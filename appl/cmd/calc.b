@@ -335,7 +335,7 @@ keyw := array[] of
 	("print",	Oprint),
 	("read",	Oread),
 	("fn",	Ofn),
-	("",	0),
+	(nil,	0),
 };
 
 conw := array[] of
@@ -352,7 +352,7 @@ conw := array[] of
 	("NaN",	Nan),
 	("Nan",	Nan),
 	("nan",	Nan),
-	("",	0.0),
+	(nil,	0.0),
 };
 
 varw := array[] of
@@ -361,7 +361,7 @@ varw := array[] of
 	(Base, 10.0),
 	(Limit, 100.0),
 	(Step, 1.0),
-	("", 0.0),
+	(nil, 0.0),
 };
 
 funw := array[] of
@@ -411,7 +411,7 @@ funw := array[] of
 	("∫",	Ointeg,	3),
 	("integral",	Ointeg,	3),
 	("solve",	Osolve,	1),
-	("",	0,	0),
+	(nil,	0,	0),
 };
 
 stdin: int;

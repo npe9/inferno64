@@ -64,6 +64,7 @@ TARG=\
 	vt.dis\
 	wish.dis\
 	wm.dis\
+	wmsmoke.dis\
 	wmplay.dis\
 
 MODULES=\

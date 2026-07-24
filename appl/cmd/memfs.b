@@ -469,7 +469,9 @@ Qidhash.new() : ref Qidhash
 Qidhash.add(h : self ref Qidhash, mf : ref Memfile)
 {
 	path := h.nextqid++;
-	mf.qid = Sys->Qid(big path, 0, Sys->QTFILE);
+	# Preserve QTDIR/QTAPPEND/QTEXCL bits already set by newmf.
+	qtype := mf.qid.qtype;
+	mf.qid = Sys->Qid(big path, 0, qtype);
 	bix := path & QHMASK;
 	mf.hashnext = h.buckets[bix];
 	h.buckets[bix] = mf;
@@ -505,12 +507,14 @@ Qidhash.lookup(h : self ref Qidhash, qid : Sys->Qid) : ref Memfile
 
 newmf(qh : ref Qidhash, parent : ref Memfile, name, owner : string, perm : int) : ref Memfile
 {
-	# qid gets set by Qidhash.add()
+	# qid.path/vers set by Qidhash.add(); qtype must be correct before add
+	# so Create replies report QTDIR (kernel mounts hang if a dir looks like a file).
 	t := now();
-	mf := ref Memfile (name, owner, Sys->Qid(big 0,0,Sys->QTFILE), perm, t, t, 0, nil, 0, parent, nil, nil, nil, nil);
-	qh.add(mf);
+	qtype := Sys->QTFILE;
 	if(perm & Sys->DMDIR)
-		mf.qid.qtype = Sys->QTDIR;
+		qtype = Sys->QTDIR;
+	mf := ref Memfile (name, owner, Sys->Qid(big 0, 0, qtype), perm, t, t, 0, nil, 0, parent, nil, nil, nil, nil);
+	qh.add(mf);
 	return mf;
 }
 

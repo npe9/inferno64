@@ -72,8 +72,16 @@ realinit(ctxt: ref Draw->Context)
 	spawn ticker(tick);
 
 	mfd := sys->open("/dev/memory", sys->OREAD);
+	if(mfd == nil){
+		sys->fprint(sys->fildes(2), "memory: open /dev/memory: %r\n");
+		raise "fail:memory";
+	}
 
 	n := getmem(mfd);
+	if(n <= 0){
+		sys->fprint(sys->fildes(2), "memory: read /dev/memory failed\n");
+		raise "fail:memory";
+	}
 	maxx := initdraw(n);
 
 	pid: int;
@@ -175,11 +183,13 @@ update(mfd: ref Sys->FD): int
 	sys->seek(mfd, big 0, Sys->SEEKSTART);
 	n := sys->read(mfd, buf, len buf);
 	if(n <= 0)
-		exit;
+		return 0;
 	(nil, l) := sys->tokenize(string buf[0:n], "\n");
 	i := 0;
 	while(l != nil) {
 		s := hd l;
+		if(len s < 7*12)
+			break;
 		a[i].size = int s[0:];
 		a[i].hw = int s[24:];
 		a[i].allocs = int s[3*12:];
@@ -195,19 +205,33 @@ getmem(mfd: ref Sys->FD): int
 {
 	n := sys->read(mfd, buf, len buf);
 	if(n <= 0)
-		exit;
+		return 0;
 	(nil, l) := sys->tokenize(string buf[0:n], "\n");
 	i := 0;
 	while(l != nil) {
 		s := hd l;
-		a[i].size = int s[0:];
-		a[i].limit = int s[12:];
-		a[i].hw = int s[2*12:];
-		a[i].allocs = int s[3*12:];
-		a[i].frees = int s[4*12:];
-		a[i].exts = int s[5*12:];
-		a[i].chunk = int s[6*12:];
-		a[i].name = s[7*12:];
+		# Prefer whitespace tokens (robust if a field exceeds width 11).
+		(nf, f) := sys->tokenize(s, " \t");
+		if(nf >= 8){
+			a[i].size = int hd f; f = tl f;
+			a[i].limit = int hd f; f = tl f;
+			a[i].hw = int hd f; f = tl f;
+			a[i].allocs = int hd f; f = tl f;
+			a[i].frees = int hd f; f = tl f;
+			a[i].exts = int hd f; f = tl f;
+			a[i].chunk = int hd f; f = tl f;
+			a[i].name = hd f;
+		}else if(len s >= 7*12){
+			a[i].size = int s[0:];
+			a[i].limit = int s[12:];
+			a[i].hw = int s[2*12:];
+			a[i].allocs = int s[3*12:];
+			a[i].frees = int s[4*12:];
+			a[i].exts = int s[5*12:];
+			a[i].chunk = int s[6*12:];
+			a[i].name = s[7*12:];
+		}else
+			break;
 		i++;
 		l = tl l;
 	}

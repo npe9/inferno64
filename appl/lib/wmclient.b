@@ -228,8 +228,13 @@ Window.onscreen(w: self ref Window, how: string)
 
 Window.startinput(w: self ref Window, devs: list of string)
 {
-	for(; devs != nil; devs = tl devs)
-		w.wmctl(sys->sprint("start %q", hd devs));
+	for(; devs != nil; devs = tl devs){
+		# Unquoted: root wm has no connfd and wmlib qword()
+		# does not strip %q quotes (start 'kbd' → unknown).
+		err := w.wmctl("start " + hd devs);
+		if(err != nil)
+			sys->fprint(sys->fildes(2), "wmclient: start %s: %s\n", hd devs, err);
+	}
 }
 
 # commands originating both from tkclient and wm (via ctl)

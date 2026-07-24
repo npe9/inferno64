@@ -46,7 +46,7 @@ WmDebugger: module
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-icondir :	con "debug/";
+icondir :	con "/icons/tk/debug/";
 
 tkconfig := array[] of {
 	"frame .m -relief raised -bd 1",

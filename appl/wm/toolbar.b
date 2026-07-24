@@ -61,6 +61,22 @@ badmodule(p: string)
 	raise "fail:bad module";
 }
 
+# Apply join "rect" (must not drop it — that left screenr as 0,480,0,480).
+waitctl(top: ref Tk->Toplevel, ready: chan of int)
+{
+	c: string;
+
+	alt{
+	c = <-top.ctxt.ctl =>
+		;
+	c = <-top.wreq =>
+		;
+	}
+	if(c != nil)
+		tkclient->wmctl(top, c);
+	ready <-= 1;
+}
+
 init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys  = load Sys Sys->PATH;
@@ -142,8 +158,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	task := chan of string;
 
 	tbtop = toolbar(ctxt, startmenu, exec, task);
-	tkclient->startinput(tbtop, "ptr" :: "control" :: nil);
+	# Apply join "rect" before !reshape (must not drop it).
+	ready := chan of int;
+	spawn waitctl(tbtop, ready);
+	<-ready;
 	layout(tbtop);
+	tkclient->startinput(tbtop, "ptr" :: "control" :: nil);
 
 	shctxt := Context.new(ctxt);
 	shctxt.addmodule("wm", myselfbuiltin);
@@ -293,6 +313,16 @@ layout(top: ref Tk->Toplevel)
 	h := 32;
 	if(r.dy() < 480)
 		h = tk->rect(top, ".b", Tk->Border|Tk->Required).dy();
+	# Keep bar inside ramfb; "place" near y=480 has hit bad delta on virt.
+	if(r.max.y - h < r.min.y)
+		h = r.dy();
+	if(h < 1)
+		h = 32;
+	if(r.dx() <= 0 || r.dy() <= 0){
+		sys->print("toolbar: bad screenr %d %d %d %d\n",
+			r.min.x, r.min.y, r.max.x, r.max.y);
+		r = ((0, 0), (640, 480));
+	}
 	cmd(top, ". configure -x " + string r.min.x +
 			font +
 			" -y " + string (r.max.y - h) +
