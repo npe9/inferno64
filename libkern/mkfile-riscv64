@@ -1,0 +1,11 @@
+#
+#	riscv64-specific files
+#
+TARGFILES=\
+	frexp-386.$O\
+	getfcr-riscv64.$O\
+	memmove-riscv64.$O\
+	memset-riscv64.$O\
+	nan-386.$O\
+	strchr-riscv64.$O\
+	setjmp-riscv64.$O\

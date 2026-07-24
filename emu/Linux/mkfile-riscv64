@@ -1,0 +1,4 @@
+ARCHFILES=
+
+# Console configs (emu-g) have no X11.
+# Full emu still links X11 from the host sysroot when present.

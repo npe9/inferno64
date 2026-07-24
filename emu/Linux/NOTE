@@ -1,0 +1,37 @@
+Linux / riscv64 (hosted emu)
+
+-	Console build `emu-g` is the supported smoke target under qemu-user.
+	Installed as `Linux/riscv64/bin/emu-g`.
+-	JIT is on by default (`LINUX_RISCV64` → `cflag=1`); use `-c0` for the
+	interpreter.  Hosted JIT: `libinterp/comp-riscv64-jit.c` (linked as
+	`comp-riscv64.o`); KenC stub: `comp-riscv64.c`.  Also `das-riscv64.c`,
+	`fence.i` in `segflush-riscv64.c`.
+-	Feature parity with arm64 JIT: IMCALL/IMFRAME/IINDC inlined; macros;
+	`freecode` on module/type unload.
+-	Full X11 `emu` links against multiarch `libx11-dev:riscv64` in
+	`inferno-rvbuild`.  Build with `./emu/Linux/cross-emu-x11.sh`
+	(installs as `Linux/riscv64/bin/emu`).  Relink must include a
+	fresh `main.o` so emuinit binds `#m`/`#^` (`/dev/pointer`, snarf).
+	`./emu/Linux/smoke-x11.sh` checks pointer + `wm` under Xvfb
+	(Inferno window appears).  Console `emu-g` remains the suite target.
+-	Acceptance: `./emu/Linux/suite-riscv64.sh` and
+	`./emu/Linux/validate-jit-levels.sh` (c0–c9).
+
+Cross-build from macOS (Docker):
+
+	./emu/Linux/cross-riscv64.sh	# rebuild JIT, relink emu-g, smoke
+	./emu/Linux/cross-emu-x11.sh	# full X11 emu (needs multiarch X11)
+	./emu/Linux/smoke-riscv64.sh	# smoke only (needs container)
+	./emu/Linux/suite-riscv64.sh	# broader Dis/sh/math suite
+
+Uses Debian trixie + `gcc-riscv64-linux-gnu` + `qemu-riscv64`.
+Set `RISCV64_CROSS=riscv64-linux-gnu-` when driving Inferno `mk` from a
+foreign Linux host (`mkfiles/mkfile-Linux-riscv64`).
+
+Native Inferno/riscv64 (QEMU virt): `os/virt` → `Inferno/riscv64/bin/ivirt`
+(interp only; `cflag=0`).  virtinit spawns compound sh -c then interactive
+UART `sh`; `./os/virt/smoke.sh` checks spawn+wait + `CONS-ALIVE` over serial.
+KenC Inferno/riscv64 is LP64 (`ulong` 8); IdleGC/BusyGC enabled (`addprog` on Procs).
+`memset-riscv64.s` must use LP64 arg layout (`n` at FP+16).
+`libmemdraw` load/unload/line: `Memimage.width` stride is `sizeof(u32)`, not `ulong`
+(LP64 bug corrupted the image pool; broke `wm/colors` flushimage).

@@ -1,0 +1,9 @@
+ROOT=/Users/npe/src/inferno64
+TKSTYLE=std
+CONF=emu
+SYSHOST=MacOSX
+SYSTARG=$SYSHOST
+OBJTYPE=arm64
+OBJDIR=$SYSTARG/$OBJTYPE
+<$ROOT/mkfiles/mkhost-$SYSHOST
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE

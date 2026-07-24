@@ -1,0 +1,36 @@
+TARGMODEL=	Posix
+TARGSHTYPE=	sh
+CPUS=		386
+
+O=		o
+OS=		o
+
+# Cross from a foreign Linux host (e.g. Docker aarch64/amd64):
+#   RISCV64_CROSS=riscv64-linux-gnu- mk ...
+# Native Linux/riscv64 leaves RISCV64_CROSS empty (uses cc).
+CROSS=$RISCV64_CROSS
+AR=${CROSS}ar
+ARFLAGS=	ruvs
+
+AS=${CROSS}gcc -c
+ASFLAGS=
+
+CC=${CROSS}gcc -c
+CFLAGS=		-g\
+		-O2\
+		-fno-strict-aliasing\
+		-Wno-implicit-function-declaration\
+		-Wno-incompatible-pointer-types\
+		-I$ROOT/Linux/riscv64/include\
+		-I$ROOT/include\
+		-DLINUX_RISCV64\
+		-D_GNU_SOURCE
+
+ANSICPP=
+LD=${CROSS}gcc
+LDFLAGS=
+
+SYSLIBS=
+
+YACC=		iyacc
+YFLAGS=		-d
