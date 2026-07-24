@@ -81,7 +81,9 @@ disallow := 1;
 plumbed: chan of int;
 roottree: ref Tree.N;
 rootitem: Item;
-runplumb := 1;
+# Default off: nested plumber under an existing wm/plumber races on /chan
+# and has panicked native draw (cause 0x5).  Use -P to start one.
+runplumb := 0;
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {

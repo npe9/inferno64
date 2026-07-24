@@ -324,7 +324,7 @@ sysname(): string
 	if(t == nil){
 		s := rf(mntpt+"/ndb");
 		if(s != nil){
-			db := Db.sopen(t);
+			db := Db.sopen(s);
 			if(db != nil){
 				(e, nil) := db.find(nil, "sys");
 				if(e != nil)
@@ -398,10 +398,18 @@ readservers(): list of string
 			return servers;
 		dnsdb.reopen();
 	}
-	if((l := dblooknet("sys", myname, "dnsdomain")) == nil)
+	# Prefer per-sys dns=/dnsdomain=; fall back to infernosite=.
+	# Skip dblooknet when sysname is empty (matches every sys=).
+	l: list of string = nil;
+	if(myname != nil && myname != "")
+		l = dblooknet("sys", myname, "dnsdomain");
+	if(l == nil)
 		l = dblook("infernosite", "", "dnsdomain");
 	dnsdomains = "" :: l;
-	if((l = dblooknet("sys", myname, "dns")) == nil)
+	l = nil;
+	if(myname != nil && myname != "")
+		l = dblooknet("sys", myname, "dns");
+	if(l == nil)
 		l = dblook("infernosite", "", "dns");
 	servers = l;
 #	zones := dblook("soa", "", "dom");
@@ -497,6 +505,26 @@ dblook(attr: string, val: string, rattr: string): list of string
 		}
 	}
 	return reverse(rl);
+}
+
+# A records from /lib/ndb for label (dom= or sys=).
+dblooka(label: string): list of ref RR
+{
+	addrs: list of string;
+	rrl: list of ref RR;
+	a: array of byte;
+
+	if(dnsdb == nil)
+		return nil;
+	addrs = dblook("dom", label, "ip");
+	if(addrs == nil)
+		addrs = dblook("sys", label, "ip");
+	for(; addrs != nil; addrs = tl addrs){
+		a = parseip(hd addrs);
+		if(a != nil)
+			rrl = ref RR.A(label, Ta, Cin, now+60, 0, a) :: rrl;
+	}
+	return rrl;
 }
 
 #
@@ -1016,6 +1044,12 @@ Step1:
 			return (x, nil);
 		if(err != nil)
 			return (nil, err);
+		# 1b. local ndb(6): dom=/sys= with ip= (no network)
+		if(attr == Ta && (x = dblooka(label)) != nil){
+			cachec <-= (x, 1);
+			cachec <-= Sync;
+			return (x, nil);
+		}
 		if(attr != Tcname){
 			if(++ncname > 10)
 				return (nil, "cname alias loop");
@@ -1789,19 +1823,41 @@ kill(pid: int)
 
 udpport(): ref Sys->FD
 {
-	conn := dial->announce(mntpt+"/udp!*!0");
-	if(conn == nil)
+	cfd, dfd: ref Sys->FD;
+	dir, lno: string;
+	buf: array of byte;
+	n: int;
+
+	# Open/announce udp directly. Dial->announce goes through
+	# mntpt/cs; when cs lives on the same mntpt that deadlocks
+	# (cs→dns→announce→cs).
+	cfd = sys->open(mntpt+"/udp/clone", Sys->ORDWR);
+	if(cfd == nil){
+		sys->fprint(stderr, "dns: open %s/udp/clone: %r\n", mntpt);
 		return nil;
-	if(sys->fprint(conn.cfd, "headers") < 0){
+	}
+	buf = array[32] of byte;
+	n = sys->read(cfd, buf, len buf);
+	if(n <= 0){
+		sys->fprint(stderr, "dns: read udp clone: %r\n");
+		return nil;
+	}
+	lno = string int string buf[0:n];
+	dir = mntpt+"/udp/"+lno;
+	if(sys->fprint(cfd, "announce *!0") < 0){
+		sys->fprint(stderr, "dns: announce: %r\n");
+		return nil;
+	}
+	if(sys->fprint(cfd, "headers") < 0){
 		sys->fprint(stderr, "dns: can't set headers mode: %r\n");
 		return nil;
 	}
-	conn.dfd = sys->open(conn.dir+"/data", Sys->ORDWR);
-	if(conn.dfd == nil){
-		sys->fprint(stderr, "dns: can't open %s/data: %r\n", conn.dir);
+	dfd = sys->open(dir+"/data", Sys->ORDWR);
+	if(dfd == nil){
+		sys->fprint(stderr, "dns: can't open %s/data: %r\n", dir);
 		return nil;
 	}
-	return conn.dfd;
+	return dfd;
 }
 
 #

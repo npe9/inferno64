@@ -178,20 +178,33 @@ wmreq1(top: ref Tk->Toplevel, c, req: string, e: int): string
 	# in the image, so
 	if(c != "!reshape")
 		return "unknown request";
+	# Honor the requested rectangle.  The old path always mapped
+	# di.r (full display), so stock Bounce built walls on a near-
+	# fullscreen act and spawned balls on the boundary.
+	(r, nil) := s2r(req, e);
+	di := top.display.image;
+	if(r.dx() <= 0 || r.dy() <= 0)
+		r = ((0, 0), (1, 1));
+	if(r.dx() > di.r.dx())
+		r.max.x = r.min.x + di.r.dx();
+	if(r.dy() > di.r.dy())
+		r.max.y = r.min.y + di.r.dy();
 	i: ref Image;
 	if(top.image == nil){
 		if(name != ".")
 			return "screen not available";
-		di := top.display.image;
 		screen := Screen.allocate(di, top.display.color(Background), 0);
 		di.draw(di.r, screen.fill, nil, screen.fill.r.min);
-		i = screen.newwindow(di.r, Draw->Refbackup, Draw->Nofill);
-	}else{
-		if(name == ".")
+		i = screen.newwindow(r, Draw->Refbackup, Draw->Nofill);
+	}else if(name == "."){
+		if(top.image.r.size().eq(r.size()))
 			i = top.image;
 		else
-			i = top.image.screen.newwindow(s2r(req, e).t0, Draw->Refbackup, Draw->Red);
-	}
+			i = top.image.screen.newwindow(r, Draw->Refbackup, Draw->Nofill);
+	}else
+		i = top.image.screen.newwindow(r, Draw->Refbackup, Draw->Red);
+	if(i == nil)
+		return sys->sprint("window creation failed: %r");
 	tk->putimage(top, name+" "+reqid, i, nil);
 	return nil;
 }

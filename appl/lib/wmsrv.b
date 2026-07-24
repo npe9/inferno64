@@ -115,18 +115,14 @@ wm(ctlio: ref Sys->FileIO,
 			);
 			clients = addclient(clients, c);
 		}
-		alt{
-		rc <-= (sys->aprint("%d", c.token), nil) => ;
-		* => ;
-		}
+		# Reply in a spawn: a direct send can stall this loop if the
+		# reader is gone; alt/`*` can drop a live reply (client hangs).
+		spawn freplyb(rc, sys->aprint("%d", c.token), nil);
 	(nil, data, fid, wc) := <-ctlio.write =>
 		c := findfid(clients, fid);
 		if(wc != nil){
 			if(c == nil){
-				alt{
-				wc <-= (0, "must read first") => ;
-				* => ;
-				}
+				spawn freply(wc, 0, "must read first");
 				break;
 			}
 			req <-= (c, data, wc);
@@ -310,6 +306,18 @@ delclient(clients: array of ref Client, c: ref Client)
 senderror(rc: chan of (string, ref Wmcontext), e: string)
 {
 	rc <-= (e, nil);
+}
+
+freply(rc: Sys->Rwrite, n: int, err: string)
+{
+	if(rc != nil)
+		rc <-= (n, err);
+}
+
+freplyb(rc: Sys->Rread, d: array of byte, err: string)
+{
+	if(rc != nil)
+		rc <-= (d, err);
 }
 
 Client.window(c: self ref Client, tag: string): ref Window

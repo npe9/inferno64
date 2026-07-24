@@ -220,7 +220,13 @@ readprog(t: ref Toplevel)
 		for(i := 0; i < n; i++) {
 			p := mkprog(d[i].name);
 			if(p != nil){
-				l := sys->sprint("%4d %4d %3dK %-7s  %s", p.pid, p.pgrp, p.size, p.state, p.mod);
+				# Native KenC Sys->sprint is LP64-fragile on
+				# multi-int formats; build one field at a time.
+				l := sys->sprint("%4d ", p.pid) +
+					sys->sprint("%4d ", p.pgrp) +
+					sys->sprint("%3dK ", p.size) +
+					sys->sprint("%-7s  ", p.state) +
+					p.mod;
 				tk->cmd(t, ".fl.l insert end '"+l);
 			}
 		}

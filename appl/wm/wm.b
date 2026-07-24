@@ -83,7 +83,6 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		raise "fail:no image";
 	}
 	wmclient->win.startinput("kbd" :: "ptr" :: nil);
-
 	wmctxt := win.ctxt;
 	screen = makescreen(win.image);
 
@@ -174,28 +173,33 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		n := len data;
 		if(err != nil)
 			n = -1;
-		alt{
-		rc <-= (n, err) =>;
-		* =>;
-		}
+		# Spawn reply: must not block the wm alt (stalls all new clients),
+		# and must not alt/`*` (can drop a live FileIO reply).
+		spawn freply(rc, n, err);
 	(nil, nil, nil, wc) := <-wmrectIO.write =>
 		if(wc == nil)
 			break;
-		alt{
-		wc <-= (0, "cannot write") =>;
-		* =>;
-		}
+		spawn freply(wc, 0, "cannot write");
 	(off, nil, nil, rc) := <-wmrectIO.read =>
 		if(rc == nil)
 			break;
 		d := array of byte r2s(screen.image.r);
 		if(off > big len d)
 			off = big len d;
-		alt{
-		rc <-= (d[int off:], nil) =>; # TODO potential bug truncating big to int
-		* =>;
-		}
+		spawn freplyb(rc, d[int off:], nil); # TODO potential bug truncating big to int
 	}
+}
+
+freply(rc: Sys->Rwrite, n: int, err: string)
+{
+	if(rc != nil)
+		rc <-= (n, err);
+}
+
+freplyb(rc: Sys->Rread, d: array of byte, err: string)
+{
+	if(rc != nil)
+		rc <-= (d, err);
 }
 
 handlerequest(win: ref Wmclient->Window, wmctxt: ref Wmcontext, c: ref Client, req: string): string
