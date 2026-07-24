@@ -1989,3 +1989,9 @@ bad:
 	return 0;
 }
 
+
+void
+freecode(void *p)
+{
+	free(p);
+}

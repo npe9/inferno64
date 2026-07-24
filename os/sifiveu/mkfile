@@ -1,0 +1,97 @@
+<../../mkconfig
+
+#Configurable parameters
+
+CONF=sifiveu
+CONFLIST=sifiveu
+
+SYSTARG=$OSTARG
+OBJTYPE=riscv64
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+#end configurable parameters
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+# QEMU -M sifive_u -bios none -kernel; DRAM @ 0x80000000
+KTZERO=0x80000000
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$IP\
+	$DEVS\
+	$ETHERS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+
+CFLAGS=-wFV -I. -I../port -I../ip -I../riscv -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD -o $target -H5 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	cp $target $INSTALLDIR/$target
+
+<../port/portmkfile
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+devether.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+netif.$O:	../port/netif.h
+ethersifivegem.$O:	../port/netif.h ../port/etherif.h
+$IP devip.$O:	../ip/ip.h
+
+# Shared os/riscv drivers
+uartsifive.$O:	../riscv/uartsifive.c
+	$CC $CFLAGS ../riscv/uartsifive.c
+
+pwmsifive.$O:	../riscv/pwmsifive.c
+	$CC $CFLAGS ../riscv/pwmsifive.c
+
+spisifive.$O:	../riscv/spisifive.c
+	$CC $CFLAGS ../riscv/spisifive.c
+
+ethersifivegem.$O:	../riscv/ethersifivegem.c
+	$CC $CFLAGS ../riscv/ethersifivegem.c
+
+# qemu-system-riscv64 -M sifive_u -nographic -bios none -kernel isifiveu

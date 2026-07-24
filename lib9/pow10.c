@@ -4,6 +4,9 @@
 #ifdef	LINUX_AMD64
 #define	_MATH_H
 #endif
+#ifdef	LINUX_RISCV64
+#define	_MATH_H
+#endif
 #include	"lib9.h"
 
 /*

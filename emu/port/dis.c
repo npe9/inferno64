@@ -26,7 +26,11 @@ struct
 } isched;
 
 extern	int	bflag;
+#if defined(MACOSX_ARM64) || defined(LINUX_RISCV64)
+int	cflag = 1;	/* native JIT is the default; use -c0 for interp */
+#else
 int	cflag;
+#endif
 uvlong	gcbusy;
 uvlong	gcidle;
 uvlong	gcidlepass;

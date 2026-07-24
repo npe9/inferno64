@@ -1,0 +1,76 @@
+<../../mkconfig
+
+CONF=spike
+CONFLIST=spike
+
+SYSTARG=$OSTARG
+OBJTYPE=riscv64
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+KTZERO=0x80000000
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$DEVS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+
+CFLAGS=-wFV -I. -I../port -I../ip -I../riscv -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD -o $target -H5 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	python3 ./elf-htif-syms.py $target
+	cp $target $INSTALLDIR/$target
+
+<../port/portmkfile
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+htif.$O:	../riscv/htif.c
+	$CC $CFLAGS ../riscv/htif.c
+
+# qemu-system-riscv64 -M spike -nographic -bios none -kernel ispike

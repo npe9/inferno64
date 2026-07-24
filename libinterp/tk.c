@@ -23,12 +23,16 @@ static char*tkputwinimage(Tk*, Draw_Image*, int);
 static void
 lockctxt(TkCtxt *ctxt)
 {
+	if(ctxt == nil || ctxt->lock == nil)
+		return;
 	libqlock(ctxt->lock);
 }
 
 static void
 unlockctxt(TkCtxt *ctxt)
 {
+	if(ctxt == nil || ctxt->lock == nil)
+		return;
 	libqunlock(ctxt->lock);
 }
 
@@ -1051,6 +1055,8 @@ tkfreetop(Heap *h, int swept)
 	unlockctxt(t->ctxt);
 	/* XXX should we leave it locked for this bit? */
 	tkfreectxt(t->ctxt);
+	t->ctxt = nil;
+	t->display = nil;
 	if(!swept) {
 		r = t->di;
 		t->di = H;
@@ -1317,7 +1323,20 @@ tkcursorswitch(TkTop *top, Image *i, TkImg *img)
 	buf = mallocz(maxb, 0);
 	if(buf == nil)
 		return TkNomem;
-	n = sprint(buf, "cursor %d %d %d %d ", i->r.min.x, i->r.min.y, ci->r.max.x, ci->r.max.y);
+	/*
+	 * KenC LP64: one int per sprint (multi-int varargs corrupt values).
+	 */
+	{
+		char *cp;
+
+		cp = buf;
+		cp += sprint(cp, "cursor ");
+		cp += sprint(cp, "%d ", i->r.min.x);
+		cp += sprint(cp, "%d ", i->r.min.y);
+		cp += sprint(cp, "%d ", ci->r.max.x);
+		cp += sprint(cp, "%d ", ci->r.max.y);
+		n = cp - buf;
+	}
 	unloadimage(ci, ci->r, (uchar*)buf+n, maxb-n);
 	hexify(buf+n, nb);
 	tktolimbo(top->wreq, buf);
@@ -1332,5 +1351,14 @@ tkcursorswitch(TkTop *top, Image *i, TkImg *img)
 void
 tkcursorset(TkTop *t, Point p)
 {
-	tkwreq(t, "ptr %d %d", p.x, p.y);
+	char buf[64];
+	char *cp;
+
+	/* KenC LP64: one int per sprint */
+	cp = buf;
+	cp += sprint(cp, "ptr ");
+	cp += sprint(cp, "%d ", p.x);
+	cp += sprint(cp, "%d", p.y);
+	USED(cp);
+	tktolimbo(t->wreq, buf);
 }

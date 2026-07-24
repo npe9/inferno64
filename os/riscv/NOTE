@@ -1,0 +1,90 @@
+Inferno RISC-V multi-board device plan
+======================================
+
+Machines (qemu-system-riscv64):
+	virt		generic virtio + PCI ECAM + ramfb	(os/virt — primary)
+	sifive_u	HiFive Unleashed / FU540		(os/sifiveu)
+	sifive_e	HiFive1 / FE310-class		(future os/sifivee)
+	spike		HTIF + CLINT only		(os/spike)
+	microchip-icicle-kit				(future)
+
+Shared drivers live in os/riscv/; boards supply mem.h/io.h and wire them.
+
+Status: NEED / WIP / HAVE / N/A
+
+Infrastructure
+	A1 trap path				HAVE (per-board l.s/trap.c)
+	A2 multi-hart				NEED
+	A3 CLINT				HAVE
+	A4 ACLINT (virt,aclint=on)		NEED
+	A5 PLIC					HAVE
+	A6 AIA APLIC				NEED
+	A7 AIA APLIC+IMSIC			NEED
+	A8 DTB / board select			WIP (hardcoded maps)
+	A9 Sv39					NEED
+	A10 OpenSBI S-mode boot			NEED
+	A11 FPU					HAVE
+	A12 PMU					OPTIONAL
+	A13 syscon poweroff/reboot		NEED
+	A14 sifive,test1			OPTIONAL
+
+Consoles
+	B1 NS16550 (virt)			HAVE  os/virt/uartvirt.c
+	B2 SiFive UART				HAVE  os/riscv/uartsifive.c (+ os/sifiveu)
+	B3 HTIF (spike)				HAVE  os/riscv/htif.c + os/spike/elf-htif-syms.py
+	B4 PolarFire MMUART (icicle)		NEED
+
+virt onboard
+	C1 virtio-mmio				HAVE
+	C2 fw_cfg				HAVE
+	C3 ramfb				HAVE
+	C4 goldfish-rtc				NEED
+	C5 cfi-flash				OPTIONAL
+	C6 PCI ECAM host			HAVE  os/riscv/pcivirt.c (BAR assign + pcimatch + virtio caps)
+	C7 riscv-iommu-sys			OPTIONAL
+	C8 ACPI					OPTIONAL
+
+Virtio (mmio HAVE; pci net HAVE)
+	D1 blk  D2 net  D3 tablet  D4 kbd  D5 rng	HAVE mmio
+	D6 gpu  D7 scsi  D8 9p  D9 serial  D10 balloon
+	D11 sound D12 crypto D13 iommu D14 mouse	NEED/OPTIONAL
+
+PCI endpoints on virt
+	E1 virtio-pci net			HAVE  os/virt/ethervirtiopci.c (#l0 with -device virtio-net-pci)
+	E2 nvme  E3 e1000e  E4 xhci		NEED
+	E5 usb funcs  E6 ahci  E7 scsi  E8 vga
+	E9 sdhci-pci  E10 iommu-pci  E11 bridges
+
+sifive_u (FU540) — no PCIe on SoC/QEMU
+	F3 PRCI					NEED
+	F4 SiFive UART				HAVE  serial shell smoke PASS
+	F5 PWM0/1				WIP   os/riscv/pwmsifive.c (probe)
+	F6 GEM					HAVE  os/riscv/ethersifivegem.c (#l0 probe; bind #l from shell)
+	F7 SPI + NOR				STUB  os/riscv/spisifive.c
+	F8 SPI-MMC				NEED
+	F9 GPIO					NEED  os/riscv/gpiosifive.c
+	F10 OTP					NEED
+	F11 PDMA				STUB-OK
+	F12 L2 ccache				STUB-OK
+
+sifive_e
+	G2 UART  G3 PRCI  G4 AON  G5 GPIO	NEED (reuse B2/F9)
+	G6/G7 QSPI/PWM often unimplemented in QEMU
+
+spike
+	H2 HTIF					HAVE  serial shell smoke PASS (see os/spike/NOTE)
+
+Build spike (HTIF shell smoke):
+	cd os/spike
+	mk SYSTARG=os OBJTYPE=riscv64 SHELLTYPE=sh INIT=spikeinit install
+	./smoke.sh
+
+icicle
+	I2 MMUART  I3 GEM×2  I4 SDHC  I5 DMA	NEED
+	I7 user DTB required
+
+Build sifiveu (serial shell smoke):
+	export PATH=$ROOT/MacOSX/arm64/bin:$PATH ROOT=$ROOT
+	cd os/sifiveu
+	mk SYSTARG=os OBJTYPE=riscv64 SHELLTYPE=sh INIT=sifiveuinit install
+	./smoke.sh

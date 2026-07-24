@@ -126,12 +126,19 @@ icmpconnect(Conv *c, char **argv, int argc)
 int
 icmpstate(Conv *c, char *state, int n)
 {
+	char *p, *e;
+
 	USED(c);
-	return snprint(state, n, "%s qin %d qout %d\n",
-		"Datagram",
-		c->rq ? qlen(c->rq) : 0,
-		c->wq ? qlen(c->wq) : 0
-	);
+	/* KenC LP64: one homogeneous arg per snprint */
+	p = state;
+	e = state + n;
+	p += snprint(p, e - p, "%s", "Datagram");
+	p += snprint(p, e - p, " qin ");
+	p += snprint(p, e - p, "%d", c->rq ? qlen(c->rq) : 0);
+	p += snprint(p, e - p, " qout ");
+	p += snprint(p, e - p, "%d", c->wq ? qlen(c->wq) : 0);
+	p += snprint(p, e - p, "\n");
+	return p - state;
 }
 
 char*
@@ -346,7 +353,7 @@ static char *unreachcode[] =
 static void
 icmpiput(Proto *icmp, Ipifc*, Block *bp)
 {
-	int	n;
+	int	n, rv;
 	Icmp	*p;
 	Block	*r;
 	Proto	*pr;
@@ -388,8 +395,10 @@ icmpiput(Proto *icmp, Ipifc*, Block *bp)
 		break;
 	case Unreachable:
 		if(p->code >= nelem(unreachcode)) {
-			snprint(m2, sizeof m2, "unreachable %V -> %V code %d",
-				p->src, p->dst, p->code);
+			/* KenC LP64: one homogeneous arg per snprint */
+			rv = snprint(m2, sizeof m2, "unreachable %V -> ", p->src);
+			rv += snprint(m2+rv, sizeof m2 - rv, "%V code ", p->dst);
+			snprint(m2+rv, sizeof m2 - rv, "%d", p->code);
 			msg = m2;
 		} else
 			msg = unreachcode[p->code];

@@ -1,0 +1,25 @@
+Inferno on QEMU spike
+=====================
+
+Status: HTIF console + Dis shell smoke PASS (`./smoke.sh`).
+
+QEMU `-M spike` HTIF requires ELF symbols `tohost` / `fromhost`.
+`jl -H5` emits a loadable ELF **without section headers / symtab**.
+`elf-htif-syms.py` injects a minimal `.symtab` / `.strtab` after link.
+
+Important: QEMU maps HTIF over the whole `[min(tohost,fromhost), max+8)`
+span.  Two separate BSS symbols are not kept adjacent by `jl`, so a gap
+turns ordinary data into "Invalid htif".  Board `l.s` therefore allocates
+one 16-byte `tohost` cell; `fromhost` is `tohost+8` (C + ELF inject).
+
+Also drain the PUTC ack in `fromhost` — QEMU leaves `0x100|char` there,
+and `clockpoll`'s getc would otherwise echo forever (CRLF flood).
+
+Build:
+	cd os/spike
+	mk SYSTARG=os OBJTYPE=riscv64 SHELLTYPE=sh INIT=spikeinit install
+	./smoke.sh
+
+Run:
+	qemu-system-riscv64 -M spike -nographic -bios none \
+		-kernel $ROOT/Inferno/riscv64/bin/ispike

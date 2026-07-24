@@ -424,7 +424,7 @@ progclose(Chan *c)
 static int
 progsize(Prog *p)
 {
-	int size;
+	int size, depth;
 	Frame *f;
 	uchar *fp;
 	Modlink *m;
@@ -433,20 +433,30 @@ progsize(Prog *p)
 	size = 0;
 	if(m->MP != H)
 		size += hmsize(D2H(m->MP));
-	if(m->prog != nil)
+	/*
+	 * JIT replaces m->prog with an mmap'd code buffer (not pool memory).
+	 * msize/poolmsize on that pointer faults.
+	 * Also skip the FP walk for compiled modules: Frame/SEXTYPE assumptions
+	 * do not hold, and a cyclic fp link would loop forever under acquire.
+	 */
+	if(m->prog != nil && !m->compiled)
 		size += msize(m->prog);
+	if(m->compiled)
+		return size/1024;
 
 	fp = p->R.FP;
-	while(fp != nil) {
+	for(depth = 0; fp != nil && depth < 256; depth++) {
 		f = (Frame*)fp;
 		fp = f->fp;
 		if(f->mr != nil) {
+			if(f->mr->compiled)
+				break;
 			if(f->mr->MP != H)
 				size += hmsize(D2H(f->mr->MP));
 			if(f->mr->prog != nil)
 				size += msize(f->mr->prog);
 		}
-		if(f->t == nil)
+		else if(f->t == nil)
 			size += msize(SEXTYPE(f));
 	}
 	return size/1024;
@@ -478,16 +488,27 @@ progqidwidth(Chan *c)
 int
 progfdprint(Chan *c, int fd, int w, char *s, int ns)
 {
+	char *cp, *ep;
 	int n;
 
 	if(w == 0)
 		w = progqidwidth(c);
-	n = snprint(s, ns, "%3d %.2s %C %4d (%.16llux %*ud %.2ux) %5d %8lld %s\n",
-		fd,
-		&"r w rw"[(c->mode&3)<<1],
-		devtab[c->type]->dc, c->dev,
-		c->qid.path, w, c->qid.vers, c->qid.type,
-		c->iounit, c->offset, chanpath(c));
+	/* KenC LP64: one homogeneous arg per snprint */
+	cp = s;
+	ep = s + ns;
+	cp += snprint(cp, ep-cp, "%3d ", fd);
+	cp += snprint(cp, ep-cp, "%.2s ", &"r w rw"[(c->mode&3)<<1]);
+	cp += snprint(cp, ep-cp, "%C ", devtab[c->type]->dc);
+	cp += snprint(cp, ep-cp, "%4d ", c->dev);
+	cp += snprint(cp, ep-cp, "(");
+	USED(w);
+	cp += snprint(cp, ep-cp, "%.16llux ", c->qid.path);
+	cp += snprint(cp, ep-cp, "%ud ", c->qid.vers);
+	cp += snprint(cp, ep-cp, "%.2ux) ", c->qid.type);
+	cp += snprint(cp, ep-cp, "%5d ", c->iounit);
+	cp += snprint(cp, ep-cp, "%8lld ", c->offset);
+	cp += snprint(cp, ep-cp, "%s\n", chanpath(c));
+	n = cp - s;
 	return n;
 }
 
@@ -691,7 +712,8 @@ progheap(Heapqry *hq, char *va, int count, ulong offset)
 			hd = *(List**)addr;
 			if(hd == H || D2H(hd)->t != &Tlist)
 				return -1;
-			n += snprint(va+n, count-n, "%zx.%zx\n", (uintptr)&hd->tail, (uintptr)hd->data);
+			n += snprint(va+n, count-n, "%zx.", (uintptr)&hd->tail);
+			n += snprint(va+n, count-n, "%zx\n", (uintptr)hd->data);
 			s = sizeof(WORD);
 			break;
 		case 'A':
@@ -703,7 +725,8 @@ progheap(Heapqry *hq, char *va, int count, ulong offset)
 			else {
 				if(D2H(a)->t != &Tarray)
 					return -1;
-				n += snprint(va+n, count-n, "%zd.%zx\n", a->len, (uintptr)a->data);
+				n += snprint(va+n, count-n, "%zd.", a->len);
+				n += snprint(va+n, count-n, "%zx\n", (uintptr)a->data);
 			}
 			s = sizeof(WORD);
 			break;
@@ -747,7 +770,10 @@ progheap(Heapqry *hq, char *va, int count, ulong offset)
 				if(c->buf == H)
 					n += snprint(va+n, count-n, "0.%zx\n", (uintptr)c);
 				else
-					n += snprint(va+n, count-n, "%zd.%zx.%d.%d\n", c->buf->len, (uintptr)c->buf->data, c->front, c->size);
+					n += snprint(va+n, count-n, "%zd.", c->buf->len);
+					n += snprint(va+n, count-n, "%zx.", (uintptr)c->buf->data);
+					n += snprint(va+n, count-n, "%d.", c->front);
+					n += snprint(va+n, count-n, "%d\n", c->size);
 			}
 			break;
 			
@@ -811,12 +837,44 @@ int2flag(int flag, char *s)
 static char*
 progtime(ulong msec, char *buf, char *ebuf)
 {
-	int tenths, sec;
+	char *p;
+	int tenths, sec, min, s, t;
 
+	/*
+	 * KenC LP64: one int per seprint/snprint (multi-int va_arg fault).
+	 */
 	tenths = msec/100;
 	sec = tenths/10;
-	seprint(buf, ebuf, "%4d:%2.2d.%d", sec/60, sec%60, tenths%10);
+	min = sec/60;
+	s = sec%60;
+	t = tenths%10;
+	p = buf;
+	p += snprint(p, ebuf-p, "%4d:", min);
+	p += snprint(p, ebuf-p, "%2.2d.", s);
+	USED(p);
+	snprint(p, ebuf-p, "%d", t);
 	return buf;
+}
+
+/*
+ * /prog/n/status line.  KenC LP64 cannot pass several ints in one snprint.
+ */
+static void
+progstatusline(char *buf, int nbuf, int pid, int pgrp, char *user,
+	ulong msec, char *state, int sizek, char *mod)
+{
+	char *cp, *ep;
+	char timebuf[12];
+
+	cp = buf;
+	ep = buf + nbuf;
+	cp += snprint(cp, ep-cp, "%8d ", pid);
+	cp += snprint(cp, ep-cp, "%8d ", pgrp);
+	cp += snprint(cp, ep-cp, "%10s ", user);
+	cp += snprint(cp, ep-cp, "%s ", progtime(msec, timebuf, timebuf+sizeof(timebuf)));
+	cp += snprint(cp, ep-cp, "%10s ", state);
+	cp += snprint(cp, ep-cp, "%5dK ", sizek);
+	snprint(cp, ep-cp, "%s", mod);
 }
 
 static s32
@@ -829,7 +887,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	ulong grpid;
 	char *a = va;
 	Progctl *ctl;
-	char mbuf[64], timebuf[12];
+	char mbuf[64];
 	char flag[10];
 
 	if(c->qid.type & QTDIR)
@@ -841,29 +899,30 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 		return qread(ctl->q, va, n);
 	case Qstatus:
 		acquire();
+		if(waserror()){
+			release();
+			nexterror();
+		}
 		p = progpid(PID(c->qid));
 		if(p == nil || p->state == Pexiting || p->R.M == H) {
+			poperror();
 			release();
-			snprint(up->genbuf, sizeof(up->genbuf), "%8ud %8d %10s %s %10s %5dK %s",
-				PID(c->qid),
-				0,
-				eve,
-				progtime(0, timebuf, timebuf+sizeof(timebuf)),
-				progstate[Pexiting],
-				0,
-				"[$Sys]");
+			progstatusline(up->genbuf, sizeof(up->genbuf),
+				PID(c->qid), 0, eve, 0,
+				progstate[Pexiting], 0, "[$Sys]");
 			return readstr(offset, va, n, up->genbuf);
 		}
 		modstatus(&p->R, mbuf, sizeof(mbuf));
 		o = p->osenv;
-		snprint(up->genbuf, sizeof(up->genbuf), "%8d %8d %10s %s %10s %5dK %s",
+		progstatusline(up->genbuf, sizeof(up->genbuf),
 			p->pid,
 			p->group!=nil? p->group->id: 0,
 			o->user,
-			progtime(TK2MS(p->ticks), timebuf, timebuf+sizeof(timebuf)),
+			TK2MS(p->ticks),
 			progstate[p->state],
 			progsize(p),
 			mbuf);
+		poperror();
 		release();
 		return readstr(offset, va, n, up->genbuf);
 	case Qwait:

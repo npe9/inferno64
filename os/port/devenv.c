@@ -436,6 +436,13 @@ envcpy(Egrp *to, Egrp *from)
 	poperror();
 }
 
+/* Inferno Sys_pctl(FORKENV) calls egrpcpy; keep envcpy as the shared body. */
+void
+egrpcpy(Egrp *to, Egrp *from)
+{
+	envcpy(to, from);
+}
+
 void
 closeegrp(Egrp *eg)
 {

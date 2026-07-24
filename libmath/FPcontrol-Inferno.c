@@ -4,15 +4,14 @@
 void
 FPinit(void)
 {
-	ulong fcr9 = FPPDBL|FPRNR|FPINVAL|FPZDIV|FPUNFL|FPOVFL;
-	setfcr(fcr9);
+	setfcr(FPPDBL|FPRNR|FPINVAL|FPZDIV|FPUNFL|FPOVFL);
 }
 
 ulong
 getFPstatus(void)
 {
 	ulong fsr = 0, fsr9 = getfsr();
-	/* on specific machines, could be table lookup */
+
 	if(fsr9&FPAINEX) fsr |= INEX;
 	if(fsr9&FPAOVFL) fsr |= OVFL;
 	if(fsr9&FPAUNFL) fsr |= UNFL;
@@ -40,11 +39,12 @@ ulong
 getFPcontrol(void)
 {
 	ulong fcr = 0, fcr9 = getfcr();
+
 	switch(fcr9&FPRMASK){
-		case FPRNR:	fcr = RND_NR; break;
-		case FPRNINF:	fcr = RND_NINF; break;
-		case FPRPINF:	fcr = RND_PINF; break;
-		case FPRZ:	fcr = RND_Z; break;
+	case FPRNR:	fcr = RND_NR; break;
+	case FPRNINF:	fcr = RND_NINF; break;
+	case FPRPINF:	fcr = RND_PINF; break;
+	case FPRZ:	fcr = RND_Z; break;
 	}
 	if(fcr9&FPINEX) fcr |= INEX;
 	if(fcr9&FPOVFL) fcr |= OVFL;
@@ -66,12 +66,11 @@ FPcontrol(ulong fcr, ulong mask)
 	if(fcr&ZDIV) fcr9 |= FPZDIV;
 	if(fcr&INVAL) fcr9 |= FPINVAL;
 	switch(fcr&RND_MASK){
-		case RND_NR:	fcr9 |= FPRNR; break;
-		case RND_NINF:	fcr9 |= FPRNINF; break;
-		case RND_PINF:	fcr9 |= FPRPINF; break;
-		case RND_Z:	fcr9 |= FPRZ; break;
+	case RND_NR:	fcr9 |= FPRNR; break;
+	case RND_NINF:	fcr9 |= FPRNINF; break;
+	case RND_PINF:	fcr9 |= FPRPINF; break;
+	case RND_Z:	fcr9 |= FPRZ; break;
 	}
 	setfcr(fcr9);
 	return(old&mask);
 }
-

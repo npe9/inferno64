@@ -9,7 +9,13 @@
 #define	A(r)	*((Array**)(r))
 
 Module*	modules;
-int	dontcompile = 1; /* TODO compiler is broken on amd64 atleast */
+/*
+ * When set, load never calls compile().  Default 0 so platforms with a
+ * working Dis JIT (arm64, riscv64, …) can compile on load when cflag!=0.
+ * Broken JITs still return 0 from compile() or callers can set this to 1.
+ * (No #if here: KenC rejects preprocessor conditionals.)
+ */
+int	dontcompile = 0;
 
 static s32
 operand(uchar **p)
@@ -219,7 +225,6 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 	lsize = operand(isp);
 	entry = operand(isp);
 	entryt = operand(isp);
-
 	if(isize < 0 || dsize < 0 || hsize < 0 || lsize < 0) {
 		kwerrstr("implausible Dis file");
 		goto bad;
@@ -334,6 +339,10 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 	dasp = 0;
 	DNP("\tvar\t@mp, size %d\n", dsize);
 	for(;;) {
+		if(istream >= code+length){
+			kwerrstr("corrupt Dis data");
+			goto bad;
+		}
 		sm = *istream++;
 		if(sm == 0)
 			break;
@@ -383,17 +392,9 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 		case DEFF:
 			DNP("\treal\t@mp+%d", v);
 			for(i = 0; i < n; i++) {
-				DNP(" raw: ");
-				for(int j = 0; j<8; j++){
-					DNP(" 0x%x", ((u8*)isp)[j]);
-				}
 				ul[0] = disw(isp);
 				ul[1] = disw(isp);
-				/*print("canontod ul[0] 0x%x ul[1] 0x%x ", ul[0], ul[1]);*/
 				*(REAL*)si = canontod(ul);
-				/*DNP("__");
-				DNP(",%g", *(REAL*)si);
-				DNP("--");*/
 				si += sizeof(REAL);
 			}
 			DNP("\n");
@@ -418,11 +419,6 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			ary->root = H;
 			ary->data = (uchar*)ary+sizeof(Array);
 			memset((void*)ary->data, 0, pt->size*v);
-			for(i=(intptr)ary->data;
-				i < v;
-				i++){
-				DNP(",%d",*(uchar*)(i+ary));
-			}
 			DNP("\n");
 			initarray(pt, ary);
 			A(si) = ary;
@@ -682,7 +678,11 @@ freemod(Module *m)
 		free(m->type);
 	}
 	free(m->name);
-	free(m->prog);
+	if(m->compiled){
+		extern void freecode(void*);
+		freecode(m->prog);
+	}else
+		free(m->prog);
 	free(m->path);
 	free(m->pctab);
 	if(m->ldt != nil){

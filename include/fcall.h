@@ -9,11 +9,11 @@ typedef
 struct	Fcall
 {
 	uchar	type;
-	ulong	fid;
+	u32	fid;
 	ushort	tag;
 	/* union { */
 		/* struct { */
-			ulong	msize;		/* Tversion, Rversion */
+			u32	msize;		/* Tversion, Rversion */
 			char	*version;	/* Tversion, Rversion */
 		/* }; */
 		/* struct { */
@@ -24,23 +24,23 @@ struct	Fcall
 		/* }; */
 		/* struct { */
 			Qid	qid;		/* Rattach, Ropen, Rcreate */
-			ulong	iounit;		/* Ropen, Rcreate */
+			u32	iounit;		/* Ropen, Rcreate */
 		/* }; */
 		/* struct { */
 			Qid	aqid;		/* Rauth */
 		/* }; */
 		/* struct { */
-			ulong	afid;		/* Tauth, Tattach */
+			u32	afid;		/* Tauth, Tattach */
 			char	*uname;		/* Tauth, Tattach */
 			char	*aname;		/* Tauth, Tattach */
 		/* }; */
 		/* struct { */
-			ulong	perm;		/* Tcreate */ 
+			u32	perm;		/* Tcreate */ 
 			char	*name;		/* Tcreate */
 			uchar	mode;		/* Tcreate, Topen */
 		/* }; */
 		/* struct { */
-			ulong	newfid;		/* Twalk */
+			u32	newfid;		/* Twalk */
 			ushort	nwname;		/* Twalk */
 			char	*wname[MAXWELEM];	/* Twalk */
 		/* }; */
@@ -49,8 +49,8 @@ struct	Fcall
 			Qid	wqid[MAXWELEM];		/* Rwalk */
 		/* }; */
 		/* struct { */
-			vlong	offset;		/* Tread, Twrite */
-			ulong	count;		/* Tread, Twrite, Rread */
+			s64	offset;		/* Tread, Twrite */
+			u32	count;		/* Tread, Twrite, Rread */
 			char	*data;		/* Twrite, Rread */
 		/* }; */
 		/* struct { */
@@ -62,10 +62,9 @@ struct	Fcall
 
 
 #define	GBIT8(p)	((p)[0])
-#define	GBIT16(p)	((p)[0]|((p)[1]<<8))
-#define	GBIT32(p)	((u32)((p)[0]|((p)[1]<<8)|((p)[2]<<16)|((p)[3]<<24)))
-#define	GBIT64(p)	((u32)((p)[0]|((p)[1]<<8)|((p)[2]<<16)|((p)[3]<<24)) |\
-				((s64)((p)[4]|((p)[5]<<8)|((p)[6]<<16)|((p)[7]<<24)) << 32))
+#define	GBIT16(p)	((u32)(p)[0]|((u32)(p)[1]<<8))
+#define	GBIT32(p)	((u32)(p)[0]|((u32)(p)[1]<<8)|((u32)(p)[2]<<16)|((u32)(p)[3]<<24))
+#define	GBIT64(p)	((u64)GBIT32(p)|((u64)GBIT32((p)+4)<<32))
 
 #define	PBIT8(p,v)	(p)[0]=(v)
 #define	PBIT16(p,v)	(p)[0]=(v);(p)[1]=(v)>>8

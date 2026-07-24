@@ -1,0 +1,21 @@
+database=
+	file=/lib/ndb/dns
+	file=/lib/ndb/inferno
+	file=/lib/ndb/common
+	file=/lib/ndb/services
+
+#
+# Virt smoke: local A record + QEMU user-net DNS (10.0.2.3).
+#
+dom=smoke.virt ip=10.0.2.15
+
+infernosite=
+	dns=10.0.2.3
+	SIGNER=master
+	FILESERVER=master
+	smtp=master
+	pop3=master
+	PROXY=master
+	GAMES=master
+	registry=master
+	gridsched=master

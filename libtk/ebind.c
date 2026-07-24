@@ -512,6 +512,8 @@ tknextfocus(TkTop *t, int d)
 	int i, n, j, k;
 	Tk *oldfocus;
 
+	if (t->ctxt == nil)
+		return nil;
 	if (t->focusorder == nil)
 		tkbuildfocusorder(t);
 
@@ -575,6 +577,8 @@ tksetglobalfocus(TkTop *top, int in)
 {
 	Tk *tk;
 	in = (in != 0);
+	if(top->ctxt == nil)
+		return;
 	if (in != top->focused){
 		top->focused = in;
 		tk = top->ctxt->tkkeygrab;
@@ -617,6 +621,8 @@ tkfocus(TkTop *top, char *arg, char **ret)
 	if(names == nil){
 		if(global)
 			return tkvalue(ret, "%d", top->focused);
+		if(top->ctxt == nil)
+			return nil;
 		tk = top->ctxt->tkkeygrab;
 		if (tk != nil && tk->name != nil)
 			return tkvalue(ret, "%s", tk->name->name);

@@ -590,6 +590,7 @@ cclone(Chan *c)
 int
 findmount(Chan **cp, Mhead **mp, int type, int dev, Qid qid)
 {
+	Chan *to;
 	Pgrp *pg;
 	Mhead *m;
 
@@ -597,12 +598,15 @@ findmount(Chan **cp, Mhead **mp, int type, int dev, Qid qid)
 	rlock(&pg->ns);
 	for(m = MOUNTH(pg, qid); m; m = m->hash){
 		rlock(&m->lock);
-if(m->from == nil){
-	print("m %p m->from 0\n", m);
-	runlock(&m->lock);
-	continue;
-}
 		if(eqchantdqid(m->from, type, dev, qid, 1)) {
+			/*
+			 * Incref the mount target before closing *cp.
+			 * When *cp is already the mounted Chan (self-bind /
+			 * remount onto the same node), closing first frees it
+			 * and the subsequent incref resurrects a CFREE Chan.
+			 */
+			to = m->mount->to;
+			incref(&to->r);
 			runlock(&pg->ns);
 			if(mp != nil){
 				incref(&m->r);
@@ -612,8 +616,7 @@ if(m->from == nil){
 			}
 			if(*cp != nil)
 				cclose(*cp);
-			incref(&m->mount->to->r);
-			*cp = m->mount->to;
+			*cp = to;
 			runlock(&m->lock);
 			return 1;
 		}
@@ -984,11 +987,12 @@ Chan*
 namec(char *aname, int amode, int omode, ulong perm)
 {
 	int n, prefix, len, t, nomount, npath;
-	Chan *c, *cnew;
+	Chan *volatile c;
+	Chan *volatile cnew;
 	Cname *cname;
 	Elemlist e;
 	Rune r;
-	Mhead *m;
+	Mhead *volatile m;
 	char *createerr, tmperrbuf[ERRMAX];
 	char *name;
 
@@ -1266,6 +1270,9 @@ if(c->umh != nil){
 			cnameclose(cnew->name);
 			cnew->name = c->name;
 			incref(&cnew->name->r);
+
+			/* save registers else error() in create has wrong value of c */
+			saveregisters();
 
 			devtab[cnew->type]->create(cnew, e.elems[e.nelems-1], omode&~(OEXCL|OCEXEC), perm);
 			poperror();

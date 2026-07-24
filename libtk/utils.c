@@ -1030,8 +1030,14 @@ tkdeliver(Tk *tk, int event, void *data)
 	Tk *dest;
 
 	if(tk != nil && ((ulong)tk->type >= TKwidgets || (uintptr)tk->name < 4096 && tk->name != nil)){
-		print("invalid Tk: type %d name %p\n", tk->type, tk->name);
-		abort();
+		/*
+		 * Corrupt/dangling widget (seen on virt when soft cursor
+		 * raced draw).  Do not abort() — that is *(int*)0 and
+		 * kills the kernel (RISC-V cause 0x5 tval 0).
+		 */
+		print("invalid Tk: type %d ", tk->type);
+		print("name %p (ignored)\n", tk->name);
+		return nil;
 	}
 //print("tkdeliver %v to %s\n", event, tkname(tk));
 	if(tk == nil || ((tk->flag&Tkdestroy) && event != TkDestroy))
@@ -1945,9 +1951,16 @@ tkiswordchar(int c)
 int
 tkhaskeyfocus(Tk *tk)
 {
-	if (tk == nil || tk->env->top->focused == 0)
+	TkCtxt *c;
+
+	if (tk == nil || tk->env == nil || tk->env->top == nil)
 		return 0;
-	return tk == tk->env->top->ctxt->tkkeygrab;
+	if (tk->env->top->focused == 0)
+		return 0;
+	c = tk->env->top->ctxt;
+	if(c == nil)
+		return 0;
+	return tk == c->tkkeygrab;
 }
 
 static int

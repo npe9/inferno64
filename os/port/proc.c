@@ -710,9 +710,9 @@ newproc(void)
 	/*
 	 * a user process. kproc() can change it as it needs.
 	 */
-	up->kp = 0;
-	up->noswap = 0;
-	up->privatemem = 0;
+	p->kp = 0;
+	p->noswap = 0;
+	p->privatemem = 0;
 	/* sched params */
 	p->mp = 0;
 	p->wired = 0;
@@ -724,7 +724,7 @@ newproc(void)
 	pidalloc(p);
 	if(p->pid == 0)
 		panic("pidalloc");
-	/* addprog(p); no more dis */
+	addprog(p);	/* Prog for IdleGC/BusyGC on Dis VM kprocs */
 
 	/* TODO should we do this just user forth procs or does it need to be done for kproc's too */
 	memset(p->time, 0, sizeof(p->time));
@@ -1691,10 +1691,8 @@ setid(char *name, int owner)
 		kstrdup(&up->user, name);
 }
 
-/* TODO no idea what this rptproc() does
- * something to do with repeat of tk actions
- */
-/*void
+/* Tk autorepeat / blinker — used by libtk (button, scroll, entry, …). */
+void
 rptwakeup(void *o, void *ar)
 {
 	Rept *r;
@@ -1746,7 +1744,7 @@ Wait:
 		poperror();
 		if(i == -1)
 			goto Wait;
-		if(i == 0) 
+		if(i == 0)
 			continue;
 		then = now;
 		acquire();
@@ -1777,7 +1775,6 @@ rptproc(char *s, int t, void *o, int (*active)(void*), int (*ck)(void*, int), vo
 	kproc(s, rproc, r, KPDUP);
 	return r;
 }
-*/
 s32
 getpid(void)
 {

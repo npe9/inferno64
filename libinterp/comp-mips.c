@@ -1960,3 +1960,9 @@ compile(Module *m, int size, Modlink *ml)
 	segflush(base, n*sizeof(*base));
 	return 1;
 }
+
+void
+freecode(void *p)
+{
+	free(p);
+}

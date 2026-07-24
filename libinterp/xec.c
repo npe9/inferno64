@@ -4,6 +4,7 @@
 #include "raise.h"
 #include "pool.h"
 
+#undef DBG
 #define DBG if(0) print
 static int debug = 0;
 
@@ -383,8 +384,10 @@ OP(mframe)
 	Modlink *ml;
 	int o;
 
+	if(R.s == nil)
+		errorf("mframe: %s", exModule);
 	ml = *(Modlink**)R.s;
-	if(ml == H)
+	if(ml == H || ml == nil)
                 errorf("mframe: %s", exModule);
 
 	o = W(m);

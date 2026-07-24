@@ -97,9 +97,12 @@ initdisplay(char *dev, char *win, void(*error)(Display*, char*))
 		}
 		ctlfd = libopen(buf, ORDWR);
 	}
-	if(ctlfd < 0)
+	if(ctlfd < 0){
+		kwerrstr("initdisplay: open %s: %r", buf);
 		goto Error1;
+	}
 	if(libread(ctlfd, info, sizeof info) < NINFO){
+		kwerrstr("initdisplay: short ctl read");
     Error2:
 		libclose(ctlfd);
 		goto Error1;
@@ -112,24 +115,28 @@ initdisplay(char *dev, char *win, void(*error)(Display*, char*))
 
 	sprint(buf, "%s/draw/%d/data", dev, atoi(info+0*12));
 	datafd = libopen(buf, ORDWR);
-	if(datafd < 0)
+	if(datafd < 0){
+		kwerrstr("initdisplay: open data: %r");
 		goto Error2;
+	}
 	sprint(buf, "%s/draw/%d/refresh", dev, atoi(info+0*12));
 	reffd = libopen(buf, OREAD);
 	if(reffd < 0){
+		kwerrstr("initdisplay: open refresh: %r");
     Error3:
 		libclose(datafd);
 		goto Error2;
 	}
-	strcpy(buf, "allocation failed");
 	disp = malloc(sizeof(Display));
 	if(disp == 0){
+		kwerrstr("initdisplay: no memory for Display");
     Error4:
 		libclose(reffd);
 		goto Error3;
 	}
 	image = malloc(sizeof(Image));
 	if(image == 0){
+		kwerrstr("initdisplay: no memory for Image");
     Error5:
 		free(disp);
 		goto Error4;
@@ -153,8 +160,10 @@ initdisplay(char *dev, char *win, void(*error)(Display*, char*))
 	disp->datachan = libfdtochan(datafd, ORDWR);
 	disp->refchan = libfdtochan(reffd, OREAD);
 	disp->ctlchan = libfdtochan(ctlfd, ORDWR);
-	if(disp->datachan == nil || disp->refchan == nil || disp->ctlchan == nil)
+	if(disp->datachan == nil || disp->refchan == nil || disp->ctlchan == nil){
+		kwerrstr("initdisplay: fdtochan failed");
 		goto Error4;
+	}
 	disp->bufsize = Displaybufsize;	/* TO DO: iounit(datafd) */
 	if(disp->bufsize <= 0)
 		disp->bufsize = Displaybufsize;
@@ -180,6 +189,7 @@ initdisplay(char *dev, char *win, void(*error)(Display*, char*))
 	disp->opaque = allocimage(disp, Rect(0, 0, 1, 1), GREY1, 1, DWhite);
 	disp->transparent = allocimage(disp, Rect(0, 0, 1, 1), GREY1, 1, DBlack);
 	if(disp->white == nil || disp->black == nil || disp->opaque == nil || disp->transparent == nil){
+		kwerrstr("initdisplay: allocimage white/black failed: %r");
 		free(image);
 		free(disp->devdir);
 		free(disp->white);
@@ -242,6 +252,8 @@ closedisplay(Display *disp)
 int
 lockdisplay(Display *disp)
 {
+	if(disp == nil || disp->qlock == nil)
+		return 0;
 	if(disp->local)
 		return 0;
 	if(libqlowner(disp->qlock) != currun()){
@@ -254,6 +266,8 @@ lockdisplay(Display *disp)
 void
 unlockdisplay(Display *disp)
 {
+	if(disp == nil || disp->qlock == nil)
+		return;
 	if(disp->local)
 		return;
 	libqunlock(disp->qlock);

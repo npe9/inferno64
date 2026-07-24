@@ -1,0 +1,34 @@
+---
+description: Inferno/Plan 9 ulong is always 32-bit (LLP64)
+alwaysApply: true
+---
+
+# Inferno / Plan 9: `ulong` is 32-bit
+
+Inferno and Plan 9 use **LLP64** on 64-bit ports (amd64, riscv64 KenC, etc.):
+
+| Type | Size | Use for |
+|------|------|---------|
+| `ulong` / `usize` | **4** | classic Plan 9 word, small counts, FCR bits |
+| `uint` / `int` | 4 | same width as `ulong` on these ports |
+| `uintptr` / `intptr` | **8** | pointers, addresses, large byte sizes |
+| `vlong` / `uvlong` | **8** | 64-bit integers |
+| `WORD` | 8 | Dis/`libinterp` (`intptr`) |
+
+KenC matches this: `SZ_LONG=4`, `SZ_IND=8` (`utils/jc`, `utils/6c`).
+
+## Do
+
+- In `*/include/u.h`: `typedef unsigned long ulong;` and `typedef unsigned long usize;`
+- Pointer-sized fields and alloc sizes: `uintptr` (see `pool.h`, `xalloc`)
+- Asm loads of `ulong` args: **`MOVW` / `MOVWU`**, not 64-bit `MOV` (high half is stack garbage)
+
+## Don't
+
+```c
+/* BAD — breaks KenC, memset counts, and amd64 parity */
+typedef unsigned long long ulong;
+typedef uintptr usize;
+```
+
+Never “fix” heap/GC by widening `ulong`. If a value must hold a pointer or large size, use `uintptr` / `uvlong`.

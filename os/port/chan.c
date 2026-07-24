@@ -1172,11 +1172,13 @@ growparse(Elemlist *e)
 
 	if((e->nelems % Delta) == 0){
 		new = smalloc((e->nelems+Delta) * sizeof(char*));
-		memmove(new, e->elems, (e->nelems+1)*sizeof(char*));
+		if(e->elems != nil)
+			memmove(new, e->elems, e->nelems*sizeof(char*));
 		free(e->elems);
 		e->elems = new;
 		inew = smalloc((e->nelems+Delta+1) * sizeof(int));
-		memmove(inew, e->off, e->nelems*sizeof(int));
+		if(e->off != nil)
+			memmove(inew, e->off, (e->nelems+1)*sizeof(int));
 		free(e->off);
 		e->off = inew;
 	}
@@ -1308,12 +1310,12 @@ Chan*
 namec(char *aname, int amode, int omode, ulong perm)
 {
 	int len, n, t, nomount;
-	Chan *c;
+	Chan *volatile c;
 	Chan *volatile cnew;
 	Path *volatile path;
 	Elemlist e;
 	Rune r;
-	Mhead *m;
+	Mhead *volatile m;
 	char *err;
 	char *name;
 
@@ -1321,7 +1323,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 		error("empty file name");
 	aname = validnamedup(aname, 1);
 	if(waserror()){
-		print("namec: waserror() loop pid %d %r\n", up->pid);
 		free(aname);
 		nexterror();
 	}
@@ -1384,7 +1385,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 	e.nelems = 0;
 	e.nerror = 0;
 	if(waserror()){
-		print("namec: waserror() before cclose pid %d %r\n", up->pid);
 		cclose(c);
 		free(e.name);
 		free(e.elems);
@@ -1407,6 +1407,9 @@ namec(char *aname, int amode, int omode, ulong perm)
 	/*
 	 * Build a list of elements in the name.
 	 */
+	/*
+	 * Build a list of elements in the name.
+	 */
 	parsename(name, &e);
 
 	/*
@@ -1416,28 +1419,19 @@ namec(char *aname, int amode, int omode, ulong perm)
 		/* perm must have DMDIR if last element is / or /. */
 		if(e.mustbedir && !(perm&DMDIR)){
 			e.nerror = e.nelems;
-			print("namec: Acreate create without DMDIR pid %d\n", up->pid);
 			error("create without DMDIR");
 		}
 
 		/* don't try to walk the last path element just yet. */
 		if(e.nelems == 0){
-			print("namec: Acreate Eexist pid %d\n", up->pid);
 			error(Eexist);
 		}
 		e.nelems--;
 	}
 
 	if(walk(&c, e.elems, e.nelems, nomount, &e.nerror) < 0){
-		print("namec: walk < 0 e.nerror %d pid %d\n", e.nerror, up->pid);
-		if(e.nerror < 0 || e.nerror > e.nelems){
-			print("namec %s walk error nerror=%d\n", aname, e.nerror);
+		if(e.nerror < 0 || e.nerror > e.nelems)
 			e.nerror = 0;
-		}else{
-			for(int j=0; j<e.nelems; j++){
-				print("	e.elems[%d] %s\n", j, e.elems[j]);
-			}
-		}
 		nexterror();
 	}
 
@@ -1454,7 +1448,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 		if(!nomount)
 			domount(&c, &m, nil);
 		if(waserror()){
-			print("namec: Abind\n");
 			putmhead(m);
 			nexterror();
 		}
@@ -1471,7 +1464,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 		path = c->path;
 		incref(path);
 		if(waserror()){
-			print("namec: Aopen\n");
 			pathclose(path);
 			nexterror();
 		}
@@ -1479,7 +1471,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 		if(!nomount)
 			domount(&c, &m, &path);
 		if(waserror()){
-			print("namec: Aopen 1\n");
 			putmhead(m);
 			nexterror();
 		}
@@ -1552,7 +1543,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 		e.nelems++;
 		e.nerror++;
 		if(walk(&c, e.elems+e.nelems-1, 1, nomount, nil) == 0){
-			print("namec: Acreate\n");
 			if(omode&OEXCL)
 				error(Eexist);
 			omode |= OTRUNC;

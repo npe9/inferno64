@@ -1,0 +1,20 @@
+Inferno on QEMU sifive_u (FU540 / HiFive Unleashed)
+====================================================
+
+Build:
+	export PATH=$ROOT/MacOSX/arm64/bin:$PATH ROOT=$ROOT
+	cd os/sifiveu
+	mk SYSTARG=os OBJTYPE=riscv64 SHELLTYPE=sh INIT=sifiveuinit install
+
+Run:
+	qemu-system-riscv64 -M sifive_u -nographic -bios none \
+		-kernel $ROOT/Inferno/riscv64/bin/isifiveu
+
+Notes:
+	- Boots hart 1 (U54 + FPU); hart 0 (E51) parked in WFI.
+	- Console: SiFive UART0 @ 0x10010000, PLIC IRQ 4, context 1.
+	- CLINT timebase 1 MHz; mtimecmp for hart 1.
+	- No PCIe on this SoC/QEMU model — use os/virt for PCI/virtio.
+	- GEM / SPI / PWM: probe stubs; see ../riscv/NOTE.
+
+Shared drivers: ../riscv/

@@ -2,7 +2,11 @@
 #include	"y.tab.h"
 
 #ifndef	CPP
+#ifdef __APPLE__
+#define	CPP	"/usr/bin/cpp"	/* macOS has no /bin/cpp (SIP) */
+#else
 #define	CPP	"/bin/cpp"
+#endif
 #endif
 
 static int ansip;

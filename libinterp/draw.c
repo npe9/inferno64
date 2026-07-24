@@ -447,13 +447,21 @@ display_dec(void *v)
 	int locked;
 
 	dr = v;
+	if(dr == nil)
+		return;
 	if(dr->ref-- != 1)
 		return;
 
 	d = dr->display;
+	if(d == nil){
+		free(dr);
+		return;
+	}
 	locked = lockdisplay(d);
 	font_close(d->defaultfont);
+	d->defaultfont = nil;
 	subfont_close(d->defaultsubfont);
+	d->defaultsubfont = nil;
 	if(locked)
 		unlockdisplay(d);
 	freeallsubfonts(d);
@@ -478,11 +486,13 @@ freedrawdisplay(Heap *h, int swept)
 	}
 	/* we've now released dd->image etc.; make sure they're not freed again */
 	d = dd->display;
-	d->image = nil;
-	d->white = nil;
-	d->black = nil;
-	d->opaque = nil;
-	d->transparent = nil;
+	if(d != nil){
+		d->image = nil;
+		d->white = nil;
+		d->black = nil;
+		d->opaque = nil;
+		d->transparent = nil;
+	}
 	display_dec(dd->dref);
 	/* Draw_Display header will be freed by caller */
 }
@@ -1508,7 +1518,15 @@ font_open(Display *display, char *name)
 	c = cachelookup(fcache, display, name);
 	if(c)
 		font = c->u.f;
-	else {
+	else if(strcmp(name, deffontname) == 0){
+		/* never open "*default*" as a file; use Display.allocate's font */
+		font = display->defaultfont;
+		if(font == nil)
+			return nil;
+		c = cacheinstall(fcache, display, name, font, "font");
+		if(c == nil)
+			c = cachelookup(fcache, display, name);
+	}else {
 		locked = lockdisplay(display);
 		font = openfont(display, name);
 		if(locked)
@@ -1529,6 +1547,9 @@ font_close(Font *f)
 	Cache *c;
 	Display *disp;
 	int locked;
+
+	if(f == nil)
+		return;
 	disp = f->display;
 	if(f->name == nil)
 		return;
@@ -1543,6 +1564,10 @@ font_close(Font *f)
 		cacheuninstall(fcache, disp, f->name, "font");
 	}
 
+	if(disp == nil){
+		freefont(f);
+		return;
+	}
 	locked = lockdisplay(disp);
 	freefont(f);
 	if(locked)
@@ -1555,6 +1580,8 @@ freecachedsubfont(Subfont *sf)
 	Cache *c;
 	Display *disp;
 
+	if(sf == nil || sf->bits == nil)
+		return;
 	disp = sf->bits->display;
 	c = cachelookup(sfcache, disp, sf->name);
 	if(c == nil){
@@ -1610,12 +1637,16 @@ freeallsubfonts(Display *d)
 void
 subfont_close(Subfont *sf)
 {
+	if(sf == nil)
+		return;
 	freecachedsubfont(sf);
 }
 
 void
 freesubfont(Subfont *sf)
 {
+	if(sf == nil)
+		return;
 	freecachedsubfont(sf);
 }
 
@@ -2101,6 +2132,9 @@ Subfont*
 lookupsubfont(Display *d, char *name)
 {
 	Cache *c;
+
+	if(strcmp(name, deffontname) == 0 && d->defaultsubfont != nil)
+		return d->defaultsubfont;
 
 	c = cachelookup(sfcache, d, name);
 	if(c == nil)
