@@ -14,6 +14,23 @@ INSTALLDIR=$ROOT/$SYSTARG/$OBJTYPE/bin	#path of directory where kernel is instal
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	#set vars based on target system
 
+# Default for 386/power (Carbon); arm64 overrides via mkfile-arm64
+SYSLIBS= \
+	-lm\
+	-framework Carbon -framework QuickTime\
+	-lpthread\
+	-framework CoreFoundation\
+	-framework IOKit\
+
+# Cocoa configs (set by mkfile-arm64): AppKit owns main(); port/main.c → emumain
+COCOAOBJ=
+COCOAFLAGS=
+
+<mkfile-$OBJTYPE	# arm64 overrides CONF/SYSLIBS/COCOA*
+
+# Console emu-g: drop AppKit main() / Cocoa (mkfile-arm64 defaults).
+<| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox'; fi
+
 <| $SHELLNAME ../port/mkdevlist $CONF	#sets $IP, $DEVS, $PORT, $LIBS
 
 OBJ=\
@@ -35,22 +52,34 @@ CFLAGS='-DROOT="'$ROOT'"'\
 
 KERNDATE=`{$NDATE}
 
-SYSLIBS= \
-	-lm\
-	-framework Carbon -framework QuickTime\
-	-lpthread\
-	-framework CoreFoundation\
-	-framework IOKit\
-
 default:V:	$O.$CONF
 
 <../port/portmkfile
 
-$O.$CONF:	$OBJ $CONF.c $CONF.root.h $LIBFILES
+# Objective-C Cocoa window backend (arm64 emu-cocoa)
+%.$O:	%.m
+	cc -c -fobjc-arc $CFLAGS $stem.m
+
+# Optional -Dmain=emumain when COCOAFLAGS set (arm64 Cocoa)
+main.$O:	../port/main.c
+	$CC $CFLAGS $COCOAFLAGS -I. ../port/main.c
+
+$O.$CONF:	$OBJ $COCOAOBJ $CONF.c $CONF.root.h $LIBFILES
+	# main.o is sensitive to COCOAFLAGS (-Dmain=emumain); always rebuild.
+	$CC $CFLAGS $COCOAFLAGS -I. ../port/main.c
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
-	$LD $LDFLAGS -o $target $OBJ $CONF.$O $LIBFILES $SYSLIBS
+	$LD $LDFLAGS -o $target $OBJ $COCOAOBJ $CONF.$O $LIBFILES $SYSLIBS
 
 install:V: $O.$CONF
 	cp $O.$CONF $INSTALLDIR/$CONF
+	# Fresh binaries need a signature or dyld stalls in UE on modern macOS.
+	codesign -s - --force $INSTALLDIR/$CONF
+	# Only the default GUI binary is also installed as plain `emu`.
+	case "$CONF" in
+	emu-cocoa|emu)
+		cp $O.$CONF $INSTALLDIR/emu
+		codesign -s - --force $INSTALLDIR/emu
+		;;
+	esac
 
 devfs.c:N:	../port/devfs-posix.c
