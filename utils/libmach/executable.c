@@ -65,6 +65,7 @@ extern	Mach	mamd64;
 extern	Mach	marm;
 extern	Mach	mpower;
 extern	Mach	mpower64;
+extern	Mach	mriscv64;
 
 ExecTable exectab[] =
 {
@@ -194,6 +195,15 @@ ExecTable exectab[] =
 		sizeof(Exec),
 		beswal,
 		common },
+	{ Y_MAGIC,			/* riscv64 j.out */
+		"riscv64 plan 9 executable",
+		"riscv64 plan 9 dlm",
+		FRISCV64,
+		1,
+		&mriscv64,
+		sizeof(Exec)+8,
+		nil,
+		commonllp64 },
 	{ (143<<16)|0413,		/* (Free|Net)BSD Arm */
 		"arm *bsd executable",
 		nil,
