@@ -1,0 +1,25 @@
+# Minimal charsets for os/virt charon (utf-8 + latin1).
+iso_8859-1:1987=iso-8859-1
+iso-ir-100=iso-8859-1
+iso_8859-1=iso-8859-1
+iso8859-1=iso-8859-1
+latin1=iso-8859-1
+l1=iso-8859-1
+iso-8859-1=
+	desc=Latin-1
+	stob=/dis/lib/convcs/cp_stob.dis	arg=/lib/convcs/iso-8859-1.cp
+	btos=/dis/lib/convcs/cp_btos.dis	arg=/lib/convcs/iso-8859-1.cp
+
+ascii=utf-8
+us-ascii=utf-8
+utf8=utf-8
+utf-8=
+	desc='Unicode UTF-8'
+	stob=/dis/lib/convcs/utf8_stob.dis
+	btos=/dis/lib/convcs/utf8_btos.dis
+
+cp1252=windows-1252
+windows-1252=
+	desc='MS Windows CP 1252 (Latin 1)'
+	stob=/dis/lib/convcs/cp_stob.dis	arg=/lib/convcs/windows-1252.cp
+	btos=/dis/lib/convcs/cp_btos.dis	arg=/lib/convcs/windows-1252.cp

@@ -1,0 +1,88 @@
+<../../mkconfig
+
+#Configurable parameters
+
+CONF=virt
+CONFLIST=virt
+
+SYSTARG=$OSTARG
+OBJTYPE=riscv64
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+#end configurable parameters
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+# QEMU -M virt -bios none -kernel; identity map at DRAM base
+KTZERO=0x80000000
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$IP\
+	$DEVS\
+	$ETHERS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+
+CFLAGS=-wFV -I. -I../port -I../ip -I../riscv -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD -o $target -H5 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	cp $target $INSTALLDIR/$target
+
+<../port/portmkfile
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+devether.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+netif.$O:	../port/netif.h
+ethervirtiommio.$O:	../port/netif.h ../port/etherif.h
+ethervirtiopci.$O:	../port/netif.h ../port/etherif.h
+$IP devip.$O:	../ip/ip.h
+
+pcivirt.$O:	../riscv/pcivirt.c
+	$CC $CFLAGS ../riscv/pcivirt.c
+
+# qemu-system-riscv64 -M virt -nographic -bios none -kernel ivirt

@@ -1,0 +1,35 @@
+# Lean plumbing for os/virt (no brutus/auplay).
+
+# image files → wm/view
+kind is text
+data matches '[a-zA-Z0-9_\-./]+'
+data matches '([a-zA-Z0-9_\-./]+)\.(jpg|jpeg|gif|bit|png)'
+data isfile     $0
+plumb to view
+plumb start /dis/wm/view.dis -i $file
+
+# URLs → charon
+kind is text
+data matches '(https?|ftp|file)://[a-zA-Z0-9_@]+([.:][a-zA-Z0-9_@]+)*/?[a-zA-Z0-9_?#~&/\-]+([:.][a-zA-Z0-9_?#~&/\-]+)*'
+plumb to web
+plumb start /dis/charon.dis $0
+
+# man(1) references
+kind is text
+data matches '([a-zA-Z\-]+)\(([0-9]+)\)'
+plumb alwaysstart man
+plumb start /dis/wm/man.dis $2 $1
+
+# directories → wm/ftree
+kind is text
+data matches '[a-zA-Z0-9_./\-]+'
+data isdir      $0
+plumb to edit
+plumb start /dis/wm/ftree.dis $dir
+
+# existing files (optional :line) → acme
+kind is text
+data matches '([.a-zA-Z0-9_/\-]+[a-zA-Z0-9_/\-])(:[0-9]+)?'
+data isfile     $1
+plumb to edit
+plumb start /dis/acme.dis $file$2
