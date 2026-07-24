@@ -86,10 +86,8 @@
 #define QZ_COMMA		0x2B
 #define QZ_PERIOD		0x2F
 #define QZ_SLASH		0x2C
-/* These are the same as the left versions - use left by default */
-#if 0
-#define QZ_RSHIFT		0x38
-#endif
+/* Right modifiers (HIToolbox / NSEvent keyCode) */
+#define QZ_RSHIFT		0x3C
 #define QZ_UP			0x7E
 #define QZ_KP1			0x53
 #define QZ_KP2			0x54
@@ -99,12 +97,9 @@
 #define QZ_LALT			0x3A
 #define QZ_LMETA		0x37
 #define QZ_SPACE		0x31
-/* These are the same as the left versions - use left by default */
-#if 0
-#define QZ_RMETA		0x37
-#define QZ_RALT			0x3A
-#define QZ_RCTRL		0x3B
-#endif
+#define QZ_RMETA		0x36
+#define QZ_RALT			0x3D
+#define QZ_RCTRL		0x3E
 #define QZ_LEFT			0x7B
 #define QZ_DOWN			0x7D
 #define QZ_RIGHT		0x7C

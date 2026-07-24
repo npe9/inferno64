@@ -40,16 +40,23 @@ SYSLIBS= \
 	-lpthread\
 	-framework CoreFoundation\
 	-framework IOKit\
+	-framework AudioToolbox\
 
 default:V:	$O.$CONF
 
 <../port/portmkfile
+
+# Objective-C for audio-cocoa.m (and any other .m hosts)
+%.$O:	%.m
+	cc -c -fobjc-arc $CFLAGS $stem.m
 
 $O.$CONF:	$OBJ $CONF.c $CONF.root.h $LIBFILES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
 	$LD $LDFLAGS -o $target $OBJ $CONF.$O $LIBFILES $SYSLIBS
 
 install:V: $O.$CONF
+	# Install only as emu-g — never overwrite Cocoa bin/emu.
 	cp $O.$CONF $INSTALLDIR/$CONF
+	codesign -s - --force $INSTALLDIR/$CONF
 
 devfs.c:N:	../port/devfs-posix.c
