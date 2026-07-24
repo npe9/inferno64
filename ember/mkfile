@@ -1,0 +1,20 @@
+<../mkconfig
+
+TARG=ember
+
+OFILES=	ast.$O\
+	lex.$O\
+	main.$O\
+	parse.$O\
+
+HFILES=	ember.h\
+
+LIBS=	bio\
+	9\
+
+BIN=$ROOT/$OBJDIR/bin
+
+<$ROOT/mkfiles/mkone-$SHELLTYPE
+
+test:V:	$O.out
+	./tests/run.sh
