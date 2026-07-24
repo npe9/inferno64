@@ -1,0 +1,336 @@
+(module
+  (name Adt)
+  (typedecl
+    (name Option)
+    (tpick
+      (tag
+        (name None)
+      )
+      (tag
+        (name Some)
+        (field
+          (name value)
+          (name T)
+        )
+      )
+    )
+    (aux
+      (name T)
+    )
+  )
+  (typedecl
+    (name Result)
+    (tpick
+      (tag
+        (name Ok)
+        (field
+          (name value)
+          (name T)
+        )
+      )
+      (tag
+        (name Err)
+        (field
+          (name err)
+          (name E)
+        )
+      )
+    )
+    (aux
+      (name T)
+      (name E)
+    )
+  )
+  (typedecl
+    (name Tree)
+    (tpick
+      (tag
+        (name Leaf)
+      )
+      (tag
+        (name Node)
+        (field
+          (name left)
+          (name right)
+          (tref
+            (name Tree)
+          )
+        )
+        (field
+          (name value)
+          (name int)
+        )
+      )
+    )
+  )
+  (fndecl
+    (name depth)
+    (tfunc
+      (field
+        (name t)
+        (tref
+          (name Tree)
+        )
+      )
+      (name int)
+    )
+    (aux
+      (scope
+        (match
+          (name t)
+          (case
+            (pat
+              (name Leaf)
+            )
+            (return
+              (const 0)
+            )
+          )
+          (case
+            (pat
+              (name Node)
+              (name l)
+              (name r)
+              (name v)
+            )
+            (das
+              (name dl)
+              (call
+                (name depth)
+                (name l)
+              )
+            )
+            (das
+              (name dr)
+              (call
+                (name depth)
+                (name r)
+              )
+            )
+            (if
+              (gt
+                (name dl)
+                (name dr)
+              )
+              (scope
+                (return
+                  (add
+                    (name dl)
+                    (const 1)
+                  )
+                )
+              )
+            )
+            (return
+              (add
+                (name dr)
+                (const 1)
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  (fndecl
+    (name find)
+    (tfunc
+      (field
+        (name xs)
+        (tarray
+          (name int)
+        )
+      )
+      (field
+        (name want)
+        (name int)
+      )
+      (tinst
+        (name Option)
+        (name int)
+      )
+    )
+    (aux
+      (scope
+        (for
+          (lt
+            (name i)
+            (call
+              (name len)
+              (name xs)
+            )
+          )
+          (scope
+            (if
+              (eq
+                (index
+                  (name xs)
+                  (name i)
+                )
+                (name want)
+              )
+              (scope
+                (return
+                  (composite
+                    (name Some)
+                    (elem
+                      (name value)
+                      (name i)
+                    )
+                  )
+                )
+              )
+            )
+          )
+          (aux
+            (forctl
+              (das
+                (name i)
+                (const 0)
+              )
+              (inc
+                (name i)
+              )
+            )
+          )
+        )
+        (return
+          (composite
+            (name None)
+          )
+        )
+      )
+    )
+  )
+  (fndecl
+    (name classify)
+    (tfunc
+      (field
+        (name n)
+        (name int)
+      )
+      (name string)
+    )
+    (aux
+      (scope
+        (match
+          (name n)
+          (case
+            (const 0)
+            (return
+              (const "zero")
+            )
+          )
+          (case
+            (const 0)
+            (const 0)
+            (const 0)
+            (return
+              (const "small")
+            )
+          )
+          (case
+            (return
+              (const "big")
+            )
+          )
+        )
+      )
+    )
+  )
+  (fndecl
+    (name parsepair)
+    (tfunc
+      (field
+        (name s)
+        (name string)
+      )
+      (tinst
+        (name Result)
+        (name int)
+        (name string)
+      )
+    )
+    (aux
+      (scope
+        (das
+          (name a)
+          (chk
+            (call
+              (name parseint)
+              (name s)
+            )
+          )
+        )
+        (das
+          (name b)
+          (chk
+            (call
+              (name parseint)
+              (name s)
+            )
+          )
+        )
+        (return
+          (composite
+            (name Ok)
+            (elem
+              (name value)
+              (add
+                (name a)
+                (name b)
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  (fndecl
+    (name parseint)
+    (tfunc
+      (field
+        (name s)
+        (name string)
+      )
+      (tinst
+        (name Result)
+        (name int)
+        (name string)
+      )
+    )
+    (aux
+      (scope
+        (if
+          (eq
+            (call
+              (name len)
+              (name s)
+            )
+            (const 0)
+          )
+          (scope
+            (return
+              (composite
+                (name Err)
+                (elem
+                  (name err)
+                  (const "empty")
+                )
+              )
+            )
+          )
+        )
+        (return
+          (composite
+            (name Ok)
+            (elem
+              (name value)
+              (const 42)
+            )
+          )
+        )
+      )
+    )
+  )
+)

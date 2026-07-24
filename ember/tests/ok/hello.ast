@@ -1,0 +1,55 @@
+(module
+  (name Hello)
+  (import
+    (name sys)
+    (const "sys.m")
+  )
+  (import
+    (name draw)
+    (const "draw.m")
+  )
+  (fndecl
+    (name init)
+    (tfunc
+      (field
+        (name ctxt)
+        (tref
+          (dot Context
+            (name draw)
+            (name Context)
+          )
+        )
+      )
+      (field
+        (name argv)
+        (tarray
+          (name string)
+        )
+      )
+    )
+    (aux
+      (scope
+        (das
+          (name fd)
+          (call
+            (dot fildes
+              (name sys)
+              (name fildes)
+            )
+            (const 1)
+          )
+        )
+        (expr
+          (call
+            (dot fprint
+              (name sys)
+              (name fprint)
+            )
+            (name fd)
+            (const "hello, inferno\n")
+          )
+        )
+      )
+    )
+  )
+)
