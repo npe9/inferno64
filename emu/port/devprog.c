@@ -422,7 +422,7 @@ progclose(Chan *c)
 static int
 progsize(Prog *p)
 {
-	int size;
+	int size, depth;
 	Frame *f;
 	uchar *fp;
 	Modlink *m;
@@ -431,20 +431,30 @@ progsize(Prog *p)
 	size = 0;
 	if(m->MP != H)
 		size += hmsize(D2H(m->MP));
-	if(m->prog != nil)
+	/*
+	 * JIT replaces m->prog with an mmap'd code buffer (not pool memory).
+	 * msize/poolmsize on that pointer faults and, under acquire(), wedges emu.
+	 * Also skip the FP walk for compiled modules: Frame/SEXTYPE assumptions
+	 * do not hold, and a cyclic fp link would loop forever under acquire.
+	 */
+	if(m->prog != nil && !m->compiled)
 		size += msize(m->prog);
+	if(m->compiled)
+		return size/1024;
 
 	fp = p->R.FP;
-	while(fp != nil) {
+	for(depth = 0; fp != nil && depth < 256; depth++) {
 		f = (Frame*)fp;
 		fp = f->fp;
 		if(f->mr != nil) {
+			if(f->mr->compiled)
+				break;
 			if(f->mr->MP != H)
 				size += hmsize(D2H(f->mr->MP));
 			if(f->mr->prog != nil)
 				size += msize(f->mr->prog);
 		}
-		if(f->t == nil)
+		else if(f->t == nil)
 			size += msize(SEXTYPE(f));
 	}
 	return size/1024;
@@ -839,8 +849,13 @@ progread(Chan *c, void *va, long n, vlong offset)
 		return qread(ctl->q, va, n);
 	case Qstatus:
 		acquire();
+		if(waserror()){
+			release();
+			nexterror();
+		}
 		p = progpid(PID(c->qid));
 		if(p == nil || p->state == Pexiting || p->R.M == H) {
+			poperror();
 			release();
 			snprint(up->genbuf, sizeof(up->genbuf), "%8lud %8d %10s %s %10s %5dK %s",
 				PID(c->qid),
@@ -862,6 +877,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 			progstate[p->state],
 			progsize(p),
 			mbuf);
+		poperror();
 		release();
 		return readstr(offset, va, n, up->genbuf);
 	case Qwait:

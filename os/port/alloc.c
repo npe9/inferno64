@@ -52,9 +52,12 @@ struct
 } table = {
 	3,
 	{
-		{ "main",  0, 	32*1024*1024, 127,  512*1024, 0, 31*1024*1024 },
-		{ "heap",  1, 	32*1024*1024, 127,  512*1024, 0, 31*1024*1024 },
-		{ "image", 2,   64*1024*1024+256, 127, 4*1024*1024, 1, 63*1024*1024 },
+		/* cursize must start 0: poolsize() may set maxsize below the old
+		 * 31MB placeholder; poolmax() then underflows and /dev/memory
+		 * lines exceed the 12-byte fields wm/memory parses. */
+		{ "main",  0, 	32*1024*1024, 127,  512*1024, 0, 0 },
+		{ "heap",  1, 	32*1024*1024, 127,  512*1024, 0, 0 },
+		{ "image", 2,   64*1024*1024+256, 127, 4*1024*1024, 1, 0 },
 	}
 };
 
@@ -489,7 +492,10 @@ poolmax(Pool *p)
 	uintptr size;
 
 	ilock(&p->l);
-	size = p->maxsize - p->cursize;
+	if(p->maxsize > p->cursize)
+		size = p->maxsize - p->cursize;
+	else
+		size = 0;
 	t = p->root;
 	if(t != nil) {
 		while(t->right != nil)
@@ -503,25 +509,56 @@ poolmax(Pool *p)
 	return size;
 }
 
+/* Exactly 11 digits + trailing space (wm/memory fixed 12-byte columns). */
+static int
+poolfmt11(char *d, int nd, uintptr v)
+{
+	char tmp[32];
+	int n;
+
+	if(v > 99999999999ULL)
+		v = 99999999999ULL;
+	n = snprint(tmp, sizeof(tmp), "%11zud ", v);
+	if(n > nd)
+		n = nd;
+	if(n > 0)
+		memmove(d, tmp, n);
+	return n;
+}
+
 int
 poolread(char *va, int count, u64 offset)
 {
 	Pool *p;
 	int n, i, signed_off;
+	char line[128];
+	int ln;
 
 	n = 0;
 	signed_off = offset;
 	for(i = 0; i < table.n; i++) {
 		p = &table.pool[i];
-		n += snprint(va+n, count-n, "%11zud %11zud %11zud %11zud %11zud %11d %11zud %s\n",
-			p->cursize,
-			p->maxsize,
-			p->hw,
-			p->nalloc,
-			p->nfree,
-			p->nbrk,
-			poolmax(p),
-			p->name);
+		/*
+		 * One arg per snprint: KenC LP64 pad is 8 bytes; keep the
+		 * fixed 12-byte fields that appl/wm/memory.b parses.
+		 */
+		ln = 0;
+		ln += poolfmt11(line+ln, sizeof(line)-ln, p->cursize);
+		ln += poolfmt11(line+ln, sizeof(line)-ln, p->maxsize);
+		ln += poolfmt11(line+ln, sizeof(line)-ln, p->hw);
+		ln += poolfmt11(line+ln, sizeof(line)-ln, p->nalloc);
+		ln += poolfmt11(line+ln, sizeof(line)-ln, p->nfree);
+		ln += poolfmt11(line+ln, sizeof(line)-ln, (uintptr)p->nbrk);
+		ln += poolfmt11(line+ln, sizeof(line)-ln, poolmax(p));
+		ln += snprint(line+ln, sizeof(line)-ln, "%s\n", p->name);
+		if(ln <= 0)
+			break;
+		if(n+ln > count)
+			ln = count-n;
+		if(ln > 0){
+			memmove(va+n, line, ln);
+			n += ln;
+		}
 
 		if(signed_off > 0) {
 			signed_off -= n;

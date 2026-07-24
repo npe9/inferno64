@@ -13,6 +13,9 @@ Inferno/386/lib
 Inferno/amd64/bin
 Inferno/amd64/include
 Inferno/amd64/lib
+Inferno/riscv64/bin
+Inferno/riscv64/include
+Inferno/riscv64/lib
 Inferno/arm/bin
 Inferno/arm/include
 Inferno/arm/lib
@@ -48,9 +51,13 @@ Linux/386/lib
 Linux/arm/bin
 Linux/arm/include
 Linux/arm/lib
+Linux/riscv64/bin
+Linux/riscv64/include
+Linux/riscv64/lib
 Linux/power/bin
 Linux/power/lib
 Linux/spim/bin
+
 Linux/spim/lib
 MacOSX/386/bin
 MacOSX/386/include
@@ -58,6 +65,9 @@ MacOSX/386/lib
 MacOSX/power/bin
 MacOSX/power/include
 MacOSX/power/lib
+MacOSX/arm64/bin
+MacOSX/arm64/include
+MacOSX/arm64/lib
 NetBSD/386/bin
 NetBSD/386/include
 NetBSD/386/lib

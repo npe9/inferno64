@@ -203,6 +203,8 @@ _freeimage1(Image *i)
 		return 0;
 	/* make sure no refresh events occur on this if we block in the write */
 	d = i->display;
+	if(d == nil)
+		return 0;
 	/* flush pending data so we don't get error deleting the image */
 	flushimage(d, 0);
 	a = bufimage(d, 1+4);

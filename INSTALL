@@ -21,12 +21,13 @@ threads efficiently.
 
      There  are  working  emu  versions   for   FreeBSD/386,
 Irix/mips,  Linux/386, NetBSD/386, MacOSX/386, MacOSX/power,
-Plan 9, Solaris/sparc, and Windows (NT,  2000  and  Explorer
-plug-in).   Each platform typically uses mechanisms specific
-to the host operating system to implement Inferno's internal
-thread/process  structure.   POSIX  threads  have often been
-found to be insufficient (poorly implemented) on some  plat-
-forms, and if so are avoided.  See  kproc in  emu/*/os.c.
+MacOSX/arm64 (Apple Silicon, Cocoa), Plan 9, Solaris/sparc,
+and Windows (NT,  2000  and  Explorer plug-in).   Each plat-
+form typically uses mechanisms specific to the host operat-
+ing system to implement Inferno's internal thread/process
+structure.   POSIX  threads  have often been found to be
+insufficient (poorly implemented) on some  platforms, and if
+so are avoided.  See  kproc in  emu/*/os.c.
 
      Source is included for ports to HP/UX  (S800  architec-
 ture),  Solaris/386, and Unixware, in case someone wishes to
@@ -106,5 +107,96 @@ This will build Inferno on a small Linux base. Note that Docker sandboxes networ
 
 `docker run --net=host --env="DISPLAY" --volume="$HOME/.Xauthority:/root/.Xauthority:rw" purgatorio emu wm/wm`
 
-This works on Linux. On Windows and MacOS you would need some kind of custom Xserver setup to make this work. Option include vcxsrv on Windows and XQuartz on MacOS. 
+This works on Linux. On Windows and MacOS you would need some kind of custom Xserver setup to make this work. Option include vcxsrv on Windows and XQuartz on MacOS.
+
+MacOSX/arm64 (Apple Silicon)
+
+     Edit  mkconfig:
+
+		ROOT=/absolute/path/to/inferno64
+		SYSHOST=MacOSX
+		OBJTYPE=arm64
+
+     Then the usual `makemk.sh`, PATH, `mk mkdirs`, `mk install`.
+     The default configuration builds Cocoa  emu  (see
+     emu/MacOSX/mkfile-arm64).  Install codesigns the binary.
+
+     Run:
+
+		emu wm/wm
+
+     JIT compilation is enabled by default on arm64; pass  -c0
+     for the interpreter.  The Inferno user is  inferno  unless
+     /usr/<your-mac-login> exists in the tree.  Window default
+     is 1024×768; use  -gWxH  to change it.  Includes CoreAudio
+     (#A), IPv6 dual-stack, and a resizable/fullscreen Cocoa window.
+     Host objects are built  -O2.  Console-only  emu-g  installs as
+     emu-g only (does not replace  emu).  Smoke:
+		emu/MacOSX/smoke-arm64.sh
+
+Linux/riscv64 (hosted emu)
+
+     On a native Linux/riscv64 host, set  mkconfig:
+
+		ROOT=/absolute/path/to/inferno64
+		SYSHOST=Linux
+		OBJTYPE=riscv64
+
+     then  `mk install`  as usual.  JIT is enabled by default; pass
+     `-c0` for the interpreter.  Console config:
+
+		(cd emu/Linux && mk CONF=emu-g install)
+
+     From macOS/Apple Silicon, cross-build console emu + JIT via Docker
+     and smoke under qemu-user:
+
+		./emu/Linux/cross-riscv64.sh
+		./emu/Linux/smoke-riscv64.sh
+
+     Full X11  emu  (multiarch libX11 in Docker):
+
+		./emu/Linux/cross-emu-x11.sh
+		./emu/Linux/smoke-x11.sh	# Xvfb: pointer + wm + colors
+
+     After changing  libmemdraw, force-rebuild the ELF archive before linking:
+
+		rm -f Linux/riscv64/lib/libmemdraw.a
+		./emu/Linux/cross-emu-x11.sh
+
+     See  emu/Linux/NOTE.  LP64 hosts must use  sizeof(u32)  for
+     Memimage.width  strides in load/unload (not sizeof(ulong)).
+
+Inferno/riscv64 (native kernel, QEMU virt)
+
+     KenC tools  ja/jc/jl  build for the host (letter  j).  Board
+     sources live in  os/virt.  With mkconfig SYSTARG=Inferno OBJTYPE=riscv64:
+
+		cd os/virt && mk INIT=virtinit install
+		./os/virt/smoke.sh
+
+     Or run QEMU directly:
+
+		qemu-system-riscv64 -M virt -nographic -bios none \
+			-kernel Inferno/riscv64/bin/ivirt
+
+     Boots Dis (interpreter only; no mmap JIT).  virtinit runs GC stress,
+     draw/tk/wm/toolbar, ndb/dns+cs on `/net`, net stack smoke, compound
+     sh -c, then interactive UART sh.  KenC Inferno/riscv64 is LP64
+     (`ulong` 8).  Use
+     `mk SYSTARG=os OBJTYPE=riscv64 SHELLTYPE=sh INIT=virtinit install`
+     from macOS (iar).  Force-relink after lib changes:  `rm -f ivirt`.
+     Softscreen + ramfb, virtio input/rng/blk/net.  Tk uses rooted
+     `/fonts/pelm` + titlebar icons; `$Freetype` via
+     `libfreetype/mk-inferno-riscv64.sh` (clang -E + jc; Apple cpp unusable).
+     `wm/wm` + `wm/toolbar` (needs `quotefmtinstall` for Limbo `%q`).
+     Virtio input drained in a kproc (not IRQ); pointer sprint is
+     KenC-safe.  Qctl uses one int per `snprint` (LP64 varargs).
+     `ndb/dns` opens `/net/udp/clone` directly (Dial announce via `/net/cs`
+     deadlocks).  Rooted desktop: plumber, acme, charon, `wm/man`,
+     `wm/ftree`/`view`/`task`/`rt`/`deb`, tetris, ….  Lean `/man/1`,
+     `/fonts/charon` (latin1), `file:/services/webget/start.html`,
+     convcs utf8/latin1.  Smoke: `./os/virt/smoke.sh` (PLUMB-OK, TB-OK,
+     COLORS-OK, ACME-OK, MAN-OK, CHARON-OK, DNS-REMOTE-OK, ROOT-APPS-OK,
+     … CONS-ALIVE).
+
 

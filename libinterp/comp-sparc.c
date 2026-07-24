@@ -1880,3 +1880,9 @@ bad:
 	free(base);
 	return 0;
 }
+
+void
+freecode(void *p)
+{
+	free(p);
+}

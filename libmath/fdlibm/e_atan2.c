@@ -106,8 +106,7 @@ pi_lo   = 1.2246467991473531772E-16; /* 0x3CA1A626, 0x33145C07 */
 	else z=atan(fabs(y/x));		/* safe to do y/x */
 	switch (m) {
 	    case 0: return       z  ;	/* atan(+,+) */
-	    case 1: __HI(z) ^= 0x80000000;
-		    return       z  ;	/* atan(-,+) */
+	    case 1: return      -z  ;	/* atan(-,+) — avoid __HI xor (KenC FP) */
 	    case 2: return  pi-(z-pi_lo);/* atan(+,-) */
 	    default: /* case 3 */
 	    	    return  (z-pi_lo)-pi;/* atan(-,-) */

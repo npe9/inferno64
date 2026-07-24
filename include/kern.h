@@ -1,3 +1,6 @@
+#ifndef _INFERNO_KERN_H_
+#define _INFERNO_KERN_H_
+
 typedef unsigned long size_t;
 
 #define	nelem(x)	(sizeof(x)/sizeof((x)[0]))
@@ -359,7 +362,7 @@ extern	char*	getuser(void);
 extern	char*	getwd(char*, int);
 extern	long	labs(long);
 extern	double	ldexp(double, int);
-/*extern	void	longjmp(jmp_buf, int);*/
+extern	void	longjmp(jmp_buf, int);
 extern	char*	mktemp(char*);
 extern	double	modf(double, double*);
 extern	int	netcrypt(void*, void*);
@@ -370,7 +373,7 @@ extern	double	pow10(int);
 extern	double	ipow10(int);
 extern	int	putenv(char*, char*);
 extern	void	qsort(void*, long, long, int (*)(void*, void*));
-/*extern	int	setjmp(jmp_buf);*/
+extern	int	setjmp(jmp_buf);
 extern	double	strtod(char*, char**);
 extern	long	strtol(char*, char**, int);
 extern	ulong	strtoul(char*, char**, int);
@@ -635,3 +638,5 @@ extern unsigned char	_ctype[];
 #define	_toupper(c)	((c)-'a'+'A')
 #define	_tolower(c)	((c)-'A'+'a')
 #define	toascii(c)	((c)&0177)
+
+#endif /* _INFERNO_KERN_H_ */

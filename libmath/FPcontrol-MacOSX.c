@@ -6,7 +6,13 @@
 void
 FPinit(void)
 {
-	ulong fcr9 = FPPDBL|FPRNR|FPINVAL|FPZDIV|FPUNFL|FPOVFL;
+	/*
+	 * On Darwin arm64, hardware FP traps (FPINVAL/FPZDIV/…) must stay
+	 * off — host frameworks (AudioToolbox, etc.) inherit FPCR and crash
+	 * with SIGILL on trapped fdiv.  Rounding-only control is enough;
+	 * status comes from sticky FPSR flags.
+	 */
+	ulong fcr9 = FPPDBL|FPRNR;
 	setfsr(0);	/* Clear pending exceptions */
 	setfcr(fcr9);
 }

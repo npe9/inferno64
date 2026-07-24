@@ -153,14 +153,18 @@ handler(char *estr)
 	return 0;
 found:
 	{
-		int n;
+		int n, i;
 		char name[3*KNAMELEN];
 
 		pc = modstatus(&R, name, sizeof(name));
 		n = 10+1+strlen(name)+1+strlen(estr)+1;
 		p->exstr = realloc(p->exstr, n);
-		if(p->exstr != nil)
-			snprint(p->exstr, n, "%zud %s %s", pc, name, estr);
+		if(p->exstr != nil){
+			/* KenC LP64: one homogeneous arg per snprint */
+			i = snprint(p->exstr, n, "%zud ", pc);
+			i += snprint(p->exstr+i, n-i, "%s ", name);
+			snprint(p->exstr+i, n-i, "%s", estr);
+		}
 	}
 
 	/*
