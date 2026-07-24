@@ -7,6 +7,10 @@
 #include        <pthread.h>
 #include	<time.h>
 #include	<termios.h>
+/* Define NSIG before including signal.h for macOS compatibility */
+#ifndef NSIG
+#define NSIG 32
+#endif
 #include	<signal.h>
 #include	<pwd.h>
 #include	<sys/resource.h>

@@ -3,6 +3,7 @@
 #include "interp.h"
 #include "kernel.h"
 #include "dynld.h"
+#undef DBG
 #define DBG if(0) print
 
 static int debug = 0;

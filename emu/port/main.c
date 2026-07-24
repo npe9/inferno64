@@ -21,8 +21,13 @@ extern	int	mflag;
 	int	vflag;
 	Procs	procs;
 	char	*eve;
+#if defined(MACOSX_ARM64)
+	int	Xsize	= 1024;
+	int	Ysize	= 768;
+#else
 	int	Xsize	= 640;
 	int	Ysize	= 480;
+#endif
 	int	bflag = 1;
 	int	sflag;
 	int	qflag;
@@ -307,9 +312,15 @@ emuinit(void *imod)
 	/* the setid cannot precede the bind of #U */
 	kbind("#U", "/", MAFTER|MCREATE);
 	setid(eve, 0);
-	/*kbind("#^", "/dev", MBEFORE);*/	/* snarf */
+	if(devno('^', 1) >= 0)
+		kbind("#^", "/dev", MBEFORE);	/* snarf */
 	/*kbind("#^", "/chan", MBEFORE); */
-	/*kbind("#m", "/dev", MBEFORE);	*//* pointer */
+	if(devno('m', 1) >= 0){
+		if(kbind("#m", "/dev", MBEFORE) < 0)
+			fprint(2, "emu: bind #m /dev failed: %r\n");
+	}
+	if(devno('A', 1) >= 0)
+		kbind("#A", "/dev", MAFTER);	/* optional audio */
 	kbind("#c", "/dev", MBEFORE);
 	kbind("#p", "/prog", MREPL);
 	kbind("#d", "/fd", MREPL);

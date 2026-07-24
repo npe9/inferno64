@@ -670,16 +670,23 @@ void
 Sys_sleep(void *fp)
 {
 	F_Sys_sleep *f;
+	int period;
 
 	f = fp;
+	/*
+	 * Limbo int is 32-bit in a WORD slot; high half can be stack junk.
+	 * A 64-bit compare then skips nanosleep and release/acquire yield-spins
+	 * (seen as 100% CPU Sys_sleep→cthread_yield on arm64 Cocoa).
+	 */
+	period = (int)f->period;
 	release();
-	if(f->period > 0){
+	if(period > 0){
 		if(waserror()){
 			acquire();
 			error("");
 		}
 		osenter();
-		*f->ret = limbosleep(f->period);
+		*f->ret = limbosleep(period);
 		osleave();
 		poperror();
 	}

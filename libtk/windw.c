@@ -38,13 +38,19 @@ tkfreectxt(TkCtxt *c)
 	tkextnfreectxt(c);
 
 	d = c->display;
-	locked = lockdisplay(d);
-	tkfreecolcache(c);
-	freeimage(c->i);
-	freeimage(c->ia);
-	if(locked)
-		unlockdisplay(d);
+	c->display = nil;
+	if(d != nil){
+		locked = lockdisplay(d);
+		tkfreecolcache(c);
+		freeimage(c->i);
+		freeimage(c->ia);
+		c->i = nil;
+		c->ia = nil;
+		if(locked)
+			unlockdisplay(d);
+	}
 	libqlfree(c->lock);
+	c->lock = nil;
 	free(c);
 }
 
@@ -213,6 +219,8 @@ tkexterncreatewin(Tk *tk, Rectangle r)
 	TkWin *tkw;
 	TkTop *top;
 	char *name;
+	char buf[128];
+	char *p, *e;
 
 	top = tk->env->top;
 	tkw = TKobj(TkWin, tk);
@@ -227,7 +235,20 @@ tkexterncreatewin(Tk *tk, Rectangle r)
 		name = tk->name->name;
 
 	tkw->reqid++;
-	tkwreq(top, "!reshape %s %d %d %d %d %d", name, tkw->reqid, r.min.x, r.min.y, r.max.x, r.max.y);
+	/*
+	 * KenC LP64: one homogeneous arg per snprint; multi-int
+	 * varargs corrupt reshape geometry so menus never map.
+	 */
+	p = buf;
+	e = buf + sizeof buf;
+	p += snprint(p, e-p, "!reshape %s ", name);
+	p += snprint(p, e-p, "%d ", tkw->reqid);
+	p += snprint(p, e-p, "%d ", r.min.x);
+	p += snprint(p, e-p, "%d ", r.min.y);
+	p += snprint(p, e-p, "%d ", r.max.x);
+	p += snprint(p, e-p, "%d", r.max.y);
+	USED(p);
+	tktolimbo(top->wreq, buf);
 	tkw->changed = 0;
 	tk->flag |= Tksuspended;
 }
@@ -635,7 +656,20 @@ tkseecmd(TkTop *t, char *arg, char **ret)
 		if (!tkvisiblerect(tk, &vr))
 			return nil;
 		/* XXX should this be converted into screen coords? */
-		return tkvalue(ret, "%d %d %d %d", vr.min.x, vr.min.y, vr.max.x, vr.max.y);
+		/* KenC LP64: one int per snprint */
+		{
+			char buf[64];
+			char *p, *e;
+
+			p = buf;
+			e = buf + sizeof buf;
+			p += snprint(p, e-p, "%d ", vr.min.x);
+			p += snprint(p, e-p, "%d ", vr.min.y);
+			p += snprint(p, e-p, "%d ", vr.max.x);
+			p += snprint(p, e-p, "%d", vr.max.y);
+			USED(p);
+			return tkvalue(ret, "%s", buf);
+		}
 	}
 	vr.min.x = opts.r[0];
 	vr.min.y = opts.r[1];

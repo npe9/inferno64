@@ -27,6 +27,7 @@ typedef struct Mntwalk	Mntwalk;
 typedef struct Mnt	Mnt;
 typedef struct Mhead	Mhead;
 typedef struct Note	Note;
+typedef struct Osenv	Osenv;
 typedef struct Path	Path;
 typedef struct Perf	Perf;
 typedef struct Pgrp	Pgrp;
@@ -571,6 +572,33 @@ struct Schedq
 	int	n;
 };
 
+/*
+ * Inferno Dis environment (also used by emu). Kept alongside the
+ * 9front-style Proc fields so disinit/inferno can run on native kernels.
+ */
+struct Osenv
+{
+	char	*syserrstr;
+	char	*errstr;
+	char	errbuf0[ERRMAX];
+	char	errbuf1[ERRMAX];
+	Pgrp*	pgrp;
+	Fgrp*	fgrp;
+	Egrp*	egrp;
+	Skeyset*	sigs;
+	Rendez*	rend;
+	Queue*	waitq;
+	Queue*	childq;
+	void*	debug;
+	char*	user;
+	FPU	fpu;
+	int	uid;
+	int	gid;
+	void	*ui;
+	uintptr	errpc;
+	int	fpuostate;
+};
+
 /* Needs a default environment to create new processes (spawn, not fork)
  *
  * When using forth for the userspace, forth's stack is in fmem.
@@ -727,6 +755,13 @@ struct Proc
 
 	/* not used by 9front. get rid of it at some point */
 	intptr errpc;
+
+	/* Inferno Dis: effective os environment for interp */
+	Osenv	*env;
+	Osenv	defenv;
+	void	*iprog;
+	void	*prog;
+	int	type;		/* Unknown/IdleGC/Interp/... */
 };
 
 enum

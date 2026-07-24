@@ -269,8 +269,19 @@ tkpropagate(TkTop *t, char *arg)
 				tk->flag &= ~Tknoprop;
 				tkpackqit(tk);
 				tkrunpack(t);
-			} else
+			} else {
+				/*
+				 * Freeze at the natural size of packed children.
+				 * A stale/zero root req makes onscreen's Tk_Required
+				 * report width 0; winplace then returns the whole free
+				 * screen, and stock Bounce builds walls on that act size
+				 * (balls spawn on the boundary → "no intersection!").
+				 */
+				tk->flag &= ~Tknoprop;
+				tkpackqit(tk);
+				tkrunpack(t);
 				tk->flag |= Tknoprop;
+			}
 			free(buf);
 			return nil;
 		}

@@ -119,6 +119,11 @@ math.$O:	$ROOT/include/mathi.h
 das-spim.c:N:	das-mips.c
 comp-spim.c:N:	comp-mips.c
 
+# Hosted Linux/riscv64: gcc builds the real JIT as comp-riscv64.o.
+# KenC/native (comp-riscv64.j) uses the stub in comp-riscv64.c.
+comp-riscv64.o:	comp-riscv64-jit.c
+	$CC $CFLAGS -o $target $prereq
+
 # optab.h:	$ROOT/include/isa.h mkoptab
 #	$SHELLNAME mkoptab > $target
 

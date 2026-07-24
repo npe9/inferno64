@@ -14,12 +14,17 @@
 
 /*
  * fabs(x) returns the absolute value of x.
+ *
+ * KenC/riscv64: do not clear the sign via __HI(x)&= on a double
+ * parameter — the write can hit a stack image while the return
+ * still uses the unmodified FP register (atan(-x) then saw NaN).
  */
 
 #include "fdlibm.h"
 
 	double fabs(double x)
 {
-	__HI(x) &= 0x7fffffff;
-        return x;
+	if(x < 0)
+		return -x;
+	return x;
 }

@@ -8,7 +8,7 @@ cd /n/local
 #cd $home
 
 # build the user's namespace in $home/
-#and {ftest -e namespace}	{nsbuild}
+and {ftest -e $home/namespace}	{@{builtin cd $home; nsbuild}}
 
 # Run the user's profile
-#and {ftest -e lib/profile}	{run ./lib/profile}
+and {ftest -e $home/lib/profile}	{@{builtin cd $home; run lib/profile}}

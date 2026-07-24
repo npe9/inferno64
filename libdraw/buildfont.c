@@ -129,8 +129,8 @@ freefont(Font *f)
 	}
 	for(i=0; i<f->nsubf; i++){
 		s = f->subf[i].f;
-/*		if(s && s!=display->defaultsubfont)*/	/* Plan 9 uses this */
-		if(s)
+		/* keep Display.defaultsubfont alive for display_dec */
+		if(s && (f->display == nil || s != f->display->defaultsubfont))
 			freesubfont(s);
 	}
 	freeimage(f->cacheimage);

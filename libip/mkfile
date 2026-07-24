@@ -1,6 +1,7 @@
 <../mkconfig
 
 LIB=libip.a
+# readipifc.c needs hosted libc.h — omit for Inferno/os kernel builds
 OFILES=\
 	ctype.$O\
 	eipfmt.$O\
@@ -11,7 +12,6 @@ OFILES=\
 	myipaddr.$O\
 	classmask.$O\
 	bo.$O\
-	readipifc.$O\
 	ipaux.$O\
 	ptclbsum.$O\
 

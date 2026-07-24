@@ -123,11 +123,18 @@ udpconnect(Conv *c, char **argv, int argc)
 static int
 udpstate(Conv *c, char *state, int n)
 {
-	return snprint(state, n, "%s qin %d qout %d\n",
-		c->inuse ? "Open" : "Closed",
-		c->rq ? qlen(c->rq) : 0,
-		c->wq ? qlen(c->wq) : 0
-	);
+	char *p, *e;
+
+	/* KenC LP64: one homogeneous arg per snprint */
+	p = state;
+	e = state + n;
+	p += snprint(p, e - p, "%s", c->inuse ? "Open" : "Closed");
+	p += snprint(p, e - p, " qin ");
+	p += snprint(p, e - p, "%d", c->rq ? qlen(c->rq) : 0);
+	p += snprint(p, e - p, " qout ");
+	p += snprint(p, e - p, "%d", c->wq ? qlen(c->wq) : 0);
+	p += snprint(p, e - p, "\n");
+	return p - state;
 }
 
 static char*
@@ -560,14 +567,22 @@ int
 udpstats(Proto *udp, char *buf, int len)
 {
 	Udppriv *upriv;
+	char *p, *e;
 
 	upriv = udp->priv;
-	return snprint(buf, len, "InDatagrams: %llud\nNoPorts: %lud\n"
-		"InErrors: %lud\nOutDatagrams: %llud\n",
-		upriv->ustats.udpInDatagrams,
-		upriv->ustats.udpNoPorts,
-		upriv->ustats.udpInErrors,
-		upriv->ustats.udpOutDatagrams);
+	/* KenC LP64: one arg per snprint */
+	p = buf;
+	e = buf + len;
+	p += snprint(p, e - p, "InDatagrams: ");
+	p += snprint(p, e - p, "%llud", upriv->ustats.udpInDatagrams);
+	p += snprint(p, e - p, "\nNoPorts: ");
+	p += snprint(p, e - p, "%lud", upriv->ustats.udpNoPorts);
+	p += snprint(p, e - p, "\nInErrors: ");
+	p += snprint(p, e - p, "%lud", upriv->ustats.udpInErrors);
+	p += snprint(p, e - p, "\nOutDatagrams: ");
+	p += snprint(p, e - p, "%llud", upriv->ustats.udpOutDatagrams);
+	p += snprint(p, e - p, "\n");
+	return p - buf;
 }
 
 int

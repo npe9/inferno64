@@ -854,7 +854,7 @@ struct Hashalg
 {
 	char	*name;
 	int	diglen;
-	DigestState *(*hf)(uchar*, u32, uchar*, DigestState*);
+	DigestState *(*hf)(uchar*, ulong, uchar*, DigestState*);
 };
 
 Hashalg hashtab[] =

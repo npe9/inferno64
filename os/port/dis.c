@@ -286,24 +286,34 @@ void
 tellsomeone(Prog *p, char *buf)
 {
 	Osenv *o;
-	int ret;
+	int ret, woke;
 
-	DBG("tellsomeone pid %d buf %s\n", p->pid, buf);
 	if(waserror())
 		return;
-	DBG("tellsomeone after waserror() pid %d buf %s\n", p->pid, buf);
 	o = p->osenv;
+	woke = 0;
 	if(o->childq != nil){
 		ret = qproduce(o->childq, buf, strlen(buf));
-		if(ret != strlen(buf))
-			print("tellsomeone qproduce on childq sent %d bytes out of %ld\n", ret, strlen(buf));
+		if(ret == strlen(buf))
+			woke = 1;
+		else if(ret != strlen(buf))
+			print("tellsomeone childq %d/%lud\n", ret, (ulong)strlen(buf));
 	}
 	if(o->waitq != nil){
 		ret = qproduce(o->waitq, buf, strlen(buf));
-		if(ret != strlen(buf))
-			print("tellsomeone qproduce on waitq sent %d bytes out of %ld\n", ret, strlen(buf));
+		if(ret == strlen(buf))
+			woke = 1;
+		else
+			print("tellsomeone waitq %d/%lud\n", ret, (ulong)strlen(buf));
 	}
 	poperror();
+	/*
+	 * On a uniprocessor, qproduce's wakeup only readies the waiter.
+	 * Yield so the parent can finish Sys_read/acquire before we
+	 * release() in delprog and risk a VM handoff deadlock.
+	 */
+	if(woke && anyready())
+		sched();
 }
 
 static void
@@ -469,7 +479,15 @@ killprog(Prog *p, char *cause)
 
 	propex(p, "killed");
 
-	snprint(msg, sizeof(msg), "%d \"%s\":%s", p->pid, p->R.M->m->name, cause);
+	/* KenC LP64: one homogeneous arg per snprint */
+	{
+		int i;
+
+		i = snprint(msg, sizeof(msg), "%d \"", p->pid);
+		i += snprint(msg+i, sizeof(msg)-i, "%s", p->R.M->m->name);
+		i += snprint(msg+i, sizeof(msg)-i, "\":");
+		snprint(msg+i, sizeof(msg)-i, "%s", cause);
+	}
 
 	p->state = Pexiting;
 	gclock();
@@ -986,7 +1004,15 @@ progexit(void)
 			r->pid, m->name, estr, r->exval, r->exstr);
 
 	// sh.b is matching on fail: not on "<pid> fail: "
-	snprint(msg, sizeof(msg), "%d \"%s\":%s", r->pid, m->name, estr);
+	/* KenC LP64: one homogeneous arg per snprint */
+	{
+		int i;
+
+		i = snprint(msg, sizeof(msg), "%d \"", r->pid);
+		i += snprint(msg+i, sizeof(msg)-i, "%s", m->name);
+		i += snprint(msg+i, sizeof(msg)-i, "\":");
+		snprint(msg+i, sizeof(msg)-i, "%s", estr);
+	}
 	// snprint(msg, sizeof(msg), "%s", estr);
 	DBG("progexit msg %s\n", msg);
 
@@ -1044,6 +1070,7 @@ vmachine(void*)
 	Prog *r;
 	Osenv *o;
 	int cycles;
+	static int gccounter;
 
 	startup();
 
@@ -1068,6 +1095,13 @@ vmachine(void*)
 
 	cycles = 0;
 	for(;;) {
+		/*
+		 * Keep the clock moving under CPU-bound Dis (Bounce tk update).
+		 * On virt, soft timers used to advance only via idlehands→WFI→
+		 * clockpoll; a busy interpreter never idled so sys->sleep stalled.
+		 */
+		clockcheck();
+
 		if(tready(nil) == 0) {
 			execatidle();
 			sleep(&isched.irend, tready, 0);
@@ -1082,6 +1116,10 @@ vmachine(void*)
 		if(r != nil) {
 			o = r->osenv;
 			up->env = o;
+			/* Keep Proc.*grp in sync for #e/#p and namec (pctl updates Osenv). */
+			up->pgrp = o->pgrp;
+			up->fgrp = o->fgrp;
+			up->egrp = o->egrp;
 
 			fpurestore(up->env->fpuostate);
 			r->xec(r);
@@ -1096,15 +1134,24 @@ vmachine(void*)
 				isched.runtl = r;
 			}
 			up->env = &up->defenv;
-			if(isched.runhd != nil)
-			if (up->iprog == nil) {
+		}
+		/*
+		 * BusyGC like emu (throttled).  Never pushrun when addrun is
+		 * set — that panics "pushrun addrun" (seen on virt at
+		 * interactive sh with wm/toolbar load).
+		 */
+		if(isched.runhd != nil)
+		if(up->iprog == nil)
+		if((++gccounter & 0xFF) == 0){
+			r = (Prog*)up->prog;
+			if(r != nil && r->addrun == nil){
+				gcbusy++;
 				up->type = BusyGC;
-				pushrun(up->prog);
+				pushrun(r);
 				rungc(isched.head);
 				up->type = Interp;
-				delrunq(up->prog);
-			} else
-				print("up->iprog not nil (%lux)\n", up->iprog);
+				delrunq(r);
+			}
 		}
 	}
 }
@@ -1168,8 +1215,11 @@ disinit(void *a)
 void
 pushrun(Prog *p)
 {
-	if(p->addrun != nil)
-		panic("pushrun addrun");
+	if(p->addrun != nil){
+		/* Was panic; under virt+wm this raced BusyGC.  Skip. */
+		print("pushrun: prog %#p has addrun (skipped)\n", p);
+		return;
+	}
 	p->state = Pready;
 	p->link = isched.runhd;
 	isched.runhd = p;
