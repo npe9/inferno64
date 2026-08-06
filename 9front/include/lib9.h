@@ -5,7 +5,6 @@ typedef usize size_t;
 #include <libc.h>
 #undef Rendez
 
-
 /*
  *	Extensions for Inferno to basic libc.h
  */

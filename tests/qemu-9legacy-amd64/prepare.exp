@@ -1,0 +1,33 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+set disk [lindex $argv 0]
+log_file -noappend -a $env(QEMU9LEGACY_PREP_LOG)
+log_user 0
+
+spawn qemu-system-x86_64 \
+	-machine pc,accel=tcg \
+	-cpu max \
+	-m 2048 \
+	-drive if=none,id=hd,file=$disk,format=qcow2 \
+	-device virtio-scsi-pci,id=scsi \
+	-device scsi-hd,drive=hd \
+	-netdev user,id=net0 \
+	-device virtio-net-pci,netdev=net0 \
+	-nographic
+
+expect {
+	-re {user(\[[^]]*\])?: $} { send "glenda\r"; exp_continue }
+	-re {term(\[[^]]*\])?: $} { send "vt100\r"; exp_continue }
+	-re {[%#] $} {
+		send "mkdir -p /n/9fat; dossrv -f /dev/sd00/9fat 9fat; mount /srv/9fat /n/9fat; cp /amd64/9k10cpuf /n/9fat/9pccpuf; ls -l /n/9fat/9pccpuf; fshalt\r"
+	}
+	timeout { puts stderr "timed out preparing the 9legacy amd64 boot"; exit 1 }
+	eof { puts stderr "QEMU exited while preparing the 9legacy amd64 boot"; exit 1 }
+}
+
+expect {
+	-re {done halting|halted} { send "\001x"; exp_continue }
+	timeout { puts stderr "timed out halting the 9legacy preparation guest"; exit 1 }
+	eof { exit 0 }
+}

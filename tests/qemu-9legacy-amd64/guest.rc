@@ -1,0 +1,49 @@
+#!/bin/rc
+
+rfork n
+
+testroot=/tmp/inferno-regress
+rm -rf $testroot
+mkdir -p $testroot/inferno
+dircp /n/inferno/inferno $testroot/inferno
+cd $testroot/inferno
+
+root=$testroot/inferno
+objtype=amd64
+mkdir -p $root/Plan9/amd64/bin
+mkdir -p $root/Plan9/amd64/lib
+bind -a $root/Plan9/amd64/bin /bin
+
+>$root/mkconfig {
+	echo 'ROOT='$root
+	echo 'TKSTYLE=std'
+	echo 'CONF=emu'
+	echo 'SYSHOST=Plan9'
+	echo 'SYSTARG=$SYSHOST'
+	echo 'OBJTYPE=amd64'
+	echo 'OBJDIR=$SYSTARG/$OBJTYPE'
+	echo '<$ROOT/mkfiles/mkhost-$SYSHOST'
+	echo '<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE'
+}
+
+echo QEMU9LEGACY:BUILD-BEGIN
+mk emuinstall || {
+	echo QEMU9LEGACY:BUILD-FAIL
+	exit build
+}
+
+emu=$root/Plan9/amd64/bin/emu
+if(! test -x $emu) {
+	echo QEMU9LEGACY:NO-AMD64-EMU
+	exit noemu
+}
+file $emu
+
+echo QEMU9LEGACY:SMOKE-BEGIN
+$emu -r $root sh -c 'echo QEMU9LEGACY:PASS' || {
+	echo QEMU9LEGACY:SMOKE-FAIL
+	exit smoke
+}
+
+echo QEMU9LEGACY:PASS
+fshalt

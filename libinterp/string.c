@@ -351,7 +351,7 @@ OP(cvtwc)
 	String *ds, **dp;
 
 	ds = newstring(16);
-	ds->len = sprint(ds->Sascii, "%zd", W(s));
+	ds->len = sprint(ds->Sascii, "%lld", (vlong)W(s));
 
 	dp = R.d;
 	destroy(*dp);

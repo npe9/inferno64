@@ -1,0 +1,36 @@
+TARGMODEL=Posix
+TARGSHTYPE=sh
+CPUS=amd64
+
+O=o
+OS=o
+
+AR=ar
+ARFLAGS=ruvs
+
+AS=cc -c
+ASFLAGS=
+
+CC=cc -c
+CFLAGS=-g\
+	-O2\
+	-fno-strict-aliasing\
+	-Wno-error\
+	-Wno-implicit-function-declaration\
+	-Wno-implicit-int\
+	-Wno-incompatible-pointer-types\
+	-Wno-return-type\
+	-Wno-unused-variable\
+	-std=gnu11\
+	-I$ROOT/MacOSX/amd64/include\
+	-I$ROOT/include\
+	-DMACOSX_AMD64
+
+ANSICPP=
+LD=cc
+LDFLAGS=
+
+SYSLIBS=
+
+YACC=iyacc
+YFLAGS=-d

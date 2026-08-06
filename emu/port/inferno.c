@@ -53,15 +53,21 @@ void
 freeFD(Heap *h, int swept)
 {
 	FD *handle;
+	Fgrp *grp;
+	int fd;
 
 	USED(swept);
 
 	handle = H2D(FD*, h);
+	fd = handle->fd.fd;
+	handle->fd.fd = -1;
+	grp = handle->grp;
+	handle->grp = nil;
 
 	release();
-	if(handle->fd.fd >= 0)
-		kfgrpclose(handle->grp, handle->fd.fd);
-	closefgrp(handle->grp);
+	if(fd >= 0)
+		kfgrpclose(grp, fd);
+	closefgrp(grp);
 	acquire();
 }
 

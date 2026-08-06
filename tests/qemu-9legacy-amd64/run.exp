@@ -1,0 +1,50 @@
+#!/usr/bin/expect -f
+
+set timeout 1800
+set disk [lindex $argv 0]
+set sourceiso [lindex $argv 1]
+set guestrc $env(QEMU9LEGACY_GUEST_RC)
+log_file -noappend -a $env(QEMU9LEGACY_SERIAL)
+log_user 0
+
+spawn qemu-system-x86_64 \
+	-machine pc,accel=tcg \
+	-cpu max \
+	-m 2048 \
+	-drive if=none,id=hd,file=$disk,format=qcow2 \
+	-device virtio-scsi-pci,id=scsi \
+	-device scsi-hd,drive=hd \
+	-drive if=none,id=src,file=$sourceiso,format=raw,media=cdrom,readonly=on \
+	-device scsi-cd,drive=src \
+	-netdev user,id=net0 \
+	-device virtio-net-pci,netdev=net0 \
+	-nographic
+
+expect {
+	-re {bootargs is .*[):] $} { send "local!/dev/sd00/fossil"; exp_continue }
+	-re {user(\[[^]]*\])?: $} { send "glenda"; exp_continue }
+	-re {term(\[[^]]*\])?: $} { send "vt100"; exp_continue }
+	-re {[%#] $} {
+		send "mkdir -p /n/inferno; 9660srv -f /dev/sd01/data infernocd; mount /srv/infernocd /n/inferno; rc $guestrc"
+	}
+	timeout { puts stderr "timed out waiting for the 9legacy shell"; exit 1 }
+	eof { puts stderr "QEMU exited before the 9legacy shell"; exit 1 }
+}
+
+set passed 0
+expect {
+	"QEMU9LEGACY:PASS" { set passed 1; exp_continue }
+	"QEMU9LEGACY:BUILD-FAIL" { exit 1 }
+	"QEMU9LEGACY:SMOKE-FAIL" { exit 1 }
+	"QEMU9LEGACY:NO-AMD64-EMU" { exit 1 }
+	-re {done halting|halted} { send "\001x"; exp_continue }
+	-re {[%#] $} {
+		if {$passed} { send "fshalt\r"; exp_continue }
+		exit 1
+	}
+	timeout { puts stderr "timed out running the guest regression"; exit 1 }
+	eof {
+		if {[string first "QEMU9LEGACY:PASS" [read [open $env(QEMU9LEGACY_SERIAL) r]]] >= 0} { exit 0 }
+		exit 1
+	}
+}

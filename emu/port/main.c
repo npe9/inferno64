@@ -7,7 +7,7 @@
 #include	"version.h"
 
 #define DP if(1){}else print
-void	(*coherence)(void) = nil;	/* used by port/lock.c and port/win-x11a.c */
+void	(*coherencefn)(void) = nil;	/* used by port/lock.c and port/win-x11a.c */
 int	exdebug = 0;
 int		rebootargc = 0;
 char**		rebootargv;
@@ -244,8 +244,8 @@ main(int argc, char *argv[])
 	char *enva[20];
 	int envc;
 
-	if(coherence == nil)
-		coherence = nofence;
+	if(coherencefn == nil)
+		coherencefn = nofence;
 	quotefmtinstall();
 	savestartup(argc, argv);
 	/* set default root now, so either $EMU or -r can override it later */
@@ -309,11 +309,19 @@ emuinit(void *imod)
 	setid(eve, 0);
 	/*kbind("#^", "/dev", MBEFORE);*/	/* snarf */
 	/*kbind("#^", "/chan", MBEFORE); */
-	/*kbind("#m", "/dev", MBEFORE);	*//* pointer */
+	/* Optional when the configured emu has no pointer device. */
+	if(!waserror()){
+		kbind("#m", "/dev", MBEFORE);
+		poperror();
+	}
 	kbind("#c", "/dev", MBEFORE);
 	kbind("#p", "/prog", MREPL);
 	kbind("#d", "/fd", MREPL);
-	kbind("#I", "/net", MAFTER);	/* will fail on Plan 9 */
+	/* Optional when the host does not provide the IP device. */
+	if(!waserror()){
+		kbind("#I", "/net", MAFTER);
+		poperror();
+	}
 
 	/* BUG: we actually only need to do these on Plan 9 */
 	/*
@@ -460,21 +468,6 @@ void
 _assert(char *fmt)
 {
 	panic("assert failed: %s", fmt);
-}
-
-/*
- * mainly for libmp
- */
-void
-sysfatal(char *fmt, ...)
-{
-	va_list arg;
-	char buf[64];
-
-	va_start(arg, fmt);
-	vsnprint(buf, sizeof(buf), fmt, arg);
-	va_end(arg);
-	error(buf);
 }
 
 void

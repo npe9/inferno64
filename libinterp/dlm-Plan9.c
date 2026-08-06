@@ -6,7 +6,7 @@
 #include "kernel.h"
 #include "dynld.h"
 
-#define	DBG	if(1) print
+static int debug = 1;
 
 extern Dynobj* dynld(int);
 extern char*	enverror(void);

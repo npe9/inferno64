@@ -1,0 +1,52 @@
+#!/bin/rc
+
+rfork n
+
+testroot=/tmp/inferno-regress
+rm -rf $testroot
+mkdir -p $testroot
+mkdir -p $testroot/inferno
+dircp /n/inferno/inferno $testroot/inferno
+cd $testroot/inferno
+
+root=$testroot/inferno
+objtype=amd64
+mkdir -p $root/9front/amd64/bin
+mkdir -p $root/9front/amd64/lib
+mkdir -p $root/9front/amd64/include
+mkdir -p $root/9front/include
+bind -a $root/9front/amd64/bin /bin
+
+>$root/mkconfig {
+	echo 'ROOT='$root
+	echo 'TKSTYLE=std'
+	echo 'CONF=emu'
+	echo 'SYSHOST=9front'
+	echo 'SYSTARG=$SYSHOST'
+	echo 'OBJTYPE=amd64'
+	echo 'OBJDIR=$SYSTARG/$OBJTYPE'
+	echo '<$ROOT/mkfiles/mkhost-$SYSHOST'
+	echo '<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE'
+}
+
+echo QEMU9FRONT:BUILD-BEGIN
+mk emuinstall || {
+	echo QEMU9FRONT:BUILD-FAIL
+	exit build
+}
+
+emu=$root/9front/amd64/bin/emu
+if(! test -x $emu) {
+	echo QEMU9FRONT:NO-AMD64-EMU
+	exit noemu
+}
+file $emu
+
+echo QEMU9FRONT:SMOKE-BEGIN
+$emu -r $root sh -c 'echo QEMU9FRONT:PASS' || {
+	echo QEMU9FRONT:SMOKE-FAIL
+	exit smoke
+}
+
+echo QEMU9FRONT:PASS
+fshalt

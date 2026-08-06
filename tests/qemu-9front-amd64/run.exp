@@ -1,0 +1,47 @@
+#!/usr/bin/expect -f
+
+set timeout 1800
+set disk [lindex $argv 0]
+set sourceiso [lindex $argv 1]
+set guestrc $env(QEMU9FRONT_GUEST_RC)
+log_file -noappend -a $env(QEMU9FRONT_SERIAL)
+log_user 0
+
+spawn qemu-system-x86_64 \
+	-machine q35,accel=tcg \
+	-cpu max \
+	-m 2048 \
+	-drive file=$disk,if=virtio,format=qcow2 \
+	-drive file=$sourceiso,media=cdrom,if=ide,readonly=on \
+	-netdev user,id=net0 \
+	-device e1000,netdev=net0 \
+	-nographic
+
+expect {
+	-re {bootargs is .*\] $} { send "local!/dev/sdF0/fs\r"; exp_continue }
+	-re {user(\[[^]]*\])?: $} { send "glenda\r"; exp_continue }
+	-re {term(\[[^]]*\])?: $} { send "vt100\r"; exp_continue }
+	-re {[%#] $} {
+		send "mkdir -p /n/inferno; 9660srv -f /dev/sdE0/data infernocd; mount /srv/infernocd /n/inferno; rc $guestrc\r"
+	}
+	timeout { puts stderr "timed out waiting for the 9front shell"; exit 1 }
+	eof { puts stderr "QEMU exited before the 9front shell"; exit 1 }
+}
+
+set passed 0
+expect {
+	"QEMU9FRONT:PASS" { set passed 1; exp_continue }
+	"QEMU9FRONT:BUILD-FAIL" { exit 1 }
+	"QEMU9FRONT:SMOKE-FAIL" { exit 1 }
+	"QEMU9FRONT:NO-AMD64-EMU" { exit 1 }
+	-re {halted} { exit 0 }
+	-re {[%#] $} {
+		if {$passed} { send "fshalt\r"; exp_continue }
+		exit 1
+	}
+	timeout { puts stderr "timed out running the guest regression"; exit 1 }
+	eof {
+		if {[string first "QEMU9FRONT:PASS" [read [open $env(QEMU9FRONT_SERIAL) r]]] >= 0} { exit 0 }
+		exit 1
+	}
+}

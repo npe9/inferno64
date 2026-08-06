@@ -11,6 +11,11 @@
 
 #include "ipintsmod.h"
 
+void mpand(mpint*, mpint*, mpint*);
+void mpor(mpint*, mpint*, mpint*);
+void mpxor(mpint*, mpint*, mpint*);
+void mpnot(mpint*, mpint*);
+
 enum
 {
 	MaxBigBytes = 1024

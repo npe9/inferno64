@@ -1,0 +1,21 @@
+# Intel macOS: Cocoa graphics (CONF=emu-cocoa). Console: mk CONF=emu-g
+CONF=emu-cocoa
+COCOAOBJ=main-cocoa.$O
+COCOAFLAGS='-Dmain=emumain'
+
+# Redirect libc allocators to the Inferno pool. Mach-O symbols have a
+# leading underscore, hence the three underscores on __wrap_* aliases.
+LDFLAGS=\
+	-Wl,-alias,___wrap_malloc,_malloc\
+	-Wl,-alias,___wrap_mallocz,_mallocz\
+	-Wl,-alias,___wrap_free,_free\
+	-Wl,-alias,___wrap_realloc,_realloc\
+	-Wl,-alias,___wrap_calloc,_calloc
+
+SYSLIBS=\
+	-lm\
+	-lpthread\
+	-framework Cocoa\
+	-framework CoreFoundation\
+	-framework IOKit\
+	-framework AudioToolbox\

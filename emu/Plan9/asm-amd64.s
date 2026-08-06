@@ -1,0 +1,28 @@
+TEXT	tramp(SB),$0
+	MOVQ	fn+8(FP), CX
+	MOVQ	arg+16(FP), DX
+	LEAQ	-16(RARG), SP
+	MOVQ	DX, RARG
+	PUSHQ	RARG
+	CALL	*CX
+	POPQ	AX
+	MOVQ	$0, RARG
+	PUSHQ	RARG
+	CALL	_exits(SB)
+	POPQ	AX
+	RET
+
+TEXT	vstack(SB),$0
+	MOVQ	ustack(SB), SP
+	PUSHQ	RARG
+	CALL	exectramp(SB)
+	POPQ	AX
+	RET
+
+TEXT	FPsave(SB), 1, $0
+	FSTENV	0(RARG)
+	RET
+
+TEXT	FPrestore(SB), 1, $0
+	FLDENV	0(RARG)
+	RET
