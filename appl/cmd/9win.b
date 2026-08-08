@@ -3,7 +3,7 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 	draw: Draw;
-	Image, Display, Pointer: import draw;
+	Image, Display, Pointer, Rect: import draw;
 include "arg.m";
 include "keyboard.m";
 include "tk.m";
@@ -42,10 +42,13 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	arg := load Arg Arg->PATH;
 	arg->init(argv);
-	arg->setusage("9win [-s] [-x width] [-y height]");
+	arg->setusage("9win [-fs] [-x width] [-y height]");
 	exportonly := 0;
+	fullsize := 0;
 	while(((opt := arg->opt())) != 0){
 		case opt {
+		'f' =>
+			fullsize = 1;
 		's' =>
 			exportonly = 1;
 		'x' =>
@@ -73,7 +76,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	if(!exportonly)
 		title += " " + hd argv;
 	w := wmclient->window(ctxt, title, buts);
-	w.reshape(((0, 0), size));
+	r := ((0, 0), size);
+	if(fullsize && ctxt.display != nil && ctxt.display.image != nil)
+		r = ctxt.display.image.r;
+	w.reshape(r);
 	w.onscreen(nil);
 	if(w.image == nil){
 		sys->fprint(sys->fildes(2), "9win: cannot get image to draw on\n");
@@ -88,7 +94,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		raise "fail:error";
 	}
 	w.startinput("kbd" :: "ptr" :: nil);
-	spawn ptrproc(rq := chan of Sys->Rread, ptr := chan[10] of ref Pointer, reshape := chan[1] of int);
+	spawn ptrproc(w, rq := chan of Sys->Rread, ptr := chan[10] of ref Pointer, reshape := chan[1] of int);
 
 		
 	fwinname := sys->file2chan(ld, "winname");
@@ -133,7 +139,10 @@ handleevents(w: ref Window, ptr: chan of ref Pointer, reshape: chan of int)
 			winname = nil;
 		}
 	p := <-w.ctxt.ptr =>
-		if(w.pointer(*p) == 0){
+		if(p.buttons == -1){
+			w.reshape(((0, 0), p.xy));
+			reshape <-= 1;
+		}else if(w.pointer(*p) == 0){
 			# XXX would block here if client isn't reading mouse... but we do want to
 			# extert back-pressure, which conflicts.
 			alt{
@@ -228,7 +237,7 @@ serveproc(w: ref Window, mouserq: chan of Sys->Rread, fwinname, fconsctl, fcons,
 	}
 }
 
-ptrproc(rq: chan of Sys->Rread, ptr: chan of ref Pointer, reshape: chan of int)
+ptrproc(w: ref Window, rq: chan of Sys->Rread, ptr: chan of ref Pointer, reshape: chan of int)
 {
 	rl: list of Sys->Rread;
 	c := ref Pointer(0, (0, 0), 0);
@@ -240,6 +249,10 @@ ptrproc(rq: chan of Sys->Rread, ptr: chan of ref Pointer, reshape: chan of int)
 			c = p;
 		<-reshape =>
 			ch = 'r';
+			# The control message has already updated w.image.  Resize
+			# events carry the image dimensions, not the last pointer.
+			ir := w.image.r;
+			c.xy = ir.size();
 		rc := <-rq =>
 			rl  = rc :: rl;
 			continue;
@@ -287,11 +300,13 @@ run(sync, ctl: chan of string, ld: string, argv: list of string)
 {
 	Rcmeta: con "|<>&^*[]?();";
 	sys->pctl(Sys->FORKNS, nil);
-	if(sys->bind("#₪", "/srv", Sys->MCREATE) == -1){
+	sys->create("/tmp/srv", Sys->OREAD, Sys->DMDIR|8r755);
+	sh->run(nil, "mount" :: "{mntgen}" :: "/tmp/srv" :: nil);
+	if(sys->bind("#s", "/tmp/srv", Sys->MCREATE) == -1){
 		sync <-= sys->sprint("cannot bind srv device: %r");
 		exit;
 	}
-	srvname := "/srv/9win."+string sys->pctl(0, nil);	# XXX do better.
+	srvname := "/tmp/srv/9win."+string sys->pctl(0, nil);	# XXX do better.
 	fd := sys->create(srvname, Sys->ORDWR, 8r600);
 	if(fd == nil){
 		sync <-= sys->sprint("cannot create %s: %r", srvname);

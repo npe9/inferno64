@@ -55,6 +55,41 @@ static int		altPressed;
 static int		button2, button3;
 static char		snarf[3*SnarfSize+1];
 
+static void
+screenresize(int w, int h)
+{
+	Memimage *old, *next;
+	int copyw, copyh, y;
+
+	if(w < 1 || h < 1 || (w == dx && h == dy))
+		return;
+	next = allocmemimage(Rect(0, 0, w, h), XBGR32);
+	if(next == nil)
+		return;
+	old = gscreen;
+	/* Initialize newly exposed pixels to the WM grey background. */
+	memset(next->data->bdata, 0x77, next->width * sizeof(u32) * h);
+	if(old != nil){
+		copyw = old->r.max.x - old->r.min.x;
+		if(copyw > w) copyw = w;
+		copyh = old->r.max.y - old->r.min.y;
+		if(copyh > h) copyh = h;
+		for(y = 0; y < copyh; y++)
+			memmove(next->data->bdata + y * next->width * sizeof(u32),
+				old->data->bdata + y * old->width * sizeof(u32),
+				copyw * sizeof(u32));
+	}
+	gscreen = next;
+	dx = w;
+	dy = h;
+	drawscreenresize(gscreen);
+	if(view != nil)
+		[view setNeedsDisplay:YES];
+	/* Existing Draw images may still reference the old screen data while
+	 * the window system processes its resize notification.  Retain it until
+	 * process teardown rather than freeing it under those clients. */
+}
+
 static int
 bytesperline1(Rectangle r)
 {
@@ -218,6 +253,14 @@ convert_key(unsigned short key, unichar ch)
 		[self layer].contentsScale = s;
 }
 
+- (void)setFrameSize:(NSSize)size
+{
+	[super setFrameSize:size];
+	if(!readybit || gscreen == nil || size.width < 1 || size.height < 1)
+		return;
+	screenresize((int)size.width, (int)size.height);
+}
+
 - (void)resetCursorRects
 {
 	[super resetCursorRects];
@@ -262,7 +305,7 @@ convert_key(unsigned short key, unichar ch)
 		bitsPerPixel:32];
 	/* Scale softscreen into the current content view (window may resize). */
 	[rep drawInRect:[self bounds]
-		fromRect:NSZeroRect
+		fromRect:NSMakeRect(0, 0, dx, dy)
 		operation:NSCompositingOperationCopy
 		fraction:1.0
 		respectFlipped:YES
@@ -437,6 +480,18 @@ convert_key(unsigned short key, unichar ch)
 @end
 
 @implementation InfernoAppDelegate
+- (void)windowDidResize:(NSNotification *)note
+{
+	NSRect r;
+	(void)note;
+	if(view == nil)
+		return;
+	if(!readybit)
+		return;
+	r = [view bounds];
+	screenresize((int)r.size.width, (int)r.size.height);
+}
+
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender
 {
 	(void)sender;
@@ -531,7 +586,6 @@ createwindow(void)
 	[win setDelegate:(id)delegate];
 	/* Softscreen size is fixed; constrain the content aspect to it. */
 	[win setContentMinSize:NSMakeSize(dx/2, dy/2)];
-	[win setContentAspectRatio:NSMakeSize(dx, dy)];
 	[win setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
 
 	view = [[InfernoView alloc] initWithFrame:NSMakeRect(0, 0, dx, dy)];

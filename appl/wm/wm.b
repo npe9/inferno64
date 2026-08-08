@@ -6,10 +6,11 @@ include "draw.m";
 	Screen, Display, Image, Rect, Point, Wmcontext, Pointer: import draw;
 include "wmsrv.m";
 	wmsrv: Wmsrv;
-	Window, Client: import wmsrv;
+	Client: import wmsrv;
 include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
+	Window: import wmclient;
 include "string.m";
 	str: String;
 include "sh.m";
@@ -28,6 +29,7 @@ Background: con int 16r777777FF;
 
 screen: ref Screen;
 display: ref Display;
+rootwin: ref Window;
 ptrfocus: ref Client;
 kbdfocus: ref Client;
 controller: ref Client;
@@ -35,6 +37,11 @@ allowcontrol := 1;
 fakekbd: chan of string;
 fakekbdin: chan of string;
 buttons := 0;
+rootresizing := 0;
+forceclientresize := 1;
+rootresized: chan of int;
+screenresize: chan of Point;
+lastscreenr: Rect;
 
 badmodule(p: string)
 {
@@ -76,6 +83,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	if(ctxt.wm == nil)
 		buts = Wmclient->Plain;
 	win := wmclient->window(ctxt, "Wm", buts);
+	rootwin = win;
 	wmclient->win.reshape(((0, 0), (100, 100)));
 	wmclient->win.onscreen("place");
 	if(win.image == nil){
@@ -85,6 +93,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	wmclient->win.startinput("kbd" :: "ptr" :: nil);
 	wmctxt := win.ctxt;
 	screen = makescreen(win.image);
+	lastscreenr = screen.image.r;
 
 	(clientwm, join, req) := wmsrv->init();
 	clientctxt := ref Draw->Context(ctxt.display, nil, clientwm);
@@ -102,7 +111,16 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		fatal("cannot run command: " + e);
 
 	fakekbd = chan of string;
+	rootresized = chan of int;
+	screenresize = chan of Point;
+	spawn screenmonitor(screenresize);
 	for(;;) alt {
+		sz := <-screenresize =>
+		if(sz.x > 0 && sz.y > 0 && rootresizing == 0){
+			updatescreen(sz);
+			rootresizing = 1;
+			spawn rootreshape(sz, rootresized);
+		}
 	c := <-win.ctl or
 	c = <-wmctxt.ctl =>
 		# XXX could implement "pleaseexit" in order that
@@ -113,13 +131,27 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				z.ctl <-= "exit";
 
 		wmclient->win.wmctl(c);
-		if(win.image != screen.image)
+		if(win.image != screen.image || !win.image.r.eq(lastscreenr))
 			reshaped(win);
 	c := <-wmctxt.kbd or
 	c = int <-fakekbd =>
 		if(kbdfocus != nil)
 			kbdfocus.kbd <-= c;
+	done := <-rootresized =>
+		rootresizing = 0;
+		if(done == 0)
+			reshaped(win);
 	p := <-wmctxt.ptr =>
+		if(p.buttons == -1){
+			# The host display changed size.  Resize the root window;
+			# reshaped() will rebuild the screen and reflow all clients.
+		if(p.xy.x > 0 && p.xy.y > 0 && rootresizing == 0){
+			updatescreen(p.xy);
+				rootresizing = 1;
+				spawn rootreshape(p.xy, rootresized);
+			}
+			continue;
+		}
 		if(wmclient->win.pointer(*p))
 			break;
 		if(p.buttons && (ptrfocus == nil || buttons == 0)){
@@ -188,6 +220,42 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			off = big len d;
 		spawn freplyb(rc, d[int off:], nil); # TODO potential bug truncating big to int
 	}
+}
+
+updatescreen(sz: Point)
+{
+	# Do not mutate the current screen here.  reshaped() needs the old
+	# rectangle to compute client reflow; rootwin.reshape() installs the new
+	# image and rectangle, then reshaped() repaints it.
+	if(sz.x <= 0 || sz.y <= 0)
+		return;
+}
+
+screenmonitor(ch: chan of Point)
+{
+	fd := sys->open("/dev/screen", Sys->OREAD);
+	if(fd == nil)
+		return;
+	last := Point(0, 0);
+	for(;;){
+		buf := array[5*12] of byte;
+		sys->seek(fd, big 0, 0);
+		n := sys->read(fd, buf, len buf);
+		if(n > 48){
+			sz := Point(int string buf[36:47], int string buf[48:]);
+			if(sz.x != last.x || sz.y != last.y){
+				last = sz;
+				ch <-= sz;
+			}
+		}
+		sys->sleep(100);
+	}
+}
+
+rootreshape(size: Point, done: chan of int)
+{
+	rootwin.reshape(((0, 0), size));
+	done <-= 0;
 }
 
 freply(rc: Sys->Rwrite, n: int, err: string)
@@ -393,7 +461,17 @@ reshaped(win: ref Wmclient->Window)
 	my := Fix;
 	if(oldr.dy() > 0)
 		my = newr.dy() * Fix / oldr.dy();
+	# Keep the destination clip in sync with the new root extent.  A stale
+	# clip rectangle clips the background fill to the old window box while
+	# allowing some direct client primitives to appear outside it.
+	win.image.clipr = win.image.r;
 	screen = makescreen(win.image);
+	# Repaint the entire new root image explicitly.  The framebuffer is
+	# preserved across a host resize, so newly exposed pixels are otherwise
+	# left with their zeroed contents until a client happens to draw there.
+	bg := win.image.display.color(Background);
+	win.image.draw(win.image.r, bg, nil, bg.r.min);
+	win.image.flush(Draw->Flushnow);
 	for(z := wmsrv->top(); z != nil; z = z.znext){
 		for(wl := z.wins; wl != nil; wl = tl wl){
 			w := hd wl;
@@ -407,10 +485,15 @@ reshaped(win: ref Wmclient->Window)
 			w.img = screen.newwindow(nr, Draw->Refbackup, Draw->Nofill);
 			# XXX check for creation failure
 			w.r = nr;
+			# Tell the client to replace its backing image as well.  The
+			# server-side window alone only lets incremental drawing (such as
+			# clock hands) reach the new area; the client's image would retain
+			# the old bounding box and leave its background stale.
 			z.ctl <-= sys->sprint("!reshape %q -1 %s", w.tag, r2s(nr));
 			z.ctl <-= "rect " + r2s(newr);
 		}
 	}
+	lastscreenr = newr;
 }
 
 controlevent(e: string)
@@ -419,7 +502,7 @@ controlevent(e: string)
 		controller.ctl <-= e;
 }
 
-dragwin(ptr: chan of ref Pointer, c: ref Client, w: ref Window, off: Point): string
+dragwin(ptr: chan of ref Pointer, c: ref Client, w: ref Wmsrv->Window, off: Point): string
 {
 	if(buttons == 0)
 		return "too late";
@@ -450,7 +533,7 @@ dragwin(ptr: chan of ref Pointer, c: ref Client, w: ref Window, off: Point): str
 	return nil;
 }
 
-sizewin(ptrc: chan of ref Pointer, c: ref Client, w: ref Window, minsize: Point): string
+sizewin(ptrc: chan of ref Pointer, c: ref Client, w: ref Wmsrv->Window, minsize: Point): string
 {
 	borders := array[4] of ref Image;
 	showborders(borders, w.r, Minx|Maxx|Miny|Maxy);
@@ -488,7 +571,7 @@ reshape(c: ref Client, tag: string, r: Rect): string
 {
 	w := c.window(tag);
 	# if window hasn't changed size, then just change its origin and use the same image.
-	if((c.flags & Fixedorigin) == 0 && w != nil && w.r.size().eq(r.size())){
+	if(forceclientresize == 0 && (c.flags & Fixedorigin) == 0 && w != nil && w.r.size().eq(r.size())){
 		c.setorigin(tag, r.min);
 	} else {
 		img := screen.newwindow(r, Draw->Refbackup, Draw->Nofill);

@@ -626,3 +626,17 @@ truerand(void)
 	randomread(&x, sizeof(x));
 	return x;
 }
+
+QLock grandomlk;
+
+void
+_genrandomqlock(void)
+{
+	qlock(&grandomlk);
+}
+
+void
+_genrandomqunlock(void)
+{
+	qunlock(&grandomlk);
+}

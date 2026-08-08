@@ -32,6 +32,9 @@ static struct
 {
 	Pointer	v;
 	int	modify;
+	int	resize;
+	int	resizew;
+	int	resizeh;
 	int	lastb;
 	Rendez	r;
 	Ref	ref;
@@ -58,6 +61,17 @@ static struct {
 	int	put;
 	int	get;
 } ptrq;
+
+void
+mouseresize(int w, int h)
+{
+	mouse.modify = 1;
+	mouse.resize = 1;
+	mouse.resizew = w;
+	mouse.resizeh = h;
+	ptrq.put++;
+	Wakeup(&ptrq.r);
+}
 
 /*
  * called by any source of pointer data
@@ -191,6 +205,7 @@ pointerread(Chan* c, void* a, long n, vlong off)
 {
 	Pointer mt;
 	char buf[1+4*12+1];
+	char type;
 	int l;
 
 	USED(&off);
@@ -206,7 +221,14 @@ pointerread(Chan* c, void* a, long n, vlong off)
 		mt = mouseconsume();
 		poperror();
 		qunlock(&mouse.q);
-		l = snprint(buf, sizeof(buf), "m%11d %11d %11d %11lud ", mt.x, mt.y, mt.b, mt.msec);
+		type = 'm';
+		if(mouse.resize){
+			type = 'r';
+			mt.x = mouse.resizew;
+			mt.y = mouse.resizeh;
+			mouse.resize = 0;
+		}
+		l = snprint(buf, sizeof(buf), "%c%11d %11d %11d %11lud ", type, mt.x, mt.y, mt.b, mt.msec);
 		if(l < n)
 			n = l;
 		memmove(a, buf, n);

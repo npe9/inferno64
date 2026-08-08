@@ -107,7 +107,9 @@ rioproxy1(wc: chan of (ref Draw->Context, string))
 	wc <-= (ref Draw->Context(display, nil, wm), nil);
 
 	sys->pctl(Sys->FORKNS, nil);
-	ebind("#₪", "/srv", Sys->MREPL|Sys->MCREATE);
+	sys->create(P9PATH+"/srv", Sys->OREAD, Sys->DMDIR|8r755);
+	sh->run(nil, "mount" :: "{mntgen}" :: (P9PATH+"/srv") :: nil);
+	ebind("#s", P9PATH+"/srv", Sys->MREPL|Sys->MCREATE);
 	if(sys->bind(P9PATH+"/dev/draw", "/dev/draw", Sys->MREPL) == -1)
 		ebind(P9PATH+"/dev", "/dev", Sys->MAFTER);
 	sh->run(nil, "mount" :: "{mntgen}" :: "/mnt" :: nil);

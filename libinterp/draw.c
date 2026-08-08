@@ -84,6 +84,9 @@ struct DFont
 	DRef*		dref;
 };
 
+static DDisplay *resize_display;
+static Screen *resize_screen;
+
 Cache*	sfcache[BIHASH];
 Cache*	fcache[BIHASH];
 void*	cacheqlock;
@@ -341,6 +344,7 @@ Display_allocate(void *fp)
 	}
 	dd = H2D(DDisplay*, h);
 	dd->display = display;
+	resize_display = dd;
 	*f->ret = &dd->drawdisplay;
 	dd->dref = dr;
 	display->limbo = dr;
@@ -370,6 +374,24 @@ Display_allocate(void *fp)
 
 	/* don't call unlockdisplay because the qlock was left up by initdisplay */
 	libqunlock(display->qlock);
+}
+
+void
+drawdisplayresize(Rectangle r)
+{
+	DDisplay *dd = resize_display;
+	if(dd == nil || dd->display == nil || dd->display->image == nil)
+		return;
+	if(resize_screen != nil){
+		resize_screen->image->r = r;
+		resize_screen->image->clipr = r;
+		if(resize_screen->fill != nil)
+			resize_screen->fill->clipr = r;
+	}
+	dd->display->image->r = r;
+	dd->display->image->clipr = r;
+	R2R(dd->drawdisplay.image->r, r);
+	R2R(dd->drawdisplay.image->clipr, r);
 }
 
 void
@@ -1312,6 +1334,7 @@ mkdrawscreen(Screen *s, Draw_Display *display)
 		return nil;
 	ds = H2D(DScreen*, h);
 	ds->screen = s;
+	resize_screen = s;
 	ds->drawscreen.fill = dfill;
 	D2H(dfill)->ref++;
 	ds->drawscreen.image = dimage;
@@ -1342,6 +1365,7 @@ allocdrawscreen(Draw_Image *dimage, Draw_Image *dfill, int public)
 		return nil;
 	ds = H2D(DScreen*, h);
 	ds->screen = s;
+	resize_screen = s;
 	ds->drawscreen.fill = dfill;
 	D2H(dfill)->ref++;
 	ds->drawscreen.image = dimage;

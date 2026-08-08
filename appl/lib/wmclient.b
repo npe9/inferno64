@@ -141,7 +141,7 @@ Window.reshape(w: self ref Window, r: Rect)
 
 putimage(w: ref Window, i: ref Image)
 {
-	if(w.screen != nil && i == w.screen.image)
+	if(w.screen != nil && i == w.screen.image && w.image != nil && w.image.r.eq(i.r))
 		return;
 	w.screen = Screen.allocate(i, w.display.color(Draw->White), 0);
 	ir := i.r.inset(w.bd);

@@ -155,6 +155,7 @@ static	Memdata	screendata;
 static	Rectangle	flushrect;
 static	int		waste;
 static	DScreen*	dscreen;
+extern	void	drawdisplayresize(Rectangle);
 extern	void		flushmemscreen(Rectangle);
 	void		drawmesg(Client*, void*, int);
 	void		drawuninstall(Client*, int);
@@ -893,6 +894,26 @@ deletescreenimage(void)
 		freememimage(screenimage);
 	screenimage = nil;
 	qunlock(&sdraw.q);
+}
+
+void
+drawscreenresize(Memimage *n)
+{
+	if(n == nil || screenimage == nil)
+		return;
+	qlock(&sdraw.q);
+	screendata.base = n->data->base;
+	screendata.bdata = n->data->bdata;
+	screenimage->data = &screendata;
+	screenimage->r = n->r;
+	screenimage->clipr = n->clipr;
+	screenimage->width = n->width;
+	qunlock(&sdraw.q);
+	drawdisplayresize(n->r);
+	/* Resize all Inferno draw metadata before invalidating the surface. */
+	flushrect = n->r;
+	drawflush();
+	mouseresize(n->r.max.x - n->r.min.x, n->r.max.y - n->r.min.y);
 }
 
 Chan*

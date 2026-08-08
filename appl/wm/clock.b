@@ -68,8 +68,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ctl := <-w.ctl or
 	ctl = <-w.ctxt.ctl =>
 		w.wmctl(ctl);
-		if(ctl != nil && ctl[0] == '!')
+		if(ctl != nil && ctl[0] == '!'){
 			drawclock(w.image, now);
+		}
 
 	p := <-w.ctxt.ptr =>
 		w.pointer(*p);

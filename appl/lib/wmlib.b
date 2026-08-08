@@ -467,12 +467,14 @@ ptrproc(sync: chan of int, fd: ref Sys->FD, ptr: chan of ref Draw->Pointer)
 
 bytes2ptr(b: array of byte): ref Pointer
 {
-	if(len b < Ptrsize || int b[0] != 'm')
+	if(len b < Ptrsize || (int b[0] != 'm' && int b[0] != 'r'))
 		return nil;
 	x := int string b[1:13];
 	y := int string b[13:25];
 	but := int string b[25:37];
 	msec := int string b[37:49];
+	if(int b[0] == 'r')
+		return ref Pointer (-1, (x, y), msec);
 	return ref Pointer (but, (x, y), msec);
 }
 
