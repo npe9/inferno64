@@ -75,4 +75,62 @@ menu Games			'Cards'			{wmapp /Apps/!Cards}
 #menu Games			'Game client'		{wmrun games/gameclient >/dev/null >[2=1]}
 #menu Games			'Game client (local)'	{wmrun games/gameclient -l > /dev/null >[2=1]}
 
+
+menu TempleOS		'ASCIIOrgan'		{wmapp /Apps/!TempleASCIIOrgan}
+menu TempleOS		'BattleLines'		{wmapp /Apps/!TempleBattleLines}
+menu TempleOS		'BigGuns'		{wmapp /Apps/!TempleBigGuns}
+menu TempleOS		'BlackDiamond'		{wmapp /Apps/!TempleBlackDiamond}
+menu TempleOS		'BomberGolf'		{wmapp /Apps/!TempleBomberGolf}
+menu TempleOS		'Bounce'		{wmapp /Apps/!TempleBounce}
+menu TempleOS		'Box'		{wmapp /Apps/!TempleBox}
+menu TempleOS		'Budget'		{wmapp /Apps/!TempleBudget}
+menu TempleOS		'Cartesian'		{wmapp /Apps/!TempleCartesian}
+menu TempleOS		'CastleFrankenstein'		{wmapp /Apps/!TempleCastleFrankenstein}
+menu TempleOS		'CharDemo'		{wmapp /Apps/!TempleCharDemo}
+menu TempleOS		'CircleTrace'		{wmapp /Apps/!TempleCircleTrace}
+menu TempleOS		'Collision'		{wmapp /Apps/!TempleCollision}
+menu TempleOS		'Digits'		{wmapp /Apps/!TempleDigits}
+menu TempleOS		'Doodle'		{wmapp /Apps/!TempleDoodle}
+menu TempleOS		'DunGen'		{wmapp /Apps/!TempleDunGen}
+menu TempleOS		'ElephantWalk'		{wmapp /Apps/!TempleElephantWalk}
+menu TempleOS		'FlapBat'		{wmapp /Apps/!TempleFlapBat}
+menu TempleOS		'FlatTops'		{wmapp /Apps/!TempleFlatTops}
+menu TempleOS		'FontEd'		{wmapp /Apps/!TempleFontEd}
+menu TempleOS		'God'		{wmapp /Apps/!TempleGod}
+menu TempleOS		'GrModels'		{wmapp /Apps/!TempleGrModels}
+menu TempleOS		'Halogen'		{wmapp /Apps/!TempleHalogen}
+menu TempleOS		'Hanoi'		{wmapp /Apps/!TempleHanoi}
+menu TempleOS		'KeepAway'		{wmapp /Apps/!TempleKeepAway}
+menu TempleOS		'Life'		{wmapp /Apps/!TempleLife}
+menu TempleOS		'Lines'		{wmapp /Apps/!TempleLines}
+menu TempleOS		'Logic'		{wmapp /Apps/!TempleLogic}
+menu TempleOS		'MassSpring'		{wmapp /Apps/!TempleMassSpring}
+menu TempleOS		'Maze'		{wmapp /Apps/!TempleMaze}
+menu TempleOS		'NetOfDots'		{wmapp /Apps/!TempleNetOfDots}
+menu TempleOS		'OhGreat'		{wmapp /Apps/!TempleOhGreat}
+menu TempleOS		'Psalmody'		{wmapp /Apps/!TemplePsalmody}
+menu TempleOS		'RainDrops'		{wmapp /Apps/!TempleRainDrops}
+menu TempleOS		'RawHide'		{wmapp /Apps/!TempleRawHide}
+menu TempleOS		'Rocket'		{wmapp /Apps/!TempleRocket}
+menu TempleOS		'RocketScience'		{wmapp /Apps/!TempleRocketScience}
+menu TempleOS		'Span'		{wmapp /Apps/!TempleSpan}
+menu TempleOS		'Squirt'		{wmapp /Apps/!TempleSquirt}
+menu TempleOS		'Stadium'		{wmapp /Apps/!TempleStadium}
+menu TempleOS		'Strut'		{wmapp /Apps/!TempleStrut}
+menu TempleOS		'Symmetry'		{wmapp /Apps/!TempleSymmetry}
+menu TempleOS		'Talons'		{wmapp /Apps/!TempleTalons}
+menu TempleOS		'TheDead'		{wmapp /Apps/!TempleTheDead}
+menu TempleOS		'TicTacToe'		{wmapp /Apps/!TempleTicTacToe}
+menu TempleOS		'TimeClock'		{wmapp /Apps/!TempleTimeClock}
+menu TempleOS		'Titanium'		{wmapp /Apps/!TempleTitanium}
+menu TempleOS		'ToTheFront'		{wmapp /Apps/!TempleToTheFront}
+menu TempleOS		'TreeCheckers'		{wmapp /Apps/!TempleTreeCheckers}
+menu TempleOS		'Varoom'		{wmapp /Apps/!TempleVaroom}
+menu TempleOS		'Vocabulary'		{wmapp /Apps/!TempleVocabulary}
+menu TempleOS		'Wenceslas'		{wmapp /Apps/!TempleWenceslas}
+menu TempleOS		'Whap'		{wmapp /Apps/!TempleWhap}
+menu TempleOS		'XCaliber'		{wmapp /Apps/!TempleXCaliber}
+menu TempleOS		'Zing'		{wmapp /Apps/!TempleZing}
+menu TempleOS		'ZoneOut'		{wmapp /Apps/!TempleZoneOut}
+
 if {ftest -f $home/lib/wmsetup} {run $home/lib/wmsetup} {}
