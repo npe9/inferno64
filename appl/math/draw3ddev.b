@@ -2,7 +2,7 @@ implement Draw3d;
 
 # Draw3d via /dev/draw protocol letters (3/M/w/u/z/g/G).
 # Falls back is the caller's job: load this module, or software draw3d.dis.
-# Server projects 'G'/'g'; Cocoa Metal batches 'G' into the softscreen.
+# Server projects 'G'/'g'; Cocoa Metal batches both onto the drawable after softscreen.
 
 include "sys.m";
 	sys: Sys;

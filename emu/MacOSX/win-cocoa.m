@@ -67,19 +67,21 @@ static int	wm_notify_generation;
 static volatile int	present_dirty;
 static volatile int	present_queued;
 
-/* Metal softscreen present (CAMetalLayer) + direct draw3d 'G' lines. */
+/* Metal softscreen present (CAMetalLayer) + direct draw3d 'G'/'g'. */
 static id<MTLDevice>		mtl_device;
 static id<MTLCommandQueue>	mtl_queue;
 static id<MTLRenderPipelineState>	mtl_pipe;
-static id<MTLRenderPipelineState>	mtl_line_pipe;	/* BGRA8 drawable */
+static id<MTLRenderPipelineState>	mtl_geom_pipe;	/* BGRA8 drawable lines+tris */
 static id<MTLTexture>		mtl_tex;
 static int	mtl_tex_w, mtl_tex_h;
 static CAMetalLayer	*mtl_layer;
 static Rectangle	soft_upload;	/* dirty softscreen region since last present */
 static int	soft_upload_valid;
+static Memimage	*mtl_solidsrc;	/* 1×1 for emergency soft fill of GPU tris */
 
 enum {
 	MaxGPULines = 16384,
+	MaxGPUTriVerts = 49152,	/* 16384 triangles × 3 packed verts */
 };
 
 typedef struct GPULine GPULine;
@@ -88,9 +90,20 @@ struct GPULine {
 	float	r, g, b, a;
 };
 
-/* Screen-space segments held until present (no Memimage writeback). */
+/*
+ * Packed screen-space vertex (must match Metal LIn: 6 floats, no padding).
+ * Used for both line endpoints and fillpoly3 triangle lists.
+ */
+typedef struct GPUVert GPUVert;
+struct GPUVert {
+	float	x, y, r, g, b, a;
+};
+
+/* Screen-space geometry held until present (no Memimage writeback). */
 static GPULine	glines[MaxGPULines];
 static int	nglines;
+static GPUVert	gtriverts[MaxGPUTriVerts];
+static int	ngtriverts;
 
 /* Soft Plan9 Paper desktop (#C4C0B4); must match appl/wm/wm.b Background. */
 enum {
@@ -136,11 +149,15 @@ static NSString *const kSoftscreenMetalSrc =
 
 /* Assigned from metal_init; declared in emu/port/devdraw.c */
 extern int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int);
+extern int	(*gpudrawfillpoly)(Memimage*, Point*, int, Memimage*, int);
 extern void	(*gpudrawflush)(void);
 
-static void	metal_flush_lines(void);
+static void	metal_flush_geom(void);
 static int	metal_queue_line(Memimage*, Point, Point, int, Memimage*, int);
+static int	metal_queue_fillpoly(Memimage*, Point*, int, Memimage*, int);
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, int, int);
+static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, int, int);
+static void	soft_burn_tris(void);
 
 static void
 invalidate_mtl_tex(void)
@@ -176,18 +193,19 @@ metal_init(void)
 	if(mtl_pipe == nil)
 		return -1;
 
-	/* Lines composite directly onto the CAMetalLayer drawable (BGRA8). */
+	/* Lines + filled tris composite onto the CAMetalLayer drawable (BGRA8). */
 	pd = [[MTLRenderPipelineDescriptor alloc] init];
 	pd.vertexFunction = [lib newFunctionWithName:@"vlmain"];
 	pd.fragmentFunction = [lib newFunctionWithName:@"flmain"];
 	pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
 	pd.colorAttachments[0].blendingEnabled = NO;
-	mtl_line_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
-	if(mtl_line_pipe == nil)
+	mtl_geom_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+	if(mtl_geom_pipe == nil)
 		return -1;
 
 	gpudrawline = metal_queue_line;
-	gpudrawflush = metal_flush_lines;
+	gpudrawfillpoly = metal_queue_fillpoly;
+	gpudrawflush = metal_flush_geom;
 	return 0;
 }
 
@@ -251,7 +269,7 @@ src_rgba(Memimage *src, float *r, float *g, float *b, float *a)
 
 /*
  * Resolve clear layered windows to softscreen (screen coords).
- * Obscured layers stay on the software memline path.
+ * Obscured layers stay on the software memline/memfillpoly path.
  */
 static Memimage*
 line_pixdst(Memimage *dst, Point *p0, Point *p1)
@@ -268,6 +286,69 @@ line_pixdst(Memimage *dst, Point *p0, Point *p1)
 	*p0 = addpt(*p0, l->delta);
 	*p1 = addpt(*p1, l->delta);
 	return l->screen->image;
+}
+
+static Memimage*
+poly_pixdst(Memimage *dst, Point *pp, int n)
+{
+	Memlayer *l;
+	int i;
+
+	if(dst == nil || pp == nil || n < 3)
+		return nil;
+	l = dst->layer;
+	if(l == nil)
+		return dst;
+	if(!l->clear)
+		return nil;
+	for(i = 0; i < n; i++)
+		pp[i] = addpt(pp[i], l->delta);
+	return l->screen->image;
+}
+
+static Memimage*
+metal_solid(float r, float g, float b, float a)
+{
+	u32 pix;
+
+	if(mtl_solidsrc == nil){
+		mtl_solidsrc = allocmemimage(Rect(0, 0, 1, 1), XBGR32);
+		if(mtl_solidsrc == nil)
+			return nil;
+	}
+	pix = ((u32)(a * 255) << 24) | ((u32)(b * 255) << 16)
+		| ((u32)(g * 255) << 8) | (u32)(r * 255);
+	*(u32*)byteaddr(mtl_solidsrc, mtl_solidsrc->r.min) = pix;
+	return mtl_solidsrc;
+}
+
+static void
+soft_burn_tris(void)
+{
+	int i;
+	Point pp[4];
+	Memimage *src;
+	GPUVert *v0, *v1, *v2;
+
+	if(gscreen == nil)
+		return;
+	for(i = 0; i + 2 < ngtriverts; i += 3){
+		v0 = &gtriverts[i];
+		v1 = &gtriverts[i+1];
+		v2 = &gtriverts[i+2];
+		src = metal_solid(v0->r, v0->g, v0->b, v0->a);
+		if(src == nil)
+			continue;
+		pp[0].x = (int)v0->x;
+		pp[0].y = (int)v0->y;
+		pp[1].x = (int)v1->x;
+		pp[1].y = (int)v1->y;
+		pp[2].x = (int)v2->x;
+		pp[2].y = (int)v2->y;
+		pp[3] = pp[0];
+		memfillpoly(gscreen, pp, 4, ~0, src, pp[0], S);
+	}
+	ngtriverts = 0;
 }
 
 static void
@@ -313,41 +394,83 @@ soft_bresenham(Memimage *dst, GPULine *L)
 }
 
 /*
- * Direct path: 'G' segments stay queued until present.  No Memimage writeback.
- * gpudrawflush is a no-op so 2D draws after line3 do not force a CPU round-trip;
- * lines composite onto the drawable after the softscreen blit.
+ * Direct path: 'G'/'g' geometry stays queued until present.  No Memimage writeback.
+ * gpudrawflush is a no-op so 2D draws after draw3d do not force a CPU round-trip;
+ * geometry composites onto the drawable after the softscreen blit.
  */
 static void
-metal_flush_lines(void)
+metal_flush_geom(void)
 {
-	/* retained until metal_present_lines */
+	/* retained until metal_present_* */
+}
+
+static int
+metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
+	int pw, int ph, GPUVert *verts, int nv, MTLPrimitiveType prim)
+{
+	float wh[2];
+	id<MTLBuffer> vbuf;
+	id<MTLRenderCommandEncoder> enc;
+	MTLRenderPassDescriptor *rp;
+
+	if(nv == 0 || cmd == nil || drawabletex == nil || mtl_geom_pipe == nil)
+		return -1;
+	vbuf = [mtl_device newBufferWithBytes:verts length:sizeof(GPUVert) * nv
+		options:MTLResourceStorageModeShared];
+	if(vbuf == nil)
+		return -1;
+	wh[0] = (float)pw;
+	wh[1] = (float)ph;
+
+	rp = [MTLRenderPassDescriptor renderPassDescriptor];
+	rp.colorAttachments[0].texture = drawabletex;
+	rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+	enc = [cmd renderCommandEncoderWithDescriptor:rp];
+	[enc setRenderPipelineState:mtl_geom_pipe];
+	[enc setVertexBuffer:vbuf offset:0 atIndex:0];
+	[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
+	[enc drawPrimitives:prim vertexStart:0 vertexCount:nv];
+	[enc endEncoding];
+	return 0;
+}
+
+static void
+metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex, int pw, int ph)
+{
+	int n;
+
+	n = ngtriverts;
+	if(n == 0)
+		return;
+	if(n % 3 != 0)
+		n -= n % 3;
+	if(metal_present_geom(cmd, drawabletex, pw, ph, gtriverts, n, MTLPrimitiveTypeTriangle) < 0)
+		soft_burn_tris();
+	else
+		ngtriverts = 0;
 }
 
 static void
 metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex, int pw, int ph)
 {
 	int i, n, nv;
-	float wh[2];
-	id<MTLBuffer> vbuf;
-	id<MTLRenderCommandEncoder> enc;
-	MTLRenderPassDescriptor *rp;
-	typedef struct { float x, y, r, g, b, a; } LVert;
-	LVert *verts;
+	GPUVert *verts;
 
 	n = nglines;
-	if(n == 0 || cmd == nil || drawabletex == nil || mtl_line_pipe == nil)
+	if(n == 0)
 		return;
 	nglines = 0;
 
 	nv = n * 2;
-	vbuf = [mtl_device newBufferWithLength:sizeof(LVert) * nv options:MTLResourceStorageModeShared];
-	if(vbuf == nil){
+	verts = malloc(sizeof(GPUVert) * nv);
+	if(verts == nil){
 		/* Emergency: burn into softscreen so the frame is not blank. */
 		for(i = 0; i < n; i++)
 			soft_bresenham(gscreen, &glines[i]);
 		return;
 	}
-	verts = vbuf.contents;
 	for(i = 0; i < n; i++){
 		verts[2*i].x = glines[i].x0;
 		verts[2*i].y = glines[i].y0;
@@ -362,20 +485,11 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex, int pw
 		verts[2*i+1].b = glines[i].b;
 		verts[2*i+1].a = glines[i].a;
 	}
-	wh[0] = (float)pw;
-	wh[1] = (float)ph;
-
-	rp = [MTLRenderPassDescriptor renderPassDescriptor];
-	rp.colorAttachments[0].texture = drawabletex;
-	rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
-	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-	enc = [cmd renderCommandEncoderWithDescriptor:rp];
-	[enc setRenderPipelineState:mtl_line_pipe];
-	[enc setVertexBuffer:vbuf offset:0 atIndex:0];
-	[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
-	[enc drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:nv];
-	[enc endEncoding];
+	if(metal_present_geom(cmd, drawabletex, pw, ph, verts, nv, MTLPrimitiveTypeLine) < 0){
+		for(i = 0; i < n; i++)
+			soft_bresenham(gscreen, &glines[i]);
+	}
+	free(verts);
 }
 
 static int
@@ -421,9 +535,64 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 }
 
 /*
- * Softscreen blit, then direct Metal line overlay onto the drawable.
- * 2D/wm stay in the softscreen; draw3d 'G' is GPU-composited on top
- * (no upload/download round-trip for the wireframe).
+ * fillpoly3 ('g'): fan-triangulate screen-space verts and queue for Metal.
+ * Convex faces (typical draw3d) are correct as a fan from vertex 0.
+ * Returns 0 ⇒ caller uses memfillpoly (obscured, bad op, colour, overflow burn).
+ */
+static int
+metal_queue_fillpoly(Memimage *dst, Point *pp, int n, Memimage *src, int op)
+{
+	Memimage *pix;
+	float r, g, bl, al;
+	int i, ntri, need;
+	GPUVert *v;
+
+	if(pp == nil || n < 3)
+		return 0;
+	if(op != SoverD && op != S)
+		return 0;
+	pix = poly_pixdst(dst, pp, n);
+	if(pix == nil)
+		return 0;
+	if(pix != gscreen && pix != screenimage)
+		return 0;
+	if(src_rgba(src, &r, &g, &bl, &al) < 0)
+		return 0;
+	ntri = n - 2;
+	need = ntri * 3;
+	if(need > MaxGPUTriVerts)
+		return 0;
+	if(ngtriverts + need > MaxGPUTriVerts)
+		soft_burn_tris();
+	for(i = 1; i < n - 1; i++){
+		v = &gtriverts[ngtriverts];
+		v[0].x = (float)pp[0].x;
+		v[0].y = (float)pp[0].y;
+		v[0].r = r;
+		v[0].g = g;
+		v[0].b = bl;
+		v[0].a = al;
+		v[1].x = (float)pp[i].x;
+		v[1].y = (float)pp[i].y;
+		v[1].r = r;
+		v[1].g = g;
+		v[1].b = bl;
+		v[1].a = al;
+		v[2].x = (float)pp[i+1].x;
+		v[2].y = (float)pp[i+1].y;
+		v[2].r = r;
+		v[2].g = g;
+		v[2].b = bl;
+		v[2].a = al;
+		ngtriverts += 3;
+	}
+	return 1;
+}
+
+/*
+ * Softscreen blit, then direct Metal fill + line overlay onto the drawable.
+ * 2D/wm stay in the softscreen; draw3d 'g'/'G' are GPU-composited on top
+ * (fills first, then lines; no upload/download round-trip for the geometry).
  */
 static void
 present_softscreen(void)
@@ -497,7 +666,8 @@ present_softscreen(void)
 	[enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
 	[enc endEncoding];
 
-	/* Direct wireframe onto the drawable (after 2D softscreen). */
+	/* Direct draw3d onto the drawable (after 2D softscreen): fills then lines. */
+	metal_present_tris(cmd, drawable.texture, pw, ph);
 	metal_present_lines(cmd, drawable.texture, pw, ph);
 
 	[cmd presentDrawable:drawable];

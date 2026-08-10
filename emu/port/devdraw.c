@@ -168,8 +168,9 @@ extern	void	drawdisplayresize(Rectangle);
 extern	void		flushmemscreen(Rectangle);
 	void		drawmesg(Client*, void*, int);
 
-/* Cocoa Metal (win-cocoa.m) assigns these; nil ⇒ software memline. */
+/* Cocoa Metal (win-cocoa.m) assigns these; nil ⇒ software memline/memfillpoly. */
 int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int);
+int	(*gpudrawfillpoly)(Memimage*, Point*, int, Memimage*, int);
 void	(*gpudrawflush)(void);
 	void		drawuninstall(Client*, int);
 	void		drawfreedimage(DImage*);
@@ -2141,7 +2142,7 @@ drawmesg(Client *client, void *av, int n)
 		 * 'z' dstid[4]         — clear (and size) software z-buffer for dst
 		 * 'g' dstid srcid n[2] xyz... — fillpoly3 world-space verts
 		 * 'G' dstid srcid thick a[3] b[3] — line3
-		 * 'G' may be Metal-batched onto the Cocoa drawable; 'g' remains software Memimage.
+		 * 'g'/'G' may be Metal-batched onto the Cocoa drawable (no Memimage writeback).
 		 */
 		case '3':
 			printmesg(fmt="", a, 0);
@@ -2225,8 +2226,16 @@ drawmesg(Client *client, void *av, int n)
 			}
 			pp[nw] = pp[0];
 			op = drawclientop(client);
-			memfillpoly(dst, pp, nw+1, ~0, src, pp[0], op);
-			/* flush bbox of projected verts */
+			{
+				int gpudone;
+
+				gpudone = 0;
+				if(gpudrawfillpoly != nil)
+					gpudone = gpudrawfillpoly(dst, pp, nw, src, op);
+				if(!gpudone)
+					memfillpoly(dst, pp, nw+1, ~0, src, pp[0], op);
+			}
+			/* flush bbox of projected verts (triggers present; GPU path composites there) */
 			r = dst->clipr;
 			if(nw > 0){
 				r.min = r.max = pp[0];
