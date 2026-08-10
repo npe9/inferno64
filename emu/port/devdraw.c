@@ -169,9 +169,11 @@ extern	void		flushmemscreen(Rectangle);
 	void		drawmesg(Client*, void*, int);
 
 /* Cocoa Metal (win-cocoa.m) assigns these; nil ⇒ software memline/memfillpoly. */
-int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int);
-int	(*gpudrawfillpoly)(Memimage*, Point*, int, Memimage*, int);
+int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, float);
+int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int);
 void	(*gpudrawflush)(void);
+void	(*gpudrawzclear)(void);
+void	(*gpudrawzenable)(int);
 	void		drawuninstall(Client*, int);
 	void		drawfreedimage(DImage*);
 	Client*		drawclientofpath(ulong);
@@ -1507,12 +1509,18 @@ drawmesg(Client *client, void *av, int n)
 	while((n-=m) > 0){
 		USED(fmt);
 		a += m;
-		/* Flush batched Metal lines before any non-line3 draw touches pixels. */
+		/*
+		 * Snapshot softscreen under queued Metal geom before 2D draws,
+		 * so present can put sprites/HUD over the wireframe.  Keep draw3d
+		 * letters from flushing mid-batch.
+		 */
 		switch(*a){
 		case 'G':
+		case 'g':
 		case 'M':
 		case 'w':
 		case 'u':
+		case 'z':
 		case '3':
 			break;
 		default:
@@ -2142,7 +2150,7 @@ drawmesg(Client *client, void *av, int n)
 		 * 'z' dstid[4]         — clear (and size) software z-buffer for dst
 		 * 'g' dstid srcid n[2] xyz... — fillpoly3 world-space verts
 		 * 'G' dstid srcid thick a[3] b[3] — line3
-		 * 'g'/'G' may be Metal-batched onto the Cocoa drawable (no Memimage writeback).
+		 * 'g'/'G' may be Metal-batched onto the Cocoa drawable (depth + overlay).
 		 */
 		case '3':
 			printmesg(fmt="", a, 0);
@@ -2180,6 +2188,8 @@ drawmesg(Client *client, void *av, int n)
 				error(Eshortdraw);
 			client->d3zenable = a[1] & 1;
 			client->d3clipbehind = (a[1] & 2) != 0;
+			if(gpudrawzenable)
+				gpudrawzenable(client->d3zenable);
 			continue;
 
 		case 'z':
@@ -2189,6 +2199,8 @@ drawmesg(Client *client, void *av, int n)
 				error(Eshortdraw);
 			dst = drawimage(client, a+1);
 			d3clearz(client, dst);
+			if(gpudrawzclear)
+				gpudrawzclear();
 			continue;
 
 		case 'g':	/* fillpoly3 */
@@ -2211,29 +2223,44 @@ drawmesg(Client *client, void *av, int n)
 				free(pp);
 				nexterror();
 			}
-			for(j = 0; j < nw; j++){
-				float fx, fy, fz, ez;
-
-				fx = bgfloat(a+11 + j*12);
-				fy = bgfloat(a+11 + j*12 + 4);
-				fz = bgfloat(a+11 + j*12 + 8);
-				if(!d3project(client, fx, fy, fz, &pp[j], &ez)){
-					poperror();
-					free(pp);
-					goto gdone;
-				}
-				USED(ez);
-			}
-			pp[nw] = pp[0];
-			op = drawclientop(client);
 			{
+				float *ezs;
 				int gpudone;
 
+				ezs = malloc(sizeof(float) * nw);
+				if(ezs == nil){
+					poperror();
+					free(pp);
+					error(Edrawmem);
+				}
+				if(waserror()){
+					free(ezs);
+					nexterror();
+				}
+				for(j = 0; j < nw; j++){
+					float fx, fy, fz, ez;
+
+					fx = bgfloat(a+11 + j*12);
+					fy = bgfloat(a+11 + j*12 + 4);
+					fz = bgfloat(a+11 + j*12 + 8);
+					if(!d3project(client, fx, fy, fz, &pp[j], &ez)){
+						poperror();
+						free(ezs);
+						poperror();
+						free(pp);
+						goto gdone;
+					}
+					ezs[j] = ez;
+				}
+				pp[nw] = pp[0];
+				op = drawclientop(client);
 				gpudone = 0;
 				if(gpudrawfillpoly != nil)
-					gpudone = gpudrawfillpoly(dst, pp, nw, src, op);
+					gpudone = gpudrawfillpoly(dst, pp, ezs, nw, src, op);
 				if(!gpudone)
 					memfillpoly(dst, pp, nw+1, ~0, src, pp[0], op);
+				poperror();
+				free(ezs);
 			}
 			/* flush bbox of projected verts (triggers present; GPU path composites there) */
 			r = dst->clipr;
@@ -2265,7 +2292,7 @@ drawmesg(Client *client, void *av, int n)
 			if(j < 0)
 				error("negative line width");
 			{
-				float ax, ay, az, bx, by, bz, ez;
+				float ax, ay, az, bx, by, bz, eza, ezb;
 				Point pa, pb;
 				int gpudone;
 
@@ -2275,13 +2302,13 @@ drawmesg(Client *client, void *av, int n)
 				bx = bgfloat(a+25);
 				by = bgfloat(a+29);
 				bz = bgfloat(a+33);
-				if(!d3project(client, ax, ay, az, &pa, &ez)
-				|| !d3project(client, bx, by, bz, &pb, &ez))
+				if(!d3project(client, ax, ay, az, &pa, &eza)
+				|| !d3project(client, bx, by, bz, &pb, &ezb))
 					continue;
 				op = drawclientop(client);
 				gpudone = 0;
 				if(gpudrawline != nil)
-					gpudone = gpudrawline(dst, pa, pb, j, src, op);
+					gpudone = gpudrawline(dst, pa, pb, j, src, op, eza, ezb);
 				if(!gpudone)
 					memline(dst, pa, pb, Endsquare, Endsquare, j, src, pa, op);
 				if(dst == screenimage || dst->layer != nil){

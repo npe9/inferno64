@@ -752,7 +752,8 @@ Set the NDC-to-screen viewport:
 .B u
 .IR flags [1]
 .br
-Bit 0 enables the software z-buffer path; bit 1 enables clip-behind
+Bit 0 enables the z-buffer path (software polyfill, and GPU depth
+on the Cocoa Metal present); bit 1 enables clip-behind
 rejection (eye
 .BR z ≥ 0 ).
 .HP
@@ -761,6 +762,10 @@ rejection (eye
 .br
 Clear (and size) the per-client software z-buffer for image
 .IR dstid .
+On Cocoa Metal, also clears the GPU depth attachment used by
+.B g
+/
+.BR G .
 .HP
 .B g
 .IR dstid [4]
@@ -797,10 +802,28 @@ The Inferno Cocoa emu presents the softscreen with Metal.  Letters
 .B g
 (fillpoly3) and
 .B G
-(line3) are queued in screen space and drawn directly onto the
-CAMetalLayer drawable after the softscreen blit (no Memimage
-writeback): filled triangles first, then lines.  Obscured layers,
-non-solid ops, and thick lines fall back to software
+(line3) are queued in screen space with per-vertex depth from eye
+.BR z .
+When
+.B u
+enables the z-buffer bit, a GPU depth test sorts fills and lines;
+.B z
+clears that depth attachment.  Thick
+.B G
+lines
+.RI ( thick >0)
+are drawn as screen-space quads (Plan 9 width
+.IR 1+2×thick ).
+Filled polygons are fan-triangulated from vertex 0 (correct for the
+convex faces used by Temple/Castle ports; concave ear-clip is not
+implemented).
+.PP
+Compositing: if 2D drawing follows queued 3D in the same frame, the emu
+snapshots the softscreen at that transition, draws the snapshot, then
+Metal 3D, then overlays softscreen pixels that changed (sprites, minimap,
+HUD).  Otherwise the softscreen is blitted and 3D is composited on top.
+There is no Memimage writeback for the GPU path.  Obscured layers and
+non-solid ops fall back to software
 .B memfillpoly
 /
 .BR memline .
