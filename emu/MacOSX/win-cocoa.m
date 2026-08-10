@@ -121,6 +121,8 @@ static uvlong	metal_saved_bytes;
 static uvlong	metal_copy_begins;
 static uvlong	metal_precopy_dirty_bytes;
 static uvlong	metal_precopy_clean_bytes;
+static uvlong	metal_precopy_largest_bytes;
+static uvlong	metal_precopy_largest_dirty;
 static uvlong	metal_copy_notes;
 static uvlong	metal_copy_rejected;
 static uvlong	metal_copy_armed;
@@ -617,6 +619,7 @@ metal_copy_begin(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 {
 	uchar *base, *p;
 	vlong off;
+	uvlong dirty, clean;
 	int bpl, tx0, tx1, ty0, ty1, tx, ty, x, y;
 	Rectangle r, tr;
 
@@ -645,6 +648,7 @@ metal_copy_begin(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 	ty0 = (r.min.y-gscreen->r.min.y)/SoftTile;
 	tx1 = (r.max.x-gscreen->r.min.x+SoftTile-1)/SoftTile;
 	ty1 = (r.max.y-gscreen->r.min.y+SoftTile-1)/SoftTile;
+	dirty = clean = 0;
 	lock(&soft_dirty_lock);
 	for(ty = ty0; ty < ty1; ty++)
 		for(tx = tx0; tx < tx1; tx++){
@@ -655,11 +659,17 @@ metal_copy_begin(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 			if(!rectclip(&tr, r))
 				continue;
 			if(soft_dirty[ty*soft_ntx+tx])
-				metal_precopy_dirty_bytes += Dx(tr)*Dy(tr)*4;
+				dirty += Dx(tr)*Dy(tr)*4;
 			else
-				metal_precopy_clean_bytes += Dx(tr)*Dy(tr)*4;
+				clean += Dx(tr)*Dy(tr)*4;
 		}
 	unlock(&soft_dirty_lock);
+	metal_precopy_dirty_bytes += dirty;
+	metal_precopy_clean_bytes += clean;
+	if(dirty+clean > metal_precopy_largest_bytes){
+		metal_precopy_largest_bytes = dirty+clean;
+		metal_precopy_largest_dirty = dirty;
+	}
 }
 
 static void
@@ -2045,15 +2055,17 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
+		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
 			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
 			metal_copy_begins, metal_precopy_dirty_bytes, metal_precopy_clean_bytes,
+			metal_precopy_largest_bytes, metal_precopy_largest_dirty,
 			metal_copy_notes, metal_copy_rejected,
 			metal_copy_armed, metal_copy_cancelled);
 		metal_stat_frames = 0;
 		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
 		metal_copy_begins = metal_copy_notes = metal_copy_rejected = 0;
 		metal_precopy_dirty_bytes = metal_precopy_clean_bytes = 0;
+		metal_precopy_largest_bytes = metal_precopy_largest_dirty = 0;
 		metal_copy_armed = metal_copy_cancelled = 0;
 	}
 }
