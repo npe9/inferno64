@@ -2109,10 +2109,14 @@ memfastdraw(Memimage *dst, Rectangle r, Memimage *src, Rectangle sr,
 		}
 		if(swid == nb && dwid == nb){
 			memmove(dp, sp, nb * dy);
+			if(memdrawcopy != nil)
+				memdrawcopy(dst, r, src, sr);
 			return 1;
 		}
 		for(y = 0; y < dy; y++, sp += swid, dp += dwid)
 			memmove(dp, sp, nb);
+		if(memdrawcopy != nil)
+			memdrawcopy(dst, r, src, sr);
 		return 1;
 	}
 

@@ -81,6 +81,7 @@ static id<MTLDepthStencilState>	mtl_depth_off;
 static id<MTLTexture>		mtl_tex;		/* softscreen upload */
 static id<MTLTexture>		mtl_under;		/* softscreen at 3D→2D flush */
 static id<MTLTexture>		mtl_depth;
+static id<MTLTexture>		mtl_copy_scratch;
 static id<MTLBuffer>		mtl_upload_buf[3];
 static id<MTLCommandBuffer>	mtl_upload_pending[3];
 static int	mtl_upload_len;
@@ -93,13 +94,26 @@ static int	mtl_vertex_off;
 static int	mtl_tex_w, mtl_tex_h;
 static int	mtl_under_w, mtl_under_h;
 static int	mtl_depth_w, mtl_depth_h;
+static int	mtl_copy_w, mtl_copy_h;
 static int	mtl_tex_fresh;	/* new soft tex: must full-upload before dirty */
 static CAMetalLayer	*mtl_layer;
 enum { SoftTile = 64 };
+enum { MaxGPUCopies = 256 };
+typedef struct GPUCopy GPUCopy;
+struct GPUCopy {
+	Rectangle	dst;
+	Rectangle	src;
+	int	armed;
+};
 static uchar	*soft_dirty;
 static uchar	*soft_upload_dirty;
 static int	soft_ntx, soft_nty;
 static Lock	soft_dirty_lock;
+static GPUCopy	gpu_copies[MaxGPUCopies];
+static int	ngpu_copies;
+static GPUCopy	present_copies[MaxGPUCopies];
+static int	npresent_copies;
+static int	damage_before_copy;
 static int	mtl_have_under;	/* snapshot taken; composite HUD over 3D */
 static int	mtl_zenable;
 static int	mtl_zclear;	/* clear depth on next geom pass */
@@ -250,6 +264,9 @@ extern void	(*gpudrawflush)(void);
 extern void	(*gpudrawreadback)(void);
 extern void	(*gpudrawzclear)(void);
 extern void	(*gpudrawzenable)(int);
+extern void	(*gpudrawdamage)(Rectangle);
+extern int	(*gpudrawflushdamage)(Rectangle);
+extern void	(*memdrawcopy)(Memimage*, Rectangle, Memimage*, Rectangle);
 
 static void	metal_flush_geom(void);
 static void	metal_zclear(void);
@@ -269,6 +286,10 @@ static float	eye_to_depth(float);
 static void	metal_clear_sprite_tex_cache(void);
 static id<MTLTexture>	metal_sprite_tex(Memimage*, Memimage*);
 static void	mark_view_dirty(void);
+static void	metal_damage_note(Rectangle);
+static int	metal_flush_damage(Rectangle);
+static void	metal_copy_note(Memimage*, Rectangle, Memimage*, Rectangle);
+static void	metal_replay_copies(id<MTLCommandBuffer>, id<MTLTexture>, int, int);
 
 static void
 invalidate_mtl_tex(void)
@@ -372,6 +393,9 @@ metal_init(void)
 	gpudrawreadback = metal_readback_geom;
 	gpudrawzclear = metal_zclear;
 	gpudrawzenable = metal_set_zenable;
+	gpudrawdamage = metal_damage_note;
+	gpudrawflushdamage = metal_flush_damage;
+	memdrawcopy = metal_copy_note;
 	mtl_zclear = 1;
 	return 0;
 }
@@ -493,12 +517,167 @@ metal_damage_map(int pw, int ph)
 	return 0;
 }
 
+static int
+rectsoverlap(Rectangle a, Rectangle b)
+{
+	return a.min.x < b.max.x && b.min.x < a.max.x
+		&& a.min.y < b.max.y && b.min.y < a.max.y;
+}
+
+static int
+rectcontains(Rectangle a, Rectangle b)
+{
+	return a.min.x <= b.min.x && a.min.y <= b.min.y
+		&& a.max.x >= b.max.x && a.max.y >= b.max.y;
+}
+
+static void
+metal_mark_tiles(Rectangle r, int value, int fullonly)
+{
+	int tx0, tx1, ty0, ty1, tx, ty;
+	Rectangle tr;
+
+	if(gscreen == nil || !rectclip(&r, gscreen->r))
+		return;
+	tx0 = (r.min.x - gscreen->r.min.x) / SoftTile;
+	ty0 = (r.min.y - gscreen->r.min.y) / SoftTile;
+	tx1 = (r.max.x - gscreen->r.min.x + SoftTile - 1) / SoftTile;
+	ty1 = (r.max.y - gscreen->r.min.y + SoftTile - 1) / SoftTile;
+	for(ty = ty0; ty < ty1; ty++)
+		for(tx = tx0; tx < tx1; tx++){
+			tr = Rect(gscreen->r.min.x + tx*SoftTile,
+				gscreen->r.min.y + ty*SoftTile,
+				gscreen->r.min.x + (tx+1)*SoftTile,
+				gscreen->r.min.y + (ty+1)*SoftTile);
+			if(fullonly && !rectcontains(r, tr))
+				continue;
+			soft_dirty[ty*soft_ntx + tx] = value;
+		}
+}
+
+static void
+metal_damage_note(Rectangle r)
+{
+	int i;
+
+	if(ngpu_copies == 0){
+		damage_before_copy = 1;
+		return;
+	}
+	if(gscreen == nil || metal_damage_map(Dx(gscreen->r), Dy(gscreen->r)) < 0){
+		mtl_tex_fresh = 1;
+		return;
+	}
+	lock(&soft_dirty_lock);
+	metal_mark_tiles(r, 1, 0);
+	for(i = 0; i < ngpu_copies; i++){
+		if(!gpu_copies[i].armed && rectcontains(r, gpu_copies[i].dst)){
+			metal_mark_tiles(gpu_copies[i].dst, 0, 1);
+			gpu_copies[i].armed = 1;
+		}else if(gpu_copies[i].armed &&
+		    (rectsoverlap(r, gpu_copies[i].src) || rectsoverlap(r, gpu_copies[i].dst))){
+			metal_mark_tiles(gpu_copies[i].dst, 1, 0);
+			gpu_copies[i].armed = -1;
+		}
+	}
+	unlock(&soft_dirty_lock);
+}
+
+static void
+metal_copy_note(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
+{
+	GPUCopy *c;
+	int i;
+
+	if(gscreen == nil || dst == nil || src == nil
+	|| dst->data != gscreen->data || src->data != gscreen->data
+	|| Dx(dr) != Dx(sr) || Dy(dr) != Dy(sr) || damage_before_copy)
+		return;
+	lock(&soft_dirty_lock);
+	for(i = 0; i < ngpu_copies; i++)
+		if(rectsoverlap(dr, gpu_copies[i].src) || rectsoverlap(dr, gpu_copies[i].dst)
+		|| rectsoverlap(sr, gpu_copies[i].src) || rectsoverlap(sr, gpu_copies[i].dst))
+		{
+			metal_mark_tiles(gpu_copies[i].dst, 1, 0);
+			gpu_copies[i].armed = -1;
+		}
+	if(ngpu_copies < MaxGPUCopies){
+		c = &gpu_copies[ngpu_copies++];
+		c->dst = dr;
+		c->src = sr;
+		c->armed = 0;
+	}
+	unlock(&soft_dirty_lock);
+}
+
+static int
+metal_flush_damage(Rectangle r)
+{
+	(void)r;
+	if(ngpu_copies == 0){
+		damage_before_copy = 0;
+		return 0;
+	}
+	mark_view_dirty();
+	return 1;
+}
+
+static void
+metal_replay_copies(id<MTLCommandBuffer> cmd, id<MTLTexture> tex, int pw, int ph)
+{
+	int i, w, h;
+	id<MTLBlitCommandEncoder> blit;
+	MTLTextureDescriptor *td;
+	GPUCopy *c;
+
+	if(npresent_copies == 0 || cmd == nil || tex == nil)
+		return;
+	if(mtl_copy_scratch == nil || mtl_copy_w != pw || mtl_copy_h != ph){
+		td = [MTLTextureDescriptor
+			texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+			width:pw height:ph mipmapped:NO];
+		td.usage = MTLTextureUsageShaderRead|MTLTextureUsageShaderWrite;
+		td.storageMode = MTLStorageModePrivate;
+		mtl_copy_scratch = [mtl_device newTextureWithDescriptor:td];
+		mtl_copy_w = pw;
+		mtl_copy_h = ph;
+	}
+	if(mtl_copy_scratch == nil){
+		mtl_tex_fresh = 1;
+		mark_view_dirty();
+		return;
+	}
+	blit = [cmd blitCommandEncoder];
+	if(blit == nil){
+		mtl_tex_fresh = 1;
+		mark_view_dirty();
+		return;
+	}
+	for(i = 0; i < npresent_copies; i++){
+		c = &present_copies[i];
+		w = Dx(c->src);
+		h = Dy(c->src);
+		[blit copyFromTexture:tex sourceSlice:0 sourceLevel:0
+			sourceOrigin:MTLOriginMake(c->src.min.x, c->src.min.y, 0)
+			sourceSize:MTLSizeMake(w, h, 1)
+			toTexture:mtl_copy_scratch destinationSlice:0 destinationLevel:0
+			destinationOrigin:MTLOriginMake(c->src.min.x, c->src.min.y, 0)];
+		[blit copyFromTexture:mtl_copy_scratch sourceSlice:0 sourceLevel:0
+			sourceOrigin:MTLOriginMake(c->src.min.x, c->src.min.y, 0)
+			sourceSize:MTLSizeMake(w, h, 1)
+			toTexture:tex destinationSlice:0 destinationLevel:0
+			destinationOrigin:MTLOriginMake(c->dst.min.x, c->dst.min.y, 0)];
+	}
+	[blit endEncoding];
+	npresent_copies = 0;
+}
+
 /* Upload dirty tile runs with screen-relative offsets.  SoftTile*4 and the
  * staging stride are 256-byte aligned, so no rectangle repacking is needed. */
 static int
 metal_upload_damage(id<MTLTexture> tex, int full)
 {
-	int bpl, pw, ph, sbpl, need, slot, tx, tx1, ty, x, y, w, h, ry, any;
+	int bpl, pw, ph, sbpl, need, slot, tx, tx1, ty, x, y, w, h, ry, any, i;
 	uchar *base, *dst, *damage, *swap;
 	id<MTLBuffer> buf;
 	id<MTLCommandBuffer> cmd;
@@ -518,6 +697,12 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 	soft_dirty = swap;
 	memset(soft_dirty, 0, soft_ntx * soft_nty);
 	damage = soft_upload_dirty;
+	npresent_copies = 0;
+	for(i = 0; !full && i < ngpu_copies; i++)
+		if(gpu_copies[i].armed == 1)
+			present_copies[npresent_copies++] = gpu_copies[i];
+	ngpu_copies = 0;
+	damage_before_copy = 0;
 	unlock(&soft_dirty_lock);
 	bpl = gscreen->width * (int)sizeof(u32);
 	sbpl = (pw * 4 + 255) & ~255;
@@ -1691,9 +1876,18 @@ present_softscreen(void)
 	/* Do CPU staging and enqueue texture uploads before acquiring a scarce
 	 * drawable; this shortens drawable ownership and avoids frame-pacing stalls. */
 	drawable = [mtl_layer nextDrawable];
-	if(drawable == nil)
+	if(drawable == nil){
+		if(npresent_copies != 0)
+			mtl_tex_fresh = 1;
 		return;
+	}
 	cmd = [mtl_queue commandBuffer];
+	if(cmd == nil){
+		if(npresent_copies != 0)
+			mtl_tex_fresh = 1;
+		return;
+	}
+	metal_replay_copies(cmd, tex, pw, ph);
 
 	if(overlay){
 		/* under (pre-3D softscreen) → Metal 3D+sprites → softscreen where changed */

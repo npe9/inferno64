@@ -178,6 +178,8 @@ void	(*gpudrawflush)(void);
 void	(*gpudrawreadback)(void);
 void	(*gpudrawzclear)(void);
 void	(*gpudrawzenable)(int);
+void	(*gpudrawdamage)(Rectangle);
+int	(*gpudrawflushdamage)(Rectangle);
 	void		drawuninstall(Client*, int);
 	void		drawfreedimage(DImage*);
 	Client*		drawclientofpath(ulong);
@@ -357,6 +359,8 @@ addflush(Rectangle r)
 {
 	if(sdraw.softscreen==0 || !rectclip(&r, screenimage->r))
 		return;
+	if(gpudrawdamage)
+		gpudrawdamage(r);
 
 	/*
 	 * Softscreen present is deferred until drawflush ('v' / Flushnow).
@@ -379,6 +383,8 @@ dstflush(Memimage *dst, Rectangle r)
 	Memlayer *l;
 
 	if(dst == screenimage){
+		if(gpudrawdamage)
+			gpudrawdamage(r);
 		combinerect(&flushrect, r);
 		return;
 	}
@@ -400,8 +406,10 @@ drawflush(void)
 {
 	if(gpudrawflush)
 		gpudrawflush();
-	if(flushrect.min.x < flushrect.max.x)
-		flushmemscreen(flushrect);
+	if(flushrect.min.x < flushrect.max.x){
+		if(gpudrawflushdamage == nil || !gpudrawflushdamage(flushrect))
+			flushmemscreen(flushrect);
+	}
 	flushrect = Rect(10000, 10000, -10000, -10000);
 }
 
