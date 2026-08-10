@@ -27,7 +27,7 @@ Squeue: adt {
 	nonempty:	fn(q: self ref Squeue): int;
 };
 # Ptrqueue is the same as the other queues except it merges events
-# that have the same button state.
+# that have the same button state.  A nil event is a flush marker.
 Ptrqueue: adt {
 	last: ref Pointer;
 	h, t: list of ref Pointer;
@@ -572,6 +572,10 @@ Squeue.nonempty(q: self ref Squeue): int
 
 Ptrqueue.put(q: self ref Ptrqueue, s: ref Pointer)
 {
+	if(s == nil){
+		q.flush();
+		return;
+	}
 	if(q.last != nil && s.buttons == q.last.buttons)
 		*q.last = *s;
 	else{
@@ -615,4 +619,5 @@ Ptrqueue.nonempty(q: self ref Ptrqueue): int
 Ptrqueue.flush(q: self ref Ptrqueue)
 {
 	q.h = q.t = nil;
+	q.last = nil;
 }
