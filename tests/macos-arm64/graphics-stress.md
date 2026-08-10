@@ -14,8 +14,16 @@ Run one phase for a longer profile:
     MacOSX/arm64/bin/emu -c1 /dis/wm/gfxstress.dis alpha 10
 
 The phases are `fill`, `copy`, `overlap`, `alpha`, `mask`, `line`,
-`ellipse`, `poly`, `text`, `upload`, `damage`, and `draw3d`. Each phase
+`ellipse`, `poly`, `text`, `upload`, `damage`, `windowmove`, and `draw3d`. Each phase
 prints its operation count, elapsed milliseconds, and operations per second.
 
 `draw3dthick` specifically stresses synchronized queue handoff and bounded
 backpressure with thick GPU lines; it is also included in `all`.
+
+Exercise clear-layer window movement and report actual Metal copy traffic:
+
+    INFERNO_METAL_STATS=1 MacOSX/arm64/bin/emu -c1 /dis/wm/wm.dis /dis/wm/gfxstress.dis windowmove 5
+
+Run it with synchronous byte-for-byte CPU/Metal softscreen validation:
+
+    INFERNO_METAL_VALIDATE=1 MacOSX/arm64/bin/emu -c1 /dis/wm/wm.dis /dis/wm/gfxstress.dis windowmove 5

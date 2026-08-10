@@ -394,8 +394,6 @@ handlerequest(win: ref Wmclient->Window, wmctxt: ref Wmcontext, c: ref Client, r
 
 	"!reshape" =>
 		# reshape tag reqid rect [how]
-		# XXX allow "how" to specify that the origin of the window is never
-		# changed - a new window will be created instead.
 		if(n < 7)
 			return "bad arg count";
 		args = tl args;
@@ -415,6 +413,17 @@ handlerequest(win: ref Wmclient->Window, wmctxt: ref Wmcontext, c: ref Client, r
 				r = newrect(r, screen.image.r);
 			"exact" =>
 				;
+			"origin" =>
+				w := c.window(tag);
+				if(w == nil)
+					return "no such tag";
+				if(!w.r.size().eq(r.size()))
+					return "origin move changed window size";
+				if(c.setorigin(tag, r.min) == -1)
+					return "can't move window";
+				if((c.flags & Sticky) == 0)
+					c.top();
+				return nil;
 			"max" =>
 				r = screen.image.r;			# XXX don't obscure toolbar?
 			* =>

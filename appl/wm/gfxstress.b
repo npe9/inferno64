@@ -28,6 +28,7 @@ img, tile, alpha, mask, scratch: ref Image;
 black, white, red, green, blue, yellow: ref Image;
 font: ref Font;
 seed := 16r13579bdf;
+moveno: int;
 
 rnd(n: int): int
 {
@@ -52,7 +53,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "Graphics stress", Wmclient->Appl);
 	win.reshape(Rect((0, 0), (800, 600)));
-	win.onscreen("place");
+	# Exact placement keeps automated runs from waiting for a pointer-driven placement.
+	win.onscreen("exact");
 	d = win.display;
 	img = win.image;
 	black = d.color(Draw->Black);
@@ -81,7 +83,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	if(phase == "all"){
 		phases := "fill" :: "copy" :: "overlap" :: "alpha" :: "mask" ::
 			"line" :: "ellipse" :: "poly" :: "text" :: "upload" ::
-			"damage" :: "draw3d" :: "draw3dthick" :: nil;
+			"damage" :: "windowmove" :: "draw3d" :: "draw3dthick" :: nil;
 		for(; phases != nil; phases = tl phases)
 			run(hd phases, seconds);
 	}else
@@ -109,13 +111,37 @@ run(phase: string, seconds: int)
 		"damage" => ops += damagebatch();
 		"draw3d" => ops += draw3dbatch(0);
 		"draw3dthick" => ops += draw3dbatch(1);
+		"windowmove" => ops += windowmovebatch();
 		* => sys->fprint(sys->fildes(2), "gfxstress: unknown phase %s\n", phase); return;
 		}
 		img.flush(Draw->Flushnow);
+		if(phase == "windowmove")
+			sys->sleep(8);
 	}
 	elapsed := sys->millisec() - start;
 	sys->print("GFXSTRESS phase=%s ops=%d ms=%d ops_per_sec=%d\n",
 		phase, ops, elapsed, (ops * 1000) / elapsed);
+}
+
+windowmovebatch(): int
+{
+	sz := win.r.size();
+	spanx := win.displayr.dx() - sz.x;
+	spany := win.displayr.dy() - sz.y;
+	x := win.displayr.min.x;
+	y := win.displayr.min.y;
+	if(spanx > 0)
+		x += (moveno*37)%(spanx+1);
+	if(spany > 0)
+		y += (moveno*23)%(spany+1);
+	err := win.wmctl(sys->sprint("!reshape . -1 %d %d %d %d origin",
+		x, y, x+sz.x, y+sz.y));
+	if(err != nil){
+		raise sys->sprint("fail:gfxstress: window move: %s", err);
+	}
+	img = win.image;
+	moveno++;
+	return 1;
 }
 
 fillbatch(): int
