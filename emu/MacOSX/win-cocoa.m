@@ -119,6 +119,10 @@ static uvlong	metal_upload_bytes;
 static uvlong	metal_copy_bytes;
 static uvlong	metal_saved_bytes;
 static int	metal_stat_frames;
+static id<MTLBuffer>	metal_validate_buf;
+static uchar	*metal_validate_cpu;
+static int	metal_validate_len;
+static int	metal_validate_stride;
 static int	mtl_have_under;	/* snapshot taken; composite HUD over 3D */
 static int	mtl_zenable;
 static int	mtl_zclear;	/* clear depth on next geom pass */
@@ -1858,10 +1862,12 @@ metal_overlay_soft(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 static void
 present_softscreen(void)
 {
-	int pw, ph, have_geom, overlay;
+	int pw, ph, have_geom, overlay, validate, bpl, sbpl, need, y;
+	uchar *vp, *cp;
 	id<MTLTexture> tex, depthtex, under;
 	id<CAMetalDrawable> drawable;
 	id<MTLCommandBuffer> cmd;
+	id<MTLBlitCommandEncoder> vblit;
 	MTLSamplerDescriptor *sd;
 	static id<MTLSamplerState> samp;
 
@@ -1879,6 +1885,25 @@ present_softscreen(void)
 	if(tex == nil)
 		return;
 	depthtex = metal_depth_tex(pw, ph);
+	validate = getenv("INFERNO_METAL_VALIDATE") != nil;
+	if(validate){
+		bpl = gscreen->width * (int)sizeof(u32);
+		sbpl = (pw*4 + 255) & ~255;
+		need = sbpl*ph;
+		if(metal_validate_len < need){
+			free(metal_validate_cpu);
+			metal_validate_cpu = malloc(need);
+			metal_validate_buf = [mtl_device newBufferWithLength:need
+				options:MTLResourceStorageModeShared];
+			metal_validate_len = need;
+		}
+		if(metal_validate_cpu == nil || metal_validate_buf == nil)
+			sysfatal("Metal validation buffer: %r");
+		metal_validate_stride = sbpl;
+		for(y = 0; y < ph; y++)
+			memmove(metal_validate_cpu+y*sbpl,
+				gscreen->data->bdata+y*bpl, pw*4);
+	}
 
 	metal_upload_damage(tex, mtl_tex_fresh);
 	mtl_tex_fresh = 0;
@@ -1908,6 +1933,18 @@ present_softscreen(void)
 		return;
 	}
 	metal_replay_copies(cmd, tex, pw, ph);
+	if(validate){
+		vblit = [cmd blitCommandEncoder];
+		if(vblit == nil)
+			sysfatal("Metal validation encoder");
+		[vblit copyFromTexture:tex sourceSlice:0 sourceLevel:0
+			sourceOrigin:MTLOriginMake(0, 0, 0)
+			sourceSize:MTLSizeMake(pw, ph, 1)
+			toBuffer:metal_validate_buf destinationOffset:0
+			destinationBytesPerRow:metal_validate_stride
+			destinationBytesPerImage:metal_validate_stride*ph];
+		[vblit endEncoding];
+	}
 
 	if(overlay){
 		/* under (pre-3D softscreen) → Metal 3D+sprites → softscreen where changed */
@@ -1928,6 +1965,15 @@ present_softscreen(void)
 
 	[cmd presentDrawable:drawable];
 	[cmd commit];
+	if(validate){
+		[cmd waitUntilCompleted];
+		vp = [metal_validate_buf contents];
+		cp = metal_validate_cpu;
+		for(y = 0; y < ph; y++)
+			if(memcmp(vp+y*metal_validate_stride,
+			    cp+y*metal_validate_stride, pw*4) != 0)
+				sysfatal("Metal softscreen coherence mismatch at row %d", y);
+	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
 		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud\n",
 			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes);
@@ -1977,6 +2023,12 @@ mark_view_dirty(void)
 	unlock(&present_lock);
 	if(!queue)
 		return;
+	if(getenv("INFERNO_METAL_VALIDATE") != nil){
+		dispatch_sync(dispatch_get_main_queue(), ^{
+			present_on_main();
+		});
+		return;
+	}
 	dispatch_async(dispatch_get_main_queue(), ^{
 		present_on_main();
 	});
