@@ -115,6 +115,8 @@ static int	ngpu_copies;
 static GPUCopy	present_copies[MaxGPUCopies];
 static int	npresent_copies;
 static int	damage_before_copy;
+static uvlong	metal_damage_calls;
+static uvlong	metal_damage_bytes;
 static uvlong	metal_upload_bytes;
 static uvlong	metal_copy_bytes;
 static uvlong	metal_saved_bytes;
@@ -587,6 +589,13 @@ static void
 metal_damage_note(Rectangle r)
 {
 	int i, nx, ny;
+	Rectangle dr;
+
+	dr = r;
+	if(gscreen != nil && rectclip(&dr, gscreen->r)){
+		metal_damage_calls++;
+		metal_damage_bytes += (uvlong)Dx(dr)*Dy(dr)*4;
+	}
 
 	if(ngpu_copies == 0){
 		damage_before_copy = 1;
@@ -2104,14 +2113,16 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud\n",
-			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud\n",
+			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
+			metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
 			metal_copy_begins, metal_precopy_dirty_bytes, metal_precopy_clean_bytes,
 			metal_precopy_largest_bytes, metal_precopy_largest_dirty,
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
 			metal_copy_armed, metal_copy_cancelled);
 		metal_stat_frames = 0;
+		metal_damage_calls = metal_damage_bytes = 0;
 		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
 		metal_copy_begins = metal_copy_notes = metal_copy_rejected = 0;
 		metal_copy_reject_storage = metal_copy_reject_damage = 0;
