@@ -82,6 +82,7 @@ static id<MTLTexture>		mtl_depth;
 static int	mtl_tex_w, mtl_tex_h;
 static int	mtl_under_w, mtl_under_h;
 static int	mtl_depth_w, mtl_depth_h;
+static int	mtl_tex_fresh;	/* new soft tex: must full-upload before dirty */
 static CAMetalLayer	*mtl_layer;
 static Rectangle	soft_upload;	/* dirty softscreen region since last present */
 static int	soft_upload_valid;
@@ -174,7 +175,8 @@ static NSString *const kSoftscreenMetalSrc =
 
 /* Assigned from metal_init; declared in emu/port/devdraw.c */
 extern int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, float);
-extern int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int);
+extern int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
+extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern void	(*gpudrawflush)(void);
 extern void	(*gpudrawzclear)(void);
 extern void	(*gpudrawzenable)(int);
@@ -183,7 +185,8 @@ static void	metal_flush_geom(void);
 static void	metal_zclear(void);
 static void	metal_set_zenable(int);
 static int	metal_queue_line(Memimage*, Point, Point, int, Memimage*, int, float, float);
-static int	metal_queue_fillpoly(Memimage*, Point*, float*, int, Memimage*, int);
+static int	metal_queue_fillpoly(Memimage*, Point*, float*, int, Memimage*, int, float);
+static int	metal_queue_plot(Memimage*, Point, Memimage*, int, float);
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	soft_burn_tris(void);
@@ -194,6 +197,7 @@ invalidate_mtl_tex(void)
 {
 	mtl_tex = nil;
 	mtl_tex_w = mtl_tex_h = 0;
+	mtl_tex_fresh = 0;
 	mtl_under = nil;
 	mtl_under_w = mtl_under_h = 0;
 	mtl_depth = nil;
@@ -262,6 +266,7 @@ metal_init(void)
 
 	gpudrawline = metal_queue_line;
 	gpudrawfillpoly = metal_queue_fillpoly;
+	gpudrawplot = metal_queue_plot;
 	gpudrawflush = metal_flush_geom;
 	gpudrawzclear = metal_zclear;
 	gpudrawzenable = metal_set_zenable;
@@ -310,6 +315,8 @@ metal_soft_tex(int pw, int ph)
 	mtl_tex = [mtl_device newTextureWithDescriptor:td];
 	mtl_tex_w = pw;
 	mtl_tex_h = ph;
+	/* Virgin tex has undefined texels; dirty-only upload would half-frame. */
+	mtl_tex_fresh = 1;
 	return mtl_tex;
 }
 
@@ -771,13 +778,13 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 }
 
 /*
- * fillpoly3 ('g'): fan-triangulate screen-space verts and queue for Metal.
+ * fillpoly3 ('g'/'k'): fan-triangulate screen-space verts and queue for Metal.
  * Convex faces (typical draw3d / Temple) are correct as a fan from vertex 0.
- * Concave ear-clip is not implemented — fall back is unnecessary for current ports.
- * Returns 0 ⇒ caller uses memfillpoly (obscured, bad op, colour, overflow).
+ * lit scales solid colour (same as soft d3applylit).
+ * Returns 0 ⇒ caller uses memfillpoly / d3fillpolyz (obscured, bad op, colour).
  */
 static int
-metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, int op)
+metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, int op, float lit)
 {
 	Memimage *pix;
 	float r, g, bl, al;
@@ -795,6 +802,14 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 		return 0;
 	if(src_rgba(src, &r, &g, &bl, &al) < 0)
 		return 0;
+	if(lit < 0.0f)
+		lit = 0.0f;
+	r *= lit;
+	g *= lit;
+	bl *= lit;
+	if(r > 1.0f) r = 1.0f;
+	if(g > 1.0f) g = 1.0f;
+	if(bl > 1.0f) bl = 1.0f;
 	ntri = n - 2;
 	need = ntri * 3;
 	if(need > MaxGPUTriVerts)
@@ -827,6 +842,16 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 		ngtriverts += 3;
 	}
 	return 1;
+}
+
+/* plot3 ('h'): 1×1 point as a degenerate line segment. */
+static int
+metal_queue_plot(Memimage *dst, Point p, Memimage *src, int op, float ez)
+{
+	Point p1;
+
+	p1 = p;
+	return metal_queue_line(dst, p, p1, 0, src, op, ez, ez);
 }
 
 static void
@@ -905,12 +930,14 @@ present_softscreen(void)
 		return;
 	depthtex = metal_depth_tex(pw, ph);
 
-	if(soft_upload_valid){
+	if(mtl_tex_fresh || !soft_upload_valid){
+		ur = gscreen->r;
+		mtl_tex_fresh = 0;
+	}else{
 		ur = soft_upload;
 		if(!rectclip(&ur, gscreen->r))
 			ur = gscreen->r;
-	}else
-		ur = gscreen->r;
+	}
 	soft_upload_valid = 0;
 	metal_upload_rect(tex, ur);
 

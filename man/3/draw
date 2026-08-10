@@ -752,7 +752,7 @@ Set the NDC-to-screen viewport:
 .B u
 .IR flags [1]
 .br
-Bit 0 enables the z-buffer path (software polyfill, and GPU depth
+Bit 0 enables the z-buffer path (software polyfill plane fill, and GPU depth
 on the Cocoa Metal present); bit 1 enables clip-behind
 rejection (eye
 .BR z ≥ 0 ).
@@ -765,7 +765,11 @@ Clear (and size) the per-client software z-buffer for image
 On Cocoa Metal, also clears the GPU depth attachment used by
 .B g
 /
-.BR G .
+.B G
+/
+.B k
+/
+.BR h .
 .HP
 .B g
 .IR dstid [4]
@@ -773,14 +777,38 @@ On Cocoa Metal, also clears the GPU depth attachment used by
 .IR n [2]
 .IR xyz [n×3×4]
 .br
-Filled polygon in world space:
+Filled polygon (compatibility):
 .I n
 vertices of
 .IR (x,y,z)
 float32 triples, transformed by the current model and projection
 matrices, then rasterised with source image
 .IR srcid
-(typically a solid colour).
+(typically a solid colour).  When z-buffering is enabled, depth uses a
+plane fit through the projected vertices (eye
+.BR z ).
+.HP
+.B k
+.IR dstid [4]
+.IR srcid [4]
+.IR n [2]
+.IR nx [4]
+.IR ny [4]
+.IR nz [4]
+.IR lit [4]
+.IR xyz [n×3×4]
+.br
+Filled polygon with face
+.I normal
+and lighting factor
+.IR lit
+(same space as the vertices).  Preferred by
+.BR draw3ddev .
+When z-buffering is enabled, soft raster uses Limbo
+.IR polyfill (2)
+plane coefficients from the normal; Metal uses the same plane mapped into
+GPU depth.  Solid colours are scaled by
+.IR lit .
 .HP
 .B G
 .IR dstid [4]
@@ -797,13 +825,58 @@ to
 .IR (x,y,z)
 float32 triple), width
 .IR thick .
+.HP
+.B h
+.IR dstid [4]
+.IR srcid [4]
+.IR xyz [3×4]
+.br
+Plot a single point
+.RI ( plot3 ).
+Soft path writes a 1×1 pixel (with z-test when enabled); Metal queues a
+degenerate line.
+.HP
+.B j
+.IR dstid [4]
+.IR imgid [4]
+.IR maskid [4]
+.IR flags [1]
+.IR scale [4]
+.IR degz [4]
+.IR xyz [3×4]
+.IR mat [16×4]
+.br
+Sprite3 family.  Projects
+.IR xyz ,
+sizes the billboard from
+.I scale
+and eye
+.BR z ,
+and
+.B memdraw s
+into
+.IR dstid .
+.I flags
+bit0: use
+.IR maskid ;
+bit1: zb (honour
+.IR degz ;
+non-trivial rotation is left to the Limbo client);
+bit2: yb vertical squash;
+bit3: append object
+.I mat
+(applied to the origin then added to
+.IR xyz ).
 .PP
 The Inferno Cocoa emu presents the softscreen with Metal.  Letters
 .B g
-(fillpoly3) and
+/
+.B k
+(fillpoly3),
 .B G
-(line3) are queued in screen space with per-vertex depth from eye
-.BR z .
+(line3), and
+.B h
+(plot3) are queued in screen space with per-vertex depth.
 When
 .B u
 enables the z-buffer bit, a GPU depth test sorts fills and lines;
@@ -821,12 +894,17 @@ implemented).
 Compositing: if 2D drawing follows queued 3D in the same frame, the emu
 snapshots the softscreen at that transition, draws the snapshot, then
 Metal 3D, then overlays softscreen pixels that changed (sprites, minimap,
-HUD).  Otherwise the softscreen is blitted and 3D is composited on top.
-There is no Memimage writeback for the GPU path.  Obscured layers and
-non-solid ops fall back to software
+HUD).  Letter
+.B j
+and immediate-mode circles/ellipses are softscreen draws and participate
+in that overlay.  There is no Memimage writeback for the GPU path.  Obscured
+layers and non-solid ops fall back to software
 .B memfillpoly
 /
-.BR memline .
+.B memline
+/
+.B d3fillpolyz
+(with z when enabled).
 Other platforms keep software rasterisation for both.
 .HP
 .B y

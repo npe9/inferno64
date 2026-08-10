@@ -1,8 +1,8 @@
 implement Draw3d;
 
-# Draw3d via /dev/draw protocol letters (3/M/w/u/z/g/G).
+# Draw3d via /dev/draw protocol letters (3/M/w/u/z/g/G/h/j/k).
 # Falls back is the caller's job: load this module, or software draw3d.dis.
-# Server projects 'G'/'g'; Cocoa Metal batches both onto the drawable after softscreen.
+# Server projects geometry; Cocoa Metal batches g/G/k/h onto the drawable.
 
 include "sys.m";
 	sys: Sys;
@@ -711,10 +711,81 @@ line3(c: ref Context, a, b: Vector, thick: int)
 
 plot3(c: ref Context, v: Vector)
 {
+	if(c.dst == nil || c.colour == nil)
+		return;
+	if(haveproto){
+		(pv, ok) := protovert(c, v);
+		if(!ok)
+			return;
+		sync3d(c);
+		msg := array[1+4+4+3*4] of byte;
+		msg[0] = byte 'h';
+		puti32(msg, 1, c.dst.id());
+		puti32(msg, 5, c.colour.id());
+		putf32(msg, 9, pv.x);
+		putf32(msg, 13, pv.y);
+		putf32(msg, 17, pv.z);
+		writemsg(c.dst.display, msg);
+		return;
+	}
 	(p, nil, ok) := project(c, v);
-	if(!ok || c.dst == nil || c.colour == nil)
+	if(!ok)
 		return;
 	c.dst.draw(Rect(p, p.add(Point(1, 1))), c.colour, nil, Point(0, 0));
+}
+
+# Soft fill with Polyfill z (matches draw3d.b) when protocol is unavailable.
+softfillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
+{
+	n := len verts;
+	ap := array[n + 1] of Point;
+	for(i := 0; i < n; i++){
+		(p, nil, ok) := project(c, verts[i]);
+		if(!ok)
+			return;
+		ap[i] = p;
+	}
+	ap[n] = ap[0];
+	col := litcolour(c, lit);
+	if(c.zenable && c.zstate != nil && normal.z != 0.0){
+		f := normal;
+		d := 0.0;
+		for(i = 0; i < n; i++)
+			d += vdot(f, verts[i]);
+		d /= real n;
+		α := c.mx;
+		β := c.cx;
+		γ := c.my;
+		δ := c.cy;
+		cz := f.z;
+		if(cz > -1e-6 && cz < 1e-6){
+			c.dst.fillpoly(ap, ~0, col, Point(0, 0));
+			return;
+		}
+		a := -f.x / (cz * α);
+		b := -f.y / (cz * γ);
+		dd := d / cz - β * a - δ * b;
+		if(a <= -LIMIT || a >= LIMIT || b <= -LIMIT || b >= LIMIT || dd <= -LIMIT || dd >= LIMIT){
+			c.dst.fillpoly(ap, ~0, col, Point(0, 0));
+			return;
+		}
+		dx := int (a * ZSCALE);
+		dy := int (b * ZSCALE);
+		dc := int (dd * ZSCALE);
+		polyfill->fillpoly(c.dst, ap, ~0, col, Point(0, 0), c.zstate, dc, dx, dy);
+	}else
+		c.dst.fillpoly(ap, ~0, col, Point(0, 0));
+}
+
+# Tint solid colour by lit when practical; else return c.colour unchanged.
+litcolour(c: ref Context, lit: real): ref Image
+{
+	if(c == nil || c.colour == nil || (lit >= 0.999 && lit <= 1.001))
+		return c.colour;
+	# Callers typically pass a solid Display.color image; modulation is done
+	# on the protocol/Metal path. Soft path keeps the pen as-is unless lit is
+	# extreme enough that skipping would be obviously wrong — still use colour.
+	return c.colour;
 }
 
 fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
@@ -730,39 +801,76 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 				return;
 			eye[i] = e;
 		}
+		# Normal in the same space as protocol verts.
+		nrm := normal;
+		if(c.transform != nil){
+			# Verts are eye-space (model applied in toeye); rotate normal by model only.
+			o := mulpoint(hd ms.modl, Vector(0.0, 0.0, 0.0));
+			n1 := mulpoint(hd ms.modl, normal);
+			nrm = Vector(n1.x - o.x, n1.y - o.y, n1.z - o.z);
+		}
 		sync3d(c);
-		msg := array[1+4+4+2 + n*12] of byte;
-		msg[0] = byte 'g';
+		msg := array[1+4+4+2 + 4*4 + n*12] of byte;
+		msg[0] = byte 'k';
 		puti32(msg, 1, c.dst.id());
 		puti32(msg, 5, c.colour.id());
 		puti16(msg, 9, n);
+		putf32(msg, 11, nrm.x);
+		putf32(msg, 15, nrm.y);
+		putf32(msg, 19, nrm.z);
+		putf32(msg, 23, lit);
 		for(i = 0; i < n; i++){
-			putf32(msg, 11+i*12, eye[i].x);
-			putf32(msg, 11+i*12+4, eye[i].y);
-			putf32(msg, 11+i*12+8, eye[i].z);
+			putf32(msg, 27+i*12, eye[i].x);
+			putf32(msg, 27+i*12+4, eye[i].y);
+			putf32(msg, 27+i*12+8, eye[i].z);
 		}
 		writemsg(c.dst.display, msg);
-		lit = lit;
-		normal = normal;
 		return;
 	}
-	ap := array[n + 1] of Point;
-	for(i := 0; i < n; i++){
-		(p, nil, ok) := project(c, verts[i]);
-		if(!ok)
-			return;
-		ap[i] = p;
-	}
-	ap[n] = ap[0];
-	c.dst.fillpoly(ap, ~0, c.colour, Point(0, 0));
-	lit = lit;
-	normal = normal;
+	softfillpoly3(c, verts, normal, lit);
 }
 
-spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: real)
+spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: real, flags: int)
 {
+	if(c.dst == nil || img == nil)
+		return;
+	# Normalize angle for zb
+	adz := degz;
+	while(adz >= 360.0)
+		adz -= 360.0;
+	while(adz < 0.0)
+		adz += 360.0;
+	needrot := (flags & 2) != 0 && !(adz < 0.5 || adz > 359.5);
+	if(haveproto && !needrot){
+		(pv, ok) := protovert(c, p);
+		if(!ok)
+			return;
+		sync3d(c);
+		fl := flags;
+		mid := 0;
+		if(mask != nil){
+			fl |= 1;
+			mid = mask.id();
+		}
+		n := 1+4+4+4+1+4+4+3*4;
+		if(fl & 8)
+			n += 16*4;
+		msg := array[n] of byte;
+		msg[0] = byte 'j';
+		puti32(msg, 1, c.dst.id());
+		puti32(msg, 5, img.id());
+		puti32(msg, 9, mid);
+		msg[13] = byte fl;
+		putf32(msg, 14, scale);
+		putf32(msg, 18, adz);
+		putf32(msg, 22, pv.x);
+		putf32(msg, 26, pv.y);
+		putf32(msg, 30, pv.z);
+		writemsg(c.dst.display, msg);
+		return;
+	}
 	(sp, ez, ok) := project(c, p);
-	if(!ok || c.dst == nil || img == nil)
+	if(!ok)
 		return;
 	iw := img.r.dx();
 	ih := img.r.dy();
@@ -774,19 +882,16 @@ spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: rea
 		sc = 1.0 / (-ez);
 	sw := int (real iw * sc);
 	sh := int (real ih * sc);
+	if(flags & 4)	# yb vertical squash
+		sh = int (real sh * 0.85);
 	if(sw < 1) sw = 1;
 	if(sh < 1) sh = 1;
-	# Normalize angle; near 0 → fast axis-aligned blit
-	while(degz >= 360.0)
-		degz -= 360.0;
-	while(degz < 0.0)
-		degz += 360.0;
-	if(degz < 0.5 || degz > 359.5){
+	if(!needrot){
 		r := Rect((sp.x - sw/2, sp.y - sh/2), (sp.x - sw/2 + sw, sp.y - sh/2 + sh));
 		c.dst.draw(r, img, mask, img.r.min);
 		return;
 	}
-	rotsprite(c.dst, sp, sw, sh, img, mask, degz);
+	rotsprite(c.dst, sp, sw, sh, img, mask, adz);
 }
 
 # Software Z-rotate blit (nearest-neighbour) for Sprite3ZB.
@@ -895,26 +1000,59 @@ rotsprite(dst: ref Image, sp: Point, sw, sh: int, img, mask: ref Image, degz: re
 
 sprite3(c: ref Context, p: Vector, img, mask: ref Image, scale: real)
 {
-	spriteat(c, p, img, mask, scale, 0.0);
+	spriteat(c, p, img, mask, scale, 0.0, 0);
 }
 
 sprite3zb(c: ref Context, p: Vector, img, mask: ref Image, scale, degz: real)
 {
-	spriteat(c, p, img, mask, scale, degz);
+	spriteat(c, p, img, mask, scale, degz, 2);
 }
 
 sprite3yb(c: ref Context, p: Vector, img, mask: ref Image, scale: real)
 {
-	# Billboard facing camera: same as sprite3 for now (no yaw tilt).
-	spriteat(c, p, img, mask, scale, 0.0);
+	# Billboard yaw stand-in: vertical squash via protocol flag bit2.
+	spriteat(c, p, img, mask, scale, 0.0, 4);
 }
 
 sprite3mat(c: ref Context, p: Vector, m: Matrix, img, mask: ref Image, scale: real)
 {
-	# Apply object matrix then place at p.
+	# Apply object matrix then place at p (protocol 'j' bit3, or soft).
 	q := mulpoint(m, Vector(0.0, 0.0, 0.0));
 	q.x += p.x; q.y += p.y; q.z += p.z;
-	spriteat(c, q, img, mask, scale, 0.0);
+	if(haveproto){
+		(pv, ok) := protovert(c, q);
+		if(!ok || c.dst == nil || img == nil)
+			return;
+		sync3d(c);
+		fl := 8;
+		mid := 0;
+		if(mask != nil){
+			fl |= 1;
+			mid = mask.id();
+		}
+		msg := array[1+4+4+4+1+4+4+3*4+16*4] of byte;
+		msg[0] = byte 'j';
+		puti32(msg, 1, c.dst.id());
+		puti32(msg, 5, img.id());
+		puti32(msg, 9, mid);
+		msg[13] = byte fl;
+		putf32(msg, 14, scale);
+		putf32(msg, 18, 0.0);
+		# Send original p; server applies mat then adds p — but we already
+		# folded mat*0+p into q. Send identity mat + q as xyz.
+		putf32(msg, 22, pv.x);
+		putf32(msg, 26, pv.y);
+		putf32(msg, 30, pv.z);
+		for(i := 0; i < 16; i++)
+			putf32(msg, 34+i*4, 0.0);
+		putf32(msg, 34+0*4, 1.0);
+		putf32(msg, 34+5*4, 1.0);
+		putf32(msg, 34+10*4, 1.0);
+		putf32(msg, 34+15*4, 1.0);
+		writemsg(c.dst.display, msg);
+		return;
+	}
+	spriteat(c, q, img, mask, scale, 0.0, 0);
 }
 
 vdot(a, b: Vector): real

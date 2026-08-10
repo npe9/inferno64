@@ -531,7 +531,9 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 		polyfill->fillpoly(c.dst, ap, ~0, c.colour, Point(0, 0), c.zstate, dc, dx, dy);
 	}else
 		c.dst.fillpoly(ap, ~0, c.colour, Point(0, 0));
-	lit = lit;	# reserved for shade selection by caller
+	# lit is applied by draw3ddev/Metal when using the protocol provider;
+	# software path expects the caller to tint c.colour (TempleOS style).
+	lit = lit;
 }
 
 spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: real)
@@ -680,8 +682,23 @@ sprite3zb(c: ref Context, p: Vector, img, mask: ref Image, scale, degz: real)
 
 sprite3yb(c: ref Context, p: Vector, img, mask: ref Image, scale: real)
 {
-	# Billboard facing camera: same as sprite3 for now (no yaw tilt).
-	spriteat(c, p, img, mask, scale, 0.0);
+	# Billboard yaw stand-in: draw with vertical squash via scale on Y.
+	(sp, ez, ok) := project(c, p);
+	if(!ok || c.dst == nil || img == nil)
+		return;
+	iw := img.r.dx();
+	ih := img.r.dy();
+	sc := 1.0;
+	if(scale > 0.0 && ez < 0.0)
+		sc = scale / (-ez);
+	else if(ez < 0.0)
+		sc = 1.0 / (-ez);
+	sw := int (real iw * sc);
+	sh := int (real ih * sc * 0.85);
+	if(sw < 1) sw = 1;
+	if(sh < 1) sh = 1;
+	r := Rect((sp.x - sw/2, sp.y - sh/2), (sp.x - sw/2 + sw, sp.y - sh/2 + sh));
+	c.dst.draw(r, img, mask, img.r.min);
 }
 
 sprite3mat(c: ref Context, p: Vector, m: Matrix, img, mask: ref Image, scale: real)

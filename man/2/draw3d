@@ -97,13 +97,14 @@ implements the same
 module type but encodes
 .BR fillpoly3 ,
 .BR line3 ,
-and related state through optional
+.BR plot3 ,
+sprites, and related state through optional
 .IR draw (3)
 protocol letters
-.RB ( 3 / M / w / u / z / g / G )
+.RB ( 3 / M / w / u / z / g / G / h / j / k )
 so a capable
 .B /dev/draw
-server can rasterise (or later accelerate) the primitives.
+server can rasterise or Metal-accelerate the primitives.
 Clients choose the provider by which
 .B .dis
 they
@@ -131,6 +132,13 @@ used by vector primitives.
 installs an optional foreshortening callback;
 .B nil
 means identity.
+When
+.B settransform
+is set,
+.B draw3ddev
+sends an identity model matrix and applies model+transform in Limbo before
+.B g / G / k / h / j
+so Castle-style foreshortening stays correct.
 .PP
 .BR Setzarea ,
 .BR clearz ,
@@ -146,6 +154,14 @@ matching
 .IR polyfill (2)
 and
 .BR wm/polyhedra .
+With
+.BR draw3ddev ,
+.B clearz
+also clears the server z-buffer
+.RB ( z )
+and Metal depth;
+soft fallback inside the emu uses the same plane coefficients when the GPU
+cannot draw (obscured or off-screen destinations).
 .B Setzclip
 enables rejection of geometry with eye-space
 .B z ≥ 0
@@ -212,6 +228,13 @@ takes a face
 .IR lit ;
 when z-buffering is enabled it computes plane coefficients for
 .IR polyfill (2).
+On the protocol path
+.RB ( k ),
+.I lit
+scales solid colours in the server/Metal; the pure software module expects
+the caller to tint
+.B c.colour
+(TempleOS style).
 .PP
 Immediate mode follows a GL-ish pattern:
 .B begin
@@ -230,8 +253,17 @@ and
 .B ellipse
 are convenience emitters;
 .B end
-flushes the primitive to
-.BR c.dst .
+flushes the primitive.
+With
+.BR draw3ddev ,
+.B POLY / FILLPOLY
+use
+.B line3 / fillpoly3
+(Metal
+.B G / k );
+circles and ellipses remain softscreen
+.B Image
+ops and composite over Metal geometry via the emu overlay path.
 .SS Sprites
 The Sprite3 family draws an image (with optional mask) as a camera-facing billboard.
 .I Scale
@@ -239,11 +271,14 @@ is a world-space half-width; 0 uses the image width in pixels.
 .B sprite3
 places an upright billboard;
 .B sprite3yb
-and
+applies a vertical squash (yaw billboard stand-in);
 .B sprite3zb
-yaw or pitch the billboard;
+rotates about Z (software blit when the angle is non-trivial);
 .B sprite3mat
 uses an explicit matrix.
+.B draw3ddev
+encodes axis-aligned sprites as letter
+.BR j .
 .PP
 .BR Newmatrix ,
 .BR vdot ,

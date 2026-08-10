@@ -137,3 +137,49 @@ draw3dline3(Image *dst, Image *src, int thick, float ax, float ay, float az, flo
 	putf32(a+29, by);
 	putf32(a+33, bz);
 }
+
+void
+draw3dplot3(Image *dst, Image *src, float x, float y, float z)
+{
+	uchar *a;
+
+	if(dst == nil || src == nil)
+		return;
+	a = bufimage(dst->display, 1+4+4+3*4);
+	if(a == nil)
+		return;
+	a[0] = 'h';
+	BP32INT(a+1, dst->id);
+	BP32INT(a+5, src->id);
+	putf32(a+9, x);
+	putf32(a+13, y);
+	putf32(a+17, z);
+}
+
+void
+draw3dfillpoly3lit(Image *dst, Image *src, float *xyz, int nvert,
+	float nx, float ny, float nz, float lit)
+{
+	uchar *a;
+	int i, m;
+
+	if(dst == nil || src == nil || xyz == nil || nvert < 3)
+		return;
+	m = 1+4+4+2 + 4*4 + nvert*3*4;
+	a = bufimage(dst->display, m);
+	if(a == nil)
+		return;
+	a[0] = 'k';
+	BP32INT(a+1, dst->id);
+	BP32INT(a+5, src->id);
+	BP16INT(a+9, nvert);
+	putf32(a+11, nx);
+	putf32(a+15, ny);
+	putf32(a+19, nz);
+	putf32(a+23, lit);
+	for(i = 0; i < nvert; i++){
+		putf32(a+27+i*12, xyz[i*3+0]);
+		putf32(a+27+i*12+4, xyz[i*3+1]);
+		putf32(a+27+i*12+8, xyz[i*3+2]);
+	}
+}

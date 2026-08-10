@@ -77,7 +77,7 @@ struct Client
 	s32		refreshme;
 	s32		infoid;
 	s32	op;	/* compositing operator - SoverD by default */
-	/* Optional draw3d protocol state (letters 3/M/w/u/z/g/G). */
+	/* Optional draw3d protocol state (letters 3/M/w/u/z/g/G/h/j/k). */
 	float		d3model[16];
 	float		d3proj[16];
 	float		d3mx, d3cx, d3my, d3cy;
@@ -170,7 +170,8 @@ extern	void		flushmemscreen(Rectangle);
 
 /* Cocoa Metal (win-cocoa.m) assigns these; nil ⇒ software memline/memfillpoly. */
 int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, float);
-int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int);
+int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
+int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 void	(*gpudrawflush)(void);
 void	(*gpudrawzclear)(void);
 void	(*gpudrawzenable)(int);
@@ -1393,9 +1394,15 @@ printmesg(char *fmt, uchar *a, int plsprnt)
 }
 
 /*
- * draw3d protocol helpers (software raster into Memimage; Metal GPU later).
+ * draw3d protocol helpers (software raster into Memimage; Metal when hooked).
  * Floats are IEEE754 binary32, little-endian (same endianness as BG32INT).
+ * Soft z uses Limbo draw3d/polyfill plane scale (ZSCALE = 1<<20).
  */
+enum {
+	D3ZSCALE	= 1<<20,
+	D3LIMIT		= 1<<11
+};
+
 static float
 bgfloat(uchar *p)
 {
@@ -1478,6 +1485,209 @@ d3clearz(Client *cl, Memimage *dst)
 		cl->d3zbuf[i] = 0x7fffffff;
 }
 
+/*
+ * Limbo draw3d fillpoly3 plane in screen space (same formulae as draw3d.b).
+ * vx,vy,vz are verts in the same space as the face normal.
+ */
+static int
+d3planecoeffs(Client *cl, float nx, float ny, float nz,
+	float *vx, float *vy, float *vz, int n,
+	int *pdx, int *pdy, int *pdc)
+{
+	float d, cz, a, b, dd, α, β, γ, δ;
+	int i;
+
+	if(n < 3 || nz == 0.0f)
+		return 0;
+	d = 0.0f;
+	for(i = 0; i < n; i++)
+		d += nx*vx[i] + ny*vy[i] + nz*vz[i];
+	d /= (float)n;
+	α = cl->d3mx;
+	β = cl->d3cx;
+	γ = cl->d3my;
+	δ = cl->d3cy;
+	if(α == 0.0f || γ == 0.0f)
+		return 0;
+	cz = nz;
+	if(cz > -1e-6f && cz < 1e-6f)
+		return 0;
+	a = -nx / (cz * α);
+	b = -ny / (cz * γ);
+	dd = d / cz - β * a - δ * b;
+	if(a <= -(float)D3LIMIT || a >= (float)D3LIMIT
+	|| b <= -(float)D3LIMIT || b >= (float)D3LIMIT
+	|| dd <= -(float)D3LIMIT || dd >= (float)D3LIMIT)
+		return 0;
+	*pdx = (int)(a * (float)D3ZSCALE);
+	*pdy = (int)(b * (float)D3ZSCALE);
+	*pdc = (int)(dd * (float)D3ZSCALE);
+	return 1;
+}
+
+/* Plane through three screen points with eye-z → fixed-point coeffs. */
+static int
+d3planefromeyez(Point *pp, float *ez, int n, int *pdx, int *pdy, int *pdc)
+{
+	float x0, y0, z0, x1, y1, z1, x2, y2, z2;
+	float e1x, e1y, e1z, e2x, e2y, e2z, nx, ny, nz, inv;
+	float a, b, dd;
+
+	if(n < 3)
+		return 0;
+	x0 = (float)pp[0].x; y0 = (float)pp[0].y; z0 = -ez[0];
+	x1 = (float)pp[1].x; y1 = (float)pp[1].y; z1 = -ez[1];
+	x2 = (float)pp[2].x; y2 = (float)pp[2].y; z2 = -ez[2];
+	e1x = x1 - x0; e1y = y1 - y0; e1z = z1 - z0;
+	e2x = x2 - x0; e2y = y2 - y0; e2z = z2 - z0;
+	nx = e1y*e2z - e1z*e2y;
+	ny = e1z*e2x - e1x*e2z;
+	nz = e1x*e2y - e1y*e2x;
+	if(nz > -1e-6f && nz < 1e-6f)
+		return 0;
+	/* z = a*x + b*y + dd  (eye z on the plane) */
+	inv = 1.0f / nz;
+	a = -nx * inv;
+	b = -ny * inv;
+	dd = (nx*x0 + ny*y0 + nz*z0) * inv;
+	if(a <= -(float)D3LIMIT || a >= (float)D3LIMIT
+	|| b <= -(float)D3LIMIT || b >= (float)D3LIMIT
+	|| dd <= -(float)D3LIMIT || dd >= (float)D3LIMIT)
+		return 0;
+	*pdx = (int)(a * (float)D3ZSCALE);
+	*pdy = (int)(b * (float)D3ZSCALE);
+	*pdc = (int)(dd * (float)D3ZSCALE);
+	return 1;
+}
+
+/* Convex point-in-polygon (draw3d faces are convex). */
+static int
+d3ptconvex(Point p, Point *v, int n)
+{
+	int i, s, c;
+	Point a, b;
+
+	s = 0;
+	for(i = 0; i < n; i++){
+		a = v[i];
+		b = v[(i+1) % n];
+		c = (b.x - a.x)*(p.y - a.y) - (b.y - a.y)*(p.x - a.x);
+		if(c < 0){
+			if(s > 0)
+				return 0;
+			s = -1;
+		}else if(c > 0){
+			if(s < 0)
+				return 0;
+			s = 1;
+		}
+	}
+	return 1;
+}
+
+/*
+ * Soft z-buffered fill matching Limbo polyfill semantics (closer = smaller z).
+ * Falls back to memfillpoly when no z-buffer is allocated.
+ */
+static void
+d3fillpolyz(Client *cl, Memimage *dst, Point *pp, int nw,
+	Memimage *src, int op, int dc, int dx, int dy)
+{
+	Rectangle bbox, clip;
+	Point p;
+	int x, y, z, k, prevx;
+	Memimage *ones;
+
+	if(!cl->d3zenable || cl->d3zbuf == nil){
+		memfillpoly(dst, pp, nw+1, ~0, src, pp[0], op);
+		return;
+	}
+	bbox.min = bbox.max = pp[0];
+	for(k = 1; k < nw; k++){
+		if(pp[k].x < bbox.min.x) bbox.min.x = pp[k].x;
+		if(pp[k].y < bbox.min.y) bbox.min.y = pp[k].y;
+		if(pp[k].x > bbox.max.x) bbox.max.x = pp[k].x;
+		if(pp[k].y > bbox.max.y) bbox.max.y = pp[k].y;
+	}
+	bbox.max.x++;
+	bbox.max.y++;
+	clip = dst->clipr;
+	if(!rectclip(&bbox, clip) || !rectclip(&bbox, cl->d3zr))
+		return;
+	ones = memopaque;
+	for(y = bbox.min.y; y < bbox.max.y; y++){
+		prevx = 0x7fffffff;
+		for(x = bbox.min.x; x < bbox.max.x; x++){
+			p = Pt(x, y);
+			if(!d3ptconvex(p, pp, nw)){
+				if(prevx != 0x7fffffff){
+					memdraw(dst, Rect(prevx, y, x, y+1),
+						src, Pt(prevx, y), ones, Pt(prevx, y), op);
+					prevx = 0x7fffffff;
+				}
+				continue;
+			}
+			z = dc + dx*x + dy*y;
+			k = (y - cl->d3zr.min.y)*cl->d3zw + (x - cl->d3zr.min.x);
+			if(k < 0 || k >= cl->d3zw*cl->d3zh)
+				continue;
+			if(z < cl->d3zbuf[k]){
+				cl->d3zbuf[k] = z;
+				if(prevx == 0x7fffffff)
+					prevx = x;
+			}else if(prevx != 0x7fffffff){
+				memdraw(dst, Rect(prevx, y, x, y+1),
+					src, Pt(prevx, y), ones, Pt(prevx, y), op);
+				prevx = 0x7fffffff;
+			}
+		}
+		if(prevx != 0x7fffffff)
+			memdraw(dst, Rect(prevx, y, bbox.max.x, y+1),
+				src, Pt(prevx, y), ones, Pt(prevx, y), op);
+	}
+}
+
+/* Tint a solid 32-bit colour by lighting factor; *tmp owns any replacement. */
+static Memimage*
+d3applylit(Memimage *src, float lit, Memimage **tmp)
+{
+	u32 v, r, g, b, a;
+	uchar *p;
+
+	*tmp = nil;
+	if(src == nil || (lit >= 0.999f && lit <= 1.001f))
+		return src;
+	if(!(src->flags & Frepl) || src->depth != 32)
+		return src;
+	p = byteaddr(src, src->r.min);
+	if(p == nil)
+		return src;
+	v = (u32)p[0] | ((u32)p[1]<<8) | ((u32)p[2]<<16) | ((u32)p[3]<<24);
+	r = v & 0xff;
+	g = (v>>8) & 0xff;
+	b = (v>>16) & 0xff;
+	a = (v>>24) & 0xff;
+	if(lit < 0.0f)
+		lit = 0.0f;
+	r = (u32)(r * lit);
+	g = (u32)(g * lit);
+	b = (u32)(b * lit);
+	if(r > 255) r = 255;
+	if(g > 255) g = 255;
+	if(b > 255) b = 255;
+	*tmp = allocmemimage(Rect(0, 0, 1, 1), src->chan);
+	if(*tmp == nil)
+		return src;
+	(*tmp)->flags |= Frepl;
+	(*tmp)->clipr = Rect(-0x3FFFFFF, -0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF);
+	p = byteaddr(*tmp, (*tmp)->r.min);
+	p[0] = (uchar)r;
+	p[1] = (uchar)g;
+	p[2] = (uchar)b;
+	p[3] = (uchar)a;
+	return *tmp;
+}
+
 void
 drawmesg(Client *client, void *av, int n)
 {
@@ -1517,6 +1727,9 @@ drawmesg(Client *client, void *av, int n)
 		switch(*a){
 		case 'G':
 		case 'g':
+		case 'h':
+		case 'j':
+		case 'k':
 		case 'M':
 		case 'w':
 		case 'u':
@@ -2148,9 +2361,12 @@ drawmesg(Client *client, void *av, int n)
 		 * 'w' mx cx my cy[4*4] — viewport: screen = (mx*ndc.x+cx, my*ndc.y+cy)
 		 * 'u' flags[1]         — bit0 zenable, bit1 clipbehind
 		 * 'z' dstid[4]         — clear (and size) software z-buffer for dst
-		 * 'g' dstid srcid n[2] xyz... — fillpoly3 world-space verts
+		 * 'g' dstid srcid n[2] xyz... — fillpoly3 (compat; no normal/lit)
+		 * 'k' dstid srcid n[2] nxyz lit xyz... — fillpoly3 with normal+lit
 		 * 'G' dstid srcid thick a[3] b[3] — line3
-		 * 'g'/'G' may be Metal-batched onto the Cocoa drawable (depth + overlay).
+		 * 'h' dstid srcid xyz[3] — plot3
+		 * 'j' dstid img mask flags scale degz xyz [mat16] — sprite3 family
+		 * 'g'/'G'/'k'/'h' may be Metal-batched on Cocoa (depth + overlay).
 		 */
 		case '3':
 			printmesg(fmt="", a, 0);
@@ -2203,9 +2419,12 @@ drawmesg(Client *client, void *av, int n)
 				gpudrawzclear();
 			continue;
 
-		case 'g':	/* fillpoly3 */
+		case 'g':	/* fillpoly3 (compat) */
+		case 'k':	/* fillpoly3 + normal + lit */
 			printmesg(fmt="LLS", a, 0);
 			m = 1+4+4+2;
+			if(*a == 'k')
+				m += 4*4;	/* nx ny nz lit */
 			if(n < m)
 				error(Eshortdraw);
 			dst = drawimage(client, a+1);
@@ -2213,71 +2432,147 @@ drawmesg(Client *client, void *av, int n)
 			nw = BG16INT(a+9);
 			if(nw < 3 || nw > 1024)
 				error(Ebadarg);
-			m += nw * 3 * 4;
-			if(n < m)
-				error(Eshortdraw);
-			pp = malloc(sizeof(Point) * (nw + 1));
-			if(pp == nil)
-				error(Edrawmem);
-			if(waserror()){
-				free(pp);
-				nexterror();
-			}
 			{
-				float *ezs;
-				int gpudone;
+				int hdr;
+				float nx, ny, nz, lit;
+				float *vx, *vy, *vz;
+				Memimage *lsrc, *ltmp;
+				int pdx, pdy, pdc, haveplane, gpudone;
 
-				ezs = malloc(sizeof(float) * nw);
-				if(ezs == nil){
+				hdr = 11;
+				nx = ny = 0.0f;
+				nz = 1.0f;
+				lit = 1.0f;
+				ltmp = nil;
+				lsrc = nil;
+				if(*a == 'k'){
+					nx = bgfloat(a+11);
+					ny = bgfloat(a+15);
+					nz = bgfloat(a+19);
+					lit = bgfloat(a+23);
+					hdr = 27;
+				}
+				m = hdr + nw * 3 * 4;
+				if(n < m)
+					error(Eshortdraw);
+				pp = malloc(sizeof(Point) * (nw + 1));
+				if(pp == nil)
+					error(Edrawmem);
+				if(waserror()){
+					free(pp);
+					nexterror();
+				}
+				vx = malloc(sizeof(float) * nw * 3);
+				if(vx == nil){
 					poperror();
 					free(pp);
 					error(Edrawmem);
 				}
+				vy = vx + nw;
+				vz = vy + nw;
 				if(waserror()){
-					free(ezs);
+					free(vx);
 					nexterror();
 				}
-				for(j = 0; j < nw; j++){
-					float fx, fy, fz, ez;
+				{
+					float *ezs;
 
-					fx = bgfloat(a+11 + j*12);
-					fy = bgfloat(a+11 + j*12 + 4);
-					fz = bgfloat(a+11 + j*12 + 8);
-					if(!d3project(client, fx, fy, fz, &pp[j], &ez)){
+					ezs = malloc(sizeof(float) * nw);
+					if(ezs == nil){
 						poperror();
-						free(ezs);
+						free(vx);
 						poperror();
 						free(pp);
-						goto gdone;
+						error(Edrawmem);
 					}
-					ezs[j] = ez;
+					if(waserror()){
+						free(ezs);
+						nexterror();
+					}
+					for(j = 0; j < nw; j++){
+						float fx, fy, fz, ez;
+
+						fx = bgfloat(a+hdr + j*12);
+						fy = bgfloat(a+hdr + j*12 + 4);
+						fz = bgfloat(a+hdr + j*12 + 8);
+						vx[j] = fx;
+						vy[j] = fy;
+						vz[j] = fz;
+						if(!d3project(client, fx, fy, fz, &pp[j], &ez)){
+							poperror();
+							free(ezs);
+							poperror();
+							free(vx);
+							poperror();
+							free(pp);
+							goto gdone;
+						}
+						ezs[j] = ez;
+					}
+					pp[nw] = pp[0];
+					op = drawclientop(client);
+					haveplane = 0;
+					pdx = pdy = pdc = 0;
+					if(client->d3zenable){
+						if(*a == 'k' && nz != 0.0f)
+							haveplane = d3planecoeffs(client, nx, ny, nz,
+								vx, vy, vz, nw, &pdx, &pdy, &pdc);
+						if(!haveplane)
+							haveplane = d3planefromeyez(pp, ezs, nw,
+								&pdx, &pdy, &pdc);
+						/* Prefer Polyfill-style plane depths for Metal. */
+						if(haveplane){
+							for(j = 0; j < nw; j++){
+								float pz;
+
+								pz = ((float)pdc + (float)pdx*(float)pp[j].x
+									+ (float)pdy*(float)pp[j].y)
+									/ (float)D3ZSCALE;
+								/* Map plane z → eye-like: closer ⇒ more negative. */
+								ezs[j] = -pz;
+							}
+						}
+					}
+					gpudone = 0;
+					if(gpudrawfillpoly != nil)
+						gpudone = gpudrawfillpoly(dst, pp, ezs, nw, src, op, lit);
+					if(!gpudone){
+						lsrc = d3applylit(src, lit, &ltmp);
+						if(waserror()){
+							if(ltmp)
+								freememimage(ltmp);
+							nexterror();
+						}
+						if(client->d3zenable && haveplane)
+							d3fillpolyz(client, dst, pp, nw, lsrc, op, pdc, pdx, pdy);
+						else
+							memfillpoly(dst, pp, nw+1, ~0, lsrc, pp[0], op);
+						poperror();
+						if(ltmp)
+							freememimage(ltmp);
+					}
+					poperror();
+					free(ezs);
 				}
-				pp[nw] = pp[0];
-				op = drawclientop(client);
-				gpudone = 0;
-				if(gpudrawfillpoly != nil)
-					gpudone = gpudrawfillpoly(dst, pp, ezs, nw, src, op);
-				if(!gpudone)
-					memfillpoly(dst, pp, nw+1, ~0, src, pp[0], op);
+				/* flush bbox of projected verts */
+				r = dst->clipr;
+				if(nw > 0){
+					r.min = r.max = pp[0];
+					for(j = 1; j < nw; j++){
+						if(pp[j].x < r.min.x) r.min.x = pp[j].x;
+						if(pp[j].y < r.min.y) r.min.y = pp[j].y;
+						if(pp[j].x > r.max.x) r.max.x = pp[j].x;
+						if(pp[j].y > r.max.y) r.max.y = pp[j].y;
+					}
+					r.max.x++;
+					r.max.y++;
+				}
+				dstflush(dst, r);
 				poperror();
-				free(ezs);
+				free(vx);
+				poperror();
+				free(pp);
 			}
-			/* flush bbox of projected verts (triggers present; GPU path composites there) */
-			r = dst->clipr;
-			if(nw > 0){
-				r.min = r.max = pp[0];
-				for(j = 1; j < nw; j++){
-					if(pp[j].x < r.min.x) r.min.x = pp[j].x;
-					if(pp[j].y < r.min.y) r.min.y = pp[j].y;
-					if(pp[j].x > r.max.x) r.max.x = pp[j].x;
-					if(pp[j].y > r.max.y) r.max.y = pp[j].y;
-				}
-				r.max.x++;
-				r.max.y++;
-			}
-			dstflush(dst, r);
-			poperror();
-			free(pp);
 		gdone:
 			continue;
 
@@ -2315,6 +2610,126 @@ drawmesg(Client *client, void *av, int n)
 					r = memlinebbox(pa, pb, Endsquare, Endsquare, j);
 					dstflush(dst, insetrect(r, -(1+1+j)));
 				}
+			}
+			continue;
+
+		case 'h':	/* plot3 */
+			printmesg(fmt="LL", a, 0);
+			m = 1+4+4+3*4;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			src = drawimage(client, a+5);
+			{
+				float fx, fy, fz, ez;
+				Point pa;
+				int gpudone, zk;
+
+				fx = bgfloat(a+9);
+				fy = bgfloat(a+13);
+				fz = bgfloat(a+17);
+				if(!d3project(client, fx, fy, fz, &pa, &ez))
+					continue;
+				op = drawclientop(client);
+				gpudone = 0;
+				if(gpudrawplot != nil)
+					gpudone = gpudrawplot(dst, pa, src, op, ez);
+				if(!gpudone){
+					if(client->d3zenable && client->d3zbuf != nil
+					&& ptinrect(pa, client->d3zr)){
+						zk = (pa.y - client->d3zr.min.y)*client->d3zw
+							+ (pa.x - client->d3zr.min.x);
+						if(zk >= 0 && zk < client->d3zw*client->d3zh){
+							int z;
+
+							z = (int)((-ez) * (float)D3ZSCALE);
+							if(z < client->d3zbuf[zk]){
+								client->d3zbuf[zk] = z;
+								memdraw(dst, Rect(pa.x, pa.y, pa.x+1, pa.y+1),
+									src, ZP, memopaque, ZP, op);
+							}
+						}else
+							memdraw(dst, Rect(pa.x, pa.y, pa.x+1, pa.y+1),
+								src, ZP, memopaque, ZP, op);
+					}else
+						memdraw(dst, Rect(pa.x, pa.y, pa.x+1, pa.y+1),
+							src, ZP, memopaque, ZP, op);
+				}
+				dstflush(dst, Rect(pa.x, pa.y, pa.x+1, pa.y+1));
+			}
+			continue;
+
+		case 'j':	/* sprite3 family */
+			printmesg(fmt="LLLb", a, 0);
+			m = 1+4+4+4+1+4+4+3*4;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			src = drawimage(client, a+5);	/* img */
+			{
+				u32 maskid;
+				int flags;
+				float scale, degz, fx, fy, fz, ez, sc;
+				Point sp;
+				Memimage *mask;
+				Rectangle dr;
+				int iw, ih, sw, sh;
+				float mat[16];
+				float qx, qy, qz;
+				DImage *dmask;
+
+				maskid = BG32INT(a+9);
+				flags = a[13];
+				scale = bgfloat(a+14);
+				degz = bgfloat(a+18);
+				fx = bgfloat(a+22);
+				fy = bgfloat(a+26);
+				fz = bgfloat(a+30);
+				mask = nil;
+				if((flags & 1) && maskid != 0){
+					dmask = drawlookup(client, (int)maskid, 1);
+					if(dmask != nil)
+						mask = dmask->image;
+				}
+				if(flags & 8){	/* sprite3mat: matrix then origin at p */
+					m = 1+4+4+4+1+4+4+3*4+16*4;
+					if(n < m)
+						error(Eshortdraw);
+					d3loadmat(mat, a+34);
+					d3mulpoint(mat, 0, 0, 0, &qx, &qy, &qz);
+					fx += qx;
+					fy += qy;
+					fz += qz;
+				}
+				if(!d3project(client, fx, fy, fz, &sp, &ez))
+					continue;
+				iw = Dx(src->r);
+				ih = Dy(src->r);
+				sc = 1.0f;
+				if(scale > 0.0f && ez < 0.0f)
+					sc = scale / (-ez);
+				else if(ez < 0.0f)
+					sc = 1.0f / (-ez);
+				sw = (int)((float)iw * sc);
+				sh = (int)((float)ih * sc);
+				/* yb: slight vertical squash as billboard yaw stand-in */
+				if(flags & 4)
+					sh = (int)((float)sh * 0.85f);
+				if(sw < 1) sw = 1;
+				if(sh < 1) sh = 1;
+				/*
+				 * Non-zero zb rotation stays client-side (Limbo rotsprite);
+				 * axis-aligned path covers sprite3 / yb / mat / zb≈0.
+				 */
+				if((flags & 2) && !(degz < 0.5f || degz > 359.5f))
+					continue;
+				dr = Rect(sp.x - sw/2, sp.y - sh/2,
+					sp.x - sw/2 + sw, sp.y - sh/2 + sh);
+				op = drawclientop(client);
+				memdraw(dst, dr, src, src->r.min,
+					mask != nil ? mask : memopaque,
+					mask != nil ? mask->r.min : ZP, op);
+				dstflush(dst, dr);
 			}
 			continue;
 
