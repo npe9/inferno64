@@ -901,25 +901,39 @@ The Inferno Cocoa emu presents the softscreen with Metal.  Letters
 (circles) are queued as GPU primitives with per-vertex depth.
 When
 .B u
-enables the z-buffer bit, a GPU depth test sorts fills and lines;
+enables the z-buffer bit, a GPU depth test
+.I sorts
+fills, lines, sprites, and circles relative to each other;
 .B z
-clears that depth attachment.  Thick
+clears that depth attachment.  GPU depth values are a monotonic map of
+eye
+.B z
+chosen for painter's-order sorting only — they are
+.I not
+bit-identical to the software
+.IR polyfill (2)
+fixed-point
+.B ZSCALE
+plane buffer.  Thick
 .B G
 lines
 .RI ( thick >0)
 are drawn as screen-space quads (Plan 9 width
 .IR 1+2×thick ).
 Filled polygons are fan-triangulated from vertex 0 (correct for the
-convex faces used by Temple/Castle ports; concave ear-clip is not
-implemented).
+convex faces used by Temple/Castle ports).  Concave ear-clip is
+intentionally omitted; callers with concave polygons must tessellate
+themselves or stay on the soft path.
 .PP
-Compositing: if 2D drawing follows queued 3D in the same frame, the emu
-snapshots the softscreen at that transition, draws the snapshot, then
-Metal 3D, then overlays softscreen pixels that changed (sprites, minimap,
-HUD).  Letter
+Compositing: if ordinary 2D drawing follows queued 3D in the same frame,
+the emu snapshots the softscreen at that transition, draws the snapshot,
+then Metal 3D (including
 .B j
-and immediate-mode circles/ellipses are softscreen draws and participate
-in that overlay.  There is no Memimage writeback for the GPU path.  Obscured
+sprites and
+.B q
+circles/ellipses), then overlays softscreen pixels that changed after the
+snapshot (wm chrome, minimap, text HUD, and any soft fallback draws).
+There is no Memimage writeback for the GPU path.  Obscured
 layers and non-solid ops fall back to software
 .B memfillpoly
 /

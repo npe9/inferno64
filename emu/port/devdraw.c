@@ -2524,7 +2524,7 @@ drawmesg(Client *client, void *av, int n)
 						if(!haveplane)
 							haveplane = d3planefromeyez(pp, ezs, nw,
 								&pdx, &pdy, &pdc);
-						/* Prefer Polyfill-style plane depths for Metal. */
+						/* Plane z → eye-like for Metal sort-only depth map. */
 						if(haveplane){
 							for(j = 0; j < nw; j++){
 								float pz;

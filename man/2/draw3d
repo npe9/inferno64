@@ -162,6 +162,13 @@ also clears the server z-buffer
 and Metal depth;
 soft fallback inside the emu uses the same plane coefficients when the GPU
 cannot draw (obscured or off-screen destinations).
+Metal depth is a separate
+.RI [0,1]
+sort key derived from eye
+.BR z ;
+it matches soft
+.B ZSCALE
+ordering for typical scenes but is not numerically identical.
 .B Setzclip
 enables rejection of geometry with eye-space
 .B z ≥ 0
@@ -228,13 +235,17 @@ takes a face
 .IR lit ;
 when z-buffering is enabled it computes plane coefficients for
 .IR polyfill (2).
-On the protocol path
-.RB ( k ),
-.I lit
-scales solid colours in the server/Metal; the pure software module expects
-the caller to tint
+.I Lit
+scales solid 32-bit colours on the protocol/Metal path
+.RB ( k )
+and on the soft providers
+.RB ( draw3d.dis
+and
+.B draw3ddev
+soft fallback).  Callers that already bake lighting into
 .B c.colour
-(TempleOS style).
+should pass
+.BR lit =1 .
 .PP
 Immediate mode follows a GL-ish pattern:
 .B begin

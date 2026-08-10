@@ -502,6 +502,7 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 		okn++;
 	}
 	ap[n] = ap[0];
+	col := litcolour(c, lit);
 	if(c.zenable && c.zstate != nil && normal.z != 0.0){
 		# Plane in screen space from face normal / centroid (polyhedra approach).
 		f := normal;
@@ -515,25 +516,57 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 		δ := c.cy;
 		cz := f.z;
 		if(cz > -1e-6 && cz < 1e-6){
-			c.dst.fillpoly(ap, ~0, c.colour, Point(0, 0));
+			c.dst.fillpoly(ap, ~0, col, Point(0, 0));
 			return;
 		}
 		a := -f.x / (cz * α);
 		b := -f.y / (cz * γ);
 		dd := d / cz - β * a - δ * b;
 		if(a <= -LIMIT || a >= LIMIT || b <= -LIMIT || b >= LIMIT || dd <= -LIMIT || dd >= LIMIT){
-			c.dst.fillpoly(ap, ~0, c.colour, Point(0, 0));
+			c.dst.fillpoly(ap, ~0, col, Point(0, 0));
 			return;
 		}
 		dx := int (a * ZSCALE);
 		dy := int (b * ZSCALE);
 		dc := int (dd * ZSCALE);
-		polyfill->fillpoly(c.dst, ap, ~0, c.colour, Point(0, 0), c.zstate, dc, dx, dy);
+		polyfill->fillpoly(c.dst, ap, ~0, col, Point(0, 0), c.zstate, dc, dx, dy);
 	}else
-		c.dst.fillpoly(ap, ~0, c.colour, Point(0, 0));
-	# lit is applied by draw3ddev/Metal when using the protocol provider;
-	# software path expects the caller to tint c.colour (TempleOS style).
-	lit = lit;
+		c.dst.fillpoly(ap, ~0, col, Point(0, 0));
+}
+
+# Tint solid 32-bit colour by lit (Metal / d3applylit parity). Non-solid pens unchanged.
+lit_src: ref Image;
+lit_out: ref Image;
+lit_factor: real;
+
+litcolour(c: ref Context, lit: real): ref Image
+{
+	if(c == nil || c.colour == nil || (lit >= 0.999 && lit <= 1.001))
+		return c.colour;
+	col := c.colour;
+	if(col.depth != 32 || col.display == nil)
+		return col;
+	if(lit < 0.0)
+		lit = 0.0;
+	if(lit_src == col && lit_out != nil && lit_factor == lit)
+		return lit_out;
+	buf := array[4] of byte;
+	r1 := Rect(col.r.min, col.r.min.add(Point(1, 1)));
+	if(col.readpixels(r1, buf) < 0)
+		return col;
+	r := int (real buf[0] * lit);
+	g := int (real buf[1] * lit);
+	b := int (real buf[2] * lit);
+	if(r > 255) r = 255;
+	if(g > 255) g = 255;
+	if(b > 255) b = 255;
+	out := col.display.rgb(r, g, b);
+	if(out == nil)
+		return col;
+	lit_src = col;
+	lit_out = out;
+	lit_factor = lit;
+	return out;
 }
 
 spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: real)

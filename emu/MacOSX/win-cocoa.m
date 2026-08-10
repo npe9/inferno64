@@ -96,8 +96,12 @@ enum {
 	MaxGPULines = 16384,
 	MaxGPUTriVerts = 49152,	/* 16384 triangles × 3 packed verts */
 	MaxGPUSprites = 512,
+	MaxSpriteTexCache = 64,	/* reuse uploads across 'j' draws */
 	EllipseSegs = 48,
-	/* Eye-z → depth: closer (ez→0−) smaller depth; far clamps to 1. */
+	/*
+	 * Eye-z → Metal depth [0,1]: closer (ez→0−) → smaller depth.
+	 * Sort-only vs soft Polyfill ZSCALE=1<<20 — same order, not bit-identical.
+	 */
 	ZDepthScale = 256,
 };
 
@@ -129,6 +133,17 @@ struct GPUSprite {
 	id<MTLTexture>	tex;
 };
 
+/* LRU cache of uploaded sprite textures (keyed by Memimage + mask + size). */
+typedef struct SpriteTexCache SpriteTexCache;
+struct SpriteTexCache {
+	Memimage	*img;
+	Memimage	*mask;
+	void	*bdata;	/* img->data->bdata — catch pointer reuse */
+	int	w, h;
+	u32	tick;
+	id<MTLTexture>	tex;
+};
+
 /* Screen-space geometry held until present (no Memimage writeback). */
 static GPULine	glines[MaxGPULines];
 static int	nglines;
@@ -136,6 +151,9 @@ static GPUVert	gtriverts[MaxGPUTriVerts];
 static int	ngtriverts;
 static GPUSprite	gsprites[MaxGPUSprites];
 static int	ngsprites;
+static SpriteTexCache	sprtexcache[MaxSpriteTexCache];
+static int	nsprtexcache;
+static u32	sprtex_tick;
 
 /* Soft Plan9 Paper desktop (#C4C0B4); must match appl/wm/wm.b Background. */
 enum {
@@ -235,6 +253,8 @@ static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTextu
 static void	metal_present_sprites(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	soft_burn_tris(void);
 static float	eye_to_depth(float);
+static void	metal_clear_sprite_tex_cache(void);
+static id<MTLTexture>	metal_sprite_tex(Memimage*, Memimage*);
 
 static void
 invalidate_mtl_tex(void)
@@ -247,6 +267,7 @@ invalidate_mtl_tex(void)
 	mtl_depth = nil;
 	mtl_depth_w = mtl_depth_h = 0;
 	mtl_have_under = 0;
+	metal_clear_sprite_tex_cache();
 	soft_upload_valid = 0;
 }
 
@@ -340,7 +361,12 @@ eye_to_depth(float ez)
 {
 	float d;
 
-	/* Camera looks toward −Z; closer ⇒ larger (less negative) ez. */
+	/*
+	 * Camera looks toward −Z; closer ⇒ larger (less negative) ez.
+	 * Soft Polyfill stores plane z as int(ez * ZSCALE) with ZSCALE=1<<20.
+	 * Here we only need a stable less-equal order for Metal depth-test
+	 * sorting among GPU primitives — not matching soft zbuf numerics.
+	 */
 	d = -ez / (float)ZDepthScale;
 	if(d < 0.0f)
 		d = 0.0f;
@@ -611,7 +637,7 @@ soft_bresenham(Memimage *dst, GPULine *L)
 /*
  * Direct path: GPU geom stays queued until present (no Memimage writeback).
  * On the first 2D draw after geometry, snapshot the softscreen so present can
- * put subsequent HUD over the Metal 3D layer (sprites now queue as GPU too).
+ * put subsequent HUD over the Metal 3D layer (j/q are GPU; overlay is leftover 2D).
  */
 static void
 metal_flush_geom(void)
@@ -841,7 +867,8 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 /*
  * fillpoly3 ('g'/'k'): fan-triangulate screen-space verts and queue for Metal.
  * Convex faces (typical draw3d / Temple) are correct as a fan from vertex 0.
- * lit scales solid colour (same as soft d3applylit).
+ * Concave ear-clip is intentionally skipped — not needed for current callers.
+ * lit scales solid colour (same as soft d3applylit / Limbo litcolour).
  * Returns 0 ⇒ caller uses memfillpoly / d3fillpolyz (obscured, bad op, colour).
  */
 static int
@@ -1023,6 +1050,80 @@ metal_upload_sprite_tex(Memimage *img, Memimage *mask)
 	return tex;
 }
 
+static void
+metal_clear_sprite_tex_cache(void)
+{
+	int i;
+
+	for(i = 0; i < nsprtexcache; i++){
+		sprtexcache[i].tex = nil;
+		sprtexcache[i].img = nil;
+		sprtexcache[i].mask = nil;
+		sprtexcache[i].bdata = nil;
+		sprtexcache[i].w = sprtexcache[i].h = 0;
+		sprtexcache[i].tick = 0;
+	}
+	nsprtexcache = 0;
+	sprtex_tick = 0;
+}
+
+/*
+ * Cache uploaded sprite textures across 'j' draws. Temple/Castle reuse the
+ * same Memimage icons every frame; avoiding re-upload is the big win.
+ * Not a packed atlas — one Metal texture per distinct (img,mask) pair.
+ */
+static id<MTLTexture>
+metal_sprite_tex(Memimage *img, Memimage *mask)
+{
+	int i, w, h, victim;
+	u32 oldest;
+	void *bdata;
+	id<MTLTexture> tex;
+	SpriteTexCache *e;
+
+	if(img == nil || img->data == nil || img->data->bdata == nil)
+		return nil;
+	w = Dx(img->r);
+	h = Dy(img->r);
+	bdata = img->data->bdata;
+	sprtex_tick++;
+	if(sprtex_tick == 0)
+		sprtex_tick = 1;
+	for(i = 0; i < nsprtexcache; i++){
+		e = &sprtexcache[i];
+		if(e->img == img && e->mask == mask && e->bdata == bdata
+		&& e->w == w && e->h == h && e->tex != nil){
+			e->tick = sprtex_tick;
+			return e->tex;
+		}
+	}
+	tex = metal_upload_sprite_tex(img, mask);
+	if(tex == nil)
+		return nil;
+	if(nsprtexcache < MaxSpriteTexCache){
+		e = &sprtexcache[nsprtexcache++];
+	}else{
+		victim = 0;
+		oldest = sprtexcache[0].tick;
+		for(i = 1; i < MaxSpriteTexCache; i++){
+			if(sprtexcache[i].tick < oldest){
+				oldest = sprtexcache[i].tick;
+				victim = i;
+			}
+		}
+		e = &sprtexcache[victim];
+		e->tex = nil;	/* release previous */
+	}
+	e->img = img;
+	e->mask = mask;
+	e->bdata = bdata;
+	e->w = w;
+	e->h = h;
+	e->tick = sprtex_tick;
+	e->tex = tex;
+	return tex;
+}
+
 /* sprite3 ('j'): textured Metal quad with depth; degz rotates in screen space. */
 static int
 metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
@@ -1055,7 +1156,7 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 		return 0;
 	if(ngsprites >= MaxGPUSprites)
 		return 0;
-	tex = metal_upload_sprite_tex(img, mask);
+	tex = metal_sprite_tex(img, mask);
 	if(tex == nil)
 		return 0;
 	while(degz >= 360.0f) degz -= 360.0f;

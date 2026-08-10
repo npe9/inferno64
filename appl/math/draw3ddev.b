@@ -804,15 +804,39 @@ softfillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 		c.dst.fillpoly(ap, ~0, col, Point(0, 0));
 }
 
-# Tint solid colour by lit when practical; else return c.colour unchanged.
+# Tint solid 32-bit colour by lit (Metal / d3applylit parity). Non-solid pens unchanged.
+lit_src: ref Image;
+lit_out: ref Image;
+lit_factor: real;
+
 litcolour(c: ref Context, lit: real): ref Image
 {
 	if(c == nil || c.colour == nil || (lit >= 0.999 && lit <= 1.001))
 		return c.colour;
-	# Callers typically pass a solid Display.color image; modulation is done
-	# on the protocol/Metal path. Soft path keeps the pen as-is unless lit is
-	# extreme enough that skipping would be obviously wrong — still use colour.
-	return c.colour;
+	col := c.colour;
+	if(col.depth != 32 || col.display == nil)
+		return col;
+	if(lit < 0.0)
+		lit = 0.0;
+	if(lit_src == col && lit_out != nil && lit_factor == lit)
+		return lit_out;
+	buf := array[4] of byte;
+	r1 := Rect(col.r.min, col.r.min.add(Point(1, 1)));
+	if(col.readpixels(r1, buf) < 0)
+		return col;
+	r := int (real buf[0] * lit);
+	g := int (real buf[1] * lit);
+	b := int (real buf[2] * lit);
+	if(r > 255) r = 255;
+	if(g > 255) g = 255;
+	if(b > 255) b = 255;
+	out := col.display.rgb(r, g, b);
+	if(out == nil)
+		return col;
+	lit_src = col;
+	lit_out = out;
+	lit_factor = lit;
+	return out;
 }
 
 fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
