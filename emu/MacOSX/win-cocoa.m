@@ -97,7 +97,7 @@ static int	mtl_depth_w, mtl_depth_h;
 static int	mtl_copy_w, mtl_copy_h;
 static int	mtl_tex_fresh;	/* new soft tex: must full-upload before dirty */
 static CAMetalLayer	*mtl_layer;
-enum { SoftTile = 64 };
+enum { SoftTile = 32 };
 enum { MaxGPUCopies = 256 };
 typedef struct GPUCopy GPUCopy;
 struct GPUCopy {
@@ -822,8 +822,9 @@ metal_replay_copies(id<MTLCommandBuffer> cmd, id<MTLTexture> tex, int pw, int ph
 	npresent_copies = 0;
 }
 
-/* Upload dirty tile runs with screen-relative offsets.  SoftTile*4 and the
- * staging stride are 256-byte aligned, so no rectangle repacking is needed. */
+/* Upload dirty tile runs with screen-relative offsets.  The staging stride
+ * is 256-byte aligned and tile offsets retain native pixel alignment, so no
+ * rectangle repacking is needed. */
 static int
 metal_upload_damage(id<MTLTexture> tex, int full)
 {
