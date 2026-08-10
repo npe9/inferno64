@@ -2101,6 +2101,8 @@ memfastdraw(Memimage *dst, Rectangle r, Memimage *src, Rectangle sr,
 		swid = src->width * sizeof(u32);
 		sp = byteaddr(src, sr.min);
 		nb = dx * dst->depth / 8;
+		if(memdrawcopybegin != nil)
+			memdrawcopybegin(dst, r, src, sr);
 		if(src->data == dst->data && dp > sp){
 			sp += (dy-1) * swid;
 			dp += (dy-1) * dwid;

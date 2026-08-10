@@ -2,6 +2,7 @@
 #include "draw.h"
 #include "memdraw.h"
 
+void (*memdrawcopybegin)(Memimage*, Rectangle, Memimage*, Rectangle);
 void (*memdrawcopy)(Memimage*, Rectangle, Memimage*, Rectangle);
 
 int

@@ -118,6 +118,7 @@ static int	damage_before_copy;
 static uvlong	metal_upload_bytes;
 static uvlong	metal_copy_bytes;
 static uvlong	metal_saved_bytes;
+static uvlong	metal_copy_begins;
 static uvlong	metal_copy_notes;
 static uvlong	metal_copy_rejected;
 static uvlong	metal_copy_armed;
@@ -305,6 +306,7 @@ static void	mark_view_dirty(void);
 static void	metal_damage_note(Rectangle);
 static int	metal_flush_damage(Rectangle);
 static void	metal_copy_note(Memimage*, Rectangle, Memimage*, Rectangle);
+static void	metal_copy_begin(Memimage*, Rectangle, Memimage*, Rectangle);
 static void	metal_replay_copies(id<MTLCommandBuffer>, id<MTLTexture>, int, int);
 
 static void
@@ -411,6 +413,7 @@ metal_init(void)
 	gpudrawzenable = metal_set_zenable;
 	gpudrawdamage = metal_damage_note;
 	gpudrawflushdamage = metal_flush_damage;
+	memdrawcopybegin = metal_copy_begin;
 	memdrawcopy = metal_copy_note;
 	mtl_zclear = 1;
 	return 0;
@@ -605,6 +608,16 @@ metal_damage_note(Rectangle r)
 		}
 	}
 	unlock(&soft_dirty_lock);
+}
+
+static void
+metal_copy_begin(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
+{
+	USED(dst);
+	USED(dr.min.x);
+	USED(src);
+	USED(sr.min.x);
+	metal_copy_begins++;
 }
 
 static void
@@ -1990,12 +2003,14 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
+		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
 			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
-			metal_copy_notes, metal_copy_rejected, metal_copy_armed, metal_copy_cancelled);
+			metal_copy_begins, metal_copy_notes, metal_copy_rejected,
+			metal_copy_armed, metal_copy_cancelled);
 		metal_stat_frames = 0;
 		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
-		metal_copy_notes = metal_copy_rejected = metal_copy_armed = metal_copy_cancelled = 0;
+		metal_copy_begins = metal_copy_notes = metal_copy_rejected = 0;
+		metal_copy_armed = metal_copy_cancelled = 0;
 	}
 }
 
