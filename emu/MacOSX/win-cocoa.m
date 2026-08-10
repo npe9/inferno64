@@ -125,6 +125,10 @@ static uvlong	metal_precopy_largest_bytes;
 static uvlong	metal_precopy_largest_dirty;
 static uvlong	metal_copy_notes;
 static uvlong	metal_copy_rejected;
+static uvlong	metal_copy_reject_storage;
+static uvlong	metal_copy_reject_damage;
+static uvlong	metal_copy_reject_geometry;
+static uvlong	metal_copy_alias_storage;
 static uvlong	metal_copy_armed;
 static uvlong	metal_copy_cancelled;
 static int	metal_stat_frames;
@@ -309,6 +313,7 @@ static id<MTLTexture>	metal_sprite_tex(Memimage*, Memimage*);
 static void	mark_view_dirty(void);
 static void	metal_damage_note(Rectangle);
 static int	metal_flush_damage(Rectangle);
+static int	metal_screen_rect(Memimage*, Rectangle, Rectangle*);
 static void	metal_copy_note(Memimage*, Rectangle, Memimage*, Rectangle);
 static void	metal_copy_begin(Memimage*, Rectangle, Memimage*, Rectangle);
 static void	metal_replay_copies(id<MTLCommandBuffer>, id<MTLTexture>, int, int);
@@ -672,31 +677,72 @@ metal_copy_begin(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 	}
 }
 
+static int
+metal_screen_rect(Memimage *i, Rectangle r, Rectangle *sp)
+{
+	uchar *base, *p;
+	vlong off;
+	int bpl, x, y;
+
+	/* Layers may have distinct Memdata wrappers over the screen.  Matching
+	 * backing bytes, pixel format, and stride makes their coordinates safely
+	 * convertible without accepting save images or other aliases. */
+	if(gscreen == nil || gscreen->data == nil || i == nil || i->data == nil
+	|| i->data->bdata != gscreen->data->bdata || i->depth != 32
+	|| i->chan != gscreen->chan || i->width != gscreen->width)
+		return 0;
+	base = byteaddr(gscreen, gscreen->r.min);
+	p = byteaddr(i, r.min);
+	off = p-base;
+	bpl = gscreen->width*sizeof(u32);
+	if(off < 0 || (off%bpl)%4 != 0)
+		return 0;
+	y = off/bpl;
+	x = (off%bpl)/4;
+	*sp = Rect(gscreen->r.min.x+x, gscreen->r.min.y+y,
+		gscreen->r.min.x+x+Dx(r), gscreen->r.min.y+y+Dy(r));
+	return rectinrect(*sp, gscreen->r);
+}
+
 static void
 metal_copy_note(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 {
 	GPUCopy *c;
 	int i;
+	Rectangle ds, ss;
 
 	metal_copy_notes++;
-	if(gscreen == nil || dst == nil || src == nil
-	|| dst->data != gscreen->data || src->data != gscreen->data
-	|| Dx(dr) != Dx(sr) || Dy(dr) != Dy(sr) || damage_before_copy){
+	if(gscreen == nil || dst == nil || src == nil || Dx(dr) != Dx(sr) || Dy(dr) != Dy(sr)){
+		metal_copy_reject_geometry++;
+		metal_copy_rejected++;
+		return;
+	}
+	if(!metal_screen_rect(dst, dr, &ds) || !metal_screen_rect(src, sr, &ss)){
+		if(dst->data != nil && src->data != nil && gscreen->data != nil
+		&& dst->data->bdata == gscreen->data->bdata
+		&& src->data->bdata == gscreen->data->bdata)
+			metal_copy_alias_storage++;
+		metal_copy_reject_storage++;
+		metal_copy_rejected++;
+		return;
+	}
+	if(damage_before_copy){
+		metal_copy_reject_damage++;
 		metal_copy_rejected++;
 		return;
 	}
 	lock(&soft_dirty_lock);
 	for(i = 0; i < ngpu_copies; i++)
-		if(rectsoverlap(dr, gpu_copies[i].src) || rectsoverlap(dr, gpu_copies[i].dst)
-		|| rectsoverlap(sr, gpu_copies[i].src) || rectsoverlap(sr, gpu_copies[i].dst))
+		if(rectsoverlap(ds, gpu_copies[i].src) || rectsoverlap(ds, gpu_copies[i].dst)
+		|| rectsoverlap(ss, gpu_copies[i].src) || rectsoverlap(ss, gpu_copies[i].dst))
 		{
 			metal_mark_tiles(gpu_copies[i].dst, 1, 0);
 			gpu_copies[i].armed = -1;
 		}
 	if(ngpu_copies < MaxGPUCopies){
 		c = &gpu_copies[ngpu_copies++];
-		c->dst = dr;
-		c->src = sr;
+		c->dst = ds;
+		c->src = ss;
 		c->armed = 0;
 		c->saved = 0;
 	}
@@ -772,7 +818,7 @@ metal_replay_copies(id<MTLCommandBuffer> cmd, id<MTLTexture> tex, int pw, int ph
 static int
 metal_upload_damage(id<MTLTexture> tex, int full)
 {
-	int bpl, pw, ph, sbpl, need, slot, tx, tx1, ty, x, y, w, h, ry, any, i;
+	int bpl, pw, ph, sbpl, need, slot, tx, tx1, ty, x, y, w, h, ry, any, i, hadcopies;
 	uchar *base, *dst, *damage, *swap;
 	id<MTLBuffer> buf;
 	id<MTLCommandBuffer> cmd;
@@ -823,6 +869,10 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 	cmd = [mtl_queue commandBuffer];
 	if(cmd == nil)
 		return -1;
+	/* Preserve the old GPU source before current CPU damage is uploaded.
+	 * Boundary and cleanup uploads then win over the replayed layer copy. */
+	hadcopies = npresent_copies != 0;
+	metal_replay_copies(cmd, tex, pw, ph);
 	blit = [cmd blitCommandEncoder];
 	if(blit == nil)
 		return -1;
@@ -859,7 +909,7 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 		}
 	}
 	[blit endEncoding];
-	if(!any)
+	if(!any && !hadcopies)
 		return 0;
 	[cmd commit];
 	mtl_upload_pending[slot] = cmd;
@@ -2006,7 +2056,6 @@ present_softscreen(void)
 			mtl_tex_fresh = 1;
 		return;
 	}
-	metal_replay_copies(cmd, tex, pw, ph);
 	if(validate){
 		vblit = [cmd blitCommandEncoder];
 		if(vblit == nil)
@@ -2055,15 +2104,18 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
+		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud\n",
 			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
 			metal_copy_begins, metal_precopy_dirty_bytes, metal_precopy_clean_bytes,
 			metal_precopy_largest_bytes, metal_precopy_largest_dirty,
-			metal_copy_notes, metal_copy_rejected,
+			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
+			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
 			metal_copy_armed, metal_copy_cancelled);
 		metal_stat_frames = 0;
 		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
 		metal_copy_begins = metal_copy_notes = metal_copy_rejected = 0;
+		metal_copy_reject_storage = metal_copy_reject_damage = 0;
+		metal_copy_reject_geometry = metal_copy_alias_storage = 0;
 		metal_precopy_dirty_bytes = metal_precopy_clean_bytes = 0;
 		metal_precopy_largest_bytes = metal_precopy_largest_dirty = 0;
 		metal_copy_armed = metal_copy_cancelled = 0;
