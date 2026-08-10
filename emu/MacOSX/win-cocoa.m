@@ -117,6 +117,8 @@ static int	npresent_copies;
 static int	damage_before_copy;
 static uvlong	metal_damage_calls;
 static uvlong	metal_damage_bytes;
+static uvlong	metal_full_uploads;
+static uvlong	metal_readbacks;
 static uvlong	metal_upload_bytes;
 static uvlong	metal_copy_bytes;
 static uvlong	metal_saved_bytes;
@@ -836,6 +838,8 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 
 	if(tex == nil || gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
 		return -1;
+	if(full)
+		metal_full_uploads++;
 	pw = Dx(gscreen->r);
 	ph = Dy(gscreen->r);
 	if(metal_damage_map(pw, ph) < 0)
@@ -1907,6 +1911,7 @@ metal_readback_geom(void)
 
 	if(nglines == 0 && ngtriverts == 0 && ngsprites == 0)
 		return;
+	metal_readbacks++;
 	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
 		return;
 	pw = Dx(gscreen->r);
@@ -2114,9 +2119,10 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
-			metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
+			metal_full_uploads, metal_readbacks, metal_upload_bytes,
+			metal_copy_bytes, metal_saved_bytes,
 			metal_copy_begins, metal_precopy_dirty_bytes, metal_precopy_clean_bytes,
 			metal_precopy_largest_bytes, metal_precopy_largest_dirty,
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
@@ -2124,6 +2130,7 @@ present_softscreen(void)
 			metal_copy_armed, metal_copy_cancelled);
 		metal_stat_frames = 0;
 		metal_damage_calls = metal_damage_bytes = 0;
+		metal_full_uploads = metal_readbacks = 0;
 		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
 		metal_copy_begins = metal_copy_notes = metal_copy_rejected = 0;
 		metal_copy_reject_storage = metal_copy_reject_damage = 0;

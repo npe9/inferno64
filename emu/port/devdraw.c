@@ -382,6 +382,11 @@ dstflush(Memimage *dst, Rectangle r)
 {
 	Memlayer *l;
 
+	/* Drawing primitives clip to the destination, but their conservative
+	 * bounding boxes can extend far beyond it (notably projected 3D lines).
+	 * Keep those bounds from expanding softscreen damage outside the image. */
+	if(!rectclip(&r, dst->clipr))
+		return;
 	if(dst == screenimage){
 		if(gpudrawdamage)
 			gpudrawdamage(r);
