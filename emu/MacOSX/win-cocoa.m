@@ -118,6 +118,10 @@ static int	damage_before_copy;
 static uvlong	metal_upload_bytes;
 static uvlong	metal_copy_bytes;
 static uvlong	metal_saved_bytes;
+static uvlong	metal_copy_notes;
+static uvlong	metal_copy_rejected;
+static uvlong	metal_copy_armed;
+static uvlong	metal_copy_cancelled;
 static int	metal_stat_frames;
 static id<MTLBuffer>	metal_validate_buf;
 static uchar	*metal_validate_cpu;
@@ -592,10 +596,12 @@ metal_damage_note(Rectangle r)
 				- (gpu_copies[i].dst.min.y+SoftTile-1)/SoftTile;
 			gpu_copies[i].saved = nx > 0 && ny > 0
 				? (ulong)nx*ny*SoftTile*SoftTile*4 : 0;
+			metal_copy_armed++;
 		}else if(gpu_copies[i].armed &&
 		    (rectsoverlap(r, gpu_copies[i].src) || rectsoverlap(r, gpu_copies[i].dst))){
 			metal_mark_tiles(gpu_copies[i].dst, 1, 0);
 			gpu_copies[i].armed = -1;
+			metal_copy_cancelled++;
 		}
 	}
 	unlock(&soft_dirty_lock);
@@ -607,10 +613,13 @@ metal_copy_note(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 	GPUCopy *c;
 	int i;
 
+	metal_copy_notes++;
 	if(gscreen == nil || dst == nil || src == nil
 	|| dst->data != gscreen->data || src->data != gscreen->data
-	|| Dx(dr) != Dx(sr) || Dy(dr) != Dy(sr) || damage_before_copy)
+	|| Dx(dr) != Dx(sr) || Dy(dr) != Dy(sr) || damage_before_copy){
+		metal_copy_rejected++;
 		return;
+	}
 	lock(&soft_dirty_lock);
 	for(i = 0; i < ngpu_copies; i++)
 		if(rectsoverlap(dr, gpu_copies[i].src) || rectsoverlap(dr, gpu_copies[i].dst)
@@ -1862,7 +1871,7 @@ metal_overlay_soft(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 static void
 present_softscreen(void)
 {
-	int pw, ph, have_geom, overlay, validate, bpl, sbpl, need, y;
+	int pw, ph, have_geom, overlay, validate, bpl, sbpl, need, x, y;
 	uchar *vp, *cp;
 	id<MTLTexture> tex, depthtex, under;
 	id<CAMetalDrawable> drawable;
@@ -1971,14 +1980,22 @@ present_softscreen(void)
 		cp = metal_validate_cpu;
 		for(y = 0; y < ph; y++)
 			if(memcmp(vp+y*metal_validate_stride,
-			    cp+y*metal_validate_stride, pw*4) != 0)
-				sysfatal("Metal softscreen coherence mismatch at row %d", y);
+			    cp+y*metal_validate_stride, pw*4) != 0){
+				for(x = 0; x < pw; x++)
+					if(((u32*)(vp+y*metal_validate_stride))[x]
+					!= ((u32*)(cp+y*metal_validate_stride))[x])
+						sysfatal("Metal softscreen coherence mismatch at %d,%d gpu=%#ux cpu=%#ux",
+							x, y, ((u32*)(vp+y*metal_validate_stride))[x],
+							((u32*)(cp+y*metal_validate_stride))[x]);
+			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud\n",
-			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes);
+		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
+			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
+			metal_copy_notes, metal_copy_rejected, metal_copy_armed, metal_copy_cancelled);
 		metal_stat_frames = 0;
 		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
+		metal_copy_notes = metal_copy_rejected = metal_copy_armed = metal_copy_cancelled = 0;
 	}
 }
 
