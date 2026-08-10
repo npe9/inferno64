@@ -119,6 +119,8 @@ static uvlong	metal_upload_bytes;
 static uvlong	metal_copy_bytes;
 static uvlong	metal_saved_bytes;
 static uvlong	metal_copy_begins;
+static uvlong	metal_precopy_dirty_bytes;
+static uvlong	metal_precopy_clean_bytes;
 static uvlong	metal_copy_notes;
 static uvlong	metal_copy_rejected;
 static uvlong	metal_copy_armed;
@@ -613,11 +615,51 @@ metal_damage_note(Rectangle r)
 static void
 metal_copy_begin(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 {
+	uchar *base, *p;
+	vlong off;
+	int bpl, tx0, tx1, ty0, ty1, tx, ty, x, y;
+	Rectangle r, tr;
+
 	USED(dst);
 	USED(dr.min.x);
-	USED(src);
-	USED(sr.min.x);
 	metal_copy_begins++;
+	if(getenv("INFERNO_METAL_STATS") == nil)
+		return;
+	if(gscreen == nil || gscreen->data == nil || src == nil || src->data == nil
+	|| src->data->bdata != gscreen->data->bdata || src->depth != 32
+	|| metal_damage_map(Dx(gscreen->r), Dy(gscreen->r)) < 0)
+		return;
+	base = byteaddr(gscreen, gscreen->r.min);
+	p = byteaddr(src, sr.min);
+	off = p-base;
+	if(off < 0)
+		return;
+	bpl = gscreen->width*sizeof(u32);
+	y = off/bpl;
+	x = (off%bpl)/4;
+	r = Rect(gscreen->r.min.x+x, gscreen->r.min.y+y,
+		gscreen->r.min.x+x+Dx(sr), gscreen->r.min.y+y+Dy(sr));
+	if(!rectclip(&r, gscreen->r))
+		return;
+	tx0 = (r.min.x-gscreen->r.min.x)/SoftTile;
+	ty0 = (r.min.y-gscreen->r.min.y)/SoftTile;
+	tx1 = (r.max.x-gscreen->r.min.x+SoftTile-1)/SoftTile;
+	ty1 = (r.max.y-gscreen->r.min.y+SoftTile-1)/SoftTile;
+	lock(&soft_dirty_lock);
+	for(ty = ty0; ty < ty1; ty++)
+		for(tx = tx0; tx < tx1; tx++){
+			tr = Rect(gscreen->r.min.x+tx*SoftTile,
+				gscreen->r.min.y+ty*SoftTile,
+				gscreen->r.min.x+(tx+1)*SoftTile,
+				gscreen->r.min.y+(ty+1)*SoftTile);
+			if(!rectclip(&tr, r))
+				continue;
+			if(soft_dirty[ty*soft_ntx+tx])
+				metal_precopy_dirty_bytes += Dx(tr)*Dy(tr)*4;
+			else
+				metal_precopy_clean_bytes += Dx(tr)*Dy(tr)*4;
+		}
+	unlock(&soft_dirty_lock);
 }
 
 static void
@@ -2003,13 +2045,15 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
+		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud copy_notes=%llud rejected=%llud armed=%llud cancelled=%llud\n",
 			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes,
-			metal_copy_begins, metal_copy_notes, metal_copy_rejected,
+			metal_copy_begins, metal_precopy_dirty_bytes, metal_precopy_clean_bytes,
+			metal_copy_notes, metal_copy_rejected,
 			metal_copy_armed, metal_copy_cancelled);
 		metal_stat_frames = 0;
 		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
 		metal_copy_begins = metal_copy_notes = metal_copy_rejected = 0;
+		metal_precopy_dirty_bytes = metal_precopy_clean_bytes = 0;
 		metal_copy_armed = metal_copy_cancelled = 0;
 	}
 }

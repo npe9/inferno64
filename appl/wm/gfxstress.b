@@ -116,7 +116,7 @@ run(phase: string, seconds: int)
 		}
 		img.flush(Draw->Flushnow);
 		if(phase == "windowmove")
-			sys->sleep(8);
+			sys->sleep(16);
 	}
 	elapsed := sys->millisec() - start;
 	sys->print("GFXSTRESS phase=%s ops=%d ms=%d ops_per_sec=%d\n",
