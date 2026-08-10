@@ -293,6 +293,14 @@ getdir(t: ref Toplevel, dir: string)
 	tkclient->settitle(t, sysnam+path);
 }
 
+# User-visible name for !App folders: !TempleFoo → !Foo.
+applabel(name: string): string
+{
+	if(name != nil && strings != nil && strings->prefix("!Temple", name))
+		return "!" + name[7:];
+	return name;
+}
+
 defcursor(t: ref Toplevel)
 {
 	tk->cmd(t, "cursor -default");
@@ -455,7 +463,7 @@ drawdirtxt(t: ref Toplevel)
 			tp,
 			de[i].length,
 			daytime->filet(now, de[i].mtime),
-			de[i].name);
+			applabel(de[i].name));
 		id := tk->cmd(t, ".fc.c create text 10 "+string y+
 				" -anchor w -text {"+s+"}");
 
@@ -476,7 +484,7 @@ drawdirico(t: ref Toplevel)
 
 	longest := 0;
 	for(i := 0; i < nde; i++) {
-		l := len de[i].name;
+		l := len applabel(de[i].name);
 		if(l > longest)
 			longest = l;
 	}
@@ -506,7 +514,7 @@ drawdirico(t: ref Toplevel)
 		id := tk->cmd(t, ".fc.c create image "+sx+" "+
 				string y+" -image "+img);
 		tk->cmd(t, ".fc.c create text "+sx+
-				" "+string (y+25)+" -text "+de[i].name);
+				" "+string (y+25)+" -text "+applabel(de[i].name));
 
 		base := ".fc.c bind "+id;
 		tk->cmd(t, base+" <Double-Button-1> {send fc %b "+string i+"}");

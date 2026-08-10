@@ -1,0 +1,30 @@
+.TH CIRCLETRACE 1
+.SH NAME
+circletrace \- circle tracing game
+.SH SYNOPSIS
+.B temple/circletrace
+.SH DESCRIPTION
+.I CircleTrace
+is a circle tracing game.
+It runs under
+.IR wm (1).
+.PP
+Drag button 1 around a guide circle. On release, radial error is scored; lower is better.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB drag
+Draw freehand around guide circle; release scores
+.TP
+.B Enter / r
+Reset
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/circletrace.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

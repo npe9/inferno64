@@ -17,9 +17,13 @@ include "wmlib.m";
 	qword, splitqword, s2r: import wmlib;
 include "titlebar.m";
 	titlebar: Titlebar;
+include "env.m";
 include "wmclient.m";
 
 Focusnone, Focusimage, Focustitle: con iota;
+
+# Resolved Dis path of the application (set by sh as $dis).
+dispath: string;
 
 Bdup: con int 16rffffffff;
 Bddown: con int 16radadadff;
@@ -77,6 +81,8 @@ cursorspec(img: ref Draw->Image): string
 blankwin: Window;
 window(ctxt: ref Draw->Context, title: string, buts: int): ref Window
 {
+	if(dispath == nil)
+		dispath = envdis();
 	w := ref blankwin;
 	w.ctxt = wmlib->connect(ctxt);
 	w.display = ctxt.display;
@@ -141,7 +147,7 @@ Window.reshape(w: self ref Window, r: Rect)
 
 putimage(w: ref Window, i: ref Image)
 {
-	if(w.screen != nil && i == w.screen.image && w.image != nil && w.image.r.eq(i.r))
+	if(w.screen != nil && i == w.screen.image)
 		return;
 	w.screen = Screen.allocate(i, w.display.color(Draw->White), 0);
 	ir := i.r.inset(w.bd);
@@ -158,6 +164,16 @@ putimage(w: ref Window, i: ref Image)
 	if(ir.dy() < 0)
 		ir.max.y = ir.min.y;
 	w.image = w.screen.newwindow(ir, Draw->Refnone, Draw->Nofill);
+	#
+	# Screen windows default to Flushon: every draw op presents the
+	# softscreen.  Animating clients (TempleOS ports) clear then redraw
+	# each frame; with Flushon the clear flashes on screen before content.
+	# Compose off-present; clients that need a frame call Flushnow
+	# (Temple ports already do).  Polyhedra avoids this by drawing to an
+	# offscreen image and revealing via tk update.
+	#
+	if(w.image != nil)
+		w.image.flush(Draw->Flushoff);
 	drawborder(w);
 	w.r = i.r;
 }
@@ -228,13 +244,8 @@ Window.onscreen(w: self ref Window, how: string)
 
 Window.startinput(w: self ref Window, devs: list of string)
 {
-	for(; devs != nil; devs = tl devs){
-		# Unquoted: root wm has no connfd and wmlib qword()
-		# does not strip %q quotes (start 'kbd' → unknown).
-		err := w.wmctl("start " + hd devs);
-		if(err != nil)
-			sys->fprint(sys->fildes(2), "wmclient: start %s: %s\n", hd devs, err);
-	}
+	for(; devs != nil; devs = tl devs)
+		w.wmctl(sys->sprint("start %q", hd devs));
 }
 
 # commands originating both from tkclient and wm (via ctl)
@@ -255,9 +266,10 @@ Window.wmctl(w: self ref Window, req: string): string
 			minsz := titlebar->minsize(w.titlebar);
 			titlebar->sendctl(w.titlebar, "!size . -1 " + string minsz.x + " " + string minsz.y);
 		}
-	"ok" or
-	"help" =>
+	"ok" =>
 		;
+	"help" =>
+		showman(w.ctxt.ctxt);
 	"rect" =>
 		(w.displayr, nil) = s2r(req, next);
 	"haskbdfocus" =>
@@ -348,4 +360,58 @@ snarfput(buf: string)
 r2s(r: Rect): string
 {
 	return sys->sprint("%d %d %d %d", r.min.x, r.min.y, r.max.x, r.max.y);
+}
+
+# $dis as set by sh when it resolved the executable (/dis/sh.dis → sh).
+envdis(): string
+{
+	e := load Env Env->PATH;
+	if(e == nil)
+		return nil;
+	return e->getenv("dis");
+}
+
+# Stem man topic from the program Dis path (/dis/wm/sh.dis → sh).
+progstem(): string
+{
+	mod := dispath;
+	if(mod == nil)
+		mod = envdis();
+	if(mod == nil)
+		return nil;
+	for(i := len mod - 1; i >= 0; i--)
+		if(mod[i] == '/'){
+			mod = mod[i+1:];
+			break;
+		}
+	if(len mod > 4 && mod[len mod-4:] == ".dis")
+		mod = mod[0:len mod-4];
+	if(mod == nil)
+		return nil;
+	return mod;
+}
+
+WmMan: module
+{
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
+showman(ctxt: ref Draw->Context)
+{
+	if(ctxt == nil)
+		return;
+	page := progstem();
+	if(page == nil)
+		page = "man";
+	path := "/man/1/" + page;
+	man := load WmMan "/dis/wm/man.dis";
+	if(man == nil){
+		sys->fprint(sys->fildes(2), "wmclient: cannot load wm/man: %r\n");
+		return;
+	}
+	(ok, nil) := sys->stat(path);
+	if(ok >= 0)
+		spawn man->init(ctxt, "wm/man" :: "-f" :: path :: nil);
+	else
+		spawn man->init(ctxt, "wm/man" :: page :: nil);
 }

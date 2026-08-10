@@ -1,0 +1,27 @@
+.TH HANOI 1
+.SH NAME
+hanoi \- Towers of Hanoi animation
+.SH SYNOPSIS
+.B temple/hanoi
+.SH DESCRIPTION
+.I Hanoi
+implements Towers of Hanoi animation.
+It runs under
+.IR wm (1).
+.PP
+Six disks move automatically among three poles. Enter restarts the animation.
+.PP
+The controls are:
+.TF space
+.TP
+.B Enter / r
+Restart animation
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/hanoi.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

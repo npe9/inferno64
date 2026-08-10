@@ -21,8 +21,9 @@ extern	int	mflag;
 	int	vflag;
 	Procs	procs;
 	char	*eve;
-	int	Xsize	= 640;
-	int	Ysize	= 480;
+	/* Cocoa/NOTE default softscreen; override with -gWxH */
+	int	Xsize	= 1024;
+	int	Ysize	= 768;
 	int	bflag = 1;
 	int	sflag;
 	int	qflag;
@@ -307,13 +308,15 @@ emuinit(void *imod)
 	/* the setid cannot precede the bind of #U */
 	kbind("#U", "/", MAFTER|MCREATE);
 	setid(eve, 0);
-	/*kbind("#^", "/dev", MBEFORE);*/	/* snarf */
+	if(devno('^', 1) >= 0)
+		kbind("#^", "/dev", MBEFORE);	/* snarf */
 	/*kbind("#^", "/chan", MBEFORE); */
-	/* Optional when the configured emu has no pointer device. */
-	if(!waserror()){
-		kbind("#m", "/dev", MBEFORE);
-		poperror();
+	if(devno('m', 1) >= 0){
+		if(kbind("#m", "/dev", MBEFORE) < 0)
+			fprint(2, "emu: bind #m /dev failed: %r\n");
 	}
+	if(devno('A', 1) >= 0)
+		kbind("#A", "/dev", MAFTER);	/* optional audio */
 	kbind("#c", "/dev", MBEFORE);
 	kbind("#p", "/prog", MREPL);
 	kbind("#d", "/fd", MREPL);

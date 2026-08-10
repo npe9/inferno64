@@ -4,6 +4,9 @@
 #include "raise.h"
 #include <pool.h>
 
+#undef DBG
+#define DBG  if(0)print
+
 static int debug = 0;
 
 #define T(r)	*((void**)(R.r))

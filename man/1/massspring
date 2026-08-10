@@ -1,0 +1,34 @@
+.TH MASSSPRING 1
+.SH NAME
+massspring \- mass-spring sandbox
+.SH SYNOPSIS
+.B temple/massspring
+.SH DESCRIPTION
+.I MassSpring
+is a mass-spring sandbox.
+It runs under
+.IR wm (1).
+.PP
+Button 1 places masses; button-2 drag connects springs. Enter clears the world.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB
+Place mass
+.TP
+.B RMB drag
+Connect spring between masses
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/massspring.b
+.SH SEE ALSO
+.IR temple (1),
+.IR ode (2),
+.IR wm (1)

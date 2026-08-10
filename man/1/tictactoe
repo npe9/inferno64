@@ -1,0 +1,30 @@
+.TH TICTACTOE 1
+.SH NAME
+tictactoe \- tic-tac-toe
+.SH SYNOPSIS
+.B temple/tictactoe
+.SH DESCRIPTION
+.I TicTacToe
+is a tic-tac-toe.
+It runs under
+.IR wm (1).
+.PP
+Button 1 places marks for two local players on a 3×3 board.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB
+Place mark in cell
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/tictactoe.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

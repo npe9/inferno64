@@ -1,0 +1,67 @@
+.TH V23-FORTUNED 8
+.SH NAME
+v23/fortuned \- Vanadium RPC fortune server
+.SH SYNOPSIS
+.B v23/fortuned
+[
+.B -a
+.I addr
+]
+.SH DESCRIPTION
+.I V23/fortuned
+creates a server principal, announces on
+.I addr
+(default
+.BR tcp!*!3245 ),
+and serves a tiny fortune service over
+.IR v23-rpc (2).
+.PP
+Methods:
+.TP
+.B Get
+Returns a fortune string (empty arg).
+.TP
+.B Add
+Appends
+.I arg
+to the in-memory fortune list.
+.PP
+Incoming clients are authorized with ACL
+.BR ...
+(TOFU: first peer blessings are trusted as roots).
+.PP
+.B /net
+must be in the name space.
+.SH SOURCE
+.B /appl/cmd/v23/fortuned.b
+.SH SEE ALSO
+.IR v23-fortune (1),
+.IR v23-rpc (2),
+.IR v23-intro (2),
+.IR dial (2)
+.SH BUGS
+.IP \(bu
+Fortunes are not persisted.
+.IP \(bu
+ACL
+.B ...
+accepts any first presenter; not suitable for hostile networks.
+.IP \(bu
+No graceful shutdown beyond process exit; hung clients can block accept
+depending on
+.IR v23-rpc (2)
+implementation.
+.IP \(bu
+Networked smoke tests against this server have not been fully verified
+when
+.B /net
+was unavailable.
+.SH TODO
+.IP \(bu
+Load fortunes from a file; optional write-back on
+.BR Add .
+.IP \(bu
+Configurable ACL / fixed roots instead of TOFU
+.BR ... .
+.IP \(bu
+Logging of peer blessing names per call.

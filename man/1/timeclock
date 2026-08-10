@@ -1,0 +1,37 @@
+.TH TIMECLOCK 1
+.SH NAME
+timeclock \- punch clock
+.SH SYNOPSIS
+.B temple/timeclock
+.SH DESCRIPTION
+.I TimeClock
+is a punch clock.
+It runs under
+.IR wm (1).
+.PP
+Punch in and out from Tk buttons and view a text report of the log.
+.PP
+The controls are:
+.TF space
+.TP
+.B Punch In / Punch Out / Report buttons
+Timekeeping
+.TP
+.B entry + Enter
+Punch in with note
+.TP
+.B Esc / q
+Quit
+.PD
+.SH FILES
+.TP
+.B /tmp/temple-timeclock.txt
+Data file.
+.TP
+.B ~/temple-timeclock.txt
+Documented; code uses /tmp.
+.SH SOURCE
+.B /appl/temple/timeclock.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

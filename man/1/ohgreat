@@ -1,0 +1,28 @@
+.TH OHGREAT 1
+.SH NAME
+ohgreat \- song and lyrics player
+.SH SYNOPSIS
+.B temple/ohgreat
+.SH DESCRIPTION
+.I OhGreat
+is a song and lyrics player.
+It runs under
+.IR wm (1).
+.PP
+Space starts and stops a fixed song while lyrics are shown.
+.PP
+The controls are:
+.TF space
+.TP
+.B space
+Play/stop
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/ohgreat.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

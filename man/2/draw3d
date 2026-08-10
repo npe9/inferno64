@@ -1,0 +1,264 @@
+.TH DRAW3D 2
+.SH NAME
+draw3d: init, context, resize, setzarea, clearz, setz, setzclip, setcolour, settransform, viewport, mode, push, pop, identity, translate, scale, rotatex, rotatey, rotatez, rotate, frustum, ortho, loadmatrix, storematrix, matmul, project, mulpoint, begin, vertex, circle, ellipse, end, line3, plot3, fillpoly3, sprite3, sprite3zb, sprite3yb, sprite3mat, newmatrix, vdot, vcross, vnorm \- immediate-mode 3-D drawing
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "math/polyfill.m";
+include "math/draw3d.m";
+draw3d := load Draw3d Draw3d->PATH;
+Vector, Matrix: import draw3d;
+
+ZSCALE: con real (1<<20);
+MODEL, PROJ: con iota;
+POLY, FILLPOLY, CIRCLE, FILLCIRCLE, ELLIPSE, FILLELLIPSE: con iota;
+
+Vector: adt { x, y, z: real; };
+Matrix: type array of array of real;
+
+Context: adt {
+	dst:       ref Draw->Image;
+	zstate:    ref Polyfill->Zstate;
+	zenable:   int;
+	clipbehind:int;
+	colour:    ref Draw->Image;
+	transform: ref fn(v: Vector): Vector;
+	mx, cx, my, cy: real;
+};
+
+init:        fn();
+context:     fn(dst: ref Draw->Image): ref Context;
+resize:      fn(c: ref Context, dst: ref Draw->Image);
+setzarea:    fn(c: ref Context, r: Draw->Rect);
+clearz:      fn(c: ref Context);
+setz:        fn(c: ref Context, on: int);
+setzclip:    fn(c: ref Context, on: int);
+setcolour:   fn(c: ref Context, col: ref Draw->Image);
+settransform:fn(c: ref Context, t: ref fn(v: Vector): Vector);
+viewport:    fn(c: ref Context, x1, y1, x2, y2: int);
+
+mode:        fn(which: int);
+push, pop, identity: fn();
+translate:   fn(x, y, z: real);
+scale:       fn(x, y, z: real);
+rotatex, rotatey, rotatez: fn(deg: real);
+rotate:      fn(deg, l, m, n: real);
+frustum:     fn(l, n, f: real);
+ortho:       fn(l, n, f: real);
+loadmatrix:  fn(m: Matrix);
+storematrix: fn(m: Matrix);
+matmul:      fn();
+
+project:     fn(c: ref Context, v: Vector): (Draw->Point, real, int);
+mulpoint:    fn(m: Matrix, v: Vector): Vector;
+
+begin:       fn(c: ref Context, kind, nvert: int);
+vertex:      fn(c: ref Context, x, y, z: real): (real, real);
+circle:      fn(c: ref Context, x, y, z, r: real);
+ellipse:     fn(c: ref Context, x, y, z: real, axes: Vector);
+end:         fn(c: ref Context);
+
+line3:       fn(c: ref Context, a, b: Vector, thick: int);
+plot3:       fn(c: ref Context, v: Vector);
+fillpoly3:   fn(c: ref Context, verts: array of Vector, normal: Vector, lit: real);
+
+sprite3:     fn(c: ref Context, p: Vector, img, mask: ref Draw->Image, scale: real);
+sprite3zb:   fn(c: ref Context, p: Vector, img, mask: ref Draw->Image, scale, degz: real);
+sprite3yb:   fn(c: ref Context, p: Vector, img, mask: ref Draw->Image, scale: real);
+sprite3mat:  fn(c: ref Context, p: Vector, m: Matrix, img, mask: ref Draw->Image, scale: real);
+
+newmatrix:   fn(): Matrix;
+vdot:        fn(a, b: Vector): real;
+vcross:      fn(a, b: Vector): Vector;
+vnorm:       fn(v: Vector): Vector;
+.EE
+.SH DESCRIPTION
+.I Draw3d
+.RB ( /dis/math/draw3d.dis )
+provides a small immediate-mode 3-D API for Inferno applications.
+It is used by
+.IR draw3ddemo (1)
+and by the programs in
+.IR temple (1).
+The module keeps a dual matrix stack (model and projection), projects
+.B Vector
+values into a destination
+.IR Draw
+.BR Image ,
+and can depth-test filled surfaces through
+.IR polyfill (2).
+.PP
+.B Init
+must be called once after the module is loaded.
+.B Context
+binds drawing to a destination image and returns a
+.B Context
+adt.
+.B Resize
+retargets an existing context after the window image changes.
+.B Viewport
+sets the NDC-to-screen mapping so that normalised device coordinates map into
+the pixel rectangle
+.BI (x1 , y1 )-( x2 , y2) .
+.B Setcolour
+selects the pen
+.B Image
+used by vector primitives.
+.B Settransform
+installs an optional foreshortening callback;
+.B nil
+means identity.
+.PP
+.BR Setzarea ,
+.BR clearz ,
+and
+.B setz
+allocate, clear, and enable a software z-buffer covering rectangle
+.IR r .
+Plane depths written by
+.B fillpoly3
+use the fixed-point scale
+.BR ZSCALE ,
+matching
+.IR polyfill (2)
+and
+.BR wm/polyhedra .
+.B Setzclip
+enables rejection of geometry with eye-space
+.B z ≥ 0
+(appropriate for a perspective frustum); leave it clear for orthographic scenes.
+.SS Matrix stack
+.B Mode
+selects the active stack:
+.B MODEL
+or
+.BR PROJ .
+.BR Push ,
+.BR pop ,
+and
+.B identity
+have the usual meanings.
+.BR Translate ,
+.BR scale ,
+.BR rotatex ,
+.BR rotatey ,
+.BR rotatez ,
+and
+.B rotate
+(angle in degrees about unit axis
+.IR (l,m,n) )
+post-multiply the current matrix.
+.B Frustum
+and
+.B ortho
+are symmetric helpers taking half-width
+.IR l ,
+near
+.IR n ,
+and far
+.IR f .
+.B Loadmatrix
+and
+.B storematrix
+transfer a 4×4
+.BR Matrix ;
+.B matmul
+replaces the current matrix with the product of the projection and model
+matrices (the MVP used by subsequent drawing).
+.SS Projection and primitives
+.B Project
+transforms a world-space
+.B Vector
+and returns a screen
+.BR Point ,
+the eye-space
+.IR z ,
+and a non-zero ok flag when the point is not clipped.
+.B Mulpoint
+applies an explicit matrix.
+.PP
+.BR Line3 ,
+.BR plot3 ,
+and
+.B fillpoly3
+draw lines, points, and filled polygons in world space.
+.B Fillpoly3
+takes a face
+.I normal
+(same space as the vertices) and a lighting factor
+.IR lit ;
+when z-buffering is enabled it computes plane coefficients for
+.IR polyfill (2).
+.PP
+Immediate mode follows a GL-ish pattern:
+.B begin
+selects a primitive kind
+.RB ( POLY ,
+.BR FILLPOLY ,
+.BR CIRCLE ,
+.BR FILLCIRCLE ,
+.BR ELLIPSE ,
+.BR FILLELLIPSE )
+and an expected vertex count;
+.B vertex
+emits a point (returning the projected pair for callers that need it);
+.B circle
+and
+.B ellipse
+are convenience emitters;
+.B end
+flushes the primitive to
+.BR c.dst .
+.SS Sprites
+The Sprite3 family draws an image (with optional mask) as a camera-facing billboard.
+.I Scale
+is a world-space half-width; 0 uses the image width in pixels.
+.B sprite3
+places an upright billboard;
+.B sprite3yb
+and
+.B sprite3zb
+yaw or pitch the billboard;
+.B sprite3mat
+uses an explicit matrix.
+.PP
+.BR Newmatrix ,
+.BR vdot ,
+.BR vcross ,
+and
+.B vnorm
+are small vector/matrix helpers.
+.SH EXAMPLE
+Typical per-frame setup inside a
+.IR wmclient (2)
+redraw:
+.EX
+	draw3d->resize(c, img);
+	draw3d->mode(Draw3d->PROJ);
+	draw3d->identity();
+	draw3d->frustum(1.0, 1.0, 100.0);
+	draw3d->mode(Draw3d->MODEL);
+	draw3d->identity();
+	draw3d->translate(0.0, 0.0, -8.0);
+	draw3d->rotatey(ang);
+	draw3d->setcolour(c, yellow);
+	draw3d->line3(c, Vector(-1.0,0.0,0.0), Vector(1.0,0.0,0.0), 1);
+.EE
+.SH FILES
+.TP
+.B /dis/math/draw3d.dis
+Implementation.
+.TP
+.B /module/math/draw3d.m
+Limbo interface.
+.SH SOURCE
+.B /appl/math/draw3d.b
+.br
+.B /module/math/draw3d.m
+.SH SEE ALSO
+.IR draw3ddemo (1),
+.IR temple (1),
+.IR polyfill (2),
+.IR draw-image (2),
+.IR math-linalg (2),
+.IR wmclient (2)

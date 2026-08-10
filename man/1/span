@@ -1,0 +1,58 @@
+.TH SPAN 1
+.SH NAME
+span \- bridge builder
+.SH SYNOPSIS
+.B temple/span
+.SH DESCRIPTION
+.I Span
+is a bridge builder.
+It runs under
+.IR wm (1).
+.PP
+Place masses and members (m/c/s/w), then space to run the simulation. Keys v and d select move and delete; n starts a new bridge.
+.PP
+The controls are:
+.TF space
+.TP
+.B m
+Mass mode
+.TP
+.B c
+Concrete mode
+.TP
+.B s
+Steel mode
+.TP
+.B w
+Wire mode
+.TP
+.B v
+Move mode
+.TP
+.B d
+Delete mode
+.TP
+.B LMB
+Place/edit per mode
+.TP
+.B RMB
+Cycle mode
+.TP
+.B space
+Run/stop simulation
+.TP
+.B Enter
+Restart
+.TP
+.B n
+New bridge
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/span.b
+.SH SEE ALSO
+.IR temple (1),
+.IR ode (2),
+.IR wm (1)

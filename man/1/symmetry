@@ -1,0 +1,33 @@
+.TH SYMMETRY 1
+.SH NAME
+symmetry \- mirror drawing
+.SH SYNOPSIS
+.B temple/symmetry
+.SH DESCRIPTION
+.I Symmetry
+is a mirror drawing.
+It runs under
+.IR wm (1).
+.PP
+Button 2 sets a mirror line; button 1 draws strokes mirrored across it.
+.PP
+The controls are:
+.TF space
+.TP
+.B RMB
+Set mirror line
+.TP
+.B LMB drag
+Draw (mirrored)
+.TP
+.B c
+Clear
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/symmetry.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

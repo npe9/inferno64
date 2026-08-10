@@ -1,0 +1,46 @@
+.TH FONTED 1
+.SH NAME
+fonted \- bitmap font editor
+.SH SYNOPSIS
+.B temple/fonted
+.SH DESCRIPTION
+.I FontEd
+is a bitmap font editor.
+It runs under
+.IR wm (1).
+.PP
+Select a glyph from the chart and toggle pixels in the magnified grid. The s key writes a hex dump under /tmp.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB on chart
+Select glyph
+.TP
+.B LMB on big grid
+Toggle pixel bit
+.TP
+.B , / <
+Previous character
+.TP
+.B . / >
+Next character
+.TP
+.B *
+Fill / related edit action
+.TP
+.B s
+Save hex to /tmp/temple-font.hex
+.TP
+.B Esc / q
+Quit
+.PD
+.SH FILES
+.TP
+.B /tmp/temple-font.hex
+Data file.
+.SH SOURCE
+.B /appl/temple/fonted.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

@@ -1,0 +1,28 @@
+.TH ASCIIORGAN 1
+.SH NAME
+asciiorgan \- keyboard organ
+.SH SYNOPSIS
+.B temple/asciiorgan
+.SH DESCRIPTION
+.I ASCIIOrgan
+is a keyboard organ.
+It runs under
+.IR wm (1).
+.PP
+Typing keys plays short tones through a Tk keyboard chart.
+.PP
+The controls are:
+.TF space
+.TP
+.B printable/other keys
+Beep at frequency derived from key code
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/asciiorgan.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

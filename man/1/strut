@@ -1,0 +1,51 @@
+.TH STRUT 1
+.SH NAME
+strut \- ship and thruster editor
+.SH SYNOPSIS
+.B temple/strut
+.SH DESCRIPTION
+.I Strut
+is a ship and thruster editor.
+It runs under
+.IR wm (1).
+.PP
+Edit masses, struts, and thrusters, then space to play. Digits fire thrusters once assigned; z and Z zoom.
+.PP
+The controls are:
+.TF space
+.TP
+.B m / s / n / t / v
+Edit modes: mass / spring / connector / thruster / move
+.TP
+.B 0-9
+Set next action key; in play fire/break
+.TP
+.B LMB
+Place/edit per mode
+.TP
+.B RMB
+Cycle edit mode
+.TP
+.B space
+Toggle play/edit
+.TP
+.B c
+Center masses
+.TP
+.B d
+Increase drag (play)
+.TP
+.B z / Z
+Zoom in/out
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/strut.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

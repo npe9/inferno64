@@ -1,0 +1,31 @@
+.TH TREECHECKERS 1
+.SH NAME
+treecheckers \- radial checkers game
+.SH SYNOPSIS
+.B temple/treecheckers
+.SH DESCRIPTION
+.I TreeCheckers
+is a radial checkers game.
+It runs under
+.IR wm (1).
+.PP
+Drag pieces with button 1 on a radial board.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB drag
+Select and move unit
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/treecheckers.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

@@ -1,0 +1,24 @@
+.TH COLLISION 1
+.SH NAME
+collision \- elastic ball collisions
+.SH SYNOPSIS
+.B temple/collision
+.SH DESCRIPTION
+.I Collision
+is a elastic ball collisions.
+It runs under
+.IR wm (1).
+.PP
+Sixty-four balls bounce and collide elastically.
+.PP
+The controls are:
+.TF space
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/collision.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

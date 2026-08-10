@@ -9,7 +9,7 @@ Tkclient: module
 	Popup,		# XXX is this useful?
 	Plain:		con 1 << iota;
 
-	Appl:		con Resize | Hide;
+	Appl:		con Resize | Hide | Help;
 
 	init:		fn();
 	makedrawcontext: fn():	ref Draw->Context;

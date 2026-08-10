@@ -1,0 +1,35 @@
+.TH BLACKDIAMOND 1
+.SH NAME
+blackdiamond \- downhill skiing game
+.SH SYNOPSIS
+.B temple/blackdiamond
+.SH DESCRIPTION
+.I BlackDiamond
+is a downhill skiing game.
+It runs under
+.IR wm (1).
+.PP
+Ski downhill past obstacles on a depth-scaled slope. Steer left and right; collisions add penalty.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left
+Move skier left (wrap)
+.TP
+.B Right
+Move skier right (wrap)
+.TP
+.B Enter / r / space
+Restart after game over
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/blackdiamond.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

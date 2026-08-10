@@ -219,8 +219,6 @@ pointerread(Chan* c, void* a, long n, vlong off)
 			nexterror();
 		}
 		mt = mouseconsume();
-		poperror();
-		qunlock(&mouse.q);
 		type = 'm';
 		if(mouse.resize){
 			type = 'r';
@@ -228,6 +226,8 @@ pointerread(Chan* c, void* a, long n, vlong off)
 			mt.y = mouse.resizeh;
 			mouse.resize = 0;
 		}
+		poperror();
+		qunlock(&mouse.q);
 		l = snprint(buf, sizeof(buf), "%c%11d %11d %11d %11lud ", type, mt.x, mt.y, mt.b, mt.msec);
 		if(l < n)
 			n = l;

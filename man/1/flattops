@@ -1,0 +1,44 @@
+.TH FLATTOPS 1
+.SH NAME
+flattops \- carrier task-force game
+.SH SYNOPSIS
+.B temple/flattops
+.SH DESCRIPTION
+.I FlatTops
+is a carrier task-force game.
+It runs under
+.IR wm (1).
+.PP
+Button 1 sets squadron heading; button 2 launches fighters (double-tap recalls). Destroy the enemy force. Plus and minus change game speed.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB
+Set friendly squadron heading toward point
+.TP
+.B RMB
+Launch squadron toward point
+.TP
+.B RMB double-tap
+Return squadron
+.TP
+.B + / =
+Increase game speed
+.TP
+.B - / _
+Decrease game speed
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/flattops.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

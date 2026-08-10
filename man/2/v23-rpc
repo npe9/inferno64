@@ -1,0 +1,163 @@
+.TH V23-RPC 2
+.SH NAME
+V23rpc: Client, Request, serve, serveconn, dial, call, close \- Vanadium-style RPC with blessing handshake
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "v23.m";
+v23sec := load V23security V23security->PATH;
+v23rpc := load V23rpc V23rpc->PATH;
+
+Request: adt {
+    method: string;
+    arg:    string;
+    remote: list of string;
+    reply:  chan of (string, string);  # (result, error)
+};
+
+Client: adt {
+    principal:  ref V23security->Principal;
+    fd:         ref Sys->FD;
+    remote:     list of string;
+};
+
+init:       fn(): string;
+serve:      fn(addr: string, p: ref V23security->Principal,
+               allow: list of string, reqc: chan of ref Request): string;
+serveconn:  fn(fd: ref Sys->FD, p: ref V23security->Principal,
+               allow: list of string, reqc: chan of ref Request): string;
+dial:       fn(addr: string, p: ref V23security->Principal):
+               (ref Client, string);
+call:       fn(c: ref Client, method: string, arg: string):
+               (string, string);
+close:      fn(c: ref Client);
+.EE
+.SH DESCRIPTION
+.B V23rpc
+provides a minimal RPC layer: mutual blessing exchange, pattern ACL, then
+request/response calls carrying a single string argument and result.
+.B Init
+loads
+.IR dial (2),
+.IR msgio (2),
+and
+.IR v23-security (2).
+.SS Server
+.B Serve
+announces on
+.I addr
+(e.g.
+.BR tcp!*!3242 ),
+accepts connections, and for each connection runs
+.B serveconn
+in a new process.
+.I Allow
+is a list of blessing patterns; callers must present a recognizable blessing
+matching at least one pattern
+.RB ( authorize
+in
+.IR v23-security (2)).
+.PP
+If
+.I allow
+contains
+.B ...
+.RB ( AllPrincipals ),
+the server trusts presented client blessing roots (TOFU) before verification.
+This is convenient for demos and unsafe for production.
+.PP
+Application code receives
+.B Request
+values on
+.IR reqc .
+For each request, send
+.BI ( result , nil )
+or
+.BI ( nil , error )
+on
+.IB r .reply .
+.B Serveconn
+handles a single already-accepted
+.IR fd .
+.SS Client
+.B Dial
+connects to
+.IR addr ,
+sends the principal’s default blessings, receives the server’s, and verifies
+them against the principal’s roots.
+On success it returns a
+.B Client
+whose
+.B remote
+lists recognized server blessing names.
+.PP
+.B Call
+sends
+.I method
+and
+.I arg
+and returns
+.BI ( result , nil )
+or
+.BI ( nil , error ) .
+.B Close
+sends
+.B CLOSE
+and drops the descriptor.
+.PP
+Clients that do not already trust the server root must add it (e.g. via
+.B addroot
+after an out-of-band exchange, or a TOFU helper as in
+.IR v23-fortune (1)).
+.SH SOURCE
+.B /appl/lib/v23/rpc.b
+.SH SEE ALSO
+.IR v23-intro (2),
+.IR v23-security (2),
+.IR v23 (6),
+.IR v23-fortuned (8),
+.IR dial (2),
+.IR msgio (2)
+.SH BUGS
+.IP \(bu
+Only one string argument and one string result; no streaming, timeouts, or
+retries.
+.IP \(bu
+No channel encryption; anyone on the path can read method/args after the
+blessing exchange.
+.IP \(bu
+.B Dial
+does not TOFU server roots; unrecognized servers fail unless roots were
+configured.
+.IP \(bu
+.B Serve
+never returns after a successful announce; errors after accept are only logged.
+.IP \(bu
+Handshake and calls share
+.IR msgio (2)
+string framing with no version negotiation beyond blessing magic
+.BR V23BLESS1 .
+.IP \(bu
+Concurrent
+.B call
+s on one
+.B Client
+are not supported.
+.SH TODO
+.IP \(bu
+Optional TLS or
+.IR ssl (3)
+wrap after blessing auth.
+.IP \(bu
+VOM-coded args/results and reserved methods
+.RB ( __… ).
+.IP \(bu
+Deadlines, cancellation, and connection caching
+.RB ( PinConnection ).
+.IP \(bu
+Proxy and mount-table name resolution.
+.IP \(bu
+Remove or gate
+.B ...
+TOFU behind an explicit option.

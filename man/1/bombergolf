@@ -1,0 +1,44 @@
+.TH BOMBERGOLF 1
+.SH NAME
+bombergolf \- bomber flight game
+.SH SYNOPSIS
+.B temple/bombergolf
+.SH DESCRIPTION
+.I BomberGolf
+is a bomber flight game.
+It runs under
+.IR wm (1).
+.PP
+Fly over trees and targets, change speed, and drop bombs with space. Destroy every target; fewer key presses score better.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left / a
+Turn left
+.TP
+.B Right / d
+Turn right
+.TP
+.B Up / w
+Speed up
+.TP
+.B Down / s
+Slow down
+.TP
+.B space
+Drop bomb
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/bombergolf.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

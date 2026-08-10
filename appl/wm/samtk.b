@@ -112,6 +112,11 @@ newflayer(tag, tp: int): ref Flayer
 	mkmenu3(t);
 	tkcmds(t, tkcmdlist);
 
+	# Map the window and enable input; toplevel alone leaves it invisible
+	# under wm (same pattern as edit, clock, etc.).
+	tkclient->onscreen(t, nil);
+	tkclient->startinput(t, "kbd" :: "ptr" :: nil);
+
 	f := ref Flayer(
 		tag,		# tag
 		t,		# t

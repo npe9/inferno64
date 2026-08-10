@@ -1,0 +1,27 @@
+.TH ELEPHANTWALK 1
+.SH NAME
+elephantwalk \- animated elephant
+.SH SYNOPSIS
+.B temple/elephantwalk
+.SH DESCRIPTION
+.I ElephantWalk
+is a animated elephant.
+It runs under
+.IR wm (1).
+.PP
+Move an elephant around the panel with wasd or the arrows.
+.PP
+The controls are:
+.TF space
+.TP
+.B arrows / wasd
+Move elephant
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/elephantwalk.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

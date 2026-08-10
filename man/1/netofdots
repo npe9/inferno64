@@ -1,0 +1,27 @@
+.TH NETOFDOTS 1
+.SH NAME
+netofdots \- dot net pattern
+.SH SYNOPSIS
+.B temple/netofdots
+.SH DESCRIPTION
+.I NetOfDots
+is a dot net pattern.
+It runs under
+.IR wm (1).
+.PP
+Draws a radiating net of lines. Space repaints.
+.PP
+The controls are:
+.TF space
+.TP
+.B space
+Repaint
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/netofdots.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

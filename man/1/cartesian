@@ -1,0 +1,27 @@
+.TH CARTESIAN 1
+.SH NAME
+cartesian \- function plotter
+.SH SYNOPSIS
+.B temple/cartesian
+.SH DESCRIPTION
+.I Cartesian
+is a function plotter.
+It runs under
+.IR wm (1).
+.PP
+Plots a sample function on labelled axes. Space redraws the graph.
+.PP
+The controls are:
+.TF space
+.TP
+.B space
+Replot
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/cartesian.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

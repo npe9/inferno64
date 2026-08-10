@@ -1,0 +1,41 @@
+.TH VAROOM 1
+.SH NAME
+varoom \- oval-track racing game
+.SH SYNOPSIS
+.B temple/varoom
+.SH DESCRIPTION
+.I Varoom
+is a oval-track racing game.
+It runs under
+.IR wm (1).
+.PP
+Steer and accelerate on an oval track against AI cars under a chase camera.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left / a
+Steer left
+.TP
+.B Right / d
+Steer right
+.TP
+.B Up / w
+Accelerate
+.TP
+.B Down / s
+Brake/slow
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/varoom.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

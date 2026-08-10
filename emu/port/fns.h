@@ -111,6 +111,7 @@ void		mountfree(Mount*);
 void		mousetrack(int, int, int, int);
 void		mouseresize(int, int);
 typedef struct Memimage Memimage;
+void		drawscreenrebind(Memimage*);
 void		drawscreenresize(Memimage*);
 void		muxclose(Mnt*);
 Chan*	namec(char*, int, int, ulong);

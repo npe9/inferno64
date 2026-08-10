@@ -1,0 +1,41 @@
+.TH TALONS 1
+.SH NAME
+talons \- fishing flight game
+.SH SYNOPSIS
+.B temple/talons
+.SH DESCRIPTION
+.I Talons
+is a fishing flight game.
+It runs under
+.IR wm (1).
+.PP
+Steer a low flight with wasd or the arrows and catch fish while avoiding birds.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left / a
+Turn left
+.TP
+.B Right / d
+Turn right
+.TP
+.B Up / w
+Increase speed
+.TP
+.B Down / s
+Decrease speed
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/talons.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

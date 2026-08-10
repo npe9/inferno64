@@ -1,0 +1,24 @@
+.TH BOUNCE 1
+.SH NAME
+bounce \- bouncing dots
+.SH SYNOPSIS
+.B temple/bounce
+.SH DESCRIPTION
+.I Bounce
+is a bouncing dots.
+It runs under
+.IR wm (1).
+.PP
+Sixteen coloured dots bounce inside the window.
+.PP
+The controls are:
+.TF space
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/bounce.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

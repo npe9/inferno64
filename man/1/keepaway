@@ -1,0 +1,36 @@
+.TH KEEPAWAY 1
+.SH NAME
+keepaway \- keep-away ball game
+.SH SYNOPSIS
+.B temple/keepaway
+.SH DESCRIPTION
+.I KeepAway
+is a keep-away ball game.
+It runs under
+.IR wm (1).
+.PP
+The player is on the left of a pitched field, the AI on the right. Move with wasd or the arrows; space kicks toward the ball. Drive the ball into the far goal zone to score.
+.PP
+The controls are:
+.TF space
+.TP
+.B arrows / wasd
+Move player
+.TP
+.B space
+Kick impulse toward ball
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/keepaway.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

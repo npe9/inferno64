@@ -123,7 +123,7 @@ start(): (ref Samio, chan of ref Sammsg)
 	# Start the Command
 	n = sys->fprint(ctl, "exec "+ SAM);
 	if(n <= 0) {
-		fprint(stderr, "can't exec %s\n", SAM);
+		fprint(stderr, "can't exec %s (host Plan 9 sam must be on emu's PATH)\n", SAM);
 		return (nil, nil);
 	}
 

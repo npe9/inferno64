@@ -78,7 +78,7 @@ Pin: adt
 {
 	pid:      int;		# stable internal id
 	path:     string;	# full path of the pinned object
-	label:    string;	# basename, used as caption
+	label:    string;	# display caption (basename with !Temple stripped)
 	x, y:     int;		# canvas-local centre of the icon
 	iconname: string;	# tk image name for the icon
 	imgid:    string;	# canvas image item id
@@ -404,6 +404,16 @@ basename(path: string): string
 	return path;
 }
 
+# User-visible launcher caption. App folders are named !TempleFoo to
+# avoid colliding with native !Foo apps; show !Foo on the desktop.
+applabel(path: string): string
+{
+	base := basename(path);
+	if(base != nil && str->prefix("!Temple", base))
+		return "!" + base[7:];
+	return base;
+}
+
 # RISC OS-style app folder test: name begins with '!' and contains '!Boot'.
 isapp(path: string): int
 {
@@ -546,7 +556,7 @@ cmdpin(path: string, x, y: int)
 	p := ref Pin;
 	p.pid = nextpid++;
 	p.path = path;
-	p.label = basename(path);
+	p.label = applabel(path);
 	p.x = x;
 	p.y = y;
 	p.iconname = icon;

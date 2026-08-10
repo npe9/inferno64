@@ -1,0 +1,40 @@
+.TH HALOGEN 1
+.SH NAME
+halogen \- perspective driving demo
+.SH SYNOPSIS
+.B temple/halogen
+.SH DESCRIPTION
+.I Halogen
+is a perspective driving demo.
+It runs under
+.IR wm (1).
+.PP
+Steer and accelerate along a perspective road. There is no finish line.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left / a
+Steer left
+.TP
+.B Right / d
+Steer right
+.TP
+.B Up / w
+Accelerate
+.TP
+.B Down / s
+Slow
+.TP
+.B r / Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/halogen.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR wm (1)

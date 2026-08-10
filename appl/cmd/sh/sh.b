@@ -817,6 +817,8 @@ runexternal(ctxt: ref Context, args: list of ref Listnode, last: int): string
 			if (last) {
 				{
 					sys->pctl(Sys->NEWFD, ctxt.keepfds);
+					# Resolved Dis path for wm Help (? → man page).
+					env->setenv("dis", npath);
 					if (DEBUG) debug(sys->sprint("runexternal before mod->init"));
 					mod->init(ctxt.drawcontext, argv);
 					if (DEBUG) debug(sys->sprint("runexternal after mod->init"));
@@ -829,7 +831,7 @@ runexternal(ctxt: ref Context, args: list of ref Listnode, last: int): string
 				}
 			}
 			extstart := chan of int;
-			spawn externalexec(mod, ctxt.drawcontext, argv, extstart, ctxt.keepfds);
+			spawn externalexec(mod, ctxt.drawcontext, argv, npath, extstart, ctxt.keepfds);
 			pid := <-extstart;
 			if (DEBUG) debug("started external externalexec; pid is "+string pid);
 			return waitfor(ctxt, pid :: nil);
@@ -944,12 +946,14 @@ keepfdstr(ctxt: ref Context): string
 }
 
 externalexec(mod: Command,
-		drawcontext: ref Draw->Context, argv: list of string, startchan: chan of int, keepfds: list of int)
+		drawcontext: ref Draw->Context, argv: list of string, dispath: string,
+		startchan: chan of int, keepfds: list of int)
 {
 	if (DEBUG) debug(sprint("externalexec(%s,... [%d args])", hd argv, len argv));
 	sys->pctl(Sys->NEWFD, keepfds);
 	startchan <-= sys->pctl(0, nil);
 	{
+		env->setenv("dis", dispath);
 		mod->init(drawcontext, argv);
 	}exception e{
 	EPIPE =>

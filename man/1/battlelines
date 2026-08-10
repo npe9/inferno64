@@ -1,0 +1,49 @@
+.TH BATTLELINES 1
+.SH NAME
+battlelines \- swarm combat game
+.SH SYNOPSIS
+.B temple/battlelines
+.SH DESCRIPTION
+.I BattleLines
+is a swarm combat game.
+It runs under
+.IR wm (1).
+.PP
+Two swarms of troopers fight across the window. Hold button 1 or 2 near the pointer to attract or repel your side. Corner bars show remaining strength.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB hold
+Apply force field at pointer (attract/repel per wheel and RMB)
+.TP
+.B RMB hold
+Invert attractive/repulsive sense of force
+.TP
+.B mouse wheel buttons 4/8 (if wm sends)
+Decrease/increase force radius wheel_z
+.TP
+.B , / -
+Decrease force radius
+.TP
+.B . / + / =
+Increase force radius
+.TP
+.B 1
+Toggle time-lapse (fast motion)
+.TP
+.B 2
+Toggle tap-mode (local push within radius)
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/battlelines.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

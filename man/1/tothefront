@@ -1,0 +1,34 @@
+.TH TOTHEFRONT 1
+.SH NAME
+tothefront \- turn-based wargame
+.SH SYNOPSIS
+.B temple/tothefront
+.SH DESCRIPTION
+.I ToTheFront
+is a turn-based wargame.
+It runs under
+.IR wm (1).
+.PP
+Button 1 selects, moves, and attacks on a grid; space ends the phase. The opposing side is played by the machine.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB
+Select unit / move / attack per phase
+.TP
+.B space / n
+End phase (player 0)
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/tothefront.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

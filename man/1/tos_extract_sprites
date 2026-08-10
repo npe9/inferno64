@@ -1,0 +1,57 @@
+.TH TOS_EXTRACT_SPRITES 1
+.SH NAME
+tos_extract_sprites \- convert DolDoc binary images to Inferno image files
+.SH SYNOPSIS
+.B python3 scripts/tos_extract_sprites.py
+.I file
+[
+.B -o
+.I outdir
+]
+[
+.B --bin
+.I n
+]
+[
+.B --prefix
+.I name
+]
+[
+.B --compressed
+]
+[
+.B --rgba
+]
+.SH DESCRIPTION
+.I Tos_extract_sprites
+is a host Python program (not a Dis module).
+It reads DolDoc files that contain binary image or vector records, or
+.B .GR
+bitmaps, and writes Inferno
+.IR image (6)
+files:
+an
+.B m8
+.B .bit
+and a
+.B k1
+.B .mask
+by default.
+.PP
+.B --compressed
+selects Inferno's compressed image encoding.
+.B --rgba
+writes an
+.B r8g8b8a8
+image and an
+.B a8
+mask instead.
+.SH EXAMPLE
+.EX
+	python3 scripts/tos_extract_sprites.py demo.HC -o /tmp/out --prefix demo
+.EE
+.SH SOURCE
+.B /scripts/tos_extract_sprites.py
+.SH SEE ALSO
+.IR image (6),
+.IR draw-image (2)

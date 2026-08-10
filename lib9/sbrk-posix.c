@@ -7,6 +7,10 @@
 #include        <pthread.h>
 #include	<time.h>
 #include	<termios.h>
+/* _XOPEN_SOURCE from lib9.h can hide NSIG on modern macOS */
+#ifndef NSIG
+#define NSIG 32
+#endif
 #include	<signal.h>
 #include	<pwd.h>
 #include	<sys/resource.h>

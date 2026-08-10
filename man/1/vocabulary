@@ -1,0 +1,35 @@
+.TH VOCABULARY 1
+.SH NAME
+vocabulary \- vocabulary quiz
+.SH SYNOPSIS
+.B temple/vocabulary
+.SH DESCRIPTION
+.I Vocabulary
+is a vocabulary quiz.
+It runs under
+.IR wm (1).
+.PP
+Choose which of four words matches the prompt. Keys 1–4 select; n asks another question.
+.PP
+The controls are:
+.TF space
+.TP
+.B 1-4 / buttons
+Select choice
+.TP
+.B n
+Next question
+.TP
+.B Esc / q
+Quit
+.PD
+.SH FILES
+.TP
+.B /lib/temple/vocab.txt
+Data file.
+.SH SOURCE
+.B /appl/temple/vocabulary.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

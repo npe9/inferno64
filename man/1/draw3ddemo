@@ -1,0 +1,29 @@
+.TH DRAW3DDEMO 1
+.SH NAME
+draw3ddemo \- showcase for math/draw3d
+.SH SYNOPSIS
+.B wm/draw3ddemo
+.SH DESCRIPTION
+.I Draw3ddemo
+is a
+.IR wm (1)
+application that exercises
+.IR draw3d (2).
+It draws a rotating mesh under perspective projection, a billboard image, and a
+simple overlay.
+The scene animates until the window is closed.
+.PP
+The keys are:
+.TF q
+.TP
+.B q, Esc
+quit
+.PD
+.PP
+It appears on the Wm Misc menu as
+.BR Draw3d .
+.SH SOURCE
+.B /appl/wm/draw3ddemo.b
+.SH SEE ALSO
+.IR draw3d (2),
+.IR wm (1)

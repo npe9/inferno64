@@ -1,0 +1,46 @@
+.TH GRMODELS 1
+.SH NAME
+grmodels \- mesh viewer
+.SH SYNOPSIS
+.B temple/grmodels
+.SH DESCRIPTION
+.I GrModels
+is a mesh viewer.
+It runs under
+.IR wm (1).
+.PP
+View a UV-sphere or stick figure. Drag or use the arrows to rotate; b and m switch models; minus and plus zoom.
+.PP
+The controls are:
+.TF space
+.TP
+.B b
+UV-sphere mode
+.TP
+.B m
+Stick-man mode
+.TP
+.B Enter
+Regenerate mesh
+.TP
+.B - / _
+Zoom out
+.TP
+.B arrows
+Yaw/pitch
+.TP
+.B LMB drag
+Rotate view
+.TP
+.B f
+Toggle face fill
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/grmodels.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR wm (1)

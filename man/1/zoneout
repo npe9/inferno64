@@ -1,0 +1,44 @@
+.TH ZONEOUT 1
+.SH NAME
+zoneout \- tank shooter
+.SH SYNOPSIS
+.B temple/zoneout
+.SH DESCRIPTION
+.I ZoneOut
+is a tank shooter.
+It runs under
+.IR wm (1).
+.PP
+Turn and drive with wasd or the arrows; space fires. Destroy every tank on the plain.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left / a
+Turn left
+.TP
+.B Right / d
+Turn right
+.TP
+.B Up / w
+Move forward
+.TP
+.B Down / s
+Move back
+.TP
+.B space
+Fire
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/zoneout.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

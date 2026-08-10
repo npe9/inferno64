@@ -1,0 +1,115 @@
+.TH POLYFILL 2
+.SH NAME
+polyfill: init, initzbuf, clearzbuf, setzbuf, fillpoly \- z-buffered polygon fill
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "math/polyfill.m";
+polyfill := load Polyfill Polyfill->PATH;
+
+Zstate: adt {
+	r: Draw->Rect;
+	zbuf0, zbuf1: array of int;
+	xlen, ylen, xylen: int;
+};
+
+init:      fn();
+initzbuf:  fn(r: Draw->Rect): ref Zstate;
+clearzbuf: fn(s: ref Zstate);
+setzbuf:   fn(s: ref Zstate, zd: int);
+fillpoly:  fn(d: ref Image, v: array of Point, w: int,
+              s: ref Image, p: Point,
+              zstate: ref Zstate, dc, dx, dy: int);
+.EE
+.SH DESCRIPTION
+.I Polyfill
+.RB ( /dis/math/polyfill.dis )
+rasterizes convex or simple polygons into a destination
+.B Image
+with an optional software depth buffer.
+It is shared by
+.IR draw3d (2)
+(for
+.B fillpoly3
+and depth-tested sprites) and by
+.B wm/polyhedra
+(see
+.IR wm-misc (1)).
+.PP
+.B Init
+prepares the module.
+.B Initzbuf
+allocates a
+.B Zstate
+covering rectangle
+.IR r ,
+including two integer depth arrays sized to the rectangle.
+.B Clearzbuf
+resets depths to a far value.
+.B Setzbuf
+writes every sample to the constant
+.IR zd .
+.PP
+.B Fillpoly
+fills the polygon whose screen vertices are
+.I v
+into destination
+.IR d ,
+sampling source image
+.I s
+with alignment point
+.I p
+(the usual
+.IR draw-image (2)
+convention).
+The winding argument
+.I w
+selects fill style as in Inferno polygon helpers.
+.PP
+When
+.I zstate
+is
+.BR nil ,
+the call is an ordinary fill with no depth test.
+When
+.I zstate
+is non-nil, each pixel's depth is computed from the plane
+.IP
+.I z
+=
+.BI (dc + x* dx + y* dy) / ZSCALE
+.PP
+using the fixed-point scale
+.B Draw3d->ZSCALE
+.RB ( 1<<20 ).
+A pixel is written only when it is nearer than the stored depth, which is then
+updated.
+.IR Draw3d (2)
+computes
+.BR dc ,
+.BR dx ,
+and
+.B dy
+from a face when
+.B fillpoly3
+is used with z-buffering enabled.
+.SH EXAMPLE
+.EX
+	polyfill->init();
+	zs := polyfill->initzbuf(img.r);
+	polyfill->clearzbuf(zs);
+	polyfill->fillpoly(img, verts, 0, colour, (0,0), zs, dc, dx, dy);
+.EE
+.SH SOURCE
+.B /appl/math/polyfill.b
+.br
+.B /module/math/polyfill.m
+.SH SEE ALSO
+.IR draw3d (2),
+.IR draw-image (2),
+.IR wm-misc (1)
+.SH BUGS
+The z-buffer is integer and shared; concurrent drawers on the same
+.B Zstate
+are not interlocked.
+Very large rectangles allocate large arrays.

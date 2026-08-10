@@ -1,0 +1,33 @@
+.TH ROCKETSCIENCE 1
+.SH NAME
+rocketscience \- guided rocket game
+.SH SYNOPSIS
+.B temple/rocketscience
+.SH DESCRIPTION
+.I RocketScience
+is a guided rocket game.
+It runs under
+.IR wm (1).
+.PP
+Space launches a guided rocket at a flying target. Enter resets.
+.PP
+The controls are:
+.TF space
+.TP
+.B space
+Launch
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/rocketscience.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

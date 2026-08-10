@@ -1,12 +1,13 @@
 /*
  * Cocoa window backend for Inferno emu (MacOSX arm64 / modern macOS).
- * Softscreen is XBGR32; AppKit blits via CGImage.
+ * Softscreen is XBGR32; AppKit blits via NSBitmapImageRep (DeviceRGB 32).
  * UI runs on the process main thread (see main-cocoa.m).
  */
 /* MacTypes.h (via Cocoa) also defines Point/Rect/nil — rename while importing. */
 #define Point	MacPoint
 #define Rect	MacRect
 #import <Cocoa/Cocoa.h>
+#import <CoreVideo/CoreVideo.h>
 #undef Point
 #undef Rect
 #undef nil
@@ -55,39 +56,305 @@ static int		altPressed;
 static int		button2, button3;
 static char		snarf[3*SnarfSize+1];
 
+static int	live_resizing;
+static int	miniaturized;
+static int	fullscreen_transition;
+static int	wm_notify_generation;
+static int	flush_display_pending;
+static CVDisplayLinkRef display_link;
+static volatile int	present_dirty;
+static volatile int	present_queued;
+
+/* Soft Plan9 Paper desktop (#C4C0B4); must match appl/wm/wm.b Background. */
+enum {
+	PaperR = 0xC4,
+	PaperG = 0xC0,
+	PaperB = 0xB4,
+	/* XBGR32 little-endian memory: R,G,B,X */
+	PaperPix = (0xFF<<24) | (PaperB<<16) | (PaperG<<8) | PaperR,
+};
+
+/*
+ * Known-good softscreen → AppKit blit (DeviceRGB spp=3 bpp=32).
+ * XBGR32 LE bytes are R,G,B,X.  Used by drawRect and in-place present.
+ */
 static void
-screenresize(int w, int h)
+blit_softscreen(NSView *v)
+{
+	NSBitmapImageRep *rep;
+	unsigned char *planes[5];
+	int pw, ph, bpl;
+
+	if(v == nil || gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
+		return;
+	pw = Dx(gscreen->r);
+	ph = Dy(gscreen->r);
+	if(pw < 1 || ph < 1)
+		return;
+	bpl = gscreen->width * (int)sizeof(u32);
+	memset(planes, 0, sizeof planes);
+	planes[0] = gscreen->data->bdata;
+	rep = [[NSBitmapImageRep alloc]
+		initWithBitmapDataPlanes:planes
+		pixelsWide:pw
+		pixelsHigh:ph
+		bitsPerSample:8
+		samplesPerPixel:3
+		hasAlpha:NO
+		isPlanar:NO
+		colorSpaceName:NSDeviceRGBColorSpace
+		bytesPerRow:bpl
+		bitsPerPixel:32];
+	if(rep == nil)
+		return;
+	[rep drawInRect:[v bounds]
+		fromRect:NSMakeRect(0, 0, pw, ph)
+		operation:NSCompositingOperationCopy
+		fraction:1.0
+		respectFlipped:YES
+		hints:@{ NSImageHintInterpolation: @(NSImageInterpolationNone) }];
+}
+
+/*
+ * Paint once.  Opaque non-layered views do not erase before drawRect, so a
+ * synchronous display updates the backing store in place (no paper flash).
+ * Prefer this over setNeedsDisplay — deferred display can batch with layout
+ * and still clear when AppKit has attached a layer behind our back.
+ */
+static void
+present_softscreen(void)
+{
+	if(view == nil)
+		return;
+	[view setWantsLayer:NO];
+	[view display];
+}
+
+static void
+present_on_main(void)
+{
+	present_queued = 0;
+	if(!present_dirty)
+		return;
+	present_dirty = 0;
+	present_softscreen();
+}
+
+static CVReturn
+display_link_cb(CVDisplayLinkRef link,
+	const CVTimeStamp *now,
+	const CVTimeStamp *output,
+	CVOptionFlags flags,
+	CVOptionFlags *outFlags,
+	void *context)
+{
+	(void)link;
+	(void)now;
+	(void)output;
+	(void)flags;
+	(void)outFlags;
+	(void)context;
+	if(!present_dirty || present_queued)
+		return kCVReturnSuccess;
+	present_queued = 1;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		present_on_main();
+	});
+	return kCVReturnSuccess;
+}
+
+static void
+ensure_display_link(void)
+{
+	CGDirectDisplayID did;
+	NSNumber *num;
+
+	if(display_link != nil)
+		return;
+	if(CVDisplayLinkCreateWithActiveCGDisplays(&display_link) != kCVReturnSuccess){
+		display_link = nil;
+		return;
+	}
+	CVDisplayLinkSetOutputCallback(display_link, display_link_cb, nil);
+	if(win != nil && [win screen] != nil){
+		num = [[win screen] deviceDescription][@"NSScreenNumber"];
+		if(num != nil){
+			did = (CGDirectDisplayID)[num unsignedIntValue];
+			CVDisplayLinkSetCurrentCGDisplay(display_link, did);
+		}
+	}
+	CVDisplayLinkStart(display_link);
+}
+
+/*
+ * Inferno flushes far faster than the display (games icons, caret).  Mark dirty
+ * and let CVDisplayLink present ≤ once per refresh — 90Hz full replaces looked
+ * like continuous blink even without a clear-to-background path.
+ */
+static void
+mark_view_dirty(void)
+{
+	if(view == nil)
+		return;
+	present_dirty = 1;
+	ensure_display_link();
+	if(display_link == nil){
+		/* No link: coalesce onto the next main-queue turn. */
+		if([NSThread isMainThread]){
+			flush_display_pending = 0;
+			present_on_main();
+			return;
+		}
+		if(flush_display_pending)
+			return;
+		flush_display_pending = 1;
+		dispatch_async(dispatch_get_main_queue(), ^{
+			flush_display_pending = 0;
+			present_on_main();
+		});
+	}
+}
+
+static void
+fillscreen(Memimage *m, u32 color)
+{
+	int x, y, w, h;
+	u32 *pix;
+
+	if(m == nil || m->data == nil || m->data->bdata == nil)
+		return;
+	w = Dx(m->r);
+	h = Dy(m->r);
+	pix = (u32*)m->data->bdata;
+	for(y = 0; y < h; y++)
+		for(x = 0; x < w; x++)
+			pix[y * m->width + x] = color;
+}
+
+/*
+ * Grow/shrink the softscreen to the view size.
+ * notify!=0 publishes a pointer resize so wm can reshape clients.
+ * Transient host gestures (live drag, zoom animation, fullscreen,
+ * miniaturize) rebind pixels only; a single coalesced notify follows.
+ */
+static void
+screenresize(int w, int h, int notify)
 {
 	Memimage *old, *next;
-	int copyw, copyh, y;
+	int copyw, copyh, y, bpl;
 
-	if(w < 1 || h < 1 || (w == dx && h == dy))
+	if(w < 1 || h < 1)
+		return;
+	/*
+	 * Same size: leave softscreen alone.  Do not mouseresize here —
+	 * deminiaturize / duplicate DidResize events used to poke wm with a
+	 * same-size resize and tear every client window down to grey.
+	 * Callers that must sync wm after a live drag use flush_wm_notify.
+	 */
+	if(w == dx && h == dy)
 		return;
 	next = allocmemimage(Rect(0, 0, w, h), XBGR32);
 	if(next == nil)
 		return;
 	old = gscreen;
-	/* Initialize newly exposed pixels to the WM grey background. */
-	memset(next->data->bdata, 0x77, next->width * sizeof(u32) * h);
+	/* Newly exposed pixels: Soft Plan9 Paper (not host-window grey). */
+	bpl = next->width * sizeof(u32);
+	fillscreen(next, PaperPix);
 	if(old != nil){
 		copyw = old->r.max.x - old->r.min.x;
 		if(copyw > w) copyw = w;
 		copyh = old->r.max.y - old->r.min.y;
 		if(copyh > h) copyh = h;
 		for(y = 0; y < copyh; y++)
-			memmove(next->data->bdata + y * next->width * sizeof(u32),
+			memmove(next->data->bdata + y * bpl,
 				old->data->bdata + y * old->width * sizeof(u32),
-				copyw * sizeof(u32));
+				(size_t)copyw * sizeof(u32));
 	}
 	gscreen = next;
 	dx = w;
 	dy = h;
-	drawscreenresize(gscreen);
-	if(view != nil)
-		[view setNeedsDisplay:YES];
+	Xsize = w;
+	Ysize = h;
+	if(notify)
+		drawscreenresize(gscreen);
+	else
+		drawscreenrebind(gscreen);
+	mark_view_dirty();
 	/* Existing Draw images may still reference the old screen data while
 	 * the window system processes its resize notification.  Retain it until
 	 * process teardown rather than freeing it under those clients. */
+}
+
+static void
+notify_screen_size(void)
+{
+	NSRect r;
+	int w, h;
+
+	if(view == nil || !readybit || miniaturized)
+		return;
+	r = [view bounds];
+	w = (int)r.size.width;
+	h = (int)r.size.height;
+	if(w < 1 || h < 1)
+		return;
+	/*
+	 * Size unchanged: do nothing.  A setNeedsDisplay here used to feed a
+	 * layout→DidResize→debounce→display loop that blinked the whole UI
+	 * even though Inferno pixels were stable.
+	 */
+	if(w == dx && h == dy)
+		return;
+	screenresize(w, h, 1);
+}
+
+/*
+ * Zoom / animated setFrame deliver many intermediate sizes without
+ * live-resize begin/end.  Coalesce to one wm reshape after the dust settles.
+ * 150ms covers typical macOS zoom animation frame gaps without mid-gesture
+ * reshape storms that left apps as grey placeholders.
+ */
+static void
+schedule_wm_notify(void)
+{
+	int gen;
+
+	if(!readybit || miniaturized || live_resizing || fullscreen_transition)
+		return;
+	gen = ++wm_notify_generation;
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_MSEC),
+		dispatch_get_main_queue(), ^{
+			if(gen != wm_notify_generation)
+				return;
+			if(miniaturized || live_resizing || fullscreen_transition)
+				return;
+			notify_screen_size();
+		});
+}
+
+/*
+ * Live-resize end / fullscreen transitions: softscreen already tracks the
+ * view, so screenresize is a no-op on size — still must mouseresize so wm
+ * reshapes clients to the final geometry.
+ */
+static void
+flush_wm_notify(void)
+{
+	NSRect r;
+	int w, h;
+
+	wm_notify_generation++;	/* cancel pending debounce */
+	if(view == nil || !readybit || miniaturized)
+		return;
+	r = [view bounds];
+	w = (int)r.size.width;
+	h = (int)r.size.height;
+	if(w < 1 || h < 1)
+		return;
+	if(w != dx || h != dy)
+		screenresize(w, h, 1);
+	else if(gscreen != nil)
+		mouseresize(dx, dy);
 }
 
 static int
@@ -236,29 +503,46 @@ convert_key(unsigned short key, unichar ch)
 	[self addTrackingArea:ta];
 }
 
-/*
- * Inferno resolution stays 1 pixel = 1 point.  Match the layer's scale to
- * the display so nearest-neighbor blit yields sharp Retina pixels (NxN
- * physical dots per Inferno pixel) instead of a soft window-server scale.
- */
 - (void)viewDidChangeBackingProperties
 {
-	CGFloat s;
-
 	[super viewDidChangeBackingProperties];
-	s = [[self window] backingScaleFactor];
-	if(s < 1.0)
-		s = 1.0;
-	if([self layer])
-		[self layer].contentsScale = s;
+}
+
+- (void)viewDidMoveToWindow
+{
+	[super viewDidMoveToWindow];
+	/* Keep non-layered even if AppKit tried to attach a layer. */
+	[self setWantsLayer:NO];
 }
 
 - (void)setFrameSize:(NSSize)size
 {
+	int w, h;
+
 	[super setFrameSize:size];
 	if(!readybit || gscreen == nil || size.width < 1 || size.height < 1)
 		return;
-	screenresize((int)size.width, (int)size.height);
+	/*
+	 * Miniaturized: leave the softscreen alone (dock preview / restore).
+	 * Live drag: rebind pixels so newly exposed areas exist; wm at end.
+	 * Zoom / animated setFrame: do not touch the softscreen on intermediate
+	 * sizes — AppKit stretches prior layer contents; one resize+notify at end
+	 * avoids wiping client pixels into grey mid-gesture.
+	 */
+	if(miniaturized)
+		return;
+	w = (int)size.width;
+	h = (int)size.height;
+	if(live_resizing){
+		screenresize(w, h, 0);
+		return;
+	}
+	if(fullscreen_transition)
+		return;
+	/* Same size: never re-arm the debounce (display/layout feedback). */
+	if(w == dx && h == dy)
+		return;
+	schedule_wm_notify();
 }
 
 - (void)resetCursorRects
@@ -276,40 +560,9 @@ convert_key(unsigned short key, unichar ch)
 
 - (void)drawRect:(NSRect)dirty
 {
-	NSBitmapImageRep *rep;
-	unsigned char *planes[5];
-
 	(void)dirty;
-	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
-		return;
-
-	/*
-	 * Do not take drawqlock here: flushmemscreen may run with the lock
-	 * held and dispatch_async onto this thread — locking would deadlock.
-	 *
-	 * Build a fresh bitmap each paint so AppKit cannot cache a stale
-	 * frame of the softscreen (menus/clicks otherwise look dead).
-	 */
-	memset(planes, 0, sizeof planes);
-	planes[0] = gscreen->data->bdata;
-	rep = [[NSBitmapImageRep alloc]
-		initWithBitmapDataPlanes:planes
-		pixelsWide:dx
-		pixelsHigh:dy
-		bitsPerSample:8
-		samplesPerPixel:3
-		hasAlpha:NO
-		isPlanar:NO
-		colorSpaceName:NSDeviceRGBColorSpace
-		bytesPerRow:dx * 4
-		bitsPerPixel:32];
-	/* Scale softscreen into the current content view (window may resize). */
-	[rep drawInRect:[self bounds]
-		fromRect:NSMakeRect(0, 0, dx, dy)
-		operation:NSCompositingOperationCopy
-		fraction:1.0
-		respectFlipped:YES
-		hints:@{ NSImageHintInterpolation: @(NSImageInterpolationNone) }];
+	/* Expose/resize and vsync presents all land here via -[NSView display]. */
+	blit_softscreen(self);
 }
 
 - (void)keyDown:(NSEvent *)e
@@ -480,16 +733,97 @@ convert_key(unsigned short key, unichar ch)
 @end
 
 @implementation InfernoAppDelegate
+- (void)windowWillStartLiveResize:(NSNotification *)note
+{
+	(void)note;
+	live_resizing = 1;
+	wm_notify_generation++;	/* cancel debounce; notify on end */
+}
+
+- (void)windowDidEndLiveResize:(NSNotification *)note
+{
+	(void)note;
+	live_resizing = 0;
+	flush_wm_notify();
+}
+
 - (void)windowDidResize:(NSNotification *)note
 {
 	NSRect r;
+	int w, h;
+
 	(void)note;
-	if(view == nil)
-		return;
-	if(!readybit)
+	if(view == nil || !readybit || live_resizing || miniaturized || fullscreen_transition)
 		return;
 	r = [view bounds];
-	screenresize((int)r.size.width, (int)r.size.height);
+	w = (int)r.size.width;
+	h = (int)r.size.height;
+	/* setFrameSize already schedules on real size changes; ignore echoes. */
+	if(w == dx && h == dy)
+		return;
+	schedule_wm_notify();
+}
+
+- (void)windowWillMiniaturize:(NSNotification *)note
+{
+	(void)note;
+	/*
+	 * Push a fresh layer frame before the dock snapshot / animation.
+	 * Otherwise AppKit often shows the window background grey.
+	 */
+	if(view != nil){
+		present_dirty = 1;
+		present_softscreen();
+	}
+	miniaturized = 1;
+	wm_notify_generation++;	/* do not reshape to transient dock sizes */
+}
+
+- (void)windowDidDeminiaturize:(NSNotification *)note
+{
+	NSRect r;
+	(void)note;
+	miniaturized = 0;
+	/*
+	 * Softscreen was preserved across miniaturize.  Redisplay only when
+	 * the content size is unchanged — a same-size wm reshape replaces
+	 * every client window with an empty placeholder (apps "disappear").
+	 */
+	if(view != nil){
+		present_dirty = 1;
+		present_softscreen();
+		r = [view bounds];
+		if((int)r.size.width != dx || (int)r.size.height != dy)
+			flush_wm_notify();
+	}
+}
+
+- (void)windowWillEnterFullScreen:(NSNotification *)note
+{
+	(void)note;
+	fullscreen_transition = 1;
+	wm_notify_generation++;
+}
+
+- (void)windowDidEnterFullScreen:(NSNotification *)note
+{
+	(void)note;
+	fullscreen_transition = 0;
+	flush_wm_notify();
+}
+
+- (void)windowWillExitFullScreen:(NSNotification *)note
+{
+	(void)note;
+	fullscreen_transition = 1;
+	wm_notify_generation++;
+}
+
+- (void)windowDidExitFullScreen:(NSNotification *)note
+{
+	(void)note;
+	fullscreen_transition = 0;
+	flush_wm_notify();
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender
@@ -584,19 +918,33 @@ createwindow(void)
 	[win setAcceptsMouseMovedEvents:YES];
 	[win setReleasedWhenClosed:NO];
 	[win setDelegate:(id)delegate];
-	/* Softscreen size is fixed; constrain the content aspect to it. */
+	[win setOpaque:YES];
+	/* Match Soft Plan9 Paper so any host clear is not grey-on-paper flash. */
+	[win setBackgroundColor:[NSColor colorWithCalibratedRed:PaperR/255.0
+		green:PaperG/255.0 blue:PaperB/255.0 alpha:1.0]];
 	[win setContentMinSize:NSMakeSize(dx/2, dy/2)];
 	[win setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
 
 	view = [[InfernoView alloc] initWithFrame:NSMakeRect(0, 0, dx, dy)];
-	[view setWantsLayer:YES];
+	/*
+	 * Non-layered opaque drawRect is the stable color/frame path.
+	 * Layer.contents experiments fixed some flashes but still shimmered when
+	 * replacing the whole texture at Inferno flush rates (often 60–90/s).
+	 * Flushes mark dirty; CVDisplayLink presents in-place ≤ once per refresh.
+	 */
+	[view setWantsLayer:NO];
 	[win setContentView:view];
+	[view setWantsLayer:NO];
 	[win makeFirstResponder:view];
 	[win setContentSize:NSMakeSize(dx, dy)];
 	[view viewDidChangeBackingProperties];
 	[win center];
 	[win makeKeyAndOrderFront:nil];
 	[NSApp activateIgnoringOtherApps:YES];
+	ensure_display_link();
+	present_dirty = 1;
+	present_softscreen();
+
 }
 
 void
@@ -612,6 +960,7 @@ screeninit(void)
 	gscreen = allocmemimage(Rect(0, 0, dx, dy), XBGR32);
 	if(gscreen == nil)
 		sysfatal("allocmemimage: %r");
+	fillscreen(gscreen, PaperPix);
 
 	/* Window must be created on the AppKit main thread */
 	dispatch_sync(dispatch_get_main_queue(), ^{
@@ -633,11 +982,9 @@ flushmemscreen(Rectangle r)
 	/*
 	 * Always mark the whole view dirty.  Partial rects are easy to get
 	 * wrong with flipped coordinates / Retina, and the softscreen blit
-	 * is cheap at 640x480.
+	 * is cheap at typical emu sizes.  Coalesce onto one AppKit paint.
 	 */
-	dispatch_async(dispatch_get_main_queue(), ^{
-		[view setNeedsDisplay:YES];
-	});
+	mark_view_dirty();
 }
 
 uchar*

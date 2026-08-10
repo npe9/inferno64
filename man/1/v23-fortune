@@ -1,0 +1,59 @@
+.TH V23-FORTUNE 1
+.SH NAME
+v23/fortune \- Vanadium RPC fortune client
+.SH SYNOPSIS
+.B v23/fortune
+[
+.B -a
+.I addr
+]
+.SH DESCRIPTION
+.I V23/fortune
+creates a client principal, dials
+.I addr
+(default
+.BR tcp!127.0.0.1!3245 )
+with ACL
+.BR ... ,
+invokes method
+.B Get
+with an empty argument, and prints the returned string.
+.PP
+Requires a running
+.IR v23-fortuned (8)
+(or compatible
+.IR v23-rpc (2)
+server).
+.PP
+.B /net
+must be available in the name space (bind Inferno’s network
+before starting
+.IR emu (1)
+clients that dial).
+.SH SOURCE
+.B /appl/cmd/v23/fortune.b
+.SH SEE ALSO
+.IR v23-fortuned (8),
+.IR v23-rpc (2),
+.IR v23-intro (2),
+.IR dial (2)
+.SH BUGS
+.IP \(bu
+End-to-end TCP smoke tests have hung when
+.B /net
+was missing or mis-bound; the client does not time out dials.
+.IP \(bu
+ACL is hard-coded to
+.BR ... ;
+no CLI for roots or patterns.
+.IP \(bu
+Only the
+.B Get
+method is used; no
+.B Add
+client.
+.SH TODO
+.IP \(bu
+Flags for blessing name, ACL, timeout, and method selection.
+.IP \(bu
+Print peer blessings after handshake for debugging.

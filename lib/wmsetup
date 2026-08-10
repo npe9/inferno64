@@ -20,6 +20,21 @@ fn wmrun {
 	} > /chan/wmstdout >[2] /chan/wmstderr &
 }
 
+# Launch a RISC OS-style !App folder (a directory containing !Boot
+# and !Run) so its toolbar-minimize icon comes from the folder's
+# own icons/<base>.bit. Implemented as a thin wrapper around the
+# /lib/wmapp shell script so plumber rules and command-line callers
+# can use the same logic (`/lib/wmapp /usr/inferno/!Calc`).
+fn wmapp {
+	args := $*
+	{
+		pctl newpgrp
+		fn wmapp
+		fn wmrun
+		/lib/wmapp $args
+	} > /chan/wmstdout >[2] /chan/wmstderr &
+}
+
 fn cd {
 	builtin cd $*;
 	rescue 'bad redir' {} {
@@ -27,26 +42,115 @@ fn cd {
 	} >[2] /dev/null
 }
 
-plumber -v >/chan/wmstdout >[2=1]
-menu Shell			{wmrun wm/sh}
-menu Acme			{wmrun acme}
-menu Edit				{wmrun wm/edit}
-menu Charon			{wmrun charon}
-menu Manual			{wmrun wm/man}
-menu Files			{if {ftest -d $home} {wmrun wm/ftree $home} {wmrun wm/ftree /}}
+plumber -v /lib/plumbing >/chan/wmstdout >[2=1]
+wmrun wm/pinboard
+# Seed desktop icons once /chan/pinboard is up (auto-grid layout).
+{
+	sleep 1
+	if {ftest -e /chan/pinboard} {
+		echo clear >/chan/pinboard
+		echo 'pin /Apps/!Shell
+pin /Apps/!Coffee
+pin /Apps/!Manual
+pin /Apps/!Draw3d
+pin /Apps/!Filer' >/chan/pinboard
+		# ls /Apps yields full paths (/Apps/!TempleFoo); match on basename.
+		for a in `{ls /Apps} {
+			base := `{basename $a}
+			if {~ $base '!Temple*'} {
+				echo pin $a >/chan/pinboard
+			}
+		}
+	}
+} >/chan/wmstdout >[2=1] &
+menu Shell			{wmapp /Apps/!Shell}
+menu Acme			{wmapp /Apps/!Acme}
+menu Edit			{wmapp /Apps/!Edit}
+menu Charon			{wmapp /Apps/!Web}
+menu Manual			{wmapp /Apps/!Manual}
+menu Apps			{wmrun wm/filer /Apps}
+menu Files			{if {ftest -d $home} {wmapp /Apps/!Filer $home} {wmapp /Apps/!Filer /}}
 menu ''	''
-menu System			'Debugger'		{wmrun wm/deb}
-menu System			'Module manager'	{wmrun wm/rt}
-menu System			'Task manager'		{wmrun wm/task}
-menu System			'Memory monitor'	{wmrun wm/memory}
-menu System			'About'			{wmrun wm/about}
-menu Misc			'Coffee'			{wmrun wm/coffee}
-menu Misc			'Colours'			{wmrun wm/colors}
+menu System			'Debugger'		{wmapp /Apps/!Debugger}
+menu System			'Module manager'	{wmapp /Apps/!DisManager}
+menu System			'Task manager'		{wmapp /Apps/!TaskManager}
+menu System			'Memory monitor'	{wmapp /Apps/!Memory}
+menu System			'Chars'	{wmapp /Apps/!Chars}
+menu System			'About'			{wmapp /Apps/!About}
+menu Misc			'Coffee'			{wmapp /Apps/!Coffee}
+menu Misc			'Draw3d'			{wmapp /Apps/!Draw3d}
+menu Misc			'Colours'			{wmapp /Apps/!Colours}
 #menu Misc			'Winctl'			{wmrun wm/winctl}
-menu Misc			'Clock'			{wmrun wm/date}
-menu Games			'Tetris'			{wmrun wm/tetris}
-menu Games			'Bounce'			{wmrun wm/bounce}
+menu Misc			'Clock'			{wmapp /Apps/!Clock}
+menu Misc			'Calculator'		{wmapp /Apps/!Calc}
+menu Misc			'Calendar'		{wmapp /Apps/!Calendar}
+menu Misc			'Stopwatch'		{wmapp /Apps/!Stopwatch}
+menu Games			'Tetris'			{wmapp /Apps/!Tetris}
+menu Games			'Bounce'			{wmapp /Apps/!Bounce}
+menu Games			'Snake'			{wmapp /Apps/!Snake}
+menu Games			'Sweeper'		{wmapp /Apps/!Sweeper}
+menu Games			'Reversi'		{wmapp /Apps/!Reversi}
+menu Games			'Connect4'		{wmapp /Apps/Connect4}
+menu Games			'Cards'			{wmapp /Apps/!Cards}
 #menu Games			'Game client'		{wmrun games/gameclient >/dev/null >[2=1]}
 #menu Games			'Game client (local)'	{wmrun games/gameclient -l > /dev/null >[2=1]}
+
+
+menu Demos		'ASCIIOrgan'		{wmapp /Apps/!TempleASCIIOrgan}
+menu Demos		'BattleLines'		{wmapp /Apps/!TempleBattleLines}
+menu Demos		'BigGuns'		{wmapp /Apps/!TempleBigGuns}
+menu Demos		'BlackDiamond'		{wmapp /Apps/!TempleBlackDiamond}
+menu Demos		'BomberGolf'		{wmapp /Apps/!TempleBomberGolf}
+menu Demos		'Bounce'		{wmapp /Apps/!TempleBounce}
+menu Demos		'Box'		{wmapp /Apps/!TempleBox}
+menu Demos		'Budget'		{wmapp /Apps/!TempleBudget}
+menu Demos		'Cartesian'		{wmapp /Apps/!TempleCartesian}
+menu Demos		'CastleFrankenstein'		{wmapp /Apps/!TempleCastleFrankenstein}
+menu Demos		'CharDemo'		{wmapp /Apps/!TempleCharDemo}
+menu Demos		'CircleTrace'		{wmapp /Apps/!TempleCircleTrace}
+menu Demos		'Collision'		{wmapp /Apps/!TempleCollision}
+menu Demos		'Digits'		{wmapp /Apps/!TempleDigits}
+menu Demos		'Doodle'		{wmapp /Apps/!TempleDoodle}
+menu Demos		'DunGen'		{wmapp /Apps/!TempleDunGen}
+menu Demos		'ElephantWalk'		{wmapp /Apps/!TempleElephantWalk}
+menu Demos		'FlapBat'		{wmapp /Apps/!TempleFlapBat}
+menu Demos		'FlatTops'		{wmapp /Apps/!TempleFlatTops}
+menu Demos		'FontEd'		{wmapp /Apps/!TempleFontEd}
+menu Demos		'God'		{wmapp /Apps/!TempleGod}
+menu Demos		'GrModels'		{wmapp /Apps/!TempleGrModels}
+menu Demos		'Halogen'		{wmapp /Apps/!TempleHalogen}
+menu Demos		'Hanoi'		{wmapp /Apps/!TempleHanoi}
+menu Demos		'KeepAway'		{wmapp /Apps/!TempleKeepAway}
+menu Demos		'Life'		{wmapp /Apps/!TempleLife}
+menu Demos		'Lines'		{wmapp /Apps/!TempleLines}
+menu Demos		'Logic'		{wmapp /Apps/!TempleLogic}
+menu Demos		'MassSpring'		{wmapp /Apps/!TempleMassSpring}
+menu Demos		'Maze'		{wmapp /Apps/!TempleMaze}
+menu Demos		'NetOfDots'		{wmapp /Apps/!TempleNetOfDots}
+menu Demos		'OhGreat'		{wmapp /Apps/!TempleOhGreat}
+menu Demos		'Psalmody'		{wmapp /Apps/!TemplePsalmody}
+menu Demos		'RainDrops'		{wmapp /Apps/!TempleRainDrops}
+menu Demos		'RawHide'		{wmapp /Apps/!TempleRawHide}
+menu Demos		'Rocket'		{wmapp /Apps/!TempleRocket}
+menu Demos		'RocketScience'		{wmapp /Apps/!TempleRocketScience}
+menu Demos		'Span'		{wmapp /Apps/!TempleSpan}
+menu Demos		'Squirt'		{wmapp /Apps/!TempleSquirt}
+menu Demos		'Stadium'		{wmapp /Apps/!TempleStadium}
+menu Demos		'Strut'		{wmapp /Apps/!TempleStrut}
+menu Demos		'Symmetry'		{wmapp /Apps/!TempleSymmetry}
+menu Demos		'Talons'		{wmapp /Apps/!TempleTalons}
+menu Demos		'TheDead'		{wmapp /Apps/!TempleTheDead}
+menu Demos		'TicTacToe'		{wmapp /Apps/!TempleTicTacToe}
+menu Demos		'TimeClock'		{wmapp /Apps/!TempleTimeClock}
+menu Demos		'Titanium'		{wmapp /Apps/!TempleTitanium}
+menu Demos		'ToTheFront'		{wmapp /Apps/!TempleToTheFront}
+menu Demos		'TreeCheckers'		{wmapp /Apps/!TempleTreeCheckers}
+menu Demos		'Varoom'		{wmapp /Apps/!TempleVaroom}
+menu Demos		'Vocabulary'		{wmapp /Apps/!TempleVocabulary}
+menu Demos		'Wenceslas'		{wmapp /Apps/!TempleWenceslas}
+menu Demos		'Whap'		{wmapp /Apps/!TempleWhap}
+menu Demos		'XCaliber'		{wmapp /Apps/!TempleXCaliber}
+menu Demos		'Zing'		{wmapp /Apps/!TempleZing}
+menu Demos		'ZoneOut'		{wmapp /Apps/!TempleZoneOut}
 
 if {ftest -f $home/lib/wmsetup} {run $home/lib/wmsetup} {}

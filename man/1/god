@@ -1,0 +1,49 @@
+.TH GOD 1
+.SH NAME
+god \- entropy word and song toy
+.SH SYNOPSIS
+.B temple/god
+.SH DESCRIPTION
+.I God
+is a entropy word and song toy.
+It runs under
+.IR wm (1).
+.PP
+Entropy from the clock and keyboard feeds buttons that pick a vocabulary word, play a generated song, or show a passage from Dante's
+.I Inferno
+(Longfellow translation).
+.PP
+The controls are:
+.TF space
+.TP
+.B Add entropy button
+Insert timer entropy into bit fifo
+.TP
+.B God Word button
+Pick word from vocab via GodBits
+.TP
+.B God Song button
+Generate and play song (fixed Normal/octave 4)
+.TP
+.B Inferno passage button
+Pick passage from Inferno.TXT
+.TP
+.B keyboard (any)
+Also feeds entropy
+.TP
+.B Esc / q
+Quit
+.PD
+.SH FILES
+.TP
+.B /lib/temple/vocab.txt
+Data file.
+.TP
+.B /lib/temple/Inferno.TXT
+Dante's Inferno (Project Gutenberg / Longfellow).
+.SH SOURCE
+.B /appl/temple/god.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

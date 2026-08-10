@@ -1,0 +1,31 @@
+.TH FLAPBAT 1
+.SH NAME
+flapbat \- side-scrolling catch game
+.SH SYNOPSIS
+.B temple/flapbat
+.SH DESCRIPTION
+.I FlapBat
+is a side-scrolling catch game.
+It runs under
+.IR wm (1).
+.PP
+Flap to stay aloft and catch glowing bugs. A bar shows how many remain; clear the field for a session best time.
+.PP
+The controls are:
+.TF space
+.TP
+.B space
+Flap
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/flapbat.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

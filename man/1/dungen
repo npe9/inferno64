@@ -1,0 +1,35 @@
+.TH DUNGEN 1
+.SH NAME
+dungen \- dungeon crawl
+.SH SYNOPSIS
+.B temple/dungen
+.SH DESCRIPTION
+.I DunGen
+is a dungeon crawl.
+It runs under
+.IR wm (1).
+.PP
+Move with wasd or the arrows in a first-person dungeon. Press space then a direction to attack. Kill every monster.
+.PP
+The controls are:
+.TF space
+.TP
+.B arrows / wasd
+Move (or attack direction after space)
+.TP
+.B space
+Enter attack mode (then arrow)
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/dungen.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

@@ -1,0 +1,31 @@
+.TH STADIUM 1
+.SH NAME
+stadium \- stadium ball-throw toy
+.SH SYNOPSIS
+.B temple/stadium
+.SH DESCRIPTION
+.I Stadium
+is a stadium ball-throw toy.
+It runs under
+.IR wm (1).
+.PP
+Button 1 throws a ball among wandering fans. Enter reseeds the crowd.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB
+Throw ball toward click
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/stadium.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR wm (1)

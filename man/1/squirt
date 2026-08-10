@@ -1,0 +1,33 @@
+.TH SQUIRT 1
+.SH NAME
+squirt \- hose and droplet toy
+.SH SYNOPSIS
+.B temple/squirt
+.SH DESCRIPTION
+.I Squirt
+is a hose and droplet toy.
+It runs under
+.IR wm (1).
+.PP
+Aim the hose nozzle with wasd or the arrows; droplets spray under the mass-spring solver.
+.PP
+The controls are:
+.TF space
+.TP
+.B arrows / wasd
+Move nozzle
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/squirt.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

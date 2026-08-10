@@ -1,0 +1,42 @@
+.TH XCALIBER 1
+.SH NAME
+xcaliber \- space combat game
+.SH SYNOPSIS
+.B temple/xcaliber
+.SH DESCRIPTION
+.I XCaliber
+is a space combat game.
+It runs under
+.IR wm (1).
+.PP
+Turn, thrust, and fire in mass-spring space combat under a chase camera.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left / a
+Turn left
+.TP
+.B Right / d
+Turn right
+.TP
+.B Up / w
+Thrust
+.TP
+.B space
+Fire
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/xcaliber.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

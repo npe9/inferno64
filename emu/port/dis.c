@@ -26,7 +26,7 @@ struct
 } isched;
 
 extern	int	bflag;
-int	cflag;
+int	cflag = 1;	/* JIT on by default; -c0 selects interpreter */
 uvlong	gcbusy;
 uvlong	gcidle;
 uvlong	gcidlepass;

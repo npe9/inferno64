@@ -896,8 +896,48 @@ deletescreenimage(void)
 	qunlock(&sdraw.q);
 }
 
+/*
+ * Layers copy width/zero from the screen image at alloc time.  When the
+ * host softscreen is rebound to a new stride, every Memimage that shares
+ * screendata must adopt the new words-per-line or draws address wrong pixels.
+ */
+static void
+updatescreenstrides(void)
+{
+	DScreen *ds;
+	Memimage *i;
+	u32 w;
+	s32 z;
+
+	if(screenimage == nil)
+		return;
+	w = screenimage->width;
+	z = screenimage->zero;
+	for(ds = dscreen; ds != nil; ds = ds->next){
+		if(ds->screen == nil)
+			continue;
+		i = ds->screen->image;
+		if(i != nil && i->data == &screendata){
+			i->width = w;
+			i->zero = z;
+		}
+		for(i = ds->screen->frontmost; i != nil; ){
+			Memimage *next;
+
+			if(i->layer == nil)
+				break;
+			next = i->layer->rear;
+			if(i->data == &screendata){
+				i->width = w;
+				i->zero = z;
+			}
+			i = next;
+		}
+	}
+}
+
 void
-drawscreenresize(Memimage *n)
+drawscreenrebind(Memimage *n)
 {
 	if(n == nil || screenimage == nil)
 		return;
@@ -908,11 +948,20 @@ drawscreenresize(Memimage *n)
 	screenimage->r = n->r;
 	screenimage->clipr = n->clipr;
 	screenimage->width = n->width;
+	screenimage->zero = n->zero;
+	updatescreenstrides();
 	qunlock(&sdraw.q);
 	drawdisplayresize(n->r);
-	/* Resize all Inferno draw metadata before invalidating the surface. */
 	flushrect = n->r;
 	drawflush();
+}
+
+void
+drawscreenresize(Memimage *n)
+{
+	drawscreenrebind(n);
+	if(n == nil)
+		return;
 	mouseresize(n->r.max.x - n->r.min.x, n->r.max.y - n->r.min.y);
 }
 

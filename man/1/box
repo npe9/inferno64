@@ -1,0 +1,25 @@
+.TH BOX 1
+.SH NAME
+box \- rotating wireframe cube
+.SH SYNOPSIS
+.B temple/box
+.SH DESCRIPTION
+.I Box
+is a rotating wireframe cube.
+It runs under
+.IR wm (1).
+.PP
+A yellow wireframe cube rotates under perspective projection.
+.PP
+The controls are:
+.TF space
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/box.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR wm (1)

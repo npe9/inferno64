@@ -1,0 +1,37 @@
+.TH THEDEAD 1
+.SH NAME
+thedead \- side-view shooter
+.SH SYNOPSIS
+.B temple/thedead
+.SH DESCRIPTION
+.I TheDead
+is a side-view shooter.
+It runs under
+.IR wm (1).
+.PP
+Move up and down; hold space or Right to fire at approaching figures.
+.PP
+The controls are:
+.TF space
+.TP
+.B Up / w
+Move up
+.TP
+.B Down / s
+Move down
+.TP
+.B space / Right
+Fire (linger hold)
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/thedead.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

@@ -1,0 +1,30 @@
+.TH DIGITS 1
+.SH NAME
+digits \- digit memory game
+.SH SYNOPSIS
+.B temple/digits
+.SH DESCRIPTION
+.I Digits
+is a digit memory game.
+It runs under
+.IR wm (1).
+.PP
+A digit pattern is shown in Tk, then typed back. Wrong guesses end the round; length grows after successes.
+.PP
+The controls are:
+.TF space
+.TP
+.B space / Enter
+Advance phase / restart after fail
+.TP
+.B 0-9
+Guess next digit
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/digits.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

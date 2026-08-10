@@ -1,0 +1,35 @@
+.TH TITANIUM 1
+.SH NAME
+titanium \- vertical scrolling shooter
+.SH SYNOPSIS
+.B temple/titanium
+.SH DESCRIPTION
+.I Titanium
+is a vertical scrolling shooter.
+It runs under
+.IR wm (1).
+.PP
+A ship near the bottom fights downward-scrolling enemies. Move with wasd or the arrows; space fires.
+.PP
+The controls are:
+.TF space
+.TP
+.B arrows / wasd
+Move
+.TP
+.B space
+Fire
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/titanium.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

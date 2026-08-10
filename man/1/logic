@@ -1,0 +1,27 @@
+.TH LOGIC 1
+.SH NAME
+logic \- truth-table synthesizer
+.SH SYNOPSIS
+.B temple/logic
+.SH DESCRIPTION
+.I Logic
+is a truth-table synthesizer.
+It runs under
+.IR wm (1).
+.PP
+Edit hex truth-table columns in Tk and synthesize a gate expression.
+.PP
+The controls are:
+.TF space
+.TP
+.B Tk fields / buttons
+Edit truth table and synthesize
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/logic.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

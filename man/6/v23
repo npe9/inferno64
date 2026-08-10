@@ -1,0 +1,114 @@
+.TH V23 6
+.SH NAME
+v23 \- Vanadium blessing and RPC wire formats (Inferno-native)
+.SH DESCRIPTION
+The Limbo Vanadium port does not use Google VOM.
+Blessings and RPC use UTF-8 text framed by
+.IR msgio (2)
+.B putstring
+/
+.BR getstring .
+.SS Blessings
+.B Encodeblessings
+produces:
+.IP
+.EX
+V23BLESS1
+\fInchains\fP
+\fIncerts\fP
+C
+\fIlen\fP
+\fIextension\fP
+\fIlen\fP
+\fIpkstr\fP
+\fIncaveats\fP
+\fIlen\fP
+\fIcav.id\fP
+\fIlen\fP
+\fIcav.param\fP
+…
+\fIlen\fP
+\fIsigstr\fP
+…
+.EE
+.PP
+Each field after a length line is exactly that many Unicode characters,
+then a newline.
+.I Pkstr
+and
+.I sigstr
+are
+.IR keyring-intro (2)
+.B pktostr
+/
+.B certtostr
+text and may contain embedded newlines; length-prefixing preserves them.
+.PP
+Certificate content for signing is a SHA1 digest over purpose
+.BR B1 ,
+extension,
+.BR pkstr ,
+each
+.IB id = param
+caveat, and (for non-roots) the parent chain digest.
+The Keyring signature uses
+.B ha=sha1
+and purpose-related hashing as implemented in
+.IR v23-security (2).
+.SS RPC connection
+After TCP connect:
+.IP 1.
+Client sends encoded blessings; server sends its blessings for the peer
+(via
+.B forpeer
+or default).
+.IP 2.
+Each side verifies the peer’s blessings against roots (server may TOFU if ACL
+contains
+.BR ... ).
+.IP 3.
+Calls:
+.IP
+.EX
+putstring(\fImethod\fP)
+putstring(\fIarg\fP)
+→ putstring("OK" or "ERR")
+  putstring(\fIresult-or-diagnostic\fP)
+.EE
+.IP 4.
+Shutdown:
+.B CLOSE
+method (empty arg).
+.SH SEE ALSO
+.IR v23-intro (2),
+.IR v23-security (2),
+.IR v23-rpc (2),
+.IR msgio (2),
+.IR keyring-certtostr (2)
+.SH BUGS
+.IP \(bu
+No VOM; cannot speak to stock
+.B v.io
+Go processes.
+.IP \(bu
+No protocol version field beyond the
+.B V23BLESS1
+magic.
+.IP \(bu
+Depends on Keyring
+.B %B
+/
+.B big64conv
+so
+.I pkstr
+/
+.I sigstr
+round-trip; broken Keyring formatting yields blessings that verify in-process
+but not after decode.
+.SH TODO
+.IP \(bu
+Replace this framing with VOM (or document a versioned dual-stack).
+.IP \(bu
+Binary length prefixes (byte counts) instead of Unicode character counts.
+.IP \(bu
+Negotiate hash algorithms and signature schemes.

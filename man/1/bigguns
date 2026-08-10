@@ -1,0 +1,45 @@
+.TH BIGGUNS 1
+.SH NAME
+bigguns \- artillery game
+.SH SYNOPSIS
+.B temple/bigguns
+.SH DESCRIPTION
+.I BigGuns
+is a artillery game.
+It runs under
+.IR wm (1).
+.PP
+Aim a barrel on a scrolling height-map, fire shells under gravity, and pan the camera with comma and full stop.
+.PP
+The controls are:
+.TF space
+.TP
+.B Left / a
+Aim barrel left
+.TP
+.B Right / d
+Aim barrel right
+.TP
+.B space
+Fire shell
+.TP
+.B ,
+Pan camera left
+.TP
+.B .
+Pan camera right
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/bigguns.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

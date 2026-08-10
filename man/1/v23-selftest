@@ -1,0 +1,48 @@
+.TH V23-SELFTEST 1
+.SH NAME
+v23/selftest \- exercise Vanadium Limbo security primitives
+.SH SYNOPSIS
+.B v23/selftest
+.SH DESCRIPTION
+.I V23/selftest
+runs in-process checks of
+.IR v23-security (2):
+principal creation, self-blessing, blessing another principal, encoding/
+decoding, pattern matching, expiry caveats, and ACL checks.
+It prints
+.B ok
+lines and exits 0 on success, or fails with a diagnostic.
+.PP
+It does not exercise
+.IR v23-rpc (2)
+over the network.
+.SH SOURCE
+.B /appl/cmd/v23/selftest.b
+.SH SEE ALSO
+.IR v23-intro (2),
+.IR v23-security (2),
+.IR v23-principal (1)
+.SH BUGS
+.IP \(bu
+Requires a working Keyring
+.B %B
+formatter in
+.IR emu (1);
+without
+.B fmtinstall('B', big64conv)
+in
+.BR keyringmodinit ,
+.B pktostr
+/
+.B certtostr
+emit literal
+.B %B%
+and verify/encode tests fail.
+.IP \(bu
+Coverage is incomplete relative to Google Vanadium (no third-party caveats,
+no VOM, no mount tables).
+.SH TODO
+.IP \(bu
+Add encode→decode→verify round-trips that deliberately break digests.
+.IP \(bu
+Add a networked RPC selftest once dial timeouts exist.

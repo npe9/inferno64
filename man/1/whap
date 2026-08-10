@@ -1,0 +1,32 @@
+.TH WHAP 1
+.SH NAME
+whap \- base defense toy
+.SH SYNOPSIS
+.B temple/whap
+.SH DESCRIPTION
+.I Whap
+is a base defense toy.
+It runs under
+.IR wm (1).
+.PP
+Move the mouse to stretch the cue ball on its spring and protect a cyan base from other balls.
+.PP
+The controls are:
+.TF space
+.TP
+.B mouse move
+Stretch ball0 toward pointer
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/whap.b
+.SH SEE ALSO
+.IR temple (1),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

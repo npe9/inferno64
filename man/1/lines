@@ -1,0 +1,24 @@
+.TH LINES 1
+.SH NAME
+lines \- animated lines
+.SH SYNOPSIS
+.B temple/lines
+.SH DESCRIPTION
+.I Lines
+is a animated lines.
+It runs under
+.IR wm (1).
+.PP
+A bouncing line paints a trail as its colour cycles.
+.PP
+The controls are:
+.TF space
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/lines.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

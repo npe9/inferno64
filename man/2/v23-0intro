@@ -1,0 +1,153 @@
+.TH V23-INTRO 2
+.SH NAME
+intro, v23 \- Vanadium secure RPC and blessings for Inferno
+.SH SYNOPSIS
+.EX
+include "keyring.m";
+include "v23.m";
+v23sec := load V23security V23security->PATH;
+v23rpc := load V23rpc V23rpc->PATH;
+.EE
+.SH DESCRIPTION
+This is an Inferno/Limbo port of core ideas from
+.I Vanadium
+.RB ( https://github.com/vanadium/core ,
+.BR v.io ).
+Vanadium provides mutually authenticated, authorization-aware RPC based on
+.I principals
+(key pairs) and
+.I blessings
+(named certificate chains with caveats).
+.PP
+The Inferno modules are:
+.TP
+.IR v23-security (2)
+Principals, blessings, caveats, blessing patterns, and ACL checks.
+.TP
+.IR v23-rpc (2)
+Framed RPC over
+.IR dial (2)
+with a blessing exchange at connect time.
+.PP
+Commands:
+.IR v23-principal (1),
+.IR v23-fortune (1),
+.IR v23-selftest (1),
+.IR v23-fortuned (8).
+Wm demo:
+.IR v23fortune (1)
+.RB ( Misc / Vanadium menu ).
+Wire framing is described in
+.IR v23 (6).
+.PP
+Concepts follow the Vanadium security model
+(principals, blessings, caveats, patterns) but the on-the-wire encoding is
+Inferno-native (length-prefixed text over
+.IR msgio (2)),
+not Google VOM.
+Limbo↔Limbo use is intentional for this port;
+interop with Go
+.B v.io
+clients requires a VOM (or compatible) codec.
+.SS Principals and blessings
+A
+.B principal
+is an Elgamal (via
+.IR keyring-intro (2))
+public/private key pair.
+A
+.B blessing
+binds a colon-separated human-readable name to a public key as a chain of
+certificates, each signed by the previous principal, optionally restricted by
+.BR caveats .
+Delegation is
+.B Bless:
+a principal extends one of its blessings with a new name component for another
+public key.
+.SS Patterns and authorization
+Blessing
+.B patterns
+select names for ACLs and the blessing store.
+.B ...
+matches any name;
+a pattern ending in
+.B :$
+matches only exactly;
+otherwise a pattern matches itself and any extension
+.RI ( alice
+matches
+.BR alice:friend ).
+.SS RPC
+.IR v23-rpc (2)
+exchanges encoded blessings at handshake, verifies them against configured
+roots, applies an allow-list of patterns, then runs string method/argument
+calls until
+.BR CLOSE .
+.SH FILES
+.TF /dis/lib/v23/security.dis
+.TP
+.B /dis/lib/v23/security.dis
+.B V23security
+implementation
+.TP
+.B /dis/lib/v23/rpc.dis
+.B V23rpc
+implementation
+.TP
+.B /module/v23.m
+Limbo module definitions
+.SH SOURCE
+.B /appl/lib/v23
+.br
+.B /appl/cmd/v23
+.SH SEE ALSO
+.IR v23-security (2),
+.IR v23-rpc (2),
+.IR v23 (6),
+.IR v23-principal (1),
+.IR v23-fortune (1),
+.IR v23-selftest (1),
+.IR v23fortune (1),
+.IR v23-fortuned (8),
+.IR keyring-intro (2),
+.IR dial (2),
+.IR msgio (2),
+.IR security-intro (2),
+.IR spki (2)
+.SH BUGS
+.IP \(bu
+Not wire-compatible with Go Vanadium (no VOM/VDL).
+.IP \(bu
+Requires an emu whose
+.B $Keyring
+builtin installs
+.B %B
+as
+.B big64conv
+so
+.B pktostr
+/
+.B certtostr
+round-trip; see
+.B /libinterp/keyring.c .
+Hosted emus that stub
+.B keyringmodinit
+cannot run this port.
+.IP \(bu
+Default key generation (Elgamal) is slow for large bit sizes; demos use 256–512 bits.
+.SH TODO
+.IP \(bu
+VOM (or a compatible subset) and VDL-generated stubs for Go interop.
+.IP \(bu
+Mount table / naming
+.RB ( v.io/v23/naming ).
+.IP \(bu
+Third-party caveats and discharges.
+.IP \(bu
+Persistent principal and blessing store (files / factotum integration).
+.IP \(bu
+Encrypted channels beyond blessing auth (TLS or Inferno
+.IR ssl (3)
+binding).
+.IP \(bu
+Richer RPC than single string argument/result (typed args, streaming).

@@ -1,0 +1,35 @@
+.TH WENCESLAS 1
+.SH NAME
+wenceslas \- snow rescue game
+.SH SYNOPSIS
+.B temple/wenceslas
+.SH DESCRIPTION
+.I Wenceslas
+is a snow rescue game.
+It runs under
+.IR wm (1).
+.PP
+Walk through the snow, leave footprints, and burn trees with space so peasants stay warm.
+.PP
+The controls are:
+.TF space
+.TP
+.B arrows / wasd
+Move king
+.TP
+.B space
+Burn trees (warmth)
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/wenceslas.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

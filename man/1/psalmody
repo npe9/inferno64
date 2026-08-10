@@ -1,0 +1,44 @@
+.TH PSALMODY 1
+.SH NAME
+psalmody \- note-list music editor
+.SH SYNOPSIS
+.B temple/psalmody
+.SH DESCRIPTION
+.I Psalmody
+is a note-list music editor.
+It runs under
+.IR wm (1).
+.PP
+Type A–G notes, octave digits, and w/h/q/e/s durations into a Tk list; space plays the score.
+.PP
+The controls are:
+.TF space
+.TP
+.B 0-9
+Set octave
+.TP
+.B A-G
+Append note
+.TP
+.B w / h / q / e / s
+Set duration
+.TP
+.B space / Play
+Play score
+.TP
+.B Save / Load / Clear buttons
+File and list ops
+.TP
+.B Esc / q
+Quit
+.PD
+.SH FILES
+.TP
+.B /tmp/temple-song.txt
+Data file.
+.SH SOURCE
+.B /appl/temple/psalmody.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)

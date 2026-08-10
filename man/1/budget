@@ -1,0 +1,37 @@
+.TH BUDGET 1
+.SH NAME
+budget \- simple ledger
+.SH SYNOPSIS
+.B temple/budget
+.SH DESCRIPTION
+.I Budget
+is a simple ledger.
+It runs under
+.IR wm (1).
+.PP
+Enter date, accounts, amount, and description in a Tk form. Add, delete, save, and load transactions; a view field shows an account balance.
+.PP
+The controls are:
+.TF space
+.TP
+.B Add / Delete / Save / Load / Quit buttons
+Ledger operations
+.TP
+.B view account entry
+Filter/balance for named account
+.TP
+.B Esc / q
+Quit
+.PD
+.SH FILES
+.TP
+.B $home/lib/temple-budget.txt
+Preferred.
+.TP
+.B /tmp/temple-budget.txt
+Fallback.
+.SH SOURCE
+.B /appl/temple/budget.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

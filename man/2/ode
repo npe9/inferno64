@@ -1,0 +1,202 @@
+.TH ODE 2
+.SH NAME
+ode: init, new, del, addmass, addspring, remmass, remspring, clearforces, update, pause, renum, massfind, d3, d3add, d3sub, d3mul, d3dot, d3norm, d3normsqr, d3dist, d3unit \- mass-spring ordinary differential equation solver
+.SH SYNOPSIS
+.EX
+include "ode.m";
+ode := load Ode Ode->PATH;
+ODE, Mass, Spring, D3: import ode;
+
+MSF_INACTIVE, MSF_FIXED: con 1 << iota;
+SSF_INACTIVE, SSF_NO_COMPRESSION, SSF_NO_TENSION: con 1 << iota;
+
+D3: adt { x, y, z: real; };
+
+Mass: adt {
+	x, y, z:   real;
+	vx, vy, vz: real;
+	fx, fy, fz: real;
+	mass:      real;
+	drag:      real;
+	flags:     int;
+	num:       int;
+	radius:    real;
+	userdata:  int;
+};
+
+Spring: adt {
+	end1, end2:    ref Mass;
+	const:         real;
+	restlen:       real;
+	f:             real;
+	displacement:  real;
+	flags:         int;
+	num:           int;
+	userdata:      int;
+};
+
+ODE: adt {
+	masses:  list of ref Mass;
+	springs: list of ref Spring;
+	drag_v, drag_v2, drag_v3: real;
+	accel_limit: real;
+	t:       real;
+	t_scale: real;
+	paused:  int;
+	h:       real;
+};
+
+init:        fn();
+new:         fn(): ref ODE;
+del:         fn(ode: ref ODE);
+addmass:     fn(ode: ref ODE, m: ref Mass);
+addspring:   fn(ode: ref ODE, s: ref Spring);
+remmass:     fn(ode: ref ODE, m: ref Mass);
+remspring:   fn(ode: ref ODE, s: ref Spring);
+clearforces: fn(ode: ref ODE);
+update:      fn(ode: ref ODE, dt: real);
+pause:       fn(ode: ref ODE, on: int);
+renum:       fn(ode: ref ODE);
+massfind:    fn(ode: ref ODE, x, y, z: real): ref Mass;
+
+d3:        fn(x, y, z: real): D3;
+d3add:     fn(a, b: D3): D3;
+d3sub:     fn(a, b: D3): D3;
+d3mul:     fn(s: real, a: D3): D3;
+d3dot:     fn(a, b: D3): real;
+d3norm:    fn(a: D3): real;
+d3normsqr: fn(a: D3): real;
+d3dist:    fn(a, b: D3): real;
+d3unit:    fn(a: D3): D3;
+.EE
+.SH DESCRIPTION
+.I Ode
+.RB ( /dis/lib/ode.dis )
+is a compact explicit integrator for systems of point masses connected by
+Hookean springs.
+Programs under
+.IR temple (1)
+use it for interactive physics.
+.PP
+.B Init
+prepares the module.
+.B New
+allocates an empty
+.B ODE
+world;
+.B del
+frees it.
+Masses and springs are linked into the world with
+.B addmass
+and
+.BR addspring ,
+and removed with
+.B remmass
+and
+.BR remspring .
+.B Renum
+renumbers the
+.B num
+fields after structural edits.
+.B Massfind
+returns a mass near
+.IR (x,y,z) ,
+or
+.B nil .
+.PP
+Each
+.B Mass
+stores position, velocity, and a force accumulator
+.BR (fx,fy,fz) .
+.B MSF_FIXED
+holds a mass in place;
+.B MSF_INACTIVE
+excludes it from integration.
+.B Drag
+is a per-mass factor combined with the world's
+.BR drag_v ,
+.BR drag_v2 ,
+and
+.B drag_v3
+terms.
+.B Radius
+is not used by the integrator itself; games store a collision radius there.
+.PP
+Each
+.B Spring
+joins
+.B end1
+and
+.BR end2 ,
+with Hooke constant
+.B const
+and rest length
+.BR restlen .
+.B SSF_NO_COMPRESSION
+and
+.B SSF_NO_TENSION
+restrict the force to one side of the rest length;
+.B SSF_INACTIVE
+disables the spring.
+After
+.BR update ,
+.B f
+and
+.B displacement
+hold the last computed force magnitude and length error.
+.PP
+The recommended force contract is:
+call
+.B clearforces
+to zero every mass accumulator, add application forces into
+.BR fx/fy/fz ,
+then call
+.BI update( ode , dt )
+with a wall-clock step in seconds.
+.B Update
+scales
+.I dt
+by
+.BR t_scale ,
+runs the spring and drag pipeline, converts force to acceleration, optionally
+clips by
+.BR accel_limit ,
+and advances positions with an RK4 step of size related to
+.BR h .
+.B Pause
+freezes integration when
+.I on
+is non-zero.
+.PP
+The
+.B d3*
+helpers manipulate
+.B D3
+triples for game code that prefers value vectors over mutating masses
+directly.
+.SH EXAMPLE
+.EX
+	ode->init();
+	world := ode->new();
+	world.t_scale = 1.0;
+	m0 := ref Mass;
+	m0.x = 0.0; m0.y = 1.0; m0.z = 0.0;
+	m0.mass = 1.0;
+	ode->addmass(world, m0);
+	# ... add more masses and springs ...
+	ode->clearforces(world);
+	m0.fy -= 9.8 * m0.mass;   # gravity
+	ode->update(world, 0.016);
+.EE
+.SH SOURCE
+.B /appl/lib/ode.b
+.br
+.B /module/ode.m
+.SH SEE ALSO
+.IR temple (1),
+.IR rocket (1),
+.IR span (1),
+.IR strut (1),
+.IR math-fp (2)
+.SH BUGS
+Collision detection is left to the application. Stiff springs or large steps can diverge.

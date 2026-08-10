@@ -1,0 +1,218 @@
+.TH V23-SECURITY 2
+.SH NAME
+V23security: Principal, Blessings, Caveat, createprincipal, blessself, bless, verifyblessings, pattern_match, authorize \- Vanadium principals and blessings
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "v23.m";
+v23 := load V23security V23security->PATH;
+
+Caveat: adt {
+    id:     string;     # "const" | "expiry"
+    param:  string;
+};
+
+Certificate: adt {
+    extension:  string;
+    pk:         ref Keyring->PK;
+    pkstr:      string;
+    caveats:    list of Caveat;
+    sig:        ref Keyring->Certificate;
+    sigstr:     string;
+};
+
+Blessings: adt {
+    chains: list of list of ref Certificate;
+    pk:     ref Keyring->PK;
+};
+
+Principal: adt {
+    sk:     ref Keyring->SK;
+    pk:     ref Keyring->PK;
+    store:  list of ref StoreEntry;
+    def:    ref Blessings;
+    roots:  list of ref RootEntry;
+
+    publickey:   fn(p: self ref Principal): ref Keyring->PK;
+    blessself:   fn(p: self ref Principal, name: string,
+                    cavs: list of Caveat): (ref Blessings, string);
+    bless:       fn(p: self ref Principal, key: ref Keyring->PK,
+                    with: ref Blessings, ext: string,
+                    cavs: list of Caveat): (ref Blessings, string);
+    sign:        fn(p: self ref Principal, msg: array of byte):
+                    (ref Keyring->Certificate, string);
+    setdefault:  fn(p: self ref Principal, b: ref Blessings): string;
+    setdefaultnil: fn(p: self ref Principal);
+    store_set:   fn(p: self ref Principal, b: ref Blessings,
+                    pattern: string): string;
+    forpeer:     fn(p: self ref Principal, peer: list of string):
+                    ref Blessings;
+    addroot:     fn(p: self ref Principal, b: ref Blessings): string;
+    addrootkey:  fn(p: self ref Principal, pk: ref Keyring->PK,
+                    pattern: string): string;
+};
+
+init:               fn(): string;
+createprincipal:    fn(bits: int, owner: string): (ref Principal, string);
+unconstrained:      fn(): Caveat;
+expiry:             fn(until: int): Caveat;
+blessingnames:      fn(b: ref Blessings): list of string;
+encodeblessings:    fn(b: ref Blessings): string;
+decodeblessings:    fn(s: string): (ref Blessings, string);
+verifyblessings:    fn(p: ref Principal, b: ref Blessings):
+                        (list of string, list of string);
+pattern_valid:      fn(pat: string): int;
+pattern_match:      fn(pat: string, names: list of string): int;
+authorize:          fn(allow: list of string, remote: list of string): string;
+.EE
+.SH DESCRIPTION
+.B V23security
+implements Vanadium-style principals and blessings on top of
+.IR keyring-intro (2).
+.B Init
+must be called first; it returns nil on success or a diagnostic.
+.PP
+.B Createprincipal
+generates an Elgamal key of
+.I bits
+bits (default 512 if
+.I bits
+≤ 0) owned by
+.IR owner .
+.SS Caveats
+.B Unconstrained
+returns a const caveat that always validates
+.RB ( "const" / "true" ).
+.B Expiry
+returns a caveat that fails when
+.IR daytime (2)
+.B now
+is after
+.I until
+(epoch seconds).
+.B Bless
+requires at least one caveat; use
+.B unconstrained
+for unrestricted delegation.
+.SS Blessings
+.B Blessself
+creates a self-signed root blessing named
+.IR name .
+.B Bless
+extends each chain in
+.I with
+by
+.I ext
+for
+.IR key ;
+.I with
+must be bound to the local principal’s public key.
+.PP
+.B Blessingnames
+returns claimed names (extensions joined by
+.BR : ).
+.B Verifyblessings
+checks signatures, caveats, and whether chain roots are trusted via
+.B addroot
+/
+.BR addrootkey ;
+it returns
+.BI ( recognized , rejected )
+where rejected entries are
+.BI name : reason
+strings.
+.PP
+.B Encodeblessings
+/
+.B decodeblessings
+use the framing in
+.IR v23 (6).
+Canonical
+.B pkstr
+/
+.B sigstr
+fields preserve Keyring text exactly for digest stability.
+.SS Store and roots
+.B Setdefault
+sets blessings presented when acting as a server (or when no store entry matches).
+.B Store_set
+associates blessings with a peer blessing
+.IR pattern .
+.B Forpeer
+selects store blessings for peer names, else the default.
+.B Addroot
+trusts the root public key of each chain in
+.I b
+for the claimed name pattern.
+.SS Patterns and ACL
+.B Pattern_match
+implements Vanadium pattern rules
+.RB ( ... ,
+optional
+.B :$
+terminator, prefix match).
+.B Authorize
+returns nil if any
+.I remote
+name matches any pattern in
+.IR allow ,
+else a diagnostic.
+.SH SOURCE
+.B /appl/lib/v23/security.b
+.SH SEE ALSO
+.IR v23-intro (2),
+.IR v23-rpc (2),
+.IR v23 (6),
+.IR keyring-gensk (2),
+.IR keyring-certtostr (2),
+.IR daytime (2)
+.SH BUGS
+.IP \(bu
+Only
+.B const
+and
+.B expiry
+caveats are implemented; unknown caveat ids fail verification.
+.IP \(bu
+.B PurposeDischarge
+is defined but third-party caveats/discharges are not implemented.
+.IP \(bu
+Blessing store and roots are in-memory only; process exit loses them.
+.IP \(bu
+.B Forpeer
+picks the matching store entry with the most chains, not Vanadium’s full
+pattern-specificity rules.
+.IP \(bu
+Signature hashing uses SHA1 because
+.IR keyring-intro (2)
+.B sign
+/
+.B verify
+accept only sha1/md5/md4 as the
+.I ha
+argument.
+.IP \(bu
+No x509-backed
+.B BlessSelf
+(Vanadium’s TLS certificate principals).
+.SH TODO
+.IP \(bu
+Peer-blessing and method caveats; public-key third-party caveats.
+.IP \(bu
+Discharge minting and caching
+.RB ( MintDischarge ).
+.IP \(bu
+Persistent
+.B BlessingStore
+/
+.B BlessingRoots
+(files or factotum).
+.IP \(bu
+Union of blessings and richer
+.B Equivalent
+/
+.B UniqueID
+semantics.
+.IP \(bu
+ECDSA/Ed25519 when Keyring exposes them end-to-end for Limbo.

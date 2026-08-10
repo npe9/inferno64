@@ -1,0 +1,42 @@
+.TH ROCKET 1
+.SH NAME
+rocket \- rocket landing toy
+.SH SYNOPSIS
+.B temple/rocket
+.SH DESCRIPTION
+.I Rocket
+is a rocket landing toy.
+It runs under
+.IR wm (1).
+.PP
+Space blasts off a two-mass rocket; wasd or the arrows thrust. Enter resets.
+.PP
+The controls are:
+.TF space
+.TP
+.B space
+Blast off
+.TP
+.B Up / w
+Thrust up
+.TP
+.B Left / a
+Thrust left
+.TP
+.B Right / d
+Thrust right
+.TP
+.B Enter
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/rocket.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR wm (1)

@@ -1,0 +1,49 @@
+.TH V23-PRINCIPAL 1
+.SH NAME
+v23/principal \- create a Vanadium principal and print a self-blessing
+.SH SYNOPSIS
+.B v23/principal
+[
+.B -b
+.I bits
+]
+[
+.B -n
+.I name
+]
+.SH DESCRIPTION
+.I V23/principal
+creates an in-memory Vanadium principal
+.RI ( v23-security (2)),
+self-blesses it as
+.I name
+(default
+.BR principal ),
+trusts that blessing as a root, and prints the public key, blessing name(s),
+and
+.IR v23 (6)
+encoding of the blessings.
+.PP
+.B -b
+sets Elgamal key size in bits (default 512).
+.SH SOURCE
+.B /appl/cmd/v23/principal.b
+.SH SEE ALSO
+.IR v23-intro (2),
+.IR v23-security (2),
+.IR v23 (6),
+.IR v23-selftest (1)
+.SH BUGS
+.IP \(bu
+Does not write keys or blessings to disk; output is for inspection/demo only.
+.IP \(bu
+Large
+.B -b
+values make key generation very slow.
+.SH TODO
+.IP \(bu
+Save/load Authinfo-style or Vanadium principal directories.
+.IP \(bu
+Subcommands mirroring
+.B go run v.io/x/ref/cmd/principal
+(bless, dump, recognize, …).

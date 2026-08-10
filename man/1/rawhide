@@ -1,0 +1,35 @@
+.TH RAWHIDE 1
+.SH NAME
+rawhide \- cattle herding game
+.SH SYNOPSIS
+.B temple/rawhide
+.SH DESCRIPTION
+.I RawHide
+is a cattle herding game.
+It runs under
+.IR wm (1).
+.PP
+The mouse or arrow keys move a horse used to drive cattle into the upper-left corral.
+.PP
+The controls are:
+.TF space
+.TP
+.B mouse move
+Move horse
+.TP
+.B arrows / wasd
+Move horse
+.TP
+.B Enter / r
+Restart
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/rawhide.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR tone (2),
+.IR wm (1)

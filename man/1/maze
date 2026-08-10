@@ -1,0 +1,33 @@
+.TH MAZE 1
+.SH NAME
+maze \- maze editor and solver
+.SH SYNOPSIS
+.B temple/maze
+.SH DESCRIPTION
+.I Maze
+is a maze editor and solver.
+It runs under
+.IR wm (1).
+.PP
+Button 1 draws walls; button 2 solves a path from the clicked cell. The c key clears the grid.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB
+Draw walls
+.TP
+.B RMB
+Solve from cell
+.TP
+.B c
+Clear
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/maze.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

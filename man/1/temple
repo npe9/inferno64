@@ -1,0 +1,339 @@
+.TH TEMPLE 1
+.SH NAME
+temple \- collection of games and demos for Wm
+.SH SYNOPSIS
+.B temple/
+.I name
+.br
+.B wmapp /Apps/!Temple
+.I Name
+.SH DESCRIPTION
+The
+.B temple
+programs are graphical games, demos, and small applications that run under
+.IR wm (1).
+Each may be started as
+.BI temple/ name
+or from the Wm
+.B TempleOS
+menu.
+.PP
+Several titles use
+.IR draw3d (2)
+for perspective drawing,
+.IR ode (2)
+for mass-spring physics, and
+.IR tone (2)
+for sound.
+.IR Draw3ddemo (1)
+(Misc menu
+.BR Draw3d )
+exercises the 3-D library alone.
+.PP
+Unless noted otherwise, quit with
+.B q
+or
+.B Esc
+and restart with
+.B Enter
+or
+.BR r .
+.SS Games
+.TP
+.B temple/battlelines
+Two swarms of troopers fight across the window.
+See
+.IR battlelines (1).
+.TP
+.B temple/bigguns
+Artillery on a scrolling height-map.
+See
+.IR bigguns (1).
+.TP
+.B temple/blackdiamond
+Ski downhill past obstacles on a depth-scaled slope.
+See
+.IR blackdiamond (1).
+.TP
+.B temple/bombergolf
+Fly a bomber over trees and rectangular targets.
+See
+.IR bombergolf (1).
+.TP
+.B temple/castlefrankenstein
+A first-person maze shooter.
+See
+.IR castlefrankenstein (1).
+.TP
+.B temple/chardemo
+A generated landscape of water, land, and trees. Arrow keys pan; Enter regenerates.
+See
+.IR chardemo (1).
+.TP
+.B temple/circletrace
+Trace a guide circle freehand with button 1.
+See
+.IR circletrace (1).
+.TP
+.B temple/collision
+Sixty-four balls bounce and collide elastically in the window.
+See
+.IR collision (1).
+.TP
+.B temple/digits
+A memory game in Tk: a digit pattern is shown, then typed back.
+See
+.IR digits (1).
+.TP
+.B temple/dungen
+A first-person dungeon crawl.
+See
+.IR dungen (1).
+.TP
+.B temple/elephantwalk
+Move an elephant around a panel with the arrow keys or wasd.
+See
+.IR elephantwalk (1).
+.TP
+.B temple/flapbat
+A side-scrolling catch game.
+See
+.IR flapbat (1).
+.TP
+.B temple/flattops
+A top-down carrier task-force game.
+See
+.IR flattops (1).
+.TP
+.B temple/halogen
+Drive along a perspective road. Steer and accelerate; there is no finish line.
+See
+.IR halogen (1).
+.TP
+.B temple/keepaway
+Keep-away on a pitched field using the mass-spring solver.
+See
+.IR keepaway (1).
+.TP
+.B temple/massspring
+A mass-spring sandbox.
+See
+.IR massspring (1).
+.TP
+.B temple/maze
+Draw walls with button 1; button 2 solves a path from the clicked cell. c clears.
+See
+.IR maze (1).
+.TP
+.B temple/raindrops
+Raindrops wet a glass grid. Holding 1 or 2 places hotspots.
+See
+.IR raindrops (1).
+.TP
+.B temple/rawhide
+Herd cattle into the upper-left corral.
+See
+.IR rawhide (1).
+.TP
+.B temple/rocket
+A two-mass rocket under the ODE solver.
+See
+.IR rocket (1).
+.TP
+.B temple/rocketscience
+Launch a guided rocket at a flying target. Space launches; Enter resets.
+See
+.IR rocketscience (1).
+.TP
+.B temple/span
+Build a bridge from masses and members, then run the simulation with space.
+See
+.IR span (1).
+.TP
+.B temple/squirt
+Aim a hose nozzle with wasd or the arrows; droplets spray under the ODE solver.
+See
+.IR squirt (1).
+.TP
+.B temple/stadium
+Wandering fans fill a stadium.
+See
+.IR stadium (1).
+.TP
+.B temple/strut
+Edit a ship of masses, struts, and thrusters, then play.
+See
+.IR strut (1).
+.TP
+.B temple/talons
+Fly low over terrain, steer with wasd or the arrows, and catch fish.
+See
+.IR talons (1).
+.TP
+.B temple/thedead
+A side-view shooter. Move up and down; hold space or Right to fire.
+See
+.IR thedead (1).
+.TP
+.B temple/tictactoe
+Classic 3×3 tic-tac-toe for two local players. Button 1 places a mark.
+See
+.IR tictactoe (1).
+.TP
+.B temple/titanium
+A vertical scrolling shooter.
+See
+.IR titanium (1).
+.TP
+.B temple/tothefront
+A simplified turn-based grid wargame.
+See
+.IR tothefront (1).
+.TP
+.B temple/treecheckers
+Checkers-like play on a radial board. Drag pieces with button 1.
+See
+.IR treecheckers (1).
+.TP
+.B temple/varoom
+Oval-track racing with a chase camera.
+See
+.IR varoom (1).
+.TP
+.B temple/wenceslas
+Guide the king through the snow, leave footprints, and burn trees for warmth.
+See
+.IR wenceslas (1).
+.TP
+.B temple/whap
+Defend a cyan base from bouncing balls.
+See
+.IR whap (1).
+.TP
+.B temple/xcaliber
+Mass-spring space combat with a chase camera.
+See
+.IR xcaliber (1).
+.TP
+.B temple/zing
+Button 1 drag in the bow box aims; release shoots. Enter resets.
+See
+.IR zing (1).
+.TP
+.B temple/zoneout
+A tank shooter in perspective.
+See
+.IR zoneout (1).
+.SS Demos
+.TP
+.B temple/asciiorgan
+A Tk keyboard organ. Typing keys plays short tones.
+See
+.IR asciiorgan (1).
+.TP
+.B temple/bounce
+Sixteen coloured dots bounce inside the window.
+See
+.IR bounce (1).
+.TP
+.B temple/box
+A yellow wireframe cube rotates under perspective projection.
+See
+.IR box (1).
+.TP
+.B temple/cartesian
+Plots a sample function on labelled Cartesian axes. Space redraws.
+See
+.IR cartesian (1).
+.TP
+.B temple/doodle
+Freehand drawing. Button 1 paints; button 2 or c cycles colour.
+See
+.IR doodle (1).
+.TP
+.B temple/fonted
+An 8×8 bitmap font editor.
+See
+.IR fonted (1).
+.TP
+.B temple/hanoi
+An animated solution of the Towers of Hanoi with six disks.
+See
+.IR hanoi (1).
+.TP
+.B temple/life
+Conway's Game of Life. Button 1 paints cells; r randomizes; space clears.
+See
+.IR life (1).
+.TP
+.B temple/lines
+An animated bouncing line that paints a trail as its colour cycles.
+See
+.IR lines (1).
+.TP
+.B temple/netofdots
+Draws a radiating net of lines. Space repaints.
+See
+.IR netofdots (1).
+.TP
+.B temple/ohgreat
+Plays a fixed song score while showing lyrics. Space starts and stops.
+See
+.IR ohgreat (1).
+.TP
+.B temple/symmetry
+Button 2 sets a mirror line; button 1 draws strokes mirrored across it.
+See
+.IR symmetry (1).
+.SS Applications
+.TP
+.B temple/budget
+A Tk ledger for date, accounts, amount, and description.
+See
+.IR budget (1).
+.TP
+.B temple/god
+A Tk toy that accumulates entropy from the clock and keyboard,.
+See
+.IR god (1).
+.TP
+.B temple/grmodels
+A mesh viewer for a UV-sphere or stick figure.
+See
+.IR grmodels (1).
+.TP
+.B temple/logic
+A Tk truth-table tool that synthesizes a gate expression from hex columns.
+See
+.IR logic (1).
+.TP
+.B temple/psalmody
+A Tk note-list editor.
+See
+.IR psalmody (1).
+.TP
+.B temple/timeclock
+A Tk punch clock with in/out buttons and a text report of the log.
+See
+.IR timeclock (1).
+.TP
+.B temple/vocabulary
+A Tk quiz: choose which of four words matches the prompt.
+See
+.IR vocabulary (1).
+.SH FILES
+.TP
+.B /dis/temple/
+Compiled programs.
+.TP
+.B /lib/wmsetup
+Wm menu entries.
+.SH SOURCE
+.B /appl/temple
+.SH SEE ALSO
+.IR draw3d (2),
+.IR ode (2),
+.IR tone (2),
+.IR draw3ddemo (1),
+.IR wm (1),
+.IR wm-misc (1)

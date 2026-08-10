@@ -1,0 +1,33 @@
+.TH LIFE 1
+.SH NAME
+life \- Conway's Game of Life
+.SH SYNOPSIS
+.B temple/life
+.SH DESCRIPTION
+.I Life
+implements Conway's Game of Life.
+It runs under
+.IR wm (1).
+.PP
+Button 1 paints live cells while the simulation runs. The r key randomizes; space clears.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB
+Paint live cells
+.TP
+.B r
+Randomize
+.TP
+.B space
+Clear
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/life.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

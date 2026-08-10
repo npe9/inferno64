@@ -1,0 +1,75 @@
+.TH V23FORTUNE 1
+.SH NAME
+wm/v23fortune \- Vanadium fortune demo for wm
+.SH SYNOPSIS
+.B wm/v23fortune
+.SH DESCRIPTION
+.I Wm/v23fortune
+is a
+.IR wm (1)
+Tk client that demonstrates the Limbo Vanadium port
+.RI ( v23-intro (2)).
+On start it creates a server principal and a client principal
+(256-bit Elgamal for speed), starts an in-process fortune RPC server on
+.BR tcp!*!3242
+(clients dial
+.BR tcp!127.0.0.1!3242 ),
+and lets the user
+.BR Get ,
+.BR Add ,
+or
+.B Has
+fortunes over
+.IR v23-rpc (2).
+.PP
+The client is pre-seeded with the server’s self-blessing as a trusted root
+(same-process demo). The server ACL is
+.B ...
+(TOFU for callers).
+.B Selftest
+loads
+.IR v23-selftest (1)
+in-process.
+.PP
+Launch from the toolbar:
+.B Misc → V23 Fortune
+or
+.BR Vanadium → Fortune ,
+or
+.BR wmapp /Apps/!V23Fortune .
+.SH FILES
+.TF /Apps/!V23Fortune
+.TP
+.B /Apps/!V23Fortune
+App folder (
+.BR !Run
+runs
+.BR wm/v23fortune )
+.TP
+.B /dis/wm/v23fortune.dis
+Implementation
+.SH SOURCE
+.B /appl/wm/v23fortune.b
+.SH SEE ALSO
+.IR v23-intro (2),
+.IR v23-fortune (1),
+.IR v23-fortuned (8),
+.IR v23-selftest (1),
+.IR toolbar (1)
+.SH BUGS
+.IP \(bu
+Uses a fixed address
+.BR tcp!127.0.0.1!3242 ;
+conflicts with a separately running
+.IR v23-fortuned (8).
+.IP \(bu
+Toolbar icon is currently a copy of the Coffee icon.
+.IP \(bu
+Key generation blocks a spawned thread for a few seconds at startup.
+.SH TODO
+.IP \(bu
+Dedicated toolbar icon and optional external
+.B fortuned
+address field.
+.IP \(bu
+Show full blessing chains / certificate dump in the UI.

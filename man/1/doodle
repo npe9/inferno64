@@ -1,0 +1,33 @@
+.TH DOODLE 1
+.SH NAME
+doodle \- freehand drawing
+.SH SYNOPSIS
+.B temple/doodle
+.SH DESCRIPTION
+.I Doodle
+is a freehand drawing.
+It runs under
+.IR wm (1).
+.PP
+Button 1 paints freehand strokes; button 2 or c cycles colour.
+.PP
+The controls are:
+.TF space
+.TP
+.B LMB drag
+Draw
+.TP
+.B RMB
+Cycle color
+.TP
+.B c
+Cycle color
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/doodle.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

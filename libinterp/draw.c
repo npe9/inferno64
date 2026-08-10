@@ -85,7 +85,6 @@ struct DFont
 };
 
 static DDisplay *resize_display;
-static Screen *resize_screen;
 
 Cache*	sfcache[BIHASH];
 Cache*	fcache[BIHASH];
@@ -380,16 +379,21 @@ void
 drawdisplayresize(Rectangle r)
 {
 	DDisplay *dd = resize_display;
+	Image *image;
+
 	if(dd == nil || dd->display == nil || dd->display->image == nil)
 		return;
-	if(resize_screen != nil){
-		resize_screen->image->r = r;
-		resize_screen->image->clipr = r;
-		if(resize_screen->fill != nil)
-			resize_screen->fill->clipr = r;
-	}
-	dd->display->image->r = r;
-	dd->display->image->clipr = r;
+	/*
+	 * Only the Display root image tracks the host framebuffer.
+	 * Do not mutate Screen/window images here: wmclient putimage
+	 * compares window.r to display.image.r to decide whether to
+	 * rebuild; updating a window's r (via a stale global Screen*)
+	 * made those rectangles match and skipped the rebuild, leaving
+	 * the new area blank/clipped to the old window box.
+	 */
+	image = dd->display->image;
+	image->r = r;
+	image->clipr = r;
 	R2R(dd->drawdisplay.image->r, r);
 	R2R(dd->drawdisplay.image->clipr, r);
 }
@@ -1334,7 +1338,6 @@ mkdrawscreen(Screen *s, Draw_Display *display)
 		return nil;
 	ds = H2D(DScreen*, h);
 	ds->screen = s;
-	resize_screen = s;
 	ds->drawscreen.fill = dfill;
 	D2H(dfill)->ref++;
 	ds->drawscreen.image = dimage;
@@ -1365,7 +1368,6 @@ allocdrawscreen(Draw_Image *dimage, Draw_Image *dfill, int public)
 		return nil;
 	ds = H2D(DScreen*, h);
 	ds->screen = s;
-	resize_screen = s;
 	ds->drawscreen.fill = dfill;
 	D2H(dfill)->ref++;
 	ds->drawscreen.image = dimage;

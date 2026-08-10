@@ -1,0 +1,30 @@
+.TH RAINDROPS 1
+.SH NAME
+raindrops \- rain on glass demo
+.SH SYNOPSIS
+.B temple/raindrops
+.SH DESCRIPTION
+.I RainDrops
+is a rain on glass demo.
+It runs under
+.IR wm (1).
+.PP
+Raindrops wet a glass grid. Holding 1 or 2 places hotspots.
+.PP
+The controls are:
+.TF space
+.TP
+.B 1 (hold)
+Hotspot 1
+.TP
+.B 2 (hold)
+Hotspot 2
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/raindrops.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

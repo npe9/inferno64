@@ -1,0 +1,118 @@
+.TH TONE 2
+.SH NAME
+tone: init, snd, beep, stop, play \- simple tones and scored melodies
+.SH SYNOPSIS
+.EX
+include "tone.m";
+tone := load Tone Tone->PATH;
+
+Rate: con 22050;
+
+init: fn(): string;
+snd:  fn(freq: int);
+beep: fn(freq, duration_ms: int);
+stop: fn();
+play: fn(score: string): string;
+.EE
+.SH DESCRIPTION
+.I Tone
+.RB ( /dis/lib/tone.dis )
+generates simple monophonic audio for Inferno applications.
+It writes PCM to the device described in
+.IR audio (3)
+at
+.B Tone->Rate
+samples per second (22050 Hz), matching the usual emulator default.
+Applications use it for short beeps and for compact melody strings.
+.PP
+.B Init
+opens the audio device.
+It returns
+.B nil
+on success, or a diagnostic string if audio is unavailable.
+Callers that treat sound as optional (most TempleOS games) simply leave a
+flag clear when
+.B init
+fails.
+.PP
+.B Snd
+starts a continuous square-ish tone at
+.I freq
+Hertz.
+A frequency of
+.B 0
+silences output (equivalent to turning the PC speaker off).
+.B Beep
+plays
+.I freq
+for
+.I duration_ms
+milliseconds and then stops.
+If
+.I duration_ms
+is less than or equal to zero, the tone continues until
+.B stop
+is called.
+.B Stop
+silences immediately.
+.PP
+.B Play
+interprets a compact score string.
+Digits set the current octave (programs typically use 4 through 6).
+The letters
+.BR w ,
+.BR h ,
+.BR q ,
+.BR e ,
+and
+.B s
+select whole, half, quarter, eighth, and sixteenth durations.
+Notes are
+.B A
+through
+.BR G ,
+with
+.B #
+and
+.B b
+accidentals;
+.B R
+is a rest.
+An example used by several demos is
+.BR 6hEqDC5B6CDhE .
+.B Play
+blocks while notes are emitted and returns
+.B nil
+or an error string.
+.PP
+.IR Asciiorgan (1)
+maps typed keys to
+.BR beep .
+.IR Ohgreat (1)
+and
+.IR psalmody (1)
+drive
+.BR play .
+Many games spawn a small loop that repeatedly
+.B play s
+background phrases while a pause flag is clear.
+.SH EXAMPLE
+.EX
+	if(tone->init() == nil){
+		tone->beep(880, 100);
+		tone->play("5qCEqG");
+		tone->stop();
+	}
+.EE
+.SH SOURCE
+.B /appl/lib/tone.b
+.br
+.B /module/tone.m
+.SH SEE ALSO
+.IR audio (3),
+.IR asciiorgan (1),
+.IR ohgreat (1),
+.IR psalmody (1),
+.IR temple (1)
+.SH BUGS
+Only one voice is available.

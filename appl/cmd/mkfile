@@ -24,7 +24,6 @@ DIRS=\
 	zip\
 
 TARG=\
-	9cpu.dis\
 	9660srv.dis\
 	9export.dis\
 	9srvfs.dis\

@@ -1,0 +1,30 @@
+.TH CHARDEMO 1
+.SH NAME
+chardemo \- scrolling landscape demo
+.SH SYNOPSIS
+.B temple/chardemo
+.SH DESCRIPTION
+.I CharDemo
+is a scrolling landscape demo.
+It runs under
+.IR wm (1).
+.PP
+Arrow keys pan a generated landscape of water, land, and trees. Enter regenerates the map.
+.PP
+The controls are:
+.TF space
+.TP
+.B arrows
+Scroll map
+.TP
+.B Enter
+Restart / regenerate
+.TP
+.B Esc / q
+Quit
+.PD
+.SH SOURCE
+.B /appl/temple/chardemo.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)
