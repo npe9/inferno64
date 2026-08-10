@@ -1212,6 +1212,57 @@ Image_name(void *fp)
 	}
 }
 
+void
+Image_id(void *fp)
+{
+	F_Image_id *f;
+	Image *i;
+
+	f = fp;
+	i = checkimage(f->src);
+	*f->ret = i->id;
+}
+
+void
+Display_writedraw(void *fp)
+{
+	F_Display_writedraw *f;
+	Display *d;
+	uchar *a;
+	int n, locked;
+
+	f = fp;
+	*f->ret = -1;
+	d = checkdisplay(f->d);
+	if(f->msg == H)
+		return;
+	n = f->msg->len;
+	if(n <= 0){
+		*f->ret = 0;
+		return;
+	}
+	locked = lockdisplay(d);
+	a = bufimage(d, n);
+	if(a == nil){
+		if(locked)
+			unlockdisplay(d);
+		return;
+	}
+	memmove(a, f->msg->data, n);
+	/* Probe letter '3' is flushed immediately so callers see server support. */
+	if(n == 1 && a[0] == '3'){
+		if(flushimage(d, 0) < 0){
+			if(locked)
+				unlockdisplay(d);
+			*f->ret = -1;
+			return;
+		}
+	}
+	if(locked)
+		unlockdisplay(d);
+	*f->ret = n;
+}
+
 Image*
 display_open(Display *disp, char *name)
 {

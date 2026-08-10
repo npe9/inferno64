@@ -337,6 +337,13 @@ struct Font
 extern Image*	_allocimage(Image*, Display*, Rectangle, u32, int, u32, int, int);
 extern Image*	allocimage(Display*, Rectangle, u32, int, u32);
 extern uchar*	bufimage(Display*, int);
+extern int	draw3dprobe(Display*);
+extern void	draw3dmatrix(Display*, int, float[16]);
+extern void	draw3dviewport(Display*, float, float, float, float);
+extern void	draw3dflags(Display*, int, int);
+extern void	draw3dclearz(Image*);
+extern void	draw3dfillpoly3(Image*, Image*, float*, int);
+extern void	draw3dline3(Image*, Image*, int, float, float, float, float, float, float);
 extern int	bytesperline(Rectangle, int);
 extern void	closedisplay(Display*);
 extern void	drawerror(Display*, char*);

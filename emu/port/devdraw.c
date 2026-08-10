@@ -77,6 +77,15 @@ struct Client
 	s32		refreshme;
 	s32		infoid;
 	s32	op;	/* compositing operator - SoverD by default */
+	/* Optional draw3d protocol state (letters 3/M/w/u/z/g/G). */
+	float		d3model[16];
+	float		d3proj[16];
+	float		d3mx, d3cx, d3my, d3cy;
+	int		d3zenable;
+	int		d3clipbehind;
+	int		*d3zbuf;
+	int		d3zw, d3zh;
+	Rectangle	d3zr;
 };
 
 struct Refresh
@@ -158,6 +167,10 @@ static	DScreen*	dscreen;
 extern	void	drawdisplayresize(Rectangle);
 extern	void		flushmemscreen(Rectangle);
 	void		drawmesg(Client*, void*, int);
+
+/* Cocoa Metal (win-cocoa.m) assigns these; nil ⇒ software memline. */
+int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int);
+void	(*gpudrawflush)(void);
 	void		drawuninstall(Client*, int);
 	void		drawfreedimage(DImage*);
 	Client*		drawclientofpath(ulong);
@@ -335,45 +348,21 @@ drawrefresh(Memimage *l, Rectangle r, void *v)
 static void
 addflush(Rectangle r)
 {
-	int abb, ar, anbb;
-	Rectangle nbb;
-
 	if(sdraw.softscreen==0 || !rectclip(&r, screenimage->r))
 		return;
 
+	/*
+	 * Softscreen present is deferred until drawflush ('v' / Flushnow).
+	 * Emitting mid-batch (old waste heuristic) presented half-composed
+	 * frames during Flushoff line storms (Castle wireframe blink).
+	 * Cocoa already coalesces presents; union the dirty rect only.
+	 */
 	if(flushrect.min.x >= flushrect.max.x){
 		flushrect = r;
 		waste = 0;
 		return;
 	}
-	nbb = flushrect;
-	combinerect(&nbb, r);
-	ar = Dx(r)*Dy(r);
-	abb = Dx(flushrect)*Dy(flushrect);
-	anbb = Dx(nbb)*Dy(nbb);
-	/*
-	 * Area of new waste is area of new bb minus area of old bb,
-	 * less the area of the new segment, which we assume is not waste.
-	 * This could be negative, but that's OK.
-	 */
-	waste += anbb-abb - ar;
-	if(waste < 0)
-		waste = 0;
-	/*
-	 * absorb if:
-	 *	total area is small
-	 *	waste is less than half total area
-	 * 	rectangles touch
-	 */
-	if(anbb<=1024 || waste*2<anbb || rectXrect(flushrect, r)){
-		flushrect = nbb;
-		return;
-	}
-	/* emit current state */
-	if(flushrect.min.x < flushrect.max.x)
-		flushmemscreen(flushrect);
-	flushrect = r;
-	waste = 0;
+	combinerect(&flushrect, r);
 }
 
 static
@@ -402,6 +391,8 @@ static
 void
 drawflush(void)
 {
+	if(gpudrawflush)
+		gpudrawflush();
 	if(flushrect.min.x < flushrect.max.x)
 		flushmemscreen(flushrect);
 	flushrect = Rect(10000, 10000, -10000, -10000);
@@ -754,6 +745,11 @@ drawnewclient(void)
 	cl->slot = i;
 	cl->clientid = ++sdraw.clientid;
 	cl->op = SoverD;
+	/* Identity model/proj; viewport set by 'w'. */
+	cl->d3model[0] = cl->d3model[5] = cl->d3model[10] = cl->d3model[15] = 1.0f;
+	cl->d3proj[0] = cl->d3proj[5] = cl->d3proj[10] = cl->d3proj[15] = 1.0f;
+	cl->d3clipbehind = 1;
+	cl->d3zenable = 1;
 	sdraw.client[i] = cl;
 	return cl;
 }
@@ -1084,6 +1080,7 @@ drawclose(Chan *c)
 		}
 		sdraw.client[cl->slot] = 0;
 		drawflush();	/* to erase visible, now dead windows */
+		free(cl->d3zbuf);
 		free(cl);
 	}
 	qunlock(&sdraw.q);
@@ -1392,6 +1389,92 @@ printmesg(char *fmt, uchar *a, int plsprnt)
 	iprint("%.*s", (int)(q-buf), buf);
 }
 
+/*
+ * draw3d protocol helpers (software raster into Memimage; Metal GPU later).
+ * Floats are IEEE754 binary32, little-endian (same endianness as BG32INT).
+ */
+static float
+bgfloat(uchar *p)
+{
+	u32 u;
+	float f;
+
+	u = (u32)BG32INT(p);
+	memmove(&f, &u, sizeof f);
+	return f;
+}
+
+static void
+d3loadmat(float *m, uchar *a)
+{
+	int i;
+
+	for(i = 0; i < 16; i++)
+		m[i] = bgfloat(a + i*4);
+}
+
+static void
+d3mulpoint(float *m, float x, float y, float z, float *ox, float *oy, float *oz)
+{
+	float x1, y1, z1, w;
+
+	x1 = x*m[0] + y*m[1] + z*m[2] + m[3];
+	y1 = x*m[4] + y*m[5] + z*m[6] + m[7];
+	z1 = x*m[8] + y*m[9] + z*m[10] + m[11];
+	w  = x*m[12] + y*m[13] + z*m[14] + m[15];
+	if(w != 0.0f && w != 1.0f){
+		x1 /= w;
+		y1 /= w;
+		z1 /= w;
+	}
+	*ox = x1;
+	*oy = y1;
+	*oz = z1;
+}
+
+/* Model then proj (matches Limbo draw3d project); returns 0 if clipped. */
+static int
+d3project(Client *cl, float x, float y, float z, Point *sp, float *eyez)
+{
+	float ex, ey, ez, cx, cy, cz;
+
+	d3mulpoint(cl->d3model, x, y, z, &ex, &ey, &ez);
+	*eyez = ez;
+	if(cl->d3clipbehind && ez >= 0.0f)
+		return 0;
+	d3mulpoint(cl->d3proj, ex, ey, ez, &cx, &cy, &cz);
+	sp->x = (int)(cl->d3mx * cx + cl->d3cx);
+	sp->y = (int)(cl->d3my * cy + cl->d3cy);
+	return 1;
+}
+
+static void
+d3clearz(Client *cl, Memimage *dst)
+{
+	int n, i;
+	Rectangle r;
+
+	if(dst == nil)
+		return;
+	r = dst->clipr;
+	n = Dx(r) * Dy(r);
+	if(n <= 0)
+		return;
+	if(cl->d3zbuf == nil || cl->d3zw != Dx(r) || cl->d3zh != Dy(r)
+	|| !eqrect(cl->d3zr, r)){
+		free(cl->d3zbuf);
+		cl->d3zbuf = malloc(sizeof(int) * n);
+		if(cl->d3zbuf == nil)
+			error(Edrawmem);
+		cl->d3zw = Dx(r);
+		cl->d3zh = Dy(r);
+		cl->d3zr = r;
+	}
+	/* ∞ depth: farther than any projected eye z (more positive = farther). */
+	for(i = 0; i < n; i++)
+		cl->d3zbuf[i] = 0x7fffffff;
+}
+
 void
 drawmesg(Client *client, void *av, int n)
 {
@@ -1423,6 +1506,19 @@ drawmesg(Client *client, void *av, int n)
 	while((n-=m) > 0){
 		USED(fmt);
 		a += m;
+		/* Flush batched Metal lines before any non-line3 draw touches pixels. */
+		switch(*a){
+		case 'G':
+		case 'M':
+		case 'w':
+		case 'u':
+		case '3':
+			break;
+		default:
+			if(gpudrawflush)
+				gpudrawflush();
+			break;
+		}
 		switch(*a){
 		default:
 			error("bad draw command");
@@ -2034,6 +2130,156 @@ drawmesg(Client *client, void *av, int n)
 			printmesg(fmt="", a, 0);
 			m = 1;
 			drawflush();
+			continue;
+
+		/*
+		 * draw3d extension (optional; old clients never send these).
+		 * '3'                 — capability probe (no body)
+		 * 'M' which[1] m[16*4] — load model(0)/proj(1) float32 LE matrix (row-major)
+		 * 'w' mx cx my cy[4*4] — viewport: screen = (mx*ndc.x+cx, my*ndc.y+cy)
+		 * 'u' flags[1]         — bit0 zenable, bit1 clipbehind
+		 * 'z' dstid[4]         — clear (and size) software z-buffer for dst
+		 * 'g' dstid srcid n[2] xyz... — fillpoly3 world-space verts
+		 * 'G' dstid srcid thick a[3] b[3] — line3
+		 * 'G' may be Metal-batched onto the Cocoa drawable; 'g' remains software Memimage.
+		 */
+		case '3':
+			printmesg(fmt="", a, 0);
+			m = 1;
+			continue;
+
+		case 'M':
+			printmesg(fmt="b", a, 0);
+			m = 1+1+16*4;
+			if(n < m)
+				error(Eshortdraw);
+			if(a[1] == 0)
+				d3loadmat(client->d3model, a+2);
+			else if(a[1] == 1)
+				d3loadmat(client->d3proj, a+2);
+			else
+				error(Ebadarg);
+			continue;
+
+		case 'w':
+			printmesg(fmt="", a, 0);
+			m = 1+4*4;
+			if(n < m)
+				error(Eshortdraw);
+			client->d3mx = bgfloat(a+1);
+			client->d3cx = bgfloat(a+5);
+			client->d3my = bgfloat(a+9);
+			client->d3cy = bgfloat(a+13);
+			continue;
+
+		case 'u':
+			printmesg(fmt="b", a, 0);
+			m = 1+1;
+			if(n < m)
+				error(Eshortdraw);
+			client->d3zenable = a[1] & 1;
+			client->d3clipbehind = (a[1] & 2) != 0;
+			continue;
+
+		case 'z':
+			printmesg(fmt="L", a, 0);
+			m = 1+4;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			d3clearz(client, dst);
+			continue;
+
+		case 'g':	/* fillpoly3 */
+			printmesg(fmt="LLS", a, 0);
+			m = 1+4+4+2;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			src = drawimage(client, a+5);
+			nw = BG16INT(a+9);
+			if(nw < 3 || nw > 1024)
+				error(Ebadarg);
+			m += nw * 3 * 4;
+			if(n < m)
+				error(Eshortdraw);
+			pp = malloc(sizeof(Point) * (nw + 1));
+			if(pp == nil)
+				error(Edrawmem);
+			if(waserror()){
+				free(pp);
+				nexterror();
+			}
+			for(j = 0; j < nw; j++){
+				float fx, fy, fz, ez;
+
+				fx = bgfloat(a+11 + j*12);
+				fy = bgfloat(a+11 + j*12 + 4);
+				fz = bgfloat(a+11 + j*12 + 8);
+				if(!d3project(client, fx, fy, fz, &pp[j], &ez)){
+					poperror();
+					free(pp);
+					goto gdone;
+				}
+				USED(ez);
+			}
+			pp[nw] = pp[0];
+			op = drawclientop(client);
+			memfillpoly(dst, pp, nw+1, ~0, src, pp[0], op);
+			/* flush bbox of projected verts */
+			r = dst->clipr;
+			if(nw > 0){
+				r.min = r.max = pp[0];
+				for(j = 1; j < nw; j++){
+					if(pp[j].x < r.min.x) r.min.x = pp[j].x;
+					if(pp[j].y < r.min.y) r.min.y = pp[j].y;
+					if(pp[j].x > r.max.x) r.max.x = pp[j].x;
+					if(pp[j].y > r.max.y) r.max.y = pp[j].y;
+				}
+				r.max.x++;
+				r.max.y++;
+			}
+			dstflush(dst, r);
+			poperror();
+			free(pp);
+		gdone:
+			continue;
+
+		case 'G':	/* line3 */
+			printmesg(fmt="LLl", a, 0);
+			m = 1+4+4+4+6*4;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			src = drawimage(client, a+5);
+			j = BG32INT(a+9);	/* thick */
+			if(j < 0)
+				error("negative line width");
+			{
+				float ax, ay, az, bx, by, bz, ez;
+				Point pa, pb;
+				int gpudone;
+
+				ax = bgfloat(a+13);
+				ay = bgfloat(a+17);
+				az = bgfloat(a+21);
+				bx = bgfloat(a+25);
+				by = bgfloat(a+29);
+				bz = bgfloat(a+33);
+				if(!d3project(client, ax, ay, az, &pa, &ez)
+				|| !d3project(client, bx, by, bz, &pb, &ez))
+					continue;
+				op = drawclientop(client);
+				gpudone = 0;
+				if(gpudrawline != nil)
+					gpudone = gpudrawline(dst, pa, pb, j, src, op);
+				if(!gpudone)
+					memline(dst, pa, pb, Endsquare, Endsquare, j, src, pa, op);
+				if(dst == screenimage || dst->layer != nil){
+					r = memlinebbox(pa, pb, Endsquare, Endsquare, j);
+					dstflush(dst, insetrect(r, -(1+1+j)));
+				}
+			}
 			continue;
 
 		/* write: 'y' id[4] R[4*4] data[x*1] */

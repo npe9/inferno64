@@ -66,6 +66,7 @@ TARG=\
 	wm.dis\
 	wmsmoke.dis\
 	wmplay.dis\
+	draw3ddemo.dis\
 
 MODULES=\
 	wmdeb.m\

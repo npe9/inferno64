@@ -23,6 +23,8 @@ TARG=\
 	powers.dis\
 	primes.dis\
 	sieve.dis\
+	draw3d.dis\
+	draw3ddev.dis\
 
 MODULES=
 

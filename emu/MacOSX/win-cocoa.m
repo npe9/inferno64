@@ -1,12 +1,14 @@
 /*
  * Cocoa window backend for Inferno emu (MacOSX arm64 / modern macOS).
- * Softscreen is XBGR32; AppKit blits via NSBitmapImageRep (DeviceRGB 32).
+ * Softscreen is XBGR32 (LE bytes R,G,B,X); presented via Metal (CAMetalLayer).
  * UI runs on the process main thread (see main-cocoa.m).
  */
 /* MacTypes.h (via Cocoa) also defines Point/Rect/nil — rename while importing. */
 #define Point	MacPoint
 #define Rect	MacRect
 #import <Cocoa/Cocoa.h>
+#import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
 #undef Point
 #undef Rect
 #undef nil
@@ -19,6 +21,7 @@
 #define attachscreen	attachscreen_memdraw_proto
 #include <memdraw.h>
 #undef attachscreen
+#include <memlayer.h>
 #include "cursor.h"
 #include "keyboard.h"
 #include "keycodes.h"
@@ -42,6 +45,8 @@ enum {
 
 Memimage	*gscreen;
 
+extern Memimage	*screenimage;	/* emu/port/devdraw.c */
+
 static int		readybit;
 static Rendez		rend;
 static int		triedscreen;
@@ -61,9 +66,31 @@ static int	fullscreen_transition;
 static int	wm_notify_generation;
 static volatile int	present_dirty;
 static volatile int	present_queued;
-static NSBitmapImageRep	*soft_rep;
-static int	soft_rep_w, soft_rep_h, soft_rep_bpl;
-static uchar	*soft_rep_base;
+
+/* Metal softscreen present (CAMetalLayer) + direct draw3d 'G' lines. */
+static id<MTLDevice>		mtl_device;
+static id<MTLCommandQueue>	mtl_queue;
+static id<MTLRenderPipelineState>	mtl_pipe;
+static id<MTLRenderPipelineState>	mtl_line_pipe;	/* BGRA8 drawable */
+static id<MTLTexture>		mtl_tex;
+static int	mtl_tex_w, mtl_tex_h;
+static CAMetalLayer	*mtl_layer;
+static Rectangle	soft_upload;	/* dirty softscreen region since last present */
+static int	soft_upload_valid;
+
+enum {
+	MaxGPULines = 16384,
+};
+
+typedef struct GPULine GPULine;
+struct GPULine {
+	float	x0, y0, x1, y1;
+	float	r, g, b, a;
+};
+
+/* Screen-space segments held until present (no Memimage writeback). */
+static GPULine	glines[MaxGPULines];
+static int	nglines;
 
 /* Soft Plan9 Paper desktop (#C4C0B4); must match appl/wm/wm.b Background. */
 enum {
@@ -74,90 +101,407 @@ enum {
 	PaperPix = (0xFF<<24) | (PaperB<<16) | (PaperG<<8) | PaperR,
 };
 
+/*
+ * Line vertex layout MUST stay 6 tightly packed floats.
+ * (float2+float4 in Metal inserts 8 bytes of padding → 32-byte stride while
+ * a C {x,y,r,g,b,a} is 24 bytes — that made every line share a bogus origin.)
+ */
+static NSString *const kSoftscreenMetalSrc =
+	@"#include <metal_stdlib>\n"
+	"using namespace metal;\n"
+	"struct VOut { float4 pos [[position]]; float2 uv; };\n"
+	"vertex VOut vmain(uint vid [[vertex_id]]) {\n"
+	"  float2 p[4] = { float2(-1,-1), float2(1,-1), float2(-1,1), float2(1,1) };\n"
+	"  float2 u[4] = { float2(0,1), float2(1,1), float2(0,0), float2(1,0) };\n"
+	"  VOut o; o.pos = float4(p[vid], 0, 1); o.uv = u[vid]; return o;\n"
+	"}\n"
+	"fragment float4 fmain(VOut in [[stage_in]],\n"
+	"    texture2d<float> tex [[texture(0)]],\n"
+	"    sampler samp [[sampler(0)]]) {\n"
+	"  return tex.sample(samp, in.uv);\n"
+	"}\n"
+	"struct LIn { float x, y, r, g, b, a; };\n"
+	"struct LOut { float4 pos [[position]]; float4 color; };\n"
+	"vertex LOut vlmain(uint vid [[vertex_id]],\n"
+	"    constant LIn *v [[buffer(0)]],\n"
+	"    constant float2 &wh [[buffer(1)]]) {\n"
+	"  LIn i = v[vid];\n"
+	"  LOut o;\n"
+	"  float2 ndc = float2(i.x/wh.x*2.0-1.0, 1.0-i.y/wh.y*2.0);\n"
+	"  o.pos = float4(ndc, 0, 1);\n"
+	"  o.color = float4(i.r, i.g, i.b, i.a);\n"
+	"  return o;\n"
+	"}\n"
+	"fragment float4 flmain(LOut in [[stage_in]]) { return in.color; }\n";
+
+/* Assigned from metal_init; declared in emu/port/devdraw.c */
+extern int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int);
+extern void	(*gpudrawflush)(void);
+
+static void	metal_flush_lines(void);
+static int	metal_queue_line(Memimage*, Point, Point, int, Memimage*, int);
+static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, int, int);
+
 static void
-invalidate_soft_rep(void)
+invalidate_mtl_tex(void)
 {
-	soft_rep = nil;
-	soft_rep_w = soft_rep_h = soft_rep_bpl = 0;
-	soft_rep_base = nil;
+	mtl_tex = nil;
+	mtl_tex_w = mtl_tex_h = 0;
+	soft_upload_valid = 0;
 }
 
-static NSBitmapImageRep*
-softscreen_rep(void)
+static int
+metal_init(void)
 {
-	unsigned char *planes[5];
-	int pw, ph, bpl;
-	uchar *base;
+	NSError *err;
+	id<MTLLibrary> lib;
+	MTLRenderPipelineDescriptor *pd;
 
-	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
-		return nil;
-	pw = Dx(gscreen->r);
-	ph = Dy(gscreen->r);
-	if(pw < 1 || ph < 1)
-		return nil;
-	bpl = gscreen->width * (int)sizeof(u32);
-	base = gscreen->data->bdata;
-	if(soft_rep != nil && soft_rep_w == pw && soft_rep_h == ph
-	&& soft_rep_bpl == bpl && soft_rep_base == base)
-		return soft_rep;
-	memset(planes, 0, sizeof planes);
-	planes[0] = base;
-	soft_rep = [[NSBitmapImageRep alloc]
-		initWithBitmapDataPlanes:planes
-		pixelsWide:pw
-		pixelsHigh:ph
-		bitsPerSample:8
-		samplesPerPixel:3
-		hasAlpha:NO
-		isPlanar:NO
-		colorSpaceName:NSDeviceRGBColorSpace
-		bytesPerRow:bpl
-		bitsPerPixel:32];
-	soft_rep_w = pw;
-	soft_rep_h = ph;
-	soft_rep_bpl = bpl;
-	soft_rep_base = base;
-	return soft_rep;
+	if(mtl_device != nil)
+		return 0;
+	mtl_device = MTLCreateSystemDefaultDevice();
+	if(mtl_device == nil)
+		return -1;
+	mtl_queue = [mtl_device newCommandQueue];
+	if(mtl_queue == nil)
+		return -1;
+	lib = [mtl_device newLibraryWithSource:kSoftscreenMetalSrc options:nil error:&err];
+	if(lib == nil)
+		return -1;
+	pd = [[MTLRenderPipelineDescriptor alloc] init];
+	pd.vertexFunction = [lib newFunctionWithName:@"vmain"];
+	pd.fragmentFunction = [lib newFunctionWithName:@"fmain"];
+	pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+	mtl_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+	if(mtl_pipe == nil)
+		return -1;
+
+	/* Lines composite directly onto the CAMetalLayer drawable (BGRA8). */
+	pd = [[MTLRenderPipelineDescriptor alloc] init];
+	pd.vertexFunction = [lib newFunctionWithName:@"vlmain"];
+	pd.fragmentFunction = [lib newFunctionWithName:@"flmain"];
+	pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+	pd.colorAttachments[0].blendingEnabled = NO;
+	mtl_line_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+	if(mtl_line_pipe == nil)
+		return -1;
+
+	gpudrawline = metal_queue_line;
+	gpudrawflush = metal_flush_lines;
+	return 0;
+}
+
+static id<MTLTexture>
+metal_soft_tex(int pw, int ph)
+{
+	MTLTextureDescriptor *td;
+
+	if(mtl_tex != nil && mtl_tex_w == pw && mtl_tex_h == ph)
+		return mtl_tex;
+	td = [MTLTextureDescriptor
+		texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+		width:pw height:ph mipmapped:NO];
+	td.usage = MTLTextureUsageShaderRead;
+	td.storageMode = MTLStorageModeShared;
+	mtl_tex = [mtl_device newTextureWithDescriptor:td];
+	mtl_tex_w = pw;
+	mtl_tex_h = ph;
+	return mtl_tex;
+}
+
+static int
+src_rgba(Memimage *src, float *r, float *g, float *b, float *a)
+{
+	uchar *p;
+
+	if(src == nil || src->data == nil || src->data->bdata == nil)
+		return -1;
+	p = byteaddr(src, src->r.min);
+	if(p == nil)
+		return -1;
+	*a = 1.0f;
+	switch(src->chan){
+	case RGB24:
+		*r = p[0] / 255.0f;
+		*g = p[1] / 255.0f;
+		*b = p[2] / 255.0f;
+		return 0;
+	case RGBA32:
+		*r = p[0] / 255.0f;
+		*g = p[1] / 255.0f;
+		*b = p[2] / 255.0f;
+		*a = p[3] / 255.0f;
+		return 0;
+	case XBGR32:
+	case XRGB32:
+		*r = p[0] / 255.0f;
+		*g = p[1] / 255.0f;
+		*b = p[2] / 255.0f;
+		return 0;
+	default:
+		if(src->depth == 32){
+			*r = p[0] / 255.0f;
+			*g = p[1] / 255.0f;
+			*b = p[2] / 255.0f;
+			return 0;
+		}
+		return -1;
+	}
 }
 
 /*
- * Softscreen → AppKit (DeviceRGB spp=3 bpp=32).  XBGR32 LE bytes are R,G,B,X.
- * Full-frame blit: Flushoff batches mean flushmemscreen's rect is only the
- * draws since the last present; earlier composed pixels must still appear.
+ * Resolve clear layered windows to softscreen (screen coords).
+ * Obscured layers stay on the software memline path.
+ */
+static Memimage*
+line_pixdst(Memimage *dst, Point *p0, Point *p1)
+{
+	Memlayer *l;
+
+	if(dst == nil)
+		return nil;
+	l = dst->layer;
+	if(l == nil)
+		return dst;
+	if(!l->clear)
+		return nil;
+	*p0 = addpt(*p0, l->delta);
+	*p1 = addpt(*p1, l->delta);
+	return l->screen->image;
+}
+
+static void
+soft_bresenham(Memimage *dst, GPULine *L)
+{
+	int x0, y0, x1, y1, dx, dy, sx, sy, err, e2;
+	u32 pix;
+	uchar *p;
+	Rectangle clip;
+
+	if(dst == nil)
+		return;
+	x0 = (int)L->x0;
+	y0 = (int)L->y0;
+	x1 = (int)L->x1;
+	y1 = (int)L->y1;
+	pix = ((u32)(L->a * 255) << 24) | ((u32)(L->b * 255) << 16)
+		| ((u32)(L->g * 255) << 8) | (u32)(L->r * 255);
+	clip = dst->clipr;
+	dx = x1 > x0 ? x1 - x0 : x0 - x1;
+	dy = y1 > y0 ? y1 - y0 : y0 - y1;
+	sx = x0 < x1 ? 1 : -1;
+	sy = y0 < y1 ? 1 : -1;
+	err = dx - dy;
+	for(;;){
+		if(x0 >= clip.min.x && x0 < clip.max.x && y0 >= clip.min.y && y0 < clip.max.y){
+			p = byteaddr(dst, Pt(x0, y0));
+			if(p != nil)
+				*(u32*)p = pix;
+		}
+		if(x0 == x1 && y0 == y1)
+			break;
+		e2 = 2 * err;
+		if(e2 > -dy){
+			err -= dy;
+			x0 += sx;
+		}
+		if(e2 < dx){
+			err += dx;
+			y0 += sy;
+		}
+	}
+}
+
+/*
+ * Direct path: 'G' segments stay queued until present.  No Memimage writeback.
+ * gpudrawflush is a no-op so 2D draws after line3 do not force a CPU round-trip;
+ * lines composite onto the drawable after the softscreen blit.
  */
 static void
-blit_softscreen(NSView *v)
+metal_flush_lines(void)
 {
-	NSBitmapImageRep *rep;
-	int pw, ph;
+	/* retained until metal_present_lines */
+}
 
-	if(v == nil)
+static void
+metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex, int pw, int ph)
+{
+	int i, n, nv;
+	float wh[2];
+	id<MTLBuffer> vbuf;
+	id<MTLRenderCommandEncoder> enc;
+	MTLRenderPassDescriptor *rp;
+	typedef struct { float x, y, r, g, b, a; } LVert;
+	LVert *verts;
+
+	n = nglines;
+	if(n == 0 || cmd == nil || drawabletex == nil || mtl_line_pipe == nil)
 		return;
-	rep = softscreen_rep();
-	if(rep == nil)
+	nglines = 0;
+
+	nv = n * 2;
+	vbuf = [mtl_device newBufferWithLength:sizeof(LVert) * nv options:MTLResourceStorageModeShared];
+	if(vbuf == nil){
+		/* Emergency: burn into softscreen so the frame is not blank. */
+		for(i = 0; i < n; i++)
+			soft_bresenham(gscreen, &glines[i]);
 		return;
-	pw = soft_rep_w;
-	ph = soft_rep_h;
-	[rep drawInRect:[v bounds]
-		fromRect:NSMakeRect(0, 0, pw, ph)
-		operation:NSCompositingOperationCopy
-		fraction:1.0
-		respectFlipped:YES
-		hints:@{ NSImageHintInterpolation: @(NSImageInterpolationNone) }];
+	}
+	verts = vbuf.contents;
+	for(i = 0; i < n; i++){
+		verts[2*i].x = glines[i].x0;
+		verts[2*i].y = glines[i].y0;
+		verts[2*i].r = glines[i].r;
+		verts[2*i].g = glines[i].g;
+		verts[2*i].b = glines[i].b;
+		verts[2*i].a = glines[i].a;
+		verts[2*i+1].x = glines[i].x1;
+		verts[2*i+1].y = glines[i].y1;
+		verts[2*i+1].r = glines[i].r;
+		verts[2*i+1].g = glines[i].g;
+		verts[2*i+1].b = glines[i].b;
+		verts[2*i+1].a = glines[i].a;
+	}
+	wh[0] = (float)pw;
+	wh[1] = (float)ph;
+
+	rp = [MTLRenderPassDescriptor renderPassDescriptor];
+	rp.colorAttachments[0].texture = drawabletex;
+	rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+	enc = [cmd renderCommandEncoderWithDescriptor:rp];
+	[enc setRenderPipelineState:mtl_line_pipe];
+	[enc setVertexBuffer:vbuf offset:0 atIndex:0];
+	[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
+	[enc drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:nv];
+	[enc endEncoding];
+}
+
+static int
+metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, int op)
+{
+	Memimage *pix;
+	Point a, b;
+	float r, g, bl, al;
+	GPULine *L;
+	int i;
+
+	USED(thick);
+	if(op != SoverD && op != S)
+		return 0;
+	if(thick > 0)
+		return 0;
+	a = p0;
+	b = p1;
+	pix = line_pixdst(dst, &a, &b);
+	if(pix == nil)
+		return 0;
+	/* Direct present only composites onto the softscreen drawable. */
+	if(pix != gscreen && pix != screenimage)
+		return 0;
+	if(src_rgba(src, &r, &g, &bl, &al) < 0)
+		return 0;
+	if(nglines >= MaxGPULines){
+		/* Overflow: fold oldest into softscreen so we do not drop geometry. */
+		for(i = 0; i < nglines; i++)
+			soft_bresenham(gscreen, &glines[i]);
+		nglines = 0;
+	}
+	L = &glines[nglines++];
+	L->x0 = (float)a.x;
+	L->y0 = (float)a.y;
+	L->x1 = (float)b.x;
+	L->y1 = (float)b.y;
+	L->r = r;
+	L->g = g;
+	L->b = bl;
+	L->a = al;
+	return 1;
 }
 
 /*
- * Paint once.  Opaque non-layered views do not erase before drawRect, so a
- * synchronous display updates the backing store in place (no paper flash).
- * Prefer this over setNeedsDisplay — deferred display can batch with layout
- * and still clear when AppKit has attached a layer behind our back.
+ * Softscreen blit, then direct Metal line overlay onto the drawable.
+ * 2D/wm stay in the softscreen; draw3d 'G' is GPU-composited on top
+ * (no upload/download round-trip for the wireframe).
  */
 static void
 present_softscreen(void)
 {
-	if(view == nil)
+	int pw, ph, bpl, ux, uy, uw, uh;
+	uchar *base, *row;
+	id<MTLTexture> tex;
+	id<CAMetalDrawable> drawable;
+	id<MTLCommandBuffer> cmd;
+	id<MTLRenderCommandEncoder> enc;
+	MTLRenderPassDescriptor *rp;
+	MTLRegion region;
+	MTLSamplerDescriptor *sd;
+	static id<MTLSamplerState> samp;
+	Rectangle ur;
+
+	if(view == nil || mtl_layer == nil || mtl_device == nil || mtl_pipe == nil)
 		return;
-	[view display];
+	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
+		return;
+	pw = Dx(gscreen->r);
+	ph = Dy(gscreen->r);
+	if(pw < 1 || ph < 1)
+		return;
+	bpl = gscreen->width * (int)sizeof(u32);
+	base = gscreen->data->bdata;
+
+	mtl_layer.drawableSize = CGSizeMake(pw, ph);
+	drawable = [mtl_layer nextDrawable];
+	if(drawable == nil)
+		return;
+	tex = metal_soft_tex(pw, ph);
+	if(tex == nil)
+		return;
+
+	if(soft_upload_valid){
+		ur = soft_upload;
+		if(!rectclip(&ur, gscreen->r))
+			ur = gscreen->r;
+	}else
+		ur = gscreen->r;
+	soft_upload_valid = 0;
+	ux = ur.min.x - gscreen->r.min.x;
+	uy = ur.min.y - gscreen->r.min.y;
+	uw = Dx(ur);
+	uh = Dy(ur);
+	if(uw > 0 && uh > 0){
+		row = base + uy * bpl + ux * 4;
+		region = MTLRegionMake2D(ux, uy, uw, uh);
+		[tex replaceRegion:region mipmapLevel:0 withBytes:row bytesPerRow:bpl];
+	}
+
+	if(samp == nil){
+		sd = [[MTLSamplerDescriptor alloc] init];
+		sd.minFilter = MTLSamplerMinMagFilterNearest;
+		sd.magFilter = MTLSamplerMinMagFilterNearest;
+		samp = [mtl_device newSamplerStateWithDescriptor:sd];
+	}
+
+	cmd = [mtl_queue commandBuffer];
+
+	rp = [MTLRenderPassDescriptor renderPassDescriptor];
+	rp.colorAttachments[0].texture = drawable.texture;
+	rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+	enc = [cmd renderCommandEncoderWithDescriptor:rp];
+	[enc setRenderPipelineState:mtl_pipe];
+	[enc setFragmentTexture:tex atIndex:0];
+	[enc setFragmentSamplerState:samp atIndex:0];
+	[enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+	[enc endEncoding];
+
+	/* Direct wireframe onto the drawable (after 2D softscreen). */
+	metal_present_lines(cmd, drawable.texture, pw, ph);
+
+	[cmd presentDrawable:drawable];
+	[cmd commit];
 }
 
 static void
@@ -255,7 +599,7 @@ screenresize(int w, int h, int notify)
 	dy = h;
 	Xsize = w;
 	Ysize = h;
-	invalidate_soft_rep();
+	invalidate_mtl_tex();
 	if(notify)
 		drawscreenresize(gscreen);
 	else
@@ -443,6 +787,11 @@ convert_key(unsigned short key, unichar ch)
 @end
 
 @implementation InfernoView
++ (Class)layerClass
+{
+	return [CAMetalLayer class];
+}
+
 - (BOOL)acceptsFirstResponder
 {
 	return YES;
@@ -492,8 +841,10 @@ convert_key(unsigned short key, unichar ch)
 - (void)viewDidMoveToWindow
 {
 	[super viewDidMoveToWindow];
-	/* Keep non-layered even if AppKit tried to attach a layer. */
-	[self setWantsLayer:NO];
+	if(mtl_layer != nil){
+		[self setWantsLayer:YES];
+		self.layer = mtl_layer;
+	}
 }
 
 - (void)setFrameSize:(NSSize)size
@@ -535,15 +886,15 @@ convert_key(unsigned short key, unichar ch)
 
 - (BOOL)isFlipped
 {
-	/* Top-left origin like Inferno; NSBitmapImageRep rows match. */
+	/* Top-left origin like Inferno softscreen rows. */
 	return YES;
 }
 
 - (void)drawRect:(NSRect)dirty
 {
 	(void)dirty;
-	/* Expose/resize and coalesced presents land here via -[NSView display]. */
-	blit_softscreen(self);
+	/* Expose/resize: Metal present (also used by coalesced flush path). */
+	present_softscreen();
 }
 
 - (void)keyDown:(NSEvent *)e
@@ -908,13 +1259,26 @@ createwindow(void)
 
 	view = [[InfernoView alloc] initWithFrame:NSMakeRect(0, 0, dx, dy)];
 	/*
-	 * Non-layered opaque drawRect is the stable color/frame path.
-	 * Flushoff on wmclient windows stops mid-frame presents; Flushnow coalesces
-	 * onto the main queue without waiting for vsync.
+	 * Metal CAMetalLayer presents the softscreen.  Flushoff on wmclient
+	 * windows stops mid-frame presents; Flushnow coalesces onto the main
+	 * queue without waiting for vsync.
 	 */
-	[view setWantsLayer:NO];
+	if(metal_init() < 0)
+		sysfatal("metal_init: no Metal device/pipeline");
+	mtl_layer = (CAMetalLayer *)view.layer;
+	if(mtl_layer == nil || ![mtl_layer isKindOfClass:[CAMetalLayer class]]){
+		[view setWantsLayer:YES];
+		mtl_layer = [CAMetalLayer layer];
+		view.layer = mtl_layer;
+	}
+	mtl_layer.device = mtl_device;
+	mtl_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+	mtl_layer.framebufferOnly = YES;
+	mtl_layer.contentsScale = 1.0;	/* 1 Inferno pixel = 1 point */
+	mtl_layer.opaque = YES;
+	mtl_layer.drawableSize = CGSizeMake(dx, dy);
+	[view setWantsLayer:YES];
 	[win setContentView:view];
-	[view setWantsLayer:NO];
 	[win makeFirstResponder:view];
 	[win setContentSize:NSMakeSize(dx, dy)];
 	[view viewDidChangeBackingProperties];
@@ -957,7 +1321,14 @@ flushmemscreen(Rectangle r)
 		return;
 	if(view == nil)
 		return;
-	/* Full softscreen present; coalesce onto one AppKit paint. */
+	if(gscreen != nil && rectclip(&r, gscreen->r)){
+		if(!soft_upload_valid){
+			soft_upload = r;
+			soft_upload_valid = 1;
+		}else
+			combinerect(&soft_upload, r);
+	}
+	/* Coalesce onto one AppKit/Metal present. */
 	mark_view_dirty();
 }
 

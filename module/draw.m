@@ -190,6 +190,8 @@ Draw: module
 		writepixels:	fn(dst: self ref Image, r: Rect, data: array of byte): int;
 		# publishing
 		name:	fn(src: self ref Image, name: string, in: int): int;
+		# /dev/draw image id (for protocol extensions such as draw3d)
+		id:		fn(src: self ref Image): int;
 		# windowing
 		top:		fn(win: self ref Image);
 		bottom:		fn(win: self ref Image);
@@ -227,6 +229,8 @@ Draw: module
 		rgb2cmap:	fn(d: self ref Display, r, g, b: int): int;
 		cmap2rgb:	fn(d: self ref Display, c: int): (int, int, int);
 		cmap2rgba:	fn(d: self ref Display, c: int): int;
+		# Append raw /dev/draw protocol bytes (e.g. draw3d letters). Returns -1 on error.
+		writedraw:	fn(d: self ref Display, msg: array of byte): int;
 	};
 
 	# a mapping between characters and pictures; always attached to a Display

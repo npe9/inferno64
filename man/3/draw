@@ -706,6 +706,104 @@ are moved as a group, maintaining their own order within the stack.
 .B v
 .br
 Flush changes from a soft screen, if any, to the display buffer.
+.SS "Draw3d extension (optional)"
+These letters are ignored by older clients (they never send them).
+Servers without the extension reject them with a write error, which
+clients use as a capability probe.
+Float fields are IEEE754 binary32 in little-endian byte order
+(same endianness as other
+.B draw
+integers).
+Matrices are 4×4 row-major, matching Limbo
+.IR draw3d (2)
+.BR Matrix
+layout
+.RI ( m[row][col] ).
+.HP
+.B 3
+.br
+Capability probe.  A server that implements the draw3d letters accepts
+this one-byte message.  Clients such as
+.B /dis/math/draw3ddev.dis
+send
+.B 3
+before using the remaining letters.
+.HP
+.B M
+.IR which [1]
+.IR m [16×4]
+.br
+Load a model
+.RB ( which =0)
+or projection
+.RB ( which =1)
+matrix from sixteen float32 values.
+.HP
+.B w
+.IR mx [4]
+.IR cx [4]
+.IR my [4]
+.IR cy [4]
+.br
+Set the NDC-to-screen viewport:
+.IR sx = mx×ndc.x + cx ,
+.IR sy = my×ndc.y + cy .
+.HP
+.B u
+.IR flags [1]
+.br
+Bit 0 enables the software z-buffer path; bit 1 enables clip-behind
+rejection (eye
+.BR z ≥ 0 ).
+.HP
+.B z
+.IR dstid [4]
+.br
+Clear (and size) the per-client software z-buffer for image
+.IR dstid .
+.HP
+.B g
+.IR dstid [4]
+.IR srcid [4]
+.IR n [2]
+.IR xyz [n×3×4]
+.br
+Filled polygon in world space:
+.I n
+vertices of
+.IR (x,y,z)
+float32 triples, transformed by the current model and projection
+matrices, then rasterised with source image
+.IR srcid
+(typically a solid colour).
+.HP
+.B G
+.IR dstid [4]
+.IR srcid [4]
+.IR thick [4]
+.IR a [3×4]
+.IR b [3×4]
+.br
+Line in world space from
+.I a
+to
+.I b
+(each an
+.IR (x,y,z)
+float32 triple), width
+.IR thick .
+.PP
+The Inferno Cocoa emu presents the softscreen with Metal.  Letter
+.B G
+(line3) is queued in screen space and drawn directly onto the
+CAMetalLayer drawable after the softscreen blit (no Memimage
+writeback). Letter
+.B g
+remains software
+.BR memfillpoly .
+Other platforms keep software
+.B memline
+for both.
 .HP
 .B y
 .IR id [4]

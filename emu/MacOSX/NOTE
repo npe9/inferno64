@@ -18,7 +18,7 @@ Try:
 
 Notes:
 -	Fresh binaries are ad-hoc codesigned on install (needed on modern macOS)
--	1 Inferno pixel = 1 point; Retina uses layer contentsScale for sharp upscale
+-	Softscreen present via Metal (`CAMetalLayer`); 1 Inferno pixel = 1 point
 -	FP exception traps are left off (Apple Silicon + host frameworks)
 -	386/power: Carbon `win.c`; `mkfile-x11` uses X11
 -	Host CFLAGS use `-O2` (`mkfiles/mkfile-MacOSX-arm64`)

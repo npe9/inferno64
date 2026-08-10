@@ -88,6 +88,29 @@ values into a destination
 and can depth-test filled surfaces through
 .IR polyfill (2).
 .PP
+The interface is defined once in
+.B math/draw3d.m .
+An alternate implementation,
+.BR /dis/math/draw3ddev.dis ,
+implements the same
+.B Draw3d
+module type but encodes
+.BR fillpoly3 ,
+.BR line3 ,
+and related state through optional
+.IR draw (3)
+protocol letters
+.RB ( 3 / M / w / u / z / g / G )
+so a capable
+.B /dev/draw
+server can rasterise (or later accelerate) the primitives.
+Clients choose the provider by which
+.B .dis
+they
+.BR load ;
+.B Draw3d->PATH
+remains the software module.
+.PP
 .B Init
 must be called once after the module is loaded.
 .B Context

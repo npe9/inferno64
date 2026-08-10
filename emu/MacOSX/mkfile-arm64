@@ -19,5 +19,7 @@ SYSLIBS=\
 	-framework CoreFoundation\
 	-framework IOKit\
 	-framework AudioToolbox\
+	-framework Metal\
+	-framework QuartzCore\
 
 

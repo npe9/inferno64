@@ -45,6 +45,7 @@ OFILES=	alloc.$O\
 	writecolmap.$O\
 	writeimage.$O\
 	writesubfont.$O\
+	draw3d.$O\
 
 HFILES=\
 	$ROOT/include/draw.h \

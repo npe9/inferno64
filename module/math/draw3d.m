@@ -1,5 +1,8 @@
 Draw3d: module
 {
+	# Default software provider. Alternate /dev/draw-backed provider:
+	#   load Draw3d "/dis/math/draw3ddev.dis";
+	# Both implement this same module interface.
 	PATH:	con "/dis/math/draw3d.dis";
 
 	# Fixed-point scale for Polyfill plane coefficients (matches wm/polyhedra).
