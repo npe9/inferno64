@@ -620,36 +620,15 @@ controlevent(e: string)
 		controller.ctl <-= e;
 }
 
-latestptr(ptr: chan of ref Pointer, p: ref Pointer): ref Pointer
-{
-Drain:
-	for(;;) alt{
-	q := <-ptr =>
-		p = q;
-	* =>
-		break Drain;
-	}
-	return p;
-}
-
 dragwin(ptr: chan of ref Pointer, c: ref Client, w: ref Wmsrv->Window, off: Point): string
 {
 	if(buttons == 0)
 		return "too late";
 	p: ref Pointer;
 	scr := screen.image.r;
-	lastmove := 0;
 	Margin: con 10;
 	do{
 		p = <-ptr;
-		p = latestptr(ptr, p);
-		# Do at most one expensive memlorigin per display interval.  Pointer
-		# release is retained by the second drain, so interaction stays responsive.
-		now := sys->millisec();
-		if(p.buttons != 0 && lastmove != 0 && now-lastmove < 16){
-			sys->sleep(16-(now-lastmove));
-			p = latestptr(ptr, p);
-		}
 		org := p.xy.sub(off);
 		if(org.y < scr.min.y)
 			org.y = scr.min.y;
@@ -660,7 +639,6 @@ dragwin(ptr: chan of ref Pointer, c: ref Client, w: ref Wmsrv->Window, off: Poin
 		else if(org.x > scr.max.x - Margin)
 			org.x = scr.max.x - Margin;
 		w.img.origin(w.img.r.min, org);
-		lastmove = sys->millisec();
 	} while (p.buttons != 0);
 	c.ptr <-= p;
 	buttons = 0;
