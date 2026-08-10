@@ -172,6 +172,8 @@ extern	void		flushmemscreen(Rectangle);
 int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, float);
 int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
+int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
+int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 void	(*gpudrawflush)(void);
 void	(*gpudrawzclear)(void);
 void	(*gpudrawzenable)(int);
@@ -1730,6 +1732,7 @@ drawmesg(Client *client, void *av, int n)
 		case 'h':
 		case 'j':
 		case 'k':
+		case 'q':
 		case 'M':
 		case 'w':
 		case 'u':
@@ -2366,7 +2369,8 @@ drawmesg(Client *client, void *av, int n)
 		 * 'G' dstid srcid thick a[3] b[3] — line3
 		 * 'h' dstid srcid xyz[3] — plot3
 		 * 'j' dstid img mask flags scale degz xyz [mat16] — sprite3 family
-		 * 'g'/'G'/'k'/'h' may be Metal-batched on Cocoa (depth + overlay).
+		 * 'q' dstid srcid flags thick xyz rx ry — circle/ellipse
+		 * 'g'/'G'/'k'/'h'/'j'/'q' may be Metal-batched on Cocoa (depth + overlay).
 		 */
 		case '3':
 			printmesg(fmt="", a, 0);
@@ -2668,7 +2672,7 @@ drawmesg(Client *client, void *av, int n)
 			src = drawimage(client, a+5);	/* img */
 			{
 				u32 maskid;
-				int flags;
+				int flags, gpudone;
 				float scale, degz, fx, fy, fz, ez, sc;
 				Point sp;
 				Memimage *mask;
@@ -2712,24 +2716,65 @@ drawmesg(Client *client, void *av, int n)
 					sc = 1.0f / (-ez);
 				sw = (int)((float)iw * sc);
 				sh = (int)((float)ih * sc);
-				/* yb: slight vertical squash as billboard yaw stand-in */
 				if(flags & 4)
 					sh = (int)((float)sh * 0.85f);
 				if(sw < 1) sw = 1;
 				if(sh < 1) sh = 1;
-				/*
-				 * Non-zero zb rotation stays client-side (Limbo rotsprite);
-				 * axis-aligned path covers sprite3 / yb / mat / zb≈0.
-				 */
-				if((flags & 2) && !(degz < 0.5f || degz > 359.5f))
-					continue;
-				dr = Rect(sp.x - sw/2, sp.y - sh/2,
-					sp.x - sw/2 + sw, sp.y - sh/2 + sh);
 				op = drawclientop(client);
-				memdraw(dst, dr, src, src->r.min,
-					mask != nil ? mask : memopaque,
-					mask != nil ? mask->r.min : ZP, op);
-				dstflush(dst, dr);
+				gpudone = 0;
+				if(gpudrawsprite != nil)
+					gpudone = gpudrawsprite(dst, sp, sw, sh, ez, src, mask, degz, op);
+				if(!gpudone){
+					dr = Rect(sp.x - sw/2, sp.y - sh/2,
+						sp.x - sw/2 + sw, sp.y - sh/2 + sh);
+					memdraw(dst, dr, src, src->r.min,
+						mask != nil ? mask : memopaque,
+						mask != nil ? mask->r.min : ZP, op);
+					dstflush(dst, dr);
+				}else
+					dstflush(dst, Rect(sp.x - sw/2, sp.y - sh/2,
+						sp.x - sw/2 + sw, sp.y - sh/2 + sh));
+			}
+			continue;
+
+		case 'q':	/* circle/ellipse (immediate mode) */
+			printmesg(fmt="LLb", a, 0);
+			m = 1+4+4+1+4+3*4+4+4;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			src = drawimage(client, a+5);
+			{
+				int flags, thick, rx, ry, gpudone, fill;
+				float fx, fy, fz, ez;
+				Point pa;
+
+				flags = a[9];
+				thick = BG32INT(a+10);
+				if(thick < 0)
+					error("negative ellipse thickness");
+				fx = bgfloat(a+14);
+				fy = bgfloat(a+18);
+				fz = bgfloat(a+22);
+				rx = (int)bgfloat(a+26);
+				ry = (int)bgfloat(a+30);
+				if(rx < 0) rx = -rx;
+				if(ry < 0) ry = -ry;
+				if(!d3project(client, fx, fy, fz, &pa, &ez))
+					continue;
+				fill = flags & 1;
+				op = drawclientop(client);
+				gpudone = 0;
+				if(gpudrawellipse != nil)
+					gpudone = gpudrawellipse(dst, pa, rx, ry, thick, fill, src, op, ez);
+				if(!gpudone){
+					if(fill)
+						memellipse(dst, pa, rx, ry, -1, src, pa, op);
+					else
+						memellipse(dst, pa, rx, ry, thick, src, pa, op);
+				}
+				dstflush(dst, Rect(pa.x - rx - thick - 1, pa.y - ry - thick - 1,
+					pa.x + rx + thick + 2, pa.y + ry + thick + 2));
 			}
 			continue;
 

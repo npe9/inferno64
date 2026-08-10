@@ -68,12 +68,13 @@ static int	wm_notify_generation;
 static volatile int	present_dirty;
 static volatile int	present_queued;
 
-/* Metal softscreen present (CAMetalLayer) + direct draw3d 'G'/'g'. */
+/* Metal softscreen present (CAMetalLayer) + direct draw3d GPU geom. */
 static id<MTLDevice>		mtl_device;
 static id<MTLCommandQueue>	mtl_queue;
 static id<MTLRenderPipelineState>	mtl_pipe;		/* softscreen / under blit */
 static id<MTLRenderPipelineState>	mtl_overlay_pipe;	/* softscreen where ≠ under */
-static id<MTLRenderPipelineState>	mtl_geom_pipe;		/* BGRA8+depth lines+tris */
+static id<MTLRenderPipelineState>	mtl_geom_pipe;		/* BGRA8+depth lines+tris+points */
+static id<MTLRenderPipelineState>	mtl_sprite_pipe;	/* textured quads + depth + blend */
 static id<MTLDepthStencilState>	mtl_depth_on;
 static id<MTLDepthStencilState>	mtl_depth_off;
 static id<MTLTexture>		mtl_tex;		/* softscreen upload */
@@ -94,6 +95,8 @@ static Memimage	*mtl_solidsrc;	/* 1×1 for emergency soft fill of GPU tris */
 enum {
 	MaxGPULines = 16384,
 	MaxGPUTriVerts = 49152,	/* 16384 triangles × 3 packed verts */
+	MaxGPUSprites = 512,
+	EllipseSegs = 48,
 	/* Eye-z → depth: closer (ez→0−) smaller depth; far clamps to 1. */
 	ZDepthScale = 256,
 };
@@ -114,11 +117,25 @@ struct GPUVert {
 	float	x, y, z, r, g, b, a;
 };
 
+/* Textured sprite vert: must match Metal TIn (9 floats). */
+typedef struct GPUTexVert GPUTexVert;
+struct GPUTexVert {
+	float	x, y, z, u, v, r, g, b, a;
+};
+
+typedef struct GPUSprite GPUSprite;
+struct GPUSprite {
+	GPUTexVert	v[6];	/* two tris */
+	id<MTLTexture>	tex;
+};
+
 /* Screen-space geometry held until present (no Memimage writeback). */
 static GPULine	glines[MaxGPULines];
 static int	nglines;
 static GPUVert	gtriverts[MaxGPUTriVerts];
 static int	ngtriverts;
+static GPUSprite	gsprites[MaxGPUSprites];
+static int	ngsprites;
 
 /* Soft Plan9 Paper desktop (#C4C0B4); must match appl/wm/wm.b Background. */
 enum {
@@ -160,7 +177,7 @@ static NSString *const kSoftscreenMetalSrc =
 	"  return s;\n"
 	"}\n"
 	"struct LIn { float x, y, z, r, g, b, a; };\n"
-	"struct LOut { float4 pos [[position]]; float4 color; };\n"
+	"struct LOut { float4 pos [[position]]; float4 color; float psize [[point_size]]; };\n"
 	"vertex LOut vlmain(uint vid [[vertex_id]],\n"
 	"    constant LIn *v [[buffer(0)]],\n"
 	"    constant float2 &wh [[buffer(1)]]) {\n"
@@ -169,14 +186,38 @@ static NSString *const kSoftscreenMetalSrc =
 	"  float2 ndc = float2(i.x/wh.x*2.0-1.0, 1.0-i.y/wh.y*2.0);\n"
 	"  o.pos = float4(ndc, i.z, 1);\n"
 	"  o.color = float4(i.r, i.g, i.b, i.a);\n"
+	"  o.psize = 2.0;\n"
 	"  return o;\n"
 	"}\n"
-	"fragment float4 flmain(LOut in [[stage_in]]) { return in.color; }\n";
+	"fragment float4 flmain(LOut in [[stage_in]]) { return in.color; }\n"
+	"struct TIn { float x, y, z, u, v, r, g, b, a; };\n"
+	"struct TOut { float4 pos [[position]]; float2 uv; float4 color; };\n"
+	"vertex TOut vtmain(uint vid [[vertex_id]],\n"
+	"    constant TIn *v [[buffer(0)]],\n"
+	"    constant float2 &wh [[buffer(1)]]) {\n"
+	"  TIn i = v[vid];\n"
+	"  TOut o;\n"
+	"  float2 ndc = float2(i.x/wh.x*2.0-1.0, 1.0-i.y/wh.y*2.0);\n"
+	"  o.pos = float4(ndc, i.z, 1);\n"
+	"  o.uv = float2(i.u, i.v);\n"
+	"  o.color = float4(i.r, i.g, i.b, i.a);\n"
+	"  return o;\n"
+	"}\n"
+	"fragment float4 ftmain(TOut in [[stage_in]],\n"
+	"    texture2d<float> tex [[texture(0)]],\n"
+	"    sampler samp [[sampler(0)]]) {\n"
+	"  float4 t = tex.sample(samp, in.uv);\n"
+	"  float4 c = t * in.color;\n"
+	"  if(c.a < 1.0/255.0) discard_fragment();\n"
+	"  return c;\n"
+	"}\n";
 
 /* Assigned from metal_init; declared in emu/port/devdraw.c */
 extern int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, float);
 extern int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
 extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
+extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
+extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 extern void	(*gpudrawflush)(void);
 extern void	(*gpudrawzclear)(void);
 extern void	(*gpudrawzenable)(int);
@@ -187,8 +228,11 @@ static void	metal_set_zenable(int);
 static int	metal_queue_line(Memimage*, Point, Point, int, Memimage*, int, float, float);
 static int	metal_queue_fillpoly(Memimage*, Point*, float*, int, Memimage*, int, float);
 static int	metal_queue_plot(Memimage*, Point, Memimage*, int, float);
+static int	metal_queue_sprite(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
+static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
+static void	metal_present_sprites(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	soft_burn_tris(void);
 static float	eye_to_depth(float);
 
@@ -242,7 +286,7 @@ metal_init(void)
 	if(mtl_overlay_pipe == nil)
 		return -1;
 
-	/* Lines + filled tris onto drawable with optional depth. */
+	/* Lines + filled tris + points onto drawable with optional depth. */
 	pd = [[MTLRenderPipelineDescriptor alloc] init];
 	pd.vertexFunction = [lib newFunctionWithName:@"vlmain"];
 	pd.fragmentFunction = [lib newFunctionWithName:@"flmain"];
@@ -251,6 +295,21 @@ metal_init(void)
 	pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
 	mtl_geom_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
 	if(mtl_geom_pipe == nil)
+		return -1;
+
+	/* Textured sprites: sample + alpha discard, depth tested. */
+	pd = [[MTLRenderPipelineDescriptor alloc] init];
+	pd.vertexFunction = [lib newFunctionWithName:@"vtmain"];
+	pd.fragmentFunction = [lib newFunctionWithName:@"ftmain"];
+	pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+	pd.colorAttachments[0].blendingEnabled = YES;
+	pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+	pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+	pd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+	pd.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+	pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+	mtl_sprite_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+	if(mtl_sprite_pipe == nil)
 		return -1;
 
 	ds = [[MTLDepthStencilDescriptor alloc] init];
@@ -267,6 +326,8 @@ metal_init(void)
 	gpudrawline = metal_queue_line;
 	gpudrawfillpoly = metal_queue_fillpoly;
 	gpudrawplot = metal_queue_plot;
+	gpudrawsprite = metal_queue_sprite;
+	gpudrawellipse = metal_queue_ellipse;
 	gpudrawflush = metal_flush_geom;
 	gpudrawzclear = metal_zclear;
 	gpudrawzenable = metal_set_zenable;
@@ -548,9 +609,9 @@ soft_bresenham(Memimage *dst, GPULine *L)
 }
 
 /*
- * Direct path: 'G'/'g' geometry stays queued until present (no Memimage writeback).
+ * Direct path: GPU geom stays queued until present (no Memimage writeback).
  * On the first 2D draw after geometry, snapshot the softscreen so present can
- * put subsequent sprites/HUD over the Metal 3D layer.
+ * put subsequent HUD over the Metal 3D layer (sprites now queue as GPU too).
  */
 static void
 metal_flush_geom(void)
@@ -558,7 +619,7 @@ metal_flush_geom(void)
 	int pw, ph;
 	id<MTLTexture> under;
 
-	if(nglines == 0 && ngtriverts == 0)
+	if(nglines == 0 && ngtriverts == 0 && ngsprites == 0)
 		return;
 	if(mtl_have_under)
 		return;
@@ -844,14 +905,316 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 	return 1;
 }
 
-/* plot3 ('h'): 1×1 point as a degenerate line segment. */
+/* plot3 ('h'): Metal filled 1.5px quad (real triangles), not softscreen 1×1. */
 static int
 metal_queue_plot(Memimage *dst, Point p, Memimage *src, int op, float ez)
 {
-	Point p1;
+	Memimage *pix;
+	Point a;
+	float r, g, bl, al, z, hx;
+	GPUVert *v;
 
-	p1 = p;
-	return metal_queue_line(dst, p, p1, 0, src, op, ez, ez);
+	if(op != SoverD && op != S)
+		return 0;
+	a = p;
+	pix = line_pixdst(dst, &a, &a);
+	if(pix == nil)
+		return 0;
+	if(pix != gscreen && pix != screenimage)
+		return 0;
+	if(src_rgba(src, &r, &g, &bl, &al) < 0)
+		return 0;
+	if(ngtriverts + 6 > MaxGPUTriVerts)
+		soft_burn_tris();
+	if(ngtriverts + 6 > MaxGPUTriVerts)
+		return 0;
+	z = eye_to_depth(ez);
+	hx = 0.75f;	/* ~1.5px square so the point is visible */
+	v = &gtriverts[ngtriverts];
+	/* tri 0: (−,+),(+,+),(+,−) ; tri 1: (−,+),(+,−),(−,−) */
+	v[0].x = (float)a.x - hx; v[0].y = (float)a.y - hx; v[0].z = z;
+	v[1].x = (float)a.x + hx; v[1].y = (float)a.y - hx; v[1].z = z;
+	v[2].x = (float)a.x + hx; v[2].y = (float)a.y + hx; v[2].z = z;
+	v[3].x = (float)a.x - hx; v[3].y = (float)a.y - hx; v[3].z = z;
+	v[4].x = (float)a.x + hx; v[4].y = (float)a.y + hx; v[4].z = z;
+	v[5].x = (float)a.x - hx; v[5].y = (float)a.y + hx; v[5].z = z;
+	v[0].r = v[1].r = v[2].r = v[3].r = v[4].r = v[5].r = r;
+	v[0].g = v[1].g = v[2].g = v[3].g = v[4].g = v[5].g = g;
+	v[0].b = v[1].b = v[2].b = v[3].b = v[4].b = v[5].b = bl;
+	v[0].a = v[1].a = v[2].a = v[3].a = v[4].a = v[5].a = al;
+	ngtriverts += 6;
+	return 1;
+}
+
+/*
+ * Upload Memimage (+ optional GREY1/8 mask → alpha) to an RGBA8 Metal texture.
+ * XBGR32 softscreen-style sources are common for Temple icons.
+ */
+static id<MTLTexture>
+metal_upload_sprite_tex(Memimage *img, Memimage *mask)
+{
+	MTLTextureDescriptor *td;
+	id<MTLTexture> tex;
+	int w, h, x, y;
+	uchar *rgba, *p, *mp;
+	u32 pix;
+	MTLRegion region;
+
+	if(img == nil || img->data == nil || img->data->bdata == nil)
+		return nil;
+	w = Dx(img->r);
+	h = Dy(img->r);
+	if(w < 1 || h < 1 || w > 2048 || h > 2048)
+		return nil;
+	rgba = malloc((size_t)w * h * 4);
+	if(rgba == nil)
+		return nil;
+	for(y = 0; y < h; y++){
+		for(x = 0; x < w; x++){
+			p = byteaddr(img, Pt(img->r.min.x + x, img->r.min.y + y));
+			if(p == nil){
+				rgba[(y*w+x)*4+0] = 0;
+				rgba[(y*w+x)*4+1] = 0;
+				rgba[(y*w+x)*4+2] = 0;
+				rgba[(y*w+x)*4+3] = 0;
+				continue;
+			}
+			if(img->depth == 32){
+				rgba[(y*w+x)*4+0] = p[0];
+				rgba[(y*w+x)*4+1] = p[1];
+				rgba[(y*w+x)*4+2] = p[2];
+				rgba[(y*w+x)*4+3] = 255;
+			}else if(img->depth == 8){
+				rgba[(y*w+x)*4+0] = p[0];
+				rgba[(y*w+x)*4+1] = p[0];
+				rgba[(y*w+x)*4+2] = p[0];
+				rgba[(y*w+x)*4+3] = 255;
+			}else{
+				pix = 0;
+				memmove(&pix, p, img->depth > 32 ? 4 : (img->depth+7)/8);
+				rgba[(y*w+x)*4+0] = (uchar)(pix & 0xff);
+				rgba[(y*w+x)*4+1] = (uchar)((pix>>8) & 0xff);
+				rgba[(y*w+x)*4+2] = (uchar)((pix>>16) & 0xff);
+				rgba[(y*w+x)*4+3] = 255;
+			}
+			if(mask != nil){
+				mp = byteaddr(mask, Pt(mask->r.min.x + x, mask->r.min.y + y));
+				if(mp == nil || (mask->depth >= 8 && mp[0] == 0))
+					rgba[(y*w+x)*4+3] = 0;
+				else if(mask->depth == 1){
+					/* GREY1: bit 7 is leftmost in the byte from byteaddr. */
+					if((mp[0] & 0x80) == 0)
+						rgba[(y*w+x)*4+3] = 0;
+				}
+			}
+		}
+	}
+	td = [MTLTextureDescriptor
+		texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+		width:w height:h mipmapped:NO];
+	td.usage = MTLTextureUsageShaderRead;
+	td.storageMode = MTLStorageModeShared;
+	tex = [mtl_device newTextureWithDescriptor:td];
+	if(tex != nil){
+		region = MTLRegionMake2D(0, 0, w, h);
+		[tex replaceRegion:region mipmapLevel:0 withBytes:rgba bytesPerRow:w*4];
+	}
+	free(rgba);
+	return tex;
+}
+
+/* sprite3 ('j'): textured Metal quad with depth; degz rotates in screen space. */
+static int
+metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
+	Memimage *img, Memimage *mask, float degz, int op)
+{
+	Memimage *pix;
+	Point a;
+	float z, hx, hy, cs, sn, rad, lx, ly, rx, ry;
+	GPUSprite *spr;
+	id<MTLTexture> tex;
+	int i;
+	static const float uv[6][2] = {
+		{0,0},{1,0},{1,1},
+		{0,0},{1,1},{0,1},
+	};
+	static const float corner[6][2] = {
+		{-1,-1},{1,-1},{1,1},
+		{-1,-1},{1,1},{-1,1},
+	};
+
+	if(op != SoverD && op != S)
+		return 0;
+	if(sw < 1 || sh < 1 || img == nil)
+		return 0;
+	a = sp;
+	pix = line_pixdst(dst, &a, &a);
+	if(pix == nil)
+		return 0;
+	if(pix != gscreen && pix != screenimage)
+		return 0;
+	if(ngsprites >= MaxGPUSprites)
+		return 0;
+	tex = metal_upload_sprite_tex(img, mask);
+	if(tex == nil)
+		return 0;
+	while(degz >= 360.0f) degz -= 360.0f;
+	while(degz < 0.0f) degz += 360.0f;
+	rad = degz * (float)M_PI / 180.0f;
+	cs = cosf(rad);
+	sn = sinf(rad);
+	hx = (float)sw * 0.5f;
+	hy = (float)sh * 0.5f;
+	z = eye_to_depth(ez);
+	spr = &gsprites[ngsprites];
+	spr->tex = tex;
+	for(i = 0; i < 6; i++){
+		lx = corner[i][0] * hx;
+		ly = corner[i][1] * hy;
+		rx = lx * cs - ly * sn;
+		ry = lx * sn + ly * cs;
+		spr->v[i].x = (float)a.x + rx;
+		spr->v[i].y = (float)a.y + ry;
+		spr->v[i].z = z;
+		spr->v[i].u = uv[i][0];
+		spr->v[i].v = uv[i][1];
+		spr->v[i].r = 1.0f;
+		spr->v[i].g = 1.0f;
+		spr->v[i].b = 1.0f;
+		spr->v[i].a = 1.0f;
+	}
+	ngsprites++;
+	return 1;
+}
+
+/* circle/ellipse ('q'): tessellate into Metal triangles or line loop. */
+static int
+metal_queue_ellipse(Memimage *dst, Point c, int a, int b, int thick, int fill,
+	Memimage *src, int op, float ez)
+{
+	Memimage *pix;
+	Point p0, p1;
+	float r, g, bl, al, z, ang, ca, sa, x0, y0, x1, y1;
+	int i, n, need;
+	GPUVert *v;
+
+	USED(thick);
+	if(op != SoverD && op != S)
+		return 0;
+	if(a < 1) a = 1;
+	if(b < 1) b = 1;
+	p0 = c;
+	p1 = c;
+	pix = line_pixdst(dst, &p0, &p1);
+	if(pix == nil)
+		return 0;
+	if(pix != gscreen && pix != screenimage)
+		return 0;
+	if(src_rgba(src, &r, &g, &bl, &al) < 0)
+		return 0;
+	z = eye_to_depth(ez);
+	n = EllipseSegs;
+	if(fill){
+		need = n * 3;
+		if(ngtriverts + need > MaxGPUTriVerts)
+			soft_burn_tris();
+		if(ngtriverts + need > MaxGPUTriVerts)
+			return 0;
+		for(i = 0; i < n; i++){
+			ang = (float)(2.0 * M_PI * i / n);
+			ca = cosf(ang);
+			sa = sinf(ang);
+			x0 = (float)p0.x + (float)a * ca;
+			y0 = (float)p0.y + (float)b * sa;
+			ang = (float)(2.0 * M_PI * (i+1) / n);
+			ca = cosf(ang);
+			sa = sinf(ang);
+			x1 = (float)p0.x + (float)a * ca;
+			y1 = (float)p0.y + (float)b * sa;
+			v = &gtriverts[ngtriverts];
+			v[0].x = (float)p0.x; v[0].y = (float)p0.y; v[0].z = z;
+			v[1].x = x0; v[1].y = y0; v[1].z = z;
+			v[2].x = x1; v[2].y = y1; v[2].z = z;
+			v[0].r = v[1].r = v[2].r = r;
+			v[0].g = v[1].g = v[2].g = g;
+			v[0].b = v[1].b = v[2].b = bl;
+			v[0].a = v[1].a = v[2].a = al;
+			ngtriverts += 3;
+		}
+		return 1;
+	}
+	/* Stroke: queue line segments (thick via existing line path). */
+	for(i = 0; i < n; i++){
+		Point qa, qb;
+		ang = (float)(2.0 * M_PI * i / n);
+		qa.x = p0.x + (int)((float)a * cosf(ang));
+		qa.y = p0.y + (int)((float)b * sinf(ang));
+		ang = (float)(2.0 * M_PI * (i+1) / n);
+		qb.x = p0.x + (int)((float)a * cosf(ang));
+		qb.y = p0.y + (int)((float)b * sinf(ang));
+		if(!metal_queue_line(dst, qa, qb, thick, src, op, ez, ez))
+			return 0;
+	}
+	return 1;
+}
+
+static void
+metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
+	id<MTLTexture> depthtex, int pw, int ph)
+{
+	int i;
+	float wh[2];
+	id<MTLBuffer> vbuf;
+	id<MTLRenderCommandEncoder> enc;
+	MTLRenderPassDescriptor *rp;
+	MTLLoadAction zload;
+	MTLSamplerDescriptor *sd;
+	static id<MTLSamplerState> sprsamp;
+
+	if(ngsprites == 0 || cmd == nil || drawabletex == nil || mtl_sprite_pipe == nil)
+		return;
+	if(depthtex == nil){
+		ngsprites = 0;
+		return;
+	}
+	if(sprsamp == nil){
+		sd = [[MTLSamplerDescriptor alloc] init];
+		sd.minFilter = MTLSamplerMinMagFilterLinear;
+		sd.magFilter = MTLSamplerMinMagFilterLinear;
+		sprsamp = [mtl_device newSamplerStateWithDescriptor:sd];
+	}
+	wh[0] = (float)pw;
+	wh[1] = (float)ph;
+	zload = mtl_zclear ? MTLLoadActionClear : MTLLoadActionLoad;
+	mtl_zclear = 0;
+
+	for(i = 0; i < ngsprites; i++){
+		vbuf = [mtl_device newBufferWithBytes:gsprites[i].v
+			length:sizeof(GPUTexVert) * 6
+			options:MTLResourceStorageModeShared];
+		if(vbuf == nil || gsprites[i].tex == nil)
+			continue;
+		rp = [MTLRenderPassDescriptor renderPassDescriptor];
+		rp.colorAttachments[0].texture = drawabletex;
+		rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+		rp.depthAttachment.texture = depthtex;
+		rp.depthAttachment.loadAction = zload;
+		rp.depthAttachment.storeAction = MTLStoreActionStore;
+		rp.depthAttachment.clearDepth = 1.0;
+		zload = MTLLoadActionLoad;
+		enc = [cmd renderCommandEncoderWithDescriptor:rp];
+		[enc setRenderPipelineState:mtl_sprite_pipe];
+		[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
+		[enc setVertexBuffer:vbuf offset:0 atIndex:0];
+		[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
+		[enc setFragmentTexture:gsprites[i].tex atIndex:0];
+		[enc setFragmentSamplerState:sprsamp atIndex:0];
+		[enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
+		[enc endEncoding];
+		gsprites[i].tex = nil;
+	}
+	ngsprites = 0;
 }
 
 static void
@@ -948,22 +1311,24 @@ present_softscreen(void)
 		samp = [mtl_device newSamplerStateWithDescriptor:sd];
 	}
 
-	have_geom = nglines > 0 || ngtriverts > 0;
+	have_geom = nglines > 0 || ngtriverts > 0 || ngsprites > 0;
 	overlay = have_geom && mtl_have_under && mtl_under != nil;
 	under = mtl_under;
 	cmd = [mtl_queue commandBuffer];
 
 	if(overlay){
-		/* under (pre-3D softscreen) → Metal 3D → softscreen where changed */
+		/* under (pre-3D softscreen) → Metal 3D+sprites → softscreen where changed */
 		metal_blit_tex(cmd, drawable.texture, mtl_pipe, under, nil, samp);
 		metal_present_tris(cmd, drawable.texture, depthtex, pw, ph);
 		metal_present_lines(cmd, drawable.texture, depthtex, pw, ph);
+		metal_present_sprites(cmd, drawable.texture, depthtex, pw, ph);
 		metal_overlay_soft(cmd, drawable.texture, tex, under, samp);
 	}else{
 		metal_blit_tex(cmd, drawable.texture, mtl_pipe, tex, nil, samp);
 		if(have_geom){
 			metal_present_tris(cmd, drawable.texture, depthtex, pw, ph);
 			metal_present_lines(cmd, drawable.texture, depthtex, pw, ph);
+			metal_present_sprites(cmd, drawable.texture, depthtex, pw, ph);
 		}
 	}
 	mtl_have_under = 0;

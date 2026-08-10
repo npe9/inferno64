@@ -852,21 +852,39 @@ sizes the billboard from
 .I scale
 and eye
 .BR z ,
-and
-.B memdraw s
-into
-.IR dstid .
+and draws a textured Metal quad (with optional
+.I degz
+screen-space rotation and depth test).
 .I flags
 bit0: use
 .IR maskid ;
-bit1: zb (honour
-.IR degz ;
-non-trivial rotation is left to the Limbo client);
+bit1: zb;
 bit2: yb vertical squash;
 bit3: append object
-.I mat
-(applied to the origin then added to
-.IR xyz ).
+.IR mat .
+Obscured destinations fall back to
+.BR memdraw .
+.HP
+.B q
+.IR dstid [4]
+.IR srcid [4]
+.IR flags [1]
+.IR thick [4]
+.IR xyz [3×4]
+.IR rx [4]
+.IR ry [4]
+.br
+Circle/ellipse at projected
+.IR xyz
+with screen-space radii
+.IR rx / ry .
+Bit0 of
+.I flags
+selects a filled disc (triangle fan); otherwise a stroked outline
+.RI ( thick
+passed to
+.BR G -style
+lines).  Tessellated on the Metal path.
 .PP
 The Inferno Cocoa emu presents the softscreen with Metal.  Letters
 .B g
@@ -874,9 +892,13 @@ The Inferno Cocoa emu presents the softscreen with Metal.  Letters
 .B k
 (fillpoly3),
 .B G
-(line3), and
+(line3),
 .B h
-(plot3) are queued in screen space with per-vertex depth.
+(plot3),
+.B j
+(sprites), and
+.B q
+(circles) are queued as GPU primitives with per-vertex depth.
 When
 .B u
 enables the z-buffer bit, a GPU depth test sorts fills and lines;

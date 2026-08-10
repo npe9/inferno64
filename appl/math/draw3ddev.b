@@ -645,14 +645,41 @@ end(c: ref Context)
 	dst := c.dst;
 	vc := c.colour;
 	case ms.vk {
-	CIRCLE =>
-		dst.ellipse(ms.ap[0], ms.vr, ms.vr, 0, vc, Point(0, 0));
-	FILLCIRCLE =>
-		dst.fillellipse(ms.ap[0], ms.vr, ms.vr, vc, Point(0, 0));
-	ELLIPSE =>
-		dst.ellipse(ms.ap[0], ms.vr, ms.vrr, 0, vc, Point(0, 0));
-	FILLELLIPSE =>
-		dst.fillellipse(ms.ap[0], ms.vr, ms.vrr, vc, Point(0, 0));
+	CIRCLE or FILLCIRCLE or ELLIPSE or FILLELLIPSE =>
+		if(haveproto && ms.apn >= 1){
+			(pv, ok) := protovert(c, ms.aw[0]);
+			if(ok){
+				sync3d(c);
+				rx := real ms.vr;
+				ry := real ms.vr;
+				if(ms.vk == ELLIPSE || ms.vk == FILLELLIPSE)
+					ry = real ms.vrr;
+				fl := 0;
+				if(ms.vk == FILLCIRCLE || ms.vk == FILLELLIPSE)
+					fl = 1;
+				msg := array[1+4+4+1+4+3*4+4+4] of byte;
+				msg[0] = byte 'q';
+				puti32(msg, 1, c.dst.id());
+				puti32(msg, 5, vc.id());
+				msg[9] = byte fl;
+				puti32(msg, 10, 0);	# thick
+				putf32(msg, 14, pv.x);
+				putf32(msg, 18, pv.y);
+				putf32(msg, 22, pv.z);
+				putf32(msg, 26, rx);
+				putf32(msg, 30, ry);
+				writemsg(c.dst.display, msg);
+				return;
+			}
+		}
+		if(ms.vk == CIRCLE)
+			dst.ellipse(ms.ap[0], ms.vr, ms.vr, 0, vc, Point(0, 0));
+		else if(ms.vk == FILLCIRCLE)
+			dst.fillellipse(ms.ap[0], ms.vr, ms.vr, vc, Point(0, 0));
+		else if(ms.vk == ELLIPSE)
+			dst.ellipse(ms.ap[0], ms.vr, ms.vrr, 0, vc, Point(0, 0));
+		else
+			dst.fillellipse(ms.ap[0], ms.vr, ms.vrr, vc, Point(0, 0));
 	POLY =>
 		# Outline via line3 segments on the protocol path.
 		if(haveproto && ms.apn >= 2){
@@ -840,8 +867,7 @@ spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: rea
 		adz -= 360.0;
 	while(adz < 0.0)
 		adz += 360.0;
-	needrot := (flags & 2) != 0 && !(adz < 0.5 || adz > 359.5);
-	if(haveproto && !needrot){
+	if(haveproto){
 		(pv, ok) := protovert(c, p);
 		if(!ok)
 			return;
@@ -886,6 +912,7 @@ spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: rea
 		sh = int (real sh * 0.85);
 	if(sw < 1) sw = 1;
 	if(sh < 1) sh = 1;
+	needrot := (flags & 2) != 0 && !(adz < 0.5 || adz > 359.5);
 	if(!needrot){
 		r := Rect((sp.x - sw/2, sp.y - sh/2), (sp.x - sw/2 + sw, sp.y - sh/2 + sh));
 		c.dst.draw(r, img, mask, img.r.min);

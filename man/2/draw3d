@@ -101,7 +101,7 @@ module type but encodes
 sprites, and related state through optional
 .IR draw (3)
 protocol letters
-.RB ( 3 / M / w / u / z / g / G / h / j / k )
+.RB ( 3 / M / w / u / z / g / G / h / j / k / q )
 so a capable
 .B /dev/draw
 server can rasterise or Metal-accelerate the primitives.
@@ -261,9 +261,13 @@ use
 .B line3 / fillpoly3
 (Metal
 .B G / k );
-circles and ellipses remain softscreen
-.B Image
-ops and composite over Metal geometry via the emu overlay path.
+.B CIRCLE / ELLIPSE
+use letter
+.B q
+(Metal tessellation);
+sprites use letter
+.B j
+(Metal textured quads with depth).
 .SS Sprites
 The Sprite3 family draws an image (with optional mask) as a camera-facing billboard.
 .I Scale
@@ -273,11 +277,11 @@ places an upright billboard;
 .B sprite3yb
 applies a vertical squash (yaw billboard stand-in);
 .B sprite3zb
-rotates about Z (software blit when the angle is non-trivial);
+rotates about Z (Metal screen-space rotation on the protocol path);
 .B sprite3mat
 uses an explicit matrix.
 .B draw3ddev
-encodes axis-aligned sprites as letter
+encodes sprites as letter
 .BR j .
 .PP
 .BR Newmatrix ,
