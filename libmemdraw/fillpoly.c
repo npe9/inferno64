@@ -5,6 +5,10 @@
 
 typedef struct Seg	Seg;
 
+enum {
+	Stackpoly = 32,
+};
+
 struct Seg
 {
 	Point	p0;
@@ -75,19 +79,27 @@ void
 _memfillpolysc(Memimage *dst, Point *vert, int nvert, int w, Memimage *src, Point sp, int detail, int fixshift, int clipped, int op)
 {
 	Seg **seg, *segtab;
+	Seg *stackseg[Stackpoly+2];
+	Seg stacktab[Stackpoly+1];
 	Point p0;
-	int i;
+	int i, heap;
 
 	if(nvert == 0)
 		return;
 
-	seg = malloc((nvert+2)*sizeof(Seg*));
-	if(seg == nil)
-		return;
-	segtab = malloc((nvert+1)*sizeof(Seg));
-	if(segtab == nil) {
-		free(seg);
-		return;
+	heap = nvert > Stackpoly;
+	if(heap){
+		seg = malloc((nvert+2)*sizeof(Seg*));
+		if(seg == nil)
+			return;
+		segtab = malloc((nvert+1)*sizeof(Seg));
+		if(segtab == nil) {
+			free(seg);
+			return;
+		}
+	}else{
+		seg = stackseg;
+		segtab = stacktab;
 	}
 
 	sp.x = (sp.x - vert[0].x) >> fixshift;
@@ -114,8 +126,10 @@ _memfillpolysc(Memimage *dst, Point *vert, int nvert, int w, Memimage *src, Poin
 	if(detail)
 		yscan(dst, seg, segtab, nvert, w, src, sp, fixshift, op);
 
-	free(seg);
-	free(segtab);
+	if(heap){
+		free(seg);
+		free(segtab);
+	}
 }
 
 static long

@@ -1023,6 +1023,38 @@ alphacalc11(Buffer bdst, Buffer bsrc, Buffer bmask, int dx, int grey, int op)
 	obdst = bdst;
 	sadelta = bsrc.alpha == &ones ? 0 : bsrc.delta;
 
+	/* Native 32-bit images can still arrive as separate channel pointers when
+	 * the destination needs a conversion/write buffer.  The implicit mask is
+	 * then an expanded row of 255 bytes, rather than the singleton &ones. */
+	if(!grey && bdst.rgba == nil && bsrc.delta == 4 && bdst.delta == 4){
+		for(i=0; i<dx; i++){
+			sa = *bsrc.alpha;
+			ma = *bmask.alpha;
+			if(ma == 255){
+				fd = 255-sa;
+				*bdst.red = *bsrc.red + MUL(fd, *bdst.red, t);
+				*bdst.grn = *bsrc.grn + MUL(fd, *bdst.grn, t);
+				*bdst.blu = *bsrc.blu + MUL(fd, *bdst.blu, t);
+				if(bdst.alpha != &ones)
+					*bdst.alpha = sa + MUL(fd, *bdst.alpha, t);
+			}else{
+				fd = 255-MUL(sa, ma, t);
+				*bdst.red = MUL(ma, *bsrc.red, s)+MUL(fd, *bdst.red, t);
+				*bdst.grn = MUL(ma, *bsrc.grn, s)+MUL(fd, *bdst.grn, t);
+				*bdst.blu = MUL(ma, *bsrc.blu, s)+MUL(fd, *bdst.blu, t);
+				if(bdst.alpha != &ones)
+					*bdst.alpha = MUL(ma, sa, s)+MUL(fd, *bdst.alpha, t);
+			}
+			bsrc.red += 4; bsrc.grn += 4; bsrc.blu += 4;
+			bdst.red += 4; bdst.grn += 4; bdst.blu += 4;
+			if(bdst.alpha != &ones)
+				bdst.alpha += 4;
+			bsrc.alpha += sadelta;
+			bmask.alpha += bmask.delta;
+		}
+		return obdst;
+	}
+
 	/* RGBA32 source-over through the replicated opaque mask is the normal
 	 * window-compositing case.  Source pixels are already premultiplied, so
 	 * multiplying them by 255 again only burns two packed-channel multiplies. */
@@ -2479,7 +2511,7 @@ static int
 chardraw(Memdrawparam *par)
 {
 	u32 bits;
-	int i, ddepth, dy, dx, x, bx, ex, y, npack, bsh, depth, op;
+	int i, j, n, ddepth, dy, dx, x, bx, ex, y, npack, bsh, depth, op;
 	u32 v, maskwid, dstwid;
 	uchar *wp, *rp, *q, *wc;
 	ushort *ws;
@@ -2587,6 +2619,33 @@ DDBG print("bits %ux sh %d...", bits, i);
 		case 32:
 			wl = (u32*)wp;
 			v = *(u32*)sp;
+			if(bsh == 0){
+				n = dx >> 3;
+				for(j=0; j<n; j++){
+					bits = *q++;
+					if(bits == 0){
+						wl += 8;
+						continue;
+					}
+					if(bits == 0xFF){
+						wl[0]=v; wl[1]=v; wl[2]=v; wl[3]=v;
+						wl[4]=v; wl[5]=v; wl[6]=v; wl[7]=v;
+						wl += 8;
+						continue;
+					}
+					for(i=7; i>=0; i--, wl++)
+						if((bits>>i)&1)
+							*wl = v;
+				}
+				n = dx & 7;
+				if(n != 0){
+					bits = *q;
+					for(i=7; n>0; i--, n--, wl++)
+						if((bits>>i)&1)
+							*wl = v;
+				}
+				break;
+			}
 			for(x=bx; x>ex; x--, wl++){
 				i = x&7;
 				if(i == 8-1)
