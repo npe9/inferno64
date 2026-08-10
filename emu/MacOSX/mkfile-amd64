@@ -16,7 +16,6 @@ SYSLIBS=\
 	-lm\
 	-lpthread\
 	-framework Cocoa\
-	-framework CoreVideo\
 	-framework CoreFoundation\
 	-framework IOKit\
 	-framework AudioToolbox\

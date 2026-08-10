@@ -7,7 +7,6 @@
 #define Point	MacPoint
 #define Rect	MacRect
 #import <Cocoa/Cocoa.h>
-#import <CoreVideo/CoreVideo.h>
 #undef Point
 #undef Rect
 #undef nil
@@ -60,10 +59,11 @@ static int	live_resizing;
 static int	miniaturized;
 static int	fullscreen_transition;
 static int	wm_notify_generation;
-static int	flush_display_pending;
-static CVDisplayLinkRef display_link;
 static volatile int	present_dirty;
 static volatile int	present_queued;
+static NSBitmapImageRep	*soft_rep;
+static int	soft_rep_w, soft_rep_h, soft_rep_bpl;
+static uchar	*soft_rep_base;
 
 /* Soft Plan9 Paper desktop (#C4C0B4); must match appl/wm/wm.b Background. */
 enum {
@@ -74,27 +74,35 @@ enum {
 	PaperPix = (0xFF<<24) | (PaperB<<16) | (PaperG<<8) | PaperR,
 };
 
-/*
- * Known-good softscreen → AppKit blit (DeviceRGB spp=3 bpp=32).
- * XBGR32 LE bytes are R,G,B,X.  Used by drawRect and in-place present.
- */
 static void
-blit_softscreen(NSView *v)
+invalidate_soft_rep(void)
 {
-	NSBitmapImageRep *rep;
+	soft_rep = nil;
+	soft_rep_w = soft_rep_h = soft_rep_bpl = 0;
+	soft_rep_base = nil;
+}
+
+static NSBitmapImageRep*
+softscreen_rep(void)
+{
 	unsigned char *planes[5];
 	int pw, ph, bpl;
+	uchar *base;
 
-	if(v == nil || gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
-		return;
+	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
+		return nil;
 	pw = Dx(gscreen->r);
 	ph = Dy(gscreen->r);
 	if(pw < 1 || ph < 1)
-		return;
+		return nil;
 	bpl = gscreen->width * (int)sizeof(u32);
+	base = gscreen->data->bdata;
+	if(soft_rep != nil && soft_rep_w == pw && soft_rep_h == ph
+	&& soft_rep_bpl == bpl && soft_rep_base == base)
+		return soft_rep;
 	memset(planes, 0, sizeof planes);
-	planes[0] = gscreen->data->bdata;
-	rep = [[NSBitmapImageRep alloc]
+	planes[0] = base;
+	soft_rep = [[NSBitmapImageRep alloc]
 		initWithBitmapDataPlanes:planes
 		pixelsWide:pw
 		pixelsHigh:ph
@@ -105,8 +113,31 @@ blit_softscreen(NSView *v)
 		colorSpaceName:NSDeviceRGBColorSpace
 		bytesPerRow:bpl
 		bitsPerPixel:32];
+	soft_rep_w = pw;
+	soft_rep_h = ph;
+	soft_rep_bpl = bpl;
+	soft_rep_base = base;
+	return soft_rep;
+}
+
+/*
+ * Softscreen → AppKit (DeviceRGB spp=3 bpp=32).  XBGR32 LE bytes are R,G,B,X.
+ * Full-frame blit: Flushoff batches mean flushmemscreen's rect is only the
+ * draws since the last present; earlier composed pixels must still appear.
+ */
+static void
+blit_softscreen(NSView *v)
+{
+	NSBitmapImageRep *rep;
+	int pw, ph;
+
+	if(v == nil)
+		return;
+	rep = softscreen_rep();
 	if(rep == nil)
 		return;
+	pw = soft_rep_w;
+	ph = soft_rep_h;
 	[rep drawInRect:[v bounds]
 		fromRect:NSMakeRect(0, 0, pw, ph)
 		operation:NSCompositingOperationCopy
@@ -126,7 +157,6 @@ present_softscreen(void)
 {
 	if(view == nil)
 		return;
-	[view setWantsLayer:NO];
 	[view display];
 }
 
@@ -140,56 +170,11 @@ present_on_main(void)
 	present_softscreen();
 }
 
-static CVReturn
-display_link_cb(CVDisplayLinkRef link,
-	const CVTimeStamp *now,
-	const CVTimeStamp *output,
-	CVOptionFlags flags,
-	CVOptionFlags *outFlags,
-	void *context)
-{
-	(void)link;
-	(void)now;
-	(void)output;
-	(void)flags;
-	(void)outFlags;
-	(void)context;
-	if(!present_dirty || present_queued)
-		return kCVReturnSuccess;
-	present_queued = 1;
-	dispatch_async(dispatch_get_main_queue(), ^{
-		present_on_main();
-	});
-	return kCVReturnSuccess;
-}
-
-static void
-ensure_display_link(void)
-{
-	CGDirectDisplayID did;
-	NSNumber *num;
-
-	if(display_link != nil)
-		return;
-	if(CVDisplayLinkCreateWithActiveCGDisplays(&display_link) != kCVReturnSuccess){
-		display_link = nil;
-		return;
-	}
-	CVDisplayLinkSetOutputCallback(display_link, display_link_cb, nil);
-	if(win != nil && [win screen] != nil){
-		num = [[win screen] deviceDescription][@"NSScreenNumber"];
-		if(num != nil){
-			did = (CGDirectDisplayID)[num unsignedIntValue];
-			CVDisplayLinkSetCurrentCGDisplay(display_link, did);
-		}
-	}
-	CVDisplayLinkStart(display_link);
-}
-
 /*
- * Inferno flushes far faster than the display (games icons, caret).  Mark dirty
- * and let CVDisplayLink present ≤ once per refresh — 90Hz full replaces looked
- * like continuous blink even without a clear-to-background path.
+ * Coalesce presents onto the next main-queue turn (or run now if already there).
+ * After wmclient Flushoff, Flushnow is once per composed frame — no need to wait
+ * for CVDisplayLink (that added up to a refresh of latency and felt sluggish).
+ * Multiple Flushnows in one quantum still collapse to a single blit.
  */
 static void
 mark_view_dirty(void)
@@ -197,22 +182,17 @@ mark_view_dirty(void)
 	if(view == nil)
 		return;
 	present_dirty = 1;
-	ensure_display_link();
-	if(display_link == nil){
-		/* No link: coalesce onto the next main-queue turn. */
-		if([NSThread isMainThread]){
-			flush_display_pending = 0;
-			present_on_main();
-			return;
-		}
-		if(flush_display_pending)
-			return;
-		flush_display_pending = 1;
-		dispatch_async(dispatch_get_main_queue(), ^{
-			flush_display_pending = 0;
-			present_on_main();
-		});
+	if([NSThread isMainThread]){
+		present_queued = 0;
+		present_on_main();
+		return;
 	}
+	if(present_queued)
+		return;
+	present_queued = 1;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		present_on_main();
+	});
 }
 
 static void
@@ -275,6 +255,7 @@ screenresize(int w, int h, int notify)
 	dy = h;
 	Xsize = w;
 	Ysize = h;
+	invalidate_soft_rep();
 	if(notify)
 		drawscreenresize(gscreen);
 	else
@@ -561,7 +542,7 @@ convert_key(unsigned short key, unichar ch)
 - (void)drawRect:(NSRect)dirty
 {
 	(void)dirty;
-	/* Expose/resize and vsync presents all land here via -[NSView display]. */
+	/* Expose/resize and coalesced presents land here via -[NSView display]. */
 	blit_softscreen(self);
 }
 
@@ -928,9 +909,8 @@ createwindow(void)
 	view = [[InfernoView alloc] initWithFrame:NSMakeRect(0, 0, dx, dy)];
 	/*
 	 * Non-layered opaque drawRect is the stable color/frame path.
-	 * Layer.contents experiments fixed some flashes but still shimmered when
-	 * replacing the whole texture at Inferno flush rates (often 60–90/s).
-	 * Flushes mark dirty; CVDisplayLink presents in-place ≤ once per refresh.
+	 * Flushoff on wmclient windows stops mid-frame presents; Flushnow coalesces
+	 * onto the main queue without waiting for vsync.
 	 */
 	[view setWantsLayer:NO];
 	[win setContentView:view];
@@ -941,7 +921,6 @@ createwindow(void)
 	[win center];
 	[win makeKeyAndOrderFront:nil];
 	[NSApp activateIgnoringOtherApps:YES];
-	ensure_display_link();
 	present_dirty = 1;
 	present_softscreen();
 
@@ -978,12 +957,7 @@ flushmemscreen(Rectangle r)
 		return;
 	if(view == nil)
 		return;
-
-	/*
-	 * Always mark the whole view dirty.  Partial rects are easy to get
-	 * wrong with flipped coordinates / Retina, and the softscreen blit
-	 * is cheap at typical emu sizes.  Coalesce onto one AppKit paint.
-	 */
+	/* Full softscreen present; coalesce onto one AppKit paint. */
 	mark_view_dirty();
 }
 
