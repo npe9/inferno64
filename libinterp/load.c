@@ -9,7 +9,47 @@
 #define	A(r)	*((Array**)(r))
 
 Module*	modules;
-int	dontcompile = 1; /* TODO compiler is broken on amd64 atleast */
+/* JIT selection is controlled by cflag (-c); individual modules may opt out. */
+int	dontcompile;
+
+typedef struct Jitalloc Jitalloc;
+struct Jitalloc {
+	void *p;
+	void (*release)(void*);
+	Jitalloc *next;
+};
+static Jitalloc *jitallocs;
+
+void
+registerjitcode(void *p, void (*release)(void*))
+{
+	Jitalloc *j;
+
+	j = malloc(sizeof(*j));
+	if(j == nil)
+		error(exNomem);
+	j->p = p;
+	j->release = release;
+	j->next = jitallocs;
+	jitallocs = j;
+}
+
+void
+freejitcode(void *p)
+{
+	Jitalloc **l, *j;
+
+	if(p == nil)
+		return;
+	for(l = &jitallocs; (j = *l) != nil; l = &j->next)
+		if(j->p == p) {
+			*l = j->next;
+			j->release(p);
+			free(j);
+			return;
+		}
+	free(p);
+}
 
 static s32
 operand(uchar **p)
@@ -682,7 +722,7 @@ freemod(Module *m)
 		free(m->type);
 	}
 	free(m->name);
-	free(m->prog);
+	freejitcode(m->prog);
 	free(m->path);
 	free(m->pctab);
 	if(m->ldt != nil){

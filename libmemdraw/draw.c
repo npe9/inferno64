@@ -89,6 +89,7 @@ memimageinit(void)
 static u32 imgtorgba(Memimage*, u32);
 static u32 rgbatoimg(Memimage*, u32);
 static u32 pixelbits(Memimage*, Point);
+static int memfastdraw(Memimage*, Rectangle, Memimage*, Rectangle, Memimage*, int);
 
 #define DDBG if(drawdebug)
 void
@@ -114,6 +115,12 @@ DDBG	print("memimagedraw %p/%uX %R @ %p %p/%uX %P %p/%uX %P... ",
 		return;
 	}
 
+	/* The display protocol overwhelmingly uses the canonical opaque mask.
+	 * Handle native-format copies and fills before decoding draw parameters,
+	 * mask pixels, or converting colours. */
+	if(memfastdraw(dst, r, src, par.sr, mask, op))
+		return;
+
 	par.op = op;
 	par.dst = dst;
 	par.r = r;
@@ -128,8 +135,13 @@ DDBG	print("memimagedraw %p/%uX %R @ %p %p/%uX %P %p/%uX %P... ",
 		if(Dx(src->r)==1 && Dy(src->r)==1){
 			par.sval = pixelbits(src, src->r.min);
 			par.state |= Simplesrc;
-			par.srgba = imgtorgba(src, par.sval);
-			par.sdval = rgbatoimg(dst, par.srgba);
+			if(src->chan == dst->chan && !(src->flags & Falpha)){
+				par.srgba = 0xFF;
+				par.sdval = par.sval;
+			}else{
+				par.srgba = imgtorgba(src, par.sval);
+				par.sdval = rgbatoimg(dst, par.srgba);
+			}
 			if((par.srgba&0xFF) == 0 && (op&DoutS)){
 				if (drawdebug) iprint("fill with transparent source\n");
 				return;	/* no-op successfully handled */
@@ -137,7 +149,10 @@ DDBG	print("memimagedraw %p/%uX %R @ %p %p/%uX %P %p/%uX %P... ",
 		}
 	}
 
-	if(mask->flags & Frepl){
+	if(mask == memopaque){
+		par.state |= Replmask|Simplemask|Fullmask;
+		par.mval = ~0;
+	}else if(mask->flags & Frepl){
 		par.state |= Replmask;
 		if(Dx(mask->r)==1 && Dy(mask->r)==1){
 			par.mval = pixelbits(mask, mask->r.min);
@@ -2015,6 +2030,76 @@ memset24(void *vp, u32 val, int n)
 	}
 }
 
+/* Fast path for the protocol's common opaque, native-format operations.
+ * drawclip has already made r and sr congruent and safe to access. */
+static int
+memfastdraw(Memimage *dst, Rectangle r, Memimage *src, Rectangle sr,
+	Memimage *mask, int op)
+{
+	uchar *dp, *sp, p[4];
+	int dx, dy, y, nb, swid, dwid;
+	u32 v;
+
+	if(mask != memopaque || dst->depth < 8 || src->chan != dst->chan)
+		return 0;
+	if(op != S && (op != SoverD || (src->flags & Falpha)))
+		return 0;
+	dx = Dx(r);
+	dy = Dy(r);
+	dwid = dst->width * sizeof(u32);
+	dp = byteaddr(dst, r.min);
+
+	if((src->flags & Frepl) == 0){
+		swid = src->width * sizeof(u32);
+		sp = byteaddr(src, sr.min);
+		nb = dx * dst->depth / 8;
+		if(src->data == dst->data && dp > sp){
+			sp += (dy-1) * swid;
+			dp += (dy-1) * dwid;
+			swid = -swid;
+			dwid = -dwid;
+		}
+		if(swid == nb && dwid == nb){
+			memmove(dp, sp, nb * dy);
+			return 1;
+		}
+		for(y = 0; y < dy; y++, sp += swid, dp += dwid)
+			memmove(dp, sp, nb);
+		return 1;
+	}
+
+	if(Dx(src->r) != 1 || Dy(src->r) != 1)
+		return 0;
+	v = pixelbits(src, src->r.min);
+	switch(dst->depth){
+	case 8:
+		for(y = 0; y < dy; y++, dp += dwid)
+			memset(dp, v, dx);
+		return 1;
+	case 16:
+		p[0] = v;
+		p[1] = v >> 8;
+		v = *(ushort*)p;
+		for(y = 0; y < dy; y++, dp += dwid)
+			memset16(dp, v, dx);
+		return 1;
+	case 24:
+		for(y = 0; y < dy; y++, dp += dwid)
+			memset24(dp, v, dx);
+		return 1;
+	case 32:
+		p[0] = v;
+		p[1] = v >> 8;
+		p[2] = v >> 16;
+		p[3] = v >> 24;
+		v = *(u32*)p;
+		for(y = 0; y < dy; y++, dp += dwid)
+			memset32(dp, v, dx);
+		return 1;
+	}
+	return 0;
+}
+
 static u32
 imgtorgba(Memimage *img, u32 val)
 {
@@ -2557,4 +2642,3 @@ memfillcolor(Memimage *i, u32 val)
 		break;
 	}
 }
-

@@ -8,3 +8,13 @@ pipelines:
           - mk $MKFLAGS mkdirs
           - mk $MKFLAGS emuinstall
           - emu cat /dev/sysctl || echo ' -' exited with status $? '(ignored)'
+  custom:
+    macos-arm64-regression:
+      - step:
+          name: macOS arm64 Cocoa and Draw3d
+          runs-on:
+            - self.hosted
+            - macos
+            - arm64
+          script:
+            - tests/macos-arm64/run.sh

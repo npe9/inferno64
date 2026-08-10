@@ -13,7 +13,7 @@ set -e
 
 ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)}
 export PATH="$ROOT/MacOSX/arm64/bin:$PATH"
-EMU="$ROOT/MacOSX/arm64/bin/emu"
+EMU="$ROOT/MacOSX/arm64/bin/emu-g"
 DIS="/tmp/jit-levels.dis"
 HOSTDIS="$ROOT$DIS"
 fail=0

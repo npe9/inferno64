@@ -81,7 +81,6 @@ port
 	uqid
 
 code
-	int	dontcompile = 1;
 	int macjit = 1;
 
 init

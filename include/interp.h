@@ -436,6 +436,8 @@ extern	void		extend(void);
 extern	void		freedyncode(Module*);
 extern	void		freedyndata(Modlink*);
 extern	void		freemod(Module*);
+extern	void		registerjitcode(void*, void (*)(void*));
+extern	void		freejitcode(void*);
 extern	void		freeheap(Heap*, int);
 extern	void		freeptrs(void*, Type*);
 extern	void		freestring(Heap*, int);

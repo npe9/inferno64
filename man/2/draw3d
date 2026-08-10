@@ -101,7 +101,7 @@ module type but encodes
 sprites, and related state through optional
 .IR draw (3)
 protocol letters
-.RB ( 3 / M / w / u / z / g / G / h / j / k / q )
+.RB ( C / 3 / M / w / u / z / g / G / h / j / k / q )
 so a capable
 .B /dev/draw
 server can rasterise or Metal-accelerate the primitives.
@@ -111,6 +111,13 @@ they
 .BR load ;
 .B Draw3d->PATH
 remains the software module.
+.B Draw3ddev
+queries the
+.B C
+capability mask and selects each accelerated primitive independently; it uses
+the legacy all-or-nothing
+.B 3
+probe only with older servers.
 .PP
 .B Init
 must be called once after the module is loaded.
@@ -162,13 +169,12 @@ also clears the server z-buffer
 and Metal depth;
 soft fallback inside the emu uses the same plane coefficients when the GPU
 cannot draw (obscured or off-screen destinations).
-Metal depth is a separate
+Metal depth is an order-preserving
 .RI [0,1]
-sort key derived from eye
-.BR z ;
-it matches soft
+mapping of the same plane-depth quantity used by the software
 .B ZSCALE
-ordering for typical scenes but is not numerically identical.
+buffer.  Its floating-point representation is not bit-identical, but it does
+not saturate at a finite scene distance and preserves the software ordering.
 .B Setzclip
 enables rejection of geometry with eye-space
 .B z ≥ 0

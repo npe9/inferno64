@@ -67,6 +67,7 @@ static int	fullscreen_transition;
 static int	wm_notify_generation;
 static volatile int	present_dirty;
 static volatile int	present_queued;
+static Lock	present_lock;
 
 /* Metal softscreen present (CAMetalLayer) + direct draw3d GPU geom. */
 static id<MTLDevice>		mtl_device;
@@ -80,13 +81,25 @@ static id<MTLDepthStencilState>	mtl_depth_off;
 static id<MTLTexture>		mtl_tex;		/* softscreen upload */
 static id<MTLTexture>		mtl_under;		/* softscreen at 3D→2D flush */
 static id<MTLTexture>		mtl_depth;
+static id<MTLBuffer>		mtl_upload_buf[3];
+static id<MTLCommandBuffer>	mtl_upload_pending[3];
+static int	mtl_upload_len;
+static int	mtl_upload_next;
+static id<MTLBuffer>		mtl_vertex_buf[3];
+static id<MTLCommandBuffer>	mtl_vertex_pending[3];
+static id<MTLCommandBuffer>	mtl_vertex_cmd;
+static int	mtl_vertex_slot = -1;
+static int	mtl_vertex_off;
 static int	mtl_tex_w, mtl_tex_h;
 static int	mtl_under_w, mtl_under_h;
 static int	mtl_depth_w, mtl_depth_h;
 static int	mtl_tex_fresh;	/* new soft tex: must full-upload before dirty */
 static CAMetalLayer	*mtl_layer;
-static Rectangle	soft_upload;	/* dirty softscreen region since last present */
-static int	soft_upload_valid;
+enum { SoftTile = 64 };
+static uchar	*soft_dirty;
+static uchar	*soft_upload_dirty;
+static int	soft_ntx, soft_nty;
+static Lock	soft_dirty_lock;
 static int	mtl_have_under;	/* snapshot taken; composite HUD over 3D */
 static int	mtl_zenable;
 static int	mtl_zclear;	/* clear depth on next geom pass */
@@ -98,11 +111,6 @@ enum {
 	MaxGPUSprites = 512,
 	MaxSpriteTexCache = 64,	/* reuse uploads across 'j' draws */
 	EllipseSegs = 48,
-	/*
-	 * Eye-z → Metal depth [0,1]: closer (ez→0−) → smaller depth.
-	 * Sort-only vs soft Polyfill ZSCALE=1<<20 — same order, not bit-identical.
-	 */
-	ZDepthScale = 256,
 };
 
 typedef struct GPULine GPULine;
@@ -237,6 +245,7 @@ extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 extern void	(*gpudrawflush)(void);
+extern void	(*gpudrawreadback)(void);
 extern void	(*gpudrawzclear)(void);
 extern void	(*gpudrawzenable)(int);
 
@@ -252,6 +261,7 @@ static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLText
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_sprites(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	soft_burn_tris(void);
+static void	metal_readback_geom(void);
 static float	eye_to_depth(float);
 static void	metal_clear_sprite_tex_cache(void);
 static id<MTLTexture>	metal_sprite_tex(Memimage*, Memimage*);
@@ -268,7 +278,12 @@ invalidate_mtl_tex(void)
 	mtl_depth_w = mtl_depth_h = 0;
 	mtl_have_under = 0;
 	metal_clear_sprite_tex_cache();
-	soft_upload_valid = 0;
+	lock(&soft_dirty_lock);
+	if(soft_dirty != nil){
+		memset(soft_dirty, 0, soft_ntx * soft_nty);
+		memset(soft_upload_dirty, 0, soft_ntx * soft_nty);
+	}
+	unlock(&soft_dirty_lock);
 }
 
 static int
@@ -350,6 +365,7 @@ metal_init(void)
 	gpudrawsprite = metal_queue_sprite;
 	gpudrawellipse = metal_queue_ellipse;
 	gpudrawflush = metal_flush_geom;
+	gpudrawreadback = metal_readback_geom;
 	gpudrawzclear = metal_zclear;
 	gpudrawzenable = metal_set_zenable;
 	mtl_zclear = 1;
@@ -359,20 +375,16 @@ metal_init(void)
 static float
 eye_to_depth(float ez)
 {
-	float d;
+	float planez;
 
 	/*
-	 * Camera looks toward −Z; closer ⇒ larger (less negative) ez.
-	 * Soft Polyfill stores plane z as int(ez * ZSCALE) with ZSCALE=1<<20.
-	 * Here we only need a stable less-equal order for Metal depth-test
-	 * sorting among GPU primitives — not matching soft zbuf numerics.
+	 * Camera looks toward −Z, while the software buffer compares plane
+	 * depth (-eye-z) with "smaller wins".  atan maps the complete positive
+	 * and negative range monotonically into [0,1], preserving that ordering
+	 * without the old 256-unit saturation collisions.
 	 */
-	d = -ez / (float)ZDepthScale;
-	if(d < 0.0f)
-		d = 0.0f;
-	if(d > 1.0f)
-		d = 1.0f;
-	return d;
+	planez = -ez;
+	return 0.5f + atanf(planez) / (float)M_PI;
 }
 
 static void
@@ -398,7 +410,7 @@ metal_soft_tex(int pw, int ph)
 		texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
 		width:pw height:ph mipmapped:NO];
 	td.usage = MTLTextureUsageShaderRead;
-	td.storageMode = MTLStorageModeShared;
+	td.storageMode = MTLStorageModePrivate;
 	mtl_tex = [mtl_device newTextureWithDescriptor:td];
 	mtl_tex_w = pw;
 	mtl_tex_h = ph;
@@ -418,7 +430,7 @@ metal_under_tex(int pw, int ph)
 		texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
 		width:pw height:ph mipmapped:NO];
 	td.usage = MTLTextureUsageShaderRead;
-	td.storageMode = MTLStorageModeShared;
+	td.storageMode = MTLStorageModePrivate;
 	mtl_under = [mtl_device newTextureWithDescriptor:td];
 	mtl_under_w = pw;
 	mtl_under_h = ph;
@@ -444,28 +456,129 @@ metal_depth_tex(int pw, int ph)
 	return mtl_depth;
 }
 
-static void
-metal_upload_rect(id<MTLTexture> tex, Rectangle ur)
+static int
+metal_damage_map(int pw, int ph)
 {
-	int bpl, ux, uy, uw, uh;
-	uchar *base, *row;
-	MTLRegion region;
+	int ntx, nty;
+	uchar *p, *q;
+
+	ntx = (pw + SoftTile - 1) / SoftTile;
+	nty = (ph + SoftTile - 1) / SoftTile;
+	lock(&soft_dirty_lock);
+	if(ntx == soft_ntx && nty == soft_nty && soft_dirty != nil){
+		unlock(&soft_dirty_lock);
+		return 0;
+	}
+	p = malloc(ntx * nty);
+	q = malloc(ntx * nty);
+	if(p == nil || q == nil){
+		free(p);
+		free(q);
+		unlock(&soft_dirty_lock);
+		return -1;
+	}
+	free(soft_dirty);
+	free(soft_upload_dirty);
+	soft_dirty = p;
+	soft_upload_dirty = q;
+	soft_ntx = ntx;
+	soft_nty = nty;
+	memset(soft_dirty, 0, ntx * nty);
+	memset(soft_upload_dirty, 0, ntx * nty);
+	unlock(&soft_dirty_lock);
+	return 0;
+}
+
+/* Upload dirty tile runs with screen-relative offsets.  SoftTile*4 and the
+ * staging stride are 256-byte aligned, so no rectangle repacking is needed. */
+static int
+metal_upload_damage(id<MTLTexture> tex, int full)
+{
+	int bpl, pw, ph, sbpl, need, slot, tx, tx1, ty, x, y, w, h, ry, any;
+	uchar *base, *dst, *damage, *swap;
+	id<MTLBuffer> buf;
+	id<MTLCommandBuffer> cmd;
+	id<MTLBlitCommandEncoder> blit;
 
 	if(tex == nil || gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
-		return;
-	if(!rectclip(&ur, gscreen->r))
-		return;
+		return -1;
+	pw = Dx(gscreen->r);
+	ph = Dy(gscreen->r);
+	if(metal_damage_map(pw, ph) < 0)
+		return -1;
+	/* Snapshot damage before touching pixels.  New flushes land in the other
+	 * map and therefore cannot be erased when this upload completes. */
+	lock(&soft_dirty_lock);
+	swap = soft_upload_dirty;
+	soft_upload_dirty = soft_dirty;
+	soft_dirty = swap;
+	memset(soft_dirty, 0, soft_ntx * soft_nty);
+	damage = soft_upload_dirty;
+	unlock(&soft_dirty_lock);
 	bpl = gscreen->width * (int)sizeof(u32);
+	sbpl = (pw * 4 + 255) & ~255;
+	need = sbpl * ph;
 	base = gscreen->data->bdata;
-	ux = ur.min.x - gscreen->r.min.x;
-	uy = ur.min.y - gscreen->r.min.y;
-	uw = Dx(ur);
-	uh = Dy(ur);
-	if(uw <= 0 || uh <= 0)
-		return;
-	row = base + uy * bpl + ux * 4;
-	region = MTLRegionMake2D(ux, uy, uw, uh);
-	[tex replaceRegion:region mipmapLevel:0 withBytes:row bytesPerRow:bpl];
+	slot = mtl_upload_next++ % nelem(mtl_upload_buf);
+	if(mtl_upload_pending[slot] != nil){
+		[mtl_upload_pending[slot] waitUntilCompleted];
+		mtl_upload_pending[slot] = nil;
+	}
+	if(mtl_upload_buf[slot] == nil || mtl_upload_len < need){
+		mtl_upload_len = need;
+		for(y = 0; y < nelem(mtl_upload_buf); y++){
+			mtl_upload_buf[y] = [mtl_device newBufferWithLength:mtl_upload_len
+				options:MTLResourceStorageModeShared];
+			mtl_upload_pending[y] = nil;
+		}
+	}
+	buf = mtl_upload_buf[slot];
+	if(buf == nil)
+		return -1;
+	dst = [buf contents];
+	cmd = [mtl_queue commandBuffer];
+	if(cmd == nil)
+		return -1;
+	blit = [cmd blitCommandEncoder];
+	if(blit == nil)
+		return -1;
+	any = 0;
+	for(ty = 0; ty < soft_nty; ty++){
+		for(tx = 0; tx < soft_ntx; ){
+			if(!full && !damage[ty * soft_ntx + tx]){
+				tx++;
+				continue;
+			}
+			for(tx1 = tx + 1; tx1 < soft_ntx; tx1++)
+				if(!full && !damage[ty * soft_ntx + tx1])
+					break;
+			x = tx * SoftTile;
+			y = ty * SoftTile;
+			w = tx1 * SoftTile;
+			if(w > pw)
+				w = pw;
+			w -= x;
+			h = SoftTile;
+			if(y + h > ph)
+				h = ph - y;
+			for(ry = 0; ry < h; ry++)
+				memmove(dst + (y + ry) * sbpl + x * 4,
+					base + (y + ry) * bpl + x * 4, w * 4);
+			[blit copyFromBuffer:buf sourceOffset:y * sbpl + x * 4
+				sourceBytesPerRow:sbpl sourceBytesPerImage:sbpl * h
+				sourceSize:MTLSizeMake(w, h, 1)
+				toTexture:tex destinationSlice:0 destinationLevel:0
+				destinationOrigin:MTLOriginMake(x, y, 0)];
+			any = 1;
+			tx = tx1;
+		}
+	}
+	[blit endEncoding];
+	if(!any)
+		return 0;
+	[cmd commit];
+	mtl_upload_pending[slot] = cmd;
+	return 0;
 }
 
 static int
@@ -643,7 +756,9 @@ static void
 metal_flush_geom(void)
 {
 	int pw, ph;
-	id<MTLTexture> under;
+	id<MTLTexture> tex, under;
+	id<MTLCommandBuffer> cmd;
+	id<MTLBlitCommandEncoder> blit;
 
 	if(nglines == 0 && ngtriverts == 0 && ngsprites == 0)
 		return;
@@ -656,10 +771,59 @@ metal_flush_geom(void)
 	if(pw < 1 || ph < 1)
 		return;
 	under = metal_under_tex(pw, ph);
-	if(under == nil)
+	tex = metal_soft_tex(pw, ph);
+	if(under == nil || tex == nil)
 		return;
-	metal_upload_rect(under, gscreen->r);
+	/* Bring the persistent soft texture current, then snapshot it entirely on
+	 * the GPU.  Uploading gscreen straight into under forced a full CPU texture
+	 * conversion every time 2D drawing followed queued geometry. */
+	metal_upload_damage(tex, mtl_tex_fresh);
+	mtl_tex_fresh = 0;
+	cmd = [mtl_queue commandBuffer];
+	if(cmd == nil)
+		return;
+	blit = [cmd blitCommandEncoder];
+	if(blit == nil)
+		return;
+	[blit copyFromTexture:tex sourceSlice:0 sourceLevel:0
+		sourceOrigin:MTLOriginMake(0, 0, 0)
+		sourceSize:MTLSizeMake(pw, ph, 1)
+		toTexture:under destinationSlice:0 destinationLevel:0
+		destinationOrigin:MTLOriginMake(0, 0, 0)];
+	[blit endEncoding];
+	[cmd commit];
 	mtl_have_under = 1;
+}
+
+static int
+metal_vertex_data(id<MTLCommandBuffer> cmd, void *data, int n,
+	id<MTLBuffer> *buf, int *off)
+{
+	int aligned;
+
+	if(cmd == nil || data == nil || n <= 0)
+		return -1;
+	if(cmd != mtl_vertex_cmd){
+		mtl_vertex_slot = (mtl_vertex_slot + 1) % nelem(mtl_vertex_buf);
+		if(mtl_vertex_pending[mtl_vertex_slot] != nil){
+			[mtl_vertex_pending[mtl_vertex_slot] waitUntilCompleted];
+			mtl_vertex_pending[mtl_vertex_slot] = nil;
+		}
+		if(mtl_vertex_buf[mtl_vertex_slot] == nil)
+			mtl_vertex_buf[mtl_vertex_slot] = [mtl_device
+				newBufferWithLength:8*1024*1024 options:MTLResourceStorageModeShared];
+		mtl_vertex_cmd = cmd;
+		mtl_vertex_off = 0;
+		mtl_vertex_pending[mtl_vertex_slot] = cmd;
+	}
+	aligned = (mtl_vertex_off + 255) & ~255;
+	if(mtl_vertex_buf[mtl_vertex_slot] == nil || aligned + n > 8*1024*1024)
+		return -1;
+	memmove((uchar*)[mtl_vertex_buf[mtl_vertex_slot] contents] + aligned, data, n);
+	*buf = mtl_vertex_buf[mtl_vertex_slot];
+	*off = aligned;
+	mtl_vertex_off = aligned + n;
+	return 0;
 }
 
 static int
@@ -669,6 +833,7 @@ metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 {
 	float wh[2];
 	id<MTLBuffer> vbuf;
+	int voff;
 	id<MTLRenderCommandEncoder> enc;
 	MTLRenderPassDescriptor *rp;
 	MTLLoadAction zload;
@@ -677,9 +842,7 @@ metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		return -1;
 	if(depthtex == nil)
 		return -1;
-	vbuf = [mtl_device newBufferWithBytes:verts length:sizeof(GPUVert) * nv
-		options:MTLResourceStorageModeShared];
-	if(vbuf == nil)
+	if(metal_vertex_data(cmd, verts, sizeof(GPUVert) * nv, &vbuf, &voff) < 0)
 		return -1;
 	wh[0] = (float)pw;
 	wh[1] = (float)ph;
@@ -699,7 +862,7 @@ metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	enc = [cmd renderCommandEncoderWithDescriptor:rp];
 	[enc setRenderPipelineState:mtl_geom_pipe];
 	[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
-	[enc setVertexBuffer:vbuf offset:0 atIndex:0];
+	[enc setVertexBuffer:vbuf offset:voff atIndex:0];
 	[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
 	[enc drawPrimitives:prim vertexStart:0 vertexCount:nv];
 	[enc endEncoding];
@@ -1263,7 +1426,7 @@ static void
 metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	id<MTLTexture> depthtex, int pw, int ph)
 {
-	int i;
+	int i, voff;
 	float wh[2];
 	id<MTLBuffer> vbuf;
 	id<MTLRenderCommandEncoder> enc;
@@ -1290,10 +1453,8 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	mtl_zclear = 0;
 
 	for(i = 0; i < ngsprites; i++){
-		vbuf = [mtl_device newBufferWithBytes:gsprites[i].v
-			length:sizeof(GPUTexVert) * 6
-			options:MTLResourceStorageModeShared];
-		if(vbuf == nil || gsprites[i].tex == nil)
+		if(gsprites[i].tex == nil || metal_vertex_data(cmd, gsprites[i].v,
+		    sizeof(GPUTexVert) * 6, &vbuf, &voff) < 0)
 			continue;
 		rp = [MTLRenderPassDescriptor renderPassDescriptor];
 		rp.colorAttachments[0].texture = drawabletex;
@@ -1307,7 +1468,7 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		enc = [cmd renderCommandEncoderWithDescriptor:rp];
 		[enc setRenderPipelineState:mtl_sprite_pipe];
 		[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
-		[enc setVertexBuffer:vbuf offset:0 atIndex:0];
+		[enc setVertexBuffer:vbuf offset:voff atIndex:0];
 		[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
 		[enc setFragmentTexture:gsprites[i].tex atIndex:0];
 		[enc setFragmentSamplerState:sprsamp atIndex:0];
@@ -1316,6 +1477,63 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		gsprites[i].tex = nil;
 	}
 	ngsprites = 0;
+}
+
+/*
+ * Materialise queued presentation-only geometry into the Inferno softscreen.
+ * draw(3) reads are ordered after writes, so readpixels must not observe the
+ * pre-Metal image.  Render into a shared off-screen target with the same
+ * pipelines/depth state, wait for completion, and copy its bytes back.
+ */
+static void
+metal_readback_geom(void)
+{
+	int pw, ph, bpl;
+	id<MTLTexture> tex, depthtex;
+	id<MTLCommandBuffer> cmd;
+	MTLTextureDescriptor *td;
+	MTLRegion region;
+	uchar *p;
+
+	if(nglines == 0 && ngtriverts == 0 && ngsprites == 0)
+		return;
+	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
+		return;
+	pw = Dx(gscreen->r);
+	ph = Dy(gscreen->r);
+	if(pw < 1 || ph < 1)
+		return;
+	td = [MTLTextureDescriptor
+		texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+		width:pw height:ph mipmapped:NO];
+	td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+	td.storageMode = MTLStorageModeShared;
+	tex = [mtl_device newTextureWithDescriptor:td];
+	depthtex = metal_depth_tex(pw, ph);
+	if(tex == nil || depthtex == nil)
+		return;
+	metal_upload_damage(tex, 1);
+	cmd = [mtl_queue commandBuffer];
+	if(cmd == nil)
+		return;
+	metal_present_tris(cmd, tex, depthtex, pw, ph);
+	metal_present_lines(cmd, tex, depthtex, pw, ph);
+	metal_present_sprites(cmd, tex, depthtex, pw, ph);
+	[cmd commit];
+	[cmd waitUntilCompleted];
+	p = byteaddr(gscreen, gscreen->r.min);
+	bpl = gscreen->width * sizeof(u32);
+	region = MTLRegionMake2D(0, 0, pw, ph);
+	[tex getBytes:p bytesPerRow:bpl fromRegion:region mipmapLevel:0];
+	/* The CPU image is authoritative again; force the next present to upload it. */
+	mtl_tex_fresh = 1;
+	lock(&soft_dirty_lock);
+	if(soft_dirty != nil){
+		memset(soft_dirty, 0, soft_ntx * soft_nty);
+		memset(soft_upload_dirty, 0, soft_ntx * soft_nty);
+	}
+	unlock(&soft_dirty_lock);
+	mtl_have_under = 0;
 }
 
 static void
@@ -1369,7 +1587,6 @@ static void
 present_softscreen(void)
 {
 	int pw, ph, have_geom, overlay;
-	Rectangle ur;
 	id<MTLTexture> tex, depthtex, under;
 	id<CAMetalDrawable> drawable;
 	id<MTLCommandBuffer> cmd;
@@ -1386,24 +1603,13 @@ present_softscreen(void)
 		return;
 
 	mtl_layer.drawableSize = CGSizeMake(pw, ph);
-	drawable = [mtl_layer nextDrawable];
-	if(drawable == nil)
-		return;
 	tex = metal_soft_tex(pw, ph);
 	if(tex == nil)
 		return;
 	depthtex = metal_depth_tex(pw, ph);
 
-	if(mtl_tex_fresh || !soft_upload_valid){
-		ur = gscreen->r;
-		mtl_tex_fresh = 0;
-	}else{
-		ur = soft_upload;
-		if(!rectclip(&ur, gscreen->r))
-			ur = gscreen->r;
-	}
-	soft_upload_valid = 0;
-	metal_upload_rect(tex, ur);
+	metal_upload_damage(tex, mtl_tex_fresh);
+	mtl_tex_fresh = 0;
 
 	if(samp == nil){
 		sd = [[MTLSamplerDescriptor alloc] init];
@@ -1415,6 +1621,11 @@ present_softscreen(void)
 	have_geom = nglines > 0 || ngtriverts > 0 || ngsprites > 0;
 	overlay = have_geom && mtl_have_under && mtl_under != nil;
 	under = mtl_under;
+	/* Do CPU staging and enqueue texture uploads before acquiring a scarce
+	 * drawable; this shortens drawable ownership and avoids frame-pacing stalls. */
+	drawable = [mtl_layer nextDrawable];
+	if(drawable == nil)
+		return;
 	cmd = [mtl_queue commandBuffer];
 
 	if(overlay){
@@ -1441,10 +1652,14 @@ present_softscreen(void)
 static void
 present_on_main(void)
 {
+	lock(&present_lock);
 	present_queued = 0;
-	if(!present_dirty)
+	if(!present_dirty){
+		unlock(&present_lock);
 		return;
+	}
 	present_dirty = 0;
+	unlock(&present_lock);
 	present_softscreen();
 }
 
@@ -1457,17 +1672,24 @@ present_on_main(void)
 static void
 mark_view_dirty(void)
 {
+	int queue;
+
 	if(view == nil)
 		return;
+	lock(&present_lock);
 	present_dirty = 1;
 	if([NSThread isMainThread]){
 		present_queued = 0;
+		unlock(&present_lock);
 		present_on_main();
 		return;
 	}
-	if(present_queued)
+	queue = !present_queued;
+	if(queue)
+		present_queued = 1;
+	unlock(&present_lock);
+	if(!queue)
 		return;
-	present_queued = 1;
 	dispatch_async(dispatch_get_main_queue(), ^{
 		present_on_main();
 	});
@@ -2251,16 +2473,26 @@ screeninit(void)
 void
 flushmemscreen(Rectangle r)
 {
+	int tx0, tx1, ty0, ty1, tx, ty;
+
 	if(r.max.x < r.min.x || r.max.y < r.min.y)
 		return;
 	if(view == nil)
 		return;
 	if(gscreen != nil && rectclip(&r, gscreen->r)){
-		if(!soft_upload_valid){
-			soft_upload = r;
-			soft_upload_valid = 1;
-		}else
-			combinerect(&soft_upload, r);
+		if(metal_damage_map(Dx(gscreen->r), Dy(gscreen->r)) < 0)
+			mtl_tex_fresh = 1;
+		else{
+			tx0 = (r.min.x - gscreen->r.min.x) / SoftTile;
+			ty0 = (r.min.y - gscreen->r.min.y) / SoftTile;
+			tx1 = (r.max.x - gscreen->r.min.x + SoftTile - 1) / SoftTile;
+			ty1 = (r.max.y - gscreen->r.min.y + SoftTile - 1) / SoftTile;
+			lock(&soft_dirty_lock);
+			for(ty = ty0; ty < ty1; ty++)
+				for(tx = tx0; tx < tx1; tx++)
+					soft_dirty[ty * soft_ntx + tx] = 1;
+			unlock(&soft_dirty_lock);
+		}
 	}
 	/* Coalesce onto one AppKit/Metal present. */
 	mark_view_dirty();

@@ -24,6 +24,10 @@ include "math/draw3d.m";
 LIMIT: con real (1<<11);
 Pi: con Math->Pi;
 
+D3CapMatrix, D3CapFill, D3CapLine, D3CapPlot, D3CapSprite, D3CapEllipse: con 1<<iota;
+D3CapGPU, D3CapReadback, D3CapNearClip, D3CapDepthOrder: con 1<<iota;
+D3CapCore: con D3CapMatrix|D3CapFill|D3CapLine|D3CapPlot|D3CapSprite|D3CapEllipse;
+
 Mstate: adt
 {
 	matl: list of Matrix;
@@ -44,6 +48,7 @@ Mstate: adt
 ms: Mstate;
 inited := 0;
 haveproto := 0;
+protocaps := 0;
 probed := 0;
 
 # Cached protocol state — avoid re-sending M/w/u on every line3.
@@ -89,7 +94,21 @@ probe(d: ref Display): int
 {
 	if(d == nil)
 		return 0;
-	return writemsg(d, array[] of {byte '3'}) >= 0;
+	ci := d.newimage(Rect((0, 0), (1, 1)), Draw->RGBA32, 0, 0);
+	if(ci != nil){
+		msg := array[5] of byte;
+		msg[0] = byte 'C';
+		puti32(msg, 1, ci.id());
+		if(writemsg(d, msg) >= 0){
+			buf := array[4] of byte;
+			if(ci.readpixels(ci.r, buf) == 4)
+				return int buf[0] | (int buf[1]<<8) | (int buf[2]<<16) | (int buf[3]<<24);
+		}
+	}
+	# Compatibility with the first extension revision, which only had '3'.
+	if(writemsg(d, array[] of {byte '3'}) >= 0)
+		return D3CapCore;
+	return 0;
 }
 
 mateq(a, b: Matrix): int
@@ -265,7 +284,8 @@ context(dst: ref Image): ref Context
 {
 	ensure();
 	if(dst != nil && dst.display != nil && !probed){
-		haveproto = probe(dst.display);
+		protocaps = probe(dst.display);
+		haveproto = (protocaps & D3CapMatrix) != 0;
 		probed = 1;
 		if(!haveproto)
 			sys->fprint(sys->fildes(2), "draw3ddev: no draw3d letters; software fallback\n");
@@ -324,7 +344,7 @@ clearz(c: ref Context)
 {
 	if(c == nil)
 		return;
-	if(haveproto && c.dst != nil){
+	if(haveproto && (protocaps & D3CapDepthOrder) != 0 && c.dst != nil){
 		sync3d(c);
 		msg := array[1+4] of byte;
 		msg[0] = byte 'z';
@@ -646,7 +666,7 @@ end(c: ref Context)
 	vc := c.colour;
 	case ms.vk {
 	CIRCLE or FILLCIRCLE or ELLIPSE or FILLELLIPSE =>
-		if(haveproto && ms.apn >= 1){
+		if(haveproto && (protocaps & D3CapEllipse) != 0 && ms.apn >= 1){
 			(pv, ok) := protovert(c, ms.aw[0]);
 			if(ok){
 				sync3d(c);
@@ -682,7 +702,7 @@ end(c: ref Context)
 			dst.fillellipse(ms.ap[0], ms.vr, ms.vrr, vc, Point(0, 0));
 	POLY =>
 		# Outline via line3 segments on the protocol path.
-		if(haveproto && ms.apn >= 2){
+		if(haveproto && (protocaps & D3CapLine) != 0 && ms.apn >= 2){
 			for(i := 0; i < ms.apn; i++){
 				j := i+1;
 				if(j >= ms.apn)
@@ -694,7 +714,7 @@ end(c: ref Context)
 			dst.poly(ms.ap, Draw->Endsquare, Draw->Endsquare, 0, vc, Point(0, 0));
 		}
 	FILLPOLY =>
-		if(haveproto && ms.apn >= 3)
+		if(haveproto && (protocaps & D3CapFill) != 0 && ms.apn >= 3)
 			fillpoly3(c, ms.aw[:ms.apn], Vector(0.0, 0.0, 1.0), 1.0);
 		else{
 			ms.ap[len ms.ap - 1] = ms.ap[0];
@@ -709,7 +729,7 @@ line3(c: ref Context, a, b: Vector, thick: int)
 		return;
 	if(thick < 0)
 		thick = 0;
-	if(haveproto){
+	if(haveproto && (protocaps & D3CapLine) != 0){
 		(pa3, oka) := protovert(c, a);
 		(pb3, okb) := protovert(c, b);
 		if(!oka || !okb)
@@ -740,7 +760,7 @@ plot3(c: ref Context, v: Vector)
 {
 	if(c.dst == nil || c.colour == nil)
 		return;
-	if(haveproto){
+	if(haveproto && (protocaps & D3CapPlot) != 0){
 		(pv, ok) := protovert(c, v);
 		if(!ok)
 			return;
@@ -844,7 +864,7 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 	n := len verts;
 	if(n < 3 || c.dst == nil || c.colour == nil)
 		return;
-	if(haveproto){
+	if(haveproto && (protocaps & D3CapFill) != 0){
 		eye := array[n] of Vector;
 		for(i := 0; i < n; i++){
 			(e, ok) := protovert(c, verts[i]);
@@ -891,7 +911,7 @@ spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: rea
 		adz -= 360.0;
 	while(adz < 0.0)
 		adz += 360.0;
-	if(haveproto){
+	if(haveproto && (protocaps & D3CapSprite) != 0){
 		(pv, ok) := protovert(c, p);
 		if(!ok)
 			return;
@@ -1070,7 +1090,7 @@ sprite3mat(c: ref Context, p: Vector, m: Matrix, img, mask: ref Image, scale: re
 	# Apply object matrix then place at p (protocol 'j' bit3, or soft).
 	q := mulpoint(m, Vector(0.0, 0.0, 0.0));
 	q.x += p.x; q.y += p.y; q.z += p.z;
-	if(haveproto){
+	if(haveproto && (protocaps & D3CapSprite) != 0){
 		(pv, ok) := protovert(c, q);
 		if(!ok || c.dst == nil || img == nil)
 			return;

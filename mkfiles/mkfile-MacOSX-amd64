@@ -9,10 +9,11 @@ AR=ar
 ARFLAGS=ruvs
 
 AS=cc -c
-ASFLAGS=
+ASFLAGS=-arch x86_64
 
 CC=cc -c
 CFLAGS=-g\
+	-arch x86_64\
 	-O2\
 	-fno-strict-aliasing\
 	-Wno-error\
@@ -27,7 +28,7 @@ CFLAGS=-g\
 	-DMACOSX_AMD64
 
 ANSICPP=
-LD=cc
+LD=cc -arch x86_64
 LDFLAGS=
 
 SYSLIBS=

@@ -1,0 +1,4 @@
+#!/dis/sh
+# Interactive demo entry: bind /net, print hints, drop to shell.
+run /dis/v23/demo.sh
+/dis/sh.dis

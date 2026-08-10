@@ -729,6 +729,19 @@ send
 .B 3
 before using the remaining letters.
 .HP
+.B C
+.IR dstid [4]
+.br
+Write the draw3d capability mask to the first pixel of the 32-bit image
+.IR dstid ,
+least-significant byte first.  Bits 0 through 5 advertise matrices/state,
+filled polygons, lines, points, sprites, and ellipses respectively.  Bit 6
+advertises direct GPU rendering, bit 7 ordered GPU readback, bit 8 near-plane
+clipping, and bit 9 software/Metal depth-order parity.  Clients should select
+each optional path from this mask; the older
+.B 3
+probe remains for compatibility.
+.HP
 .B M
 .IR which [1]
 .IR m [16×4]
@@ -908,13 +921,13 @@ fills, lines, sprites, and circles relative to each other;
 clears that depth attachment.  GPU depth values are a monotonic map of
 eye
 .B z
-chosen for painter's-order sorting only — they are
+chosen as an order-preserving mapping of the software plane depth.  They are
 .I not
 bit-identical to the software
 .IR polyfill (2)
 fixed-point
 .B ZSCALE
-plane buffer.  Thick
+plane buffer, but preserve its ordering across the full depth range.  Thick
 .B G
 lines
 .RI ( thick >0)
@@ -933,14 +946,21 @@ sprites and
 .B q
 circles/ellipses), then overlays softscreen pixels that changed after the
 snapshot (wm chrome, minimap, text HUD, and any soft fallback draws).
-There is no Memimage writeback for the GPU path.  Obscured
+GPU drawing remains presentation-only while queued, but an
+.B r
+image-read request first renders pending geometry into an off-screen Metal
+target and copies the result back to the softscreen.  Consequently
+.IR readpixels (2)
+observes all preceding draw3d operations in protocol order.  Obscured
 layers and non-solid ops fall back to software
 .B memfillpoly
 /
 .B memline
 /
 .B d3fillpolyz
-(with z when enabled).
+(with the same depth ordering when z is enabled).  Software sprite fallback
+also applies billboard scaling and Z rotation before mask-aware per-pixel depth
+testing.
 Other platforms keep software rasterisation for both.
 .HP
 .B y

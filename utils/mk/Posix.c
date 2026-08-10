@@ -251,9 +251,10 @@ catchnotes()
 char*
 maketmp(void)
 {
-	static char temp[L_tmpnam];
+	static char temp[] = "/tmp/mkargXXXXXXXXXXX";
 
-	return tmpnam(temp);
+	mktemp(temp);
+	return temp;
 }
 
 int

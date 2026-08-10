@@ -911,9 +911,10 @@ punt(Inst *i, int m, void (*fn)(void))
 
 	switch(i->add & ARM) {
 	case AXNON:
-		/* R.m = R.d (matches dec[] behaviour regardless of THREOP) */
-		mem(Ldw, O(REG, d), RREG, RA0);
-		mem(Stw, O(REG, m), RREG, RA0);
+		if(m & THREOP) {
+			mem(Ldw, O(REG, d), RREG, RA0);
+			mem(Stw, O(REG, m), RREG, RA0);
+		}
 		break;
 	case AXIMM:
 		literal((short)i->reg, O(REG, m));
@@ -2345,6 +2346,7 @@ macret(void)
 	linterp = code - 1;
 
 	/* Compiled: call destroy, jump to lr */
+	PATCH_BCOND(nomrlab);
 	BLR_REG(RA0);
 	mem(Stw, O(REG, SP), RREG, RFP);
 	mem(Ldw, O(Frame, lr), RFP, RA1);
@@ -2367,7 +2369,6 @@ macret(void)
 	PATCH_BCOND(notypelab);
 	PATCH_BCOND(nodestroylab);
 	PATCH_BCOND(nofplab);
-	PATCH_BCOND(nomrlab);
 	PATCH_BCOND(noreflab);
 	dummy.add = AXNON;
 	punt(&dummy, TCHECK|NEWPC, optab[IRET]);
@@ -2619,6 +2620,15 @@ comd(Type *t)
 /*
  * JIT code allocator: leading ulong holds total mmap length for freecode().
  */
+static void
+jitrelease(void *p)
+{
+	ulong *hdr;
+
+	hdr = (ulong*)p - 1;
+	munmap(hdr, hdr[0]);
+}
+
 static void*
 jitalloc(ulong sz)
 {
@@ -2639,18 +2649,16 @@ jitalloc(ulong sz)
 		return nil;
 #endif
 	hdr[0] = tot;
+	registerjitcode(hdr + 1, jitrelease);
 	return hdr + 1;
 }
 
 void
 freecode(void *p)
 {
-	ulong *hdr;
-
 	if(p == nil)
 		return;
-	hdr = (ulong*)p - 1;
-	munmap(hdr, hdr[0]);
+	freejitcode(p);
 }
 
 static int

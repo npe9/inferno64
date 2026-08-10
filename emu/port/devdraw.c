@@ -175,6 +175,7 @@ int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 void	(*gpudrawflush)(void);
+void	(*gpudrawreadback)(void);
 void	(*gpudrawzclear)(void);
 void	(*gpudrawzenable)(int);
 	void		drawuninstall(Client*, int);
@@ -1402,7 +1403,17 @@ printmesg(char *fmt, uchar *a, int plsprnt)
  */
 enum {
 	D3ZSCALE	= 1<<20,
-	D3LIMIT		= 1<<11
+	D3LIMIT		= 1<<11,
+	D3CapMatrix	= 1<<0,
+	D3CapFill	= 1<<1,
+	D3CapLine	= 1<<2,
+	D3CapPlot	= 1<<3,
+	D3CapSprite	= 1<<4,
+	D3CapEllipse	= 1<<5,
+	D3CapGPU	= 1<<6,
+	D3CapReadback	= 1<<7,
+	D3CapNearClip	= 1<<8,
+	D3CapDepthOrder	= 1<<9
 };
 
 static float
@@ -1458,6 +1469,83 @@ d3project(Client *cl, float x, float y, float z, Point *sp, float *eyez)
 	sp->x = (int)(cl->d3mx * cx + cl->d3cx);
 	sp->y = (int)(cl->d3my * cy + cl->d3cy);
 	return 1;
+}
+
+/* Clip a segment in eye space instead of dropping it when it crosses z=0. */
+static int
+d3projectline(Client *cl, float ax, float ay, float az, float bx, float by, float bz,
+	Point *pa, Point *pb, float *eza, float *ezb)
+{
+	float aex, aey, aez, bex, bey, bez, cx, cy, cz, t;
+	float const nearz = -1.0e-4f;
+
+	d3mulpoint(cl->d3model, ax, ay, az, &aex, &aey, &aez);
+	d3mulpoint(cl->d3model, bx, by, bz, &bex, &bey, &bez);
+	if(cl->d3clipbehind){
+		if(aez >= nearz && bez >= nearz)
+			return 0;
+		if(aez >= nearz){
+			t = (nearz - bez) / (aez - bez);
+			aex = bex + t*(aex-bex);
+			aey = bey + t*(aey-bey);
+			aez = nearz;
+		}else if(bez >= nearz){
+			t = (nearz - aez) / (bez - aez);
+			bex = aex + t*(bex-aex);
+			bey = aey + t*(bey-aey);
+			bez = nearz;
+		}
+	}
+	d3mulpoint(cl->d3proj, aex, aey, aez, &cx, &cy, &cz);
+	pa->x = (int)(cl->d3mx * cx + cl->d3cx);
+	pa->y = (int)(cl->d3my * cy + cl->d3cy);
+	d3mulpoint(cl->d3proj, bex, bey, bez, &cx, &cy, &cz);
+	pb->x = (int)(cl->d3mx * cx + cl->d3cx);
+	pb->y = (int)(cl->d3my * cy + cl->d3cy);
+	*eza = aez;
+	*ezb = bez;
+	return 1;
+}
+
+/* Sutherland-Hodgman clip against the eye plane used by clipbehind. */
+static int
+d3clipnear(Client *cl, float *ix, float *iy, float *iz, int n,
+	float *ox, float *oy, float *oz)
+{
+	float sx, sy, sz, ex, ey, ez, qx, qy, sez, eez, t;
+	float const nearz = -1.0e-4f;
+	int i, m, sin, ein;
+
+	if(!cl->d3clipbehind){
+		for(i = 0; i < n; i++){
+			ox[i] = ix[i];
+			oy[i] = iy[i];
+			oz[i] = iz[i];
+		}
+		return n;
+	}
+	m = 0;
+	sx = ix[n-1]; sy = iy[n-1]; sz = iz[n-1];
+	d3mulpoint(cl->d3model, sx, sy, sz, &qx, &qy, &sez);
+	sin = sez < nearz;
+	for(i = 0; i < n; i++){
+		ex = ix[i]; ey = iy[i]; ez = iz[i];
+		d3mulpoint(cl->d3model, ex, ey, ez, &qx, &qy, &eez);
+		ein = eez < nearz;
+		if(sin != ein){
+			t = (nearz - sez) / (eez - sez);
+			ox[m] = sx + t*(ex-sx);
+			oy[m] = sy + t*(ey-sy);
+			oz[m++] = sz + t*(ez-sz);
+		}
+		if(ein){
+			ox[m] = ex;
+			oy[m] = ey;
+			oz[m++] = ez;
+		}
+		sx = ex; sy = ey; sz = ez; sez = eez; sin = ein;
+	}
+	return m;
 }
 
 static void
@@ -1649,6 +1737,163 @@ d3fillpolyz(Client *cl, Memimage *dst, Point *pp, int nw,
 	}
 }
 
+/* Depth-tested software line/point fallback using the Metal plane-depth order. */
+static void
+d3linez(Client *cl, Memimage *dst, Point a, Point b, int thick,
+	Memimage *src, int op, float eza, float ezb)
+{
+	Rectangle r;
+	Point p;
+	float vx, vy, len2, t, qx, qy, rad2, eyez;
+	int x, y, k, z;
+
+	if(!cl->d3zenable || cl->d3zbuf == nil){
+		memline(dst, a, b, Endsquare, Endsquare, thick, src, a, op);
+		return;
+	}
+	r = memlinebbox(a, b, Endsquare, Endsquare, thick);
+	if(!rectclip(&r, dst->clipr) || !rectclip(&r, cl->d3zr))
+		return;
+	vx = b.x-a.x;
+	vy = b.y-a.y;
+	len2 = vx*vx + vy*vy;
+	rad2 = ((float)thick + 0.5f)*((float)thick + 0.5f);
+	for(y = r.min.y; y < r.max.y; y++)
+		for(x = r.min.x; x < r.max.x; x++){
+			if(len2 <= 1.0e-6f)
+				t = 0.0f;
+			else{
+				t = ((x-a.x)*vx + (y-a.y)*vy)/len2;
+				if(t < 0.0f) t = 0.0f;
+				if(t > 1.0f) t = 1.0f;
+			}
+			qx = (float)a.x + t*vx;
+			qy = (float)a.y + t*vy;
+			if((x-qx)*(x-qx) + (y-qy)*(y-qy) > rad2)
+				continue;
+			eyez = eza + t*(ezb-eza);
+			z = (int)(-eyez*(float)D3ZSCALE);
+			k = (y-cl->d3zr.min.y)*cl->d3zw + x-cl->d3zr.min.x;
+			if(k < 0 || k >= cl->d3zw*cl->d3zh || z >= cl->d3zbuf[k])
+				continue;
+			cl->d3zbuf[k] = z;
+			p = Pt(x, y);
+			memdraw(dst, Rect(x, y, x+1, y+1), src, p, memopaque, p, op);
+		}
+}
+
+static int
+d3zpixel(Client *cl, Point p, float eyez)
+{
+	int k, z;
+
+	if(!cl->d3zenable || cl->d3zbuf == nil)
+		return 1;
+	if(!ptinrect(p, cl->d3zr))
+		return 0;
+	k = (p.y-cl->d3zr.min.y)*cl->d3zw + p.x-cl->d3zr.min.x;
+	if(k < 0 || k >= cl->d3zw*cl->d3zh)
+		return 0;
+	z = (int)(-eyez*(float)D3ZSCALE);
+	if(z >= cl->d3zbuf[k])
+		return 0;
+	cl->d3zbuf[k] = z;
+	return 1;
+}
+
+static int
+d3maskset(Memimage *mask, Point p)
+{
+	uchar *q;
+
+	if(mask == nil)
+		return 1;
+	q = byteaddr(mask, p);
+	if(q == nil)
+		return 0;
+	if(mask->depth == 1)
+		return (q[0] & 0x80) != 0;
+	return q[0] != 0;
+}
+
+/* Rotated/scaled sprite fallback with constant billboard depth. */
+static void
+d3spritez(Client *cl, Memimage *dst, Point c, int sw, int sh, float eyez,
+	Memimage *src, Memimage *mask, float degz, int op)
+{
+	Rectangle r;
+	Point p, sp, mp;
+	float rad, cs, sn, hx, hy, ex, ey, lx, ly;
+	int x, y, iw, ih, mw, mh;
+
+	iw = Dx(src->r); ih = Dy(src->r);
+	if(iw < 1 || ih < 1 || sw < 1 || sh < 1)
+		return;
+	rad = degz*(float)M_PI/180.0f;
+	cs = cosf(rad); sn = sinf(rad);
+	hx = sw*0.5f; hy = sh*0.5f;
+	ex = fabsf(cs)*hx + fabsf(sn)*hy;
+	ey = fabsf(sn)*hx + fabsf(cs)*hy;
+	r = Rect((int)floorf(c.x-ex), (int)floorf(c.y-ey),
+		(int)ceilf(c.x+ex), (int)ceilf(c.y+ey));
+	if(!rectclip(&r, dst->clipr))
+		return;
+	mw = mask != nil ? Dx(mask->r) : 0;
+	mh = mask != nil ? Dy(mask->r) : 0;
+	for(y = r.min.y; y < r.max.y; y++)
+		for(x = r.min.x; x < r.max.x; x++){
+			/* Inverse screen rotation into the unrotated billboard. */
+			lx = (x+0.5f-c.x)*cs + (y+0.5f-c.y)*sn;
+			ly = -(x+0.5f-c.x)*sn + (y+0.5f-c.y)*cs;
+			if(lx < -hx || lx >= hx || ly < -hy || ly >= hy)
+				continue;
+			sp = Pt(src->r.min.x + (int)((lx+hx)*iw/sw),
+				src->r.min.y + (int)((ly+hy)*ih/sh));
+			mp = ZP;
+			if(mask != nil){
+				mp = Pt(mask->r.min.x + (int)((lx+hx)*mw/sw),
+					mask->r.min.y + (int)((ly+hy)*mh/sh));
+				if(!d3maskset(mask, mp))
+					continue;
+			}
+			p = Pt(x, y);
+			if(!d3zpixel(cl, p, eyez))
+				continue;
+			memdraw(dst, Rect(x, y, x+1, y+1), src, sp,
+				mask != nil ? mask : memopaque, mp, op);
+		}
+}
+
+static void
+d3ellipsez(Client *cl, Memimage *dst, Point c, int rx, int ry, int thick,
+	int fill, Memimage *src, int op, float eyez)
+{
+	Rectangle r;
+	Point p;
+	float dx, dy, d, tol;
+	int x, y;
+
+	if(rx < 1 || ry < 1)
+		return;
+	tol = ((float)thick + 0.75f) / (float)(rx < ry ? rx : ry);
+	r = Rect(c.x-rx-thick-1, c.y-ry-thick-1,
+		c.x+rx+thick+2, c.y+ry+thick+2);
+	if(!rectclip(&r, dst->clipr))
+		return;
+	for(y = r.min.y; y < r.max.y; y++)
+		for(x = r.min.x; x < r.max.x; x++){
+			dx = (x+0.5f-c.x)/(float)rx;
+			dy = (y+0.5f-c.y)/(float)ry;
+			d = sqrtf(dx*dx + dy*dy);
+			if((fill && d > 1.0f) || (!fill && (d < 1.0f-tol || d > 1.0f+tol)))
+				continue;
+			p = Pt(x, y);
+			if(!d3zpixel(cl, p, eyez))
+				continue;
+			memdraw(dst, Rect(x, y, x+1, y+1), src, p, memopaque, p, op);
+		}
+}
+
 /* Tint a solid 32-bit colour by lighting factor; *tmp owns any replacement. */
 static Memimage*
 d3applylit(Memimage *src, float lit, Memimage **tmp)
@@ -1738,6 +1983,7 @@ drawmesg(Client *client, void *av, int n)
 		case 'u':
 		case 'z':
 		case '3':
+		case 'C':
 			break;
 		default:
 			if(gpudrawflush)
@@ -2209,6 +2455,9 @@ drawmesg(Client *client, void *av, int n)
 			if(n < m)
 				error(Eshortdraw);
 			i = drawimage(client, a+1);
+			/* A read observes all preceding draw3d work, including GPU queues. */
+			if(gpudrawreadback)
+				gpudrawreadback();
 			drawrectangle(&r, a+5);
 			if(!rectinrect(r, i->r))
 				error(Ereadoutside);
@@ -2360,6 +2609,7 @@ drawmesg(Client *client, void *av, int n)
 		/*
 		 * draw3d extension (optional; old clients never send these).
 		 * '3'                 — capability probe (no body)
+		 * 'C' dstid[4]        — write explicit capability bits to 32-bit image
 		 * 'M' which[1] m[16*4] — load model(0)/proj(1) float32 LE matrix (row-major)
 		 * 'w' mx cx my cy[4*4] — viewport: screen = (mx*ndc.x+cx, my*ndc.y+cy)
 		 * 'u' flags[1]         — bit0 zenable, bit1 clipbehind
@@ -2375,6 +2625,27 @@ drawmesg(Client *client, void *av, int n)
 		case '3':
 			printmesg(fmt="", a, 0);
 			m = 1;
+			continue;
+
+		case 'C':	/* explicit draw3d capabilities: C dstid[4] */
+			printmesg(fmt="L", a, 0);
+			m = 1+4;
+			if(n < m)
+				error(Eshortdraw);
+			i = drawimage(client, a+1);
+			if(i->depth != 32 || Dx(i->r) < 1 || Dy(i->r) < 1)
+				error(Ebadarg);
+			value = D3CapMatrix | D3CapFill | D3CapLine | D3CapPlot
+				| D3CapSprite | D3CapEllipse | D3CapNearClip | D3CapDepthOrder;
+			if(gpudrawfillpoly != nil)
+				value |= D3CapGPU;
+			if(gpudrawreadback != nil)
+				value |= D3CapReadback;
+			u = byteaddr(i, i->r.min);
+			u[0] = value;
+			u[1] = value>>8;
+			u[2] = value>>16;
+			u[3] = value>>24;
 			continue;
 
 		case 'M':
@@ -2439,7 +2710,7 @@ drawmesg(Client *client, void *av, int n)
 			{
 				int hdr;
 				float nx, ny, nz, lit;
-				float *vx, *vy, *vz;
+				float *vx, *vy, *vz, *ix, *iy, *iz;
 				Memimage *lsrc, *ltmp;
 				int pdx, pdy, pdc, haveplane, gpudone;
 
@@ -2459,29 +2730,32 @@ drawmesg(Client *client, void *av, int n)
 				m = hdr + nw * 3 * 4;
 				if(n < m)
 					error(Eshortdraw);
-				pp = malloc(sizeof(Point) * (nw + 1));
+				pp = malloc(sizeof(Point) * (nw + 2));
 				if(pp == nil)
 					error(Edrawmem);
 				if(waserror()){
 					free(pp);
 					nexterror();
 				}
-				vx = malloc(sizeof(float) * nw * 3);
+				vx = malloc(sizeof(float) * (nw + 1) * 6);
 				if(vx == nil){
 					poperror();
 					free(pp);
 					error(Edrawmem);
 				}
-				vy = vx + nw;
-				vz = vy + nw;
+				vy = vx + nw + 1;
+				vz = vy + nw + 1;
+				ix = vz + nw + 1;
+				iy = ix + nw + 1;
+				iz = iy + nw + 1;
 				if(waserror()){
 					free(vx);
 					nexterror();
 				}
 				{
-					float *ezs;
+					float *ezs, ez;
 
-					ezs = malloc(sizeof(float) * nw);
+					ezs = malloc(sizeof(float) * (nw + 1));
 					if(ezs == nil){
 						poperror();
 						free(vx);
@@ -2494,15 +2768,27 @@ drawmesg(Client *client, void *av, int n)
 						nexterror();
 					}
 					for(j = 0; j < nw; j++){
-						float fx, fy, fz, ez;
+						float fx, fy, fz;
 
 						fx = bgfloat(a+hdr + j*12);
 						fy = bgfloat(a+hdr + j*12 + 4);
 						fz = bgfloat(a+hdr + j*12 + 8);
-						vx[j] = fx;
-						vy[j] = fy;
-						vz[j] = fz;
-						if(!d3project(client, fx, fy, fz, &pp[j], &ez)){
+						ix[j] = fx;
+						iy[j] = fy;
+						iz[j] = fz;
+					}
+					nw = d3clipnear(client, ix, iy, iz, nw, vx, vy, vz);
+					if(nw < 3){
+						poperror();
+						free(ezs);
+						poperror();
+						free(vx);
+						poperror();
+						free(pp);
+						goto gdone;
+					}
+					for(j = 0; j < nw; j++){
+						if(!d3project(client, vx[j], vy[j], vz[j], &pp[j], &ez)){
 							poperror();
 							free(ezs);
 							poperror();
@@ -2601,15 +2887,15 @@ drawmesg(Client *client, void *av, int n)
 				bx = bgfloat(a+25);
 				by = bgfloat(a+29);
 				bz = bgfloat(a+33);
-				if(!d3project(client, ax, ay, az, &pa, &eza)
-				|| !d3project(client, bx, by, bz, &pb, &ezb))
+				if(!d3projectline(client, ax, ay, az, bx, by, bz,
+				    &pa, &pb, &eza, &ezb))
 					continue;
 				op = drawclientop(client);
 				gpudone = 0;
 				if(gpudrawline != nil)
 					gpudone = gpudrawline(dst, pa, pb, j, src, op, eza, ezb);
 				if(!gpudone)
-					memline(dst, pa, pb, Endsquare, Endsquare, j, src, pa, op);
+					d3linez(client, dst, pa, pb, j, src, op, eza, ezb);
 				if(dst == screenimage || dst->layer != nil){
 					r = memlinebbox(pa, pb, Endsquare, Endsquare, j);
 					dstflush(dst, insetrect(r, -(1+1+j)));
@@ -2725,11 +3011,8 @@ drawmesg(Client *client, void *av, int n)
 				if(gpudrawsprite != nil)
 					gpudone = gpudrawsprite(dst, sp, sw, sh, ez, src, mask, degz, op);
 				if(!gpudone){
-					dr = Rect(sp.x - sw/2, sp.y - sh/2,
-						sp.x - sw/2 + sw, sp.y - sh/2 + sh);
-					memdraw(dst, dr, src, src->r.min,
-						mask != nil ? mask : memopaque,
-						mask != nil ? mask->r.min : ZP, op);
+					d3spritez(client, dst, sp, sw, sh, ez, src, mask, degz, op);
+					dr = Rect(sp.x - sw, sp.y - sh, sp.x + sw + 1, sp.y + sh + 1);
 					dstflush(dst, dr);
 				}else
 					dstflush(dst, Rect(sp.x - sw/2, sp.y - sh/2,
@@ -2767,12 +3050,8 @@ drawmesg(Client *client, void *av, int n)
 				gpudone = 0;
 				if(gpudrawellipse != nil)
 					gpudone = gpudrawellipse(dst, pa, rx, ry, thick, fill, src, op, ez);
-				if(!gpudone){
-					if(fill)
-						memellipse(dst, pa, rx, ry, -1, src, pa, op);
-					else
-						memellipse(dst, pa, rx, ry, thick, src, pa, op);
-				}
+				if(!gpudone)
+					d3ellipsez(client, dst, pa, rx, ry, thick, fill, src, op, ez);
 				dstflush(dst, Rect(pa.x - rx - thick - 1, pa.y - ry - thick - 1,
 					pa.x + rx + thick + 2, pa.y + ry + thick + 2));
 			}

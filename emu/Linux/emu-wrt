@@ -79,7 +79,6 @@ port
 	uqid
 
 code
-	int dontcompile = 1;
 	unsigned long strtochan(char *s) {return 0;}
 
 init

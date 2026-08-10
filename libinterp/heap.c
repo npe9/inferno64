@@ -129,7 +129,7 @@ freearray(Heap *h, int swept)
 		}
 	}
 	if(t->ref-- == 1) {
-		free(t->initialize);
+		freejitcode(t->initialize);
 		free(t);
 	}
 }
@@ -149,7 +149,7 @@ freelist(Heap *h, int swept)
 			freeptrs(l->data, t);
 		t->ref--;
 		if(t->ref == 0) {
-			free(t->initialize);
+			freejitcode(t->initialize);
 			free(t);
 		}
 	}
@@ -167,7 +167,7 @@ freelist(Heap *h, int swept)
 				freeptrs(l->data, t);
 			t->ref--;
 			if(t->ref == 0) {
-				free(t->initialize);
+				freejitcode(t->initialize);
 				free(t);
 			}
 		}
@@ -277,7 +277,7 @@ freetype(Type *t)
 	if(t == nil || --t->ref > 0)
 		return;
 
-	free(t->initialize);
+	freejitcode(t->initialize);
 	free(t);
 }
 
