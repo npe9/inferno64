@@ -53,7 +53,7 @@ Key: adt {
 	on:	int;
 };
 
-background: con "#dddddd";
+background: con "#D4D0C4";
 
 Backspace, Tab, Backslash, CapsLock, Return, Shift, Ctrl, Esc, Alt, Space: con iota;
 

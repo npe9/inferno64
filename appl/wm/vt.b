@@ -98,7 +98,7 @@ shwin_cfg := array[] of {
 titlebar()
 {
 	tk->cmd(t, "destroy .Wm_t.S");
-	tk->cmd(t, "button .Wm_t.S -bg #aaaaaa -fg white -text {" +
+	tk->cmd(t, "button .Wm_t.S -bg #D4D0C4 -fg #2A2A22 -text {" +
 		sprint("%d x %d", vt.wid, vt.hgt) + "}; " +
 		"pack .Wm_t.S -side right");
 	c := "green";

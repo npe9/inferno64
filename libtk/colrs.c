@@ -6,17 +6,33 @@
 
 enum
 {
-	tkBackR		= 0xdd,		/* Background base color */
-	tkBackG 	= 0xdd,
-	tkBackB 	= 0xdd,
+	/* Soft Plan9 Paper body (#F5F0D8). */
+	tkBackR		= 0xf5,		/* Background base color */
+	tkBackG 	= 0xf0,
+	tkBackB 	= 0xd8,
 
-	tkSelectR	= 0xb0,		/* Check box selected color */
-	tkSelectG	= 0x30,
-	tkSelectB	= 0x60,
+	/* Soft chrome for active/hover widgets (#D4D0C4). */
+	tkActiveR	= 0xd4,
+	tkActiveG	= 0xd0,
+	tkActiveB	= 0xc4,
 
-	tkSelectbgndR	= 0x40,		/* Selected item background */
-	tkSelectbgndG	= 0x40,
-	tkSelectbgndB	= 0x40
+	/* Soft accent (#3D6A9A) */
+	tkSelectR	= 0x3d,		/* Check box selected color */
+	tkSelectG	= 0x6a,
+	tkSelectB	= 0x9a,
+
+	/* Soft blue selection wash (lightened accent) */
+	tkSelectbgndR	= 0xb8,
+	tkSelectbgndG	= 0xcc,
+	tkSelectbgndB	= 0xe0,
+
+	tkForeR		= 0x2a,		/* Soft near-black text */
+	tkForeG		= 0x2a,
+	tkForeB		= 0x22,
+
+	tkMuteR		= 0x8a,		/* Muted cool slate / disabled */
+	tkMuteG		= 0x90,
+	tkMuteB		= 0x98
 };
 
 typedef struct Coltab Coltab;
@@ -38,19 +54,19 @@ static Coltab coltab[] =
 		RGB(tkBackR, tkBackG, tkBackB),
 		TkDarkshade,
 	TkCactivebgnd,
-		RGB(tkBackR+0x10, tkBackG+0x10, tkBackB+0x10),
+		RGB(tkActiveR, tkActiveG, tkActiveB),
 		TkSameshade,
 	TkCactivebgndlght,
-		RGB(tkBackR+0x10, tkBackG+0x10, tkBackB+0x10),
+		RGB(tkActiveR, tkActiveG, tkActiveB),
 		TkLightshade,
 	TkCactivebgnddark,
-		RGB(tkBackR+0x10, tkBackG+0x10, tkBackB+0x10),
+		RGB(tkActiveR, tkActiveG, tkActiveB),
 		TkDarkshade,
 	TkCactivefgnd,
-		RGB(0, 0, 0),
+		RGB(tkForeR, tkForeG, tkForeB),
 		TkSameshade,
 	TkCforegnd,
-		RGB(0, 0, 0),
+		RGB(tkForeR, tkForeG, tkForeB),
 		TkSameshade,
 	TkCselect,
 		RGB(tkSelectR, tkSelectG, tkSelectB),
@@ -65,13 +81,13 @@ static Coltab coltab[] =
 		RGB(tkSelectbgndR, tkSelectbgndG, tkSelectbgndB),
 		TkDarkshade,
 	TkCselectfgnd,
-		RGB(0xff, 0xff, 0xff),
+		RGB(tkForeR, tkForeG, tkForeB),
 		TkSameshade,
 	TkCdisablefgnd,
-		RGB(0x88, 0x88, 0x88),
+		RGB(tkMuteR, tkMuteG, tkMuteB),
 		TkSameshade,
 	TkChighlightfgnd,
-		RGB(0, 0, 0),
+		RGB(tkSelectR, tkSelectG, tkSelectB),
 		TkSameshade,
 	TkCtransparent,
 		DTransparent,

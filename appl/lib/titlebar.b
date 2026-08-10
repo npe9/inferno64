@@ -8,10 +8,12 @@ include "tk.m";
 	tk: Tk;
 include "titlebar.m";
 
+# Soft Plan9 Paper: inactive cool slate #8A9098, active accent #3D6A9A,
+# titlebar buttons use soft chrome #D4D0C4 so bitmaps stay readable.
 title_cfg := array[] of {
-	"frame .Wm_t -bg #aaaaaa -borderwidth 1",
-	"label .Wm_t.title -anchor w -bg #aaaaaa -fg white",
-	"button .Wm_t.e -bitmap exit.bit -command {send wm_title exit} -takefocus 0",
+	"frame .Wm_t -bg #8A9098 -borderwidth 1",
+	"label .Wm_t.title -anchor w -bg #8A9098 -fg white",
+	"button .Wm_t.e -bitmap exit.bit -command {send wm_title exit} -takefocus 0 -bg #D4D0C4 -fg #2A2A22",
 	"pack .Wm_t.e -side right",
 	"bind .Wm_t <Button-1> {send wm_title move %X %Y}",
 	"bind .Wm_t <Double-Button-1> {send wm_title lower .}",
@@ -21,10 +23,10 @@ title_cfg := array[] of {
 	"bind .Wm_t.title <Double-Button-1> {send wm_title lower .}",
 	"bind .Wm_t.title <Motion-Button-1> {}",
 	"bind .Wm_t.title <Motion> {}",
-	"bind . <FocusIn> {.Wm_t configure -bg blue;"+
-		".Wm_t.title configure -bg blue;update}",
-	"bind . <FocusOut> {.Wm_t configure -bg #aaaaaa;"+
-		".Wm_t.title configure -bg #aaaaaa;update}",
+	"bind . <FocusIn> {.Wm_t configure -bg #3D6A9A;"+
+		".Wm_t.title configure -bg #3D6A9A -fg white;update}",
+	"bind . <FocusOut> {.Wm_t configure -bg #8A9098;"+
+		".Wm_t.title configure -bg #8A9098 -fg white;update}",
 };
 
 init()
@@ -47,19 +49,19 @@ new(top: ref Tk->Toplevel, buts: int): chan of string
 
 	if(buts & OK)
 		cmd(top, "button .Wm_t.ok -bitmap ok.bit"+
-			" -command {send wm_title ok} -takefocus 0; pack .Wm_t.ok -side right");
+			" -command {send wm_title ok} -takefocus 0 -bg #D4D0C4 -fg #2A2A22; pack .Wm_t.ok -side right");
 
 	if(buts & Hide)
 		cmd(top, "button .Wm_t.top -bitmap task.bit"+
-			" -command {send wm_title task} -takefocus 0; pack .Wm_t.top -side right");
+			" -command {send wm_title task} -takefocus 0 -bg #D4D0C4 -fg #2A2A22; pack .Wm_t.top -side right");
 
 	if(buts & Resize)
 		cmd(top, "button .Wm_t.m -bitmap maxf.bit"+
-			" -command {send wm_title size} -takefocus 0; pack .Wm_t.m -side right");
+			" -command {send wm_title size} -takefocus 0 -bg #D4D0C4 -fg #2A2A22; pack .Wm_t.m -side right");
 
-	if(buts & Help)
-		cmd(top, "button .Wm_t.h -bitmap help.bit"+
-			" -command {send wm_title help} -takefocus 0; pack .Wm_t.h -side right");
+	# Always offer a help (?) button on decorated windows.
+	cmd(top, "button .Wm_t.h -bitmap help.bit"+
+		" -command {send wm_title help} -takefocus 0 -bg #D4D0C4 -fg #2A2A22; pack .Wm_t.h -side right");
 
 	# pack the title last so it gets clipped first
 	cmd(top, "pack .Wm_t.title -side left");

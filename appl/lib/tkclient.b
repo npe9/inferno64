@@ -17,9 +17,18 @@ include "wmlib.m";
 	qword, splitqword, s2r: import wmlib;
 include "titlebar.m";
 	titlebar: Titlebar;
+include "env.m";
 include "tkclient.m";
 
-Background: con int 16r777777FF;		# should be drawn over immediately, but just in case...
+Background: con int 16rC4C0B4FF;		# Soft Plan9 Paper desktop; drawn over immediately, but just in case...
+
+# Per-toplevel icon path. Set via seticon() or auto-picked-up from the
+# $wmicon environment variable by toplevel(). Threaded through to the
+# wm/toolbar as a second argument on the "task" wmctl request.
+iconmap: list of (ref Toplevel, string);
+
+# Resolved Dis path of the application (set by sh as $dis).
+dispath: string;
 
 init()
 {
@@ -47,6 +56,8 @@ makedrawcontext(): ref Draw->Context
 
 toplevel(ctxt: ref Draw->Context, topconfig: string, title: string, buts: int): (ref Tk->Toplevel, chan of string)
 {
+	if(dispath == nil)
+		dispath = envdis();
 	wm := wmlib->connect(ctxt);
 	opts := "";
 	if((buts & Plain) == 0)
@@ -60,6 +71,13 @@ toplevel(ctxt: ref Draw->Context, topconfig: string, title: string, buts: int): 
 	readscreenrect(top);
 	c := titlebar->new(top, buts);
 	titlebar->settitle(top, title);
+	# Auto-pick-up of the !App folder icon set by the filer's launch_app.
+	e := load Env Env->PATH;
+	if(e != nil) {
+		ip := e->getenv("wmicon");
+		if(ip != nil && ip != "")
+			seticon(top, ip);
+	}
 	return (top, c);
 }
 
@@ -108,9 +126,10 @@ wmctl(top: ref Tk->Toplevel, req: string): string
 	"size" =>
 		minsz := titlebar->minsize(top);
 		titlebar->sendctl(top, "!size . -1 " + string minsz.x + " " + string minsz.y);
-	"ok" or
-	"help" =>
+	"ok" =>
 		;
+	"help" =>
+		showman(top.ctxt.ctxt);
 	"rect" =>
 		r: Rect;
 		(c, next) = qword(req, next);
@@ -128,8 +147,14 @@ wmctl(top: ref Tk->Toplevel, req: string): string
 		cmd(top, "update");
 	"task" =>
 		(r, nil) := splitqword(req, next);
-		if(r.t0 == r.t1)
-			req = sys->sprint("task %q", cmd(top, ".Wm_t.title cget -text"));
+		if(r.t0 == r.t1) {
+			title := cmd(top, ".Wm_t.title cget -text");
+			ip := geticon(top);
+			if(ip != "")
+				req = sys->sprint("task %q %q", title, ip);
+			else
+				req = sys->sprint("task %q", title);
+		}
 		if(wmreq(top, c, req, next) == nil)
 			cmd(top, ". unmap; update");
 	"untask" =>
@@ -178,33 +203,20 @@ wmreq1(top: ref Tk->Toplevel, c, req: string, e: int): string
 	# in the image, so
 	if(c != "!reshape")
 		return "unknown request";
-	# Honor the requested rectangle.  The old path always mapped
-	# di.r (full display), so stock Bounce built walls on a near-
-	# fullscreen act and spawned balls on the boundary.
-	(r, nil) := s2r(req, e);
-	di := top.display.image;
-	if(r.dx() <= 0 || r.dy() <= 0)
-		r = ((0, 0), (1, 1));
-	if(r.dx() > di.r.dx())
-		r.max.x = r.min.x + di.r.dx();
-	if(r.dy() > di.r.dy())
-		r.max.y = r.min.y + di.r.dy();
 	i: ref Image;
 	if(top.image == nil){
 		if(name != ".")
 			return "screen not available";
+		di := top.display.image;
 		screen := Screen.allocate(di, top.display.color(Background), 0);
 		di.draw(di.r, screen.fill, nil, screen.fill.r.min);
-		i = screen.newwindow(r, Draw->Refbackup, Draw->Nofill);
-	}else if(name == "."){
-		if(top.image.r.size().eq(r.size()))
+		i = screen.newwindow(di.r, Draw->Refbackup, Draw->Nofill);
+	}else{
+		if(name == ".")
 			i = top.image;
 		else
-			i = top.image.screen.newwindow(r, Draw->Refbackup, Draw->Nofill);
-	}else
-		i = top.image.screen.newwindow(r, Draw->Refbackup, Draw->Red);
-	if(i == nil)
-		return sys->sprint("window creation failed: %r");
+			i = top.image.screen.newwindow(s2r(req, e).t0, Draw->Refbackup, Draw->Red);
+	}
 	tk->putimage(top, name+" "+reqid, i, nil);
 	return nil;
 }
@@ -222,6 +234,37 @@ recvimage(top: ref Tk->Toplevel, name, reqid: string)
 settitle(top: ref Tk->Toplevel, name: string): string
 {
 	return titlebar->settitle(top, name);
+}
+
+# Associate an absolute path (e.g. <approot>/icons/<name>.bit) with this
+# toplevel. The path is appended to subsequent "task" wmctl requests so
+# the wm/toolbar can render an icon for the minimized window.
+seticon(top: ref Tk->Toplevel, iconpath: string): string
+{
+	nm: list of (ref Toplevel, string);
+	found := 0;
+	for(l := iconmap; l != nil; l = tl l) {
+		(t, p) := hd l;
+		if(t == top) {
+			nm = (top, iconpath) :: nm;
+			found = 1;
+		} else
+			nm = (t, p) :: nm;
+	}
+	if(!found)
+		nm = (top, iconpath) :: nm;
+	iconmap = nm;
+	return nil;
+}
+
+geticon(top: ref Tk->Toplevel): string
+{
+	for(l := iconmap; l != nil; l = tl l) {
+		(t, p) := hd l;
+		if(t == top)
+			return p;
+	}
+	return "";
 }
 
 handler(top: ref Tk->Toplevel, stop: chan of int)
@@ -258,5 +301,58 @@ cmd(top: ref Tk->Toplevel, s: string): string
 	if (e != nil && e[0] == '!')
 		sys->fprint(sys->fildes(2), "tkclient: tk error %s on '%s'\n", e, s);
 	return e;
+}
+
+envdis(): string
+{
+	e := load Env Env->PATH;
+	if(e == nil)
+		return nil;
+	return e->getenv("dis");
+}
+
+# Stem man topic from the program Dis path (/dis/wm/sh.dis → sh).
+progstem(): string
+{
+	mod := dispath;
+	if(mod == nil)
+		mod = envdis();
+	if(mod == nil)
+		return nil;
+	for(i := len mod - 1; i >= 0; i--)
+		if(mod[i] == '/'){
+			mod = mod[i+1:];
+			break;
+		}
+	if(len mod > 4 && mod[len mod-4:] == ".dis")
+		mod = mod[0:len mod-4];
+	if(mod == nil)
+		return nil;
+	return mod;
+}
+
+WmMan: module
+{
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
+showman(ctxt: ref Draw->Context)
+{
+	if(ctxt == nil)
+		return;
+	page := progstem();
+	if(page == nil)
+		page = "man";
+	path := "/man/1/" + page;
+	man := load WmMan "/dis/wm/man.dis";
+	if(man == nil){
+		sys->fprint(sys->fildes(2), "tkclient: cannot load wm/man: %r\n");
+		return;
+	}
+	(ok, nil) := sys->stat(path);
+	if(ok >= 0)
+		spawn man->init(ctxt, "wm/man" :: "-f" :: path :: nil);
+	else
+		spawn man->init(ctxt, "wm/man" :: page :: nil);
 }
 

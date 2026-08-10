@@ -21,11 +21,19 @@ Wm: module {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-Ptrstarted, Kbdstarted, Controlstarted, Controller, Fixedorigin: con 1<<iota;
+Ptrstarted, Kbdstarted, Controlstarted, Controller, Fixedorigin, Sticky: con 1<<iota;
 Bdwidth: con 3;
 Sminx, Sminy, Smaxx, Smaxy: con iota;
 Minx, Miny, Maxx, Maxy: con 1<<iota;
-Background: con int 16r777777FF;
+Background: con int 16rC4C0B4FF;	# Soft Plan9 Paper desktop
+
+# Snapshot of a client window taken before the root Screen is rebuilt.
+Snap: adt {
+	c:	ref Client;
+	tag:	string;
+	nr:	Rect;
+	img:	ref Image;	# display-backed copy of prior pixels (may be nil)
+};
 
 screen: ref Screen;
 display: ref Display;
@@ -42,6 +50,8 @@ forceclientresize := 1;
 rootresized: chan of int;
 screenresize: chan of Point;
 lastscreenr: Rect;
+pendingsize: Point;	# host size arrived while rootreshape in flight
+pendingsnaps: list of ref Snap;	# captured before root putimage greys the fb
 
 badmodule(p: string)
 {
@@ -113,13 +123,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	fakekbd = chan of string;
 	rootresized = chan of int;
 	screenresize = chan of Point;
+	pendingsize = (0, 0);
 	spawn screenmonitor(screenresize);
 	for(;;) alt {
 		sz := <-screenresize =>
-		if(sz.x > 0 && sz.y > 0 && rootresizing == 0){
-			updatescreen(sz);
-			rootresizing = 1;
-			spawn rootreshape(sz, rootresized);
+		if(sz.x > 0 && sz.y > 0){
+			if(rootresizing){
+				pendingsize = sz;
+			}else{
+				rootresizing = 1;
+				spawn rootreshape(sz, rootresized);
+			}
 		}
 	c := <-win.ctl or
 	c = <-wmctxt.ctl =>
@@ -141,14 +155,30 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		rootresizing = 0;
 		if(done == 0)
 			reshaped(win);
+		# Prefer an explicit pending host size; else catch display drift.
+		sz := pendingsize;
+		pendingsize = (0, 0);
+		if(sz.x <= 0 || sz.y <= 0){
+			if(display != nil && display.image != nil
+			&& !samescreensize(display.image.r, lastscreenr))
+				sz = display.image.r.size();
+		}
+		if(sz.x > 0 && sz.y > 0 && display != nil && display.image != nil
+		&& !samescreensize(display.image.r, lastscreenr)){
+			rootresizing = 1;
+			spawn rootreshape(sz, rootresized);
+		}
 	p := <-wmctxt.ptr =>
 		if(p.buttons == -1){
 			# The host display changed size.  Resize the root window;
 			# reshaped() will rebuild the screen and reflow all clients.
-		if(p.xy.x > 0 && p.xy.y > 0 && rootresizing == 0){
-			updatescreen(p.xy);
-				rootresizing = 1;
-				spawn rootreshape(p.xy, rootresized);
+			if(p.xy.x > 0 && p.xy.y > 0){
+				if(rootresizing)
+					pendingsize = p.xy;
+				else{
+					rootresizing = 1;
+					spawn rootreshape(p.xy, rootresized);
+				}
 			}
 			continue;
 		}
@@ -158,7 +188,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			c := wmsrv->find(p.xy);
 			if(c != nil){
 				ptrfocus = c;
-				c.ctl <-= "raise";
+				if((c.flags & Sticky) == 0)
+					c.ctl <-= "raise";
 				setfocus(win, c);
 			}
 		}
@@ -222,15 +253,6 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 }
 
-updatescreen(sz: Point)
-{
-	# Do not mutate the current screen here.  reshaped() needs the old
-	# rectangle to compute client reflow; rootwin.reshape() installs the new
-	# image and rectangle, then reshaped() repaints it.
-	if(sz.x <= 0 || sz.y <= 0)
-		return;
-}
-
 screenmonitor(ch: chan of Point)
 {
 	fd := sys->open("/dev/screen", Sys->OREAD);
@@ -252,9 +274,47 @@ screenmonitor(ch: chan of Point)
 	}
 }
 
+samescreensize(a, b: Rect): int
+{
+	return a.dx() > 0 && a.dy() > 0 && a.dx() == b.dx() && a.dy() == b.dy();
+}
+
 rootreshape(size: Point, done: chan of int)
 {
-	rootwin.reshape(((0, 0), size));
+	# Prefer the live Display root rectangle: host softscreen / drawdisplayresize
+	# may have advanced past the size that woke us during a live drag.
+	r := ((0, 0), size);
+	if(display != nil && display.image != nil)
+		r = ((0, 0), display.image.r.size());
+	# Same pixel size as the last completed reshape: do not tear down clients.
+	# Compare dx/dy only — origin differences must not force a rebuild.
+	# (Deminiaturize and duplicate host notifies used to hit this path and
+	# replace every app window with an empty placeholder.)
+	if(samescreensize(lastscreenr, r)){
+		if(rootwin.image != nil)
+			rootwin.image.flush(Draw->Flushnow);
+		done <-= 1;
+		return;
+	}
+	# Snapshot client pixels BEFORE putimage rebuilds the root window.
+	# That rebuild paints Background over the shared framebuffer and, for
+	# Refnone root layers, permanently erases the app pixels that a later
+	# reshaped() snapshot would otherwise try to recover.
+	pendingsnaps = capturesnaps(r);
+	rootwin.r = rootwin.screenr(r);
+	# Drop the cached root image so putimage rebuilds the window layer.
+	# Do not clear rootwin.screen: Window.reshape returns early when screen is nil.
+	rootwin.image = nil;
+	err := rootwin.wmctl(sys->sprint("!reshape . -1 %s", r2s(rootwin.r)));
+	if(err != nil)
+		sys->fprint(sys->fildes(2), "wm: root reshape: %s\n", err);
+	if(rootwin.image != nil){
+		# Paint immediately so the White screen fill from putimage never shows.
+		bg := rootwin.image.display.color(Background);
+		rootwin.image.clipr = rootwin.image.r;
+		rootwin.image.draw(rootwin.image.r, bg, nil, bg.r.min);
+		rootwin.image.flush(Draw->Flushnow);
+	}
 	done <-= 0;
 }
 
@@ -377,6 +437,17 @@ handlerequest(win: ref Wmclient->Window, wmctxt: ref Wmcontext, c: ref Client, r
 	"lower" =>
 		c.bottom();
 
+	"sticky" =>
+		# sticky [on|off] — when on, the wm will not auto-raise this
+		# client on pointer-press, so it can stay at the bottom of the
+		# z-order. Pinboard uses this to be the desktop surface.
+		if(n == 1 || (n == 2 && hd tl args == "on"))
+			c.flags |= Sticky;
+		else if(n == 2 && hd tl args == "off")
+			c.flags &= ~Sticky;
+		else
+			return "bad sticky arg";
+
 	"!move" or
 	"!size" =>
 		# !move tag reqid startx starty
@@ -448,19 +519,53 @@ handlerequest(win: ref Wmclient->Window, wmctxt: ref Wmcontext, c: ref Client, r
 	return nil;
 }
 
-Fix: con 1000;
+# Keep each client in its prior screen rectangle (clamped if the host shrank).
+# Do not scale with the host size: after a grow the apps must remain in their
+# original bounding boxes with only the newly exposed L filled in grey.
+capturesnaps(newr: Rect): list of ref Snap
+{
+	snaps: list of ref Snap;
+	if(display == nil || screen == nil)
+		return nil;
+	for(z := wmsrv->top(); z != nil; z = z.znext){
+		for(wl := z.wins; wl != nil; wl = tl wl){
+			w := hd wl;
+			nr := w.r;
+			# Preserve origin/size when the host grows; only fit on shrink.
+			if(nr.max.x > newr.max.x || nr.max.y > newr.max.y
+			|| nr.min.x < newr.min.x || nr.min.y < newr.min.y
+			|| nr.dx() > newr.dx() || nr.dy() > newr.dy())
+				nr = fitrect(nr, newr);
+			snap: ref Image = nil;
+			if(w.img != nil && w.r.dx() > 0 && w.r.dy() > 0){
+				snap = display.newimage(((0, 0), w.r.size()),
+					w.img.chans, 0, Background);
+				if(snap != nil)
+					snap.draw(snap.r, w.img, nil, w.img.r.min);
+			}
+			snaps = ref Snap(z, w.tag, nr, snap) :: snaps;
+		}
+	}
+	return snaps;
+}
+
 # the window manager window has been reshaped;
 # allocate a new screen, and move all the 
 reshaped(win: ref Wmclient->Window)
 {
-	oldr := screen.image.r;
 	newr := win.image.r;
-	mx := Fix;
-	if(oldr.dx() > 0)
-		mx = newr.dx() * Fix / oldr.dx();
-	my := Fix;
-	if(oldr.dy() > 0)
-		my = newr.dy() * Fix / oldr.dy();
+	snaps := pendingsnaps;
+	pendingsnaps = nil;
+	# Fallback when reshape did not come through rootreshape (e.g. ctl).
+	# At that point the root image may already be grey — best-effort only.
+	if(snaps == nil)
+		snaps = capturesnaps(newr);
+	sl: list of ref Snap;
+	for(sl = snaps; sl != nil; sl = tl sl){
+		w := (hd sl).c.window((hd sl).tag);
+		if(w != nil)
+			w.img = nil;
+	}
 	# Keep the destination clip in sync with the new root extent.  A stale
 	# clip rectangle clips the background fill to the old window box while
 	# allowing some direct client primitives to appear outside it.
@@ -472,28 +577,32 @@ reshaped(win: ref Wmclient->Window)
 	bg := win.image.display.color(Background);
 	win.image.draw(win.image.r, bg, nil, bg.r.min);
 	win.image.flush(Draw->Flushnow);
-	for(z := wmsrv->top(); z != nil; z = z.znext){
-		for(wl := z.wins; wl != nil; wl = tl wl){
-			w := hd wl;
-			w.img = nil;
-			nr := w.r.subpt(oldr.min);
-			nr.min.x = nr.min.x * mx / Fix;
-			nr.min.y = nr.min.y * my / Fix;
-			nr.max.x = nr.max.x * mx / Fix;
-			nr.max.y = nr.max.y * my / Fix;
-			nr = nr.addpt(newr.min);
-			w.img = screen.newwindow(nr, Draw->Refbackup, Draw->Nofill);
-			# XXX check for creation failure
-			w.r = nr;
-			# Tell the client to replace its backing image as well.  The
-			# server-side window alone only lets incremental drawing (such as
-			# clock hands) reach the new area; the client's image would retain
-			# the old bounding box and leave its background stale.
-			z.ctl <-= sys->sprint("!reshape %q -1 %s", w.tag, r2s(nr));
-			z.ctl <-= "rect " + r2s(newr);
+	# Recreate in reverse so z-order matches the prior top-first walk.
+	for(sl = snaps; sl != nil; sl = tl sl){
+		s := hd sl;
+		w := s.c.window(s.tag);
+		if(w == nil)
+			continue;
+		w.img = screen.newwindow(s.nr, Draw->Refbackup, Background);
+		if(w.img != nil && s.img != nil){
+			# Copy into the window's current size; fitrect may have shrunk it.
+			dr := w.img.r;
+			if(dr.dx() > s.img.r.dx())
+				dr.max.x = dr.min.x + s.img.r.dx();
+			if(dr.dy() > s.img.r.dy())
+				dr.max.y = dr.min.y + s.img.r.dy();
+			w.img.draw(dr, s.img, nil, s.img.r.min);
 		}
+		w.r = s.nr;
+		# Tell the client to replace its backing image as well.  The
+		# server-side window alone only lets incremental drawing (such as
+		# clock hands) reach the new area; the client's image would retain
+		# the old bounding box and leave its background stale.
+		s.c.ctl <-= sys->sprint("!reshape %q -1 %s", s.tag, r2s(s.nr));
+		s.c.ctl <-= "rect " + r2s(newr);
 	}
 	lastscreenr = newr;
+	win.image.flush(Draw->Flushnow);
 }
 
 controlevent(e: string)
@@ -570,17 +679,34 @@ sizewin(ptrc: chan of ref Pointer, c: ref Client, w: ref Wmsrv->Window, minsize:
 reshape(c: ref Client, tag: string, r: Rect): string
 {
 	w := c.window(tag);
+	# Host reshape fan-out already installed a window at this rect (with a
+	# pixel snapshot).  Re-push that image so the client putimage/update
+	# runs — do not replace it with a fresh Nofill and erase the contents.
+	if(w != nil && w.img != nil && w.r.eq(r)){
+		if(c.setimage(tag, w.img) == -1)
+			return "can't do two at once";
+		if((c.flags & Sticky) == 0)
+			c.top();
+		return nil;
+	}
 	# if window hasn't changed size, then just change its origin and use the same image.
 	if(forceclientresize == 0 && (c.flags & Fixedorigin) == 0 && w != nil && w.r.size().eq(r.size())){
 		c.setorigin(tag, r.min);
 	} else {
-		img := screen.newwindow(r, Draw->Refbackup, Draw->Nofill);
+		old: ref Image = nil;
+		if(w != nil)
+			old = w.img;
+		img := screen.newwindow(r, Draw->Refbackup, Background);
 		if(img == nil)
 			return sys->sprint("window creation failed: %r");
+		if(old != nil)
+			img.draw(img.r, old, nil, old.r.min);
 		if(c.setimage(tag, img) == -1)
 			return "can't do two at once";
 	}
-	c.top();
+	# Sticky clients (e.g. pinboard) keep their z-order.
+	if((c.flags & Sticky) == 0)
+		c.top();
 	return nil;
 }
 

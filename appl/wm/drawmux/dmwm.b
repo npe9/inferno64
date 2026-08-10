@@ -26,7 +26,7 @@ Dmwm: module {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-Background: con int 16r777777FF;
+Background: con int 16rC4C0B4FF;
 
 screen: ref Screen;
 display: ref Display;
