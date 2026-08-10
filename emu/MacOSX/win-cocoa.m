@@ -153,8 +153,9 @@ struct SpriteTexCache {
 };
 
 /* Screen-space geometry held until present (no Memimage writeback). */
-static GPULine	glines[MaxGPULines];
+static GPULine	*glines;
 static int	nglines;
+static int	maxglines;
 static GPUVert	gtriverts[MaxGPUTriVerts];
 static int	ngtriverts;
 static GPUSprite	gsprites[MaxGPUSprites];
@@ -162,6 +163,7 @@ static int	ngsprites;
 static SpriteTexCache	sprtexcache[MaxSpriteTexCache];
 static int	nsprtexcache;
 static u32	sprtex_tick;
+static Lock	mtl_geom_lock;
 
 /* Soft Plan9 Paper desktop (#C4C0B4); must match appl/wm/wm.b Background. */
 enum {
@@ -260,11 +262,13 @@ static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, 
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_sprites(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
-static void	soft_burn_tris(void);
+static void	soft_burn_tris(GPUVert*, int);
+static int	metal_tri_reserve(int);
 static void	metal_readback_geom(void);
 static float	eye_to_depth(float);
 static void	metal_clear_sprite_tex_cache(void);
 static id<MTLTexture>	metal_sprite_tex(Memimage*, Memimage*);
+static void	mark_view_dirty(void);
 
 static void
 invalidate_mtl_tex(void)
@@ -677,7 +681,7 @@ metal_solid(float r, float g, float b, float a)
 }
 
 static void
-soft_burn_tris(void)
+soft_burn_tris(GPUVert *verts, int nverts)
 {
 	int i;
 	Point pp[4];
@@ -686,10 +690,10 @@ soft_burn_tris(void)
 
 	if(gscreen == nil)
 		return;
-	for(i = 0; i + 2 < ngtriverts; i += 3){
-		v0 = &gtriverts[i];
-		v1 = &gtriverts[i+1];
-		v2 = &gtriverts[i+2];
+	for(i = 0; i + 2 < nverts; i += 3){
+		v0 = &verts[i];
+		v1 = &verts[i+1];
+		v2 = &verts[i+2];
 		src = metal_solid(v0->r, v0->g, v0->b, v0->a);
 		if(src == nil)
 			continue;
@@ -702,7 +706,22 @@ soft_burn_tris(void)
 		pp[3] = pp[0];
 		memfillpoly(gscreen, pp, 4, ~0, src, pp[0], S);
 	}
-	ngtriverts = 0;
+}
+
+/* Return with the geometry lock held and room reserved for one atomic append. */
+static int
+metal_tri_reserve(int need)
+{
+	if(need < 1 || need > MaxGPUTriVerts)
+		return 0;
+retry:
+	lock(&mtl_geom_lock);
+	if(ngtriverts + need <= MaxGPUTriVerts)
+		return 1;
+	unlock(&mtl_geom_lock);
+	mark_view_dirty();
+	osyield();
+	goto retry;
 }
 
 static void
@@ -874,17 +893,28 @@ metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	id<MTLTexture> depthtex, int pw, int ph)
 {
 	int n;
+	GPUVert *verts;
 
+	lock(&mtl_geom_lock);
 	n = ngtriverts;
-	if(n == 0)
+	if(n == 0){
+		unlock(&mtl_geom_lock);
 		return;
+	}
 	if(n % 3 != 0)
 		n -= n % 3;
-	if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph, gtriverts, n,
+	verts = malloc(sizeof(GPUVert) * n);
+	if(verts == nil){
+		unlock(&mtl_geom_lock);
+		return;
+	}
+	memmove(verts, gtriverts, sizeof(GPUVert) * n);
+	ngtriverts = 0;
+	unlock(&mtl_geom_lock);
+	if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph, verts, n,
 	    MTLPrimitiveTypeTriangle) < 0)
-		soft_burn_tris();
-	else
-		ngtriverts = 0;
+		soft_burn_tris(verts, n);
+	free(verts);
 }
 
 static void
@@ -893,18 +923,28 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 {
 	int i, n, nv, nthin, nthick;
 	GPUVert *verts, *tv;
-	GPULine *L;
+	GPULine *L, *lines;
 	float dx, dy, len, px, py, hw;
 
+	lock(&mtl_geom_lock);
 	n = nglines;
-	if(n == 0)
+	if(n == 0){
+		unlock(&mtl_geom_lock);
 		return;
+	}
+	lines = malloc(sizeof(GPULine) * n);
+	if(lines == nil){
+		unlock(&mtl_geom_lock);
+		return;
+	}
+	memmove(lines, glines, sizeof(GPULine) * n);
 	nglines = 0;
+	unlock(&mtl_geom_lock);
 
 	nthin = 0;
 	nthick = 0;
 	for(i = 0; i < n; i++){
-		if(glines[i].thick > 0)
+		if(lines[i].thick > 0)
 			nthick++;
 		else
 			nthin++;
@@ -915,13 +955,14 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	verts = malloc(sizeof(GPUVert) * nv);
 	if(verts == nil){
 		for(i = 0; i < n; i++)
-			soft_bresenham(gscreen, &glines[i]);
+			soft_bresenham(gscreen, &lines[i]);
+		free(lines);
 		return;
 	}
 	/* Pack thin endpoints first, then thick quads (stable offsets for draws). */
 	tv = verts;
 	for(i = 0; i < n; i++){
-		L = &glines[i];
+		L = &lines[i];
 		if(L->thick > 0)
 			continue;
 		tv[0].x = L->x0; tv[0].y = L->y0; tv[0].z = L->z0;
@@ -931,7 +972,7 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		tv += 2;
 	}
 	for(i = 0; i < n; i++){
-		L = &glines[i];
+		L = &lines[i];
 		if(L->thick <= 0)
 			continue;
 		/* Plan 9 width = 1+2*thick → half-width thick+0.5 in screen pixels. */
@@ -966,8 +1007,8 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph,
 		    verts + nthin * 2, nthick * 6, MTLPrimitiveTypeTriangle) < 0){
 			for(i = 0; i < n; i++)
-				if(glines[i].thick > 0)
-					soft_bresenham(gscreen, &glines[i]);
+				if(lines[i].thick > 0)
+					soft_bresenham(gscreen, &lines[i]);
 		}
 	}
 	if(nthin > 0){
@@ -975,11 +1016,12 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph,
 		    verts, nthin * 2, MTLPrimitiveTypeLine) < 0){
 			for(i = 0; i < n; i++)
-				if(glines[i].thick <= 0)
-					soft_bresenham(gscreen, &glines[i]);
+				if(lines[i].thick <= 0)
+					soft_bresenham(gscreen, &lines[i]);
 		}
 	}
 	free(verts);
+	free(lines);
 }
 
 static int
@@ -989,8 +1031,7 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 	Memimage *pix;
 	Point a, b;
 	float r, g, bl, al;
-	GPULine *L;
-	int i;
+	GPULine *L, *p;
 
 	if(op != SoverD && op != S)
 		return 0;
@@ -1006,11 +1047,23 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 		return 0;
 	if(src_rgba(src, &r, &g, &bl, &al) < 0)
 		return 0;
-	if(nglines >= MaxGPULines){
-		/* Overflow: fold oldest into softscreen so we do not drop geometry. */
-		for(i = 0; i < nglines; i++)
-			soft_bresenham(gscreen, &glines[i]);
-		nglines = 0;
+
+retry:
+	lock(&mtl_geom_lock);
+	if(nglines >= maxglines){
+		if(maxglines != 0){
+			unlock(&mtl_geom_lock);
+			mark_view_dirty();
+			osyield();
+			goto retry;
+		}
+		p = malloc(sizeof(GPULine) * MaxGPULines);
+		if(p == nil){
+			unlock(&mtl_geom_lock);
+			return 0;
+		}
+		glines = p;
+		maxglines = MaxGPULines;
 	}
 	L = &glines[nglines++];
 	L->x0 = (float)a.x;
@@ -1024,6 +1077,7 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 	L->b = bl;
 	L->a = al;
 	L->thick = thick;
+	unlock(&mtl_geom_lock);
 	return 1;
 }
 
@@ -1065,8 +1119,8 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 	need = ntri * 3;
 	if(need > MaxGPUTriVerts)
 		return 0;
-	if(ngtriverts + need > MaxGPUTriVerts)
-		soft_burn_tris();
+	if(!metal_tri_reserve(need))
+		return 0;
 	for(i = 1; i < n - 1; i++){
 		v = &gtriverts[ngtriverts];
 		v[0].x = (float)pp[0].x;
@@ -1092,6 +1146,7 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 		v[2].a = al;
 		ngtriverts += 3;
 	}
+	unlock(&mtl_geom_lock);
 	return 1;
 }
 
@@ -1114,9 +1169,7 @@ metal_queue_plot(Memimage *dst, Point p, Memimage *src, int op, float ez)
 		return 0;
 	if(src_rgba(src, &r, &g, &bl, &al) < 0)
 		return 0;
-	if(ngtriverts + 6 > MaxGPUTriVerts)
-		soft_burn_tris();
-	if(ngtriverts + 6 > MaxGPUTriVerts)
+	if(!metal_tri_reserve(6))
 		return 0;
 	z = eye_to_depth(ez);
 	hx = 0.75f;	/* ~1.5px square so the point is visible */
@@ -1133,6 +1186,7 @@ metal_queue_plot(Memimage *dst, Point p, Memimage *src, int op, float ez)
 	v[0].b = v[1].b = v[2].b = v[3].b = v[4].b = v[5].b = bl;
 	v[0].a = v[1].a = v[2].a = v[3].a = v[4].a = v[5].a = al;
 	ngtriverts += 6;
+	unlock(&mtl_geom_lock);
 	return 1;
 }
 
@@ -1317,8 +1371,6 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 		return 0;
 	if(pix != gscreen && pix != screenimage)
 		return 0;
-	if(ngsprites >= MaxGPUSprites)
-		return 0;
 	tex = metal_sprite_tex(img, mask);
 	if(tex == nil)
 		return 0;
@@ -1330,6 +1382,14 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 	hx = (float)sw * 0.5f;
 	hy = (float)sh * 0.5f;
 	z = eye_to_depth(ez);
+	retry:
+	lock(&mtl_geom_lock);
+	if(ngsprites >= MaxGPUSprites){
+		unlock(&mtl_geom_lock);
+		mark_view_dirty();
+		osyield();
+		goto retry;
+	}
 	spr = &gsprites[ngsprites];
 	spr->tex = tex;
 	for(i = 0; i < 6; i++){
@@ -1348,6 +1408,7 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 		spr->v[i].a = 1.0f;
 	}
 	ngsprites++;
+	unlock(&mtl_geom_lock);
 	return 1;
 }
 
@@ -1380,9 +1441,7 @@ metal_queue_ellipse(Memimage *dst, Point c, int a, int b, int thick, int fill,
 	n = EllipseSegs;
 	if(fill){
 		need = n * 3;
-		if(ngtriverts + need > MaxGPUTriVerts)
-			soft_burn_tris();
-		if(ngtriverts + need > MaxGPUTriVerts)
+		if(!metal_tri_reserve(need))
 			return 0;
 		for(i = 0; i < n; i++){
 			ang = (float)(2.0 * M_PI * i / n);
@@ -1405,6 +1464,7 @@ metal_queue_ellipse(Memimage *dst, Point c, int a, int b, int thick, int fill,
 			v[0].a = v[1].a = v[2].a = al;
 			ngtriverts += 3;
 		}
+		unlock(&mtl_geom_lock);
 		return 1;
 	}
 	/* Stroke: queue line segments (thick via existing line path). */
@@ -1435,10 +1495,16 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	MTLSamplerDescriptor *sd;
 	static id<MTLSamplerState> sprsamp;
 
-	if(ngsprites == 0 || cmd == nil || drawabletex == nil || mtl_sprite_pipe == nil)
+	lock(&mtl_geom_lock);
+	if(ngsprites == 0 || cmd == nil || drawabletex == nil || mtl_sprite_pipe == nil){
+		unlock(&mtl_geom_lock);
 		return;
+	}
 	if(depthtex == nil){
+		for(i = 0; i < ngsprites; i++)
+			gsprites[i].tex = nil;
 		ngsprites = 0;
+		unlock(&mtl_geom_lock);
 		return;
 	}
 	if(sprsamp == nil){
@@ -1477,6 +1543,7 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		gsprites[i].tex = nil;
 	}
 	ngsprites = 0;
+	unlock(&mtl_geom_lock);
 }
 
 /*

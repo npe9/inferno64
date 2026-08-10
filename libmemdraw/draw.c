@@ -1023,6 +1023,22 @@ alphacalc11(Buffer bdst, Buffer bsrc, Buffer bmask, int dx, int grey, int op)
 	obdst = bdst;
 	sadelta = bsrc.alpha == &ones ? 0 : bsrc.delta;
 
+	/* RGBA32 source-over through the replicated opaque mask is the normal
+	 * window-compositing case.  Source pixels are already premultiplied, so
+	 * multiplying them by 255 again only burns two packed-channel multiplies. */
+	if(!grey && bdst.rgba && bsrc.rgba && bmask.delta == 0 && *bmask.alpha == 255){
+		for(i=0; i<dx; i++){
+			sa = *bsrc.alpha;
+			fd = 255-sa;
+			q2 = MUL0123(fd, *bdst.rgba, s, t);
+			*bdst.rgba = BWADD(*bsrc.rgba, q2);
+			bsrc.rgba++;
+			bdst.rgba++;
+			bsrc.alpha += sadelta;
+		}
+		return obdst;
+	}
+
 	for(i=0; i<dx; i++){
 		sa = *bsrc.alpha;
 		ma = *bmask.alpha;

@@ -67,6 +67,7 @@ TARG=\
 	wmsmoke.dis\
 	wmplay.dis\
 	draw3ddemo.dis\
+	gfxstress.dis\
 
 MODULES=\
 	wmdeb.m\
