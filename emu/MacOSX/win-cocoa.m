@@ -104,6 +104,7 @@ struct GPUCopy {
 	Rectangle	dst;
 	Rectangle	src;
 	int	armed;
+	ulong	saved;
 };
 static uchar	*soft_dirty;
 static uchar	*soft_upload_dirty;
@@ -114,6 +115,10 @@ static int	ngpu_copies;
 static GPUCopy	present_copies[MaxGPUCopies];
 static int	npresent_copies;
 static int	damage_before_copy;
+static uvlong	metal_upload_bytes;
+static uvlong	metal_copy_bytes;
+static uvlong	metal_saved_bytes;
+static int	metal_stat_frames;
 static int	mtl_have_under;	/* snapshot taken; composite HUD over 3D */
 static int	mtl_zenable;
 static int	mtl_zclear;	/* clear depth on next geom pass */
@@ -170,6 +175,9 @@ struct SpriteTexCache {
 static GPULine	*glines;
 static int	nglines;
 static int	maxglines;
+static GPULine	*present_lines;
+static GPUVert	*present_line_verts;
+static GPUVert	*present_tri_verts;
 static GPUVert	gtriverts[MaxGPUTriVerts];
 static int	ngtriverts;
 static GPUSprite	gsprites[MaxGPUSprites];
@@ -558,7 +566,7 @@ metal_mark_tiles(Rectangle r, int value, int fullonly)
 static void
 metal_damage_note(Rectangle r)
 {
-	int i;
+	int i, nx, ny;
 
 	if(ngpu_copies == 0){
 		damage_before_copy = 1;
@@ -574,6 +582,12 @@ metal_damage_note(Rectangle r)
 		if(!gpu_copies[i].armed && rectcontains(r, gpu_copies[i].dst)){
 			metal_mark_tiles(gpu_copies[i].dst, 0, 1);
 			gpu_copies[i].armed = 1;
+			nx = gpu_copies[i].dst.max.x/SoftTile
+				- (gpu_copies[i].dst.min.x+SoftTile-1)/SoftTile;
+			ny = gpu_copies[i].dst.max.y/SoftTile
+				- (gpu_copies[i].dst.min.y+SoftTile-1)/SoftTile;
+			gpu_copies[i].saved = nx > 0 && ny > 0
+				? (ulong)nx*ny*SoftTile*SoftTile*4 : 0;
 		}else if(gpu_copies[i].armed &&
 		    (rectsoverlap(r, gpu_copies[i].src) || rectsoverlap(r, gpu_copies[i].dst))){
 			metal_mark_tiles(gpu_copies[i].dst, 1, 0);
@@ -606,6 +620,7 @@ metal_copy_note(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 		c->dst = dr;
 		c->src = sr;
 		c->armed = 0;
+		c->saved = 0;
 	}
 	unlock(&soft_dirty_lock);
 }
@@ -657,6 +672,8 @@ metal_replay_copies(id<MTLCommandBuffer> cmd, id<MTLTexture> tex, int pw, int ph
 		c = &present_copies[i];
 		w = Dx(c->src);
 		h = Dy(c->src);
+		metal_copy_bytes += (uvlong)w*h*4;
+		metal_saved_bytes += c->saved;
 		[blit copyFromTexture:tex sourceSlice:0 sourceLevel:0
 			sourceOrigin:MTLOriginMake(c->src.min.x, c->src.min.y, 0)
 			sourceSize:MTLSizeMake(w, h, 1)
@@ -759,6 +776,7 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 				toTexture:tex destinationSlice:0 destinationLevel:0
 				destinationOrigin:MTLOriginMake(x, y, 0)];
 			any = 1;
+			metal_upload_bytes += (uvlong)w*h*4;
 			tx = tx1;
 		}
 	}
@@ -1088,7 +1106,9 @@ metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	}
 	if(n % 3 != 0)
 		n -= n % 3;
-	verts = malloc(sizeof(GPUVert) * n);
+	if(present_tri_verts == nil)
+		present_tri_verts = malloc(sizeof(GPUVert) * MaxGPUTriVerts);
+	verts = present_tri_verts;
 	if(verts == nil){
 		unlock(&mtl_geom_lock);
 		return;
@@ -1099,7 +1119,6 @@ metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph, verts, n,
 	    MTLPrimitiveTypeTriangle) < 0)
 		soft_burn_tris(verts, n);
-	free(verts);
 }
 
 static void
@@ -1117,7 +1136,9 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		unlock(&mtl_geom_lock);
 		return;
 	}
-	lines = malloc(sizeof(GPULine) * n);
+	if(present_lines == nil)
+		present_lines = malloc(sizeof(GPULine) * MaxGPULines);
+	lines = present_lines;
 	if(lines == nil){
 		unlock(&mtl_geom_lock);
 		return;
@@ -1137,11 +1158,12 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 
 	/* Thin: 2 verts/line; thick: 6 verts (two tris) each. */
 	nv = nthin * 2 + nthick * 6;
-	verts = malloc(sizeof(GPUVert) * nv);
+	if(present_line_verts == nil)
+		present_line_verts = malloc(sizeof(GPUVert) * MaxGPULines * 6);
+	verts = present_line_verts;
 	if(verts == nil){
 		for(i = 0; i < n; i++)
 			soft_bresenham(gscreen, &lines[i]);
-		free(lines);
 		return;
 	}
 	/* Pack thin endpoints first, then thick quads (stable offsets for draws). */
@@ -1205,8 +1227,6 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 					soft_bresenham(gscreen, &lines[i]);
 		}
 	}
-	free(verts);
-	free(lines);
 }
 
 static int
@@ -1908,6 +1928,12 @@ present_softscreen(void)
 
 	[cmd presentDrawable:drawable];
 	[cmd commit];
+	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
+		fprint(2, "METALSTATS frames=%d upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud\n",
+			metal_stat_frames, metal_upload_bytes, metal_copy_bytes, metal_saved_bytes);
+		metal_stat_frames = 0;
+		metal_upload_bytes = metal_copy_bytes = metal_saved_bytes = 0;
+	}
 }
 
 static void
