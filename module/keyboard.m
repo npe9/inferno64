@@ -46,5 +46,5 @@ Keyboard : module {
 	Latin: con Spec|16r6f;
 
 	APP: con Spec|16r200;	# for application use (ALT keys)
+	Keyup: con Spec|16r800;	# release: Keyup | (key & 16r7ff)
 };
-

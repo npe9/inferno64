@@ -34,6 +34,8 @@ ErrIco: con "error -fg red";
 
 ed: ref Tk->Toplevel;
 dirty := 0;
+savedtext, lasttext: string;
+undos: list of string;
 
 BLUE : con "#0000ff";
 GREEN : con "#008800";
@@ -67,6 +69,7 @@ ed_config := array[] of {
 	".m.edit.menu add command -label Cut -command {send c cut}",
 	".m.edit.menu add command -label Copy -command {send c copy}",
 	".m.edit.menu add command -label Paste -command {send c paste}",
+	".m.edit.menu add command -label Undo -command {send c undo}",
 	"menu .m.search.menu",
 	".m.search.menu add command -label {Find ...} " +
 					"-command {send c searchf}",
@@ -82,7 +85,8 @@ ed_config := array[] of {
 	".m.options.menu add command -label Indent -command {send c indent}",
 	"text .b.t  -yscrollcommand {.b.s set} -bg white",
 	"bind .b.t <Button-2> {.m.edit.menu post %X %Y}",
-	"bind .b.t <Key> +{send c dirtied {%A}}",
+	"bind .b.t <Key> +{send c dirtied {%A}; after 0 {send c changed}}",
+	"bind .b.t <Control-_> {send c undo}",
 	"bind .b.t <ButtonRelease-1> +{send c reindent}",
 	"scrollbar .b.s -command {.b.t yview}",
 	"pack .m -fill x",
@@ -181,6 +185,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			case s {
 			"exit" =>	if ( check_dirty() ){ set_clean(); break cmdloop; }
 			"dirtied" =>	set_dirty(); do_limbo_check(s);
+			"changed" =>	remember_change();
+			"undo" =>	do_undo();
 			"new" =>	if ( check_dirty()) {set_clean(); do_new();}
 			"open" =>	if ( check_dirty() && do_open()) set_clean();
 			"save" =>	do_save(0);
@@ -388,6 +394,9 @@ is_keyword(word : string) : int
 do_new()
 {
 	cmd(ed, ".b.t delete 1.0 end");
+	savedtext = "";
+	lasttext = "";
+	undos = nil;
 	curfile = "(New)";
 	tkclient->settitle(ed, "Edit " + curfile);
 }
@@ -438,6 +447,8 @@ do_save(prompt: int)
 		}
 
 		if(savetfile(fname, contents)) {
+			savedtext = contents;
+			lasttext = contents;
 			set_clean();
 			break;
 		}
@@ -553,6 +564,33 @@ do_replaceall()
 }
 	
 
+remember_change()
+{
+	now := tk->cmd(ed, ".b.t get 1.0 end");
+	if(now == lasttext)
+		return;
+	undos = lasttext :: undos;
+	lasttext = now;
+	if(now != savedtext)
+		set_dirty();
+	else
+		set_clean();
+}
+
+do_undo()
+{
+	if(undos == nil)
+		return;
+	text := hd undos;
+	undos = tl undos;
+	cmd(ed, ".b.t delete 1.0 end; .b.t insert 1.0 " + tk->quote(text));
+	lasttext = text;
+	if(text != savedtext)
+		set_dirty();
+	else
+		set_clean();
+}
+
 loadtfile(path: string): string
 {
 	if ( path != nil && path[0] == '/' )
@@ -588,6 +626,9 @@ loadtfile(path: string): string
 	tkclient->settitle(ed, "Edit " + curfile);
 	cmd(ed, "cursor -default");
 	cmd(ed, "update");
+	savedtext = tk->cmd(ed, ".b.t get 1.0 end");
+	lasttext = savedtext;
+	undos = nil;
 	return "";
 }
 

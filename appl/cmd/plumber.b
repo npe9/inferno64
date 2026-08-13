@@ -8,6 +8,8 @@ include "draw.m";
 
 include "sh.m";
 
+include "env.m";
+
 include "regex.m";
 	regex: Regex;
 
@@ -352,7 +354,11 @@ startup(dir, prog: string, args: list of string, wait: chan of int)
 		}
 	}
 
-	sys->pctl(Sys->NEWFD|Sys->NEWPGRP|Sys->FORKNS, list of {0, 1, 2});
+	# A program started directly by the plumber must not inherit the plumber's
+	# environment identity.  Titlebar source lookup uses $dis, and sharing the
+	# environment here made an editor window point back at plumber.b.
+	sys->pctl(Sys->NEWFD|Sys->NEWPGRP|Sys->FORKNS|Sys->FORKENV,
+		list of {0, 1, 2});
 	wait <-= 1;
 	wait = nil;
 	mod := load Command prog;
@@ -360,6 +366,9 @@ startup(dir, prog: string, args: list of string, wait: chan of int)
 		sys->fprint(stderr, "plumb: can't load %s: %r\n", prog);
 		return;
 	}
+	env := load Env Env->PATH;
+	if(env != nil)
+		env->setenv("dis", prog);
 	sys->chdir(dir);
 	mod->init(context, prog :: args);
 }
@@ -399,7 +408,8 @@ process(in: ref Inmesg): (int, array of byte)
 			args = in.text :: nil;
 		}else
 			return (NOTSTARTED, nil);
-		log(sys->sprint("start %s port %s\n", path, output[j].name));
+		log(sys->sprint("start %s argv %s port %s\n", path,
+			str->quoted(args), output[j].name));
 		wait := chan of int;
 		output[j].waiting = 1;
 		spawn startup(in.msg.dir, path, args, wait);

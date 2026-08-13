@@ -113,6 +113,24 @@ The user wishes to resize the window.
 .TP
 .B help
 The help button has been clicked.
+.B Wmctl
+opens the manual page associated with the running Dis module.
+.TP
+.B source
+The pencil button has been clicked.
+.B Wmctl
+finds the Limbo source associated with the running Dis module and sends its
+path, resolved executable, and original argument vector through
+.IR plumber (8)
+to
+.IR develop (1).
+The
+.B wmsource
+environment variable can name the source explicitly; otherwise conventional
+.B /dis
+to
+.B /appl
+mappings are tried.
 .TP
 .B ok
 The OK  button has been clicked.
@@ -176,7 +194,9 @@ ready to the event types specified in
 .IR devs .
 Currently understood are
 .B kbd
-for keyboard events, and
+for keyboard press events,
+.B keyup
+to additionally request keyboard release events, and
 .B ptr
 for pointer events.
 .PP
@@ -226,4 +246,6 @@ channel for interaction with
 .B /appl/lib/tkclient.b
 .SH SEE ALSO
 .IR wm (1),
-.IR tk (2)
+.IR tk (2),
+.IR plumbing (6),
+.IR plumber (8)

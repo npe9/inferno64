@@ -819,6 +819,7 @@ runexternal(ctxt: ref Context, args: list of ref Listnode, last: int): string
 					sys->pctl(Sys->NEWFD, ctxt.keepfds);
 					# Resolved Dis path for wm Help (? → man page).
 					env->setenv("dis", npath);
+					env->setenv("wmargs", str->quoted(argv));
 					if (DEBUG) debug(sys->sprint("runexternal before mod->init"));
 					mod->init(ctxt.drawcontext, argv);
 					if (DEBUG) debug(sys->sprint("runexternal after mod->init"));
@@ -950,10 +951,15 @@ externalexec(mod: Command,
 		startchan: chan of int, keepfds: list of int)
 {
 	if (DEBUG) debug(sprint("externalexec(%s,... [%d args])", hd argv, len argv));
-	sys->pctl(Sys->NEWFD, keepfds);
+	# External commands must not share the shell's environment group: in
+	# particular, recording this command's resolved Dis path must not replace
+	# the identity inherited by a launcher or by another concurrently running
+	# command.
+	sys->pctl(Sys->NEWFD | Sys->FORKENV, keepfds);
 	startchan <-= sys->pctl(0, nil);
 	{
 		env->setenv("dis", dispath);
+		env->setenv("wmargs", str->quoted(argv));
 		mod->init(drawcontext, argv);
 	}exception e{
 	EPIPE =>

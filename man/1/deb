@@ -164,9 +164,3 @@ memory.
 .PP
 When setting breakpoints there is no visual cue for the selected statement or operation until
 the breakpoint is actually set.
-.PP
-It is only possible to debug modules executed by the interpreter.
-Code that has been JITed, the compilation execution method, yields
-stack information that does not correspond to information in the symbol
-.RB ( .sbl )
-file.

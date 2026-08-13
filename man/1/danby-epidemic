@@ -1,0 +1,41 @@
+.TH DANBY-EPIDEMIC 1
+.SH NAME
+danby-epidemic \- susceptible-infected-recovered epidemic
+.SH SYNOPSIS
+.B temple/epidemic
+.SH DESCRIPTION
+.I Temple/epidemic
+is an interactive live simulation of susceptible-infected-recovered epidemic.
+It integrates the model continuously and redraws its state as parameters or
+initial conditions change.
+.SH MODEL
+S'=-beta SI; I'=beta SI-gamma I; R'=gamma I.
+.PP
+S, I, and R are population fractions; beta is contact rate and gamma recovery rate.
+.SH DISPLAY
+The three time traces show susceptible depletion, the infection peak, and accumulated recovery. Their sum should remain one.
+.SH CONTROLS
+Drag vertically to choose the initial infected fraction. The bottom tracks set contact and recovery.
+.PP
+Space pauses or resumes the simulation.  Period advances one displayed step
+while paused.  The
+.B r
+key restores the default initial state and
+.B q
+or Escape exits.
+.SH INTERPRETATION
+The quantities are normalized unless physical units are stated explicitly.
+The display is a visualization of a low-dimensional differential-equation
+model, not an agent simulation or a prediction of a particular real system.
+Parameter changes restart the displayed history so trajectories from different
+settings are not joined.
+.SH NUMERICS
+The state is advanced by the general-purpose
+.B Numerics
+fourth-order Runge-Kutta solver.  Small negative values caused by numerical
+roundoff are clamped for nonnegative population and stock models.
+.SH SOURCE
+.B /appl/temple/epidemic.b
+.SH SEE ALSO
+.IR numerics (2)
+

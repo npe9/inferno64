@@ -1,0 +1,27 @@
+.TH LIVEPLOT 2
+.SH NAME
+liveplot \- drawing primitives for live simulation displays
+.SH SYNOPSIS
+.EX
+include "liveplot.m";
+liveplot := load Liveplot Liveplot->PATH;
+liveplot->grid(image, rectangle, colour, 10, 10);
+liveplot->series(image, rectangle, x, y, n,
+        xmin, xmax, ymin, ymax, colour);
+.EE
+.SH DESCRIPTION
+.I Liveplot
+provides model-independent drawing operations for continuously updated
+simulations.  It maps real coordinates to image coordinates, draws grids,
+renders time series and phase paths, and draws parameter sliders.
+.PP
+It deliberately does not own a window, event loop, history policy, equations,
+labels, or domain visualization.  Applications can combine its plots with
+spatial or symbolic views such as an orbit, court, compartment flow, or stock.
+.SH SOURCE
+.B /module/liveplot.m
+.br
+.B /appl/lib/liveplot.b
+.SH SEE ALSO
+.IR draw (2),
+.IR numerics (2)

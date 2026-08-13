@@ -503,25 +503,19 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 	}
 	ap[n] = ap[0];
 	col := litcolour(c, lit);
-	if(c.zenable && c.zstate != nil && normal.z != 0.0){
-		# Plane in screen space from face normal / centroid (polyhedra approach).
-		f := normal;
-		d := 0.0;
-		for(i = 0; i < n; i++)
-			d += vdot(f, verts[i]);
-		d /= real n;
-		α := c.mx;
-		β := c.cx;
-		γ := c.my;
-		δ := c.cy;
-		cz := f.z;
-		if(cz > -1e-6 && cz < 1e-6){
-			c.dst.fillpoly(ap, ~0, col, Point(0, 0));
-			return;
-		}
-		a := -f.x / (cz * α);
-		b := -f.y / (cz * γ);
-		dd := d / cz - β * a - δ * b;
+	if(c.zenable && c.zstate != nil){
+		# Derive z directly from transformed screen vertices.  A world-space
+		# normal is invalid after a custom/nonlinear perspective transform.
+		x0:=eye[0].x; y0:=eye[0].y; z0:=-eye[0].z;
+		x1:=eye[1].x; y1:=eye[1].y; z1:=-eye[1].z;
+		x2:=eye[2].x; y2:=eye[2].y; z2:=-eye[2].z;
+		e1x:=x1-x0; e1y:=y1-y0; e1z:=z1-z0;
+		e2x:=x2-x0; e2y:=y2-y0; e2z:=z2-z0;
+		nx:=e1y*e2z-e1z*e2y; ny:=e1z*e2x-e1x*e2z; nz:=e1x*e2y-e1y*e2x;
+		if(nz > -1e-6 && nz < 1e-6){ c.dst.fillpoly(ap, ~0, col, Point(0,0)); return; }
+		a := -nx/nz;
+		b := -ny/nz;
+		dd := (nx*x0+ny*y0+nz*z0)/nz;
 		if(a <= -LIMIT || a >= LIMIT || b <= -LIMIT || b >= LIMIT || dd <= -LIMIT || dd >= LIMIT){
 			c.dst.fillpoly(ap, ~0, col, Point(0, 0));
 			return;
@@ -596,11 +590,12 @@ spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: rea
 		c.dst.draw(r, img, mask, img.r.min);
 		return;
 	}
-	rotsprite(c.dst, sp, sw, sh, img, mask, degz);
+	transformsprite(c.dst, sp, sw, sh, img, mask, degz, 0);
 }
 
 # Software Z-rotate blit (nearest-neighbour) for Sprite3ZB.
-rotsprite(dst: ref Image, sp: Point, sw, sh: int, img, mask: ref Image, degz: real)
+transformsprite(dst: ref Image, sp: Point, sw, sh: int,
+	img, mask: ref Image, degz: real, flipx: int)
 {
 	iw := img.r.dx();
 	ih := img.r.dy();
@@ -664,6 +659,8 @@ rotsprite(dst: ref Image, sp: Point, sw, sh: int, img, mask: ref Image, degz: re
 			dy := real y - cy;
 			lx := dx * cs + dy * sn;
 			ly := -dx * sn + dy * cs;
+			if(flipx)
+				lx = -lx;
 			if(lx < -hx || lx >= hx || ly < -hy || ly >= hy)
 				continue;
 			# map to source pixel
@@ -701,6 +698,16 @@ rotsprite(dst: ref Image, sp: Point, sw, sh: int, img, mask: ref Image, degz: re
 		tmpm.writepixels(tmpm.r, dmsk);
 	dr := Rect((sp.x - bw/2, sp.y - bh/2), (sp.x - bw/2 + bw, sp.y - bh/2 + bh));
 	dst.draw(dr, tmp, tmpm, Point(0, 0));
+}
+
+sprite2d(dst: ref Image, center: Point, img, mask: ref Image,
+	width, height: int, degz: real, flipx: int)
+{
+	if(img == nil || dst == nil)
+		return;
+	if(width <= 0) width = img.r.dx();
+	if(height <= 0) height = img.r.dy();
+	transformsprite(dst, center, width, height, img, mask, degz, flipx);
 }
 
 sprite3(c: ref Context, p: Vector, img, mask: ref Image, scale: real)

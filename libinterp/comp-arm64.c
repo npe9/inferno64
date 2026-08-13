@@ -2917,6 +2917,14 @@ compile(Module *m, int size, Modlink *ml)
 				eidx, (void*)RELPC(patch[eidx]));
 		m->entry = (Inst*)RELPC(patch[eidx]);
 	}
+	/*
+	 * The prog and profiling devices compare native PCs as byte offsets
+	 * from m->prog.  During code generation patch[] is deliberately kept
+	 * in A64 instruction units for IA()/RELPC(); publish it in the common
+	 * byte-offset representation only after every relocation is complete.
+	 */
+	for(i = 0; i <= size; i++)
+		patch[i] *= sizeof(*base);
 	m->pctab = patch;
 
 #ifdef APPLE_JIT

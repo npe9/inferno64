@@ -1,0 +1,90 @@
+.TH SPRITEEDIT 1
+.SH NAME
+spriteedit \- edit TempleOS-style sprites embedded in text
+.SH SYNOPSIS
+.B temple/spriteedit
+[
+.I file
+[
+.I name
+]
+]
+.SH DESCRIPTION
+.I Spriteedit
+is an Inferno RGBA sprite editor modelled on the TempleOS DolDoc sprite editor.
+Its source format is an ordinary text block, so sprites can be kept inside
+Limbo source, troff input, documentation, or a standalone asset file.
+.PP
+The block format is
+.EX
+.SPRITE cursor 2 2 r8g8b8a8
+-16776961 -1
+. 862388223
+.ENDSPRITE
+.EE
+Pixels are signed 32-bit Inferno
+.B r8g8b8a8
+values separated by spaces.  A dot denotes a transparent pixel.  RGB sliders
+and the r/R, g/G, and b/B keys edit the current full-colour paint value.
+.PP
+Mesh elements use the companion textual form
+.EX
+.MESH pyramid 4 2
+v -20 -20 0
+v 20 -20 0
+v 20 20 0
+v -20 20 0
+f 12 0 1 2
+f 12 0 2 3
+.ENDMESH
+.EE
+where each face contains an Inferno RGBA value followed by three vertex
+indices.  Mesh mode presents an editable orthographic view alongside a live
+filled perspective preview.  Clicking selects a vertex, dragging moves it in
+the current plane, and Tab cycles through XY, XZ, and ZY planes.  Space records
+the selected vertex for a face, T creates a triangle from the last three
+recorded vertices, and V creates a vertex at the origin.
+.PP
+If the named block already exists, saving replaces only that block and
+preserves all surrounding text.  If it does not exist, a new block is
+appended.  With no arguments the editor uses
+.BR /tmp/sprite.txt
+and the object name
+.BR sprite .
+.PP
+The controls are:
+.TF "Right button"
+.TP
+.B Left button
+Paint with the selected palette colour.
+.TP
+.B Right button
+Erase to transparency.
+.TP
+.B r/R, g/G, b/B
+Decrease or increase the corresponding colour channel.
+.TP
+.B X
+Select transparent ink.
+.TP
+.B S
+Save the embedded block.
+.TP
+.B L
+Reload it from disk.
+.TP
+.B N
+Clear the sprite.
+.TP
+.B Tab
+Cycle the mesh editing plane.
+.TP
+.B Q, Escape
+Quit.
+.PD
+.SH SOURCE
+.B /appl/temple/spriteedit.b
+.SH SEE ALSO
+.IR acme (1),
+.IR plumb (1),
+.IR wm (1)

@@ -67,6 +67,7 @@ menu_cfg := array[] of {
 	".m add command -text Cut -command {send edit cut}",
 	".m add command -text Paste -command {send edit paste}",
 	".m add command -text Snarf -command {send edit snarf}",
+	".m add command -text Undo -command {send edit undo}",
 	".m add command -text Look -command {send edit look}",
 };
 
@@ -127,6 +128,7 @@ input_cfg := array[] of {
 	"bind .ft.t <Control-h> {send keys {%A}}",
 	"bind .ft.t <Control-w> {send keys {%A}}",
 	"bind .ft.t <Control-u> {send keys {%A}}",
+	"bind .ft.t <Control-_> {send edit undo}",
 	"bind .ft.t <Button-1> +{grab set .ft.t; send but1 pressed}",
 	"bind .ft.t <Double-Button-1> +{grab set .ft.t; send but1 pressed}",
 	"bind .ft.t <ButtonRelease-1> +{grab release .ft.t; send but1 released}",
@@ -244,6 +246,12 @@ tagconfig = array[NTAG] of {
 
 enabled := array[] of {"disabled", "normal"};
 
+Undo: adt
+{
+	text:	string;
+	fonts:	int;
+};
+
 File: adt
 {
 	tk:			ref Tk->Toplevel;
@@ -260,6 +268,7 @@ File: adt
 	button3:		int;
 	fontsok:		int;		# fonts and tags can be set
 	extensions:	list of ref Ext;
+	undos:		list of ref Undo;
 };
 
 Ext: adt
@@ -356,7 +365,7 @@ control(ctxt: ref Context)
 
 	# f is not used to store anything, just to simplify interfaces
 	# shared by control and brutus
-	f := ref File (t, 1, 0, 0, "", 0, DEFFONTNAME, DEFSIZE, DEFTAG, nil, 0, 0, 0, nil);
+	f := ref File (t, 1, 0, 0, "", 0, DEFFONTNAME, DEFSIZE, DEFTAG, nil, 0, 0, 0, nil, nil);
 
 	tkcmds(t, menu_cfg);
 	tkcmd(t, "frame .b");
@@ -531,7 +540,7 @@ brutus(ctxt: ref Context, filename: string)
 
 	(t, titlectl)  := tkclient->toplevel(ctxt, SETFONT, Name, Tkclient->Appl);
 
-	f := ref File (t, 0, 0, 0, filename, 0, DEFFONTNAME, DEFSIZE, DEFTAG, nil, 0, 0, 0, nil);
+	f := ref File (t, 0, 0, 0, filename, 0, DEFFONTNAME, DEFSIZE, DEFTAG, nil, 0, 0, 0, nil, nil);
 	f.configed = array[NTAG] of {* => 0};
 
 	tkcmds(t, menu_cfg);
@@ -606,6 +615,8 @@ brutus(ctxt: ref Context, filename: string)
 		}
 
 	ecmd := <-edit =>
+		if(ecmd != "undo")
+			checkpoint(f);
 		editor(f, ecmd);
 		tkcmd(t, FOCUS);
 
@@ -731,12 +742,14 @@ brutus(ctxt: ref Context, filename: string)
 		}
 
 	c := <-keys =>
+		checkpoint(f);
 		typing(f, c);
 
 	c := <-but1 =>
 		mousebut1(f, c);
 
 	c := <-but2 =>
+		checkpoint(f);
 		mousebut2(f, c);
 
 	c := <-but3 =>
@@ -1062,6 +1075,37 @@ isalnum(s: string): int
 	return 0;
 }
 
+undotext(f: ref File): ref Undo
+{
+	if(f.fontsused)
+		return ref Undo(sgml(f.tk, "-sgml", "1.0", "end"), 1);
+	return ref Undo(tkcmd(f.tk, ".ft.t get 1.0 end"), 0);
+}
+
+checkpoint(f: ref File)
+{
+	u := undotext(f);
+	if(f.undos != nil && (hd f.undos).text == u.text && (hd f.undos).fonts == u.fonts)
+		return;
+	f.undos = u :: f.undos;
+}
+
+undo(f: ref File)
+{
+	if(f.undos == nil)
+		return;
+	u := hd f.undos;
+	f.undos = tl f.undos;
+	tkcmd(f.tk, ".ft.t delete 1.0 end");
+	f.fontsused = u.fonts;
+	if(u.fonts)
+		insert(f, u.text);
+	else
+		tkcmd(f.tk, ".ft.t insert 1.0 " + tk->quote(u.text));
+	dirty(f, 1);
+	tkcmd(f.tk, ".ft.t mark set insert 1.0; update");
+}
+
 editor(f: ref File, ecmd: string)
 {
 
@@ -1083,6 +1127,9 @@ editor(f: ref File, ecmd: string)
 	"look" =>
 		menuindex = "3";
 		look(f);
+
+	"undo" =>
+		undo(f);
 	}
 	tkcmd(f.tk, UPDATE);
 }

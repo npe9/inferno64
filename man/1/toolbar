@@ -117,6 +117,7 @@ Initialisation shell-script.
 .B /appl/wm/toolbar.b
 .SH "SEE ALSO"
 .IR wm(1),
+.IR pinboard (1),
 .IR tkclient (2),
 .IR wmclient (2),
 .IR toolbar (1),

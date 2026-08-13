@@ -32,6 +32,10 @@ Save the selected text in the snarf buffer.
 .TP
 .B look
 Search forwards and select the next occurrence of the selected text.
+.TP
+.B undo
+Undo the last textual change in this document, preserving styled text.
+Control-underscore invokes the same command.
 .PD
 .PP
 Mouse chording is implemented, as in

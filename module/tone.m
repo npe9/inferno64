@@ -10,7 +10,8 @@ Tone: module
 	beep:	fn(freq, duration_ms: int);
 	stop:	fn();
 	# TempleOS-ish Play() subset: digits set octave (4-6),
-	# durations w/h/q/e/s (whole..sixteenth), notes A-G, #/b accidentals, rests R.
+	# durations w/h/q/e/s/t (whole..thirty-second), dotted duration '.',
+	# notes A-G, #/b accidentals, rests R.
 	# Example: "6hEqDC5B6CDhE"
 	play:	fn(score: string): string;
 };

@@ -236,6 +236,7 @@ lease dhcpclient
 lgamma math-elem
 listen sys-dial
 lists lists
+liveplot liveplot
 local daytime
 lock lock
 log math-elem
@@ -268,6 +269,7 @@ netinfo dial
 netmkaddr dial
 newns newns
 newuser newns
+numerics numerics
 ninep 9p-ninep
 norm1 math-linalg
 norm2 math-linalg

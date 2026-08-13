@@ -74,6 +74,7 @@ A simple cut-and-paste text editor.
 Several menus provide the usual editing commands.
 Text selections are dragged out using mouse button 1.
 Mouse button-2 displays a pop-up menu of the Cut, Copy and Paste commands.
+The Edit menu also provides multi-level Undo; control-underscore invokes it.
 .TP
 .B wm/mand
 A fractal browser to explore the Mandelbrot and Julia sets.
