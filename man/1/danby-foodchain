@@ -1,41 +1,34 @@
 .TH DANBY-FOODCHAIN 1
 .SH NAME
-danby-foodchain \- three-level trophic chain
+danby-foodchain \- plants, herbivores, and carnivores
 .SH SYNOPSIS
 .B temple/foodchain
-.SH DESCRIPTION
-.I Temple/foodchain
-is an interactive live simulation of three-level trophic chain.
-It integrates the model continuously and redraws its state as parameters or
-initial conditions change.
 .SH MODEL
-P'=rP(1-P)-aPH; H'=aPH-0.65H-0.9HC; C'=0.9HC-mC.
+P' = rP(1-P/K)-aPH;
+H' = eaPH-dH-bHC;
+C' = fbHC-mC.
 .PP
-P is prey, H predator, and C top predator. Parameters control prey growth, predation, and top loss.
+P denotes plants, H herbivores, and C carnivores.  Energy moves upward through
+the two consumption terms with conversion efficiencies e and f, while losses
+occur independently at each consumer level.
 .SH DISPLAY
-Three time traces show trophic lag: changes propagate from prey to predator to top predator.
+The three histories make trophic delay visible: a plant change first affects
+herbivores and only then carnivores.  Labelled instantaneous bars preserve the
+identity and scale of all three trophic levels and can be dragged directly.
 .SH CONTROLS
-Drag the view to set prey and predator; top predator resets to a small seed. Bottom tracks set growth, predation, and top loss.
-.PP
-Space pauses or resumes the simulation.  Period advances one displayed step
-while paused.  The
-.B r
-key restores the default initial state and
-.B q
-or Escape exits.
-.SH INTERPRETATION
-The quantities are normalized unless physical units are stated explicitly.
-The display is a visualization of a low-dimensional differential-equation
-model, not an agent simulation or a prediction of a particular real system.
-Parameter changes restart the displayed history so trajectories from different
-settings are not joined.
+Drag a state bar to alter plants, herbivores, or carnivores.  The eight bottom
+tracks set plant growth and capacity, grazing and its conversion, herbivore
+death, predation and its conversion, and carnivore death.  Space pauses,
+period steps, r resets, and q exits.
 .SH NUMERICS
-The state is advanced by the general-purpose
-.B Numerics
-fourth-order Runge-Kutta solver.  Small negative values caused by numerical
-roundoff are clamped for nonnegative population and stock models.
+The independent model module is
+.B /appl/danby/foodchain.b.
+Its empty boundary, metadata, and finite initial derivative are tested by
+.B temple/danbytest.
 .SH SOURCE
 .B /appl/temple/foodchain.b
+.br
+.B /appl/temple/populations.b
 .SH SEE ALSO
+.IR danby-manyspecies (1),
 .IR numerics (2)
-

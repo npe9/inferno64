@@ -1,0 +1,7 @@
+.TH DANBY-RKF45SYSTEM 1
+.SH NAME
+danby-rkf45system \- implement adaptive RKF4(5) for a system
+.SH DESCRIPTION
+Both harmonic-oscillator components share the six RKF stages, while normalized
+error is computed over the complete vector.  Tighten tolerance to inspect the
+accepted-step count and component accuracy.

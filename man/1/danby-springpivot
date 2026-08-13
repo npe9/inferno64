@@ -1,0 +1,7 @@
+.TH DANBY-SPRINGPIVOT 1
+.SH NAME
+danby-springpivot \- pendulum with a compliant sliding pivot
+.SH DESCRIPTION
+The pendulum pivot has mass and is attached to a horizontal spring.  Reaction
+forces from the bob drive the pivot, allowing energy exchange between spring
+translation and pendulum rotation.

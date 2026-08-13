@@ -1,0 +1,10 @@
+.TH DANBY-ODESYSTEMS 1
+.SH NAME
+danby-odesystems \- coupled first-order ODE laboratory
+.SH DESCRIPTION
+The app contrasts a scalar exponential equation with the two-component harmonic
+oscillator x'=v, v'=-x.  Exact and adaptive numerical components are overlaid,
+showing that a system is advanced as one state vector with shared step control.
+.SH CONTROLS
+1 selects the scalar problem, 2 the system, F cycles injected faults, plus and
+minus change tolerance, R resets, and Q exits.

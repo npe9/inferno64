@@ -1,0 +1,12 @@
+.TH DANBY-MOVINGPIVOT 1
+.SH NAME
+danby-movingpivot \- simulate a vertically driven pendulum
+.SH SYNOPSIS
+.B movingpivot
+.SH DESCRIPTION
+The pivot oscillates vertically, periodically changing the effective gravity.
+This is the standard parametrically excited pendulum and can exhibit resonance
+or stabilization of otherwise unstable motion.
+.PP
+The plot shows angle and pivot height.  Click a parameter scale to change it,
+space pauses, period steps while paused, R resets, and Q exits.

@@ -1,0 +1,16 @@
+.TH DANBY-BADMINTON 1
+.SH NAME
+danby-badminton \- high-drag shuttlecock trajectories
+.SH SYNOPSIS
+.B temple/badminton
+.SH MODEL
+The shuttlecock follows gravity plus velocity-squared drag.  Its unusually
+large area-to-mass ratio makes rapid deceleration the dominant feature, visibly
+separating the path from a vacuum parabola.
+.SH DISPLAY
+The plots show height versus distance and speed versus time.  Tracks alter
+speed, angle, drag, lift, spin, and gravity.
+.SH SOURCE
+.B /appl/danby/badminton.b
+.SH SEE ALSO
+.IR trajectory (2)

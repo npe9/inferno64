@@ -1,0 +1,7 @@
+.TH OSCILLATOR 2
+.SH NAME
+oscillator \- reusable scalar nonlinear oscillator equations
+.SH DESCRIPTION
+The module supplies acceleration functions for polynomial springs, the driven
+Duffing equation, and the Van der Pol oscillator.  Integration policy remains
+with the caller.

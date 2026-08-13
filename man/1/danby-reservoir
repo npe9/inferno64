@@ -1,0 +1,7 @@
+.TH DANBY-RESERVOIR 1
+.SH NAME
+danby-reservoir \- cascaded reservoir dynamics
+.SH DESCRIPTION
+Water moves through upper, lower, and service reservoirs under square-root head
+laws, demand, and evaporation.  The live volumes expose delay and attenuation
+through the cascade.

@@ -1,0 +1,12 @@
+.TH DANBY-PEGPENDULUM 1
+.SH NAME
+danby-pegpendulum \- simulate a pendulum wrapping around a peg
+.SH SYNOPSIS
+.B pegpendulum
+.SH DESCRIPTION
+When the string contacts the peg, its instantaneous centre of rotation moves to
+the peg and its effective length shortens.  The visualization exposes the two
+string segments and the plot shows angle and active length.
+.PP
+Click a parameter scale to change it, space pauses, period steps while paused,
+R resets, and Q exits.

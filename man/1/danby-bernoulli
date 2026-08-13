@@ -1,0 +1,7 @@
+.TH DANBY-BERNOULLI 1
+.SH NAME
+danby-bernoulli \- Bernoulli's brachistochrone problem
+.SH DESCRIPTION
+Two beads descend between the same endpoints: one on a cycloid and one on a
+straight ramp.  The animation and progress traces show why the longer cycloidal
+path arrives first under gravity.

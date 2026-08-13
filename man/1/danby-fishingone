@@ -1,0 +1,32 @@
+.TH DANBY-FISHINGONE 1
+.SH NAME
+danby-fishingone \- bioeconomics of a single fish stock
+.SH SYNOPSIS
+.B temple/fishingone
+.SH MODEL
+X'=rX(1-X/K)-qEX;
+E'=sE(pqX-c).
+.PP
+X is fish biomass and E fishing effort.  Harvest is qEX.  Effort expands when
+revenue per effort pqX exceeds cost c and contracts when fishing is unprofitable.
+The open-access equilibrium has X*=c/(pq) and
+E*=r(1-X*/K)/q when X* lies below carrying capacity.
+.SH DISPLAY
+Stock and effort histories show the ecological-economic feedback: depletion
+reduces profit, falling effort permits recovery, and delayed response can
+produce cycles.  This replaces the constant-take harvest demonstration for
+the economics section.
+.SH CONTROLS
+Drag either state bar.  Tracks set growth, carrying capacity, catchability,
+price, cost, and effort response.  Space pauses, period steps, r resets, and
+q exits.
+.SH NUMERICS
+The analytic open-access equilibrium is checked by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/danby/fishingone.b
+.br
+.B /appl/temple/fishingone.b
+.SH SEE ALSO
+.IR danby-harvest (1),
+.IR populationmodel (2)

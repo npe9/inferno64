@@ -1,0 +1,7 @@
+.TH DANBY-TANKCONTROL 1
+.SH NAME
+danby-tankcontrol \- feedback control of tank level and temperature
+.SH DESCRIPTION
+Separate finite-speed actuators move an outlet valve and heater toward
+proportional-control commands.  Traces show process variables together with
+actuator response, overshoot, and settling.

@@ -1,0 +1,7 @@
+.TH REACTION 2
+.SH NAME
+reaction \- reusable mass-action reaction-network operations
+.SH DESCRIPTION
+The module calculates mass-action flux from concentration and reaction-order
+vectors, applies stoichiometric vectors to derivatives, and clears derivative
+arrays.  Model modules retain ownership of network topology and parameters.

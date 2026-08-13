@@ -1,0 +1,24 @@
+implement Maypredator;
+
+include "sys.m";
+include "draw.m";
+
+Command: module
+{
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
+Maypredator: module
+{
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
+init(ctxt: ref Draw->Context, nil: list of string)
+{
+	ecology := load Command "/dis/temple/ecology.dis";
+	if(ecology == nil)
+		raise "fail:Maypredator: cannot load ecology interface";
+	ecology->init(ctxt,
+		"maypredator" :: "/dis/danby/maypredator.dis" ::
+		"danby-maypredator" :: nil);
+}

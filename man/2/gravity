@@ -1,0 +1,18 @@
+.TH GRAVITY 2
+.SH NAME
+gravity \- reusable planar pairwise-gravity kernel
+.SH SYNOPSIS
+.B include "danby/gravity.m";
+.SH DESCRIPTION
+.I Gravity
+computes pairwise softened Newtonian accelerations for an arbitrary number of
+bodies stored as x, y, vx, vy tuples.  Each pair is accumulated with equal and
+opposite force, preserving total linear momentum.  It also computes total
+mechanical energy and angular momentum for diagnostics.
+.SH SOURCE
+.B /module/danby/gravity.m
+.br
+.B /appl/danby/gravity.b
+.SH SEE ALSO
+.IR orbital (2),
+.IR numerics (2)

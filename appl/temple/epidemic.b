@@ -10,8 +10,13 @@ include "wmclient.m";
  Window: import wmclient;
 include "numerics.m";
  numerics: Numerics;
+include "plot.m";
+ plot: Plot;
+ Plotter: import plot;
 include "env.m";
  env: Env;
+include "danby/populationmodel.m";
+ epidemicmodel: Populationmodel;
 Epidemic: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
  };
 win: ref Window;
@@ -23,17 +28,21 @@ recovery := 0.55;
 t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
-histt, hists, histi, histr: array of real;
-nh := 0;
+graph: ref Plotter;
+model: ref Populationmodel->Model;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	numerics = load Numerics Numerics->PATH;
+	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	if(sys == nil || draw == nil || wmclient == nil || numerics == nil)
+	epidemicmodel = load Populationmodel "/dis/danby/epidemic.dis";
+	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
+			plot == nil || epidemicmodel == nil)
 		raise "fail:epidemic: missing module";
+	model = epidemicmodel->new();
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-epidemic");
 	 }
@@ -42,18 +51,20 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(ctxt == nil) ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "SIR epidemic", Wmclient->Appl);
 	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	bg=win.display.color(int 16r101722ff);
-	 fg=win.display.color(int 16re8edf2ff);
-	grid=win.display.color(int 16r29384aff);
-	 live=win.display.color(int 16r55d6beff);
-	accent=win.display.color(int 16rffb454ff);
+	bg=win.display.color(int 16rf4f0e7ff);
+	 fg=win.display.color(int 16r20272cff);
+	grid=win.display.color(int 16rd6d0c4ff);
+	 live=win.display.color(int 16r178f86ff);
+	accent=win.display.color(int 16rb85c38ff);
 	w=numerics->workspace(len y);
-	histt=array[1200] of real;
-	hists=array[1200] of real;
-	histi=array[1200] of real;
-	histr=array[1200] of real;
+	graph=plot->new(win.image,font);
+	graph.cmd("table history time S I R -capacity 12000");
+	graph.cmd("colour foreground 16r20272cff\n" +
+		"colour grid 16rd6d0c4ff\n" +
+		"colour live 16r178f86ff\n" +
+		"colour accent 16rb85c38ff");
 	win.reshape(Rect((0,0),(720,450)));
-	 win.onscreen("place");
+	 win.onscreen("exact");
 	 win.startinput("kbd"::"ptr"::nil);
 	ticks:=chan of int;
 	 spawn timer(ticks);
@@ -74,43 +85,28 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	} redraw();
 	}
 }
-rhs(nil: real, q, d: array of real)
+rhs(rhsTime: real, q, d: array of real)
 {
-	inf:=contact*q[0]*q[1];
-	rec:=recovery*q[1];
-	d[0]=-inf;
-	d[1]=inf-rec;
-	d[2]=rec;
+	epidemicmodel->evaluate(model,rhsTime,q,d);
 }
 reset()
 {
 	y[0]=0.995;
 	y[1]=0.005;
 	y[2]=0.0;
+	model.parameter[0] = contact;
+	model.parameter[1] = recovery;
 	t=0.0;
-	nh=0;
 	paused=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g %.17g",t,y[0],y[1],y[2]));
 }
 step()
 {
 	numerics->rk4(w, rhs, t, 0.008, y);
 	 t+=0.008;
 	for(i:=0;i<len y;i++)if(y[i]<0.0)y[i]=0.0;
-	if(nh<len histt){histt[nh]=t;
-	hists[nh]=y[0];
-	histi[nh]=y[1];
-	histr[nh]=y[2];
-	nh++;
-	}
-	else {for(i=1;i<nh;i++){histt[i-1]=histt[i];
-	hists[i-1]=hists[i];
-	histi[i-1]=histi[i];
-	histr[i-1]=histr[i];
-	}histt[nh-1]=t;
-	hists[nh-1]=y[0];
-	histi[nh-1]=y[1];
-	histr[nh-1]=y[2];
-	}
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g %.17g",t,y[0],y[1],y[2]));
 }
 pointer(p: ref Draw->Pointer)
 {
@@ -121,6 +117,8 @@ pointer(p: ref Draw->Pointer)
 		else recovery=4.0*real(p.xy.x-(r.min.x+r.dx()/2))/real(r.dx()/2);
 		if(contact<0.02)contact=0.02;
 		if(recovery<0.02)recovery=0.02;
+		model.parameter[0] = contact;
+		model.parameter[1] = recovery;
 	}else{
 		y[1]=real(r.max.y-58-p.xy.y)/real(r.dy()-93);
 		if(y[1]<0.0)y[1]=0.0;
@@ -129,7 +127,8 @@ pointer(p: ref Draw->Pointer)
 		y[2]=0.0;
 	}
 	t=0.0;
-	nh=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g %.17g",t,y[0],y[1],y[2]));
 }
 redraw()
 {
@@ -137,18 +136,27 @@ redraw()
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
 	r:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
-	for(i:=1;i<10;i++){x:=r.min.x+i*r.dx()/10;
-	y0:=r.min.y+i*r.dy()/10;
-	im.line((x,r.min.y),(x,r.max.y),0,0,0,grid,Point(0,0));
-	im.line((r.min.x,y0),(r.max.x,y0),0,0,0,grid,Point(0,0));
-	}
-	for(i=1;i<nh;i++){x0:=map(histt[i-1],0.0,10.0,r.min.x,r.max.x);
-	x1:=map(histt[i],0.0,10.0,r.min.x,r.max.x);
-	im.line((x0,map(hists[i-1],0.0,1.0,r.max.y,r.min.y)),(x1,map(hists[i],0.0,1.0,r.max.y,r.min.y)),0,0,1,live,Point(0,0));
-	im.line((x0,map(histi[i-1],0.0,1.0,r.max.y,r.min.y)),(x1,map(histi[i],0.0,1.0,r.max.y,r.min.y)),0,0,1,accent,Point(0,0));
-	im.line((x0,map(histr[i-1],0.0,1.0,r.max.y,r.min.y)),(x1,map(histr[i],0.0,1.0,r.max.y,r.min.y)),0,0,1,fg,Point(0,0));
-	}
-	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("SIR epidemic — t %.2f  S %.3f  I %.3f  R %.3f",t,y[0],y[1],y[2]));
+	graph.image=im;
+	graph.cmd("clear");
+	graph.cmd(sys->sprint("view main %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	tmax:=t;
+	if(tmax<10.0)
+		tmax=10.0;
+	graph.cmd(sys->sprint("scale main x 0 %.8g",tmax));
+	graph.cmd("scale main y 0 1 reverse");
+	graph.cmd("axis main x time");
+	graph.cmd("axis main y fraction");
+	graph.cmd("line main history x time y S colour live width 2");
+	graph.cmd("line main history x time y I colour accent width 2");
+	graph.cmd("line main history x time y R colour foreground width 2");
+	graph.draw();
+	x:=r.max.x-32;
+	im.text((x,r.max.y-int(y[0]*real(r.dy()))-4),live,Point(0,0),font,"S");
+	im.text((x,r.max.y-int(y[1]*real(r.dy()))-4),accent,Point(0,0),font,"I");
+	im.text((x,r.max.y-int(y[2]*real(r.dy()))-4),fg,Point(0,0),font,"R");
+	r0:=contact/recovery;
+	total:=y[0]+y[1]+y[2];
+	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("SIR   dS=-βSI   dI=βSI-γI   R0 %.3g   S+I+R %.6f",r0,total));
 	drawpar(im,0,"contact",contact,4.0);
 	drawpar(im,1,"recovery",recovery,4.0);
 	im.flush(Draw->Flushnow);
@@ -169,4 +177,3 @@ return a+int((v-lo)*real(b-a)/(hi-lo));
 timer(c:chan of int){for(;;){sys->sleep(25);
 c<-=1;
 }}
-

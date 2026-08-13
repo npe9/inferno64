@@ -1,0 +1,13 @@
+.TH DANBY-LAGRANGE1 1
+.SH NAME
+danby-lagrange1 \- motion near the triangular Lagrange points
+.SH SYNOPSIS
+.B temple/lagrange1
+.SH MODEL
+Earth and Moon orbit their barycentre.  A station begins near L4 or L5 with a
+selectable displacement and velocity perturbation.  The live trails expose the
+bounded tadpole-like response possible near a stable triangular point.
+.SH SOURCE
+.B /appl/danby/lagrange1.b
+.SH SEE ALSO
+.IR orbital (2)

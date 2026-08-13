@@ -1,0 +1,7 @@
+.TH DANBY-TIDALROTATION 1
+.SH NAME
+danby-tidalrotation \- explore spin-orbit capture under tidal friction
+.SH DESCRIPTION
+A rapidly rotating triaxial body loses relative spin through tidal friction.
+Changing eccentricity, triaxiality, and damping exposes passage through and
+capture into spin-orbit resonances.

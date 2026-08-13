@@ -1,0 +1,11 @@
+.TH DANBY-PERIHELION 1
+.SH NAME
+danby-perihelion \- relativistic precession of planetary perihelion
+.SH SYNOPSIS
+.B temple/perihelion
+.SH MODEL
+A leading post-Newtonian radial correction depends on angular momentum and
+inverse radius. Increasing its coefficient rotates successive perihelia while
+the Newtonian limit closes the orbit.
+.SH SOURCE
+.B /appl/danby/perihelion.b

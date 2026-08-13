@@ -1,0 +1,7 @@
+.TH DANBY-CARBONMICROPHONE 1
+.SH NAME
+danby-carbonmicrophone \- electromechanical carbon microphone circuit
+.SH DESCRIPTION
+Diaphragm displacement changes carbon resistance, altering circuit current;
+current in turn exerts force on the diaphragm.  The coupled traces show gain,
+damping, and possible feedback instability.

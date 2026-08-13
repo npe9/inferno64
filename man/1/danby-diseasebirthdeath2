@@ -1,0 +1,27 @@
+.TH DANBY-DISEASEBIRTHDEATH2 1
+.SH NAME
+danby-diseasebirthdeath2 \- epidemic with independent vital rates and virulence
+.SH SYNOPSIS
+.B temple/diseasebirthdeath2
+.SH MODEL
+N=S+I+R;
+S' = bN-beta SI/N-mu S;
+I' = beta SI/N-(gamma+mu+alpha)I;
+R' = gamma I-mu R.
+.PP
+Birth b and natural death mu need not balance, and alpha is additional
+disease mortality.  Consequently N'=(b-mu)N-alpha I and population size is a
+model result, not a fixed normalization.  Frequency-dependent incidence keeps
+the contact interpretation meaningful as N changes.
+.SH CONTROLS
+Drag a compartment bar.  Tracks set contact, recovery, birth, natural death,
+and virulence.  Space pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The regression suite checks the stated total-population balance directly.
+.SH SOURCE
+.B /appl/danby/diseasebirthdeath2.b
+.br
+.B /appl/temple/diseasebirthdeath2.b
+.SH SEE ALSO
+.IR danby-diseasebirthdeath1 (1),
+.IR populationmodel (2)

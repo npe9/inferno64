@@ -1,0 +1,40 @@
+.TH DANBY-FORCEDPENDULUM 1
+.SH NAME
+danby-forcedpendulum \- periodically forced damped pendulum
+.SH SYNOPSIS
+.B temple/forcedpendulum
+.SH DESCRIPTION
+.I Forcedpendulum
+integrates
+.EX
+theta'' + c theta' + sin(theta) = A cos(omega t).
+.EE
+It combines a directly manipulated physical pendulum, a phase portrait, an
+angle time series, and a stroboscopic Poincare section.  Orange phase points
+are sampled once per forcing period.  A periodic response produces a finite
+set of points; a chaotic attractor produces a structured cloud.
+.PP
+The problem-specific equation and energy calculation reside in
+.BR /dis/danby/forcedpendulum.dis ;
+the application owns only integration, interaction, and presentation.
+.SH CONTROLS
+Drag the pendulum to set its angle.  Bottom tracks control damping, driving
+amplitude, and driving frequency.  Space pauses, period advances one numerical
+step while paused,
+.B R
+resets, and Escape or
+.B Q
+exits.
+.SH VALIDATION
+The model regression test disables damping and forcing and checks conservation
+of mechanical energy over twenty simulated seconds with RK4 step 0.001.
+.SH SOURCE
+.B /module/danby/forcedpendulum.m
+.br
+.B /appl/danby/forcedpendulum.b
+.br
+.B /appl/temple/forcedpendulum.b
+.SH SEE ALSO
+.IR danby-chaos (1),
+.IR numerics (2),
+.IR plot (2)

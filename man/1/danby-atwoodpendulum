@@ -1,0 +1,9 @@
+.TH DANBY-ATWOODPENDULUM 1
+.SH NAME
+danby-atwoodpendulum \- simulate the swinging Atwood machine
+.SH DESCRIPTION
+One mass swings while the counterweight constrains the total string length.
+Radial motion and angular motion are dynamically coupled: centrifugal force
+changes the descent and radial speed changes angular speed.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.

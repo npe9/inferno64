@@ -1,0 +1,11 @@
+.TH ATMOSPHERE 2
+.SH NAME
+atmosphere \- exponential density, drag, and heating utilities
+.SH DESCRIPTION
+The module supplies exponential density versus altitude, quadratic vector drag,
+and a density-times-speed-cubed heating proxy for descent, ballistic, re-entry,
+and aerobraking models.
+.SH SOURCE
+.B /module/danby/atmosphere.m
+.br
+.B /appl/danby/atmosphere.b

@@ -1,0 +1,13 @@
+.TH DANBY-VARYINGPENDULUM 1
+.SH NAME
+danby-varyingpendulum \- simulate a pendulum whose length varies
+.SH SYNOPSIS
+.B varyingpendulum
+.SH DESCRIPTION
+The suspension length changes sinusoidally.  The equation includes the radial
+Coriolis term, so a drive near twice the natural frequency can parametrically
+amplify the swing.  The diagram shows the changing length and the plot compares
+angle with length.
+.PP
+Click a parameter scale to change it, space pauses, period steps while paused,
+R resets, and Q exits.

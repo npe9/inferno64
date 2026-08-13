@@ -1,0 +1,19 @@
+.TH DANBY-CHAOSINTRO 1
+.SH NAME
+danby-chaosintro \- introduction to deterministic chaos
+.SH SYNOPSIS
+.B temple/chaosintro
+.SH DESCRIPTION
+Two Lorenz trajectories begin only one millionth of a unit apart.  Their
+overlaid phase curves initially coincide, while the lower graph records the
+base-10 logarithm of their separation.  A sustained rising interval is direct
+evidence of sensitive dependence: deterministic equations can make long-term
+prediction impractical without being random.
+.PP
+Click the lower controls to change sigma, rho, and beta.  Click the phase view
+to choose another initial x value.  Space pauses, period advances one step
+while paused, and
+.B r
+resets.
+.SH SEE ALSO
+danby-chaosdynamics(1), danby-chaos(1), danby-chaosmap(1)

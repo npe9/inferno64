@@ -1,0 +1,9 @@
+.TH DANBY-TABLEPENDULUM 1
+.SH NAME
+danby-tablependulum \- pendulum coupled through a hole to a table mass
+.SH DESCRIPTION
+A mass moves radially on a horizontal table while the remaining string supports
+a swinging bob below the hole.  The fixed total string length couples table
+radius, pendulum length, and angular motion.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.

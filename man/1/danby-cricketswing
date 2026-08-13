@@ -1,0 +1,16 @@
+.TH DANBY-CRICKETSWING 1
+.SH NAME
+danby-cricketswing \- aerodynamic swing of a cricket ball
+.SH SYNOPSIS
+.B temple/cricketswing
+.SH MODEL
+An effective signed swing coefficient represents the asymmetric aerodynamic
+force created by seam orientation and boundary-layer differences.  It acts
+laterally while gravity and drag determine drop and loss of speed.
+.SH DISPLAY
+Synchronized side and plan views distinguish swing from vertical motion.
+Tracks alter release speed, elevation, aim, drag, swing, and gravity.
+.SH SOURCE
+.B /appl/danby/cricketswing.b
+.SH SEE ALSO
+.IR flight3d (2)

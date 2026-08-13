@@ -1,0 +1,22 @@
+.TH DANBY-VIOLETSANTSRODENTS 1
+.SH NAME
+danby-violetsantsrodents \- mutualism and predation in a three-species network
+.SH SYNOPSIS
+.B temple/violetsantsrodents
+.SH MODEL
+Violets grow logistically.  Ant activity adds a saturating seed-dispersal
+benefit.  Rodents consume violets, while ants reduce effective rodent grazing.
+Ants reproduce from violet service and both animal populations have independent
+mortality.  Thus the model contains mutualism, consumption, and indirect
+protection rather than a simple linear food chain.
+.SH DISPLAY
+Separate histories and editable current-state bars preserve all three species.
+The eight tracks control violet growth and capacity, ant benefit, rodent
+grazing, ant conversion and death, ant deterrence, and rodent death.
+.SH SOURCE
+.B /appl/danby/violetsantsrodents.b
+.br
+.B /appl/temple/violetsantsrodents.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR numerics (2)

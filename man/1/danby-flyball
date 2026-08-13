@@ -1,0 +1,17 @@
+.TH DANBY-FLYBALL 1
+.SH NAME
+danby-flyball \- flight of a batted baseball
+.SH SYNOPSIS
+.B temple/flyball
+.SH MODEL
+A ball launched one metre above the ground is acted on by gravity, quadratic
+drag, and backspin-induced Magnus lift.  Integration ends at an interpolated
+ground crossing, allowing range and hang time to be read without timestep
+quantization.
+.SH DISPLAY
+The spatial plot shows the complete arc and the telemetry plot shows speed.
+Tracks alter exit speed, angle, drag, lift, backspin, and gravity.
+.SH SOURCE
+.B /appl/danby/flyball.b
+.SH SEE ALSO
+.IR trajectory (2)

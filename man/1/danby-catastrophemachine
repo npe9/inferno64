@@ -1,0 +1,7 @@
+.TH DANBY-CATASTROPHEMACHINE 1
+.SH NAME
+danby-catastrophemachine \- Zeeman catastrophe machine
+.SH DESCRIPTION
+A constrained state point is joined by elastic bands to a fixed point and a
+moving control point.  Slow control motion folds the equilibrium surface and
+causes sudden jumps and hysteresis.

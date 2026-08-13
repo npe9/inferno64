@@ -1,0 +1,75 @@
+.TH PLOT 2
+.SH NAME
+plot \- command language for live plots
+.SH SYNOPSIS
+.EX
+include "plot.m";
+plot := load Plot Plot->PATH;
+
+p := plot->new(image, font);
+p.cmd("colour foreground 16r20272cff\n" +
+      "table history time a b -capacity 1200\n" +
+      "view phase 40 20 600 430\n" +
+      "scale phase x 0 1.5\n" +
+      "scale phase y 0 1.5 reverse\n" +
+      "axis phase x B grid\n" +
+      "axis phase y A grid\n" +
+      "line phase history x b y a colour foreground width 2");
+p.cmd("history append 0 0.25 0.5");
+
+updates := plot->run(p);
+updates <-= ref Plot->Plotmsg(
+    "history append 0.1 0.27 0.52  0.2 0.30 0.55",
+    nil);
+.EE
+.SH DESCRIPTION
+.I Plot
+interprets a small grammar for live plotting.  Applications declare named
+tables and colours, views, linear scales, axes,
+and line, point, or vector marks.  Tables are fixed-capacity O(1) ring buffers;
+logical rows remain ordered from oldest to newest.
+.PP
+A command string can contain several newline-separated commands, allowing a
+complete plot declaration to be installed with one call.  Like a Tk widget,
+each declared table becomes a named command.  Its
+.B append
+and
+.B clear
+operations accept the table's natural arity, so table arity remains data in
+the language rather than becoming a family of Limbo functions or array-valued
+calls.
+.PP
+An
+.B append
+command can contain several complete rows.  The number of values must be a
+non-zero multiple of the table's column count.  Batching amortizes parsing and
+channel synchronization when samples arrive quickly.
+.PP
+.B run
+starts an optional command receiver and returns its input channel.  Producers
+send
+.B Plotmsg
+values containing the same commands accepted by
+.BR cmd .
+If the reply channel is non-nil, the receiver returns the command's error
+string after applying it; a nil string denotes success.  A nil reply channel
+makes the message asynchronous.
+.PP
+The receiver serializes command mutations, but it does not draw or flush the
+display.  The window-owning process remains responsible for calling
+.B draw
+at its chosen display rate.  Once a plot has concurrent producers, mutations
+should all pass through the command channel; synchronous queries and drawing
+must be coordinated by the owner to avoid observing a partial update.
+.PP
+The plotting language owns scaling, reversed screen coordinates, nice numeric
+ticks, grid lines, mappings, clipping, and rendering.  It does not evaluate
+data transformations or differential equations.  Applications and numerical
+modules publish already-computed columns.
+.PP
+.B invert
+maps a pointer position in a named view back to data coordinates.
+.SH SOURCE
+.B /module/plot.m
+.br
+.B /appl/lib/plot.b

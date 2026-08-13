@@ -1,0 +1,7 @@
+.TH DANBY-HYPERIONROTATION 1
+.SH NAME
+danby-hyperionrotation \- chaotic spin of Hyperion
+.SH DESCRIPTION
+Hyperion's appreciable eccentricity and large triaxiality repeatedly torque its
+long axis near periapsis.  Nearby initial attitudes can therefore diverge into
+different tumbling histories.

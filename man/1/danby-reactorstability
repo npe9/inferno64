@@ -1,0 +1,7 @@
+.TH DANBY-REACTORSTABILITY 1
+.SH NAME
+danby-reactorstability \- exothermic continuous-reactor stability
+.SH DESCRIPTION
+Arrhenius reaction rate couples reactant depletion to heat release while feed
+and cooling remove heat.  Parameters reveal cold and hot equilibria, ignition,
+extinction, and thermal runaway.

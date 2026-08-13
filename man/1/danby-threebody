@@ -1,0 +1,16 @@
+.TH DANBY-THREEBODY 1
+.SH NAME
+danby-threebody \- mutual gravitational motion of three bodies
+.SH SYNOPSIS
+.B temple/threebody
+.SH MODEL
+All three finite masses accelerate under every pairwise Newtonian interaction.
+The initial equilateral rotating configuration can be perturbed in velocity to
+show regular motion giving way to close encounters and sensitive trajectories.
+.SH DISPLAY
+Colour-coded trails show all three paths.  Total energy and angular momentum
+are plotted as integration diagnostics.
+.SH SOURCE
+.B /appl/danby/threebody.b
+.SH SEE ALSO
+.IR orbital (2)

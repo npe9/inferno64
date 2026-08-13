@@ -1,0 +1,7 @@
+.TH DANBY-MERCURYROTATION 1
+.SH NAME
+danby-mercuryrotation \- Mercury's 3:2 spin-orbit resonance
+.SH DESCRIPTION
+The model combines Mercury's eccentric orbit, permanent triaxial torque, and
+weak tidal friction.  Its resonant observable is twice the body angle minus
+three times the orbital anomaly; bounded motion indicates 3:2 capture.

@@ -1,0 +1,7 @@
+.TH DANBY-STILLMOREENZYME 1
+.SH NAME
+danby-stillmoreenzyme \- cooperative two-site enzyme kinetics
+.SH DESCRIPTION
+The enzyme binds substrate in two stages before catalysis.  Adjustable second
+binding exposes cooperative, sigmoid response beyond simple Michaelis-Menten
+saturation.

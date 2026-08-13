@@ -1,0 +1,16 @@
+.TH DANBY-SKIJUMP 1
+.SH NAME
+danby-skijump \- takeoff and aerodynamic flight of a ski jumper
+.SH SYNOPSIS
+.B temple/skijump
+.SH MODEL
+The jumper leaves the ramp at a selected speed and angle.  Relative airspeed,
+including headwind, determines quadratic drag and aerodynamic lift; gravity
+completes the flight equations.
+.SH DISPLAY
+The spatial plot shows height versus distance and telemetry shows speed.
+Tracks alter takeoff speed, ramp angle, drag, lift, headwind, and gravity.
+.SH SOURCE
+.B /appl/danby/skijump.b
+.SH SEE ALSO
+.IR trajectory (2)

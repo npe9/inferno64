@@ -1,0 +1,10 @@
+.TH DANBY-ROCKET2D 1
+.SH NAME
+danby-rocket2d \- finite-burn two-dimensional rocket ascent
+.SH SYNOPSIS
+.B temple/rocket2d
+.SH MODEL
+Variable-mass thrust acts along a selected pitch angle until burnout. Gravity
+and altitude-dependent drag then shape the downrange trajectory.
+.SH SOURCE
+.B /appl/danby/rocket2d.b

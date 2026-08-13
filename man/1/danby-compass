@@ -1,0 +1,7 @@
+.TH DANBY-COMPASS 1
+.SH NAME
+danby-compass \- compass needle in an oscillating magnetic field
+.SH DESCRIPTION
+The needle follows a field whose direction oscillates sinusoidally.  Torque,
+damping, field amplitude, and frequency expose lag, resonance, phase locking,
+and nonlinear rotations.

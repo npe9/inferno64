@@ -1,0 +1,7 @@
+.TH DANBY-VIOLINBOW 1
+.SH NAME
+danby-violinbow \- bow/string stick-slip oscillator
+.SH DESCRIPTION
+A velocity-weakening friction law couples the moving bow to a damped string
+mode.  The nonlinear transition between sticking and slipping sustains the
+Helmholtz-like oscillation instead of simple viscous decay.

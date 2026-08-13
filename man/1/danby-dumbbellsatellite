@@ -1,0 +1,9 @@
+.TH DANBY-DUMBBELLSATELLITE 1
+.SH NAME
+danby-dumbbellsatellite \- gravity-gradient attitude dynamics in orbit
+.SH DESCRIPTION
+The satellite centre follows a circular orbit while its extended body librates
+relative to the local vertical under tidal gravity.  The diagram shows orbit and
+attitude together; the plot compares orbital phase and relative attitude.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.

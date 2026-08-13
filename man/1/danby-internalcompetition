@@ -1,0 +1,26 @@
+.TH DANBY-INTERNALCOMPETITION 1
+.SH NAME
+danby-internalcompetition \- predator-prey model with crowding in each species
+.SH SYNOPSIS
+.B temple/internalcompetition
+.SH MODEL
+X' = X(a-bX-cY);
+Y' = Y(eX-d-fY).
+.PP
+The terms bX and fY represent competition within the prey and predator
+populations.  They replace the neutral family of Volterra orbits with bounded
+density-dependent dynamics.  The positive nullcline intersection is marked.
+.SH DISPLAY
+The phase portrait shows approach to or departure from the coexistence point;
+the time histories show damping, overshoot, and predator lag.
+.SH CONTROLS
+Drag the phase portrait to set initial populations.  The six bottom tracks set
+birth, prey crowding, predation, conversion, death, and predator crowding.
+Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/internalcompetition.b
+.br
+.B /appl/temple/internalcompetition.b
+.SH SEE ALSO
+.IR danby-ecology (1),
+.IR numerics (2)

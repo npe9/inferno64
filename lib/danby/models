@@ -1,0 +1,183 @@
+# section|stem|kind|status|title
+# status is planned, partial, implemented, or validated.
+1.1|meaning|lesson|implemented|What a Differential Equation Might Mean
+1.2|instructions|lesson|implemented|What Is a Differential Equation Telling Us To Do?
+1.3|solutions|lesson|implemented|Looking at and Interpreting a Solution
+1.4|existence|lesson|implemented|When Is There a Solution?
+1.5|chapter1assignments|lesson|implemented|Assignments
+2.1|euler|lesson|implemented|Euler's Method
+2.2|truncation|lesson|implemented|Truncation Error
+2.3|methodorder|lesson|implemented|The Order of a Method
+2.4|eulerorder|lesson|implemented|Numerical Confirmation of the Order of Euler's Method
+3.1|odesystems|lesson|implemented|Generalities
+3.2|heun|lesson|implemented|A Look at the Improved Euler's Method
+3.3|rungekutta|lesson|implemented|Runge-Kutta Formulas
+3.4|stepsize|lesson|implemented|Stepsize Control - Some Tactics to Avoid
+3.5|rkf45|lesson|implemented|Fehlberg's RKF4(5) Method
+3.6|rkf45scalar|lesson|implemented|Implementation of RKF4(5): One Equation
+3.7|rkf45system|lesson|implemented|Implementation of RKF4(5): A System of Equations
+3.8|solverdebug|lesson|implemented|Projects for Debugging, Testing and Understanding the Program
+3.9|solverrun|lesson|implemented|Running the Program
+4.1|modeling|lesson|implemented|Generalities
+4.2|arms|ode|implemented|Richardson's Arms Race
+4.3|stability|lesson|implemented|Linear Systems, Linear Stability and Nonlinear Stability
+5.1|chaosintro|lesson|implemented|Introduction
+5.2|chaosdynamics|lesson|implemented|Chaos in Dynamical Systems
+5.3|chaos|ode|implemented|The Lorenz Equations
+5.4|forcedpendulum|ode|implemented|A Periodically Forced Pendulum
+5.5|chaosmap|map|implemented|Chaos in Difference Equations
+6.1|ecology|ode|implemented|The Predator-Prey Model of Volterra
+6.2|periodicvolterra|ode|implemented|Volterra's Model with Periodic Birthrate
+6.3|predatorfishing|ode|implemented|The Predator-Prey Model with Fishing
+6.4|logisticprey|ode|implemented|The Predator-Prey Model with Logistic Growth for the Prey
+6.5|logisticpredators|ode|implemented|The Predator-Prey Model with Logistic Growth for Both Species
+6.6|alternativepredation|ode|implemented|An Alternative Law for Predation
+6.7|maypredator|ode|implemented|A Predator-Prey Model Due to R. M. May: Limit Cycles
+6.8|internalcompetition|ode|implemented|The Predator-Prey Model with Internal Competition
+6.9|cooperation|ode|implemented|Cooperation Between Two Species
+6.10|competition|ode|implemented|Competition Between Two Species
+6.11|childcare|ode|implemented|The Predator-Prey Model with Child Care
+6.12|manyspecies|ode|implemented|Predator-Prey Models with More than Two Species
+6.13|foodchain|ode|implemented|Carnivores, Vegetarians and Plants
+6.14|violetsantsrodents|ode|implemented|Violets, Ants and Rodents
+6.15|parasite|ode|implemented|Population Growth of a Parasite
+6.16|cannibalism|ode|implemented|A Model for Cannibalism
+6.17|changingenvironment|ode|implemented|Population Growth in a Changing Environment
+6.18|lakepollution|ode|implemented|A Model for Lake Pollution
+6.19|budworm|ode|implemented|The Spruce Budworm versus the Balsam Fir
+7.1|epidemic|ode|implemented|A Model for the Spread of Disease
+7.2|vaccination|ode|implemented|Possible Effects of Vaccination
+7.3|migration|ode|implemented|Possible Effects of Migration
+7.4|diseasebirthdeath1|ode|implemented|Disease with Birth and Death Included: Model 1
+7.5|diseasebirthdeath2|ode|implemented|Disease with Birth and Death Included: Model 2
+7.6|crossinfection|ode|implemented|Cross-Infection Between Two Species
+7.7|incubation|ode|implemented|The Spread of Disease with Incubation Included
+7.8|seasonaldisease|ode|implemented|Seasonal Changes in Infectiousness
+7.9|malaria|ode|implemented|The Epidemiology of Malaria
+7.10|gonorrhea|ode|implemented|The Spread of Gonorrhea
+7.11|hiv|ode|implemented|A Model for the Initial Spread of the HIV Virus
+7.12|weightchange|ode|implemented|A Model for Weight Change
+7.13|heartbeat|ode|implemented|Zeeman's Model for the Heartbeat
+8.1|lanchester|ode|implemented|Lanchester's Combat Models
+8.2|productionexchange|ode|implemented|Production and Exchange
+8.3|fishingone|ode|implemented|The Economics of Fishing: One Species of Fish
+8.4|fishingtwo|ode|implemented|The Economics of Fishing: Two Species of Fish
+8.5|boom|ode|implemented|Goodwin's Growth Cycle
+8.6|twocapital|ode|implemented|A One-sector, Two-capital Model of Economic Growth
+9.1|spinningball|ode|implemented|The Dynamics of a Spinning Ball
+9.2|baseballpitch|ode|implemented|A Model for a Baseball Pitch
+9.3|knuckleball|ode|implemented|Pitching a Knuckle Ball
+9.4|flyball|ode|implemented|The Flight of a Flyball
+9.5|softballpitch|ode|implemented|Pitching a Softball
+9.6|golfdrive|ode|implemented|Driving a Golf Ball
+9.7|tennis|ode|implemented|Serving in Tennis
+9.8|soccerkick|ode|implemented|Kicking a Ball in Soccer
+9.9|cricketbowl|ode|implemented|Bowling a Cricket Ball
+9.10|cricketswing|ode|implemented|The Swing of a Cricket Ball
+9.11|badminton|ode|implemented|Shuttlecock Trajectories in Badminton
+9.12|tabletennis|ode|implemented|Table Tennis
+9.13|basketball|ode|implemented|Shooting in Basketball
+9.14|badfootball|ode|implemented|A Badly Kicked Football
+9.15|discus|ode|implemented|The Path of a Discus
+9.16|javelin|ode|implemented|The Motion of a Javelin
+9.17|skijump|ode|implemented|A Model for the Ski Jump
+9.18|running|ode|implemented|Running
+9.19|diving|ode|implemented|Diving
+9.20|polevault|ode|implemented|The Pole Vault
+10.1|flight|ode|implemented|The Dynamics of Flight
+10.2|hovercraft|ode|implemented|The Motion of a Hovercraft
+10.3|shipmotion|ode|implemented|Pitching and Rolling at Sea
+10.4|balloon|ode|implemented|The Motion of a Balloon and Its Payload
+10.5|joggingcompanion|ode|implemented|Jogging with a Companion
+10.6|bungee|ode|implemented|A Bunji Jump
+10.7|yoyo|mechanics|implemented|A Model for the Motion of a Yo-yo
+10.8|amusementchaos|ode|implemented|Chaos in the Amusement Park
+10.9|spacestationball|mechanics|implemented|Playing Ball in a Space Station
+10.10|fireworks|mechanics|implemented|Fireworks
+11.1|threebody|nbody|implemented|The Motion of Three Bodies
+11.2|moontrip|nbody|implemented|A Trip to the Moon
+11.3|lagrange1|nbody|implemented|A Space Station Around L4 or L5: 1
+11.4|lagrange2|nbody|implemented|A Space Station Around L4 or L5: 2
+11.5|skylab|ode|implemented|The Descent of Skylab
+11.6|icbmrange|ode|implemented|The Range of an ICBM
+11.7|icbmaccuracy|ode|implemented|The Accuracy of an ICBM
+11.8|aerobraking|ode|implemented|Aero-Braking the Orbit of a Spacecraft
+11.9|rocketintro|ode|implemented|The Motion of a Rocket: Introduction
+11.10|multistagerocket|ode|implemented|The Motion of a Rocket: Multi-Stage Rockets
+11.11|rocket2d|ode|implemented|The Motion of a Rocket: Two-Dimensional Motion
+11.12|lowthrust|ode|implemented|The Motion of a Rocket: Low-Thrust Orbits
+11.13|reentry|ode|implemented|Reentering the Earth's Atmosphere
+11.14|spaceyoyo|mechanics|implemented|De-spinning a Satellite: A Space Yo-yo
+11.15|stretchyoyo|mechanics|implemented|De-spinning a Satellite: The Stretch Yo-yo
+11.16|cometcatch|nbody|implemented|If You Were Jupiter, Could You Catch a Comet?
+11.17|jupiterboost|nbody|implemented|Using Jupiter to Boost the Orbit of a Spacecraft
+11.18|grandtour|nbody|implemented|A Grand Tour of the Solar System
+11.19|perihelion|ode|implemented|Relativistic Motion of the Perihelion of a Planetary Orbit
+11.20|poyntingrobertson|ode|implemented|The Poynting-Robertson Effect
+11.21|galaxies|nbody|implemented|Gravitational Interaction Between Two Galaxies
+11.22|venushead|geometry|implemented|If You Were on Venus, Could You See the Back of Your Head?
+11.23|heliumburning|reaction|implemented|Helium Burning in a Hot Star
+11.24|starmodel|ode|implemented|An Approximate Model for a Star
+11.25|whitedwarf|ode|implemented|The Limiting Mass of a White Dwarf
+12.1|simplependulum|mechanics|implemented|The Simple Pendulum
+12.2|pendulumperiod|lesson|implemented|The Period of a Simple Pendulum
+12.3|dampedpendulum|mechanics|implemented|The Pendulum with Linear Damping
+12.4|drypendulum|mechanics|implemented|The Pendulum with Dry Friction
+12.5|clockpendulum|mechanics|implemented|The Pendulum of a Clock
+12.6|windpendulum|mechanics|implemented|The Simple Pendulum in a Stiff Wind
+12.7|loadedpendulum|mechanics|implemented|The Simple Pendulum with Added Constant Load
+12.8|synchronousmotor|mechanics|implemented|Pull-out Torques of Synchronous Motors
+12.9|gravitypendulum|mechanics|implemented|A Gravity Pendulum
+12.10|magneticpendulum2d|mechanics|implemented|A Magnetic Pendulum in Two Dimensions
+12.11|swing1|mechanics|implemented|A Child on a Swing: 1
+12.12|swing2|mechanics|implemented|A Child on a Swing: 2
+12.13|varyingpendulum|mechanics|implemented|A Pendulum with Varying Length
+12.14|swingingcenser|mechanics|implemented|A Swinging Censer
+12.15|movingpivot|mechanics|implemented|A Pendulum with Moving Pivot
+12.16|pegpendulum|mechanics|implemented|A Pendulum Wrapped Around a Peg
+12.17|slidingpendulum1|mechanics|implemented|The Motion of a Sliding Pendulum: 1
+12.18|slidingpendulum2|mechanics|implemented|The Motion of a Sliding Pendulum: 2
+12.19|atwoodpendulum|mechanics|implemented|The Swinging Atwood Machine
+12.20|tablependulum|mechanics|implemented|A Pendulum Connected to a Mass Moving on a Table
+12.21|doublependulum|mechanics|implemented|A Double Pendulum
+12.22|wheelpendulum|mechanics|implemented|A Pendulum Attached to a Freely Spinning Wheel
+12.23|magneticpendulum3d|mechanics|implemented|A Magnetic Pendulum in Three Dimensions
+12.24|dumbbellsatellite|mechanics|implemented|A Dumbbell Satellite
+12.25|moonrotation|mechanics|implemented|The Rotation of the Moon
+12.26|hyperionrotation|mechanics|implemented|The Rotation of Hyperion
+12.27|mercuryrotation|mechanics|implemented|The Rotation of Mercury
+12.28|tidalrotation|mechanics|implemented|Rotation of the Moon and Mercury Including Tidal Friction
+13.1|nonlinearsprings|mechanics|implemented|Non-Linear Springs
+13.2|duffing|ode|implemented|Duffing's Equation
+13.3|vanderpol|ode|implemented|Van der Pol's Equation and Friends
+13.4|variationparameters|lesson|implemented|Variation of Parameters and Van der Pol's Equation
+13.5|columnbuckling|mechanics|implemented|A Dynamic Model for the Buckling of a Column
+13.6|catastrophemachine|mechanics|implemented|Zeeman's Catastrophe Machine
+13.7|attractingwires|mechanics|implemented|Two Attracting Wires
+13.8|violinbow|mechanics|implemented|The Action Between a Violin Bow and a String
+13.9|carrierlanding|mechanics|implemented|Landing an Airplane on an Aircraft Carrier
+13.10|springpivot|mechanics|implemented|A Pendulum with Spring Pivot
+13.11|springpendulum|mechanics|implemented|A Spring Pendulum
+13.12|chaoticwheel|mechanics|implemented|A Chaotic Driven Wheel
+14.1|decomposition|reaction|implemented|The Decomposition of a Molecule
+14.2|enzymekinetics|reaction|implemented|Enzyme Kinetics
+14.3|enzymeapplication|reaction|implemented|An Application of Enzyme Kinetics
+14.4|moreenzyme|reaction|implemented|More Enzyme Kinetics
+14.5|stillmoreenzyme|reaction|implemented|Still More Enzyme Kinetics
+14.6|brusselator|reaction|implemented|The Brusselator
+14.7|oregonator|reaction|implemented|The Oregonator
+14.8|reactorstability|reaction|implemented|Chemical-Tank-Reactor Stability
+14.9|tankcontrol|reaction|implemented|Temperature and Volume Control in a Tank
+14.10|reservoir|ode|implemented|The Dynamics of a Reservoir System
+15.1|fireflies|ode|implemented|Fireflies
+15.2|pursuit|ode|implemented|Curves of Pursuit
+15.3|lowbombing|ode|implemented|Low-level Bombing
+15.4|carbonmicrophone|ode|implemented|A Carbon Microphone Circuit
+15.5|rotatingring1|mechanics|implemented|A Ball in a Rotating Circular Ring: 1
+15.6|rotatingring2|mechanics|implemented|A Ball in a Rotating Circular Ring: 2
+15.7|compass|mechanics|implemented|A Compass Needle in an Oscillating Magnetic Field
+15.8|pistonflywheel|mechanics|implemented|The Motion of a Piston and Flywheel
+15.9|wattgovernor|mechanics|implemented|Watt's Governor
+15.10|dynamoreversal|ode|implemented|A Dynamo System with Magnetic Reversal
+15.11|twomagnet|mechanics|implemented|A Two-Magnet Toy
+15.12|bernoulli|ode|implemented|Bernoulli's Problem

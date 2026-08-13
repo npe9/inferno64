@@ -299,6 +299,9 @@ pointer tk
 polyfill polyfill
 pop3 pop3
 popup popup
+plot plot
+populationmodel populationmodel
+trajectory trajectory
 pow math-elem
 pow10 math-elem
 pread sys-read
@@ -532,3 +535,17 @@ xml xml
 y0 math-elem
 y1 math-elem
 yn math-elem
+flight3d flight3d
+mechanism mechanism
+gravity gravity
+orbital orbital
+atmosphere atmosphere
+propulsion propulsion
+profile profile
+pendulum pendulum
+cartpendulum cartpendulum
+doublependulum doublependulum
+spinorbit spinorbit
+oscillator oscillator
+reaction reaction
+rotatinghoop rotatinghoop

@@ -1,0 +1,12 @@
+.TH DANBY-SWINGINGCENSER 1
+.SH NAME
+danby-swingingcenser \- simulate a censer driven by hand motion
+.SH SYNOPSIS
+.B swingingcenser
+.SH DESCRIPTION
+The suspension point is accelerated horizontally by a prescribed rhythm.  Its
+acceleration appears as a tangential inertial force on the censer, allowing
+resonant growth or suppression according to phase.
+.PP
+Click a parameter scale to change it, space pauses, period steps while paused,
+R resets, and Q exits.

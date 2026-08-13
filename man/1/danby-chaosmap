@@ -1,0 +1,43 @@
+.TH DANBY-CHAOSMAP 1
+.SH NAME
+danby-chaosmap \- logistic-map bifurcations, cobwebs, and Lyapunov exponent
+.SH SYNOPSIS
+.B temple/chaosmap
+.SH DESCRIPTION
+.I Chaosmap
+iterates the difference equation
+.EX
+x[n+1] = r x[n] (1-x[n]).
+.EE
+The left view is a bifurcation diagram: after transients are discarded, it
+plots long-run values against the parameter.  The orange line marks the
+selected parameter.  The right view is a cobweb construction between the map
+and the diagonal, exposing each iteration geometrically.
+.PP
+The heading reports a finite-sample Lyapunov exponent.  A negative value means
+nearby states contract in the sampled orbit; a positive value means exponential
+separation and is evidence of chaos.
+.SH CONTROLS
+Drag the bottom track to choose
+.IR r .
+Drag in the cobweb view to choose the initial value.
+.B R
+restores the reference case, and Escape or
+.B Q
+exits.
+.SH VALIDATION
+Regression tests check the fixed point at
+.I r=2,
+a negative exponent in the period-two regime, and the known exponent
+.I log(2)
+at
+.IR r=4 .
+.SH SOURCE
+.B /module/danby/chaosmap.m
+.br
+.B /appl/danby/chaosmap.b
+.br
+.B /appl/temple/chaosmap.b
+.SH SEE ALSO
+.IR danby-chaos (1),
+.IR danby-forcedpendulum (1)

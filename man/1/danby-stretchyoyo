@@ -1,0 +1,10 @@
+.TH DANBY-STRETCHYOYO 1
+.SH NAME
+danby-stretchyoyo \- elastic-tether satellite de-spin
+.SH SYNOPSIS
+.B temple/stretchyoyo
+.SH MODEL
+Tip masses exchange rotational energy with a damped elastic radial mode. The
+display shows tether breathing while spin and extension evolve.
+.SH SOURCE
+.B /appl/danby/stretchyoyo.b

@@ -1,0 +1,7 @@
+.TH DANBY-RUNGEKUTTA 1
+.SH NAME
+danby-rungekutta \- classical fourth-order Runge-Kutta experiment
+.SH DESCRIPTION
+The RK4 trace combines four staged slope samples and its endpoint error follows
+a fourth-order line under step refinement.  See
+.IR danby-methods (1).

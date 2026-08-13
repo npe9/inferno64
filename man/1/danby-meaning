@@ -1,0 +1,6 @@
+.TH DANBY-MEANING 1
+.SH NAME
+danby-meaning \- interpret a differential equation as a field of local rates
+.SH DESCRIPTION
+The direction field assigns a slope at every state, before any initial value is
+chosen.  Click to seed different integral curves and compare global behavior.

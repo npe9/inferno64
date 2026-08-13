@@ -1,0 +1,7 @@
+.TH DANBY-SOLVERRUN 1
+.SH NAME
+danby-solverrun \- run and inspect an adaptive initial-value solver
+.SH DESCRIPTION
+The complete workflow selects scalar or vector state, tolerance, initial data,
+integration interval, and reports acceptance, rejection, and observed error.
+It is the executable counterpart to the solver implementation chapters.

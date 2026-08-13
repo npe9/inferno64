@@ -1,0 +1,6 @@
+.TH DANBY-INSTRUCTIONS 1
+.SH NAME
+danby-instructions \- follow the local instructions in a differential equation
+.SH DESCRIPTION
+Each field segment is the immediate instruction dy/dt=f(t,y).  A solution is a
+curve tangent to all those local instructions, not a list of isolated values.

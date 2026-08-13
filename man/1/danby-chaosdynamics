@@ -1,0 +1,17 @@
+.TH DANBY-CHAOSDYNAMICS 1
+.SH NAME
+danby-chaosdynamics \- measure sensitive dependence in a dynamical system
+.SH SYNOPSIS
+.B temple/chaosdynamics
+.SH DESCRIPTION
+This experiment integrates an initial state and a perturbation separated by
+10^-6 using identical deterministic Lorenz equations.  The lower trace is
+log10 of Euclidean separation.  Its approximately linear growth intervals
+correspond to exponential separation; their slope estimates a finite-time
+Lyapunov exponent.  Folding and boundedness in the phase portrait prevent the
+growth from continuing indefinitely.
+.PP
+Changing rho exposes non-chaotic and chaotic parameter regimes and separates
+complicated geometry from measured sensitive dependence.
+.SH SEE ALSO
+danby-chaosintro(1), danby-chaos(1), numerics(2), plot(2)

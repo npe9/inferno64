@@ -10,8 +10,9 @@ include "wmclient.m";
  Window: import wmclient;
 include "numerics.m";
  numerics: Numerics;
-include "liveplot.m";
- liveplot: Liveplot;
+include "plot.m";
+ plot: Plot;
+ Plotter: import plot;
 include "env.m";
  env: Env;
 Price: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
@@ -26,17 +27,16 @@ adjustment := 0.9;
 t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
-histt, histy: array of real;
-nh := 0;
+graph: ref Plotter;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	numerics = load Numerics Numerics->PATH;
-	liveplot = load Liveplot Liveplot->PATH;
+	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	if(sys == nil || draw == nil || wmclient == nil || numerics == nil || liveplot == nil)
+	if(sys == nil || draw == nil || wmclient == nil || numerics == nil || plot == nil)
 		raise "fail:price: missing module";
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-price");
@@ -46,16 +46,23 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(ctxt == nil) ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "Price growth", Wmclient->Appl);
 	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	bg=win.display.color(int 16r101722ff);
-	 fg=win.display.color(int 16re8edf2ff);
-	grid=win.display.color(int 16r29384aff);
-	 live=win.display.color(int 16r55d6beff);
-	accent=win.display.color(int 16rffb454ff);
+	bg=win.display.color(int 16rf4f0e7ff);
+	 fg=win.display.color(int 16r20272cff);
+	grid=win.display.color(int 16rd6d0c4ff);
+	 live=win.display.color(int 16r178f86ff);
+	accent=win.display.color(int 16rb85c38ff);
 	w=numerics->workspace(len y);
-	 histt=array[1200] of real;
-	 histy=array[1200] of real;
+	graph=plot->new(win.image,font);
+	graph.cmd("table history time price -capacity 12000");
+	graph.cmd("table demand quantity price -capacity 40");
+	graph.cmd("table supply quantity price -capacity 40");
+	graph.cmd("table price quantity price -capacity 2");
+	graph.cmd("colour foreground 16r20272cff\n" +
+		"colour grid 16rd6d0c4ff\n" +
+		"colour live 16r178f86ff\n" +
+		"colour accent 16rb85c38ff");
 	win.reshape(Rect((0,0),(720,450)));
-	 win.onscreen("place");
+	 win.onscreen("exact");
 	 win.startinput("kbd"::"ptr"::nil);
 	ticks:=chan of int;
 	 spawn timer(ticks);
@@ -84,23 +91,16 @@ reset()
 {
 	y[0]=0.25;
 	 t=0.0;
-	 nh=0;
 	 paused=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g",t,y[0]));
 }
 step()
 {
 	numerics->rk4(w, rhs, t, 0.008, y);
 	 t+=0.008;
 	if(y[0]<0.0)y[0]=0.0;
-	if(nh<len histt){histt[nh]=t;
-	histy[nh]=y[0];
-	nh++;
-	}
-	else {for(i:=1;i<nh;i++){histt[i-1]=histt[i];
-	histy[i-1]=histy[i];
-	}histt[nh-1]=t;
-	histy[nh-1]=y[0];
-	}
+	graph.cmd(sys->sprint("history append %.17g %.17g",t,y[0]));
 }
 pointer(p: ref Draw->Pointer)
 {
@@ -119,21 +119,50 @@ pointer(p: ref Draw->Pointer)
 		if(y[0]>1.0)y[0]=1.0;
 	}
 	t=0.0;
-	nh=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g",t,y[0]));
 }
 redraw()
 {
 	im:=win.image;
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	r:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
-	liveplot->grid(im,r,grid,10,10);
-	# Quantity is horizontal, price vertical.  The crossing is equilibrium.
-	im.line((r.min.x,r.max.y),(r.max.x,r.min.y),0,0,2,live,Point(0,0));
-	im.line((r.min.x,r.min.y),(r.max.x,r.max.y),0,0,2,accent,Point(0,0));
-	py:=liveplot->map(y[0],0.0,1.0,r.max.y,r.min.y);
-	im.line((r.min.x,py),(r.max.x,py),0,0,2,fg,Point(0,0));
-	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("Price growth — t %.2f  price %.4g",t,y[0]));
+	content:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
+	xsplit:=content.min.x+content.dx()*55/100;
+	market:=Rect(content.min,(xsplit-22,content.max.y));
+	timeplot:=Rect((xsplit+30,content.min.y),content.max);
+	graph.image=im;
+	graph.cmd("clear");
+	graph.cmd(sys->sprint("view market %d %d %d %d",market.min.x,market.min.y,market.max.x,market.max.y));
+	graph.cmd("scale market x 0 1");
+	graph.cmd("scale market y 0 1 reverse");
+	graph.cmd("axis market x quantity");
+	graph.cmd("axis market y price");
+	graph.cmd("demand clear");
+	graph.cmd("supply clear");
+	for(i:=0;i<40;i++){
+		q:=real(i)/39.0;
+		graph.cmd(sys->sprint("demand append %.17g %.17g",q,1.0-q));
+		graph.cmd(sys->sprint("supply append %.17g %.17g",q,q));
+	}
+	graph.cmd("price clear");
+	graph.cmd(sys->sprint("price append %.17g %.17g",0.0,y[0]));
+	graph.cmd(sys->sprint("price append %.17g %.17g",1.0,y[0]));
+	graph.cmd("line market demand x quantity y price colour live width 2");
+	graph.cmd("line market supply x quantity y price colour accent width 2");
+	graph.cmd("line market price x quantity y price colour foreground width 1");
+	tmax:=t;
+	if(tmax<10.0)
+		tmax=10.0;
+	graph.cmd(sys->sprint("view time %d %d %d %d",timeplot.min.x,timeplot.min.y,timeplot.max.x,timeplot.max.y));
+	graph.cmd(sys->sprint("scale time x 0 %.8g",tmax));
+	graph.cmd("scale time y 0 1 reverse");
+	graph.cmd("axis time x time");
+	graph.cmd("axis time y price");
+	graph.cmd("line time history x time y price colour foreground width 2");
+	graph.draw();
+	eq:=demand/(demand+supply);
+	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("Price adjustment   dp/dt=a[D(1-p)-Sp]   p %.3g   equilibrium %.3g",y[0],eq));
 	drawpar(im,0,"demand",demand,2.0);
 	drawpar(im,1,"supply",supply,2.0);
 	drawpar(im,2,"adjustment",adjustment,2.0);

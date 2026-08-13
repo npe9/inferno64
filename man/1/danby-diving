@@ -1,0 +1,16 @@
+.TH DANBY-DIVING 1
+.SH NAME
+danby-diving \- translational and rotational motion of a diver
+.SH SYNOPSIS
+.B temple/diving
+.SH MODEL
+The centre of mass follows a drag-affected projectile while angular momentum
+rotates the body.  Tucking reduces the effective moment of inertia and therefore
+increases angular speed for fixed angular momentum.
+.SH DISPLAY
+The linked body rotates about its moving centre of mass.  Height and completed
+rotations are plotted against time.
+.SH SOURCE
+.B /appl/danby/diving.b
+.SH SEE ALSO
+.IR mechanism (2)

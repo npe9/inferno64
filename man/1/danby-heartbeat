@@ -1,0 +1,30 @@
+.TH DANBY-HEARTBEAT 1
+.SH NAME
+danby-heartbeat \- Zeeman fast-slow heartbeat oscillator
+.SH SYNOPSIS
+.B temple/heartbeat
+.SH MODEL
+epsilon x'=-(x^3-Tx+y);
+y'=x-x0.
+.PP
+x is a fast muscle state, y a slow electrochemical drive, T tension, and x0
+pacemaker bias.  The cubic fast nullcline and slow feedback produce relaxation
+oscillations.  The equilibrium is x=x0, y=Tx0-x0^3.
+.SH DISPLAY
+The left phase portrait plots drive against muscle state and reveals the fast
+jumps and slow recovery branches.  The right plot shows both signed states
+against time.  A nonnegative compartment plot would incorrectly clip half of
+the cycle and is therefore not used.
+.SH CONTROLS
+Drag the phase portrait to set both states.  Tracks set epsilon, tension, and
+pacemaker bias.  Space pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The analytic equilibrium is checked by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/danby/heartbeat.b
+.br
+.B /appl/temple/heartbeat.b
+.SH SEE ALSO
+.IR numerics (2),
+.IR plot (2)

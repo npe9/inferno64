@@ -1,0 +1,11 @@
+.TH DANBY-JUPITERBOOST 1
+.SH NAME
+danby-jupiterboost \- heliocentric speed change in a Jupiter flyby
+.SH SYNOPSIS
+.B temple/jupiterboost
+.SH MODEL
+A massless spacecraft encounters moving Jupiter in the Sun's field. Its
+heliocentric speed and Jupiter distance show the energy exchange during the
+gravity assist; signed aim offset selects leading or trailing encounters.
+.SH SOURCE
+.B /appl/danby/jupiterboost.b

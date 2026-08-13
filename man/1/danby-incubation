@@ -1,0 +1,26 @@
+.TH DANBY-INCUBATION 1
+.SH NAME
+danby-incubation \- SEIR epidemic with a latent compartment
+.SH SYNOPSIS
+.B temple/incubation
+.SH MODEL
+S'=-beta SI;
+E'=beta SI-sigma E;
+I'=sigma E-gamma I;
+R'=gamma I.
+.PP
+Exposed E is infected but not yet infectious.  The mean incubation time is
+1/sigma.  Separating E from I produces a delayed, typically broader infectious
+peak without changing total population.
+.SH CONTROLS
+Drag any compartment bar.  Tracks set contact, incubation progression, and
+recovery.  Space pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The regression suite verifies S'+E'+I'+R'=0.
+.SH SOURCE
+.B /appl/danby/incubation.b
+.br
+.B /appl/temple/incubation.b
+.SH SEE ALSO
+.IR danby-epidemic (1),
+.IR populationmodel (2)

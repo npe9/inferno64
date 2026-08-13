@@ -1,0 +1,9 @@
+.TH DANBY-DOUBLEPENDULUM 1
+.SH NAME
+danby-doublependulum \- explore a nonlinear double pendulum
+.SH DESCRIPTION
+Two massive links obey the full coupled nonlinear equations.  The diagram
+follows both bobs and the live plot compares their angles, revealing energy
+exchange and sensitive chaotic motion.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.

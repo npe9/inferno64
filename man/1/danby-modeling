@@ -1,0 +1,25 @@
+.TH DANBY-MODELING 1
+.SH NAME
+danby-modeling \- explore assumptions, parameters, and predictions in a differential-equation model
+.SH SYNOPSIS
+.B temple/modeling
+.SH DESCRIPTION
+.I Danby-modeling
+opens an interactive laboratory for the normal-form system
+.IP
+dx/dt = ax - y - (x squared + y squared)x,
+.IP
+dy/dt = x + ay - (x squared + y squared)y.
+.PP
+The green curve is the nonlinear model and the ochre curve is its linear
+approximation at the equilibrium.  The phase portrait and time history show
+that specifying equations is also specifying assumptions: the cubic term is
+negligible near the origin but controls the global prediction.
+.PP
+Click the scale at the bottom to vary
+.I a.
+Space pauses and
+.B r
+resets the initial condition.
+.SH SEE ALSO
+danby-stability(1), numerics(2), plot(2)

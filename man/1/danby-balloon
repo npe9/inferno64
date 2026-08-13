@@ -1,0 +1,15 @@
+.TH DANBY-BALLOON 1
+.SH NAME
+danby-balloon \- vertical balloon motion with a swinging payload
+.SH SYNOPSIS
+.B temple/balloon
+.SH MODEL
+Net buoyancy, total suspended mass, gravity, and drag determine vertical motion.
+The payload is a pendulum whose pivot shares the balloon acceleration.
+.SH DISPLAY
+The tether and payload follow their computed angle beneath the balloon.
+Altitude and payload swing are plotted against time.
+.SH SOURCE
+.B /appl/danby/balloon.b
+.SH SEE ALSO
+.IR mechanism (2)

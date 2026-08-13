@@ -1,0 +1,7 @@
+.TH DANBY-SOLVERDEBUG 1
+.SH NAME
+danby-solverdebug \- controlled numerical-solver debugging projects
+.SH DESCRIPTION
+F cycles reproducible faults: a derivative-sign error, a wrong initial value,
+and time-dependent derivative contamination.  Each has a distinct divergence
+from the analytic trace, separating model, initialization, and RHS defects.

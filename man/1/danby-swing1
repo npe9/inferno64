@@ -1,0 +1,12 @@
+.TH DANBY-SWING1 1
+.SH NAME
+danby-swing1 \- pump a swing by changing centre of mass
+.SH SYNOPSIS
+.B swing1
+.SH DESCRIPTION
+This model changes the effective pendulum length twice per pumping cycle.  The
+radial motion contributes the exact two-times-length-rate angular-velocity term,
+so timing determines whether the child adds or removes energy.
+.PP
+The diagram and live angle/speed plot expose the motion.  Click a parameter
+scale to change it, space pauses, period steps while paused, R resets, and Q exits.

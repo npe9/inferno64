@@ -1,0 +1,7 @@
+.TH DANBY-EULERORDER 1
+.SH NAME
+danby-eulerorder \- numerically confirm first-order Euler convergence
+.SH DESCRIPTION
+Repeated step halving shows Euler endpoint error falling by approximately two,
+which is the operational meaning of first order.  See
+.IR danby-methods (1).

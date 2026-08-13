@@ -1,0 +1,12 @@
+.TH CARTPENDULUM 2
+.SH NAME
+cartpendulum \- nonlinear cart and pendulum equation library
+.SH SYNOPSIS
+.EX
+include "danby/cartpendulum.m";
+.EE
+.SH DESCRIPTION
+.B Cartpendulum
+evaluates the coupled horizontal cart and pendulum derivatives, including cart
+spring and damping forces and hinge damping.  State order is cart position,
+cart velocity, pendulum angle, and angular velocity.

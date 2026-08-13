@@ -1,0 +1,7 @@
+.TH DANBY-CHAOTICWHEEL 1
+.SH NAME
+danby-chaoticwheel \- periodically driven nonlinear wheel
+.SH DESCRIPTION
+A gravity-biased wheel receives periodic torque and damping.  Its nonlinear
+rotation is the driven-pendulum route from periodic response through period
+doubling to chaotic tumbling.

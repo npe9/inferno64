@@ -1,0 +1,10 @@
+.TH DANBY-AEROBRAKING 1
+.SH NAME
+danby-aerobraking \- orbital energy loss during atmospheric passes
+.SH SYNOPSIS
+.B temple/aerobraking
+.SH MODEL
+Central gravity produces the orbit while exponential atmosphere applies drag
+near planetary radius. Repeated periapsis passages lower speed and apoapsis.
+.SH SOURCE
+.B /appl/danby/aerobraking.b

@@ -1,0 +1,24 @@
+.TH DANBY-CANNIBALISM 1
+.SH NAME
+danby-cannibalism \- age-structured population with adult cannibalism
+.SH SYNOPSIS
+.B temple/cannibalism
+.SH MODEL
+J' = bA-mJ-dJ J-cJA;
+A' = mJ+ecJA-dA A.
+.PP
+J and A are young and adult animals.  Cannibalism removes young while a
+fraction e of consumed biomass contributes to adults.  Keeping the stages
+separate exposes when cannibalism is a loss, a density regulator, or a transfer
+between age classes.
+.SH CONTROLS
+Drag either state bar.  The six tracks set birth, maturation, cannibalism,
+food conversion, and young and adult death.  Space pauses, period steps,
+r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/cannibalism.b
+.br
+.B /appl/temple/cannibalism.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR danby-childcare (1)

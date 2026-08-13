@@ -1,0 +1,31 @@
+.TH DANBY-LANCHESTER 1
+.SH NAME
+danby-lanchester \- Lanchester square-law combat model
+.SH SYNOPSIS
+.B temple/lanchester
+.SH MODEL
+A'=-bB; B'=-aA.
+.PP
+A and B are opposing force strengths; a is A's effectiveness against B and b
+is B's effectiveness against A.  The square-law invariant aA^2-bB^2 is
+constant until one force reaches zero.  This provides a quantitative model
+separate from the graphical
+.B battlelines
+game.
+.SH DISPLAY
+Two histories and editable current-strength bars show attrition and the
+survivor.  Changing effectiveness exposes why initial numerical superiority
+and effectiveness enter quadratically.
+.SH CONTROLS
+Drag either force bar.  Tracks set the two effectiveness coefficients.  Space
+pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The differential invariant is checked analytically by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/danby/lanchester.b
+.br
+.B /appl/temple/lanchester.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR battlelines (1)

@@ -1,0 +1,11 @@
+.TH DANBY-ICBMACCURACY 1
+.SH NAME
+danby-icbmaccuracy \- lateral miss distance from aim and crosswind error
+.SH SYNOPSIS
+.B temple/icbmaccuracy
+.SH MODEL
+A three-dimensional ballistic trajectory separates downrange, altitude, and
+lateral motion. Signed aim error and crosswind expose their contribution to miss
+distance in the plan view.
+.SH SOURCE
+.B /appl/danby/icbmaccuracy.b

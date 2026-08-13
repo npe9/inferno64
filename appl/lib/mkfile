@@ -94,6 +94,7 @@ TARG=\
 	plumbing.dis\
 	pop3.dis\
 	popup.dis\
+	plot.dis\
 	powerman.dis\
 	profile.dis\
 	pslib.dis\

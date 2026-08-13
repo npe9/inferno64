@@ -13,7 +13,11 @@ X'=sigma(Y-X); Y'=X(rho-Z)-Y; Z'=XY-beta Z.
 .PP
 sigma, rho, and beta control the Lorenz system; X, Y, and Z are abstract convection state variables.
 .SH DISPLAY
-The x-z projection displays the two-lobed strange attractor. Nearby initial states can follow visibly different paths after sufficient time.
+The upper x-z projection displays two trajectories beginning only
+10^-6 units apart.  They initially overlap, then separate and eventually
+occupy the two-lobed strange attractor.  The lower plot shows
+log10 of their Euclidean separation against time, making sensitive dependence
+visible before it can be distinguished in the phase portrait.
 .SH CONTROLS
 Drag the main view to change initial X. The bottom tracks set sigma, rho, and beta.
 .PP
@@ -30,12 +34,13 @@ model, not an agent simulation or a prediction of a particular real system.
 Parameter changes restart the displayed history so trajectories from different
 settings are not joined.
 .SH NUMERICS
-The state is advanced by the general-purpose
+Both states are advanced by the general-purpose
 .B Numerics
-fourth-order Runge-Kutta solver.  Small negative values caused by numerical
-roundoff are clamped for nonnegative population and stock models.
+fourth-order Runge-Kutta solver using identical timesteps.  The model module's
+equilibria are checked by the automated Danby model test.
 .SH SOURCE
 .B /appl/temple/chaos.b
+.PP
+.B /appl/danby/lorenz.b
 .SH SEE ALSO
 .IR numerics (2)
-

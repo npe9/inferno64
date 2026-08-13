@@ -1,0 +1,7 @@
+.TH DANBY-CARRIERLANDING 1
+.SH NAME
+danby-carrierlanding \- aircraft arresting cable and moving deck
+.SH DESCRIPTION
+An aircraft catches a slack arresting cable whose tension grows quadratically
+with extension.  The carrier deck heaves beneath it, and the plot shows stopping
+distance and speed as cable and damping parameters change.

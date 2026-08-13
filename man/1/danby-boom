@@ -35,7 +35,8 @@ The state is advanced by the general-purpose
 fourth-order Runge-Kutta solver.  Small negative values caused by numerical
 roundoff are clamped for nonnegative population and stock models.
 .SH SOURCE
+.B /appl/danby/boom.b
+.br
 .B /appl/temple/boom.b
 .SH SEE ALSO
 .IR numerics (2)
-
