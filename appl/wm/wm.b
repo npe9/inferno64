@@ -214,7 +214,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		}else {
 			controlevent("newclient " + string c.id);
 			# Raise the new client so it's visible and on top
-			c.ctl <-= "raise";
+			c.top();
 			# Set keyboard focus to the new client
 			setfocus(win, c);
 		}
