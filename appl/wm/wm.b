@@ -16,12 +16,13 @@ include "string.m";
 include "sh.m";
 include "winplace.m";
 	winplace: Winplace;
+include "keyboard.m";
 
 Wm: module {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-Ptrstarted, Kbdstarted, Controlstarted, Controller, Fixedorigin, Sticky: con 1<<iota;
+Ptrstarted, Kbdstarted, Keyupstarted, Controlstarted, Controller, Fixedorigin, Sticky: con 1<<iota;
 Bdwidth: con 3;
 Sminx, Sminy, Smaxx, Smaxy: con iota;
 Minx, Miny, Maxx, Maxy: con 1<<iota;
@@ -149,7 +150,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			reshaped(win);
 	c := <-wmctxt.kbd or
 	c = int <-fakekbd =>
-		if(kbdfocus != nil)
+		if(kbdfocus != nil &&
+		   (!iskeyup(c) || (kbdfocus.flags & Keyupstarted)))
 			kbdfocus.kbd <-= c;
 	done := <-rootresized =>
 		rootresizing = 0;
@@ -251,6 +253,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			off = big len d;
 		spawn freplyb(rc, d[int off:], nil); # TODO potential bug truncating big to int
 	}
+}
+
+# Keyup contains the generic special-key prefix as well as the release bit.
+# A simple `c & Keyup` therefore also matches ordinary arrow/function key
+# presses.  Match the complete encoded tag and leave its low 11 key bits out.
+iskeyup(c: int): int
+{
+	return (c & (Keyboard->Spec | 16r800)) == Keyboard->Keyup;
 }
 
 screenmonitor(ch: chan of Point)
@@ -384,6 +394,10 @@ handlerequest(win: ref Wmclient->Window, wmctxt: ref Wmcontext, c: ref Client, r
 			# application, but usually you want this to happen... how can we distinguish
 			# the two cases?
 			setfocus(win, c);
+		"keyup" =>
+			# Releases are opt-in: otherwise their private key codes would
+			# appear as garbage characters in ordinary text widgets.
+			c.flags |= Keyupstarted;
 		"control" =>
 			if((c.flags & Controller) == 0)
 				return "control not available";
