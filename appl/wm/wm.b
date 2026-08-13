@@ -211,8 +211,13 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			controller = c;
 			c.flags |= Controller;
 			allowcontrol = 0;
-		}else
+		}else {
 			controlevent("newclient " + string c.id);
+			# Raise the new client so it's visible and on top
+			c.ctl <-= "raise";
+			# Set keyboard focus to the new client
+			setfocus(win, c);
+		}
 		c.cursor = "cursor";
 	(c, data, rc) := <-req =>
 		# if client leaving
