@@ -1,0 +1,106 @@
+.TH PINBOARD 1
+.SH NAME
+pinboard \- window manager desktop and application launcher
+.SH SYNOPSIS
+.B wm/pinboard
+.SH DESCRIPTION
+.I Pinboard
+provides a frameless desktop surface for
+.IR wm (1).
+It remains below ordinary application windows and displays icons for files,
+directories, and RISC OS-style application directories.
+The standard
+.IR toolbar (1)
+initialisation script starts one pinboard and places a selection of applications
+on it.
+.PP
+An application directory has a name beginning with
+.B !
+and contains a
+.B !Boot
+file.
+It normally also contains a
+.B !Run
+script and an
+.BI icons/ name .bit
+image, with an optional matching
+.B .mask
+file.
+When such a directory is activated,
+.I pinboard
+forks a private process group, file descriptor group, name space, and
+environment; sets
+.B approot
+and, when an icon is present,
+.BR wmicon ;
+applies
+.BR !Boot ;
+and executes
+.BR !Run .
+Application activation does not pass through the plumber.
+.PP
+Activating any other pinned path sends a text message to
+.IR plumber (8).
+The message source is
+.BR pinboard ,
+its directory is the directory containing the path,
+and its data is the complete path.
+The applicable rule in
+.IR plumbing (6)
+determines what opens the object.
+.SS Pointer operations
+.TP
+.B Button 1 on an icon
+Select the icon.  Dragging moves it; if it belongs to a multiple selection,
+dragging moves the entire selection.
+.TP
+.B Button 1 on empty space
+Clear the selection.
+.TP
+.B Button 3 drag on empty space
+Rubber-band a group of icons into the selection.
+.TP
+.B Button 2
+Open the context menu.  Its operations remove selected icons, clear the
+backdrop, or tidy all icons into a grid.
+.TP
+.B Double button 1 on an icon
+Activate the pinned object as described above.
+.PP
+Icon positions and the backdrop are held in memory.
+They are not automatically preserved when the pinboard exits, but the complete
+state can be read from and restored through
+.BR /chan/pinboard ;
+see
+.IR pinboard (4).
+.SH FILES
+.TP
+.B /chan/pinboard
+Textual control and state interface.
+.TP
+.B /lib/wmsetup
+Starts the pinboard and supplies its initial icons.
+.TP
+.BI /Apps/! name /!Boot
+Application name-space description.
+.TP
+.BI /Apps/! name /!Run
+Application launch script.
+.TP
+.BI /Apps/! name /icons/! name .bit
+Application icon, optionally accompanied by a
+.B .mask
+file.
+.SH SOURCE
+.B /appl/wm/pinboard.b
+.SH SEE ALSO
+.IR wm (1),
+.IR toolbar (1),
+.IR pinboard (4),
+.IR plumbing (6),
+.IR plumber (8)
+.SH BUGS
+Paths containing spaces cannot be represented by the current
+.B /chan/pinboard
+protocol.
+

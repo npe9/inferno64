@@ -399,11 +399,8 @@ progstem(): string
 
 showman(ctxt: ref Draw->Context)
 {
-	tracehelp("enter");
-	if(ctxt == nil){
-		tracehelp("nil context");
+	if(ctxt == nil)
 		return;
-	}
 	page: string;
 	env := load Env Env->PATH;
 	if(env != nil)
@@ -414,13 +411,11 @@ showman(ctxt: ref Draw->Context)
 		page = "man";
 	plumbmsg = load Plumbmsg Plumbmsg->PATH;
 	if(plumbmsg == nil){
-		tracehelp("cannot load plumbmsg: "+sys->sprint("%r"));
 		sys->fprint(sys->fildes(2), "wmclient: cannot load %s: %r\n", Plumbmsg->PATH);
 		return;
 	}
 	if(!manplumbready){
 		if(plumbmsg->init(1, nil, 0) < 0){
-			tracehelp("cannot connect plumber: "+sys->sprint("%r"));
 			sys->fprint(sys->fildes(2), "wmclient: cannot connect to plumber: %r\n");
 			return;
 		}
@@ -437,23 +432,6 @@ showman(ctxt: ref Draw->Context)
 	attrs = ref Attr("section", "1") :: ref Attr("path", path) :: attrs;
 	msg := ref Msg("titlebar", "man", "/man/1", "text",
 		plumbmsg->attrs2string(attrs), array of byte path);
-	tracehelp("send dst=man dir=/man/1 data="+path+" attrs="+msg.attr);
-	sys->print("wmclient help: dst=man dir=/man/1 data=%s attrs=%s\n",
-		path, msg.attr);
-	if(msg.send() < 0){
-		tracehelp("send failed: "+sys->sprint("%r"));
+	if(msg.send() < 0)
 		sys->fprint(sys->fildes(2), "wmclient: cannot plumb manual %s: %r\n", path);
-	}else
-		tracehelp("send succeeded");
-}
-
-tracehelp(s: string)
-{
-	fd := sys->open("/tmp/help.trace", Sys->OWRITE);
-	if(fd == nil)
-		fd = sys->create("/tmp/help.trace", Sys->OWRITE, 8r666);
-	if(fd != nil){
-		sys->seek(fd, big 0, Sys->SEEKEND);
-		sys->fprint(fd, "wmclient: %s\n", s);
-	}
 }

@@ -1,0 +1,116 @@
+.TH PINBOARD 4
+.SH NAME
+pinboard \- desktop control and state file
+.SH SYNOPSIS
+.EX
+echo 'pin /Apps/!Manual' >/chan/pinboard
+cat /chan/pinboard
+.EE
+.SH DESCRIPTION
+.I Pinboard
+(see
+.IR pinboard (1))
+uses
+.IR sys-file2chan (2)
+to serve the synthetic file
+.BR /chan/pinboard .
+Programs and shell scripts use this file to add and remove desktop objects,
+set the backdrop, and save or restore the current layout.
+There is no separate Pinboard Limbo module: the file protocol is its public
+programming interface.
+.PP
+The file accepts a line-oriented textual protocol.
+Fields are separated by spaces or tabs and paths must not contain white space.
+A command may be split across several writes; it takes effect when its newline
+is received.
+Unknown commands and malformed or inapplicable commands are ignored.
+The commands are:
+.TP
+.BI pin " path" " [x y]"
+Add an icon for
+.IR path .
+The path must exist.
+If
+.I x
+and
+.I y
+are supplied, they give the centre of the icon in screen pixels.
+The coordinates are clamped to keep the icon and caption on the desktop.
+If they are omitted or negative, the next vacant grid position is chosen.
+More than one icon can refer to the same path.
+.TP
+.BI unpin " path"
+Remove every icon referring to
+.IR path .
+.TP
+.BI backdrop " image"
+Replace the backdrop with
+.IR image .
+The image must be an Inferno
+.B .bit
+image.  It is drawn at the desktop origin and is not scaled.
+If the image cannot be opened, the existing backdrop is unchanged.
+.TP
+.B clear
+Remove all pinned icons without changing the backdrop.
+.PP
+Reading the file returns a snapshot in the same command language: first a
+.B backdrop
+line, when one is set, followed by one
+.B pin
+line for every icon, including its coordinates.
+A read beginning at offset zero captures fresh state; subsequent reads at
+increasing offsets return the remainder of that same snapshot.
+Consequently a snapshot can be saved and later written back to reconstruct a
+layout.
+.SH EXAMPLES
+Add an application using automatic placement:
+.IP
+.EX
+echo 'pin /Apps/!Manual' >/chan/pinboard
+.EE
+.PP
+Place a file at a particular location:
+.IP
+.EX
+echo 'pin /usr/inferno/notes 120 96' >/chan/pinboard
+.EE
+.PP
+Save a layout, then replace the current icons with that saved layout:
+.IP
+.EX
+cat /chan/pinboard >/tmp/pinboard.state
+echo clear >/chan/pinboard
+cat /tmp/pinboard.state >/chan/pinboard
+.EE
+.PP
+A Limbo client can use the ordinary
+.IR Sys
+file operations:
+.IP
+.EX
+fd := sys->open("/chan/pinboard", Sys->OWRITE);
+if(fd == nil)
+	raise "fail:pinboard";
+cmd := array of byte "pin /Apps/!Manual\en";
+if(sys->write(fd, cmd, len cmd) != len cmd)
+	raise "fail:pinboard write";
+.EE
+.SH FILES
+.TP
+.B /chan/pinboard
+The control and state file.
+.SH SOURCE
+.B /appl/wm/pinboard.b
+.SH SEE ALSO
+.IR pinboard (1),
+.IR sys-file2chan (2),
+.IR srv (3),
+.IR plumbing (6),
+.IR plumber (8)
+.SH BUGS
+The protocol has no quoting or escaping convention, so paths containing spaces
+cannot be used.
+.PP
+State is not written to permanent storage automatically.
+

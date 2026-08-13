@@ -127,6 +127,9 @@ is called, with a list of devices (e.g.
 .BR ptr ,
 .BR kbd )
 to start input for.
+Programs that need key-release events must additionally request
+.BR keyup ;
+ordinary text clients should not request it.
 .IB W .settitle
 sets the title that is shown on the window's title bar;
 it can make the window's size (and therefore the window's image)
@@ -172,6 +175,24 @@ give the minimum size acceptable for the window.
 .TP
 .B help
 The help button has been clicked.
+.IB W .wmctl
+opens the manual page associated with the running Dis module.
+.TP
+.B source
+The pencil button has been clicked.
+.IB W .wmctl
+finds the Limbo source associated with the running Dis module and sends its
+path, resolved executable, and original argument vector through
+.IR plumber (8)
+to
+.IR develop (1).
+The
+.B wmsource
+environment variable can name the source explicitly; otherwise conventional
+.B /dis
+to
+.B /appl
+mappings are tried.
 .TP
 .B ok
 The OK  button has been clicked.
@@ -265,4 +286,6 @@ channel for interaction with
 .B /appl/lib/wmclient.b
 .SH SEE ALSO
 .IR wm (1),
-.IR tk (2)
+.IR tk (2),
+.IR plumbing (6),
+.IR plumber (8)

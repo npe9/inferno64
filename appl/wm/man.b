@@ -169,7 +169,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	pidc := chan of int;
 
 	if (argv != nil) {
-		if (hd argv == "-f") {
+		if (hd argv != nil && (hd argv)[0] == '/') {
+			history = ref History.Go(nil, nil, "", "", "", hd argv);
+		} else if (hd argv == "-f") {
 			first: ref History;
 			for (argv = tl argv; argv != nil; argv = tl argv) {
 				hnode := ref History.Go(history, nil, "", "", "", hd argv);

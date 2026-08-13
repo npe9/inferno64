@@ -1,0 +1,24 @@
+.TH PDELAB 1
+.SH NAME
+pdelab \- interactive partial differential equation simulations
+.SH SYNOPSIS
+.B temple/pdelab
+[
+.I mode
+]
+.SH DESCRIPTION
+.I Pdelab
+visualizes three finite-difference field simulations using
+.IR pde (2):
+heat diffusion, a damped wave equation, and the coupled Gray-Scott
+reaction-diffusion equations.
+The optional mode is 1, 2, or 3.
+.PP
+Press 1, 2, or 3 to switch simulation.  Button 1 injects heat, displaces the
+wave surface, or adds reagent.  Space pauses, r resets, and q exits.
+.SH SOURCE
+.B /appl/temple/pdelab.b
+.SH SEE ALSO
+.IR ode (2),
+.IR pde (2),
+.IR temple (1)

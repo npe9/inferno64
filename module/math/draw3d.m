@@ -89,6 +89,10 @@ Draw3d: module
 	sprite3zb:	fn(c: ref Context, p: Vector, img, mask: ref Draw->Image, scale, degz: real);
 	sprite3yb:	fn(c: ref Context, p: Vector, img, mask: ref Draw->Image, scale: real);
 	sprite3mat:	fn(c: ref Context, p: Vector, m: Matrix, img, mask: ref Draw->Image, scale: real);
+	# Shared 2D sprite transform used by ports that render into Tk buffers.
+	# center is the destination centre; width/height <= 0 use source dimensions.
+	sprite2d:	fn(dst: ref Draw->Image, center: Draw->Point,
+		img, mask: ref Draw->Image, width, height: int, degz: real, flipx: int);
 
 	# Utility
 	newmatrix:	fn(): Matrix;

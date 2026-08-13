@@ -1,0 +1,41 @@
+.TH DANBY-ARMS 1
+.SH NAME
+danby-arms \- Richardson arms race
+.SH SYNOPSIS
+.B temple/arms
+.SH DESCRIPTION
+.I Temple/arms
+is an interactive live simulation of Richardson arms race.
+It integrates the model continuously and redraws its state as parameters or
+initial conditions change.
+.SH MODEL
+A'=aB-fA+g; B'=bA-fB+g.
+.PP
+a and b are mutual response, f fatigue, and g grievance. A and B are abstract arsenal levels.
+.SH DISPLAY
+Each block represents 0.025 arsenal units. If f^2>ab the display reports stable equilibrium; otherwise mutual response produces unstable escalation.
+.SH CONTROLS
+Drag the view to set initial arsenals. Four bottom tracks set both responses, fatigue, and grievance.
+.PP
+Space pauses or resumes the simulation.  Period advances one displayed step
+while paused.  The
+.B r
+key restores the default initial state and
+.B q
+or Escape exits.
+.SH INTERPRETATION
+The quantities are normalized unless physical units are stated explicitly.
+The display is a visualization of a low-dimensional differential-equation
+model, not an agent simulation or a prediction of a particular real system.
+Parameter changes restart the displayed history so trajectories from different
+settings are not joined.
+.SH NUMERICS
+The state is advanced by the general-purpose
+.B Numerics
+fourth-order Runge-Kutta solver.  Small negative values caused by numerical
+roundoff are clamped for nonnegative population and stock models.
+.SH SOURCE
+.B /appl/temple/arms.b
+.SH SEE ALSO
+.IR numerics (2)
+

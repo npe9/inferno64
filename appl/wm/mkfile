@@ -21,6 +21,7 @@ TARG=\
 	colors.dis\
 	cprof.dis\
 	date.dis\
+	develop.dis\
 	deb.dis\
 	debdata.dis\
 	debsrc.dis\

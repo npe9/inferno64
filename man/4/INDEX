@@ -24,6 +24,7 @@ memfs memfs
 mntgen mntgen
 namespace namespace
 palmsrv palmsrv
+pinboard pinboard
 ramfile ramfile
 rawdbfs dbfs
 registry registry

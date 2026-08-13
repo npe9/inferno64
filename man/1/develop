@@ -1,0 +1,107 @@
+.TH DEVELOP 1
+.SH NAME
+develop \- edit, rebuild, and relaunch a running Limbo program
+.SH SYNOPSIS
+.B wm/develop
+.I source
+.RI [ "dis" " [ "arg ..." ]" ]
+.SH DESCRIPTION
+.I Develop
+is opened by the pencil button in an application window's titlebar.
+The window manager plumbs the program's primary Limbo source, resolved Dis
+module, and original argument vector to a new development window.
+.PP
+When current symbol information is available, the main text area opens at the
+exact source statement of the first application frame on the captured live
+stack.  It falls back to the program's primary
+.B .b
+file.  The
+.B Modules
+menu lists that file, its included
+.B .m
+declarations, and conventionally named implementation sources found in the
+standard Inferno source directories.
+.PP
+.I Source
+may have the form
+.IB file : line .
+Develop opens the file with the insertion point at that line.  Plumbing rules
+may therefore select a source statement by starting Develop with a
+.IB file : line
+argument.  Titlebar requests also include the running process identifier;
+when debugging symbols describe its current frame, Develop automatically
+opens that frame and selects its current source line.
+.PP
+When Develop is entered from a running application, it briefly stops the
+captured Dis process, records its symbolic call stack, arguments, and local
+values using the existing Dis and
+.B .sbl
+debug information, and resumes it.  The snapshot remains fixed while source
+is edited, so navigation does not silently change the state being examined.
+The same snapshot records modules on the captured call stack and non-nil
+module references in its symbolic module globals.  Their loaded Dis paths are
+mapped back to implementation sources and retained in the session's
+.B Modules
+menu and definition index.  Thus button-3 lookup reflects the modules loaded
+by that application instance, not merely files named by textual includes.
+For a built-in module, lookup prefers its native runtime implementation; for
+example, looking up Math member
+.B cos
+opens
+.B Math_cos
+in
+.B /libinterp/math.c
+instead of stopping at the declaration in
+.BR /module/math.m .
+System calls are likewise mapped past the module registrar to their hosted
+implementation; for example,
+.B sys->bind
+opens
+.B Sys_bind
+in
+.BR /emu/port/inferno.c .
+.PP
+Button 3 on a Limbo identifier recursively follows the program's included
+module declarations and their corresponding implementation sources, looking
+for a matching function, method, type, or variable declaration.  Function
+bodies are preferred to interface declarations.  Develop opens the defining file and selects the complete
+declaration line.  If there is no local definition, it plumbs the identifier
+from the current source directory so site-specific rules or another tool can
+handle it.
+.PP
+The commands are:
+.TP
+.B Save
+Write the current source file.
+.TP
+.B Undo
+Undo the last textual change.  Control-underscore invokes the same command.
+.TP
+.B Build
+Save the current file and compile the primary source with debugging symbols,
+writing the result over the program's resolved Dis module.
+.TP
+.B Run
+Launch the current Dis module with the argument vector captured when the
+original application was started.
+.TP
+.B Go
+Save and build, terminate the captured old application only after a successful
+build, and relaunch it with its original arguments.
+.TP
+.B State
+Display the call stack, arguments, and locals recorded when Develop opened.
+.PP
+Compiler diagnostics are written to the window-system console; build status
+is also shown at the bottom of the editor.
+.SH FILES
+.TP
+.B /module
+Standard module declaration directory searched for relative includes.
+.SH SOURCE
+.B /appl/wm/develop.b
+.SH SEE ALSO
+.IR limbo (1),
+.IR plumb (1),
+.IR wmclient (2),
+.IR plumbing (6)

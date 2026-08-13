@@ -1,0 +1,41 @@
+.TH DANBY-TENNIS 1
+.SH NAME
+danby-tennis \- tennis serve flight with drag and wind
+.SH SYNOPSIS
+.B temple/tennis
+.SH DESCRIPTION
+.I Temple/tennis
+is an interactive live simulation of tennis serve flight with drag and wind.
+It integrates the model continuously and redraws its state as parameters or
+initial conditions change.
+.SH MODEL
+x'=vx; y'=vy; vx'=-k|v-w|(vx-w); vy'=-g-k|v-w|vy.
+.PP
+Position is measured across a 23.77 m court. k is drag and w is horizontal wind.
+.SH DISPLAY
+The court-space path shows whether the ball clears the 0.914 m center net and where it first lands.
+.SH CONTROLS
+Drag vertically to set initial height. The bottom tracks set drag and wind.
+.PP
+Space pauses or resumes the simulation.  Period advances one displayed step
+while paused.  The
+.B r
+key restores the default initial state and
+.B q
+or Escape exits.
+.SH INTERPRETATION
+The quantities are normalized unless physical units are stated explicitly.
+The display is a visualization of a low-dimensional differential-equation
+model, not an agent simulation or a prediction of a particular real system.
+Parameter changes restart the displayed history so trajectories from different
+settings are not joined.
+.SH NUMERICS
+The state is advanced by the general-purpose
+.B Numerics
+fourth-order Runge-Kutta solver.  Small negative values caused by numerical
+roundoff are clamped for nonnegative population and stock models.
+.SH SOURCE
+.B /appl/temple/tennis.b
+.SH SEE ALSO
+.IR numerics (2)
+

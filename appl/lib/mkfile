@@ -71,16 +71,20 @@ TARG=\
 	libc.dis\
 	libc0.dis\
 	lists.dis\
+	liveplot.dis\
 	lock.dis\
 	login.dis\
 	man.dis\
 	memfs.dis\
 	mpeg.dis\
 	msgio.dis\
+	numerics.dis\
 	nametree.dis\
 	names.dis\
 	newns.dis\
 	ninep.dis\
+	ode.dis\
+	pde.dis\
 	oldauth.dis\
 	palm.dis\
 	palmdb.dis\
@@ -108,6 +112,7 @@ TARG=\
 	rfc822.dis\
 	riff.dis\
 	scoretable.dis\
+	scorestore.dis\
 	scsiio.dis\
 	secstore.dis\
 	selectfile.dis\
@@ -143,6 +148,7 @@ TARG=\
 	tcl_calc.dis\
 	tkclient.dis\
 	titlebar.dis\
+	tone.dis\
 	translate.dis\
 	ubfa.dis\
 	url.dis\

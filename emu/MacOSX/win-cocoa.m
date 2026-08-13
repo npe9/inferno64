@@ -2570,6 +2570,23 @@ convert_key(unsigned short key, unichar ch)
 		gkbdputc(gkbdq, key);
 }
 
+- (void)keyUp:(NSEvent *)e
+{
+	int key;
+	NSUInteger mods;
+	NSString *chars;
+	unichar ch;
+
+	mods = [e modifierFlags];
+	if(mods & NSEventModifierFlagCommand)
+		return;
+	chars = [e characters];
+	ch = [chars length] > 0 ? [chars characterAtIndex:0] : 0;
+	key = convert_key([e keyCode], ch);
+	if(key != -1)
+		gkbdputc(gkbdq, Keyup | (key & 0x7ff));
+}
+
 - (void)flagsChanged:(NSEvent *)e
 {
 	NSUInteger mods = [e modifierFlags];

@@ -14,6 +14,7 @@ DIRS=\
 #	mux\
 	spree\
 	svc\
+	temple\
 	tiny\
 	wm\
 

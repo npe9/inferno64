@@ -34,7 +34,13 @@ if{! ftest -f /net/cs}{
 }
 mount -a {mntgen} /n
 
-plumber >/chan/wmstdout >[2=1]
+if {! ftest -e /chan/plumb.input} {
+	plumber >/chan/wmstdout >[2=1]
+}
+if {! ftest -e /chan/plumb.input} {
+	echo 'wmsetup.grid: plumber did not create /chan/plumb.input' >[1=2]
+	raise plumber
+}
 menu Shell			{wmrun wm/sh}
 menu Acme			{wmrun acme}
 menu Charon			{wmrun charon}

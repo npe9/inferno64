@@ -1,0 +1,100 @@
+<../../mkconfig
+
+TARG=\
+	asciiorgan.dis\
+	battlelines.dis\
+	bigguns.dis\
+	blackdiamond.dis\
+	bombergolf.dis\
+	bounce.dis\
+	box.dis\
+	budget.dis\
+	cartesian.dis\
+	castlefrankenstein.dis\
+	chardemo.dis\
+	circletrace.dis\
+	collision.dis\
+	digits.dis\
+	doodle.dis\
+	population.dis\
+	ecology.dis\
+	epidemic.dis\
+	tennis.dis\
+	orbit.dis\
+	chaos.dis\
+	harvest.dis\
+	competition.dis\
+	foodchain.dis\
+	migration.dis\
+	sirs.dis\
+	vaccination.dis\
+	strains.dis\
+	drug.dis\
+	price.dis\
+	firms.dis\
+	boom.dis\
+	arms.dis\
+	dungen.dis\
+	elephantwalk.dis\
+	flapbat.dis\
+	flattops.dis\
+	fonted.dis\
+	god.dis\
+	grmodels.dis\
+	halogen.dis\
+	hanoi.dis\
+	keepaway.dis\
+	life.dis\
+	lines.dis\
+	logic.dis\
+	massspring.dis\
+	maze.dis\
+	netofdots.dis\
+	ohgreat.dis\
+	pdelab.dis\
+	psalmody.dis\
+	raindrops.dis\
+	rawhide.dis\
+	rocket.dis\
+	rocketscience.dis\
+	span.dis\
+	spriteedit.dis\
+	squirt.dis\
+	smoketest.dis\
+	stadium.dis\
+	strut.dis\
+	symmetry.dis\
+	talons.dis\
+	thedead.dis\
+	tictactoe.dis\
+	timeclock.dis\
+	titanium.dis\
+	tothefront.dis\
+	treecheckers.dis\
+	varoom.dis\
+	vocabulary.dis\
+	wenceslas.dis\
+	whap.dis\
+	xcaliber.dis\
+	zing.dis\
+	zoneout.dis
+
+DISBIN=$ROOT/dis/temple
+
+<$ROOT/mkfiles/mkdis
+
+SYSMODULES=\
+	draw.m\
+	sys.m\
+	tk.m\
+	wmclient.m\
+	tkclient.m\
+	math.m\
+	rand.m\
+	ode.m\
+	pde.m\
+	tone.m\
+	keyboard.m\
+	bufio.m\
+	liveplot.m\
+	numerics.m\

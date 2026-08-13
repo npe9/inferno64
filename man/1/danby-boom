@@ -1,0 +1,41 @@
+.TH DANBY-BOOM 1
+.SH NAME
+danby-boom \- Goodwin wage-employment cycle
+.SH SYNOPSIS
+.B temple/boom
+.SH DESCRIPTION
+.I Temple/boom
+is an interactive live simulation of Goodwin wage-employment cycle.
+It integrates the model continuously and redraws its state as parameters or
+initial conditions change.
+.SH MODEL
+U'=U(-a+bV); V'=V(c-dU).
+.PP
+U is wage share, V employment, a wage decay, b job-to-wage response, c job growth, and d wage drag.
+.SH DISPLAY
+The phase portrait shows the idealized closed boom-bust cycle around (c/d,a/b). It is not a forecast of a real economy.
+.SH CONTROLS
+Drag the view to set wage share and employment. Four bottom tracks set all coefficients.
+.PP
+Space pauses or resumes the simulation.  Period advances one displayed step
+while paused.  The
+.B r
+key restores the default initial state and
+.B q
+or Escape exits.
+.SH INTERPRETATION
+The quantities are normalized unless physical units are stated explicitly.
+The display is a visualization of a low-dimensional differential-equation
+model, not an agent simulation or a prediction of a particular real system.
+Parameter changes restart the displayed history so trajectories from different
+settings are not joined.
+.SH NUMERICS
+The state is advanced by the general-purpose
+.B Numerics
+fourth-order Runge-Kutta solver.  Small negative values caused by numerical
+roundoff are clamped for nonnegative population and stock models.
+.SH SOURCE
+.B /appl/temple/boom.b
+.SH SEE ALSO
+.IR numerics (2)
+

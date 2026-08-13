@@ -1,0 +1,33 @@
+.TH NUMERICS 2
+.SH NAME
+numerics \- general-purpose integration of explicit ordinary differential equations
+.SH SYNOPSIS
+.EX
+include "numerics.m";
+numerics := load Numerics Numerics->PATH;
+w := numerics->workspace(len state);
+numerics->rk4(w, rhs, t, h, state);
+.EE
+.SH DESCRIPTION
+.I Numerics
+integrates a first-order initial-value problem
+.I y'=f(t,y)
+without knowing the meaning of the state vector.
+The caller supplies a right-hand-side function that fills a derivative array.
+.PP
+.B workspace
+allocates reusable Runge-Kutta scratch arrays for a state of the given size.
+.B rk4
+advances one classical fourth-order Runge-Kutta step in place.
+.B integrate
+advances between two times using bounded steps and an exact final endpoint.
+Backward integration is supported.
+.PP
+The library does not impose positivity, conservation, event handling, units,
+or model-specific tolerances.  Those policies belong to the caller.
+.SH SOURCE
+.B /module/numerics.m
+.br
+.B /appl/lib/numerics.b
+.SH SEE ALSO
+.IR liveplot (2)

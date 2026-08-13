@@ -54,7 +54,7 @@ enum {
 	Circumflex=	German|0x3,
 
 	APP=		Spec|0x200,		/* for ALT application keys */
+	Keyup=		Spec|0x800,		/* release: Keyup | (key & 0x7ff) */
 
 	No=			-1,			/* peter */
 };
-

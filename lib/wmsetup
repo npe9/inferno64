@@ -42,11 +42,23 @@ fn cd {
 	} >[2] /dev/null
 }
 
-plumber -v /lib/plumbing >/chan/wmstdout >[2=1]
+if {! ftest -e /chan/plumb.input} {
+	# With no explicit rule file plumber loads /usr/$user/lib/plumbing.
+	plumber -v >/chan/wmstdout >[2=1]
+}
+if {! ftest -e /chan/plumb.input} {
+	echo 'wmsetup: plumber did not create /chan/plumb.input' >[1=2]
+	raise plumber
+}
 wmrun wm/pinboard
 # Seed desktop icons once /chan/pinboard is up (auto-grid layout).
 {
-	sleep 1
+	# Pinboard creates its file2chan before building the canvas, but WM and
+	# JIT scheduling can take more than the old fixed one-second delay.
+	# Poll for the public endpoint and seed only after it can be opened.
+	for retry in 1 2 3 4 5 {
+		if {! ftest -e /chan/pinboard} {sleep 1}
+	}
 	if {ftest -e /chan/pinboard} {
 		echo clear >/chan/pinboard
 		echo 'pin /Apps/!Shell
@@ -57,8 +69,14 @@ pin /Apps/!Filer' >/chan/pinboard
 		# ls /Apps yields full paths (/Apps/!TempleFoo); match on basename.
 		for a in `{ls /Apps} {
 			base := `{basename $a}
-			if {~ $base '!Temple*'} {
-				echo pin $a >/chan/pinboard
+			if {~ $base '!Temple*' '!Model*' '!PDELab'} {
+				# Depending on ls formatting, a can be either !TempleFoo or
+				# /Apps/!TempleFoo. Pinboard requires an absolute path.
+				if {~ $a '/*'} {
+					echo pin $a >/chan/pinboard
+				} {
+					echo pin /Apps/$a >/chan/pinboard
+				}
 			}
 		}
 	}

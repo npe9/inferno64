@@ -46,7 +46,11 @@ can be
 .BR ptr 
 (pointer events),
 .BR kbd
-(keyboard events)
+(keyboard press events),
+.BR keyup
+(also deliver keyboard release events after
+.BR kbd
+has been started),
 and
 .BR control
 (window manager control events, see below).
@@ -211,6 +215,7 @@ File holding current screen rectangle.
 .B /appl/wm/wm.b
 .SH "SEE ALSO"
 .IR toolbar (1),
+.IR pinboard (1),
 .IR logon (1),
 .IR tkclient (2),
 .IR wmclient (2)

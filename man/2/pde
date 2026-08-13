@@ -1,0 +1,51 @@
+.TH PDE 2
+.SH NAME
+pde: new, clear, get, set, splat, splatold, diffuse, wave, gray \- finite-difference field solvers
+.SH SYNOPSIS
+.EX
+include "pde.m";
+pde := load Pde Pde->PATH;
+Field: import pde;
+
+f := pde->new(nx, ny, dx, dy, Pde->CLAMP);
+pde->diffuse(f, diffusivity, dt);
+pde->wave(f, speed, damping, dt);
+pde->gray(a, b, da, db, feed, kill, dt);
+.EE
+.SH DESCRIPTION
+.I Pde
+provides reusable explicit finite-difference solvers on rectangular scalar
+fields.  A Field owns its current values, a work buffer, and the previous
+time level required by the wave solver.  Values are stored row-major in
+.BR u .
+.PP
+.B New
+creates an nx by ny field with physical cell sizes dx and dy.  Boundary mode
+.B CLAMP
+imposes a zero normal derivative,
+.B PERIODIC
+wraps both axes, and
+.B ZERO
+uses zero outside the domain.
+.B Clear,
+.B Get,
+.B Set,
+.B Splat,
+and
+.B Splatold
+initialize or interact with a field.
+.PP
+.B Diffuse
+solves the two-dimensional heat equation.
+.B Wave
+solves a damped second-order wave equation; its Field's old array is the
+previous time level.
+.B Gray
+advances two equally sized fields with the Gray-Scott reaction-diffusion
+model.  All three routines automatically subdivide dt to satisfy a
+conservative explicit stability limit.
+.SH SOURCE
+.B /appl/lib/pde.b
+.SH SEE ALSO
+.IR ode (2),
+.IR pdelab (1)

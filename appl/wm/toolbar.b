@@ -220,10 +220,16 @@ sys->print("error: %s\n", err);
 			}
 			snarf[int off:] = data; # TODO potential bug truncating big to int
 		}
+		hostsnarfput(snarf);
 		wc <-= (len data, "");
 	(off, nbytes, nil, rc) := <-snarfIO.read =>
 		if(rc == nil)
 			break;
+		if(off == big 0){
+			host := hostsnarfget();
+			if(host != nil)
+				snarf = host;
+		}
 		if (off >= big len snarf) {
 			rc <-= (nil, "");		# XXX alt
 			break;
@@ -235,6 +241,27 @@ sys->print("error: %s\n", err);
 	donesetup = <-setupfinished =>
 		;	
 	}
+}
+
+# /dev/snarf is the emulator host clipboard.  /chan/snarf remains the public
+# WM endpoint, but mirrors it so existing applications and Acme need no changes.
+hostsnarfget(): array of byte
+{
+	fd := sys->open("/dev/snarf", Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	b := array[100*1024] of byte;
+	n := sys->read(fd, b, len b);
+	if(n < 0)
+		return nil;
+	return b[0:n];
+}
+
+hostsnarfput(b: array of byte)
+{
+	fd := sys->open("/dev/snarf", Sys->OWRITE);
+	if(fd != nil && len b > 0)
+		sys->write(fd, b, len b);
 }
 
 wmctl(top: ref Tk->Toplevel, c: string)

@@ -1,6 +1,27 @@
 # these are in order from most specific to least,
 # since first rule that fires wins.
 
+# Titlebar help is a normal plumbing request.  Keep the topic in data so users
+# can replace this rule with Acme or another manual viewer.
+dst is man
+kind is text
+data matches '(/[.a-zA-Z0-9_\-]+)+'
+data isfile $0
+plumb alwaysstart man
+plumb start /dis/wm/man.dis $file
+
+# Explicit source selections for Develop, including file:line addresses.
+dst is develop
+kind is text
+data matches '([.a-zA-Z0-9_/\-]+[a-zA-Z0-9_/\-])(:[0-9]+)?'
+data isfile $1
+plumb alwaysstart develop
+plumb start /dis/wm/develop.dis $file$2
+
+src is titlebar
+plumb alwaysstart develop
+plumb start /dis/wm/develop.dis $data
+
 # image files go to wm/view
 kind is text
 data matches '[a-zA-Z0-9_\-./]+'
@@ -52,9 +73,3 @@ data matches '[a-zA-Z0-9_./\-]+'
 data isdir      $0
 plumb alwaysstart dir # nasty plumbing hack
 plumb start /dis/wm/dir.dis $dir
-
-# man pages
-kind is text
-data matches '([a-zA-Z\-]+)\(([0-9]+)\)'
-plumb alwaysstart man # nasty plumbing hack
-plumb start /dis/wm/man.dis $2 $1
