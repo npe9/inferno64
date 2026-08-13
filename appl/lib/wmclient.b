@@ -18,6 +18,9 @@ include "wmlib.m";
 include "titlebar.m";
 	titlebar: Titlebar;
 include "env.m";
+include "plumbmsg.m";
+	plumbmsg: Plumbmsg;
+manplumbready: int;
 include "wmclient.m";
 
 Focusnone, Focusimage, Focustitle: con iota;
@@ -270,6 +273,9 @@ Window.wmctl(w: self ref Window, req: string): string
 		;
 	"help" =>
 		showman(w.ctxt.ctxt);
+	"source" =>
+		if((err := titlebar->develop(dispath)) != nil)
+			sys->fprint(sys->fildes(2), "wmclient: %s\n", err);
 	"rect" =>
 		(w.displayr, nil) = s2r(req, next);
 	"haskbdfocus" =>
@@ -391,27 +397,41 @@ progstem(): string
 	return mod;
 }
 
-WmMan: module
-{
-	init:	fn(ctxt: ref Draw->Context, argv: list of string);
-};
-
 showman(ctxt: ref Draw->Context)
 {
 	if(ctxt == nil)
 		return;
-	page := progstem();
+	page: string;
+	env := load Env Env->PATH;
+	if(env != nil)
+		page = env->getenv("wmman");
+	if(page == nil)
+		page = progstem();
 	if(page == nil)
 		page = "man";
-	path := "/man/1/" + page;
-	man := load WmMan "/dis/wm/man.dis";
-	if(man == nil){
-		sys->fprint(sys->fildes(2), "wmclient: cannot load wm/man: %r\n");
+	plumbmsg = load Plumbmsg Plumbmsg->PATH;
+	if(plumbmsg == nil){
+		sys->fprint(sys->fildes(2), "wmclient: cannot load %s: %r\n", Plumbmsg->PATH);
 		return;
 	}
-	(ok, nil) := sys->stat(path);
-	if(ok >= 0)
-		spawn man->init(ctxt, "wm/man" :: "-f" :: path :: nil);
-	else
-		spawn man->init(ctxt, "wm/man" :: page :: nil);
+	if(!manplumbready){
+		if(plumbmsg->init(1, nil, 0) < 0){
+			sys->fprint(sys->fildes(2), "wmclient: cannot connect to plumber: %r\n");
+			return;
+		}
+		manplumbready = 1;
+	}
+	Msg, Attr: import plumbmsg;
+	program := progstem();
+	args := "";
+	if(env != nil)
+		args = env->getenv("wmargs");
+	attrs := ref Attr("action", "showman") :: ref Attr("program", program) ::
+		ref Attr("topic", page) :: ref Attr("argv", args) :: nil;
+	path := "/man/1/"+page;
+	attrs = ref Attr("section", "1") :: ref Attr("path", path) :: attrs;
+	msg := ref Msg("titlebar", "man", "/man/1", "text",
+		plumbmsg->attrs2string(attrs), array of byte path);
+	if(msg.send() < 0)
+		sys->fprint(sys->fildes(2), "wmclient: cannot plumb manual %s: %r\n", path);
 }
