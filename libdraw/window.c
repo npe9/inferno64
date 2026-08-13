@@ -118,6 +118,7 @@ _allocwindow(Image *i, Screen *s, Rectangle r, int ref, u32 val)
 	i->screen = s;
 	i->next = s->display->windows;
 	s->display->windows = i;
+	topwindow(i);
 	return i;
 }
 
