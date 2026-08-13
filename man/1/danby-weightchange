@@ -1,0 +1,25 @@
+.TH DANBY-WEIGHTCHANGE 1
+.SH NAME
+danby-weightchange \- body-mass energy-balance model
+.SH SYNOPSIS
+.B temple/weightchange
+.SH MODEL
+M'=(E-a M^(3/4)-cM)/q.
+.PP
+M is body mass, E energy intake, aM^(3/4) a metabolic scaling law, cM an
+activity expenditure, and q effective stored-energy density.  An equilibrium
+occurs where intake and expenditure intersect.  The equation illustrates
+feedback and timescale; it is not individualized health advice.
+.SH DISPLAY
+The graph uses physical stock magnitude rather than a normalized population
+fraction.  The current mass bar is directly editable.
+.SH CONTROLS
+Tracks set intake, basal coefficient, activity, and energy density.  Space
+pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/weightchange.b
+.br
+.B /appl/temple/weightchange.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR numerics (2)

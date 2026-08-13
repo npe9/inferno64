@@ -1,0 +1,15 @@
+.TH DANBY-JOGGINGCOMPANION 1
+.SH NAME
+danby-joggingcompanion \- coupled pacing of two runners
+.SH SYNOPSIS
+.B temple/joggingcompanion
+.SH MODEL
+Each runner relaxes toward a chosen pace against drag.  The companion also
+responds to error from the desired separation, producing convergence or
+oscillatory catch-up according to response and coupling.
+.SH DISPLAY
+Two linked figures show separation; leader speed and separation are plotted.
+.SH SOURCE
+.B /appl/danby/joggingcompanion.b
+.SH SEE ALSO
+.IR mechanism (2)

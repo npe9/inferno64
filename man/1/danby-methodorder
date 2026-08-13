@@ -1,0 +1,7 @@
+.TH DANBY-METHODORDER 1
+.SH NAME
+danby-methodorder \- measure convergence order
+.SH DESCRIPTION
+Endpoint errors for Euler, Heun, and RK4 are plotted against step size on
+logarithmic axes.  Their slopes approach one, two, and four.  See
+.IR danby-methods (1).

@@ -1,0 +1,13 @@
+.TH DANBY-MAGNETICPENDULUM2D 1
+.SH NAME
+danby-magneticpendulum2d \- explore a planar magnetic pendulum
+.SH SYNOPSIS
+.B magneticpendulum2d
+.SH DESCRIPTION
+A damped bob moves over three equally spaced magnetic attractors while its
+suspension supplies a central restoring force.  Small changes of release point
+can select different magnets and produce intricate basin boundaries.
+.PP
+The left diagram shows the bob, suspension centre, and magnets.  The live plot
+shows x and y.  Click a parameter scale to change it, space pauses, period steps
+while paused, R resets, and Q exits.

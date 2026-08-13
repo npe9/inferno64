@@ -1,0 +1,11 @@
+.TH DANBY-SYNCHRONOUSMOTOR 1
+.SH NAME
+danby-synchronousmotor \- phase locking and pull-out torque
+.SH SYNOPSIS
+.B temple/synchronousmotor
+.SH MODEL
+Rotor phase lag obeys a damped driven-pendulum equation. Load below maximum
+electromagnetic torque permits a fixed phase lag; above it, phase slips grow
+and the rotor pulls out of synchronism.
+.SH SOURCE
+.B /appl/danby/synchronousmotor.b

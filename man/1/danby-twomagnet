@@ -1,0 +1,7 @@
+.TH DANBY-TWOMAGNET 1
+.SH NAME
+danby-twomagnet \- bistable magnetic oscillator
+.SH DESCRIPTION
+A spring-mounted moving magnet is attracted by two fixed magnets.  Competing
+inverse-cube forces create one or two stable wells and permit snap-through and
+sensitive transitions.

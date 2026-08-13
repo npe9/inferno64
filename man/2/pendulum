@@ -1,0 +1,11 @@
+.TH PENDULUM 2
+.SH NAME
+pendulum \- reusable pendulum torque and diagnostic kernel
+.SH DESCRIPTION
+Computes nonlinear gravitational torque with optional linear damping, Coulomb
+friction, constant load, wind, and periodic drive. It also supplies mechanical
+energy and the small-angle period.
+.SH SOURCE
+.B /module/danby/pendulum.m
+.br
+.B /appl/danby/pendulum.b

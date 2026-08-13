@@ -1,0 +1,7 @@
+.TH DANBY-ENZYMEKINETICS 1
+.SH NAME
+danby-enzymekinetics \- explicit Michaelis-Menten reaction dynamics
+.SH DESCRIPTION
+Substrate and free enzyme reversibly form a complex, which releases product and
+enzyme.  Unlike the quasi-steady formula, the app integrates every species and
+shows the initial complex transient.

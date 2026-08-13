@@ -1,0 +1,23 @@
+.TH DANBY-BUDWORM 1
+.SH NAME
+danby-budworm \- spruce budworm outbreak threshold
+.SH SYNOPSIS
+.B temple/budworm
+.SH MODEL
+N' = rN(1-N/K)-BN^2/(A^2+N^2).
+.PP
+Budworms grow logistically on available foliage.  Bird predation saturates at
+high budworm density.  The opposing S-shaped growth and saturating loss curves
+can create multiple equilibria, a low endemic state, and a high outbreak state;
+parameter changes reveal the threshold and hysteresis directly.
+.SH CONTROLS
+Drag the budworm state bar.  Tracks set intrinsic growth, foliage capacity,
+maximum bird predation, and predation saturation.  Space pauses, period steps,
+r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/budworm.b
+.br
+.B /appl/temple/budworm.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR numerics (2)

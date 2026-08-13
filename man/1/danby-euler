@@ -1,0 +1,9 @@
+.TH DANBY-EULER 1
+.SH NAME
+danby-euler \- construct Euler solutions from a direction field
+.SH DESCRIPTION
+The orange step arrows follow the derivative at each interval's left endpoint.
+Change step size and compare them with the exact curve to see local tangent
+error accumulate into global error.  See
+.IR danby-methods (1)
+for controls.

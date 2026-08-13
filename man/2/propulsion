@@ -1,0 +1,10 @@
+.TH PROPULSION 2
+.SH NAME
+propulsion \- variable-mass rocket utilities
+.SH DESCRIPTION
+Computes remaining mass, burn time, and thrust acceleration for a constant-flow
+rocket stage, with thrust ending exactly at propellant exhaustion.
+.SH SOURCE
+.B /module/danby/propulsion.m
+.br
+.B /appl/danby/propulsion.b

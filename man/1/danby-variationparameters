@@ -1,0 +1,7 @@
+.TH DANBY-VARIATIONPARAMETERS 1
+.SH NAME
+danby-variationparameters \- compare Van der Pol motion with averaging
+.SH DESCRIPTION
+The app integrates the full Van der Pol equation beside the slowly varying
+amplitude and phase obtained by variation of parameters.  Their traces show
+where the weakly nonlinear approximation succeeds and breaks down.

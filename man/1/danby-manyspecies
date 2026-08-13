@@ -1,0 +1,29 @@
+.TH DANBY-MANYSPECIES 1
+.SH NAME
+danby-manyspecies \- one prey population shared by two predator species
+.SH SYNOPSIS
+.B temple/manyspecies
+.SH MODEL
+X' = rX(1-X/K)-a1XY-a2XZ;
+Y' = c1 a1XY-d1Y;
+Z' = c2 a2XZ-d2Z.
+.PP
+Y and Z exploit the same prey X but may have different attack, conversion,
+and death rates.  Their zero-growth prey requirements d1/(c1a1) and
+d2/(c2a2) explain competitive exclusion except at a parameter coincidence.
+.SH DISPLAY
+Three histories and three directly editable state bars show which predator
+persists, how quickly exclusion occurs, and how the prey responds.
+.SH CONTROLS
+Drag a state bar to change an initial population.  The eight tracks set prey
+growth and capacity followed by attack, conversion, and death for each
+predator.  Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/manyspecies.b
+.br
+.B /appl/temple/manyspecies.b
+.br
+.B /appl/temple/populations.b
+.SH SEE ALSO
+.IR danby-foodchain (1),
+.IR numerics (2)

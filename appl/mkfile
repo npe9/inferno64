@@ -4,6 +4,7 @@ DIRS=\
 	acme\
 #	alphabet\
 	charon\
+	danby\
 	cmd\
 	collab\
 	demo\

@@ -1,0 +1,7 @@
+.TH DANBY-SPRINGPENDULUM 1
+.SH NAME
+danby-springpendulum \- elastic radial pendulum
+.SH DESCRIPTION
+The suspension itself stretches.  Radial spring motion and angular motion are
+coupled through centrifugal and Coriolis terms, producing beats, autoparametric
+resonance, and complex trajectories.

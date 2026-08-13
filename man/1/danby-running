@@ -1,0 +1,16 @@
+.TH DANBY-RUNNING 1
+.SH NAME
+danby-running \- coupled speed, fatigue, cadence, and distance model
+.SH SYNOPSIS
+.B temple/running
+.SH MODEL
+Forward acceleration is propulsive drive reduced by fatigue, minus a quadratic
+resistance, divided by body mass.  Fatigue accumulates with speed squared and
+recovers proportionally.  Stride length converts speed into gait phase.
+.SH DISPLAY
+The articulated runner is driven by the integrated gait phase.  The graph shows
+speed and cumulative distance, so animation and quantitative state agree.
+.SH SOURCE
+.B /appl/danby/running.b
+.SH SEE ALSO
+.IR mechanism (2)

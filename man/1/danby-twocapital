@@ -1,0 +1,26 @@
+.TH DANBY-TWOCAPITAL 1
+.SH NAME
+danby-twocapital \- one-sector growth with two capital stocks
+.SH SYNOPSIS
+.B temple/twocapital
+.SH MODEL
+Y=A K1^alpha K2^(1-alpha);
+K1'=s1Y-d1K1;
+K2'=s2Y-d2K2.
+.PP
+Output Y uses a constant-returns Cobb-Douglas combination of two complementary
+capital stocks.  Separate investment and depreciation rates reveal balanced
+growth, bottlenecks, and changes in capital composition.
+.SH DISPLAY
+Both capital histories and current stocks are displayed.  The controls vary
+productivity, output share, both investment fractions, and both depreciation
+rates.
+.SH CONTROLS
+Drag either capital bar.  Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/twocapital.b
+.br
+.B /appl/temple/twocapital.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR numerics (2)

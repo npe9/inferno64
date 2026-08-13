@@ -1,0 +1,21 @@
+.TH MECHANISM 2
+.SH NAME
+mechanism \- live articulated dynamical-model interface
+.SH SYNOPSIS
+.B include "danby/mechanism.m";
+.SH DESCRIPTION
+.I Mechanism
+separates a model's ODE state from its depiction.  A model supplies derivatives,
+parameter bounds, an array of Cartesian points, link index pairs, and two
+observable quantities.  The shared client integrates the state, draws the linked
+geometry with automatic scaling, and plots both quantities against time.
+.PP
+This representation is reusable for human motion, pendulums, springs, linkages,
+and other systems where a trajectory alone does not explain the dynamics.
+.SH SOURCE
+.B /module/danby/mechanism.m
+.br
+.B /appl/temple/mechanism.b
+.SH SEE ALSO
+.IR numerics (2),
+.IR plot (2)

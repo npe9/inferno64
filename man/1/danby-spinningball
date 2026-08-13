@@ -1,0 +1,33 @@
+.TH DANBY-SPINNINGBALL 1
+.SH NAME
+danby-spinningball \- drag and Magnus lift on a spinning projectile
+.SH SYNOPSIS
+.B temple/spinningball
+.SH MODEL
+x'=vx; y'=vy;
+vx'=-D|v|vx-L omega vy;
+vy'=-g-D|v|vy+L omega vx.
+.PP
+D gives quadratic aerodynamic drag and L omega rotates the velocity-dependent
+Magnus acceleration perpendicular to motion.  Positive spin in this two-
+dimensional convention produces upward lift on positive horizontal velocity.
+.SH DISPLAY
+The large spatial plot shows the actual height-versus-distance trajectory.
+The adjacent telemetry plot shows speed against time.  Integration stops at a
+linearly interpolated ground crossing, so reported range is not quantized to a
+whole timestep.
+.SH CONTROLS
+Tracks set launch speed and angle, drag, lift, spin, and gravity.  Any change
+relaunches the ball.  Space pauses, period steps, r relaunches, and q exits.
+.SH NUMERICS
+The regression suite turns off drag and lift and verifies the exact vacuum
+kinematic derivatives and launch-speed decomposition.
+.SH SOURCE
+.B /appl/danby/spinningball.b
+.br
+.B /appl/temple/spinningball.b
+.br
+.B /appl/temple/trajectory.b
+.SH SEE ALSO
+.IR trajectory (2),
+.IR numerics (2)

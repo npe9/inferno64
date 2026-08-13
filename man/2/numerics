@@ -6,7 +6,13 @@ numerics \- general-purpose integration of explicit ordinary differential equati
 include "numerics.m";
 numerics := load Numerics Numerics->PATH;
 w := numerics->workspace(len state);
+numerics->euler(w, rhs, t, h, state);
+numerics->heun(w, rhs, t, h, state);
 numerics->rk4(w, rhs, t, h, state);
+
+tolerance := Numerics->Tolerance(1e-8, 1e-6, 1e-8, 0.25);
+result := numerics->rkf45(w, rhs, tolerance, t, h, state);
+result = numerics->adaptive(w, rhs, tolerance, t, tend, h, state);
 .EE
 .SH DESCRIPTION
 .I Numerics
@@ -17,11 +23,33 @@ The caller supplies a right-hand-side function that fills a derivative array.
 .PP
 .B workspace
 allocates reusable Runge-Kutta scratch arrays for a state of the given size.
+.B euler
+advances one explicit Euler step.
+.B heun
+advances one improved-Euler step using the average of the initial and predicted
+slopes.
 .B rk4
 advances one classical fourth-order Runge-Kutta step in place.
 .B integrate
 advances between two times using bounded steps and an exact final endpoint.
 Backward integration is supported.
+.PP
+.B rkf45
+attempts one embedded Fehlberg fourth/fifth-order step.  It measures the
+componentwise error against
+.IB absolute + relative*max(|y|,|ynew|) .
+The returned
+.B Stepresult
+reports whether the step was accepted, the resulting time, normalized maximum
+error, suggested next step, and number of right-hand-side evaluations.  State
+is changed only after an accepted step.
+.PP
+.B adaptive
+repeats RKF4(5) attempts to reach an exact final endpoint.  It observes the
+minimum and maximum steps in the supplied
+.B Tolerance
+and raises an exception if the requested tolerance cannot be met at the
+minimum step.  Forward and backward integration are supported.
 .PP
 The library does not impose positivity, conservation, event handling, units,
 or model-specific tolerances.  Those policies belong to the caller.

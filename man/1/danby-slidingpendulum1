@@ -1,0 +1,10 @@
+.TH DANBY-SLIDINGPENDULUM1 1
+.SH NAME
+danby-slidingpendulum1 \- pendulum on a freely sliding support
+.SH DESCRIPTION
+The pivot cart moves without an external horizontal force.  Bob and support
+exchange momentum, so the support recoils while the pendulum swings.  The model
+uses the coupled nonlinear cart and pendulum equations rather than prescribing
+the pivot motion.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.

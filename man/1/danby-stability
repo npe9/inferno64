@@ -1,0 +1,18 @@
+.TH DANBY-STABILITY 1
+.SH NAME
+danby-stability \- compare linear and nonlinear stability
+.SH SYNOPSIS
+.B temple/stability
+.SH DESCRIPTION
+The laboratory overlays a nonlinear trajectory (green) and the trajectory
+predicted by linearization (ochre).  The parameter
+.I a
+is the real part of the linear eigenvalues.
+.PP
+For negative values the origin is a stable focus.  For positive values it is
+unstable, while the nonlinear saturation creates a stable limit cycle of
+radius square-root(a).  At zero the linear test is inconclusive but the cubic
+terms establish nonlinear asymptotic stability.  This makes visible both the
+power and the limitation of linear stability analysis.
+.SH SEE ALSO
+danby-modeling(1), numerics(2), plot(2)

@@ -1,0 +1,7 @@
+.TH DANBY-MOONROTATION 1
+.SH NAME
+danby-moonrotation \- lunar synchronous rotation and libration
+.SH DESCRIPTION
+An eccentric Kepler orbit drives the triaxial Moon's attitude.  Tidal damping
+draws the spin toward synchronous rotation while orbital speed varies through
+the orbit.  The plot shows libration and the spin-to-orbit ratio.

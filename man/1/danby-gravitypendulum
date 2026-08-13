@@ -1,0 +1,13 @@
+.TH DANBY-GRAVITYPENDULUM 1
+.SH NAME
+danby-gravitypendulum \- simulate gravity-gradient attitude motion
+.SH SYNOPSIS
+.B gravitypendulum
+.SH DESCRIPTION
+The display follows an extended body in a circular orbit.  Tidal gravity tends
+to align its long axis with the local vertical.  Orbital rate controls the
+restoring torque; damping removes libration energy.
+.PP
+The left diagram shows the body and local orbital tangent.  The live plot shows
+attitude and angular speed.  Click a parameter scale to change it, space pauses,
+period steps while paused, R resets, and Q exits.

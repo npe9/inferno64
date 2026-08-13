@@ -1,0 +1,6 @@
+.TH DANBY-MOREENZYME 1
+.SH NAME
+danby-moreenzyme \- reversible enzyme catalysis
+.SH DESCRIPTION
+Product can bind free enzyme and recreate the complex, so the reaction approaches
+a chemical equilibrium rather than exhausting substrate irreversibly.

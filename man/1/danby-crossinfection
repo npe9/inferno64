@@ -1,0 +1,24 @@
+.TH DANBY-CROSSINFECTION 1
+.SH NAME
+danby-crossinfection \- infection transmitted within and between two species
+.SH SYNOPSIS
+.B temple/crossinfection
+.SH MODEL
+The force of infection on species A is beta IA+k IB; that on species B is
+beta IB+k IA.  Each force transfers its susceptible compartment to infectious,
+and infectious members recover at species-specific rates.  Recovered members
+leave the four displayed active compartments.
+.SH DISPLAY
+Four histories distinguish the susceptible and infectious populations of both
+species.  Cross contact can synchronize otherwise different outbreaks.
+.SH CONTROLS
+Drag any compartment bar.  Tracks set within-species contact, cross-species
+contact, and both recovery rates.  Space pauses, period steps, r resets, and
+q exits.
+.SH SOURCE
+.B /appl/danby/crossinfection.b
+.br
+.B /appl/temple/crossinfection.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR danby-malaria (1)

@@ -1,0 +1,7 @@
+.TH DANBY-OREGONATOR 1
+.SH NAME
+danby-oregonator \- reduced Belousov-Zhabotinsky oscillator
+.SH DESCRIPTION
+The three-variable Oregonator follows bromous acid, bromide, and oxidized
+catalyst.  Separated fast and slow timescales produce sharp chemical pulses and
+recovery cycles.

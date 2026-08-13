@@ -1,0 +1,6 @@
+.TH ROTATINGHOOP 2
+.SH NAME
+rotatinghoop \- bead acceleration in a rotating vertical hoop
+.SH DESCRIPTION
+The module evaluates angular acceleration from gravity, centrifugal force, and
+damping for either prescribed or dynamically computed hoop rotation rates.

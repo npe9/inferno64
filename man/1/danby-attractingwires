@@ -1,0 +1,7 @@
+.TH DANBY-ATTRACTINGWIRES 1
+.SH NAME
+danby-attractingwires \- current-driven attraction and pull-in
+.SH DESCRIPTION
+Parallel currents attract with force inversely proportional to wire spacing,
+while supports try to restore their unloaded separation.  Above a threshold no
+stable spacing remains and the wires collapse together.

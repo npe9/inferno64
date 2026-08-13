@@ -10,6 +10,9 @@ include "wmclient.m";
  Window: import wmclient;
 include "numerics.m";
  numerics: Numerics;
+include "plot.m";
+ plot: Plot;
+ Plotter: import plot;
 include "env.m";
  env: Env;
 Sirs: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
@@ -24,16 +27,16 @@ waning := 0.08;
 t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
-histt, hists, histi, histr: array of real;
-nh := 0;
+graph: ref Plotter;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	numerics = load Numerics Numerics->PATH;
+	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	if(sys == nil || draw == nil || wmclient == nil || numerics == nil)
+	if(sys == nil || draw == nil || wmclient == nil || numerics == nil || plot == nil)
 		raise "fail:sirs: missing module";
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-sirs");
@@ -43,18 +46,20 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(ctxt == nil) ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "SIRS epidemic", Wmclient->Appl);
 	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	bg=win.display.color(int 16r101722ff);
-	 fg=win.display.color(int 16re8edf2ff);
-	grid=win.display.color(int 16r29384aff);
-	 live=win.display.color(int 16r55d6beff);
-	accent=win.display.color(int 16rffb454ff);
+	bg=win.display.color(int 16rf4f0e7ff);
+	 fg=win.display.color(int 16r20272cff);
+	grid=win.display.color(int 16rd6d0c4ff);
+	 live=win.display.color(int 16r178f86ff);
+	accent=win.display.color(int 16rb85c38ff);
 	w=numerics->workspace(len y);
-	histt=array[1200] of real;
-	hists=array[1200] of real;
-	histi=array[1200] of real;
-	histr=array[1200] of real;
+	graph=plot->new(win.image,font);
+	graph.cmd("table history time S I R -capacity 12000");
+	graph.cmd("colour foreground 16r20272cff\n" +
+		"colour grid 16rd6d0c4ff\n" +
+		"colour live 16r178f86ff\n" +
+		"colour accent 16rb85c38ff");
 	win.reshape(Rect((0,0),(720,450)));
-	 win.onscreen("place");
+	 win.onscreen("exact");
 	 win.startinput("kbd"::"ptr"::nil);
 	ticks:=chan of int;
 	 spawn timer(ticks);
@@ -90,29 +95,16 @@ reset()
 	y[1]=0.01;
 	y[2]=0.0;
 	t=0.0;
-	nh=0;
 	paused=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g %.17g",t,y[0],y[1],y[2]));
 }
 step()
 {
 	numerics->rk4(w, rhs, t, 0.008, y);
 	 t+=0.008;
 	for(i:=0;i<len y;i++)if(y[i]<0.0)y[i]=0.0;
-	if(nh<len histt){histt[nh]=t;
-	hists[nh]=y[0];
-	histi[nh]=y[1];
-	histr[nh]=y[2];
-	nh++;
-	}
-	else {for(i=1;i<nh;i++){histt[i-1]=histt[i];
-	hists[i-1]=hists[i];
-	histi[i-1]=histi[i];
-	histr[i-1]=histr[i];
-	}histt[nh-1]=t;
-	hists[nh-1]=y[0];
-	histi[nh-1]=y[1];
-	histr[nh-1]=y[2];
-	}
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g %.17g",t,y[0],y[1],y[2]));
 }
 pointer(p: ref Draw->Pointer)
 {
@@ -135,7 +127,8 @@ pointer(p: ref Draw->Pointer)
 		y[2]=0.0;
 	}
 	t=0.0;
-	nh=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g %.17g",t,y[0],y[1],y[2]));
 }
 redraw()
 {
@@ -143,22 +136,35 @@ redraw()
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
 	r:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
-	for(i:=1;i<10;i++){x:=r.min.x+i*r.dx()/10;
-	y0:=r.min.y+i*r.dy()/10;
-	im.line((x,r.min.y),(x,r.max.y),0,0,0,grid,Point(0,0));
-	im.line((r.min.x,y0),(r.max.x,y0),0,0,0,grid,Point(0,0));
-	}
-	for(i=1;i<nh;i++){x0:=map(histt[i-1],0.0,10.0,r.min.x,r.max.x);
-	x1:=map(histt[i],0.0,10.0,r.min.x,r.max.x);
-	im.line((x0,map(hists[i-1],0.0,1.0,r.max.y,r.min.y)),(x1,map(hists[i],0.0,1.0,r.max.y,r.min.y)),0,0,1,live,Point(0,0));
-	im.line((x0,map(histi[i-1],0.0,1.0,r.max.y,r.min.y)),(x1,map(histi[i],0.0,1.0,r.max.y,r.min.y)),0,0,1,accent,Point(0,0));
-	im.line((x0,map(histr[i-1],0.0,1.0,r.max.y,r.min.y)),(x1,map(histr[i],0.0,1.0,r.max.y,r.min.y)),0,0,1,fg,Point(0,0));
-	}
-	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("SIRS epidemic — t %.2f  S %.3f  I %.3f  R %.3f",t,y[0],y[1],y[2]));
+	drawhistory(im,r,"S","I","R");
+	total:=y[0]+y[1]+y[2];
+	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("SIRS   R0 %.3g   S+I+R %.6f   I %.3f",contact/recovery,total,y[1]));
 	drawpar(im,0,"contact",contact,4.0);
 	drawpar(im,1,"recovery",recovery,4.0);
 	drawpar(im,2,"immunity loss",waning,0.5);
 	im.flush(Draw->Flushnow);
+}
+
+drawhistory(im: ref Image, r: Rect, a, b, c: string)
+{
+	graph.image=im;
+	graph.cmd("clear");
+	graph.cmd(sys->sprint("view main %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	tmax:=t;
+	if(tmax<10.0)
+		tmax=10.0;
+	graph.cmd(sys->sprint("scale main x 0 %.8g",tmax));
+	graph.cmd("scale main y 0 1 reverse");
+	graph.cmd("axis main x time");
+	graph.cmd("axis main y fraction");
+	graph.cmd("line main history x time y "+a+" colour live width 2");
+	graph.cmd("line main history x time y "+b+" colour accent width 2");
+	graph.cmd("line main history x time y "+c+" colour foreground width 2");
+	graph.draw();
+	x:=r.max.x-24;
+	im.text((x,map(y[0],0.0,1.0,r.max.y,r.min.y)),live,(0,0),font,a);
+	im.text((x,map(y[1],0.0,1.0,r.max.y,r.min.y)),accent,(0,0),font,b);
+	im.text((x,map(y[2],0.0,1.0,r.max.y,r.min.y)),fg,(0,0),font,c);
 }
 drawpar(im: ref Image,j:int,name:string,v,max:real)
 {

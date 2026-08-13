@@ -1,0 +1,71 @@
+.TH DANBY-METHODS 1
+.SH NAME
+danby-methods \- compare Euler, Heun, RK4, and adaptive RKF4(5)
+.SH SYNOPSIS
+.B temple/methods
+.SH DESCRIPTION
+.I Methods
+is an interactive numerical-methods laboratory with three initial-value
+problems:
+.EX
+y' = y,              y(0) = 1
+y' = -y,             y(0) = 1
+y' = 1.8y(1-y),      y(0) = 0.08.
+.EE
+They have analytic exponential or logistic solutions.  The background vectors
+form a direction field: at every displayed state they show the local direction
+specified by the differential equation, independently of any selected initial
+condition.  The upper view overlays the analytic solution with explicit Euler, improved Euler
+(Heun), classical fourth-order Runge-Kutta, and the accepted points selected
+by adaptive Fehlberg RKF4(5).
+.PP
+Each orange Euler arrow is the literal construction
+.IR (t,y)+h(1,f(t,y)) :
+the method follows the direction at the beginning of the interval for one
+whole step.  Comparing those arrows with the direction field explains the
+method's accumulated error geometrically.
+.PP
+The lower view plots endpoint error against step size on logarithmic
+coordinates.  The slopes approach one for Euler, two for Heun, and four for
+RK4.  This provides numerical confirmation of method order rather than merely
+showing that smaller steps look smoother.
+.PP
+RKF4(5) uses absolute and relative error tolerances to accept or reject each
+trial step.  Its accepted and rejected counts are displayed separately from
+the fixed-step control.
+.SH CONTROLS
+Drag the bottom logarithmic track to vary the fixed step from 0.005 to 0.8.
+The
+.B +
+and
+.B -
+keys decrease and increase it.
+.B 1 ,
+.B 2 ,
+and
+.B 3
+select exponential growth, exponential decay, and nonlinear logistic growth.
+.B D
+switches the lower view between convergence order and adaptive diagnostics.
+The diagnostic view shows the logarithms of trial step size and normalized
+error against trial time; orange points are rejected attempts.  A normalized
+error at or below zero on this logarithmic scale is acceptable.
+.B R
+restores the initial setting, and
+.B Q
+or Escape exits.
+.SH INTERPRETATION
+Euler follows the tangent at the beginning of each interval and therefore
+systematically underestimates this convex solution.  Heun averages the first
+slope and a predicted endpoint slope.  RK4 combines four slopes.  The lower
+plot measures the resulting endpoint errors at a common final time, avoiding
+a misleading comparison based only on curve appearance.
+.SH SOURCE
+.B /appl/temple/methods.b
+.br
+.B /module/numerics.m
+.br
+.B /appl/lib/numerics.b
+.SH SEE ALSO
+.IR numerics (2),
+.IR plot (2)

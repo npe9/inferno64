@@ -1,0 +1,17 @@
+.TH ORBITAL 2
+.SH NAME
+orbital \- live multi-body orbital-model interface
+.SH SYNOPSIS
+.B include "danby/orbital.m";
+.SH DESCRIPTION
+An orbital model supplies body masses, initial states, equations, controls, and
+two diagnostics.  The shared client integrates all bodies, retains persistent
+colour-coded trails, scales the orbital view, labels bodies, and plots both
+diagnostics against time.
+.SH SOURCE
+.B /module/danby/orbital.m
+.br
+.B /appl/temple/orbital.b
+.SH SEE ALSO
+.IR gravity (2),
+.IR plot (2)

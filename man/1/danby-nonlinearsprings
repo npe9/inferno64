@@ -1,0 +1,7 @@
+.TH DANBY-NONLINEARSPRINGS 1
+.SH NAME
+danby-nonlinearsprings \- explore polynomial spring laws
+.SH DESCRIPTION
+The restoring force contains independently adjustable linear, quadratic, and
+cubic terms.  The diagram tracks the mass and the plot shows displacement and
+velocity, exposing asymmetric wells, hardening, and softening behavior.

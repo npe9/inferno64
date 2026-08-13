@@ -1,0 +1,12 @@
+.TH DANBY-VENUSHEAD 1
+.SH NAME
+danby-venushead \- curved atmospheric light path around Venus
+.SH SYNOPSIS
+.B temple/venushead
+.SH MODEL
+A ray equation couples radial position and direction through an atmospheric
+refractive-index gradient. The diagram compares the curved ray with planetary
+radius and observer position; wrapped angle measures whether it returns behind
+the observer.
+.SH SOURCE
+.B /appl/danby/venushead.b

@@ -1,0 +1,8 @@
+.TH DANBY-RKF45SCALAR 1
+.SH NAME
+danby-rkf45scalar \- implement adaptive RKF4(5) for one equation
+.SH DESCRIPTION
+The scalar exponential problem exposes accepted and rejected Fehlberg trials,
+tolerance, and maximum error against the analytic solution.  See
+.IR danby-odesystems (1)
+for controls.

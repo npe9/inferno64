@@ -13,9 +13,17 @@ A'=aB-fA+g; B'=bA-fB+g.
 .PP
 a and b are mutual response, f fatigue, and g grievance. A and B are abstract arsenal levels.
 .SH DISPLAY
-Each block represents 0.025 arsenal units. If f^2>ab the display reports stable equilibrium; otherwise mutual response produces unstable escalation.
+The main phase portrait plots B horizontally and A vertically.  It combines a
+direction field, both nullclines, the historical trajectory, the current state,
+and the stable equilibrium when it lies in view.  The lower plot uses the same
+generic line geometry to show A(t) and B(t).  The compact stock view retains the
+weapon metaphor; each block represents 0.025 arsenal units.
+.PP
+If f^2>ab the display reports stable equilibrium; otherwise mutual response
+produces unstable escalation.
 .SH CONTROLS
-Drag the view to set initial arsenals. Four bottom tracks set both responses, fatigue, and grievance.
+Drag the phase portrait to set A and B through inverse plot scales. Four bottom
+tracks set both responses, fatigue, and grievance.
 .PP
 Space pauses or resumes the simulation.  Period advances one displayed step
 while paused.  The
@@ -38,4 +46,3 @@ roundoff are clamped for nonnegative population and stock models.
 .B /appl/temple/arms.b
 .SH SEE ALSO
 .IR numerics (2)
-

@@ -1,0 +1,7 @@
+.TH DANBY-VANDERPOL 1
+.SH NAME
+danby-vanderpol \- self-excited relaxation oscillator
+.SH DESCRIPTION
+Van der Pol damping adds energy at small amplitude and removes it at large
+amplitude, producing a stable limit cycle.  Increasing mu changes near-sinusoidal
+motion into relaxation oscillation.

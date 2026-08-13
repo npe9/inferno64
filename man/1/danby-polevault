@@ -1,0 +1,16 @@
+.TH DANBY-POLEVAULT 1
+.SH NAME
+danby-polevault \- coupled vaulter and elastic pole dynamics
+.SH SYNOPSIS
+.B temple/polevault
+.SH MODEL
+Run-up speed supplies initial angular motion and pole compression.  A damped
+elastic mode exchanges energy with the vaulter's rotation under gravity.  Pole
+length, stiffness, damping, mass, and gravity remain directly adjustable.
+.SH DISPLAY
+The three-point pole visibly bends while carrying the vaulter.  The graph shows
+vaulter height and elastic energy stored in the pole.
+.SH SOURCE
+.B /appl/danby/polevault.b
+.SH SEE ALSO
+.IR mechanism (2)

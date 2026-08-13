@@ -1,0 +1,36 @@
+.TH DANBY-PERIODICVOLTERRA 1
+.SH NAME
+danby-periodicvolterra \- predator and prey with a periodic birthrate
+.SH SYNOPSIS
+.B temple/periodicvolterra
+.SH DESCRIPTION
+.I Periodicvolterra
+shows how seasonal variation changes the closed orbits of the Volterra model.
+.SH MODEL
+X' = a(1+s cos(wt))X-bXY;
+Y' = cXY-dY.
+.PP
+X and Y are prey and predator populations.  The controls set mean prey birth
+a, predation b, conversion c, predator death d, seasonal amplitude s, and
+angular frequency w.  Setting s to zero recovers the autonomous Volterra
+model.  The marked point (d/c,a/b) is the equilibrium of that mean model;
+with seasonal forcing it is a reference point rather than a fixed solution.
+.SH DISPLAY
+The left panel is the population phase portrait.  The right panel plots both
+populations against time, so forcing, phase lag, and modulation are visible.
+.SH CONTROLS
+Drag the phase portrait to choose the two initial populations.  Drag the six
+bottom tracks to alter the parameters.  Space pauses, period advances one
+display step, r resets, and q or Escape exits.
+.SH NUMERICS
+The model is implemented separately in
+.B /appl/danby/periodicvolterra.b
+and integrated with the general-purpose fourth-order Runge-Kutta routine in
+.IR numerics (2).
+.SH SOURCE
+.B /appl/temple/periodicvolterra.b
+.br
+.B /appl/temple/ecology.b
+.SH SEE ALSO
+.IR danby-ecology (1),
+.IR numerics (2)

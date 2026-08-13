@@ -1,0 +1,10 @@
+.TH DANBY-REENTRY 1
+.SH NAME
+danby-reentry \- atmospheric re-entry trajectory
+.SH SYNOPSIS
+.B temple/reentry
+.SH MODEL
+Entry speed and angle feed an exponential-atmosphere drag model with optional
+lift. The path displays the narrow corridor between skip-out and steep descent.
+.SH SOURCE
+.B /appl/danby/reentry.b

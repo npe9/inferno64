@@ -1,0 +1,7 @@
+.TH DANBY-WATTGOVERNOR 1
+.SH NAME
+danby-wattgovernor \- centrifugal engine-speed governor
+.SH DESCRIPTION
+Shaft speed raises the flyballs, and their elevation increases the modeled load
+on the shaft.  The coupled arm and speed equations show regulation, hunting,
+and loss of stability as gain and damping change.

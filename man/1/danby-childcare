@@ -1,0 +1,38 @@
+.TH DANBY-CHILDCARE 1
+.SH NAME
+danby-childcare \- stage-structured predator-prey model with parental care
+.SH SYNOPSIS
+.B temple/childcare
+.SH MODEL
+P' = rP-H;
+J' = cH-(m+dJ(1-0.8u))J;
+A' = mJ-dA A;
+.PP
+H=a(1-0.6u)PA is predation, P is prey, J young predators, A adult predators,
+and u is parental-care effort.  Care reduces juvenile mortality but also
+reduces adult hunting, making the biological tradeoff explicit.  The
+three-state system cannot be represented faithfully by a two-axis population
+phase portrait.
+.SH DISPLAY
+The history plot gives prey, young, and adult populations separate traces.
+The adjacent labelled bars show their instantaneous magnitudes and can be
+dragged to change the state directly.  This exposes the maturation delay
+between food intake, young predators, and hunting adults.
+.SH CONTROLS
+Drag a state bar to change that population.  The seven bottom tracks set prey
+birth, attack, conversion, maturation, young and adult death, and care effort.
+Space pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The equation module is
+.B /appl/danby/childcare.b
+and the reusable N-state interface is
+.B /module/danby/populationmodel.m.
+The empty-population boundary and model metadata are regression-tested by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/temple/childcare.b
+.br
+.B /appl/temple/populations.b
+.SH SEE ALSO
+.IR danby-ecology (1),
+.IR numerics (2)

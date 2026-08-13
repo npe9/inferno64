@@ -1,0 +1,13 @@
+.TH DANBY-DISCUS 1
+.SH NAME
+danby-discus \- aerodynamic path of a discus
+.SH SYNOPSIS
+.B temple/discus
+.SH MODEL
+The planar flight combines gravity, quadratic drag, and lift controlled by the
+disc attitude.  Changing attitude exposes the tradeoff between supporting lift
+and aerodynamic loading.
+.SH SOURCE
+.B /appl/danby/discus.b
+.SH SEE ALSO
+.IR trajectory (2)

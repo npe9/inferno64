@@ -1,0 +1,7 @@
+.TH DANBY-ROTATINGRING1 1
+.SH NAME
+danby-rotatingring1 \- bead in a circular hoop at prescribed rotation
+.SH DESCRIPTION
+A bead moves under gravity in a vertical hoop rotating at fixed speed about its
+vertical diameter.  Centrifugal force creates off-bottom equilibria above a
+critical rotation rate.

@@ -1,0 +1,30 @@
+.TH DANBY-PRODUCTIONEXCHANGE 1
+.SH NAME
+danby-productionexchange \- production, use, and exchange of two goods
+.SH SYNOPSIS
+.B temple/productionexchange
+.SH MODEL
+X'=pX-cX X-k(X-Y);
+Y'=pY-cY Y+k(X-Y).
+.PP
+X and Y are inventories produced and consumed in two sectors.  Exchange moves
+goods from the larger inventory toward the smaller without creating or
+destroying their combined stock.  Thus (X+Y)'=pX+pY-cX X-cY Y independently
+of the exchange coefficient k.
+.SH DISPLAY
+Both inventories and their current values are shown.  Increasing exchange
+equalizes shortages and surpluses more rapidly but does not change total
+production or use.
+.SH CONTROLS
+Drag either inventory bar.  Tracks set both production and use rates and the
+exchange response.  Space pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+Cancellation of internal exchange in the total-stock balance is tested by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/danby/productionexchange.b
+.br
+.B /appl/temple/productionexchange.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR numerics (2)

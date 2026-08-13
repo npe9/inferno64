@@ -1,0 +1,9 @@
+.TH DANBY-WHEELPENDULUM 1
+.SH NAME
+danby-wheelpendulum \- pendulum attached to a freely spinning wheel
+.SH DESCRIPTION
+The pendulum torque reacts against the wheel instead of a fixed support.  Their
+angular accelerations are equal and opposite after inertia scaling, conserving
+total angular momentum in the absence of gravity and damping.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.

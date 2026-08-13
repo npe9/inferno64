@@ -1,0 +1,16 @@
+.TH DANBY-SOFTBALLPITCH 1
+.SH NAME
+danby-softballpitch \- drag and spin on a pitched softball
+.SH SYNOPSIS
+.B temple/softballpitch
+.SH MODEL
+This model uses the same velocity-squared drag and Magnus-force equations as
+the baseball model, with a lower release height, speed, and coefficients suited
+to the larger ball.  It follows the pitch for 0.8 seconds or to ground impact.
+.SH DISPLAY
+The plots show height against distance and speed against time.  Tracks alter
+speed, angle, drag, lift, spin, and gravity.
+.SH SOURCE
+.B /appl/danby/softballpitch.b
+.SH SEE ALSO
+.IR trajectory (2)

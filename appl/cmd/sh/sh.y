@@ -922,6 +922,9 @@ runexternal(ctxt: ref Context, args: list of ref Listnode, last: int): string
 					return EPIPE;
 				"fail:*" =>
 					return failurestatus(e);
+				"*" =>
+					sys->fprint(stderr(), "sh: %s: exception: %s\n", npath, e);
+					return npath + ": exception";
 				}
 			}
 			extstart := chan of int;
@@ -1049,9 +1052,14 @@ externalexec(mod: Command,
 	{
 		mod->init(drawcontext, argv);
 	}
-	exception {
+	exception e {
 	EPIPE =>
 		raise "fail:" + EPIPE;
+	"fail:*" =>
+		raise e;
+	"*" =>
+		sys->fprint(sys->fildes(2), "sh: %s: exception: %s\n", hd argv, e);
+		raise "fail:" + hd argv + ": exception";
 	}
 }
 

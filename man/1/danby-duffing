@@ -1,0 +1,7 @@
+.TH DANBY-DUFFING 1
+.SH NAME
+danby-duffing \- driven nonlinear Duffing oscillator
+.SH DESCRIPTION
+The Duffing equation combines damping, linear and cubic stiffness, and harmonic
+forcing.  Negative linear and positive cubic stiffness create the familiar
+double-well system with periodic and chaotic responses.

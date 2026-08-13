@@ -1,0 +1,7 @@
+.TH DANBY-CHAPTER1ASSIGNMENTS 1
+.SH NAME
+danby-chapter1assignments \- interactive introductory exercises
+.SH DESCRIPTION
+Use modes 1 through 5 and varied initial values to identify slopes, equilibria,
+monotonic intervals, asymptotic behavior, and nonunique solutions.  Predict each
+curve from the field before comparing with integration.

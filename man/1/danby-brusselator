@@ -1,0 +1,7 @@
+.TH DANBY-BRUSSELATOR 1
+.SH NAME
+danby-brusselator \- two-variable chemical limit cycle
+.SH DESCRIPTION
+The canonical Brusselator feed parameters control a Hopf bifurcation from a
+stable steady state to sustained chemical oscillation.  The concentration bars
+and traces show activator and intermediate cycling out of phase.

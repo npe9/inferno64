@@ -1,0 +1,10 @@
+.TH DANBY-GALAXIES 1
+.SH NAME
+danby-galaxies \- gravitational interaction of two model galaxies
+.SH SYNOPSIS
+.B temple/galaxies
+.SH MODEL
+Two massive cores and four lighter tracers interact gravitationally. Close
+passages distort the initially separated systems and produce tidal trails.
+.SH SOURCE
+.B /appl/danby/galaxies.b

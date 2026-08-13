@@ -1,0 +1,25 @@
+.TH DANBY-LAKEPOLLUTION 1
+.SH NAME
+danby-lakepollution \- pollutant mass balance in a well-mixed lake
+.SH SYNOPSIS
+.B temple/lakepollution
+.SH MODEL
+C' = I/V-(Q/V+k)C.
+.PP
+C is concentration, I pollutant mass input per unit time, V lake volume,
+Q clean-water outflow, and k first-order removal or decay.  The equilibrium
+C*=I/(Q+kV) and flushing time 1/(Q/V+k) separate the eventual pollution level
+from the speed at which it is approached.
+.SH CONTROLS
+Drag the concentration bar.  Tracks set input mass, volume, outflow, and decay.
+Space pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The analytic mass-balance equilibrium is checked by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/danby/lakepollution.b
+.br
+.B /appl/temple/lakepollution.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR numerics (2)

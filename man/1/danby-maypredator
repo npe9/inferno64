@@ -1,0 +1,32 @@
+.TH DANBY-MAYPREDATOR 1
+.SH NAME
+danby-maypredator \- May predator-prey limit-cycle model
+.SH SYNOPSIS
+.B temple/maypredator
+.SH MODEL
+X' = rX(1-X/K)-aXY/(X+A);
+Y' = sY(1-Y/(bX)).
+.PP
+Prey have logistic growth and saturating predation.  Predator carrying
+capacity is proportional to available prey.  The interaction can destabilize
+the positive equilibrium and produce an attracting limit cycle.
+.SH DISPLAY
+The phase portrait distinguishes convergence to an equilibrium from repeated
+motion around a limit cycle.  The adjacent histories reveal amplitude and
+predator lag.
+.SH CONTROLS
+Drag the phase portrait to set initial populations.  The six tracks set prey
+growth and capacity, attack and half-saturation, predator growth, and prey
+support.  Space pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The implementation handles the prey-free boundary explicitly, avoiding the
+singularity in Y/(bX).  Its positive analytic equilibrium and boundary
+derivative are checked by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/danby/maypredator.b
+.br
+.B /appl/temple/maypredator.b
+.SH SEE ALSO
+.IR danby-logisticprey (1),
+.IR numerics (2)

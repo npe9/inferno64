@@ -1,0 +1,25 @@
+.TH DANBY-DISEASEBIRTHDEATH1 1
+.SH NAME
+danby-diseasebirthdeath1 \- SIR disease with balanced demographic turnover
+.SH SYNOPSIS
+.B temple/diseasebirthdeath1
+.SH MODEL
+S' = mu-beta SI-mu S;
+I' = beta SI-(gamma+mu)I;
+R' = gamma I-mu R.
+.PP
+Births enter susceptible at rate mu and all compartments experience the same
+natural death rate.  For S+I+R=1, births exactly balance deaths.  Unlike the
+closed SIR model, replenished susceptibles can support an endemic equilibrium.
+.SH CONTROLS
+Drag a compartment bar.  Tracks set contact, recovery, and turnover.  Space
+pauses, period steps, r resets, and q exits.
+.SH NUMERICS
+The regression suite verifies conservation on the unit population simplex.
+.SH SOURCE
+.B /appl/danby/diseasebirthdeath1.b
+.br
+.B /appl/temple/diseasebirthdeath1.b
+.SH SEE ALSO
+.IR danby-diseasebirthdeath2 (1),
+.IR populationmodel (2)

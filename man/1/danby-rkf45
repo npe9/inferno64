@@ -1,0 +1,8 @@
+.TH DANBY-RKF45 1
+.SH NAME
+danby-rkf45 \- Fehlberg embedded RK4(5) laboratory
+.SH DESCRIPTION
+The embedded fourth- and fifth-order estimates supply an error measurement
+without a second full integration.  Accepted and rejected trials expose the
+tolerance controller.  See
+.IR danby-methods (1).

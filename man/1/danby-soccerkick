@@ -1,0 +1,17 @@
+.TH DANBY-SOCCERKICK 1
+.SH NAME
+danby-soccerkick \- three-dimensional flight of a kicked soccer ball
+.SH SYNOPSIS
+.B temple/soccerkick
+.SH MODEL
+The ball is subject to gravity, quadratic drag, and a Magnus acceleration
+proportional to the cross product of spin and velocity.  Signed aim and curve
+show how a kick bends independently of its vertical arc.
+.SH DISPLAY
+The upper graph is height versus downrange distance.  The lower graph is the
+plan view, lateral displacement versus downrange distance.  Tracks alter speed,
+elevation, aim, drag, curve, and gravity.
+.SH SOURCE
+.B /appl/danby/soccerkick.b
+.SH SEE ALSO
+.IR flight3d (2)

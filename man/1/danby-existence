@@ -1,0 +1,7 @@
+.TH DANBY-EXISTENCE 1
+.SH NAME
+danby-existence \- explore existence and failure of uniqueness
+.SH DESCRIPTION
+For y'=sqrt(|y|), the zero solution and a solution that waits at zero before
+departing satisfy the same initial condition.  The two displayed curves make
+the missing Lipschitz uniqueness condition concrete.

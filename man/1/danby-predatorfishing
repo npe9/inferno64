@@ -1,0 +1,37 @@
+.TH DANBY-PREDATORFISHING 1
+.SH NAME
+danby-predatorfishing \- predator and prey under fishing pressure
+.SH SYNOPSIS
+.B temple/predatorfishing
+.SH DESCRIPTION
+.I Predatorfishing
+adds equal per-capita fishing effort to both populations in a Volterra model.
+.SH MODEL
+X' = X(a-E-bY);
+Y' = Y(cX-d-E).
+.PP
+X is prey, Y is predator, and E is fishing effort.  When a>E, the positive
+equilibrium is ((d+E)/c,(a-E)/b).  Thus equal harvesting raises the equilibrium
+prey population and lowers the equilibrium predator population: the classic
+Volterra fishing effect.  When E is at least a, a positive coexistence
+equilibrium no longer exists.
+.SH DISPLAY
+The phase portrait and time histories show the transient and shifted
+equilibrium simultaneously.  The marked point is the analytic coexistence
+equilibrium for the current controls.
+.SH CONTROLS
+Drag the phase portrait to choose initial populations and the five bottom
+tracks to change birth, predation, conversion, death, and fishing effort.
+Space pauses, period advances one display step, r resets, and q or Escape exits.
+.SH NUMERICS
+The equation module is
+.B /appl/danby/predatorfishing.b
+and is regression-tested by
+.B temple/danbytest.
+.SH SOURCE
+.B /appl/temple/predatorfishing.b
+.br
+.B /appl/temple/ecology.b
+.SH SEE ALSO
+.IR danby-ecology (1),
+.IR numerics (2)

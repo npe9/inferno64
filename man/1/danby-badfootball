@@ -1,0 +1,16 @@
+.TH DANBY-BADFOOTBALL 1
+.SH NAME
+danby-badfootball \- unstable lateral flight of a poorly kicked football
+.SH SYNOPSIS
+.B temple/badfootball
+.SH MODEL
+Gravity and quadratic drag determine the basic arc.  A signed periodic lateral
+force represents an unstable, poorly aligned rotation, producing a wobbling
+plan-view path without corrupting the vertical trajectory.
+.SH DISPLAY
+Side and plan projections show the arc and lateral wobble separately.  Tracks
+alter speed, elevation, aim, drag, wobble, and gravity.
+.SH SOURCE
+.B /appl/danby/badfootball.b
+.SH SEE ALSO
+.IR flight3d (2)

@@ -34,8 +34,12 @@ The state is advanced by the general-purpose
 .B Numerics
 fourth-order Runge-Kutta solver.  Small negative values caused by numerical
 roundoff are clamped for nonnegative population and stock models.
+.PP
+The regression suite checks conservation across all four compartments.
 .SH SOURCE
+.B /appl/danby/vaccination.b
+.br
 .B /appl/temple/vaccination.b
 .SH SEE ALSO
+.IR populationmodel (2),
 .IR numerics (2)
-

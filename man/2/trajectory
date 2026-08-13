@@ -1,0 +1,37 @@
+.TH TRAJECTORY 2
+.SH NAME
+Trajectory \- interface and live client for planar flight models
+.SH SYNOPSIS
+.EX
+include "danby/trajectory.m";
+modelmodule: Trajectory;
+
+modelmodule = load Trajectory path;
+model := modelmodule->new();
+state := modelmodule->initialstate(model);
+modelmodule->evaluate(model,t,state,derivative);
+.EE
+.SH DESCRIPTION
+.I Trajectory
+separates signed planar equations of motion from integration and display.
+Implementations provide mutable parameters, labels and display ranges, a fresh
+initial [x,y,vx,vy] state, and a right-hand-side evaluation function.
+.PP
+.B /dis/temple/trajectory.dis
+is the reusable live client.  It advances the state with
+.IR numerics (2),
+stores named Plot data, draws physical height against distance and speed against
+time, and detects the first descending ground crossing by interpolation.
+Unlike
+.IR populationmodel (2),
+it does not clamp signed velocity components.
+.SH FILES
+.B /module/danby/trajectory.m
+.br
+.B /appl/temple/trajectory.b
+.br
+.B /dis/temple/trajectory.dis
+.SH SEE ALSO
+.IR plot (2),
+.IR numerics (2),
+.IR populationmodel (2)

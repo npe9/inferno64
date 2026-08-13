@@ -1,0 +1,8 @@
+.TH DANBY-TRUNCATION 1
+.SH NAME
+danby-truncation \- explore local and accumulated truncation error
+.SH DESCRIPTION
+Varying the step separates the one-step tangent defect from endpoint error.
+The exact and numerical curves show accumulation; the logarithmic view measures
+how rapidly it shrinks.  See
+.IR danby-methods (1).

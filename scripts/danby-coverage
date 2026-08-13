@@ -1,0 +1,52 @@
+#!/bin/sh
+
+set -e
+
+root=${1:-.}
+manifest=$root/lib/danby/models
+
+if test ! -r "$manifest"
+then
+	echo "danby-coverage: cannot read $manifest" >&2
+	exit 1
+fi
+
+awk -F '|' '
+BEGIN {
+	print "chapter  total  validated  implemented  partial  planned"
+}
+/^#/ || NF == 0 {
+	next
+}
+NF != 5 {
+	printf "%s:%d: expected five fields, found %d\n", FILENAME, NR, NF > "/dev/stderr"
+	bad = 1
+	next
+}
+{
+	split($1, part, ".")
+	chapter = part[1]
+	if($4 != "validated" && $4 != "implemented" &&
+	   $4 != "partial" && $4 != "planned") {
+		printf "%s:%d: invalid status %s\n", FILENAME, NR, $4 > "/dev/stderr"
+		bad = 1
+	}
+	total[chapter]++
+	status[chapter SUBSEP $4]++
+	all++
+	allstatus[$4]++
+}
+END {
+	for(chapter = 1; chapter <= 15; chapter++)
+		printf "%7d  %5d  %9d  %11d  %7d  %7d\n",
+			chapter, total[chapter],
+			status[chapter SUBSEP "validated"],
+			status[chapter SUBSEP "implemented"],
+			status[chapter SUBSEP "partial"],
+			status[chapter SUBSEP "planned"]
+	printf "total    %5d  %9d  %11d  %7d  %7d\n",
+		all, allstatus["validated"], allstatus["implemented"],
+		allstatus["partial"], allstatus["planned"]
+	exit bad
+}
+' "$manifest"

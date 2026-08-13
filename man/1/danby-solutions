@@ -1,0 +1,6 @@
+.TH DANBY-SOLUTIONS 1
+.SH NAME
+danby-solutions \- inspect and interpret solution curves
+.SH DESCRIPTION
+Logistic solution curves reveal equilibrium, sign, monotonicity, saturation,
+and long-time limits directly from their geometry and the underlying field.

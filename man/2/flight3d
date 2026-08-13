@@ -1,0 +1,23 @@
+.TH FLIGHT3D 2
+.SH NAME
+flight3d \- reusable three-dimensional flight model interface
+.SH SYNOPSIS
+.B include "danby/flight3d.m";
+.SH DESCRIPTION
+.I Flight3d
+separates a six-state model (x, lateral position, height, and their three
+velocities) from the common live interface.  A model supplies initial state,
+derivatives, observation time, and labelled parameter bounds.  Bounds include
+explicit minima so signed aim, spin, and aerodynamic curve remain directly
+manipulable.
+.PP
+The client integrates with RK4 and presents synchronized side and plan views.
+Ground impact is located by interpolation between integration states.
+.SH SOURCE
+.B /module/danby/flight3d.m
+.br
+.B /appl/temple/flight3d.b
+.SH SEE ALSO
+.IR ballistics (2),
+.IR numerics (2),
+.IR plot (2)

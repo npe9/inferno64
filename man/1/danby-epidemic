@@ -34,8 +34,13 @@ The state is advanced by the general-purpose
 .B Numerics
 fourth-order Runge-Kutta solver.  Small negative values caused by numerical
 roundoff are clamped for nonnegative population and stock models.
+.PP
+The regression suite checks that S'+I'+R'=0 for an arbitrary state, proving
+that the equation module conserves total population before numerical error.
 .SH SOURCE
+.B /appl/danby/epidemic.b
+.br
 .B /appl/temple/epidemic.b
 .SH SEE ALSO
+.IR populationmodel (2),
 .IR numerics (2)
-

@@ -1,0 +1,13 @@
+.TH DANBY-SWING2 1
+.SH NAME
+danby-swing2 \- pump a swing with rhythmic torque
+.SH SYNOPSIS
+.B swing2
+.SH DESCRIPTION
+This companion swing model keeps the pendulum length fixed and applies a
+periodic body torque.  Comparing its phase and amplitude with
+.IR swing1 (1)
+separates torque pumping from centre-of-mass pumping.
+.PP
+Click a parameter scale to change it, space pauses, period steps while paused,
+R resets, and Q exits.

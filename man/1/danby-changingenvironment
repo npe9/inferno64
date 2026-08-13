@@ -1,0 +1,22 @@
+.TH DANBY-CHANGINGENVIRONMENT 1
+.SH NAME
+danby-changingenvironment \- logistic growth with varying carrying capacity
+.SH SYNOPSIS
+.B temple/changingenvironment
+.SH MODEL
+N' = rN(1-N/K(t));
+K(t) = K0(1+s sin(wt)).
+.PP
+The capacity varies independently of the population.  Its amplitude is
+restricted below one so K remains positive.  Slow forcing lets the population
+track capacity; fast forcing produces lag and a reduced response.
+.SH CONTROLS
+Drag the population bar.  The four tracks set growth, mean capacity, variation,
+and forcing frequency.  Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/changingenvironment.b
+.br
+.B /appl/temple/changingenvironment.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR numerics (2)

@@ -1,0 +1,10 @@
+.TH DANBY-DAMPEDPENDULUM 1
+.SH NAME
+danby-dampedpendulum \- pendulum with velocity-proportional damping
+.SH SYNOPSIS
+.B temple/dampedpendulum
+.SH MODEL
+Linear damping removes energy continuously in proportion to angular velocity;
+the energy trace shows exponential-like decay toward rest.
+.SH SOURCE
+.B /appl/danby/dampedpendulum.b

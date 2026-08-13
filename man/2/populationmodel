@@ -1,0 +1,62 @@
+.TH POPULATIONMODEL 2
+.SH NAME
+Populationmodel \- common interface for live compartment and population models
+.SH SYNOPSIS
+.EX
+include "danby/populationmodel.m";
+modelmodule: Populationmodel;
+
+modelmodule = load Populationmodel path;
+model := modelmodule->new();
+modelmodule->evaluate(model,t,state,derivative);
+.EE
+.SH DESCRIPTION
+.I Populationmodel
+is the structural interface used by independent Danby equation modules with
+an arbitrary number of nonnegative state quantities.  It separates equations
+and model metadata from integration, plotting, window management, and input.
+.PP
+Each implementation exports a constructor, a title, state and parameter
+labels, parameter display ranges, and an evaluation function.  The returned
+.B Model
+contains mutable parameter values and the default initial state.  Implementors
+define the ADT's
+.B rhs
+method and expose it through
+.B evaluate
+so clients need not import colliding ADT method names from several models.
+.SH INTERFACE
+.TP
+.B new()
+Return a fresh model instance.  Arrays must not be shared between calls.
+.TP
+.B statelabels()
+Return one concise display label for every element of
+.BR Model.initial .
+.TP
+.B parameterlabels(), parameterranges()
+Return parallel arrays matching
+.BR Model.parameter .
+Every range is the positive upper endpoint used by direct-manipulation tracks.
+.TP
+.B evaluate(model,t,state,derivative)
+Evaluate the right-hand side without advancing time.  State and derivative
+must have the same length as
+.BR Model.initial .
+.SH CLIENT
+.B /dis/temple/populations.dis
+is the reusable live client.  It constructs a named Plot table, integrates
+with
+.IR numerics (2),
+draws one history per state, and supplies directly editable current-state bars
+and parameter tracks.  A public application normally wraps it with the model
+path and manual-page stem rather than duplicating the client.
+.SH FILES
+.B /module/danby/populationmodel.m
+.br
+.B /appl/temple/populations.b
+.br
+.B /dis/temple/populations.dis
+.SH SEE ALSO
+.IR numerics (2),
+.IR plot (2)

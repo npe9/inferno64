@@ -10,8 +10,13 @@ include "wmclient.m";
  Window: import wmclient;
 include "numerics.m";
  numerics: Numerics;
+include "plot.m";
+ plot: Plot;
+ Plotter: import plot;
 include "env.m";
  env: Env;
+include "danby/twospecies.m";
+ competitionmodel: Twospecies;
 Competition: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
  };
 win: ref Window;
@@ -24,17 +29,21 @@ coupling := 0.7;
 t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
-histt, histy, hist2: array of real;
-nh := 0;
+graph: ref Plotter;
+model: ref Twospecies->Model;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	numerics = load Numerics Numerics->PATH;
+	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	if(sys == nil || draw == nil || wmclient == nil || numerics == nil)
+	competitionmodel = load Twospecies "/dis/danby/competition.dis";
+	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
+			plot == nil || competitionmodel == nil)
 		raise "fail:Competition: missing module";
+	model = competitionmodel->new();
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-competition");
 	 }
@@ -43,17 +52,22 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(ctxt == nil) ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "Competing species", Wmclient->Appl);
 	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	bg=win.display.color(int 16r101722ff);
-	 fg=win.display.color(int 16re8edf2ff);
-	grid=win.display.color(int 16r29384aff);
-	 live=win.display.color(int 16r55d6beff);
-	accent=win.display.color(int 16rffb454ff);
+	bg=win.display.color(int 16rf4f0e7ff);
+	 fg=win.display.color(int 16r20272cff);
+	grid=win.display.color(int 16rd6d0c4ff);
+	 live=win.display.color(int 16r178f86ff);
+	accent=win.display.color(int 16rb85c38ff);
 	w=numerics->workspace(len y);
-	 histt=array[1200] of real;
-	 histy=array[1200] of real;
-	hist2=array[1200] of real;
+	graph=plot->new(win.image,font);
+	graph.cmd("table history time A B -capacity 12000");
+	graph.cmd("table equilibrium A B -capacity 1");
+	graph.cmd("table current A B -capacity 1");
+	graph.cmd("colour foreground 16r20272cff\n" +
+		"colour grid 16rd6d0c4ff\n" +
+		"colour live 16r178f86ff\n" +
+		"colour accent 16rb85c38ff");
 	win.reshape(Rect((0,0),(720,450)));
-	 win.onscreen("place");
+	 win.onscreen("exact");
 	 win.startinput("kbd"::"ptr"::nil);
 	ticks:=chan of int;
 	 spawn timer(ticks);
@@ -78,18 +92,18 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		redraw();
 	}
 }
-rhs(nil: real, q, d: array of real)
+rhs(rhsTime: real, q, d: array of real)
 {
-	d[0]=growa*q[0]*(1.0-q[0]-coupling*q[1]);
-	d[1]=growb*q[1]*(1.0-q[1]-coupling*q[0]);
+	competitionmodel->evaluate(model,rhsTime,q,d);
 }
 reset()
 {
 	y[0]=0.65;
 	y[1]=0.25;
 	t=0.0;
-	nh=0;
 	paused=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",t,y[0],y[1]));
 }
 step()
 {
@@ -97,21 +111,7 @@ step()
 	 t+=0.008;
 	if(y[0]<0.0)y[0]=0.0;
 	if(y[1]<0.0)y[1]=0.0;
-	if(nh<len histt){histt[nh]=t;
-	histy[nh]=y[0];
-	hist2[nh]=y[1];
-	nh++;
-	}
-	else {
-		for(i:=1;i<nh;i++){
-			histt[i-1]=histt[i];
-			histy[i-1]=histy[i];
-			hist2[i-1]=hist2[i];
-		}
-		histt[nh-1]=t;
-		histy[nh-1]=y[0];
-		hist2[nh-1]=y[1];
-	}
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",t,y[0],y[1]));
 }
 pointer(p: ref Draw->Pointer)
 {
@@ -128,6 +128,9 @@ pointer(p: ref Draw->Pointer)
 			growb=2.0*f;
 		if(j>=2)
 			coupling=2.0*f;
+		model.parameter[0] = growa;
+		model.parameter[1] = growb;
+		model.parameter[2] = coupling;
 	}else{
 		y[0]=1.5*real(r.max.y-58-p.xy.y)/real(r.dy()-93);
 		y[1]=1.5*real(p.xy.x-r.min.x)/real(r.dx());
@@ -135,22 +138,50 @@ pointer(p: ref Draw->Pointer)
 		if(y[1]<0.0)y[1]=0.0;
 	}
 	t=0.0;
-	nh=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",t,y[0],y[1]));
 }
 redraw()
 {
 	im:=win.image;
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	r:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
-	for(i:=1;i<10;i++){
-		x:=r.min.x+i*r.dx()/10;
-		y0:=r.min.y+i*r.dy()/10;
-		im.line((x,r.min.y),(x,r.max.y),0,0,0,grid,Point(0,0));
-		im.line((r.min.x,y0),(r.max.x,y0),0,0,0,grid,Point(0,0));
-	}
-	for(i=1;i<nh;i++)im.line((map(histy[i-1],0.0,1.5,r.min.x,r.max.x),map(hist2[i-1],0.0,1.5,r.max.y,r.min.y)),(map(histy[i],0.0,1.5,r.min.x,r.max.x),map(hist2[i],0.0,1.5,r.max.y,r.min.y)),0,0,1,live,Point(0,0));
-	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("Competing species — t %.2f  species A %.4g  species B %.4g",t,y[0],y[1]));
+	content:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
+	mid:=content.min.x+content.dx()/2;
+	phase:=Rect(content.min,(mid-24,content.max.y));
+	timeplot:=Rect((mid+30,content.min.y),content.max);
+	graph.image=im;
+	graph.cmd("clear");
+	graph.cmd(sys->sprint("view phase %d %d %d %d",phase.min.x,phase.min.y,phase.max.x,phase.max.y));
+	graph.cmd("scale phase x 0 1.5");
+	graph.cmd("scale phase y 0 1.5 reverse");
+	graph.cmd("axis phase x species-A");
+	graph.cmd("axis phase y species-B");
+	graph.cmd("equilibrium clear");
+	(coexist,coexistb) := competitionmodel->fixedpoint(model);
+	graph.cmd(sys->sprint("equilibrium append %.17g %.17g",coexist,coexistb));
+	graph.cmd("current clear");
+	graph.cmd(sys->sprint("current append %.17g %.17g",y[0],y[1]));
+	graph.cmd("line phase history x A y B colour foreground width 2");
+	graph.cmd("point phase equilibrium x A y B colour accent radius 5");
+	graph.cmd("point phase current x A y B colour live radius 4");
+	tmax:=t;
+	if(tmax<10.0)
+		tmax=10.0;
+	graph.cmd(sys->sprint("view time %d %d %d %d",timeplot.min.x,timeplot.min.y,timeplot.max.x,timeplot.max.y));
+	graph.cmd(sys->sprint("scale time x 0 %.8g",tmax));
+	graph.cmd("scale time y 0 1.5 reverse");
+	graph.cmd("axis time x time");
+	graph.cmd("axis time y population");
+	graph.cmd("line time history x time y A colour live width 2");
+	graph.cmd("line time history x time y B colour accent width 2");
+	graph.draw();
+	regime:="stable coexistence";
+	if(coupling>1.0)
+		regime="competitive exclusion";
+	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,
+		sys->sprint("Competing species   %s   coexistence %.3g, %.3g",
+			regime,coexist,coexist));
 	drawpar(im,0,"growth A",growa,2.0);
 	drawpar(im,1,"growth B",growb,2.0);
 	drawpar(im,2,"coupling",coupling,2.0);

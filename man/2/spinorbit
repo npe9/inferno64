@@ -1,0 +1,7 @@
+.TH SPINORBIT 2
+.SH NAME
+spinorbit \- eccentric-orbit rotational dynamics
+.SH DESCRIPTION
+The module advances true anomaly, body angle, and spin rate for a triaxial body
+on an eccentric orbit.  It supplies inverse-cube figure torque and optional
+tidal damping relative to instantaneous orbital angular speed.

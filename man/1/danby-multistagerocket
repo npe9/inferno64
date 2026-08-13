@@ -1,0 +1,11 @@
+.TH DANBY-MULTISTAGEROCKET 1
+.SH NAME
+danby-multistagerocket \- sequential two-stage rocket dynamics
+.SH SYNOPSIS
+.B temple/multistagerocket
+.SH MODEL
+The first stage burns and is discarded before the second stage ignites. The
+mass discontinuity and separate thrust levels expose the performance reason for
+staging while gravity and drag remain active.
+.SH SOURCE
+.B /appl/danby/multistagerocket.b

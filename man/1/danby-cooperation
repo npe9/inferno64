@@ -1,0 +1,27 @@
+.TH DANBY-COOPERATION 1
+.SH NAME
+danby-cooperation \- density-limited mutualism between two species
+.SH SYNOPSIS
+.B temple/cooperation
+.SH MODEL
+X' = X(a-bX+cY);
+Y' = Y(d-eY+fX).
+.PP
+Each population is self-limited but increases the other's per-capita growth.
+Finite coexistence requires be>cf.  As cf approaches be, the analytic
+equilibrium moves outward; when cf is at least be this simple model predicts
+unbounded mutual amplification and the origin is marked instead.
+.SH DISPLAY
+The phase portrait exposes the nullcline intersection and the histories show
+whether cooperation settles or grows beyond the selected display range.
+.SH CONTROLS
+Drag the phase portrait to set initial populations.  The six bottom tracks set
+the two intrinsic growth rates, crowding strengths, and cross-species benefits.
+Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/cooperation.b
+.br
+.B /appl/temple/cooperation.b
+.SH SEE ALSO
+.IR danby-competition (1),
+.IR numerics (2)

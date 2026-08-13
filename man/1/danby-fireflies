@@ -1,0 +1,7 @@
+.TH DANBY-FIREFLIES 1
+.SH NAME
+danby-fireflies \- synchronization of coupled oscillators
+.SH DESCRIPTION
+Four fireflies have slightly different natural flash frequencies and sinusoidal
+all-to-all coupling.  Their positions pulse with phase while coherence measures
+the Kuramoto order parameter from zero to one.

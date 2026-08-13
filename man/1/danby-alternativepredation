@@ -1,0 +1,27 @@
+.TH DANBY-ALTERNATIVEPREDATION 1
+.SH NAME
+danby-alternativepredation \- predator-prey model with saturating consumption
+.SH SYNOPSIS
+.B temple/alternativepredation
+.SH MODEL
+C = aXY/(1+hX);
+X' = rX-C;
+Y' = cC-dY.
+.PP
+The handling coefficient h makes consumption saturate as prey become abundant,
+instead of increasing without bound as in mass-action predation.  A positive
+equilibrium exists when ca>dh; otherwise the display marks the origin.
+.SH DISPLAY
+The phase portrait exposes the changed nullclines while the time plot makes
+the amplitude and phase lag of population cycles explicit.
+.SH CONTROLS
+Drag the phase portrait to set initial populations and the bottom tracks to
+set birth, attack, conversion, death, and handling.  Space pauses, period
+steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/alternativepredation.b
+.br
+.B /appl/temple/alternativepredation.b
+.SH SEE ALSO
+.IR danby-ecology (1),
+.IR numerics (2)

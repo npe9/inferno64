@@ -1,0 +1,7 @@
+.TH DANBY-PURSUIT 1
+.SH NAME
+danby-pursuit \- cyclic curves of pursuit
+.SH DESCRIPTION
+Four agents move at fixed speed toward the next agent.  The linked geometry
+shrinks and rotates into classical pursuit spirals; turn bias deforms the pure
+line-of-sight law.

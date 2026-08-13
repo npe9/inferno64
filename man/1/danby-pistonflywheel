@@ -1,0 +1,7 @@
+.TH DANBY-PISTONFLYWHEEL 1
+.SH NAME
+danby-pistonflywheel \- slider-crank piston and flywheel dynamics
+.SH DESCRIPTION
+Exact slider-crank geometry converts flywheel angle into piston position.  Drive
+torque, periodic load torque, inertia, and damping determine startup, speed
+ripple, and possible stalling.

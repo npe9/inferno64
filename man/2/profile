@@ -1,0 +1,12 @@
+.TH PROFILE 2
+.SH NAME
+profile \- interactive radial-structure model interface
+.SH DESCRIPTION
+A profile model maps controls to two fields sampled along radius. The shared
+client computes the complete profile, plots both normalized fields, and
+recomputes immediately when boundary conditions or constitutive parameters
+change.
+.SH SOURCE
+.B /module/danby/profile.m
+.br
+.B /appl/temple/profile.b

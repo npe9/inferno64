@@ -10,8 +10,13 @@ include "wmclient.m";
  Window: import wmclient;
 include "numerics.m";
  numerics: Numerics;
+include "plot.m";
+ plot: Plot;
+ Plotter: import plot;
 include "env.m";
  env: Env;
+include "danby/populationmodel.m";
+ boommodel: Populationmodel;
 Boom: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
  };
 win: ref Window;
@@ -25,17 +30,21 @@ wagedrag := 1.00;
 t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
-histt, histy, hist2: array of real;
-nh := 0;
+graph: ref Plotter;
+model: ref Populationmodel->Model;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	numerics = load Numerics Numerics->PATH;
+	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	if(sys == nil || draw == nil || wmclient == nil || numerics == nil)
+	boommodel = load Populationmodel "/dis/danby/boom.dis";
+	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
+			plot == nil || boommodel == nil)
 		raise "fail:Boom: missing module";
+	model = boommodel->new();
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-boom");
 	 }
@@ -44,17 +53,20 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(ctxt == nil) ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "Goodwin boom and bust", Wmclient->Appl);
 	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	bg=win.display.color(int 16r101722ff);
-	 fg=win.display.color(int 16re8edf2ff);
-	grid=win.display.color(int 16r29384aff);
-	 live=win.display.color(int 16r55d6beff);
-	accent=win.display.color(int 16rffb454ff);
+	bg=win.display.color(int 16rf4f0e7ff);
+	 fg=win.display.color(int 16r20272cff);
+	grid=win.display.color(int 16rd6d0c4ff);
+	 live=win.display.color(int 16r178f86ff);
+	accent=win.display.color(int 16rb85c38ff);
 	w=numerics->workspace(len y);
-	 histt=array[1200] of real;
-	 histy=array[1200] of real;
-	hist2=array[1200] of real;
+	graph=plot->new(win.image,font);
+	graph.cmd("table history time A B -capacity 12000");
+	graph.cmd("colour foreground 16r20272cff\n" +
+		"colour grid 16rd6d0c4ff\n" +
+		"colour live 16r178f86ff\n" +
+		"colour accent 16rb85c38ff");
 	win.reshape(Rect((0,0),(720,450)));
-	 win.onscreen("place");
+	 win.onscreen("exact");
 	 win.startinput("kbd"::"ptr"::nil);
 	ticks:=chan of int;
 	 spawn timer(ticks);
@@ -79,18 +91,22 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		redraw();
 	}
 }
-rhs(nil: real, q, d: array of real)
+rhs(rhsTime: real, q, d: array of real)
 {
-	d[0]=q[0]*(-decay+wagejob*q[1]);
-	d[1]=q[1]*(jobgrowth-wagedrag*q[0]);
+	boommodel->evaluate(model,rhsTime,q,d);
 }
 reset()
 {
 	y[0]=0.65;
 	y[1]=0.25;
 	t=0.0;
-	nh=0;
 	paused=0;
+	model.parameter[0] = decay;
+	model.parameter[1] = wagejob;
+	model.parameter[2] = jobgrowth;
+	model.parameter[3] = wagedrag;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",t,y[0],y[1]));
 }
 step()
 {
@@ -98,21 +114,7 @@ step()
 	 t+=0.008;
 	if(y[0]<0.0)y[0]=0.0;
 	if(y[1]<0.0)y[1]=0.0;
-	if(nh<len histt){histt[nh]=t;
-	histy[nh]=y[0];
-	hist2[nh]=y[1];
-	nh++;
-	}
-	else {
-		for(i:=1;i<nh;i++){
-			histt[i-1]=histt[i];
-			histy[i-1]=histy[i];
-			hist2[i-1]=hist2[i];
-		}
-		histt[nh-1]=t;
-		histy[nh-1]=y[0];
-		hist2[nh-1]=y[1];
-	}
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",t,y[0],y[1]));
 }
 pointer(p: ref Draw->Pointer)
 {
@@ -127,6 +129,10 @@ pointer(p: ref Draw->Pointer)
 		if(j==1)wagejob=2.0*f;
 		if(j==2)jobgrowth=2.0*f;
 		if(j>=3)wagedrag=2.0*f;
+		model.parameter[0] = decay;
+		model.parameter[1] = wagejob;
+		model.parameter[2] = jobgrowth;
+		model.parameter[3] = wagedrag;
 	}else{
 		y[0]=1.5*real(r.max.y-58-p.xy.y)/real(r.dy()-93);
 		y[1]=1.5*real(p.xy.x-r.min.x)/real(r.dx());
@@ -134,7 +140,8 @@ pointer(p: ref Draw->Pointer)
 		if(y[1]<0.0)y[1]=0.0;
 	}
 	t=0.0;
-	nh=0;
+	graph.cmd("history clear");
+	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",t,y[0],y[1]));
 }
 redraw()
 {
@@ -142,14 +149,20 @@ redraw()
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
 	r:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
-	for(i:=1;i<10;i++){
-		x:=r.min.x+i*r.dx()/10;
-		y0:=r.min.y+i*r.dy()/10;
-		im.line((x,r.min.y),(x,r.max.y),0,0,0,grid,Point(0,0));
-		im.line((r.min.x,y0),(r.max.x,y0),0,0,0,grid,Point(0,0));
-	}
-	for(i=1;i<nh;i++)im.line((map(histy[i-1],0.0,1.5,r.min.x,r.max.x),map(hist2[i-1],0.0,1.5,r.max.y,r.min.y)),(map(histy[i],0.0,1.5,r.min.x,r.max.x),map(hist2[i],0.0,1.5,r.max.y,r.min.y)),0,0,1,live,Point(0,0));
-	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,sys->sprint("Goodwin boom and bust — t %.2f  wage %.4g  employment %.4g",t,y[0],y[1]));
+	graph.image=im;
+	graph.cmd("clear");
+	graph.cmd(sys->sprint("view phase %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	graph.cmd("scale phase x 0 1.5");
+	graph.cmd("scale phase y 0 1.5 reverse");
+	graph.cmd("axis phase x wage-share");
+	graph.cmd("axis phase y employment");
+	graph.cmd("line phase history x A y B colour foreground width 2");
+	graph.draw();
+	eqw:=jobgrowth/wagedrag;
+	eqe:=decay/wagejob;
+	im.text(im.r.min.add((10,18)),fg,Point(0,0),font,
+		sys->sprint("Goodwin cycle   equilibrium wage %.3g   employment %.3g",
+			eqw,eqe));
 	drawpar(im,0,"wage decay",decay,2.0);
 	drawpar(im,1,"job to wage",wagejob,2.0);
 	drawpar(im,2,"job growth",jobgrowth,2.0);

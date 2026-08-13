@@ -1,0 +1,6 @@
+.TH DANBY-ROTATINGRING2 1
+.SH NAME
+danby-rotatingring2 \- bead exchanging angular momentum with a free hoop
+.SH DESCRIPTION
+The hoop is no longer externally speed-controlled.  Its rotation changes as the
+bead moves away from the axis so total axial angular momentum is conserved.

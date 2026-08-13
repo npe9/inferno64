@@ -1,0 +1,7 @@
+.TH DANBY-HEUN 1
+.SH NAME
+danby-heun \- improved Euler predictor-corrector experiment
+.SH DESCRIPTION
+Heun averages the initial slope with the slope at an Euler-predicted endpoint.
+Compare its curve and second-order error slope with Euler.  See
+.IR danby-methods (1).

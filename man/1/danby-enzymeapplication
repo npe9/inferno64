@@ -1,0 +1,7 @@
+.TH DANBY-ENZYMEAPPLICATION 1
+.SH NAME
+danby-enzymeapplication \- competitive enzyme inhibition
+.SH DESCRIPTION
+Substrate and inhibitor compete for the same free enzyme.  The blocked-enzyme
+trace makes sequestration visible and shows how inhibition lowers product rate
+without consuming inhibitor.

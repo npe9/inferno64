@@ -1,0 +1,25 @@
+.TH DANBY-GONORRHEA 1
+.SH NAME
+danby-gonorrhea \- two-sex SIS transmission model
+.SH SYNOPSIS
+.B temple/gonorrhea
+.SH MODEL
+Sw'=-bm Sw Im+gw Iw; Iw'=bm Sw Im-gw Iw;
+Sm'=-bw Sm Iw+gm Im; Im'=bw Sm Iw-gm Im.
+.PP
+Recovery returns individuals to susceptibility, so immunity does not accumulate.
+Separate transmission and recovery parameters expose asymmetric prevalence in
+the two interacting groups.
+.SH DISPLAY
+Four histories show susceptible and infectious fractions for women and men.
+Each pair is conserved independently and that invariant is regression-tested.
+.SH CONTROLS
+Drag any compartment bar.  Tracks set both directional transmission rates and
+both recovery rates.  Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/gonorrhea.b
+.br
+.B /appl/temple/gonorrhea.b
+.SH SEE ALSO
+.IR populationmodel (2),
+.IR danby-crossinfection (1)

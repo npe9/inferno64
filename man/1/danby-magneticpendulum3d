@@ -1,0 +1,9 @@
+.TH DANBY-MAGNETICPENDULUM3D 1
+.SH NAME
+danby-magneticpendulum3d \- simulate a three-dimensional magnetic pendulum
+.SH DESCRIPTION
+A suspended bob moves in x, y, and height over four magnets.  The left view is
+an oblique orthographic projection; the plot shows horizontal radius and height.
+Attraction uses softened inverse-cube distance to remain finite near a magnet.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.

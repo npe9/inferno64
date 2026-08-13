@@ -1,0 +1,7 @@
+.TH DANBY-DECOMPOSITION 1
+.SH NAME
+danby-decomposition \- consecutive molecular decomposition reactions
+.SH DESCRIPTION
+A parent species becomes an intermediate and then a product through two
+first-order reactions.  The live concentrations show the intermediate rise and
+fall while total material is conserved.

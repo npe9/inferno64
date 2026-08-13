@@ -1,0 +1,26 @@
+.TH DANBY-LOGISTICPREY 1
+.SH NAME
+danby-logisticprey \- predator-prey model with logistic prey growth
+.SH SYNOPSIS
+.B temple/logisticprey
+.SH MODEL
+X' = rX(1-X/K)-aXY;
+Y' = cXY-dY.
+.PP
+The prey population X is limited by carrying capacity K.  Predators Y grow by
+converted predation and die at per-capita rate d.  When d/c<K, the positive
+equilibrium is X=d/c and Y=r(1-X/K)/a.
+.SH DISPLAY
+The left panel is the phase portrait with the analytic equilibrium marked.
+The right panel shows both population histories.  Unlike the neutral closed
+orbits of the Volterra model, logistic regulation can attract trajectories.
+.SH CONTROLS
+Drag the phase portrait to set initial populations and the bottom tracks to
+set r, K, a, c, and d.  Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/logisticprey.b
+.br
+.B /appl/temple/logisticprey.b
+.SH SEE ALSO
+.IR danby-ecology (1),
+.IR numerics (2)

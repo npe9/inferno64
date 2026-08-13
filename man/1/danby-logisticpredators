@@ -1,0 +1,25 @@
+.TH DANBY-LOGISTICPREDATORS 1
+.SH NAME
+danby-logisticpredators \- logistic regulation of prey and predators
+.SH SYNOPSIS
+.B temple/logisticpredators
+.SH MODEL
+X' = rX(1-X/K)-aXY;
+Y' = Y(cX-d)(1-Y/L).
+.PP
+K limits prey in the absence of predators and L limits predator growth.
+The positive intersection X=d/c, Y=r(1-X/K)/a is marked.  A second predator
+nullcline at Y=L makes it possible to compare regulation of only the prey with
+regulation of both populations.
+.SH DISPLAY
+Phase and time plots update together as any of the six coefficients changes.
+.SH CONTROLS
+Drag the phase portrait to set initial populations and the bottom tracks to
+set r, K, a, c, d, and L.  Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/logisticpredators.b
+.br
+.B /appl/temple/logisticpredators.b
+.SH SEE ALSO
+.IR danby-logisticprey (1),
+.IR numerics (2)

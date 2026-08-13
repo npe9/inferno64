@@ -1,0 +1,7 @@
+.TH DANBY-COLUMNBUCKLING 1
+.SH NAME
+danby-columnbuckling \- dynamic column buckling
+.SH DESCRIPTION
+The straight column loses stability when compression crosses the critical
+value.  Cubic post-buckling stiffness creates two bent equilibria, making the
+pitchfork bifurcation visible in both shape and displacement history.

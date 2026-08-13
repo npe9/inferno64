@@ -1,0 +1,10 @@
+.TH DANBY-SKYLAB 1
+.SH NAME
+danby-skylab \- atmospheric orbital decay of Skylab
+.SH SYNOPSIS
+.B temple/skylab
+.SH MODEL
+Exponential atmospheric density and quadratic drag decelerate a large satellite;
+the rising density during descent creates positive feedback toward re-entry.
+.SH SOURCE
+.B /appl/danby/skylab.b

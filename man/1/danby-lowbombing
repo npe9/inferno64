@@ -1,0 +1,7 @@
+.TH DANBY-LOWBOMBING 1
+.SH NAME
+danby-lowbombing \- aircraft and bomb relative trajectory
+.SH DESCRIPTION
+An aircraft flies level while a released bomb follows gravity with quadratic
+drag.  Release delay, height, speed, and drag expose impact range and the moving
+aircraft's separation from the bomb.

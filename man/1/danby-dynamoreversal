@@ -1,0 +1,7 @@
+.TH DANBY-DYNAMOREVERSAL 1
+.SH NAME
+danby-dynamoreversal \- nonlinear dynamo with polarity reversals
+.SH DESCRIPTION
+Two coupled electrical modes exchange energy with a mechanically driven rotor.
+The Rikitake-type system can remain in one polarity or reverse irregularly as
+loss, asymmetry, and drive vary.

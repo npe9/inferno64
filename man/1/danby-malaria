@@ -1,0 +1,27 @@
+.TH DANBY-MALARIA 1
+.SH NAME
+danby-malaria \- coupled human and mosquito infection cycle
+.SH SYNOPSIS
+.B temple/malaria
+.SH MODEL
+Sh'=-a Sh Iv+gamma Ih; Ih'=a Sh Iv-gamma Ih;
+Sv'=-b Sv Ih+mu Iv; Iv'=b Sv Ih-mu Iv.
+.PP
+Humans acquire infection from infectious mosquitoes and recover.  Mosquitoes
+acquire infection from infectious humans; turnover replaces infectious vectors
+with susceptible vectors.  Transmission therefore requires both halves of the
+cycle instead of a single SIR contact term.
+.SH DISPLAY
+Four histories make the phase lag between human and mosquito prevalence
+visible.  Human and mosquito totals are each conserved independently.
+.SH CONTROLS
+Drag any compartment bar.  Tracks set mosquito-to-human transmission,
+human-to-mosquito transmission, human recovery, and mosquito turnover.
+Space pauses, period steps, r resets, and q exits.
+.SH SOURCE
+.B /appl/danby/malaria.b
+.br
+.B /appl/temple/malaria.b
+.SH SEE ALSO
+.IR danby-crossinfection (1),
+.IR populationmodel (2)

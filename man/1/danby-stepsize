@@ -1,0 +1,8 @@
+.TH DANBY-STEPSIZE 1
+.SH NAME
+danby-stepsize \- inspect adaptive-step acceptance and rejection
+.SH DESCRIPTION
+The diagnostic view plots attempted step size and normalized error over time,
+including rejected attempts.  It demonstrates why naive step doubling and
+unbounded controllers fail.  See
+.IR danby-methods (1).

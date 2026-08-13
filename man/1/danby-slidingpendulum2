@@ -1,0 +1,8 @@
+.TH DANBY-SLIDINGPENDULUM2 1
+.SH NAME
+danby-slidingpendulum2 \- pendulum on an elastic sliding support
+.SH DESCRIPTION
+This variant attaches the sliding support to a spring and damper.  Energy moves
+between the cart mode and pendulum mode, exposing beats and internal resonance.
+.PP
+Click a parameter scale to change it, space pauses, period steps, R resets, and Q exits.
