@@ -206,7 +206,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		rc <-= nil;
 		# new client; inform it of the available screen rectangle.
 		# XXX do we need to do this now we've got wmrect?
-		c.ctl <-= "rect " + r2s(screen.image.r);
+		# Spawned: the client hasn't reached its ctl-reading loop yet
+		# (see sendctl above) - a direct send here can deadlock against
+		# the client's own setup requests.
+		spawn sendctl(c.ctl, "rect " + r2s(screen.image.r));
 		if(allowcontrol){
 			controller = c;
 			c.flags |= Controller;
@@ -331,6 +334,16 @@ rootreshape(size: Point, done: chan of int)
 		rootwin.image.flush(Draw->Flushnow);
 	}
 	done <-= 0;
+}
+
+# Send on a client's ctl channel without blocking the caller: at join
+# time the client hasn't reached its own event loop yet (it's still
+# inside wmclient->window()), so a plain c.ctl <-= would stall this
+# whole dispatch loop until the client gets there - and deadlock if the
+# client's own next step needs a reply from us first.
+sendctl(c: chan of string, s: string)
+{
+	c <-= s;
 }
 
 freply(rc: Sys->Rwrite, n: int, err: string)
