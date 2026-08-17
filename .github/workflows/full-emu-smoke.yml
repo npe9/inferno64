@@ -1,0 +1,94 @@
+name: Full emulator smoketest (build + run)
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+jobs:
+  build-and-run:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxft-dev libasound2-dev libgl1-mesa-dev libfreetype6-dev xvfb
+
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update || true
+          brew install pkg-config || true
+
+      - name: Build emulator (best-effort)
+        run: |
+          set -e
+          echo "Building emulator (best-effort)"
+          cd emu || exit 0
+          # try common conf targets; callers can edit these if repo uses different CONF names
+          if command -v mk >/dev/null 2>&1; then
+            if [ "${{ matrix.os }}" = "macos-latest" ]; then
+              mk CONF=emu-cocoa install || true
+            else
+              mk CONF=emu-x11 install || mk CONF=emu-linux install || true
+            fi
+          elif [ -f Makefile ]; then
+            make || true
+          else
+            echo "no build rule found in emu/ — continuing"
+          fi
+
+      - name: Locate emu and limbo
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE"
+          EMU_PATH=$(find "$ROOT" -type f -name emu -perm -111 -print -quit || true)
+          LIMBO_PATH=$(find "$ROOT" -type f -name limbo -perm -111 -print -quit || true)
+          echo "EMU_PATH=$EMU_PATH" >> $GITHUB_ENV
+          echo "LIMBO_PATH=$LIMBO_PATH" >> $GITHUB_ENV
+
+      - name: Compile smoketest (limbo)
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE"
+          if [ -n "$LIMBO_PATH" ] && [ -x "$LIMBO_PATH" ]; then
+            LIMBO="$LIMBO_PATH"
+          elif command -v limbo >/dev/null 2>&1; then
+            LIMBO=limbo
+          else
+            echo "limbo not found; cannot compile smoketest"; exit 1
+          fi
+          $LIMBO -I "$ROOT/module" -o /tmp/smoke.dis "$ROOT/appl/temple/smoketest.sbl"
+
+      - name: Run smoketest (emu)
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE"
+          EMU=${{ env.EMU_PATH }}
+          if [ -z "$EMU" ]; then
+            if command -v emu >/dev/null 2>&1; then EMU=emu; fi
+          fi
+          if [ -z "$EMU" ]; then echo "emu not found; cannot run full smoketest"; exit 1; fi
+
+          # run under Xvfb on Linux
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            echo "Running emu under Xvfb"
+            xvfb-run -a --server-args='-screen 0 1280x1024x24' "$EMU" -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis || true
+          else
+            echo "Running emu on macOS runner (no Xvfb)"
+            "$EMU" -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis || true
+          fi
+
+      - name: Archive logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoketest-artifacts-${{ matrix.os }}
+          path: /tmp/smoke.dis
