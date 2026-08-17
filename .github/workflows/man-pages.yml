@@ -1,0 +1,20 @@
+name: Man page coverage
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  man-pages:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with full history for diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch origin/main for comparison
+        run: git fetch origin main --depth=1 2>/dev/null || true
+
+      - name: Check new programs have man pages
+        run: bash scripts/check-man-pages.sh origin/main
