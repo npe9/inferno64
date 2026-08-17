@@ -47,7 +47,7 @@ check_wrapper_target() {
 }
 
 while IFS= read -r -d '' f; do
-	check_wrapper_target "$f" "danby"
+	check_wrapper_target "$f" "temple"
 done < <(find Apps/!Danby -name '!Run' -type f -print0)
 
 while IFS= read -r -d '' f; do
