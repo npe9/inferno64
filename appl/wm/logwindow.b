@@ -21,6 +21,9 @@ Logwindow: module {
 };
 
 cfg := array[] of {
+	"menu .m",
+	".m add command -label Snarf -command {send cmd snarf}",
+	".m add command -label Paste -command {send cmd paste}",
 	"frame .bf",
 	"checkbutton .bf.scroll -text Scroll -variable scroll -command {send cmd scroll}",
 	".bf.scroll select",
@@ -36,7 +39,7 @@ cfg := array[] of {
 	"pack .bf -anchor w",
 	"pack .t -fill both -expand 1",
 	"pack propagate . 0",
-	"bind .t.t <Control-c> {send cmd copy}",
+	"bind .t.t <Button-2> {.m post %X %Y}",
 };
 
 eflag := 0;
@@ -148,13 +151,17 @@ logwin(fd: ref Sys->FD, top: ref Tk->Toplevel, wmchan: chan of string)
 			scrolling = int tk->cmd(top, "variable scroll");
 		"popup" =>
 			popup = int tk->cmd(top, "variable popup");
-		"copy" =>
+		"snarf" =>
 			sel := tk->cmd(top, ".t.t tag ranges sel");
 			if (sel != nil) {
 				range := tk->cmd(top, ".t.t tag nextrange sel 1.0");
 				if (range != nil)
 					tkclient->snarfput(tk->cmd(top, ".t.t get " + range));
 			}
+		"paste" =>
+			s := tkclient->snarfget();
+			if (s != "")
+				tk->cmd(top, ".t.t insert insert '" + s);
 		}
 	}
 }
