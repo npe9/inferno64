@@ -75,6 +75,11 @@ dirwin_cfg := array[] of {
 		" -borderwidth 2 -width 10c -height 300"+
 		" -yscrollcommand {.fc.scroll set} $font",
 
+	# canvas has no built-in wheel scrolling (unlike text widgets, which
+	# get it from a default binding table) - wire it up explicitly.
+	"bind .fc.c <Button-4> {.fc.c yview scroll -3 units}",
+	"bind .fc.c <Button-5> {.fc.c yview scroll 3 units}",
+
 	"frame .mbar",
 	"menubutton .mbar.opt -text {Options} -menu .opt",
 	".mbar configure $font",
