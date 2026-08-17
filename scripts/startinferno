@@ -1,3 +1,6 @@
 #!/usr/bin/env sh
-emu -g1280x1024 wm/wm
+# Prefer setting EMU_CMD or EMU_FLAGS in the environment if you need custom binaries or flags.
+EMU_CMD=${EMU_CMD:-emu}
+EMU_FLAGS=${EMU_FLAGS:--g1280x1024 -pheap=64m -pimage=32m}
+exec "$EMU_CMD" $EMU_FLAGS wm/wm
 
