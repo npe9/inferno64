@@ -38,7 +38,7 @@ nearby := array[] of {0.100001,0.0,0.0};
 time := 0.0;
 paused := 0;
 lessonstem := "chaos";
-ControlBandH: con 74;
+ControlBandH: con 88;
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {
@@ -216,10 +216,10 @@ redraw()
 	graph.cmd("clear");
 	bandtop := image.r.max.y-ControlBandH;
 	middle := image.r.min.y+image.r.dy()*2/3;
-	phase := Rect(image.r.min.add((50,38)),
-		(image.r.max.x-22,middle-20));
-	separation := Rect((image.r.min.x+50,middle+22),
-		(image.r.max.x-22,bandtop-10));
+	phase := Rect(image.r.min.add((58,44)),
+		(image.r.max.x-30,middle-22));
+	separation := Rect((image.r.min.x+58,middle+26),
+		(image.r.max.x-30,bandtop-16));
 	tmin := time-25.0;
 	if(tmin < 0.0)
 		tmin = 0.0;
@@ -243,6 +243,9 @@ redraw()
 		"line phase trajectories x nearx y nearz colour accent width 1\n" +
 		"line separation trajectories x time y logdistance colour accent width 2");
 	graph.draw();
+	image.text((phase.min.x+10,phase.min.y+15),live,Point(0,0),font,"primary");
+	image.text((phase.min.x+84,phase.min.y+15),accent,Point(0,0),font,"nearby");
+	image.text((separation.min.x+10,separation.min.y+15),accent,Point(0,0),font,"log10(distance)");
 	image.text(image.r.min.add((12,19)),foreground,Point(0,0),font,
 		sys->sprint("Lorenz pair: initial separation 10^-6   t %.2f   x %.3f/%.3f",
 			time,state[0],nearby[0]));
@@ -263,7 +266,7 @@ drawcontrol(image: ref Image, which: int, name: string,
 	image.line((left,y),(right,y),0,0,2,grid,Point(0,0));
 	x := left+int(value/maximum*real(right-left));
 	image.ellipse((x,y),4,4,0,accent,Point(0,0));
-	image.text((left,bandtop+45),foreground,Point(0,0),font,
+	image.text((left,bandtop+44),foreground,Point(0,0),font,
 		sys->sprint("%s %.3g",name,value));
 }
 
