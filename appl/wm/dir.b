@@ -44,6 +44,7 @@ font:		string;
 Xwidth:		con 50;
 IconLabelMaxChars: con 22;
 IconRowDY: con 62;
+nextappimg:	int;
 
 WmDir: module
 {
@@ -300,7 +301,7 @@ getdir(t: ref Toplevel, dir: string)
 # User-visible name for !App folders: !TempleFoo → !Foo.
 applabel(name: string): string
 {
-	if(name != nil && strings != nil && strings->prefix("!Temple", name))
+	if(name != nil && strings != nil && len name > 7 && strings->prefix("!Temple", name))
 		return "!" + name[7:];
 	return name;
 }
@@ -338,6 +339,33 @@ launchapp(approot: string)
 	if(sh == nil)
 		return;
 	sh->run(ctxt, "{$*&}" :: approot + "/!Run" :: nil);
+}
+
+appicon(t: ref Toplevel, entryname: string): string
+{
+	apppath := path + entryname;
+	if(!isapp(apppath))
+		return "";
+	iconbase := apppath + "/icons/" + entryname;
+	(ok, nil) := sys->stat(iconbase + ".bit");
+	if(ok < 0)
+		return "";
+
+	name := sys->sprint("WmDir_App_%d", nextappimg++);
+	bf := iconbase + ".bit";
+	mf := iconbase + ".mask";
+	if(len bf > 0 && bf[0] == '/')
+		bf = "@" + bf;
+	if(len mf > 0 && mf[0] == '/')
+		mf = "@" + mf;
+
+	e := tk->cmd(t, sys->sprint("image create bitmap %s -file %s -maskfile %s", name, bf, mf));
+	if(e == nil || e[0] == '!'){
+		e = tk->cmd(t, sys->sprint("image create bitmap %s -file %s", name, bf));
+		if(e == nil || e[0] == '!')
+			return "";
+	}
+	return name;
 }
 
 iconlabel(name: string, maxchars: int): string
@@ -565,8 +593,11 @@ drawdirico(t: ref Toplevel)
 
 	for(i = 0; i < nde; i++) {
 		sx := string x;
-		ft := filetype(t, de[i], de[i].name);
-		img := ft.tkname;
+		img := appicon(t, de[i].name);
+		if(img == ""){
+			ft := filetype(t, de[i], de[i].name);
+			img = ft.tkname;
+		}
 		lbl := iconlabel(applabel(de[i].name), xwid/Fontwidth - 2);
 		labelw := xwid - 8;
 		if(labelw < 24)

@@ -418,7 +418,7 @@ basename(path: string): string
 applabel(path: string): string
 {
 	base := basename(path);
-	if(base != nil && str->prefix("!Temple", base))
+	if(base != nil && len base > 7 && str->prefix("!Temple", base))
 		return "!" + base[7:];
 	return base;
 }
