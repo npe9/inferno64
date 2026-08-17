@@ -28,7 +28,15 @@ Background: con int 16rC4C0B4FF;		# Soft Plan9 Paper desktop; drawn over immedia
 # Per-toplevel icon path. Set via seticon() or auto-picked-up from the
 # $wmicon environment variable by toplevel(). Threaded through to the
 # wm/toolbar as a second argument on the "task" wmctl request.
+#
+# This module is shared, not per-caller: pinboard opens a folder view by
+# calling wm/dir's init() directly in a spawned Limbo thread rather than
+# as a separate program (appl/wm/pinboard.b's activate()), so pinboard's
+# own toplevel and every directory view it has open all read-modify-write
+# this same iconmap concurrently. seticon's read-then-replace is not
+# atomic on its own - iconlock serializes it.
 iconmap: list of (ref Toplevel, string);
+iconlock: chan of int;
 
 # Resolved Dis path of the application (set by sh as $dis).
 dispath: string;
@@ -38,6 +46,10 @@ init()
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	tk = load Tk Tk->PATH;
+	if(iconlock == nil){
+		iconlock = chan[1] of int;
+		iconlock <-= 1;
+	}
 	wmlib = load Wmlib Wmlib->PATH;
 	if(wmlib == nil){
 		sys->fprint(sys->fildes(2), "tkclient: cannot load %s: %r\n", Wmlib->PATH);
@@ -247,6 +259,7 @@ settitle(top: ref Tk->Toplevel, name: string): string
 # the wm/toolbar can render an icon for the minimized window.
 seticon(top: ref Tk->Toplevel, iconpath: string): string
 {
+	<-iconlock;
 	nm: list of (ref Toplevel, string);
 	found := 0;
 	for(l := iconmap; l != nil; l = tl l) {
@@ -260,6 +273,7 @@ seticon(top: ref Tk->Toplevel, iconpath: string): string
 	if(!found)
 		nm = (top, iconpath) :: nm;
 	iconmap = nm;
+	iconlock <-= 1;
 	return nil;
 }
 
