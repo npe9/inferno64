@@ -30,6 +30,8 @@ include "plumbmsg.m";
 	Msg: import plumbmsg;
 
 include "env.m";
+include "newns.m";
+include "sh.m";
 
 include "arrays.m";
 	arrays: Arrays;
@@ -303,6 +305,41 @@ applabel(name: string): string
 	return name;
 }
 
+isapp(path: string): int
+{
+	if(path == nil)
+		return 0;
+	(ok, nil) := sys->stat(path + "/!Boot");
+	if(ok < 0)
+		return 0;
+	(ok, nil) = sys->stat(path + "/!Run");
+	return ok >= 0;
+}
+
+launchapp(approot: string)
+{
+	if(approot[len approot-1] == '/')
+		approot = approot[0:len approot-1];
+	sys->pctl(sys->NEWPGRP|sys->FORKFD|sys->FORKNS|sys->FORKENV, nil);
+
+	environ := load Env Env->PATH;
+	if(environ != nil){
+		environ->setenv("approot", approot);
+	}
+
+	ns := load Newns Newns->PATH;
+	if(ns != nil){
+		err := ns->newns(nil, approot + "/!Boot");
+		if(err != nil)
+			return;
+	}
+
+	sh := load Sh Sh->PATH;
+	if(sh == nil)
+		return;
+	sh->run(ctxt, "{$*&}" :: approot + "/!Run" :: nil);
+}
+
 iconlabel(name: string, maxchars: int): string
 {
 	if(name == nil)
@@ -338,6 +375,11 @@ button1(t: ref Toplevel, item: ref Dir)
 	ft := filetype(t, item, exec);
 
 	if(item.mode & Sys->DMDIR) {
+		if(item.name != ".." && isapp(exec)) {
+			defcursor(t);
+			spawn launchapp(exec);
+			return;
+		}
 		if(walk != 0) {
 			path = npath;
 			getdir(t, npath+name);
