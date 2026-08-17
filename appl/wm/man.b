@@ -35,7 +35,7 @@ HEADING2: con "/fonts/lucidasans/italiclatin1.7.font";
 rfont, bfont, ifont, h1font, h2font: ref Font;
 
 GOATTR: con Parseman->ATTR_LAST << iota;
-MANPATH: con "/man/1/man";
+MANPATH: con "/man/1/0intro";
 INDENT: con 40;
 
 metrics: Parseman->Metrics;

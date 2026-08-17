@@ -6,6 +6,11 @@ LIB=$DOC/man/lib
 
 default:V: check
 
+# Regenerate the section 1 command index (man/1/0intro).
+# Run this after adding or renaming man pages in man/1/.
+0intro:V:
+	python3 $ROOT/scripts/gen_0intro.py > $DOC/man/1/0intro
+
 # Can be called from hosted Inferno
 indices.hosted:V:
 	for i in `{seq 10} {

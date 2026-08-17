@@ -1,188 +1,1246 @@
 .TH INTRO 1
 .SH NAME
-intro \- introduction to Inferno
+intro \- introduction to section 1 and index of commands
 .SH DESCRIPTION
-Inferno is a virtualised operating system that can
-run natively across a wide range of processor architectures
-or hosted on a wide range of operating systems.
-The principal components of the system are:
-.IP •
-The Inferno kernel which can run both native and `hosted' on a range of platforms
-and which presents the same interface to programs in both cases.
-.IP •
-The Dis virtual machine.
-.IP •
-Styx - the tiny broad-spectrum file service protocol.
-.IP •
-Limbo - a new simple, modular, concurrent programming language.
-.IP •
-Tk and Prefab - graphical user interface (`GUI') primitives without a lot of goo.
-.IP •
-The portable cross-development suites that allow any native Inferno platform
-to be cross-compiled on any hosted system.
-.SS Manual conventions
-Throughout this volume, manual entries are cross referenced
-by a notation of the form
-.IR entry ( n ),
-where
-.I entry
-is the name of the page (in italics) and
-.I n
-is the manual section holding the page.
-The same name may be found in more than one section.
-For example, the environment variable inspection command
-documented in
-.IR env (1),
-is quite distinct from the module interface to environment variables
-which is documented in
-.IR env (2),
-which in turn is distinct from the component documented by
-.IR env (3),
-which describes the underlying device that implements environment variables.
 .PP
-Pathnames are understood to exist in the file system space visible from
-Inferno. The root of this space when viewed from the host operating
-system is the Inferno installation directory, sometimes called the
-Inferno root directory. Unless otherwise enabled, the result of
-changes made by Inferno programs to files in the file system space
-is generally restricted to this portion of the host file system.
-.SS Name spaces
-One of the great strengths of Inferno is the
-.I name space
-interface to the resources available to a process,
-a hierarchical structure
-which looks very similar to a conventional file system.
-Resources look like files and directories that can be read
-and written, created and deleted in a way familiar to
-most programmers.
+Section 1 of the Inferno manual covers commands and applications.
+For a general introduction to Inferno see
+.IR intro (1).
 .PP
-While this interface
-.I is
-used to provide programs with access to conventional
-disk-based filestore, it is also used to control devices
-and user level programs
-.I mounted
-in a process's name space.
-Once a program or a device has been attached to a process's
-name space, the program or device interprets any access
-to the attachment point;
-it can synthesise on demand the names of new files or directories,
-create their contents on the fly as the process reads from them,
-and interpret written data as commands or data as appropriate
-(See
-.IR bind (1)
-and
-.IR sys-bind (2)).
-.PP
-Each new Inferno process inherits its parent's name space,
-but it can divorce its own name space from that of its parent (see
-.IR sys-pctl (2)),
-giving programs the capability to attach
-resources to their own name space without making them globally
-visible. This per-process name space is potent
-but potentially confusing, so, to help programs that might be
-confused,
-.IR namespace (4)
-gives some conventions that should be adhered to if programs
-are to work properly. (That page also gives a general overview
-of the Inferno source tree.)
-.SS Start up
-See ``Installation of the Inferno Software'' in Volume 2
-for details of how to start up Inferno.
-.SS Window/development environment
-Inferno provides a powerful development environment in which to write, compile,
-execute and debug programs written in the Limbo language.
-It gives the developer a clean platform from which he can utilise
-an operating system which contains
-many new and innovative ideas and some, carefully chosen,
-older concepts that have survived the test of time and are likely to be
-familiar to most Plan 9 or Unix users.
-.PP
-Superficially, the Inferno shell
-.IR sh (1)
-looks and behaves much like
-its Plan 9 or Unix contemporaries but, at heart, it is quite different.
-The shell takes advantage of the dynamic module loading
-services that Inferno provides to allow it to be dynamically extended
-in appropriate and interesting ways. For example, by loading the
-.IR sh-tk (1)
-builtin module, a shell script can provide all the programming logic
-required to manage a
-.I Tk
-window with full
-.I Tk
-functionality in, surprisingly, few lines of code; by loading the
-.IR sh-file2chan (1)
-builtin module, a shell script can create a file in the name space
-whose properties are completely under the control of the script.
-.PP
-The Inferno window
-manager
+Commands whose names begin with
+.B wm/
+run under the window manager
 .IR wm (1)
-allows the user to manage the order and position of a dynamic collection of application
-windows in which to perform various tasks.
-.IR Acme (1)
-is targeted at programmers. It is an editor, a shell and window system all rolled
-into one, which through thoughtful and consistent application of simple principles
-results in a rich and productive programming environment with a user interface
-that feels right.
-.I Acme
-requires a three-button mouse and
-attaches distinct functions to the three mouse buttons and, indeed, to chords of buttons to
-maximise the productivity of the programmer's mouse. For more details of the
-.I Acme
-user interface see the paper
-"Acme: A User Interface for Programmers" in Volume 2.
-.PP
-Limbo programs are compiled with
-.IR limbo (1). 
-This compiles Limbo source into a machine-independent format (Dis) for
-execution by the Inferno Dis virtual machine. The virtual machine is designed to provide 
-safe execution of programs even on machines without memory protection.
-Debugging is made straightforward by use of either
-.IR stack (1)
-, to display the execution stack of a process
-or, if a finer inspection is required,
-.IR deb (1),
-a novel window based debugger that allows the user to identify the exact location of
-problems, set break points and walk the data structures of any module loaded by the program. See "Program Development in Inferno" in Volume 2 for details on how to use the
-development tools that Inferno provides.
-.SH SEE ALSO
-.nf
-Section (1) (this section) for the commonly-used commands.
-Section (2) for Limbo modules, including Inferno's system calls.
-Section (3) for kernel devices (accessed by `bind').
-Section (4) for file services (accessed by `mount').
-Section (5) for the Styx file service protocol.
-Section (6) for file formats and system conventions.
-Section (7) for databases and database access modules.
-Section (8) for administrative modules and system services.
-Section (9) for the reference for Inferno's Tk variant, Limbo/Tk.
-Section (10) for the build environment and device driver implementation.
-.PP
-Volume 2 contains papers and other documentation about Inferno.
-.PP
-The back of this volume contains a permuted index.
-.SH DIAGNOSTICS
-On successful execution, a process can simply exit.
-Programs (modules) that wish to return error status to
-the command interpreters
-.IR sh (1)
-and
+and require a display context.
+.SS Commands
+.TP 5
+.TP
+.IR 9win (1)
+create a Plan 9 window within Inferno
+.TP
+.IR abc (1)
+alphabet declarations
+.TP
+.IR about (1)
+miscellaneous graphical applications
+.TP
+.IR ack (1)
+miscellaneous mathematical applications
+.TP
+.IR acme (1)
+interactive text windows
+.TP
+.IR alphabet (1)
+typed shell interface
+.TP
+.IR ar (1)
+archive maintainer
+.TP
+.IR arg (1)
+shell command-line argument parsing
+.TP
+.IR asciiorgan (1)
+keyboard organ
+.TP
+.IR asm (1)
+Dis assembler, Dis disassembler
+.TP
+.IR auplay (1)
+basic audio output and conversion
+.TP
+.IR avr (1)
+Atmel AVR support
+.TP
+.IR basename (1)
+strip file name affixes
+.TP
+.IR battlelines (1)
+swarm combat game
+.TP
+.IR bigguns (1)
+artillery game
+.TP
+.IR bind (1)
+change name space
+.TP
+.IR blackdiamond (1)
+downhill skiing game
+.TP
+.IR blur (1)
+an example program to demonstrate splitting a task over sever...
+.TP
+.IR bombergolf (1)
+bomber flight game
+.TP
+.IR bounce (1)
+bouncing dots
+.TP
+.IR box (1)
+rotating wireframe cube
+.TP
+.IR brutus (1)
+screen editor with support for SGML
+.TP
+.IR budget (1)
+simple ledger
+.TP
+.IR cal (1)
+print calendar
+.TP
+.IR calc (1)
+calculator language
+.TP
+.IR calendar (1)
+calendar and diary
+.TP
+.IR cartesian (1)
+function plotter
+.TP
+.IR castlefrankenstein (1)
+maze shooter
+.TP
+.IR cat (1)
+concatenate files
+.TP
+.IR cd (1)
+change working directory
+.TP
+.IR chardemo (1)
+scrolling landscape demo
+.TP
+.IR charon (1)
+web browser
+.TP
+.IR chgrp (1)
+change file's group or owner
+.TP
+.IR chmod (1)
+change file mode (permissions)
+.TP
+.IR circletrace (1)
+circle tracing game
+.TP
+.IR cleanname (1)
+clean a path name
+.TP
+.IR cmp (1)
+compare two files
+.TP
+.IR collab: (1)
+connect to collaborative files and services
+.TP
+.IR collab: (1)
+collaborative activities
+.TP
+.IR collision (1)
+elastic ball collisions
+.TP
+.IR comm (1)
+select or reject lines common to two sorted files
+.TP
+.IR cook (1)
+SGML converter
+.TP
+.IR cp (1)
+copy files
+.TP
+.IR cprof (1)
+coverage profiling of limbo programs
+.TP
+.IR cpu (1)
+execute a remote command
+.TP
+.IR crypt (1)
+data encryption
+.TP
+.IR csv (1)
+parse ``comma-separated values''
+.TP
+.IR danby-aerobraking (1)
+orbital energy loss during atmospheric passes
+.TP
+.IR danby-alternativepredation (1)
+predator-prey model with saturating consumption
+.TP
+.IR danby-amusementchaos (1)
+driven nonlinear amusement-ride pendulum
+.TP
+.IR danby-arms (1)
+Richardson arms race
+.TP
+.IR danby-attractingwires (1)
+current-driven attraction and pull-in
+.TP
+.IR danby-atwoodpendulum (1)
+simulate the swinging Atwood machine
+.TP
+.IR danby-badfootball (1)
+unstable lateral flight of a poorly kicked football
+.TP
+.IR danby-badminton (1)
+high-drag shuttlecock trajectories
+.TP
+.IR danby-balloon (1)
+vertical balloon motion with a swinging payload
+.TP
+.IR danby-baseballpitch (1)
+aerodynamic flight of a pitched baseball
+.TP
+.IR danby-basketball (1)
+trajectory and backspin of a basketball shot
+.TP
+.IR danby-bernoulli (1)
+Bernoulli's brachistochrone problem
+.TP
+.IR danby-boom (1)
+Goodwin wage-employment cycle
+.TP
+.IR danby-brusselator (1)
+two-variable chemical limit cycle
+.TP
+.IR danby-budworm (1)
+spruce budworm outbreak threshold
+.TP
+.IR danby-bungee (1)
+slack-to-elastic bungee-jump dynamics
+.TP
+.IR danby-cannibalism (1)
+age-structured population with adult cannibalism
+.TP
+.IR danby-carbonmicrophone (1)
+electromechanical carbon microphone circuit
+.TP
+.IR danby-carrierlanding (1)
+aircraft arresting cable and moving deck
+.TP
+.IR danby-catastrophemachine (1)
+Zeeman catastrophe machine
+.TP
+.IR danby-changingenvironment (1)
+logistic growth with varying carrying capacity
+.TP
+.IR danby-chaos (1)
+Lorenz chaotic convection
+.TP
+.IR danby-chaosdynamics (1)
+measure sensitive dependence in a dynamical system
+.TP
+.IR danby-chaosintro (1)
+introduction to deterministic chaos
+.TP
+.IR danby-chaosmap (1)
+logistic-map bifurcations, cobwebs, and Lyapunov exponent
+.TP
+.IR danby-chaoticwheel (1)
+periodically driven nonlinear wheel
+.TP
+.IR danby-chapter1assignments (1)
+interactive introductory exercises
+.TP
+.IR danby-childcare (1)
+stage-structured predator-prey model with parental care
+.TP
+.IR danby-clockpendulum (1)
+damped pendulum sustained by an escapement
+.TP
+.IR danby-columnbuckling (1)
+dynamic column buckling
+.TP
+.IR danby-cometcatch (1)
+gravitational scattering and comet capture by Jupiter
+.TP
+.IR danby-compass (1)
+compass needle in an oscillating magnetic field
+.TP
+.IR danby-competition (1)
+two-species logistic competition
+.TP
+.IR danby-cooperation (1)
+density-limited mutualism between two species
+.TP
+.IR danby-cricketbowl (1)
+spin and drag on a bowled cricket ball
+.TP
+.IR danby-cricketswing (1)
+aerodynamic swing of a cricket ball
+.TP
+.IR danby-crossinfection (1)
+infection transmitted within and between two species
+.TP
+.IR danby-dampedpendulum (1)
+pendulum with velocity-proportional damping
+.TP
+.IR danby-decomposition (1)
+consecutive molecular decomposition reactions
+.TP
+.IR danby-discus (1)
+aerodynamic path of a discus
+.TP
+.IR danby-diseasebirthdeath1 (1)
+SIR disease with balanced demographic turnover
+.TP
+.IR danby-diseasebirthdeath2 (1)
+epidemic with independent vital rates and virulence
+.TP
+.IR danby-diving (1)
+translational and rotational motion of a diver
+.TP
+.IR danby-doublependulum (1)
+explore a nonlinear double pendulum
+.TP
+.IR danby-drug (1)
+two-compartment drug absorption
+.TP
+.IR danby-drypendulum (1)
+pendulum with Coulomb dry friction
+.TP
+.IR danby-duffing (1)
+driven nonlinear Duffing oscillator
+.TP
+.IR danby-dumbbellsatellite (1)
+gravity-gradient attitude dynamics in orbit
+.TP
+.IR danby-dynamoreversal (1)
+nonlinear dynamo with polarity reversals
+.TP
+.IR danby-ecology (1)
+Lotka-Volterra predator and prey
+.TP
+.IR danby-enzymeapplication (1)
+competitive enzyme inhibition
+.TP
+.IR danby-enzymekinetics (1)
+explicit Michaelis-Menten reaction dynamics
+.TP
+.IR danby-epidemic (1)
+susceptible-infected-recovered epidemic
+.TP
+.IR danby-euler (1)
+construct Euler solutions from a direction field
+.TP
+.IR danby-eulerorder (1)
+numerically confirm first-order Euler convergence
+.TP
+.IR danby-existence (1)
+explore existence and failure of uniqueness
+.TP
+.IR danby-fireflies (1)
+synchronization of coupled oscillators
+.TP
+.IR danby-fireworks (1)
+launch, timed burst, and fragment trajectories
+.TP
+.IR danby-firms (1)
+coupled competing firm shares
+.TP
+.IR danby-fishingone (1)
+bioeconomics of a single fish stock
+.TP
+.IR danby-fishingtwo (1)
+bioeconomics of two fish stocks and one fleet
+.TP
+.IR danby-flight (1)
+coupled longitudinal aircraft dynamics
+.TP
+.IR danby-flyball (1)
+flight of a batted baseball
+.TP
+.IR danby-foodchain (1)
+plants, herbivores, and carnivores
+.TP
+.IR danby-forcedpendulum (1)
+periodically forced damped pendulum
+.TP
+.IR danby-galaxies (1)
+gravitational interaction of two model galaxies
+.TP
+.IR danby-golfdrive (1)
+aerodynamic trajectory of a driven golf ball
+.TP
+.IR danby-gonorrhea (1)
+two-sex SIS transmission model
+.TP
+.IR danby-grandtour (1)
+sequential outer-planet gravity assists
+.TP
+.IR danby-gravitypendulum (1)
+simulate gravity-gradient attitude motion
+.TP
+.IR danby-harvest (1)
+logistic population with constant harvesting
+.TP
+.IR danby-heartbeat (1)
+Zeeman fast-slow heartbeat oscillator
+.TP
+.IR danby-heliumburning (1)
+helium-burning reaction network
+.TP
+.IR danby-heun (1)
+improved Euler predictor-corrector experiment
+.TP
+.IR danby-hiv (1)
+initial spread and progression of HIV
+.TP
+.IR danby-hovercraft (1)
+planar translation and yaw of a hovercraft
+.TP
+.IR danby-hyperionrotation (1)
+chaotic spin of Hyperion
+.TP
+.IR danby-icbmaccuracy (1)
+lateral miss distance from aim and crosswind error
+.TP
+.IR danby-icbmrange (1)
+ballistic range with atmospheric drag
+.TP
+.IR danby-incubation (1)
+SEIR epidemic with a latent compartment
+.TP
+.IR danby-instructions (1)
+follow the local instructions in a differential equation
+.TP
+.IR danby-internalcompetition (1)
+predator-prey model with crowding in each species
+.TP
+.IR danby-javelin (1)
+aerodynamic motion of a javelin
+.TP
+.IR danby-joggingcompanion (1)
+coupled pacing of two runners
+.TP
+.IR danby-jupiterboost (1)
+heliocentric speed change in a Jupiter flyby
+.TP
+.IR danby-knuckleball (1)
+fluctuating aerodynamic force on a knuckleball
+.TP
+.IR danby-lagrange1 (1)
+motion near the triangular Lagrange points
+.TP
+.IR danby-lagrange2 (1)
+larger perturbations about L4 or L5
+.TP
+.IR danby-lakepollution (1)
+pollutant mass balance in a well-mixed lake
+.TP
+.IR danby-lanchester (1)
+Lanchester square-law combat model
+.TP
+.IR danby-loadedpendulum (1)
+pendulum with constant applied torque
+.TP
+.IR danby-logisticpredators (1)
+logistic regulation of prey and predators
+.TP
+.IR danby-logisticprey (1)
+predator-prey model with logistic prey growth
+.TP
+.IR danby-lowbombing (1)
+aircraft and bomb relative trajectory
+.TP
+.IR danby-lowthrust (1)
+continuous low-thrust orbital transfer
+.TP
+.IR danby-magneticpendulum2d (1)
+explore a planar magnetic pendulum
+.TP
+.IR danby-magneticpendulum3d (1)
+simulate a three-dimensional magnetic pendulum
+.TP
+.IR danby-malaria (1)
+coupled human and mosquito infection cycle
+.TP
+.IR danby-manyspecies (1)
+one prey population shared by two predator species
+.TP
+.IR danby-maypredator (1)
+May predator-prey limit-cycle model
+.TP
+.IR danby-meaning (1)
+interpret a differential equation as a field of local rates
+.TP
+.IR danby-mercuryrotation (1)
+Mercury's 3:2 spin-orbit resonance
+.TP
+.IR danby-methodorder (1)
+measure convergence order
+.TP
+.IR danby-methods (1)
+compare Euler, Heun, RK4, and adaptive RKF4(5)
+.TP
+.IR danby-migration (1)
+effects of migration on an SIR epidemic
+.TP
+.IR danby-modeling (1)
+explore assumptions, parameters, and predictions in a differe...
+.TP
+.IR danby-moonrotation (1)
+lunar synchronous rotation and libration
+.TP
+.IR danby-moontrip (1)
+restricted three-body transfer from Earth to Moon
+.TP
+.IR danby-moreenzyme (1)
+reversible enzyme catalysis
+.TP
+.IR danby-movingpivot (1)
+simulate a vertically driven pendulum
+.TP
+.IR danby-multistagerocket (1)
+sequential two-stage rocket dynamics
+.TP
+.IR danby-nonlinearsprings (1)
+explore polynomial spring laws
+.TP
+.IR danby-odesystems (1)
+coupled first-order ODE laboratory
+.TP
+.IR danby-orbit (1)
+planar two-body orbital flight
+.TP
+.IR danby-oregonator (1)
+reduced Belousov-Zhabotinsky oscillator
+.TP
+.IR danby-parasite (1)
+host-limited parasite population growth
+.TP
+.IR danby-pegpendulum (1)
+simulate a pendulum wrapping around a peg
+.TP
+.IR danby-pendulumperiod (1)
+amplitude dependence of pendulum period
+.TP
+.IR danby-perihelion (1)
+relativistic precession of planetary perihelion
+.TP
+.IR danby-periodicvolterra (1)
+predator and prey with a periodic birthrate
+.TP
+.IR danby-pistonflywheel (1)
+slider-crank piston and flywheel dynamics
+.TP
+.IR danby-polevault (1)
+coupled vaulter and elastic pole dynamics
+.TP
+.IR danby-population (1)
+logistic population growth
+.TP
+.IR danby-poyntingrobertson (1)
+radiation drag on an orbiting dust grain
+.TP
+.IR danby-predatorfishing (1)
+predator and prey under fishing pressure
+.TP
+.IR danby-price (1)
+dynamic supply-demand price adjustment
+.TP
+.IR danby-productionexchange (1)
+production, use, and exchange of two goods
+.TP
+.IR danby-pursuit (1)
+cyclic curves of pursuit
+.TP
+.IR danby-reactorstability (1)
+exothermic continuous-reactor stability
+.TP
+.IR danby-reentry (1)
+atmospheric re-entry trajectory
+.TP
+.IR danby-reservoir (1)
+cascaded reservoir dynamics
+.TP
+.IR danby-rkf45 (1)
+Fehlberg embedded RK4(5) laboratory
+.TP
+.IR danby-rkf45scalar (1)
+implement adaptive RKF4(5) for one equation
+.TP
+.IR danby-rkf45system (1)
+implement adaptive RKF4(5) for a system
+.TP
+.IR danby-rocket2d (1)
+finite-burn two-dimensional rocket ascent
+.TP
+.IR danby-rocketintro (1)
+introductory variable-mass vertical rocket
+.TP
+.IR danby-rotatingring1 (1)
+bead in a circular hoop at prescribed rotation
+.TP
+.IR danby-rotatingring2 (1)
+bead exchanging angular momentum with a free hoop
+.TP
+.IR danby-rungekutta (1)
+classical fourth-order Runge-Kutta experiment
+.TP
+.IR danby-running (1)
+coupled speed, fatigue, cadence, and distance model
+.TP
+.IR danby-seasonaldisease (1)
+SIR transmission with seasonal infectiousness
+.TP
+.IR danby-shipmotion (1)
+forced roll and pitch at sea
+.TP
+.IR danby-simplependulum (1)
+exact nonlinear simple pendulum
+.TP
+.IR danby-sirs (1)
+epidemic with waning immunity
+.TP
+.IR danby-skijump (1)
+takeoff and aerodynamic flight of a ski jumper
+.TP
+.IR danby-skylab (1)
+atmospheric orbital decay of Skylab
+.TP
+.IR danby-slidingpendulum1 (1)
+pendulum on a freely sliding support
+.TP
+.IR danby-slidingpendulum2 (1)
+pendulum on an elastic sliding support
+.TP
+.IR danby-soccerkick (1)
+three-dimensional flight of a kicked soccer ball
+.TP
+.IR danby-softballpitch (1)
+drag and spin on a pitched softball
+.TP
+.IR danby-solutions (1)
+inspect and interpret solution curves
+.TP
+.IR danby-solverdebug (1)
+controlled numerical-solver debugging projects
+.TP
+.IR danby-solverrun (1)
+run and inspect an adaptive initial-value solver
+.TP
+.IR danby-spacestationball (1)
+ball motion in a rotating space station
+.TP
+.IR danby-spaceyoyo (1)
+rigid-tether satellite de-spin
+.TP
+.IR danby-spinningball (1)
+drag and Magnus lift on a spinning projectile
+.TP
+.IR danby-springpendulum (1)
+elastic radial pendulum
+.TP
+.IR danby-springpivot (1)
+pendulum with a compliant sliding pivot
+.TP
+.IR danby-stability (1)
+compare linear and nonlinear stability
+.TP
+.IR danby-starmodel (1)
+approximate hydrostatic stellar profile
+.TP
+.IR danby-stepsize (1)
+inspect adaptive-step acceptance and rejection
+.TP
+.IR danby-stillmoreenzyme (1)
+cooperative two-site enzyme kinetics
+.TP
+.IR danby-strains (1)
+two epidemic strains sharing susceptible hosts
+.TP
+.IR danby-stretchyoyo (1)
+elastic-tether satellite de-spin
+.TP
+.IR danby-swing1 (1)
+pump a swing by changing centre of mass
+.TP
+.IR danby-swing2 (1)
+pump a swing with rhythmic torque
+.TP
+.IR danby-swingingcenser (1)
+simulate a censer driven by hand motion
+.TP
+.IR danby-synchronousmotor (1)
+phase locking and pull-out torque
+.TP
+.IR danby-tablependulum (1)
+pendulum coupled through a hole to a table mass
+.TP
+.IR danby-tabletennis (1)
+drag and topspin in table tennis
+.TP
+.IR danby-tankcontrol (1)
+feedback control of tank level and temperature
+.TP
+.IR danby-tennis (1)
+tennis serve flight with drag and wind
+.TP
+.IR danby-threebody (1)
+mutual gravitational motion of three bodies
+.TP
+.IR danby-tidalrotation (1)
+explore spin-orbit capture under tidal friction
+.TP
+.IR danby-truncation (1)
+explore local and accumulated truncation error
+.TP
+.IR danby-twocapital (1)
+one-sector growth with two capital stocks
+.TP
+.IR danby-twomagnet (1)
+bistable magnetic oscillator
+.TP
+.IR danby-vaccination (1)
+SIR epidemic with an initially vaccinated compartment
+.TP
+.IR danby-vanderpol (1)
+self-excited relaxation oscillator
+.TP
+.IR danby-variationparameters (1)
+compare Van der Pol motion with averaging
+.TP
+.IR danby-varyingpendulum (1)
+simulate a pendulum whose length varies
+.TP
+.IR danby-venushead (1)
+curved atmospheric light path around Venus
+.TP
+.IR danby-violetsantsrodents (1)
+mutualism and predation in a three-species network
+.TP
+.IR danby-violinbow (1)
+bow/string stick-slip oscillator
+.TP
+.IR danby-wattgovernor (1)
+centrifugal engine-speed governor
+.TP
+.IR danby-weightchange (1)
+body-mass energy-balance model
+.TP
+.IR danby-wheelpendulum (1)
+pendulum attached to a freely spinning wheel
+.TP
+.IR danby-whitedwarf (1)
+degenerate stellar profiles and limiting mass
+.TP
+.IR danby-windpendulum (1)
+pendulum under steady aerodynamic torque
+.TP
+.IR danby-yoyo (1)
+coupled translation and rotation of a yo-yo
+.TP
+.IR date (1)
+print the date
+.TP
+.IR dd (1)
+convert and copy a file
+.TP
+.IR deb (1)
+graphical Limbo debugger
+.TP
+.IR develop (1)
+edit, rebuild, and relaunch a running Limbo program
+.TP
+.IR diff (1)
+differential file comparator
+.TP
+.IR digits (1)
+digit memory game
+.TP
+.IR disdep (1)
+print load dependencies for Dis file
+.TP
+.IR dmview (1)
+view remote displays
+.TP
+.IR doodle (1)
+freehand drawing
+.TP
+.IR draw3ddemo (1)
+showcase for math/draw3d
+.TP
+.IR du (1)
+disk usage
+.TP
+.IR dungen (1)
+dungeon crawl
+.TP
+.IR ebook (1)
+Open Ebook browser
+.TP
+.IR echo (1)
+print arguments
+.TP
+.IR elephantwalk (1)
+animated elephant
+.TP
+.IR emu (1)
+Inferno emulator (hosted Inferno)
+.TP
+.IR env (1)
+display environment variables
+.TP
+.IR expr (1)
+shell module for simple arithmetic.
+.TP
+.IR fc (1)
+command-line floating point calculator
+.TP
+.IR file2chan (1)
+shell interface to file2chan
+.TP
+.IR filename (1)
+interactively select a file
+.TP
+.IR flapbat (1)
+side-scrolling catch game
+.TP
+.IR flattops (1)
+carrier task-force game
+.TP
+.IR fmt (1)
+simple text formatter
+.TP
+.IR fonted (1)
+bitmap font editor
+.TP
+.IR fortune (1)
+sample lines from a file
+.TP
+.IR freq (1)
+print histogram of character frequencies
+.TP
+.IR fs (1)
+file-hierarchy traversal
+.TP
+.IR fs (1)
+file-hierarchy traversal
+.TP
+.IR ftest (1)
+test file attributes
+.TP
+.IR ftree (1)
+file tree browser
+.TP
+.IR gettar (1)
+tar archive utilities
+.TP
+.IR getzip (1)
+zip file utilities
+.TP
+.IR god (1)
+entropy word and song toy
+.TP
+.IR grep (1)
+pattern matching
+.TP
+.IR grid (1)
+peer-to-peer data distribution
+.TP
+.IR grid: (1)
+exports a selected namespace and serves it on standard input
+.TP
+.IR grid: (1)
+graphical interface to view resources registered with a known
+.TP
+.IR grid: (1)
+registers a resource with a known
+.TP
+.IR grid: (1)
+graphical interface for configuring tasks using and resources
+.TP
+.IR gridstart (1)
+connect to a public 9p service grid
+.TP
+.IR grmodels (1)
+mesh viewer
+.TP
+.IR gzip (1)
+compression and decompression utilities
+.TP
+.IR halogen (1)
+perspective driving demo
+.TP
+.IR hanoi (1)
+Towers of Hanoi animation
+.TP
+.IR idea (1)
+encrypt/decrypt a file with the IDEA cipher
+.TP
+.IR itest (1)
+run tests and replay results
+.TP
+.IR join (1)
+join a spree clique.
+.TP
+.IR keepaway (1)
+keep-away ball game
+.TP
+.IR keyboard (1)
+character input for touch screen devices
+.TP
+.IR kill (1)
+terminate process(es)
+.TP
+.IR life (1)
+Conway's Game of Life
+.TP
+.IR limbo (1)
+Limbo compiler
+.TP
+.IR lines (1)
+animated lines
+.TP
+.IR listen (1)
+network connections
+.TP
+.IR logic (1)
+truth-table synthesizer
+.TP
+.IR logon (1)
+log on to Inferno
+.TP
+.IR logwindow (1)
+window that pops up when data becomes available.
+.TP
+.IR look (1)
+find lines in a sorted list
+.TP
+.IR ls (1)
+list files
+.TP
+.IR m4 (1)
+macro processor
+.TP
+.IR main (1)
+operators on the basic Alphabet types
+.TP
+.IR man (1)
+print or find manual pages
+.TP
 .IR mash (1)
-do so by raising a special exception (eg, using the
-.B raise
-statement in Limbo).
-The exception's value is a string
-beginning with the text
-.RB ` fail: '.
+programmable shell
+.TP
+.IR mash-make (1)
+builtin `make' functionality
+.TP
+.IR mash-tk (1)
+control visual elements of mash window
+.TP
+.IR massspring (1)
+mass-spring sandbox
+.TP
+.IR maze (1)
+maze editor and solver
+.TP
+.IR mc (1)
+multicolumn print
+.TP
+.IR miniterm (1)
+Minitel® emulator
+.TP
+.IR mk (1)
+maintain (make) related files
+.TP
+.IR mkdir (1)
+make a directory
+.TP
+.IR mload (1)
+namespace separation for shell modules
+.TP
+.IR monitor (1)
+graphical display for viewing resource use.
+.TP
+.IR mprof (1)
+memory profiling limbo programs
+.TP
+.IR mux (1)
+interactive television demo
+.TP
+.IR mv (1)
+move files
+.TP
+.IR netkey (1)
+calculate response to authentication challenge
+.TP
+.IR netofdots (1)
+dot net pattern
+.TP
+.IR netstat (1)
+summarize network connections
+.TP
+.IR ns (1)
+display current namespace
+.TP
+.IR nsbuild (1)
+build Inferno namespace
+.TP
+.IR ohgreat (1)
+song and lyrics player
+.TP
+.IR os (1)
+interface to host OS commands (hosted Inferno only)
+.TP
+.IR p (1)
+paginate
+.TP
+.IR passwd (1)
+change user password
+.TP
+.IR pdelab (1)
+interactive partial differential equation simulations
+.TP
+.IR pinboard (1)
+window manager desktop and application launcher
+.TP
+.IR plumb (1)
+send message to plumber
+.TP
+.IR prefix (1)
+shell script string manipulation
+.TP
+.IR prof (1)
+profiling limbo programs
+.TP
+.IR ps (1)
+process (thread) status
+.TP
+.IR psalmody (1)
+note-list music editor
+.TP
+.IR pwd (1)
+print working directory
+.TP
+.IR raindrops (1)
+rain on glass demo
+.TP
+.IR rawhide (1)
+cattle herding game
+.TP
+.IR rcmd (1)
+remote command execution
+.TP
+.IR re (1)
+shell script regular expression handling
+.TP
+.IR read (1)
+read from standard input with optional seek
+.TP
+.IR report (1)
+shell module for test reporting.
+.TP
+.IR rm (1)
+remove file(s)
+.TP
+.IR rocket (1)
+rocket landing toy
+.TP
+.IR rocketscience (1)
+guided rocket game
+.TP
+.IR runas (1)
+run command as another user
+.TP
+.IR secstore (1)
+retrieve files from secure store
+.TP
+.IR sendmail (1)
+send mail messages
+.TP
+.IR sexprs (1)
+parse and generate S-expressions
+.TP
+.IR sh (1)
+command language
+.TP
+.IR sh (1)
+Window frames for the Inferno shells
+.TP
+.IR sleep (1)
+suspend execution for an interval
+.TP
+.IR sort (1)
+sort file
+.TP
+.IR span (1)
+bridge builder
+.TP
+.IR spriteedit (1)
+edit TempleOS-style sprites embedded in text
+.TP
+.IR squirt (1)
+hose and droplet toy
+.TP
+.IR stack (1)
+examine call stack
+.TP
+.IR stadium (1)
+stadium ball-throw toy
+.TP
+.IR std (1)
+standard shell builtins module.
+.TP
+.IR stream (1)
+stream data between source and sink
+.TP
+.IR strings (1)
+extract printable strings
+.TP
+.IR strut (1)
+ship and thruster editor
+.TP
+.IR sum (1)
+calculate file's checksum
+.TP
+.IR symmetry (1)
+mirror drawing
+.TP
+.IR tail (1)
+deliver the last part of a file
+.TP
+.IR talons (1)
+fishing flight game
+.TP
+.IR tcs (1)
+translate character sets
+.TP
+.IR tee (1)
+pipe fitting
+.TP
+.IR telnet (1)
+make a remote telnet connection
+.TP
+.IR temple (1)
+collection of games and demos for Wm
+.TP
+.IR thedead (1)
+side-view shooter
+.TP
+.IR tictactoe (1)
+tic-tac-toe
+.TP
+.IR time (1)
+time command execution
+.TP
+.IR timeclock (1)
+punch clock
+.TP
+.IR timestamp (1)
+log event times
+.TP
+.IR tiny: (1)
+reduced command line interface to the Inferno system
+.TP
+.IR titanium (1)
+vertical scrolling shooter
+.TP
+.IR tk (1)
+loadable tk module for sh.
+.TP
+.IR tkcmd (1)
+enter Tk commands interactively
+.TP
+.IR tktester (1)
+test Tk widgets and help design Tk layouts
+.TP
+.IR toolbar (1)
+window manager toolbar
+.TP
+.IR tos_extract_sprites (1)
+convert DolDoc binary images to Inferno image files
+.TP
+.IR tothefront (1)
+turn-based wargame
+.TP
+.IR touch (1)
+update the modification time of one or more files
+.TP
+.IR tr (1)
+translate characters
+.TP
+.IR treecheckers (1)
+radial checkers game
+.TP
+.IR tsort (1)
+topological sort
+.TP
+.IR unicode (1)
+interpret Unicode characters
+.TP
+.IR uniq (1)
+report repeated lines in a file
+.TP
+.IR units (1)
+conversion program
+.TP
+.IR uuencode (1)
+encode/decode a file
+.TP
+.IR v23/fortune (1)
+Vanadium RPC fortune client
+.TP
+.IR v23/principal (1)
+create a Vanadium principal and print a self-blessing
+.TP
+.IR v23/selftest (1)
+exercise Vanadium Limbo security primitives
+.TP
+.IR vacget (1)
+venti archive utilities
+.TP
+.IR varoom (1)
+oval-track racing game
+.TP
+.IR vixen (1)
+vi-like text editor
+.TP
+.IR vocabulary (1)
+vocabulary quiz
+.TP
+.IR wc (1)
+count lines, words, and characters
+.TP
+.IR webgrab (1)
+fetch web page content as files
+.TP
+.IR wenceslas (1)
+snow rescue game
+.TP
+.IR whap (1)
+base defense toy
+.TP
+.IR wish (1)
+interface to the Tk graphics toolkit
+.TP
+.IR wm (1)
+window manager
+.TP
+.IR wm/v23fortune (1)
+Vanadium fortune demo for wm
+.TP
+.IR xcaliber (1)
+space combat game
+.TP
+.IR xd (1)
+dump file contents in multiple formats
+.TP
+.IR yacc (1)
+yet another compiler-compiler (Limbo version)
+.TP
+.IR zeros (1)
+write sequence of bytes
+.TP
+.IR zing (1)
+bow and arrow toy
+.TP
+.IR zipstream (1)
+rewrite zip file for streaming
+.TP
+.IR zoneout (1)
+tank shooter
 .SH SEE ALSO
-.IR intro (2),
-.IR intro (3),
-.IR intro (4),
-.IR intro (5),
-.IR intro (6),
-.IR intro (7),
-.IR intro (8),
-.IR intro (9),
+.IR intro (2) ,
+.IR intro (3) ,
+.IR intro (4) ,
+.IR intro (5) ,
+.IR intro (6) ,
+.IR intro (8) ,
+.IR intro (9) ,
 .IR intro (10)
