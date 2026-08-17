@@ -125,9 +125,9 @@ wm(ctlio: ref Sys->FileIO,
 				spawn freply(wc, 0, "must read first");
 				break;
 			}
-			req <-= (c, data, wc);
+			spawn sendreq(req, c, data, wc);
 		}else if(c != nil){
-			req <-= (c, nil, nil);
+			spawn sendreq(req, c, nil, nil);
 			delclient(clients, c);
 		}
 	}
@@ -318,6 +318,16 @@ freplyb(rc: Sys->Rread, d: array of byte, err: string)
 {
 	if(rc != nil)
 		rc <-= (d, err);
+}
+
+# Forward in a spawn: this wm() proc is the single shared dispatcher for
+# every client's ctlio reads and writes. A direct send here blocks until
+# wm.b's own alt loop happens to be selecting req at that instant - which
+# stalls *every other client's* I/O too until it does, not just this one's.
+sendreq(req: chan of (ref Client, array of byte, Sys->Rwrite),
+		c: ref Client, data: array of byte, wc: Sys->Rwrite)
+{
+	req <-= (c, data, wc);
 }
 
 Client.window(c: self ref Client, tag: string): ref Window
