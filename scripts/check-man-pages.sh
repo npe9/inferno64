@@ -26,34 +26,21 @@ cd "$(dirname "$0")/.."
 # We extract everything before the \- delimiter and split on commas/spaces.
 # ---------------------------------------------------------------------------
 build_documented() {
-    python3 - <<'PYEOF'
-import os, re, sys
-
-documented = set()
-for section in ['man/1','man/2','man/3','man/4','man/5','man/6','man/7','man/8']:
-    if not os.path.isdir(section):
-        continue
-    for f in os.listdir(section):
-        path = os.path.join(section, f)
-        if not os.path.isfile(path):
-            continue
-        try:
-            text = open(path).read()
-        except Exception:
-            continue
-        m = re.search(r'\.SH NAME\s*\n(.*?)\\-', text, re.DOTALL)
-        if not m:
-            continue
-        names_str = m.group(1)
-        # Strip groff directives (lines starting with .)
-        names_str = re.sub(r'^\.[^\n]*\n', '', names_str, flags=re.MULTILINE)
-        for name in re.split(r'[,\s]+', names_str):
-            name = name.strip()
-            if name:
-                documented.add(name)
-
-print('\n'.join(sorted(documented)))
-PYEOF
+    find man -type f ! -name 'INDEX' ! -name '0intro' \
+    | sort \
+    | xargs awk '
+        /^\.SH[[:space:]]+NAME/ { in_name=1; next }
+        /^\.SH/ && in_name      { in_name=0 }
+        in_name && /\\-/ {
+            n = $0
+            sub(/\\-.*/,"",n)
+            gsub(/\.[A-Z].*/,"",n)
+            gsub(/[,[:space:]]+/,"\n",n)
+            print n
+        }
+    ' \
+    | grep -v '^$' \
+    | sort -u
 }
 
 # ---------------------------------------------------------------------------
