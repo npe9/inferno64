@@ -66,12 +66,12 @@ jobs:
               mv "$ROOT/mkconfig" "$ROOT/mkconfig.orig"
               RESTORE_MKCONFIG=1
             fi
-            cat > "$ROOT/mkconfig" <<'MKCFG'
-ROOT=$GITHUB_WORKSPACE
+            cat > "$ROOT/mkconfig" <<MKCFG
+ROOT=$ROOT
 SYSHOST=$SYSTARG
 SYSTARG=$SYSTARG
 OBJTYPE=$OBJTYPE
-SYSTYPE=posix
+SYSTYPE=$SYSTYPE
 MKCFG
             ROOT="$ROOT" SYSTARG="$SYSTARG" OBJTYPE="$OBJTYPE" SYSTYPE="$SYSTYPE" "$ROOT/makemk.sh" || true
             MKPATH="$ROOT/$SYSTARG/$OBJTYPE/bin/mk"
