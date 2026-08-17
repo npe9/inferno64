@@ -38,6 +38,7 @@ t := 0.0;
 paused := 0;
 finished := 0;
 observationmaximum := array[] of {1.0,1.0};
+ControlBandH: con 76;
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {
@@ -176,7 +177,8 @@ handlepointer(pointer: ref Draw->Pointer)
 	if(!(pointer.buttons&1) || win.image == nil)
 		return;
 	r := win.image.r;
-	if(pointer.xy.y <= r.max.y-55)
+	bandtop := r.max.y-ControlBandH;
+	if(pointer.xy.y < bandtop)
 		return;
 	n := len model.parameter;
 	width := r.dx()/n;
@@ -199,7 +201,8 @@ redraw()
 	if(im == nil)
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	content := Rect(im.r.min.add((25,38)),im.r.max.sub((18,62)));
+	bandtop := im.r.max.y-ControlBandH;
+	content := Rect(im.r.min.add((25,38)),(im.r.max.x-18,bandtop-10));
 	middle := content.min.x+(content.dx()*3)/5;
 	mechanismview := Rect(content.min,(middle-20,content.max.y));
 	plotview := Rect((middle+35,content.min.y),content.max);
@@ -299,13 +302,28 @@ drawparameter(im: ref Image, index: int, name: string,
 {
 	width := im.r.dx()/len model.parameter;
 	x := im.r.min.x+index*width;
-	y := im.r.max.y-40;
+	bandtop := im.r.max.y-ControlBandH;
+	y := bandtop+24;
 	im.line((x+4,y),(x+width-6,y),0,0,2,grid,Point(0,0));
 	fraction := (value-minima[index])/(maximum-minima[index]);
 	knob := x+4+int(fraction*real(width-10));
 	im.ellipse((knob,y),4,4,0,fg,Point(0,0));
-	im.text((x+4,im.r.max.y-17),fg,Point(0,0),font,
-		sys->sprint("%s %.3g",name,value));
+	maxchars := (width-10)/8;
+	if(maxchars < 6)
+		maxchars = 6;
+	im.text((x+4,bandtop+47),fg,Point(0,0),font,
+		sys->sprint("%s %.3g",fitlabel(name,maxchars),value));
+}
+
+fitlabel(name: string, maxchars: int): string
+{
+	if(name == nil)
+		return "";
+	if(maxchars < 4)
+		maxchars = 4;
+	if(len name <= maxchars)
+		return name;
+	return name[0:maxchars-3]+"...";
 }
 
 timer(ticks: chan of int)

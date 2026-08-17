@@ -38,6 +38,7 @@ nearby := array[] of {0.100001,0.0,0.0};
 time := 0.0;
 paused := 0;
 lessonstem := "chaos";
+ControlBandH: con 74;
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {
@@ -174,7 +175,8 @@ setpointer(point: Point)
 	if(win.image == nil)
 		return;
 	r := win.image.r;
-	if(point.y >= r.max.y-52){
+	bandtop := r.max.y-ControlBandH;
+	if(point.y >= bandtop){
 		width := r.dx()/3;
 		which := (point.x-r.min.x)/width;
 		fraction := real(point.x-(r.min.x+which*width))/real(width);
@@ -190,7 +192,11 @@ setpointer(point: Point)
 			model.beta = 5.0*fraction;
 		reset();
 	}else{
-		state[0] = 30.0*(real(r.max.y-58-point.y)/real(r.dy()-93)-0.5);
+		drawh := bandtop-r.min.y-40;
+		if(drawh < 20)
+			drawh = 20;
+		relative := real((bandtop-8)-point.y)/real(drawh);
+		state[0] = 30.0*(relative-0.5);
 		nearby[0] = state[0]+1.0e-6;
 		nearby[1] = state[1];
 		nearby[2] = state[2];
@@ -208,11 +214,12 @@ redraw()
 	image.draw(image.r,background,nil,Point(0,0));
 	graph.image = image;
 	graph.cmd("clear");
+	bandtop := image.r.max.y-ControlBandH;
 	middle := image.r.min.y+image.r.dy()*2/3;
 	phase := Rect(image.r.min.add((50,38)),
 		(image.r.max.x-22,middle-20));
 	separation := Rect((image.r.min.x+50,middle+22),
-		(image.r.max.x-22,image.r.max.y-62));
+		(image.r.max.x-22,bandtop-10));
 	tmin := time-25.0;
 	if(tmin < 0.0)
 		tmin = 0.0;
@@ -251,11 +258,12 @@ drawcontrol(image: ref Image, which: int, name: string,
 	width := image.r.dx()/3;
 	left := image.r.min.x+which*width+5;
 	right := left+width-11;
-	y := image.r.max.y-32;
+	bandtop := image.r.max.y-ControlBandH;
+	y := bandtop+24;
 	image.line((left,y),(right,y),0,0,2,grid,Point(0,0));
 	x := left+int(value/maximum*real(right-left));
 	image.ellipse((x,y),4,4,0,accent,Point(0,0));
-	image.text((left,image.r.max.y-12),foreground,Point(0,0),font,
+	image.text((left,bandtop+45),foreground,Point(0,0),font,
 		sys->sprint("%s %.3g",name,value));
 }
 
