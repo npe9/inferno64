@@ -148,21 +148,38 @@ a novel window based debugger that allows the user to identify the exact locatio
 problems, set break points and walk the data structures of any module loaded by the program. See "Program Development in Inferno" in Volume 2 for details on how to use the
 development tools that Inferno provides.
 .SH SEE ALSO
-.nf
-Section (1) (this section) for the commonly-used commands.
-Section (2) for Limbo modules, including Inferno's system calls.
-Section (3) for kernel devices (accessed by `bind').
-Section (4) for file services (accessed by `mount').
-Section (5) for the Styx file service protocol.
-Section (6) for file formats and system conventions.
-Section (7) for databases and database access modules.
-Section (8) for administrative modules and system services.
-Section (9) for the reference for Inferno's Tk variant, Limbo/Tk.
-Section (10) for the build environment and device driver implementation.
-.PP
-Volume 2 contains papers and other documentation about Inferno.
-.PP
-The back of this volume contains a permuted index.
+.TP
+.IR intro (1)
+commands and applications (this section)
+.TP
+.IR intro (2)
+Limbo modules, including system calls
+.TP
+.IR intro (3)
+kernel devices (accessed via
+.IR bind (1))
+.TP
+.IR intro (4)
+file services (accessed via
+.IR mount (1))
+.TP
+.IR intro (5)
+the Styx file service protocol
+.TP
+.IR intro (6)
+file formats and system conventions
+.TP
+.IR intro (7)
+databases and database access modules
+.TP
+.IR intro (8)
+administrative modules and system services
+.TP
+.IR intro (9)
+Limbo/Tk reference
+.TP
+.IR intro (10)
+build environment and device driver implementation
 .SH DIAGNOSTICS
 On successful execution, a process can simply exit.
 Programs (modules) that wish to return error status to
@@ -176,13 +193,3 @@ statement in Limbo).
 The exception's value is a string
 beginning with the text
 .RB ` fail: '.
-.SH SEE ALSO
-.IR intro (2),
-.IR intro (3),
-.IR intro (4),
-.IR intro (5),
-.IR intro (6),
-.IR intro (7),
-.IR intro (8),
-.IR intro (9),
-.IR intro (10)
