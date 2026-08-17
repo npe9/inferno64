@@ -9,18 +9,20 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /src
 COPY . /src
 
-# Create a CI-friendly mkconfig so makemk.sh doesn't try to use developer paths
-RUN printf 'ROOT=/src\nSYSHOST=Linux\nSYSTARG=Linux\nOBJTYPE=amd64\nSYSTYPE=posix\nCONF=emu-x11\n' > /src/mkconfig \
-    && chmod +x /src/makemk.sh || true
+# Try to build limbo directly (gcc fallback) and emu (best-effort)
+RUN printf 'ROOT=/src\nSYSHOST=Linux\nSYSTARG=Linux\nOBJTYPE=amd64\nSYSTYPE=posix\nCONF=emu-x11\n' > /src/mkconfig || true \
+    && if command -v gcc >/dev/null 2>&1; then \
+        if [ -d /src/limbo ]; then \
+          echo "Building limbo with gcc"; \
+          (cd /src/limbo && gcc -I/src/include -I/src/utils/include -o /src/limbo *.c) || true; \
+        fi; \
+    fi \
+    && if [ -d /src/emu ]; then \
+        echo "Attempting to build emu with make"; \
+        (cd /src/emu && if [ -f Makefile ]; then make || true; else echo "no Makefile for emu"; fi) || true; \
+    fi
 
-# Try to bootstrap mk and build limbo (best-effort)
-RUN /src/makemk.sh || true \
-    && if [ -x /src/Linux/amd64/bin/mk ]; then PATH=/src/Linux/amd64/bin:$PATH mk -f /src/limbo/mkfile || true; else (cd /src/limbo && gcc -I/src/include -I/src/utils/include -o limbo *.c) || true; fi
-
-# Try to build the emu (best-effort)
-RUN if [ -x /src/Linux/amd64/bin/mk ]; then PATH=/src/Linux/amd64/bin:$PATH cd /src/emu && mk CONF=emu-x11 install || true; else (cd /src/emu && make || true); fi
-
-ENV PATH="/src/Linux/amd64/bin:/usr/local/bin:$PATH"
+ENV PATH="/src:/usr/local/bin:$PATH"
 
 ENTRYPOINT ["/bin/bash","-lc"]
 CMD ["echo smoke image ready"]
