@@ -87,6 +87,15 @@ MKCFG
             else
               echo "mk not available after makemk.sh; continuing"
             fi
+
+            # Fallback: try to build limbo directly with gcc if not present
+            if [ ! -x "$ROOT/$SYSTARG/$OBJTYPE/bin/limbo" ] && command -v gcc >/dev/null 2>&1; then
+              echo "Attempting direct gcc build of limbo as fallback"
+              if [ -d "$ROOT/limbo" ]; then
+                (cd "$ROOT/limbo" && gcc -I"$ROOT/include" -I"$ROOT/utils/include" -o "$ROOT/limbo" *.c) || true
+              fi
+            fi
+
             if [ "$RESTORE_MKCONFIG" = 1 ]; then
               mv "$ROOT/mkconfig.orig" "$ROOT/mkconfig" || true
             else
