@@ -1,0 +1,43 @@
+name: Full emulator smoketest (build + run)
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+jobs:
+  build-and-run:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxft-dev libasound2-dev libgl1-mesa-dev libfreetype6-dev xvfb
+
+      - name: Build Docker image with limbo+emu
+        uses: docker/build-push-action@v4
+        with:
+          context: ./
+          file: ./docker/Smoke.Dockerfile
+          push: false
+          tags: inferno64-smoke:latest
+
+      - name: Run smoketest inside Docker
+        run: |
+          set -e
+          IMAGE=inferno64-smoke:latest
+          docker run --rm -v "$GITHUB_WORKSPACE":/src "$IMAGE" \
+            /bin/bash -lc "limbo -I /src/module -o /tmp/smoke.dis /src/appl/temple/smoketest.sbl && xvfb-run -a --server-args='-screen 0 1280x1024x24' /src/emu -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis"
+
+      - name: Archive logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoketest-artifacts-${{ matrix.os }}
+          path: /tmp/smoke.dis

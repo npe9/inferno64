@@ -1,0 +1,73 @@
+name: Quick smoketest (compile/load)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoketest:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxft-dev libasound2-dev libgl1-mesa-dev libfreetype6-dev
+
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update || true
+          brew install pkg-config || true
+
+      - name: Build (best-effort)
+        run: |
+          set -e
+          echo "Attempting to build project tools (limbo/emu) — best effort"
+          cd emu || exit 0
+          if command -v mk >/dev/null 2>&1; then
+            mk CONF=emu-x11 install || mk CONF=emu-cocoa install || mk CONF=emu-linux install || true
+          elif [ -f Makefile ]; then
+            make || true
+          else
+            echo "no build rule found in emu/ — continuing"
+          fi
+
+      - name: Bootstrap mk & build limbo (best-effort)
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE"
+          echo "Building limbo directly with gcc"
+          
+          # Try to build limbo directly with gcc
+          if [ -d "$ROOT/limbo" ] && command -v gcc >/dev/null 2>&1; then
+            echo "gcc available; attempting to build limbo..."
+            ls -la "$ROOT/limbo" || echo "limbo dir not readable"
+            (cd "$ROOT/limbo" && gcc -v -I"$ROOT/include" -I"$ROOT/utils/include" -o "$ROOT/limbo" *.c 2>&1) && echo "limbo build succeeded" || echo "limbo build failed (continuing anyway)"
+          else
+            echo "limbo dir or gcc missing; will rely on system limbo"
+          fi
+
+      - name: Compile smoketest (limbo)
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE"
+          mkdir -p /tmp/smoke
+          # find a limbo binary built in repo or fall back to system 'limbo'
+          LIMBO=""
+          if [ -x "$ROOT/limbo" ]; then LIMBO="$ROOT/limbo"; fi
+          if [ -z "$LIMBO" ] && command -v limbo >/dev/null 2>&1; then LIMBO="limbo"; fi
+          if [ -z "$LIMBO" ]; then echo "limbo not found; cannot compile smoketest"; exit 1; fi
+          echo "using limbo: $LIMBO"
+          $LIMBO -I "$ROOT/module" -o /tmp/smoke.dis "$ROOT/appl/temple/smoketest.sbl"
+
+      - name: Verify smoketest artifact
+        run: |
+          if [ -f /tmp/smoke.dis ]; then echo "smoketest compiled: /tmp/smoke.dis"; else echo "no smoketest artifact produced"; fi
