@@ -316,15 +316,15 @@ wmreq(w: ref Window, req: string, e: int): string
 	if(w.ctxt.connfd != nil){
 		if(sys->fprint(w.ctxt.connfd, "%s", req) == -1)
 			return sys->sprint("%r");
-		if(req[0] == '!')
+		if(req != nil && req[0] == '!')
 			recvimage(w);
 		return nil;
 	}
 	# if we're getting an image and there's no window manager,
 	# then there's only one image to get...
-	if(req[0] == '!')
+	if(req != nil && req[0] == '!')
 		putimage(w, w.ctxt.ctxt.display.image);
-	else{
+	else if(req != nil){
 		(nil, nil, err) := wmlib->wmctl(w.ctxt, req);
 		return err;
 	}

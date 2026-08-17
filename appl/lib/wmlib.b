@@ -276,6 +276,8 @@ reshape(wm: ref Wmcontext, name: string, r: Draw->Rect, i: ref Draw->Image, how:
 #
 wmctl(wm: ref Wmcontext, request: string): (string, ref Image, string)
 {
+	if(request == nil)
+		return (nil, nil, nil);
 	(w, e) := qword(request, 0);
 	case w {
 	"exit" =>
