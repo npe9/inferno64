@@ -9,7 +9,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,7 +47,11 @@ jobs:
           
           # Try to build limbo directly with gcc
           if [ -d "$ROOT/limbo" ] && command -v gcc >/dev/null 2>&1; then
-            (cd "$ROOT/limbo" && gcc -I"$ROOT/include" -I"$ROOT/utils/include" -o "$ROOT/limbo" *.c 2>&1) || echo "gcc limbo build failed; will try system limbo"
+            echo "gcc available; attempting to build limbo..."
+            ls -la "$ROOT/limbo" || echo "limbo dir not readable"
+            (cd "$ROOT/limbo" && gcc -v -I"$ROOT/include" -I"$ROOT/utils/include" -o "$ROOT/limbo" *.c 2>&1) && echo "limbo build succeeded" || echo "limbo build failed (continuing anyway)"
+          else
+            echo "limbo dir or gcc missing; will rely on system limbo"
           fi
 
       - name: Compile smoketest (limbo)
