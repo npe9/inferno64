@@ -39,6 +39,41 @@ jobs:
             echo "no build rule found in emu/ — continuing"
           fi
 
+      - name: Bootstrap mk & build limbo (best-effort)
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE"
+          echo "Bootstrapping mk and building limbo"
+          # Determine platform vars
+          if [ "${{ runner.os }}" = "macOS" ] || [ "${{ runner.os }}" = "macOS" ]; then
+            SYSTARG="MacOSX"
+          else
+            SYSTARG="Linux"
+          fi
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64|amd64) OBJTYPE=amd64 ;;
+            aarch64|arm64) OBJTYPE=arm64 ;;
+            *) OBJTYPE=amd64 ;;
+          esac
+          SYSTYPE=posix
+
+          # try bootstrap mk (makemk.sh will place mk and libs under $ROOT/$SYSTARG/$OBJTYPE)
+          if [ -x "$ROOT/makemk.sh" ]; then
+            chmod +x "$ROOT/makemk.sh"
+            ROOT="$ROOT" SYSTARG="$SYSTARG" OBJTYPE="$OBJTYPE" SYSTYPE="$SYSTYPE" "$ROOT/makemk.sh" || true
+            MKPATH="$ROOT/$SYSTARG/$OBJTYPE/bin/mk"
+            if [ -x "$MKPATH" ]; then
+              echo "using mk at $MKPATH to build limbo"
+              PATH="$ROOT/$SYSTARG/$OBJTYPE/bin:$PATH"
+              "$MKPATH" -f "$ROOT/limbo/mkfile" || true
+            else
+              echo "mk not available after makemk.sh; continuing"
+            fi
+          else
+            echo "makemk.sh missing; skipping mk bootstrap"
+          fi
+
       - name: Compile smoketest (limbo)
         run: |
           set -e
@@ -46,10 +81,11 @@ jobs:
           mkdir -p /tmp/smoke
           # find a limbo binary built in repo or fall back to system 'limbo'
           LIMBO=""
-          if [ -x "$ROOT/bin/limbo" ]; then LIMBO="$ROOT/bin/limbo"; fi
+          if [ -x "$ROOT/$SYSTARG/$OBJTYPE/bin/limbo" ]; then LIMBO="$ROOT/$SYSTARG/$OBJTYPE/bin/limbo"; fi
+          if [ -z "$LIMBO" ] && [ -x "$ROOT/bin/limbo" ]; then LIMBO="$ROOT/bin/limbo"; fi
           if [ -z "$LIMBO" ] && [ -x "$ROOT/limbo" ]; then LIMBO="$ROOT/limbo"; fi
           if [ -z "$LIMBO" ] && command -v limbo >/dev/null 2>&1; then LIMBO="limbo"; fi
-          if [ -z "$LIMBO" ]; then echo "limbo not found; cannot compile smoketest"; exit 0; fi
+          if [ -z "$LIMBO" ]; then echo "limbo not found; cannot compile smoketest"; exit 1; fi
           echo "using limbo: $LIMBO"
           $LIMBO -I "$ROOT/module" -o /tmp/smoke.dis "$ROOT/appl/temple/smoketest.sbl"
 

@@ -45,6 +45,40 @@ jobs:
             echo "no build rule found in emu/ — continuing"
           fi
 
+      - name: Bootstrap mk & build limbo (best-effort)
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE"
+          echo "Bootstrapping mk and building limbo"
+          # Determine platform vars
+          if [ "${{ runner.os }}" = "macOS" ] || [ "${{ runner.os }}" = "macOS" ]; then
+            SYSTARG="MacOSX"
+          else
+            SYSTARG="Linux"
+          fi
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64|amd64) OBJTYPE=amd64 ;;
+            aarch64|arm64) OBJTYPE=arm64 ;;
+            *) OBJTYPE=amd64 ;;
+          esac
+          SYSTYPE=posix
+
+          if [ -x "$ROOT/makemk.sh" ]; then
+            chmod +x "$ROOT/makemk.sh"
+            ROOT="$ROOT" SYSTARG="$SYSTARG" OBJTYPE="$OBJTYPE" SYSTYPE="$SYSTYPE" "$ROOT/makemk.sh" || true
+            MKPATH="$ROOT/$SYSTARG/$OBJTYPE/bin/mk"
+            if [ -x "$MKPATH" ]; then
+              echo "using mk at $MKPATH to build limbo"
+              PATH="$ROOT/$SYSTARG/$OBJTYPE/bin:$PATH"
+              "$MKPATH" -f "$ROOT/limbo/mkfile" || true
+            else
+              echo "mk not available after makemk.sh; continuing"
+            fi
+          else
+            echo "makemk.sh missing; skipping mk bootstrap"
+          fi
+
       - name: Locate emu and limbo
         run: |
           set -e
