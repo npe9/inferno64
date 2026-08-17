@@ -36,6 +36,7 @@ cfg := array[] of {
 	"pack .bf -anchor w",
 	"pack .t -fill both -expand 1",
 	"pack propagate . 0",
+	"bind .t.t <Control-c> {send cmd copy}",
 };
 
 eflag := 0;
@@ -147,6 +148,13 @@ logwin(fd: ref Sys->FD, top: ref Tk->Toplevel, wmchan: chan of string)
 			scrolling = int tk->cmd(top, "variable scroll");
 		"popup" =>
 			popup = int tk->cmd(top, "variable popup");
+		"copy" =>
+			sel := tk->cmd(top, ".t.t tag ranges sel");
+			if (sel != nil) {
+				range := tk->cmd(top, ".t.t tag nextrange sel 1.0");
+				if (range != nil)
+					tkclient->snarfput(tk->cmd(top, ".t.t get " + range));
+			}
 		}
 	}
 }
