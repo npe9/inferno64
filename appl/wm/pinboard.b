@@ -320,7 +320,7 @@ relayout()
 		" -width " + string screenr.dx() +
 		" -height " + string screenr.dy());
 	maxx := screenr.dx() - IconW/2;
-	maxy := screenr.dy() - (IconH/2 + LabelDY);
+	maxy := screenr.dy() - (IconH/2 + LabelBottomDY);
 	for(l := pins; l != nil; l = tl l){
 		p := hd l;
 		nx := p.x;
@@ -548,6 +548,24 @@ nextslot(): (int, int)
 	return (SlotPad + IconW/2, SlotPad + IconH/2);
 }
 
+overlapat(x, y: int): int
+{
+	nx1 := x - SelW/2;
+	nx2 := x + SelW/2;
+	ny1 := y - IconH/2;
+	ny2 := y + LabelBottomDY;
+	for(l := pins; l != nil; l = tl l){
+		p := hd l;
+		px1 := p.x - SelW/2;
+		px2 := p.x + SelW/2;
+		py1 := p.y - IconH/2;
+		py2 := p.y + LabelBottomDY;
+		if(nx1 < px2 && nx2 > px1 && ny1 < py2 && ny2 > py1)
+			return 1;
+	}
+	return 0;
+}
+
 abs(n: int): int
 {
 	if(n < 0) return -n;
@@ -567,6 +585,10 @@ cmdpin(path: string, x, y: int)
 		(x, y) = nextslot();
 	# Clamp into the canvas.
 	(x, y) = clamp(x, y);
+	# Keep initial placement legible even when pin commands include
+	# stale packed coordinates from older layouts.
+	if(overlapat(x, y))
+		(x, y) = nextslot();
 
 	p := ref Pin;
 	p.pid = nextpid++;
