@@ -92,7 +92,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		}
 	key := <-win.ctxt.kbd =>
 		case key {
-		16r1b or 'q' or 'Q' => exit;
+		16r1b or 'q' or 'Q' => win.wmctl("exit");
 		' ' => paused = !paused;
 		'r' or 'R' => reset();
 		}

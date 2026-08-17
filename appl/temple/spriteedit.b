@@ -107,7 +107,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		pointer(p);
 	k := <-win.ctxt.kbd =>
 		case k {
-		16r1b or 'q' or 'Q' => exit;
+		16r1b or 'q' or 'Q' => win.wmctl("exit");
 		's' or 'S' => save(); redraw();
 		'l' or 'L' => load_sprite(); redraw();
 		'n' or 'N' => clear_current(); redraw();

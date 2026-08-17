@@ -91,7 +91,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		}
 	key := <-win.ctxt.kbd =>
 		case key {
-		16r1b or 'q' or 'Q' => exit;
+		16r1b or 'q' or 'Q' => win.wmctl("exit");
 		' ' => paused = !paused;
 		'.' =>
 			if(paused){

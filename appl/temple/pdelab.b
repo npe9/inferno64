@@ -58,7 +58,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	p := <-win.ctxt.ptr => win.pointer(*p); pointer(p);
 	k := <-win.ctxt.kbd =>
 		case k {
-		16r1b or 'q' or 'Q' => exit;
+		16r1b or 'q' or 'Q' => win.wmctl("exit");
 		'1' or '2' or '3' => mode = k-'0'; reset();
 		'r' or 'R' => reset();
 		' ' => paused = !paused;

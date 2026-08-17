@@ -84,7 +84,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		redraw();
 	key := <-win.ctxt.kbd =>
 		case key {
-		16r1b or 'q' or 'Q' => exit;
+		16r1b or 'q' or 'Q' => win.wmctl("exit");
 		'1' => systemmode = 0; recompute(); redraw();
 		'2' => systemmode = 1; recompute(); redraw();
 		'f' or 'F' => fault = (fault+1)%4; recompute(); redraw();
