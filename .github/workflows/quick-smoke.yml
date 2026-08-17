@@ -61,6 +61,18 @@ jobs:
           # try bootstrap mk (makemk.sh will place mk and libs under $ROOT/$SYSTARG/$OBJTYPE)
           if [ -x "$ROOT/makemk.sh" ]; then
             chmod +x "$ROOT/makemk.sh"
+            # create a CI mkconfig that points at the workspace so makemk.sh doesn't use developer paths
+            if [ -f "$ROOT/mkconfig" ]; then
+              mv "$ROOT/mkconfig" "$ROOT/mkconfig.orig"
+              RESTORE_MKCONFIG=1
+            fi
+            cat > "$ROOT/mkconfig" <<'MKCFG'
+ROOT=$GITHUB_WORKSPACE
+SYSHOST=$SYSTARG
+SYSTARG=$SYSTARG
+OBJTYPE=$OBJTYPE
+SYSTYPE=posix
+MKCFG
             ROOT="$ROOT" SYSTARG="$SYSTARG" OBJTYPE="$OBJTYPE" SYSTYPE="$SYSTYPE" "$ROOT/makemk.sh" || true
             MKPATH="$ROOT/$SYSTARG/$OBJTYPE/bin/mk"
             if [ -x "$MKPATH" ]; then
@@ -69,6 +81,11 @@ jobs:
               "$MKPATH" -f "$ROOT/limbo/mkfile" || true
             else
               echo "mk not available after makemk.sh; continuing"
+            fi
+            if [ "$RESTORE_MKCONFIG" = 1 ]; then
+              mv "$ROOT/mkconfig.orig" "$ROOT/mkconfig" || true
+            else
+              rm -f "$ROOT/mkconfig" || true
             fi
           else
             echo "makemk.sh missing; skipping mk bootstrap"
