@@ -57,15 +57,19 @@ Pinboard: module
 };
 
 # Canvas geometry per icon. The image is drawn centered at (x,y);
-# the text label sits centred at (x, y + LabelDY); the optional
-# selection outline is a (W x H) rectangle centred on the icon.
+# the text label sits centred at (x, y + LabelDY); labels are wrapped
+# to LabelWrapW and clipped to LabelMaxChars so adjacent captions do
+# not overlap.
 IconW:    con 48;
 IconH:    con 48;
 LabelDY:  con 28;
+LabelBottomDY: con 50;
+LabelWrapW: con 92;
+LabelMaxChars: con 22;
 SelW:     con 56;
 SelH:     con 56;
-SlotDX:   con 96;	# auto-place grid pitch
-SlotDY:   con 80;
+SlotDX:   con 112;	# auto-place grid pitch
+SlotDY:   con 96;
 SlotPad:  con 20;	# leave a margin around the screen edge
 
 # Inferno Tk only recognises a small fixed set of colour names; use
@@ -414,6 +418,17 @@ applabel(path: string): string
 	return base;
 }
 
+fitlabel(label: string, maxchars: int): string
+{
+	if(label == nil)
+		return "";
+	if(maxchars < 4)
+		maxchars = 4;
+	if(len label <= maxchars)
+		return label;
+	return label[0:maxchars-3] + "...";
+}
+
 # RISC OS-style app folder test: name begins with '!' and contains '!Boot'.
 isapp(path: string): int
 {
@@ -556,15 +571,15 @@ cmdpin(path: string, x, y: int)
 	p := ref Pin;
 	p.pid = nextpid++;
 	p.path = path;
-	p.label = applabel(path);
+	p.label = fitlabel(applabel(path), LabelMaxChars);
 	p.x = x;
 	p.y = y;
 	p.iconname = icon;
 	tag := sys->sprint("pid%d", p.pid);
 	p.imgid = cmd(pintop, sys->sprint(".c create image %d %d -anchor center -image %s -tags {pin %s img}",
 		x, y, icon, tag));
-	p.txtid = cmd(pintop, sys->sprint(".c create text %d %d -anchor n -text {%s} -justify center -fill %s -tags {pin %s txt}",
-		x, y + LabelDY, p.label, Fgcolor, tag));
+	p.txtid = cmd(pintop, sys->sprint(".c create text %d %d -anchor n -width %d -text {%s} -justify center -fill %s -tags {pin %s txt}",
+		x, y + LabelDY, LabelWrapW, p.label, Fgcolor, tag));
 	p.selid = "";
 
 	# Per-item double-click so activate sees a pid, not coords.
@@ -582,7 +597,7 @@ cmdpin(path: string, x, y: int)
 clamp(x, y: int): (int, int)
 {
 	maxx := screenr.dx() - IconW/2;
-	maxy := screenr.dy() - (IconH/2 + LabelDY);
+	maxy := screenr.dy() - (IconH/2 + LabelBottomDY);
 	if(x < IconW/2) x = IconW/2;
 	if(x > maxx)    x = maxx;
 	if(y < IconH/2) y = IconH/2;
@@ -795,7 +810,7 @@ pinat(x, y: int): ref Pin
 	for(l := pins; l != nil; l = tl l){
 		p := hd l;
 		if(x >= p.x - SelW/2 && x < p.x + SelW/2 &&
-		   y >= p.y - IconH/2 && y < p.y + LabelDY + 20)
+		   y >= p.y - IconH/2 && y < p.y + LabelBottomDY)
 			return p;
 	}
 	return nil;

@@ -40,6 +40,8 @@ include "string.m";
 Fontwidth: 	int;
 font:		string;
 Xwidth:		con 50;
+IconLabelMaxChars: con 22;
+IconRowDY: con 62;
 
 WmDir: module
 {
@@ -301,6 +303,17 @@ applabel(name: string): string
 	return name;
 }
 
+iconlabel(name: string, maxchars: int): string
+{
+	if(name == nil)
+		return "";
+	if(maxchars < 4)
+		maxchars = 4;
+	if(len name <= maxchars)
+		return name;
+	return name[0:maxchars-3] + "...";
+}
+
 defcursor(t: ref Toplevel)
 {
 	tk->cmd(t, "cursor -default");
@@ -485,6 +498,8 @@ drawdirico(t: ref Toplevel)
 	longest := 0;
 	for(i := 0; i < nde; i++) {
 		l := len applabel(de[i].name);
+		if(l > IconLabelMaxChars)
+			l = IconLabelMaxChars;
 		if(l > longest)
 			longest = l;
 	}
@@ -510,11 +525,16 @@ drawdirico(t: ref Toplevel)
 		sx := string x;
 		ft := filetype(t, de[i], de[i].name);
 		img := ft.tkname;
+		lbl := iconlabel(applabel(de[i].name), xwid/Fontwidth - 2);
+		labelw := xwid - 8;
+		if(labelw < 24)
+			labelw = 24;
 		
 		id := tk->cmd(t, ".fc.c create image "+sx+" "+
 				string y+" -image "+img);
 		tk->cmd(t, ".fc.c create text "+sx+
-				" "+string (y+25)+" -text "+applabel(de[i].name));
+				" "+string (y+25)+" -anchor n -width "+string labelw+
+				" -justify center -text {"+lbl+"}");
 
 		base := ".fc.c bind "+id;
 		tk->cmd(t, base+" <Double-Button-1> {send fc %b "+string i+"}");
@@ -525,10 +545,10 @@ drawdirico(t: ref Toplevel)
 		x += xwid;
 		if(x > w) {
 			x = xwid/2;
-			y += 50;
+			y += IconRowDY;
 		}
 	}
-	y += 50;
+	y += IconRowDY;
 	x = int tk->cmd(t, ".fc.c cget actwidth");
 	tk->cmd(t, ".fc.c configure -scrollregion { 0 0 "+string x+" "+string y+"}");
 }
