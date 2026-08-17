@@ -46,11 +46,14 @@ check_wrapper_target() {
 	[ -f "appl/$expected_ns/$app.dis" ] || fail "missing app binary source for $file -> appl/$expected_ns/$app.dis"
 }
 
+# Category folder !Run files (top-level !Boot+!Run for wm/dir) are exempt.
 while IFS= read -r -d '' f; do
+	[ "$f" = "Apps/!Danby/!Run" ] && continue
 	check_wrapper_target "$f" "temple"
 done < <(find Apps/!Danby -name '!Run' -type f -print0)
 
 while IFS= read -r -d '' f; do
+	[ "$f" = "Apps/!Temple/!Run" ] && continue
 	check_wrapper_target "$f" "temple"
 done < <(find Apps/!Temple -name '!Run' -type f -print0)
 
