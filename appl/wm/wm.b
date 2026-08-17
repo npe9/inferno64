@@ -346,6 +346,14 @@ sendctl(c: chan of string, s: string)
 	c <-= s;
 }
 
+# Like sendctl, but for two messages that must arrive in order - spawning
+# each separately wouldn't guarantee that.
+sendctl2(c: chan of string, s1, s2: string)
+{
+	c <-= s1;
+	c <-= s2;
+}
+
 freply(rc: Sys->Rwrite, n: int, err: string)
 {
 	if(rc != nil)
@@ -837,11 +845,14 @@ setfocus(win: ref Wmclient->Window, new: ref Client)
 	if(new != nil && (new.flags & Kbdstarted) == 0)
 		return;
 	if(old != nil)
-		old.ctl <-= "haskbdfocus 0";
-	
+		spawn sendctl(old.ctl, "haskbdfocus 0");
+
 	if(new != nil){
-		new.ctl <-= "raise";
-		new.ctl <-= "haskbdfocus 1";
+		# new just asked to "start kbd" from inside its own synchronous
+		# setup (see wm.b's handlerequest "start"/"kbd" case) and isn't
+		# necessarily draining its ctl channel yet - a direct send here
+		# risks the same deadlock the join handler's "rect" send had.
+		spawn sendctl2(new.ctl, "raise", "haskbdfocus 1");
 		kbdfocus = new;
 	} else
 		kbdfocus = nil;
