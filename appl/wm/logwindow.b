@@ -152,12 +152,8 @@ logwin(fd: ref Sys->FD, top: ref Tk->Toplevel, wmchan: chan of string)
 		"popup" =>
 			popup = int tk->cmd(top, "variable popup");
 		"snarf" =>
-			sel := tk->cmd(top, ".t.t tag ranges sel");
-			if (sel != nil) {
-				range := tk->cmd(top, ".t.t tag nextrange sel 1.0");
-				if (range != nil)
-					tkclient->snarfput(tk->cmd(top, ".t.t get " + range));
-			}
+			if (tk->cmd(top, ".t.t tag ranges sel") != "")
+				tkclient->snarfput(tk->cmd(top, ".t.t get sel.first sel.last"));
 		"paste" =>
 			s := tkclient->snarfget();
 			if (s != "")
