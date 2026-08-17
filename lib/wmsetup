@@ -69,7 +69,7 @@ pin /Apps/!Filer' >/chan/pinboard
 		# ls /Apps yields full paths (/Apps/!TempleFoo); match on basename.
 		for a in `{ls /Apps} {
 			base := `{basename $a}
-			if {~ $base '!Temple*' '!Model*' '!PDELab'} {
+			if {~ $base '!Temple' '!Danby' '!Models' '!Lessons' '!Temple*' '!Model*' '!PDELab'} {
 				# Depending on ls formatting, a can be either !TempleFoo or
 				# /Apps/!TempleFoo. Pinboard requires an absolute path.
 				if {~ $a '/*'} {
