@@ -96,7 +96,25 @@ MKCFG
             echo "makemk.sh missing; skipping mk bootstrap"
           fi
 
-      - name: Locate emu and limbo
+      - name: Build Docker image with limbo+emu (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        uses: docker/build-push-action@v4
+        with:
+          context: ./
+          file: ./docker/Smoke.Dockerfile
+          push: false
+          tags: inferno64-smoke:latest
+
+      - name: Run smoketest inside Docker (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -e
+          IMAGE=inferno64-smoke:latest
+          docker run --rm -v "$GITHUB_WORKSPACE":/src "$IMAGE" \
+            /bin/bash -lc "limbo -I /src/module -o /tmp/smoke.dis /src/appl/temple/smoketest.sbl && xvfb-run -a --server-args='-screen 0 1280x1024x24' /src/emu -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis"
+
+      - name: Locate emu and limbo (macOS fallback)
+        if: matrix.os == 'macos-latest'
         run: |
           set -e
           ROOT="$GITHUB_WORKSPACE"
@@ -105,7 +123,8 @@ MKCFG
           echo "EMU_PATH=$EMU_PATH" >> $GITHUB_ENV
           echo "LIMBO_PATH=$LIMBO_PATH" >> $GITHUB_ENV
 
-      - name: Compile smoketest (limbo)
+      - name: Compile smoketest (limbo) (macOS fallback)
+        if: matrix.os == 'macos-latest'
         run: |
           set -e
           ROOT="$GITHUB_WORKSPACE"
@@ -118,7 +137,8 @@ MKCFG
           fi
           $LIMBO -I "$ROOT/module" -o /tmp/smoke.dis "$ROOT/appl/temple/smoketest.sbl"
 
-      - name: Run smoketest (emu)
+      - name: Run smoketest (emu) (macOS fallback)
+        if: matrix.os == 'macos-latest'
         run: |
           set -e
           ROOT="$GITHUB_WORKSPACE"
@@ -127,15 +147,8 @@ MKCFG
             if command -v emu >/dev/null 2>&1; then EMU=emu; fi
           fi
           if [ -z "$EMU" ]; then echo "emu not found; cannot run full smoketest"; exit 1; fi
-
-          # run under Xvfb on Linux
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            echo "Running emu under Xvfb"
-            xvfb-run -a --server-args='-screen 0 1280x1024x24' "$EMU" -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis || true
-          else
-            echo "Running emu on macOS runner (no Xvfb)"
-            "$EMU" -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis || true
-          fi
+          echo "Running emu on macOS runner (no Xvfb)"
+          "$EMU" -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis || true
 
       - name: Archive logs
         if: always()
