@@ -330,9 +330,13 @@ launchapp(approot: string)
 
 	ns := load Newns Newns->PATH;
 	if(ns != nil){
-		err := ns->newns(nil, approot + "/!Boot");
-		if(err != nil)
-			return;
+		bootpath := approot + "/!Boot";
+		(ok, nil) := sys->stat(bootpath);
+		if(ok >= 0){
+			err := ns->newns(nil, bootpath);
+			if(err != nil)
+				return;
+		}
 	}
 
 	sh := load Sh Sh->PATH;

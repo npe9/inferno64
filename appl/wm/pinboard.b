@@ -951,10 +951,14 @@ launch_app(approot: string)
 
 	ns := load Newns Newns->PATH;
 	if(ns != nil){
-		err := ns->newns(nil, approot + "/!Boot");
-		if(err != nil){
-			sys->fprint(sys->fildes(2), "pinboard: !Boot %s: %s\n", approot, err);
-			return;
+		bootpath := approot + "/!Boot";
+		(bok, nil) := sys->stat(bootpath);
+		if(bok >= 0){
+			err := ns->newns(nil, bootpath);
+			if(err != nil){
+				sys->fprint(sys->fildes(2), "pinboard: !Boot %s: %s\n", approot, err);
+				return;
+			}
 		}
 	}
 	sh := load Sh Sh->PATH;
