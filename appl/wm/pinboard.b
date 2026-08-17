@@ -56,6 +56,11 @@ Pinboard: module
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+Wm: module
+{
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
 # Canvas geometry per icon. The image is drawn centered at (x,y);
 # the text label sits centred at (x, y + LabelDY); labels are wrapped
 # to LabelWrapW and clipped to LabelMaxChars so adjacent captions do
@@ -440,6 +445,9 @@ isapp(path: string): int
 	if(base == nil || base[0] != '!')
 		return 0;
 	(ok, nil) := sys->stat(path + "/!Boot");
+	if(ok < 0)
+		return 0;
+	(ok, nil) = sys->stat(path + "/!Run");
 	return ok >= 0;
 }
 
@@ -897,6 +905,13 @@ activate(path: string)
 {
 	if(isapp(path)){
 		spawn launch_app(path);
+		return;
+	}
+	(ok, d) := sys->stat(path);
+	if(ok >= 0 && (d.mode & Sys->DMDIR)){
+		mod := load Wm "/dis/wm/dir.dis";
+		if(mod != nil)
+			spawn mod->init(drawctxt, "pinboard" :: path :: nil);
 		return;
 	}
 	if(!plumbed)
