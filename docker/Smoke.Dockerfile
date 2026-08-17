@@ -9,17 +9,16 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /src
 COPY . /src
 
-# Try to build limbo directly (gcc fallback) and emu (best-effort)
-RUN printf 'ROOT=/src\nSYSHOST=Linux\nSYSTARG=Linux\nOBJTYPE=amd64\nSYSTYPE=posix\nCONF=emu-x11\n' > /src/mkconfig || true \
-    && if command -v gcc >/dev/null 2>&1; then \
-        if [ -d /src/limbo ]; then \
-          echo "Building limbo with gcc"; \
-          (cd /src/limbo && gcc -I/src/include -I/src/utils/include -o /src/limbo *.c) || true; \
-        fi; \
-    fi \
-    && if [ -d /src/emu ]; then \
-        echo "Attempting to build emu with make"; \
-        (cd /src/emu && if [ -f Makefile ]; then make || true; else echo "no Makefile for emu"; fi) || true; \
+# Build limbo directly with gcc (no makemk.sh)
+RUN if [ -d /src/limbo ] && command -v gcc >/dev/null 2>&1; then \
+      echo "Building limbo with gcc"; \
+      cd /src/limbo && gcc -I/src/include -I/src/utils/include -o /src/limbo *.c || echo "limbo build failed"; \
+    fi
+
+# Build emu with make if Makefile exists
+RUN if [ -d /src/emu ] && [ -f /src/emu/Makefile ]; then \
+      echo "Building emu with make"; \
+      cd /src/emu && make || echo "emu make failed"; \
     fi
 
 ENV PATH="/src:/usr/local/bin:$PATH"
