@@ -355,15 +355,15 @@ is started and might as well be set along side the
 environment variable if the same configuration options are to be used on
 each invocation.
 .P1
-set EMU="-rd:\eDocuments and Settings\ejohn\einferno -g1024x768"
+set EMU="-rd:\eDocuments and Settings\ejohn\einferno -g1024x768 -pheap=64m -pimage=32m"
 .P2
 for Windows.
 .P1
-EMU=(-r/usr/john/inferno -g1024x768)
+EMU=(-r/usr/john/inferno -g1024x768 -pheap=64m -pimage=32m)
 .P2
 for Plan 9, and
 .P1
-EMU="-r/usr/john/inferno -g1024x768"
+EMU="-r/usr/john/inferno -g1024x768 -pheap=64m -pimage=32m"
 .P2
 for Unix.
 An alternative to using the
