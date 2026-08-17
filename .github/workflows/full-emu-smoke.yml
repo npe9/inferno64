@@ -51,7 +51,7 @@ jobs:
           ROOT="$GITHUB_WORKSPACE"
           echo "Bootstrapping mk and building limbo"
           # Determine platform vars
-          if [ "${{ runner.os }}" = "macOS" ] || [ "${{ runner.os }}" = "macOS" ]; then
+          if [ "$RUNNER_OS" = "macOS" ]; then
             SYSTARG="MacOSX"
           else
             SYSTARG="Linux"
