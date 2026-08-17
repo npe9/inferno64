@@ -38,7 +38,7 @@ t := 0.0;
 paused := 0;
 finished := 0;
 observationmaximum := array[] of {1.0,1.0};
-ControlBandH: con 88;
+ControlBandH: con 76;
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {
@@ -202,10 +202,10 @@ redraw()
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
 	bandtop := im.r.max.y-ControlBandH;
-	content := Rect(im.r.min.add((25,38)),(im.r.max.x-18,bandtop-16));
+	content := Rect(im.r.min.add((25,38)),(im.r.max.x-18,bandtop-10));
 	middle := content.min.x+(content.dx()*3)/5;
-	mechanismview := Rect(content.min.add((8,6)),(middle-28,content.max.y-8));
-	plotview := Rect((middle+43,content.min.y+6),(content.max.x-8,content.max.y-8));
+	mechanismview := Rect(content.min,(middle-20,content.max.y));
+	plotview := Rect((middle+35,content.min.y),content.max);
 	drawmechanism(im,mechanismview);
 	graph.image = im;
 	graph.cmd("clear");
@@ -224,8 +224,6 @@ redraw()
 	graph.cmd("line quantities history x time y first colour first width 2");
 	graph.cmd("line quantities history x time y second colour second width 2");
 	graph.draw();
-	im.text((plotview.min.x+10,plotview.min.y+15),firstcolour,Point(0,0),font,observablelabels[0]);
-	im.text((plotview.min.x+10,plotview.min.y+30),secondcolour,Point(0,0),font,observablelabels[1]);
 	values := modelmodule->observables(model,state);
 	status := "running";
 	if(paused)
@@ -313,7 +311,7 @@ drawparameter(im: ref Image, index: int, name: string,
 	maxchars := (width-10)/8;
 	if(maxchars < 6)
 		maxchars = 6;
-	im.text((x+4,bandtop+44),fg,Point(0,0),font,
+	im.text((x+4,bandtop+47),fg,Point(0,0),font,
 		sys->sprint("%s %.3g",fitlabel(name,maxchars),value));
 }
 

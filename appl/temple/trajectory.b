@@ -42,7 +42,7 @@ groundimpact := 0;
 xmaximum := 10.0;
 ymaximum := 5.0;
 speedmaximum := 10.0;
-ControlBandH: con 88;
+ControlBandH: con 76;
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {
@@ -217,10 +217,10 @@ redraw()
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
 	bandtop := im.r.max.y-ControlBandH;
-	content := Rect(im.r.min.add((48,38)),(im.r.max.x-18,bandtop-16));
+	content := Rect(im.r.min.add((48,38)),(im.r.max.x-18,bandtop-10));
 	middle := content.min.x+(content.dx()*2)/3;
-	flight := Rect(content.min.add((8,6)),(middle-33,content.max.y-8));
-	telemetry := Rect((middle+38,content.min.y+6),(content.max.x-8,content.max.y-8));
+	flight := Rect(content.min,(middle-25,content.max.y));
+	telemetry := Rect((middle+30,content.min.y),content.max);
 	graph.image = im;
 	graph.cmd("clear");
 	graph.cmd(sys->sprint("view flight %d %d %d %d",
@@ -241,8 +241,6 @@ redraw()
 	graph.cmd("axis telemetry y speed");
 	graph.cmd("line telemetry history x time y speed colour speed width 2");
 	graph.draw();
-	im.text((flight.min.x+10,flight.min.y+15),pathcolour,Point(0,0),font,"trajectory");
-	im.text((telemetry.min.x+10,telemetry.min.y+15),speedcolour,Point(0,0),font,"speed");
 	status := "in flight";
 	if(groundimpact)
 		status = "landed";
@@ -269,7 +267,7 @@ drawparameter(im: ref Image, index: int, name: string,
 	maxchars := (width-10)/8;
 	if(maxchars < 6)
 		maxchars = 6;
-	im.text((x+4,bandtop+44),fg,Point(0,0),font,
+	im.text((x+4,bandtop+47),fg,Point(0,0),font,
 		sys->sprint("%s %.3g",fitlabel(name,maxchars),value));
 }
 
