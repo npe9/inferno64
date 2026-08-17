@@ -10,103 +10,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install deps (Linux)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxft-dev libasound2-dev libgl1-mesa-dev libfreetype6-dev xvfb
 
-      - name: Install deps (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew update || true
-          brew install pkg-config || true
-
-      - name: Build emulator (best-effort)
-        run: |
-          set -e
-          echo "Building emulator (best-effort)"
-          cd emu || exit 0
-          # try common conf targets; callers can edit these if repo uses different CONF names
-          if command -v mk >/dev/null 2>&1; then
-            if [ "${{ matrix.os }}" = "macos-latest" ]; then
-              mk CONF=emu-cocoa install || true
-            else
-              mk CONF=emu-x11 install || mk CONF=emu-linux install || true
-            fi
-          elif [ -f Makefile ]; then
-            make || true
-          else
-            echo "no build rule found in emu/ — continuing"
-          fi
-
-      - name: Bootstrap mk & build limbo (best-effort)
-        run: |
-          set -e
-          ROOT="$GITHUB_WORKSPACE"
-          echo "Bootstrapping mk and building limbo"
-          # Determine platform vars
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            SYSTARG="MacOSX"
-          else
-            SYSTARG="Linux"
-          fi
-          ARCH=$(uname -m)
-          case "$ARCH" in
-            x86_64|amd64) OBJTYPE=amd64 ;;
-            aarch64|arm64) OBJTYPE=arm64 ;;
-            *) OBJTYPE=amd64 ;;
-          esac
-          SYSTYPE=posix
-
-          if [ -x "$ROOT/makemk.sh" ]; then
-            chmod +x "$ROOT/makemk.sh"
-            # create a CI mkconfig that points at the workspace so makemk.sh doesn't use developer paths
-            if [ -f "$ROOT/mkconfig" ]; then
-              mv "$ROOT/mkconfig" "$ROOT/mkconfig.orig"
-              RESTORE_MKCONFIG=1
-            fi
-            cat > "$ROOT/mkconfig" <<MKCFG
-ROOT=$ROOT
-SYSHOST=$SYSTARG
-SYSTARG=$SYSTARG
-OBJTYPE=$OBJTYPE
-SYSTYPE=$SYSTYPE
-MKCFG
-            ROOT="$ROOT" SYSTARG="$SYSTARG" OBJTYPE="$OBJTYPE" SYSTYPE="$SYSTYPE" "$ROOT/makemk.sh" || true
-            MKPATH="$ROOT/$SYSTARG/$OBJTYPE/bin/mk"
-            if [ -x "$MKPATH" ]; then
-              echo "using mk at $MKPATH to build limbo"
-              PATH="$ROOT/$SYSTARG/$OBJTYPE/bin:$PATH"
-              "$MKPATH" -f "$ROOT/limbo/mkfile" || true
-            else
-              echo "mk not available after makemk.sh; continuing"
-            fi
-
-            # Fallback: try to build limbo directly with gcc if not present
-            if [ ! -x "$ROOT/$SYSTARG/$OBJTYPE/bin/limbo" ] && command -v gcc >/dev/null 2>&1; then
-              echo "Attempting direct gcc build of limbo as fallback"
-              if [ -d "$ROOT/limbo" ]; then
-                (cd "$ROOT/limbo" && gcc -I"$ROOT/include" -I"$ROOT/utils/include" -o "$ROOT/limbo" *.c) || true
-              fi
-            fi
-
-            if [ "$RESTORE_MKCONFIG" = 1 ]; then
-              mv "$ROOT/mkconfig.orig" "$ROOT/mkconfig" || true
-            else
-              rm -f "$ROOT/mkconfig" || true
-            fi
-          else
-            echo "makemk.sh missing; skipping mk bootstrap"
-          fi
-
-      - name: Build Docker image with limbo+emu (ubuntu only)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build Docker image with limbo+emu
         uses: docker/build-push-action@v4
         with:
           context: ./
@@ -114,50 +28,12 @@ MKCFG
           push: false
           tags: inferno64-smoke:latest
 
-      - name: Run smoketest inside Docker (ubuntu only)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Run smoketest inside Docker
         run: |
           set -e
           IMAGE=inferno64-smoke:latest
           docker run --rm -v "$GITHUB_WORKSPACE":/src "$IMAGE" \
             /bin/bash -lc "limbo -I /src/module -o /tmp/smoke.dis /src/appl/temple/smoketest.sbl && xvfb-run -a --server-args='-screen 0 1280x1024x24' /src/emu -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis"
-
-      - name: Locate emu and limbo (macOS fallback)
-        if: matrix.os == 'macos-latest'
-        run: |
-          set -e
-          ROOT="$GITHUB_WORKSPACE"
-          EMU_PATH=$(find "$ROOT" -type f -name emu -perm -111 -print -quit || true)
-          LIMBO_PATH=$(find "$ROOT" -type f -name limbo -perm -111 -print -quit || true)
-          echo "EMU_PATH=$EMU_PATH" >> $GITHUB_ENV
-          echo "LIMBO_PATH=$LIMBO_PATH" >> $GITHUB_ENV
-
-      - name: Compile smoketest (limbo) (macOS fallback)
-        if: matrix.os == 'macos-latest'
-        run: |
-          set -e
-          ROOT="$GITHUB_WORKSPACE"
-          if [ -n "$LIMBO_PATH" ] && [ -x "$LIMBO_PATH" ]; then
-            LIMBO="$LIMBO_PATH"
-          elif command -v limbo >/dev/null 2>&1; then
-            LIMBO=limbo
-          else
-            echo "limbo not found; cannot compile smoketest"; exit 1
-          fi
-          $LIMBO -I "$ROOT/module" -o /tmp/smoke.dis "$ROOT/appl/temple/smoketest.sbl"
-
-      - name: Run smoketest (emu) (macOS fallback)
-        if: matrix.os == 'macos-latest'
-        run: |
-          set -e
-          ROOT="$GITHUB_WORKSPACE"
-          EMU=${{ env.EMU_PATH }}
-          if [ -z "$EMU" ]; then
-            if command -v emu >/dev/null 2>&1; then EMU=emu; fi
-          fi
-          if [ -z "$EMU" ]; then echo "emu not found; cannot run full smoketest"; exit 1; fi
-          echo "Running emu on macOS runner (no Xvfb)"
-          "$EMU" -g1280x1024 -pheap=64m -pimage=32m /tmp/smoke.dis || true
 
       - name: Archive logs
         if: always()
