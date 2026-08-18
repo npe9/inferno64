@@ -678,7 +678,8 @@ dragwin(ptr: chan of ref Pointer, c: ref Client, w: ref Wmsrv->Window, off: Poin
 			org.x = scr.min.x + Margin - w.r.dx();
 		else if(org.x > scr.max.x - Margin)
 			org.x = scr.max.x - Margin;
-		w.img.origin(w.img.r.min, org);
+		if(w.img != nil)
+			w.img.origin(w.img.r.min, org);
 	} while (p.buttons != 0);
 	c.ptr <-= p;
 	buttons = 0;
