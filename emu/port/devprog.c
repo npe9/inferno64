@@ -195,7 +195,7 @@ proggen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 			return -1;
 		}
 		mkqid(&qid, pid<<QSHIFT, pid, QTDIR);
-		devdir(c, qid, up->genbuf, 0, o->user, DMDIR|0555, dp);
+		devdir(c, qid, up->genbuf, 0, o!=nil? o->user: eve, DMDIR|0555, dp);
 		release();
 		return 1;
 	}
@@ -431,7 +431,11 @@ progsize(Prog *p)
 	size = 0;
 	if(m->MP != H)
 		size += hmsize(D2H(m->MP));
-	if(m->prog != nil)
+	/* m->prog is native compiled code (not pool-allocated) when
+	 * m->compiled - msize() expects a pool allocation header just
+	 * before the pointer, so calling it here segfaults on whatever
+	 * garbage precedes the compiled code in memory. */
+	if(!m->compiled && m->prog != nil)
 		size += msize(m->prog);
 
 	fp = p->R.FP;
@@ -441,7 +445,7 @@ progsize(Prog *p)
 		if(f->mr != nil) {
 			if(f->mr->MP != H)
 				size += hmsize(D2H(f->mr->MP));
-			if(f->mr->prog != nil)
+			if(!f->mr->compiled && f->mr->prog != nil)
 				size += msize(f->mr->prog);
 		}
 		if(f->t == nil)
@@ -772,6 +776,14 @@ modstatus(REG *r, char *ptr, int len)
 
 	if(r->M->m->name[0] == '$') {
 		f = (Frame*)r->FP;
+		/* f or f->mr can be nil for a frame with no caller module yet
+		 * (e.g. a just-spawned thread) - progstack() below guards the
+		 * same field for the same reason; ps/status reads used to
+		 * segfault the whole emulator hitting this unguarded. */
+		if(f == nil || f->mr == nil) {
+			snprint(ptr, len, "%s", r->M->m->name);
+			return 0;
+		}
 		snprint(ptr, len, "%s[%s]", f->mr->m->name, r->M->m->name);
 		if(f->mr->compiled)
 			return (WORD)f->lr;
@@ -857,7 +869,7 @@ progread(Chan *c, void *va, long n, vlong offset)
 		snprint(up->genbuf, sizeof(up->genbuf), "%8d %8d %10s %s %10s %5dK %s",
 			p->pid,
 			p->group!=nil? p->group->id: 0,
-			o->user,
+			o!=nil? o->user: eve,
 			progtime(p->ticks, timebuf, timebuf+sizeof(timebuf)),
 			progstate[p->state],
 			progsize(p),
