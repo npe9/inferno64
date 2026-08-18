@@ -723,7 +723,15 @@ sizewin(ptrc: chan of ref Pointer, c: ref Client, w: ref Wmsrv->Window, minsize:
 			offset.y = xy.y - r.max.y;
 		}
 	}
-	return reshape(c, w.tag, sweep(ptrc, r, offset, borders, move, show, minsize));
+	nr := sweep(ptrc, r, offset, borders, move, show, minsize);
+	# dragwin() resets this after its own modal drag loop; sizewin() never
+	# did, leaving the global button-down state stuck from whatever click
+	# started the resize. The main loop's click dispatch only re-picks a
+	# focus target when buttons==0, so every click after a resize keeps
+	# going to the just-resized (and now possibly differently-shaped)
+	# window instead of wherever was actually clicked.
+	buttons = 0;
+	return reshape(c, w.tag, nr);
 }
 
 reshape(c: ref Client, tag: string, r: Rect): string
