@@ -23,6 +23,7 @@
 #define NSIG 32
 #endif
 #include	<signal.h>
+#include	<execinfo.h>
 #include	<pwd.h>
 #include	<sys/resource.h>
 #include	<sys/time.h>
@@ -115,12 +116,37 @@ pexit(char *msg, int t)
 
 
 
+/* Native C call stack at the point of a hardware trap (SIGSEGV/SIGBUS/
+ * SIGILL/SIGFPE). This build JIT-compiles Dis to native code, so a nil
+ * field access, an out-of-range array access in compiled code, or a
+ * genuine memory-corruption bug all surface as one of these signals
+ * with nothing but a one-line "disfault:" message and an address -
+ * there was previously no way to tell whether the fault happened in
+ * the draw/tk native layer, the interpreter itself, or elsewhere
+ * without attaching a native debugger. backtrace_symbols_fd writes
+ * directly to the fd with no further allocation, so it's usable from
+ * inside a signal handler.
+ */
+static void
+printbacktrace(void)
+{
+	void *frames[64];
+	int n;
+
+	n = backtrace(frames, nelem(frames));
+	if(n <= 0)
+		return;
+	fprint(2, "disfault: native backtrace (%d frames):\n", n);
+	backtrace_symbols_fd(frames, n, 2);
+}
+
 static void
 sysfault(char *what, void *addr)
 {
 	char buf[64];
 
 	snprint(buf, sizeof(buf), "sys: %s%#p", what, addr);
+	printbacktrace();
 	disfault(nil, buf);
 }
 
@@ -142,9 +168,10 @@ static void
 trapmemref(int signo, siginfo_t *si, void *a)
 {
 	USED(a);	/* ucontext_t*, could fetch pc in machine-dependent way */
-	if(isnilref(si))
+	if(isnilref(si)){
+		printbacktrace();
 		disfault(nil, exNilref);
-	else if(signo == SIGBUS)
+	}else if(signo == SIGBUS)
 		sysfault("bad address addr=", si->si_addr);	/* eg, misaligned */
 	else
 		sysfault("segmentation violation addr=", si->si_addr);
@@ -158,6 +185,7 @@ trapFPE(int signo, siginfo_t *si, void *a)
 	USED(signo);
 	USED(a);
 	snprint(buf, sizeof(buf), "sys: fp: exception status=%.4lux pc=%#p", getfsr(), si->si_addr);
+	printbacktrace();
 	disfault(nil, buf);
 }
 

@@ -477,6 +477,7 @@ extern	Array*		mem2array(void*, int);
 extern	void		mlink(Module*, Link*, uchar*, int, int, Type*);
 extern	void		modinit(void);
 extern	WORD		modstatus(REG*, char*, int);
+extern	int			progstack(REG*, int, char*, int, long);
 extern	void		movp(void);
 extern	void		movtmp(void);
 extern	void		movtmpsafe(void);

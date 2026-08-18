@@ -1028,6 +1028,24 @@ disfault(void *reg, char *msg)
 	if(p == nil)
 		panic("Interp faults with no dis prog");
 
+	/* Print the Dis-level call stack at fault time: which module/pc was
+	 * running and what called it. Without this, a native fault (segv,
+	 * bad address) or an "array bounds"/"dereference of nil" trap only
+	 * ever reports a one-line message with no indication of where in
+	 * the Limbo source it happened - previously the only way to find
+	 * that out was reading /prog/pid/stack before the broken prog got
+	 * cleaned up (if it did at all), or attaching a native debugger. */
+	{
+		char stackbuf[4096];
+		int n;
+
+		n = progstack(&p->R, p->state, stackbuf, sizeof(stackbuf)-1, 0);
+		if(n > 0){
+			stackbuf[n] = '\0';
+			print("disfault: %s\nstack:\n%s", msg, stackbuf);
+		}
+	}
+
 	/* cause an exception in the dis prog.  As for error(), but Plan 9 needs reg*/
 	kstrcpy(up->env->errstr, msg, ERRMAX);
 	print("disfault: %s\n", msg);

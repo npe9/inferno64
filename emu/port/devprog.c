@@ -547,7 +547,7 @@ pc2dispc(Inst *pc, Module *mod)
 	return 0;
 }
 
-static int
+int
 progstack(REG *reg, int state, char *va, int count, long offset)
 {
 	int n;
