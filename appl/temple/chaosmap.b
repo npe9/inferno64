@@ -60,7 +60,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	fillbifurcation();
 	fillselected();
 	win.reshape(Rect((0,0),(900,570)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	redraw();
 	for(;;) alt {

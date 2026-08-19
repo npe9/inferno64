@@ -108,7 +108,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	trail = array[Ntrail] of array of real;
 	reset();
 	win.reshape(Rect((0,0),(920,580)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	ticks := chan of int;
 	spawn timer(ticks);

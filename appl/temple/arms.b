@@ -87,7 +87,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.reshape(Rect((0,0),(900,650)));
 	# Exact placement prevents WM's placement gestures from leaking into the
 	# phase portrait or parameter controls.
-	win.onscreen("exact");
+	win.onscreen("place");
 	pointerready = 2;
 	win.startinput("kbd"::"ptr"::nil);
 	ticks := chan of int;

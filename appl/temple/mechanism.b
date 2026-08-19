@@ -96,7 +96,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		"colour second 16r7b5aa6ff");
 	reset();
 	win.reshape(Rect((0,0),(900,560)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	ticks := chan of int;
 	spawn timer(ticks);

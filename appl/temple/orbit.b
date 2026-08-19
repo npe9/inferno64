@@ -54,7 +54,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	 histt=array[1200] of real;
 	 histy=array[1200] of real;
 	win.reshape(Rect((0,0),(720,450)));
-	 win.onscreen("exact");
+	 win.onscreen("place");
 	 win.startinput("kbd"::"ptr"::nil);
 	ticks:=chan of int;
 	 spawn timer(ticks);

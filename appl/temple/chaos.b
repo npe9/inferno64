@@ -82,7 +82,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	declareplot();
 	reset();
 	win.reshape(Rect((0,0),(900,610)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	ticks := chan of int;
 	spawn timer(ticks);

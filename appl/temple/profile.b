@@ -82,7 +82,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		"colour second 16r178f86ff");
 	recompute();
 	win.reshape(Rect((0,0),(860,520)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	redraw();
 	for(;;) alt {

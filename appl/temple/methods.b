@@ -82,7 +82,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	declareplot();
 	recompute();
 	win.reshape(Rect((0,0),(920,680)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	redraw();
 	for(;;) alt {

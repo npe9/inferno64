@@ -54,7 +54,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	win = wmclient->window(ctxt, "Graphics stress", Wmclient->Appl);
 	win.reshape(Rect((0, 0), (800, 600)));
 	# Exact placement keeps automated runs from waiting for a pointer-driven placement.
-	win.onscreen("exact");
+	win.onscreen("place");
 	d = win.display;
 	img = win.image;
 	black = d.color(Draw->Black);

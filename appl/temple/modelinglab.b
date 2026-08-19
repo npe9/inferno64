@@ -75,7 +75,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		"colour live 16r178f86ff\ncolour accent 16rb85c38ff");
 	reset();
 	win.reshape(Rect((0,0),(980,690)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	ticks := chan of int;
 	spawn timer(ticks);

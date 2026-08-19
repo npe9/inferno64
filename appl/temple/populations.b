@@ -105,7 +105,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	graph.cmd(colours);
 	reset();
 	win.reshape(Rect((0,0),(800,500)));
-	win.onscreen("exact");
+	win.onscreen("place");
 	win.startinput("kbd"::"ptr"::nil);
 	ticks := chan of int;
 	spawn timer(ticks);
