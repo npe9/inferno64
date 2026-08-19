@@ -29,6 +29,23 @@ initzbuf(r: Rect): ref Zstate
 	return s;
 }
 
+# Like initzbuf, but reuses s's existing buffers when the pixel dimensions
+# haven't changed - just repoints s.r at the new rect (clearzbuf's caller
+# always clears right after this anyway; only min-offset indexing math
+# elsewhere reads s.r's position). Callers (draw3d.b, draw3ddev.b) call
+# this once per rendered frame, not just on an actual resize, so reallocating
+# unconditionally here reallocated and discarded two width*height int arrays
+# every single frame - the larger the window, the more GC churn per frame.
+resizezbuf(s: ref Zstate, r: Rect): ref Zstate
+{
+	if(s == nil)
+		return initzbuf(r);
+	if(s.xlen != r.dx() || s.ylen != r.dy())
+		return initzbuf(r);
+	s.r = r;
+	return s;
+}
+
 clearzbuf(s: ref Zstate)
 {
 	b0 := s.zbuf0;

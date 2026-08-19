@@ -93,7 +93,7 @@ context(dst: ref Image): ref Context
 	c.colour = nil;
 	c.transform = nil;
 	if(dst != nil){
-		c.zstate = polyfill->initzbuf(dst.r);
+		c.zstate = polyfill->resizezbuf(c.zstate, dst.r);
 		viewport(c, dst.r.min.x, dst.r.min.y, dst.r.max.x, dst.r.max.y);
 	}
 	# matrix stacks
@@ -118,7 +118,7 @@ resize(c: ref Context, dst: ref Image)
 	ensure();
 	c.dst = dst;
 	if(dst != nil){
-		c.zstate = polyfill->initzbuf(dst.r);
+		c.zstate = polyfill->resizezbuf(c.zstate, dst.r);
 		viewport(c, dst.r.min.x, dst.r.min.y, dst.r.max.x, dst.r.max.y);
 	}else
 		c.zstate = nil;
@@ -131,7 +131,7 @@ setzarea(c: ref Context, r: Rect)
 	if(c == nil)
 		return;
 	if(r.dx() > 0 && r.dy() > 0)
-		c.zstate = polyfill->initzbuf(r);
+		c.zstate = polyfill->resizezbuf(c.zstate, r);
 	else
 		c.zstate = nil;
 }
