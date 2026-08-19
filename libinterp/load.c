@@ -451,7 +451,7 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			DNP(",%d", v);
 			h = nheap(sizeof(Array)+(pt->size*v));
 			h->t = &Tarray;
-			h->t->ref++;
+			AINC(&h->t->ref);
 			ary = H2D(Array*, h);
 			ary->t = pt;
 			ary->len = v;
@@ -702,7 +702,7 @@ lookmod(char *s)
 
 	for(m = modules; m != nil; m = m->link)
 		if(strcmp(s, m->path) == 0) {
-			m->ref++;
+			AINC(&m->ref);
 			return m;
 		}
 	return nil;
@@ -748,11 +748,12 @@ void
 unload(Module *m)
 {
 	Module **last, *mm;
+	int nr;
 
-	m->ref--;
-	if(m->ref > 0)
+	nr = ADEC(&m->ref);
+	if(nr > 0)
 		return;
-	if(m->ref == -1)
+	if(nr == -1)
 		abort();
 
 	last = &modules;

@@ -1222,7 +1222,7 @@ Crypt_sktopk(void *fp)
 	}
 	if(pk == H)
 		return;
-	D2H(pk)->ref++;
+	AINC(&D2H(pk)->ref);
 	*f->ret = pk;
 }
 

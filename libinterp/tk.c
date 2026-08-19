@@ -101,7 +101,7 @@ Tk_toplevel(void *a)
 	poolimmutable(h);
 
 	t->dd = f->d;
-	D2H(t->dd)->ref++;
+	AINC(&D2H(t->dd)->ref);
 
 	t->execdepth = -1;
 	t->display = disp;
@@ -612,7 +612,7 @@ Tk_namechan(void *a)
 	tl->screenr = DRECT(t->screenr);
 	unlockctxt(t->ctxt);
 	h = D2H(v->value);
-	h->ref++;
+	AINC(&h->ref);
 	Setmark(h);
 	retstr("", f->ret);
 }
@@ -739,7 +739,7 @@ tkaddpanelimage(TkTop *t, Draw_Image *di, Image **i)
 
 	for (pi = t->panelimages; pi != nil; pi = pi->link) {
 		if (pi->image == di) {
-			pi->ref++;
+			AINC(&pi->ref);
 			return nil;
 		}
 	}
@@ -748,7 +748,7 @@ tkaddpanelimage(TkTop *t, Draw_Image *di, Image **i)
 	if (pi == nil)
 		return TkNomem;
 	pi->image = di;
-	D2H(di)->ref++;
+	AINC(&D2H(di)->ref);
 	pi->ref = 1;
 	pi->link = t->panelimages;
 	t->panelimages = pi;
@@ -770,7 +770,7 @@ tkdelpanelimage(TkTop *t, Image *i)
 			break;
 		prev = pi;
 	}
-	if (pi == nil || --pi->ref > 0)
+	if (pi == nil || ADEC(&pi->ref) > 0)
 		return;
 	if (prev)
 		prev->link = pi->link;
@@ -1079,7 +1079,7 @@ tktopimagedptr(TkTop *top, Draw_Image *di)
 	}
 	if(di == H)
 		return;
-	D2H(di)->ref++;
+	AINC(&D2H(di)->ref);
 	top->di = di;
 }
 
@@ -1124,7 +1124,7 @@ tksetwindrawimage(Tk *tk, Draw_Image *di)
 		unlockdisplay(i->display);
 
 	if(!same){
-		D2H(di)->ref++;
+		AINC(&D2H(di)->ref);
 		if(tk->name){
 			name = tk->name->name;
 			if(name[0] == '.' && name[1] == '\0')

@@ -291,7 +291,7 @@ Sys_tokenize(void *fp)
 		nl = cons(IBY2WD, h);
 		nl->tail = H;
 		nl->t = &Tptr;
-		Tptr.ref++;
+		AINC(&Tptr.ref);
 		*(String**)nl->data = slicer(first, last, s);
 		h = &nl->tail;
 
@@ -456,10 +456,10 @@ mem2array(void *va, int n)
 		n = 0;
 	h = nheap(sizeof(Array)+n);
 	h->t = &Tarray;
-	h->t->ref++;
+	AINC(&h->t->ref);
 	a = H2D(Array*, h);
 	a->t = &Tbyte;
-	Tbyte.ref++;
+	AINC(&Tbyte.ref);
 	a->len = n;
 	a->root = H;
 	a->data = (uchar*)a+sizeof(Array);

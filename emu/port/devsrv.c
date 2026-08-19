@@ -742,7 +742,7 @@ srvretype(Channel *c, SrvFile *f, Type *t)
 	h = D2H(c);
 	freetype(h->t);
 	h->t = t;
-	t->ref++;
+	AINC(&t->ref);
 	c->aux = f;
 }
 

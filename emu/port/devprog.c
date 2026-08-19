@@ -366,7 +366,7 @@ closedbgctl(Progctl *ctl, Prog *p)
 {
 	Osenv *o;
 
-	if(ctl->ref-- > 1)
+	if(ADEC(&ctl->ref) > 0)
 		return;
 	freebpts(ctl->bpts);
 	if(p != nil){
@@ -1399,7 +1399,7 @@ dbgxec(Prog *p)
 
 	env = p->osenv;
 	ctl = env->debug;
-	ctl->ref++;
+	AINC(&ctl->ref);
 	if(waserror()){
 		closedbgctl(ctl, p);
 		nexterror();

@@ -128,7 +128,7 @@ freearray(Heap *h, int swept)
 			}
 		}
 	}
-	if(t->ref-- == 1) {
+	if(ADEC(&t->ref) == 0) {
 		freejitcode(t->initialize);
 		free(t);
 	}
@@ -147,8 +147,7 @@ freelist(Heap *h, int swept)
 	if(t != nil) {
 		if(!swept && t->np)
 			freeptrs(l->data, t);
-		t->ref--;
-		if(t->ref == 0) {
+		if(ADEC(&t->ref) == 0) {
 			freejitcode(t->initialize);
 			free(t);
 		}
@@ -159,14 +158,13 @@ freelist(Heap *h, int swept)
 	while(l != (List*)H) {
 		t = l->t;
 		th = D2H(l);
-		if(th->ref-- != 1)
+		if(ADEC(&th->ref) != 0)
 			break;
-		th->t->ref--;	/* should be &Tlist and ref shouldn't go to 0 here nor be 0 already */
+		ADEC(&th->t->ref);	/* should be &Tlist and ref shouldn't go to 0 here nor be 0 already */
 		if(t != nil) {
 			if (t->np)
 				freeptrs(l->data, t);
-			t->ref--;
-			if(t->ref == 0) {
+			if(ADEC(&t->ref) == 0) {
 				freejitcode(t->initialize);
 				free(t);
 			}
@@ -222,7 +220,7 @@ destroy(void *v)
 	h = D2H(v);
 	{ Bhdr *b; D2B(b, h); }		/* consistency check */
 
-	if(--h->ref > 0 || gchalt > 64) 	/* Protect 'C' thread stack */
+	if(ADEC(&h->ref) > 0 || gchalt > 64) 	/* Protect 'C' thread stack */
 		return;
 
 	if(heapmonitor != nil)
@@ -265,7 +263,7 @@ checktype(void *v, Type *t, char *name, int newref)
 	if(t == nil || h->t != t)
 		errorf("%s: %s", exType, name);
 	if(newref){
-		h->ref++;
+		AINC(&h->ref);
 		Setmark(h);
 	}
 	return v;
@@ -274,7 +272,7 @@ checktype(void *v, Type *t, char *name, int newref)
 void
 freetype(Type *t)
 {
-	if(t == nil || --t->ref > 0)
+	if(t == nil || ADEC(&t->ref) > 0)
 		return;
 
 	freejitcode(t->initialize);
@@ -298,7 +296,7 @@ incmem(void *vw, Type *t)
 			for(m = 0x80; m != 0; m >>= 1) {
 				if((c & m) && (wp = *q) != H) {
 					h = D2H(wp);
-					h->ref++;
+					AINC(&h->ref);
 					Setmark(h);
 				}
 				q++;
@@ -386,7 +384,7 @@ heapz(Type *t)
 		error(exHeap);
 
 	h->t = t;
-	t->ref++;
+	AINC(&t->ref);
 	h->ref = 1;
 	h->color = mutator;
 	memset(H2D(void*, h), 0, t->size);
@@ -407,7 +405,7 @@ heap(Type *t)
 		error(exHeap);
 
 	h->t = t;
-	t->ref++;
+	AINC(&t->ref);
 	h->ref = 1;
 	h->color = mutator;
 	if(t->np)
@@ -425,7 +423,7 @@ heaparray(Type *t, int sz)
 
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
-	Tarray.ref++;
+	AINC(&Tarray.ref);
 	a = H2D(Array*, h);
 	a->t = t;
 	a->len = sz;
@@ -447,7 +445,7 @@ initarray(Type *t, Array *a)
 	int i;
 	uchar *p;
 
-	t->ref++;
+	AINC(&t->ref);
 	if(t->np == 0)
 		return;
 
@@ -472,10 +470,10 @@ arraycpy(Array *sa)
 
 	dh = nheap(sizeof(Array) + sa->t->size*sa->len);
 	dh->t = &Tarray;
-	Tarray.ref++;
+	AINC(&Tarray.ref);
 	da = H2D(Array*, dh);
 	da->t = sa->t;
-	da->t->ref++;
+	AINC(&da->t->ref);
 	da->len = sa->len;
 	da->root = H;
 	da->data = (uchar*)da + sizeof(Array);
@@ -520,7 +518,7 @@ newmp(void *dst, void *src, Type *t)
 					if(h->t == &Tarray)
 						*q = arraycpy(wp);
 					else {
-						h->ref++;
+						AINC(&h->ref);
 						Setmark(h);
 					}
 				}

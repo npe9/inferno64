@@ -781,7 +781,7 @@ doselect(void *fp, int dotags)
 			else
 				pe = element(pe, i, nil);
 			destroy(f->ret->t2);
-			D2H(pe)->ref++;
+			AINC(&D2H(pe)->ref);
 			f->ret->t2 = &pe->e;
 			if(locked)
 				unlockdisplay(pc->display);

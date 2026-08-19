@@ -358,7 +358,7 @@ Display_allocate(void *fp)
 		if(display->defaultfont){
 			c = cacheinstall(fcache, display, deffontname, display->defaultfont, "font");
 			if(c)
-				c->ref++;
+				AINC(&c->ref);
 			/* else BUG? */
 		}
 	}
@@ -437,14 +437,14 @@ Display_getwindow(void *fp)
 	if(screen != nil){
 		if(f->screen != H){
 			f->ret->t0 = f->screen;
-			D2H(f->screen)->ref++;
+			AINC(&D2H(f->screen)->ref);
 		}else
 			f->ret->t0 = mkdrawscreen(screen, f->d);
 	}
 	if(image != nil){
 		if(f->image != H){
 			f->ret->t1 = f->image;
-			D2H(f->image)->ref++;
+			AINC(&D2H(f->image)->ref);
 		}else
 			f->ret->t1 = mkdrawimage(image, f->ret->t0, f->d, nil);
 	}
@@ -473,7 +473,7 @@ display_dec(void *v)
 	int locked;
 
 	dr = v;
-	if(dr->ref-- != 1)
+	if(ADEC(&dr->ref) != 0)
 		return;
 
 	d = dr->display;
@@ -1206,7 +1206,7 @@ Image_name(void *fp)
 		destroy(f->src->iname);
 		if(f->in){
 			f->src->iname = f->name;
-			D2H(f->name)->ref++;
+			AINC(&D2H(f->name)->ref);
 		}else
 			f->src->iname = H;
 	}
@@ -1325,7 +1325,7 @@ Display_namedimage(void *fp)
 			unlockdisplay(d);
 	}else{
 		di->iname = f->name;
-		D2H(f->name)->ref++;
+		AINC(&D2H(f->name)->ref);
 	}
 }
 
@@ -1390,14 +1390,14 @@ mkdrawscreen(Screen *s, Draw_Display *display)
 	ds = H2D(DScreen*, h);
 	ds->screen = s;
 	ds->drawscreen.fill = dfill;
-	D2H(dfill)->ref++;
+	AINC(&D2H(dfill)->ref);
 	ds->drawscreen.image = dimage;
-	D2H(dimage)->ref++;
+	AINC(&D2H(dimage)->ref);
 	ds->drawscreen.display = dimage->display;
-	D2H(dimage->display)->ref++;
+	AINC(&D2H(dimage->display)->ref);
 	ds->drawscreen.id = s->id;
 	ds->dref = s->display->limbo;
-	ds->dref->ref++;
+	AINC(&ds->dref->ref);
 	return &ds->drawscreen;
 }
 
@@ -1420,14 +1420,14 @@ allocdrawscreen(Draw_Image *dimage, Draw_Image *dfill, int public)
 	ds = H2D(DScreen*, h);
 	ds->screen = s;
 	ds->drawscreen.fill = dfill;
-	D2H(dfill)->ref++;
+	AINC(&D2H(dfill)->ref);
 	ds->drawscreen.image = dimage;
-	D2H(dimage)->ref++;
+	AINC(&D2H(dimage)->ref);
 	ds->drawscreen.display = dimage->display;
-	D2H(dimage->display)->ref++;
+	AINC(&D2H(dimage->display)->ref);
 	ds->drawscreen.id = s->id;
 	ds->dref = image->display->limbo;
-	ds->dref->ref++;
+	AINC(&ds->dref->ref);
 	return ds;
 }
 
@@ -1481,9 +1481,9 @@ Display_publicscreen(void *fp)
 	ds->drawscreen.image =H;
 	ds->drawscreen.id = s->id;
 	ds->drawscreen.display = f->d;
-	D2H(f->d)->ref++;
+	AINC(&D2H(f->d)->ref);
 	ds->dref = disp->limbo;
-	ds->dref->ref++;
+	AINC(&ds->dref->ref);
 	*f->ret = &ds->drawscreen;
 }
 
@@ -1564,13 +1564,13 @@ Font_build(void *fp)
 	dfont = H2D(DFont*, h);
 	dfont->font = font;
 	dfont->drawfont.name = f->name;
-	D2H(f->name)->ref++;
+	AINC(&D2H(f->name)->ref);
 	dfont->drawfont.height = font->height;
 	dfont->drawfont.ascent = font->ascent;
 	dfont->drawfont.display = f->d;
-	D2H(f->d)->ref++;
+	AINC(&D2H(f->d)->ref);
 	dfont->dref = disp->limbo;
-	dfont->dref->ref++;
+	AINC(&dfont->dref->ref);
 
 	*f->ret = &dfont->drawfont;
 }
@@ -1595,7 +1595,7 @@ font_open(Display *display, char *name)
 		c = cacheinstall(fcache, display, name, font, "font");
 	}
 	if(c)
-		c->ref++;
+		AINC(&c->ref);
 
 	return font;
 }
@@ -1615,7 +1615,7 @@ font_close(Font *f)
 	if(c != nil && f == c->u.f) {
 		if(c->ref <= 0)
 			return;
-		if(c->ref-- != 1)
+		if(ADEC(&c->ref) != 0)
 			return;
 		cacheuninstall(fcache, disp, f->name, "font");
 	}
@@ -1639,7 +1639,7 @@ freecachedsubfont(Subfont *sf)
 		return;
 	}
 	if(c->ref > 0)
-		c->ref--;
+		ADEC(&c->ref);
 	/* if ref is zero, we leave it around for later harvesting by freeallsubfonts */
 }
 
@@ -1664,7 +1664,7 @@ freeallsubfonts(Display *d)
 					prev->next = c->next;
 				free(c->name);
 				sf = c->u.sf;
-				if(--sf->ref==0){
+				if(ADEC(&sf->ref)==0){
 					free(sf->info);
 					locked = lockdisplay(c->display);
 					freeimage(sf->bits);
@@ -1722,13 +1722,13 @@ Font_open(void *fp)
 	df = H2D(DFont*, h);
 	df->font = font;
 	df->drawfont.name = f->name;
-	D2H(f->name)->ref++;
+	AINC(&D2H(f->name)->ref);
 	df->drawfont.height = font->height;
 	df->drawfont.ascent = font->ascent;
 	df->drawfont.display = f->d;
-	D2H(f->d)->ref++;
+	AINC(&D2H(f->d)->ref);
 	df->dref = disp->limbo;
-	df->dref->ref++;
+	AINC(&df->dref->ref);
 	*f->ret = &df->drawfont;
 }
 
@@ -1953,10 +1953,10 @@ mkdrawimage(Image *i, Draw_Screen *screen, Draw_Display *display, void *ref)
 	di->image = i;
 	di->drawimage.screen = screen;
 	if(screen != H)
-		D2H(screen)->ref++;
+		AINC(&D2H(screen)->ref);
 	di->drawimage.display = display;
 	if(display != H)
-		D2H(display)->ref++;
+		AINC(&D2H(display)->ref);
 	di->refreshptr = ref;
 
 	R2R(di->drawimage.r, i->r);
@@ -1966,7 +1966,7 @@ mkdrawimage(Image *i, Draw_Screen *screen, Draw_Display *display, void *ref)
 	di->drawimage.repl = i->repl;
 	di->flush = 1;
 	di->dref = i->display->limbo;
-	di->dref->ref++;
+	AINC(&di->dref->ref);
 	return &di->drawimage;
 }
 
@@ -2160,10 +2160,10 @@ allocdrawimage(DDisplay *ddisplay, Draw_Rect r, ulong chan, Image *iimage, int r
 	di->drawimage.depth = chantodepth(chan);
 	di->drawimage.repl = repl;
 	di->drawimage.display = (Draw_Display*)ddisplay;
-	D2H(di->drawimage.display)->ref++;
+	AINC(&D2H(di->drawimage.display)->ref);
 	di->drawimage.screen = H;
 	di->dref = ddisplay->display->limbo;
-	di->dref->ref++;
+	AINC(&di->dref->ref);
 	di->image = image;
 	di->refreshptr = 0;
 	di->flush = 1;
@@ -2193,7 +2193,7 @@ installsubfont(char *name, Subfont *subfont)
 
 	c = cacheinstall(sfcache, subfont->bits->display, name, subfont, "subfont");
 	if(c)
-		c->ref++;
+		AINC(&c->ref);
 }
 
 /*

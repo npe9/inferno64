@@ -368,6 +368,23 @@ struct Handler
 #define gcunlock()	gchalt--
 #define gcruns()	(gchalt == 0)
 
+/* Atomic refcount inc/dec: the scheduler genuinely runs multiple native
+ * threads executing Dis bytecode concurrently (see emu/port/dis.c's
+ * vmachine()/acquire()/release()), so two threads touching the same
+ * object's ->ref field is a real, not hypothetical, race - a plain
+ * `->ref++`/`--h->ref` can lose an update or, worse, let two threads both
+ * observe the count hit zero and both free the object. AINC returns the
+ * post-increment value (mainly for symmetry - most call sites don't need
+ * it); ADEC returns the post-decrement value, which callers that gate
+ * freeing on "did *I* just take it to zero" (e.g. heap.c's destroy())
+ * need to check instead of the old `--h->ref > 0` pattern. Guarded against
+ * redefinition since both interp.h and emu/port/dat.h define these (not
+ * every .c file that touches a ->ref field includes both). */
+#ifndef AINC
+#define AINC(p)	__atomic_fetch_add((p), 1, __ATOMIC_SEQ_CST)
+#define ADEC(p)	__atomic_sub_fetch((p), 1, __ATOMIC_SEQ_CST)
+#endif
+
 extern	int	bflag;
 extern	int	cflag;
 extern	int	nproc;

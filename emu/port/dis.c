@@ -350,7 +350,7 @@ newprog(Prog *p, Modlink *m)
 	n->exval = H;
 
 	h = D2H(m);
-	h->ref++;
+	AINC(&h->ref);
 	Setmark(h);
 	n->R.M = m;
 	n->R.MP = m->MP;
@@ -1279,6 +1279,51 @@ vmachine(void *a)
 		up->env = &up->defenv;
 	}
 
+	/* GC-LOCK HISTORY: r->xec(r) below runs with no lock held, and
+	 * multiple vmachine kprocs (spun up by release() whenever a proc
+	 * blocks on native I/O) each independently pull procs off
+	 * isched.runhd and call xec() in parallel - genuine concurrent
+	 * execution, not hypothetical. libinterp/heap.c's destroy() used to
+	 * decrement refcounts with a plain, non-atomic `--h->ref`, so two
+	 * threads decrementing the same object's refcount at once was a
+	 * lost-update race -> could hit 0 twice -> double free. Root-caused
+	 * via a resize-triggered wm.dis crash that persisted even after
+	 * fixing the specific Limbo-level race it looked like (see
+	 * appl/wm/wm.b's pendingsnapslock and git log for that
+	 * investigation).
+	 *
+	 * First attempt was a single global lock (dislock) around Dis
+	 * execution - taken at the end of acquire(), dropped at the start
+	 * of release(), plus wrapped directly around this r->xec(r) call.
+	 * REVERTED: it deadlocked basic multi-command shell usage
+	 * (`sh -c 'echo a; echo b'` - only "a" ever printed). Cause: proc
+	 * termination/error handling in this VM unwinds via longjmp
+	 * (waserror()/nexterror()), which jumps straight back to
+	 * vmachine()'s own `while(waserror())` recovery block at the top of
+	 * this function, skipping right over the paired unlock() - leaving
+	 * the lock held by nobody forever.
+	 *
+	 * Fixed instead with atomics: every genuinely-shared ->ref++/--
+	 * site across heap.c, xec.c, draw.c, tk.c, loader.c, keyring.c,
+	 * link.c, load.c, string.c, runt.c, crypt.c, and the emu/port
+	 * files that touch Limbo heap objects (devdraw.c, exception.c,
+	 * dis.c, devprog.c, devsrv.c, srv.c) now goes through AINC()/ADEC()
+	 * (see include/interp.h / emu/port/dat.h - __atomic_fetch_add /
+	 * __atomic_sub_fetch). No held state, so no longjmp-skips-the-
+	 * unlock failure mode - each op is a single indivisible instruction.
+	 * emu/port/{chan,devpipe,devssl,devsrv,exportfs,pgrp}.c's own
+	 * device-level refcounts were already protected by an existing
+	 * lock (verified per-site) and were left alone.
+	 *
+	 * REMAINING GAP: this only covers the interpreted (-c0) path.
+	 * libinterp/comp-arm64.c - the JIT backend, which is what actually
+	 * runs by default (cflag=1, i.e. -c1) - emits plain, non-atomic
+	 * load/modify/store machine code for the same h->ref field (see
+	 * its OHeap,ref) mem() calls). That's a separate, harder,
+	 * architecture-specific fix (would need LSE atomic instructions or
+	 * a CAS-retry sequence in the generated code) and is NOT done.
+	 * Everything in this investigation was validated with -c0. See
+	 * memory inferno-rio-gc-lock-todo for the full writeup. */
 	cycles = 0;
 	for(;;) {
 		if(tready(nil) == 0) {

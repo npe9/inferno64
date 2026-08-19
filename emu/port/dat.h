@@ -512,3 +512,12 @@ enum
 #pragma	varargck	type	"E" uchar*
 
 extern void	(*mainmonitor)(int, void*, ulong);
+
+/* Atomic refcount inc/dec - see the matching definition (and full
+ * rationale) in include/interp.h. Duplicated here, guarded against
+ * redefinition, because plenty of emu/port .c files touch a ->ref field
+ * without including interp.h. */
+#ifndef AINC
+#define AINC(p)	__atomic_fetch_add((p), 1, __ATOMIC_SEQ_CST)
+#define ADEC(p)	__atomic_sub_fetch((p), 1, __ATOMIC_SEQ_CST)
+#endif

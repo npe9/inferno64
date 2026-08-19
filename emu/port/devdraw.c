@@ -557,12 +557,12 @@ drawinstallscreen(Client *client, DScreen *d, int id, DImage *dimage, DImage *df
 		d->dimage = dimage;
 		if(dimage){
 			s->image = dimage->image;
-			dimage->ref++;
+			AINC(&dimage->ref);
 		}
 		d->dfill = dfill;
 		if(dfill){
 			s->fill = dfill->image;
-			dfill->ref++;
+			AINC(&dfill->ref);
 		}
 		d->ref = 0;
 		d->id = id;
@@ -573,7 +573,7 @@ drawinstallscreen(Client *client, DScreen *d, int id, DImage *dimage, DImage *df
 		dscreen = d;
 	}
 	c->dscreen = d;
-	d->ref++;
+	AINC(&d->ref);
 	c->next = client->cscreen;
 	client->cscreen = c;
 	return d->screen;
@@ -593,11 +593,12 @@ void
 drawfreedscreen(DScreen *this)
 {
 	DScreen *ds, *next;
+	int nr;
 
-	this->ref--;
-	if(this->ref < 0)
+	nr = ADEC(&this->ref);
+	if(nr < 0)
 		print("negative ref in drawfreedscreen\n");
-	if(this->ref > 0)
+	if(nr > 0)
 		return;
 	ds = dscreen;
 	if(ds == this){
@@ -628,11 +629,12 @@ drawfreedimage(DImage *dimage)
 	int i;
 	Memimage *l;
 	DScreen *ds;
+	int nr;
 
-	dimage->ref--;
-	if(dimage->ref < 0)
+	nr = ADEC(&dimage->ref);
+	if(nr < 0)
 		print("negative ref in drawfreedimage\n");
-	if(dimage->ref > 0)
+	if(nr > 0)
 		return;
 
 	/* any names? */
@@ -2050,7 +2052,7 @@ drawmesg(Client *client, void *av, int n)
 					memldelete(l);
 					error(Edrawmem);
 				}
-				dscrn->ref++;
+				AINC(&dscrn->ref);
 				if(reffn){
 					refx = nil;
 					if(reffn == drawrefresh){
@@ -2317,7 +2319,7 @@ drawmesg(Client *client, void *av, int n)
 			di->vers = dn->vers;
 			di->name = smalloc(j+1);
 			di->fromname = dn->dimage;
-			di->fromname->ref++;
+			AINC(&di->fromname->ref);
 			memmove(di->name, a+6, j);
 			di->name[j] = 0;
 			client->infoid = dstid;

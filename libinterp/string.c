@@ -476,7 +476,7 @@ newstring(int nb)
 
 	h = nheap(sizeof(String)+nb);
 	h->t = &Tstring;
-	Tstring.ref++;
+	AINC(&Tstring.ref);
 	s = H2D(String*, h);
 	s->tmp = nil;
 	s->len = nb;
@@ -496,7 +496,7 @@ newrunes(int nr)
 		nr = -nr;
 	h = nheap(sizeof(String)+nr*sizeof(Rune));
 	h->t = &Tstring;
-	Tstring.ref++;
+	AINC(&Tstring.ref);
 	s = H2D(String*, h);
 	s->tmp = nil;
 	s->len = -nr;

@@ -91,10 +91,10 @@ Loader_ifetch(void *a)
 
 	h = nheap(sizeof(Array)+m->nprog*sizeof(Loader_Inst));
 	h->t = &Tarray;
-	h->t->ref++;
+	AINC(&h->t->ref);
 	ar = H2D(Array*, h);
 	ar->t = Tinst;
-	Tinst->ref++;
+	AINC(&Tinst->ref);
 	ar->len = m->nprog;
 	ar->root = H;
 	ar->data = (uchar*)ar+sizeof(Array);
@@ -145,10 +145,10 @@ Loader_link(void *a)
 
 	h = nheap(sizeof(Array)+nlink*sizeof(Loader_Link));
 	h->t = &Tarray;
-	h->t->ref++;
+	AINC(&h->t->ref);
 	ar = H2D(Array*, h);
 	ar->t = Tlink;
-	Tlink->ref++;
+	AINC(&Tlink->ref);
 	ar->len = nlink;
 	ar->root = H;
 	ar->data = (uchar*)ar+sizeof(Array);
@@ -195,10 +195,10 @@ Loader_tdesc(void *a)
 
 	h = nheap(sizeof(Array)+m->ntype*sizeof(Loader_Typedesc));
 	h->t = &Tarray;
-	h->t->ref++;
+	AINC(&h->t->ref);
 	ar = H2D(Array*, h);
 	ar->t = Tdesc;
-	Tdesc->ref++;
+	AINC(&Tdesc->ref);
 	ar->len = m->ntype;
 	ar->root = H;
 	ar->data = (uchar*)ar+sizeof(Array);
@@ -258,10 +258,10 @@ Loader_newmod(void *a)
 	}
 	m->origmp = (uchar*)f->data;
 	h = D2H(f->data);
-	h->ref++;
+	AINC(&h->ref);
 	Setmark(h);
 	m->type[0] = h->t;
-	h->t->ref++;
+	AINC(&h->t->ref);
 
 	ia = f->inst;
 	m->nprog = ia->len;

@@ -308,7 +308,7 @@ newSK(SigAlg *sa, String *owner, int increfsa)
 	k->x.sa = (Keyring_SigAlg*)sa;
 	if(increfsa) {
 		h = D2H(sa);
-		h->ref++;
+		AINC(&h->ref);
 		Setmark(h);
 	}
 	k->x.owner = owner;
@@ -528,7 +528,7 @@ newPK(SigAlg *sa, String *owner, int increfsa)
 	k->x.sa = (Keyring_SigAlg*)sa;
 	if(increfsa) {
 		h = D2H(sa);
-		h->ref++;
+		AINC(&h->ref);
 		Setmark(h);
 	}
 	k->x.owner = owner;
@@ -737,7 +737,7 @@ newCertificate(SigAlg *sa, String *ha, String *signer, long exp, int increfsa)
 	c->x.sa = (Keyring_SigAlg*)sa;
 	if(increfsa) {
 		h = D2H(sa);
-		h->ref++;
+		AINC(&h->ref);
 		Setmark(h);
 	}
 	c->x.signer = signer;

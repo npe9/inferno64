@@ -294,7 +294,7 @@ OP(movp)
 	sv = P(s);
 	if(sv != H) {
 		h = D2H(sv);
-		h->ref++;
+		AINC(&h->ref);
 		Setmark(h);
 	}
 	dv = P(d);
@@ -437,7 +437,7 @@ OP(newa)
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
-	Tarray.ref++;
+	AINC(&Tarray.ref);
 	a = H2D(Array*, h);
 	a->t = t;
 	a->len = sz;
@@ -462,7 +462,7 @@ OP(newaz)
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
-	Tarray.ref++;
+	AINC(&Tarray.ref);
 	a = H2D(Array*, h);
 	a->t = t;
 	a->len = sz;
@@ -501,7 +501,7 @@ cnewc(Type *t, void (*mover)(void), int len)
 	c->size = 0;
 	if(mover == movtmp){
 		c->mid.t = t;
-		t->ref++;
+		AINC(&t->ref);
 	}
 	return c;
 }
@@ -786,12 +786,12 @@ OP(iload)
 
 	DBG("\t\tiload module %s for the ldt index %zd\n", n, W(m));
 	if(strcmp(n, "$self") == 0) {
-		m->ref++;
+		AINC(&m->ref);
 		ml = linkmod(m, ldt, 0);
 		if(ml != H) {
 			ml->MP = R.M->MP;
 			h = D2H(ml->MP);
-			h->ref++;
+			AINC(&h->ref);
 			Setmark(h);
 		}
 	}
@@ -826,7 +826,7 @@ OP(mcall)
 	R.FP = (uchar*)f;
 	R.M = ml;
 	h = D2H(ml);
-	h->ref++;
+	AINC(&h->ref);
 
 	DBG("\t\tmcall frame at *R.s 0x%p is\n", f);
 	if(0 && f->t != nil)
@@ -845,7 +845,7 @@ OP(mcall)
 	}
 	if(ml->prog == nil) {
 		l->runt(f);
-		h->ref--;
+		ADEC(&h->ref);
 		R.M = f->mr;
 		R.SP = R.FP;
 		R.FP = f->fp;
@@ -1116,7 +1116,7 @@ cons(ulong size, List **lp)
 
 	h = nheap(sizeof(List) + size - sizeof(((List*)0)->data));
 	h->t = &Tlist;
-	Tlist.ref++;
+	AINC(&Tlist.ref);
 	l = H2D(List*, h);
 	l->t = nil;
 
@@ -1160,11 +1160,11 @@ OP(consp)
 	sv = P(s);
 	if(sv != H) {
 		h = D2H(sv);
-		h->ref++;
+		AINC(&h->ref);
 		Setmark(h);
 	}
 	l->t = &Tptr;
-	Tptr.ref++;
+	AINC(&Tptr.ref);
 	*(WORD**)l->data = sv;
 }
 OP(consf)
@@ -1193,7 +1193,7 @@ OP(consmp)
 	incmem(R.s, t);
 	memmove(l->data, R.s, t->size);
 	l->t = t;
-	t->ref++;
+	AINC(&t->ref);
 }
 OP(headb)
 {
@@ -1280,12 +1280,12 @@ OP(slicea)
 	ss->len = n;
 	ss->data = ds->data + start*t->size;
 	ss->t = t;
-	t->ref++;
+	AINC(&t->ref);
 
 	if(ds->root != H) {			/* slicing a slice */
 		ds = ds->root;
 		h = D2H(ds);
-		h->ref++;
+		AINC(&h->ref);
 		at = A(d);
 		A(d) = ss;
 		ss->root = ds;
@@ -1385,7 +1385,7 @@ OP(iraise)
 		error(exNilref);
 	p->exval = v;
 	h = D2H(v);
-	h->ref++;
+	AINC(&h->ref);
 	if(h->t == &Tstring){
 		 error(string2c((String*)v));
 	}else{
@@ -1634,7 +1634,7 @@ OP(self)
 
 	ml = R.M;
 	h = D2H(ml);
-	h->ref++;
+	AINC(&h->ref);
 	Setmark(h);
 	mp = R.d;
 	t = *mp;

@@ -54,10 +54,10 @@ Srv_iph2a(void *fp)
 
 		hpt = nheap(sizeof(List) + IBY2WD);
 		hpt->t = &Tlist;
-		hpt->t->ref++;
+		AINC(&hpt->t->ref);
 		nl = H2D(List*, hpt);
 		nl->t = &Tptr;
-		Tptr.ref++;
+		AINC(&Tptr.ref);
 		nl->tail = (List*)H;
 		*(String**)nl->data = ss;
 
@@ -106,10 +106,10 @@ Srv_ipa2h(void *fp)
 
 		hpt = nheap(sizeof(List) + IBY2WD);
 		hpt->t = &Tlist;
-		hpt->t->ref++;
+		AINC(&hpt->t->ref);
 		nl = H2D(List*, hpt);
 		nl->t = &Tptr;
-		Tptr.ref++;
+		AINC(&Tptr.ref);
 		nl->tail = (List*)H;
 		*(String**)nl->data = ss;
 
