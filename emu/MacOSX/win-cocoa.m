@@ -2210,6 +2210,38 @@ fillscreen(Memimage *m, u32 color)
 }
 
 /*
+ * Retired softscreen buffers, kept alive briefly instead of freed
+ * immediately: a Draw layer created just before a resize can still
+ * hold a pointer into the *previous* generation's pixel memory for a
+ * little while (see the comment in screenresize() below), so freeing
+ * `old` the instant a new buffer replaces it risks a use-after-free.
+ * But never freeing it (the original approach here) leaks a full
+ * screen-sized buffer on every single resize callback - and a live
+ * drag fires many of these per second, so that exhausts the image
+ * pool (and blanks the display) within seconds of resizing.
+ * Bound it instead: once more than RETIRED generations have piled up,
+ * free the oldest. Anything that still needed it has had many more
+ * resize cycles to catch up than the single "next event" the original
+ * comment was worried about.
+ */
+enum { Retired = 4 };
+static Memimage *retired[Retired];
+static int retiredn;
+
+static void
+retirescreen(Memimage *old)
+{
+	if(old == nil)
+		return;
+	if(retiredn == Retired){
+		freememimage(retired[0]);
+		memmove(retired, retired+1, (Retired-1)*sizeof(retired[0]));
+		retiredn--;
+	}
+	retired[retiredn++] = old;
+}
+
+/*
  * Grow/shrink the softscreen to the view size.
  * notify!=0 publishes a pointer resize so wm can reshape clients.
  * Transient host gestures (live drag, zoom animation, fullscreen,
@@ -2260,8 +2292,10 @@ screenresize(int w, int h, int notify)
 		drawscreenrebind(gscreen);
 	mark_view_dirty();
 	/* Existing Draw images may still reference the old screen data while
-	 * the window system processes its resize notification.  Retain it until
-	 * process teardown rather than freeing it under those clients. */
+	 * the window system processes its resize notification - retire it
+	 * (freed after Retired more generations) rather than freeing it out
+	 * from under those clients immediately. See retirescreen(). */
+	retirescreen(old);
 }
 
 static void
@@ -2310,6 +2344,18 @@ schedule_wm_notify(void)
 			notify_screen_size();
 		});
 }
+
+/*
+ * Tried and did NOT fix a resize-triggered bug (icons replaced by a white
+ * block): forcing an extra, delayed full re-upload/present here on the
+ * theory that a present was racing wm's own Tk redraw and sampling
+ * gscreen too early. If that were the whole story, this retry - run well
+ * after the redraw should have landed - would have picked up correct
+ * data. It didn't, which means gscreen's own memory is genuinely wrong
+ * at the affected coordinates by then, not just a stale GPU snapshot of
+ * otherwise-correct memory. See memory inferno-rio-wm-resize-fixes item 7
+ * for the full diagnosis; the actual mechanism is still unresolved.
+ */
 
 /*
  * Live-resize end / fullscreen transitions: softscreen already tracks the
