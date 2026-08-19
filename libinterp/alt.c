@@ -241,11 +241,20 @@ altcomm(Alt *a, int which)
 			R.s = &c;
 			R.d = ac->ptr;
 			irecv();
-			return;	
+			return;
 		}
 		ac++;
 		n++;
 	}
+	/* Diagnostic: altrdy() (pass 1) counted `nrdy` ready channels and
+	 * xecalt() picked `which` in [0,nrdy) to hand to us; if we get here,
+	 * `which` never hit 0 against an actually-ready channel in this
+	 * pass 2 walk - i.e. a channel that looked ready during pass 1 no
+	 * longer is during pass 2. When that happens the caller's dispatch
+	 * index slot (R.d before we overwrote it above) is never written,
+	 * so a subsequent igoto reads whatever was left there. */
+	print("altcomm: no channel matched which=%d nrdy-derived, nsend=%ld nrecv=%ld\n",
+		which, (long)a->nsend, (long)a->nrecv);
 	return;
 }
 
