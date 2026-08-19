@@ -2,7 +2,7 @@
 .SH NAME
 danby-manyspecies \- one prey population shared by two predator species
 .SH SYNOPSIS
-.B temple/manyspecies
+.B danby/manyspecies
 .SH MODEL
 X' = rX(1-X/K)-a1XY-a2XZ;
 Y' = c1 a1XY-d1Y;
@@ -19,9 +19,9 @@ Drag a state bar to change an initial population.  The eight tracks set prey
 growth and capacity followed by attack, conversion, and death for each
 predator.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/manyspecies.b
+.B /appl/danby/plugin/manyspecies.b
 .br
-.B /appl/temple/manyspecies.b
+.B /appl/danby/manyspecies.b
 .br
 .B /appl/temple/populations.b
 .SH SEE ALSO

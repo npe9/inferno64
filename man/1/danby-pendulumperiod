@@ -2,10 +2,10 @@
 .SH NAME
 danby-pendulumperiod \- amplitude dependence of pendulum period
 .SH SYNOPSIS
-.B temple/pendulumperiod
+.B danby/pendulumperiod
 .SH MODEL
 The exact sine equation is compared with the small-angle prediction
 2 pi sqrt(L/g). Increasing amplitude makes the actual oscillation visibly
 depart from the approximation.
 .SH SOURCE
-.B /appl/danby/pendulumperiod.b
+.B /appl/danby/plugin/pendulumperiod.b

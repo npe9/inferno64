@@ -2,10 +2,10 @@
 .SH NAME
 danby-clockpendulum \- damped pendulum sustained by an escapement
 .SH SYNOPSIS
-.B temple/clockpendulum
+.B danby/clockpendulum
 .SH MODEL
 Damping removes energy throughout the swing. A signed escapement impulse acts
 only inside a narrow interval around the center crossing, producing a stable
 limit-cycle amplitude instead of unbounded periodic forcing.
 .SH SOURCE
-.B /appl/danby/clockpendulum.b
+.B /appl/danby/plugin/clockpendulum.b

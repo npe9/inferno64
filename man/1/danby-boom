@@ -2,7 +2,7 @@
 .SH NAME
 danby-boom \- Goodwin wage-employment cycle
 .SH SYNOPSIS
-.B temple/boom
+.B danby/boom
 .SH DESCRIPTION
 .I Temple/boom
 is an interactive live simulation of Goodwin wage-employment cycle.
@@ -35,8 +35,8 @@ The state is advanced by the general-purpose
 fourth-order Runge-Kutta solver.  Small negative values caused by numerical
 roundoff are clamped for nonnegative population and stock models.
 .SH SOURCE
-.B /appl/danby/boom.b
+.B /appl/danby/plugin/boom.b
 .br
-.B /appl/temple/boom.b
+.B /appl/danby/boom.b
 .SH SEE ALSO
 .IR numerics (2)

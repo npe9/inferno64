@@ -2,7 +2,7 @@
 .SH NAME
 danby-incubation \- SEIR epidemic with a latent compartment
 .SH SYNOPSIS
-.B temple/incubation
+.B danby/incubation
 .SH MODEL
 S'=-beta SI;
 E'=beta SI-sigma E;
@@ -18,9 +18,9 @@ recovery.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite verifies S'+E'+I'+R'=0.
 .SH SOURCE
-.B /appl/danby/incubation.b
+.B /appl/danby/plugin/incubation.b
 .br
-.B /appl/temple/incubation.b
+.B /appl/danby/incubation.b
 .SH SEE ALSO
 .IR danby-epidemic (1),
 .IR populationmodel (2)

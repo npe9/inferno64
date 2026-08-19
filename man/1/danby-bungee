@@ -2,7 +2,7 @@
 .SH NAME
 danby-bungee \- slack-to-elastic bungee-jump dynamics
 .SH SYNOPSIS
-.B temple/bungee
+.B danby/bungee
 .SH MODEL
 The jumper first free-falls with air drag.  Once fall distance exceeds cord
 length, elastic and damping forces engage.  This piecewise force law exposes
@@ -10,6 +10,6 @@ the transition from slack cord to oscillatory recovery.
 .SH DISPLAY
 The cord length follows computed fall distance; distance and speed are plotted.
 .SH SOURCE
-.B /appl/danby/bungee.b
+.B /appl/danby/plugin/bungee.b
 .SH SEE ALSO
 .IR mechanism (2)

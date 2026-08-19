@@ -2,7 +2,7 @@
 .SH NAME
 danby-foodchain \- plants, herbivores, and carnivores
 .SH SYNOPSIS
-.B temple/foodchain
+.B danby/foodchain
 .SH MODEL
 P' = rP(1-P/K)-aPH;
 H' = eaPH-dH-bHC;
@@ -26,7 +26,7 @@ The independent model module is
 Its empty boundary, metadata, and finite initial derivative are tested by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/temple/foodchain.b
+.B /appl/danby/foodchain.b
 .br
 .B /appl/temple/populations.b
 .SH SEE ALSO

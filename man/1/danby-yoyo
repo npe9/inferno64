@@ -2,12 +2,12 @@
 .SH NAME
 danby-yoyo \- coupled translation and rotation of a yo-yo
 .SH SYNOPSIS
-.B temple/yoyo
+.B danby/yoyo
 .SH MODEL
 Axle radius and rotational inertia add an effective translational mass while
 the string unwinds.  At full extension the acceleration reverses to model the
 return.  Angular speed is constrained by the no-slip winding relation.
 .SH SOURCE
-.B /appl/danby/yoyo.b
+.B /appl/danby/plugin/yoyo.b
 .SH SEE ALSO
 .IR mechanism (2)

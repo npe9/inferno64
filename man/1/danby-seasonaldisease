@@ -2,7 +2,7 @@
 .SH NAME
 danby-seasonaldisease \- SIR transmission with seasonal infectiousness
 .SH SYNOPSIS
-.B temple/seasonaldisease
+.B danby/seasonaldisease
 .SH MODEL
 beta(t)=beta0(1+s cos(wt));
 S'=-beta(t)SI;
@@ -18,9 +18,9 @@ frequency, and recovery.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The time-dependent right-hand side is tested for population conservation.
 .SH SOURCE
-.B /appl/danby/seasonaldisease.b
+.B /appl/danby/plugin/seasonaldisease.b
 .br
-.B /appl/temple/seasonaldisease.b
+.B /appl/danby/seasonaldisease.b
 .SH SEE ALSO
 .IR danby-epidemic (1),
 .IR populationmodel (2)

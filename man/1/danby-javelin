@@ -2,12 +2,12 @@
 .SH NAME
 danby-javelin \- aerodynamic motion of a javelin
 .SH SYNOPSIS
-.B temple/javelin
+.B danby/javelin
 .SH MODEL
 The javelin begins at release height and experiences gravity, quadratic drag,
 and attitude-dependent lift.  The controls permit comparison with vacuum
 flight and exploration of release angle and aerodynamic attitude.
 .SH SOURCE
-.B /appl/danby/javelin.b
+.B /appl/danby/plugin/javelin.b
 .SH SEE ALSO
 .IR trajectory (2)

@@ -2,9 +2,9 @@
 .SH NAME
 danby-loadedpendulum \- pendulum with constant applied torque
 .SH SYNOPSIS
-.B temple/loadedpendulum
+.B danby/loadedpendulum
 .SH MODEL
 A constant load shifts static equilibrium according to torque balance. Beyond
 the maximum gravitational restoring torque no locked equilibrium exists.
 .SH SOURCE
-.B /appl/danby/loadedpendulum.b
+.B /appl/danby/plugin/loadedpendulum.b

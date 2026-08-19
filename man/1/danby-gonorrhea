@@ -2,7 +2,7 @@
 .SH NAME
 danby-gonorrhea \- two-sex SIS transmission model
 .SH SYNOPSIS
-.B temple/gonorrhea
+.B danby/gonorrhea
 .SH MODEL
 Sw'=-bm Sw Im+gw Iw; Iw'=bm Sw Im-gw Iw;
 Sm'=-bw Sm Iw+gm Im; Im'=bw Sm Iw-gm Im.
@@ -17,9 +17,9 @@ Each pair is conserved independently and that invariant is regression-tested.
 Drag any compartment bar.  Tracks set both directional transmission rates and
 both recovery rates.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/gonorrhea.b
+.B /appl/danby/plugin/gonorrhea.b
 .br
-.B /appl/temple/gonorrhea.b
+.B /appl/danby/gonorrhea.b
 .SH SEE ALSO
 .IR populationmodel (2),
 .IR danby-crossinfection (1)

@@ -2,7 +2,7 @@
 .SH NAME
 danby-chaosmap \- logistic-map bifurcations, cobwebs, and Lyapunov exponent
 .SH SYNOPSIS
-.B temple/chaosmap
+.B danby/chaosmap
 .SH DESCRIPTION
 .I Chaosmap
 iterates the difference equation
@@ -35,9 +35,9 @@ at
 .SH SOURCE
 .B /module/danby/chaosmap.m
 .br
-.B /appl/danby/chaosmap.b
+.B /appl/danby/plugin/chaosmap.b
 .br
-.B /appl/temple/chaosmap.b
+.B /appl/danby/chaosmap.b
 .SH SEE ALSO
 .IR danby-chaos (1),
 .IR danby-forcedpendulum (1)

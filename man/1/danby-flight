@@ -2,7 +2,7 @@
 .SH NAME
 danby-flight \- coupled longitudinal aircraft dynamics
 .SH SYNOPSIS
-.B temple/flight
+.B danby/flight
 .SH MODEL
 Speed and flight-path angle follow thrust, lift, drag, mass, and gravity.
 Aircraft pitch and pitch rate form a coupled attitude-control mode; angle of
@@ -11,6 +11,6 @@ attack is the difference between pitch and flight-path angle.
 The aircraft drawing follows integrated pitch.  Altitude and airspeed are
 plotted against time.
 .SH SOURCE
-.B /appl/danby/flight.b
+.B /appl/danby/plugin/flight.b
 .SH SEE ALSO
 .IR mechanism (2)

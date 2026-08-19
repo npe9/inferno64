@@ -2,7 +2,7 @@
 .SH NAME
 danby-logisticpredators \- logistic regulation of prey and predators
 .SH SYNOPSIS
-.B temple/logisticpredators
+.B danby/logisticpredators
 .SH MODEL
 X' = rX(1-X/K)-aXY;
 Y' = Y(cX-d)(1-Y/L).
@@ -17,9 +17,9 @@ Phase and time plots update together as any of the six coefficients changes.
 Drag the phase portrait to set initial populations and the bottom tracks to
 set r, K, a, c, d, and L.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/logisticpredators.b
+.B /appl/danby/plugin/logisticpredators.b
 .br
-.B /appl/temple/logisticpredators.b
+.B /appl/danby/logisticpredators.b
 .SH SEE ALSO
 .IR danby-logisticprey (1),
 .IR numerics (2)

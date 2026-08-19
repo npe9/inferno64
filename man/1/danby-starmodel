@@ -2,10 +2,10 @@
 .SH NAME
 danby-starmodel \- approximate hydrostatic stellar profile
 .SH SYNOPSIS
-.B temple/starmodel
+.B danby/starmodel
 .SH MODEL
 Hydrostatic pressure balance is integrated outward with enclosed-mass growth
 and a polytropic equation of state. The graph shows normalized density and
 enclosed mass versus radius.
 .SH SOURCE
-.B /appl/danby/starmodel.b
+.B /appl/danby/plugin/starmodel.b

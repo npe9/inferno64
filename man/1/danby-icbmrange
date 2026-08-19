@@ -2,9 +2,9 @@
 .SH NAME
 danby-icbmrange \- ballistic range with atmospheric drag
 .SH SYNOPSIS
-.B temple/icbmrange
+.B danby/icbmrange
 .SH MODEL
 Launch speed and elevation determine the vacuum arc while altitude-dependent
 quadratic drag modifies apogee and range.
 .SH SOURCE
-.B /appl/danby/icbmrange.b
+.B /appl/danby/plugin/icbmrange.b

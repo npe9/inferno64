@@ -2,7 +2,7 @@
 .SH NAME
 danby-parasite \- host-limited parasite population growth
 .SH SYNOPSIS
-.B temple/parasite
+.B danby/parasite
 .SH MODEL
 H' = rH(1-H/K)-bHP;
 P' = cbHP-dP.
@@ -15,9 +15,9 @@ Drag the host or parasite state bar.  The five tracks set host growth and
 capacity, infection, conversion, and parasite death.  Space pauses, period
 steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/parasite.b
+.B /appl/danby/plugin/parasite.b
 .br
-.B /appl/temple/parasite.b
+.B /appl/danby/parasite.b
 .SH SEE ALSO
 .IR populationmodel (2),
 .IR danby-epidemic (1)

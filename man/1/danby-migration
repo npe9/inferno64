@@ -2,7 +2,7 @@
 .SH NAME
 danby-migration \- effects of migration on an SIR epidemic
 .SH SYNOPSIS
-.B temple/migration
+.B danby/migration
 .SH MODEL
 S' = -beta SI+m(Sm-S);
 I' = beta SI-gamma I+m(Im-I);
@@ -21,9 +21,9 @@ migrant infection fraction.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite verifies conservation of total population under migration.
 .SH SOURCE
-.B /appl/danby/migration.b
+.B /appl/danby/plugin/migration.b
 .br
-.B /appl/temple/migration.b
+.B /appl/danby/migration.b
 .SH SEE ALSO
 .IR danby-epidemic (1),
 .IR populationmodel (2)

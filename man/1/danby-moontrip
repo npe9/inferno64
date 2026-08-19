@@ -2,7 +2,7 @@
 .SH NAME
 danby-moontrip \- restricted three-body transfer from Earth to Moon
 .SH SYNOPSIS
-.B temple/moontrip
+.B danby/moontrip
 .SH MODEL
 Earth and Moon orbit their barycentre while a negligible-mass spacecraft is
 launched from near Earth.  Speed and direction determine whether it remains
@@ -11,6 +11,6 @@ Earth-bound, passes the Moon, escapes, or enters a close lunar encounter.
 The complete Earth, Moon, and spacecraft trails are drawn.  Spacecraft distance
 from each primary is plotted.
 .SH SOURCE
-.B /appl/danby/moontrip.b
+.B /appl/danby/plugin/moontrip.b
 .SH SEE ALSO
 .IR orbital (2)

@@ -2,9 +2,9 @@
 .SH NAME
 danby-drypendulum \- pendulum with Coulomb dry friction
 .SH SYNOPSIS
-.B temple/drypendulum
+.B danby/drypendulum
 .SH MODEL
 A fixed-magnitude torque opposes the direction of motion. Unlike linear
 damping, successive amplitudes fall approximately linearly before stopping.
 .SH SOURCE
-.B /appl/danby/drypendulum.b
+.B /appl/danby/plugin/drypendulum.b

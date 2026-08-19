@@ -2,7 +2,7 @@
 .SH NAME
 danby-malaria \- coupled human and mosquito infection cycle
 .SH SYNOPSIS
-.B temple/malaria
+.B danby/malaria
 .SH MODEL
 Sh'=-a Sh Iv+gamma Ih; Ih'=a Sh Iv-gamma Ih;
 Sv'=-b Sv Ih+mu Iv; Iv'=b Sv Ih-mu Iv.
@@ -19,9 +19,9 @@ Drag any compartment bar.  Tracks set mosquito-to-human transmission,
 human-to-mosquito transmission, human recovery, and mosquito turnover.
 Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/malaria.b
+.B /appl/danby/plugin/malaria.b
 .br
-.B /appl/temple/malaria.b
+.B /appl/danby/malaria.b
 .SH SEE ALSO
 .IR danby-crossinfection (1),
 .IR populationmodel (2)

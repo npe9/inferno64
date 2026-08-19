@@ -2,7 +2,7 @@
 .SH NAME
 danby-childcare \- stage-structured predator-prey model with parental care
 .SH SYNOPSIS
-.B temple/childcare
+.B danby/childcare
 .SH MODEL
 P' = rP-H;
 J' = cH-(m+dJ(1-0.8u))J;
@@ -24,13 +24,13 @@ birth, attack, conversion, maturation, young and adult death, and care effort.
 Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The equation module is
-.B /appl/danby/childcare.b
+.B /appl/danby/plugin/childcare.b
 and the reusable N-state interface is
 .B /module/danby/populationmodel.m.
 The empty-population boundary and model metadata are regression-tested by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/temple/childcare.b
+.B /appl/danby/childcare.b
 .br
 .B /appl/temple/populations.b
 .SH SEE ALSO

@@ -2,7 +2,7 @@
 .SH NAME
 danby-predatorfishing \- predator and prey under fishing pressure
 .SH SYNOPSIS
-.B temple/predatorfishing
+.B danby/predatorfishing
 .SH DESCRIPTION
 .I Predatorfishing
 adds equal per-capita fishing effort to both populations in a Volterra model.
@@ -25,13 +25,13 @@ tracks to change birth, predation, conversion, death, and fishing effort.
 Space pauses, period advances one display step, r resets, and q or Escape exits.
 .SH NUMERICS
 The equation module is
-.B /appl/danby/predatorfishing.b
+.B /appl/danby/plugin/predatorfishing.b
 and is regression-tested by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/temple/predatorfishing.b
+.B /appl/danby/predatorfishing.b
 .br
-.B /appl/temple/ecology.b
+.B /appl/danby/ecology.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

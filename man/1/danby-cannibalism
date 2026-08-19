@@ -2,7 +2,7 @@
 .SH NAME
 danby-cannibalism \- age-structured population with adult cannibalism
 .SH SYNOPSIS
-.B temple/cannibalism
+.B danby/cannibalism
 .SH MODEL
 J' = bA-mJ-dJ J-cJA;
 A' = mJ+ecJA-dA A.
@@ -16,9 +16,9 @@ Drag either state bar.  The six tracks set birth, maturation, cannibalism,
 food conversion, and young and adult death.  Space pauses, period steps,
 r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/cannibalism.b
+.B /appl/danby/plugin/cannibalism.b
 .br
-.B /appl/temple/cannibalism.b
+.B /appl/danby/cannibalism.b
 .SH SEE ALSO
 .IR populationmodel (2),
 .IR danby-childcare (1)

@@ -2,7 +2,7 @@
 .SH NAME
 danby-competition \- two-species logistic competition
 .SH SYNOPSIS
-.B temple/competition
+.B danby/competition
 .SH DESCRIPTION
 .I Temple/competition
 is an interactive live simulation of two-species logistic competition.
@@ -35,7 +35,7 @@ The state is advanced by the general-purpose
 fourth-order Runge-Kutta solver.  Small negative values caused by numerical
 roundoff are clamped for nonnegative population and stock models.
 .SH SOURCE
-.B /appl/temple/competition.b
+.B /appl/danby/competition.b
 .SH SEE ALSO
 .IR numerics (2)
 

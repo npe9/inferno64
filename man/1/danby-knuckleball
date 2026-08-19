@@ -2,7 +2,7 @@
 .SH NAME
 danby-knuckleball \- fluctuating aerodynamic force on a knuckleball
 .SH SYNOPSIS
-.B temple/knuckleball
+.B danby/knuckleball
 .SH MODEL
 In addition to quadratic drag, the vertical aerodynamic acceleration is
 A sin(omega t).  The flutter amplitude and frequency expose the erratic force
@@ -12,6 +12,6 @@ for 0.65 seconds or until ground impact.
 The plots show height versus distance and speed versus time.  Tracks alter the
 release, drag, flutter, frequency, and gravity.
 .SH SOURCE
-.B /appl/danby/knuckleball.b
+.B /appl/danby/plugin/knuckleball.b
 .SH SEE ALSO
 .IR trajectory (2)

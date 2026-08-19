@@ -2,7 +2,7 @@
 .SH NAME
 danby-diseasebirthdeath1 \- SIR disease with balanced demographic turnover
 .SH SYNOPSIS
-.B temple/diseasebirthdeath1
+.B danby/diseasebirthdeath1
 .SH MODEL
 S' = mu-beta SI-mu S;
 I' = beta SI-(gamma+mu)I;
@@ -17,9 +17,9 @@ pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite verifies conservation on the unit population simplex.
 .SH SOURCE
-.B /appl/danby/diseasebirthdeath1.b
+.B /appl/danby/plugin/diseasebirthdeath1.b
 .br
-.B /appl/temple/diseasebirthdeath1.b
+.B /appl/danby/diseasebirthdeath1.b
 .SH SEE ALSO
 .IR danby-diseasebirthdeath2 (1),
 .IR populationmodel (2)

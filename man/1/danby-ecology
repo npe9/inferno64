@@ -2,7 +2,7 @@
 .SH NAME
 danby-ecology \- Lotka-Volterra predator and prey
 .SH SYNOPSIS
-.B temple/ecology
+.B danby/ecology
 .SH DESCRIPTION
 .I Temple/ecology
 is an interactive live simulation of Lotka-Volterra predator and prey.
@@ -35,7 +35,7 @@ The state is advanced by the general-purpose
 fourth-order Runge-Kutta solver.  Small negative values caused by numerical
 roundoff are clamped for nonnegative population and stock models.
 .SH SOURCE
-.B /appl/temple/ecology.b
+.B /appl/danby/ecology.b
 .SH SEE ALSO
 .IR numerics (2)
 

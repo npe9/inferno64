@@ -2,7 +2,7 @@
 .SH NAME
 danby-basketball \- trajectory and backspin of a basketball shot
 .SH SYNOPSIS
-.B temple/basketball
+.B danby/basketball
 .SH MODEL
 The ball leaves a two-metre release point under gravity, drag, and optional
 backspin lift.  Speed and launch angle expose the family of arcs that can reach
@@ -11,6 +11,6 @@ regulation hoop height.
 The spatial graph shows the shot arc; telemetry shows speed.  Tracks change
 speed, angle, drag, lift, backspin, and gravity.
 .SH SOURCE
-.B /appl/danby/basketball.b
+.B /appl/danby/plugin/basketball.b
 .SH SEE ALSO
 .IR trajectory (2)

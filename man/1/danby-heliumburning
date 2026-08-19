@@ -2,10 +2,10 @@
 .SH NAME
 danby-heliumburning \- helium-burning reaction network
 .SH SYNOPSIS
-.B temple/heliumburning
+.B danby/heliumburning
 .SH MODEL
 Triple-alpha reactions convert helium to carbon; subsequent captures form
 oxygen and heavier products. Temperature and density scale rates while a
 cooling term removes accumulated thermal energy.
 .SH SOURCE
-.B /appl/danby/heliumburning.b
+.B /appl/danby/plugin/heliumburning.b

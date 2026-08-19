@@ -2,9 +2,9 @@
 .SH NAME
 danby-poyntingrobertson \- radiation drag on an orbiting dust grain
 .SH SYNOPSIS
-.B temple/poyntingrobertson
+.B danby/poyntingrobertson
 .SH MODEL
 Radiation pressure reduces effective solar gravity while tangential radiation
 drag removes angular momentum, producing an inward spiral.
 .SH SOURCE
-.B /appl/danby/poyntingrobertson.b
+.B /appl/danby/plugin/poyntingrobertson.b

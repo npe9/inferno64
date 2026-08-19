@@ -2,7 +2,7 @@
 .SH NAME
 danby-fireworks \- launch, timed burst, and fragment trajectories
 .SH SYNOPSIS
-.B temple/fireworks
+.B danby/fireworks
 .SH MODEL
 Four coincident fragments first rise as one shell.  A narrow smooth impulse at
 the selectable fuse time supplies the requested radial burst velocity while
@@ -12,6 +12,6 @@ each fragment trajectory.
 The points separate visibly at ignition.  Mean altitude and horizontal spread
 are plotted, making burst timing and symmetry measurable.
 .SH SOURCE
-.B /appl/danby/fireworks.b
+.B /appl/danby/plugin/fireworks.b
 .SH SEE ALSO
 .IR mechanism (2)

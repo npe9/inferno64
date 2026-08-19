@@ -2,10 +2,10 @@
 .SH NAME
 danby-cometcatch \- gravitational scattering and comet capture by Jupiter
 .SH SYNOPSIS
-.B temple/cometcatch
+.B danby/cometcatch
 .SH MODEL
 Sun and Jupiter gravitationally scatter a massless comet. The graph reports
 heliocentric specific energy: negative final energy is bound, while positive
 energy is an escaping orbit. Jupiter distance identifies the encounter.
 .SH SOURCE
-.B /appl/danby/cometcatch.b
+.B /appl/danby/plugin/cometcatch.b

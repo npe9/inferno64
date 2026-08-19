@@ -2,7 +2,7 @@
 .SH NAME
 danby-heartbeat \- Zeeman fast-slow heartbeat oscillator
 .SH SYNOPSIS
-.B temple/heartbeat
+.B danby/heartbeat
 .SH MODEL
 epsilon x'=-(x^3-Tx+y);
 y'=x-x0.
@@ -22,9 +22,9 @@ pacemaker bias.  Space pauses, period steps, r resets, and q exits.
 The analytic equilibrium is checked by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/heartbeat.b
+.B /appl/danby/plugin/heartbeat.b
 .br
-.B /appl/temple/heartbeat.b
+.B /appl/danby/heartbeat.b
 .SH SEE ALSO
 .IR numerics (2),
 .IR plot (2)

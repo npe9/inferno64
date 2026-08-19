@@ -2,7 +2,7 @@
 .SH NAME
 danby-lakepollution \- pollutant mass balance in a well-mixed lake
 .SH SYNOPSIS
-.B temple/lakepollution
+.B danby/lakepollution
 .SH MODEL
 C' = I/V-(Q/V+k)C.
 .PP
@@ -17,9 +17,9 @@ Space pauses, period steps, r resets, and q exits.
 The analytic mass-balance equilibrium is checked by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/lakepollution.b
+.B /appl/danby/plugin/lakepollution.b
 .br
-.B /appl/temple/lakepollution.b
+.B /appl/danby/lakepollution.b
 .SH SEE ALSO
 .IR populationmodel (2),
 .IR numerics (2)

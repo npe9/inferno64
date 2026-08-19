@@ -2,7 +2,7 @@
 .SH NAME
 danby-alternativepredation \- predator-prey model with saturating consumption
 .SH SYNOPSIS
-.B temple/alternativepredation
+.B danby/alternativepredation
 .SH MODEL
 C = aXY/(1+hX);
 X' = rX-C;
@@ -19,9 +19,9 @@ Drag the phase portrait to set initial populations and the bottom tracks to
 set birth, attack, conversion, death, and handling.  Space pauses, period
 steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/alternativepredation.b
+.B /appl/danby/plugin/alternativepredation.b
 .br
-.B /appl/temple/alternativepredation.b
+.B /appl/danby/alternativepredation.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

@@ -2,7 +2,7 @@
 .SH NAME
 danby-weightchange \- body-mass energy-balance model
 .SH SYNOPSIS
-.B temple/weightchange
+.B danby/weightchange
 .SH MODEL
 M'=(E-a M^(3/4)-cM)/q.
 .PP
@@ -17,9 +17,9 @@ fraction.  The current mass bar is directly editable.
 Tracks set intake, basal coefficient, activity, and energy density.  Space
 pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/weightchange.b
+.B /appl/danby/plugin/weightchange.b
 .br
-.B /appl/temple/weightchange.b
+.B /appl/danby/weightchange.b
 .SH SEE ALSO
 .IR populationmodel (2),
 .IR numerics (2)

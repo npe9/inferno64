@@ -2,7 +2,7 @@
 .SH NAME
 danby-hiv \- initial spread and progression of HIV
 .SH SYNOPSIS
-.B temple/hiv
+.B danby/hiv
 .SH MODEL
 S'=-beta SI;
 I'=beta SI-delta I;
@@ -16,9 +16,9 @@ educational compartment model, not a clinical forecast.
 Drag any compartment bar.  Tracks set effective contact, progression, and AIDS
 mortality.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/hiv.b
+.B /appl/danby/plugin/hiv.b
 .br
-.B /appl/temple/hiv.b
+.B /appl/danby/hiv.b
 .SH SEE ALSO
 .IR populationmodel (2),
 .IR danby-epidemic (1)

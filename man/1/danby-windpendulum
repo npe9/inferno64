@@ -2,9 +2,9 @@
 .SH NAME
 danby-windpendulum \- pendulum under steady aerodynamic torque
 .SH SYNOPSIS
-.B temple/windpendulum
+.B danby/windpendulum
 .SH MODEL
 An angle-dependent wind torque competes with gravity, shifting the equilibrium
 and, at sufficient wind loading, removing the original stable position.
 .SH SOURCE
-.B /appl/danby/windpendulum.b
+.B /appl/danby/plugin/windpendulum.b

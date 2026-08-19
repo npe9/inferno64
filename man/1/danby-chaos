@@ -2,7 +2,7 @@
 .SH NAME
 danby-chaos \- Lorenz chaotic convection
 .SH SYNOPSIS
-.B temple/chaos
+.B danby/lorenz
 .SH DESCRIPTION
 .I Temple/chaos
 is an interactive live simulation of Lorenz chaotic convection.
@@ -39,8 +39,8 @@ Both states are advanced by the general-purpose
 fourth-order Runge-Kutta solver using identical timesteps.  The model module's
 equilibria are checked by the automated Danby model test.
 .SH SOURCE
-.B /appl/temple/chaos.b
-.PP
 .B /appl/danby/lorenz.b
+.PP
+.B /appl/danby/plugin/lorenz.b
 .SH SEE ALSO
 .IR numerics (2)

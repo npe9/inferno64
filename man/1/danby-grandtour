@@ -2,10 +2,10 @@
 .SH NAME
 danby-grandtour \- sequential outer-planet gravity assists
 .SH SYNOPSIS
-.B temple/grandtour
+.B danby/grandtour
 .SH MODEL
 Sun, Jupiter, and Saturn move under mutual gravity while a massless spacecraft
 is launched outward. Persistent trails and distances to both planets expose
 whether initial speed produces one or two useful encounters.
 .SH SOURCE
-.B /appl/danby/grandtour.b
+.B /appl/danby/plugin/grandtour.b

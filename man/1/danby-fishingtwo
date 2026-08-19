@@ -2,7 +2,7 @@
 .SH NAME
 danby-fishingtwo \- bioeconomics of two fish stocks and one fleet
 .SH SYNOPSIS
-.B temple/fishingtwo
+.B danby/fishingtwo
 .SH MODEL
 Xi'=ri Xi(1-Xi/Ki)-qi E Xi;
 E'=sE(p1q1X1+p2q2X2-c).
@@ -19,9 +19,9 @@ Drag any state bar.  Tracks set growth, capacity, catchability, and price for
 each stock, followed by fleet cost and response.  Space pauses, period steps,
 r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/fishingtwo.b
+.B /appl/danby/plugin/fishingtwo.b
 .br
-.B /appl/temple/fishingtwo.b
+.B /appl/danby/fishingtwo.b
 .SH SEE ALSO
 .IR danby-fishingone (1),
 .IR populationmodel (2)

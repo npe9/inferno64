@@ -2,7 +2,7 @@
 .SH NAME
 danby-logisticprey \- predator-prey model with logistic prey growth
 .SH SYNOPSIS
-.B temple/logisticprey
+.B danby/logisticprey
 .SH MODEL
 X' = rX(1-X/K)-aXY;
 Y' = cXY-dY.
@@ -18,9 +18,9 @@ orbits of the Volterra model, logistic regulation can attract trajectories.
 Drag the phase portrait to set initial populations and the bottom tracks to
 set r, K, a, c, and d.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/logisticprey.b
+.B /appl/danby/plugin/logisticprey.b
 .br
-.B /appl/temple/logisticprey.b
+.B /appl/danby/logisticprey.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

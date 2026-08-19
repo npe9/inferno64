@@ -2,10 +2,10 @@
 .SH NAME
 danby-whitedwarf \- degenerate stellar profiles and limiting mass
 .SH SYNOPSIS
-.B temple/whitedwarf
+.B danby/whitedwarf
 .SH MODEL
 Hydrostatic balance is closed by a degenerate equation of state. Moving gamma
 toward 4/3 exposes the weak dependence of total mass on central density that
 leads to the Chandrasekhar limiting-mass result.
 .SH SOURCE
-.B /appl/danby/whitedwarf.b
+.B /appl/danby/plugin/whitedwarf.b

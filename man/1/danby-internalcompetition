@@ -2,7 +2,7 @@
 .SH NAME
 danby-internalcompetition \- predator-prey model with crowding in each species
 .SH SYNOPSIS
-.B temple/internalcompetition
+.B danby/internalcompetition
 .SH MODEL
 X' = X(a-bX-cY);
 Y' = Y(eX-d-fY).
@@ -18,9 +18,9 @@ Drag the phase portrait to set initial populations.  The six bottom tracks set
 birth, prey crowding, predation, conversion, death, and predator crowding.
 Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/internalcompetition.b
+.B /appl/danby/plugin/internalcompetition.b
 .br
-.B /appl/temple/internalcompetition.b
+.B /appl/danby/internalcompetition.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

@@ -2,7 +2,7 @@
 .SH NAME
 danby-hovercraft \- planar translation and yaw of a hovercraft
 .SH SYNOPSIS
-.B temple/hovercraft
+.B danby/hovercraft
 .SH MODEL
 Body-directed thrust accelerates the craft against linear drag.  Rudder moment,
 rotational inertia, and yaw damping determine heading.  Translation therefore
@@ -10,6 +10,6 @@ turns only as the integrated body heading changes.
 .SH DISPLAY
 The triangular plan view rotates with heading.  Speed and heading are plotted.
 .SH SOURCE
-.B /appl/danby/hovercraft.b
+.B /appl/danby/plugin/hovercraft.b
 .SH SEE ALSO
 .IR mechanism (2)

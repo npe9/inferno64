@@ -2,12 +2,12 @@
 .SH NAME
 danby-tabletennis \- drag and topspin in table tennis
 .SH SYNOPSIS
-.B temple/tabletennis
+.B danby/tabletennis
 .SH MODEL
 Quadratic drag slows the light ball while topspin supplies a downward Magnus
 force, making the shot dip sooner than gravity alone.  Setting lift or topspin
 to zero isolates the two effects.
 .SH SOURCE
-.B /appl/danby/tabletennis.b
+.B /appl/danby/plugin/tabletennis.b
 .SH SEE ALSO
 .IR trajectory (2)

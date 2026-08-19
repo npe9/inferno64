@@ -2,7 +2,7 @@
 .SH NAME
 danby-baseballpitch \- aerodynamic flight of a pitched baseball
 .SH SYNOPSIS
-.B temple/baseballpitch
+.B danby/baseballpitch
 .SH MODEL
 The ball starts at release height with selectable speed and angle.  Quadratic
 drag opposes its velocity and spin produces a perpendicular Magnus force.  The
@@ -13,6 +13,6 @@ The spatial plot is height against distance; the smaller plot is speed against
 time.  Tracks alter speed, angle, drag, lift, spin, and gravity and immediately
 repeat the pitch.
 .SH SOURCE
-.B /appl/danby/baseballpitch.b
+.B /appl/danby/plugin/baseballpitch.b
 .SH SEE ALSO
 .IR trajectory (2)

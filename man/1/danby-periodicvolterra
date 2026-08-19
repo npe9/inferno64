@@ -2,7 +2,7 @@
 .SH NAME
 danby-periodicvolterra \- predator and prey with a periodic birthrate
 .SH SYNOPSIS
-.B temple/periodicvolterra
+.B danby/periodicvolterra
 .SH DESCRIPTION
 .I Periodicvolterra
 shows how seasonal variation changes the closed orbits of the Volterra model.
@@ -24,13 +24,13 @@ bottom tracks to alter the parameters.  Space pauses, period advances one
 display step, r resets, and q or Escape exits.
 .SH NUMERICS
 The model is implemented separately in
-.B /appl/danby/periodicvolterra.b
+.B /appl/danby/plugin/periodicvolterra.b
 and integrated with the general-purpose fourth-order Runge-Kutta routine in
 .IR numerics (2).
 .SH SOURCE
-.B /appl/temple/periodicvolterra.b
+.B /appl/danby/periodicvolterra.b
 .br
-.B /appl/temple/ecology.b
+.B /appl/danby/ecology.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

@@ -2,7 +2,7 @@
 .SH NAME
 danby-cooperation \- density-limited mutualism between two species
 .SH SYNOPSIS
-.B temple/cooperation
+.B danby/cooperation
 .SH MODEL
 X' = X(a-bX+cY);
 Y' = Y(d-eY+fX).
@@ -19,9 +19,9 @@ Drag the phase portrait to set initial populations.  The six bottom tracks set
 the two intrinsic growth rates, crowding strengths, and cross-species benefits.
 Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/cooperation.b
+.B /appl/danby/plugin/cooperation.b
 .br
-.B /appl/temple/cooperation.b
+.B /appl/danby/cooperation.b
 .SH SEE ALSO
 .IR danby-competition (1),
 .IR numerics (2)

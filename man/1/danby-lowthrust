@@ -2,10 +2,10 @@
 .SH NAME
 danby-lowthrust \- continuous low-thrust orbital transfer
 .SH SYNOPSIS
-.B temple/lowthrust
+.B danby/lowthrust
 .SH MODEL
 Central gravity is combined with a small continuously steered acceleration.
 Prograde thrust spirals outward, retrograde thrust spirals inward, and steering
 offset creates non-tangential transfers.
 .SH SOURCE
-.B /appl/danby/lowthrust.b
+.B /appl/danby/plugin/lowthrust.b

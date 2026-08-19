@@ -2,7 +2,7 @@
 .SH NAME
 danby-lanchester \- Lanchester square-law combat model
 .SH SYNOPSIS
-.B temple/lanchester
+.B danby/lanchester
 .SH MODEL
 A'=-bB; B'=-aA.
 .PP
@@ -23,9 +23,9 @@ pauses, period steps, r resets, and q exits.
 The differential invariant is checked analytically by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/lanchester.b
+.B /appl/danby/plugin/lanchester.b
 .br
-.B /appl/temple/lanchester.b
+.B /appl/danby/lanchester.b
 .SH SEE ALSO
 .IR populationmodel (2),
 .IR battlelines (1)

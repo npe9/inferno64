@@ -2,7 +2,7 @@
 .SH NAME
 danby-diseasebirthdeath2 \- epidemic with independent vital rates and virulence
 .SH SYNOPSIS
-.B temple/diseasebirthdeath2
+.B danby/diseasebirthdeath2
 .SH MODEL
 N=S+I+R;
 S' = bN-beta SI/N-mu S;
@@ -19,9 +19,9 @@ and virulence.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite checks the stated total-population balance directly.
 .SH SOURCE
-.B /appl/danby/diseasebirthdeath2.b
+.B /appl/danby/plugin/diseasebirthdeath2.b
 .br
-.B /appl/temple/diseasebirthdeath2.b
+.B /appl/danby/diseasebirthdeath2.b
 .SH SEE ALSO
 .IR danby-diseasebirthdeath1 (1),
 .IR populationmodel (2)

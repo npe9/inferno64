@@ -2,7 +2,7 @@
 .SH NAME
 danby-stability \- compare linear and nonlinear stability
 .SH SYNOPSIS
-.B temple/stability
+.B danby/stability
 .SH DESCRIPTION
 The laboratory overlays a nonlinear trajectory (green) and the trajectory
 predicted by linearization (ochre).  The parameter

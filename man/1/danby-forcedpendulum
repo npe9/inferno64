@@ -2,7 +2,7 @@
 .SH NAME
 danby-forcedpendulum \- periodically forced damped pendulum
 .SH SYNOPSIS
-.B temple/forcedpendulum
+.B danby/forcedpendulum
 .SH DESCRIPTION
 .I Forcedpendulum
 integrates
@@ -31,9 +31,9 @@ of mechanical energy over twenty simulated seconds with RK4 step 0.001.
 .SH SOURCE
 .B /module/danby/forcedpendulum.m
 .br
-.B /appl/danby/forcedpendulum.b
+.B /appl/danby/plugin/forcedpendulum.b
 .br
-.B /appl/temple/forcedpendulum.b
+.B /appl/danby/forcedpendulum.b
 .SH SEE ALSO
 .IR danby-chaos (1),
 .IR numerics (2),

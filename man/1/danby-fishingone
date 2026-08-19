@@ -2,7 +2,7 @@
 .SH NAME
 danby-fishingone \- bioeconomics of a single fish stock
 .SH SYNOPSIS
-.B temple/fishingone
+.B danby/fishingone
 .SH MODEL
 X'=rX(1-X/K)-qEX;
 E'=sE(pqX-c).
@@ -24,9 +24,9 @@ q exits.
 The analytic open-access equilibrium is checked by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/fishingone.b
+.B /appl/danby/plugin/fishingone.b
 .br
-.B /appl/temple/fishingone.b
+.B /appl/danby/fishingone.b
 .SH SEE ALSO
 .IR danby-harvest (1),
 .IR populationmodel (2)

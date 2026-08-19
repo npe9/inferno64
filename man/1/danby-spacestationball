@@ -2,13 +2,13 @@
 .SH NAME
 danby-spacestationball \- ball motion in a rotating space station
 .SH SYNOPSIS
-.B temple/spacestationball
+.B danby/spacestationball
 .SH MODEL
 Motion in the station frame includes Coriolis and centrifugal accelerations,
 plus optional drag.  Reversing station rotation reverses Coriolis deflection.
 .SH DISPLAY
 The ball moves inside an octagonal station plan; radius and speed are plotted.
 .SH SOURCE
-.B /appl/danby/spacestationball.b
+.B /appl/danby/plugin/spacestationball.b
 .SH SEE ALSO
 .IR mechanism (2)

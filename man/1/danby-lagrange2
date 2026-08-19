@@ -2,13 +2,13 @@
 .SH NAME
 danby-lagrange2 \- larger perturbations about L4 or L5
 .SH SYNOPSIS
-.B temple/lagrange2
+.B danby/lagrange2
 .SH MODEL
 This companion experiment starts farther from the triangular equilibrium and
 permits a larger velocity perturbation.  Comparison with
 .I danby-lagrange1
 shows the finite stability region and transition to wide or escaping motion.
 .SH SOURCE
-.B /appl/danby/lagrange2.b
+.B /appl/danby/plugin/lagrange2.b
 .SH SEE ALSO
 .IR orbital (2)

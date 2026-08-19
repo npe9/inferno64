@@ -2,7 +2,7 @@
 .SH NAME
 danby-shipmotion \- forced roll and pitch at sea
 .SH SYNOPSIS
-.B temple/shipmotion
+.B danby/shipmotion
 .SH MODEL
 Roll and pitch are separate damped, forced angular oscillators with adjustable
 hydrostatic stiffness and wave frequencies.  Their phase offset makes combined
@@ -11,6 +11,6 @@ sea motion visible without conflating the two axes.
 Front and side hull projections show roll and pitch; both angles are plotted
 against time.
 .SH SOURCE
-.B /appl/danby/shipmotion.b
+.B /appl/danby/plugin/shipmotion.b
 .SH SEE ALSO
 .IR mechanism (2)

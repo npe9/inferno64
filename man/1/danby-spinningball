@@ -2,7 +2,7 @@
 .SH NAME
 danby-spinningball \- drag and Magnus lift on a spinning projectile
 .SH SYNOPSIS
-.B temple/spinningball
+.B danby/spinningball
 .SH MODEL
 x'=vx; y'=vy;
 vx'=-D|v|vx-L omega vy;
@@ -23,9 +23,9 @@ relaunches the ball.  Space pauses, period steps, r relaunches, and q exits.
 The regression suite turns off drag and lift and verifies the exact vacuum
 kinematic derivatives and launch-speed decomposition.
 .SH SOURCE
-.B /appl/danby/spinningball.b
+.B /appl/danby/plugin/spinningball.b
 .br
-.B /appl/temple/spinningball.b
+.B /appl/danby/spinningball.b
 .br
 .B /appl/temple/trajectory.b
 .SH SEE ALSO

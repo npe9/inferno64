@@ -2,7 +2,7 @@
 .SH NAME
 danby-golfdrive \- aerodynamic trajectory of a driven golf ball
 .SH SYNOPSIS
-.B temple/golfdrive
+.B danby/golfdrive
 .SH MODEL
 The drive includes gravity, quadratic drag, and backspin-induced Magnus lift.
 Unlike a vacuum parabola, increasing lift can increase hang time while drag
@@ -12,6 +12,6 @@ The large plot shows height against carry distance and the smaller plot shows
 speed against time.  Tracks alter ball speed, launch angle, drag, lift,
 backspin, and gravity.
 .SH SOURCE
-.B /appl/danby/golfdrive.b
+.B /appl/danby/plugin/golfdrive.b
 .SH SEE ALSO
 .IR trajectory (2)

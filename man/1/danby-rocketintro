@@ -2,9 +2,9 @@
 .SH NAME
 danby-rocketintro \- introductory variable-mass vertical rocket
 .SH SYNOPSIS
-.B temple/rocketintro
+.B danby/rocketintro
 .SH MODEL
 Thrust acceleration rises as propellant mass falls, ceases at burnout, and
 competes with gravity and quadratic drag. Altitude and velocity are plotted.
 .SH SOURCE
-.B /appl/danby/rocketintro.b
+.B /appl/danby/plugin/rocketintro.b
