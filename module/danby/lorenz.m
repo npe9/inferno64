@@ -1,6 +1,6 @@
 Lorenz: module
 {
-	PATH: con "/dis/danby/lorenz.dis";
+	PATH: con "/dis/danby/plugin/lorenz.dis";
 
 	Model: adt {
 		sigma, rho, beta: real;

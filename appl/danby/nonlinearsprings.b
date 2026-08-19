@@ -1,73 +1,13 @@
-implement Mechanism;
-
-include "danby/oscillator.m";
-	oscillator: Oscillator;
-include "danby/mechanism.m";
-
-new(): ref Model
+implement Nonlinearsprings;
+include "sys.m";
+include "draw.m";
+Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+Nonlinearsprings: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	oscillator = load Oscillator Oscillator->PATH;
-	return ref Model(array[] of {1.0,1.0,0.0,0.8,0.08,1.2});
-}
-
-title(): string
-{
-	return "Non-linear springs";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mass", "linear", "quadratic", "cubic", "damping", "initial x"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,-5.0,-5.0,-5.0,0.0,-3.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5.0,5.0,5.0,5.0,2.0,3.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[5],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[1];
-	derivative[1] = oscillator->nonlinear(state[0],state[1],p[0],p[1],p[2],p[3],p[4]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {-2.0,0.0,state[0],0.0,state[0],-0.3,state[0],0.3};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"displacement", "velocity"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
+	c := load Command "/dis/temple/mechanism.dis";
+	if(c == nil)
+		raise "fail:Nonlinearsprings: cannot load mechanism interface";
+	c->init(ctxt,"nonlinearsprings" :: "/dis/danby/plugin/nonlinearsprings.dis" ::
+		"danby-nonlinearsprings" :: nil);
 }

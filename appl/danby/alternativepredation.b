@@ -1,56 +1,24 @@
-implement Twospecies;
+implement Alternativepredation;
 
-include "danby/twospecies.m";
+include "sys.m";
+include "draw.m";
 
-new(): ref Model
+Command: module
 {
-	return ref Model(array[] of {1.2, 2.0, 1.0, 0.6, 0.5});
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-title(): string
+Alternativepredation: module
 {
-	return "Predator-prey with saturating predation";
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-parameterlabels(): array of string
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	return array[] of {
-		"prey birth", "attack", "conversion",
-		"predator death", "handling"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0, 4.0, 3.0, 2.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	consumption := p[1]*state[0]*state[1]/(1.0+p[4]*state[0]);
-	derivative[0] = p[0]*state[0]-consumption;
-	derivative[1] = p[2]*consumption-p[3]*state[1];
-}
-
-Model.equilibrium(model: self ref Model): (real, real)
-{
-	p := model.parameter;
-	denominator := p[2]*p[1]-p[3]*p[4];
-	if(denominator <= 0.0)
-		return (0.0,0.0);
-	prey := p[3]/denominator;
-	predators := p[0]*(1.0+p[4]*prey)/p[1];
-	return (prey,predators);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-fixedpoint(model: ref Model): (real, real)
-{
-	return model.equilibrium();
+	ecology := load Command "/dis/temple/ecology.dis";
+	if(ecology == nil)
+		raise "fail:Alternativepredation: cannot load ecology interface";
+	ecology->init(ctxt,
+		"alternativepredation" :: "/dis/danby/plugin/alternativepredation.dis" ::
+		"danby-alternativepredation" :: nil);
 }

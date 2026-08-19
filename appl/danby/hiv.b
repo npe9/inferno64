@@ -1,46 +1,20 @@
-implement Populationmodel;
-
-include "danby/populationmodel.m";
-
-new(): ref Model
+implement Hiv;
+include "sys.m";
+include "draw.m";
+Command: module
 {
-	parameters := array[] of {1.4, 0.18, 0.12};
-	initial := array[] of {0.995, 0.005, 0.0};
-	return ref Model(parameters,initial);
-}
-
-title(): string
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+Hiv: module
 {
-	return "Initial spread of HIV";
-}
-
-statelabels(): array of string
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	return array[] of {"susceptible", "HIV infected", "AIDS"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"effective contact", "progression", "AIDS mortality"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {4.0, 1.0, 1.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	transmission := p[0]*state[0]*state[1];
-	progression := p[1]*state[1];
-	derivative[0] = -transmission;
-	derivative[1] = transmission-progression;
-	derivative[2] = progression-p[2]*state[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
+	client := load Command "/dis/temple/populations.dis";
+	if(client == nil)
+		raise "fail:Hiv: cannot load compartment interface";
+	client->init(ctxt,
+		"hiv" :: "/dis/danby/plugin/hiv.dis" ::
+		"danby-hiv" :: nil);
 }

@@ -1,6 +1,6 @@
 Stability: module
 {
-	PATH: con "/dis/danby/stability.dis";
+	PATH: con "/dis/danby/plugin/stability.dis";
 
 	Model: adt {
 		growth: real;

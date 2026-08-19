@@ -1,46 +1,24 @@
-implement Populationmodel;
+implement Diseasebirthdeath1;
 
-include "danby/populationmodel.m";
+include "sys.m";
+include "draw.m";
 
-new(): ref Model
+Command: module
 {
-	parameters := array[] of {2.2, 0.55, 0.03};
-	initial := array[] of {0.99, 0.01, 0.0};
-	return ref Model(parameters,initial);
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-title(): string
+Diseasebirthdeath1: module
 {
-	return "Disease with balanced births and deaths";
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-statelabels(): array of string
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	return array[] of {"susceptible", "infectious", "recovered"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"contact", "recovery", "turnover"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {5.0, 2.0, 0.5};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	infections := p[0]*state[0]*state[1];
-	recoveries := p[1]*state[1];
-	derivative[0] = p[2]-infections-p[2]*state[0];
-	derivative[1] = infections-recoveries-p[2]*state[1];
-	derivative[2] = recoveries-p[2]*state[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
+	populations := load Command "/dis/temple/populations.dis";
+	if(populations == nil)
+		raise "fail:Diseasebirthdeath1: cannot load compartment interface";
+	populations->init(ctxt,
+		"diseasebirthdeath1" :: "/dis/danby/plugin/diseasebirthdeath1.dis" ::
+		"danby-diseasebirthdeath1" :: nil);
 }

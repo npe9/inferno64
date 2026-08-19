@@ -1,6 +1,6 @@
 Chaosmap: module
 {
-	PATH: con "/dis/danby/chaosmap.dis";
+	PATH: con "/dis/danby/plugin/chaosmap.dis";
 
 	step: fn(parameter, value: real): real;
 	derivative: fn(parameter, value: real): real;

@@ -1,6 +1,6 @@
 Forcedpendulum: module
 {
-	PATH: con "/dis/danby/forcedpendulum.dis";
+	PATH: con "/dis/danby/plugin/forcedpendulum.dis";
 
 	Model: adt {
 		damping, drive, frequency: real;

@@ -1,43 +1,20 @@
-implement Populationmodel;
-
-include "danby/populationmodel.m";
-
-new(): ref Model
+implement Productionexchange;
+include "sys.m";
+include "draw.m";
+Command: module
 {
-	return ref Model(array[] of {0.8,0.5,0.55,0.7,0.45},
-		array[] of {0.7,0.35});
-}
-
-title(): string
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+Productionexchange: module
 {
-	return "Production and exchange of two goods";
-}
-
-statelabels(): array of string
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	return array[] of {"good A inventory", "good B inventory"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"production A", "use A", "production B", "use B", "exchange"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {2.0,2.0,2.0,2.0,2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	flow := p[4]*(state[0]-state[1]);
-	derivative[0] = p[0]-p[1]*state[0]-flow;
-	derivative[1] = p[2]-p[3]*state[1]+flow;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
+	client := load Command "/dis/temple/populations.dis";
+	if(client == nil)
+		raise "fail:Productionexchange: cannot load model interface";
+	client->init(ctxt,
+		"productionexchange" :: "/dis/danby/plugin/productionexchange.dis" ::
+		"danby-productionexchange" :: nil);
 }

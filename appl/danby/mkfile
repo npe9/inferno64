@@ -1,5 +1,13 @@
 <../../mkconfig
 
+# plugin/ holds the pure physics-model modules (implement Mechanism, Orbital,
+# etc, no init(ctxt,argv)) that used to live directly in this directory. The
+# .b files below are now standalone Command wrappers - each loads its own
+# plugin from /dis/danby/plugin/<name>.dis and, for most, one of the shared
+# harnesses in ../temple (mechanism.dis, orbital.dis, etc) to actually run it.
+DIRS=\
+	plugin\
+
 TARG=\
 	gravity.dis\
 	pendulum.dis\
@@ -174,3 +182,4 @@ TARG=\
 DISBIN=$ROOT/dis/danby
 
 <$ROOT/mkfiles/mkdis
+<$ROOT/mkfiles/mksubdirs

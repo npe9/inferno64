@@ -1,53 +1,24 @@
-implement Populationmodel;
+implement Violetsantsrodents;
 
-include "danby/populationmodel.m";
+include "sys.m";
+include "draw.m";
 
-new(): ref Model
+Command: module
 {
-	parameters := array[] of {0.8, 1.5, 0.35, 0.5, 0.8, 0.3, 1.2, 0.35};
-	initial := array[] of {0.7, 0.3, 0.18};
-	return ref Model(parameters,initial);
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-title(): string
+Violetsantsrodents: module
 {
-	return "Violets, ants, and rodents";
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-statelabels(): array of string
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	return array[] of {"violets", "ants", "rodents"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {
-		"violet growth", "capacity", "ant benefit", "rodent grazing",
-		"ant conversion", "ant death", "ant deterrence", "rodent death"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {2.0, 3.0, 1.5, 2.0, 2.0, 1.5, 3.0, 1.5};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	violets := state[0];
-	ants := state[1];
-	rodents := state[2];
-	seedservice := ants*violets/(1.0+violets);
-	rodentfood := violets*rodents/(1.0+p[6]*ants);
-	derivative[0] = p[0]*violets*(1.0-violets/p[1])
-		+p[2]*seedservice-p[3]*rodentfood;
-	derivative[1] = p[4]*seedservice-p[5]*ants;
-	derivative[2] = rodentfood-p[7]*rodents;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
+	populations := load Command "/dis/temple/populations.dis";
+	if(populations == nil)
+		raise "fail:Violetsantsrodents: cannot load population interface";
+	populations->init(ctxt,
+		"violetsantsrodents" :: "/dis/danby/plugin/violetsantsrodents.dis" ::
+		"danby-violetsantsrodents" :: nil);
 }

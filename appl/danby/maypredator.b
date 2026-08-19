@@ -1,62 +1,24 @@
-implement Twospecies;
+implement Maypredator;
 
-include "math.m";
-	math: Math;
-include "danby/twospecies.m";
+include "sys.m";
+include "draw.m";
 
-new(): ref Model
+Command: module
 {
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0, 2.0, 1.2, 0.3, 0.8, 0.7});
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-title(): string
+Maypredator: module
 {
-	return "May predator-prey limit cycles";
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-parameterlabels(): array of string
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	return array[] of {
-		"prey growth", "prey capacity", "attack",
-		"half saturation", "predator growth", "prey support"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0, 4.0, 4.0, 2.0, 3.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	x := state[0];
-	y := state[1];
-	derivative[0] = p[0]*x*(1.0-x/p[1])-p[2]*x*y/(x+p[3]);
-	if(x <= 1.0e-12){
-		derivative[1] = -p[4]*y;
-		return;
-	}
-	derivative[1] = p[4]*y*(1.0-y/(p[5]*x));
-}
-
-Model.equilibrium(model: self ref Model): (real, real)
-{
-	p := model.parameter;
-	b := p[0]*p[1]-p[0]*p[3]-p[2]*p[5]*p[1];
-	discriminant := b*b+4.0*p[0]*p[0]*p[3]*p[1];
-	prey := (b+math->sqrt(discriminant))/(2.0*p[0]);
-	return (prey,p[5]*prey);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-fixedpoint(model: ref Model): (real, real)
-{
-	return model.equilibrium();
+	ecology := load Command "/dis/temple/ecology.dis";
+	if(ecology == nil)
+		raise "fail:Maypredator: cannot load ecology interface";
+	ecology->init(ctxt,
+		"maypredator" :: "/dis/danby/plugin/maypredator.dis" ::
+		"danby-maypredator" :: nil);
 }

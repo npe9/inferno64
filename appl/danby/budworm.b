@@ -1,44 +1,24 @@
-implement Populationmodel;
+implement Budworm;
 
-include "danby/populationmodel.m";
+include "sys.m";
+include "draw.m";
 
-new(): ref Model
+Command: module
 {
-	parameters := array[] of {0.55, 3.0, 1.0, 0.5};
-	initial := array[] of {0.35};
-	return ref Model(parameters,initial);
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-title(): string
+Budworm: module
 {
-	return "Spruce budworm versus balsam fir";
-}
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
 
-statelabels(): array of string
+init(ctxt: ref Draw->Context, nil: list of string)
 {
-	return array[] of {"budworms"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"growth", "foliage capacity", "bird predation", "saturation"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {2.0, 6.0, 3.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	worms := state[0];
-	predation := p[2]*worms*worms/(p[3]*p[3]+worms*worms);
-	derivative[0] = p[0]*worms*(1.0-worms/p[1])-predation;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
+	populations := load Command "/dis/temple/populations.dis";
+	if(populations == nil)
+		raise "fail:Budworm: cannot load population interface";
+	populations->init(ctxt,
+		"budworm" :: "/dis/danby/plugin/budworm.dis" ::
+		"danby-budworm" :: nil);
 }
