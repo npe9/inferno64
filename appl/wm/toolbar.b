@@ -193,9 +193,36 @@ sys->print("error: %s\n", err);
 		tk->keyboard(tbtop, k);
 	m := <-tbtop.ctxt.ptr =>
 		tk->pointer(tbtop, *m);
-	s := <-tbtop.ctxt.ctl or
-	s = <-tbtop.wreq =>
+	s := <-tbtop.ctxt.ctl =>
 		wmctl(tbtop, s);
+	s := <-tbtop.wreq =>
+		# Tk's own geometry manager posts here when it thinks the
+		# toplevel's size needs to change - using ITS OWN local
+		# coordinate origin (0,0), since Tk has no notion of where
+		# the window sits on screen (that's the WM's job). wmctl()'s
+		# generic fallback would forward a "!reshape" request as-is,
+		# misread by the server as an ABSOLUTE screen position -
+		# e.g. "(0,0)-(width,32)" instead of the correct bottom-pinned
+		# rect layout() already computed - clobbering a window that
+		# was already positioned correctly. layout() is the sole
+		# authoritative source for absolute placement (it runs on
+		# every "rect" notification and explicitly calls
+		# tkclient->onscreen(tbtop, "exact") with the real rect), so
+		# drop *only* a reshape of the toplevel itself (name ".")
+		# from this channel. A "!reshape" naming some *other* window
+		# is libtk's tkexterncreatewin() (windw.c) asking wmreq1()
+		# (tkclient.b) to actually allocate that window's backing
+		# image - this is how every Tk "external window" gets made,
+		# popup menus included (its own comment: "for a choicebutton
+		# menu, use the name of the choicebutton which created it").
+		# Dropping those unconditionally, as an earlier version of
+		# this guard did, left every popup menu - including the
+		# toolbar's own Start menu - with no backing image at all:
+		# the click was received and handled, but the menu had
+		# nothing to display into, so it looked like the click did
+		# nothing.
+		if(!isreshapeof(s, "."))
+			wmctl(tbtop, s);
 	s := <-exec =>
 		# guard against parallel access to the shctxt environment
 		if (donesetup){
@@ -356,7 +383,19 @@ layout(top: ref Tk->Toplevel)
 			" -width " + string r.dx() +
 			" -height " + string h);
 	cmd(top, "update");
+	# Any duplicate "!reshape" Tk's own geometry manager posts to
+	# tbtop.wreq as a side effect of the configure/update above is
+	# filtered out where it's received (see the main loop) - this call
+	# is the sole authoritative source for absolute screen placement.
 	tkclient->onscreen(tbtop, "exact");
+	# onscreen("exact") blocks until the server hands back a freshly
+	# (re)allocated backing image at the new size; the "update" above
+	# ran against the *old* one, before this call requested the new
+	# size, so it can't have painted anything into a newly exposed
+	# region on growth. See the identical fix (with fuller explanation)
+	# in appl/wm/pinboard.b's relayout() - force a redraw now that the
+	# new backing store is actually in place.
+	cmd(top, "update");
 }
 
 toolbar(ctxt: ref Draw->Context, startmenu: int,
@@ -530,6 +569,19 @@ delmenu(m: string)
 getself(): Shellbuiltin
 {
 	return myselfbuiltin;
+}
+
+# True iff s is a "!reshape <name> ..." wreq request naming window `name`
+# specifically (see libtk/windw.c's tkexterncreatewin(), the sole source of
+# these messages: format is "!reshape %s %d %d %d %d %d", the %s being the
+# window's own path - "." for the toplevel itself, anything else for a
+# Tk-created external window such as a popup menu).
+isreshapeof(s, name: string): int
+{
+	if(len s < 9 || s[0:8] != "!reshape" || s[8] != ' ')
+		return 0;
+	(word, nil) := str->splitl(s[9:], " ");
+	return word == name;
 }
 
 cmd(top: ref Tk->Toplevel, c: string): string

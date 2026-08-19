@@ -53,6 +53,14 @@ screenresize: chan of Point;
 lastscreenr: Rect;
 pendingsize: Point;	# host size arrived while rootreshape in flight
 pendingsnaps: list of ref Snap;	# captured before root putimage greys the fb
+# pendingsnaps is written by rootreshape() (a spawned proc, one per resize)
+# and read+cleared by reshaped() (in the main loop) - without a lock those
+# race: rootreshape() assigning a fresh list concurrently with reshaped()
+# reading the old one is a torn/corrupt ref-counted pointer, which crashes
+# in the interpreter (movp) the moment reshaped() touches it - reliably
+# reproducible by resizing, since that's the only thing that ever spawns
+# rootreshape(). See the <-pendingsnapslock / pendingsnapslock<-=1 pairs.
+pendingsnapslock: chan of int;
 
 badmodule(p: string)
 {
@@ -125,6 +133,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	rootresized = chan of int;
 	screenresize = chan of Point;
 	pendingsize = (0, 0);
+	pendingsnapslock = chan[1] of int;
+	pendingsnapslock <-= 1;
 	spawn screenmonitor(screenresize);
 	for(;;) alt {
 		sz := <-screenresize =>
@@ -314,11 +324,27 @@ rootreshape(size: Point, done: chan of int)
 		done <-= 1;
 		return;
 	}
+	# Debounce: give the previous cycle's client round-trips (in particular
+	# a client's own self-initiated reshape confirmation, e.g.
+	# appl/wm/toolbar.b's layout()/onscreen("exact")) time to land before
+	# this cycle starts mutating shared server state (reassigning `screen`,
+	# recreating every window). A fast/large drag can otherwise fire a new
+	# cycle faster than that round-trip completes, so a stale confirmation
+	# from the older cycle arrives after this one has already moved on and
+	# clobbers a window's just-set origin/rect (observed: a bottom-pinned
+	# toolbar's server-side rect snapping to (0,0)-(w,32) after the correct
+	# position had already been confirmed, leaving it visually in place but
+	# unresponsive to clicks since click routing uses the now-wrong rect).
+	# This proc is already spawned off the main loop, so sleeping here does
+	# not block wm's own event dispatch.
+	sys->sleep(150);
 	# Snapshot client pixels BEFORE putimage rebuilds the root window.
 	# That rebuild paints Background over the shared framebuffer and, for
 	# Refnone root layers, permanently erases the app pixels that a later
 	# reshaped() snapshot would otherwise try to recover.
+	<-pendingsnapslock;
 	pendingsnaps = capturesnaps(r);
+	pendingsnapslock <-= 1;
 	rootwin.r = rootwin.screenr(r);
 	# Drop the cached root image so putimage rebuilds the window layer.
 	# Do not clear rootwin.screen: Window.reshape returns early when screen is nil.
@@ -602,9 +628,37 @@ capturesnaps(newr: Rect): list of ref Snap
 # allocate a new screen, and move all the 
 reshaped(win: ref Wmclient->Window)
 {
+	# win.image can be transiently nil here: the ctl-arm in the main
+	# loop calls wmclient->win.wmctl(c) (which can itself clear and
+	# rebuild win.image while processing a reshape/rect command) and
+	# then calls reshaped(win) if win.image != screen.image - a nil
+	# image trivially satisfies that comparison. The Dis interpreter's
+	# raw memmove-based value copy (used for `win.image.r`, a Rect
+	# field access) doesn't nil-check its source the way ref-counted
+	# pointer copies do, so this crashed instead of erroring cleanly.
+	# Nothing to reshape yet if there's no image; whatever set it to
+	# nil is about to give it a real one, which will trigger another
+	# reshape on its own.
+	if(win.image == nil){
+		# Record that this size was attempted even though it failed.
+		# win == rootwin (see main()), and rootreshape() always sets
+		# rootwin.r := rootwin.screenr(r) before win.image can go
+		# missing, so win.r already holds the target rect even here.
+		# Without this, the rootresized-done arm in the main loop
+		# compares display.image.r against a stale lastscreenr,
+		# never finds a match, and immediately respawns rootreshape()
+		# again - an unthrottled retry storm that hammered capturesnaps()
+		# thousands of times a second and risked exhausting the image
+		# pool for good, instead of leaving room for a later, genuine
+		# size change (caught by screenmonitor()'s own poll) to retry.
+		lastscreenr = win.r;
+		return;
+	}
 	newr := win.image.r;
+	<-pendingsnapslock;
 	snaps := pendingsnaps;
 	pendingsnaps = nil;
+	pendingsnapslock <-= 1;
 	# Fallback when reshape did not come through rootreshape (e.g. ctl).
 	# At that point the root image may already be grey — best-effort only.
 	if(snaps == nil)
@@ -641,14 +695,24 @@ reshaped(win: ref Wmclient->Window)
 			if(dr.dy() > s.img.r.dy())
 				dr.max.y = dr.min.y + s.img.r.dy();
 			w.img.draw(dr, s.img, nil, s.img.r.min);
+			# Present this window's own backing store now. win.image's
+			# flush below only presents the root image; a freshly
+			# recreated child window's snapshot draw can otherwise sit
+			# unpresented until something unrelated (e.g. c.top() on a
+			# click) forces a recomposite - visible as a stale/white
+			# window that "fixes itself" the moment it's clicked.
+			w.img.flush(Draw->Flushnow);
 		}
 		w.r = s.nr;
 		# Tell the client to replace its backing image as well.  The
 		# server-side window alone only lets incremental drawing (such as
 		# clock hands) reach the new area; the client's image would retain
 		# the old bounding box and leave its background stale.
-		s.c.ctl <-= sys->sprint("!reshape %q -1 %s", s.tag, r2s(s.nr));
-		s.c.ctl <-= "rect " + r2s(newr);
+		# Spawned: a blocking send here stalls the *entire* wm dispatch
+		# loop (reshaped() runs synchronously in the main proc) if this
+		# client isn't immediately ready to receive - same hazard as
+		# the join/setfocus sends elsewhere in this file.
+		spawn sendctl2(s.c.ctl, sys->sprint("!reshape %q -1 %s", s.tag, r2s(s.nr)), "rect " + r2s(newr));
 	}
 	lastscreenr = newr;
 	win.image.flush(Draw->Flushnow);
@@ -901,10 +965,15 @@ fitrect(w, r: Rect): Rect
 	if(w.dy() > r.dy())
 		w.max.y = w.min.y + r.dy();
 	size := w.size();
+	# Align the overflowing edge with r's far edge, keeping the window's
+	# size - not shift both edges back from r.min, which produces a
+	# negative min when r.min is 0 and gets "corrected" by the min-clamp
+	# below into snapping the window to r's near edge instead (e.g. a
+	# bottom-pinned toolbar teleporting to the top on a shrink).
 	if (w.max.x > r.max.x)
-		(w.min.x, w.max.x) = (r.min.x - size.x, r.max.x - size.x);
+		(w.min.x, w.max.x) = (r.max.x - size.x, r.max.x);
 	if (w.max.y > r.max.y)
-		(w.min.y, w.max.y) = (r.min.y - size.y, r.max.y - size.y);
+		(w.min.y, w.max.y) = (r.max.y - size.y, r.max.y);
 	if (w.min.x < r.min.x)
 		(w.min.x, w.max.x) = (r.min.x, r.min.x + size.x);
 	if (w.min.y < r.min.y)

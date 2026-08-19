@@ -190,8 +190,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		tk->keyboard(pintop, k);
 	p := <-pintop.ctxt.ptr =>
 		tk->pointer(pintop, *p);
-	c := <-pintop.ctxt.ctl or
-	c = <-pintop.wreq =>
+	c := <-pintop.ctxt.ctl =>
 		case msgverb(c) {
 		"rect" =>
 			tkclient->wmctl(pintop, c);
@@ -202,6 +201,26 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		* =>
 			tkclient->wmctl(pintop, c);
 		}
+	c := <-pintop.wreq =>
+		# Tk's own geometry manager posts here when it thinks the
+		# toplevel's size needs to change - using its own local (0,0)
+		# coordinate origin, not an absolute screen position (see the
+		# identical filter and fuller explanation in
+		# appl/wm/toolbar.b's main loop). relayout()'s explicit
+		# tkclient->onscreen(pintop, "exact") call is the sole
+		# authoritative source for absolute placement; forwarding a
+		# "!reshape" *of the toplevel itself* (name ".") from here
+		# instead can clobber a window a later resize cycle already
+		# positioned correctly - drop only that case. A "!reshape"
+		# naming any *other* window is libtk's tkexterncreatewin()
+		# (windw.c) asking for that window's backing image to
+		# actually be allocated (used for every Tk "external window",
+		# popup menus included) - dropping those unconditionally, as
+		# an earlier version of this guard did, silently broke any
+		# popup menu on this toplevel (see the identical toolbar.b
+		# fix and its isreshapeof() helper - same bug, same fix).
+		if(!isreshapeof(c, "."))
+			tkclient->wmctl(pintop, c);
 	m := <-mouse =>
 		handlemouse(m);
 	(off, data, nil, wc) := <-pinIO.write =>
@@ -317,6 +336,19 @@ msgverb(s: string): string
 	return hd toks;
 }
 
+# True iff s is a "!reshape <name> ..." wreq request naming window `name`
+# specifically (see libtk/windw.c's tkexterncreatewin(), the sole source of
+# these messages: format is "!reshape %s %d %d %d %d %d", the %s being the
+# window's own path - "." for the toplevel itself, anything else for a
+# Tk-created external window such as a popup menu).
+isreshapeof(s, name: string): int
+{
+	if(len s < 9 || s[0:8] != "!reshape" || s[8] != ' ')
+		return 0;
+	(word, nil) := str->splitl(s[9:], " ");
+	return word == name;
+}
+
 # Reflow on host-window resize: clamp icons that fell off-screen.
 relayout()
 {
@@ -324,6 +356,14 @@ relayout()
 		" -y " + string screenr.min.y +
 		" -width " + string screenr.dx() +
 		" -height " + string screenr.dy());
+	# relayout() had no explicit reshape request of its own before -
+	# the incidental "!reshape" Tk's own geometry manager pushes to
+	# pintop.wreq as a side effect of the configure above (filtered out
+	# where it's received; see the main loop) was pinboard's *only* way
+	# of telling the server its new size, and unreliably so. Send our
+	# own explicit, authoritative one instead of relying on it.
+	tkclient->onscreen(pintop, "exact");
+	cmd(pintop, "update");
 	maxx := screenr.dx() - IconW/2;
 	maxy := screenr.dy() - (IconH/2 + LabelBottomDY);
 	for(l := pins; l != nil; l = tl l){
