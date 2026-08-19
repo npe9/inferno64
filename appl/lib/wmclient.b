@@ -28,6 +28,11 @@ Focusnone, Focusimage, Focustitle: con iota;
 # Resolved Dis path of the application (set by sh as $dis).
 dispath: string;
 
+# Soft Plan9 Paper desktop; matches appl/wm/wm.b and appl/lib/tkclient.b's
+# own Background constants (same color, defined independently in each -
+# there's no shared module home for it). See putimage()'s Screen.allocate().
+Background: con int 16rC4C0B4FF;
+
 Bdup: con int 16rffffffff;
 Bddown: con int 16radadadff;
 
@@ -150,9 +155,36 @@ Window.reshape(w: self ref Window, r: Rect)
 
 putimage(w: ref Window, i: ref Image)
 {
-	if(w.screen != nil && i == w.screen.image)
+	# i is the display's root image, which some hosts (this one included)
+	# keep as a single persistent object whose .r is updated in place on
+	# a resize rather than replaced with a new Image. Object identity alone
+	# ("same i as last time") therefore does not mean "nothing to rebuild":
+	# also require that a real image is already in place and that its
+	# rect still matches i's. Without the extra checks, a caller that
+	# nils w.image to force a rebuild (rootreshape() does, deliberately,
+	# to make putimage rebuild the window layer) would have that request
+	# silently dropped whenever i itself hadn't changed identity, leaving
+	# w.image nil forever after the first resize.
+	if(w.screen != nil && i == w.screen.image && w.image != nil && w.r.eq(i.r))
 		return;
-	w.screen = Screen.allocate(i, w.display.color(Draw->White), 0);
+	# Background, not Draw->White: this Screen is rebuilt from scratch on
+	# every reshape (see above), discarding the previous one. memlayer's
+	# memldelete() paints a dying layer's own footprint with its Screen's
+	# fill color as it's torn down - a cleanup step meant for "this area
+	# is now truly vacant". But by the time the *old* w.image here is
+	# GC'd, a *new*, unrelated w.screen/w.image already correctly
+	# occupies that same shared-softscreen region (created above, just
+	# before the old one's last ref drops) - memldelete() has no idea,
+	# since fill-on-delete only knows about its own screen's z-order, not
+	# any other screen sharing the same physical pixels. Draw->White here
+	# unconditionally punched a white hole through whatever the new
+	# window had just correctly drawn, every single reshape, with nothing
+	# ever redrawing over it - the reported "white block after growing
+	# the host window" bug. appl/wm/wm.b and appl/lib/tkclient.b's own
+	# analogous Screen.allocate() calls already use this same desktop
+	# color for the identical "just in case something shows through"
+	# purpose; wmclient.b's Draw->White was the outlier.
+	w.screen = Screen.allocate(i, w.display.color(Background), 0);
 	ir := i.r.inset(w.bd);
 	if(ir.dx() < 0)
 		ir.max.x = ir.min.x;
