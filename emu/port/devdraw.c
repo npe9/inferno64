@@ -49,7 +49,21 @@ u32 blanktime = 30;	/* in minutes; a half hour */
 
 struct Draw
 {
-	QLock	q;
+	/* Plain spinlock, not QLock: drawscreenrebind() is called directly
+	 * from the native host's window-resize callback (win-cocoa.m's
+	 * screenresize(), on the OS UI thread) rather than from an Inferno
+	 * kproc, so the thread-local `up` QLock's blocked/queued path
+	 * dereferences is nil there. That only crashed when this lock was
+	 * actually contended - i.e. exactly when the interpreter thread
+	 * was mid-critical-section here at the moment of a host resize -
+	 * which is why it was an intermittent, resize-triggered fault
+	 * ("dereference of nil" / "bad address" depending on scheduling)
+	 * rather than a deterministic one. Every use of this lock already
+	 * releases it before any blocking call (see the Qrefresh case
+	 * below, which explicitly unlocks before Sleep()), so a spinlock
+	 * costs nothing here and is safe from any thread.
+	 */
+	Lock	q;
 	s32		clientid;
 	s32		nclient;
 	Client**	client;
@@ -906,12 +920,12 @@ initscreenimage(void)
 void
 deletescreenimage(void)
 {
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 	/* RSC: BUG: detach screen */
 	if(screenimage)
 		freememimage(screenimage);
 	screenimage = nil;
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 }
 
 /*
@@ -959,7 +973,7 @@ drawscreenrebind(Memimage *n)
 {
 	if(n == nil || screenimage == nil)
 		return;
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 	screendata.base = n->data->base;
 	screendata.bdata = n->data->bdata;
 	screenimage->data = &screendata;
@@ -968,7 +982,7 @@ drawscreenrebind(Memimage *n)
 	screenimage->width = n->width;
 	screenimage->zero = n->zero;
 	updatescreenstrides();
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 	drawdisplayresize(n->r);
 	flushrect = n->r;
 	drawflush();
@@ -986,12 +1000,12 @@ drawscreenresize(Memimage *n)
 Chan*
 drawattach(char *spec)
 {
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 	if(!initscreenimage()){
-		qunlock(&sdraw.q);
+		unlock(&sdraw.q);
 		error("no frame buffer");
 	}
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 	return devattach('i', spec);
 }
 
@@ -1017,9 +1031,9 @@ drawopen(Chan *c, int omode)
 	if(c->qid.type & QTDIR)
 		return devopen(c, omode, 0, 0, drawgen);
 
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 	if(waserror()){
-		qunlock(&sdraw.q);
+		unlock(&sdraw.q);
 		nexterror();
 	}
 
@@ -1050,7 +1064,7 @@ drawopen(Chan *c, int omode)
 		incref(&cl->r);
 		break;
 	}
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 	poperror();
 	c->mode = openmode(omode);
 	c->flag |= COPEN;
@@ -1069,9 +1083,9 @@ drawclose(Chan *c)
 
 	if(QID(c->qid) < Qcolormap)	/* Qtopdir, Qnew, Q3rd, Q2nd have no client */
 		return;
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 	if(waserror()){
-		qunlock(&sdraw.q);
+		unlock(&sdraw.q);
 		nexterror();
 	}
 
@@ -1105,7 +1119,7 @@ drawclose(Chan *c)
 		free(cl->d3zbuf);
 		free(cl);
 	}
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 	poperror();
 }
 
@@ -1136,9 +1150,9 @@ drawread(Chan *c, void *a, long n, vlong off)
 	if(c->qid.type & QTDIR)
 		return devdirread(c, a, n, 0, 0, drawgen);
 	cl = drawclient(c);
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 	if(waserror()){
-		qunlock(&sdraw.q);
+		unlock(&sdraw.q);
 		nexterror();
 	}
 	switch(QID(c->qid)){
@@ -1198,14 +1212,14 @@ drawread(Chan *c, void *a, long n, vlong off)
 		for(;;){
 			if(cl->refreshme || cl->refresh)
 				break;
-			qunlock(&sdraw.q);
+			unlock(&sdraw.q);
 			if(waserror()){
-				qlock(&sdraw.q);	/* restore lock for waserror() above */
+				lock(&sdraw.q);	/* restore lock for waserror() above */
 				nexterror();
 			}
 			Sleep(&cl->refrend, drawrefactive, cl);
 			poperror();
-			qlock(&sdraw.q);
+			lock(&sdraw.q);
 		}
 		p = a;
 		while(cl->refresh && n>=5*4){
@@ -1223,7 +1237,7 @@ drawread(Chan *c, void *a, long n, vlong off)
 		cl->refreshme = 0;
 		n = p-(uchar*)a;
 	}
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 	poperror();
 	return n;
 }
@@ -1271,10 +1285,10 @@ drawwrite(Chan *c, void *a, long n, vlong off)
 	if(c->qid.type & QTDIR)
 		error(Eisdir);
 	cl = drawclient(c);
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 	if(waserror()){
 		drawwakeall();
-		qunlock(&sdraw.q);
+		unlock(&sdraw.q);
 		nexterror();
 	}
 	switch(QID(c->qid)){
@@ -1331,7 +1345,7 @@ drawwrite(Chan *c, void *a, long n, vlong off)
 	default:
 		error(Ebadusefd);
 	}
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 	poperror();
 	return n;
 }
@@ -3118,13 +3132,13 @@ drawlsetrefresh(ulong qidpath, int id, void *reffn, void *refx)
 void
 drawqlock(void)
 {
-	qlock(&sdraw.q);
+	lock(&sdraw.q);
 }
 
 void
 drawqunlock(void)
 {
-	qunlock(&sdraw.q);
+	unlock(&sdraw.q);
 }
 
 void
