@@ -85,7 +85,7 @@ ed_config := array[] of {
 	".m.options.menu add command -label Indent -command {send c indent}",
 	"text .b.t  -yscrollcommand {.b.s set} -bg white",
 	"bind .b.t <Button-2> {.m.edit.menu post %X %Y}",
-	"bind .b.t <Key> +{send c dirtied {%A}; after 0 {send c changed}}",
+	"bind .b.t <Key> +{send c dirtied {%A}}",
 	"bind .b.t <Control-_> {send c undo}",
 	"bind .b.t <ButtonRelease-1> +{send c reindent}",
 	"scrollbar .b.s -command {.b.t yview}",
@@ -179,12 +179,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				tkclient->settitle(ed, task_title);
 		s := <-c =>
 			if ( len s > 7 && s[:7] == "dirtied" ) {
-				set_dirty(); do_limbo_check(s);
+				set_dirty(); do_limbo_check(s); remember_change();
 			}
 			else
 			case s {
 			"exit" =>	if ( check_dirty() ){ set_clean(); break cmdloop; }
-			"dirtied" =>	set_dirty(); do_limbo_check(s);
+			"dirtied" =>	set_dirty(); do_limbo_check(s); remember_change();
 			"changed" =>	remember_change();
 			"undo" =>	do_undo();
 			"new" =>	if ( check_dirty()) {set_clean(); do_new();}
