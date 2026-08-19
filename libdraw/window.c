@@ -112,9 +112,16 @@ _allocwindow(Image *i, Screen *s, Rectangle r, int ref, u32 val)
 	Display *d;
 
 	d = s->display;
-	i = _allocimage(i, d, r, s->image->chan, 0, val, s->id, ref);
-	if(i == 0)
+	if(s->image == nil){
+		print("TEMPDBG _allocwindow: s->image==nil\n");
 		return 0;
+	}
+	i = _allocimage(i, d, r, s->image->chan, 0, val, s->id, ref);
+	if(i == 0){
+		print("TEMPDBG _allocwindow: _allocimage returned 0, s->image->chan=%ux r=(%d,%d)-(%d,%d)\n",
+			s->image->chan, r.min.x, r.min.y, r.max.x, r.max.y);
+		return 0;
+	}
 	i->screen = s;
 	i->next = s->display->windows;
 	s->display->windows = i;
