@@ -265,6 +265,22 @@ struct Prog
 	void		(*xec)(Prog*);
 
 	void*		osenv;
+
+	/* Diagnostic: per-proc instruction trace (see wmtracedump() in
+	 * xec.c). Attached to the Prog itself, not thread-local: a proc
+	 * that yields (blocking send/recv, quantum expiry) can resume on a
+	 * different native thread or be interleaved with many other procs
+	 * on the same one, and either way a shared/thread-local buffer
+	 * gets swamped by unrelated procs' instructions long before this
+	 * one gets scheduled again. */
+	struct {
+		int	pc;
+		int	op;
+		void*	fp;
+		void*	mp;
+	} wmtrace[256];
+	int	wmtracei;
+	int	wmtracen;
 };
 
 struct Module
@@ -495,6 +511,7 @@ extern	void		mlink(Module*, Link*, uchar*, int, int, Type*);
 extern	void		modinit(void);
 extern	WORD		modstatus(REG*, char*, int);
 extern	int			progstack(REG*, int, char*, int, long);
+extern	void		wmtracedump(Prog*);
 extern	void		movp(void);
 extern	void		movtmp(void);
 extern	void		movtmpsafe(void);

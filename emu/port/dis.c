@@ -1220,17 +1220,29 @@ disfault(void *reg, char *msg)
 	 * channel operand is nil" from "an alt statement's channel operand
 	 * is nil" from every other op that checks for a nil ref - the
 	 * one-line message and even the call stack below don't, since
-	 * several different ops share the same source line/PC bucketing. */
-	if(!p->R.M->compiled && p->R.PC != nil){
+	 * several different ops share the same source line/PC bucketing.
+	 *
+	 * Deliberately the GLOBAL R here, not p->R: xec() only writes
+	 * p->R = R back on a *normal* quantum exit (falls off the bottom
+	 * of the do-while, or blocks cleanly). A mid-instruction native
+	 * fault skips that entirely, so p->R is stale - frozen at wherever
+	 * this proc's *previous* quantum happened to end, which is
+	 * whatever instruction the scheduler last preempted it at, not
+	 * where it just crashed. The live global R (xec.c) is what the
+	 * interpreter was actually touching when the signal hit, on this
+	 * same thread, synchronously - that's the real fault site. */
+	if(!R.M->compiled && R.PC != nil){
 		int op;
 		char *opn;
 
-		op = p->R.PC->op;
+		op = R.PC->op;
 		opn = (op >= 0 && op < MAXDIS && opnames[op] != nil)? opnames[op]: "?";
 		print("disfault: %s at %s+%ld (s=%ld d=%ld)\n",
-			opn, p->R.M->m->path,
-			(long)(p->R.PC - p->R.M->prog),
-			(long)p->R.PC->s.ind, (long)p->R.PC->d.ind);
+			opn, R.M->m->path,
+			(long)(R.PC - R.M->prog),
+			(long)R.PC->s.ind, (long)R.PC->d.ind);
+		if(strcmp(R.M->m->path, "/dis/wm/wm.dis") == 0)
+			wmtracedump(p);
 	}
 
 	/* Print the Dis-level call stack at fault time: which module/pc was
@@ -1239,12 +1251,13 @@ disfault(void *reg, char *msg)
 	 * ever reports a one-line message with no indication of where in
 	 * the Limbo source it happened - previously the only way to find
 	 * that out was reading /prog/pid/stack before the broken prog got
-	 * cleaned up (if it did at all), or attaching a native debugger. */
+	 * cleaned up (if it did at all), or attaching a native debugger.
+	 * Also the live global R, for the same staleness reason as above. */
 	{
 		char stackbuf[4096];
 		int n;
 
-		n = progstack(&p->R, p->state, stackbuf, sizeof(stackbuf)-1, 0);
+		n = progstack(&R, p->state, stackbuf, sizeof(stackbuf)-1, 0);
 		if(n > 0){
 			stackbuf[n] = '\0';
 			print("disfault: %s\nstack:\n%s", msg, stackbuf);

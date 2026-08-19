@@ -11,6 +11,38 @@ static int debug = 0;
 REG	R;			/* Virtual Machine registers */
 String	snil;			/* String known to be zero length */
 
+/* Diagnostic: ring buffer of the last few instructions xec() dispatched
+ * for a given proc, so a fault report can show what actually ran
+ * leading up to it - not just the single (possibly misleading) PC
+ * value disfault() captures after the fact. See wmtracedump(), called
+ * from disfault().
+ *
+ * Attached to the Prog itself (p->wmtrace[], declared in interp.h),
+ * not a shared or thread-local buffer: a proc that yields (blocking
+ * send/recv, quantum expiry) can be interleaved on the same thread
+ * with many other unrelated procs, or resume on a different thread
+ * entirely - either way a shared/thread-local buffer gets swamped by
+ * those other procs' instructions long before this one gets scheduled
+ * again and actually faults. Keying by Prog* survives all of that. */
+void
+wmtracedump(Prog *p)
+{
+	int i, n, cnt, wn;
+	Modlink *m;
+	char *path;
+
+	wn = nelem(p->wmtrace);
+	cnt = p->wmtracen < wn? p->wmtracen: wn;
+	print("wmtrace (last %d instructions dispatched by this proc before fault):\n", cnt);
+	for(i = 0; i < cnt; i++){
+		n = (p->wmtracei - 1 - i + 2*wn) % wn;
+		m = p->wmtrace[n].mp;
+		path = (m != nil && m->m != nil && m->m->path != nil)? m->m->path: "?";
+		print("  [%d] pc=%d op=%d fp=%p mod=%p path=%s\n",
+			-i, p->wmtrace[n].pc, p->wmtrace[n].op, p->wmtrace[n].fp, m, path);
+	}
+}
+
 #define Stmp	*((WORD*)(R.FP+NREG*IBY2WD))
 #define Dtmp	*((WORD*)(R.FP+(NREG+2)*IBY2WD))
 
@@ -1789,6 +1821,21 @@ xec(Prog *p)
 		DBG("step: %p: %s pid %d state %d %4zd %D:\tR.PC->op=0x%x R.PC->add=0x%x\n",
 			p, R.M->m->name, p->pid, p->state, R.PC-R.M->prog, R.PC, R.PC->op,
 			R.PC->add);
+		/* Unconditional (not filtered to wm.dis): a plain call - even
+		 * cross-module, via mcall - is still this same proc, so
+		 * following it wherever it goes (into wmclient/tk/draw/...)
+		 * is exactly what we want to see what this proc was actually
+		 * doing right before the fault. Recorded on p itself so it
+		 * survives yields/thread migration - see wmtracedump(). */
+		{
+			int wn = nelem(p->wmtrace);
+			p->wmtrace[p->wmtracei].pc = R.PC - R.M->prog;
+			p->wmtrace[p->wmtracei].op = R.PC->op;
+			p->wmtrace[p->wmtracei].fp = R.FP;
+			p->wmtrace[p->wmtracei].mp = (void*)R.M;
+			p->wmtracei = (p->wmtracei+1) % wn;
+			p->wmtracen++;
+		}
 		dec[R.PC->add]();
 		op = R.PC->op;
 		R.PC++;
