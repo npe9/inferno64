@@ -952,7 +952,7 @@ schedmod(Module *m)
 	Type *t;
 	Prog *p;
 	Modlink *ml;
-	Frame f, *fp;
+	Frame *f, *fp;
 
 	ml = mklinkmod(m, 0);
 
@@ -960,19 +960,33 @@ schedmod(Module *m)
 		t = m->type[0];
 		h = nheap(t->size);
 		h->t = t;
-		t->ref++;
+		AINC(&t->ref);
 		ml->MP = H2D(uchar*, h);
 		newmp(ml->MP, m->origmp, t);
 	}
 
 	p = newprog(nil, ml);
 	h = D2H(ml);
-	h->ref--;
+	ADEC(&h->ref);
 	p->R.PC = m->entry;
-	fp = &f;
+	/* newstack() below does memmove(p->R.FP, f, f->t->size) - f->t is
+	 * m->entryt here, the *complete* entry-frame type covering every
+	 * local the module's init() declares, which is routinely far
+	 * bigger than sizeof(Frame). A bare on-stack `Frame f` (as this
+	 * used to be) is only ever big enough for the Frame header, so
+	 * that copy read straight past it into whatever the caller's
+	 * stack happened to hold - garbage into every local of every
+	 * program's very first frame, on every single emu startup.
+	 * initmem() right below only clears the pointer-typed slots (per
+	 * the type's GC map); every plain int/byte/real local is left
+	 * exactly as newstack's memmove set it. Allocate the real
+	 * entry-frame size instead. */
+	f = mallocz(m->entryt->size, 1);
+	fp = f;
 	R.s = &fp;
-	f.t = m->entryt;
+	f->t = m->entryt;
 	newstack(p);
+	free(f);
 	initmem(m->entryt, p->R.FP);
 
 	return p;
