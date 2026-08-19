@@ -449,10 +449,10 @@ tkdrawcanv(Tk *tk, Point orig)
 			c->update = bufr;
 			tkcvssetdirty(tk);		/* unnecessary? */
 		}
-	
+
 		if(c->image == nil)
 			return nil;
-	
+
 		r = c->update;
 		if (rectclip(&r, c->image->r)) {
 			if (alpha)
@@ -473,10 +473,10 @@ tkdrawcanv(Tk *tk, Point orig)
 		r = tkrect(tk, 0);
 		bufr = rectsubpt(bufr, c->view);
 		vis = rectclip(&bufr, tkrect(tk, 0));
-	
+
 		if (!vis || !rectinrect(tk->dirty, bufr))
 			draw(dst, rectaddpt(tk->dirty, rel), tkgc(tk->env, TkCbackgnd), nil, c->view);
-	
+
 		if (vis && rectclip(&bufr, tk->dirty))
 			draw(dst, rectaddpt(bufr, rel), c->image, nil, addpt(bufr.min, c->view));
 	}
