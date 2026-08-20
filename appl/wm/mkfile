@@ -69,6 +69,7 @@ TARG=\
 	toycpu.dis\
 	tutor.dis\
 	unibrowse.dis\
+	videosynth.dis\
 	view.dis\
 	vt.dis\
 	wish.dis\
