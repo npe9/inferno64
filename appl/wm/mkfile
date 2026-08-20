@@ -63,6 +63,7 @@ TARG=\
 	task.dis\
 	telnet.dis\
 	tetris.dis\
+	thinkertoy.dis\
 	toolbar.dis\
 	unibrowse.dis\
 	view.dis\
