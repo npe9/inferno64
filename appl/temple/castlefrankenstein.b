@@ -52,7 +52,6 @@ SCRN_SCALE: con 512;
 WALL_H: con 1.0;
 PI: con 3.141592653589793;
 NEAR: con 0.05;
-CAMERA_EPS: con 0.001;
 FOCAL_OFFSET: con 1.0/3.0;
 EYE_H: con 125.0/512.0;
 BODY_RADIUS: con 0.08;
@@ -453,30 +452,16 @@ los(x1, y1, x2, y2: int): int
 }
 
 # World: x = map-x, y = height, z = map-y. Camera follows the player smoothly.
-cf_xform(v: Vector): Vector
-{
-	tx := v.x - cam_x;
-	ty := v.y - EYE_H;
-	tz := v.z - cam_y;
-	ca := math->cos(cam_a);
-	sa := math->sin(cam_a);
-	rx := tx * sa + tz * ca;
-	rz := tx * ca - tz * sa;
-	# Polygons are clipped to NEAR before reaching this transform.  Use a much
-	# smaller guard here so rounding at the clip plane cannot reject a complete
-	# polygon on alternating frames.
-	denom := rz + FOCAL_OFFSET;
-	if(denom < CAMERA_EPS)
-		return Vector(0.0, 0.0, 1.0);
-	sx := (real SCRN_SCALE / 2.0) * rx / denom;
-	# Draw screen Y grows downward.  World Y grows upward, so perspective Y
-	# must be inverted here (the previous sign put the floor above the camera).
-	sy := -(real SCRN_SCALE / 2.0) * ty / denom;
-	# CFTransform uses zz only for perspective division; its transformed z
-	# remains the camera-forward coordinate used by the depth buffer.
-	return Vector(sx / d3c.mx, sy / d3c.my, -rz);
-}
-
+#
+# Used to be a settransform() closure (cf_xform) called once per vertex of
+# every wall/floor/mesh triangle - the actual perspective-divide math ran in
+# interpreted Limbo bytecode for every single vertex, every frame. It's an
+# ordinary camera: a rigid rotate+translate view, then a perspective divide
+# by (z + FOCAL_OFFSET) instead of a bare z. Both are exactly representable
+# as matrices (the shifted-w perspective is draw3d->frustumoffset()), so
+# setup3d() now builds them once per FRAME instead of once per VERTEX, and
+# fillpoly3()/line3()/etc send raw world vertices down the wire - letting
+# devdraw.c (and eventually the GPU) do the transform instead of Limbo.
 setup3d(img: ref Image)
 {
 	if(d3c == nil)
@@ -487,11 +472,25 @@ setup3d(img: ref Image)
 	draw3d->setz(d3c, 1);
 	draw3d->clearz(d3c);
 	draw3d->setzclip(d3c, 1);
-	draw3d->settransform(d3c, cf_xform);
+
+	sa := math->sin(cam_a);
+	ca := math->cos(cam_a);
+	view := draw3d->newmatrix();
+	view[0][0] = sa;  view[0][1] = 0.0; view[0][2] = ca; view[0][3] = -(cam_x*sa + cam_y*ca);
+	view[1][0] = 0.0; view[1][1] = 1.0; view[1][2] = 0.0; view[1][3] = -EYE_H;
+	view[2][0] = -ca; view[2][1] = 0.0; view[2][2] = sa; view[2][3] = cam_x*ca - cam_y*sa;
+	view[3][0] = 0.0; view[3][1] = 0.0; view[3][2] = 0.0; view[3][3] = 1.0;
+	draw3d->mode(Draw3d->MODEL);
+	draw3d->loadmatrix(view);
+
+	# frustumoffset's sx/sy are NDC-per-world-unit; dividing SCRN_SCALE by
+	# the current viewport half-extent here (rather than baking a fixed
+	# scale into the matrix) reproduces the old per-vertex "/d3c.mx"/"/d3c.my"
+	# exactly, including on resize.
 	draw3d->mode(Draw3d->PROJ);
 	draw3d->identity();
-	draw3d->mode(Draw3d->MODEL);
-	draw3d->identity();
+	draw3d->frustumoffset((real SCRN_SCALE/2.0) / d3c.mx,
+		-(real SCRN_SCALE/2.0) / d3c.my, FOCAL_OFFSET);
 }
 
 solid(mx, my: int): int

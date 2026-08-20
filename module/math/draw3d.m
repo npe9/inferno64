@@ -59,6 +59,15 @@ Draw3d: module
 	rotatez:	fn(deg: real);
 	rotate:		fn(deg, l, m, n: real);	# axis (l,m,n) unit
 	frustum:	fn(l, n, f: real);		# symmetric frustum helper
+	# Perspective with a shifted w-row: divide by (z + zoff) instead of a
+	# bare z. sx/sy are independent NDC scale factors (pass a negative sy
+	# for a screen-down/world-up flip). Lets a client express a custom
+	# perspective camera (e.g. a fixed-focal-length raycaster view) as an
+	# ordinary matrix instead of a per-vertex settransform() closure, so
+	# vertices travel the wire raw and the transform runs once per frame
+	# in C/GPU rather than once per vertex in Limbo. Assumes identity()
+	# was just called, like frustum()/ortho().
+	frustumoffset:	fn(sx, sy, zoff: real);
 	ortho:		fn(l, n, f: real);
 	loadmatrix:	fn(m: Matrix);
 	storematrix:	fn(m: Matrix);

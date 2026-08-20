@@ -295,6 +295,16 @@ frustum(l, n, f: real)
 	}
 }
 
+# See module/math/draw3d.m for the derivation/contract.
+frustumoffset(sx, sy, zoff: real)
+{
+	m := hd ms.matl;
+	m[0][0] = sx;
+	m[1][1] = sy;
+	m[3][2] = -1.0;
+	m[3][3] = zoff;
+}
+
 ortho(l, n, f: real)
 {
 	m := hd ms.matl;
