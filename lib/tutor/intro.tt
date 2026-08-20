@@ -1,0 +1,69 @@
+LESSON Introduction to Inferno
+START intro
+
+FRAME intro
+TEXT
+Welcome. This is a short branching lesson about Inferno, in the style
+of PLATO's TUTOR language: type an answer and press Enter or Submit.
+
+What is the name of the virtual machine that runs Inferno's compiled
+bytecode?
+END
+JUDGE dis 1 disgood Right - it's called Dis.
+JUDGE jvm 0 wrongjvm Close, but that's Java's virtual machine, not Inferno's.
+JUDGE clr 0 wrongjvm Close, but that's .NET's virtual machine, not Inferno's.
+DEFAULT 0 tryagain Not quite - think about what interprets .dis files.
+
+FRAME tryagain
+TEXT
+Here's a hint: the compiled files this system runs end in ".dis".
+What's the name of the machine that executes them?
+END
+JUDGE dis 1 disgood Right - it's called Dis.
+DEFAULT 0 intro Let's go back to the start and try once more.
+
+FRAME wrongjvm
+TEXT
+Not Inferno's own virtual machine - that one belongs to a different
+system entirely. Inferno's is a two-letter name related to its own
+file extension.
+END
+JUDGE dis 1 disgood Right - it's called Dis.
+DEFAULT 0 intro Let's go back to the start and try once more.
+
+FRAME disgood
+TEXT
+Correct! Inferno's virtual machine is called Dis.
+
+Second question: what is the name of the language most Inferno
+applications - including this lesson's own runtime - are written in?
+END
+JUDGE limbo 1 limbogood Right - Limbo.
+JUDGE c 0 wrongc Inferno's own internals use C, but applications like this one don't.
+DEFAULT 0 langtryagain Not quite - it's not one of the usual suspects like C or Java.
+
+FRAME langtryagain
+TEXT
+Hint: the language's name is also a place - the edge of something,
+neither fully one thing nor another.
+END
+JUDGE limbo 1 limbogood Right - Limbo.
+DEFAULT 0 disgood Let's revisit that question.
+
+FRAME wrongc
+TEXT
+C is what the Dis virtual machine itself and the emulator are written
+in - but Inferno applications like this lesson are written one level
+up, in a language made for this system specifically.
+END
+JUDGE limbo 1 limbogood Right - Limbo.
+DEFAULT 0 disgood Let's revisit that question.
+
+FRAME limbogood
+TEXT
+Correct! Applications like this one are written in Limbo.
+
+That's the end of this short lesson. Well done - you've correctly
+identified both the Dis virtual machine and the Limbo language.
+END
+DEFAULT 1 limbogood The lesson is complete - your score is shown above.

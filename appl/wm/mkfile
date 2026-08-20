@@ -65,6 +65,7 @@ TARG=\
 	tetris.dis\
 	thinkertoy.dis\
 	toolbar.dis\
+	tutor.dis\
 	unibrowse.dis\
 	view.dis\
 	vt.dis\
