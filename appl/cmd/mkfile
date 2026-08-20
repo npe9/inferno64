@@ -150,6 +150,7 @@ TARG=\
 	styxmon.dis\
 	styxlisten.dis\
 	sum.dis\
+	synth.dis\
 	tac.dis\
 	tail.dis\
 	tarfs.dis\
