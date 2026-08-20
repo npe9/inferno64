@@ -495,6 +495,30 @@ Tk_keyboard(void *a)
 	tl = (Tk_Toplevel*)t;
 	if(t == H || D2H(t)->t != fakeTkTop)
 		return;
+	/*
+	 * Key-release events are encoded as Keyup|(key&0x7ff) (see
+	 * include/keyboard.h) and land on the same kbd channel/Tk_keyboard
+	 * call as key-presses - win-cocoa.m's keyUp: sends one for every
+	 * keyDown: so the app can track modifier state. TKKEY() below only
+	 * masks to 16 bits and does nothing to strip that marker, so with
+	 * no binding anywhere matching TkKey|Keyup, every release fell
+	 * through to entry.c/textw.c's bare-TkKey catch-all insert binding
+	 * and inserted the release's raw code as if it were a typed
+	 * character - a private-use-area codepoint between every real one.
+	 * Bail out here instead: nothing currently consumes Keyup through
+	 * this path, and it was never meant to reach text insertion at all.
+	 *
+	 * German/Grave/Acute/Circumflex (dead keys for a German keyboard)
+	 * numerically collide with this same mask - Keyup|(German|1) folds
+	 * right back to German|1's own value, a pre-existing overlap in
+	 * this encoding, not something new here - so name them explicitly
+	 * rather than eating a real press of one on a backend that sends
+	 * them (win-cocoa.m never does, but this file is shared by every
+	 * backend).
+	 */
+	if((f->key & 0xf800) == Keyup && f->key != German
+	&& f->key != Grave && f->key != Acute && f->key != Circumflex)
+		return;
 	c = t->ctxt;
 	if (c == nil)
 		return;
