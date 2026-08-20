@@ -569,24 +569,101 @@ rectcontains(Rectangle a, Rectangle b)
 		&& a.max.x >= b.max.x && a.max.y >= b.max.y;
 }
 
+/*
+ * Ensure soft_shadow (a full mirror of the softscreen's own pixel buffer,
+ * same stride) is at least `need` bytes. Caller holds soft_dirty_lock.
+ */
 static void
-metal_mark_tiles(Rectangle r, int value, int fullonly)
+ensure_soft_shadow(int need)
+{
+	uchar *p;
+
+	if(soft_shadow != nil && soft_shadow_len >= need)
+		return;
+	p = realloc(soft_shadow, need);
+	if(p == nil)
+		return;
+	soft_shadow = p;
+	soft_shadow_len = need;
+}
+
+/*
+ * Freeze scr's pixels for tile range [tx0,tx1)x[ty0,ty1) into soft_shadow.
+ * Caller holds soft_dirty_lock and has already confirmed scr/scr->data/
+ * scr->data->bdata are non-nil and that this tile range is valid for scr
+ * (i.e. derived from scr->r, not some other, possibly stale, screen).
+ */
+static void
+snapshot_tiles(Memimage *scr, int tx0, int ty0, int tx1, int ty1)
+{
+	int bpl, pw, ph, x0, y0, x1, y1, y, w;
+	uchar *base;
+
+	pw = Dx(scr->r);
+	ph = Dy(scr->r);
+	bpl = scr->width * (int)sizeof(u32);
+	ensure_soft_shadow(bpl * ph);
+	if(soft_shadow == nil)
+		return;
+	base = scr->data->bdata;
+	x0 = tx0 * SoftTile;
+	y0 = ty0 * SoftTile;
+	x1 = tx1 * SoftTile;
+	if(x1 > pw)
+		x1 = pw;
+	y1 = ty1 * SoftTile;
+	if(y1 > ph)
+		y1 = ph;
+	w = x1 - x0;
+	if(w <= 0)
+		return;
+	for(y = y0; y < y1; y++)
+		memmove(soft_shadow + y * bpl + x0 * 4, base + y * bpl + x0 * 4, w * 4);
+}
+
+/*
+ * Mark tiles dirty (or, for the gpu-copy bookkeeping, explicitly clean -
+ * value 0, meaning "a GPU-side texture copy will present this region, no
+ * CPU upload needed"). Every value-1 call also freezes those tiles' pixels
+ * into soft_shadow right here, synchronously - this is the *only* place
+ * that marks tiles dirty (flushmemscreen() and metal_damage_note() both
+ * route through it), so soft_dirty and soft_shadow can never drift apart:
+ * metal_upload_damage() later trusts that any tile it finds marked dirty
+ * has correspondingly fresh bytes waiting in soft_shadow. Splitting those
+ * two updates across separate call sites (as an earlier version of this
+ * fix did, only in flushmemscreen()) let tiles get marked dirty here via
+ * the gpu-copy-cancelled path without ever getting a shadow refresh -
+ * metal_upload_damage() would then upload whatever soft_shadow last held
+ * for that tile, from a previous, unrelated flush - visible as ghost
+ * "snapshot remnants" of old content while dragging a window.
+ *
+ * Takes an explicit `scr` (the caller's own single, consistent read of the
+ * gscreen global) rather than reading gscreen itself: gscreen is reassigned
+ * with no lock at all on a host resize (screenresize(), main thread) - a
+ * function that reads the global more than once risks tearing a maximize
+ * (a full screen resize, so the two reads can land on very differently-
+ * sized screens) into an out-of-bounds copy.
+ */
+static void
+metal_mark_tiles(Memimage *scr, Rectangle r, int value, int fullonly)
 {
 	int tx0, tx1, ty0, ty1, tx, ty;
 	Rectangle tr;
 
-	if(gscreen == nil || !rectclip(&r, gscreen->r))
+	if(scr == nil || !rectclip(&r, scr->r))
 		return;
-	tx0 = (r.min.x - gscreen->r.min.x) / SoftTile;
-	ty0 = (r.min.y - gscreen->r.min.y) / SoftTile;
-	tx1 = (r.max.x - gscreen->r.min.x + SoftTile - 1) / SoftTile;
-	ty1 = (r.max.y - gscreen->r.min.y + SoftTile - 1) / SoftTile;
+	tx0 = (r.min.x - scr->r.min.x) / SoftTile;
+	ty0 = (r.min.y - scr->r.min.y) / SoftTile;
+	tx1 = (r.max.x - scr->r.min.x + SoftTile - 1) / SoftTile;
+	ty1 = (r.max.y - scr->r.min.y + SoftTile - 1) / SoftTile;
+	if(value && scr->data != nil && scr->data->bdata != nil)
+		snapshot_tiles(scr, tx0, ty0, tx1, ty1);
 	for(ty = ty0; ty < ty1; ty++)
 		for(tx = tx0; tx < tx1; tx++){
-			tr = Rect(gscreen->r.min.x + tx*SoftTile,
-				gscreen->r.min.y + ty*SoftTile,
-				gscreen->r.min.x + (tx+1)*SoftTile,
-				gscreen->r.min.y + (ty+1)*SoftTile);
+			tr = Rect(scr->r.min.x + tx*SoftTile,
+				scr->r.min.y + ty*SoftTile,
+				scr->r.min.x + (tx+1)*SoftTile,
+				scr->r.min.y + (ty+1)*SoftTile);
 			if(fullonly && !rectcontains(r, tr))
 				continue;
 			soft_dirty[ty*soft_ntx + tx] = value;
@@ -598,9 +675,11 @@ metal_damage_note(Rectangle r)
 {
 	int i, nx, ny;
 	Rectangle dr;
+	Memimage *scr;
 
+	scr = gscreen;
 	dr = r;
-	if(gscreen != nil && rectclip(&dr, gscreen->r)){
+	if(scr != nil && rectclip(&dr, scr->r)){
 		metal_damage_calls++;
 		metal_damage_bytes += (uvlong)Dx(dr)*Dy(dr)*4;
 	}
@@ -609,15 +688,15 @@ metal_damage_note(Rectangle r)
 		damage_before_copy = 1;
 		return;
 	}
-	if(gscreen == nil || metal_damage_map(Dx(gscreen->r), Dy(gscreen->r)) < 0){
+	if(scr == nil || metal_damage_map(Dx(scr->r), Dy(scr->r)) < 0){
 		mtl_tex_fresh = 1;
 		return;
 	}
 	lock(&soft_dirty_lock);
-	metal_mark_tiles(r, 1, 0);
+	metal_mark_tiles(scr, r, 1, 0);
 	for(i = 0; i < ngpu_copies; i++){
 		if(!gpu_copies[i].armed && rectcontains(r, gpu_copies[i].dst)){
-			metal_mark_tiles(gpu_copies[i].dst, 0, 1);
+			metal_mark_tiles(scr, gpu_copies[i].dst, 0, 1);
 			gpu_copies[i].armed = 1;
 			nx = gpu_copies[i].dst.max.x/SoftTile
 				- (gpu_copies[i].dst.min.x+SoftTile-1)/SoftTile;
@@ -628,7 +707,7 @@ metal_damage_note(Rectangle r)
 			metal_copy_armed++;
 		}else if(gpu_copies[i].armed &&
 		    (rectsoverlap(r, gpu_copies[i].src) || rectsoverlap(r, gpu_copies[i].dst))){
-			metal_mark_tiles(gpu_copies[i].dst, 1, 0);
+			metal_mark_tiles(scr, gpu_copies[i].dst, 1, 0);
 			gpu_copies[i].armed = -1;
 			metal_copy_cancelled++;
 		}
@@ -727,17 +806,19 @@ metal_copy_note(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 	GPUCopy *c;
 	int i;
 	Rectangle ds, ss;
+	Memimage *scr;
 
 	metal_copy_notes++;
-	if(gscreen == nil || dst == nil || src == nil || Dx(dr) != Dx(sr) || Dy(dr) != Dy(sr)){
+	scr = gscreen;
+	if(scr == nil || dst == nil || src == nil || Dx(dr) != Dx(sr) || Dy(dr) != Dy(sr)){
 		metal_copy_reject_geometry++;
 		metal_copy_rejected++;
 		return;
 	}
 	if(!metal_screen_rect(dst, dr, &ds) || !metal_screen_rect(src, sr, &ss)){
-		if(dst->data != nil && src->data != nil && gscreen->data != nil
-		&& dst->data->bdata == gscreen->data->bdata
-		&& src->data->bdata == gscreen->data->bdata)
+		if(dst->data != nil && src->data != nil && scr->data != nil
+		&& dst->data->bdata == scr->data->bdata
+		&& src->data->bdata == scr->data->bdata)
 			metal_copy_alias_storage++;
 		metal_copy_reject_storage++;
 		metal_copy_rejected++;
@@ -753,7 +834,7 @@ metal_copy_note(Memimage *dst, Rectangle dr, Memimage *src, Rectangle sr)
 		if(rectsoverlap(ds, gpu_copies[i].src) || rectsoverlap(ds, gpu_copies[i].dst)
 		|| rectsoverlap(ss, gpu_copies[i].src) || rectsoverlap(ss, gpu_copies[i].dst))
 		{
-			metal_mark_tiles(gpu_copies[i].dst, 1, 0);
+			metal_mark_tiles(scr, gpu_copies[i].dst, 1, 0);
 			gpu_copies[i].armed = -1;
 		}
 	if(ngpu_copies < MaxGPUCopies){
@@ -3050,85 +3131,38 @@ screeninit(void)
 }
 
 /*
- * Ensure soft_shadow (a full mirror of gscreen's own pixel buffer, same
- * stride) is at least `need` bytes. Caller holds soft_dirty_lock.
+ * Marks the flushed rect's tiles dirty (metal_mark_tiles(), which also
+ * freezes their pixels into soft_shadow synchronously - before this
+ * returns to whatever Limbo code queued the flush, which may immediately
+ * start drawing the *next* frame into gscreen. mark_view_dirty()'s actual
+ * upload (metal_upload_damage()) runs later, asynchronously, on the
+ * AppKit main thread; without this snapshot it would read gscreen's live
+ * bytes at whatever later moment it happens to run, which can already be
+ * mid-way through the next frame's clear+redraw - a torn frame, seen as
+ * blinking on every draw. See metal_mark_tiles()'s own comment for why
+ * that snapshot lives there and not inline here, and for why this reads
+ * gscreen into a local exactly once rather than letting metal_mark_tiles
+ * (or this function, in an earlier version of this fix) re-read the
+ * global - a dispatch_sync to force the main thread to catch up instead
+ * would risk deadlock: this runs while devdraw.c's drawwrite() holds
+ * sdraw.q, which a concurrent resize on the main thread also takes.
  */
-static void
-ensure_soft_shadow(int need)
-{
-	uchar *p;
-
-	if(soft_shadow != nil && soft_shadow_len >= need)
-		return;
-	p = realloc(soft_shadow, need);
-	if(p == nil)
-		return;
-	soft_shadow = p;
-	soft_shadow_len = need;
-}
-
 void
 flushmemscreen(Rectangle r)
 {
-	int tx0, tx1, ty0, ty1, tx, ty, bpl, pw, ph, x0, y0, x1, y1, x, y, w;
-	uchar *base;
+	Memimage *scr;
 
 	if(r.max.x < r.min.x || r.max.y < r.min.y)
 		return;
 	if(view == nil)
 		return;
-	if(gscreen != nil && rectclip(&r, gscreen->r)){
-		pw = Dx(gscreen->r);
-		ph = Dy(gscreen->r);
-		if(metal_damage_map(pw, ph) < 0)
+	scr = gscreen;
+	if(scr != nil && rectclip(&r, scr->r)){
+		if(metal_damage_map(Dx(scr->r), Dy(scr->r)) < 0)
 			mtl_tex_fresh = 1;
 		else{
-			tx0 = (r.min.x - gscreen->r.min.x) / SoftTile;
-			ty0 = (r.min.y - gscreen->r.min.y) / SoftTile;
-			tx1 = (r.max.x - gscreen->r.min.x + SoftTile - 1) / SoftTile;
-			ty1 = (r.max.y - gscreen->r.min.y + SoftTile - 1) / SoftTile;
-			/*
-			 * Freeze the pixels for this flush into soft_shadow right
-			 * here, synchronously, on the calling (interpreter) thread -
-			 * before returning below to whatever Limbo code queued this
-			 * flush, which may immediately start drawing the *next*
-			 * frame into gscreen. mark_view_dirty()'s actual upload
-			 * (metal_upload_damage()) runs later, asynchronously, on
-			 * the AppKit main thread; without this snapshot it reads
-			 * gscreen's live bytes at whatever later moment it happens
-			 * to run, which can already be mid-way through the next
-			 * frame's clear+redraw - a torn frame, seen as blinking on
-			 * every draw. Copying now, while we know these bytes are
-			 * exactly the ones this flush intended to present, closes
-			 * that race without adding any cross-thread blocking (see
-			 * the deadlock note on drawmesg()'s sdraw.q, held across
-			 * this whole call chain, in the atomics/lock work earlier
-			 * this branch - a dispatch_sync here to force the main
-			 * thread to catch up would risk exactly that deadlock if
-			 * the main thread were meanwhile blocked on sdraw.q too).
-			 */
 			lock(&soft_dirty_lock);
-			bpl = gscreen->width * (int)sizeof(u32);
-			ensure_soft_shadow(bpl * ph);
-			if(soft_shadow != nil && gscreen->data != nil && gscreen->data->bdata != nil){
-				base = gscreen->data->bdata;
-				x0 = tx0 * SoftTile;
-				y0 = ty0 * SoftTile;
-				x1 = tx1 * SoftTile;
-				if(x1 > pw)
-					x1 = pw;
-				y1 = ty1 * SoftTile;
-				if(y1 > ph)
-					y1 = ph;
-				w = x1 - x0;
-				if(w > 0)
-					for(y = y0; y < y1; y++)
-						memmove(soft_shadow + y * bpl + x0 * 4,
-							base + y * bpl + x0 * 4, w * 4);
-			}
-			for(ty = ty0; ty < ty1; ty++)
-				for(tx = tx0; tx < tx1; tx++)
-					soft_dirty[ty * soft_ntx + tx] = 1;
+			metal_mark_tiles(scr, r, 1, 0);
 			unlock(&soft_dirty_lock);
 		}
 	}
