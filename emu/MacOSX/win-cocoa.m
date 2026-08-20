@@ -110,6 +110,12 @@ static uchar	*soft_dirty;
 static uchar	*soft_upload_dirty;
 static int	soft_ntx, soft_nty;
 static Lock	soft_dirty_lock;
+/*
+ * Snapshot of gscreen's own pixel bytes (same layout/stride, full size),
+ * frozen at each flushmemscreen() call - see the comment there for why.
+ */
+static uchar	*soft_shadow;
+static int	soft_shadow_len;
 static GPUCopy	gpu_copies[MaxGPUCopies];
 static int	ngpu_copies;
 static GPUCopy	present_copies[MaxGPUCopies];
@@ -862,7 +868,19 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 	bpl = gscreen->width * (int)sizeof(u32);
 	sbpl = (pw * 4 + 255) & ~255;
 	need = sbpl * ph;
-	base = gscreen->data->bdata;
+	/*
+	 * Read from the frozen per-flush snapshot (see flushmemscreen()), not
+	 * gscreen's live bytes directly - by the time this runs (async, on
+	 * the AppKit main thread, well after the interpreter thread that
+	 * requested this present has moved on), the live buffer may already
+	 * be mid-way through a *later* frame's clear+redraw. A `full` upload
+	 * covers the whole screen regardless of per-tile damage, including
+	 * regions flushmemscreen() may never have snapshotted (e.g. right
+	 * after a resize creates a fresh texture) - read live there, exactly
+	 * as before this fix, rather than risk uploading stale/never-written
+	 * shadow bytes.
+	 */
+	base = (!full && soft_shadow != nil) ? soft_shadow : gscreen->data->bdata;
 	slot = mtl_upload_next++ % nelem(mtl_upload_buf);
 	if(mtl_upload_pending[slot] != nil){
 		[mtl_upload_pending[slot] waitUntilCompleted];
@@ -3031,24 +3049,83 @@ screeninit(void)
 	Sleep(&rend, isready, nil);
 }
 
+/*
+ * Ensure soft_shadow (a full mirror of gscreen's own pixel buffer, same
+ * stride) is at least `need` bytes. Caller holds soft_dirty_lock.
+ */
+static void
+ensure_soft_shadow(int need)
+{
+	uchar *p;
+
+	if(soft_shadow != nil && soft_shadow_len >= need)
+		return;
+	p = realloc(soft_shadow, need);
+	if(p == nil)
+		return;
+	soft_shadow = p;
+	soft_shadow_len = need;
+}
+
 void
 flushmemscreen(Rectangle r)
 {
-	int tx0, tx1, ty0, ty1, tx, ty;
+	int tx0, tx1, ty0, ty1, tx, ty, bpl, pw, ph, x0, y0, x1, y1, x, y, w;
+	uchar *base;
 
 	if(r.max.x < r.min.x || r.max.y < r.min.y)
 		return;
 	if(view == nil)
 		return;
 	if(gscreen != nil && rectclip(&r, gscreen->r)){
-		if(metal_damage_map(Dx(gscreen->r), Dy(gscreen->r)) < 0)
+		pw = Dx(gscreen->r);
+		ph = Dy(gscreen->r);
+		if(metal_damage_map(pw, ph) < 0)
 			mtl_tex_fresh = 1;
 		else{
 			tx0 = (r.min.x - gscreen->r.min.x) / SoftTile;
 			ty0 = (r.min.y - gscreen->r.min.y) / SoftTile;
 			tx1 = (r.max.x - gscreen->r.min.x + SoftTile - 1) / SoftTile;
 			ty1 = (r.max.y - gscreen->r.min.y + SoftTile - 1) / SoftTile;
+			/*
+			 * Freeze the pixels for this flush into soft_shadow right
+			 * here, synchronously, on the calling (interpreter) thread -
+			 * before returning below to whatever Limbo code queued this
+			 * flush, which may immediately start drawing the *next*
+			 * frame into gscreen. mark_view_dirty()'s actual upload
+			 * (metal_upload_damage()) runs later, asynchronously, on
+			 * the AppKit main thread; without this snapshot it reads
+			 * gscreen's live bytes at whatever later moment it happens
+			 * to run, which can already be mid-way through the next
+			 * frame's clear+redraw - a torn frame, seen as blinking on
+			 * every draw. Copying now, while we know these bytes are
+			 * exactly the ones this flush intended to present, closes
+			 * that race without adding any cross-thread blocking (see
+			 * the deadlock note on drawmesg()'s sdraw.q, held across
+			 * this whole call chain, in the atomics/lock work earlier
+			 * this branch - a dispatch_sync here to force the main
+			 * thread to catch up would risk exactly that deadlock if
+			 * the main thread were meanwhile blocked on sdraw.q too).
+			 */
 			lock(&soft_dirty_lock);
+			bpl = gscreen->width * (int)sizeof(u32);
+			ensure_soft_shadow(bpl * ph);
+			if(soft_shadow != nil && gscreen->data != nil && gscreen->data->bdata != nil){
+				base = gscreen->data->bdata;
+				x0 = tx0 * SoftTile;
+				y0 = ty0 * SoftTile;
+				x1 = tx1 * SoftTile;
+				if(x1 > pw)
+					x1 = pw;
+				y1 = ty1 * SoftTile;
+				if(y1 > ph)
+					y1 = ph;
+				w = x1 - x0;
+				if(w > 0)
+					for(y = y0; y < y1; y++)
+						memmove(soft_shadow + y * bpl + x0 * 4,
+							base + y * bpl + x0 * 4, w * 4);
+			}
 			for(ty = ty0; ty < ty1; ty++)
 				for(tx = tx0; tx < tx1; tx++)
 					soft_dirty[ty * soft_ntx + tx] = 1;
