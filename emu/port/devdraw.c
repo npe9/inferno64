@@ -191,6 +191,13 @@ int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
  * per-vertex d3project() + gpudrawfillpoly/memfillpoly path either way. */
 int	(*gpudrawfillpoly3d)(Memimage*, float*, float*, float*, int, Memimage*, int,
 	float, float*, float*, float, float, float, float);
+/* Gouraud sibling of gpudrawfillpoly3d: one lit per vertex instead of one
+ * shared flat lit, so the GPU rasterizer's own per-vertex varying
+ * interpolation (already perspective-correct - see win-cocoa.m's vgmain)
+ * does the smooth shading for free. nil or a 0 return ⇒ caller degrades to
+ * a single flat fill at the average of the per-vertex lits - see case 'K'. */
+int	(*gpudrawfillpoly3g)(Memimage*, float*, float*, float*, float*, int, Memimage*,
+	int, float*, float*, float, float, float, float);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -1448,7 +1455,8 @@ enum {
 	D3CapGPU	= 1<<6,
 	D3CapReadback	= 1<<7,
 	D3CapNearClip	= 1<<8,
-	D3CapDepthOrder	= 1<<9
+	D3CapDepthOrder	= 1<<9,
+	D3CapGouraud	= 1<<10
 };
 
 static float
@@ -2691,7 +2699,8 @@ drawmesg(Client *client, void *av, int n)
 			if(i->depth != 32 || Dx(i->r) < 1 || Dy(i->r) < 1)
 				error(Ebadarg);
 			value = D3CapMatrix | D3CapFill | D3CapLine | D3CapPlot
-				| D3CapSprite | D3CapEllipse | D3CapNearClip | D3CapDepthOrder;
+				| D3CapSprite | D3CapEllipse | D3CapNearClip | D3CapDepthOrder
+				| D3CapGouraud;
 			if(gpudrawfillpoly != nil)
 				value |= D3CapGPU;
 			if(gpudrawreadback != nil)
@@ -2942,6 +2951,129 @@ drawmesg(Client *client, void *av, int n)
 				free(pp);
 			}
 		gdone:
+			continue;
+
+		case 'K':	/* fillpoly3 gouraud: dstid srcid n[2] lit[n*4] xyz[n*12] */
+			printmesg(fmt="LLS", a, 0);
+			m = 1+4+4+2;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			src = drawimage(client, a+5);
+			nw = BG16INT(a+9);
+			if(nw < 3 || nw > 1024)
+				error(Ebadarg);
+			m = 11 + nw*4 + nw*12;
+			if(n < m)
+				error(Eshortdraw);
+			{
+				float *vx, *vy, *vz, *lits;
+				float avglit;
+
+				vx = malloc(sizeof(float) * nw * 4);
+				if(vx == nil)
+					error(Edrawmem);
+				vy = vx + nw;
+				vz = vy + nw;
+				lits = vz + nw;
+				if(waserror()){
+					free(vx);
+					nexterror();
+				}
+				avglit = 0.0f;
+				for(j = 0; j < nw; j++){
+					lits[j] = bgfloat(a + 11 + j*4);
+					avglit += lits[j];
+				}
+				avglit /= (float)nw;
+				for(j = 0; j < nw; j++){
+					vx[j] = bgfloat(a + 11 + nw*4 + j*12);
+					vy[j] = bgfloat(a + 11 + nw*4 + j*12 + 4);
+					vz[j] = bgfloat(a + 11 + nw*4 + j*12 + 8);
+				}
+				op = drawclientop(client);
+				/*
+				 * Real per-vertex Gouraud: hand raw model-space verts +
+				 * per-vertex lits straight to whichever GPU hook this
+				 * backend has wired (nil on any backend that hasn't -
+				 * same nullable-hook convention as gpudrawfillpoly3d/
+				 * gpudrawline/etc). Only Cocoa/Metal (win-cocoa.m) hooks
+				 * this today, but nothing here is Metal-specific: a
+				 * future OpenGL/Vulkan/Direct3D backend wires its own
+				 * queue function to gpudrawfillpoly3g the same way, and
+				 * any rasterizer with standard perspective-correct
+				 * varying interpolation (the normal case for all of
+				 * those) gets Gouraud for free from one colour per
+				 * vertex, same as Metal's vgmain/fgmain do here.
+				 */
+				if(gpudrawfillpoly3g != nil && gpudrawfillpoly3g(dst,
+				    vx, vy, vz, lits, nw, src, op, client->d3model,
+				    client->d3proj, client->d3mx, client->d3cx,
+				    client->d3my, client->d3cy)){
+					poperror();
+					free(vx);
+					goto Kdone;
+				}
+				/*
+				 * No GPU hook wired (or it declined): degrade to a single
+				 * flat fill at the average of the per-vertex lits rather
+				 * than a from-scratch native Gouraud rasterizer -
+				 * deliberately out of scope for this primitive's first
+				 * cut. No z-buffer here either (unlike 'k''s CPU
+				 * fallback); this is the portable path every backend
+				 * gets today (X11, a plain framebuffer, etc.) until it
+				 * grows its own gpudrawfillpoly3g hook.
+				 */
+				{
+					Point *pp2;
+					Memimage *lsrc, *ltmp;
+
+					pp2 = malloc(sizeof(Point) * (nw+1));
+					if(pp2 == nil)
+						error(Edrawmem);
+					if(waserror()){
+						free(pp2);
+						nexterror();
+					}
+					for(j = 0; j < nw; j++){
+						float ez;
+
+						if(!d3project(client, vx[j], vy[j], vz[j], &pp2[j], &ez)){
+							poperror();
+							free(pp2);
+							goto Kdone;
+						}
+					}
+					pp2[nw] = pp2[0];
+					ltmp = nil;
+					lsrc = d3applylit(src, avglit, &ltmp);
+					if(waserror()){
+						if(ltmp)
+							freememimage(ltmp);
+						nexterror();
+					}
+					memfillpoly(dst, pp2, nw+1, ~0, lsrc, pp2[0], op);
+					poperror();
+					if(ltmp)
+						freememimage(ltmp);
+					r = dst->clipr;
+					r.min = r.max = pp2[0];
+					for(j = 1; j < nw; j++){
+						if(pp2[j].x < r.min.x) r.min.x = pp2[j].x;
+						if(pp2[j].y < r.min.y) r.min.y = pp2[j].y;
+						if(pp2[j].x > r.max.x) r.max.x = pp2[j].x;
+						if(pp2[j].y > r.max.y) r.max.y = pp2[j].y;
+					}
+					r.max.x++;
+					r.max.y++;
+					dstflush(dst, r);
+					poperror();
+					free(pp2);
+				}
+				poperror();
+				free(vx);
+			}
+		Kdone:
 			continue;
 
 		case 'G':	/* line3 */

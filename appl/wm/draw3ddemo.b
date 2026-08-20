@@ -206,22 +206,24 @@ frame()
 
 drawface(v: array of Vector, col: ref Image)
 {
-	e1 := Vector(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
-	e2 := Vector(v[2].x-v[0].x, v[2].y-v[0].y, v[2].z-v[0].z);
-	localn := draw3d->vnorm(draw3d->vcross(e1, e2));
-	# These four faces weren't hand-authored with a consistent outward
-	# winding (they used to just flat-fill with no normal at all) - the
-	# cube is centred on the local origin, so a face's own first vertex is
-	# always on the outward side of its plane; flip the normal if the
-	# cross product above happened to point inward instead.
-	if(draw3d->vdot(localn, v[0]) < 0.0)
-		localn = Vector(-localn.x, -localn.y, -localn.z);
-	worldn := draw3d->mulpoint(rotm, localn);
-	lit := draw3d->vdot(worldn, lightdir);
-	if(lit < AMBIENT)
-		lit = AMBIENT;
+	# Real per-vertex Gouraud, not just flat-per-face: each corner gets its
+	# own smoothed normal instead of the face's single flat one, so
+	# fillpoly3g's shading gradient is genuine, not a fake average. For a
+	# cube centred on the local origin, the vertex-averaged normal at
+	# corner (sx,sy,sz) - the average of the three unit-axis face normals
+	# that meet there - is exactly the normalized diagonal vnorm(corner)
+	# itself, no separate per-vertex bookkeeping needed.
+	lits := array[len v] of real;
+	for(i := 0; i < len v; i++){
+		localn := draw3d->vnorm(v[i]);
+		worldn := draw3d->mulpoint(rotm, localn);
+		lit := draw3d->vdot(worldn, lightdir);
+		if(lit < AMBIENT)
+			lit = AMBIENT;
+		lits[i] = lit;
+	}
 	draw3d->setcolour(d3c, col);
-	draw3d->fillpoly3(d3c, v, worldn, lit);
+	draw3d->fillpoly3g(d3c, v, lits);
 }
 
 timer(c: chan of int, ms: int)

@@ -91,6 +91,16 @@ Draw3d: module
 	# Flat shaded poly; if zenable, computes plane depth for Polyfill.
 	# normal is face normal in the same space as verts (for lighting/cull optional).
 	fillpoly3:	fn(c: ref Context, verts: array of Vector, normal: Vector, lit: real);
+	# Gouraud shaded poly: one lit per vertex (parallel to verts), smoothly
+	# interpolated across the face instead of fillpoly3's single flat lit -
+	# the caller does its own per-vertex lighting (e.g. a dot product
+	# against a light direction using a per-vertex normal) and hands the
+	# result here. The protocol provider sends these on to the GPU hook a
+	# backend wires up (any rasterizer with standard perspective-correct
+	# interpolation gets real Gouraud from one colour per vertex, no
+	# per-backend shading code needed); the software provider approximates
+	# it by recursive subdivision down to small flat-shaded fills.
+	fillpoly3g:	fn(c: ref Context, verts: array of Vector, lits: array of real);
 
 	# Sprite3 family: img + optional mask (coffee-style).
 	# scale is world-space half-width hint for perspective size; 0 → use img pixel size.

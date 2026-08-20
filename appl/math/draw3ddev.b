@@ -25,7 +25,7 @@ LIMIT: con real (1<<11);
 Pi: con Math->Pi;
 
 D3CapMatrix, D3CapFill, D3CapLine, D3CapPlot, D3CapSprite, D3CapEllipse: con 1<<iota;
-D3CapGPU, D3CapReadback, D3CapNearClip, D3CapDepthOrder: con 1<<iota;
+D3CapGPU, D3CapReadback, D3CapNearClip, D3CapDepthOrder, D3CapGouraud: con 1<<iota;
 D3CapCore: con D3CapMatrix|D3CapFill|D3CapLine|D3CapPlot|D3CapSprite|D3CapEllipse;
 
 Mstate: adt
@@ -904,6 +904,84 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 		return;
 	}
 	softfillpoly3(c, verts, normal, lit);
+}
+
+# Gouraud shaded poly: one lit per vertex, sent straight to the wire so
+# whatever GPU hook the backend has wired (see win-cocoa.m's
+# metal_queue_fillpoly3g) can give each vertex its own colour and let the
+# rasterizer's own perspective-correct varying interpolation do the actual
+# shading - the same trick fillpoly3 plays for a single flat lit, just with
+# n colours instead of one. No server capability ⇒ software subdivision
+# fallback (softfillpoly3g below), same approximation draw3d.b's software
+# provider uses.
+fillpoly3g(c: ref Context, verts: array of Vector, lits: array of real)
+{
+	n := len verts;
+	if(n < 3 || len lits != n || c.dst == nil || c.colour == nil)
+		return;
+	if(haveproto && (protocaps & D3CapGouraud) != 0){
+		eye := array[n] of Vector;
+		for(i := 0; i < n; i++){
+			(e, ok) := protovert(c, verts[i]);
+			if(!ok)
+				return;
+			eye[i] = e;
+		}
+		sync3d(c);
+		msg := array[1+4+4+2 + n*4 + n*12] of byte;
+		msg[0] = byte 'K';
+		puti32(msg, 1, c.dst.id());
+		puti32(msg, 5, c.colour.id());
+		puti16(msg, 9, n);
+		for(i = 0; i < n; i++)
+			putf32(msg, 11+i*4, lits[i]);
+		hdr := 11 + n*4;
+		for(i = 0; i < n; i++){
+			putf32(msg, hdr+i*12, eye[i].x);
+			putf32(msg, hdr+i*12+4, eye[i].y);
+			putf32(msg, hdr+i*12+8, eye[i].z);
+		}
+		writemsg(c.dst.display, msg);
+		return;
+	}
+	softfillpoly3g(c, verts, lits);
+}
+
+GSUBEPS: con 0.02;
+GSUBDEPTH: con 4;
+
+# Software approximation of Gouraud when there's no protocol/GPU: fan-
+# triangulate then recursively 4-way-subdivide (midpoint split, linearly
+# interpolating position and lit) until the three corner lits are close
+# enough to look flat or a depth cap is hit, flat-filling the leaf via the
+# existing softfillpoly3 at the average of its three corner lits. Not true
+# per-pixel interpolation - see the module doc comment on fillpoly3g.
+softfillpoly3g(c: ref Context, verts: array of Vector, lits: array of real)
+{
+	n := len verts;
+	for(i := 1; i < n-1; i++)
+		gsubdiv(c, verts[0], verts[i], verts[i+1], lits[0], lits[i], lits[i+1], GSUBDEPTH);
+}
+
+gsubdiv(c: ref Context, a, b, cc: Vector, la, lb, lc: real, depth: int)
+{
+	dab := la-lb; if(dab < 0.0) dab = -dab;
+	dbc := lb-lc; if(dbc < 0.0) dbc = -dbc;
+	dca := lc-la; if(dca < 0.0) dca = -dca;
+	if(depth <= 0 || (dab < GSUBEPS && dbc < GSUBEPS && dca < GSUBEPS)){
+		softfillpoly3(c, array[] of {a, b, cc}, Vector(0.0, 0.0, 0.0), (la+lb+lc)/3.0);
+		return;
+	}
+	mab := Vector((a.x+b.x)/2.0, (a.y+b.y)/2.0, (a.z+b.z)/2.0);
+	mbc := Vector((b.x+cc.x)/2.0, (b.y+cc.y)/2.0, (b.z+cc.z)/2.0);
+	mca := Vector((cc.x+a.x)/2.0, (cc.y+a.y)/2.0, (cc.z+a.z)/2.0);
+	lab := (la+lb)/2.0;
+	lbc := (lb+lc)/2.0;
+	lca := (lc+la)/2.0;
+	gsubdiv(c, a, mab, mca, la, lab, lca, depth-1);
+	gsubdiv(c, mab, b, mbc, lab, lb, lbc, depth-1);
+	gsubdiv(c, mca, mbc, cc, lca, lbc, lc, depth-1);
+	gsubdiv(c, mab, mbc, mca, lab, lbc, lca, depth-1);
 }
 
 spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: real, flags: int)

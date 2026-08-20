@@ -377,6 +377,8 @@ extern int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, f
 extern int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
 extern int	(*gpudrawfillpoly3d)(Memimage*, float*, float*, float*, int, Memimage*, int,
 	float, float*, float*, float, float, float, float);
+extern int	(*gpudrawfillpoly3g)(Memimage*, float*, float*, float*, float*, int, Memimage*,
+	int, float*, float*, float, float, float, float);
 extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -395,6 +397,8 @@ static int	metal_queue_line(Memimage*, Point, Point, int, Memimage*, int, float,
 static int	metal_queue_fillpoly(Memimage*, Point*, float*, int, Memimage*, int, float);
 static int	metal_queue_fillpoly3d(Memimage*, float*, float*, float*, int, Memimage*, int,
 	float, float*, float*, float, float, float, float);
+static int	metal_queue_fillpoly3g(Memimage*, float*, float*, float*, float*, int, Memimage*,
+	int, float*, float*, float, float, float, float);
 static void	metal_present_tris3d(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static int	metal_queue_plot(Memimage*, Point, Memimage*, int, float);
 static int	metal_queue_sprite(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
@@ -526,6 +530,7 @@ metal_init(void)
 	gpudrawline = metal_queue_line;
 	gpudrawfillpoly = metal_queue_fillpoly;
 	gpudrawfillpoly3d = metal_queue_fillpoly3d;
+	gpudrawfillpoly3g = metal_queue_fillpoly3g;
 	gpudrawplot = metal_queue_plot;
 	gpudrawsprite = metal_queue_sprite;
 	gpudrawellipse = metal_queue_ellipse;
@@ -1935,6 +1940,103 @@ metal_queue_fillpoly3d(Memimage *dst, float *vx, float *vy, float *vz, int n,
 		v[1].r = r; v[1].g = g; v[1].b = bl; v[1].a = al;
 		v[2].x = vx[i+1]; v[2].y = vy[i+1]; v[2].z = vz[i+1];
 		v[2].r = r; v[2].g = g; v[2].b = bl; v[2].a = al;
+		ng3triverts += 3;
+		g3batches[bi].count += 3;
+	}
+	metal_g3_calls++;
+	metal_g3_tris += ntri;
+	unlock(&mtl_geom_lock);
+	return 1;
+}
+
+/*
+ * fillpoly3 gouraud ('K'): same raw-model-space GPU-T&L path as
+ * metal_queue_fillpoly3d, but one lit per vertex instead of one shared lit
+ * for the whole face. vgmain/fgmain already interpolate whatever colour
+ * each vertex carries in G3In.{r,g,b,a} - real hardware perspective-correct
+ * interpolation, the actual definition of Gouraud shading - so the only
+ * change needed here versus the flat version is computing a per-vertex
+ * colour instead of one shared one; no shader or present-path changes.
+ * Returns 0 ⇒ caller degrades to a single flat fill at the average lit.
+ */
+static void
+gouraud_colour(float r0, float g0, float bl0, float al, float lit, GPUVert3D *v)
+{
+	if(lit < 0.0f)
+		lit = 0.0f;
+	v->r = r0*lit > 1.0f ? 1.0f : r0*lit;
+	v->g = g0*lit > 1.0f ? 1.0f : g0*lit;
+	v->b = bl0*lit > 1.0f ? 1.0f : bl0*lit;
+	v->a = al;
+}
+
+static int
+metal_queue_fillpoly3g(Memimage *dst, float *vx, float *vy, float *vz, float *lits, int n,
+	Memimage *src, int op, float *model, float *proj,
+	float mx, float cx, float my, float cy)
+{
+	float r0, g0, bl0, al;
+	int i, ntri, need, bi, pw, ph;
+	GPUXform xf;
+	GPUVert3D *v;
+
+	if(vx == nil || vy == nil || vz == nil || lits == nil || n < 3)
+		return 0;
+	if(op != SoverD && op != S)
+		return 0;
+	if(dst == nil)
+		return 0;
+	if(dst->layer != nil){
+		Memlayer *l = dst->layer;
+		if(!l->clear)
+			return 0;
+		cx += (float)l->delta.x;
+		cy += (float)l->delta.y;
+		dst = l->screen->image;
+	}
+	if(dst != gscreen && dst != screenimage)
+		return 0;
+	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
+		return 0;
+	pw = Dx(gscreen->r);
+	ph = Dy(gscreen->r);
+	if(pw < 1 || ph < 1)
+		return 0;
+	if(src_rgba(src, &r0, &g0, &bl0, &al) < 0)
+		return 0;
+	ntri = n - 2;
+	need = ntri * 3;
+	if(need > MaxGPUTriVerts)
+		return 0;
+
+	memmove(xf.model, model, sizeof xf.model);
+	d3combineproj(proj, mx, cx, my, cy, (float)pw, (float)ph, xf.proj);
+
+	if(!metal_tri3d_reserve(need))
+		return 0;
+	if(ng3batches == 0 || !g3xform_eq(&g3batches[ng3batches-1].xform, &xf)){
+		if(ng3batches >= MaxG3Batches){
+			unlock(&mtl_geom_lock);
+			return 0;
+		}
+		bi = ng3batches++;
+		g3batches[bi].xform = xf;
+		g3batches[bi].start = ng3triverts;
+		g3batches[bi].count = 0;
+	}else
+		bi = ng3batches - 1;
+	for(i = 1; i < n - 1; i++){
+		v = &g3triverts[ng3triverts];
+
+		v[0].x = vx[0]; v[0].y = vy[0]; v[0].z = vz[0];
+		gouraud_colour(r0, g0, bl0, al, lits[0], &v[0]);
+
+		v[1].x = vx[i]; v[1].y = vy[i]; v[1].z = vz[i];
+		gouraud_colour(r0, g0, bl0, al, lits[i], &v[1]);
+
+		v[2].x = vx[i+1]; v[2].y = vy[i+1]; v[2].z = vz[i+1];
+		gouraud_colour(r0, g0, bl0, al, lits[i+1], &v[2]);
+
 		ng3triverts += 3;
 		g3batches[bi].count += 3;
 	}

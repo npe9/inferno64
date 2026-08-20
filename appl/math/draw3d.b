@@ -495,7 +495,18 @@ plot3(c: ref Context, v: Vector)
 	c.dst.draw(Rect(p, p.add(Point(1, 1))), c.colour, nil, Point(0, 0));
 }
 
-fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
+fillpoly3(c: ref Context, verts: array of Vector, nil: Vector, lit: real)
+{
+	fillpoly3flat(c, verts, lit);
+}
+
+# The actual flat-fill core, factored out of fillpoly3() so fillpoly3g()'s
+# subdivision base case (below) can reuse it without duplicating the
+# project()+z-plane-fit logic. normal was already unused here (see
+# fillpoly3's own doc comment in the module) - the code below always
+# derives its own screen-space normal from the projected vertices for the
+# z-plane fit, world-space normal or none.
+fillpoly3flat(c: ref Context, verts: array of Vector, lit: real)
 {
 	n := len verts;
 	if(n < 3 || c.dst == nil || c.colour == nil)
@@ -536,6 +547,49 @@ fillpoly3(c: ref Context, verts: array of Vector, normal: Vector, lit: real)
 		polyfill->fillpoly(c.dst, ap, ~0, col, Point(0, 0), c.zstate, dc, dx, dy);
 	}else
 		c.dst.fillpoly(ap, ~0, col, Point(0, 0));
+}
+
+# Gouraud shaded poly, software approximation: fan-triangulate then
+# recursively subdivide each triangle (4-way midpoint split, linearly
+# interpolating position and lit at each new midpoint) until either the
+# three corner lits are close enough to look flat or a depth cap is hit,
+# then flat-fill the leaf with fillpoly3flat() at the average of its three
+# corner lits. Not true per-pixel interpolation (that would need a native
+# Polyfill change to carry a colour gradient, not just a depth plane), but
+# converges visually for smooth per-vertex lighting without touching any
+# native code - see draw3ddev.b's fillpoly3g for the real, exact GPU
+# version (per-vertex colour, hardware perspective-correct interpolation).
+GSUBEPS: con 0.02;
+GSUBDEPTH: con 4;
+
+fillpoly3g(c: ref Context, verts: array of Vector, lits: array of real)
+{
+	n := len verts;
+	if(n < 3 || len lits != n || c.dst == nil || c.colour == nil)
+		return;
+	for(i := 1; i < n-1; i++)
+		gsubdiv(c, verts[0], verts[i], verts[i+1], lits[0], lits[i], lits[i+1], GSUBDEPTH);
+}
+
+gsubdiv(c: ref Context, a, b, cc: Vector, la, lb, lc: real, depth: int)
+{
+	dab := la-lb; if(dab < 0.0) dab = -dab;
+	dbc := lb-lc; if(dbc < 0.0) dbc = -dbc;
+	dca := lc-la; if(dca < 0.0) dca = -dca;
+	if(depth <= 0 || (dab < GSUBEPS && dbc < GSUBEPS && dca < GSUBEPS)){
+		fillpoly3flat(c, array[] of {a, b, cc}, (la+lb+lc)/3.0);
+		return;
+	}
+	mab := Vector((a.x+b.x)/2.0, (a.y+b.y)/2.0, (a.z+b.z)/2.0);
+	mbc := Vector((b.x+cc.x)/2.0, (b.y+cc.y)/2.0, (b.z+cc.z)/2.0);
+	mca := Vector((cc.x+a.x)/2.0, (cc.y+a.y)/2.0, (cc.z+a.z)/2.0);
+	lab := (la+lb)/2.0;
+	lbc := (lb+lc)/2.0;
+	lca := (lc+la)/2.0;
+	gsubdiv(c, a, mab, mca, la, lab, lca, depth-1);
+	gsubdiv(c, mab, b, mbc, lab, lb, lbc, depth-1);
+	gsubdiv(c, mca, mbc, cc, lca, lbc, lc, depth-1);
+	gsubdiv(c, mab, mbc, mca, lab, lbc, lca, depth-1);
 }
 
 # Tint solid 32-bit colour by lit (Metal / d3applylit parity). Non-solid pens unchanged.
