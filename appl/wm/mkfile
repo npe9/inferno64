@@ -29,6 +29,7 @@ TARG=\
 	dir.dis\
 	edit.dis\
 	eliza.dis\
+	fantics.dis\
 	filename.dis\
 	getauthinfo.dis\
 	hypercube.dis\
