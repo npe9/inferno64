@@ -8,6 +8,7 @@ TARG=\
 	atwoodpendulum.dis\
 	badfootball.dis\
 	badminton.dis\
+	ballistics.dis\
 	balloon.dis\
 	baseballpitch.dis\
 	basketball.dis\
