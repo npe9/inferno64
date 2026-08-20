@@ -79,6 +79,7 @@ TARG=\
 	lagrange2.dis\
 	lakepollution.dis\
 	lanchester.dis\
+	limitstogrowth.dis\
 	loadedpendulum.dis\
 	logisticpredators.dis\
 	logisticprey.dis\
