@@ -10,7 +10,11 @@ implement WmHyperdoc;
 # scrolls the other pane to bring its partner span into view - a simplified
 # form of Nelson's "derivative motion". A link whose partner is currently
 # scrolled out of view is drawn as a broken arrow pointing toward the edge
-# it's off past, matching the convention described in the book.
+# it's off past, matching the convention described in the book. The "Sync
+# scroll" checkbutton turns on continuous derivative motion: scrolling either
+# pane snaps the other to whichever link is nearest the top of the view, so
+# the two documents are dragged along together rather than only jumping on
+# an explicit click - the fuller "Parallel Textface" behaviour.
 
 include "sys.m";
 	sys: Sys;
@@ -50,10 +54,12 @@ ntags := 0;
 tkconfig := array[] of {
 	"frame .tool",
 	"label .tool.status -text {select a span in each pane, then Link} -anchor w",
+	"variable syncscroll 0",
+	"checkbutton .tool.sync -text {Sync scroll} -variable syncscroll -command {send redraw x}",
 	"entry .tool.label -bg white -width 20",
 	"button .tool.link -text Link -command {send mklink go}",
 	"pack .tool.status -side left -expand 1 -fill x",
-	"pack .tool.label .tool.link -side left",
+	"pack .tool.sync .tool.label .tool.link -side left",
 
 	"frame .left",
 	"text .left.t -state disabled -bd 0 -width 0 -height 0 -bg white -wrap word"+
@@ -158,7 +164,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		e := tkclient->wmctl(window, s);
 		if(e == nil && s[0] == '!')
 			redraw();
-	nil := <-redrawc =>
+	s := <-redrawc =>
+		dosync(s);
 		redraw();
 	nil := <-mklink =>
 		domklink();
@@ -300,6 +307,51 @@ appendlink(af, a1, a2, bf, b1, b2, label: string): string
 		text = "";
 	rec := af + "\t" + a1 + "\t" + a2 + "\t" + bf + "\t" + b1 + "\t" + b2 + "\t" + label + "\n";
 	return writefile(LINKSTORE, text + rec);
+}
+
+# "Parallel Textface" derivative motion: when Sync scroll is on, whichever
+# pane the caller names as "side" (or the left pane, as a reasonable default,
+# for the checkbutton's own toggle event) is treated as driving - find the
+# link nearest the top of its current view and drag the other pane's view to
+# line up with that link's other end. Tk's own scroll-position dedup (a
+# yview that lands on the position it's already at fires no further
+# -yscrollcommand event) is what keeps this from ping-ponging forever when
+# the programmatic scroll below triggers the other pane's own sync in turn.
+dosync(side: string)
+{
+	if(tkcmd(window, "variable syncscroll") != "1")
+		return;
+	drivingw := ".left.t";
+	other := ".right.t";
+	if(len side > 0 && side[0] == 'r'){
+		drivingw = ".right.t";
+		other = ".left.t";
+	}
+	top := tkcmd(window, drivingw + " index @0,0");
+	best: ref Viewlink;
+	bestidx := "";
+	for(l := viewlinks; l != nil; l = tl l){
+		v := hd l;
+		idx := v.lidx1;
+		if(drivingw == ".right.t")
+			idx = v.ridx1;
+		if(tkcmd(window, drivingw + " compare " + idx + " <= " + top) != "1")
+			continue;
+		if(best == nil || tkcmd(window, drivingw + " compare " + idx + " > " + bestidx) == "1"){
+			best = v;
+			bestidx = idx;
+		}
+	}
+	if(best == nil)
+		return;
+	otheridx := best.ridx1;
+	if(drivingw == ".right.t")
+		otheridx = best.lidx1;
+	curtop := tkcmd(window, other + " index @0,0");
+	if(tkcmd(window, other + " compare " + curtop + " == " + otheridx) == "1")
+		return;
+	tkcmd(window, other + " yview " + otheridx);
+	setstatus(best.label);
 }
 
 # Redraw every connector line in the strip between the two panes, based on
