@@ -28,6 +28,7 @@ TARG=\
 	debsrc.dis\
 	dir.dis\
 	edit.dis\
+	eliza.dis\
 	filename.dis\
 	getauthinfo.dis\
 	hypercube.dis\

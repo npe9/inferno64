@@ -45,6 +45,7 @@ TARG=\
 	diskblocks.dis\
 	disks.dis\
 	dividers.dis\
+	eliza.dis\
 	env.dis\
 	ether.dis\
 	exception.dis\
