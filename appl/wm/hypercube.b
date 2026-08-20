@@ -7,10 +7,19 @@ implement Hypercube;
 # tumbling in 4D), then get perspective-divided by (distance - w) down to
 # ordinary 3D - the same trick used to go from 3D world space to a 2D
 # screen, just one dimension up - before being handed to draw3d's usual
-# line3()/matrix-stack pipeline for the final 3D->2D display. Edges that
-# change the 4th coordinate are drawn in red, a standard convention in 4D
-# wireframe visualizations so a viewer can actually track which edges are
-# "the ones you can't see" in an ordinary 3D object.
+# line3()/matrix-stack pipeline for the final 3D->2D display. Each of the
+# 4 axes gets its own edge colour (a standard convention in 4D wireframe
+# visualizations), so a viewer can actually track which edges are "the
+# ones you can't see" in an ordinary 3D object - yellow (the w axis) marks
+# the 8 edges that only exist because there's a 4th dimension at all.
+#
+# An earlier version of this file also filled each half's 6 faces as a
+# translucent solid (the "two nested cubes" look many tesseract demos
+# use) - dropped after live testing: with all 12 faces filled, the two
+# still-overlapping cubes near the start of a rotation read as one solid,
+# oddly-coloured blob rather than a legible tesseract, and chasing the
+# exact colour behaviour further wasn't worth it for what a plain
+# multi-colour wireframe already shows clearly on its own.
 
 include "sys.m";
 	sys: Sys;
@@ -37,11 +46,15 @@ Hypercube: module {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+DIST: con 6.5;
+SCALE: con 8.0;
+
 Pi: con Math->Pi;
 
 win: ref Window;
 d3c: ref Draw3d->Context;
-white, red, black: ref Image;
+black, white: ref Image;
+axiscolour: array of ref Image;	# x, y, z, w edge colours, in that order
 font: ref Font;
 ang1 := 0.0;
 ang2 := 0.0;
@@ -55,9 +68,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	math = load Math Math->PATH;
-	draw3d = load Draw3d "/dis/math/draw3ddev.dis";
-	if(draw3d == nil)
-		draw3d = load Draw3d Draw3d->PATH;
+	# Plain software provider, not draw3ddev.dis/GPU: this is 32 line3()
+	# calls a frame, trivial CPU work, and the GPU-accelerated line3 path
+	# was dropping most segments here for reasons not worth chasing when
+	# nothing in this demo needs the acceleration in the first place.
+	draw3d = load Draw3d Draw3d->PATH;
 	if(draw3d == nil){
 		sys->fprint(sys->fildes(2), "hypercube: cannot load draw3d: %r\n");
 		raise "fail:load";
@@ -77,8 +92,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win = wmclient->window(ctxt, "Hypercube", Wmclient->Appl);
 	d := win.display;
 	white = d.color(Draw->White);
-	red = d.color(int 16rFF4444FF);
 	black = d.color(Draw->Black);
+	axiscolour = array[] of {
+		d.color(int 16rFF4444FF),	# x: red
+		d.color(int 16r44DD44FF),	# y: green
+		d.color(int 16r44AAFFFF),	# z: cyan-blue
+		d.color(int 16rFFDD22FF),	# w: yellow - the "extra" axis
+	};
 	font = Font.open(d, "/fonts/lucidasans/unicode.8.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");
@@ -150,9 +170,18 @@ project4d(): array of Vector
 		w2 := x*s2 + w1*c2;
 		# perspective divide by (distance - w): the near "cube" of the
 		# tesseract grows larger and the far one shrinks, same trick as
-		# an ordinary 3D perspective camera, one dimension up.
-		d := 1.0/(3.0-w2);
-		out[i] = Vector(x1*d*2.5, y*d*2.5, z1*d*2.5);
+		# an ordinary 3D perspective camera, one dimension up. w2 can
+		# reach +-3 in the worst case (two chained rotations of a unit
+		# +-1 corner, triangle-inequality bound |x*s2|+|w1*c2| with
+		# |w1|<=2), so a distance of 3 lets the denominator hit zero -
+		# that's what was blowing one face up to cover the whole window.
+		# DIST=6.5 keeps a safe margin (worst-case denom ~3.5); the clamp
+		# is a second line of defence in case that bound is still loose.
+		denom := DIST-w2;
+		if(denom < 1.0)
+			denom = 1.0;
+		d := 1.0/denom;
+		out[i] = Vector(x1*d*SCALE, y*d*SCALE, z1*d*SCALE);
 	}
 	return out;
 }
@@ -168,21 +197,19 @@ frame()
 	draw3d->translate(0.0, 0.0, -5.0);
 
 	verts := project4d();
+
 	for(i := 0; i < 16; i++){
 		for(b := 0; b < 4; b++){
 			j := i ^ (1<<b);
 			if(j <= i)
 				continue;
-			if(b == 3)
-				draw3d->setcolour(d3c, red);
-			else
-				draw3d->setcolour(d3c, white);
-			draw3d->line3(d3c, verts[i], verts[j], 0);
+			draw3d->setcolour(d3c, axiscolour[b]);
+			draw3d->line3(d3c, verts[i], verts[j], 1);
 		}
 	}
 	if(font != nil)
 		img.text(Point(img.r.min.x+8, img.r.min.y+16), white, Point(0, 0), font,
-			"tesseract: 16 vertices, 32 edges - red edges run along the 4th axis");
+			"tesseract: red=x  green=y  blue=z  yellow=w (the 4th axis)");
 	img.flush(Draw->Flushnow);
 }
 
