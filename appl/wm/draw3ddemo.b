@@ -35,6 +35,17 @@ sprite, sprmask: ref Image;
 ang := 0.0;
 font: ref Font;
 
+# Dynamic per-face flat shading (Nelson's "halftone image synthesis" - a
+# shaded solid, not just a wireframe): each face's own object-space normal
+# is rotated into the same stationary frame the light lives in (the current
+# spin, with translation stripped out - there's no separate camera/view
+# matrix in this demo) and dotted against a fixed light direction, so
+# brightness genuinely changes as the cube turns rather than each face
+# just keeping a hardcoded colour.
+AMBIENT: con 0.15;
+lightdir: Draw3d->Vector;
+rotm: Draw3d->Matrix;
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -50,6 +61,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		raise "fail:load";
 	}
 	draw3d->init();
+	lightdir = draw3d->vnorm(Vector(0.35, 0.6, 0.7));
 
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -102,7 +114,15 @@ setup(img: ref Image)
 	draw3d->viewport(d3c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
 	draw3d->mode(Draw3d->PROJ);
 	draw3d->identity();
-	draw3d->frustum(1.5, 4.0, 100.0);
+	# frustum()'s matrix (row 2 == row 3) is fine for the CPU toclip() path
+	# but the GPU T&L path (metal_queue_fillpoly3d/d3combineproj) was only
+	# ever exercised against frustumoffset()'s shifted-w-row convention
+	# (castlefrankenstein's camera) - frustum() sent filled faces to the
+	# GPU queue (metal_g3_calls counted them) with valid colours yet
+	# nothing rasterized, a real gap this demo is the first to hit. Same
+	# n/l = 4.0/1.5 scale as the old frustum() call; zoff=0 is an ordinary
+	# perspective camera truly at the origin, no raycaster offset needed.
+	draw3d->frustumoffset(2.6667, -2.6667, 0.0);
 	draw3d->mode(Draw3d->MODEL);
 }
 
@@ -120,6 +140,16 @@ frame()
 	draw3d->translate(0.0, 0.0, -6.0);
 	draw3d->rotatey(ang);
 	draw3d->rotatex(ang * 0.6);
+
+	# Capture the current spin as a rotation-only matrix (strip the
+	# translate() column) so drawface() can carry each face's normal into
+	# the same stationary frame lightdir lives in, without re-deriving the
+	# rotation math by hand.
+	rotm = draw3d->newmatrix();
+	draw3d->storematrix(rotm);
+	rotm[0][3] = 0.0;
+	rotm[1][3] = 0.0;
+	rotm[2][3] = 0.0;
 
 	# Filled cube faces (painter's order: back then front-ish).
 	drawface(array[] of {
@@ -176,11 +206,22 @@ frame()
 
 drawface(v: array of Vector, col: ref Image)
 {
+	e1 := Vector(v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z);
+	e2 := Vector(v[2].x-v[0].x, v[2].y-v[0].y, v[2].z-v[0].z);
+	localn := draw3d->vnorm(draw3d->vcross(e1, e2));
+	# These four faces weren't hand-authored with a consistent outward
+	# winding (they used to just flat-fill with no normal at all) - the
+	# cube is centred on the local origin, so a face's own first vertex is
+	# always on the outward side of its plane; flip the normal if the
+	# cross product above happened to point inward instead.
+	if(draw3d->vdot(localn, v[0]) < 0.0)
+		localn = Vector(-localn.x, -localn.y, -localn.z);
+	worldn := draw3d->mulpoint(rotm, localn);
+	lit := draw3d->vdot(worldn, lightdir);
+	if(lit < AMBIENT)
+		lit = AMBIENT;
 	draw3d->setcolour(d3c, col);
-	draw3d->begin(d3c, Draw3d->FILLPOLY, len v);
-	for(i := 0; i < len v; i++)
-		draw3d->vertex(d3c, v[i].x, v[i].y, v[i].z);
-	draw3d->end(d3c);
+	draw3d->fillpoly3(d3c, v, worldn, lit);
 }
 
 timer(c: chan of int, ms: int)
