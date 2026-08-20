@@ -185,6 +185,12 @@ extern	void		flushmemscreen(Rectangle);
 /* Cocoa Metal (win-cocoa.m) assigns these; nil ⇒ software memline/memfillpoly. */
 int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, float);
 int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
+/* GPU does model*proj+viewport itself; vx/vy/vz are raw model-space, post
+ * near-clip. nil ⇒ not hooked (Cocoa always hooks it alongside gpudrawfillpoly)
+ * or this call wasn't eligible (op/dst/src) - caller falls back to the
+ * per-vertex d3project() + gpudrawfillpoly/memfillpoly path either way. */
+int	(*gpudrawfillpoly3d)(Memimage*, float*, float*, float*, int, Memimage*, int,
+	float, float*, float*, float, float, float, float);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -2816,6 +2822,30 @@ drawmesg(Client *client, void *av, int n)
 						free(pp);
 						goto gdone;
 					}
+					op = drawclientop(client);
+					/*
+					 * GPU-T&L: hand the raw clipped world verts straight to
+					 * Metal and let vgmain do model*proj+viewport - skips
+					 * this whole function's per-vertex d3project() loop
+					 * *and* the plane-fit below (d3planecoeffs/
+					 * d3planefromeyez only exist because the old
+					 * screen-space GPU/software paths interpolate depth
+					 * linearly across the triangle; true hardware
+					 * perspective-correct interpolation of a real eye-z
+					 * needs no such approximation).
+					 */
+					if(gpudrawfillpoly3d != nil && gpudrawfillpoly3d(dst,
+					    vx, vy, vz, nw, src, op, lit, client->d3model,
+					    client->d3proj, client->d3mx, client->d3cx,
+					    client->d3my, client->d3cy)){
+						poperror();
+						free(ezs);
+						poperror();
+						free(vx);
+						poperror();
+						free(pp);
+						goto gdone;
+					}
 					for(j = 0; j < nw; j++){
 						if(!d3project(client, vx[j], vy[j], vz[j], &pp[j], &ez)){
 							poperror();
@@ -2829,7 +2859,6 @@ drawmesg(Client *client, void *av, int n)
 						ezs[j] = ez;
 					}
 					pp[nw] = pp[0];
-					op = drawclientop(client);
 					haveplane = 0;
 					pdx = pdy = pdc = 0;
 					if(client->d3zenable){

@@ -75,6 +75,7 @@ static id<MTLCommandQueue>	mtl_queue;
 static id<MTLRenderPipelineState>	mtl_pipe;		/* softscreen / under blit */
 static id<MTLRenderPipelineState>	mtl_overlay_pipe;	/* softscreen where ≠ under */
 static id<MTLRenderPipelineState>	mtl_geom_pipe;		/* BGRA8+depth lines+tris+points */
+static id<MTLRenderPipelineState>	mtl_geom3d_pipe;	/* raw-vertex tris: GPU does model*proj+viewport */
 static id<MTLRenderPipelineState>	mtl_sprite_pipe;	/* textured quads + depth + blend */
 static id<MTLDepthStencilState>	mtl_depth_on;
 static id<MTLDepthStencilState>	mtl_depth_off;
@@ -141,6 +142,8 @@ static uvlong	metal_copy_reject_geometry;
 static uvlong	metal_copy_alias_storage;
 static uvlong	metal_copy_armed;
 static uvlong	metal_copy_cancelled;
+static uvlong	metal_g3_calls;	/* gpudrawfillpoly3d successes: real GPU T&L, not CPU d3project */
+static uvlong	metal_g3_tris;
 static int	metal_stat_frames;
 static id<MTLBuffer>	metal_validate_buf;
 static uchar	*metal_validate_cpu;
@@ -156,6 +159,7 @@ enum {
 	MaxGPUTriVerts = 49152,	/* 16384 triangles × 3 packed verts */
 	MaxGPUSprites = 512,
 	MaxSpriteTexCache = 64,	/* reuse uploads across 'j' draws */
+	MaxG3Batches = 64,	/* distinct model/proj xforms per frame, GPU-T&L path */
 	EllipseSegs = 48,
 };
 
@@ -173,6 +177,45 @@ struct GPULine {
 typedef struct GPUVert GPUVert;
 struct GPUVert {
 	float	x, y, z, r, g, b, a;
+};
+
+/*
+ * Raw (untransformed) vertex for the GPU-T&L path: model-space position,
+ * post near-clip (near-clipping stays in C - d3clipnear - since it needs
+ * the vertex count anyway for buffer sizing; everything past that - the
+ * model*proj multiply, a *real* hardware perspective divide, and depth -
+ * runs in vgmain/fgmain instead of devdraw.c's d3project() C loop).
+ * Must match Metal G3In (7 floats, no padding).
+ */
+typedef struct GPUVert3D GPUVert3D;
+struct GPUVert3D {
+	float	x, y, z, r, g, b, a;
+};
+
+/*
+ * Per-batch uniform for the GPU-T&L path: must match Metal G3Xform layout.
+ * model is the real (row-major) model matrix. proj is *not* the raw draw3d
+ * projection matrix - metal_queue_fillpoly3d folds the viewport scale
+ * (mx/cx/my/cy) and the screen-pixel→Metal-NDC map (wh) into it once per
+ * batch (d3combineproj), so the vertex shader can emit a genuine clip.xyzw
+ * and let the GPU do one real perspective divide, instead of the manual
+ * "divide then treat w=1" trick that only supports linear-in-screen-space
+ * depth (wrong for a triangle at a steep angle or spanning a lot of depth -
+ * this is what actually broke fills: some of a mesh's own triangles failed
+ * the depth test against others whenever the crude linear approximation
+ * disagreed with which one was really closer).
+ */
+typedef struct GPUXform GPUXform;
+struct GPUXform {
+	float	model[16];
+	float	proj[16];
+};
+
+typedef struct G3Batch G3Batch;
+struct G3Batch {
+	GPUXform	xform;
+	int	start;	/* first vertex in g3triverts */
+	int	count;
 };
 
 /* Textured sprite vert: must match Metal TIn (9 floats). */
@@ -207,6 +250,11 @@ static GPUVert	*present_line_verts;
 static GPUVert	*present_tri_verts;
 static GPUVert	gtriverts[MaxGPUTriVerts];
 static int	ngtriverts;
+static GPUVert3D	*present_tri3d_verts;
+static GPUVert3D	g3triverts[MaxGPUTriVerts];
+static int	ng3triverts;
+static G3Batch	g3batches[MaxG3Batches];
+static int	ng3batches;
 static GPUSprite	gsprites[MaxGPUSprites];
 static int	ngsprites;
 static SpriteTexCache	sprtexcache[MaxSpriteTexCache];
@@ -267,6 +315,41 @@ static NSString *const kSoftscreenMetalSrc =
 	"  return o;\n"
 	"}\n"
 	"fragment float4 flmain(LOut in [[stage_in]]) { return in.color; }\n"
+	"struct G3In { float x, y, z, r, g, b, a; };\n"
+	"struct G3Xform { float model[16]; float proj[16]; };\n"
+	"struct G3Out { float4 pos [[position]]; float4 color; float ez; };\n"
+	"/* GPU-T&L: raw model-space vertex in. model then proj (proj already has\n"
+	"   the viewport scale and screen→Metal-NDC map folded in by\n"
+	"   d3combineproj, so this outputs a genuine clip.xyzw) - a real hardware\n"
+	"   perspective divide, not a manual one, so ez below gets true\n"
+	"   perspective-correct interpolation across the triangle. clip.z is a\n"
+	"   dummy (0 <= 0.5*clip.w <= clip.w always passes hardware near/far\n"
+	"   clipping) - fgmain writes the real depth from the interpolated ez. */\n"
+	"vertex G3Out vgmain(uint vid [[vertex_id]],\n"
+	"    constant G3In *v [[buffer(0)]],\n"
+	"    constant G3Xform &x [[buffer(1)]]) {\n"
+	"  G3In i = v[vid];\n"
+	"  float ex = i.x*x.model[0] + i.y*x.model[1] + i.z*x.model[2] + x.model[3];\n"
+	"  float ey = i.x*x.model[4] + i.y*x.model[5] + i.z*x.model[6] + x.model[7];\n"
+	"  float ez = i.x*x.model[8] + i.y*x.model[9] + i.z*x.model[10] + x.model[11];\n"
+	"  float ew = i.x*x.model[12] + i.y*x.model[13] + i.z*x.model[14] + x.model[15];\n"
+	"  if(ew != 0.0 && ew != 1.0) { ex /= ew; ey /= ew; ez /= ew; }\n"
+	"  float cx_ = ex*x.proj[0] + ey*x.proj[1] + ez*x.proj[2] + x.proj[3];\n"
+	"  float cy_ = ex*x.proj[4] + ey*x.proj[5] + ez*x.proj[6] + x.proj[7];\n"
+	"  float cw_ = ex*x.proj[12] + ey*x.proj[13] + ez*x.proj[14] + x.proj[15];\n"
+	"  G3Out o;\n"
+	"  o.pos = float4(cx_, cy_, cw_*0.5, cw_);\n"
+	"  o.color = float4(i.r, i.g, i.b, i.a);\n"
+	"  o.ez = ez;\n"
+	"  return o;\n"
+	"}\n"
+	"struct G3FragOut { float4 color [[color(0)]]; float depth [[depth(any)]]; };\n"
+	"fragment G3FragOut fgmain(G3Out in [[stage_in]]) {\n"
+	"  G3FragOut o;\n"
+	"  o.color = in.color;\n"
+	"  o.depth = 0.5 + atan(-in.ez) / M_PI_F;\n"
+	"  return o;\n"
+	"}\n"
 	"struct TIn { float x, y, z, u, v, r, g, b, a; };\n"
 	"struct TOut { float4 pos [[position]]; float2 uv; float4 color; };\n"
 	"vertex TOut vtmain(uint vid [[vertex_id]],\n"
@@ -292,6 +375,8 @@ static NSString *const kSoftscreenMetalSrc =
 /* Assigned from metal_init; declared in emu/port/devdraw.c */
 extern int	(*gpudrawline)(Memimage*, Point, Point, int, Memimage*, int, float, float);
 extern int	(*gpudrawfillpoly)(Memimage*, Point*, float*, int, Memimage*, int, float);
+extern int	(*gpudrawfillpoly3d)(Memimage*, float*, float*, float*, int, Memimage*, int,
+	float, float*, float*, float, float, float, float);
 extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -308,6 +393,9 @@ static void	metal_zclear(void);
 static void	metal_set_zenable(int);
 static int	metal_queue_line(Memimage*, Point, Point, int, Memimage*, int, float, float);
 static int	metal_queue_fillpoly(Memimage*, Point*, float*, int, Memimage*, int, float);
+static int	metal_queue_fillpoly3d(Memimage*, float*, float*, float*, int, Memimage*, int,
+	float, float*, float*, float, float, float, float);
+static void	metal_present_tris3d(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static int	metal_queue_plot(Memimage*, Point, Memimage*, int, float);
 static int	metal_queue_sprite(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -395,6 +483,20 @@ metal_init(void)
 	if(mtl_geom_pipe == nil)
 		return -1;
 
+	/* Raw model-space verts in; a real hardware perspective divide (not the
+	 * manual-divide-then-w=1 trick mtl_geom_pipe uses) gives true
+	 * perspective-correct interpolation of ez, and fgmain writes the
+	 * nonlinear atan depth from that per fragment instead of per vertex. */
+	pd = [[MTLRenderPipelineDescriptor alloc] init];
+	pd.vertexFunction = [lib newFunctionWithName:@"vgmain"];
+	pd.fragmentFunction = [lib newFunctionWithName:@"fgmain"];
+	pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+	pd.colorAttachments[0].blendingEnabled = NO;
+	pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+	mtl_geom3d_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+	if(mtl_geom3d_pipe == nil)
+		return -1;
+
 	/* Textured sprites: sample + alpha discard, depth tested. */
 	pd = [[MTLRenderPipelineDescriptor alloc] init];
 	pd.vertexFunction = [lib newFunctionWithName:@"vtmain"];
@@ -423,6 +525,7 @@ metal_init(void)
 
 	gpudrawline = metal_queue_line;
 	gpudrawfillpoly = metal_queue_fillpoly;
+	gpudrawfillpoly3d = metal_queue_fillpoly3d;
 	gpudrawplot = metal_queue_plot;
 	gpudrawsprite = metal_queue_sprite;
 	gpudrawellipse = metal_queue_ellipse;
@@ -1223,7 +1326,7 @@ metal_flush_geom(void)
 	id<MTLCommandBuffer> cmd;
 	id<MTLBlitCommandEncoder> blit;
 
-	if(nglines == 0 && ngtriverts == 0 && ngsprites == 0)
+	if(nglines == 0 && ngtriverts == 0 && ng3triverts == 0 && ngsprites == 0)
 		return;
 	if(mtl_have_under)
 		return;
@@ -1360,6 +1463,91 @@ metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph, verts, n,
 	    MTLPrimitiveTypeTriangle) < 0)
 		soft_burn_tris(verts, n);
+}
+
+/*
+ * GPU-T&L triangles: one drawPrimitives per distinct (model,proj,viewport)
+ * batch, each with its own xform bound at buffer(1) - vgmain does the
+ * model*proj multiply, divide, and viewport scale that metal_present_geom's
+ * vertex shader (vlmain) assumes is already done. metal_queue_fillpoly3d
+ * already checked every eligibility gate (op/dst/src) before queuing, so
+ * the only failure left here is allocation - drop the frame's queued
+ * batches rather than software-raster them (there's no projected
+ * screen-space triangle to hand soft_burn_tris; the whole point of this
+ * path is that one was never computed on the CPU).
+ */
+static void
+metal_present_tris3d(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
+	id<MTLTexture> depthtex, int pw, int ph)
+{
+	int i, n, nb;
+	id<MTLBuffer> vbuf;
+	int voff;
+	id<MTLRenderCommandEncoder> enc;
+	MTLRenderPassDescriptor *rp;
+	MTLLoadAction zload;
+	G3Batch *batches;
+
+	lock(&mtl_geom_lock);
+	n = ng3triverts;
+	nb = ng3batches;
+	if(n == 0 || nb == 0){
+		ng3triverts = 0;
+		ng3batches = 0;
+		unlock(&mtl_geom_lock);
+		return;
+	}
+	if(present_tri3d_verts == nil)
+		present_tri3d_verts = malloc(sizeof(GPUVert3D) * MaxGPUTriVerts);
+	if(present_tri3d_verts == nil){
+		ng3triverts = 0;
+		ng3batches = 0;
+		unlock(&mtl_geom_lock);
+		return;
+	}
+	memmove(present_tri3d_verts, g3triverts, sizeof(GPUVert3D) * n);
+	batches = malloc(sizeof(G3Batch) * nb);
+	if(batches != nil)
+		memmove(batches, g3batches, sizeof(G3Batch) * nb);
+	ng3triverts = 0;
+	ng3batches = 0;
+	unlock(&mtl_geom_lock);
+	if(batches == nil || cmd == nil || drawabletex == nil || depthtex == nil
+	|| mtl_geom3d_pipe == nil){
+		free(batches);
+		return;
+	}
+	if(metal_vertex_data(cmd, present_tri3d_verts, sizeof(GPUVert3D) * n, &vbuf, &voff) < 0){
+		free(batches);
+		return;
+	}
+
+	zload = mtl_zclear ? MTLLoadActionClear : MTLLoadActionLoad;
+	mtl_zclear = 0;
+
+	rp = [MTLRenderPassDescriptor renderPassDescriptor];
+	rp.colorAttachments[0].texture = drawabletex;
+	rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+	rp.depthAttachment.texture = depthtex;
+	rp.depthAttachment.loadAction = zload;
+	rp.depthAttachment.storeAction = MTLStoreActionStore;
+	rp.depthAttachment.clearDepth = 1.0;
+
+	enc = [cmd renderCommandEncoderWithDescriptor:rp];
+	[enc setRenderPipelineState:mtl_geom3d_pipe];
+	[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
+	[enc setVertexBuffer:vbuf offset:voff atIndex:0];
+	for(i = 0; i < nb; i++){
+		if(batches[i].count == 0)
+			continue;
+		[enc setVertexBufferOffset:voff + batches[i].start * sizeof(GPUVert3D) atIndex:0];
+		[enc setVertexBytes:&batches[i].xform length:sizeof(GPUXform) atIndex:1];
+		[enc drawPrimitives:MTLPrimitiveTypeTriangle
+			vertexStart:0 vertexCount:batches[i].count];
+	}
+	[enc endEncoding];
+	free(batches);
 }
 
 static void
@@ -1592,6 +1780,166 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 		v[2].a = al;
 		ngtriverts += 3;
 	}
+	unlock(&mtl_geom_lock);
+	return 1;
+}
+
+/* Return with the geometry lock held and room reserved in g3triverts. */
+static int
+metal_tri3d_reserve(int need)
+{
+	if(need < 1 || need > MaxGPUTriVerts)
+		return 0;
+retry:
+	lock(&mtl_geom_lock);
+	if(ng3triverts + need <= MaxGPUTriVerts)
+		return 1;
+	unlock(&mtl_geom_lock);
+	mark_view_dirty();
+	osyield();
+	goto retry;
+}
+
+static int
+g3xform_eq(GPUXform *a, GPUXform *b)
+{
+	return memcmp(a->model, b->model, sizeof a->model) == 0
+		&& memcmp(a->proj, b->proj, sizeof a->proj) == 0;
+}
+
+/*
+ * Fold the viewport scale (mx/cx/my/cy: NDC → screen pixels) and the
+ * screen-pixel → Metal-NDC map (wh, same convention as vlmain/vtmain) into
+ * the draw3d projection matrix, so vgmain can emit real clip.xyzw and let
+ * the GPU do one genuine perspective divide instead of a manual one.
+ * Derivation: with clip.w = cw (proj's own w-row, unchanged),
+ *   clip.x/cw must equal screen_x/wh.x*2-1, where screen_x = mx*(ndcx/cw)+cx
+ *   and ndcx/cw is proj's own (pre-viewport) NDC x. Multiplying through by
+ *   cw gives clip.x as a linear combination of proj's row0 and row3 - see
+ *   the y equivalent below (with the same sign flip vlmain's "1.0-y" uses).
+ * clip.z is left as a dummy 0.5*cw (always inside [0,cw] for cw>0, which
+ * d3clipnear guarantees) - fgmain supplies the real depth per fragment.
+ */
+static void
+d3combineproj(float *proj, float mx, float cx, float my, float cy,
+	float pw, float ph, float *out)
+{
+	float a, b;
+	int i;
+
+	a = 2.0f*mx/pw;
+	b = 2.0f*cx/pw - 1.0f;
+	for(i = 0; i < 4; i++)
+		out[i] = a*proj[i] + b*proj[12+i];
+	a = -2.0f*my/ph;
+	b = 1.0f - 2.0f*cy/ph;
+	for(i = 0; i < 4; i++)
+		out[4+i] = a*proj[4+i] + b*proj[12+i];
+	for(i = 0; i < 4; i++)
+		out[8+i] = 0.5f*proj[12+i];
+	for(i = 0; i < 4; i++)
+		out[12+i] = proj[12+i];
+}
+
+/*
+ * fillpoly3 ('g'/'k'), GPU-T&L variant: vertices are raw model-space (post
+ * d3clipnear), untransformed. The model/proj multiply and viewport scale
+ * that metal_queue_fillpoly's caller (d3project) does once per vertex in C
+ * happen instead in the vgmain/fgmain shaders, once per vertex/fragment on
+ * the GPU. Batches by (model,proj) so devdraw.c doesn't need to flush on
+ * every draw call - in practice a whole frame of a fixed camera (the
+ * common case: setup3d() sets model/proj once, every wall/floor/mesh
+ * triangle for that frame shares them) is one batch.
+ * Returns 0 ⇒ caller falls back to the CPU d3project + memfillpoly/gpudrawfillpoly path.
+ */
+static int
+metal_queue_fillpoly3d(Memimage *dst, float *vx, float *vy, float *vz, int n,
+	Memimage *src, int op, float lit, float *model, float *proj,
+	float mx, float cx, float my, float cy)
+{
+	float r, g, bl, al;
+	int i, ntri, need, bi, pw, ph;
+	GPUXform xf;
+	GPUVert3D *v;
+
+	if(vx == nil || vy == nil || vz == nil || n < 3)
+		return 0;
+	if(op != SoverD && op != S)
+		return 0;
+	if(dst == nil)
+		return 0;
+	/*
+	 * Same redirect poly_pixdst does for the 2D path: a fully-visible
+	 * (clear) layer can draw straight onto the physical screen with a
+	 * fixed pixel offset (delta) added; an obscured one has no single
+	 * screen position to draw into (parts of it are covered) and has to
+	 * go through the CPU path, which composites via the ordinary
+	 * softscreen/memlayer machinery. Raw model-space verts have no screen
+	 * position yet to add delta to directly, so fold it into the viewport
+	 * constant term instead (cx/cy already mean "add this many pixels
+	 * after the NDC scale" - delta is exactly that, one more pixel-space
+	 * offset) rather than needing the vertices themselves in screen space.
+	 */
+	if(dst->layer != nil){
+		Memlayer *l = dst->layer;
+		if(!l->clear)
+			return 0;
+		cx += (float)l->delta.x;
+		cy += (float)l->delta.y;
+		dst = l->screen->image;
+	}
+	if(dst != gscreen && dst != screenimage)
+		return 0;
+	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
+		return 0;
+	pw = Dx(gscreen->r);
+	ph = Dy(gscreen->r);
+	if(pw < 1 || ph < 1)
+		return 0;
+	if(src_rgba(src, &r, &g, &bl, &al) < 0)
+		return 0;
+	if(lit < 0.0f)
+		lit = 0.0f;
+	r *= lit;
+	g *= lit;
+	bl *= lit;
+	if(r > 1.0f) r = 1.0f;
+	if(g > 1.0f) g = 1.0f;
+	if(bl > 1.0f) bl = 1.0f;
+	ntri = n - 2;
+	need = ntri * 3;
+	if(need > MaxGPUTriVerts)
+		return 0;
+
+	memmove(xf.model, model, sizeof xf.model);
+	d3combineproj(proj, mx, cx, my, cy, (float)pw, (float)ph, xf.proj);
+
+	if(!metal_tri3d_reserve(need))
+		return 0;
+	if(ng3batches == 0 || !g3xform_eq(&g3batches[ng3batches-1].xform, &xf)){
+		if(ng3batches >= MaxG3Batches){
+			unlock(&mtl_geom_lock);
+			return 0;
+		}
+		bi = ng3batches++;
+		g3batches[bi].xform = xf;
+		g3batches[bi].start = ng3triverts;
+		g3batches[bi].count = 0;
+	}else
+		bi = ng3batches - 1;
+	for(i = 1; i < n - 1; i++){
+		v = &g3triverts[ng3triverts];
+		v[0].x = vx[0]; v[0].y = vy[0]; v[0].z = vz[0];
+		v[0].r = r; v[0].g = g; v[0].b = bl; v[0].a = al;
+		v[1].x = vx[i]; v[1].y = vy[i]; v[1].z = vz[i];
+		v[1].r = r; v[1].g = g; v[1].b = bl; v[1].a = al;
+		v[2].x = vx[i+1]; v[2].y = vy[i+1]; v[2].z = vz[i+1];
+		v[2].r = r; v[2].g = g; v[2].b = bl; v[2].a = al;
+		ng3triverts += 3;
+		g3batches[bi].count += 3;
+	}
+	metal_g3_calls++;
+	metal_g3_tris += ntri;
 	unlock(&mtl_geom_lock);
 	return 1;
 }
@@ -2008,7 +2356,7 @@ metal_readback_geom(void)
 	MTLRegion region;
 	uchar *p;
 
-	if(nglines == 0 && ngtriverts == 0 && ngsprites == 0)
+	if(nglines == 0 && ngtriverts == 0 && ng3triverts == 0 && ngsprites == 0)
 		return;
 	metal_readbacks++;
 	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
@@ -2031,6 +2379,7 @@ metal_readback_geom(void)
 	if(cmd == nil)
 		return;
 	metal_present_tris(cmd, tex, depthtex, pw, ph);
+	metal_present_tris3d(cmd, tex, depthtex, pw, ph);
 	metal_present_lines(cmd, tex, depthtex, pw, ph);
 	metal_present_sprites(cmd, tex, depthtex, pw, ph);
 	[cmd commit];
@@ -2153,7 +2502,7 @@ present_softscreen(void)
 		samp = [mtl_device newSamplerStateWithDescriptor:sd];
 	}
 
-	have_geom = nglines > 0 || ngtriverts > 0 || ngsprites > 0;
+	have_geom = nglines > 0 || ngtriverts > 0 || ng3triverts > 0 || ngsprites > 0;
 	overlay = have_geom && mtl_have_under && mtl_under != nil;
 	under = mtl_under;
 	/* Do CPU staging and enqueue texture uploads before acquiring a scarce
@@ -2187,6 +2536,7 @@ present_softscreen(void)
 		/* under (pre-3D softscreen) → Metal 3D+sprites → softscreen where changed */
 		metal_blit_tex(cmd, drawable.texture, mtl_pipe, under, nil, samp);
 		metal_present_tris(cmd, drawable.texture, depthtex, pw, ph);
+		metal_present_tris3d(cmd, drawable.texture, depthtex, pw, ph);
 		metal_present_lines(cmd, drawable.texture, depthtex, pw, ph);
 		metal_present_sprites(cmd, drawable.texture, depthtex, pw, ph);
 		metal_overlay_soft(cmd, drawable.texture, tex, under, samp);
@@ -2194,6 +2544,7 @@ present_softscreen(void)
 		metal_blit_tex(cmd, drawable.texture, mtl_pipe, tex, nil, samp);
 		if(have_geom){
 			metal_present_tris(cmd, drawable.texture, depthtex, pw, ph);
+			metal_present_tris3d(cmd, drawable.texture, depthtex, pw, ph);
 			metal_present_lines(cmd, drawable.texture, depthtex, pw, ph);
 			metal_present_sprites(cmd, drawable.texture, depthtex, pw, ph);
 		}
@@ -2218,7 +2569,7 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -2226,7 +2577,8 @@ present_softscreen(void)
 			metal_precopy_largest_bytes, metal_precopy_largest_dirty,
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
-			metal_copy_armed, metal_copy_cancelled);
+			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris);
+		metal_g3_calls = metal_g3_tris = 0;
 		metal_stat_frames = 0;
 		metal_damage_calls = metal_damage_bytes = 0;
 		metal_full_uploads = metal_readbacks = 0;
