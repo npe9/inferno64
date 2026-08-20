@@ -1,0 +1,5 @@
+#(ds,greet,##(ps,Hello NAME! Your name is )##(ps,#(ln,NAME))##(ps, letters long.
+))
+#(ss,greet,NAME)
+#(cl,greet,Inferno)
+#(cl,greet,TRAC)
