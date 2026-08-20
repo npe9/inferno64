@@ -19,6 +19,7 @@ TARG=\
 	coffee.dis\
 	collide.dis\
 	colors.dis\
+	computermovie.dis\
 	cprof.dis\
 	date.dis\
 	develop.dis\
