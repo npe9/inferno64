@@ -29,6 +29,7 @@ TARG=\
 	edit.dis\
 	filename.dis\
 	getauthinfo.dis\
+	hypercube.dis\
 	hyperdoc.dis\
 	keyboard.dis\
 	logon.dis\
