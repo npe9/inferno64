@@ -151,6 +151,7 @@ TARG=\
 	tkclient.dis\
 	titlebar.dis\
 	tone.dis\
+	toycpu.dis\
 	translate.dis\
 	tutor.dis\
 	ubfa.dis\
