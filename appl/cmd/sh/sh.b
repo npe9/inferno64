@@ -120,7 +120,7 @@ initialise()
 
 		env = load Env Env->PATH;
 		if(env == nil) badmodule(Env->PATH);
-		
+
 		argm = load Arg Arg->PATH;
 		if(argm == nil) badmodule(Arg->PATH);
 	}
@@ -1143,12 +1143,15 @@ Context.new(drawcontext: ref Draw->Context): ref Context
 	initialise();
 	if (env != nil)
 		env->clone();
+	envlock := chan[1] of int;
+	envlock <-= 1;
 	ctxt := ref Context(
 		ref Environment(
 			ref Builtins(nil, 0),
 			ref Builtins(nil, 0),
 			nil,
-			newlocalenv(nil)
+			newlocalenv(nil),
+			envlock
 		),
 		waitfd(),
 		drawcontext,
@@ -1168,21 +1171,36 @@ Context.copy(ctxt: self ref Context, copyenv: int): ref Context
 	# new process, because there'll be problems if not (two processes
 	# simultaneously reading the same wait file)
 	nctxt := ref Context(ctxt.env, waitfd(), ctxt.drawcontext, ctxt.keepfds);
-			
+
 	if (copyenv) {
 		if (env != nil)
 			env->clone();
-		nctxt.env = ref Environment(
-			copybuiltins(ctxt.env.sbuiltins),
-			copybuiltins(ctxt.env.builtins),
-			ctxt.env.bmods,
-			copylocalenv(ctxt.env.localenv)
-		);
+		# lock the source context while snapshotting it: ctxt.env may be
+		# shared (copyenv=0) with other procs still mutating it concurrently.
+		<-ctxt.env.lock;
+		nsb := copybuiltins(ctxt.env.sbuiltins);
+		nb := copybuiltins(ctxt.env.builtins);
+		nbmods := ctxt.env.bmods;
+		nle := copylocalenv(ctxt.env.localenv);
+		ctxt.env.lock <-= 1;
+		nenvlock := chan[1] of int;
+		nenvlock <-= 1;
+		nctxt.env = ref Environment(nsb, nb, nbmods, nle, nenvlock);
 	}
 	return nctxt;
 }
 
 Context.set(ctxt: self ref Context, name: string, val: list of ref Listnode)
+{
+	<-ctxt.env.lock;
+	setnolock(ctxt, name, val);
+	ctxt.env.lock <-= 1;
+}
+
+# same as Context.set, but assumes ctxt.env.lock is already held by the
+# caller - used internally by Context.pop, which must not re-obtain a
+# channel-based lock it's already holding (chan[1] of int semaphores aren't reentrant).
+setnolock(ctxt: ref Context, name: string, val: list of ref Listnode)
 {
 	e := ctxt.env.localenv;
 	idx := hashfn(name, len e.vars);
@@ -1223,17 +1241,22 @@ Context.get(ctxt: self ref Context, name: string): list of ref Listnode
 		}
 	}
 
+	<-ctxt.env.lock;
 	v := varfind(ctxt.env.localenv, name);
+	r: list of ref Listnode;
 	if (v != nil) {
 		if (idx != -1)
-			return index(v.val, idx);
-		return v.val;
+			r = index(v.val, idx);
+		else
+			r = v.val;
 	}
-	return nil;
+	ctxt.env.lock <-= 1;
+	return r;
 }
 
 Context.envlist(ctxt: self ref Context): list of (string, list of ref Listnode)
 {
+	<-ctxt.env.lock;
 	t := array[ENVHASHSIZE] of list of ref Var;
 	for (e := ctxt.env.localenv; e != nil; e = e.pushed) {
 		for (i := 0; i < len e.vars; i++) {
@@ -1253,11 +1276,13 @@ Context.envlist(ctxt: self ref Context): list of (string, list of ref Listnode)
 			l = (v.name, v.val) :: l;
 		}
 	}
+	ctxt.env.lock <-= 1;
 	return l;
 }
 
 Context.setlocal(ctxt: self ref Context, name: string, val: list of ref Listnode)
 {
+	<-ctxt.env.lock;
 	e := ctxt.env.localenv;
 	idx := hashfn(name, len e.vars);
 	v := hashfind(e.vars, idx, name);
@@ -1270,16 +1295,20 @@ Context.setlocal(ctxt: self ref Context, name: string, val: list of ref Listnode
 		v.val = val;
 		v.flags |= Var.CHANGED;
 	}
+	ctxt.env.lock <-= 1;
 }
 
 
 Context.push(ctxt: self ref Context)
 {
+	<-ctxt.env.lock;
 	ctxt.env.localenv = newlocalenv(ctxt.env.localenv);
+	ctxt.env.lock <-= 1;
 }
 
 Context.pop(ctxt: self ref Context)
 {
+	<-ctxt.env.lock;
 	if (ctxt.env.localenv.pushed == nil)
 		panic("unbalanced contexts in shell environment");
 	else {
@@ -1290,10 +1319,11 @@ Context.pop(ctxt: self ref Context)
 				if ((v := varfind(ctxt.env.localenv, (hd vl).name)) != nil)
 					v.flags |= Var.CHANGED;
 				else
-					ctxt.set((hd vl).name, nil);
+					setnolock(ctxt, (hd vl).name, nil);
 			}
 		}
 	}
+	ctxt.env.lock <-= 1;
 }
 
 Context.run(ctxt: self ref Context, args: list of ref Listnode, last: int): string
@@ -1315,28 +1345,41 @@ Context.run(ctxt: self ref Context, args: list of ref Listnode, last: int): stri
 
 Context.addmodule(ctxt: self ref Context, name: string, mod: Shellbuiltin)
 {
+	# initbuiltin is a callback into another module's code, which may
+	# itself legitimately call back into ctxt (e.g. ctxt.addbuiltin) -
+	# keep it outside the lock so those calls can't deadlock against us.
 	mod->initbuiltin(ctxt, myself);
+	<-ctxt.env.lock;
 	ctxt.env.bmods = (name, mod->getself()) :: ctxt.env.bmods;
+	ctxt.env.lock <-= 1;
 }
 
 Context.addbuiltin(c: self ref Context, name: string, mod: Shellbuiltin)
 {
+	<-c.env.lock;
 	addbuiltin(c.env.builtins, name, mod);
+	c.env.lock <-= 1;
 }
 
 Context.removebuiltin(c: self ref Context, name: string, mod: Shellbuiltin)
 {
+	<-c.env.lock;
 	removebuiltin(c.env.builtins, name, mod);
+	c.env.lock <-= 1;
 }
 
 Context.addsbuiltin(c: self ref Context, name: string, mod: Shellbuiltin)
 {
+	<-c.env.lock;
 	addbuiltin(c.env.sbuiltins, name, mod);
+	c.env.lock <-= 1;
 }
 
 Context.removesbuiltin(c: self ref Context, name: string, mod: Shellbuiltin)
 {
+	<-c.env.lock;
 	removebuiltin(c.env.sbuiltins, name, mod);
+	c.env.lock <-= 1;
 }
 
 varfind(e: ref Localenv, name: string): ref Var
@@ -1358,11 +1401,13 @@ Context.fail(ctxt: self ref Context, ename: string, err: string)
 
 Context.setoptions(ctxt: self ref Context, flags, on: int): int
 {
+	<-ctxt.env.lock;
 	old := ctxt.env.localenv.flags;
 	if (on)
 		ctxt.env.localenv.flags |= flags;
 	else
 		ctxt.env.localenv.flags &= ~flags;
+	ctxt.env.lock <-= 1;
 	return old;
 }
 
@@ -2126,11 +2171,16 @@ loadmodule(ctxt: ref Context, name: string): string
 {
 	# avoid loading the same module twice (it's convenient
 	# to have load be a null-op if the module required is already loaded)
+	<-ctxt.env.lock;
+	found := 0;
 	for (bl := ctxt.env.bmods; bl != nil; bl = tl bl) {
 		(bname, nil) := hd bl;
 		if (bname == name)
-			return nil;
+			found = 1;
 	}
+	ctxt.env.lock <-= 1;
+	if (found)
+		return nil;
 	path := name;
 	if (len path < 4 || path[len path-4:] != ".dis")
 		path += ".dis";
@@ -2141,8 +2191,11 @@ loadmodule(ctxt: ref Context, name: string): string
 		diagnostic(ctxt, sys->sprint("load: cannot load %s: %r", path));
 		return "bad module";
 	}
+	# initbuiltin is a callback - see the comment in Context.addmodule.
 	s := mod->initbuiltin(ctxt, myself);
+	<-ctxt.env.lock;
 	ctxt.env.bmods = (name, mod->getself()) :: ctxt.env.bmods;
+	ctxt.env.lock <-= 1;
 	if (s != nil) {
 		unloadmodule(ctxt, name);
 		diagnostic(ctxt, "load: module init failed: " + s);
@@ -2154,6 +2207,7 @@ unloadmodule(ctxt: ref Context, name: string): string
 {
 	bl: list of (string, Shellbuiltin);
 	mod: Shellbuiltin;
+	<-ctxt.env.lock;
 	for (cl := ctxt.env.bmods; cl != nil; cl = tl cl) {
 		(bname, bmod) := hd cl;
 		if (bname == name)
@@ -2162,6 +2216,7 @@ unloadmodule(ctxt: ref Context, name: string): string
 			bl = hd cl :: bl;
 	}
 	if (mod == nil) {
+		ctxt.env.lock <-= 1;
 		diagnostic(ctxt, sys->sprint("module %s not found", name));
 		return "not found";
 	}
@@ -2169,6 +2224,7 @@ unloadmodule(ctxt: ref Context, name: string): string
 		ctxt.env.bmods = hd bl :: ctxt.env.bmods;
 	removebuiltinmod(ctxt.env.builtins, mod);
 	removebuiltinmod(ctxt.env.sbuiltins, mod);
+	ctxt.env.lock <-= 1;
 	return nil;
 }
 

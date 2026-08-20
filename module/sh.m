@@ -72,6 +72,13 @@ Sh: module
 		builtins: ref Builtins;
 		bmods: list of (string, Shellbuiltin);
 		localenv: ref Localenv;
+		lock: chan of int;		# guards this Environment when shared
+						# (copyenv=0) across concurrent procs -
+						# chan[1] of int used as a binary
+						# semaphore, same idiom as wm.b's
+						# pendingsnapslock: pre-filled with
+						# one token, <-lock to acquire,
+						# lock<-=1 to release
 	};
 	Localenv: adt {
 		vars: array of list of ref Var;
