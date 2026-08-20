@@ -29,6 +29,7 @@ TARG=\
 	9srvfs.dis\
 	9win.dis\
 	B.dis\
+	apl.dis\
 	ar.dis\
 	archfs.dis\
 	auplay.dis\
