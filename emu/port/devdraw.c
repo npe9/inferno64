@@ -1610,9 +1610,29 @@ d3clearz(Client *cl, Memimage *dst)
 		cl->d3zbuf[i] = 0x7fffffff;
 }
 
+/* True iff cl->d3model is the identity matrix. */
+static int
+d3modelisident(Client *cl)
+{
+	int i, j;
+
+	for(i = 0; i < 4; i++)
+		for(j = 0; j < 4; j++)
+			if(cl->d3model[i*4+j] != (i == j ? 1.0f : 0.0f))
+				return 0;
+	return 1;
+}
+
 /*
  * Limbo draw3d fillpoly3 plane in screen space (same formulae as draw3d.b).
- * vx,vy,vz are verts in the same space as the face normal.
+ * vx,vy,vz are verts in the same space as the face normal - this formula
+ * maps that space to screen coordinates through the viewport scale alone,
+ * with no model or projection transform in between, so it's only valid
+ * when cl->d3model is identity (the caller must check d3modelisident()
+ * first) - a real model matrix (rotation/translation) needs the general,
+ * slower d3planefromeyez() below instead, which derives the plane from
+ * already-projected screen points + eye z rather than assuming vx/vy/vz
+ * map to the screen directly.
  */
 static int
 d3planecoeffs(Client *cl, float nx, float ny, float nz,
@@ -2862,7 +2882,7 @@ drawmesg(Client *client, void *av, int n)
 					haveplane = 0;
 					pdx = pdy = pdc = 0;
 					if(client->d3zenable){
-						if(*a == 'k' && nz != 0.0f)
+						if(*a == 'k' && nz != 0.0f && d3modelisident(client))
 							haveplane = d3planecoeffs(client, nx, ny, nz,
 								vx, vy, vz, nw, &pdx, &pdy, &pdc);
 						if(!haveplane)
