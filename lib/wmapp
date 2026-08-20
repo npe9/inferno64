@@ -21,7 +21,7 @@ if {~ $#* 0} {
 }
 
 approot := $1
-extra := $*(2-)
+extra := ${tl $*}
 
 if {! ftest -d $approot} {
 	echo wmapp: $approot is not a directory >[1=2]
