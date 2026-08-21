@@ -25,11 +25,11 @@ main(int argc, char **argv)
 	data=malloc(text+dat); if(data == NULL) return 1;
 	if(fread(data, 1, text+dat, in) != text+dat) return 1;
 	memset(b, 0, sizeof b); p=0;
-	raw(&p, "MZ", 2); p=0x3a; w32(&p, 0x40); p=0x40;
+	raw(&p, "MZ", 2); p=0x3c; w32(&p, 0x40); p=0x40;
 	raw(&p, "PE\0\0", 4); w16(&p, 0x8664); w16(&p, 1); w32(&p,0); w32(&p,0); w32(&p,0); w16(&p,0xf0); w16(&p,2223);
 	w16(&p,0x20b); b[p++]=9; b[p++]=0; w32(&p,0); w32(&p,0); w32(&p,0); w32(&p,entry-0x8000); w32(&p,0);
-	w64(&p,0x8000); w32(&p,0x200); w32(&p,0x200); w16(&p,4); w16(&p,0); w16(&p,0); w16(&p,0); w16(&p,4); w16(&p,0); w32(&p,0); w32(&p,image); w32(&p,0x200); w32(&p,0); w16(&p,10); w16(&p,0); w64(&p,0); w64(&p,0); w64(&p,0); w64(&p,0); w32(&p,0); w32(&p,16); w64(&p,0);
-	p=0x178; raw(&p, ".text\0\0\0", 8); w32(&p,text+dat); w32(&p,0x200); w32(&p,text+dat); w32(&p,0x200); w32(&p,0); w32(&p,0); w16(&p,0); w16(&p,0); w32(&p,0x86000020);
+	w64(&p,0x8000); w32(&p,0x200); w32(&p,0x200); w16(&p,4); w16(&p,0); w16(&p,0); w16(&p,0); w16(&p,4); w16(&p,0); w32(&p,0); w32(&p,image); w32(&p,0x200); w32(&p,0); w16(&p,10); w16(&p,0); w64(&p,0); w64(&p,0); w64(&p,0); w64(&p,0); w32(&p,0); w32(&p,16);
+	p=0x148; raw(&p, ".text\0\0\0", 8); w32(&p,text+dat); w32(&p,0x200); w32(&p,text+dat); w32(&p,0x200); w32(&p,0); w32(&p,0); w16(&p,0); w16(&p,0); w32(&p,0x86000020);
 	if((out=fopen(argv[2], "wb")) == NULL) return 1;
 	fwrite(b,1,sizeof b,out); fwrite(data,1,text+dat,out); n=(0x200+text+dat+bss+0x1ff)&~0x1ff; while((int)ftell(out)<n) fputc(0,out); fclose(out); free(data); return 0;
 }
