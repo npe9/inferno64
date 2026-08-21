@@ -431,6 +431,13 @@ syscall(Ureg* ureg)
 	/* if we delayed sched because we held a lock, sched now */
 	if(up->delaysched)
 		sched();
+	/* Some multiboot firmware returns the SYSCALL opcode in RCX. */
+	if(waserror() == 0){
+		validaddr(ureg->pc, 2, 0);
+		if(*(ushort*)ureg->pc == 0x050f)
+			ureg->pc += 2;
+		poperror();
+	}
 	kexit(ureg);
 	fpukexit(ureg);
 }

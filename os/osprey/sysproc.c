@@ -716,8 +716,6 @@ sysalarm(va_list list)
 {
 	return procalarm(va_arg(list, ulong));
 }
-
-
 uintptr
 sysexits(va_list list)
 {
@@ -1492,5 +1490,3 @@ dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
 	up->psstate = nil;
 	return 0;
 }
-
-
