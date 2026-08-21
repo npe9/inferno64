@@ -106,6 +106,7 @@ userinit(void)
 	for(s = "osprey: userinit\n"; *s != 0; s++)
 		outb(0x3f8, *s);
 	up = nil;
-	kstrdup(&eve, "");
+	/* Osprey starts with a local, non-authenticated host user. */
+	kstrdup(&eve, "peep");
 	kproc("*init*", proc0, nil);
 }
