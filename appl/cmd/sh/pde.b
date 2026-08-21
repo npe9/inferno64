@@ -134,6 +134,25 @@ runbuiltin(ctxt: ref Context, nil: Sh,
 			ctxt.fail("usage", "usage: pde <id> splat cx cy radius value");
 		pde->splat(p.field, int (hd a).word, int (hd tl a).word,
 			int (hd tl tl a).word, real (hd tl tl tl a).word);
+	"clearb" =>
+		p := efieldb(ctxt, h);
+		if (len tl rest != 1)
+			ctxt.fail("usage", "usage: pde <id> clearb value");
+		pde->clear(p.fieldb, real (hd tl rest).word);
+	"setb" =>
+		p := efieldb(ctxt, h);
+		a := tl rest;
+		if (len a != 3)
+			ctxt.fail("usage", "usage: pde <id> setb x y value");
+		pde->set(p.fieldb, int (hd a).word, int (hd tl a).word,
+			real (hd tl tl a).word);
+	"splatb" =>
+		p := efieldb(ctxt, h);
+		a := tl rest;
+		if (len a != 4)
+			ctxt.fail("usage", "usage: pde <id> splatb cx cy radius value");
+		pde->splat(p.fieldb, int (hd a).word, int (hd tl a).word,
+			int (hd tl tl a).word, real (hd tl tl tl a).word);
 	* =>
 		ctxt.fail("usage", "pde: unknown command " + verb);
 	}
@@ -169,6 +188,13 @@ runsbuiltin(ctxt: ref Context, nil: Sh,
 			ctxt.fail("usage", "usage: pde <id> get x y");
 		v := pde->get(p.field, int (hd a).word, int (hd tl a).word);
 		return ref Listnode(nil, sys->sprint("%g", v)) :: nil;
+	"getb" =>
+		p := efieldb(ctxt, h);
+		a := tl rest;
+		if (len a != 2)
+			ctxt.fail("usage", "usage: pde <id> getb x y");
+		v := pde->get(p.fieldb, int (hd a).word, int (hd tl a).word);
+		return ref Listnode(nil, sys->sprint("%g", v)) :: nil;
 	"run" =>
 		p := ecommitted(ctxt, h);
 		a := tl rest;
@@ -201,6 +227,14 @@ ecommitted(ctxt: ref Context, h: ref Handle): ref Problem
 	if (h.problem == nil)
 		ctxt.fail("pde", "pde: handle not committed - run \"pde <id> commit\" first");
 	return h.problem;
+}
+
+efieldb(ctxt: ref Context, h: ref Handle): ref Problem
+{
+	p := ecommitted(ctxt, h);
+	if (p.fieldb == nil)
+		ctxt.fail("pde", "pde: no fieldb - only \"equation gray\" has a second field");
+	return p;
 }
 
 ehandle(ctxt: ref Context, w: string): ref Handle

@@ -31,6 +31,17 @@ pde \- shell script interface to pde(2)'s problem-specification language
 .br
 .B pde
 .I id
+.B equation gray da
+.I Da
+.B db
+.I Db
+.B feed
+.I F
+.B kill
+.I K
+.br
+.B pde
+.I id
 .B "solver explicit"
 .br
 .B pde
@@ -83,6 +94,27 @@ pde \- shell script interface to pde(2)'s problem-specification language
 .I id
 .B clear
 .I value
+.br
+.B pde
+.I id
+.B setb
+.I x y value
+.br
+.B pde
+.I id
+.B splatb
+.I cx cy radius value
+.br
+.B pde
+.I id
+.B clearb
+.I value
+.br
+.B ${pde
+.I id
+.B getb
+.I x y
+.B }
 .br
 .B ${pde
 .I id
@@ -178,6 +210,19 @@ and
 read or write the underlying field directly, the same as
 .IR pde (2)'s
 own functions of the same name.
+.PP
+.BR Getb ,
+.BR setb ,
+.BR splatb ,
+and
+.B clearb
+do the same for the second field
+.RB ( fieldb )
+that only exists for
+.BR "equation gray" ;
+using any of them on a handle whose equation isn't
+.B gray
+raises an error.
 .B Del
 frees one or more handles.
 .PP

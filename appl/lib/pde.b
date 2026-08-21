@@ -262,6 +262,7 @@ newproblem(spec: string): (ref Problem, string)
 	equation := "";
 	diffusivity := 0.0;
 	speed := 0.0; damping := 0.0;
+	da := 0.0; db := 0.0; feed := 0.0; kill := 0.0;
 	solvermethod := "explicit";
 	tolerance := 1.0e-8;
 	restart := 30;
@@ -305,7 +306,16 @@ newproblem(spec: string): (ref Problem, string)
 				if(speed <= 0.0)
 					return (nil, "equation wave: speed must be given and positive");
 			"gray" =>
-				return (nil, "equation gray: not expressible here (two coupled fields) - call gray() directly");
+				for(i := 2; i+1 < len a; i += 2)
+					case a[i] {
+					"da" => da = real a[i+1];
+					"db" => db = real a[i+1];
+					"feed" => feed = real a[i+1];
+					"kill" => kill = real a[i+1];
+					* => return (nil, "equation gray: unknown option " + a[i]);
+					}
+				if(da <= 0.0 || db <= 0.0)
+					return (nil, "equation gray: da and db must be given and positive");
 			* =>
 				return (nil, "equation: unknown equation " + equation);
 			}
@@ -336,9 +346,14 @@ newproblem(spec: string): (ref Problem, string)
 		return (nil, "newproblem: spec has no mesh line");
 	if(equation == "")
 		return (nil, "newproblem: spec has no equation line");
+	if(equation == "gray" && solvermethod != "explicit")
+		return (nil, "equation gray: only solver explicit is valid - the reaction term is nonlinear");
 	f := new(grid.nx, grid.ny, grid.dx, grid.dy, grid.bc);
-	return (ref Problem(f, equation, solvermethod, diffusivity, speed, damping,
-		tolerance, restart, maxiter, defaultstep), nil);
+	fb: ref Field;
+	if(equation == "gray")
+		fb = new(grid.nx, grid.ny, grid.dx, grid.dy, grid.bc);
+	return (ref Problem(f, fb, equation, solvermethod, diffusivity, speed, damping,
+		da, db, feed, kill, tolerance, restart, maxiter, defaultstep), nil);
 }
 
 # Batch/unattended driver: repeatedly step() by p's own "time step DT"
@@ -379,6 +394,9 @@ step(p: ref Problem, dt: real): string
 			return nil;
 		}
 		return solvewave(p, dt);
+	"gray" =>
+		gray(p.field, p.fieldb, p.da, p.db, p.feed, p.kill, dt);
+		return nil;
 	}
 	return "step: unknown equation " + p.equation;
 }

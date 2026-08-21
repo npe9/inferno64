@@ -43,13 +43,18 @@ Pde: module
 	#   mesh NXxNY [domain WxH] [bc clamp|periodic|zero]     - see mesh(2)
 	#   equation diffuse diffusivity D
 	#   equation wave speed S damping Dm
+	#   equation gray da Da db Db feed F kill K
 	#   solver explicit                            (default; stability-limited)
 	#   solver gmres|cg [tolerance T] [restart R] [maxiter N]  - see krylov(2)
 	#   time step DT                               (default for run(); optional)
 	#
-	# ("gray", the two-field Gray-Scott reaction-diffusion solver, isn't
-	# expressible here - this spec describes one field's worth of
-	# problem. Call gray() directly, as before.)
+	# "equation gray" is Gray-Scott reaction-diffusion, the one equation
+	# needing two coupled fields rather than one - fielda (aliased as
+	# field, so existing single-field callers keep working unchanged) and
+	# fieldb, both on the spec's own mesh. Its own reaction term is
+	# nonlinear, so unlike diffuse/wave it has no implicit solver here -
+	# only "solver explicit" is valid, still gray() underneath, with its
+	# own stability-limited substepping.
 	#
 	# Both "equation diffuse" and "equation wave" have genuinely symmetric
 	# positive definite implicit operators for clamp/periodic boundaries
@@ -63,6 +68,11 @@ Pde: module
 	Problem: adt {
 		field:	ref Field;
 
+		# Only non-nil for "equation gray" - Gray-Scott's second field.
+		# A caller sets/reads it directly with the same get/set/splat/
+		# clear used on field; there's no second Problem for it.
+		fieldb:	ref Field;
+
 		# Set by newproblem() from the spec string; step()/run() read
 		# these back. Treat as read-only, the same as Field's own
 		# u/work/old - there's no reason to poke them directly when the
@@ -71,6 +81,7 @@ Pde: module
 		solvermethod:	string;
 		diffusivity:	real;
 		speed, damping:	real;
+		da, db, feed, kill: real;	# "equation gray" only
 		tolerance:	real;
 		restart, maxiter: int;
 		defaultstep:	real;	# from "time step DT"; 0.0 if unset

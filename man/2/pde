@@ -70,26 +70,47 @@ see there for the grammar.  Required.
 .BI "equation diffuse diffusivity " D
 .TP
 .BI "equation wave speed " S " damping " Dm
-Selects the equation and its parameters.  Required.  The two-field
-Gray-Scott solver
-.RI ( gray )
-is not expressible here, since this spec describes one field; call
-.B gray
-directly as shown above.
+.TP
+.BI "equation gray da " Da " db " Db " feed " F " kill " K
+Selects the equation and its parameters.  Required.
+.B Gray
+is the one equation needing two coupled fields: newproblem() allocates
+a second field the same size as the first, reachable as
+.IR p . fieldb
+(the first is
+.IR p . field ,
+as for every other equation \(em existing single-field callers keep
+working unchanged).  Its own reaction term is nonlinear, so unlike
+.B diffuse
+and
+.B wave
+it has no implicit solver here; only
+.B "solver explicit"
+is valid for it.
 .TP
 .B "solver explicit"
 The default: the same stability-limited
 .B diffuse
 /
 .B wave
+/
+.B gray
 routines described above, internally subdividing dt as needed.
 .TP
 .BI "solver gmres|cg [tolerance " T "] [restart " R "] [maxiter " N ]
-Solves either equation implicitly via
+Solves
+.B diffuse
+or
+.B wave
+implicitly via
 .IR krylov (2)
 instead, matrix-free, unconditionally stable for any dt \(em unlike
 .BR explicit ,
-it never needs to subdivide the requested step.  For
+it never needs to subdivide the requested step.  Rejected at
+.B newproblem
+time for
+.B gray
+(see above).  For
 .B diffuse
 this is ordinary backward Euler; for
 .B wave
