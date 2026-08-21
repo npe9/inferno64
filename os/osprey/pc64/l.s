@@ -71,7 +71,25 @@ TEXT _multibootentry<>(SB), 1, $-4
 	OUTB
 	MOVB	$'h', AL
 	OUTB
-	MOVB	$'i', AL
+	MOVB	$'e', AL
+	OUTB
+	MOVB	$'l', AL
+	OUTB
+	MOVB	$'l', AL
+	OUTB
+	MOVB	$'o', AL
+	OUTB
+	MOVB	$' ', AL
+	OUTB
+	MOVB	$'w', AL
+	OUTB
+	MOVB	$'o', AL
+	OUTB
+	MOVB	$'r', AL
+	OUTB
+	MOVB	$'l', AL
+	OUTB
+	MOVB	$'d', AL
 	OUTB
 	MOVB	$'\n', AL
 	OUTB
