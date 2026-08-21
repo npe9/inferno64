@@ -1,8 +1,20 @@
 #!/dis/sh
+# Regenerates a section's INDEX ("<name> <file>" per line) from each
+# page's NAME line.  Run via man/mkfile's indices.hosted target.
+#
+# WARNING: the committed INDEX files are hand-curated and are *not*
+# simply this script's output - for man/2 this produces about 835
+# lines against the 500 that are checked in, because a NAME line
+# listing many entry points yields one index entry per name.  Diff
+# before overwriting; do not assume regenerating is an improvement.
+# Lines with other than two fields are silently ignored by man(1)
+# (see appl/lib/man.b), so multi-word NAME entries that this script
+# does not split produce dead entries.
+load std
 U='ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 L='abcdefghijklmnopqrstuvwxyz'
 builtin cd $1
-for (i in [a-z0-9:]*) {
+for i in [a-z0-9:]* {
 	sed -n '
 	/SH *NAM/,/SH/{
 		/SH/d
@@ -40,4 +52,6 @@ for (i in [a-z0-9:]*) {
 ' $i
 kw=`{echo $i  | sed 's/0intro/intro/'}
 echo $kw $i
-} | sort | uniq
+} | sort | uniq | sed '/^intro /{
+/^intro 0intro$/!d
+}'
