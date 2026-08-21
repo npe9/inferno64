@@ -1,0 +1,150 @@
+.TH SEQUENCER 2
+.SH NAME
+sequencer: newsession, init, play \- a CSP-style modular synthesizer
+.SH SYNOPSIS
+.EX
+include "sequencer.m";
+sequencer := load Sequencer Sequencer->PATH;
+Session: import sequencer;
+
+s := sequencer->newsession();
+err := s.cmd("noteon 0 60");
+err = s.cmd("play score.ski");
+err = s.cmd("stop");
+.EE
+.SH DESCRIPTION
+.I Sequencer
+is a CSP-style modular synthesizer: each voice, filter, oscillator,
+and envelope is its own process, wired together over typed channels
+.RB ( Sample
+pulls one block of samples on demand;
+.B Control
+sends a parameter change) instead of a monolithic audio callback \(em
+Limbo's concurrency used as the actual synthesis architecture, not
+just plumbing around one.
+.PP
+Ported from Caerwyn Jones's Inferno lab 62
+.RI ( "software synth csp style" ),
+.BR https://github.com/caerwynj/inferno-lab/tree/master/62 ;
+see SOURCE below for what changed in the port.
+.SS "The command language"
+A
+.B Session
+wraps one master
+.B Inst
+(four independently playable voices, each two-note polyphonic FM
+with vibrato, mixed through a shared delay) with a small command
+language, the same shape
+.IR tk (2)'s
+widget
+.B cmd
+and
+.IR krylov (2)'s
+own
+.B Solver.cmd
+already use: one verb-plus-args string per call, string result.
+.B Newsession
+builds a fresh session (initializing the audio device on first use).
+.TP
+.BI "noteon " voice " " midinote
+Starts note
+.I midinote
+(standard MIDI note number) on
+.I voice
+(0\-3).
+.TP
+.BI "noteoff " voice
+Releases the note currently playing on
+.IR voice .
+.TP
+.BI "play " file
+Plays a SKINI-format score
+.RI ( file ,
+"NoteOn dt voice midinote velocity" / "NoteOff dt voice" lines, as in
+STK's own score notation) through the session's master
+.BR Inst ,
+in the background \(em
+.B cmd
+returns immediately, not when the score finishes. A session only ever
+plays one score at a time: calling
+.B play
+again while one is running is an error, not a silent queue or
+interrupt.
+.TP
+.B stop
+Stops a
+.B play
+in progress. A no-op, not an error, if nothing is playing.
+.PP
+.B Control's
+raw
+.RI ( int , real )
+pairs and the
+.BR CFREQ / CKEYON /...
+constants used internally between voices are never exposed through
+.BR Session.cmd \(em
+the same discipline
+.IR pde (2)
+uses to keep
+.IR krylov (2)'s
+own types from crossing its interface.
+.SS "Standalone use"
+.B Init
+is a complete standalone player in its own right (see
+.IR playski (1)):
+given a single SKINI file as its argument, it builds one session,
+plays the file to completion, and exits \(em what a caller wants
+.B without
+needing the incremental note-by-note or multi-score control
+.B Session
+gives.
+.B Play
+is
+.BR init 's
+own lower-level primitive (drives one score through one already-built
+.B Inst
+until it ends or "stop" arrives on a caller-supplied channel);
+.B Session.cmd's
+own
+.B play
+verb is a thin wrapper over it.
+.SH SOURCE
+.B /module/sequencer.m
+.br
+.B /appl/lib/sequencer.b
+.PP
+The DSP graph itself (adsr/mixer/delay/onepole/onezero/twopole/
+twozero/lfo/waveloop/fm/master/poly) is unchanged from Caerwyn Jones's
+original. Three real adaptations were needed to run in this tree:
+.B audioctl()
+and the audio device paths, to match this tree's own verified-working
+.B /dev/audio
+convention (see
+.IR tone (2))
+rather than the original's
+.BR #A/audioctl ;
+.B init()
+and
+.B play()
+both called
+.B sys->pctl()
+through the module-level
+.B sys
+variable
+.B before
+.B modinit()
+had loaded it \(em a latent bug invisible in whatever environment the
+original was written against, but a genuine crash on the very first
+line in this build, fixed by loading first; and the
+.B Session
+command language itself (this file's
+.BR cmd / newsession ),
+which the original didn't have \(em the original's own GUI
+.RI ( gui.b ,
+not ported) drove
+.B Inst
+directly instead.
+.SH SEE ALSO
+.IR tone (2),
+.IR playski (1),
+.IR sh-synth (1)

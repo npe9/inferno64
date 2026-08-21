@@ -116,6 +116,7 @@ TARG=\
 	os.dis\
 	p.dis\
 	pause.dis\
+	playski.dis\
 	plumb.dis\
 	plumber.dis\
 	prof.dis\
@@ -209,6 +210,7 @@ SYSMODULES=\
 	readdir.m\
 	regex.m\
 	security.m\
+	sequencer.m\
 	sh.m\
 	srv.m\
 	string.m\

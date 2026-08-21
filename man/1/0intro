@@ -1252,6 +1252,9 @@ interactive partial differential equation simulations
 .IR pinboard (1)
 window manager desktop and application launcher
 .TP
+.IR playski (1)
+play a SKINI score through sequencer(2)'s synthesizer
+.TP
 .IR plumb (1)
 send message to plumber
 .TP
@@ -1377,6 +1380,9 @@ mirror drawing
 .TP
 .IR synth (1)
 algorithmic scale-walk melody composer
+.TP
+.IR synth (1)
+shell script interface to sequencer(2)'s command language
 .TP
 .IR tac (1)
 print lines of a file in reverse order

@@ -20,6 +20,7 @@ TARG=sh.dis\
 	verify.dis\
 	fem.dis\
 	gpu.dis\
+	synth.dis\
 
 INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/arg.dis\
@@ -40,6 +41,7 @@ INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/verify.dis\
 	$ROOT/dis/sh/fem.dis\
 	$ROOT/dis/sh/gpu.dis\
+	$ROOT/dis/sh/synth.dis\
 
 SYSMODULES=\
 	bufio.m\
@@ -51,6 +53,7 @@ SYSMODULES=\
 	lock.m\
 	mesh.m\
 	pde.m\
+	sequencer.m\
 	sexprs.m\
 	sh.m\
 	string.m\

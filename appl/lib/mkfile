@@ -125,6 +125,7 @@ TARG=\
 	scsiio.dis\
 	secstore.dis\
 	selectfile.dis\
+	sequencer.dis\
 	sets.dis\
 	sets32.dis\
 	sexprs.dis\

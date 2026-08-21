@@ -1,0 +1,92 @@
+.TH SH-SYNTH 1
+.SH NAME
+synth \- shell script interface to sequencer(2)'s command language
+.SH SYNOPSIS
+.B load synth
+
+.B ${synth
+.B new
+.B }
+.br
+.B synth
+.I id
+.B noteon
+.I voice midinote
+.br
+.B synth
+.I id
+.B noteoff
+.I voice
+.br
+.B synth
+.I id
+.B play
+.I file
+.br
+.B synth
+.I id
+.B stop
+.br
+.B synth del
+.I id...
+.SH DESCRIPTION
+.I Synth
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR sequencer (2)'s
+own
+.B Session
+command language \(em playing notes and SKINI scores through the CSP
+synthesizer from a script, without a compiled Limbo program.
+.PP
+.B ${synth new}
+allocates a handle wrapping a fresh
+.IR sequencer (2)
+.B Session
+(one master
+.BR Inst ),
+and yields it.
+.BR Noteon ,
+.BR noteoff ,
+.BR play ,
+and
+.B stop
+each call
+.IR sequencer (2)'s
+own
+.B Session.cmd
+unchanged; see
+.IR sequencer (2)
+for what each verb means, including why
+.B play
+returns immediately rather than blocking until the score finishes,
+and why a second
+.B play
+while one is already running is an error.
+.B Del
+frees one or more handles \(em it only removes the shell's own
+bookkeeping, the same as
+.IR sh-pde (1)'s
+own
+.BR del ;
+the session's underlying voice processes are long-lived by design (see
+.IR sequencer (2))
+and are not torn down by it.
+.SH EXAMPLE
+.EX
+	load synth
+	id := ${synth new}
+	synth $id noteon 0 60
+	synth $id noteoff 0
+	synth $id play /appl/lib/bachtest.ski
+	synth $id stop
+	synth del $id
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/synth.b
+.SH SEE ALSO
+.IR sequencer (2),
+.IR playski (1),
+.IR sh (1),
+.IR sh-pde (1)

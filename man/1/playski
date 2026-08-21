@@ -1,0 +1,33 @@
+.TH PLAYSKI 1
+.SH NAME
+playski \- play a SKINI score through sequencer(2)'s synthesizer
+.SH SYNOPSIS
+.B playski
+.I file.ski
+.SH DESCRIPTION
+.B Playski
+plays a SKINI-format score
+.RI ( "NoteOn dt voice midinote velocity" / "NoteOff dt voice"
+lines, as in STK's own score notation) through
+.IR sequencer (2)'s
+CSP-style modular synthesizer, to real
+.BR /dev/audio ,
+and exits when the score finishes.
+.PP
+It is a thin wrapper \(em a friendlier name than the raw
+.B /dis/lib/sequencer.dis
+path \(em around
+.IR sequencer (2)'s
+own standalone player; see there for the actual synthesis graph, and
+.IR sh-synth (1)
+for note-by-note or multi-score script control instead of a single
+whole-file play.
+.SH EXAMPLE
+.EX
+playski /appl/lib/bachtest.ski
+.EE
+.SH SOURCE
+.B /appl/cmd/playski.b
+.SH SEE ALSO
+.IR sequencer (2),
+.IR sh-synth (1)
