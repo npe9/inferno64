@@ -1250,6 +1250,25 @@ metal_solid(float r, float g, float b, float a)
  * drawn, and replayed into gscreen once the texture has been copied.
  */
 static int	mtl_soft_defer;
+/*
+ * Counts geometry primitives the GPU could not draw, so a rare failure
+ * reports itself instead of being silent.  A fallback means a Metal
+ * pass could not run at all; it is always worth knowing about, so the
+ * first one warns even without INFERNO_METAL_STATS, once per process.
+ */
+static uvlong	metal_soft_fallbacks;
+static int	metal_soft_warned;
+
+static void
+note_soft_fallback(void)
+{
+	metal_soft_fallbacks++;
+	if(!metal_soft_warned){
+		metal_soft_warned = 1;
+		fprint(2, "inferno: metal geometry pass failed; "
+			"drawing on the CPU instead (set INFERNO_METAL_STATS for counts)\n");
+	}
+}
 static GPULine	*defer_lines;
 static int	ndefer_lines, maxdefer_lines;
 static GPUVert	*defer_tverts;
@@ -1297,6 +1316,7 @@ defer_tris(GPUVert *v, int nv)
 static void
 soft_line_or_defer(GPULine *L)
 {
+	note_soft_fallback();
 	if(mtl_soft_defer)
 		defer_line(L);
 	else
@@ -1306,6 +1326,7 @@ soft_line_or_defer(GPULine *L)
 static void
 soft_tris_or_defer(GPUVert *v, int nv)
 {
+	note_soft_fallback();
 	if(mtl_soft_defer)
 		defer_tris(v, nv);
 	else
@@ -2770,7 +2791,7 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud soft_fallbacks=%llud\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -2778,8 +2799,10 @@ present_softscreen(void)
 			metal_precopy_largest_bytes, metal_precopy_largest_dirty,
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
-			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris);
+			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris,
+			metal_soft_fallbacks);
 		metal_g3_calls = metal_g3_tris = 0;
+		metal_soft_fallbacks = 0;
 		metal_stat_frames = 0;
 		metal_damage_calls = metal_damage_bytes = 0;
 		metal_full_uploads = metal_readbacks = 0;
