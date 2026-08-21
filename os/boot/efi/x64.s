@@ -37,10 +37,6 @@ TEXT eficall(SB), 1, $-4
 	MOVQ SI, SP
 	RET
 
-TEXT rebase(SB), 1, $-4
-	MOVQ BP, AX
-	RET
-
 TEXT jump(SB), 1, $-4
 	CLI
 	MOVL $_idtptr64p<>(SB), AX
