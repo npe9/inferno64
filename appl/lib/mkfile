@@ -68,6 +68,7 @@ TARG=\
 	itslib.dis\
 	json.dis\
 	keyset.dis\
+	krylov.dis\
 	libc.dis\
 	libc0.dis\
 	lists.dis\
@@ -76,6 +77,8 @@ TARG=\
 	login.dis\
 	man.dis\
 	memfs.dis\
+	mesh.dis\
+	meshview.dis\
 	mpeg.dis\
 	msgio.dis\
 	numerics.dis\
@@ -156,6 +159,7 @@ TARG=\
 	url.dis\
 	vac.dis\
 	venti.dis\
+	verify.dis\
 	virgil.dis\
 	volume.dis\
 	wait.dis\

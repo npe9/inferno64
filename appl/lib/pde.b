@@ -6,7 +6,23 @@ include "sys.m";
 include "math.m";
 	math: Math;
 
+include "string.m";
+	str: String;
+
 include "pde.m";
+
+# mesh(2) is the "mesh ..." line's own little language, shared
+# infrastructure any future problem class reuses unchanged - not part of
+# pde.m's own interface either, same reasoning as Krylov below.
+include "mesh.m";
+	mesh: Mesh;
+
+# Krylov is an implementation detail of "solver gmres"/"solver cg" in
+# newproblem()/step() - deliberately not part of pde.m's own interface,
+# so nothing outside this file ever sees a Krylov type.
+include "krylov.m";
+	krylov: Krylov;
+	Solver: import krylov;
 
 init()
 {
@@ -14,6 +30,12 @@ init()
 		sys = load Sys Sys->PATH;
 	if(math == nil)
 		math = load Math Math->PATH;
+	if(str == nil)
+		str = load String String->PATH;
+	if(mesh == nil)
+		mesh = load Mesh Mesh->PATH;
+	if(krylov == nil)
+		krylov = load Krylov Krylov->PATH;
 }
 
 new(nx, ny: int, dx, dy: real, bc: int): ref Field
@@ -89,6 +111,219 @@ lap(f: ref Field, x, y: int): real
 swap(f: ref Field)
 {
 	t := f.u; f.u = f.work; f.work = t;
+}
+
+# --- implicit (backward Euler) diffusion, matrix-free via krylov(2) ---
+
+# The current problem, threaded into diffuseop() below through
+# module-level state: Krylov->Apply is a bare function reference, not a
+# closure (Limbo has no closure literals), so this is how context reaches
+# it - the same reason lorenz.b's own rhs() reads a module-level model
+# instead of capturing one. Not reentrant across concurrent solves within
+# one process; every caller in this tree runs one physics update at a
+# time, so that's not a real constraint here.
+opfield: ref Field;
+opdt, opdiffusivity: real;
+
+# Same boundary-aware 5-point stencil as lap(), but reading an arbitrary
+# vector laid out like f.u instead of f.u itself - what lets diffuseop()
+# apply the operator to a Krylov basis vector rather than only ever to
+# the field's own current state.
+getvec(f: ref Field, x: array of real, ix, iy: int): real
+{
+	if(f.bc == PERIODIC){
+		ix = (ix%f.nx + f.nx)%f.nx;
+		iy = (iy%f.ny + f.ny)%f.ny;
+	}else if(ix < 0 || ix >= f.nx || iy < 0 || iy >= f.ny){
+		if(f.bc == ZERO)
+			return 0.0;
+		if(ix < 0) ix = 0;
+		if(ix >= f.nx) ix = f.nx-1;
+		if(iy < 0) iy = 0;
+		if(iy >= f.ny) iy = f.ny-1;
+	}
+	return x[iy*f.nx+ix];
+}
+
+lapvec(f: ref Field, x: array of real, ix, iy: int): real
+{
+	c := getvec(f, x, ix, iy);
+	return (getvec(f,x,ix-1,iy)-2.0*c+getvec(f,x,ix+1,iy))/(f.dx*f.dx)
+		+ (getvec(f,x,ix,iy-1)-2.0*c+getvec(f,x,ix,iy+1))/(f.dy*f.dy);
+}
+
+# (I - dt*diffusivity*L)x, the backward-Euler system operator: exactly
+# what a solver needs, no matrix ever assembled.
+diffuseop(x: array of real): array of real
+{
+	f := opfield;
+	y := array[len x] of real;
+	for(iy := 0; iy < f.ny; iy++)
+		for(ix := 0; ix < f.nx; ix++){
+			i := iy*f.nx+ix;
+			y[i] = x[i] - opdt*opdiffusivity*lapvec(f,x,ix,iy);
+		}
+	return y;
+}
+
+# Runs the backward-Euler implicit diffusion solve for one step, using
+# whichever Krylov method p's spec named. Purely internal - newproblem()/
+# step() are the only exported entry points that ever touch a Solver.
+solvediffuse(p: ref Problem, dt: real): string
+{
+	f := p.field;
+	if(p.diffusivity <= 0.0 || dt <= 0.0)
+		return nil;
+	opfield = f;
+	opdt = dt;
+	opdiffusivity = p.diffusivity;
+	solver := krylov->new();
+	solver.cmd(sys->sprint("method %s\ntolerance %g\nrestart %d\nmaxiter %d",
+		p.solvermethod, p.tolerance, p.restart, p.maxiter));
+	x := solver.solve(diffuseop, f.u, f.u);
+	if(!solver.converged)
+		return sys->sprint("step: %s failed to converge (residual %g after %d iterations)",
+			p.solvermethod, solver.residual, solver.iterations);
+	f.u[0:] = x;
+	return nil;
+}
+
+# --- the problem-specification "little language" ---
+
+specwords(s: string): array of string
+{
+	l := str->fields(s);
+	a := array[len l] of string;
+	for(i := 0; l != nil; (i,l) = (i+1,tl l))
+		a[i] = hd l;
+	return a;
+}
+
+newproblem(spec: string): (ref Problem, string)
+{
+	init();
+	grid: ref Mesh->Grid;
+	equation := "";
+	diffusivity := 0.0;
+	speed := 0.0; damping := 0.0;
+	solvermethod := "explicit";
+	tolerance := 1.0e-8;
+	restart := 30;
+	maxiter := 200;
+	defaultstep := 0.0;
+
+	for(rest := spec; rest != nil;){
+		(line, tail) := str->splitl(rest, "\n");
+		if(tail != nil)
+			tail = tail[1:];
+		rest = tail;
+		a := specwords(line);
+		if(len a == 0)
+			continue;
+		case a[0] {
+		"mesh" =>
+			(g, err) := mesh->parse(line);
+			if(err != nil)
+				return (nil, err);
+			grid = g;
+		"equation" =>
+			if(len a < 2)
+				return (nil, "equation: usage: equation diffuse|wave <params...>");
+			equation = a[1];
+			case equation {
+			"diffuse" =>
+				for(i := 2; i+1 < len a; i += 2)
+					if(a[i] == "diffusivity")
+						diffusivity = real a[i+1];
+					else
+						return (nil, "equation diffuse: unknown option " + a[i]);
+				if(diffusivity <= 0.0)
+					return (nil, "equation diffuse: diffusivity must be given and positive");
+			"wave" =>
+				for(i := 2; i+1 < len a; i += 2)
+					case a[i] {
+					"speed" => speed = real a[i+1];
+					"damping" => damping = real a[i+1];
+					* => return (nil, "equation wave: unknown option " + a[i]);
+					}
+				if(speed <= 0.0)
+					return (nil, "equation wave: speed must be given and positive");
+			"gray" =>
+				return (nil, "equation gray: not expressible here (two coupled fields) - call gray() directly");
+			* =>
+				return (nil, "equation: unknown equation " + equation);
+			}
+		"solver" =>
+			if(len a < 2)
+				return (nil, "solver: usage: solver explicit|gmres|cg [tolerance T] [restart R] [maxiter N]");
+			solvermethod = a[1];
+			if(solvermethod != "explicit" && solvermethod != "gmres" && solvermethod != "cg")
+				return (nil, "solver: method must be explicit, gmres, or cg, got " + solvermethod);
+			for(i := 2; i+1 < len a; i += 2)
+				case a[i] {
+				"tolerance" => tolerance = real a[i+1];
+				"restart" => restart = int a[i+1];
+				"maxiter" => maxiter = int a[i+1];
+				* => return (nil, "solver: unknown option " + a[i]);
+				}
+		"time" =>
+			if(len a != 3 || a[1] != "step")
+				return (nil, "time: usage: time step DT");
+			defaultstep = real a[2];
+			if(defaultstep <= 0.0)
+				return (nil, "time: step must be positive");
+		* =>
+			return (nil, "unknown problem-spec line: " + a[0]);
+		}
+	}
+	if(grid == nil)
+		return (nil, "newproblem: spec has no mesh line");
+	if(equation == "")
+		return (nil, "newproblem: spec has no equation line");
+	if(equation == "wave" && solvermethod != "explicit")
+		return (nil, "equation wave: no implicit solver available - use solver explicit");
+	f := new(grid.nx, grid.ny, grid.dx, grid.dy, grid.bc);
+	return (ref Problem(f, equation, solvermethod, diffusivity, speed, damping,
+		tolerance, restart, maxiter, defaultstep), nil);
+}
+
+# Batch/unattended driver: repeatedly step() by p's own "time step DT"
+# until at least `until` total time has elapsed. For verification and UQ
+# studies, which run a problem to completion without a redraw loop
+# driving individual step() calls by wall-clock elapsed time the way an
+# interactive caller (e.g. pdelab.b) does.
+run(p: ref Problem, until: real): (int, string)
+{
+	if(p.defaultstep <= 0.0)
+		return (0, "run: spec has no time step line");
+	n := 0;
+	elapsed := 0.0;
+	for(; elapsed < until; elapsed += p.defaultstep){
+		h := p.defaultstep;
+		if(elapsed+h > until)
+			h = until-elapsed;
+		err := step(p, h);
+		if(err != nil)
+			return (n, err);
+		n++;
+	}
+	return (n, nil);
+}
+
+step(p: ref Problem, dt: real): string
+{
+	case p.equation {
+	"diffuse" =>
+		if(p.solvermethod == "explicit"){
+			diffuse(p.field, p.diffusivity, dt);
+			return nil;
+		}
+		return solvediffuse(p, dt);
+	"wave" =>
+		wave(p.field, p.speed, p.damping, dt);
+		return nil;
+	}
+	return "step: unknown equation " + p.equation;
 }
 
 diffuse(f: ref Field, d, dt: real)

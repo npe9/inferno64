@@ -15,6 +15,11 @@ include "wmclient.m";
 include "pde.m";
 	pde: Pde;
 	Field: import pde;
+include "mesh.m";
+	mesh: Mesh;
+include "meshview.m";
+	meshview: Meshview;
+	View: import meshview;
 
 Pdelab: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -23,7 +28,9 @@ NY: con 72;
 
 win: ref Window;
 a, b: ref Field;
-pal: array of ref Image;
+grid: ref Mesh->Grid;
+view: ref View;
+values: array of real;
 font: ref Font;
 mode := 1;
 paused := 0;
@@ -34,18 +41,20 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	pde = load Pde Pde->PATH;
+	mesh = load Mesh Mesh->PATH;
+	meshview = load Meshview Meshview->PATH;
 	if(pde == nil){ sys->fprint(sys->fildes(2), "pdelab: cannot load %s: %r\n", Pde->PATH); raise "fail:load"; }
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init(); pde->init();
 	if(ctxt == nil) ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "PDE Laboratory", Wmclient->Appl);
 	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	pal = array[256] of ref Image;
-	for(i := 0; i < 256; i++){
-		# Inferno-capable smooth blue/cyan/yellow heat map, not a Temple palette.
-		r := clamp(2*i-128); g := clamp(3*i-256); bl := clamp(255-2*i);
-		pal[i] = win.display.color((r<<24)|(g<<16)|(bl<<8)|255);
-	}
+	view = meshview->new(win.image, font);
+	# Same smooth blue/cyan/yellow heat map as before, now a declared ramp
+	# (meshview(2)) instead of a hand-built 256-entry table.
+	view.cmd("colour 0 1 16r000030ff 16r0080e0ff 16re0ff40ff 16rffff00ff");
+	grid = ref Mesh->Grid(NX, NY, 1.0, 1.0, Pde->CLAMP);
+	values = array[NX*NY] of real;
 	a = pde->new(NX, NY, 1.0, 1.0, Pde->CLAMP);
 	b = pde->new(NX, NY, 1.0, 1.0, Pde->CLAMP);
 	if(tl argv != nil){ m := int hd tl argv; if(m >= 1 && m <= 3) mode = m; }
@@ -102,22 +111,19 @@ pointer(p: ref Draw->Pointer)
 redraw()
 {
 	img := win.image; if(img == nil) return;
-	cw := (img.r.dx()+NX-1)/NX; ch := (img.r.dy()+NY-1)/NY;
+	view.image = img;
 	for(y := 0; y < NY; y++) for(x := 0; x < NX; x++){
 		v := a.u[y*NX+x];
 		if(mode == 2) v = (v+1.0)*0.5;
 		if(mode == 3) v = b.u[y*NX+x]-a.u[y*NX+x]*0.25+0.25;
-		i := clamp(int (v*255.0));
-		x0 := img.r.min.x+x*img.r.dx()/NX; y0 := img.r.min.y+y*img.r.dy()/NY;
-		img.draw(Rect((x0,y0),(x0+cw,y0+ch)),pal[i],nil,Point(0,0));
+		values[y*NX+x] = v;
 	}
+	view.draw(img.r, grid, values);
 	name := array[] of {"", "heat/diffusion", "damped wave", "Gray-Scott reaction-diffusion"};
-	img.text(img.r.min.add((8,16)), pal[255], Point(0,0), font,
+	img.text(img.r.min.add((8,16)), view.palette[255], Point(0,0), font,
 		sys->sprint("%s  [1-3 select, draw, r reset, space pause]", name[mode]));
 	img.flush(Draw->Flushnow);
 }
-
-clamp(v: int): int { if(v < 0) return 0; if(v > 255) return 255; return v; }
 
 timer(c: chan of int)
 {
