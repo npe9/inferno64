@@ -93,8 +93,10 @@ proc0(void*)
 void
 userinit(void)
 {
+	char *s;
+	for(s = "osprey: userinit\n"; *s != 0; s++)
+		outb(0x3f8, *s);
 	up = nil;
 	kstrdup(&eve, "");
 	kproc("*init*", proc0, nil);
 }
-

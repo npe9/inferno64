@@ -172,6 +172,13 @@ init0(void)
 	touser(sp);
 }
 
+static void
+serialstr(char *s)
+{
+	while(*s != 0)
+		outb(0x3f8, *s++);
+}
+
 void
 main(void)
 {
@@ -228,6 +235,7 @@ main(void)
 	print("init: pages\n");
 	preallocpages();
 	pageinit();
+	serialstr("osprey: entering user space\n");
 	print("init: user\n");
 	userinit();
 	print("init: sched\n");
