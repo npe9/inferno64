@@ -1,6 +1,6 @@
 Toycpu: module
 {
-	PATH: con "/dis/lib/toycpu.dis";
+	PATH: con "/dis/dreammachines/plugin/toycpu.dis";
 
 	Mem: con 100;	# 100 mailboxes, 000..999 each - Bucky's Wristwatch/Rock
 			# Bottom territory: how few instructions does something

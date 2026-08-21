@@ -2,7 +2,7 @@
 .SH NAME
 toycpu \- Little Man Computer-style toy CPU and assembler
 .SH SYNOPSIS
-.B wm/toycpu
+.B dreammachines/toycpu
 .RI [ program.lmc ]
 .SH DESCRIPTION
 .I Toycpu
@@ -46,8 +46,8 @@ Minimal INP/STA/INP/ADD/OUT/HLT smoke test.
 .B /lib/toycpu/countdown.lmc
 A real loop: reads a number and counts it down to zero.
 .SH SOURCE
-.B /appl/wm/toycpu.b
+.B /appl/dreammachines/toycpu.b
 .br
-.B /appl/lib/toycpu.b
+.B /appl/dreammachines/plugin/toycpu.b
 .br
-.B /module/toycpu.m
+.B /module/dreammachines/toycpu.m

@@ -3,7 +3,7 @@ implement Tutor;
 include "sys.m";
 	sys: Sys;
 
-include "tutor.m";
+include "dreammachines/tutor.m";
 
 init()
 {

@@ -2,7 +2,7 @@
 .SH NAME
 trac \- Mooers' TRAC macro-language interpreter
 .SH SYNOPSIS
-.B trac
+.B dreammachines/trac
 .I file.tc
 .SH DESCRIPTION
 .I Trac
@@ -67,4 +67,4 @@ Minimal ds/ss/cl template-substitution demo.
 Recursion, arithmetic, and branching all doing real work: a
 self-recursive loop counting 1 to 15, printing fizz/buzz/fizzbuzz.
 .SH SOURCE
-.B /appl/cmd/trac.b
+.B /appl/dreammachines/trac.b

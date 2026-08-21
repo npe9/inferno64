@@ -45,7 +45,6 @@ TARG=\
 	diskblocks.dis\
 	disks.dis\
 	dividers.dis\
-	eliza.dis\
 	env.dis\
 	ether.dis\
 	exception.dis\
@@ -151,9 +150,7 @@ TARG=\
 	tkclient.dis\
 	titlebar.dis\
 	tone.dis\
-	toycpu.dis\
 	translate.dis\
-	tutor.dis\
 	ubfa.dis\
 	url.dis\
 	vac.dis\

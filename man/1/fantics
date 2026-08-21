@@ -2,7 +2,7 @@
 .SH NAME
 fantics \- staged-performance player (timed reveal/emphasis/pause)
 .SH SYNOPSIS
-.B wm/fantics
+.B dreammachines/fantics
 .RI [ script.fant ]
 .SH DESCRIPTION
 .I Fantics
@@ -51,4 +51,4 @@ or Escape quits.
 A short performance about fantics itself, using the technique to
 explain the technique.
 .SH SOURCE
-.B /appl/wm/fantics.b
+.B /appl/dreammachines/fantics.b

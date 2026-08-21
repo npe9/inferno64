@@ -2,7 +2,7 @@
 .SH NAME
 synth \- algorithmic scale-walk melody composer
 .SH SYNOPSIS
-.B synth
+.B dreammachines/synth
 .RI [ nnotes
 .RI [ seed
 .RI [ major | minor | penta ]]]
@@ -36,6 +36,6 @@ and
 .B minor
 (natural, rendered with sharps uniformly) are also available.
 .SH SOURCE
-.B /appl/cmd/synth.b
+.B /appl/dreammachines/synth.b
 .SH SEE ALSO
 .IR tone (2)

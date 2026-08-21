@@ -1,6 +1,6 @@
 Eliza: module
 {
-	PATH: con "/dis/lib/eliza.dis";
+	PATH: con "/dis/dreammachines/plugin/eliza.dis";
 
 	# One PRE or POST word-substitution entry: word -> a (possibly
 	# multi-word) replacement.

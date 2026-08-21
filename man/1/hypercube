@@ -2,7 +2,7 @@
 .SH NAME
 hypercube \- tumbling tesseract, a 4-dimensional wireframe demo
 .SH SYNOPSIS
-.B wm/hypercube
+.B dreammachines/hypercube
 .SH DESCRIPTION
 .I Hypercube
 is a work-alike of the "Mind's Eye more: n dimensions" chapter of
@@ -19,6 +19,6 @@ wireframe pipeline. Each of the four axes (x/y/z/w) is drawn in its
 own colour (red/green/blue/yellow), the standard convention for
 reading a 4-D wireframe.
 .SH SOURCE
-.B /appl/wm/hypercube.b
+.B /appl/dreammachines/hypercube.b
 .SH SEE ALSO
 .IR draw3ddemo (1)

@@ -1,0 +1,33 @@
+<../../mkconfig
+
+# Work-alikes of the systems surveyed in Ted Nelson's Computer Lib/Dream
+# Machines (1974): a hypertext browser, algorithmic-composition and video
+# synthesis demos, a branching-alternatives editor, a CAI lesson engine, a
+# Little Man Computer, an ELIZA-style conversational script, and the
+# TRAC/BASIC/APL languages it surveys alongside them. plugin/ holds the
+# pure library modules (Tutor, Eliza, Toycpu) that the corresponding
+# command wrappers below load at runtime, the same split appl/danby uses.
+
+DIRS=\
+	plugin\
+
+TARG=\
+	apl.dis\
+	basic.dis\
+	computermovie.dis\
+	eliza.dis\
+	fantics.dis\
+	hypercube.dis\
+	hyperdoc.dis\
+	ix.dis\
+	synth.dis\
+	thinkertoy.dis\
+	trac.dis\
+	tutor.dis\
+	toycpu.dis\
+	videosynth.dis\
+
+DISBIN=$ROOT/dis/dreammachines
+
+<$ROOT/mkfiles/mkdis
+<$ROOT/mkfiles/mksubdirs

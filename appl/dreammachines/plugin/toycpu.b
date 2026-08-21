@@ -42,7 +42,7 @@ implement Toycpu;
 
 include "sys.m";
 	sys: Sys;
-include "toycpu.m";
+include "dreammachines/toycpu.m";
 
 init()
 {

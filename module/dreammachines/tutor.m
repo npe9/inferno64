@@ -1,6 +1,6 @@
 Tutor: module
 {
-	PATH: con "/dis/lib/tutor.dis";
+	PATH: con "/dis/dreammachines/plugin/tutor.dis";
 
 	# Nelson's Dream Machines chapter on CAI (computer-assisted
 	# instruction) and PLATO: a lesson is a graph of frames, not a

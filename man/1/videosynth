@@ -2,7 +2,7 @@
 .SH NAME
 videosynth \- Sandin Image Processor-style video synthesizer
 .SH SYNOPSIS
-.B wm/videosynth
+.B dreammachines/videosynth
 .SH DESCRIPTION
 .I Videosynth
 is a digital work-alike of Dan Sandin's Image Processor (1973), the
@@ -32,4 +32,4 @@ resets, and
 .B q
 or Escape quits.
 .SH SOURCE
-.B /appl/wm/videosynth.b
+.B /appl/dreammachines/videosynth.b

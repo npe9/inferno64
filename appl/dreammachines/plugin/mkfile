@@ -1,0 +1,10 @@
+<../../../mkconfig
+
+TARG=\
+	eliza.dis\
+	toycpu.dis\
+	tutor.dis\
+
+DISBIN=$ROOT/dis/dreammachines/plugin
+
+<$ROOT/mkfiles/mkdis

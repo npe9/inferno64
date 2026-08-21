@@ -29,7 +29,7 @@ implement Fantics;
 #              its own
 #
 # Runs as a bare wmclient window (no Tk - nothing here needs a button,
-# and per wm/toycpu.b's finding this backend's synthetic clicks on Tk
+# and per dreammachines/toycpu.b's finding this backend's synthetic clicks on Tk
 # buttons aren't reliable anyway), black stage with light text rather
 # than this tree's usual white background - the one app in this whole
 # series actually about staging gets to look staged. Space/Return
@@ -37,7 +37,7 @@ implement Fantics;
 # fully-revealed state, or straight to the next beat if it's already
 # there); r restarts from the first beat; q/Esc quits.
 #
-# usage: wm/fantics [script.fant]
+# usage: dreammachines/fantics [script.fant]
 
 include "sys.m";
 	sys: Sys;

@@ -48,7 +48,7 @@ implement Eliza;
 include "sys.m";
 	sys: Sys;
 
-include "eliza.m";
+include "dreammachines/eliza.m";
 
 init()
 {

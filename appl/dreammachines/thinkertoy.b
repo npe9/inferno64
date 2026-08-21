@@ -21,7 +21,7 @@ implement Thinkertoy;
 # position-less file gets one fresh Auto Layout on load instead of
 # piling every node at the origin.
 #
-# usage: wm/thinkertoy [file]
+# usage: dreammachines/thinkertoy [file]
 
 include "sys.m";
 	sys: Sys;

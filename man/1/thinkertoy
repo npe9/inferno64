@@ -2,7 +2,7 @@
 .SH NAME
 thinkertoy \- branching-alternatives tree editor
 .SH SYNOPSIS
-.B wm/thinkertoy
+.B dreammachines/thinkertoy
 .RI [ file ]
 .SH DESCRIPTION
 .I Thinkertoy
@@ -36,4 +36,4 @@ If
 is given it is loaded at startup; otherwise a new empty tree (a single
 root node) is created.
 .SH SOURCE
-.B /appl/wm/thinkertoy.b
+.B /appl/dreammachines/thinkertoy.b

@@ -29,13 +29,11 @@ TARG=\
 	9srvfs.dis\
 	9win.dis\
 	B.dis\
-	apl.dis\
 	ar.dis\
 	archfs.dis\
 	auplay.dis\
 	auhdr.dis\
 	basename.dis\
-	basic.dis\
 	bind.dis\
 	bit2gif.dis\
 	bytes.dis\
@@ -89,7 +87,6 @@ TARG=\
 	iostats.dis\
 	itest.dis\
 	itreplay.dis\
-	ix.dis\
 	kill.dis\
 	listen.dis\
 	lockfs.dis\
@@ -150,7 +147,6 @@ TARG=\
 	styxmon.dis\
 	styxlisten.dis\
 	sum.dis\
-	synth.dis\
 	tac.dis\
 	tail.dis\
 	tarfs.dis\
@@ -167,7 +163,6 @@ TARG=\
 	touchcal.dis\
 	tokenize.dis\
 	tr.dis\
-	trac.dis\
 	trampoline.dis\
 	trfs.dis\
 	tsort.dis\

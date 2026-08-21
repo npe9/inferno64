@@ -25,7 +25,7 @@ implement Videosynth;
 #
 # Runs as a bare wmclient window (like computermovie.b/draw3ddemo.b),
 # not a Tk app - there's nothing here a button would add over a key
-# binding, and per [[inferno-rio-dream-machine-roadmap]]'s wm/toycpu.b
+# binding, and per [[inferno-rio-dream-machine-roadmap]]'s dreammachines/toycpu.b
 # entry, this Cocoa backend's synthetic-click delivery to Tk buttons is
 # unreliable right now anyway; keyboard-only sidesteps it entirely.
 #

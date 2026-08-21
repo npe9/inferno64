@@ -8,7 +8,7 @@ implement Wmtoycpu;
 # and an input box that only matters once the machine is actually
 # blocked waiting for one.
 #
-# usage: wm/toycpu [program.lmc]
+# usage: dreammachines/toycpu [program.lmc]
 
 include "sys.m";
 	sys: Sys;
@@ -25,7 +25,7 @@ include "tkclient.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 
-include "toycpu.m";
+include "dreammachines/toycpu.m";
 	toycpu: Toycpu;
 
 Wmtoycpu: module {

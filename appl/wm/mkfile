@@ -19,7 +19,6 @@ TARG=\
 	coffee.dis\
 	collide.dis\
 	colors.dis\
-	computermovie.dis\
 	cprof.dis\
 	date.dis\
 	develop.dis\
@@ -28,12 +27,8 @@ TARG=\
 	debsrc.dis\
 	dir.dis\
 	edit.dis\
-	eliza.dis\
-	fantics.dis\
 	filename.dis\
 	getauthinfo.dis\
-	hypercube.dis\
-	hyperdoc.dis\
 	keyboard.dis\
 	logon.dis\
 	logwindow.dis\
@@ -65,12 +60,8 @@ TARG=\
 	task.dis\
 	telnet.dis\
 	tetris.dis\
-	thinkertoy.dis\
 	toolbar.dis\
-	toycpu.dis\
-	tutor.dis\
 	unibrowse.dis\
-	videosynth.dis\
 	view.dis\
 	vt.dis\
 	wish.dis\

@@ -2,7 +2,7 @@
 .SH NAME
 apl \- APL interpreter with real right-to-left evaluation
 .SH SYNOPSIS
-.B apl
+.B dreammachines/apl
 .I file.apl
 .SH DESCRIPTION
 .I Apl
@@ -66,4 +66,4 @@ subtraction.
 A vector of Fahrenheit temperatures converted to Celsius all at once,
 via scalar-extension broadcasting.
 .SH SOURCE
-.B /appl/cmd/apl.b
+.B /appl/dreammachines/apl.b

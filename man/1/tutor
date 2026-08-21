@@ -2,7 +2,7 @@
 .SH NAME
 tutor \- CAI/PLATO-style branching-lesson engine
 .SH SYNOPSIS
-.B wm/tutor
+.B dreammachines/tutor
 .RI [ lesson-file ]
 .SH DESCRIPTION
 .I Tutor
@@ -52,8 +52,8 @@ order, and DEFAULT is used when none match.
 The default sample lesson, covering the Dis virtual machine and the
 Limbo language.
 .SH SOURCE
-.B /appl/wm/tutor.b
+.B /appl/dreammachines/tutor.b
 .br
-.B /appl/lib/tutor.b
+.B /appl/dreammachines/plugin/tutor.b
 .br
-.B /module/tutor.m
+.B /module/dreammachines/tutor.m

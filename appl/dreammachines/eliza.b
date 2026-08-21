@@ -1,15 +1,14 @@
-implement Wmtutor;
+implement Wmeliza;
 
-# Nelson's Dream Machines chapter on CAI (computer-assisted instruction)
-# and PLATO: a lesson the student's own answers steer, not a document
-# they just read - appl/lib/tutor.b (module/tutor.m) parses the plain-
-# text branching-lesson format and judges answers against it; this file
-# is just the runtime window: show the current frame's text, take a
-# typed answer, judge it, show the feedback and the next frame, track a
-# score. Deliberately distinct from this tree's existing static
-# !Lessons reading material, which has no judging or branching at all.
+# Nelson's Dream Machines chapter on AI singles out Weizenbaum's ELIZA -
+# appl/lib/eliza.b (module/eliza.m) is the actual keyword-ranked pattern
+# matcher and pronoun-reflection engine; this file is just the chat
+# window: show the transcript so far, take a typed line, get a reply,
+# append both to the transcript, scroll to the end. Unlike dreammachines/tutor.b
+# (which replaces its view each turn - a lesson frame is a fresh page),
+# this view only ever grows - a conversation is its own scrollback.
 #
-# usage: wm/tutor [lesson-file]
+# usage: dreammachines/eliza [script-file]
 
 include "sys.m";
 	sys: Sys;
@@ -26,18 +25,16 @@ include "tkclient.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 
-include "tutor.m";
-	tutor: Tutor;
+include "dreammachines/eliza.m";
+	eliza: Eliza;
 
-Wmtutor: module {
+Wmeliza: module {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
 window: ref Tk->Toplevel;
-lesson: ref Tutor->Lesson;
-cur: ref Tutor->Frame;
-score, attempts: int;
-lessonpath := "/lib/tutor/intro.tt";
+script: ref Eliza->Script;
+scriptpath := "/lib/eliza/doctor.el";
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {
@@ -59,47 +56,39 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	wmclient->init();
 	if(ctxt == nil)
 		ctxt = wmclient->makedrawcontext();
-	tutor = load Tutor Tutor->PATH;
-	if(tutor == nil)
-		loaderr(Tutor->PATH);
-	tutor->init();
+	eliza = load Eliza Eliza->PATH;
+	if(eliza == nil)
+		loaderr(Eliza->PATH);
+	eliza->init();
 
 	argv = tl argv;
 	if(argv != nil)
-		lessonpath = hd argv;
+		scriptpath = hd argv;
 
-	(l, err) := tutor->loadlesson(lessonpath);
-	if(l == nil){
-		sys->fprint(sys->fildes(2), "tutor: cannot load %s: %s\n", lessonpath, err);
+	(scr, err) := eliza->loadscript(scriptpath);
+	if(scr == nil){
+		sys->fprint(sys->fildes(2), "eliza: cannot load %s: %s\n", scriptpath, err);
 		raise "fail:load";
 	}
-	lesson = l;
-	cur = tutor->findframe(lesson, lesson.start);
-	if(cur == nil){
-		sys->fprint(sys->fildes(2), "tutor: %s: START frame %q not found\n", lessonpath, lesson.start);
-		raise "fail:load";
-	}
+	script = scr;
 
 	tkclient->init();
 	buts := Tkclient->Resize | Tkclient->Hide;
 	winctl: chan of string;
-	title := "Tutor";
-	if(lesson.title != "")
-		title = lesson.title;
-	(window, winctl) = tkclient->toplevel(ctxt, nil, title, buts);
+	(window, winctl) = tkclient->toplevel(ctxt, nil, "Eliza", buts);
 	cmdc := chan of string;
 	tk->namechan(window, cmdc, "cmd");
 	for(tc := 0; tc < len tkconfig; tc++)
 		tkcmd(window, tkconfig[tc]);
 	if((e := tkcmd(window, "variable lasterror")) != nil){
-		sys->fprint(sys->fildes(2), "tutor: tk initialization failed: %s\n", e);
+		sys->fprint(sys->fildes(2), "eliza: tk initialization failed: %s\n", e);
 		raise "fail:tk";
 	}
 	fittoscreen(window);
 	tkcmd(window, "update");
 
-	showtext(cur.text);
-	setscore();
+	if(script.greeting != "")
+		appendline("Eliza: " + script.greeting);
 
 	tkclient->onscreen(window, nil);
 	tkclient->startinput(window, "kbd"::"ptr"::nil);
@@ -121,10 +110,6 @@ init(ctxt: ref Draw->Context, argv: list of string)
 }
 
 tkconfig := array[] of {
-	"frame .tool",
-	"label .tool.score -text {score 0/0} -anchor w",
-	"pack .tool.score -side left -expand 1 -fill x",
-
 	"frame .view",
 	"text .view.t -state disabled -bd 0 -width 0 -height 0 -bg white -wrap word -yscrollcommand {.view.yscroll set}",
 	"scrollbar .view.yscroll -orient vertical -command {.view.t yview}",
@@ -132,9 +117,9 @@ tkconfig := array[] of {
 	"pack .view.t -expand 1 -fill both",
 
 	"frame .answer",
-	"label .answer.l -text {your answer:}",
+	"label .answer.l -text {you:}",
 	"entry .answer.e -bg white",
-	"button .answer.submit -text Submit -command {send cmd submit}",
+	"button .answer.submit -text Send -command {send cmd submit}",
 	"pack .answer.l -side left",
 	"pack .answer.e -side left -expand 1 -fill x -padx 4",
 	"pack .answer.submit -side left",
@@ -143,11 +128,10 @@ tkconfig := array[] of {
 	"bind .view.t <Button-1> +{grab set .view.t}",
 	"bind .view.t <ButtonRelease-1> +{grab release .view.t}",
 
-	"pack .tool -fill x",
 	"pack .view -expand 1 -fill both",
 	"pack .answer -fill x",
 	"pack propagate . 0",
-	". configure -width 640 -height 420",
+	". configure -width 560 -height 420",
 	"focus .answer.e",
 };
 
@@ -155,34 +139,22 @@ docmd(s: string)
 {
 	case s {
 	"submit" =>
-		answer := tkcmd(window, ".answer.e get");
-		if(answer == "")
+		line := tkcmd(window, ".answer.e get");
+		if(line == "")
 			return;
-		(correct, next, response) := tutor->judge(cur, answer);
-		attempts++;
-		if(correct)
-			score++;
-		setscore();
-		nf := tutor->findframe(lesson, next);
-		if(nf == nil){
-			showtext(response + "\n\n[end of lesson - no frame named " + next + "]");
-			return;
-		}
-		cur = nf;
-		showtext(response + "\n\n" + cur.text);
+		appendline("You: " + line);
+		reply := eliza->respond(script, line);
+		appendline("Eliza: " + reply);
 		tkcmd(window, ".answer.e delete 0 end");
 	}
 }
 
-showtext(s: string)
+appendline(s: string)
 {
-	tkcmd(window, ".view.t delete 1.0 end");
-	tkcmd(window, ".view.t insert 1.0 " + tk->quote(s));
-}
-
-setscore()
-{
-	tkcmd(window, ".tool.score configure -text " + tk->quote(sys->sprint("score %d/%d", score, attempts)));
+	tkcmd(window, ".view.t configure -state normal");
+	tkcmd(window, ".view.t insert end " + tk->quote(s + "\n\n"));
+	tkcmd(window, ".view.t configure -state disabled");
+	tkcmd(window, ".view.t see end");
 }
 
 loaderr(modname: string)

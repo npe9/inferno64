@@ -8,6 +8,7 @@ DIRS=\
 	cmd\
 	collab\
 	demo\
+	dreammachines\
 	ebook\
 	grid\
 	lib\

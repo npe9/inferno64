@@ -2,7 +2,7 @@
 .SH NAME
 computermovie \- keyframed camera flythrough demo
 .SH SYNOPSIS
-.B wm/computermovie
+.B dreammachines/computermovie
 .SH DESCRIPTION
 .I Computermovie
 is a work-alike of the "computer movies" chapter of Nelson's
@@ -23,7 +23,7 @@ Contrast
 .IR draw3ddemo (1),
 where the object spins in place and the camera never moves.
 .SH SOURCE
-.B /appl/wm/computermovie.b
+.B /appl/dreammachines/computermovie.b
 .br
 .B /module/math/camerapath.m
 .SH SEE ALSO

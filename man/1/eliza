@@ -2,7 +2,7 @@
 .SH NAME
 eliza \- Weizenbaum ELIZA-style conversational program
 .SH SYNOPSIS
-.B wm/eliza
+.B dreammachines/eliza
 .RI [ script.el ]
 .SH DESCRIPTION
 .I Eliza
@@ -46,8 +46,8 @@ to talk to it.
 .B /lib/eliza/doctor.el
 The default DOCTOR-persona script.
 .SH SOURCE
-.B /appl/wm/eliza.b
+.B /appl/dreammachines/eliza.b
 .br
-.B /appl/lib/eliza.b
+.B /appl/dreammachines/plugin/eliza.b
 .br
-.B /module/eliza.m
+.B /module/dreammachines/eliza.m

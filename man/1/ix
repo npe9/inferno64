@@ -2,10 +2,10 @@
 .SH NAME
 ix \- indexed, ranked full-text search
 .SH SYNOPSIS
-.B ix build
+.B dreammachines/ix build
 .I index.ix file...
 .br
-.B ix search
+.B dreammachines/ix search
 .I index.ix word...
 .SH DESCRIPTION
 .I Ix
@@ -19,12 +19,12 @@ that word is across the whole indexed set \(em rather than the plain
 line-matching of
 .IR grep (1).
 .PP
-.B ix build
+.B dreammachines/ix build
 reads every
 .I file
 given, tokenizes it, and writes a plain-text on-disk index to
 .IR index.ix .
-.B ix search
+.B dreammachines/ix search
 tokenizes
 .I word...
 the same way and prints every indexed document that contains any
@@ -33,6 +33,6 @@ query word, ranked highest score first.
 Both the on-disk index and the query/rank pass are plain lists with
 linear search: fine at demo scale, not written to scale further.
 .SH SOURCE
-.B /appl/cmd/ix.b
+.B /appl/dreammachines/ix.b
 .SH SEE ALSO
 .IR grep (1)

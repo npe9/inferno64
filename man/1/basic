@@ -2,7 +2,7 @@
 .SH NAME
 basic \- line-numbered BASIC interpreter
 .SH SYNOPSIS
-.B basic
+.B dreammachines/basic
 .I file.bas
 .SH DESCRIPTION
 .I Basic
@@ -68,4 +68,4 @@ INPUT with a prompt, GOSUB/RETURN, LEN.
 .B /lib/basic/features.bas
 STEP, all four ordering comparisons, ABS/VAL/INT.
 .SH SOURCE
-.B /appl/cmd/basic.b
+.B /appl/dreammachines/basic.b
