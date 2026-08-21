@@ -105,7 +105,7 @@ display draw-display
 dividers dividers
 doc palmfile
 dot math-linalg
-draw draw-example
+draw draw-0intro
 draw-context draw-context
 draw-display draw-display
 draw-example draw-example
@@ -219,7 +219,7 @@ json json
 jvalue json
 key spki
 keyboard tk
-keyring keyring-sha1
+keyring keyring-0intro
 keyring-auth keyring-auth
 keyring-certtostr keyring-certtostr
 keyring-crypt keyring-crypt
@@ -246,7 +246,7 @@ login security-login
 makedrawcontext wmclient
 map lists
 match filepat
-math math-linalg
+math math-0intro
 math-elem math-elem
 math-export math-export
 math-fp math-fp
@@ -301,11 +301,12 @@ pop3 pop3
 popup popup
 plot plot
 populationmodel populationmodel
+security security-0intro
 trajectory trajectory
 pow math-elem
 pow10 math-elem
 pread sys-read
-prefab prefab-style
+prefab prefab-0intro
 prefab-compound prefab-compound
 prefab-element prefab-element
 prefab-environ prefab-environ
@@ -507,6 +508,7 @@ unpair lists
 unquoted string
 utfbytes sys-utfbytes
 uvalue ubfa
+v23 v23-0intro
 valid spki
 venti venti
 verifier spki-verifier
