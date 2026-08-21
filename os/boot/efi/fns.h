@@ -17,6 +17,7 @@ void (*close)(void *f);
 
 int readn(void *f, void *data, int len);
 void unload(void);
+extern void (*stop)(void);
 
 int getc(void);
 void putc(int c);

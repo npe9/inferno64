@@ -9,6 +9,7 @@ EFI_SYSTEM_TABLE *ST;
 void* (*open)(char *name);
 int (*read)(void *f, void *data, int len);
 void (*close)(void *f);
+void (*stop)(void);
 
 void
 putc(int c)
