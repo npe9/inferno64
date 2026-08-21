@@ -89,6 +89,7 @@ TARG=\
 	itreplay.dis\
 	keyuptest.dis\
 	kill.dis\
+	line3test.dis\
 	listen.dis\
 	lockfs.dis\
 	logfile.dis\

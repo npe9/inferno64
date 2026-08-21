@@ -407,6 +407,7 @@ static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLText
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_sprites(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	soft_burn_tris(GPUVert*, int);
+static void	soft_bresenham(Memimage*, GPULine*);
 static int	metal_tri_reserve(int);
 static void	metal_readback_geom(void);
 static float	eye_to_depth(float);
@@ -1232,6 +1233,99 @@ metal_solid(float r, float g, float b, float a)
 	return mtl_solidsrc;
 }
 
+/*
+ * Deferred software fallback.
+ *
+ * When a Metal geometry pass cannot run (pipeline not built yet on the
+ * first frame, vertex staging failure, no encoder), the present
+ * routines fall back to drawing the primitives into gscreen with the
+ * CPU rasterisers below.  That is right for the on-screen present
+ * path, but metal_readback_geom() renders into an offscreen texture
+ * and then copies that texture *over* gscreen, which silently threw
+ * away everything the fallback had just drawn.  A whole batch of line3
+ * segments vanished whenever a pass failed - most visibly on the first
+ * frame after start-up, before the pipeline is built.
+ *
+ * During a readback the fallback is therefore recorded instead of
+ * drawn, and replayed into gscreen once the texture has been copied.
+ */
+static int	mtl_soft_defer;
+static GPULine	*defer_lines;
+static int	ndefer_lines, maxdefer_lines;
+static GPUVert	*defer_tverts;
+static int	ndefer_tverts, maxdefer_tverts;
+
+static void
+defer_line(GPULine *L)
+{
+	GPULine *p;
+	int nmax;
+
+	if(ndefer_lines >= maxdefer_lines){
+		nmax = maxdefer_lines ? maxdefer_lines * 2 : 256;
+		p = realloc(defer_lines, sizeof(GPULine) * nmax);
+		if(p == nil)
+			return;
+		defer_lines = p;
+		maxdefer_lines = nmax;
+	}
+	defer_lines[ndefer_lines++] = *L;
+}
+
+static void
+defer_tris(GPUVert *v, int nv)
+{
+	GPUVert *p;
+	int nmax;
+
+	if(nv <= 0)
+		return;
+	if(ndefer_tverts + nv > maxdefer_tverts){
+		nmax = maxdefer_tverts ? maxdefer_tverts * 2 : 1024;
+		while(nmax < ndefer_tverts + nv)
+			nmax *= 2;
+		p = realloc(defer_tverts, sizeof(GPUVert) * nmax);
+		if(p == nil)
+			return;
+		defer_tverts = p;
+		maxdefer_tverts = nmax;
+	}
+	memmove(defer_tverts + ndefer_tverts, v, sizeof(GPUVert) * nv);
+	ndefer_tverts += nv;
+}
+
+static void
+soft_line_or_defer(GPULine *L)
+{
+	if(mtl_soft_defer)
+		defer_line(L);
+	else
+		soft_bresenham(gscreen, L);
+}
+
+static void
+soft_tris_or_defer(GPUVert *v, int nv)
+{
+	if(mtl_soft_defer)
+		defer_tris(v, nv);
+	else
+		soft_burn_tris(v, nv);
+}
+
+static void
+metal_soft_replay(void)
+{
+	int i;
+
+	for(i = 0; i < ndefer_lines; i++)
+		soft_bresenham(gscreen, &defer_lines[i]);
+	ndefer_lines = 0;
+	if(ndefer_tverts > 0){
+		soft_burn_tris(defer_tverts, ndefer_tverts);
+		ndefer_tverts = 0;
+	}
+}
+
 static void
 soft_burn_tris(GPUVert *verts, int nverts)
 {
@@ -1467,7 +1561,7 @@ metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	unlock(&mtl_geom_lock);
 	if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph, verts, n,
 	    MTLPrimitiveTypeTriangle) < 0)
-		soft_burn_tris(verts, n);
+		soft_tris_or_defer(verts, n);
 }
 
 /*
@@ -1597,7 +1691,7 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	verts = present_line_verts;
 	if(verts == nil){
 		for(i = 0; i < n; i++)
-			soft_bresenham(gscreen, &lines[i]);
+			soft_line_or_defer(&lines[i]);
 		return;
 	}
 	/* Pack thin endpoints first, then thick quads (stable offsets for draws). */
@@ -1649,7 +1743,7 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		    verts + nthin * 2, nthick * 6, MTLPrimitiveTypeTriangle) < 0){
 			for(i = 0; i < n; i++)
 				if(lines[i].thick > 0)
-					soft_bresenham(gscreen, &lines[i]);
+					soft_line_or_defer(&lines[i]);
 		}
 	}
 	if(nthin > 0){
@@ -1658,7 +1752,7 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		    verts, nthin * 2, MTLPrimitiveTypeLine) < 0){
 			for(i = 0; i < n; i++)
 				if(lines[i].thick <= 0)
-					soft_bresenham(gscreen, &lines[i]);
+					soft_line_or_defer(&lines[i]);
 		}
 	}
 }
@@ -2480,16 +2574,21 @@ metal_readback_geom(void)
 	cmd = [mtl_queue commandBuffer];
 	if(cmd == nil)
 		return;
+	mtl_soft_defer = 1;
 	metal_present_tris(cmd, tex, depthtex, pw, ph);
 	metal_present_tris3d(cmd, tex, depthtex, pw, ph);
 	metal_present_lines(cmd, tex, depthtex, pw, ph);
 	metal_present_sprites(cmd, tex, depthtex, pw, ph);
+	mtl_soft_defer = 0;
 	[cmd commit];
 	[cmd waitUntilCompleted];
 	p = byteaddr(gscreen, gscreen->r.min);
 	bpl = gscreen->width * sizeof(u32);
 	region = MTLRegionMake2D(0, 0, pw, ph);
 	[tex getBytes:p bytesPerRow:bpl fromRegion:region mipmapLevel:0];
+	/* Now the texture has landed, draw whatever the GPU passes could
+	 * not; doing it earlier would have been overwritten just above. */
+	metal_soft_replay();
 	/* The CPU image is authoritative again; force the next present to upload it. */
 	mtl_tex_fresh = 1;
 	lock(&soft_dirty_lock);

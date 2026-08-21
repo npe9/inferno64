@@ -1,0 +1,54 @@
+.TH LINE3TEST 1
+.SH NAME
+line3test \- check draw3d's GPU line provider against the software one
+.SH SYNOPSIS
+.B line3test
+.SH DESCRIPTION
+.B Line3test
+draws a fan of
+.B line3
+segments through both
+.IR draw3d (2)
+providers \(em the software one and the
+.BR /dev/draw -backed
+.B draw3ddev
+\(em and reports how many segments each actually rendered, followed by
+.B PASS
+or a
+.B FAIL
+naming how many went missing.
+.PP
+It counts
+.I segments,
+not lit pixels.
+A pixel count cannot distinguish sixty thin segments from twenty thick
+ones, which is exactly the failure this exists to catch: each spoke is
+projected to where it is expected to appear and probed there.
+.PP
+The GPU line hook only accepts the screen as a destination, so the fan
+is drawn to the display image and read back.
+That is reliable rather than racy \(em
+.IR draw (3)
+runs any queued GPU geometry before serving a read, so the readback
+observes work that has not been presented yet.
+.SH EXAMPLE
+.EX
+% line3test
+line3: software 60/60, draw3ddev 60/60
+PASS
+.EE
+.SH SOURCE
+.B /appl/cmd/line3test.b
+.SH SEE ALSO
+.IR draw3d (2),
+.IR draw3ddemo (1)
+.SH BUGS
+It exercises the working path.
+The failure it was written for only appears when a Metal geometry pass
+cannot run and the software fallback takes over, which this cannot
+provoke from Limbo; reproducing that needs
+.B metal_present_geom
+in
+.I emu/MacOSX/win-cocoa.m
+made to fail.
+Passing here does not prove the fallback path is sound.

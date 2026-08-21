@@ -1141,6 +1141,9 @@ Conway's Game of Life
 .IR limbo (1)
 Limbo compiler
 .TP
+.IR line3test (1)
+check draw3d's GPU line provider against the software one
+.TP
 .IR lines (1)
 animated lines
 .TP
