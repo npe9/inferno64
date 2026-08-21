@@ -42,11 +42,14 @@ newfrompattern(n: int, elems: array of array of int): ref CSR
 {
 	neigh := array[n] of list of int;
 	counts := array[n] of int;
-	# Explicit, not relying on implicit zero/nil-init - see the note
-	# below on val. A stale nonzero counts[] entry here corrupts nnz
-	# (and, downstream, colidx/val's own array sizes); a stale non-nil
-	# neigh[] entry is worse - a dangling list from an earlier, unrelated
-	# allocation of this array's size.
+	# Explicit, not relying on a fresh array's contents - see the note
+	# below on val. Only counts[] is actually exposed: Dis leaves
+	# non-*pointer* space undefined, so an int array is at risk while
+	# neigh[] (list of int, a pointer type) does get nil-initialised by
+	# initmem either way. A stale nonzero counts[] entry corrupts nnz
+	# and, downstream, colidx/val's own array sizes - which is how this
+	# first showed up, as a "negative array size" crash rather than a
+	# wrong number. neigh[] is cleared alongside it for symmetry.
 	for(i0 := 0; i0 < n; i0++){
 		counts[i0] = 0;
 		neigh[i0] = nil;
@@ -73,13 +76,15 @@ newfrompattern(n: int, elems: array of array of int): ref CSR
 	rowptr[n] = nnz;
 	colidx := array[nnz] of int;
 	val := array[nnz] of real;
-	# Explicit, not relying on a fresh array's implicit zero-init: this
-	# build's allocator has been observed to hand back a freshly
-	# array[N]-allocated block still holding a previous same-size
-	# allocation's contents (confirmed with a minimal, repeated-call
-	# repro - not specific to this file). Every accumulate-from-zero
-	# array in sparse(2)/fem(2) zeroes itself explicitly for exactly
-	# this reason; do not remove it as "redundant".
+	# Explicit, not relying on a fresh array's contents. Dis specifies
+	# newa's non-pointer space as *undefined* (doc/dis.ms, "newa,
+	# newaz"), so an array[N] of a pointer-free type holds whatever the
+	# reused heap block last contained. This tree now compiles with
+	# limbo -z (mkfiles/mkdis), which emits the zeroing newaz instead
+	# and makes that guarantee hold - but every accumulate-from-zero
+	# array in sparse(2)/fem(2) still zeroes itself explicitly, so
+	# correctness never depends on a build flag. Do not remove as
+	# "redundant".
 	for(i = 0; i < nnz; i++)
 		val[i] = 0.0;
 	for(i = 0; i < n; i++){

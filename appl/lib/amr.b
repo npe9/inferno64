@@ -27,11 +27,11 @@ newblock(level, bi, bj, bk, bs: int): ref Block
 {
 	n := (bs+2)*(bs+2)*(bs+2);
 	u := array[n] of real;
-	# Explicit, not relying on implicit zero-init - this build's
-	# allocator has been observed to hand back a freshly array[N]-
-	# allocated block still holding a previous same-size allocation's
-	# contents (see fem(2)/sparse(2) for the minimal repro). Every
-	# fresh block's data starts genuinely zero for exactly that reason.
+	# Explicit, not relying on a fresh array's contents: Dis leaves
+	# newa's non-pointer space undefined by design (see sparse(2) for
+	# the full note). This tree compiles with limbo -z, which zeroes
+	# it anyway; keeping this explicit means a block's data starts at
+	# zero regardless of build flags.
 	for(i := 0; i < n; i++)
 		u[i] = 0.0;
 	return ref Block(level, bi, bj, bk, 1, nil, u);

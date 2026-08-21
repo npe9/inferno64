@@ -1,7 +1,19 @@
 BINTARG=${TARG:%=$DISBIN/%}
 MODDIR=$ROOT/module
 SYS_MODULE=${SYSMODULES:%=$MODDIR/%}
-LIMBOFLAGS=-I$MODDIR
+# -z makes the compiler emit newaz rather than newa, i.e. array[n] of T
+# is zero-filled instead of holding whatever the heap block last held.
+# Dis specifies newa's non-pointer space as *undefined* (see doc/dis.ms
+# under "newa, newaz"), so this is opt-in by design and both are
+# correct; without it, code that allocates an array and accumulates
+# into it - rather than fully overwriting it - silently reads a
+# previous allocation's data. That is invisible until a heap block gets
+# reused, which is exactly what makes it expensive to debug: it looks
+# like a data-dependent numerical bug, not an allocation bug. The
+# measured cost is negligible (single-digit ms to zero ~1GB), so this
+# tree takes the guarantee everywhere rather than relying on every
+# author to know that Limbo doesn't give it.
+LIMBOFLAGS=-z -I$MODDIR
 
 all:V:		$TARG
 

@@ -185,6 +185,28 @@ Suppresses normal output file generation.
 .B \-w
 Print warning messages about unused variables, etc.
 More \f5w\fP's (e.g., \f5\-ww\fP) increase the pedantry of the checking.
+.TP
+.B \-z
+Emit the zeroing array-allocation instruction
+.B newaz
+instead of
+.BR newa ,
+so that
+.BI array[ n "] of " T
+is guaranteed zero-filled.
+Without it, Dis leaves an array's non-pointer space
+.I undefined
+\(em it holds whatever the reused heap block last contained \(em so
+code that allocates an array and accumulates into it, rather than
+fully overwriting it, silently reads stale data.
+See
+.IR dis (6)
+under
+.B "newa, newaz"
+for the instruction-level definition.
+The cost is one
+.B memset
+per array allocation.
 .PP
 .SH FILES
 .TF /module
