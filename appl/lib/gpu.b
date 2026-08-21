@@ -27,17 +27,12 @@ new(): ref Backend
 	return ref Backend("cpu", "f64", 1, nil);
 }
 
-# A real check, not a promise: there is no native GPU device wired
-# into this build yet (see gpu(2)'s own SOURCE section) - attempting
-# to open the device this module would use if one existed, rather
-# than hardcoding a return value, is what keeps this honest once a
-# real backend does land underneath the same interface: the very same
-# check starts reporting true then, with nothing else in this file
-# needing to change.
+# A real check, not a promise: attempts to reach gpu(3) (see gpu(2)'s
+# own SOURCE section) rather than hardcoding a return value.
 available(): int
 {
 	init();
-	fd := sys->open("/dev/gpu/clone", Sys->OREAD);
+	fd := sys->open("/dev/gpuclone", Sys->OREAD);
 	if(fd == nil)
 		return 0;
 	return 1;
@@ -105,12 +100,69 @@ cpuapply(x: array of real): array of real
 	return sparse->matvec(cpumatrix, x);
 }
 
+gpufd: ref Sys->FD;
+gpun: int;
+
+# gpu(3)'s own protocol is text for this first pass (see its SOURCE
+# section for why) - marshal/unmarshal accordingly. A real high-
+# throughput version would move this to a compact binary encoding
+# without changing anything on the Krylov->Apply side of this file.
+gpuapply(x: array of real): array of real
+{
+	msg := sys->sprint("X");
+	for(i := 0; i < len x; i++)
+		msg += sys->sprint(" %g", x[i]);
+	msg += "\n";
+	sys->write(gpufd, array of byte msg, len msg);
+	buf := array[gpun*32 + 16] of byte;
+	rn := sys->read(gpufd, buf, len buf);
+	(nil, flds) := sys->tokenize(string buf[0:rn], " \n\t");
+	y := array[gpun] of real;
+	for(i = 0; i < gpun && flds != nil; i++){
+		y[i] = real hd flds;
+		flds = tl flds;
+	}
+	return y;
+}
+
 Backend.apply(b: self ref Backend, m: ref CSR): Apply
 {
 	init();
 	b.lasterror = nil;
-	if(b.device == "gpu" && !available())
+	if(b.device != "gpu"){
+		cpumatrix = m;
+		return cpuapply;
+	}
+	if(!available()){
 		b.lasterror = "backend: device gpu requested but unavailable, using cpu";
-	cpumatrix = m;
-	return cpuapply;
+		cpumatrix = m;
+		return cpuapply;
+	}
+	fd := sys->open("/dev/gpuclone", Sys->ORDWR);
+	if(fd == nil){
+		b.lasterror = sys->sprint("backend: device gpu open failed (%r), using cpu");
+		cpumatrix = m;
+		return cpuapply;
+	}
+	umsg := sys->sprint("U %d %d\n", m.n, len m.val);
+	for(i := 0; i <= m.n; i++)
+		umsg += sys->sprint("%d ", m.rowptr[i]);
+	umsg += "\n";
+	for(i = 0; i < len m.colidx; i++)
+		umsg += sys->sprint("%d ", m.colidx[i]);
+	umsg += "\n";
+	for(i = 0; i < len m.val; i++)
+		umsg += sys->sprint("%g ", m.val[i]);
+	umsg += "\n";
+	sys->write(fd, array of byte umsg, len umsg);
+	ack := array[16] of byte;
+	an := sys->read(fd, ack, len ack);
+	if(an < 3 || string ack[0:3] != "OK\n"){
+		b.lasterror = "backend: device gpu upload failed, using cpu";
+		cpumatrix = m;
+		return cpuapply;
+	}
+	gpufd = fd;
+	gpun = m.n;
+	return gpuapply;
 }

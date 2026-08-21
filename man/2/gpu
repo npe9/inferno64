@@ -89,17 +89,27 @@ already use for a solver that failed to converge, applied here to a
 backend that couldn't be honoured instead.
 .PP
 .B Available
-is a real check, not a promise: it attempts to reach a native GPU
-device and reports whether one exists right now. There is no native
-GPU device wired into this build yet (see SOURCE below), so it always
-returns false today \(em
+is a real check, not a promise: it attempts to reach
+.IR gpu (3),
+the native device
+.B apply
+uses when
+.I b
+is configured for
+.BR "device gpu" .
+If
+.IR gpu (3)
+can't be reached (not this platform, or the device otherwise
+unavailable),
 .B device
 .B gpu
-still works when it does; it just always falls back through
+still works \(em
+.B apply
+falls back to
+.B cpu
+through
 .BR lasterror ,
-observably, until a real backend lands underneath this same interface,
-at which point this same check starts reporting true and nothing else
-here needs to change.
+observably, exactly as if it had been asked for in the first place.
 .SH "USING IT FROM fem(2)"
 .IR fem (2)'s
 own
@@ -134,20 +144,25 @@ just to notice a requested backend fell back.
 .br
 .B /appl/lib/gpu.b
 .PP
-No native GPU device exists in this tree yet \(em a future one would be
-a Styx device (matching
+The device
+.B apply
+talks to when configured for
+.B "device gpu"
+is
+.IR gpu (3)
+\(em a real Styx device (matching
 .IR ssl (3)'s
 own shape: open a handle, upload a matrix once, exchange only the
-vector per call) with a Metal compute-pipeline implementation behind
-it on this platform, mirroring the existing GPU
-.I draw
-hooks
-.RI ( win-cocoa.m )
-one layer down from rendering into general compute. Nothing in this
-interface would need to change for it to plug in.
+vector per call), running the matvec itself on the CPU for now, not
+yet a Metal compute pipeline; see
+.IR gpu (3)
+for why that split is deliberate and what would change (only
+.IR gpu (3)'s
+own C, nothing here) to make it a real GPU-backed kernel.
 .SH SEE ALSO
 .IR sparse (2),
 .IR krylov (2),
 .IR fem (2),
+.IR gpu (3),
 .IR sh-gpu (1),
 .IR sh-fem (1)

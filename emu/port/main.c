@@ -317,6 +317,8 @@ emuinit(void *imod)
 	}
 	if(devno('A', 1) >= 0)
 		kbind("#A", "/dev", MAFTER);	/* optional audio */
+	if(devno('G', 1) >= 0)
+		kbind("#G", "/dev", MAFTER);	/* optional gpu(2) backend */
 	kbind("#c", "/dev", MBEFORE);
 	kbind("#p", "/prog", MREPL);
 	kbind("#d", "/fd", MREPL);

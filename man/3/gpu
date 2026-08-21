@@ -1,0 +1,138 @@
+.TH GPU 3
+.SH NAME
+gpu \- execution-target device for gpu(2)
+.SH SYNOPSIS
+.B /dev/gpuclone
+.SH DESCRIPTION
+The
+.I gpu
+device is the native backend
+.IR gpu (2)'s
+own
+.B Backend.apply
+talks to when configured for
+.BR "device gpu" ;
+scripts and most Limbo programs should reach it through
+.IR gpu (2)
+rather than opening it directly.
+.PP
+Unlike
+.IR ssl (3),
+.I gpu
+binds flat into
+.B /dev
+(matching
+.IR audio (3)'s
+own
+.BR /dev/audio / /dev/audioctl
+convention, not
+.IR ssl (3)'s
+own numbered-subdirectory one) \(em its one file is
+.BR /dev/gpuclone ,
+not a
+.B clone
+file under a
+.B /dev/gpu
+directory. Opening
+.B /dev/gpuclone
+allocates one handle: matrix state (the uploaded
+.IR sparse (2)
+CSR arrays) and the pending response live on that one open channel,
+which also serves both reads and writes \(em there is no separate
+.B ctl
+/
+.B data
+split, since every message on a handle is naturally one request
+immediately followed by one response.
+.PP
+The protocol is line-oriented text, not binary, for now (see
+.B PERFORMANCE
+below). Each write is one request; the following read returns its
+response. Two request shapes, both starting with a one-letter tag:
+.EX
+	U n nnz
+	rowptr (n+1 space-separated integers)
+	colidx (nnz space-separated integers)
+	val (nnz space-separated reals)
+.EE
+Uploads an
+.IR n \(mu n
+CSR matrix with
+.I nnz
+nonzeros, replacing any previous upload on this handle. The following
+read returns
+.B OK
+on success, or an error.
+.EX
+	X x (n space-separated reals)
+.EE
+Computes
+.IR y = Ax
+against the uploaded matrix (an error if none has been uploaded, or
+.I x
+doesn't have exactly
+.I n
+values). The following read returns
+.I y
+the same way, space-separated reals.
+.PP
+Closing the handle frees its matrix state.
+.SH PERFORMANCE
+The matvec itself
+.RI ( gpuspmv ()
+in the source) runs on the CPU, in this device, today \(em despite the
+name, nothing here dispatches to an actual GPU yet. This is a
+deliberate staging choice, not the finished design: it validates the
+whole protocol and the
+.IR gpu (2)/ fem (2)
+plumbing above it end to end (confirmed:
+.IR gpu (2)'s
+own
+.B available
+genuinely returns true through this device, and a
+.B "backend gpu"
+.IR fem (2)
+solve matches an equivalent
+.B "backend cpu"
+solve to floating-point precision) before adding the actual
+acceleration. A real GPU-backed replacement changes only
+.B gpuspmv()
+and the object this device links against \(em nothing in
+.IR gpu (2)'s
+own interface, or in this device's own read/write protocol, needs to
+change for it \(em mirroring how the existing GPU
+.I draw
+hooks
+.RI ( gpudrawfillpoly3d / g ,
+implemented in
+.B win-cocoa.m )
+already sit one layer below
+.IR draw (2)
+without
+.I draw.m
+itself knowing Metal exists. The natural next step is a
+.B win-gpu.m
+building a real
+.B MTLComputePipelineState
+kernel, registered in this platform's device manifest
+.RB ( emu-cocoa )
+the same way
+.B draw
+already names
+.B win-cocoa
+as its own extra source.
+.PP
+The text protocol itself is also a correctness-first choice: real
+matrix upload happens once per solve, so parsing overhead doesn't
+matter there; a high-throughput version would move the
+.B X
+exchange \(em the one part called every Krylov iteration \(em to a
+compact binary encoding once real GPU compute makes that exchange the
+actual bottleneck.
+.SH SOURCE
+.B /emu/port/devgpu.c
+.SH SEE ALSO
+.IR gpu (2),
+.IR sparse (2),
+.IR ssl (3),
+.IR audio (3)
