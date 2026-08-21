@@ -1,0 +1,33 @@
+.TH WM-REMOTE 1
+.SH NAME
+remotelogon, rmtdir \- remote access windows
+.SH SYNOPSIS
+.B wm/remotelogon
+.RB [ -u
+.IR user ]
+.RB [ -p
+.IR passwd ]
+.I command
+.RI [ arg ...]
+.br
+.B wm/rmtdir
+.SH DESCRIPTION
+.TP
+.B wm/remotelogon
+Gets a certificate to enable remote access, then runs
+.I command
+.RI [ arg ...]
+with it.
+.TP
+.B wm/rmtdir
+A window prompting for a
+.RI net!machine
+address to dial, then browses the remote machine's directory tree
+over that connection \(em the network-remote counterpart to
+.IR dir (1).
+.SH SOURCE
+.B /appl/wm/remotelogon.b
+.br
+.B /appl/wm/rmtdir.b
+.SH SEE ALSO
+.IR dir (1)

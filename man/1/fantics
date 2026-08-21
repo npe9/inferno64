@@ -1,0 +1,54 @@
+.TH FANTICS 1
+.SH NAME
+fantics \- staged-performance player (timed reveal/emphasis/pause)
+.SH SYNOPSIS
+.B wm/fantics
+.RI [ script.fant ]
+.SH DESCRIPTION
+.I Fantics
+is a work-alike of Nelson's own term, from
+.IR "Computer Lib/Dream Machines" ,
+for the craft of how information is staged for a person \(em pacing,
+emphasis, the dramatic pause \(em as a real design discipline in its
+own right, not a technology. It plays back a script of timed "beats"
+with real elapsed-time pacing on a black stage.
+.PP
+.I Script.fant
+defaults to
+.BR /lib/fantics/demo.fant .
+A script is a sequence of beats:
+.IP
+.nf
+.ft L
+TYPE ms
+<text, revealed one character at a time, ms between each>
+END
+
+FLASH ms
+<text, shown all at once, held for ms before advancing>
+END
+
+PAUSE ms
+END
+.ft
+.fi
+.PP
+.B PAUSE
+shows nothing at all for its duration \(em the beat
+.I is
+the silence, Nelson's dramatic pause taken literally.
+.PP
+Space or Return skips the current beat's animation (or advances if it
+is already fully revealed);
+.B r
+restarts from the first beat;
+.B q
+or Escape quits.
+.SH FILES
+.TF /lib/fantics/demo.fant
+.TP
+.B /lib/fantics/demo.fant
+A short performance about fantics itself, using the technique to
+explain the technique.
+.SH SOURCE
+.B /appl/wm/fantics.b

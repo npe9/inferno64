@@ -1,0 +1,22 @@
+.TH B 1
+.SH NAME
+B \- open a file in the running text editor
+.SH SYNOPSIS
+.B B
+.I file...
+.SH DESCRIPTION
+.I B
+asks whatever editor is currently listening on
+.B /cmd/clone
+to open each
+.IR file .
+Relative paths are resolved against the current working directory
+first.
+.PP
+This is the same convention Plan 9's own
+.B B
+uses for Acme: a small command-line hook so other tools and scripts
+can hand a file to the editor already on screen, rather than starting
+a new one.
+.SH SOURCE
+.B /appl/cmd/B.b

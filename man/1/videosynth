@@ -1,0 +1,35 @@
+.TH VIDEOSYNTH 1
+.SH NAME
+videosynth \- Sandin Image Processor-style video synthesizer
+.SH SYNOPSIS
+.B wm/videosynth
+.SH DESCRIPTION
+.I Videosynth
+is a digital work-alike of Dan Sandin's Image Processor (1973), the
+subject of a chapter in Nelson's
+.IR "Computer Lib/Dream Machines" :
+a patchable rig of oscillators, colorizers, and feedback loops. There
+is no real video signal to patch here, so a waveform generator (three
+interfering sine terms) drives an HSV colorizer (hue cycling over
+time), and a software feedback loop blends each frame with the last so
+patterns trail and decay rather than cutting cleanly frame to frame.
+.PP
+The image is a deliberately chunky, low-resolution grid (each logical
+cell a solid block of real screen pixels), both an authentic period
+choice and what keeps the expensive part of the computation \(em the
+sine terms \(em running once per cell instead of once per pixel.
+.PP
+Keys:
+.B c
+cycles through four built-in "patches" (oscillator/colour parameter
+sets, standing in for re-patching the real machine's cables),
+.B f
+toggles the feedback loop,
+.BR + / -
+adjust the animation speed,
+.B r
+resets, and
+.B q
+or Escape quits.
+.SH SOURCE
+.B /appl/wm/videosynth.b

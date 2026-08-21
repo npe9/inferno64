@@ -1,0 +1,71 @@
+.TH BASIC 1
+.SH NAME
+basic \- line-numbered BASIC interpreter
+.SH SYNOPSIS
+.B basic
+.I file.bas
+.SH DESCRIPTION
+.I Basic
+is a work-alike of the BASIC named in the languages chapter of
+Nelson's
+.IR "Computer Lib/Dream Machines" :
+line-numbered, imperative, built around PRINT/INPUT/GOTO/FOR rather
+than TRAC's string rewriting or APL's array notation. Every line
+starts with a number, its own address for GOTO/GOSUB; statements run
+top to bottom in line-number order unless control flow says otherwise,
+and there is no structure beyond what GOTO/GOSUB/FOR give.
+.PP
+Statements:
+.B LET
+(keyword optional \(em
+.B "X = 5"
+works the same as
+.BR "LET X = 5" ),
+.B PRINT
+(comma tabs, trailing
+.B ;
+suppresses the newline, including across separate PRINT statements),
+.B INPUT
+(with an optional prompt string),
+.BR "IF ... THEN" ,
+.BR GOTO ,
+.BR GOSUB / RETURN ,
+.BR FOR / TO / STEP / NEXT ,
+.BR END ,
+.BR REM .
+.PP
+Expressions support
+.BR + - * / MOD ,
+string concatenation via
+.B +
+when either side is a string, the six comparisons
+.RB ( = <> < > <= >= ),
+parentheses, unary minus, and five built-in functions:
+.BR LEN ,
+.BR VAL ,
+.BR STR$ ,
+.BR ABS ,
+.BR INT .
+A trailing
+.B $
+on a variable name makes it a string variable, the universal
+convention every classic BASIC used.
+.PP
+Not implemented, a deliberate scope cut: arrays/DIM, DEF FN, functions
+beyond the five above, and doubled-quote string escaping (a string
+literal cannot contain a literal
+.B '"'
+at all).
+.SH FILES
+.TF /lib/basic/fizzbuzz.bas
+.TP
+.B /lib/basic/fizzbuzz.bas
+FOR/MOD/IF-THEN/string-building.
+.TP
+.B /lib/basic/greet.bas
+INPUT with a prompt, GOSUB/RETURN, LEN.
+.TP
+.B /lib/basic/features.bas
+STEP, all four ordering comparisons, ABS/VAL/INT.
+.SH SOURCE
+.B /appl/cmd/basic.b

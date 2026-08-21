@@ -1,0 +1,53 @@
+.TH ELIZA 1
+.SH NAME
+eliza \- Weizenbaum ELIZA-style conversational program
+.SH SYNOPSIS
+.B wm/eliza
+.RI [ script.el ]
+.SH DESCRIPTION
+.I Eliza
+is a work-alike of Weizenbaum's ELIZA (1966), the AI chapter of
+Nelson's
+.IR "Computer Lib/Dream Machines" :
+a keyword-ranked pattern match and pronoun-reflection engine, not a
+research replica. It ranks whichever of a script's trigger words are
+present in what was typed, decomposes the highest-ranked one against a
+handful of patterns, and reflects the matched pieces back with
+pronouns swapped (I/you, my/your, ...) \(em the trick that reads as
+understanding without there being any.
+.PP
+.I Script.el
+defaults to
+.BR /lib/eliza/doctor.el ,
+a DOCTOR-style script (Weizenbaum's own name for the persona, not a
+transcription of the lost 1966 original). A script defines
+.BR GREETING ,
+.BR DEFAULT ,
+word substitutions
+.RB ( PRE
+before matching,
+.B POST
+when reflecting a captured span), and ranked
+.B KEY
+words each with
+.B DECOMP
+patterns (literal words and
+.RB `` * ''
+wildcards) and
+.B REASSEMBLE
+reply templates.
+.PP
+Type a line in the entry box and press Return or
+.B Send
+to talk to it.
+.SH FILES
+.TF /lib/eliza/doctor.el
+.TP
+.B /lib/eliza/doctor.el
+The default DOCTOR-persona script.
+.SH SOURCE
+.B /appl/wm/eliza.b
+.br
+.B /appl/lib/eliza.b
+.br
+.B /module/eliza.m

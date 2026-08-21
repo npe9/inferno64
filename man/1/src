@@ -1,0 +1,19 @@
+.TH SRC 1
+.SH NAME
+src \- print the source path a compiled program was built from
+.SH SYNOPSIS
+.B src
+.I name...
+.SH DESCRIPTION
+For each
+.I name
+(a
+.B .dis
+file or a bare program name resolved the same way the shell would),
+.I src
+reads the compiled module's own embedded metadata and prints the
+source file path it was compiled from, or
+.RB `` ? ''
+if that could not be determined.
+.SH SOURCE
+.B /appl/cmd/src.b

@@ -1,0 +1,53 @@
+.TH TOYCPU 1
+.SH NAME
+toycpu \- Little Man Computer-style toy CPU and assembler
+.SH SYNOPSIS
+.B wm/toycpu
+.RI [ program.lmc ]
+.SH DESCRIPTION
+.I Toycpu
+is a work-alike of "Bucky's Wristwatch"/"Rock Bottom" from Nelson's
+.IR "Computer Lib/Dream Machines" :
+how few instructions does something still recognisable as a computer
+need? It implements a Little Man Computer-style machine: 100 numbered
+mailboxes (000\(en999 each), one accumulator, and ten instructions
+(add, subtract, load, store, an unconditional jump, two conditional
+jumps, input, output, halt).
+.PP
+.I Program.lmc
+defaults to
+.BR /lib/toycpu/countdown.lmc .
+Assembly source is one mailbox per line,
+.RI '[ label ]
+.IR MNEMONIC " [" operand ]',
+with forward-referenced labels resolved in a first pass. The front
+panel shows a live dump of all 100 mailboxes with the program
+counter's own mailbox marked
+.RB ` -> '.
+.PP
+Keys:
+.B s
+steps one instruction,
+.B r
+runs to completion or the next
+.B INP
+that has no input queued,
+.B t
+resets to the start of the loaded program, and an input box
+(only meaningful once the machine is blocked on
+.BR INP )
+lets you supply the next value.
+.SH FILES
+.TF /lib/toycpu/countdown.lmc
+.TP
+.B /lib/toycpu/addtwo.lmc
+Minimal INP/STA/INP/ADD/OUT/HLT smoke test.
+.TP
+.B /lib/toycpu/countdown.lmc
+A real loop: reads a number and counts it down to zero.
+.SH SOURCE
+.B /appl/wm/toycpu.b
+.br
+.B /appl/lib/toycpu.b
+.br
+.B /module/toycpu.m

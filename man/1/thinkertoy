@@ -1,0 +1,39 @@
+.TH THINKERTOY 1
+.SH NAME
+thinkertoy \- branching-alternatives tree editor
+.SH SYNOPSIS
+.B wm/thinkertoy
+.RI [ file ]
+.SH DESCRIPTION
+.I Thinkertoy
+is a work-alike of the Thinkertoys/decision-creativity chapter of
+Nelson's
+.IR "Computer Lib/Dream Machines" :
+a tree where each node is a decision, option, or consequence, and its
+children are its alternatives or outcomes.
+.PP
+Nodes are laid out on a canvas and can be dragged anywhere with the
+mouse (press, drag, release on a node). The
+.B "Add Child"
+and
+.B "Add Sibling"
+buttons add a new node near wherever it was added from, without
+disturbing the layout of anything else already placed; the root node
+has no siblings. An explicit
+.B "Auto Layout"
+button is the only operation that recomputes the whole tree's
+positions, so a manually arranged layout is never silently discarded
+by an unrelated edit.
+.PP
+Trees are saved as a tab-indented outline, one node per line, with
+each node's saved x,y position appended \(em a manually arranged
+layout survives save and reload exactly as left. An older file saved
+without positions gets one fresh Auto Layout on load instead of
+piling every node at the origin.
+.PP
+If
+.I file
+is given it is loaded at startup; otherwise a new empty tree (a single
+root node) is created.
+.SH SOURCE
+.B /appl/wm/thinkertoy.b

@@ -1,0 +1,30 @@
+.TH COMPUTERMOVIE 1
+.SH NAME
+computermovie \- keyframed camera flythrough demo
+.SH SYNOPSIS
+.B wm/computermovie
+.SH DESCRIPTION
+.I Computermovie
+is a work-alike of the "computer movies" chapter of Nelson's
+.IR "Computer Lib/Dream Machines" :
+early computer animation built from a camera path keyframed through a
+static synthetic scene, interpolated and played back frame by frame,
+rather than the scene itself moving.
+.PP
+Six coloured panels are arranged in a row; a five-keyframe, 16-second
+looping camera path (linearly interpolating position and yaw/pitch
+between keyframes) flies the viewpoint through them, with the current
+time and camera position/orientation shown as an overlay. The path
+repeats indefinitely; press
+.B q
+or Escape to quit.
+.PP
+Contrast
+.IR draw3ddemo (1),
+where the object spins in place and the camera never moves.
+.SH SOURCE
+.B /appl/wm/computermovie.b
+.br
+.B /module/math/camerapath.m
+.SH SEE ALSO
+.IR draw3ddemo (1)

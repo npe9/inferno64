@@ -1,0 +1,25 @@
+.TH VIXENPLUMB 1
+.SH NAME
+vixenplumb \- forward plumb messages to running vixen instances
+.SH SYNOPSIS
+.B vixenplumb
+.RB [ -d ]
+.RI [ path ]
+.SH DESCRIPTION
+.I Vixenplumb
+registers the plumb destination
+.B edit
+and keeps track of running
+.B vixen
+editor instances, forwarding each plumb message it receives to
+whichever instance is already editing the named file (or starting a
+new one) rather than always opening a fresh window.
+.PP
+.RI [ path ]
+restricts forwarding to files matching that pattern.
+.B -d
+enables debug output.
+.SH SOURCE
+.B /appl/cmd/vixenplumb.b
+.SH SEE ALSO
+.IR plumb (1)

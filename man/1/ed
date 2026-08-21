@@ -1,0 +1,27 @@
+.TH ED 1
+.SH NAME
+ed \- line editor
+.SH SYNOPSIS
+.B ed
+.RB [ -o " | " -
+.RI | file ]
+.SH DESCRIPTION
+.I Ed
+is the classic line-oriented text editor: it reads commands from
+standard input describing lines or ranges of the file being edited
+and what to do with them (print, change, delete, substitute with a
+regular expression, and so on), one command per line, rather than
+presenting a screen-editing view.
+.PP
+.I File
+is loaded initially if given.
+.B -
+suppresses the usual byte-count messages (the classic
+.B ed
+"silent" convention).
+.B -o
+starts with an empty buffer and directs the final write to standard
+output rather than a named file, for use as a filter driven entirely
+by editing commands read from standard input.
+.SH SOURCE
+.B /appl/cmd/ed.b

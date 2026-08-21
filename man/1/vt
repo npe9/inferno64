@@ -1,0 +1,14 @@
+.TH VT 1
+.SH NAME
+vt \- VT100-style terminal emulator window
+.SH SYNOPSIS
+.B wm/vt
+.SH DESCRIPTION
+.I Vt
+is a Wm-hosted terminal emulator window, interpreting a useful subset
+of VT100/ANSI escape sequences (cursor movement, scrolling regions,
+colour) over a
+.B /dev/cons
+connected to a freshly spawned shell.
+.SH SOURCE
+.B /appl/wm/vt.b

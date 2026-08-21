@@ -1,0 +1,41 @@
+.TH BALLISTICS 2
+.SH NAME
+ballistics \- reusable projectile-acceleration kernels
+.SH SYNOPSIS
+.B include "danby/ballistics.m";
+.SH DESCRIPTION
+.I Ballistics
+computes the instantaneous acceleration of a projectile subject to
+quadratic drag, Magnus lift (or spin-induced curve), gravity, and an
+optional constant vertical force.
+.PP
+.B acceleration
+evaluates the planar (x, y) case, taking velocity components
+.IR vx , vy ,
+drag and lift coefficients, a spin rate, gravity, and an extra
+.I verticalforce
+term (used for a boost or downdraft); it returns the resulting
+.IR ax , ay
+acceleration pair.
+.PP
+.B acceleration3
+evaluates the three-dimensional case, taking velocity components
+.IR vx , vy , vz ,
+a drag coefficient, a Magnus coefficient, a spin vector
+.IR spinx , spiny , spinz ,
+and gravity; it returns the
+.IR ax , ay , az
+acceleration triple, with the Magnus term computed as the cross
+product of spin and velocity.
+.PP
+Callers integrate these accelerations themselves (typically with
+.IR numerics 's
+RK4 stepper) to produce a trajectory; the module holds no state of
+its own.
+.SH SOURCE
+.B /module/danby/ballistics.m
+.br
+.B /appl/danby/ballistics.b
+.SH SEE ALSO
+.IR flight3d (2),
+.IR numerics (2)

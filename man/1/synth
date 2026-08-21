@@ -1,0 +1,41 @@
+.TH SYNTH 1
+.SH NAME
+synth \- algorithmic scale-walk melody composer
+.SH SYNOPSIS
+.B synth
+.RI [ nnotes
+.RI [ seed
+.RI [ major | minor | penta ]]]
+.SH DESCRIPTION
+.I Synth
+is a work-alike of the audio chapter of Nelson's
+.IR "Computer Lib/Dream Machines" :
+the computer as an instrument generating music, not merely reproducing
+it. It composes a melody with a scale-constrained random walk \(em
+every step lands on an in-scale degree by construction, small steps
+heavily favoured, an occasional bigger leap or repeated note, the
+whole walk clamped to a two-octave range \(em renders the result into
+.IR tone (2)'s
+own TempleOS-style Play() notation, and hands it off to
+.B tone->play()
+to actually perform through
+.BR /dev/audio .
+.PP
+.I Nnotes
+defaults to 24,
+.I seed
+to 1 (a given seed always composes the same tune \(em the actual
+thing checkable about this without listening to it), and the scale
+defaults to
+.B penta
+(major pentatonic: C D E G A), the interval choice generative-music
+sketches lean on because it has no strongly dissonant step in it at
+all;
+.B major
+and
+.B minor
+(natural, rendered with sharps uniformly) are also available.
+.SH SOURCE
+.B /appl/cmd/synth.b
+.SH SEE ALSO
+.IR tone (2)

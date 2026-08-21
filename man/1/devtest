@@ -1,0 +1,70 @@
+.TH DEVTEST 1
+.SH NAME
+mouse, mousedev, ptrcheck, irtest, progstem_probe \- device/driver diagnostic tools
+.SH SYNOPSIS
+.B mouse
+.RI [ type ]
+.br
+.B mousedev
+.br
+.B ptrcheck
+.br
+.B irtest
+.br
+.B progstem_probe
+.SH DESCRIPTION
+Small developer diagnostics for hardware and kernel device support,
+not general end-user tools. Each writes a plain-text report of what it
+found (most to
+.B /tmp
+or standard output) rather than presenting a UI.
+.PP
+.TP
+.B mouse
+Ported from Plan 9's
+.BR aux/mouse :
+initializes a serial mouse of the given
+.IR type
+(probing standard speeds if none given) and relays its events onto
+.BR /dev/mouse .
+.TP
+.B mousedev
+Opens the display and
+.BR /dev/pointer ,
+then logs the first 30 raw pointer events read from it to
+.BR /tmp/mousedev.out .
+.TP
+.B ptrcheck
+Checks that
+.B /dev/pointer
+and
+.B /dev/cursor
+both open successfully (logging the result to
+.BR /tmp/ptrcheck.out ,
+or standard error if that can't be created), then hands off to
+.IR wm (1).
+.TP
+.B irtest
+Exercises the infrared device driver
+.RI ( ir.m ),
+loading it from either its normal or simulator path.
+.TP
+.B progstem_probe
+Reads its own
+.B /prog/<pid>/{text,status,heap,stack}
+files and prints each one's metadata and a sample of its content \(em
+a smoke test for the
+.B /prog
+per-process filesystem.
+.SH SOURCE
+.B /appl/cmd/mouse.b
+.br
+.B /appl/cmd/mousedev.b
+.br
+.B /appl/cmd/ptrcheck.b
+.br
+.B /appl/cmd/irtest.b
+.br
+.B /appl/cmd/progstem_probe.b
+.SH SEE ALSO
+.IR wm (1)

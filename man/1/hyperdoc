@@ -1,0 +1,55 @@
+.TH HYPERDOC 1
+.SH NAME
+hyperdoc \- linked-document hypertext browser
+.SH SYNOPSIS
+.B wm/hyperdoc
+.RI [ docA
+.RI [ docB ]]
+.SH DESCRIPTION
+.I Hyperdoc
+is a work-alike of Ted Nelson's Xanadu/hypermedia idea and his
+.I "Parallel Textface"
+(see
+.IR "Computer Lib/Dream Machines" ,
+1974): two scrollable text panels, side by side, with a canvas strip
+between them showing visible connector lines for the links currently
+on screen.
+.PP
+.I Docs
+default to
+.B /man/1/intro
+and
+.BR /man/1/sh .
+.PP
+Select a span of text in either panel (drag with button 1, matching
+the usual Tk text-selection gesture) then use the
+.B Link
+button to record a named link between the two selections. Links persist
+in
+.B /lib/hyperdoc/links
+(tab-separated: document, start index, end index, document, start
+index, end index, label) and are reloaded on every launch.
+.PP
+A linked span is drawn with a highlight; clicking it scrolls the other
+panel to its partner (Nelson's
+.IR "derivative motion" ).
+If a link's partner is currently scrolled off screen, its connector is
+drawn as a broken stub pointing toward whichever edge the partner lies
+past, rather than a dangling arrow to nowhere.
+.PP
+The
+.B "Sync scroll"
+checkbutton turns on a stronger form of the Parallel Textface: whichever
+panel is scrolled becomes the driver, and the other panel is snapped to
+the nearest link boundary in the driver's current view, so the two
+documents track each other continuously rather than only on a click.
+.SH FILES
+.TF /lib/hyperdoc/links
+.TP
+.B /lib/hyperdoc/links
+Persisted link records, tab-separated.
+.SH SOURCE
+.B /appl/wm/hyperdoc.b
+.SH SEE ALSO
+.IR wm (1),
+.IR man (1)

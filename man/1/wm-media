@@ -1,0 +1,39 @@
+.TH WM-MEDIA 1
+.SH NAME
+avi, qt, wmplay \- media player windows
+.SH SYNOPSIS
+.B wm/avi
+.br
+.B wm/qt
+.br
+.B wm/wmplay
+.RI [ file ]
+.SH DESCRIPTION
+A collection of media-playback windows under the Wm window manager.
+.PP
+.TP
+.B wm/avi
+Plays Microsoft AVI movie files. Started with no arguments; use its
+.B Open
+menu to locate an
+.B .avi
+file.
+.TP
+.B wm/qt
+Plays Apple QuickTime
+.B .mov
+files. Started with no arguments; use its
+.B Open
+menu to locate a file.
+.TP
+.B wm/wmplay
+A simple media player.
+.I File
+may be given directly on the command line, or chosen afterward from
+the player's own controls.
+.SH SOURCE
+.B /appl/wm/avi.b
+.br
+.B /appl/wm/qt.b
+.br
+.B /appl/wm/wmplay.b

@@ -1,0 +1,32 @@
+.TH XARGS 1
+.SH NAME
+xargs \- run a command once per line of standard input
+.SH SYNOPSIS
+.B xargs
+.I command
+.RI [ arg ...]
+.SH DESCRIPTION
+.I Xargs
+reads standard input one line at a time, tokenizes each line on
+whitespace, and runs
+.I command
+once per line with
+.I arg...
+(if any were given on
+.IR xargs 's
+own command line) followed by that line's own tokens appended.
+.PP
+Unlike a POSIX xargs, which batches arguments across the whole input
+up to a length limit, this is strictly one invocation of
+.I command
+per input line.
+.I Command
+is loaded as
+.B .dis
+(a
+.B .dis
+suffix is added if not already present, first from wherever it
+resolves normally, then from
+.BR /dis ).
+.SH SOURCE
+.B /appl/cmd/xargs.b

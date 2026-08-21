@@ -1,0 +1,55 @@
+.TH WM-EXPORT-IMPORT 1
+.SH NAME
+wmexport, wmimport, rioimport \- export or import a window-manager display over Styx
+.SH SYNOPSIS
+.B wmexport
+.br
+.B wmimport
+.RB [ -d
+.IR /dev ]
+.RB [ -w
+.IR /mnt/wm ]
+.I cmd
+.RI [ arg ...]
+.br
+.B rioimport
+.I cmd
+.RI [ arg ...]
+.SH DESCRIPTION
+.TP
+.B wmexport
+Serves the local window manager as a synthetic Styx filesystem
+(wmctl, keyboard, pointer, and window-name files under a per-window
+.BR clone / N
+tree) that a remote or local
+.B wmimport
+can mount and drive.
+.TP
+.B wmimport
+Mounts a
+.B wmexport
+filesystem (default
+.IR /dev ,
+.IR /mnt/wm )
+and runs
+.I cmd
+.RI [ arg ...]
+against the Draw context it provides.
+.TP
+.B rioimport
+The Plan 9
+.B rio
+counterpart: proxies a running
+.B rio
+window as an Inferno Draw context and runs
+.I cmd
+.RI [ arg ...]
+inside it, rather than mounting an Inferno-native
+.B wmexport
+service.
+.SH SOURCE
+.B /appl/cmd/wmexport.b
+.br
+.B /appl/cmd/wmimport.b
+.br
+.B /appl/cmd/rioimport.b

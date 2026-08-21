@@ -1,0 +1,26 @@
+.TH GETFILE 1
+.SH NAME
+getfile \- file-picker dialog
+.SH SYNOPSIS
+.B getfile
+.RB [ -g
+.IR geom ]
+.RB [ -d
+.IR startdir ]
+.RI [ pattern ...]
+.SH DESCRIPTION
+.I Getfile
+pops up a small Wm window for picking a file: an editable path field
+plus a scrollable listing of
+.IR startdir " (or the current directory),"
+filtered by
+.I pattern
+if any are given. It is meant to be used from another program that
+needs the user to choose a file, not run standalone for its own sake.
+.PP
+.B -g
+sets the window's initial geometry;
+.B -d
+sets the starting directory.
+.SH SOURCE
+.B /appl/cmd/getfile.b

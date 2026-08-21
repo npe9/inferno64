@@ -1,0 +1,58 @@
+.TH SED 1
+.SH NAME
+sed \- stream editor
+.SH SYNOPSIS
+.B sed
+.RB [ -n ]
+.RB [ -g ]
+.RB [ -d ]
+.B -e
+.I command
+.RB [ -e
+.IR command ...]
+.RI [ file ...]
+.br
+.B sed
+.RB [ -n ]
+.RB [ -g ]
+.RB [ -d ]
+.B -f
+.I cmdfile
+.RI [ file ...]
+.SH DESCRIPTION
+.I Sed
+is a partial port of Plan 9's own stream editor: it applies a script
+of editing commands to each line of each
+.IR file
+(standard input if none given) and writes the result to standard
+output.
+.PP
+Options:
+.TP 10
+.B -n
+Suppress the default output of each pattern space; only lines an
+.B p
+command (or a substitute's
+.B p
+flag) explicitly prints are written.
+.TP
+.B -g
+Treat every substitute command as globally flagged, as if
+.B g
+were given on each one.
+.TP
+.B -d
+Enable debug tracing of the compiled command list.
+.TP
+.BI -e " command"
+Add
+.I command
+to the script; may be repeated.
+.TP
+.BI -f " cmdfile"
+Read the script from
+.I cmdfile
+instead of
+.BR -e .
+.SH SOURCE
+.B /appl/cmd/sed.b

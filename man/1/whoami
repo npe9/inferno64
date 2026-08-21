@@ -1,0 +1,10 @@
+.TH WHOAMI 1
+.SH NAME
+whoami \- print the current user's name
+.SH SYNOPSIS
+.B whoami
+.SH DESCRIPTION
+.I Whoami
+prints the name of the currently logged-in user.
+.SH SOURCE
+.B /appl/cmd/whoami.b

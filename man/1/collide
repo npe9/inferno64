@@ -1,0 +1,43 @@
+.TH COLLIDE 1
+.SH NAME
+collide \- bouncing-balls 3D physics demo
+.SH SYNOPSIS
+.B wm/collide
+.RB [ -cse ]
+.RB [ -f ]
+.RB [ -op ]
+.RB [ -b
+.IR num ]
+.RB [ -v
+.IR num ]
+.SH DESCRIPTION
+.I Collide
+animates a number of balls bouncing and colliding inside a bounding
+surface, rendered in 3D.
+.TP 10
+.B -c
+Bound the balls inside a cube.
+.TP
+.B -s
+Bound the balls inside a sphere.
+.TP
+.B -e
+Bound the balls inside an ellipsoid.
+.TP
+.B -f
+Flat-shade the balls instead of the default shading.
+.TP
+.B -o
+Orthographic (no perspective) projection.
+.TP
+.B -p
+An alternate perspective projection.
+.TP
+.BI -b " num"
+Number of balls (also sets the default velocity scale).
+.TP
+.BI -v " num"
+Velocity scale, independent of
+.BR -b .
+.SH SOURCE
+.B /appl/wm/collide.b

@@ -1,0 +1,13 @@
+.TH RANDPASS 1
+.SH NAME
+randpass \- generate a random password
+.SH SYNOPSIS
+.B randpass
+.RI [ length ]
+.SH DESCRIPTION
+.I Randpass
+prints a random password of
+.I length
+characters (default 16, maximum 255) to standard output.
+.SH SOURCE
+.B /appl/cmd/randpass.b

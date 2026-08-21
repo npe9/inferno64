@@ -1,0 +1,17 @@
+.TH TAC 1
+.SH NAME
+tac \- print lines of a file in reverse order
+.SH SYNOPSIS
+.B tac
+.RI [ file ...]
+.SH DESCRIPTION
+.I Tac
+prints the lines of each
+.I file
+(standard input if none given) in reverse order, last line first \(em
+.B cat
+backwards.
+.SH SOURCE
+.B /appl/cmd/tac.b
+.SH SEE ALSO
+.IR cat (1)

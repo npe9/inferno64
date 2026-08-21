@@ -5,3 +5,9 @@ doublependulum \- coupled nonlinear double-pendulum equations
 The module evaluates derivatives for two massive pendulum links using absolute
 link angles.  It accepts independent masses, lengths, gravity, and damping and
 is suitable for interactive models or numerical experiments.
+.SH SOURCE
+.B /module/danby/doublependulum.m
+.br
+.B /appl/danby/doublependulumlib.b
+.SH SEE ALSO
+.IR numerics (2)

@@ -1,0 +1,42 @@
+.TH BYTES 1
+.SH NAME
+bytes \- display or patch a byte range of standard input
+.SH SYNOPSIS
+.B bytes
+.I start end
+.RI [ replacement ]
+.SH DESCRIPTION
+With two arguments,
+.I bytes
+copies standard input to standard output, printing bytes
+.I start
+through
+.I end
+(exclusive) as C-style escapes
+.RB ( \e XX
+for a non-printable byte,
+.B \e\e
+for a literal backslash) rather than raw binary \(em a quick way to
+inspect a byte range without a hex dump tool.
+.PP
+With a third argument,
+.I bytes
+instead copies standard input to standard output with the bytes in
+.RI [ start , end )
+replaced by
+.IR replacement ,
+which may itself contain
+.BR \en , \er , \et , \ev , \e\e
+or
+.B \eXX
+hex escapes.
+.PP
+Either
+.I start
+or
+.I end
+may be given as the literal word
+.B end
+to mean the end of the input.
+.SH SOURCE
+.B /appl/cmd/bytes.b

@@ -1,0 +1,24 @@
+.TH HYPERCUBE 1
+.SH NAME
+hypercube \- tumbling tesseract, a 4-dimensional wireframe demo
+.SH SYNOPSIS
+.B wm/hypercube
+.SH DESCRIPTION
+.I Hypercube
+is a work-alike of the "Mind's Eye more: n dimensions" chapter of
+Nelson's
+.IR "Computer Lib/Dream Machines" :
+a 16-vertex 4-dimensional hypercube, rotating simultaneously in two
+4-D planes (a single plane alone looks like an ordinary 3-D spin; two
+together is what actually reads as tumbling in 4 dimensions).
+.PP
+Each vertex is perspective-divided down to ordinary 3-D by its own
+distance along the fourth axis, then drawn with the usual
+.IR draw3d (2)
+wireframe pipeline. Each of the four axes (x/y/z/w) is drawn in its
+own colour (red/green/blue/yellow), the standard convention for
+reading a 4-D wireframe.
+.SH SOURCE
+.B /appl/wm/hypercube.b
+.SH SEE ALSO
+.IR draw3ddemo (1)

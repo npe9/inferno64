@@ -1,0 +1,15 @@
+.TH TRAMPOLINE 1
+.SH NAME
+trampoline \- relay standard input/output through a network connection
+.SH SYNOPSIS
+.B trampoline
+.I addr
+.SH DESCRIPTION
+.I Trampoline
+dials
+.I addr
+and relays bytes between the resulting connection and its own
+standard input and output, so a network service can be driven from
+(or piped into) an ordinary command pipeline.
+.SH SOURCE
+.B /appl/cmd/trampoline.b

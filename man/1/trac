@@ -1,0 +1,70 @@
+.TH TRAC 1
+.SH NAME
+trac \- Mooers' TRAC macro-language interpreter
+.SH SYNOPSIS
+.B trac
+.I file.tc
+.SH DESCRIPTION
+.I Trac
+is a work-alike of Mooers' TRAC (Text Reckoning And Compiler, 1964),
+one of the languages named in Nelson's
+.IR "Computer Lib/Dream Machines" :
+a pure string-rewriting language. A
+.I form
+.B #(name,arg,arg,...)
+is replaced in place by whatever it evaluates to, and the replacement
+text is itself rescanned \(em there is no loop construct at all;
+recursion via a function calling itself, guarded by a comparison, is
+how a TRAC program loops.
+.PP
+Forms come in two kinds, distinguished by how many
+.B #
+precede the
+.BR ( :
+.B #(...)
+is
+.I active
+\(em evaluated immediately as the scanner reaches it.
+.B ##(...)
+is
+.I neutral
+\(em the scanner strips one
+.B #
+and copies everything up to the matching
+.B )
+through untouched, so it sits inert until something later rescans
+that text. This is what lets
+.B ds
+store a function body containing a self-call without it firing at
+definition time.
+.PP
+Primitives:
+.BR ds ,
+.BR ss ,
+.B cl
+(define, mark parameter positions by literal substring, invoke \(em
+though calling any name directly does the same lookup),
+.B dd
+(delete),
+.B eq / gr
+(string-equal / numeric-greater-than conditionals),
+.B ad / su / ml / dv
+(integer arithmetic),
+.B ln / cc / cn
+(length, first character, first
+.I n
+characters), and
+.B ps / rs
+(print \(em the only primitives with an immediate side effect \(em and
+read a line from the terminal).
+.SH FILES
+.TF /lib/trac/fizzbuzz.tc
+.TP
+.B /lib/trac/hello.tc
+Minimal ds/ss/cl template-substitution demo.
+.TP
+.B /lib/trac/fizzbuzz.tc
+Recursion, arithmetic, and branching all doing real work: a
+self-recursive loop counting 1 to 15, printing fizz/buzz/fizzbuzz.
+.SH SOURCE
+.B /appl/cmd/trac.b

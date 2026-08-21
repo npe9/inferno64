@@ -211,6 +211,9 @@ miscellaneous mathematical applications
 .IR acme (1)
 interactive text windows
 .TP
+.IR apl (1)
+APL interpreter with real right-to-left evaluation
+.TP
 .IR ar (1)
 archive maintainer
 .TP
@@ -229,11 +232,20 @@ basic audio output and conversion
 .IR autoconvert (1)
 typed shell interface
 .TP
+.IR avi (1)
+media player windows
+.TP
 .IR avr (1)
 Atmel AVR support
 .TP
+.IR B (1)
+open a file in the running text editor
+.TP
 .IR basename (1)
 strip file name affixes
+.TP
+.IR basic (1)
+line-numbered BASIC interpreter
 .TP
 .IR battlelines (1)
 swarm combat game
@@ -243,6 +255,9 @@ artillery game
 .TP
 .IR bind (1)
 change name space
+.TP
+.IR bit2gif (1)
+GIF/Inferno-bitmap conversion tools
 .TP
 .IR blackdiamond (1)
 downhill skiing game
@@ -264,6 +279,9 @@ screen editor with support for SGML
 .TP
 .IR budget (1)
 simple ledger
+.TP
+.IR bytes (1)
+display or patch a byte range of standard input
 .TP
 .IR cal (1)
 print calendar
@@ -313,11 +331,17 @@ collaborative activities
 .IR collab: (1)
 connect to collaborative files and services
 .TP
+.IR collide (1)
+bouncing-balls 3D physics demo
+.TP
 .IR collision (1)
 elastic ball collisions
 .TP
 .IR comm (1)
 select or reject lines common to two sorted files
+.TP
+.IR computermovie (1)
+keyframed camera flythrough demo
 .TP
 .IR cook (1)
 SGML converter
@@ -606,6 +630,9 @@ pollutant mass balance in a well-mixed lake
 .TP
 .IR danby-lanchester (1)
 Lanchester square-law combat model
+.TP
+.IR danby-limitstogrowth (1)
+Club of Rome System Dynamics model of population, capital, po...
 .TP
 .IR danby-loadedpendulum (1)
 pendulum with constant applied torque
@@ -925,6 +952,9 @@ differential file comparator
 .IR digits (1)
 digit memory game
 .TP
+.IR dir (1)
+directory/file browser window
+.TP
 .IR disdep (1)
 print load dependencies for Dis file
 .TP
@@ -949,8 +979,14 @@ Open Ebook browser
 .IR echo (1)
 print arguments
 .TP
+.IR ed (1)
+line editor
+.TP
 .IR elephantwalk (1)
 animated elephant
+.TP
+.IR eliza (1)
+Weizenbaum ELIZA-style conversational program
 .TP
 .IR emu (1)
 Inferno emulator (hosted Inferno)
@@ -960,6 +996,9 @@ display environment variables
 .TP
 .IR expr (1)
 shell module for simple arithmetic.
+.TP
+.IR fantics (1)
+staged-performance player (timed reveal/emphasis/pause)
 .TP
 .IR fc (1)
 command-line floating point calculator
@@ -1000,11 +1039,17 @@ test file attributes
 .IR ftree (1)
 file tree browser
 .TP
+.IR getfile (1)
+file-picker dialog
+.TP
 .IR gettar (1)
 tar archive utilities
 .TP
 .IR getzip (1)
 zip file utilities
+.TP
+.IR gfxstress (1)
+deterministic Draw/draw3d graphics stress test
 .TP
 .IR god (1)
 entropy word and song toy
@@ -1042,6 +1087,12 @@ perspective driving demo
 .IR hanoi (1)
 Towers of Hanoi animation
 .TP
+.IR hypercube (1)
+tumbling tesseract, a 4-dimensional wireframe demo
+.TP
+.IR hyperdoc (1)
+linked-document hypertext browser
+.TP
 .IR idea (1)
 encrypt/decrypt a file with the IDEA cipher
 .TP
@@ -1050,6 +1101,9 @@ introduction to Inferno
 .TP
 .IR itest (1)
 run tests and replay results
+.TP
+.IR ix (1)
+indexed, ranked full-text search
 .TP
 .IR join (1)
 join a spree clique.
@@ -1114,6 +1168,9 @@ maze editor and solver
 .IR mc (1)
 multicolumn print
 .TP
+.IR mdb (1)
+Dis module debugger
+.TP
 .IR miniterm (1)
 Minitel® emulator
 .TP
@@ -1128,6 +1185,9 @@ namespace separation for shell modules
 .TP
 .IR monitor (1)
 graphical display for viewing resource use.
+.TP
+.IR mouse (1)
+device/driver diagnostic tools
 .TP
 .IR mprof (1)
 memory profiling limbo programs
@@ -1192,17 +1252,29 @@ print working directory
 .IR raindrops (1)
 rain on glass demo
 .TP
+.IR randpass (1)
+generate a random password
+.TP
 .IR rawhide (1)
 cattle herding game
 .TP
 .IR rcmd (1)
 remote command execution
 .TP
+.IR rdp (1)
+remote debug protocol client over a serial line
+.TP
 .IR re (1)
 shell script regular expression handling
 .TP
 .IR read (1)
 read from standard input with optional seek
+.TP
+.IR readmail (1)
+POP3 mail reader window
+.TP
+.IR remotelogon (1)
+remote access windows
 .TP
 .IR report (1)
 shell module for test reporting.
@@ -1222,8 +1294,14 @@ run command as another user
 .IR secstore (1)
 retrieve files from secure store
 .TP
+.IR sed (1)
+stream editor
+.TP
 .IR sendmail (1)
 send mail messages
+.TP
+.IR seq (1)
+print a sequence of numbers
 .TP
 .IR sexprs (1)
 parse and generate S-expressions
@@ -1249,6 +1327,9 @@ edit TempleOS-style sprites embedded in text
 .IR squirt (1)
 hose and droplet toy
 .TP
+.IR src (1)
+print the source path a compiled program was built from
+.TP
 .IR stack (1)
 examine call stack
 .TP
@@ -1273,11 +1354,20 @@ calculate file's checksum
 .IR symmetry (1)
 mirror drawing
 .TP
+.IR synth (1)
+algorithmic scale-walk melody composer
+.TP
+.IR tac (1)
+print lines of a file in reverse order
+.TP
 .IR tail (1)
 deliver the last part of a file
 .TP
 .IR talons (1)
 fishing flight game
+.TP
+.IR tclsh (1)
+Tcl shell
 .TP
 .IR tcs (1)
 translate character sets
@@ -1291,8 +1381,14 @@ make a remote telnet connection
 .IR temple (1)
 collection of games and demos for Wm
 .TP
+.IR test (1)
+evaluate a condition, for use by shell scripts
+.TP
 .IR thedead (1)
 side-view shooter
+.TP
+.IR thinkertoy (1)
+branching-alternatives tree editor
 .TP
 .IR tictactoe (1)
 tic-tac-toe
@@ -1333,14 +1429,26 @@ turn-based wargame
 .IR touch (1)
 update the modification time of one or more files
 .TP
+.IR toycpu (1)
+Little Man Computer-style toy CPU and assembler
+.TP
 .IR tr (1)
 translate characters
+.TP
+.IR trac (1)
+Mooers' TRAC macro-language interpreter
+.TP
+.IR trampoline (1)
+relay standard input/output through a network connection
 .TP
 .IR treecheckers (1)
 radial checkers game
 .TP
 .IR tsort (1)
 topological sort
+.TP
+.IR tutor (1)
+CAI/PLATO-style branching-lesson engine
 .TP
 .IR unicode (1)
 interpret Unicode characters
@@ -1369,11 +1477,20 @@ venti archive utilities
 .IR varoom (1)
 oval-track racing game
 .TP
+.IR videosynth (1)
+Sandin Image Processor-style video synthesizer
+.TP
 .IR vixen (1)
 vi-like text editor
 .TP
+.IR vixenplumb (1)
+forward plumb messages to running vixen instances
+.TP
 .IR vocabulary (1)
 vocabulary quiz
+.TP
+.IR vt (1)
+VT100-style terminal emulator window
 .TP
 .IR wc (1)
 count lines, words, and characters
@@ -1387,6 +1504,12 @@ snow rescue game
 .IR whap (1)
 base defense toy
 .TP
+.IR whoami (1)
+print the current user's name
+.TP
+.IR whois (1)
+query a whois server
+.TP
 .IR wish (1)
 interface to the Tk graphics toolkit
 .TP
@@ -1395,6 +1518,15 @@ window manager
 .TP
 .IR wm/v23fortune (1)
 Vanadium fortune demo for wm
+.TP
+.IR wmexport (1)
+export or import a window-manager display over Styx
+.TP
+.IR wmsmoke (1)
+minimal window-manager smoke test
+.TP
+.IR xargs (1)
+run a command once per line of standard input
 .TP
 .IR xcaliber (1)
 space combat game

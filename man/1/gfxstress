@@ -1,0 +1,26 @@
+.TH GFXSTRESS 1
+.SH NAME
+gfxstress \- deterministic Draw/draw3d graphics stress test
+.SH SYNOPSIS
+.B wm/gfxstress
+.RI [ phase
+.RI [ seconds ]]
+.SH DESCRIPTION
+.I Gfxstress
+is a deterministic, phase-oriented exerciser for the Draw protocol,
+memdraw, screen damage/upload, and the optional
+.IR draw3d (2)
+device path. Each phase drives a different mix of operations (plain
+fills, straight copies, overlapping regions, alpha blending, masked
+draws) at a fixed, seeded pattern, so a run can be compared frame for
+frame against a previous one rather than relying on eyeballing it.
+.PP
+With no arguments it cycles through all phases; giving
+.I phase
+restricts the run to that one, and
+.I seconds
+bounds how long it runs \(em useful for exact placement in automated
+testing, where waiting for a pointer-driven placement would make the
+run non-deterministic.
+.SH SOURCE
+.B /appl/wm/gfxstress.b

@@ -1,0 +1,30 @@
+.TH WHOIS 1
+.SH NAME
+whois \- query a whois server
+.SH SYNOPSIS
+.B whois
+.RB [ -a
+.IR addr ]
+.RB [ -n ]
+.I host
+.SH DESCRIPTION
+.I Whois
+looks up
+.I host
+and prints the response. It starts at IANA's own whois server and
+follows any
+.B refer:
+line in the reply to the right regional registry automatically, up to
+five hops.
+.TP 10
+.BI -a " addr"
+Query
+.I addr
+instead of the default (IANA) server.
+.TP
+.B -n
+Don't follow
+.B refer:
+lines; print whatever the first server queried returns.
+.SH SOURCE
+.B /appl/cmd/whois.b

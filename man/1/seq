@@ -1,0 +1,19 @@
+.TH SEQ 1
+.SH NAME
+seq \- print a sequence of numbers
+.SH SYNOPSIS
+.B seq
+.RI [ first
+.RI [ increment ]]
+.I last
+.SH DESCRIPTION
+.I Seq
+prints the integers from
+.I first
+(default 1) to
+.I last
+inclusive, one per line, stepping by
+.I increment
+(default 1).
+.SH SOURCE
+.B /appl/cmd/seq.b

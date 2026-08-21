@@ -1,0 +1,14 @@
+.TH READMAIL 1
+.SH NAME
+readmail \- POP3 mail reader window
+.SH SYNOPSIS
+.B wm/readmail
+.SH DESCRIPTION
+.I Readmail
+is a small Wm-hosted mail client: it connects to a POP3 server,
+lists the messages waiting in the mailbox, and displays a selected
+message in its own reader window. Errors talking to the server (bad
+login, a POP3 protocol problem) are shown in a pop-up dialog rather
+than left to standard error.
+.SH SOURCE
+.B /appl/wm/readmail.b

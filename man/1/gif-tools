@@ -1,0 +1,32 @@
+.TH GIF-TOOLS 1
+.SH NAME
+bit2gif, gif2bit, metamorph \- GIF/Inferno-bitmap conversion tools
+.SH SYNOPSIS
+.B bit2gif
+.I file.bit
+.br
+.B gif2bit
+.I file.gif
+.br
+.B metamorph
+.I nslides
+.SH DESCRIPTION
+.TP
+.B bit2gif
+Converts an Inferno bitmap image to a GIF file of the same base name.
+.TP
+.B gif2bit
+Converts a GIF image to an Inferno bitmap file of the same base name.
+.TP
+.B metamorph
+Converts a numbered sequence of GIF slides
+.RI ( img001.GIF ", " img002.GIF ", ..., up to " nslides )
+in the current directory into Inferno bitmap files
+.RI ( img1.bit ", " img2.bit ", ...), one call handling a whole slide "
+deck rather than one file at a time.
+.SH SOURCE
+.B /appl/cmd/bit2gif.b
+.br
+.B /appl/cmd/gif2bit.b
+.br
+.B /appl/cmd/metamorph.b

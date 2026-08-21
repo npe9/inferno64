@@ -1,8 +1,13 @@
 .TH WM-MISC 1
 .SH NAME
-about, clock, coffee, colors, date, edit, mand, memory, polyhedra, reversi, rt, stopwatch, sweeper, task, tetris, unibrowse, view, winctl \- miscellaneous graphical applications
+about, c4, clock, coffee, colors, date, edit, mand, memory, polyhedra, reversi, rt, snake, stopwatch, sweeper, task, tetris, unibrowse, view, winctl \- miscellaneous graphical applications
 .SH SYNOPSIS
 .B wm/about
+.br
+.B wm/c4
+[
+.B -aps
+]
 .br
 .B wm/clock
 .br
@@ -24,6 +29,8 @@ about, clock, coffee, colors, date, edit, mand, memory, polyhedra, reversi, rt, 
 .B wm/reversi
 .br
 .B wm/rt
+.br
+.B wm/snake
 .br
 .B wm/stopwatch
 .br
@@ -55,6 +62,15 @@ more information.
 .TP
 .B wm/about
 Display system version and copyright information.
+.TP
+.B wm/c4
+Connect Four against the computer.
+.B -a
+starts in auto-play mode,
+.B -p
+prints each move, and
+.B -s
+disables the sleep between the computer's moves.
 .TP
 .B wm/clock
 Display an analogue clock.
@@ -113,6 +129,10 @@ by the tree search algorithm.
 A Dis module inspector: it can show the Dis instructions, strings,
 types and other attributes of a module; it also allows the user
 to set some attributes stored in a module's header.
+.TP
+.B wm/snake
+The classic Snake game: steer with the arrow keys, growing a trail
+that must not run into itself or the walls.
 .TP
 .B wm/stopwatch
 A simple-minded stopwatch.

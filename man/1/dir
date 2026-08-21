@@ -1,0 +1,27 @@
+.TH DIR 1
+.SH NAME
+dir \- directory/file browser window
+.SH SYNOPSIS
+.B wm/dir
+.RI [ directory ]
+.SH DESCRIPTION
+.I Dir
+is the Wm desktop's own directory browser: a window listing the
+entries of
+.I directory
+(the current directory if none given), with an
+.B Options
+menu and a title bar showing the path being viewed. Double-clicking a
+subdirectory opens it in the same style; double-clicking a file or
+.B !Run
+script inside an app folder launches it.
+.PP
+This is the window the pinboard opens for
+.B !
+app folders (such as
+.BR Apps/!DreamMachines ),
+and can equally be launched directly on any path.
+.SH SOURCE
+.B /appl/wm/dir.b
+.SH SEE ALSO
+.IR pinboard (1)

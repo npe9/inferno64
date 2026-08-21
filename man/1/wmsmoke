@@ -1,0 +1,16 @@
+.TH WMSMOKE 1
+.SH NAME
+wmsmoke \- minimal window-manager smoke test
+.SH SYNOPSIS
+.B wm/wmsmoke
+.SH DESCRIPTION
+.I Wmsmoke
+is a minimal Wm client used to sanity-check the window-manager
+protocol itself: it connects, handles a
+.B !reshape
+request, and proves that it can obtain a real image and
+.B /chan/wmrect
+rather than exercising any application-level feature. A developer
+diagnostic, not an end-user tool.
+.SH SOURCE
+.B /appl/wm/wmsmoke.b

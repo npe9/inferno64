@@ -1,0 +1,64 @@
+.TH TEST 1
+.SH NAME
+test \- evaluate a condition, for use by shell scripts
+.SH SYNOPSIS
+.B test
+.I expression
+.SH DESCRIPTION
+.I Test
+evaluates
+.I expression
+and exits with status false if the value is
+.BR "" (empty)
+or
+.BR 0 ,
+true otherwise \(em the venerable shell-scripting
+.B test
+command, unary and binary operators included:
+.TP
+.BI -f " file"
+.I File
+exists and is a plain file.
+.TP
+.BI -d " file"
+.I File
+exists and is a directory.
+.TP
+.BI -e " file"
+.I File
+exists.
+.TP
+.BI -r " file" ", " -w " file" ", " -x " file"
+.I File
+exists and is readable, writable, or executable respectively.
+.TP
+.BI -s " file"
+.I File
+exists and has non-zero length.
+.TP
+.BI -z " string" ", " -n " string"
+.I String
+has zero length, or non-zero length.
+.TP
+.IR n1 " -eq " n2 ", " -ne ", " -gt ", " -lt ", " -ge ", " -le " n2"
+Integer comparison.
+.TP
+.IR file1 " -nt " file2 ", " -ot " file2"
+.I File1
+is newer, or older, than
+.IR file2 .
+.TP
+.IR file " -older " time
+.I File\^'s
+modification time is older than
+.IR time .
+.PP
+Expressions combine with
+.B -a
+(and),
+.B -o
+(or), and parentheses; a leading
+.B !
+negates.
+.SH SOURCE
+.B /appl/cmd/test.b

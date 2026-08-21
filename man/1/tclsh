@@ -1,0 +1,20 @@
+.TH TCLSH 1
+.SH NAME
+tclsh \- Tcl shell
+.SH SYNOPSIS
+.B tclsh
+.RI [ arg ...]
+.SH DESCRIPTION
+.I Tclsh
+is a front end onto this tree's own Tcl interpreter
+.RI ( tcl_core.b
+and its companion
+.B tcl_*
+library modules): it reads lines from standard input, evaluates each
+as a Tcl command, and prints a
+.B tcl%
+prompt between commands. Any
+.I arg...
+is passed through to the Tcl core's own initialization.
+.SH SOURCE
+.B /appl/cmd/tclsh.b

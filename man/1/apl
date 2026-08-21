@@ -1,0 +1,69 @@
+.TH APL 1
+.SH NAME
+apl \- APL interpreter with real right-to-left evaluation
+.SH SYNOPSIS
+.B apl
+.I file.apl
+.SH DESCRIPTION
+.I Apl
+is a work-alike of APL, the third language named in Nelson's
+.IR "Computer Lib/Dream Machines" ,
+and the one with the least in common with BASIC or TRAC: every value
+is an array (a scalar is just a one-element array here), a small set
+of primitives apply to a whole array at once, and \(em the single most
+notorious thing about the language \(em expressions have no operator
+precedence at all and evaluate strictly right to left.
+.B "2×3+4"
+is
+.B "2×(3+4)=14,"
+not
+.B "(2×3)+4=10,"
+because
+.B 3+4
+is further right and is applied first.
+.PP
+Real APL glyphs are used throughout, not ASCII substitutes: ←
+(assign), ⍴ (shape/reshape), ⍳ (iota), ⌈ and ⌊
+(ceiling and floor), ≤ and ≥ (comparisons), × and ÷
+(multiply/divide), ⍝ (a comment glyph), and ¯ (a distinct
+negative-literal prefix, never fused into the
+.B \-
+subtraction/negate function).
+.PP
+Primitives:
+.B "+ - × ÷ ⌈ ⌊"
+(monadic and dyadic each \(em identity/negate/sign/reciprocal/
+ceiling/floor monadic, elementwise arithmetic dyadic with scalar
+extension),
+.B "= < > ≤ ≥"
+and not-equal
+(dyadic, elementwise 1/0),
+.B ⍳
+(monadic iota, index origin 1),
+.B ⍴
+(monadic shape, dyadic reshape \(em cycling through the right
+argument), and reduce as a suffix on any of
+.B "+ - × ÷ ⌈ ⌊"
+.RB ( +/V ", " -/V ", etc.). "
+Reduce folds from the right, same as real APL.
+.PP
+Not implemented, a deliberate scope cut: bracket indexing
+.RB ( V[I] ),
+rank beyond 1 (vectors and scalars only), and user-defined functions.
+.SH FILES
+.TF /lib/apl/tempconvert.apl
+.TP
+.B /lib/apl/basics.apl
+Index generator, reshape, and the precedence-defying
+.B "2×3+4"
+itself.
+.TP
+.B /lib/apl/reduce.apl
+Reduction and elementwise comparison, including a right-fold
+subtraction.
+.TP
+.B /lib/apl/tempconvert.apl
+A vector of Fahrenheit temperatures converted to Celsius all at once,
+via scalar-extension broadcasting.
+.SH SOURCE
+.B /appl/cmd/apl.b

@@ -1,0 +1,22 @@
+.TH RDP 1
+.SH NAME
+rdp \- remote debug protocol client over a serial line
+.SH SYNOPSIS
+.B rdp
+.RB [ -crdlht ]
+.RB [ -e\fIc\fR ]
+.RB [ -O\fIofs\fR ]
+.RB [ -p\fIport\fR ]
+.RB [ -s\fIbps\fR ]
+.RI [ prog ]
+.SH DESCRIPTION
+.I Rdp
+talks a remote debug protocol to a target over a serial line (default
+port
+.BR /dev/eia0 ,
+default speed 38400 bps), for loading and debugging a program on
+embedded hardware that has no display of its own.
+.I Prog,
+if given, is the local image to load onto the target.
+.SH SOURCE
+.B /appl/cmd/rdp.b

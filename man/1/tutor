@@ -1,0 +1,59 @@
+.TH TUTOR 1
+.SH NAME
+tutor \- CAI/PLATO-style branching-lesson engine
+.SH SYNOPSIS
+.B wm/tutor
+.RI [ lesson-file ]
+.SH DESCRIPTION
+.I Tutor
+is a work-alike of the CAI (computer-assisted instruction)/PLATO
+chapter of Nelson's
+.IR "Computer Lib/Dream Machines" :
+a lesson the student's own typed answers steer, not a document they
+just read \(em distinct from this system's static
+.B !Lessons
+reading material (a pinboard folder of plain documents), which has no
+judging or branching at all.
+.PP
+.I Lesson-file
+defaults to
+.BR /lib/tutor/intro.tt .
+A lesson is a graph of named frames; each frame shows its text, takes
+a typed answer, and judges it against an ordered list of keyword
+rules (the first case-insensitive substring match wins), branching to
+a named next frame, with a
+.B DEFAULT
+fallback if nothing matches. A running score of correct answers out
+of attempts is kept in the toolbar.
+.PP
+The plain-text lesson format:
+.IP
+.nf
+.ft L
+LESSON <title>
+START <framename>
+
+FRAME <name>
+TEXT
+<one or more lines, shown verbatim>
+END
+JUDGE <keyword> <correct 0|1> <next> <response text...>
+...
+DEFAULT <correct 0|1> <next> <response text...>
+.ft
+.fi
+.PP
+Blank lines between frames are ignored; JUDGE rules are tried in
+order, and DEFAULT is used when none match.
+.SH FILES
+.TF /lib/tutor/intro.tt
+.TP
+.B /lib/tutor/intro.tt
+The default sample lesson, covering the Dis virtual machine and the
+Limbo language.
+.SH SOURCE
+.B /appl/wm/tutor.b
+.br
+.B /appl/lib/tutor.b
+.br
+.B /module/tutor.m
