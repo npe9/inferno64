@@ -1228,6 +1228,9 @@ dot net pattern
 .IR netstat (1)
 summarize network connections
 .TP
+.IR nowmtest (1)
+regression test for the no-window-manager draw context
+.TP
 .IR ns (1)
 display current namespace
 .TP

@@ -112,6 +112,7 @@ TARG=\
 	netkey.dis\
 	netstat.dis\
 	newer.dis\
+	nowmtest.dis\
 	ns.dis\
 	nsbuild.dis\
 	os.dis\

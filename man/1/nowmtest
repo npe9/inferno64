@@ -1,0 +1,70 @@
+.TH NOWMTEST 1
+.SH NAME
+nowmtest \- regression test for the no-window-manager draw context
+.SH SYNOPSIS
+.B nowmtest
+.SH DESCRIPTION
+.B Nowmtest
+checks that an application started without a window manager can still
+build a Tk window and draw into it.
+It prints one line per stage and a final
+.B PASS
+or
+.BR "SOME CHECKS FAILED" .
+.PP
+An application launched with no wm has no
+.IR draw (2)
+context, and falls back to
+.IR wmclient (2)'s
+.BR makedrawcontext ,
+which returns a context whose
+.B wm
+channel is
+.BR nil .
+Real applications do this directly \(em
+.I dreammachines/tutor.b
+and its siblings all contain
+.IB "if(ctxt == nil) ctxt" " = wmclient\->makedrawcontext()" .
+.B Nowmtest
+walks that same path:
+.BR makedrawcontext ,
+.IR tkclient (2)'s
+.BR toplevel ,
+.BR onscreen ,
+.BR startinput ,
+then widget creation, packing, an update and a resize, checking that
+each returns rather than blocking.
+It also confirms that nothing arrives on the control channel, and that
+waiting for it is not required to make progress.
+.PP
+Those checks only show that nothing deadlocked.
+The one that shows the window is real reads the toplevel's own image
+back with
+.B readpixels
+and counts non-zero bytes, which depends on nothing outside the
+process \(em no window server, no accessibility API, and no unlocked
+screen, all of which make screenshots an unreliable test on some
+hosts.
+A 1024x768 toplevel with a single button typically reports around 2.3
+of 3.1 million bytes non-zero.
+.PP
+It needs a graphical backend; under a headless
+.IR emu (1)
+it exits reporting that no display could be allocated.
+.SH SOURCE
+.B /appl/cmd/nowmtest.b
+.SH SEE ALSO
+.IR wmclient (2),
+.IR tkclient (2),
+.IR tk (2)
+.SH BUGS
+Tk starts helper processes that would keep the emulator alive after
+the test finished, so the test runs in its own process group and takes
+it down before exiting.
+Killing processes that are blocked reading leaves the emulator
+printing a few
+.B "rread ... fdtochan failed"
+lines after the result.
+They are teardown noise, not a failure; the exit status and the
+.B PASS
+line are the result.
