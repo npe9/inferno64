@@ -1126,6 +1126,9 @@ keep-away ball game
 .IR keyboard (1)
 character input for touch screen devices
 .TP
+.IR keyuptest (1)
+regression test for key-release handling in Tk
+.TP
 .IR kill (1)
 terminate process(es)
 .TP

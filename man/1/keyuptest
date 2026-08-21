@@ -1,0 +1,68 @@
+.TH KEYUPTEST 1
+.SH NAME
+keyuptest \- regression test for key-release handling in Tk
+.SH SYNOPSIS
+.B keyuptest
+.SH DESCRIPTION
+.B Keyuptest
+checks that key-release events are not delivered to Tk widgets as
+typed text.
+It prints one line per check and a final
+.B PASS
+or
+.BR "SOME CHECKS FAILED" .
+.PP
+A backend sends a release for every press on the same keyboard channel
+as the press itself, encoded as
+.BI Keyup| "(key & 0x7ff)"
+(see
+.IR keyboard (6)).
+If nothing strips that marker before delivery, every release falls
+through to the bare-key binding in
+.IR entry (9)
+or
+.IR text (9)
+and is inserted literally, putting a private-use-area codepoint
+between every real character \(em the visible symptom being text that
+looks correct but is twice the expected length.
+.PP
+Rather than driving the window system, the test calls
+.IR tk (2)'s
+.B keyboard
+entry point directly with exact key codes and reads the widget back
+with
+.BR ".e get" ,
+so it is deterministic and needs no synthetic input.
+It checks four things:
+that typing with a matching release per press yields only the typed
+characters;
+that ordinary presses still insert (so the release filter cannot be
+passing by swallowing everything);
+that releases alone insert nothing;
+and that
+.BR German ,
+.BR Grave ,
+.BR Acute ,
+and
+.B Circumflex
+are still delivered \(em those four numerically satisfy the same mask
+as
+.RB ( 0xef00
+.B &
+.BR 0xf800 " == " 0xe800 ),
+so a filter written without care swallows real dead-key presses.
+.PP
+It allocates its own display and so needs a graphical backend; under a
+headless
+.IR emu (1)
+it exits reporting that no display could be allocated.
+.SH SOURCE
+.B /appl/cmd/keyuptest.b
+.SH SEE ALSO
+.IR tk (2),
+.IR keyboard (6)
+.SH BUGS
+It exercises only the delivery path, not a real keyboard: a backend
+that encodes releases differently from
+.IR keyboard (6)
+would pass here and still misbehave.
