@@ -229,11 +229,15 @@ wmreq1(top: ref Tk->Toplevel, c, req: string, e: int): string
 		screen := Screen.allocate(di, top.display.color(Background), 0);
 		di.draw(di.r, screen.fill, nil, screen.fill.r.min);
 		i = screen.newwindow(di.r, Draw->Refbackup, Draw->Nofill);
+		if(i == nil)
+			return sys->sprint("newwindow failed: %r");
 	}else{
 		if(name == ".")
 			i = top.image;
 		else
 			i = top.image.screen.newwindow(s2r(req, e).t0, Draw->Refbackup, Draw->Red);
+		if(i == nil)
+			return sys->sprint("newwindow failed: %r");
 	}
 	tk->putimage(top, name+" "+reqid, i, nil);
 	return nil;

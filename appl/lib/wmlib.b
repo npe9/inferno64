@@ -201,6 +201,8 @@ handlerequest(display: ref Display, c: ref Client, sc: ref Wmsrv->Client, data: 
 			return sys->sprint("cannot get image %#q: %r", name);
 		s := Screen.allocate(i, display.white, 0);
 		i = s.newwindow(i.r, Draw->Refnone, Draw->Nofill);
+		if(i == nil)
+			return sys->sprint("cannot make window for %#q: %r", name);
 		rc := chan of int;
 		sc.images <-= (nil, i, rc);
 		if(<-rc == -1)

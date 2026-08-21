@@ -193,12 +193,16 @@ putimage(w: ref Window, i: ref Image)
 	if(w.titlebar != nil){
 		w.tbrect = Rect(ir.min, (ir.max.x, ir.min.y + w.tbsize.y));
 		tbimage := w.screen.newwindow(w.tbrect, Draw->Refnone, Draw->Nofill);
+		if(tbimage == nil)
+			sys->fprint(sys->fildes(2), "wmclient: titlebar newwindow failed: %r\n");
 		tk->putimage(w.titlebar, ".", tbimage, nil);
 		ir.min.y = w.tbrect.max.y;
 	}
 	if(ir.dy() < 0)
 		ir.max.y = ir.min.y;
 	w.image = w.screen.newwindow(ir, Draw->Refnone, Draw->Nofill);
+	if(w.image == nil)
+		sys->fprint(sys->fildes(2), "wmclient: newwindow failed: %r\n");
 	#
 	# Screen windows default to Flushon: every draw op presents the
 	# softscreen.  Animating clients (TempleOS ports) clear then redraw
