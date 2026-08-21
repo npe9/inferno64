@@ -5,6 +5,19 @@
 
 int	_drawdebug;
 
+/*
+ * Turn the _drawdebug diagnostics on or off.  draw.h has always
+ * declared this but nothing ever defined it, so _drawdebug could only
+ * be set from a debugger; the failure paths in alloc.c and window.c
+ * that report why an image or window could not be allocated are gated
+ * on it.
+ */
+void
+drawsetdebug(int n)
+{
+	_drawdebug = n;
+}
+
 enum {
 	CHECKLOCKING = 0
 };

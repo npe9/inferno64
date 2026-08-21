@@ -24,21 +24,24 @@ _allocimage(Image *ai, Display *d, Rectangle r, u32 chan, int repl, u32 val, int
 	i = 0;
 
 	if(chan == 0){
-		print("TEMPDBG _allocimage: chan==0 (bad channel descriptor)\n");
+		if(_drawdebug)
+			_drawprint(2, "allocimage: chan==0 (bad channel descriptor)\n");
 		kwerrstr("bad channel descriptor");
 		return nil;
 	}
 
 	depth = chantodepth(chan);
 	if(depth == 0){
-		print("TEMPDBG _allocimage: chantodepth(%ux)==0\n", chan);
+		if(_drawdebug)
+			_drawprint(2, "allocimage: chantodepth(%ux)==0\n", chan);
 		err = "bad channel descriptor";
     Error:
 		if(err)
 			kwerrstr("allocimage: %s", err);
 		else
 			kwerrstr("allocimage: %r");
-		print("TEMPDBG _allocimage: Error path, err=%s errstr=%r\n", err? err: "(bufimage/flushimage failure)");
+		if(_drawdebug)
+			_drawprint(2, "allocimage: failed: %s: %r\n", err? err: "(bufimage/flushimage failure)");
 		free(i);
 		return 0;
 	}
@@ -47,7 +50,8 @@ _allocimage(Image *ai, Display *d, Rectangle r, u32 chan, int repl, u32 val, int
 	flushimage(d, 0);
 	a = bufimage(d, 1+4+4+1+4+1+4*4+4*4+4);
 	if(a == 0){
-		print("TEMPDBG _allocimage: bufimage returned 0\n");
+		if(_drawdebug)
+			_drawprint(2, "allocimage: bufimage returned 0\n");
 		goto Error;
 	}
 	d->imageid++;
@@ -74,7 +78,8 @@ _allocimage(Image *ai, Display *d, Rectangle r, u32 chan, int repl, u32 val, int
 	BP32INT(a+47, val);
 	DP("_allocimage id %d screenid %d r %R clipr %R\n", id, screenid, r, clipr);
 	if(flushimage(d, 0) < 0){
-		print("TEMPDBG _allocimage: flushimage(d,0) < 0 after bufimage\n");
+		if(_drawdebug)
+			_drawprint(2, "allocimage: flushimage failed after bufimage\n");
 		goto Error;
 	}
 
@@ -83,7 +88,8 @@ _allocimage(Image *ai, Display *d, Rectangle r, u32 chan, int repl, u32 val, int
 	else{
 		i = malloc(sizeof(Image));
 		if(i == nil){
-			print("TEMPDBG _allocimage: malloc(sizeof(Image)) failed\n");
+			if(_drawdebug)
+				_drawprint(2, "allocimage: malloc(Image) failed\n");
 			a = bufimage(d, 1+4);
 			if(a){
 				a[0] = 'f';
