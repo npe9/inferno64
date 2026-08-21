@@ -1,0 +1,132 @@
+.TH DREAMMACHINES 1
+.SH NAME
+dreammachines \- work-alikes of the systems surveyed in Nelson's Computer Lib/Dream Machines
+.SH SYNOPSIS
+.B dreammachines/
+.I name
+.br
+.B wmapp /Apps/!DreamMachines
+.SH DESCRIPTION
+The
+.B dreammachines
+programs are small, runnable work-alikes of the historical and
+speculative computing systems Ted Nelson surveys in
+.I "Computer Lib/Dream Machines"
+(1974): a hypertext browser with two-way links, a branching-alternatives
+outliner, a CAI/PLATO-style lesson engine, an algorithmic-composition and
+video-synthesis demo, a minimal instruction-set computer, an ELIZA-style
+conversational script, and three of the languages the book discusses
+alongside them (TRAC, BASIC, and APL). None claims bit-for-bit fidelity
+to any specific historical system; each captures the idea Nelson
+describes well enough to run and be read.
+.PP
+Each program may be started as
+.BI dreammachines/ name
+or from the
+.B !DreamMachines
+pinboard folder.
+.PP
+.IR tutor (1),
+.IR eliza (1),
+and
+.IR toycpu (1)
+load their engine as a separate library module (the
+.BR Tutor ,
+.BR Eliza ,
+and
+.B Toycpu
+interfaces) from
+.BR plugin/ ,
+the same command/library split
+.IR danby (1)
+uses; the rest are single self-contained programs.
+.SS Hypertext & Outlining
+.TP
+.B dreammachines/hyperdoc
+Two-way hypertext browser over the man pages, with clickable links and a
+persistent link store.
+See
+.IR hyperdoc (1).
+.TP
+.B dreammachines/thinkertoy
+Branching-alternatives tree editor with direct-manipulation drag layout.
+See
+.IR thinkertoy (1).
+.SS Teaching & Conversation
+.TP
+.B dreammachines/tutor
+Plain-text CAI/PLATO branching-lesson engine.
+See
+.IR tutor (1).
+.TP
+.B dreammachines/eliza
+Weizenbaum's ELIZA: keyword-ranked pattern matching over a script, not a
+language model.
+See
+.IR eliza (1).
+.SS Computing & Languages
+.TP
+.B dreammachines/toycpu
+A Little Man Computer: 100 mailboxes, one accumulator, ten instructions.
+See
+.IR toycpu (1).
+.TP
+.B dreammachines/trac
+The TRAC rescan-based text-macro language.
+See
+.IR trac (1).
+.TP
+.B dreammachines/basic
+A small interactive BASIC.
+See
+.IR basic (1).
+.TP
+.B dreammachines/apl
+A small APL, right-to-left evaluation and literal glyph operators.
+See
+.IR apl (1).
+.SS Media & Composition
+.TP
+.B dreammachines/computermovie
+Keyframed 3-D camera flythrough demo.
+See
+.IR computermovie (1).
+.TP
+.B dreammachines/hypercube
+A tumbling wireframe tesseract.
+See
+.IR hypercube (1).
+.TP
+.B dreammachines/videosynth
+A live analog-video-synthesizer work-alike (the Sandin Image Processor).
+See
+.IR videosynth (1).
+.TP
+.B dreammachines/fantics
+A scripted rhythmic-performance player (Nelson's term for the timing and
+motion of the presentation itself, distinct from its content).
+See
+.IR fantics (1).
+.SS Search
+.TP
+.B dreammachines/ix
+TF-IDF ranked full-text search over a set of files.
+See
+.IR ix (1).
+.SH FILES
+.TP
+.B /dis/dreammachines/
+Compiled commands.
+.TP
+.B /dis/dreammachines/plugin/
+Compiled Tutor, Eliza, and Toycpu library modules.
+.TP
+.B /lib/wmsetup
+Wm menu entries.
+.SH SOURCE
+.B /appl/dreammachines
+.SH SEE ALSO
+.IR danby (1),
+.IR temple (1),
+.IR wm (1),
+.IR wm-misc (1)

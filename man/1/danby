@@ -1,0 +1,1051 @@
+.TH DANBY 1
+.SH NAME
+danby \- collection of ODE-based physical, biological, and economic models for Wm
+.SH SYNOPSIS
+.B danby/
+.I name
+.br
+.B wmapp /Apps/!Danby
+.SH DESCRIPTION
+The
+.B danby
+programs are interactive numerical-integration demonstrations in the spirit of
+James Danby's
+.I Computer Modeling: From Sports to Spaceflight, From Order to Chaos
+and companion texts: each poses an ordinary-differential-equation model,
+integrates it live with
+.IR numerics (2)'s
+fourth-order Runge-Kutta stepper (or, for the adaptive-step lessons, an
+embedded RKF4(5) pair), and redraws its state as parameters or initial
+conditions change under the pointer or a set of parameter tracks.
+.PP
+Each program may be started as
+.BI danby/ name
+or from the
+.B !Danby
+pinboard folder; the related
+.B !Models
+and
+.B !Lessons
+folders group the same programs by subject and by teaching sequence.
+Unless its own page says otherwise, each program pauses and resumes with
+.BR space ,
+steps one displayed increment with
+.B period
+while paused, restarts from its default state with
+.BR r ,
+and quits with
+.B q
+or
+.BR Escape .
+.PP
+A handful of the underlying models \(em
+.IR ballistics (2),
+.IR doublependulum (2),
+.IR gravity (2),
+.IR atmosphere (2),
+and others \(em are pure library modules with no command of their own; they are
+documented separately in section 2, and are loaded by one or more of the
+commands below.
+.PP
+Several of the classical-problem and teaching-sequence programs below
+(the ones invoked as
+.BI temple/ name
+rather than
+.BI danby/ name )
+were written to accompany this same set of models but, for build reasons,
+live in
+.IR temple (1)'s
+own directory rather than this one; they are listed here rather than there
+because their documentation page names and subject matter both follow this
+family.
+.SS Pendulums & Oscillators
+.TP
+.B danby/amusementchaos
+Driven nonlinear amusement-ride pendulum.
+See
+.IR danby-amusementchaos (1).
+.TP
+.B danby/atwoodpendulum
+Simulate the swinging Atwood machine.
+See
+.IR danby-atwoodpendulum (1).
+.TP
+.B danby/clockpendulum
+Damped pendulum sustained by an escapement.
+See
+.IR danby-clockpendulum (1).
+.TP
+.B danby/compass
+Compass needle in an oscillating magnetic field.
+See
+.IR danby-compass (1).
+.TP
+.B danby/dampedpendulum
+Pendulum with velocity-proportional damping.
+See
+.IR danby-dampedpendulum (1).
+.TP
+.B danby/doublependulum
+Explore a nonlinear double pendulum.
+See
+.IR danby-doublependulum (1).
+.TP
+.B danby/drypendulum
+Pendulum with Coulomb dry friction.
+See
+.IR danby-drypendulum (1).
+.TP
+.B danby/duffing
+Driven nonlinear Duffing oscillator.
+See
+.IR danby-duffing (1).
+.TP
+.B danby/forcedpendulum
+Periodically forced damped pendulum.
+See
+.IR danby-forcedpendulum (1).
+.TP
+.B danby/loadedpendulum
+Pendulum with constant applied torque.
+See
+.IR danby-loadedpendulum (1).
+.TP
+.B danby/magneticpendulum2d
+Explore a planar magnetic pendulum.
+See
+.IR danby-magneticpendulum2d (1).
+.TP
+.B danby/magneticpendulum3d
+Simulate a three-dimensional magnetic pendulum.
+See
+.IR danby-magneticpendulum3d (1).
+.TP
+.B danby/movingpivot
+Simulate a vertically driven pendulum.
+See
+.IR danby-movingpivot (1).
+.TP
+.B danby/pegpendulum
+Simulate a pendulum wrapping around a peg.
+See
+.IR danby-pegpendulum (1).
+.TP
+.B danby/pendulumperiod
+Amplitude dependence of pendulum period.
+See
+.IR danby-pendulumperiod (1).
+.TP
+.B danby/simplependulum
+Exact nonlinear simple pendulum.
+See
+.IR danby-simplependulum (1).
+.TP
+.B danby/slidingpendulum1
+Pendulum on a freely sliding support.
+See
+.IR danby-slidingpendulum1 (1).
+.TP
+.B danby/slidingpendulum2
+Pendulum on an elastic sliding support.
+See
+.IR danby-slidingpendulum2 (1).
+.TP
+.B danby/springpendulum
+Elastic radial pendulum.
+See
+.IR danby-springpendulum (1).
+.TP
+.B danby/springpivot
+Pendulum with a compliant sliding pivot.
+See
+.IR danby-springpivot (1).
+.TP
+.B danby/swing1
+Pump a swing by changing centre of mass.
+See
+.IR danby-swing1 (1).
+.TP
+.B danby/swing2
+Pump a swing with rhythmic torque.
+See
+.IR danby-swing2 (1).
+.TP
+.B danby/swingingcenser
+Simulate a censer driven by hand motion.
+See
+.IR danby-swingingcenser (1).
+.TP
+.B danby/tablependulum
+Pendulum coupled through a hole to a table mass.
+See
+.IR danby-tablependulum (1).
+.TP
+.B danby/twomagnet
+Bistable magnetic oscillator.
+See
+.IR danby-twomagnet (1).
+.TP
+.B danby/vanderpol
+Self-excited relaxation oscillator.
+See
+.IR danby-vanderpol (1).
+.TP
+.B danby/variationparameters
+Compare Van der Pol motion with averaging.
+See
+.IR danby-variationparameters (1).
+.TP
+.B danby/varyingpendulum
+Simulate a pendulum whose length varies.
+See
+.IR danby-varyingpendulum (1).
+.TP
+.B danby/wheelpendulum
+Pendulum attached to a freely spinning wheel.
+See
+.IR danby-wheelpendulum (1).
+.TP
+.B danby/windpendulum
+Pendulum under steady aerodynamic torque.
+See
+.IR danby-windpendulum (1).
+.SS Orbital, Celestial & Stellar Mechanics
+.TP
+.B danby/aerobraking
+Orbital energy loss during atmospheric passes.
+See
+.IR danby-aerobraking (1).
+.TP
+.B danby/cometcatch
+Gravitational scattering and comet capture by Jupiter.
+See
+.IR danby-cometcatch (1).
+.TP
+.B danby/dumbbellsatellite
+Gravity-gradient attitude dynamics in orbit.
+See
+.IR danby-dumbbellsatellite (1).
+.TP
+.B danby/galaxies
+Gravitational interaction of two model galaxies.
+See
+.IR danby-galaxies (1).
+.TP
+.B danby/grandtour
+Sequential outer-planet gravity assists.
+See
+.IR danby-grandtour (1).
+.TP
+.B danby/gravitypendulum
+Simulate gravity-gradient attitude motion.
+See
+.IR danby-gravitypendulum (1).
+.TP
+.B danby/heliumburning
+Helium-burning reaction network.
+See
+.IR danby-heliumburning (1).
+.TP
+.B danby/hyperionrotation
+Chaotic spin of Hyperion.
+See
+.IR danby-hyperionrotation (1).
+.TP
+.B danby/jupiterboost
+Heliocentric speed change in a Jupiter flyby.
+See
+.IR danby-jupiterboost (1).
+.TP
+.B danby/lagrange1
+Motion near the triangular Lagrange points.
+See
+.IR danby-lagrange1 (1).
+.TP
+.B danby/lagrange2
+Larger perturbations about L4 or L5.
+See
+.IR danby-lagrange2 (1).
+.TP
+.B danby/lowthrust
+Continuous low-thrust orbital transfer.
+See
+.IR danby-lowthrust (1).
+.TP
+.B danby/mercuryrotation
+Mercury's 3:2 spin-orbit resonance.
+See
+.IR danby-mercuryrotation (1).
+.TP
+.B danby/moonrotation
+Lunar synchronous rotation and libration.
+See
+.IR danby-moonrotation (1).
+.TP
+.B danby/moontrip
+Restricted three-body transfer from Earth to Moon.
+See
+.IR danby-moontrip (1).
+.TP
+.B temple/orbit
+Planar two-body orbital flight.
+See
+.IR danby-orbit (1).
+.TP
+.B danby/perihelion
+Relativistic precession of planetary perihelion.
+See
+.IR danby-perihelion (1).
+.TP
+.B danby/poyntingrobertson
+Radiation drag on an orbiting dust grain.
+See
+.IR danby-poyntingrobertson (1).
+.TP
+.B danby/skylab
+Atmospheric orbital decay of Skylab.
+See
+.IR danby-skylab (1).
+.TP
+.B danby/spacestationball
+Ball motion in a rotating space station.
+See
+.IR danby-spacestationball (1).
+.TP
+.B danby/starmodel
+Approximate hydrostatic stellar profile.
+See
+.IR danby-starmodel (1).
+.TP
+.B danby/threebody
+Mutual gravitational motion of three bodies.
+See
+.IR danby-threebody (1).
+.TP
+.B danby/tidalrotation
+Explore spin-orbit capture under tidal friction.
+See
+.IR danby-tidalrotation (1).
+.TP
+.B danby/venushead
+Curved atmospheric light path around Venus.
+See
+.IR danby-venushead (1).
+.TP
+.B danby/whitedwarf
+Degenerate stellar profiles and limiting mass.
+See
+.IR danby-whitedwarf (1).
+.SS Flight, Rockets & Vehicle Dynamics
+.TP
+.B danby/balloon
+Vertical balloon motion with a swinging payload.
+See
+.IR danby-balloon (1).
+.TP
+.B danby/carrierlanding
+Aircraft arresting cable and moving deck.
+See
+.IR danby-carrierlanding (1).
+.TP
+.B danby/flight
+Coupled longitudinal aircraft dynamics.
+See
+.IR danby-flight (1).
+.TP
+.B danby/hovercraft
+Planar translation and yaw of a hovercraft.
+See
+.IR danby-hovercraft (1).
+.TP
+.B danby/icbmaccuracy
+Lateral miss distance from aim and crosswind error.
+See
+.IR danby-icbmaccuracy (1).
+.TP
+.B danby/icbmrange
+Ballistic range with atmospheric drag.
+See
+.IR danby-icbmrange (1).
+.TP
+.B danby/lowbombing
+Aircraft and bomb relative trajectory.
+See
+.IR danby-lowbombing (1).
+.TP
+.B danby/multistagerocket
+Sequential two-stage rocket dynamics.
+See
+.IR danby-multistagerocket (1).
+.TP
+.B danby/reentry
+Atmospheric re-entry trajectory.
+See
+.IR danby-reentry (1).
+.TP
+.B danby/rocket2d
+Finite-burn two-dimensional rocket ascent.
+See
+.IR danby-rocket2d (1).
+.TP
+.B danby/rocketintro
+Introductory variable-mass vertical rocket.
+See
+.IR danby-rocketintro (1).
+.TP
+.B danby/shipmotion
+Forced roll and pitch at sea.
+See
+.IR danby-shipmotion (1).
+.TP
+.B danby/spaceyoyo
+Rigid-tether satellite de-spin.
+See
+.IR danby-spaceyoyo (1).
+.TP
+.B danby/stretchyoyo
+Elastic-tether satellite de-spin.
+See
+.IR danby-stretchyoyo (1).
+.SS Chaos, Bifurcation & Nonlinear Dynamics
+.TP
+.B danby/catastrophemachine
+Zeeman catastrophe machine.
+See
+.IR danby-catastrophemachine (1).
+.TP
+.B danby/lorenz
+Lorenz chaotic convection.
+See
+.IR danby-chaos (1).
+.TP
+.B temple/chaosdynamics
+Measure sensitive dependence in a dynamical system, using the same Lorenz
+model as
+.B danby/lorenz
+under a lesson-sequence wrapper in
+.IR temple (1).
+See
+.IR danby-chaosdynamics (1).
+.TP
+.B temple/chaosintro
+Introduction to deterministic chaos, using the same Lorenz model as
+.B danby/lorenz
+under a lesson-sequence wrapper in
+.IR temple (1).
+See
+.IR danby-chaosintro (1).
+.TP
+.B danby/chaosmap
+Logistic-map bifurcations, cobwebs, and Lyapunov exponent.
+See
+.IR danby-chaosmap (1).
+.TP
+.B danby/chaoticwheel
+Periodically driven nonlinear wheel.
+See
+.IR danby-chaoticwheel (1).
+.TP
+.B danby/dynamoreversal
+Nonlinear dynamo with polarity reversals.
+See
+.IR danby-dynamoreversal (1).
+.TP
+.B danby/fireflies
+Synchronization of coupled oscillators.
+See
+.IR danby-fireflies (1).
+.TP
+.B danby/heartbeat
+Zeeman fast-slow heartbeat oscillator.
+See
+.IR danby-heartbeat (1).
+.TP
+.B danby/stability
+Compare linear and nonlinear stability.
+See
+.IR danby-stability (1).
+.SS Population Ecology & Epidemiology
+.TP
+.B danby/alternativepredation
+Predator-prey model with saturating consumption.
+See
+.IR danby-alternativepredation (1).
+.TP
+.B danby/budworm
+Spruce budworm outbreak threshold.
+See
+.IR danby-budworm (1).
+.TP
+.B danby/cannibalism
+Age-structured population with adult cannibalism.
+See
+.IR danby-cannibalism (1).
+.TP
+.B danby/changingenvironment
+Logistic growth with varying carrying capacity.
+See
+.IR danby-changingenvironment (1).
+.TP
+.B danby/childcare
+Stage-structured predator-prey model with parental care.
+See
+.IR danby-childcare (1).
+.TP
+.B danby/competition
+Two-species logistic competition.
+See
+.IR danby-competition (1).
+.TP
+.B danby/cooperation
+Density-limited mutualism between two species.
+See
+.IR danby-cooperation (1).
+.TP
+.B danby/crossinfection
+Infection transmitted within and between two species.
+See
+.IR danby-crossinfection (1).
+.TP
+.B danby/diseasebirthdeath1
+SIR disease with balanced demographic turnover.
+See
+.IR danby-diseasebirthdeath1 (1).
+.TP
+.B danby/diseasebirthdeath2
+Epidemic with independent vital rates and virulence.
+See
+.IR danby-diseasebirthdeath2 (1).
+.TP
+.B danby/ecology
+Lotka-Volterra predator and prey.
+See
+.IR danby-ecology (1).
+.TP
+.B danby/epidemic
+Susceptible-infected-recovered epidemic.
+See
+.IR danby-epidemic (1).
+.TP
+.B danby/foodchain
+Plants, herbivores, and carnivores.
+See
+.IR danby-foodchain (1).
+.TP
+.B danby/gonorrhea
+Two-sex SIS transmission model.
+See
+.IR danby-gonorrhea (1).
+.TP
+.B temple/harvest
+Logistic population with constant harvesting.
+See
+.IR danby-harvest (1).
+.TP
+.B danby/hiv
+Initial spread and progression of HIV.
+See
+.IR danby-hiv (1).
+.TP
+.B danby/incubation
+SEIR epidemic with a latent compartment.
+See
+.IR danby-incubation (1).
+.TP
+.B danby/internalcompetition
+Predator-prey model with crowding in each species.
+See
+.IR danby-internalcompetition (1).
+.TP
+.B danby/lakepollution
+Pollutant mass balance in a well-mixed lake.
+See
+.IR danby-lakepollution (1).
+.TP
+.B danby/logisticpredators
+Logistic regulation of prey and predators.
+See
+.IR danby-logisticpredators (1).
+.TP
+.B danby/logisticprey
+Predator-prey model with logistic prey growth.
+See
+.IR danby-logisticprey (1).
+.TP
+.B danby/malaria
+Coupled human and mosquito infection cycle.
+See
+.IR danby-malaria (1).
+.TP
+.B danby/manyspecies
+One prey population shared by two predator species.
+See
+.IR danby-manyspecies (1).
+.TP
+.B danby/maypredator
+May predator-prey limit-cycle model.
+See
+.IR danby-maypredator (1).
+.TP
+.B danby/migration
+Effects of migration on an SIR epidemic.
+See
+.IR danby-migration (1).
+.TP
+.B danby/parasite
+Host-limited parasite population growth.
+See
+.IR danby-parasite (1).
+.TP
+.B danby/periodicvolterra
+Predator and prey with a periodic birthrate.
+See
+.IR danby-periodicvolterra (1).
+.TP
+.B temple/population
+Logistic population growth.
+See
+.IR danby-population (1).
+.TP
+.B danby/predatorfishing
+Predator and prey under fishing pressure.
+See
+.IR danby-predatorfishing (1).
+.TP
+.B danby/seasonaldisease
+SIR transmission with seasonal infectiousness.
+See
+.IR danby-seasonaldisease (1).
+.TP
+.B temple/sirs
+Epidemic with waning immunity.
+See
+.IR danby-sirs (1).
+.TP
+.B temple/strains
+Two epidemic strains sharing susceptible hosts.
+See
+.IR danby-strains (1).
+.TP
+.B danby/vaccination
+SIR epidemic with an initially vaccinated compartment.
+See
+.IR danby-vaccination (1).
+.TP
+.B danby/violetsantsrodents
+Mutualism and predation in a three-species network.
+See
+.IR danby-violetsantsrodents (1).
+.SS Economics & Social Dynamics
+.TP
+.B temple/arms
+Richardson arms race.
+See
+.IR danby-arms (1).
+.TP
+.B danby/boom
+Goodwin wage-employment cycle.
+See
+.IR danby-boom (1).
+.TP
+.B temple/firms
+Coupled competing firm shares.
+See
+.IR danby-firms (1).
+.TP
+.B danby/fishingone
+Bioeconomics of a single fish stock.
+See
+.IR danby-fishingone (1).
+.TP
+.B danby/fishingtwo
+Bioeconomics of two fish stocks and one fleet.
+See
+.IR danby-fishingtwo (1).
+.TP
+.B danby/lanchester
+Lanchester square-law combat model.
+See
+.IR danby-lanchester (1).
+.TP
+.B danby/limitstogrowth
+Club of Rome System Dynamics model of population, capital, pollution, and resources.
+See
+.IR danby-limitstogrowth (1).
+.TP
+.B temple/price
+Dynamic supply-demand price adjustment.
+See
+.IR danby-price (1).
+.TP
+.B danby/productionexchange
+Production, use, and exchange of two goods.
+See
+.IR danby-productionexchange (1).
+.TP
+.B danby/twocapital
+One-sector growth with two capital stocks.
+See
+.IR danby-twocapital (1).
+.SS Sports & Projectile Aerodynamics
+.TP
+.B danby/badfootball
+Unstable lateral flight of a poorly kicked football.
+See
+.IR danby-badfootball (1).
+.TP
+.B danby/badminton
+High-drag shuttlecock trajectories.
+See
+.IR danby-badminton (1).
+.TP
+.B danby/baseballpitch
+Aerodynamic flight of a pitched baseball.
+See
+.IR danby-baseballpitch (1).
+.TP
+.B danby/basketball
+Trajectory and backspin of a basketball shot.
+See
+.IR danby-basketball (1).
+.TP
+.B danby/cricketbowl
+Spin and drag on a bowled cricket ball.
+See
+.IR danby-cricketbowl (1).
+.TP
+.B danby/cricketswing
+Aerodynamic swing of a cricket ball.
+See
+.IR danby-cricketswing (1).
+.TP
+.B danby/discus
+Aerodynamic path of a discus.
+See
+.IR danby-discus (1).
+.TP
+.B danby/diving
+Translational and rotational motion of a diver.
+See
+.IR danby-diving (1).
+.TP
+.B danby/fireworks
+Launch, timed burst, and fragment trajectories.
+See
+.IR danby-fireworks (1).
+.TP
+.B danby/flyball
+Flight of a batted baseball.
+See
+.IR danby-flyball (1).
+.TP
+.B danby/golfdrive
+Aerodynamic trajectory of a driven golf ball.
+See
+.IR danby-golfdrive (1).
+.TP
+.B danby/javelin
+Aerodynamic motion of a javelin.
+See
+.IR danby-javelin (1).
+.TP
+.B danby/joggingcompanion
+Coupled pacing of two runners.
+See
+.IR danby-joggingcompanion (1).
+.TP
+.B danby/knuckleball
+Fluctuating aerodynamic force on a knuckleball.
+See
+.IR danby-knuckleball (1).
+.TP
+.B danby/polevault
+Coupled vaulter and elastic pole dynamics.
+See
+.IR danby-polevault (1).
+.TP
+.B danby/running
+Coupled speed, fatigue, cadence, and distance model.
+See
+.IR danby-running (1).
+.TP
+.B danby/skijump
+Takeoff and aerodynamic flight of a ski jumper.
+See
+.IR danby-skijump (1).
+.TP
+.B danby/soccerkick
+Three-dimensional flight of a kicked soccer ball.
+See
+.IR danby-soccerkick (1).
+.TP
+.B danby/softballpitch
+Drag and spin on a pitched softball.
+See
+.IR danby-softballpitch (1).
+.TP
+.B danby/spinningball
+Drag and Magnus lift on a spinning projectile.
+See
+.IR danby-spinningball (1).
+.TP
+.B danby/tabletennis
+Drag and topspin in table tennis.
+See
+.IR danby-tabletennis (1).
+.TP
+.B temple/tennis
+Tennis serve flight with drag and wind.
+See
+.IR danby-tennis (1).
+.SS Chemistry, Biology & Physiology
+.TP
+.B danby/brusselator
+Two-variable chemical limit cycle.
+See
+.IR danby-brusselator (1).
+.TP
+.B danby/decomposition
+Consecutive molecular decomposition reactions.
+See
+.IR danby-decomposition (1).
+.TP
+.B temple/drug
+Two-compartment drug absorption.
+See
+.IR danby-drug (1).
+.TP
+.B danby/enzymeapplication
+Competitive enzyme inhibition.
+See
+.IR danby-enzymeapplication (1).
+.TP
+.B danby/enzymekinetics
+Explicit Michaelis-Menten reaction dynamics.
+See
+.IR danby-enzymekinetics (1).
+.TP
+.B danby/moreenzyme
+Reversible enzyme catalysis.
+See
+.IR danby-moreenzyme (1).
+.TP
+.B danby/oregonator
+Reduced Belousov-Zhabotinsky oscillator.
+See
+.IR danby-oregonator (1).
+.TP
+.B danby/reactorstability
+Exothermic continuous-reactor stability.
+See
+.IR danby-reactorstability (1).
+.TP
+.B danby/stillmoreenzyme
+Cooperative two-site enzyme kinetics.
+See
+.IR danby-stillmoreenzyme (1).
+.TP
+.B danby/weightchange
+Body-mass energy-balance model.
+See
+.IR danby-weightchange (1).
+.SS Mechanical & Electrical Engineering Systems
+.TP
+.B danby/attractingwires
+Current-driven attraction and pull-in.
+See
+.IR danby-attractingwires (1).
+.TP
+.B danby/bungee
+Slack-to-elastic bungee-jump dynamics.
+See
+.IR danby-bungee (1).
+.TP
+.B danby/carbonmicrophone
+Electromechanical carbon microphone circuit.
+See
+.IR danby-carbonmicrophone (1).
+.TP
+.B danby/columnbuckling
+Dynamic column buckling.
+See
+.IR danby-columnbuckling (1).
+.TP
+.B danby/nonlinearsprings
+Explore polynomial spring laws.
+See
+.IR danby-nonlinearsprings (1).
+.TP
+.B danby/pistonflywheel
+Slider-crank piston and flywheel dynamics.
+See
+.IR danby-pistonflywheel (1).
+.TP
+.B danby/reservoir
+Cascaded reservoir dynamics.
+See
+.IR danby-reservoir (1).
+.TP
+.B danby/rotatingring1
+Bead in a circular hoop at prescribed rotation.
+See
+.IR danby-rotatingring1 (1).
+.TP
+.B danby/rotatingring2
+Bead exchanging angular momentum with a free hoop.
+See
+.IR danby-rotatingring2 (1).
+.TP
+.B danby/synchronousmotor
+Phase locking and pull-out torque.
+See
+.IR danby-synchronousmotor (1).
+.TP
+.B danby/tankcontrol
+Feedback control of tank level and temperature.
+See
+.IR danby-tankcontrol (1).
+.TP
+.B danby/violinbow
+Bow/string stick-slip oscillator.
+See
+.IR danby-violinbow (1).
+.TP
+.B danby/wattgovernor
+Centrifugal engine-speed governor.
+See
+.IR danby-wattgovernor (1).
+.TP
+.B danby/yoyo
+Coupled translation and rotation of a yo-yo.
+See
+.IR danby-yoyo (1).
+.SS Numerical Methods, Classical Problems & Lessons
+.TP
+.B danby/bernoulli
+Bernoulli's brachistochrone problem.
+See
+.IR danby-bernoulli (1).
+.TP
+.B temple/chapter1assignments
+Interactive introductory exercises.
+See
+.IR danby-chapter1assignments (1).
+.TP
+.B temple/euler
+Construct Euler solutions from a direction field.
+See
+.IR danby-euler (1).
+.TP
+.B danby/eulerorder
+Numerically confirm first-order Euler convergence.
+See
+.IR danby-eulerorder (1).
+.TP
+.B temple/existence
+Explore existence and failure of uniqueness.
+See
+.IR danby-existence (1).
+.TP
+.B temple/heun
+Improved Euler predictor-corrector experiment.
+See
+.IR danby-heun (1).
+.TP
+.B temple/instructions
+Follow the local instructions in a differential equation.
+See
+.IR danby-instructions (1).
+.TP
+.B temple/meaning
+Interpret a differential equation as a field of local rates.
+See
+.IR danby-meaning (1).
+.TP
+.B temple/methodorder
+Measure convergence order.
+See
+.IR danby-methodorder (1).
+.TP
+.B temple/methods
+Compare Euler, Heun, RK4, and adaptive RKF4(5).
+See
+.IR danby-methods (1).
+.TP
+.B temple/modeling
+Explore assumptions, parameters, and predictions in a differential-equation model.
+See
+.IR danby-modeling (1).
+.TP
+.B temple/odesystems
+Coupled first-order ODE laboratory.
+See
+.IR danby-odesystems (1).
+.TP
+.B danby/pursuit
+Cyclic curves of pursuit.
+See
+.IR danby-pursuit (1).
+.TP
+.B temple/rkf45
+Fehlberg embedded RK4(5) laboratory.
+See
+.IR danby-rkf45 (1).
+.TP
+.B temple/rkf45scalar
+Implement adaptive RKF4(5) for one equation.
+See
+.IR danby-rkf45scalar (1).
+.TP
+.B temple/rkf45system
+Implement adaptive RKF4(5) for a system.
+See
+.IR danby-rkf45system (1).
+.TP
+.B temple/rungekutta
+Classical fourth-order Runge-Kutta experiment.
+See
+.IR danby-rungekutta (1).
+.TP
+.B temple/solutions
+Inspect and interpret solution curves.
+See
+.IR danby-solutions (1).
+.TP
+.B temple/solverdebug
+Controlled numerical-solver debugging projects.
+See
+.IR danby-solverdebug (1).
+.TP
+.B temple/solverrun
+Run and inspect an adaptive initial-value solver.
+See
+.IR danby-solverrun (1).
+.TP
+.B temple/stepsize
+Inspect adaptive-step acceptance and rejection.
+See
+.IR danby-stepsize (1).
+.TP
+.B temple/truncation
+Explore local and accumulated truncation error.
+See
+.IR danby-truncation (1).
+.SH FILES
+.TP
+.B /dis/danby/
+Compiled commands.
+.TP
+.B /dis/danby/plugin/
+Compiled model and support library modules.
+.TP
+.B /lib/wmsetup
+Wm menu entries.
+.SH SOURCE
+.B /appl/danby
+.SH SEE ALSO
+.IR numerics (2),
+.IR plot (2),
+.IR wm (1),
+.IR temple (1),
+.IR danby-limitstogrowth (1)

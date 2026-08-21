@@ -361,6 +361,9 @@ data encryption
 .IR csv (1)
 parse ``comma-separated values''
 .TP
+.IR danby (1)
+collection of ODE-based physical, biological, and economic mo...
+.TP
 .IR danby-aerobraking (1)
 orbital energy loss during atmospheric passes
 .TP
@@ -966,6 +969,9 @@ freehand drawing
 .TP
 .IR draw3ddemo (1)
 showcase for math/draw3d
+.TP
+.IR dreammachines (1)
+work-alikes of the systems surveyed in Nelson's Computer Lib/...
 .TP
 .IR du (1)
 disk usage
