@@ -16,6 +16,9 @@ include "numerics.m";
 include "plot.m";
 	plot: Plot;
 	Plotter: import plot;
+include "paramtracks.m";
+	paramtracks: Paramtracks;
+	Tracks: import paramtracks;
 include "danby/forcedpendulum.m";
 	forcedpendulum: Forcedpendulum;
 	Model: import forcedpendulum;
@@ -33,6 +36,7 @@ win: ref Window;
 font: ref Font;
 background, foreground, grid, live, accent: ref Image;
 graph: ref Plotter;
+tracks: ref Tracks;
 model: ref Model;
 work: ref Numerics->Workspace;
 state := array[] of {0.2,0.0};
@@ -48,10 +52,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	math = load Math Math->PATH;
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
+	paramtracks = load Paramtracks Paramtracks->PATH;
 	forcedpendulum = load Forcedpendulum Forcedpendulum->PATH;
 	env = load Env Env->PATH;
 	if(sys == nil || draw == nil || wmclient == nil || math == nil ||
-			numerics == nil || plot == nil || forcedpendulum == nil)
+			numerics == nil || plot == nil || paramtracks == nil || forcedpendulum == nil)
 		raise "fail:forcedpendulum: missing module";
 	if(env != nil){
 		env->clone();
@@ -71,7 +76,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	model = forcedpendulum->new(0.22,1.2,2.0/3.0);
 	work = numerics->workspace(len state);
 	graph = plot->new(win.image,font);
+	tracks = paramtracks->new(win.image,font);
 	declareplot();
+	declaretracks();
 	reset();
 	win.reshape(Rect((0,0),(920,650)));
 	win.onscreen("place");
@@ -119,6 +126,23 @@ declareplot()
 		"colour grid 16rd6d0c4ff\n" +
 		"colour live 16r178f86ff\n" +
 		"colour accent 16rb85c38ff");
+	if(error != nil)
+		raise "fail:forcedpendulum: " + error;
+}
+
+declaretracks()
+{
+	error := tracks.cmd(
+		"colour foreground 16r20272cff\n" +
+		"colour grid 16rd6d0c4ff\n" +
+		"colour accent 16rb85c38ff\n" +
+		"band 52\n" +
+		"track damping 0 1 colour accent\n" +
+		"track drive 0 2 colour accent\n" +
+		"track frequency 0.2 2.0 colour accent\n" +
+		"set damping 0.22\n" +
+		"set drive 1.2\n" +
+		sys->sprint("set frequency %g", 2.0/3.0));
 	if(error != nil)
 		raise "fail:forcedpendulum: " + error;
 }
@@ -175,20 +199,13 @@ setpointer(point: Point)
 	if(win.image == nil)
 		return;
 	r := win.image.r;
-	if(point.y >= r.max.y-52){
-		width := r.dx()/3;
-		which := (point.x-r.min.x)/width;
-		fraction := real(point.x-(r.min.x+which*width))/real(width);
-		if(fraction < 0.01)
-			fraction = 0.01;
-		if(fraction > 0.99)
-			fraction = 0.99;
-		if(which == 0)
-			model.damping = fraction;
-		if(which == 1)
-			model.drive = 2.0*fraction;
-		if(which >= 2)
-			model.frequency = 0.2+1.8*fraction;
+	(name, value, ok) := tracks.hit(point, r);
+	if(ok){
+		case name {
+		"damping" => model.damping = value;
+		"drive" => model.drive = value;
+		"frequency" => model.frequency = value;
+		}
 	}else if(point.x < r.min.x+r.dx()/3){
 		pivot := Point(r.min.x+r.dx()/6,r.min.y+105);
 		dx := real(point.x-pivot.x);
@@ -209,6 +226,7 @@ redraw()
 		return;
 	image.draw(image.r,background,nil,Point(0,0));
 	graph.image = image;
+	tracks.image = image;
 	graph.cmd("clear");
 	phase := Rect((image.r.min.x+image.r.dx()/3+42,image.r.min.y+38),
 		(image.r.max.x-22,image.r.min.y+image.r.dy()/2-8));
@@ -242,7 +260,7 @@ redraw()
 			model.damping,model.drive,model.frequency,time));
 	image.text((phase.min.x+5,phase.min.y+14),accent,Point(0,0),font,
 		"orange: once per forcing period (Poincare section)");
-	drawcontrols(image);
+	tracks.draw(image.r);
 	image.flush(Draw->Flushnow);
 }
 
@@ -258,27 +276,6 @@ drawpendulum(image: ref Image)
 	image.ellipse(pivot,5,5,0,accent,Point(0,0));
 	image.text((pivot.x-75,pivot.y+length+28),foreground,Point(0,0),font,
 		sys->sprint("angle %.3f   velocity %.3f",state[0],state[1]));
-}
-
-drawcontrols(image: ref Image)
-{
-	width := image.r.dx()/3;
-	drawcontrol(image,0,"damping",model.damping,1.0,width);
-	drawcontrol(image,1,"drive",model.drive,2.0,width);
-	drawcontrol(image,2,"frequency",model.frequency,2.0,width);
-}
-
-drawcontrol(image: ref Image, which: int, name: string,
-		value, maximum: real, width: int)
-{
-	left := image.r.min.x+which*width+8;
-	right := left+width-16;
-	y := image.r.max.y-28;
-	image.line((left,y),(right,y),0,0,2,grid,Point(0,0));
-	x := left+int(value/maximum*real(right-left));
-	image.ellipse((x,y),4,4,0,accent,Point(0,0));
-	image.text((left,image.r.max.y-9),foreground,Point(0,0),font,
-		sys->sprint("%s %.3g",name,value));
 }
 
 timer(ticks: chan of int)

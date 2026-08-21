@@ -16,6 +16,9 @@ include "numerics.m";
 include "plot.m";
 	plot: Plot;
 	Plotter: import plot;
+include "paramtracks.m";
+	paramtracks: Paramtracks;
+	Tracks: import paramtracks;
 include "danby/lorenz.m";
 	lorenz: Lorenz;
 	Model: import lorenz;
@@ -29,8 +32,9 @@ Chaos: module
 
 win: ref Window;
 font: ref Font;
-background, foreground, grid, live, accent: ref Image;
+background, foreground, live: ref Image;
 graph: ref Plotter;
+tracks: ref Tracks;
 model: ref Model;
 work, nearwork: ref Numerics->Workspace;
 state := array[] of {0.1,0.0,0.0};
@@ -48,10 +52,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	math = load Math Math->PATH;
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
+	paramtracks = load Paramtracks Paramtracks->PATH;
 	lorenz = load Lorenz Lorenz->PATH;
 	env = load Env Env->PATH;
 	if(sys == nil || draw == nil || wmclient == nil || math == nil ||
-			numerics == nil || plot == nil || lorenz == nil)
+			numerics == nil || plot == nil || paramtracks == nil || lorenz == nil)
 		raise "fail:chaos: missing module";
 	if(argv != nil && tl argv != nil)
 		lessonstem = hd tl argv;
@@ -72,14 +77,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	font = Font.open(win.display,"/fonts/lucida/unicode.8.font");
 	background = win.display.color(int 16rf4f0e7ff);
 	foreground = win.display.color(int 16r20272cff);
-	grid = win.display.color(int 16rd6d0c4ff);
 	live = win.display.color(int 16r178f86ff);
-	accent = win.display.color(int 16rb85c38ff);
 	model = lorenz->new(10.0,28.0,8.0/3.0);
 	work = numerics->workspace(len state);
 	nearwork = numerics->workspace(len nearby);
 	graph = plot->new(win.image,font);
+	tracks = paramtracks->new(win.image,font);
 	declareplot();
+	declaretracks();
 	reset();
 	win.reshape(Rect((0,0),(900,610)));
 	win.onscreen("place");
@@ -130,6 +135,23 @@ declareplot()
 		raise "fail:chaos: " + error;
 }
 
+declaretracks()
+{
+	error := tracks.cmd(
+		"colour foreground 16r20272cff\n" +
+		"colour grid 16rd6d0c4ff\n" +
+		"colour accent 16rb85c38ff\n" +
+		"band " + string ControlBandH + "\n" +
+		"track sigma 0 25 colour accent\n" +
+		"track rho 0 50 colour accent\n" +
+		"track beta 0 5 colour accent\n" +
+		"set sigma 10\n" +
+		"set rho 28\n" +
+		sys->sprint("set beta %g", 8.0/3.0));
+	if(error != nil)
+		raise "fail:chaos: " + error;
+}
+
 reset()
 {
 	state[0] = 0.1;
@@ -176,20 +198,13 @@ setpointer(point: Point)
 		return;
 	r := win.image.r;
 	bandtop := r.max.y-ControlBandH;
-	if(point.y >= bandtop){
-		width := r.dx()/3;
-		which := (point.x-r.min.x)/width;
-		fraction := real(point.x-(r.min.x+which*width))/real(width);
-		if(fraction < 0.02)
-			fraction = 0.02;
-		if(fraction > 0.98)
-			fraction = 0.98;
-		if(which == 0)
-			model.sigma = 25.0*fraction;
-		if(which == 1)
-			model.rho = 50.0*fraction;
-		if(which >= 2)
-			model.beta = 5.0*fraction;
+	(name, value, ok) := tracks.hit(point, r);
+	if(ok){
+		case name {
+		"sigma" => model.sigma = value;
+		"rho" => model.rho = value;
+		"beta" => model.beta = value;
+		}
 		reset();
 	}else{
 		drawh := bandtop-r.min.y-40;
@@ -213,6 +228,7 @@ redraw()
 		return;
 	image.draw(image.r,background,nil,Point(0,0));
 	graph.image = image;
+	tracks.image = image;
 	graph.cmd("clear");
 	bandtop := image.r.max.y-ControlBandH;
 	middle := image.r.min.y+image.r.dy()*2/3;
@@ -246,25 +262,8 @@ redraw()
 	image.text(image.r.min.add((12,19)),foreground,Point(0,0),font,
 		sys->sprint("Lorenz pair: initial separation 10^-6   t %.2f   x %.3f/%.3f",
 			time,state[0],nearby[0]));
-	drawcontrol(image,0,"sigma",model.sigma,25.0);
-	drawcontrol(image,1,"rho",model.rho,50.0);
-	drawcontrol(image,2,"beta",model.beta,5.0);
+	tracks.draw(image.r);
 	image.flush(Draw->Flushnow);
-}
-
-drawcontrol(image: ref Image, which: int, name: string,
-		value, maximum: real)
-{
-	width := image.r.dx()/3;
-	left := image.r.min.x+which*width+5;
-	right := left+width-11;
-	bandtop := image.r.max.y-ControlBandH;
-	y := bandtop+24;
-	image.line((left,y),(right,y),0,0,2,grid,Point(0,0));
-	x := left+int(value/maximum*real(right-left));
-	image.ellipse((x,y),4,4,0,accent,Point(0,0));
-	image.text((left,bandtop+45),foreground,Point(0,0),font,
-		sys->sprint("%s %.3g",name,value));
 }
 
 timer(ticks: chan of int)

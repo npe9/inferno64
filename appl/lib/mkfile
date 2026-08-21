@@ -89,6 +89,7 @@ TARG=\
 	palm.dis\
 	palmdb.dis\
 	palmfile.dis\
+	paramtracks.dis\
 	parseman.dis\
 	plumbmsg.dis\
 	plumbing.dis\
