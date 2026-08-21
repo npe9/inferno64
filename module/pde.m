@@ -51,13 +51,15 @@ Pde: module
 	# expressible here - this spec describes one field's worth of
 	# problem. Call gray() directly, as before.)
 	#
-	# solver gmres/cg only applies to "equation diffuse" - that operator
-	# is genuinely symmetric positive definite for clamp/periodic
-	# boundaries (so "solver cg" is valid and faster there), and general
-	# enough with zero boundaries or a future non-symmetric equation that
-	# "solver gmres" is the safe default. "equation wave" has no implicit
-	# solver in this tree yet; newproblem rejects it with "solver
-	# explicit" required.
+	# Both "equation diffuse" and "equation wave" have genuinely symmetric
+	# positive definite implicit operators for clamp/periodic boundaries
+	# (each is the identity minus a positive multiple of the same
+	# negative-semidefinite discrete Laplacian) - so "solver cg" is valid
+	# and faster for either there, and "solver gmres" is the safe general
+	# default (zero boundaries, or a future non-symmetric equation).
+	# wave's implicit step keeps the field's old array meaning exactly
+	# what it already means for explicit wave()/splatold() - the previous
+	# time level, not a second, solver-dependent convention.
 	Problem: adt {
 		field:	ref Field;
 

@@ -85,31 +85,43 @@ The default: the same stability-limited
 routines described above, internally subdividing dt as needed.
 .TP
 .BI "solver gmres|cg [tolerance " T "] [restart " R "] [maxiter " N ]
-Solves
-.B "equation diffuse"
-implicitly (backward Euler) via
+Solves either equation implicitly via
 .IR krylov (2)
 instead, matrix-free, unconditionally stable for any dt \(em unlike
 .BR explicit ,
-it never needs to subdivide the requested step.  The operator is
-symmetric positive definite for
+it never needs to subdivide the requested step.  For
+.B diffuse
+this is ordinary backward Euler; for
+.B wave
+it is the same central-difference-in-time update
+.B explicit
+uses, with the Laplacian moved onto the new time level (a single
+linear solve for the new position, not a larger indirect system),
+which keeps
+.BR Field 's
+.B old
+array meaning exactly what
+.B splatold
+and explicit
+.B wave
+already document \(em the previous time level, not a second,
+solver-dependent convention.  Both operators are symmetric positive
+definite for
 .B clamp
 or
 .B periodic
-boundaries, so
+boundaries (each is the identity minus a positive multiple of the same
+negative-semidefinite discrete Laplacian), so
 .B cg
 is valid (and faster) there;
 .B gmres
-is the safe general default.  Krylov internals never cross this
-interface \(em nothing outside
+is the safe general default (zero boundaries, or a future
+non-symmetric equation).  Krylov internals never cross this interface
+\(em nothing outside
 .I pde.b
 itself ever sees a
 .IR krylov (2)
-type.  Only valid with
-.BR "equation diffuse" ;
-.B "equation wave"
-has no implicit solver in this tree yet and rejects any solver but
-.BR explicit .
+type.
 .TP
 .BI "time step " DT
 Sets the default step

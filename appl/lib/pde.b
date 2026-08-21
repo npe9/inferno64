@@ -124,6 +124,7 @@ swap(f: ref Field)
 # time, so that's not a real constraint here.
 opfield: ref Field;
 opdt, opdiffusivity: real;
+opq: real;	# waveop's speed^2*dt^2 coefficient
 
 # Same boundary-aware 5-point stencil as lap(), but reading an arbitrary
 # vector laid out like f.u instead of f.u itself - what lets diffuseop()
@@ -184,6 +185,61 @@ solvediffuse(p: ref Problem, dt: real): string
 	if(!solver.converged)
 		return sys->sprint("step: %s failed to converge (residual %g after %d iterations)",
 			p.solvermethod, solver.residual, solver.iterations);
+	f.u[0:] = x;
+	return nil;
+}
+
+# --- implicit wave, matrix-free via krylov(2) ---
+
+# diffuse()'s implicit reformulation moves diffusion's own explicit
+# term (h*d*lap(...)) to the new time level. This does exactly the same
+# thing to wave()'s own explicit central-difference-in-time update
+#   u_new = (2-damping*h)*u - (1-damping*h)*old + speed^2*h^2*lap(u)
+# (see wave() above; h is the actual step, damping*h/speed^2*h^2
+# written as d/q there) - only the lap(u) term moves to lap(u_new):
+#   u_new - q*lap(u_new) = (2-d)*u - (1-d)*old
+# a single linear solve for u_new alone, q=speed^2*dt^2, d=damping*dt.
+# This is the point of doing it this way rather than the more obvious
+# (u, du/dt) first-order-system reformulation: it keeps old's meaning
+# exactly what explicit wave() and splatold() already document ("the
+# previous time level"), not a second, incompatible convention a caller
+# would have to know about depending on which solver is active. It is
+# also symmetric positive definite for clamp/periodic boundaries (I
+# minus a positive multiple of the same negative-semidefinite Laplacian
+# diffusion's own implicit solve uses) - so unlike the (u,v) shape this
+# replaced, "solver cg" is valid here too, not just gmres.
+waveop(x: array of real): array of real
+{
+	f := opfield;
+	y := array[len x] of real;
+	for(iy := 0; iy < f.ny; iy++)
+		for(ix := 0; ix < f.nx; ix++){
+			i := iy*f.nx+ix;
+			y[i] = x[i] - opq*lapvec(f,x,ix,iy);
+		}
+	return y;
+}
+
+solvewave(p: ref Problem, dt: real): string
+{
+	f := p.field;
+	if(p.speed <= 0.0 || dt <= 0.0)
+		return nil;
+	d := p.damping*dt;
+	q := p.speed*p.speed*dt*dt;
+	rhs := array[len f.u] of real;
+	for(i := 0; i < len rhs; i++)
+		rhs[i] = (2.0-d)*f.u[i] - (1.0-d)*f.old[i];
+	opfield = f;
+	opq = q;
+	solver := krylov->new();
+	solver.cmd(sys->sprint("method %s\ntolerance %g\nrestart %d\nmaxiter %d",
+		p.solvermethod, p.tolerance, p.restart, p.maxiter));
+	x := solver.solve(waveop, rhs, f.u);
+	if(!solver.converged)
+		return sys->sprint("step: %s failed to converge (residual %g after %d iterations)",
+			p.solvermethod, solver.residual, solver.iterations);
+	f.old[0:] = f.u;
 	f.u[0:] = x;
 	return nil;
 }
@@ -280,8 +336,6 @@ newproblem(spec: string): (ref Problem, string)
 		return (nil, "newproblem: spec has no mesh line");
 	if(equation == "")
 		return (nil, "newproblem: spec has no equation line");
-	if(equation == "wave" && solvermethod != "explicit")
-		return (nil, "equation wave: no implicit solver available - use solver explicit");
 	f := new(grid.nx, grid.ny, grid.dx, grid.dy, grid.bc);
 	return (ref Problem(f, equation, solvermethod, diffusivity, speed, damping,
 		tolerance, restart, maxiter, defaultstep), nil);
@@ -320,8 +374,11 @@ step(p: ref Problem, dt: real): string
 		}
 		return solvediffuse(p, dt);
 	"wave" =>
-		wave(p.field, p.speed, p.damping, dt);
-		return nil;
+		if(p.solvermethod == "explicit"){
+			wave(p.field, p.speed, p.damping, dt);
+			return nil;
+		}
+		return solvewave(p, dt);
 	}
 	return "step: unknown equation " + p.equation;
 }
