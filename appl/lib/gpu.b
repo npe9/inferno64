@@ -144,6 +144,27 @@ Backend.apply(b: self ref Backend, m: ref CSR): Apply
 		cpumatrix = m;
 		return cpuapply;
 	}
+	# Ask the device what it would ACTUALLY compute in before trusting
+	# it with a solve. A real hardware backend is f32-only (Metal has
+	# no double), so honouring a caller's "precision f64" means
+	# declining the device rather than quietly handing back single
+	# precision - the same never-silently-wrong discipline the
+	# unavailable-device path above already follows.
+	pq := array of byte "P\n";
+	sys->write(fd, pq, len pq);
+	pbuf := array[16] of byte;
+	pn := sys->read(fd, pbuf, len pbuf);
+	devprec := "f64";
+	if(pn >= 3)
+		devprec = string pbuf[0:3];
+	# Asking for f32 and getting f64 is strictly more precision than
+	# requested, never a problem; only the reverse is.
+	if(b.precision == "f64" && devprec != "f64"){
+		b.lasterror = "backend: device gpu computes in " + devprec +
+			", precision f64 requested - using cpu";
+		cpumatrix = m;
+		return cpuapply;
+	}
 	umsg := sys->sprint("U %d %d\n", m.n, len m.val);
 	for(i := 0; i <= m.n; i++)
 		umsg += sys->sprint("%d ", m.rowptr[i]);

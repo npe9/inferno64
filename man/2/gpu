@@ -41,12 +41,37 @@ Where the matvec runs. Default
 .BR cpu .
 .TP
 .BI "precision f32|f64"
-A real tradeoff, not decoration: a GPU's own throughput advantage is
-largest at
-.BR f32 ,
-at the cost of needing a looser
-.IR krylov (2)
-tolerance to match it. Default
+A real tradeoff, and genuinely enforced. GPU compute is f32-only
+(Metal has no
+.BR double ),
+so this verb decides whether the hardware path may be used at all:
+.B apply
+asks
+.IR gpu (3)
+what it would actually compute in, and if that is less precise than
+what was asked for, it declines the device and runs on the
+.B cpu
+instead, saying so through
+.BR lasterror ,
+rather than quietly returning single precision. Asking for
+.B f32
+and getting a device that computes in
+.B f64
+is never a problem, only the reverse. Default
+.BR f64 ,
+which therefore means
+.B "device gpu"
+alone will
+.B not
+use the GPU \(em ask for
+.B "precision f32"
+explicitly when the loss is acceptable. The cost is real and visible:
+an
+.IR fem (2)
+Poisson solve at
+.B f32
+converges in 9 CG iterations to a residual near 1e\-11, against 7
+iterations and 1e\-17 at
 .BR f64 .
 .TP
 .BI "resident on|off"
@@ -74,11 +99,15 @@ is currently configured for.
 .B Apply
 never silently substitutes
 .B cpu
-for a requested-but-unavailable
+for a
 .B gpu
-without saying so:
+that was asked for but can't be honoured \(em whether because
+.IR gpu (3)
+isn't reachable at all, or because it computes in less precision than
+.B precision
+called for (see above).
 .B b.lasterror
-is set afterward to describe what it actually had to do instead (e.g.
+is set afterward to say which of those happened (e.g.
 .RI \(lq backend: " " "device gpu requested but unavailable, using cpu" \(rq),
 or left
 .B nil
@@ -86,7 +115,14 @@ if the call ran exactly as configured \(em the same observable-not-
 swallowed convention
 .IR pde (2)/ fem (2)
 already use for a solver that failed to converge, applied here to a
-backend that couldn't be honoured instead.
+backend that couldn't be honoured instead. When the GPU
+.B is
+used, the matrix is uploaded to it once and only the vector crosses
+per
+.IR krylov (2)
+iteration, which is what
+.B resident
+above refers to.
 .PP
 .B Available
 is a real check, not a promise: it attempts to reach
@@ -153,12 +189,14 @@ is
 \(em a real Styx device (matching
 .IR ssl (3)'s
 own shape: open a handle, upload a matrix once, exchange only the
-vector per call), running the matvec itself on the CPU for now, not
-yet a Metal compute pipeline; see
+vector per call). On this platform its kernel is a real Metal compute
+pipeline, one GPU thread per matrix row; on a platform without one it
+runs the same matvec on the CPU instead, with nothing in this
+interface differing either way except what
+.B precision
+reports. See
 .IR gpu (3)
-for why that split is deliberate and what would change (only
-.IR gpu (3)'s
-own C, nothing here) to make it a real GPU-backed kernel.
+for the device protocol and how that split is arranged.
 .SH SEE ALSO
 .IR sparse (2),
 .IR krylov (2),

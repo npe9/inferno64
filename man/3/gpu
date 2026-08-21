@@ -48,7 +48,23 @@ immediately followed by one response.
 The protocol is line-oriented text, not binary, for now (see
 .B PERFORMANCE
 below). Each write is one request; the following read returns its
-response. Two request shapes, both starting with a one-letter tag:
+response. Three request shapes, each starting with a one-letter tag:
+.EX
+	P
+.EE
+The following read returns
+.B f32
+or
+.BR f64 :
+the precision this device would
+.B actually
+compute in. Not cosmetic \(em a hardware backend is f32-only (Metal
+has no double), so a caller needing f64 must know that
+.B before
+trusting a result. This is what
+.IR gpu (2)'s
+.B precision
+verb queries.
 .EX
 	U n nnz
 	rowptr (n+1 space-separated integers)
@@ -77,60 +93,83 @@ values). The following read returns
 the same way, space-separated reals.
 .PP
 Closing the handle frees its matrix state.
-.SH PERFORMANCE
-The matvec itself
-.RI ( gpuspmv ()
-in the source) runs on the CPU, in this device, today \(em despite the
-name, nothing here dispatches to an actual GPU yet. This is a
-deliberate staging choice, not the finished design: it validates the
-whole protocol and the
-.IR gpu (2)/ fem (2)
-plumbing above it end to end (confirmed:
-.IR gpu (2)'s
-own
-.B available
-genuinely returns true through this device, and a
-.B "backend gpu"
-.IR fem (2)
-solve matches an equivalent
-.B "backend cpu"
-solve to floating-point precision) before adding the actual
-acceleration. A real GPU-backed replacement changes only
-.B gpuspmv()
-and the object this device links against \(em nothing in
-.IR gpu (2)'s
-own interface, or in this device's own read/write protocol, needs to
-change for it \(em mirroring how the existing GPU
-.I draw
-hooks
-.RI ( gpudrawfillpoly3d / g ,
-implemented in
-.B win-cocoa.m )
-already sit one layer below
-.IR draw (2)
-without
-.I draw.m
-itself knowing Metal exists. The natural next step is a
-.B win-gpu.m
-building a real
-.B MTLComputePipelineState
-kernel, registered in this platform's device manifest
-.RB ( emu-cocoa )
-the same way
-.B draw
-already names
-.B win-cocoa
-as its own extra source.
+.SH IMPLEMENTATION
+The numeric kernel is not this device's own job. It dispatches through
+three nullable hooks \(em
+.BR gpuhwupload ,
+.BR gpuhwspmv ,
+.B gpuhwfree
+\(em exactly the convention
+.I devdraw.c
+already uses for
+.BR gpudrawfillpoly3d / g :
+a platform backend that has real GPU compute assigns them at load
+time, and everywhere they are nil every matvec silently uses this
+device's own portable CPU loop instead. Adding or removing a hardware
+backend therefore changes nothing about this device's Styx surface,
+and no platform
+.B #ifdef
+appears in it.
 .PP
-The text protocol itself is also a correctness-first choice: real
-matrix upload happens once per solve, so parsing overhead doesn't
-matter there; a high-throughput version would move the
+On this platform
+.RB ( win-gpu.m ,
+named by the
+.B gpu
+line in the
+.B emu-cocoa
+device manifest, the same way
+.B draw
+names
+.BR win-cocoa )
+those hooks are a real
+.B MTLComputePipelineState
+running one GPU thread per matrix row. The matrix buffers are uploaded
+once per matrix and stay device-resident; only the x and y vectors
+cross per matvec \(em which is the whole reason offloading a Krylov
+solve pays off, and what
+.IR gpu (2)'s
+.B resident
+verb refers to. That file deliberately includes no Inferno headers at
+all: the hooks are plain C types on both sides, so it needs neither
+.I dat.h
+nor the
+.BR Point / Rect
+renaming
+.I win-cocoa.m
+has to do.
+.PP
+Metal Shading Language has no
+.BR double ,
+so the hardware path is inherently f32, converting on the way in and
+out. That is a hardware property, not a shortcut, and it is why the
+.B P
+request above exists: rather than quietly returning single precision
+to a caller who asked for double,
+.IR gpu (2)
+asks this device what it would really compute in and declines to use
+it when that is not good enough. The effect is directly observable
+\(em an
+.IR fem (2)
+Poisson solve with
+.B "backend gpu precision f32"
+converges in 9 CG iterations to a residual around 1e\-11, against 7
+iterations and 1e\-17 for the same solve on the CPU, with the two
+solutions agreeing to about 4e\-8: f32 epsilon, exactly as expected.
+.PP
+The text protocol remains a correctness-first choice, and is now the
+obvious next thing to improve: matrix upload happens once per solve so
+its parsing cost is irrelevant, but the
 .B X
-exchange \(em the one part called every Krylov iteration \(em to a
-compact binary encoding once real GPU compute makes that exchange the
-actual bottleneck.
+exchange runs every Krylov iteration and currently formats and reparses
+the whole vector as text each time. A compact binary encoding there
+\(em which changes neither
+.IR gpu (2)'s
+interface nor the hardware hooks \(em is where the real throughput win
+now is, since the kernel itself already runs on the GPU.
 .SH SOURCE
 .B /emu/port/devgpu.c
+.br
+.B /emu/MacOSX/win-gpu.m
 .SH SEE ALSO
 .IR gpu (2),
 .IR sparse (2),

@@ -20,6 +20,13 @@
  * session was scoped. Write one request, then read its response,
  * exactly once per write - no pipelining.
  *
+ *   write "P\n"
+ *       -> read() afterward returns "f32\n" or "f64\n": the precision
+ *          this device would actually compute in. Not cosmetic - a
+ *          hardware backend is f32-only (Metal has no double), so a
+ *          caller who needs f64 has to know that BEFORE trusting a
+ *          result, which is exactly what gpu(2)'s "precision" verb
+ *          uses this for.
  *   write "U <n> <nnz>\n<n+1 rowptr ints>\n<nnz colidx ints>\n<nnz val reals>\n"
  *       -> upload a CSR matrix, replacing any previous upload on
  *          this handle. read() afterward returns "OK\n" or an error.
@@ -28,10 +35,14 @@
  *          none uploaded, or n doesn't match). read() afterward
  *          returns "<n reals>\n", the result y.
  *
- * The matvec itself runs on the CPU in this device (software.c) -
- * this file's whole job is the protocol and handle lifecycle, not
- * the numeric kernel; a future GPU-backed replacement of gpuspmv()
- * changes only software.c, not this file's Styx surface.
+ * The numeric kernel itself is NOT this file's job: gpuspmv() below
+ * dispatches to a platform backend's real GPU compute through the
+ * nullable gpuhw* hooks (win-gpu.m provides Metal ones on this
+ * platform), and falls back to a portable CPU loop wherever no such
+ * backend is linked - the same convention devdraw.c already uses for
+ * gpudrawfillpoly3d/g. This file owns only the protocol and handle
+ * lifecycle, so neither adding nor removing a hardware backend
+ * changes its Styx surface at all.
  */
 #include	"dat.h"
 #include	"fns.h"
@@ -48,6 +59,25 @@ enum
 #define HANDLE(q)	((int)(q).path >> 4)
 #define QID(h, t)	(((h)<<4) | (t))
 
+/*
+ * Nullable hardware hooks, exactly the convention devdraw.c already
+ * uses for gpudrawfillpoly3d/g: a platform backend that has real GPU
+ * compute (win-gpu.m, Metal) assigns these at load time; everywhere
+ * else they stay nil and every matvec silently uses the portable CPU
+ * path below. Plain C types only, so the backend implementing them
+ * needs no Inferno headers at all.
+ *
+ * gpuhwupload returns an opaque per-matrix handle (device-resident
+ * buffers) or nil if it can't; gpuhwspmv returns 0 if it couldn't run
+ * and the caller should fall back. Metal has no f64, so a hardware
+ * backend is inherently f32 - gpu(2) is what decides whether that's
+ * acceptable for a given solve (see its "precision" verb), not this
+ * file.
+ */
+void*	(*gpuhwupload)(int n, int nnz, int *rowptr, int *colidx, double *val);
+int	(*gpuhwspmv)(void *h, double *x, double *y, int n);
+void	(*gpuhwfree)(void *h);
+
 typedef struct Gstate Gstate;
 struct Gstate
 {
@@ -57,6 +87,7 @@ struct Gstate
 	int	*rowptr;
 	int	*colidx;
 	double	*val;
+	void	*hw;		/* gpuhwupload handle, or nil for the CPU path */
 
 	char	*resp;		/* pending read() response */
 	int	resplen;
@@ -67,14 +98,16 @@ static Gstate	*gtab;
 static int	ngtab;
 static Lock	gtablock;
 
-/* Software matvec: y = A*x, CSR. The one thing a real GPU backend
- * would replace - kept as its own function for exactly that reason. */
+/* y = A*x, CSR - on real GPU hardware when a backend provided one for
+ * this matrix, otherwise the portable CPU path. */
 static void
 gpuspmv(Gstate *g, double *x, double *y)
 {
 	int row, jj;
 	double s;
 
+	if(g->hw != nil && gpuhwspmv != nil && gpuhwspmv(g->hw, x, y, g->n))
+		return;
 	for(row = 0; row < g->n; row++){
 		s = 0.0;
 		for(jj = g->rowptr[row]; jj < g->rowptr[row+1]; jj++)
@@ -86,6 +119,9 @@ gpuspmv(Gstate *g, double *x, double *y)
 static void
 gfree(Gstate *g)
 {
+	if(g->hw != nil && gpuhwfree != nil)
+		gpuhwfree(g->hw);
+	g->hw = nil;
 	free(g->rowptr);
 	free(g->colidx);
 	free(g->val);
@@ -321,6 +357,19 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 	memmove(buf, va, n);
 	buf[n] = 0;
 
+	if(buf[0] == 'P'){
+		free(buf);
+		lock(&gtablock);
+		/* A hardware backend is f32-only; the portable fallback is
+		 * f64. Report what a matvec on THIS handle would really
+		 * compute in, not what the device is named after. */
+		if(gpuhwspmv != nil && gpuhwupload != nil)
+			setresp(g, strdup("f32\n"));
+		else
+			setresp(g, strdup("f64\n"));
+		unlock(&gtablock);
+		return n;
+	}
 	if(buf[0] == 'U'){
 		s = buf+1;
 		while(*s == ' ')
@@ -342,12 +391,21 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 			error(Ebadarg);
 		}
 		lock(&gtablock);
+		if(g->hw != nil && gpuhwfree != nil)
+			gpuhwfree(g->hw);
+		g->hw = nil;
 		free(g->rowptr); free(g->colidx); free(g->val);
 		g->rowptr = rowptr;
 		g->colidx = colidx;
 		g->val = val;
 		g->n = nn;
 		g->nnz = nnz;
+		/* Resident upload: the matrix goes to the device once here,
+		 * and only the vector crosses per matvec afterward - the whole
+		 * point of gpu(2)'s own "resident on". A nil return just means
+		 * this matvec runs on the CPU instead; never an error. */
+		if(gpuhwupload != nil)
+			g->hw = gpuhwupload(nn, nnz, rowptr, colidx, val);
 		setresp(g, strdup("OK\n"));
 		unlock(&gtablock);
 		return n;

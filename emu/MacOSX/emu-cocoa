@@ -21,7 +21,7 @@ dev
 	ip	ipif-posix ipaux
 	eia
 	audio	audio-cocoa
-	gpu
+	gpu	win-gpu
 	mem
 
 lib
