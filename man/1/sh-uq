@@ -1,0 +1,75 @@
+.TH SH-UQ 1
+.SH NAME
+uq \- shell script interface to uq(2)
+.SH SYNOPSIS
+.B load uq
+
+.B ${uq
+.I spec template
+.B }
+.SH DESCRIPTION
+.I Uq
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR uq (2)'s
+Monte Carlo uncertainty-quantification sweep over a
+.IR pde (2)
+problem \(em a study naturally driven and reported from a shell
+script, the same as
+.IR sh-verify (1)'s
+convergence check.
+.PP
+.I Spec
+and
+.I template
+are each a single shell word, built the same way any other multi-line
+spec string is assembled in
+.IR sh (1)
+scripts: quoted single-line fragments joined with
+.BR sh (1)'s
+own
+.B ^
+concatenation operator and a variable
+.RI ( nl ,
+say) holding one newline character.  Given such an
+.IR nl :
+.EX
+	load uq
+	template = 'mesh 20x20 domain 1x1 bc clamp'^$nl^'equation diffuse diffusivity $D'^$nl^'solver gmres tolerance 1e-8 restart 30'^$nl^'time step 0.01'
+	spec = 'sample D uniform 0.03 0.08'^$nl^'count 20'^$nl^'init splat 10 10 0 1.0'^$nl^'until 0.5'^$nl^'observe get 10 10'
+	result = ${uq $spec $template}
+	echo $result
+.EE
+.I Spec
+and
+.I template
+follow exactly
+.IR uq (2)'s
+own grammar, documented there in full.
+.PP
+.B ${uq}
+yields one element carrying the summary \(em six space-separated
+numbers,
+.RI \(lq n " " nfailed " " mean " " stddev " " min " " max \(rq
+\(em followed by
+.I n
+more elements, the raw quantity-of-interest value from each
+successful draw, the same fields
+.IR uq (2)'s
+own
+.B Summary
+carries.  A malformed spec or template, or a template where every draw
+fails, raises a
+.B uq
+exception with the same text
+.IR uq (2)'s
+.B run
+would have returned.
+.SH SOURCE
+.B /appl/cmd/sh/uq.b
+.SH SEE ALSO
+.IR uq (2),
+.IR sh (1),
+.IR sh-pde (1),
+.IR sh-verify (1)

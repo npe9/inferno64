@@ -1,0 +1,133 @@
+.TH UQ 2
+.SH NAME
+uq: run \- Monte Carlo uncertainty quantification over a pde(2) problem
+.SH SYNOPSIS
+.EX
+include "uq.m";
+uq := load Uq Uq->PATH;
+
+template := "mesh 20x20 domain 1x1 bc clamp\en" +
+	"equation diffuse diffusivity $D\en" +
+	"solver gmres tolerance 1e-8 restart 30\en" +
+	"time step 0.01";
+(s, err) := uq->run(
+	"sample D uniform 0.03 0.08\encount 200\enseed 1\en" +
+	"init splat 10 10 3 1.0\enuntil 5.0\enobserve get 10 10",
+	template);
+.EE
+.SH DESCRIPTION
+.I Uq
+answers a different question than
+.IR verify (2)
+does: not "does this converge at the right order" but "given
+uncertainty in one input, what's the resulting spread in an output" -
+the standard meaning of uncertainty quantification, one layer above
+.IR pde (2)'s
+own problem language, in the same declarative spirit: describe the
+family of problems and what to look at, not a sampling loop written by
+hand.
+.PP
+.I Template
+is an ordinary
+.IR pde (2)
+spec, except it contains
+.B $NAME
+(a single token, exactly where a number would go) wherever the sampled
+value belongs.  Nothing about sampling or statistics crosses into
+.IR pde (2)
+itself \(em
+.I uq.b
+only ever calls
+.IR pde (2)'s
+own
+.BR newproblem ,
+.BR run ,
+.BR clear ,
+.BR splat ,
+and
+.BR get ,
+the same as any other caller would.
+.PP
+.I Uqspec
+is one or more newline-separated lines:
+.TP
+.BI "sample " name " uniform " lo " " hi
+.TP
+.BI "sample " name " normal " mean " " stddev
+The parameter to vary and its distribution.  Exactly one
+.B sample
+line is supported; sampling more than one parameter at once isn't
+built yet.
+.TP
+.BI "count " n
+How many draws.
+.TP
+.BI "seed " s
+Optional; default 1.  The same seed reproduces the same draws.
+.TP
+.BI "init clear " value
+.TP
+.BI "init splat " cx " " cy " " radius " " value
+Optional initial condition applied to each draw's field before
+running (a fresh field from
+.IR pde (2)'s
+.B newproblem
+starts at all zero, so a study observing anything other than the
+zero state needs one of these).
+.TP
+.BI "until " t
+Required: each draw runs to this total time via
+.IR pde (2)'s
+own
+.BR run ,
+which needs the template's own
+.B "time step"
+line.
+.TP
+.BI "observe get " x " " y
+.TP
+.B "observe mean"
+The scalar quantity of interest read back from each draw's final
+field: a single grid value, or the field's average (useful as a
+conservation check \(em a no-flux boundary diffusion should show
+near-zero spread here regardless of how much the sampled parameter
+varies, even though a
+.B get
+at one point varies a great deal).
+.PP
+.B Run
+draws
+.I count
+samples, substitutes each into
+.I template
+in place of
+.BR $NAME ,
+builds and runs a fresh problem for each, and summarizes the resulting
+.I count
+quantity-of-interest values.  A draw whose spec fails to parse or whose
+solver fails to converge is skipped, not fatal to the whole study (a
+single unstable-regime draw shouldn't kill an otherwise-good batch);
+.B Summary.nfailed
+counts how many were skipped.  If every draw fails,
+.B run
+returns an error rather than a bogus all-zero summary.
+.PP
+.B Summary
+carries
+.BR mean ,
+.BR stddev ,
+.BR min ,
+and
+.B max
+over the successful draws, plus the raw
+.B samples
+array itself for a caller that wants its own histogram or percentiles
+beyond these four numbers.
+.SH SOURCE
+.B /module/uq.m
+.br
+.B /appl/lib/uq.b
+.SH SEE ALSO
+.IR pde (2),
+.IR verify (2),
+.IR sh-uq (1)

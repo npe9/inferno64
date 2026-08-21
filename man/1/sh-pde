@@ -207,4 +207,5 @@ own SYNOPSIS shows in Limbo:
 .IR krylov (2),
 .IR sh (1),
 .IR sh-mesh (1),
-.IR sh-verify (1)
+.IR sh-verify (1),
+.IR sh-uq (1)

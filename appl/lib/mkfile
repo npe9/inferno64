@@ -156,6 +156,7 @@ TARG=\
 	tone.dis\
 	translate.dis\
 	ubfa.dis\
+	uq.dis\
 	url.dis\
 	vac.dis\
 	venti.dis\

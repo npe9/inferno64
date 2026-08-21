@@ -149,6 +149,7 @@ holding a garbage state.
 .IR mesh (2),
 .IR krylov (2),
 .IR verify (2),
+.IR uq (2),
 .IR ode (2),
 .IR pdelab (1),
 .IR sh-pde (1)

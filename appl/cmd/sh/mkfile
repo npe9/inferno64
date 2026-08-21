@@ -16,6 +16,7 @@ TARG=sh.dis\
 	test.dis\
 	mesh.dis\
 	pde.dis\
+	uq.dis\
 	verify.dis\
 
 INS=	$ROOT/dis/sh.dis\
@@ -33,6 +34,7 @@ INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/test.dis\
 	$ROOT/dis/sh/mesh.dis\
 	$ROOT/dis/sh/pde.dis\
+	$ROOT/dis/sh/uq.dis\
 	$ROOT/dis/sh/verify.dis\
 
 SYSMODULES=\
@@ -47,6 +49,7 @@ SYSMODULES=\
 	sh.m\
 	string.m\
 	sys.m\
+	uq.m\
 	verify.m\
 	tk.m\
 	tkclient.m\

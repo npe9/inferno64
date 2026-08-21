@@ -1474,6 +1474,9 @@ report repeated lines in a file
 .IR units (1)
 conversion program
 .TP
+.IR uq (1)
+shell script interface to uq(2)
+.TP
 .IR uuencode (1)
 encode/decode a file
 .TP
