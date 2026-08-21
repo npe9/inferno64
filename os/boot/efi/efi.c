@@ -10,6 +10,7 @@ void* (*open)(char *name);
 int (*read)(void *f, void *data, int len);
 void (*close)(void *f);
 void (*stop)(void);
+extern void *rebase(void *);
 
 void
 putc(int c)
@@ -295,6 +296,11 @@ efimain(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st)
 	f = nil;
 	if(pxeinit(&f) && isoinit(&f) && fsinit(&f))
 		print("no boot devices\n");
+	open = rebase(open);
+	read = rebase(read);
+	close = rebase(close);
+	if(stop != nil)
+		stop = rebase(stop);
 
 	for(;;){
 		kern = configure(f, path);
