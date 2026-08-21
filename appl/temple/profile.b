@@ -137,7 +137,6 @@ redraw()
 	if(im == nil)
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	view := Rect(im.r.min.add((65,42)),im.r.max.sub((25,70)));
 	firstmaximum := 1.0;
 	for(i := 0; i < samples; i++){
 		if(data[3*i+1] > firstmaximum)
@@ -147,8 +146,7 @@ redraw()
 	}
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view radial %d %d %d %d",
-		view.min.x,view.min.y,view.max.x,view.max.y));
+	graph.cmd("content margin 65 42 25 70\nview radial content");
 	graph.cmd(sys->sprint("scale radial x 0 %.8g",data[3*(samples-1)]));
 	graph.cmd(sys->sprint("scale radial y 0 %.8g reverse",firstmaximum));
 	graph.cmd("axis radial x radius");

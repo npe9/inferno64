@@ -166,8 +166,7 @@ redraw()
 	im.draw(im.r,bg,nil,Point(0,0));
 	graph.image = im;
 	graph.cmd("clear");
-	r := Rect(im.r.min.add((55,55)),im.r.max.sub((30,55)));
-	graph.cmd(sys->sprint("view fieldview %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	graph.cmd("content margin 55 55 30 55\nview fieldview content");
 	graph.cmd("scale fieldview x 0 4\nscale fieldview y -2 2 reverse\n"+
 		"axis fieldview x independent variable\naxis fieldview y dependent variable\n"+
 		"vectors fieldview field x time y value dx dt dy dy colour grid width 1\n"+

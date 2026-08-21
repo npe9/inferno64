@@ -149,7 +149,7 @@ drawplots(im: ref Image, r: Rect, alabel, blabel: string)
 {
 	graph.image=im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view phase %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	graph.cmd("content margin 45 35 18 58\nview phase content");
 	graph.cmd("scale phase x 0 1.5");
 	graph.cmd("scale phase y 0 1.5 reverse");
 	graph.cmd("axis phase x "+alabel);

@@ -127,13 +127,11 @@ redraw()
 	im:=win.image;
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	content:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
-	xsplit:=content.min.x+content.dx()*55/100;
-	market:=Rect(content.min,(xsplit-22,content.max.y));
-	timeplot:=Rect((xsplit+30,content.min.y),content.max);
 	graph.image=im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view market %d %d %d %d",market.min.x,market.min.y,market.max.x,market.max.y));
+	graph.cmd("content margin 45 35 18 58\n" +
+		"split content x market 55 time 45 gutter 52\n" +
+		"view market market");
 	graph.cmd("scale market x 0 1");
 	graph.cmd("scale market y 0 1 reverse");
 	graph.cmd("axis market x quantity");
@@ -154,7 +152,7 @@ redraw()
 	tmax:=t;
 	if(tmax<10.0)
 		tmax=10.0;
-	graph.cmd(sys->sprint("view time %d %d %d %d",timeplot.min.x,timeplot.min.y,timeplot.max.x,timeplot.max.y));
+	graph.cmd("view time time");
 	graph.cmd(sys->sprint("scale time x 0 %.8g",tmax));
 	graph.cmd("scale time y 0 1 reverse");
 	graph.cmd("axis time x time");

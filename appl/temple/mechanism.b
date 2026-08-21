@@ -205,12 +205,12 @@ redraw()
 	content := Rect(im.r.min.add((25,38)),(im.r.max.x-18,bandtop-10));
 	middle := content.min.x+(content.dx()*3)/5;
 	mechanismview := Rect(content.min,(middle-20,content.max.y));
-	plotview := Rect((middle+35,content.min.y),content.max);
 	drawmechanism(im,mechanismview);
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view quantities %d %d %d %d",
-		plotview.min.x,plotview.min.y,plotview.max.x,plotview.max.y));
+	graph.cmd("content margin 25 38 18 "+string (ControlBandH+10)+"\n" +
+		"split content x mechanismview 3 plotview 2 gutter 55\n" +
+		"view quantities plotview");
 	tmax := t;
 	if(tmax < 2.0)
 		tmax = 2.0;

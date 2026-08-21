@@ -142,7 +142,6 @@ redraw()
 	im:=win.image;
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	r:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
 	tmax := t;
 	if(tmax < 10.0)
 		tmax = 10.0;
@@ -151,8 +150,7 @@ redraw()
 		ymax = 1.5;
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view concentration %d %d %d %d",
-		r.min.x,r.min.y,r.max.x,r.max.y));
+	graph.cmd("content margin 45 35 18 58\nview concentration content");
 	graph.cmd(sys->sprint("scale concentration x 0 %.8g",tmax));
 	graph.cmd(sys->sprint("scale concentration y 0 %.8g reverse",ymax));
 	graph.cmd("axis concentration x time");

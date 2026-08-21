@@ -168,10 +168,6 @@ redraw()
 	im:=win.image;
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	content:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
-	mid:=content.min.x+content.dx()/2;
-	phase:=Rect(content.min,(mid-24,content.max.y));
-	timeplot:=Rect((mid+30,content.min.y),content.max);
 	maximum:=1.5;
 	if(y[0]*1.15>maximum)
 		maximum=y[0]*1.15;
@@ -179,7 +175,9 @@ redraw()
 		maximum=y[1]*1.15;
 	graph.image=im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view phase %d %d %d %d",phase.min.x,phase.min.y,phase.max.x,phase.max.y));
+	graph.cmd("content margin 45 35 18 58\n" +
+		"split content x phase 1 time 1 gutter 54\n" +
+		"view phase phase");
 	graph.cmd(sys->sprint("scale phase x 0 %.8g",maximum));
 	graph.cmd(sys->sprint("scale phase y 0 %.8g reverse",maximum));
 	graph.cmd("axis phase x prey");
@@ -200,7 +198,7 @@ redraw()
 	tmax:=t;
 	if(tmax<10.0)
 		tmax=10.0;
-	graph.cmd(sys->sprint("view time %d %d %d %d",timeplot.min.x,timeplot.min.y,timeplot.max.x,timeplot.max.y));
+	graph.cmd("view time time");
 	graph.cmd(sys->sprint("scale time x 0 %.8g",tmax));
 	graph.cmd(sys->sprint("scale time y 0 %.8g reverse",maximum));
 	graph.cmd("axis time x time");

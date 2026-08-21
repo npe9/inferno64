@@ -161,17 +161,17 @@ redraw()
 	image.draw(image.r,background,nil,Point(0,0));
 	graph.image = image;
 	graph.cmd("clear");
-	middle := image.r.min.x+image.r.dx()/2;
-	phase := Rect(image.r.min.add((50,50)),(middle-18,image.r.max.y-75));
-	series := Rect((middle+45,image.r.min.y+50),(image.r.max.x-22,image.r.max.y-75));
+	graph.cmd("content margin 50 50 22 75\n" +
+		"split content x phase 1 series 1 gutter 63\n" +
+		"view phase phase\n" +
+		"view series series");
 	tmax := time;
 	if(tmax < 10.0)
 		tmax = 10.0;
 	graph.cmd(sys->sprint(
-		"view phase %d %d %d %d\nscale phase x -3 3\nscale phase y -3 3 reverse\naxis phase x x grid\naxis phase y y grid\n"+
-		"view series %d %d %d %d\nscale series x 0 %.9g\nscale series y -5 5 reverse\naxis series x time grid\naxis series y x grid",
-		phase.min.x,phase.min.y,phase.max.x,phase.max.y,
-		series.min.x,series.min.y,series.max.x,series.max.y,tmax));
+		"scale phase x -3 3\nscale phase y -3 3 reverse\naxis phase x x grid\naxis phase y y grid\n"+
+		"scale series x 0 %.9g\nscale series y -5 5 reverse\naxis series x time grid\naxis series y x grid",
+		tmax));
 	graph.cmd("line phase paths x x y y colour live width 2\n"+
 		"line phase paths x lx y ly colour accent width 1\n"+
 		"line series paths x time y x colour live width 2\n"+

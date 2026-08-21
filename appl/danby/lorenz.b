@@ -230,30 +230,23 @@ redraw()
 	graph.image = image;
 	tracks.image = image;
 	graph.cmd("clear");
-	bandtop := image.r.max.y-ControlBandH;
-	middle := image.r.min.y+image.r.dy()*2/3;
-	phase := Rect(image.r.min.add((50,38)),
-		(image.r.max.x-22,middle-20));
-	separation := Rect((image.r.min.x+50,middle+22),
-		(image.r.max.x-22,bandtop-10));
 	tmin := time-25.0;
 	if(tmin < 0.0)
 		tmin = 0.0;
 	tmax := tmin+25.0;
-	graph.cmd(sys->sprint(
-		"view phase %d %d %d %d\n" +
+	graph.cmd(sys->sprint("content margin 50 38 22 %d\n" +
+		"split content y phase 2 separation 1 gutter 42\n" +
+		"view phase phase\n" +
 		"scale phase x -22 22\n" +
 		"scale phase y 0 52 reverse\n" +
 		"axis phase x x grid\n" +
 		"axis phase y z grid\n" +
-		"view separation %d %d %d %d\n" +
+		"view separation separation\n" +
 		"scale separation x %.9g %.9g\n" +
 		"scale separation y -7 2 reverse\n" +
 		"axis separation x time grid\n" +
 		"axis separation y log10-distance grid",
-		phase.min.x,phase.min.y,phase.max.x,phase.max.y,
-		separation.min.x,separation.min.y,separation.max.x,separation.max.y,
-		tmin,tmax));
+		ControlBandH+10, tmin,tmax));
 	graph.cmd(
 		"line phase trajectories x x y z colour live width 2\n" +
 		"line phase trajectories x nearx y nearz colour accent width 1\n" +

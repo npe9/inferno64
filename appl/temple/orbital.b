@@ -222,12 +222,12 @@ redraw()
 	content := Rect(im.r.min.add((25,38)),im.r.max.sub((18,62)));
 	middle := content.min.x+(content.dx()*3)/5;
 	orbitview := Rect(content.min,(middle-20,content.max.y));
-	plotview := Rect((middle+35,content.min.y),content.max);
 	draworbits(im,orbitview);
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view diagnostics %d %d %d %d",
-		plotview.min.x,plotview.min.y,plotview.max.x,plotview.max.y));
+	graph.cmd("content margin 25 38 18 62\n" +
+		"split content x orbitview 3 plotview 2 gutter 55\n" +
+		"view diagnostics plotview");
 	tmax := t;
 	if(tmax < 2.0)
 		tmax = 2.0;

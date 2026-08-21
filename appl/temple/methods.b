@@ -411,12 +411,17 @@ redraw()
 	convergence := Rect((image.r.min.x+52,middle+24),
 		(image.r.max.x-22,image.r.max.y-70));
 	ymax := ymaximum();
-	graph.cmd(sys->sprint("view solution %d %d %d %d\n" +
+	graph.cmd(sys->sprint(
+		"rect solution %d %d %d %d\n" +
+		"rect convergence %d %d %d %d\n" +
+		"view solution solution",
+		solution.min.x,solution.min.y,solution.max.x,solution.max.y,
+		convergence.min.x,convergence.min.y,convergence.max.x,convergence.max.y));
+	graph.cmd(sys->sprint(
 		"scale solution x 0 %d\n" +
 		"scale solution y 0 %.17g reverse\n" +
 		"axis solution x time grid\n" +
 		"axis solution y value grid",
-		solution.min.x,solution.min.y,solution.max.x,solution.max.y,
 		Tend,ymax));
 	graph.cmd("vector solution field x time y value dx dt dy dy colour grid width 1\n" +
 		"vector solution eulerstep x time y value dx dt dy dy colour euler width 1\n" +
@@ -425,25 +430,23 @@ redraw()
 		"line solution heun x time y value colour heun width 1\n" +
 		"line solution rk4 x time y value colour rk4 width 2\n" +
 		"point solution adaptive x time y value colour adaptive radius 2");
+	graph.cmd("view convergence convergence");
 	if(!showadaptive){
-		graph.cmd(sys->sprint("view convergence %d %d %d %d\n" +
+		graph.cmd(
 			"scale convergence x -2.4 0\n" +
 			"scale convergence y -13 2 reverse\n" +
 			"axis convergence x log10(step) grid\n" +
-			"axis convergence y log10(endpoint error) grid",
-			convergence.min.x,convergence.min.y,
-			convergence.max.x,convergence.max.y));
+			"axis convergence y log10(endpoint error) grid");
 		graph.cmd("line convergence errors x logh y euler colour euler width 2\n" +
 			"line convergence errors x logh y heun colour heun width 2\n" +
 			"line convergence errors x logh y rk4 colour rk4 width 2");
 	}else{
-		graph.cmd(sys->sprint("view convergence %d %d %d %d\n" +
+		graph.cmd(sys->sprint(
 			"scale convergence x 0 %d\n" +
 			"scale convergence y -12 1 reverse\n" +
 			"axis convergence x trial-time grid\n" +
 			"axis convergence y log10(step/error) grid",
-			convergence.min.x,convergence.min.y,
-			convergence.max.x,convergence.max.y,Tend));
+			Tend));
 		graph.cmd("line convergence adaptiveinfo x time y logh colour adaptive width 2\n" +
 			"line convergence adaptiveinfo x time y logerror colour rk4 width 1\n" +
 			"point convergence rejected x time y logerror colour euler radius 4");

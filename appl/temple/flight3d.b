@@ -216,21 +216,17 @@ redraw()
 	if(im == nil)
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	content := Rect(im.r.min.add((48,38)),im.r.max.sub((18,62)));
-	middle := content.min.y+content.dy()/2;
-	side := Rect(content.min,(content.max.x,middle-18));
-	plan := Rect((content.min.x,middle+26),content.max);
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view side %d %d %d %d",
-		side.min.x,side.min.y,side.max.x,side.max.y));
+	graph.cmd("content margin 48 38 18 62\n" +
+		"split content y side 1 plan 1 gutter 44\n" +
+		"view side side");
 	graph.cmd(sys->sprint("scale side x 0 %.8g",xmaximum));
 	graph.cmd(sys->sprint("scale side y 0 %.8g reverse",heightmaximum));
 	graph.cmd("axis side x downrange");
 	graph.cmd("axis side y height");
 	graph.cmd("line side history x x y height colour side width 2");
-	graph.cmd(sys->sprint("view plan %d %d %d %d",
-		plan.min.x,plan.min.y,plan.max.x,plan.max.y));
+	graph.cmd("view plan plan");
 	graph.cmd(sys->sprint("scale plan x 0 %.8g",xmaximum));
 	graph.cmd(sys->sprint("scale plan y %.8g %.8g reverse",
 		-lateralmaximum,lateralmaximum));

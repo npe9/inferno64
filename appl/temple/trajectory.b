@@ -216,15 +216,11 @@ redraw()
 	if(im == nil)
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	bandtop := im.r.max.y-ControlBandH;
-	content := Rect(im.r.min.add((48,38)),(im.r.max.x-18,bandtop-10));
-	middle := content.min.x+(content.dx()*2)/3;
-	flight := Rect(content.min,(middle-25,content.max.y));
-	telemetry := Rect((middle+30,content.min.y),content.max);
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view flight %d %d %d %d",
-		flight.min.x,flight.min.y,flight.max.x,flight.max.y));
+	graph.cmd("content margin 48 38 18 "+string (ControlBandH+10)+"\n" +
+		"split content x flight 2 telemetry 1 gutter 55\n" +
+		"view flight flight");
 	graph.cmd(sys->sprint("scale flight x 0 %.8g",xmaximum));
 	graph.cmd(sys->sprint("scale flight y 0 %.8g reverse",ymaximum));
 	graph.cmd("axis flight x distance");
@@ -233,8 +229,7 @@ redraw()
 	tmax := t;
 	if(tmax < 2.0)
 		tmax = 2.0;
-	graph.cmd(sys->sprint("view telemetry %d %d %d %d",
-		telemetry.min.x,telemetry.min.y,telemetry.max.x,telemetry.max.y));
+	graph.cmd("view telemetry telemetry");
 	graph.cmd(sys->sprint("scale telemetry x 0 %.8g",tmax));
 	graph.cmd(sys->sprint("scale telemetry y 0 %.8g reverse",speedmaximum));
 	graph.cmd("axis telemetry x time");

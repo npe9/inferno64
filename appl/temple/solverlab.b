@@ -196,8 +196,7 @@ redraw()
 	im.draw(im.r,im.display.color(int 16rf4f0e7ff),nil,Point(0,0));
 	graph.image = im;
 	graph.cmd("clear");
-	r := Rect(im.r.min.add((45,55)),im.r.max.sub((25,55)));
-	graph.cmd(sys->sprint("view solution %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	graph.cmd("content margin 45 55 25 55\nview solution content");
 	graph.cmd("scale solution x 0 6\nscale solution y -3 3 reverse\n"+
 		"axis solution x time\naxis solution y state\n"+
 		"line solution exact x time y first colour exact width 1\n"+

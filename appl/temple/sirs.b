@@ -149,7 +149,7 @@ drawhistory(im: ref Image, r: Rect, a, b, c: string)
 {
 	graph.image=im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view main %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	graph.cmd("content margin 45 35 18 58\nview main content");
 	tmax:=t;
 	if(tmax<10.0)
 		tmax=10.0;

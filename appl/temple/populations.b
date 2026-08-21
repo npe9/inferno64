@@ -223,15 +223,13 @@ redraw()
 	if(im == nil)
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	plotrect := Rect(im.r.min.add((48,38)),
-		(im.r.max.x-200,im.r.max.y-(controlrows()*42+20)));
 	tmax := t;
 	if(tmax < 10.0)
 		tmax = 10.0;
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view historyplot %d %d %d %d",
-		plotrect.min.x,plotrect.min.y,plotrect.max.x,plotrect.max.y));
+	graph.cmd(sys->sprint("content margin 48 38 200 %d\nview historyplot content",
+		controlrows()*42+20));
 	graph.cmd(sys->sprint("scale historyplot x 0 %.8g",tmax));
 	graph.cmd(sys->sprint("scale historyplot y 0 %.8g reverse",displaymax));
 	graph.cmd("axis historyplot x time");
