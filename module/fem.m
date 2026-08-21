@@ -45,6 +45,13 @@ Fem: module
 		solvermethod:	string;
 		tolerance:	real;
 		restart, maxiter: int;
+
+		# Set by newproblem() from an optional "backend ..." line;
+		# never nil (defaults to device cpu) so solve() always has one
+		# to call. Read p.backend.lasterror after solve() to see
+		# whether a requested gpu backend actually ran, or silently
+		# had to fall back - see gpu(2).
+		backend: ref Gpu->Backend;
 	};
 
 	# A little language for a whole steady-state FE Poisson problem,
@@ -57,17 +64,24 @@ Fem: module
 	#   load Q                            (optional constant source; default 0.0)
 	#   bc dirichlet V                    (uniform value on all six outer faces)
 	#   solver gmres|cg [tolerance T] [restart R] [maxiter N]  - see krylov(2)
+	#   backend cpu|gpu [precision f32|f64] [resident on|off]  - see gpu(2); optional, default cpu
 	#
 	# Unlike pde(2) there is no "solver explicit" here: an assembled
 	# system has no stability-limited substep to fall back to - solving
 	# Ax=b for a real sparse A is always an actual linear solve.
+	#
+	# mesh/material/load/bc/solver describe the equation; backend
+	# describes only where the resulting matvec runs - a fourth,
+	# independent axis alongside mesh(2)'s geometry vocabulary and
+	# krylov(2)'s algorithm vocabulary, not a variant of either.
 	newproblem:	fn(spec: string): (ref Problem, string);
 
-	# Solves p.a x = p.b via krylov(2) - p.a's own matvec is the Apply
-	# closure, so this is a real sparse solve, not a matrix-free one.
-	# Returns the nodal solution (indexed exactly like femesh(2)'s node
-	# ids), iteration count, and final residual, or an error string if
-	# the solve failed to converge (nil result, in which case the other
-	# three returns should not be trusted).
+	# Solves p.a x = p.b via krylov(2), using p.backend's own apply()
+	# for the matvec - a real sparse solve either way, cpu or gpu, and
+	# krylov(2) itself never learns which. Returns the nodal solution
+	# (indexed exactly like femesh(2)'s node ids), iteration count, and
+	# final residual, or an error string if the solve failed to
+	# converge (nil result, in which case the other three returns
+	# should not be trusted).
 	solve:	fn(p: ref Problem): (array of real, int, real, string);
 };

@@ -123,6 +123,19 @@ back to, so solving
 for a real sparse
 .I A
 is always an actual linear solve.
+.TP
+.BI "backend cpu|gpu [precision f32|f64] [resident on|off]"
+Where the matvec runs, reusing
+.IR gpu (2)'s
+own vocabulary verbatim \(em a fourth, independent axis alongside
+.IR femesh (2)'s
+geometry vocabulary and
+.IR krylov (2)'s
+algorithm vocabulary, not a variant of either. Optional; defaults to
+.BR "device cpu" .
+See
+.IR gpu (2)
+for what each word means.
 .PP
 .B Solve
 runs
@@ -130,15 +143,21 @@ runs
 via
 .IR krylov (2)
 using
-.IR p . a 's
+.IR p . backend 's
 own
-.B matvec
-as the operator \(em a real sparse solve, not a matrix-free one \(em
-and returns the nodal solution (indexed exactly like
+.B apply
+for the operator \(em a real sparse solve either way, cpu or gpu, and
+.IR krylov (2)
+itself never learns which \(em and returns the nodal solution (indexed
+exactly like
 .IR femesh (2)'s
 node ids), the iteration count, and the final residual, or an error
 string if the solve failed to converge (in which case the other three
 returns should not be trusted).
+.IR P . backend . lasterror
+is set afterward if a requested backend fell back to a different one
+\(em see
+.IR gpu (2).
 .SH SOURCE
 .B /module/fem.m
 .br
@@ -147,4 +166,6 @@ returns should not be trusted).
 .IR femesh (2),
 .IR sparse (2),
 .IR krylov (2),
-.IR pde (2)
+.IR gpu (2),
+.IR pde (2),
+.IR sh-fem (1)

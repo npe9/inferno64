@@ -19,6 +19,9 @@ include "fem.m";
 include "krylov.m";
 	krylov: Krylov;
 	Solver: import krylov;
+include "gpu.m";
+	gpu: Gpu;
+	Backend: import gpu;
 
 init()
 {
@@ -28,6 +31,7 @@ init()
 		femesh = load Femesh Femesh->PATH;
 		sparse = load Sparse Sparse->PATH;
 		krylov = load Krylov Krylov->PATH;
+		gpu = load Gpu Gpu->PATH;
 	}
 }
 
@@ -213,6 +217,7 @@ newproblem(spec: string): (ref Problem, string)
 	tolerance := 1.0e-8;
 	restart := 30;
 	maxiter := 200;
+	backend := gpu->new();
 
 	for(rest := spec; rest != nil;){
 		(line, tail) := str->splitl(rest, "\n");
@@ -256,6 +261,17 @@ newproblem(spec: string): (ref Problem, string)
 				"maxiter" => maxiter = int a[i+1];
 				* => return (nil, "solver: unknown option " + a[i]);
 				}
+		"backend" =>
+			if(len a < 2)
+				return (nil, "backend: usage: backend cpu|gpu [precision f32|f64] [resident on|off]");
+			berr := backend.cmd("device " + a[1]);
+			if(berr != nil)
+				return (nil, "backend: " + berr);
+			for(i := 2; i+1 < len a; i += 2){
+				berr = backend.cmd(a[i] + " " + a[i+1]);
+				if(berr != nil)
+					return (nil, "backend: " + berr);
+			}
 		* =>
 			return (nil, "unknown problem-spec line: " + a[0]);
 		}
@@ -284,26 +300,26 @@ newproblem(spec: string): (ref Problem, string)
 			j++;
 		}
 	dirichlet(a, b, bnodes, bvalues);
-	return (ref Problem(grid, a, b, solvermethod, tolerance, restart, maxiter), nil);
+	return (ref Problem(grid, a, b, solvermethod, tolerance, restart, maxiter, backend), nil);
 }
 
-# --- solve: krylov(2) against the assembled matrix's own matvec ---
-
-opmatrix: ref CSR;
-
-femop(x: array of real): array of real
-{
-	return sparse->matvec(opmatrix, x);
-}
+# --- solve: krylov(2) against the assembled matrix's own matvec, via
+# p.backend's apply() - cpu-backed today (device gpu falls back
+# observably; see gpu(2)), gpu-backed transparently to this file and
+# to krylov(2) itself once a real backend lands underneath the same
+# interface. ---
 
 solve(p: ref Problem): (array of real, int, real, string)
 {
 	init();
-	opmatrix = p.a;
+	b := p.backend;
+	if(b == nil)
+		b = gpu->new();
+	apply := b.apply(p.a);
 	solver := krylov->new();
 	solver.cmd(sys->sprint("method %s\ntolerance %g\nrestart %d\nmaxiter %d",
 		p.solvermethod, p.tolerance, p.restart, p.maxiter));
-	x := solver.solve(femop, p.b, nil);
+	x := solver.solve(apply, p.b, nil);
 	if(!solver.converged)
 		return (nil, solver.iterations, solver.residual,
 			sys->sprint("solve: %s failed to converge (residual %g after %d iterations)",

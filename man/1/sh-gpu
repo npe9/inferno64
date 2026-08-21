@@ -1,0 +1,117 @@
+.TH SH-GPU 1
+.SH NAME
+gpu \- shell script interface to gpu(2)'s backend command language
+.SH SYNOPSIS
+.B load gpu
+
+.B ${gpu
+.B available
+.B }
+.br
+.B ${gpu
+.B new
+.B }
+.br
+.B gpu
+.I id
+.B device cpu|gpu
+.br
+.B gpu
+.I id
+.B precision f32|f64
+.br
+.B gpu
+.I id
+.B resident on|off
+.br
+.B ${gpu
+.I id
+.B device|precision|resident|lasterror
+.B }
+.br
+.B gpu del
+.I id...
+.SH DESCRIPTION
+.I Gpu
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR gpu (2)'s
+own
+.B Backend
+command language \(em which device a
+.IR krylov (2)
+matvec runs on, a property of the machine, independent of
+.IR mesh (2)'s
+geometry vocabulary and
+.IR krylov (2)'s
+algorithm vocabulary.
+.PP
+Most scripts reach
+.I gpu(2)
+indirectly, through
+.IR fem (2)'s
+own
+.B backend
+spec line (see
+.IR sh-fem (1))
+rather than building a
+.B Backend
+handle directly here \(em this module exists for the cases that do:
+checking
+.B ${gpu
+.B available}
+before deciding whether a script's own workload is worth the trouble,
+or building a
+.B Backend
+to hand off explicitly.
+.PP
+.B ${gpu new}
+allocates a handle wrapping a fresh
+.IR gpu (2)
+.B Backend
+(default
+.BR "device cpu" ),
+and yields it.
+.BR Device ,
+.BR precision ,
+and
+.B resident
+each call
+.IR gpu (2)'s
+own
+.B Backend.cmd
+unchanged; see
+.IR gpu (2)
+for what each word means.
+.B ${gpu
+.I id
+.BR device|precision|resident }
+read the handle's current settings back;
+.B ${gpu
+.I id
+.BR lasterror }
+reads the empty string unless the backend's last
+.B apply
+call (via
+.IR fem (2)'s
+own
+.B solve ,
+typically) had to fall back to a different device than requested.
+.B ${gpu
+.BR available }
+is
+.IR gpu (2)'s
+own real availability check, not a promise \(em see
+.IR gpu (2)
+for what it means for this to read 0.
+.B Del
+frees one or more handles.
+.SH SOURCE
+.B /appl/cmd/sh/gpu.b
+.SH SEE ALSO
+.IR gpu (2),
+.IR fem (2),
+.IR krylov (2),
+.IR sh (1),
+.IR sh-fem (1)

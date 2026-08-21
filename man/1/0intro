@@ -1009,6 +1009,9 @@ staged-performance player (timed reveal/emphasis/pause)
 .IR fc (1)
 command-line floating point calculator
 .TP
+.IR fem (1)
+shell script interface to fem(2)'s problem-specification lang...
+.TP
 .IR file2chan (1)
 shell interface to file2chan
 .TP
@@ -1059,6 +1062,9 @@ deterministic Draw/draw3d graphics stress test
 .TP
 .IR god (1)
 entropy word and song toy
+.TP
+.IR gpu (1)
+shell script interface to gpu(2)'s backend command language
 .TP
 .IR grep (1)
 pattern matching

@@ -1,0 +1,153 @@
+.TH GPU 2
+.SH NAME
+gpu: new, available \- an execution-target command language for krylov(2) operators
+.SH SYNOPSIS
+.EX
+include "gpu.m";
+gpu := load Gpu Gpu->PATH;
+Backend: import gpu;
+
+b := gpu->new();
+err := b.cmd("device gpu\enprecision f32\enresident on");
+apply := b.apply(m);
+.EE
+.SH DESCRIPTION
+.I Gpu
+is an execution-target axis, independent of
+.IR mesh (2)'s
+geometry vocabulary and
+.IR krylov (2)'s
+algorithm vocabulary: which of those two a solve uses is a property of
+the equation being solved; where the resulting matvec actually runs is
+a property of the machine, and
+.I Gpu
+is the one place that distinction lives.
+.PP
+A
+.B Backend
+is configured by a small command language, the same shape
+.IR tk (2)'s
+own widget
+.B cmd
+and
+.IR krylov (2)'s
+own
+.B Solver.cmd
+already use \(em one verb-plus-args string per call (or several,
+newline-separated, in one call), string result:
+.TP
+.BI "device cpu|gpu"
+Where the matvec runs. Default
+.BR cpu .
+.TP
+.BI "precision f32|f64"
+A real tradeoff, not decoration: a GPU's own throughput advantage is
+largest at
+.BR f32 ,
+at the cost of needing a looser
+.IR krylov (2)
+tolerance to match it. Default
+.BR f64 .
+.TP
+.BI "resident on|off"
+Keep an uploaded matrix's GPU buffers alive across calls. Default
+.BR on
+\(em the whole reason to offload a Krylov solve at all is that
+.B matvec
+runs every iteration against the
+.B same
+matrix, so paying the upload cost once and only exchanging the vector
+each call is what makes offload worth doing, not a one-shot
+convenience.
+.PP
+.B Apply
+builds a
+.IR krylov (2)
+.B Apply
+closure for a
+.IR sparse (2)
+matrix
+.IR m ,
+backed by whichever device
+.I b
+is currently configured for.
+.B Apply
+never silently substitutes
+.B cpu
+for a requested-but-unavailable
+.B gpu
+without saying so:
+.B b.lasterror
+is set afterward to describe what it actually had to do instead (e.g.
+.RI \(lq backend: " " "device gpu requested but unavailable, using cpu" \(rq),
+or left
+.B nil
+if the call ran exactly as configured \(em the same observable-not-
+swallowed convention
+.IR pde (2)/ fem (2)
+already use for a solver that failed to converge, applied here to a
+backend that couldn't be honoured instead.
+.PP
+.B Available
+is a real check, not a promise: it attempts to reach a native GPU
+device and reports whether one exists right now. There is no native
+GPU device wired into this build yet (see SOURCE below), so it always
+returns false today \(em
+.B device
+.B gpu
+still works when it does; it just always falls back through
+.BR lasterror ,
+observably, until a real backend lands underneath this same interface,
+at which point this same check starts reporting true and nothing else
+here needs to change.
+.SH "USING IT FROM fem(2)"
+.IR fem (2)'s
+own
+.B newproblem
+spec grammar reuses
+.I Gpu's
+vocabulary verbatim as an optional
+.B backend
+line, the same way it already reuses
+.IR krylov (2)'s
+own
+.B solver
+vocabulary:
+.EX
+	mesh 20x20x20 domain 1x1x1
+	material diffusivity 1.0
+	bc dirichlet 0.0
+	solver cg tolerance 1e-8
+	backend gpu precision f32
+.EE
+.IR Fem (2)'s
+.B solve
+reads
+.IR p . backend . lasterror
+after solving, so a caller of
+.I fem
+alone never has to import
+.I Gpu
+just to notice a requested backend fell back.
+.SH SOURCE
+.B /module/gpu.m
+.br
+.B /appl/lib/gpu.b
+.PP
+No native GPU device exists in this tree yet \(em a future one would be
+a Styx device (matching
+.IR ssl (3)'s
+own shape: open a handle, upload a matrix once, exchange only the
+vector per call) with a Metal compute-pipeline implementation behind
+it on this platform, mirroring the existing GPU
+.I draw
+hooks
+.RI ( win-cocoa.m )
+one layer down from rendering into general compute. Nothing in this
+interface would need to change for it to plug in.
+.SH SEE ALSO
+.IR sparse (2),
+.IR krylov (2),
+.IR fem (2),
+.IR sh-gpu (1),
+.IR sh-fem (1)

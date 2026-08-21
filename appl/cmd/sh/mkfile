@@ -18,6 +18,8 @@ TARG=sh.dis\
 	pde.dis\
 	uq.dis\
 	verify.dis\
+	fem.dis\
+	gpu.dis\
 
 INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/arg.dis\
@@ -36,12 +38,16 @@ INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/pde.dis\
 	$ROOT/dis/sh/uq.dis\
 	$ROOT/dis/sh/verify.dis\
+	$ROOT/dis/sh/fem.dis\
+	$ROOT/dis/sh/gpu.dis\
 
 SYSMODULES=\
 	bufio.m\
 	draw.m\
 	env.m\
+	fem.m\
 	filepat.m\
+	gpu.m\
 	lock.m\
 	mesh.m\
 	pde.m\

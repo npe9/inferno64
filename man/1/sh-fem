@@ -1,0 +1,202 @@
+.TH SH-FEM 1
+.SH NAME
+fem \- shell script interface to fem(2)'s problem-specification language
+.SH SYNOPSIS
+.B load fem
+
+.B ${fem
+.B new
+.B }
+.br
+.B fem
+.I id
+.B mesh
+.I NXxNYxNZ
+.RB [ domain
+.IR WxHxD ]
+.br
+.B fem
+.I id
+.B material diffusivity
+.I D
+.br
+.B fem
+.I id
+.B load
+.I Q
+.br
+.B fem
+.I id
+.B bc dirichlet
+.I V
+.br
+.B fem
+.I id
+.B solver gmres|cg
+.RB [ tolerance
+.IR T ]
+.RB [ restart
+.IR R ]
+.RB [ maxiter
+.IR N ]
+.br
+.B fem
+.I id
+.B backend cpu|gpu
+.RB [ precision
+.IR f32|f64 ]
+.RB [ resident
+.IR on|off ]
+.br
+.B fem
+.I id
+.B commit
+.br
+.B fem
+.I id
+.B solve
+.br
+.B ${fem
+.I id
+.B get
+.I n
+.B }
+.br
+.B ${fem
+.I id
+.B getijk
+.I i j k
+.B }
+.br
+.B ${fem
+.I id
+.B nnodes|iters|resid|lasterror
+.B }
+.br
+.B fem del
+.I id...
+.SH DESCRIPTION
+.I Fem
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR fem (2)'s
+own little language for specifying a whole finite-element Poisson
+problem \(em mesh, material, load, boundary condition, solver, and
+execution backend together \(em declaratively, instead of a compiled
+Limbo program.
+.PP
+.IR Fem (2)'s
+own
+.B newproblem
+takes a whole spec as one string in a single call; this module adds
+the incremental, script-friendly build-up around it \(em
+.BR mesh / material / load / bc / solver / backend
+accumulate one line of the spec each,
+.B commit
+then calls
+.IR fem (2)'s
+.B newproblem
+on the accumulated lines, and
+.B solve
+calls
+.IR fem (2)'s
+own
+.B solve
+\(em without changing
+.IR fem (2)
+itself in any way: every verb below except the handle/solution
+bookkeeping is exactly
+.IR fem (2)'s
+(and, for
+.BR backend ", " gpu (2)'s)
+own vocabulary, documented there in full.
+.PP
+.B ${fem new}
+allocates a handle for a problem still being built, and yields it.
+.BR Mesh ,
+.BR material ,
+.BR load ,
+.BR bc ,
+.BR solver ,
+and
+.B backend
+each append one line of spec text to that handle; using any of them
+after
+.B commit
+raises an error.
+.B Commit
+parses the accumulated spec via
+.IR fem (2)'s
+.B newproblem
+(real assembly happens here, not at
+.BR solve );
+.B solve
+then runs
+.IR fem (2)'s
+own
+.B solve
+and stores the result on the handle. Using
+.BR get ,
+.BR getijk ,
+.BR nnodes ,
+.BR iters ,
+.BR resid ,
+or
+.B lasterror
+before committing (or, for the solution-dependent verbs, before
+solving) raises an error.
+.PP
+.BR Get
+reads the solved value at flat node
+.IR n ;
+.B getijk
+is the same by grid position, via
+.IR femesh (2)'s
+own
+.BR nodeid .
+.B Nnodes
+is the mesh's node count.
+.B Iters
+and
+.B resid
+are the solve's own iteration count and final residual.
+.B Lasterror
+reads
+.IR p . backend . lasterror
+\(em nil (the empty string) unless a requested
+.B backend
+line fell back to a different one; see
+.IR gpu (2).
+.B Del
+frees one or more handles.
+.PP
+A complete example \(em an implicit Poisson solve on a small cube,
+requesting (and, in this build, gracefully falling back from) a gpu
+backend:
+.EX
+	load fem
+	id := ${fem new}
+	fem $id mesh 20x20x20 domain 1x1x1
+	fem $id material diffusivity 1.0
+	fem $id load 1.0
+	fem $id bc dirichlet 0.0
+	fem $id solver cg tolerance 1e-8
+	fem $id backend gpu precision f32
+	fem $id commit
+	fem $id solve
+	echo iters ${fem $id iters} lasterror ${fem $id lasterror}
+	echo centre ${fem $id getijk 10 10 10}
+	fem del $id
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/fem.b
+.SH SEE ALSO
+.IR fem (2),
+.IR femesh (2),
+.IR krylov (2),
+.IR gpu (2),
+.IR sh (1),
+.IR sh-gpu (1),
+.IR sh-mesh (1),
+.IR sh-pde (1)
