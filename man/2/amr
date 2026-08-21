@@ -1,0 +1,151 @@
+.TH AMR 2
+.SH NAME
+amr: new, adapt, exchange, step, sweep, refine, coarsen, get, set, clear, splat, totalmass \- block-structured adaptive mesh refinement
+.SH SYNOPSIS
+.EX
+include "amr.m";
+amr := load Amr Amr->PATH;
+Forest, Block: import amr;
+
+f := amr->new(nx0, ny0, nz0, blocksize, maxlevel, domainx, domainy, domainz);
+amr->adapt(f, crit);
+amr->sweep(f, diffusivity, dt);
+.EE
+.SH DESCRIPTION
+.I Amr
+is block-structured adaptive mesh refinement, the shape miniAMR itself
+uses: the domain is tiled at level 0 by an
+.IR nx0 " x " ny0 " x " nz0
+grid of
+.BR Block s,
+each holding
+.IR blocksize \(ha3
+cells. Refining a block replaces it with 8 level+1 children, each
+still
+.IR blocksize \(ha3
+cells but covering half the parent's physical extent per axis \(em
+refinement halves the cell size, not the block's own cell count. This
+is the real distinction from an arbitrary octree of individual cells:
+whole blocks refine or coarsen as a unit.
+.PP
+.B New
+creates a forest with the given root grid, block size, refinement cap,
+and physical domain size.
+.B Cellsize
+gives the per-cell physical size at a level;
+.B Blockbox
+gives a block's physical centre and half-extent \(em what a
+.B Criterion
+is evaluated against.
+.B Activeblocks
+lists every leaf (active) block, in a stable order.
+.PP
+.B Refine
+splits a block into 8 finer children, seeding each with a real
+piecewise-constant injection of the parent's own values.
+.B Coarsen
+merges a refined block's 8 children back via real restriction (each
+interior cell becomes the volume-average of the matching 2x2x2 block
+of fine cells); it is a no-op unless all 8 children are themselves
+leaves \(em coarsening only ever removes one level at a time, bottom-up.
+Refining then immediately coarsening the same block is an exact
+identity on the data, for any field, not only a smooth one: injection
+replicates each coarse cell into its matching 8 fine cells, and
+restriction exactly averages those replicas back.
+.SS "Adaptation and 2:1 balance"
+.B Criterion
+is a bare function reference (Limbo has no closure literals \(em the
+same convention as
+.IR krylov (2)'s
+.B Apply
+/
+.IR fem (2)'s
+.BR Src ),
+given a block's physical centre and half-extent, returning whether it
+should be refined.
+.PP
+.B Adapt
+runs one full adaptation pass: refines every active block
+.I crit
+flags (down to
+.IR maxlevel ),
+first extending the refine set until the forest is 2:1 balanced \(em
+no two face-adjacent leaves differ by more than one level, the
+standard block-AMR invariant that bounds
+.BR exchange ()
+to only ever needing a same-level, one-level-coarser, or up-to-4
+one-level-finer neighbour per face, not an arbitrary jump. It then
+coarsens every refined block whose own box
+.I crit
+no longer flags, whose children are all themselves leaves,
+.B and
+whose own level is still 2:1-balanced against its neighbours after
+coarsening \(em skipping that last check would silently undo any
+refinement that balancing alone required (crit() never wants such a
+block back, so it would be coarsened again on the very next call).
+.SS "Ghost exchange and the stencil sweep"
+.B Exchange
+fills every active block's 1-cell ghost halo from its neighbours:
+same-level neighbour \(em direct copy; one-level-coarser neighbour \(em
+piecewise-constant prolongation of its boundary cells; one-level-finer
+neighbours (up to 4 per face) \(em volume-averaged restriction of
+their boundary cells. At the domain's own outer boundary, ghosts are
+filled by clamping (zero-Neumann), matching
+.IR pde (2)'s
+.BR CLAMP .
+.PP
+.B Step
+runs one explicit 7-point 3D Laplacian diffusion update on every
+active block's interior cells, using each block's own (already-
+exchanged) ghost halo, internally subdividing
+.I dt
+to satisfy a stability limit sized off the
+.B finest
+active level \(em the same conservative, always-safe-for-coarser-
+blocks convention
+.IR pde (2)'s
+own
+.B diffuse
+uses, generalised across mixed resolutions.
+.B Sweep
+is
+.B exchange
+then
+.BR step ,
+what a driver loop calls each iteration.
+.PP
+On a forest with no refinement at all,
+.B sweep
+reproduces
+.IR pde (2)'s
+own
+.B diffuse
+exactly (verified to float-noise precision against an equivalent
+.IR pde (2)
+field run side by side with the same initial condition and step).
+.SS "Field access"
+.BR Get " and " set
+read or write one cell by its block-local
+.RI ( x , y , z )
+index (there is no single global index \(em AMR has none).
+.B Clear
+sets every active cell to a value;
+.B splat
+sets every active cell within a physical radius of a point.
+.B Totalmass
+sums
+.IR value \(mu cellsize\(ha3
+over every active cell \(em the invariant a diffusion sweep should
+conserve on a single-resolution forest (verified); a mixed-resolution
+forest is not guaranteed to conserve it exactly, since this
+implementation's ghost exchange does not perform a flux-matching
+correction at coarse-fine boundaries \(em a real, documented scope
+limit, not an oversight.
+.SH SOURCE
+.B /module/amr.m
+.br
+.B /appl/lib/amr.b
+.SH SEE ALSO
+.IR pde (2),
+.IR mesh (2),
+.IR femesh (2)
