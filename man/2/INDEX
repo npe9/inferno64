@@ -66,7 +66,7 @@ cos math-elem
 cosh math-elem
 crc crc
 create sys-open
-crypt intro
+crypt crypt-0intro
 crypt-crypt crypt-crypt
 crypt-dsagen crypt-dsagen
 crypt-gensk crypt-gensk
@@ -200,7 +200,7 @@ import_real32 math-export
 in string
 inflate filter-deflate
 init security-auth
-intro sys-0intro
+intro 0intro
 iobuf iobuf
 iounit sys-iounit
 ip ip
