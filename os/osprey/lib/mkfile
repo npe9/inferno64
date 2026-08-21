@@ -1,0 +1,24 @@
+<../../../mkconfig
+
+SYSTARG=Inferno
+OBJTYPE=amd64
+<$ROOT/mkfiles/mkfile-Inferno-amd64
+
+LIB=$ROOT/Osprey/$OBJTYPE/lib/libosprey.a
+OFILES=\
+	osprey-edf.$O\
+	osprey-queue.$O\
+	osprey-core.$O\
+	osprey-process.$O\
+	osprey-runtime.$O\
+	osprey-ns.$O\
+	osprey-snap.$O\
+	osprey-net.$O\
+
+all install:V: $OFILES $LIB
+
+$LIB: $OFILES
+	iar vu $target $prereq
+
+osprey-%.$O: $ROOT/os/osprey/policy/%.c
+	$CC $CFLAGS -o $target $ROOT/os/osprey/policy/$stem.c

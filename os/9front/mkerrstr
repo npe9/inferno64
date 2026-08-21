@@ -1,0 +1,12 @@
+#!/bin/rc
+
+awk '
+{
+	name = $0
+	sub(/^extern[ \t]+/, "", name)
+	sub(/;.*/, "", name)
+	message = $0
+	sub(/^.*\/\*[ \t]*/, "", message)
+	sub(/[ \t]*\*\/.*$/, "", message)
+	print name " = \"" message "\";"
+}' $1

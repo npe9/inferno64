@@ -1,0 +1,16 @@
+#!/bin/rc
+
+rfork e
+switch($#*){
+case 1
+	RE=`{echo *.c | sed 's/ /|/g; s/.*/^(&)$/'}
+	LOCAL=(*.c)
+	LIST=()
+	for(i in `{builtin cd $1; ls *.c})
+		if(! ~ $i $LOCAL)
+			LIST=($LIST $i)
+	echo $LIST | sed 's/\.c//g; s/  */|/g'
+case *
+	exit 'usage'
+}
+exit ''

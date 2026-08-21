@@ -1,0 +1,83 @@
+Osprey kernel policy layer
+
+This directory contains the portable portion of the Osprey kernel.  It is
+kept independent of Proc, Mach, device drivers, and architecture trap code so
+that the scheduling and queue contracts can be tested before integration.
+This directory is the source-of-truth portable Osprey layer.  The top-level
+Osprey directory contains only target build output, such as
+Osprey/amd64/lib.
+
+edf.c implements the first policy slice:
+
+* resource-container CPU budget, period, deadline, and accounting fields;
+* bounded memory, network-byte, and network-packet accounting and release;
+* intrusive earliest-deadline-first task ordering;
+* deterministic sequence ordering for equal deadlines.
+
+queue.c implements a fixed-size single-producer/single-consumer request ring.
+The architecture adapter must provide the memory barriers required when the
+ring is shared across cores.
+
+core.c adds one independent EDF run queue per core.  It deliberately
+does not migrate tasks or touch Plan 9 Proc objects yet.  syscall.h reserves
+the request/reply operation numbers for the asynchronous syscall adapter.
+
+process.c groups those pieces into the first Osprey process contract: a
+resource container, schedulable task, request ring, and reply ring.  The next
+kernel adapter can attach this contract to a native process without exposing
+the queue representation to the scheduler.
+
+syscall.h defines asynchronous operations for file I/O, IPC, metadata,
+namespace binding, allocation, yielding, and polling.  Requests carry async,
+continuation, and reply flags; replies preserve status and flags while the
+architecture adapter decides whether a blocked request needs a trap or an
+inter-core wakeup.
+
+ns.h and ns.c provide a bounded, allocation-free private namespace table for
+container-local names.  The native adapter supplies the table storage and
+performs the actual Chan binding; the portable layer only maintains the
+local-to-global mapping.
+
+snap.h and snap.c capture and restore portable process metadata for
+checkpoint/restart.  Queue storage, user memory, and device handles remain
+owned by the adapter; the snapshot only records state that is valid across a
+restart or migration.
+
+net.h and net.c provide the first packet-path primitive: fixed packet
+descriptors and a bounded queue that charges bytes and packets to the owning
+resource container.  Descriptors carry the shared driver-layer Block type,
+allowing zero-copy handoff between device Chan code and Osprey scheduling.
+
+runtime.c adds the flavor-independent kernel-side control plane.  It owns a
+set of independent per-core schedulers, attaches and detaches processes, and
+services one queued request at a time through a caller-supplied handler.  It
+also exposes block, wake, exit, and conservative load-balancing operations.
+The handler is where a native kernel or buddy operating system implements
+file, IPC, and network operations; the scheduler and queue code do not know
+about those services.
+
+The runtime is deliberately storage-oriented: callers provide the core and
+process arrays, and no allocation or platform-specific lock is performed.
+An architecture adapter is responsible for interrupts, memory barriers,
+address-space setup, and migration between cores.
+
+The next layer follows the traditional port interface: Chan, device tables,
+portdat.h, portfns.h, and error.h.  Architecture code supplies only trap,
+MMU, interrupt, and timer details.  Osprey services should be exposed as
+Inferno devices and Chan operations wherever possible, so native and hosted
+adapters share the same contracts.
+
+The initial port headers are based on the Inferno driver interface.  Osprey
+lib.h supplies the common libc, Qid, Dir, and open-mode definitions expected
+by that interface.  Osprey
+uses the conventional Queue name for its asynchronous message ring; the
+driver and qio layers are shared by the flavor rather than duplicated under
+an Osprey namespace.  The 9front adapter can extend these headers where its
+driver ABI differs without changing the portable Osprey policy files.
+
+lib/mkfile builds these objects as libosprey.a.  It is intentionally separate
+from the 9front libraries; the 9front kernel does not link or include this
+library.
+
+The next integration layer will adapt these objects to 9front Proc/Mach state,
+then add per-core run queues and asynchronous syscall completion handling.

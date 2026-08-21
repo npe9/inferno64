@@ -324,7 +324,7 @@ int
 oclass(Adr *a)
 {
 	vlong v;
-	long l;
+	int l;
 
 	if(a->type >= D_INDIR || a->index != D_NONE) {
 		if(a->index != D_NONE && a->scale == 0) {

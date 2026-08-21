@@ -1,0 +1,6 @@
+KERNEL_DIRS=\
+	os/boot/pc\
+	os/boot/efi\
+	os/pc64\
+
+KERNELPORT=$ROOT/os/inferno

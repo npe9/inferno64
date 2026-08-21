@@ -8,7 +8,8 @@ CLEANCONFLIST=pc64
 
 SYSTARG=Inferno # $OSTARG
 OBJTYPE=amd64 # 386
-INSTALLDIR=$ROOT/Inferno/$OBJTYPE/	#path of directory where kernel is installed
+FLAVOR=Inferno
+INSTALLDIR=$ROOT/$FLAVOR/$OBJTYPE/	#path of directory where kernel is installed
 #INSTALLDIR=/$OBJTYPE
 
 # must match mem.h
@@ -20,7 +21,8 @@ KTZERO=0x200000
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	#set vars based on target system
 
-<| $SHELLNAME ../port/mkdevlist $CONF	#sets $IP, $DEVS, $ETHERS, $VGAS, $PORT, $MISC, $LIBS, $OTHERS
+KERNELSHELL=$SHELLNAME
+<| $KERNELSHELL ../inferno/mkdevlist $CONF	#sets $IP, $DEVS, $ETHERS, $VGAS, $PORT, $MISC, $LIBS, $OTHERS
 
 OBJ=\
 	l.$O\
@@ -52,7 +54,7 @@ HFILES=\
 	io.h\
 
 # use the CFLAGS set in ../../mkfiles/mkfile-Inferno-amd64
-CFLAGS=$CFLAGS -I$ROOT/libinterp -I$ROOT/libip -I../port
+CFLAGS=$CFLAGS -I$ROOT/libinterp -I$ROOT/libip -I../inferno
 KERNDATE=`{$NDATE}
 
 default:V: i$CONF i$CONF.acid
@@ -64,7 +66,6 @@ SDEV=`{cd ../pc; echo devsd.c sd*.c | sed 's/\.c/.'$O'/g'}
 
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
-	$LD -v -a -o $target -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES > $target.loader
 	$LD -o $target -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
 	$KSIZE $target
 
@@ -79,11 +80,32 @@ REPCH=`{echo $PCHEADERS | sed 's/\.h//g; s/ /|/g'}
 ^($REPCH)\.h:R:	../pc/\1.h
 	cp $prereq .
 
-REPCC=`{../port/mkfilelist ../pc}
-^($REPCC)\.$O:R:	'../pc/\1.c'
-	$CC $CFLAGS -I. -. ../pc/$stem1.c
+fpu.$O: fpu.c
+	$CC $CFLAGS fpu.c
+inferno.main.$O: inferno.main.c
+	$CC $CFLAGS inferno.main.c
+main.$O: main.c
+	$CC $CFLAGS main.c
+memory.$O: memory.c
+	$CC $CFLAGS memory.c
+mmu.$O: mmu.c
+	$CC $CFLAGS mmu.c
+screen.$O: screen.c
+	$CC $CFLAGS screen.c
+squidboy.$O: squidboy.c
+	$CC $CFLAGS squidboy.c
+trap.$O: trap.c
+	$CC $CFLAGS trap.c
+vgasoft.$O: vgasoft.c
+	$CC $CFLAGS vgasoft.c
 
-<../port/portmkfile
+%.$O: ../pc/%.c
+	$CC $CFLAGS -I. -. ../pc/$stem.c
+
+bootargs.$O: ../pc/bootargs.c
+	$CC $CFLAGS -I. -. ../pc/bootargs.c
+
+<../inferno/portmkfile
 
 clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
 devether.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
@@ -94,12 +116,12 @@ trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
 forth.$O:	forth.h bindings.s
 forth.h:	forth.head.h mkdict.awk primitives-nasm.s words-nasm.s
 	cp forth.head.h $target
-	cat primitives-nasm.s words-nasm.s | ./mkdict.awk >> $target
+	cat primitives-nasm.s words-nasm.s | $AWK -f ./mkdict.awk >> $target
 devforth.$O: forth.h
 
 CLEANEXTRA=words.s primitives.s forth.h
 
-devether.$O $ETHERS:	etherif.h ../port/netif.h
+devether.$O $ETHERS:	etherif.h ../inferno/netif.h
 $IP devip.$O:		../ip/ip.h
 $VGA mouse.$O:		screen.h ../../include/memdraw.h
 
@@ -107,20 +129,20 @@ mp.$O:				mp.h apbootstrap.i
 apic.$O squidboy.$O:		mp.h
 archmp.$O archacpi.$O:		mp.h
 
-$SDEV:				../port/sd.h
+$SDEV:				../inferno/sd.h
 sdiahci.$O:			ahci.h
 
-ether8169.$O:			../port/ethermii.h
+ether8169.$O:			../inferno/ethermii.h
 
 $O.rebootcode:		rebootcode.$O
 	$LD -l -R1 -s -o $target -T$REBOOTADDR $prereq
 rebootcode.out:		$O.rebootcode
-	dd -if $prereq(1) -of $target -bs 1 -iseek 40
+	dd if=$prereq of=$target bs=1 skip=40
 
 $O.apbootstrap:		apbootstrap.$O
 	$LD -l -R1 -s -o $target -T$APBOOTSTRAP $prereq
 apbootstrap.out:	$O.apbootstrap
-	dd -if $prereq(1) -of $target -bs 1 -iseek 40
+	dd if=$prereq of=$target bs=1 skip=40
 
 # to be moved to port/interp 
 bench.h:D: ../../module/bench.m

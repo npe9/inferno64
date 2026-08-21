@@ -1,6 +1,6 @@
 #include <lib9.h>
 
-#define UVLONG_MAX	(1LL<<63)
+#define UVLONG_MAX	(~(uvlong)0)
 
 uvlong
 strtoull(char *nptr, char **endptr, int base)

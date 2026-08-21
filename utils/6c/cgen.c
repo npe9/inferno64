@@ -1121,7 +1121,7 @@ void
 reglcgen(Node *t, Node *n, Node *nn)
 {
 	Node *r;
-	long v;
+	int v;
 
 	regialloc(t, n, nn);
 	if(n->op == OIND) {
@@ -1817,9 +1817,12 @@ layout(Node *f, Node *t, int c, int cv, Node *cn)
 int
 immconst(Node *n)
 {
-	long v;
+	int v;
 
 	if(n->op != OCONST || !typechlpv[n->type->etype])
+		return 0;
+	if((n->type->etype == TUINT || n->type->etype == TULONG) &&
+	   (uvlong)n->vconst > 0x7fffffffULL)
 		return 0;
 	if(typechl[n->type->etype])
 		return 1;

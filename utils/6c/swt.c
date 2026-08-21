@@ -360,7 +360,7 @@ zname(Biobuf *b, Sym *s, int t)
 void
 zaddr(Biobuf *b, Adr *a, int s)
 {
-	long l;
+	int l;
 	int i, t;
 	char *n;
 	Ieee e;

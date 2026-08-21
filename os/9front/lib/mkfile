@@ -1,0 +1,60 @@
+MKSHELL=rc
+<../../../mkconfig
+
+SYSTARG=9front
+OBJTYPE=amd64
+<$ROOT/mkfiles/mkfile-9front-amd64
+CFLAGS=$CFLAGS -I$ROOT/libkern
+
+LIB=$ROOT/9front/$OBJTYPE/lib/lib9front.a
+OFILES=\
+	aes.$O\
+	aesni.$O\
+	aes_xts.$O\
+	bo.$O\
+	classmask.$O\
+	convD2M.$O\
+	convM2D.$O\
+	convM2S.$O\
+	convS2M.$O\
+	ctype.$O\
+	eipfmt.$O\
+	equivip.$O\
+	getcallerpc.$O\
+	hmac.$O\
+	ipaux.$O\
+	iplocalonifc.$O\
+	ipremoteonifc.$O\
+	nrand.$O\
+	parseether.$O\
+	parseip.$O\
+	pool.$O\
+	ptclbsum.$O\
+	rand.$O\
+	sha2_128.$O\
+	sha2block128.$O\
+	sprint.$O\
+	tsmemcmp.$O\
+
+all install:V: $OFILES $LIB
+
+$LIB: $OFILES
+	iar vu $target $prereq
+
+%.$O: %.c
+	$CC $CFLAGS $stem.c
+
+%.$O: %.s
+	$AS $AFLAGS $stem.s
+
+convD2M.$O: $ROOT/lib9/convD2M.c
+	$CC $CFLAGS $prereq
+
+convM2D.$O: $ROOT/lib9/convM2D.c
+	$CC $CFLAGS $prereq
+
+convM2S.$O: $ROOT/lib9/convM2S.c
+	$CC $CFLAGS $prereq
+
+convS2M.$O: $ROOT/lib9/convS2M.c
+	$CC $CFLAGS $prereq

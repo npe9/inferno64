@@ -1,0 +1,4 @@
+KERNEL_DIRS=\
+	os/9front/pc64\
+
+KERNELPORT=$ROOT/os/9front

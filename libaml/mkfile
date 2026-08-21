@@ -10,4 +10,6 @@ OFILES=\
 
 HFILES=$ROOT/include/aml.h
 
+AR=iar
+
 <$ROOT/mkfiles/mksyslib-$SHELLTYPE

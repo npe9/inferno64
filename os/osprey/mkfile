@@ -1,0 +1,8 @@
+master:V:
+	{
+	echo '# do not edit; automatically generated'
+	echo
+	echo '' | awk '{print}'
+	awk '/^DEV[ 	]/{print}' master.local
+	cat master.local
+	} >master
