@@ -184,6 +184,8 @@ main(void)
 {
 	mach0init();
 	bootargsinit();
+	if(getconf("console") == nil)
+		addconf("console", "0");
 	trapinit0();
 	ioinit();
 	i8250console();

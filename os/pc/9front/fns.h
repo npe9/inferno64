@@ -8,6 +8,7 @@ int	bios32ci(BIOS32si*, BIOS32ci*);
 void	bios32close(BIOS32si*);
 BIOS32si* bios32open(char*);
 void	bootargsinit(void);
+void	addconf(char*, char*);
 ulong	cankaddr(ulong);
 int	checksum(void *, int);
 void	clockintr(Ureg*, void*);

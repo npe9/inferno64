@@ -154,6 +154,22 @@ getconf(char *name)
 }
 
 void
+addconf(char *name, char *value)
+{
+	int i;
+
+	for(i = 0; i < nconf; i++)
+		if(cistrcmp(confname[i], name) == 0){
+			confval[i] = value;
+			return;
+		}
+	if(nconf >= MAXCONF)
+		return;
+	confname[nconf] = name;
+	confval[nconf++] = value;
+}
+
+void
 setconfenv(void)
 {
 	int i;
