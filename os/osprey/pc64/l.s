@@ -37,8 +37,8 @@ TEXT _protected<>(SB), 1, $-4
  */
 TEXT _multibootheader<>(SB), 1, $-4
 	LONG	$0x1BADB002			/* magic */
-	LONG	$0x00010007			/* flags */
-	LONG	$-(0x1BADB002 + 0x00010007)	/* checksum */
+	LONG	$0x00010003			/* flags: omit the optional video request */
+	LONG	$-(0x1BADB002 + 0x00010003)	/* checksum */
 	LONG	$_multibootheader<>-KZERO(SB)	/* header_addr */
 	LONG	$_protected<>-KZERO(SB)		/* load_addr */
 	LONG	$edata-KZERO(SB)		/* load_end_addr */
@@ -54,6 +54,27 @@ TEXT _multibootheader<>(SB), 1, $-4
  * multiboot bootloaders put the data segment right behind text
  */
 TEXT _multibootentry<>(SB), 1, $-4
+	MOVW	$0x3f8, DX
+	MOVB	$'o', AL
+	OUTB
+	MOVB	$'s', AL
+	OUTB
+	MOVB	$'p', AL
+	OUTB
+	MOVB	$'r', AL
+	OUTB
+	MOVB	$'e', AL
+	OUTB
+	MOVB	$'y', AL
+	OUTB
+	MOVB	$' ', AL
+	OUTB
+	MOVB	$'h', AL
+	OUTB
+	MOVB	$'i', AL
+	OUTB
+	MOVB	$'\n', AL
+	OUTB
 	MOVL	$etext-KZERO(SB), SI
 	MOVL	SI, DI
 	ADDL	$(BY2PG-1), DI

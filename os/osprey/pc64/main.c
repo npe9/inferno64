@@ -181,7 +181,7 @@ main(void)
 	ioinit();
 	i8250console();
 	quotefmtinstall();
-	screeninit();
+	print("osprey: hello world\n");
 	print("\nPlan 9\n");
 	cpuidentify();
 	meminit0();
