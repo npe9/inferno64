@@ -174,23 +174,19 @@ redraw()
 	image.draw(image.r,background,nil,Point(0,0));
 	graph.image = image;
 	graph.cmd("clear");
-	left := Rect(image.r.min.add((50,38)),
-		(image.r.min.x+image.r.dx()*2/3-20,image.r.max.y-58));
-	right := Rect((image.r.min.x+image.r.dx()*2/3+35,image.r.min.y+38),
-		(image.r.max.x-18,image.r.max.y-58));
-	graph.cmd(sys->sprint(
-		"view bif %d %d %d %d\n" +
+	graph.cmd("content margin 50 38 18 58\n" +
+		"split content x bif 2 cob 1 gutter 55\n" +
+		"view bif bif\n" +
+		"view cob cob");
+	graph.cmd(
 		"scale bif x 2.8 4\n" +
 		"scale bif y 0 1 reverse\n" +
 		"axis bif x parameter-r grid\n" +
 		"axis bif y long-run-x grid\n" +
-		"view cob %d %d %d %d\n" +
 		"scale cob x 0 1\n" +
 		"scale cob y 0 1 reverse\n" +
 		"axis cob x x[n] grid\n" +
-		"axis cob y x[n+1] grid",
-		left.min.x,left.min.y,left.max.x,left.max.y,
-		right.min.x,right.min.y,right.max.x,right.max.y));
+		"axis cob y x[n+1] grid");
 	graph.cmd(
 		"point bif bifurcation x parameter y value colour foreground radius 1\n" +
 		"line bif selected x parameter y value colour accent width 1\n" +

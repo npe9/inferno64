@@ -166,14 +166,11 @@ redraw()
 	if(im == nil)
 		return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	content := Rect(im.r.min.add((45,35)),im.r.max.sub((18,60)));
-	middle := content.min.x+content.dx()/2;
-	phase := Rect(content.min,(middle-24,content.max.y));
-	timeplot := Rect((middle+30,content.min.y),content.max);
 	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view phase %d %d %d %d",
-		phase.min.x,phase.min.y,phase.max.x,phase.max.y));
+	graph.cmd("content margin 45 35 18 60\n" +
+		"split content x phase 1 timeplot 1 gutter 54\n" +
+		"view phase phase");
 	graph.cmd("scale phase x -2 2");
 	graph.cmd("scale phase y -2 2 reverse");
 	graph.cmd("axis phase x muscle-state");
@@ -182,8 +179,7 @@ redraw()
 	tmax := t;
 	if(tmax < 10.0)
 		tmax = 10.0;
-	graph.cmd(sys->sprint("view timeplot %d %d %d %d",
-		timeplot.min.x,timeplot.min.y,timeplot.max.x,timeplot.max.y));
+	graph.cmd("view timeplot timeplot");
 	graph.cmd(sys->sprint("scale timeplot x 0 %.8g",tmax));
 	graph.cmd("scale timeplot y -2 2 reverse");
 	graph.cmd("axis timeplot x time");

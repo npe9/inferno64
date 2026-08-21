@@ -148,10 +148,9 @@ redraw()
 	im:=win.image;
 	if(im==nil)return;
 	im.draw(im.r,bg,nil,Point(0,0));
-	r:=Rect(im.r.min.add((45,35)),im.r.max.sub((18,58)));
 	graph.image=im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("view phase %d %d %d %d",r.min.x,r.min.y,r.max.x,r.max.y));
+	graph.cmd("content margin 45 35 18 58\nview phase content");
 	graph.cmd("scale phase x 0 1.5");
 	graph.cmd("scale phase y 0 1.5 reverse");
 	graph.cmd("axis phase x wage-share");

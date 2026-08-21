@@ -21,7 +21,7 @@ new(image: ref Image, font: ref Font): ref Plotter
 		math = load Math Math->PATH;
 		str = load String String->PATH;
 	}
-	return ref Plotter(image, font, nil, nil, nil, nil);
+	return ref Plotter(image, font, nil, nil, nil, nil, nil);
 }
 
 run(p: ref Plotter): chan of ref Plotmsg
@@ -194,6 +194,24 @@ findcolour(p: ref Plotter, name: string): ref Image
 	return nil;
 }
 
+findrect(p: ref Plotter, name: string): ref Namedrect
+{
+	for(l := p.rects; l != nil; l = tl l)
+		if((hd l).name == name)
+			return hd l;
+	return nil;
+}
+
+setrect(p: ref Plotter, name: string, r: Rect)
+{
+	nr := findrect(p,name);
+	if(nr == nil){
+		nr = ref Namedrect(name,r);
+		p.rects = nr :: p.rects;
+	}else
+		nr.r = r;
+}
+
 tablecmd(t: ref Table, name: string, a: array of string): string
 {
 	if(len a < 2)
@@ -279,9 +297,16 @@ Plotter.cmd(p: self ref Plotter, command: string): string
 		p.layers = nil;
 		return nil;
 	"view" =>
-		if(len a != 6)
-			return "usage: view name x0 y0 x1 y1";
-		r := Rect((int a[2],int a[3]),(int a[4],int a[5]));
+		r: Rect;
+		if(len a == 3){
+			nr := findrect(p,a[2]);
+			if(nr == nil)
+				return "view: no such rect " + a[2];
+			r = nr.r;
+		}else if(len a == 6)
+			r = Rect((int a[2],int a[3]),(int a[4],int a[5]));
+		else
+			return "usage: view name x0 y0 x1 y1 | view name rect";
 		v := findview(p,a[1]);
 		if(v == nil){
 			v = ref View(a[1],r,ref Scale(0.0,1.0,r.min.x,r.max.x),
@@ -289,6 +314,60 @@ Plotter.cmd(p: self ref Plotter, command: string): string
 			p.views = v :: p.views;
 		}else
 			v.r = r;
+		return nil;
+	"content" =>
+		if(len a != 6 || a[1] != "margin")
+			return "usage: content margin left top right bottom";
+		if(p.image == nil)
+			return "content: no image";
+		ir := p.image.r;
+		l := int a[2]; t := int a[3]; rr := int a[4]; b := int a[5];
+		setrect(p, "content", Rect(ir.min.add((l,t)), ir.max.sub((rr,b))));
+		return nil;
+	"rect" =>
+		if(len a != 6)
+			return "usage: rect name x0 y0 x1 y1";
+		setrect(p, a[1], Rect((int a[2],int a[3]),(int a[4],int a[5])));
+		return nil;
+	"split" =>
+		if(len a < 6)
+			return "usage: split source x|y name weight [name weight...] gutter g";
+		if(a[len a-2] != "gutter")
+			return "split: expected gutter g at the end";
+		gutter := int a[len a-1];
+		src := findrect(p,a[1]);
+		if(src == nil)
+			return "split: no such rect " + a[1];
+		axis := a[2];
+		if(axis != "x" && axis != "y")
+			return "split: axis must be x or y";
+		npanels := (len a-5)/2;
+		if(npanels < 1 || (len a-5)%2 != 0)
+			return "split: names/weights must come in pairs";
+		total := 0.0;
+		for(i := 0; i < npanels; i++)
+			total += real a[3+2*i+1];
+		span := src.r.max.x - src.r.min.x;
+		if(axis == "y")
+			span = src.r.max.y - src.r.min.y;
+		span -= gutter*(npanels-1);
+		if(span < 0)
+			span = 0;
+		pos := 0;
+		if(axis == "x") pos = src.r.min.x;
+		else pos = src.r.min.y;
+		for(i = 0; i < npanels; i++){
+			name := a[3+2*i];
+			weight := real a[3+2*i+1];
+			extent := int(real(span)*weight/total);
+			pr: Rect;
+			if(axis == "x")
+				pr = Rect((pos,src.r.min.y),(pos+extent,src.r.max.y));
+			else
+				pr = Rect((src.r.min.x,pos),(src.r.max.x,pos+extent));
+			setrect(p,name,pr);
+			pos += extent+gutter;
+		}
 		return nil;
 	"scale" =>
 		if(len a < 5)
