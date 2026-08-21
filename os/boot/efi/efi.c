@@ -42,7 +42,7 @@ unload(void)
 	eficall(ST->BootServices->ExitBootServices, IH, MK);
 }
 
-static void
+void
 memconf(char **cfg)
 {
 	static uchar memtype[EfiMaxMemoryType] = {
@@ -72,6 +72,8 @@ memconf(char **cfg)
 	entvers = 1;
 	if(eficall(ST->BootServices->GetMemoryMap, &mapsize, mapbuf, &MK, &entsize, &entvers))
 		return;
+	if(cfg == nil)
+		return;
 
 	s = *cfg;
 	for(p = mapbuf; mapsize >= entsize; p += entsize, mapsize -= entsize){
@@ -93,7 +95,7 @@ memconf(char **cfg)
 	*s = '\0';
 	if(s > *cfg){
 		s[-1] = '\n';
-		print(*cfg);
+		/* Do not call firmware after obtaining the map. */
 		*cfg = s;
 	}
 }
@@ -276,7 +278,6 @@ Found:
 void
 eficonfig(char **cfg)
 {
-	memconf(cfg);
 	acpiconf(cfg);
 	screenconf(cfg);
 }

@@ -364,6 +364,8 @@ bootkern(void *f)
 
 	close(f);
 	print("boot\n");
+	/* Get the final map immediately before ExitBootServices. */
+	memconf(nil);
 	unload();
 
 	jump(e);
