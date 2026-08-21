@@ -1,0 +1,100 @@
+.TH SPARSE 2
+.SH NAME
+sparse: newfrompattern, clear, get, set, add, matvec, dirichlet \- a compressed sparse row matrix
+.SH SYNOPSIS
+.EX
+include "sparse.m";
+sparse := load Sparse Sparse->PATH;
+CSR: import sparse;
+
+m := sparse->newfrompattern(n, elems);
+sparse->add(m, row, col, value);
+y := sparse->matvec(m, x);
+sparse->dirichlet(m, b, rows, values);
+.EE
+.SH DESCRIPTION
+.I Sparse
+is a square compressed-sparse-row (CSR) matrix: a
+.B CSR
+holds
+.IR n ,
+.BR rowptr " (length " n +1),
+.BR colidx " and " val " (both length " nnz ),
+each row's slice of
+.B colidx
+/
+.B val
+sorted by column. This (not a stencil closure) is what makes
+.IR fem (2)
+a genuine sparse-matrix assembly: its
+.IR krylov (2)
+.B Apply
+for a
+.I Sparse
+matrix is this matrix's own
+.BR matvec ,
+applied to real assembled values, never a stencil evaluated on the fly
+the way
+.IR pde (2)'s
+matrix-free implicit solvers are.
+.PP
+.B Newfrompattern
+builds the symbolic pattern once from
+.IR elems ,
+a per-element list of the global node ids it touches (e.g.
+.IR femesh (2)'s
+own
+.BR elemnodes ),
+before any numeric assembly \(em every pair of nodes sharing an
+element becomes a nonzero, including the diagonal. A real FE/sparse
+code never rebuilds the pattern per solve, only refills the numeric
+values via repeated
+.B clear
+/
+.B add
+calls, which is why the pattern and the values are built in two
+separate steps here.
+.PP
+.BR Clear ,
+.BR get ,
+.BR set ,
+and
+.B add
+read or write one entry;
+.B get
+returns 0.0 for a
+.RI ( row , col )
+pair outside the pattern rather than an error, since that's a genuine
+zero, not a mistake.
+.B Matvec
+computes
+.IR m * x .
+.PP
+.B Dirichlet
+eliminates a set of fixed degrees of freedom from
+.RI ( m , b )
+in place: for each
+.RI ( rows [ i ], values [ i ]),
+it zeros that row and column of
+.I m
+(folding each column's contribution into
+.IR b ),
+sets the diagonal to 1, and sets
+.IR b [ rows [ i ]]
+to
+.IR values [ i ].
+This keeps
+.I m
+symmetric positive definite when it started that way \(em unlike just
+overwriting the row, which drops symmetry and
+.IR krylov (2)'s
+.B cg
+convergence guarantee with it.
+.SH SOURCE
+.B /module/sparse.m
+.br
+.B /appl/lib/sparse.b
+.SH SEE ALSO
+.IR femesh (2),
+.IR krylov (2),
+.IR fem (2)

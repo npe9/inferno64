@@ -1,0 +1,87 @@
+.TH FEMESH 2
+.SH NAME
+femesh: parse, nnodes, nelem, nodeid, nodeijk, nodecoord, isboundary, elemnodes \- a structured hex8 finite-element mesh
+.SH SYNOPSIS
+.EX
+include "femesh.m";
+femesh := load Femesh Femesh->PATH;
+
+(g, err) := femesh->parse("mesh 20x20x20 domain 1x1x1");
+n := femesh->nnodes(g);
+e := femesh->nelem(g);
+nodes := femesh->elemnodes(g, 0);
+.EE
+.SH DESCRIPTION
+.I Femesh
+describes a structured brick of hex8 (trilinear 8-node hexahedral)
+elements \(em the mesh shape a real finite-element assembly needs:
+nodes, elements, and which nodes each element touches, not just a
+uniform array of values the way
+.IR mesh (2)'s
+own
+.B Grid
+is for
+.IR pde (2)'s
+finite-difference stencils.
+.B Femesh
+is the domain half of
+.IR fem (2),
+split out the same way
+.IR mesh (2)
+is split out from
+.IR pde (2).
+.PP
+The grammar is one line:
+.EX
+mesh NXxNYxNZ [domain WxHxD]
+.EE
+giving
+.I nx
+by
+.I ny
+by
+.I nz
+elements; domain defaults to
+.B 1x1x1
+if omitted.
+.B Parse
+returns
+.RI ( nil ", " error )
+on a malformed line.
+.PP
+A
+.B Grid
+has
+.RI ( nx +1)*( ny +1)*( nz +1)
+nodes and
+.IR nx * ny * nz
+elements.
+.B Nodeid
+maps a node's
+.RI ( i , j , k )
+grid position to its flat id;
+.B Nodeijk
+and
+.B Nodecoord
+invert that, giving grid position or physical
+.RI ( x , y , z )
+coordinates from an id.
+.B Isboundary
+reports whether a node lies on any of the brick's six outer faces \(em
+the set a Dirichlet boundary condition applies to.
+.B Elemnodes
+gives the 8 global node ids of element
+.I e
+in standard hex8 local order: the bottom face counterclockwise, then
+the top face the same way, each node directly above the one 4 below
+it \(em the order
+.IR fem (2)'s
+element stiffness matrix is written against.
+.SH SOURCE
+.B /module/femesh.m
+.br
+.B /appl/lib/femesh.b
+.SH SEE ALSO
+.IR mesh (2),
+.IR sparse (2),
+.IR fem (2)

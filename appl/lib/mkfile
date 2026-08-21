@@ -49,6 +49,8 @@ TARG=\
 	ether.dis\
 	exception.dis\
 	factotum.dis\
+	fem.dis\
+	femesh.dis\
 	filepat.dis\
 	format.dis\
 	fsfilter.dis\
@@ -127,6 +129,7 @@ TARG=\
 	slip.dis\
 	smtp.dis\
 	sort.dis\
+	sparse.dis\
 	ssl.dis\
 	string.dis\
 	strinttab.dis\

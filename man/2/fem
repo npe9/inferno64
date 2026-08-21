@@ -1,0 +1,150 @@
+.TH FEM 2
+.SH NAME
+fem: assemble, loadfn, loadconst, dirichlet, newproblem, solve \- finite-element Poisson assembly and solve
+.SH SYNOPSIS
+.EX
+include "fem.m";
+fem := load Fem Fem->PATH;
+Problem: import fem;
+
+(p, err) := fem->newproblem(
+	"mesh 20x20x20 domain 1x1x1\en" +
+	"material diffusivity 1.0\en" +
+	"load 1.0\en" +
+	"bc dirichlet 0.0\en" +
+	"solver cg tolerance 1e-8");
+if(err != nil)
+	...
+(x, iters, resid, serr) := fem->solve(p);
+.EE
+.SH DESCRIPTION
+.I Fem
+is a real finite-element assembly on
+.IR femesh (2)'s
+structured hex8 mesh: trilinear shape functions, 2x2x2 Gauss
+quadrature, scattered into one global
+.IR sparse (2)
+CSR matrix \(em this, not a stencil closure, is what makes it a
+finite-\fIelement\fP proxy rather than another
+.IR pde (2)
+equation. Where
+.IR pde (2)'s
+implicit solvers apply an operator matrix-free,
+.IR krylov (2)'s
+.B Apply
+for a
+.I Fem
+problem is a real assembled sparse matrix's own
+.BR matvec .
+.PP
+.B Assemble
+builds the global stiffness matrix for constant-diffusivity Poisson
+(\-div(D grad u) = f) on a
+.IR femesh (2)
+.BR Grid ,
+with no boundary conditions applied yet.
+.B Loadfn
+builds the consistent FE load vector for a source
+.I src
+(a bare function of physical
+.RI ( x , y , z ),
+evaluated at each real quadrature point, the same convention
+.IR krylov (2)'s
+own
+.B Apply
+uses since Limbo has no closure literals);
+.B loadconst
+is
+.B loadfn
+for a source constant everywhere, the common case.
+.B Dirichlet
+eliminates a set of fixed nodes from an assembled
+.RI ( a , b )
+pair \(em a thin wrapper over
+.IR sparse (2)'s
+own
+.BR dirichlet ,
+kept here so a caller never needs to import
+.I sparse
+just to set a boundary condition.
+.SS "The problem-specification language"
+.B Newproblem
+parses a spec into a ready, fully assembled and boundary-eliminated
+.B Problem
+in one call, the same relationship a printf format string has to what
+it produces \(em the same shape
+.IR pde (2)'s
+own
+.B newproblem
+has, layered on
+.IR femesh (2)'s
+mesh grammar the same way
+.IR pde (2)
+is layered on
+.IR mesh (2)'s.
+A spec is one or more newline-separated lines:
+.TP
+.BI "mesh " NXxNYxNZ " [domain " WxHxD "]"
+Delegates to
+.IR femesh (2);
+see there for the grammar. Required.
+.TP
+.BI "material diffusivity " D
+The constant diffusivity passed to
+.BR assemble .
+Required.
+.TP
+.BI "load " Q
+A constant volumetric source, passed to
+.BR loadconst .
+Optional; defaults to 0.0.
+.TP
+.BI "bc dirichlet " V
+Fixes every boundary node (see
+.IR femesh (2)'s
+.BR isboundary )
+to the uniform value
+.IR V .
+Required \(em an assembled system with no boundary condition at all
+is singular.
+.TP
+.BI "solver gmres|cg [tolerance " T "] [restart " R "] [maxiter " N ]
+Which
+.IR krylov (2)
+method solves the assembled system, and its parameters; see
+.IR krylov (2)
+for what each means. Unlike
+.IR pde (2)
+there is no
+.B "solver explicit"
+here: an assembled system has no stability-limited substep to fall
+back to, so solving
+.IR Ax=b
+for a real sparse
+.I A
+is always an actual linear solve.
+.PP
+.B Solve
+runs
+.IR p . a " x = " p . b
+via
+.IR krylov (2)
+using
+.IR p . a 's
+own
+.B matvec
+as the operator \(em a real sparse solve, not a matrix-free one \(em
+and returns the nodal solution (indexed exactly like
+.IR femesh (2)'s
+node ids), the iteration count, and the final residual, or an error
+string if the solve failed to converge (in which case the other three
+returns should not be trusted).
+.SH SOURCE
+.B /module/fem.m
+.br
+.B /appl/lib/fem.b
+.SH SEE ALSO
+.IR femesh (2),
+.IR sparse (2),
+.IR krylov (2),
+.IR pde (2)
