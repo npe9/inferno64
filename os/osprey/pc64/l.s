@@ -982,6 +982,7 @@ TEXT syscallentry(SB), 1, $-4
 	LEAQ	8(SP), RARG			/* Ureg* arg */
 
 	CALL	syscall(SB)
+	ADDQ	$2, (19*8)(SP)		/* UEFI GRUB's SYSRET frame retains the syscall IP */
 
 TEXT forkret(SB), 1, $-4
 	SWAPGS

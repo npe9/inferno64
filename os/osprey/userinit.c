@@ -17,6 +17,13 @@
  */
 #include	"initcode.i"
 
+static void
+smark(char *s)
+{
+	while(*s != 0)
+		outb(0x3f8, *s++);
+}
+
 /*
  * The first process kernel process starts here.
  */
@@ -27,6 +34,7 @@ proc0(void*)
 	Page *p;
 
 	spllo();
+	smark("osprey: proc0\n");
 	print("proc0: start\n");
 	if(waserror())
 		panic("proc0: %s", up->errstr);
@@ -84,6 +92,7 @@ proc0(void*)
 	 *	switch to usermode to run initcode
 	 */
 	print("proc0: init0\n");
+	smark("osprey: touser\n");
 	init0();
 
 	/* init0 will never return */
