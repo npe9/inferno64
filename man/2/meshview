@@ -1,0 +1,69 @@
+.TH MESHVIEW 2
+.SH NAME
+meshview: new, cmd, draw \- declarative field-to-pixel colour ramps
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "mesh.m";
+include "meshview.m";
+meshview := load Meshview Meshview->PATH;
+View: import meshview;
+
+v := meshview->new(image, font);
+v.cmd("colour 0 1 16r000030ff 16r0080e0ff 16re0ff40ff 16rffff00ff");
+v.draw(image.r, grid, values);
+.EE
+.SH DESCRIPTION
+.I Meshview
+turns a
+.IR mesh (2)
+grid's worth of scalar values into pixels \(em the same relationship
+.IR plot (2)
+has to a time-series chart, applied to a 2-D field instead: describe
+the colour ramp once via
+.BR cmd ,
+then
+.B draw
+every frame, rather than hand-building a palette table and per-cell
+blit loop for each field.
+.PP
+.B New
+takes the destination image and a font (colours are resolved via the
+font's display, following
+.IR plot (2)'s
+own convention \(em
+.B image
+may still be
+.B nil
+at setup time, before the first reshape/onscreen, while a font opened
+against the window's display already isn't).
+.PP
+.B Cmd
+accepts:
+.TP
+.BI "colour " lo " " hi " " rgba0 " " rgba1 " [" rgba2 " ...]"
+Maps
+.RI [ lo , hi ]
+onto a 256-entry ramp, linearly interpolated between the given
+.B 16rRRGGBBAA
+stops, evenly spaced across the range.  Two stops give a simple
+gradient; three or more give a fuller heat ramp.
+.PP
+.B Draw
+renders
+.IR grid 's
+.I nx
+by
+.I ny
+.I values
+into
+.IR r ,
+one sub-rectangle per cell.
+.SH SOURCE
+.B /module/meshview.m
+.br
+.B /appl/lib/meshview.b
+.SH SEE ALSO
+.IR mesh (2),
+.IR plot (2),
+.IR pdelab (1)

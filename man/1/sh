@@ -959,6 +959,9 @@ Print each simple command to stderr before executing it.
 .IR sh-regex (1),
 .IR sh-string (1),
 .IR sh-csv (1),
+.IR sh-mesh (1),
+.IR sh-pde (1),
+.IR sh-verify (1),
 .IR sh (2),
 .IR env (2)
 .SH BUGS

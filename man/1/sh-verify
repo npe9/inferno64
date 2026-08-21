@@ -1,0 +1,59 @@
+.TH SH-VERIFY 1
+.SH NAME
+laplacianorder \- shell script interface to verify(2)
+.SH SYNOPSIS
+.B load verify
+
+.B ${laplacianorder
+.I n0 levels
+.B }
+.SH DESCRIPTION
+.I Verify
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR verify (2)'s
+convergence-order check for
+.IR pde (2)'s
+discrete Laplacian \(em the kind of study a shell loop is the natural
+place to drive, not a compiled program.
+.PP
+.B ${laplacianorder}
+runs the check at
+.IR n0 ", 2" n0 ", 4" n0 ", ..."
+resolution for
+.I levels
+levels, and yields one element per level: three space-separated
+numbers,
+.RI \(lq n " " error " " order \(rq,
+the same fields
+.IR verify (2)'s
+own
+.B Level
+carries.  A caller typically loops over the result (after
+.BR "load std" ,
+for
+.IR sh-std (1)'s
+.BR for ):
+.EX
+	load std
+	load verify
+	for r in ${laplacianorder 8 5} {echo $r}
+.EE
+prints one line per level, the error shrinking and the observed order
+climbing toward
+.I 2.0
+as resolution doubles.  A bad argument (fewer than 2 levels, or
+.I n0
+under 4) raises a
+.B laplacianorder
+exception with the same text
+.IR verify (2)
+would have returned.
+.SH SOURCE
+.B /appl/cmd/sh/verify.b
+.SH SEE ALSO
+.IR verify (2),
+.IR sh (1),
+.IR sh-std (1),
+.IR sh-pde (1)

@@ -1,0 +1,78 @@
+.TH PARAMTRACKS 2
+.SH NAME
+paramtracks: new, cmd, hit, draw, value \- a labelled parameter-slider control band
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "paramtracks.m";
+paramtracks := load Paramtracks Paramtracks->PATH;
+Tracks: import paramtracks;
+
+t := paramtracks->new(image, font);
+t.cmd("colour foreground 16r20272cff\encolour accent 16rb85c38ff\en" +
+      "band 74\entrack sigma 0 25 colour accent\enset sigma 10");
+t.draw(image.r);
+(name, value, ok) := t.hit(pointer.xy, image.r);
+.EE
+.SH DESCRIPTION
+.I Paramtracks
+is a small Tk/Plot-style command language for the labelled band of
+parameter sliders several danby models draw along one edge of their
+window: equal-width horizontal slots, one per live parameter, hit-
+tested by fraction-across-the-slot and drawn as a line, a dot at the
+current value, and a
+.RI \(lq name " " value \(rq
+label underneath.  It replaces what several models used to hand-roll
+independently (band-hit-test arithmetic and slider drawing, duplicated
+near-verbatim save for the parameter names, ranges, and pixel
+constants) with one reusable module, the same way
+.IR plot (2)
+replaced per-model chart-drawing code.
+.PP
+.B Cmd
+accepts newline-separated commands:
+.TP
+.BI "colour " name " " rgba
+Defines a named colour, resolved via the track image's font's display.
+.TP
+.BI "band " height
+Sets the control band's pixel height (the bottom
+.I height
+pixels of whatever rect
+.B draw
+/
+.B hit
+are given).
+.TP
+.BI "track " name " " lo " " hi " [colour " colourname "]"
+Adds (or reconfigures) a track; its value defaults to
+.IR lo .
+.TP
+.BI "set " name " " value
+Sets a track's current value directly, e.g. after model init or reset.
+.PP
+.B Draw
+renders the band within the bottom
+.B band
+pixels of
+.IR r .
+.B Hit
+tests a pointer position against
+.IR r 's
+band: if it falls inside, the hit track's value is updated from the
+pointer's fractional position across its slot (clamped to
+.RI [0.01,\ 0.99] )
+and
+.RI ( name ", " value ", 1)"
+is returned; otherwise
+.RI (\(lq\(rq,\ 0.0,\ 0).
+.B Value
+reads a named track's current value without going through
+.BR hit .
+.SH SOURCE
+.B /module/paramtracks.m
+.br
+.B /appl/lib/paramtracks.b
+.SH SEE ALSO
+.IR plot (2),
+.IR danby (1)

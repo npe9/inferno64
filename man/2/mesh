@@ -1,0 +1,61 @@
+.TH MESH 2
+.SH NAME
+mesh: parse \- a little language for describing a domain grid
+.SH SYNOPSIS
+.EX
+include "mesh.m";
+mesh := load Mesh Mesh->PATH;
+
+(g, err) := mesh->parse("mesh 64x64 domain 1x1 bc periodic");
+.EE
+.SH DESCRIPTION
+.I Mesh
+parses one line describing a rectangular grid \(em resolution, physical
+domain size, and boundary condition \(em into a
+.B Grid
+holding exactly the geometry half of
+.IR pde (2)'s
+own
+.BR Field .
+It is split out as its own module, rather than living inside
+.IR pde (2)
+itself, so any future problem class describes its domain the same way
+instead of re-deriving
+.RI \(lq NXxNY " domain " WxH " bc " ... \(rq
+parsing on its own: a mesh is infrastructure every problem class
+shares, the equation on top of it is each class's own concern.
+.PP
+The grammar is one line:
+.EX
+mesh NXxNY [domain WxH] [bc clamp|periodic|zero]
+.EE
+.I NXxNY
+gives the resolution; both dimensions must be at least 2.
+.I domain
+gives the physical width and height, defaulting to
+.B 1x1
+if omitted \(em cell size is then
+.IR width / NX
+by
+.IR height / NY .
+.I bc
+gives the boundary condition (see
+.IR pde (2)
+for what each mode means), defaulting to
+.BR clamp .
+.PP
+.B Parse
+returns
+.RI ( nil ", " error )
+on a malformed line, describing what was wrong; a
+.IR pde (2)
+consumer such as
+.B newproblem
+passes that error straight back to its own caller unchanged.
+.SH SOURCE
+.B /module/mesh.m
+.br
+.B /appl/lib/mesh.b
+.SH SEE ALSO
+.IR pde (2),
+.IR sh-mesh (1)

@@ -1,0 +1,62 @@
+.TH VERIFY 2
+.SH NAME
+verify: laplacianorder \- convergence-order verification for pde(2)'s Laplacian
+.SH SYNOPSIS
+.EX
+include "verify.m";
+verify := load Verify Verify->PATH;
+
+(levels, err) := verify->laplacianorder(8, 5);
+.EE
+.SH DESCRIPTION
+.I Verify
+checks that a discretization actually converges at the order it
+claims to \(em verification (are we solving the equations right?) in
+the numerical-methods sense, not validation (are they the right
+equations?), and not just eyeballing that an error got smaller.
+.PP
+.B Laplacianorder
+applies
+.IR pde (2)'s
+discrete 5-point Laplacian to the known function
+.RI sin(2π x )sin(2π y )
+on a periodic unit square \(em periodic specifically to avoid any
+boundary-treatment order contaminating the measurement, isolating pure
+interior-stencil accuracy \(em at
+.IR n0 ", 2" n0 ", 4" n0 ", ..."
+resolution for
+.I levels
+levels, and reports, at each level, the max-norm error against the
+exact Laplacian and the observed convergence order versus the previous
+level (0.0 at the first level, which has none).  A correctly
+implemented centred 5-point stencil is 2nd order: order should climb
+toward
+.I 2.0
+as resolution increases, e.g.
+.IR 0.000 ", " 1.930 ", " 1.982 ", " 1.996 ", " 1.999
+for
+.IR n0 =8
+over 5 levels.
+.PP
+The Laplacian is applied via one deliberately small explicit
+.B diffuse()
+sub-step rather than a new
+.IR pde (2)
+export: for a step
+.I h
+small enough that
+.B diffuse
+takes it unsubdivided,
+.RI ( u \fIsub\fRnew\fR - u \fIsub\fRold\fR)/ h
+is exactly the discrete Laplacian by construction of the explicit-Euler
+update
+.B diffuse
+performs internally \(em which also keeps this check free of any time-
+discretization question, measuring only the spatial operator.
+.SH SOURCE
+.B /module/verify.m
+.br
+.B /appl/lib/verify.b
+.SH SEE ALSO
+.IR pde (2),
+.IR sh-verify (1)

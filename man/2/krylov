@@ -1,0 +1,95 @@
+.TH KRYLOV 2
+.SH NAME
+krylov: new, cmd, solve \- matrix-free GMRES and conjugate-gradient solvers
+.SH SYNOPSIS
+.EX
+include "krylov.m";
+krylov := load Krylov Krylov->PATH;
+Solver: import krylov;
+
+s := krylov->new();
+s.cmd("method gmres\enrestart 30\entolerance 1e-8\enmaxiter 200");
+x := s.solve(apply, b, nil);
+if(!s.converged)
+	...
+.EE
+.SH DESCRIPTION
+.I Krylov
+solves
+.IB apply( x ) " = " b
+for
+.I x
+by GMRES(m) with restart or by conjugate gradient (CG), configured by a
+small command language in the same style as
+.IR plot (2)'s
+own
+.BR cmd .
+.I Apply
+is a plain function reference \(em
+.B "fn(x: array of real): array of real"
+\(em never a stored matrix: the only workable shape for anything built
+on a grid, where even a modest mesh makes the dense matrix far too large
+to assemble or store.
+.PP
+.B New
+returns a
+.B Solver
+defaulted to GMRES, tolerance
+.IR 1e\-8 ,
+restart
+.IR 30 ,
+and
+.IR 200
+maximum iterations.
+.B Cmd
+accepts one or more newline-separated commands:
+.TP
+.BI "method " gmres|cg
+Selects the algorithm.
+.B Gmres
+is the general-purpose default: valid for any nonsingular operator,
+symmetric or not.
+.B Cg
+does half the work per iteration and needs no restart or basis storage,
+but is only mathematically valid when the operator is genuinely
+symmetric positive definite \(em handed one that isn't, it can fail
+silently or diverge.  Whether an operator qualifies is a real property
+of the equation being solved
+.RI ( pde (2)
+notes which of its own equations do), not a style preference.
+.TP
+.BI "tolerance " t
+Relative residual tolerance.
+.TP
+.BI "restart " k
+GMRES restart length; ignored by CG.
+.TP
+.BI "maxiter " n
+Iteration cap.
+.PP
+.B Solve
+runs the configured method from
+.I x0
+(a zero vector if
+.I x0
+is
+.BR nil ),
+and returns the solution.  It also sets, for the caller to inspect:
+.B iterations
+(how many were taken),
+.B residual
+(the final relative residual norm), and
+.B converged
+(whether
+.B residual
+met
+.BR tolerance ) \(em a caller can then decide whether to trust the
+result, retry with a tighter setup, or report failure, rather than
+silently using a possibly-garbage answer.
+.SH SOURCE
+.B /module/krylov.m
+.br
+.B /appl/lib/krylov.b
+.SH SEE ALSO
+.IR pde (2),
+.IR plot (2)

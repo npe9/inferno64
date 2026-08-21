@@ -1123,6 +1123,9 @@ character input for touch screen devices
 .IR kill (1)
 terminate process(es)
 .TP
+.IR laplacianorder (1)
+shell script interface to verify(2)
+.TP
 .IR life (1)
 Conway's Game of Life
 .TP
@@ -1177,6 +1180,9 @@ multicolumn print
 .IR mdb (1)
 Dis module debugger
 .TP
+.IR mesh (1)
+shell script interface to mesh(2)
+.TP
 .IR miniterm (1)
 Minitel® emulator
 .TP
@@ -1230,6 +1236,9 @@ paginate
 .TP
 .IR passwd (1)
 change user password
+.TP
+.IR pde (1)
+shell script interface to pde(2)'s problem-specification lang...
 .TP
 .IR pdelab (1)
 interactive partial differential equation simulations

@@ -1,0 +1,54 @@
+.TH SH-MESH 1
+.SH NAME
+mesh \- shell script interface to mesh(2)
+.SH SYNOPSIS
+.B load mesh
+
+.B ${mesh
+.I NXxNY
+.RB [ domain
+.IR WxH ]
+.RB [ bc
+.IR clamp|periodic|zero ]
+.B }
+.SH DESCRIPTION
+.I Mesh
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR mesh (2)'s
+own little language for describing a grid, without going through a
+larger consumer like
+.IR sh-pde (1).
+.PP
+.B ${mesh}
+parses its arguments exactly as
+.IR mesh (2)'s
+.B parse
+does, and yields five elements: the grid's
+.IR nx ,
+.IR ny ,
+.IR dx ,
+and
+.I dy
+followed by the boundary mode as one of the words
+.BR clamp ,
+.BR periodic ,
+or
+.BR zero .
+A caller typically destructures the result directly:
+.EX
+	(nx ny dx dy bc) = ${mesh 64x64 domain 1x1 bc periodic}
+.EE
+A malformed spec raises a
+.B mesh
+exception carrying the same error text
+.IR mesh (2)'s
+.B parse
+would have returned.
+.SH SOURCE
+.B /appl/cmd/sh/mesh.b
+.SH SEE ALSO
+.IR mesh (2),
+.IR sh (1),
+.IR sh-pde (1)

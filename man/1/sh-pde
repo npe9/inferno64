@@ -1,0 +1,210 @@
+.TH SH-PDE 1
+.SH NAME
+pde \- shell script interface to pde(2)'s problem-specification language
+.SH SYNOPSIS
+.B load pde
+
+.B ${pde
+.B new
+.B }
+.br
+.B pde
+.I id
+.B mesh
+.I NXxNY
+.RB [ domain
+.IR WxH ]
+.RB [ bc
+.IR clamp|periodic|zero ]
+.br
+.B pde
+.I id
+.B equation diffuse diffusivity
+.I D
+.br
+.B pde
+.I id
+.B equation wave speed
+.I S
+.B damping
+.I Dm
+.br
+.B pde
+.I id
+.B "solver explicit"
+.br
+.B pde
+.I id
+.B solver gmres|cg
+.RB [ tolerance
+.IR T ]
+.RB [ restart
+.IR R ]
+.RB [ maxiter
+.IR N ]
+.br
+.B pde
+.I id
+.B time step
+.I DT
+.br
+.B pde
+.I id
+.B commit
+.br
+.B pde
+.I id
+.B step
+.I dt
+.br
+.B ${pde
+.I id
+.B run
+.I until
+.B }
+.br
+.B ${pde
+.I id
+.B get
+.I x y
+.B }
+.br
+.B pde
+.I id
+.B set
+.I x y value
+.br
+.B pde
+.I id
+.B splat
+.I cx cy radius value
+.br
+.B pde
+.I id
+.B clear
+.I value
+.br
+.B ${pde
+.I id
+.B nx|ny|dx|dy
+.B }
+.br
+.B pde del
+.I id...
+.SH DESCRIPTION
+.I Pde
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR pde (2)'s
+own little language for specifying an entire problem \(em mesh,
+equation, and solver together \(em declaratively, the way a scientist
+would write it, instead of a compiled Limbo program.
+.PP
+.IR Pde (2)'s
+own
+.B newproblem
+takes a whole spec as one string in a single call; this module adds
+the incremental, script-friendly build-up around it \(em
+.BR mesh / equation / solver / time
+accumulate one line of the spec each,
+.B commit
+then calls
+.IR pde (2)'s
+.B newproblem
+on the accumulated lines \(em without changing
+.IR pde (2)
+itself in any way: every verb below except the handle bookkeeping is
+exactly
+.IR pde (2)'s
+own vocabulary, documented there in full.
+.PP
+.B ${pde new}
+allocates a handle (a small integer) for a problem still being built,
+and yields it.
+.BR Mesh ,
+.BR equation ,
+.BR solver ,
+and
+.B time
+each append one line of spec text to that handle, exactly as
+.IR pde (2)
+defines them; using any of them after
+.B commit
+raises an error.
+.B Commit
+parses the accumulated spec via
+.IR pde (2)'s
+.B newproblem
+and turns the handle into a ready problem; using
+.BR step ,
+.BR run ,
+.BR get ,
+.BR set ,
+.BR splat ,
+.BR clear ,
+or the
+.B nx
+/
+.B ny
+/
+.B dx
+/
+.B dy
+introspection verbs before committing raises an error.
+.PP
+.B Step
+advances the problem by an explicit
+.I dt
+(for an interactive caller driving its own loop).
+.B Run
+is the batch driver: it repeats
+.B step
+using the handle's own
+.B "time step"
+line until at least
+.I until
+total time has elapsed, and yields the number of steps taken \(em what
+a verification or UQ study run from a shell script calls instead of
+.BR step .
+Both raise an error (e.g. a solver that failed to converge) rather than
+leaving the field holding a garbage state.
+.PP
+.BR Get ,
+.BR set ,
+.BR splat ,
+and
+.B clear
+read or write the underlying field directly, the same as
+.IR pde (2)'s
+own functions of the same name.
+.B Del
+frees one or more handles.
+.PP
+A complete example \(em an implicit diffusion solve, stepped to
+completion, matching the same problem
+.IR pde (2)'s
+own SYNOPSIS shows in Limbo:
+.EX
+	load pde
+	id := ${pde new}
+	pde $id mesh 64x64 domain 1x1 bc clamp
+	pde $id equation diffuse diffusivity 0.05
+	pde $id solver gmres tolerance 1e-8 restart 30
+	pde $id time step 0.01
+	pde $id commit
+	pde $id clear 0.0
+	pde $id set 32 32 1.0
+	n := ${pde $id run 10.0}
+	echo centre ${pde $id get 32 32}
+	pde del $id
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/pde.b
+.SH SEE ALSO
+.IR pde (2),
+.IR mesh (2),
+.IR krylov (2),
+.IR sh (1),
+.IR sh-mesh (1),
+.IR sh-verify (1)

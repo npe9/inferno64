@@ -69,6 +69,55 @@ modules publish already-computed columns.
 .PP
 .B invert
 maps a pointer position in a named view back to data coordinates.
+.SS "Declarative panel layout"
+.EX
+p.cmd("content margin 45 35 18 58\en" +
+      "split content x phase 1 time 1 gutter 54\en" +
+      "view phase phase\en" +
+      "view time time");
+.EE
+Alongside literal pixel bounds, views can be laid out declaratively \(em
+the same idea as a Tk geometry manager, applied to plot panels instead of
+widgets: describe the split wanted, not the pixel arithmetic.  Recomputed
+from
+.B p.image.r
+on every call, so it stays correct across a live window resize with no
+extra bookkeeping.
+.TP
+.BI "content margin " l " " t " " r " " b
+Registers a rect named
+.B content
+as the current image's rectangle, shrunk by the given margins.
+.TP
+.BI "rect " name " " x0 " " y0 " " x1 " " y1
+Registers
+.I name
+as a rect with the given literal bounds \(em for a caller that already
+has exact pixel bounds (e.g. because they are also needed directly in
+Limbo, for label placement past what the plot itself draws) and only
+wants to avoid hand-formatting a
+.B view
+command's four integers.
+.TP
+.BI "split " source " x|y " name " " w " [" name " " w " ...] gutter " g
+Splits the named rect
+.I source
+along the given axis into named rects, proportional to each
+.IR w ,
+separated by
+.I g
+pixels.
+.TP
+.BI "view " name " " rect
+As well as the original
+.BI "view " name " " x0 " " y0 " " x1 " " y1
+form, a view can take a previously registered rect's bounds directly by
+name, from either
+.B content
+/
+.B split
+or
+.BR rect .
 .SH SOURCE
 .B /module/plot.m
 .br
