@@ -1,0 +1,23 @@
+<../../../mkconfig
+
+SYSTARG=Osprey
+OBJTYPE=amd64
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+BIN=$ROOT/Osprey/$OBJTYPE/bin
+TARG=ring
+OFILES=ring.$O
+
+all:V:	$TARG
+
+install:V: $TARG
+	cp $TARG $BIN/
+
+$TARG:	$OFILES
+	$LD -l -o $target $OFILES $ROOT/Osprey/$OBJTYPE/lib/libc.a
+
+%.$O:	%.c
+	$CC $CFLAGS $stem.c
+
+clean:V:
+	rm -f *.[$OS] $TARG

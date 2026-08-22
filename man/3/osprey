@@ -8,6 +8,7 @@ osprey \- resource containers, per-core scheduling and request rings
 .B /n/osprey/ctl
 .B /n/osprey/status
 .B /n/osprey/reply
+.B /n/osprey/arena
 .fi
 .SH DESCRIPTION
 The osprey device gives access to the portable Osprey policy layer:
@@ -22,6 +23,17 @@ no
 .IR Mach ,
 and no device registers.  This device is the adapter between it and the
 rest of the kernel, and it serialises all of it under one lock.
+.PP
+The rings live in one contiguous physical span, published as the
+.B osprey
+physical segment, so a process may
+.IR segattach (2)
+it and submit requests and collect replies without entering the kernel at
+all.  Only servicing a request still goes through the device.  The span is
+divided into a slice per container;
+.B status
+reports the size of the span, the size of a slice, and each container's
+own offset within it.
 .PP
 .B ctl
 accepts the following commands.  A container is named by an arbitrary
@@ -66,6 +78,11 @@ whose budget is exhausted before its period elapses stops being runnable.
 Move one task from the busiest core to the least busy, if they differ by
 more than one task.
 .TP
+.BI poke " id offset text"
+Copy text and a terminating null into the container's data area.  A
+process that has mapped the span writes there itself; this is for the
+shell.
+.TP
 .BI submit " id op " [ arg " ...]"
 Put a request on the container's request ring.
 .I op
@@ -83,13 +100,17 @@ is one of
 .BR yield ,
 or
 .BR poll .
-Up to three argument words follow.
+Up to three argument words follow.  If the request ring is full the write
+blocks until the dispatcher makes room.
 .TP
 .BI service " " [ n ]
 Service up to
 .I n
 queued requests, one from each container in turn, and put a reply on the
 originating container's reply ring.  The default is one.
+.TP
+.BI wait " id"
+Block until the container has a reply to collect.
 .TP
 .BI bind " id local global"
 Add a private name to the container's namespace.
@@ -116,8 +137,117 @@ the container, the operation, the reply status
 .BR blocked
 or
 .BR retry )
-and three result words.  A ring has no stable offset, so a reader always
-takes what is there at the time of the read.
+and three result words.  A ring has no stable offset, so only a read at
+the start of the file takes anything.
+.PP
+.B arena
+is the shared span itself at its own byte offsets, so a ring or a data
+area can be examined without mapping it.
+.SH REQUESTS
+.PP
+.BR yield ,
+.B poll
+and
+.B alloc
+are settled by the portable layer:
+.B poll
+reports the occupancy of the two rings and
+.B alloc
+charges the container's memory budget, refusing the request when the cap
+set by
+.B limit
+is reached.
+.PP
+.BR open ,
+.BR read ,
+.BR write ,
+.B stat
+and
+.B close
+are served against real kernel channels, in the namespace of whichever
+process drove the dispatcher.
+.B open
+takes the offset of a null-terminated path in the container's data area
+and an open mode, and replies with a handle.
+.BR read ,
+.B write
+and
+.B stat
+take a handle, an offset into the data area, and a byte count, and reply
+with the count transferred.
+.B close
+takes a handle.  The remaining operations are refused.
+.SH THE SHARED SPAN
+.PP
+A process maps the span with
+.IP
+.nf
+segattach(0, "osprey", 0, arenasize)
+.fi
+.PP
+where
+.I arenasize
+is the value
+.B status
+reports.  At its container's slice offset it finds
+.IP
+.nf
+struct Ospreymap {
+	uvlong	magic;		/* 0x4f53505259 */
+	uvlong	id;
+	uvlong	size;		/* messages in each ring */
+	uvlong	msgsize;	/* bytes in one message */
+	uvlong	requestqueue;	/* the rest are byte offsets */
+	uvlong	replyqueue;	/* from the start of the slice */
+	uvlong	request;
+	uvlong	reply;
+	uvlong	data;
+	uvlong	datalen;
+};
+.fi
+.PP
+Each ring head is
+.IP
+.nf
+struct Queue {
+	void	*message;	/* a kernel address; not usable */
+	uvlong	size;
+	uvlong	put;
+	uvlong	get;
+};
+.fi
+.PP
+and a message is
+.IP
+.nf
+struct Message {
+	uvlong	op;
+	uvlong	sequence;
+	uvlong	container;
+	uvlong	arg[5];		/* arg[0] status, arg[1] flags */
+};
+.fi
+.PP
+To submit, write the message at index
+.B put
+modulo
+.B size
+of the request array and then increment
+.BR put ;
+to collect, read the reply array at
+.B get
+modulo
+.B size
+when
+.B put
+differs from
+.B get
+and then increment
+.BR get .
+The message must be stored before the index that publishes it, and the
+index read before the message it refers to; the kernel side uses
+.IR coherence (10.2)
+for that, and a machine that reorders stores needs the same on this side.
 .SH EXAMPLE
 Order three containers by deadline and bill the one that runs:
 .IP
@@ -142,8 +272,25 @@ for(i in 1 2 3)
 echo service 4 >/n/osprey/ctl
 cat /n/osprey/reply
 .fi
+.PP
+Read a file through the ring.  The data offset comes from the container's
+line in
+.BR status ;
+here it is 2240, so the sixty-fourth byte of the data area is at 2304 in
+the span:
+.IP
+.nf
+echo poke 10 0 /dev/osversion >/n/osprey/ctl
+echo submit 10 open 0 0 >/n/osprey/ctl
+echo submit 10 read 0 64 32 >/n/osprey/ctl
+echo service 4 >/n/osprey/ctl
+cat /n/osprey/reply
+dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
+.fi
 .SH SOURCE
 .B /os/osprey/policy
+.br
+.B /os/osprey/cmd/ring.c
 .br
 .B /os/osprey/adapter/ospreyrt.c
 .br
@@ -151,17 +298,22 @@ cat /n/osprey/reply
 .SH SEE ALSO
 .IR cons (3)
 .SH BUGS
-The dispatcher answers only the operations the policy layer can settle by
-itself:
-.BR yield ,
-.B poll
+.BR wait ,
+.BR send ,
+.B recv
 and
-.BR alloc .
-The file, IPC and network operations belong to the user-level services
-described in the Osprey plan and are refused until those exist.
+.B bind
+are refused; process, IPC and network requests belong to the user-level
+services described in the Osprey plan.
 .PP
-Requests are submitted and replies are drained through
-.B ctl
-and
-.BR reply ,
-not by mapping the rings into a process.
+Servicing is driven by writes to
+.BR ctl ,
+not by the kernel's own clock or trap paths, and the dispatcher runs in
+the namespace of whichever process wrote
+.BR service .
+A container is not yet attached to a
+.IR Proc .
+.PP
+The whole span is mapped by any process that attaches it, so one
+container can read and write another's rings, and the kernel address in
+each ring head is visible to them all.

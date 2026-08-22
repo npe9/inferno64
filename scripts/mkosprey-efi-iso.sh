@@ -58,6 +58,11 @@ mcopy -i "$ESP" "$NSH" ::/startup.nsh
 echo "tree $TREE"
 cp "$LOADER" "$TREE/EFI/BOOT/BOOTX64.EFI"
 cp "$KERNEL" "$TREE/amd64/9pc64"
+# the user-space ring program, when it has been built
+if [ -f "$ROOT/Osprey/amd64/bin/ring" ]; then
+	mkdir -p "$TREE/bin"
+	cp "$ROOT/Osprey/amd64/bin/ring" "$TREE/bin/ring"
+fi
 cp "$ESP" "$TREE/efiboot.fat"
 cp "$CFG" "$TREE/plan9.ini"
 
