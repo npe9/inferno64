@@ -167,7 +167,7 @@ struct PMMU
 #define	inittxtflush(p)
 #define	settxtflush(p,c)
 
-#include "../../9front/portdat.h"
+#include "../portdat.h"
 
 typedef struct {
 	u32int	_0_;

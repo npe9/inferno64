@@ -4,7 +4,7 @@ MKSHELL=rc
 CONF=pc64
 CONFLIST=pc64
 
-SYSTARG=9front
+SYSTARG=Osprey
 OBJTYPE=amd64
 objtype=$OBJTYPE
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
@@ -12,10 +12,10 @@ objtype=$OBJTYPE
 FLAVOR=Osprey
 PORTDIR=$ROOT/os/$FLAVOR
 IPDIR=$PORTDIR/ip
-BOOTDIR=$ROOT/os/9front/boot
-PCDIR=$ROOT/os/pc/9front
+BOOTDIR=$PORTDIR/boot
+PCDIR=$PORTDIR/pc
 TARGETLIB=$ROOT/$FLAVOR/$OBJTYPE/lib
-PORTLIB=$ROOT/os/9front/lib
+PORTLIB=$PORTDIR/kernlib
 DEVCONF=$PORTDIR
 INSTALLDIR=$ROOT/$FLAVOR/$OBJTYPE
 KERNELSHELL=rc
@@ -87,16 +87,15 @@ OBJ=\
 	$PORTOBJ\
 
 LIB=\
-	$TARGETLIB/lib9front.a\
+	$TARGETLIB/libospreykern.a\
 	$TARGETLIB/libosprey.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libsec.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libmp.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libfis.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libkern.a\
 
-$TARGETLIB/lib9front.a:V:
+$TARGETLIB/libospreykern.a:V:
 	{ cd $PORTLIB; mk install; }
-	cp $ROOT/9front/$OBJTYPE/lib/lib9front.a $target
 
 $TARGETLIB/libosprey.a:V:
 	{ cd $ROOT/os/osprey/lib; mk install; }
@@ -146,8 +145,8 @@ $ETHER: 			$PORTDIR/etherif.h $PORTDIR/netif.h
 $AUDIO:				$PORTDIR/audioif.h
 ether8003.$O ether8390.$O:	ether8390.h
 etheryuk.$O:			yukdump.h
-$VGA mouse.$O:			screen.h $ROOT/9front/include/memdraw.h
-vgavesa.$O:			$ROOT/9front/386/include/ureg.h
+$VGA mouse.$O:			screen.h $PORTDIR/include/memdraw.h
+vgavesa.$O:			$PORTDIR/386/include/ureg.h
 
 mp.$O:				mp.h apbootstrap.i
 apic.$O squidboy.$O:		mp.h
@@ -170,7 +169,7 @@ main.$O:			rebootcode.i
 devusb.$O usbuhci.$O usbohci.$O usbehci.$O usbehcipc.$O usbxhci.$O: $PORTDIR/usb.h
 usbehci.$O usbehcipc.$O:	usbehci.h
 
-trap.$O main.$O:		$ROOT/9front/include/tos.h
+trap.$O main.$O:		$PORTDIR/include/tos.h
 
 ether8169.$O:			$PORTDIR/ethermii.h
 etherdp83820.$O:		$PORTDIR/ethermii.h
@@ -188,7 +187,7 @@ ethervirtio10.$O:		$PORTDIR/virtio10.h
 pcipc.$O:	$PORTDIR/pci.h io.h
 virtio10pc.$O:	$PORTDIR/virtio10.h
 
-initcode.out:		init9.$O initcode.$O $ROOT/9front/$OBJTYPE/lib/libc.a
+initcode.out:		init9.$O initcode.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq
 
 $O.rebootcode:		rebootcode.$O

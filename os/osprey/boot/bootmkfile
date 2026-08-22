@@ -1,0 +1,19 @@
+MKSHELL=rc
+
+boot.$O:	$BOOTDIR/boot.c
+	$CC -I$BOOTDIR $CFLAGS $BOOTDIR/boot.c
+
+bootlib.$O:	$BOOTDIR/bootlib.c
+	$CC -I$BOOTDIR $CFLAGS $BOOTDIR/bootlib.c
+
+bootsys.$O:	$BOOTDIR/bootsys.s
+	$AS $AFLAGS $BOOTDIR/bootsys.s
+
+boot:	boot.$O bootlib.$O bootsys.$O $ROOT/Inferno/$OBJTYPE/lib/libkern.a
+	$LD -l -o $target $prereq
+
+# The boot filesystem is an architecture-independent build input.  Keeping it
+# with the 9front portable boot sources lets hosted Inferno builds avoid a
+# dependency on 9front's disk/mkfs and mkpaqfs host commands.
+$CONF.bootfs.paq bootfs.paq:D:	$BOOTDIR/$CONF.bootfs.paq
+	cp $prereq $target

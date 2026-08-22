@@ -129,6 +129,6 @@ port
 
 bootdir
 	boot
-	../../../9front/amd64/bin/paqfs	paqfs
-	../../../9front/amd64/bin/auth/factotum	factotum
+	../../../Osprey/amd64/bin/paqfs	paqfs
+	../../../Osprey/amd64/bin/auth/factotum	factotum
 	$CONF.bootfs.paq	bootfs.paq

@@ -22,6 +22,18 @@
   address, immediately continue debugging and fixing it; never ask whether to
   continue after such an event.
 
+- Kernels are self-contained.  Each flavor owns a directory under `os/` --
+  `os/inferno`, `os/9front`, `os/osprey` -- holding its portable code, its
+  architecture adapters, its drivers, its boot programs, its kernel library
+  and its kernel headers.  No file, header, mkfile or build rule under one
+  flavor may name another flavor's source directory or target tree: osprey
+  builds osprey, inferno builds inferno, 9front builds 9front.  Copy a file
+  into the flavor that needs it rather than reaching across.
+- What is shared is the host toolchain and the flavor-independent sources:
+  the compilers and loaders in `utils`, `libmach`, the top-level `include`,
+  and libraries such as `libsec`, `libmp`, `libfis` and `libkern` that are
+  built from one source tree for every target.  A flavor may use those; it
+  may not use another flavor's kernel code.
 - Follow Inferno conventions and prefer its configuration files, device tables,
   runtime capability checks, and `waserror`/`poperror` mechanism.
 - Do not use `#ifdef` or other preprocessor conditionals to select platform or

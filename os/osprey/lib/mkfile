@@ -3,7 +3,7 @@
 # The policy objects link into the Osprey kernel, so they must be compiled
 # against the same headers as os/osprey/pc64: the two trees disagree about
 # the width of usize, and mixing them makes the loader reject the objects.
-SYSTARG=9front
+SYSTARG=Osprey
 OBJTYPE=amd64
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
