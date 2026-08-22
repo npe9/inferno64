@@ -296,10 +296,10 @@ stream of frames you can read" is a capability.
 
 Three honest answers, in preference order, none of which needs a new namespace:
 
-1. **Reuse the namespace that already exists.** Frames want to become
-   `draw(3)` images, and draw images already have names. A decoder told
-   `render <image>` on its `ctl` can write into an existing draw image with no
-   new addressing scheme and no new object space.
+1. **Reuse the namespace that already exists** — and for video this is not a
+   fallback but the answer: put decode *in* `draw(3)`, where images already
+   have connection-scoped names and where a coherence protocol for host-side
+   pixels already exists. See "Movies belong in draw(3)" below.
 2. **Keep the capability on one side of the boundary.** If decode and display
    never need to be separated, they need not cross at all.
 3. **Do the optimisation invisibly.** If two host-backed devices are connected,
@@ -330,74 +330,69 @@ Three things it got right or learned the hard way, all of which transfer:
   twelve inside the scheduler hang of open bug 1 — it was measuring that bug,
   not the device. Fewer opens took it to one in twelve.
 
-### Movies
+### Movies belong in `draw(3)`
 
-What exists today: `appl/wm/avi.b` (384 lines) decodes in Limbo and pushes
-pixels into a `Draw->Image`; `appl/wm/mpeg.b` and `appl/wm/qt.b` are
-**commented out of `appl/wm/mkfile`** and do not build. So the tree's movie
-story is a software decoder that routes every frame through the Limbo heap —
-the most expensive path available, and the one with the open memory bug in it.
+Not a separate `/dev/video`. A decoded frame **is an image**, `draw(3)` already
+owns images, and putting decode there is what makes zero copy reachable rather
+than aspirational. Three things in the existing code say this fits rather than
+being bolted on:
 
-**There is dedicated video silicon, and it is neither the GPU nor the ANE.**
-Apple Silicon carries fixed-function *media engines* reached through
-VideoToolbox. Measured on this machine (M4 Max, macOS 26.6) with
-`VTIsHardwareDecodeSupported` and `VTCopyVideoEncoderList` rather than taken
-from a spec sheet:
+- **Draw images already have names, scoped the right way.** Image ids are per
+  draw connection (`/dev/draw/N`), so they live inside the caller's namespace
+  and inherit its authority — which is exactly what the reverted global id
+  table did not.
+- **A texture cache keyed by `Memimage*` already exists.** `win-cocoa.m` keeps
+  one for sprites (`sprtexcache`), uploading with
+  `replaceRegion:mipmapLevel:withBytes:`. "A draw image whose pixels live on
+  the host" is therefore already half-present; video changes only *who fills
+  the texture*.
+- **The coherence protocol already exists.** `devdraw.c`'s read case calls
+  `gpudrawreadback()` before handing pixels back — *"A read observes all
+  preceding draw3d work, including GPU queues."* Host-side pixels that must
+  materialise on demand is a solved problem here, and a video frame is the same
+  category as GPU-drawn content, not a new one.
 
-| | hardware |
-|---|---|
-| decode | H.264, HEVC, **AV1**, ProRes 422 / 4444 / RAW, JPEG |
-| encode | H.264, HEVC (plus depth, disparity, muxed-alpha), ProRes ×6, JPEG |
-| neither | **VP9**, **MPEG-4 Part 2** |
+**The chain.** AVFoundation demuxes; VideoToolbox decodes to a `CVPixelBuffer`
+backed by an `IOSurface`; `CVMetalTextureCache` turns that into an `MTLTexture`
+with no copy; `win-cocoa.m` composites `MTLTexture`s already. So decode to
+display touches no Limbo memory and performs no `memmove` at all.
 
-Three consequences worth having written down before anyone plans work:
+**The Limbo-visible interface is just an image plus a control verb** — allocate
+an image as usual, then tell draw to play a source into it. No new namespace,
+no new object space, and the frame is addressed the way every other image is.
 
-- **The formats this tree already decodes are exactly the ones with no hardware
-  support.** `mpeg.b` is MPEG-1/2 and `avi.b` handles DIB/RLE; none of that is
-  accelerated, and MPEG-4 Part 2 is not either. So "hardware-accelerate the
-  existing players" is not available as a goal. The win is *supporting modern
-  formats at all*, which the tree currently cannot play.
-- **AV1 is decode-only.** There is no hardware AV1 encoder here, so an encode
-  path must fall back to software or choose HEVC.
-- **The media engines are independent of the GPU and the ANE**, so decode can
-  run concurrently with Metal compute and CoreML inference rather than
-  contending with them. That is what makes composing capabilities by object id
-  worth doing rather than merely tidy.
+**Distribution still works, which is the test of whether the layering is
+right.** A remote client reading that image over Styx goes through draw's
+ordinary read path, `gpudrawreadback()` materialises the pixels, and it sees a
+normal image. Zero copy is a *local* optimisation; correctness does not depend
+on it. That is the property the reverted design destroyed.
 
-The probe used to get that table is four dozen lines of Objective-C against
-VideoToolbox; re-run it on any new machine rather than assuming, since the
-answer varies by chip tier (base M-series lacks ProRes hardware; AV1 decode
-arrived with M3).
+Costs and risks, none of them hidden:
 
-Beyond the codecs, macOS offers a chain that avoids the boundary entirely:
+- **`bdata` goes stale.** While a frame lives only in a texture, the
+  `Memimage`'s own pixels are not current. Reads are covered by the existing
+  readback, but every *memdraw* path that touches such an image must either
+  force a readback first or be refused. That is the one genuinely invasive
+  part, and it is where this will go wrong if rushed.
+- **Readback is not free**, so a Limbo program processing frames — which is
+  what `videosynth.b` and the Dream Machine work do — pays real cost per frame.
+  It must stay possible and it must be obvious, not silently expensive.
+- **A/V sync and backpressure** against `audio(3)`: presentation timestamps,
+  and a read that blocks until a frame is ready.
+- Only `emu-cocoa` has any of this; `emu-g` must keep working with the hooks
+  nil, as it does for `gpu(3)` and the existing draw hooks.
 
-- **AVFoundation** demuxes the container; **VideoToolbox** does hardware
-  H.264/HEVC/ProRes decode and encode.
-- Decoded frames arrive as `CVPixelBuffer`, generally backed by an `IOSurface`.
-- `CVMetalTextureCache` turns that into an `MTLTexture` **with no copy**.
-- `devdraw`/`win-cocoa.m` already composite Metal textures.
-- CoreML consumes the *same* `CVPixelBuffer` directly.
+**A useful side effect.** Ordinary images are uploaded to Metal today with
+`replaceRegion:withBytes:` — a CPU copy per image. The texture-backed-image
+work video needs is the same work that would remove that copy, so the two wants
+are one piece of work rather than two.
 
-So decode→display and decode→inference can both run without a single frame byte
-entering the Limbo heap. That is what "use the whole OS" should mean here, and
-it is exactly what the shared object registry above enables.
-
-One thing to fix on the way: `win-cocoa.m` currently uploads images with
-`replaceRegion:mipmapLevel:withBytes:` — a CPU copy per image. The zero-copy
-path needs a `CVMetalTextureCache`, which is also what video would use, so the
-two wants are the same work.
-
-**Honest caveat, and it must not be designed away.** If frames never enter
-Limbo, then Limbo programs cannot *process* pixels — and processing pixels in
-Limbo is the entire point of things like `videosynth.b` and the Dream Machine
-work. So there must be an explicit, opt-in "bring this object across" operation,
-and its cost must be visible in the interface rather than hidden. The design
-goal is that crossing the boundary is *possible and obvious*, not that it is
-impossible.
-
-Also needed for playback and not glamorous: presentation timestamps and A/V
-sync against `audio(3)`, and backpressure — a `read` that blocks until a frame
-is ready is the natural Styx expression of it.
+**What exists to build on, and what does not.** `appl/wm/avi.b` decodes in
+Limbo and pushes pixels into a `Draw->Image`; `appl/wm/mpeg.b` and
+`appl/wm/qt.b` are commented out of `appl/wm/mkfile` and do not build. And per
+the measured table above, the formats those decoders handle are precisely the
+ones with **no** hardware support. So this is not "accelerate the existing
+players" — it is playing formats the tree currently cannot play at all.
 
 ### `ml(3)` is then just another instance
 
