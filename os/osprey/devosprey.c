@@ -92,6 +92,8 @@ enum {
 	CMunbindproc,
 	CMserve,
 	CMmode,
+	CMsemup,
+	CMselect,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -116,6 +118,8 @@ static Cmdtab ospreycmd[] = {
 	CMbindproc,	"bindproc",	3,
 	CMserve,	"serve",	2,
 	CMmode,		"mode",		3,
+	CMsemup,	"semup",	3,
+	CMselect,	"select",	4,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -158,6 +162,7 @@ static Physseg ospreyseg = { SG_PHYSICAL, "osprey", 0, 0 };
 static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
 static Proc *ospreyprocs[16];		/* the process bound to each container */
 static Rendez ospreyservrend[16];	/* wakes a container's service process */
+static Rendez ospreyselrend[16];	/* wakes a container's select */
 static int ospreyserving[16];		/* a service process is running for it */
 static Pgrp *ospreypgrp[16];		/* the namespace it is to run in */
 static int ospreystopped[16];		/* we stopped that container's process */
@@ -176,6 +181,27 @@ queuebarrier(void)
  */
 static void ospreywakeup(void);
 static void ospreyrelease(Proc*, int);
+
+/*
+ * A select waits here.  The arms it offered stay in the shared span, so
+ * the predicate looks at them again each time rather than at a snapshot:
+ * an arm may have been turned off, or its ring filled, while we slept.
+ */
+typedef struct Selwait Selwait;
+struct Selwait {
+	Ospreyproc *p;
+	uvlong	armoff;
+	int	narms;
+};
+
+static int
+ospreyselok(void *a)
+{
+	Selwait *w = a;
+
+	return ospreyindex(w->p) < 0
+		|| ospreyselectready(w->p, w->armoff, w->narms) != -1;
+}
 
 static int
 ospreyhaswork(void *a)
@@ -359,6 +385,7 @@ ospreywakeup(void)
 	for(i = 0; i < nelem(ospreyroomrend); i++){
 		wakeup(&ospreyroomrend[i]);
 		wakeup(&ospreyreplyrend[i]);
+		wakeup(&ospreyselrend[i]);
 	}
 }
 
@@ -718,6 +745,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	Cmdtab *ct;
 	Ospreyproc *p;
 	Proc *q;
+	Selwait sw;
 	char *nm;
 	uvlong arg[Ospreynarg];
 	int i, op, x;
@@ -824,8 +852,10 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		}
 		if(ospreysubmit(p, op, arg) < 0)
 			error(Eio);
-		if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyservrend))
+		if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyservrend)){
 			wakeup(&ospreyservrend[x]);
+			wakeup(&ospreyselrend[x]);
+		}
 		ospreywakeup();
 		break;
 
@@ -837,6 +867,52 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
 		ospreywakeup();
+		break;
+
+	case CMsemup:
+		/*
+		 * Give a semaphore.  This is what an interrupt does for the
+		 * task that serves its device, and what one task does for
+		 * another that is waiting on it.
+		 */
+		p = ospreyproc(cb->f[1]);
+		i = atoi(cb->f[2]);
+		if(i < 0 || (ulong)i >= ospreynsem())
+			error(Ebadarg);
+		ospreysemgive(p, i);
+		if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
+			wakeup(&ospreyselrend[x]);
+		ospreywakeup();
+		break;
+
+	case CMselect:
+		/*
+		 * Wait on the arms the container left in the span and
+		 * perform the first that is ready.  Which one that was is
+		 * left in the container's map, where the caller reads it
+		 * without asking.
+		 */
+		p = ospreyproc(cb->f[1]);
+		sw.p = p;
+		sw.armoff = strtoull(cb->f[2], nil, 0);
+		sw.narms = atoi(cb->f[3]);
+		/* wait only while the arms are good and none of them is ready */
+		while((i = ospreyselectready(p, sw.armoff, sw.narms)) == -1){
+			if((x = ospreyindex(p)) < 0)
+				error(Enonexist);
+			qunlock(&ospreylock);
+			if(waserror()){
+				qlock(&ospreylock);
+				nexterror();
+			}
+			sleep(&ospreyselrend[x], ospreyselok, &sw);
+			poperror();
+			qlock(&ospreylock);
+			p = ospreyproc(cb->f[1]);
+			sw.p = p;
+		}
+		if(i < 0 || ospreyselect(p, sw.armoff, sw.narms) < 0)
+			error(Ebadarg);
 		break;
 
 	case CMmode:

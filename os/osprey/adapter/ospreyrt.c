@@ -35,6 +35,7 @@
 
 #include "runtime.h"
 #include "snap.h"
+#include "select.h"
 
 enum {
 	Nproc		= 16,	/* resource containers this adapter can hold */
@@ -42,6 +43,8 @@ enum {
 	Nqueue		= 16,	/* messages per request and reply ring */
 	Nname		= 8,	/* private namespace entries per container */
 	Ndata		= 4096,	/* names and i/o buffers per container */
+	Nsem		= 8,	/* semaphores per container */
+	Narm		= 16,	/* arms one select may offer */
 	Align		= 64,
 };
 
@@ -137,6 +140,12 @@ ospreyncore(void)
 	return Ncore;
 }
 
+ulong
+ospreynsem(void)
+{
+	return Nsem;
+}
+
 static void
 sizes(void)
 {
@@ -144,6 +153,7 @@ sizes(void)
 		return;
 	slicesize = ROUNDUP(sizeof(Ospreymap), Align)
 		+ ROUNDUP(2*sizeof(Queue), Align)
+		+ ROUNDUP(Nsem*sizeof(Sem), Align)
 		+ ROUNDUP(2*Nqueue*sizeof(Message), Align)
 		+ Ndata;
 	slicesize = ROUNDUP(slicesize, Align);
@@ -323,11 +333,16 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	m->msgsize = sizeof(Message);
 	m->requestqueue = ROUNDUP(sizeof(Ospreymap), Align);
 	m->replyqueue = m->requestqueue + sizeof(Queue);
-	m->request = ROUNDUP(m->replyqueue + sizeof(Queue), Align);
+	m->sem = ROUNDUP(m->replyqueue + sizeof(Queue), Align);
+	m->nsem = Nsem;
+	m->request = ROUNDUP(m->sem + Nsem*sizeof(Sem), Align);
 	m->reply = m->request + Nqueue*sizeof(Message);
 	m->data = ROUNDUP(m->reply + Nqueue*sizeof(Message), Align);
 	m->datalen = slicesize - m->data;
+	m->selected = ~0ULL;
 	p->map = m;
+	for(i = 0; i < Nsem; i++)
+		seminit((Sem*)(base + m->sem) + i, 0);
 
 	rq = (Queue*)(base + m->requestqueue);
 	pq = (Queue*)(base + m->replyqueue);
@@ -718,6 +733,111 @@ ospreyservicep(Ospreyproc *p, uvlong now)
 	return runtimeserve(&runtime, &p->process, dispatch, nil);
 }
 
+static Sem*
+semof(Ospreyproc *p, ulong i)
+{
+	if(p == nil || p->used == 0 || p->map == nil || i >= p->map->nsem)
+		return nil;
+	return (Sem*)((uchar*)p->map + p->map->sem) + i;
+}
+
+void
+ospreysemgive(Ospreyproc *p, ulong i)
+{
+	semgive(semof(p, i));
+}
+
+uvlong
+ospreysemcount(Ospreyproc *p, ulong i)
+{
+	return semcount(semof(p, i));
+}
+
+/*
+ * Resolve the arms a caller left in the shared span into the objects
+ * they name, so the portable scan never sees an offset.  An arm past the
+ * end of the array, or naming something the container does not have, is
+ * refused rather than quietly turned off: a caller that miscounts should
+ * hear about it.
+ */
+static int
+arms(Ospreyproc *p, uvlong armoff, int narms, Arm *a)
+{
+	Ospreyarm *o;
+	Ospreymap *m;
+	uchar *base;
+	int i;
+
+	if(p == nil || p->used == 0 || (m = p->map) == nil)
+		return -1;
+	if(narms <= 0 || narms > Narm)
+		return -1;
+	if((o = ospreydata(p, armoff, narms*sizeof(Ospreyarm))) == nil)
+		return -1;
+	base = (uchar*)m;
+	for(i = 0; i < narms; i++){
+		a[i].op = (int)o[i].op;
+		a[i].q = nil;
+		a[i].s = nil;
+		a[i].m = nil;
+		switch(a[i].op){
+		case MSlast:
+		case MSnoop:
+			continue;
+		case MSget:
+		case MSput:
+			if(o[i].obj > 1)
+				return -1;
+			a[i].q = o[i].obj == 0 ? p->process.requests
+					: p->process.replies;
+			a[i].m = ospreydata(p, o[i].buf, sizeof(Message));
+			if(a[i].m == nil)
+				return -1;
+			continue;
+		case MSdown:
+			if((a[i].s = semof(p, (ulong)o[i].obj)) == nil)
+				return -1;
+			continue;
+		}
+		return -1;
+	}
+	USED(base);
+	return 0;
+}
+
+/*
+ * -2 when the arms themselves are wrong, -1 when they are good and none
+ * is ready.  A caller that cannot tell those apart waits for something
+ * that will never happen.
+ */
+int
+ospreyselectready(Ospreyproc *p, uvlong armoff, int narms)
+{
+	Arm a[Narm];
+
+	if(arms(p, armoff, narms, a) < 0)
+		return -2;
+	return selectready(a, narms);
+}
+
+/*
+ * Perform one ready arm and record which it was where the caller can
+ * read it without asking again.
+ */
+int
+ospreyselect(Ospreyproc *p, uvlong armoff, int narms)
+{
+	Arm a[Narm];
+	int i;
+
+	if(arms(p, armoff, narms, a) < 0)
+		return -2;
+	i = selectscan(a, narms);
+	if(p->map != nil)
+		p->map->selected = i < 0 ? ~0ULL : (uvlong)i;
+	return i;
+}
+
 int
 ospreyrequestready(Ospreyproc *p)
 {
@@ -848,7 +968,13 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			queuecount(q->requests), queuecount(q->replies),
 			procs[i].slice, ospreydataoffset(&procs[i]),
 			procs[i].pid);
-		/* the container's private names, if it has bound any */
+		/* the semaphores, and the container's private names */
+		p = seprint(p, e, "sem %llud", q->id);
+		for(n = 0; n < Nsem; n++)
+			p = seprint(p, e, " %llud",
+				semcount((Sem*)((uchar*)procs[i].map
+					+ procs[i].map->sem) + n));
+		p = seprint(p, e, "\n");
 		for(n = 0; n < q->ns.n; n++)
 			p = seprint(p, e, "name %llud %s %s\n", q->id,
 				q->ns.name[n].local, q->ns.name[n].global);

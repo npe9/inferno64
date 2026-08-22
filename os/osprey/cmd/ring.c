@@ -40,6 +40,31 @@ struct Ospreymap {
 	uvlong	reply;
 	uvlong	data;
 	uvlong	datalen;
+	uvlong	sem;
+	uvlong	nsem;
+	uvlong	selected;
+};
+
+typedef struct Sem Sem;
+struct Sem {
+	uvlong	count;
+	uvlong	given;
+	uvlong	taken;
+};
+
+typedef struct Arm Arm;
+struct Arm {
+	uvlong	op;
+	uvlong	obj;
+	uvlong	buf;
+};
+
+enum {
+	OSlast,
+	OSnoop,
+	OSget,
+	OSput,
+	OSdown,
 };
 
 struct Queue {
@@ -129,6 +154,30 @@ name(char **t, uvlong i)
 	return i < n ? t[i] : "?";
 }
 
+static char*
+ringcat(char *d, char *s)
+{
+	while(*s != 0)
+		*d++ = *s++;
+	return d;
+}
+
+static char*
+ringnum(char *d, uvlong v)
+{
+	char b[24];
+	int i;
+
+	i = sizeof b;
+	do {
+		b[--i] = '0' + (int)(v % 10);
+		v /= 10;
+	} while(v != 0 && i > 0);
+	while(i < sizeof b)
+		*d++ = b[i++];
+	return d;
+}
+
 static int
 oplookup(char *s)
 {
@@ -138,6 +187,77 @@ oplookup(char *s)
 		if(strcmp(opname[i], s) == 0)
 			return i;
 	return -1;
+}
+
+/*
+ * Wait on a reply and on a semaphore at once, as the talk's driver task
+ * waits on its message queue, its interrupt semaphore and its output
+ * queue.  Readiness is visible in the mapped span, so the loop looks for
+ * itself first and only asks the kernel to wait when neither is ready.
+ * The arm that fired is left in the map, where it is read without asking
+ * again.
+ */
+static void
+waitmain(uchar *base, Ospreymap *m, Queue *pq, int argc, char **argv)
+{
+	Arm *a;
+	Sem *sem;
+	char buf[64], *e;
+	int fd, n, sn;
+
+	sn = argc > 4 ? (int)num(argv[4]) : 0;
+	sem = (Sem*)(base + m->sem) + sn;
+
+	/* the arms live in the data area, at its start */
+	a = (Arm*)(base + m->data);
+	a[0].op = OSget;  a[0].obj = 1;	/* a reply */
+	a[0].buf = 3*sizeof(Arm);
+	a[1].op = OSdown; a[1].obj = sn;	/* or the semaphore */
+	a[1].buf = 0;
+	a[2].op = OSlast; a[2].obj = 0; a[2].buf = 0;
+
+	outs("waiting on a reply or semaphore "); outd(sn);
+	outs("\n"); flush();
+
+	/*
+	 * A reply is ours to take: this end of that ring is the consumer,
+	 * so no one else is moving its get index and no trap is needed.
+	 */
+	if(pq->put != pq->get){
+		pq->get++;
+		outs("took a reply without the kernel\n");
+		flush();
+		return;
+	}
+
+	/*
+	 * A semaphore is shared with whoever gives it, so taking one is
+	 * the kernel's to do.  Its count is visible here either way, which
+	 * is how the loop above knew whether to ask at all.
+	 */
+	if((fd = open("/n/osprey/ctl", OWRITE)) < 0)
+		die("cannot open /n/osprey/ctl");
+	e = buf;
+	e = ringcat(e, "select ");
+	e = ringnum(e, m->id);
+	e = ringcat(e, " 0 3\n");	/* the arms are at the start of it */
+	n = write(fd, buf, e-buf);
+	close(fd);
+	if(n < 0)
+		die("select failed");
+
+	outs("select returned, arm ");
+	if(m->selected == ~0ULL)
+		outs("none");
+	else
+		outd(m->selected);
+	outs(", replies put "); outd(pq->put);
+	outs(" get "); outd(pq->get);
+	outs(", sem "); outd(sem->count);
+	outs(" given "); outd(sem->given);
+	outs(" taken "); outd(sem->taken);
+	outs("\n");
+	flush();
 }
 
 static void
@@ -182,6 +302,11 @@ ringmain(int argc, char **argv)
 	outs("\n");
 	if(argc == 3){
 		flush();
+		return;
+	}
+
+	if(strcmp(argv[3], "wait") == 0){
+		waitmain(base, m, pq, argc, argv);
 		return;
 	}
 

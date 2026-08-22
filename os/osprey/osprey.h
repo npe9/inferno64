@@ -36,6 +36,31 @@ struct Ospreymap {
 	uvlong	reply;
 	uvlong	data;		/* names and i/o buffers */
 	uvlong	datalen;
+	uvlong	sem;		/* the container's semaphores */
+	uvlong	nsem;
+	uvlong	selected;	/* the arm the last select performed */
+};
+
+/*
+ * One arm of a select, as it appears in the shared span.  The talk's own
+ * arms hold pointers; here they hold offsets from the start of the
+ * container's slice, since the span is at a different address in every
+ * process that maps it.  An arm is turned off by setting op to MSnoop
+ * rather than the array being built again.
+ */
+typedef struct Ospreyarm Ospreyarm;
+struct Ospreyarm {
+	uvlong	op;
+	uvlong	obj;	/* ring: 0 requests, 1 replies; down: semaphore */
+	uvlong	buf;	/* offset of the message taken into or added from */
+};
+
+enum {
+	OSlast,		/* these are the talk's MSlast, MSnoop, ... */
+	OSnoop,
+	OSget,
+	OSput,
+	OSdown,
 };
 
 int		ospreyarena(void *base, ulong size);
@@ -80,6 +105,12 @@ int		ospreycollect(Ospreyproc*, uvlong *op, long *status, uvlong *arg);
 int		ospreyservice(uvlong now);
 int		ospreyservicep(Ospreyproc*, uvlong now);
 int		ospreyrequestready(Ospreyproc*);
+
+void		ospreysemgive(Ospreyproc*, ulong sem);
+uvlong		ospreysemcount(Ospreyproc*, ulong sem);
+int		ospreyselect(Ospreyproc*, uvlong armoff, int narms);
+int		ospreyselectready(Ospreyproc*, uvlong armoff, int narms);
+ulong		ospreynsem(void);
 
 int		ospreycheckpoint(Ospreyproc*);
 int		ospreyrestore(Ospreyproc*);

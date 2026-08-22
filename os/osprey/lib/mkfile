@@ -17,6 +17,8 @@ OFILES=\
 	osprey-ns.$O\
 	osprey-snap.$O\
 	osprey-net.$O\
+	osprey-sem.$O\
+	osprey-select.$O\
 
 all install:V: $OFILES $LIB
 
