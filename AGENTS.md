@@ -6,6 +6,9 @@
 - Keep progress updates brief; report concrete edits, commands, failures, and
   verified outcomes. Only ask for clarification when an essential choice
   cannot be resolved from the repository or the request.
+- Do not ask the user whether to continue while requested work remains. Keep
+  implementing, testing, and repairing the result until it is complete or a
+  genuine external blocker requires user input.
 
 - Follow Inferno conventions and prefer its configuration files, device tables,
   runtime capability checks, and `waserror`/`poperror` mechanism.
