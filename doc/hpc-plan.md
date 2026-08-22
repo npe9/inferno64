@@ -95,8 +95,12 @@ use the GPU**, because `precision` defaults to `f64`. Ask for `precision f32`.
 
 ## Plan — remaining
 
-1. **Scheduler deadlock (see below) — do this first.** It blocks runtime
-   validation of anything concurrent, which is most of what is left.
+1. **Scheduler deadlock (see below).** Now localised to a lost `vmq` push, with
+   the next three steps written out — but *not* a prerequisite for the rest.
+   It blocks runtime validation of anything **concurrent**, and items 2–5 are
+   not: they are single-threaded numerics plus a device. Do it when a
+   concurrency change needs validating, or when someone has the patience for a
+   ~12% reproducer; do not let it block the GPU work again.
 2. **`krylov(2)` vector ops on GPU.** `dot`/`axpy`/`norm` still run on the CPU.
    Once matvec is offloaded these are the remaining serial part; a solve that
    ships the vector back and forth per operation will not scale.
