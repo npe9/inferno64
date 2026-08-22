@@ -11,6 +11,10 @@
   genuine external blocker requires user input.
 - After a commit, continue with the next known implementation or verification
   step without asking the user whether to proceed.
+- When a build or test still fails, keep investigating and applying fixes;
+  report the failure only as progress while continuing toward a working result.
+- Do not substitute a status explanation for implementation when the repository
+  still contains a repairable failure.
 
 - Follow Inferno conventions and prefer its configuration files, device tables,
   runtime capability checks, and `waserror`/`poperror` mechanism.
