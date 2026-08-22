@@ -21,6 +21,16 @@ same(char *a, char *b)
 	return *a == *b;
 }
 
+static void
+copy(char *d, char *s)
+{
+	char *e;
+
+	for(e = d + Nnamelen - 1; d < e && *s != 0; )
+		*d++ = *s++;
+	*d = 0;
+}
+
 static long
 find(Ns *ns, char *local)
 {
@@ -39,15 +49,17 @@ nsbind(Ns *ns, char *local, char *global)
 	long i;
 	if(ns == nil || local == nil || global == nil)
 		return -1;
+	if(*local == 0 || *global == 0)
+		return -1;
 	i = find(ns, local);
 	if(i >= 0){
-		ns->name[i].global = global;
+		copy(ns->name[i].global, global);
 		return 0;
 	}
 	if(ns->n >= ns->cap)
 		return -1;
-	ns->name[ns->n].local = local;
-	ns->name[ns->n].global = global;
+	copy(ns->name[ns->n].local, local);
+	copy(ns->name[ns->n].global, global);
 	ns->n++;
 	return 0;
 }

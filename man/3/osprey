@@ -138,7 +138,10 @@ Put the recorded state back.
 Add a private name to the container's namespace.
 .TP
 .BI unbind " id local"
-Remove one.
+Remove one.  A name is at most 31 characters and a container holds at
+most eight; binding a local name that is already there replaces what it
+refers to.  The table is a mapping the container keeps, not a mount: the
+kernel does not resolve requests through it yet.
 .SH SCHEDULING
 .PP
 Each core has its own run queue, its own lock and its own clock.  On every
@@ -349,6 +352,16 @@ queue and not the process behind it.
 .PP
 Network accounting has no packet path charging it yet; the caps and
 counters are there for the one the plan adds later.
+.PP
+The scheduler has one run queue and one lock per core, but this kernel
+brings up only the boot processor under UEFI: it has no
+.B archacpi
+because the ACPI interpreter this tree carries does not match the header
+the driver expects, and
+.B archmp
+faults because the firmware leaves no MP table for it to find.  So the
+per-core paths are exercised on one core, and migration moves a container
+to a run queue whose clock does not tick.
 .PP
 The whole span is mapped by any process that attaches it, so one
 container can read and write another's rings, and the kernel address in

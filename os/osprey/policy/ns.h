@@ -9,9 +9,19 @@
 typedef struct Name Name;
 typedef struct Ns Ns;
 
+enum {
+	Nnamelen = 32,
+};
+
+/*
+ * The names are held rather than pointed at.  A caller's string is
+ * usually a parsed command line that goes away as soon as the call
+ * returns, and a table that can be copied whole is also what the
+ * checkpoint layer needs.
+ */
 struct Name {
-	char	*local;
-	char	*global;
+	char	local[Nnamelen];
+	char	global[Nnamelen];
 };
 
 struct Ns {

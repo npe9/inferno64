@@ -54,8 +54,6 @@ struct Ospreyproc {
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
 	Name	name[Nname];
-	char	local[Nname][KNAMELEN];
-	char	global[Nname][KNAMELEN];
 };
 
 static Runtime runtime;
@@ -307,12 +305,6 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 
 	p = &procs[slot];
 	memset(p, 0, sizeof *p);
-	for(i = 0; i < Nname; i++){
-		p->name[i].local = p->local[i];
-		p->name[i].global = p->global[i];
-		p->local[i][0] = '\0';
-		p->global[i][0] = '\0';
-	}
 
 	p->slice = (uvlong)slot * slicesize;
 	base = arena + p->slice;
@@ -768,6 +760,10 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			q->container.netbytes, q->container.netmax,
 			queuecount(q->requests), queuecount(q->replies),
 			procs[i].slice, ospreydataoffset(&procs[i]));
+		/* the container's private names, if it has bound any */
+		for(n = 0; n < q->ns.n; n++)
+			p = seprint(p, e, "name %llud %s %s\n", q->id,
+				q->ns.name[n].local, q->ns.name[n].global);
 	}
 	return p - buf;
 }
