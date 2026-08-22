@@ -73,6 +73,7 @@ TARG=\
 	fortune.dis\
 	freq.dis\
 	fs.dis\
+	fdstresstest.dis\
 	ftest.dis\
 	ftpfs.dis\
 	getauthinfo.dis\

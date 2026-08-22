@@ -1,0 +1,108 @@
+.TH FDSTRESSTEST 1
+.SH NAME
+fdstresstest \- reproduce a scheduler hang under concurrent fd use
+.SH SYNOPSIS
+.B fdstresstest
+.SH DESCRIPTION
+.B Fdstresstest
+spawns sixteen processes that deliberately
+.I share
+the parent's file descriptor group \(em no
+.B Sys->NEWFD
+\(em and has each open, write, read and drop
+.B /dev/null
+eighty times, so many processes enter and leave blocking system calls
+against one descriptor table at once.
+.PP
+A hang is the failure.
+When it succeeds it prints a count and
+.BR PASS ;
+when it fails it produces no output and never exits, so run it under an
+external timeout:
+.EX
+	timeout 30 emu-g -c0 -r . /dis/fdstresstest.dis
+.EE
+It hung on roughly three runs in ten under
+.BR -c0 ,
+and one in six under
+.BR -c1 .
+.SH DIAGNOSIS
+Sampling the native threads of a hung
+.IR emu (1)
+shows the deadlock clearly.
+One thread is blocked in
+.B acquire
+.RI ( emu/port/dis.c ),
+reached from
+.B Sys_open
+\(em so it is waiting for a virtual machine slot, not for the file.
+It sits on
+.BR isched.vmq .
+Every other virtual machine thread is parked in
+.BR osblock ,
+either inside
+.B iyield
+having just handed its slot to someone else, or asleep in
+.B Sleep
+on
+.BR isched.irend .
+Nothing is left to take the waiting process off
+.B isched.vmq
+and
+.B osready
+it.
+.PP
+The obvious suspects are not the cause.
+.B Osblock
+and
+.B osready
+are a counting semaphore taken under a mutex, so a wakeup delivered
+before the sleep is not lost.
+.B Tready,
+the predicate the idle threads sleep on, does test
+.B isched.vmq
+and not only
+.BR isched.runhd ,
+so a process arriving on that queue is a reason to wake.
+.B Incref
+and
+.B decref
+are lock-protected, so this is not the
+.B Chan
+reference counting.
+What has not been established is how the accounting between
+.BR acquire ,
+.B release
+and
+.B iyield
+reaches a state where every thread is parked, and that is where anyone
+picking this up should start.
+.PP
+Note that
+.B acquire
+only calls
+.B Wakeup
+when the process it just queued was the first on
+.BR isched.vmq .
+That is sound while some thread is asleep on
+.BR isched.irend ,
+and does nothing when they are all parked in
+.B iyield
+instead.
+.SH SOURCE
+.B /appl/cmd/fdstresstest.b
+.SH SEE ALSO
+.IR emu (1)
+.SH BUGS
+The bug it reproduces is unfixed.
+.PP
+It has no internal watchdog on purpose.
+Adding one stopped the hang reproducing entirely \(em the extra
+.B spawn
+and
+.B alt
+perturb scheduling enough to close the window \(em so a watchdog would
+have quietly turned this into a test that always passes.
+.PP
+Because it hangs rather than failing, it is not suitable for an
+unattended test run without a timeout.

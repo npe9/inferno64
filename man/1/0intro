@@ -1009,6 +1009,9 @@ staged-performance player (timed reveal/emphasis/pause)
 .IR fc (1)
 command-line floating point calculator
 .TP
+.IR fdstresstest (1)
+reproduce a scheduler hang under concurrent fd use
+.TP
 .IR fem (1)
 shell script interface to fem(2)'s problem-specification lang...
 .TP
