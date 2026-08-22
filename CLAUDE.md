@@ -1,5 +1,9 @@
 # Working agreement for this repository
 
+`AGENTS.md` carries the repository-wide rules that apply to every agent working
+here, including the autonomy rule: **do not ask for input, do not end a turn
+with a question.** This file adds the detail specific to working with Claude.
+
 **Picking up cold?** Read `doc/hpc-plan.md` first — current state of the
 numerics/GPU work, the remaining plan, open bugs with reproducers, and the
 gotchas that have cost real time.
