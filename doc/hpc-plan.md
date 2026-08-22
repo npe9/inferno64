@@ -627,10 +627,25 @@ freed and then written by someone still holding its address.
 while its owning proc sits in `kread`? The proc is `Prelease` with a live
 frame, so the array should be rooted. Instrument the free side rather than the
 write side — record in each `Array`'s free path whether any proc is currently
-in a released syscall holding that same `data` pointer. A cheaper first cut:
-confirm the mechanism without Metal at all by adding an artificial delay to
-`gpuwrite`'s `X` handler and running with `INFERNO_NOGPUHW=1`; if the
-corruption appears, this is about window width and nothing about Metal.
+in a released syscall holding that same `data` pointer. The cheaper first cut was tried and came back **inconclusive**, so it is
+recorded rather than repeated blindly. A temporary 1ms sleep in `gpuwrite`'s
+`X` handler, with `INFERNO_NOGPUHW=1` so no Metal was involved at all:
+
+```
+Metal off, no delay   pass 8  fail  2   poison reports 0   (of 10)
+Metal off, 1ms delay  pass 2  fail 10   poison reports 0   (of 12)
+Metal on              pass 1  fail  9   poison reports 1   (of 10)
+```
+
+The delay reproduces Metal's *failure rate* — but that is not the same as
+reproducing the *corruption*, and it did not produce a single poison report.
+Two reasons not to read it as confirmation: a 1ms sleep per matvec across 40
+procs adds a great deal of blocking, so the extra failures are just as easily
+the scheduler hang of open bug 1; and 0 reports in 12 runs is unremarkable
+when the base rate is about 1 in 10. If this is retried, **classify the
+failures** — hang versus crash versus poison report — because the undivided
+pass/fail number cannot distinguish the two bugs, which is exactly the trap
+that nearly cost the `gethandle` fix earlier.
 
 Two warnings about the tool itself, both learned the hard way:
 - It poisons only the payload *past* the tree links, because those are live
