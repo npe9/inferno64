@@ -11,7 +11,7 @@ dupgen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 	Fgrp *fgrp = up->env->fgrp;
 	Chan *f;
 	static int perm[] = { 0400, 0200, 0600, 0 };
-	int p;
+	int p, mode;
 	Qid q;
 
 	USED(name); USED(tab); USED(ntab);
@@ -22,15 +22,30 @@ dupgen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 	if(s == 0)
 		return 0;
 	s--;
-	if(s/2 > fgrp->maxfd)
+	/*
+	 * Read the descriptor table under its lock.  A process sharing this
+	 * Fgrp - one spawned without Sys->NEWFD - can be closing the very
+	 * descriptor being walked, and fdclose() both clears the slot and
+	 * drops the last reference to the Chan, so looking at f->mode
+	 * afterwards was a use-after-free.  Everything needed is taken here
+	 * (mode only), so nothing is dereferenced once the lock is dropped.
+	 */
+	lock(&fgrp->l);
+	if(s/2 > fgrp->maxfd){
+		unlock(&fgrp->l);
 		return -1;
-	if((f=fgrp->fd[s/2]) == nil)
+	}
+	if((f = fgrp->fd[s/2]) == nil){
+		unlock(&fgrp->l);
 		return 0;
+	}
+	mode = f->mode;
+	unlock(&fgrp->l);
 	if(s & 1){
 		p = 0400;
 		sprint(up->genbuf, "%dctl", s/2);
 	}else{
-		p = perm[f->mode&3];
+		p = perm[mode&3];
 		sprint(up->genbuf, "%d", s/2);
 	}
 	mkqid(&q, s+1, 0, QTFILE);
