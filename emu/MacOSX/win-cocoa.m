@@ -9,6 +9,7 @@
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <ImageIO/ImageIO.h>
 #undef Point
 #undef Rect
 #undef nil
@@ -383,6 +384,7 @@ extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 extern Memimage* (*gpuimagealloc)(Rectangle, u32);
 extern int	(*gpuimagefree)(Memimage*);
+extern int	(*gpuimagedecode)(Memimage*, uchar*, int);
 extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 extern void	(*gpudrawflush)(void);
 extern void	(*gpudrawreadback)(void);
@@ -406,6 +408,7 @@ static int	metal_queue_plot(Memimage*, Point, Memimage*, int, float);
 static int	metal_queue_sprite(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 static Memimage* metal_image_alloc(Rectangle, u32);
 static int	metal_image_free(Memimage*);
+static int	metal_image_decode(Memimage*, uchar*, int);
 static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
@@ -540,6 +543,7 @@ metal_init(void)
 	gpudrawsprite = metal_queue_sprite;
 	gpuimagealloc = metal_image_alloc;
 	gpuimagefree = metal_image_free;
+	gpuimagedecode = metal_image_decode;
 	gpudrawellipse = metal_queue_ellipse;
 	gpudrawflush = metal_flush_geom;
 	gpudrawreadback = metal_readback_geom;
@@ -2476,6 +2480,94 @@ metal_image_free(Memimage *i)
 	free(md);
 	teximg_freed++;
 	return 1;
+}
+
+
+/*
+ * Hardware image decode straight into a draw image's pixels.
+ *
+ * ImageIO uses the platform's JPEG hardware, which this machine has (see
+ * emu/MacOSX/vtcaps.m). CoreGraphics is pointed at the Memimage's own bdata,
+ * so the decoded pixels land directly in the destination - and when that
+ * destination is texture-backed (INFERNO_TEXIMAGE) they land in GPU-visible
+ * memory, never passing through the Limbo heap.
+ *
+ * Honest about the copy count: this is decode-then-convert-into-place, one
+ * CoreGraphics pass, not zero copies. Zero would need the decoder to produce a
+ * CVPixelBuffer and that buffer to be the image's backing, which is the shape
+ * video wants (VTDecompressionSession plus CVMetalTextureCache) and is why
+ * this is written as a hook rather than inline.
+ *
+ * Only 32-bit destinations: a mask or an 8-bit image has no sensible bitmap
+ * context here, and refusing is better than quietly producing wrong pixels.
+ */
+static int
+metal_image_decode(Memimage *dst, uchar *enc, int nenc)
+{
+	CFDataRef cfdata;
+	CGImageSourceRef src;
+	CGImageRef img;
+	CGColorSpaceRef cs;
+	CGContextRef ctx;
+	uchar *base;
+	int w, h, bpr;
+
+	if(dst == nil || enc == nil || nenc <= 0){
+		kwerrstr("draw video: nothing to decode");
+		return -1;
+	}
+	if(chantodepth(dst->chan) != 32){
+		kwerrstr("draw video: destination must be a 32-bit image");
+		return -1;
+	}
+	w = Dx(dst->r);
+	h = Dy(dst->r);
+	if(w <= 0 || h <= 0){
+		kwerrstr("draw video: empty destination");
+		return -1;
+	}
+
+	/* The bytes came through Inferno's namespace; CoreGraphics never sees
+	 * a path and so cannot reach anything this process could not. */
+	cfdata = CFDataCreateWithBytesNoCopy(nil, enc, nenc, kCFAllocatorNull);
+	if(cfdata == nil){
+		kwerrstr("draw video: out of memory");
+		return -1;
+	}
+	src = CGImageSourceCreateWithData(cfdata, nil);
+	CFRelease(cfdata);
+	if(src == nil){
+		kwerrstr("draw video: unrecognised image format");
+		return -1;
+	}
+	img = CGImageSourceCreateImageAtIndex(src, 0, nil);
+	CFRelease(src);
+	if(img == nil){
+		kwerrstr("draw video: cannot decode image");
+		return -1;
+	}
+
+	/* byteaddr gives the first pixel of r; width is in u32 words. */
+	base = byteaddr(dst, dst->r.min);
+	bpr = dst->width * sizeof(u32);
+	cs = CGColorSpaceCreateDeviceRGB();
+	/* Inferno's x8r8g8b8 is b,g,r,x in memory order, which is what
+	 * little-endian BGRA8 means to CoreGraphics. */
+	ctx = CGBitmapContextCreate(base, w, h, 8, bpr, cs,
+		kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
+	CGColorSpaceRelease(cs);
+	if(ctx == nil){
+		CGImageRelease(img);
+		kwerrstr("draw video: cannot address destination pixels");
+		return -1;
+	}
+	/* Scales to fit, so a caller may size the image as it likes rather
+	 * than having to know the file's dimensions first. */
+	CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), img);
+	CGContextFlush(ctx);
+	CGContextRelease(ctx);
+	CGImageRelease(img);
+	return 0;
 }
 
 static void

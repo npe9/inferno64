@@ -1,0 +1,73 @@
+.TH DRAWDECODETEST 1
+.SH NAME
+drawdecodetest \- test hardware image decode into a draw image
+.SH SYNOPSIS
+.B drawdecodetest
+.SH DESCRIPTION
+.B Drawdecodetest
+exercises
+.IR draw (3)'s
+.B video
+file: decoding an encoded image directly into the pixels of a draw
+image, using whatever hardware decoder the platform provides.
+.PP
+It allocates a 32-bit image, checks it really is blank, writes
+.B "decode \fIid\fP \fIpath\fP"
+to
+.BR /dev/draw/\fIN\fP/video ,
+reads the pixels back with an ordinary draw read, and requires the
+result to be neither blank nor uniform.
+Both checks matter: they are the two ways this fails quietly \(em
+nothing written at all, and a solid fill from a decode that produced
+nothing.
+.PP
+The image is
+.B 65
+pixels wide deliberately.
+That is 260 bytes per row, which is not the aligned stride a texture
+wants, so a texture-backed image (see
+.IR draw (3)'s
+.BR INFERNO_TEXIMAGE )
+has a different
+.B width
+from the natural one.
+That is precisely the case where a wrong
+.B Memimage.width
+or
+.B .zero
+puts every row at the wrong offset, and a decoded photograph read back
+would show it.
+Running with and without
+.B INFERNO_TEXIMAGE
+should give byte-identical results.
+.PP
+It speaks the draw protocol directly rather than using
+.IR draw (2),
+because the verb names its destination by image id and libdraw does
+not expose ids to Limbo.
+That is the right interface for the device \(em the id is how every
+other draw message names an image \(em so the test uses it as libdraw
+does, including binding
+.B #i
+into its own namespace first.
+.SH SOURCE
+.B /appl/cmd/drawdecodetest.b
+.SH SEE ALSO
+.IR draw (3),
+.IR draw (2)
+.SH BUGS
+Requires a platform with a hardware decoder, so it is meaningful only
+under
+.BR emu-cocoa .
+Under
+.B emu-g
+there is no draw device at all and the test cannot even load
+.IR draw (2).
+.PP
+It decodes one JPEG at one size.
+It does not test other formats, other channel layouts, scaling to a
+destination of a different aspect ratio, or a decode that fails \(em
+and in particular it does not check the decoded pixels against a
+reference decoder, only that they look like an image.
+.IR readjpg (2)
+exists in this tree and would make that comparison possible.

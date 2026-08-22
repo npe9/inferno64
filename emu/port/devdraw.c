@@ -17,7 +17,8 @@ enum
 	Qcolormap,
 	Qctl,
 	Qdata,
-	Qrefresh
+	Qrefresh,
+	Qvideo
 };
 
 /*
@@ -211,6 +212,21 @@ int	(*gpudrawfillpoly3g)(Memimage*, float*, float*, float*, float*, int, Memimag
  */
 Memimage* (*gpuimagealloc)(Rectangle, u32);
 int	(*gpuimagefree)(Memimage*);
+/*
+ * Decode an encoded image into a draw image's pixels, using whatever hardware
+ * decoder the platform has. Returns 0 on success, -1 and sets an error string
+ * otherwise; nil means the platform offers no decoder, which is an error to
+ * the caller rather than a silent no-op.
+ *
+ * Takes the encoded BYTES, not a path, and that is deliberate. A path here
+ * would have to be a host path, which would punch straight through the
+ * namespace - the caller could then only decode files the host can see, and
+ * not, say, one on a Styx mount from another machine. Reading through
+ * Inferno's own namespace and passing the bytes keeps the capability where it
+ * belongs. The encoded form is small; it is the decoded pixels that are large,
+ * and those still go directly into the destination image.
+ */
+int	(*gpuimagedecode)(Memimage*, uchar *enc, int nenc);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -338,6 +354,10 @@ drawgen(Chan *c, char *name, Dirtab *tab, int x, int s, Dir *dp)
 	case 3:
 		q.path = path|Qrefresh;
 		devdir(c, q, "refresh", 0, eve, 0400, dp);
+		break;
+	case 4:
+		q.path = path|Qvideo;
+		devdir(c, q, "video", 0, eve, 0600, dp);
 		break;
 	default:
 		return -1;
@@ -1282,6 +1302,96 @@ drawwakeall(void)
 	}
 }
 
+/*
+ * /dev/draw/N/video - decode an image file into one of this client's images.
+ *
+ *	decode <imageid> <path>
+ *
+ * A separate file rather than another verb on ctl, whose write is already a
+ * four-byte image id, and rather than a new letter in the draw message
+ * protocol on data: this is control, it is text, and it belongs in a file of
+ * its own the way audio(3) separates audioctl from audio.
+ *
+ * The destination is an ordinary draw image the client already allocated, so
+ * everything that can be done with an image - drawn from, read, exported over
+ * Styx - works on the result with nothing new. Where the image happens to be
+ * texture-backed (see gpuimagealloc) the decoder writes into GPU-visible
+ * memory and the pixels never enter the Limbo heap at all.
+ */
+static void
+drawvideoctl(Client *cl, void *a, long n)
+{
+	char *buf, *f[3];
+	DImage *d;
+	uchar *enc, *nenc2;
+	int nf, id, fd, nenc, encsz, r;
+
+	if(gpuimagedecode == nil)
+		error("no hardware image decoder on this platform");
+	buf = malloc(n+1);
+	if(buf == nil)
+		error(Enomem);
+	if(waserror()){
+		free(buf);
+		nexterror();
+	}
+	memmove(buf, a, n);
+	buf[n] = 0;
+	nf = tokenize(buf, f, nelem(f));
+	if(nf != 3 || strcmp(f[0], "decode") != 0)
+		error("usage: decode <imageid> <path>");
+	id = atoi(f[1]);
+	d = drawlookup(cl, id, 1);
+	if(d == nil || d->image == nil)
+		error(Enodrawimage);
+
+	/* Read it through the namespace, so any file this process can see -
+	 * including one mounted from elsewhere - can be decoded. */
+	fd = kopen(f[2], OREAD);
+	if(fd < 0)
+		error(up->env->errstr);
+	if(waserror()){
+		kclose(fd);
+		nexterror();
+	}
+	nenc = 0;
+	encsz = 64*1024;
+	enc = malloc(encsz);
+	if(enc == nil)
+		error(Enomem);
+	for(;;){
+		if(nenc == encsz){
+			if(encsz >= 64*1024*1024)
+				error("image file too large");
+			encsz *= 2;
+			nenc2 = realloc(enc, encsz);
+			if(nenc2 == nil)
+				error(Enomem);
+			enc = nenc2;
+		}
+		r = kread(fd, enc+nenc, encsz-nenc);
+		if(r < 0)
+			error(up->env->errstr);
+		if(r == 0)
+			break;
+		nenc += r;
+	}
+	poperror();
+	kclose(fd);
+
+	if(waserror()){
+		free(enc);
+		nexterror();
+	}
+	if(gpuimagedecode(d->image, enc, nenc) < 0)
+		error(up->env->errstr);
+	poperror();
+	free(enc);
+
+	poperror();
+	free(buf);
+}
+
 static long
 drawwrite(Chan *c, void *a, long n, vlong off)
 {
@@ -1319,6 +1429,9 @@ drawwrite(Chan *c, void *a, long n, vlong off)
 		nexterror();
 	}
 	switch(QID(c->qid)){
+	case Qvideo:
+		drawvideoctl(cl, a, n);
+		break;
 	case Qctl:
 		if(n != 4)
 			error("unknown draw control request");

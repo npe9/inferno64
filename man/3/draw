@@ -1026,6 +1026,38 @@ The message has five decimal integers formatted as in the
 .B ctl
 message: the image id of the window and the coordinates of the rectangle
 that should be refreshed.
+.SS "Hardware image decode"
+Writing
+.EX
+	decode \fIid\fP \fIpath\fP
+.EE
+to
+.B video
+decodes the named file into the pixels of image
+.I id
+using the platform's hardware decoder.
+The file is read through the namespace, not opened by the host, so
+anything this process can see can be decoded \(em including a file on a
+mount from another machine \(em and the decoder is handed the encoded
+bytes rather than a path.
+The image is an ordinary draw image, so everything that can be done
+with one works on the result; where it is texture-backed the decoded
+pixels land in GPU-visible memory without passing through the Limbo
+heap.
+The destination must be 32-bit, and the image is scaled to fit it, so a
+caller need not know the file's dimensions in advance.
+.PP
+It is a file of its own rather than another verb on
+.BR ctl ,
+whose write is already a four-byte image id, and rather than a new
+letter in the draw message protocol on
+.BR data :
+this is textual control, and it belongs beside the data the way
+.IR audio (3)
+separates
+.B audioctl
+from
+.BR audio .
 .SH ENVIRONMENT
 .TP
 .B INFERNO_TEXIMAGE

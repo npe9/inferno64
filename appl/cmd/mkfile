@@ -80,6 +80,7 @@ TARG=\
 	gettar.dis\
 	gif2bit.dis\
 	gpubench.dis\
+	drawdecodetest.dis\
 	gputest.dis\
 	grep.dis\
 	gunzip.dis\
