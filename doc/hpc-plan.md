@@ -497,15 +497,30 @@ Those are big-endian IEEE754 singles: `0x42f20000` = 121.0, `0x43100000` =
 what `put32f` writes. **So a `gpu(3)` matvec response is being written into
 memory that is already on the free list.**
 
-The shape that fits is a Limbo array being freed while a system call still
-holds its pointer: `sys->read` releases the VM for the host call, and if the
-array's refcount drops to zero meanwhile, the device writes the reply into
-freed memory. That is a *prediction*, and it is testable — the tree's
-AINC/ADEC atomics cover only the interpreted path, and `dis.c`'s own GC-LOCK
-HISTORY comment says the arm64 JIT still emits non-atomic refcount code. So the
-corruption should be far rarer under `-c0` than `-c1`. **Run that comparison
-before believing any of this** — it also ties open bug 6's `decref` panic to
-the same cause.
+Two obvious explanations were then tested and **both are wrong**. Do not spend
+time on either again:
+
+- **Not the JIT's non-atomic refcounts.** `dis.c`'s GC-LOCK HISTORY comment
+  notes the AINC/ADEC atomics cover only the interpreted path, which predicts
+  the corruption should be far rarer under `-c0`. It is not. `gputest` under
+  `emu-cocoa`, poison on, 10 runs each: `-c1` 2 passed with 1 poison report,
+  `-c0` **0 passed with 1 poison report**. The interpreted path corrupts just
+  as much.
+- **Not a slice temporary passed to a released syscall.** Both `gputest` and
+  `gpu.b` read with `sys->read(fd, rbuf[off:], ...)`, and a slice descriptor
+  collected while the VM is released would explain everything. Rewriting the
+  read to pass the array with no slice at all changed nothing: 1 of 10 passed
+  either way, 1 poison report either way.
+
+The strongest clue left is the **`emu-g` / `emu-cocoa` asymmetry**, because the
+one thing that differs about *producing this particular data* is that under
+`emu-cocoa` the reply comes from Metal (`metal_spmv`) and under `emu-g` from
+`devgpu.c`'s own C loop. The next experiment is therefore to run `emu-cocoa`
+with the Metal compute hooks forced off, so the same binary and the same Cocoa
+environment produce the reply through the C path: if the corruption follows the
+Metal path it is in `win-gpu.m`, and if it stays it is environmental. That needs
+a few lines in `gpucompute_init()` to honour an env var, and is worth having
+permanently as a way to compare the two backends in one build.
 
 Two warnings about the tool itself, both learned the hard way:
 - It poisons only the payload *past* the tree links, because those are live
