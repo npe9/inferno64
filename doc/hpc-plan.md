@@ -480,6 +480,42 @@ bug 1's lost wakeup. Whether the hang and this corruption are one bug or two is
 well explain the other, and this one has the advantage of being a crash with a
 native backtrace rather than a silent hang.
 
+**A poisoned free list caught the write, and the data names it.** Set
+`INFERNO_POOLPOISON=1` (added for this; off by default, `emu/port/alloc.c`) and
+every free block's dead payload is filled with `0xa5` and checked when the
+block leaves the free tree. Running `gputest(1)` under `emu-cocoa` produced:
+
+```
+POOLPOISON pooldel: block 107e2dd00 size 128 ... allocpc=0x10261d758
+bytes: 42 f2 00 00 43 10 00 00 43 29 00 00 43 44 00 00 43 61 00 00 ...
+ascii: B...C...C)..CD..Ca..C...C...C...C...C...........
+```
+
+Those are big-endian IEEE754 singles: `0x42f20000` = 121.0, `0x43100000` =
+144.0, `0x43290000` = 169.0, and on to 400.0 — that is 11², 12², … 20².
+`gputest`'s matvec check expects exactly `y[i] = (i+1)²`, and big-endian f32 is
+what `put32f` writes. **So a `gpu(3)` matvec response is being written into
+memory that is already on the free list.**
+
+The shape that fits is a Limbo array being freed while a system call still
+holds its pointer: `sys->read` releases the VM for the host call, and if the
+array's refcount drops to zero meanwhile, the device writes the reply into
+freed memory. That is a *prediction*, and it is testable — the tree's
+AINC/ADEC atomics cover only the interpreted path, and `dis.c`'s own GC-LOCK
+HISTORY comment says the arm64 JIT still emits non-atomic refcount code. So the
+corruption should be far rarer under `-c0` than `-c1`. **Run that comparison
+before believing any of this** — it also ties open bug 6's `decref` panic to
+the same cause.
+
+Two warnings about the tool itself, both learned the hard way:
+- It poisons only the payload *past* the tree links, because those are live
+  while a block sits in the tree. A use-after-free that writes at offset 0 —
+  the most likely kind — is invisible to it.
+- Filling the *whole* block cost a **275× slowdown** (`fem(2)` assembly 14ms →
+  3845ms), which moved the bug rather than finding it. It now fills at most
+  `Poisonmax` (128) bytes, costing about 1.35×, which is what made the hit
+  above possible.
+
 Why `emu-cocoa` is worse than `emu-g`: the Cocoa build runs the AppKit main
 thread and Metal's own worker threads on top of the same allocator, so it is
 simply more concurrent. That also makes it the better place to chase this.

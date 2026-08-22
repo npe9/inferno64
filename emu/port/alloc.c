@@ -148,11 +148,117 @@ poolchain(Pool *p)
 	return p->chain;
 }
 
+/*
+ * Free-block poisoning, for the allocator corruption in doc/hpc-plan.md.
+ * Off unless INFERNO_POOLPOISON is set in the environment, matching the
+ * INFERNO_DRAWDEBUG / INFERNO_METAL_STATS convention already in this tree.
+ *
+ * The symptom is dopoolalloc faulting while walking the free tree, whose
+ * left/right/fwd links live inside free blocks - so something writes into a
+ * block after it has been freed. Filling the dead part of every free block
+ * with a known byte and checking it when the block leaves the free tree turns
+ * that into a report naming the block, the offset, the bytes that overwrote
+ * it, and - most usefully - allocpc, the caller that last allocated it.
+ *
+ * Only the payload AFTER the tree links is filled: the links themselves are
+ * live while the block sits in the tree.
+ */
+enum {
+	Poisonbyte = 0xa5,
+	/*
+	 * Only the first Poisonmax bytes past the links are filled and
+	 * checked, not the whole block. Filling everything cost a 275x
+	 * slowdown on allocation-heavy work (fem(2) assembly went from 14ms
+	 * to 3845ms), which perturbs timing far too much to be useful on
+	 * anything race-dependent - and a write-after-free almost always
+	 * lands near the start of the block anyway.
+	 */
+	Poisonmax = 128
+};
+
+static int	poolpoison = -1;	/* -1 = not yet looked up */
+
+/* Looked up once, lazily: emu has no poolinit() to hang it off, and the
+ * pools are in use before main() gets to parse anything. getenv() only scans
+ * environ, so calling it from inside the allocator does not recurse. */
+static int
+poisonon(void)
+{
+	if(poolpoison < 0)
+		poolpoison = getenv("INFERNO_POOLPOISON") != nil;
+	return poolpoison;
+}
+
+static uchar*
+poisonrange(Bhdr *b, uintptr *len)
+{
+	uchar *lo, *hi;
+
+	lo = (uchar*)b + offsetof(Bhdr, u) + sizeof(b->u.s);
+	hi = (uchar*)B2T(b);
+	if(hi <= lo){
+		*len = 0;
+		return nil;
+	}
+	*len = hi - lo;
+	if(*len > Poisonmax)
+		*len = Poisonmax;
+	return lo;
+}
+
+static void
+poisonfill(Bhdr *b)
+{
+	uchar *q;
+	uintptr n;
+
+	if(!poisonon())
+		return;
+	if((q = poisonrange(b, &n)) != nil)
+		memset(q, Poisonbyte, n);
+}
+
+static void
+poisoncheck(Bhdr *b, char *where)
+{
+	uchar *q;
+	uintptr n, i, j, e;
+
+	if(!poisonon())
+		return;
+	if((q = poisonrange(b, &n)) == nil)
+		return;
+	for(i = 0; i < n; i++)
+		if(q[i] != Poisonbyte)
+			break;
+	if(i == n)
+		return;
+
+	print("POOLPOISON %s: block %p size %zud written %zud bytes after free\n",
+		where, b, (uintptr)b->size, (uintptr)i);
+	print("POOLPOISON allocpc=%#zx reallocpc=%#zx\n",
+		(uintptr)b->allocpc, (uintptr)b->reallocpc);
+	e = i + 48;
+	if(e > n)
+		e = n;
+	print("POOLPOISON bytes:");
+	for(j = i; j < e; j++)
+		print(" %.2ux", q[j]);
+	print("\nPOOLPOISON ascii: ");
+	for(j = i; j < e; j++)
+		print("%c", (q[j] >= 0x20 && q[j] < 0x7f)? q[j]: '.');
+	print("\n");
+	/* Do not fault here: the point is to see every writer, not just the
+	 * first, and the block is about to be reused and overwritten anyway. */
+	poisonfill(b);
+}
+
 void
 pooldel(Pool *p, Bhdr *t)
 {
 	Bhdr *s, *f, *rp, *q;
 
+	poisoncheck(t, "pooldel");
 	if(t->parent == nil && p->root != t) {
 		t->prev->fwd = t->fwd;
 		t->fwd->prev = t->prev;
@@ -234,6 +340,9 @@ pooladd(Pool *p, Bhdr *q)
 	int size;
 	Bhdr *tp, *t;
 
+	/* Before the links are written, and covering every return path below.
+	 * The poison range starts after u.s, so it never touches them. */
+	poisonfill(q);
 	q->magic = MAGIC_F;
 
 	q->left = nil;
