@@ -27,6 +27,7 @@ enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	Nword		= 5,
 	Nwait		= 100,		/* tenths of a second */
+	Narm		= 8,
 };
 
 struct Ospreymap {
@@ -154,6 +155,26 @@ name(char **t, uvlong i)
 	return i < n ? t[i] : "?";
 }
 
+static int
+prefix(char *s, char *p)
+{
+	while(*p != 0)
+		if(*s++ != *p++)
+			return 0;
+	return 1;
+}
+
+static int
+hasget(Arm *a, int n, uvlong ring)
+{
+	int i;
+
+	for(i = 0; i < n; i++)
+		if(a[i].op == OSget && a[i].obj == ring)
+			return 1;
+	return 0;
+}
+
 static char*
 ringcat(char *d, char *s)
 {
@@ -198,32 +219,56 @@ oplookup(char *s)
  * again.
  */
 static void
-waitmain(uchar *base, Ospreymap *m, Queue *pq, int argc, char **argv)
+waitmain(uchar *base, Ospreymap *m, Queue *rq, Queue *pq, int argc, char **argv)
 {
 	Arm *a;
 	Sem *sem;
 	char buf[64], *e;
-	int fd, n, sn;
+	int fd, n, sn, na, i;
+	uvlong msgroom;
+
+	msgroom = sizeof(Message);
 
 	sn = argc > 4 ? (int)num(argv[4]) : 0;
-	sem = (Sem*)(base + m->sem) + sn;
 
-	/* the arms live in the data area, at its start */
+	/*
+	 * Build the arms from the arguments, in the data area, at its
+	 * start.  Each is get:RING, put:RING, down:SEM or noop; with none
+	 * given, wait on a reply or on semaphore sn, which is the talk's
+	 * driver shape without its output queue.
+	 */
 	a = (Arm*)(base + m->data);
-	a[0].op = OSget;  a[0].obj = 1;	/* a reply */
-	a[0].buf = 3*sizeof(Arm);
-	a[1].op = OSdown; a[1].obj = sn;	/* or the semaphore */
-	a[1].buf = 0;
-	a[2].op = OSlast; a[2].obj = 0; a[2].buf = 0;
+	na = 0;
+	for(i = 5; i < argc && na < Narm-1; i++, na++){
+		a[na].buf = (uvlong)(Narm*sizeof(Arm)) + na*msgroom;
+		if(prefix(argv[i], "get:"))
+			a[na].op = OSget, a[na].obj = num(argv[i]+4);
+		else if(prefix(argv[i], "put:"))
+			a[na].op = OSput, a[na].obj = num(argv[i]+4);
+		else if(prefix(argv[i], "down:"))
+			a[na].op = OSdown, a[na].obj = num(argv[i]+5);
+		else if(strcmp(argv[i], "noop") == 0)
+			a[na].op = OSnoop, a[na].obj = 0;
+		else
+			die("arm is get:N, put:N, down:N or noop");
+	}
+	if(na == 0){
+		a[0].op = OSget;  a[0].obj = 1;
+		a[0].buf = (uvlong)(Narm*sizeof(Arm));
+		a[1].op = OSdown; a[1].obj = sn; a[1].buf = 0;
+		na = 2;
+	}
+	a[na].op = OSlast; a[na].obj = 0; a[na].buf = 0;
+	na++;
 
-	outs("waiting on a reply or semaphore "); outd(sn);
-	outs("\n"); flush();
+	outs("waiting on "); outd(na-1); outs(" arms\n"); flush();
 
 	/*
 	 * A reply is ours to take: this end of that ring is the consumer,
 	 * so no one else is moving its get index and no trap is needed.
+	 * Only when a reply is among the arms offered, of course.
 	 */
-	if(pq->put != pq->get){
+	if(hasget(a, na, 1) && pq->put != pq->get){
 		pq->get++;
 		outs("took a reply without the kernel\n");
 		flush();
@@ -240,7 +285,9 @@ waitmain(uchar *base, Ospreymap *m, Queue *pq, int argc, char **argv)
 	e = buf;
 	e = ringcat(e, "select ");
 	e = ringnum(e, m->id);
-	e = ringcat(e, " 0 3\n");	/* the arms are at the start of it */
+	e = ringcat(e, " 0 ");
+	e = ringnum(e, na);
+	e = ringcat(e, "\n");
 	n = write(fd, buf, e-buf);
 	close(fd);
 	if(n < 0)
@@ -251,11 +298,18 @@ waitmain(uchar *base, Ospreymap *m, Queue *pq, int argc, char **argv)
 		outs("none");
 	else
 		outd(m->selected);
+	outs(", requests put "); outd(rq->put);
+	outs(" get "); outd(rq->get);
 	outs(", replies put "); outd(pq->put);
 	outs(" get "); outd(pq->get);
-	outs(", sem "); outd(sem->count);
-	outs(" given "); outd(sem->given);
-	outs(" taken "); outd(sem->taken);
+	/* the semaphore the arm that fired names, not the one asked about */
+	if(m->selected != ~0ULL && a[m->selected].op == OSdown){
+		sem = (Sem*)(base + m->sem) + a[m->selected].obj;
+		outs(", sem "); outd(a[m->selected].obj);
+		outs(" count "); outd(sem->count);
+		outs(" given "); outd(sem->given);
+		outs(" taken "); outd(sem->taken);
+	}
 	outs("\n");
 	flush();
 }
@@ -306,7 +360,7 @@ ringmain(int argc, char **argv)
 	}
 
 	if(strcmp(argv[3], "wait") == 0){
-		waitmain(base, m, pq, argc, argv);
+		waitmain(base, m, rq, pq, argc, argv);
 		return;
 	}
 

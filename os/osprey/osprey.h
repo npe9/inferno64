@@ -81,6 +81,7 @@ void		ospreyreset(void);
 Ospreyproc*	ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline);
 Ospreyproc*	ospreylookup(uvlong id);
 Ospreyproc*	ospreynext(Ospreyproc*);
+Ospreyproc*	ospreyat(int);
 uvlong		ospreyid(Ospreyproc*);
 
 int		ospreyattach(Ospreyproc*, ulong core, uvlong now);
@@ -125,6 +126,14 @@ int		ospreyunbind(Ospreyproc*, char *local);
  */
 void		ospreylockcore(ulong core);
 void		ospreyunlockcore(ulong core);
+
+/*
+ * Semaphores are given by interrupt handlers and taken by tasks, so they
+ * need a lock both sides may hold; the core locks will not do, since a
+ * semaphore belongs to a container rather than to a core.
+ */
+void		ospreylocksem(void);
+void		ospreyunlocksem(void);
 
 /*
  * Served by the device: the operations that need a Chan.  arg and result

@@ -295,6 +295,15 @@ ospreynext(Ospreyproc *p)
 	return nil;
 }
 
+/* the container in a given slot, or nil */
+Ospreyproc*
+ospreyat(int i)
+{
+	if(i < 0 || i >= Nproc || procs[i].used == 0)
+		return nil;
+	return &procs[i];
+}
+
 uvlong
 ospreyid(Ospreyproc *p)
 {
@@ -744,13 +753,24 @@ semof(Ospreyproc *p, ulong i)
 void
 ospreysemgive(Ospreyproc *p, ulong i)
 {
-	semgive(semof(p, i));
+	Sem *s;
+
+	if((s = semof(p, i)) == nil)
+		return;
+	ospreylocksem();
+	semgive(s);
+	ospreyunlocksem();
 }
 
 uvlong
 ospreysemcount(Ospreyproc *p, ulong i)
 {
-	return semcount(semof(p, i));
+	uvlong n;
+
+	ospreylocksem();
+	n = semcount(semof(p, i));
+	ospreyunlocksem();
+	return n;
 }
 
 /*
@@ -764,17 +784,14 @@ static int
 arms(Ospreyproc *p, uvlong armoff, int narms, Arm *a)
 {
 	Ospreyarm *o;
-	Ospreymap *m;
-	uchar *base;
 	int i;
 
-	if(p == nil || p->used == 0 || (m = p->map) == nil)
+	if(p == nil || p->used == 0 || p->map == nil)
 		return -1;
 	if(narms <= 0 || narms > Narm)
 		return -1;
 	if((o = ospreydata(p, armoff, narms*sizeof(Ospreyarm))) == nil)
 		return -1;
-	base = (uchar*)m;
 	for(i = 0; i < narms; i++){
 		a[i].op = (int)o[i].op;
 		a[i].q = nil;
@@ -801,7 +818,6 @@ arms(Ospreyproc *p, uvlong armoff, int narms, Arm *a)
 		}
 		return -1;
 	}
-	USED(base);
 	return 0;
 }
 
@@ -815,9 +831,14 @@ ospreyselectready(Ospreyproc *p, uvlong armoff, int narms)
 {
 	Arm a[Narm];
 
+	int i;
+
 	if(arms(p, armoff, narms, a) < 0)
 		return -2;
-	return selectready(a, narms);
+	ospreylocksem();
+	i = selectready(a, narms);
+	ospreyunlocksem();
+	return i;
 }
 
 /*
@@ -832,7 +853,9 @@ ospreyselect(Ospreyproc *p, uvlong armoff, int narms)
 
 	if(arms(p, armoff, narms, a) < 0)
 		return -2;
+	ospreylocksem();
 	i = selectscan(a, narms);
+	ospreyunlocksem();
 	if(p->map != nil)
 		p->map->selected = i < 0 ? ~0ULL : (uvlong)i;
 	return i;
@@ -970,10 +993,12 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			procs[i].pid);
 		/* the semaphores, and the container's private names */
 		p = seprint(p, e, "sem %llud", q->id);
+		ospreylocksem();
 		for(n = 0; n < Nsem; n++)
 			p = seprint(p, e, " %llud",
 				semcount((Sem*)((uchar*)procs[i].map
 					+ procs[i].map->sem) + n));
+		ospreyunlocksem();
 		p = seprint(p, e, "\n");
 		for(n = 0; n < q->ns.n; n++)
 			p = seprint(p, e, "name %llud %s %s\n", q->id,

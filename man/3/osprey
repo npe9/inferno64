@@ -157,6 +157,15 @@ Give the container's
 semaphore.  This is what an interrupt does for the task that serves its
 device, and what one task does for another waiting on it.
 .TP
+.BI tick " id " [ n | off ]
+Have the clock interrupt give the container's
+.IR n th
+semaphore on every tick of the core it is attached to, or stop.  This is
+a device interrupt handing work to the task that serves it, with the one
+interrupt this driver owns standing in for a device it does not have: the
+interrupt gives the semaphore and wakes whoever waits on it, and does no
+more, while the task runs in the scheduler like any other.
+.TP
 .BI select " id offset narms"
 Wait on the arms the container has left in its data area at
 .I offset
@@ -396,6 +405,9 @@ A semaphore counts, and reports how many times it has been given and
 taken;
 .B status
 lists the counts of a container's semaphores on a line of their own.
+Giving one is the only operation an interrupt performs, so semaphores are
+held under a lock of their own rather than the one that serves the rest
+of the device, which a handler could not take.
 .SH EXAMPLE
 Order three containers by deadline and bill the one that runs:
 .IP
@@ -475,6 +487,10 @@ counters are there for the one the plan adds later.
 A container carries one process.  Two processes billed to one container,
 were the device to allow it, could charge it from two cores at once and
 lose an update between them.
+.PP
+A driver task in the sense the plan means it -- an interrupt that gives a
+semaphore and a task that serves the device -- is only demonstrated, by
+the clock.  No driver in this kernel has been converted to it.
 .PP
 The whole span is mapped by any process that attaches it, so one
 container can read and write another's rings, and the kernel address in

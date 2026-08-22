@@ -94,6 +94,7 @@ enum {
 	CMmode,
 	CMsemup,
 	CMselect,
+	CMtick,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -120,6 +121,7 @@ static Cmdtab ospreycmd[] = {
 	CMmode,		"mode",		3,
 	CMsemup,	"semup",	3,
 	CMselect,	"select",	4,
+	CMtick,		"tick",		3,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -139,6 +141,7 @@ static Rendez ospreyreplyrend[16];
  * ticks; the adapter takes them all, in index order, when it moves a task
  * between cores.  They are ilocks because hzclock() runs with no process.
  */
+static Lock ospreysemlock;		/* semaphores, given from interrupts */
 static Lock ospreycorelock[8];
 static uvlong ospreylastticks[8];
 static uvlong ospreyhz;			/* machine cycles a second */
@@ -156,6 +159,18 @@ ospreyunlockcore(ulong core)
 	if(core < nelem(ospreycorelock))
 		iunlock(&ospreycorelock[core]);
 }
+
+void
+ospreylocksem(void)
+{
+	ilock(&ospreysemlock);
+}
+
+void
+ospreyunlocksem(void)
+{
+	iunlock(&ospreysemlock);
+}
 static uchar *ospreybase;		/* the shared arena */
 /* SG_PHYSICAL is a value of the SG_TYPE field, not a flag beside it */
 static Physseg ospreyseg = { SG_PHYSICAL, "osprey", 0, 0 };
@@ -166,6 +181,7 @@ static Rendez ospreyselrend[16];	/* wakes a container's select */
 static int ospreyserving[16];		/* a service process is running for it */
 static Pgrp *ospreypgrp[16];		/* the namespace it is to run in */
 static int ospreystopped[16];		/* we stopped that container's process */
+static int ospreyticksem[16];		/* semaphore the clock gives, or -1 */
 
 void
 queuebarrier(void)
@@ -284,6 +300,22 @@ ospreyclock(int core)
 	ospreytick(core, q != nil ? q->osprey : nil, d, now);
 
 	/*
+	 * Hand this tick to any container that asked for it, the way a
+	 * device interrupt hands work to the task that serves it: give a
+	 * semaphore and wake whoever is waiting on it.  The interrupt does
+	 * no more than that; the task runs in the scheduler like any other.
+	 */
+	for(i = 0; i < nelem(ospreyticksem); i++){
+		if(ospreyticksem[i] < 0)
+			continue;
+		if((p = ospreyat(i)) == nil || ospreycoreof(p) != (ulong)core)
+			continue;
+		ospreysemgive(p, ospreyticksem[i]);
+		wakeup(&ospreyselrend[i]);
+		wakeup(&ospreyservrend[i]);
+	}
+
+	/*
 	 * Wake the service process of any container that has a request
 	 * waiting.  A process that submitted through the mapped ring never
 	 * entered the kernel, so the clock is what notices.
@@ -393,6 +425,7 @@ static void
 ospreyinit(void)
 {
 	uvlong size;
+	int i;
 
 	if(ospreybase != nil)
 		return;
@@ -415,6 +448,8 @@ ospreyinit(void)
 		return;
 	}
 	fastticks(&ospreyhz);
+	for(i = 0; i < nelem(ospreyticksem); i++)
+		ospreyticksem[i] = -1;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 }
@@ -544,7 +579,9 @@ ospreyputserver(Ospreyproc *p)
 
 	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyservrend))
 		return;
+	ospreyticksem[x] = -1;
 	wakeup(&ospreyservrend[x]);
+	wakeup(&ospreyselrend[x]);
 }
 
 static void
@@ -867,6 +904,26 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
 		ospreywakeup();
+		break;
+
+	case CMtick:
+		/*
+		 * Have the clock interrupt give one of the container's
+		 * semaphores on every tick of its core.  There is no device
+		 * here whose interrupt to take, so the one interrupt this
+		 * driver already owns stands in for it.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyticksem))
+			error(Ebadarg);
+		if(strcmp(cb->f[2], "off") == 0)
+			ospreyticksem[x] = -1;
+		else {
+			i = atoi(cb->f[2]);
+			if(i < 0 || (ulong)i >= ospreynsem())
+				error(Ebadarg);
+			ospreyticksem[x] = i;
+		}
 		break;
 
 	case CMsemup:
