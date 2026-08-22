@@ -387,6 +387,26 @@ Costs and risks, none of them hidden:
 work video needs is the same work that would remove that copy, so the two wants
 are one piece of work rather than two.
 
+**Built so far** (`845e8f40`, `09321675`): texture-backed draw images behind
+`INFERNO_TEXIMAGE`, where an image's pixels are allocated from Metal so bdata
+and a texture are the same bytes; and `/dev/draw/N/video`, whose
+`decode <id> <path>` runs the platform's hardware decoder into an ordinary
+draw image. `drawdecodetest(1)` covers both, deliberately at a width whose
+natural stride differs from the aligned one so that a wrong `width` or `zero`
+would show. Two things learned doing it, both now settled the right way: the
+decode hook takes encoded **bytes**, not a path, because a path would have to
+be a host path and would punch through the namespace - the first version did
+exactly that and failed on an ordinary Inferno path; and only 32-bit images
+can be texture-backed, so on a typical workload most images still come from
+the pool.
+
+Still to do for video proper: `VTDecompressionSession` and
+`CVMetalTextureCache` so the decoder produces the image's backing directly
+rather than converting into it (the current path is one CoreGraphics pass, not
+zero copies); demuxing; presentation timestamps and A/V sync against
+`audio(3)`; and the `bdata`-staleness rule for memdraw paths, which remains
+the genuinely invasive part.
+
 **What exists to build on, and what does not.** `appl/wm/avi.b` decodes in
 Limbo and pushes pixels into a `Draw->Image`; `appl/wm/mpeg.b` and
 `appl/wm/qt.b` are commented out of `appl/wm/mkfile` and do not build. And per
