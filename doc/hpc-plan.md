@@ -397,7 +397,47 @@ the pool lock at `val == 1` with no owner running and seven threads spinning in
 `lock()` from `poolfree`/`dopoolalloc`. Whether that one was caused by this path
 was never established.
 
-### 5. Smaller, noted, unfixed
+### 5. Heap corruption in the allocator under concurrency (`emu-cocoa`)
+
+New, found by `gputest(1)`. Under `emu-cocoa` that test fails almost every run
+— 0 of 6 on a build with **no gpu changes at all**, so it is neither the test
+nor `gpu(3)`. Under `emu-g` the same test passes 89 of 100.
+
+```
+disfault: native backtrace:
+  trapmemref
+  _sigtramp
+  dopoolalloc + 92
+  kmalloc + 68
+  kstrdup + 48
+  kproc + 272
+  Sys_open + 48
+  rmcall / xec / vmachine / tramp
+disfault: sys: segmentation violation addr=0x434f4e4c
+```
+
+Two things to notice. The faulting address `0x434f4e4c` is **ASCII text**
+(`CONL`) being followed as a pointer — a corrupted allocator free list, not a
+null or a stray offset. And the path is `Sys_open` → `release()` → `kproc()` →
+`kstrdup` → `kmalloc`, which is the *same* `Sys_open`/`release` path as open
+bug 1's lost wakeup. Whether the hang and this corruption are one bug or two is
+**not established** — but they are close enough together that finding one may
+well explain the other, and this one has the advantage of being a crash with a
+native backtrace rather than a silent hang.
+
+Why `emu-cocoa` and not `emu-g`: the Cocoa build runs the AppKit main thread
+and Metal's own worker threads on top of the same allocator, so it is simply
+more concurrent. That also makes it the better place to chase this.
+
+Related but separately confirmed *not* the cause: `win-gpu.m`'s Metal
+initialisation used a hand-rolled `if(gpu_ready != 0) return` one-shot, which
+genuinely does let several first-uploads run the whole body at once and
+overwrite `gpu_device`/`gpu_queue`/`gpu_pipe` under each other, with no barrier
+before publishing `gpu_ready = 1`. That is now a `dispatch_once` — correct by
+inspection — but it did **not** change this failure, so do not treat it as the
+fix.
+
+### 6. Smaller, noted, unfixed
 
 - `metal_present_geom()` consumes `mtl_zclear` before creating its encoder and
   uses the encoder without a nil check — a failed encoder loses that frame's

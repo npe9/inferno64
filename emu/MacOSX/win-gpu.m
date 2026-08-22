@@ -72,36 +72,55 @@ static int				gpu_ready;	/* 0 untried, 1 ok, -1 failed */
 @implementation GpuMat
 @end
 
-/* Lazy, and only ever attempted once: a machine without a usable
- * Metal device must not pay the setup cost on every upload, and must
- * degrade to devgpu.c's CPU path rather than failing. */
-static int
-gpucompute_init(void)
+static dispatch_once_t	gpu_once;
+
+static void
+gpucompute_setup(void)
 {
 	NSError *err = nil;
 	id<MTLLibrary> lib;
 	id<MTLFunction> fn;
 
-	if(gpu_ready != 0)
-		return gpu_ready;
 	gpu_ready = -1;
 	gpu_device = MTLCreateSystemDefaultDevice();
 	if(gpu_device == nil)
-		return -1;
+		return;
 	gpu_queue = [gpu_device newCommandQueue];
 	if(gpu_queue == nil)
-		return -1;
+		return;
 	lib = [gpu_device newLibraryWithSource:kSpmvMetalSrc options:nil error:&err];
 	if(lib == nil)
-		return -1;
+		return;
 	fn = [lib newFunctionWithName:@"spmv"];
 	if(fn == nil)
-		return -1;
+		return;
 	gpu_pipe = [gpu_device newComputePipelineStateWithFunction:fn error:&err];
 	if(gpu_pipe == nil)
-		return -1;
+		return;
 	gpu_ready = 1;
-	return 1;
+}
+
+/*
+ * Lazy, and only ever attempted once: a machine without a usable Metal device
+ * must not pay the setup cost on every upload, and must degrade to devgpu.c's
+ * CPU path rather than failing.
+ *
+ * dispatch_once, NOT a plain "if(gpu_ready != 0) return" guard. gpu(3) hands
+ * out one handle per open, so several Limbo processes can be in their first
+ * upload at once, and the hand-rolled guard let all of them past the test and
+ * run the whole body concurrently - each overwriting gpu_device, gpu_queue and
+ * gpu_pipe while the others were already dispatching against them. It also had
+ * no barrier between filling those globals and publishing gpu_ready = 1, so a
+ * thread could observe ready with a nil pipeline. gputest(1) failed seven runs
+ * in eight under emu-cocoa because of this, mostly as a segmentation fault.
+ */
+static int
+gpucompute_init(void)
+{
+	dispatch_once(&gpu_once, ^{
+		gpucompute_setup();
+	});
+	return gpu_ready;
 }
 
 static void*

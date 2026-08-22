@@ -64,9 +64,27 @@ no hardware backend is linked, so the matvecs run on
 .IR gpu (3)'s
 own portable CPU loop and the test covers the protocol and handle
 lifecycle but not Metal.
-Run it under
+.PP
+It is meant to be run under
 .B emu-cocoa
-to cover the hardware path as well.
+as well, to cover the Metal path \(em but there it currently fails
+almost every run, and not for any reason of its own.
+The fault is a segmentation violation inside
+.B dopoolalloc
+reached from
+.BR kstrdup / kproc
+in
+.BR release ,
+called from
+.BR Sys_open :
+heap corruption in the allocator under concurrency, on a build with no
+.I gpu
+changes at all.
+See the open-bug section of
+.B /doc/hpc-plan.md
+before spending time on it, and do not read a failure there as a fault
+of this test or of
+.IR gpu (3).
 .PP
 It does not test
 .BR resident ,
