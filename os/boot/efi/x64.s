@@ -1,5 +1,8 @@
 MODE $64
 
+GLOBL	jumpentry(SB), $8
+DATA	jumpentry(SB)/8, $0
+
 TEXT start(SB), 1, $-4
 	/* spill arguments */
 	MOVQ CX, 8(SP)

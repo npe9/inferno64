@@ -156,7 +156,7 @@ timeout(int ms)
 
 extern char *confaddr;
 /* Values consumed by the mode-switch stub after ExitBootServices. */
-void *jumpentry;
+extern void *jumpentry;
 void *jumpargs;
 static char *confend;
 
