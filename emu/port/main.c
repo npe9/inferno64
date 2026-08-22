@@ -252,15 +252,6 @@ main(int argc, char *argv[])
 	/* set default root now, so either $EMU or -r can override it later */
 	if((p = getenv("INFERNO")) != nil || (p = getenv("ROOT")) != nil)
 		strecpy(rootdir, rootdir+sizeof(rootdir), p);
-	/*
-	 * libdraw's allocimage/allocwindow failure diagnostics are gated on
-	 * _drawdebug (see libdraw/alloc.c).  Nothing could set it without
-	 * editing the source, which is useless for a fault that only shows
-	 * up occasionally on someone else's machine - so let the
-	 * environment turn it on.
-	 */
-	if(getenv("INFERNO_DRAWDEBUG") != nil)
-		drawsetdebug(1);
 	opt = getenv("EMU");
 	if(opt != nil && *opt != '\0') {
 		enva[0] = "emu";

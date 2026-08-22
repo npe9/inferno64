@@ -3329,11 +3329,28 @@ interf(void)
 	drawreplxy(0, 0, 0);
 }
 
+/*
+ * libdraw's allocimage/allocwindow failure diagnostics are gated on
+ * _drawdebug (libdraw/alloc.c).  Nothing could set it without editing
+ * the source, which is useless for a fault that shows up occasionally
+ * and usually on someone else's machine, so let the environment turn
+ * it on.  This lives here rather than in port/main.c because a
+ * headless configuration (emu-g) does not link libdraw at all, and
+ * calling drawsetdebug() from main.c left it with an undefined symbol.
+ */
+static void
+drawdevinit(void)
+{
+	if(getenv("INFERNO_DRAWDEBUG") != nil)
+		drawsetdebug(1);
+	devinit();
+}
+
 Dev drawdevtab = {
 	'i',
 	"draw",
 
-	devinit,
+	drawdevinit,
 	drawattach,
 	drawwalk,
 	drawstat,
