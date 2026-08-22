@@ -81,6 +81,7 @@ TARG=\
 	gif2bit.dis\
 	gpubench.dis\
 	gputest.dis\
+	hostobjtest.dis\
 	grep.dis\
 	gunzip.dis\
 	gzip.dis\

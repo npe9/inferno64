@@ -319,6 +319,10 @@ emuinit(void *imod)
 		kbind("#A", "/dev", MAFTER);	/* optional audio */
 	if(devno('G', 1) >= 0)
 		kbind("#G", "/dev", MAFTER);	/* optional gpu(2) backend */
+	/* A directory, not flat like #A and #G: this device has a ctl plus one
+	 * file per live object, so it needs a name of its own. */
+	if(devno('O', 1) >= 0)
+		kbind("#O", "/dev/hostobj", MREPL|MCREATE);
 	kbind("#c", "/dev", MBEFORE);
 	kbind("#p", "/prog", MREPL);
 	kbind("#d", "/fd", MREPL);
