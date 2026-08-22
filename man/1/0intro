@@ -1069,6 +1069,9 @@ entropy word and song toy
 .IR gpu (1)
 shell script interface to gpu(2)'s backend command language
 .TP
+.IR gpubench (1)
+time a fem(2) solve on the cpu against the GPU backend
+.TP
 .IR grep (1)
 pattern matching
 .TP

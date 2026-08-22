@@ -1,0 +1,47 @@
+.TH GPUBENCH 1
+.SH NAME
+gpubench \- time a fem(2) solve on the cpu against the GPU backend
+.SH SYNOPSIS
+.B gpubench
+[
+.I n
+]
+.SH DESCRIPTION
+.B Gpubench
+assembles and solves the same
+.IR fem (2)
+Poisson problem twice, once with
+.B "backend cpu"
+and once with
+.BR "backend gpu precision f32" ,
+and prints assembly time, solve time, iteration count, residual and a
+sample of the solution for each.
+.I N
+gives the mesh size and defaults to 12, meaning 12x12x12.
+.PP
+It exists because whether offloading helps depends entirely on problem
+size, and the answer is not the one people assume.
+Per-call cost dominates small problems, and single precision costs
+extra CG iterations, so the GPU is several times
+.I slower
+until the problem is big enough.
+On this machine break-even is around nine thousand nodes.
+See
+.IR gpu (3)
+for the measurements.
+.PP
+Large meshes need more heap than the default:
+.EX
+	emu -pheap=1073741824 -pmain=536870912 -r . /dis/gpubench.dis 30
+.EE
+.SH SOURCE
+.B /appl/cmd/gpubench.b
+.SH SEE ALSO
+.IR gpu (2),
+.IR gpu (3),
+.IR fem (2)
+.SH BUGS
+It reports wall-clock time for one run of each, with no repetition or
+warm-up, so small differences are noise.
+It compares f64 on the cpu against f32 on the GPU, which is the only
+comparison the hardware allows but is not like for like.

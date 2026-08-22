@@ -45,10 +45,19 @@ which also serves both reads and writes \(em there is no separate
 split, since every message on a handle is naturally one request
 immediately followed by one response.
 .PP
-The protocol is line-oriented text, not binary, for now (see
-.B PERFORMANCE
-below). Each write is one request; the following read returns its
-response. Three request shapes, each starting with a one-letter tag:
+The wire format is binary.
+Integers are 32-bit and values IEEE754 single, both big-endian, which
+is what Limbo's
+.B math->export_int
+and
+.B math->export_real32
+produce, so a caller needs no hand-rolled marshalling.
+Single precision throughout, because the hardware path is f32-only
+anyway (see the
+.B P
+request).
+Each write is one request; the following read returns its response.
+Three request shapes, each starting with a one-letter tag:
 .EX
 	P
 .EE
@@ -58,39 +67,43 @@ or
 .BR f64 :
 the precision this device would
 .B actually
-compute in. Not cosmetic \(em a hardware backend is f32-only (Metal
-has no double), so a caller needing f64 must know that
+compute in.
+Not cosmetic \(em a hardware backend is f32-only (Metal has no
+.BR double ),
+so a caller needing f64 must know that
 .B before
-trusting a result. This is what
+trusting a result.
+This is what
 .IR gpu (2)'s
 .B precision
 verb queries.
 .EX
-	U n nnz
-	rowptr (n+1 space-separated integers)
-	colidx (nnz space-separated integers)
-	val (nnz space-separated reals)
+	U  n  nnz  rowptr[n+1]  colidx[nnz]  val[nnz]
 .EE
 Uploads an
 .IR n \(mu n
 CSR matrix with
 .I nnz
-nonzeros, replacing any previous upload on this handle. The following
-read returns
+nonzeros, replacing any previous upload on this handle.
+The following read returns
 .B OK
 on success, or an error.
 .EX
-	X x (n space-separated reals)
+	X  x[n]
 .EE
 Computes
 .IR y = Ax
-against the uploaded matrix (an error if none has been uploaded, or
-.I x
-doesn't have exactly
-.I n
-values). The following read returns
+against the uploaded matrix.
+The following read returns
 .I y
-the same way, space-separated reals.
+as
+.I n
+raw single-precision values.
+.PP
+Text was tried first and was not merely slow: formatting a whole CSR
+matrix as decimal exhausted the Limbo heap at a 16x16x16 mesh, long
+before the GPU was the limit, and the per-iteration vector exchange
+cost more than the arithmetic it carried.
 .PP
 Closing the handle frees its matrix state.
 .SH IMPLEMENTATION
@@ -156,16 +169,26 @@ converges in 9 CG iterations to a residual around 1e\-11, against 7
 iterations and 1e\-17 for the same solve on the CPU, with the two
 solutions agreeing to about 4e\-8: f32 epsilon, exactly as expected.
 .PP
-The text protocol remains a correctness-first choice, and is now the
-obvious next thing to improve: matrix upload happens once per solve so
-its parsing cost is irrelevant, but the
-.B X
-exchange runs every Krylov iteration and currently formats and reparses
-the whole vector as text each time. A compact binary encoding there
-\(em which changes neither
-.IR gpu (2)'s
-interface nor the hardware hooks \(em is where the real throughput win
-now is, since the kernel itself already runs on the GPU.
+Whether offloading is worth it depends entirely on problem size, so
+measure rather than assume \(em
+.IR gpubench (1)
+does exactly this comparison.
+A
+.IR fem (2)
+Poisson solve on this machine, cpu f64 against gpu f32:
+.EX
+	mesh      nodes    cpu     gpu
+	12x12x12   2197     4ms    32ms
+	16x16x16   4913    10ms    26ms
+	20x20x20   9261    26ms    26ms
+	24x24x24  15625    52ms    35ms
+	30x30x30  29791   128ms    62ms
+.EE
+Break-even is around nine thousand nodes; below that the per-call cost
+of crossing this interface dominates, and above it the GPU pulls ahead,
+reaching roughly twice the speed at thirty thousand.
+Note that f32 also costs iterations \(em 52 against 42 at the largest
+size \(em so the gain per matvec is larger than the gain per solve.
 .SH SOURCE
 .B /emu/port/devgpu.c
 .br

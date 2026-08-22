@@ -4,6 +4,8 @@ include "sys.m";
 	sys: Sys;
 include "string.m";
 	str: String;
+include "math.m";
+	math: Math;
 include "sparse.m";
 	sparse: Sparse;
 	CSR: import sparse;
@@ -18,6 +20,7 @@ init()
 		sys = load Sys Sys->PATH;
 		str = load String String->PATH;
 		sparse = load Sparse Sparse->PATH;
+		math = load Math Math->PATH;
 	}
 }
 
@@ -103,25 +106,27 @@ cpuapply(x: array of real): array of real
 gpufd: ref Sys->FD;
 gpun: int;
 
-# gpu(3)'s own protocol is text for this first pass (see its SOURCE
-# section for why) - marshal/unmarshal accordingly. A real high-
-# throughput version would move this to a compact binary encoding
-# without changing anything on the Krylov->Apply side of this file.
+# One request per matvec: tag byte then the vector as big-endian
+# IEEE754 singles, which is what math->export_real32 emits and what
+# gpu(3) decodes. Text here cost more than the arithmetic and could not
+# scale - see gpu(3).
 gpuapply(x: array of real): array of real
 {
-	msg := sys->sprint("X");
-	for(i := 0; i < len x; i++)
-		msg += sys->sprint(" %g", x[i]);
-	msg += "\n";
-	sys->write(gpufd, array of byte msg, len msg);
-	buf := array[gpun*32 + 16] of byte;
-	rn := sys->read(gpufd, buf, len buf);
-	(nil, flds) := sys->tokenize(string buf[0:rn], " \n\t");
-	y := array[gpun] of real;
-	for(i = 0; i < gpun && flds != nil; i++){
-		y[i] = real hd flds;
-		flds = tl flds;
+	msg := array[1 + gpun*4] of byte;
+	msg[0] = byte 'X';
+	math->export_real32(msg[1:], x);
+	if(sys->write(gpufd, msg, len msg) != len msg)
+		return sparse->matvec(cpumatrix, x);
+	rbuf := array[gpun*4] of byte;
+	off := 0;
+	while(off < len rbuf){
+		nr := sys->read(gpufd, rbuf[off:], len rbuf - off);
+		if(nr <= 0)
+			return sparse->matvec(cpumatrix, x);
+		off += nr;
 	}
+	y := array[gpun] of real;
+	math->import_real32(rbuf, y);
 	return y;
 }
 
@@ -165,17 +170,24 @@ Backend.apply(b: self ref Backend, m: ref CSR): Apply
 		cpumatrix = m;
 		return cpuapply;
 	}
-	umsg := sys->sprint("U %d %d\n", m.n, len m.val);
-	for(i := 0; i <= m.n; i++)
-		umsg += sys->sprint("%d ", m.rowptr[i]);
-	umsg += "\n";
-	for(i = 0; i < len m.colidx; i++)
-		umsg += sys->sprint("%d ", m.colidx[i]);
-	umsg += "\n";
-	for(i = 0; i < len m.val; i++)
-		umsg += sys->sprint("%g ", m.val[i]);
-	umsg += "\n";
-	sys->write(fd, array of byte umsg, len umsg);
+	nnz := len m.val;
+	hdr := array[2] of int;
+	hdr[0] = m.n;
+	hdr[1] = nnz;
+	umsg := array[1 + 8 + (m.n+1)*4 + nnz*4 + nnz*4] of byte;
+	umsg[0] = byte 'U';
+	math->export_int(umsg[1:9], hdr);
+	o := 9;
+	math->export_int(umsg[o:o+(m.n+1)*4], m.rowptr);
+	o += (m.n+1)*4;
+	math->export_int(umsg[o:o+nnz*4], m.colidx);
+	o += nnz*4;
+	math->export_real32(umsg[o:o+nnz*4], m.val);
+	if(sys->write(fd, umsg, len umsg) != len umsg){
+		b.lasterror = "backend: device gpu upload write failed, using cpu";
+		cpumatrix = m;
+		return cpuapply;
+	}
 	ack := array[16] of byte;
 	an := sys->read(fd, ack, len ack);
 	if(an < 3 || string ack[0:3] != "OK\n"){

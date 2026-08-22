@@ -11,29 +11,27 @@
  * request followed by one response, matching how gpu(2)'s own
  * Backend.apply()/cmd() call this one call at a time already.
  *
- * Protocol is deliberately text, not binary, for this first pass: a
- * real high-throughput version would move to a compact binary
- * encoding once real GPU compute (see gpudrawfillpoly3d/g for the
- * existing GPU *render* hooks this mirrors one layer down) is wired
- * in on top of this device - correctness and the end-to-end plumbing
- * come first, matching how every other module built into gpu(2) this
- * session was scoped. Write one request, then read its response,
- * exactly once per write - no pipelining.
+ * The wire format is binary.  Text was tried first and was not merely
+ * slow: formatting a whole CSR matrix as decimal exhausted the Limbo
+ * heap at a 16x16x16 mesh, long before the GPU was the limit.  Integers
+ * are 32-bit and values IEEE754 single, both big-endian, matching what
+ * Limbo's math->export_int/export_real32 produce so the sender needs no
+ * hand-rolled marshalling.  Single precision throughout because the
+ * hardware path is f32-only anyway (Metal has no double) - see the
+ * 'P' request.  Write one request, then read its response, exactly
+ * once per write - no pipelining.
  *
  *   write "P\n"
- *       -> read() afterward returns "f32\n" or "f64\n": the precision
- *          this device would actually compute in. Not cosmetic - a
- *          hardware backend is f32-only (Metal has no double), so a
- *          caller who needs f64 has to know that BEFORE trusting a
- *          result, which is exactly what gpu(2)'s "precision" verb
- *          uses this for.
- *   write "U <n> <nnz>\n<n+1 rowptr ints>\n<nnz colidx ints>\n<nnz val reals>\n"
- *       -> upload a CSR matrix, replacing any previous upload on
- *          this handle. read() afterward returns "OK\n" or an error.
- *   write "X <n reals>\n"
- *       -> compute y = A*x against the uploaded matrix (error if
- *          none uploaded, or n doesn't match). read() afterward
- *          returns "<n reals>\n", the result y.
+ *       -> read() returns "f32\n" or "f64\n": the precision this
+ *          device would actually compute in.  Not cosmetic - a caller
+ *          needing f64 must know before trusting a result, which is
+ *          what gpu(2)'s "precision" verb uses this for.
+ *   write 'U' n nnz rowptr[n+1] colidx[nnz] val[nnz]
+ *       -> upload a CSR matrix, replacing any previous one on this
+ *          handle.  read() returns "OK\n" or an error.
+ *   write 'X' x[n]
+ *       -> compute y = A*x against the uploaded matrix.  read()
+ *          returns y[n] as raw single-precision values.
  *
  * The numeric kernel itself is NOT this file's job: gpuspmv() below
  * dispatches to a platform backend's real GPU compute through the
@@ -165,6 +163,42 @@ newhandle(void)
 	return i;
 }
 
+/* Binary-safe variant of setresp: takes ownership of buf. */
+static void
+setrespn(Gstate *g, char *buf, int len)
+{
+	free(g->resp);
+	g->resp = buf;
+	g->resplen = len;
+	g->respoff = 0;
+}
+
+static uint
+be32(uchar *p)
+{
+	return ((uint)p[0]<<24) | ((uint)p[1]<<16) | ((uint)p[2]<<8) | (uint)p[3];
+}
+
+/* IEEE754 single, big-endian on the wire (matches Limbo's
+ * math->export_real32), to double. */
+static double
+be32f(uchar *p)
+{
+	union { uint u; float f; } v;
+
+	v.u = be32(p);
+	return (double)v.f;
+}
+
+static void
+put32f(uchar *p, double d)
+{
+	union { uint u; float f; } v;
+
+	v.f = (float)d;
+	p[0] = v.u>>24; p[1] = v.u>>16; p[2] = v.u>>8; p[3] = v.u;
+}
+
 static void
 setresp(Gstate *g, char *s)
 {
@@ -172,57 +206,6 @@ setresp(Gstate *g, char *s)
 	g->resp = s;
 	g->resplen = strlen(s);
 	g->respoff = 0;
-}
-
-/* Parses "<count> <ints...>" starting at *sp, filling a freshly
- * malloc'd array; advances *sp past what it consumed. Returns nil on
- * a malformed count/short list. */
-static int*
-parseints(char **sp, int count)
-{
-	int *a;
-	int i;
-	char *s;
-
-	a = malloc(count * sizeof(int));
-	if(a == nil)
-		return nil;
-	s = *sp;
-	for(i = 0; i < count; i++){
-		while(*s == ' ' || *s == '\t')
-			s++;
-		if(*s == 0){
-			free(a);
-			return nil;
-		}
-		a[i] = strtol(s, &s, 10);
-	}
-	*sp = s;
-	return a;
-}
-
-static double*
-parsereals(char **sp, int count)
-{
-	double *a;
-	int i;
-	char *s;
-
-	a = malloc(count * sizeof(double));
-	if(a == nil)
-		return nil;
-	s = *sp;
-	for(i = 0; i < count; i++){
-		while(*s == ' ' || *s == '\t')
-			s++;
-		if(*s == 0){
-			free(a);
-			return nil;
-		}
-		a[i] = strtod(s, &s);
-	}
-	*sp = s;
-	return a;
 }
 
 static int
@@ -338,11 +321,10 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 {
 	Gstate *g;
 	int h;
-	char *buf, *s;
-	int nn, nnz;
+	char *buf;
+	int nn, nnz, i;
 	int *rowptr, *colidx;
 	double *val, *x, *y;
-	int i;
 	char *out;
 
 	USED(unused_offset);
@@ -371,25 +353,44 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 		return n;
 	}
 	if(buf[0] == 'U'){
-		s = buf+1;
-		while(*s == ' ')
-			s++;
-		nn = strtol(s, &s, 10);
-		while(*s == ' ')
-			s++;
-		nnz = strtol(s, &s, 10);
+		uchar *q;
+		int need;
+
+		/* 'U' n nnz rowptr[n+1] colidx[nnz] val[nnz], all big-endian,
+		 * ints 32-bit and values IEEE754 single - see gpu(3).  Text
+		 * was unusable here: formatting a matrix's worth of numbers
+		 * exhausted the heap well before the GPU became the limit. */
+		if(n < 9){
+			free(buf);
+			error(Ebadarg);
+		}
+		q = (uchar*)buf;
+		nn = be32(q+1);
+		nnz = be32(q+5);
 		if(nn <= 0 || nnz < 0){
 			free(buf);
 			error(Ebadarg);
 		}
-		rowptr = parseints(&s, nn+1);
-		colidx = parseints(&s, nnz);
-		val = parsereals(&s, nnz);
-		free(buf);
-		if(rowptr == nil || colidx == nil || val == nil){
-			free(rowptr); free(colidx); free(val);
-			error(Ebadarg);
+		need = 9 + (nn+1)*4 + nnz*4 + nnz*4;
+		if(n < need){
+			free(buf);
+			error(Eshortstat);
 		}
+		rowptr = malloc((nn+1) * sizeof(int));
+		colidx = malloc((nnz > 0 ? nnz : 1) * sizeof(int));
+		val = malloc((nnz > 0 ? nnz : 1) * sizeof(double));
+		if(rowptr == nil || colidx == nil || val == nil){
+			free(rowptr); free(colidx); free(val); free(buf);
+			error(Enomem);
+		}
+		q += 9;
+		for(i = 0; i <= nn; i++, q += 4)
+			rowptr[i] = (int)be32(q);
+		for(i = 0; i < nnz; i++, q += 4)
+			colidx[i] = (int)be32(q);
+		for(i = 0; i < nnz; i++, q += 4)
+			val[i] = be32f(q);
+		free(buf);
 		lock(&gtablock);
 		if(g->hw != nil && gpuhwfree != nil)
 			gpuhwfree(g->hw);
@@ -400,10 +401,9 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 		g->val = val;
 		g->n = nn;
 		g->nnz = nnz;
-		/* Resident upload: the matrix goes to the device once here,
-		 * and only the vector crosses per matvec afterward - the whole
-		 * point of gpu(2)'s own "resident on". A nil return just means
-		 * this matvec runs on the CPU instead; never an error. */
+		/* Resident upload: the matrix crosses once here, and only the
+		 * vector crosses per matvec afterward - the whole point of
+		 * gpu(2)'s "resident on". */
 		if(gpuhwupload != nil)
 			g->hw = gpuhwupload(nn, nnz, rowptr, colidx, val);
 		setresp(g, strdup("OK\n"));
@@ -411,38 +411,38 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 		return n;
 	}
 	if(buf[0] == 'X'){
+		uchar *q, *out;
+
 		if(g->rowptr == nil){
 			free(buf);
 			error(Ebadctl);
 		}
-		s = buf+1;
-		x = parsereals(&s, g->n);
-		free(buf);
-		if(x == nil)
-			error(Ebadarg);
+		if(n < 1 + g->n*4){
+			free(buf);
+			error(Eshortstat);
+		}
+		x = malloc(g->n * sizeof(double));
 		y = malloc(g->n * sizeof(double));
-		if(y == nil){
-			free(x);
+		if(x == nil || y == nil){
+			free(x); free(y); free(buf);
 			error(Enomem);
 		}
+		q = (uchar*)buf + 1;
+		for(i = 0; i < g->n; i++, q += 4)
+			x[i] = be32f(q);
+		free(buf);
 		gpuspmv(g, x, y);
 		free(x);
-		/* "%g\n" per value, generously bounded */
-		out = malloc(g->n * 32 + 1);
+		out = malloc(g->n * 4);
 		if(out == nil){
 			free(y);
 			error(Enomem);
 		}
-		out[0] = 0;
-		for(i = 0; i < g->n; i++){
-			char one[32];
-			snprint(one, sizeof one, "%g ", y[i]);
-			strcat(out, one);
-		}
-		strcat(out, "\n");
+		for(i = 0; i < g->n; i++)
+			put32f(out + i*4, y[i]);
 		free(y);
 		lock(&gtablock);
-		setresp(g, out);
+		setrespn(g, (char*)out, g->n * 4);
 		unlock(&gtablock);
 		return n;
 	}

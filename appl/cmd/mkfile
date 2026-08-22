@@ -79,6 +79,7 @@ TARG=\
 	getauthinfo.dis\
 	gettar.dis\
 	gif2bit.dis\
+	gpubench.dis\
 	grep.dis\
 	gunzip.dis\
 	gzip.dis\
