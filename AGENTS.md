@@ -9,6 +9,8 @@
 - Do not ask the user whether to continue while requested work remains. Keep
   implementing, testing, and repairing the result until it is complete or a
   genuine external blocker requires user input.
+- After a commit, continue with the next known implementation or verification
+  step without asking the user whether to proceed.
 
 - Follow Inferno conventions and prefer its configuration files, device tables,
   runtime capability checks, and `waserror`/`poperror` mechanism.
