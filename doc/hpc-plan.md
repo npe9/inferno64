@@ -121,35 +121,77 @@ Reproducer committed: `appl/cmd/fdstresstest.b`, `man/1/fdstresstest`.
 timeout 30 ./MacOSX/arm64/bin/emu-g -c0 -r . /dis/fdstresstest.dis
 ```
 
-Hangs ~3/10 under `-c0`, ~1/6 under `-c1`. **A hang is the failure** — no
-output, no exit. Any test sharing an `Fgrp` across processes hits it, which is
-why it gates the concurrency work.
+Hangs ~1/10 under `-c0`. **A hang is the failure** — no output, no exit. Any
+test sharing an `Fgrp` across processes hits it, which is why it gates the
+concurrency work.
 
-Diagnosed with `sample <pid>` on a hung emu: one thread blocked in `acquire()`
-(`emu/port/dis.c`) from `Sys_open` — waiting for a VM slot, not the file —
-sitting on `isched.vmq`, while **every other VM thread is parked in `osblock`**,
-inside `iyield()` or asleep on `isched.irend`. Nothing is left to pop the waiter
-off `vmq` and `osready` it.
+**It is a single lost `osready`, and that is now proven, not inferred.** lldb
+was attached to a hung `emu-g` and the missing wakeup injected by hand:
+
+```
+(lldb) expr -- (void)osready((Proc*)0x104e20fa0)
+(lldb) detach
+```
+
+The run completed normally and immediately. Nothing else about the state was
+touched, so nothing else was wrong.
+
+Full state at the hang (`lldb -p <pid>`, `p isched`, plus a script walking
+`head`/`vmq`/`idlevmq` by `next`/`qnext`):
+
+- `tready(0)` → **0**. `runhd == nil`, `vmq == nil`. The scheduler believes it
+  is legitimately idle.
+- Two progs: pid 1 `Precv` (waiting on the channel pid 3 would send to), pid 3
+  **`Prelease`**.
+- Nine threads: one `main` in `ospause`, six vmachine kprocs parked in
+  `iyield`'s `osblock` on `idlevmq`, one asleep on `isched.irend` in the
+  vmachine loop (the holder), and one — the proc owning prog pid 3 —
+  parked in `acquire`'s `osblock` at `dis.c:1033`, reached from
+  `Sys_open` → `mcall` → `xec`.
+- That proc: `text = "acquire"`, `qnext == nil`, **on no queue**, and
+  `((Sem*)p->os)->v == 0` — no token ever arrived.
+
+So the proc pushed itself onto `vmq`, and then left `vmq` without anyone
+calling `osready` on it. Every path that clears `vmq` (`release()`, `iyield()`)
+calls `osready` on what it popped, so either a pop lost its wakeup or the push
+itself was lost.
 
 Already ruled out — do not re-check:
-- `osblock`/`osready` are a counting semaphore under a mutex; a wakeup arriving
-  before the sleep is not lost.
-- `Sleep()` evaluates its predicate under `r->l` and `Wakeup` takes `r->l`, so
-  no lost wakeup there either.
-- `tready()` already tests `isched.vmq`, not just `isched.runhd`.
+- **Not a lost semaphore wakeup.** `osblock`/`osready` are a proper counting
+  semaphore: `pthread_mutex` + `v++`/`while(v==0) cond_wait` + `v--`. An
+  `osready` arriving before the `osblock` is counted, not dropped.
+- **Not two sleepers on one `Rendez`.** `Sleep()` (`emu/port/proc.c:28`)
+  `panic`s on `r->p != nil`, so that state would abort, not hang.
+- **Not a lost `Wakeup`.** `Sleep` evaluates its predicate under `r->l` and
+  `Wakeup` takes `r->l`; and `tready()` already tests `vmq`, not just `runhd`.
+  At the hang `tready()` is 0 anyway, so the irend handshake is not implicated.
+- **Not `isched.vmqt` going stale.** It is only read when `vmq != nil`, and
+  `acquire()` reassigns it on every push to an empty queue.
+- **Not a thread dying while holding the VM.** `progexit()` returns into
+  `vmachine`'s `waserror` loop; it does not exit the thread.
 - `incref`/`decref` are lock-protected; not `Chan` refcounting.
 - `addrun`/`delrun` not taking `isched.l` is *by design* — only the slot holder
   touches the run queue.
 
-Leads: `Rendez` holds exactly **one** proc, so `isched.irend` has a single
-sleeper and `Wakeup` wakes one — threads parked in `iyield` are invisible to it
-and only `release()` can reach them. `acquire()` only calls `Wakeup` when the
-proc it queued was *first* on `vmq`. Unknown: how the accounting reaches
-all-threads-parked. **Instrument next** — dump `vmq`/`idlevmq`/`idle`/`runhd` at
-the hang; more code reading has not paid off.
+Live suspect, not yet confirmed: **`Proc.qnext` is shared** between the
+scheduler's `vmq`/`idlevmq` (`dis.c`) and `qlock`'s wait queue
+(`emu/port/lock.c:55`), and `osblock`/`osready` are likewise shared between
+`acquire`, `iyield`, `qlock` and `Sleep`. One semaphore serving four distinct
+blocking points means a token delivered for one can be consumed by another. No
+overlap has been demonstrated yet — find one before changing anything.
 
-Not patched deliberately: the scheduler is delicate and at 1-in-3 reproduction a
-speculative change is unfalsifiable.
+**Next step is a scheduler event trace**, not more code reading: record
+push/pop/park/ready per `Proc` under the `isched.l` that is already held, and
+dump the ring at the hang. That says directly whether the pop happened.
+
+Not patched speculatively: at 1-in-10 a change cannot be falsified by running
+the test. Any candidate fix needs 50+ runs each side plus a negative control
+confirming the unpatched build still hangs in the same session — and `-c1` is
+the default `cflag`, so validate there too or say plainly that you did not.
+
+Reproducing on demand: `emu-g` in a loop, 15s per attempt, stop at the first
+survivor and attach. `sample <pid>` gives the threads; lldb gives `isched`.
+Kill leftovers **by pid** — another session may share this Mac.
 
 ### 2. `Screen.newwindow()` returns nil after a resize
 
