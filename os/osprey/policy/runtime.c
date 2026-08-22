@@ -125,29 +125,41 @@ runtimenext(Runtime *r, ulong core, uvlong now)
 	return corenext(&r->core[core]);
 }
 
+/* take one request off a process's ring and answer it */
+int
+runtimeserve(Runtime *r, Process *p, Handler handler, void *arg)
+{
+	Request req;
+	Reply rep;
+
+	if(r == nil || p == nil || handler == nil)
+		return -1;
+	if(processnext(p, &req) < 0)
+		return 0;
+	rep.message = req.message;
+	rep.sequence = req.sequence;
+	rep.status = ReplyPending;
+	rep.flags = 0;
+	if(handler(p, &req, &rep, arg) < 0)
+		rep.status = ReplyError;
+	else if(rep.status == ReplyPending)
+		rep.status = ReplyDone;
+	processreply(p, &rep);
+	return 1;
+}
+
 int
 runtimeservice(Runtime *r, Handler handler, void *arg)
 {
 	ulong i;
-	Request req;
-	Reply rep;
-	Process *p;
+
 	if(r == nil || handler == nil || r->process == nil)
 		return -1;
 	for(i = 0; i < r->nprocess; i++){
-		p = r->process[i];
-		if(p == nil || processnext(p, &req) < 0)
+		if(r->process[i] == nil)
 			continue;
-		rep.message = req.message;
-		rep.sequence = req.sequence;
-		rep.status = ReplyPending;
-		rep.flags = 0;
-		if(handler(p, &req, &rep, arg) < 0)
-			rep.status = ReplyError;
-		else if(rep.status == ReplyPending)
-			rep.status = ReplyDone;
-		processreply(p, &rep);
-		return 1;
+		if(runtimeserve(r, r->process[i], handler, arg) > 0)
+			return 1;
 	}
 	return 0;
 }

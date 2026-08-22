@@ -90,6 +90,7 @@ enum {
 	CMnetfree,
 	CMbindproc,
 	CMunbindproc,
+	CMserve,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -112,6 +113,7 @@ static Cmdtab ospreycmd[] = {
 	CMrestore,	"restore",	2,
 	CMmigrate,	"migrate",	3,
 	CMbindproc,	"bindproc",	3,
+	CMserve,	"serve",	2,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -153,6 +155,9 @@ static uchar *ospreybase;		/* the shared arena */
 static Physseg ospreyseg = { SG_PHYSICAL, "osprey", 0, 0 };
 static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
 static Proc *ospreyprocs[16];		/* the process bound to each container */
+static Rendez ospreyservrend[16];	/* wakes a container's service process */
+static int ospreyserving[16];		/* a service process is running for it */
+static Pgrp *ospreypgrp[16];		/* the namespace it is to run in */
 
 void
 queuebarrier(void)
@@ -166,6 +171,69 @@ queuebarrier(void)
  * longer than a second is clamped, so a core that was idle in the monitor
  * does not throw everything off its queue at once.
  */
+static void ospreywakeup(void);
+
+static int
+ospreyhaswork(void *a)
+{
+	Ospreyproc *p = a;
+
+	return ospreyindex(p) < 0 || ospreyrequestready(p);
+}
+
+/*
+ * A container's service process.  It answers requests from that
+ * container's ring and sleeps when there are none; the clock wakes it
+ * when a process that has mapped the ring puts one there, so an ordinary
+ * request costs the caller no trap at all.  It runs in the namespace of
+ * whoever asked for it, which is where a container's file names mean
+ * what they say.
+ */
+static void
+ospreyserver(void *a)
+{
+	Ospreyproc *p = a;
+	Pgrp *pg;
+	int x;
+
+	/*
+	 * kproc leaves a kernel process in the shared kernel name space,
+	 * where a container's file names mean nothing.  Take the name space
+	 * of the process that asked for the server instead; it already
+	 * holds the reference for us.
+	 */
+	if((x = ospreyindex(p)) >= 0 && (pg = ospreypgrp[x]) != nil){
+		ospreypgrp[x] = nil;
+		closepgrp(up->pgrp);
+		up->pgrp = pg;
+	}
+
+	if(waserror())
+		goto done;
+	for(;;){
+		if((x = ospreyindex(p)) < 0)
+			break;
+		qlock(&ospreylock);
+		if(waserror()){
+			qunlock(&ospreylock);
+			break;
+		}
+		while(ospreyservicep(p, fastticks(nil)) > 0)
+			;
+		poperror();
+		qunlock(&ospreylock);
+		ospreywakeup();
+		if(ospreyindex(p) < 0)
+			break;
+		sleep(&ospreyservrend[x], ospreyhaswork, p);
+	}
+	poperror();
+done:
+	if((x = ospreyindex(p)) >= 0)
+		ospreyserving[x] = 0;
+	pexit("osprey server", 1);
+}
+
 static void
 ospreyclock(int core)
 {
@@ -184,6 +252,15 @@ ospreyclock(int core)
 
 	q = m->proc;
 	ospreytick(core, q != nil ? q->osprey : nil, d, now);
+
+	/*
+	 * Wake the service process of any container that has a request
+	 * waiting.  A process that submitted through the mapped ring never
+	 * entered the kernel, so the clock is what notices.
+	 */
+	for(i = 0; i < nelem(ospreyservrend); i++)
+		if(ospreyserving[i])
+			wakeup(&ospreyservrend[i]);
 
 	/*
 	 * Hold a throttled container's process back until its period
@@ -363,6 +440,17 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 
 /* drop every chan a container still holds */
 /* let go of the process a container was billing */
+/* let go of a container's service process */
+static void
+ospreyputserver(Ospreyproc *p)
+{
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyservrend))
+		return;
+	wakeup(&ospreyservrend[x]);
+}
+
 static void
 ospreyputproc(Ospreyproc *p)
 {
@@ -583,6 +671,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		for(p = ospreynext(nil); p != nil; p = ospreynext(p)){
 			ospreyclosefds(p);
 			ospreyputproc(p);
+			ospreyputserver(p);
 		}
 		ospreyreset();
 		ospreywakeup();
@@ -612,6 +701,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		p = ospreyproc(cb->f[1]);
 		ospreyclosefds(p);
 		ospreyputproc(p);
+		ospreyputserver(p);
 		if(ospreyexit(p) < 0)
 			error(Ebadarg);
 		ospreywakeup();
@@ -664,6 +754,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		}
 		if(ospreysubmit(p, op, arg) < 0)
 			error(Eio);
+		if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyservrend))
+			wakeup(&ospreyservrend[x]);
 		ospreywakeup();
 		break;
 
@@ -677,6 +769,30 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		ospreywakeup();
 		break;
 
+	case CMserve:
+		/*
+		 * Give the container a service process of its own, in this
+		 * process's namespace.  From then on nothing has to write
+		 * service for its requests to be answered.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyserving))
+			error(Ebadarg);
+		if(ospreyserving[x])
+			break;
+		ospreyserving[x] = 1;
+		incref(up->pgrp);
+		ospreypgrp[x] = up->pgrp;
+		if(waserror()){
+			ospreyserving[x] = 0;
+			ospreypgrp[x] = nil;
+			closepgrp(up->pgrp);
+			nexterror();
+		}
+		kproc("osprey", ospreyserver, p);
+		poperror();
+		break;
+
 	case CMbindproc:
 		/*
 		 * Bill a running process to this container.  From here on the
@@ -687,6 +803,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
 			error(Ebadarg);
 		i = atoi(cb->f[2]);
+		q = nil;
 		for(op = 0; op < conf.nproc; op++){
 			q = proctab(op);
 			if(q->pid == i && q->state != Dead)

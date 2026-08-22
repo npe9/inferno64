@@ -132,6 +132,16 @@ Service up to
 queued requests, one from each container in turn, and put a reply on the
 originating container's reply ring.  The default is one.
 .TP
+.BI serve " id"
+Give the container a service process of its own, running in the name
+space of the process that asks.  From then on its requests are answered
+without anyone writing
+.BR service :
+the process sleeps until a request arrives, and the clock wakes it, so a
+request submitted through the mapped ring is answered without the caller
+entering the kernel at all.  The service process goes away with the
+container.
+.TP
 .BI wait " id"
 Block until the container has a reply to collect.
 .TP
@@ -218,7 +228,10 @@ are served against real kernel channels, in the namespace of whichever
 process drove the dispatcher.
 .B open
 takes the offset of a null-terminated path in the container's data area
-and an open mode, and replies with a handle.
+and an open mode, and replies with a handle.  The path is resolved in the
+name space of the container's service process, or of whoever wrote
+.B service
+when it has none.
 .BR read ,
 .B write
 and
@@ -356,10 +369,6 @@ and
 are refused; process, IPC and network requests belong to the user-level
 services described in the Osprey plan.
 .PP
-Servicing is driven by writes to
-.BR ctl ,
-and the dispatcher runs in the namespace of whichever process wrote
-.BR service .
 Scheduling is driven by the clock.  A container with no process bound to
 it is billed for whatever its core's run queue says it is running, which
 is a policy fiction until

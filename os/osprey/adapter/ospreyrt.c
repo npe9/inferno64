@@ -672,6 +672,24 @@ ospreyservice(uvlong now)
 	return runtimeservice(&runtime, dispatch, nil);
 }
 
+int
+ospreyservicep(Ospreyproc *p, uvlong now)
+{
+	if(p == nil || p->used == 0)
+		return -1;
+	ready();
+	runtime.now = now;
+	return runtimeserve(&runtime, &p->process, dispatch, nil);
+}
+
+int
+ospreyrequestready(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return 0;
+	return !queueempty(p->process.requests);
+}
+
 /*
  * The serialisable part of a container: identity, core, state, budget
  * accounting, ring indices and namespace size.  Ring storage, the data
