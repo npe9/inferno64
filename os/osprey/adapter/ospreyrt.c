@@ -40,6 +40,8 @@ enum {
 struct Ospreyproc {
 	Process	process;
 	int	used;
+	int	saved;		/* snap holds a checkpoint */
+	Snap	snap;
 	uvlong	sequence;	/* request numbering, kept out of Task */
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
@@ -165,6 +167,14 @@ ospreydataoffset(Ospreyproc *p)
 	if(p == nil || p->used == 0 || p->map == nil)
 		return 0;
 	return p->slice + p->map->data;
+}
+
+uvlong
+ospreydatalen(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0 || p->map == nil)
+		return 0;
+	return p->map->datalen;
 }
 
 void*
@@ -495,6 +505,31 @@ ospreyservice(uvlong now)
 	ready();
 	runtime.now = now;
 	return runtimeservice(&runtime, dispatch, nil);
+}
+
+/*
+ * The serialisable part of a container: identity, core, state, budget
+ * accounting, ring indices and namespace size.  Ring storage, the data
+ * area and any chan the kernel holds for it are the adapter's, and are
+ * not part of the snapshot.
+ */
+int
+ospreycheckpoint(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return -1;
+	if(snapsave(&p->process, &p->snap) < 0)
+		return -1;
+	p->saved = 1;
+	return 0;
+}
+
+int
+ospreyrestore(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0 || p->saved == 0)
+		return -1;
+	return snapload(&p->process, &p->snap);
 }
 
 int

@@ -112,6 +112,15 @@ originating container's reply ring.  The default is one.
 .BI wait " id"
 Block until the container has a reply to collect.
 .TP
+.BI checkpoint " id"
+Record the container's serialisable state: identity, core, run state,
+budget accounting, ring indices and namespace size.  Ring storage, the
+data area and any channel the kernel holds for it are the adapter's and
+are not part of it.
+.TP
+.BI restore " id"
+Put the recorded state back.
+.TP
 .BI bind " id local global"
 Add a private name to the container's namespace.
 .TP
@@ -317,3 +326,11 @@ A container is not yet attached to a
 The whole span is mapped by any process that attaches it, so one
 container can read and write another's rings, and the kernel address in
 each ring head is visible to them all.
+.PP
+A ring carries one producer and one consumer.  Two processes submitting
+to the same container, or a process submitting while another writes
+.B submit
+to
+.B ctl
+for it, will corrupt the ring; the device sleeps one waiter per container
+per direction and does not arbitrate between more.

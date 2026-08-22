@@ -83,6 +83,8 @@ enum {
 	CMunbind,
 	CMwait,
 	CMpoke,
+	CMcheckpoint,
+	CMrestore,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -101,12 +103,21 @@ static Cmdtab ospreycmd[] = {
 	CMunbind,	"unbind",	3,
 	CMwait,		"wait",		2,
 	CMpoke,		"poke",		4,
+	CMcheckpoint,	"checkpoint",	2,
+	CMrestore,	"restore",	2,
 };
 
 static QLock ospreylock;
-static Rendez ospreyrend;		/* ring space and replies */
+/*
+ * One pair of rendezvous points per container: sleep() allows a single
+ * sleeper on a Rendez, and a room-waiter and a reply-waiter must not
+ * share one.  A ring still has one producer and one consumer.
+ */
+static Rendez ospreyroomrend[16];
+static Rendez ospreyreplyrend[16];
 static uchar *ospreybase;		/* the shared arena */
-static Physseg ospreyseg = { SG_PHYSICAL|SG_SHARED, "osprey", 0, 0 };
+/* SG_PHYSICAL is a value of the SG_TYPE field, not a flag beside it */
+static Physseg ospreyseg = { SG_PHYSICAL, "osprey", 0, 0 };
 static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
 
 void
@@ -125,24 +136,34 @@ ospreynow(void)
 
 /*
  * Sleep predicates.  Both are read without the qlock, so they only look
- * at the ring indices the barrier already orders.
+ * at the ring indices the barrier already orders.  A container that has
+ * gone away wakes its waiters so they can fail rather than hang.
  */
 static int
 ospreyroom(void *a)
 {
-	return !ospreyrequestfull((Ospreyproc*)a);
+	Ospreyproc *p = a;
+
+	return ospreyindex(p) < 0 || !ospreyrequestfull(p);
 }
 
 static int
 ospreyreply(void *a)
 {
-	return ospreyreplyready((Ospreyproc*)a);
+	Ospreyproc *p = a;
+
+	return ospreyindex(p) < 0 || ospreyreplyready(p);
 }
 
 static void
 ospreywakeup(void)
 {
-	wakeup(&ospreyrend);
+	int i;
+
+	for(i = 0; i < nelem(ospreyroomrend); i++){
+		wakeup(&ospreyroomrend[i]);
+		wakeup(&ospreyreplyrend[i]);
+	}
 }
 
 static void
@@ -189,7 +210,10 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 	case OpOpen:
 		if((a = ospreydata(p, arg[0], 1)) == nil)
 			return StatusError;
-		if((e = memchr(a, 0, Namelen)) == nil || e == a)
+		n = ospreydatalen(p) - arg[0];
+		if(n > Namelen)
+			n = Namelen;
+		if((e = memchr(a, 0, n)) == nil || e == a)
 			return StatusError;
 		for(i = 0; i < Nfd; i++)
 			if(ospreyfd[x][i] == nil)
@@ -434,7 +458,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	Ospreyproc *p;
 	char *nm;
 	uvlong arg[Ospreynarg];
-	int i, op;
+	int i, op, x;
 
 	if((ulong)c->qid.path == Qarena)
 		return ospreyarenaio(a, n, offset, 1);
@@ -517,12 +541,14 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				strtoull(cb->f[3+i], nil, 0) : 0;
 		/* the queue-full path: wait for the dispatcher to make room */
 		while(ospreyrequestfull(p)){
+			if((x = ospreyindex(p)) < 0)
+				error(Enonexist);
 			qunlock(&ospreylock);
 			if(waserror()){
 				qlock(&ospreylock);
 				nexterror();
 			}
-			sleep(&ospreyrend, ospreyroom, p);
+			sleep(&ospreyroomrend[x], ospreyroom, p);
 			poperror();
 			qlock(&ospreylock);
 			p = ospreyproc(cb->f[1]);
@@ -539,6 +565,17 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		while(i-- > 0)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
+		ospreywakeup();
+		break;
+
+	case CMcheckpoint:
+		if(ospreycheckpoint(ospreyproc(cb->f[1])) < 0)
+			error(Ebadarg);
+		break;
+
+	case CMrestore:
+		if(ospreyrestore(ospreyproc(cb->f[1])) < 0)
+			error(Ebadarg);
 		ospreywakeup();
 		break;
 
@@ -559,12 +596,14 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		/* the reply wait path */
 		p = ospreyproc(cb->f[1]);
 		while(!ospreyreplyready(p)){
+			if((x = ospreyindex(p)) < 0)
+				error(Enonexist);
 			qunlock(&ospreylock);
 			if(waserror()){
 				qlock(&ospreylock);
 				nexterror();
 			}
-			sleep(&ospreyrend, ospreyreply, p);
+			sleep(&ospreyreplyrend[x], ospreyreply, p);
 			poperror();
 			qlock(&ospreylock);
 			p = ospreyproc(cb->f[1]);

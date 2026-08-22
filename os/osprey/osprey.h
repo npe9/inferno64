@@ -45,6 +45,7 @@ int		ospreyindex(Ospreyproc*);
 int		ospreynproc(void);
 void*		ospreydata(Ospreyproc*, uvlong off, ulong len);
 uvlong		ospreydataoffset(Ospreyproc*);
+uvlong		ospreydatalen(Ospreyproc*);
 void*		ospreyarenaaddr(uvlong off, ulong len);
 int		ospreyrequestfull(Ospreyproc*);
 int		ospreyreplyready(Ospreyproc*);
@@ -66,6 +67,9 @@ int		ospreylimit(Ospreyproc*, ulong memory, ulong netbytes, ulong netpackets);
 int		ospreysubmit(Ospreyproc*, uvlong op, uvlong *arg);
 int		ospreycollect(Ospreyproc*, uvlong *op, long *status, uvlong *arg);
 int		ospreyservice(uvlong now);
+
+int		ospreycheckpoint(Ospreyproc*);
+int		ospreyrestore(Ospreyproc*);
 
 int		ospreybind(Ospreyproc*, char *local, char *global);
 int		ospreyunbind(Ospreyproc*, char *local);
