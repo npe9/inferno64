@@ -400,12 +400,23 @@ exactly that and failed on an ordinary Inferno path; and only 32-bit images
 can be texture-backed, so on a typical workload most images still come from
 the pool.
 
-Still to do for video proper: `VTDecompressionSession` and
-`CVMetalTextureCache` so the decoder produces the image's backing directly
-rather than converting into it (the current path is one CoreGraphics pass, not
-zero copies); demuxing; presentation timestamps and A/V sync against
-`audio(3)`; and the `bdata`-staleness rule for memdraw paths, which remains
-the genuinely invasive part.
+Movies decode too (`65a67fcc`), and stream (`this commit`): `open`/`next`/
+`close` on the same file run a decode session, so playback is one pass instead
+of re-reading per frame - 4ms against 65ms for ten frames of the test clip -
+with the encoded stream pushed in chunks so memory stays bounded. The fixture
+and its generator are both in the tree (`lib/movies/test.mov`,
+`emu/MacOSX/mkmovie.m`), flat colour per frame so a decode test can assert a
+colour rather than "something was written".
+
+Still to do for video proper: the stream is staged to local storage before the
+first frame, because AVFoundation wants an asset it can open, so a session
+cannot start decoding until the stream ends - fixing that means parsing the
+container on this side and feeding samples to the decoder, and `quicktime(2)`
+already exists here for the parsing half. Then `CVMetalTextureCache` so the
+decoder's pixel buffer *is* the image's backing rather than being copied into
+it; presentation timestamps and A/V sync against `audio(3)`; and the
+`bdata`-staleness rule for memdraw paths, which remains the genuinely invasive
+part.
 
 **What exists to build on, and what does not.** `appl/wm/avi.b` decodes in
 Limbo and pushes pixels into a `Draw->Image`; `appl/wm/mpeg.b` and
