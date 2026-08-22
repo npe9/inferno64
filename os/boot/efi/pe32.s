@@ -133,9 +133,17 @@ TEXT reloc(SB), 1, $0
 	MOVL DI, (SP)
 	RET
 
+TEXT rebase(SB), 1, $0
+	/*
+	 * ia32 links with IMAGE_FILE_RELOCS_STRIPPED and the loader copies
+	 * itself to IMAGEBASE, so a stored address needs no adjustment.
+	 */
+	MOVL 4(SP), AX
+	RET
+
 TEXT jump(SB), $0
 	CLI
-	MOVL 4(SP), AX
+	MOVL jumpentry(SB), AX
 	JMP *AX
 
 TEXT eficall(SB), 1, $0
@@ -157,3 +165,16 @@ TEXT eficall(SB), 1, $0
 
 	MOVL SI, SP
 	RET
+
+
+#include "mem.h"
+
+/*
+ * Values staged by bootkern before the firmware is shut down.  They live
+ * in initialized data so that the self-relocation copy carries them.
+ */
+GLOBL	jumpentry(SB), $4
+DATA	jumpentry(SB)/4, $0
+
+GLOBL	confaddr(SB), $4
+DATA	confaddr(SB)/4, $CONFADDR
