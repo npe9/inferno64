@@ -35,6 +35,7 @@ struct Pool
 	uintptr	nfree;
 	int	nbrk;
 	int	lastfree;
+	int	insec;		/* diagnostic: threads inside the locked region */
 	void	(*move)(void*, void*);
 };
 
@@ -236,8 +237,12 @@ poisoncheck(Bhdr *b, char *where)
 
 	print("POOLPOISON %s: block %p size %zud written %zud bytes after free\n",
 		where, b, (uintptr)b->size, (uintptr)i);
-	print("POOLPOISON allocpc=%#zx reallocpc=%#zx\n",
-		(uintptr)b->allocpc, (uintptr)b->reallocpc);
+	/* ASLR makes the raw pc useless; print it relative to a known exported
+	 * symbol so it can be resolved against the on-disk binary. */
+	print("POOLPOISON allocpc=%#zx (poolalloc%+zd) reallocpc=%#zx\n",
+		(uintptr)b->allocpc,
+		(intptr)((uintptr)b->allocpc - (uintptr)poolalloc),
+		(uintptr)b->reallocpc);
 	e = i + 48;
 	if(e > n)
 		e = n;
@@ -251,6 +256,32 @@ poisoncheck(Bhdr *b, char *where)
 	/* Do not fault here: the point is to see every writer, not just the
 	 * first, and the block is about to be reused and overwritten anyway. */
 	poisonfill(b);
+}
+
+/*
+ * Mutual-exclusion check for the pool lock, under the same INFERNO_POOLPOISON
+ * flag. The corruption in doc/hpc-plan.md shows up as pooldel finding a block
+ * whose poison has already been overwritten, which means the block was handed
+ * out while still in the free tree - a double allocation, which can only
+ * happen if two threads are inside the locked region at once. This says
+ * whether that is what is happening. Per-pool, because two threads in two
+ * different pools overlapping is perfectly legal.
+ */
+static void
+poolenter(Pool *p)
+{
+	lock(&p->l);
+	if(poisonon() && __atomic_add_fetch(&p->insec, 1, __ATOMIC_SEQ_CST) != 1)
+		print("POOLLOCK: %d threads inside %s's locked region\n",
+			p->insec, p->name);
+}
+
+static void
+poolexit(Pool *p)
+{
+	if(poisonon())
+		__atomic_sub_fetch(&p->insec, 1, __ATOMIC_SEQ_CST);
+	unlock(&p->l);
 }
 
 void
@@ -395,7 +426,7 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 	osize = size;
 	size = (size + BHDRSIZE + p->quanta) & ~(p->quanta);
 
-	lock(&p->l);
+	poolenter(p);
 	p->nalloc++;
 
 	t = p->root;
@@ -408,7 +439,7 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 			p->cursize += t->size;
 			if(p->cursize > p->hw)
 				p->hw = p->cursize;
-			unlock(&p->l);
+			poolexit(p);
 			if(p->monitor)
 				MM(p->pnum, pc, B2D(t), size);
 			return B2D(t);
@@ -428,7 +459,7 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 			p->cursize += q->size;
 			if(p->cursize > p->hw)
 				p->hw = p->cursize;
-			unlock(&p->l);
+			poolexit(p);
 			if(p->monitor)
 				MM(p->pnum, pc, B2D(q), size);
 			return B2D(q);
@@ -444,7 +475,7 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 		p->cursize += q->size;
 		if(p->cursize > p->hw)
 			p->hw = p->cursize;
-		unlock(&p->l);
+		poolexit(p);
 		if(p->monitor)
 			MM(p->pnum, pc, B2D(q), size);
 		return B2D(q);
@@ -463,11 +494,11 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 		ns &= ~p->quanta;
 		if (ns < size) {
 			if(poolcompact(p)) {
-				unlock(&p->l);
+				poolexit(p);
 				return poolalloc(p, osize);
 			}
 
-			unlock(&p->l);
+			poolexit(p);
 			print("arena %s too large: size %zd maxsize %zud ressize %zud"
 				" cursize %zud arenasize %zud\n",
 				 p->name, size, p->maxsize, p->ressize,
@@ -482,7 +513,7 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 	t = (Bhdr *)sbrk(alloc);
 	if(t == (void*)-1) {
 		p->nbrk--;
-		unlock(&p->l);
+		poolexit(p);
 		return nil;
 	}
 #ifdef __NetBSD__
@@ -511,7 +542,7 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 		t->magic = MAGIC_E;
 		p->chain->csize += alloc;
 		p->cursize += alloc;
-		unlock(&p->l);
+		poolexit(p);
 		poolfree(p, B2D(q));		/* for backward merge */
 		return poolalloc(p, osize);
 	}
@@ -541,7 +572,7 @@ dopoolalloc(Pool *p, uintptr asize, uintptr pc)
 	p->cursize += t->size;
 	if(p->cursize > p->hw)
 		p->hw = p->cursize;
-	unlock(&p->l);
+	poolexit(p);
 	if(p->monitor)
 		MM(p->pnum, pc, B2D(t), size);
 	return B2D(t);
@@ -567,7 +598,7 @@ poolfree(Pool *p, void *v)
 	if(p->monitor)
 		MM(p->pnum|(1<<8), getcallerpc(&p), v, b->size);
 
-	lock(&p->l);
+	poolenter(p);
 	p->nfree++;
 	p->cursize -= b->size;
 	c = B2NB(b);
@@ -591,7 +622,7 @@ poolfree(Pool *p, void *v)
 		B2T(b)->hdr = b;
 	}
 	pooladd(p, b);
-	unlock(&p->l);
+	poolexit(p);
 }
 
 void *
