@@ -207,7 +207,10 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    matrix per solve, which UQ and convergence studies pay repeatedly.
 5. Possibly: f64 emulation or mixed-precision refinement, so `precision f64`
    can use the GPU instead of declining it.
-6. **Vector instructions in Dis and the JIT.** A separate line of attack on the
+6. **`ml(3)` — a `/dev/ml` CoreML device.** Not built, not started. Details
+   after this list, including the honest caveat that it does **not** help
+   anything else in this plan.
+7. **Vector instructions in Dis and the JIT.** A separate line of attack on the
    same bottleneck item 2 measures — see the detailed section after this list.
    Short version: start with C builtins in `math(2)`, which need no Dis, JIT,
    spec or compiler change, because the win is dispatch amortisation before it
@@ -215,7 +218,63 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
 
 ---
 
-## Item 6 in detail: vector instructions in Dis and the JIT
+## Item 6 in detail: `ml(3)`, a `/dev/ml` CoreML device
+
+**Nothing of this exists yet** — no `devml.c`, no `win-ml.m`, no `ml` line in
+any device manifest. What follows is the design it should take, because the
+shape is already established by `gpu(3)` and there is no reason to invent a
+second one.
+
+**Start by being clear what it is for.** CoreML executes a *compiled model
+graph*; it is not a way to dispatch arbitrary kernels. The Apple Neural Engine
+has no public API at all other than CoreML, so there is no route by which this
+device accelerates a CG solve, a stencil sweep, or anything else in items 1–5.
+Say that plainly up front: **`/dev/ml` is an inference device, and it will not
+make the numerics faster.** It is worth building because inference from Limbo
+is a genuinely new capability for this tree, not because it helps the solver.
+
+**Follow `gpu(3)` exactly**, because every part of that shape was paid for:
+
+- One file, `/dev/mlclone`, bound flat into `/dev` (`#M`), one handle per
+  loaded model. `emu/port/devml.c` owns the protocol and handle lifecycle and
+  nothing else.
+- Nullable hooks — `mlhwload`, `mlhwpredict`, `mlhwfree` — in plain C types, so
+  `emu/MacOSX/win-ml.m` needs no Inferno headers, exactly as `win-gpu.m` needs
+  none. Where the hooks are nil the device reports no backend rather than
+  failing, and no platform `#ifdef` appears in the portable file.
+- **Binary wire format, not text.** Text was tried for `gpu(3)` and exhausted
+  the Limbo heap formatting a matrix at 16³; a tensor is worse.
+- Handle table of **pointers**, resolved under a lock by one `gethandle()`.
+  Not a re-derivation: the array-of-structs version of exactly this table was a
+  use-after-free (see the `gpu(3)` history), and an ML device will hold several
+  models open at once, which is the case that breaks it.
+
+**Precision is the part to get right, and it is harder here than for `gpu(3)`.**
+Metal has no `double`, which is why `gpu(2)` has a `precision` verb and why the
+`P` request answers what the device will *actually deliver*. The ANE is
+narrower still — **fp16** — and CoreML may silently move a model between ANE,
+GPU and CPU (`MLComputeUnits`) with different numerics on each. So `ml(3)`
+needs the same never-silently-wrong machinery from day one, and its `P`
+equivalent must report the *compute unit actually selected*, not what was
+requested. The `gpu(3)` version of this shipped wrong once — it claimed `f64`
+on a path whose wire carried `f32` — and that is the mistake to not repeat.
+
+**The one genuinely new design problem** is that CoreML loads a *compiled*
+`.mlmodelc` from a host filesystem path, and Inferno's namespace is not the
+host filesystem. Options, in order of preference: have the caller pass host
+path bytes and treat that as the model identifier (simple, honest, but punches
+through the namespace); or accept the compiled model over the wire and stage it
+to a temporary host file inside the device (keeps the namespace intact, costs a
+copy and a temp-file lifecycle). Decide this before writing any code — it
+determines the whole protocol.
+
+**Sequencing.** `ml(3)` is independent of everything else here and blocks
+nothing. It should be built when inference is actually wanted, not as part of
+the numerics work, and it should not be allowed to delay items 1–5.
+
+---
+
+## Item 7 in detail: vector instructions in Dis and the JIT
 
 Three separate questions get conflated here, and keeping them apart is most of the design: what a Limbo programmer writes, what Dis represents, and what the JIT emits. **The third can be answered without touching the first two, and that is where to start.**
 
@@ -804,42 +863,3 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 
 A pixel count once reported a renderer dropping *every* segment as "120% of
 software". Count the thing that actually differs.
-
-I can't edit `doc/hpc-plan.md` — I have no tools in this response. But here is the section, written to match that document's voice and structure, ready to paste in under **Plan — remaining**.
-
----
-
-## N. Vector instructions in Dis and the JIT
-
-Three separate questions get conflated here, and keeping them apart is most of the design: what a Limbo programmer writes, what Dis represents, and what the JIT emits. **The third can be answered without touching the first two, and that is where to start.**
-
-### Start with builtin module functions, not new opcodes
-
-`math(2)` is already a builtin implemented in C (`libinterp/math.c`). Adding `math->dot`/`axpy`/`norm`/`scale`, or a `blas(2)` alongside it, costs no Dis change, no JIT change, no spec change and no compiler change. The C implementation gets auto-vectorised by clang, or calls Accelerate/vDSP — which is also the **only** way to reach AMX, since it has no public API.
-
-The reason this captures most of the value is dispatch, not arithmetic. `for(i=0;i<n;i++) s += x[i]*y[i]` pays roughly six Dis dispatches per element — two `IINDF`, each with a bounds check, plus `IMULF`, `IADDF`, increment and compare. A builtin pays one `mcall` for the whole array and one length check. That is an order of magnitude before any SIMD, and SIMD multiplies on top of it.
-
-This targets exactly what is measured in item 2 above: at 30³ the CG loop's `dot`/`axpy`/`norm` are 16ms of 39ms once matvec is offloaded, and CPU `sparse->matvec` is 110ms. Those are BLAS-1 and BLAS-2 shapes. They want library calls, not new instructions.
-
-### If Dis is extended, the unit is an array, not a lane
-
-Width-agnostic aggregate opcodes (`IVADDF`, `IVDOT`, `IVAXPY` over whole `array of real` operands), **never** fixed-width lane types like `real4`. Fixed widths leak the architecture into both the language and the bytecode — 128-bit NEON, 256/512-bit AVX, scalable SVE. Dis has stayed portable for thirty years by being width-agnostic, and `doc/dis.ms` is a real spec this tree treats as authoritative: read its stance on extension before adding anything (that lesson cost real time once already — see the `newa` entry under Gotchas).
-
-Aggregate ops also amortise the bounds check to one per instruction, which is a large part of the win independent of SIMD.
-
-### Auto-vectorising existing Dis in the JIT is the last resort
-
-Pattern-matching loops in `comp-arm64.c` needs loop recognition, alias analysis, bounds-check elimination and trip-count invariance — a serious compiler project against bytecode not designed to make it easy, with per-element frame accesses and explicit bounds checks in the way. Low payoff against either option above.
-
-### Traps specific to this tree
-
-- **`WORD` is `intptr`, so 64-bit here.** `array of int` has 64-bit elements: two NEON lanes, not four. `libinterp/math.c`'s `export_int` bug — casting Limbo array data to C `int*` — is exactly this class of mistake, and it is fixed but instructive. No vector builtin over `array of int` may assume 32-bit lanes.
-- **The interpreter stays authoritative.** `-c0` and `-c1` must agree; the JIT is an optimisation, not a semantics provider. Every new opcode needs an `xec.c` implementation *and* one in every `comp-*.c`, or `.dis` files stop being portable.
-- **Reduction reassociation breaks reproducibility.** A vectorised `dot`/`norm` reassociates floating-point addition, so `-c0` and `-c1` would disagree numerically. That would undermine `verify(2)`'s convergence-order study and any negative control. This session already saw f32-vs-f64 shift CG iteration counts 22→25 and 42→52; the same sensitivity applies. Either fix the reduction order in the spec or document the divergence explicitly.
-- **FP register state across scheduler switches.** `emu/MacOSX/asm-arm64.s`'s `FPsave`/`FPrestore` save only `FPSR`/`FPCR`, relying on the C ABI for the register file. On AArch64 only the **low 64 bits** of `v8`–`v15` are callee-saved. If the JIT holds live vector values there across a point where `release()`/`acquire()` can run, that is silent corruption.
-- **Restrict to pointer-free element types** (`byte`, `int`, `big`, `real`). That sidesteps GC pointer maps and write barriers entirely, and is a clean defensible boundary.
-- **`comp-arm64.c` still has the unfixed non-atomic refcount gap** (see `dis.c`'s GC-LOCK HISTORY comment). Work in that file should either close it first or take care not to make it worse.
-
-### Sequencing
-
-Builtins first — they are the existing mechanism and capture the dispatch win. Measure against the CG loop; the numbers to beat are already recorded in item 2. Only if that proves insufficient does aggregate-opcode work become justified, and by then there will be real data on which operations matter.
