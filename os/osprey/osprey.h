@@ -42,6 +42,7 @@ int		ospreyarena(void *base, ulong size);
 uvlong		ospreyarenasize(void);
 uvlong		ospreyslice(Ospreyproc*);
 int		ospreyindex(Ospreyproc*);
+ulong		ospreycoreof(Ospreyproc*);
 int		ospreynproc(void);
 int		ospreyncore(void);
 void*		ospreydata(Ospreyproc*, uvlong off, ulong len);

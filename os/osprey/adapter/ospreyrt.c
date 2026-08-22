@@ -177,6 +177,12 @@ ospreyslice(Ospreyproc *p)
 	return p == nil ? 0 : p->slice;
 }
 
+ulong
+ospreycoreof(Ospreyproc *p)
+{
+	return p == nil || p->used == 0 ? ~0UL : p->process.core;
+}
+
 int
 ospreyindex(Ospreyproc *p)
 {
@@ -510,25 +516,33 @@ ospreytick(ulong core, Ospreyproc *running, uvlong amount, uvlong now)
 	runtime.now = now;
 	c->cycles += amount;
 	/*
-	 * Bill the container of the process the core is actually running,
-	 * when one is bound to it.  Without a process behind it a container
-	 * can only be billed for the core's own idea of what it is running.
+	 * Bill the container of the process this core is running, wherever
+	 * that container's task is queued.  Only one process is bound to a
+	 * container and it runs on one core at a time, so a container has
+	 * one biller at a time even though any core may be the one.
 	 */
 	t = running != nil && running->used ? &running->process.task : c->current;
-	if(t != nil && t->container != nil
-	&& containercharge(t->container, amount, now) < 0){
-		coredequeue(c, t);
-		throttled++;
-	}
+	if(t != nil && t->container != nil)
+		containercharge(t->container, amount, now);
+
+	/*
+	 * Queueing decisions belong to the core the container is attached
+	 * to, which is the only one holding the lock that protects this run
+	 * queue.  A container that has run out of budget leaves it; one
+	 * whose period has refilled comes back.
+	 */
 	for(i = 0; i < Nproc; i++){
 		q = plist[i];
 		if(q == nil || q->core != core || q->state != ProcessRunnable)
 			continue;
-		if(q->task.runnable)
-			continue;
 		containerrefill(&q->container, now);
-		if(budgetok(&q->task, amount))
-			coreenqueue(c, &q->task, now);
+		if(budgetok(&q->task, amount)){
+			if(q->task.runnable == 0)
+				coreenqueue(c, &q->task, now);
+		} else if(q->task.runnable){
+			coredequeue(c, &q->task);
+			throttled++;
+		}
 	}
 	corenext(c);
 	ospreyunlockcore(core);

@@ -158,6 +158,7 @@ static Proc *ospreyprocs[16];		/* the process bound to each container */
 static Rendez ospreyservrend[16];	/* wakes a container's service process */
 static int ospreyserving[16];		/* a service process is running for it */
 static Pgrp *ospreypgrp[16];		/* the namespace it is to run in */
+static int ospreystopped[16];		/* we stopped that container's process */
 
 void
 queuebarrier(void)
@@ -263,22 +264,35 @@ ospreyclock(int core)
 			wakeup(&ospreyservrend[i]);
 
 	/*
-	 * Hold a throttled container's process back until its period
-	 * refills.  A budget is a reservation rather than a hard stop: the
-	 * process drops to the lowest fixed priority, so it runs only when
-	 * nothing within its budget wants the core.
+	 * Stop a throttled container's process until its period refills.
+	 * procctl is examined on the way out of every trap, so a process
+	 * that has run out of budget stops at the end of this very clock
+	 * interrupt, and a budget is a limit rather than a preference.
+	 * Only processes stopped here are started again here.
 	 */
 	for(i = 0; i < nelem(ospreyprocs); i++){
 		if((q = ospreyprocs[i]) == nil || (p = q->osprey) == nil)
 			continue;
+		/* the container's own core decides, so the cores do not fight */
+		if(ospreycoreof(p) != (ulong)core)
+			continue;
 		if(ospreythrottled(p)){
-			if(q->fixedpri == 0){
-				procpriority(q, 0, 1);
+			if(ospreystopped[i] == 0 && q->state != Stopped
+			&& q->state != Dead && q->state != Moribund){
+				ospreystopped[i] = 1;
+				q->procctl = Proc_stopme;
 				if(q == m->proc)
 					q->delaysched++;
 			}
-		} else if(q->fixedpri)
-			procpriority(q, PriNormal, 0);
+		} else if(ospreystopped[i]){
+			ospreystopped[i] = 0;
+			if(q->procctl == Proc_stopme)
+				q->procctl = 0;
+			if(q->state == Stopped){
+				q->procctl = 0;
+				ready(q);
+			}
+		}
 	}
 }
 
@@ -440,6 +454,23 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 
 /* drop every chan a container still holds */
 /* let go of the process a container was billing */
+/* undo a stop this device imposed, so nothing is left frozen */
+static void
+ospreyrelease(Proc *q, int x)
+{
+	if(x < 0 || x >= nelem(ospreystopped))
+		return;
+	ospreystopped[x] = 0;
+	if(q == nil)
+		return;
+	if(q->procctl == Proc_stopme)
+		q->procctl = 0;
+	if(q->state == Stopped){
+		q->procctl = 0;
+		ready(q);
+	}
+}
+
 /* let go of a container's service process */
 static void
 ospreyputserver(Ospreyproc *p)
@@ -460,8 +491,7 @@ ospreyputproc(Ospreyproc *p)
 	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
 		return;
 	if((q = ospreyprocs[x]) != nil){
-		if(q->fixedpri)
-			procpriority(q, PriNormal, 0);
+		ospreyrelease(q, x);
 		q->osprey = nil;
 		ospreyprocs[x] = nil;
 	}
@@ -823,8 +853,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
 			error(Ebadarg);
 		if((q = ospreyprocs[x]) != nil){
-			if(q->fixedpri)
-				procpriority(q, PriNormal, 0);
+			ospreyrelease(q, x);
 			q->osprey = nil;
 			ospreyprocs[x] = nil;
 		}
