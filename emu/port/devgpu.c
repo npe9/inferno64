@@ -92,7 +92,18 @@ struct Gstate
 	int	respoff;
 };
 
-static Gstate	*gtab;
+/*
+ * Handle table. This is an array of POINTERS, not of Gstate, and that is
+ * load-bearing: growing it reallocates the pointer array, and a Gstate that
+ * moved out from under a concurrent gpuread/gpuwrite would be a use-after-free.
+ * Individually allocated Gstates never move, and gfree() only resets one for
+ * reuse rather than freeing it, so a resolved Gstate* stays valid memory for
+ * the life of the process.
+ *
+ * Everything that touches gtab or ngtab does so under gtablock - see
+ * gethandle(), which is the only way to turn a Chan into a Gstate.
+ */
+static Gstate	**gtab;
 static int	ngtab;
 static Lock	gtablock;
 
@@ -135,30 +146,66 @@ gfree(Gstate *g)
 	g->inuse = 0;
 }
 
+/*
+ * Resolve a Chan to its Gstate, or nil if the handle is not live. The table
+ * is read only under gtablock; the Gstate returned outlives the lock because
+ * Gstates are never moved or freed (see the gtab comment above).
+ *
+ * Serialising two procs that share one handle is NOT this lock's job and
+ * cannot be: every message here is one request followed by its response, so
+ * interleaving two conversations on a single handle scrambles the protocol
+ * whatever the locking. One handle per proc, which is what gpu(2) does.
+ */
+static Gstate*
+gethandle(Chan *c)
+{
+	Gstate *g;
+	int h;
+
+	h = HANDLE(c->qid);
+	lock(&gtablock);
+	if(h < 0 || h >= ngtab || gtab[h] == nil || !gtab[h]->inuse){
+		unlock(&gtablock);
+		return nil;
+	}
+	g = gtab[h];
+	unlock(&gtablock);
+	return g;
+}
+
 static int
 newhandle(void)
 {
 	int i;
-	Gstate *ng;
+	Gstate **ng, *g;
 
 	lock(&gtablock);
 	for(i = 0; i < ngtab; i++)
-		if(!gtab[i].inuse)
+		if(gtab[i] == nil || !gtab[i]->inuse)
 			break;
 	if(i == ngtab){
-		ng = malloc((ngtab+16) * sizeof(Gstate));
+		ng = malloc((ngtab+16) * sizeof(Gstate*));
 		if(ng == nil){
 			unlock(&gtablock);
 			return -1;
 		}
 		if(gtab != nil)
-			memmove(ng, gtab, ngtab * sizeof(Gstate));
-		memset(ng+ngtab, 0, 16 * sizeof(Gstate));
-		free(gtab);
+			memmove(ng, gtab, ngtab * sizeof(Gstate*));
+		memset(ng+ngtab, 0, 16 * sizeof(Gstate*));
+		free(gtab);	/* only the pointer array moves, never a Gstate */
 		gtab = ng;
 		ngtab += 16;
 	}
-	gtab[i].inuse = 1;
+	if(gtab[i] == nil){
+		g = malloc(sizeof(Gstate));
+		if(g == nil){
+			unlock(&gtablock);
+			return -1;
+		}
+		memset(g, 0, sizeof(Gstate));
+		gtab[i] = g;
+	}
+	gtab[i]->inuse = 1;
 	unlock(&gtablock);
 	return i;
 }
@@ -275,16 +322,14 @@ static void
 gpuclose(Chan *c)
 {
 	Gstate *g;
-	int h;
 
 	if(c->qid.type & QTDIR)
 		return;
 	if(TYPE(c->qid) != Qhandle)
 		return;
-	h = HANDLE(c->qid);
-	if(h < 0 || h >= ngtab)
+	g = gethandle(c);
+	if(g == nil)
 		return;
-	g = &gtab[h];
 	lock(&gtablock);
 	gfree(g);
 	unlock(&gtablock);
@@ -294,16 +339,14 @@ static long
 gpuread(Chan *c, void *va, long n, vlong unused_offset)
 {
 	Gstate *g;
-	int h;
 	long m;
 
 	USED(unused_offset);
 	if(c->qid.type & QTDIR)
 		return devdirread(c, va, n, nil, 0, gpugen);
-	h = HANDLE(c->qid);
-	if(h < 0 || h >= ngtab || !gtab[h].inuse)
+	g = gethandle(c);
+	if(g == nil)
 		error(Enonexist);
-	g = &gtab[h];
 	if(g->resp == nil)
 		return 0;
 	m = g->resplen - g->respoff;
@@ -320,7 +363,6 @@ static long
 gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 {
 	Gstate *g;
-	int h;
 	char *buf;
 	int nn, nnz, i;
 	int *rowptr, *colidx;
@@ -328,10 +370,9 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 	char *out;
 
 	USED(unused_offset);
-	h = HANDLE(c->qid);
-	if(h < 0 || h >= ngtab || !gtab[h].inuse)
+	g = gethandle(c);
+	if(g == nil)
 		error(Enonexist);
-	g = &gtab[h];
 
 	buf = malloc(n+1);
 	if(buf == nil)

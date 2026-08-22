@@ -1,0 +1,85 @@
+.TH GPUTEST 1
+.SH NAME
+gputest \- test gpu(3)'s handle table and gpu(2)'s precision negotiation
+.SH SYNOPSIS
+.B gputest
+.SH DESCRIPTION
+.B Gputest
+exercises two things
+.IR gpubench (1)
+cannot: that
+.IR gpu (3)
+keeps many handles apart under concurrent use, and that
+.IR gpu (2)
+refuses to hand back single precision to a caller who asked for double.
+.PP
+The first check builds a diagonal
+.IR sparse (2)
+matrix and applies it twice through
+.IR gpu (2),
+once with
+.B "precision f64"
+and once with
+.BR f32 .
+The f64 attempt must be
+.B declined
+\(em this device is f32 on every path (see
+.IR gpu (3))
+\(em and the f32 attempt must both succeed and compute the right answer.
+.PP
+The second check spawns forty processes, each of which opens its own
+.BR /dev/gpuclone ,
+uploads a differently-sized diagonal matrix, and performs sixty matvecs
+against it, verifying every element each time.
+Forty is chosen to be larger than the sixteen-entry quantum
+.I gpu (3)'s
+handle table grows by, so the table is reallocated while other processes
+are already using handles out of it.
+The matrices are diagonal with small integer entries, so every expected
+value is exact even after the f32 wire round trip, and any wrong value
+means the device has confused one handle with another rather than merely
+lost precision.
+.PP
+It talks to
+.B /dev/gpuclone
+directly rather than through
+.IR gpu (2)
+for that second part, deliberately:
+.IR gpu (2)
+holds its device descriptor and matrix order in module-level variables
+and documents itself as not reentrant, so driving it from many processes
+at once would exercise the wrong thing.
+What has to survive many handles at once is the device.
+.SH SOURCE
+.B /appl/cmd/gputest.b
+.SH SEE ALSO
+.IR gpu (2),
+.IR gpu (3),
+.IR gpubench (1),
+.IR sparse (2)
+.SH BUGS
+Under
+.B emu-g
+no hardware backend is linked, so the matvecs run on
+.IR gpu (3)'s
+own portable CPU loop and the test covers the protocol and handle
+lifecycle but not Metal.
+Run it under
+.B emu-cocoa
+to cover the hardware path as well.
+.PP
+It does not test
+.BR resident ,
+nor uploading a second matrix over a live handle, nor any matrix that is
+not diagonal \(em
+.IR gpubench (1)
+covers real matrices, on one handle.
+.PP
+This test is heavily concurrent and so is itself vulnerable to the
+scheduler hang described in
+.IR fdstresstest (1):
+roughly one run in ten produces no output and never exits, which is that
+bug and not this one.
+Run it under an external timeout and count a timeout separately from a
+failure, or the hang will swamp whatever you were trying to measure \(em
+it masked this test's own signal completely until the two were separated.

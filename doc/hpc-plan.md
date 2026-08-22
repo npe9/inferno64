@@ -56,6 +56,12 @@ Big problems need heap: `-pheap=1073741824 -pmain=536870912`.
 Shell access for most of these: `appl/cmd/sh/{mesh,pde,fem,gpu,uq,verify,synth}.b`,
 documented as `sh-*(1)`.
 
+`gpu(3)` is now in the **`emu-g` manifest too**, not just `emu-cocoa`. That
+makes the whole GPU stack testable headlessly, and — because `emu-g` links no
+`win-gpu.m` — it is the only configuration in which `devgpu.c`'s no-hardware
+path actually runs. That path was previously unreachable, which is how it came
+to report the wrong precision for as long as it did.
+
 **Scope deliberately excluded**: no MPI-analog anywhere. miniFE and miniAMR are
 serial kernels by explicit decision — this tree has no distributed-memory story,
 and inventing one was judged a different project, not an extension.
@@ -346,6 +352,14 @@ deliberately. And lldb truncates a large struct print, so `p *(Proc*)0x...`
 will appear to be missing fields that are really there — print the fields
 individually, or check with `type lookup Proc`.
 
+**It contaminates other measurements — classify hangs separately.** Any
+concurrent test in this tree inherits this hang, so a pass/fail count lumps it
+in with whatever you were actually measuring. That happened: `gputest(1)`'s
+A/B first read as "no improvement, and the fix looks slightly worse", because
+~10% of *both* arms were this hang. Separating hangs from real failures turned
+the same data into 9/100 → 0/100 on the metric that mattered. Count
+`timeout`'s exit 124 as its own category, never as a failure of your change.
+
 ### 2. `Screen.newwindow()` returns nil after a resize
 
 Rare, unfixed. No longer silent: all five Limbo call sites now report the reason
@@ -383,16 +397,7 @@ the pool lock at `val == 1` with no owner running and seven threads spinning in
 `lock()` from `poolfree`/`dopoolalloc`. Whether that one was caused by this path
 was never established.
 
-### 5. `devgpu`'s handle table races its own realloc
-
-`newhandle()` (`emu/port/devgpu.c`) `free`s the old `gtab` under `gtablock`,
-but `gpuread`/`gpuwrite` take `g = &gtab[h]` with **no lock** and then mutate
-`g->respoff` unlocked. Harmless today only because `gpu(2)` uses exactly one
-handle, serially. **An AMR offload that opens a handle per block is precisely
-the case that triggers it** — treat it as a precondition for plan item 3, not
-a nice-to-have.
-
-### 6. Smaller, noted, unfixed
+### 5. Smaller, noted, unfixed
 
 - `metal_present_geom()` consumes `mtl_zclear` before creating its encoder and
   uses the encoder without a nil check — a failed encoder loses that frame's
