@@ -82,6 +82,16 @@ gpucompute_setup(void)
 	id<MTLFunction> fn;
 
 	gpu_ready = -1;
+	/*
+	 * INFERNO_NOGPUHW leaves this backend unavailable, so gpu(3) falls
+	 * back to its own portable CSR loop. That makes it possible to compare
+	 * the Metal path against the CPU path within one binary and one
+	 * environment - which emu-g cannot do, since it has no Metal at all,
+	 * and which is exactly what separating a backend bug from an
+	 * environmental one needs. See doc/hpc-plan.md.
+	 */
+	if(getenv("INFERNO_NOGPUHW") != nil)
+		return;
 	gpu_device = MTLCreateSystemDefaultDevice();
 	if(gpu_device == nil)
 		return;

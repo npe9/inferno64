@@ -512,15 +512,35 @@ time on either again:
   read to pass the array with no slice at all changed nothing: 1 of 10 passed
   either way, 1 poison report either way.
 
-The strongest clue left is the **`emu-g` / `emu-cocoa` asymmetry**, because the
-one thing that differs about *producing this particular data* is that under
-`emu-cocoa` the reply comes from Metal (`metal_spmv`) and under `emu-g` from
-`devgpu.c`'s own C loop. The next experiment is therefore to run `emu-cocoa`
-with the Metal compute hooks forced off, so the same binary and the same Cocoa
-environment produce the reply through the C path: if the corruption follows the
-Metal path it is in `win-gpu.m`, and if it stays it is environmental. That needs
-a few lines in `gpucompute_init()` to honour an env var, and is worth having
-permanently as a way to compare the two backends in one build.
+**It is the Metal compute path, and that is now measured, not guessed.**
+`INFERNO_NOGPUHW=1` (added for this, `emu/MacOSX/win-gpu.m`, documented in
+`gpu(3)`) leaves the hardware hooks unregistered so `gpu(3)` uses its own C
+loop. Same binary, same Cocoa environment, only the backend differs —
+`gputest`, poison on, 10 runs each:
+
+| Metal | passed | failed | poison reports |
+|---|---|---|---|
+| on | 1 | 9 | 1 |
+| **off** | **8** | **2** | **0** |
+
+The corruption follows the backend. (The residual 2 of 10 is the scheduler
+hang of open bug 1, which is present either way.)
+
+That does **not** mean the bug is necessarily *in* `win-gpu.m`'s own code. The
+structural fact worth knowing is that this emu links with
+`-Wl,-alias,___wrap_malloc,_malloc` and friends, so **every `malloc` and `free`
+in the whole process — Metal's, Foundation's, the Objective-C runtime's — goes
+through emu's pool allocator**, from threads that are not emu procs. Turning
+Metal on turns that traffic on. Two things already checked, so as not to repeat
+them: emu's `lock()` is safe on a foreign thread (`osyield`/`osmillisleep`
+never touch `up`), and `poolfault` — which panics loudly when a pointer that is
+not an emu block is freed into the pool — never fires, which argues against the
+simplest "allocated by one allocator, freed by another" story.
+
+Next, in order: get a poison report while running with Metal on and
+`MallocStackLogging` or a `malloc` interposer active, to identify which thread
+and which call last wrote the block; and check whether Metal's shared-storage
+buffers are being satisfied from emu's pool at all.
 
 Two warnings about the tool itself, both learned the hard way:
 - It poisons only the payload *past* the tree links, because those are live

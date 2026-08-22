@@ -203,6 +203,19 @@ of crossing this interface dominates, and above it the GPU pulls ahead,
 reaching roughly twice the speed at thirty thousand.
 Note that f32 also costs iterations \(em 52 against 42 at the largest
 size \(em so the gain per matvec is larger than the gain per solve.
+.SH ENVIRONMENT
+.TP
+.B INFERNO_NOGPUHW
+Leaves the platform's hardware backend unregistered, so every matvec uses
+this device's own portable CPU loop.
+The point is comparison: it makes the two paths differ by nothing but the
+backend, inside one binary and one environment, which is otherwise impossible
+\(em
+.B emu-g
+has no Metal at all, so it differs in far more than the backend.
+That is how the corruption described in
+.B /doc/hpc-plan.md
+was localised.
 .SH SOURCE
 .B /emu/port/devgpu.c
 .br
