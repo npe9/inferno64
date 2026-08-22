@@ -39,6 +39,9 @@ struct Ospreymap {
 	uvlong	sem;		/* the container's semaphores */
 	uvlong	nsem;
 	uvlong	selected;	/* the arm the last select performed */
+	uvlong	pktbuf;		/* receive buffers, when an interface is given */
+	uvlong	npktbuf;
+	uvlong	pktbufsize;	/* stride of one, its data at its start */
 };
 
 /*
@@ -119,6 +122,11 @@ void		ospreysemgive(Ospreyproc*, ulong sem);
 int		ospreypktput(Ospreyproc*, void *block, ulong len);
 int		ospreypktget(Ospreyproc*, void **block, ulong *len);
 ulong		ospreypktcount(Ospreyproc*);
+extern ulong	(*ospreypktdirect)(Ospreyproc*);
+extern ulong	(*ospreypktcopied)(Ospreyproc*);
+int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
+void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);
+uvlong		ospreyoff_at(Ospreyproc*, void *addr);
 uvlong		ospreysemcount(Ospreyproc*, ulong sem);
 int		ospreyselect(Ospreyproc*, uvlong armoff, int narms);
 int		ospreyselectready(Ospreyproc*, uvlong armoff, int narms);

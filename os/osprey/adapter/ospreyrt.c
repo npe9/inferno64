@@ -46,6 +46,8 @@ enum {
 	Ndata		= 4096,	/* names and i/o buffers per container */
 	Nsem		= 8,	/* semaphores per container */
 	Npkt		= 32,	/* packets a container may hold */
+	Npktbuf		= 16,	/* receive buffers it lends an interface */
+	Pktbufsize	= 2112,	/* one of them, room for 2048 and a trailer */
 	Narm		= 16,	/* arms one select may offer */
 	Align		= 64,
 };
@@ -164,7 +166,8 @@ sizes(void)
 		+ ROUNDUP(2*sizeof(Queue), Align)
 		+ ROUNDUP(Nsem*sizeof(Sem), Align)
 		+ ROUNDUP(2*Nqueue*sizeof(Message), Align)
-		+ Ndata;
+		+ ROUNDUP(Ndata, Align)
+		+ Npktbuf*Pktbufsize;
 	slicesize = ROUNDUP(slicesize, Align);
 }
 
@@ -231,6 +234,41 @@ ospreydatalen(Ospreyproc *p)
 	if(p == nil || p->used == 0 || p->map == nil)
 		return 0;
 	return p->map->datalen;
+}
+
+/* where this container's receive buffers are, and how many */
+int
+ospreymapsizes(Ospreyproc *p, uvlong *off, uvlong *n, uvlong *size)
+{
+	if(p == nil || p->used == 0 || p->map == nil)
+		return -1;
+	*off = p->map->pktbuf;
+	*n = p->map->npktbuf;
+	*size = p->map->pktbufsize;
+	return 0;
+}
+
+/* the address of a place in this container's slice, and the reverse */
+void*
+ospreyat_off(Ospreyproc *p, uvlong off, ulong len)
+{
+	if(p == nil || p->used == 0 || p->map == nil)
+		return nil;
+	if(off >= slicesize || len > slicesize - off)
+		return nil;
+	return (uchar*)p->map + off;
+}
+
+uvlong
+ospreyoff_at(Ospreyproc *p, void *addr)
+{
+	uchar *a = addr;
+
+	if(p == nil || p->used == 0 || p->map == nil)
+		return ~0ULL;
+	if(a < (uchar*)p->map || a >= (uchar*)p->map + slicesize)
+		return ~0ULL;
+	return a - (uchar*)p->map;
 }
 
 void*
@@ -356,7 +394,10 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	m->request = ROUNDUP(m->sem + Nsem*sizeof(Sem), Align);
 	m->reply = m->request + Nqueue*sizeof(Message);
 	m->data = ROUNDUP(m->reply + Nqueue*sizeof(Message), Align);
-	m->datalen = slicesize - m->data;
+	m->datalen = Ndata;
+	m->pktbuf = ROUNDUP(m->data + Ndata, Align);
+	m->npktbuf = Npktbuf;
+	m->pktbufsize = Pktbufsize;
 	m->selected = ~0ULL;
 	p->map = m;
 	for(i = 0; i < Nsem; i++)
@@ -820,7 +861,13 @@ ospreyroute(Ospreyproc *s)
 	Message m;
 	int n;
 
-	if(s == nil || s->used == 0)
+	/*
+	 * Only a container that answers for others has anything here to
+	 * route.  Draining anyone else's reply ring would take the answers
+	 * meant for the container itself, which is what the first version
+	 * did.
+	 */
+	if(s == nil || s->used == 0 || s->serving == 0)
 		return 0;
 	for(n = 0; queueget(s->process.replies, &m) == 0; n++){
 		if((p = ospreylookup(m.container)) == nil || p == s)
@@ -896,6 +943,10 @@ ospreypktget(Ospreyproc *p, void **block, ulong *len)
 	*len = k.len;
 	return 0;
 }
+
+/* how a container's packets have been arriving; the device keeps count */
+ulong	(*ospreypktdirect)(Ospreyproc*);
+ulong	(*ospreypktcopied)(Ospreyproc*);
 
 ulong
 ospreypktcount(Ospreyproc *p)
@@ -1147,6 +1198,9 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			procs[i].slice, ospreydataoffset(&procs[i]),
 			procs[i].pid);
 		/* the semaphores, and the container's private names */
+		p = seprint(p, e, "packets %llud direct %lud copied %lud held %lud\n",
+			q->id, ospreypktdirect(&procs[i]),
+			ospreypktcopied(&procs[i]), pktqcount(&procs[i].pktq));
 		p = seprint(p, e, "sem %llud", q->id);
 		ospreylocksem();
 		for(n = 0; n < Nsem; n++){

@@ -27,6 +27,14 @@ struct Macent
 
 typedef struct Ether Ether;
 struct Ether {
+	/*
+	 * Where receive buffers come from, when something other than the
+	 * driver provides them: a container given this interface puts its
+	 * own, in memory it has mapped, so that a packet arrives where it
+	 * can be read without being copied.
+	 */
+	Bpool*	rbpool;
+
 	ISAConf;			/* hardware info */
 	int	tbdf;			/* type+busno+devno+funcno */
 

@@ -18,6 +18,9 @@
 #include	"fns.h"
 #include	"error.h"
 
+#include	"../netif.h"
+#include	"etherif.h"
+
 #include	"osprey.h"
 
 enum {
@@ -29,6 +32,7 @@ enum {
 
 	Statuslen	= 8*1024,	/* every core and container line */
 	Nfd		= 16,		/* chans a container may hold open */
+	Rbtlr		= 16,		/* allocb's trailer room, kept clear of */
 	Namelen		= 256,		/* longest path a request may name */
 };
 
@@ -193,6 +197,46 @@ static int ospreyuartsem[16];		/* the semaphore its interrupt gives */
 static int ospreyuarting[16];		/* its driver task is running */
 static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
+static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
+static Block *ospreyheld[16];		/* the packet the container is reading */
+static ulong ospreydirect[16];		/* packets that arrived in the span */
+static ulong ospreycopied[16];		/* and packets that had to be moved */
+
+/*
+ * Lend the interface receive buffers out of the container's own slice.
+ * The driver takes them from the pool as it would its own, the card
+ * writes the packet straight into memory the container has mapped, and
+ * freeing one puts it back.  Nothing is copied on the way in or out.
+ */
+static int
+ospreylendbufs(Ospreyproc *p, int x)
+{
+	Bpool *pool;
+	Block *b;
+	uchar *a;
+	uvlong off, size, n, i;
+
+	if(ospreymapsizes(p, &off, &n, &size) < 0 || n == 0)
+		return -1;
+	pool = &ospreyrbpool[x];
+	memset(pool, 0, sizeof *pool);
+	pool->size = size - Rbtlr;
+	pool->align = 8;
+	for(i = 0; i < n; i++){
+		if((a = ospreyat_off(p, off + i*size, size)) == nil)
+			return -1;
+		if((b = mallocz(sizeof(Block), 1)) == nil)
+			return -1;
+		b->base = a;
+		b->lim = a + size;
+		b->rp = b->wp = a;
+		b->pool = pool;
+		b->flag = BINTR;
+		b->list = pool->head;
+		pool->head = b;
+	}
+	return 0;
+}
 
 void
 queuebarrier(void)
@@ -217,10 +261,51 @@ static int ospreyarmready(void*);
  * copied and not freed here.  A container over its caps, or with no
  * room, refuses it and the driver disposes of it as it would have.
  */
+/*
+ * Take one of the container's own buffers, or nothing.  iallocbp would
+ * make a new block out of kernel memory when the pool ran dry, which is
+ * exactly the memory these buffers exist to avoid.
+ */
+static ulong
+ospreycountdirect(Ospreyproc *p)
+{
+	int x;
+
+	x = ospreyindex(p);
+	return x < 0 || x >= nelem(ospreydirect) ? 0 : ospreydirect[x];
+}
+
+static ulong
+ospreycountcopied(Ospreyproc *p)
+{
+	int x;
+
+	x = ospreyindex(p);
+	return x < 0 || x >= nelem(ospreycopied) ? 0 : ospreycopied[x];
+}
+
+static Block*
+ospreytakebuf(int x)
+{
+	Bpool *pool;
+	Block *b;
+
+	pool = &ospreyrbpool[x];
+	ilock(pool);
+	if((b = pool->head) != nil){
+		pool->head = b->list;
+		b->list = nil;
+	}
+	iunlock(pool);
+	return b;
+}
+
 static int
 ospreyethergive(void *ether, Block *bp)
 {
 	Ospreyproc *p;
+	Block *nb;
+	long n;
 	int i;
 
 	for(i = 0; i < nelem(ospreyether); i++){
@@ -228,8 +313,32 @@ ospreyethergive(void *ether, Block *bp)
 			continue;
 		if((p = ospreyat(i)) == nil)
 			return 0;
-		if(ospreypktput(p, bp, BLEN(bp)) < 0)
-			return 0;
+		/*
+		 * A packet the card wrote into one of the container's own
+		 * buffers is already where it belongs.  One that arrived in
+		 * a buffer the driver had queued before the interface was
+		 * given away is moved into one, so that what the container
+		 * is told is always a place in the span; as the driver's
+		 * own buffers are used up and replaced from the pool, this
+		 * stops happening.
+		 */
+		n = BLEN(bp);
+		if(ospreyoff_at(p, bp->rp) == ~0ULL){
+			if((nb = ospreytakebuf(i)) == nil)
+				return 0;
+			if(n > nb->lim - nb->wp)
+				n = nb->lim - nb->wp;
+			memmove(nb->wp, bp->rp, n);
+			nb->wp += n;
+			freeb(bp);
+			bp = nb;
+			ospreycopied[i]++;
+		} else
+			ospreydirect[i]++;
+		if(ospreypktput(p, bp, n) < 0){
+			freeb(bp);
+			return 1;
+		}
 		ospreysemgive(p, ospreyethersem[i]);
 		wakeup(&ospreyselrend[i]);
 		wakeup(&ospreyservrend[i]);
@@ -591,6 +700,8 @@ ospreyinit(void)
 		ospreyticksem[i] = -1;
 	ospreyuartintr = ospreyuartgive;
 	ospreyetheriq = ospreyethergive;
+	ospreypktdirect = ospreycountdirect;
+	ospreypktcopied = ospreycountcopied;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 }
@@ -674,26 +785,24 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 	case OpRecv:
 		/*
 		 * Take the next packet the interface gave this container and
-		 * copy what will fit into its data area.  The copy is here
-		 * because a driver's block is not in the shared span; making
-		 * it so is what the plan means by shared packet buffers.
+		 * answer with where it is in the span and how long it is.
+		 * The card wrote it there; nothing copies it.  The buffer is
+		 * the container's until it asks for the next packet, which
+		 * is when the one before it goes back to the interface.
 		 */
-		n = (long)arg[1];
-		if(n < 0 || (a = ospreydata(p, arg[0], n)) == nil)
+		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyheld))
 			return StatusError;
+		if(ospreyheld[x] != nil){
+			freeb(ospreyheld[x]);
+			ospreyheld[x] = nil;
+		}
 		if(ospreypktget(p, &bl, &blen) < 0)
 			return StatusError;
-		if(waserror()){
-			freeb(bl);
-			return StatusError;
-		}
-		if((ulong)n > blen)
-			n = blen;
-		memmove(a, ((Block*)bl)->rp, n);
-		poperror();
-		freeb(bl);
-		result[0] = n;
+		ospreyheld[x] = bl;
+		result[0] = ospreyoff_at(p, ((Block*)bl)->rp);
 		result[1] = blen;
+		if(result[0] == ~0ULL)
+			return StatusError;
 		return StatusDone;
 
 	case OpClose:
@@ -1104,7 +1213,13 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyether))
 			error(Ebadarg);
 		if(strcmp(cb->f[2], "off") == 0){
+			if(ospreyether[x] != nil)
+				((Ether*)ospreyether[x])->rbpool = nil;
 			ospreyether[x] = nil;
+			if(ospreyheld[x] != nil){
+				freeb(ospreyheld[x]);
+				ospreyheld[x] = nil;
+			}
 			wakeup(&ospreyselrend[x]);
 			break;
 		}
@@ -1113,8 +1228,11 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			error(Ebadarg);
 		if((et = etherlookup(cb->f[2])) == nil)
 			error(Enonexist);
+		if(ospreylendbufs(p, x) < 0)
+			error(Enomem);
 		ospreyether[x] = et;
 		ospreyethersem[x] = i;
+		((Ether*)et)->rbpool = &ospreyrbpool[x];
 		break;
 
 	case CMuart:

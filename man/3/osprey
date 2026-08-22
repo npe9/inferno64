@@ -317,11 +317,12 @@ with the count transferred.
 takes a handle.
 .PP
 .B recv
-takes the next packet an interface has given the container, into an
-offset in the data area for at most a count of bytes, and replies with
-the bytes copied and the packet's whole length.  The container's network
-accounting is credited for the packet as it is taken.  The remaining
-operations are refused.
+takes the next packet an interface has given the container and replies
+with where it is in the container's slice and how long it is.  The card
+wrote it there; nothing copies it.  The buffer belongs to the container
+until it asks for the next packet, which is when the one before goes back
+to the interface.  The container's network accounting is credited for the
+packet as it is taken.  The remaining operations are refused.
 .SH THE SHARED SPAN
 .PP
 A process maps the span with
@@ -546,9 +547,20 @@ container's request ring and on the interrupt, where the presentation's
 has a third arm for its output queue; nothing reads the control messages
 that arrive on the first arm yet.
 .PP
-A packet reaches a container without being copied, but reading one copies
-it: a driver's block is not in the shared span.  Putting packet buffers
-there is what the plan means by a zero-copy path, and is not done.
+Giving an interface to a container lends the interface receive buffers
+out of the container's own slice, so the card writes packets straight
+into memory the container has mapped.  A packet that arrives in a buffer
+the driver had queued beforehand is moved into one of those once, so that
+what the container is told is always a place in the span; as the driver's
+own buffers are used and replaced from the pool this stops happening.
+.B status
+reports how a container's packets have been arriving.
+.PP
+Only the interfaces whose driver takes its receive buffers from the
+interface's pool can be lent them; of the drivers in this kernel that is
+the igbe.  And a card writing into memory a process has mapped is a card
+writing where that process may write too, which a container that is not
+trusted with its own packets should not be given.
 .PP
 The whole span is mapped by any process that attaches it, so one
 container can read and write another's rings, and the kernel address in

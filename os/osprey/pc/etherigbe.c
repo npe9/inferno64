@@ -1006,7 +1006,8 @@ igbereplenish(Ctlr* ctlr)
 	while(NEXT(rdt, ctlr->nrd) != ctlr->rdh){
 		rd = &ctlr->rdba[rdt];
 		if(ctlr->rb[rdt] == nil){
-			bp = iallocbp(&ctlr->pool);
+			bp = iallocbp(ctlr->edev != nil && ctlr->edev->rbpool != nil ?
+				ctlr->edev->rbpool : &ctlr->pool);
 			if(bp == nil)
 				break;
 			ctlr->rb[rdt] = bp;

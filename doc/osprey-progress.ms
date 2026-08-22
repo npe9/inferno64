@@ -47,9 +47,10 @@ interrupt again.
 .B "The packet path."
 An ethernet interface handed to a container: its packets are charged
 against the container's network caps and queued for it whole, each giving
-a semaphore, without reaching the rest of the network stack.  Reading one
-copies it into the container's data area, because a driver's block is not
-in the shared span.
+a semaphore, without reaching the rest of the network stack.  The
+interface takes its receive buffers from the container's own slice, so a
+packet is written straight into memory the container has mapped and
+reading one is being told where it is.
 .PP
 .B "A service outside the kernel."
 A container may name another as its server.  Requests the kernel does not
@@ -63,21 +64,16 @@ ring indices, namespace.
 .NH 1
 Next, in order
 .PP
-.B "1.  Shared packet buffers."
-Packet buffers in the shared span, so that a packet crosses to a
-user-level service without being copied at all.  The queue and the
-accounting are done; what remains is where the bytes live.
-.PP
-.B "2.  \[*p]p."
+.B "1.  \[*p]p."
 A session that outlives the connection carrying it, transactions grouped
 into one round trip, string attributes in place of control files,
 immutable versions committed when a file is closed, and leases.
 .PP
-.B "3.  Restart and migration."
+.B "2.  Restart and migration."
 Writing a checkpoint out and reading it into a fresh container, then
 moving one between machines.
 .PP
-.B "4.  Page flipping."
+.B "3.  Page flipping."
 Handing a page between containers instead of copying its contents, for
 messages large enough to be worth it.
 .NH 1
