@@ -511,7 +511,22 @@ Twelve runs, never entered more than once; something upstream serialises the
 first upload in practice. So `dispatch_once` is a correctness fix by
 inspection, nothing more, and definitely not the cure for the corruption above.
 
-### 6. Smaller, noted, unfixed
+### 6. `panic: decref` — seen once, not attributed
+
+Observed exactly once, in `gputest(1)` under the default `-c1`. A refcount went
+negative. Not reproduced since: 30 further runs (15 with the current tree, 15
+with a pre-`gethandle` binary) produced none, and it is **not** attributable to
+this session's `devgpu` work, which touches no refcounts.
+
+Worth recording anyway because there is an obvious suspect already written
+down: `dis.c`'s own GC-LOCK HISTORY comment notes that the AINC/ADEC atomics
+cover only the interpreted `-c0` path, and that the arm64 JIT still emits plain
+non-atomic load/modify/store for the same `h->ref` field. `-c1` is the default.
+So this is the predicted symptom of a known, deliberately unfixed gap, and
+anyone seeing it again should reach for that comment first rather than treat it
+as new.
+
+### 7. Smaller, noted, unfixed
 
 - ~~`metal_present_geom()` consumes `mtl_zclear` before creating its encoder~~
   **fixed.** All three geom passes (`metal_present_geom`, the 3-D triangle
