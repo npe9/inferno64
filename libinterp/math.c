@@ -36,20 +36,27 @@ Math_import_int(void *fp)
 	int i, n;
 	unsigned int u;
 	unsigned char *bp;
-	int *x;
+	WORD *x;
 
 	f = fp;
 	n = f->x->len;
 	if(f->b->len!=4*n)
 		error(exMathia);
 	bp = (unsigned char *)(f->b->data);
-	x = (int*)(f->x->data);
+	/*
+	 * Limbo's int is WORD, which is intptr and so 64 bits here; this
+	 * read as C int and silently mangled every array of more than one
+	 * element (element 1 came back as the top half of element 0).  The
+	 * external form stays 32-bit - only the in-memory element type
+	 * changed with the 64-bit port.
+	 */
+	x = (WORD*)(f->x->data);
 	for(i=0; i<n; i++){
 		u = *bp++;
 		u = (u<<8) | *bp++;
 		u = (u<<8) | *bp++;
 		u = (u<<8) | *bp++;
-		x[i] = u;
+		x[i] = (int)u;	/* sign-extend the 32-bit external value */
 	}
 }
 
@@ -114,16 +121,17 @@ Math_export_int(void *fp)
 	int i, n;
 	unsigned int u;
 	unsigned char *bp;
-	int *x;
+	WORD *x;
 
 	f = fp;
 	n = f->x->len;
 	if(f->b->len!=4*n)
 		error(exMathia);
 	bp = (unsigned char *)(f->b->data);
-	x = (int*)(f->x->data);
+	/* See Math_import_int: Limbo int is WORD (64-bit here), not C int. */
+	x = (WORD*)(f->x->data);
 	for(i=0; i<n; i++){
-		u = x[i];
+		u = (unsigned int)x[i];
 		*bp++ = u>>24;
 		*bp++ = u>>16;
 		*bp++ = u>>8;
