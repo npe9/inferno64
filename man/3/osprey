@@ -1,0 +1,167 @@
+.TH OSPREY 3
+.SH NAME
+osprey \- resource containers, per-core scheduling and request rings
+.SH SYNOPSIS
+.nf
+.B bind '#O' /n/osprey
+
+.B /n/osprey/ctl
+.B /n/osprey/status
+.B /n/osprey/reply
+.fi
+.SH DESCRIPTION
+The osprey device gives access to the portable Osprey policy layer:
+resource containers with a CPU budget and a deadline, one independent
+earliest-deadline-first run queue per core, bounded memory and network
+accounting, a private namespace per container, and a pair of
+single-producer/single-consumer request and reply rings.
+.PP
+The policy layer holds no state of the host kernel's: it has no
+.IR Proc ,
+no
+.IR Mach ,
+and no device registers.  This device is the adapter between it and the
+rest of the kernel, and it serialises all of it under one lock.
+.PP
+.B ctl
+accepts the following commands.  A container is named by an arbitrary
+non-zero number chosen by the writer.  Times and budgets are in the units
+reported as
+.B hz
+by
+.BR status .
+.TP
+.BI reset
+Discard every container and empty every run queue.
+.TP
+.BI create " id budget period deadline"
+Create a container with the given CPU budget, replenishment period and
+relative deadline.
+.TP
+.BI limit " id memory netbytes netpackets"
+Set the bounded resource caps.
+.B create
+leaves them at zero, so a container refuses every allocation until they
+are named.
+.TP
+.BI attach " id core"
+Release the container's task and insert it into that core's run queue in
+deadline order.
+.TP
+.BI detach " id"
+Remove the task from every run queue.
+.TP
+.BI exit " id"
+Remove the task and free the container.
+.TP
+.BI schedule " core"
+Make the earliest-deadline runnable task on the core the core's current
+task.  The task is not removed from the run queue.
+.TP
+.BI charge " core cycles"
+Bill cycles to the core and to the current task's container.  A container
+whose budget is exhausted before its period elapses stops being runnable.
+.TP
+.BI balance " "
+Move one task from the busiest core to the least busy, if they differ by
+more than one task.
+.TP
+.BI submit " id op " [ arg " ...]"
+Put a request on the container's request ring.
+.I op
+is one of
+.BR read ,
+.BR write ,
+.BR open ,
+.BR close ,
+.BR wait ,
+.BR send ,
+.BR recv ,
+.BR stat ,
+.BR bind ,
+.BR alloc ,
+.BR yield ,
+or
+.BR poll .
+Up to three argument words follow.
+.TP
+.BI service " " [ n ]
+Service up to
+.I n
+queued requests, one from each container in turn, and put a reply on the
+originating container's reply ring.  The default is one.
+.TP
+.BI bind " id local global"
+Add a private name to the container's namespace.
+.TP
+.BI unbind " id local"
+Remove one.
+.PP
+Reading
+.B status
+reports the clock, the tick rate, and one line per core and per
+container.  A core's line gives the number of runnable tasks, the cycles
+charged to it, the number of context switches, the current task and the
+run queue in deadline order.  A container's line gives its core, state,
+CPU budget and use, period, absolute deadline, memory and network use
+against their caps, and the occupancy of its two rings.
+.PP
+Reading
+.B reply
+drains every container's reply ring and returns one line per reply:
+the container, the operation, the reply status
+.RB ( pending ,
+.BR done ,
+.BR error ,
+.BR blocked
+or
+.BR retry )
+and three result words.  A ring has no stable offset, so a reader always
+takes what is there at the time of the read.
+.SH EXAMPLE
+Order three containers by deadline and bill the one that runs:
+.IP
+.nf
+bind '#O' /n/osprey
+echo create 10 1000000 100000000 90000000 >/n/osprey/ctl
+echo create 20 1000000 100000000 30000000 >/n/osprey/ctl
+echo create 30 1000000 100000000 60000000 >/n/osprey/ctl
+for(i in 10 20 30)
+	echo attach $i 0 >/n/osprey/ctl
+echo schedule 0 >/n/osprey/ctl
+echo charge 0 500000 >/n/osprey/ctl
+cat /n/osprey/status
+.fi
+.PP
+Charge a container's memory budget until it is refused:
+.IP
+.nf
+echo limit 10 8192 65536 64 >/n/osprey/ctl
+for(i in 1 2 3)
+	echo submit 10 alloc 4096 >/n/osprey/ctl
+echo service 4 >/n/osprey/ctl
+cat /n/osprey/reply
+.fi
+.SH SOURCE
+.B /os/osprey/policy
+.br
+.B /os/osprey/adapter/ospreyrt.c
+.br
+.B /os/osprey/devosprey.c
+.SH SEE ALSO
+.IR cons (3)
+.SH BUGS
+The dispatcher answers only the operations the policy layer can settle by
+itself:
+.BR yield ,
+.B poll
+and
+.BR alloc .
+The file, IPC and network operations belong to the user-level services
+described in the Osprey plan and are refused until those exist.
+.PP
+Requests are submitted and replies are drained through
+.B ctl
+and
+.BR reply ,
+not by mapping the rings into a process.

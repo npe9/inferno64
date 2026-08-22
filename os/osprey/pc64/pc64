@@ -16,6 +16,7 @@ dev
 	cap
 	kprof
 	fs
+	osprey
 
 	ether		netif
 	bridge		log

@@ -28,6 +28,7 @@ logfs logfs
 lpt lpt
 mnt mnt
 mpeg mpeg
+osprey osprey
 pbus pbus
 pci pnp
 pipe pipe

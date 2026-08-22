@@ -19,6 +19,11 @@ PORTLIB=$ROOT/os/9front/lib
 DEVCONF=$PORTDIR
 INSTALLDIR=$ROOT/$FLAVOR/$OBJTYPE
 KERNELSHELL=rc
+# The policy directory carries its own lib.h, error.h, portdat.h and
+# portfns.h for a future native port, and its headers include one another
+# by plain name.  The adapter is therefore compiled with the policy
+# directory on the include path and the port directory off it.
+POLICYCFLAGS=$CFLAGS -I$PORTDIR/policy -I$PORTDIR
 CFLAGS=$CFLAGS -I$PORTDIR -I$IPDIR
 p=9
 
@@ -62,6 +67,7 @@ PORTOBJ=\
 	tod.$O\
 	xalloc.$O\
 	userinit.$O\
+	ospreyrt.$O\
 
 OBJ=\
 	l.$O\
@@ -82,6 +88,7 @@ OBJ=\
 
 LIB=\
 	$TARGETLIB/lib9front.a\
+	$TARGETLIB/libosprey.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libsec.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libmp.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libfis.a\
@@ -90,6 +97,9 @@ LIB=\
 $TARGETLIB/lib9front.a:V:
 	{ cd $PORTLIB; mk install; }
 	cp $ROOT/9front/$OBJTYPE/lib/lib9front.a $target
+
+$TARGETLIB/libosprey.a:V:
+	{ cd $ROOT/os/osprey/lib; mk install; }
 
 ETHER=`{cd $PCDIR; echo devether.c ether*.c | sed 's/\.c/.'$O'/g'}
 AUDIO=`{cd $PCDIR; echo devaudio.c audio*.c | sed 's/\.c/.'$O'/g'}
@@ -199,3 +209,8 @@ acid:V:
 
 %.clean:V:
 	rm -f $stem.c [9bz]$stem [9bz]$stem.gz boot$stem.* $O.rebootcode $O.apbootstrap $PCHEADERS
+
+ospreyrt.$O:	$PORTDIR/adapter/ospreyrt.c $PORTDIR/osprey.h
+	$CC $POLICYCFLAGS $PORTDIR/adapter/ospreyrt.c
+
+devosprey.$O:	$PORTDIR/osprey.h

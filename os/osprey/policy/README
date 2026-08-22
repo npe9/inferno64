@@ -77,7 +77,23 @@ driver ABI differs without changing the portable Osprey policy files.
 
 lib/mkfile builds these objects as libosprey.a.  It is intentionally separate
 from the 9front libraries; the 9front kernel does not link or include this
-library.
+library.  It is compiled against the same headers as the kernel: the Inferno
+and 9front trees disagree about the width of usize, and objects built from
+the two cannot be linked together.
 
-The next integration layer will adapt these objects to 9front Proc/Mach state,
-then add per-core run queues and asynchronous syscall completion handling.
+The first integration layer is now in place.  adapter/ospreyrt.c owns the
+core, container and ring storage and presents the policy layer through
+osprey.h, which names no policy type, so a kernel file may include it
+alongside portdat.h; the policy Queue and the qio Queue never meet.  The
+adapter lives in its own directory because the compiler looks for a quoted
+include beside the file being compiled first, and the port directory has its
+own edf.h, lib.h, queue.h, error.h, portdat.h and portfns.h.  devosprey.c
+publishes the result as the #O device, described in man/3/osprey, so
+containers, run queues, budgets and rings can be driven and inspected from
+the shell.
+
+What that layer does not yet do: the rings are reached through ctl and reply
+rather than mapped into a process, the dispatcher answers only yield, poll
+and alloc, and the scheduler is stepped by writes to ctl rather than by the
+kernel's own clock and trap paths.  Those are the next steps, together with
+attaching a container to a real Proc.
