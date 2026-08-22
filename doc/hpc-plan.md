@@ -414,9 +414,11 @@ matvecs each, which is far more malloc/free traffic than 16 procs opening
 pass 7   hang 4   crash 1
 ```
 
-Note the hang rate under `emu-cocoa` (~33%) is well above the `emu-g` `-c0`
-figure of 12%, so **`emu-cocoa` is the harsher environment for both symptoms**
-and the better place to reproduce either.
+On hang rates, be careful what that supports: 4 hangs in 12 is a wide interval,
+and it is **not** distinguishable from the 38% measured for `emu-g` under
+`-c1`. It is above `emu-g`'s `-c0` figure of 12%, and that is all the data
+carries. What `emu-cocoa` clearly *is* harsher for is the crash, which `emu-g`
+has not produced at all.
 
 ```
 disfault: native backtrace:
@@ -458,11 +460,18 @@ detected and ignored today rather than reported.
 
 Related but separately confirmed *not* the cause: `win-gpu.m`'s Metal
 initialisation used a hand-rolled `if(gpu_ready != 0) return` one-shot, which
-genuinely does let several first-uploads run the whole body at once and
+by inspection lets several first-uploads run the whole body at once and
 overwrite `gpu_device`/`gpu_queue`/`gpu_pipe` under each other, with no barrier
-before publishing `gpu_ready = 1`. That is now a `dispatch_once` — correct by
-inspection — but it did **not** change this failure, so do not treat it as the
-fix.
+before publishing `gpu_ready = 1`. That is now a `dispatch_once`.
+
+**But that race was never observed to fire, and the note should not pretend
+otherwise.** The old guard was instrumented with a counter of how many times
+the body ran, and tested under `gputest(1)` on `emu-cocoa` — including a
+variant whose *first* GPU use is the concurrent phase, to rule out the obvious
+explanation that the single-threaded precision check initialises Metal first.
+Twelve runs, never entered more than once; something upstream serialises the
+first upload in practice. So `dispatch_once` is a correctness fix by
+inspection, nothing more, and definitely not the cure for the corruption above.
 
 ### 6. Smaller, noted, unfixed
 

@@ -107,12 +107,21 @@ gpucompute_setup(void)
  *
  * dispatch_once, NOT a plain "if(gpu_ready != 0) return" guard. gpu(3) hands
  * out one handle per open, so several Limbo processes can be in their first
- * upload at once, and the hand-rolled guard let all of them past the test and
- * run the whole body concurrently - each overwriting gpu_device, gpu_queue and
- * gpu_pipe while the others were already dispatching against them. It also had
- * no barrier between filling those globals and publishing gpu_ready = 1, so a
- * thread could observe ready with a nil pipeline. gputest(1) failed seven runs
- * in eight under emu-cocoa because of this, mostly as a segmentation fault.
+ * upload at once; the hand-rolled guard would let all of them past the test
+ * and run the whole body concurrently, each overwriting gpu_device, gpu_queue
+ * and gpu_pipe while the others were already dispatching against them, and it
+ * had no barrier between filling those globals and publishing gpu_ready = 1,
+ * so a thread could observe ready with a nil pipeline.
+ *
+ * Honest about the evidence: that race was never observed to FIRE. The old
+ * guard was instrumented with a counter of how many times the body ran and
+ * tested under gputest(1) on emu-cocoa, including a variant whose first GPU
+ * use is the concurrent phase - 12 runs, never more than once. Something
+ * upstream evidently serialises the first upload in practice. So this is a
+ * correctness fix by inspection, not the cure for any measured failure, and
+ * in particular NOT the cure for the allocator corruption that gputest hits
+ * under emu-cocoa (see doc/hpc-plan.md) - that reproduces without the device
+ * at all.
  */
 static int
 gpucompute_init(void)
