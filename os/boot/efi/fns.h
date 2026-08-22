@@ -5,7 +5,7 @@ enum {
 extern char hex[];
 
 void usleep(int t);
-void jump(void *pc);
+void jump(void *pc, void *args);
 
 int pxeinit(void **pf);
 int isoinit(void **pf);
