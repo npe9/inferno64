@@ -18,7 +18,6 @@ dev
 	eia
 #	audio	audio
 	gpu
-	hostobj	hostobj
 	mem
 
 lib
@@ -78,7 +77,6 @@ init
 
 root
 	/dev	/
-	/dev/hostobj	/
 	/fd	/
 	/prog	/
 	/prof	/

@@ -22,7 +22,6 @@ dev
 	eia
 	audio	audio-cocoa
 	gpu	win-gpu
-	hostobj	hostobj
 	mem
 
 lib
@@ -90,7 +89,6 @@ init
 
 root
 	/dev	/
-	/dev/hostobj	/
 	/fd	/
 	/prog	/
 	/prof	/
