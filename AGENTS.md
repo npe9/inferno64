@@ -34,6 +34,14 @@
   and libraries such as `libsec`, `libmp`, `libfis` and `libkern` that are
   built from one source tree for every target.  A flavor may use those; it
   may not use another flavor's kernel code.
+- Osprey has two sources: `doc/osprey-plan.ms`, and the author's own
+  presentation of the system (`osprey.pdf`, summarised in section 1 of the
+  plan).  Work through both without asking whether to continue.  Do not ask
+  for input, confirmation or a choice between approaches until everything
+  both describe is implemented; decide, build it, test it against a booted
+  kernel, and say plainly in the man page and the commit what is real and
+  what is only demonstrated.  `doc/osprey-progress.ms` holds the ordered
+  plan and what is done; keep it current as each piece lands.
 - Follow Inferno conventions and prefer its configuration files, device tables,
   runtime capability checks, and `waserror`/`poperror` mechanism.
 - Do not use `#ifdef` or other preprocessor conditionals to select platform or
