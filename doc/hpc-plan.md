@@ -401,7 +401,22 @@ was never established.
 
 New, found by `gputest(1)`. Under `emu-cocoa` that test fails almost every run
 — 0 of 6 on a build with **no gpu changes at all**, so it is neither the test
-nor `gpu(3)`. Under `emu-g` the same test passes 89 of 100.
+nor this session's work. Under `emu-g` the same test passes 89 of 100.
+
+**It is not `gpu(3)`-specific either.** `fdstresstest(1)`, which never touches
+the device, crashes the same way under `emu-cocoa`. That is much rarer — one in
+about fifty runs against nearly every run for `gputest` — and the difference is
+most likely allocation pressure: `gputest` runs 40 procs against 60 buffered
+matvecs each, which is far more malloc/free traffic than 16 procs opening
+`/dev/null`. Same measurement, `emu-cocoa`, 12 runs of `fdstresstest`:
+
+```
+pass 7   hang 4   crash 1
+```
+
+Note the hang rate under `emu-cocoa` (~33%) is well above the `emu-g` `-c0`
+figure of 12%, so **`emu-cocoa` is the harsher environment for both symptoms**
+and the better place to reproduce either.
 
 ```
 disfault: native backtrace:
@@ -425,9 +440,21 @@ bug 1's lost wakeup. Whether the hang and this corruption are one bug or two is
 well explain the other, and this one has the advantage of being a crash with a
 native backtrace rather than a silent hang.
 
-Why `emu-cocoa` and not `emu-g`: the Cocoa build runs the AppKit main thread
-and Metal's own worker threads on top of the same allocator, so it is simply
-more concurrent. That also makes it the better place to chase this.
+Why `emu-cocoa` is worse than `emu-g`: the Cocoa build runs the AppKit main
+thread and Metal's own worker threads on top of the same allocator, so it is
+simply more concurrent. That also makes it the better place to chase this.
+
+**Do not reach for lldb first.** Three attempts to catch the fault under the
+debugger produced no crash at all — the run hangs instead. The debugger changes
+the timing enough to move the bug, the same way a watchdog did for open bug 1.
+What did work was letting emu's own `trapmemref` handler print its native
+backtrace. If you need more than that, the allocator already carries
+`MAGIC_A`/`MAGIC_F` block magics and a `poolaudit()` (`emu/port/alloc.c`);
+asserting the magic at the top of `poolfree()` would catch the corruption
+nearer its source than a segfault deep in a free-list walk, and costs one
+compare. Note `poolfree()` currently *reads* neighbour magics to decide whether
+to coalesce and silently declines when they are wrong, so corruption there is
+detected and ignored today rather than reported.
 
 Related but separately confirmed *not* the cause: `win-gpu.m`'s Metal
 initialisation used a hand-rolled `if(gpu_ready != 0) return` one-shot, which
