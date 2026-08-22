@@ -106,7 +106,14 @@ userinit(void)
 	for(s = "osprey: userinit\n"; *s != 0; s++)
 		outb(0x3f8, *s);
 	up = nil;
-	/* Osprey starts with a local, non-authenticated host user. */
-	kstrdup(&eve, "peep");
+	/*
+	 * The host owner stays empty until the boot process picks one.
+	 * Device permission entries (devsd's unit, ctl, raw and partition
+	 * users, for one) are filled in from eve on first stat and only
+	 * refreshed while they are still empty, so naming a placeholder
+	 * here freezes device ownership to a user that nothing else knows
+	 * and makes a later hostowner write lose access to the disk.
+	 */
+	kstrdup(&eve, "");
 	kproc("*init*", proc0, nil);
 }

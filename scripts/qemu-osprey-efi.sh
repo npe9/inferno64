@@ -6,6 +6,7 @@ ROOT=`cd \`dirname "$0"\`/.. && pwd`
 ISO=${1:-$ROOT/.qemu/osprey-efi.iso}
 LOG=${2:-$ROOT/.qemu/serial.log}
 SECS=${3:-40}
+DISK=${OSPREY_DISK:-}
 
 rm -f "$LOG"
 cp "$ROOT/.qemu/edk2-vars.fd" "$ROOT/.qemu/edk2-vars-run.fd"
@@ -14,6 +15,9 @@ timeout "$SECS" qemu-system-x86_64 \
 	-drive if=pflash,format=raw,unit=0,readonly=on,file="$ROOT/.qemu/edk2-code.fd" \
 	-drive if=pflash,format=raw,unit=1,file="$ROOT/.qemu/edk2-vars-run.fd" \
 	-cdrom "$ISO" \
+	${DISK:+-drive file=$DISK,format=qcow2,if=none,id=hd0} \
+	${DISK:+-device ich9-ahci,id=ahci} \
+	${DISK:+-device ide-hd,drive=hd0,bus=ahci.0} \
 	-serial "file:$LOG" \
 	-display none -no-reboot >/dev/null 2>&1 || true
 sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$LOG"

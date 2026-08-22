@@ -7,6 +7,8 @@
 # ISO contains is still produced by mk.
 #
 # usage: scripts/mkosprey-efi-iso.sh [iso]
+#
+# OSPREY_NOBOOTPROMPT=local!/dev/sdE0/fs skips the bootrc bootargs prompt.
 
 set -e
 
@@ -15,7 +17,7 @@ PATH=$ROOT/MacOSX/arm64/bin:$PATH
 export PATH ROOT
 
 ISO=${1:-$ROOT/.qemu/osprey-efi.iso}
-KERNEL=$ROOT/os/osprey/pc64/9pc64
+KERNEL=${OSPREY_KERNEL:-$ROOT/os/osprey/pc64/9pc64}
 LOADER=$ROOT/os/boot/efi/bootx64.efi
 ESP=$ROOT/os/boot/efi/efiboot.fat
 TREE=`mktemp -d "${TMPDIR:-/tmp}/osprey-iso.XXXXXX"`
@@ -30,10 +32,17 @@ test -f "$KERNEL" || { echo "no kernel: $KERNEL" >&2; exit 1; }
 CFG=$TREE/cfg/plan9.ini
 NSH=$TREE/startup.nsh
 mkdir -p "$TREE/EFI/BOOT" "$TREE/amd64" "$TREE/cfg"
-cat >"$CFG" <<'INI'
+cat >"$CFG" <<INI
 bootfile=/amd64/9pc64
 console=0
 INI
+# OSPREY_BOOTPROMPT=no with a root device makes the boot non-interactive.
+if [ -n "$OSPREY_NOBOOTPROMPT" ]; then
+	echo "nobootprompt=$OSPREY_NOBOOTPROMPT" >>"$CFG"
+fi
+if [ -n "$OSPREY_USER" ]; then
+	echo "user=$OSPREY_USER" >>"$CFG"
+fi
 echo 'fs0:\EFI\BOOT\BOOTX64.EFI' >"$NSH"
 
 echo "esp $ESP"
