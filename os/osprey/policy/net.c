@@ -42,3 +42,11 @@ pktqcount(Pktq *q)
 {
 	return q == nil ? 0 : q->put - q->get;
 }
+
+int
+pktqfull(Pktq *q)
+{
+	if(q == nil || q->size == 0)
+		return 1;
+	return q->put - q->get >= q->size;
+}

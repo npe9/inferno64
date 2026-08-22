@@ -36,6 +36,7 @@
 #include "runtime.h"
 #include "snap.h"
 #include "select.h"
+#include "net.h"
 
 enum {
 	Nproc		= 16,	/* resource containers this adapter can hold */
@@ -44,6 +45,7 @@ enum {
 	Nname		= 8,	/* private namespace entries per container */
 	Ndata		= 4096,	/* names and i/o buffers per container */
 	Nsem		= 8,	/* semaphores per container */
+	Npkt		= 32,	/* packets a container may hold */
 	Narm		= 16,	/* arms one select may offer */
 	Align		= 64,
 };
@@ -57,6 +59,9 @@ struct Ospreyproc {
 	int	pid;		/* the process billed to this container, or 0 */
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
+	Pktq	pktq;		/* packets given to this container */
+	Pkt	pkt[Npkt];
+	Pkt	*pktp[Npkt];
 	Name	name[Nname];
 };
 
@@ -358,6 +363,7 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	rm = (Message*)(base + m->request);
 	pm = (Message*)(base + m->reply);
 	lockall();
+	pktqinit(&p->pktq, p->pktp, Npkt);
 	if(processinit(&p->process, id, budget, period, deadline,
 		rq, pq, rm, pm, Nqueue, p->name, Nname) < 0){
 		unlockall();
@@ -748,6 +754,61 @@ semof(Ospreyproc *p, ulong i)
 	if(p == nil || p->used == 0 || p->map == nil || i >= p->map->nsem)
 		return nil;
 	return (Sem*)((uchar*)p->map + p->map->sem) + i;
+}
+
+/*
+ * A packet for this container: charge it, and keep the block whole.  A
+ * container over its network caps, or with no room, refuses it, and the
+ * caller frees the block as it would have anyway.
+ */
+int
+ospreypktput(Ospreyproc *p, void *block, ulong len)
+{
+	Pkt *k;
+
+	if(p == nil || p->used == 0 || block == nil)
+		return -1;
+	if(pktqfull(&p->pktq))
+		return -1;
+	if(netcharge(&p->process.container, len, 1) < 0)
+		return -1;
+	k = &p->pkt[p->pktq.put % Npkt];
+	k->block = block;
+	k->len = len;
+	k->container = &p->process.container;
+	if(pktqput(&p->pktq, k) < 0){
+		netrelease(&p->process.container, len, 1);
+		return -1;
+	}
+	return 0;
+}
+
+/*
+ * Take the next packet.  The block is handed back rather than read: what
+ * is in it is the driver's business and this layer has no way to look
+ * inside one.  The caller copies what it wants and frees it.
+ */
+int
+ospreypktget(Ospreyproc *p, void **block, ulong *len)
+{
+	Pkt k;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	if(pktqget(&p->pktq, &k) < 0)
+		return -1;
+	netrelease(&p->process.container, k.len, 1);
+	*block = k.block;
+	*len = k.len;
+	return 0;
+}
+
+ulong
+ospreypktcount(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return 0;
+	return pktqcount(&p->pktq);
 }
 
 void

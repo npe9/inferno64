@@ -108,6 +108,15 @@ int		ospreyservicep(Ospreyproc*, uvlong now);
 int		ospreyrequestready(Ospreyproc*);
 
 void		ospreysemgive(Ospreyproc*, ulong sem);
+
+/*
+ * The packet path.  A block handed in is the container's, charged
+ * against its network caps; taking one out copies the bytes into the
+ * container's data area and gives the block back to the caller to free.
+ */
+int		ospreypktput(Ospreyproc*, void *block, ulong len);
+int		ospreypktget(Ospreyproc*, void **block, ulong *len);
+ulong		ospreypktcount(Ospreyproc*);
 uvlong		ospreysemcount(Ospreyproc*, ulong sem);
 int		ospreyselect(Ospreyproc*, uvlong armoff, int narms);
 int		ospreyselectready(Ospreyproc*, uvlong armoff, int narms);

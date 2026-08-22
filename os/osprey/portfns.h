@@ -174,7 +174,11 @@ void		kprocchild(Proc*, void (*)(void));
 void		(*kproftimer)(uintptr);
 void		(*ospreytimer)(int);
 int		(*ospreyuartintr)(Uart*);
+/* the interface is passed untyped: Ether belongs to etherif.h, which
+ * the port headers do not and should not include */
+int		(*ospreyetheriq)(void*, Block*);
 Uart*		uartlookup(char*);
+void*		etherlookup(char*);
 void		ksetenv(char*, char*, int);
 void		kstrcpy(char*, char*, int);
 void		kstrdup(char**, char*);

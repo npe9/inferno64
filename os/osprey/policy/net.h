@@ -22,6 +22,7 @@ struct Pktq {
 };
 
 int	pktqinit(Pktq*, Pkt**, ulong);
+int	pktqfull(Pktq*);
 int	pktqput(Pktq*, Pkt*);
 int	pktqget(Pktq*, Pkt*);
 ulong	pktqcount(Pktq*);

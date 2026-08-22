@@ -252,6 +252,23 @@ Drop:		freeb(bp);
 	return bp;
 }
 
+/*
+ * The interface called etherN, for anything outside this file that must
+ * name one, such as a container that has been given one.
+ */
+void*
+etherlookup(char *name)
+{
+	int i;
+
+	if(name == nil || strncmp(name, "ether", 5) != 0)
+		return nil;
+	i = atoi(name+5);
+	if(i < 0 || i >= MaxEther)
+		return nil;
+	return etherxx[i];
+}
+
 void
 etheriq(Ether* ether, Block* bp)
 {
@@ -262,6 +279,12 @@ etheriq(Ether* ether, Block* bp)
 	if(ether->dmat != nil)
 		dmatproxy(bp, 0, ether->ea, ether->dmat);
 	ether->inpackets++;
+	/*
+	 * A container that has claimed this interface is given the packet
+	 * whole, and the block with it: nothing is copied here.
+	 */
+	if(ospreyetheriq != nil && ospreyetheriq(ether, bp))
+		return;
 	ethermux(ether, bp, nil);
 }
 

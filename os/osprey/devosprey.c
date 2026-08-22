@@ -96,6 +96,7 @@ enum {
 	CMselect,
 	CMtick,
 	CMuart,
+	CMether,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -124,6 +125,7 @@ static Cmdtab ospreycmd[] = {
 	CMselect,	"select",	4,
 	CMtick,		"tick",		3,
 	CMuart,		"uart",		4,
+	CMether,	"ether",	4,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -187,6 +189,8 @@ static int ospreyticksem[16];		/* semaphore the clock gives, or -1 */
 static Uart *ospreyuart[16];		/* a uart this container serves */
 static int ospreyuartsem[16];		/* the semaphore its interrupt gives */
 static int ospreyuarting[16];		/* its driver task is running */
+static void *ospreyether[16];		/* an interface this container has */
+static int ospreyethersem[16];		/* the semaphore its packets give */
 
 void
 queuebarrier(void)
@@ -203,6 +207,34 @@ queuebarrier(void)
 static void ospreywakeup(void);
 static void ospreyrelease(Proc*, int);
 static int ospreyarmready(void*);
+
+/*
+ * Called from etheriq, in the driver's interrupt or its input task.  A
+ * packet for a container that has claimed this interface is charged
+ * against its network caps and put on its queue whole; the block is not
+ * copied and not freed here.  A container over its caps, or with no
+ * room, refuses it and the driver disposes of it as it would have.
+ */
+static int
+ospreyethergive(void *ether, Block *bp)
+{
+	Ospreyproc *p;
+	int i;
+
+	for(i = 0; i < nelem(ospreyether); i++){
+		if(ospreyether[i] != ether)
+			continue;
+		if((p = ospreyat(i)) == nil)
+			return 0;
+		if(ospreypktput(p, bp, BLEN(bp)) < 0)
+			return 0;
+		ospreysemgive(p, ospreyethersem[i]);
+		wakeup(&ospreyselrend[i]);
+		wakeup(&ospreyservrend[i]);
+		return 1;
+	}
+	return 0;
+}
 
 /*
  * Called from a uart's interrupt handler.  Everything the handler does
@@ -555,6 +587,7 @@ ospreyinit(void)
 	for(i = 0; i < nelem(ospreyticksem); i++)
 		ospreyticksem[i] = -1;
 	ospreyuartintr = ospreyuartgive;
+	ospreyetheriq = ospreyethergive;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 }
@@ -572,6 +605,8 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 {
 	char *a, *e;
 	Chan *c;
+	void *bl;
+	ulong blen;
 	long n;
 	int i, x;
 
@@ -631,6 +666,31 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 		n = devtab[c->type]->stat(c, (uchar*)a, n);
 		poperror();
 		result[0] = n;
+		return StatusDone;
+
+	case OpRecv:
+		/*
+		 * Take the next packet the interface gave this container and
+		 * copy what will fit into its data area.  The copy is here
+		 * because a driver's block is not in the shared span; making
+		 * it so is what the plan means by shared packet buffers.
+		 */
+		n = (long)arg[1];
+		if(n < 0 || (a = ospreydata(p, arg[0], n)) == nil)
+			return StatusError;
+		if(ospreypktget(p, &bl, &blen) < 0)
+			return StatusError;
+		if(waserror()){
+			freeb(bl);
+			return StatusError;
+		}
+		if((ulong)n > blen)
+			n = blen;
+		memmove(a, ((Block*)bl)->rp, n);
+		poperror();
+		freeb(bl);
+		result[0] = n;
+		result[1] = blen;
 		return StatusDone;
 
 	case OpClose:
@@ -888,6 +948,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	Ospreyproc *p;
 	Proc *q;
 	Uart *ut;
+	void *et;
 	Selwait sw;
 	char *nm;
 	uvlong arg[Ospreynarg];
@@ -1010,6 +1071,29 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
 		ospreywakeup();
+		break;
+
+	case CMether:
+		/*
+		 * Give the container an ethernet interface: its packets are
+		 * charged to the container's network caps and queued for it,
+		 * and each gives the named semaphore.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyether))
+			error(Ebadarg);
+		if(strcmp(cb->f[2], "off") == 0){
+			ospreyether[x] = nil;
+			wakeup(&ospreyselrend[x]);
+			break;
+		}
+		i = atoi(cb->f[3]);
+		if(i < 0 || (ulong)i >= ospreynsem())
+			error(Ebadarg);
+		if((et = etherlookup(cb->f[2])) == nil)
+			error(Enonexist);
+		ospreyether[x] = et;
+		ospreyethersem[x] = i;
 		break;
 
 	case CMuart:

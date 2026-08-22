@@ -44,18 +44,23 @@ the device, and a kernel task of the container's waits on that semaphore
 beside its request ring, does the register work, and lets the device
 interrupt again.
 .PP
+.B "The packet path."
+An ethernet interface handed to a container: its packets are charged
+against the container's network caps and queued for it whole, each giving
+a semaphore, without reaching the rest of the network stack.  Reading one
+copies it into the container's data area, because a driver's block is not
+in the shared span.
+.PP
 .B "Checkpoint."
 The serialisable part of a container: identity, core, state, accounting,
 ring indices, namespace.
 .NH 1
 Next, in order
 .PP
-.B "1.  The packet path."
-Packet descriptors carrying the driver's Block through a bounded queue
-that charges the owning container, so that the network accounting already
-in the policy layer has something charging it.  Then shared packet
-buffers in the span, so a packet crosses to a user-level service without
-being copied.
+.B "1.  Shared packet buffers."
+Packet buffers in the shared span, so that a packet crosses to a
+user-level service without being copied at all.  The queue and the
+accounting are done; what remains is where the bytes live.
 .PP
 .B "2.  A service outside the kernel."
 The request ABI as a library, so a process can be given a file system or
