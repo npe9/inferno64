@@ -20,8 +20,11 @@ struct Container {
 	uvlong	budget;
 	uvlong	period;
 	uvlong	deadline;
-	uvlong	used;
+	uvlong	used;		/* of the reservation, this period */
+	uvlong	besteffort;	/* time taken beyond it, since the start */
+	uvlong	periods;	/* periods elapsed */
 	uvlong	epoch;
+	int	strict;		/* refuse time beyond the reservation */
 	ulong	memory;
 	ulong	memused;
 	ulong	netbytes;
@@ -40,6 +43,8 @@ struct Task {
 };
 
 void	containerinit(Container*, uvlong, uvlong, uvlong);
+void	containerstrict(Container*, int);
+int	containerover(Container*);
 void	containerrefill(Container*, uvlong);
 int	containercharge(Container*, uvlong, uvlong);
 int	memcharge(Container*, ulong);

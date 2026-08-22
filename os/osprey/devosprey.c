@@ -91,6 +91,7 @@ enum {
 	CMbindproc,
 	CMunbindproc,
 	CMserve,
+	CMmode,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -114,6 +115,7 @@ static Cmdtab ospreycmd[] = {
 	CMmigrate,	"migrate",	3,
 	CMbindproc,	"bindproc",	3,
 	CMserve,	"serve",	2,
+	CMmode,		"mode",		3,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -173,6 +175,7 @@ queuebarrier(void)
  * does not throw everything off its queue at once.
  */
 static void ospreywakeup(void);
+static void ospreyrelease(Proc*, int);
 
 static int
 ospreyhaswork(void *a)
@@ -286,22 +289,37 @@ ospreyclock(int core)
 		/* the container's own core decides, so the cores do not fight */
 		if(ospreycoreof(p) != (ulong)core)
 			continue;
-		if(ospreythrottled(p)){
-			if(ospreystopped[i] == 0 && q->state != Stopped
-			&& q->state != Dead && q->state != Moribund){
-				ospreystopped[i] = 1;
-				q->procctl = Proc_stopme;
-				if(q == m->proc)
-					q->delaysched++;
-			}
-		} else if(ospreystopped[i]){
-			ospreystopped[i] = 0;
-			if(q->procctl == Proc_stopme)
-				q->procctl = 0;
-			if(q->state == Stopped){
-				q->procctl = 0;
-				ready(q);
-			}
+		if(ospreystrict(p)){
+			/*
+			 * Held to the reservation: the process stops when it
+			 * is spent and starts again when the period refills.
+			 */
+			if(ospreythrottled(p)){
+				if(ospreystopped[i] == 0 && q->state != Stopped
+				&& q->state != Dead && q->state != Moribund){
+					ospreystopped[i] = 1;
+					q->procctl = Proc_stopme;
+					if(q == m->proc)
+						q->delaysched++;
+				}
+			} else if(ospreystopped[i])
+				ospreyrelease(q, i);
+		} else {
+			/*
+			 * Best effort past the reservation: the process keeps
+			 * the core when nothing with time left wants it, and
+			 * the time it takes is counted apart.
+			 */
+			if(ospreystopped[i])
+				ospreyrelease(q, i);
+			if(ospreyover(p)){
+				if(q->fixedpri == 0){
+					procpriority(q, 0, 1);
+					if(q == m->proc)
+						q->delaysched++;
+				}
+			} else if(q->fixedpri)
+				procpriority(q, PriNormal, 0);
 		}
 	}
 }
@@ -511,6 +529,8 @@ ospreyputproc(Ospreyproc *p)
 	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
 		return;
 	if((q = ospreyprocs[x]) != nil){
+		if(q->fixedpri)
+			procpriority(q, PriNormal, 0);
 		ospreyrelease(q, x);
 		q->osprey = nil;
 		ospreyprocs[x] = nil;
@@ -819,6 +839,16 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		ospreywakeup();
 		break;
 
+	case CMmode:
+		p = ospreyproc(cb->f[1]);
+		if(strcmp(cb->f[2], "strict") == 0)
+			ospreysetstrict(p, 1);
+		else if(strcmp(cb->f[2], "besteffort") == 0)
+			ospreysetstrict(p, 0);
+		else
+			error(Ebadarg);
+		break;
+
 	case CMserve:
 		/*
 		 * Give the container a service process of its own, in this
@@ -873,6 +903,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
 			error(Ebadarg);
 		if((q = ospreyprocs[x]) != nil){
+			if(q->fixedpri)
+				procpriority(q, PriNormal, 0);
 			ospreyrelease(q, x);
 			q->osprey = nil;
 			ospreyprocs[x] = nil;

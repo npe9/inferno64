@@ -213,7 +213,12 @@ acid:V:
 %.clean:V:
 	rm -f $stem.c [9bz]$stem [9bz]$stem.gz boot$stem.* $O.rebootcode $O.apbootstrap $PCHEADERS
 
-ospreyrt.$O:	$PORTDIR/adapter/ospreyrt.c $PORTDIR/osprey.h
+# The adapter embeds the policy layer's structures, so it must be rebuilt
+# whenever one of them changes; without this the library and the adapter
+# disagree about where a field is and the kernel walks wild pointers.
+POLICYHFILES=`{echo $PORTDIR/policy/*.h}
+
+ospreyrt.$O:	$PORTDIR/adapter/ospreyrt.c $PORTDIR/osprey.h $POLICYHFILES
 	$CC $POLICYCFLAGS $PORTDIR/adapter/ospreyrt.c
 
 devosprey.$O:	$PORTDIR/osprey.h

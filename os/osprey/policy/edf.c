@@ -9,7 +9,10 @@ containerinit(Container *c, uvlong budget, uvlong period, uvlong deadline)
 	c->period = period;
 	c->deadline = deadline;
 	c->used = 0;
+	c->besteffort = 0;
+	c->periods = 0;
 	c->epoch = 0;
+	c->strict = 0;
 	c->memory = 0;
 	c->memused = 0;
 	c->netbytes = 0;
@@ -27,21 +30,51 @@ containerrefill(Container *c, uvlong now)
 		return;
 	n = now / c->period;
 	if(n != c->epoch){
+		if(c->epoch != 0)
+			c->periods += n - c->epoch;
 		c->epoch = n;
 		c->used = 0;
 	}
 }
 
+void
+containerstrict(Container *c, int strict)
+{
+	if(c != nil)
+		c->strict = strict != 0;
+}
+
+/* the reservation for this period is spent */
+int
+containerover(Container *c)
+{
+	if(c == nil)
+		return 0;
+	return c->used >= c->budget;
+}
+
+/*
+ * Charge time to the reservation for this period, and whatever will not
+ * fit to the best-effort account.  A container may take that time -- the
+ * scheduler decides, and a strict one is held to its reservation -- but
+ * it is counted apart from it either way.
+ */
 int
 containercharge(Container *c, uvlong amount, uvlong now)
 {
+	uvlong left;
+
 	if(c == nil)
 		return -1;
 	containerrefill(c, now);
-	if(amount > c->budget - (c->used < c->budget ? c->used : c->budget))
-		return -1;
-	c->used += amount;
-	return 0;
+	left = c->used < c->budget ? c->budget - c->used : 0;
+	if(amount <= left){
+		c->used += amount;
+		return 0;
+	}
+	c->used += left;
+	c->besteffort += amount - left;
+	return -1;
 }
 
 int

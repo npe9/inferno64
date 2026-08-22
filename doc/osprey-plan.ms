@@ -21,6 +21,49 @@ and
 .CW Osprey
 directories are target build output.
 .NH 1
+What Osprey is
+.PP
+This plan was written from the architecture of a predictable-cloud
+operating system.  The name is older than that: Osprey is Noah Evans's
+own system, presented in October 2010, and the talk describes something
+more particular than a scheduler and a set of queues.
+.PP
+Osprey is a microkernel with library operating systems above it.  The
+kernel holds only fast message passing, address space maintenance,
+interrupt handling and process scheduling.  Message passing is between
+cores, flipping pages where it can; the talk measures a send, a receive
+and a context switch together at 270 nanoseconds.  Segments may be shared
+at different addresses, and processes that share an address space migrate
+as a group.
+.PP
+The unit of execution is a task, not a Plan 9 process, and the central
+call is
+.CW select ,
+which waits on an array of arms the caller owns and returns the one that
+fired.  An arm is a message queue to receive from, or a semaphore to take.
+An arm can be turned off in place rather than the array rebuilt.  A device
+driver is a task that selects on its own message queue, on a semaphore an
+interrupt raises, and on its output queue: interrupt handling stays short
+and the driver runs in the scheduler like everything else.
+.PP
+The scheduler is real time.  A task reports the periods it has seen and
+the best-effort time it has used, so a reservation is time the task is
+owed and anything beyond it is best effort, accounted apart.
+.PP
+Files are reached over
+.I \[*p]p ,
+a protocol of the 9P family in which a session outlives the connection
+that carried it, transactions group into one round trip, files carry
+string attributes rather than control files, and versions are immutable
+and committed when a file is closed.
+.PP
+What is built here follows the parts of that which fit a Plan 9 kernel:
+the scheduler, the resource containers, the asynchronous rings and the
+shared arena.  The task model, the select call, the semaphores and
+\[*p]p are not built, and the sections below still describe the plan as
+it was written rather than the talk.
+
+.NH 1
 Portable kernel layer
 .PP
 Complete the Osprey port layer in

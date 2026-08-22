@@ -497,6 +497,28 @@ ospreythrottled(Ospreyproc *p)
 	return p->process.state == ProcessRunnable && p->process.task.runnable == 0;
 }
 
+/* the container has spent its reservation for this period */
+int
+ospreyover(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return 0;
+	return containerover(&p->process.container);
+}
+
+int
+ospreystrict(Ospreyproc *p)
+{
+	return p != nil && p->used && p->process.container.strict;
+}
+
+void
+ospreysetstrict(Ospreyproc *p, int strict)
+{
+	if(p != nil && p->used)
+		containerstrict(&p->process.container, strict);
+}
+
 int
 ospreytick(ulong core, Ospreyproc *running, uvlong amount, uvlong now)
 {
@@ -536,7 +558,7 @@ ospreytick(ulong core, Ospreyproc *running, uvlong amount, uvlong now)
 		if(q == nil || q->core != core || q->state != ProcessRunnable)
 			continue;
 		containerrefill(&q->container, now);
-		if(budgetok(&q->task, amount)){
+		if(q->container.strict == 0 || budgetok(&q->task, amount)){
 			if(q->task.runnable == 0)
 				coreenqueue(c, &q->task, now);
 		} else if(q->task.runnable){
@@ -812,12 +834,15 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		q = &procs[i].process;
 		p = seprint(p, e, "proc %llud core %lud %s"
 			" budget %llud used %llud period %llud deadline %llud"
+			" besteffort %llud periods %llud %s"
 			" mem %lud of %lud net %lud of %lud"
 			" requests %llud replies %llud"
 			" slice %llud data %llud pid %d\n",
 			q->id, q->core, statename(q->state),
 			q->container.budget, q->container.used,
 			q->container.period, q->task.deadline,
+			q->container.besteffort, q->container.periods,
+			q->container.strict ? "strict" : "besteffort",
 			q->container.memused, q->container.memory,
 			q->container.netbytes, q->container.netmax,
 			queuecount(q->requests), queuecount(q->replies),

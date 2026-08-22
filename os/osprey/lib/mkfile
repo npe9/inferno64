@@ -23,5 +23,13 @@ all install:V: $OFILES $LIB
 $LIB: $OFILES
 	iar vu $target $prereq
 
+# Every one of these files embeds structures the headers define, so all
+# of them must be rebuilt when any header changes.  Without this a
+# changed structure leaves half the library reading fields at the old
+# offsets, and the kernel walks wild pointers.
+HFILES=`{echo $ROOT/os/osprey/policy/*.h}
+
+$OFILES: $HFILES
+
 osprey-%.$O: $ROOT/os/osprey/policy/%.c
 	$CC $CFLAGS -o $target $ROOT/os/osprey/policy/$stem.c

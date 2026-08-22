@@ -50,6 +50,12 @@ Discard every container and empty every run queue.
 Create a container with the given CPU budget, replenishment period and
 relative deadline.
 .TP
+.BI mode " id " [ besteffort | strict ]
+How the container is held to its CPU reservation.  A best-effort
+container, which is the default, may take time beyond it when nothing
+with time left wants the core, and that time is counted apart from the
+reservation.  A strict one is stopped until its period refills.
+.TP
 .BI limit " id memory netbytes netpackets"
 Set the bounded resource caps.
 .B create
@@ -176,14 +182,22 @@ process may be run by a core other than the one its container is attached
 to, so billing follows the process while the decision to leave or rejoin
 a run queue belongs to the core that owns it.
 .PP
-A process bound to a container that has run out of budget is stopped
-until the period refills.  The control word a debugger uses to stop a
-process is examined on the way out of every trap, so a process that
-exhausts its budget stops at the end of the clock interrupt that spends
-the last of it, and a budget is a limit rather than a preference: it does
-not run again that period even if its core has nothing else to do.  Only
-processes stopped this way are started again this way, and unbinding a
-container, or its exit, releases the process it was holding.
+A budget is a reservation.  Time within it is the container's to take;
+time beyond it is best effort, counted apart from the reservation in the
+container's
+.B besteffort
+total, and taken only when nothing with reservation left wants the core.
+A process whose container is past its reservation drops to the lowest
+fixed scheduling priority until the period refills.
+.PP
+A container put in
+.B strict
+mode is instead held to its reservation: its process is stopped when the
+reservation is spent and started again when the period refills.  The
+control word a debugger uses to stop a process is examined on the way out
+of every trap, so it stops at the end of the clock interrupt that spends
+the last of it.  Only processes stopped this way are started again this
+way, and unbinding a container, or its exit, releases the one it held.
 .PP
 Reading
 .B status
@@ -191,8 +205,8 @@ reports the clock, the tick rate, and one line per core and per
 container.  A core's line gives the number of runnable tasks, the cycles
 charged to it, the number of context switches, the current task and the
 run queue in deadline order.  A container's line gives its core, state,
-CPU budget and use, period, absolute deadline, memory and network use
-against their caps, and the occupancy of its two rings.
+CPU budget and use, period, absolute deadline, best-effort time, periods
+elapsed, mode, memory and network use against their caps, and the occupancy of its two rings.
 .PP
 Reading
 .B reply
