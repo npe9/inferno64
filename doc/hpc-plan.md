@@ -289,7 +289,38 @@ pixels into a `Draw->Image`; `appl/wm/mpeg.b` and `appl/wm/qt.b` are
 story is a software decoder that routes every frame through the Limbo heap —
 the most expensive path available, and the one with the open memory bug in it.
 
-macOS offers a chain that avoids the boundary entirely:
+**There is dedicated video silicon, and it is neither the GPU nor the ANE.**
+Apple Silicon carries fixed-function *media engines* reached through
+VideoToolbox. Measured on this machine (M4 Max, macOS 26.6) with
+`VTIsHardwareDecodeSupported` and `VTCopyVideoEncoderList` rather than taken
+from a spec sheet:
+
+| | hardware |
+|---|---|
+| decode | H.264, HEVC, **AV1**, ProRes 422 / 4444 / RAW, JPEG |
+| encode | H.264, HEVC (plus depth, disparity, muxed-alpha), ProRes ×6, JPEG |
+| neither | **VP9**, **MPEG-4 Part 2** |
+
+Three consequences worth having written down before anyone plans work:
+
+- **The formats this tree already decodes are exactly the ones with no hardware
+  support.** `mpeg.b` is MPEG-1/2 and `avi.b` handles DIB/RLE; none of that is
+  accelerated, and MPEG-4 Part 2 is not either. So "hardware-accelerate the
+  existing players" is not available as a goal. The win is *supporting modern
+  formats at all*, which the tree currently cannot play.
+- **AV1 is decode-only.** There is no hardware AV1 encoder here, so an encode
+  path must fall back to software or choose HEVC.
+- **The media engines are independent of the GPU and the ANE**, so decode can
+  run concurrently with Metal compute and CoreML inference rather than
+  contending with them. That is what makes composing capabilities by object id
+  worth doing rather than merely tidy.
+
+The probe used to get that table is four dozen lines of Objective-C against
+VideoToolbox; re-run it on any new machine rather than assuming, since the
+answer varies by chip tier (base M-series lacks ProRes hardware; AV1 decode
+arrived with M3).
+
+Beyond the codecs, macOS offers a chain that avoids the boundary entirely:
 
 - **AVFoundation** demuxes the container; **VideoToolbox** does hardware
   H.264/HEVC/ProRes decode and encode.
