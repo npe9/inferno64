@@ -116,9 +116,45 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    not: they are single-threaded numerics plus a device. Do it when a
    concurrency change needs validating, or when someone has the patience for a
    ~12% reproducer; do not let it block the GPU work again.
-2. **`krylov(2)` vector ops on GPU.** `dot`/`axpy`/`norm` still run on the CPU.
-   Once matvec is offloaded these are the remaining serial part; a solve that
-   ships the vector back and forth per operation will not scale.
+2. **Device-resident vectors — this is items 2 and 4 together, and doing
+   either alone is wrong.** `dot`/`axpy`/`norm` still run on the CPU, and the
+   plan used to list "put them on the GPU" as its own item. Measured, that
+   framing is wrong in both directions.
+
+   Timing `cgsolve`'s loop split between `apply()` and the five vector ops,
+   `fem(2)` Poisson, `emu-cocoa` with real Metal:
+
+   | backend | mesh | apply | vector ops | vector share |
+   |---|---|---|---|---|
+   | cpu f64 | 24³ | 50ms | 2ms | 3% |
+   | cpu f64 | 30³ | 110ms | 14ms | 11% |
+   | gpu f32 | 24³ | 15ms | 9ms | **36%** |
+   | gpu f32 | 30³ | 23ms | 16ms | **40%** |
+
+   So the item is real — offloading the matvec turned the vector ops from
+   background noise into 40% of the solve, textbook Amdahl, and they now cap
+   what any faster matvec can buy. But **offloading them one at a time would
+   make it slower, not faster**: each is O(n) arithmetic and a round trip is
+   O(n) transfer, so a `dot` that ships a vector to compute one scalar is pure
+   loss. The current `apply()` already pays that twice per iteration.
+
+   The only shape that wins is keeping the vectors *device-resident for the
+   whole solve*: upload `b` and `x0` once, run the CG recurrence against vector
+   handles, and bring back only the scalars the convergence test needs. That
+   subsumes old item 4 (keep the matrix resident) because it is the same
+   mechanism — handles that outlive a call — and it also removes the
+   per-matvec transfer, which is what `apply()`'s 23ms at 30³ mostly *is*:
+   800k nonzeros is about 1.6 MFLOP, trivial for the GPU, so 0.44ms per matvec
+   is overhead, not arithmetic.
+
+   Rough ceiling, so nobody expects too much: at 30³ the solve is 67ms against
+   the CPU's 128ms (1.9×). Making the vector ops free takes that to about 2.5×;
+   the rest needs the transfers gone too. `dot` also needs a real parallel
+   reduction kernel, which is the one genuinely new piece of Metal here.
+
+   Note this is measured for **CG only**. GMRES does far more vector work per
+   iteration (Arnoldi orthogonalisation is O(k) dots and axpys at restart
+   length k), so the fraction there should be higher — expected, not measured.
 3. **`amr(2)` and `pde(2)` on GPU.** Both are *stencil* sweeps, not SpMV, so
    they need a second Metal kernel — and no matrix upload at all, so the
    per-call overhead that dominates small SpMV problems mostly disappears.
@@ -165,8 +201,10 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    invariant for verification and nothing calls it. Note its coarse/fine
    prolongation is not flux-conservative, so measure the CPU drift first
    rather than blaming a port for it.
-4. **Keep the matrix resident across solves.** Today `apply()` re-uploads per
-   solve; UQ and convergence studies solve the same matrix repeatedly.
+4. *(folded into item 2 — the matrix and the vectors need the same
+   device-resident-handle mechanism, and the measurement there says the
+   vectors are the part that now matters.)* Today `apply()` also re-uploads the
+   matrix per solve, which UQ and convergence studies pay repeatedly.
 5. Possibly: f64 emulation or mixed-precision refinement, so `precision f64`
    can use the GPU instead of declining it.
 
