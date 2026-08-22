@@ -121,7 +121,7 @@ Reproducer committed: `appl/cmd/fdstresstest.b`, `man/1/fdstresstest`.
 timeout 30 ./MacOSX/arm64/bin/emu-g -c0 -r . /dis/fdstresstest.dis
 ```
 
-Hangs ~1/10 under `-c0`. **A hang is the failure** — no output, no exit. Any
+Hangs ~12% under `-c0` (18/150 measured).  **A hang is the failure** — no output, no exit. Any
 test sharing an `Fgrp` across processes hits it, which is why it gates the
 concurrency work.
 
@@ -156,6 +156,30 @@ calling `osready` on it. Every path that clears `vmq` (`release()`, `iyield()`)
 calls `osready` on what it popped, so either a pop lost its wakeup or the push
 itself was lost.
 
+**The push is what is lost, and it is lost in `vmq` specifically.** Measured by
+temporarily giving `Proc` a counter per blocking site and per waking site, then
+reading them off a hung process. One representative capture:
+
+```
+blocks   acquire 481   iyield+startup 119   Sleep 3   qlock 2
+readies  rel-vmq+iyield 480   rel-idlevmq 119   Wakeup 3   qunlock 2
+```
+
+Read that carefully, because it settles several things at once:
+
+- `acquire` blocked 481 times and was woken 480. **Deficit of exactly one, in
+  `vmq`.**
+- `idlevmq` balances exactly (119/119). The bug is not there.
+- `Sleep` (3/3) and `qlock` (2/2) balance exactly. **The shared-semaphore theory
+  is dead** — no other blocking point stole the token. It was never sent.
+- Since the wakeup was never sent and the proc is on no queue, the *push* was
+  lost, not the pop.
+
+The same capture recorded what `acquire()` saw at that push: `vmq` was a
+single-element list `[X]` and the proc linked itself onto `X`. `X` was later
+popped, but `vmq` did not then become `[stuck]` — so `X`'s link field stopped
+pointing at the stuck proc between the push and the pop.
+
 Already ruled out — do not re-check:
 - **Not a lost semaphore wakeup.** `osblock`/`osready` are a proper counting
   semaphore: `pthread_mutex` + `v++`/`while(v==0) cond_wait` + `v--`. An
@@ -173,25 +197,70 @@ Already ruled out — do not re-check:
 - `addrun`/`delrun` not taking `isched.l` is *by design* — only the slot holder
   touches the run queue.
 
-Live suspect, not yet confirmed: **`Proc.qnext` is shared** between the
-scheduler's `vmq`/`idlevmq` (`dis.c`) and `qlock`'s wait queue
-(`emu/port/lock.c:55`), and `osblock`/`osready` are likewise shared between
-`acquire`, `iyield`, `qlock` and `Sleep`. One semaphore serving four distinct
-blocking points means a token delivered for one can be consumed by another. No
-overlap has been demonstrated yet — find one before changing anything.
+- **Not `Proc.qnext` aliasing — this was tried and it failed.** `qnext` really
+  is shared between the scheduler's `vmq`/`idlevmq` (`dis.c`) and `qlock`'s wait
+  queue, and `qlock` (`emu/port/lock.c:58`) writes the *tail proc's* `qnext`,
+  not only its own — the one place in the tree that writes another proc's link.
+  That is a real aliasing hazard and it matches the symptom exactly, so it was
+  fixed: `Proc` got a separate `vmqnext` used only by `vmq`/`idlevmq`.
+  **It made no difference**, so the change was reverted rather than left in the
+  scheduler as unearned churn. Measured interleaved, same machine, same session,
+  alternating binaries run pair by pair so load hits both equally:
 
-**Next step is a scheduler event trace**, not more code reading: record
-push/pop/park/ready per `Proc` under the `isched.l` that is already held, and
-dump the ring at the hang. That says directly whether the pop happened.
+  ```
+  150 pairs, -c0:   baseline 18/150 hung     with vmqnext 23/150 hung
+  ```
 
-Not patched speculatively: at 1-in-10 a change cannot be falsified by running
-the test. Any candidate fix needs 50+ runs each side plus a negative control
-confirming the unpatched build still hangs in the same session — and `-c1` is
-the default `cflag`, so validate there too or say plainly that you did not.
+  Do not re-derive this. If you want the aliasing cleaned up on its own merits,
+  fine — but it is hygiene, not this bug.
 
-Reproducing on demand: `emu-g` in a loop, 15s per attempt, stop at the first
-survivor and attach. `sample <pid>` gives the threads; lldb gives `isched`.
-Kill leftovers **by pid** — another session may share this Mac.
+So: the push is lost from `vmq` while `isched.l` is held by both the pusher
+(`acquire`) and every popper (`release`, `iyield`). Either that mutual exclusion
+is not holding, or something outside those three touches the list. Both are
+worth checking directly, and neither has been.
+
+**Next step**, in order of cost:
+1. Re-run the per-site counters (they cost one `int` increment each and did *not*
+   make the hang go away — verified) and this time also record, at the lost
+   push, whether `isched.vmqt` was actually reachable from `isched.vmq`. That
+   distinguishes "linked onto a stale tail" from "linked correctly then unlinked".
+2. Audit every read/write of `isched.vmq`/`vmqt` for one not under `isched.l` —
+   note that `acquire()` deliberately manipulates `runhd`/`runtl` *unlocked*
+   after `osblock()`, and `tready()`/`execatidle()` read scheduler state
+   unlocked, so unlocked access to this struct is already normal here.
+3. Only then consider `lock()`/`_tas` themselves. `_tas` (`emu/MacOSX/asm-arm64.s`)
+   is a correct `ldaxr`/`stlxr` acquire loop, though it abandons the exclusive
+   monitor without `clrex` on the contended path; `unlock()` is `coherencefn()`
+   then a plain store.
+
+Do not patch speculatively: at ~12% a change cannot be falsified by a handful
+of runs. Any candidate needs the interleaved A/B above — 150 pairs, both
+binaries alternating in one session — and `-c1` as well, since that is the
+default `cflag`. The `vmqnext` attempt looked obviously right and was wrong.
+
+### Reproducing and instrumenting it
+
+A normal run takes 0.2s, so a hang is unambiguous. Loop `emu-g`, poll every
+0.25s, treat >10s as hung, and leave the first hung process **alive** to attach
+to (`kill` leftovers by pid — another session may share this Mac).
+
+`sample <pid>` gives threads; lldb gives the data. The debug-map warning about
+`main.o` is harmless, but it does mean globals defined in `emu/port/main.c`
+(such as `procs`) are not visible — reach procs through the `tramp(arg=...)`
+argument in each thread's backtrace instead.
+
+```
+lldb -p <pid> -b -o "p isched" -o "thread backtrace all"
+lldb -p <pid> -b -o "expr -- (void)osready((Proc*)0x...)" -o "detach"
+```
+
+Two traps worth knowing. `emu/MacOSX/mkfile` has an **empty `HFILES`**, so
+editing `emu/port/dat.h` does *not* trigger a rebuild — you can silently get a
+binary whose object files disagree about `struct Proc`'s layout. Alternating
+`CONF` forces a full recompile, which is why it worked here; do that
+deliberately. And lldb truncates a large struct print, so `p *(Proc*)0x...`
+will appear to be missing fields that are really there — print the fields
+individually, or check with `type lookup Proc`.
 
 ### 2. `Screen.newwindow()` returns nil after a resize
 
@@ -211,7 +280,26 @@ A real ordering bug *was* found next to it and fixed (`66acdf8c`): the GPU
 readback overwrote `gscreen` with the texture *after* the CPU fallback had drawn
 into it, discarding the fallback. Do not assume that was the reported symptom.
 
-### 4. Smaller, noted, unfixed
+### 4. `trapUSR1` takes a non-local exit from an async signal handler
+
+Found while chasing the hang above; **not** its cause (a hung process was caught
+with a counter showing zero SIGUSR1 deliveries in the whole run), but real.
+
+`trapUSR1` (`emu/MacOSX/os.c`) calls `disfault(nil, Eintr)` when a SIGUSR1
+arrives with no interrupt posted — a case its own comment calls "Should never
+happen". `disfault` with `Eintr` reaches `exits(0)`, which is plain libc
+`exit()`. Since the emu links with `-Wl,-alias,___wrap_free,_free`, **every
+`free` in the process is emu's pool allocator**, so `exit()`'s own cleanup
+re-enters `poolfree`. If the signal lands while that thread is already inside
+the allocator, `exit()` blocks on the pool lock the interrupted thread itself
+holds, and every other thread then spins in `lock()` forever.
+
+That is not hypothetical: a separate hang was captured in exactly that shape —
+the pool lock at `val == 1` with no owner running and seven threads spinning in
+`lock()` from `poolfree`/`dopoolalloc`. Whether that one was caused by this path
+was never established.
+
+### 5. Smaller, noted, unfixed
 
 - `metal_present_geom()` consumes `mtl_zclear` before creating its encoder and
   uses the encoder without a nil check — a failed encoder loses that frame's
