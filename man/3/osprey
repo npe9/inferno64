@@ -77,6 +77,16 @@ Bill cycles to the core and to the current task's container.
 .BI migrate " id core"
 Move a container to another core's run queue and release its task there.
 .TP
+.BI bindproc " id pid"
+.PD 0
+.TP
+.BI unbindproc " id"
+.PD
+Bill a running process to the container, or stop billing it.  From then
+on the clock charges the container for the cycles the core spends in that
+process, and the budget holds the process back.  A process that exits
+stops being billed on its own.
+.TP
 .BI netcharge " id bytes packets"
 .PD 0
 .TP
@@ -146,11 +156,17 @@ kernel does not resolve requests through it yet.
 .PP
 Each core has its own run queue, its own lock and its own clock.  On every
 tick the machine cycles since the last tick on that core are billed to the
-container the core is running.  A container that exhausts its CPU budget
+container of the process the core is running, if one is bound to it, and
+otherwise to the container the core's own run queue names.  A container that exhausts its CPU budget
 before its period is out leaves the run queue, so the containers behind it
 get their turn, and returns when its period refills.  The core then picks
 the earliest-deadline runnable task again.  Only the lock of the core
 being ticked is taken; moving a task between cores takes them all.
+.PP
+A process bound to a throttled container drops to the lowest fixed
+scheduling priority until the period refills.  A budget is therefore a
+reservation and not a hard stop: the process still runs when nothing
+within its budget wants the core.
 .PP
 Reading
 .B status
@@ -344,11 +360,11 @@ Servicing is driven by writes to
 .BR ctl ,
 and the dispatcher runs in the namespace of whichever process wrote
 .BR service .
-Scheduling is driven by the clock, but a container is not yet attached to
-a
-.IR Proc ,
-so exhausting a budget throttles the container's place in the Osprey run
-queue and not the process behind it.
+Scheduling is driven by the clock.  A container with no process bound to
+it is billed for whatever its core's run queue says it is running, which
+is a policy fiction until
+.B bindproc
+makes it a real one.
 .PP
 Network accounting has no packet path charging it yet; the caps and
 counters are there for the one the plan adds later.

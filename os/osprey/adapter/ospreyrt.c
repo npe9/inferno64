@@ -51,6 +51,7 @@ struct Ospreyproc {
 	int	saved;		/* snap holds a checkpoint */
 	Snap	snap;
 	uvlong	sequence;	/* request numbering, kept out of Task */
+	int	pid;		/* the process billed to this container, or 0 */
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
 	Name	name[Nname];
@@ -470,11 +471,32 @@ ospreycharge(ulong core, uvlong amount, uvlong now)
  * period has since refilled.  Then choose again.  Returns the number of
  * containers this tick threw off the queue.
  */
+void
+ospreysetpid(Ospreyproc *p, int pid)
+{
+	if(p != nil && p->used)
+		p->pid = pid;
+}
+
+/*
+ * A container is throttled when it has been attached to a core but is
+ * not on its run queue, which is where the tick puts it once its budget
+ * for the period is gone.
+ */
 int
-ospreytick(ulong core, uvlong amount, uvlong now)
+ospreythrottled(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return 0;
+	return p->process.state == ProcessRunnable && p->process.task.runnable == 0;
+}
+
+int
+ospreytick(ulong core, Ospreyproc *running, uvlong amount, uvlong now)
 {
 	Core *c;
 	Process *q;
+	Task *t;
 	ulong i;
 	int throttled;
 
@@ -486,8 +508,16 @@ ospreytick(ulong core, uvlong amount, uvlong now)
 
 	ospreylockcore(core);
 	runtime.now = now;
-	if(corecharge(c, amount, now) < 0 && c->current != nil){
-		coredequeue(c, c->current);
+	c->cycles += amount;
+	/*
+	 * Bill the container of the process the core is actually running,
+	 * when one is bound to it.  Without a process behind it a container
+	 * can only be billed for the core's own idea of what it is running.
+	 */
+	t = running != nil && running->used ? &running->process.task : c->current;
+	if(t != nil && t->container != nil
+	&& containercharge(t->container, amount, now) < 0){
+		coredequeue(c, t);
 		throttled++;
 	}
 	for(i = 0; i < Nproc; i++){
@@ -752,14 +782,15 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			" budget %llud used %llud period %llud deadline %llud"
 			" mem %lud of %lud net %lud of %lud"
 			" requests %llud replies %llud"
-			" slice %llud data %llud\n",
+			" slice %llud data %llud pid %d\n",
 			q->id, q->core, statename(q->state),
 			q->container.budget, q->container.used,
 			q->container.period, q->task.deadline,
 			q->container.memused, q->container.memory,
 			q->container.netbytes, q->container.netmax,
 			queuecount(q->requests), queuecount(q->replies),
-			procs[i].slice, ospreydataoffset(&procs[i]));
+			procs[i].slice, ospreydataoffset(&procs[i]),
+			procs[i].pid);
 		/* the container's private names, if it has bound any */
 		for(n = 0; n < q->ns.n; n++)
 			p = seprint(p, e, "name %llud %s %s\n", q->id,

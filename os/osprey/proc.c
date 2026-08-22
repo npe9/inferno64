@@ -1260,6 +1260,8 @@ pexit(char *exitstr, int freemem)
 	Segment *s;
 	int i;
 
+	up->osprey = nil;	/* stop billing an osprey container */
+
 
 	up->alarm = 0;
 	timerdel(up);

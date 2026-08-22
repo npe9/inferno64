@@ -88,6 +88,8 @@ enum {
 	CMmigrate,
 	CMnetcharge,
 	CMnetfree,
+	CMbindproc,
+	CMunbindproc,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -109,6 +111,8 @@ static Cmdtab ospreycmd[] = {
 	CMcheckpoint,	"checkpoint",	2,
 	CMrestore,	"restore",	2,
 	CMmigrate,	"migrate",	3,
+	CMbindproc,	"bindproc",	3,
+	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
 };
@@ -148,6 +152,7 @@ static uchar *ospreybase;		/* the shared arena */
 /* SG_PHYSICAL is a value of the SG_TYPE field, not a flag beside it */
 static Physseg ospreyseg = { SG_PHYSICAL, "osprey", 0, 0 };
 static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
+static Proc *ospreyprocs[16];		/* the process bound to each container */
 
 void
 queuebarrier(void)
@@ -164,7 +169,10 @@ queuebarrier(void)
 static void
 ospreyclock(int core)
 {
+	Ospreyproc *p;
+	Proc *q;
 	uvlong now, d;
+	int i;
 
 	if(ospreybase == nil || core < 0 || core >= nelem(ospreylastticks))
 		return;
@@ -173,7 +181,28 @@ ospreyclock(int core)
 	ospreylastticks[core] = now;
 	if(ospreyhz != 0 && d > ospreyhz)
 		d = ospreyhz;
-	ospreytick(core, d, now);
+
+	q = m->proc;
+	ospreytick(core, q != nil ? q->osprey : nil, d, now);
+
+	/*
+	 * Hold a throttled container's process back until its period
+	 * refills.  A budget is a reservation rather than a hard stop: the
+	 * process drops to the lowest fixed priority, so it runs only when
+	 * nothing within its budget wants the core.
+	 */
+	for(i = 0; i < nelem(ospreyprocs); i++){
+		if((q = ospreyprocs[i]) == nil || (p = q->osprey) == nil)
+			continue;
+		if(ospreythrottled(p)){
+			if(q->fixedpri == 0){
+				procpriority(q, 0, 1);
+				if(q == m->proc)
+					q->delaysched++;
+			}
+		} else if(q->fixedpri)
+			procpriority(q, PriNormal, 0);
+	}
 }
 
 static uvlong
@@ -333,6 +362,23 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 }
 
 /* drop every chan a container still holds */
+/* let go of the process a container was billing */
+static void
+ospreyputproc(Ospreyproc *p)
+{
+	Proc *q;
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
+		return;
+	if((q = ospreyprocs[x]) != nil){
+		if(q->fixedpri)
+			procpriority(q, PriNormal, 0);
+		q->osprey = nil;
+		ospreyprocs[x] = nil;
+	}
+}
+
 static void
 ospreyclosefds(Ospreyproc *p)
 {
@@ -513,6 +559,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	Cmdbuf *cb;
 	Cmdtab *ct;
 	Ospreyproc *p;
+	Proc *q;
 	char *nm;
 	uvlong arg[Ospreynarg];
 	int i, op, x;
@@ -533,8 +580,10 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	switch(ct->index){
 	case CMreset:
 		/* the chans first: cclose can sleep, and reset takes locks */
-		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
+		for(p = ospreynext(nil); p != nil; p = ospreynext(p)){
 			ospreyclosefds(p);
+			ospreyputproc(p);
+		}
 		ospreyreset();
 		ospreywakeup();
 		break;
@@ -562,6 +611,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		/* the chans first: cclose can sleep, and exit takes locks */
 		p = ospreyproc(cb->f[1]);
 		ospreyclosefds(p);
+		ospreyputproc(p);
 		if(ospreyexit(p) < 0)
 			error(Ebadarg);
 		ospreywakeup();
@@ -625,6 +675,43 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
 		ospreywakeup();
+		break;
+
+	case CMbindproc:
+		/*
+		 * Bill a running process to this container.  From here on the
+		 * clock charges the container for the cycles the core spends
+		 * in that process, and the budget holds it back.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
+			error(Ebadarg);
+		i = atoi(cb->f[2]);
+		for(op = 0; op < conf.nproc; op++){
+			q = proctab(op);
+			if(q->pid == i && q->state != Dead)
+				break;
+		}
+		if(op == conf.nproc)
+			error(Enonexist);
+		if(ospreyprocs[x] != nil && ospreyprocs[x] != q)
+			ospreyprocs[x]->osprey = nil;
+		ospreyprocs[x] = q;
+		q->osprey = p;
+		ospreysetpid(p, i);
+		break;
+
+	case CMunbindproc:
+		p = ospreyproc(cb->f[1]);
+		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
+			error(Ebadarg);
+		if((q = ospreyprocs[x]) != nil){
+			if(q->fixedpri)
+				procpriority(q, PriNormal, 0);
+			q->osprey = nil;
+			ospreyprocs[x] = nil;
+		}
+		ospreysetpid(p, 0);
 		break;
 
 	case CMmigrate:

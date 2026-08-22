@@ -781,6 +781,7 @@ struct Proc
 
 	int	nlocks;		/* number of locks held by proc */
 
+	void	*osprey;	/* the osprey container this process is billed to */
 	ulong	delaysched;
 	ulong	priority;	/* priority level */
 	ulong	basepri;	/* base priority level */
