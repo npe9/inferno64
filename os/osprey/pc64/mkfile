@@ -88,6 +88,7 @@ OBJ=\
 
 LIB=\
 	$TARGETLIB/libospreykern.a\
+	$TARGETLIB/libaml.a\
 	$TARGETLIB/libosprey.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libsec.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libmp.a\
@@ -99,6 +100,9 @@ $TARGETLIB/libospreykern.a:V:
 
 $TARGETLIB/libosprey.a:V:
 	{ cd $ROOT/os/osprey/lib; mk install; }
+
+$TARGETLIB/libaml.a:V:
+	{ cd $ROOT/os/osprey/libaml; mk install; }
 
 ETHER=`{cd $PCDIR; echo devether.c ether*.c | sed 's/\.c/.'$O'/g'}
 AUDIO=`{cd $PCDIR; echo devaudio.c audio*.c | sed 's/\.c/.'$O'/g'}

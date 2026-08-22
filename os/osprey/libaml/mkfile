@@ -1,0 +1,23 @@
+<../../../mkconfig
+
+# The ACPI interpreter, kept in the Osprey tree like the rest of the
+# kernel and compiled against the same headers, so that its objects and
+# the kernel's agree about the width of usize.
+SYSTARG=Osprey
+OBJTYPE=amd64
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+LIB=$ROOT/Osprey/$OBJTYPE/lib/libaml.a
+OFILES=\
+	aml.$O\
+
+all install:V: $OFILES $LIB
+
+$LIB: $OFILES
+	iar vu $target $prereq
+
+%.$O: %.c
+	$CC $CFLAGS $stem.c
+
+clean:V:
+	rm -f *.[$OS] $LIB

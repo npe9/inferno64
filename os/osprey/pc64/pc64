@@ -69,7 +69,13 @@ link
 misc
 	headless
 	pci		pcipc
+# archgeneric must come first: it is the fallback the others inherit
+# their unset entries from, and the one used when none of them identify.
+# acpi before mp: a machine with both describes itself more fully in its
+# ACPI tables, and firmware that boots us over UEFI leaves no MP table.
 	archgeneric	i8259 i8253
+	archacpi	mp apic squidboy ec
+	archmp		mp apic squidboy
 	mp		apic squidboy hpet
 	mtrr
 
