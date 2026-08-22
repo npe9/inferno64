@@ -909,6 +909,14 @@ struct PhysUart
 	void	(*power)(Uart*, int);
 	int	(*getc)(Uart*);	/* polling versions, for iprint, rdb */
 	void	(*putc)(Uart*, int);
+
+	/*
+	 * For a uart served by a task rather than in the handler: the
+	 * register-level work, and the switch that stops the device
+	 * interrupting until the task has done it.
+	 */
+	void	(*interrupt)(Uart*);
+	void	(*intrmask)(Uart*, int);
 };
 
 enum {

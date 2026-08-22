@@ -452,13 +452,10 @@ i8250kick(Uart* uart)
 }
 
 static void
-i8250interrupt(Ureg*, void* arg)
+i8250intr(Uart *uart)
 {
 	Ctlr *ctlr;
-	Uart *uart;
 	int iir, lsr, old, r;
-
-	uart = arg;
 
 	ctlr = uart->regs;
 	for(iir = csr8r(ctlr, Iir); !(iir & Ip); iir = csr8r(ctlr, Iir)){
@@ -517,6 +514,48 @@ i8250interrupt(Ureg*, void* arg)
 			break;
 		}
 	}
+}
+
+/*
+ * Turn this uart's interrupt output on or off.  A uart served by a task
+ * is masked by the handler and unmasked by the task once it has done the
+ * work, so that the device does not interrupt again in between.
+ */
+static void
+i8250intrmask(Uart *uart, int on)
+{
+	Ctlr *ctlr;
+
+	/*
+	 * Silence the hardware without touching sticky, which is the
+	 * driver's own account of what ought to be enabled and is kept up
+	 * to date by the handler this masking exists to defer.  Saving and
+	 * putting back the register instead would restore the transmit
+	 * interrupt that the handler had just turned off, and an enabled
+	 * transmit interrupt with an idle transmitter never stops.
+	 */
+	ctlr = uart->regs;
+	ilock(ctlr);
+	csr8w(ctlr, Ier, on ? ctlr->sticky[Ier] : 0);
+	iunlock(ctlr);
+}
+
+/*
+ * The registered handler.  If a task has claimed this uart, the
+ * interrupt does no more than hand it over: mask the source, give the
+ * task's semaphore, and let it do the work in the scheduler.
+ */
+static void
+i8250interrupt(Ureg*, void *arg)
+{
+	Uart *uart;
+
+	uart = arg;
+	if(ospreyuartintr != nil && ospreyuartintr(uart)){
+		i8250intrmask(uart, 0);
+		return;
+	}
+	i8250intr(uart);
 }
 
 static void
@@ -673,6 +712,8 @@ PhysUart i8250physuart = {
 	.dtr		= i8250dtr,
 	.status		= i8250status,
 	.fifo		= i8250fifo,
+	.interrupt	= i8250intr,
+	.intrmask	= i8250intrmask,
 	.getc		= i8250getc,
 	.putc		= i8250putc,
 };

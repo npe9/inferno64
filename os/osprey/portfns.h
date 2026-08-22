@@ -173,6 +173,8 @@ void		kproc(char*, void(*)(void*), void*);
 void		kprocchild(Proc*, void (*)(void));
 void		(*kproftimer)(uintptr);
 void		(*ospreytimer)(int);
+int		(*ospreyuartintr)(Uart*);
+Uart*		uartlookup(char*);
 void		ksetenv(char*, char*, int);
 void		kstrcpy(char*, char*, int);
 void		kstrdup(char**, char*);

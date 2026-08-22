@@ -31,6 +31,8 @@ def main():
 	ap.add_argument('-u', '--until', default=None)
 	ap.add_argument('-c', '--command', action='append', default=[])
 	ap.add_argument('-q', '--quiet', action='store_true')
+	ap.add_argument('-2', '--serial2', default=None,
+		help='a second serial port, e.g. unix:/tmp/com2,server,nowait')
 	a = ap.parse_args()
 
 	qemu = [
@@ -41,6 +43,8 @@ def main():
 		'-display', 'none', '-monitor', 'none', '-no-reboot',
 		'-serial', 'stdio',
 	]
+	if a.serial2:
+		qemu += ['-serial', a.serial2]
 	if a.disk:
 		qemu += [
 			'-drive', 'file=%s,format=qcow2,if=none,id=hd0' % a.disk,

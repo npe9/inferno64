@@ -36,6 +36,31 @@ static void	uartflow(void*);
 /*
  *  enable/disable uart and add/remove to list of enabled uarts
  */
+/*
+ * The uart called eiaN, or the one with that internal name.  Used by
+ * anything outside this file that must name a uart, such as a task that
+ * has been given one to serve.
+ */
+Uart*
+uartlookup(char *name)
+{
+	Uart *p;
+	int i;
+
+	if(name == nil || *name == '\0')
+		return nil;
+	if(strncmp(name, "eia", 3) == 0){
+		i = atoi(name+3);
+		if(uart != nil && i >= 0 && i < uartnuart)
+			return uart[i];
+		return nil;
+	}
+	for(p = uartlist; p != nil; p = p->next)
+		if(strcmp(p->name, name) == 0)
+			return p;
+	return nil;
+}
+
 static Uart*
 uartenable(Uart *p)
 {

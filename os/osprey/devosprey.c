@@ -95,6 +95,7 @@ enum {
 	CMsemup,
 	CMselect,
 	CMtick,
+	CMuart,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -122,6 +123,7 @@ static Cmdtab ospreycmd[] = {
 	CMsemup,	"semup",	3,
 	CMselect,	"select",	4,
 	CMtick,		"tick",		3,
+	CMuart,		"uart",		4,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -182,6 +184,9 @@ static int ospreyserving[16];		/* a service process is running for it */
 static Pgrp *ospreypgrp[16];		/* the namespace it is to run in */
 static int ospreystopped[16];		/* we stopped that container's process */
 static int ospreyticksem[16];		/* semaphore the clock gives, or -1 */
+static Uart *ospreyuart[16];		/* a uart this container serves */
+static int ospreyuartsem[16];		/* the semaphore its interrupt gives */
+static int ospreyuarting[16];		/* its driver task is running */
 
 void
 queuebarrier(void)
@@ -197,6 +202,105 @@ queuebarrier(void)
  */
 static void ospreywakeup(void);
 static void ospreyrelease(Proc*, int);
+static int ospreyarmready(void*);
+
+/*
+ * Called from a uart's interrupt handler.  Everything the handler does
+ * for a claimed uart is here: give the task's semaphore and wake it.  The
+ * handler masks the device and returns; the task does the work.
+ */
+static int
+ospreyuartgive(Uart *uart)
+{
+	Ospreyproc *p;
+	int i;
+
+	for(i = 0; i < nelem(ospreyuart); i++){
+		if(ospreyuart[i] != uart || ospreyuarting[i] == 0)
+			continue;
+		if((p = ospreyat(i)) == nil)
+			return 0;
+		ospreysemgive(p, ospreyuartsem[i]);
+		wakeup(&ospreyselrend[i]);
+		return 1;
+	}
+	return 0;
+}
+
+/*
+ * A uart served by a task, as the presentation has it.  The task waits
+ * on its container's request ring and on the semaphore the interrupt
+ * gives; when the interrupt is what fired it does the work the handler
+ * would have done and lets the device interrupt again.  It is a kernel
+ * task, so no trap is taken for the wait or for the work.
+ */
+static void
+ospreyuarttask(void *a)
+{
+	Ospreyproc *p = a;
+	Ospreyarm *arm;
+	Uart *uart;
+	int x, n;
+
+	if(waserror())
+		goto done;
+	for(;;){
+		if((x = ospreyindex(p)) < 0 || (uart = ospreyuart[x]) == nil)
+			break;
+
+		/*
+		 * The arms go in the container's data area, where a select
+		 * from anywhere else puts them: a control message on the
+		 * request ring, or the interrupt.  The presentation's uart
+		 * has a third arm for its output queue.
+		 */
+		if((arm = ospreydata(p, 0, 3*sizeof(Ospreyarm))) == nil)
+			break;
+		arm[0].op = OSget;
+		arm[0].obj = 0;			/* the request ring */
+		arm[0].buf = 3*sizeof(Ospreyarm);
+		arm[1].op = OSdown;
+		arm[1].obj = ospreyuartsem[x];	/* the interrupt */
+		arm[1].buf = 0;
+		arm[2].op = OSlast;
+		arm[2].obj = 0;
+		arm[2].buf = 0;
+
+		qlock(&ospreylock);
+		n = ospreyselect(p, 0, 3);
+		qunlock(&ospreylock);
+
+		if(n == 1){
+			(*uart->phys->interrupt)(uart);
+			(*uart->phys->intrmask)(uart, 1);
+			continue;
+		}
+		if(n == 0)
+			continue;	/* a control message; nothing reads it yet */
+		sleep(&ospreyselrend[x], ospreyarmready, p);
+	}
+	poperror();
+done:
+	if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyuarting)){
+		ospreyuarting[x] = 0;
+		if(ospreyuart[x] != nil)
+			(*ospreyuart[x]->phys->intrmask)(ospreyuart[x], 1);
+		ospreyuart[x] = nil;
+	}
+	pexit("osprey uart", 1);
+}
+
+/* the uart task waits for one of its arms, or for its uart to be taken */
+static int
+ospreyarmready(void *a)
+{
+	Ospreyproc *p = a;
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || ospreyuart[x] == nil)
+		return 1;
+	return ospreyselectready(p, 0, 3) >= 0;
+}
 
 /*
  * A select waits here.  The arms it offered stay in the shared span, so
@@ -450,6 +554,7 @@ ospreyinit(void)
 	fastticks(&ospreyhz);
 	for(i = 0; i < nelem(ospreyticksem); i++)
 		ospreyticksem[i] = -1;
+	ospreyuartintr = ospreyuartgive;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 }
@@ -782,6 +887,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	Cmdtab *ct;
 	Ospreyproc *p;
 	Proc *q;
+	Uart *ut;
 	Selwait sw;
 	char *nm;
 	uvlong arg[Ospreynarg];
@@ -904,6 +1010,47 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
 		ospreywakeup();
+		break;
+
+	case CMuart:
+		/*
+		 * Hand a uart to the container: from here its interrupt does
+		 * nothing but give the named semaphore, and a task of the
+		 * container's does the work.  The console's uart is refused;
+		 * losing it would take the machine with it.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyuart))
+			error(Ebadarg);
+		if(strcmp(cb->f[2], "off") == 0){
+			if(ospreyuart[x] != nil)
+				(*ospreyuart[x]->phys->intrmask)(ospreyuart[x], 1);
+			ospreyuart[x] = nil;
+			ospreyuarting[x] = 0;
+			wakeup(&ospreyselrend[x]);
+			break;
+		}
+		i = atoi(cb->f[3]);
+		if(i < 0 || (ulong)i >= ospreynsem())
+			error(Ebadarg);
+		if((ut = uartlookup(cb->f[2])) == nil)
+			error(Enonexist);
+		if(ut->console || ut->special)
+			error(Eperm);
+		if(ut->phys->interrupt == nil || ut->phys->intrmask == nil)
+			error(Ebadarg);
+		ospreyuart[x] = ut;
+		ospreyuartsem[x] = i;
+		if(ospreyuarting[x] == 0){
+			ospreyuarting[x] = 1;
+			if(waserror()){
+				ospreyuarting[x] = 0;
+				ospreyuart[x] = nil;
+				nexterror();
+			}
+			kproc("ospreyuart", ospreyuarttask, p);
+			poperror();
+		}
 		break;
 
 	case CMtick:

@@ -157,6 +157,18 @@ Give the container's
 semaphore.  This is what an interrupt does for the task that serves its
 device, and what one task does for another waiting on it.
 .TP
+.BI uart " id name " [ n | off ]
+Give the container the uart called
+.I name
+-- \fBeia1\fP, or the uart's own name -- to serve, with its interrupt
+giving the container's
+.IR n th
+semaphore.  From then on the interrupt does no more than that and masks
+the device, and a task of the container's does the work the handler would
+have done and lets the device interrupt again.  The task is a kernel
+task, so neither its wait nor its work takes a trap.  The console's uart
+is refused: losing it would take the machine with it.
+.TP
 .BI tick " id " [ n | off ]
 Have the clock interrupt give the container's
 .IR n th
@@ -488,9 +500,10 @@ A container carries one process.  Two processes billed to one container,
 were the device to allow it, could charge it from two cores at once and
 lose an update between them.
 .PP
-A driver task in the sense the plan means it -- an interrupt that gives a
-semaphore and a task that serves the device -- is only demonstrated, by
-the clock.  No driver in this kernel has been converted to it.
+The uart is the only driver served by a task.  Its task waits on the
+container's request ring and on the interrupt, where the presentation's
+has a third arm for its output queue; nothing reads the control messages
+that arrive on the first arm yet.
 .PP
 The whole span is mapped by any process that attaches it, so one
 container can read and write another's rings, and the kernel address in

@@ -38,41 +38,41 @@ Waiting on several things at once: message rings and semaphores, arms in
 the shared span, turned off in place.  An interrupt gives a semaphore and
 wakes the task waiting on it.
 .PP
+.B "A driver served by a task."
+A uart handed to a container: its interrupt gives a semaphore and masks
+the device, and a kernel task of the container's waits on that semaphore
+beside its request ring, does the register work, and lets the device
+interrupt again.
+.PP
 .B "Checkpoint."
 The serialisable part of a container: identity, core, state, accounting,
 ring indices, namespace.
 .NH 1
 Next, in order
 .PP
-.B "1.  A driver that is a task."
-The mechanism is demonstrated by the clock alone; no driver in the kernel
-has been converted to it.  The presentation's own example is a uart whose
-task waits on its message queue, on the semaphore its interrupt gives,
-and on its output queue, turning the last arm off when the fifo is full.
-.PP
-.B "2.  The packet path."
+.B "1.  The packet path."
 Packet descriptors carrying the driver's Block through a bounded queue
 that charges the owning container, so that the network accounting already
 in the policy layer has something charging it.  Then shared packet
 buffers in the span, so a packet crosses to a user-level service without
 being copied.
 .PP
-.B "3.  A service outside the kernel."
+.B "2.  A service outside the kernel."
 The request ABI as a library, so a process can be given a file system or
 a protocol stack to serve rather than the kernel serving it.  This is
 what the plan means by user-level services and what the presentation
 means by a library operating system.
 .PP
-.B "4.  \[*p]p."
+.B "3.  \[*p]p."
 A session that outlives the connection carrying it, transactions grouped
 into one round trip, string attributes in place of control files,
 immutable versions committed when a file is closed, and leases.
 .PP
-.B "5.  Restart and migration."
+.B "4.  Restart and migration."
 Writing a checkpoint out and reading it into a fresh container, then
 moving one between machines.
 .PP
-.B "6.  Page flipping."
+.B "5.  Page flipping."
 Handing a page between containers instead of copying its contents, for
 messages large enough to be worth it.
 .NH 1

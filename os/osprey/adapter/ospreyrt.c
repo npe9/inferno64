@@ -994,10 +994,12 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		/* the semaphores, and the container's private names */
 		p = seprint(p, e, "sem %llud", q->id);
 		ospreylocksem();
-		for(n = 0; n < Nsem; n++)
-			p = seprint(p, e, " %llud",
-				semcount((Sem*)((uchar*)procs[i].map
-					+ procs[i].map->sem) + n));
+		for(n = 0; n < Nsem; n++){
+			Sem *sm = (Sem*)((uchar*)procs[i].map
+				+ procs[i].map->sem) + n;
+			p = seprint(p, e, " %llud/%llud/%llud",
+				sm->count, sm->given, sm->taken);
+		}
 		ospreyunlocksem();
 		p = seprint(p, e, "\n");
 		for(n = 0; n < q->ns.n; n++)
