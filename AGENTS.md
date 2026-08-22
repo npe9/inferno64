@@ -15,6 +15,12 @@
   report the failure only as progress while continuing toward a working result.
 - Do not substitute a status explanation for implementation when the repository
   still contains a repairable failure.
+- This rule applies to the current message as well as future messages: after
+  documenting or committing a change, continue with the next repair step
+  without asking for permission.
+- After reporting a milestone, partial success, boot failure, or diagnostic
+  address, immediately continue debugging and fixing it; never ask whether to
+  continue after such an event.
 
 - Follow Inferno conventions and prefer its configuration files, device tables,
   runtime capability checks, and `waserror`/`poperror` mechanism.
