@@ -389,7 +389,9 @@ bootkern(void *f)
 
 	memconf(findconf("*e820=")?nil:&confend);
 	jumpentry = e;
-	jumpargs = BOOTARGS;
+	/* Osprey's entry records BX as the Multiboot pointer.  EFI has no
+	 * Multiboot structure; configuration remains available at CONFADDR. */
+	jumpargs = nil;
 	unload();
 
 	jump(e, BOOTARGS);

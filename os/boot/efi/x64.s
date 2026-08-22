@@ -51,7 +51,7 @@ TEXT jump(SB), 1, $-4
 	/* The Inferno compiler's call ABI is not the EFI ABI.  Use the values
 	 * staged by bootkern so the handoff survives the mode transition. */
 	MOVQ	jumpentry(SB), BP
-	MOVQ	jumpargs(SB), BX
+	XORQ	BX, BX
 	/* load zero length idt */
 	MOVL	$_idtptr64p<>(SB), AX
 	MOVL	(AX), IDTR

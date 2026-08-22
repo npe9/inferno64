@@ -18,6 +18,7 @@ BIN=$ROOT/Inferno/$OBJTYPE
 TARG=bootia32.efi bootx64.efi efiboot.fat
 HFILES=fns.h mem.h
 IMAGEBASE=0x8000
+LINKBASE=0x8200
 CFLAGS=-FTVw
 PEFLAGS=$CFLAGS '-DIMAGEBASE='$IMAGEBASE
 
@@ -51,7 +52,7 @@ sub.8:	sub.c
 
 
 bootx64.efi:	x64.6 efi.6 fs.6 pxe.6 iso.6 sub.6
-	6l -l -s -R1 -T$IMAGEBASE -o bootx64.out $prereq
+	6l -l -s -R1 -T$LINKBASE -o bootx64.out $prereq
 	$ROOT/tools/aout2efi bootx64.out $target
 
 pe64.6:	pe64.s
