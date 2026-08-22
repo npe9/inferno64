@@ -225,9 +225,6 @@ waitmain(uchar *base, Ospreymap *m, Queue *rq, Queue *pq, int argc, char **argv)
 	Sem *sem;
 	char buf[64], *e;
 	int fd, n, sn, na, i;
-	uvlong msgroom;
-
-	msgroom = sizeof(Message);
 
 	sn = argc > 4 ? (int)num(argv[4]) : 0;
 
@@ -239,8 +236,14 @@ waitmain(uchar *base, Ospreymap *m, Queue *rq, Queue *pq, int argc, char **argv)
 	 */
 	a = (Arm*)(base + m->data);
 	na = 0;
+	/*
+	 * Every arm names the same message buffer.  Only one arm is ever
+	 * performed, and a server that takes a request there and then puts
+	 * its answer from there keeps the container and sequence the
+	 * request carried, which is how the answer finds its way home.
+	 */
 	for(i = 5; i < argc && na < Narm-1; i++, na++){
-		a[na].buf = (uvlong)(Narm*sizeof(Arm)) + na*msgroom;
+		a[na].buf = (uvlong)(Narm*sizeof(Arm));
 		if(prefix(argv[i], "get:"))
 			a[na].op = OSget, a[na].obj = num(argv[i]+4);
 		else if(prefix(argv[i], "put:"))
@@ -255,11 +258,25 @@ waitmain(uchar *base, Ospreymap *m, Queue *rq, Queue *pq, int argc, char **argv)
 	if(na == 0){
 		a[0].op = OSget;  a[0].obj = 1;
 		a[0].buf = (uvlong)(Narm*sizeof(Arm));
-		a[1].op = OSdown; a[1].obj = sn; a[1].buf = 0;
+		a[1].op = OSdown; a[1].obj = sn;
+		a[1].buf = (uvlong)(Narm*sizeof(Arm));
 		na = 2;
 	}
 	a[na].op = OSlast; a[na].obj = 0; a[na].buf = 0;
 	na++;
+
+	/*
+	 * Answering is putting the message back with a status in it.  The
+	 * container and sequence it came with are still there, which is how
+	 * the kernel knows where to send it.
+	 */
+	for(i = 0; i < na; i++)
+		if(a[i].op == OSput){
+			Message *mp;
+
+			mp = (Message*)(base + m->data + Narm*sizeof(Arm));
+			mp->arg[0] = 1;		/* done */
+		}
 
 	outs("waiting on "); outd(na-1); outs(" arms\n"); flush();
 
@@ -293,6 +310,15 @@ waitmain(uchar *base, Ospreymap *m, Queue *rq, Queue *pq, int argc, char **argv)
 	if(n < 0)
 		die("select failed");
 
+	/* what the message buffer holds, for a server that took a request */
+	{
+		Message *mp = (Message*)(base + m->data + Narm*sizeof(Arm));
+
+		outs("message op "); outd(mp->op);
+		outs(" from "); outd(mp->container);
+		outs(" sequence "); outd(mp->sequence);
+		outs("\n");
+	}
 	outs("select returned, arm ");
 	if(m->selected == ~0ULL)
 		outs("none");

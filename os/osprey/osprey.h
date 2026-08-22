@@ -105,6 +105,8 @@ int		ospreysubmit(Ospreyproc*, uvlong op, uvlong *arg);
 int		ospreycollect(Ospreyproc*, uvlong *op, long *status, uvlong *arg);
 int		ospreyservice(uvlong now);
 int		ospreyservicep(Ospreyproc*, uvlong now);
+int		ospreydelegate(Ospreyproc*, Ospreyproc *server);
+int		ospreyroute(Ospreyproc *server);
 int		ospreyrequestready(Ospreyproc*);
 
 void		ospreysemgive(Ospreyproc*, ulong sem);

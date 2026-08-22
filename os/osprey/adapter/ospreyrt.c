@@ -59,6 +59,8 @@ struct Ospreyproc {
 	int	pid;		/* the process billed to this container, or 0 */
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
+	Ospreyproc *server;	/* answers what the kernel will not */
+	int	serving;	/* is that server for someone */
 	Pktq	pktq;		/* packets given to this container */
 	Pkt	pkt[Npkt];
 	Pkt	*pktp[Npkt];
@@ -70,6 +72,8 @@ static Core cores[Ncore];
 static Ospreyproc procs[Nproc];
 static Process *plist[Nproc];
 static int started;
+
+static int forward(Ospreyproc*, Request*);
 
 static uchar *arena;		/* the shared span, or nil until given one */
 static ulong arenasize;
@@ -442,6 +446,15 @@ ospreyexit(Ospreyproc *p)
 		return -1;
 	lockall();
 	runtimeexit(&runtime, &p->process);
+	if(p->server != nil){
+		p->server->serving--;
+		p->server = nil;
+	}
+	for(i = 0; i < Nproc; i++)
+		if(procs[i].used && procs[i].server == p){
+			procs[i].server = nil;
+			p->serving--;
+		}
 	for(i = 0; i < Nproc; i++)
 		if(plist[i] == &p->process)
 			plist[i] = nil;
@@ -723,25 +736,106 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 	/*
 	 * Everything else needs the kernel: file, process, IPC and network
 	 * requests are served by ospreykernop() in the device, which is the
-	 * only side of the adapter that may touch a Chan.
+	 * only side of the adapter that may touch a Chan.  What it will not
+	 * answer goes to the container's server, if it has one, and is
+	 * answered from outside the kernel altogether.
 	 */
 	rep->status = ospreykernop((Ospreyproc*)p, req->message.op,
 		&req->message.arg[2], &rep->message.arg[2]);
+	if(rep->status == ReplyError && forward((Ospreyproc*)p, req) == 0)
+		return 1;	/* answered elsewhere */
 	return 0;
 }
 
+/*
+ * Serve one request from whichever container has one.  A container that
+ * answers for others is passed over: what is on its ring is there for the
+ * process serving it, and the kernel answering it first would take the
+ * work away from exactly the service this exists to allow.
+ */
 int
 ospreyservice(uvlong now)
 {
+	int i;
+
 	ready();
 	runtime.now = now;
-	return runtimeservice(&runtime, dispatch, nil);
+	for(i = 0; i < Nproc; i++){
+		if(procs[i].used == 0 || procs[i].serving)
+			continue;
+		if(runtimeserve(&runtime, &procs[i].process, dispatch, nil) > 0)
+			return 1;
+	}
+	return 0;
+}
+
+/*
+ * Have another container answer the requests this one makes that the
+ * kernel does not implement.  The server is an ordinary process with the
+ * span mapped: the request appears on its own request ring, carrying the
+ * container and sequence it came from, and the answer it leaves on its
+ * reply ring is routed back to them.
+ */
+int
+ospreydelegate(Ospreyproc *p, Ospreyproc *server)
+{
+	if(p == nil || p->used == 0)
+		return -1;
+	if(server == p)
+		return -1;
+	if(p->server != nil)
+		p->server->serving--;
+	p->server = server;
+	if(server != nil)
+		server->serving++;
+	return 0;
+}
+
+/* move a request to the server's ring, keeping where it came from */
+static int
+forward(Ospreyproc *p, Request *req)
+{
+	Ospreyproc *s;
+	Message m;
+
+	if(p == nil || (s = p->server) == nil || s->used == 0)
+		return -1;
+	m = req->message;
+	m.container = p->process.id;
+	m.sequence = req->sequence;
+	if(queuefull(s->process.requests))
+		return -1;
+	return queueput(s->process.requests, &m);
+}
+
+/*
+ * Take what a server has answered and give it to whoever asked.  A
+ * container that serves others should not also be asking, since its
+ * reply ring is where its answers go.
+ */
+int
+ospreyroute(Ospreyproc *s)
+{
+	Ospreyproc *p;
+	Message m;
+	int n;
+
+	if(s == nil || s->used == 0)
+		return 0;
+	for(n = 0; queueget(s->process.replies, &m) == 0; n++){
+		if((p = ospreylookup(m.container)) == nil || p == s)
+			continue;
+		if(queuefull(p->process.replies))
+			continue;
+		queueput(p->process.replies, &m);
+	}
+	return n;
 }
 
 int
 ospreyservicep(Ospreyproc *p, uvlong now)
 {
-	if(p == nil || p->used == 0)
+	if(p == nil || p->used == 0 || p->serving)
 		return -1;
 	ready();
 	runtime.now = now;

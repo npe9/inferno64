@@ -131,6 +131,7 @@ runtimeserve(Runtime *r, Process *p, Handler handler, void *arg)
 {
 	Request req;
 	Reply rep;
+	int n;
 
 	if(r == nil || p == nil || handler == nil)
 		return -1;
@@ -140,7 +141,10 @@ runtimeserve(Runtime *r, Process *p, Handler handler, void *arg)
 	rep.sequence = req.sequence;
 	rep.status = ReplyPending;
 	rep.flags = 0;
-	if(handler(p, &req, &rep, arg) < 0)
+	n = handler(p, &req, &rep, arg);
+	if(n > 0)
+		return 1;	/* the handler will answer it elsewhere */
+	if(n < 0)
 		rep.status = ReplyError;
 	else if(rep.status == ReplyPending)
 		rep.status = ReplyDone;

@@ -157,6 +157,14 @@ Give the container's
 semaphore.  This is what an interrupt does for the task that serves its
 device, and what one task does for another waiting on it.
 .TP
+.BI delegate " id " [ server | off ]
+Have another container answer the requests this one makes that the kernel
+does not implement.  The request appears on the server's own request
+ring, carrying the container and the sequence it came from, and whatever
+the server leaves on its reply ring is routed back to them.  The server
+is an ordinary process with the span mapped: nothing of the service is in
+the kernel but the routing.
+.TP
 .BI ether " id name " [ n | off ]
 Give the container the ethernet interface called
 .I name
@@ -388,6 +396,21 @@ The message must be stored before the index that publishes it, and the
 index read before the message it refers to; the kernel side uses
 .IR coherence (10.2)
 for that, and a machine that reorders stores needs the same on this side.
+.SH SERVICES OUTSIDE THE KERNEL
+.PP
+An operation the kernel refuses is not the end of it.  A container with a
+server has the request put on that server's request ring instead of being
+answered, and the process serving it takes the request with a
+.B MSget
+arm and answers it with a
+.B MSput
+arm, naming the same message.  Answering is putting the message back with
+a status in it: the container and sequence it arrived with are still
+there, and are what the reply is routed by.
+.PP
+A container that serves others is passed over when requests are serviced,
+because what is on its ring is there for its process; and it should not
+also be asking, since its reply ring is where its answers go.
 .SH SELECT
 .PP
 A task waits on several things at once by offering an array of arms.  An

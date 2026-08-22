@@ -97,6 +97,7 @@ enum {
 	CMtick,
 	CMuart,
 	CMether,
+	CMdelegate,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -126,6 +127,7 @@ static Cmdtab ospreycmd[] = {
 	CMtick,		"tick",		3,
 	CMuart,		"uart",		4,
 	CMether,	"ether",	4,
+	CMdelegate,	"delegate",	3,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -402,6 +404,7 @@ ospreyserver(void *a)
 		}
 		while(ospreyservicep(p, fastticks(nil)) > 0)
 			;
+		ospreyroute(p);
 		poperror();
 		qunlock(&ospreylock);
 		ospreywakeup();
@@ -1070,7 +1073,25 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		while(i-- > 0)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
+		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
+			ospreyroute(p);
 		ospreywakeup();
+		break;
+
+	case CMdelegate:
+		/*
+		 * Have another container answer what the kernel will not.
+		 * The server is an ordinary process; nothing about this is
+		 * in the kernel but the routing.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if(strcmp(cb->f[2], "off") == 0){
+			if(ospreydelegate(p, nil) < 0)
+				error(Ebadarg);
+			break;
+		}
+		if(ospreydelegate(p, ospreyproc(cb->f[2])) < 0)
+			error(Ebadarg);
 		break;
 
 	case CMether:

@@ -51,6 +51,12 @@ a semaphore, without reaching the rest of the network stack.  Reading one
 copies it into the container's data area, because a driver's block is not
 in the shared span.
 .PP
+.B "A service outside the kernel."
+A container may name another as its server.  Requests the kernel does not
+implement are put on the server's ring with the container and sequence
+they came from, an ordinary process takes them and answers them through
+the same rings and the same select, and the answer is routed home.
+.PP
 .B "Checkpoint."
 The serialisable part of a container: identity, core, state, accounting,
 ring indices, namespace.
@@ -62,22 +68,16 @@ Packet buffers in the shared span, so that a packet crosses to a
 user-level service without being copied at all.  The queue and the
 accounting are done; what remains is where the bytes live.
 .PP
-.B "2.  A service outside the kernel."
-The request ABI as a library, so a process can be given a file system or
-a protocol stack to serve rather than the kernel serving it.  This is
-what the plan means by user-level services and what the presentation
-means by a library operating system.
-.PP
-.B "3.  \[*p]p."
+.B "2.  \[*p]p."
 A session that outlives the connection carrying it, transactions grouped
 into one round trip, string attributes in place of control files,
 immutable versions committed when a file is closed, and leases.
 .PP
-.B "4.  Restart and migration."
+.B "3.  Restart and migration."
 Writing a checkpoint out and reading it into a fresh container, then
 moving one between machines.
 .PP
-.B "5.  Page flipping."
+.B "4.  Page flipping."
 Handing a page between containers instead of copying its contents, for
 messages large enough to be worth it.
 .NH 1
