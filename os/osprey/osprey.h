@@ -43,6 +43,7 @@ uvlong		ospreyarenasize(void);
 uvlong		ospreyslice(Ospreyproc*);
 int		ospreyindex(Ospreyproc*);
 int		ospreynproc(void);
+int		ospreyncore(void);
 void*		ospreydata(Ospreyproc*, uvlong off, ulong len);
 uvlong		ospreydataoffset(Ospreyproc*);
 uvlong		ospreydatalen(Ospreyproc*);
@@ -61,8 +62,12 @@ int		ospreydetach(Ospreyproc*);
 int		ospreyexit(Ospreyproc*);
 int		ospreybalance(uvlong now);
 uvlong		ospreyschedule(ulong core, uvlong now);
+int		ospreytick(ulong core, uvlong amount, uvlong now);
+int		ospreymigrate(Ospreyproc*, ulong core, uvlong now);
 int		ospreycharge(ulong core, uvlong amount, uvlong now);
 int		ospreylimit(Ospreyproc*, ulong memory, ulong netbytes, ulong netpackets);
+int		ospreynetcharge(Ospreyproc*, ulong bytes, ulong packets);
+void		ospreynetrelease(Ospreyproc*, ulong bytes, ulong packets);
 
 int		ospreysubmit(Ospreyproc*, uvlong op, uvlong *arg);
 int		ospreycollect(Ospreyproc*, uvlong *op, long *status, uvlong *arg);
@@ -73,6 +78,14 @@ int		ospreyrestore(Ospreyproc*);
 
 int		ospreybind(Ospreyproc*, char *local, char *global);
 int		ospreyunbind(Ospreyproc*, char *local);
+
+/*
+ * Supplied by the device.  One lock per core: the clock path takes only
+ * the lock of the core it ticks, which is what keeps one container's
+ * scheduling out of another core's way.
+ */
+void		ospreylockcore(ulong core);
+void		ospreyunlockcore(ulong core);
 
 /*
  * Served by the device: the operations that need a Chan.  arg and result

@@ -26,6 +26,7 @@ def main():
 	ap.add_argument('-t', '--timeout', type=float, default=120.0)
 	ap.add_argument('-l', '--log', default=os.path.join(ROOT, '.qemu/console.log'))
 	ap.add_argument('-m', '--memory', default='1024')
+	ap.add_argument('-p', '--cpus', default='1')
 	ap.add_argument('-e', '--expect', action='append', default=[])
 	ap.add_argument('-u', '--until', default=None)
 	ap.add_argument('-c', '--command', action='append', default=[])
@@ -33,7 +34,7 @@ def main():
 	a = ap.parse_args()
 
 	qemu = [
-		'qemu-system-x86_64', '-machine', 'q35', '-m', a.memory,
+		'qemu-system-x86_64', '-machine', 'q35', '-m', a.memory, '-smp', a.cpus,
 		'-drive', 'if=pflash,format=raw,unit=0,readonly=on,file=%s/.qemu/edk2-code.fd' % ROOT,
 		'-drive', 'if=pflash,format=raw,unit=1,file=%s/.qemu/edk2-vars-run.fd' % ROOT,
 		'-cdrom', a.iso,

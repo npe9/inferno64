@@ -68,11 +68,24 @@ Remove the task and free the container.
 .TP
 .BI schedule " core"
 Make the earliest-deadline runnable task on the core the core's current
-task.  The task is not removed from the run queue.
+task.  The task is not removed from the run queue.  The clock does this
+on its own; the command is for driving the scheduler by hand.
 .TP
 .BI charge " core cycles"
-Bill cycles to the core and to the current task's container.  A container
-whose budget is exhausted before its period elapses stops being runnable.
+Bill cycles to the core and to the current task's container.
+.TP
+.BI migrate " id core"
+Move a container to another core's run queue and release its task there.
+.TP
+.BI netcharge " id bytes packets"
+.PD 0
+.TP
+.BI netfree " id bytes packets"
+.PD
+Charge or release the container's network byte and packet accounting
+against the caps
+.B limit
+set.
 .TP
 .BI balance " "
 Move one task from the busiest core to the least busy, if they differ by
@@ -126,6 +139,15 @@ Add a private name to the container's namespace.
 .TP
 .BI unbind " id local"
 Remove one.
+.SH SCHEDULING
+.PP
+Each core has its own run queue, its own lock and its own clock.  On every
+tick the machine cycles since the last tick on that core are billed to the
+container the core is running.  A container that exhausts its CPU budget
+before its period is out leaves the run queue, so the containers behind it
+get their turn, and returns when its period refills.  The core then picks
+the earliest-deadline runnable task again.  Only the lock of the core
+being ticked is taken; moving a task between cores takes them all.
 .PP
 Reading
 .B status
@@ -317,11 +339,16 @@ services described in the Osprey plan.
 .PP
 Servicing is driven by writes to
 .BR ctl ,
-not by the kernel's own clock or trap paths, and the dispatcher runs in
-the namespace of whichever process wrote
+and the dispatcher runs in the namespace of whichever process wrote
 .BR service .
-A container is not yet attached to a
-.IR Proc .
+Scheduling is driven by the clock, but a container is not yet attached to
+a
+.IR Proc ,
+so exhausting a budget throttles the container's place in the Osprey run
+queue and not the process behind it.
+.PP
+Network accounting has no packet path charging it yet; the caps and
+counters are there for the one the plan adds later.
 .PP
 The whole span is mapped by any process that attaches it, so one
 container can read and write another's rings, and the kernel address in

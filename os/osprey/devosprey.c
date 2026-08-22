@@ -85,6 +85,9 @@ enum {
 	CMpoke,
 	CMcheckpoint,
 	CMrestore,
+	CMmigrate,
+	CMnetcharge,
+	CMnetfree,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -105,6 +108,9 @@ static Cmdtab ospreycmd[] = {
 	CMpoke,		"poke",		4,
 	CMcheckpoint,	"checkpoint",	2,
 	CMrestore,	"restore",	2,
+	CMmigrate,	"migrate",	3,
+	CMnetcharge,	"netcharge",	4,
+	CMnetfree,	"netfree",	4,
 };
 
 static QLock ospreylock;
@@ -115,6 +121,29 @@ static QLock ospreylock;
  */
 static Rendez ospreyroomrend[16];
 static Rendez ospreyreplyrend[16];
+
+/*
+ * One lock per core.  The clock path takes only the lock of the core it
+ * ticks; the adapter takes them all, in index order, when it moves a task
+ * between cores.  They are ilocks because hzclock() runs with no process.
+ */
+static Lock ospreycorelock[8];
+static uvlong ospreylastticks[8];
+static uvlong ospreyhz;			/* machine cycles a second */
+
+void
+ospreylockcore(ulong core)
+{
+	if(core < nelem(ospreycorelock))
+		ilock(&ospreycorelock[core]);
+}
+
+void
+ospreyunlockcore(ulong core)
+{
+	if(core < nelem(ospreycorelock))
+		iunlock(&ospreycorelock[core]);
+}
 static uchar *ospreybase;		/* the shared arena */
 /* SG_PHYSICAL is a value of the SG_TYPE field, not a flag beside it */
 static Physseg ospreyseg = { SG_PHYSICAL, "osprey", 0, 0 };
@@ -126,7 +155,26 @@ queuebarrier(void)
 	coherence();
 }
 
-static uvlong ospreyhz;
+/*
+ * One tick of this core's clock, from hzclock().  The elapsed machine
+ * cycles are billed to whatever container the core is running; a gap
+ * longer than a second is clamped, so a core that was idle in the monitor
+ * does not throw everything off its queue at once.
+ */
+static void
+ospreyclock(int core)
+{
+	uvlong now, d;
+
+	if(ospreybase == nil || core < 0 || core >= nelem(ospreylastticks))
+		return;
+	now = fastticks(nil);
+	d = now - ospreylastticks[core];
+	ospreylastticks[core] = now;
+	if(ospreyhz != 0 && d > ospreyhz)
+		d = ospreyhz;
+	ospreytick(core, d, now);
+}
 
 static uvlong
 ospreynow(void)
@@ -185,6 +233,15 @@ ospreyinit(void)
 	ospreyseg.size = size;
 	/* published once; a second driver reset keeps the same span */
 	addphysseg(&ospreyseg);
+
+	if(ospreyncore() > nelem(ospreycorelock)){
+		print("osprey: %d cores but %d locks\n",
+			ospreyncore(), (int)nelem(ospreycorelock));
+		return;
+	}
+	fastticks(&ospreyhz);
+	ospreyreset();		/* so no tick can find it uninitialised */
+	ospreytimer = ospreyclock;
 }
 
 /*
@@ -475,6 +532,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	ct = lookupcmd(cb, ospreycmd, nelem(ospreycmd));
 	switch(ct->index){
 	case CMreset:
+		/* the chans first: cclose can sleep, and reset takes locks */
 		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
 			ospreyclosefds(p);
 		ospreyreset();
@@ -501,6 +559,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMexit:
+		/* the chans first: cclose can sleep, and exit takes locks */
 		p = ospreyproc(cb->f[1]);
 		ospreyclosefds(p);
 		if(ospreyexit(p) < 0)
@@ -566,6 +625,25 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
 		ospreywakeup();
+		break;
+
+	case CMmigrate:
+		p = ospreyproc(cb->f[1]);
+		if(ospreymigrate(p, strtoul(cb->f[2], nil, 0), ospreynow()) < 0)
+			error(Ebadarg);
+		break;
+
+	case CMnetcharge:
+		p = ospreyproc(cb->f[1]);
+		if(ospreynetcharge(p, strtoul(cb->f[2], nil, 0),
+			strtoul(cb->f[3], nil, 0)) < 0)
+			error(Enomem);
+		break;
+
+	case CMnetfree:
+		p = ospreyproc(cb->f[1]);
+		ospreynetrelease(p, strtoul(cb->f[2], nil, 0),
+			strtoul(cb->f[3], nil, 0));
 		break;
 
 	case CMcheckpoint:

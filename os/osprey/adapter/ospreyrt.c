@@ -9,8 +9,16 @@
  * first, and the port directory has its own edf.h, lib.h and queue.h.
  *
  * Storage is static: the policy layer is written to be given its arrays
- * rather than to allocate them, and the kernel side serialises every
- * entry point.
+ * rather than to allocate them.
+ *
+ * Locking.  The device supplies one lock per core.  A function that ticks,
+ * schedules or bills one core takes that core's lock; a function that
+ * moves a task between cores, or that creates or destroys a container,
+ * takes every core's lock in index order.  Everything else -- the rings,
+ * the namespace, the resource caps, the snapshot -- is left to the caller,
+ * which serialises the device's own file operations.  No locking function
+ * here calls another, and ready() runs before any lock is taken, so the
+ * first-use reset cannot deadlock against a lock it would take itself.
  */
 /* the policy headers guard their own <u.h> with this */
 #define OSPREY_U_INCLUDED
@@ -107,6 +115,30 @@ ospreyopname(uvlong op)
  * and it carves a fixed slice out of it for each container.
  */
 static void
+lockall(void)
+{
+	ulong i;
+
+	for(i = 0; i < Ncore; i++)
+		ospreylockcore(i);
+}
+
+static void
+unlockall(void)
+{
+	ulong i;
+
+	for(i = Ncore; i-- > 0; )
+		ospreyunlockcore(i);
+}
+
+int
+ospreyncore(void)
+{
+	return Ncore;
+}
+
+static void
 sizes(void)
 {
 	if(slicesize != 0)
@@ -200,6 +232,8 @@ ospreyreset(void)
 {
 	ulong i;
 
+	if(started)
+		lockall();
 	memset(procs, 0, sizeof procs);
 	memset(cores, 0, sizeof cores);
 	memset(plist, 0, sizeof plist);
@@ -208,6 +242,8 @@ ospreyreset(void)
 	runtimeinit(&runtime, cores, Ncore, plist, Nproc);
 	if(arena != nil)
 		memset(arena, 0, slicesize * Nproc);
+	if(started)
+		unlockall();
 	started = 1;
 }
 
@@ -298,15 +334,19 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	pq = (Queue*)(base + m->replyqueue);
 	rm = (Message*)(base + m->request);
 	pm = (Message*)(base + m->reply);
+	lockall();
 	if(processinit(&p->process, id, budget, period, deadline,
-		rq, pq, rm, pm, Nqueue, p->name, Nname) < 0)
+		rq, pq, rm, pm, Nqueue, p->name, Nname) < 0){
+		unlockall();
 		return nil;
+	}
 	p->used = 1;
 	for(i = 0; i < Nproc; i++)
 		if(plist[i] == nil){
 			plist[i] = &p->process;
 			break;
 		}
+	unlockall();
 	return p;
 }
 
@@ -329,18 +369,39 @@ ospreyreplyready(Ospreyproc *p)
 int
 ospreyattach(Ospreyproc *p, ulong core, uvlong now)
 {
+	int r;
+
 	if(p == nil || p->used == 0)
 		return -1;
+	lockall();
 	runtime.now = now;
-	return runtimeattach(&runtime, &p->process, core);
+	r = runtimeattach(&runtime, &p->process, core);
+	unlockall();
+	return r;
+}
+
+/*
+ * Controlled migration: the same operation as attach, named separately
+ * because moving a running container between cores is a policy decision
+ * and balance() makes it on its own.
+ */
+int
+ospreymigrate(Ospreyproc *p, ulong core, uvlong now)
+{
+	return ospreyattach(p, core, now);
 }
 
 int
 ospreydetach(Ospreyproc *p)
 {
+	int r;
+
 	if(p == nil || p->used == 0)
 		return -1;
-	return runtimedetach(&runtime, &p->process);
+	lockall();
+	r = runtimedetach(&runtime, &p->process);
+	unlockall();
+	return r;
 }
 
 int
@@ -350,6 +411,7 @@ ospreyexit(Ospreyproc *p)
 
 	if(p == nil || p->used == 0)
 		return -1;
+	lockall();
 	runtimeexit(&runtime, &p->process);
 	for(i = 0; i < Nproc; i++)
 		if(plist[i] == &p->process)
@@ -358,6 +420,7 @@ ospreyexit(Ospreyproc *p)
 		memset(p->map, 0, slicesize);
 	p->used = 0;
 	p->map = nil;
+	unlockall();
 	return 0;
 }
 
@@ -383,17 +446,71 @@ taskid(Task *t)
 uvlong
 ospreyschedule(ulong core, uvlong now)
 {
+	uvlong id;
+
 	ready();
-	return taskid(runtimenext(&runtime, core, now));
+	if(core >= Ncore)
+		return 0;
+	ospreylockcore(core);
+	id = taskid(runtimenext(&runtime, core, now));
+	ospreyunlockcore(core);
+	return id;
 }
 
 int
 ospreycharge(ulong core, uvlong amount, uvlong now)
 {
+	int r;
+
 	ready();
 	if(core >= Ncore)
 		return -1;
-	return corecharge(&cores[core], amount, now);
+	ospreylockcore(core);
+	r = corecharge(&cores[core], amount, now);
+	ospreyunlockcore(core);
+	return r;
+}
+
+/*
+ * One tick of a core's clock.  Bill the running container; if that
+ * exhausts its budget before its period is out, take it off the run queue
+ * so the cores below it get their turn, and put back anything whose
+ * period has since refilled.  Then choose again.  Returns the number of
+ * containers this tick threw off the queue.
+ */
+int
+ospreytick(ulong core, uvlong amount, uvlong now)
+{
+	Core *c;
+	Process *q;
+	ulong i;
+	int throttled;
+
+	ready();
+	if(core >= Ncore)
+		return -1;
+	c = &cores[core];
+	throttled = 0;
+
+	ospreylockcore(core);
+	runtime.now = now;
+	if(corecharge(c, amount, now) < 0 && c->current != nil){
+		coredequeue(c, c->current);
+		throttled++;
+	}
+	for(i = 0; i < Nproc; i++){
+		q = plist[i];
+		if(q == nil || q->core != core || q->state != ProcessRunnable)
+			continue;
+		if(q->task.runnable)
+			continue;
+		containerrefill(&q->container, now);
+		if(budgetok(&q->task, amount))
+			coreenqueue(c, &q->task, now);
+	}
+	corenext(c);
+	ospreyunlockcore(core);
+	return throttled;
 }
 
 /*
@@ -411,11 +528,37 @@ ospreylimit(Ospreyproc *p, ulong memory, ulong netbytes, ulong netpackets)
 	return 0;
 }
 
+/*
+ * Bounded network accounting.  Nothing charges these yet from a packet
+ * path; the caps and the counters are here so that the path added later
+ * has something to charge.
+ */
+int
+ospreynetcharge(Ospreyproc *p, ulong bytes, ulong packets)
+{
+	if(p == nil || p->used == 0)
+		return -1;
+	return netcharge(&p->process.container, bytes, packets);
+}
+
+void
+ospreynetrelease(Ospreyproc *p, ulong bytes, ulong packets)
+{
+	if(p == nil || p->used == 0)
+		return;
+	netrelease(&p->process.container, bytes, packets);
+}
+
 int
 ospreybalance(uvlong now)
 {
+	int r;
+
 	ready();
-	return runtimebalance(&runtime, now);
+	lockall();
+	r = runtimebalance(&runtime, now);
+	unlockall();
+	return r;
 }
 
 int
@@ -589,16 +732,24 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		now, hz, (ulong)Ncore, (ulong)Nproc,
 		slicesize*Nproc, slicesize, (ulong)Ndata);
 	for(i = 0; i < Ncore; i++){
+		/*
+		 * The run queue is a list the clock is free to change on
+		 * another core, so walk it under that core's lock.
+		 */
+		ospreylockcore(i);
 		for(n = 0, t = cores[i].runq; t != nil; t = t->next)
 			n++;
-		if(n == 0 && cores[i].cycles == 0)
+		if(n == 0 && cores[i].cycles == 0){
+			ospreyunlockcore(i);
 			continue;
+		}
 		p = seprint(p, e, "core %lud runq %lud cycles %llud switches %llud"
 			" current %llud order",
 			i, n, cores[i].cycles, cores[i].contextswitches,
 			taskid(cores[i].current));
 		for(t = cores[i].runq; t != nil; t = t->next)
 			p = seprint(p, e, " %llud", taskid(t));
+		ospreyunlockcore(i);
 		p = seprint(p, e, "\n");
 	}
 	for(i = 0; i < Nproc; i++){

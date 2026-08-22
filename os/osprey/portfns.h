@@ -172,6 +172,7 @@ void		killproc(Proc*,int);
 void		kproc(char*, void(*)(void*), void*);
 void		kprocchild(Proc*, void (*)(void));
 void		(*kproftimer)(uintptr);
+void		(*ospreytimer)(int);
 void		ksetenv(char*, char*, int);
 void		kstrcpy(char*, char*, int);
 void		kstrdup(char**, char*);

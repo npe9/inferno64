@@ -169,6 +169,10 @@ hzclock(Ureg *ur)
 	if(m->machno == 0)
 		checkalarms();
 
+	/* the osprey per-core scheduler, when the device is configured */
+	if(ospreytimer != nil)
+		ospreytimer(m->machno);
+
 	if(up && up->state == Running){
 		if(userureg(ur)){
 			/* user profiling clock */
