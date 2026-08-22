@@ -2,7 +2,7 @@
 
 typedef uintptr Syscall(va_list);
 
-Syscall syssysr1;
+Syscall sysr1;
 Syscall sys_errstr;
 Syscall sysbind;
 Syscall syschdir;

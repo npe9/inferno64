@@ -9,7 +9,18 @@ typedef uintptr Syscall(va_list);
 
 !
 
-awk '/^#define[ 	]+[A-Z0-9_]+/ {n=$2; if(n=="SYSR1") n="SYSR1"; print "SYS" n}' $file |
+# The name of the implementation of a syscall is its sys.h name in lower case
+# with a sys prefix, except SYSR1, whose implementation is sysr1 rather
+# than syssysr1.  Written with awk rather than sed: the original used the
+# Plan 9 regexp dialect, in which parentheses group without a backslash,
+# and produced nothing at all on a hosted build machine.
+awk '/^#define[ \t]+[A-Z0-9_]+/ {
+	n = $2;
+	if(n == "SYSR1")
+		print n;
+	else
+		print "SYS" n;
+}' $file |
 	tr A-Z a-z |
 	awk '{print "Syscall " $0 ";"}'
 

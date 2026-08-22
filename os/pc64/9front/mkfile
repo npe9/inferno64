@@ -87,9 +87,11 @@ LIB=\
 	$ROOT/Inferno/$OBJTYPE/lib/libfis.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libkern.a\
 
+# FLAVOR is 9front here, so os/9front/lib installs the library straight
+# into $TARGETLIB and there is nothing to copy.  The other flavors keep
+# their libraries under their own target directory and do copy it.
 $TARGETLIB/lib9front.a:V:
 	{ cd $PORTLIB; mk install; }
-	cp $ROOT/9front/$OBJTYPE/lib/lib9front.a $target
 
 ETHER=`{cd $PCDIR; echo devether.c ether*.c | sed 's/\.c/.'$O'/g'}
 AUDIO=`{cd $PCDIR; echo devaudio.c audio*.c | sed 's/\.c/.'$O'/g'}
