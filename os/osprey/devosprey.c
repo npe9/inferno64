@@ -271,8 +271,18 @@ ospreyclock(int core)
 	 * Only processes stopped here are started again here.
 	 */
 	for(i = 0; i < nelem(ospreyprocs); i++){
-		if((q = ospreyprocs[i]) == nil || (p = q->osprey) == nil)
+		if((q = ospreyprocs[i]) == nil)
 			continue;
+		if((p = q->osprey) == nil){
+			/*
+			 * pexit cleared it, so the process is gone and its
+			 * Proc will be handed to another pid.  Let go of it
+			 * here rather than leave a stale stop behind.
+			 */
+			ospreystopped[i] = 0;
+			ospreyprocs[i] = nil;
+			continue;
+		}
 		/* the container's own core decides, so the cores do not fight */
 		if(ospreycoreof(p) != (ulong)core)
 			continue;
@@ -458,17 +468,27 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 static void
 ospreyrelease(Proc *q, int x)
 {
+	int s;
+
 	if(x < 0 || x >= nelem(ospreystopped))
 		return;
 	ospreystopped[x] = 0;
 	if(q == nil)
 		return;
+	/*
+	 * splhi so the tick on this core cannot be part way through the
+	 * same decision.  A tick on another core can still be, but it
+	 * checks the state too, and the worst of losing that race is the
+	 * diagnostic ready() prints for a process already queued.
+	 */
+	s = splhi();
 	if(q->procctl == Proc_stopme)
 		q->procctl = 0;
 	if(q->state == Stopped){
 		q->procctl = 0;
 		ready(q);
 	}
+	splx(s);
 }
 
 /* let go of a container's service process */
