@@ -22,6 +22,7 @@ include "draw.m";
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
 Jpg:	con "/lib/ebooks/oebtest/DrBill.jpg";
+Mov:	con "/lib/movies/test.mov";
 # 65 wide on purpose: 65*4 = 260 bytes per row, which is NOT the aligned
 # stride Metal wants, so a texture-backed image has a different width from the
 # natural one. That is exactly the case where getting Memimage.width or .zero
@@ -186,7 +187,49 @@ init(nil: ref Draw->Context, nil: list of string)
 		print("  decoded %s into a %dx%d image: %d non-zero bytes, %d distinct values\n",
 			Jpg, W, H, nz, distinct);
 
+	movie(data, video);
+
 	if(fail)
 		raise "fail:test";
 	print("PASS\n");
+}
+
+# The test movie is flat colour per frame: frame i is rgb(20+20i, 128,
+# 220-20i). Flat blocks, so even lossy H.264 lands within a few counts of the
+# intended value - which is what lets this assert a colour rather than merely
+# "something was written".
+movie(data, video: ref Sys->FD)
+{
+	for(f := 0; f < 3; f++){
+		cmd := array of byte sprint("frame %d %d %s", Id, f, Mov);
+		if(sys->write(video, cmd, len cmd) != len cmd){
+			bad(sprint("frame %d: %r", f));
+			return;
+		}
+		(px, e) := readpixels(data, Id);
+		if(e != nil){
+			bad(e);
+			return;
+		}
+		# x8r8g8b8 is b,g,r,x in memory order; sample the middle pixel.
+		o := ((H/2)*W + W/2) * 4;
+		b := int px[o];
+		g := int px[o+1];
+		r := int px[o+2];
+		wr := 20 + f*20;
+		wb := 220 - f*20;
+		if(abs(r-wr) > 12 || abs(g-128) > 12 || abs(b-wb) > 12)
+			bad(sprint("frame %d: got rgb(%d,%d,%d) want about rgb(%d,128,%d)",
+				f, r, g, b, wr, wb));
+		else
+			print("  frame %d: rgb(%d,%d,%d), expected about rgb(%d,128,%d)\n",
+				f, r, g, b, wr, wb);
+	}
+}
+
+abs(x: int): int
+{
+	if(x < 0)
+		return -x;
+	return x;
 }

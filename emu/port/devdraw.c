@@ -226,7 +226,7 @@ int	(*gpuimagefree)(Memimage*);
  * belongs. The encoded form is small; it is the decoded pixels that are large,
  * and those still go directly into the destination image.
  */
-int	(*gpuimagedecode)(Memimage*, uchar *enc, int nenc);
+int	(*gpuimagedecode)(Memimage*, uchar *enc, int nenc, int frame);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -1305,7 +1305,8 @@ drawwakeall(void)
 /*
  * /dev/draw/N/video - decode an image file into one of this client's images.
  *
- *	decode <imageid> <path>
+ *	decode <imageid> <path>		still image
+ *	frame  <imageid> <n> <path>	frame n of a movie
  *
  * A separate file rather than another verb on ctl, whose write is already a
  * four-byte image id, and rather than a new letter in the draw message
@@ -1321,10 +1322,10 @@ drawwakeall(void)
 static void
 drawvideoctl(Client *cl, void *a, long n)
 {
-	char *buf, *f[3];
+	char *buf, *f[4];
 	DImage *d;
 	uchar *enc, *nenc2;
-	int nf, id, fd, nenc, encsz, r;
+	int nf, id, fd, nenc, encsz, r, frame;
 
 	if(gpuimagedecode == nil)
 		error("no hardware image decoder on this platform");
@@ -1338,8 +1339,16 @@ drawvideoctl(Client *cl, void *a, long n)
 	memmove(buf, a, n);
 	buf[n] = 0;
 	nf = tokenize(buf, f, nelem(f));
-	if(nf != 3 || strcmp(f[0], "decode") != 0)
-		error("usage: decode <imageid> <path>");
+	frame = -1;
+	if(nf == 3 && strcmp(f[0], "decode") == 0)
+		;					/* still image */
+	else if(nf == 4 && strcmp(f[0], "frame") == 0){
+		frame = atoi(f[2]);
+		f[2] = f[3];				/* path */
+		if(frame < 0)
+			error("frame number must not be negative");
+	}else
+		error("usage: decode <imageid> <path> | frame <imageid> <n> <path>");
 	id = atoi(f[1]);
 	d = drawlookup(cl, id, 1);
 	if(d == nil || d->image == nil)
@@ -1383,7 +1392,7 @@ drawvideoctl(Client *cl, void *a, long n)
 		free(enc);
 		nexterror();
 	}
-	if(gpuimagedecode(d->image, enc, nenc) < 0)
+	if(gpuimagedecode(d->image, enc, nenc, frame) < 0)
 		error(up->env->errstr);
 	poperror();
 	free(enc);

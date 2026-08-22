@@ -10,6 +10,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <ImageIO/ImageIO.h>
+#import <AVFoundation/AVFoundation.h>
 #undef Point
 #undef Rect
 #undef nil
@@ -384,7 +385,7 @@ extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 extern Memimage* (*gpuimagealloc)(Rectangle, u32);
 extern int	(*gpuimagefree)(Memimage*);
-extern int	(*gpuimagedecode)(Memimage*, uchar*, int);
+extern int	(*gpuimagedecode)(Memimage*, uchar*, int, int);
 extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 extern void	(*gpudrawflush)(void);
 extern void	(*gpudrawreadback)(void);
@@ -408,7 +409,8 @@ static int	metal_queue_plot(Memimage*, Point, Memimage*, int, float);
 static int	metal_queue_sprite(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 static Memimage* metal_image_alloc(Rectangle, u32);
 static int	metal_image_free(Memimage*);
-static int	metal_image_decode(Memimage*, uchar*, int);
+static int	metal_image_decode(Memimage*, uchar*, int, int);
+static int	metal_movie_frame(Memimage*, uchar*, int, int);
 static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
@@ -2483,6 +2485,113 @@ metal_image_free(Memimage *i)
 }
 
 
+
+/*
+ * One frame of a movie, decoded by the platform's media engine.
+ *
+ * AVAssetReader does demux and hardware decode together and hands back
+ * CVPixelBuffers, which is far less machinery than driving
+ * VTDecompressionSession directly and uses the same fixed-function decoder.
+ *
+ * INTERIM, and the limitation is real: the encoded bytes arrive whole and are
+ * staged to a temporary file, because AVFoundation wants an asset URL and the
+ * bytes came through Inferno's namespace rather than from a host path. That is
+ * fine for a short clip and wrong for a real film - a feature-length movie
+ * must be streamed into the device, not handed over entire. Streaming is the
+ * next piece of work; see doc/hpc-plan.md item 6. What this does establish is
+ * the decode path itself and that frames land in an ordinary draw image.
+ */
+static int
+metal_movie_frame(Memimage *dst, uchar *enc, int nenc, int frame)
+{
+	NSString *tmp;
+	NSData *data;
+	AVURLAsset *asset;
+	AVAssetTrack *track;
+	AVAssetReader *rd;
+	AVAssetReaderTrackOutput *out;
+	CMSampleBufferRef sb;
+	CVPixelBufferRef pb;
+	NSError *err = nil;
+	uchar *base, *sp;
+	size_t sbpr;
+	int w, h, dbpr, y, i, rc;
+
+	w = Dx(dst->r);
+	h = Dy(dst->r);
+	tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:
+		[NSString stringWithFormat:@"inferno-frame-%d.mov", (int)getpid()]];
+	data = [NSData dataWithBytesNoCopy:enc length:nenc freeWhenDone:NO];
+	if(![data writeToFile:tmp atomically:NO]){
+		kwerrstr("draw video: cannot stage movie data");
+		return -1;
+	}
+
+	rc = -1;
+	asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:tmp] options:nil];
+	track = [[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
+	if(track == nil){
+		kwerrstr("draw video: no video track");
+		goto out;
+	}
+	rd = [AVAssetReader assetReaderWithAsset:asset error:&err];
+	if(rd == nil){
+		kwerrstr("draw video: cannot read movie");
+		goto out;
+	}
+	/* BGRA out, so it matches Inferno's x8r8g8b8 byte order with no
+	 * conversion of our own. */
+	out = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:track
+		outputSettings:@{ (id)kCVPixelBufferPixelFormatTypeKey:
+			@(kCVPixelFormatType_32BGRA) }];
+	[rd addOutput:out];
+	if(![rd startReading]){
+		kwerrstr("draw video: cannot start reading");
+		goto out;
+	}
+
+	pb = NULL;
+	for(i = 0; i <= frame; i++){
+		sb = [out copyNextSampleBuffer];
+		if(sb == NULL){
+			kwerrstr("draw video: movie has no frame %d", frame);
+			goto out;
+		}
+		if(i < frame){
+			CFRelease(sb);
+			continue;
+		}
+		pb = CMSampleBufferGetImageBuffer(sb);
+		if(pb == NULL){
+			CFRelease(sb);
+			kwerrstr("draw video: frame %d has no image", frame);
+			goto out;
+		}
+		CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+		sp = CVPixelBufferGetBaseAddress(pb);
+		sbpr = CVPixelBufferGetBytesPerRow(pb);
+		base = byteaddr(dst, dst->r.min);
+		dbpr = dst->width * sizeof(u32);
+		if(sp != nil){
+			int sw = (int)CVPixelBufferGetWidth(pb);
+			int sh = (int)CVPixelBufferGetHeight(pb);
+			int cw = sw < w? sw: w;
+			int ch = sh < h? sh: h;
+			for(y = 0; y < ch; y++)
+				memmove(base + (size_t)y*dbpr, sp + (size_t)y*sbpr, (size_t)cw*4);
+			rc = 0;
+		}
+		CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+		CFRelease(sb);
+		break;
+	}
+	if(rc != 0 && pb == NULL)
+		kwerrstr("draw video: no frame decoded");
+out:
+	[[NSFileManager defaultManager] removeItemAtPath:tmp error:nil];
+	return rc;
+}
+
 /*
  * Hardware image decode straight into a draw image's pixels.
  *
@@ -2502,7 +2611,7 @@ metal_image_free(Memimage *i)
  * context here, and refusing is better than quietly producing wrong pixels.
  */
 static int
-metal_image_decode(Memimage *dst, uchar *enc, int nenc)
+metal_image_decode(Memimage *dst, uchar *enc, int nenc, int frame)
 {
 	CFDataRef cfdata;
 	CGImageSourceRef src;
@@ -2526,6 +2635,9 @@ metal_image_decode(Memimage *dst, uchar *enc, int nenc)
 		kwerrstr("draw video: empty destination");
 		return -1;
 	}
+
+	if(frame >= 0)
+		return metal_movie_frame(dst, enc, nenc, frame);
 
 	/* The bytes came through Inferno's namespace; CoreGraphics never sees
 	 * a path and so cannot reach anything this process could not. */
