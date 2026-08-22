@@ -16,13 +16,20 @@ main(int argc, char **argv)
 	FILE *in, *out;
 	unsigned char h[32], *data;
 	uint32_t text, dat, bss, entry, image;
+	uint32_t magic;
+	long hdrsz;
 	int p, n;
 	if(argc != 3){ fprintf(stderr, "usage: aout2efi input output\n"); return 2; }
 	if((in=fopen(argv[1], "rb")) == NULL) return 1;
 	if(fread(h, 1, sizeof h, in) != sizeof h) return 1;
+	magic=be32(h+0);
 	text=be32(h+4); dat=be32(h+8); bss=be32(h+12); entry=be32(h+20);
+	/* amd64 Plan 9 a.out files carry an additional eight-byte entry
+	 * record after Exec.  Do not copy that record into the EFI text. */
+	hdrsz = magic == 0x00008a97 ? 40 : 32;
 	image=0x200+text+dat+bss;
 	data=malloc(text+dat); if(data == NULL) return 1;
+	if(fseek(in, hdrsz, SEEK_SET) != 0) return 1;
 	if(fread(data, 1, text+dat, in) != text+dat) return 1;
 	memset(b, 0, sizeof b); p=0;
 	raw(&p, "MZ", 2); p=0x3c; w32(&p, 0x40); p=0x40;
