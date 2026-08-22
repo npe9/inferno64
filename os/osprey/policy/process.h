@@ -14,8 +14,13 @@ struct Process {
 	Container	container;
 	Ns	ns;
 	Task	task;
-	Queue	requests;
-	Queue	replies;
+	/*
+	 * The rings are named rather than embedded so that the adapter can
+	 * place them in memory a user process also maps, while the
+	 * scheduling state above stays private to the kernel.
+	 */
+	Queue	*requests;
+	Queue	*replies;
 	Message	*requeststorage;
 	Message	*repliestorage;
 };
@@ -28,7 +33,7 @@ enum {
 };
 
 int	processinit(Process*, uvlong, uvlong, uvlong, uvlong,
-	Message*, Message*, uvlong, Name*, ulong);
+	Queue*, Queue*, Message*, Message*, uvlong, Name*, ulong);
 int	processsubmit(Process*, Request*);
 int	processreply(Process*, Reply*);
 int	processnext(Process*, Request*);

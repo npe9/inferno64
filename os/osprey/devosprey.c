@@ -25,8 +25,38 @@ enum {
 	Qctl,
 	Qstatus,
 	Qreply,
+	Qarena,
 
 	Statuslen	= 8*1024,	/* every core and container line */
+	Nfd		= 16,		/* chans a container may hold open */
+	Namelen		= 256,		/* longest path a request may name */
+};
+
+/*
+ * The operation numbers are the portable layer's, which this file may not
+ * include; they are named here so the dispatcher can switch on them.
+ */
+enum {
+	OpRead,
+	OpWrite,
+	OpOpen,
+	OpClose,
+	OpWait,
+	OpSend,
+	OpRecv,
+	OpStat,
+	OpBind,
+	OpAlloc,
+	OpYield,
+	OpPoll,
+};
+
+enum {
+	StatusPending,
+	StatusDone,
+	StatusError,
+	StatusBlocked,
+	StatusRetry,
 };
 
 static Dirtab ospreydir[] = {
@@ -34,6 +64,7 @@ static Dirtab ospreydir[] = {
 	"ctl",		{Qctl},			0,	0664,
 	"status",	{Qstatus},		0,	0444,
 	"reply",	{Qreply},		0,	0444,
+	"arena",	{Qarena},		0,	0660,
 };
 
 enum {
@@ -50,6 +81,8 @@ enum {
 	CMservice,
 	CMbind,
 	CMunbind,
+	CMwait,
+	CMpoke,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -66,9 +99,21 @@ static Cmdtab ospreycmd[] = {
 	CMservice,	"service",	0,
 	CMbind,		"bind",		4,
 	CMunbind,	"unbind",	3,
+	CMwait,		"wait",		2,
+	CMpoke,		"poke",		4,
 };
 
 static QLock ospreylock;
+static Rendez ospreyrend;		/* ring space and replies */
+static uchar *ospreybase;		/* the shared arena */
+static Physseg ospreyseg = { SG_PHYSICAL|SG_SHARED, "osprey", 0, 0 };
+static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
+
+void
+queuebarrier(void)
+{
+	coherence();
+}
 
 static uvlong ospreyhz;
 
@@ -76,6 +121,153 @@ static uvlong
 ospreynow(void)
 {
 	return fastticks(&ospreyhz);
+}
+
+/*
+ * Sleep predicates.  Both are read without the qlock, so they only look
+ * at the ring indices the barrier already orders.
+ */
+static int
+ospreyroom(void *a)
+{
+	return !ospreyrequestfull((Ospreyproc*)a);
+}
+
+static int
+ospreyreply(void *a)
+{
+	return ospreyreplyready((Ospreyproc*)a);
+}
+
+static void
+ospreywakeup(void)
+{
+	wakeup(&ospreyrend);
+}
+
+static void
+ospreyinit(void)
+{
+	uvlong size;
+
+	if(ospreybase != nil)
+		return;
+	size = PGROUND(ospreyarenasize());
+	ospreybase = xspanalloc(size, BY2PG, 0);
+	if(ospreybase == nil)
+		return;
+	if(ospreyarena(ospreybase, size) < 0){
+		ospreybase = nil;
+		return;
+	}
+	ospreyseg.pa = PADDR(ospreybase);
+	ospreyseg.size = size;
+	/* published once; a second driver reset keeps the same span */
+	addphysseg(&ospreyseg);
+}
+
+/*
+ * The operations that need a Chan.  They run in the namespace of whatever
+ * process drove the dispatcher, which is the process that wrote service to
+ * ctl; a container does not yet have a namespace of its own beyond the
+ * name table the policy layer keeps.  Each one catches its own errors so
+ * that a failed request becomes a reply rather than unwinding the service
+ * loop with the request already off the ring.
+ */
+long
+ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
+{
+	char *a, *e;
+	Chan *c;
+	long n;
+	int i, x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyfd))
+		return StatusError;
+
+	switch(op){
+	case OpOpen:
+		if((a = ospreydata(p, arg[0], 1)) == nil)
+			return StatusError;
+		if((e = memchr(a, 0, Namelen)) == nil || e == a)
+			return StatusError;
+		for(i = 0; i < Nfd; i++)
+			if(ospreyfd[x][i] == nil)
+				break;
+		if(i == Nfd)
+			return StatusError;
+		if(waserror())
+			return StatusError;
+		c = namec(a, Aopen, (int)arg[1], 0);
+		poperror();
+		ospreyfd[x][i] = c;
+		result[0] = i;
+		return StatusDone;
+
+	case OpRead:
+	case OpWrite:
+		i = (int)arg[0];
+		if(i < 0 || i >= Nfd || (c = ospreyfd[x][i]) == nil)
+			return StatusError;
+		n = (long)arg[2];
+		if(n < 0 || (a = ospreydata(p, arg[1], n)) == nil)
+			return StatusError;
+		if(waserror())
+			return StatusError;
+		if(op == OpRead)
+			n = devtab[c->type]->read(c, a, n, c->offset);
+		else
+			n = devtab[c->type]->write(c, a, n, c->offset);
+		poperror();
+		c->offset += n;
+		result[0] = n;
+		return StatusDone;
+
+	case OpStat:
+		i = (int)arg[0];
+		if(i < 0 || i >= Nfd || (c = ospreyfd[x][i]) == nil)
+			return StatusError;
+		n = (long)arg[2];
+		if(n < 0 || (a = ospreydata(p, arg[1], n)) == nil)
+			return StatusError;
+		if(waserror())
+			return StatusError;
+		n = devtab[c->type]->stat(c, (uchar*)a, n);
+		poperror();
+		result[0] = n;
+		return StatusDone;
+
+	case OpClose:
+		i = (int)arg[0];
+		if(i < 0 || i >= Nfd || (c = ospreyfd[x][i]) == nil)
+			return StatusError;
+		ospreyfd[x][i] = nil;
+		if(waserror())
+			return StatusError;
+		cclose(c);
+		poperror();
+		return StatusDone;
+	}
+	return StatusError;
+}
+
+/* drop every chan a container still holds */
+static void
+ospreyclosefds(Ospreyproc *p)
+{
+	Chan *c;
+	int i, x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyfd))
+		return;
+	for(i = 0; i < Nfd; i++)
+		if((c = ospreyfd[x][i]) != nil){
+			ospreyfd[x][i] = nil;
+			if(waserror())
+				continue;
+			cclose(c);
+			poperror();
+		}
 }
 
 static Ospreyproc*
@@ -116,6 +308,41 @@ ospreyopen(Chan *c, int omode)
 static void
 ospreyclose(Chan*)
 {
+}
+
+static long
+ospreyarenaio(void *a, long n, vlong offset, int write)
+{
+	uvlong size;
+	void *m;
+
+	size = ospreyarenasize();
+	if(offset < 0 || (uvlong)offset >= size)
+		return 0;
+	if(n > size - offset)
+		n = size - offset;
+	if(n <= 0)
+		return 0;
+	qlock(&ospreylock);
+	if(waserror()){
+		qunlock(&ospreylock);
+		nexterror();
+	}
+	if((m = ospreyarenaaddr(offset, n)) == nil)
+		n = 0;
+	else if(write)
+		memmove(m, a, n);
+	else
+		memmove(a, m, n);
+	qunlock(&ospreylock);
+	poperror();
+	return n;
+}
+
+static long
+ospreyarenaread(void *a, long n, vlong offset)
+{
+	return ospreyarenaio(a, n, offset, 0);
 }
 
 static long
@@ -186,20 +413,31 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 		free(buf);
 		return n;
 
+	case Qarena:
+		/*
+		 * The shared span itself, at its own byte offsets, so the
+		 * rings and data areas can be examined without mapping it.
+		 */
+		n = ospreyarenaread(a, n, offset);
+		return n;
+
 	default:
 		error(Egreg);
 	}
 }
 
 static long
-ospreywrite(Chan *c, void *a, long n, vlong)
+ospreywrite(Chan *c, void *a, long n, vlong offset)
 {
 	Cmdbuf *cb;
 	Cmdtab *ct;
 	Ospreyproc *p;
+	char *nm;
 	uvlong arg[Ospreynarg];
 	int i, op;
 
+	if((ulong)c->qid.path == Qarena)
+		return ospreyarenaio(a, n, offset, 1);
 	if((ulong)c->qid.path != Qctl)
 		error(Eperm);
 
@@ -213,7 +451,10 @@ ospreywrite(Chan *c, void *a, long n, vlong)
 	ct = lookupcmd(cb, ospreycmd, nelem(ospreycmd));
 	switch(ct->index){
 	case CMreset:
+		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
+			ospreyclosefds(p);
 		ospreyreset();
+		ospreywakeup();
 		break;
 
 	case CMcreate:
@@ -236,8 +477,11 @@ ospreywrite(Chan *c, void *a, long n, vlong)
 		break;
 
 	case CMexit:
-		if(ospreyexit(ospreyproc(cb->f[1])) < 0)
+		p = ospreyproc(cb->f[1]);
+		ospreyclosefds(p);
+		if(ospreyexit(p) < 0)
 			error(Ebadarg);
+		ospreywakeup();
 		break;
 
 	case CMbalance:
@@ -271,8 +515,21 @@ ospreywrite(Chan *c, void *a, long n, vlong)
 		for(i = 0; i < Ospreynarg; i++)
 			arg[i] = 3 + i < cb->nf ?
 				strtoull(cb->f[3+i], nil, 0) : 0;
+		/* the queue-full path: wait for the dispatcher to make room */
+		while(ospreyrequestfull(p)){
+			qunlock(&ospreylock);
+			if(waserror()){
+				qlock(&ospreylock);
+				nexterror();
+			}
+			sleep(&ospreyrend, ospreyroom, p);
+			poperror();
+			qlock(&ospreylock);
+			p = ospreyproc(cb->f[1]);
+		}
 		if(ospreysubmit(p, op, arg) < 0)
 			error(Eio);
+		ospreywakeup();
 		break;
 
 	case CMservice:
@@ -282,6 +539,36 @@ ospreywrite(Chan *c, void *a, long n, vlong)
 		while(i-- > 0)
 			if(ospreyservice(ospreynow()) <= 0)
 				break;
+		ospreywakeup();
+		break;
+
+	case CMpoke:
+		/*
+		 * Put a name in a container's data area without mapping the
+		 * arena.  A process that has segattached it writes there
+		 * itself; this is for the shell.
+		 */
+		p = ospreyproc(cb->f[1]);
+		i = strlen(cb->f[3]);
+		if((nm = ospreydata(p, strtoull(cb->f[2], nil, 0), i+1)) == nil)
+			error(Ebadarg);
+		memmove(nm, cb->f[3], i+1);
+		break;
+
+	case CMwait:
+		/* the reply wait path */
+		p = ospreyproc(cb->f[1]);
+		while(!ospreyreplyready(p)){
+			qunlock(&ospreylock);
+			if(waserror()){
+				qlock(&ospreylock);
+				nexterror();
+			}
+			sleep(&ospreyrend, ospreyreply, p);
+			poperror();
+			qlock(&ospreylock);
+			p = ospreyproc(cb->f[1]);
+		}
 		break;
 
 	case CMbind:
@@ -307,7 +594,7 @@ Dev ospreydevtab = {
 	"osprey",
 
 	devreset,
-	devinit,
+	ospreyinit,
 	devshutdown,
 	ospreyattachdev,
 	ospreywalk,

@@ -24,7 +24,7 @@ queueput(Queue *q, Message *m)
 	if(q->size == 0 || put - get >= q->size)
 		return -1;
 	q->message[put % q->size] = *m;
-	/* The kernel adapter supplies the architecture write barrier. */
+	queuebarrier();		/* message visible before the index */
 	q->put = put + 1;
 	return 0;
 }
@@ -40,6 +40,7 @@ queueget(Queue *q, Message *m)
 	put = q->put;
 	if(get == put)
 		return -1;
+	queuebarrier();		/* index read before the message */
 	*m = q->message[get % q->size];
 	q->get = get + 1;
 	return 0;
@@ -51,4 +52,20 @@ queuecount(Queue *q)
 	if(q == nil)
 		return 0;
 	return q->put - q->get;
+}
+
+int
+queuefull(Queue *q)
+{
+	if(q == nil || q->size == 0)
+		return 1;
+	return q->put - q->get >= q->size;
+}
+
+int
+queueempty(Queue *q)
+{
+	if(q == nil)
+		return 1;
+	return q->put == q->get;
 }

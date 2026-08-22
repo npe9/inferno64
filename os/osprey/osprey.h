@@ -11,10 +11,43 @@
  */
 
 typedef struct Ospreyproc Ospreyproc;
+typedef struct Ospreymap Ospreymap;
 
 enum {
 	Ospreynarg	= 3,	/* request words available to the caller */
+	Ospreymagic	= 0x4f53505259ULL,
 };
+
+/*
+ * The shared arena.  One physical span is carved into a slice per
+ * container and published as the "osprey" physical segment, so a process
+ * can segattach it and work its rings directly instead of trapping.  A
+ * slice starts with this map; every other field in it is a byte offset
+ * from the start of the same slice.  status names each container's slice.
+ */
+struct Ospreymap {
+	uvlong	magic;
+	uvlong	id;
+	uvlong	size;		/* messages in each ring */
+	uvlong	msgsize;	/* bytes in one message */
+	uvlong	requestqueue;	/* the ring heads: size, put, get */
+	uvlong	replyqueue;
+	uvlong	request;	/* the message arrays */
+	uvlong	reply;
+	uvlong	data;		/* names and i/o buffers */
+	uvlong	datalen;
+};
+
+int		ospreyarena(void *base, ulong size);
+uvlong		ospreyarenasize(void);
+uvlong		ospreyslice(Ospreyproc*);
+int		ospreyindex(Ospreyproc*);
+int		ospreynproc(void);
+void*		ospreydata(Ospreyproc*, uvlong off, ulong len);
+uvlong		ospreydataoffset(Ospreyproc*);
+void*		ospreyarenaaddr(uvlong off, ulong len);
+int		ospreyrequestfull(Ospreyproc*);
+int		ospreyreplyready(Ospreyproc*);
 
 void		ospreyreset(void);
 Ospreyproc*	ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline);
@@ -36,6 +69,13 @@ int		ospreyservice(uvlong now);
 
 int		ospreybind(Ospreyproc*, char *local, char *global);
 int		ospreyunbind(Ospreyproc*, char *local);
+
+/*
+ * Served by the device: the operations that need a Chan.  arg and result
+ * are the Ospreynarg caller words of the request and of its reply.  The
+ * return value is the reply status.
+ */
+long		ospreykernop(Ospreyproc*, uvlong op, uvlong *arg, uvlong *result);
 
 int		ospreyop(char *name);
 char*		ospreyopname(uvlong op);

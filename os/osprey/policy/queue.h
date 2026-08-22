@@ -28,9 +28,20 @@ struct Queue {
 	volatile uvlong	get;
 };
 
+/*
+ * Supplied by the architecture adapter.  A ring may be shared between a
+ * core and a user process on another core, so the message must be visible
+ * before the index that publishes it, and the index must be read before
+ * the message it refers to.  On a machine that needs no instruction for
+ * that, the adapter may define this as an empty function.
+ */
+void	queuebarrier(void);
+
 int	queueinit(Queue*, Message*, uvlong);
 int	queueput(Queue*, Message*);
 int	queueget(Queue*, Message*);
 uvlong	queuecount(Queue*);
+int	queuefull(Queue*);
+int	queueempty(Queue*);
 
 #endif

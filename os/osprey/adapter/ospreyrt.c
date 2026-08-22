@@ -33,14 +33,16 @@ enum {
 	Ncore		= 8,	/* independent per-core run queues */
 	Nqueue		= 16,	/* messages per request and reply ring */
 	Nname		= 8,	/* private namespace entries per container */
+	Ndata		= 4096,	/* names and i/o buffers per container */
+	Align		= 64,
 };
 
 struct Ospreyproc {
 	Process	process;
 	int	used;
 	uvlong	sequence;	/* request numbering, kept out of Task */
-	Message	request[Nqueue];
-	Message	reply[Nqueue];
+	uvlong	slice;		/* byte offset of this container in the arena */
+	Ospreymap *map;		/* the slice itself */
 	Name	name[Nname];
 	char	local[Nname][KNAMELEN];
 	char	global[Nname][KNAMELEN];
@@ -51,6 +53,12 @@ static Core cores[Ncore];
 static Ospreyproc procs[Nproc];
 static Process *plist[Nproc];
 static int started;
+
+static uchar *arena;		/* the shared span, or nil until given one */
+static ulong arenasize;
+static ulong slicesize;
+
+#define ROUNDUP(n, a)	(((n)+(a)-1) & ~((uvlong)(a)-1))
 
 static struct {
 	char	*name;
@@ -92,6 +100,91 @@ ospreyopname(uvlong op)
 	return "?";
 }
 
+/*
+ * The adapter does not allocate: the device hands it one contiguous span
+ * and it carves a fixed slice out of it for each container.
+ */
+static void
+sizes(void)
+{
+	if(slicesize != 0)
+		return;
+	slicesize = ROUNDUP(sizeof(Ospreymap), Align)
+		+ ROUNDUP(2*sizeof(Queue), Align)
+		+ ROUNDUP(2*Nqueue*sizeof(Message), Align)
+		+ Ndata;
+	slicesize = ROUNDUP(slicesize, Align);
+}
+
+int
+ospreyarena(void *base, ulong size)
+{
+	ulong need;
+
+	sizes();
+	need = slicesize * Nproc;
+	if(base == nil || size < need)
+		return -1;
+	arena = base;
+	arenasize = size;
+	memset(arena, 0, need);
+	return 0;
+}
+
+uvlong
+ospreyarenasize(void)
+{
+	sizes();
+	return slicesize * Nproc;
+}
+
+uvlong
+ospreyslice(Ospreyproc *p)
+{
+	return p == nil ? 0 : p->slice;
+}
+
+int
+ospreyindex(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return -1;
+	return p - procs;
+}
+
+int
+ospreynproc(void)
+{
+	return Nproc;
+}
+
+/* byte offset of a container's data area within the whole arena */
+uvlong
+ospreydataoffset(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0 || p->map == nil)
+		return 0;
+	return p->slice + p->map->data;
+}
+
+void*
+ospreyarenaaddr(uvlong off, ulong len)
+{
+	if(arena == nil || off >= arenasize || len > arenasize - off)
+		return nil;
+	return arena + off;
+}
+
+void*
+ospreydata(Ospreyproc *p, uvlong off, ulong len)
+{
+	if(p == nil || p->used == 0 || p->map == nil)
+		return nil;
+	if(off >= p->map->datalen || len > p->map->datalen - off)
+		return nil;
+	return (uchar*)p->map + p->map->data + off;
+}
+
 void
 ospreyreset(void)
 {
@@ -103,6 +196,8 @@ ospreyreset(void)
 	for(i = 0; i < Ncore; i++)
 		coreinit(&cores[i], i);
 	runtimeinit(&runtime, cores, Ncore, plist, Nproc);
+	if(arena != nil)
+		memset(arena, 0, slicesize * Nproc);
 	started = 1;
 }
 
@@ -149,18 +244,22 @@ Ospreyproc*
 ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 {
 	Ospreyproc *p;
-	int i;
+	Ospreymap *m;
+	Queue *rq, *pq;
+	Message *rm, *pm;
+	uchar *base;
+	int i, slot;
 
 	ready();
-	if(id == 0 || ospreylookup(id) != nil)
+	if(id == 0 || arena == nil || ospreylookup(id) != nil)
 		return nil;
-	for(i = 0; i < Nproc; i++)
-		if(procs[i].used == 0)
+	for(slot = 0; slot < Nproc; slot++)
+		if(procs[slot].used == 0)
 			break;
-	if(i == Nproc)
+	if(slot == Nproc)
 		return nil;
 
-	p = &procs[i];
+	p = &procs[slot];
 	memset(p, 0, sizeof *p);
 	for(i = 0; i < Nname; i++){
 		p->name[i].local = p->local[i];
@@ -168,8 +267,29 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 		p->local[i][0] = '\0';
 		p->global[i][0] = '\0';
 	}
+
+	p->slice = (uvlong)slot * slicesize;
+	base = arena + p->slice;
+	memset(base, 0, slicesize);
+	m = (Ospreymap*)base;
+	m->magic = Ospreymagic;
+	m->id = id;
+	m->size = Nqueue;
+	m->msgsize = sizeof(Message);
+	m->requestqueue = ROUNDUP(sizeof(Ospreymap), Align);
+	m->replyqueue = m->requestqueue + sizeof(Queue);
+	m->request = ROUNDUP(m->replyqueue + sizeof(Queue), Align);
+	m->reply = m->request + Nqueue*sizeof(Message);
+	m->data = ROUNDUP(m->reply + Nqueue*sizeof(Message), Align);
+	m->datalen = slicesize - m->data;
+	p->map = m;
+
+	rq = (Queue*)(base + m->requestqueue);
+	pq = (Queue*)(base + m->replyqueue);
+	rm = (Message*)(base + m->request);
+	pm = (Message*)(base + m->reply);
 	if(processinit(&p->process, id, budget, period, deadline,
-		p->request, p->reply, Nqueue, p->name, Nname) < 0)
+		rq, pq, rm, pm, Nqueue, p->name, Nname) < 0)
 		return nil;
 	p->used = 1;
 	for(i = 0; i < Nproc; i++)
@@ -178,6 +298,22 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 			break;
 		}
 	return p;
+}
+
+int
+ospreyrequestfull(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return 1;
+	return queuefull(p->process.requests);
+}
+
+int
+ospreyreplyready(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return 0;
+	return !queueempty(p->process.replies);
 }
 
 int
@@ -208,7 +344,10 @@ ospreyexit(Ospreyproc *p)
 	for(i = 0; i < Nproc; i++)
 		if(plist[i] == &p->process)
 			plist[i] = nil;
+	if(p->map != nil)
+		memset(p->map, 0, slicesize);
 	p->used = 0;
+	p->map = nil;
 	return 0;
 }
 
@@ -325,8 +464,8 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 		return 0;
 
 	case ReqPoll:
-		rep->message.arg[2] = queuecount(&p->requests);
-		rep->message.arg[3] = queuecount(&p->replies);
+		rep->message.arg[2] = queuecount(p->requests);
+		rep->message.arg[3] = queuecount(p->replies);
 		rep->status = ReplyDone;
 		return 0;
 
@@ -339,7 +478,14 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 		rep->status = ReplyDone;
 		return 0;
 	}
-	rep->status = ReplyError;
+
+	/*
+	 * Everything else needs the kernel: file, process, IPC and network
+	 * requests are served by ospreykernop() in the device, which is the
+	 * only side of the adapter that may touch a Chan.
+	 */
+	rep->status = ospreykernop((Ospreyproc*)p, req->message.op,
+		&req->message.arg[2], &rep->message.arg[2]);
 	return 0;
 }
 
@@ -403,8 +549,10 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 	ready();
 	p = buf;
 	e = buf + nbuf;
-	p = seprint(p, e, "now %llud hz %llud cores %lud procs %lud\n",
-		now, hz, (ulong)Ncore, (ulong)Nproc);
+	p = seprint(p, e, "now %llud hz %llud cores %lud procs %lud"
+		" arena %lud slice %lud data %lud\n",
+		now, hz, (ulong)Ncore, (ulong)Nproc,
+		slicesize*Nproc, slicesize, (ulong)Ndata);
 	for(i = 0; i < Ncore; i++){
 		for(n = 0, t = cores[i].runq; t != nil; t = t->next)
 			n++;
@@ -425,13 +573,15 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		p = seprint(p, e, "proc %llud core %lud %s"
 			" budget %llud used %llud period %llud deadline %llud"
 			" mem %lud of %lud net %lud of %lud"
-			" requests %llud replies %llud\n",
+			" requests %llud replies %llud"
+			" slice %llud data %llud\n",
 			q->id, q->core, statename(q->state),
 			q->container.budget, q->container.used,
 			q->container.period, q->task.deadline,
 			q->container.memused, q->container.memory,
 			q->container.netbytes, q->container.netmax,
-			queuecount(&q->requests), queuecount(&q->replies));
+			queuecount(q->requests), queuecount(q->replies),
+			procs[i].slice, ospreydataoffset(&procs[i]));
 	}
 	return p - buf;
 }
