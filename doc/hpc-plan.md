@@ -513,9 +513,19 @@ inspection, nothing more, and definitely not the cure for the corruption above.
 
 ### 6. Smaller, noted, unfixed
 
-- `metal_present_geom()` consumes `mtl_zclear` before creating its encoder and
-  uses the encoder without a nil check — a failed encoder loses that frame's
-  depth clear.
+- ~~`metal_present_geom()` consumes `mtl_zclear` before creating its encoder~~
+  **fixed.** All three geom passes (`metal_present_geom`, the 3-D triangle
+  pass, and the sprite loop) now consume the pending depth clear only once the
+  encoder exists, so a pass that never happens leaves the clear pending instead
+  of dropping it. Verified by forcing encoder creation to fail on every other
+  3-D pass and counting clears actually lost: **0 of 1000 with the fix, 500 of
+  1000 without** — the exact half the forced failure rate predicts. The other
+  half of the original note was wrong and is dropped: using the encoder without
+  a nil check is harmless, because messaging nil is a no-op in Objective-C.
+  (A first attempt at that probe was itself wrong — it nil-ed `enc` *after*
+  creating a real encoder, which leaks it and trips Metal's
+  "released without endEncoding" assertion. Force the failure by not creating
+  the encoder at all.)
 - `metal_queue_line`'s queue-full path busy-waits on the UI thread draining it.
 - `man/3/ip.original` looks like a stray backup file; regenerating section 3's
   index would pick it up as a second `ip`.

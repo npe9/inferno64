@@ -1533,8 +1533,8 @@ metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	wh[0] = (float)pw;
 	wh[1] = (float)ph;
 
+	/* Do NOT clear mtl_zclear yet - see the note at the encoder below. */
 	zload = mtl_zclear ? MTLLoadActionClear : MTLLoadActionLoad;
-	mtl_zclear = 0;
 
 	rp = [MTLRenderPassDescriptor renderPassDescriptor];
 	rp.colorAttachments[0].texture = drawabletex;
@@ -1546,6 +1546,13 @@ metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	rp.depthAttachment.clearDepth = 1.0;
 
 	enc = [cmd renderCommandEncoderWithDescriptor:rp];
+	if(enc == nil)
+		return -1;	/* pass never happened: leave the clear pending */
+	/* The pass is now certain to run, so the pending clear is genuinely
+	 * consumed. Clearing the flag before this point threw the clear away
+	 * whenever the encoder could not be created, and the next geom pass
+	 * then loaded a stale depth buffer instead of a cleared one. */
+	mtl_zclear = 0;
 	[enc setRenderPipelineState:mtl_geom_pipe];
 	[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
 	[enc setVertexBuffer:vbuf offset:voff atIndex:0];
@@ -1642,8 +1649,8 @@ metal_present_tris3d(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		return;
 	}
 
+	/* Do NOT clear mtl_zclear yet - see the note at the encoder below. */
 	zload = mtl_zclear ? MTLLoadActionClear : MTLLoadActionLoad;
-	mtl_zclear = 0;
 
 	rp = [MTLRenderPassDescriptor renderPassDescriptor];
 	rp.colorAttachments[0].texture = drawabletex;
@@ -1655,6 +1662,11 @@ metal_present_tris3d(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	rp.depthAttachment.clearDepth = 1.0;
 
 	enc = [cmd renderCommandEncoderWithDescriptor:rp];
+	if(enc == nil){
+		free(batches);
+		return;		/* pass never happened: leave the clear pending */
+	}
+	mtl_zclear = 0;		/* the pass will run, so the clear is consumed */
 	[enc setRenderPipelineState:mtl_geom3d_pipe];
 	[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
 	[enc setVertexBuffer:vbuf offset:voff atIndex:0];
@@ -2526,8 +2538,9 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	}
 	wh[0] = (float)pw;
 	wh[1] = (float)ph;
+	/* Not consumed yet: if every sprite below fails to encode, the clear
+	 * must stay pending rather than being dropped on the floor. */
 	zload = mtl_zclear ? MTLLoadActionClear : MTLLoadActionLoad;
-	mtl_zclear = 0;
 
 	for(i = 0; i < ngsprites; i++){
 		if(gsprites[i].tex == nil || metal_vertex_data(cmd, gsprites[i].v,
@@ -2541,8 +2554,11 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		rp.depthAttachment.loadAction = zload;
 		rp.depthAttachment.storeAction = MTLStoreActionStore;
 		rp.depthAttachment.clearDepth = 1.0;
-		zload = MTLLoadActionLoad;
 		enc = [cmd renderCommandEncoderWithDescriptor:rp];
+		if(enc == nil)
+			continue;	/* clear still pending for the next sprite */
+		zload = MTLLoadActionLoad;
+		mtl_zclear = 0;		/* this pass will run and carries the clear */
 		[enc setRenderPipelineState:mtl_sprite_pipe];
 		[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
 		[enc setVertexBuffer:vbuf offset:voff atIndex:0];
