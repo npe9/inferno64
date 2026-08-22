@@ -40,10 +40,6 @@
 #include <mach/task.h>
 #include <mach/vm_map.h>
 
-#if defined(__ppc__)
-#include <architecture/ppc/cframe.h>
-#endif
-
 enum
 {
     DELETE = 0x7F

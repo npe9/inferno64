@@ -4,8 +4,8 @@ SYSTARG=MacOSX
 
 #Configurable parameters
 
-CONF=emu			#default configuration
-CONFLIST=emu
+CONF=emu-cocoa			#default configuration
+CONFLIST=emu-cocoa emu-g
 CLEANCONFLIST=
 
 INSTALLDIR=$ROOT/$SYSTARG/$OBJTYPE/bin	#path of directory where kernel is installed
@@ -14,19 +14,19 @@ INSTALLDIR=$ROOT/$SYSTARG/$OBJTYPE/bin	#path of directory where kernel is instal
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	#set vars based on target system
 
-# Default for 386/power (Carbon); arm64 overrides via mkfile-arm64
+# Every surviving MacOSX target is Cocoa and sets its own SYSLIBS in
+# mkfile-$OBJTYPE; this is only a floor for anything that does not.
 SYSLIBS= \
 	-lm\
-	-framework Carbon -framework QuickTime\
 	-lpthread\
 	-framework CoreFoundation\
 	-framework IOKit\
 
-# Cocoa configs (set by mkfile-arm64): AppKit owns main(); port/main.c → emumain
+# Cocoa configs (set by mkfile-arm64/amd64): AppKit owns main(); port/main.c → emumain
 COCOAOBJ=
 COCOAFLAGS=
 
-<mkfile-$OBJTYPE	# arm64 overrides CONF/SYSLIBS/COCOA*
+<mkfile-$OBJTYPE	# arm64/amd64 set CONF/SYSLIBS/COCOA*
 
 # Console emu-g: drop AppKit main() / Cocoa (mkfile-arm64 defaults).
 <| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox'; fi
