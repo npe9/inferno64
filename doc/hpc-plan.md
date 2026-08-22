@@ -623,11 +623,36 @@ Four and five are the important ones: **the allocator itself is behaving.**
 Mutual exclusion holds and blocks never move, so the block really is being
 freed and then written by someone still holding its address.
 
-**Next**, and it is now a narrow question: what frees the destination array
-while its owning proc sits in `kread`? The proc is `Prelease` with a live
-frame, so the array should be rooted. Instrument the free side rather than the
-write side — record in each `Array`'s free path whether any proc is currently
-in a released syscall holding that same `data` pointer. The cheaper first cut was tried and came back **inconclusive**, so it is
+**The free side was instrumented and the answer is "not observed".**
+`poolinflight()` (`emu/port/alloc.c`, same `INFERNO_POOLPOISON` flag) registers
+a syscall's buffer for the duration of its released window, and `poolfree`
+reports if the block it is about to free contains one. Across 30 runs it never
+fired.
+
+**Do not trust that negative.** In the same runs the corruption stopped being
+detected at all: 0 `POOLPOISON` reports in 45 runs against a base rate near 1
+in 10 (p ≈ 0.008), while the *failure* rate went the wrong way — 0 of 15
+passing. So the bug is still there; the detectors stopped firing. The likely
+reason is that `poisoncheck` only fires when a corrupted block is later removed
+from the free tree, and these runs die sooner.
+
+That is the **third** time instrumentation has moved this bug (after the
+watchdog on `fdstresstest` and whole-block poisoning), and the second time it
+was the added *synchronisation* specifically: the first version of the
+in-flight check took a lock on every `poolfree` and suppressed the corruption
+entirely. It is now lock-free for that reason, and the rule for anything on
+this path is: **no locks, no allocation, no syscalls — a scan of a small array
+is the budget.**
+
+Where that leaves it. The proc is `Prelease` with a live frame, so the
+destination array *should* be rooted, and nothing observed says who frees it.
+Two things worth trying that do not add work to the free path: run the whole
+thing under a build with `-fsanitize=address` (an `emu-cocoa-asan` binary
+exists in this tree from earlier work, though there is no mkfile target for
+it — note the `-Wl,-alias,___wrap_malloc` aliasing has to go for ASan to mean
+anything); or make `poisoncheck` fire at the moment of corruption rather than
+at the next `pooldel`, by having the *GC* verify poison across the whole free
+tree at a safepoint, which costs nothing on the allocator's hot path. The cheaper first cut was tried and came back **inconclusive**, so it is
 recorded rather than repeated blindly. A temporary 1ms sleep in `gpuwrite`'s
 `X` handler, with `INFERNO_NOGPUHW=1` so no Metal was involved at all:
 

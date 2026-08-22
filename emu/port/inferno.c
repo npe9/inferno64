@@ -272,7 +272,9 @@ Sys_read(void *fp)
 		n = f->buf->len;
 
 	release();
+	poolinflight(f->buf->data, n, 1);
 	*f->ret = kread(fdchk(f->fd), f->buf->data, n);
+	poolinflight(f->buf->data, n, 0);
 	acquire();
 }
 

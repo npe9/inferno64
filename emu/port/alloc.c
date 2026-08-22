@@ -259,6 +259,82 @@ poisoncheck(Bhdr *b, char *where)
 }
 
 /*
+ * In-flight syscall buffers, under the same INFERNO_POOLPOISON flag.
+ *
+ * Sys_read (emu/port/inferno.c) hands a Limbo array's raw data pointer to the
+ * host read AFTER release(), so the VM is free for the whole call and the
+ * device eventually memmoves its reply into that pointer. The corruption in
+ * doc/hpc-plan.md is always a device reply sitting in a free block, which says
+ * that buffer is being freed while the read is still running - but not by
+ * whom, and every hypothesis about who has been wrong so far.
+ *
+ * So this catches it at the free, which is the side that has not been
+ * instrumented: a syscall registers its buffer for the duration of the
+ * released window, and poolfree reports if the block it is about to free
+ * contains one. Whoever is freeing it is then on the stack.
+ */
+/*
+ * Deliberately lock-free and small. A first version took a lock on every
+ * poolfree, which serialised the allocator enough to make the corruption stop
+ * happening at all - 0 reports in 30 runs against a base rate near 1 in 10.
+ * That is the third time instrumentation has moved this bug, so the rule here
+ * is: never add synchronisation to a path this hot. A racing slot read can
+ * miss an entry (a false negative, which is fine) or in principle see a stale
+ * one, so verify any hit by inspection rather than trusting it blindly.
+ */
+enum { Ninflight = 32 };
+
+static struct {
+	void*	p;
+	uintptr	len;
+} inflight[Ninflight];
+
+/* add != 0 to register, 0 to drop. Safe to call before poisonon() is
+ * meaningful; it simply does nothing when the flag is off. */
+void
+poolinflight(void *v, uintptr len, int add)
+{
+	int i;
+
+	if(!poisonon() || v == nil)
+		return;
+	for(i = 0; i < Ninflight; i++){
+		if(add){
+			if(inflight[i].p == nil){
+				inflight[i].len = len;
+				__atomic_store_n(&inflight[i].p, v, __ATOMIC_RELEASE);
+				break;
+			}
+		}else if(__atomic_load_n(&inflight[i].p, __ATOMIC_ACQUIRE) == v){
+			__atomic_store_n(&inflight[i].p, nil, __ATOMIC_RELEASE);
+			break;
+		}
+	}
+}
+
+/* Called from poolfree before it takes the pool lock. */
+static void
+inflightcheck(Bhdr *b)
+{
+	uchar *lo, *hi, *q;
+	int i;
+
+	if(!poisonon())
+		return;
+	lo = (uchar*)b;
+	hi = lo + b->size;
+	for(i = 0; i < Ninflight; i++){
+		q = __atomic_load_n(&inflight[i].p, __ATOMIC_ACQUIRE);
+		if(q != nil && q >= lo && q < hi){
+			print("POOLINFLIGHT: freeing block %p size %zud holding a live "
+				"syscall buffer %p len %zud\n",
+				b, (uintptr)b->size, q, inflight[i].len);
+			break;
+		}
+	}
+}
+
+/*
  * Mutual-exclusion check for the pool lock, under the same INFERNO_POOLPOISON
  * flag. The corruption in doc/hpc-plan.md shows up as pooldel finding a block
  * whose poison has already been overwritten, which means the block was handed
@@ -595,6 +671,7 @@ poolfree(Pool *p, void *v)
 	extern Bhdr *ptr;
 
 	D2B(b, v);
+	inflightcheck(b);
 	if(p->monitor)
 		MM(p->pnum|(1<<8), getcallerpc(&p), v, b->size);
 

@@ -70,6 +70,8 @@ struct Balign
 extern	void	(*poolfault)(void *, char *, uintptr);
 extern	void	poolinit(void);
 extern	void*	poolalloc(Pool*, uintptr);
+/* diagnostic, see emu/port/alloc.c; no-op unless INFERNO_POOLPOISON is set */
+extern	void	poolinflight(void*, uintptr, int);
 extern	void	poolfree(Pool*, void*);
 extern	Bhdr*	poolchain(Pool*);
 extern	int	poolcompact(Pool*);
