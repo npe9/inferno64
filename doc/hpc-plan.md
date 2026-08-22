@@ -207,9 +207,12 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    matrix per solve, which UQ and convergence studies pay repeatedly.
 5. Possibly: f64 emulation or mixed-precision refinement, so `precision f64`
    can use the GPU instead of declining it.
-6. **`ml(3)` — a `/dev/ml` CoreML device.** Not built, not started. Details
-   after this list, including the honest caveat that it does **not** help
-   anything else in this plan.
+6. **Host-capability devices: the shape, then `ml(3)` and video.** Reaching
+   the OS's real capabilities — ANE, VideoToolbox, AVFoundation, camera, Metal
+   — from Limbo. Nothing built yet. The detailed section after this list argues
+   the shape matters more than any one device, and that `gpu(3)`'s synchronous
+   single-file RPC is **not** the template: it cannot stream, cannot decouple
+   producer from consumer, and moves bulk data on every call.
 7. **Vector instructions in Dis and the JIT.** A separate line of attack on the
    same bottleneck item 2 measures — see the detailed section after this list.
    Short version: start with C builtins in `math(2)`, which need no Dis, JIT,
@@ -218,61 +221,133 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
 
 ---
 
-## Item 6 in detail: `ml(3)`, a `/dev/ml` CoreML device
+## Item 6 in detail: host-capability devices — `ml(3)`, video, and the shape
 
-**Nothing of this exists yet** — no `devml.c`, no `win-ml.m`, no `ml` line in
-any device manifest. What follows is the design it should take, because the
-shape is already established by `gpu(3)` and there is no reason to invent a
-second one.
+The goal is to reach the host OS's real capabilities — ANE, VideoToolbox,
+AVFoundation, the camera, Metal — from Limbo. **None of this exists yet.** What
+follows is the shape, because getting that wrong is what would make each new
+capability a fresh one-off instead of an instance of one pattern.
 
-**Start by being clear what it is for.** CoreML executes a *compiled model
-graph*; it is not a way to dispatch arbitrary kernels. The Apple Neural Engine
-has no public API at all other than CoreML, so there is no route by which this
-device accelerates a CG solve, a stencil sweep, or anything else in items 1–5.
-Say that plainly up front: **`/dev/ml` is an inference device, and it will not
-make the numerics faster.** It is worth building because inference from Limbo
-is a genuinely new capability for this tree, not because it helps the solver.
+### `gpu(3)`'s shape is right for what it does and does not generalise
 
-**Follow `gpu(3)` exactly**, because every part of that shape was paid for:
+`gpu(3)` is a synchronous RPC on a single file: write a request, read its
+reply, one at a time. That is correct for *compute `y = Ax` and hand it back*,
+and the parts of it that were paid for in blood should be kept —
+binary wire format (text exhausted the heap at a 16³ matrix), nullable hooks so
+the portable file has no platform `#ifdef`, a handle table of pointers resolved
+under one lock (the array-of-structs version was a use-after-free), and a
+precision request that reports what the device will *actually deliver*.
 
-- One file, `/dev/mlclone`, bound flat into `/dev` (`#M`), one handle per
-  loaded model. `emu/port/devml.c` owns the protocol and handle lifecycle and
-  nothing else.
-- Nullable hooks — `mlhwload`, `mlhwpredict`, `mlhwfree` — in plain C types, so
-  `emu/MacOSX/win-ml.m` needs no Inferno headers, exactly as `win-gpu.m` needs
-  none. Where the hooks are nil the device reports no backend rather than
-  failing, and no platform `#ifdef` appears in the portable file.
-- **Binary wire format, not text.** Text was tried for `gpu(3)` and exhausted
-  the Limbo heap formatting a matrix at 16³; a tensor is worse.
-- Handle table of **pointers**, resolved under a lock by one `gethandle()`.
-  Not a re-derivation: the array-of-structs version of exactly this table was a
-  use-after-free (see the `gpu(3)` history), and an ML device will hold several
-  models open at once, which is the case that breaks it.
+But three properties make it the wrong template for everything else:
 
-**Precision is the part to get right, and it is harder here than for `gpu(3)`.**
-Metal has no `double`, which is why `gpu(2)` has a `precision` verb and why the
-`P` request answers what the device will *actually deliver*. The ANE is
-narrower still — **fp16** — and CoreML may silently move a model between ANE,
-GPU and CPU (`MLComputeUnits`) with different numerics on each. So `ml(3)`
-needs the same never-silently-wrong machinery from day one, and its `P`
-equivalent must report the *compute unit actually selected*, not what was
-requested. The `gpu(3)` version of this shipped wrong once — it claimed `f64`
-on a path whose wire carried `f32` — and that is the mistake to not repeat.
+1. **It cannot stream.** One request, one reply, cannot express "keep producing
+   frames at 30fps".
+2. **It cannot decouple producer from consumer.** The calling proc blocks for
+   the whole operation, so no other proc can be draining results — which is
+   precisely the shape Limbo is good at and Inferno is built for.
+3. **Bulk data crosses on every call.** For a vector that is merely the
+   bottleneck item 2 measures. For video it is fatal: a 4K frame is about 12MB,
+   so 30fps is ~360MB/s through `memmove` and the pool allocator — which is
+   exactly the path open bug 5 shows is unsafe under concurrency.
 
-**The one genuinely new design problem** is that CoreML loads a *compiled*
-`.mlmodelc` from a host filesystem path, and Inferno's namespace is not the
-host filesystem. Options, in order of preference: have the caller pass host
-path bytes and treat that as the model identifier (simple, honest, but punches
-through the namespace); or accept the compiled model over the wire and stage it
-to a temporary host file inside the device (keeps the namespace intact, costs a
-copy and a temp-file lifecycle). Decide this before writing any code — it
-determines the whole protocol.
+### The shape: clone directory, text `ctl`, binary `data`, host-resident objects
 
-**Sequencing.** `ml(3)` is independent of everything else here and blocks
-nothing. It should be built when inference is actually wanted, not as part of
-the numerics work, and it should not be allowed to delay items 1–5.
+Two conventions, both already in this tree, and one new idea.
 
----
+**Clone plus numbered directory** (`ssl(3)`, `ip(3)`), not the flat single file
+`gpu(3)` borrowed from `audio(3)`. Flat is right when there is exactly one
+instance; these have many concurrent ones. So `/dev/ml/clone` giving
+`/dev/ml/N/…`, and likewise for video.
+
+**Separate `ctl` and `data`** (`audio(3)`: `/dev/audio` + `/dev/audioctl`),
+which is also what streaming needs — one proc writing frames while another
+reads results, instead of a lockstep round trip. Note this does *not* contradict
+`gpu(3)`'s "text was too slow" lesson: that was about bulk data. Text is right
+for control and wrong for payload, and the two-file split is what lets each be
+what it should be. `ctl` should take a verb-per-line command language, which is
+this tree's established idiom already — `tk(2)`, `krylov(2)`, `pde(2)`,
+`gpu(2)` all work this way.
+
+**The new idea, and the one that matters: a shared registry of host-resident
+objects, named by id.** Decoded frames, tensors, textures and matrices live on
+the host side; Limbo holds only ids and moves them between capabilities through
+`ctl`. Bulk data crosses the Styx boundary **only when a program explicitly
+asks for it**.
+
+This is not invented — it is `gpu(3)`'s "the matrix uploads once and stays
+resident, only the vectors cross", generalised from one device to all of them.
+Making the registry **shared across capability devices** rather than per-device
+is what lets them compose: a frame decoded by video can be fed to `ml` or drawn
+by `draw` **by id**, with no copy and no bridge code between each pair. Per-device
+handle spaces would require an N×N set of bridges instead.
+
+### Movies
+
+What exists today: `appl/wm/avi.b` (384 lines) decodes in Limbo and pushes
+pixels into a `Draw->Image`; `appl/wm/mpeg.b` and `appl/wm/qt.b` are
+**commented out of `appl/wm/mkfile`** and do not build. So the tree's movie
+story is a software decoder that routes every frame through the Limbo heap —
+the most expensive path available, and the one with the open memory bug in it.
+
+macOS offers a chain that avoids the boundary entirely:
+
+- **AVFoundation** demuxes the container; **VideoToolbox** does hardware
+  H.264/HEVC/ProRes decode and encode.
+- Decoded frames arrive as `CVPixelBuffer`, generally backed by an `IOSurface`.
+- `CVMetalTextureCache` turns that into an `MTLTexture` **with no copy**.
+- `devdraw`/`win-cocoa.m` already composite Metal textures.
+- CoreML consumes the *same* `CVPixelBuffer` directly.
+
+So decode→display and decode→inference can both run without a single frame byte
+entering the Limbo heap. That is what "use the whole OS" should mean here, and
+it is exactly what the shared object registry above enables.
+
+One thing to fix on the way: `win-cocoa.m` currently uploads images with
+`replaceRegion:mipmapLevel:withBytes:` — a CPU copy per image. The zero-copy
+path needs a `CVMetalTextureCache`, which is also what video would use, so the
+two wants are the same work.
+
+**Honest caveat, and it must not be designed away.** If frames never enter
+Limbo, then Limbo programs cannot *process* pixels — and processing pixels in
+Limbo is the entire point of things like `videosynth.b` and the Dream Machine
+work. So there must be an explicit, opt-in "bring this object across" operation,
+and its cost must be visible in the interface rather than hidden. The design
+goal is that crossing the boundary is *possible and obvious*, not that it is
+impossible.
+
+Also needed for playback and not glamorous: presentation timestamps and A/V
+sync against `audio(3)`, and backpressure — a `read` that blocks until a frame
+is ready is the natural Styx expression of it.
+
+### `ml(3)` is then just another instance
+
+Same clone directory, same `ctl`/`data` split, same registry: load a model,
+name it, run it on an object id, get an object id back.
+
+Two things specific to it. **Precision is harder than for the GPU**: Metal has
+no `double`, but the ANE is **fp16**, and CoreML may silently move a model
+between ANE, GPU and CPU with different numerics on each — so its precision
+query must report the compute unit *actually selected*, not the one requested.
+`gpu(3)` shipped that wrong once, claiming `f64` on a wire that carried `f32`.
+And **CoreML loads a compiled `.mlmodelc` from a host filesystem path** while
+Inferno's namespace is not the host filesystem: either pass host path bytes and
+accept the namespace puncture, or accept the model over `data` and stage it to a
+temp file. Decide before writing code; it determines the protocol.
+
+Say plainly what this device is not: CoreML runs a compiled model graph and the
+ANE has no public API outside it, so `ml(3)` will not accelerate a CG solve or a
+stencil sweep. It is worth building for inference, not for the numerics.
+
+### What this means for the rest of the plan
+
+Item 2 (device-resident vectors) is **the same mechanism** — a host-resident
+object named by an id, with bulk crossing only on demand. Build the registry
+once and item 2 becomes an instance of it rather than a private arrangement
+inside `gpu(3)`.
+
+Sequencing: the registry and the clone/`ctl`/`data` shape first, since
+everything else is an instance; then whichever capability is actually wanted.
+None of it blocks items 1–5, and none of it should be allowed to delay them.
 
 ## Item 7 in detail: vector instructions in Dis and the JIT
 
