@@ -386,6 +386,11 @@ extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memima
 extern Memimage* (*gpuimagealloc)(Rectangle, u32);
 extern int	(*gpuimagefree)(Memimage*);
 extern int	(*gpuimagedecode)(Memimage*, uchar*, int, int);
+extern void*	(*gpuvideoopen)(void);
+extern int	(*gpuvideowrite)(void*, uchar*, int);
+extern int	(*gpuvideostart)(void*);
+extern int	(*gpuvideonext)(void*, Memimage*);
+extern void	(*gpuvideoclose)(void*);
 extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 extern void	(*gpudrawflush)(void);
 extern void	(*gpudrawreadback)(void);
@@ -411,6 +416,11 @@ static Memimage* metal_image_alloc(Rectangle, u32);
 static int	metal_image_free(Memimage*);
 static int	metal_image_decode(Memimage*, uchar*, int, int);
 static int	metal_movie_frame(Memimage*, uchar*, int, int);
+static void*	metal_video_open(void);
+static int	metal_video_write(void*, uchar*, int);
+static int	metal_video_start(void*);
+static int	metal_video_next(void*, Memimage*);
+static void	metal_video_close(void*);
 static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
@@ -546,6 +556,11 @@ metal_init(void)
 	gpuimagealloc = metal_image_alloc;
 	gpuimagefree = metal_image_free;
 	gpuimagedecode = metal_image_decode;
+	gpuvideoopen = metal_video_open;
+	gpuvideowrite = metal_video_write;
+	gpuvideostart = metal_video_start;
+	gpuvideonext = metal_video_next;
+	gpuvideoclose = metal_video_close;
 	gpudrawellipse = metal_queue_ellipse;
 	gpudrawflush = metal_flush_geom;
 	gpudrawreadback = metal_readback_geom;
@@ -2485,6 +2500,188 @@ metal_image_free(Memimage *i)
 }
 
 
+
+
+/*
+ * A streaming decode session.
+ *
+ * The encoded stream is pushed in from devdraw in chunks and appended to a
+ * staged file, then read back by AVAssetReader, which does demux and hardware
+ * decode together. Frames come out sequentially, so playing a movie costs one
+ * pass rather than re-reading it per frame.
+ *
+ * The staging is the honest limitation: AVFoundation wants an asset URL, and
+ * the bytes arrive through Inferno's namespace rather than from a host path.
+ * Chunking means memory stays bounded whatever the size of the movie, but the
+ * file is still copied to local disk before the first frame, so a session
+ * cannot start decoding until the stream ends. Removing that needs the demux
+ * done on this side - feeding VTDecompressionSession from a container parser
+ * rather than handing AVFoundation a file - and this tree already has a
+ * QuickTime container reader in module/quicktime.m that could do it.
+ */
+typedef struct Vsess Vsess;
+struct Vsess {
+	NSString		*path;
+	NSFileHandle		*w;
+	AVAssetReader		*rd;
+	AVAssetReaderTrackOutput *out;
+	int			started;
+};
+
+static void*
+metal_video_open(void)
+{
+	Vsess *v;
+	static int seq;
+
+	v = mallocz(sizeof(Vsess), 1);
+	if(v == nil)
+		return nil;
+	v->path = [NSTemporaryDirectory() stringByAppendingPathComponent:
+		[NSString stringWithFormat:@"inferno-vid-%d-%d.mov",
+			(int)getpid(), seq++]];
+	[[NSFileManager defaultManager] createFileAtPath:v->path contents:nil attributes:nil];
+	v->w = [NSFileHandle fileHandleForWritingAtPath:v->path];
+	if(v->w == nil){
+		free(v);
+		return nil;
+	}
+	/* ARC will not keep these alive through a void* the kernel holds. */
+	CFBridgingRetain(v->path);
+	CFBridgingRetain(v->w);
+	return v;
+}
+
+static int
+metal_video_write(void *sess, uchar *buf, int n)
+{
+	Vsess *v = sess;
+
+	if(v == nil || v->started){
+		kwerrstr("draw video: session already started");
+		return -1;
+	}
+	@try {
+		[v->w writeData:[NSData dataWithBytesNoCopy:buf length:n freeWhenDone:NO]];
+	} @catch(NSException *e){
+		kwerrstr("draw video: cannot stage stream");
+		return -1;
+	}
+	return 0;
+}
+
+static int
+metal_video_start(void *sess)
+{
+	Vsess *v = sess;
+	AVURLAsset *asset;
+	AVAssetTrack *track;
+	NSError *err = nil;
+
+	if(v == nil || v->started){
+		kwerrstr("draw video: session already started");
+		return -1;
+	}
+	[v->w closeFile];
+	v->w = nil;
+
+	asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:v->path] options:nil];
+	track = [[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
+	if(track == nil){
+		kwerrstr("draw video: no video track");
+		return -1;
+	}
+	v->rd = [AVAssetReader assetReaderWithAsset:asset error:&err];
+	if(v->rd == nil){
+		kwerrstr("draw video: cannot read movie");
+		return -1;
+	}
+	v->out = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:track
+		outputSettings:@{ (id)kCVPixelBufferPixelFormatTypeKey:
+			@(kCVPixelFormatType_32BGRA) }];
+	[v->rd addOutput:v->out];
+	if(![v->rd startReading]){
+		kwerrstr("draw video: cannot start reading");
+		return -1;
+	}
+	CFBridgingRetain(v->rd);
+	CFBridgingRetain(v->out);
+	v->started = 1;
+	return 0;
+}
+
+static int
+metal_video_next(void *sess, Memimage *dst)
+{
+	Vsess *v = sess;
+	CMSampleBufferRef sb;
+	CVPixelBufferRef pb;
+	uchar *base, *sp;
+	size_t sbpr;
+	int w, h, dbpr, y, sw, sh, cw, ch, rc;
+
+	if(v == nil || !v->started){
+		kwerrstr("draw video: session not started");
+		return -1;
+	}
+	if(chantodepth(dst->chan) != 32){
+		kwerrstr("draw video: destination must be a 32-bit image");
+		return -1;
+	}
+	sb = [v->out copyNextSampleBuffer];
+	if(sb == NULL){
+		kwerrstr("draw video: end of stream");
+		return -1;
+	}
+	pb = CMSampleBufferGetImageBuffer(sb);
+	if(pb == NULL){
+		CFRelease(sb);
+		kwerrstr("draw video: frame carries no image");
+		return -1;
+	}
+	rc = -1;
+	CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+	sp = CVPixelBufferGetBaseAddress(pb);
+	if(sp != nil){
+		w = Dx(dst->r);
+		h = Dy(dst->r);
+		base = byteaddr(dst, dst->r.min);
+		dbpr = dst->width * sizeof(u32);
+		sbpr = CVPixelBufferGetBytesPerRow(pb);
+		sw = (int)CVPixelBufferGetWidth(pb);
+		sh = (int)CVPixelBufferGetHeight(pb);
+		cw = sw < w? sw: w;
+		ch = sh < h? sh: h;
+		for(y = 0; y < ch; y++)
+			memmove(base + (size_t)y*dbpr, sp + (size_t)y*sbpr, (size_t)cw*4);
+		rc = 0;
+	}else
+		kwerrstr("draw video: frame has no pixels");
+	CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+	CFRelease(sb);
+	return rc;
+}
+
+static void
+metal_video_close(void *sess)
+{
+	Vsess *v = sess;
+
+	if(v == nil)
+		return;
+	if(v->rd != nil){
+		[v->rd cancelReading];
+		CFBridgingRelease((__bridge CFTypeRef)v->rd);
+		CFBridgingRelease((__bridge CFTypeRef)v->out);
+	}
+	if(v->w != nil){
+		[v->w closeFile];
+		CFBridgingRelease((__bridge CFTypeRef)v->w);
+	}
+	[[NSFileManager defaultManager] removeItemAtPath:v->path error:nil];
+	CFBridgingRelease((__bridge CFTypeRef)v->path);
+	free(v);
+}
 
 /*
  * One frame of a movie, decoded by the platform's media engine.

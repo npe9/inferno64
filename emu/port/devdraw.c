@@ -92,6 +92,7 @@ struct Client
 	s32		refreshme;
 	s32		infoid;
 	s32	op;	/* compositing operator - SoverD by default */
+	void*	vsess;	/* open video decode session, or nil (see Qvideo) */
 	/* Optional draw3d protocol state (letters 3/M/w/u/z/g/G/h/j/k). */
 	float		d3model[16];
 	float		d3proj[16];
@@ -227,6 +228,25 @@ int	(*gpuimagefree)(Memimage*);
  * and those still go directly into the destination image.
  */
 int	(*gpuimagedecode)(Memimage*, uchar *enc, int nenc, int frame);
+/*
+ * Streaming video decode. A session is opened once, fed the encoded stream in
+ * chunks, then advanced a frame at a time.
+ *
+ * Feeding it in chunks rather than handing over the whole file is the point:
+ * a feature-length movie does not fit in memory, and the one-shot path that
+ * came before this read the entire file for every single frame, which is
+ * quadratic in the number of frames decoded. A session decodes sequentially,
+ * so playback costs one pass.
+ *
+ * The bytes still arrive through Inferno's namespace - devdraw reads the file
+ * and pushes it down here - so a movie on a Styx mount from another machine
+ * works exactly like a local one, which a host path would not allow.
+ */
+void*	(*gpuvideoopen)(void);
+int	(*gpuvideowrite)(void *sess, uchar *buf, int n);
+int	(*gpuvideostart)(void *sess);
+int	(*gpuvideonext)(void *sess, Memimage *dst);
+void	(*gpuvideoclose)(void *sess);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -1163,6 +1183,12 @@ drawclose(Chan *c)
 		}
 		sdraw.client[cl->slot] = 0;
 		drawflush();	/* to erase visible, now dead windows */
+		/* A decode session holds host resources - a reader, a staged
+		 * file - so it must go with the client that opened it, not
+		 * wait for an explicit close that may never come. */
+		if(cl->vsess != nil && gpuvideoclose != nil)
+			gpuvideoclose(cl->vsess);
+		cl->vsess = nil;
 		free(cl->d3zbuf);
 		free(cl);
 	}
@@ -1303,32 +1329,92 @@ drawwakeall(void)
 }
 
 /*
- * /dev/draw/N/video - decode an image file into one of this client's images.
+ * /dev/draw/N/video - hardware decode into this client's images.
  *
  *	decode <imageid> <path>		still image
- *	frame  <imageid> <n> <path>	frame n of a movie
+ *	frame  <imageid> <n> <path>	frame n of a movie (one shot)
+ *	open   <path>			start a decode session
+ *	next   <imageid>		decode the next frame into imageid
+ *	close				end the session
  *
  * A separate file rather than another verb on ctl, whose write is already a
  * four-byte image id, and rather than a new letter in the draw message
- * protocol on data: this is control, it is text, and it belongs in a file of
- * its own the way audio(3) separates audioctl from audio.
+ * protocol on data: this is textual control, and it belongs beside the data
+ * the way audio(3) separates audioctl from audio.
  *
- * The destination is an ordinary draw image the client already allocated, so
+ * Destinations are ordinary draw images the client already allocated, so
  * everything that can be done with an image - drawn from, read, exported over
- * Styx - works on the result with nothing new. Where the image happens to be
- * texture-backed (see gpuimagealloc) the decoder writes into GPU-visible
- * memory and the pixels never enter the Limbo heap at all.
+ * Styx - works on the result with nothing new. Where an image is
+ * texture-backed (see gpuimagealloc) the decoded pixels land in GPU-visible
+ * memory and never enter the Limbo heap.
+ *
+ * open/next/close exist because frame is quadratic: it reads and decodes the
+ * whole file for every frame asked for, which is fine for a test and useless
+ * for playback. A session reads once and decodes forward.
  */
+enum { Vchunk = 64*1024 };
+
+/*
+ * Push a namespace file into an open session in chunks. Never holds the whole
+ * file: a movie does not fit in memory, and the point of a session is that it
+ * does not have to.
+ */
+static void
+drawvideofeed(void *sess, char *path)
+{
+	uchar *buf;
+	int fd, r;
+
+	fd = kopen(path, OREAD);
+	if(fd < 0)
+		error(up->env->errstr);
+	if(waserror()){
+		kclose(fd);
+		nexterror();
+	}
+	buf = malloc(Vchunk);
+	if(buf == nil)
+		error(Enomem);
+	if(waserror()){
+		free(buf);
+		nexterror();
+	}
+	for(;;){
+		r = kread(fd, buf, Vchunk);
+		if(r < 0)
+			error(up->env->errstr);
+		if(r == 0)
+			break;
+		if(gpuvideowrite(sess, buf, r) < 0)
+			error(up->env->errstr);
+	}
+	poperror();
+	free(buf);
+	poperror();
+	kclose(fd);
+	if(gpuvideostart(sess) < 0)
+		error(up->env->errstr);
+}
+
+static Memimage*
+drawvideodst(Client *cl, char *ids)
+{
+	DImage *d;
+
+	d = drawlookup(cl, atoi(ids), 1);
+	if(d == nil || d->image == nil)
+		error(Enodrawimage);
+	return d->image;
+}
+
 static void
 drawvideoctl(Client *cl, void *a, long n)
 {
 	char *buf, *f[4];
-	DImage *d;
 	uchar *enc, *nenc2;
-	int nf, id, fd, nenc, encsz, r, frame;
+	int nf, fd, nenc, encsz, r, frame;
+	void *sess;
 
-	if(gpuimagedecode == nil)
-		error("no hardware image decoder on this platform");
 	buf = malloc(n+1);
 	if(buf == nil)
 		error(Enomem);
@@ -1339,6 +1425,53 @@ drawvideoctl(Client *cl, void *a, long n)
 	memmove(buf, a, n);
 	buf[n] = 0;
 	nf = tokenize(buf, f, nelem(f));
+	if(nf < 1)
+		error(Ebadctl);
+
+	if(strcmp(f[0], "close") == 0 && nf == 1){
+		if(cl->vsess != nil && gpuvideoclose != nil)
+			gpuvideoclose(cl->vsess);
+		cl->vsess = nil;
+		poperror();
+		free(buf);
+		return;
+	}
+
+	if(strcmp(f[0], "open") == 0 && nf == 2){
+		if(gpuvideoopen == nil)
+			error("no hardware video decoder on this platform");
+		if(cl->vsess != nil){
+			gpuvideoclose(cl->vsess);
+			cl->vsess = nil;
+		}
+		sess = gpuvideoopen();
+		if(sess == nil)
+			error("cannot start a decode session");
+		if(waserror()){
+			gpuvideoclose(sess);
+			nexterror();
+		}
+		drawvideofeed(sess, f[1]);
+		poperror();
+		cl->vsess = sess;
+		poperror();
+		free(buf);
+		return;
+	}
+
+	if(strcmp(f[0], "next") == 0 && nf == 2){
+		if(cl->vsess == nil)
+			error("no decode session open");
+		if(gpuvideonext(cl->vsess, drawvideodst(cl, f[1])) < 0)
+			error(up->env->errstr);
+		poperror();
+		free(buf);
+		return;
+	}
+
+	/* The one-shot forms, which read the file each time. */
+	if(gpuimagedecode == nil)
+		error("no hardware image decoder on this platform");
 	frame = -1;
 	if(nf == 3 && strcmp(f[0], "decode") == 0)
 		;					/* still image */
@@ -1348,14 +1481,9 @@ drawvideoctl(Client *cl, void *a, long n)
 		if(frame < 0)
 			error("frame number must not be negative");
 	}else
-		error("usage: decode <imageid> <path> | frame <imageid> <n> <path>");
-	id = atoi(f[1]);
-	d = drawlookup(cl, id, 1);
-	if(d == nil || d->image == nil)
-		error(Enodrawimage);
+		error("usage: decode <id> <path> | frame <id> <n> <path> | "
+			"open <path> | next <id> | close");
 
-	/* Read it through the namespace, so any file this process can see -
-	 * including one mounted from elsewhere - can be decoded. */
 	fd = kopen(f[2], OREAD);
 	if(fd < 0)
 		error(up->env->errstr);
@@ -1371,7 +1499,7 @@ drawvideoctl(Client *cl, void *a, long n)
 	for(;;){
 		if(nenc == encsz){
 			if(encsz >= 64*1024*1024)
-				error("image file too large");
+				error("image file too large: use open/next");
 			encsz *= 2;
 			nenc2 = realloc(enc, encsz);
 			if(nenc2 == nil)
@@ -1392,7 +1520,7 @@ drawvideoctl(Client *cl, void *a, long n)
 		free(enc);
 		nexterror();
 	}
-	if(gpuimagedecode(d->image, enc, nenc, frame) < 0)
+	if(gpuimagedecode(drawvideodst(cl, f[1]), enc, nenc, frame) < 0)
 		error(up->env->errstr);
 	poperror();
 	free(enc);

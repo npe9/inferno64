@@ -63,6 +63,19 @@ Because the expected colour differs per frame, this also shows the
 decoder really returns frame
 .IR n ,
 not the same frame each time.
+.PP
+It then opens a decode session, takes all ten frames with
+.BR next ,
+checks each against the colour that frame was built with, and times
+that against fetching the same ten frames one-shot \(em typically 4ms
+against 65ms, since the one-shot form re-reads the file per frame.
+Timing alone would prove nothing, so the session frames are checked
+against the same expected colours: it cannot be fast by being wrong.
+.PP
+Finally it leaves a session open on purpose and exits.
+The session holds a reader and a staged file, so releasing it is the
+client teardown's job; a leak shows up as a stray file in the host
+temporary directory.
 .SH SOURCE
 .B /appl/cmd/drawdecodetest.b
 .SH SEE ALSO

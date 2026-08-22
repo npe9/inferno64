@@ -188,6 +188,7 @@ init(nil: ref Draw->Context, nil: list of string)
 			Jpg, W, H, nz, distinct);
 
 	movie(data, video);
+	session(data, video);
 
 	if(fail)
 		raise "fail:test";
@@ -225,6 +226,75 @@ movie(data, video: ref Sys->FD)
 			print("  frame %d: rgb(%d,%d,%d), expected about rgb(%d,128,%d)\n",
 				f, r, g, b, wr, wb);
 	}
+}
+
+# The session form: open once, decode forward. The one-shot "frame" verb reads
+# and decodes the whole file for every frame, so asking for n frames costs n
+# passes; this costs one. Both are checked against the same expected colours,
+# so a session cannot be fast by being wrong.
+session(data, video: ref Sys->FD)
+{
+	cmd := array of byte sprint("open %s", Mov);
+	if(sys->write(video, cmd, len cmd) != len cmd){
+		bad(sprint("open session: %r"));
+		return;
+	}
+	t0 := sys->millisec();
+	nf := 0;
+	for(f := 0; f < 10; f++){
+		nx := array of byte sprint("next %d", Id);
+		if(sys->write(video, nx, len nx) != len nx)
+			break;			# end of stream is not a failure
+		(px, e) := readpixels(data, Id);
+		if(e != nil){
+			bad(e);
+			break;
+		}
+		o := ((H/2)*W + W/2) * 4;
+		b := int px[o];
+		r := int px[o+2];
+		wr := 20 + f*20;
+		wb := 220 - f*20;
+		if(abs(r-wr) > 12 || abs(b-wb) > 12){
+			bad(sprint("session frame %d: got rgb(%d,-,%d) want about rgb(%d,-,%d)",
+				f, r, b, wr, wb));
+			break;
+		}
+		nf++;
+	}
+	tses := sys->millisec() - t0;
+
+	cl := array of byte "close";
+	sys->write(video, cl, len cl);
+
+	if(nf != 10){
+		bad(sprint("session decoded %d frames, expected 10", nf));
+		return;
+	}
+
+	# Same frames the quadratic way, for comparison.
+	t0 = sys->millisec();
+	for(f = 0; f < 10; f++){
+		one := array of byte sprint("frame %d %d %s", Id, f, Mov);
+		if(sys->write(video, one, len one) != len one){
+			bad(sprint("one-shot frame %d: %r", f));
+			return;
+		}
+		readpixels(data, Id);
+	}
+	tone := sys->millisec() - t0;
+
+	print("  session: 10 frames in %dms; one-shot: %dms\n", tses, tone);
+
+	# Deliberately leave a session open. It holds host resources - a reader
+	# and a staged file - and nothing here will close it, so releasing it
+	# is the client teardown's job when this program exits. A leak shows up
+	# as a stray file in the host temporary directory.
+	op := array of byte sprint("open %s", Mov);
+	sys->write(video, op, len op);
+	print("  left a session open on purpose; teardown must release it\n");
+	if(tses > tone)
+		print("  (note: session was not faster here - the clip is tiny)\n");
 }
 
 abs(x: int): int

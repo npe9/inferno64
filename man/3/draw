@@ -1031,6 +1031,9 @@ Writing
 .EX
 	decode \fIid\fP \fIpath\fP
 	frame  \fIid\fP \fIn\fP \fIpath\fP
+	open   \fIpath\fP
+	next   \fIid\fP
+	close
 .EE
 to
 .B video
@@ -1052,11 +1055,36 @@ A still image is scaled to fit it, so a caller need not know the file's
 dimensions in advance; a movie frame is copied, and clipped where the
 frame and the image differ in size.
 .PP
-Movie decode currently takes the whole encoded file at once and stages
-it, which is fine for a short clip and wrong for a real film \(em a
-feature-length movie has to be streamed into the device rather than
-handed over entire.
-That is the next piece of work rather than a property of the interface.
+.B Frame
+is one-shot: it reads and decodes the file from the beginning every
+time, so asking for
+.I n
+frames costs
+.I n
+passes.
+For anything but a single still,
+.B open
+a session and take frames with
+.BR next ,
+which decodes forward and costs one pass \(em ten frames of the test
+clip take 4ms that way against 65ms one-shot.
+.B Next
+fails at end of stream.
+.B Close
+ends the session; so does the client going away, since a session holds
+host resources that must not outlive it.
+.PP
+The stream is pushed into the device in chunks, so memory stays bounded
+whatever the size of the movie.
+It is still staged to local storage before the first frame, because the
+platform decoder wants an asset it can open while the bytes arrive
+through the namespace \(em a movie on a mount from another machine
+therefore works, but a session cannot begin decoding until the stream
+ends.
+Removing that needs the container parsed on this side and samples fed
+to the decoder directly, for which
+.IR quicktime (2)
+already exists in this tree.
 .PP
 It is a file of its own rather than another verb on
 .BR ctl ,
