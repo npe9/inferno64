@@ -250,36 +250,85 @@ But three properties make it the wrong template for everything else:
    so 30fps is ~360MB/s through `memmove` and the pool allocator — which is
    exactly the path open bug 5 shows is unsafe under concurrency.
 
-### The shape: clone directory, text `ctl`, binary `data`, host-resident objects
+### The shape: one device per capability, composed through the namespace
 
-Two conventions, both already in this tree, and one new idea.
+Two conventions, both already in this tree.
 
 **Clone plus numbered directory** (`ssl(3)`, `ip(3)`), not the flat single file
 `gpu(3)` borrowed from `audio(3)`. Flat is right when there is exactly one
-instance; these have many concurrent ones. So `/dev/ml/clone` giving
-`/dev/ml/N/…`, and likewise for video.
+instance; these have many concurrent ones. So `/dev/video/clone` giving
+`/dev/video/N/…`, and likewise for `ml`.
 
 **Separate `ctl` and `data`** (`audio(3)`: `/dev/audio` + `/dev/audioctl`),
-which is also what streaming needs — one proc writing frames while another
-reads results, instead of a lockstep round trip. Note this does *not* contradict
-`gpu(3)`'s "text was too slow" lesson: that was about bulk data. Text is right
-for control and wrong for payload, and the two-file split is what lets each be
-what it should be. `ctl` should take a verb-per-line command language, which is
-this tree's established idiom already — `tk(2)`, `krylov(2)`, `pde(2)`,
-`gpu(2)` all work this way.
+which is also what streaming needs — one proc writing while another reads,
+instead of a lockstep round trip. This does *not* contradict `gpu(3)`'s "text
+was too slow": that was about payload. Text is right for control and wrong for
+bulk, and the two-file split is what lets each be what it should be. `ctl`
+takes a verb-per-line command language, which is this tree's established idiom
+already — `tk(2)`, `krylov(2)`, `pde(2)`, `gpu(2)` all work that way.
 
-**The new idea, and the one that matters: a shared registry of host-resident
-objects, named by id.** Decoded frames, tensors, textures and matrices live on
-the host side; Limbo holds only ids and moves them between capabilities through
-`ctl`. Bulk data crosses the Styx boundary **only when a program explicitly
-asks for it**.
+**And that is the whole mechanism. Do not add a second one.**
 
-This is not invented — it is `gpu(3)`'s "the matrix uploads once and stays
-resident, only the vectors cross", generalised from one device to all of them.
-Making the registry **shared across capability devices** rather than per-device
-is what lets them compose: a frame decoded by video can be fed to `ml` or drawn
-by `draw` **by id**, with no copy and no bridge code between each pair. Per-device
-handle spaces would require an N×N set of bridges instead.
+A registry of host-resident objects addressed by integer id was built here and
+**reverted**, because it was wrong in a way worth recording so it is not
+rebuilt. The argument for it was real — capabilities need to pass large things
+between them without copying through the Limbo heap — but the design answered
+it by exposing the *host's* structure (a handle table over `CVPixelBuffer`s)
+instead of virtualising the *capability*. Three things that breaks:
+
+- **Inferno already has the shared handle space: the namespace.** `Chan`s and
+  file descriptors are the capability handles. A parallel id space reinvents
+  them, worse.
+- **It breaks distribution.** Styx exports file trees, so `/dev/video/0/data`
+  can be mounted from another machine and used exactly like a local one.
+  "Object 79 in a local registry" cannot be exported at all — the design
+  quietly makes every capability local-only, which is the opposite of the point.
+- **It breaks the security model.** Per-process namespaces *are* how authority
+  is restricted here. A global id table is ambient authority: any proc that can
+  open the control file can name any object, whatever its namespace says.
+
+So: **one device per capability, each presenting what it does in Inferno's
+terms**, and composition through the namespace — read from one, write to
+another; bind; mount; export over Styx. A `CVPixelBuffer` is host structure. "A
+stream of frames you can read" is a capability.
+
+### Then what about the copying, which was a real problem?
+
+Three honest answers, in preference order, none of which needs a new namespace:
+
+1. **Reuse the namespace that already exists.** Frames want to become
+   `draw(3)` images, and draw images already have names. A decoder told
+   `render <image>` on its `ctl` can write into an existing draw image with no
+   new addressing scheme and no new object space.
+2. **Keep the capability on one side of the boundary.** If decode and display
+   never need to be separated, they need not cross at all.
+3. **Do the optimisation invisibly.** If two host-backed devices are connected,
+   emu may shortcut between them internally. That is an implementation detail
+   behind the file interface, which is where it belongs — not a namespace
+   feature. The interface stays "read frames"; whether a copy happened is the
+   kernel's business.
+
+And the caveat stands regardless of mechanism: Limbo programs must still be
+able to *get* the pixels, because processing them is what `videosynth.b` and
+the Dream Machine work do. Reading `data` gives you the bytes; that path must
+stay, and its cost should be visible rather than surprising.
+
+### Lessons from the reverted attempt that apply to whatever is built next
+
+Three things it got right or learned the hard way, all of which transfer:
+
+- **Enumerate by a stable slot, not by position in a snapshot.** `devwalk`
+  resolves a name by calling the gen function with successive indices, so if
+  index *i* means "the i'th live thing", concurrent creation and destruction
+  move the answer and a walk can step straight past something that existed the
+  whole time. This was a real bug, found by a test, not by inspection.
+- **A pending `ctl` reply belongs to the open, not to the device.** One global
+  reply has concurrent clients overwriting each other's answers. `devgpu.c`
+  already does it per-handle for this reason.
+- **Hold one `ctl` fd per client rather than opening per command.** The first
+  version of that test opened `ctl` twice per operation and spent eight runs in
+  twelve inside the scheduler hang of open bug 1 — it was measuring that bug,
+  not the device. Fewer opens took it to one in twelve.
 
 ### Movies
 
@@ -352,8 +401,10 @@ is ready is the natural Styx expression of it.
 
 ### `ml(3)` is then just another instance
 
-Same clone directory, same `ctl`/`data` split, same registry: load a model,
-name it, run it on an object id, get an object id back.
+Same clone directory, same `ctl`/`data` split: `/dev/ml/N`, where `ctl` selects
+the model and compute units, `in` takes the input and `out` gives the result.
+The instance *is* the handle — no ids, so a model can be used across a Styx
+mount like anything else.
 
 Two things specific to it. **Precision is harder than for the GPU**: Metal has
 no `double`, but the ANE is **fp16**, and CoreML may silently move a model
@@ -371,10 +422,12 @@ stencil sweep. It is worth building for inference, not for the numerics.
 
 ### What this means for the rest of the plan
 
-Item 2 (device-resident vectors) is **the same mechanism** — a host-resident
-object named by an id, with bulk crossing only on demand. Build the registry
-once and item 2 becomes an instance of it rather than a private arrangement
-inside `gpu(3)`.
+Item 2 (device-resident vectors) wants the same *property* — a big thing that
+stays put while only small things cross — but it does **not** want a shared id
+space either, for the reasons above. `gpu(3)` already keeps its matrix resident
+against an open handle, and vectors should live against that same handle: the
+`Chan` is the name. That keeps it exportable over Styx and inside the caller's
+namespace, which an id table would not.
 
 Sequencing: the registry and the clone/`ctl`/`data` shape first, since
 everything else is an instance; then whichever capability is actually wanted.
