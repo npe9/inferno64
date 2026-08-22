@@ -26,7 +26,7 @@ enum {
 	Qstatus,
 	Qreply,
 
-	Statuslen	= 4*1024,
+	Statuslen	= 8*1024,	/* every core and container line */
 };
 
 static Dirtab ospreydir[] = {
@@ -122,7 +122,7 @@ static long
 ospreyread(Chan *c, void *a, long n, vlong offset)
 {
 	char *buf, *s, *e;
-	uvlong op, arg[Ospreynarg];
+	uvlong op, now, arg[Ospreynarg];
 	Ospreyproc *p;
 	long status;
 
@@ -141,7 +141,8 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 			qunlock(&ospreylock);
 			nexterror();
 		}
-		ospreystatus(buf, Statuslen, ospreynow(), ospreyhz);
+		now = ospreynow();	/* sets ospreyhz; read it after */
+		ospreystatus(buf, Statuslen, now, ospreyhz);
 		qunlock(&ospreylock);
 		poperror();
 		n = readstr(offset, a, n, buf);
@@ -152,9 +153,13 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 	case Qreply:
 		/*
 		 * One line per reply, drained from every container's reply
-		 * ring.  A ring has no stable offset, so a reader always
-		 * takes what is there now.
+		 * ring.  Reading is destructive and a ring has no stable
+		 * offset, so only a read at the start of the file takes
+		 * anything: a reader that asks for more would otherwise
+		 * drain replies that arrived meanwhile and discard them.
 		 */
+		if(offset != 0)
+			return 0;
 		buf = smalloc(Statuslen);
 		if(waserror()){
 			free(buf);
