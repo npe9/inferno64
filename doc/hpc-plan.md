@@ -588,10 +588,49 @@ never touch `up`), and `poolfault` — which panics loudly when a pointer that i
 not an emu block is freed into the pool — never fires, which argues against the
 simplest "allocated by one allocator, freed by another" story.
 
-Next, in order: get a poison report while running with Metal on and
-`MallocStackLogging` or a `malloc` interposer active, to identify which thread
-and which call last wrote the block; and check whether Metal's shared-storage
-buffers are being satisfied from emu's pool at all.
+**What the write is.** `Sys_read` (`emu/port/inferno.c`) does:
+
+```c
+release();
+*f->ret = kread(fdchk(f->fd), f->buf->data, n);
+acquire();
+```
+
+— it hands the Limbo array's raw `data` pointer to the host read *after*
+releasing the VM, and `gpuread` finishes with
+`memmove(va, g->resp + g->respoff, m)` where `va` **is** that pointer. So the
+corruption is the device writing a reply into a destination buffer that has
+been freed during the released window. That matches the captured bytes exactly:
+what lands in the free block is always a matvec reply, never anything else.
+
+Why Metal matters is then not that Metal is buggy, but that `metal_spmv` does
+`[cb waitUntilCompleted]` — roughly 0.3ms with the VM released, against
+microseconds for the C loop. It widens the window enormously.
+
+**Hypotheses tested and refuted — do not repeat these:**
+
+| # | hypothesis | how it died |
+|---|---|---|
+| 1 | JIT non-atomic refcounts (`-c1` only) | `-c0` corrupts identically: 0/10 vs 2/10 passes |
+| 2 | slice temporary (`rbuf[off:]`) collected mid-call | rewritten with no slice: 1/10 either way |
+| 3 | foreign allocator frees into emu's pool | `poolfault` panics on exactly that and never fires |
+| 4 | two threads inside the pool's locked region | per-pool entry counter: **0 violations in 15 runs** |
+| 5 | heap compaction moving the block | `poolsetcompact` is never called anywhere; `p->move` is always nil, so `poolcompact` returns immediately |
+| 6 | `killprog` tearing down a stack mid-syscall | its `Prelease` case sets `Pexiting` and returns without destroying the stack |
+| 7 | attribute the block via `allocpc` | resolves inside `__wrap_malloc` itself — `getcallerpc` does not return the caller here, so the field is useless on this platform |
+
+Four and five are the important ones: **the allocator itself is behaving.**
+Mutual exclusion holds and blocks never move, so the block really is being
+freed and then written by someone still holding its address.
+
+**Next**, and it is now a narrow question: what frees the destination array
+while its owning proc sits in `kread`? The proc is `Prelease` with a live
+frame, so the array should be rooted. Instrument the free side rather than the
+write side — record in each `Array`'s free path whether any proc is currently
+in a released syscall holding that same `data` pointer. A cheaper first cut:
+confirm the mechanism without Metal at all by adding an artificial delay to
+`gpuwrite`'s `X` handler and running with `INFERNO_NOGPUHW=1`; if the
+corruption appears, this is about window width and nothing about Metal.
 
 Two warnings about the tool itself, both learned the hard way:
 - It poisons only the payload *past* the tree links, because those are live
@@ -725,3 +764,42 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 
 A pixel count once reported a renderer dropping *every* segment as "120% of
 software". Count the thing that actually differs.
+
+I can't edit `doc/hpc-plan.md` — I have no tools in this response. But here is the section, written to match that document's voice and structure, ready to paste in under **Plan — remaining**.
+
+---
+
+## N. Vector instructions in Dis and the JIT
+
+Three separate questions get conflated here, and keeping them apart is most of the design: what a Limbo programmer writes, what Dis represents, and what the JIT emits. **The third can be answered without touching the first two, and that is where to start.**
+
+### Start with builtin module functions, not new opcodes
+
+`math(2)` is already a builtin implemented in C (`libinterp/math.c`). Adding `math->dot`/`axpy`/`norm`/`scale`, or a `blas(2)` alongside it, costs no Dis change, no JIT change, no spec change and no compiler change. The C implementation gets auto-vectorised by clang, or calls Accelerate/vDSP — which is also the **only** way to reach AMX, since it has no public API.
+
+The reason this captures most of the value is dispatch, not arithmetic. `for(i=0;i<n;i++) s += x[i]*y[i]` pays roughly six Dis dispatches per element — two `IINDF`, each with a bounds check, plus `IMULF`, `IADDF`, increment and compare. A builtin pays one `mcall` for the whole array and one length check. That is an order of magnitude before any SIMD, and SIMD multiplies on top of it.
+
+This targets exactly what is measured in item 2 above: at 30³ the CG loop's `dot`/`axpy`/`norm` are 16ms of 39ms once matvec is offloaded, and CPU `sparse->matvec` is 110ms. Those are BLAS-1 and BLAS-2 shapes. They want library calls, not new instructions.
+
+### If Dis is extended, the unit is an array, not a lane
+
+Width-agnostic aggregate opcodes (`IVADDF`, `IVDOT`, `IVAXPY` over whole `array of real` operands), **never** fixed-width lane types like `real4`. Fixed widths leak the architecture into both the language and the bytecode — 128-bit NEON, 256/512-bit AVX, scalable SVE. Dis has stayed portable for thirty years by being width-agnostic, and `doc/dis.ms` is a real spec this tree treats as authoritative: read its stance on extension before adding anything (that lesson cost real time once already — see the `newa` entry under Gotchas).
+
+Aggregate ops also amortise the bounds check to one per instruction, which is a large part of the win independent of SIMD.
+
+### Auto-vectorising existing Dis in the JIT is the last resort
+
+Pattern-matching loops in `comp-arm64.c` needs loop recognition, alias analysis, bounds-check elimination and trip-count invariance — a serious compiler project against bytecode not designed to make it easy, with per-element frame accesses and explicit bounds checks in the way. Low payoff against either option above.
+
+### Traps specific to this tree
+
+- **`WORD` is `intptr`, so 64-bit here.** `array of int` has 64-bit elements: two NEON lanes, not four. `libinterp/math.c`'s `export_int` bug — casting Limbo array data to C `int*` — is exactly this class of mistake, and it is fixed but instructive. No vector builtin over `array of int` may assume 32-bit lanes.
+- **The interpreter stays authoritative.** `-c0` and `-c1` must agree; the JIT is an optimisation, not a semantics provider. Every new opcode needs an `xec.c` implementation *and* one in every `comp-*.c`, or `.dis` files stop being portable.
+- **Reduction reassociation breaks reproducibility.** A vectorised `dot`/`norm` reassociates floating-point addition, so `-c0` and `-c1` would disagree numerically. That would undermine `verify(2)`'s convergence-order study and any negative control. This session already saw f32-vs-f64 shift CG iteration counts 22→25 and 42→52; the same sensitivity applies. Either fix the reduction order in the spec or document the divergence explicitly.
+- **FP register state across scheduler switches.** `emu/MacOSX/asm-arm64.s`'s `FPsave`/`FPrestore` save only `FPSR`/`FPCR`, relying on the C ABI for the register file. On AArch64 only the **low 64 bits** of `v8`–`v15` are callee-saved. If the JIT holds live vector values there across a point where `release()`/`acquire()` can run, that is silent corruption.
+- **Restrict to pointer-free element types** (`byte`, `int`, `big`, `real`). That sidesteps GC pointer maps and write barriers entirely, and is a clean defensible boundary.
+- **`comp-arm64.c` still has the unfixed non-atomic refcount gap** (see `dis.c`'s GC-LOCK HISTORY comment). Work in that file should either close it first or take care not to make it worse.
+
+### Sequencing
+
+Builtins first — they are the existing mechanism and capture the dispatch win. Measure against the CG loop; the numbers to beat are already recorded in item 2. Only if that proves insufficient does aggregate-opcode work become justified, and by then there will be real data on which operations matter.
