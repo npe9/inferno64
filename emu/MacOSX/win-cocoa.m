@@ -381,6 +381,8 @@ extern int	(*gpudrawfillpoly3g)(Memimage*, float*, float*, float*, float*, int, 
 	int, float*, float*, float, float, float, float);
 extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
+extern Memimage* (*gpuimagealloc)(Rectangle, u32);
+extern int	(*gpuimagefree)(Memimage*);
 extern int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 extern void	(*gpudrawflush)(void);
 extern void	(*gpudrawreadback)(void);
@@ -402,6 +404,8 @@ static int	metal_queue_fillpoly3g(Memimage*, float*, float*, float*, float*, int
 static void	metal_present_tris3d(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static int	metal_queue_plot(Memimage*, Point, Memimage*, int, float);
 static int	metal_queue_sprite(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
+static Memimage* metal_image_alloc(Rectangle, u32);
+static int	metal_image_free(Memimage*);
 static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
@@ -534,6 +538,8 @@ metal_init(void)
 	gpudrawfillpoly3g = metal_queue_fillpoly3g;
 	gpudrawplot = metal_queue_plot;
 	gpudrawsprite = metal_queue_sprite;
+	gpuimagealloc = metal_image_alloc;
+	gpuimagefree = metal_image_free;
 	gpudrawellipse = metal_queue_ellipse;
 	gpudrawflush = metal_flush_geom;
 	gpudrawreadback = metal_readback_geom;
@@ -2290,6 +2296,188 @@ metal_upload_sprite_tex(Memimage *img, Memimage *mask)
 	return tex;
 }
 
+
+/*
+ * Texture-backed draw images.
+ *
+ * An ordinary draw image's pixels come from the imagmem pool, so getting them
+ * onto the GPU means a copy. Here the pixels are allocated from Metal instead
+ * and the Memimage's bdata points straight at the buffer's contents, so on
+ * unified memory bdata and the texture are the same bytes: memdraw writes are
+ * visible to the GPU with no upload, and a hardware decoder can be pointed at
+ * the same memory to write frames into an ordinary draw image.
+ *
+ * The construction is the one devdraw.c already uses for the screen -
+ * allocmemimaged() over a caller-supplied Memdata, then override i->width with
+ * the real stride. It is only valid when i->zero works out to 0, which is why
+ * this restricts itself to images whose rectangle starts at the origin: zero
+ * is derived from r.min inside allocmemimaged and is not recomputed here.
+ *
+ * Metal needs the row stride aligned, which memdraw does not otherwise
+ * require, so the image is wider in memory than in pixels. memdraw handles
+ * that natively - it is exactly what Memimage.width is for.
+ *
+ * Off unless INFERNO_TEXIMAGE is set: this changes where every draw image's
+ * pixels live, which is not a default to take on quietly.
+ */
+enum { MaxTexImage = 64 };
+
+static struct {
+	Memimage	*img;
+	Memdata		*md;
+	id<MTLBuffer>	buf;
+	id<MTLTexture>	tex;
+} teximg[MaxTexImage];
+static int	nteximg;
+static int	teximg_on = -1;	/* -1 = not yet looked up */
+static Lock	teximg_lock;
+u32		teximg_alloced;	/* diagnostic counters */
+u32		teximg_declined;
+u32		teximg_nchan;	/* declined: not 32-bit */
+u32		teximg_nsmall;	/* declined: too small to bother */
+u32		teximg_freed;	/* returned through gpuimagefree */
+
+static int
+teximg_enabled(void)
+{
+	if(teximg_on < 0)
+		teximg_on = getenv("INFERNO_TEXIMAGE") != nil;
+	return teximg_on;
+}
+
+static Memimage*
+metal_image_alloc(Rectangle r, u32 chan)
+{
+	Memimage *i;
+	Memdata *md;
+	id<MTLBuffer> buf;
+	id<MTLTexture> tex;
+	MTLTextureDescriptor *td;
+	NSUInteger align;
+	int w, h, bpr, slot, d;
+	uintptr z;
+
+	if(!teximg_enabled() || mtl_device == nil)
+		return nil;
+	w = Dx(r);
+	h = Dy(r);
+	if(w <= 0 || h <= 0){
+		teximg_declined++;
+		return nil;
+	}
+	if((d = chantodepth(chan)) != 32){
+		teximg_nchan++;
+		teximg_declined++;
+		return nil;
+	}
+	if((vlong)w*h < 16*16){
+		teximg_nsmall++;
+		teximg_declined++;
+		return nil;
+	}
+
+	lock(&teximg_lock);
+	if(nteximg >= MaxTexImage){
+		unlock(&teximg_lock);
+		teximg_declined++;
+		return nil;
+	}
+	unlock(&teximg_lock);
+
+	align = [mtl_device minimumLinearTextureAlignmentForPixelFormat:
+		MTLPixelFormatBGRA8Unorm];
+	if(align < 4)
+		align = 4;
+	bpr = (w*4 + (int)align - 1) & ~((int)align - 1);
+
+	buf = [mtl_device newBufferWithLength:(NSUInteger)bpr*h
+		options:MTLResourceStorageModeShared];
+	if(buf == nil){
+		teximg_declined++;
+		return nil;
+	}
+	td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:
+		MTLPixelFormatBGRA8Unorm width:w height:h mipmapped:NO];
+	td.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+	td.storageMode = MTLStorageModeShared;
+	tex = [buf newTextureWithDescriptor:td offset:0 bytesPerRow:bpr];
+	if(tex == nil){
+		teximg_declined++;
+		return nil;
+	}
+
+	md = mallocz(sizeof(Memdata), 1);
+	if(md == nil){
+		teximg_declined++;
+		return nil;
+	}
+	md->ref = 1;
+	md->base = nil;
+	md->bdata = (uchar*)[buf contents];
+	md->allocd = 0;	/* freememimage must not touch it; we own this */
+
+	i = allocmemimaged(r, chan, md);
+	if(i == nil){
+		free(md);
+		teximg_declined++;
+		return nil;
+	}
+	/*
+	 * Override the stride, and recompute zero to match it. allocmemimaged
+	 * derived zero from the NATURAL stride, so leaving it would put every
+	 * row at the wrong offset for any image not at the origin - devdraw
+	 * gets away with assigning width alone for the screen only because the
+	 * screen starts at (0,0), where zero is 0 either way. Same formula as
+	 * allocmemimaged, with our stride.
+	 */
+	i->width = bpr/sizeof(u32);
+	z = sizeof(u32)*(uintptr)i->width*r.min.y;
+	if(r.min.x >= 0)
+		z += (r.min.x*d)/8;
+	else
+		z -= (-r.min.x*d+7)/8;
+	i->zero = -z;
+	i->clipr = r;
+
+	lock(&teximg_lock);
+	slot = nteximg++;
+	teximg[slot].img = i;
+	teximg[slot].md = md;
+	teximg[slot].buf = buf;
+	teximg[slot].tex = tex;
+	unlock(&teximg_lock);
+	teximg_alloced++;
+	return i;
+}
+
+static int
+metal_image_free(Memimage *i)
+{
+	Memdata *md;
+	int k;
+
+	if(i == nil)
+		return 0;
+	lock(&teximg_lock);
+	for(k = 0; k < nteximg; k++)
+		if(teximg[k].img == i)
+			break;
+	if(k >= nteximg){
+		unlock(&teximg_lock);
+		return 0;	/* not ours: caller frees it the ordinary way */
+	}
+	md = teximg[k].md;
+	teximg[k].buf = nil;	/* ARC releases the buffer and its texture */
+	teximg[k].tex = nil;
+	teximg[k] = teximg[--nteximg];
+	unlock(&teximg_lock);
+
+	freememimage(i);	/* allocd == 0, so this leaves md and the bytes */
+	free(md);
+	teximg_freed++;
+	return 1;
+}
+
 static void
 metal_clear_sprite_tex_cache(void)
 {
@@ -2807,7 +2995,7 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud soft_fallbacks=%llud\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -2816,7 +3004,8 @@ present_softscreen(void)
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
 			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris,
-			metal_soft_fallbacks);
+			metal_soft_fallbacks, teximg_alloced, teximg_declined,
+			teximg_nchan, teximg_nsmall, teximg_freed, nteximg);
 		metal_g3_calls = metal_g3_tris = 0;
 		metal_soft_fallbacks = 0;
 		metal_stat_frames = 0;

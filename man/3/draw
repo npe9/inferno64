@@ -1026,6 +1026,24 @@ The message has five decimal integers formatted as in the
 .B ctl
 message: the image id of the window and the coordinates of the rectangle
 that should be refreshed.
+.SH ENVIRONMENT
+.TP
+.B INFERNO_TEXIMAGE
+Allocate an image's pixels from GPU-visible memory, so that the
+.B Memimage
+and a texture are the same bytes rather than one being a copy of the
+other.
+On unified memory that removes the upload needed to composite an image,
+and lets a hardware decoder write frames directly into an ordinary draw
+image.
+Only 32-bit images above a minimum size qualify \(em a mask or an 8-bit
+image has no matching texture format \(em so on a typical workload most
+images still come from the ordinary pool.
+.PP
+Off by default: it changes where every eligible image's pixels live,
+which is not a default to take on quietly.
+Where the platform provides no such allocator the hooks are nil and
+every image is allocated as usual.
 .SH SOURCE
 .B /emu/port/devdraw.c
 .br

@@ -198,6 +198,19 @@ int	(*gpudrawfillpoly3d)(Memimage*, float*, float*, float*, int, Memimage*, int,
  * a single flat fill at the average of the per-vertex lits - see case 'K'. */
 int	(*gpudrawfillpoly3g)(Memimage*, float*, float*, float*, float*, int, Memimage*,
 	int, float*, float*, float, float, float, float);
+/*
+ * Optional GPU-visible backing for a draw image's pixels. win-cocoa.m may
+ * allocate the pixel memory from Metal so that bdata and a texture are the
+ * same bytes - on unified memory that means compositing the image needs no
+ * upload, and a hardware decoder can write frames straight into it. Returning
+ * nil means "not backed", and the caller allocates an ordinary pool image, so
+ * everywhere these are nil nothing changes at all.
+ *
+ * gpuimagefree returns 1 if the image was one of its own and has been freed;
+ * 0 means the caller should freememimage() it as usual.
+ */
+Memimage* (*gpuimagealloc)(Rectangle, u32);
+int	(*gpuimagefree)(Memimage*);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
@@ -690,7 +703,8 @@ drawfreedimage(DImage *dimage)
 			memlfree(l);
 		drawfreedscreen(ds);
 	}else
-		freememimage(dimage->image);
+		if(gpuimagefree == nil || !gpuimagefree(dimage->image))
+			freememimage(dimage->image);
     Return:
 	free(dimage->fchar);
 	free(dimage);
@@ -2116,7 +2130,11 @@ drawmesg(Client *client, void *av, int n)
 				}
 				continue;
 			}
-			i = allocmemimage(r, chan);
+			i = nil;
+			if(gpuimagealloc != nil)
+				i = gpuimagealloc(r, chan);
+			if(i == nil)
+				i = allocmemimage(r, chan);
 			if(i == 0)
 				error(Edrawmem);
 			if(repl)
@@ -2125,7 +2143,8 @@ drawmesg(Client *client, void *av, int n)
 			if(!repl)
 				rectclip(&i->clipr, r);
 			if(drawinstall(client, dstid, i, 0) == 0){
-				freememimage(i);
+				if(gpuimagefree == nil || !gpuimagefree(i))
+					freememimage(i);
 				error(Edrawmem);
 			}
 			memfillcolor(i, value);
