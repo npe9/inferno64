@@ -172,12 +172,40 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
 
 Reproducer committed: `appl/cmd/fdstresstest.b`, `man/1/fdstresstest`.
 
+**A single run is not the reproducer.** One run almost certainly prints `PASS`
+and tells you nothing. Loop it. A normal run takes 0.2s, so anything past a
+couple of seconds is the failure — **a hang is the failure**: no output, no exit.
+
+Measured rates, 150 runs each:
+
+| flags | hung |
+|---|---|
+| `-c0` (interpreter) | 18/150 — **12%** |
+| `-c1` (JIT, **the default** `cflag`) | 57/150 — **38%** |
+
+**Reproduce and validate under `-c1`, not `-c0`.** It is both the default
+configuration and three times more likely to fail, so it is far cheaper to
+falsify a candidate fix against. Most of the analysis below was done under `-c0`
+because the interpreter is easier to reason about; the JIT emits non-atomic
+refcount code (see the GC-LOCK HISTORY comment in `dis.c`), so a `-c1`-only
+difference would be its own finding — but the hang occurs on both, so the
+scheduler bug is not JIT-specific.
+
 ```sh
-timeout 30 ./MacOSX/arm64/bin/emu-g -c0 -r . /dis/fdstresstest.dis
+for i in $(seq 1 150); do
+	./MacOSX/arm64/bin/emu-g -c1 -r . /dis/fdstresstest.dis >/dev/null 2>&1 &
+	pid=$!
+	ok=0
+	for t in $(seq 1 40); do
+		sleep 0.25
+		kill -0 $pid 2>/dev/null || { ok=1; break; }
+	done
+	[ $ok = 0 ] && { echo "hung: $pid"; break; }   # leave it alive to attach
+	wait $pid 2>/dev/null
+done
 ```
 
-Hangs ~12% under `-c0` (18/150 measured).  **A hang is the failure** — no output, no exit. Any
-test sharing an `Fgrp` across processes hits it, which is why it gates the
+Any test sharing an `Fgrp` across processes hits it, which is why it gates the
 concurrency work.
 
 **It is a single lost `osready`, and that is now proven, not inferred.** lldb
@@ -288,10 +316,11 @@ worth checking directly, and neither has been.
    monitor without `clrex` on the contended path; `unlock()` is `coherencefn()`
    then a plain store.
 
-Do not patch speculatively: at ~12% a change cannot be falsified by a handful
-of runs. Any candidate needs the interleaved A/B above — 150 pairs, both
-binaries alternating in one session — and `-c1` as well, since that is the
-default `cflag`. The `vmqnext` attempt looked obviously right and was wrong.
+Do not patch speculatively: even at 38% a change cannot be falsified by a
+handful of runs. Any candidate needs the interleaved A/B above — 150 pairs,
+both binaries alternating in one session so machine load hits them equally —
+run under `-c1` for the stronger signal. The `vmqnext` attempt looked obviously
+right and was wrong.
 
 ### Reproducing and instrumenting it
 
