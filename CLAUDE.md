@@ -1,5 +1,9 @@
 # Working agreement for this repository
 
+**Picking up cold?** Read `doc/hpc-plan.md` first — current state of the
+numerics/GPU work, the remaining plan, open bugs with reproducers, and the
+gotchas that have cost real time.
+
 ## Autonomy: default to acting, not asking
 
 **Keep working until the work is done.** Finish an item, commit it, and start the next one in the
