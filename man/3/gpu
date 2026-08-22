@@ -61,22 +61,36 @@ Three request shapes, each starting with a one-letter tag:
 .EX
 	P
 .EE
-The following read returns
-.B f32
-or
-.BR f64 :
-the precision this device would
+The following read returns the precision a matvec on this handle would
 .B actually
-compute in.
-Not cosmetic \(em a hardware backend is f32-only (Metal has no
-.BR double ),
-so a caller needing f64 must know that
+deliver, which for this protocol is always
+.BR f32 .
+Not cosmetic \(em a caller needing f64 must know that
 .B before
 trusting a result.
 This is what
 .IR gpu (2)'s
 .B precision
 verb queries.
+.PP
+The answer is unconditional, and deliberately so.
+A hardware backend is f32-only anyway (Metal has no
+.BR double ),
+but even with no hardware backend linked at all \(em when every matvec
+falls through to the portable CPU loop below, which is written in
+.B double
+\(em the
+.B U
+and
+.B X
+requests still carry their values as 32-bit IEEE754 singles.
+The vector handed back has therefore been through f32 twice whatever
+computed it, so reporting
+.B f64
+on the fallback path (as this device once did) told a caller who asked
+for double that it was getting double while quietly handing back
+single \(em precisely the failure this request exists to prevent.
+Carrying genuine f64 needs new request tags with 8-byte values.
 .EX
 	U  n  nnz  rowptr[n+1]  colidx[nnz]  val[nnz]
 .EE

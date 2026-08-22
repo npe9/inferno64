@@ -342,13 +342,24 @@ gpuwrite(Chan *c, void *va, long n, vlong unused_offset)
 	if(buf[0] == 'P'){
 		free(buf);
 		lock(&gtablock);
-		/* A hardware backend is f32-only; the portable fallback is
-		 * f64. Report what a matvec on THIS handle would really
-		 * compute in, not what the device is named after. */
-		if(gpuhwspmv != nil && gpuhwupload != nil)
-			setresp(g, strdup("f32\n"));
-		else
-			setresp(g, strdup("f64\n"));
+		/* Report what a matvec on this handle would really deliver to
+		 * the caller, not what it computes with internally.
+		 *
+		 * This used to answer f64 whenever no hardware hooks were
+		 * linked, on the grounds that the portable gpuspmv() loop below
+		 * is written in double. That was wrong, and wrong in the one
+		 * direction this request exists to prevent: 'U' and 'X' carry
+		 * values as be32f/put32f - IEEE754 SINGLE - on every path,
+		 * hardware or not. So the vector handed back has been through
+		 * f32 twice regardless, and a caller who asked for f64 and was
+		 * told f64 was quietly getting f32.
+		 *
+		 * f32 is therefore the honest answer for this protocol as it
+		 * stands, and the effect is that "precision f64" now declines
+		 * this device on every path instead of only the hardware one.
+		 * Carrying real f64 needs new request tags with 8-byte values;
+		 * until those exist, do not soften this back. */
+		setresp(g, strdup("f32\n"));
 		unlock(&gtablock);
 		return n;
 	}

@@ -87,9 +87,18 @@ solve, because f32 costs iterations (52 vs 42 at 30³).
 
 Metal has no `double`, so the hardware path is f32-only. `gpu(2)`'s `precision`
 verb is therefore load-bearing, not decoration: `apply()` asks the device (`P`
-request) what it would *actually* compute in and **declines the GPU** when that
-is worse than asked. Consequence worth knowing: **`backend gpu` alone does not
-use the GPU**, because `precision` defaults to `f64`. Ask for `precision f32`.
+request) what it would *actually* deliver and **declines the GPU** when that is
+worse than asked. Consequence worth knowing: **`backend gpu` alone does not use
+the GPU**, because `precision` defaults to `f64`. Ask for `precision f32`.
+
+The `P` answer is now unconditionally `f32`. It used to report `f64` whenever no
+hardware hooks were linked, reasoning that the portable fallback loop is written
+in `double` — but `U` and `X` carry values as 32-bit singles on *every* path, so
+that told an f64 caller it was getting f64 while handing back f32. Latent rather
+than active on this platform (only `emu-cocoa` builds `devgpu.c`, and it always
+links `win-gpu.m`, whose constructor registers the hooks), but it would fire the
+moment `devgpu` is built without a hardware backend — a Linux port, or adding
+`gpu` to the `emu-g` manifest. Real f64 needs new tags with 8-byte values.
 
 ---
 
@@ -105,9 +114,51 @@ use the GPU**, because `precision` defaults to `f64`. Ask for `precision f32`.
    Once matvec is offloaded these are the remaining serial part; a solve that
    ships the vector back and forth per operation will not scale.
 3. **`amr(2)` and `pde(2)` on GPU.** Both are *stencil* sweeps, not SpMV, so
-   they need a second Metal kernel — but no matrix upload at all, so the
+   they need a second Metal kernel — and no matrix upload at all, so the
    per-call overhead that dominates small SpMV problems mostly disappears.
-   One kernel should serve both.
+
+   **"One kernel serves both" was written here as an assumption and it is
+   false.** The arithmetic matches (`c + h*D*lap`, second-order central
+   differences, explicit Euler, substepped) but the memory contract does not:
+
+   - `amr(2)` blocks carry a real **1-cell ghost halo** (`(bs+2)³`, filled by
+     `exchange()` before the sweep), so its inner loop does no boundary tests
+     at all. `pde(2)`'s `Field` is **unpadded** `nx*ny` and routes all five
+     stencil reads through `get()`, which branches on `f.bc` per access
+     (periodic modulo / zero / clamp). Those are different kernels, and you
+     cannot simply pad `Field`: its exact length is load-bearing outside
+     `pde.b` — `krylov->solve` takes `f.u` as x0/rhs directly, and `verify.b`
+     indexes it as `iy*n+ix`. Padding it is an API break reaching into
+     `krylov(2)` and `verify(2)`.
+   - 2-D 5-point versus 3-D 7-point.
+   - `pde` has one `(dx,dy)` per launch; `amr`'s `(dx,dy,dz)` is per block,
+     from the block's level.
+
+   The contract that *does* work for both: **launch per contiguous padded
+   region, take `(nx,ny,nz,dx,dy,dz,h,D)` as launch parameters, and require
+   the caller to have filled a 1-cell halo first.** `amr` already satisfies it
+   exactly; `pde` needs a new padded scratch buffer plus an O(perimeter)
+   "materialise the BC into a halo" step per substep, which keeps `f.u`'s
+   public layout intact. Cheap, but it is a real new buffer and copy, not
+   free reuse.
+
+   Also: only `diffuse()` maps cleanly. `wave()` needs two input levels and a
+   three-way rotation; `gray()` needs two coupled fields, a nonlinear term and
+   per-cell clamping. Three kernels minimum on the `pde` side for all of them.
+
+   Before benchmarking, know that `amr`'s CPU baseline is unfairly slow for
+   reasons unrelated to the kernel: `sweep()` calls `exchange()` and then
+   `step()` calls it again, and each substep allocates and zero-fills a fresh
+   `(bs+2)³` array per block and copies it back. Fix or measure around those,
+   or the GPU will look better than it is.
+
+   `verify(2)`'s `laplacianorder()` is the regression test to extend — it
+   isolates exactly this stencil and asserts second-order convergence, which
+   is a real numerical assertion rather than a smoke test. `amr(2)` has **no
+   tests at all**; `amr.m` documents `totalmass` as the conservation
+   invariant for verification and nothing calls it. Note its coarse/fine
+   prolongation is not flux-conservative, so measure the CPU drift first
+   rather than blaming a port for it.
 4. **Keep the matrix resident across solves.** Today `apply()` re-uploads per
    solve; UQ and convergence studies solve the same matrix repeatedly.
 5. Possibly: f64 emulation or mixed-precision refinement, so `precision f64`
@@ -303,7 +354,16 @@ the pool lock at `val == 1` with no owner running and seven threads spinning in
 `lock()` from `poolfree`/`dopoolalloc`. Whether that one was caused by this path
 was never established.
 
-### 5. Smaller, noted, unfixed
+### 5. `devgpu`'s handle table races its own realloc
+
+`newhandle()` (`emu/port/devgpu.c`) `free`s the old `gtab` under `gtablock`,
+but `gpuread`/`gpuwrite` take `g = &gtab[h]` with **no lock** and then mutate
+`g->respoff` unlocked. Harmless today only because `gpu(2)` uses exactly one
+handle, serially. **An AMR offload that opens a handle per block is precisely
+the case that triggers it** — treat it as a precondition for plan item 3, not
+a nice-to-have.
+
+### 6. Smaller, noted, unfixed
 
 - `metal_present_geom()` consumes `mtl_zclear` before creating its encoder and
   uses the encoder without a nil check — a failed encoder loses that frame's

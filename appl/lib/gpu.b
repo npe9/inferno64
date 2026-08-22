@@ -197,5 +197,12 @@ Backend.apply(b: self ref Backend, m: ref CSR): Apply
 	}
 	gpufd = fd;
 	gpun = m.n;
+	# gpuapply() falls back to sparse->matvec(cpumatrix, x) if a write or
+	# read to the device fails mid-solve, so cpumatrix has to be right on
+	# the success path too - not just on the paths that return cpuapply.
+	# It was previously only ever set when falling back, leaving that
+	# rescue path dereferencing nil on the first such failure unless some
+	# earlier apply() happened to leave the same matrix behind.
+	cpumatrix = m;
 	return gpuapply;
 }
