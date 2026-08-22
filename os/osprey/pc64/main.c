@@ -175,8 +175,10 @@ init0(void)
 static void
 serialstr(char *s)
 {
-	while(*s != 0)
-		outb(0x3f8, *s++);
+	while(*s != 0){
+		outb(0x3f8, *s);
+		s++;
+	}
 }
 
 void
