@@ -1082,9 +1082,11 @@ through the namespace \(em a movie on a mount from another machine
 therefore works, but a session cannot begin decoding until the stream
 ends.
 Removing that needs the container parsed on this side and samples fed
-to the decoder directly, for which
+to the decoder directly.
 .IR quicktime (2)
-already exists in this tree.
+parses movie and track headers but has no sample tables, so it cannot
+yet locate a sample or supply a decoder's parameter sets; it would have
+to be extended first.
 .PP
 It is a file of its own rather than another verb on
 .BR ctl ,

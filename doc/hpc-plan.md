@@ -411,8 +411,13 @@ colour rather than "something was written".
 Still to do for video proper: the stream is staged to local storage before the
 first frame, because AVFoundation wants an asset it can open, so a session
 cannot start decoding until the stream ends - fixing that means parsing the
-container on this side and feeding samples to the decoder, and `quicktime(2)`
-already exists here for the parsing half. Then `CVMetalTextureCache` so the
+container on this side and feeding samples to the decoder.
+
+**Correction:** an earlier version of this note said `quicktime(2)` already
+does the parsing half. It does not. `module/quicktime.m` is a *header* parser
+— `mvhd` and `trak` — with no sample tables at all: no `stsd`, `stsc`, `stco`,
+`stsz` or `stts`, so it cannot locate a compressed sample or extract the
+`avcC` parameter sets a decoder needs. Extending it is real work, not reuse. Then `CVMetalTextureCache` so the
 decoder's pixel buffer *is* the image's backing rather than being copied into
 it; presentation timestamps and A/V sync against `audio(3)`; and the
 `bdata`-staleness rule for memdraw paths, which remains the genuinely invasive
