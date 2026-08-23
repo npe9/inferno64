@@ -1163,6 +1163,13 @@ so it still worked; the rate is a timing artefact, not evidence.
 
 ### Original analysis, kept because the method is worth reading
 
+**Everything from here to the end of this bug is historical.** It is written in
+the present tense and describes a build that no longer exists; the rates it
+quotes and statements like "gates the concurrency work" were true then. It is
+kept because the elimination it does — the counting semaphore, the `Rendez`
+handshake, `vmqnext`, the per-site counters — is what narrowed the search, and
+because a regression would have to be re-narrowed the same way.
+
 Reproducer committed: `appl/cmd/fdstresstest.b`, `man/1/fdstresstest`.
 
 **A single run is not the reproducer.** One run almost certainly prints `PASS`
