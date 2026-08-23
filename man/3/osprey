@@ -231,6 +231,14 @@ a frame with a group in it is answered with a frame of replies to
 whoever sent it, and a group that asked for a stream has its frames sent
 at the rate it asked for.  There is no connection: each group says which
 session it belongs to.
+.B off
+gives the interface back and waits for the processes answering on it to
+finish, so that
+.B off
+followed by
+.B on
+works: while one of them still holds the conversation, nothing else can
+take that frame type.
 .TP
 .BI output " id off len"
 Put work on the container's output queue: a place in its data area and
@@ -700,8 +708,8 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .PP
 .B /scripts/osprey-check.py
 boots one kernel on four cores and asks it for everything a single
-machine can be made to show: a request submitted and collected through the mapped ring with
-nobody writing
+machine can be made to show: a request submitted and collected through
+the mapped ring with nobody writing
 .BR service ,
 a select woken by a semaphore on the arm it was given, a page written by
 one container and read by another after it is handed over, a private
@@ -710,12 +718,18 @@ checkpoint, an attribute written over
 .IR pip (5)
 that nobody else sees until the fid that wrote it is closed, an
 operation the kernel refuses put on another container's ring and
-answered there, what a round trip costs with a trap and without one, sixteen hundred
-requests from
-eight processes at once with none lost, a container held to a
+answered there, what a round trip costs with a trap and without one, a
+uart driven by a task whose bytes are watched leaving the second serial
+port, sixteen hundred requests from eight processes at once with none
+lost, the pages a container held coming back when it exits, eight idle
+service processes costing nothing at all, a container held to a
 five-per-cent reservation while an identical process beside it is not,
-and a uart driven by a task, whose bytes are watched leaving the second
-serial port.
+the wire
+.IR pip (5)
+is spoken on given back when it is turned off, and a session that
+outlived a
+.B reset
+told there is no such session.
 .PP
 .B /scripts/osprey-check-wire.py
 boots two on one wire and asks for the rest: a key agreed rather than
