@@ -267,10 +267,12 @@ diff diff
 digits digits
 disdep disdep
 disdump asm
+disrepl disrepl
 dmview dmview
 dmwm dmview
 doodle doodle
 draw3ddemo draw3ddemo
+drawbind drawbind
 drop sh-string
 du du
 dungen dungen
@@ -432,6 +434,7 @@ rdata sh-file2chan
 re sh-regex
 read read
 recv sh-tk
+refstress refstress
 register grid-register
 report sh-test
 rerror sh-file2chan
@@ -490,6 +493,8 @@ stream stream
 strings strings
 strut strut
 styxlisten listen
+styxlog styxlog
+styxreplay styxreplay
 sum sum
 sweeper wm-misc
 symmetry symmetry

@@ -1,0 +1,71 @@
+.TH STYXLOG 1
+.SH NAME
+styxlog \- what a recorded session did
+.SH SYNOPSIS
+.B styxlog
+[
+.B -d
+]
+[
+.B -b
+.I nbytes
+]
+[
+.B -f
+.I substring
+]
+.I tracefile
+.SH DESCRIPTION
+.B Styxlog
+reads a trace written by
+.B iostats -t
+(see
+.IR iostats (4))
+and prints what the session did, as opens, reads and writes against paths,
+with the time each happened.
+.PP
+A raw trace is a sequence of messages about numbered fids, which is the
+wrong vocabulary for reading: nothing in it says that the program opened
+.BR /dis/wm/toolbar.dis .
+Walks are what give fids their meaning, so this follows them and keeps a
+name for every fid.
+.PP
+Short printable writes are shown as text, because that is usually where
+the interesting part of a session is \(em a Tk command, a line to a
+control file \(em and a byte count says nothing about it.
+.B -f
+restricts the report to paths containing a substring, and
+.B -b
+ignores reads and writes below a size.
+.SH EXAMPLE
+.IP
+.EX
+% iostats -t /s.styx sh /tmp/session.sh
+% styxlog /s.styx
+    0.006  open   /dis/sh.dis
+    0.012  open   /tmpsh/sess.sh
+    0.013  open   /dis/echo.dis
+    0.014  write  /dev/null: hello\en
+    0.016  open   /dis/sleep.dis
+    1.018  open   /dis/date.dis
+    1.021  open   /dev/time
+    1.022  write  /dev/null: Sun Aug 23 18:47:45 GMT 2026\en
+.EE
+.PP
+Loading a module is an open of its
+.B .dis
+file, so the programs a session ran are in the log, and so is the pause
+the sleep caused.
+.SH SOURCE
+.B /appl/cmd/styxlog.b
+.SH SEE ALSO
+.IR iostats (4),
+.IR styxreplay (1)
+.SH BUGS
+A read is counted but not attributed to a path, because attributing it
+needs the request it answers and this walks the trace in one pass.
+Opens carry the path, which is usually enough to follow what happened.
+.PP
+It does not know which process did what.
+A trace records one name space, and every process sharing it appears in
+the same stream.

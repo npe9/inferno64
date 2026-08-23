@@ -61,6 +61,7 @@ TARG=\
 	disdep.dis\
 	disdump.dis\
 	disrepl.dis\
+	drawbind.dis\
 	dossrv.dis\
 	du.dis\
 	echo.dis\
@@ -92,6 +93,7 @@ TARG=\
 	playmovie.dis\
 	refstress.dis\
 	sparsetest.dis\
+	styxlog.dis\
 	styxreplay.dis\
 	vecbench.dis\
 	qttest.dis\

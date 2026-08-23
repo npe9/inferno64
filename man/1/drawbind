@@ -1,0 +1,75 @@
+.TH DRAWBIND 1
+.SH NAME
+drawbind \- what a program's own bind does to a trace of it
+.SH SYNOPSIS
+.B drawbind
+[
+.B -b
+]
+.SH DESCRIPTION
+.B Drawbind
+allocates a display and a 64\(mu64 image through
+.IR draw (2)
+and says so.
+With
+.BR -b ,
+it binds
+.B "#i"
+onto
+.B /dev
+first; without it, it uses whatever
+.B /dev
+it inherited.
+Nothing else differs.
+.PP
+It exists because that difference decides whether the work can be
+recorded.
+.IR Iostats (4)
+interposes on the
+.I name space,
+so it sees what a program reaches through the name space \(em and
+.B bind
+of a kernel device goes straight to the device, past anything mounted on
+the way.
+.SH EXAMPLE
+.IP
+.EX
+% bind -b '#i' /dev
+% iostats -t /a.styx drawbind
+drawbind: allocated a 64x64 image, using an inherited /dev
+% iostats -t /b.styx drawbind -b
+drawbind: allocated a 64x64 image, having bound #i onto /dev
+% styxlog -f draw /a.styx
+    0.023  open   /dev/draw/new
+    0.023  open   /dev/draw/1/data
+    0.023  open   /dev/draw/1/refresh
+    0.024  write  /dev/draw/1/data (51 bytes)
+    ...
+% styxlog -f draw /b.styx
+%
+.EE
+.PP
+Both runs allocated the image.
+Only one of them can be seen to have done so.
+.PP
+Running the same program both ways is the part that matters.
+An empty trace is not evidence on its own \(em a program that did nothing
+produces one too \(em so the case worth showing is the one where the work
+demonstrably happened and the trace is still empty.
+.SH SOURCE
+.B /appl/cmd/drawbind.b
+.SH SEE ALSO
+.IR iostats (4),
+.IR styxlog (1),
+.IR styxreplay (1),
+.IR draw (2)
+.SH BUGS
+It demonstrates the gap and does not close it.
+Closing it would mean interposing below the name space rather than in
+it.
+.PP
+.B "#i"
+is the case that matters in practice, but nothing about it is special:
+any
+.B "bind #"
+escapes a trace the same way.

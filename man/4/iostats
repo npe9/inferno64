@@ -91,7 +91,7 @@ without the bytes, and no line carries a time.
 Each record is
 .IP
 .EX
-'T' or 'R'   1 byte, the direction
+\&'T' or 'R'   1 byte, the direction
 time         8 bytes, big-endian microseconds
 length       4 bytes, big-endian
 message      length bytes, the Styx message verbatim
@@ -138,6 +138,62 @@ instructions at a time, see
 \(em so the schedule is a sequence of discrete handoffs rather than an
 arbitrary interleaving, which is a far smaller thing to record than it
 would be on a machine that ran them side by side.
+.SS "What a program can do to escape it"
+The interposition is on the name space, so what is captured is what the
+program reaches
+.I through
+the name space \(em and a program that attaches a kernel device itself
+does not.
+.B Bind
+of
+.BR "#i" ,
+.BR "#m" ,
+.B "#c"
+and the rest goes straight to the device, past anything mounted on the
+way, and none of the traffic appears.
+.PP
+This is not hypothetical and is easy to meet by accident, because it is
+what a graphics program normally does.
+.IR Drawbind (1)
+exists to show it: one program that allocates a display and an image
+through
+.IR draw (2),
+differing only in whether it binds
+.B "#i"
+onto
+.B /dev
+itself or inherits a
+.B /dev
+its parent bound.
+.IP
+.EX
+% bind -b '#i' /dev
+% iostats -t /a.styx drawbind
+% iostats -t /b.styx drawbind -b
+.EE
+.PP
+Both allocate the image and say so.
+The traces do not agree that they did:
+.IP
+.EX
+% styxlog -f draw /a.styx
+    0.023  open   /dev/draw/new
+    0.023  open   /dev/draw/1/data
+    0.023  open   /dev/draw/1/refresh
+    0.024  write  /dev/draw/1/data (51 bytes)
+    ...
+% styxlog -f draw /b.styx
+%
+.EE
+.PP
+Not one message, though the work was done and succeeded.
+That is the point of running the same program both ways: a trace with
+nothing in it otherwise looks like a program that did nothing.
+.PP
+So bind the devices in the shell that runs
+.BR iostats ,
+not in the program being traced.
+An inherited name space is traced; a self-attached device is not.
 .SS "The report"
 It goes to standard
 .IR output ,
@@ -155,12 +211,18 @@ reporting microseconds while the function that reads it is called
 .PP
 .IR Styxreplay (1)
 serves a trace back to a program.
+.IR Styxlog (1)
+reads one, and reports what the session did as opens and writes against
+paths rather than as messages about fids.
 .SH SOURCE
 .B /appl/cmd/iostats.b
 .SH BUGS
 Poor clock resolution means that large amounts of I/O must be done to
 get accurate rate figures.
 .PP
-Can be fooled by programs that do fresh mounts outside its purview.
+Can be fooled by programs that do fresh mounts outside its purview, and
+by any program that binds a kernel device itself; see
+.I "What a program can do to escape it"
+above.
 .PP
 Cannot monitor standard input or output.
