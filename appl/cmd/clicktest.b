@@ -35,13 +35,18 @@ Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 cfg := array[] of {
 	"frame .f",
 	"button .b -text {press me} -command {send cmd press}",
-	"label .l -text {nothing yet}",
+	"label .l -text {nothing yet} -width 200",
 	"pack .b .l -in .f",
 	"pack .f -fill both -expand 1",
 	"pack propagate . 0",
 	"update",
 };
 
+# The label is given a fixed width on purpose. Without one its text changes
+# width when a press is recorded, pack re-centres what is beside it, and the
+# button moves out from under the next click - two clicks in five went missing
+# that way, which looks like clicks being dropped and is a widget that walked.
+#
 # A menu is the case a click alone does not cover: it posts on a press and
 # tracks the pointer, so an item is chosen by moving onto it rather than by
 # clicking where it happens to be. That is what session(2) keeps pointer
@@ -53,7 +58,7 @@ menucfg := array[] of {
 	".mb.m add command -label one -command {send cmd one}",
 	".mb.m add command -label two -command {send cmd two}",
 	".mb.m add command -label three -command {send cmd three}",
-	"label .l -text {nothing yet}",
+	"label .l -text {nothing yet} -width 200",
 	"pack .mb .l -in .f",
 	"pack .f -fill both -expand 1",
 	"pack propagate . 0",
@@ -77,8 +82,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	wait := 30;
 	menu := 0;
 	item := 2;
+	expect := "";
+	want := 0;
 	arg->init(argv);
-	arg->setusage("clicktest [-m] [-i item] [-w wherefile] [-r resultfile] [-t seconds]");
+	arg->setusage("clicktest [-m] [-i item] [-e what -n count] [-w wherefile] [-r resultfile] [-t seconds]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'w' =>	where = arg->earg();
@@ -86,6 +93,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		't' =>	wait = int arg->earg();
 		'm' =>	menu++;		# a menu instead of a button
 		'i' =>	item = int arg->earg();	# which item to aim the drag at
+		'e' =>	expect = arg->earg();	# what should arrive
+		'n' =>	want = int arg->earg();	# and how many times
 		* =>	arg->usage();
 		}
 
@@ -171,26 +180,54 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	spawn timeout(wait, cmd);
 
 	n := 0;
+	wrong := 0;
 	rfd := sys->create(result, Sys->OWRITE, 8r666);
-	for(;;)alt{
+	# a flag rather than break: in Limbo a break inside an alt arm leaves
+	# the alt, not the loop around it, so the loop never ended and every
+	# check below was unreachable - which looked exactly like a check that
+	# had not been written
+	done := 0;
+	while(!done)alt{
 	c := <-cmd =>
-		if(c == "timeout")
+		if(c == "timeout"){
+			done = 1;
 			break;
+		}
 		n++;
+		if(expect != "" && c != expect)
+			wrong++;
 		tk->cmd(t, ".l configure -text {" + c + " " + string n + "}");
 		tk->cmd(t, "update");
 		if(rfd != nil)
 			fprint(rfd, "%s %d\n", c, n);
 		sys->print("clicktest: %s %d\n", c, n);
 	m := <-menubut =>
-		if(m == "exit")
+		if(m == "exit"){
+			done = 1;
 			break;
+		}
 		tkclient->wmctl(t, m);
 	}
 	if(rfd != nil)
 		fprint(rfd, "end %d\n", n);
 	sys->print("clicktest: %d presses\n", n);
 	stop <-= 1;
+
+	# With -e and -n this is a check rather than a measurement, and says so
+	# in its exit status, so a script can fail. Without them it only
+	# reports, which is what it was built to do.
+	if(expect != "" || want != 0){
+		if(want != 0 && n != want){
+			sys->print("clicktest: FAIL wanted %d presses, got %d\n", want, n);
+			raise "fail:count";
+		}
+		if(wrong != 0){
+			sys->print("clicktest: FAIL %d of %d presses were not %s\n",
+				wrong, n, expect);
+			raise "fail:wrong";
+		}
+		sys->print("clicktest: PASS\n");
+	}
 }
 
 timeout(secs: int, c: chan of string)

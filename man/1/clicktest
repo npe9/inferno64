@@ -47,6 +47,14 @@ Tk's event dispatch, the widget's own hit testing \(em is untested by that.
 % cat /clicktest.result
 press 1
 .EE
+.SS "As a check"
+With
+.B -e
+and
+.B -n
+it says whether the presses it wanted arrived, in its exit status, so a script
+can fail.
+Without them it only reports, which is what it was built to do.
 .SH "WHAT IT ESTABLISHED"
 That a scripted click does work a real Tk button, reliably: twenty-five of
 twenty-five presses over five runs.
@@ -62,7 +70,20 @@ work Tk buttons on this platform, and fail silently.
 goes in underneath the host, so it is not the same path and does not have that
 problem.
 .PP
-It also found a real defect.
+It establishes the whole path as well, not just the pieces.
+A script of pointer actions, compiled into a
+.I recording
+and then played back whole with
+.B session play
+\(em rather than by calling
+.B session click
+directly \(em presses the button three times out of three, five runs out of
+five.
+That is
+.IR session (2)
+end to end: script, recording, script again, and a widget at the end of it.
+.PP
+It also found two real defects.
 A press and a release written back to back arrive microseconds apart however
 they are stamped, and a widget then sees a button that was never really held:
 thirteen presses out of fifteen, losing one click in five or so.
@@ -70,6 +91,19 @@ thirteen presses out of fifteen, losing one click in five or so.
 now spaces the delivery to match the times the events claim.
 Nothing but a widget would have shown that \(em at the device the events are
 all present and correctly stamped either way.
+.PP
+And that a widget which moves between clicks looks exactly like clicks being
+dropped.
+This program's own label changed width when it recorded a press,
+.B pack
+re-centred what was beside it, and the button walked out from under the next
+click: two clicks in five went missing, and only the repeats, never the first.
+The label has a fixed width now.
+.PP
+That one is worth remembering by anybody scripting a window rather than by
+anybody working on
+.IR session (2),
+because the coordinates in a script are absolute and nothing revisits them.
 .SS "The menu"
 .B -m
 puts up a menu instead, and

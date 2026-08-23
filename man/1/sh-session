@@ -57,8 +57,15 @@ edited, and made a recording again.
 .PP
 .B Play
 runs one directly, honouring the waits it contains.
-Timing shorter than a wait is not reproduced \(em actions inside a run go as
-fast as the writes do \(em which is part of what
+Timing shorter than a wait is not reproduced from the recording.
+It is not instant either: a click holds its button for 30ms, a double click
+takes 150ms and a drag about 110ms, because a press and a release delivered
+back to back are not a click at all as far as a widget is concerned \(em see
+.IR clicktest (1).
+So a script of many clicks takes longer than the sum of its waits, and the
+individual gaps are the ones a widget needs rather than the ones that were
+recorded.
+That is part of what
 .I approximate
 means below.
 The remaining verbs are the actions themselves, which is what a printed script
