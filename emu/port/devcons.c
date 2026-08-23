@@ -120,8 +120,24 @@ kbdslave(void *a)
 	/* pexit("kbdslave", 0); */	/* not reached */
 }
 
+/*
+ * Every platform's window driver calls this with a key from the host, so it is
+ * the place to record and to replay one. gkbdputc1 is the same function
+ * without that, for keys generated inside the system - a write to
+ * /dev/keyboard - which must not be recorded: on a replay the program that
+ * wrote them runs again and writes them again.
+ */
 void
 gkbdputc(Queue *q, int ch)
+{
+	if(inputreplaying())
+		return;		/* a replay is driving; ignore the real keyboard */
+	inputrecord('k', ch, 0, 0);
+	gkbdputc1(q, ch);
+}
+
+void
+gkbdputc1(Queue *q, int ch)
 {
 	int n;
 	Rune r;
@@ -461,7 +477,7 @@ conswrite(Chan *c, void *va, long n, vlong offset)
 		for(x=0; x<n; ) {
 			Rune r;
 			x += chartorune(&r, &((char*)va)[x]);
-			gkbdputc(gkbdq, r);
+			gkbdputc1(gkbdq, r);
 		}
 		break;
 

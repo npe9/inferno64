@@ -65,6 +65,7 @@ static struct {
 void
 mouseresize(int w, int h)
 {
+	inputrecord('r', w, h, 0);
 	mouse.modify = 1;
 	mouse.resize = 1;
 	mouse.resizew = w;
@@ -75,19 +76,36 @@ mouseresize(int w, int h)
 
 /*
  * called by any source of pointer data
+ *
+ * Split so that a replay can supply the time an event originally carried
+ * rather than the time it is being injected. Consumers compare msec deltas -
+ * appl/acme/text.b treats two clicks less than 500ms apart as a double click -
+ * so restamping a replayed event with osmillisec() turns a recorded double
+ * click into two single clicks whenever the injection drifts.
  */
 void
 mousetrack(int b, int x, int y, int isdelta)
 {
+	if(inputreplaying())
+		return;		/* a replay is driving; ignore the real mouse */
+	if(isdelta){
+		x += mouse.v.x;
+		y += mouse.v.y;
+	}
+	inputrecord('m', x, y, b);
+	mousetrackt(b, x, y, 0, osmillisec());
+}
+
+void
+mousetrackt(int b, int x, int y, int isdelta, ulong msec)
+{
 	int lastb;
-	ulong msec;
 	Pointer e;
 
 	if(isdelta){
 		x += mouse.v.x;
 		y += mouse.v.y;
 	}
-	msec = osmillisec();
 	lastb = mouse.v.b;
 	mouse.v.x = x;
 	mouse.v.y = y;
@@ -138,6 +156,23 @@ mousexy(void)
 	return Pt(mouse.v.x, mouse.v.y);
 }
 
+
+static void
+pointerinject(int b, int x, int y, ulong msec)
+{
+	mousetrackt(b, x, y, 0, msec);
+}
+
+/*
+ * Registered rather than called directly so that inputrec.c builds in a
+ * configuration with no pointer device at all, such as emu-g.
+ */
+static void
+pointerinit(void)
+{
+	inputmousehook = pointerinject;
+	inputresizehook = mouseresize;
+}
 
 static Chan*
 pointerattach(char* spec)
@@ -301,7 +336,7 @@ Dev pointerdevtab = {
 	'm',
 	"pointer",
 
-	devinit,
+	pointerinit,
 	pointerattach,
 	pointerwalk,
 	pointerstat,

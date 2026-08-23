@@ -329,6 +329,7 @@ if sh-std
 import sh-alphabet
 in sh-string
 index sh-std
+inputtest inputtest
 intro 0intro
 islist sh-sexprs
 itest itest

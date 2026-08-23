@@ -57,6 +57,7 @@ port
 	exception
 	exportfs
 	inferno
+	inputrec
 	latin1
 	main
 	parse

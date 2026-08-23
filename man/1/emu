@@ -283,6 +283,48 @@ directly:
 EMU='-g800x600 -c1'
 emu /dis/wm/wm.dis wm/logon -u inferno
 .EE
+.SS "Recording and replaying the input a session received"
+Two environment variables record the input a whole session received and give
+it back to a later one.
+.TP
+.B INFERNO_INPUT_RECORD=\fIfile\fP
+Write every pointer movement, key and window resize the host delivered, with
+the time it arrived, to
+.IR file .
+.TP
+.B INFERNO_INPUT_REPLAY=\fIfile\fP
+Take the input from
+.I file
+instead of from the host, at the times it originally arrived.
+The real mouse and keyboard are ignored for the duration, so that a stray
+movement cannot quietly corrupt the run.
+.PP
+This is interposed below the name space rather than in it, on the two functions
+every window driver calls, so it catches the whole system \(em
+.IR wm (1),
+its Tk clients, and anything they start \(em including programs that bind
+.B "#i"
+themselves and so escape a Styx trace entirely (see
+.IR iostats (4)
+and
+.IR drawbind (1)).
+.PP
+Times are relative to the start of the session, not to the first event, so the
+wait before the first one is reproduced too.
+That matters: anchoring on the first event injects it the instant
+.B emu
+boots, long before the session's programs are running, and the recording is
+then delivered into a queue and read back in one burst \(em the order survives
+and the timing does not.
+.PP
+The recorded time of each pointer event is passed through rather than restamped
+on injection, because consumers compare its deltas:
+.B appl/acme/text.b
+treats two clicks less than 500ms apart as a double click.
+.PP
+See
+.IR inputtest (1)
+for what was measured.
 .SH FILES
 .TF /dis/emuinit.dis
 .TP

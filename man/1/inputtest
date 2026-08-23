@@ -1,0 +1,115 @@
+.TH INPUTTEST 1
+.SH NAME
+inputtest \- log the input the system received
+.SH SYNOPSIS
+.B inputtest
+[
+.B -w
+]
+[
+.B -p
+]
+[
+.B -o
+.I logfile
+]
+[
+.B -n
+.I events
+]
+.SH DESCRIPTION
+.B Inputtest
+reads
+.B /dev/keyboard
+\(em or
+.B /dev/pointer
+with
+.B -p
+\(em and writes what arrives, with times, to
+.I logfile
+.RB ( /inputtest.log
+by default).
+.B -n
+stops after a number of events.
+.PP
+It exists so that a recording made by
+.B INFERNO_INPUT_RECORD
+can be checked against something read inside the process rather than against a
+screenshot.
+A window that looks right proves much less than a log of exactly which keys
+arrived and when, and it cannot be compared automatically between a recorded
+run and a replayed one.
+.PP
+Keys are logged as numbers, not characters.
+Key
+.I releases
+arrive here as well as presses, as codes above 59000, and a log of characters
+would not show them \(em which is exactly how a Tk bug that inserted releases
+as text stayed invisible to typing into a window and looking at it.
+.SS \fB-w\fP, and why a recording can be empty
+.B -w
+allocates a display before reading.
+Without a window on screen the host window driver has no key window and never
+calls
+.BR gkbdputc ,
+so nothing is delivered and the recording is empty for a reason that has
+nothing to do with the recorder.
+This cost real time: the first recordings made here were 16 bytes, a header and
+no events.
+.SH EXAMPLE
+Record a session, then run it again with no hands:
+.IP
+.EX
+INFERNO_INPUT_RECORD=/rec.in emu -r . /dis/sh.dis \e
+	-c 'inputtest -w -o /a.log -n 9'	# and type
+INFERNO_INPUT_REPLAY=/rec.in emu -r . /dis/sh.dis \e
+	-c 'inputtest -w -o /b.log -n 9'	# and do not
+.EE
+.PP
+Typing
+.B hello
+gives the same nine events in the same order at the same times, to within a
+millisecond or two:
+.IP
+.EX
+recorded   0 104 | 11 59496 | 11 101 | 23 59493 | 23 108 ...
+replayed   0 104 |  6 59496 |  6 101 | 21 59493 | 21 108 ...
+.EE
+.PP
+With
+.BR -p ,
+the pointer states and the
+.I device's own
+msec come back byte for byte:
+.B (252,290,0)@7019
+,
+.B (277,305,0)@7204
+,
+.BR (302,320,0)@7390 .
+That is the value consumers compare to detect a double click, so it has to
+survive the replay rather than be restamped on injection.
+.SH SOURCE
+.B /appl/cmd/inputtest.b
+.SH SEE ALSO
+.IR emu (1),
+.IR iostats (4),
+.IR drawbind (1),
+.IR styxlog (1)
+.SH BUGS
+It reads one device at a time.
+.PP
+.B /dev/pointer
+reports the current state rather than a queue of events, so a reader faster
+than the events repeats samples, and the number of repeats differs between two
+runs without anything being wrong.
+Compare distinct consecutive states, not lines.
+.PP
+Button presses were not exercised end to end here.
+Synthetic clicks from the host are unreliable on macOS and none arrived, so
+what has been shown for buttons is only that they travel in the same record,
+by the same code, as the position and time that were verified.
+.PP
+Nothing here reproduces
+.I execution.
+Dis scheduling is not recorded, so a program racing two of its own processes
+can still diverge on identical input.

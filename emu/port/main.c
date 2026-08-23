@@ -369,6 +369,8 @@ emuinit(void *imod)
 		free(wdir);
 	}
 
+	inputrecinit();
+
 	kproc("main", disinit, imod, KPDUPFDG|KPDUPPG|KPDUPENVG);
 
 	for(;;)

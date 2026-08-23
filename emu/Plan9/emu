@@ -71,6 +71,7 @@ port
 	exportfs
 	exptab
 	inferno
+	inputrec
 	latin1
 	main
 	parse

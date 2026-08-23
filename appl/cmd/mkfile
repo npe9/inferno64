@@ -102,6 +102,7 @@ TARG=\
 	gunzip.dis\
 	gzip.dis\
 	hd.dis\
+	inputtest.dis\
 	idea.dis\
 	import.dis\
 	iostats.dis\
