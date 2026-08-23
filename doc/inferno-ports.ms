@@ -18,39 +18,78 @@ the IP stack, the boot programs and the init programs.
 .NH 1
 The shape
 .PP
-A kernel tree here is
-.CW port ,
-then an architecture, then a board:
+Plan 9 and Inferno organise a kernel by board, not by architecture:
+one directory per machine, flat, beside the portable code.
+.CW sys/src/9
+has
+.CW pc ,
+.CW bcm ,
+.CW kw ,
+.CW omap ,
+.CW teg2 ,
+.CW zynq
+and the rest as siblings of
+.CW port ;
+Inferno's
+.CW os
+had
+.CW pc ,
+.CW js ,
+.CW bitsy ,
+.CW mpc
+the same way.  This tree does the same:
 .IP
 .nf
-port/
-  amd64/
-    pc          the PC, as it already was
-  riscv64/
-    virt        QEMU -M virt
-    sifiveu     SiFive Unleashed
-    spike       the Spike simulator
-  arm64/
-    bcm2712     Raspberry Pi 5
-    jh7110      VisionFive 2
+os/inferno/
+  port/       the portable kernel
+  ip/         the ip stack
+  init/       the init programs
+  boot/       the boot programs
+  pc/         shared PC code
+  pc64/       the 64 bit PC
+  riscv/      shared RISC-V drivers
+  virt/       QEMU -M virt, riscv64
+  sifiveu/    SiFive Unleashed
+  spike/      the Spike simulator
 .fi
 .PP
-rather than a directory per board beside the portable code.  What
-differs between two boards of one architecture is mostly a device tree,
-not a kernel; the architecture directory holds what they share \- the
-UART, the interrupt controller, the timer, the PCI window \- and a board
-directory holds what only it has.
-.PP
-.CW riscv64
-is that shape already:
-.CW os/inferno/riscv64
-holds the SiFive UART, HTIF, the GEM ethernet and the PCI ECAM window,
-and
+A directory of shared code for a family of boards is part of that
+shape rather than a departure from it:
+.CW pc
+holds what
+.CW pc64
+uses and does not build a kernel of its own, and
+.CW riscv
+now holds the SiFive UART, HTIF, the GEM ethernet, the SPI and PWM
+controllers and the PCI ECAM window that
 .CW virt ,
 .CW sifiveu
 and
 .CW spike
-sit inside it.
+share.  What a board directory holds is what only that board has.
+.PP
+The
+.CW NOTE
+that came with the RISC-V work said this from the start \-
+.CW "os/virt ,"
+.CW "os/sifiveu ,"
+.CW os/spike ,
+with
+.RB "\(lq" "shared drivers live in os/riscv/" "\(rq"
+\- and the tree now matches it.
+.PP
+x86 is the exception, and is already right:
+.CW q35 ,
+.CW microvm
+and
+.CW i440fx
+are not different boards, they are different configurations of the same
+one, and
+.CW pc
+and
+.CW pc64
+take them by config file.  RISC-V and ARM are not settled enough for
+that; each board there gets a directory.
 .NH 1
 What is built
 .PP
@@ -202,38 +241,80 @@ now.
 The machines to support
 .PP
 One list, so that a board argument is settled by what a machine is worth
-rather than by what is nearest to hand.  The stars are how much each is
-worth having, not how hard it is.
+rather than by what is nearest to hand, and so that the directory each
+one gets is decided once.  The stars are how much each is worth having,
+not how hard it is.
 .PP
 .TS
 box tab(;);
-lb lb lb lb
-l l l l.
-architecture;machine;what it is;worth
+lb lb lb lb lb
+l l l l l.
+architecture;qemu machine;directory;what it is;worth
 _
-x86-64;q35;a modern-ish PC;\(**\(**\(**\(**\(**
-x86-64;microvm;the minimal paravirtual machine;\(**\(**\(**\(**\(**
-x86-64;pc/i440fx;an old PC;\(**\(**
-AArch64;virt;the generic virtual ARM computer;\(**\(**\(**\(**\(**
-AArch64;sbsa-ref;a standards-based ARM server;\(**\(**\(**\(**\(**
-AArch64;raspi4b;Raspberry Pi 4;\(**\(**\(**\(**
-AArch64;xlnx-zcu102;Xilinx Zynq UltraScale+;\(**\(**\(**
-AArch64;amd-versal-virt;AMD Versal;\(**\(**\(**\(**
-RISC-V64;virt;the generic RISC-V computer;\(**\(**\(**\(**\(**
-RISC-V64;sifive_u;SiFive Unmatched;\(**\(**\(**\(**
-RISC-V64;icicle;the Microchip Icicle family, a real SoC;\(**\(**\(**\(**
+x86-64;q35;pc64;a modern-ish PC;\(**\(**\(**\(**\(**
+x86-64;microvm;pc64;the minimal paravirtual machine;\(**\(**\(**\(**\(**
+x86-64;pc/i440fx;pc64;an old PC;\(**\(**
+AArch64;virt;armvirt;the generic virtual ARM computer;\(**\(**\(**\(**\(**
+AArch64;sbsa-ref;sbsa;a standards-based ARM server;\(**\(**\(**\(**\(**
+AArch64;raspi4b;raspi4;Raspberry Pi 4;\(**\(**\(**\(**
+AArch64;xlnx-zcu102;zcu102;Xilinx Zynq UltraScale+;\(**\(**\(**
+AArch64;amd-versal-virt;versal;AMD Versal;\(**\(**\(**\(**
+RISC-V64;virt;virt;the generic RISC-V computer;\(**\(**\(**\(**\(**
+RISC-V64;sifive_u;sifiveu;SiFive Unleashed;\(**\(**\(**\(**
+RISC-V64;spike;spike;the Spike simulator;\(**\(**\(**
+RISC-V64;icicle-kit;icicle;the Microchip Icicle, a real SoC;\(**\(**\(**\(**
+ARM (M);stm32vldiscovery;stm32;an STM32 microcontroller;\(**
 .TE
 .PP
-Every one of them is a machine QEMU emulates, so every one of them can
+The three x86 rows are one directory because they are one board with
+three configurations; that is what a config file is for.  Every other
+row is a directory of its own beside
+.CW port ,
+with
+.CW riscv
+already there for what the RISC-V boards share and an
+.CW arm64
+beside it for what the ARM ones will.
+.PP
+.CW virt
+is the RISC-V one and
+.CW armvirt
+the ARM one rather than the pair being
+.CW rvvirt
+and
+.CW armvirt :
+the RISC-V one is the directory that exists, is built and is named that
+in the
+.CW NOTE
+the work came with, and renaming a working board for symmetry is not
+worth it.
+.CW pc
+and
+.CW pc64
+are asymmetric in the same tree for the same reason.
+.PP
+Every machine here but the Icicle is one QEMU emulates, so every one can
 be brought up and kept up without hardware on a desk; the four that are
 also real parts \-
 .CW raspi4b ,
 .CW xlnx-zcu102 ,
 .CW amd-versal-virt
 and the Icicle \- are the ones where the emulator is a stepping stone
-rather than the destination.  Nothing on this list is built yet beyond
-.CW riscv64/virt ;
-it is the plan, not the state.
+rather than the destination.
+.PP
+.CW stm32
+is not one of the others with a different config, and should not be
+started as though it were.  Cortex-M has no MMU, and every board here
+builds
+.CW mmu.$O ;
+the QEMU STM32 machines have on the order of a hundred kilobytes of
+RAM, which will not hold the Dis interpreter and a Limbo root.  It is a
+different kind of port \- native code, no paging, a root in flash \-
+and it is on this list to be argued about rather than to be next.
+.PP
+Of all of it, only
+.CW virt
+is built.  This is the plan, not the state.
 .NH 1
 Then
 .PP

@@ -133,7 +133,7 @@ and the rest as siblings.
 .IP
 .nf
 os/9front/	port pc pc64 ip boot lib
-os/inferno/	port pc pc64 ip boot init and a directory per machine
+os/inferno/	port pc pc64 riscv virt sifiveu spike ip boot init
 os/osprey/	port pc pc64 ip boot adapter policy lib cmd kernlib libaml
 .fi
 .PP

@@ -19,6 +19,10 @@ rest as siblings.  A machine directory reads the portable code as
 port		the portable kernel
 pc		PC drivers, shared by that flavour's PC machines
 pc64		the amd64 PC machine
+riscv		RISC-V drivers, shared by that flavour's RISC-V machines
+virt		QEMU -M virt, riscv64 (Inferno only)
+sifiveu		the SiFive Unleashed (Inferno only)
+spike		the Spike simulator (Inferno only)
 ip		the Internet protocol stack, Ether and PPP media
 boot		bootstrap programs; see the README there
 init		the Limbo program the native kernel runs at startup
