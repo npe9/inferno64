@@ -207,8 +207,23 @@ srvwalk(Chan *c, Chan *nc, char **name, s32 nname)
 			for(d = pd->entry; d != nil; d = d->entry)
 				if(d->qid.path == w->clone->qid.path)
 					break;
-			if(d == nil)
-				panic("srvwalk");
+			/*
+			 * Entry can vanish between srvgen and here (file2chan
+			 * teardown / plumber).  Fail the walk instead of panicking.
+			 * Clone still has type 's' and parent aux from devclone —
+			 * clear type so close is rootclose, not srvclunk (which
+			 * would decref the parent SrvFile and later double-cclose).
+			 */
+			if(d == nil){
+				if(w->clone != c){
+					w->clone->type = 0;
+					cclose(w->clone);
+				}
+				free(w);
+				poperror();
+				qunlock(&dev.l);
+				return nil;
+			}
 			if(w->clone == c)
 				pd->ref--;
 		}else

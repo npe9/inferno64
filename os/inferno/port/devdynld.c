@@ -262,19 +262,19 @@ dlattach(char *spec)
 }
 
 static Walkqid*
-dlwalk(Chan *c, Chan *nc, char **name, int nname)
+dlwalk(Chan *c, Chan *nc, char **name, s32 nname)
 {
 	return devwalk(c, nc, name, nname, dltab, nelem(dltab), devgen);
 }
 
-static int
-dlstat(Chan *c, uchar *db, int n)
+static s32
+dlstat(Chan *c, uchar *db, s32 n)
 {
 	return devstat(c, db, n, dltab, nelem(dltab), devgen);
 }
 
 static Chan*
-dlopen(Chan *c, int omode)
+dlopen(Chan *c, u32 omode)
 {
 	return devopen(c, omode, dltab, nelem(dltab), devgen);
 }
@@ -285,8 +285,8 @@ dlclose(Chan *c)
 	USED(c);
 }
 
-static long
-dlread(Chan *c, void *a, long n, vlong voffset)
+static s32
+dlread(Chan *c, void *a, s32 n, s64 voffset)
 {
 	switch((u64)c->qid.path){
 	case Qdir:
@@ -301,8 +301,8 @@ dlread(Chan *c, void *a, long n, vlong voffset)
 	return n;
 }
 
-static long
-dlwrite(Chan *c, void *a, long n, vlong voffset)
+static s32
+dlwrite(Chan *c, void *a, s32 n, s64 voffset)
 {
 	Cmdbuf *cb;
 	char *name, *tag, *path;

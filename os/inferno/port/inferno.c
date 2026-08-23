@@ -683,15 +683,18 @@ void
 Sys_sleep(void *fp)
 {
 	F_Sys_sleep *f;
+	int period;
 
 	f = fp;
+	/* Limbo int in a WORD slot; high half may be junk (see emu/port). */
+	period = (int)f->period;
 	release();
-	if(f->period > 0){
+	if(period > 0){
 		if(waserror()){
 			acquire();
 			error("");
 		}
-		tsleep(&up->sleep, return0, 0, f->period);
+		tsleep(&up->sleep, return0, 0, period);
 		poperror();
 	}
 	acquire();
@@ -907,6 +910,11 @@ Sys_pctl(void *fp)
 
 	if(f->flags & Sys_NODEVS)
 		o->pgrp->nodevs = 1;
+
+	/* Proc mirrors Osenv groups used by #e and some namec paths. */
+	up->pgrp = o->pgrp;
+	up->fgrp = o->fgrp;
+	up->egrp = o->egrp;
 
 	poperror();
 

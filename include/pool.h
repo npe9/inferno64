@@ -53,7 +53,8 @@ struct Balign
 };
 
 #define B2D(bp)		((void*)bp->u.data)
-#define D2B(b, dp)	b = ((Bhdr*)(((uchar*)dp)-(((Bhdr*)0)->u.data))); \
+/* Use BHDRSIZE-based offset: KenC may load through ((Bhdr*)0)->u.data in D2B. */
+#define D2B(b, dp)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
 			if(b->magic != MAGIC_A && b->magic != MAGIC_I){\
 				b = ((Balign*)((char*)dp-sizeof(Balign)))->hdr; \
 				if(b->magic != MAGIC_A && b->magic != MAGIC_I)\

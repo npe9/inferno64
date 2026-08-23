@@ -11,6 +11,10 @@ OBJTYPE=386
 INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin	#path of directory where kernel is installed
 #INSTALLDIR=/$OBJTYPE
 
+IPDIR=../ip
+INITDIR=../init
+PORTDIR=../port
+
 #end configurable parameters
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	#set vars based on target system

@@ -53,7 +53,7 @@ struct Dstate
 	ushort	blocklen;	/* blocking length */
 
 	ushort	diglen;		/* length of digest */
-	DigestState *(*hf)(uchar*, u32, uchar*, DigestState*);	/* hash func */
+	DigestState *(*hf)(uchar*, ulong, uchar*, DigestState*);	/* hash func */
 
 	/* for SSL format */
 	int	max;			/* maximum unpadded data per msg */
@@ -844,7 +844,7 @@ struct Hashalg
 {
 	char	*name;
 	int	diglen;
-	DigestState *(*hf)(uchar*, u32, uchar*, DigestState*);
+	DigestState *(*hf)(uchar*, ulong, uchar*, DigestState*);
 };
 
 Hashalg hashtab[] =

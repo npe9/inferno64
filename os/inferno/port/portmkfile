@@ -1,8 +1,11 @@
+# PORTDIR is the portable kernel: .. for a machine beside it, ../../port
+# for a board under an architecture.  A machine mkfile sets it before
+# including this file.
 PORTHFILES=\
-	../port/error.h\
-	../port/lib.h\
-	../port/portdat.h\
-	../port/portfns.h\
+	$PORTDIR/error.h\
+	$PORTDIR/lib.h\
+	$PORTDIR/portdat.h\
+	$PORTDIR/portfns.h\
 
 LIBFILES=${LIBS:%=$ROOT/Inferno/$OBJTYPE/lib/lib%.a}
 
@@ -14,11 +17,11 @@ CLEANEXTRA=
 %.$O:	%.c
 	$CC $CFLAGS $stem.c
 
-%.$O:		../port/%.c
-		$CC $CFLAGS -I. ../port/$stem.c
+%.$O:		$PORTDIR/%.c
+		$CC $CFLAGS -I. $PORTDIR/$stem.c
 
-%.$O:		../ip/%.c
-		$CC $CFLAGS -I. ../ip/$stem.c
+%.$O:		$IPDIR/%.c
+		$CC $CFLAGS -I. $IPDIR/$stem.c
 
 &.$O:		$HFILES $PORTHFILES
 
@@ -102,13 +105,13 @@ nuke-rc nuke-nt:QV:
 
 nuke:V:		clean nuke-$SHELLTYPE
 
-$CONF.c:	../port/mkdevc $CONF
-		$SHELLNAME ../port/mkdevc $CONF > $CONF.c
+$CONF.c:	$PORTDIR/mkdevc $CONF
+		$SHELLNAME $PORTDIR/mkdevc $CONF > $CONF.c
 
-errstr.h:	../port/error.h
-		sed 's/extern //;s,;.*/\* , = ",;s, \*/,";,' < ../port/error.h > errstr.h
+errstr.h:	$PORTDIR/error.h
+		sed 's/extern //;s,;.*/\* , = ",;s, \*/,";,' < $PORTDIR/error.h > errstr.h
 
-../init/%.dis:	../init/%.b
+$INITDIR/%.dis:	$INITDIR/%.b
 		cd ../init; mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE $stem.dis
 
 $ROOT/libinterp/runt.h:
@@ -122,7 +125,7 @@ alloc.$O:	$INTERP
 devdbg.$O:	$INTERP
 
 devmnt.$O:	$ROOT/include/fcall.h
-devns16552.$O:	../port/netif.h
+devns16552.$O:	$PORTDIR/netif.h
 devns16552.$O:	ns16552.h
 devpipe.$O:	$INTERP
 devprof.$O:	$RUNT $INTERP
@@ -134,17 +137,17 @@ dis.$O:	$INTERP
 discall.$O:	$INTERP
 exception.$O:	$RUNT	$INTERP
 inferno.$O:	$RUNT	$INTERP
-latin1.$O:	../port/latin1.h
-main.$O:	../port/error.h
-netif.$O:	../port/netif.h
+latin1.$O:	$PORTDIR/latin1.h
+main.$O:	$PORTDIR/error.h
+netif.$O:	$PORTDIR/netif.h
 proc.$O:	errstr.h	$INTERP
 screen.$O:	screen.h
 trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
 
 devroot.$O:	$CONF.root.h
 $CONF.$O:	$CONF.root.h
-$CONF.root.s $CONF.root.h: $CONF ../init/$INIT.dis ../port/mkroot $ROOTFILES
-	$SHELLNAME ../port/mkroot $CONF
+$CONF.root.s $CONF.root.h: $CONF $INITDIR/$INIT.dis $PORTDIR/mkroot $ROOTFILES
+	$SHELLNAME $PORTDIR/mkroot $CONF
 
 %.i:D:	%.out
 	{echo 'uchar '^$stem^'[]={'
@@ -152,4 +155,4 @@ $CONF.root.s $CONF.root.h: $CONF ../init/$INIT.dis ../port/mkroot $ROOTFILES
 		sed -e 's/^[0-9a-f]+ //' -e 's/ ([0-9a-f][0-9a-f])/0x\1,/g'
 	 echo '};'} > $target
 
-%.$O:	$ROOT/Inferno/$OBJTYPE/include/u.h ../port/lib.h mem.h dat.h fns.h io.h ../port/error.h ../port/portdat.h ../port/portfns.h
+%.$O:	$ROOT/Inferno/$OBJTYPE/include/u.h $PORTDIR/lib.h mem.h dat.h fns.h io.h $PORTDIR/error.h $PORTDIR/portdat.h $PORTDIR/portfns.h

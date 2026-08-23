@@ -23,8 +23,8 @@ enum {
 
 struct
 {
-	int	minpc;
-	int	maxpc;
+	ulong	minpc;		/* ulong: LLP64 PCs at 0x80000000+ (not signed int) */
+	ulong	maxpc;
 	int	nbuf;
 	int	time;
 	ulong	*buf;
@@ -96,7 +96,7 @@ kprofstat(Chan *c, uchar *db, int n)
 }
 
 static Chan *
-kprofopen(Chan *c, int omode)
+kprofopen(Chan *c, u32 omode)
 {
 	if(c->qid.type & QTDIR){
 		if(omode != OREAD)
@@ -113,8 +113,64 @@ kprofclose(Chan*)
 {
 }
 
-static long
-kprofread(Chan *c, void *va, long n, vlong offset)
+/*
+ * Print hottest PC buckets to the console (for virt serial / smoke logs).
+ */
+static void
+kprofdump(void)
+{
+	ulong i, pc, hits, total, outside;
+	int n, j;
+	ulong top[16], topi[16];
+
+	if(kprof.buf == nil){
+		print("kprof: no buffer\n");
+		return;
+	}
+	total = kprof.buf[SpecialTotalTicks];
+	outside = kprof.buf[SpecialOutsideTicks];
+	print("KPROF total ");
+	print("%lud", total);
+	print(" outside ");
+	print("%lud\n", outside);
+	for(j = 0; j < nelem(top); j++){
+		top[j] = 0;
+		topi[j] = 0;
+	}
+	for(i = SpecialMax; i < (ulong)kprof.nbuf; i++){
+		hits = kprof.buf[i];
+		if(hits == 0)
+			continue;
+		for(j = 0; j < nelem(top); j++){
+			if(hits > top[j]){
+				memmove(top+j+1, top+j, (nelem(top)-j-1)*sizeof(top[0]));
+				memmove(topi+j+1, topi+j, (nelem(top)-j-1)*sizeof(topi[0]));
+				top[j] = hits;
+				topi[j] = i;
+				break;
+			}
+		}
+	}
+	n = 0;
+	for(j = 0; j < nelem(top) && top[j] != 0; j++){
+		pc = kprof.minpc + (topi[j] << LRES);
+		print("KPROF-TOP ");
+		print("%lud ", top[j]);
+		print("%#lux\n", pc);
+		n++;
+	}
+	if(n == 0)
+		print("KPROF-TOP none\n");
+	/* Optional board hook (virt screen soft→fb / cursor path). */
+	{
+		extern void screenstats(void);
+
+		screenstats();
+	}
+}
+
+static int
+kprofread(Chan *c, void *va, s32 n, s64 offset)
 {
 	ulong tabend;
 	ulong w, *bp;
@@ -154,8 +210,8 @@ kprofread(Chan *c, void *va, long n, vlong offset)
 	return n;
 }
 
-static long
-kprofwrite(Chan *c, void *vp, long n, vlong offset)
+static int
+kprofwrite(Chan *c, void *vp, s32 n, s64 offset)
 {
 	char *a;
 	USED(offset);
@@ -175,6 +231,9 @@ kprofwrite(Chan *c, void *vp, long n, vlong offset)
 		else if(strncmp(a, "stop", 4) == 0) {
 			archkprofenable(0);
 			kprof.time = 0;
+		}
+		else if(strncmp(a, "dump", 4) == 0) {
+			kprofdump();
 		}
 		else
 			error(Ebadctl);

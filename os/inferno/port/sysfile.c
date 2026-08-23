@@ -145,7 +145,6 @@ fdtochan(Fgrp *f, int fd, int mode, int chkmnt, int iref)
 	lock(f);
 	if(fd<0 || f->maxfd<fd || (c = f->fd[fd])==nil) {
 		unlock(f);
-		print("fdtochan Ebadfd fd %d\n", fd);
 		error(Ebadfd);
 	}
 	if(iref)
@@ -155,7 +154,6 @@ fdtochan(Fgrp *f, int fd, int mode, int chkmnt, int iref)
 	if(chkmnt && (c->flag&CMSG)) {
 		if(iref)
 			cclose(c);
-		print("fdtochan Ebadusefd 1\n");
 		error(Ebadusefd);
 	}
 
@@ -163,15 +161,12 @@ fdtochan(Fgrp *f, int fd, int mode, int chkmnt, int iref)
 		return c;
 
 	if((mode&OTRUNC) && c->mode==OREAD) {
-		print("fdtochan Ebadusefd 2\n");
 		if(iref)
 			cclose(c);
 		error(Ebadusefd);
 	}
 
 	if((mode&~OTRUNC) != c->mode) {
-		print("fdtochan Ebadusefd 3 mode 0x%x mode&~OTRUNC 0x%x c->mode 0x%x\n",
-			mode, mode&~OTRUNC, c->mode);
 		if(iref)
 			cclose(c);
 		error(Ebadusefd);
@@ -862,22 +857,21 @@ kunmount(char *name, char *old)
 	Chan *cmount, *cmounted;
 
 	cmounted = nil;
-	cmount = namec(old, Amount, 0, 0);
+	cmount = nil;
 	if(waserror()) {
-		cclose(cmount);
+		if(cmount != nil)
+			cclose(cmount);
 		if(cmounted != nil)
 			cclose(cmounted);
-		nexterror();
+		return -1;
 	}
-	if(name != nil) {
-		/*
-		 * This has to be namec(..., Aopen, ...) because
-		 * if arg[0] is something like /srv/cs or /fd/0,
-		 * opening it is the only way to get at the real
-		 * Chan underneath.
-		 */
+	cmount = namec(old, Amount, 0, 0);
+	/*
+	 * Limbo nil becomes "" via string2c; skip like emu.
+	 * namec(..., Aopen, ...) when name is /srv/... or /fd/...
+	 */
+	if(name != nil && name[0] != '\0')
 		cmounted = namec(name, Aopen, OREAD, 0);
-	}
 	cunmount(cmount, cmounted);
 	poperror();
 	cclose(cmount);
@@ -892,16 +886,12 @@ kopen(char *path, int mode)
 	int fd;
 	Chan *c;
 
-/* if(up->pid == 23) print("kopen path %s mode 0x%ux\n", path, mode); */
-	if(waserror()){
-		print("kopen: namec failed on path %s\n", path);
+	if(waserror())
 		return -1;
-	}
 
 	openmode(mode);                         /* error check only */
 	c = namec(path, Aopen, mode, 0);
 	if(waserror()){
-		print("kopen: newfd failed on path %s\n", path);
 		cclose(c);
 		nexterror();
 	}
@@ -982,15 +972,12 @@ rread(int fd, void *p, s32 n, s64 *offp)
 	Chan *c;
 	s64 off;
 
-	if(waserror()){
-		print("rread fd %d p 0x%p n %d fdtochan failed: %r\n", fd, p, n);
+	if(waserror())
 		return -1;
-	}
 
 	c = fdtochan(up->fgrp, fd, OREAD, 1, 1);
 
 	if(waserror()){
-		print("rread fd %d p 0x%p n %d fdtochan failed: %r\n", fd, p, n);
 		cclose(c);
 		nexterror();
 	}
@@ -1267,10 +1254,7 @@ rwrite(int fd, void *buf, s32 len, s64 *offp)
 
 	n = 0;
 	c = fdtochan(up->fgrp, fd, OWRITE, 1, 1);
-	if(c == nil)
-		print("rwrite fdtochan nil %r\n");
 	if(waserror()) {
-		print("rwrite waserror loop %r\n");
 		if(offp == nil){
 			lock(c);
 			c->offset -= n;

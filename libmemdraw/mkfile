@@ -9,6 +9,7 @@ COMMONFILES=\
 	defont.$O\
 	ellipse.$O\
 	fillpoly.$O\
+	drawcopy.$O\
 	hwdraw.$O\
 	icossin.$O\
 	icossin2.$O\

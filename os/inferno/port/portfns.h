@@ -150,6 +150,7 @@ void		kbdclock(void);		/* will go away with kbdfs */
 int		kbdcr2nl(Queue*, int);	/* will go away with kbdfs */
 void		kbdprocesschar(int);	/* will go away with kbdfs */
 int		kbdputc(Queue*, int);	/* will go away with kbdfs */
+void		gkbdputc(Queue*, int);
 void		kbdrepeat(int);		/* will go away with kbdfs */
 int		kenter(Ureg*);
 void		kexit(Ureg*);
@@ -289,6 +290,7 @@ int		qwindow(Queue*);
 int		qwrite(Queue*, void*, int);
 void		randominit(void);
 ulong	randomread(void*, ulong);
+void		genrandom(uchar*, int);
 void		rdb(void);
 void*	realloc(void*, ulong);
 long		readblist(Block*, uchar*, long, ulong);

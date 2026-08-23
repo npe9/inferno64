@@ -17,6 +17,10 @@ REBOOTADDR=0x2000
 APBOOTSTRAP=0x3000
 KTZERO=0x200000
 
+IPDIR=../ip
+INITDIR=../init
+PORTDIR=../port
+
 #end configurable parameters
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	#set vars based on target system

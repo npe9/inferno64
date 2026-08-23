@@ -1,10 +1,10 @@
 #include "u.h"
-#include "../../port/lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../../port/error.h"
+#include "../port/error.h"
 #include "interp.h"
 
 #include "virt.root.h"
@@ -84,28 +84,22 @@ void modinit(void){
 	tkmodinit();
 }
 
-#include "../../port/sd.h"
+#include "../port/sd.h"
 extern SDifc sdvirtiommioifc;
 SDifc* sdifc[] = {
 	&sdvirtiommioifc,
 	nil,
 };
 
-extern PhysUart virtphysuart;
-PhysUart* physuart[] = {
-	&virtphysuart,
-	nil,
-};
-
-#include "../ip/ip.h"
-extern void udpinit(Fs*);
+#include "ip.h"
 extern void tcpinit(Fs*);
+extern void udpinit(Fs*);
 extern void ipifcinit(Fs*);
 extern void icmpinit(Fs*);
 extern void icmp6init(Fs*);
 void (*ipprotoinit[])(Fs*) = {
-	udpinit,
 	tcpinit,
+	udpinit,
 	ipifcinit,
 	icmpinit,
 	icmp6init,

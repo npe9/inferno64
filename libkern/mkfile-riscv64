@@ -1,0 +1,12 @@
+#
+#	riscv64-specific files
+#
+#	No hand-written assembly yet: the portable C is correct and slow,
+#	which is the right order to do it in.
+#
+TARGFILES=\
+	frexp-386.$O\
+	memmove.$O\
+	memset.$O\
+	nan-386.$O\
+	strchr.$O\

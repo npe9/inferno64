@@ -649,7 +649,9 @@ ipread(Chan *ch, void *a, s32 n, s64 off)
 		x = f->p[PROTO(ch->qid)];
 		c = x->conv[CONV(ch->qid)];
 		if(x->remote == nil) {
-			snprint(buf, Statelen, "%I!%d\n", c->raddr, c->rport);
+			/* KenC LP64: one homogeneous arg per snprint */
+			rv = snprint(buf, Statelen, "%I!", c->raddr);
+			snprint(buf+rv, Statelen-rv, "%d\n", c->rport);
 		} else {
 			(*x->remote)(c, buf, Statelen-2);
 		}
@@ -661,7 +663,9 @@ ipread(Chan *ch, void *a, s32 n, s64 off)
 		x = f->p[PROTO(ch->qid)];
 		c = x->conv[CONV(ch->qid)];
 		if(x->local == nil) {
-			snprint(buf, Statelen, "%I!%d\n", c->laddr, c->lport);
+			/* KenC LP64: one homogeneous arg per snprint */
+			rv = snprint(buf, Statelen, "%I!", c->laddr);
+			snprint(buf+rv, Statelen-rv, "%d\n", c->lport);
 		} else {
 			(*x->local)(c, buf, Statelen-2);
 		}

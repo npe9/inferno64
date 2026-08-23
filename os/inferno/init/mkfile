@@ -1,4 +1,4 @@
-<../../mkconfig
+<../../../mkconfig
 
 OBJ=\
 	disinit.dis\

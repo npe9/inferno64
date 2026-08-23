@@ -10,7 +10,7 @@
 #include	"keyboard.h"
 
 extern int cflag;
-int keepbroken = 1;
+extern int keepbroken;
 extern int rdbstarted;
 extern u32 kerndate;
 
@@ -30,6 +30,7 @@ int	panicking;
 int mouseshifted;
 Queue*  kbdq;                   /* unprocessed console input */
 Queue*  lineq;                  /* processed console input */
+Queue*	gkbdq;			/* graphics /dev/keyboard input */
 static struct
 {
         QLock;
@@ -175,7 +176,6 @@ putstrn0(char *str, int n, int usewrite)
 	if(rdbstarted == 1)
 		return;
 	if(serialoq == nil){
-		uartputs("putstrn0 ", 9);
 		uartputs(str, n);
 		return;
 	}
@@ -407,6 +407,7 @@ enum{
 	Qpid,
 	Qppid,
 	Qrandom,
+	Qnotquiterandom,
 	Qreboot,
 	Qscancode,
 	Qsysctl,
@@ -445,6 +446,7 @@ static Dirtab consdir[]=
 	"pid",		{Qpid},		NUMSIZE,	0444,
 	"ppid",		{Qppid},	NUMSIZE,	0444,
 	"random",	{Qrandom},	0,		0444,
+	"notquiterandom",	{Qnotquiterandom},	0,	0444,
 	"reboot",	{Qreboot},	0,		0220,
 	"scancode",	{Qscancode},	0,		0444,
 	"sysctl",	{Qsysctl},	0,		0644,			/* obsoleted by reboot and osversion */
@@ -556,6 +558,12 @@ consinit(void)
 		if(kbdq == nil)
 			panic("consinit");
 		qnoblock(kbdq, 1);
+	}
+	if(gkbdq == nil){
+		gkbdq = qopen(4*1024, 0, 0, 0);
+		if(gkbdq == nil)
+			panic("consinit gkbdq");
+		qnoblock(gkbdq, 1);
 	}
 	/* above until kbdfs is built */
 
@@ -674,6 +682,9 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 
 	case Qsysctl:
 		return readstr(offset, buf, n, VERSION);
+
+	case Qkeyboard:
+		return qread(gkbdq, buf, n);
 
 	case Qcons:
 		/* below belongs in kbdfs */
@@ -849,6 +860,10 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 	case Qrandom:
 		return randomread(buf, n);
 
+	case Qnotquiterandom:
+		genrandom(buf, n);
+		return n;
+
 	case Qdrivers:
 		b = smalloc(READSTR);
 		k = 0;
@@ -915,6 +930,14 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 			putstrn0(a, bp, 1);
 			a += bp;
 			l -= bp;
+		}
+		break;
+
+	case Qkeyboard:
+		for(x = 0; x < n; ){
+			Rune r;
+			x += chartorune(&r, a+x);
+			gkbdputc(gkbdq, r);
 		}
 		break;
 
@@ -1445,6 +1468,53 @@ kbdputc(Queue *q, int ch)
         echo(r, buf, n);
         qproduce(q, buf, n);
         return 0;
+}
+
+/*
+ * Graphics keyboard (/dev/keyboard): no echo, used by wm/tk.
+ */
+void
+gkbdputc(Queue *q, int ch)
+{
+	int n;
+	Rune r;
+	static Rune kc[5];
+	static int nk, collecting = 0;
+	char buf[UTFmax];
+
+	if(q == nil)
+		return;
+	r = ch;
+	if(r == Latin){
+		collecting = 1;
+		nk = 0;
+		return;
+	}
+	if(collecting){
+		int c;
+
+		if(nk < nelem(kc))
+			kc[nk++] = r;
+		c = latin1(kc, nk);
+		if(c < -1)	/* need more keystrokes */
+			return;
+		collecting = 0;
+		if(c == -1){	/* invalid sequence */
+			for(n = 0; n < nk; n++){
+				int m = runetochar(buf, &kc[n]);
+				if(m > 0)
+					qproduce(q, buf, m);
+			}
+			nk = 0;
+			return;
+		}
+		r = (Rune)c;
+		nk = 0;
+	}
+	n = runetochar(buf, &r);
+	if(n == 0)
+		return;
+	qproduce(q, buf, n);
 }
 
 void

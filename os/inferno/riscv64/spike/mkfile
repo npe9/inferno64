@@ -1,4 +1,8 @@
-<../../../../mkconfig
+<../../../../mkconfigIPDIR=../../ip
+INITDIR=../../init
+PORTDIR=../../port
+
+
 
 CONF=spike
 CONFLIST=spike

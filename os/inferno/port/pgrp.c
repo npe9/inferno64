@@ -217,6 +217,7 @@ newfgrp(Fgrp *old)
 	}
 	new->nfd = n;
 	new->fd = smalloc(n*sizeof(Chan*));
+	new->flag = smalloc(n*sizeof(new->flag[0]));
 	return new;
 }
 

@@ -191,6 +191,10 @@ static	char Eoldname[] =	"named image no longer valid";
 static	char Enamed[] = 	"image already has name";
 static	char Ewrongname[] = 	"wrong name for image";
 
+/* Provided by os/port/swcursor.c on virt; stub elsewhere if needed. */
+extern void	swcursordounlock(void);
+void	drawflush(void);
+
 static void
 dlock(void)
 {
@@ -206,6 +210,13 @@ candlock(void)
 static void
 dunlock(void)
 {
+	/*
+	 * Softscreen boards (virt): push pending flushrect to hardware
+	 * even if the client omitted a final 'v'.  Overlay cursor is
+	 * painted inside flushmemscreen while we still hold drawlock.
+	 */
+	drawflush();
+	swcursordounlock();
 	qunlock(&drawlock);
 }
 
@@ -1161,11 +1172,44 @@ drawread(Chan *c, void *a, s32 n, s64 off)
 				error(Enodrawimage);
 			i = di->image;
 		}
-		n = sprint(a, "%11d %11d %11s %11d %11d %11d %11d %11d %11d %11d %11d %11d",
-			cl->clientid, cl->infoid, chantostr(buf, i->chan), (i->flags&Frepl)==Frepl,
-			i->r.min.x, i->r.min.y, i->r.max.x, i->r.max.y,
-			i->clipr.min.x, i->clipr.min.y, i->clipr.max.x, i->clipr.max.y);
-		((char*)a)[n++] = ' ';
+		/*
+		 * KenC LP64: snprint/va_arg mishandles multiple ints in one
+		 * call (second %d reads a pointer-sized slot).  Format fields
+		 * without varargs.
+		 */
+		if(chantostr(buf, i->chan) == nil)
+			strcpy(buf, "???");
+		{
+			char *cp, *ep;
+			int repl;
+			s32 r0, r1, r2, r3, c0, c1, c2, c3;
+
+			/*
+			 * One value per snprint: KenC LP64 va_arg mis-reads
+			 * the 2nd+ int in a multi-int vararg list (Qctl was
+			 * emitting infoid as a pointer and r as 0,480,0,480).
+			 */
+			repl = (i->flags&Frepl)==Frepl;
+			r0 = i->r.min.x; r1 = i->r.min.y;
+			r2 = i->r.max.x; r3 = i->r.max.y;
+			c0 = i->clipr.min.x; c1 = i->clipr.min.y;
+			c2 = i->clipr.max.x; c3 = i->clipr.max.y;
+			cp = a;
+			ep = cp + n;
+			cp += snprint(cp, ep-cp, "%11d ", cl->clientid);
+			cp += snprint(cp, ep-cp, "%11d ", cl->infoid);
+			cp += snprint(cp, ep-cp, "%11s ", buf);
+			cp += snprint(cp, ep-cp, "%11d ", repl);
+			cp += snprint(cp, ep-cp, "%11d ", r0);
+			cp += snprint(cp, ep-cp, "%11d ", r1);
+			cp += snprint(cp, ep-cp, "%11d ", r2);
+			cp += snprint(cp, ep-cp, "%11d ", r3);
+			cp += snprint(cp, ep-cp, "%11d ", c0);
+			cp += snprint(cp, ep-cp, "%11d ", c1);
+			cp += snprint(cp, ep-cp, "%11d ", c2);
+			cp += snprint(cp, ep-cp, "%11d ", c3);
+			n = cp - (char*)a;
+		}
 		cl->infoid = -1;
 		break;
 

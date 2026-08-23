@@ -100,8 +100,12 @@ mousetrack(int b, int x, int y, int isdelta)
 	mouse.modify = 1;
 	ptrq.put++;
 	wakeup(&ptrq.r);
-	drawactive(1);
-	/* TO DO: cursor update */
+	/*
+	 * Soft cursor uses canqlock(drawlock); never block here.
+	 * drawactive omitted (emu does too).
+	 */
+	/* drawactive(1); */
+	cursoron();
 }
 
 static int
@@ -141,7 +145,7 @@ pointerattach(char* spec)
 }
 
 static Walkqid*
-pointerwalk(Chan *c, Chan *nc, char **name, int nname)
+pointerwalk(Chan *c, Chan *nc, char **name, s32 nname)
 {
 	Walkqid *wq;
 
@@ -151,8 +155,8 @@ pointerwalk(Chan *c, Chan *nc, char **name, int nname)
 	return wq;
 }
 
-static int
-pointerstat(Chan* c, uchar *db, int n)
+static s32
+pointerstat(Chan* c, uchar *db, s32 n)
 {
 	return devstat(c, db, n, pointertab, nelem(pointertab), devgen);
 }
@@ -172,7 +176,7 @@ pointeropen(Chan* c, u32 omode)
 			qunlock(&mouse.q);
 			error(Einuse);
 		}
-		/* cursorenable(); */
+		cursorenable();
 		qunlock(&mouse.q);
 		poperror();
 	}
@@ -187,8 +191,9 @@ pointerclose(Chan* c)
 	switch((u64)c->qid.path){
 	case Qpointer:
 		qlock(&mouse.q);
-		/* TODO if(decref(&mouse.ref) == 0)
-			cursordisable();*/
+		if(decref(&mouse.ref) == 0){
+			cursordisable();
+		}
 		qunlock(&mouse.q);
 		break;
 	}
@@ -213,7 +218,21 @@ pointerread(Chan* c, void* a, s32 n, s64)
 		mt = mouseconsume();
 		poperror();
 		qunlock(&mouse.q);
-		l = sprint(tmp, "m%11d %11d %11d %11lud ", mt.x, mt.y, mt.b, mt.msec);
+		/*
+		 * KenC LP64: one homogeneous arg per sprint/snprint;
+		 * multi-int varargs mis-read 2nd+ values as pointers.
+		 */
+		{
+			char *cp;
+
+			cp = tmp;
+			*cp++ = 'm';
+			cp += sprint(cp, "%11d ", mt.x);
+			cp += sprint(cp, "%11d ", mt.y);
+			cp += sprint(cp, "%11d ", mt.b);
+			cp += sprint(cp, "%11lud ", mt.msec);
+			l = cp - tmp;
+		}
 		if(l < n)
 			n = l;
 		memmove(a, tmp, n);
@@ -234,6 +253,7 @@ pointerwrite(Chan* c, void* va, s32 n, s64)
 	char *a = va;
 	char buf[128];
 	int b, x, y;
+	Drawcursor cur;
 
 	switch((u32)c->qid.path){
 	case Qpointer:
@@ -250,6 +270,29 @@ pointerwrite(Chan* c, void* va, s32 n, s64)
 		else
 			b = mouse.b;
 		mousetrack(b, x, y, 0);
+		break;
+	case Qcursor:
+		/*
+		 * hotx[4] hoty[4] dx[4] dy[4] clr[dx/8 * dy/2] set[dx/8 * dy/2]
+		 * dx multiple of 8; dy multiple of 2.
+		 */
+		if(n == 0){
+			cur.data = nil;
+			drawcursor(&cur);
+			break;
+		}
+		if(n < 8)
+			error(Eshort);
+		cur.hotx = BG32INT((uchar*)va+0*4);
+		cur.hoty = BG32INT((uchar*)va+1*4);
+		cur.minx = 0;
+		cur.miny = 0;
+		cur.maxx = BG32INT((uchar*)va+2*4);
+		cur.maxy = BG32INT((uchar*)va+3*4);
+		if(cur.maxx%8 != 0 || cur.maxy%2 != 0 || n-4*4 != (cur.maxx/8 * cur.maxy))
+			error(Ebadarg);
+		cur.data = (uchar*)va + 4*4;
+		drawcursor(&cur);
 		break;
 	default:
 		error(Ebadusefd);

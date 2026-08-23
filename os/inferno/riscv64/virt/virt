@@ -1,0 +1,136 @@
+# virt - QEMU -M virt riscv64 terminal
+#
+# Reconstructed from the generated virt.c that pr/riscv-native-boards
+# carried without the configuration it was generated from.  The devices,
+# links, modules, storage interface and protocols below are the ones
+# that file names.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+	sd
+	ether		netif
+	ip	ip ipv6 ipaux iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
+	draw
+	pointer
+	ssl
+	dynld
+	cap
+	kprof
+
+ip
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
+
+# the order matters: a library with an undefined symbol at the end
+# makes the loader complain
+lib
+	interp
+	keyring
+	memlayer
+	memdraw
+	draw
+	tk
+	freetype
+	sec
+	mp
+	math
+	kern
+	ip
+
+link
+	ethervirtiommio
+	ethervirtiopci	pcivirt
+	ethermedium
+	loopbackmedium
+	inputvirtiommio
+	rngvirtiommio
+
+# the portable kernel this board takes, and its own code beside it.
+# archvirt and the rest are objects and nothing more; naming them under
+# misc would have mkdevc build a PCArch table for them, which is the
+# PC's abstraction and not this board's.
+port
+	alarm
+	alloc
+	allocb
+	auth
+	chan
+	dev
+	dial
+	dis
+	discall
+	edf
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+# randomvirt is this board's entropy; the portable random.c wants a
+# libsec newer than the one this tree shares
+# rdb wants the kernel debugger's console queue, which this board
+# does not configure
+# screenvirt has this board's hwdraw; the portable swcursor has another
+	sysfile
+	taslock
+	xalloc
+
+	archvirt
+	uartvirt
+	randomvirt
+	screenvirt
+
+misc
+	sdvirtiommio	sdscsi
+
+mod
+	sys
+	keyring
+	crypt
+	math
+	ipints
+	draw
+	freetype
+	tk
+
+init
+	virtinit
+
+code
+	int main_pool_pcnt = 20;
+	int heap_pool_pcnt = 20;
+	int image_pool_pcnt = 20;	/* was 60; large contig poolalloc hangs under TCG */
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+	/chan	/
+	/dev	/
+	/dis	/
+	/env	/
+	/fd	/
+	/n	/
+	/net	/
+	/net.alt	/
+	/nvfs	/
+	/prog	/
+	/tmp	/
+	/osinit.dis

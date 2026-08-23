@@ -64,17 +64,63 @@ a Ken C assembler, compiler and loader for riscv64, cherry-picked from
 All three build on this host.
 .PP
 The boards came from
-.CW pr/riscv-native-boards .
-They do not build yet, and the reason is worth writing down: that branch
-carries the
+.CW pr/riscv-native-boards ,
+which carries the
 .I generated
-configuration
-.CW ( virt.c ,
-and the root header it includes) but not the configuration it was
-generated from.  A board here needs a file naming its devices, its links
-and the files baked into its root; without one there is nothing for
-.CW mkdevc
-to read.  Reconstructing those three files is the next piece of work.
+configuration and not the configuration it was generated from.  The
+.CW virt
+configuration has been reconstructed from what the generated file names:
+its eighteen devices, its six links, its storage interface, its five
+protocols, its eight modules and the portable objects it takes.  It
+parses, and from it the whole kernel compiles for riscv64 \- fifty-seven
+objects, every device, the IP stack, the virtio drivers, the board's own
+code and its assembly.
+.PP
+Getting that far took a handful of small things that only show up when
+somebody builds for a target nobody has built for:
+.IP \(bu
+.CW libsec
+named
+.CW chacha.c
+and
+.CW chachablock.c
+in its mkfile and did not have them; they were restored from the commit
+that added them, and four of their signatures made to match
+.CW libsec.h ,
+which only matters where
+.CW ulong
+and
+.CW u32
+are different types.
+.IP \(bu
+.CW iar
+could not write a symbol table for riscv64 archives until it was rebuilt
+against the libmach the new toolchain brought, so every library linked
+as if it were empty.
+.IP \(bu
+.CW libkern
+had no
+.CW mkfile-riscv64 ,
+so the architecture's own files \- memmove, memset, strchr \- were
+silently not built.  It has one now, naming the portable C rather than
+assembly that does not exist yet.
+.IP \(bu
+.CW libmemdraw 's
+default
+.CW hwdraw
+shared a file with two variables
+.CW draw.c
+needs, so a board with its own
+.CW hwdraw
+pulled the default in behind them and collided.  They are separate files
+now.
+.PP
+What stops it is
+.CW libinterp/heap.c ,
+which uses the compiler's atomic builtins;
+.CW jc
+has none.  The LLP64 branch has a version of that file that does not,
+and taking it is the next piece of work.
 .NH 1
 Then
 .PP

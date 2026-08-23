@@ -9,6 +9,10 @@ SYSTARG=$OSTARG
 OBJTYPE=riscv64
 INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
 
+IPDIR=../../ip
+INITDIR=../../init
+PORTDIR=../../port
+
 #end configurable parameters
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
@@ -80,7 +84,7 @@ devether.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
 netif.$O:	../../port/netif.h
 ethervirtiommio.$O:	../../port/netif.h ../../port/etherif.h
 ethervirtiopci.$O:	../../port/netif.h ../../port/etherif.h
-$IP devip.$O:	../ip/ip.h
+$IP devip.$O:	$IPDIR/ip.h
 
 pcivirt.$O:	../pcivirt.c
 	$CC $CFLAGS ../pcivirt.c

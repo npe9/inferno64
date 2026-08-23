@@ -487,20 +487,52 @@ static int
 tcpstate(Conv *c, char *state, int n)
 {
 	Tcpctl *s;
+	char *p, *e;
 
 	s = (Tcpctl*)(c->ptcl);
 
-	return snprint(state, n,
-		"%s qin %d qout %d rq %d.%d srtt %d mdev %d sst %lud cwin %lud swin %lud>>%d rwin %lud>>%d qscale %d timer.start %d timer.count %d rerecv %d katimer.start %d katimer.count %d\n",
-		tcpstates[s->state],
-		c->rq ? qlen(c->rq) : 0,
-		c->wq ? qlen(c->wq) : 0,
-		s->nreseq, s->reseqlen,
-		s->srtt, s->mdev, s->ssthresh,
-		s->cwind, s->snd.wnd, s->snd.scale, s->rcv.wnd, s->rcv.scale,
-		s->qscale,
-		s->timer.start, s->timer.count, s->rerecv,
-		s->katimer.start, s->katimer.count);
+	/* KenC LP64: one homogeneous arg per snprint */
+	p = state;
+	e = state + n;
+	p += snprint(p, e - p, "%s", tcpstates[s->state]);
+	p += snprint(p, e - p, " qin ");
+	p += snprint(p, e - p, "%d", c->rq ? qlen(c->rq) : 0);
+	p += snprint(p, e - p, " qout ");
+	p += snprint(p, e - p, "%d", c->wq ? qlen(c->wq) : 0);
+	p += snprint(p, e - p, " rq ");
+	p += snprint(p, e - p, "%d", s->nreseq);
+	p += snprint(p, e - p, ".");
+	p += snprint(p, e - p, "%d", s->reseqlen);
+	p += snprint(p, e - p, " srtt ");
+	p += snprint(p, e - p, "%d", s->srtt);
+	p += snprint(p, e - p, " mdev ");
+	p += snprint(p, e - p, "%d", s->mdev);
+	p += snprint(p, e - p, " sst ");
+	p += snprint(p, e - p, "%lud", s->ssthresh);
+	p += snprint(p, e - p, " cwin ");
+	p += snprint(p, e - p, "%lud", s->cwind);
+	p += snprint(p, e - p, " swin ");
+	p += snprint(p, e - p, "%lud", s->snd.wnd);
+	p += snprint(p, e - p, ">>");
+	p += snprint(p, e - p, "%d", s->snd.scale);
+	p += snprint(p, e - p, " rwin ");
+	p += snprint(p, e - p, "%lud", s->rcv.wnd);
+	p += snprint(p, e - p, ">>");
+	p += snprint(p, e - p, "%d", s->rcv.scale);
+	p += snprint(p, e - p, " qscale ");
+	p += snprint(p, e - p, "%d", s->qscale);
+	p += snprint(p, e - p, " timer.start ");
+	p += snprint(p, e - p, "%d", s->timer.start);
+	p += snprint(p, e - p, " timer.count ");
+	p += snprint(p, e - p, "%d", s->timer.count);
+	p += snprint(p, e - p, " rerecv ");
+	p += snprint(p, e - p, "%d", s->rerecv);
+	p += snprint(p, e - p, " katimer.start ");
+	p += snprint(p, e - p, "%d", s->katimer.start);
+	p += snprint(p, e - p, " katimer.count ");
+	p += snprint(p, e - p, "%d", s->katimer.count);
+	p += snprint(p, e - p, "\n");
+	return p - state;
 }
 
 static int
@@ -1301,7 +1333,8 @@ tcpsndsyn(Conv *s, Tcpctl *tcb)
 {
 	Tcppriv *tpriv;
 
-	tcb->iss = (nrand(1<<16)<<16)|nrand(1<<16);
+	/* Cast before shift: KenC LP64 sign-extends (int<<16) into ulong. */
+	tcb->iss = (((ulong)nrand(1<<16))<<16) | (ulong)nrand(1<<16);
 	tcb->rttseq = tcb->iss;
 	tcb->snd.wl2 = tcb->iss;
 	tcb->snd.una = tcb->iss;
@@ -1574,7 +1607,8 @@ limbo(Conv *s, uchar *source, uchar *dest, Tcp *seg, int version)
 		lp->mss = seg->mss;
 		lp->rcvscale = seg->ws;
 		lp->irs = seg->seq;
-		lp->iss = (nrand(1<<16)<<16)|nrand(1<<16);
+		/* Cast before shift: KenC LP64 sign-extends (int<<16) into ulong. */
+		lp->iss = (((ulong)nrand(1<<16))<<16) | (ulong)nrand(1<<16);
 	}
 
 	if(sndsynack(s->p, lp) < 0){
@@ -2281,10 +2315,25 @@ reset:
 	 */
 	if(tcb->state != Syn_received && (seg.flags & RST) == 0){
 		if(tcpporthogdefense
-		&& seq_within(seg.ack, tcb->snd.una-(1<<31), tcb->snd.una-(1<<29))){
-			print("stateless hog %I.%d->%I.%d f %ux %lux - %lux - %lux\n",
-				source, seg.source, dest, seg.dest, seg.flags,
-				tcb->snd.una-(1<<31), seg.ack, tcb->snd.una-(1<<29));
+		&& seq_within(seg.ack, tcb->snd.una-((ulong)1<<31), tcb->snd.una-((ulong)1<<29))){
+			/* KenC LP64: one arg per print (multi-arg %I/%d crashed in utflen). */
+			print("stateless hog ");
+			print("%I", source);
+			print(".");
+			print("%d", seg.source);
+			print("->");
+			print("%I", dest);
+			print(".");
+			print("%d", seg.dest);
+			print(" f ");
+			print("%ux", seg.flags);
+			print(" ");
+			print("%lux", tcb->snd.una-((ulong)1<<31));
+			print(" - ");
+			print("%lux", seg.ack);
+			print(" - ");
+			print("%lux", tcb->snd.una-((ulong)1<<29));
+			print("\n");
 			localclose(s, "stateless hog");
 		}
 	}
@@ -2326,8 +2375,17 @@ reset:
 	if(seg.seq != tcb->rcv.nxt)
 	if(length != 0 || (seg.flags & (SYN|FIN))) {
 		update(s, &seg);
-		if(addreseq(f, tcb, tpriv, &seg, bp, length) < 0)
-			print("reseq %I.%d -> %I.%d\n", s->raddr, s->rport, s->laddr, s->lport);
+		if(addreseq(f, tcb, tpriv, &seg, bp, length) < 0){
+			print("reseq ");
+			print("%I", s->raddr);
+			print(".");
+			print("%d", s->rport);
+			print(" -> ");
+			print("%I", s->laddr);
+			print(".");
+			print("%d", s->lport);
+			print("\n");
+		}
 		tcb->flags |= FORCE;		/* force duplicate ack; RFC 5681 §3.2 */
 		goto output;
 	}
@@ -2343,8 +2401,22 @@ reset:
 		if(seg.flags & RST) {
 			if(tcb->state == Established) {
 				tpriv->stats[EstabResets]++;
-				if(tcb->rcv.nxt != seg.seq)
-					print("out of order RST rcvd: %I.%d -> %I.%d, rcv.nxt %lux seq %lux\n", s->raddr, s->rport, s->laddr, s->lport, tcb->rcv.nxt, seg.seq);
+				if(tcb->rcv.nxt != seg.seq){
+					/* KenC LP64: multi-arg print corrupted va_list → utflen(0xde). */
+					print("out of order RST rcvd: ");
+					print("%I", s->raddr);
+					print(".");
+					print("%d", s->rport);
+					print(" -> ");
+					print("%I", s->laddr);
+					print(".");
+					print("%d", s->lport);
+					print(", rcv.nxt ");
+					print("%lux", tcb->rcv.nxt);
+					print(" seq ");
+					print("%lux", seg.seq);
+					print("\n");
+				}
 			}
 			localclose(s, Econrefused);
 			goto raise;

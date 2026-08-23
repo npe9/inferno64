@@ -23,7 +23,7 @@ collect && section ~ "root"{
 		if (NF > 1)
 			src[nroot] = infernoroot $2;
 		else if (dst[nroot] == "/osinit.dis")
-			src[nroot] = infernoroot "/os/init/" init ".dis";
+			src[nroot] = infernoroot "/os/inferno/init/" init ".dis";
 		else
 			src[nroot] = infernoroot $1;
 		for(i=0; i<nroot; i++)

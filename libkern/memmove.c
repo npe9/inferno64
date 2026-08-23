@@ -2,13 +2,13 @@
 
 /* for testing only */
 void*
-memcpy(void *a1, void *a2, uintptr n)
+memcpy(void *a1, void *a2, ulong n)
 {
 	return memmove(a1, a2, n);
 }
 
 void*
-memmove(void *a1, void *a2, uintptr n)
+memmove(void *a1, void *a2, ulong n)
 {
 	char *s1, *s2;
 

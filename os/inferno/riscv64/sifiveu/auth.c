@@ -15,7 +15,7 @@ char	hostdomain[DOMLEN] = "inferno";
 int
 iseve(void)
 {
-	return strcmp(eve, up->env->user) == 0;
+	return strcmp(eve, up->user) == 0;
 }
 
 long
@@ -63,6 +63,6 @@ userwrite(char *data, int n)
 	if(buf[n-1] == '\n')
 		n--;
 	buf[n] = '\0';
-	kstrdup(&up->env->user, buf);
+	kstrdup(&up->user, buf);
 	return n;
 }
