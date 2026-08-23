@@ -171,6 +171,8 @@ simpleg(long b)
 		return GVOLATILE;
 	case BVOLATILE|BCONSTNT:
 		return GCONSTNT|GVOLATILE;
+	case BNORET:
+		return GNORET;
 	}
 	return GXXX;
 }
@@ -1339,6 +1341,7 @@ Init	gnamesinit[] =
 	GCONSTNT,		0,	"CONST",
 	GVOLATILE,		0,	"VOLATILE",
 	GVOLATILE|GCONSTNT,	0,	"CONST-VOLATILE",
+	GNORET,			0,	"NORET",
 	-1,			0,	0,
 };
 

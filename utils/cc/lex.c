@@ -1161,7 +1161,7 @@ struct
 	"goto",		LGOTO,		0,
 	"if",		LIF,		0,
 	"inline",	LINLINE,	0,
-	"_Noreturn",	LNORETURN,	0,
+	"_Noreturn",	LNORET,		0,
 	"int",		LINT,		TINT,
 	"long",		LLONG,		TLONG,
 	"register",	LREGISTER,	0,

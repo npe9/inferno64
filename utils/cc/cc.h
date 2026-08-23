@@ -88,7 +88,6 @@ struct	Sym
 	char	sym;
 	char	aused;
 	char	sig;
-	char	noret;		/* declared _Noreturn: a call to it never returns */
 };
 #define	S	((Sym*)0)
 
@@ -334,6 +333,7 @@ enum
 	TVOLATILE,
 	TUNSIGNED,
 	TSIGNED,
+	TNORET,
 	TFILE,
 	TOLD,
 	NALLTYPES,
@@ -362,9 +362,10 @@ enum
 	GXXX		= 0,
 	GCONSTNT	= 1<<0,
 	GVOLATILE	= 1<<1,
-	NGTYPES		= 1<<2,
+	GNORET		= 1<<2,
+	NGTYPES		= 1<<4,
 
-	GINCOMPLETE	= 1<<2,
+	GINCOMPLETE	= 1<<3,
 };
 enum
 {
@@ -387,7 +388,6 @@ enum
 	BSTRUCT		= 1L<<TSTRUCT,
 	BUNION		= 1L<<TUNION,
 	BENUM		= 1L<<TENUM,
-	BFILE		= 1L<<TFILE,
 	BDOT		= 1L<<TDOT,
 	BCONSTNT	= 1L<<TCONSTNT,
 	BVOLATILE	= 1L<<TVOLATILE,
@@ -399,6 +399,7 @@ enum
 	BTYPEDEF	= 1L<<TTYPEDEF,
 	BTYPESTR	= 1L<<TTYPESTR,
 	BREGISTER	= 1L<<TREGISTER,
+	BNORET		= 1L<<TNORET,
 
 	BINTEGER	= BCHAR|BUCHAR|BSHORT|BUSHORT|BINT|BUINT|
 				BLONG|BULONG|BVLONG|BUVLONG,
@@ -407,7 +408,7 @@ enum
 /* these can be overloaded with complex types */
 
 	BCLASS		= BAUTO|BEXTERN|BSTATIC|BTYPEDEF|BTYPESTR|BREGISTER,
-	BGARB		= BCONSTNT|BVOLATILE,
+	BGARB		= BCONSTNT|BVOLATILE|BNORET,
 };
 
 struct	Funct
@@ -445,13 +446,6 @@ EXTERN	Io*	ionext;
 EXTERN	Io*	iostack;
 EXTERN	long	lastbit;
 EXTERN	char	lastclass;
-/*
- * Set while a declaration carrying _Noreturn is being read, and applied
- * to each function it declares.  The kernel's portfns.h says error(),
- * panic() and nexterror() this way, and without it every switch that
- * ends in error() is "no return at end of function".
- */
-EXTERN	char	lastnoret;
 EXTERN	Type*	lastdcl;
 EXTERN	long	lastfield;
 EXTERN	Type*	lasttype;

@@ -199,6 +199,42 @@ It is an
 .CW int
 now.
 .NH 1
+The machines to support
+.PP
+One list, so that a board argument is settled by what a machine is worth
+rather than by what is nearest to hand.  The stars are how much each is
+worth having, not how hard it is.
+.PP
+.TS
+box tab(;);
+lb lb lb lb
+l l l l.
+architecture;machine;what it is;worth
+_
+x86-64;q35;a modern-ish PC;\(**\(**\(**\(**\(**
+x86-64;microvm;the minimal paravirtual machine;\(**\(**\(**\(**\(**
+x86-64;pc/i440fx;an old PC;\(**\(**
+AArch64;virt;the generic virtual ARM computer;\(**\(**\(**\(**\(**
+AArch64;sbsa-ref;a standards-based ARM server;\(**\(**\(**\(**\(**
+AArch64;raspi4b;Raspberry Pi 4;\(**\(**\(**\(**
+AArch64;xlnx-zcu102;Xilinx Zynq UltraScale+;\(**\(**\(**
+AArch64;amd-versal-virt;AMD Versal;\(**\(**\(**\(**
+RISC-V64;virt;the generic RISC-V computer;\(**\(**\(**\(**\(**
+RISC-V64;sifive_u;SiFive Unmatched;\(**\(**\(**\(**
+RISC-V64;icicle;the Microchip Icicle family, a real SoC;\(**\(**\(**\(**
+.TE
+.PP
+Every one of them is a machine QEMU emulates, so every one of them can
+be brought up and kept up without hardware on a desk; the four that are
+also real parts \-
+.CW raspi4b ,
+.CW xlnx-zcu102 ,
+.CW amd-versal-virt
+and the Icicle \- are the ones where the emulator is a stepping stone
+rather than the destination.  Nothing on this list is built yet beyond
+.CW riscv64/virt ;
+it is the plan, not the state.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

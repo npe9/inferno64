@@ -64,7 +64,7 @@
 %token	LIF LINT LLONG LREGISTER LRETURN LSHORT LSIZEOF LUSED
 %token	LSTATIC LSTRUCT LSWITCH LTYPEDEF LTYPESTR LUNION LUNSIGNED
 %token	LWHILE LVOID LENUM LSIGNED LCONSTNT LVOLATILE LSET LSIGNOF
-%token	LRESTRICT LINLINE LNORETURN
+%token	LRESTRICT LINLINE LNORET
 %%
 prog:
 |	prog xdecl
@@ -76,12 +76,8 @@ xdecl:
 	zctlist ';'
 	{
 		dodecl(xdecl, lastclass, lasttype, Z);
-		lastnoret = 0;
 	}
 |	zctlist xdlist ';'
-	{
-		lastnoret = 0;
-	}
 |	zctlist xdecor
 	{
 		lastdcl = T;
@@ -156,12 +152,10 @@ adecl:
 	ctlist ';'
 	{
 		$$ = dodecl(adecl, lastclass, lasttype, Z);
-		lastnoret = 0;
 	}
 |	ctlist adlist ';'
 	{
 		$$ = $2;
-		lastnoret = 0;
 	}
 
 adlist:
@@ -1150,12 +1144,12 @@ cname:	/* class words */
 |	LTYPESTR { $$ = BTYPESTR; }
 |	LREGISTER { $$ = BREGISTER; }
 |	LINLINE { $$ = 0; }
-|	LNORETURN { $$ = 0; lastnoret = 1; }
 
 gname:	/* garbage words */
 	LCONSTNT { $$ = BCONSTNT; }
 |	LVOLATILE { $$ = BVOLATILE; }
 |	LRESTRICT { $$ = 0; }
+|	LNORET { $$ = BNORET; }
 
 name:
 	LNAME
