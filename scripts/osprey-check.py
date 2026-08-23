@@ -108,6 +108,18 @@ CHECKS = [
    "echo output 5 256 17 >/n/osprey/ctl; sleep 2",
    "echo submit 5 close 0 >/n/osprey/ctl; sleep 2; cat /n/osprey/reply"],
   "5 close done"),
+ ("a container held to its reservation",
+  ["{ while(){} } &",
+   "b=$apid; echo create 6 5000000 100000000 100000000 >/n/osprey/ctl",
+   "echo attach 6 0 >/n/osprey/ctl; echo mode 6 strict >/n/osprey/ctl",
+   "echo bindproc 6 $b >/n/osprey/ctl",
+   "{ while(){} } &",
+   "u=$apid; sleep 8; ps | awk '$2=='^$b"],
+  "Stopped"),
+ ("and one that is not, still running beside it",
+  ["ps | awk '$2=='^$u",
+   "echo kill >/proc/$b/ctl; echo kill >/proc/$u/ctl; echo done"],
+  "!Stopped"),
 ]
 
 def plain(s):
@@ -163,6 +175,10 @@ def main():
             ok = m is not None and int(m.group(1)) < 1000000
             if m:
                 what += ' (%s ns)' % m.group(1)
+        elif want.startswith('!'):
+            # what must not be there: a check that only ever looked for
+            # something present would pass however the other half went
+            ok = want[1:] not in parts[i]
         else:
             ok = want in parts[i]
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))

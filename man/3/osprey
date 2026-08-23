@@ -696,8 +696,10 @@ checkpoint, an attribute written over
 .IR pip (5)
 that nobody else sees until the fid that wrote it is closed, an
 operation the kernel refuses put on another container's ring and
-answered there, what a round trip costs, and a uart driven by a task,
-whose bytes are watched leaving the second serial port.
+answered there, what a round trip costs, a container held to a
+five-per-cent reservation while an identical process beside it is not,
+and a uart driven by a task, whose bytes are watched leaving the second
+serial port.
 .PP
 .B /scripts/osprey-check-wire.py
 boots two on one wire and asks for the rest: a key agreed rather than
