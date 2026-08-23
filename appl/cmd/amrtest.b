@@ -173,6 +173,19 @@ inball(cx, cy, cz, nil, nil, nil: real): int
 	return dx*dx + dy*dy + dz*dz <= crad*crad;
 }
 
+# Everything, so a forest refines uniformly to maxlevel.
+everywhere(nil, nil, nil, nil, nil, nil: real): int
+{
+	return 1;
+}
+
+# Only the left half: the right half must coarsen away while the left stays
+# at maxlevel, which is what puts coarsening next to deep refinement.
+lefthalf(cx, nil, nil, nil, nil, nil: real): int
+{
+	return cx < 0.5;
+}
+
 init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -311,6 +324,31 @@ init(nil: ref Draw->Context, nil: list of string)
 	if(d2 > 0.15)
 		bad(sprint("interface mass drift %g is far larger than the 0.052 "+
 			"measured when this was written", d2));
+
+	# Coarsening must respect balance too.
+	#
+	# amr(2) used to say that coarsening never rechecks cross-neighbour
+	# balance, and called that a scope limit. It is not one any more:
+	# coarsenlevel() asks needsbalance() before collapsing a block, and
+	# that guard is load-bearing. Removing it leaves 272 face pairs
+	# differing by two levels on the forest below, so this drives the
+	# coarsening path deliberately rather than leaving it to whatever a
+	# refinement test happens to touch.
+	#
+	# Refine everything to maxlevel, then want only the left half: the
+	# right half coarsens, pass by pass, alongside a left half that stays
+	# deep - which is the arrangement that breaks if coarsening does not
+	# look at its neighbours.
+	cf := amr->new(4, 4, 4, 4, 2, 1.0, 1.0, 1.0);
+	for(p := 0; p < 2; p++)
+		amr->adapt(cf, everywhere);
+	balance(cf, "uniform at maxlevel");
+	for(p = 0; p < 3; p++){
+		amr->adapt(cf, lefthalf);
+		balance(cf, sprint("after coarsening pass %d", p+1));
+	}
+	if(len amr->activeblocks(cf) >= 4096)
+		bad("nothing coarsened, so the coarsening path was not tested");
 
 	if(fail)
 		raise "fail:test";

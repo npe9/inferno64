@@ -44,6 +44,20 @@ Prolongation, restriction and the Laplacian are all exact on a constant
 whatever the level structure, so any cross-level mistake appears as a
 named cell that is no longer that constant, rather than as a plausible
 field that happens to be wrong.
+.SS Coarsening
+Coarsening is driven deliberately rather than left to whatever a
+refinement test happens to touch: a forest is refined everywhere to
+maxlevel, then only its left half is wanted, so the right half coarsens
+pass by pass alongside a left half that stays deep.
+.PP
+That arrangement is the one that breaks if coarsening does not consider
+its neighbours, and it is worth having because
+.B module/amr.m
+described exactly that as a scope limit \(em
+.RB \(lq "coarsening never checks cross-neighbor balance" \(rq
+\(em long after it had stopped being true.
+The guard is real and load-bearing: removing it leaves 272 face pairs
+differing by two levels on this forest.
 .SS Conservation, measured three ways
 Mass is treated as two different questions, because lumping them
 together would make the strict one useless.
@@ -78,16 +92,6 @@ is not measuring mass.
 .IR pde (2),
 .IR pdetest (1)
 .SH BUGS
-Nothing checks
-.BR coarsen 's
-interaction with balance.
-.IR Amr (2)
-states plainly that coarsening never checks cross-neighbour balance, so a
-forest can in principle be left unbalanced by coarsening alone; this
-test's balance scan would catch it, but nothing here drives
-.B adapt
-with a criterion that shrinks, which is what would provoke it.
-.PP
 One block size, one domain, one criterion shape, diffusion only.
 .PP
 The interface drift figure is for the specific forest built here.

@@ -383,9 +383,23 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    rediscovered. Control for the balance scan: a forest hand-refined three
    levels deep reports 30 face pairs differing by more than one level.
 
-   One documentation bug on the way: `module/amr.m` described `totalmass` as
-   the total cell *volume*, omitting the value, which would make it independent
-   of the field and useless as an invariant. `man/2/amr` always had it right.
+   **Two documentation bugs on the way, both in `module/amr.m`, both cases of a
+   comment outliving the code.** It described `totalmass` as the total cell
+   *volume*, omitting the value — which would make it independent of the field
+   and useless as an invariant. And it described coarsening as never checking
+   cross-neighbour balance, calling that "a real, documented scope limit, not an
+   oversight" — long after that had stopped being true. `coarsenlevel()` does
+   ask `needsbalance()`, and the guard is load-bearing: removing it leaves
+   **272 face pairs differing by two levels**. `amrtest(1)` now drives the
+   coarsening path deliberately (refine everywhere, then want only the left
+   half, so one side coarsens beside a side that stays deep) rather than leaving
+   it to whatever a refinement test happens to touch. `man/2/amr` had both
+   right.
+
+   The general lesson, which cost time here: **the module comment was the thing
+   I reasoned from, and it was stale.** I went looking for a bug the docs
+   promised and spent two experiments failing to reproduce it before reading
+   the implementation, which says in its own comment that it was fixed.
 
    Both are *stencil* sweeps, not SpMV, so
    they need a second Metal kernel — and no matrix upload at all, so the

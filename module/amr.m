@@ -72,8 +72,16 @@ Amr: module
 	# the standard block-AMR technique, not a simplification specific
 	# to this implementation); then coarsens every refined block whose
 	# own box crit no longer flags and whose children are all
-	# themselves leaves (coarsening never checks cross-neighbor
-	# balance - a real, documented scope limit, not an oversight).
+	# themselves leaves - and, like refinement, only where collapsing the
+	# block would not itself break 2:1 balance.
+	#
+	# (This comment used to say coarsening never checks cross-neighbor
+	# balance, and called that a documented scope limit. It was a bug and
+	# it was fixed: a block refined only to satisfy balance, never wanted
+	# by crit, would be coarsened straight back on the next call, silently
+	# undoing the balance the refine pass had just established. The guard
+	# is load-bearing - removing it leaves 272 face pairs differing by two
+	# levels on amrtest(1)'s forest. man/2/amr had it right.)
 	adapt:	fn(f: ref Forest, crit: Criterion);
 
 	# Fills every active block's 1-cell ghost halo from its neighbors:
