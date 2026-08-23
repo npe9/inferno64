@@ -70,6 +70,9 @@ CHECKS = [
    "sleep 1; o=`{awk '/^proc 7/{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)+64}' /n/osprey/status}",
    "dd -if /n/osprey/arena -bs 1 -iseek $o -count 4 >[2]/dev/null; echo"],
   "2000"),
+ ("a round trip that does not wait for the clock",
+  ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
+  None),   # checked by the number, not by a string
  ("a uart driven by a task, answering a control message",
   ["echo create 5 100000000 200000000 200000000 >/n/osprey/ctl",
    "echo attach 5 0 >/n/osprey/ctl; echo uart 5 eia1 3 >/n/osprey/ctl",
@@ -126,7 +129,16 @@ def main():
 
     bad = 0
     for i, (what, _, want) in enumerate(CHECKS):
-        ok = want in parts[i]
+        if want is None:
+            # a round trip took a whole clock tick until something woke
+            # the service process; anything near a millisecond is that
+            # bug back again
+            m = re.search(r'(\d+) ns each', parts[i])
+            ok = m is not None and int(m.group(1)) < 1000000
+            if m:
+                what += ' (%s ns)' % m.group(1)
+        else:
+            ok = want in parts[i]
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))
         if not ok:
             bad += 1

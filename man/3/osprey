@@ -359,6 +359,11 @@ the start of the file takes anything.
 is the shared span itself at its own byte offsets, so a ring or a data
 area can be examined without mapping it.
 .PP
+.B bench
+says what a request costs; see
+.B "WHAT IT COSTS"
+below.
+.PP
 .B snap
 is every container as text: its identity, the core it is on, whether it
 was running, its budget, period and deadline, what it has used, its caps,
@@ -706,6 +711,43 @@ a line at a time and keeps its logs when anything failed.  Both want
 .B .qemu/9front-root.qcow2
 and an ISO built by
 .BR /scripts/mkosprey-efi-iso.sh .
+.SH WHAT IT COSTS
+.PP
+Writing
+.IP
+.nf
+\fIid count\fP
+.fi
+.PP
+to
+.B bench
+puts that many
+.B poll
+requests on the container's ring one after another, waits for each
+answer, and hands back on the same
+.B fd
+what a round trip cost: the cycles, the nanoseconds and the rate they
+were counted at.  The container must have a service process of its own,
+or there is nothing to switch to.
+.PP
+What is measured is a request put on a ring, the process that serves the
+container woken and switched to, the request dispatched, the answer put
+on the reply ring, and the asking process woken and switched back \-
+which is the talk's send, receive and context switch, twice over, in a
+Plan 9 kernel rather than a microkernel.  The talk measures 270
+nanoseconds.  This measures about 59 microseconds under QEMU without
+hardware virtualisation, where the cycle counter is emulated and the
+number is not a hardware figure; what it is good for is comparing this
+kernel with itself.
+.PP
+It was 5.5 milliseconds until
+.B bench
+was written to ask.  Nothing woke a container's service process when a
+request was submitted from inside the kernel, so every round trip waited
+for the clock to notice.  A submission through the mapped ring is still
+the clock's to notice, since a process that never entered the kernel
+cannot wake anybody: that is what not trapping costs, and it is the
+trade the whole arrangement is about.
 .SH TICKETS
 .PP
 A name is only worth what the machine it was said on is worth.  On a

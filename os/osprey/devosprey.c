@@ -35,6 +35,7 @@ enum {
 	Qpip,
 	Qsnap,
 	Qticket,
+	Qbench,
 
 	Statuslen	= 8*1024,	/* every core and container line */
 	Snaplen		= 64*1024,	/* every container as a checkpoint */
@@ -84,6 +85,7 @@ static Dirtab ospreydir[] = {
 	"pip",		{Qpip},			0,	0660,
 	"snap",		{Qsnap},		0,	0660,
 	"ticket",	{Qticket},		0,	0660,
+	"bench",	{Qbench},		0,	0660,
 };
 
 /*
@@ -1180,6 +1182,14 @@ ospreywakeup(void)
 		wakeup(&ospreyroomrend[i]);
 		wakeup(&ospreyreplyrend[i]);
 		wakeup(&ospreyselrend[i]);
+		/*
+		 * And the service process.  Whoever calls this is in the
+		 * kernel already, so a request it submitted can be answered
+		 * now rather than at the next tick; a process that submitted
+		 * through the mapped ring never entered the kernel and is
+		 * still the clock's to notice.
+		 */
+		wakeup(&ospreyservrend[i]);
 	}
 }
 
@@ -1548,7 +1558,8 @@ static void
 ospreyclose(Chan *c)
 {
 	/* a ticket is the chan's own; the pip session is not */
-	if((ulong)c->qid.path == Qticket && c->aux != nil){
+	if(((ulong)c->qid.path == Qticket
+	|| (ulong)c->qid.path == Qbench) && c->aux != nil){
 		free(c->aux);
 		c->aux = nil;
 	}
@@ -2589,6 +2600,7 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 	case Qpip:
 		return pipread(c, a, n);
 
+	case Qbench:
 	case Qticket:
 		/*
 		 * The ticket the last write on this chan asked for, handed
@@ -2670,6 +2682,93 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		return ospreyarenaio(a, n, offset, 1);
 	if((ulong)c->qid.path == Qpip)
 		return pipwrite(c, a, n);
+	if((ulong)c->qid.path == Qbench){
+		/*
+		 * What a request costs this kernel.  The talk measures a
+		 * send, a receive and a context switch together at 270
+		 * nanoseconds; that is a microkernel figure and this is not
+		 * one, so the number wanted here is what it really costs to
+		 * put a request on a ring, wake the process that serves the
+		 * container, and be woken again with the answer.
+		 *
+		 * The container must have a service process of its own --
+		 * ctl serve -- or there would be nothing to switch to.
+		 */
+		uvlong t0, t1, arg[Ospreynarg], op;
+		long i, count, status;
+		char *r;
+
+		cb = parsecmd(a, n);
+		if(waserror()){
+			free(cb);
+			nexterror();
+		}
+		if(cb->nf != 2)
+			error(Ebadarg);
+		count = (long)strtoul(cb->f[1], nil, 0);
+		if(count <= 0 || count > 100000)
+			error(Ebadarg);
+		qlock(&ospreylock);
+		if(waserror()){
+			qunlock(&ospreylock);
+			nexterror();
+		}
+		p = ospreyproc(cb->f[0]);
+		if(!ospreymay(p, up->user))
+			error(Eperm);
+		if((x = ospreyindex(p)) < 0)
+			error(Enonexist);
+		if(ospreyserving[x] == 0)
+			error("the container has no service process");
+		while(ospreyreplyready(p))	/* start from a quiet ring */
+			ospreycollect(p, &op, &status, arg);
+
+		cycles(&t0);
+		for(i = 0; i < count; i++){
+			memset(arg, 0, sizeof arg);
+			if(ospreysubmit(p, ospreyop("poll"), arg) < 0)
+				break;
+			ospreywakeup();
+			while(!ospreyreplyready(p)){
+				if((x = ospreyindex(p)) < 0)
+					error(Enonexist);
+				qunlock(&ospreylock);
+				if(waserror()){
+					qlock(&ospreylock);
+					nexterror();
+				}
+				sleep(&ospreyreplyrend[x], ospreyreply, p);
+				poperror();
+				qlock(&ospreylock);
+				p = ospreyproc(cb->f[0]);
+			}
+			ospreycollect(p, &op, &status, arg);
+		}
+		cycles(&t1);
+
+		r = smalloc(256);
+		if(waserror()){
+			free(r);
+			nexterror();
+		}
+		if(i <= 0)
+			error("nothing was measured");
+		snprint(r, 256, "%ld round trips, %llud cycles each,"
+			" %llud ns each, at %llud hz\n",
+			i, (t1 - t0)/i,
+			m->cpuhz == 0 ? 0 :
+				((t1 - t0)/i)*1000000000ULL/m->cpuhz,
+			m->cpuhz);
+		poperror();
+		if(c->aux != nil)
+			free(c->aux);
+		c->aux = r;
+		qunlock(&ospreylock);
+		poperror();
+		poperror();
+		free(cb);
+		return n;
+	}
 	if((ulong)c->qid.path == Qticket){
 		/*
 		 * Sign a name for a container until a time.  Only somebody

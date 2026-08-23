@@ -139,6 +139,21 @@ is read.  Reading it is a checkpoint and writing
 one back is a restart, into this kernel or another one -- a container
 that was running when it was written out is running again when it is read
 back.
+.PP
+.B "What it costs."
+The presentation measures a send, a receive and a context switch
+together at 270 nanoseconds.  The same thing here \- a request put on a
+ring, the container's service process woken and switched to, the answer
+put back, and the asking process woken and switched again \- measures
+about 59 microseconds, under QEMU with no hardware virtualisation, where
+the cycle counter is emulated.  It is not a hardware figure and is not
+meant to stand beside the talk's as one; it is what this kernel can be
+compared with itself by.  Writing to
+.CW #O/bench
+is how it is asked.  Asking it the first time found that nothing woke a
+container's service process when a request was submitted from inside the
+kernel, so a round trip waited for the clock: 5.5 milliseconds, ninety
+times what it costs now.
 .NH 1
 What proves it
 .PP
