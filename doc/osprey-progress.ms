@@ -68,9 +68,10 @@ been committed over, and leases on fids and sessions.  What it names are
 containers, whose settings and accounting are their attributes.
 .PP
 .B "A segment for each container, and pages handed over."
-A container's slice is a segment of its own, so a process attaches that
-container's memory and nobody else's, and so is each page that may be
-handed about.  A container takes a page, writes in it, and hands it to
+A container's slice is a segment of its own, and so is each page that may
+be handed about, and the name of one is a capability: a container's
+memory is for the process bound to it and the processes that one started,
+and a page is for whichever container holds it.  A container takes a page, writes in it, and hands it to
 another, which attaches the same page and finds what was written: the
 page is mapped, not copied.
 .PP
@@ -93,17 +94,12 @@ Everything the plan and the presentation describe that a kernel of this
 shape can do is done.  What is left is either a different kernel, or work
 neither source spells out.
 .PP
-.B "1.  Segments that are capabilities."
-A segment's name is not one: any process may attach any of them, so a
-container is only as private as the names it keeps.  The kernel knows
-which container holds which page and is not asked when one is attached.
-.PP
-.B "2.  Delegated authentication."
+.B "1.  Delegated authentication."
 The presentation asks for authentication delegated across a distributed
 system.  Nothing here does anything about who is asking: a container is
 whoever can write to the device.
 .PP
-.B "3.  \[*p]p as its own transport."
+.B "2.  \[*p]p as its own transport."
 It is spoken over a file.  The presentation has it able to be the
 transport itself, and to carry isochronous data.
 .NH 1

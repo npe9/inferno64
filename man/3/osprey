@@ -367,7 +367,13 @@ Each container's slice is a segment of its own, named
 .BR osprey N
 and reported with its size by
 .BR status ,
-so that attaching one gets that container's memory and nobody else's:
+so that attaching one gets that container's memory and nobody else's.
+A name is not enough to have it: a container's memory is for the process
+bound to it by
+.B bindproc
+and the processes that one started, and a page is for whichever container
+holds it, so the right to a page goes with the page when it is handed
+over.  A container with no process bound to it is nobody's.
 .IP
 .nf
 segattach(0, "osprey0", 0, slicesize)
@@ -611,11 +617,8 @@ the igbe.  And a card writing into memory a process has mapped is a card
 writing where that process may write too, which a container that is not
 trusted with its own packets should not be given.
 .PP
-A segment's name is not a capability: any process may attach any of
-them, so a container is only as private as the names it keeps to itself.
-The kernel knows which container holds which page, but nothing asks it
-when a page is attached.  The kernel address in each ring head is
-visible to whoever attaches that slice.
+The kernel address in each ring head is visible to whoever may attach
+that slice.
 .PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes

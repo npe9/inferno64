@@ -143,6 +143,8 @@ uvlong		ospreyoff_at(Ospreyproc*, void *addr);
 int		ospreypagealloc(Ospreyproc*);
 int		ospreypagefree(Ospreyproc*, int i);
 int		ospreypageflip(Ospreyproc *from, Ospreyproc *to, int i);
+int		ospreyholdspage(Ospreyproc*, uvlong off);
+uvlong		ospreypageoff(uvlong i);
 uvlong		ospreysemcount(Ospreyproc*, ulong sem);
 int		ospreyselect(Ospreyproc*, uvlong armoff, int narms);
 int		ospreyselectready(Ospreyproc*, uvlong armoff, int narms);

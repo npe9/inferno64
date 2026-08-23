@@ -822,6 +822,13 @@ segattach(int attr, char *name, uintptr va, uintptr len)
 	if(ps == nil)
 		error(Ebadarg);
 
+	/*
+	 * A segment that belongs to something may say who may have it.
+	 * One that answers for no name is anyone's, as before.
+	 */
+	if(ospreysegok != nil && ospreysegok(name) == 0)
+		error(Eperm);
+
 	if(len > ps->size)
 		error(Enovmem);
 

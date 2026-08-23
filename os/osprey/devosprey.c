@@ -764,6 +764,51 @@ ospreywakeup(void)
  * Name every part of the span: a segment for each container's slice and
  * one for each page.  They are published once, when the span is made.
  */
+/*
+ * Whether this process may attach one of these segments.  A container's
+ * memory is the process bound to it and the processes it started; a page
+ * is whichever container holds it.  Nothing else may have either, so a
+ * name is a capability and not merely a name.
+ */
+static int
+ospreyentitled(int slot)
+{
+	Proc *q, *r;
+	int i;
+
+	if(slot < 0 || slot >= nelem(ospreyprocs))
+		return 0;
+	if((q = ospreyprocs[slot]) == nil)
+		return 0;	/* nobody is bound to it, so nobody may have it */
+	for(r = up, i = 0; r != nil && i < 64; r = r->parent, i++)
+		if(r == q)
+			return 1;
+	return 0;
+}
+
+static int
+ospreysegentitled(char *name)
+{
+	Ospreyproc *p;
+	uvlong off;
+	int i, n;
+
+	if(strncmp(name, "osprey", 6) != 0)
+		return 1;		/* not ours to say */
+	name += 6;
+	if(strncmp(name, "page", 4) == 0){
+		off = ospreypageoff(strtoul(name+4, nil, 10));
+		if(off == ~0ULL)
+			return 0;
+		for(i = 0; i < ospreynproc(); i++)
+			if((p = ospreyat(i)) != nil && ospreyholdspage(p, off))
+				return ospreyentitled(i);
+		return 0;	/* a page nobody holds is nobody's */
+	}
+	n = (int)strtoul(name, nil, 10);
+	return ospreyentitled(n);
+}
+
 static void
 ospreypublish(void)
 {
@@ -836,6 +881,7 @@ ospreyinit(void)
 		ospreyticksem[i] = -1;
 	ospreyuartintr = ospreyuartgive;
 	ospreyetheriq = ospreyethergive;
+	ospreysegok = ospreysegentitled;
 	ospreypktdirect = ospreycountdirect;
 	ospreypktcopied = ospreycountcopied;
 	ospreyreset();		/* so no tick can find it uninitialised */

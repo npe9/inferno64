@@ -498,6 +498,29 @@ ospreypageflip(Ospreyproc *from, Ospreyproc *to, int i)
 	return 0;
 }
 
+/* whether this container holds the page at that offset in the span */
+int
+ospreyholdspage(Ospreyproc *p, uvlong off)
+{
+	uvlong *l, j;
+
+	if((l = pagelist(p)) == nil)
+		return 0;
+	for(j = 0; j < p->map->npage; j++)
+		if(l[j] == off)
+			return 1;
+	return 0;
+}
+
+uvlong
+ospreypageoff(uvlong i)
+{
+	sizes();
+	if(pagebase == 0)
+		ospreyarenasize();
+	return i >= Npage ? ~0ULL : pagebase + i*Pagesize;
+}
+
 /* where this container's receive buffers are, and how many */
 int
 ospreymapsizes(Ospreyproc *p, uvlong *off, uvlong *n, uvlong *size)
