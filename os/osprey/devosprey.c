@@ -611,6 +611,7 @@ static Proc *ospreyprocs[16];		/* the process bound to each container */
 static Rendez ospreyservrend[16];	/* wakes a container's service process */
 static Rendez ospreyselrend[16];	/* wakes a container's select */
 static int ospreyserving[16];		/* a service process is running for it */
+static uvlong ospreyservingid[16];	/* and which container it was started for */
 static Pgrp *ospreypgrp[16];		/* the namespace it is to run in */
 static int ospreystopped[16];		/* we stopped that container's process */
 static int ospreyticksem[16];		/* semaphore the clock gives, or -1 */
@@ -992,6 +993,25 @@ ospreyhaswork(void *a)
 }
 
 /*
+ * Wake the service process of any container that has a request waiting,
+ * and of no other.  Waking them all is what a service process itself
+ * would do at the end of its round, and then each of the others would
+ * wake all of them again: eight idle containers kept a core busy that
+ * way.
+ */
+static void
+ospreywakeservers(int except)
+{
+	Ospreyproc *q;
+	int i;
+
+	for(i = 0; i < nelem(ospreyservrend); i++)
+		if(i != except && ospreyserving[i] && (q = ospreyat(i)) != nil
+		&& ospreyrequestready(q))
+			wakeup(&ospreyservrend[i]);
+}
+
+/*
  * A container's service process.  It answers requests from that
  * container's ring and sleeps when there are none; the clock wakes it
  * when a process that has mapped the ring puts one there, so an ordinary
@@ -1004,7 +1024,18 @@ ospreyserver(void *a)
 {
 	Ospreyproc *p = a;
 	Pgrp *pg;
-	int x;
+	uvlong myid;
+	int x, myx;
+
+	/*
+	 * The slot and the container are remembered here: once the
+	 * container has gone, ospreyindex says nothing, and the flag that
+	 * says a server is running for this slot would never be cleared.
+	 * A slot left marked that way takes no new server ever again, and
+	 * says nothing about it either.
+	 */
+	myx = ospreyindex(p);
+	myid = ospreyid(p);
 
 	/*
 	 * kproc leaves a kernel process in the shared kernel name space,
@@ -1034,14 +1065,17 @@ ospreyserver(void *a)
 		poperror();
 		qunlock(&ospreylock);
 		ospreywakeup();
+		/* a request routed to somebody else's ring is theirs to answer */
+		ospreywakeservers(x);
 		if(ospreyindex(p) < 0)
 			break;
 		sleep(&ospreyservrend[x], ospreyhaswork, p);
 	}
 	poperror();
 done:
-	if((x = ospreyindex(p)) >= 0)
-		ospreyserving[x] = 0;
+	if(myx >= 0 && myx < nelem(ospreyserving)
+	&& ospreyservingid[myx] == myid)
+		ospreyserving[myx] = 0;
 	pexit("osprey server", 1);
 }
 
@@ -1086,7 +1120,8 @@ ospreyclock(int core)
 	 * entered the kernel, so the clock is what notices.
 	 */
 	for(i = 0; i < nelem(ospreyservrend); i++)
-		if(ospreyserving[i])
+		if(ospreyserving[i] && (p = ospreyat(i)) != nil
+		&& ospreyrequestready(p))
 			wakeup(&ospreyservrend[i]);
 
 	/*
@@ -1183,14 +1218,6 @@ ospreywakeup(void)
 		wakeup(&ospreyroomrend[i]);
 		wakeup(&ospreyreplyrend[i]);
 		wakeup(&ospreyselrend[i]);
-		/*
-		 * And the service process.  Whoever calls this is in the
-		 * kernel already, so a request it submitted can be answered
-		 * now rather than at the next tick; a process that submitted
-		 * through the mapped ring never entered the kernel and is
-		 * still the clock's to notice.
-		 */
-		wakeup(&ospreyservrend[i]);
 	}
 }
 
@@ -2761,6 +2788,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			if(ospreysubmit(p, ospreyop("poll"), arg) < 0)
 				break;
 			ospreywakeup();
+			ospreywakeservers(-1);
 			while(!ospreyreplyready(p)){
 				if((x = ospreyindex(p)) < 0)
 					error(Enonexist);
@@ -3348,9 +3376,13 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		p = ospreyproc(cb->f[1]);
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyserving))
 			error(Ebadarg);
-		if(ospreyserving[x])
-			break;
+		if(ospreyserving[x]){
+			if(ospreyservingid[x] == ospreyid(p))
+				break;		/* already has one */
+			error("the last server for that slot has not finished");
+		}
 		ospreyserving[x] = 1;
+		ospreyservingid[x] = ospreyid(p);
 		incref(up->pgrp);
 		ospreypgrp[x] = up->pgrp;
 		if(waserror()){
