@@ -386,7 +386,11 @@ A checkpoint is text and goes wherever text goes.
 .I mig
 carries one to another machine in an ethernet frame of its own type and
 reads it back into the kernel there, destroying what it sent so that the
-container is afterwards in one place and not two.
+container is afterwards in one place and not two.  It destroys it only
+when the other end has said the checkpoint arrived: a checkpoint that is
+refused there \- signed under a key that machine does not hold, say \-
+would otherwise leave the container gone from one machine and never
+there on the other.
 .PP
 .B pip
 speaks the session protocol described in
@@ -707,8 +711,10 @@ boots two on one wire and asks for the rest: a key agreed rather than
 typed into both, \[*p]p answered in frames of its own, a container
 refused to a session that has not said who it is and given to one that
 presents a ticket signed by that key, an attribute arriving at the rate
-it was asked for, a container carried across and restarted, and a
-checkpoint too big for a frame refused rather than half sent.
+it was asked for, a container carried across and restarted, a
+checkpoint signed by a key the other end does not hold refused with the
+container kept where it was, and one too big for a frame refused rather
+than half sent.
 .PP
 Each says
 .B ok

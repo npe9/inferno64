@@ -71,10 +71,16 @@ CLIENT = [
 # and the pair that carries a container across, and the one that will not fit
 SRC = [
  CD + "; rm -f /tmp/mig; cp /n/cd/bin/mig /tmp/mig; chmod +x /tmp/mig",
- "bind '#O' /n/osprey; echo create 42 40000000 800000000 200000000 >/n/osprey/ctl",
+ "bind '#O' /n/osprey; echo key sekrit >/n/osprey/ctl",
+ "echo create 42 40000000 800000000 200000000 >/n/osprey/ctl",
  "echo attach 42 0 >/n/osprey/ctl; echo bind 42 home /usr/glenda >/n/osprey/ctl",
  "echo '#### migrate'; sleep 8; /tmp/mig send",
  "echo '#### left'; grep -c '^proc ' /n/osprey/status",
+ # now the other machine holds a different key
+ "echo create 44 40000000 800000000 200000000 >/n/osprey/ctl",
+ "echo attach 44 0 >/n/osprey/ctl",
+ "echo '#### wrongkey'; sleep 12; /tmp/mig send",
+ "echo '#### stillhere'; grep -c '^proc ' /n/osprey/status",
  # one container with a full ring still fits in a frame; two do not
  "for(c in 41 43) echo create $c 40000000 800000000 200000000 >/n/osprey/ctl",
  "for(c in 41 43) echo attach $c 0 >/n/osprey/ctl",
@@ -87,9 +93,11 @@ SRC = [
 ]
 DST = [
  CD + "; rm -f /tmp/mig; cp /n/cd/bin/mig /tmp/mig; chmod +x /tmp/mig",
- "bind '#O' /n/osprey; echo '#### arrived'; /tmp/mig recv",
+ "bind '#O' /n/osprey; echo key sekrit >/n/osprey/ctl",
+ "echo '#### arrived'; /tmp/mig recv",
  "grep '^name 42' /n/osprey/status",
- "sleep 20; echo '#### only'; grep -c '^proc ' /n/osprey/status",
+ "echo key other >/n/osprey/ctl; echo '#### refuse'; /tmp/mig recv",
+ "sleep 12; echo '#### only'; grep -c '^proc ' /n/osprey/status",
  "echo '#### end'",
 ]
 
@@ -129,10 +137,16 @@ def main():
                     'restarted' in dst and 'name 42 home /usr/glenda' in dst))
     results.append(("and gone from the one it left",
                     between(src, 'left', 'end').find('\n0\n') >= 0))
+    results.append(("a checkpoint signed by a key the other end does not hold, refused",
+                    'would not take it' in between(dst, 'refuse', 'only')))
+    results.append(("and the container kept, since nothing said it arrived",
+                    between(src, 'stillhere', 'toobig').find('\n1\n') >= 0))
     results.append(("a checkpoint too big for a frame refused, not half-sent",
                     'does not fit in one frame' in between(src, 'toobig', 'kept')))
+    # 44, which the other end would not take, and 41 and 43, which
+    # would not fit in a frame
     results.append(("with everything it would have sent still there",
-                    between(src, 'kept', 'end').find('\n2\n') >= 0
+                    between(src, 'kept', 'end').find('\n3\n') >= 0
                     and between(dst, 'only', 'end').find('\n1\n') >= 0))
 
     bad = 0

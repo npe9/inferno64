@@ -261,24 +261,82 @@ migsend(int move)
 		die("cannot open the conversation data");
 	if(write(fd, frame, Hdrlen + n) != Hdrlen + n)
 		die("the frame did not go");
-	close(fd);
 	outs("sent "); outn(n); outs(" bytes of checkpoint\n");
 	flush();
-	if(move)
+
+	/*
+	 * What is sent is destroyed here, so wait to be told it arrived.
+	 * Without this a checkpoint the other end would not take -- signed
+	 * with a key it does not hold, say -- left the container gone from
+	 * this machine and never there on that one.  The reply is a frame
+	 * of the same type beginning "taken", from somebody else.
+	 */
+	if(move){
+		static uchar in[Maxframe];
+		int k;
+
+		alarm(10000);	/* rather than wait for ever on a lost frame */
+		for(;;){
+			k = read(fd, in, sizeof in);
+			if(k <= Hdrlen)
+				die("the other end said nothing");
+			USED(k);
+			if(memcmp(in+6, ea, 6) == 0)
+				continue;	/* our own frame comes back */
+			if(k >= Hdrlen+5 && memcmp(in+Hdrlen, "taken", 5) == 0)
+				break;
+			if(k >= Hdrlen+7 && memcmp(in+Hdrlen, "refused", 7) == 0)
+				die("the other end would not take it");
+		}
+		alarm(0);
+		close(fd);
 		migdrop((char*)frame + Hdrlen, n);
+		return;
+	}
+	close(fd);
+}
+
+/* tell whoever sent that checkpoint what became of it */
+static void
+migsay(int fd, uchar *ea, uchar *to, char *what)
+{
+	static uchar out[Maxframe];
+	int i, n;
+
+	memmove(out, to, 6);
+	memmove(out+6, ea, 6);
+	out[12] = Ethertype >> 8;
+	out[13] = Ethertype;
+	for(n = 0; what[n] != '\0'; n++)
+		out[Hdrlen+n] = what[n];
+	n += Hdrlen;
+	for(i = n; i < 60; i++)
+		out[i] = 0;
+	if(n < 60)
+		n = 60;
+	write(fd, out, n);
 }
 
 static void
 migrecv(void)
 {
+	uchar ea[6], from[6];
 	int fd, n;
 
+	myaddr(ea);
 	if((fd = converse()) < 0)
 		die("cannot open the conversation data");
-	n = read(fd, frame, sizeof frame);
-	close(fd);
-	if(n <= Hdrlen)
-		die("no frame");
+	for(;;){
+		n = read(fd, frame, sizeof frame);
+		if(n <= Hdrlen)
+			die("no frame");
+		if(memcmp(frame+6, ea, 6) == 0)
+			continue;		/* our own */
+		if(n >= Hdrlen+5 && memcmp(frame+Hdrlen, "taken", 5) == 0)
+			continue;		/* somebody else's answer */
+		break;
+	}
+	memmove(from, frame+6, 6);
 	/*
 	 * A frame is padded out to its minimum, so stop at the last thing
 	 * the checkpoint said rather than handing the padding to the
@@ -303,10 +361,22 @@ migrecv(void)
 	outs("received "); outn(n - Hdrlen); outs(" bytes of checkpoint\n");
 	flush();
 
-	if((fd = open("/n/osprey/snap", OWRITE)) < 0)
-		die("cannot write /n/osprey/snap");
-	if(write(fd, frame + Hdrlen, n - Hdrlen) != n - Hdrlen)
-		die("the kernel would not take it");
+	{
+		int sfd;
+
+		if((sfd = open("/n/osprey/snap", OWRITE)) < 0){
+			migsay(fd, ea, from, "refused");
+			die("cannot write /n/osprey/snap");
+		}
+		if(write(sfd, frame + Hdrlen, n - Hdrlen) != n - Hdrlen){
+			close(sfd);
+			migsay(fd, ea, from, "refused");
+			die("the kernel would not take it");
+		}
+		close(sfd);
+	}
+	/* the sender destroys what it sent, so say that it arrived */
+	migsay(fd, ea, from, "taken");
 	close(fd);
 	outs("restarted\n");
 	flush();
