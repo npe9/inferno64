@@ -19,7 +19,8 @@ rest as siblings.  A machine directory reads the portable code as
 port		the portable kernel
 pc		PC drivers, shared by that flavour's PC machines
 pc64		the amd64 PC machine
-riscv		RISC-V drivers, shared by that flavour's RISC-V machines
+riscv		RISC-V drivers, shared by that flavour's RISC-V machines;
+		source only, with no mkfile of its own
 virt		QEMU -M virt, riscv64 (Inferno only)
 sifiveu		the SiFive Unleashed (Inferno only)
 spike		the Spike simulator (Inferno only)

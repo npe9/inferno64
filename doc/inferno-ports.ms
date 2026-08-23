@@ -54,14 +54,22 @@ os/inferno/
 .fi
 .PP
 A directory of shared code for a family of boards is part of that
-shape rather than a departure from it:
+shape rather than a departure from it.
 .CW pc
-holds what
+is the older example: in 9front and in Osprey,
 .CW pc64
-uses and does not build a kernel of its own, and
+takes its drivers out of it by naming it
+.CW PCDIR ,
+and the mkfile it carries is the upstream one for a 32 bit PC kernel
+that is not built here.  In Inferno,
+.CW pc
+is a 386 board that does build.
 .CW riscv
-now holds the SiFive UART, HTIF, the GEM ethernet, the SPI and PWM
-controllers and the PCI ECAM window that
+is the simpler kind: source and nothing else, no mkfile at all, reached
+by the board mkfiles as
+.CW -I../riscv
+and by a rule for each file.  It holds the SiFive UART, PWM and SPI,
+HTIF, the GEM ethernet and the PCI ECAM window that
 .CW virt ,
 .CW sifiveu
 and

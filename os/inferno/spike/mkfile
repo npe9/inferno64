@@ -1,8 +1,6 @@
-<../../../mkconfigIPDIR=../ip
-INITDIR=../init
-PORTDIR=../port
+<../../../mkconfig
 
-
+#Configurable parameters
 
 CONF=spike
 CONFLIST=spike
@@ -10,6 +8,12 @@ CONFLIST=spike
 SYSTARG=$OSTARG
 OBJTYPE=riscv64
 INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+IPDIR=../ip
+INITDIR=../init
+PORTDIR=../port
+
+#end configurable parameters
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
