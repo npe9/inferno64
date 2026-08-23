@@ -1123,9 +1123,68 @@ anything that reads a torn view of memory another thread was midway through
 publishing is a good candidate for both, and they should be re-measured before
 any further work is done on them.
 
-Cost: **1-2%**, at the noise floor of a five-second `pde(2)` run (5.02/5.15s
-baseline against 5.12/5.17s fixed). `gpubench` appears to show 20% but does not:
-that is one millisecond of clock quantisation on a six-millisecond solve.
+**Cost: none that can be measured, and the reason is structural.**
+
+Measured three ways, machine otherwise idle.
+
+*Per operation*, a microbenchmark of the three variants (the `_tas` acquire loop
+plus each release), 50M iterations each:
+
+```
+A  str  + blr nofence   3.52 - 3.61 ns per lock/unlock pair
+B  stlr + blr nofence   3.50 - 3.52 ns
+C  stlr, no blr         3.50 - 3.63 ns
+```
+
+They are indistinguishable, and they do not even order consistently between
+runs. The reason is that a correct lock *already* pays for an exclusive-monitor
+round trip on the acquire side — `ldaxr`/`stlxr` — and that is what the 3.5ns
+is. A release store on the same line sits in its shadow. The marginal cost of
+making the release side correct is therefore about zero, because the expensive
+half was never optional.
+
+(Watch out when writing that benchmark: `coherencefn` must be `volatile` or
+cross-TU, or clang proves it points at an empty function and deletes the
+indirect call, and you measure two variants while believing you measured three.)
+
+*Per program*, how hot `unlock` actually is — counted, not guessed:
+
+| workload | unlocks | rate |
+|---|---|---|
+| `pde(2)` 128², 100 implicit steps (0.53s) | 81,544 | ~150k/s |
+| `fdstresstest` (0.2s, 16 procs) | 143,008 | ~715k/s |
+| `sparsetest` | 29,389 | — |
+
+At 10⁵–10⁶ unlocks a second and a per-unlock delta below the noise of a 3.5ns
+operation, the whole-program cost is bounded well under 0.1%. And that is what
+the wall clock says: six alternating pairs of the 128² run gave baseline
+0.53/0.53/0.53/0.55/0.55/0.55 against fixed 0.53/0.53/0.53/0.53/0.54/0.54 — the
+fixed binary is never slower.
+
+An earlier note here said 1-2%, and `gpubench` appeared to show 20%. Both were
+measurement artefacts: the first was a loaded machine, the second one
+millisecond of clock quantisation on a six-millisecond solve.
+
+**The tradespace, since there is one worth stating.** Correctness is not the
+tradeable axis — without this the VM deadlocks on 45% of `fdstresstest` runs.
+The axis is *which* correct release you buy:
+
+- `stlr` (release store) — what this does. Exactly the ordering required.
+- `dmb ish` then a plain store, i.e. making `coherencefn` a real fence — orders
+  strictly more than a release needs, and keeps an indirect call.
+- a `__ATOMIC_SEQ_CST` store — adds a trailing barrier on arm64 for ordering no
+  lock release requires.
+
+The cheapest correct option is also the one that expresses the intent, which is
+unusual and worth taking. Where any of this *could* matter is a lock rate two
+orders of magnitude above this tree's, or heavy contention — and emu's contended
+path goes to `osyield()` and `osmillisleep(i*10)`, microseconds to
+milliseconds, which dwarfs every option above.
+
+The `blr` to `coherencefn` in `unlock()` is now dead weight. It measured free
+(variant C above), so removing it would be tidying rather than a speedup, and it
+is left alone because `coherencefn` is still a documented extension point that
+`win-x11a.c` uses.
 
 **Still true and still not fixed**: `coherencefn` remains `nofence`. `unlock()`
 no longer depends on it, but `emu/port/win-x11a.c:628` still calls it and still
