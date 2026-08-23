@@ -1117,11 +1117,10 @@ this section demanded, and which the earlier `vmqnext` candidate failed:
 | `gputest`, 25 pairs | 11 pass / **8 hang** / **6 other** | **25 pass / 0 hang / 0 other** |
 
 Note `gputest`'s *other* column: six crashes on the baseline, none with the fix.
-Those included `panic: decref` (bug 6). That is an observation, not a claim that
-bugs 5 and 6 are fixed — nobody has run their own reproducers against this — but
-anything that reads a torn view of memory another thread was midway through
-publishing is a good candidate for both, and they should be re-measured before
-any further work is done on them.
+Those included `panic: decref` (bug 6). Bugs 5 and 6 have since been measured
+against this properly — seven crashes in 225 baseline runs, none in 435 with the
+fix — and both now say "not reproducible" rather than "open". Neither is
+*explained*; see those sections for why the distinction is kept.
 
 **Cost: none that can be measured, and the reason is structural.**
 
@@ -1426,13 +1425,18 @@ the same data into 9/100 → 0/100 on the metric that mattered. Count
 
 ### 2. `Screen.newwindow()` returns nil after a resize
 
+Rare, unfixed. **Characterised on a build where every `unlock()` was a plain
+store** (bug 1), so if it recurs, re-establish it before analysing it: a race
+described on that build may not be the same race, or any race, now.
+
 Rare, unfixed. No longer silent: all five Limbo call sites now report the reason
 (`8ad7019e`). The error *was* always propagated via `%r`; every caller discarded
 it. `INFERNO_DRAWDEBUG=1` turns on libdraw's own diagnostics.
 
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
-Seen twice, never reproduced under control. Three hypotheses tested and
+Seen twice, never reproduced under control — and, like bug 2, seen on a build
+where `unlock()` had no release barrier. Re-establish before analysing. Three hypotheses tested and
 disproved (first run after recompiling; consecutive runs; first run after 100s
 idle). A failed Metal pass now warns once per process and counts in
 `INFERNO_METAL_STATS`, so a recurrence will say whether a fallback was involved.
@@ -1502,7 +1506,30 @@ the pool lock at `val == 1` with no owner running and seven threads spinning in
 `lock()` from `poolfree`/`dopoolalloc`. Whether that one was caused by this path
 was never established.
 
-### 5. Heap corruption in the allocator under concurrency (`emu-cocoa`)
+### 5. Heap corruption in the allocator under concurrency (`emu-cocoa`) — **not reproducible since bug 1 was fixed**
+
+Measured rather than assumed, because this section previously said only that it
+should be re-measured.
+
+| reproducer | baseline crashes | fixed crashes |
+|---|---|---|
+| `gputest`, 25 pairs interleaved | **6** | 0 |
+| `fdstresstest`/`emu-cocoa`, 200 pairs interleaved | **1** | 0 |
+| `gputest`, 60 further runs | — | 0 |
+| `fdstresstest`/`emu-cocoa`, 150 further runs | — | 0 |
+
+**Seven crashes in 225 baseline runs; none in 435 with the fix.**
+
+That is a strong result but it is *not* a proof that the allocator is now
+correct, and the difference matters. What is established is that the crash
+signature this section describes does not occur any more. A plausible mechanism
+exists — `unlock()` published nothing, so a thread taking a pool lock could see
+a partially-written free list — but nobody has demonstrated that chain, and
+"not reproducible in 435 runs" is what the evidence supports. If it returns,
+it is a new investigation, not a resumption of this one.
+
+The original characterisation follows.
+
 
 New, found by `gputest(1)`. Under `emu-cocoa` that test fails almost every run
 — 0 of 6 on a build with **no gpu changes at all**, so it is neither the test
@@ -1728,7 +1755,15 @@ Twelve runs, never entered more than once; something upstream serialises the
 first upload in practice. So `dispatch_once` is a correctness fix by
 inspection, nothing more, and definitely not the cure for the corruption above.
 
-### 6. `panic: decref` — seen once, not attributed
+### 6. `panic: decref` — **not reproducible since bug 1 was fixed**
+
+It was among the six `gputest` crashes on the unfixed binary in the table above
+and does not appear in 435 runs with the fix. Same caveat as bug 5: that is
+"no longer reproducible", not "explained".
+
+The original note follows.
+
+#### Original note: seen once, not attributed
 
 Observed exactly once, in `gputest(1)` under the default `-c1`. A refcount went
 negative. Not reproduced since: 30 further runs (15 with the current tree, 15
