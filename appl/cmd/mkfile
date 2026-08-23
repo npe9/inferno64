@@ -91,6 +91,7 @@ TARG=\
 	mltest.dis\
 	pdetest.dis\
 	playmovie.dis\
+	quitall.dis\
 	refstress.dis\
 	schedcmp.dis\
 	sparsetest.dis\

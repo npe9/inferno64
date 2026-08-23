@@ -126,6 +126,56 @@ It is `emu/port/inputrec.c` plus two splits (`mousetrack`/`mousetrackt`,
 `gkbdputc`/`gkbdputc1`) and **no platform file changes at all**, which is what
 keeps Nt/Plan9/9front/X11 safe when none of them can be built here.
 
+#### Then the schedule: recorded, and measured before being forced (`aef1b7f3`)
+
+The next step is replaying *execution*, and the obvious way is to force a
+recorded schedule. Whether that is worth building depends on how much two runs
+of the same session actually differ — measurable, not arguable. So
+`INFERNO_SCHED_RECORD` and `schedcmp(1)` exist and forcing does not yet.
+
+Four sites are recorded, not one. Vmachine's loop only says which prog *began*
+a quantum; `acquire()` puts its prog back at the **head** of the run queue and
+returns into the middle of the `xec()` call it left, so a prog that makes a
+system call and comes back never passes through the loop. Recording only the
+loop would miss every interleaving caused by host calls, which is most of them.
+
+| session | runs | non-yield events | order identical |
+|---|---|---|---|
+| sequential shell | 14 | 352, all equal | **yes, 14 of 14** |
+| `wm`, input replayed | 3 | 2776, 2776, 2792 | no, diverges at 83 |
+| `refstress`, 16 procs | 3 | 50592–67440 | no, diverges at 145 |
+
+Filtering `iyield` is what makes any of this visible — a yield is a vmachine
+kproc handing the slot to a proc *already waiting for it*, host-thread
+bookkeeping that changes nothing about which Dis program runs when, and left in
+it is the only thing that varies in the sequential case.
+
+So a sequential session is reproducible with nothing forced. Not *guaranteed* —
+one divergent pair turned up in about twenty runs — so "reliably reproducible",
+not "deterministic". Every session with a window in it diverged, and fast.
+
+**How a session ends is part of the measurement.** The first version of the
+`wm` row stopped both runs with a timer from outside and reported that they did
+an identical amount of work; they had merely been cut off at similar points.
+`quitall(1)` (new) lets a recorded session end itself, and once the runs were
+allowed to finish, two of three matched and the third did not. The corrected
+row is the one above. Stopping a comparison from outside measures the timer.
+
+Forcing is therefore the only route for a session with a window in it — and
+even there the amount of work is not fixed between runs, so a forced order will
+sometimes be impossible to follow: the prog the recording says to run next is
+blocked, and the prog that would wake it is the one being held back. That is
+the honest reason it is not built yet, rather than an oversight.
+
+Two bugs found by a negative control rather than inspection. Reading the module
+name through `p->R.M` faults during teardown: `delprog()` both releases the slot
+and takes it back after `progexit()` has run `destroystack()`. `sh -c 'echo one;
+echo two'` printed "one" and faulted — the very symptom dis.c documents for the
+lock that was tried around Dis execution and reverted — while the same command
+without the recorder printed both. **Disabling the release hook alone did not
+fix it**, because `acquire` is on the same teardown path; only vmachine's loop
+may read the module, and everything else takes the name from a pid-keyed cache.
+
 Three mistakes, all of which looked identical from outside — *no input arrived*:
 
 - **A kproc starts with a fresh fd group and no name space.** The drain proc

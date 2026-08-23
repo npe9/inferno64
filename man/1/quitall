@@ -1,0 +1,48 @@
+.TH QUITALL 1
+.SH NAME
+quitall \- end the session
+.SH SYNOPSIS
+.B quitall
+.SH DESCRIPTION
+.B Quitall
+kills every process, which ends
+.IR emu :
+it leaves when its last Dis process does.
+.PP
+.IR Wm (1)
+has no quit of its own, and
+.B exit
+only ends the shell inside it.
+.SH "WHY IT EXISTS"
+Measurement, rather than tidiness.
+Comparing two runs of a session requires both to stop for the same reason.
+Stopping them with a timer from outside compares where the timer landed as
+much as anything the system did \(em which is exactly what went wrong in an
+earlier version of the measurement in
+.IR schedcmp (1),
+where two runs appeared to do an identical amount of work and had merely been
+cut off at similar points.
+.PP
+A recorded session that ends by running this ends at the same place every time.
+Its name is all letters so that a synthetic keyboard can type it, which is how
+such a recording gets made \(em see
+.IR emu (1)
+for
+.BR INFERNO_INPUT_RECORD .
+.SH SOURCE
+.B /appl/cmd/quitall.b
+.SH SEE ALSO
+.IR emu (1),
+.IR schedcmp (1),
+.IR inputtest (1)
+.SH BUGS
+It reads all of
+.B /prog
+before killing anything, because the directory changes underneath as processes
+die and a partial sweep leaves the session up \(em which is the one outcome
+that would make this useless.
+.PP
+It kills itself last, and does not report what it killed, because by then there
+is nothing left to report to.
+.PP
+No warning, no confirmation, nothing saved.

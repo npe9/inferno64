@@ -424,6 +424,7 @@ puttar gettar
 putzip getzip
 pwd pwd
 query grid-query
+quitall quitall
 quote sh
 raindrops raindrops
 raise sh-std

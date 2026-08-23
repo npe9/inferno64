@@ -51,24 +51,42 @@ that varied was the yields.
 Three regimes, and they differ:
 .IP
 .EX
-session                     non-yield events  order identical
-sequential shell                         420  yes
-wm, with input replayed                  931  no, diverges at 270
-refstress, 16 processes        50592 - 67440  no, diverges at 145
+session                       runs  non-yield events  order identical
+sequential shell                14    352, all equal  yes, 14 of 14
+wm, input replayed               3  2776, 2776, 2792  no, diverges at 83
+refstress, 16 processes          3     50592 - 67440  no, diverges at 145
 .EE
 .PP
-The middle row is the interesting one.
-Two replays of the same
-.IR wm (1)
-session do exactly the same
-.I amount
-of work \(em 190 quanta and 741 handoffs, both runs \(em and do it in a
-different order.
-The bottom row does not even agree on the amount.
+The first row is the surprise.
+Fourteen runs of the same shell session produced byte-identical schedules once
+.B iyield
+was removed \(em same quanta, same handoffs, same processes in the same order.
+Dis execution there is reproducible without anything being forced.
 .PP
-That is what says where forcing a recorded schedule could pay: not in a
-sequential session, which needs no help, and not under heavy contention, where
-the work itself differs so a forced order would be impossible to follow.
+Not guaranteed, though: one divergent pair was seen in about twenty runs of
+that same session, with equal lengths and a different order.
+So it is reliably reproducible rather than certainly so, and a claim of
+determinism would be too strong.
+.PP
+Every session with a window in it diverged, and quickly.
+.PP
+It matters how a session ends.
+These runs end by running
+.IR quitall (1)
+from the recorded input, so both stop for the same reason.
+An earlier version of this measurement stopped them with a timer from outside
+and reported that two
+.IR wm (1)
+runs did an identical amount of work; they had merely been cut off at similar
+points, and once they were allowed to finish, two of three runs matched and
+the third did not.
+.PP
+So: forcing a recorded schedule would buy nothing in a sequential session,
+which needs no help.
+It is the only route for a session with a window in it \(em and even there the
+amount of work is not fixed between runs, so a forced order will sometimes be
+impossible to follow, because the process the recording says to run next is
+blocked and the one that would wake it is the one being held back.
 .SH SOURCE
 .B /appl/cmd/schedcmp.b
 .SH SEE ALSO
