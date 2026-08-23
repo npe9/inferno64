@@ -15,7 +15,8 @@
  *
  *	cc -fobjc-arc -framework Foundation -framework AVFoundation \
  *		-framework CoreMedia -framework CoreVideo -o mkmovie mkmovie.m
- *	./mkmovie $ROOT/lib/movies/test.mov
+ *	./mkmovie $ROOT/lib/movies/test.mov		# the committed fixture
+ *	./mkmovie /tmp/big.mov 1920 1080 60		# a larger one, for timing
  */
 // Generates a tiny test movie: N frames of flat, known colours.
 // Flat blocks so lossy H.264 still reproduces the colour closely, which is
@@ -26,11 +27,12 @@
 int main(int argc, char **argv)
 {
 	@autoreleasepool {
-		if(argc < 2){ fprintf(stderr, "usage: mkmovie out.mov\n"); return 1; }
+		if(argc < 2){ fprintf(stderr, "usage: mkmovie out.mov [w h nframes]\n"); return 1; }
 		NSString *path = [NSString stringWithUTF8String:argv[1]];
 		[[NSFileManager defaultManager] removeItemAtPath:path error:nil];
 		NSError *err = nil;
 		int W = 64, H = 64, N = 10;
+		if(argc >= 5){ W = atoi(argv[2]); H = atoi(argv[3]); N = atoi(argv[4]); }
 
 		AVAssetWriter *w = [AVAssetWriter assetWriterWithURL:[NSURL fileURLWithPath:path]
 			fileType:AVFileTypeQuickTimeMovie error:&err];

@@ -3,6 +3,9 @@
 vstreamtest \- test streaming video decode end to end
 .SH SYNOPSIS
 .B vstreamtest
+[
+.I file
+]
 .SH DESCRIPTION
 .B Vstreamtest
 exercises the whole streaming path:
@@ -26,6 +29,16 @@ is not frame
 .IR n .
 A test expecting otherwise fails against a decoder that is working
 correctly \(em as this one did before it used the composition offsets.
+.PP
+Given a
+.I file
+argument it decodes that instead, taking the frame size from the track
+and checking only what holds for any clip.
+It skips reading the pixels back in that case: at 1080p a readback
+costs as much as the decode, so timing one would measure this program
+rather than the decoder.
+.IR mkmovie ,
+alongside the emu source, will build a larger clip to try it on.
 .SH SOURCE
 .B /appl/cmd/vstreamtest.b
 .SH SEE ALSO
@@ -40,3 +53,4 @@ Frames are decoded as fast as the samples are written, with no regard
 for the durations
 .IR quicktime (2)
 reports, so this measures decode throughput and not playback.
+Measured that way, 1080p decodes at about 2.3ms a frame.

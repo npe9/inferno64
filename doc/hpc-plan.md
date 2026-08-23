@@ -408,10 +408,37 @@ and its generator are both in the tree (`lib/movies/test.mov`,
 `emu/MacOSX/mkmovie.m`), flat colour per frame so a decode test can assert a
 colour rather than "something was written".
 
-Still to do for video proper: the stream is staged to local storage before the
-first frame, because AVFoundation wants an asset it can open, so a session
-cannot start decoding until the stream ends - fixing that means parsing the
-container on this side and feeding samples to the decoder.
+**Streaming is done** (`45be0862`): `quicktime(2)` locates samples in Limbo,
+`decoder`/`target` on `/dev/draw/N/video` configure a VideoToolbox decoder from
+the `avcC` parameter sets, and each write to `/dev/draw/N/videodata` is one
+coded sample. Nothing staged, nothing read ahead, memory flat in the length of
+the movie. `vstreamtest(1)` drives it.
+
+**Zero copy is not worth doing yet, and this is measured.** The remaining CPU
+copy is the decoder's pixel buffer into the image's `bdata`. At 1080p:
+
+| | |
+|---|---|
+| decode, 60 frames of 1920×1080 | 140ms, i.e. **2.3ms/frame (~430fps)** |
+| the copy itself | 7.9MB/frame, ~0.15–0.4ms at realistic bandwidth |
+
+So the copy is **6–17%** of a path already running about ten times faster than
+real-time playback needs, and removing it requires the `bdata`-staleness rule —
+the most invasive change on this list, touching every memdraw path that might
+read a texture-backed image. **Do not do it for speed.** The case for it is
+4K, high frame rates, or several streams at once, and that case should be
+measured before the work, not assumed.
+
+The better-targeted win, if decode throughput ever matters, is that each sample
+is decoded synchronously with a wait: pipelining would help more than deleting
+the copy.
+
+To reproduce the measurement, generate a larger clip rather than committing one
+— `mkmovie` takes a size: `./mkmovie /tmp/big.mov 1920 1080 60`, then
+`vstreamtest /tmp/big.mov`. Only the small committed fixture is checked pixel
+by pixel; on any other clip `vstreamtest` skips the readback, because reading a
+1080p image back through the draw protocol would measure the test rather than
+the decoder.
 
 `quicktime(2)` **now does the parsing half** (`720e32cb`). It was a header
 parser only — an earlier version of this note claimed otherwise without

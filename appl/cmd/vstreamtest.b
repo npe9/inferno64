@@ -24,9 +24,12 @@ include "draw.m";
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
 Mov:	con "/lib/movies/test.mov";
-W:	con 64;
-H:	con 64;
 Id:	con 1;
+
+# Taken from the track rather than assumed, so this can be pointed at any
+# clip. The colour checks only apply to the known fixture.
+mov := Mov;
+W, H: int;
 
 fail := 0;
 
@@ -108,7 +111,7 @@ abs(x: int): int
 	return x;
 }
 
-init(nil: ref Draw->Context, nil: list of string)
+init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	str = load String String->PATH;
@@ -120,8 +123,11 @@ init(nil: ref Draw->Context, nil: list of string)
 	}
 	qt->init();
 
+	if(tl argv != nil)
+		mov = hd tl argv;
+
 	# 1. Find the samples, in Limbo.
-	(ts, err) := qt->tracks(Mov);
+	(ts, err) := qt->tracks(mov);
 	if(err != nil){
 		print("vstreamtest: %s\n", err);
 		raise "fail:parse";
@@ -135,9 +141,16 @@ init(nil: ref Draw->Context, nil: list of string)
 		raise "fail:parse";
 	}
 
-	mfd := sys->open(Mov, Sys->OREAD);
+	W = t.width;
+	H = t.height;
+	if(W <= 0 || H <= 0){
+		print("vstreamtest: track has no size\n");
+		raise "fail:parse";
+	}
+
+	mfd := sys->open(mov, Sys->OREAD);
 	if(mfd == nil){
-		print("vstreamtest: open %s: %r\n", Mov);
+		print("vstreamtest: open %s: %r\n", mov);
 		raise "fail:open";
 	}
 
@@ -204,10 +217,18 @@ init(nil: ref Draw->Context, nil: list of string)
 			bad(sprint("decode sample %d: %r", f));
 			break;
 		}
-		(px, e2) := readpixels(data, Id);
-		if(e2 != nil){
-			bad(e2);
-			break;
+		# Only the known fixture is checked pixel by pixel. Reading a
+		# 1080p image back through the draw protocol costs as much as
+		# decoding it, so on any other clip that would be measuring the
+		# test rather than the decoder.
+		px: array of byte;
+		if(mov == Mov){
+			e2: string;
+			(px, e2) = readpixels(data, Id);
+			if(e2 != nil){
+				bad(e2);
+				break;
+			}
 		}
 		# Samples are in DECODE order; the picture a sample produces is
 		# the one at its presentation time. This stream has B-frames -
@@ -219,12 +240,16 @@ init(nil: ref Draw->Context, nil: list of string)
 			disp = (dts + s.coff) / s.delta;
 		dts += s.delta;
 
-		o := ((H/2)*W + W/2) * 4;
-		b := int px[o];
-		r := int px[o+2];
+		b := 0;
+		r := 0;
+		if(px != nil){
+			o := ((H/2)*W + W/2) * 4;
+			b = int px[o];
+			r = int px[o+2];
+		}
 		wr := 20 + disp*20;
 		wb := 220 - disp*20;
-		if(abs(r-wr) > 12 || abs(b-wb) > 12){
+		if(mov == Mov && (abs(r-wr) > 12 || abs(b-wb) > 12)){
 			bad(sprint("sample %d (display %d): got rgb(%d,-,%d) want about rgb(%d,-,%d)",
 				f, disp, r, b, wr, wb));
 			break;
@@ -241,12 +266,17 @@ init(nil: ref Draw->Context, nil: list of string)
 		bad(sprint("decoded %d of %d samples", ndec, len t.samples));
 	# Every display position exactly once: catches a decoder that returns
 	# the same picture twice, which reordering makes easy to miss.
-	for(k := 0; k < len seen; k++)
-		if(seen[k] == 0)
-			bad(sprint("no sample produced display frame %d", k));
+	if(mov == Mov)
+		for(k := 0; k < len seen; k++)
+			if(seen[k] == 0)
+				bad(sprint("no sample produced display frame %d", k));
 	if(fail)
 		raise "fail:test";
-	print("  %d samples parsed in Limbo, decoded in %dms, every frame the expected colour\n",
-		ndec, ms);
+	if(mov == Mov)
+		print("  %d samples parsed in Limbo, decoded in %dms, every frame the expected colour\n",
+			ndec, ms);
+	else
+		print("  %s: %dx%d, %d frames decoded in %dms (%d us/frame)\n",
+			mov, W, H, ndec, ms, ms*1000/ndec);
 	print("PASS\n");
 }
