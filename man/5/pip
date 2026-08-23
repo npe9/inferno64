@@ -280,6 +280,8 @@ retransmitted, and a group in a lost frame is simply not answered.
 .PP
 A session is remembered against the connection that last used it, so two
 connections working one session at once will confuse each other's
-replies.  Eight sessions of sixteen fids are all there are, a fid holds
-at most eight written attributes, and what has lapsed is only collected
-when someone else asks for a session.
+replies.  Eight sessions of sixteen fids are all there are, and a fid
+holds at most eight written attributes.  What has lapsed is collected
+when somebody asks for a session, when a frame arrives on the wire, and
+every few milliseconds while a stream is running \- so a machine that is
+being asked nothing keeps what has lapsed until it is asked something.
