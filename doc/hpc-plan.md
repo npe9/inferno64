@@ -445,6 +445,34 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    to find out what inspection commands are actually wanted; then decide
    whether (b) is worth the descriptor work. Do **not** start with (b).
 
+   **(a) is built.** `disrepl(1)`. Four things it turned up that were not
+   obvious from reading:
+
+   - **A branch target must be a bare label, not `$label`.** `bnew ...,$top`
+     does not fail — it assembles as the immediate 0 and branches to the first
+     instruction, so the program restarts forever. `asm` gives no warning. This
+     was the first loop written, and it hung for two minutes.
+   - **The host interrupt is not usable.** On this platform emu wires SIGINT to
+     `cleanexit` (`emu/MacOSX/os.c`), so the usual interrupt character takes
+     the whole emulator down and the session with it. Stopping a running
+     program therefore has to be a line of input — `!` — arriving on the same
+     channel as everything else and selected against the running program in one
+     `alt`, with a time limit as a third arm for when nobody is watching.
+     Input that arrives during a run and is *not* the interrupt is queued, or a
+     piped session mistakes its own next command for one.
+   - **A blocked process keeps emu alive.** Each run spawned a watchdog that
+     blocked forever on a send nobody would receive, one per line typed.
+     Nothing looked wrong until the session ended, at which point it hung for
+     as long as the outer timeout allowed. Buffered channels for anything a
+     losing racer has to send on, and kill the watchdog when it is not the arm
+     that fired.
+   - **`rread` printed a diagnostic for every interrupted read** (added in
+     `003f169c`), and killing a process blocked in a read is the ordinary way
+     to shut a reader down, so the console filled with it. Now suppressed for
+     `Eintr` only, the way `devssl.c` already did.
+
+   (b) remains undone and the argument for it is unchanged.
+
 ---
 
 ## Item 6 in detail: host-capability devices — `ml(3)`, video, and the shape

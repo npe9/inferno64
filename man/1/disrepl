@@ -1,0 +1,155 @@
+.TH DISREPL 1
+.SH NAME
+disrepl \- write Dis programs at a prompt
+.SH SYNOPSIS
+.B disrepl
+.SH DESCRIPTION
+.B Disrepl
+reads Dis instructions one at a time and runs the program they build up,
+printing eight scratch words after every line.
+.PP
+Nothing here interprets Dis.
+.I Emu
+already interprets and compiles it,
+.IR asm (1)
+assembles it and
+.IR disdump (1)
+disassembles it; what this adds is the loop, and somewhere for a program
+to keep its state from one line to the next.
+.PP
+It does that by keeping every line typed and running the whole program
+again after each one.
+The consequence is worth knowing before it surprises anyone: a line with
+an effect outside the virtual machine happens again on every subsequent
+line.
+What it buys is that the frame, its type descriptor and the module's
+link section all come from a wrapper the Limbo compiler generated, so
+the garbage collector is told the truth about which words hold pointers
+without this program having to work a descriptor out for itself.
+.SS Scratch
+Eight words are free for use and are printed after each run:
+.IP
+.EX
+s0  80(fp)      s4  120(fp)
+s1  96(fp)      s5  128(fp)
+s2  104(fp)     s6  136(fp)
+s3  112(fp)     s7  144(fp)
+.EE
+.PP
+They are not contiguous, and the gaps are not spare.
+.B 88(fp)
+is the argument area the print is built in,
+.B 152(fp)
+holds a pointer to the
+.I Sys
+module, and anything from
+.B 160(fp)
+up is the frame of that call.
+Writing to those breaks the program in ways that have nothing to do with
+what was typed.
+.SS Labels
+A branch target is a bare label name:
+.IP
+.EX
+movw $5,96(fp)
+top: addw 80(fp),96(fp),80(fp)
+subw $1,96(fp),96(fp)
+bnew 96(fp),$0,top
+.EE
+.PP
+which leaves 15 in
+.BR s0 .
+Writing
+.B $top
+instead does not fail.
+It assembles, as the immediate 0, and branches to the first instruction
+of the module \(em so the program restarts forever.
+This is worth stating because it is what the first loop written here
+did, and the assembler gives no warning.
+.SS Commands
+.TP
+.B .list
+Show the program so far.
+.TP
+.B .drop
+Remove the last instruction and run again.
+.TP
+.B .clear
+Start again.
+.TP
+.B .asm
+Show the assembly that would be handed to
+.IR asm (1),
+wrapper and all.
+.TP
+.B .dump
+Disassemble the module that was built.
+.TP
+.B !
+Stop a program that is still running.
+.TP
+.B .quit
+Leave.
+.SS Stopping a program
+Typing
+.B !
+while a program is running stops it.
+There is a reason it is a command rather than a keystroke: on this
+platform
+.I emu
+wires the host interrupt signal to a clean exit, so the usual interrupt
+character would take the whole emulator down and the session with it.
+The interrupt is therefore a line of input, which arrives on the same
+channel as everything else and is selected against the running program
+in one
+.BR alt .
+.PP
+Input that arrives while a program is running and is not
+.B !
+is queued rather than acted on, which is what lets a session be piped in
+without its next command being mistaken for an interrupt.
+.PP
+A program that runs for more than three seconds is stopped anyway, for
+when nobody is watching.
+A line that does not assemble, or that has to be stopped, is not kept: a
+mistake would otherwise repeat on every line after it.
+A line that assembles and runs but raises is kept, because it is a real
+instruction doing a real thing.
+.SH FILES
+.TP
+.B /tmp/disrepl.s
+the assembly of the current session
+.TP
+.B /tmp/disrepl.dis
+the module built from it
+.SH SOURCE
+.B /appl/cmd/disrepl.b
+.SH SEE ALSO
+.IR asm (1),
+.IR disdump (1),
+.IR limbo (1),
+.IR prog (3)
+.PP
+``The Dis Virtual Machine'' in Volume 2.
+.SH BUGS
+Only the eight scratch words can be seen.
+There is no way to look at module data, the heap, or a frame word that
+is not one of the eight, and no way to print anything from a program
+under construction \(em the printing is the wrapper's, not the user's.
+.PP
+Re-running the whole session after each line is quadratic in the length
+of the session, and repeats external effects.
+The alternative, a live frame that persists between lines, needs the
+type descriptor to grow with it; see
+.B doc/hpc-plan.md
+for the argument.
+.PP
+The wrapper is fixed text.
+Changing the number of scratch words means regenerating it with
+.I limbo
+.B -S
+and editing the source, and the procedure for that is a comment rather
+than a program.
+.PP
+There is no history, no editing beyond what the terminal provides, and
+no way to load a session from a file or save one to it.

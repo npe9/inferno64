@@ -60,6 +60,7 @@ TARG=\
 	diff.dis\
 	disdep.dis\
 	disdump.dis\
+	disrepl.dis\
 	dossrv.dis\
 	du.dis\
 	echo.dis\
