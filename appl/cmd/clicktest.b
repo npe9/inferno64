@@ -175,6 +175,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	wfd = nil;
 
+	w0 := tk->cmd(t, ". cget -actwidth");
+	h0 := tk->cmd(t, ". cget -actheight");
+	sys->print("clicktest: toplevel starts %sx%s\n", w0, h0);
+
 	stop := chan of int;
 	spawn tkclient->handler(t, stop);
 	spawn timeout(wait, cmd);
@@ -210,6 +214,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	if(rfd != nil)
 		fprint(rfd, "end %d\n", n);
+	# The toplevel's size again at the end. One window measured twice is the
+	# only way to see whether the screen changed under it: two windows give
+	# two positions because wm places them differently, which says nothing.
+	sys->print("clicktest: toplevel was %sx%s, now %sx%s\n", w0, h0,
+		tk->cmd(t, ". cget -actwidth"), tk->cmd(t, ". cget -actheight"));
 	sys->print("clicktest: %d presses\n", n);
 	stop <-= 1;
 

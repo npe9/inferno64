@@ -1668,6 +1668,25 @@ Rare, unfixed. No longer silent: all five Limbo call sites now report the reason
 (`8ad7019e`). The error *was* always propagated via `%r`; every caller discarded
 it. `INFERNO_DRAWDEBUG=1` turns on libdraw's own diagnostics.
 
+**The input replay machinery cannot re-establish this, and here is why, so that
+nobody spends the afternoon again.** The trigger is a host window resize, and
+`screenresize()` is reachable *only* from the platform's UI thread
+(`win-cocoa.m`; `devdraw.c:56` says so too). Nothing inside Inferno can cause
+one: there is no control file, and `session resize` deliberately refuses.
+
+A recording *does* carry `r` events and a replay *does* deliver them, but that
+is only the `mouseresize()` half — wm is told the size changed while `gscreen`
+is untouched. Tried it: three resize events replayed into a live `wm`, and
+screenshots before and after were **byte-identical**, so wm did not visibly
+react. (The in-process check was inconclusive rather than negative: the client
+used was a fixed-size Tk window, which would not resize on a real screen change
+either. A client that fills the screen would be needed to tell the two apart.)
+
+So bug 2 needs either a way to drive the host window from outside — accessibility
+does not see this app, and synthetic clicks do not reach it — or a test hook that
+calls `screenresize()` directly, which would be a different event from the one
+being investigated and would have to be labelled as such.
+
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
 Seen twice, never reproduced under control — and, like bug 2, seen on a build
