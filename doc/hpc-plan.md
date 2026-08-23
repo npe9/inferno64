@@ -355,8 +355,34 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    change. Neither substitutes for the other, and the profile said which to do
    where.
 
-3. **`amr(2)` and `pde(2)` on GPU — the cheap experiment was run, and `pde(2)`
-   is now 5-6x faster with no GPU at all.** The recommendation here was to try
+3. **`amr(2)` and `pde(2)` on GPU — CLOSED by the same measurement that closed
+   item 2.** A dispatch costs about 200us of command-buffer round trip whatever
+   the kernel. A CPU stencil sweep costs 0.48ns a cell:
+
+   | grid | one sweep on the CPU |
+   |---|---|
+   | 64² | 2.6us |
+   | 128² | 8.6us |
+   | 256² | 31.1us |
+   | 512² | 126us |
+
+   So a GPU stencil does not break even until roughly **640×640** — and that is
+   per dispatch, while both callers need one per *substep* (the explicit
+   steppers subdivide for stability) or per Krylov iteration. `pde(2)`'s own
+   documented examples are 64² to 256².
+
+   For `amr(2)` it is worse and more clear-cut. A block at blocksize 16 holds
+   4096 interior cells, about **2us** of work: a dispatch per block would be a
+   hundred times slower than doing it on the CPU. It would have to be one
+   dispatch across every block at once — which the padded-block layout does
+   permit, and which is a gather over a block list rather than the "launch per
+   contiguous padded region" this plan originally sketched.
+
+   None of that is worth doing before the per-dispatch cost is addressed, which
+   is the same conclusion as item 2 and for the same reason. **Retired, not
+   deferred.**
+
+   What the item did produce, by running its own cheap experiment first: The recommendation here was to try
    a C stencil builtin before any Metal work. Measured first: `pde(2)`'s
    `diffuseop` — the operator applied once per Krylov iteration — was **78 to
    82 per cent** of a solve, the same Amdahl position `sparse->matvec` had
