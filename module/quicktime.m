@@ -68,6 +68,37 @@ QuickTime: module
 		trak:		fn(r: self ref QD, l: int): string;
 	};
 
+	# One coded sample: where it is in the file, how big, how long it
+	# lasts, and whether it can be decoded without what came before.
+	Sample: adt
+	{
+		off:	big;		# file offset
+		size:	int;		# bytes
+		delta:	int;		# duration, in the track's timescale
+		sync:	int;		# non-zero if a sync (key) sample
+	};
+
+	Track: adt
+	{
+		id:		int;
+		kind:		string;	# "vide", "soun", ...
+		codec:		string;	# "avc1", "mp4a", ...
+		timescale:	int;	# units per second
+		width:		int;	# vide only
+		height:		int;
+		# Codec setup, verbatim: the avcC payload for avc1, which is
+		# what a hardware decoder needs to be configured before it can
+		# be given any sample.
+		extra:		array of byte;
+		samples:	array of Sample;
+	};
+
 	init:	fn();
 	open:	fn(file: string): (ref QD, string);
+
+	# Sample tables, which the QD reader above does not have: it parses
+	# movie and track headers only. This walks the file by seeking, since
+	# the tables live in moov while the samples they point at are in mdat,
+	# and returns everything needed to feed a decoder a frame at a time.
+	tracks:	fn(file: string): (array of ref Track, string);
 };

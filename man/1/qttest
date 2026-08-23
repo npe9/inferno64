@@ -1,0 +1,50 @@
+.TH QTTEST 1
+.SH NAME
+qttest \- test quicktime(2)'s sample tables
+.SH SYNOPSIS
+.B qttest
+[
+.I file
+]
+.SH DESCRIPTION
+.B Qttest
+parses
+.B /lib/movies/test.mov
+with
+.IR quicktime (2)
+and checks the result against what that file is known to contain: one
+video track,
+.BR avc1 ,
+64 by 64, ten samples.
+Given a
+.I file
+argument it parses that instead and checks only what holds for any
+movie.
+.PP
+Checking against a fixture with known contents is the point.
+A parser returning plausible rubbish \(em one track, some samples \(em
+passes a smoke test and fails this.
+.PP
+It also requires that every sample lie inside the file and be
+non-empty, that every duration be positive, that the first sample be a
+sync sample (nothing can start decoding otherwise), and that the track
+carry
+.B avcC
+setup data with a sane configuration version, since without it the
+samples cannot be given to a decoder at all.
+.SH SOURCE
+.B /appl/cmd/qttest.b
+.SH SEE ALSO
+.IR quicktime (2),
+.IR draw (3)
+.SH BUGS
+The fixture is one short, single-track, all-intra-plus-P-frame H.264
+movie written by one encoder.
+Multi-track files, 64-bit chunk offsets
+.RB ( co64 ),
+uniform sample sizes, edit lists and audio tracks are not exercised,
+though the code paths for several of those exist.
+.PP
+Error handling is checked by hand rather than here: a JPEG, a truncated
+movie, an empty file and random bytes each produce a diagnostic rather
+than a crash.

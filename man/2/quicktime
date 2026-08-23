@@ -1,0 +1,111 @@
+.TH QUICKTIME 2
+.SH NAME
+quicktime \- QuickTime and MP4 file structure
+.SH SYNOPSIS
+.EX
+include "quicktime.m";
+qt := load QuickTime QuickTime->PATH;
+
+Sample: adt {
+	off:	big;
+	size:	int;
+	delta:	int;
+	sync:	int;
+};
+
+Track: adt {
+	id:		int;
+	kind:		string;
+	codec:		string;
+	timescale:	int;
+	width:		int;
+	height:		int;
+	extra:		array of byte;
+	samples:	array of Sample;
+};
+
+init:	fn();
+tracks:	fn(file: string): (array of ref Track, string);
+open:	fn(file: string): (ref QD, string);
+.EE
+.SH DESCRIPTION
+.B Tracks
+parses a QuickTime or MP4 file and returns one
+.B Track
+for each media track, with everything needed to hand its samples to a
+decoder.
+It walks the file by seeking, because the sample tables live in
+.B moov
+while the samples they describe live in
+.BR mdat ,
+and the two appear in either order.
+.PP
+.B Kind
+is the handler type,
+.B vide
+or
+.B soun
+and so on;
+.B codec
+is the sample format, such as
+.BR avc1 .
+.B Timescale
+is the number of time units per second, in which each sample's
+.B delta
+is expressed.
+.B Width
+and
+.B height
+are meaningful for video tracks.
+.PP
+.B Extra
+is the codec setup data, verbatim: for
+.B avc1
+it is the
+.B avcC
+payload carrying the sequence and picture parameter sets.
+A hardware decoder must be configured with this before it can be given
+any sample, so a track whose
+.B extra
+is nil cannot be decoded even though its samples are present.
+.PP
+Each
+.B Sample
+gives a file offset and length, so the coded bytes can be read without
+further parsing, its duration in the track's timescale, and whether it
+is a sync sample \(em one that can be decoded without reference to
+anything before it.
+Where the file has no sync sample table, every sample is reported as a
+sync sample, which is what an all-keyframe codec produces.
+.PP
+.B Open
+and the
+.B QD
+reader are older and much more limited: they parse the movie and track
+.I headers
+sequentially and know nothing of sample tables.
+New code wants
+.BR tracks .
+.SH SOURCE
+.B /appl/lib/quicktime.b
+.SH SEE ALSO
+.IR qttest (1),
+.IR draw (3)
+.SH BUGS
+.B Tracks
+reads each sample table whole, so a movie with a very large number of
+samples costs memory proportional to that count \(em not to the size of
+the movie, but not nothing either.
+.PP
+Only the setup box is extracted from a sample description, and only
+.BR avcC ,
+.B hvcC
+and
+.B esds
+are recognised.
+Multiple sample descriptions in one track are ignored: the first is
+used for the whole track.
+.PP
+Edit lists are not applied, so the samples are in decode order with
+their raw durations, which is not necessarily presentation order or
+timing.

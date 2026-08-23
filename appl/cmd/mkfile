@@ -82,6 +82,7 @@ TARG=\
 	gpubench.dis\
 	drawdecodetest.dis\
 	gputest.dis\
+	qttest.dis\
 	grep.dis\
 	gunzip.dis\
 	gzip.dis\
