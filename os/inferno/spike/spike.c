@@ -9,7 +9,7 @@
 
 #include "spike.root.h"
 
-ulong ndevs = 21;
+ulong ndevs = 20;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -20,10 +20,9 @@ extern Dev srvdevtab;
 extern Dev uartdevtab;
 extern Dev envdevtab;
 extern Dev ssldevtab;
-extern Dev dynlddevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
-Dev* devtab[21]={
+Dev* devtab[20]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -34,7 +33,6 @@ Dev* devtab[21]={
 	&uartdevtab,
 	&envdevtab,
 	&ssldevtab,
-	&dynlddevtab,
 	&capdevtab,
 	&kprofdevtab,
 	nil,

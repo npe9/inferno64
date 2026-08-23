@@ -46,6 +46,14 @@
   kernel, and say plainly in the man page and the commit what is real and
   what is only demonstrated.  `doc/osprey-progress.ms` holds the ordered
   plan and what is done; keep it current as each piece lands.
+- Write every path so it can be plumbed. A path in a document is absolute from
+  the tree root (`os/osprey/port/devosprey.c`, `utils/cc/pgen.c`). A path in a
+  source comment is either that, or relative to the file's own directory the
+  way an `#include` in the same file would be written (`../adapter/ospreyrt.c`
+  from `os/osprey/cmd/`). Never a bare basename for a file that exists more
+  than once, and never a directory name standing alone where it looks like a
+  path. Where a name refers to a function rather than a file, give the file
+  too.
 - Follow Inferno conventions and prefer its configuration files, device tables,
   runtime capability checks, and `waserror`/`poperror` mechanism.
 - Do not use `#ifdef` or other preprocessor conditionals to select platform or

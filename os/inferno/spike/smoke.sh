@@ -1,7 +1,7 @@
 #!/bin/sh
 # QEMU spike HTIF serial smoke
 set -e
-ROOT=${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+ROOT=${ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 KERN=$ROOT/Inferno/riscv64/bin/ispike
 export PATH=$ROOT/MacOSX/arm64/bin:$PATH
 

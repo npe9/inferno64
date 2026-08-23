@@ -1,0 +1,115 @@
+# spike - the Spike simulator, riscv64, console only
+#
+# Reconstructed from the generated spike.c that pr/riscv-native-boards
+# carried without the configuration it was generated from, the same way
+# virt's was.  The devices, modules, uart and pool sizes below are the
+# ones that file names; the portable objects are the ones this board's
+# mkfile links.
+#
+# There is no ip stack, no ethernet, no storage and no draw: the OBJ
+# list in the mkfile has neither $IP nor $ETHERS, and the generated
+# devtab names none of them.  A simulator with an HTIF console is all
+# this is.
+#
+# The generated spike.c names dynlddevtab, so the configuration it came
+# from asked for the real dynamic loader.  libdynld has no riscv64
+# member -- dynld-386.c through dynld-spim.c and no more -- so this asks
+# for port/nodynld.c instead, which is what virt does.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+	ssl
+	cap
+	kprof
+
+# the order matters: a library with an undefined symbol at the end
+# makes the loader complain
+lib
+	interp
+	keyring
+	sec
+	mp
+	math
+	kern
+
+# the portable kernel this board takes, and its own code beside it.
+# archspike and the rest are objects and nothing more; naming them
+# under misc would have mkdevc build a PCArch table for them, which is
+# the PC's abstraction and not this board's.
+port
+	alarm
+	alloc
+	allocb
+# the board has its own auth.c, named in the mkfile
+	chan
+	dev
+	dial
+	dis
+	discall
+# edf wants a microsecond clock this board does not export
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+# randomsifiveu is this board's entropy; the portable random.c wants a
+# libsec newer than the one this tree shares
+	sysfile
+	taslock
+	xalloc
+
+	archspike
+	randomsifiveu
+	screenspike
+
+# uarthtif is this board's PhysUart -- mkdevc turns a misc name
+# beginning uart into <rest>physuart, so uarthtif gives htifphysuart,
+# which is what the generated spike.c names.  htif.c beside it in
+# ../riscv is what that driver calls.
+misc
+	uarthtif
+	htif
+
+mod
+	sys
+	keyring
+	crypt
+	math
+
+init
+	spikeinit
+
+code
+	int main_pool_pcnt = 40;
+	int heap_pool_pcnt = 40;
+	int image_pool_pcnt = 20;
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+	/chan	/
+	/dev	/
+	/dis	/
+	/env	/
+	/fd	/
+	/n	/
+	/net	/
+	/prog	/
+	/tmp	/
+	/osinit.dis

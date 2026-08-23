@@ -320,9 +320,12 @@ RAM, which will not hold the Dis interpreter and a Limbo root.  It is a
 different kind of port \- native code, no paging, a root in flash \-
 and it is on this list to be argued about rather than to be next.
 .PP
-Of all of it, only
-.CW virt
-is built.  This is the plan, not the state.
+Of all of it, the three RISC-V boards that have code are built:
+.CW virt ,
+.CW sifiveu
+and
+.CW spike .
+The rest is the plan, not the state.
 .NH 1
 Then
 .PP

@@ -8,7 +8,7 @@
 #   ./os/virt/play.sh --detach  # new session; survives parent shell exit
 set -e
 
-ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)}
+ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)}
 export PATH="$ROOT/MacOSX/arm64/bin:${PATH:-}"
 IVIRT=${IVIRT:-$ROOT/Inferno/riscv64/bin/ivirt}
 QEMU=${QEMU:-qemu-system-riscv64}

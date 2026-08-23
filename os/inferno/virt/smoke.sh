@@ -4,7 +4,7 @@
 #	./os/virt/smoke.sh
 set -e
 
-ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)}
+ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)}
 IVIRT=${IVIRT:-$ROOT/Inferno/riscv64/bin/ivirt}
 QEMU=${QEMU:-qemu-system-riscv64}
 LOG=${TMPDIR:-/tmp}/ivirt-smoke.$$.log

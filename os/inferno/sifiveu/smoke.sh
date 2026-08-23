@@ -1,7 +1,7 @@
 #!/bin/sh
 # QEMU sifive_u serial smoke
 set -e
-ROOT=${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
+ROOT=${ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 KERN=$ROOT/Inferno/riscv64/bin/isifiveu
 export PATH=$ROOT/MacOSX/arm64/bin:$PATH
 

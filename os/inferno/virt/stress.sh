@@ -5,6 +5,6 @@
 #
 #	./os/virt/stress.sh
 set -e
-ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)}
+ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)}
 export ROOT
 exec "$ROOT/os/virt/smoke.sh"

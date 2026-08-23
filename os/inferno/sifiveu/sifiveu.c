@@ -9,7 +9,7 @@
 
 #include "sifiveu.root.h"
 
-ulong ndevs = 23;
+ulong ndevs = 22;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -20,12 +20,11 @@ extern Dev srvdevtab;
 extern Dev uartdevtab;
 extern Dev envdevtab;
 extern Dev ssldevtab;
-extern Dev dynlddevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
 extern Dev etherdevtab;
 extern Dev ipdevtab;
-Dev* devtab[23]={
+Dev* devtab[22]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -36,7 +35,6 @@ Dev* devtab[23]={
 	&uartdevtab,
 	&envdevtab,
 	&ssldevtab,
-	&dynlddevtab,
 	&capdevtab,
 	&kprofdevtab,
 	&etherdevtab,
@@ -72,7 +70,7 @@ PhysUart* physuart[] = {
 	nil,
 };
 
-#include "../ip/ip.h"
+#include "ip.h"
 extern void udpinit(Fs*);
 extern void tcpinit(Fs*);
 extern void ipifcinit(Fs*);
