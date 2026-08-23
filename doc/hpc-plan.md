@@ -209,10 +209,15 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    can use the GPU instead of declining it.
 6. **Host-capability devices: the shape, then `ml(3)` and video.** Reaching
    the OS's real capabilities — ANE, VideoToolbox, AVFoundation, camera, Metal
-   — from Limbo. Nothing built yet. The detailed section after this list argues
-   the shape matters more than any one device, and that `gpu(3)`'s synchronous
-   single-file RPC is **not** the template: it cannot stream, cannot decouple
-   producer from consumer, and moves bulk data on every call.
+   — from Limbo. The detailed section after this list argues the shape matters
+   more than any one device, and that `gpu(3)`'s synchronous single-file RPC is
+   **not** the template: it cannot stream, cannot decouple producer from
+   consumer, and moves bulk data on every call.
+
+   **Video is done**: still and movie decode in `draw(3)`, AAC decode as a
+   filter in `audio(3)`, container parsing in `quicktime(2)`, and `playmovie(1)`
+   synchronising the two. **`ml(3)` is what remains** — the section below argues
+   it is the same shape again and not a new problem.
 7. **Vector instructions in Dis and the JIT.** A separate line of attack on the
    same bottleneck item 2 measures — see the detailed section after this list.
    Short version: start with C builtins in `math(2)`, which need no Dis, JIT,
