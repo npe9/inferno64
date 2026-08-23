@@ -356,8 +356,36 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    What this does **not** settle is the GPU question, which still needs
    re-deriving — but the CPU baseline it would be measured against has just
    moved by 5-6x, which is the same trap the old GPU table fell into. Note
-   also that `amr(2)`'s 3-D seven-point stencil shares none of this code and
-   still has no test at all.
+   also that `amr(2)`'s 3-D seven-point stencil shares none of this code and is
+   still all Limbo — the same 160x is presumably sitting there.
+
+   **`amr(2)` now has a test** (`amrtest(1)`), which it never did. It checks
+   the 2:1 balance after *every* adaptation pass rather than at the end, by
+   scanning all six faces of every leaf and walking the tree to find whatever
+   covers the neighbouring region; that a refine/coarsen round trip is exact on
+   a field that differs in every cell; and that a constant survives both a
+   cross-level exchange and a diffusion step, which is exact whatever the level
+   structure and so localises any cross-level mistake to a named cell.
+
+   It also settles the conservation question this plan told the next person to
+   measure rather than assume:
+
+   | forest | leaves | mass drift over 20 sweeps |
+   |---|---|---|
+   | uniform, level 0 | 27 | 5.2e-15 |
+   | uniform, every block refined | 216 | 1.0e-14 |
+   | adapted around a ball | 608 | **0.052** |
+
+   The drift is **entirely** from coarse-fine interfaces — with none, mass is
+   conserved to machine precision. That is the documented scope limit rather
+   than a defect, but 5% over twenty sweeps is large enough to know before
+   relying on it, and it is now in `man/2/amr` instead of waiting to be
+   rediscovered. Control for the balance scan: a forest hand-refined three
+   levels deep reports 30 face pairs differing by more than one level.
+
+   One documentation bug on the way: `module/amr.m` described `totalmass` as
+   the total cell *volume*, omitting the value, which would make it independent
+   of the field and useless as an invariant. `man/2/amr` always had it right.
 
    Both are *stencil* sweeps, not SpMV, so
    they need a second Metal kernel — and no matrix upload at all, so the
