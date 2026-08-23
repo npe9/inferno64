@@ -1121,6 +1121,13 @@ no longer depends on it, but `emu/port/win-x11a.c:628` still calls it and still
 gets nothing. That is a latent bug for an X11 build, which cannot be tested
 here.
 
+**"Bug 1 fixed" is not "the lock has been audited".** Only the release side was
+wrong and only the release side was changed. The acquire side was read and left
+alone: `_tas` is `ldaxr`/`stlxr`, which is correct, but each failed attempt in
+`lock()`'s spin abandons the exclusive monitor without `clrex` — flagged as
+step 3 in the original analysis below and still not examined. It is not
+implicated by any evidence here; it is simply the part nobody has looked at.
+
 **How it was found**, since three earlier attempts were not:
 
 1. The plan's step 2 — audit every `isched.vmq`/`vmqt` access for one outside
