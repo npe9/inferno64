@@ -131,6 +131,7 @@ struct Pipsession {
 	uchar	reply[Pipmaxmsg];
 	long	nreply;
 	long	rp;
+	int	overflow;	/* a reply would not fit and was not made */
 };
 
 /*
@@ -1724,14 +1725,41 @@ pipreply(Pipsession *ps, int type, int tag, long n)
 {
 	uchar *r;
 
-	if(ps->nreply + Pipheader + n > sizeof ps->reply)
+	if(ps->nreply + Pipheader + n > sizeof ps->reply){
+		/*
+		 * Saying nothing here would answer a group with fewer
+		 * replies than it had messages, and the client would match
+		 * them up wrongly.  The group is answered with one error
+		 * instead; pipfits does that.
+		 */
+		ps->overflow = 1;
 		return nil;
+	}
 	r = ps->reply + ps->nreply;
 	pipput(r, 4, Pipheader + n);
 	r[4] = type;
 	pipput(r+5, 2, tag);
 	ps->nreply += Pipheader + n;
 	return r + Pipheader;
+}
+
+/*
+ * Whether what a group produced can be sent.  A reply that did not fit
+ * the buffer, or a whole reply that will not fit the transport carrying
+ * it, is replaced by one error: a client is better told than handed
+ * half of what it asked for.
+ */
+static void piperror(Pipsession*, int, char*);
+
+static long
+pipfits(Pipsession *ps, long room)
+{
+	if(ps->overflow == 0 && (room <= 0 || ps->nreply <= room))
+		return ps->nreply;
+	ps->nreply = ps->rp = 0;
+	ps->overflow = 0;
+	piperror(ps, 0, "the replies to that group do not fit");
+	return ps->nreply;
 }
 
 static void
@@ -1833,6 +1861,7 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		ps->lease = pipnow() + Pipsesslease;	/* renegotiated */
 		*psp = ps;
 		ps->nreply = ps->rp = 0;	/* this group's replies */
+		ps->overflow = 0;
 		if((r = pipreply(ps, PipRsession, tag, 8)) != nil)
 			pipput(r, 8, ps->sid);
 		return sz;
@@ -2370,8 +2399,10 @@ pipwrite(Chan *c, uchar *m, long n)
 	ps = (Pipsession*)c->aux;
 	if(ps != nil && (ps->used == 0 || ps > &pipsession[Nsession-1]))
 		ps = nil;
-	if(ps != nil)
+	if(ps != nil){
 		ps->nreply = ps->rp = 0;
+		ps->overflow = 0;
+	}
 	for(used = 0, i = 0; i < Pipmaxgroup && used < n; i++){
 		k = pipmsg(&ps, m+used, n-used);
 		if(k <= 0)
@@ -2380,6 +2411,7 @@ pipwrite(Chan *c, uchar *m, long n)
 	}
 	if(ps == nil)
 		error("no session");
+	pipfits(ps, 0);
 	c->aux = ps;
 	qunlock(&piplock);
 	poperror();
@@ -2445,9 +2477,9 @@ pipserve(uchar *in, long n, uchar *out, long nout)
 	}
 	if(ps == nil)
 		return 0;
-	r = ps->nreply;
-	if(r > nout)
-		r = nout;
+	r = pipfits(ps, nout);
+	if(r > nout)			/* even the error does not fit */
+		return 0;
 	memmove(out, ps->reply, r);
 	ps->nreply = ps->rp = 0;
 	return r;

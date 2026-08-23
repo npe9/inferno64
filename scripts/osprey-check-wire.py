@@ -65,6 +65,9 @@ CLIENT = [
  "echo '#### noticket'; /tmp/pip -e open 1 /7 read 1 budget close 1",
  "echo '#### ticket'; /tmp/pip -e auth $\"t open 1 /7 read 1 budget close 1",
  "echo '#### stream'; /tmp/pip -e auth $\"t open 3 /7 stream 3 500 6 used",
+ "echo '#### toolong'; a=()",
+ "for(i in `{seq 1 14}) a=($a read 1 '*')",
+ "/tmp/pip -e auth $\"t open 1 /7 $a",
  "echo '#### end'",
 ]
 
@@ -128,7 +131,9 @@ def main():
                     "Rauth" in between(cli, 'ticket', 'stream')
                     and "Rread" in between(cli, 'ticket', 'stream')))
     results.append(("an attribute arriving six times at the rate it was asked for",
-                    between(cli, 'stream', 'end').count('Rread') == 6))
+                    between(cli, 'stream', 'toolong').count('Rread') == 6))
+    results.append(("a group whose replies will not fit a frame told so, not cut",
+                    'do not fit' in between(cli, 'toolong', 'end')))
 
     (src, dst), logs = pair(17893, SRC, DST,
                             '52:54:00:00:c2:01', '52:54:00:00:c2:02')

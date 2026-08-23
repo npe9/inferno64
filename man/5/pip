@@ -274,9 +274,12 @@ counted up, because a session carries what a ticket proved.
 A stream is not scheduled against a reservation: it is sent when it is
 due by a kernel process that wakes every five milliseconds, so its
 period is kept to about that much and not better.  There are eight
-streams for the whole machine.  The wire carries a group in one frame,
-so a group and its replies must each fit in 1500 bytes; nothing is
-retransmitted, and a group in a lost frame is simply not answered.
+streams for the whole machine.  The wire carries a group in one frame, so a group and its
+replies must each fit in 1500 bytes; a group whose replies do not is
+answered with one error rather than with as many of them as fit, since
+a client counting replies against messages would otherwise match them up
+wrongly.  Nothing is retransmitted, and a group in a lost frame is
+simply not answered.
 .PP
 A session is remembered against the connection that last used it, so two
 connections working one session at once will confuse each other's
