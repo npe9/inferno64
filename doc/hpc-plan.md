@@ -207,10 +207,32 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    builtins already captured most of what device residency was going to buy.
 
    The other half of this item — keeping the *matrix* resident — is already
-   done (`resident on` in `gpu(2)`). What is left on the GPU path is per-call
-   overhead: below mesh 28 its cost per iteration is flat at 176-200us whatever
-   the problem size, which is the shape of a fixed cost, not of arithmetic.
-   **That is the thing worth attacking, and it is not this item.**
+   done (`resident on` in `gpu(2)`).
+
+   **And the per-call overhead has now been decomposed, which finishes this
+   item off.** `INFERNO_METAL_STATS` makes `win-gpu.m` report where a matvec's
+   time goes:
+
+   | mesh | convert in | encode | **commit + wait** | convert out |
+   |---|---|---|---|---|
+   | 24 | 2.6us | 4.2us | **194.2us** | 2.0us |
+   | 32 | 4.5us | 4.3us | **211.3us** | 4.4us |
+
+   The commit and wait is **94% of the call**, and it barely moves while the
+   problem grows 2.7 times. Everything this item and item 4 were about —
+   marshalling, transfers, residency — is the 10us, not the 200. The cost of
+   the interface is a **Metal command-buffer round trip**, not data movement.
+
+   That also explains the flat GPU column mechanically, and it fixes where the
+   crossover comes from: the GPU wins exactly when a CPU matvec exceeds about
+   200us, which is mesh 28. Nothing about vectors or residency changes that.
+
+   **So the only thing that can make GPU offload pay here is fewer command
+   buffers** — which for a Krylov solve means running the whole iteration on
+   the GPU, since each iteration depends on the last and cannot be batched. That
+   is a large piece of work and a different item from this one. Until someone
+   does it, `backend gpu` is a correct facility with a narrow window
+   (mesh 28-32+, f32 only, more iterations), and that is the honest summary.
 
    The argument below about round trips still holds as reasoning. Its numbers
    are stale twice over.

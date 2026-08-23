@@ -255,6 +255,35 @@ and an offload measured against an interpreted loop was measuring the
 interpreter.
 Reducing the per-call cost is what would make this device pay, and it
 has not been attempted.
+.SS "Where the time goes"
+Setting
+.B INFERNO_METAL_STATS
+makes each matvec's cost be reported every two hundred calls, split into
+converting the vector in, encoding the command buffer, committing and
+waiting for it, and converting the result out.
+.PP
+The answer is not what one would guess and it decides whether using this
+device is worth doing:
+.IP
+.EX
+mesh      convert in   encode   commit+wait   convert out
+24x24x24     2.6us      4.2us      194.2us       2.0us
+32x32x32     4.5us      4.3us      211.3us       4.4us
+.EE
+.PP
+The commit and wait is 94% of the call and barely moves while the problem
+grows nearly threefold.
+The cost of this interface is a command-buffer round trip, not data
+movement \(em so making the transfers cheaper, or keeping vectors on the
+device, addresses the ten microseconds and not the two hundred.
+.PP
+It also says where the break-even comes from: the GPU wins exactly when a
+matvec on the CPU costs more than about 200 microseconds, which is mesh
+twenty-eight.
+Making this device pay more generally means issuing fewer command
+buffers, and for a Krylov solve that means running the whole iteration on
+the GPU, since each iteration depends on the one before and they cannot
+be batched.
 .SH ENVIRONMENT
 .TP
 .B INFERNO_NOGPUHW

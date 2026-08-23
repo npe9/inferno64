@@ -26,6 +26,8 @@
  * "resident" verb.
  */
 #import <Foundation/Foundation.h>
+#include <time.h>
+#include <stdio.h>
 #import <Metal/Metal.h>
 
 /* Implemented here, declared in emu/port/devgpu.c. Plain C types by
@@ -178,9 +180,15 @@ metal_upload(int n, int nnz, int *rowptr, int *colidx, double *val)
 	return (void*)CFBridgingRetain(m);
 }
 
+static int gpu_nspmv;
+static int gpu_stats_on = -1;
+static double gpu_convin, gpu_encode, gpu_commit, gpu_convout;
+static void gpu_stats(void);
+
 static int
 metal_spmv(void *h, double *x, double *y, int n)
 {
+	double tp0, tp1, tp2, tp3;
 	GpuMat *m;
 	id<MTLCommandBuffer> cb;
 	id<MTLComputeCommandEncoder> enc;
@@ -196,9 +204,13 @@ metal_spmv(void *h, double *x, double *y, int n)
 	if(n != m.n)
 		return 0;
 
+	if(gpu_stats_on < 0)
+		gpu_stats_on = getenv("INFERNO_METAL_STATS") != NULL;
+	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp0 = t.tv_sec*1e9 + t.tv_nsec; }
 	fx = (float*)[m.x contents];
 	for(i = 0; i < n; i++)
 		fx[i] = (float)x[i];
+	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp1 = t.tv_sec*1e9 + t.tv_nsec; }
 
 	un = (uint32_t)n;
 	cb = [gpu_queue commandBuffer];
@@ -219,15 +231,53 @@ metal_spmv(void *h, double *x, double *y, int n)
 	tg = MTLSizeMake(w, 1, 1);
 	[enc dispatchThreads:grid threadsPerThreadgroup:tg];
 	[enc endEncoding];
+	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp2 = t.tv_sec*1e9 + t.tv_nsec; }
 	[cb commit];
 	[cb waitUntilCompleted];
+	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp3 = t.tv_sec*1e9 + t.tv_nsec; }
 	if([cb status] != MTLCommandBufferStatusCompleted)
 		return 0;
 
 	fy = (float*)[m.y contents];
 	for(i = 0; i < n; i++)
 		y[i] = (double)fy[i];
+	{
+		struct timespec t; double tp4;
+		clock_gettime(CLOCK_MONOTONIC, &t); tp4 = t.tv_sec*1e9 + t.tv_nsec;
+		gpu_nspmv++;
+		gpu_convin  += tp1-tp0;
+		gpu_encode  += tp2-tp1;
+		gpu_commit  += tp3-tp2;
+		gpu_convout += tp4-tp3;
+		if(gpu_stats_on)
+			gpu_stats();
+	}
 	return 1;
+}
+
+/*
+ * Where a GPU matvec's time actually goes, on INFERNO_METAL_STATS - the same
+ * switch win-cocoa.m already uses for its own counters.
+ *
+ * It is worth having permanently because the answer is not what anyone
+ * expects and it decides whether offloading is worth doing at all: the commit
+ * and wait is about 200us and barely moves as the problem grows, while the
+ * conversions and the encoding together are under 10us. The cost of this
+ * interface is a command-buffer round trip, not data movement.
+ *
+ * Printed every 200 calls rather than at exit, so it is visible from a run
+ * that is killed or hangs.
+ */
+static void
+gpu_stats(void)
+{
+	if(gpu_nspmv % 200 != 0)
+		return;
+	fprintf(stderr,
+		"metal spmv: %d calls, per call convert-in %.1fus encode %.1fus "
+		"commit+wait %.1fus convert-out %.1fus\n",
+		gpu_nspmv, gpu_convin/gpu_nspmv/1000.0, gpu_encode/gpu_nspmv/1000.0,
+		gpu_commit/gpu_nspmv/1000.0, gpu_convout/gpu_nspmv/1000.0);
 }
 
 static void
