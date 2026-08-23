@@ -129,10 +129,18 @@ with its drivers in
 rather than under
 .CW os/inferno ;
 those directories are used by no other flavor, so the rule is met even
-though the names do not say so, and
+though the names do not say so.  Moving them is still not something that
+could be verified: that kernel does not build.  It is nearer than it
+was \-
 .CW os/pc64/l.s
-does not currently assemble, which would make the move impossible to
-verify.  Osprey's boot file system and the user library its
+assembles now, having used a comment syntax this
+.CW 6a
+does not know, the same fix
+.CW os/osprey/pc64/l.s
+already carried \- but the mkfile has no rule for several of the objects
+it names, and the configuration bakes a Dis file system into the kernel
+that is not built in this tree.  Until that is put right a move could
+only be checked by reading.  Osprey's boot file system and the user library its
 .CW initcode
 links against are prebuilt binaries copied into
 .CW Osprey/amd64 ,
