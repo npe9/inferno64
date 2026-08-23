@@ -47,6 +47,9 @@ enum {
 	Nsem		= 8,	/* semaphores per container */
 	Npkt		= 32,	/* packets a container may hold */
 	Npktbuf		= 16,	/* receive buffers it lends an interface */
+	Npage		= 32,	/* pages that may be handed about */
+	Pagesize	= 4096,
+	Maxpage		= 8,	/* pages one container may hold */
 	Pktbufsize	= 2112,	/* one of them, room for 2048 and a trailer */
 	Narm		= 16,	/* arms one select may offer */
 	Align		= 64,
@@ -82,6 +85,8 @@ static char *statename(int);
 static uchar *arena;		/* the shared span, or nil until given one */
 static ulong arenasize;
 static ulong slicesize;
+static uvlong pagebase;		/* the pages, after every slice */
+static uchar pagetaken[Npage];
 
 #define ROUNDUP(n, a)	(((n)+(a)-1) & ~((uvlong)(a)-1))
 
@@ -312,13 +317,13 @@ ospreyarena(void *base, ulong size)
 {
 	ulong need;
 
-	sizes();
-	need = slicesize * Nproc;
+	need = ospreyarenasize();
 	if(base == nil || size < need)
 		return -1;
 	arena = base;
 	arenasize = size;
 	memset(arena, 0, need);
+	memset(pagetaken, 0, sizeof pagetaken);
 	return 0;
 }
 
@@ -326,7 +331,8 @@ uvlong
 ospreyarenasize(void)
 {
 	sizes();
-	return slicesize * Nproc;
+	pagebase = ROUNDUP((uvlong)slicesize * Nproc, Pagesize);
+	return pagebase + (uvlong)Npage*Pagesize;
 }
 
 uvlong
@@ -370,6 +376,85 @@ ospreydatalen(Ospreyproc *p)
 	if(p == nil || p->used == 0 || p->map == nil)
 		return 0;
 	return p->map->datalen;
+}
+
+static uvlong*
+pagelist(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0 || p->map == nil)
+		return nil;
+	return (uvlong*)((uchar*)p->map + p->map->page);
+}
+
+/*
+ * Take a page for this container.  Nothing is mapped or unmapped: the
+ * arena is one span and both ends have all of it, so what a page belongs
+ * to is what a map names, and that is what moves.
+ */
+int
+ospreypagealloc(Ospreyproc *p)
+{
+	uvlong *l;
+	int i;
+
+	if((l = pagelist(p)) == nil || p->map->npage >= p->map->maxpage)
+		return -1;
+	for(i = 0; i < Npage; i++)
+		if(pagetaken[i] == 0){
+			pagetaken[i] = 1;
+			l[p->map->npage] = pagebase + (uvlong)i*Pagesize;
+			return p->map->npage++;
+		}
+	return -1;
+}
+
+static int
+pagedrop(Ospreyproc *p, int i, uvlong *off)
+{
+	uvlong *l;
+	uvlong n;
+
+	if((l = pagelist(p)) == nil)
+		return -1;
+	n = p->map->npage;
+	if(i < 0 || (uvlong)i >= n)
+		return -1;
+	*off = l[i];
+	for(; (uvlong)i < n-1; i++)
+		l[i] = l[i+1];
+	p->map->npage = n-1;
+	return 0;
+}
+
+int
+ospreypagefree(Ospreyproc *p, int i)
+{
+	uvlong off;
+
+	if(pagedrop(p, i, &off) < 0)
+		return -1;
+	if(off >= pagebase && off < pagebase + (uvlong)Npage*Pagesize)
+		pagetaken[(off - pagebase)/Pagesize] = 0;
+	return 0;
+}
+
+/*
+ * Hand a page from one container to another.  What was written in it is
+ * there afterwards, having been neither copied nor moved.
+ */
+int
+ospreypageflip(Ospreyproc *from, Ospreyproc *to, int i)
+{
+	uvlong *l, off;
+
+	if(from == nil || to == nil || from == to)
+		return -1;
+	if((l = pagelist(to)) == nil || to->map->npage >= to->map->maxpage)
+		return -1;
+	if(pagedrop(from, i, &off) < 0)
+		return -1;
+	l[to->map->npage++] = off;
+	return 0;
 }
 
 /* where this container's receive buffers are, and how many */
@@ -530,10 +615,19 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	m->request = ROUNDUP(m->sem + Nsem*sizeof(Sem), Align);
 	m->reply = m->request + Nqueue*sizeof(Message);
 	m->data = ROUNDUP(m->reply + Nqueue*sizeof(Message), Align);
-	m->datalen = Ndata;
 	m->pktbuf = ROUNDUP(m->data + Ndata, Align);
 	m->npktbuf = Npktbuf;
 	m->pktbufsize = Pktbufsize;
+	/*
+	 * The pages a container holds are named at the end of its data
+	 * area, as offsets into the whole arena rather than into the
+	 * slice: a page is not part of any slice, and moves between them.
+	 */
+	m->page = m->data + Ndata - Maxpage*sizeof(uvlong);
+	m->npage = 0;
+	m->maxpage = Maxpage;
+	m->pagesize = Pagesize;
+	m->datalen = Ndata - Maxpage*sizeof(uvlong);
 	m->selected = ~0ULL;
 	p->map = m;
 	for(i = 0; i < Nsem; i++)
@@ -1464,9 +1558,10 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 	p = buf;
 	e = buf + nbuf;
 	p = seprint(p, e, "now %llud hz %llud cores %lud procs %lud"
-		" arena %lud slice %lud data %lud\n",
+		" arena %llud slice %lud data %lud pagesize %lud\n",
 		now, hz, (ulong)Ncore, (ulong)Nproc,
-		slicesize*Nproc, slicesize, (ulong)Ndata);
+		ospreyarenasize(), slicesize, (ulong)Ndata,
+		(ulong)Pagesize);
 	for(i = 0; i < Ncore; i++){
 		/*
 		 * The run queue is a list the clock is free to change on
@@ -1509,6 +1604,16 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			procs[i].slice, ospreydataoffset(&procs[i]),
 			procs[i].pid);
 		/* the semaphores, and the container's private names */
+		{
+			uvlong *l;
+			uvlong j;
+
+			l = pagelist(&procs[i]);
+			p = seprint(p, e, "pages %llud", q->id);
+			for(j = 0; l != nil && j < procs[i].map->npage; j++)
+				p = seprint(p, e, " %llud", l[j]);
+			p = seprint(p, e, "\n");
+		}
 		p = seprint(p, e, "packets %llud direct %lud copied %lud held %lud\n",
 			q->id, ospreypktdirect(&procs[i]),
 			ospreypktcopied(&procs[i]), pktqcount(&procs[i].pktq));

@@ -159,6 +159,17 @@ Give the container's
 semaphore.  This is what an interrupt does for the task that serves its
 device, and what one task does for another waiting on it.
 .TP
+.BI page " id " [ alloc | i ]
+Take a page for the container, or give back the one it holds at that
+place in its list.
+.TP
+.BI flip " id id i"
+Hand the page at that place in the first container's list to the second.
+What was written in it is there afterwards, having been neither copied
+nor moved.  A container's pages are listed by
+.B status
+as offsets in the span.
+.TP
 .BI delegate " id " [ server | off ]
 Have another container answer the requests this one makes that the kernel
 does not implement.  The request appears on the server's own request
@@ -600,7 +611,12 @@ trusted with its own packets should not be given.
 .PP
 The whole span is mapped by any process that attaches it, so one
 container can read and write another's rings, and the kernel address in
-each ring head is visible to them all.
+each ring head is visible to them all.  That is also why flipping a page
+maps nothing: both ends already have every page, so what moves is which
+container's map names it.  What it saves is the copy, which is what page
+flipping is for, but it is not the operation on a page table that the
+name suggests.  That would want a segment for each container rather than
+one for them all, which would answer this paragraph as well.
 .PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes

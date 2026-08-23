@@ -67,6 +67,13 @@ is closed and that are refused if what they were written against has
 been committed over, and leases on fids and sessions.  What it names are
 containers, whose settings and accounting are their attributes.
 .PP
+.B "Pages handed over."
+A container may take a page and hand it to another; what was written in
+it is there afterwards, neither copied nor moved.  Both ends map the
+whole span, so nothing is mapped or unmapped and what moves is which
+container's map names the page: the copy is saved, which is the point,
+but no page table is touched.
+.PP
 .B "Migration."
 A container carried to another machine over a wire: its checkpoint in an
 ethernet frame of its own type, read back into a kernel that had never
@@ -82,9 +89,24 @@ back.
 .NH 1
 Next, in order
 .PP
-.B "1.  Page flipping."
-Handing a page between containers instead of copying its contents, for
-messages large enough to be worth it.
+Everything the plan and the presentation describe that a kernel of this
+shape can do is done.  What is left is either a different kernel, or work
+neither source spells out.
+.PP
+.B "1.  A segment for each container."
+The span is one segment and every process that attaches it has all of
+it, so a container can read another's rings and a flipped page is only a
+change of name.  A segment for each container would answer both, and
+make a flip an operation on a page table.
+.PP
+.B "2.  Delegated authentication."
+The presentation asks for authentication delegated across a distributed
+system.  Nothing here does anything about who is asking: a container is
+whoever can write to the device.
+.PP
+.B "3.  \[*p]p as its own transport."
+It is spoken over a file.  The presentation has it able to be the
+transport itself, and to carry isochronous data.
 .NH 1
 Not attempted
 .PP

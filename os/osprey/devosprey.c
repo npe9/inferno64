@@ -183,6 +183,8 @@ enum {
 	CMuart,
 	CMether,
 	CMdelegate,
+	CMpage,
+	CMflip,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -213,6 +215,8 @@ static Cmdtab ospreycmd[] = {
 	CMuart,		"uart",		4,
 	CMether,	"ether",	4,
 	CMdelegate,	"delegate",	3,
+	CMpage,		"page",		3,
+	CMflip,		"flip",		4,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -1799,6 +1803,32 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
 			ospreyroute(p);
 		ospreywakeup();
+		break;
+
+	case CMpage:
+		/*
+		 * Take a page for the container, or give one back.  A page
+		 * is in the arena, which the container has mapped, so what
+		 * it holds is what its map names.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if(strcmp(cb->f[2], "alloc") == 0){
+			if(ospreypagealloc(p) < 0)
+				error(Enomem);
+		} else if(ospreypagefree(p, atoi(cb->f[2])) < 0)
+			error(Ebadarg);
+		break;
+
+	case CMflip:
+		/*
+		 * Hand a page from one container to another.  What was
+		 * written in it is there afterwards, having been neither
+		 * copied nor moved.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if(ospreypageflip(p, ospreyproc(cb->f[2]),
+			atoi(cb->f[3])) < 0)
+			error(Ebadarg);
 		break;
 
 	case CMdelegate:

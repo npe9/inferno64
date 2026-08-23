@@ -42,6 +42,10 @@ struct Ospreymap {
 	uvlong	pktbuf;		/* receive buffers, when an interface is given */
 	uvlong	npktbuf;
 	uvlong	pktbufsize;	/* stride of one, its data at its start */
+	uvlong	page;		/* offsets of the pages held, in the arena */
+	uvlong	npage;		/* how many are held */
+	uvlong	maxpage;	/* how many may be */
+	uvlong	pagesize;
 };
 
 /*
@@ -127,6 +131,15 @@ extern ulong	(*ospreypktcopied)(Ospreyproc*);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);
 uvlong		ospreyoff_at(Ospreyproc*, void *addr);
+
+/*
+ * Pages, handed between containers rather than copied.  A page is in the
+ * arena, which both ends have mapped, so flipping one is the change of
+ * which container's map names it; the bytes do not move.
+ */
+int		ospreypagealloc(Ospreyproc*);
+int		ospreypagefree(Ospreyproc*, int i);
+int		ospreypageflip(Ospreyproc *from, Ospreyproc *to, int i);
 uvlong		ospreysemcount(Ospreyproc*, ulong sem);
 int		ospreyselect(Ospreyproc*, uvlong armoff, int narms);
 int		ospreyselectready(Ospreyproc*, uvlong armoff, int narms);
