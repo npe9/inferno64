@@ -186,14 +186,34 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    around. It is also worth re-measuring open bugs 5 and 6 against it before
    spending any more time on them: `gputest`'s six baseline crashes, `decref`
    among them, do not occur with the fix.
-2. **Device-resident vectors — live again, but only above mesh 28.** This item
-   was suspended when `math->spmv` made the CPU faster than the GPU at every
-   size then measurable. Raising that ceiling changed the answer: the GPU wins
-   per matvec from 28 cubed and per solve from 32, so the vector operations
-   riding along with an offloaded matvec matter again. Re-derive the 40% from
-   the current table before building anything — it was measured on the old one.
-   The argument below about round trips is what still holds; its numbers do
-   not.
+2. **Device-resident vectors — DOWNGRADED. The 40% this item rests on is now
+   10-17%, and it was re-derived rather than assumed.**
+
+   The item's whole case is that offloading the matvec turns the vector
+   operations into 40% of a solve, so they cap what any faster matvec can buy.
+   That was measured before `math(2)` gained `dot`, `axpby` and the rest. Timed
+   again, `apply()` against the five vector ops, summed over `gpubench`'s five
+   solves:
+
+   | | apply | vector | vector share |
+   |---|---|---|---|
+   | mesh 24, gpu f32 | 37ms | 4ms | **~10%** |
+   | mesh 32, gpu f32 | 71ms | 15ms | **~17%** |
+   | mesh 32, cpu f64 | 74ms | 12ms | ~14% |
+
+   So making the vector operations free would take the 32³ GPU solve from about
+   15ms to about 12ms — roughly **1.2x**, on a path that only just beats the CPU
+   there (17-18ms against 15ms, in f32, at 52 iterations against 45). The
+   builtins already captured most of what device residency was going to buy.
+
+   The other half of this item — keeping the *matrix* resident — is already
+   done (`resident on` in `gpu(2)`). What is left on the GPU path is per-call
+   overhead: below mesh 28 its cost per iteration is flat at 176-200us whatever
+   the problem size, which is the shape of a fixed cost, not of arithmetic.
+   **That is the thing worth attacking, and it is not this item.**
+
+   The argument below about round trips still holds as reasoning. Its numbers
+   are stale twice over.
 
    **Device-resident vectors — this is items 2 and 4 together, and doing
    either alone is wrong.** `dot`/`axpy`/`norm` still run on the CPU, and the
