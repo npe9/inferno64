@@ -61,6 +61,11 @@ the sleep caused.
 .SH SEE ALSO
 .IR iostats (4),
 .IR styxreplay (1)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 A read is counted but not attributed to a path, because attributing it
 needs the request it answers and this walks the trace in one pass.

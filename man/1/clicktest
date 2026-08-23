@@ -148,6 +148,11 @@ It is posted, read, and unposted to find out.
 .IR sh-session (1),
 .IR inputtest (1),
 .IR pointer (3)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 It reports the button's position from Tk's own
 .B -actx

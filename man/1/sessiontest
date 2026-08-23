@@ -59,6 +59,11 @@ triggers; a compiled one can have exactly the one.
 .IR session (2),
 .IR sh-session (1),
 .IR inputtest (1)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 It checks decoding and compiling, not performing.
 That a recording becomes the right script is tested here; that the script then

@@ -63,6 +63,11 @@ demonstrably happened and the trace is still empty.
 .IR styxlog (1),
 .IR styxreplay (1),
 .IR draw (2)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 It demonstrates the gap and does not close it.
 Closing it would mean interposing below the name space rather than in

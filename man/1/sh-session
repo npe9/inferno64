@@ -142,6 +142,11 @@ it over.
 .IR emu (1),
 .IR session (2),
 .IR pointer (3)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 A scripted session is not recorded: the injection paths deliberately reach the
 non-recording half of the driver, so that a program inside a session which

@@ -122,6 +122,11 @@ to build next.
 .IR emu (1),
 .IR refstress (1),
 .IR inputtest (1)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 It compares schedules, which say which process ran and in what order, not what
 any of them computed.

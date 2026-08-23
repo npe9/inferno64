@@ -14,6 +14,7 @@ FILES = \
 	compiler.ps \
 	sh.ps \
 	dis.ps \
+	session.ps \
 	acid.ps \
 	acidpaper.ps \
 	acidtut.ps \

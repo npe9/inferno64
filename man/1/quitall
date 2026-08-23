@@ -35,6 +35,11 @@ for
 .IR emu (1),
 .IR schedcmp (1),
 .IR inputtest (1)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 It reads all of
 .B /prog

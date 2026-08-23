@@ -110,6 +110,11 @@ times out of twenty-five.
 .IR emu (1),
 .IR pointer (3),
 .IR cons (3)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
 .SH BUGS
 A session driven by a script is not recorded.
 .B /dev/pointerin
