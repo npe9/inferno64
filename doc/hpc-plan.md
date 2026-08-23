@@ -1096,6 +1096,17 @@ The fix is one line: make the release a release.
 `emu/port/alloc.c` already uses `__atomic_store_n(..., __ATOMIC_RELEASE)`, so
 this is the tree's own idiom rather than a new dependency.
 
+The whole bug and the whole fix, one instruction, read out of the two binaries
+rather than assumed from the source:
+
+```
+baseline   blr x8            ; coherencefn - nofence, does nothing
+           str  wzr, [x19]   ; plain store
+
+fixed      blr x8
+           stlr wzr, [x19]   ; store-release
+```
+
 **Measured, interleaved, alternating binaries in one session** — the validation
 this section demanded, and which the earlier `vmqnext` candidate failed:
 
