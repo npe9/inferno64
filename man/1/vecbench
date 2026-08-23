@@ -1,0 +1,65 @@
+.TH VECBENCH 1
+.SH NAME
+vecbench \- time the vector operations a Krylov solve runs on
+.SH SYNOPSIS
+.B vecbench
+[
+.I n
+]
+.SH DESCRIPTION
+.B Vecbench
+times the vector operations a
+.IR krylov (2)
+solve spends most of its time in, comparing what Limbo generates against
+.IR math (2)'s
+C builtins, on vectors of
+.I n
+elements (default 13824, which is 24\(mu24\(mu24).
+.PP
+It reports, in microseconds per call: a dot product written in Limbo,
+the same through
+.BR math\->dot ,
+.BR math\->norm2 ,
+an
+.I axpy
+written in Limbo both allocating its result and writing in place,
+.BR math\->axpby ,
+and a bare
+.B array[n]
+allocation on its own.
+.PP
+The comparison it exists for is the last three.
+The obvious explanation for these operations costing 40% of a
+GPU-backed solve was Limbo heap traffic, since every one of them
+allocated a fresh array.
+That is wrong: the in-place version costs the same as the allocating
+one, and a bare allocation is under a microsecond.
+The cost is the generated code, which is why a C builtin helps by
+several times over and removing allocations does not help at all.
+.PP
+The JIT is on by default and matters enormously here \(em the same
+loops run about fourteen times slower under
+.B -c0
+\(em so comparing the two is part of what this is for.
+.SH EXAMPLES
+Compare compiled against interpreted:
+.IP
+.EX
+vecbench
+emu -c0 -r . /dis/vecbench.dis
+.EE
+.SH SOURCE
+.B /appl/cmd/vecbench.b
+.SH SEE ALSO
+.IR gpubench (1),
+.IR math-linalg (2),
+.IR krylov (2)
+.SH BUGS
+The Limbo versions are copies of what
+.IR krylov (2)
+used to contain, kept here for the comparison.
+They will not track it if it changes again.
+.PP
+One length, one element type, one machine.
+Nothing here says anything about a vector too large for cache, where
+the balance between generated code and memory bandwidth is different.

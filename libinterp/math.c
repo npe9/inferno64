@@ -880,6 +880,17 @@ Math_dot(void *fp)
 }
 
 void
+Math_axpby(void *fp)
+{
+	F_Math_axpby *f;
+
+	f = fp;
+	if(f->x->len != f->y->len)
+		error(exMathia);	/* incompatible lengths */
+	axpby(f->x->len, f->a, (double*)(f->x->data), f->b, (double*)(f->y->data));
+}
+
+void
 Math_iamax(void *fp)
 {
 	F_Math_iamax *f;

@@ -24,6 +24,9 @@ Math: module
 	atan:		fn(x: real): real;	# arctan(x) in [-pi/2,pi/2]
 	atan2:		fn(y, x: real): real;	# arctan(y/x) in [-pi,pi]
 	atanh:		fn(x: real): real;
+	# y = a*x + b*y, in place; BLAS daxpby. The one vector update a
+	# Krylov solve does most - CG does three per iteration.
+	axpby:		fn(a: real, x: array of real, b: real, y: array of real);
 	cbrt:		fn(x: real): real;
 	ceil:		fn(x: real): real;
 	copysign:	fn(x, s: real): real;

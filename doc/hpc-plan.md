@@ -155,6 +155,57 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    Note this is measured for **CG only**. GMRES does far more vector work per
    iteration (Arnoldi orthogonalisation is O(k) dots and axpys at restart
    length k), so the fraction there should be higher — expected, not measured.
+   **Measured before designing any of this, and it resized the item.** The 40%
+   figure was suspected to be Limbo heap traffic, since every vector op
+   allocated a fresh `array of real`. It is not: an in-place `axpy` costs 32.0us
+   against the allocating one's 33.0us at 13824 elements, so **allocation is 3%**
+   and a bare `array[n]` is 0.5us. The cost is the generated code. (The JIT
+   matters enormously and was already on: the same loop interpreted at `-c0`
+   costs 421us, 14x more.)
+
+   **What the measurement found instead: `math(2)` already had `dot`, `norm1`,
+   `norm2`, `iamax` and even `gemm` as C builtins, and `krylov.b` hand-rolled
+   its own in Limbo.** `math->dot` is **3.9x** faster than the JIT-compiled
+   Limbo one (7.5us against 29.5us). The one genuinely missing operation was the
+   vector update, now added as `math->axpby` (`y = a*x + b*y`, `libmath/blas.c`)
+   — **16x** faster than the same loop in Limbo (2.0us against 32.0us), the
+   larger factor because a streaming multiply-add vectorises where a reduction
+   does not. `axpby` rather than `axpy` because CG needs both shapes: `y += a*x`
+   for the solution and residual, and `y = x + b*y` for `p = r + beta*p`, which
+   an accumulating form cannot express without destroying `r`.
+
+   End to end on `fem(2)` Poisson at 24 cubed, iteration count and residual
+   **unchanged** (34 and 39 iterations, residuals identical to 12 digits, and
+   `verify(2)`'s `laplacianorder` still 1.930/1.982/1.996/1.999):
+
+   | backend | before | after |
+   |---|---|---|
+   | cpu f64 | 54ms | 47ms |
+   | gpu f32 | 44ms | 21-31ms |
+
+   The GPU path gains more, which is the Amdahl prediction confirmed from the
+   other side: vector ops were 40% of that solve and only 3% of the CPU one.
+
+   **So item 2's ceiling has moved and should be re-derived before building
+   device residency.** Two cautions for whoever does. First, the table above
+   compares `gpu f32` against `cpu f64` and those are *different solves* — 39
+   iterations against 34 — so quote iteration counts with any speedup or measure
+   at equal precision. Second, a device-side `dot` as a parallel tree reduction
+   rounds differently from a sequential sum, and CG's convergence test reads
+   that number, so a changed iteration count can masquerade as a performance
+   result; `verify(2)`'s `laplacianorder` is the regression that catches it.
+
+   Left undone deliberately: `dot`'s own kernel in `libmath/blas.c` still uses
+   the pointer-walking style, which does not vectorise, and could plausibly
+   reach `axpby`'s 2us. Rewriting it with indexed loops and several accumulators
+   changes the summation order and therefore the rounding of a long-standing
+   published primitive that other code depends on. Worth doing, not worth doing
+   silently.
+
+   Reproduce with `vecbench(1)`; the end-to-end figures are `gpubench(1)`. Note
+   `gpubench` panics with "not enough memory" at mesh 28 and above on this
+   machine regardless of `-pheap`/`-pmain`, and did so before this change too.
+
 3. **`amr(2)` and `pde(2)` on GPU.** Both are *stencil* sweeps, not SpMV, so
    they need a second Metal kernel — and no matrix upload at all, so the
    per-call overhead that dominates small SpMV problems mostly disappears.

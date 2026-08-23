@@ -77,19 +77,25 @@ Solver.cmd(s: self ref Solver, command: string): string
 	return "unknown krylov command: " + a[0];
 }
 
-# --- vector helpers; none mutate their array arguments ---
+# --- vector helpers ---
+#
+# dot and norm are math(2) builtins, which were already in this tree and
+# unused here: the hand-written Limbo versions this replaced cost 30us per
+# 13824-element call against the builtin's 7.5us, even with the JIT on.
+#
+# The in-place updates below go through math->axpby (y = a*x + b*y), which is
+# 16x faster than the same loop in Limbo - a streaming multiply-add
+# vectorises, where dot's reduction does not. That is why they mutate their
+# accumulator now, and each call site says which array it owns.
 
 dot(x, y: array of real): real
 {
-	sum := 0.0;
-	for(i := 0; i < len x; i++)
-		sum += x[i]*y[i];
-	return sum;
+	return math->dot(x, y);
 }
 
 norm(x: array of real): real
 {
-	return math->sqrt(dot(x,x));
+	return math->norm2(x);
 }
 
 zeros(n: int): array of real
@@ -117,15 +123,6 @@ sub(x, y: array of real): array of real
 	z := array[len x] of real;
 	for(i := 0; i < len x; i++)
 		z[i] = x[i]-y[i];
-	return z;
-}
-
-# a*x + y, a new array.
-axpy(a: real, x, y: array of real): array of real
-{
-	z := array[len x] of real;
-	for(i := 0; i < len x; i++)
-		z[i] = a*x[i]+y[i];
 	return z;
 }
 
@@ -226,7 +223,9 @@ gmressolve(s: ref Solver, apply: Apply, b: array of real,
 			w := apply(v[j]);
 			for(i := 0; i <= j; i++){
 				h[i][j] = dot(w, v[i]);
-				w = axpy(-h[i][j], v[i], w);
+				# w came fresh from apply (see Apply in
+				# krylov.m); v[i] is only read.
+				math->axpby(-h[i][j], v[i], 1.0, w);
 			}
 			hnext := norm(w);
 			h[j+1][j] = hnext;
@@ -260,7 +259,7 @@ gmressolve(s: ref Solver, apply: Apply, b: array of real,
 				y[bi] = sum/h[bi][bi];
 		}
 		for(bi = 0; bi < used; bi++)
-			x = axpy(y[bi], v[bi], x);
+			math->axpby(y[bi], v[bi], 1.0, x);
 	}
 }
 
@@ -297,15 +296,17 @@ cgsolve(s: ref Solver, apply: Apply, b: array of real,
 		if(denom == 0.0)
 			break;
 		alpha := rsold/denom;
-		x = axpy(alpha, p, x);
-		r = axpy(-alpha, ap, r);
+		# x, r and p are this function's own (startingpoint copies x0,
+		# sub and copyvec allocate), so they are updated in place.
+		math->axpby(alpha, p, 1.0, x);		# x += alpha*p
+		math->axpby(-alpha, ap, 1.0, r);	# r -= alpha*ap
 		rsnew := dot(r,r);
 		resid = math->sqrt(rsnew)/normb;
 		if(resid <= tol){
 			iter++;
 			break;
 		}
-		p = axpy(rsnew/rsold, p, r);
+		math->axpby(1.0, r, rsnew/rsold, p);	# p = r + beta*p
 		rsold = rsnew;
 	}
 	s.iterations = iter;

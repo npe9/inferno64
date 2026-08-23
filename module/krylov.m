@@ -9,6 +9,11 @@ Krylov: module
 	# tree doesn't have) - exactly how real solver libraries (PETSc's
 	# MatShell, Trilinos' operator interface) let you plug in a stencil
 	# instead of a matrix.
+	# Must return a FRESH array each call, not a reused buffer: the
+	# solver updates the residual in place against it, so a shared
+	# buffer would be corrupted between iterations. Every implementation
+	# in this tree (sparse->matvec, pde(2), fem(2), gpu(2)) already
+	# allocates one per call.
 	Apply: type ref fn(x: array of real): array of real;
 
 	# Configured by a small command language, the vocabulary of the

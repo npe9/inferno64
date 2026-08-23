@@ -31,6 +31,20 @@ is a plain function reference \(em
 on a grid, where even a modest mesh makes the dense matrix far too large
 to assemble or store.
 .PP
+It must return a
+.I fresh
+array each call rather than a reused buffer.
+The solver updates the residual in place against the array it is given
+back, so a shared buffer would be corrupted between iterations.
+Every implementation in this tree \(em
+.IR sparse (2)'s
+.BR matvec ,
+.IR pde (2),
+.IR fem (2)
+and
+.IR gpu (2)
+\(em already allocates one per call.
+.PP
 .B New
 returns a
 .B Solver

@@ -17,6 +17,7 @@ enum
 
 extern	double	ipow10(int);
 extern	void	FPinit(void);
+extern	void	axpby(int, double, double*, double, double*);
 extern	double	dot(int, double*, double*);
 extern	ulong	FPcontrol(ulong, ulong);
 extern	ulong	FPstatus(ulong, ulong);
