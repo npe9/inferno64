@@ -677,6 +677,35 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/adapter/ospreyrt.c
 .br
 .B /os/osprey/devosprey.c
+.SH CHECKING
+.PP
+.B /scripts/osprey-check.py
+boots one kernel and asks it for everything a single machine can be made
+to show: a request submitted and collected through the mapped ring with
+nobody writing
+.BR service ,
+a select woken by a semaphore on the arm it was given, a page written by
+one container and read by another after it is handed over, a private
+name, a request still in flight and the buffer it names carried across a
+checkpoint, and a uart driven by a task, whose bytes are watched leaving
+the second serial port.
+.PP
+.B /scripts/osprey-check-wire.py
+boots two on one wire and asks for the rest: a key agreed rather than
+typed into both, \[*p]p answered in frames of its own, a container
+refused to a session that has not said who it is and given to one that
+presents a ticket signed by that key, an attribute arriving at the rate
+it was asked for, a container carried across and restarted, and a
+checkpoint too big for a frame refused rather than half sent.
+.PP
+Each says
+.B ok
+or
+.B FAIL
+a line at a time and keeps its logs when anything failed.  Both want
+.B .qemu/9front-root.qcow2
+and an ISO built by
+.BR /scripts/mkosprey-efi-iso.sh .
 .SH TICKETS
 .PP
 A name is only worth what the machine it was said on is worth.  On a

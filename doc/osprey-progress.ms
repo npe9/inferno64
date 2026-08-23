@@ -140,6 +140,20 @@ one back is a restart, into this kernel or another one -- a container
 that was running when it was written out is running again when it is read
 back.
 .NH 1
+What proves it
+.PP
+.CW scripts/osprey-check.py
+boots one kernel and
+.CW scripts/osprey-check-wire.py
+boots two on one wire; between them they ask for everything above and
+say
+.B ok
+or
+.B FAIL
+a line at a time.  Eighteen lines, all
+.BR ok ,
+against the kernel this file describes.
+.NH 1
 Next, in order
 .PP
 Everything the plan and the presentation describe that a kernel of this
