@@ -175,7 +175,25 @@ device, and what one task does for another waiting on it.
 .BI revoke " id user"
 .PD
 Hand the right to a container to another, by name, or take it back.
-Only whoever the container is already for may do either.  Nothing here
+Only whoever the container is already for may do either \- as with every
+other command here that names a container: attaching it, limiting it,
+binding a process to it, giving it a device, submitting to it,
+checkpointing it, taking its pages or destroying it are all refused to
+anyone it is not for.  The ones that name no container \-
+.BR reset ,
+.BR create ,
+.BR schedule ,
+.BR charge ,
+.BR balance ,
+.BR service ,
+.BR key ,
+.B pair
+and
+.B pipether
+\- are the machine's rather than a container's.
+.B flip
+asks about the container the page is taken from and not the one it is
+given to, since that is a gift.  Nothing here
 knows anything about that name: it is enough that whoever comes with it
 is called that, which is what makes it a delegation and not a lookup.
 Grants are written into a checkpoint, so they cross to another machine

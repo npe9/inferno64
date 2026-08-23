@@ -1603,6 +1603,24 @@ ospreyproc(char *s)
 	return p;
 }
 
+/*
+ * The container that name says, if it is the caller's to touch.  A
+ * container is for whoever it is for, which the kernel enforced at a
+ * segment and at a pi-p open and not here: anyone who could write ctl
+ * could take another user's pages, stop its process or destroy it
+ * outright.
+ */
+static Ospreyproc*
+ospreymine(char *name)
+{
+	Ospreyproc *p;
+
+	p = ospreyproc(name);
+	if(!ospreymay(p, up != nil ? up->user : nil))
+		error(Eperm);
+	return p;
+}
+
 static Chan*
 ospreyattachdev(char *spec)
 {
@@ -3033,7 +3051,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMattach:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(ospreyattach(p, strtoul(cb->f[2], nil, 0), ospreynow()) < 0)
 			error(Ebadarg);
 		break;
@@ -3045,7 +3063,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 
 	case CMexit:
 		/* the chans first: cclose can sleep, and exit takes locks */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		ospreyclosefds(p);
 		ospreyputproc(p);
 		ospreyputserver(p);
@@ -3071,7 +3089,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMlimit:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(ospreylimit(p, strtoul(cb->f[2], nil, 0),
 			strtoul(cb->f[3], nil, 0),
 			strtoul(cb->f[4], nil, 0)) < 0)
@@ -3081,7 +3099,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	case CMsubmit:
 		if(cb->nf < 3 || cb->nf > 3 + Ospreynarg)
 			error(Ecmdargs);
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if((op = ospreyop(cb->f[2])) < 0)
 			error(Ebadarg);
 		for(i = 0; i < Ospreynarg; i++)
@@ -3101,7 +3119,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			sleep(&ospreyroomrend[x], ospreyroom, p);
 			poperror();
 			qlock(&ospreylock);
-			p = ospreyproc(cb->f[1]);
+			p = ospreymine(cb->f[1]);
 		}
 		if(ospreysubmit(p, op, arg) < 0)
 			error(Eio);
@@ -3276,7 +3294,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * is in the arena, which the container has mapped, so what
 		 * it holds is what its map names.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(strcmp(cb->f[2], "alloc") == 0){
 			if(ospreypagealloc(p) < 0)
 				error(Enomem);
@@ -3290,7 +3308,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * written in it is there afterwards, having been neither
 		 * copied nor moved.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
+		/* the page it is given to need not be mine: this is a gift */
 		if(ospreypageflip(p, ospreyproc(cb->f[2]),
 			atoi(cb->f[3])) < 0)
 			error(Ebadarg);
@@ -3302,7 +3321,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * The server is an ordinary process; nothing about this is
 		 * in the kernel but the routing.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(strcmp(cb->f[2], "off") == 0){
 			if(ospreydelegate(p, nil) < 0)
 				error(Ebadarg);
@@ -3318,7 +3337,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * charged to the container's network caps and queued for it,
 		 * and each gives the named semaphore.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyether))
 			error(Ebadarg);
 		if(strcmp(cb->f[2], "off") == 0){
@@ -3353,7 +3372,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * container's does the work.  The console's uart is refused;
 		 * losing it would take the machine with it.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyuart))
 			error(Ebadarg);
 		if(strcmp(cb->f[2], "off") == 0){
@@ -3407,7 +3426,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * here whose interrupt to take, so the one interrupt this
 		 * driver already owns stands in for it.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyticksem))
 			error(Ebadarg);
 		if(strcmp(cb->f[2], "off") == 0)
@@ -3426,7 +3445,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * task that serves its device, and what one task does for
 		 * another that is waiting on it.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		i = atoi(cb->f[2]);
 		if(i < 0 || (ulong)i >= ospreynsem())
 			error(Ebadarg);
@@ -3443,7 +3462,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * left in the container's map, where the caller reads it
 		 * without asking.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		sw.p = p;
 		sw.armoff = strtoull(cb->f[2], nil, 0);
 		sw.narms = atoi(cb->f[3]);
@@ -3459,7 +3478,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			sleep(&ospreyselrend[x], ospreyselok, &sw);
 			poperror();
 			qlock(&ospreylock);
-			p = ospreyproc(cb->f[1]);
+			p = ospreymine(cb->f[1]);
 			sw.p = p;
 		}
 		if(i < 0 || ospreyselect(p, sw.armoff, sw.narms) < 0)
@@ -3467,7 +3486,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMmode:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(strcmp(cb->f[2], "strict") == 0)
 			ospreysetstrict(p, 1);
 		else if(strcmp(cb->f[2], "besteffort") == 0)
@@ -3482,7 +3501,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * process's namespace.  From then on nothing has to write
 		 * service for its requests to be answered.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyserving))
 			error(Ebadarg);
 		if(ospreyserving[x]){
@@ -3510,7 +3529,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * clock charges the container for the cycles the core spends
 		 * in that process, and the budget holds it back.
 		 */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
 			error(Ebadarg);
 		i = atoi(cb->f[2]);
@@ -3542,7 +3561,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMunbindproc:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyprocs))
 			error(Ebadarg);
 		if((q = ospreyprocs[x]) != nil){
@@ -3556,31 +3575,31 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMmigrate:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(ospreymigrate(p, strtoul(cb->f[2], nil, 0), ospreynow()) < 0)
 			error(Ebadarg);
 		break;
 
 	case CMnetcharge:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(ospreynetcharge(p, strtoul(cb->f[2], nil, 0),
 			strtoul(cb->f[3], nil, 0)) < 0)
 			error(Enomem);
 		break;
 
 	case CMnetfree:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		ospreynetrelease(p, strtoul(cb->f[2], nil, 0),
 			strtoul(cb->f[3], nil, 0));
 		break;
 
 	case CMcheckpoint:
-		if(ospreycheckpoint(ospreyproc(cb->f[1])) < 0)
+		if(ospreycheckpoint(ospreymine(cb->f[1])) < 0)
 			error(Ebadarg);
 		break;
 
 	case CMrestore:
-		if(ospreyrestore(ospreyproc(cb->f[1])) < 0)
+		if(ospreyrestore(ospreymine(cb->f[1])) < 0)
 			error(Ebadarg);
 		ospreywakeup();
 		break;
@@ -3600,7 +3619,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 
 	case CMwait:
 		/* the reply wait path */
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		while(!ospreyreplyready(p)){
 			if((x = ospreyindex(p)) < 0)
 				error(Enonexist);
@@ -3612,18 +3631,18 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			sleep(&ospreyreplyrend[x], ospreyreply, p);
 			poperror();
 			qlock(&ospreylock);
-			p = ospreyproc(cb->f[1]);
+			p = ospreymine(cb->f[1]);
 		}
 		break;
 
 	case CMbind:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(ospreybind(p, cb->f[2], cb->f[3]) < 0)
 			error(Ebadarg);
 		break;
 
 	case CMunbind:
-		p = ospreyproc(cb->f[1]);
+		p = ospreymine(cb->f[1]);
 		if(ospreyunbind(p, cb->f[2]) < 0)
 			error(Enonexist);
 		break;
