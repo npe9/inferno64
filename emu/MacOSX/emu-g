@@ -18,6 +18,7 @@ dev
 	eia
 #	audio	audio
 	gpu
+	ml	win-ml
 	mem
 
 lib

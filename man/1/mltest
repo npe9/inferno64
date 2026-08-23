@@ -1,0 +1,85 @@
+.TH MLTEST 1
+.SH NAME
+mltest \- test the inference device
+.SH SYNOPSIS
+.B mltest
+[
+.I model
+]
+.SH DESCRIPTION
+.B Mltest
+exercises
+.IR ml (3)
+end to end: the model crosses into the device as bytes, the host
+compiles and runs it, and the answer comes back through
+.IR math (2)'s
+marshalling.
+.PP
+It runs against
+.BR /lib/ml/linear.mlmodel ,
+built by
+.B mkmlmodel.py
+alongside the emu source with weights chosen by hand rather than
+trained, so the answer is known in advance:
+.I y
+=
+.IR Wx " + " b
+with
+.I W
+= [[1,2,3],[10,20,30]] and
+.I b
+= [0.5,\-0.5], so
+.I x
+= (1,2,3) must give
+.I y
+= (14.5, 139.5).
+.PP
+Asserting that, rather than that some bytes came back, is the point.
+The two outputs differ by an order of magnitude and neither is symmetric
+in its inputs, so a transposed weight matrix, a swapped output, a wrong
+element width or a byte-order mistake each produce a visibly wrong
+number instead of a plausible one.
+Sending the input in the host's byte order rather than the device's
+gives (0.5, \-0.5) \(em the bias alone \(em which is how that path was
+checked.
+.PP
+Three further things are checked because each is a way the device could
+appear to work while being wrong.
+The declared element type is compared against
+.BR f64 ,
+since a client assuming
+.B f32
+would write half the bytes.
+A deliberately short write to
+.B in
+must be refused rather than padded.
+And the model is loaded a second time with
+.B "units cpu"
+and
+.BR info 's
+.B device
+line must then say
+.BR cpu :
+a device report that is really a constant string would satisfy every
+other check here.
+.PP
+Given a
+.I model
+argument it uses that file instead, in which case only the checks that
+hold for any model are meaningful.
+.SH SOURCE
+.B /appl/cmd/mltest.b
+.SH SEE ALSO
+.IR ml (3),
+.IR math (2)
+.SH BUGS
+One model, one input, one output, all multi-array and all
+.BR f64 .
+Nothing here exercises
+.B feed
+or
+.BR take ,
+which exist for models with more than one of either.
+.PP
+Nothing is timed, so this says the device is correct and nothing at all
+about whether reaching the Neural Engine through it is worth doing.

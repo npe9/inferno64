@@ -1,0 +1,220 @@
+.TH ML 3
+.SH NAME
+ml \- machine-learning inference device
+.SH SYNOPSIS
+.B bind -a '#N' /dev
+.PP
+.B /dev/ml/clone
+.br
+.BI /dev/ml/ n /ctl
+.br
+.BI /dev/ml/ n /model
+.br
+.BI /dev/ml/ n /info
+.br
+.BI /dev/ml/ n /in
+.br
+.BI /dev/ml/ n /out
+.SH DESCRIPTION
+The
+.I ml
+device runs a trained model on whatever inference hardware the host has.
+On Apple silicon that is CoreML, and so in practice the Neural Engine;
+elsewhere the device exists but reports that it has no backend.
+.PP
+Opening
+.B /dev/ml/clone
+allocates an instance and turns that same file descriptor into the
+instance's
+.BR ctl ,
+exactly as
+.IR draw (3)'s
+.B /dev/draw/new
+does.
+Reading it gives the instance number
+.IR n ,
+whose directory holds the rest of the files.
+Closing the
+.B ctl
+file releases the instance and everything it holds; closing
+.B in
+or
+.B out
+does not, so a program may open, write and close them as often as it
+likes.
+.PP
+An instance is a directory rather than a single request/response file
+like
+.IR gpu (3)'s,
+because a model has four genuinely different things to say: bulk
+write-once bytes, a read-only description, an input and an output.
+Carrying those on one file means inventing a framing protocol, which is
+what
+.IR gpu (3)
+had to do and why it is not the template for anything larger.
+.SS Loading a model
+Write the model to
+.BR model ,
+in as many writes as convenient \(em they are appended, not positional
+\(em then write
+.B load
+to
+.BR ctl .
+.PP
+The model crosses as
+.IR bytes .
+No host path is ever handed over.
+An Inferno path is not a host path: it may name a file on a
+.IR styx (10)
+mount from another machine, or one that exists only in the calling
+process's namespace, so handing it to a host framework would puncture
+the namespace for nothing.
+This is not a compromise forced by the host \(em CoreML compiles a
+staged single-file model and produces the compiled form itself.
+.SS Finding out what it takes
+.B Info
+becomes readable once a model is loaded, and reading it is not optional:
+without it a client cannot form a valid write to
+.BR in .
+Its lines are
+.IP
+.EX
+in \fIname type dim\fP...
+out \fIname type dim\fP...
+device \fIwhat ran it\fP
+.EE
+.PP
+where
+.I type
+is
+.BR f64 ,
+.BR f32 ,
+.B f16
+or
+.BR i32 .
+Do not assume
+.BR f32 :
+a model that declares
+.B f64
+needs twice the bytes, and a client that guesses wrong gets a
+plausible-looking wrong answer rather than an error.
+.PP
+The
+.B device
+line says what
+.I actually
+ran the model, not what was asked for.
+Compute units are a request the host may decline, and reporting a
+request as though it were a result is the mistake
+.IR gpu (3)
+shipped once, claiming
+.B f64
+on a wire that carried
+.BR f32 .
+Where the host will not say, the line says so rather than echoing the
+request back.
+.SS Running it
+Write the input to
+.BR in ,
+write
+.B run
+to
+.BR ctl ,
+then read
+.BR out .
+.PP
+.B In
+and
+.B out
+carry raw elements of the type
+.B info
+gives,
+.IR big-endian .
+That is the same wire
+.IR gpu (3)
+uses and what
+.IR math (2)'s
+.B export_real
+and
+.B export_real32
+already produce, so a Limbo caller marshals with what it has; it also
+means a model reached across a
+.IR styx (10)
+mount from a machine of the other byte order still receives the bytes it
+meant.
+Converting to whatever the host wants happens on the host side, which is
+the end that knows the element type.
+.PP
+A write to
+.B in
+whose length does not match the feature's declared shape and type is
+refused, with an error naming both sizes.
+.SS ctl
+.TP
+.BI units " cpu|gpu|ane|all"
+Which compute units to ask for.
+This is part of the configuration a model is loaded with, so set it
+before
+.BR load ;
+what actually resulted is on
+.BR info 's
+.B device
+line.
+.TP
+.BI feed " name"
+Which input subsequent writes to
+.B in
+fill.
+Needed only for a model with more than one input.
+.TP
+.BI take " name"
+Which output subsequent reads of
+.B out
+drain.
+Needed only for a model with more than one output.
+.TP
+.B load
+Compile and load the bytes written to
+.BR model .
+.TP
+.B run
+Run the model and fetch its output.
+.TP
+.B reset
+Discard the model and start over.
+.SH SOURCE
+.B /emu/port/devml.c
+.br
+.B /emu/MacOSX/win-ml.m
+.SH SEE ALSO
+.IR mltest (1),
+.IR gpu (3),
+.IR draw (3),
+.IR math (2)
+.SH DIAGNOSTICS
+Errors from the host's inference framework are passed through, so a
+malformed model or a wrong input size reports what the framework said
+rather than a generic failure.
+.SH BUGS
+This runs a compiled model graph, and that is all it does.
+The Neural Engine has no public interface outside CoreML, so
+.I ml
+will not accelerate a
+.IR krylov (2)
+solve or a
+.IR pde (2)
+stencil sweep, and it is not a general compute device.
+It is worth having for inference and for nothing else.
+.PP
+Only multi-array features are handled.
+A model taking images, dictionaries or sequences reports its features as
+.B opaque
+in
+.B info
+and cannot be fed.
+.PP
+There is no way to enumerate the compute units the host has, only to ask
+for one and read back what happened.
+.PP
+The whole model is held in memory before it is compiled, and again by
+the host afterwards.

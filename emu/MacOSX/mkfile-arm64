@@ -22,6 +22,7 @@ SYSLIBS=\
 	-framework AVFoundation -framework VideoToolbox\
 	-framework CoreMedia -framework CoreVideo\
 	-framework ImageIO\
+	-framework CoreML\
 	-framework Metal\
 	-framework QuartzCore\
 

@@ -29,7 +29,7 @@ COCOAFLAGS=
 <mkfile-$OBJTYPE	# arm64/amd64 set CONF/SYSLIBS/COCOA*
 
 # Console emu-g: drop AppKit main() / Cocoa (mkfile-arm64 defaults).
-<| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox'; fi
+<| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox -framework Foundation -framework CoreML'; fi
 
 <| $SHELLNAME ../port/mkdevlist $CONF	#sets $IP, $DEVS, $PORT, $LIBS
 

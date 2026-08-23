@@ -214,10 +214,13 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    **not** the template: it cannot stream, cannot decouple producer from
    consumer, and moves bulk data on every call.
 
-   **Video is done**: still and movie decode in `draw(3)`, AAC decode as a
-   filter in `audio(3)`, container parsing in `quicktime(2)`, and `playmovie(1)`
-   synchronising the two. **`ml(3)` is what remains** — the section below argues
-   it is the same shape again and not a new problem.
+   **This item is done.** Video: still and movie decode in `draw(3)`, AAC
+   decode as a filter in `audio(3)`, container parsing in `quicktime(2)`,
+   `playmovie(1)` synchronising the two. Inference: `ml(3)` (`devml.c` +
+   `win-ml.m`), running on the Neural Engine, verified by `mltest(1)`. Both
+   are the same shape — one device per capability, composed through the
+   namespace — which is what the section below argued mattered more than
+   either device.
 7. **Vector instructions in Dis and the JIT.** A separate line of attack on the
    same bottleneck item 2 measures — see the detailed section after this list.
    Short version: start with C builtins in `math(2)`, which need no Dis, JIT,
@@ -518,26 +521,62 @@ the measured table above, the formats those decoders handle are precisely the
 ones with **no** hardware support. So this is not "accelerate the existing
 players" — it is playing formats the tree currently cannot play at all.
 
-### `ml(3)` is then just another instance
+### `ml(3)` is then just another instance — and it is now built
 
 Same clone directory, same `ctl`/`data` split: `/dev/ml/N`, where `ctl` selects
 the model and compute units, `in` takes the input and `out` gives the result.
 The instance *is* the handle — no ids, so a model can be used across a Styx
-mount like anything else.
+mount like anything else. `emu/port/devml.c` owns the protocol,
+`emu/MacOSX/win-ml.m` is CoreML behind the same nullable hooks `devgpu.c` uses,
+and `mltest(1)` runs it end to end. It works under `emu-cocoa` and headless
+under `emu-g`.
 
-Two things specific to it. **Precision is harder than for the GPU**: Metal has
-no `double`, but the ANE is **fp16**, and CoreML may silently move a model
-between ANE, GPU and CPU with different numerics on each — so its precision
-query must report the compute unit *actually selected*, not the one requested.
-`gpu(3)` shipped that wrong once, claiming `f64` on a wire that carried `f32`.
-And **CoreML loads a compiled `.mlmodelc` from a host filesystem path** while
-Inferno's namespace is not the host filesystem: either pass host path bytes and
-accept the namespace puncture, or accept the model over `data` and stage it to a
-temp file. Decide before writing code; it determines the protocol.
+**The two hard questions were settled by measurement, not by choosing.**
+`emu/MacOSX/mlcaps.m` — a standalone probe, deliberately not part of the build,
+the same shape as `vtcaps.m` — was written and run *before* the protocol, and
+both answers came out better than the plan assumed:
+
+- **The model crosses as bytes, and there is no namespace puncture at all.**
+  The plan posed this as a fork — pass host path bytes and accept the puncture,
+  or stage. It is not a fork: `compileModelAtURL:` accepts a *staged single-file*
+  `.mlmodel` and produces the compiled `.mlmodelc` itself, so only bytes ever
+  cross and no `.mlmodelc` directory has to be moved anywhere.
+- **The compute unit actually used can be reported honestly.** `MLComputePlan`
+  (macOS 14.4+) gives a device per operation, so `info`'s `device` line says
+  what ran rather than what was asked for. This is exactly where `gpu(3)`
+  shipped the bug once, and it is *verified* rather than assumed: `units cpu`
+  reports `cpu` while the default reports `ane`, so the line cannot be a
+  constant string. That check is in `mltest(1)`.
+
+Two things the plan did not anticipate, both of which would produce a
+plausible wrong answer rather than an error:
+
+- **The element type is not f32.** The fixture model declares **f64**, and
+  CoreML publishes the type per feature. A client that assumed f32 would write
+  exactly half the bytes needed. `info` therefore carries type and shape, and a
+  mismatched write is refused with an error naming both sizes.
+- **Byte order has to be decided and stated.** The wire is big-endian, matching
+  `gpu(3)` and what `math(2)`'s `export_real` already produces, so a Limbo
+  caller marshals with what it has and a model reached over a Styx mount from a
+  different-endian machine still gets what was meant. The host wants native
+  order, so the swap lives in the backend, which is the end that knows the
+  element type. The negative control: feeding native-order bytes yields
+  `(0.5, -0.5)` — the bias term alone — instead of `(14.5, 139.5)`.
+
+The fixture is `lib/ml/linear.mlmodel`, built by `emu/MacOSX/mkmlmodel.py` with
+weights chosen by hand rather than trained, so the answer is known: `W =
+[[1,2,3],[10,20,30]]`, `b = [0.5,-0.5]`, `x = (1,2,3)` gives `y = (14.5,
+139.5)`. The two outputs differ by an order of magnitude and neither is
+symmetric in its inputs, so a transposed matrix, a swapped output, a wrong
+element width and a byte-order mistake each show up as a visibly wrong number.
+Note `coremltools` is needed only to *build* the fixture, and only in a venv —
+it is not a dependency of the tree or of the test.
 
 Say plainly what this device is not: CoreML runs a compiled model graph and the
 ANE has no public API outside it, so `ml(3)` will not accelerate a CG solve or a
-stencil sweep. It is worth building for inference, not for the numerics.
+stencil sweep. It is worth having for inference, not for the numerics. Only
+multi-array features are handled; anything else reports as `opaque` in `info`
+and cannot be fed.
 
 ### What this means for the rest of the plan
 

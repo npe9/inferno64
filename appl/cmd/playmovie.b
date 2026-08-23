@@ -243,7 +243,11 @@ play(mfd: ref Sys->FD, vt, at: ref Track, adec, aout, vdata, vvideo: ref Sys->FD
 		nvsamp = len vt.samples;
 
 	for(;;){
-		if(ai >= nasamp && vi >= nvsamp)
+		# Not done when both tracks have been fed: the ring still holds
+		# frames that have been decoded and not yet shown. Breaking here
+		# drops them, which the fixtures hide because mkmovie rounds the
+		# audio up to a whole second so it always outlasts the video.
+		if(ai >= nasamp && vi >= nvsamp && nheld == 0)
 			break;
 
 		# Where the audio has got to, in milliseconds.
