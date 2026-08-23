@@ -173,12 +173,19 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
 
 ## Plan — remaining
 
-1. **Scheduler deadlock (see below).** Now localised to a lost `vmq` push, with
-   the next three steps written out — but *not* a prerequisite for the rest.
-   It blocks runtime validation of anything **concurrent**, and items 2–5 are
-   not: they are single-threaded numerics plus a device. Do it when a
-   concurrency change needs validating, or when someone has the patience for a
-   ~12% reproducer; do not let it block the GPU work again.
+1. **Scheduler deadlock — FIXED.** `unlock()` had no release barrier: it called
+   `coherencefn()`, which is `nofence`, an empty function, on every platform.
+   On arm64 a critical section's stores could therefore become visible after
+   the store releasing the lock, so the next holder read state the previous one
+   had not yet published — and a proc pushed onto `isched.vmq` could vanish
+   from it with nobody popping it. One line: the release store is now a release
+   store. 150 interleaved pairs at `-c1`: **67 hangs to 0**. See below for the
+   evidence and for how three earlier attempts missed it.
+
+   **This unblocks concurrency validation**, which this list has been routing
+   around. It is also worth re-measuring open bugs 5 and 6 against it before
+   spending any more time on them: `gputest`'s six baseline crashes, `decref`
+   among them, do not occur with the fix.
 2. **Device-resident vectors — live again, but only above mesh 28.** This item
    was suspended when `math->spmv` made the CPU faster than the GPU at every
    size then measurable. Raising that ceiling changed the answer: the GPU wins
@@ -1053,7 +1060,90 @@ Builtins first — they are the existing mechanism and capture the dispatch win.
 
 ## Open bugs
 
-### 1. Scheduler deadlock under concurrent fd use — **blocks the rest**
+### 1. Scheduler deadlock under concurrent fd use — **FIXED**
+
+**`unlock()` had no release barrier, on any platform, ever.**
+
+```c
+void
+unlock(Lock *l)
+{
+	coherencefn();
+	l->val = 0;
+}
+```
+
+`coherencefn` is a function pointer that starts nil and is set exactly once, in
+`main()`, to `nofence` — an **empty function**. Nothing in the tree assigns it
+anything else, on any platform. So `unlock()` was a plain store with nothing in
+front of it.
+
+On x86 that is nearly harmless: its store order is already what this code
+assumes. On arm64 it is not. The stores a critical section makes can become
+visible *after* the store that releases the lock, so the next thread to take
+the lock — whose `_tas` does have acquire semantics (`ldaxr`/`stlxr`) — can read
+state the previous holder finished writing but had not yet published. A proc
+pushed onto `isched.vmq` could therefore vanish from the queue with nobody
+popping it, which is precisely the symptom this section spent so long
+characterising.
+
+The fix is one line: make the release a release.
+
+```c
+	__atomic_store_n(&l->val, 0, __ATOMIC_RELEASE);
+```
+
+`emu/port/alloc.c` already uses `__atomic_store_n(..., __ATOMIC_RELEASE)`, so
+this is the tree's own idiom rather than a new dependency.
+
+**Measured, interleaved, alternating binaries in one session** — the validation
+this section demanded, and which the earlier `vmqnext` candidate failed:
+
+| reproducer | baseline | fixed |
+|---|---|---|
+| `fdstresstest`, `-c1`, 150 pairs | 81 pass / **67 hang** / 2 other | **150 pass / 0 hang** |
+| `fdstresstest`, `-c0`, 80 pairs | 54 ok / **26 hang** | **80 ok / 0 hang** |
+| `gputest`, 25 pairs | 11 pass / **8 hang** / **6 other** | **25 pass / 0 hang / 0 other** |
+
+Note `gputest`'s *other* column: six crashes on the baseline, none with the fix.
+Those included `panic: decref` (bug 6). That is an observation, not a claim that
+bugs 5 and 6 are fixed — nobody has run their own reproducers against this — but
+anything that reads a torn view of memory another thread was midway through
+publishing is a good candidate for both, and they should be re-measured before
+any further work is done on them.
+
+Cost: **1-2%**, at the noise floor of a five-second `pde(2)` run (5.02/5.15s
+baseline against 5.12/5.17s fixed). `gpubench` appears to show 20% but does not:
+that is one millisecond of clock quantisation on a six-millisecond solve.
+
+**Still true and still not fixed**: `coherencefn` remains `nofence`. `unlock()`
+no longer depends on it, but `emu/port/win-x11a.c:628` still calls it and still
+gets nothing. That is a latent bug for an X11 build, which cannot be tested
+here.
+
+**How it was found**, since three earlier attempts were not:
+
+1. The plan's step 2 — audit every `isched.vmq`/`vmqt` access for one outside
+   `isched.l` — found nothing. All four sites are locked and the unlocked reads
+   are all re-checked before acting.
+2. Step 1's instrumentation said `vmq_badtail == 0` over 4923 pushes: the tail
+   was *always* reachable at a push, killing the "linked onto a stale tail"
+   half of the hypothesis outright.
+3. Per-proc history (a ring was useless — 10000 events over 128 slots, the
+   stuck proc's push long overwritten) showed the stuck proc with
+   `dbgpush=413 > dbgpop=389`: pushed, never popped, yet `isched.vmq == nil`.
+4. A direct invariant — maintain a count of pushes minus pops, walk the list
+   under the lock, compare — caught the list going from length 2 to length 1
+   **between two consecutive locked operations, with no pop in between**. At
+   that point the only remaining possibilities were "the lock does not
+   exclude" or "something else writes the links", and the lock was where the
+   plan's own step 3 said to look.
+
+The instrumentation moved the hang rate from ~40% to ~5% when the walk was
+under the lock, exactly as this document warns elsewhere. It still reproduced,
+so it still worked; the rate is a timing artefact, not evidence.
+
+### Original analysis, kept because the method is worth reading
 
 Reproducer committed: `appl/cmd/fdstresstest.b`, `man/1/fdstresstest`.
 
