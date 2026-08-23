@@ -427,6 +427,125 @@ type that
 does not know.  That is a porting gap in the amd64 Inferno kernel and a
 piece of work of its own.
 .NH 1
+How a native kernel provides networking
+.PP
+The stack is in the kernel and it is reached as files.  There is no
+socket call anywhere.
+.IP \(bu 2
+.CW os/inferno/ip
+holds it: the protocols
+.RB ( tcp.c ,
+.CW udp.c ,
+.CW icmp.c ,
+.CW icmp6.c ,
+.CW il.c ,
+.CW rudp.c ,
+.CW esp.c ,
+.CW gre.c ,
+.CW igmp.c ),
+the core
+.RB ( ip.c ,
+.CW ipv6.c ,
+.CW ipifc.c ,
+.CW iproute.c ,
+.CW arp.c ,
+.CW ipmux.c ,
+.CW nat.c ,
+.CW netlog.c )
+and the helpers beside them.
+.IP \(bu 2
+.CW os/inferno/ip/devip.c
+is
+.CW #I ,
+and a program binds it on
+.CW /net .
+Everything after that is
+.CW open ,
+.CW read
+and
+.CW write
+on
+.CW /net/ipifc/clone ,
+.CW /net/tcp ,
+.CW /net/udp ,
+.CW /net/arp ,
+.CW /net/iproute
+and
+.CW /net/log .
+.IP \(bu 2
+Which protocols a kernel has is a line in its config file.  The
+.CW ip
+section becomes
+.CW ipprotoinit[]
+in the generated
+.CW <conf>.c ,
+and
+.CW devip.c 's
+attach walks it calling each
+.CW <proto>init(Fs*) ,
+so a board with no use for a protocol does not carry it.
+.IP \(bu 2
+Cards are a separate thing joined to it by a
+.CW Medium .
+.CW os/inferno/port/devether.c
+is
+.CW #l ;
+a driver registers with
+.CW addethercard("virtio",\ reset)
+from a
+.CW <name>link()
+function, and the config's
+.CW link
+section becomes the
+.CW links()
+the kernel calls at boot.
+.CW os/inferno/ip/ethermedium.c
+is the join, and it is worth reading: its
+.CW bind
+opens
+.CW "#l0/addr"
+through
+.CW namec
+and reads the mac, so the ip stack reaches a card the way any program
+would \- by name, through the name space.
+.CW loopbackmedium.c ,
+.CW pktmedium.c ,
+.CW nullmedium.c
+and
+.CW netdevmedium.c
+are the others.
+.IP \(bu 2
+Addresses are userland's business.
+.CW os/inferno/init/virtinit.b
+binds
+.CW #I
+on
+.CW /net ,
+opens
+.CW /net/ipifc/clone ,
+and hands it to
+.CW dhcpclient ;
+a static setup writes
+.CW "bind ether /net/ether0"
+and
+.CW "add <ip> <mask>"
+to the same file.
+.PP
+So a board brings up networking by naming three things in its config
+\- the protocols in the
+.CW ip
+section, the card driver and its medium in the
+.CW link
+section, and
+.CW ether
+and
+.CW ip
+in the
+.CW dev
+section \- and by binding
+.CW #I
+at boot.  Nothing in that path is a library the kernel links.
+.NH 1
 How a native kernel gets its ip helpers
 .PP
 The RISC-V boards listed
