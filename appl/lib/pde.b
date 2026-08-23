@@ -161,6 +161,32 @@ lapvec(f: ref Field, x: array of real, ix, iy: int): real
 # combine, which is y = 1*x + (-c)*lap. Two C calls and no loop here at all.
 # The Limbo version is kept below as the fallback and as the statement of what
 # the operator is - pdetest(1) checks the two against each other.
+# lap5 needs somewhere to put the Laplacian that is not the array it is
+# reading. The explicit steppers below all want it for a whole grid at once, so
+# one buffer is kept and grown rather than allocated per substep.
+lapbuf: array of real;
+lapbufb: array of real;		# gray needs both fields' Laplacians at once
+
+lapinto(f: ref Field): array of real
+{
+	if(math == nil)
+		return nil;
+	if(lapbuf == nil || len lapbuf < f.nx*f.ny)
+		lapbuf = array[f.nx*f.ny] of real;
+	math->lap5(f.nx, f.ny, f.dx, f.dy, f.bc, f.u, lapbuf);
+	return lapbuf;
+}
+
+lapintob(f: ref Field): array of real
+{
+	if(math == nil)
+		return nil;
+	if(lapbufb == nil || len lapbufb < f.nx*f.ny)
+		lapbufb = array[f.nx*f.ny] of real;
+	math->lap5(f.nx, f.ny, f.dx, f.dy, f.bc, f.u, lapbufb);
+	return lapbufb;
+}
+
 applyop(x: array of real, c: real): array of real
 {
 	f := opfield;
@@ -419,9 +445,16 @@ diffuse(f: ref Field, d, dt: real)
 	ns := int (dt/maxdt)+1;
 	h := dt/real(ns);
 	for(s := 0; s < ns; s++){
-		for(y := 0; y < f.ny; y++)
-			for(x := 0; x < f.nx; x++)
-				f.work[y*f.nx+x] = get(f,x,y)+h*d*lap(f,x,y);
+		# u + h*d*lap(u), which is axpby's shape once the Laplacian
+		# exists: work = lap, then work = 1*u + (h*d)*work.
+		l := lapinto(f);
+		if(l != nil){
+			f.work[0:] = l[0:f.nx*f.ny];
+			math->axpby(1.0, f.u, h*d, f.work);
+		}else
+			for(y := 0; y < f.ny; y++)
+				for(x := 0; x < f.nx; x++)
+					f.work[y*f.nx+x] = get(f,x,y)+h*d*lap(f,x,y);
 		swap(f);
 	}
 }
@@ -437,11 +470,19 @@ wave(f: ref Field, speed, damping, dt: real)
 	for(s := 0; s < ns; s++){
 		q := speed*speed*h*h;
 		d := damping*h;
-		for(y := 0; y < f.ny; y++)
-			for(x := 0; x < f.nx; x++){
-				i := y*f.nx+x;
-				f.work[i] = (2.0-d)*f.u[i]-(1.0-d)*f.old[i]+q*lap(f,x,y);
-			}
+		l := lapinto(f);
+		if(l != nil){
+			# work = q*lap + (2-d)*u - (1-d)*old, in three steps
+			# that are each a single pass.
+			f.work[0:] = l[0:f.nx*f.ny];
+			math->axpby(2.0-d, f.u, q, f.work);
+			math->axpby(-(1.0-d), f.old, 1.0, f.work);
+		}else
+			for(y := 0; y < f.ny; y++)
+				for(x := 0; x < f.nx; x++){
+					i := y*f.nx+x;
+					f.work[i] = (2.0-d)*f.u[i]-(1.0-d)*f.old[i]+q*lap(f,x,y);
+				}
 		t := f.old; f.old = f.u; f.u = f.work; f.work = t;
 	}
 }
@@ -458,12 +499,26 @@ gray(a, b: ref Field, da, db, feed, kill, dt: real)
 	ns := int (dt/maxdt)+1;
 	h := dt/real(ns);
 	for(s := 0; s < ns; s++){
+		# The reaction term is nonlinear and per-cell, so this loop
+		# stays in Limbo - but the five-point gather that dominates it
+		# does not have to. Both Laplacians are computed for the whole
+		# grid first and read back here.
+		la := lapinto(a);
+		lb := lapintob(b);
 		for(y := 0; y < a.ny; y++)
 			for(x := 0; x < a.nx; x++){
 				i := y*a.nx+x;
 				av := a.u[i]; bv := b.u[i]; ab2 := av*bv*bv;
-				a.work[i] = av+h*(da*lap(a,x,y)-ab2+feed*(1.0-av));
-				b.work[i] = bv+h*(db*lap(b,x,y)+ab2-(feed+kill)*bv);
+				lav, lbv: real;
+				if(la != nil){
+					lav = la[i];
+					lbv = lb[i];
+				}else{
+					lav = lap(a,x,y);
+					lbv = lap(b,x,y);
+				}
+				a.work[i] = av+h*(da*lav-ab2+feed*(1.0-av));
+				b.work[i] = bv+h*(db*lbv+ab2-(feed+kill)*bv);
 				if(a.work[i] < 0.0) a.work[i] = 0.0;
 				if(a.work[i] > 1.0) a.work[i] = 1.0;
 				if(b.work[i] < 0.0) b.work[i] = 0.0;

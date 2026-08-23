@@ -320,8 +320,30 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    | 128² | 3.41s | 0.58s |
    | 256² | 28.10s | 5.26s |
 
-   Results agree to 5.5e-16 relative after a hundred successive GMRES solves,
-   and `verify(2)`'s `laplacianorder` is unchanged.
+   Results agree to 5.5e-16 relative after a hundred successive GMRES solves.
+
+   **The explicit steppers were then converted too, and that is where the big
+   factor was.** `diffuse`, `wave` and `gray` each called `lap(f,x,y)` per cell,
+   which is five `get()` calls with boundary branches plus a call of its own —
+   about six Limbo calls per cell — and they *substep* for stability, so one
+   `run` is many full sweeps. Precomputing the Laplacian for the whole grid with
+   `lap5` and combining with `axpby`:
+
+   | 256², explicit diffuse, 50 steps | before | after |
+   |---|---|---|
+   | | 54.26s | **0.34s** |
+
+   Bit-identical result. `gray` is bit-identical too; `wave` agrees to 1.3e-15
+   across 50 substepped steps. `gray`'s reaction term is nonlinear and per-cell
+   so that loop stays in Limbo — only the five-point gather moved.
+
+   **A correction to what the previous commit implied.** It reported
+   `laplacianorder` unchanged alongside the `lap5` work, which reads as
+   evidence for it. It was not: `laplacianorder` drives `pde->diffuse` on a raw
+   `Field`, which at that point still went through the *unconverted* Limbo
+   `lap()`. It exercises `lap5` only now that the explicit path is converted —
+   verified by perturbing `lap5` by 0.1% and watching the reported orders move
+   (1.930 → 1.950). "Unchanged" is only evidence when the code is reached.
 
    **`lap5` shipped measured on `clamp` alone**, with periodic and zero never
    compared against anything — the border is where such a kernel goes wrong,
