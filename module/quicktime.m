@@ -91,6 +91,8 @@ QuickTime: module
 		timescale:	int;	# units per second
 		width:		int;	# vide only
 		height:		int;
+		chans:		int;	# soun only: channel count
+		rate:		int;	# soun only: sample rate in Hz
 		# Codec setup, verbatim: the avcC payload for avc1, which is
 		# what a hardware decoder needs to be configured before it can
 		# be given any sample.

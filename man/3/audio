@@ -142,6 +142,41 @@ is one of
 .BR line ,
 .BR aux1 ,
 .BR loop .
+.SS "Decoding coded audio"
+.B Audiodec
+is a filter, not another way to play: write one coded sample to it and
+read back the PCM that sample decodes to.
+Configure it first by writing
+.EX
+	decoder \fIcodec\fP \fIrate\fP \fIchannels\fP \fIhex setup\fP
+.EE
+to
+.BR audioctl ,
+where the setup data is the codec's parameter sets \(em for
+.B mp4a
+that is the
+.B esds
+payload, which
+.IR quicktime (2)
+returns as a track's
+.BR extra .
+.B Nodecoder
+releases it.
+.PP
+A filter rather than a sink because that is what composes: the caller
+may send the PCM to
+.BR audio ,
+mix it, write it to a file, or measure it.
+It is also the only shape that can be tested without listening.
+.PP
+Only the coded bytes of one sample cross into the kernel.
+Finding those samples in a container is a data-format job and is done
+in Limbo by
+.IR quicktime (2);
+what is here is the part that needs the platform's decoder.
+This mirrors what
+.IR draw (3)
+does for video.
 .SH SOURCE
 .B /emu/port/devaudio*.c
 .br

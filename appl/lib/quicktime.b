@@ -483,6 +483,16 @@ sampledesc(fd: ref Sys->FD, skids: list of ref Atom, t: ref Track): string
 			}
 		}
 	}
+	# Audio parameters live in the fixed part of the entry, and a decoder
+	# needs them: the sample rate is a 16.16 fixed-point value and the
+	# media timescale is not always the same number.
+	if(t.kind == "soun" && 8 + 28 <= len b){
+		t.chans = beu16(b, 8 + 24);
+		t.rate = beu32(b, 8 + 32) >> 16;
+		if(t.rate <= 0)
+			t.rate = t.timescale;
+	}
+
 	t.extra = setupbox(b, 8 + skip, 8 + esz);
 	return nil;
 }

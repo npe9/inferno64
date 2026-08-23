@@ -8,7 +8,32 @@ Dirtab audiotab[] =
 	".",		{Qdir, 0, QTDIR},	0,	0555,
 	"audio",	{Qaudio},	0,	0666,
 	"audioctl",	{Qaudioctl},	0,	0666,
+	"audiodec",	{Qaudiodec},	0,	0666,
 };
+
+/*
+ * Coded-audio decode, as a filter: write one coded sample, read back the PCM
+ * it turns into. A filter rather than another way to play, because that is
+ * what composes - the caller can send the PCM to /dev/audio, mix it, write it
+ * to a file, or measure it - and because a sink cannot be tested without
+ * listening to it.
+ *
+ * The split is the same one draw(3) makes for video: quicktime(2) finds the
+ * coded samples in Limbo, and only the bytes of one sample cross into the
+ * kernel, where the platform decoder is the part that cannot be done anywhere
+ * else. Nil hooks mean no decoder, which is an error to the caller rather
+ * than silence.
+ */
+void*	(*audiodecopen)(char *codec, int rate, int chans, uchar *extra, int nextra);
+int	(*audiodecsample)(void *dec, uchar *in, int nin, uchar *out, int nout);
+void	(*audiodecclose)(void *dec);
+
+static void	*audiodec;		/* one decoder, like the one audio device */
+static uchar	*audiodecbuf;		/* PCM waiting to be read */
+static int	audiodeclen;
+static int	audiodecoff;
+
+enum { Audiodecmax = 256*1024 };	/* a decoded sample is far smaller */
 
 static void
 audioinit(void)
@@ -45,6 +70,7 @@ audioopen(Chan *c, int omode)
 	switch(c->qid.path) {
 	case Qdir:
 	case Qaudioctl:
+	case Qaudiodec:		/* a filter: it opens no hardware */
 		break;
 	case Qaudio:
 		audio_file_open(c, c->mode);
@@ -65,6 +91,7 @@ audioclose(Chan *c)
 	switch(c->qid.path) {
 	case Qdir:
 	case Qaudioctl:
+	case Qaudiodec:
 		break;
 	case Qaudio:
 		audio_file_close(c);
@@ -87,6 +114,15 @@ audioread(Chan *c, void *va, long count, vlong offset)
 	switch(c->qid.path) {
 	case Qaudio:
 		return audio_file_read(c, va, count, offset);
+	case Qaudiodec:
+		if(audiodecbuf == nil || audiodecoff >= audiodeclen)
+			return 0;
+		n = audiodeclen - audiodecoff;
+		if(n > count)
+			n = count;
+		memmove(va, audiodecbuf + audiodecoff, n);
+		audiodecoff += n;
+		return n;
 	case Qaudioctl:
 		buf = smalloc(READSTR);
 		if(waserror()){
@@ -106,6 +142,21 @@ static long
 audiowrite(Chan *c, void *va, long count, vlong offset)
 {
 	switch(c->qid.path) {
+	case Qaudiodec:
+		if(audiodec == nil)
+			error("no decoder: write \"decoder\" to audioctl first");
+		if(audiodecbuf == nil){
+			audiodecbuf = malloc(Audiodecmax);
+			if(audiodecbuf == nil)
+				error(Enomem);
+		}
+		audiodeclen = audiodecsample(audiodec, va, count, audiodecbuf, Audiodecmax);
+		audiodecoff = 0;
+		if(audiodeclen < 0){
+			audiodeclen = 0;
+			error(up->env->errstr);
+		}
+		return count;
 	case Qaudio:
 		return audio_file_write(c, va, count, offset);
 	case Qaudioctl:
@@ -117,6 +168,66 @@ audiowrite(Chan *c, void *va, long count, vlong offset)
 static int sval(char*, unsigned long*, ulong, ulong);
 static int str2val(svp_t*, char*, ulong*);
 static char* val2str(svp_t*, ulong);
+
+static int
+hexval(int c)
+{
+	if(c >= '0' && c <= '9')
+		return c - '0';
+	if(c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if(c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+static void
+audiodecctl(Cmdbuf *cb)
+{
+	uchar *ex;
+	int nex, i, hi, lo, l, rate, chans;
+
+	if(audiodecopen == nil)
+		error("no audio decoder on this platform");
+	if(audiodec != nil){
+		audiodecclose(audiodec);
+		audiodec = nil;
+	}
+	rate = atoi(cb->f[2]);
+	chans = atoi(cb->f[3]);
+	if(rate <= 0 || chans <= 0)
+		error("decoder needs a positive rate and channel count");
+
+	nex = 0;
+	ex = nil;
+	if(cb->nf >= 5){
+		l = strlen(cb->f[4]);
+		if(l & 1)
+			error("setup data must be an even number of hex digits");
+		nex = l/2;
+		ex = malloc(nex);
+		if(ex == nil)
+			error(Enomem);
+		if(waserror()){
+			free(ex);
+			nexterror();
+		}
+		for(i = 0; i < nex; i++){
+			hi = hexval(cb->f[4][2*i]);
+			lo = hexval(cb->f[4][2*i+1]);
+			if(hi < 0 || lo < 0)
+				error("bad hex in setup data");
+			ex[i] = (hi<<4) | lo;
+		}
+		poperror();
+	}
+	audiodec = audiodecopen(cb->f[1], rate, chans, ex, nex);
+	free(ex);
+	if(audiodec == nil)
+		error(up->env->errstr);
+	audiodeclen = 0;
+	audiodecoff = 0;
+}
 
 int
 audioparse(char* args, int len, Audio_t *t)
@@ -131,6 +242,29 @@ audioparse(char* args, int len, Audio_t *t)
 	if(waserror()){
 		free(cb);
 		return 0;
+	}
+
+	/*
+	 * decoder <codec> <rate> <chans> <hex setup>
+	 *
+	 * Handled before the ordinary parameters because it is not one of
+	 * them: it configures the audiodec filter rather than the device's own
+	 * format, and its setup data is hex for the same reason draw(3)'s is -
+	 * this is a text control file and a parameter set is tens of bytes.
+	 */
+	if(cb->nf >= 4 && strcmp(cb->f[0], "decoder") == 0){
+		audiodecctl(cb);
+		poperror();
+		free(cb);
+		return 1;
+	}
+	if(cb->nf == 1 && strcmp(cb->f[0], "nodecoder") == 0){
+		if(audiodec != nil && audiodecclose != nil)
+			audiodecclose(audiodec);
+		audiodec = nil;
+		poperror();
+		free(cb);
+		return 1;
 	}
 
 	tf = 0;

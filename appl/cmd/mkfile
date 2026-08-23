@@ -82,6 +82,7 @@ TARG=\
 	gpubench.dis\
 	drawdecodetest.dis\
 	gputest.dis\
+	adectest.dis\
 	qttest.dis\
 	vstreamtest.dis\
 	grep.dis\

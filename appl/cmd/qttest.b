@@ -148,9 +148,14 @@ init(nil: ref Draw->Context, argv: list of string)
 		raise "fail:test";
 
 	for(j = 0; j < len ts; j++)
-		print("  track %d: %s/%s timescale %d, %d samples, %d bytes of setup\n",
-			ts[j].id, ts[j].kind, ts[j].codec, ts[j].timescale,
-			len ts[j].samples, len ts[j].extra);
+		if(ts[j].kind == "soun")
+			print("  track %d: %s/%s %dHz %d ch, %d samples, %d bytes of setup\n",
+				ts[j].id, ts[j].kind, ts[j].codec, ts[j].rate,
+				ts[j].chans, len ts[j].samples, len ts[j].extra);
+		else
+			print("  track %d: %s/%s timescale %d, %d samples, %d bytes of setup\n",
+				ts[j].id, ts[j].kind, ts[j].codec, ts[j].timescale,
+				len ts[j].samples, len ts[j].extra);
 
 	print("  %s: %s/%s %dx%d, timescale %d, %d bytes of setup data\n",
 		mov, t.kind, t.codec, t.width, t.height, t.timescale, len t.extra);

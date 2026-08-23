@@ -399,3 +399,165 @@ audio_file_close(Chan *c)
 		qunlock(&outlock);
 	}
 }
+
+/*
+ * AAC decode for /dev/audiodec, one coded sample at a time.
+ *
+ * AudioConverter rather than AVFoundation, because this must work on a
+ * stream: quicktime(2) hands over the coded samples it found and each one is
+ * converted on its own, so nothing is staged and no file is opened here.
+ *
+ * The esds payload from the container goes in as the decompression magic
+ * cookie, which is how the converter learns the exact AAC profile - guessing
+ * it from the sample rate and channel count works until it does not.
+ */
+#import <AudioToolbox/AudioToolbox.h>
+
+extern void*	(*audiodecopen)(char*, int, int, uchar*, int);
+extern int	(*audiodecsample)(void*, uchar*, int, uchar*, int);
+extern void	(*audiodecclose)(void*);
+
+typedef struct Adec Adec;
+struct Adec {
+	AudioConverterRef	conv;
+	AudioStreamBasicDescription in, out;
+	uchar			*pkt;	/* the sample being converted */
+	int			npkt;
+	int			done;	/* the converter has taken it */
+};
+
+/*
+ * Called by the converter when it wants input. One coded sample is one packet,
+ * and it is offered exactly once: returning zero packets afterwards is what
+ * tells the converter to stop rather than block.
+ */
+static OSStatus
+adec_input(AudioConverterRef conv, UInt32 *npkt, AudioBufferList *bl,
+	AudioStreamPacketDescription **pdesc, void *ref)
+{
+	Adec *d = ref;
+	static AudioStreamPacketDescription pd;
+
+	USED(conv);
+	if(d->done || d->pkt == nil || d->npkt <= 0){
+		*npkt = 0;
+		return noErr;
+	}
+	bl->mNumberBuffers = 1;
+	bl->mBuffers[0].mNumberChannels = d->in.mChannelsPerFrame;
+	bl->mBuffers[0].mDataByteSize = d->npkt;
+	bl->mBuffers[0].mData = d->pkt;
+	pd.mStartOffset = 0;
+	pd.mVariableFramesInPacket = 0;
+	pd.mDataByteSize = d->npkt;
+	if(pdesc != NULL)
+		*pdesc = &pd;
+	*npkt = 1;
+	d->done = 1;
+	return noErr;
+}
+
+static void*
+metal_audiodec_open(char *codec, int rate, int chans, uchar *extra, int nextra)
+{
+	Adec *d;
+	OSStatus st;
+
+	if(codec == nil || strcmp(codec, "mp4a") != 0){
+		kwerrstr("audio decode: only mp4a is supported here");
+		return nil;
+	}
+	d = mallocz(sizeof(Adec), 1);
+	if(d == nil)
+		return nil;
+
+	d->in.mSampleRate = rate;
+	d->in.mFormatID = kAudioFormatMPEG4AAC;
+	d->in.mChannelsPerFrame = chans;
+	d->in.mFramesPerPacket = 1024;		/* AAC-LC */
+
+	d->out.mSampleRate = rate;
+	d->out.mFormatID = kAudioFormatLinearPCM;
+	d->out.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+	d->out.mBitsPerChannel = 16;
+	d->out.mChannelsPerFrame = chans;
+	d->out.mFramesPerPacket = 1;
+	d->out.mBytesPerFrame = 2 * chans;
+	d->out.mBytesPerPacket = d->out.mBytesPerFrame;
+
+	st = AudioConverterNew(&d->in, &d->out, &d->conv);
+	if(st != noErr){
+		kwerrstr("audio decode: cannot create a converter");
+		free(d);
+		return nil;
+	}
+	if(extra != nil && nextra > 0){
+		/* Not fatal if refused: some streams carry no usable cookie
+		 * and the format above is enough. */
+		AudioConverterSetProperty(d->conv,
+			kAudioConverterDecompressionMagicCookie, nextra, extra);
+	}
+	return d;
+}
+
+static int
+metal_audiodec_sample(void *dec, uchar *in, int nin, uchar *out, int nout)
+{
+	Adec *d = dec;
+	AudioBufferList bl;
+	UInt32 frames;
+	OSStatus st;
+
+	if(d == nil || in == nil || nin <= 0){
+		kwerrstr("audio decode: nothing to decode");
+		return -1;
+	}
+	d->pkt = in;
+	d->npkt = nin;
+	d->done = 0;
+
+	/*
+	 * Exactly one packet's worth, not as much as the output buffer holds.
+	 * Asking for more makes the converter consume this packet, ask for
+	 * another, get none, and treat the stream as ended - after which it
+	 * returns nothing for every later sample. That looked like a decoder
+	 * that produced one buffer of silence and then stopped.
+	 */
+	frames = d->in.mFramesPerPacket;
+	if(frames > (UInt32)(nout / d->out.mBytesPerFrame))
+		frames = nout / d->out.mBytesPerFrame;
+	bl.mNumberBuffers = 1;
+	bl.mBuffers[0].mNumberChannels = d->out.mChannelsPerFrame;
+	bl.mBuffers[0].mDataByteSize = nout;
+	bl.mBuffers[0].mData = out;
+
+	st = AudioConverterFillComplexBuffer(d->conv, adec_input, d, &frames, &bl, NULL);
+	d->pkt = nil;
+	d->npkt = 0;
+	if(st != noErr && frames == 0){
+		kwerrstr("audio decode: converter failed");
+		return -1;
+	}
+	return (int)(frames * d->out.mBytesPerFrame);
+}
+
+static void
+metal_audiodec_close(void *dec)
+{
+	Adec *d = dec;
+
+	if(d == nil)
+		return;
+	if(d->conv != NULL)
+		AudioConverterDispose(d->conv);
+	free(d);
+}
+
+__attribute__((constructor))
+static void
+audiodec_register(void)
+{
+	audiodecopen = metal_audiodec_open;
+	audiodecsample = metal_audiodec_sample;
+	audiodecclose = metal_audiodec_close;
+}

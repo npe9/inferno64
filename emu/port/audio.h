@@ -50,7 +50,8 @@ enum
 {
 	Qdir = 0,		/* must start at 0 representing a directory */
 	Qaudio,
-	Qaudioctl
+	Qaudioctl,
+	Qaudiodec
 };
 
 /* required external platform specific functions */

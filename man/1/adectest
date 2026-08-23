@@ -1,0 +1,51 @@
+.TH ADECTEST 1
+.SH NAME
+adectest \- test audio(3)'s decode filter
+.SH SYNOPSIS
+.B adectest
+.SH DESCRIPTION
+.B Adectest
+decodes the audio track of
+.B /lib/movies/av.mov
+through
+.BR /dev/audiodec :
+.IR quicktime (2)
+finds the coded samples in Limbo, each is written to the filter, and
+the PCM is read back.
+.PP
+It then
+.B measures the pitch
+of that PCM and compares it against the tone the clip was built with.
+That is the point of the test.
+"Some bytes came back" would pass against a decoder producing noise,
+silence, or the wrong sample rate; a square wave of a known frequency
+will not.
+Pitch is measured by counting sign changes, which for a square wave is
+exactly two per period, and unlike a peak or an energy measure cannot
+be fooled by silence or a DC offset.
+.PP
+The clip carries a 220Hz square wave; decoded and measured back it
+comes out around 216Hz, the difference being what a lossy codec does to
+a square wave's harmonics.
+.SH SOURCE
+.B /appl/cmd/adectest.b
+.SH SEE ALSO
+.IR audio (3),
+.IR quicktime (2),
+.IR vstreamtest (1)
+.SH BUGS
+Requires a platform decoder, so it is meaningful only under
+.BR emu-cocoa .
+.B Emu-g
+has no audio device at all.
+.PP
+One codec, one sample rate, one channel, one second of tone.
+Nothing here plays the audio, so nothing here tests the device's output
+path, and nothing tests synchronisation with video \(em for which the
+durations
+.IR quicktime (2)
+reports would be the starting point.
+.PP
+The first packet a decoder emits is the encoder's priming and is
+silence; the measurement skips the start of the stream rather than
+accounting for the priming exactly.
