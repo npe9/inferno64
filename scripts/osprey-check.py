@@ -159,6 +159,12 @@ CHECKS = [
   ["ps | awk '$2=='^$u",
    "echo kill >/proc/$b/ctl; echo kill >/proc/$u/ctl; echo done"],
   "!Stopped"),
+ ("the wire pi-p is spoken on given back when it is turned off",
+  ["echo pipether ether0 on >/n/osprey/ctl; a=`{ps|grep ospreypip|wc -l}",
+   "echo pipether ether0 off >/n/osprey/ctl; b=`{ps|grep ospreypip|wc -l}",
+   "echo pipether ether0 on >/n/osprey/ctl; sleep 1; c=`{ps|grep ospreypip|wc -l}",
+   "echo wire $a $b $c; echo pipether ether0 off >/n/osprey/ctl"],
+  "wire 2 0 2"),
  # last: reset takes the machine apart
  ("a session that outlived a reset told there is no such session",
   ["y=`{/tmp/pip open 1 /1 read 1 budget}; echo $y",
@@ -177,7 +183,7 @@ def main():
                                COM2, '600'],
                               stdout=open(COM2LOG, 'w'),
                               stderr=subprocess.DEVNULL)
-    argv = ['./scripts/osprey-console.py', '-q', '-p', '4',
+    argv = ['./scripts/osprey-console.py', '-q', '-p', '4', '-n', 'e1000',
             '-2', 'unix:%s,server,nowait' % COM2, '-l', LOG, '-S',
             '-d', ROOT + '/.qemu/9front-root.qcow2', '-t', '320',
             '-e', r'user\[glenda\]: =', '-u', '% ']

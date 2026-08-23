@@ -439,6 +439,7 @@ static Pipstream pipstream[Pipmaxstream];
 static uchar pipfrom[6];	/* the address the group in hand came from */
 static int pipviafile;		/* the group in hand came through #O/pip */
 static Chan *pipetherchan;	/* the wire, while there is one */
+static Rendez pipetherrend;	/* woken when the wire has been given back */
 static int pipserving;		/* a wire is being answered on */
 static uvlong pipnextsid = 1;
 static QLock piplock;
@@ -2379,6 +2380,12 @@ pipstreamer(void*)
  * remembered against the connection, so that a client need not name it
  * again in every group.
  */
+static int
+pipetherdone(void*)
+{
+	return pipetherchan == nil;
+}
+
 /*
  * Forget every session and every stream.  What a session holds is a fid
  * on a container, and reset makes those containers into different ones
@@ -2464,6 +2471,7 @@ done:
 	for(n = 0; n < Pipmaxstream; n++)
 		pipstream[n].used = 0;
 	qunlock(&piplock);
+	wakeup(&pipetherrend);
 	if(dc != nil)
 		cclose(dc);
 	if(cc != nil)
@@ -3121,7 +3129,34 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * about containers.
 		 */
 		if(strcmp(cb->f[2], "off") == 0){
+			/*
+			 * The reader is asleep in a read on its conversation
+			 * and will not look at pipserving until something
+			 * arrives, so send it something.  A frame of nothing
+			 * is a group with no messages in it, which it
+			 * answers by going round again -- and then sees that
+			 * it has been told to stop.  Waiting for it to
+			 * finish is what makes off followed by on work.
+			 */
 			pipserving = 0;
+			qlock(&piplock);
+			if(pipetherchan != nil){
+				static uchar quiet[Minframe];
+
+				memset(quiet, 0, sizeof quiet);
+				quiet[0] = 0xff;
+				quiet[12] = Pipethertype >> 8;
+				quiet[13] = Pipethertype;
+				if(!waserror()){
+					devtab[pipetherchan->type]->write(
+						pipetherchan, quiet,
+						sizeof quiet, 0);
+					poperror();
+				}
+			}
+			qunlock(&piplock);
+			while(pipetherchan != nil)
+				sleep(&pipetherrend, pipetherdone, nil);
 			break;
 		}
 		if(pipserving)
@@ -3300,6 +3335,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			error(Ebadarg);
 		if((et = etherlookup(cb->f[2])) == nil)
 			error(Enonexist);
+		if(ospreyether[x] != nil && ospreyether[x] != et)
+			ospreyputether(p);	/* give the last one back first */
 		if(ospreylendbufs(p, x) < 0)
 			error(Enomem);
 		ospreyether[x] = et;
@@ -3343,6 +3380,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if(ut->phys->interrupt == nil || ut->phys->intrmask == nil
 		|| ut->phys->send == nil || ut->phys->taskenable == nil)
 			error(Ebadarg);
+		if(ospreyuart[x] != nil && ospreyuart[x] != ut)
+			ospreyputuart(p);	/* and the last uart */
 		ospreyuart[x] = ut;
 		ospreyuartsem[x] = i;
 		if(ut->phys->taskenable != nil)
