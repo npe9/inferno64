@@ -133,8 +133,9 @@ next open.
 .B "Checkpoint and restart."
 Every container as text: what it is, what it is allowed, what it has
 used, where it was running, and whatever its rings are holding \- a
-message in flight is written out with the container and put back on the
-same ring when it is read.  Reading it is a checkpoint and writing
+message in flight is written out with the container, along with the data
+area the buffers it names are in, and put back on the same ring when it
+is read.  Reading it is a checkpoint and writing
 one back is a restart, into this kernel or another one -- a container
 that was running when it was written out is running again when it is read
 back.

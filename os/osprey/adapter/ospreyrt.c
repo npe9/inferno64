@@ -1572,6 +1572,58 @@ snapqueue(char *p, char *e, char *name, Queue *q)
 	return p;
 }
 
+/*
+ * The buffers the messages in a ring name.  A message says where in the
+ * container's data area its buffer is, so a checkpoint that carried the
+ * messages and not the area would answer them against whatever happened
+ * to be at that offset.  Written in chunks and only the chunks that
+ * hold something, so a container with an empty area writes nothing.
+ */
+enum {
+	Snapchunk = 32,		/* bytes of data area to a line */
+};
+
+static char*
+snapdata(char *p, char *e, Ospreyproc *q)
+{
+	static char hex[] = "0123456789abcdef";
+	uchar *d;
+	ulong off, len, i;
+
+	len = (ulong)ospreydatalen(q);
+	if((d = ospreydata(q, 0, len)) == nil)
+		return p;
+	for(off = 0; off < len; off += Snapchunk){
+		ulong n;
+
+		n = len - off < Snapchunk ? len - off : Snapchunk;
+		for(i = 0; i < n; i++)
+			if(d[off+i] != 0)
+				break;
+		if(i == n)
+			continue;	/* nothing in this one */
+		p = seprint(p, e, "data %lud ", off);
+		for(i = 0; i < n && p < e - 2; i++){
+			*p++ = hex[d[off+i] >> 4];
+			*p++ = hex[d[off+i] & 0xF];
+		}
+		p = seprint(p, e, "\n");
+	}
+	return p;
+}
+
+static int
+snaphex(int c)
+{
+	if(c >= '0' && c <= '9')
+		return c - '0';
+	if(c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if(c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
 long
 ospreysnapwrite(char *buf, long nbuf)
 {
@@ -1621,6 +1673,9 @@ ospreysnapwrite(char *buf, long nbuf)
 		p = snapqueue(p, e, "requests", r->requests);
 		p = snapqueue(p, e, "replies", r->replies);
 		p = snapqueue(p, e, "output", r->output);
+		if(!queueempty(r->requests) || !queueempty(r->replies)
+		|| !queueempty(r->output))
+			p = snapdata(p, e, q);
 		for(j = 0; j < r->ns.n; j++)
 			p = seprint(p, e, "name %s %s\n",
 				r->ns.name[j].local, r->ns.name[j].global);
@@ -1765,6 +1820,23 @@ ospreysnapread(char *text, long n)
 			for(j = 0; j < MessageWords-3; j++)
 				m.arg[j] = strtoull(snapword(&line), nil, 0);
 			queueput(q, &m);
+		} else if(strcmp(key, "data") == 0){
+			uchar *d;
+			ulong off, len;
+			int hi, lo;
+
+			off = (ulong)strtoull(a, nil, 0);
+			b = snapword(&line);
+			len = strlen(b) / 2;
+			if(len == 0 || (d = ospreydata(p, off, len)) == nil)
+				continue;
+			for(len = 0; b[2*len] != '\0' && b[2*len+1] != '\0'; len++){
+				hi = snaphex(b[2*len]);
+				lo = snaphex(b[2*len+1]);
+				if(hi < 0 || lo < 0)
+					break;
+				d[len] = (hi<<4) | lo;
+			}
 		} else if(strcmp(key, "name") == 0){
 			b = snapword(&line);
 			nsbind(&r->ns, a, b);

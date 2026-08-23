@@ -369,10 +369,13 @@ checkpoint names that is not there is made, one that is there is set to
 what the checkpoint says, and one that was running when it was written
 out is running again.  A message a ring is holding is written out with
 it, one line each, and put back on the same ring when the checkpoint is
-read; a ring that is empty writes nothing, which is the usual case.
-Nothing of the data area, the packets or the channels the kernel holds
-is in it: what is written is what a container is, not what it happens to
-be holding.
+read; a ring that is empty writes nothing, which is the usual case.  A
+container with anything in a ring writes its data area out as well, in
+lines of thirty-two bytes and only the lines that hold something, since
+that is where the buffers those messages name are.  The packets, the
+pages and the channels the kernel holds are not in it: what is written
+is what a container is and what it is in the middle of, not everything
+it happens to be holding.
 .PP
 A checkpoint is text and goes wherever text goes.
 .I mig
@@ -772,17 +775,12 @@ share.  A container migrated part way through its period arrives with
 that much of a budget already spent, and is only itself again at the next
 period.
 .PP
-A message that was in flight goes with a container, but the data area it
-may name does not, and neither do the container's packets, pages or open
-channels \- a checkpoint is what a container is, not what it is holding.
-A restored message is still serviced: a request that named a buffer is
-answered against whatever is at that offset now, which in a kernel that
-made the container afresh is zeroes and after a migration is whatever
-the slot it landed in was holding.  Requests that name no buffer \-
-.BR alloc ,
-.BR poll ,
-.B yield
-\- come back whole.
+A message that was in flight goes with a container and so does the data
+area, so a request that named a buffer is answered against the buffer it
+named.  The container's packets, its pages and the channels the kernel
+holds for it do not go: a container that had already opened something
+comes back having to open it again, and one whose request to open was
+still on the ring has that request answered where it arrives.
 .PP
 A checkpoint is one ethernet frame when
 .I mig
