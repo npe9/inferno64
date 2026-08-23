@@ -412,6 +412,12 @@ Run:
 	}
 	kill(rpid, "kill");
 	kill(tpid, "kill");
+	# Let the trace writer finish. Without this it waits on a channel that
+	# nothing will ever send to again, and since a live process keeps emu
+	# running, the whole command hangs after the traced program has already
+	# exited - which is exactly what it did.
+	if(tracech != nil)
+		tracech <-= (0, big 0, nil);
 	done <-= 1;
 }
 
