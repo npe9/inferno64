@@ -417,10 +417,15 @@ l1:
 		if(c1 == '/') {
 			for(;;) {
 				c = GETC();
-				if(c == '\n') {
-					lineno++;
-					goto l0;
-				}
+				/*
+				 * The newline ends the comment and is still
+				 * the end of the statement: this body is an
+				 * assembler's, where a line is a line.  Going
+				 * back for the next character instead would
+				 * join the next instruction to this one.
+				 */
+				if(c == '\n')
+					goto l1;
 				if(c == EOF) {
 					yyerror("eof in comment");
 					errorexit();
