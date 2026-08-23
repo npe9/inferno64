@@ -127,7 +127,7 @@ CLEANEXTRA=words.s primitives.s forth.h
 
 devether.$O $ETHERS:	etherif.h ../port/netif.h
 $IP devip.$O:		../ip/ip.h
-$VGA mouse.$O:		screen.h ../../include/memdraw.h
+$VGA mouse.$O:		screen.h ../../../include/memdraw.h
 
 mp.$O:				mp.h apbootstrap.i
 apic.$O squidboy.$O:		mp.h

@@ -397,6 +397,35 @@ goes on through its memory, draw, pointer and keyboard tests; what it
 still fails is its disk test, which wants a
 .CW -drive
 this invocation does not give it.
+.PP
+.CW os/inferno/pc64
+was asking for the same userland and stopping in the same place, and
+gets much further now.  Two more things were in its way and are fixed:
+its mkfile named
+.CW ../../include/memdraw.h ,
+one directory too few since the kernels were laid out one flavour per
+directory, and its config asks for
+.CW auth
+in the portable section while no portable
+.CW auth.c
+existed anywhere \- the three RISC-V boards each carried an identical
+copy of one.  That copy is
+.CW os/inferno/port/auth.c
+now, which is where portable code goes, and the boards take it through
+.CW portmkfile 's
+rule for a portable source rather than each holding their own.  All
+three still run a shell with it there.
+.PP
+What stops
+.CW pc64
+now is not plumbing: it compiles and fails in
+.CW fpu.c
+on an
+.CW FPU
+type that
+.CW os/inferno/port/portdat.h
+does not know.  That is a porting gap in the amd64 Inferno kernel and a
+piece of work of its own.
 .NH 1
 Then
 .PP
