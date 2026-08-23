@@ -1,5 +1,18 @@
 # Working agreement for this repository
 
+## Do not stop to say what is next — just do it
+
+**This is the rule that gets broken most often, so it comes first.** If you know what the next step
+is, take it in this turn. Do not end with "Next: ...", "The next thing is ...", or any other
+description of work you are about to do — that is asking for permission with extra words, and it
+costs a round trip to say "yes, carry on".
+
+Report what happened, not what is about to happen. Say what you did, what it showed, and what was
+wrong with it. Then keep going.
+
+The only time a closing plan is right is when the work genuinely stops: the task is finished, or
+something outside your control blocks it. Say which one, in a sentence.
+
 `AGENTS.md` carries the repository-wide rules that apply to every agent working
 here, including the autonomy rule: **do not ask for input, do not end a turn
 with a question.** This file adds the detail specific to working with Claude.
@@ -14,12 +27,6 @@ gotchas that have cost real time.
 same turn. Do not stop at a natural boundary to check in.
 
 **Never end a turn with "want me to do X next?"** If there is an obvious next item, do it.
-
-**Do not stop to say what is next — just do it.** Ending a turn with "Next: ..." is the same as
-asking, one round trip later. If you know what the next step is, take it in the same turn and report
-it as done. Report what happened, not what is about to happen. A closing plan is only warranted when
-the work genuinely stops there: the task is finished, or something outside your control blocks it,
-and then say which.
 
 **Do not use AskUserQuestion for anything with a sane default.** Pick the sensible option, name it in
 one line, and proceed: *"Doing X, it's the obvious default — say so if you wanted Y."* Reserve the

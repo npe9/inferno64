@@ -15,9 +15,13 @@ line what you picked, and carry on. Finish an item, commit it, and start the
 next one in the same turn.
 
 **Never end a turn with a question.** No "want me to do X next?", no "shall I
-continue?", no offering a menu. End with what was done and what happens next,
-stated as fact. If there is an obvious next item, do it rather than describing
-it.
+continue?", no offering a menu.
+
+**And do not end with a plan either.** "Next: ..." is the same request one
+round trip later. If you know the next step, take it in the same turn. Report
+what happened, not what is about to happen. A closing plan is right only when
+the work genuinely stops - the task is finished, or something outside your
+control blocks it - and then say which.
 
 **Scheduling the work is not the user's job.** Every unnecessary question costs
 a round trip and buys nothing. This applies to ordinary judgement calls,
