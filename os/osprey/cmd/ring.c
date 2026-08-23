@@ -43,8 +43,10 @@ struct Ospreymap {
 	uvlong	msgsize;
 	uvlong	requestqueue;
 	uvlong	replyqueue;
+	uvlong	outputqueue;
 	uvlong	request;
 	uvlong	reply;
+	uvlong	output;
 	uvlong	data;
 	uvlong	datalen;
 	uvlong	sem;

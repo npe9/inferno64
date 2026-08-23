@@ -117,7 +117,7 @@ static struct {
 static char *attrnames[] = {
 	"core", "state", "budget", "used", "period", "deadline",
 	"besteffort", "periods", "mode", "memory", "memused",
-	"netbytes", "netmax", "packets", "requests", "replies",
+	"netbytes", "netmax", "packets", "requests", "replies", "output",
 	"slice", "data", "pid", "version", nil,
 };
 
@@ -265,6 +265,8 @@ ospreyattr(Ospreyproc *p, char *name, char *buf, long nbuf)
 		s = seprint(s, e, "%llud", queuecount(q->requests));
 	else if(strcmp(name, "replies") == 0)
 		s = seprint(s, e, "%llud", queuecount(q->replies));
+	else if(strcmp(name, "output") == 0)
+		s = seprint(s, e, "%llud", queuecount(q->output));
 	else if(strcmp(name, "slice") == 0)
 		s = seprint(s, e, "%llud", p->slice);
 	else if(strcmp(name, "data") == 0)
@@ -391,9 +393,9 @@ sizes(void)
 	if(slicesize != 0)
 		return;
 	slicesize = ROUNDUP(sizeof(Ospreymap), Align)
-		+ ROUNDUP(2*sizeof(Queue), Align)
+		+ ROUNDUP(3*sizeof(Queue), Align)
 		+ ROUNDUP(Nsem*sizeof(Sem), Align)
-		+ ROUNDUP(2*Nqueue*sizeof(Message), Align)
+		+ ROUNDUP(3*Nqueue*sizeof(Message), Align)
 		+ ROUNDUP(Ndata, Align)
 		+ Npktbuf*Pktbufsize;
 	/*
@@ -732,8 +734,8 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 {
 	Ospreyproc *p;
 	Ospreymap *m;
-	Queue *rq, *pq;
-	Message *rm, *pm;
+	Queue *rq, *pq, *oq;
+	Message *rm, *pm, *om;
 	uchar *base;
 	int i, slot;
 
@@ -760,11 +762,13 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	m->msgsize = sizeof(Message);
 	m->requestqueue = ROUNDUP(sizeof(Ospreymap), Align);
 	m->replyqueue = m->requestqueue + sizeof(Queue);
-	m->sem = ROUNDUP(m->replyqueue + sizeof(Queue), Align);
+	m->outputqueue = m->replyqueue + sizeof(Queue);
+	m->sem = ROUNDUP(m->outputqueue + sizeof(Queue), Align);
 	m->nsem = Nsem;
 	m->request = ROUNDUP(m->sem + Nsem*sizeof(Sem), Align);
 	m->reply = m->request + Nqueue*sizeof(Message);
-	m->data = ROUNDUP(m->reply + Nqueue*sizeof(Message), Align);
+	m->output = m->reply + Nqueue*sizeof(Message);
+	m->data = ROUNDUP(m->output + Nqueue*sizeof(Message), Align);
 	m->pktbuf = ROUNDUP(m->data + Ndata, Align);
 	m->npktbuf = Npktbuf;
 	m->pktbufsize = Pktbufsize;
@@ -785,12 +789,14 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 
 	rq = (Queue*)(base + m->requestqueue);
 	pq = (Queue*)(base + m->replyqueue);
+	oq = (Queue*)(base + m->outputqueue);
 	rm = (Message*)(base + m->request);
 	pm = (Message*)(base + m->reply);
+	om = (Message*)(base + m->output);
 	lockall();
 	pktqinit(&p->pktq, p->pktp, Npkt);
 	if(processinit(&p->process, id, budget, period, deadline,
-		rq, pq, rm, pm, Nqueue, p->name, Nname) < 0){
+		rq, pq, oq, rm, pm, om, Nqueue, p->name, Nname) < 0){
 		unlockall();
 		return nil;
 	}
@@ -1389,10 +1395,19 @@ arms(Ospreyproc *p, uvlong armoff, int narms, Arm *a)
 			continue;
 		case MSget:
 		case MSput:
-			if(o[i].obj > 1)
+			switch(o[i].obj){
+			case 0:
+				a[i].q = p->process.requests;
+				break;
+			case 1:
+				a[i].q = p->process.replies;
+				break;
+			case 2:
+				a[i].q = p->process.output;
+				break;
+			default:
 				return -1;
-			a[i].q = o[i].obj == 0 ? p->process.requests
-					: p->process.replies;
+			}
 			a[i].m = ospreydata(p, o[i].buf, sizeof(Message));
 			if(a[i].m == nil)
 				return -1;
@@ -1445,6 +1460,76 @@ ospreyselect(Ospreyproc *p, uvlong armoff, int narms)
 	if(p->map != nil)
 		p->map->selected = i < 0 ? ~0ULL : (uvlong)i;
 	return i;
+}
+
+uvlong
+ospreymsgsize(void)
+{
+	return sizeof(Message);
+}
+
+/* what the message at that offset says: its operation and the caller's words */
+int
+ospreymessage(Ospreyproc *p, uvlong off, uvlong *op, uvlong *arg)
+{
+	Message *m;
+	int i;
+
+	if((m = ospreydata(p, off, sizeof(Message))) == nil)
+		return -1;
+	*op = m->op;
+	for(i = 0; i < Ospreynarg; i++)
+		arg[i] = m->arg[2+i];
+	return 0;
+}
+
+/* and the answer to it, on the container's reply ring */
+int
+ospreyanswer(Ospreyproc *p, uvlong off, long status)
+{
+	Message *m;
+	Reply r;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	if((m = ospreydata(p, off, sizeof(Message))) == nil)
+		return -1;
+	memset(&r, 0, sizeof r);
+	r.message = *m;
+	r.sequence = m->sequence;
+	r.status = status;
+	return processreply(&p->process, &r);
+}
+
+/*
+ * Work for a driver task: a place in the container's data area and how
+ * much of it.  This is the queue the presentation's driver takes from
+ * on its third arm, and it is the container's own memory, so whoever
+ * has the slice mapped may fill it without the kernel.
+ */
+int
+ospreyoutput(Ospreyproc *p, uvlong off, uvlong len)
+{
+	Message m;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	if(ospreydata(p, off, (ulong)len) == nil)
+		return -1;
+	memset(&m, 0, sizeof m);
+	m.op = ReqWrite;
+	m.container = p->process.id;
+	m.arg[2] = off;
+	m.arg[3] = len;
+	return queueput(p->process.output, &m);
+}
+
+int
+ospreyoutputready(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return 0;
+	return !queueempty(p->process.output);
 }
 
 int
@@ -1506,6 +1591,8 @@ ospreysnapwrite(char *buf, long nbuf)
 			r->requests->put, r->requests->get);
 		p = seprint(p, e, "replies %llud %llud\n",
 			r->replies->put, r->replies->get);
+		p = seprint(p, e, "output %llud %llud\n",
+			r->output->put, r->output->get);
 		for(j = 0; j < r->ns.n; j++)
 			p = seprint(p, e, "name %s %s\n",
 				r->ns.name[j].local, r->ns.name[j].global);
@@ -1627,6 +1714,10 @@ ospreysnapread(char *text, long n)
 			b = snapword(&line);
 			r->replies->put = v;
 			r->replies->get = strtoull(b, nil, 0);
+		} else if(strcmp(key, "output") == 0){
+			b = snapword(&line);
+			r->output->put = v;
+			r->output->get = strtoull(b, nil, 0);
 		} else if(strcmp(key, "name") == 0){
 			b = snapword(&line);
 			nsbind(&r->ns, a, b);
@@ -1692,6 +1783,18 @@ ospreystatusname(long status)
 	return "?";
 }
 
+/* the reverse, for a caller that has no business knowing the numbers */
+long
+ospreystatusof(char *name)
+{
+	if(strcmp(name, "pending") == 0)	return ReplyPending;
+	if(strcmp(name, "done") == 0)		return ReplyDone;
+	if(strcmp(name, "error") == 0)		return ReplyError;
+	if(strcmp(name, "blocked") == 0)	return ReplyBlocked;
+	if(strcmp(name, "retry") == 0)		return ReplyRetry;
+	return ReplyError;
+}
+
 static char*
 statename(int state)
 {
@@ -1749,7 +1852,7 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			" budget %llud used %llud period %llud deadline %llud"
 			" besteffort %llud periods %llud %s"
 			" mem %lud of %lud net %lud of %lud"
-			" requests %llud replies %llud"
+			" requests %llud replies %llud output %llud"
 			" slice %llud data %llud pid %d\n",
 			q->id, q->core, statename(q->state),
 			q->container.budget, q->container.used,
@@ -1759,6 +1862,7 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			q->container.memused, q->container.memory,
 			q->container.netbytes, q->container.netmax,
 			queuecount(q->requests), queuecount(q->replies),
+			queuecount(q->output),
 			procs[i].slice, ospreydataoffset(&procs[i]),
 			procs[i].pid);
 		/* the semaphores, and the container's private names */

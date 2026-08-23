@@ -222,6 +222,12 @@ whoever sent it, and a group that asked for a stream has its frames sent
 at the rate it asked for.  There is no connection: each group says which
 session it belongs to.
 .TP
+.BI output " id off len"
+Put work on the container's output queue: a place in its data area and
+how much of it.  See
+.B "A DRIVER SERVED BY A TASK"
+below.
+.TP
 .BI delegate " id " [ server | off ]
 Have another container answer the requests this one makes that the kernel
 does not implement.  The request appears on the server's own request
@@ -324,7 +330,8 @@ container.  A core's line gives the number of runnable tasks, the cycles
 charged to it, the number of context switches, the current task and the
 run queue in deadline order.  A container's line gives its core, state,
 CPU budget and use, period, absolute deadline, best-effort time, periods
-elapsed, mode, memory and network use against their caps, and the occupancy of its two rings.
+elapsed, mode, memory and network use against their caps, and the
+occupancy of its three rings.
 A last
 .B key
 line says what key this machine holds \- not the key, what SHA1 makes of
@@ -383,7 +390,7 @@ and
 .B alloc
 are settled by the portable layer:
 .B poll
-reports the occupancy of the two rings and
+reports the occupancy of the request and reply rings and
 .B alloc
 charges the container's memory budget, refusing the request when the cap
 set by
@@ -455,8 +462,10 @@ struct Ospreymap {
 	uvlong	msgsize;	/* bytes in one message */
 	uvlong	requestqueue;	/* the rest are byte offsets */
 	uvlong	replyqueue;	/* from the start of the slice */
+	uvlong	outputqueue;	/* what a driver task takes work from */
 	uvlong	request;
 	uvlong	reply;
+	uvlong	output;
 	uvlong	data;
 	uvlong	datalen;
 	uvlong	sem;		/* the semaphores */
@@ -507,6 +516,39 @@ The message must be stored before the index that publishes it, and the
 index read before the message it refers to; the kernel side uses
 .IR coherence (10.2)
 for that, and a machine that reorders stores needs the same on this side.
+.SH A DRIVER SERVED BY A TASK
+.PP
+.B uart
+hands a uart to a container.  From then on its interrupt handler does
+nothing but silence the source and give the container's
+.IR n th
+semaphore, and a kernel task of the container's does the work \- so no
+trap is taken for the wait or for the work, and the driver is scheduled
+like everything else the container does.
+.PP
+The task waits on three things at once, which is the shape the
+presentation gives a driver: the control messages sent to it on the
+request ring, the semaphore its interrupt gives, and the
+.I "output queue"
+it takes work from.  A message on the output queue is a place in the
+container's own data area and how much of it, so whoever has the slice
+mapped fills a buffer and says where it is; nothing is copied.  The task
+writes as much of it as the transmitter will take right now, and while
+any of it is still going out it turns the output arm off in place \-
+.B MSnoop
+\- which is what
+.B select
+is described doing with a full fifo.  A control message is answered on
+the reply ring:
+.B open
+sets the line speed and
+.B close
+gives the uart back.
+.PP
+.B output
+puts work on that queue from the outside, for a caller that has not
+mapped the slice.  A container's own process needs neither it nor a
+trap: the queue is in memory it has mapped.
 .SH SERVICES OUTSIDE THE KERNEL
 .PP
 An operation the kernel refuses is not the end of it.  A container with a
@@ -726,10 +768,14 @@ A container carries one process.  Two processes billed to one container,
 were the device to allow it, could charge it from two cores at once and
 lose an update between them.
 .PP
-The uart is the only driver served by a task.  Its task waits on the
-container's request ring and on the interrupt, where the presentation's
-has a third arm for its output queue; nothing reads the control messages
-that arrive on the first arm yet.
+The uart is the only driver served by a task.  What its task will do
+with a control message is set the line speed and give the uart back;
+anything else is answered
+.BR error .
+It writes what it is given straight out of the device rather than
+through the uart's own output staging, so nothing a task sends is
+interleaved with what the rest of the kernel sends to the same port.
+Only the i8250 has the two entries a task needs.
 .PP
 Giving an interface to a container lends the interface receive buffers
 out of the container's own slice, so the card writes packets straight

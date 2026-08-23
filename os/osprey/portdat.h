@@ -917,6 +917,14 @@ struct PhysUart
 	 */
 	void	(*interrupt)(Uart*);
 	void	(*intrmask)(Uart*, int);
+	/*
+	 * As many of these bytes as the transmitter will take right now,
+	 * and no waiting: a task with nothing to send may not sit in a
+	 * loop, it turns off the arm it takes work from and waits with
+	 * the others.
+	 */
+	int	(*send)(Uart*, uchar*, int);
+	void	(*taskenable)(Uart*, int);
 };
 
 enum {

@@ -536,8 +536,57 @@ i8250intrmask(Uart *uart, int on)
 	 */
 	ctlr = uart->regs;
 	ilock(ctlr);
-	csr8w(ctlr, Ier, on ? ctlr->sticky[Ier] : 0);
+	/*
+	 * Written directly rather than through csr8w, which ors sticky in
+	 * and so could never write the zero that silences the device.
+	 */
+	outb(ctlr->io+Ier, on ? ctlr->sticky[Ier] : 0);
 	iunlock(ctlr);
+}
+
+/*
+ * Set this uart up to be driven by a task: the fifo checked, the handler
+ * registered, and received characters interrupting.  Not the
+ * transmitter -- a task takes what it may send when it looks, so an
+ * enabled transmit interrupt with an idle transmitter would do nothing
+ * but interrupt.
+ */
+static void i8250interrupt(Ureg*, void*);
+
+static void
+i8250taskenable(Uart *uart, int on)
+{
+	Ctlr *ctlr;
+
+	ctlr = uart->regs;
+	if(on == 0){
+		ctlr->sticky[Ier] = 0;
+		outb(ctlr->io+Ier, 0);
+		return;
+	}
+	ilock(ctlr);
+	if(!ctlr->checkfifo){
+		while(!(csr8r(ctlr, Lsr) & Temt))
+			;
+		csr8w(ctlr, Fcr, FIFOena);
+		if(csr8r(ctlr, Iir) & Ifena)
+			ctlr->hasfifo = 1;
+		csr8w(ctlr, Fcr, 0);
+		ctlr->checkfifo = 1;
+	}
+	iunlock(ctlr);
+	if(ctlr->iena == 0){
+		intrenable(ctlr->irq, i8250interrupt, uart, ctlr->tbdf, uart->name);
+		ctlr->iena = 1;
+	}
+	ctlr->sticky[Ier] = Erda;
+	ctlr->sticky[Mcr] |= Ie;
+	outb(ctlr->io+Ier, ctlr->sticky[Ier]);
+	outb(ctlr->io+Mcr, ctlr->sticky[Mcr]);
+	(*uart->phys->dtr)(uart, 1);
+	(*uart->phys->rts)(uart, 1);
+	if(uart->modem == 0)
+		uart->cts = 1;
 }
 
 /*
@@ -696,6 +745,28 @@ i8250putc(Uart *uart, int c)
 		delay(1);
 }
 
+/*
+ * As many as the holding register will take now.  This is i8250kick's
+ * loop over somebody else's bytes rather than the uart's own stage, for
+ * a uart whose output is driven by a task.
+ */
+static int
+i8250send(Uart *uart, uchar *p, int n)
+{
+	Ctlr *ctlr;
+	int i;
+
+	if(uart->cts == 0)
+		return 0;
+	ctlr = uart->regs;
+	for(i = 0; i < n && i < 128; i++){
+		if(!(csr8r(ctlr, Lsr) & Thre))
+			break;
+		outb(ctlr->io+Thr, p[i]);
+	}
+	return i;
+}
+
 PhysUart i8250physuart = {
 	.name		= "i8250",
 	.pnp		= i8250pnp,
@@ -714,6 +785,8 @@ PhysUart i8250physuart = {
 	.fifo		= i8250fifo,
 	.interrupt	= i8250intr,
 	.intrmask	= i8250intrmask,
+	.send		= i8250send,
+	.taskenable	= i8250taskenable,
 	.getc		= i8250getc,
 	.putc		= i8250putc,
 };

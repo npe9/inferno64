@@ -506,6 +506,7 @@ enum {
 	CMpipether,
 	CMkey,
 	CMpair,
+	CMoutput,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -543,6 +544,7 @@ static Cmdtab ospreycmd[] = {
 	CMpipether,	"pipether",	3,
 	CMkey,		"key",		2,
 	CMpair,		"pair",		3,
+	CMoutput,	"output",	4,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -612,6 +614,8 @@ static int ospreyticksem[16];		/* semaphore the clock gives, or -1 */
 static Uart *ospreyuart[16];		/* a uart this container serves */
 static int ospreyuartsem[16];		/* the semaphore its interrupt gives */
 static int ospreyuarting[16];		/* its driver task is running */
+static uvlong ospreyuartoff[16];	/* what is left of the last work taken */
+static long ospreyuartlen[16];
 static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
 static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
@@ -790,11 +794,46 @@ ospreyuartgive(Uart *uart)
 }
 
 /*
+ * What is left of the work last taken off the output queue, pushed as
+ * far as the transmitter will take it now.  Returns what is still left.
+ */
+static long
+ospreyuartpush(Ospreyproc *p, Uart *uart, int x)
+{
+	uchar *b;
+	int k;
+
+	if(ospreyuartlen[x] <= 0)
+		return 0;
+	if(uart->phys->send == nil){	/* nothing to push it with */
+		ospreyuartlen[x] = 0;
+		return 0;
+	}
+	b = ospreydata(p, ospreyuartoff[x], ospreyuartlen[x]);
+	if(b == nil){
+		ospreyuartlen[x] = 0;
+		return 0;
+	}
+	k = (*uart->phys->send)(uart, b, ospreyuartlen[x]);
+	if(k > 0){
+		ospreyuartoff[x] += k;
+		ospreyuartlen[x] -= k;
+	}
+	return ospreyuartlen[x];
+}
+
+/*
  * A uart served by a task, as the presentation has it.  The task waits
- * on its container's request ring and on the semaphore the interrupt
- * gives; when the interrupt is what fired it does the work the handler
- * would have done and lets the device interrupt again.  It is a kernel
- * task, so no trap is taken for the wait or for the work.
+ * on three things at once, which is the shape the talk gives a driver:
+ * the messages sent to it on its container's request ring, the semaphore
+ * its interrupt gives, and the output queue it takes work from.  When
+ * the interrupt is what fired it does the work the handler would have
+ * done and lets the device interrupt again.  It is a kernel task, so no
+ * trap is taken for the wait or for the work.
+ *
+ * The output arm is turned off in place -- MSnoop, not a rebuilt array
+ * -- while what was last taken is still going out, which is what
+ * select(2) of the talk describes a driver doing with a full fifo.
  */
 static void
 ospreyuarttask(void *a)
@@ -802,6 +841,7 @@ ospreyuarttask(void *a)
 	Ospreyproc *p = a;
 	Ospreyarm *arm;
 	Uart *uart;
+	uvlong arg[Ospreynarg], op, msg, out;
 	int x, n;
 
 	if(waserror())
@@ -810,23 +850,26 @@ ospreyuarttask(void *a)
 		if((x = ospreyindex(p)) < 0 || (uart = ospreyuart[x]) == nil)
 			break;
 
+		ospreyuartpush(p, uart, x);
+
 		/*
 		 * The arms go in the container's data area, where a select
-		 * from anywhere else puts them: a control message on the
-		 * request ring, or the interrupt.  The presentation's uart
-		 * has a third arm for its output queue.
+		 * from anywhere else puts them, and so do the two messages
+		 * they are taken into.
 		 */
 		if((arm = ospreydata(p, 0, 3*sizeof(Ospreyarm))) == nil)
 			break;
+		msg = 3*sizeof(Ospreyarm);
+		out = msg + ospreymsgsize();
 		arm[0].op = OSget;
 		arm[0].obj = 0;			/* the request ring */
-		arm[0].buf = 3*sizeof(Ospreyarm);
+		arm[0].buf = msg;
 		arm[1].op = OSdown;
 		arm[1].obj = ospreyuartsem[x];	/* the interrupt */
 		arm[1].buf = 0;
-		arm[2].op = OSlast;
-		arm[2].obj = 0;
-		arm[2].buf = 0;
+		arm[2].op = ospreyuartlen[x] > 0 ? OSnoop : OSget;
+		arm[2].obj = 2;			/* the output queue */
+		arm[2].buf = out;
 
 		qlock(&ospreylock);
 		n = ospreyselect(p, 0, 3);
@@ -837,14 +880,62 @@ ospreyuarttask(void *a)
 			(*uart->phys->intrmask)(uart, 1);
 			continue;
 		}
-		if(n == 0)
-			continue;	/* a control message; nothing reads it yet */
-		sleep(&ospreyselrend[x], ospreyarmready, p);
+		if(n == 2){
+			/* work: a place in the container's own data area */
+			qlock(&ospreylock);
+			if(ospreymessage(p, out, &op, arg) == 0){
+				ospreyuartoff[x] = arg[0];
+				ospreyuartlen[x] = (long)arg[1];
+			}
+			qunlock(&ospreylock);
+			continue;
+		}
+		if(n == 0){
+			/*
+			 * A control message.  What a task holding a uart can
+			 * do with one is set its line speed and give it back;
+			 * anything else is refused, and every one is answered
+			 * on the reply ring.
+			 */
+			long status;
+
+			status = ospreystatusof("error");
+			qlock(&ospreylock);
+			if(ospreymessage(p, msg, &op, arg) == 0){
+				char *name = ospreyopname(op);
+
+				if(strcmp(name, "open") == 0){
+					if(arg[0] != 0 && uart->phys->baud != nil
+					&& (*uart->phys->baud)(uart, (int)arg[0]) < 0)
+						status = ospreystatusof("error");
+					else
+						status = ospreystatusof("done");
+				} else if(strcmp(name, "close") == 0){
+					status = ospreystatusof("done");
+					ospreyuart[x] = nil;
+				}
+			}
+			ospreyanswer(p, msg, status);
+			qunlock(&ospreylock);
+			ospreywakeup();
+			continue;
+		}
+		/*
+		 * Nothing to do.  With work still going out there is no arm
+		 * to wake on -- the transmit interrupt is not enabled, since
+		 * an enabled one with an idle transmitter never stops -- so
+		 * look again shortly instead.
+		 */
+		if(ospreyuartlen[x] > 0)
+			tsleep(&up->sleep, return0, nil, 5);
+		else
+			sleep(&ospreyselrend[x], ospreyarmready, p);
 	}
 	poperror();
 done:
 	if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyuarting)){
 		ospreyuarting[x] = 0;
+		ospreyuartlen[x] = 0;
 		if(ospreyuart[x] != nil)
 			(*ospreyuart[x]->phys->intrmask)(ospreyuart[x], 1);
 		ospreyuart[x] = nil;
@@ -2817,6 +2908,22 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		poperror();
 		break;
 
+	case CMoutput:
+		/*
+		 * Put work on the container's output queue: a place in its
+		 * own data area and how much of it.  A process with the
+		 * slice mapped puts its own work there without the kernel;
+		 * this is for whoever has not mapped it.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if(!ospreymay(p, up->user))
+			error(Eperm);
+		if(ospreyoutput(p, strtoull(cb->f[2], nil, 0),
+			strtoull(cb->f[3], nil, 0)) < 0)
+			error(Ebadarg);
+		ospreywakeup();
+		break;
+
 	case CMkey:
 		/*
 		 * The key this machine signs with, and believes.  Only the
@@ -2979,8 +3086,11 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyuart))
 			error(Ebadarg);
 		if(strcmp(cb->f[2], "off") == 0){
-			if(ospreyuart[x] != nil)
+			if(ospreyuart[x] != nil){
+				if(ospreyuart[x]->phys->taskenable != nil)
+					(*ospreyuart[x]->phys->taskenable)(ospreyuart[x], 0);
 				(*ospreyuart[x]->phys->intrmask)(ospreyuart[x], 1);
+			}
 			ospreyuart[x] = nil;
 			ospreyuarting[x] = 0;
 			wakeup(&ospreyselrend[x]);
@@ -2997,6 +3107,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			error(Ebadarg);
 		ospreyuart[x] = ut;
 		ospreyuartsem[x] = i;
+		if(ut->phys->taskenable != nil)
+			(*ut->phys->taskenable)(ut, 1);
 		if(ospreyuarting[x] == 0){
 			ospreyuarting[x] = 1;
 			if(waserror()){

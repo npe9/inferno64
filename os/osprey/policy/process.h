@@ -21,8 +21,15 @@ struct Process {
 	 */
 	Queue	*requests;
 	Queue	*replies;
+	/*
+	 * And what a driver task takes its work from.  The presentation's
+	 * driver selects on three things: the messages sent to it, the
+	 * semaphore its interrupt gives, and this.
+	 */
+	Queue	*output;
 	Message	*requeststorage;
 	Message	*repliestorage;
+	Message	*outputstorage;
 };
 
 enum {
@@ -33,7 +40,8 @@ enum {
 };
 
 int	processinit(Process*, uvlong, uvlong, uvlong, uvlong,
-	Queue*, Queue*, Message*, Message*, uvlong, Name*, ulong);
+	Queue*, Queue*, Queue*, Message*, Message*, Message*, uvlong,
+	Name*, ulong);
 int	processsubmit(Process*, Request*);
 int	processreply(Process*, Reply*);
 int	processnext(Process*, Request*);

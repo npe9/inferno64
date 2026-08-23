@@ -2,27 +2,30 @@
 
 int
 processinit(Process *p, uvlong id, uvlong budget, uvlong period,
-	uvlong deadline, Queue *requestq, Queue *replyq,
-	Message *requests, Message *replies,
+	uvlong deadline, Queue *requestq, Queue *replyq, Queue *outputq,
+	Message *requests, Message *replies, Message *outputs,
 	uvlong queuesize, Name *names, ulong nnames)
 {
-	if(p == nil || requestq == nil || replyq == nil ||
-		requests == nil || replies == nil || queuesize == 0 ||
-		names == nil || nnames == 0)
+	if(p == nil || requestq == nil || replyq == nil || outputq == nil ||
+		requests == nil || replies == nil || outputs == nil ||
+		queuesize == 0 || names == nil || nnames == 0)
 		return -1;
 	p->id = id;
 	p->core = 0;
 	p->state = ProcessNew;
 	p->requests = requestq;
 	p->replies = replyq;
+	p->output = outputq;
 	p->requeststorage = requests;
 	p->repliestorage = replies;
+	p->outputstorage = outputs;
 	containerinit(&p->container, budget, period, deadline);
 	if(nsinit(&p->ns, names, nnames) < 0)
 		return -1;
 	taskinit(&p->task, &p->container);
 	if(queueinit(p->requests, requests, queuesize) < 0 ||
-		queueinit(p->replies, replies, queuesize) < 0)
+		queueinit(p->replies, replies, queuesize) < 0 ||
+		queueinit(p->output, outputs, queuesize) < 0)
 		return -1;
 	return 0;
 }

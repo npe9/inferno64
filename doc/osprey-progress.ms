@@ -40,9 +40,13 @@ wakes the task waiting on it.
 .PP
 .B "A driver served by a task."
 A uart handed to a container: its interrupt gives a semaphore and masks
-the device, and a kernel task of the container's waits on that semaphore
-beside its request ring, does the register work, and lets the device
-interrupt again.
+the device, and a kernel task of the container's does the register work
+and lets the device interrupt again.  The task waits on the three things
+the presentation gives a driver \- the control messages sent to it, the
+semaphore its interrupt gives, and the output queue it takes work from
+\- answers the control messages on the reply ring, and writes what it is
+given straight out of the device, turning the output arm off in place
+while what it last took is still going out.
 .PP
 .B "The packet path."
 An ethernet interface handed to a container: its packets are charged

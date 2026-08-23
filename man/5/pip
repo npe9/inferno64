@@ -199,6 +199,7 @@ reports:
 .BR packets ,
 .BR requests ,
 .BR replies ,
+.BR output ,
 .BR slice ,
 .BR data ,
 .B pid

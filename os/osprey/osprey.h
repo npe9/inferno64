@@ -32,8 +32,10 @@ struct Ospreymap {
 	uvlong	msgsize;	/* bytes in one message */
 	uvlong	requestqueue;	/* the ring heads: size, put, get */
 	uvlong	replyqueue;
+	uvlong	outputqueue;	/* what a driver task takes work from */
 	uvlong	request;	/* the message arrays */
 	uvlong	reply;
+	uvlong	output;
 	uvlong	data;		/* names and i/o buffers */
 	uvlong	datalen;
 	uvlong	sem;		/* the container's semaphores */
@@ -58,7 +60,7 @@ struct Ospreymap {
 typedef struct Ospreyarm Ospreyarm;
 struct Ospreyarm {
 	uvlong	op;
-	uvlong	obj;	/* ring: 0 requests, 1 replies; down: semaphore */
+	uvlong	obj;	/* ring: 0 requests, 1 replies, 2 output; down: semaphore */
 	uvlong	buf;	/* offset of the message taken into or added from */
 };
 
@@ -84,6 +86,12 @@ void*		ospreydata(Ospreyproc*, uvlong off, ulong len);
 uvlong		ospreydataoffset(Ospreyproc*);
 uvlong		ospreydatalen(Ospreyproc*);
 void*		ospreyarenaaddr(uvlong off, ulong len);
+uvlong		ospreymsgsize(void);
+long		ospreystatusof(char*);
+int		ospreymessage(Ospreyproc*, uvlong off, uvlong *op, uvlong *arg);
+int		ospreyanswer(Ospreyproc*, uvlong off, long status);
+int		ospreyoutput(Ospreyproc*, uvlong off, uvlong len);
+int		ospreyoutputready(Ospreyproc*);
 int		ospreyrequestfull(Ospreyproc*);
 int		ospreyreplyready(Ospreyproc*);
 
