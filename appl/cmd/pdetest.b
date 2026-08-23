@@ -24,6 +24,8 @@ include "sys.m";
 	print, sprint: import sys;
 include "math.m";
 	math: Math;
+include "verify.m";
+	verify: Verify;
 include "draw.m";
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
@@ -209,6 +211,7 @@ init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	math = load Math Math->PATH;
+	verify = load Verify Verify->PATH;
 	if(math == nil){
 		print("pdetest: load Math: %r\n");
 		raise "fail:load";
@@ -255,6 +258,29 @@ init(nil: ref Draw->Context, nil: list of string)
 	check7(2, 0.5, 0.25, 0.125, 0.02);
 	check7(8, 0.031, 0.047, 0.019, 0.005);	# nothing square
 	check7(16, 0.0625, 0.0625, 0.0625, 0.0);	# a = 0: pure copy of c
+
+	# Second order, against an analytic Laplacian rather than against
+	# another implementation.
+	#
+	# Everything above compares lap7 with the Limbo loop it replaced, and
+	# that loop had never itself been checked against anything: two
+	# implementations of the same misunderstanding agree with each other
+	# perfectly. A convergence study cannot be fooled that way.
+	if(verify == nil)
+		bad("cannot load verify(2): the convergence check is skipped");
+	else {
+		(ls, verr) := verify->laplacian7order(8, 3);
+		if(verr != nil)
+			bad("laplacian7order: " + verr);
+		else {
+			for(k := 0; k < len ls; k++)
+				print("  lap7 order n=%-3d error %-12.6g order %.3f\n",
+					ls[k].n, ls[k].error, ls[k].order);
+			last := ls[len ls - 1].order;
+			if(last < 1.9 || last > 2.1)
+				bad(sprint("lap7 converges at order %.3f, expected 2", last));
+		}
+	}
 
 	if(fail)
 		raise "fail:test";

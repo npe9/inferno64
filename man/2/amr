@@ -84,6 +84,21 @@ coarsening \(em skipping that last check would silently undo any
 refinement that balancing alone required (crit() never wants such a
 block back, so it would be coarsened again on the very next call).
 .SS "Ghost exchange and the stencil sweep"
+A block's halo is meaningful only between an
+.B exchange
+and whatever next writes the block.
+.B Step
+replaces each block's array with the one it computed into, whose halo is
+zero rather than the values the last exchange put there, and refills
+every halo at the top of its next substep.
+.B Get
+and
+.B set
+address interior cells only, so nothing in this interface exposes the
+difference; a caller reaching into
+.B Block.u
+directly should not expect halo values to survive a step.
+.PP
 .B Sweep
 is now simply
 .BR step .

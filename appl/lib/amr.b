@@ -28,6 +28,30 @@ loadmath()
 # Flat index into a block's (B+2)^3 padded array; x,y,z in [-1,B] (the
 # ghost layer is x/y/z == -1 or B, using the SAME formula as interior
 # access - the +1 offset already lands ghost cells at 0 and B+1).
+# The halo of a padded (bs+2)^3 block: the two outer z planes in full, then
+# the two outer y rows of each remaining plane, then the two outer x cells of
+# each remaining row. O(bs^2), where clearing the whole cube is O(bs^3).
+zerohalo(w: array of real, bs: int)
+{
+	p := bs+2;
+	x := 0; y := 0; z := 0;		# Limbo scopes a for-init to the function
+	for(y = 0; y < p; y++)
+		for(x = 0; x < p; x++){
+			w[y*p + x] = 0.0;
+			w[(p-1)*p*p + y*p + x] = 0.0;
+		}
+	for(z = 1; z < p-1; z++)
+		for(x = 0; x < p; x++){
+			w[z*p*p + x] = 0.0;
+			w[z*p*p + (p-1)*p + x] = 0.0;
+		}
+	for(z = 1; z < p-1; z++)
+		for(y = 1; y < p-1; y++){
+			w[z*p*p + y*p] = 0.0;
+			w[z*p*p + y*p + p-1] = 0.0;
+		}
+}
+
 idx(bs, x, y, z: int): int
 {
 	p := bs+2;
@@ -568,14 +592,26 @@ step(f: ref Forest, diffusivity, dt: real)
 			(dx, dy, dz) := cellsize(f, b.level);
 			n := (bs+2)*(bs+2)*(bs+2);
 			w := array[n] of real;
-			for(j := 0; j < n; j++)
-				w[j] = 0.0;
 			# A block is exactly the padded cube math(2)'s lap7
 			# wants, and its halo is already filled, so the whole
 			# update is one call with no boundary handling at all.
-			if(math != nil)
+			if(math != nil){
+				# lap7 writes every interior cell and nothing
+				# else, so only the halo needs clearing - and
+				# it does need clearing rather than being left
+				# to a fresh array's contents, which Dis leaves
+				# undefined for a pointer-free type (see
+				# doc/dis.ms; the tree's -z makes it zero in
+				# practice, but correctness must not depend on
+				# a build flag). Zeroing all of w instead is
+				# 5832 stores a block per substep at blocksize
+				# 16, against 1736 for the halo alone, and the
+				# interior ones are overwritten immediately.
+				zerohalo(w, bs);
 				math->lap7(bs, dx, dy, dz, h*diffusivity, b.u, w);
-			else
+			}else{
+				for(j := 0; j < n; j++)
+					w[j] = 0.0;
 				for(z := 0; z < bs; z++)
 					for(y := 0; y < bs; y++)
 						for(x := 0; x < bs; x++){
@@ -585,6 +621,7 @@ step(f: ref Forest, diffusivity, dt: real)
 								+ (get(b,bs,x,y,z-1)-2.0*c+get(b,bs,x,y,z+1))/(dz*dz);
 							w[idx(bs,x,y,z)] = c + h*diffusivity*lap;
 						}
+			}
 			news[i] = w;
 		}
 		# Take the new array rather than copying it back cell by cell.

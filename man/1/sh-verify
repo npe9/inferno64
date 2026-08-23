@@ -1,6 +1,6 @@
 .TH SH-VERIFY 1
 .SH NAME
-laplacianorder \- shell script interface to verify(2)
+laplacianorder, laplacian7order \- shell script interface to verify(2)
 .SH SYNOPSIS
 .B load verify
 
@@ -50,6 +50,17 @@ under 4) raises a
 exception with the same text
 .IR verify (2)
 would have returned.
+.PP
+.B ${laplacian7order
+.I n0 levels
+.B }
+is the same for
+.IR math (2)'s
+three-dimensional
+.BR lap7 ,
+with
+.I n
+the interior width of a cube rather than the side of a square.
 .SH SOURCE
 .B /appl/cmd/sh/verify.b
 .SH SEE ALSO

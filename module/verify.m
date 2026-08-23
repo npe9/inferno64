@@ -25,4 +25,19 @@ Verify: module
 	# A correct centred 5-point Laplacian is 2nd order: order should
 	# converge to ~2.0 as resolution increases.
 	laplacianorder:	fn(n0, levels: int): (array of ref Level, string);
+
+	# The same study for math(2)'s lap7, the three-dimensional
+	# seven-point stencil amr(2) sweeps with. It exists for the same
+	# reason the two-dimensional one does, and for one more: lap7 is
+	# tested elsewhere only by comparing it against the Limbo loop it
+	# replaced, and that loop had never itself been checked against an
+	# analytic Laplacian. Two implementations of the same
+	# misunderstanding agree with each other.
+	#
+	# Applied to sin(2*pi*x)*sin(2*pi*y)*sin(2*pi*z) on a padded cube
+	# whose halo is filled with the exact function - which is what
+	# lap7 expects and removes boundary treatment from the measurement
+	# entirely, the same reason the 2-D study uses a periodic square.
+	# Level.n is the cube's interior width.
+	laplacian7order: fn(n0, levels: int): (array of ref Level, string);
 };

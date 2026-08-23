@@ -1,12 +1,13 @@
 .TH VERIFY 2
 .SH NAME
-verify: laplacianorder \- convergence-order verification for pde(2)'s Laplacian
+verify: laplacianorder, laplacian7order \- convergence-order verification for the Laplacians
 .SH SYNOPSIS
 .EX
 include "verify.m";
 verify := load Verify Verify->PATH;
 
 (levels, err) := verify->laplacianorder(8, 5);
+(levels, err) = verify->laplacian7order(8, 4);
 .EE
 .SH DESCRIPTION
 .I Verify
@@ -53,6 +54,35 @@ update
 .B diffuse
 performs internally \(em which also keeps this check free of any time-
 discretization question, measuring only the spatial operator.
+.PP
+.B Laplacian7order
+is the same study for
+.IR math (2)'s
+.BR lap7 ,
+the three-dimensional seven-point stencil
+.IR amr (2)
+sweeps with.
+It applies that stencil to
+.if n \{\
+sin(2*pi*x)*sin(2*pi*y)*sin(2*pi*z)
+.\}
+.if t \{\
+.I "sin 2\(*px sin 2\(*py sin 2\(*pz"
+.\}
+on a padded cube whose halo is filled with the exact function, which is
+what
+.B lap7
+expects and removes boundary treatment from the measurement entirely \(em
+the same purpose periodicity serves in the two-dimensional study.
+.PP
+It exists for the usual reason and for one more.
+.B Lap7
+is otherwise checked only by comparing it against the Limbo loop it
+replaced, and that loop had never itself been checked against an
+analytic Laplacian: two implementations of one misunderstanding agree
+with each other perfectly.
+A convergence study cannot be satisfied that way.
+Observed: 1.978, 1.994, 1.999.
 .SH SOURCE
 .B /module/verify.m
 .br
