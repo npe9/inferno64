@@ -77,29 +77,38 @@ says:
 ```
 mesh       nodes   cpu f64            gpu f32
                    solve  us/iter     solve  us/iter
-12x12x12    2197     0ms      -         4ms    235
-16x16x16    4913     2ms     91         6ms    240
-20x20x20    9261     3ms    107         7ms    219
-24x24x24   15625     6ms    176        11ms    282
+12x12x12    2197   0-1ms      -       3-4ms    176
+16x16x16    4913   1-1ms     45       5-8ms    200
+20x20x20    9261   2-3ms     71      6-12ms    188
+24x24x24   15625   5-6ms    147      7-18ms    179
 ```
+Best of five solves per row; the range is the spread across those five.
 
-Read the **per-iteration** columns, not the per-solve ones. An earlier version
-of this table reported 74ms for the GPU at mesh 12 against 30ms at mesh 24 —
-smaller problem, more time — and explained it as per-call overhead. That was
-wrong: it was the *one-time* cost of setting up Metal landing on whichever solve
-ran first and being divided by however many iterations that mesh needed.
-`gpubench(1)` now runs and discards a GPU solve before timing, and mesh 12 drops
-from 74ms to 4ms.
+Read the **per-iteration** columns, not the per-solve ones.
 
-What the corrected numbers say is still that the GPU does not pay here, but for
-a reason that is now actually supported: its cost per iteration is **flat**
-(219–282us regardless of problem size), which is what per-call overhead looks
-like, while the CPU's grows with the problem (91 to 176us), which is what
-arithmetic looks like. The two are converging and the GPU would presumably
-overtake somewhere above 30 cubed — but f32 also costs extra iterations (39
-against 34 at 24 cubed), so the per-solve crossover sits further out than the
-per-matvec one. Neither can be measured here: `gpubench` panics at mesh 28 and
-above.
+This table took three attempts and the first two were wrong, which is the more
+useful thing recorded here. Version one compared Metal against an *interpreted*
+matvec. Version two fixed that but reported 74ms for the GPU at mesh 12 against
+30ms at mesh 24 — a smaller problem taking longer — and explained it as per-call
+overhead; it was the *one-time* cost of setting up Metal, landing on whichever
+solve ran first and divided by that mesh's iteration count. Version three fixed
+that with a discarded warm-up run but took **one sample per size** of a quantity
+that varies by a third run to run, and timed a 5ms solve with a 1ms clock: the
+per-iteration figures it produced (219–282us) were noise, and a "flat" claim
+drawn from them was not supported by its own data.
+
+`gpubench(1)` now discards a GPU solve, then runs each solve five times and
+reports the best with the range. The variance is all upward, as contention
+noise is, so the best is the clean measurement.
+
+With that, the claim is earned: the GPU's cost per iteration really is **flat**
+(176–200us across a sevenfold range of problem size), which is what per-call
+overhead looks like, while the CPU's grows with the problem (0 to 147us), which
+is what arithmetic looks like. The GPU still loses at every size that fits. But
+the per-iteration figures are close at 24 cubed — 147 against 179 — so the
+per-matvec crossover is probably near mesh 26–28, while f32's extra iterations
+(39 against 34) put the per-solve crossover further out. Neither can be
+measured here: `gpubench` panics at mesh 28 and above.
 
 None of the GPU work is wrong and none of it should be deleted: the device, the
 Metal kernel, the residency and the precision query all do what they say. What
@@ -158,7 +167,7 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    ~12% reproducer; do not let it block the GPU work again.
 2. **Device-resident vectors — SUSPENDED pending re-derivation.** The table
    this item rests on was measured against a Limbo matvec; with `math->spmv`
-   the CPU solve at 24 cubed is 6ms against the GPU's 11ms, so "the vector ops
+   the CPU solve at 24 cubed is 5ms against the GPU's 7ms, so "the vector ops
    are 40% of a GPU-backed solve" is now a statement about a path slower than
    not offloading at all. Fix the GPU path's per-call overhead
    first, or re-measure and find this item is not worth doing. What follows is

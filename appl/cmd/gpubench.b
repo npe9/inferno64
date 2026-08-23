@@ -22,20 +22,45 @@ include "fem.m";
 include "draw.m";
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
+# Repeats the solve, because one timing of it is not a measurement.
+#
+# Two reasons, both found the hard way. The clock is whole milliseconds and a
+# solve takes single-figure ones, so a single timing is quantised to something
+# like 20% of itself. And the GPU figure varies run to run by a third or more
+# where the CPU figure does not, so a single sample of it invited - and got - a
+# confident statement about a trend that the spread does not support. Reporting
+# the best of several removes the quantisation and most of the noise; the range
+# is printed so that what is left is visible rather than hidden.
+Reps:	con 5;
+
 run(spec: string, label: string)
 {
 	t0 := sys->millisec();
 	(p, err) := fem->newproblem(spec);
 	if(err != nil){ print("  %s: newproblem: %s\n", label, err); return; }
 	t1 := sys->millisec();
-	(nil, iters, resid, serr) := fem->solve(p);
-	t2 := sys->millisec();
-	if(serr != nil){ print("  %s: solve: %s\n", label, serr); return; }
+
+	best := -1;
+	worst := -1;
+	iters := 0;
+	resid := 0.0;
+	for(k := 0; k < Reps; k++){
+		ta := sys->millisec();
+		(nil, it, rd, serr) := fem->solve(p);
+		tb := sys->millisec();
+		if(serr != nil){ print("  %s: solve: %s\n", label, serr); return; }
+		iters = it;
+		resid = rd;
+		if(best < 0 || tb-ta < best)
+			best = tb-ta;
+		if(tb-ta > worst)
+			worst = tb-ta;
+	}
 	per := 0.0;
 	if(iters > 0)
-		per = real (t2-t1)*1000.0/real iters;
-	print("  %-16s assemble %5dms  solve %6dms  iters %3d  %7.0fus/iter  resid %g  %s\n",
-		label, t1-t0, t2-t1, iters, per, resid,
+		per = real best*1000.0/real iters;
+	print("  %-16s assemble %5dms  solve %4d-%dms  iters %3d  %6.0fus/iter  resid %g  %s\n",
+		label, t1-t0, best, worst, iters, per, resid,
 		errs(p.backend.lasterror));
 }
 
