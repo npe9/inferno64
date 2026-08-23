@@ -217,6 +217,7 @@ SYSMODULES=\
 	man.m\
 	newns.m\
 	prefab.m\
+	quicktime.m\
 	readdir.m\
 	regex.m\
 	security.m\

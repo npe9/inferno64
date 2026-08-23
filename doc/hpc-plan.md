@@ -737,8 +737,19 @@ lldb -p <pid> -b -o "p isched" -o "thread backtrace all"
 lldb -p <pid> -b -o "expr -- (void)osready((Proc*)0x...)" -o "detach"
 ```
 
-Two traps worth knowing. `emu/MacOSX/mkfile` has an **empty `HFILES`**, so
-editing `emu/port/dat.h` does *not* trigger a rebuild — you can silently get a
+**Build dependencies are declared per directory, and a missing one is silent.**
+Two instances, both of which cost real time:
+
+- A Limbo directory's `mkfile` lists the `module/*.m` files it depends on in
+  `SYSMODULES`. `appl/lib/mkfile` had `quicktime.m`; `appl/cmd/mkfile` did not.
+  So changing `module/quicktime.m` rebuilt the library and **not** the commands,
+  and they drifted apart until a program died with
+  `link typecheck QuickTime->tracks() db7bb871/101c27d5`. If a new module is
+  used from a directory, add it to that directory's `SYSMODULES` — the rule in
+  `mkfiles/mkdis` (`%.dis: $MODULES $SYS_MODULE`) is already there and does
+  nothing without the list.
+- `emu/MacOSX/mkfile` has an **empty `HFILES`**, so editing `emu/port/dat.h`
+  does *not* trigger a rebuild — you can silently get a
 binary whose object files disagree about `struct Proc`'s layout. Alternating
 `CONF` forces a full recompile, which is why it worked here; do that
 deliberately. And lldb truncates a large struct print, so `p *(Proc*)0x...`
