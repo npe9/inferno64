@@ -127,6 +127,11 @@ it over.
 .IR session (2),
 .IR pointer (3)
 .SH BUGS
+A scripted session cannot be recorded: the injection paths deliberately do not
+record, so there is no record, edit, record again.
+See
+.IR session (2).
+.PP
 A timed
 .B pause
 is a plain sleep rather than a console read raced against a timer, because the
