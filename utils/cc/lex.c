@@ -2,7 +2,11 @@
 #include	"y.tab.h"
 
 #ifndef	CPP
+#ifdef __APPLE__
+#define	CPP	"/usr/bin/cpp"	/* macOS has no /bin/cpp (SIP) */
+#else
 #define	CPP	"/bin/cpp"
+#endif
 #endif
 
 /*
@@ -245,8 +249,14 @@ compile(char *file, char **defs, int ndef)
 			i = 1;
 			if(debug['.'])
 				av[i++] = strdup("-.");
-			/* 1999 ANSI C requires recognising // comments */
+			/*
+			 * Plan 9 cpp -+ enables // comments in traditional
+			 * mode.  Apple clang cpp rejects -+; modern cpp
+			 * already accepts // comments.
+			 */
+#ifndef __APPLE__
 			av[i++] = strdup("-+");
+#endif
 			for(c = 0; c < ndef; c++) {
 				sprint(opt, "-D%s", defs[c]);
 				av[i++] = strdup(opt);
