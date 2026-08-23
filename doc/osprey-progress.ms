@@ -67,12 +67,12 @@ is closed and that are refused if what they were written against has
 been committed over, and leases on fids and sessions.  What it names are
 containers, whose settings and accounting are their attributes.
 .PP
-.B "Pages handed over."
-A container may take a page and hand it to another; what was written in
-it is there afterwards, neither copied nor moved.  Both ends map the
-whole span, so nothing is mapped or unmapped and what moves is which
-container's map names the page: the copy is saved, which is the point,
-but no page table is touched.
+.B "A segment for each container, and pages handed over."
+A container's slice is a segment of its own, so a process attaches that
+container's memory and nobody else's, and so is each page that may be
+handed about.  A container takes a page, writes in it, and hands it to
+another, which attaches the same page and finds what was written: the
+page is mapped, not copied.
 .PP
 .B "Migration."
 A container carried to another machine over a wire: its checkpoint in an
@@ -93,11 +93,10 @@ Everything the plan and the presentation describe that a kernel of this
 shape can do is done.  What is left is either a different kernel, or work
 neither source spells out.
 .PP
-.B "1.  A segment for each container."
-The span is one segment and every process that attaches it has all of
-it, so a container can read another's rings and a flipped page is only a
-change of name.  A segment for each container would answer both, and
-make a flip an operation on a page table.
+.B "1.  Segments that are capabilities."
+A segment's name is not one: any process may attach any of them, so a
+container is only as private as the names it keeps.  The kernel knows
+which container holds which page and is not asked when one is attached.
 .PP
 .B "2.  Delegated authentication."
 The presentation asks for authentication delegated across a distributed

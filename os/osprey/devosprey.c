@@ -267,8 +267,14 @@ ospreyunlocksem(void)
 	iunlock(&ospreysemlock);
 }
 static uchar *ospreybase;		/* the shared arena */
-/* SG_PHYSICAL is a value of the SG_TYPE field, not a flag beside it */
-static Physseg ospreyseg = { SG_PHYSICAL, "osprey", 0, 0 };
+/*
+ * SG_PHYSICAL is a value of the SG_TYPE field, not a flag beside it.
+ * Each container's slice is a segment of its own, and so is each page
+ * that may be handed between them, so that attaching one gets that
+ * memory and nobody else's.
+ */
+static Physseg ospreyseg[16+32];
+static int ospreynseg;
 static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
 static Proc *ospreyprocs[16];		/* the process bound to each container */
 static Rendez ospreyservrend[16];	/* wakes a container's service process */
@@ -754,6 +760,54 @@ ospreywakeup(void)
 	}
 }
 
+/*
+ * Name every part of the span: a segment for each container's slice and
+ * one for each page.  They are published once, when the span is made.
+ */
+static void
+ospreypublish(void)
+{
+	Ospreyproc *p;
+	Physseg *ps;
+	uvlong off, n, sz;
+	int i;
+
+	sz = ospreyslicesize();
+	for(i = 0; i < ospreynproc(); i++){
+		if((p = ospreyat(i)) == nil)
+			continue;
+		USED(p);
+	}
+	/*
+	 * The containers do not exist yet, so their segments are named
+	 * from the same rule the adapter uses.
+	 */
+	for(i = 0; i < ospreynproc() && ospreynseg < nelem(ospreyseg); i++){
+		ps = &ospreyseg[ospreynseg];
+		ps->attr = SG_PHYSICAL;
+		ps->name = smalloc(16);
+		snprint(ps->name, 16, "osprey%d", i);
+		ps->pa = PADDR(ospreybase) + (uvlong)i*sz;
+		ps->size = sz;
+		if(addphysseg(ps) != nil)
+			ospreynseg++;
+	}
+	off = (uvlong)ospreynproc() * sz;
+	off = (off + BY2PG-1) & ~((uvlong)BY2PG-1);
+	for(n = 0; ospreynseg < nelem(ospreyseg); n++){
+		if(off + (n+1)*BY2PG > ospreyarenasize())
+			break;
+		ps = &ospreyseg[ospreynseg];
+		ps->attr = SG_PHYSICAL;
+		ps->name = smalloc(16);
+		snprint(ps->name, 16, "ospreypage%llud", n);
+		ps->pa = PADDR(ospreybase) + off + n*BY2PG;
+		ps->size = BY2PG;
+		if(addphysseg(ps) != nil)
+			ospreynseg++;
+	}
+}
+
 static void
 ospreyinit(void)
 {
@@ -770,10 +824,7 @@ ospreyinit(void)
 		ospreybase = nil;
 		return;
 	}
-	ospreyseg.pa = PADDR(ospreybase);
-	ospreyseg.size = size;
-	/* published once; a second driver reset keeps the same span */
-	addphysseg(&ospreyseg);
+	ospreypublish();
 
 	if(ospreyncore() > nelem(ospreycorelock)){
 		print("osprey: %d cores but %d locks\n",

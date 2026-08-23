@@ -6,7 +6,13 @@
  * taken to submit a request or to collect its reply.  Only the servicing
  * of a request still goes through the device.
  *
- * usage: ring arenasize slice [op [arg ...]]
+ * usage: ring segment size [op [arg ...]]
+ *        ring segment size page PAGESEG [text]
+ *
+ * The segment is the container's own -- osprey0, osprey1 and so on, as
+ * status reports -- and the size is that segment's, not the whole span's.
+ * Each container's memory is a segment of its own, so attaching one gets
+ * that container's and nobody else's.
  *
  * With no op it reports the container's map.  The offsets come from
  * /n/osprey/status; see osprey(3).
@@ -348,19 +354,20 @@ ringmain(int argc, char **argv)
 	Ospreymap *m;
 	Queue *rq, *pq;
 	Message *rm, *pm, msg;
+	long n;
 	int i, op;
 
 	if(argc < 3)
-		die("usage: ring arenasize slice [op [arg ...]]");
-	arenasize = num(argv[1]);
-	slice = num(argv[2]);
+		die("usage: ring segment size [op [arg ...]]");
+	arenasize = num(argv[2]);
 
-	va = (uchar*)segattach(0, "osprey", 0, arenasize);
+	va = (uchar*)segattach(0, argv[1], 0, arenasize);
 	if(va == (uchar*)-1)
 		die("segattach failed");
-	outs("mapped osprey segment\n");
+	outs("mapped "); outs(argv[1]); outs("\n");
 
-	base = va + slice;
+	slice = 0;
+	base = va;
 	m = (Ospreymap*)base;
 	if(m->magic != Ospreymagic)
 		die("no container mapped at that offset");
@@ -381,6 +388,30 @@ ringmain(int argc, char **argv)
 	outs(" get "); outd(pq->get);
 	outs("\n");
 	if(argc == 3){
+		flush();
+		return;
+	}
+
+	if(strcmp(argv[3], "page") == 0 && argc > 4){
+		/*
+		 * A page is a segment of its own, so a container that has
+		 * been handed one attaches it and finds what was written
+		 * there: the page was mapped, not copied.
+		 */
+		uchar *pg;
+
+		pg = (uchar*)segattach(0, argv[4], 0, 4096);
+		if(pg == (uchar*)-1)
+			die("cannot attach that page");
+		outs("mapped "); outs(argv[4]); outs("\n");
+		if(argc > 5){
+			n = strlen(argv[5]);
+			memmove(pg, argv[5], n+1);
+			outs("wrote '"); outs(argv[5]); outs("'\n");
+		} else {
+			pg[63] = 0;
+			outs("holds '"); outs((char*)pg); outs("'\n");
+		}
 		flush();
 		return;
 	}

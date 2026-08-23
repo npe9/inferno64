@@ -51,6 +51,7 @@ enum {
 	Pagesize	= 4096,
 	Maxpage		= 8,	/* pages one container may hold */
 	Pktbufsize	= 2112,	/* one of them, room for 2048 and a trailer */
+	Segnamelen	= 16,
 	Narm		= 16,	/* arms one select may offer */
 	Align		= 64,
 };
@@ -65,6 +66,7 @@ struct Ospreyproc {
 	uvlong	version;	/* writes to its attributes */
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
+	char	segname[Segnamelen];	/* the segment that is this slice */
 	Ospreyproc *server;	/* answers what the kernel will not */
 	int	serving;	/* is that server for someone */
 	Pktq	pktq;		/* packets given to this container */
@@ -309,7 +311,11 @@ sizes(void)
 		+ ROUNDUP(2*Nqueue*sizeof(Message), Align)
 		+ ROUNDUP(Ndata, Align)
 		+ Npktbuf*Pktbufsize;
-	slicesize = ROUNDUP(slicesize, Align);
+	/*
+	 * A whole number of pages: a slice is a segment of its own, and a
+	 * segment is attached in pages.
+	 */
+	slicesize = ROUNDUP(slicesize, Pagesize);
 }
 
 int
@@ -339,6 +345,41 @@ uvlong
 ospreyslice(Ospreyproc *p)
 {
 	return p == nil ? 0 : p->slice;
+}
+
+uvlong
+ospreyslicesize(void)
+{
+	sizes();
+	return slicesize;
+}
+
+/*
+ * A container's slice is a segment of its own, so that attaching one
+ * gets that container's memory and nobody else's.
+ */
+char*
+ospreysegname(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return nil;
+	return p->segname;
+}
+
+/* and a page is a segment of its own, so that handing one over maps it */
+char*
+ospreypagesegname(uvlong off)
+{
+	static char buf[Segnamelen];
+	char *s;
+	uvlong i;
+
+	if(off < pagebase || off >= pagebase + (uvlong)Npage*Pagesize)
+		return nil;
+	i = (off - pagebase)/Pagesize;
+	s = seprint(buf, buf+sizeof buf, "ospreypage%llud", i);
+	USED(s);
+	return buf;
 }
 
 ulong
@@ -601,6 +642,7 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	memset(p, 0, sizeof *p);
 
 	p->slice = (uvlong)slot * slicesize;
+	seprint(p->segname, p->segname + Segnamelen, "osprey%d", slot);
 	base = arena + p->slice;
 	memset(base, 0, slicesize);
 	m = (Ospreymap*)base;
@@ -1609,6 +1651,8 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			uvlong j;
 
 			l = pagelist(&procs[i]);
+				p = seprint(p, e, "segment %llud %s %lud\n",
+				q->id, procs[i].segname, slicesize);
 			p = seprint(p, e, "pages %llud", q->id);
 			for(j = 0; l != nil && j < procs[i].map->npage; j++)
 				p = seprint(p, e, " %llud", l[j]);

@@ -73,6 +73,9 @@ enum {
 int		ospreyarena(void *base, ulong size);
 uvlong		ospreyarenasize(void);
 uvlong		ospreyslice(Ospreyproc*);
+char*		ospreysegname(Ospreyproc*);
+char*		ospreypagesegname(uvlong off);
+uvlong		ospreyslicesize(void);
 int		ospreyindex(Ospreyproc*);
 ulong		ospreycoreof(Ospreyproc*);
 int		ospreynproc(void);

@@ -8,7 +8,11 @@
 /*
  * Attachable segment types
  */
-static Physseg physseg[10] = {
+/*
+ * Room for a segment for each container and each page it may be handed,
+ * so that a container maps its own memory and not everyone's.
+ */
+static Physseg physseg[64] = {
 	{ SG_SHARED,	"shared",	0,	SEGMAXSIZE	},
 	{ SG_BSS,	"memory",	0,	SEGMAXSIZE	},
 	{ 0,		0,		0,	0		},

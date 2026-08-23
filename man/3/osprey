@@ -165,10 +165,12 @@ place in its list.
 .TP
 .BI flip " id id i"
 Hand the page at that place in the first container's list to the second.
-What was written in it is there afterwards, having been neither copied
-nor moved.  A container's pages are listed by
+A page is a segment of its own, named
+.BR ospreypage N,
+so what was written in it is there for the container it is handed to:
+the page is mapped, not copied.
 .B status
-as offsets in the span.
+lists the pages a container holds, as offsets in the span.
 .TP
 .BI delegate " id " [ server | off ]
 Have another container answer the requests this one makes that the kernel
@@ -361,17 +363,17 @@ to the interface.  The container's network accounting is credited for the
 packet as it is taken.  The remaining operations are refused.
 .SH THE SHARED SPAN
 .PP
-A process maps the span with
+Each container's slice is a segment of its own, named
+.BR osprey N
+and reported with its size by
+.BR status ,
+so that attaching one gets that container's memory and nobody else's:
 .IP
 .nf
-segattach(0, "osprey", 0, arenasize)
+segattach(0, "osprey0", 0, slicesize)
 .fi
 .PP
-where
-.I arenasize
-is the value
-.B status
-reports.  At its container's slice offset it finds
+At the start of it a process finds
 .IP
 .nf
 struct Ospreymap {
@@ -528,7 +530,7 @@ Wait on a reply or on a semaphore, and let something else provide one:
 .nf
 echo create 5 40000000 800000000 200000000 >/n/osprey/ctl
 echo attach 5 0 >/n/osprey/ctl
-ring 101376 0 wait 1 &
+ring osprey0 40960 wait 1 &
 echo semup 5 1 >/n/osprey/ctl
 .fi
 .PP
@@ -609,14 +611,11 @@ the igbe.  And a card writing into memory a process has mapped is a card
 writing where that process may write too, which a container that is not
 trusted with its own packets should not be given.
 .PP
-The whole span is mapped by any process that attaches it, so one
-container can read and write another's rings, and the kernel address in
-each ring head is visible to them all.  That is also why flipping a page
-maps nothing: both ends already have every page, so what moves is which
-container's map names it.  What it saves is the copy, which is what page
-flipping is for, but it is not the operation on a page table that the
-name suggests.  That would want a segment for each container rather than
-one for them all, which would answer this paragraph as well.
+A segment's name is not a capability: any process may attach any of
+them, so a container is only as private as the names it keeps to itself.
+The kernel knows which container holds which page, but nothing asks it
+when a page is attached.  The kernel address in each ring head is
+visible to whoever attaches that slice.
 .PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes
