@@ -67,6 +67,12 @@ is closed and that are refused if what they were written against has
 been committed over, and leases on fids and sessions.  What it names are
 containers, whose settings and accounting are their attributes.
 .PP
+.B "Migration."
+A container carried to another machine over a wire: its checkpoint in an
+ethernet frame of its own type, read back into a kernel that had never
+heard of it, and destroyed where it came from so that it is in one place
+afterwards.
+.PP
 .B "Checkpoint and restart."
 Every container as text: what it is, what it is allowed, what it has
 used, and where it was running.  Reading it is a checkpoint and writing
@@ -76,13 +82,7 @@ back.
 .NH 1
 Next, in order
 .PP
-.B "1.  Migration between machines."
-A checkpoint is text and goes wherever a file goes, so what is left is
-the moving: carrying one to another machine over a connection rather than
-by hand, and stopping a container on the one and starting it on the other
-without either losing what was in flight.
-.PP
-.B "2.  Page flipping."
+.B "1.  Page flipping."
 Handing a page between containers instead of copying its contents, for
 messages large enough to be worth it.
 .NH 1

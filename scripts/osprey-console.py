@@ -31,8 +31,13 @@ def main():
 	ap.add_argument('-u', '--until', default=None)
 	ap.add_argument('-c', '--command', action='append', default=[])
 	ap.add_argument('-q', '--quiet', action='store_true')
+	ap.add_argument('-S', '--snapshot', action='store_true',
+		help='write nowhere: the disk is left as it was, so two of\n'
+		     'these may share one image')
 	ap.add_argument('-n', '--net', default=None,
 		help='attach a nic, e.g. e1000')
+	ap.add_argument('--netdev', default='user,id=n0',
+		help='how the nic is attached, e.g. socket,id=n0,listen=:1234')
 	ap.add_argument('-2', '--serial2', default=None,
 		help='a second serial port, e.g. unix:/tmp/com2,server,nowait')
 	a = ap.parse_args()
@@ -48,7 +53,9 @@ def main():
 	if a.serial2:
 		qemu += ['-serial', a.serial2]
 	if a.net:
-		qemu += ['-netdev', 'user,id=n0', '-device', a.net + ',netdev=n0']
+		qemu += ['-netdev', a.netdev, '-device', a.net + ',netdev=n0']
+	if a.snapshot:
+		qemu += ['-snapshot']
 	if a.disk:
 		qemu += [
 			'-drive', 'file=%s,format=qcow2,if=none,id=hd0' % a.disk,

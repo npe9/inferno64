@@ -291,6 +291,12 @@ out is running again.  Nothing of the ring storage, the data area, the
 packets or the channels the kernel holds is in it: what is written is
 what a container is, not what it happens to be holding.
 .PP
+A checkpoint is text and goes wherever text goes.
+.I mig
+carries one to another machine in an ethernet frame of its own type and
+reads it back into the kernel there, destroying what it sent so that the
+container is afterwards in one place and not two.
+.PP
 .B pip
 speaks the session protocol described in
 .IR pip (5),
@@ -556,6 +562,17 @@ makes it a real one.
 .PP
 Network accounting has no packet path charging it yet; the caps and
 counters are there for the one the plan adds later.
+.PP
+A checkpoint records what a container has used, but what it has used is
+counted against a period of a clock the machine it arrives at does not
+share.  A container migrated part way through its period arrives with
+that much of a budget already spent, and is only itself again at the next
+period.
+.PP
+Nothing that was in flight goes with a container.  Its ring indices are
+written out but the messages they point at are not, so a container should
+be migrated when its rings are empty; there is nothing that stops one
+being migrated when they are not.
 .PP
 A container carries one process.  Two processes billed to one container,
 were the device to allow it, could charge it from two cores at once and
