@@ -1,0 +1,150 @@
+.TH PIP 5
+.SH NAME
+pip \- the Osprey session protocol
+.SH SYNOPSIS
+.nf
+.B #O/pip
+.fi
+.SH DESCRIPTION
+.PP
+Pip is the protocol Osprey containers are spoken to with.  What it keeps
+from 9P: authentication is someone else's business, fids name what a
+conversation is working on, and every T message is answered by an R
+message carrying its tag.  What it changes is three things.
+.PP
+A
+.I session
+outlives the connection that carried it.  It is named by a number, and a
+client whose connection has gone opens another and says which session it
+is resuming; its fids are still there.
+.PP
+Transactions are
+.IR grouped .
+As many T messages as will fit are written at once and their R messages
+read back at once, so that opening a thing, reading it and closing it is
+one round trip rather than three.
+.PP
+What is read from a thing is
+.IR named .
+A read asks for an attribute by string rather than for bytes at an
+offset, and the attribute called
+.B *
+is the list of attributes the thing has.
+.SH MESSAGES
+.PP
+Numbers are little endian.  A string is a two-byte length followed by
+that many bytes, not terminated.  Every message begins
+.IP
+.nf
+size[4] type[1] tag[2]
+.fi
+.PP
+and the rest is
+.IP
+.nf
+Tsession	sid[8]		resume that session, or 0 for a new one
+Rsession	sid[8]
+Topen		fid[4] nfid[4] how[1] name[s]
+Ropen		qid[8]
+Tread		fid[4] count[4] attr[s]
+Rread		version[8] data[s]
+Twrite		fid[4] attr[s] data[s]
+Rwrite		version[8]
+Tclose		fid[4]
+Rclose
+Rerror		ename[s]
+.fi
+.PP
+.B Topen
+walks the name from the root, clones
+.I fid
+into
+.I nfid
+and opens it: the walk, the clone and the open of 9P in one message.  A
+group begins with
+.BR Tsession ,
+and the session it settles on is remembered against the connection, so a
+client need not name it again in every group.
+.PP
+A
+.I version
+counts the writes to what a fid names, so that a client can tell whether
+what it read is still what is there.
+.SH NAMES
+.PP
+The root is
+.BR / ,
+and its only attribute is
+.BR * ,
+the list of the containers there are.  A container is named by its
+number.  Its attributes are those
+.IR osprey (3)
+reports:
+.BR core ,
+.BR state ,
+.BR budget ,
+.BR used ,
+.BR period ,
+.BR deadline ,
+.BR besteffort ,
+.BR periods ,
+.BR mode ,
+.BR memory ,
+.BR memused ,
+.BR netbytes ,
+.BR netmax ,
+.BR packets ,
+.BR requests ,
+.BR replies ,
+.BR slice ,
+.BR data ,
+.B pid
+and
+.BR version .
+Of those,
+.BR budget ,
+.BR period ,
+.BR deadline ,
+.BR memory ,
+.B netmax
+and
+.B mode
+may be written; the rest are what the container has done rather than what
+it was asked to do.
+.SH EXAMPLE
+.PP
+Open a container, read every attribute it has and close it, in one round
+trip:
+.IP
+.nf
+pip open 2 /5 read 2 '*' read 2 budget close 2
+.fi
+.PP
+Come back to the same session from another process, with the fid still
+open:
+.IP
+.nf
+pip -s 1 write 2 mode strict read 2 version
+.fi
+.SH SOURCE
+.B /os/osprey/pip.h
+.br
+.B /os/osprey/devosprey.c
+.br
+.B /os/osprey/cmd/pip.c
+.SH SEE ALSO
+.IR osprey (3)
+.SH BUGS
+.PP
+The presentation also has files leased, and versions immutable and
+committed when a file is closed.  Here a version is only a count of the
+writes, nothing is immutable, and nothing is leased.
+.PP
+Pip is spoken over a file rather than being its own transport, and there
+is no isochronous data.  The things it names are containers; no file
+system is served over it.
+.PP
+A session is remembered against the connection that last used it, so two
+connections working one session at once will confuse each other's
+replies.  Eight sessions of sixteen fids are all there are, and a session
+is never collected: it lasts until the kernel is rebooted.

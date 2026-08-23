@@ -22,6 +22,7 @@
 #include	"etherif.h"
 
 #include	"osprey.h"
+#include	"pip.h"
 
 enum {
 	Qdir,
@@ -29,6 +30,7 @@ enum {
 	Qstatus,
 	Qreply,
 	Qarena,
+	Qpip,
 
 	Statuslen	= 8*1024,	/* every core and container line */
 	Nfd		= 16,		/* chans a container may hold open */
@@ -69,7 +71,42 @@ static Dirtab ospreydir[] = {
 	"status",	{Qstatus},		0,	0444,
 	"reply",	{Qreply},		0,	0444,
 	"arena",	{Qarena},		0,	0660,
+	"pip",		{Qpip},			0,	0660,
 };
+
+/*
+ * pi-p.  A session holds fids and outlives the connection that made it,
+ * so a client that loses one opens another and says which session it is
+ * resuming.  Writing a group of T messages leaves the R messages for the
+ * next read: one round trip for as many transactions as fit.
+ */
+enum {
+	Nsession	= 8,
+	Nfid		= 16,
+};
+
+typedef struct Pipfid Pipfid;
+typedef struct Pipsession Pipsession;
+
+struct Pipfid {
+	int	used;
+	ulong	fid;
+	uvlong	id;		/* the container it names, or 0 for the root */
+	int	open;
+};
+
+struct Pipsession {
+	int	used;
+	uvlong	sid;
+	Pipfid	fid[Nfid];
+	uchar	reply[Pipmaxmsg];
+	long	nreply;
+	long	rp;
+};
+
+static Pipsession pipsession[Nsession];
+static uvlong pipnextsid = 1;
+static QLock piplock;
 
 enum {
 	CMreset,
@@ -936,6 +973,391 @@ ospreyclose(Chan*)
 {
 }
 
+
+static uvlong
+pipget(uchar *p, int n)
+{
+	uvlong v;
+	int i;
+
+	v = 0;
+	for(i = n; i-- > 0; )
+		v = (v<<8) | p[i];
+	return v;
+}
+
+static void
+pipput(uchar *p, int n, uvlong v)
+{
+	int i;
+
+	for(i = 0; i < n; i++, v >>= 8)
+		p[i] = v;
+}
+
+static Pipsession*
+pipfind(uvlong sid)
+{
+	int i;
+
+	for(i = 0; i < Nsession; i++)
+		if(pipsession[i].used && pipsession[i].sid == sid)
+			return &pipsession[i];
+	return nil;
+}
+
+static Pipfid*
+pipfid(Pipsession *ps, ulong fid)
+{
+	int i;
+
+	for(i = 0; i < Nfid; i++)
+		if(ps->fid[i].used && ps->fid[i].fid == fid)
+			return &ps->fid[i];
+	return nil;
+}
+
+static Pipfid*
+pipnewfid(Pipsession *ps, ulong fid)
+{
+	int i;
+
+	if(pipfid(ps, fid) != nil)
+		return nil;
+	for(i = 0; i < Nfid; i++)
+		if(ps->fid[i].used == 0){
+			ps->fid[i].used = 1;
+			ps->fid[i].fid = fid;
+			ps->fid[i].id = 0;
+			ps->fid[i].open = 0;
+			return &ps->fid[i];
+		}
+	return nil;
+}
+
+/* room for one more reply, and where it goes */
+static uchar*
+pipreply(Pipsession *ps, int type, int tag, long n)
+{
+	uchar *r;
+
+	if(ps->nreply + Pipheader + n > sizeof ps->reply)
+		return nil;
+	r = ps->reply + ps->nreply;
+	pipput(r, 4, Pipheader + n);
+	r[4] = type;
+	pipput(r+5, 2, tag);
+	ps->nreply += Pipheader + n;
+	return r + Pipheader;
+}
+
+static void
+piperror(Pipsession *ps, int tag, char *e)
+{
+	uchar *r;
+	long n;
+
+	n = strlen(e);
+	if(n > Pipmaxname)
+		n = Pipmaxname;
+	if((r = pipreply(ps, PipRerror, tag, 2 + n)) == nil)
+		return;
+	pipput(r, 2, n);
+	memmove(r+2, e, n);
+}
+
+/* the name a PipTopen walks: empty or / is the root, /N or N a container */
+static uvlong
+pipwalk(char *name, long n)
+{
+	char buf[32];
+	long i;
+
+	while(n > 0 && *name == '/')
+		name++, n--;
+	if(n == 0)
+		return 0;
+	if(n >= sizeof buf)
+		return ~0ULL;
+	for(i = 0; i < n; i++){
+		if(name[i] < '0' || name[i] > '9')
+			return ~0ULL;
+		buf[i] = name[i];
+	}
+	buf[n] = 0;
+	return strtoull(buf, nil, 10);
+}
+
+/*
+ * One T message.  Returns the bytes it consumed, or -1 if the group is
+ * malformed and nothing more of it can be trusted.
+ */
+static long
+pipmsg(Pipsession **psp, uchar *m, long n)
+{
+	Pipsession *ps;
+	Pipfid *f, *nf;
+	Ospreyproc *p;
+	char attr[Pipmaxname+1], val[Pipmaxname+1];
+	uchar *r;
+	uvlong sz, sid, id;
+	long alen, vlen, cnt, k;
+	ulong fid, nfid;
+	int type, tag, i;
+
+	if(n < Pipheader)
+		return -1;
+	sz = pipget(m, 4);
+	if(sz < Pipheader || sz > n)
+		return -1;
+	type = m[4];
+	tag = pipget(m+5, 2);
+	ps = *psp;
+
+	if(type == PipTsession){
+		if(sz < Pipheader + 8)
+			return -1;
+		sid = pipget(m+Pipheader, 8);
+		if(sid != 0){
+			if((ps = pipfind(sid)) == nil){
+				if(*psp == nil)
+					return -1;
+				piperror(*psp, tag, "no such session");
+				return sz;
+			}
+		} else {
+			for(i = 0; i < Nsession; i++)
+				if(pipsession[i].used == 0)
+					break;
+			if(i == Nsession){
+				if(*psp != nil)
+					piperror(*psp, tag, "no free sessions");
+				return sz;
+			}
+			ps = &pipsession[i];
+			memset(ps, 0, sizeof *ps);
+			ps->used = 1;
+			ps->sid = pipnextsid++;
+		}
+		*psp = ps;
+		if((r = pipreply(ps, PipRsession, tag, 8)) != nil)
+			pipput(r, 8, ps->sid);
+		return sz;
+	}
+
+	if(ps == nil)
+		return -1;
+
+	switch(type){
+	case PipTopen:
+		if(sz < Pipheader + 4+4+1+2)
+			return -1;
+		fid = pipget(m+Pipheader, 4);
+		nfid = pipget(m+Pipheader+4, 4);
+		k = Pipheader + 4+4+1;
+		alen = pipget(m+k, 2);
+		k += 2;
+		if(k + alen > sz)
+			return -1;
+		USED(fid);
+		id = pipwalk((char*)m+k, alen);
+		if(id == ~0ULL){
+			piperror(ps, tag, "bad name");
+			break;
+		}
+		if(id != 0 && ospreylookup(id) == nil){
+			piperror(ps, tag, "no such container");
+			break;
+		}
+		if((nf = pipnewfid(ps, nfid)) == nil){
+			piperror(ps, tag, "fid in use or no free fids");
+			break;
+		}
+		nf->id = id;
+		nf->open = 1;
+		if((r = pipreply(ps, PipRopen, tag, 8)) != nil)
+			pipput(r, 8, id);
+		break;
+
+	case PipTread:
+		if(sz < Pipheader + 4+4+2)
+			return -1;
+		fid = pipget(m+Pipheader, 4);
+		cnt = pipget(m+Pipheader+4, 4);
+		k = Pipheader + 8;
+		alen = pipget(m+k, 2);
+		k += 2;
+		if(k + alen > sz || alen > Pipmaxname)
+			return -1;
+		memmove(attr, m+k, alen);
+		attr[alen] = 0;
+		if((f = pipfid(ps, fid)) == nil || f->open == 0){
+			piperror(ps, tag, "fid not open");
+			break;
+		}
+		if(f->id == 0){
+			/* the root: its attribute is the list of containers */
+			if(strcmp(attr, "*") != 0){
+				piperror(ps, tag, "no such attribute");
+				break;
+			}
+			k = 0;
+			for(p = ospreynext(nil); p != nil; p = ospreynext(p))
+				k += snprint(val+k, sizeof val - k,
+					k == 0 ? "%llud" : " %llud", ospreyid(p));
+			if(cnt >= 0 && k > cnt)
+				k = cnt;
+			if((r = pipreply(ps, PipRread, tag, 8+2+k)) != nil){
+				pipput(r, 8, 0);
+				pipput(r+8, 2, k);
+				memmove(r+10, val, k);
+			}
+			break;
+		}
+		if((p = ospreylookup(f->id)) == nil){
+			piperror(ps, tag, "container is gone");
+			break;
+		}
+		{
+			char *b;
+
+			b = smalloc(Pipmaxmsg/2);
+			if(waserror()){
+				free(b);
+				nexterror();
+			}
+			k = ospreyattr(p, attr, b, Pipmaxmsg/2);
+			if(k < 0)
+				piperror(ps, tag, "no such attribute");
+			else {
+				if(cnt >= 0 && k > cnt)
+					k = cnt;
+				if((r = pipreply(ps, PipRread, tag, 8+2+k)) != nil){
+					pipput(r, 8, ospreyversion(p));
+					pipput(r+8, 2, k);
+					memmove(r+10, b, k);
+				}
+			}
+			poperror();
+			free(b);
+		}
+		break;
+
+	case PipTwrite:
+		if(sz < Pipheader + 4+2)
+			return -1;
+		fid = pipget(m+Pipheader, 4);
+		k = Pipheader + 4;
+		alen = pipget(m+k, 2);
+		k += 2;
+		if(k + alen > sz || alen > Pipmaxname)
+			return -1;
+		memmove(attr, m+k, alen);
+		attr[alen] = 0;
+		k += alen;
+		if(k + 2 > sz)
+			return -1;
+		vlen = pipget(m+k, 2);
+		k += 2;
+		if(k + vlen > sz || vlen > Pipmaxname)
+			return -1;
+		memmove(val, m+k, vlen);
+		val[vlen] = 0;
+		if((f = pipfid(ps, fid)) == nil || f->open == 0 || f->id == 0){
+			piperror(ps, tag, "fid not open");
+			break;
+		}
+		if((p = ospreylookup(f->id)) == nil){
+			piperror(ps, tag, "container is gone");
+			break;
+		}
+		if(ospreysetattr(p, attr, val) < 0){
+			piperror(ps, tag, "attribute is not writable");
+			break;
+		}
+		if((r = pipreply(ps, PipRwrite, tag, 8)) != nil)
+			pipput(r, 8, ospreyversion(p));
+		break;
+
+	case PipTclose:
+		if(sz < Pipheader + 4)
+			return -1;
+		fid = pipget(m+Pipheader, 4);
+		if((f = pipfid(ps, fid)) == nil){
+			piperror(ps, tag, "no such fid");
+			break;
+		}
+		f->used = 0;
+		pipreply(ps, PipRclose, tag, 0);
+		break;
+
+	default:
+		piperror(ps, tag, "unknown message");
+		break;
+	}
+	return sz;
+}
+
+/*
+ * A group: as many T messages as were written at once, answered in one
+ * reply the client reads next.  The session a group leaves off in is
+ * remembered against the connection, so that a client need not name it
+ * again in every group.
+ */
+static long
+pipwrite(Chan *c, uchar *m, long n)
+{
+	Pipsession *ps;
+	long k, used;
+	int i;
+
+	qlock(&piplock);
+	if(waserror()){
+		qunlock(&piplock);
+		nexterror();
+	}
+	ps = (Pipsession*)c->aux;
+	if(ps != nil && (ps->used == 0 || ps > &pipsession[Nsession-1]))
+		ps = nil;
+	if(ps != nil)
+		ps->nreply = ps->rp = 0;
+	for(used = 0, i = 0; i < Pipmaxgroup && used < n; i++){
+		k = pipmsg(&ps, m+used, n-used);
+		if(k <= 0)
+			break;
+		if(i == 0 && ps != nil)
+			ps->nreply -= 0;	/* first message may open it */
+		used += k;
+	}
+	if(ps == nil)
+		error("no session");
+	c->aux = ps;
+	qunlock(&piplock);
+	poperror();
+	return n;
+}
+
+static long
+pipread(Chan *c, void *a, long n)
+{
+	Pipsession *ps;
+
+	qlock(&piplock);
+	ps = (Pipsession*)c->aux;
+	if(ps == nil || ps->used == 0){
+		qunlock(&piplock);
+		return 0;
+	}
+	if(n > ps->nreply - ps->rp)
+		n = ps->nreply - ps->rp;
+	if(n < 0)
+		n = 0;
+	memmove(a, ps->reply + ps->rp, n);
+	ps->rp += n;
+	qunlock(&piplock);
+	return n;
+}
+
 static long
 ospreyarenaio(void *a, long n, vlong offset, int write)
 {
@@ -1047,6 +1469,9 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 		n = ospreyarenaread(a, n, offset);
 		return n;
 
+	case Qpip:
+		return pipread(c, a, n);
+
 	default:
 		error(Egreg);
 	}
@@ -1068,6 +1493,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 
 	if((ulong)c->qid.path == Qarena)
 		return ospreyarenaio(a, n, offset, 1);
+	if((ulong)c->qid.path == Qpip)
+		return pipwrite(c, a, n);
 	if((ulong)c->qid.path != Qctl)
 		error(Eperm);
 

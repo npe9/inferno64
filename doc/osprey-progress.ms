@@ -58,16 +58,24 @@ implement are put on the server's ring with the container and sequence
 they came from, an ordinary process takes them and answers them through
 the same rings and the same select, and the answer is routed home.
 .PP
+.B "\[*p]p."
+The session protocol: sessions that outlive the connection carrying them,
+transactions grouped so that opening a thing, reading it and closing it
+is one round trip, and reads that name an attribute rather than an offset
+into bytes.  What it names are containers, whose settings and accounting
+are their attributes.  Leases, and versions that are immutable and
+committed when a thing is closed, are not built.
+.PP
 .B "Checkpoint."
 The serialisable part of a container: identity, core, state, accounting,
 ring indices, namespace.
 .NH 1
 Next, in order
 .PP
-.B "1.  \[*p]p."
-A session that outlives the connection carrying it, transactions grouped
-into one round trip, string attributes in place of control files,
-immutable versions committed when a file is closed, and leases.
+.B "1.  Leases and immutable versions."
+The rest of what \[*p]p asks for: a version that cannot be changed once
+made, committed when what made it is closed, and a lease that says how
+long what a client holds is good for.
 .PP
 .B "2.  Restart and migration."
 Writing a checkpoint out and reading it into a fresh container, then

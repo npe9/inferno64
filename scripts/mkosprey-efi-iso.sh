@@ -59,10 +59,12 @@ echo "tree $TREE"
 cp "$LOADER" "$TREE/EFI/BOOT/BOOTX64.EFI"
 cp "$KERNEL" "$TREE/amd64/9pc64"
 # the user-space ring program, when it has been built
-if [ -f "$ROOT/Osprey/amd64/bin/ring" ]; then
-	mkdir -p "$TREE/bin"
-	cp "$ROOT/Osprey/amd64/bin/ring" "$TREE/bin/ring"
-fi
+mkdir -p "$TREE/bin"
+for b in ring pip; do
+	if [ -f "$ROOT/Osprey/amd64/bin/$b" ]; then
+		cp "$ROOT/Osprey/amd64/bin/$b" "$TREE/bin/$b"
+	fi
+done
 cp "$ESP" "$TREE/efiboot.fat"
 cp "$CFG" "$TREE/plan9.ini"
 

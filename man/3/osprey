@@ -9,6 +9,7 @@ osprey \- resource containers, per-core scheduling and request rings
 .B /n/osprey/status
 .B /n/osprey/reply
 .B /n/osprey/arena
+.B /n/osprey/pip
 .fi
 .SH DESCRIPTION
 The osprey device gives access to the portable Osprey policy layer:
@@ -278,6 +279,13 @@ the start of the file takes anything.
 .B arena
 is the shared span itself at its own byte offsets, so a ring or a data
 area can be examined without mapping it.
+.PP
+.B pip
+speaks the session protocol described in
+.IR pip (5),
+in which a container's settings and accounting are named attributes, a
+session outlives the connection carrying it, and as many transactions as
+will fit are one round trip.
 .SH REQUESTS
 .PP
 .BR yield ,

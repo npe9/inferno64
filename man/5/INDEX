@@ -6,6 +6,7 @@ error error
 flush flush
 intro 0intro
 open open
+pip pip
 read read
 remove remove
 stat stat

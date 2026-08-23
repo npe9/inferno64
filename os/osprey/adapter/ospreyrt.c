@@ -59,6 +59,7 @@ struct Ospreyproc {
 	Snap	snap;
 	uvlong	sequence;	/* request numbering, kept out of Task */
 	int	pid;		/* the process billed to this container, or 0 */
+	uvlong	version;	/* writes to its attributes */
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
 	Ospreyproc *server;	/* answers what the kernel will not */
@@ -76,6 +77,7 @@ static Process *plist[Nproc];
 static int started;
 
 static int forward(Ospreyproc*, Request*);
+static char *statename(int);
 
 static uchar *arena;		/* the shared span, or nil until given one */
 static ulong arenasize;
@@ -100,6 +102,124 @@ static struct {
 	{"yield",	ReqYield},
 	{"poll",	ReqPoll},
 };
+
+static char *attrnames[] = {
+	"core", "state", "budget", "used", "period", "deadline",
+	"besteffort", "periods", "mode", "memory", "memused",
+	"netbytes", "netmax", "packets", "requests", "replies",
+	"slice", "data", "pid", "version", nil,
+};
+
+uvlong
+ospreyversion(Ospreyproc *p)
+{
+	return p == nil ? 0 : p->version;
+}
+
+/*
+ * Read one attribute of a container into buf, or the list of them all
+ * when the name is *.  Returns what was written, or -1 for a name the
+ * container does not have.
+ */
+long
+ospreyattr(Ospreyproc *p, char *name, char *buf, long nbuf)
+{
+	Container *c;
+	Process *q;
+	char *e, *s;
+	int i;
+
+	if(p == nil || p->used == 0 || name == nil || nbuf <= 0)
+		return -1;
+	q = &p->process;
+	c = &q->container;
+	s = buf;
+	e = buf + nbuf;
+
+	if(strcmp(name, "*") == 0){
+		for(i = 0; attrnames[i] != nil; i++)
+			s = seprint(s, e, i == 0 ? "%s" : " %s", attrnames[i]);
+		return s - buf;
+	}
+	if(strcmp(name, "core") == 0)
+		s = seprint(s, e, "%lud", q->core);
+	else if(strcmp(name, "state") == 0)
+		s = seprint(s, e, "%s", statename(q->state));
+	else if(strcmp(name, "budget") == 0)
+		s = seprint(s, e, "%llud", c->budget);
+	else if(strcmp(name, "used") == 0)
+		s = seprint(s, e, "%llud", c->used);
+	else if(strcmp(name, "period") == 0)
+		s = seprint(s, e, "%llud", c->period);
+	else if(strcmp(name, "deadline") == 0)
+		s = seprint(s, e, "%llud", q->task.deadline);
+	else if(strcmp(name, "besteffort") == 0)
+		s = seprint(s, e, "%llud", c->besteffort);
+	else if(strcmp(name, "periods") == 0)
+		s = seprint(s, e, "%llud", c->periods);
+	else if(strcmp(name, "mode") == 0)
+		s = seprint(s, e, "%s", c->strict ? "strict" : "besteffort");
+	else if(strcmp(name, "memory") == 0)
+		s = seprint(s, e, "%lud", c->memory);
+	else if(strcmp(name, "memused") == 0)
+		s = seprint(s, e, "%lud", c->memused);
+	else if(strcmp(name, "netbytes") == 0)
+		s = seprint(s, e, "%lud", c->netbytes);
+	else if(strcmp(name, "netmax") == 0)
+		s = seprint(s, e, "%lud", c->netmax);
+	else if(strcmp(name, "packets") == 0)
+		s = seprint(s, e, "%lud", (ulong)pktqcount(&p->pktq));
+	else if(strcmp(name, "requests") == 0)
+		s = seprint(s, e, "%llud", queuecount(q->requests));
+	else if(strcmp(name, "replies") == 0)
+		s = seprint(s, e, "%llud", queuecount(q->replies));
+	else if(strcmp(name, "slice") == 0)
+		s = seprint(s, e, "%llud", p->slice);
+	else if(strcmp(name, "data") == 0)
+		s = seprint(s, e, "%llud", ospreydataoffset(p));
+	else if(strcmp(name, "pid") == 0)
+		s = seprint(s, e, "%d", p->pid);
+	else if(strcmp(name, "version") == 0)
+		s = seprint(s, e, "%llud", p->version);
+	else
+		return -1;
+	return s - buf;
+}
+
+/*
+ * Write one.  Only the attributes that are a container's own policy may
+ * be set; what it has done is read only.
+ */
+int
+ospreysetattr(Ospreyproc *p, char *name, char *val)
+{
+	Container *c;
+
+	if(p == nil || p->used == 0 || name == nil || val == nil)
+		return -1;
+	c = &p->process.container;
+	if(strcmp(name, "budget") == 0)
+		c->budget = strtoull(val, nil, 0);
+	else if(strcmp(name, "period") == 0)
+		c->period = strtoull(val, nil, 0);
+	else if(strcmp(name, "deadline") == 0)
+		c->deadline = strtoull(val, nil, 0);
+	else if(strcmp(name, "memory") == 0)
+		c->memory = strtoul(val, nil, 0);
+	else if(strcmp(name, "netmax") == 0)
+		c->netmax = strtoul(val, nil, 0);
+	else if(strcmp(name, "mode") == 0){
+		if(strcmp(val, "strict") == 0)
+			containerstrict(c, 1);
+		else if(strcmp(val, "besteffort") == 0)
+			containerstrict(c, 0);
+		else
+			return -1;
+	} else
+		return -1;
+	p->version++;
+	return 0;
+}
 
 int
 ospreyop(char *name)

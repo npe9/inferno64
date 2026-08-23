@@ -161,6 +161,16 @@ void		ospreyunlocksem(void);
  */
 long		ospreykernop(Ospreyproc*, uvlong op, uvlong *arg, uvlong *result);
 
+/*
+ * A container's attributes, by name.  The list of them is the attribute
+ * called *, and writing one is what the corresponding ctl command does.
+ * The version counts the writes, so a reader can tell whether what it
+ * has is still what is there.
+ */
+long		ospreyattr(Ospreyproc*, char *name, char *buf, long nbuf);
+int		ospreysetattr(Ospreyproc*, char *name, char *val);
+uvlong		ospreyversion(Ospreyproc*);
+
 int		ospreyop(char *name);
 char*		ospreyopname(uvlong op);
 char*		ospreystatusname(long status);
