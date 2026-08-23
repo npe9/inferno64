@@ -413,11 +413,23 @@ first frame, because AVFoundation wants an asset it can open, so a session
 cannot start decoding until the stream ends - fixing that means parsing the
 container on this side and feeding samples to the decoder.
 
-**Correction:** an earlier version of this note said `quicktime(2)` already
-does the parsing half. It does not. `module/quicktime.m` is a *header* parser
-— `mvhd` and `trak` — with no sample tables at all: no `stsd`, `stsc`, `stco`,
-`stsz` or `stts`, so it cannot locate a compressed sample or extract the
-`avcC` parameter sets a decoder needs. Extending it is real work, not reuse. Then `CVMetalTextureCache` so the
+`quicktime(2)` **now does the parsing half** (`720e32cb`). It was a header
+parser only — an earlier version of this note claimed otherwise without
+checking — and now has real sample tables: `tracks()` returns each track's
+codec, timescale, dimensions, the verbatim codec setup data (`avcC` for
+H.264), and every sample's offset, size, duration and sync flag. Verified by
+`qttest(1)` against `lib/movies/test.mov`, whose contents are known exactly
+because `mkmovie.m` wrote them.
+
+That is deliberate placement: **finding samples in a container is a
+data-format job and belongs in Limbo**; the device's capability is decoding
+H.264 samples, which is the part only the hardware can do.
+
+So what is left for streaming is now only the device half: a
+`VTDecompressionSession` configured from the `avcC` parameter sets, and a way
+to hand it one sample at a time. The text `ctl` cannot carry binary samples,
+so that wants a second file in the client directory — the same `ctl`/`data`
+split applied one level down. Then `CVMetalTextureCache` so the
 decoder's pixel buffer *is* the image's backing rather than being copied into
 it; presentation timestamps and A/V sync against `audio(3)`; and the
 `bdata`-staleness rule for memdraw paths, which remains the genuinely invasive
