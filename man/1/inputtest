@@ -78,16 +78,20 @@ replayed   0 104 |  6 59496 |  6 101 | 21 59493 | 21 108 ...
 .PP
 With
 .BR -p ,
-the pointer states and the
-.I device's own
-msec come back byte for byte:
+the distinct pointer states come back identical, and so do the intervals
+between the times the device reports:
 .B (252,290,0)@7019
 ,
 .B (277,305,0)@7204
 ,
 .BR (302,320,0)@7390 .
-That is the value consumers compare to detect a double click, so it has to
-survive the replay rather than be restamped on injection.
+.PP
+It is the intervals that matter and the intervals that are guaranteed.
+Consumers compare differences of that msec to detect a double click, so it must
+be carried through rather than restamped on injection.
+The absolute values matched here as well, because a replay's clock starts when
+.B emu
+does, but nothing promises that and nothing should depend on it.
 .SH SOURCE
 .B /appl/cmd/inputtest.b
 .SH SEE ALSO

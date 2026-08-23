@@ -51,9 +51,16 @@ struct Ievent {
 /*
  * One producer and one consumer, so no lock, exactly as ptrq in devpointer.c
  * does it: every event comes from the single host window-driver thread, and
- * only the drain kproc reads. Do not add a second producer without adding a
- * lock, and note that locking here would be locking on a thread that has no
- * Proc, which is why the shape is this one.
+ * only the drain kproc reads. Locking here would be locking on a thread that
+ * has no Proc, which is why the shape is this one.
+ *
+ * That there is one producer is worth being able to check rather than trust.
+ * Keys arrive only from the platform's driver. Resizes look like two paths -
+ * win-cocoa.m calls mouseresize directly, and also reaches it through port
+ * code as screenresize -> drawscreenresize -> mouseresize - but both are on
+ * the host UI thread; drawscreenresize has exactly that one caller, and
+ * devdraw.c's own comment says the same. Check that again before adding a
+ * caller, and add a lock if it ever stops being true.
  */
 static struct {
 	int	on;
@@ -63,6 +70,7 @@ static struct {
 	int	wr;
 	int	rd;
 	int	lost;
+	int	toldlost;
 	Rendez	r;
 } rec;
 
@@ -127,7 +135,7 @@ inputrecord(int type, int a, int b, int c)
 	if(w >= Nring)
 		w = 0;
 	if(w == rec.rd){
-		rec.lost++;		/* reported once, at the end */
+		rec.lost++;		/* the drain proc says so */
 		return;
 	}
 	rec.ring[rec.wr].type = type;
@@ -148,6 +156,16 @@ inputrecproc(void *v)
 	USED(v);
 	for(;;){
 		Sleep(&rec.r, recnotempty, 0);
+		/*
+		 * A dropped event makes a short trace that replays cleanly and
+		 * looks right, which for a tool whose whole value is fidelity
+		 * is the one failure that must not be silent.
+		 */
+		if(rec.lost != 0 && !rec.toldlost){
+			rec.toldlost = 1;
+			print("inputrec: the event ring overflowed;"
+				" this recording is INCOMPLETE\n");
+		}
 		while(rec.rd != rec.wr){
 			e = rec.ring[rec.rd];
 			if(++rec.rd >= Nring)

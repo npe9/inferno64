@@ -274,16 +274,7 @@ name in host file system of directory where
 .I emu
 was invoked
 .PD
-.SH EXAMPLE
-To start
-.B wm/logon
-directly:
-.IP
-.EX
-EMU='-g800x600 -c1'
-emu /dis/wm/wm.dis wm/logon -u inferno
-.EE
-.SS "Recording and replaying the input a session received"
+.SH "RECORDING AND REPLAYING INPUT"
 Two environment variables record the input a whole session received and give
 it back to a later one.
 .TP
@@ -325,6 +316,15 @@ treats two clicks less than 500ms apart as a double click.
 See
 .IR inputtest (1)
 for what was measured.
+.SH EXAMPLE
+To start
+.B wm/logon
+directly:
+.IP
+.EX
+EMU='-g800x600 -c1'
+emu /dis/wm/wm.dis wm/logon -u inferno
+.EE
 .SH FILES
 .TF /dis/emuinit.dis
 .TP
