@@ -1033,6 +1033,8 @@ Writing
 	frame  \fIid\fP \fIn\fP \fIpath\fP
 	open   \fIpath\fP
 	next   \fIid\fP
+	decoder \fIcodec\fP [\fIhex\fP]
+	target \fIid\fP
 	close
 .EE
 to
@@ -1073,6 +1075,41 @@ fails at end of stream.
 .B Close
 ends the session; so does the client going away, since a session holds
 host resources that must not outlive it.
+.SS "Decoding a stream of coded samples"
+.B Decoder
+configures a decoder for
+.I codec
+from its parameter sets, given as hex \(em for
+.B avc1
+that is the
+.B avcC
+payload, which
+.IR quicktime (2)
+returns as a track's
+.BR extra .
+.B Target
+says which image frames go into.
+Each write to
+.B videodata
+is then one coded sample, and decodes into that image.
+.PP
+This is the form that streams: nothing is staged, nothing is read
+ahead, and decoding starts on the first sample, so memory does not grow
+with the length of the movie.
+Finding the samples is the caller's job and belongs there \(em
+.IR quicktime (2)
+locates them, and only the coded bytes of one frame cross into the
+kernel.
+The parameter sets are hex because
+.B video
+is a text control file and they are tens of bytes; the samples are not
+small, which is why they go to a file of their own.
+.PP
+Samples are decoded in the order given, which for a stream with
+B-frames is not display order.
+A caller wanting display order reorders using the composition offsets
+.IR quicktime (2)
+reports.
 .PP
 The stream is pushed into the device in chunks, so memory stays bounded
 whatever the size of the movie.

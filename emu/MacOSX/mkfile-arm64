@@ -19,7 +19,8 @@ SYSLIBS=\
 	-framework CoreFoundation\
 	-framework IOKit\
 	-framework AudioToolbox\
-	-framework AVFoundation -framework CoreMedia -framework CoreVideo\
+	-framework AVFoundation -framework VideoToolbox\
+	-framework CoreMedia -framework CoreVideo\
 	-framework ImageIO\
 	-framework Metal\
 	-framework QuartzCore\

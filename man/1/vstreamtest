@@ -1,0 +1,42 @@
+.TH VSTREAMTEST 1
+.SH NAME
+vstreamtest \- test streaming video decode end to end
+.SH SYNOPSIS
+.B vstreamtest
+.SH DESCRIPTION
+.B Vstreamtest
+exercises the whole streaming path:
+.IR quicktime (2)
+locates the coded samples in Limbo, and
+.IR draw (3)'s
+decoder turns them into frames in an ordinary draw image.
+.PP
+Nothing is staged and no path is handed to the host.
+The container is read through the namespace \(em so it may be on a
+mount from another machine \(em and what crosses into the kernel is the
+parameter sets and then the coded bytes of one frame at a time.
+.PP
+It checks every frame against the colour that frame was built with, and
+that each display position is produced exactly once.
+Both matter: the samples of
+.B /lib/movies/test.mov
+are in decode order and the stream has B-frames, so sample
+.I n
+is not frame
+.IR n .
+A test expecting otherwise fails against a decoder that is working
+correctly \(em as this one did before it used the composition offsets.
+.SH SOURCE
+.B /appl/cmd/vstreamtest.b
+.SH SEE ALSO
+.IR quicktime (2),
+.IR draw (3),
+.IR drawdecodetest (1)
+.SH BUGS
+One short clip, one codec, one track.
+Audio is not decoded at all, so nothing here tests synchronisation.
+.PP
+Frames are decoded as fast as the samples are written, with no regard
+for the durations
+.IR quicktime (2)
+reports, so this measures decode throughput and not playback.

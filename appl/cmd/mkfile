@@ -83,6 +83,7 @@ TARG=\
 	drawdecodetest.dis\
 	gputest.dis\
 	qttest.dis\
+	vstreamtest.dis\
 	grep.dis\
 	gunzip.dis\
 	gzip.dis\

@@ -69,6 +69,15 @@ any sample, so a track whose
 .B extra
 is nil cannot be decoded even though its samples are present.
 .PP
+.B Coff
+is the composition offset: a sample's presentation time is its decode
+time plus this.
+It is non-zero only when the stream codes frames out of display order,
+which H.264 does whenever it uses B-frames, and then samples arrive in
+decode order and a player must reorder them.
+Ignoring it produces pictures in the wrong order \(em which looks like
+a broken decoder and is not one.
+.PP
 Each
 .B Sample
 gives a file offset and length, so the coded bytes can be read without
@@ -92,6 +101,12 @@ New code wants
 .IR qttest (1),
 .IR draw (3)
 .SH BUGS
+Composition offsets are read as signed, including in a version 0
+.B ctts
+where the specification says unsigned, because real files \(em
+including this tree's own test movie, written by the platform's encoder
+\(em carry negative values there.
+.PP
 .B Tracks
 reads each sample table whole, so a movie with a very large number of
 samples costs memory proportional to that count \(em not to the size of

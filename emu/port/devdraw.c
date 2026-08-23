@@ -18,7 +18,8 @@ enum
 	Qctl,
 	Qdata,
 	Qrefresh,
-	Qvideo
+	Qvideo,
+	Qvideodata
 };
 
 /*
@@ -93,6 +94,8 @@ struct Client
 	s32		infoid;
 	s32	op;	/* compositing operator - SoverD by default */
 	void*	vsess;	/* open video decode session, or nil (see Qvideo) */
+	void*	vdec;	/* open sample-fed decoder, or nil (see Qvideodata) */
+	s32	vtarget;	/* image the decoder writes frames into */
 	/* Optional draw3d protocol state (letters 3/M/w/u/z/g/G/h/j/k). */
 	float		d3model[16];
 	float		d3proj[16];
@@ -242,6 +245,22 @@ int	(*gpuimagedecode)(Memimage*, uchar *enc, int nenc, int frame);
  * and pushes it down here - so a movie on a Styx mount from another machine
  * works exactly like a local one, which a host path would not allow.
  */
+/*
+ * A decoder fed one coded sample at a time, rather than a whole file.
+ *
+ * This is the half that only the hardware can do. Finding the samples in a
+ * container is a data-format job that belongs in Limbo - quicktime(2) does it
+ * - so what crosses into the kernel is exactly what must: the codec, its
+ * parameter sets, and the coded bytes of one frame.
+ *
+ * Unlike the file-based session, nothing is staged and nothing is read ahead,
+ * so decoding starts on the first sample and memory does not scale with the
+ * length of the movie.
+ */
+void*	(*gpudecopen)(char *codec, uchar *extra, int nextra);
+int	(*gpudecsample)(void *dec, uchar *buf, int n, Memimage *dst);
+void	(*gpudecclose)(void *dec);
+
 void*	(*gpuvideoopen)(void);
 int	(*gpuvideowrite)(void *sess, uchar *buf, int n);
 int	(*gpuvideostart)(void *sess);
@@ -378,6 +397,10 @@ drawgen(Chan *c, char *name, Dirtab *tab, int x, int s, Dir *dp)
 	case 4:
 		q.path = path|Qvideo;
 		devdir(c, q, "video", 0, eve, 0600, dp);
+		break;
+	case 5:
+		q.path = path|Qvideodata;
+		devdir(c, q, "videodata", 0, eve, 0600, dp);
 		break;
 	default:
 		return -1;
@@ -1189,6 +1212,9 @@ drawclose(Chan *c)
 		if(cl->vsess != nil && gpuvideoclose != nil)
 			gpuvideoclose(cl->vsess);
 		cl->vsess = nil;
+		if(cl->vdec != nil && gpudecclose != nil)
+			gpudecclose(cl->vdec);
+		cl->vdec = nil;
 		free(cl->d3zbuf);
 		free(cl);
 	}
@@ -1354,6 +1380,18 @@ drawwakeall(void)
  */
 enum { Vchunk = 64*1024 };
 
+static int
+hexval(int c)
+{
+	if(c >= '0' && c <= '9')
+		return c - '0';
+	if(c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if(c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
 /*
  * Push a namespace file into an open session in chunks. Never holds the whole
  * file: a movie does not fit in memory, and the point of a session is that it
@@ -1397,22 +1435,28 @@ drawvideofeed(void *sess, char *path)
 }
 
 static Memimage*
-drawvideodst(Client *cl, char *ids)
+drawvideodstid(Client *cl, int id)
 {
 	DImage *d;
 
-	d = drawlookup(cl, atoi(ids), 1);
+	d = drawlookup(cl, id, 1);
 	if(d == nil || d->image == nil)
 		error(Enodrawimage);
 	return d->image;
+}
+
+static Memimage*
+drawvideodst(Client *cl, char *ids)
+{
+	return drawvideodstid(cl, atoi(ids));
 }
 
 static void
 drawvideoctl(Client *cl, void *a, long n)
 {
 	char *buf, *f[4];
-	uchar *enc, *nenc2;
-	int nf, fd, nenc, encsz, r, frame;
+	uchar *enc, *nenc2, *ex;
+	int nf, fd, nenc, encsz, r, frame, nex, i, l, hi, lo;
 	void *sess;
 
 	buf = malloc(n+1);
@@ -1432,6 +1476,67 @@ drawvideoctl(Client *cl, void *a, long n)
 		if(cl->vsess != nil && gpuvideoclose != nil)
 			gpuvideoclose(cl->vsess);
 		cl->vsess = nil;
+		if(cl->vdec != nil && gpudecclose != nil)
+			gpudecclose(cl->vdec);
+		cl->vdec = nil;
+		poperror();
+		free(buf);
+		return;
+	}
+
+	/*
+	 * decoder <codec> <hex parameter sets>
+	 *
+	 * The parameter sets are hex because ctl is text; they are tens of
+	 * bytes, so this costs nothing, and it keeps the control file
+	 * readable and writable from a shell. The coded samples themselves go
+	 * to videodata, which is binary, because they are not small.
+	 */
+	if(strcmp(f[0], "decoder") == 0 && (nf == 2 || nf == 3)){
+		if(gpudecopen == nil)
+			error("no sample decoder on this platform");
+		if(cl->vdec != nil){
+			gpudecclose(cl->vdec);
+			cl->vdec = nil;
+		}
+		nex = 0;
+		ex = nil;
+		if(nf == 3){
+			l = strlen(f[2]);
+			if(l & 1)
+				error("parameter sets must be an even number of hex digits");
+			nex = l/2;
+			ex = malloc(nex);
+			if(ex == nil)
+				error(Enomem);
+			if(waserror()){
+				free(ex);
+				nexterror();
+			}
+			for(i = 0; i < nex; i++){
+				hi = hexval(f[2][2*i]);
+				lo = hexval(f[2][2*i+1]);
+				if(hi < 0 || lo < 0)
+					error("bad hex in parameter sets");
+				ex[i] = (hi<<4) | lo;
+			}
+			poperror();
+		}
+		cl->vdec = gpudecopen(f[1], ex, nex);
+		free(ex);
+		if(cl->vdec == nil)
+			error(up->env->errstr);
+		cl->vtarget = 0;
+		poperror();
+		free(buf);
+		return;
+	}
+
+	if(strcmp(f[0], "target") == 0 && nf == 2){
+		/* Checked now so a bad id is an error on the control write,
+		 * where the caller can see it, rather than on a later sample. */
+		drawvideodst(cl, f[1]);
+		cl->vtarget = atoi(f[1]);
 		poperror();
 		free(buf);
 		return;
@@ -1482,7 +1587,8 @@ drawvideoctl(Client *cl, void *a, long n)
 			error("frame number must not be negative");
 	}else
 		error("usage: decode <id> <path> | frame <id> <n> <path> | "
-			"open <path> | next <id> | close");
+			"open <path> | next <id> | decoder <codec> [<hex>] | "
+			"target <id> | close");
 
 	fd = kopen(f[2], OREAD);
 	if(fd < 0)
@@ -1568,6 +1674,16 @@ drawwrite(Chan *c, void *a, long n, vlong off)
 	switch(QID(c->qid)){
 	case Qvideo:
 		drawvideoctl(cl, a, n);
+		break;
+	case Qvideodata:
+		/* One write is one coded sample. Framing is the caller's, and
+		 * it has it already: quicktime(2) gives each sample's size. */
+		if(cl->vdec == nil)
+			error("no decoder: write \"decoder\" to video first");
+		if(cl->vtarget == 0)
+			error("no target image: write \"target\" to video first");
+		if(gpudecsample(cl->vdec, a, n, drawvideodstid(cl, cl->vtarget)) < 0)
+			error(up->env->errstr);
 		break;
 	case Qctl:
 		if(n != 4)

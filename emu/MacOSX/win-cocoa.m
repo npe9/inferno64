@@ -11,6 +11,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <ImageIO/ImageIO.h>
 #import <AVFoundation/AVFoundation.h>
+#import <VideoToolbox/VideoToolbox.h>
 #undef Point
 #undef Rect
 #undef nil
@@ -386,6 +387,9 @@ extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memima
 extern Memimage* (*gpuimagealloc)(Rectangle, u32);
 extern int	(*gpuimagefree)(Memimage*);
 extern int	(*gpuimagedecode)(Memimage*, uchar*, int, int);
+extern void*	(*gpudecopen)(char*, uchar*, int);
+extern int	(*gpudecsample)(void*, uchar*, int, Memimage*);
+extern void	(*gpudecclose)(void*);
 extern void*	(*gpuvideoopen)(void);
 extern int	(*gpuvideowrite)(void*, uchar*, int);
 extern int	(*gpuvideostart)(void*);
@@ -416,6 +420,9 @@ static Memimage* metal_image_alloc(Rectangle, u32);
 static int	metal_image_free(Memimage*);
 static int	metal_image_decode(Memimage*, uchar*, int, int);
 static int	metal_movie_frame(Memimage*, uchar*, int, int);
+static void*	metal_dec_open(char*, uchar*, int);
+static int	metal_dec_sample(void*, uchar*, int, Memimage*);
+static void	metal_dec_close(void*);
 static void*	metal_video_open(void);
 static int	metal_video_write(void*, uchar*, int);
 static int	metal_video_start(void*);
@@ -556,6 +563,9 @@ metal_init(void)
 	gpuimagealloc = metal_image_alloc;
 	gpuimagefree = metal_image_free;
 	gpuimagedecode = metal_image_decode;
+	gpudecopen = metal_dec_open;
+	gpudecsample = metal_dec_sample;
+	gpudecclose = metal_dec_close;
 	gpuvideoopen = metal_video_open;
 	gpuvideowrite = metal_video_write;
 	gpuvideostart = metal_video_start;
@@ -2501,6 +2511,239 @@ metal_image_free(Memimage *i)
 
 
 
+
+
+/*
+ * A decoder fed one coded sample at a time.
+ *
+ * This is the half that has to be here: configuring the media engine and
+ * handing it frames. Locating those frames in a container is done in Limbo by
+ * quicktime(2), so nothing about MP4 or QuickTime structure appears below -
+ * only H.264 parameter sets and coded samples.
+ *
+ * Unlike the file-based session there is no staging and no read-ahead:
+ * decoding starts on the first sample, and memory does not grow with the
+ * length of the movie. That is what the staged path could not do.
+ */
+typedef struct Dec Dec;
+struct Dec {
+	CMVideoFormatDescriptionRef	fmt;
+	VTDecompressionSessionRef	sess;
+	int				nalsize;	/* length prefix bytes */
+	CVPixelBufferRef		out;		/* newest frame */
+};
+
+static void
+dec_output(void *ref, void *unused_frame, OSStatus st, VTDecodeInfoFlags unused_flags,
+	CVImageBufferRef img, CMTime unused_pts, CMTime unused_dur)
+{
+	Dec *d = ref;
+
+	USED(unused_frame); USED(unused_flags);	/* CMTime args are structs: USED() cannot take them */
+	if(st != noErr || img == NULL)
+		return;
+	if(d->out != NULL)
+		CVPixelBufferRelease(d->out);
+	d->out = (CVPixelBufferRef)CVPixelBufferRetain((CVPixelBufferRef)img);
+}
+
+/*
+ * avcC: version(1) profile(1) compat(1) level(1), then a byte whose low two
+ * bits are lengthSizeMinusOne, a byte whose low five bits are the SPS count,
+ * then each SPS as a 16-bit length and its bytes, then a PPS count and the
+ * PPS entries the same way. VideoToolbox wants the parameter sets themselves,
+ * so they are pulled out here rather than passed as an opaque blob.
+ */
+static void*
+metal_dec_open(char *codec, uchar *extra, int nextra)
+{
+	Dec *d;
+	const uint8_t *ps[8];
+	size_t pssz[8];
+	int nps, i, o, n, nsps, npps;
+	OSStatus st;
+	NSDictionary *attrs;
+	VTDecompressionOutputCallbackRecord cb;
+
+	if(codec == nil || strcmp(codec, "avc1") != 0){
+		kwerrstr("draw video: only avc1 is supported here");
+		return nil;
+	}
+	if(extra == nil || nextra < 7 || extra[0] != 1){
+		kwerrstr("draw video: avc1 needs avcC parameter sets");
+		return nil;
+	}
+
+	d = mallocz(sizeof(Dec), 1);
+	if(d == nil)
+		return nil;
+	d->nalsize = (extra[4] & 3) + 1;
+
+	nps = 0;
+	o = 5;
+	nsps = extra[o++] & 0x1f;
+	for(i = 0; i < nsps && nps < nelem(ps); i++){
+		if(o + 2 > nextra)
+			goto bad;
+		n = (extra[o]<<8) | extra[o+1];
+		o += 2;
+		if(o + n > nextra)
+			goto bad;
+		ps[nps] = extra + o;
+		pssz[nps] = n;
+		nps++;
+		o += n;
+	}
+	if(o >= nextra)
+		goto bad;
+	npps = extra[o++];
+	for(i = 0; i < npps && nps < nelem(ps); i++){
+		if(o + 2 > nextra)
+			goto bad;
+		n = (extra[o]<<8) | extra[o+1];
+		o += 2;
+		if(o + n > nextra)
+			goto bad;
+		ps[nps] = extra + o;
+		pssz[nps] = n;
+		nps++;
+		o += n;
+	}
+	if(nps < 2)
+		goto bad;
+
+	st = CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault,
+		nps, ps, pssz, d->nalsize, &d->fmt);
+	if(st != noErr){
+		kwerrstr("draw video: bad H.264 parameter sets");
+		free(d);
+		return nil;
+	}
+
+	/* BGRA out, matching Inferno's x8r8g8b8 byte order. */
+	attrs = @{ (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA) };
+	memset(&cb, 0, sizeof(cb));
+	cb.decompressionOutputCallback = dec_output;
+	cb.decompressionOutputRefCon = d;
+	st = VTDecompressionSessionCreate(kCFAllocatorDefault, d->fmt, NULL,
+		(__bridge CFDictionaryRef)attrs, &cb, &d->sess);
+	if(st != noErr){
+		CFRelease(d->fmt);
+		free(d);
+		kwerrstr("draw video: cannot create a decompression session");
+		return nil;
+	}
+	return d;
+bad:
+	kwerrstr("draw video: malformed avcC");
+	free(d);
+	return nil;
+}
+
+static int
+metal_dec_sample(void *dec, uchar *buf, int n, Memimage *dst)
+{
+	Dec *d = dec;
+	CMBlockBufferRef bb = NULL;
+	CMSampleBufferRef sb = NULL;
+	CVPixelBufferRef pb;
+	OSStatus st;
+	size_t sz;
+	uchar *base, *sp;
+	size_t sbpr;
+	int w, h, dbpr, y, sw, sh, cw, ch, rc;
+
+	if(d == nil || buf == nil || n <= 0){
+		kwerrstr("draw video: nothing to decode");
+		return -1;
+	}
+	if(chantodepth(dst->chan) != 32){
+		kwerrstr("draw video: destination must be a 32-bit image");
+		return -1;
+	}
+
+	/* The sample is already length-prefixed NAL units, which is what the
+	 * format description says to expect, so it goes in as it stands. */
+	sz = n;
+	st = CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, buf, sz,
+		kCFAllocatorNull, NULL, 0, sz, 0, &bb);
+	if(st != noErr){
+		kwerrstr("draw video: cannot wrap sample");
+		return -1;
+	}
+	st = CMSampleBufferCreateReady(kCFAllocatorDefault, bb, d->fmt, 1, 0, NULL,
+		1, &sz, &sb);
+	if(st != noErr){
+		CFRelease(bb);
+		kwerrstr("draw video: cannot build sample buffer");
+		return -1;
+	}
+
+	if(d->out != NULL){
+		CVPixelBufferRelease(d->out);
+		d->out = NULL;
+	}
+	/*
+	 * Flags 0: decode synchronously, in decode order, one picture out per
+	 * sample in. With temporal processing enabled the decoder is free to
+	 * emit on its own schedule, and since only the newest picture is kept
+	 * here, feeding sample 1 could hand back frame 4 - which is exactly
+	 * what happened. A caller that wants presentation order can reorder
+	 * using the timestamps quicktime(2) already provides.
+	 */
+	st = VTDecompressionSessionDecodeFrame(d->sess, sb, 0, NULL, NULL);
+	if(st == noErr)
+		VTDecompressionSessionWaitForAsynchronousFrames(d->sess);
+	CFRelease(sb);
+	CFRelease(bb);
+	if(st != noErr){
+		kwerrstr("draw video: decode failed");
+		return -1;
+	}
+
+	pb = d->out;
+	if(pb == NULL)
+		return 0;	/* accepted, no picture yet: normal while reordering */
+
+	rc = -1;
+	CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+	sp = CVPixelBufferGetBaseAddress(pb);
+	if(sp != nil){
+		w = Dx(dst->r);
+		h = Dy(dst->r);
+		base = byteaddr(dst, dst->r.min);
+		dbpr = dst->width * sizeof(u32);
+		sbpr = CVPixelBufferGetBytesPerRow(pb);
+		sw = (int)CVPixelBufferGetWidth(pb);
+		sh = (int)CVPixelBufferGetHeight(pb);
+		cw = sw < w? sw: w;
+		ch = sh < h? sh: h;
+		for(y = 0; y < ch; y++)
+			memmove(base + (size_t)y*dbpr, sp + (size_t)y*sbpr, (size_t)cw*4);
+		rc = 0;
+	}else
+		kwerrstr("draw video: frame has no pixels");
+	CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+	return rc;
+}
+
+static void
+metal_dec_close(void *dec)
+{
+	Dec *d = dec;
+
+	if(d == nil)
+		return;
+	if(d->sess != NULL){
+		VTDecompressionSessionInvalidate(d->sess);
+		CFRelease(d->sess);
+	}
+	if(d->fmt != NULL)
+		CFRelease(d->fmt);
+	if(d->out != NULL)
+		CVPixelBufferRelease(d->out);
+	free(d);
+}
 
 /*
  * A streaming decode session.

@@ -1011,11 +1011,32 @@ as new.
 
 ## Gotchas that cost real time
 
-**Limbo `int` is 64-bit here.** `WORD` is `intptr`; `include/interp.h` still has
-`typedef int WORD; /* 32 bits */` commented out. `math->export_int`/`import_int`
-cast to C `int*` and mangled every multi-element array (`[1,2,3,4]` →
-`[1,2,0,0]`) until `1561fcaa`. **Anything else casting Limbo array data to C
-`int*` has the same bug.**
+**A Limbo `int` is stored in 64 bits but arithmetic on it is 32-bit.** Both
+halves matter and they are easy to conflate — an earlier version of this note
+said simply "Limbo int is 64-bit here", which is wrong as stated.
+
+*Storage*: `WORD` is `intptr`, so each element of an `array of int` occupies 8
+bytes. `math->export_int`/`import_int` cast to C `int*` and so mangled every
+multi-element array (`[1,2,3,4]` → `[1,2,0,0]`) until `1561fcaa`. **Anything
+else casting Limbo array data to C `int*` has the same bug.**
+
+*Arithmetic, and the trap*: an `int` here holds **more than 32 bits**, so it
+does **not** wrap — `255<<24` really is 4278190080, not −16777216. But
+`sys->print("%d")` formats only the **low 32 bits**, so that value *prints* as
+−16777216 and `16rffffff88` prints as −120 while arithmetic on it uses
+4294967176.
+
+That combination is vicious: a value reads correctly, prints wrongly, and then
+computes "wrongly" in a way that looks like the print. It cost real time here —
+a `ctts` composition offset printed as −120, was assumed to be sign-extended
+already, and produced a display index of 71582789. **Do not infer an int's
+value from `%d`.** Print through `big` (`%bd`) when it might exceed 2^31.
+
+Consequences: reading a 32-bit field gives the true *unsigned* value, so a
+chunk offset in a file over 2GB is fine unmasked — but a genuinely *signed*
+field must be sign-extended explicitly (see `bes32` in `appl/lib/quicktime.b`).
+An earlier version of this note claimed the opposite, that arithmetic wraps at
+32 bits; that was itself an artifact of believing `%d`.
 
 **`array[n] of T` is not zeroed** unless compiled with `limbo -z`. `doc/dis.ms`
 specifies `newa` as leaving non-pointer space undefined; the zeroing `newaz`

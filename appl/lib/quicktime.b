@@ -230,7 +230,7 @@ atomat(fd: ref Sys->FD, off, limit: big): (ref Atom, string)
 		return (nil, "seek failed");
 	if(sys->readn(fd, b, 8) != 8)
 		return (nil, nil);		# clean end
-	sz := big beu32(b, 0);
+	sz := big beu32(b, 0) & big 16rffffffff;	# masked: atoms can exceed 2^31
 	kind := string b[4:8];
 	hdr := big 8;
 	if(sz == big 1){
@@ -249,6 +249,11 @@ atomat(fd: ref Sys->FD, off, limit: big): (ref Atom, string)
 	return (a, nil);
 }
 
+# Unsigned, and that is not a formality here: an int in this tree holds more
+# than 32 bits, so 255<<24 does NOT wrap negative and this returns the true
+# value even above 2^31. Printing one with %d is what misleads - %d shows the
+# low 32 bits, so 16rffffff88 prints as -120 while arithmetic on it uses
+# 4294967176. Where a signed field is wanted, use bes32.
 beu32(b: array of byte, o: int): int
 {
 	return (int b[o]<<24) | (int b[o+1]<<16) | (int b[o+2]<<8) | int b[o+3];
@@ -256,7 +261,23 @@ beu32(b: array of byte, o: int): int
 
 beu64(b: array of byte, o: int): big
 {
-	return (big beu32(b, o) << 32) | (big beu32(b, o+4) & big 16rffffffff);
+	# Both halves masked: beu32 is signed, so an unmasked high word would
+	# sign-extend and an unmasked low word would corrupt the result.
+	return ((big beu32(b, o) & big 16rffffffff) << 32) |
+		(big beu32(b, o+4) & big 16rffffffff);
+}
+
+# A 32-bit field that is genuinely signed. Sign extension has to be explicit
+# because beu32 does not wrap: ctts version 1 offsets are signed by the
+# specification, and version 0 offsets are nominally unsigned but real files
+# carry negative values there anyway - this tree's own test movie, written by
+# the platform's encoder, has a version 0 ctts holding -120 and -60.
+bes32(b: array of byte, o: int): int
+{
+	v := big beu32(b, o) & big 16rffffffff;
+	if(v >= big 16r80000000)
+		v -= big 16r100000000;
+	return int v;
 }
 
 beu16(b: array of byte, o: int): int
@@ -536,6 +557,7 @@ buildsamples(fd: ref Sys->FD, skids: list of ref Atom, t: ref Track): string
 		samples = samples[0:si];
 
 	durations(fd, skids, samples);
+	compoffsets(fd, skids, samples);
 	syncs(fd, skids, samples);
 	t.samples = samples;
 	return nil;
@@ -558,6 +580,30 @@ durations(fd: ref Sys->FD, skids: list of ref Atom, s: array of Sample)
 		delta := beu32(b, 8 + k*8 + 4);
 		for(j := 0; j < cnt && si < len s; j++)
 			s[si++].delta = delta;
+	}
+}
+
+# ctts gives each sample's composition offset, present when the stream codes
+# frames out of display order. Without it a caller decoding in file order gets
+# the pictures in decode order, which for a stream with B-frames is not the
+# order they are meant to be shown in.
+compoffsets(fd: ref Sys->FD, skids: list of ref Atom, s: array of Sample)
+{
+	ctts := find(skids, "ctts");
+	if(ctts == nil)
+		return;			# no reordering: coff stays 0
+	b := readat(fd, ctts.off, int ctts.size);
+	if(b == nil || len b < 8)
+		return;
+	n := beu32(b, 4);
+	if(len b < 8 + n*8)
+		return;
+	si := 0;
+	for(k := 0; k < n && si < len s; k++){
+		cnt := beu32(b, 8 + k*8);
+		off := bes32(b, 8 + k*8 + 4);
+		for(j := 0; j < cnt && si < len s; j++)
+			s[si++].coff = off;
 	}
 }
 

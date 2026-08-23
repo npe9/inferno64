@@ -75,6 +75,11 @@ QuickTime: module
 		off:	big;		# file offset
 		size:	int;		# bytes
 		delta:	int;		# duration, in the track's timescale
+		# Composition offset: presentation time is decode time plus
+		# this. Non-zero only when the stream has frames coded out of
+		# display order - B-frames - in which case samples arrive in
+		# decode order and a player must reorder by presentation time.
+		coff:	int;
 		sync:	int;		# non-zero if a sync (key) sample
 	};
 
