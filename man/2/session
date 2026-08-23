@@ -48,6 +48,18 @@ code that wrote it.
 performs an action.
 .B Span
 is how long the whole recording lasts, in milliseconds.
+.B Write
+is the inverse of
+.BR read :
+actions back into a recording.
+.PP
+Decoding and writing are exact inverses on anything decoding produced.
+A recording read, written and read again gives the identical actions, and a
+script printed, compiled and printed again is the identical script \(em
+checked by
+.IR sessiontest (1).
+The one thing that changes is the time before the first action, which a
+recording has and a script does not.
 .SS "What the decoding does"
 Releases are dropped.
 Runs of printable keys become one
@@ -83,15 +95,27 @@ events carry.
 .IR pointer (3),
 .IR cons (3)
 .SH BUGS
-A session driven by a script cannot be recorded.
+A session driven by a script is not recorded.
 .B /dev/pointerin
 and writes to
 .B /dev/keyboard
-deliberately do not record \(em on a replay the program that wrote them runs
-again and writes them again, so recording them would double everything \(em
-which means the machine cannot record its own injections.
-So there is no record, edit, record again: a recording is made by a person at
-the keyboard, and everything after that is a script.
+reach the non-recording half of
+.B mousetrack
+and
+.BR gkbdputc ,
+deliberately: a program inside the session that writes keys \(em
+.IR keyuptest (1)
+is one \(em runs again on a replay and writes them again, so recording them as
+well would deliver them twice.
+.PP
+That is a choice rather than an obstacle, and it is narrower than it looks: the
+doubling happens only when the replay re-runs the program that did the
+injecting.
+It is
+.B write
+rather than a recording flag that closes the loop, and it closes it better,
+because it needs no replay at all and cannot drift: a recording becomes a
+script, the script is edited, and this makes it a recording again.
 .PP
 .B Aresize
 decodes but cannot be performed: the host owns the window size.

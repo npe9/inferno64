@@ -45,4 +45,11 @@ Session: module
 
 	# how long to run a whole recording, in milliseconds
 	span:	fn(a: array of ref Action): int;
+
+	# actions back into a recording, closing the loop the other way: a
+	# recording becomes a script, the script is edited, and this makes it a
+	# recording again. The alternative - recording what a script injects -
+	# would mean the events arrived twice whenever the replay re-ran the
+	# script that injected them.
+	write:	fn(a: array of ref Action, path: string): string;
 };

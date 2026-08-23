@@ -135,6 +135,59 @@ cat(a: array of array of Ev): array of Ev
 	return r;
 }
 
+# every kind of action, through write() and back through read()
+fixedpoint()
+{
+	acts := array[] of {
+		ref Action(Session->Atype, 0, "echo hello", 0, 0, 0, 0, 0),
+		ref Action(Session->Await, 0, nil, 1500, 0, 0, 0, 0),
+		ref Action(Session->Akey, 0, "Return", 0, 0, 0, 0, 0),
+		ref Action(Session->Aclick, 0, nil, 200, 300, 0, 0, 1),
+		ref Action(Session->Await, 0, nil, 800, 0, 0, 0, 0),
+		ref Action(Session->Aclick, 0, nil, 200, 300, 0, 0, 1),
+		ref Action(Session->Adouble, 0, nil, 400, 100, 0, 0, 1),
+		ref Action(Session->Adrag, 0, nil, 10, 20, 90, 80, 1),
+		ref Action(Session->Amove, 0, nil, 500, 500, 0, 0, 0),
+		ref Action(Session->Await, 0, nil, 2000, 0, 0, 0, 0),
+		ref Action(Session->Atype, 0, "quitall", 0, 0, 0, 0, 0),
+		ref Action(Session->Akey, 0, "Return", 0, 0, 0, 0, 0),
+	};
+	want: list of string;
+	for(i := len acts - 1; i >= 0; i--)
+		want = acts[i].script() :: want;
+
+	if((e := session->write(acts, tmp)) != nil){
+		print("FAIL compiling a script back to a recording: %s\n", e);
+		failed++;
+		return;
+	}
+	(got, err) := session->read(tmp);
+	if(err != nil){
+		print("FAIL reading back a compiled recording: %s\n", err);
+		failed++;
+		return;
+	}
+	ok := len got == len want;
+	l := want;
+	for(i = 0; ok && i < len got; i++){
+		if(got[i].script() != hd l)
+			ok = 0;
+		l = tl l;
+	}
+	if(ok){
+		print("ok   a script survives compiling and decoding unchanged\n");
+		return;
+	}
+	print("FAIL a script survives compiling and decoding unchanged\n");
+	print("     wanted:\n");
+	for(l = want; l != nil; l = tl l)
+		print("       %s\n", hd l);
+	print("     got:\n");
+	for(i = 0; i < len got; i++)
+		print("       %s\n", got[i].script());
+	failed++;
+}
+
 init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -174,7 +227,9 @@ init(nil: ref Draw->Context, nil: list of string)
 		},
 		list of {"session click 200 300 1"});
 
-	# two clicks close together are one double click
+	# two clicks close together are ONE action: the first was reported as a
+	# click before the second made it a double, and a double click is one
+	# thing rather than two
 	check("two clicks within 500ms are a double click",
 		array[] of {
 			Ev('m', 1000, 200, 300, 0),
@@ -183,7 +238,7 @@ init(nil: ref Draw->Context, nil: list of string)
 			Ev('m', 1150, 200, 300, 1),
 			Ev('m', 1180, 200, 300, 0),
 		},
-		list of {"session click 200 300 1", "session doubleclick 200 300 1"});
+		list of {"session doubleclick 200 300 1"});
 
 	# far enough apart, they are two clicks
 	check("two clicks 900ms apart are not a double click",
@@ -212,6 +267,11 @@ init(nil: ref Draw->Context, nil: list of string)
 		array[] of {Ev('r', 500, 800, 600, 0)},
 		list of {"session resize 800 600"});
 
+	# a lone move, with nothing before it to compare against
+	check("a single move is not swallowed",
+		array[] of {Ev('m', 1000, 520, 527, 0)},
+		list of {"session move 520 527"});
+
 	# a recording ending on a move must not read past its last record
 	check("a trailing move does not run off the end",
 		array[] of {
@@ -219,6 +279,11 @@ init(nil: ref Draw->Context, nil: list of string)
 			Ev('m', 1100, 400, 500, 0),
 		},
 		list of {"session move 400 500"});
+
+	# a script, compiled to a recording and decoded again, must be the same
+	# script - otherwise a recording cannot be edited and used, which is the
+	# whole reason compiling exists
+	fixedpoint();
 
 	sys->remove(tmp);
 	if(failed){

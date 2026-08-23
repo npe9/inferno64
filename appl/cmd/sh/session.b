@@ -72,6 +72,88 @@ runsbuiltin(nil: ref Context, nil: Sh, nil: list of ref Listnode): list of ref L
 	return nil;
 }
 
+# a script, back into the actions it names. Blank lines and comments are the
+# ones this program wrote; anything else must parse or the script is wrong and
+# saying so is more use than skipping it.
+readscript(path: string): (array of ref Action, string)
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return (nil, sprint("%s: %r", path));
+	(ok, d) := sys->fstat(fd);
+	if(ok < 0)
+		return (nil, sprint("stat %s: %r", path));
+	buf := array[int d.length] of byte;
+	if(sys->readn(fd, buf, len buf) != len buf)
+		return (nil, sprint("short read of %s", path));
+
+	acts: list of ref Action;
+	n := 0;
+	for(i := 0; i < len buf; ){
+		j := i;
+		while(j < len buf && buf[j] != byte '\n')
+			j++;
+		line := string buf[i:j];
+		i = j+1;
+		w := tokens(line);
+		if(w == nil || (hd w)[0] == '#')
+			continue;
+		if(hd w == "session")
+			w = tl w;
+		(a, err) := session->parse(w);
+		if(err != nil)
+			return (nil, sprint("%s: %s", line, err));
+		acts = a :: acts;
+		n++;
+	}
+	r := array[n] of ref Action;
+	for(i = n-1; i >= 0; i--){
+		r[i] = hd acts;
+		acts = tl acts;
+	}
+	return (r, nil);
+}
+
+# words of a script line, honouring the single quotes this program writes
+tokens(s: string): list of string
+{
+	r: list of string;
+	i := 0;
+	while(i < len s){
+		while(i < len s && (s[i] == ' ' || s[i] == '\t'))
+			i++;
+		if(i >= len s)
+			break;
+		w := "";
+		if(s[i] == '\''){
+			i++;
+			while(i < len s){
+				if(s[i] == '\''){
+					if(i+1 < len s && s[i+1] == '\''){
+						w[len w] = '\'';
+						i += 2;
+						continue;
+					}
+					i++;
+					break;
+				}
+				w[len w] = s[i];
+				i++;
+			}
+		}else{
+			while(i < len s && s[i] != ' ' && s[i] != '\t'){
+				w[len w] = s[i];
+				i++;
+			}
+		}
+		r = w :: r;
+	}
+	q: list of string;
+	for(; r != nil; r = tl r)
+		q = hd r :: q;
+	return q;
+}
+
 words(argv: list of ref Listnode): list of string
 {
 	w: list of string;
@@ -85,6 +167,7 @@ words(argv: list of ref Listnode): list of string
 
 usage: con
 "usage: session script recording          # print it as a script\n"+
+"       session compile script recording  # and the other way\n"+
 "       session play recording            # run it, honouring its waits\n"+
 "       session type text | key name\n"+
 "       session click x y [b] | doubleclick x y [b] | drag x0 y0 x1 y1 [b]\n"+
@@ -117,6 +200,22 @@ runbuiltin(ctxt: ref Context, nil: Sh, argv: list of ref Listnode, nil: int): st
 		for(i := 0; i < len acts; i++)
 			if((e := acts[i].play()) != nil)
 				fprint(sys->fildes(2), "session: %s\n", e);
+		return nil;
+
+	"compile" =>
+		# The loop the other way round: a recording becomes a script,
+		# the script is edited, and this makes it a recording again.
+		# Recording what a script injects would be the obvious route
+		# and is the wrong one - the events would arrive twice whenever
+		# the replay re-ran the script that injected them.
+		if(len w != 3)
+			ctxt.fail("usage", usage);
+		(sfd, rec) := (hd tl w, hd tl tl w);
+		(acts, err) := readscript(sfd);
+		if(err != nil)
+			ctxt.fail("session", "session: " + err);
+		if((e := session->write(acts, rec)) != nil)
+			ctxt.fail("session", "session: " + e);
 		return nil;
 
 	"pause" =>

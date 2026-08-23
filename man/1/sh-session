@@ -10,6 +10,9 @@ sh-session \- drive and describe a session from the shell
 .B session play
 .I recording
 .br
+.B session compile
+.I script recording
+.br
 .B session type
 .I text
 .br
@@ -46,6 +49,12 @@ into shell, and runs it.
 .PP
 .B Script
 prints the recording as a script.
+.B Compile
+is
+.B script
+backwards: it turns a script into a recording, so a recording can be decoded,
+edited, and made a recording again.
+.PP
 .B Play
 runs one directly, honouring the waits it contains.
 Timing shorter than a wait is not reproduced \(em actions inside a run go as
@@ -127,8 +136,12 @@ it over.
 .IR session (2),
 .IR pointer (3)
 .SH BUGS
-A scripted session cannot be recorded: the injection paths deliberately do not
-record, so there is no record, edit, record again.
+A scripted session is not recorded: the injection paths deliberately reach the
+non-recording half of the driver, so that a program inside a session which
+writes keys is not replayed twice.
+Use
+.B compile
+to get a recording back from a script; it needs no replay and cannot drift.
 See
 .IR session (2).
 .PP

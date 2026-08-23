@@ -213,6 +213,136 @@ Action.play(a: self ref Action): string
 	return nil;
 }
 
+Keyms:	con 20;		# between characters of a run of typing
+Clickms: con 30;	# a button held for a click
+Sepms:	con 600;	# least gap between two clicks that are not a double
+
+pbe32(b: array of byte, o, v: int)
+{
+	b[o] = byte (v>>24);
+	b[o+1] = byte (v>>16);
+	b[o+2] = byte (v>>8);
+	b[o+3] = byte v;
+}
+
+Ev: adt {
+	kind:	int;
+	at:	int;
+	a, b, c: int;
+};
+
+ev(l: list of Ev, kind, at, a, b, c: int): list of Ev
+{
+	return Ev(kind, at, a, b, c) :: l;
+}
+
+# a key as the hardware would have delivered it: a press and a release
+kev(l: list of Ev, at, r: int): list of Ev
+{
+	l = ev(l, 'k', at, r, 0, 0);
+	return ev(l, 'k', at+Keyms/2, Keyup|(r&16r7ff), 0, 0);
+}
+
+write(acts: array of ref Action, path: string): string
+{
+	evs: list of Ev;
+	t := 0;
+	# where the decoder will measure the next gap from - not t, which has
+	# run on past the last event of each action. Without this a wait grows
+	# by one key-time every time a script is compiled and decoded again.
+	last := 0;
+	lastclick := -Sepms;
+	for(i := 0; i < len acts; i++){
+		a := acts[i];
+		case a.kind {
+		Await =>
+			t = last + a.x;
+			continue;
+		Atype =>
+			for(j := 0; j < len a.text; j++){
+				evs = kev(evs, t, a.text[j]);
+				last = t;
+				t += Keyms;
+			}
+		Akey =>
+			c := keycode(a.text);
+			if(c < 0)
+				return sprint("no such key: %s", a.text);
+			evs = kev(evs, t, c);
+			last = t;
+			t += Keyms;
+		Amove =>
+			evs = ev(evs, 'm', t, a.x, a.y, 0);
+			last = t;
+			t += Keyms;
+		Aclick or Adouble =>
+			# two clicks are only two clicks if they are far
+			# enough apart to not be read as one, so a script
+			# with no wait between them still means what it says
+			if(a.kind == Aclick && t - lastclick < Sepms)
+				t = lastclick + Sepms;
+			# the press goes at t, with no move in front of it: the
+			# press carries its own position, and a gap is measured
+			# to the press, so anything earlier makes the wait that
+			# decodes out of this longer than the one that went in
+			evs = ev(evs, 'm', t, a.x, a.y, a.b);
+			evs = ev(evs, 'm', t+Clickms, a.x, a.y, 0);
+			t += Clickms;
+			if(a.kind == Adouble){
+				t += 90;
+				evs = ev(evs, 'm', t, a.x, a.y, a.b);
+				evs = ev(evs, 'm', t+Clickms, a.x, a.y, 0);
+				t += Clickms;
+			}
+			last = t;
+			lastclick = t;
+		Adrag =>
+			evs = ev(evs, 'm', t, a.x, a.y, a.b);
+			for(j := 1; j <= 4; j++){
+				x := a.x + (a.x2-a.x)*j/5;
+				y := a.y + (a.y2-a.y)*j/5;
+				evs = ev(evs, 'm', t+5+j*10, x, y, a.b);
+			}
+			evs = ev(evs, 'm', t+50, a.x2, a.y2, a.b);
+			evs = ev(evs, 'm', t+70, a.x2, a.y2, 0);
+			t += 70;
+			last = t;
+			lastclick = t;
+		Aresize =>
+			evs = ev(evs, 'r', t, a.x, a.y, 0);
+			last = t;
+			t += Keyms;
+		Apause =>
+			;			# nothing the hardware ever did
+		}
+	}
+
+	n := len evs;
+	r := array[n] of Ev;
+	for(i = n-1; i >= 0; i--){
+		r[i] = hd evs;
+		evs = tl evs;
+	}
+	buf := array[Hdrsz + n*Recsz] of byte;
+	buf[0:] = array of byte "inferec1";
+	pbe32(buf, 8, 1024);
+	pbe32(buf, 12, 768);
+	for(i = 0; i < n; i++){
+		o := Hdrsz + i*Recsz;
+		buf[o] = byte r[i].kind;
+		pbe32(buf, o+1, r[i].at);
+		pbe32(buf, o+5, r[i].a);
+		pbe32(buf, o+9, r[i].b);
+		pbe32(buf, o+13, r[i].c);
+	}
+	fd := sys->create(path, Sys->OWRITE, 8r666);
+	if(fd == nil)
+		return sprint("cannot create %s: %r", path);
+	if(sys->write(fd, buf, len buf) != len buf)
+		return sprint("cannot write %s: %r", path);
+	return nil;
+}
+
 span(a: array of ref Action): int
 {
 	t := 0;
@@ -348,7 +478,12 @@ read(path: string): (array of ref Action, string)
 			last = at;
 		'm' =>
 			(x, y, b) := (v1, v2, v3);
-			if(px < 0)
+			# the very first pointer event has nothing to be
+			# compared against: seeding px from it makes it look
+			# like no movement at all, and a recording whose only
+			# pointer event is one move then decodes to nothing
+			firstm := px < 0;
+			if(firstm)
 				(px, py) = (x, y);
 			if(b != 0 && pb == 0){
 				(downx, downy, downt) = (x, y, at);
@@ -362,8 +497,19 @@ read(path: string): (array of ref Action, string)
 				if(moved)
 					a = ref Action(Adrag, downt, nil, downx, downy, x, y, pb);
 				else if(at - lastclickt < Dblms
-					&& abs(x-lastclickx) <= Slop && abs(y-lastclicky) <= Slop)
+					&& abs(x-lastclickx) <= Slop && abs(y-lastclicky) <= Slop){
 					a = ref Action(Adouble, downt, nil, downx, downy, 0, 0, pb);
+					# the first of the pair was reported as a
+					# click before this one was known to be a
+					# double; a double click is one action, so
+					# take it back. Only when nothing came
+					# between them, which for two clicks less
+					# than Gap apart is the ordinary case.
+					if(acts != nil && (hd acts).kind == Aclick
+					   && abs((hd acts).x - downx) <= Slop
+					   && abs((hd acts).y - downy) <= Slop)
+						acts = tl acts;
+				}
 				else
 					a = ref Action(Aclick, downt, nil, downx, downy, 0, 0, pb);
 				acts = a :: acts;
@@ -378,7 +524,7 @@ read(path: string): (array of ref Action, string)
 				# recording, but it is worth recording, because a
 				# menu tracks the pointer and a replay that never
 				# moves never opens one
-				if(abs(x-px) > Slop || abs(y-py) > Slop)
+				if(firstm || abs(x-px) > Slop || abs(y-py) > Slop)
 					pendmove = 1;
 			}
 			if(pendmove && b == 0){
