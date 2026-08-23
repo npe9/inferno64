@@ -77,40 +77,25 @@ int main(int argc, char **argv)
 		[w startWriting];
 		[w startSessionAtSourceTime:kCMTimeZero];
 
-		// frame i is a flat colour: red ramps, green fixed, blue ramps down
-		for(int i = 0; i < N; i++){
-			CVPixelBufferRef pb = NULL;
-			CVPixelBufferPoolCreatePixelBuffer(NULL, ad.pixelBufferPool, &pb);
-			if(pb == NULL){ NSLog(@"no pixel buffer"); return 1; }
-			CVPixelBufferLockBaseAddress(pb, 0);
-			uint8_t *b = CVPixelBufferGetBaseAddress(pb);
-			size_t bpr = CVPixelBufferGetBytesPerRow(pb);
-			uint8_t r = 20 + i*20, g = 128, bl = 220 - i*20;
-			for(int y = 0; y < H; y++)
-				for(int x = 0; x < W; x++){
-					uint8_t *p = b + y*bpr + x*4;
-					p[0] = bl; p[1] = g; p[2] = r; p[3] = 255;  // BGRA
-				}
-			CVPixelBufferUnlockBaseAddress(pb, 0);
-			for(int spin = 0; !in.isReadyForMoreMediaData && spin < 5000; spin++)
-				usleep(1000);
-			[ad appendPixelBuffer:pb withPresentationTime:CMTimeMake(i, 10)];
-			CVPixelBufferRelease(pb);
-		}
-		[in markAsFinished];
-
 		/*
-		 * Audio comes after the video input is finished, not
-		 * interleaved with it. AVAssetWriter will not accept a backlog
-		 * on one input while another is starved, so appending all the
-		 * video and then all the audio deadlocks on
-		 * isReadyForMoreMediaData - which it did.
+		 * Both tracks are fed in presentation-time order, always
+		 * appending to whichever input is furthest behind.
 		 *
-		 * Audio: one second per ten frames at the video's rate, a
-		 * square wave stepping 220Hz, 440Hz, 660Hz... so the tone
-		 * changes in step with the picture. Square rather than sine
-		 * because AAC preserves its fundamental clearly enough that a
-		 * decode test can measure the pitch back.
+		 * Appending all the video and then all the audio is the
+		 * obvious thing and it does work - until it doesn't.
+		 * AVAssetWriter will not accept an unbounded backlog on one
+		 * input while another is starved, so that version survived ten
+		 * frames, filled the queue at eighty, and threw
+		 * "cannot be appended when readyForMoreMediaData is NO".
+		 * Interleaving keeps neither input starved and has no such
+		 * limit.
+		 *
+		 * Video: frame i is a flat colour at i/10 s - red ramping up,
+		 * green fixed, blue ramping down. Audio: a square wave
+		 * stepping 220Hz, 440Hz, 660Hz... one second per ten frames,
+		 * so the tone changes in step with the picture. Square rather
+		 * than sine because AAC preserves its fundamental clearly
+		 * enough that a decode test can measure the pitch back.
 		 */
 		int nsec = (N + 9) / 10;
 		AudioStreamBasicDescription lpcm = {0};
@@ -124,32 +109,63 @@ int main(int argc, char **argv)
 		lpcm.mBytesPerPacket = 2;
 
 		int per = (int)rate;			/* one second at a time */
-		int16_t *pcm = malloc(per * 2);
 		CMFormatDescriptionRef afmt = NULL;
 		CMAudioFormatDescriptionCreate(NULL, &lpcm, 0, NULL, 0, NULL, NULL, &afmt);
-		for(int sec = 0; sec < nsec; sec++){
+
+		int vi = 0, sec = 0;
+		while(vi < N || sec < nsec){
+			/* whichever track's next sample is earlier */
+			int dovideo = vi < N && (sec >= nsec || vi/10.0 <= (double)sec);
+			AVAssetWriterInput *want = dovideo ? in : ain;
+			int spin;
+			for(spin = 0; !want.isReadyForMoreMediaData && spin < 10000; spin++)
+				usleep(1000);
+			if(!want.isReadyForMoreMediaData){
+				fprintf(stderr, "mkmovie: %s input never became ready\n",
+					dovideo ? "video" : "audio");
+				return 1;
+			}
+			if(dovideo){
+				CVPixelBufferRef pb = NULL;
+				CVPixelBufferPoolCreatePixelBuffer(NULL, ad.pixelBufferPool, &pb);
+				if(pb == NULL){ NSLog(@"no pixel buffer"); return 1; }
+				CVPixelBufferLockBaseAddress(pb, 0);
+				uint8_t *b = CVPixelBufferGetBaseAddress(pb);
+				size_t bpr = CVPixelBufferGetBytesPerRow(pb);
+				uint8_t r = 20 + vi*20, g = 128, bl = 220 - vi*20;
+				for(int y = 0; y < H; y++)
+					for(int x = 0; x < W; x++){
+						uint8_t *p = b + y*bpr + x*4;
+						p[0] = bl; p[1] = g; p[2] = r; p[3] = 255;  // BGRA
+					}
+				CVPixelBufferUnlockBaseAddress(pb, 0);
+				[ad appendPixelBuffer:pb withPresentationTime:CMTimeMake(vi, 10)];
+				CVPixelBufferRelease(pb);
+				vi++;
+				continue;
+			}
+			/* The block buffer keeps this until the writer is done with
+			 * it, so each second gets its own; kCFAllocatorMalloc makes
+			 * the block buffer free it. A single reused buffer would be
+			 * overwritten while still queued. */
+			int16_t *pcm = malloc(per * 2);
 			double hz = 220.0 * (sec + 1);
 			int period = (int)(rate / hz);
 			for(int k = 0; k < per; k++)
 				pcm[k] = ((k / (period/2)) & 1) ? 8000 : -8000;
 			CMBlockBufferRef bb = NULL;
-			CMBlockBufferCreateWithMemoryBlock(NULL, pcm, per*2, kCFAllocatorNull,
+			CMBlockBufferCreateWithMemoryBlock(NULL, pcm, per*2, kCFAllocatorMalloc,
 				NULL, 0, per*2, 0, &bb);
 			CMSampleBufferRef sb = NULL;
 			CMSampleTimingInfo ti = { CMTimeMake(1, (int)rate),
 				CMTimeMake(sec*(int)rate, (int)rate), kCMTimeInvalid };
 			CMSampleBufferCreate(NULL, bb, TRUE, NULL, NULL, afmt, per, 1, &ti, 0, NULL, &sb);
-			for(int spin = 0; !ain.isReadyForMoreMediaData && spin < 5000; spin++)
-				usleep(1000);
-			if(!ain.isReadyForMoreMediaData){
-				fprintf(stderr, "mkmovie: audio input never became ready\n");
-				return 1;
-			}
 			[ain appendSampleBuffer:sb];
 			CFRelease(sb);
 			CFRelease(bb);
+			sec++;
 		}
-		free(pcm);
+		[in markAsFinished];
 		[ain markAsFinished];
 		dispatch_semaphore_t s = dispatch_semaphore_create(0);
 		[w finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(s); }];

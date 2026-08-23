@@ -83,6 +83,7 @@ TARG=\
 	drawdecodetest.dis\
 	gputest.dis\
 	adectest.dis\
+	playmovie.dis\
 	qttest.dis\
 	vstreamtest.dis\
 	grep.dis\

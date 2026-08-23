@@ -1,0 +1,86 @@
+.TH PLAYMOVIE 1
+.SH NAME
+playmovie \- play a movie, video paced against the audio
+.SH SYNOPSIS
+.B playmovie
+[
+.B -s
+]
+.I file
+.SH DESCRIPTION
+.B Playmovie
+plays a QuickTime or MP4 file.
+.IR quicktime (2)
+locates the coded samples of both tracks in Limbo;
+.IR audio (3)
+decodes the audio to PCM and
+.IR draw (3)
+decodes the video into draw images.
+Nothing here knows how AAC or H.264 work, and nothing in the kernel
+knows what an MP4 is.
+.PP
+The audio is the clock, and it has to be.
+A sound card consumes samples at its own fixed rate, so a write to
+.B /dev/audio
+blocks when the device's buffer is full; feeding it paces the whole
+loop for free and gives a position to fit the video to.
+Driving the other way \(em showing frames on a timer and playing audio
+to match \(em means resampling audio whenever the timer drifts, which
+is audible.
+.PP
+The position the audio clock reports is what has been handed to the
+device, which runs ahead of what has been heard by however deep its
+buffer is.
+That offset is constant, so it does not accumulate: it shifts the whole
+picture by a fixed amount rather than letting the two tracks drift
+apart, which is the thing that matters.
+.PP
+Frames are held in a small ring of images and shown in presentation
+order.
+This is not optional.
+Coded samples are in
+.I decode
+order, and a stream with B-frames presents them in a different one, so
+several decoded frames have to exist at once before any can be shown at
+the right time.
+Pacing frames in the order they decode gives visibly wrong timing: on
+.B /lib/movies/av.mov
+it puts frames up to 317ms from where they belong, against 19ms with
+the ring.
+If the ring is ever too small for the stream's reordering depth a frame
+would have to be shown after a later one; that is checked for and
+reported rather than passing silently.
+.PP
+The
+.B -s
+option reports the synchronisation error without opening
+.BR /dev/audio ,
+so the file plays as fast as it decodes.
+The measurement is the same either way, which is the point of having
+it: the drift is a property of the arithmetic, not of the speed the
+loop happens to run at.
+.SH SOURCE
+.B /appl/cmd/playmovie.b
+.SH SEE ALSO
+.IR quicktime (2),
+.IR audio (3),
+.IR draw (3),
+.IR vstreamtest (1),
+.IR adectest (1)
+.SH BUGS
+The worst error is reported and the frames are counted, but no frame is
+ever put on the screen: each is decoded into an image and dropped.
+What is tested is the timing, not the display.
+.PP
+There is no seeking, no pause and no way to stop before the end.
+.PP
+A clip shorter than the audio device's buffer never blocks, so it plays
+in less than its own duration and the pacing is not exercised at all.
+.B /lib/movies/av.mov
+is one such clip: at 1.07s it finishes in 0.9s.
+.I Mkmovie ,
+alongside the emu source, will build a longer one \(em 80 frames plays
+in 8.01s for 8s of audio, with the error still bounded at 22ms.
+.PP
+One video track and one audio track, the first of each.
+Subtitles and multiple audio tracks are ignored.

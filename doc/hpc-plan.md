@@ -441,13 +441,41 @@ sink because that composes, and because a sink cannot be tested without
 listening to it: `adectest(1)` measures the *pitch* of the decoded PCM against
 the tone the clip was built with (220Hz in, 216Hz back).
 
-So both halves of a movie now decode. **What is missing to actually play one is
-synchronisation**, and that is the next real piece: presentation timestamps are
-already available — `quicktime(2)` reports each sample's duration and
-composition offset — but nothing yet paces frames against the audio clock, and
-nothing writes the decoded PCM to `/dev/audio`. Note the pacing has to be
-driven by audio: the sound card's consumption is the clock, and video is fitted
-to it, not the other way round.
+So both halves of a movie now decode, and **`playmovie(1)` now synchronises
+them**. The audio is the clock: a write to `/dev/audio` blocks when the device's
+buffer is full, so feeding it paces the loop for free and gives a position to
+fit the video to. Driving the other way — frames on a timer, audio resampled to
+match — is audible. The clock reports what has been *handed to* the device
+rather than what has been heard, but that offset is constant: it shifts the
+whole picture, it does not accumulate.
+
+Two things came out of building it that are worth keeping.
+
+**Frames cannot be paced in decode order.** The first version fed each sample as
+`quicktime(2)` reported it and compared its presentation time against the clock.
+That is wrong for any stream with B-frames, and wrongly by a lot: it put frames
+up to **317ms** from where they belong on `av.mov`. Presentation order needs
+several decoded frames alive at once, so `playmovie` decodes into a ring of four
+draw images and shows the earliest held frame the clock has reached — **19ms**,
+which is under one AAC packet (23.2ms) and therefore the clock's own
+granularity. Setting the ring to one restores 317ms exactly, which is the
+negative control. The ring can in principle be too small for a stream's
+reordering depth; that shows up as a frame that would have to be shown after a
+later one, and is reported rather than passing quietly.
+
+**A short clip does not exercise pacing at all.** `av.mov` is 1.07s, fits
+entirely in the audio device's buffer, never blocks, and finishes in 0.9s — so
+the first "it plays" was not evidence of anything. An 80-frame clip from
+`mkmovie` plays in **8.01s for 8s of audio** with the error still at 22ms, i.e.
+bounded rather than growing over 8× the length. That is the measurement that
+means something.
+
+Building that longer clip needed a fix to `mkmovie` itself. It appended all the
+video and then all the audio, which survives ten frames and throws
+`readyForMoreMediaData is NO` at eighty: `AVAssetWriter` will not take an
+unbounded backlog on one input while another is starved. It now interleaves by
+presentation time, feeding whichever input is furthest behind, which has no such
+limit.
 
 To reproduce the measurement, generate a larger clip rather than committing one
 — `mkmovie` takes a size: `./mkmovie /tmp/big.mov 1920 1080 60`, then
