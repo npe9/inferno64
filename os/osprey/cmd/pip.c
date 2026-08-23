@@ -7,7 +7,8 @@
  *	open FID NAME		walk, clone and open in one message
  *	read FID ATTR		read an attribute, * for the list of them
  *	write FID ATTR VALUE	set one
- *	close FID
+ *	lease FID		renew the fid and its session
+ *	close FID		commit what was written, and let it go
  *
  * All of them given at once go in one group: one write and one read, one
  * round trip, however many transactions.  With -s the session is resumed
@@ -146,6 +147,7 @@ typename(int t)
 	case PipRread:		return "Rread";
 	case PipRwrite:		return "Rwrite";
 	case PipRclose:		return "Rclose";
+	case PipRlease:		return "Rlease";
 	case PipRerror:		return "Rerror";
 	}
 	return "R?";
@@ -194,12 +196,16 @@ pipmain(int argc, char **argv)
 			str(m+4, argv[i+2]);
 			str(m+4+2+n, argv[i+3]);
 			i += 4;
+		} else if(strcmp(argv[i], "lease") == 0 && i+1 < argc){
+			m = msg(PipTlease, 4);
+			put(m, 4, num(argv[i+1]));
+			i += 2;
 		} else if(strcmp(argv[i], "close") == 0 && i+1 < argc){
 			m = msg(PipTclose, 4);
 			put(m, 4, num(argv[i+1]));
 			i += 2;
 		} else
-			die("usage: pip [-s sid] open FID NAME | read FID ATTR | write FID ATTR VAL | close FID");
+			die("usage: pip [-s sid] open FID NAME | read FID ATTR | write FID ATTR VAL | lease FID | close FID");
 	}
 
 	if((fd = open("/n/osprey/pip", ORDWR)) < 0)
@@ -225,6 +231,8 @@ pipmain(int argc, char **argv)
 			break;
 		case PipRopen:
 			outs(" qid "); outn(get(m, 8));
+			outs(" version "); outn(get(m+8, 8));
+			outs(" lease "); outn(get(m+16, 8));
 			break;
 		case PipRread:
 			outs(" version "); outn(get(m, 8));
@@ -232,7 +240,9 @@ pipmain(int argc, char **argv)
 			outs(" '"); outb(m+10, alen); outs("'");
 			break;
 		case PipRwrite:
-			outs(" version "); outn(get(m, 8));
+		case PipRclose:
+		case PipRlease:
+			outs(" "); outn(get(m, 8));
 			break;
 		case PipRerror:
 			alen = get(m, 2);

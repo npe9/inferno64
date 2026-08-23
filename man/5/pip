@@ -45,13 +45,15 @@ and the rest is
 Tsession	sid[8]		resume that session, or 0 for a new one
 Rsession	sid[8]
 Topen		fid[4] nfid[4] how[1] name[s]
-Ropen		qid[8]
+Ropen		qid[8] version[8] lease[8]
 Tread		fid[4] count[4] attr[s]
 Rread		version[8] data[s]
 Twrite		fid[4] attr[s] data[s]
 Rwrite		version[8]
 Tclose		fid[4]
-Rclose
+Rclose		version[8]
+Tlease		fid[4]
+Rlease		lease[8]
 Rerror		ename[s]
 .fi
 .PP
@@ -65,11 +67,38 @@ group begins with
 .BR Tsession ,
 and the session it settles on is remembered against the connection, so a
 client need not name it again in every group.
+.SH VERSIONS
 .PP
-A
-.I version
-counts the writes to what a fid names, so that a client can tell whether
-what it read is still what is there.
+A write does not change what it names.  It changes the version the fid is
+making, which nobody else can see: a read through that fid gets what it
+wrote, a read through any other gets what is committed.  Closing the fid
+commits the version, as a whole; nothing is half applied.
+.PP
+A version once made is not altered again.  A fid that was opened at one
+version and comes to be closed when another has been committed over it is
+refused, and what it wrote is thrown away: what it was written against is
+not what is there any more.  Two clients that begin from the same version
+will not both win.
+.PP
+.B Ropen
+says the version the fid begins from,
+.B Rwrite
+the version it is making, and
+.B Rclose
+the version it committed, or zero if it wrote nothing.
+.SH LEASES
+.PP
+A fid and a session are each good for a time, said in milliseconds by
+.B Ropen
+and by
+.BR Rlease .
+.B Tlease
+renews a fid and the session it belongs to.  What is not renewed goes
+away: a fid that has lapsed is no longer a fid, and a client that comes
+back to a session it has let lapse is told there is no such session and
+must open another.  Renewing a session is what
+.B Tsession
+does, so a client that keeps coming back keeps it.
 .SH NAMES
 .PP
 The root is
@@ -121,11 +150,14 @@ pip open 2 /5 read 2 '*' read 2 budget close 2
 .fi
 .PP
 Come back to the same session from another process, with the fid still
-open:
+open, and commit what was written:
 .IP
 .nf
-pip -s 1 write 2 mode strict read 2 version
+pip open 2 /5 write 2 budget 777
+pip -s 1 read 2 budget lease 2 close 2
 .fi
+.PP
+The write is nobody else's until that close.
 .SH SOURCE
 .B /os/osprey/pip.h
 .br
@@ -136,15 +168,12 @@ pip -s 1 write 2 mode strict read 2 version
 .IR osprey (3)
 .SH BUGS
 .PP
-The presentation also has files leased, and versions immutable and
-committed when a file is closed.  Here a version is only a count of the
-writes, nothing is immutable, and nothing is leased.
-.PP
 Pip is spoken over a file rather than being its own transport, and there
 is no isochronous data.  The things it names are containers; no file
 system is served over it.
 .PP
 A session is remembered against the connection that last used it, so two
 connections working one session at once will confuse each other's
-replies.  Eight sessions of sixteen fids are all there are, and a session
-is never collected: it lasts until the kernel is rebooted.
+replies.  Eight sessions of sixteen fids are all there are, a fid holds
+at most eight written attributes, and what has lapsed is only collected
+when someone else asks for a session.

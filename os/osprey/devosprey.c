@@ -93,11 +93,24 @@ struct Pipfid {
 	ulong	fid;
 	uvlong	id;		/* the container it names, or 0 for the root */
 	int	open;
+	uvlong	lease;		/* good until this many milliseconds */
+
+	/*
+	 * The version this fid is making.  A write changes it and nobody
+	 * else can see it; closing the fid commits it, unless what it was
+	 * made from has been committed over since.
+	 */
+	int	dirty;
+	uvlong	base;		/* the version it was made from */
+	char	name[8][32];
+	char	val[8][32];
+	int	nval;
 };
 
 struct Pipsession {
 	int	used;
 	uvlong	sid;
+	uvlong	lease;
 	Pipfid	fid[Nfid];
 	uchar	reply[Pipmaxmsg];
 	long	nreply;
@@ -107,6 +120,34 @@ struct Pipsession {
 static Pipsession pipsession[Nsession];
 static uvlong pipnextsid = 1;
 static QLock piplock;
+
+static uvlong
+pipnow(void)
+{
+	return TK2MS(MACHP(0)->ticks);
+}
+
+/* let go of everything whose lease has run out */
+static void
+pipexpire(void)
+{
+	uvlong now;
+	int i, j;
+
+	now = pipnow();
+	for(i = 0; i < Nsession; i++){
+		if(pipsession[i].used == 0)
+			continue;
+		if(pipsession[i].lease < now){
+			pipsession[i].used = 0;
+			continue;
+		}
+		for(j = 0; j < Nfid; j++)
+			if(pipsession[i].fid[j].used
+			&& pipsession[i].fid[j].lease < now)
+				pipsession[i].fid[j].used = 0;
+	}
+}
 
 enum {
 	CMreset,
@@ -1026,13 +1067,74 @@ pipnewfid(Pipsession *ps, ulong fid)
 		return nil;
 	for(i = 0; i < Nfid; i++)
 		if(ps->fid[i].used == 0){
+			memset(&ps->fid[i], 0, sizeof ps->fid[i]);
 			ps->fid[i].used = 1;
 			ps->fid[i].fid = fid;
-			ps->fid[i].id = 0;
-			ps->fid[i].open = 0;
+			ps->fid[i].lease = pipnow() + Pipfidlease;
 			return &ps->fid[i];
 		}
 	return nil;
+}
+
+/*
+ * A fid's own version of an attribute, if it has written one.  What a
+ * fid writes is its own until the fid is closed.
+ */
+static char*
+pipdraft(Pipfid *f, char *name)
+{
+	int i;
+
+	for(i = 0; i < f->nval; i++)
+		if(strcmp(f->name[i], name) == 0)
+			return f->val[i];
+	return nil;
+}
+
+static int
+pipsetdraft(Pipfid *f, char *name, char *val)
+{
+	int i;
+
+	if(strlen(val) >= sizeof f->val[0] || strlen(name) >= sizeof f->name[0])
+		return -1;
+	for(i = 0; i < f->nval; i++)
+		if(strcmp(f->name[i], name) == 0)
+			break;
+	if(i == f->nval){
+		if(f->nval >= nelem(f->name))
+			return -1;
+		f->nval++;
+		strcpy(f->name[i], name);
+	}
+	strcpy(f->val[i], val);
+	f->dirty = 1;
+	return 0;
+}
+
+/*
+ * Commit what a fid has written, all of it or none of it.  A version
+ * made from one that has since been committed over is refused: what it
+ * was written against is not what is there any more.
+ */
+static int
+pipcommit(Pipfid *f, uvlong *version)
+{
+	Ospreyproc *p;
+	int i;
+
+	*version = 0;
+	if(f->dirty == 0 || f->id == 0)
+		return 0;
+	if((p = ospreylookup(f->id)) == nil)
+		return -1;
+	if(ospreyversion(p) != f->base)
+		return -1;
+	for(i = 0; i < f->nval; i++)
+		if(ospreysetattr(p, f->name[i], f->val[i]) < 0)
+			return -1;
+	*version = ospreyversion(p);
+	return 0;
 }
 
 /* room for one more reply, and where it goes */
@@ -1118,6 +1220,7 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		if(sz < Pipheader + 8)
 			return -1;
 		sid = pipget(m+Pipheader, 8);
+		pipexpire();
 		if(sid != 0){
 			if((ps = pipfind(sid)) == nil){
 				if(*psp == nil)
@@ -1139,6 +1242,7 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			ps->used = 1;
 			ps->sid = pipnextsid++;
 		}
+		ps->lease = pipnow() + Pipsesslease;	/* renegotiated */
 		*psp = ps;
 		if((r = pipreply(ps, PipRsession, tag, 8)) != nil)
 			pipput(r, 8, ps->sid);
@@ -1175,8 +1279,12 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		}
 		nf->id = id;
 		nf->open = 1;
-		if((r = pipreply(ps, PipRopen, tag, 8)) != nil)
+		nf->base = id == 0 ? 0 : ospreyversion(ospreylookup(id));
+		if((r = pipreply(ps, PipRopen, tag, 24)) != nil){
 			pipput(r, 8, id);
+			pipput(r+8, 8, nf->base);
+			pipput(r+16, 8, nf->lease - pipnow());
+		}
 		break;
 
 	case PipTread:
@@ -1219,21 +1327,24 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			break;
 		}
 		{
-			char *b;
+			char *b, *s;
 
 			b = smalloc(Pipmaxmsg/2);
 			if(waserror()){
 				free(b);
 				nexterror();
 			}
-			k = ospreyattr(p, attr, b, Pipmaxmsg/2);
+			s = pipdraft(f, attr);
+			k = s != nil ? snprint(b, Pipmaxmsg/2, "%s", s)
+				: ospreyattr(p, attr, b, Pipmaxmsg/2);
 			if(k < 0)
 				piperror(ps, tag, "no such attribute");
 			else {
 				if(cnt >= 0 && k > cnt)
 					k = cnt;
 				if((r = pipreply(ps, PipRread, tag, 8+2+k)) != nil){
-					pipput(r, 8, ospreyversion(p));
+					pipput(r, 8, f->dirty ? f->base + 1
+						: ospreyversion(p));
 					pipput(r+8, 2, k);
 					memmove(r+10, b, k);
 				}
@@ -1271,12 +1382,17 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			piperror(ps, tag, "container is gone");
 			break;
 		}
-		if(ospreysetattr(p, attr, val) < 0){
+		USED(p);
+		if(!ospreyattrwritable(attr)){
 			piperror(ps, tag, "attribute is not writable");
 			break;
 		}
+		if(pipsetdraft(f, attr, val) < 0){
+			piperror(ps, tag, "no room for another attribute");
+			break;
+		}
 		if((r = pipreply(ps, PipRwrite, tag, 8)) != nil)
-			pipput(r, 8, ospreyversion(p));
+			pipput(r, 8, f->base + 1);
 		break;
 
 	case PipTclose:
@@ -1287,8 +1403,28 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			piperror(ps, tag, "no such fid");
 			break;
 		}
+		if(pipcommit(f, &sid) < 0){
+			f->used = 0;
+			piperror(ps, tag, "what it was written against has changed");
+			break;
+		}
 		f->used = 0;
-		pipreply(ps, PipRclose, tag, 0);
+		if((r = pipreply(ps, PipRclose, tag, 8)) != nil)
+			pipput(r, 8, sid);
+		break;
+
+	case PipTlease:
+		if(sz < Pipheader + 4)
+			return -1;
+		fid = pipget(m+Pipheader, 4);
+		if((f = pipfid(ps, fid)) == nil){
+			piperror(ps, tag, "no such fid");
+			break;
+		}
+		f->lease = pipnow() + Pipfidlease;
+		ps->lease = pipnow() + Pipsesslease;
+		if((r = pipreply(ps, PipRlease, tag, 8)) != nil)
+			pipput(r, 8, (uvlong)Pipfidlease);
 		break;
 
 	default:

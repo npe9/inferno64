@@ -186,6 +186,22 @@ ospreyattr(Ospreyproc *p, char *name, char *buf, long nbuf)
 	return s - buf;
 }
 
+/* the attributes that may be written: a container's own policy */
+static char *writable[] = {
+	"budget", "period", "deadline", "memory", "netmax", "mode", nil,
+};
+
+int
+ospreyattrwritable(char *name)
+{
+	int i;
+
+	for(i = 0; writable[i] != nil; i++)
+		if(strcmp(writable[i], name) == 0)
+			return 1;
+	return 0;
+}
+
 /*
  * Write one.  Only the attributes that are a container's own policy may
  * be set; what it has done is read only.

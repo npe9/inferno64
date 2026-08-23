@@ -61,10 +61,11 @@ the same rings and the same select, and the answer is routed home.
 .B "\[*p]p."
 The session protocol: sessions that outlive the connection carrying them,
 transactions grouped so that opening a thing, reading it and closing it
-is one round trip, and reads that name an attribute rather than an offset
-into bytes.  What it names are containers, whose settings and accounting
-are their attributes.  Leases, and versions that are immutable and
-committed when a thing is closed, are not built.
+is one round trip, reads that name an attribute rather than an offset
+into bytes, versions that nobody else sees until the fid that made them
+is closed and that are refused if what they were written against has
+been committed over, and leases on fids and sessions.  What it names are
+containers, whose settings and accounting are their attributes.
 .PP
 .B "Checkpoint."
 The serialisable part of a container: identity, core, state, accounting,
@@ -72,16 +73,11 @@ ring indices, namespace.
 .NH 1
 Next, in order
 .PP
-.B "1.  Leases and immutable versions."
-The rest of what \[*p]p asks for: a version that cannot be changed once
-made, committed when what made it is closed, and a lease that says how
-long what a client holds is good for.
-.PP
-.B "2.  Restart and migration."
+.B "1.  Restart and migration."
 Writing a checkpoint out and reading it into a fresh container, then
 moving one between machines.
 .PP
-.B "3.  Page flipping."
+.B "2.  Page flipping."
 Handing a page between containers instead of copying its contents, for
 messages large enough to be worth it.
 .NH 1
