@@ -433,6 +433,22 @@ The better-targeted win, if decode throughput ever matters, is that each sample
 is decoded synchronously with a wait: pipelining would help more than deleting
 the copy.
 
+**Audio decodes too** (`a4792b59`). `/dev/audiodec` is a *filter*: write one
+coded sample, read back its PCM, configured by `decoder <codec> <rate>
+<channels> <hex setup>` on `audioctl`. Same split as video — `quicktime(2)`
+finds the samples in Limbo, only the coded bytes cross. A filter rather than a
+sink because that composes, and because a sink cannot be tested without
+listening to it: `adectest(1)` measures the *pitch* of the decoded PCM against
+the tone the clip was built with (220Hz in, 216Hz back).
+
+So both halves of a movie now decode. **What is missing to actually play one is
+synchronisation**, and that is the next real piece: presentation timestamps are
+already available — `quicktime(2)` reports each sample's duration and
+composition offset — but nothing yet paces frames against the audio clock, and
+nothing writes the decoded PCM to `/dev/audio`. Note the pacing has to be
+driven by audio: the sound card's consumption is the clock, and video is fitted
+to it, not the other way round.
+
 To reproduce the measurement, generate a larger clip rather than committing one
 — `mkmovie` takes a size: `./mkmovie /tmp/big.mov 1920 1080 60`, then
 `vstreamtest /tmp/big.mov`. Only the small committed fixture is checked pixel
