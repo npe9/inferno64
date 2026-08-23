@@ -150,7 +150,11 @@ the cycle counter is emulated.  It is not a hardware figure and is not
 meant to stand beside the talk's as one; it is what this kernel can be
 compared with itself by.  Writing to
 .CW #O/bench
-is how it is asked.  Asking it the first time found that nothing woke a
+is how it is asked.  Through the mapped ring, where no trap is taken at
+all, four hundred round trips take about twenty milliseconds \- fifty
+microseconds each \- so long as the container keeps asking; it is the
+first request after its service process has gone to sleep that waits for
+a clock tick.  Asking it the first time found that nothing woke a
 container's service process when a request was submitted from inside the
 kernel, so a round trip waited for the clock: 5.5 milliseconds, ninety
 times what it costs now.
@@ -165,7 +169,7 @@ say
 .B ok
 or
 .B FAIL
-a line at a time.  Thirty lines, all
+a line at a time.  Thirty-one lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1

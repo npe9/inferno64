@@ -700,7 +700,8 @@ checkpoint, an attribute written over
 .IR pip (5)
 that nobody else sees until the fid that wrote it is closed, an
 operation the kernel refuses put on another container's ring and
-answered there, what a round trip costs, sixteen hundred requests from
+answered there, what a round trip costs with a trap and without one, sixteen hundred
+requests from
 eight processes at once with none lost, a container held to a
 five-per-cent reservation while an identical process beside it is not,
 and a uart driven by a task, whose bytes are watched leaving the second
@@ -757,10 +758,24 @@ It was 5.5 milliseconds until
 .B bench
 was written to ask.  Nothing woke a container's service process when a
 request was submitted from inside the kernel, so every round trip waited
-for the clock to notice.  A submission through the mapped ring is still
-the clock's to notice, since a process that never entered the kernel
-cannot wake anybody: that is what not trapping costs, and it is the
-trade the whole arrangement is about.
+for the clock to notice.
+.PP
+A submission through the mapped ring cannot wake anybody \- a process
+that never entered the kernel has no way to \- so the clock is what
+notices it.  That does not mean it is slow.  A container asking steadily
+keeps its service process awake, and then nothing waits for anything:
+.IP
+.nf
+ring osprey0 \fIsize\fP bench 400
+.fi
+.PP
+does four hundred submissions and collections through the mapped ring
+in about twenty milliseconds of real time, or fifty microseconds each,
+with not one trap taken.  It is the first request after the service
+process has gone to sleep that waits for a tick, and the 5.5
+milliseconds above is what that costs.  So the trade is not speed
+against traps: it is latency when idle against no traps at all when
+busy, which is the arrangement the talk is describing.
 .SH TICKETS
 .PP
 A name is only worth what the machine it was said on is worth.  On a

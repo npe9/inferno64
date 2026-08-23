@@ -18,6 +18,9 @@ The two-machine half is scripts/osprey-check-wire.py.
 """
 import os, re, subprocess, sys, tempfile, time
 
+class _None2: pass
+None2 = _None2()   # a check whose answer is a time rather than a string
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
 
@@ -99,6 +102,9 @@ CHECKS = [
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string
+ ("four hundred round trips through the mapped ring with no trap at all",
+  ["time /tmp/ring osprey0 $sz bench 400"],
+  None2),
  ("a uart driven by a task, answering a control message",
   ["echo create 5 100000000 200000000 200000000 >/n/osprey/ctl",
    "echo attach 5 0 >/n/osprey/ctl; echo uart 5 eia1 3 >/n/osprey/ctl",
@@ -181,7 +187,15 @@ def main():
 
     bad = 0
     for i, (what, _, want) in enumerate(CHECKS):
-        if want is None:
+        if want is None2:
+            # clock-bound would be 5.5ms each: over two seconds for four
+            # hundred, where a server that stays awake takes hundredths
+            m = re.search(r'(\d+\.\d+)r', parts[i])
+            ok = ('did 400 round trips' in parts[i]
+                  and m is not None and float(m.group(1)) < 1.0)
+            if m:
+                what += ' (%ss)' % m.group(1)
+        elif want is None:
             # a round trip took a whole clock tick until something woke
             # the service process; anything near a millisecond is that
             # bug back again

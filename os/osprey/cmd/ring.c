@@ -394,6 +394,34 @@ ringmain(int argc, char **argv)
 		return;
 	}
 
+	if(strcmp(argv[3], "bench") == 0 && argc > 4){
+		/*
+		 * Submit and collect that many times through the mapped ring
+		 * without entering the kernel once, so that what the shell's
+		 * time says is the round trip a container pays when it does
+		 * not trap.  Nothing is printed in the loop.
+		 */
+		long k, want;
+
+		want = (long)num(argv[4]);
+		for(k = 0; k < want; k++){
+			while(rq->put - rq->get >= m->size)
+				;
+			memset(&msg, 0, sizeof msg);
+			msg.op = (uvlong)oplookup("poll");
+			msg.sequence = k+1;
+			msg.container = m->id;
+			rm[rq->put % m->size] = msg;
+			rq->put++;
+			while(pq->put == pq->get)
+				;
+			pq->get++;
+		}
+		outs("did "); outd(want); outs(" round trips\n");
+		flush();
+		return;
+	}
+
 	if(strcmp(argv[3], "page") == 0 && argc > 4){
 		/*
 		 * A page is a segment of its own, so a container that has
