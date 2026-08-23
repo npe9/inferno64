@@ -7,6 +7,10 @@ iostats \- file system to measure I/O
 .B -d
 ]
 [
+.B -t
+.I tracefile
+]
+[
 .B -f
 .I dbfile
 ]
@@ -70,6 +74,70 @@ Start a new shell, displaying all 9P traffic caused by the shell or its children
 .EX
 iostats -df /fd/1 sh
 .EE
+.SS "Recording for replay"
+.B -t
+writes every message to
+.I tracefile
+exactly as it crossed the wire, with the time at which it crossed.
+.PP
+This is not what
+.B -d
+produces.
+That prints a readable rendering, and a rendering cannot be replayed: a
+read appears as
+.RB \(lq "array[2167] of byte" \(rq
+without the bytes, and no line carries a time.
+.PP
+Each record is
+.IP
+.EX
+'T' or 'R'   1 byte, the direction
+time         8 bytes, big-endian microseconds
+length       4 bytes, big-endian
+message      length bytes, the Styx message verbatim
+.EE
+.PP
+The two directions are read by separate processes which hand records to
+one writer, so the file is a total order over both and no descriptor
+offset is shared.
+.PP
+The times come from
+.BR /dev/time ,
+which reports microseconds despite the internal function being called
+.BR nsec .
+They are good enough to reproduce pacing at human scale: a script that
+read a file, slept a second, read another, slept two and read a third
+produced a trace spanning 3.031s in which the two pauses are recovered
+as 1.005s and 2.005s.
+.SS "What a trace does and does not determine"
+Because devices in Inferno are files, a great deal that is usually
+outside a trace is inside this one: pointer and keyboard input, the draw
+protocol, anything under
+.BR /chan ,
+and reads of
+.B /dev/time
+and
+.BR /dev/random .
+.PP
+Two things escape it.
+.B Sys->millisec
+and
+.B Sys->sleep
+are system calls rather than files
+.RI ( emu/port/inferno.c ),
+so a program that paces itself with those is not fully captured; one that
+reads
+.B /dev/time
+is.
+And the order in which a program's own processes run is not recorded.
+.PP
+That second gap is smaller here than it would be elsewhere.
+Dis execution is serialised \(em exactly one process executes
+instructions at a time, see
+.IR refstress (1)
+\(em so the schedule is a sequence of discrete handoffs rather than an
+arbitrary interleaving, which is a far smaller thing to record than it
+would be on a machine that ran them side by side.
 .SH SOURCE
 .B /appl/cmd/iostats.b
 .SH BUGS

@@ -27,6 +27,53 @@ Iostats: module
 };
 
 Maxmsg: con 128*1024+Styx->IOHDRSZ;
+
+#
+# Recording, for replay rather than for reading.
+#
+# -d already prints every message, but that trace cannot be replayed: text()
+# renders a read as "array[2167] of byte" without the bytes, and carries no
+# time. This writes the message exactly as it crossed the wire, with the
+# nanosecond at which it crossed, which is what a replayer needs to reproduce
+# both what happened and when.
+#
+#	'T' or 'R'	1 byte, the direction
+#	time		8 bytes, big-endian nanoseconds from /dev/time
+#	length		4 bytes, big-endian
+#	message		length bytes, the Styx message verbatim
+#
+# Both readers are separate processes, so they hand records to one writer
+# rather than sharing a file descriptor's offset; that also makes the file a
+# total order over the two directions.
+#
+tracefile: string;
+tracech: chan of (int, big, array of byte);
+
+p32b(b: array of byte, o: int, v: int)
+{
+	b[o] = byte (v>>24); b[o+1] = byte (v>>16); b[o+2] = byte (v>>8); b[o+3] = byte v;
+}
+
+p64b(b: array of byte, o: int, v: big)
+{
+	for(i := 0; i < 8; i++)
+		b[o+i] = byte (v >> ((7-i)*8));
+}
+
+tracewriter(fd: ref Sys->FD, c: chan of (int, big, array of byte))
+{
+	for(;;){
+		(dir, t, a) := <-c;
+		if(a == nil)
+			break;
+		h := array[13] of byte;
+		h[0] = byte dir;
+		p64b(h, 1, t);
+		p32b(h, 9, len a);
+		sys->write(fd, h, len h);
+		sys->write(fd, a, len a);
+	}
+}
 Ns2ms: con big 1000000;
 
 Rpc: adt
@@ -124,11 +171,12 @@ init(ctxt: ref Draw->Context, args: list of string)
 	dbfile := "iostats.out";
 	arg := load Arg Arg->PATH;
 	arg->init(args);
-	arg->setusage("iostats [-d] [-f debugfile] cmds [args ...]");
+	arg->setusage("iostats [-d] [-f debugfile] [-t tracefile] cmds [args ...]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'd' =>	dbg++;
 		'f' =>		dbfile = arg->earg();
+		't' =>		tracefile = arg->earg();
 		* =>		arg->usage();
 		}
 	args = arg->argv();
@@ -217,6 +265,13 @@ iostats(expfd: ref Sys->FD, mountfd: ref Sys->FD, pids: chan of int, done: chan 
 	timefd := sys->open("/dev/time", Sys->OREAD);
 	if(timefd == nil)
 		fatal(sys->sprint("can't open /dev/time: %r"));
+	if(tracefile != nil){
+		tf := sys->create(tracefile, Sys->OWRITE, 8r666);
+		if(tf == nil)
+			fatal(sys->sprint("can't create %q: %r", tracefile));
+		tracech = chan of (int, big, array of byte);
+		spawn tracewriter(tf, tracech);
+	}
 	tmsgs := chan of (int, ref Tmsg);
 	spawn Treader(mountfd, expfd, tmsgs);
 	(tpid, nil) := <-tmsgs;
@@ -431,8 +486,13 @@ Treader(fd: ref Sys->FD, ofd: ref Sys->FD, out: chan of (int, ref Tmsg))
 	out <-= (sys->pctl(0, nil), nil);
 	fd = sys->fildes(fd.fd);
 	ofd = sys->fildes(ofd.fd);
+	tfd: ref Sys->FD;
+	if(tracech != nil)
+		tfd = sys->open("/dev/time", Sys->OREAD);
 	for(;;){
 		(a, err) := styx->readmsg(fd, Maxmsg);
+		if(tracech != nil && a != nil)
+			tracech <-= ('T', nsec(tfd), a);
 		if(err != nil){
 			out <-= (0, ref Tmsg.Readerror(0, err));
 			break;
@@ -456,8 +516,13 @@ Rreader(fd: ref Sys->FD, ofd: ref Sys->FD, out: chan of (int, ref Rmsg))
 	out <-= (sys->pctl(0, nil), nil);
 	fd = sys->fildes(fd.fd);
 	ofd = sys->fildes(ofd.fd);
+	tfd: ref Sys->FD;
+	if(tracech != nil)
+		tfd = sys->open("/dev/time", Sys->OREAD);
 	for(;;){
 		(a, err) := styx->readmsg(fd, Maxmsg);
+		if(tracech != nil && a != nil)
+			tracech <-= ('R', nsec(tfd), a);
 		if(err != nil){
 			out <-= (0, ref Rmsg.Readerror(0, err));
 			break;
@@ -543,6 +608,16 @@ fatal(s: string)
 	raise "fatal:error";
 }
 
+# Misnamed, and worth knowing when reading either the statistics or a trace:
+# /dev/time reports timeoffset + osusectime(), which is MICROseconds, not
+# nanoseconds (emu/port/devcons.c, case Qtime). Everything derived from this is
+# therefore in microseconds.
+#
+# One consequence is not fixed here because it could not be tested: the report
+# divides these values by Ns2ms, a million, and prints the result as
+# milliseconds, which would make it a thousand times too small. The report did
+# not appear at all in any run made while adding the -t flag below, so why it
+# is silent should be established before anyone changes the arithmetic.
 nsec(fd: ref Sys->FD): big
 {
 	buf := array[100] of byte;
