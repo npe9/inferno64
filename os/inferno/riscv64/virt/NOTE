@@ -1,0 +1,104 @@
+Inferno/riscv64 native kernel (QEMU -M virt)
+
+Build (from macOS host with KenC tools on PATH):
+
+	export PATH=$ROOT/MacOSX/arm64/bin:$PATH ROOT=$ROOT
+	cd os/virt
+	rm -f ivirt   # force relink after lib changes
+	mk SYSTARG=os OBJTYPE=riscv64 SHELLTYPE=sh INIT=virtinit install
+	./smoke.sh
+
+Kernel: Inferno/riscv64/bin/ivirt (jl -H5 -T0x80000000).
+Init: os/init/virtinit.b rooted as /osinit.dis.
+
+Notes
+- KenC host is LP64; target Inferno/riscv64 is LLP64 (ulong/usize 32-bit)
+  like Inferno/amd64.  jc stack args must pad to 8 (utils/jc/swt.c Aarg2 →
+  SZ_VLONG, like 6c); else multi-arg snprint/print mis-reads slots.
+  One-int-per-snprint call sites remain defensive.  Tk menu !reshape /
+  ptr / cursor strings must also use one int per sprint (multi-int tkwreq
+  corrupted geometry → menus never mapped).
+- jl float literals: Ieee in utils/jc/i.out.h must be two 32-bit words
+  (int, not host long).  With sizeof(long)==8, ADATA for 10.0 etc. was
+  emitted as zeros → dtoa/g_fmt hung; Limbo %g follows amd64 snprint path.
+- DRAMSIZE is 256MiB (mem.h / QEMU -m 256); archconfinit must use it
+  (was hard-coded 128MiB → half the RAM invisible to pools).
+- poolsizeinit must use uvlong for nb*pcnt (LLP64 ulong wraps; image
+  pool was ~30MiB instead of ~150MiB).
+- Kernel profiling: #K (devkprof); echo startclr/stop/dump >/dev/kpctl.
+  clockintr samples ur->pc; cycles() reads mcycle (not HZ ticks).
+  SMOKE_KEEP_LOG=/tmp/log ./os/virt/stress.sh keeps the serial log.
+- Display: gscreen draws directly into the ramfb buffer (no soft→fb
+  memcpy — that copy dominated Bounce). Soft cursor overlays with
+  under[] save/restore; flushmemscreen only repairs the glyph when
+  the dirty rect hits it or the hotpoint moved. cursorproc: one
+  compose per wakeup (no busy-while). Lock-free (never waits on
+  drawlock). play.sh uses -display cocoa,show-cursor=on.
+- Virtio tablet: used-ring drain needs coherence before reading usedent;
+  recycling a garbage id permanently stuck the pointer after Bounce/QMP
+  floods. Nbuf=256, reclaim-all on bad id, drain-until-quiet.
+- Bounce (stock Limbo): no-WM tkclient !reshape used to map di.r (full
+  display) ignoring Required size → act ~640×480, walls on boundary,
+  “no intersection!”. tkclient now honors the reshape rect. Keep Bounce
+  unmodified; fix windowing/runtime, not the game.
+- KenC fdlibm: fabs/atan2 must not rely on __HI(x) mutating a double
+  parameter (stack image updated, FP reg stale → NaN). Use compare/-x
+  and return -z. Broken atan2(-1,1) made stock Bounce print
+  “no intersection!” after the reshape fix.
+- Busy Dis (Bounce): stock game; sys->sleep(ms) can stick in acquire
+  while Tk_cmd holds the Dis VM. virtinit iptimer spins sleep(0) so
+  wmstress stays fair without changing Bounce. vmachine/flushmemscreen
+  clockcheck() keep soft timers moving under load.
+- BusyGC throttled (emu-style) + skip pushrun if addrun set (avoids
+  panic: pushrun addrun under wm load).
+- KSTACK 32KiB (was 8KiB): trap+draw on process stack; Cocoa mouse
+  otherwise overflowed → cause 0x2 at heap/BSS (execute non-text).
+- TCP diag prints (%I.%d → %I.%d …): KenC LP64 one-arg-per-print only;
+  multi-arg print faulted in utflen (cause 0x5 tval 0xde) on RST → "hung".
+- Softscreen + optional ramfb (fw_cfg); virtio input/kbd, rng, blk, net.
+- ndb/dns + ndb/cs bind #s on /net (default).  dns udpport() must not use
+  Dial->announce (that walks /net/cs and deadlocks with dns).
+- Local A records: dns.b dblooka() reads dom=/sys= ip= from /lib/ndb/local.
+- dns readservers uses dblooknet when /dev/sysname is set (virtinit writes "virt").
+- Toolbar: apply join "rect" in waitctl; /lib/wmsetup prints TB-OK + COLORS-OK.
+- Virtio input: drain in kproc (not IRQ); mousetrack must not call drawactive.
+- /dev/pointer: KenC-safe sprint; decref on close; set /dev/sysname in virtinit.
+- Rooted desktop: plumber, acme, charon, wm/man, view/ftree/edit/tetris,
+  wm/{task,rt,deb,coffee}.  Coffee needs /icons/bigdelight + coffee0–5 bit/mask.
+  Lean lucida/lucm + /fonts/charon (latin1 bits only).
+  Lean /man/1 (~22 pages) + convcs utf8/latin1.
+  Charon start: file:/services/webget/start.html (lean, no GIF).
+  Plumbing: edits→acme, URLs→charon, name(sec)→wm/man.
+  Software cursor (os/port/swcursor + screenvirt); /dev/cursor wired.
+  Smoke: TASKPROG-OK, ACME/MAN/CHARON-LIVE-OK, CHARON-HTTP-OK (host
+  :8765), ROOT-APPS.  QEMU -m 256; image_pool_pcnt 60.  dumpstack walks
+  kstack; /prog status uses KenC-safe snprint (wm/task).  Rooted
+  strinttab/html for Charon/HTML.  KenC-safe tcpstate/devip local+remote.
+
+Interactive QEMU (GUI window, not -nographic):
+
+	./os/virt/play.sh
+	# Or: hostfwd + FAT FS-OK image + echoes (see play.sh).  Bare qemu
+	# without hostfwd prints TCP-IN-FAIL timeout / FS-FAIL content.
+
+Acme: needs writable /tmp (memfs in virtinit → TMP-OK) and /mnt/acme.
+  Disk.init creates /tmp/X*.acme; without memfs acme exits immediately.
+  Rebuild appl/acme together (stale gui.dis vs acme.dis → link typecheck).
+  Heavysmoke ACME-LIVE uses makedrawcontext (no wmsrv) so pointer/plumb
+  warnings are expected; menu Acme under wm is the real check.
+Memory monitor: /dev/memory via poolread (KenC-safe 11-digit fields);
+  MEMORY-OK at boot.  Empty bars were poolmax underflow: static cursize
+  started at 31MB while virt poolsize() set maxsize ~25MB → huge 7th
+  field broke wm/memory's fixed columns.  cursize now starts 0.
+  Recopy dis/wm/memory.dis after limbo.
+Dis stress (virtinit + ./os/virt/stress.sh):
+  CMD-STRESS-OK — file ops + mkdir + wc/grep/tail/… under /tmp (memfs).
+  memfs Create sets QTDIR before Qidhash.add.  ulong/usize are LLP64
+  (32-bit) like Inferno/amd64 + KenC; FPcontrol is plain C.  memset
+  must MOVWU the count (64-bit MOV smeared stack garbage → RAM end).
+  KenC F28–F31 (0.0/0.5/1.0/2.0) inited in l.s like Power fp.s; other
+  float literals via jl ADATA.  Limbo %g/%e/%f uses snprint→gfltconv→dtoa
+  (amd64 path).  MATH-OK / REAL-OK / CMD-STRESS calc-ok.
+  WM-STRESS-OK — live+kill including ftree (/tmp, no nested plumber) and
+  deb (/icons/tk/debug/*).  Charon charsets include windows-1252.
+  Acme/man/charon in heavysmoke.  Ends with DIS-STRESS-OK.

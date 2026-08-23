@@ -1,0 +1,24 @@
+TARGMODEL=	Inferno
+TARGSHTYPE=	rc
+CPUS=		riscv64
+
+O=		j
+OS=		j
+
+AR=		ar
+ARFLAGS=	vu
+
+AS=		ja
+ASFLAGS=
+
+CC=		jc
+CFLAGS=		-wFVT -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/Inferno/include -I$ROOT/include
+ANSICPP= -p
+
+LD=		jl
+LDFLAGS=
+
+SYSLIBS=	-lc
+
+YACC=		yacc
+YFLAGS=		-d

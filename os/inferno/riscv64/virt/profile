@@ -1,0 +1,5 @@
+# Inferno/riscv64 virt console profile (sh -l).
+# Keep this free of emu-only binds (#U).
+load std
+if {~ $#home 0} {home=/usr/inferno}
+cd $home

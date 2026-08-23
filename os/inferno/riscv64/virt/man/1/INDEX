@@ -1,0 +1,22 @@
+acme	acme, win - interactive text windows
+bind	bind, mount, unmount - change name space
+calc	calc - calculator language
+cat	cat - concatenate files
+charon	charon - web browser
+chmod	chmod - change file mode (permissions)
+cp	cp, fcp - copy files
+date	date - print the date
+echo	echo - print arguments
+ftree	ftree - file tree browser
+grep	grep - pattern matching
+ls	ls, lc - list files
+man	man, wm/man, man2html, man2txt, lookman, sig -
+mkdir	mkdir - make a directory
+mv	mv - move files
+plumb	plumb - send message to plumber
+rm	rm - remove file(s)
+sh	sh, builtin, exit, load, loaded, local, whatis, quote, run, set, unload, unquote - command language
+sleep	sleep, pause - suspend execution for an interval
+tail	tail - deliver the last part of a file
+wc	wc - count lines, words, and characters
+wm	wm - window manager

@@ -1,0 +1,110 @@
+.TL
+Where Inferno Runs
+.AU
+Inferno RIO
+23 August 2026
+.NH 1
+What was here
+.PP
+.CW os
+carried fifteen machine directories for hardware from the early 2000s:
+StrongARM handhelds and evaluation boards, PXA boards, PowerPC 405 and
+860 boards, and a scattering of others.  Nothing emulates any of them,
+none had been built in years, and between them they held six hundred
+files of drivers for parts that are not made.  They are gone.
+.PP
+What is left is what can be run: the portable kernel, the PC machines,
+the IP stack, the boot programs and the init programs.
+.NH 1
+The shape
+.PP
+A kernel tree here is
+.CW port ,
+then an architecture, then a board:
+.IP
+.nf
+port/
+  amd64/
+    pc          the PC, as it already was
+  riscv64/
+    virt        QEMU -M virt
+    sifiveu     SiFive Unleashed
+    spike       the Spike simulator
+  arm64/
+    bcm2712     Raspberry Pi 5
+    jh7110      VisionFive 2
+.fi
+.PP
+rather than a directory per board beside the portable code.  What
+differs between two boards of one architecture is mostly a device tree,
+not a kernel; the architecture directory holds what they share \- the
+UART, the interrupt controller, the timer, the PCI window \- and a board
+directory holds what only it has.
+.PP
+.CW riscv64
+is that shape already:
+.CW os/inferno/riscv64
+holds the SiFive UART, HTIF, the GEM ethernet and the PCI ECAM window,
+and
+.CW virt ,
+.CW sifiveu
+and
+.CW spike
+sit inside it.
+.NH 1
+What is built
+.PP
+The toolchain is:
+.CW ja ,
+.CW jc
+and
+.CW jl ,
+a Ken C assembler, compiler and loader for riscv64, cherry-picked from
+.CW pr/kenc-riscv64 .
+All three build on this host.
+.PP
+The boards came from
+.CW pr/riscv-native-boards .
+They do not build yet, and the reason is worth writing down: that branch
+carries the
+.I generated
+configuration
+.CW ( virt.c ,
+and the root header it includes) but not the configuration it was
+generated from.  A board here needs a file naming its devices, its links
+and the files baked into its root; without one there is nothing for
+.CW mkdevc
+to read.  Reconstructing those three files is the next piece of work.
+.NH 1
+Then
+.PP
+QEMU virt first, because it is the cleanest new instruction set and the
+best thing to bring up against: S-mode, SBI, Sv39, PLIC, CLINT, a UART
+and virtio.  Then the same kernel on a VisionFive 2 and on a Raspberry
+Pi 5, which are two inexpensive machines rather than two simulators.
+.PP
+.I virtio
+deserves to be a platform of its own rather than a driver in one board:
+net, block, GPU, input, entropy and serial, one small family covering
+QEMU, KVM and most of what a cloud runs.  A native Inferno that speaks
+it is a very small appliance.
+.PP
+And PCI belongs in a namespace rather than under a driver model:
+.IP
+.nf
+/dev/pci/1.0.0/ctl config bar0 irq
+.fi
+.PP
+with a driver attaching to the resource rather than being registered
+against a table.  That is the move Inferno already made for networking
+and for graphics, and it is the one worth making for accelerators too:
+a
+.CW /dev/compute
+that says
+.CW ctl ,
+.CW mem ,
+.CW submit
+and
+.CW sync ,
+with a CPU, a GPU or an NPU behind it, rather than a Vulkan or a Metal
+interface handed up to Limbo.

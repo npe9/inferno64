@@ -1,0 +1,45 @@
+# /lib/wmsetup for os/virt — emu-like lean desktop (+ acme/charon/man).
+load std
+if {! {~ wm ${loaded}}} {
+	echo wmsetup must run under wm >[1=2]
+	raise usage
+}
+
+fn wmrun {
+	args := $*
+	{
+		pctl newpgrp
+		fn wmrun
+		$args
+	} > /chan/wmstdout >[2] /chan/wmstderr &
+}
+
+plumber -v >/chan/wmstdout >[2=1]
+echo PLUMB-OK
+
+menu Shell			{wmrun wm/sh}
+menu Acme			{wmrun acme}
+menu Edit				{wmrun wm/edit}
+menu Charon			{wmrun charon file:/services/webget/start.html}
+menu Manual			{wmrun wm/man}
+menu Files			{if {~ $#home 0} {wmrun wm/ftree /} {if {ftest -d $home} {wmrun wm/ftree $home} {wmrun wm/ftree /}}}
+menu ''	''
+menu System			'Debugger'		{wmrun wm/deb}
+menu System			'Module manager'	{wmrun wm/rt}
+menu System			'Task manager'		{wmrun wm/task}
+menu System			'Memory monitor'	{wmrun wm/memory}
+menu System			'About'			{wmrun wm/about}
+menu System			'Keyboard'		{wmrun wm/keyboard}
+menu Misc			'Colours'			{wmrun wm/colors}
+menu Misc			'Clock'			{wmrun wm/clock}
+menu Misc			'Coffee'			{wmrun wm/coffee}
+menu Misc			'View'			{wmrun wm/view}
+menu Games			'Bounce'			{wmrun wm/bounce}
+menu Games			'Tetris'			{wmrun wm/tetris}
+
+# Auto-launch colours only.  Acme/Man/Charon are exercised in virtinit
+# (ACME-LIVE-OK / MAN-LIVE-OK / CHARON-LIVE-OK) then killed so the
+# menubar keeps image-pool headroom (256MB DRAM, 60% image pool).
+echo TB-OK
+wmrun wm/colors
+echo COLORS-OK
