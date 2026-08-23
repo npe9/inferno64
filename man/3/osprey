@@ -393,7 +393,11 @@ the start of the file takes anything.
 .PP
 .B arena
 is the shared span itself at its own byte offsets, so a ring or a data
-area can be examined without mapping it.
+area can be examined without mapping it \- but only the parts of it the
+caller may have.  A slice is its container's and a page is whichever
+container holds it, so reading or writing across a container that is
+somebody else's is refused, as attaching its segment would be.  A page
+nobody holds is nobody's.
 .PP
 .B bench
 says what a request costs; see
@@ -408,7 +412,10 @@ Reading it is
 taking a checkpoint, and writing one back is a restart -- a container the
 checkpoint names that is not there is made, one that is there is set to
 what the checkpoint says, and one that was running when it was written
-out is running again.  A message a ring is holding is written out with
+out is running again.  A checkpoint may make a container that is not
+here; it may not write over one that is and is not the writer's, since a
+checkpoint says who a container is for and writing one would otherwise
+be a way of taking any container going.  A message a ring is holding is written out with
 it, one line each, and put back on the same ring when the checkpoint is
 read; a ring that is empty writes nothing, which is the usual case.  A
 container with anything in a ring writes its data area out as well, in
@@ -754,8 +761,9 @@ five-per-cent reservation while an identical process beside it is not,
 the wire
 .IR pip (5)
 is spoken on given back when it is turned off, a container that
-scribbles over its own map not taking the machine with it, and a session
-that outlived a
+scribbles over its own map not taking the machine with it, the span
+refusing a slice that is not the caller's and a checkpoint refusing to
+write over one, and a session that outlived a
 .B reset
 told there is no such session.
 .PP

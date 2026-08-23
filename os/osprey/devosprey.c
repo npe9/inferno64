@@ -440,6 +440,7 @@ static uchar pipfrom[6];	/* the address the group in hand came from */
 static int pipviafile;		/* the group in hand came through #O/pip */
 static Chan *pipetherchan;	/* the wire, while there is one */
 static Rendez pipetherrend;	/* woken when the wire has been given back */
+static int pipetherprocs;	/* how many processes are answering on it */
 static int pipserving;		/* a wire is being answered on */
 static uvlong pipnextsid = 1;
 static QLock piplock;
@@ -2340,6 +2341,7 @@ pipstreamer(void*)
 
 	out = smalloc(Pipframe);
 	b = smalloc(Pipmaxmsg/2);
+	pipetherprocs++;
 	while(pipserving){
 		tsleep(&up->sleep, return0, nil, 5);
 		qlock(&piplock);
@@ -2389,6 +2391,8 @@ pipstreamer(void*)
 	}
 	free(b);
 	free(out);
+	pipetherprocs--;
+	wakeup(&pipetherrend);
 	pexit("osprey pip stream", 1);
 }
 
@@ -2401,7 +2405,7 @@ pipstreamer(void*)
 static int
 pipetherdone(void*)
 {
-	return pipetherchan == nil;
+	return pipetherchan == nil && pipetherprocs == 0;
 }
 
 /*
@@ -2449,6 +2453,7 @@ pipetherserve(void *a)
 	out = smalloc(Pipframe);
 	dc = etherconv(ifc, Pipethertype, &cc);
 	pipetherchan = dc;
+	pipetherprocs++;
 	kproc("ospreypipstream", pipstreamer, nil);
 	while(pipserving){
 		n = devtab[dc->type]->read(dc, in, Pipframe, 0);
@@ -2496,6 +2501,8 @@ done:
 		cclose(cc);
 	free(in);
 	free(out);
+	pipetherprocs--;
+	wakeup(&pipetherrend);
 	pexit("osprey pip", 1);
 }
 
@@ -2623,6 +2630,45 @@ pipread(Chan *c, void *a, long n)
 }
 
 static long
+/*
+ * Whether these bytes of the span are the caller's to see.  A slice is
+ * a container's and a page is whichever container holds it; a page
+ * nobody holds is nobody's memory yet.  Without this the arena file
+ * hands every container's memory to whoever can open it, which is the
+ * whole of what a segment name being a capability was for.
+ */
+static int
+ospreyspanmine(uvlong off, long n)
+{
+	Ospreyproc *p;
+	uvlong slice, end, base;
+	int i;
+
+	slice = ospreyslicesize();
+	if(slice == 0)
+		return 0;
+	for(end = off + n; off < end; off = base + slice){
+		i = (int)(off / slice);
+		base = (uvlong)i * slice;
+		if(i >= ospreynproc()){
+			/* the pages, past every slice */
+			for(; off < end; off += BY2PG){
+				p = nil;
+				while((p = ospreynext(p)) != nil)
+					if(ospreyholdspage(p, off & ~((uvlong)BY2PG-1))
+					&& !ospreymay(p, up != nil ? up->user : nil))
+						return 0;
+			}
+			return 1;
+		}
+		if((p = ospreyat(i)) != nil
+		&& !ospreymay(p, up != nil ? up->user : nil))
+			return 0;
+	}
+	return 1;
+}
+
+static long
 ospreyarenaio(void *a, long n, vlong offset, int write)
 {
 	uvlong size;
@@ -2635,6 +2681,8 @@ ospreyarenaio(void *a, long n, vlong offset, int write)
 		n = size - offset;
 	if(n <= 0)
 		return 0;
+	if(!ospreyspanmine(offset, n))
+		error(Eperm);
 	qlock(&ospreylock);
 	if(waserror()){
 		qunlock(&ospreylock);
@@ -3007,6 +3055,28 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			qunlock(&ospreylock);
 			nexterror();
 		}
+		/*
+		 * A checkpoint may make a container that is not here.  It
+		 * may not write over one that is and is not the writer's:
+		 * a checkpoint says who a container is for, so writing one
+		 * would otherwise be a way of taking any container going.
+		 */
+		{
+			char *l;
+			uvlong id;
+
+			for(l = nm; (l = strstr(l, "container ")) != nil; ){
+				if(l != nm && l[-1] != '\n'){
+					l += 10;
+					continue;
+				}
+				l += 10;
+				id = strtoull(l, nil, 0);
+				if(ospreylookup(id) != nil
+				&& !ospreymay(ospreylookup(id), up->user))
+					error(Eperm);
+			}
+		}
 		ospreysnapread(nm, x+1);
 		qunlock(&ospreylock);
 		poperror();
@@ -3175,7 +3245,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				}
 			}
 			qunlock(&piplock);
-			while(pipetherchan != nil)
+			while(!pipetherdone(nil))
 				sleep(&pipetherrend, pipetherdone, nil);
 			break;
 		}
