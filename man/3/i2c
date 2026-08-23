@@ -80,7 +80,7 @@ otherwise the file offset is ignored, and the device typically starts at 0 for e
 Read and write requests are trimmed to the declared
 size of the device.
 .SH SOURCE
-.B /os/port/devi2c.c
+.B /os/inferno/port/devi2c.c
 .br
 .B /os/*/i2c.c
 .br

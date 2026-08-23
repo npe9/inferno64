@@ -172,8 +172,8 @@ The image data is organised as interleaved scan lines from top to bottom of the 
 with UY0 and VY1 values alternating, with two bytes per value, stored high-order byte
 first, encoded according to the IEEE digital component video standard.
 .SH SOURCE
-.B /os/port/devtv.c
+.B /os/inferno/port/devtv.c
 .br
-.B /os/pc/tv.h
+.B /os/inferno/pc/tv.h
 .SH SEE ALSO
 .IR audio (3)

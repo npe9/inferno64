@@ -112,7 +112,7 @@ Access to a
 must therefore be serialised by some other mechanism, usually
 .IR qlock (10.2).
 .SH SOURCE
-.B /os/port/proc.c
+.B /os/inferno/port/proc.c
 .br
 .B /emu/port/proc.c
 .SH SEE ALSO

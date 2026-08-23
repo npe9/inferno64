@@ -1,10 +1,10 @@
 #include "u.h"
-#include "../../9front/lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../../9front/pci.h"
+#include "../port/pci.h"
 
 static int
 intelcputempok(void)

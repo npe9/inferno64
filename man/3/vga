@@ -237,7 +237,7 @@ The following disables hardware acceleration.
 echo hwaccel off > /dev/vgactl
 .EE
 .SH SOURCE
-.B /os/pc/devvga.c
+.B /os/inferno/pc/devvga.c
 .SH SEE ALSO
 .IR arch (3)
 ....IR vga (8)

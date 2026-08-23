@@ -273,4 +273,4 @@ and
 .SH SOURCE
 .B /emu/port/devtls.c
 .br
-.B /os/port/devtls.c
+.B /os/inferno/port/devtls.c

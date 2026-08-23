@@ -1,11 +1,11 @@
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../error.h"
-#include "../audioif.h"
+#include "../port/error.h"
+#include "../port/audioif.h"
 
 enum {
 	Reset = 0x0,

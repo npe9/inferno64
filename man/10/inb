@@ -78,7 +78,7 @@ The
 .I count
 is in elements, not bytes.
 .SH SOURCE
-.B /os/pc/l.s
+.B /os/inferno/pc/l.s
 .SH SEE ALSO
 .IR dma (10.2),
 .IR isaconfig (10.2)

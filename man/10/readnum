@@ -55,6 +55,6 @@ the largest
 .I size
 allowed is 64 bytes. 
 .SH SOURCE
-.B /os/port/devcons.c
+.B /os/inferno/port/devcons.c
 .br
 .B /emu/port/devcon.c

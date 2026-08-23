@@ -98,7 +98,7 @@ and is allowed to modify it.
 returns a write lock.
 The next pending process, whether reader or writer, is scheduled.
 .SH SOURCE
-.B /os/port/qlock.c
+.B /os/inferno/port/qlock.c
 .br
 .B /os/emu/port/lock.c
 .SH SEE ALSO

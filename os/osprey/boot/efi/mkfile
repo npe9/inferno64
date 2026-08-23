@@ -1,0 +1,134 @@
+<../../../mkconfig
+objtype=386
+SYSTARG=$OSTARG
+OBJTYPE=386
+BIN=$ROOT/Osprey/$OBJTYPE
+LIBDIR=$ROOT/Osprey/$OBJTYPE/lib
+LIBDIRS=$ROOT/libfis $ROOT/libflate $ROOT/libkern
+LIBS=\
+	libfis\
+	libflate\
+	libkern\
+
+LIBFILES=${LIBS:%=$LIBDIR/%.a}
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+BIN=$ROOT/Osprey/$OBJTYPE
+
+TARG=bootia32.efi bootx64.efi efiboot.fat
+HFILES=fns.h mem.h
+IMAGEBASE=0x8000
+LINKBASE=0x8200
+
+# The loader is freestanding: it uses only the kernel-side headers, so the
+# include path is set per object type rather than taken from the host mkfile.
+INC32=-I$ROOT/Osprey/386/include -I$ROOT/Osprey/include -I$ROOT/include
+INC64=-I$ROOT/Osprey/amd64/include -I$ROOT/Osprey/include -I$ROOT/include
+CFLAGS=-FTVw
+CFLAGS32=$CFLAGS $INC32
+CFLAGS64=$CFLAGS $INC64
+PEFLAGS32=$CFLAGS32 '-DIMAGEBASE='$IMAGEBASE
+PEFLAGS64=$CFLAGS64 '-DIMAGEBASE='$IMAGEBASE
+
+all:V: $TARG
+
+install:V: $TARG
+	cp $prereq $BIN/
+
+bootia32.efi:	pe32.8 efi.8 fs.8 pxe.8 iso.8 sub.8
+	8l -l -H3 -T$IMAGEBASE -o $target $prereq
+
+pe32.8:	pe32.s
+	8a $PEFLAGS32 pe32.s
+
+efi.8:	efi.c efi.h
+	8c $CFLAGS32 efi.c
+
+fs.8:	fs.c efi.h
+	8c $CFLAGS32 fs.c
+
+pxe.8:	pxe.c efi.h
+	8c $CFLAGS32 pxe.c
+
+iso.8:	iso.c efi.h
+	8c $CFLAGS32 iso.c
+
+sub.8:	sub.c
+	8c $CFLAGS32 sub.c
+
+%.8:	$HFILES
+
+
+bootx64.efi:	x64.6 efi.6 fs.6 pxe.6 iso.6 sub.6
+	6l -l -s -R1 -T$LINKBASE -o bootx64.out $prereq
+	$ROOT/tools/aout2efi bootx64.out $target
+
+pe64.6:	pe64.s
+	6a $PEFLAGS64 pe64.s
+
+efi.6:	efi.c efi.h
+	6c $CFLAGS64 efi.c
+
+fs.6:	fs.c efi.h
+	6c $CFLAGS64 fs.c
+
+pxe.6:	pxe.c efi.h
+	6c $CFLAGS64 pxe.c
+
+iso.6:	iso.c efi.h
+	6c $CFLAGS64 iso.c
+
+sub.6:	sub.c
+	6c $CFLAGS64 sub.c
+
+x64.6:	x64.s
+	6a $PEFLAGS64 x64.s
+
+%.6:	$HFILES
+
+efiboot.fat:D:	bootia32.efi bootx64.efi
+	s = $target.$pid
+	rm -f $target
+	dd -if /dev/zero -of $target -bs 1024 -count 1024
+	disk/format -xd -t hard $target
+	dossrv -f $target $s
+	mount -c /srv/$s /n/esp
+	mkdir /n/esp/efi
+	mkdir /n/esp/efi/boot
+	cp bootia32.efi /n/esp/efi/boot
+	cp bootx64.efi /n/esp/efi/boot
+	unmount /n/esp
+	rm /srv/$s
+
+
+test.iso:D:	efiboot.fat
+	rm -fr tmp
+	mkdir tmp
+	mkdir tmp/cfg
+	mkdir tmp/386
+	cp efiboot.fat tmp/386
+	cp /386/9bootiso tmp/386
+	cp /386/9pc tmp/386
+	echo 'bootfile=/386/9pc' >tmp/cfg/plan9.ini
+	disk/mk9660 -B 386/9bootiso -E 386/efiboot.fat -p <{echo +} -s tmp $target
+	rm -r tmp
+
+test.fat:D:	bootia32.efi bootx64.efi
+	s = $target.$pid
+	rm -f $target
+	dd -if /dev/zero -of $target -bs 65536 -count 128
+	disk/format -xd -t hard $target
+	dossrv -f $target $s
+	mount -c /srv/$s /n/esp
+	mkdir /n/esp/efi
+	mkdir /n/esp/efi/boot
+	cp bootia32.efi /n/esp/efi/boot
+	cp bootx64.efi /n/esp/efi/boot
+	cp /386/9pc /n/esp
+	echo 'bootfile=9pc' >/n/esp/plan9.ini
+	unmount /n/esp
+	rm /srv/$s
+
+
+clean:V:
+	rm -f *.[68] *.out $TARG test.* 

@@ -1,4 +1,4 @@
-#include "../../9front/portfns.h"
+#include "../port/portfns.h"
 
 Dirtab*	addarchfile(char*, int, long(*)(Chan*,void*,long,vlong), long(*)(Chan*,void*,long,vlong));
 void	archinit(void);

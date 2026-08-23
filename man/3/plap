@@ -129,7 +129,7 @@ of
 .IR dial (2)
 to do the work needed to establish and manipulate network connections.
 .SH SOURCE
-.B /os/pc/devplap.c
+.B /os/inferno/pc/devplap.c
 .SH SEE ALSO
 .IR pbus (3)
 .SH BUGS

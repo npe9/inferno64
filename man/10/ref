@@ -56,6 +56,6 @@ will
 if the count goes negative,
 revealing a reference counting bug.
 .SH SOURCE
-.B /os/port/chan.c
+.B /os/inferno/port/chan.c
 .br
 .B /emu/port/chan.c

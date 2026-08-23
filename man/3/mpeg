@@ -90,7 +90,7 @@ and the hardware.
 When closed, the device waits for the last block of data to display
 before returning to the application.
 .SH SOURCE
-.B /os/pc/devmpeg.c
+.B /os/inferno/pc/devmpeg.c
 .SH CONFIGURATION
 .B "mpeg0=port=0x1e0 irq=15 dma=6
 .SH SEE ALSO

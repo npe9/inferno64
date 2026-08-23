@@ -14,7 +14,7 @@ ASFLAGS=
 CC=		6c
 #	Osprey kernel code is self-contained: it sees only its own headers
 #	under os/osprey and the shared, flavor-independent ones in include.
-CFLAGS=		-wFV -I$ROOT/os/osprey/$OBJTYPE/include -I$ROOT/os/osprey/include -I$ROOT/include
+CFLAGS=		-wFV -I$ROOT/$SYSTARG/$OBJTYPE/include -I$ROOT/$SYSTARG/include -I$ROOT/include
 ANSICPP= -p
 
 LD=		6l

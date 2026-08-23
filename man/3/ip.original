@@ -913,14 +913,14 @@ to be set, or the current user lacks the privileges to set it.
 .SH SOURCE
 .B /emu/port/devip.c
 .br
-.B /os/ip/devip.c
+.B /os/inferno/ip/devip.c
 .br
-.BI /os/ip/ proto .c
+.BI /os/inferno/ip/ proto .c
 .br
-.B /os/ip/ipifc.c
+.B /os/inferno/ip/ipifc.c
 .br
 .br
-.B /os/ip/*medium.c
+.B /os/inferno/ip/*medium.c
 .SH "SEE ALSO"
 .IR dial (2)
 .\" joinmulti and leavemulti are unimplemented

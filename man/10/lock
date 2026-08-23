@@ -99,7 +99,7 @@ not
 .I ilock
 to interlock with an interrupt routine, and similar blunders.
 .SH SOURCE
-.B /os/port/taslock.c
+.B /os/inferno/port/taslock.c
 .br
 .B /os/*/l.s
 .br

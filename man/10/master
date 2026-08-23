@@ -6,9 +6,9 @@ master, master.local \- list of device specifiers
 .br
 .B /emu/port/master.local
 .PP
-.B os/port/master
+.B os/inferno/port/master
 .br
-.B os/port/master.local
+.B os/inferno/port/master.local
 .SH DESCRIPTION
 Each device has a name of the form
 .BI # x
@@ -50,7 +50,7 @@ The
 files by contrast are generated automatically by
 .B emu/port/mkfile
 and
-.B os/port/mkfile
+.B os/inferno/port/mkfile
 from the source for all platforms and
 .BR master.local .
 In the distribution, they might include names for drivers that exist but are not

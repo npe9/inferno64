@@ -76,7 +76,7 @@ Otherwise, it contains the number of keys loaded, as a decimal integer.
 .SH SOURCE
 .B /emu/port/devsign.c
 .br
-.B /os/port/devsign.c
+.B /os/inferno/port/devsign.c
 .SH SEE ALSO
 .B wm/rt
 in

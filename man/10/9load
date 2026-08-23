@@ -393,7 +393,7 @@ for information on ensuring this.
 .br
 .IB "FAT filesystem" :\eplan9.ini
 .SH SOURCE
-.B /os/boot/pc
+.B /os/inferno/boot/pc
 .SH "SEE ALSO"
 .IR plan9.ini (10.6),
 .IR prep (8)

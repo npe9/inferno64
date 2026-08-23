@@ -2,13 +2,13 @@
  * vga driver using just vesa bios to set up.
  */
 #include "u.h"
-#include "../../9front/lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../../9front/pci.h"
-#include "../../9front/error.h"
+#include "../port/pci.h"
+#include "../port/error.h"
 
 #define Ureg Ureg386
 #include "/386/include/ureg.h"

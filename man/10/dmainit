@@ -83,4 +83,4 @@ returns the number of bytes that were last transferred by channel
 .IR chan .
 The count is always even for word-oriented DMA channels.
 .SH SOURCE
-.B /os/pc/dma.c
+.B /os/inferno/pc/dma.c

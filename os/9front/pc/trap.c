@@ -1,12 +1,12 @@
 #include	"u.h"
 #include	"tos.h"
-#include	"../../9front/lib.h"
+#include	"../port/lib.h"
 #include	"mem.h"
 #include	"dat.h"
 #include	"fns.h"
 #include	"io.h"
 #include	"ureg.h"
-#include	"../../9front/error.h"
+#include	"../port/error.h"
 #include	<trace.h>
 
 extern int irqhandled(Ureg*, int);

@@ -123,22 +123,46 @@ The check is mechanical.  From the root of the tree,
 finds no build reference; only comments naming the system a file was
 derived from.
 .PP
-Two deviations remain.  The Inferno amd64 kernel still lives in
-.CW os/pc64
-with its drivers in
-.CW os/pc ,
-rather than under
-.CW os/inferno ;
-those directories are used by no other flavor, so the rule is met even
-though the names do not say so.  Moving them is still not something that
-could be verified: that kernel does not build.  It is nearer than it was
-\-
-.CW os/pc64/l.s
-assembles, the assembler having been fixed rather than the file \- but
-the mkfile has no rule for several of the objects it names, and the
+Each flavor is laid out the way Plan 9 and Inferno lay out a kernel:
+the portable code in
+.CW port ,
+one directory for each machine beside it, and
+.CW ip ,
+.CW boot
+and the rest as siblings.
+.IP
+.nf
+os/9front/	port pc pc64 ip boot lib
+os/inferno/	port pc pc64 ip boot init and a directory per machine
+os/osprey/	port pc pc64 ip boot adapter policy lib cmd kernlib libaml
+.fi
+.PP
+.CW os
+holds those three directories and nothing else.  The portable code used
+to lie loose at the top of each flavor with
+.CW os/port
+beside them as a fourth copy of Inferno's; it is
+.CW os/inferno/port
+now, and every machine directory reads it as
+.CW ../port
+as both systems write it.  Headers that belong to a target rather than
+to a source tree are in the target:
+.CW Osprey/amd64/include
+and
+.CW Osprey/include ,
+beside
+.CW Inferno/amd64/include
+and
+.CW 9front/amd64/include .
+.PP
+One deviation remains.  The Inferno amd64 kernel does not build, and did
+not before the move either:
+.CW os/inferno/pc64/l.s
+assembles and the objects the mkfile names first compile, but the
 configuration bakes a Dis file system into the kernel that is not built
-in this tree.  Until that is put right a move could only be checked by
-reading.  Osprey's boot file system and the user library its
+in this tree.  What was checked is that the two kernels that do build,
+9front's and Osprey's, build to the same text size as before.  Osprey's
+boot file system and the user library its
 .CW initcode
 links against are prebuilt binaries copied into
 .CW Osprey/amd64 ,

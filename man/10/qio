@@ -474,7 +474,7 @@ the queue becomes non-blocking, and
 data written to a queue beyond its high water mark is discarded
 by calls that would otherwise block.
 .SH SOURCE
-.B /os/port/qio.c
+.B /os/inferno/port/qio.c
 .br
 .B /emu/port/qio.c
 .SH SEE ALSO

@@ -33,7 +33,7 @@ copies data to and from kernel memory, taking the current file offset as an addr
 flushes caches as necessary to ensure that writes to kernel memory through any
 of these files will be visible when subsequently executed as instructions.
 .SH SOURCE
-.B /os/port/devboot.c
+.B /os/inferno/port/devboot.c
 .SH SEE ALSO
 .IR tftp (2),
 .IR cons (3)

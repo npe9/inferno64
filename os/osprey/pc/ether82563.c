@@ -4,15 +4,15 @@
  * Coraid EtherDrive® hba
  */
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
-#include "../error.h"
-#include "../netif.h"
-#include "../etherif.h"
+#include "../port/pci.h"
+#include "../port/error.h"
+#include "../port/netif.h"
+#include "../port/etherif.h"
 
 /*
  * note: the 82575, 82576 and 82580 are operated using registers aliased

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build the Osprey EFI boot ISO on a host system.
 #
-# The Plan 9 recipes in os/boot/efi/mkfile build the EFI System Partition
+# The Plan 9 recipes in os/osprey/boot/efi/mkfile build the EFI System Partition
 # image with disk/format and dossrv, which only exist on Plan 9.  On a
 # hosted build machine we use mtools and xorriso instead.  Everything the
 # ISO contains is still produced by mk.
@@ -18,14 +18,14 @@ export PATH ROOT
 
 ISO=${1:-$ROOT/.qemu/osprey-efi.iso}
 KERNEL=${OSPREY_KERNEL:-$ROOT/os/osprey/pc64/9pc64}
-LOADER=$ROOT/os/boot/efi/bootx64.efi
-ESP=$ROOT/os/boot/efi/efiboot.fat
+LOADER=$ROOT/os/osprey/boot/efi/bootx64.efi
+ESP=$ROOT/os/osprey/boot/efi/efiboot.fat
 TREE=`mktemp -d "${TMPDIR:-/tmp}/osprey-iso.XXXXXX"`
 
 trap 'rm -rf "$TREE"' 0
 
 echo "mk bootx64.efi"
-(cd "$ROOT/os/boot/efi" && mk bootx64.efi)
+(cd "$ROOT/os/osprey/boot/efi" && mk bootx64.efi)
 
 test -f "$KERNEL" || { echo "no kernel: $KERNEL" >&2; exit 1; }
 

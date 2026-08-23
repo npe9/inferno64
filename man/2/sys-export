@@ -107,9 +107,9 @@ but it can also be stopped locally by killing
 .br
 .B /emu/port/exportfs.c
 .br
-.B /os/port/inferno.c
+.B /os/inferno/port/inferno.c
 .br
-.B /os/port/exportfs.c
+.B /os/inferno/port/exportfs.c
 .SH DIAGNOSTICS
 .B Export
 returns a non-negative value on success and -1 on error;

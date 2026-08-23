@@ -307,4 +307,4 @@ file is currently unimplemented.
 .SH SOURCE
 .B /emu/port/devprog.c
 .br
-.B /os/port/devprog.c
+.B /os/inferno/port/devprog.c

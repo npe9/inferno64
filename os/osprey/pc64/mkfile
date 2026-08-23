@@ -10,12 +10,14 @@ objtype=$OBJTYPE
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
 FLAVOR=Osprey
-PORTDIR=$ROOT/os/$FLAVOR
-IPDIR=$PORTDIR/ip
-BOOTDIR=$PORTDIR/boot
-PCDIR=$PORTDIR/pc
+FLAVDIR=$ROOT/os/$FLAVOR
+TARGDIR=$ROOT/$FLAVOR
+PORTDIR=$FLAVDIR/port
+IPDIR=$FLAVDIR/ip
+BOOTDIR=$FLAVDIR/boot
+PCDIR=$FLAVDIR/pc
 TARGETLIB=$ROOT/$FLAVOR/$OBJTYPE/lib
-PORTLIB=$PORTDIR/kernlib
+PORTLIB=$FLAVDIR/kernlib
 DEVCONF=$PORTDIR
 INSTALLDIR=$ROOT/$FLAVOR/$OBJTYPE
 KERNELSHELL=rc
@@ -23,7 +25,7 @@ KERNELSHELL=rc
 # portfns.h for a future native port, and its headers include one another
 # by plain name.  The adapter is therefore compiled with the policy
 # directory on the include path and the port directory off it.
-POLICYCFLAGS=$CFLAGS -I$PORTDIR/policy -I$PORTDIR
+POLICYCFLAGS=$CFLAGS -I$FLAVDIR/policy -I$PORTDIR
 CFLAGS=$CFLAGS -I$PORTDIR -I$IPDIR
 p=9
 
@@ -99,10 +101,10 @@ $TARGETLIB/libospreykern.a:V:
 	{ cd $PORTLIB; mk install; }
 
 $TARGETLIB/libosprey.a:V:
-	{ cd $ROOT/os/osprey/lib; mk install; }
+	{ cd $FLAVDIR/lib; mk install; }
 
 $TARGETLIB/libaml.a:V:
-	{ cd $ROOT/os/osprey/libaml; mk install; }
+	{ cd $FLAVDIR/libaml; mk install; }
 
 ETHER=`{cd $PCDIR; echo devether.c ether*.c | sed 's/\.c/.'$O'/g'}
 AUDIO=`{cd $PCDIR; echo devaudio.c audio*.c | sed 's/\.c/.'$O'/g'}
@@ -149,8 +151,8 @@ $ETHER: 			$PORTDIR/etherif.h $PORTDIR/netif.h
 $AUDIO:				$PORTDIR/audioif.h
 ether8003.$O ether8390.$O:	ether8390.h
 etheryuk.$O:			yukdump.h
-$VGA mouse.$O:			screen.h $PORTDIR/include/memdraw.h
-vgavesa.$O:			$PORTDIR/386/include/ureg.h
+$VGA mouse.$O:			screen.h $TARGDIR/include/memdraw.h
+vgavesa.$O:			$TARGDIR/386/include/ureg.h
 
 mp.$O:				mp.h apbootstrap.i
 apic.$O squidboy.$O:		mp.h
@@ -173,7 +175,7 @@ main.$O:			rebootcode.i
 devusb.$O usbuhci.$O usbohci.$O usbehci.$O usbehcipc.$O usbxhci.$O: $PORTDIR/usb.h
 usbehci.$O usbehcipc.$O:	usbehci.h
 
-trap.$O main.$O:		$PORTDIR/include/tos.h
+trap.$O main.$O:		$TARGDIR/include/tos.h
 
 ether8169.$O:			$PORTDIR/ethermii.h
 etherdp83820.$O:		$PORTDIR/ethermii.h
@@ -216,9 +218,9 @@ acid:V:
 # The adapter embeds the policy layer's structures, so it must be rebuilt
 # whenever one of them changes; without this the library and the adapter
 # disagree about where a field is and the kernel walks wild pointers.
-POLICYHFILES=`{echo $PORTDIR/policy/*.h}
+POLICYHFILES=`{echo $FLAVDIR/policy/*.h}
 
-ospreyrt.$O:	$PORTDIR/adapter/ospreyrt.c $PORTDIR/osprey.h $POLICYHFILES
-	$CC $POLICYCFLAGS $PORTDIR/adapter/ospreyrt.c
+ospreyrt.$O:	$FLAVDIR/adapter/ospreyrt.c $PORTDIR/osprey.h $POLICYHFILES
+	$CC $POLICYCFLAGS $FLAVDIR/adapter/ospreyrt.c
 
 devosprey.$O:	$PORTDIR/osprey.h

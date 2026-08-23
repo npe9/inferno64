@@ -60,4 +60,4 @@ inportb(port: int): byte
 }
 .EE
 .SH SOURCE
-.B /os/pc/devarch.c
+.B /os/inferno/pc/devarch.c

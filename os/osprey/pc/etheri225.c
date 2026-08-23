@@ -4,16 +4,16 @@
  */
 
 #include "u.h"
-#include "../lib.h"
-#include "../error.h"
+#include "../port/lib.h"
+#include "../port/error.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
-#include "../netif.h"
-#include "../etherif.h"
-#include "../ethermii.h"
+#include "../port/pci.h"
+#include "../port/netif.h"
+#include "../port/etherif.h"
+#include "../port/ethermii.h"
 
 enum {
 	/* device */

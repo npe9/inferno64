@@ -2,11 +2,11 @@
  * IGMPv2 - internet group management protocol (and MLDv1)
  */
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
-#include "../error.h"
+#include "../port/error.h"
 
 #include "ip.h"
 #include "ipv6.h"

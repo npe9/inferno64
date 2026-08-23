@@ -1,13 +1,13 @@
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
 
-#include "../pci.h"
-#include "../error.h"
-#include "../virtio10.h"
+#include "../port/pci.h"
+#include "../port/error.h"
+#include "../port/virtio10.h"
 
 u8int
 vin8(Vio *r, int p)

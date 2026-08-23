@@ -26,7 +26,7 @@
  */
 #include <u.h>
 #include <libc.h>
-#include "../pip.h"
+#include "../port/pip.h"
 
 enum {
 	Bufsize	= 8192,

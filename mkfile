@@ -29,9 +29,9 @@ EMUDIRS=\
 
 
 KERNEL_DIRS=\
-	os/boot/pc\
-	os/boot/efi\
-	os/pc64\
+	os/inferno/boot/pc\
+	os/inferno/boot/efi\
+	os/inferno/pc64\
 
 # mkconfig is included at this point to allow it to override
 #the preceding declarations (particularly KERNEL_DIRS) if need be

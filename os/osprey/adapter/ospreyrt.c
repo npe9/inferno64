@@ -30,8 +30,8 @@
  * declared exactly as the port declares them.  The loader compares type
  * signatures, and the two trees disagree about the width of usize.
  */
-#include "../lib.h"
-#include "osprey.h"
+#include "../port/lib.h"
+#include "../port/osprey.h"
 
 #include "runtime.h"
 #include "snap.h"

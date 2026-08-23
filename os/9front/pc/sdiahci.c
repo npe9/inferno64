@@ -4,17 +4,17 @@
  */
 
 #include "u.h"
-#include "../../9front/lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../../9front/pci.h"
-#include "../../9front/error.h"
-#include "../../9front/sd.h"
+#include "../port/pci.h"
+#include "../port/error.h"
+#include "../port/sd.h"
 #include <fis.h>
 #include "ahci.h"
-#include "../../9front/led.h"
+#include "../port/led.h"
 
 #pragma	varargck	type	"T"	int
 #define	dprint(...)	if(debug)	print(__VA_ARGS__); else USED(debug)

@@ -63,6 +63,6 @@ is allocated by
 and the caller is responsible for freeing it using
 .IR free .
 .SH SOURCE
-.B /os/port/parse.c
+.B /os/inferno/port/parse.c
 .br
 .B /emu/port/dev.c

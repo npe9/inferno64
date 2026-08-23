@@ -2,12 +2,12 @@
  * embedded controller (usually at ports 0x66/0x62)
  */
 #include	"u.h"
-#include	"../lib.h"
+#include	"../port/lib.h"
 #include	"mem.h"
 #include	"dat.h"
 #include	"fns.h"
 #include	"io.h"
-#include	"../error.h"
+#include	"../port/error.h"
 
 enum {
 	/* registers */

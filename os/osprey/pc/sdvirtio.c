@@ -3,16 +3,16 @@
  * http://docs.oasis-open.org/virtio/virtio/v1.0/virtio-v1.0.html
  */
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
+#include "../port/pci.h"
 #include "ureg.h"
-#include "../error.h"
+#include "../port/error.h"
 
-#include "../sd.h"
+#include "../port/sd.h"
 
 typedef struct Vring Vring;
 typedef struct Vdesc Vdesc;

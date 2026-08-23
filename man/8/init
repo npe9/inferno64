@@ -94,6 +94,6 @@ to serve local files from disk or flash memory.
 .SH SOURCE
 .B /appl/cmd/emuinit.b
 .br
-.B /os/init/*.b
+.B /os/inferno/init/*.b
 .SH SEE ALSO
 .IR emu (1)

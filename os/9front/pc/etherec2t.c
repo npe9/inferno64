@@ -2,14 +2,14 @@
  * Supposed NE2000 PCMCIA clones, see the comments in ether2000.c
  */
 #include "u.h"
-#include "../../9front/lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../../9front/error.h"
-#include "../../9front/netif.h"
-#include "../../9front/etherif.h"
+#include "../port/error.h"
+#include "../port/netif.h"
+#include "../port/etherif.h"
 
 #include "ether8390.h"
 

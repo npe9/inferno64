@@ -220,7 +220,7 @@ Most functions call
 .IR error (10.2)
 on any sort of error.
 .SH SOURCE
-.B /os/port/chan.c
+.B /os/inferno/port/chan.c
 .br
 .B /emu/port/chan.c
 .SH SEE ALSO

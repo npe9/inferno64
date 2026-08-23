@@ -10,16 +10,16 @@
  *	use the lproc as a periodic timer for stalls, etc.
  */
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
-#include "../error.h"
-#include "../netif.h"
-#include "../etherif.h"
-#include "../ethermii.h"
+#include "../port/pci.h"
+#include "../port/error.h"
+#include "../port/netif.h"
+#include "../port/etherif.h"
+#include "../port/ethermii.h"
 
 enum {
 	Par0		= 0x00,		/* Ethernet Address */

@@ -42,4 +42,4 @@ a previously unused device will emerge correctly formatted as an empty tiny file
 conventional mount point used by
 .IR init (8)
 .SH SOURCE
-.B /os/port/devtinyfs.c
+.B /os/inferno/port/devtinyfs.c

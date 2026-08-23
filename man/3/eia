@@ -129,7 +129,7 @@ The
 .B status
 file can be read for a report of the serial port status.
 .SH SOURCE
-.B /os/port/devns16552.c
+.B /os/inferno/port/devns16552.c
 .br
 .B /os/*/devuart.c
 .br

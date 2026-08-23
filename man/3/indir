@@ -63,7 +63,7 @@ This is a re-implementation.
 .SH SOURCE
 .B /emu/port/devindir.c
 .br
-.B /os/port/devindir.c
+.B /os/inferno/port/devindir.c
 .SH SEE ALSO
 .IR bind (1),
 .IR sys-bind (2),

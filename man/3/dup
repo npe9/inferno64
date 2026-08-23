@@ -57,4 +57,4 @@ file in
 .SH SOURCE
 .B /usr/inferno/emu/port/devdup.c
 .br
-.B /usr/inferno/os/port/devdup.c
+.B /usr/inferno/os/inferno/port/devdup.c

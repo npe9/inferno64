@@ -104,7 +104,7 @@ and finally calls
 to start invoking the recovery procedures currently stacked by
 .IR waserror .
 The files
-.B /os/port/error.h
+.B /os/inferno/port/error.h
 and
 .B /emu/port/error.h
 offer a wide selection of predefined error messages, suitable for almost any occasion.
@@ -161,7 +161,7 @@ inner(Thing *t)
 }
 .EE
 .SH SOURCE
-.B /os/port/proc.c
+.B /os/inferno/port/proc.c
 .br
 .B /emu/port/main.c
 .SH CAVEATS

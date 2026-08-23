@@ -1,14 +1,14 @@
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
+#include "../port/pci.h"
 #include "ureg.h"
-#include "../error.h"
+#include "../port/error.h"
 
-#include "../sd.h"
+#include "../port/sd.h"
 #include <fis.h>
 
 #define	HOWMANY(x, y)	(((x)+((y)-1))/(y))

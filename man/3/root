@@ -49,6 +49,6 @@ in
 .SH SOURCE
 .B /emu/port/devroot.c
 .br
-.B /os/port/devroot.c
+.B /os/inferno/port/devroot.c
 .SH SEE ALSO
 .IR init (8)

@@ -81,7 +81,7 @@ command is used to analyse the data:
 	kprof /usr/inferno/os/mpc/impc /tmp/kpdata
 .EE
 .SH SOURCE
-.B /os/port/devkprof.c
+.B /os/inferno/port/devkprof.c
 .SH SEE ALSO
 .IR kprof (10.1)
 .SH BUGS

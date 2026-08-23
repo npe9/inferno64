@@ -158,7 +158,7 @@ is one of
 The device has not been implemented on every platform that could provide it,
 particularly hosted implementations.
 .br
-.B /os/port/devaudio.c
+.B /os/inferno/port/devaudio.c
 (a driver for the SB16) implements an older interface of broadly similar form,
 but using
 .B volume

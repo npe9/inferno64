@@ -49,4 +49,4 @@ file returns a string describing the form factor of the disk, one of
 or
 .BR 5¼HD .
 .SH SOURCE
-.B /os/pc/devfloppy.c
+.B /os/inferno/pc/devfloppy.c

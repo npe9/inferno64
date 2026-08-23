@@ -140,6 +140,6 @@ fsconfig=/dev/fd0disk
 .SH "SEE ALSO"
 .IR dossrv (4)
 .SH SOURCE
-.B /os/port/devds.c
+.B /os/inferno/port/devds.c
 .SH BUGS
 Should be able to select block size for interleaved devices.

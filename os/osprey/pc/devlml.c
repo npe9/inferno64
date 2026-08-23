@@ -2,13 +2,13 @@
  * Lml 22 driver
  */
 #include	"u.h"
-#include	"../lib.h"
+#include	"../port/lib.h"
 #include	"mem.h"
 #include	"dat.h"
 #include	"fns.h"
-#include	"../error.h"
+#include	"../port/error.h"
 #include	"io.h"
-#include	"../pci.h"
+#include	"../port/pci.h"
 
 #include	"devlml.h"
 

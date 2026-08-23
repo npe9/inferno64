@@ -123,9 +123,9 @@ Reading the
 file returns statistics and status information specific to a given
 hardware interface.
 .SH SOURCE
-.B /os/port/devlance.c
+.B /os/inferno/port/devlance.c
 .br
-.B /os/port/netif.c
+.B /os/inferno/port/netif.c
 .br
 .B /os/*/devether.c
 .br

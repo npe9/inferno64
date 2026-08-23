@@ -3,15 +3,15 @@
  * copyright © 2007, coraid, inc.
  */
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
-#include "../error.h"
-#include "../netif.h"
-#include "../etherif.h"
+#include "../port/pci.h"
+#include "../port/error.h"
+#include "../port/netif.h"
+#include "../port/etherif.h"
 
 /*
  * // comments note conflicts with 82563-style drivers,

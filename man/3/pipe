@@ -58,7 +58,7 @@ A pipe persists until it is unmounted and no processes have either end open.
 .SH SOURCE
 .B /emu/port/devpipe.c
 .br
-.B /os/port/devpipe.c
+.B /os/inferno/port/devpipe.c
 .SH "SEE ALSO"
 .IR sys-file2chan (2),
 .IR sys-pipe (2)

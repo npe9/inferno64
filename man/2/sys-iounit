@@ -27,7 +27,7 @@ will return zero.
 .SH SOURCE
 .B /emu/port/inferno.c
 .br
-.B /os/port/inferno.c
+.B /os/inferno/port/inferno.c
 .SH SEE ALSO
 .IR sys-dup (2),
 .IR read (5)

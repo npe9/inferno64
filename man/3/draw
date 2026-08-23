@@ -1031,7 +1031,7 @@ that should be refreshed.
 .br
 .B /emu/*/win.c
 .br
-.B /os/port/devdraw.c
+.B /os/inferno/port/devdraw.c
 .br
 .B /os/*/screen.c
 .br

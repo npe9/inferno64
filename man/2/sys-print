@@ -257,7 +257,7 @@ the printed string will always be quoted.
 .SH SOURCE
 .B /libinterp/runt.c:/^xprint
 .br
-.B /os/port/print.c
+.B /os/inferno/port/print.c
 .br
 .B /lib9/print.c
 .SH SEE ALSO

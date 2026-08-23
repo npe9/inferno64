@@ -135,9 +135,9 @@ To find just the PCI video card (class 3):
 grep '^03' /dev/pci/*ctl
 .EE
 .SH SOURCE
-.B /os/pc/devpnp.c
+.B /os/inferno/pc/devpnp.c
 .br
-.B /os/port/devpci.c
+.B /os/inferno/port/devpci.c
 .SH BUGS
 There is currently no way to write to PCI configuration space,
 or to perform reads of less than 32 bits.

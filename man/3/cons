@@ -280,7 +280,7 @@ number of microseconds since the epoch 00:00:00 GMT, Jan. 1, 1970.
 .SH SOURCE
 .B /emu/port/devcons.c
 .br
-.B /os/port/devcons.c
+.B /os/inferno/port/devcons.c
 .SH SEE ALSO
 .IR draw (3),
 .IR keyboard (6),

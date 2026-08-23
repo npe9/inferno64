@@ -33,7 +33,7 @@
  */
 
 #include	"u.h"
-#include	"../../9front/lib.h"
+#include	"../port/lib.h"
 #include	"mem.h"
 #include	"dat.h"
 #include	"fns.h"

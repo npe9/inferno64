@@ -6,14 +6,14 @@
  * for sdhc documentation see: https://www.sdcard.org/
  */
 #include "u.h"
-#include "../../9front/lib.h"
-#include "../../9front/error.h"
+#include "../port/lib.h"
+#include "../port/error.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../../9front/pci.h"
-#include "../../9front/sd.h"
+#include "../port/pci.h"
+#include "../port/sd.h"
 
 /* registers */
 enum {

@@ -2,13 +2,13 @@
  *	SB 16 driver
  */
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../error.h"
-#include "../audioif.h"
+#include "../port/error.h"
+#include "../port/audioif.h"
 
 typedef struct	Ring	Ring;
 typedef struct	Blaster	Blaster;

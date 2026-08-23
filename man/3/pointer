@@ -73,7 +73,7 @@ format.
 .SH SOURCE
 .B /emu/port/devpointer.c
 .br
-.B /os/port/devpointer.c
+.B /os/inferno/port/devpointer.c
 .SH SEE ALSO
 .IR wm (1),
 .IR draw-intro (2),

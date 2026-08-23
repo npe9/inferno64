@@ -150,7 +150,7 @@ can later be re-used by another client.
 .SH SOURCE
 .B /emu/port/devsrv.c
 .br
-.B /os/port/devsrv.c
+.B /os/inferno/port/devsrv.c
 .SH SEE ALSO
 .IR sh-file2chan (1),
 .IR sys-intro (2),

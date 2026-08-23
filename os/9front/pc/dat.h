@@ -170,7 +170,7 @@ struct PMMU
 #define	inittxtflush(p)
 #define	settxtflush(p,c)
 
-#include "../../9front/portdat.h"
+#include "../port/portdat.h"
 
 typedef struct {
 	ulong	link;			/* link (old TSS selector) */

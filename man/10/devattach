@@ -642,7 +642,7 @@ They can be named directly in a device driver's device
 switch (the
 .B Dev
 structure in
-.BR /os/port/portdat.h :
+.BR /os/inferno/port/portdat.h :
 see
 .IR dev (10.2)).
 .PP
@@ -691,7 +691,7 @@ is an invalid mode (eg, reserved bits set).
 .SH SOURCE
 .B /emu/port/dev.c
 .br
-.B /os/port/dev.c
+.B /os/inferno/port/dev.c
 .SH SEE ALSO
 .IR allocb (10.2),
 .IR eve (10.2),

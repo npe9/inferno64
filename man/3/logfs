@@ -247,7 +247,7 @@ command.
 .br
 .B /emu/port/devlogfs.c
 .br
-.B /os/port/devlogfs.c
+.B /os/inferno/port/devlogfs.c
 .SH SEE ALSO
 .IR flash (3),
 .IR ftl (3),

@@ -253,7 +253,7 @@ A directory holding source directories for the native versions of Inferno.
 .B /os/init
 Limbo source for platform-specific initialisation procedures.
 .TP
-.B /os/port
+.B /os/inferno/port
 Portable native kernel source.
 .TP
 .BI /os/ arch

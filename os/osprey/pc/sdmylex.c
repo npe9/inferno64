@@ -10,16 +10,16 @@
  *
  */
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
+#include "../port/pci.h"
 #include "ureg.h"
-#include "../error.h"
+#include "../port/error.h"
 
-#include "../sd.h"
+#include "../port/sd.h"
 
 #define K2BPA(va, tbdf)	PADDR(va)
 #define BPA2K(pa, tbdf)	KADDR(pa)

@@ -18,14 +18,14 @@
 #define MAXTARGET	16		/* can be 8 or 16 */
 
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../pci.h"
+#include "../port/pci.h"
 
-#include "../sd.h"
+#include "../port/sd.h"
 extern SDifc sd53c8xxifc;
 
 /**********************************/

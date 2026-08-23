@@ -326,10 +326,10 @@ to be a directory.
 .br
 .B /emu/port/mkroot
 .br
-.B /os/port/mkdevc
+.B /os/inferno/port/mkdevc
 .br
-.B /os/port/mkdevlist
+.B /os/inferno/port/mkdevlist
 .br
-.B /os/port/mkroot
+.B /os/inferno/port/mkroot
 .SH SEE ALSO
 .IR mk (10.1)

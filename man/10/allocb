@@ -307,7 +307,7 @@ are unsuitable for use by interrupt handlers.
 .IR Iallocb
 returns a null pointer when it runs out of memory.
 .SH SOURCE
-.B /os/port/qio.c
+.B /os/inferno/port/qio.c
 .br
 .B /emu/port/qio.c
 .SH SEE ALSO

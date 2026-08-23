@@ -3,14 +3,14 @@
  */
 
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../error.h"
-#include "../netif.h"
-#include "../etherif.h"
+#include "../port/error.h"
+#include "../port/netif.h"
+#include "../port/etherif.h"
 
 enum {
 	IoSize		= 0x10,		/* port pool size */

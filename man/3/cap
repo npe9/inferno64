@@ -77,7 +77,7 @@ can be removed by the host owner to prevent its further use.
 .SH SOURCE
 .B /emu/port/devcap.c
 .br
-.B /os/port/devcap.c
+.B /os/inferno/port/devcap.c
 .SH SEE ALSO
 .IR keyring-sha1 (2),
 .IR cons (3),

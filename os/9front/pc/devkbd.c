@@ -2,12 +2,12 @@
  * keyboard input
  */
 #include	"u.h"
-#include	"../../9front/lib.h"
+#include	"../port/lib.h"
 #include	"mem.h"
 #include	"dat.h"
 #include	"fns.h"
 #include	"io.h"
-#include	"../../9front/error.h"
+#include	"../port/error.h"
 
 enum {
 	Data=		0x60,		/* data port */

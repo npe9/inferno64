@@ -120,7 +120,7 @@ void bootscreeninit(void)
 {
 }
 
-#include "ip/ip.h"
+#include "../ip/ip.h"
 extern void tcpinit(Fs*);
 extern void udpinit(Fs*);
 extern void rudpinit(Fs*);
@@ -151,7 +151,7 @@ void dtracytick(Ureg*)
 {
 }
 
-char* conffile = "/Users/npe/src/inferno64-branches/osprey-port/os/pc64/9front/pc64";
+char* conffile = "/Users/npe/src/inferno64-branches/osprey-port/os/9front/pc64/pc64";
 ulong kerndate = KERNDATE;
 uchar configfile[]={
 0x23,0x20,0x70,0x63,0x36,0x34,0x20,0x2d,0x20,0x61,0x6d,0x64,0x36,0x34,0x20,0x70,

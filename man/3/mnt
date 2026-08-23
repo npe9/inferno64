@@ -76,7 +76,7 @@ so this device can be accessed directly only by the kernel.
 .SH SOURCE
 .B /emu/port/devmnt.c
 .br
-.B /os/port/devmnt.c
+.B /os/inferno/port/devmnt.c
 .SH BUGS
 When mounting a service through the mount driver,
 that is, when the channel being multiplexed is itself

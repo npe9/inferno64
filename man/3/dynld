@@ -66,7 +66,7 @@ the symbol's kernel address,
 its type signature,
 and its name.
 .SH SOURCE
-.B /os/port/devdynld.c
+.B /os/inferno/port/devdynld.c
 .SH SEE ALSO
 .IR dynld (10.2),
 .IR a.out (10.6),

@@ -79,7 +79,7 @@ is conventionally bound by various applications
 .SH SOURCE
 .B /emu/port/devsrv.c
 .br
-.B /os/port/devsrv.c
+.B /os/inferno/port/devsrv.c
 .SH SEE ALSO
 .IR plumb (1),
 .IR wm (1),

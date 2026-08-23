@@ -321,7 +321,7 @@ when a user logs into Inferno and cannot be changed.
 .SH SOURCE
 .B /emu/port/inferno.c
 .br
-.B /os/port/inferno.c
+.B /os/inferno/port/inferno.c
 .SH DIAGNOSTICS
 System calls often return an integer status, or tuples containing results and
 an integer status,

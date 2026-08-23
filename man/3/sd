@@ -173,7 +173,7 @@ file;
 file to retrieve the status of the command,
 returned as a text integer.
 .SH SOURCE
-.B /os/port/devsd.c
+.B /os/inferno/port/devsd.c
 .br
 .B /os/*/sd*.[hc]
 .SH SEE ALSO

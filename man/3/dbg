@@ -371,7 +371,7 @@ Reply to successful
 Unused.
 .PP
 .SH SOURCE
-.B /os/port/devdbg.c
+.B /os/inferno/port/devdbg.c
 .br
 .B /os/*/*break.c
 .br

@@ -239,9 +239,9 @@ dialsigner(service: string): (int, Connection)
 .br
 .B /emu/port/dial.c
 .br
-.B /os/port/inferno.c
+.B /os/inferno/port/inferno.c
 .br
-.B /os/port/dial.c
+.B /os/inferno/port/dial.c
 .SH DIAGNOSTICS
 The integer valued functions return 0 on success and -1 on error;
 the system error string is set.

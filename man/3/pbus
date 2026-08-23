@@ -51,7 +51,7 @@ All invalid packets received are quietly discarded.
 Packets are also dropped whenever an internal input queue overflows
 because the reader has not kept up with arriving traffic.
 .SH SOURCE
-.B /os/pc/devpbus.c
+.B /os/inferno/pc/devpbus.c
 .SH SEE ALSO
 .IR plap (3)
 .SH BUGS

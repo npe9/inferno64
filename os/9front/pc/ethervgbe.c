@@ -21,16 +21,16 @@
  */
 
 #include "u.h"
-#include "../../9front/lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../../9front/pci.h"
-#include "../../9front/error.h"
-#include "../../9front/netif.h"
-#include "../../9front/etherif.h"
-#include "../../9front/ethermii.h"
+#include "../port/pci.h"
+#include "../port/error.h"
+#include "../port/netif.h"
+#include "../port/etherif.h"
+#include "../port/ethermii.h"
 
 #define DEBUG
 

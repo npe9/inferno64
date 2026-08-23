@@ -1,10 +1,10 @@
 #include "u.h"
-#include "../lib.h"
+#include "../port/lib.h"
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
-#include "../error.h"
+#include "../port/error.h"
 
 extern PhysUart i8250physuart;
 extern PhysUart isaphysuart;
