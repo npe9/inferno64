@@ -209,6 +209,24 @@ migdrop(char *text, int n)
 	flush();
 }
 
+/*
+ * Whether this is all of a checkpoint: the last line is a container's
+ * end, or the signature that follows one.
+ */
+static int
+whole(char *p, int n)
+{
+	if(n >= 4 && memcmp(p + n - 4, "end\n", 4) == 0)
+		return 1;
+	while(n > 0 && p[n-1] != '\n')
+		n--;
+	if(n > 0)
+		n--;			/* the newline before the last line */
+	while(n > 0 && p[n-1] != '\n')
+		n--;
+	return n >= 4 && memcmp(p + n - 4, "end\n", 4) == 0;
+}
+
 static void
 migsend(int move)
 {
@@ -221,6 +239,16 @@ migsend(int move)
 	close(fd);
 	if(n <= 0)
 		die("nothing to send");
+	/*
+	 * A checkpoint goes in one frame.  One that filled the buffer was
+	 * cut, and a cut checkpoint must not be sent -- what is sent is
+	 * destroyed here afterwards, so half of it arriving would lose a
+	 * container from both machines at once.
+	 */
+	if(n >= Maxframe - Hdrlen)
+		die("the checkpoint does not fit in one frame");
+	if(!whole((char*)frame + Hdrlen, n))
+		die("the checkpoint does not end where one should");
 
 	myaddr(ea);
 	for(i = 0; i < 6; i++)

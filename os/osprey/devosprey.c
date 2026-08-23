@@ -37,7 +37,7 @@ enum {
 	Qticket,
 
 	Statuslen	= 8*1024,	/* every core and container line */
-	Snaplen		= 16*1024,	/* every container as a checkpoint */
+	Snaplen		= 64*1024,	/* every container as a checkpoint */
 	Nfd		= 16,		/* chans a container may hold open */
 	Rbtlr		= 16,		/* allocb's trailer room, kept clear of */
 	Pipethertype	= 0x910a,	/* frames that carry a pi-p group */
@@ -912,6 +912,10 @@ ospreyuarttask(void *a)
 						status = ospreystatusof("done");
 				} else if(strcmp(name, "close") == 0){
 					status = ospreystatusof("done");
+					/* give it back as ctl uart off does */
+					if(uart->phys->taskenable != nil)
+						(*uart->phys->taskenable)(uart, 0);
+					(*uart->phys->intrmask)(uart, 1);
 					ospreyuart[x] = nil;
 				}
 			}
@@ -2618,7 +2622,8 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 			qunlock(&ospreylock);
 			nexterror();
 		}
-		ospreysnapwrite(buf, Snaplen);
+		if(ospreysnapwrite(buf, Snaplen) < 0)
+			error("checkpoint does not fit");
 		/*
 		 * A checkpoint carries who a container is for and who it has
 		 * been handed to.  On another machine that is only worth what
@@ -3103,7 +3108,13 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			error(Enonexist);
 		if(ut->console || ut->special)
 			error(Eperm);
-		if(ut->phys->interrupt == nil || ut->phys->intrmask == nil)
+		/*
+		 * All four, not two: without send the task would have
+		 * nothing to write with and would drop what it was given
+		 * without telling anyone.
+		 */
+		if(ut->phys->interrupt == nil || ut->phys->intrmask == nil
+		|| ut->phys->send == nil || ut->phys->taskenable == nil)
 			error(Ebadarg);
 		ospreyuart[x] = ut;
 		ospreyuartsem[x] = i;

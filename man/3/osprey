@@ -775,11 +775,25 @@ period.
 A message that was in flight goes with a container, but the data area it
 may name does not, and neither do the container's packets, pages or open
 channels \- a checkpoint is what a container is, not what it is holding.
-So a request that names a buffer arrives pointing at a buffer that was
-not carried.  A checkpoint is also one ethernet frame when
+A restored message is still serviced: a request that named a buffer is
+answered against whatever is at that offset now, which in a kernel that
+made the container afresh is zeroes and after a migration is whatever
+the slot it landed in was holding.  Requests that name no buffer \-
+.BR alloc ,
+.BR poll ,
+.B yield
+\- come back whole.
+.PP
+A checkpoint is one ethernet frame when
 .I mig
-carries it, so a container with a great many messages in flight will not
-fit in one and is not migrated.
+carries it, so a container with a great many messages in flight does not
+fit;
+.I mig
+refuses to send a checkpoint that did not fit rather than sending half
+of one, since what it sends it destroys.  Reading
+.B snap
+refuses for the same reason when every container together does not fit
+in the device's buffer.
 .PP
 A container carries one process.  Two processes billed to one container,
 were the device to allow it, could charge it from two cores at once and
@@ -792,7 +806,9 @@ anything else is answered
 It writes what it is given straight out of the device rather than
 through the uart's own output staging, so nothing a task sends is
 interleaved with what the rest of the kernel sends to the same port.
-Only the i8250 has the two entries a task needs.
+A uart whose driver has not the four entries a task needs is refused to
+a container rather than given one that silently drops what it is told to
+send; of the drivers in this kernel the i8250 is the one that has them.
 .PP
 Giving an interface to a container lends the interface receive buffers
 out of the container's own slice, so the card writes packets straight

@@ -1626,6 +1626,14 @@ ospreysnapwrite(char *buf, long nbuf)
 				r->ns.name[j].local, r->ns.name[j].global);
 		p = seprint(p, e, "end\n");
 	}
+	/*
+	 * seprint stops at the end and says nothing, and a checkpoint cut
+	 * in half is worse than no checkpoint: it would be signed as if it
+	 * were whole and read back as partial state.  A ring with a great
+	 * many messages in it is what makes this reachable.
+	 */
+	if(p >= buf + nbuf - 1)
+		return -1;
 	return p - buf;
 }
 
