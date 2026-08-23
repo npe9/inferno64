@@ -87,6 +87,17 @@ and its clients and anything they started.
 A click is written with explicit times rather than left to the clock, because a
 consumer decides a double click from the difference between the times the
 events carry.
+The delivery is spaced to match those times as well.
+Stamps alone are not enough: a press and a release written back to back arrive
+microseconds apart however they are stamped, and a widget then sees a button
+that was never really held.
+That lost about one click in five against a real Tk button, and nothing but a
+widget would have shown it \(em at the device the events are all present and
+correctly stamped either way.
+See
+.IR clicktest (1),
+which also establishes that a scripted click does work a Tk button, twenty-five
+times out of twenty-five.
 .SH SOURCE
 .B /appl/lib/session.b
 .SH SEE ALSO

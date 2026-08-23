@@ -147,6 +147,12 @@ putkey(s: string): string
 # consumer decides a double click by the difference between the times two
 # events carry - see appl/acme/text.b - so a script that means a double click
 # has to say so instead of hoping two writes land close enough together.
+#
+# The stamps are not enough on their own. A press and a release written
+# back to back arrive microseconds apart however they are stamped, and a
+# widget then sees a button that was never really held: one click in five was
+# lost that way against a real Tk button. So the delivery is spaced to match
+# what the stamps claim.
 putptr(x, y, b, msec: int): string
 {
 	s := array of byte sprint("%d %d %d %d", x, y, b, msec);
@@ -173,34 +179,44 @@ Action.play(a: self ref Action): string
 	Aclick =>
 		if((e = putptr(a.x, a.y, 0, t)) != nil)
 			return e;
+		sys->sleep(10);
 		if((e = putptr(a.x, a.y, a.b, t+10)) != nil)
 			return e;
+		sys->sleep(20);
 		return putptr(a.x, a.y, 0, t+30);
 	Adouble =>
 		if((e = putptr(a.x, a.y, 0, t)) != nil)
 			return e;
+		sys->sleep(10);
 		if((e = putptr(a.x, a.y, a.b, t+10)) != nil)
 			return e;
+		sys->sleep(20);
 		if((e = putptr(a.x, a.y, 0, t+30)) != nil)
 			return e;
+		sys->sleep(90);
 		if((e = putptr(a.x, a.y, a.b, t+120)) != nil)
 			return e;
+		sys->sleep(30);
 		return putptr(a.x, a.y, 0, t+150);
 	Adrag =>
 		if((e = putptr(a.x, a.y, 0, t)) != nil)
 			return e;
+		sys->sleep(10);
 		if((e = putptr(a.x, a.y, a.b, t+10)) != nil)
 			return e;
 		# a few intermediate points, so a widget tracking the drag sees
 		# it move rather than teleport
+		sys->sleep(10);
 		for(i := 1; i <= 4; i++){
 			x := a.x + (a.x2-a.x)*i/5;
 			y := a.y + (a.y2-a.y)*i/5;
 			if((e = putptr(x, y, a.b, t+10+i*20)) != nil)
 				return e;
+			sys->sleep(20);
 		}
 		if((e = putptr(a.x2, a.y2, a.b, t+110)) != nil)
 			return e;
+		sys->sleep(20);
 		return putptr(a.x2, a.y2, 0, t+130);
 	Await =>
 		sys->sleep(a.x);

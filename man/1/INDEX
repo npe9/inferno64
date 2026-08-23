@@ -51,6 +51,7 @@ chgrp chgrp
 chmod chmod
 circletrace circletrace
 cleanname cleanname
+clicktest clicktest
 clock wm-misc
 cmp cmp
 coffee wm-misc

@@ -38,6 +38,7 @@ TARG=\
 	bind.dis\
 	bit2gif.dis\
 	bytes.dis\
+	clicktest.dis\
 	cal.dis\
 	calc.dis\
 	cat.dis\

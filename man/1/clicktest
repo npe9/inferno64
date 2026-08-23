@@ -1,0 +1,93 @@
+.TH CLICKTEST 1
+.SH NAME
+clicktest \- does a scripted click work a widget?
+.SH SYNOPSIS
+.B clicktest
+[
+.B -w
+.I wherefile
+]
+[
+.B -r
+.I resultfile
+]
+[
+.B -t
+.I seconds
+]
+.SH DESCRIPTION
+.B Clicktest
+puts a button on the screen, writes where the button actually is to
+.I wherefile
+.RB ( /clicktest.where
+by default), and records what reaches it in
+.I resultfile
+.RB ( /clicktest.result ).
+A script reads the position, clicks there, and reads the result.
+.PP
+It exists because delivering a click and working a widget are different
+claims.
+.IR Inputtest (1)
+shows that a click written to
+.B /dev/pointerin
+comes back off
+.B /dev/pointer
+with the right coordinates and times; everything between \(em the pointer
+queue,
+.IR wm (1),
+Tk's event dispatch, the widget's own hit testing \(em is untested by that.
+.SH EXAMPLE
+.IP
+.EX
+% load session
+% clicktest -t 30 &
+% sleep 6
+% xy=`{cat /clicktest.where}
+% session click $xy 1
+% cat /clicktest.result
+press 1
+.EE
+.SH "WHAT IT ESTABLISHED"
+That a scripted click does work a real Tk button, reliably: twenty-five of
+twenty-five presses over five runs.
+.PP
+That is worth stating plainly because this tree carries the opposite warning
+about the neighbouring case.
+Synthetic clicks posted at the host with
+.B CGEvent
+do
+.I not
+work Tk buttons on this platform, and fail silently.
+.B /dev/pointerin
+goes in underneath the host, so it is not the same path and does not have that
+problem.
+.PP
+It also found a real defect.
+A press and a release written back to back arrive microseconds apart however
+they are stamped, and a widget then sees a button that was never really held:
+thirteen presses out of fifteen, losing one click in five or so.
+.IR Session (2)
+now spaces the delivery to match the times the events claim.
+Nothing but a widget would have shown that \(em at the device the events are
+all present and correctly stamped either way.
+.SH SOURCE
+.B /appl/cmd/clicktest.b
+.SH SEE ALSO
+.IR session (2),
+.IR sh-session (1),
+.IR inputtest (1),
+.IR pointer (3)
+.SH BUGS
+It reports the button's position from Tk's own
+.B -actx
+and
+.BR -acty ,
+added to the toplevel's.
+If a window manager moves the window afterwards the position is stale, and the
+click goes wherever it now points.
+.PP
+One button, one kind of widget.
+A menu, which tracks the pointer rather than waiting for a press and release in
+one place, is not covered \(em and that is the case
+.IR session (2)
+keeps pointer movement for.
