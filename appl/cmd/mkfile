@@ -1,6 +1,7 @@
 <../../mkconfig
 
 DIRS=\
+	asm\
 	auth\
 	auxi\
 	avr\

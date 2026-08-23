@@ -383,6 +383,68 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    spec or compiler change, because the win is dispatch amortisation before it
    is ever SIMD.
 
+8. **A Dis REPL — a shell for writing Dis programs interactively.** Requested
+   directly; this is a usability item, not a numerics one, and shares nothing
+   with 1-7 except the VM.
+
+   **Most of the machinery already exists, and it works.** Verified end to end
+   before writing this:
+
+   - `limbo -S` emits Dis assembly — instructions plus `desc`/`var`/`string`/
+     `module`/`link`/`ldts`/`ext` directives.
+   - `appl/cmd/asm/` is a **complete Dis assembler** with a yacc grammar
+     (`asm.y`), and it still builds. It was simply **not in `appl/cmd/mkfile`'s
+     `DIRS`**, so a command documented in `man/1/asm` had never been built.
+     Fixed.
+   - `disdump(1)` (`appl/cmd/disdump.b`) disassembles, and is built.
+   - `dis(2)` reads Dis object files from Limbo.
+   - `loader(2)` **builds and links a module in memory at runtime** —
+     `newmod`/`tnew`/`ext`/`link`/`compile` take an array of `Loader->Inst` and
+     produce a callable module, `compile` running the JIT over it.
+
+   The round trip run to check this: a three-line Limbo program through
+   `limbo -S`, then `asm`, then executed — printing its output — then
+   `disdump`ed back to the same instructions.
+
+   So the item is **not "write a Dis interpreter"**. Dis is already
+   interpreted, JITted, assembled and disassembled here. The item is the
+   interactive loop and the state that has to survive between lines.
+
+   **The one hard problem is state.** Each `.dis` is a module with its own
+   frame; typing `addw $1,$2,40(fp)` at a prompt only means something if `fp`
+   persists to the next line, and Dis is a *typed* VM — every frame and data
+   block needs a type descriptor so the garbage collector knows which words are
+   pointers. A REPL cannot invent a frame layout as it goes without also
+   maintaining that descriptor.
+
+   Two approaches, and the cheap one should come first:
+
+   a. **Accumulate and re-run.** Keep every line the user has typed, re-emit
+      the whole session as one assembly file, assemble with `asm`, run it,
+      show what changed. No VM work at all and it reuses `asm` verbatim.
+      Quadratic in session length, which at typing speed does not matter, and
+      state is *reconstructed* rather than live — so a line with a side effect
+      outside the VM (a write to a file, a `print`) repeats every time. That
+      limitation is the reason to do (b) eventually, and it should be stated
+      to the user rather than hidden.
+   b. **A live frame through `loader(2)`.** One module with a generously sized
+      frame and a descriptor covering it, instructions appended as they are
+      typed, `compile` re-run, execution resumed at the new code. State is
+      genuinely live and side effects happen once. The work is in growing the
+      frame and its descriptor without invalidating pointers the collector is
+      tracking.
+
+   Either way the REPL needs, beyond the loop: a way to show the frame and
+   module data as words with their descriptor's pointer map applied (nothing
+   does this today — `disdump` shows code, not data); `desc` declaration from
+   the prompt, which `asm`'s grammar already accepts; and an error path that
+   reports an assembly error without discarding the session.
+
+   Sequencing: build (a) as `appl/cmd/disrepl.b` with a `man/1/disrepl` page,
+   since it is a few hundred lines of glue over tools that already work; use it
+   to find out what inspection commands are actually wanted; then decide
+   whether (b) is worth the descriptor work. Do **not** start with (b).
+
 ---
 
 ## Item 6 in detail: host-capability devices — `ml(3)`, video, and the shape
