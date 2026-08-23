@@ -67,13 +67,14 @@ getflag(char *s)
 {
 	Bits flag;
 	int f;
-	char *fmt;
+	char *fmt, *e;
 	Rune c;
 
 	fmt = fmtbuf;
+	e = fmtbuf + sizeof(fmtbuf)-1;
 	flag = zbits;
 	nstar = 0;
-	for(;;) {
+	while(fmt < e){
 		s += chartorune(&c, s);
 		if(c == 0 || c >= nelem(flagbits))
 			break;
@@ -164,6 +165,7 @@ arginit(void)
 
 	argflag('*', Fstar);
 	argflag('l', Fl);
+	argflag('z', ewidth[TVLONG]==ewidth[TIND] ? Fvl : Fl);
 
 	argflag('o', Fverb);
 	flagbits['x'] = flagbits['o'];
@@ -175,7 +177,7 @@ pragvararg(void)
 {
 	Sym *s;
 	int n, c;
-	char *t;
+	char *t, *e;
 	Rune r;
 	Type *ty;
 
@@ -225,12 +227,15 @@ cktype:
 	if(c != '"')
 		goto bad;
 	t = fmtbuf;
+	e = t + sizeof(fmtbuf)-1;
 	for(;;) {
 		r = getr();
 		if(r == ' ' || r == '\n')
 			goto bad;
 		if(r == '"')
 			break;
+		if(t >= e)
+			goto bad;
 		t += runetochar(t, &r);
 	}
 	*t = 0;

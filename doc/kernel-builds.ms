@@ -209,3 +209,139 @@ Native kernel mkfiles override those settings locally, allowing a Mac host
 to build an amd64 Inferno, 9front or Osprey target without replacing the
 host tools.  Keep every part of a kernel in that flavor's directory, and
 its objects and libraries in that flavor's target directory.
+.NH 1
+The compilers, and what came from 9front
+.PP
+.CW utils
+holds the Inferno fork of the Plan 9 compilers, which is a fork of the
+same source 9front forked.  9front has kept working on theirs; this
+records what has been taken across and what has not, so that the next
+pass starts from the list rather than from a diff.
+.PP
+Taken:
+.IP \(bu 2
+.CW _Noreturn ,
+as a garbage word with its own type bit
+.RB ( TNORET ,
+.CW GNORET ,
+.CW BNORET )
+rather than a mark on the symbol, so that it is carried by prototypes
+and by function pointers; and the
+.CW "case OFUNC"
+in
+.CW pgen.c
+that clears
+.CW canreach
+at a call to one.
+.IP \(bu 2
+.CW codgen
+refusing to hand the backend a function that already has errors, and
+.CW usedset
+taking a nil node.
+.IP \(bu 2
+.CW scon.c :
+a constant fold that crossed a cast from an unsigned type of a
+different width, which is wrong when the modulus changes.
+.IP \(bu 2
+.CW dpchk.c :
+two walks off the end of
+.CW fmtbuf
+in the
+.CW "#pragma varargck"
+parser, and
+.CW %z
+as a known verb sized to the pointer.
+.IP \(bu 2
+.CW funct.c :
+a hundred byte buffer for a name built from a struct tag.
+.IP \(bu 2
+.CW acid.c :
+the acid verb for a pointer, which was the thirty-two bit one.
+.IP \(bu 2
+.CW pickle.c :
+its debugging flag, which was
+.CW -P ,
+the peephole flag.
+.IP \(bu 2
+.CW tc
+and
+.CW 0c :
+.CW outlstring
+written for a two byte rune while its caller counts bytes of
+.CW TRune .
+.PP
+Not taken, and why:
+.IP \(bu 2
+The host layer.  9front replaced
+.CW Posix.c ,
+.CW Nt.c ,
+.CW Plan9.c
+and
+.CW 9front.c
+with one
+.CW compat.c
+against their own libc.  These utils are built on a Mac.
+.IP \(bu 2
+.CW TRune .
+Inferno cross-compiles, so the target's rune width is not the host's;
+9front hardcodes
+.CW Rune
+because it does not.
+.IP \(bu 2
+The hunk allocator.  9front dropped
+.CW gethunk
+and
+.CW alloc
+for plain malloc.  That touches every file and buys nothing here.
+.IP \(bu 2
+.CW lex.c
+wholesale.  Most of its difference is 9front's
+.CW smprint
+and their argument handling; this tree's
+.CW lex.c
+carries the
+.CW __APPLE__
+cpp handling that lets it build on a Mac at all.  The dynamic
+.CW defs ,
+.CW av
+and
+.CW ofile
+buffers in it are a real fix and are worth a pass of their own.
+.IP \(bu 2
+.CW com.c :
+the
+.CW mixedasop
+restructuring, the
+.CW zpconst
+null-pointer comparison and the
+.CW "function not declared"
+diagnostic.  Real, entangled with each other, and a pass of their own.
+.IP \(bu 2
+.CW fndecls ,
+.CW thisfnnode ,
+.CW OROL ,
+.CW sextern ,
+.CW paramconv 's
+dropped argument,
+.CW macexpand 's
+new signature, and
+.CW "case a ... b" .
+Features rather than fixes.
+.IP \(bu 2
+The backends.  6c, 8c, 5c, kc, vc and qc are between two hundred and a
+thousand changed lines each of per-architecture code generation and
+peephole work, with no shared test surface here.
+.CW 0c
+and
+.CW jc
+have no 9front counterpart at all.
+.PP
+.CW utils/cc/lexbody
+is shared by every assembler and carries this tree's own fix for
+.CW //
+comments, which must survive anything taken from 9front:
+.CW "goto l1"
+rather than
+.CW "goto l0" ,
+so that the newline an assembler needs as a statement separator is not
+swallowed with the comment.
