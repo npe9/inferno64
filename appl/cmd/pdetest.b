@@ -1,7 +1,8 @@
 implement Command;
 
 #
-# Tests math(2)'s lap5 against the Limbo five-point stencil it replaced.
+# Tests math(2)'s stencil builtins - lap5 and lap7 - against the Limbo loops
+# they replaced.
 #
 # The interior of that kernel is easy and the border is not: it exists so the
 # interior loop can run without a boundary test in it, which means the edges
@@ -128,6 +129,82 @@ check(nx, ny: int, dx, dy: real, bc: int)
 			nx, ny, bcname(bc), worst);
 }
 
+# lap7 works on a padded cube whose one-cell halo the caller has filled, so it
+# has no boundary handling at all - the risk is entirely in the strides, which
+# are p and p*p for a p=(n+2) cube, and in the fused "c + a*lap". Both are
+# invisible in a solve: a wrong stride reads a real number from the wrong cell.
+pidx(n, x, y, z: int): int
+{
+	p := n+2;
+	return (z+1)*p*p + (y+1)*p + (x+1);
+}
+
+reflap7(n: int, dx, dy, dz, a: real, u, y: array of real)
+{
+	for(z := 0; z < n; z++)
+		for(yy := 0; yy < n; yy++)
+			for(x := 0; x < n; x++){
+				c := u[pidx(n,x,yy,z)];
+				l := (u[pidx(n,x-1,yy,z)]-2.0*c+u[pidx(n,x+1,yy,z)])/(dx*dx)
+				   + (u[pidx(n,x,yy-1,z)]-2.0*c+u[pidx(n,x,yy+1,z)])/(dy*dy)
+				   + (u[pidx(n,x,yy,z-1)]-2.0*c+u[pidx(n,x,yy,z+1)])/(dz*dz);
+				y[pidx(n,x,yy,z)] = c + a*l;
+			}
+}
+
+check7(n: int, dx, dy, dz, a: real)
+{
+	p := n+2;
+	np := p*p*p;
+	u := array[np] of real;
+	j := 0;
+	for(j = 0; j < np; j++)
+		u[j] = rnd();		# halo included: it is real data here
+	got := array[np] of real;
+	want := array[np] of real;
+	for(j = 0; j < np; j++){
+		got[j] = -12345.0;	# so an unwritten interior cell shows up
+		want[j] = -12345.0;
+	}
+	math->lap7(n, dx, dy, dz, a, u, got);
+	reflap7(n, dx, dy, dz, a, u, want);
+
+	worst := 0.0;
+	nbad := 0;
+	for(z := 0; z < n; z++)
+		for(y := 0; y < n; y++)
+			for(x := 0; x < n; x++){
+				i := pidx(n,x,y,z);
+				d := got[i] - want[i];
+				if(d < 0.0)
+					d = -d;
+				if(want[i] != 0.0)
+					d /= math->fabs(want[i]);
+				if(d > 1e-12)
+					nbad++;
+				if(d > worst)
+					worst = d;
+			}
+	if(nbad != 0)
+		bad(sprint("lap7 %d^3: %d interior cells differ, worst %g", n, nbad, worst));
+	else
+		print("  lap7 %2d^3   worst relative difference %g\n", n, worst);
+
+	# The halo must not be written: amr(2) relies on it being refilled by
+	# exchange() rather than on whatever a stencil left behind, and a
+	# kernel that ran one cell too far would still produce a correct
+	# interior.
+	nh := 0;
+	for(z = -1; z <= n; z++)
+		for(y = -1; y <= n; y++)
+			for(x = -1; x <= n; x++)
+				if(x < 0 || x >= n || y < 0 || y >= n || z < 0 || z >= n)
+					if(got[pidx(n,x,y,z)] != -12345.0)
+						nh++;
+	if(nh != 0)
+		bad(sprint("lap7 %d^3 wrote %d halo cells", n, nh));
+}
+
 init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -171,6 +248,13 @@ init(nil: ref Draw->Context, nil: list of string)
 		bad(sprint("the Laplacian of a plane is %g, expected 0", worst));
 	else
 		print("  the Laplacian of a plane is %g inside\n", worst);
+
+	# lap7: no boundary conditions, so the cases that matter are the
+	# strides and the halo.
+	check7(1, 0.5, 0.5, 0.5, 0.01);		# a single interior cell
+	check7(2, 0.5, 0.25, 0.125, 0.02);
+	check7(8, 0.031, 0.047, 0.019, 0.005);	# nothing square
+	check7(16, 0.0625, 0.0625, 0.0625, 0.0);	# a = 0: pure copy of c
 
 	if(fail)
 		raise "fail:test";

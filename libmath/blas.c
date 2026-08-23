@@ -133,6 +133,48 @@ lap5(int nx, int ny, double dx, double dy, int bc, double *x, double *y)
 }
 
 
+/*
+ * y = u + a * (seven-point Laplacian of u), on the interior of a padded cube.
+ *
+ * u and y are both (n+2)^3, x fastest, with a one-cell halo the caller has
+ * already filled - which is what amr(2) blocks are, and why this needs no
+ * boundary handling at all where lap5 needs a separate border walk. Only the
+ * interior of y is written; its halo is left alone, because the caller
+ * refills halos before the next use anyway.
+ *
+ * Fused rather than a bare Laplacian plus an axpby, unlike the two-dimensional
+ * case: there the arrays are exactly the grid and axpby applies to all of it,
+ * whereas here a second pass would have to skip the halo, so it would need its
+ * own strided loop and would save nothing.
+ */
+void
+lap7(int n, double dx, double dy, double dz, double a, double *u, double *y)
+{
+	int p, x, yy, z;
+	double c, *row, *dst;
+	double ix2, iy2, iz2;
+
+	if(n <= 0)
+		return;
+	p = n+2;
+	ix2 = dx*dx;
+	iy2 = dy*dy;
+	iz2 = dz*dz;
+	for(z = 1; z <= n; z++)
+		for(yy = 1; yy <= n; yy++){
+			row = u + z*p*p + yy*p;
+			dst = y + z*p*p + yy*p;
+			for(x = 1; x <= n; x++){
+				c = row[x];
+				dst[x] = c + a*(
+					  (row[x-1] - 2.0*c + row[x+1])/ix2
+					+ (row[x-p] - 2.0*c + row[x+p])/iy2
+					+ (row[x-p*p] - 2.0*c + row[x+p*p])/iz2);
+			}
+		}
+}
+
+
 int
 iamax(int n, double *x)
 {

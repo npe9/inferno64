@@ -948,6 +948,23 @@ Math_lap5(void *fp)
 }
 
 void
+Math_lap7(void *fp)
+{
+	F_Math_lap7 *f;
+	int p, n;
+
+	f = fp;
+	if(f->n <= 0)
+		error(exMathia);
+	p = f->n + 2;
+	n = p*p*p;
+	if(f->u->len != n || f->y->len != n)
+		error(exMathia);	/* incompatible lengths */
+	lap7(f->n, f->dx, f->dy, f->dz, f->a,
+		(double*)(f->u->data), (double*)(f->y->data));
+}
+
+void
 Math_axpby(void *fp)
 {
 	F_Math_axpby *f;

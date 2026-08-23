@@ -356,8 +356,41 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    What this does **not** settle is the GPU question, which still needs
    re-deriving — but the CPU baseline it would be measured against has just
    moved by 5-6x, which is the same trap the old GPU table fell into. Note
-   also that `amr(2)`'s 3-D seven-point stencil shares none of this code and is
-   still all Limbo — the same 160x is presumably sitting there.
+   `amr(2)`'s 3-D seven-point stencil shares none of `lap5`'s code and is now
+   `math->lap7`. It is a *different* kernel and deliberately so: an `amr` block
+   is a padded cube whose one-cell halo `exchange()` has already filled, so
+   there is no boundary handling at all, and the update is fused (`u + a*lap`)
+   rather than a bare Laplacian plus `axpby`, because a second pass would have
+   to skip the halo and would save nothing. This is exactly the "launch per
+   contiguous padded region" contract this plan predicted would work.
+
+   Two other things in `step()` mattered as much as the kernel, and the profile
+   said so — 8 substeps came out as stencil 23ms, exchange 8ms, copy-back ~8ms,
+   allocation 1ms:
+
+   - `sweep()` called `exchange()` and then `step()` exchanged again at the top
+     of its first substep. A whole redundant exchange per sweep, and the entire
+     exchange cost when a step took one substep. `sweep` is now just `step`.
+   - `step()` copied its result back cell by cell. Nothing reads another
+     block's data during the stencil loop — it touches only a block's own
+     interior and halo — so the block now simply takes the new array.
+
+   The plan warned that the allocation and zero-fill made this baseline
+   "unfairly slow". Measured, that part is 1ms of 40 — the warning was
+   overstated; the copy-back it was bundled with was the real cost.
+
+   | 5 sweeps, 4³ roots | before | after |
+   |---|---|---|
+   | blocksize 8 | 199ms | 44ms |
+   | blocksize 16 | 4817ms | 603ms |
+
+   Mass identical to the bit in both. `pdetest(1)` compares `lap7` against a
+   Limbo reference on padded cubes and, separately, checks that the **halo is
+   not written** — a kernel running one cell too far still produces a correct
+   interior, so that mistake passes a comparison of interior values and is
+   caught only by looking at cells that should not have changed. Controls: a
+   `p*p`→`p` stride typo differs in every interior cell; running one cell too
+   far is caught by the halo check alone.
 
    **`amr(2)` now has a test** (`amrtest(1)`), which it never did. It checks
    the 2:1 balance after *every* adaptation pass rather than at the end, by

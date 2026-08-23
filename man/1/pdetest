@@ -1,16 +1,19 @@
 .TH PDETEST 1
 .SH NAME
-pdetest \- test the five-point Laplacian
+pdetest \- test the stencil builtins
 .SH SYNOPSIS
 .B pdetest
 .SH DESCRIPTION
 .B Pdetest
 checks
 .IR math (2)'s
+stencil builtins,
 .B lap5
-against the Limbo stencil it replaced, which is kept inside the test as
-the statement of what the operator is.
-.PP
+and
+.BR lap7 ,
+against the Limbo loops they replaced, which are kept inside the test as
+the statement of what the operators are.
+.SS lap5
 The interior of that kernel is easy and the border is not.
 It exists so that the interior loop can run without a boundary test in
 it, which means the edges are computed by separate code, once, for each
@@ -39,6 +42,28 @@ plane is zero everywhere inside, whatever the spacing.
 That catches a sign or a spacing error which comparing against a
 reference cannot, because a reference written from the same
 misunderstanding would agree.
+.SS lap7
+.B Lap7
+has no boundary conditions \(em it works on a padded cube whose halo the
+caller filled \(em so the risk is entirely in the strides, which are
+.I p
+and
+.I p\(mup
+for a
+.RI ( n +2)
+cube, and in the fused
+.IR "c + a" \(mu\fPlap.
+A wrong stride reads a real number from the wrong cell, which is
+invisible in anything but a direct comparison.
+.PP
+It is also checked that the halo is
+.I not
+written.
+.IR Amr (2)
+relies on refilling halos itself, and a kernel that ran one cell too far
+would still produce a correct interior \(em so that mistake passes a
+comparison of interior values and is caught only by looking at the cells
+that should not have changed.
 .SH SOURCE
 .B /appl/cmd/pdetest.b
 .SH SEE ALSO

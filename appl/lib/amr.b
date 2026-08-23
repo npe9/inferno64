@@ -2,7 +2,18 @@ implement Amr;
 
 include "sys.m";
 	sys: Sys;
+include "math.m";
+	math: Math;
 include "amr.m";
+
+# Amr has no init(), and adding one would change a published interface, so
+# Math is loaded on first use. If it cannot be loaded, step() falls back to the
+# Limbo stencil, which is what this module did before and is still correct.
+loadmath()
+{
+	if(math == nil)
+		math = load Math Math->PATH;
+}
 
 # --- geometry / indexing ---
 
@@ -543,6 +554,7 @@ step(f: ref Forest, diffusivity, dt: real)
 	h2 := hx*hx;
 	if(hy*hy < h2) h2 = hy*hy;
 	if(hz*hz < h2) h2 = hz*hz;
+	loadmath();
 	maxdt := 0.15*h2/diffusivity;
 	ns := int (dt/maxdt)+1;
 	h := dt/real(ns);
@@ -558,30 +570,40 @@ step(f: ref Forest, diffusivity, dt: real)
 			w := array[n] of real;
 			for(j := 0; j < n; j++)
 				w[j] = 0.0;
-			for(z := 0; z < bs; z++)
-				for(y := 0; y < bs; y++)
-					for(x := 0; x < bs; x++){
-						c := get(b, bs, x, y, z);
-						lap := (get(b,bs,x-1,y,z)-2.0*c+get(b,bs,x+1,y,z))/(dx*dx)
-							+ (get(b,bs,x,y-1,z)-2.0*c+get(b,bs,x,y+1,z))/(dy*dy)
-							+ (get(b,bs,x,y,z-1)-2.0*c+get(b,bs,x,y,z+1))/(dz*dz);
-						w[idx(bs,x,y,z)] = c + h*diffusivity*lap;
-					}
+			# A block is exactly the padded cube math(2)'s lap7
+			# wants, and its halo is already filled, so the whole
+			# update is one call with no boundary handling at all.
+			if(math != nil)
+				math->lap7(bs, dx, dy, dz, h*diffusivity, b.u, w);
+			else
+				for(z := 0; z < bs; z++)
+					for(y := 0; y < bs; y++)
+						for(x := 0; x < bs; x++){
+							c := get(b, bs, x, y, z);
+							lap := (get(b,bs,x-1,y,z)-2.0*c+get(b,bs,x+1,y,z))/(dx*dx)
+								+ (get(b,bs,x,y-1,z)-2.0*c+get(b,bs,x,y+1,z))/(dy*dy)
+								+ (get(b,bs,x,y,z-1)-2.0*c+get(b,bs,x,y,z+1))/(dz*dz);
+							w[idx(bs,x,y,z)] = c + h*diffusivity*lap;
+						}
 			news[i] = w;
 		}
-		for(i = 0; i < len blocks; i++){
-			b := blocks[i];
-			for(z := 0; z < bs; z++)
-				for(y := 0; y < bs; y++)
-					for(x := 0; x < bs; x++)
-						set(b, bs, x, y, z, news[i][idx(bs,x,y,z)]);
-		}
+		# Take the new array rather than copying it back cell by cell.
+		# Nothing read another block's u during the loop above - the
+		# stencil only ever touches a block's own interior and its own
+		# halo - so there is no ordering to preserve, and the halo of
+		# the array taken here does not matter because exchange()
+		# refills every halo before it is next read.
+		for(i = 0; i < len blocks; i++)
+			blocks[i].u = news[i];
 	}
 }
 
+# step() exchanges at the top of every substep, including the first, so it
+# needs no exchange before it - this used to do one anyway, which was a whole
+# redundant exchange of every block per sweep, and the entire cost of one when
+# the step took a single substep.
 sweep(f: ref Forest, diffusivity, dt: real)
 {
-	exchange(f);
 	step(f, diffusivity, dt);
 }
 

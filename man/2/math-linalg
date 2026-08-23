@@ -1,6 +1,6 @@
 .TH MATH-LINALG 2
 .SH NAME
-Math: dot, norm1, norm2, iamax, axpby, spmv, lap5, gemm, sort \- linear algebra primitives
+Math: dot, norm1, norm2, iamax, axpby, spmv, lap5, lap7, gemm, sort \- linear algebra primitives
 .SH SYNOPSIS
 .EX
 include	"math.m";
@@ -12,6 +12,7 @@ iamax: fn(x: array of real): int;
 axpby: fn(a: real, x: array of real, b: real, y: array of real);
 spmv: fn(rowptr, colidx: array of int, val, x, y: array of real);
 lap5: fn(nx, ny: int, dx, dy: real, bc: int, x, y: array of real);
+lap7: fn(n: int, dx, dy, dz, a: real, u, y: array of real);
 gemm: fn(transa, transb: int,  # upper case N or T
 		m, n, k: int, alpha: real,
 		a: array of real, lda: int,
@@ -129,6 +130,42 @@ That is where such a kernel goes wrong, so
 .IR pdetest (1)
 compares every cell against the obvious version for all three boundary
 conditions and for grids one cell wide.
+.PP
+.PP
+.BI lap7( "n , dx , dy , dz , a , u , y" )
+sets the interior of
+.I y
+to
+.IR u " + " a \(mu\fPthe seven-point Laplacian of
+.IR u ,
+on a padded cube.
+.I U
+and
+.I y
+are both
+.RI ( n +2)\(ha3,
+x fastest, with a one-cell halo the caller has already filled.
+.PP
+There is no boundary handling at all: the halo is what makes it
+unnecessary, which is the whole reason
+.IR amr (2)
+stores its blocks that way.
+Only the interior of
+.I y
+is written \(em its halo is left alone, because
+.IR amr (2)
+refills every halo before it is next read, and a kernel that ran one cell
+too far would still produce a correct interior.
+.IR Pdetest (1)
+checks that.
+.PP
+Unlike the two-dimensional case this is fused rather than a bare
+Laplacian to be combined with
+.BR axpby :
+there the arrays are exactly the grid and
+.B axpby
+applies to all of it, whereas here a second pass would have to skip the
+halo, needing its own strided loop and saving nothing.
 .PP
 For the infinity norm, the function
 iamax(x)

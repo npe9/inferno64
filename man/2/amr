@@ -84,6 +84,29 @@ coarsening \(em skipping that last check would silently undo any
 refinement that balancing alone required (crit() never wants such a
 block back, so it would be coarsened again on the very next call).
 .SS "Ghost exchange and the stencil sweep"
+.B Sweep
+is now simply
+.BR step .
+.B Step
+exchanges at the top of every substep, including the first, so a
+.B sweep
+that exchanged before calling it was doing a whole extra exchange of
+every block \(em the entire cost of one, when the step took a single
+substep.
+.PP
+.B Step
+computes through
+.IR math (2)'s
+.BR lap7 ,
+for which a block is already exactly the padded cube it wants, and takes
+each block's new array rather than copying it back cell by cell.
+Nothing reads another block's data during the stencil loop \(em it
+touches only a block's own interior and its own halo \(em so there is no
+ordering to preserve.
+Five sweeps of a 4\(mu4\(mu4 forest went from 199ms to 44ms at
+blocksize 8, and from 4817ms to 603ms at blocksize 16, with the mass
+identical to the bit.
+.PP
 .B Exchange
 fills every active block's 1-cell ghost halo from its neighbours:
 same-level neighbour \(em direct copy; one-level-coarser neighbour \(em

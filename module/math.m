@@ -40,6 +40,14 @@ Math: module
 	# x and y must be nx*ny long and must not be the same array.
 	lap5:		fn(nx, ny: int, dx, dy: real, bc: int,
 			x, y: array of real);
+
+	# y = u + a*(seven-point Laplacian of u) on the interior of a
+	# padded cube. u and y are both (n+2)^3, x fastest, with a
+	# one-cell halo the caller has already filled - amr(2) blocks.
+	# Only the interior of y is written. No boundary handling: the
+	# halo is what makes it unnecessary.
+	lap7:		fn(n: int, dx, dy, dz, a: real,
+			u, y: array of real);
 	cbrt:		fn(x: real): real;
 	ceil:		fn(x: real): real;
 	copysign:	fn(x, s: real): real;
