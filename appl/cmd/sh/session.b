@@ -85,7 +85,7 @@ words(argv: list of ref Listnode): list of string
 
 usage: con
 "usage: session script recording          # print it as a script\n"+
-"       session play recording            # run it, at the recorded pace\n"+
+"       session play recording            # run it, honouring its waits\n"+
 "       session type text | key name\n"+
 "       session click x y [b] | doubleclick x y [b] | drag x0 y0 x1 y1 [b]\n"+
 "       session move x y | wait seconds\n"+

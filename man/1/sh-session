@@ -47,7 +47,11 @@ into shell, and runs it.
 .B Script
 prints the recording as a script.
 .B Play
-runs one directly.
+runs one directly, honouring the waits it contains.
+Timing shorter than a wait is not reproduced \(em actions inside a run go as
+fast as the writes do \(em which is part of what
+.I approximate
+means below.
 The remaining verbs are the actions themselves, which is what a printed script
 is made of.
 .SH EXAMPLE

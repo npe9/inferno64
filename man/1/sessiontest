@@ -1,0 +1,55 @@
+.TH SESSIONTEST 1
+.SH NAME
+sessiontest \- check that a recording decodes into the right actions
+.SH SYNOPSIS
+.B sessiontest
+.SH DESCRIPTION
+.B Sessiontest
+checks
+.IR session (2)'s
+decoding: typing with the releases dropped and a repeated letter kept, a named
+key ending a run of text, a pause becoming an explicit wait, a press and
+release becoming a click, two of those becoming a double click or not
+depending on the 500ms between them, movement with a button held becoming a
+drag, and a resize.
+.PP
+It
+.I builds
+recordings rather than making them.
+That is the point rather than a shortcut: the half of the decoder that matters
+most cannot be exercised any other way here.
+Clicks, double clicks and drags are what the recorded-time design exists for,
+and synthetic clicks from the host do not arrive on this platform \(em see
+.IR inputtest (1).
+Injecting them through
+.B /dev/pointerin
+does not help either, because that path deliberately does not record, for the
+same reason writing to
+.B /dev/keyboard
+does not.
+A recording cannot contain events the machine put there itself.
+.PP
+What is left is the decoder's real input, which is a file in a documented
+format.
+Building one with known events tests exactly what was otherwise going untested.
+.SH "WHAT IT FOUND"
+That a long pause in the middle of typing was swallowed: "a", two seconds, "b"
+decoded as typing
+.BR ab ,
+losing the pause \(em which is the whole reason times are recorded.
+Nothing in a real recording made that obvious, because a script that types the
+right characters looks right.
+.SH SOURCE
+.B /appl/cmd/sessiontest.b
+.SH SEE ALSO
+.IR session (2),
+.IR sh-session (1),
+.IR inputtest (1)
+.SH BUGS
+It checks decoding, not performing.
+That a recording becomes the right script is tested here; that the script then
+delivers the same keystrokes was checked by hand, by running one against a
+fresh session and comparing what arrived.
+.PP
+Nothing here covers a recording made by the real hardware, only recordings in
+the format the real hardware produces.

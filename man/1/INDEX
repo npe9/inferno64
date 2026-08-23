@@ -457,6 +457,7 @@ secstore secstore
 send sh-tk
 sendmail sendmail
 session grid-session
+sessiontest sessiontest
 set sh
 sexprs sh-sexprs
 sh wm-sh

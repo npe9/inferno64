@@ -302,7 +302,8 @@ read(path: string): (array of ref Action, string)
 	acts: list of ref Action;
 	last := -1;		# time of the previous action, for the waits
 	text := "";		# characters accumulated into one type action
-	texttime := 0;
+	texttime := 0;		# when the run started
+	lasttext := 0;		# and when its last character arrived
 
 	# pointer state between events
 	(px, py, pb) := (-1, -1, 0);
@@ -324,13 +325,22 @@ read(path: string): (array of ref Action, string)
 			if(isrelease(v1))
 				continue;
 			if(istext(v1)){
+				# a long pause in the middle of typing ends the
+				# run: otherwise "a", two seconds, "b" decodes
+				# as typing "ab" and the pause - which is the
+				# whole point of recording times - is lost
+				if(text != "" && at - lasttext >= Gap){
+					(acts, last) = flushtext(acts, text, texttime, lasttext, last);
+					text = "";
+				}
 				if(text == "")
 					texttime = at;
 				text[len text] = v1;
+				lasttext = at;
 				continue;
 			}
 			# a named key ends any run of text before it
-			(acts, last) = flushtext(acts, text, texttime, last);
+			(acts, last) = flushtext(acts, text, texttime, lasttext, last);
 			text = "";
 			(acts, last) = addwait(acts, last, at);
 			a := ref Action(Akey, at, keyname(v1), 0, 0, 0, 0, 0);
@@ -345,7 +355,7 @@ read(path: string): (array of ref Action, string)
 				moved = 0;
 				pendmove = 0;
 			}else if(b == 0 && pb != 0){
-				(acts, last) = flushtext(acts, text, texttime, last);
+				(acts, last) = flushtext(acts, text, texttime, lasttext, last);
 				text = "";
 				(acts, last) = addwait(acts, last, downt);
 				a: ref Action;
@@ -373,9 +383,10 @@ read(path: string): (array of ref Action, string)
 			}
 			if(pendmove && b == 0){
 				# hold it until the movement stops
-				if(off + Recsz >= len buf || int buf[off+Recsz] != 'm'
+				# the lookahead reads a whole record, so require one
+			if(off + 2*Recsz > len buf || int buf[off+Recsz] != 'm'
 				   || g32b(buf, off+Recsz+1) - at > Gap){
-					(acts, last) = flushtext(acts, text, texttime, last);
+					(acts, last) = flushtext(acts, text, texttime, lasttext, last);
 					text = "";
 					(acts, last) = addwait(acts, last, at);
 					acts = ref Action(Amove, at, nil, x, y, 0, 0, 0) :: acts;
@@ -385,14 +396,14 @@ read(path: string): (array of ref Action, string)
 			}
 			(px, py, pb) = (x, y, b);
 		'r' =>
-			(acts, last) = flushtext(acts, text, texttime, last);
+			(acts, last) = flushtext(acts, text, texttime, lasttext, last);
 			text = "";
 			(acts, last) = addwait(acts, last, at);
 			acts = ref Action(Aresize, at, nil, v1, v2, 0, 0, 0) :: acts;
 			last = at;
 		}
 	}
-	(acts, last) = flushtext(acts, text, texttime, last);
+	(acts, last) = flushtext(acts, text, texttime, lasttext, last);
 
 	n := len acts;
 	r := array[n] of ref Action;
@@ -417,11 +428,13 @@ addwait(acts: list of ref Action, last, at: int): (list of ref Action, int)
 	return (acts, last);
 }
 
-flushtext(acts: list of ref Action, text: string, at, last: int): (list of ref Action, int)
+# the wait goes in front of the run, and time afterwards is measured from the
+# run's end rather than its start
+flushtext(acts: list of ref Action, text: string, at, end, last: int): (list of ref Action, int)
 {
 	if(text == "")
 		return (acts, last);
 	(acts, nil) = addwait(acts, last, at);
 	acts = ref Action(Atype, at, text, 0, 0, 0, 0, 0) :: acts;
-	return (acts, at);
+	return (acts, end);
 }

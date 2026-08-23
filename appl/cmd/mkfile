@@ -93,6 +93,7 @@ TARG=\
 	playmovie.dis\
 	quitall.dis\
 	refstress.dis\
+	sessiontest.dis\
 	schedcmp.dis\
 	sparsetest.dis\
 	styxlog.dis\
