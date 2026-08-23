@@ -1442,10 +1442,51 @@ A real ordering bug *was* found next to it and fixed (`66acdf8c`): the GPU
 readback overwrote `gscreen` with the texture *after* the CPU fallback had drawn
 into it, discarding the fallback. Do not assume that was the reported symptom.
 
-### 4. `trapUSR1` takes a non-local exit from an async signal handler
+### 4. `trapUSR1` took a non-local exit from an async signal handler — **FIXED**
 
-Found while chasing the hang above; **not** its cause (a hung process was caught
-with a counter showing zero SIGUSR1 deliveries in the whole run), but real.
+Two faults in six lines, both now gone (`emu/MacOSX/os.c`).
+
+**The non-local exit.** `disfault(nil, Eintr)` from an asynchronous signal
+handler lands in `exits(0)`, which is libc `exit()`. Because emu aliases `free`
+to its own pool allocator, `exit()`'s cleanup re-enters `poolfree`; if the
+signal arrived while that thread was already inside the allocator, `exit` blocks
+on the pool lock the interrupted thread itself holds and every other thread then
+spins in `lock()` for ever.
+
+**And an unchecked `up`.** `up` is nil on a thread with no proc —
+`cleanexit()` immediately below says exactly that and guards for it — so a
+delivery to such a thread faulted inside the handler.
+
+A spurious SIGUSR1 is harmless. The signal exists only to knock a thread out of
+a blocking host call so it returns `EINTR`; *returning from the handler is the
+whole mechanism*. So the handler now checks `up`, counts the spurious case in
+`nspurioususr1`, and returns.
+
+**Forced, because it will not happen on demand.** A `getenv`-guarded hook made
+`startup()` call `trapUSR1(30)` at the point where `type == Interp` and
+`intwait == 0` — precisely the case — and the same hook was compiled into both
+binaries so the only difference was the handler body:
+
+```
+baseline   completed 0 of 5
+fixed      completed 5 of 5
+```
+
+Worth knowing what the failure looks like, because it is not a crash: the
+baseline **exits with status 0 and prints nothing**, having done none of the
+work. `disfault(nil, Eintr)` reaches `exits(0)`, so the process reports success.
+Anything scripting emu would have believed it.
+
+The legitimate path still works — `disrepl(1)`'s `!` interrupt, which kills a
+process blocked in a read through `prog(3)` and depends on this handler clearing
+`intwait`, still reports `interrupted`.
+
+Note this was **not** the cause of bug 1: a hung process was caught with a
+counter showing zero SIGUSR1 deliveries in the whole run.
+
+### 4b. Original note, for the hang it was found next to
+
+Found while chasing the hang above; **not** its cause, but real.
 
 `trapUSR1` (`emu/MacOSX/os.c`) calls `disfault(nil, Eintr)` when a SIGUSR1
 arrives with no interrupt posted — a case its own comment calls "Should never

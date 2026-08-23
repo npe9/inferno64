@@ -185,17 +185,47 @@ trapFPE(int signo, siginfo_t *si, void *a)
 	disfault(nil, buf);
 }
 
+/*
+ * SIGUSR1 exists only to knock a thread out of a blocking host system call so
+ * that it returns EINTR. Returning from this handler is the entire mechanism;
+ * clearing intwait is bookkeeping for osleave(), which spins on it.
+ *
+ * It must do nothing else, and it used to do two things it should not.
+ *
+ * It called disfault(nil, Eintr) when a signal arrived with nothing posted - a
+ * case its own comment called "should never happen". That is a non-local exit
+ * out of an asynchronous signal handler, and it lands in exits(0), which is
+ * libc exit(). Because emu aliases free to its own pool allocator, exit()'s
+ * cleanup re-enters poolfree: if the signal arrived while this thread was
+ * already inside the allocator, exit blocks on the pool lock the interrupted
+ * thread itself holds, and every other thread then spins in lock() for ever. A
+ * hang was captured in exactly that shape - the pool lock held with no owner
+ * running and seven threads spinning in lock() from poolfree/dopoolalloc.
+ *
+ * And it dereferenced up without checking it. up is nil on a thread that has no
+ * proc - cleanexit() below says so and guards for it - so a signal delivered to
+ * such a thread faulted inside the handler.
+ *
+ * A spurious delivery is harmless: the interrupted call returns EINTR and its
+ * caller deals with that already. Count it so it stays visible, and return.
+ */
+int nspurioususr1;
+
 void
 trapUSR1(int signo)
 {
-    USED(signo);
-    
-    if(up->type != Interp)      /* Used to unblock pending I/O */
-        return;
-    if(up->intwait == 0)        /* Not posted so its a sync error */
-        disfault(nil, Eintr);	/* Should never happen */
-    
-    up->intwait = 0;		/* Clear it so the proc can continue */
+	USED(signo);
+
+	if(up == nil)			/* no proc on this thread; nothing to do */
+		return;
+	if(up->type != Interp)		/* used to unblock pending I/O */
+		return;
+	if(up->intwait == 0){		/* nothing posted - see above */
+		__atomic_fetch_add(&nspurioususr1, 1, __ATOMIC_RELAXED);
+		return;
+	}
+
+	up->intwait = 0;		/* clear it so the proc can continue */
 }
 
 /* from geoff collyer's port */
