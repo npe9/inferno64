@@ -19,8 +19,11 @@ export PATH ROOT
 ISO=${1:-$ROOT/.qemu/osprey-efi.iso}
 KERNEL=${OSPREY_KERNEL:-$ROOT/os/osprey/pc64/9pc64}
 LOADER=$ROOT/os/osprey/boot/efi/bootx64.efi
-ESP=$ROOT/os/osprey/boot/efi/efiboot.fat
 TREE=`mktemp -d "${TMPDIR:-/tmp}/osprey-iso.XXXXXX"`
+# The ESP is built fresh here rather than over the one in the source tree:
+# that one is a checked-in artifact of the Plan 9 mkfile, and rewriting it
+# on every run made it churn with whatever plan9.ini the last build wanted.
+ESP=$TREE/efiboot.fat
 
 trap 'rm -rf "$TREE"' 0
 
@@ -65,7 +68,6 @@ for b in ring pip mig p9srv; do
 		cp "$ROOT/Osprey/amd64/bin/$b" "$TREE/bin/$b"
 	fi
 done
-cp "$ESP" "$TREE/efiboot.fat"
 cp "$CFG" "$TREE/plan9.ini"
 
 echo "iso $ISO"

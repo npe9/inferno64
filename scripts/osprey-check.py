@@ -144,6 +144,15 @@ CHECKS = [
    "echo submit 61 open 256 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
    "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply"],
   "61 open done"),
+ ("the shape of that file, asked of the personality",
+  ["echo submit 61 stat 0 512 128 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply",
+   "o=`{awk '/^proc 61/{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)+555}' /n/osprey/status}",
+   # 9p puts the name 43 bytes into a stat entry, after its own length,
+   # the type, the qid, the mode, the times and the length; what is
+   # wanted is only that the entry names the file the server opened
+   "dd -if /n/osprey/arena -bs 1 -iseek $o -count 5 >[2]/dev/null; echo"],
+  "proof"),
  ("the same bind refused to a container the kernel answers for",
   ["echo poke 63 128 /n/only >/n/osprey/ctl",
    "echo poke 63 192 /n/other >/n/osprey/ctl",

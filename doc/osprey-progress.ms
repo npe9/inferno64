@@ -170,7 +170,7 @@ say
 .B ok
 or
 .B FAIL
-a line at a time.  Forty-six lines, all
+a line at a time.  Forty-seven lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -261,9 +261,26 @@ space of its own there, only the name table the policy layer keeps, so
 is refused and always was.  The personality has one, because it is a
 program, and a container that names it can build a name space and then
 open a name that no name space on the machine held before it asked.
-The check does exactly that, and has the same
+The check does exactly that, has the container ask the personality for
+the shape of the file it opened through that bind and finds the file's
+own name in what comes back, and has the same
 .CW bind
 refused to a container the kernel still answers for.
+.PP
+Two things about this tree came out of building it, and both are the
+same shape as the compiler that could not compile its own kernels.  The
+harness booted an iso that had been built by hand without the root
+device in its
+.CW plan9.ini ,
+so the kernel stopped at the bootargs prompt and every check failed at
+once, which reads exactly like a broken kernel; the harness now builds
+its own.  And
+.CW os/osprey/cmd
+holds its binaries in the repository, where nothing says whether they
+were linked by the toolchain in the tree now: the committed
+.CW ring
+was half the size of the one this toolchain produces.  All four are
+relinked.
 .PP
 Two things had to be got right for the server to be able to work at all.
 A request names its arguments as offsets into the
