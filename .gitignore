@@ -115,7 +115,8 @@ y.debug
 /dis/**/*.dis
 /acme/dis/*.dis
 /acme/**/*.dis
-/os/init/*.dis
+/os/*/init/*.dis
+/os/*/init/*.sbl
 /os/init/*.sbl
 
 # ignore generated files

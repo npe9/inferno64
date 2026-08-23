@@ -117,9 +117,14 @@ code
 	int panicreset = 0;
 
 root
+# The Limbo userland, the same set os/inferno/pc64/pc64 carries.  A bare
+# name whose $ROOT counterpart is a directory makes an empty directory in
+# the embedded root; a name that is a file embeds its bytes.  Dis is
+# bytecode and has no architecture, so these are the files appl/cmd and
+# appl/lib install for every target, not riscv64 ones.
 	/chan	/
 	/dev	/
-	/dis	/
+	/dis
 	/env	/
 	/fd	/
 	/n	/
@@ -128,4 +133,68 @@ root
 	/nvfs	/
 	/prog	/
 	/tmp	/
+	/proc	/
+	/dis/lib
+	/dis/svc
+	/dis/wm
 	/osinit.dis
+	/dis/init
+	/dis/shutdown
+	/dis/basename.dis
+	/dis/bind.dis
+	/dis/cat.dis
+	/dis/cd.dis
+	/dis/diskparts
+	/dis/echo.dis
+	/dis/ftest.dis
+	/dis/grep.dis
+	/dis/ls.dis
+	/dis/mntgen.dis
+	/dis/mount.dis
+	/dis/memfs.dis
+	/dis/dossrv.dis
+	/dis/ns.dis
+	/dis/ps.dis
+	/dis/pwd.dis
+	/dis/read.dis
+	/dis/sh.dis
+	/dis/sh.dis
+	/dis/sh/std.dis
+	/dis/unmount.dis
+	/dis/9660srv.dis
+	/dis/disk/fdisk.dis
+	/dis/disk/kfs.dis
+	/dis/disk/kfs64.dis
+	/dis/disk/kfscmd.dis
+	/dis/disk/prep.dis
+	/dis/ip/dhcp.dis
+	/dis/ip/ping.dis
+	/dis/auth/factotum.dis
+	/dis/disk/calc.tab.dis
+	/dis/disk/pedit.dis
+	/dis/lib/arg.dis
+	/dis/lib/auth.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
+	/dis/lib/disks.dis
+	/dis/lib/env.dis
+	/dis/lib/factotum.dis
+	/dis/lib/filepat.dis
+	/dis/lib/ip.dis
+	/dis/lib/names.dis
+	/dis/lib/nametree.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/readdir.dis
+	/dis/lib/regex.dis
+	/dis/lib/ssl.dis
+	/dis/lib/string.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxpersist.dis
+	/dis/lib/styxservers.dis
+	/dis/lib/timers.dis
+	/dis/lib/workdir.dis

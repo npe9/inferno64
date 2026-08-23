@@ -320,12 +320,83 @@ RAM, which will not hold the Dis interpreter and a Limbo root.  It is a
 different kind of port \- native code, no paging, a root in flash \-
 and it is on this list to be argued about rather than to be next.
 .PP
-Of all of it, the three RISC-V boards that have code are built:
+Of all of it, the three RISC-V boards that have code are built and run
+a shell:
 .CW virt ,
 .CW sifiveu
 and
 .CW spike .
 The rest is the plan, not the state.
+.NH 1
+The userland
+.PP
+There is no RISC-V Limbo userland to find, and there was never going to
+be one: Dis is bytecode and has no architecture.  What was missing was
+a Limbo userland at all.
+.CW dis
+in this tree held the shell scripts and none of the compiled modules,
+and every native kernel that lists them in its
+.CW root
+section \- the three RISC-V boards and
+.CW pc64
+\- stopped at
+.CW "init: load sh:" .
+.PP
+It builds here, with the
+.CW limbo
+that is already in
+.CW MacOSX/arm64/bin :
+.IP
+.nf
+mk mkdirs
+(cd appl/cmd; mk install)
+(cd appl/lib; mk install)
+.fi
+.PP
+.CW mkdirs
+first, from
+.CW lib/emptydirs ,
+or the compiler has nowhere to install to and says so one directory at
+a time.  That gives 169 commands in
+.CW dis
+and 162 modules in
+.CW dis/lib ,
+and
+.CW dis
+is in
+.CW .gitignore ,
+so it is built and not carried.
+.PP
+The three boards then take the same
+.CW root
+list
+.CW os/inferno/pc64/pc64
+carries, less the Forth entries that are that board's: 55 named files,
+632 kilobytes, embedded in the kernel image.  A bare name whose
+.CW $ROOT
+counterpart is a directory makes an empty directory in the embedded
+root rather than copying the tree, which is what
+.CW os/inferno/port/mkroot
+does with it.
+.PP
+All three then reach a shell:
+.IP
+.nf
+spike     spike init / SPIKE-OK / HELLO-FROM-SH / SPIKE-SH-OK
+sifiveu   sifiveu init / SIFIVEU-OK / HELLO-FROM-SH
+virt      starting sh... / sh loaded / GC-STRESS-OK
+.fi
+.PP
+.CW spike
+and
+.CW sifiveu
+had those tests written in their init programs already, against a
+userland that did not exist.
+.CW virt
+goes on through its memory, draw, pointer and keyboard tests; what it
+still fails is its disk test, which wants a
+.CW -drive
+this invocation does not give it.
 .NH 1
 Then
 .PP
