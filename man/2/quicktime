@@ -118,6 +118,11 @@ Only the setup box is extracted from a sample description, and only
 and
 .B esds
 are recognised.
+Where a QuickTime-style audio entry keeps its
+.B esds
+inside a
+.B wave
+container, that is descended into; other container shapes are not.
 Multiple sample descriptions in one track are ignored: the first is
 used for the whole track.
 .PP

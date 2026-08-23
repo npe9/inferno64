@@ -461,21 +461,50 @@ sampledesc(fd: ref Sys->FD, skids: list of ref Atom, t: ref Track): string
 		return nil;
 	t.codec = string b[12:16];
 
-	# Walk the boxes nested inside the sample entry for the setup box.
+	# Walk the boxes nested inside the sample entry for the setup box. How
+	# far in they start depends on what kind of entry it is, and getting
+	# this wrong finds nothing rather than failing loudly.
+	#
 	# A SampleEntry is 8 bytes of box header, 6 reserved and a 2-byte data
-	# reference index; a VisualSampleEntry adds 70 more (pre_defined,
+	# reference index: 16. A VisualSampleEntry adds 70 (pre_defined,
 	# width/height, resolutions, frame count, the 32-byte compressor name,
-	# depth). So nested boxes begin 86 bytes into the entry, and the entry
-	# itself begins 8 bytes into stsd's contents.
-	o := 8 + 86;
-	while(o + 8 <= 8 + esz){
+	# depth), so 86. An AudioSampleEntry adds 20 in its version 0 form (8
+	# reserved, channel count, sample size, pre_defined, reserved, sample
+	# rate), so 36 - and its version, in the first two bytes after the
+	# SampleEntry, adds 16 more for version 1 and 36 for version 2.
+	# The entry itself begins 8 bytes into stsd's contents.
+	skip := 86;
+	if(t.kind == "soun"){
+		skip = 36;
+		if(8 + 16 + 2 <= len b){
+			case beu16(b, 8 + 16) {
+			1 =>	skip += 16;
+			2 =>	skip += 36;
+			}
+		}
+	}
+	t.extra = setupbox(b, 8 + skip, 8 + esz);
+	return nil;
+}
+
+# Search a sample entry's nested boxes for the codec setup box, descending
+# into a QuickTime "wave" container - which is where an audio entry written in
+# the QuickTime style keeps its esds, rather than at the top level of the
+# entry. Missing that finds nothing and looks exactly like a track with no
+# setup data.
+setupbox(b: array of byte, o, end: int): array of byte
+{
+	while(o + 8 <= end){
 		bsz := beu32(b, o);
 		kind := string b[o+4:o+8];
-		if(bsz < 8 || o + bsz > 8 + esz)
+		if(bsz < 8 || o + bsz > end)
 			break;
-		if(kind == "avcC" || kind == "hvcC" || kind == "esds"){
-			t.extra = b[o+8:o+bsz];
-			break;
+		if(kind == "avcC" || kind == "hvcC" || kind == "esds")
+			return b[o+8:o+bsz];
+		if(kind == "wave"){
+			inner := setupbox(b, o+8, o+bsz);
+			if(inner != nil)
+				return inner;
 		}
 		o += bsz;
 	}

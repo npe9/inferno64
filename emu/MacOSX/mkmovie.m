@@ -7,6 +7,10 @@
  * one. Uses hardware H.264 encode, so together with the decode test it
  * exercises both halves of the media engine.
  *
+ * The clip also carries an AAC audio track: a square wave whose frequency
+ * steps with the video colour, so a sync test has something in the sound it
+ * can point at and say which frame it belongs with.
+ *
  * Flat colour per frame on purpose - frame i is rgb(20+20i, 128, 220-20i).
  * A lossy codec reproduces a flat block within a few counts, which is what
  * lets a decode test assert a colour instead of merely that something was
@@ -23,6 +27,7 @@
 // what makes a decode test able to assert an expected value.
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
+#import <AudioToolbox/AudioToolbox.h>
 
 int main(int argc, char **argv)
 {
@@ -50,6 +55,25 @@ int main(int argc, char **argv)
 				(id)kCVPixelBufferWidthKey: @(W),
 				(id)kCVPixelBufferHeightKey: @(H) }];
 		[w addInput:in];
+
+		/* Both inputs must exist before startWriting: canAddInput
+		 * refuses afterwards, and an input that was never added never
+		 * becomes ready. */
+		double rate = 44100;
+		NSDictionary *aset = @{
+			AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+			AVSampleRateKey: @(rate),
+			AVNumberOfChannelsKey: @1,
+			AVEncoderBitRateKey: @64000 };
+		AVAssetWriterInput *ain = [AVAssetWriterInput
+			assetWriterInputWithMediaType:AVMediaTypeAudio outputSettings:aset];
+		ain.expectsMediaDataInRealTime = NO;
+		if(![w canAddInput:ain]){
+			fprintf(stderr, "mkmovie: cannot add an audio input\n");
+			return 1;
+		}
+		[w addInput:ain];
+
 		[w startWriting];
 		[w startSessionAtSourceTime:kCMTimeZero];
 
@@ -68,17 +92,71 @@ int main(int argc, char **argv)
 					p[0] = bl; p[1] = g; p[2] = r; p[3] = 255;  // BGRA
 				}
 			CVPixelBufferUnlockBaseAddress(pb, 0);
-			while(!in.isReadyForMoreMediaData) usleep(1000);
+			for(int spin = 0; !in.isReadyForMoreMediaData && spin < 5000; spin++)
+				usleep(1000);
 			[ad appendPixelBuffer:pb withPresentationTime:CMTimeMake(i, 10)];
 			CVPixelBufferRelease(pb);
 		}
 		[in markAsFinished];
+
+		/*
+		 * Audio comes after the video input is finished, not
+		 * interleaved with it. AVAssetWriter will not accept a backlog
+		 * on one input while another is starved, so appending all the
+		 * video and then all the audio deadlocks on
+		 * isReadyForMoreMediaData - which it did.
+		 *
+		 * Audio: one second per ten frames at the video's rate, a
+		 * square wave stepping 220Hz, 440Hz, 660Hz... so the tone
+		 * changes in step with the picture. Square rather than sine
+		 * because AAC preserves its fundamental clearly enough that a
+		 * decode test can measure the pitch back.
+		 */
+		int nsec = (N + 9) / 10;
+		AudioStreamBasicDescription lpcm = {0};
+		lpcm.mSampleRate = rate;
+		lpcm.mFormatID = kAudioFormatLinearPCM;
+		lpcm.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+		lpcm.mBitsPerChannel = 16;
+		lpcm.mChannelsPerFrame = 1;
+		lpcm.mFramesPerPacket = 1;
+		lpcm.mBytesPerFrame = 2;
+		lpcm.mBytesPerPacket = 2;
+
+		int per = (int)rate;			/* one second at a time */
+		int16_t *pcm = malloc(per * 2);
+		CMFormatDescriptionRef afmt = NULL;
+		CMAudioFormatDescriptionCreate(NULL, &lpcm, 0, NULL, 0, NULL, NULL, &afmt);
+		for(int sec = 0; sec < nsec; sec++){
+			double hz = 220.0 * (sec + 1);
+			int period = (int)(rate / hz);
+			for(int k = 0; k < per; k++)
+				pcm[k] = ((k / (period/2)) & 1) ? 8000 : -8000;
+			CMBlockBufferRef bb = NULL;
+			CMBlockBufferCreateWithMemoryBlock(NULL, pcm, per*2, kCFAllocatorNull,
+				NULL, 0, per*2, 0, &bb);
+			CMSampleBufferRef sb = NULL;
+			CMSampleTimingInfo ti = { CMTimeMake(1, (int)rate),
+				CMTimeMake(sec*(int)rate, (int)rate), kCMTimeInvalid };
+			CMSampleBufferCreate(NULL, bb, TRUE, NULL, NULL, afmt, per, 1, &ti, 0, NULL, &sb);
+			for(int spin = 0; !ain.isReadyForMoreMediaData && spin < 5000; spin++)
+				usleep(1000);
+			if(!ain.isReadyForMoreMediaData){
+				fprintf(stderr, "mkmovie: audio input never became ready\n");
+				return 1;
+			}
+			[ain appendSampleBuffer:sb];
+			CFRelease(sb);
+			CFRelease(bb);
+		}
+		free(pcm);
+		[ain markAsFinished];
 		dispatch_semaphore_t s = dispatch_semaphore_create(0);
 		[w finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(s); }];
 		dispatch_semaphore_wait(s, DISPATCH_TIME_FOREVER);
 		if(w.status != AVAssetWriterStatusCompleted){ NSLog(@"write: %@", w.error); return 1; }
-		printf("wrote %s: %d frames %dx%d h264, frame i colour rgb(%d,128,%d)\n",
-			argv[1], N, W, H, 20, 220);
+		printf("wrote %s: %d frames %dx%d h264 + %d s aac (220Hz steps)\n",
+			argv[1], N, W, H, nsec);
 		return 0;
 	}
 }

@@ -32,6 +32,34 @@ bad(s: string)
 	fail = 1;
 }
 
+# Holds for any track in any file: samples inside the file, non-empty, with a
+# positive duration, and something to start decoding from.
+checktrack(t: ref Track, mov: string)
+{
+	(ok, d) := sys->stat(mov);
+	if(ok < 0){
+		bad(sprint("stat: %r"));
+		return;
+	}
+	if(t.timescale <= 0)
+		bad(sprint("track %d: timescale %d", t.id, t.timescale));
+	nsync := 0;
+	for(i := 0; i < len t.samples; i++){
+		s := t.samples[i];
+		if(s.size <= 0)
+			bad(sprint("track %d sample %d is empty", t.id, i));
+		if(s.off < big 0 || s.off + big s.size > d.length)
+			bad(sprint("track %d sample %d at %bd+%d lies outside a %bd-byte file",
+				t.id, i, s.off, s.size, d.length));
+		if(s.delta <= 0)
+			bad(sprint("track %d sample %d has duration %d", t.id, i, s.delta));
+		if(s.sync)
+			nsync++;
+	}
+	if(len t.samples > 0 && nsync == 0)
+		bad(sprint("track %d has no sync samples", t.id));
+}
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -51,12 +79,24 @@ init(nil: ref Draw->Context, argv: list of string)
 		print("qttest: %s\n", err);
 		raise "fail:parse";
 	}
-	if(len ts != 1){
+	if(mov == Mov && len ts != 1){
 		bad(sprint("%d tracks, expected 1", len ts));
 		raise "fail:test";
 	}
 
-	t := ts[0];
+	# Whatever the file, every track must be self-consistent. The video
+	# track is then checked in detail below.
+	for(j := 0; j < len ts; j++)
+		checktrack(ts[j], mov);
+
+	t: ref Track;
+	for(j = 0; j < len ts; j++)
+		if(ts[j].kind == "vide")
+			t = ts[j];
+	if(t == nil){
+		bad("no video track");
+		raise "fail:test";
+	}
 	if(t.kind != "vide")
 		bad(sprint("track kind %#q, expected \"vide\"", t.kind));
 	if(t.codec != "avc1")
@@ -106,6 +146,11 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	if(fail)
 		raise "fail:test";
+
+	for(j = 0; j < len ts; j++)
+		print("  track %d: %s/%s timescale %d, %d samples, %d bytes of setup\n",
+			ts[j].id, ts[j].kind, ts[j].codec, ts[j].timescale,
+			len ts[j].samples, len ts[j].extra);
 
 	print("  %s: %s/%s %dx%d, timescale %d, %d bytes of setup data\n",
 		mov, t.kind, t.codec, t.width, t.height, t.timescale, len t.extra);
