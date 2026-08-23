@@ -70,6 +70,43 @@ thirteen presses out of fifteen, losing one click in five or so.
 now spaces the delivery to match the times the events claim.
 Nothing but a widget would have shown that \(em at the device the events are
 all present and correctly stamped either way.
+.SS "The menu"
+.B -m
+puts up a menu instead, and
+.B -i
+chooses which of its three items to aim at.
+A menu is the case a click does not cover: it posts on the press and tracks the
+pointer, so an item is taken by moving onto it and releasing there, which is a
+drag rather than a click.
+.PP
+The file then holds exactly the four numbers a drag wants, so a script needs no
+arithmetic:
+.IP
+.EX
+% clicktest -m -i 2 &
+% session drag `{cat /clicktest.where} 1
+% cat /clicktest.result
+two 1
+.EE
+.PP
+Aimed at each item in turn it selects that item and no other:
+.IP
+.EX
+aimed at item 1 -> one
+aimed at item 2 -> two
+aimed at item 3 -> three
+.EE
+.PP
+Three targets and three different answers is the part that matters.
+One of them alone would show only that a menu can be made to do something; that
+the answer follows where the pointer went is what shows the movement is being
+tracked.
+.PP
+Getting there needed the menu measured rather than assumed.
+Guessing that it sits flush under its button with items the button's height put
+the release on the first item while aiming at the second \(em which looks
+exactly like a menu ignoring the pointer, and is not one.
+It is posted, read, and unposted to find out.
 .SH SOURCE
 .B /appl/cmd/clicktest.b
 .SH SEE ALSO
@@ -86,8 +123,12 @@ added to the toplevel's.
 If a window manager moves the window afterwards the position is stale, and the
 click goes wherever it now points.
 .PP
-One button, one kind of widget.
-A menu, which tracks the pointer rather than waiting for a press and release in
-one place, is not covered \(em and that is the case
-.IR session (2)
-keeps pointer movement for.
+A button and a menu, which are two kinds of widget out of many.
+.PP
+What the menu establishes is that the movement inside a
+.I drag
+is tracked.
+A standalone
+.B move
+\(em the pointer going somewhere and staying there, with no button \(em still
+has no demonstration, only the same reasoning.

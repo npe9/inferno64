@@ -42,6 +42,24 @@ cfg := array[] of {
 	"update",
 };
 
+# A menu is the case a click alone does not cover: it posts on a press and
+# tracks the pointer, so an item is chosen by moving onto it rather than by
+# clicking where it happens to be. That is what session(2) keeps pointer
+# movement for, and until this it was a reason rather than a demonstration.
+menucfg := array[] of {
+	"frame .f",
+	"menubutton .mb -text Menu -menu .mb.m",
+	"menu .mb.m",
+	".mb.m add command -label one -command {send cmd one}",
+	".mb.m add command -label two -command {send cmd two}",
+	".mb.m add command -label three -command {send cmd three}",
+	"label .l -text {nothing yet}",
+	"pack .mb .l -in .f",
+	"pack .f -fill both -expand 1",
+	"pack propagate . 0",
+	"update",
+};
+
 init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -57,13 +75,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	where := "/clicktest.where";
 	result := "/clicktest.result";
 	wait := 30;
+	menu := 0;
+	item := 2;
 	arg->init(argv);
-	arg->setusage("clicktest [-w wherefile] [-r resultfile] [-t seconds]");
+	arg->setusage("clicktest [-m] [-i item] [-w wherefile] [-r resultfile] [-t seconds]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'w' =>	where = arg->earg();
 		'r' =>	result = arg->earg();
 		't' =>	wait = int arg->earg();
+		'm' =>	menu++;		# a menu instead of a button
+		'i' =>	item = int arg->earg();	# which item to aim the drag at
 		* =>	arg->usage();
 		}
 
@@ -74,8 +96,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	tkclient->init();
 	(t, menubut) := tkclient->toplevel(ctxt, "", "clicktest", 0);
-	for(i := 0; i < len cfg; i++)
-		tk->cmd(t, cfg[i]);
+	tkc := cfg;
+	if(menu)
+		tkc = menucfg;
+	for(i := 0; i < len tkc; i++)
+		tk->cmd(t, tkc[i]);
 
 	cmd := chan of string;
 	tk->namechan(t, cmd, "cmd");
@@ -87,10 +112,13 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# thing a script can act on. -actx and -acty are the position Tk gave
 	# the widget after packing; the toplevel's own position has to be added
 	# because a widget's is relative to it.
-	bx := int tk->cmd(t, ".b cget -actx");
-	by := int tk->cmd(t, ".b cget -acty");
-	bw := int tk->cmd(t, ".b cget -actwidth");
-	bh := int tk->cmd(t, ".b cget -actheight");
+	w := ".b";
+	if(menu)
+		w = ".mb";
+	bx := int tk->cmd(t, w + " cget -actx");
+	by := int tk->cmd(t, w + " cget -acty");
+	bw := int tk->cmd(t, w + " cget -actwidth");
+	bh := int tk->cmd(t, w + " cget -actheight");
 	tx := int tk->cmd(t, ". cget -actx");
 	ty := int tk->cmd(t, ". cget -acty");
 	(cx, cy) := (tx + bx + bw/2, ty + by + bh/2);
@@ -100,9 +128,43 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		fprint(sys->fildes(2), "clicktest: %s: %r\n", where);
 		raise "fail:create";
 	}
-	fprint(wfd, "%d %d\n", cx, cy);
+	if(menu){
+		# A menu posts on the press and tracks the pointer, so an item
+		# is taken by moving onto it and releasing there - which is a
+		# drag. The file holds exactly the four numbers a drag wants,
+		# aimed at the middle item, so a script needs no arithmetic:
+		#	session drag `{cat /clicktest.where} 1
+		# Measure the menu rather than assume it sits flush under its
+		# button with items the button's height. Posting it, reading
+		# its real geometry and unposting is the only way to be right
+		# about a border and padding that are not this program's to
+		# know. Guessing put the release on the first item while aiming
+		# at the second, which looks like a menu that ignored the
+		# pointer and is not one.
+		tk->cmd(t, ".mb.m post " + string cx + " " + string (ty+by+bh));
+		tk->cmd(t, "update");
+		my := int tk->cmd(t, ".mb.m cget -acty");
+		mh := int tk->cmd(t, ".mb.m cget -actheight");
+		tk->cmd(t, ".mb.m unpost");
+		tk->cmd(t, "update");
+		if(mh <= 0){
+			my = ty + by + bh;
+			mh = 3 * bh;		# nothing better to go on
+		}
+		ih := mh / 3;			# three items
+		if(item < 1)
+			item = 1;
+		if(item > 3)
+			item = 3;
+		iy := my + (item-1)*ih + ih/2;
+		fprint(wfd, "%d %d %d %d\n", cx, cy, cx, iy);
+		sys->print("clicktest: menu at %d %d, item %d at %d %d\n",
+			cx, cy, item, cx, iy);
+	}else{
+		fprint(wfd, "%d %d\n", cx, cy);
+		sys->print("clicktest: the button's centre is at %d %d\n", cx, cy);
+	}
 	wfd = nil;
-	sys->print("clicktest: the button's centre is at %d %d\n", cx, cy);
 
 	stop := chan of int;
 	spawn tkclient->handler(t, stop);
@@ -115,11 +177,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		if(c == "timeout")
 			break;
 		n++;
-		tk->cmd(t, ".l configure -text {pressed " + string n + "}");
+		tk->cmd(t, ".l configure -text {" + c + " " + string n + "}");
 		tk->cmd(t, "update");
 		if(rfd != nil)
-			fprint(rfd, "press %d\n", n);
-		sys->print("clicktest: press %d\n", n);
+			fprint(rfd, "%s %d\n", c, n);
+		sys->print("clicktest: %s %d\n", c, n);
 	m := <-menubut =>
 		if(m == "exit")
 			break;

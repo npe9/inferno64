@@ -68,10 +68,15 @@ with the text.
 A press and release of a button at one place is a click; two of those within
 500ms is a double click; one with movement between is a drag.
 Movement with no button held is reported only where it stops.
-Some of it is kept rather than none because a widget that tracks the pointer,
-such as a menu, would otherwise never see it move \(em though no script here
-has yet driven a menu, so that is the reason for keeping it rather than a
-demonstration that this much is enough.
+Some of it is kept rather than none because a widget that tracks the pointer
+would otherwise never see it move.
+.PP
+That a tracking widget really is driven this way is settled for a drag: a
+scripted drag onto the second item of a menu takes the second item, onto the
+third takes the third, so the item follows where the pointer went \(em see
+.IR clicktest (1).
+A standalone move, with no button held, still has the reasoning and no
+demonstration.
 Quiet longer than 250ms becomes an explicit wait.
 .SS "How an action is performed"
 Through the two files the system already has for it:
