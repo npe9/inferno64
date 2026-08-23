@@ -90,6 +90,7 @@ TARG=\
 	mltest.dis\
 	pdetest.dis\
 	playmovie.dis\
+	refstress.dis\
 	sparsetest.dis\
 	vecbench.dis\
 	qttest.dis\

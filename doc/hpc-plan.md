@@ -1778,6 +1778,45 @@ So this is the predicted symptom of a known, deliberately unfixed gap, and
 anyone seeing it again should reach for that comment first rather than treat it
 as new.
 
+### 8. JIT reference counts were not atomic — **FIXED**
+
+`libinterp/comp-arm64.c`'s `IMOVP` calls `MacCOLR` and `MacFRP`, and those
+emitted a plain load, modify and store on `h->ref`. The interpreted path was
+given atomics long ago (`AINC`/`ADEC`); this is the compiled path, which is what
+runs by default (`cflag=1`). Both macros now use a load-exclusive/store-exclusive
+retry loop.
+
+**LL/SC rather than LSE** (`ldaddal` and friends): LSE is ARMv8.1, and while
+every Apple part has it, this backend also builds for ARMv8.0 hardware such as a
+Cortex-A72. The encodings were checked against the assembler rather than
+recalled — `ldaxr x0,[x4]` is `c85ffc80`, `stlxr w2,x0,[x4]` is `c802fc80` — and
+`sizeof(Heap) - O(Heap,ref)` is 24, confirmed by compiling the struct.
+
+The destroy path still deliberately does not store: `rdestroy()` does its own
+`--h->ref` and expects to find 1. Leaving the exclusive monitor set on that exit
+is harmless.
+
+**The precondition is real and was measured, not assumed.** A temporary counter
+around `r->xec(r)` in `vmachine()` — increment, record the maximum, decrement —
+reported **17 Dis processes executing simultaneously** under `fdstresstest` and
+13 under a refcount stress, against 1 for a single-threaded test. So the
+`GC-LOCK HISTORY` comment's claim of genuine parallel `xec()` is correct. (Six
+lines; re-add them if the number is ever wanted again.)
+
+**But the race was never provoked.** `refstress(1)` puts 16 processes on *one*
+shared object, ~1.28M reference-count pairs a run, with real host I/O so the
+processes genuinely run in parallel, and churns the heap afterwards so that an
+object freed early gets its block reused and the damage becomes visible. Twelve
+runs, no failure. So this is a fix by construction, not one demonstrated to
+repair an observed fault, and it is worth saying so plainly.
+
+What *was* demonstrated: everything still works and nothing got slower. All
+tests pass under `-c1` and `-c0`; `fdstresstest` 40 of 40; `gputest` 15 of 15;
+and the JIT and the interpreter produce a **bit-identical** 128² solve
+(`.0004038174634327743`), which is the check that the emitted code was not
+subtly perturbed. Cost, alternating: `refstress` 0.12s either way, `pde(2)` 128²
+0.56s either way — four pairs, no difference at all.
+
 ### 7. Smaller, noted, unfixed
 
 **`emu-g` faulted once in the console keyboard slave**, at startup, and did not

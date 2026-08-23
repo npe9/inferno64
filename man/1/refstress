@@ -1,0 +1,72 @@
+.TH REFSTRESS 1
+.SH NAME
+refstress \- hammer reference counts from many processes at once
+.SH SYNOPSIS
+.B refstress
+.SH DESCRIPTION
+.B Refstress
+puts sixteen processes on a single shared heap object and has each of them
+assign and drop a reference to it forty thousand times.
+.PP
+Every pointer assignment in Dis decrements the old target's reference
+count and increments the new one.
+Those are
+.B MacFRP
+and
+.B MacCOLR
+in the compiled path, which until recently emitted a plain load, modify
+and store \(em so two processes assigning the same object at the same
+moment could lose an update.
+A lost decrement leaks, which is harmless and hides the other case; a
+lost increment frees an object that is still referenced.
+.SS Why it is built the way it is
+Three things about it are deliberate and none are obvious.
+.PP
+The processes share
+.I one
+object, because the race needs two of them touching the same header at
+the same instant.
+A per-process working set would run exactly the same instructions and
+never collide.
+.PP
+They do real host I/O in the loop, and that is not incidental.
+Dis runs one process at a time per virtual machine slot; extra
+.B vmachine
+threads only come into existence when a process blocks on the host,
+which is what
+.B release
+spawns them for.
+A worker that only spins is executed by one thread together with every
+other worker, serially, and cannot race with anything.
+Opening
+.B /dev/null
+periodically is what makes the concurrency real \(em measured at
+thirteen processes inside
+.B xec
+simultaneously.
+.PP
+It churns the heap before checking.
+A lost increment frees an object that the shared array still points at,
+and reading freed memory usually returns exactly what was there, so
+checking the tag straight away proves nothing.
+Allocating hard first makes the pool hand that block out again, and the
+tag then reads as whatever the new owner wrote.
+.SH SOURCE
+.B /appl/cmd/refstress.b
+.SH SEE ALSO
+.IR fdstresstest (1),
+.IR emu (1)
+.PP
+.B doc/hpc-plan.md
+bug 8.
+.SH BUGS
+.B It has never failed,
+on either the compiled or the interpreted path, before or after the
+reference counts were made atomic.
+The race it is built for is real by construction \(em the emitted code
+was a plain read-modify-write on a field several threads touch \(em but
+this does not demonstrate it, and so it cannot demonstrate a fix either.
+Treat a failure here as significant and a pass as weak evidence.
+.PP
+It cannot see reference counts, only their consequences, and only when
+the freed block is reused in a way that changes a field it checks.

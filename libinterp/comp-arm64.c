@@ -278,6 +278,21 @@ enum
 #define CBNZ_X(Rt, imm19) \
 	*code++ = (0xB5000000 | (((imm19) & 0x7FFFF)<<5) | (Rt))
 
+/*
+ * Load/store exclusive, 64-bit, for the reference counts below. Heap.ref is a
+ * ulong, which is 64 bits on every arm64 target, so these are the X forms; the
+ * status register of a store-exclusive is always a W.
+ *
+ * LL/SC rather than the single-instruction LSE atomics (ldaddal and friends):
+ * LSE is ARMv8.1, and while every Apple part has it, this backend also builds
+ * for ARMv8.0 hardware such as a Cortex-A72. Encodings checked against the
+ * assembler - ldaxr x0,[x4] is c85ffc80 and stlxr w2,x0,[x4] is c802fc80.
+ */
+#define LDAXR_X(Rt, Rn) \
+	*code++ = (0xC85FFC00 | ((Rn)<<5) | (Rt))
+#define STLXR_X(Rs, Rt, Rn) \
+	*code++ = (0xC800FC00 | ((Rs)<<16) | ((Rn)<<5) | (Rt))
+
 /* Patch helpers */
 #define RELPC(pc)		((ulong)(base + (pc)))
 #define IA(s, o)		(base + s[o])
@@ -2250,7 +2265,8 @@ preamble(void)
 static void
 macfrp(void)
 {
-	u32int *nilcheck, *destroy, *done;
+	u32int *nilcheck, *destroy, *done, *retry;
+	int roff;
 
 	/* destroy the pointer in RA0; match arm32: leave ref==1 in memory
 	 * for rdestroy(), which does its own --h->ref. */
@@ -2258,11 +2274,31 @@ macfrp(void)
 	nilcheck = code;
 	BCOND(EQ, 0);			/* H → return */
 
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA0, RA2);
+	/*
+	 * Atomic decrement-and-test.
+	 *
+	 * This used to be a plain load, subtract and store. Several vmachine
+	 * threads run xec() genuinely in parallel - measured at up to 17 at
+	 * once - so two of them decrementing the same object's count could
+	 * lose an update, and a lost decrement leaks while a lost increment
+	 * frees an object that is still referenced. The interpreted path was
+	 * given atomics long ago (AINC/ADEC); this is the compiled path,
+	 * which is the one that runs by default.
+	 *
+	 * The destroy case deliberately does not store, exactly as before:
+	 * rdestroy() does its own --h->ref and expects to find 1. Leaving the
+	 * exclusive monitor set on that path is harmless - it is cleared by
+	 * the next load-exclusive or by a context switch.
+	 */
+	SUB_IMM(RTA, RA0, sizeof(Heap) - O(Heap, ref));
+	retry = code;
+	LDAXR_X(RA2, RTA);
 	SUBS_IMM(RA2, RA2, 1);
 	destroy = code;
 	BCOND(EQ, 0);			/* was last ref → destroy */
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA0, RA2);
+	STLXR_X(RA3, RA2, RTA);
+	roff = (int)(retry - code);		/* before the macro's code++ */
+	CBNZ_X(RA3, roff);			/* store failed → retry */
 	done = code;
 	B_IMM(0);			/* → return */
 
@@ -2285,11 +2321,17 @@ macfrp(void)
 static void
 maccolr(void)
 {
-	u32int *done;
+	u32int *done, *retry;
+	int roff;
 
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA1, RA0);
+	/* Atomic increment - see the note in macfrp above. */
+	SUB_IMM(RTA, RA1, sizeof(Heap) - O(Heap, ref));
+	retry = code;
+	LDAXR_X(RA0, RTA);
 	ADD_IMM(RA0, RA0, 1);
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA1, RA0);
+	STLXR_X(RA3, RA0, RTA);
+	roff = (int)(retry - code);		/* before the macro's code++ */
+	CBNZ_X(RA3, roff);			/* store failed → retry */
 
 	mem(Ldw32, O(Heap, color) - sizeof(Heap), RA1, RA0);
 	con((uvlong)&mutator, RA2);

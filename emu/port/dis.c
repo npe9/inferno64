@@ -1342,15 +1342,13 @@ vmachine(void *a)
 	 * device-level refcounts were already protected by an existing
 	 * lock (verified per-site) and were left alone.
 	 *
-	 * REMAINING GAP: this only covers the interpreted (-c0) path.
-	 * libinterp/comp-arm64.c - the JIT backend, which is what actually
-	 * runs by default (cflag=1, i.e. -c1) - emits plain, non-atomic
-	 * load/modify/store machine code for the same h->ref field (see
-	 * its OHeap,ref) mem() calls). That's a separate, harder,
-	 * architecture-specific fix (would need LSE atomic instructions or
-	 * a CAS-retry sequence in the generated code) and is NOT done.
-	 * Everything in this investigation was validated with -c0. See
-	 * memory inferno-rio-gc-lock-todo for the full writeup. */
+	 * The compiled path is now covered too: libinterp/comp-arm64.c's
+	 * MacCOLR and MacFRP emitted a plain load/modify/store on the same
+	 * h->ref and now use a load-exclusive/store-exclusive retry loop
+	 * (LL/SC rather than LSE, because this backend also builds for
+	 * ARMv8.0 parts that have no LSE). See doc/hpc-plan.md bug 8 - and
+	 * note it is a fix by construction: the race was never provoked,
+	 * though parallel xec() was measured at 17 processes at once. */
 	cycles = 0;
 	for(;;) {
 		if(tready(nil) == 0) {
