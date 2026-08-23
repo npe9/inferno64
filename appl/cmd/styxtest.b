@@ -23,8 +23,10 @@ include "string.m";
 include "styx.m";
 	styx: Styx;
 	Tmsg, Rmsg: import styx;
+include "sh.m";
+	sh: Sh;
 
-Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+# Command is declared by sh.m, which is included above.
 
 Logger: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -234,6 +236,74 @@ cat(a: list of Rec, b: array of Rec): array of Rec
 	return r;
 }
 
+slurp(path: string): (string, string)
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return (nil, sprint("%s: %r", path));
+	(ok, d) := sys->fstat(fd);
+	if(ok < 0)
+		return (nil, sprint("stat %s: %r", path));
+	buf := array[int d.length] of byte;
+	if(sys->readn(fd, buf, len buf) != len buf)
+		return (nil, sprint("short read of %s", path));
+	return (string buf, nil);
+}
+
+# That a recorded program replays byte for byte needs a program to run, so this
+# one is an integration check rather than the built-trace kind above.
+#
+# The control is the important half. If styxreplay's mount quietly did nothing
+# the program would read the real file and the output would match anyway, so
+# the file is taken away before the replay: what comes out can then only have
+# come from the trace.
+replaycheck()
+{
+	sh = load Sh Sh->PATH;
+	if(sh == nil){
+		print("FAIL a replayed program produces the same output: cannot load sh\n");
+		failed++;
+		return;
+	}
+	data := "/styxtest.data";
+	strace := "/styxtest.strace";
+	outb := "/styxtest.b";
+	want := "one\ntwo\nthree\nand a longer line to make it worth reading\n";
+
+	fd := sys->create(data, Sys->OWRITE, 8r666);
+	if(fd == nil){
+		print("FAIL a replayed program produces the same output: %s: %r\n", data);
+		failed++;
+		return;
+	}
+	b := array of byte want;
+	sys->write(fd, b, len b);
+	fd = nil;
+
+	# iostats prints its own report on standard output, so the recorded
+	# run's output is not compared; what is recorded is the trace.
+	sh->system(nil, "iostats -t " + strace + " cat " + data + " > /styxtest.a");
+	sys->remove(data);		# the control
+	sh->system(nil, "styxreplay " + strace + " cat " + data + " > " + outb);
+
+	(got, err) := slurp(outb);
+	if(err != nil)
+		got = "";
+	if(got == want)
+		print("ok   a replayed program produces the same output, with the file gone\n");
+	else{
+		print("FAIL a replayed program produces the same output, with the file gone\n");
+		print("     wanted %d bytes, got %d\n", len want, len got);
+		if(err != nil)
+			print("     %s\n", err);
+		failed++;
+	}
+	sys->remove(strace);
+	sys->remove("/styxtest.a");
+	sys->remove(outb);
+	sys->remove(data);
+}
+
 init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -318,6 +388,8 @@ init(nil: ref Draw->Context, nil: list of string)
 			R(135, ref Rmsg.Open(4, qid(100), 8192)),
 		}),
 		list of {"<fid 1>"});
+
+	replaycheck();
 
 	sys->remove(trace);
 	sys->remove(out);

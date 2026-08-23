@@ -20,6 +20,18 @@ own paths, whether their replies come back in order or not; that a walk which
 stopped early or failed outright leaves the fid unnamed; and that a clunked fid
 is forgotten, so a later fid of the same number does not inherit the old name.
 .PP
+And that a recorded program replays byte for byte.
+That one needs a program to run, so it is an integration check rather than the
+built-trace kind.
+.PP
+Its control is the important half.
+If
+.IR styxreplay (1)'s
+mount quietly did nothing, the program would read the real file and the output
+would match anyway \(em so the file is
+.I removed
+before the replay, and what comes out can then only have come from the trace.
+.PP
 It builds the traces rather than making them, because every interesting case
 is about concurrency and none of them can be produced by tracing one program.
 The trace is a documented format, so it is written directly \(em the same
@@ -53,11 +65,9 @@ That
 .B iostats -t
 writes what actually crossed is not tested here.
 .PP
-.IR Styxreplay (1)
-is not covered at all.
-Its claim \(em that a recorded program replays byte for byte \(em needs a
-program to run, so it is an integration test rather than this kind, and it has
-been checked by hand and not since.
+The replay check covers one program reading one file.
+Divergence is not checked here, though it does work: replaying a trace against a
+different command reports which walk differed and stops.
 .PP
 It reports through the same standard output it redirects while running
 .IR styxlog (1),
