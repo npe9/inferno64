@@ -13,8 +13,13 @@ gotchas that have cost real time.
 **Keep working until the work is done.** Finish an item, commit it, and start the next one in the
 same turn. Do not stop at a natural boundary to check in.
 
-**Never end a turn with "want me to do X next?"** If there is an obvious next item, do it. End turns
-with what was done and what is happening next, stated as fact.
+**Never end a turn with "want me to do X next?"** If there is an obvious next item, do it.
+
+**Do not stop to say what is next — just do it.** Ending a turn with "Next: ..." is the same as
+asking, one round trip later. If you know what the next step is, take it in the same turn and report
+it as done. Report what happened, not what is about to happen. A closing plan is only warranted when
+the work genuinely stops there: the task is finished, or something outside your control blocks it,
+and then say which.
 
 **Do not use AskUserQuestion for anything with a sane default.** Pick the sensible option, name it in
 one line, and proceed: *"Doing X, it's the obvious default — say so if you wanted Y."* Reserve the
