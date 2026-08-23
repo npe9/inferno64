@@ -52,6 +52,7 @@ u64	getcr3(void);
 u64	getcr4(void);
 u64	getdr6(void);
 char*	getconf(char*);
+void	addconf(char*, char*);
 void	guesscpuhz(int);
 void	mwait(void*);
 int	i8042auxcmd(int);

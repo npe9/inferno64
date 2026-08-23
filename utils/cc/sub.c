@@ -971,6 +971,25 @@ loop:
 	return 1;
 }
 
+/*
+ * a null pointer constant: zero, or zero cast to void*, or that cast
+ * again.  Comparing a pointer with one must not lose the pointer type.
+ */
+int
+zpconst(Node *n)
+{
+	while(n->op == OCAST){
+		if(n->type == T)
+			break;
+		if(n->type->etype != TIND)
+			break;
+		if(n->type->link->etype != TVOID)
+			break;
+		n = n->left;
+	}
+	return vconst(n) == 0;
+}
+
 int
 vconst(Node *n)
 {

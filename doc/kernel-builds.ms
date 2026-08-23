@@ -309,13 +309,33 @@ and
 buffers in it are a real fix and are worth a pass of their own.
 .IP \(bu 2
 .CW com.c :
-the
-.CW mixedasop
-restructuring, the
-.CW zpconst
-null-pointer comparison and the
-.CW "function not declared"
-diagnostic.  Real, entangled with each other, and a pass of their own.
+a mixed assign-op kept the type of the arithmetic rather than of what
+was being assigned to;
+.CW zpconst ,
+so that a comparison against a null pointer constant keeps the pointer
+type through the casts to
+.CW void* ;
+a call to a function with no declaration at all said "args not checked"
+as though there were one, and now says it is not declared, which found
+.CW addconf
+called from three
+.CW pc64/main.c
+with the declaration only in
+.CW pc/fns.h ;
+a constant divisor of zero, said rather than folded; a cast to void
+with no side effect dropped, and
+.CW ccom
+made safe against being called on the same node twice.  And the
+useless-comparison checker: reversing a comparison used
+.CW comrel
+where it wanted
+.CW invrel ,
+its bounds were computed with an
+.CW add
+that could itself overflow, and it skipped every cast on the left --
+including the narrowing ones that are the whole reason the comparison
+might be useless -- and then took the type from the symbol rather than
+from the expression.
 .IP \(bu 2
 .CW fndecls ,
 .CW thisfnnode ,

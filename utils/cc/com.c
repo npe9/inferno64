@@ -179,12 +179,15 @@ tcomo(Node *n, int f)
 		arith(n, 0);
 		while(n->left->op == OCAST)
 			n->left = n->left->left;
-		if(!sametype(t, n->type) && !mixedasop(t, n->type)) {
-			r = new1(OCAST, n->right, Z);
-			r->type = t;
-			n->right = r;
+		if(!mixedasop(t, n->type)) {
+			if(!sametype(t, n->type)) {
+				r = new1(OCAST, n->right, Z);
+				r->type = t;
+				n->right = r;
+				n->type = t;
+			}
+		} else
 			n->type = t;
-		}
 		break;
 
 	case OASMUL:
@@ -206,11 +209,16 @@ tcomo(Node *n, int f)
 		arith(n, 0);
 		while(n->left->op == OCAST)
 			n->left = n->left->left;
-		if(!sametype(t, n->type) && !mixedasop(t, n->type)) {
-			r = new1(OCAST, n->right, Z);
-			r->type = t;
-			n->right = r;
+		if(!mixedasop(t, n->type)) {
+			if(!sametype(t, n->type)) {
+				r = new1(OCAST, n->right, Z);
+				r->type = t;
+				n->right = r;
+				n->type = t;
+			}
+		} else {
 			n->type = t;
+			break;
 		}
 		if(typeu[n->type->etype]) {
 			if(n->op == OASDIV)
@@ -259,12 +267,15 @@ tcomo(Node *n, int f)
 		arith(n, 0);
 		while(n->left->op == OCAST)
 			n->left = n->left->left;
-		if(!sametype(t, n->type) && !mixedasop(t, n->type)) {
-			r = new1(OCAST, n->right, Z);
-			r->type = t;
-			n->right = r;
+		if(!mixedasop(t, n->type)) {
+			if(!sametype(t, n->type)) {
+				r = new1(OCAST, n->right, Z);
+				r->type = t;
+				n->right = r;
+				n->type = t;
+			}
+		}else
 			n->type = t;
-		}
 		if(typeu[n->type->etype]) {
 			if(n->op == OASMOD)
 				n->op = OASLMOD;
@@ -331,11 +342,13 @@ tcomo(Node *n, int f)
 		o |= tcom(r->left);
 		if(o | tcom(r->right))
 			goto bad;
-		if(r->right->type->etype == TIND && vconst(r->left) == 0) {
+		if(r->right->type->etype == TIND && zpconst(r->left)) {
+			r->type = r->right->type;
 			r->left->type = r->right->type;
 			r->left->vconst = 0;
 		}
-		if(r->left->type->etype == TIND && vconst(r->right) == 0) {
+		if(r->left->type->etype == TIND && zpconst(r->right)) {
+			r->type = r->left->type;
 			r->right->type = r->left->type;
 			r->right->vconst = 0;
 		}
@@ -600,11 +613,16 @@ tcomo(Node *n, int f)
 		if(o | tcoma(l, r, l->type->down, 1))
 			goto bad;
 		n->type = l->type->link;
-		if(!debug['B'])
-			if(l->type->down == T || l->type->down->etype == TOLD) {
+		if(!debug['B']){
+			if(l->type->down == T){
+				if(!debug['T'])
+					nerrors--;
+				diag(n, "function not declared: %F", l);
+			}else if(l->type->down->etype == TOLD) {
 				nerrors--;
 				diag(n, "function args not checked: %F", l);
 			}
+		}
 		dpcheck(n);
 		break;
 
@@ -1000,6 +1018,8 @@ if(debug['y']) prtree(n, "final");
  *	remove some zero operands
  *	remove no op casts
  *	evaluate constants
+ * Note: ccom may be called on the same node
+ * multiple times.
  */
 void
 ccom(Node *n)
@@ -1031,6 +1051,23 @@ loop:
 	case OASADD:
 		ccom(l);
 		ccom(r);
+		if(n->op == OASMOD || n->op == OASLMOD || n->op == OASDIV || n->op == OASLDIV)
+		if(r->op == OCONST){
+			if(!typefd[r->type->etype] && r->vconst == 0) {
+				if(n->op == OASMOD || n->op == OASLMOD)
+					diag(n, "modulo by zero");
+				else
+					diag(n, "divide by zero");
+				r->vconst = ~0;
+			}
+			if(typefd[r->type->etype] && r->fconst == 0.) {
+				if(n->op == OASMOD || n->op == OASLMOD)
+					diag(n, "modulo by zero");
+				else
+					diag(n, "divide by zero");
+				r->fconst = 1e10;
+			}
+		}
 		if(n->op == OASLSHR || n->op == OASASHR || n->op == OASASHL)
 		if(r->op == OCONST) {
 			t = n->type->width * 8;	/* bits per byte */
@@ -1040,9 +1077,20 @@ loop:
 		break;
 
 	case OCAST:
+		if(n->type == types[TVOID] && !side(l)){
+			n->left = Z;
+			n->type = T;
+		}
+		if(n->left == Z)
+			break;
 		if(castucom(n))
 			warn(n, "32-bit unsigned complement zero-extended to 64 bits");
 		ccom(l);
+		if(l->type == T){
+			n->left = Z;
+			n->type = T;
+			break;
+		}
 		if(l->op == OCONST) {
 			evconst(n);
 			if(n->op == OCONST)
@@ -1312,19 +1360,6 @@ cmp(Big x, Big y)
 	}
 	return 0;
 }
-static Big
-add(Big x, int y)
-{
-	uvlong ob;
-	
-	ob = x.b;
-	x.b += y;
-	if(y > 0 && x.b < ob)
-		x.a++;
-	if(y < 0 && x.b > ob)
-		x.a--;
-	return x;
-} 
 
 Big
 big(vlong a, uvlong b)
@@ -1357,7 +1392,7 @@ compar(Node *n, int reverse)
 	if(reverse){
 		r = n->left;
 		l = n->right;
-		op = comrel[relindex(n->op)];
+		op = invrel[relindex(n->op)];
 	}else{
 		l = n->left;
 		r = n->right;
@@ -1367,19 +1402,21 @@ compar(Node *n, int reverse)
 	/*
 	 * Skip over left casts to find out the original expression range.
 	 */
-	while(l->op == OCAST)
+	while(l->op == OCAST){
+		lt = l->type;
+		rt = l->left->type;
+		if(lt == T || rt == T)
+			return 0;
+		if(lt->width < rt->width)
+			break;
+		if(lt->width == rt->width && ((lt->etype ^ rt->etype) & 1) != 0)
+			break;
 		l = l->left;
+	}
 	if(l->op == OCONST)
 		return 0;
 	lt = l->type;
-	if(l->op == ONAME && l->sym->type){
-		lt = l->sym->type;
-		if(lt->etype == TARRAY)
-			lt = lt->link;
-	}
-	if(lt == T)
-		return 0;
-	if(lt->etype == TXXX || lt->etype > TUVLONG)
+	if(lt == T || lt->etype == TXXX || lt->etype > TUVLONG)
 		return 0;
 	
 	/*
@@ -1396,18 +1433,19 @@ compar(Node *n, int reverse)
 	x.b = r->vconst;
 	x.a = 0;
 	if((rt->etype&1) && r->vconst < 0)	/* signed negative */
-		x.a = ~(uvlong)0;
+		x.a = ~0ULL;
 
-	if((lt->etype&1)==0){
+	if(lt->etype & 1){
+		/* signed */
+		lo = big(~0ULL, -(1LL<<(lt->width*8-1)));
+		hi = big(0, (1LL<<(lt->width*8-1))-1);
+	} else {
 		/* unsigned */
 		lo = big(0, 0);
 		if(lt->width == 8)
-			hi = big(0, ~(uvlong)0);
+			hi = big(0, ~0ULL);
 		else
-			hi = big(0, ((uvlong)1<<(l->type->width*8))-1);
-	}else{
-		lo = big(~(uvlong)0, -((uvlong)1<<(l->type->width*8-1)));
-		hi = big(0, ((uvlong)1<<(l->type->width*8-1))-1);
+			hi = big(0, (1LL<<(lt->width*8))-1);
 	}
 
 	switch(op){
@@ -1417,14 +1455,14 @@ compar(Node *n, int reverse)
 	case OHS:
 		if(cmp(x, lo) <= 0)
 			goto useless;
-		if(cmp(x, add(hi, 1)) >= 0)
+		if(cmp(x, hi) > 0)
 			goto useless;
 		break;
 	case OLE:
 	case OLS:
 	case OGT:
 	case OHI:
-		if(cmp(x, add(lo, -1)) <= 0)
+		if(cmp(x, lo) < 0)
 			goto useless;
 		if(cmp(x, hi) >= 0)
 			goto useless;
@@ -1445,7 +1483,7 @@ compar(Node *n, int reverse)
 	return 0;
 
 useless:
-	if((x.a==0 && x.b<=9) || (x.a==~(uvlong)0 && x.b >= -(uvlong)9))
+	if((x.a==0 && x.b<=9) || (x.a==~0LL && x.b >= -9ULL))
 		snprint(xbuf, sizeof xbuf, "%lld", x.b);
 	else if(x.a == 0)
 		snprint(xbuf, sizeof xbuf, "%#llux", x.b);
