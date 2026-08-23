@@ -15,28 +15,6 @@ loadmath()
 		math = load Math Math->PATH;
 }
 
-inlist(l: list of int, x: int): int
-{
-	for(; l != nil; l = tl l)
-		if(hd l == x)
-			return 1;
-	return 0;
-}
-
-listtoarray(l: list of int): array of int
-{
-	n := 0;
-	for(p := l; p != nil; p = tl p)
-		n++;
-	a := array[n] of int;
-	i := n-1;
-	for(p = l; p != nil; p = tl p){
-		a[i] = hd p;
-		i--;
-	}
-	return a;
-}
-
 sortints(a: array of int)
 {
 	for(i := 1; i < len a; i++){
@@ -52,36 +30,63 @@ sortints(a: array of int)
 
 newfrompattern(n: int, elems: array of array of int): ref CSR
 {
-	neigh := array[n] of list of int;
-	counts := array[n] of int;
-	# Explicit, not relying on a fresh array's contents - see the note
-	# below on val. Only counts[] is actually exposed: Dis leaves
-	# non-*pointer* space undefined, so an int array is at risk while
-	# neigh[] (list of int, a pointer type) does get nil-initialised by
-	# initmem either way. A stale nonzero counts[] entry corrupts nnz
-	# and, downstream, colidx/val's own array sizes - which is how this
-	# first showed up, as a "negative array size" crash rather than a
-	# wrong number. neigh[] is cleared alongside it for symmetry.
-	for(i0 := 0; i0 < n; i0++){
-		counts[i0] = 0;
-		neigh[i0] = nil;
-	}
+	# Which elements touch each node, in CSR form: count, prefix-sum,
+	# fill. This is what makes a row's neighbours reachable one row at a
+	# time, which is what makes the marker below work.
+	#
+	# The obvious version keeps a list of neighbours per node and scans it
+	# for each candidate. That is O(degree) per insertion with a pointer
+	# chase at every step, and for a hex mesh it was two thirds of the
+	# whole assembly - about eleven million list traversals at 24x24x24.
+	# Nothing here is in C; it is the same work done once instead of
+	# degree times.
+	ecount := array[n+1] of int;
+	for(i0 := 0; i0 <= n; i0++)
+		ecount[i0] = 0;
 	for(e := 0; e < len elems; e++){
 		en := elems[e];
-		for(a := 0; a < len en; a++){
-			na := en[a];
-			for(b := 0; b < len en; b++){
-				nb := en[b];
-				if(!inlist(neigh[na], nb)){
-					neigh[na] = nb :: neigh[na];
-					counts[na]++;
+		for(a := 0; a < len en; a++)
+			ecount[en[a]+1]++;
+	}
+	for(i0 = 0; i0 < n; i0++)
+		ecount[i0+1] += ecount[i0];
+	fill := array[n] of int;
+	for(i0 = 0; i0 < n; i0++)
+		fill[i0] = ecount[i0];
+	nodeelem := array[ecount[n]] of int;
+	for(e = 0; e < len elems; e++){
+		en := elems[e];
+		for(a := 0; a < len en; a++)
+			nodeelem[fill[en[a]]++] = e;
+	}
+
+	# mark[c] holds the stamp of the row that last claimed column c, so
+	# membership is one comparison rather than a scan. Two passes are
+	# needed - one to size the rows, one to fill them - and they use
+	# different stamps (i, then n+i) so the second pass is not fooled by
+	# the first pass's marks. That avoids clearing an n-element array
+	# twice per row, which would cost more than the scan it replaced.
+	counts := array[n] of int;
+	mark := array[n] of int;
+	for(i0 = 0; i0 < n; i0++){
+		counts[i0] = 0;
+		mark[i0] = -1;
+	}
+	for(i := 0; i < n; i++){
+		c := 0;
+		for(k := ecount[i]; k < ecount[i+1]; k++){
+			en := elems[nodeelem[k]];
+			for(b := 0; b < len en; b++)
+				if(mark[en[b]] != i){
+					mark[en[b]] = i;
+					c++;
 				}
-			}
 		}
+		counts[i] = c;
 	}
 	rowptr := array[n+1] of int;
 	nnz := 0;
-	for(i := 0; i < n; i++){
+	for(i = 0; i < n; i++){
 		rowptr[i] = nnz;
 		nnz += counts[i];
 	}
@@ -100,11 +105,19 @@ newfrompattern(n: int, elems: array of array of int): ref CSR
 	for(i = 0; i < nnz; i++)
 		val[i] = 0.0;
 	for(i = 0; i < n; i++){
-		row := listtoarray(neigh[i]);
-		sortints(row);
 		off := rowptr[i];
-		for(j := 0; j < len row; j++)
-			colidx[off+j] = row[j];
+		c := 0;
+		for(k := ecount[i]; k < ecount[i+1]; k++){
+			en := elems[nodeelem[k]];
+			for(b := 0; b < len en; b++)
+				if(mark[en[b]] != n+i){
+					mark[en[b]] = n+i;
+					colidx[off+c] = en[b];
+					c++;
+				}
+		}
+		# Sorted, which get/set/add rely on: find() binary-searches.
+		sortints(colidx[off:off+c]);
 	}
 	return ref CSR(n, rowptr, colidx, val);
 }
@@ -115,11 +128,23 @@ clear(m: ref CSR)
 		m.val[i] = 0.0;
 }
 
+# Binary search, not a scan: newfrompattern sorts each row, and assembly calls
+# this once per element entry - 64 times per hex element - so the difference is
+# the bulk of the scatter.
 find(m: ref CSR, row, col: int): int
 {
-	for(jj := m.rowptr[row]; jj < m.rowptr[row+1]; jj++)
-		if(m.colidx[jj] == col)
-			return jj;
+	lo := m.rowptr[row];
+	hi := m.rowptr[row+1] - 1;
+	while(lo <= hi){
+		mid := (lo + hi) / 2;
+		c := m.colidx[mid];
+		if(c == col)
+			return mid;
+		if(c < col)
+			lo = mid + 1;
+		else
+			hi = mid - 1;
+	}
 	return -1;
 }
 

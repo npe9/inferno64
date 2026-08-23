@@ -261,6 +261,28 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    `gpubench` panics with "not enough memory" at mesh 28 and above on this
    machine regardless of `-pheap`/`-pmain`, and did so before this change too.
 
+   **The bottleneck then moved to assembly, and that has been dealt with too.**
+   With the solve at 6ms, `fem(2)`'s assembly was 116ms of a 122ms run — 95% of
+   it. Two thirds of that was `sparse->newfrompattern` scanning a per-node list
+   of neighbours to test membership, O(degree) with a pointer chase per step:
+   about eleven million list traversals at 24 cubed. Replacing it with a
+   node-to-element map plus a marker array — **no C at all, just the same work
+   done once instead of degree times** — took it from 65ms to 10ms. Making
+   `find` binary-search the row it already sorts took the scatter from 38ms to
+   21ms. Assembly overall **116ms → 45ms**, producing a bit-identical matrix
+   (same residual to every digit).
+
+   `sparsetest(1)` is new and compares the pattern *entry by entry* against the
+   old list-scanning implementation, on random rather than grid connectivity —
+   a structured mesh delivers neighbours nearly sorted already and would hide an
+   ordering mistake. Removing the per-row sort makes it fail on the first
+   column, which is the control.
+
+   Note the ordering lesson: the algorithmic fix here was worth 6x and needed no
+   C, while the C builtin for `spmv` was worth 9-10x and needed no algorithm
+   change. Neither substitutes for the other, and the profile said which to do
+   where.
+
 3. **`amr(2)` and `pde(2)` on GPU — also needs re-deriving** against the C
    matvec baseline above. Note that a stencil sweep in Limbo is exactly the
    kind of loop `math->spmv` just showed is 9-10x off what C does, so a C

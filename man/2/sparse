@@ -56,6 +56,25 @@ requires of any
 .BR Apply .
 .PP
 .B Newfrompattern
+uses a marker array to decide whether a column is already in a row,
+rather than scanning a list of that node's neighbours.
+The scanning version cost O(degree) with a pointer chase at every step,
+and on a hex mesh it was two thirds of the whole assembly \(em about
+eleven million list traversals at 24\(mu24\(mu24.
+It produces exactly the same pattern, which
+.IR sparsetest (1)
+checks entry by entry against the old implementation.
+.PP
+Each row is sorted, and
+.B get,
+.B set
+and
+.B add
+binary-search it.
+That matters at assembly time, where a hex element performs sixty-four
+lookups.
+.PP
+.B Newfrompattern
 builds the symbolic pattern once from
 .IR elems ,
 a per-element list of the global node ids it touches (e.g.

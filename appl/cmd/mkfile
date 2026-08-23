@@ -86,6 +86,7 @@ TARG=\
 	krylovtest.dis\
 	mltest.dis\
 	playmovie.dis\
+	sparsetest.dis\
 	vecbench.dis\
 	qttest.dis\
 	vstreamtest.dis\

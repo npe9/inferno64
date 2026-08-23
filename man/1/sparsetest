@@ -1,0 +1,65 @@
+.TH SPARSETEST 1
+.SH NAME
+sparsetest \- test the sparse matrix module
+.SH SYNOPSIS
+.B sparsetest
+.SH DESCRIPTION
+.B Sparsetest
+checks
+.IR sparse (2)
+against reference implementations written inside the test itself.
+.PP
+Every part of that module now has a fast version and an obvious one, and
+the obvious one is the specification.
+.B Newfrompattern
+uses a marker array where it used to scan a list of neighbours per node;
+.B find
+binary-searches a row where it used to scan it; and
+.B matvec
+calls
+.IR math (2)'s
+.B spmv
+where it used to loop in Limbo.
+Each is several times faster, and each could be subtly wrong in a way
+that still produces a plausible matrix rather than an obvious failure.
+So the slow versions live here and the outputs are compared.
+.PP
+The element connectivity is random rather than a grid.
+A structured mesh visits nodes in an order that hides an ordering
+mistake, because the neighbours of a node arrive very nearly sorted
+already; random clusters do not.
+.PP
+The pattern is compared to the reference
+.I exactly
+\(em every
+.B rowptr
+and
+.B colidx
+entry \(em and then each row is checked to be sorted and free of
+duplicates, which is what
+.B find
+depends on.
+Every entry the pattern claims must read back what was written to it,
+and every column the pattern does not have must read as zero and swallow
+a write without disturbing anything.
+Finally
+.B matvec
+is compared against the row loop.
+.PP
+That last one is a tolerance and not an equality, because the C loop
+contracts the multiply and add into a fused one and rounds differently:
+a couple of units in the last place is expected, and anything larger is
+not rounding.
+.SH SOURCE
+.B /appl/cmd/sparsetest.b
+.SH SEE ALSO
+.IR sparse (2),
+.IR math-linalg (2),
+.IR krylovtest (1)
+.SH BUGS
+.B Dirichlet
+is not tested.
+.PP
+One matrix, one shape of element, one size.
+Nothing here exercises a matrix large enough for the pattern builder's
+memory behaviour to matter, which is where its cost now is.
