@@ -593,11 +593,33 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    are the same shape — one device per capability, composed through the
    namespace — which is what the section below argued mattered more than
    either device.
-7. **Vector instructions in Dis and the JIT.** A separate line of attack on the
-   same bottleneck item 2 measures — see the detailed section after this list.
-   Short version: start with C builtins in `math(2)`, which need no Dis, JIT,
-   spec or compiler change, because the win is dispatch amortisation before it
-   is ever SIMD.
+7. **Vector instructions in Dis and the JIT — the numerics case for it is
+   spent.** Its own advice was "start with C builtins in `math(2)`, because the
+   win is dispatch amortisation before it is ever SIMD". That was right, it was
+   done, and it is where the 4x to 16x came from.
+
+   What is left of the argument is the SIMD half, and clang has already taken
+   it. Disassembling the kernels that now carry the work:
+
+   | kernel | vectorised | |
+   |---|---|---|
+   | `axpby` | **yes** | `fmla.2d`, `fmul.2d` — streaming, no dependencies |
+   | `lap5` | **yes** | `fadd.2d`, `mov.16b` |
+   | `dot` | partly | `fmul.2d` but a scalar `fadd` chain |
+   | `spmv` | **no** | one scalar `fmadd` |
+
+   So a Dis-level vector facility would have to beat kernels that are already
+   two-wide NEON. And the two that are not vectorised are not vectorised for
+   structural reasons rather than for want of an opcode: `dot`'s reduction is
+   sequential *by construction* (changing the summation order changes the
+   rounding of a published primitive — see the note under item 2), and
+   `spmv`'s inner loop is an indirect gather, `x[colidx[jj]]`, which no vector
+   instruction set helps with directly.
+
+   This retires the *numerics* justification for the item. If it is wanted for
+   its own sake — vector types visible to a Limbo programmer — that is a
+   language argument and should be made as one, not on performance grounds that
+   have already been collected.
 
 8. **A Dis REPL — a shell for writing Dis programs interactively.** Requested
    directly; this is a usability item, not a numerics one, and shares nothing
