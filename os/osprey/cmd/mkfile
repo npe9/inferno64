@@ -5,8 +5,8 @@ OBJTYPE=amd64
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
 BIN=$ROOT/Osprey/$OBJTYPE/bin
-TARG=ring pip mig
-OFILES=ring.$O pip.$O mig.$O
+TARG=ring pip mig p9srv
+OFILES=ring.$O pip.$O mig.$O p9srv.$O
 
 all:V:	$TARG
 
@@ -21,6 +21,9 @@ pip:	pip.$O
 
 mig:	mig.$O
 	$LD -l -o $target mig.$O $ROOT/Osprey/$OBJTYPE/lib/libc.a
+
+p9srv:	p9srv.$O
+	$LD -l -o $target p9srv.$O $ROOT/Osprey/$OBJTYPE/lib/libc.a
 
 %.$O:	%.c
 	$CC $CFLAGS $stem.c

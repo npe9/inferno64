@@ -22,6 +22,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def main():
 	ap = argparse.ArgumentParser()
 	ap.add_argument('-i', '--iso', default=os.path.join(ROOT, '.qemu/osprey-efi.iso'))
+	ap.add_argument('-b', '--build', action='store_true',
+		help='build the iso first, with the root device answered')
 	ap.add_argument('-d', '--disk', default=None)
 	ap.add_argument('-t', '--timeout', type=float, default=120.0)
 	ap.add_argument('-l', '--log', default=os.path.join(ROOT, '.qemu/console.log'))
@@ -41,6 +43,17 @@ def main():
 	ap.add_argument('-2', '--serial2', default=None,
 		help='a second serial port, e.g. unix:/tmp/com2,server,nowait')
 	a = ap.parse_args()
+
+	if a.build:
+		# The harness answers no prompts before the shell, so the iso it
+		# boots must have the root device in its plan9.ini.  An iso built
+		# without it stops at bootargs and every check fails, which reads
+		# exactly like a broken kernel; building it here is what stops
+		# that from happening again.
+		env = dict(os.environ, OSPREY_NOBOOTPROMPT='local!/dev/sdE0/fs')
+		subprocess.run(['sh', os.path.join(ROOT, 'scripts/mkosprey-efi-iso.sh'),
+			a.iso], env=env, check=True,
+			stdout=subprocess.DEVNULL)
 
 	qemu = [
 		'qemu-system-x86_64', '-machine', 'q35', '-m', a.memory, '-smp', a.cpus,

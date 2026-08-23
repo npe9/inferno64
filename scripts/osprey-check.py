@@ -30,8 +30,9 @@ COM2LOG = tempfile.mktemp(prefix='osprey-com2-', suffix='.out')
 
 SETUP = [
  "9660srv -r -f /dev/sdF2/data cd9660 >[2]/dev/null & sleep 1; mkdir -p /n/cd; "
- "mount /srv/cd9660 /n/cd; rm -f /tmp/ring /tmp/pip; cp /n/cd/bin/ring /tmp/ring; cp /n/cd/bin/pip /tmp/pip; "
- "chmod +x /tmp/ring /tmp/pip",
+ "mount /srv/cd9660 /n/cd; echo mounted",
+ # a long line loses a character to the console, so the copying is its own
+ "for(b in ring pip p9srv) { rm -f /tmp/$b; cp /n/cd/bin/$b /tmp/$b; chmod +x /tmp/$b }",
  "bind '#O' /n/osprey; sz=`{grep arena /n/osprey/status | sed 's/.*slice //; s/ .*//'}; "
  "for(c in 1 2) { echo create $c 40000000 800000000 200000000 >/n/osprey/ctl; "
  "echo attach $c 0 >/n/osprey/ctl; echo limit $c 262144 65536 64 >/n/osprey/ctl }; echo ready",
@@ -99,6 +100,42 @@ CHECKS = [
   ["/tmp/ring $sg $sz wait 0 put:1",
    "echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply"],
   "8 send done 7"),
+ ("a name space of the server's own, holding a name",
+  ["rm -rf /tmp/only; mkdir -p /tmp/only /n/only",
+   "echo p9srv-answered >/tmp/only/proof",
+   "@{rfork n; bind /tmp/only /n/only; ls /n/only | awk 'END{print \"there\", NR}'} &",
+   "sleep 2; echo asked"],
+  "there 1"),
+ ("and the one the kernel answers from, which has not got it",
+  ["ls /n/only | awk 'END{print \"here\", NR}'"],
+  "here 0"),
+ ("a file opened by the personality server, in that name space",
+  ["for(c in 61 62) echo create $c 40000000 800000000 200000000 >/n/osprey/ctl",
+   "for(c in 61 62) echo attach $c 0 >/n/osprey/ctl",
+   "echo delegate 61 62 >/n/osprey/ctl",
+   "s2=`{grep '^proc 62' /n/osprey/status | sed 's/.*slice //; s/ .*//'}",
+   "sv=osprey^`{echo $s2 $sz | awk '{print int($1/$2)}'}; echo $sv",
+   "@{rfork n; bind /tmp/only /n/only; /tmp/p9srv $sv $sz} &",
+   "sleep 2; echo poke 61 0 /n/only/proof >/n/osprey/ctl",
+   "echo submit 61 open 0 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply"],
+  "61 open done"),
+ ("and what that file holds, read through it into the asking container",
+  ["echo submit 61 read 0 512 32 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply",
+   "o=`{awk '/^proc 61/{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)+512}' /n/osprey/status}",
+   "dd -if /n/osprey/arena -bs 1 -iseek $o -count 14 >[2]/dev/null; echo"],
+  "p9srv-answered"),
+ ("and the same name refused to a container the kernel still answers for",
+  ["echo create 63 40000000 800000000 200000000 >/n/osprey/ctl",
+   "echo attach 63 0 >/n/osprey/ctl",
+   "echo poke 63 0 /n/only/proof >/n/osprey/ctl",
+   "echo submit 63 open 0 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 1; cat /n/osprey/reply",
+   # give the slots back: there are only sixteen, and the check below
+   # wants eight of them at once
+   "for(c in 61 63 62) echo exit $c >/n/osprey/ctl"],
+  "63 open error"),
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string
@@ -205,7 +242,7 @@ def main():
                                COM2, '600'],
                               stdout=open(COM2LOG, 'w'),
                               stderr=subprocess.DEVNULL)
-    argv = ['./scripts/osprey-console.py', '-q', '-p', '4', '-n', 'e1000',
+    argv = ['./scripts/osprey-console.py', '-q', '-b', '-p', '4', '-n', 'e1000',
             '-2', 'unix:%s,server,nowait' % COM2, '-l', LOG, '-S',
             '-d', ROOT + '/.qemu/9front-root.qcow2', '-t', '320',
             '-e', r'user\[glenda\]: =', '-u', '% ']

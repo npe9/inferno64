@@ -1234,7 +1234,7 @@ ospreywakeup(void)
  * name is a capability and not merely a name.
  */
 static int
-ospreyentitled(int slot)
+ospreyentitledself(int slot)
 {
 	Proc *q, *r;
 	int i;
@@ -1255,6 +1255,28 @@ ospreyentitled(int slot)
 		if(r == q)
 			return 1;
 	return 0;
+}
+
+/*
+ * And whoever answers for it.  A container that has delegated its
+ * personality to a server has given that server the right to reach the
+ * memory its requests point into: the name to open and the buffer to
+ * read into are offsets in the asking container's own slice, so a server
+ * that cannot map that slice cannot answer anything at all.
+ *
+ * One step, not a chain.  A server's own server is not thereby given
+ * everything its clients have; that would be a policy nobody asked for.
+ */
+static int
+ospreyentitled(int slot)
+{
+	Ospreyproc *s;
+
+	if(ospreyentitledself(slot))
+		return 1;
+	if((s = ospreyserverof(ospreyat(slot))) == nil)
+		return 0;
+	return ospreyentitledself(ospreyindex(s));
 }
 
 static int

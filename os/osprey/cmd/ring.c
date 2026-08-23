@@ -364,8 +364,20 @@ ringmain(int argc, char **argv)
 	arenasize = num(argv[2]);
 
 	va = (uchar*)segattach(0, argv[1], 0, arenasize);
-	if(va == (uchar*)-1)
-		die("segattach failed");
+	if(va == (uchar*)-1){
+		/* what the kernel said, since "failed" says nothing */
+		char e[ERRMAX];
+
+		e[0] = '\0';
+		errstr(e, sizeof e);
+		outs("ring: segattach ");
+		outs(argv[1]);
+		outs(": ");
+		outs(e);
+		outs("\n");
+		flush();
+		exits("segattach");
+	}
 	outs("mapped "); outs(argv[1]); outs("\n");
 
 	slice = 0;

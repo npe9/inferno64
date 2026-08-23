@@ -86,6 +86,11 @@ static Ospreyproc procs[Nproc];
 static Process *plist[Nproc];
 static int started;
 
+enum {
+	Fwdnone	= -1,	/* no server: the kernel's own personality answers */
+	Fwdfull	= -2,	/* a server, but its ring has no room right now */
+};
+
 static int forward(Ospreyproc*, Request*);
 static char *statename(int);
 
@@ -1282,16 +1287,35 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 	}
 
 	/*
-	 * Everything else needs the kernel: file, process, IPC and network
-	 * requests are served by ospreykernop() in the device, which is the
-	 * only side of the adapter that may touch a Chan.  What it will not
-	 * answer goes to the container's server, if it has one, and is
-	 * answered from outside the kernel altogether.
+	 * Everything above is mechanism and is answered here.  Everything
+	 * below it -- opening a name, reading it, the shape of a file --
+	 * is a personality, and a personality is a program.  A container
+	 * that has named a server has all of it answered there, in that
+	 * server's own name space, with the kernel doing nothing but
+	 * carrying the message.
+	 *
+	 * A container that has named none falls back to the kernel's own
+	 * Plan 9 personality in ospreykernop(), which is where all of this
+	 * used to live and is what a library operating system is meant to
+	 * replace.
 	 */
+	switch(forward((Ospreyproc*)p, req)){
+	case 0:
+		return 1;	/* answered outside the kernel */
+	case Fwdfull:
+		/*
+		 * Delegated, but the server cannot take it just now.  Saying
+		 * so is the answer.  Falling through to the kernel here --
+		 * which the first version did, because forward returned the
+		 * same -1 for a full ring as for no server at all -- had the
+		 * personality this container had replaced answering for it
+		 * whenever its server was busy.
+		 */
+		rep->status = ReplyRetry;
+		return 0;
+	}
 	rep->status = ospreykernop((Ospreyproc*)p, req->message.op,
 		&req->message.arg[2], &rep->message.arg[2]);
-	if(rep->status == ReplyError && forward((Ospreyproc*)p, req) == 0)
-		return 1;	/* answered elsewhere */
 	return 0;
 }
 
@@ -1339,7 +1363,13 @@ ospreydelegate(Ospreyproc *p, Ospreyproc *server)
 	return 0;
 }
 
-/* move a request to the server's ring, keeping where it came from */
+/*
+ * Move a request to the server's ring, keeping where it came from.  The
+ * two ways of failing are not the same and must not be reported the same:
+ * Fwdnone means this container has no personality of its own and the
+ * kernel's is what it gets, Fwdfull means it has one that cannot take the
+ * request at this moment and should be asked again.
+ */
 static int
 forward(Ospreyproc *p, Request *req)
 {
@@ -1347,13 +1377,24 @@ forward(Ospreyproc *p, Request *req)
 	Message m;
 
 	if(p == nil || (s = p->server) == nil || s->used == 0)
-		return -1;
+		return Fwdnone;
 	m = req->message;
 	m.container = p->process.id;
 	m.sequence = req->sequence;
 	if(queuefull(s->process.requests))
-		return -1;
-	return queueput(s->process.requests, &m);
+		return Fwdfull;
+	if(queueput(s->process.requests, &m) < 0)
+		return Fwdfull;
+	return 0;
+}
+
+/* who answers for this container, if anyone does */
+Ospreyproc*
+ospreyserverof(Ospreyproc *p)
+{
+	if(p == nil || p->used == 0)
+		return nil;
+	return p->server;
 }
 
 /*

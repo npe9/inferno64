@@ -118,6 +118,14 @@ def main():
     results = []
     kept = []
 
+    # once, before either machine starts: the two boot at the same time
+    # and would race building it.  An iso without the root device in its
+    # plan9.ini stops at bootargs and everything below fails at once.
+    subprocess.run(['sh', os.path.join(ROOT, 'scripts/mkosprey-efi-iso.sh')],
+                   env=dict(os.environ,
+                            OSPREY_NOBOOTPROMPT='local!/dev/sdE0/fs'),
+                   check=True, stdout=subprocess.DEVNULL)
+
     (srv, cli), logs = pair(17891, SERVER, CLIENT)
     kept += logs
     ka, kb = keyof(srv), keyof(cli)

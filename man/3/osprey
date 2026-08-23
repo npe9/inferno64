@@ -637,6 +637,61 @@ there, and are what the reply is routed by.
 A container that serves others is passed over when requests are serviced,
 because what is on its ring is there for its process; and it should not
 also be asking, since its reply ring is where its answers go.
+.PP
+The server is asked first, not last.  A request that is not one of the
+three the policy layer answers by itself \-
+.BR yield ,
+.B poll
+and
+.B alloc
+\- is offered to the container's server before the kernel's own
+personality is consulted, and only a container that has named no server
+reaches
+.BR ospreykernop() .
+A container that has named one has
+.BR open ,
+.BR read ,
+.B write
+and
+.B close
+answered entirely outside the kernel, in the server's name space, with
+the kernel doing nothing but carrying the message.  If the server has
+named one but its ring is full the request is answered
+.B retry
+rather than falling through, so the personality a container replaced
+does not answer for it whenever its server is busy.
+.PP
+.I p9srv
+is such a server: an ordinary user program that maps its own slice,
+waits on its request ring, performs each
+.BR open ,
+.BR read ,
+.B write
+and
+.B close
+with the ordinary system calls in its own name space, and puts the
+answer back.  It refuses everything else rather than falling back into
+the kernel.  It is started as
+.IP
+.B "p9srv segment size [nslice]"
+.LP
+where the segment is the server's own container slice and the size is
+that slice's.
+.PP
+A request names its arguments as offsets into the
+.I asking
+container's data area, so the server maps that container's slice as
+well.  It may: a container that has delegated to a server has thereby
+given that server the right to reach the memory its own requests point
+into, and that is now what the span's permission check says, one step
+and not a chain.  Which slice belongs to which container the server asks
+.B status
+for rather than reading it out of the maps, since a container may write
+its own map and could otherwise claim to be one of the others.  The
+offsets within a slice it takes from its own map, which nobody else may
+write, and applies to the client; a client that lied about
+.B datalen
+would otherwise have its server write a read past the end of the slice.
 .SH SELECT
 .PP
 A task waits on several things at once by offering an array of arms.  An
@@ -739,6 +794,8 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/policy
 .br
 .B /os/osprey/cmd/ring.c
+.br
+.B /os/osprey/cmd/p9srv.c
 .br
 .B /os/osprey/adapter/ospreyrt.c
 .br
@@ -925,6 +982,42 @@ has them answered there.
 .B recv
 takes a packet from the queue of a container that has been given an
 interface, and is refused by a container that has not.
+.PP
+.I p9srv
+is a personality for the file operations and nothing else.  A container
+that names it has
+.BR open ,
+.BR read ,
+.B write
+and
+.B close
+answered outside the kernel; everything else it asks for is answered
+.BR error ,
+since a server is named for all of what the kernel does not keep.  The
+rest of the kernel is untouched by it: the name it opens is resolved by
+.IR chan (3)
+in the server's process,
+.B dev.c
+and
+.B pgrp.c
+are still the kernel's, and every device driver and the whole of the ip
+stack are still linked into the kernel and still 9front.  What is real
+here is that the path exists and one personality really uses it, not
+that any of the kernel has been taken out.
+.PP
+The right a delegating container gives its server over its own memory is
+enforced but not demonstrated: in
+.I osprey-check
+every container is glenda's, so the server reaches the client's slice as
+its owner would anyway.  A server run by another user is what the rule is
+for.
+.PP
+.I p9srv
+lets nothing go.  A container that exits leaves the files it had opened
+open in the server and its slice attached, and the table of containers
+the server has answered for only grows; a server that has answered for
+sixteen of them answers nothing for the seventeenth.  Nothing tells a
+server that a container has gone.
 .PP
 Scheduling is driven by the clock.  A container with no process bound to
 it is billed for whatever its core's run queue says it is running, which

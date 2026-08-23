@@ -170,7 +170,7 @@ say
 .B ok
 or
 .B FAIL
-a line at a time.  Thirty-eight lines, all
+a line at a time.  Forty-three lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -185,6 +185,88 @@ The exchange is with whoever answers.  A person comparing two
 fingerprints is the only thing that says it was the machine that was
 meant, and there is nothing a machine could compare instead without
 something already shared to compare it against.
+.NH 1
+A personality outside the kernel
+.PP
+The talk's shape is a microkernel that keeps message passing, address
+spaces, interrupts and scheduling, and library operating systems above
+it.  Measured against that, almost all of this kernel is on the wrong
+side of the line: of the Osprey kernel's sources, the mechanism is
+.CW devosprey.c ,
+.CW ospreyrt.c
+and
+.CW policy/ ,
+together with proc, the locks, the mmu and segment and page code, the
+trap and interrupt paths and the boot code.  Everything else \-
+.CW chan.c ,
+.CW dev.c ,
+.CW pgrp.c ,
+.CW sysfile.c ,
+every
+.CW dev*.c ,
+the whole of
+.CW ip/ ,
+and every driver in
+.CW pc/
+\- is a personality, and it is about nine tenths of what is linked.
+.PP
+The first thing that had to change is who is asked first.
+.CW dispatch()
+answered a request out of the kernel and forwarded only what it refused;
+it now answers the three requests the policy layer really owns \-
+.CW yield ,
+.CW poll
+and
+.CW alloc
+\- and offers everything else to the container's server before
+.CW ospreykernop() .
+A container that has named a server never reaches the kernel's own
+personality at all.  Along with that,
+.CW forward()
+stopped reporting a full server ring the same way it reports no server:
+the first meant the request was answered
+.CW retry ,
+the second that the kernel answers it, and conflating them had the
+personality a container had replaced answering for it whenever its
+server was busy.
+.PP
+.CW os/osprey/cmd/p9srv.c
+is the personality.  It is an ordinary user program: it maps its own
+container's slice, waits on its request ring with a
+.CW get
+arm, performs
+.CW open ,
+.CW read ,
+.CW write
+and
+.CW close
+with the ordinary system calls in its own name space, and puts the
+answer back with a
+.CW put
+arm.  It refuses everything else rather than falling back into the
+kernel.  The check boots a kernel, gives one container a server running
+in a name space of its own, and has that container open a name that
+exists only there; the same name asked for by a container with no
+server is answered
+.CW error ,
+which is what says the answer came from the program and not from the
+kernel around it.
+.PP
+Two things had to be got right for the server to be able to work at all.
+A request names its arguments as offsets into the
+.I asking
+container's data area, so the server must map that container's slice: a
+container that delegates to a server now thereby grants it that,
+one step and not a chain.  And the server must not believe anything in a
+client's map, since a container may write every byte of its own \- so
+which slice belongs to which container is asked of
+.CW status ,
+and the offsets within a slice are taken from the server's own map and
+applied to the client.
+.PP
+This is one personality for the file operations, and the kernel it runs
+beside is unchanged.  Nothing has been taken out of the kernel; what is
+real is that the path exists and something outside really uses it.
 .NH 1
 Not attempted
 .PP
