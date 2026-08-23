@@ -31,11 +31,10 @@ is a plain function reference \(em
 on a grid, where even a modest mesh makes the dense matrix far too large
 to assemble or store.
 .PP
-It must return a
-.I fresh
-array each call rather than a reused buffer.
-The solver updates the residual in place against the array it is given
-back, so a shared buffer would be corrupted between iterations.
+The solver
+.I modifies
+the array it is given back \(em GMRES orthogonalises in place against it
+\(em so do not return an array that is still needed elsewhere.
 Every implementation in this tree \(em
 .IR sparse (2)'s
 .BR matvec ,
@@ -43,7 +42,13 @@ Every implementation in this tree \(em
 .IR fem (2)
 and
 .IR gpu (2)
-\(em already allocates one per call.
+\(em allocates a fresh one per call, which is the simplest way to
+satisfy that.
+.PP
+Returning a scratch buffer and reusing it happens to work at present,
+because the basis vector GMRES keeps is a copy rather than the array
+itself.
+That is a property of the current implementation and not a promise.
 .PP
 .B New
 returns a

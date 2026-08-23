@@ -34,16 +34,25 @@ builtin, which is nine to ten times faster, there is no break-even at
 any size that fits in memory here:
 .IP
 .EX
-mesh        nodes   cpu f64   gpu f32
-12x12x12     2197      0ms      74ms
-16x16x16     4913      2ms      36ms
-20x20x20     9261      2ms      34ms
-24x24x24    15625      6ms      30ms
+mesh       nodes   cpu f64          gpu f32
+                   solve us/iter    solve us/iter
+12x12x12    2197     0ms     -        4ms   235
+16x16x16    4913     2ms    91        6ms   240
+20x20x20    9261     3ms   107        7ms   219
+24x24x24   15625     6ms   176       11ms   282
 .EE
 .PP
-The GPU column is roughly flat while the CPU column grows with the
-problem, which says that path is dominated by per-call cost rather than
-arithmetic.
+It runs and discards one GPU solve before timing anything.
+Without that, the one-time cost of setting up Metal lands on whichever
+solve runs first and is then divided by however many iterations that
+mesh needs \(em which reported 74ms at mesh twelve against 30ms at mesh
+twenty-four, a smaller problem taking longer, and invited exactly the
+wrong explanation.
+.PP
+Read the per-iteration columns.
+The GPU's cost per iteration is flat whatever the problem size, which is
+what per-call cost looks like; the CPU's grows with the problem, which
+is what arithmetic looks like.
 Single precision also costs extra CG iterations \(em 39 against 34 at
 24\(mu24\(mu24 \(em so the two columns are not even the same solve, and
 any speedup quoted from them should carry both iteration counts.

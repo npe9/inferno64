@@ -75,18 +75,31 @@ offloading look like a win were taken against a CPU matvec written in Limbo.
 says:
 
 ```
-mesh      nodes   cpu f64   gpu f32
-12x12x12   2197      0ms      74ms
-16x16x16   4913      2ms      36ms
-20x20x20   9261      2ms      34ms
-24x24x24  15625      6ms      30ms
+mesh       nodes   cpu f64            gpu f32
+                   solve  us/iter     solve  us/iter
+12x12x12    2197     0ms      -         4ms    235
+16x16x16    4913     2ms     91         6ms    240
+20x20x20    9261     3ms    107         7ms    219
+24x24x24   15625     6ms    176        11ms    282
 ```
 
-The GPU column is roughly *flat* while the CPU column scales with the problem,
-which says the GPU path is dominated by per-call overhead rather than
-arithmetic — consistent with the note below that 0.44ms per matvec at 30 cubed
-is overhead, not FLOPs. There is no break-even at any size that fits in memory
-on this machine (`gpubench` panics at mesh 28 and above).
+Read the **per-iteration** columns, not the per-solve ones. An earlier version
+of this table reported 74ms for the GPU at mesh 12 against 30ms at mesh 24 —
+smaller problem, more time — and explained it as per-call overhead. That was
+wrong: it was the *one-time* cost of setting up Metal landing on whichever solve
+ran first and being divided by however many iterations that mesh needed.
+`gpubench(1)` now runs and discards a GPU solve before timing, and mesh 12 drops
+from 74ms to 4ms.
+
+What the corrected numbers say is still that the GPU does not pay here, but for
+a reason that is now actually supported: its cost per iteration is **flat**
+(219–282us regardless of problem size), which is what per-call overhead looks
+like, while the CPU's grows with the problem (91 to 176us), which is what
+arithmetic looks like. The two are converging and the GPU would presumably
+overtake somewhere above 30 cubed — but f32 also costs extra iterations (39
+against 34 at 24 cubed), so the per-solve crossover sits further out than the
+per-matvec one. Neither can be measured here: `gpubench` panics at mesh 28 and
+above.
 
 None of the GPU work is wrong and none of it should be deleted: the device, the
 Metal kernel, the residency and the precision query all do what they say. What
@@ -145,9 +158,9 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    ~12% reproducer; do not let it block the GPU work again.
 2. **Device-resident vectors — SUSPENDED pending re-derivation.** The table
    this item rests on was measured against a Limbo matvec; with `math->spmv`
-   the CPU solve at 24 cubed is 6ms against the GPU's 30ms, so "the vector ops
-   are 40% of a GPU-backed solve" is now a statement about a path five times
-   slower than not offloading at all. Fix the GPU path's per-call overhead
+   the CPU solve at 24 cubed is 6ms against the GPU's 11ms, so "the vector ops
+   are 40% of a GPU-backed solve" is now a statement about a path slower than
+   not offloading at all. Fix the GPU path's per-call overhead
    first, or re-measure and find this item is not worth doing. What follows is
    the original argument, left intact because its *reasoning* about round trips
    still holds — only its numbers are stale.
@@ -237,6 +250,12 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    changes the summation order and therefore the rounding of a long-standing
    published primitive that other code depends on. Worth doing, not worth doing
    silently.
+
+   `krylovtest(1)` is new and covers what none of this had: the solvers
+   themselves. It asserts *exact* iteration counts against matrices with a
+   chosen number of distinct eigenvalues, which is the property that moves if a
+   basis stops being orthogonal — a residual check would not notice. GMRES had
+   no test at all before this, and the in-place updates went out without one.
 
    Reproduce with `vecbench(1)`; the end-to-end figures are `gpubench(1)`. Note
    `gpubench` panics with "not enough memory" at mesh 28 and above on this

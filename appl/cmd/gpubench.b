@@ -28,12 +28,23 @@ run(spec: string, label: string)
 	(p, err) := fem->newproblem(spec);
 	if(err != nil){ print("  %s: newproblem: %s\n", label, err); return; }
 	t1 := sys->millisec();
-	(x, iters, resid, serr) := fem->solve(p);
+	(nil, iters, resid, serr) := fem->solve(p);
 	t2 := sys->millisec();
 	if(serr != nil){ print("  %s: solve: %s\n", label, serr); return; }
-	print("  %-16s assemble %5dms  solve %6dms  iters %3d  resid %g  x[mid]=%g  %s\n",
-		label, t1-t0, t2-t1, iters, resid, x[len x/2],
+	per := 0.0;
+	if(iters > 0)
+		per = real (t2-t1)*1000.0/real iters;
+	print("  %-16s assemble %5dms  solve %6dms  iters %3d  %7.0fus/iter  resid %g  %s\n",
+		label, t1-t0, t2-t1, iters, per, resid,
 		errs(p.backend.lasterror));
+}
+
+warm(spec: string)
+{
+	(p, err) := fem->newproblem(spec);
+	if(err != nil)
+		return;
+	fem->solve(p);
 }
 
 errs(s: string): string
@@ -57,6 +68,15 @@ init(nil: ref Draw->Context, argv: list of string)
 		"bc dirichlet 0.0\n" +
 		"solver cg tolerance 1e-8 maxiter 2000";
 	print("mesh %sx%sx%s\n", n, n, n);
+
+	# One discarded GPU solve first. Without it the whole cost of setting
+	# up Metal - device, library, pipeline - lands on whichever solve runs
+	# first and is then divided by however many iterations that mesh
+	# happens to need, which made a small mesh look far more expensive per
+	# solve than a large one. That is a startup cost, not a per-call one,
+	# and reporting it as either without saying so is misleading.
+	warm(base + "\nbackend gpu precision f32");
+
 	run(base + "\nbackend cpu", "cpu f64");
 	run(base + "\nbackend gpu precision f32", "gpu f32");
 }

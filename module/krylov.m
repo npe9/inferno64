@@ -9,11 +9,15 @@ Krylov: module
 	# tree doesn't have) - exactly how real solver libraries (PETSc's
 	# MatShell, Trilinos' operator interface) let you plug in a stencil
 	# instead of a matrix.
-	# Must return a FRESH array each call, not a reused buffer: the
-	# solver updates the residual in place against it, so a shared
-	# buffer would be corrupted between iterations. Every implementation
-	# in this tree (sparse->matvec, pde(2), fem(2), gpu(2)) already
-	# allocates one per call.
+	# The solver MODIFIES the array this returns - GMRES orthogonalises
+	# in place against it - so do not return an array you still need.
+	# Every implementation in this tree (sparse->matvec, pde(2), fem(2),
+	# gpu(2)) allocates a fresh one per call, which is the simplest way
+	# to satisfy that.
+	#
+	# Returning a scratch buffer you reuse happens to work today, because
+	# the basis vector is a copy rather than the array itself. That is a
+	# property of the current implementation, not a promise.
 	Apply: type ref fn(x: array of real): array of real;
 
 	# Configured by a small command language, the vocabulary of the

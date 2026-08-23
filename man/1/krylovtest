@@ -1,0 +1,59 @@
+.TH KRYLOVTEST 1
+.SH NAME
+krylovtest \- test the Krylov solvers
+.SH SYNOPSIS
+.B krylovtest
+.SH DESCRIPTION
+.B Krylovtest
+solves systems whose answers are known in advance with both of
+.IR krylov (2)'s
+methods, and checks the number of iterations each takes as well as the
+residual it reaches.
+.PP
+The iteration count is the point.
+Both solvers build a basis and depend on it staying orthogonal, and the
+vector updates that maintain it happen in place through
+.IR math (2)'s
+.BR axpby ,
+so a mistake there damages a basis vector rather than crashing.
+That does not produce a wrong answer: GMRES with a damaged basis
+usually still converges, only slower.
+A residual check alone would pass.
+The iteration count is what moves.
+.PP
+The systems are diagonal with a chosen number of distinct eigenvalues,
+because a Krylov method converges in at most that many iterations and
+for these matrices takes exactly that many \(em the sharpest statement
+available about whether a basis is doing its job.
+.PP
+One case is deliberately non-symmetric, where conjugate gradients has no
+business converging and GMRES must.
+Without it the whole test could pass on symmetric problems alone, and
+the Arnoldi recurrence \(em the part that actually keeps a stored basis
+\(em would never be exercised on anything CG could not have done.
+A second runs GMRES with a restart shorter than the iterations needed,
+so the basis is rebuilt rather than grown once.
+.SH SOURCE
+.B /appl/cmd/krylovtest.b
+.SH SEE ALSO
+.IR krylov (2),
+.IR math-linalg (2),
+.IR vecbench (1)
+.SH BUGS
+It does not catch an
+.B Apply
+that returns a reused buffer rather than a fresh array.
+That was tried: every count and residual here is unchanged by it,
+because the basis vector GMRES keeps is a copy rather than the array
+.B Apply
+handed back.
+The solver does modify that array, so reusing one is still unwise, but
+that is a caution in
+.IR krylov (2)
+and not something this test can detect.
+.PP
+Dense matrices only, and small ones.
+Nothing here exercises
+.IR sparse (2),
+preconditioning \(em there is none \(em or a matrix badly enough
+conditioned to make either method struggle.
