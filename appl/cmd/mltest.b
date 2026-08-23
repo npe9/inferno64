@@ -194,6 +194,8 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(dev2 != "cpu")
 		bad(sprint("asked for cpu, info reports device %#q", dev2));
 
+	stale();
+
 	if(fail)
 		raise "fail:test";
 	print("  %s: %d bytes of model\n", mod, total);
@@ -241,6 +243,58 @@ loaded(mod, units: string): string
 	if(n <= 0)
 		return sprint("read info: %r");
 	return devof(string ib[0:n]);
+}
+
+# An fd on an instance may outlive the ctl fd that owned it - ml(3) allows
+# that on purpose, so a program can open, write and close "in" as it likes.
+# The slot it names is reused, so such an fd must be refused rather than
+# silently resolving to whoever took the slot next.
+#
+# Without the check this does not fail loudly: the write reaches the new
+# instance and succeeds if that instance has a model loaded. What
+# distinguishes the two cases is which error comes back - "file does not
+# exist" from the stale fd being rejected, against an error belonging to the
+# other instance - so this compares the error and not just success.
+stale()
+{
+	ctl1 := sys->open("/dev/ml/clone", Sys->ORDWR);
+	if(ctl1 == nil){
+		bad(sprint("clone: %r"));
+		return;
+	}
+	b := array[32] of byte;
+	n := sys->read(ctl1, b, len b);
+	if(n <= 0){
+		bad(sprint("read clone: %r"));
+		return;
+	}
+	(id, nil) := str->toint(str->drop(string b[0:n], " "), 10);
+	in1 := sys->open(sprint("/dev/ml/%d/in", id), Sys->OWRITE);
+	if(in1 == nil){
+		bad(sprint("open in: %r"));
+		return;
+	}
+	ctl1 = nil;			# releases the instance, freeing its slot
+
+	ctl2 := sys->open("/dev/ml/clone", Sys->ORDWR);
+	if(ctl2 == nil){
+		bad(sprint("second clone: %r"));
+		return;
+	}
+	n = sys->read(ctl2, b, len b);
+	(id2, nil) := str->toint(str->drop(string b[0:n], " "), 10);
+	if(id2 == id){
+		bad("the second instance got the first one's number");
+		return;
+	}
+
+	if(sys->write(in1, array[8] of byte, 8) >= 0){
+		bad("a stale fd wrote into the instance that reused its slot");
+		return;
+	}
+	err := sprint("%r");
+	if(err != "file does not exist")
+		bad(sprint("stale fd gave %#q, expected the fd to be rejected", err));
 }
 
 devof(info: string): string

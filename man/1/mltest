@@ -63,6 +63,16 @@ line must then say
 a device report that is really a constant string would satisfy every
 other check here.
 .PP
+Last, an fd on an instance is kept open past the
+.B ctl
+fd that owned it \(em which
+.IR ml (3)
+allows on purpose \(em and must then be refused rather than resolving to
+whichever instance reused the slot.
+That one does not fail loudly when it is broken: the write reaches the
+new instance and succeeds if it has a model loaded, so the check
+compares the error returned and not merely that one was.
+.PP
 Given a
 .I model
 argument it uses that file instead, in which case only the checks that

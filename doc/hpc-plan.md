@@ -572,6 +572,22 @@ element width and a byte-order mistake each show up as a visibly wrong number.
 Note `coremltools` is needed only to *build* the fixture, and only in a venv —
 it is not a dependency of the tree or of the test.
 
+Two concurrency bugs were found by review after it worked and fixed before the
+next commit, both worth recording because the passing test could not have
+caught either. `Sys_write` and `Sys_read` **release the VM** around the device
+call (`emu/port/inferno.c`), so two Limbo processes really can be inside
+`devml` at once — which means (a) the read and close paths had to take the same
+qlock the write path already took, or `run`'s `free(m->out)` races a reader and
+`reset`'s `mlclosemodel` races an `info`; and (b) the qid could not name the
+instance by *slot*, because slots are reused and `in`/`out` fds are allowed to
+outlive their `ctl` fd — so a stale fd resolved to whoever took the slot next.
+The instance id now lives in `qid.vers`. The control for that second one is
+worth keeping in mind: with the check removed the stale write did **not**
+obviously fail, it reached the new instance and returned *that* instance's
+error, so the discriminator is which error comes back, not whether one does.
+The same release-the-VM fact means the long CoreML calls do not freeze other
+processes — checked rather than assumed.
+
 Say plainly what this device is not: CoreML runs a compiled model graph and the
 ANE has no public API outside it, so `ml(3)` will not accelerate a CG solve or a
 stencil sweep. It is worth having for inference, not for the numerics. Only

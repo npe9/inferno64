@@ -43,6 +43,14 @@ or
 does not, so a program may open, write and close them as often as it
 likes.
 .PP
+An instance's files may be held open after its
+.B ctl
+file is closed, but they will not then work: the instance is gone, and
+the slot it used may belong to another one, so such a file descriptor is
+refused with
+.B "file does not exist"
+rather than being retargeted.
+.PP
 An instance is a directory rather than a single request/response file
 like
 .IR gpu (3)'s,

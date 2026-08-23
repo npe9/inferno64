@@ -192,6 +192,13 @@ mlfree(Mstate *m)
 	m->inuse = 0;
 }
 
+/*
+ * The qid path carries the slot, which is reused, so it alone is not a name:
+ * an "in" or "out" fd may outlive the ctl fd that owned the instance - that is
+ * allowed on purpose - and would then resolve to whatever instance later took
+ * the slot and write into it. The instance id goes in qid.vers, and a stale fd
+ * is rejected rather than silently retargeted.
+ */
 static Mstate*
 instance(Chan *c)
 {
@@ -200,7 +207,8 @@ instance(Chan *c)
 
 	s = SLOT(c->qid);
 	lock(&mtablock);
-	if(s < 0 || s >= nmtab || mtab[s] == nil || !mtab[s]->inuse){
+	if(s < 0 || s >= nmtab || mtab[s] == nil || !mtab[s]->inuse ||
+	   mtab[s]->id != (int)c->qid.vers){
 		unlock(&mtablock);
 		return nil;
 	}
@@ -260,8 +268,9 @@ mlgen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 			return -1;
 		}
 		snprint(up->genbuf, sizeof(up->genbuf), "%d", mtab[i]->id);
+		slot = mtab[i]->id;
 		unlock(&mtablock);
-		mkqid(&q, MKPATH(i, Q3rd), 0, QTDIR);
+		mkqid(&q, MKPATH(i, Q3rd), slot, QTDIR);
 		devdir(c, q, up->genbuf, 0, eve, DMDIR|0555, dp);
 		return 1;
 	}
@@ -269,7 +278,7 @@ mlgen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 	/* third level: the instance's files */
 	if(s < 0 || s >= nelem(files))
 		return -1;
-	mkqid(&q, MKPATH(SLOT(c->qid), ftype[s]), 0, QTFILE);
+	mkqid(&q, MKPATH(SLOT(c->qid), ftype[s]), c->qid.vers, QTFILE);
 	devdir(c, q, files[s], 0, eve, ftype[s] == Qinfo ? 0444 : 0666, dp);
 	return 1;
 }
@@ -295,7 +304,7 @@ mlstat(Chan *c, uchar *db, int n)
 static Chan*
 mlopen(Chan *c, int omode)
 {
-	int s;
+	int s, i;
 	Qid q;
 
 	if(c->qid.type & QTDIR){
@@ -311,7 +320,10 @@ mlopen(Chan *c, int omode)
 		if(s < 0)
 			error(Enomem);
 		/* the clone fd becomes this instance's ctl, as /dev/draw/new does */
-		mkqid(&q, MKPATH(s, Qctl), 0, QTFILE);
+		lock(&mtablock);
+		i = mtab[s]->id;
+		unlock(&mtablock);
+		mkqid(&q, MKPATH(s, Qctl), i, QTFILE);
 		c->qid = q;
 	}
 	c->mode = openmode(omode);
@@ -337,7 +349,15 @@ mlclose(Chan *c)
 	m = instance(c);
 	if(m == nil)
 		return;
+	/*
+	 * Under the same lock every other operation takes. Sys_write and
+	 * Sys_read release the VM before calling in here, so another process
+	 * really can be inside a write on this instance right now, and
+	 * freeing its buffers from underneath it would be a use-after-free.
+	 */
+	qlock(&m->l);
 	mlfree(m);
+	qunlock(&m->l);
 }
 
 static long
@@ -354,10 +374,26 @@ mlread(Chan *c, void *va, long n, vlong off)
 	if(m == nil)
 		error(Enonexist);
 
+	/*
+	 * Held for the same reason mlwrite holds it: "reset" frees the
+	 * backend model and "run" frees and replaces m->out, either of which
+	 * can be running in another process while this one is reading.
+	 * Checking m->m against nil and then calling through it is only safe
+	 * if nothing can clear it in between.
+	 */
+	qlock(&m->l);
+	if(waserror()){
+		qunlock(&m->l);
+		nexterror();
+	}
+
 	switch(TYPE(c->qid)){
 	case Qctl:
 		snprint(up->genbuf, sizeof(up->genbuf), "%11d ", m->id);
-		return readstr(off, va, n, up->genbuf);
+		rv = readstr(off, va, n, up->genbuf);
+		poperror();
+		qunlock(&m->l);
+		return rv;
 
 	case Qinfo:
 		if(m->m == nil)
@@ -376,6 +412,8 @@ mlread(Chan *c, void *va, long n, vlong off)
 		rv = readstr(off, va, n, buf);
 		poperror();
 		free(buf);
+		poperror();
+		qunlock(&m->l);
 		return rv;
 
 	case Qout:
@@ -383,14 +421,15 @@ mlread(Chan *c, void *va, long n, vlong off)
 		 * Whatever "run" fetched, read like an ordinary file so a
 		 * short read does not lose the tail.
 		 */
-		if(m->out == nil)
-			return 0;
-		if(off >= m->nout)
-			return 0;
-		rv = m->nout - off;
-		if(rv > n)
-			rv = n;
-		memmove(va, m->out + off, rv);
+		rv = 0;
+		if(m->out != nil && off < m->nout){
+			rv = m->nout - off;
+			if(rv > n)
+				rv = n;
+			memmove(va, m->out + off, rv);
+		}
+		poperror();
+		qunlock(&m->l);
 		return rv;
 	}
 	error(Ebadarg);
