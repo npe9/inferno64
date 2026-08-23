@@ -19,16 +19,38 @@ sample of the solution for each.
 .I N
 gives the mesh size and defaults to 12, meaning 12x12x12.
 .PP
-It exists because whether offloading helps depends entirely on problem
-size, and the answer is not the one people assume.
-Per-call cost dominates small problems, and single precision costs
-extra CG iterations, so the GPU is several times
-.I slower
-until the problem is big enough.
-On this machine break-even is around nine thousand nodes.
-See
-.IR gpu (3)
-for the measurements.
+It exists because whether offloading helps depends entirely on what it
+is compared against, and the answer is not the one people assume.
+.PP
+It used to report a break-even around nine thousand nodes, above which
+the GPU won.
+That was measured against a matvec written in Limbo.
+Since
+.IR sparse (2)
+began calling
+.IR math (2)'s
+.B spmv
+builtin, which is nine to ten times faster, there is no break-even at
+any size that fits in memory here:
+.IP
+.EX
+mesh        nodes   cpu f64   gpu f32
+12x12x12     2197      0ms      74ms
+16x16x16     4913      2ms      36ms
+20x20x20     9261      2ms      34ms
+24x24x24    15625      6ms      30ms
+.EE
+.PP
+The GPU column is roughly flat while the CPU column grows with the
+problem, which says that path is dominated by per-call cost rather than
+arithmetic.
+Single precision also costs extra CG iterations \(em 39 against 34 at
+24\(mu24\(mu24 \(em so the two columns are not even the same solve, and
+any speedup quoted from them should carry both iteration counts.
+.PP
+The lesson worth keeping is about the baseline, not the GPU: an
+offload measured against an interpreted loop is measuring the
+interpreter.
 .PP
 Large meshes need more heap than the default:
 .EX

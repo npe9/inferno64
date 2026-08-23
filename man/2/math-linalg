@@ -1,6 +1,6 @@
 .TH MATH-LINALG 2
 .SH NAME
-Math: dot, norm1, norm2, iamax, axpby, gemm, sort \- linear algebra primitives
+Math: dot, norm1, norm2, iamax, axpby, spmv, gemm, sort \- linear algebra primitives
 .SH SYNOPSIS
 .EX
 include	"math.m";
@@ -10,6 +10,7 @@ dot: fn(x, y: array of real): real;
 norm1, norm2: fn(x: array of real): real;
 iamax: fn(x: array of real): int;
 axpby: fn(a: real, x: array of real, b: real, y: array of real);
+spmv: fn(rowptr, colidx: array of int, val, x, y: array of real);
 gemm: fn(transa, transb: int,  # upper case N or T
 		m, n, k: int, alpha: real,
 		a: array of real, lda: int,
@@ -64,6 +65,34 @@ took a 24\(mu24\(mu24
 .IR fem (2)
 Poisson solve from 54ms to 47ms on the CPU and from 44ms to about 25ms
 on the GPU backend, with the iteration count and residual unchanged.
+.PP
+.PP
+.BI spmv( "rowptr , colidx , val , x , y" )
+computes
+.I y
+=
+.IR Ax ,
+where
+.I A
+is sparse in compressed sparse row form:
+.I rowptr
+has one entry per row plus a final total,
+.I colidx
+and
+.I val
+one each per nonzero, and
+.I y
+is as long as there are rows.
+Column indices are bounds-checked, and a matrix that does not describe
+itself consistently raises the same error as a length mismatch.
+.PP
+This is the operation a Krylov solve spends nearly all of its time in \(em
+at 24\(mu24\(mu24 about 360us of matvec against 12us of everything else \(em
+and it is nine to ten times faster than the same loop in Limbo.
+The row loop and its summation order are unchanged, so results differ from
+the Limbo version only by the compiler contracting a multiply and an add into
+a fused one: about two units in the last place, which does not change a CG
+iteration count.
 .PP
 For the infinity norm, the function
 iamax(x)

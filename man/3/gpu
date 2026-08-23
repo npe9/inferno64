@@ -191,18 +191,31 @@ A
 .IR fem (2)
 Poisson solve on this machine, cpu f64 against gpu f32:
 .EX
-	mesh      nodes    cpu     gpu
-	12x12x12   2197     4ms    32ms
-	16x16x16   4913    10ms    26ms
-	20x20x20   9261    26ms    26ms
-	24x24x24  15625    52ms    35ms
-	30x30x30  29791   128ms    62ms
+	mesh      nodes   cpu f64   gpu f32
+	12x12x12   2197      0ms      74ms
+	16x16x16   4913      2ms      36ms
+	20x20x20   9261      2ms      34ms
+	24x24x24  15625      6ms      30ms
 .EE
-Break-even is around nine thousand nodes; below that the per-call cost
-of crossing this interface dominates, and above it the GPU pulls ahead,
-reaching roughly twice the speed at thirty thousand.
-Note that f32 also costs iterations \(em 52 against 42 at the largest
-size \(em so the gain per matvec is larger than the gain per solve.
+There is no break-even at any size that fits in memory here.
+The GPU column is roughly flat while the CPU column grows with the
+problem, which says this path is dominated by the per-call cost of
+crossing the interface rather than by arithmetic.
+Note that f32 also costs iterations \(em 39 against 34 at
+24\(mu24\(mu24 \(em so the two columns are not the same solve, and any
+comparison drawn from them should carry both counts.
+.PP
+This table used to show the GPU winning above about nine thousand nodes.
+Nothing about this device changed; the baseline did.
+.IR sparse (2)
+now computes its matvec through
+.IR math (2)'s
+.B spmv
+builtin instead of a loop in Limbo, which is nine to ten times faster,
+and an offload measured against an interpreted loop was measuring the
+interpreter.
+Reducing the per-call cost is what would make this device pay, and it
+has not been attempted.
 .SH ENVIRONMENT
 .TP
 .B INFERNO_NOGPUHW

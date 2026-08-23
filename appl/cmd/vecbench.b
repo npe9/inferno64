@@ -19,6 +19,9 @@ include "sys.m";
 	print: import sys;
 include "math.m";
 	math: Math;
+include "sparse.m";
+	sparse: Sparse;
+	CSR: import sparse;
 include "draw.m";
 Vecbench: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -50,10 +53,25 @@ alloconly(n: int): int
 	return len z;
 }
 
+# What sparse(2)'s matvec was before it called math->spmv, kept here so the
+# comparison is against the Limbo loop and not against spmv itself.
+limbomatvec(m: ref CSR, x: array of real): array of real
+{
+	y := array[m.n] of real;
+	for(row := 0; row < m.n; row++){
+		s := 0.0;
+		for(jj := m.rowptr[row]; jj < m.rowptr[row+1]; jj++)
+			s += m.val[jj]*x[m.colidx[jj]];
+		y[row] = s;
+	}
+	return y;
+}
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	math = load Math Math->PATH;
+	sparse = load Sparse Sparse->PATH;
 	n := 13824;
 	reps := 2000;
 	argv = tl argv;
@@ -98,6 +116,53 @@ init(nil: ref Draw->Context, argv: list of string)
 		math->axpby(1.0, x, 1.0, z);
 	tcaxpy := sys->millisec()-t0;
 
+	# The matvec, which is where a Krylov solve actually spends its time:
+	# a 7-point stencil in CSR, the shape fem(2) assembles.
+	nz := 7;
+	rowptr := array[n+1] of int;
+	colidx := array[n*nz] of int;
+	val := array[n*nz] of real;
+	for(r := 0; r < n; r++){
+		rowptr[r] = r*nz;
+		for(c := 0; c < nz; c++){
+			colidx[r*nz+c] = (r + c*911) % n;
+			# Deliberately not exactly representable. With 1.0 and
+			# 6.0 here the C and Limbo loops agreed bit for bit and
+			# the comparison below proved nothing: the C compiler
+			# contracts the multiply-add into an FMA, which only
+			# rounds differently when the values actually need
+			# rounding.
+			val[r*nz+c] = 1.0/real (c+3);
+		}
+		val[r*nz] = 6.0/7.0;
+	}
+	rowptr[n] = n*nz;
+	m := ref CSR(n, rowptr, colidx, val);
+	mreps := reps/10;
+	t0 = sys->millisec();
+	for(i = 0; i < mreps; i++)
+		limbomatvec(m, x);
+	tmv := sys->millisec()-t0;
+
+	yy := array[n] of real;
+	t0 = sys->millisec();
+	for(i = 0; i < mreps; i++)
+		math->spmv(m.rowptr, m.colidx, m.val, x, yy);
+	tcmv := sys->millisec()-t0;
+
+	# Same answer, not just faster.
+	ref2 := limbomatvec(m, x);
+	worst := 0.0;
+	for(i = 0; i < n; i++){
+		d := yy[i] - ref2[i];
+		if(d < 0.0)
+			d = -d;
+		if(ref2[i] != 0.0)
+			d /= math->fabs(ref2[i]);
+		if(d > worst)
+			worst = d;
+	}
+
 	t0 = sys->millisec();
 	k := 0;
 	for(i = 0; i < reps; i++)
@@ -113,6 +178,10 @@ init(nil: ref Draw->Context, argv: list of string)
 	print("  axpy (in place)%7.1f\n", real tinto*1000.0/real reps);
 	print("  axpby (math2)  %7.1f   %.1fx\n", real tcaxpy*1000.0/real reps,
 		real tinto/real tcaxpy);
+	print("  matvec (Limbo) %7.1f   (%d nonzeros)\n",
+		real tmv*1000.0/real mreps, n*nz);
+	print("  spmv   (math2) %7.1f   %.1fx, worst relative difference %g\n",
+		real tcmv*1000.0/real mreps, real tmv/real tcmv, worst);
 	print("  bare array[n]  %7.1f\n", real tjustalloc*1000.0/real reps);
 	print("  alloc share of axpy: %.0f%%\n",
 		100.0*(real talloc - real tinto)/real talloc);

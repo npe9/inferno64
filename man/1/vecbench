@@ -24,11 +24,14 @@ an
 .I axpy
 written in Limbo both allocating its result and writing in place,
 .BR math\->axpby ,
-and a bare
+a bare
 .B array[n]
-allocation on its own.
+allocation on its own, and a 7-point CSR matvec both in Limbo and
+through
+.BR math\->spmv .
 .PP
-The comparison it exists for is the last three.
+The comparison it exists for is the two axpy rows against the bare
+allocation.
 The obvious explanation for these operations costing 40% of a
 GPU-backed solve was Limbo heap traffic, since every one of them
 allocated a fresh array.
@@ -41,6 +44,17 @@ The JIT is on by default and matters enormously here \(em the same
 loops run about fourteen times slower under
 .B -c0
 \(em so comparing the two is part of what this is for.
+.PP
+The matvec is included because it is where the time actually goes: at
+this length it costs about 360 microseconds in Limbo against 12 for all
+the vector operations put together.
+Its check is a worst relative difference rather than an equality, and
+the matrix is deliberately built from values that are not exactly
+representable.
+An earlier version used 1.0 and 6.0, and reported the two loops as
+identical to the bit \(em which proved nothing, because the compiler
+contracts the multiply and add into a fused one and that only rounds
+differently when the values need rounding at all.
 .SH EXAMPLES
 Compare compiled against interpreted:
 .IP

@@ -27,6 +27,13 @@ Math: module
 	# y = a*x + b*y, in place; BLAS daxpby. The one vector update a
 	# Krylov solve does most - CG does three per iteration.
 	axpby:		fn(a: real, x: array of real, b: real, y: array of real);
+
+	# y = A*x, A sparse in compressed sparse row form: rowptr has one
+	# entry per row plus a final total, colidx and val one each per
+	# nonzero. y must be as long as there are rows. This is the
+	# operation a Krylov solve spends nearly all its time in.
+	spmv:		fn(rowptr, colidx: array of int,
+			val, x, y: array of real);
 	cbrt:		fn(x: real): real;
 	ceil:		fn(x: real): real;
 	copysign:	fn(x, s: real): real;

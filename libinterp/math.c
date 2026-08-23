@@ -879,6 +879,54 @@ Math_dot(void *fp)
 	*f->ret = dot(f->x->len, (double*)(f->x->data), (double*)(f->y->data));
 }
 
+/*
+ * y = A*x for a sparse matrix in compressed sparse row form.
+ *
+ * This is where a Krylov solve actually spends its time: with the vector
+ * operations on math(2)'s builtins, a 24-cubed fem(2) Poisson iteration is
+ * about 360us of matvec against 12us of everything else.
+ *
+ * The loop is here rather than in libmath/blas.c because it has to know how
+ * Limbo represents an array of int, and that is WORD - 64 bits in this tree,
+ * not C int. Getting that wrong reads every other index; math.c already
+ * carries a comment about it biting someone in Math_export_int.
+ *
+ * Column indices are bounds-checked. They come from Limbo and a wrong one
+ * would read outside x, so this is not optional however much the branch
+ * costs - and it costs little, being perfectly predicted for any real matrix.
+ */
+void
+Math_spmv(void *fp)
+{
+	F_Math_spmv *f;
+	WORD *rowptr, *colidx;
+	double *val, *x, *y, s;
+	int n, nnz, row, jj, nx;
+
+	f = fp;
+	n = f->rowptr->len - 1;
+	nnz = f->colidx->len;
+	nx = f->x->len;
+	if(n < 0 || f->val->len != nnz || f->y->len != n)
+		error(exMathia);	/* incompatible lengths */
+	rowptr = (WORD*)(f->rowptr->data);
+	colidx = (WORD*)(f->colidx->data);
+	val = (double*)(f->val->data);
+	x = (double*)(f->x->data);
+	y = (double*)(f->y->data);
+	for(row = 0; row < n; row++){
+		if(rowptr[row] < 0 || rowptr[row+1] > nnz || rowptr[row] > rowptr[row+1])
+			error(exMathia);
+		s = 0.0;
+		for(jj = (int)rowptr[row]; jj < (int)rowptr[row+1]; jj++){
+			if((uvlong)colidx[jj] >= (uvlong)nx)
+				error(exMathia);
+			s += val[jj]*x[colidx[jj]];
+		}
+		y[row] = s;
+	}
+}
+
 void
 Math_axpby(void *fp)
 {

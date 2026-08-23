@@ -38,6 +38,23 @@ the way
 .IR pde (2)'s
 matrix-free implicit solvers are.
 .PP
+.B Matvec
+computes the product through
+.IR math (2)'s
+.B spmv
+builtin, which is nine to ten times faster than the Limbo loop it
+replaced and is where a Krylov solve spends nearly all its time.
+The row loop and its summation order are unchanged, so results differ
+only by the compiler contracting a multiply and an add into a fused
+one \(em about two units in the last place.
+It falls back to the Limbo loop if
+.IR math (2)
+cannot be loaded, so this is a speed change and not a new dependency.
+Each call returns a fresh array, as
+.IR krylov (2)
+requires of any
+.BR Apply .
+.PP
 .B Newfrompattern
 builds the symbolic pattern once from
 .IR elems ,

@@ -66,18 +66,37 @@ to report the wrong precision for as long as it did.
 serial kernels by explicit decision — this tree has no distributed-memory story,
 and inventing one was judged a different project, not an extension.
 
-### GPU offload — working, and faster than the CPU
+### GPU offload — working, and now a loss at every size that fits here
 
-- `gpu(3)` (`emu/port/devgpu.c`) — Styx device, `/dev/gpuclone`. One handle per
-  uploaded matrix; matrix uploads once and stays resident, only the vector
-  crosses per matvec. Commit `0992a316`.
-- `emu/MacOSX/win-gpu.m` — real `MTLComputePipelineState`, one GPU thread per
-  matrix row, plugged in via nullable `gpuhw*` hooks (same convention
-  `devdraw.c` uses for `gpudrawfillpoly3d`). Commit `8785cb06`.
-- Binary wire format, commit `eef811eb`. 32-bit ints, IEEE754 single, big-endian
-  — exactly what `math->export_int`/`export_real32` emit.
+**Read this before doing any more GPU work.** The measurements below that made
+offloading look like a win were taken against a CPU matvec written in Limbo.
+`sparse->matvec` now calls `math->spmv`, a C builtin, and is **9-10x faster**
+(commit follows this note). Re-measured against that baseline, `gpubench(1)`
+says:
 
-Measured with `gpubench(1)`, cpu f64 vs gpu f32:
+```
+mesh      nodes   cpu f64   gpu f32
+12x12x12   2197      0ms      74ms
+16x16x16   4913      2ms      36ms
+20x20x20   9261      2ms      34ms
+24x24x24  15625      6ms      30ms
+```
+
+The GPU column is roughly *flat* while the CPU column scales with the problem,
+which says the GPU path is dominated by per-call overhead rather than
+arithmetic — consistent with the note below that 0.44ms per matvec at 30 cubed
+is overhead, not FLOPs. There is no break-even at any size that fits in memory
+on this machine (`gpubench` panics at mesh 28 and above).
+
+None of the GPU work is wrong and none of it should be deleted: the device, the
+Metal kernel, the residency and the precision query all do what they say. What
+changed is the baseline they were being compared against, and with an honest
+one they do not currently pay. **Items 2 and 3 below both need re-deriving from
+this table rather than the old one.** The most likely conclusion is that the
+per-call overhead has to go before anything else matters, which is a different
+piece of work from making the vector operations resident.
+
+The old table, kept so the change is legible — same code, Limbo matvec:
 
 ```
 mesh      nodes    cpu     gpu
@@ -88,8 +107,16 @@ mesh      nodes    cpu     gpu
 30x30x30  29791   128ms    62ms   <- 2.1x
 ```
 
-**Offloading is a loss below ~9k nodes.** Per matvec the win is larger than per
-solve, because f32 costs iterations (52 vs 42 at 30³).
+### What the GPU offload is
+
+- `gpu(3)` (`emu/port/devgpu.c`) — Styx device, `/dev/gpuclone`. One handle per
+  uploaded matrix; matrix uploads once and stays resident, only the vector
+  crosses per matvec. Commit `0992a316`.
+- `emu/MacOSX/win-gpu.m` — real `MTLComputePipelineState`, one GPU thread per
+  matrix row, plugged in via nullable `gpuhw*` hooks (same convention
+  `devdraw.c` uses for `gpudrawfillpoly3d`). Commit `8785cb06`.
+- Binary wire format, commit `eef811eb`. 32-bit ints, IEEE754 single, big-endian
+  — exactly what `math->export_int`/`export_real32` emit.
 
 Metal has no `double`, so the hardware path is f32-only. `gpu(2)`'s `precision`
 verb is therefore load-bearing, not decoration: `apply()` asks the device (`P`
@@ -116,7 +143,16 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    not: they are single-threaded numerics plus a device. Do it when a
    concurrency change needs validating, or when someone has the patience for a
    ~12% reproducer; do not let it block the GPU work again.
-2. **Device-resident vectors — this is items 2 and 4 together, and doing
+2. **Device-resident vectors — SUSPENDED pending re-derivation.** The table
+   this item rests on was measured against a Limbo matvec; with `math->spmv`
+   the CPU solve at 24 cubed is 6ms against the GPU's 30ms, so "the vector ops
+   are 40% of a GPU-backed solve" is now a statement about a path five times
+   slower than not offloading at all. Fix the GPU path's per-call overhead
+   first, or re-measure and find this item is not worth doing. What follows is
+   the original argument, left intact because its *reasoning* about round trips
+   still holds — only its numbers are stale.
+
+   **Device-resident vectors — this is items 2 and 4 together, and doing
    either alone is wrong.** `dot`/`axpy`/`norm` still run on the CPU, and the
    plan used to list "put them on the GPU" as its own item. Measured, that
    framing is wrong in both directions.
@@ -206,7 +242,12 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    `gpubench` panics with "not enough memory" at mesh 28 and above on this
    machine regardless of `-pheap`/`-pmain`, and did so before this change too.
 
-3. **`amr(2)` and `pde(2)` on GPU.** Both are *stencil* sweeps, not SpMV, so
+3. **`amr(2)` and `pde(2)` on GPU — also needs re-deriving** against the C
+   matvec baseline above. Note that a stencil sweep in Limbo is exactly the
+   kind of loop `math->spmv` just showed is 9-10x off what C does, so a C
+   stencil builtin is the cheaper experiment and should be run first.
+
+   Both are *stencil* sweeps, not SpMV, so
    they need a second Metal kernel — and no matrix upload at all, so the
    per-call overhead that dominates small SpMV problems mostly disappears.
 

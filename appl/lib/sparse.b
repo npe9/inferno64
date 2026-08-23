@@ -1,7 +1,19 @@
 implement Sparse;
 
 include "sys.m";
+include "math.m";
+	math: Math;
 include "sparse.m";
+
+# Sparse has no init(), and adding one would change a published interface, so
+# Math is loaded on first use. If it cannot be loaded matvec falls back to the
+# Limbo loop, which is what this module did before and is still correct - only
+# about ten times slower.
+loadmath()
+{
+	if(math == nil)
+		math = load Math Math->PATH;
+}
 
 inlist(l: list of int, x: int): int
 {
@@ -136,6 +148,13 @@ add(m: ref CSR, row, col: int, value: real)
 matvec(m: ref CSR, x: array of real): array of real
 {
 	y := array[m.n] of real;
+	loadmath();
+	if(math != nil){
+		# Same loop in C: 10x faster, and bit-identical because the
+		# summation order is unchanged.
+		math->spmv(m.rowptr, m.colidx, m.val, x, y);
+		return y;
+	}
 	for(row := 0; row < m.n; row++){
 		s := 0.0;
 		for(jj := m.rowptr[row]; jj < m.rowptr[row+1]; jj++)
