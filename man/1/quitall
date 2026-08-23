@@ -1,6 +1,6 @@
 .TH QUITALL 1
 .SH NAME
-quitall \- end the session
+quitall \- kill every process and exit emu
 .SH SYNOPSIS
 .B quitall
 .SH DESCRIPTION

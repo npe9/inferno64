@@ -167,6 +167,17 @@ sometimes be impossible to follow: the prog the recording says to run next is
 blocked, and the prog that would wake it is the one being held back. That is
 the honest reason it is not built yet, rather than an oversight.
 
+**Does the recorder move what it measures?** Every number above was taken with
+recording on, and recording takes a lock and a wakeup on the scheduler's hot
+path — the "beware diagnostics that move the bug" trap, live. Schedules cannot
+be compared with the recorder off, so the check is indirect: `refstress`'s
+host-call concurrency count is order-sensitive and needs no recording. Twenty
+runs each way gave min 3 / max 16 / median 16 either side (mean 13.3 off, 11.7
+on, against a distribution that is mostly 16 with a tail at 3–4), and the
+serialisation invariant held in all forty. So the recorder does not remove the
+concurrency it observes — not proof it perturbs nothing, but enough to stop the
+sequential row being an artefact of the instrument.
+
 Two bugs found by a negative control rather than inspection. Reading the module
 name through `p->R.M` faults during teardown: `delprog()` both releases the slot
 and takes it back after `progexit()` has run `destroystack()`. `sh -c 'echo one;
