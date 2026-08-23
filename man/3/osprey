@@ -191,6 +191,23 @@ each other's word about who is asking and nobody else's; a machine with
 no key takes every word it is given, which is what it did before there
 were keys at all.
 .TP
+.BI pair " name " [ offer | listen ]
+Agree a key with whoever is on the other end of that interface, rather
+than have the same one typed into both machines.  One says
+.BR listen ,
+the other says
+.BR offer ;
+each picks a number it keeps and sends what the published group makes of
+it, and both arrive at the same secret without it ever crossing the
+wire.  What this does not do is say who is on the other end: whoever
+answers first is whom the key was agreed with.  Both machines then say
+the same
+.B key
+line in
+.BR status ,
+and somebody who can see both compares them.  That is the whole of the
+authentication, and it is a person.
+.TP
 .BI pipether " name " [ on | off ]
 Answer
 .IR pip (5)
@@ -308,6 +325,15 @@ charged to it, the number of context switches, the current task and the
 run queue in deadline order.  A container's line gives its core, state,
 CPU budget and use, period, absolute deadline, best-effort time, periods
 elapsed, mode, memory and network use against their caps, and the occupancy of its two rings.
+A last
+.B key
+line says what key this machine holds \- not the key, what SHA1 makes of
+it \- or
+.B none
+if it holds none.  Two machines that agreed a key say the same thing
+there; see
+.B TICKETS
+below.
 .PP
 Reading
 .B reply
@@ -646,6 +672,13 @@ of
 .IR pip (5)
 presents one; see there for what a session does with it.
 .PP
+.PP
+A grant taken back stops a ticket that was made under it: whether the
+container is still that name's is asked again at every read, write,
+close and stream, not only when the fid was opened, so a
+.B revoke
+reaches a session that is already at work and a stream already running.
+.PP
 A checkpoint read from
 .B snap
 is signed the same way, with a last line
@@ -712,6 +745,15 @@ interface's pool can be lent them; of the drivers in this kernel that is
 the igbe.  And a card writing into memory a process has mapped is a card
 writing where that process may write too, which a container that is not
 trusted with its own packets should not be given.
+.PP
+A key is agreed with whoever answers, not with whoever was meant.
+.B pair
+says nothing about who is on the other end; the fingerprints in
+.B status
+are for a person to compare, and until somebody has compared them the key
+may have been agreed with anybody who was on the wire.  Nothing repeats
+the exchange, so a key lasts until it is changed, and changing it makes
+every ticket and every checkpoint written under the old one worthless.
 .PP
 The kernel address in each ring head is visible to whoever may attach
 that slice.

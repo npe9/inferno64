@@ -23,6 +23,7 @@
 
 #include	"osprey.h"
 #include	<libsec.h>
+#include	<mp.h>
 #include	"pip.h"
 
 enum {
@@ -40,6 +41,7 @@ enum {
 	Nfd		= 16,		/* chans a container may hold open */
 	Rbtlr		= 16,		/* allocb's trailer room, kept clear of */
 	Pipethertype	= 0x910a,	/* frames that carry a pi-p group */
+	Pairethertype	= 0x910b,	/* and that agree a key */
 	Pipframe	= 1514,
 	Etherhdr	= 14,
 	Minframe	= 60,
@@ -165,6 +167,173 @@ enum {
 
 static uchar ospreykey[Keylen];
 static int ospreykeyset;
+
+/*
+ * The key agreed rather than typed in twice.  Two machines each pick a
+ * number they keep, send what it makes of a public one, and arrive at
+ * the same secret without it ever crossing the wire.  This is Oakley
+ * group 2 -- RFC 2409's 1024-bit prime, and 2 -- which is published
+ * exactly so that everybody may use the same one.
+ *
+ * What this does not do is say who is on the other end.  Whoever answers
+ * first is whom the key is agreed with, so both machines say what
+ * fingerprint they arrived at and somebody who can see both compares
+ * them.  That is the whole of the authentication and it is a person.
+ */
+static char *pairprime =
+	"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
+	"29024E088A67CC74020BBEA63B139B22514A08798E3404DD"
+	"EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
+	"E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
+	"EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381"
+	"FFFFFFFFFFFFFFFF";
+
+static void ospreyhex(uchar*, int, char*);
+static Chan *etherconv(char*, int, Chan**);
+
+static char ospreyfinger[2*8+1];	/* what key this machine arrived at */
+
+static void
+pairgen(uchar *p, int n)
+{
+	randomread(p, n);
+}
+
+/*
+ * What this machine offers: g**x mod p, keeping x.  The caller frees
+ * nothing; what is kept is returned and what is not is let go here.
+ */
+static int
+pairoffer(mpint **xp, mpint **pp, uchar *out, int nout)
+{
+	mpint *p, *g, *x, *y;
+	int n;
+
+	p = strtomp(pairprime, nil, 16, nil);
+	g = uitomp(2, nil);
+	x = mprand(256, pairgen, nil);
+	y = mpnew(0);
+	if(p == nil || g == nil || x == nil || y == nil)
+		return -1;
+	if(mpcmp(p, mpzero) == 0)	/* the group did not parse */
+		return -1;
+	mpexp(g, x, p, y);
+	n = mptobe(y, out, nout, nil);
+	mpfree(g);
+	mpfree(y);
+	*xp = x;
+	*pp = p;
+	return n;
+}
+
+/*
+ * And what it makes of what it was offered: the same secret on both
+ * sides, having crossed nothing.  The key is what SHA1 makes of it.
+ */
+static void
+pairfinish(mpint *x, mpint *p, uchar *in, int n)
+{
+	mpint *ytheirs, *z;
+	uchar *b;
+	int k;
+
+	ytheirs = betomp(in, n, nil);
+	z = mpnew(0);
+	if(ytheirs == nil || z == nil)
+		return;
+	mpexp(ytheirs, x, p, z);
+	b = smalloc(256);
+	k = mptobe(z, b, 256, nil);
+	if(k > 0){
+		uchar h[SHA1dlen];
+
+		ospreykeyset = 0;	/* nothing checks against half a key */
+		sha1(b, k, ospreykey, nil);
+		sha1(ospreykey, Keylen, h, nil);
+		ospreyhex(h, 8, ospreyfinger);
+		ospreykeyset = 1;
+	}
+	free(b);
+	mpfree(ytheirs);
+	mpfree(z);
+}
+
+typedef struct Pairarg Pairarg;
+struct Pairarg {
+	char	ifc[32];
+	int	offer;
+};
+
+/*
+ * Agree a key with whoever is on the other end of an interface.  One
+ * machine listens and one offers; both end up holding the same key and
+ * saying the same fingerprint, and neither of them has been told what
+ * the other is called.
+ */
+static void
+pairproc(void *a)
+{
+	Pairarg *pa;
+	Chan *dc, *cc;
+	mpint *x, *p;
+	uchar *in, *out;
+	long n;
+	int k;
+
+	pa = a;
+	in = out = nil;
+	dc = cc = nil;
+	x = p = nil;
+	if(waserror())
+		goto done;
+	in = smalloc(Pipframe);
+	out = smalloc(Pipframe);
+	dc = etherconv(pa->ifc, Pairethertype, &cc);
+	if((k = pairoffer(&x, &p, out+Etherhdr+3, Pipframe-Etherhdr-3)) <= 0)
+		error("cannot make an offer");
+	memset(out, 0xff, 6);		/* to whoever is out there */
+	memset(out+6, 0, 6);
+	out[12] = Pairethertype >> 8;
+	out[13] = Pairethertype;
+	out[Etherhdr] = pa->offer ? 1 : 2;
+	out[Etherhdr+1] = k >> 8;
+	out[Etherhdr+2] = k;
+	n = Etherhdr + 3 + k;
+	while(n < Minframe)
+		out[n++] = 0;
+
+	if(pa->offer)
+		devtab[dc->type]->write(dc, out, n, 0);
+	for(;;){
+		k = devtab[dc->type]->read(dc, in, Pipframe, 0);
+		if(k <= Etherhdr + 3)
+			continue;
+		if(in[Etherhdr] != (pa->offer ? 2 : 1))
+			continue;	/* our own frame, or the wrong half */
+		break;
+	}
+	if(!pa->offer){
+		memmove(out, in+6, 6);	/* back to whoever asked */
+		devtab[dc->type]->write(dc, out, n, 0);
+	}
+	k = (in[Etherhdr+1]<<8) | in[Etherhdr+2];
+	if(k > 0 && Etherhdr + 3 + k <= Pipframe)
+		pairfinish(x, p, in+Etherhdr+3, k);
+	poperror();
+done:
+	if(x != nil)
+		mpfree(x);
+	if(p != nil)
+		mpfree(p);
+	if(dc != nil)
+		cclose(dc);
+	if(cc != nil)
+		cclose(cc);
+	free(in);
+	free(out);
+	free(pa);
+	pexit("osprey pair", 1);
+}
 
 static void
 ospreyhex(uchar *h, int n, char *out)
@@ -336,6 +505,7 @@ enum {
 	CMrevoke,
 	CMpipether,
 	CMkey,
+	CMpair,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -372,6 +542,7 @@ static Cmdtab ospreycmd[] = {
 	CMrevoke,	"revoke",	3,
 	CMpipether,	"pipether",	3,
 	CMkey,		"key",		2,
+	CMpair,		"pair",		3,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -1321,6 +1492,36 @@ pipfind(uvlong sid)
 	return nil;
 }
 
+/*
+ * Who a session asks as.  A ticket says so and is signed; without one it
+ * is whoever the transport says, which on a wire is nobody -- a frame
+ * may say anything, so it says nothing.
+ */
+static char*
+pipwho(Pipsession *ps)
+{
+	if(ps->user[0] != '\0')
+		return ps->user;
+	return pipviafile && up != nil ? up->user : nil;
+}
+
+/*
+ * Whether the container a fid names is still that session's to have.
+ * Asked again at every use, not only at the open: a grant taken back
+ * while a fid is open takes effect at the next thing done with it.
+ */
+static int
+pipstill(Pipsession *ps, Pipfid *f)
+{
+	if(f->id == 0)		/* the root is nobody's */
+		return 1;
+	if(!ospreymay(ospreylookup(f->id), pipwho(ps)))
+		return 0;
+	if(ps->user[0] != '\0' && ps->authid != f->id)
+		return 0;
+	return 1;
+}
+
 static Pipfid*
 pipfid(Pipsession *ps, ulong fid)
 {
@@ -1561,12 +1762,7 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		 * nobody -- a frame may say anything, so it says nothing.
 		 */
 		if(id != 0){
-			char *who;
-
-			who = ps->user[0] != '\0' ? ps->user
-				: pipviafile ? (up != nil ? up->user : nil)
-				: nil;
-			if(!ospreymay(ospreylookup(id), who)){
+			if(!ospreymay(ospreylookup(id), pipwho(ps))){
 				piperror(ps, tag, "not yours");
 				break;
 			}
@@ -1603,6 +1799,10 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		attr[alen] = 0;
 		if((f = pipfid(ps, fid)) == nil || f->open == 0){
 			piperror(ps, tag, "fid not open");
+			break;
+		}
+		if(!pipstill(ps, f)){
+			piperror(ps, tag, "not yours");
 			break;
 		}
 		if(f->id == 0){
@@ -1680,6 +1880,10 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			piperror(ps, tag, "fid not open");
 			break;
 		}
+		if(!pipstill(ps, f)){
+			piperror(ps, tag, "not yours");
+			break;
+		}
 		if((p = ospreylookup(f->id)) == nil){
 			piperror(ps, tag, "container is gone");
 			break;
@@ -1703,6 +1907,12 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		fid = pipget(m+Pipheader, 4);
 		if((f = pipfid(ps, fid)) == nil){
 			piperror(ps, tag, "no such fid");
+			break;
+		}
+		if(f->dirty && !pipstill(ps, f)){
+			/* what it may not have, it may not commit over */
+			f->used = 0;
+			piperror(ps, tag, "not yours");
 			break;
 		}
 		if(pipcommit(f, &sid) < 0){
@@ -1787,6 +1997,10 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 				piperror(ps, tag, "fid not open");
 				break;
 			}
+			if(!pipstill(ps, f)){
+				piperror(ps, tag, "not yours");
+				break;
+			}
 			/* one stream to a fid: a second says what the first said */
 			slot = -1;
 			for(j = 0; j < Pipmaxstream; j++){
@@ -1864,6 +2078,8 @@ pipstreamvalue(Pipstream *st, char *b, long nb, uvlong *version)
 		return -1;
 	if((f = pipfid(ps, st->fid)) == nil || f->open == 0)
 		return -1;
+	if(!pipstill(ps, f))		/* a grant taken back stops the stream */
+		return -1;
 	if(f->id == 0){
 		if(strcmp(st->attr, "*") != 0)
 			return -1;
@@ -1907,6 +2123,7 @@ pipstreamer(void*)
 			continue;
 		}
 		pipexpire();	/* a stream lasts no longer than its fid */
+		pipviafile = 0;	/* and asks as nobody's process, only its ticket */
 		now = pipnow();
 		for(i = 0; i < Pipmaxstream; i++){
 			if(pipstream[i].used == 0 || pipstream[i].due > now)
@@ -2211,6 +2428,18 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 		}
 		now = ospreynow();	/* sets ospreyhz; read it after */
 		ospreystatus(buf, Statuslen, now, ospreyhz);
+		/*
+		 * and what key this machine holds -- not the key, what SHA1
+		 * makes of it, so that two machines that agreed one may be
+		 * seen to have agreed the same one.
+		 */
+		{
+			long k;
+
+			k = strlen(buf);
+			seprint(buf+k, buf+Statuslen, "key %s\n",
+				ospreykeyset ? ospreyfinger : "none");
+		}
 		qunlock(&ospreylock);
 		poperror();
 		n = readstr(offset, a, n, buf);
@@ -2599,11 +2828,49 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			error(Eperm);
 		if(strcmp(cb->f[1], "off") == 0){
 			memset(ospreykey, 0, sizeof ospreykey);
+			ospreyfinger[0] = '\0';
 			ospreykeyset = 0;
 			break;
 		}
 		sha1((uchar*)cb->f[1], strlen(cb->f[1]), ospreykey, nil);
+		{
+			uchar h[SHA1dlen];
+
+			sha1(ospreykey, Keylen, h, nil);
+			ospreyhex(h, 8, ospreyfinger);
+		}
 		ospreykeyset = 1;
+		break;
+
+	case CMpair:
+		/*
+		 * Agree a key with whoever is on the other end of that
+		 * interface rather than have the same one typed into both
+		 * machines.  One says listen and the other says offer; both
+		 * end up saying the same fingerprint in status, and
+		 * comparing those two is the only thing that says who was
+		 * on the other end.
+		 */
+		if(strcmp(eve, "") != 0 && strcmp(up->user, eve) != 0)
+			error(Eperm);
+		{
+			Pairarg *pa;
+
+			pa = smalloc(sizeof(Pairarg));
+			if(waserror()){
+				free(pa);
+				nexterror();
+			}
+			strncpy(pa->ifc, cb->f[1], sizeof pa->ifc - 1);
+			if(strcmp(cb->f[2], "offer") == 0)
+				pa->offer = 1;
+			else if(strcmp(cb->f[2], "listen") == 0)
+				pa->offer = 0;
+			else
+				error(Ebadarg);
+			poperror();
+			kproc("ospreypair", pairproc, pa);
+		}
 		break;
 
 	case CMgrant:

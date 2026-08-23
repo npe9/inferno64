@@ -259,8 +259,10 @@ pip -e auth 'fred 7 0 f18f505a...' open 1 /7 read 1 budget close 1
 The things pip names are containers; no file system is served over it.
 A machine with no key believes every name it is told, and over a wire
 that means a session may open only what is nobody's.  A ticket is a
-bearer token: whoever holds it is the name in it until it runs out, and
-nothing revokes one early.  A session id is drawn at random rather than
+bearer token: whoever holds it is the name in it.  Taking back the grant
+it was made under stops it \- at the next read, write, close or stream as
+well as at the next open \- but a ticket for a container's own owner is
+stopped by nothing short of changing the machine's key.  A session id is drawn at random rather than
 counted up, because a session carries what a ticket proved.
 A stream is not scheduled against a reservation: it is sent when it is
 due by a kernel process that wakes every five milliseconds, so its

@@ -116,6 +116,16 @@ it for the container it names.  A checkpoint that arrives unsigned, or
 signed by somebody else, is refused \- which is what makes the grants a
 migrated container arrives with worth anything.
 .PP
+.B "A key agreed rather than typed in twice."
+Two machines agree a key over the wire with the published 1024-bit group
+\- each picks a number it keeps and sends what the group makes of it \-
+so the key itself never crosses.  What that does not say is who was on
+the other end, so both machines report the same fingerprint in
+.B status
+and a person compares them.  A grant taken back now stops a ticket made
+under it, at every read, write, close and stream rather than only at the
+next open.
+.PP
 .B "Checkpoint and restart."
 Every container as text: what it is, what it is allowed, what it has
 used, and where it was running.  Reading it is a checkpoint and writing
@@ -129,10 +139,11 @@ Everything the plan and the presentation describe that a kernel of this
 shape can do is done.  What is left is a different kernel, and the things
 below, which neither source spells out.
 .PP
-.B "1.  A key that is agreed rather than typed in twice."
-Two machines trust each other because somebody wrote the same key into
-both.  Nothing here does a key exchange, and a ticket is a bearer token
-that nothing revokes early.
+.B "1.  Knowing who agreed the key."
+The exchange is with whoever answers.  A person comparing two
+fingerprints is the only thing that says it was the machine that was
+meant, and there is nothing a machine could compare instead without
+something already shared to compare it against.
 .NH 1
 Not attempted
 .PP
