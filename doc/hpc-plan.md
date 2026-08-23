@@ -377,14 +377,31 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
 
    The plan warned that the allocation and zero-fill made this baseline
    "unfairly slow". Measured, that part is 1ms of 40 — the warning was
-   overstated; the copy-back it was bundled with was the real cost.
+   overstated; the copy-back it was bundled with was the real cost. The
+   zero-fill is now only of the *halo*, since `lap7` writes every interior cell
+   itself: 1736 stores a block per substep at blocksize 16 rather than 5832,
+   worth about 4%. It is not removed altogether because Dis leaves a fresh
+   array of a pointer-free type undefined (`doc/dis.ms`) and correctness must
+   not depend on the tree's `-z` — `sparse(2)` already states that rule.
 
    | 5 sweeps, 4³ roots | before | after |
    |---|---|---|
    | blocksize 8 | 199ms | 44ms |
    | blocksize 16 | 4817ms | 603ms |
 
-   Mass identical to the bit in both. `pdetest(1)` compares `lap7` against a
+   Mass identical to the bit in both.
+
+   **`verify(2)` gained `laplacian7order`.** Everything else only compared
+   `lap7` against the Limbo loop it replaced — and *that* loop had never been
+   checked against an analytic Laplacian. Two implementations of one
+   misunderstanding agree with each other perfectly; a convergence study cannot
+   be satisfied that way. Applied to `sin2πx·sin2πy·sin2πz` on a padded cube
+   whose halo holds the exact function (removing boundary treatment from the
+   measurement, the same purpose periodicity serves in the 2-D study), it
+   converges at **1.978 → 1.994 → 1.999**. `pdetest(1)` asserts the last is 2
+   within 0.1; `sh-verify(1)` exposes it.
+
+   `pdetest(1)` also compares `lap7` against a
    Limbo reference on padded cubes and, separately, checks that the **halo is
    not written** — a kernel running one cell too far still produces a correct
    interior, so that mistake passes a comparison of interior values and is
@@ -467,6 +484,7 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    three-way rotation; `gray()` needs two coupled fields, a nonlinear term and
    per-cell clamping. Three kernels minimum on the `pde` side for all of them.
 
+   *(All three of these are now fixed — see above. Kept for the reasoning.)*
    Before benchmarking, know that `amr`'s CPU baseline is unfairly slow for
    reasons unrelated to the kernel: `sweep()` calls `exchange()` and then
    `step()` calls it again, and each substep allocates and zero-fills a fresh
