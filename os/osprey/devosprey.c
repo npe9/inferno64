@@ -2772,7 +2772,9 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 		s = buf;
 		e = buf + Statuslen;
 		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
-			while(s < e - 1 && ospreycollect(p, &op, &status, arg) == 0)
+			/* reading is taking, so only from what is ours */
+			while(ospreymay(p, up->user) && s < e - 1
+			&& ospreycollect(p, &op, &status, arg) == 0)
 				s = seprint(s, e, "%llud %s %s %llud %llud %llud\n",
 					ospreyid(p), ospreyopname(op),
 					ospreystatusname(status),
@@ -3204,11 +3206,26 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if(cb->nf > 2)
 			error(Ecmdargs);
 		i = cb->nf == 2 ? atoi(cb->f[1]) : 1;
-		while(i-- > 0)
-			if(ospreyservice(ospreynow()) <= 0)
+		/*
+		 * Only the caller's containers.  A request is answered in
+		 * the namespace of whoever asked for it to be, so servicing
+		 * somebody else's container would resolve their names here
+		 * and leave the channel in their hands.
+		 */
+		while(i-- > 0){
+			int did;
+
+			did = 0;
+			for(p = ospreynext(nil); p != nil; p = ospreynext(p))
+				if(ospreymay(p, up->user)
+				&& ospreyservicep(p, ospreynow()) > 0)
+					did++;
+			if(did == 0)
 				break;
+		}
 		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
-			ospreyroute(p);
+			if(ospreymay(p, up->user))
+				ospreyroute(p);
 		ospreywakeup();
 		break;
 

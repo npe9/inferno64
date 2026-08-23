@@ -147,8 +147,11 @@ blocks until the dispatcher makes room.
 .BI service " " [ n ]
 Service up to
 .I n
-queued requests, one from each container in turn, and put a reply on the
-originating container's reply ring.  The default is one.
+queued requests, one from each of the caller's containers in turn, and
+put a reply on the originating container's reply ring.  The default is
+one.  Only the caller's, because a request is answered in the name space
+of whoever asked for it to be: servicing somebody else's container would
+resolve their names here and leave the channel in their hands.
 .TP
 .BI serve " id"
 Give the container a service process of its own, running in the name
@@ -380,7 +383,9 @@ below.
 .PP
 Reading
 .B reply
-drains every container's reply ring and returns one line per reply:
+drains the reply ring of every container the reader may have \- reading
+is taking, so it takes only from those \- and returns one line per
+reply:
 the container, the operation, the reply status
 .RB ( pending ,
 .BR done ,
