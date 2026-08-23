@@ -2210,7 +2210,19 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 | `line3test` | draw3d GPU line provider vs software | GUI; counts *segments*, not pixels |
 | `fdstresstest` | the scheduler hang | **hangs on failure**, run under `timeout` |
 | `gpubench` | cpu vs GPU solve timings | not pass/fail, prints numbers |
+| `sessiontest` | session(2) decoding, and that decode/compile are inverses | headless; found 4 real bugs |
+| `clicktest -e -n` | that a scripted click/drag works a real Tk widget | GUI; **needs `-e`/`-n` or it only reports** |
+| `schedcmp` | how much two runs' Dis schedules differ | not pass/fail, prints numbers |
+| `inputtest` | what input the system actually received | GUI; the instrument, not a test |
 | `temple/numericstest`, `temple/smoketest` | pre-existing | |
 
 A pixel count once reported a renderer dropping *every* segment as "120% of
 software". Count the thing that actually differs.
+
+Two more of the same kind, both from the scripted-input work. **At the device,
+a press and a release are present and correctly stamped whether or not they are
+delivered far enough apart to be a click** — so checking `/dev/pointer` proves
+nothing about whether a widget was worked; only a widget does. And **a widget
+that moves between clicks looks exactly like clicks being dropped**: twelve
+presses in fifteen, only ever the repeats, because a label beside the button
+changed width and `pack` re-centred it.
