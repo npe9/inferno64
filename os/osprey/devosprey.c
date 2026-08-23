@@ -31,8 +31,10 @@ enum {
 	Qreply,
 	Qarena,
 	Qpip,
+	Qsnap,
 
 	Statuslen	= 8*1024,	/* every core and container line */
+	Snaplen		= 16*1024,	/* every container as a checkpoint */
 	Nfd		= 16,		/* chans a container may hold open */
 	Rbtlr		= 16,		/* allocb's trailer room, kept clear of */
 	Namelen		= 256,		/* longest path a request may name */
@@ -72,6 +74,7 @@ static Dirtab ospreydir[] = {
 	"reply",	{Qreply},		0,	0444,
 	"arena",	{Qarena},		0,	0660,
 	"pip",		{Qpip},			0,	0660,
+	"snap",		{Qsnap},		0,	0660,
 };
 
 /*
@@ -1608,6 +1611,30 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 	case Qpip:
 		return pipread(c, a, n);
 
+	case Qsnap:
+		/*
+		 * Every container as text, so that a checkpoint can be
+		 * written somewhere and read back: into this kernel later,
+		 * or into another one.
+		 */
+		buf = smalloc(Snaplen);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		qlock(&ospreylock);
+		if(waserror()){
+			qunlock(&ospreylock);
+			nexterror();
+		}
+		ospreysnapwrite(buf, Snaplen);
+		qunlock(&ospreylock);
+		poperror();
+		n = readstr(offset, a, n, buf);
+		poperror();
+		free(buf);
+		return n;
+
 	default:
 		error(Egreg);
 	}
@@ -1631,6 +1658,30 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		return ospreyarenaio(a, n, offset, 1);
 	if((ulong)c->qid.path == Qpip)
 		return pipwrite(c, a, n);
+	if((ulong)c->qid.path == Qsnap){
+		/* a checkpoint read back; what it names and is not here is made */
+		if(n <= 0 || n >= Snaplen)
+			error(Etoobig);
+		nm = smalloc(n+1);
+		if(waserror()){
+			free(nm);
+			nexterror();
+		}
+		memmove(nm, a, n);
+		nm[n] = '\0';
+		qlock(&ospreylock);
+		if(waserror()){
+			qunlock(&ospreylock);
+			nexterror();
+		}
+		ospreysnapread(nm, n+1);
+		qunlock(&ospreylock);
+		poperror();
+		poperror();
+		free(nm);
+		ospreywakeup();
+		return n;
+	}
 	if((ulong)c->qid.path != Qctl)
 		error(Eperm);
 

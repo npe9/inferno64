@@ -67,15 +67,20 @@ is closed and that are refused if what they were written against has
 been committed over, and leases on fids and sessions.  What it names are
 containers, whose settings and accounting are their attributes.
 .PP
-.B "Checkpoint."
-The serialisable part of a container: identity, core, state, accounting,
-ring indices, namespace.
+.B "Checkpoint and restart."
+Every container as text: what it is, what it is allowed, what it has
+used, and where it was running.  Reading it is a checkpoint and writing
+one back is a restart, into this kernel or another one -- a container
+that was running when it was written out is running again when it is read
+back.
 .NH 1
 Next, in order
 .PP
-.B "1.  Restart and migration."
-Writing a checkpoint out and reading it into a fresh container, then
-moving one between machines.
+.B "1.  Migration between machines."
+A checkpoint is text and goes wherever a file goes, so what is left is
+the moving: carrying one to another machine over a connection rather than
+by hand, and stopping a container on the one and starting it on the other
+without either losing what was in flight.
 .PP
 .B "2.  Page flipping."
 Handing a page between containers instead of copying its contents, for

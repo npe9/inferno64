@@ -10,6 +10,7 @@ osprey \- resource containers, per-core scheduling and request rings
 .B /n/osprey/reply
 .B /n/osprey/arena
 .B /n/osprey/pip
+.B /n/osprey/snap
 .fi
 .SH DESCRIPTION
 The osprey device gives access to the portable Osprey policy layer:
@@ -207,13 +208,12 @@ write returns when an arm has been performed; arms that name something
 the container does not have are refused rather than waited on.
 .TP
 .BI checkpoint " id"
-Record the container's serialisable state: identity, core, run state,
-budget accounting, ring indices and namespace size.  Ring storage, the
-data area and any channel the kernel holds for it are the adapter's and
-are not part of it.
+Record the container's state where the kernel can put it back, without
+writing it anywhere.
 .TP
 .BI restore " id"
-Put the recorded state back.
+Put that back.  For a checkpoint that leaves the kernel, read and write
+.BR snap .
 .TP
 .BI bind " id local global"
 Add a private name to the container's namespace.
@@ -279,6 +279,17 @@ the start of the file takes anything.
 .B arena
 is the shared span itself at its own byte offsets, so a ring or a data
 area can be examined without mapping it.
+.PP
+.B snap
+is every container as text: its identity, the core it is on, whether it
+was running, its budget, period and deadline, what it has used, its caps,
+its version, its ring indices and its private names.  Reading it is
+taking a checkpoint, and writing one back is a restart -- a container the
+checkpoint names that is not there is made, one that is there is set to
+what the checkpoint says, and one that was running when it was written
+out is running again.  Nothing of the ring storage, the data area, the
+packets or the channels the kernel holds is in it: what is written is
+what a container is, not what it happens to be holding.
 .PP
 .B pip
 speaks the session protocol described in

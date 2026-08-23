@@ -1212,6 +1212,181 @@ ospreyrequestready(Ospreyproc *p)
 }
 
 /*
+ * The whole of what a container is, as text, so that it can be written
+ * somewhere and read back -- into this kernel later, or into another
+ * one.  Ring storage, the data area, the packets and the channels the
+ * kernel holds for it are not part of it: what is here is what a
+ * container is, not what it happens to be holding.
+ */
+long
+ospreysnapwrite(char *buf, long nbuf)
+{
+	Ospreyproc *q;
+	Process *r;
+	Container *c;
+	char *p, *e;
+	ulong i, j;
+
+	ready();
+	p = buf;
+	e = buf + nbuf;
+	for(i = 0; i < Nproc; i++){
+		if(procs[i].used == 0)
+			continue;
+		q = &procs[i];
+		r = &q->process;
+		c = &r->container;
+		p = seprint(p, e, "container %llud\n", r->id);
+		p = seprint(p, e, "core %lud\n", r->core);
+		p = seprint(p, e, "state %s\n", statename(r->state));
+		p = seprint(p, e, "budget %llud\n", c->budget);
+		p = seprint(p, e, "period %llud\n", c->period);
+		p = seprint(p, e, "deadline %llud\n", c->deadline);
+		p = seprint(p, e, "used %llud\n", c->used);
+		p = seprint(p, e, "besteffort %llud\n", c->besteffort);
+		p = seprint(p, e, "periods %llud\n", c->periods);
+		p = seprint(p, e, "mode %s\n", c->strict ? "strict" : "besteffort");
+		p = seprint(p, e, "memory %lud\n", c->memory);
+		p = seprint(p, e, "memused %lud\n", c->memused);
+		p = seprint(p, e, "netmax %lud\n", c->netmax);
+		p = seprint(p, e, "packetmax %lud\n", c->packetmax);
+		p = seprint(p, e, "netbytes %lud\n", c->netbytes);
+		p = seprint(p, e, "netpackets %lud\n", c->netpackets);
+		p = seprint(p, e, "version %llud\n", q->version);
+		p = seprint(p, e, "requests %llud %llud\n",
+			r->requests->put, r->requests->get);
+		p = seprint(p, e, "replies %llud %llud\n",
+			r->replies->put, r->replies->get);
+		for(j = 0; j < r->ns.n; j++)
+			p = seprint(p, e, "name %s %s\n",
+				r->ns.name[j].local, r->ns.name[j].global);
+		p = seprint(p, e, "end\n");
+	}
+	return p - buf;
+}
+
+static char*
+snapword(char **pp)
+{
+	char *s, *w;
+
+	s = *pp;
+	while(*s == ' ' || *s == '\t')
+		s++;
+	w = s;
+	while(*s != '\0' && *s != ' ' && *s != '\t')
+		s++;
+	if(*s != '\0')
+		*s++ = '\0';
+	*pp = s;
+	return w;
+}
+
+/*
+ * Read a checkpoint back.  A container it names that is not here is
+ * made; one that is here is set to what the checkpoint says.  The text
+ * is written over as it is parsed, so the caller must own it.
+ */
+int
+ospreysnapread(char *text, long n)
+{
+	Ospreyproc *p;
+	Process *r;
+	Container *c;
+	char *s, *line, *key, *a, *b;
+	uvlong id, v, now;
+	int made, runnable;
+
+	ready();
+	if(text == nil || n <= 0)
+		return -1;
+	text[n-1] = '\0';
+	p = nil;
+	made = 0;
+	runnable = 0;
+	now = runtime.now;
+	for(s = text; *s != '\0'; ){
+		line = s;
+		while(*s != '\0' && *s != '\n')
+			s++;
+		if(*s == '\n')
+			*s++ = '\0';
+		key = snapword(&line);
+		if(*key == '\0' || *key == '#')
+			continue;
+		if(strcmp(key, "container") == 0){
+			id = strtoull(snapword(&line), nil, 0);
+			if((p = ospreylookup(id)) == nil){
+				p = ospreycreate(id, 0, 1, 0);
+				made++;
+			}
+			runnable = 0;
+			continue;
+		}
+		if(p == nil || p->used == 0)
+			continue;
+		r = &p->process;
+		c = &r->container;
+		a = snapword(&line);
+		v = strtoull(a, nil, 0);
+		if(strcmp(key, "end") == 0){
+			/*
+			 * A container that was running when it was written
+			 * out is running again: a checkpoint that came back
+			 * only as settings would not be a restart.
+			 */
+			if(runnable)
+				ospreyattach(p, p->process.core, now);
+			p = nil;
+		} else if(strcmp(key, "state") == 0)
+			runnable = strcmp(a, "runnable") == 0;
+		else if(strcmp(key, "core") == 0)
+			r->core = v;
+		else if(strcmp(key, "budget") == 0)
+			c->budget = v;
+		else if(strcmp(key, "period") == 0)
+			c->period = v == 0 ? 1 : v;
+		else if(strcmp(key, "deadline") == 0)
+			c->deadline = v;
+		else if(strcmp(key, "used") == 0)
+			c->used = v;
+		else if(strcmp(key, "besteffort") == 0)
+			c->besteffort = v;
+		else if(strcmp(key, "periods") == 0)
+			c->periods = v;
+		else if(strcmp(key, "mode") == 0)
+			containerstrict(c, strcmp(a, "strict") == 0);
+		else if(strcmp(key, "memory") == 0)
+			c->memory = v;
+		else if(strcmp(key, "memused") == 0)
+			c->memused = v;
+		else if(strcmp(key, "netmax") == 0)
+			c->netmax = v;
+		else if(strcmp(key, "packetmax") == 0)
+			c->packetmax = v;
+		else if(strcmp(key, "netbytes") == 0)
+			c->netbytes = v;
+		else if(strcmp(key, "netpackets") == 0)
+			c->netpackets = v;
+		else if(strcmp(key, "version") == 0)
+			p->version = v;
+		else if(strcmp(key, "requests") == 0){
+			b = snapword(&line);
+			r->requests->put = v;
+			r->requests->get = strtoull(b, nil, 0);
+		} else if(strcmp(key, "replies") == 0){
+			b = snapword(&line);
+			r->replies->put = v;
+			r->replies->get = strtoull(b, nil, 0);
+		} else if(strcmp(key, "name") == 0){
+			b = snapword(&line);
+			nsbind(&r->ns, a, b);
+		}
+	}
+	return made;
+}
+
+/*
  * The serialisable part of a container: identity, core, state, budget
  * accounting, ring indices and namespace size.  Ring storage, the data
  * area and any chan the kernel holds for it are the adapter's, and are

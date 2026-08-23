@@ -132,6 +132,14 @@ int		ospreyselect(Ospreyproc*, uvlong armoff, int narms);
 int		ospreyselectready(Ospreyproc*, uvlong armoff, int narms);
 ulong		ospreynsem(void);
 
+/*
+ * A checkpoint that can leave the kernel: the serialisable state of
+ * every container as text, and the reading back of it.  What is read
+ * back into a container that is not there makes it.
+ */
+long		ospreysnapwrite(char *buf, long nbuf);
+int		ospreysnapread(char *text, long n);
+
 int		ospreycheckpoint(Ospreyproc*);
 int		ospreyrestore(Ospreyproc*);
 
