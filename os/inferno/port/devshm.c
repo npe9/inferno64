@@ -85,33 +85,11 @@ open(RDWR)	wlock()
  */
 
 /*
- * shared memory data structures. Modeled after Egrp.
+ * The shared memory data structures, modelled after Egrp, are in
+ * ../port/portdat.h: pgrp.c makes and closes an Sgrp and portfns.h
+ * declares that, so they cannot live here as well.  This file carried
+ * an identical second copy of both.
  */
-typedef struct Svalue Svalue;
-struct Svalue
-{
-	Ref;
-	RWlock;
-	char	*name;
-	char	*value;
-	s32	len;
-	s32 vers;
-	u8 dead;	/* set by remove() */
-};
-
-typedef struct Sgrp Sgrp;
-struct Sgrp
-{
-	Ref;
-	RWlock;
-	union{		/* array of Svalue pointers */
-		Svalue	**entries;
-		Svalue	**ent;
-	};
-	int	nent;	/* number of entries used */
-	int	ment;	/* maximum number of entries */
-	u32	vers;	/* of Sgrp */
-};
 
 Sgrp* newshmgrp(void);
 static int shmwriteable(Chan *c);

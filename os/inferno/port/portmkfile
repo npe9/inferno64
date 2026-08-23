@@ -150,9 +150,13 @@ $CONF.root.s $CONF.root.h: $CONF $INITDIR/$INIT.dis $PORTDIR/mkroot $ROOTFILES
 	$SHELLNAME $PORTDIR/mkroot $CONF
 
 %.i:D:	%.out
-	{echo 'uchar '^$stem^'[]={'
-	 xd -1x <$stem.out |
-		sed -e 's/^[0-9a-f]+ //' -e 's/ ([0-9a-f][0-9a-f])/0x\1,/g'
-	 echo '};'} > $target
+	# od rather than xd: xd is a Plan 9 program and is not among the
+	# host tools this tree builds, so the rule only ever worked when
+	# its output was already checked in.  -A n drops the addresses and
+	# -v stops od folding repeated lines into a *.
+	{ echo 'uchar '$stem'[]={'
+	  od -A n -v -t x1 $stem.out |
+		awk '{for(i = 1; i <= NF; i++) printf "0x%s,", $i; print ""}'
+	  echo '};'; } > $target
 
 %.$O:	$ROOT/Inferno/$OBJTYPE/include/u.h $PORTDIR/lib.h mem.h dat.h fns.h io.h $PORTDIR/error.h $PORTDIR/portdat.h $PORTDIR/portfns.h

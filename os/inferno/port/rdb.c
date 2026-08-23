@@ -8,6 +8,13 @@
 
 int rdbstarted;
 
+/*
+ * DBG is if(debug)print, from ../port/lib.h, and wants a debug of its
+ * own in every file that uses it.  This one had none, so the two calls
+ * below did not compile.
+ */
+static int debug = 0;
+
 #define DBGS	if(1)scrprint
 #pragma varargck argpos scrprint 1
 static Ureg ureg;

@@ -5,6 +5,12 @@ typedef struct Confmem	Confmem;
 typedef struct FPssestate	FPssestate;
 typedef struct FPavxstate	FPavxstate;
 typedef struct FPsave	FPsave;
+/*
+ * Inferno names a machine's floating point save area FPU, and
+ * os/inferno/port/portdat.h puts one in every Osenv.  This machine
+ * directory came from 9front, where the same thing is FPsave.
+ */
+typedef struct FPsave	FPU;
 typedef struct PFPU	PFPU;
 typedef ulong Instr;
 typedef struct ISAConf	ISAConf;

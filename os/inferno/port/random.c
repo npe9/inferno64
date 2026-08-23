@@ -17,6 +17,12 @@ static struct
 } *rs;
 
 typedef struct Seedbuf Seedbuf;
+/*
+ * This file came from 9front, whose libsec spells the SHA-2 state
+ * SHA2_512state and the function sha2_512.  Inferno's libsec, which is
+ * the one include/libsec.h declares and libsec builds for every target
+ * here, spells them SHA512state and sha512.
+ */
 struct Seedbuf
 {
 	ulong		randomcount;
@@ -25,7 +31,7 @@ struct Seedbuf
 	uchar		next;
 	ushort		bits;
 
-	SHA2_512state	ds;
+	SHA512state	ds;
 };
 
 static void
@@ -89,7 +95,7 @@ randomseed(void*)
 	}
 	timerdel(up);
 
-	sha2_512(s->buf, sizeof(s->buf), s->buf, &s->ds);
+	sha512(s->buf, sizeof(s->buf), s->buf, &s->ds);
 	setupChachastate(rs, s->buf, 32, s->buf+32, 12, 20);
 	qunlock(rs);
 

@@ -119,7 +119,13 @@ misc
 #	vgat2r4		+cur
 #	vgatvp3020	=cur
 #	vgatvp3026	=cur
-	vgavesa
+# vgavesa calls the VESA BIOS in real mode through a 386 Ureg, which
+# is why os/inferno/pc/vgavesa.c includes /386/include/ureg.h by
+# absolute path.  A 64 bit kernel cannot make that call without a
+# thunk this one does not have; 9front's pc64 takes the mode from
+# the loader's *bootscreen instead.  vgasoft above is what this
+# kernel draws with.
+#	vgavesa
 #	vgavmware	+cur
 
 mod
@@ -168,7 +174,11 @@ port
 	qio
 	qlock
 	random
-	rdb
+# rdb is 9front's kernel debugger and wants printq, klogq, serialoq
+# and consuart out of that flavour's devcons.c; os/inferno/port's
+# has none of them.  The RISC-V boards leave it out for the same
+# reason -- see os/inferno/virt/virt.
+#	rdb
 #	rebootcmd
 	swcursor
 	sysfile

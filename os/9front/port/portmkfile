@@ -65,10 +65,14 @@ errstr.h:D:	$PORTDIR/mkerrstr $PORTDIR/error.h
 	rc $PORTDIR/mkerrstr $PORTDIR/error.h > errstr.h
 
 %.i:D:	%.out
+	# od rather than xd: xd is a Plan 9 program and is not among the
+	# host tools this tree builds, so the rule only ever worked when
+	# its output was already checked in.  -A n drops the addresses and
+	# -v stops od folding repeated lines into a *.
 	{ echo 'uchar '$stem'[]={'
-	 xd -1x <$stem.out |
-		awk '{for(i = 2; i <= NF; i++) printf "0x%s,", $i; print ""}'
-	 echo '};'; } > $target
+	  od -A n -v -t x1 $stem.out |
+		awk '{for(i = 1; i <= NF; i++) printf "0x%s,", $i; print ""}'
+	  echo '};'; } > $target
 
 %.db:D:	main.c
 	$CC -s$stem main.c | dbfmt > $stem.db
