@@ -27,7 +27,7 @@ dev
 	cap
 	kprof
 	ether		netif
-	ip	ip ipv6 ipaux iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
 ip
 	udp
@@ -45,7 +45,11 @@ lib
 	mp
 	math
 	kern
-	ip
+# not libip: that is the hosted helper library, and its
+# readipifc.c opens and reads /net/ipifc.  A native kernel has
+# its own ip stack -- the ip section above, with os/inferno/ip/
+# ipaux.c -- and upstream Inferno's native configs link no ip
+# library at all.
 
 link
 	ethersifivegem
@@ -60,6 +64,7 @@ port
 	alarm
 	alloc
 	allocb
+	bo
 # the board has its own auth.c, named in the mkfile
 	chan
 	dev

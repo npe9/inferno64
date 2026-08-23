@@ -427,6 +427,131 @@ type that
 does not know.  That is a porting gap in the amd64 Inferno kernel and a
 piece of work of its own.
 .NH 1
+How a native kernel gets its ip helpers
+.PP
+The RISC-V boards listed
+.CW ip
+in their config's
+.CW lib
+section, which
+.CW os/inferno/port/portmkfile
+resolves to
+.CW $ROOT/libip
+\- the
+.I hosted
+helper library, whose
+.CW readipifc.c
+opens and reads
+.CW /net/ipifc .
+That cannot compile against a kernel's
+.CW libc.h ,
+and it never did: the
+.CW libip.a
+those kernels were linking was an artifact left in
+.CW Inferno/riscv64/lib
+from before that header existed.  Compile it today, for either native
+target, and it fails the same way.
+.PP
+Nothing else does it that way.
+.IP \(bu 2
+Upstream Inferno's native configs link no ip library at all.
+.CW os/pc/pc
+asks for
+.CW "interp keyring draw memlayer memdraw tk sec mp math kern"
+and nothing more; the byte order helpers come from
+.CW os/port/netaux.c ,
+named on the
+.CW ether
+line as
+.CW "ether netif netaux ethermedium" ,
+and the address helpers from the kernel's own
+.CW os/ip/ipaux.c .
+.IP \(bu 2
+9front here keeps a kernel library,
+.CW os/9front/lib ,
+built as
+.CW lib9front.a :
+.CW bo.c ,
+.CW eipfmt.c ,
+.CW ipaux.c ,
+.CW parseip.c ,
+.CW ptclbsum.c ,
+.CW classmask.c ,
+.CW equivip.c ,
+.CW parseether.c
+\- the same content as libip, compiled for a kernel.
+.IP \(bu 2
+Osprey here does the same in
+.CW os/osprey/kernlib ,
+built as
+.CW libospreykern.a .
+.PP
+Inferno had neither, so it reached for the hosted library.  It has them
+now, as kernel source rather than as a library, which is upstream
+Inferno's arrangement:
+.CW os/inferno/port/bo.c
+under the
+.CW port
+section, and
+.CW parseip.c ,
+.CW eipfmt.c ,
+.CW ptclbsum.c ,
+.CW classmask.c ,
+.CW equivip.c
+and
+.CW parseether.c
+in
+.CW os/inferno/ip
+under the
+.CW ip
+section, with
+.CW isv4 ,
+.CW v4tov6 ,
+.CW v6tov4
+and the v4 well known addresses added to
+.CW os/inferno/ip/ipaux.c
+where upstream keeps them.  The files are 9front's rather than upstream
+Inferno's because this tree's
+.CW os/inferno/ip/ip.h
+is 9front's: its
+.CW parseip
+returns a
+.CW vlong
+and its
+.CW parseipmask
+takes a third argument, which upstream's do not.
+.PP
+Three small things came with them.
+.CW parseip.c
+wanted
+.CW isxdigit
+and
+.CW isalnum
+from
+.CW <ctype.h> ,
+which a kernel has not got, so it has two predicates of its own; it
+wanted
+.CW CLASS ,
+which is in the shared
+.CW include/ip.h
+that a kernel does not include; and
+.CW bo.c 's
+.CW ulong ,
+.CW vlong
+and
+.CW ushort
+became
+.CW u32 ,
+.CW u64
+and
+.CW u16 ,
+which is what
+.CW os/inferno/port/portfns.h
+declares and what a network field is on a target whose long is eight
+bytes.
+.PP
+All three boards still run a shell with no ip library linked.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
