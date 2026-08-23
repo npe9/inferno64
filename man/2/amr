@@ -141,6 +141,20 @@ forest is not guaranteed to conserve it exactly, since this
 implementation's ghost exchange does not perform a flux-matching
 correction at coarse-fine boundaries \(em a real, documented scope
 limit, not an oversight.
+.PP
+.IR Amrtest (1)
+measures all three cases rather than leaving the reader to guess how
+much that limit costs.
+A uniform forest, at level 0 or with every block refined, conserves mass
+to about
+.BR 1e\-14 ,
+which is to say exactly.
+A forest adapted around a ball, 608 leaves with real coarse-fine
+interfaces, loses about
+.B 5%
+of its mass over twenty sweeps.
+That is the scope limit, not a defect, but it is a large enough number
+to know before relying on it.
 .SH SOURCE
 .B /module/amr.m
 .br

@@ -102,8 +102,12 @@ Amr: module
 	clear:	fn(f: ref Forest, value: real);
 	splat:	fn(f: ref Forest, cx, cy, cz, radius: real, value: real);
 
-	# Total interior cell volume (sum of cellsize^3 over every active
-	# block's every interior cell) - the invariant a diffusion/restrict/
-	# prolongate cycle should conserve, used for verification.
+	# Total mass: the sum of value*cellsize^3 over every active block's
+	# every interior cell - the invariant a diffusion/restrict/prolongate
+	# cycle should conserve, used for verification.
+	#
+	# (This comment used to describe it as the total cell *volume*, which
+	# omits the value and would make it independent of the field and
+	# useless as an invariant. man/2/amr always had it right.)
 	totalmass: fn(f: ref Forest): real;
 };
