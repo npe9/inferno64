@@ -81,7 +81,7 @@ extern	void	poolmutable(void*);
 extern	char*	poolname(Pool*);
 extern	int	poolread(char*, int, uintptr);
 extern	void*	poolrealloc(Pool*, void*, uintptr);
-extern	int	poolsetsize(char*, int);
+extern	int	poolsetsize(char*, uintptr);
 extern	void	poolsetcompact(Pool*, void (*)(void*, void*));
 extern	char*	poolaudit(char*(*)(int, Bhdr *));
 

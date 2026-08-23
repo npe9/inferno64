@@ -191,26 +191,42 @@ A
 .IR fem (2)
 Poisson solve on this machine, cpu f64 against gpu f32:
 .EX
-	mesh      nodes   cpu f64           gpu f32
-	                  solve  us/iter    solve  us/iter
-	12x12x12   2197   0-1ms      -      3-4ms    176
-	16x16x16   4913   1-1ms     45      5-8ms    200
-	20x20x20   9261   2-3ms     71     6-12ms    188
-	24x24x24  15625   5-6ms    147     7-18ms    179
+	mesh      nodes   cpu f64            gpu f32
+	                  solve   us/iter    solve   us/iter
+	12x12x12   2197    0-1ms      -      3-4ms     176
+	16x16x16   4913    1-1ms     45      5-8ms     200
+	20x20x20   9261    2-3ms     71     6-12ms     188
+	24x24x24  15625    5-6ms    147     7-18ms     179
+	28x28x28  21952  10-11ms    250    10-23ms     222
+	30x30x30  27000  13-15ms    310    13-25ms     250
+	32x32x32  32768  17-18ms    378    15-28ms     288
 .EE
+Best of five solves; the range is the spread across those five.
 Best of five solves; the range is the spread across those five.
 .PP
 Read the per-iteration columns.
-There is no break-even at any size that fits in memory here, but the
-reason is visible only per iteration: the GPU's cost is flat whatever
-the problem size \(em 176 to 200 microseconds across a sevenfold range
-\(em which is what the per-call cost of crossing this interface looks
-like, while the CPU's grows with the problem, which is what arithmetic
-looks like.
-They are close at 24\(mu24\(mu24, 147 against 179, so the per-matvec
-crossover is probably near mesh twenty-six or twenty-eight; f32's extra
-iterations put the per-solve crossover further out still.
-Neither can be measured here.
+Below mesh twenty-eight the GPU's cost is flat whatever the problem size
+\(em 176 to 200 microseconds across a sevenfold range \(em which is what
+the per-call cost of crossing this interface looks like, while the CPU's
+grows with the problem, which is what arithmetic looks like.
+They cross per matvec at 28\(mu28\(mu28, 250 against 222, and per solve
+at 32\(mu32\(mu32, 17ms against 15ms.
+.PP
+Two cautions on that per-solve figure.
+It is f32 against f64 and takes 52 iterations against 45, so the two
+columns are not the same solve; and the GPU's spread is far wider
+(15\(en28ms against 17\(en18ms), so the win is on the best of five and
+not on the worst.
+.PP
+This table said for some time that there was no break-even at any size
+that would fit.
+That was not a fact about the machine: pool sizes were parsed into a C
+.BR int ,
+so
+.B -pheap=4g
+arrived as zero and anything from 2GB up was refused as "not enough
+memory".
+A mesh of twenty-eight cubed needs a few megabytes.
 .PP
 Two things are needed to get figures worth reading, and
 .IR gpubench (1)

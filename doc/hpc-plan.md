@@ -75,12 +75,15 @@ offloading look like a win were taken against a CPU matvec written in Limbo.
 says:
 
 ```
-mesh       nodes   cpu f64            gpu f32
-                   solve  us/iter     solve  us/iter
-12x12x12    2197   0-1ms      -       3-4ms    176
-16x16x16    4913   1-1ms     45       5-8ms    200
-20x20x20    9261   2-3ms     71      6-12ms    188
-24x24x24   15625   5-6ms    147      7-18ms    179
+mesh       nodes   cpu f64             gpu f32
+                   solve   us/iter     solve   us/iter
+12x12x12    2197    0-1ms      -       3-4ms     176
+16x16x16    4913    1-1ms     45       5-8ms     200
+20x20x20    9261    2-3ms     71      6-12ms     188
+24x24x24   15625    5-6ms    147      7-18ms     179
+28x28x28   21952  10-11ms    250     10-23ms     222   <- per-matvec crossover
+30x30x30   27000  13-15ms    310     13-25ms     250
+32x32x32   32768  17-18ms    378     15-28ms     288   <- per-solve crossover
 ```
 Best of five solves per row; the range is the spread across those five.
 
@@ -101,14 +104,25 @@ drawn from them was not supported by its own data.
 reports the best with the range. The variance is all upward, as contention
 noise is, so the best is the clean measurement.
 
-With that, the claim is earned: the GPU's cost per iteration really is **flat**
-(176–200us across a sevenfold range of problem size), which is what per-call
-overhead looks like, while the CPU's grows with the problem (0 to 147us), which
-is what arithmetic looks like. The GPU still loses at every size that fits. But
-the per-iteration figures are close at 24 cubed — 147 against 179 — so the
-per-matvec crossover is probably near mesh 26–28, while f32's extra iterations
-(39 against 34) put the per-solve crossover further out. Neither can be
-measured here: `gpubench` panics at mesh 28 and above.
+Version four extended the range, and reversed the conclusion. "`gpubench` panics
+at mesh 28 and above" was written here three times as a fact about the machine.
+It was a **bug**: `poolsetsize` took a C `int`, so `-pheap=2g` arrived negative
+and `-pheap=4g` arrived as zero, and the size check then reported "not enough
+memory" for a mesh needing a few megabytes. Fixed (`uintptr` throughout,
+`strtoull` instead of `atoi`, and a `g` suffix), and meshes up to 32 now run.
+
+So: **the GPU does pay, from mesh 28 up.** Below that its cost per iteration is
+flat (176-200us across a sevenfold range), which is what per-call overhead looks
+like, while the CPU's grows with the problem, which is what arithmetic looks
+like. They cross per matvec at 28 cubed (250 against 222) and per solve at 32
+cubed (17ms against 15ms). Two cautions on that last one: it is f32 against f64
+with 52 iterations against 45, so they are not the same solve; and the GPU's
+spread is far wider (15-28ms against 17-18ms), so the win is on the best of five
+and not on the worst.
+
+The earlier "no break-even at any size that fits in memory here" was true only
+because of the pool bug. **A ceiling nobody questioned hid the answer for four
+versions of this table.**
 
 None of the GPU work is wrong and none of it should be deleted: the device, the
 Metal kernel, the residency and the precision query all do what they say. What
@@ -165,14 +179,14 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    not: they are single-threaded numerics plus a device. Do it when a
    concurrency change needs validating, or when someone has the patience for a
    ~12% reproducer; do not let it block the GPU work again.
-2. **Device-resident vectors — SUSPENDED pending re-derivation.** The table
-   this item rests on was measured against a Limbo matvec; with `math->spmv`
-   the CPU solve at 24 cubed is 5ms against the GPU's 7ms, so "the vector ops
-   are 40% of a GPU-backed solve" is now a statement about a path slower than
-   not offloading at all. Fix the GPU path's per-call overhead
-   first, or re-measure and find this item is not worth doing. What follows is
-   the original argument, left intact because its *reasoning* about round trips
-   still holds — only its numbers are stale.
+2. **Device-resident vectors — live again, but only above mesh 28.** This item
+   was suspended when `math->spmv` made the CPU faster than the GPU at every
+   size then measurable. Raising that ceiling changed the answer: the GPU wins
+   per matvec from 28 cubed and per solve from 32, so the vector operations
+   riding along with an offloaded matvec matter again. Re-derive the 40% from
+   the current table before building anything — it was measured on the old one.
+   The argument below about round trips is what still holds; its numbers do
+   not.
 
    **Device-resident vectors — this is items 2 and 4 together, and doing
    either alone is wrong.** `dot`/`axpy`/`norm` still run on the CPU, and the

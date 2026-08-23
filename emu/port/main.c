@@ -88,12 +88,21 @@ geom(char *val)
 	return 1;
 }
 
+/*
+ * -p<pool>=<size>[k|m|g]
+ *
+ * strtoull, not atoi: atoi returns int, so a pool of 2GB or more was truncated
+ * before it ever reached poolsetsize - 4GB became zero - and came back as
+ * "panic: not enough memory". The suffix is applied with an overflow check for
+ * the same reason.
+ */
 static void
 poolopt(char *str)
 {
-	char *var;
+	char *var, *end;
 	int n;
-	ulong x;
+	uintptr x;
+	uvlong v, mul;
 
 	var = str;
 	while(*str && *str != '=')
@@ -102,17 +111,30 @@ poolopt(char *str)
 		usage();
 	*str++ = '\0';
 	n = strlen(str);
-	x = atoi(str);
+	v = strtoull(str, &end, 0);
+	if(end == str)
+		usage();
+	mul = 1;
 	switch(str[n - 1]){
 	case 'k':
 	case 'K':
-		x *= 1024;
+		mul = 1024;
 		break;
 	case 'm':
 	case 'M':
-		x *= 1024*1024;
+		mul = 1024*1024;
+		break;
+	case 'g':
+	case 'G':
+		mul = 1024*1024*1024;
 		break;
 	}
+	if(v > (uvlong)~(uintptr)0 / mul)
+		usage();
+	v *= mul;
+	x = (uintptr)v;
+	if((uvlong)x != v)
+		usage();
 	if(poolsetsize(var, x) == 0)
 		usage();
 }

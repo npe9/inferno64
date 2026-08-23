@@ -34,13 +34,17 @@ builtin, which is nine to ten times faster, there is no break-even at
 any size that fits in memory here:
 .IP
 .EX
-mesh       nodes   cpu f64           gpu f32
-                   solve  us/iter    solve  us/iter
-12x12x12    2197   0-1ms      -      3-4ms    176
-16x16x16    4913   1-1ms     45      5-8ms    200
-20x20x20    9261   2-3ms     71     6-12ms    188
-24x24x24   15625   5-6ms    147     7-18ms    179
+mesh      nodes   cpu f64            gpu f32
+                  solve   us/iter    solve   us/iter
+12x12x12   2197    0-1ms      -      3-4ms     176
+16x16x16   4913    1-1ms     45      5-8ms     200
+20x20x20   9261    2-3ms     71     6-12ms     188
+24x24x24  15625    5-6ms    147     7-18ms     179
+28x28x28  21952  10-11ms    250    10-23ms     222
+30x30x30  27000  13-15ms    310    13-25ms     250
+32x32x32  32768  17-18ms    378    15-28ms     288
 .EE
+Best of five solves; the range is the spread across those five.
 .PP
 Two things are needed before those numbers mean anything, and both are
 here.
@@ -57,10 +61,21 @@ The variance is all upward, as contention noise is, so the best is the
 clean measurement and the range is what is left of the noise.
 .PP
 Read the per-iteration columns.
-The GPU's cost per iteration is flat whatever the problem size \(em 176
-to 200 microseconds across a sevenfold range \(em which is what per-call
-cost looks like; the CPU's grows with the problem, which is what
-arithmetic looks like.
+Below mesh twenty-eight the GPU's cost per iteration is flat whatever the
+problem size \(em 176 to 200 microseconds across a sevenfold range \(em
+which is what per-call cost looks like; the CPU's grows with the problem,
+which is what arithmetic looks like.
+They cross per matvec at twenty-eight cubed and per solve at thirty-two.
+.PP
+Large meshes need a large heap, and until recently could not get one:
+pool sizes were parsed into a C
+.BR int ,
+so
+.B -pheap=4g
+arrived as zero and was refused as "not enough memory".
+That is fixed, and a
+.B g
+suffix works.
 Single precision also costs extra CG iterations \(em 39 against 34 at
 24\(mu24\(mu24 \(em so the two columns are not even the same solve, and
 any speedup quoted from them should carry both iteration counts.

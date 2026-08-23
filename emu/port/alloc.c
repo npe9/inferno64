@@ -101,17 +101,29 @@ memlow(void)
 	return heapmem->cursize > (heapmem->maxsize)/2;
 }
 
+/*
+ * Size is uintptr, not int. maxsize and ressize have always been uintptr, but
+ * this took an int, so any pool of 2GB or more arrived truncated - 2GB as a
+ * negative number and 4GB as zero - and the "size < RESERVED" test below then
+ * reported it as "not enough memory" on a machine with plenty. That is what
+ * stopped gpubench running a mesh of 28 cubed, which needs a few megabytes.
+ *
+ * A pool smaller than the reserve is a bad argument rather than a fatal
+ * condition, so it is refused and the caller prints usage. Nothing is
+ * modified before the check: the old version assigned both fields and then
+ * panicked, which left the table inconsistent if anything had caught it.
+ */
 int
-poolsetsize(char *s, int size)
+poolsetsize(char *s, uintptr size)
 {
 	int i;
 
+	if(size < RESERVED)
+		return 0;
 	for(i = 0; i < table.n; i++) {
 		if(strcmp(table.pool[i].name, s) == 0) {
 			table.pool[i].maxsize = size;
 			table.pool[i].ressize = size-RESERVED;
-			if(size < RESERVED)
-				panic("not enough memory");
 			return 1;
 		}
 	}

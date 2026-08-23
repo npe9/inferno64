@@ -14,7 +14,7 @@ emu \- Inferno emulator (hosted Inferno)
 ]
 .RB [ \-s ]
 [
-.BI \-p " pool=maxsize"
+.BI \-p " pool=maxsize" [\fBk\fP|\fBm\fP|\fBg\fP]
 ]
 [
 .BI \-f " font"
@@ -157,6 +157,19 @@ the Dis virtual machine heap
 .B image
 image storage for the display
 .RE
+.IP
+.I Maxsize
+may carry a
+.BR k ,
+.B m
+or
+.B g
+suffix for kilo-, mega- or gigabytes.
+Sizes of 2GB and above used to be refused with
+.RB \(lq "panic: not enough memory" \(rq
+however much the machine had, because the size was parsed into a C
+.BR int ;
+a bad size is now refused with a usage message instead.
 .TP
 .B \-7
 When host graphics is provided by X11, request a 7-bit colour map;
