@@ -6,6 +6,13 @@ copyright notice that includes the copyright notice and the other
 notices below.  It is fine (and often tidier) to do that in a separate
 file such as NOTICE, LICENCE or COPYING.
 
+Three kernels are built from this directory and they do not share a
+copyright.  os/inferno is Inferno's own, covered by this notice and by
+the notices in os/inferno/port and os/inferno/pc.  os/9front is 9front,
+which is under the MIT licence and carries its own terms with it.
+os/osprey is 9front's kernel with the Osprey policy layer added, so it
+is 9front's copyright with the Osprey work on top.
+
 	Copyright © 1994-1999 Lucent Technologies Inc.  All rights reserved.
 	Portions Copyright © 1997-1999 Vita Nuova Limited
 	Portions Copyright © 2000-2007 Vita Nuova Holdings Limited (www.vitanuova.com)

@@ -1,43 +1,40 @@
-#	a few sample native ports for different architectures
+#	the kernels
 
-cerf1110	arm	Intrinsyc SA-1110 Cerf Cube
-ipaq1110	arm	Strongarm SA1110 native kernel for Compaq iPAQ 36xx
-sa1110	arm	SA1110 code common to most/all SA1110 platforms (eg, ipaq, cerf)
+Three kernels are built from this directory.  Each has one directory and
+names nothing outside it; what is shared is the host toolchain in
+../utils, the flavour-independent headers in ../include, and libraries
+such as libsec, libmp, libfis and libkern.
 
-cerf250	arm	Intrinsyc Cerfboard250 (PXA250)
-gum	arm	Gumstix PXA255	not yet ready for distribution
-pxa	arm	general PXA support
+inferno		the native Inferno kernel
+9front		the 9front kernel, as vendored
+osprey		Osprey: 9front's kernel with the Osprey policy layer in it
 
-js	sparc	original port to Javastation-1, included as sparc example but will not build
+#	what is inside one
 
-ks32	arm	ARM Evaluator 7t demo
+Each is laid out the way Plan 9 and Inferno lay out a kernel: the
+portable code in port, one directory for each machine beside it, and the
+rest as siblings.  A machine directory reads the portable code as
+../port.
 
-manga	arm	Micrel KS8695P ARM922 core with 4-port switch and PCI support
+port		the portable kernel
+pc		PC drivers, shared by that flavour's PC machines
+pc64		the amd64 PC machine
+ip		the Internet protocol stack, Ether and PPP media
+boot		bootstrap programs; see the README there
+init		the Limbo program the native kernel runs at startup
 
-cerf405	power	Cerfcube 405EP (based on IBM 405EP processor)
+Osprey has three more of its own: policy, the portable Osprey layer;
+adapter, the one file where that layer and the kernel meet; and cmd, the
+user programs that drive it.
 
-ipengine	power	Bright Star Engineering (www.brightstareng.com) ipEngine-1 (MPC823)
-rpcg	power	RPCG-Lite MPC823/850 board
-fads	power	MPC8xx FADS development board
-mpc	power	code common to ports to Motorola MPC8xx boards
+Headers that belong to a target rather than to a source tree are in the
+target: Inferno/amd64/include, 9front/amd64/include, Osprey/include and
+Osprey/amd64/include.
 
-pc	386	basis for ports to various PC-based platforms
+#	elsewhere
 
-#			basic Inferno native kernel components
-port	common	native operating system components
-ip	common	Internet protocol stack, Ether and PPP media
-init	common	Limbo initialisation program (run by native kernel on startup)
-
-#	sample bootstraps
-boot	-	directory of several bootstrap programs; see README there
-
-The build host and native kernel implementation are separate selections.
-Inferno and 9front keep their portable kernel implementations in os/inferno
-and os/9front respectively.  PC and amd64 hardware support remains in os/pc
-and os/pc64 so compatible drivers can be built by both kernels.
-
-See ../doc/kernel-builds.ms for the target-tree layout and commands for
-building native Inferno, 9front, and Osprey flavors.
-See ../doc/coding.ms for the Plan 9 and Inferno naming, error-handling, and
-portability conventions used by those flavors.
-See ../doc/osprey-plan.ms for the ordered Osprey kernel implementation plan.
+../doc/kernel-builds.ms		the target-tree layout and how to build each
+../doc/coding.ms		the naming, error-handling and portability
+				conventions these kernels follow
+../doc/osprey-plan.ms		what Osprey is and the plan it was built to
+../doc/osprey-progress.ms	what of that is built, and what proves it
