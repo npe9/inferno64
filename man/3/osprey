@@ -666,12 +666,27 @@ is such a server: an ordinary user program that maps its own slice,
 waits on its request ring, performs each
 .BR open ,
 .BR read ,
-.B write
-and
+.BR write ,
+.BR stat ,
 .B close
+and
+.B bind
 with the ordinary system calls in its own name space, and puts the
 answer back.  It refuses everything else rather than falling back into
-the kernel.  It is started as
+the kernel.
+.B bind
+is the one the kernel has no answer for at all -- a container has no
+name space of its own there, only the name table the policy layer keeps
+-- and is the clearest of them: the two names are offsets in the asking
+container's data area, the third argument is the ordinary
+.IR bind (2)
+flag word, and what it changes is the server's name space, which is the
+container's name space for as long as that server answers for it.  A
+container may then open a name that no name space on the machine had
+before it asked for it.
+.PP
+.I p9srv
+is started as
 .IP
 .B "p9srv segment size [nslice]"
 .LP
@@ -979,6 +994,13 @@ user-level services described in the Osprey plan, and a container with a
 server named by
 .B delegate
 has them answered there.
+.I p9srv
+answers
+.BR bind ;
+.B wait
+and
+.B send
+nothing yet answers.
 .B recv
 takes a packet from the queue of a container that has been given an
 interface, and is refused by a container that has not.
@@ -988,9 +1010,11 @@ is a personality for the file operations and nothing else.  A container
 that names it has
 .BR open ,
 .BR read ,
-.B write
-and
+.BR write ,
+.BR stat ,
 .B close
+and
+.B bind
 answered outside the kernel; everything else it asks for is answered
 .BR error ,
 since a server is named for all of what the kernel does not keep.  The

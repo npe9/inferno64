@@ -353,6 +353,27 @@ clientdata(Client *c, uvlong off, uvlong len)
 }
 
 /*
+ * A name a request points at: NUL terminated, inside the data area, and
+ * no longer than a name may be.  The bounds are this server's, not the
+ * client's, for the reason clientdata gives.
+ */
+static char*
+clientname(Client *c, uvlong off)
+{
+	char *a, *e;
+	long n;
+
+	if((a = clientdata(c, off, 1)) == nil)
+		return nil;
+	n = datalen - off;
+	if(n > Namelen)
+		n = Namelen;
+	if((e = memchr(a, 0, n)) == nil || e == a)
+		return nil;
+	return a;
+}
+
+/*
  * Answer one request in this server's own name space.  Nothing here
  * enters the kernel except the ordinary system call the operation is:
  * that is the whole of the point.
@@ -371,13 +392,7 @@ serve(Message *mp)
 
 	switch(mp->op){
 	case Opopen:
-		off = mp->arg[2];
-		if((a = clientdata(c, off, 1)) == nil)
-			return Sterror;
-		n = datalen - off;
-		if(n > Namelen)
-			n = Namelen;
-		if((e = memchr(a, 0, n)) == nil || e == a)
+		if((a = clientname(c, mp->arg[2])) == nil)
 			return Sterror;
 		for(i = 0; i < Nfd; i++)
 			if(c->fd[i] < 0)
@@ -410,6 +425,40 @@ serve(Message *mp)
 		if(n < 0)
 			return Sterror;
 		mp->arg[2] = (uvlong)n;
+		return Stdone;
+
+	case Opstat:
+		i = (int)mp->arg[2];
+		if(i < 0 || i >= Nfd || c->fd[i] < 0)
+			return Sterror;
+		off = mp->arg[3];
+		cnt = mp->arg[4];
+		if((a = clientdata(c, off, cnt)) == nil)
+			return Sterror;
+		if((n = fstat(c->fd[i], (uchar*)a, (long)cnt)) < 0)
+			return Sterror;
+		mp->arg[2] = (uvlong)n;
+		return Stdone;
+
+	case Opbind:
+		/*
+		 * The kernel refuses this: a container has no name space of
+		 * its own there, only the name table the policy layer keeps.
+		 * Here it is the ordinary bind, in the server's name space,
+		 * which is the container's name space for as long as this
+		 * server answers for it.  That is the whole difference
+		 * between a personality and a device.
+		 */
+		if((a = clientname(c, mp->arg[2])) == nil)
+			return Sterror;
+		if((e = clientname(c, mp->arg[3])) == nil)
+			return Sterror;
+		if(bind(a, e, (int)mp->arg[4]) < 0)
+			return Sterror;
+		if(verbose){
+			outs("bind '"); outs(a); outs("' '"); outs(e);
+			outs("'\n"); flush();
+		}
 		return Stdone;
 
 	case Opclose:

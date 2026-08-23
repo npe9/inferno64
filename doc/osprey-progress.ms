@@ -170,7 +170,7 @@ say
 .B ok
 or
 .B FAIL
-a line at a time.  Forty-three lines, all
+a line at a time.  Forty-six lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -237,9 +237,11 @@ container's slice, waits on its request ring with a
 arm, performs
 .CW open ,
 .CW read ,
-.CW write
-and
+.CW write ,
+.CW stat ,
 .CW close
+and
+.CW bind
 with the ordinary system calls in its own name space, and puts the
 answer back with a
 .CW put
@@ -251,6 +253,17 @@ server is answered
 .CW error ,
 which is what says the answer came from the program and not from the
 kernel around it.
+.PP
+.CW bind
+is the one the kernel has no answer for at all: a container has no name
+space of its own there, only the name table the policy layer keeps, so
+.CW ReqBind
+is refused and always was.  The personality has one, because it is a
+program, and a container that names it can build a name space and then
+open a name that no name space on the machine held before it asked.
+The check does exactly that, and has the same
+.CW bind
+refused to a container the kernel still answers for.
 .PP
 Two things had to be got right for the server to be able to work at all.
 A request names its arguments as offsets into the
