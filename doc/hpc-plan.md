@@ -66,6 +66,36 @@ to report the wrong precision for as long as it did.
 serial kernels by explicit decision — this tree has no distributed-memory story,
 and inventing one was judged a different project, not an extension.
 
+### Record and replay of a whole session
+
+Devices are files, so **one interposition point catches nearly everything** —
+pointer, keyboard, the draw protocol, `/chan`, `/dev/time`, `/dev/random`. That
+makes "record a session and run it again" a much smaller job here than it would
+be elsewhere, and most of the machinery already existed.
+
+| command | what it does | commit |
+|---|---|---|
+| `iostats -t file` | records every Styx message verbatim, with the time it crossed | `130184ac`, `c6fb5c3c` |
+| `styxreplay(1)` | serves a trace back to a program, at the pace it was recorded | `67598aba` |
+| `styxlog(1)` | reads a trace as a session: opens and writes against *paths*, not fids | `b8613505` |
+| `drawbind(1)` | demonstrates what a program's own `bind` does to a trace of it | `b8613505` |
+
+Verified: a recorded `cat` replays **byte-for-byte identical**, 63 of 63
+exchanges; a script that sleeps 1s and 2s replays with pauses of 1.005s and
+2.002s. Comparison is on what a request *asks for*, never on bytes — tags and
+fids are the client's own bookkeeping, and no fid translation table is needed
+because a reply never mentions a fid (`Rwalk`/`Ropen` carry qids).
+
+Two things escape: `sys->millisec()` and `sys->sleep()` are syscalls rather than
+files, and the order processes run in is not recorded — though that is a smaller
+gap here than elsewhere, since Dis execution is serialised (`refstress(1)`), so
+the schedule is a sequence of discrete handoffs. Recording *that* is the step
+from faithful input capture to deterministic replay, and would be what finally
+makes bugs 2 and 3 — both seen twice, never reproduced — reproducible.
+
+The third thing that escapes is a program's own `bind` of a kernel device; see
+the gotcha below, because it is the one that bites silently.
+
 ### GPU offload — working, and now a loss at every size that fits here
 
 **Read this before doing any more GPU work.** The measurements below that made
@@ -1965,6 +1995,34 @@ bugs 1-6 above.
 ---
 
 ## Gotchas that cost real time
+
+**A trace records the name space, so `bind "#dev"` escapes it.** `iostats(4)`
+interposes between a program and its name space. Anything the program reaches
+*through* the name space is captured — pointer, keyboard, the draw protocol,
+`/dev/time`. Anything it attaches *itself* is not: `bind` of `#i`, `#m`, `#c`
+goes straight to the device, past whatever is mounted on the way. This is easy
+to meet by accident because it is what a graphics program normally does, and it
+fails silently — the trace is simply empty.
+
+`drawbind(1)` is the reproducer, and its shape is the reusable part: one binary,
+one flag, same work both ways. **An empty trace is not evidence on its own,
+because a program that did nothing produces one too.** The case worth showing is
+the one where the work demonstrably happened — both runs print
+`allocated a 64x64 image` — and the trace is still empty. An earlier version of
+this note compared two *different* programs in two configurations and claimed it
+as a single-variable result; it wasn't one.
+
+So bind the devices in the shell that runs `iostats`, not in the traced program.
+
+**A pending Styx walk must be keyed by tag, not held in one slot.** Several
+processes share one name space and one trace, so their walks interleave —
+`Twalk(A)`, `Twalk(B)`, `Rwalk(A)`, `Rwalk(B)`. A single pending slot binds A's
+reply to B's path and leaves B's fid unnamed. Both mistakes produce output that
+looks entirely plausible, and neither appears in a single-process test: on a
+trace of three concurrent `drawbind` clients the single-slot version gave 23
+`<fid N>` placeholders and 46 wrong lines, and keyed by tag, none. Also check
+for a *short* `Rwalk` — fewer qids than names means the walk stopped early and
+the new fid was never established, so naming it invents a path deeper than it is.
 
 **A Limbo `int` is stored in 64 bits but arithmetic on it is 32-bit.** Both
 halves matter and they are easy to conflate — an earlier version of this note
