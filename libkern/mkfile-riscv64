@@ -1,10 +1,14 @@
 #
 #	riscv64-specific files
 #
-#	No hand-written assembly yet: the portable C is correct and slow,
-#	which is the right order to do it in.
+#	Only the atomics are hand-written: an instruction the compiler has
+#	no word for is an assembly function here, as getcallerpc is.  The
+#	rest is the portable C, which is correct and slow, and that is the
+#	right order to do it in.
 #
 TARGFILES=\
+	ainc-riscv64.$O\
+	getfcr-riscv64.$O\
 	frexp-386.$O\
 	memmove.$O\
 	memset.$O\

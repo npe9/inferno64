@@ -341,7 +341,8 @@ struct Modlink
 struct Heap
 {
 	int	color;		/* Allocation color */
-	ulong	ref;
+	int	ref;		/* int, as every other reference count here,
+				 * so that one ainc serves them all */
 	Type*	t;
 	ulong	hprof;	/* heap profiling */
 };
@@ -397,8 +398,10 @@ struct Handler
  * redefinition since both interp.h and emu/port/dat.h define these (not
  * every .c file that touches a ->ref field includes both). */
 #ifndef AINC
-#define AINC(p)	__atomic_fetch_add((p), 1, __ATOMIC_SEQ_CST)
-#define ADEC(p)	__atomic_sub_fetch((p), 1, __ATOMIC_SEQ_CST)
+extern	int	ainc(int*);
+extern	int	adec(int*);
+#define AINC(p)	ainc(p)
+#define ADEC(p)	adec(p)
 #endif
 
 extern	int	bflag;

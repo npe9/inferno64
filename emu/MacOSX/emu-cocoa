@@ -55,6 +55,7 @@ mod
 
 port
 	alloc
+	atomic
 	cache
 	chan
 	dev

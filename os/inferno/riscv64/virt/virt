@@ -21,7 +21,6 @@ dev
 	draw
 	pointer
 	ssl
-	dynld
 	cap
 	kprof
 
@@ -40,8 +39,6 @@ lib
 	memlayer
 	memdraw
 	draw
-	tk
-	freetype
 	sec
 	mp
 	math
@@ -64,13 +61,13 @@ port
 	alarm
 	alloc
 	allocb
-	auth
+# the board has its own auth.c, named in the mkfile
 	chan
 	dev
 	dial
 	dis
 	discall
-	edf
+# edf wants a microsecond clock this board does not export yet
 	exception
 	exportfs
 	inferno
@@ -87,18 +84,18 @@ port
 # libsec newer than the one this tree shares
 # rdb wants the kernel debugger's console queue, which this board
 # does not configure
-# screenvirt has this board's hwdraw; the portable swcursor has another
+	swcursor
 	sysfile
 	taslock
 	xalloc
 
 	archvirt
-	uartvirt
 	randomvirt
 	screenvirt
 
 misc
 	sdvirtiommio	sdscsi
+	uartvirt
 
 mod
 	sys
@@ -107,8 +104,6 @@ mod
 	math
 	ipints
 	draw
-	freetype
-	tk
 
 init
 	virtinit

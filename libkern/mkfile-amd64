@@ -2,6 +2,7 @@
 #	amd64-specific files
 #
 TARGFILES=\
+	ainc-amd64.$O\
 	frexp-386.$O\
 	getfcr-amd64.$O\
 	memmove-amd64.$O\

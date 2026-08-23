@@ -115,12 +115,89 @@ needs, so a board with its own
 pulled the default in behind them and collided.  They are separate files
 now.
 .PP
-What stops it is
-.CW libinterp/heap.c ,
-which uses the compiler's atomic builtins;
+It boots.  Under
+.CW "qemu-system-riscv64 -M virt -bios none -kernel ivirt" :
+.IP
+.nf
+Inferno/riscv64 virt
+267403264 bytes free
+procinit conf.nproc 200
+pci ecam 0x30000000 size 0x10000000 mmio 0x40000000
+pci 0.0.0: 1b36/0008 class 060000 irq 32
+
+Inferno Fourth Edition (20151010)
+conf virt jit 0
+
+Initial Dis: "/osinit.dis"
+** Inferno/riscv64 virt **
+starting sh...
+load sh:
+.fi
+.PP
+\- the kernel comes up, sizes memory, starts its processes, walks the
+PCI bus, loads its first Dis module and asks for a shell.  There is no
+shell because this tree does not build a Limbo userland; that is the
+next thing, and it is a different piece of work from a kernel port.
+.NH 1
+Atomics, and instructions a compiler has no word for
+.PP
+.CW AINC
+and
+.CW ADEC ,
+the reference counting the Dis heap turns on, were macros over the
+C compiler's atomic builtins.
 .CW jc
-has none.  The LLP64 branch has a version of that file that does not,
-and taking it is the next piece of work.
+has no such builtins, and neither did any of the Ken compilers.
+.PP
+They are functions now, one line of assembly each, in the way this tree
+has always reached an instruction its compiler cannot say:
+.CW getcallerpc
+is a function,
+.CW _tas
+is a function, and the load-reserved and store-conditional it needs are
+built out of a
+.CW WORD
+macro because the assembler has no mnemonic for them.
+.CW ainc
+and
+.CW adec
+are the same thing with
+.CW amoadd.w :
+.IP
+.nf
+#define AMOADDW(rs2, rs1, rd) \\
+	WORD $((0<<27)|AQ|RL|((rs2)<<20)|((rs1)<<15)|(2<<12)|((rd)<<7)|057)
+
+TEXT	ainc(SB), 1, $-4
+	MOV	RARG, R12
+	MOV	$1, R10
+	AMOADDW(10, 12, 8)
+	ADD	$1, R8
+	RET
+.fi
+.PP
+with a
+.CW "LOCK; XADDL"
+version beside it for amd64 and 386, and a C one in
+.CW emu/port/atomic.c
+for the hosted build, where the host compiler does have the word and
+emits the same instruction.  The floating-point control word went the
+same way:
+.CW getfcr
+and
+.CW setfcr
+read and write the
+.CW fcsr
+control register, which is likewise not something a compiler can say.
+.PP
+One thing had to move for a single function to serve both callers: the
+Dis heap's reference count was a
+.CW ulong
+where every other reference count in the same header was an
+.CW int .
+It is an
+.CW int
+now.
 .NH 1
 Then
 .PP

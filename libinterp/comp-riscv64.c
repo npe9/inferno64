@@ -12,6 +12,8 @@
 #include "interp.h"
 #include "raise.h"
 
+void (*comvec)(void);
+
 int
 compile(Module *m, int size, Modlink *ml)
 {

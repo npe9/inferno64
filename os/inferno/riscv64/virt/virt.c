@@ -9,7 +9,7 @@
 
 #include "virt.root.h"
 
-ulong ndevs = 26;
+ulong ndevs = 25;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -25,10 +25,9 @@ extern Dev ipdevtab;
 extern Dev drawdevtab;
 extern Dev pointerdevtab;
 extern Dev ssldevtab;
-extern Dev dynlddevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
-Dev* devtab[26]={
+Dev* devtab[25]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -44,7 +43,6 @@ Dev* devtab[26]={
 	&drawdevtab,
 	&pointerdevtab,
 	&ssldevtab,
-	&dynlddevtab,
 	&capdevtab,
 	&kprofdevtab,
 	nil,
@@ -71,8 +69,6 @@ extern void cryptmodinit(void);
 extern void mathmodinit(void);
 extern void ipintsmodinit(void);
 extern void drawmodinit(void);
-extern void freetypemodinit(void);
-extern void tkmodinit(void);
 void modinit(void){
 	sysmodinit();
 	keyringmodinit();
@@ -80,14 +76,18 @@ void modinit(void){
 	mathmodinit();
 	ipintsmodinit();
 	drawmodinit();
-	freetypemodinit();
-	tkmodinit();
 }
 
 #include "../port/sd.h"
 extern SDifc sdvirtiommioifc;
 SDifc* sdifc[] = {
 	&sdvirtiommioifc,
+	nil,
+};
+
+extern PhysUart virtphysuart;
+PhysUart* physuart[] = {
+	&virtphysuart,
 	nil,
 };
 

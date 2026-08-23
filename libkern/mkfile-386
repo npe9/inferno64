@@ -2,6 +2,7 @@
 #	386-specific files
 #
 TARGFILES=\
+	ainc-386.$O\
 	frexp-386.$O\
 	getfcr-386.$O\
 	memmove-386.$O\

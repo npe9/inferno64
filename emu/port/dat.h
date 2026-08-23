@@ -518,6 +518,8 @@ extern void	(*mainmonitor)(int, void*, ulong);
  * redefinition, because plenty of emu/port .c files touch a ->ref field
  * without including interp.h. */
 #ifndef AINC
-#define AINC(p)	__atomic_fetch_add((p), 1, __ATOMIC_SEQ_CST)
-#define ADEC(p)	__atomic_sub_fetch((p), 1, __ATOMIC_SEQ_CST)
+extern	int	ainc(int*);
+extern	int	adec(int*);
+#define AINC(p)	ainc(p)
+#define ADEC(p)	adec(p)
 #endif
