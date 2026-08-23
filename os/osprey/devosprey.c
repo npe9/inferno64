@@ -1499,6 +1499,50 @@ ospreyrelease(Proc *q, int x)
 	splx(s);
 }
 
+/*
+ * Let go of an interface a container had claimed.  The card takes its
+ * receive buffers from that container's slice, so leaving the pool
+ * named after the container has gone would have it writing packets into
+ * memory that belongs to whatever comes next.
+ */
+static void
+ospreyputether(Ospreyproc *p)
+{
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyether))
+		return;
+	if(ospreyether[x] != nil){
+		((Ether*)ospreyether[x])->rbpool = nil;
+		ospreyether[x] = nil;
+	}
+	if(ospreyheld[x] != nil){
+		freeb(ospreyheld[x]);
+		ospreyheld[x] = nil;
+	}
+	wakeup(&ospreyselrend[x]);
+}
+
+/* and a uart, which is left quiet rather than interrupting nobody */
+static void
+ospreyputuart(Ospreyproc *p)
+{
+	Uart *u;
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyuart))
+		return;
+	if((u = ospreyuart[x]) != nil){
+		ospreyuart[x] = nil;
+		ospreyuartlen[x] = 0;
+		if(u->phys->taskenable != nil)
+			(*u->phys->taskenable)(u, 0);
+		if(u->phys->intrmask != nil)
+			(*u->phys->intrmask)(u, 1);
+	}
+	wakeup(&ospreyselrend[x]);
+}
+
 /* let go of a container's service process */
 static void
 ospreyputserver(Ospreyproc *p)
@@ -2975,6 +3019,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		ospreyclosefds(p);
 		ospreyputproc(p);
 		ospreyputserver(p);
+		ospreyputether(p);
+		ospreyputuart(p);
 		if(ospreyexit(p) < 0)
 			error(Ebadarg);
 		ospreywakeup();

@@ -891,8 +891,24 @@ ospreyexit(Ospreyproc *p)
 	for(i = 0; i < Nproc; i++)
 		if(plist[i] == &p->process)
 			plist[i] = nil;
-	if(p->map != nil)
+	/*
+	 * The pages it was holding go back to the span.  The list of them
+	 * is in the map, which is about to be wiped, and nothing else
+	 * remembers which they were: without this every page a container
+	 * ever took was gone until the machine was reset.
+	 */
+	if(p->map != nil){
+		uvlong *l, off, j;
+
+		if((l = pagelist(p)) != nil)
+			for(j = 0; j < p->map->npage; j++){
+				off = l[j];
+				if(off >= pagebase
+				&& off < pagebase + (uvlong)Npage*Pagesize)
+					pagetaken[(off - pagebase)/Pagesize] = 0;
+			}
 		memset(p->map, 0, slicesize);
+	}
 	p->used = 0;
 	p->map = nil;
 	unlockall();

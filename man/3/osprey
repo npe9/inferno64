@@ -72,7 +72,10 @@ deadline order.
 Remove the task from every run queue.
 .TP
 .BI exit " id"
-Remove the task and free the container.
+Remove the task and free the container.  What it was holding goes with
+it: the channels it had open, the process bound to it, its service
+process, the pages it had taken, and any interface or uart it had been
+given, which are left as they were before it was given them.
 .TP
 .BI schedule " core"
 Make the earliest-deadline runnable task on the core the core's current
