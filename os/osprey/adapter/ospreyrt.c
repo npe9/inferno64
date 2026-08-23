@@ -1057,9 +1057,10 @@ ospreylimit(Ospreyproc *p, ulong memory, ulong netbytes, ulong netpackets)
 }
 
 /*
- * Bounded network accounting.  Nothing charges these yet from a packet
- * path; the caps and the counters are here so that the path added later
- * has something to charge.
+ * Bounded network accounting.  A packet that arrives for a container's
+ * interface is charged against these as it is queued and given back when
+ * it is taken; netcharge and netfree are for whatever else a container
+ * is told to account for.
  */
 int
 ospreynetcharge(Ospreyproc *p, ulong bytes, ulong packets)
@@ -1287,6 +1288,11 @@ semof(Ospreyproc *p, ulong i)
  * A packet for this container: charge it, and keep the block whole.  A
  * container over its network caps, or with no room, refuses it, and the
  * caller frees the block as it would have anyway.
+ *
+ * The charging is pktqput's, and only pktqput's.  Charging here as well
+ * cost every packet twice and gave only one of them back when it was
+ * taken, so a container with a cap stopped hearing anything after about
+ * half of it and never recovered.
  */
 int
 ospreypktput(Ospreyproc *p, void *block, ulong len)
@@ -1297,17 +1303,11 @@ ospreypktput(Ospreyproc *p, void *block, ulong len)
 		return -1;
 	if(pktqfull(&p->pktq))
 		return -1;
-	if(netcharge(&p->process.container, len, 1) < 0)
-		return -1;
 	k = &p->pkt[p->pktq.put % Npkt];
 	k->block = block;
 	k->len = len;
 	k->container = &p->process.container;
-	if(pktqput(&p->pktq, k) < 0){
-		netrelease(&p->process.container, len, 1);
-		return -1;
-	}
-	return 0;
+	return pktqput(&p->pktq, k);
 }
 
 /*
@@ -1547,6 +1547,31 @@ ospreyrequestready(Ospreyproc *p)
  * kernel holds for it are not part of it: what is here is what a
  * container is, not what it happens to be holding.
  */
+/*
+ * One line per message a ring is holding.  A queue is single producer,
+ * single consumer and its storage is a plain array, so what is in it is
+ * the slots between get and put.
+ */
+static char*
+snapqueue(char *p, char *e, char *name, Queue *q)
+{
+	Message *m;
+	uvlong i;
+	int j;
+
+	if(q == nil || q->message == nil || q->size == 0)
+		return p;
+	for(i = q->get; i != q->put; i++){
+		m = &q->message[i % q->size];
+		p = seprint(p, e, "queued %s %llud %llud %llud",
+			name, m->op, m->sequence, m->container);
+		for(j = 0; j < MessageWords-3; j++)
+			p = seprint(p, e, " %llud", m->arg[j]);
+		p = seprint(p, e, "\n");
+	}
+	return p;
+}
+
 long
 ospreysnapwrite(char *buf, long nbuf)
 {
@@ -1587,12 +1612,15 @@ ospreysnapwrite(char *buf, long nbuf)
 		for(j = 0; j < Ngrant; j++)
 			if(q->grant[j][0] != '\0')
 				p = seprint(p, e, "grant %s\n", q->grant[j]);
-		p = seprint(p, e, "requests %llud %llud\n",
-			r->requests->put, r->requests->get);
-		p = seprint(p, e, "replies %llud %llud\n",
-			r->replies->put, r->replies->get);
-		p = seprint(p, e, "output %llud %llud\n",
-			r->output->put, r->output->get);
+		/*
+		 * What is in the rings, message by message, rather than the
+		 * indices alone: the indices without the messages they point
+		 * at named storage that was not going anywhere.  A ring that
+		 * is empty writes nothing, which is the usual case.
+		 */
+		p = snapqueue(p, e, "requests", r->requests);
+		p = snapqueue(p, e, "replies", r->replies);
+		p = snapqueue(p, e, "output", r->output);
 		for(j = 0; j < r->ns.n; j++)
 			p = seprint(p, e, "name %s %s\n",
 				r->ns.name[j].local, r->ns.name[j].global);
@@ -1706,18 +1734,29 @@ ospreysnapread(char *text, long n)
 			c->netpackets = v;
 		else if(strcmp(key, "version") == 0)
 			p->version = v;
-		else if(strcmp(key, "requests") == 0){
-			b = snapword(&line);
-			r->requests->put = v;
-			r->requests->get = strtoull(b, nil, 0);
-		} else if(strcmp(key, "replies") == 0){
-			b = snapword(&line);
-			r->replies->put = v;
-			r->replies->get = strtoull(b, nil, 0);
-		} else if(strcmp(key, "output") == 0){
-			b = snapword(&line);
-			r->output->put = v;
-			r->output->get = strtoull(b, nil, 0);
+		else if(strcmp(key, "requests") == 0)
+			USED(v);	/* an older checkpoint's indices */
+ else if(strcmp(key, "queued") == 0){
+			Message m;
+			Queue *q;
+			int j;
+
+			/* a is the ring's name; the rest is the message */
+			if(strcmp(a, "requests") == 0)
+				q = r->requests;
+			else if(strcmp(a, "replies") == 0)
+				q = r->replies;
+			else if(strcmp(a, "output") == 0)
+				q = r->output;
+			else
+				continue;
+			memset(&m, 0, sizeof m);
+			m.op = strtoull(snapword(&line), nil, 0);
+			m.sequence = strtoull(snapword(&line), nil, 0);
+			m.container = strtoull(snapword(&line), nil, 0);
+			for(j = 0; j < MessageWords-3; j++)
+				m.arg[j] = strtoull(snapword(&line), nil, 0);
+			queueput(q, &m);
 		} else if(strcmp(key, "name") == 0){
 			b = snapword(&line);
 			nsbind(&r->ns, a, b);

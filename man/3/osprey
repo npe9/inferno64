@@ -362,13 +362,17 @@ area can be examined without mapping it.
 .B snap
 is every container as text: its identity, the core it is on, whether it
 was running, its budget, period and deadline, what it has used, its caps,
-its version, its ring indices and its private names.  Reading it is
+its version, whatever its rings are holding and its private names.
+Reading it is
 taking a checkpoint, and writing one back is a restart -- a container the
 checkpoint names that is not there is made, one that is there is set to
 what the checkpoint says, and one that was running when it was written
-out is running again.  Nothing of the ring storage, the data area, the
-packets or the channels the kernel holds is in it: what is written is
-what a container is, not what it happens to be holding.
+out is running again.  A message a ring is holding is written out with
+it, one line each, and put back on the same ring when the checkpoint is
+read; a ring that is empty writes nothing, which is the usual case.
+Nothing of the data area, the packets or the channels the kernel holds
+is in it: what is written is what a container is, not what it happens to
+be holding.
 .PP
 A checkpoint is text and goes wherever text goes.
 .I mig
@@ -750,8 +754,12 @@ is a policy fiction until
 .B bindproc
 makes it a real one.
 .PP
-Network accounting has no packet path charging it yet; the caps and
-counters are there for the one the plan adds later.
+A packet is charged against a container's network caps while it sits in
+its queue and given back when it is taken, so the caps bound what is
+waiting rather than what has ever arrived.  Nothing else a container
+does over the network is charged unless something writes
+.B netcharge
+for it.
 .PP
 A checkpoint records what a container has used, but what it has used is
 counted against a period of a clock the machine it arrives at does not
@@ -759,10 +767,14 @@ share.  A container migrated part way through its period arrives with
 that much of a budget already spent, and is only itself again at the next
 period.
 .PP
-Nothing that was in flight goes with a container.  Its ring indices are
-written out but the messages they point at are not, so a container should
-be migrated when its rings are empty; there is nothing that stops one
-being migrated when they are not.
+A message that was in flight goes with a container, but the data area it
+may name does not, and neither do the container's packets, pages or open
+channels \- a checkpoint is what a container is, not what it is holding.
+So a request that names a buffer arrives pointing at a buffer that was
+not carried.  A checkpoint is also one ethernet frame when
+.I mig
+carries it, so a container with a great many messages in flight will not
+fit in one and is not migrated.
 .PP
 A container carries one process.  Two processes billed to one container,
 were the device to allow it, could charge it from two cores at once and
