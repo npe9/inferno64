@@ -88,6 +88,34 @@ ethernet frame of its own type, read back into a kernel that had never
 heard of it, and destroyed where it came from so that it is in one place
 afterwards.
 .PP
+.B "\[*p]p as its own transport, and isochronous data."
+The protocol is spoken on a wire of its own \- ethernet type
+.B 0x910A ,
+a group in one frame and its replies in the frame back \- as well as
+through
+.BR #O/pip .
+Nothing about the wire is a connection: each group says which session it
+belongs to, which is what a session outliving its connection was for.  On
+that wire a
+.B Tstream
+asks for an attribute to keep arriving at a rate rather than to be asked
+for, and the frames come at that rate with nothing sent to make them
+happen.
+.PP
+.B "Proving who is asking."
+A machine holds a key and signs with it: a
+.I ticket
+saying a name may have a container until a time, and a checkpoint saying
+who a container is for and who it has been handed to.  Two machines with
+the same key take each other's word and nobody else's.  Over
+.B #O/pip
+the kernel already knows whose process is asking; over a wire it knows
+nothing, so a session that has not presented a ticket may open only what
+is nobody's, and one that has presented a good one asks as the name in
+it for the container it names.  A checkpoint that arrives unsigned, or
+signed by somebody else, is refused \- which is what makes the grants a
+migrated container arrives with worth anything.
+.PP
 .B "Checkpoint and restart."
 Every container as text: what it is, what it is allowed, what it has
 used, and where it was running.  Reading it is a checkpoint and writing
@@ -98,17 +126,13 @@ back.
 Next, in order
 .PP
 Everything the plan and the presentation describe that a kernel of this
-shape can do is done.  What is left is either a different kernel, or work
-neither source spells out.
+shape can do is done.  What is left is a different kernel, and the things
+below, which neither source spells out.
 .PP
-.B "1.  Proving who is asking."
-A name is taken for what it says.  Nothing signs a grant or proves that
-whoever presents a name is entitled to it, so the delegation is only as
-good as the machine it is on.
-.PP
-.B "2.  \[*p]p as its own transport."
-It is spoken over a file.  The presentation has it able to be the
-transport itself, and to carry isochronous data.
+.B "1.  A key that is agreed rather than typed in twice."
+Two machines trust each other because somebody wrote the same key into
+both.  Nothing here does a key exchange, and a ticket is a bearer token
+that nothing revokes early.
 .NH 1
 Not attempted
 .PP

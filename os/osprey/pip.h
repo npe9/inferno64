@@ -31,6 +31,10 @@
  *	Rclose		version[8]
  *	Tlease		fid[4]
  *	Rlease		lease[8]
+ *	Tstream		fid[4] period[4] count[4] attr[s]
+ *	Rstream		period[8]
+ *	Tauth		ticket[s]
+ *	Rauth		user[s]
  *	Rerror		ename[s]
  *
  * The names in this header carry a Pip prefix, since 9P has the same
@@ -44,6 +48,22 @@
  * when the fid is closed -- as a whole, or not at all if what it was made
  * from has been committed over in the meantime.  A version once made is
  * not altered again.
+ *
+ * Tauth presents a ticket: a name, a container and a time, signed by a
+ * machine with the key.  A session with a ticket asks as the name the
+ * ticket carries, for the container it names, until it runs out.
+ * Without one, a session asks as whoever the transport says -- which
+ * over a wire is nobody at all, since a frame may say anything.
+ *
+ * Tstream asks for an attribute to keep arriving at a rate rather than
+ * being asked for: once every period milliseconds, count times over (0
+ * for no end), the server sends an Rread carrying the Tstream's own tag,
+ * unasked and with no request to match it against.  A second Tstream on
+ * the same fid replaces the first, and a period of zero stops it.  The
+ * rate is fixed when the stream is set up and the frames come at that
+ * rate whatever the client is doing, which is what makes it isochronous
+ * and is why it needs a transport of its own: over a file, nothing can
+ * arrive that was not read for.
  *
  * A fid and a session are leased: each is good for a time, said in
  * milliseconds when it is opened and again whenever it is renewed, and
@@ -68,11 +88,16 @@ enum {
 	PipTlease,
 	PipRlease,
 	PipRerror,
+	PipTstream,
+	PipRstream,
+	PipTauth,
+	PipRauth,
 
 	Pipheader	= 7,		/* size, type, tag */
 	Pipmaxmsg	= 8192,
 	Pipmaxname	= 64,
 	Pipmaxgroup	= 16,		/* messages in one group */
+	Pipmaxstream	= 8,		/* streams running at once */
 
 	Pipfidlease	= 30*1000,	/* how long a fid is good for */
 	Pipsesslease	= 300*1000,	/* and a session */

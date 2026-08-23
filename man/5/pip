@@ -54,11 +54,16 @@ Tclose		fid[4]
 Rclose		version[8]
 Tlease		fid[4]
 Rlease		lease[8]
+Tstream		fid[4] period[4] count[4] attr[s]
+Rstream		period[8]
+Tauth		ticket[s]
+Rauth		user[s]
 Rerror		ename[s]
 .fi
 .PP
 A container is only opened by whoever it is for; see
-.IR osprey (3).
+.B "WHO IS ASKING"
+below.
 .PP
 .B Topen
 walks the name from the root, clones
@@ -70,6 +75,72 @@ group begins with
 .BR Tsession ,
 and the session it settles on is remembered against the connection, so a
 client need not name it again in every group.
+.SH TRANSPORT
+.PP
+Pip is spoken over
+.B #O/pip
+by writing a group and reading its replies, and it is spoken on a wire
+of its own.
+.IP
+.nf
+echo pipether ether0 on >/n/osprey/ctl
+.fi
+.PP
+takes a conversation on that interface carrying ethernet type
+.BR 0x910A ,
+and answers every group that arrives in a frame with its replies in a
+frame back to whoever sent it.  Nothing about that is a connection:
+each group says which session it is for, which is exactly what a session
+outliving its connection buys.
+.SH WHO IS ASKING
+.PP
+A container is only opened by whoever it is for.  Over
+.B #O/pip
+that is the process's own name, which the kernel knows and did not have
+to be told.  Over a wire it is nobody: a frame may say anything, so it
+says nothing, and a session that has not proved a name may open only the
+root.
+.PP
+.B Tauth
+presents a
+.I ticket
+\- a name, a container and a time, signed under a machine's key; see
+.IR osprey (3).
+If it checks out and has not run out, the session asks as that name from
+then on, for the container the ticket names and no other, and
+.B Rauth
+says which name that is.  A ticket that does not check out leaves the
+session with no name at all.
+.PP
+The name a session proved outlives the connection along with the rest of
+the session, which is the point: a client whose wire went away comes
+back, says which session it is, and is still who it was.
+.SH STREAMS
+.PP
+.B Tstream
+asks for an attribute to keep arriving at a rate rather than to be asked
+for.  Once every
+.I period
+milliseconds,
+.I count
+times over \- 0 for no end \- an
+.B Rread
+is sent carrying the
+.BR Tstream 's
+own tag, unasked, with no request to match it against.  A second
+.B Tstream
+on the same fid replaces the first and a period of 0 stops it; so does
+the fid's lease running out, or the container going away.
+.PP
+The rate is fixed when the stream is set up and the frames come at that
+rate whatever the client is doing, which is what makes it isochronous
+and why it needs the wire: over a file nothing can arrive that was not
+read for.  A
+.B Tstream
+asked for over
+.B #O/pip
+is answered
+.LR "no wire to stream on" .
 .SH VERSIONS
 .PP
 A write does not change what it names.  It changes the version the fid is
@@ -161,6 +232,20 @@ pip -s 1 read 2 budget lease 2 close 2
 .fi
 .PP
 The write is nobody else's until that close.
+.PP
+Ask another machine for a container's used time six times over, half a
+second apart, and let it arrive:
+.IP
+.nf
+pip -e open 3 /7 stream 3 500 6 used
+.fi
+.PP
+That machine will not have heard of us, so a container that is somebody's
+needs the ticket it signed for us first:
+.IP
+.nf
+pip -e auth 'fred 7 0 f18f505a...' open 1 /7 read 1 budget close 1
+.fi
 .SH SOURCE
 .B /os/osprey/pip.h
 .br
@@ -171,9 +256,18 @@ The write is nobody else's until that close.
 .IR osprey (3)
 .SH BUGS
 .PP
-Pip is spoken over a file rather than being its own transport, and there
-is no isochronous data.  The things it names are containers; no file
-system is served over it.
+The things pip names are containers; no file system is served over it.
+A machine with no key believes every name it is told, and over a wire
+that means a session may open only what is nobody's.  A ticket is a
+bearer token: whoever holds it is the name in it until it runs out, and
+nothing revokes one early.  A session id is drawn at random rather than
+counted up, because a session carries what a ticket proved.
+A stream is not scheduled against a reservation: it is sent when it is
+due by a kernel process that wakes every five milliseconds, so its
+period is kept to about that much and not better.  There are eight
+streams for the whole machine.  The wire carries a group in one frame,
+so a group and its replies must each fit in 1500 bytes; nothing is
+retransmitted, and a group in a lost frame is simply not answered.
 .PP
 A session is remembered against the connection that last used it, so two
 connections working one session at once will confuse each other's

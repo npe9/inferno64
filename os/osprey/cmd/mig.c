@@ -261,6 +261,16 @@ migrecv(void)
 		n--;
 	if(n <= 4)
 		die("the frame does not end in a checkpoint");
+	/*
+	 * a signed checkpoint carries one more line after the end of it;
+	 * that line is the whole point, so keep it.
+	 */
+	if(memcmp(frame + Hdrlen + n, "sig ", 4) == 0){
+		n += 4;
+		while(frame[Hdrlen + n] != '\n' && Hdrlen + n < Maxframe)
+			n++;
+		n++;
+	}
 	n += Hdrlen;
 	outs("received "); outn(n - Hdrlen); outs(" bytes of checkpoint\n");
 	flush();

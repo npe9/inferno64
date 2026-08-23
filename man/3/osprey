@@ -184,6 +184,27 @@ the page is mapped, not copied.
 .B status
 lists the pages a container holds, as offsets in the span.
 .TP
+.BI key " text " | off
+The key this machine signs with and believes.  Only the host owner sets
+it, and nothing reads it back.  Two machines holding the same key take
+each other's word about who is asking and nobody else's; a machine with
+no key takes every word it is given, which is what it did before there
+were keys at all.
+.TP
+.BI pipether " name " [ on | off ]
+Answer
+.IR pip (5)
+on the interface called
+.I name
+rather than only through
+.BR #O/pip .
+A conversation is taken on it carrying ethernet type
+.BR 0x910A ;
+a frame with a group in it is answered with a frame of replies to
+whoever sent it, and a group that asked for a stream has its frames sent
+at the rate it asked for.  There is no connection: each group says which
+session it belongs to.
+.TP
 .BI delegate " id " [ server | off ]
 Have another container answer the requests this one makes that the kernel
 does not implement.  The request appears on the server's own request
@@ -581,6 +602,62 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/adapter/ospreyrt.c
 .br
 .B /os/osprey/devosprey.c
+.SH TICKETS
+.PP
+A name is only worth what the machine it was said on is worth.  On a
+wire, or in a checkpoint that arrived from elsewhere, anyone may say
+anything; so a machine that holds a key will sign what is true here, to
+be believed there.
+.PP
+Writing
+.IP
+.nf
+\fIid user seconds\fP
+.fi
+.PP
+to
+.B ticket
+signs a ticket saying that
+.I user
+may have container
+.I id
+for that many seconds \- 0 for as long as the key lasts \- and reading
+the same
+.B fd
+hands it over, once.  Only somebody the container is already for may
+ask, and only for a name it is already for: a ticket says a thing that
+is already true, so that somewhere else can be told.  It is
+.IP
+.nf
+{echo '7 fred 0' >[1=0]; cat} <>/n/osprey/ticket
+.fi
+.PP
+because the ticket belongs to the
+.B fd
+that asked for it and to nothing else.  What comes back is
+.IP
+.nf
+user id expiry signature
+.fi
+.PP
+where the signature is HMAC-SHA1 under the machine's key.  A
+.B Tauth
+of
+.IR pip (5)
+presents one; see there for what a session does with it.
+.PP
+A checkpoint read from
+.B snap
+is signed the same way, with a last line
+.IP
+.nf
+sig \fIsignature\fP
+.fi
+.PP
+and a machine with a key will read back only a checkpoint it, or a
+machine holding the same key, signed.  This is what makes a migration
+between two machines worth anything: the grants a container arrives with
+are the grants somebody with the key wrote.
 .SH SEE ALSO
 .IR cons (3)
 .SH BUGS

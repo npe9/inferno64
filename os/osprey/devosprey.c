@@ -22,6 +22,7 @@
 #include	"etherif.h"
 
 #include	"osprey.h"
+#include	<libsec.h>
 #include	"pip.h"
 
 enum {
@@ -32,11 +33,16 @@ enum {
 	Qarena,
 	Qpip,
 	Qsnap,
+	Qticket,
 
 	Statuslen	= 8*1024,	/* every core and container line */
 	Snaplen		= 16*1024,	/* every container as a checkpoint */
 	Nfd		= 16,		/* chans a container may hold open */
 	Rbtlr		= 16,		/* allocb's trailer room, kept clear of */
+	Pipethertype	= 0x910a,	/* frames that carry a pi-p group */
+	Pipframe	= 1514,
+	Etherhdr	= 14,
+	Minframe	= 60,
 	Namelen		= 256,		/* longest path a request may name */
 };
 
@@ -75,6 +81,7 @@ static Dirtab ospreydir[] = {
 	"arena",	{Qarena},		0,	0660,
 	"pip",		{Qpip},			0,	0660,
 	"snap",		{Qsnap},		0,	0660,
+	"ticket",	{Qticket},		0,	0660,
 };
 
 /*
@@ -114,13 +121,153 @@ struct Pipsession {
 	int	used;
 	uvlong	sid;
 	uvlong	lease;
+	char	user[Pipmaxname+1];	/* proven by a ticket, or empty */
+	uvlong	authid;			/* the container the ticket is for */
 	Pipfid	fid[Nfid];
 	uchar	reply[Pipmaxmsg];
 	long	nreply;
 	long	rp;
 };
 
+/*
+ * A stream: an attribute that keeps arriving at a rate, rather than one
+ * that is asked for.  It belongs to a fid, it goes to the address the
+ * request came from, and it needs a wire -- over a file nothing can
+ * arrive that was not read for.
+ */
+typedef struct Pipstream Pipstream;
+struct Pipstream {
+	int	used;
+	uvlong	sid;
+	ulong	fid;
+	int	tag;
+	uvlong	period;		/* milliseconds between frames */
+	long	left;		/* frames still to send, -1 for no end */
+	uvlong	due;		/* when the next one goes */
+	char	attr[Pipmaxname+1];
+	uchar	ea[6];		/* whoever asked for it */
+};
+
+/*
+ * Proving who is asking.  A name on its own is only worth what the
+ * machine it was said on is worth: over a wire, or in a checkpoint that
+ * came from somewhere else, anyone may say anything.  So a machine holds
+ * a key, and what it signs with that key it will believe again -- and so
+ * will any other machine holding the same key.  This is devcap's trick
+ * with a different shape: not a hash to be presented once, but a ticket
+ * that says who, for which container, until when.
+ */
+enum {
+	Keylen		= SHA1dlen,
+	Ticketlen	= 256,
+	Sigchars	= 2*SHA1dlen,
+};
+
+static uchar ospreykey[Keylen];
+static int ospreykeyset;
+
+static void
+ospreyhex(uchar *h, int n, char *out)
+{
+	static char x[] = "0123456789abcdef";
+	int i;
+
+	for(i = 0; i < n; i++){
+		*out++ = x[h[i]>>4];
+		*out++ = x[h[i]&0xF];
+	}
+	*out = '\0';
+}
+
+/* the signature over some text, or nothing if this machine holds no key */
+static int
+ospreysign(char *text, char *out, int nout)
+{
+	uchar h[SHA1dlen];
+
+	if(ospreykeyset == 0 || nout <= Sigchars)
+		return -1;
+	hmac_sha1((uchar*)text, strlen(text), ospreykey, Keylen, h, nil);
+	ospreyhex(h, SHA1dlen, out);
+	return Sigchars;
+}
+
+/* whether that signature is the one this key makes over that text */
+static int
+ospreysigok(char *text, char *sig)
+{
+	char want[Sigchars+1];
+	int i, d;
+
+	if(ospreykeyset == 0 || sig == nil)
+		return 0;
+	if((long)strlen(sig) != Sigchars)	/* before reading that far */
+		return 0;
+	if(ospreysign(text, want, sizeof want) < 0)
+		return 0;
+	/* the whole string every time: a compare that stops early tells */
+	for(d = 0, i = 0; i < Sigchars; i++)
+		d |= want[i] ^ sig[i];
+	return d == 0;
+}
+
+/*
+ * A ticket is its own text and the signature over it:
+ *	user id expiry signature
+ * Expiry is in seconds since the epoch, so that it means the same on the
+ * machine that reads it as on the machine that wrote it.
+ */
+static int
+ospreyticket(char *user, uvlong id, uvlong expiry, char *out, int nout)
+{
+	char text[Ticketlen];
+	int n;
+
+	n = snprint(text, sizeof text, "%s %llud %llud", user, id, expiry);
+	if(n < 0 || n + 1 + Sigchars >= nout)
+		return -1;
+	strcpy(out, text);
+	out[n] = ' ';
+	return ospreysign(text, out+n+1, nout-n-1) < 0 ? -1 : n+1+Sigchars;
+}
+
+/*
+ * What a ticket says, if it says it truthfully and still holds.  The
+ * name is copied out; nothing of the caller's is trusted afterwards.
+ */
+static int
+ospreyticketok(char *t, char *user, int nuser, uvlong *id)
+{
+	char buf[Ticketlen], text[Ticketlen], *f[4];
+	uvlong expiry;
+	int nf;
+
+	if(ospreykeyset == 0 || strlen(t) >= sizeof buf)
+		return -1;
+	strcpy(buf, t);
+	nf = tokenize(buf, f, nelem(f));
+	if(nf != 4)
+		return -1;
+	/* the text as it was signed, put back rather than patched up */
+	if(snprint(text, sizeof text, "%s %s %s", f[0], f[1], f[2]) < 0)
+		return -1;
+	if(!ospreysigok(text, f[3]))
+		return -1;
+	expiry = strtoull(f[2], nil, 10);
+	if(expiry != 0 && expiry < (uvlong)seconds())
+		return -1;
+	*id = strtoull(f[1], nil, 10);
+	strncpy(user, f[0], nuser-1);
+	user[nuser-1] = '\0';
+	return 0;
+}
+
 static Pipsession pipsession[Nsession];
+static Pipstream pipstream[Pipmaxstream];
+static uchar pipfrom[6];	/* the address the group in hand came from */
+static int pipviafile;		/* the group in hand came through #O/pip */
+static Chan *pipetherchan;	/* the wire, while there is one */
+static int pipserving;		/* a wire is being answered on */
 static uvlong pipnextsid = 1;
 static QLock piplock;
 
@@ -187,6 +334,8 @@ enum {
 	CMflip,
 	CMgrant,
 	CMrevoke,
+	CMpipether,
+	CMkey,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -221,6 +370,8 @@ static Cmdtab ospreycmd[] = {
 	CMflip,		"flip",		4,
 	CMgrant,	"grant",	3,
 	CMrevoke,	"revoke",	3,
+	CMpipether,	"pipether",	3,
+	CMkey,		"key",		2,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -347,6 +498,8 @@ queuebarrier(void)
  */
 static void ospreywakeup(void);
 static void ospreyrelease(Proc*, int);
+static Chan *etherconv(char*, int, Chan**);
+static long pipserve(uchar*, long, uchar*, long);
 static int ospreyarmready(void*);
 
 /*
@@ -1126,8 +1279,13 @@ ospreyopen(Chan *c, int omode)
 }
 
 static void
-ospreyclose(Chan*)
+ospreyclose(Chan *c)
 {
+	/* a ticket is the chan's own; the pip session is not */
+	if((ulong)c->qid.path == Qticket && c->aux != nil){
+		free(c->aux);
+		c->aux = nil;
+	}
 }
 
 
@@ -1356,10 +1514,18 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			ps = &pipsession[i];
 			memset(ps, 0, sizeof *ps);
 			ps->used = 1;
-			ps->sid = pipnextsid++;
+			/*
+			 * not in order: a session carries what a ticket
+			 * proved, so a sid that can be guessed is a way in.
+			 */
+			randomread(&ps->sid, sizeof ps->sid);
+			if(ps->sid == 0)
+				ps->sid = pipnextsid;
+			pipnextsid++;
 		}
 		ps->lease = pipnow() + Pipsesslease;	/* renegotiated */
 		*psp = ps;
+		ps->nreply = ps->rp = 0;	/* this group's replies */
 		if((r = pipreply(ps, PipRsession, tag, 8)) != nil)
 			pipput(r, 8, ps->sid);
 		return sz;
@@ -1389,10 +1555,25 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			piperror(ps, tag, "no such container");
 			break;
 		}
-		if(id != 0 && !ospreymay(ospreylookup(id),
-			up != nil ? up->user : nil)){
-			piperror(ps, tag, "not yours");
-			break;
+		/*
+		 * Who is asking.  A ticket says so and is signed; without
+		 * one it is whoever the transport says, which on a wire is
+		 * nobody -- a frame may say anything, so it says nothing.
+		 */
+		if(id != 0){
+			char *who;
+
+			who = ps->user[0] != '\0' ? ps->user
+				: pipviafile ? (up != nil ? up->user : nil)
+				: nil;
+			if(!ospreymay(ospreylookup(id), who)){
+				piperror(ps, tag, "not yours");
+				break;
+			}
+			if(ps->user[0] != '\0' && ps->authid != id){
+				piperror(ps, tag, "ticket is for another container");
+				break;
+			}
 		}
 		if((nf = pipnewfid(ps, nfid)) == nil){
 			piperror(ps, tag, "fid in use or no free fids");
@@ -1548,6 +1729,110 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			pipput(r, 8, (uvlong)Pipfidlease);
 		break;
 
+	case PipTauth:
+		if(sz < Pipheader + 2)
+			return -1;
+		alen = pipget(m+Pipheader, 2);
+		if(Pipheader + 2 + alen > sz || alen > Pipmaxname){
+			piperror(ps, tag, "bad ticket");
+			break;
+		}
+		{
+			char t[Ticketlen], who[Pipmaxname+1];
+			uvlong who_id;
+
+			if(alen >= sizeof t){
+				piperror(ps, tag, "bad ticket");
+				break;
+			}
+			memmove(t, m+Pipheader+2, alen);
+			t[alen] = '\0';
+			if(ospreyticketok(t, who, sizeof who, &who_id) < 0){
+				ps->user[0] = '\0';
+				ps->authid = 0;
+				piperror(ps, tag, "ticket does not check out");
+				break;
+			}
+			strncpy(ps->user, who, sizeof ps->user - 1);
+			ps->user[sizeof ps->user - 1] = '\0';
+			ps->authid = who_id;
+			k = strlen(ps->user);
+			if((r = pipreply(ps, PipRauth, tag, 2+k)) != nil){
+				pipput(r, 2, k);
+				memmove(r+2, ps->user, k);
+			}
+		}
+		break;
+
+	case PipTstream:
+		if(sz < Pipheader + 4+4+4+2)
+			return -1;
+		fid = pipget(m+Pipheader, 4);
+		k = Pipheader + 4;
+		{
+			uvlong period;
+			long count;
+			int j, slot;
+
+			period = pipget(m+k, 4);
+			count = (long)pipget(m+k+4, 4);
+			k += 8;
+			alen = pipget(m+k, 2);
+			k += 2;
+			if(k + alen > sz || alen > Pipmaxname)
+				return -1;
+			memmove(attr, m+k, alen);
+			attr[alen] = 0;
+			if((f = pipfid(ps, fid)) == nil || f->open == 0){
+				piperror(ps, tag, "fid not open");
+				break;
+			}
+			/* one stream to a fid: a second says what the first said */
+			slot = -1;
+			for(j = 0; j < Pipmaxstream; j++){
+				if(pipstream[j].used && pipstream[j].sid == ps->sid
+				&& pipstream[j].fid == fid){
+					slot = j;
+					break;
+				}
+			}
+			if(period == 0){
+				if(slot >= 0)
+					pipstream[slot].used = 0;
+				if((r = pipreply(ps, PipRstream, tag, 8)) != nil)
+					pipput(r, 8, 0);
+				break;
+			}
+			if(pipetherchan == nil){
+				piperror(ps, tag, "no wire to stream on");
+				break;
+			}
+			if(slot < 0){
+				for(j = 0; j < Pipmaxstream; j++)
+					if(pipstream[j].used == 0){
+						slot = j;
+						break;
+					}
+			}
+			if(slot < 0){
+				piperror(ps, tag, "no room for another stream");
+				break;
+			}
+			memset(&pipstream[slot], 0, sizeof(Pipstream));
+			pipstream[slot].used = 1;
+			pipstream[slot].sid = ps->sid;
+			pipstream[slot].fid = fid;
+			pipstream[slot].tag = tag;
+			pipstream[slot].period = period;
+			pipstream[slot].left = count == 0 ? -1 : count;
+			pipstream[slot].due = pipnow() + period;
+			strncpy(pipstream[slot].attr, attr, Pipmaxname);
+			memmove(pipstream[slot].ea, pipfrom, 6);
+			if((r = pipreply(ps, PipRstream, tag, 8)) != nil)
+				pipput(r, 8, period);
+		}
+		break;
+
 	default:
 		piperror(ps, tag, "unknown message");
 		break;
@@ -1556,11 +1841,196 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 }
 
 /*
+ * What a stream carries: the same value a PipTread would have answered
+ * with, without the request.
+ */
+static long
+pipstreamvalue(Pipstream *st, char *b, long nb, uvlong *version)
+{
+	Pipsession *ps;
+	Pipfid *f;
+	void *p;
+	char *s;
+	long k;
+	int i;
+
+	ps = nil;
+	for(i = 0; i < Nsession; i++)
+		if(pipsession[i].used && pipsession[i].sid == st->sid){
+			ps = &pipsession[i];
+			break;
+		}
+	if(ps == nil)
+		return -1;
+	if((f = pipfid(ps, st->fid)) == nil || f->open == 0)
+		return -1;
+	if(f->id == 0){
+		if(strcmp(st->attr, "*") != 0)
+			return -1;
+		k = 0;
+		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
+			k += snprint(b+k, nb-k, k == 0 ? "%llud" : " %llud",
+				ospreyid(p));
+		*version = 0;
+		return k;
+	}
+	if((p = ospreylookup(f->id)) == nil)
+		return -1;
+	s = pipdraft(f, st->attr);
+	k = s != nil ? snprint(b, nb, "%s", s) : ospreyattr(p, st->attr, b, nb);
+	if(k < 0)
+		return -1;
+	*version = f->dirty ? f->base + 1 : ospreyversion(p);
+	return k;
+}
+
+/*
+ * The rate.  Frames go out when they are due whatever the client is
+ * doing; nothing is read to make them happen.
+ */
+static void
+pipstreamer(void*)
+{
+	uchar *out;
+	char *b;
+	uvlong now, version;
+	long k, n;
+	int i;
+
+	out = smalloc(Pipframe);
+	b = smalloc(Pipmaxmsg/2);
+	while(pipserving){
+		tsleep(&up->sleep, return0, nil, 5);
+		qlock(&piplock);
+		if(waserror()){
+			qunlock(&piplock);
+			continue;
+		}
+		pipexpire();	/* a stream lasts no longer than its fid */
+		now = pipnow();
+		for(i = 0; i < Pipmaxstream; i++){
+			if(pipstream[i].used == 0 || pipstream[i].due > now)
+				continue;
+			k = pipstreamvalue(&pipstream[i], b, Pipmaxmsg/2, &version);
+			if(k < 0){
+				pipstream[i].used = 0;	/* what it named is gone */
+				continue;
+			}
+			if(k > Pipframe - Etherhdr - Pipheader - 10)
+				k = Pipframe - Etherhdr - Pipheader - 10;
+			memmove(out, pipstream[i].ea, 6);
+			memset(out+6, 0, 6);	/* the driver fills this in */
+			out[12] = Pipethertype >> 8;
+			out[13] = Pipethertype;
+			n = Etherhdr;
+			pipput(out+n, 4, Pipheader + 8+2+k);
+			out[n+4] = PipRread;
+			pipput(out+n+5, 2, pipstream[i].tag);
+			n += Pipheader;
+			pipput(out+n, 8, version);
+			pipput(out+n+8, 2, k);
+			memmove(out+n+10, b, k);
+			n += 10 + k;
+			while(n < Minframe)
+				out[n++] = 0;
+			if(pipetherchan != nil)
+				devtab[pipetherchan->type]->write(pipetherchan,
+					out, n, 0);
+			pipstream[i].due += pipstream[i].period;
+			if(pipstream[i].due <= now)
+				pipstream[i].due = now + pipstream[i].period;
+			if(pipstream[i].left > 0 && --pipstream[i].left == 0)
+				pipstream[i].used = 0;
+		}
+		poperror();
+		qunlock(&piplock);
+	}
+	free(b);
+	free(out);
+	pexit("osprey pip stream", 1);
+}
+
+/*
  * A group: as many T messages as were written at once, answered in one
  * reply the client reads next.  The session a group leaves off in is
  * remembered against the connection, so that a client need not name it
  * again in every group.
  */
+/*
+ * Answer pi-p on a wire.  Nothing here is a connection: a frame arrives
+ * with a group in it, the group says which session it belongs to, and
+ * the replies go back to whoever sent it.  That a session outlives a
+ * connection is exactly what lets the protocol be its own transport.
+ */
+static void
+pipetherserve(void *a)
+{
+	Chan *dc, *cc;
+	uchar *in, *out;
+	long n, r;
+	char *ifc;
+
+	ifc = a;
+
+	in = nil;
+	out = nil;
+	dc = nil;
+	cc = nil;
+	if(waserror())
+		goto done;
+	in = smalloc(Pipframe);
+	out = smalloc(Pipframe);
+	dc = etherconv(ifc, Pipethertype, &cc);
+	pipetherchan = dc;
+	kproc("ospreypipstream", pipstreamer, nil);
+	while(pipserving){
+		n = devtab[dc->type]->read(dc, in, Pipframe, 0);
+		if(n <= Etherhdr)
+			continue;
+		qlock(&piplock);
+		if(waserror()){
+			qunlock(&piplock);
+			nexterror();
+		}
+		pipexpire();
+		pipviafile = 0;			/* a frame says nothing about who */
+		memmove(pipfrom, in+6, 6);	/* for a stream to be sent to */
+		r = pipserve(in+Etherhdr, n-Etherhdr,
+			out+Etherhdr, Pipframe-Etherhdr);
+		qunlock(&piplock);
+		poperror();
+		if(r <= 0)
+			continue;
+		memmove(out, in+6, 6);		/* back to whoever asked */
+		memmove(out+6, in, 6);
+		out[12] = Pipethertype >> 8;
+		out[13] = Pipethertype;
+		r += Etherhdr;
+		while(r < Minframe)		/* shorter than this is refused */
+			out[r++] = 0;
+		devtab[dc->type]->write(dc, out, r, 0);
+	}
+	poperror();
+done:
+	pipserving = 0;
+	/*
+	 * the streamer writes on this chan, and only ever with the lock
+	 * held, so taking it away under the lock is enough.
+	 */
+	qlock(&piplock);
+	pipetherchan = nil;
+	for(n = 0; n < Pipmaxstream; n++)
+		pipstream[n].used = 0;
+	qunlock(&piplock);
+	if(dc != nil)
+		cclose(dc);
+	if(cc != nil)
+		cclose(cc);
+	free(in);
+	free(out);
+	pexit("osprey pip", 1);
+}
+
 static long
 pipwrite(Chan *c, uchar *m, long n)
 {
@@ -1573,6 +2043,7 @@ pipwrite(Chan *c, uchar *m, long n)
 		qunlock(&piplock);
 		nexterror();
 	}
+	pipviafile = 1;		/* the kernel knows who this process is */
 	ps = (Pipsession*)c->aux;
 	if(ps != nil && (ps->used == 0 || ps > &pipsession[Nsession-1]))
 		ps = nil;
@@ -1582,8 +2053,6 @@ pipwrite(Chan *c, uchar *m, long n)
 		k = pipmsg(&ps, m+used, n-used);
 		if(k <= 0)
 			break;
-		if(i == 0 && ps != nil)
-			ps->nreply -= 0;	/* first message may open it */
 		used += k;
 	}
 	if(ps == nil)
@@ -1592,6 +2061,73 @@ pipwrite(Chan *c, uchar *m, long n)
 	qunlock(&piplock);
 	poperror();
 	return n;
+}
+
+/*
+ * A group carried by something that is not a connection: a datagram, say.
+ * There is nothing to remember a session against, so the group says which
+ * session it is -- which is what a session outliving its connection is
+ * for -- and the replies go back the way the group came.
+ */
+/*
+ * A conversation of our own on an interface, carrying one frame type.
+ * The control file is held open for as long as the conversation lives.
+ */
+static Chan*
+etherconv(char *ifc, int type, Chan **ccp)
+{
+	char buf[64], path[64];
+	Chan *cc, *dc;
+	long n;
+	int cno;
+
+	/*
+	 * the chan the clone file hands back is the conversation's own ctl
+	 * file, and the conversation lives exactly as long as it is held
+	 * open.  close it and the connect is undone under you.
+	 */
+	snprint(path, sizeof path, "#l/%s/clone", ifc);
+	cc = namec(path, Aopen, ORDWR, 0);
+	if(waserror()){
+		cclose(cc);
+		nexterror();
+	}
+	n = devtab[cc->type]->read(cc, buf, sizeof buf - 1, 0);
+	if(n <= 0)
+		error(Eio);
+	buf[n] = '\0';
+	cno = atoi(buf);
+	snprint(buf, sizeof buf, "connect %d", type);
+	devtab[cc->type]->write(cc, buf, strlen(buf), 0);
+	snprint(path, sizeof path, "#l/%s/%d/data", ifc, cno);
+	dc = namec(path, Aopen, ORDWR, 0);
+	poperror();
+	*ccp = cc;
+	return dc;
+}
+
+static long
+pipserve(uchar *in, long n, uchar *out, long nout)
+{
+	Pipsession *ps;
+	long used, k, r;
+	int i;
+
+	ps = nil;
+	for(used = 0, i = 0; i < Pipmaxgroup && used < n; i++){
+		k = pipmsg(&ps, in+used, n-used);
+		if(k <= 0)
+			break;
+		used += k;
+	}
+	if(ps == nil)
+		return 0;
+	r = ps->nreply;
+	if(r > nout)
+		r = nout;
+	memmove(out, ps->reply, r);
+	ps->nreply = ps->rp = 0;
+	return r;
 }
 
 static long
@@ -1729,6 +2265,23 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 	case Qpip:
 		return pipread(c, a, n);
 
+	case Qticket:
+		/*
+		 * The ticket the last write on this chan asked for, handed
+		 * over once.  There is no offset in it: a write moves the
+		 * chan's, and what is wanted is the whole thing.
+		 */
+		if(c->aux == nil)
+			return 0;
+		s = (char*)c->aux;
+		if((long)strlen(s) > n)
+			error(Etoobig);
+		n = strlen(s);
+		memmove(a, s, n);
+		free(c->aux);
+		c->aux = nil;
+		return n;
+
 	case Qsnap:
 		/*
 		 * Every container as text, so that a checkpoint can be
@@ -1746,6 +2299,22 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 			nexterror();
 		}
 		ospreysnapwrite(buf, Snaplen);
+		/*
+		 * A checkpoint carries who a container is for and who it has
+		 * been handed to.  On another machine that is only worth what
+		 * the machine that wrote it is worth, so a machine with a key
+		 * signs what it wrote, and one with the same key will believe
+		 * it and no other.
+		 */
+		if(ospreykeyset){
+			char sig[Sigchars+1];
+			long k;
+
+			k = strlen(buf);
+			if(ospreysign(buf, sig, sizeof sig) > 0
+			&& k + 5 + Sigchars < Snaplen)
+				snprint(buf+k, Snaplen-k, "sig %s\n", sig);
+		}
 		qunlock(&ospreylock);
 		poperror();
 		n = readstr(offset, a, n, buf);
@@ -1776,6 +2345,54 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		return ospreyarenaio(a, n, offset, 1);
 	if((ulong)c->qid.path == Qpip)
 		return pipwrite(c, a, n);
+	if((ulong)c->qid.path == Qticket){
+		/*
+		 * Sign a name for a container until a time.  Only somebody
+		 * the container is already for may ask, and only for a name
+		 * it is already for: a ticket says a thing that is true
+		 * here, so that it can be believed elsewhere.  What comes
+		 * back is on this chan alone, so nobody else sees it.
+		 */
+		char *t;
+		uvlong secs;
+
+		if(ospreykeyset == 0)
+			error("no key");
+		cb = parsecmd(a, n);
+		if(waserror()){
+			free(cb);
+			nexterror();
+		}
+		if(cb->nf != 3)
+			error(Ebadarg);
+		qlock(&ospreylock);
+		if(waserror()){
+			qunlock(&ospreylock);
+			nexterror();
+		}
+		p = ospreyproc(cb->f[0]);
+		if(!ospreymay(p, up->user) || !ospreymay(p, cb->f[1]))
+			error(Eperm);
+		secs = strtoull(cb->f[2], nil, 10);
+		t = smalloc(Ticketlen);
+		if(waserror()){
+			free(t);
+			nexterror();
+		}
+		if(ospreyticket(cb->f[1], ospreyid(p),
+			secs == 0 ? 0 : (uvlong)seconds() + secs,
+			t, Ticketlen) < 0)
+			error(Ebadarg);
+		poperror();
+		if(c->aux != nil)
+			free(c->aux);
+		c->aux = t;
+		qunlock(&ospreylock);
+		poperror();
+		poperror();
+		free(cb);
+		return n;
+	}
 	if((ulong)c->qid.path == Qsnap){
 		/* a checkpoint read back; what it names and is not here is made */
 		if(n <= 0 || n >= Snaplen)
@@ -1787,12 +2404,37 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		}
 		memmove(nm, a, n);
 		nm[n] = '\0';
+		x = n;		/* what the writer wrote, whatever we keep */
+		/*
+		 * and a machine with a key takes back only what it, or a
+		 * machine holding the same key, signed.
+		 */
+		if(ospreykeyset){
+			char *sig;
+
+			if(n > 4 && strncmp(nm, "sig ", 4) == 0)
+				sig = nm;
+			else if((sig = strstr(nm, "\nsig ")) != nil)
+				sig++;
+			if(sig == nil)
+				error("checkpoint is not signed");
+			*sig = '\0';
+			sig += 4;
+			for(i = 0; sig[i] != '\0'; i++)
+				if(sig[i] == '\n'){
+					sig[i] = '\0';
+					break;
+				}
+			if(!ospreysigok(nm, sig))
+				error("checkpoint is not ours");
+			x = strlen(nm);
+		}
 		qlock(&ospreylock);
 		if(waserror()){
 			qunlock(&ospreylock);
 			nexterror();
 		}
-		ospreysnapread(nm, n+1);
+		ospreysnapread(nm, x+1);
 		qunlock(&ospreylock);
 		poperror();
 		poperror();
@@ -1918,6 +2560,50 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
 			ospreyroute(p);
 		ospreywakeup();
+		break;
+
+	case CMpipether:
+		/*
+		 * Speak pi-p on a wire rather than through this file.  Two
+		 * machines that have nothing else in common can then talk
+		 * about containers.
+		 */
+		if(strcmp(cb->f[2], "off") == 0){
+			pipserving = 0;
+			break;
+		}
+		if(pipserving)
+			break;
+		if(etherlookup(cb->f[1]) == nil)
+			error(Enonexist);
+		nm = smalloc(strlen(cb->f[1])+1);
+		strcpy(nm, cb->f[1]);
+		pipserving = 1;
+		if(waserror()){
+			pipserving = 0;
+			free(nm);
+			nexterror();
+		}
+		kproc("ospreypip", pipetherserve, nm);
+		poperror();
+		break;
+
+	case CMkey:
+		/*
+		 * The key this machine signs with, and believes.  Only the
+		 * host owner sets it, and nothing reads it back: what it is
+		 * for is that two machines holding the same one will take
+		 * each other's word, and nobody else's.
+		 */
+		if(strcmp(eve, "") != 0 && strcmp(up->user, eve) != 0)
+			error(Eperm);
+		if(strcmp(cb->f[1], "off") == 0){
+			memset(ospreykey, 0, sizeof ospreykey);
+			ospreykeyset = 0;
+			break;
+		}
+		sha1((uchar*)cb->f[1], strlen(cb->f[1]), ospreykey, nil);
+		ospreykeyset = 1;
 		break;
 
 	case CMgrant:
