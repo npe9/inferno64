@@ -46,7 +46,14 @@ by
 .BR status .
 .TP
 .BI reset
-Discard every container and empty every run queue.
+Discard every container and empty every run queue, and let go of
+everything they were holding, as
+.B exit
+does for one: channels, bound processes, service processes, pages,
+interfaces and uarts.  Every
+.IR pip (5)
+session and stream goes too, since the containers their fids name are
+about to be different containers with the same numbers.
 .TP
 .BI create " id budget period deadline"
 Create a container with the given CPU budget, replenishment period and

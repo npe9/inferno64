@@ -159,6 +159,12 @@ CHECKS = [
   ["ps | awk '$2=='^$u",
    "echo kill >/proc/$b/ctl; echo kill >/proc/$u/ctl; echo done"],
   "!Stopped"),
+ # last: reset takes the machine apart
+ ("a session that outlived a reset told there is no such session",
+  ["y=`{/tmp/pip open 1 /1 read 1 budget}; echo $y",
+   "echo reset >/n/osprey/ctl",
+   "/tmp/pip -s $y(5) read 1 budget"],
+  "write failed: no session"),
 ]
 
 def plain(s):

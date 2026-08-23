@@ -88,6 +88,25 @@ die(char *s)
 	exits(s);
 }
 
+/* the same, with what the kernel said about it */
+static void
+dieerr(char *s)
+{
+	static char e[128];
+
+	e[0] = '\0';
+	errstr(e, sizeof e);
+	outs("pip: ");
+	outs(s);
+	if(e[0] != '\0'){
+		outs(": ");
+		outs(e);
+	}
+	outs("\n");
+	flush();
+	exits(s);
+}
+
 static uvlong
 num(char *s)
 {
@@ -436,9 +455,9 @@ pipmain(int argc, char **argv)
 		n = etherrecv(rbuf, sizeof rbuf);
 	} else {
 		if((fd = open("/n/osprey/pip", ORDWR)) < 0)
-			die("cannot open /n/osprey/pip");
+			dieerr("cannot open /n/osprey/pip");
 		if(write(fd, wbuf, wn) != wn)
-			die("write failed");
+			dieerr("write failed");
 		n = read(fd, rbuf, sizeof rbuf);
 		close(fd);
 	}

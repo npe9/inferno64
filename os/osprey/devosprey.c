@@ -2380,6 +2380,25 @@ pipstreamer(void*)
  * again in every group.
  */
 /*
+ * Forget every session and every stream.  What a session holds is a fid
+ * on a container, and reset makes those containers into different ones
+ * with the same numbers, so a session that outlived the reset would be
+ * holding somebody else's.
+ */
+static void
+pipreset(void)
+{
+	int i;
+
+	qlock(&piplock);
+	for(i = 0; i < Nsession; i++)
+		pipsession[i].used = 0;
+	for(i = 0; i < Pipmaxstream; i++)
+		pipstream[i].used = 0;
+	qunlock(&piplock);
+}
+
+/*
  * Answer pi-p on a wire.  Nothing here is a connection: a frame arrives
  * with a group in it, the group says which session it belongs to, and
  * the replies go back to whoever sent it.  That a session outlives a
@@ -2988,8 +3007,11 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			ospreyclosefds(p);
 			ospreyputproc(p);
 			ospreyputserver(p);
+			ospreyputether(p);
+			ospreyputuart(p);
 		}
 		ospreyreset();
+		pipreset();
 		ospreywakeup();
 		break;
 
