@@ -88,6 +88,7 @@ struct	Sym
 	char	sym;
 	char	aused;
 	char	sig;
+	char	noret;		/* declared _Noreturn: a call to it never returns */
 };
 #define	S	((Sym*)0)
 
@@ -444,6 +445,13 @@ EXTERN	Io*	ionext;
 EXTERN	Io*	iostack;
 EXTERN	long	lastbit;
 EXTERN	char	lastclass;
+/*
+ * Set while a declaration carrying _Noreturn is being read, and applied
+ * to each function it declares.  The kernel's portfns.h says error(),
+ * panic() and nexterror() this way, and without it every switch that
+ * ends in error() is "no return at end of function".
+ */
+EXTERN	char	lastnoret;
 EXTERN	Type*	lastdcl;
 EXTERN	long	lastfield;
 EXTERN	Type*	lasttype;

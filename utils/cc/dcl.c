@@ -86,6 +86,8 @@ loop:
 		if(f == NODECL)
 			break;
 		s = n->sym;
+		if(lastnoret && t != T && t->etype == TFUNC)
+			s->noret = 1;
 		(*f)(c, t, s);
 		if(s->class == CLOCAL)
 			s = mkstatic(s);

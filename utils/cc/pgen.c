@@ -1,5 +1,9 @@
 #include "gc.h"
 
+/* was the last statement generated a call to something that never returns */
+static int endsnoret;
+static int noretcall(Node*);
+
 void
 codgen(Node *n, Node *nn)
 {
@@ -69,8 +73,14 @@ codgen(Node *n, Node *nn)
 
 	canreach = 1;
 	warnreach = 1;
+	endsnoret = 0;
 	gen(n);
-	if(canreach && thisfn->link->etype != TVOID){
+	/*
+	 * A function whose last statement is a call to something declared
+	 * _Noreturn -- a switch whose default is error(), say -- has a
+	 * return at the end of it in every sense that matters.
+	 */
+	if(canreach && !endsnoret && thisfn->link->etype != TVOID){
 		if(debug['B'])
 			warn(Z, "no return at end of function: %s", n1->sym->name);
 		else
@@ -119,6 +129,18 @@ uncomma(Node *n)
 	return n;
 }
 
+/* is this statement a call to something that never comes back */
+static int
+noretcall(Node *n)
+{
+	if(n == Z || n->op != OFUNC)
+		return 0;
+	n = n->left;
+	if(n == Z || n->op != ONAME || n->sym == S)
+		return 0;
+	return n->sym->noret;
+}
+
 void
 gen(Node *n)
 {
@@ -132,6 +154,7 @@ gen(Node *n)
 loop:
 	if(n == Z)
 		return;
+	endsnoret = 0;
 	nearln = n->lineno;
 	o = n->op;
 	if(debug['G'])
@@ -163,6 +186,14 @@ loop:
 	default:
 		complex(n);
 		cgen(n, Z);
+		/*
+		 * Remember whether the last thing generated was a call to
+		 * something declared _Noreturn.  Only the diagnostic below
+		 * looks at this: canreach drives code generation, and moving
+		 * it here changed what was emitted for every switch that
+		 * ends in error(), which is most of a kernel.
+		 */
+		endsnoret = noretcall(n);
 		break;
 
 	case OLIST:
