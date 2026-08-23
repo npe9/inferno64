@@ -57,11 +57,18 @@ that carried it, transactions group into one round trip, files carry
 string attributes rather than control files, and versions are immutable
 and committed when a file is closed.
 .PP
-What is built here follows the parts of that which fit a Plan 9 kernel:
-the scheduler, the resource containers, the asynchronous rings and the
-shared arena.  The task model, the select call, the semaphores and
-\[*p]p are not built, and the sections below still describe the plan as
-it was written rather than the talk.
+What is built here follows the parts of that which fit a Plan 9 kernel.
+The sections below are the plan as it was written, before the talk was
+read; everything in them is done, and so are the parts of the talk they
+did not describe \- the select call and its arms, semaphores an
+interrupt gives, a driver served by a task waiting on the three things
+the talk gives it, a reservation with best effort beyond it, and
+\[*p]p, which is spoken over a file and on a wire of its own and
+carries an attribute at a fixed rate when it is asked to.
+.I doc/osprey-progress.ms
+is what was built and in what order, and says plainly which parts of the
+talk a kernel of this shape cannot reach: the microkernel itself, and
+processes that share an address space migrating as a group.
 
 .NH 1
 Portable kernel layer

@@ -157,7 +157,17 @@ Not attempted
 The presentation describes a microkernel with library operating systems
 above it.  This is a Plan 9 kernel with an Osprey policy layer inside it,
 and the parts of Osprey that are about where code runs rather than what
-it does -- the microkernel itself, processes that share an address space
+it does -- the microkernel itself, a library operating system linked
+into the task that uses it, processes that share an address space
 migrating as a group -- are not reachable from here without writing a
 different kernel.  What is built follows the contracts rather than the
 structure, and says so.
+.PP
+The plan's other name for what sits beside a library OS is a
+.I buddy
+operating system, and that much this does have: what a container asks
+for and the policy layer cannot answer is answered by the Plan 9 kernel
+around it, or by a user-level server the container has named.  It is a
+buddy in the sense of answering for the parts a task has not brought
+with it; it is not one in the sense the plan means, since the task did
+not bring any of them.
