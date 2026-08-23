@@ -771,11 +771,17 @@ ring osprey0 \fIsize\fP bench 400
 .PP
 does four hundred submissions and collections through the mapped ring
 in about twenty milliseconds of real time, or fifty microseconds each,
-with not one trap taken.  It is the first request after the service
-process has gone to sleep that waits for a tick, and the 5.5
-milliseconds above is what that costs.  So the trade is not speed
-against traps: it is latency when idle against no traps at all when
-busy, which is the arrangement the talk is describing.
+with not one trap taken.
+.PP
+A request arriving at a service process that has gone to sleep might be
+expected to wait for the tick that wakes it, and does not measurably:
+twenty separate runs of
+.B "bench 1"
+\- each against a server that had gone to sleep when the run before it
+finished \- take no longer than twenty runs that ask for nothing at all.
+Whatever wakes it, it is not waiting a whole tick to be woken.  The 5.5
+milliseconds above was the other path, where the asking process slept
+too and nothing but the clock could wake either of them.
 .SH TICKETS
 .PP
 A name is only worth what the machine it was said on is worth.  On a

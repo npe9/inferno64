@@ -152,9 +152,10 @@ compared with itself by.  Writing to
 .CW #O/bench
 is how it is asked.  Through the mapped ring, where no trap is taken at
 all, four hundred round trips take about twenty milliseconds \- fifty
-microseconds each \- so long as the container keeps asking; it is the
-first request after its service process has gone to sleep that waits for
-a clock tick.  Asking it the first time found that nothing woke a
+microseconds each \- and twenty single round trips against a server that
+had gone to sleep each time cost no more than twenty runs that ask for
+nothing, so the tick that wakes a sleeping server is not what a request
+waits for.  Asking it the first time found that nothing woke a
 container's service process when a request was submitted from inside the
 kernel, so a round trip waited for the clock: 5.5 milliseconds, ninety
 times what it costs now.
