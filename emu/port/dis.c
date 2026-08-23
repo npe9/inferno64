@@ -1346,9 +1346,23 @@ vmachine(void *a)
 	 * MacCOLR and MacFRP emitted a plain load/modify/store on the same
 	 * h->ref and now use a load-exclusive/store-exclusive retry loop
 	 * (LL/SC rather than LSE, because this backend also builds for
-	 * ARMv8.0 parts that have no LSE). See doc/hpc-plan.md bug 8 - and
-	 * note it is a fix by construction: the race was never provoked,
-	 * though parallel xec() was measured at 17 processes at once. */
+	 * ARMv8.0 parts that have no LSE). See doc/hpc-plan.md bug 8.
+	 *
+	 * A correction to the paragraph above while here. Counting threads
+	 * inside xec() gives 17, which looks like 17 processes running Dis at
+	 * once and is not: xec() spans the system calls a process makes
+	 * through mcall, and a process inside a host call has already released
+	 * the slot. Measured directly (refstress(1)), the number of processes
+	 * executing Dis instructions simultaneously is ONE - acquire()/
+	 * release() hand the single slot to one process at a time - while the
+	 * number inside a region containing a host call is four to sixteen.
+	 *
+	 * So Dis-side reference-count updates cannot race each other. They can
+	 * race the C-side incref/decref in the device code above, which runs
+	 * on threads holding no slot, and that pairing is what the atomics
+	 * fixed. The compiled-path fix is by construction: the race has never
+	 * been provoked from a Limbo program, and now it is clear why it
+	 * cannot be. */
 	cycles = 0;
 	for(;;) {
 		if(tready(nil) == 0) {

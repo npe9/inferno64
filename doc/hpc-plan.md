@@ -1838,19 +1838,42 @@ The destroy path still deliberately does not store: `rdestroy()` does its own
 `--h->ref` and expects to find 1. Leaving the exclusive monitor set on that exit
 is harmless.
 
-**The precondition is real and was measured, not assumed.** A temporary counter
-around `r->xec(r)` in `vmachine()` — increment, record the maximum, decrement —
-reported **17 Dis processes executing simultaneously** under `fdstresstest` and
-13 under a refcount stress, against 1 for a single-threaded test. So the
-`GC-LOCK HISTORY` comment's claim of genuine parallel `xec()` is correct. (Six
-lines; re-add them if the number is ever wanted again.)
+**The race was never provoked, and finding out why corrected something.**
 
-**But the race was never provoked.** `refstress(1)` puts 16 processes on *one*
-shared object, ~1.28M reference-count pairs a run, with real host I/O so the
-processes genuinely run in parallel, and churns the heap afterwards so that an
-object freed early gets its block reused and the damage becomes visible. Twelve
-runs, no failure. So this is a fix by construction, not one demonstrated to
-repair an observed fault, and it is worth saying so plainly.
+A counter around `r->xec(r)` reports **17** under `fdstresstest`, and I first
+wrote that down as "17 Dis processes executing simultaneously". **That is
+wrong.** `xec()` contains the whole of a process's execution *including* the
+system calls it makes through `mcall`, and a process inside a host call has
+already released the virtual machine slot. Seventeen threads were inside
+`xec()`; at most one was executing Dis instructions.
+
+`refstress(1)` now measures the distinction directly, with an unprotected
+shared counter incremented and decremented around two different regions (a lost
+update there can only undercount, so it errs towards "not concurrent"):
+
+| region | processes inside at once |
+|---|---|
+| pure Dis instructions | **1**, always |
+| the same, with a host system call in it | 4 to 16 |
+
+So **Dis execution is serialised** — `acquire()`/`release()` hand the one slot
+to one process at a time — and the extra threads exist to cover processes that
+are *waiting*, not running.
+
+The consequence for this bug: the compiled path's counter updates run only
+while holding the slot, so they **cannot race each other**. What they can race
+is the C-side `incref`/`decref` in emu's own device code, which runs on threads
+holding no slot; those are atomic (`AINC`/`ADEC`), and atomic against
+non-atomic is still a race. The fix is therefore still correct and still
+needed — but it is not reachable from a Limbo program, which is why no amount
+of `refstress` provokes it.
+
+This also means the `GC-LOCK HISTORY` comment's explanation — "multiple
+vmachine kprocs ... call xec() in parallel — genuine concurrent execution" — is
+not what is observed here, at least in these workloads. Its *fix* stands: the
+double free it repaired is exactly the Dis-side-against-C-side pairing above.
+
+So: a fix by construction, not one demonstrated to repair an observed fault.
 
 What *was* demonstrated: everything still works and nothing got slower. All
 tests pass under `-c1` and `-c0`; `fdstresstest` 40 of 40; `gputest` 15 of 15;

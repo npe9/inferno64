@@ -185,6 +185,17 @@ static int gpu_stats_on = -1;
 static double gpu_convin, gpu_encode, gpu_commit, gpu_convout;
 static void gpu_stats(void);
 
+/* Nothing here runs unless INFERNO_METAL_STATS is set: the clock calls are
+ * inside the same test as the printing, not merely the printing. */
+static double
+gpu_now(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (double)t.tv_sec*1e9 + (double)t.tv_nsec;
+}
+
 static int
 metal_spmv(void *h, double *x, double *y, int n)
 {
@@ -206,11 +217,13 @@ metal_spmv(void *h, double *x, double *y, int n)
 
 	if(gpu_stats_on < 0)
 		gpu_stats_on = getenv("INFERNO_METAL_STATS") != NULL;
-	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp0 = t.tv_sec*1e9 + t.tv_nsec; }
+	if(gpu_stats_on)
+		tp0 = gpu_now();
 	fx = (float*)[m.x contents];
 	for(i = 0; i < n; i++)
 		fx[i] = (float)x[i];
-	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp1 = t.tv_sec*1e9 + t.tv_nsec; }
+	if(gpu_stats_on)
+		tp1 = gpu_now();
 
 	un = (uint32_t)n;
 	cb = [gpu_queue commandBuffer];
@@ -231,26 +244,27 @@ metal_spmv(void *h, double *x, double *y, int n)
 	tg = MTLSizeMake(w, 1, 1);
 	[enc dispatchThreads:grid threadsPerThreadgroup:tg];
 	[enc endEncoding];
-	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp2 = t.tv_sec*1e9 + t.tv_nsec; }
+	if(gpu_stats_on)
+		tp2 = gpu_now();
 	[cb commit];
 	[cb waitUntilCompleted];
-	{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); tp3 = t.tv_sec*1e9 + t.tv_nsec; }
+	if(gpu_stats_on)
+		tp3 = gpu_now();
 	if([cb status] != MTLCommandBufferStatusCompleted)
 		return 0;
 
 	fy = (float*)[m.y contents];
 	for(i = 0; i < n; i++)
 		y[i] = (double)fy[i];
-	{
-		struct timespec t; double tp4;
-		clock_gettime(CLOCK_MONOTONIC, &t); tp4 = t.tv_sec*1e9 + t.tv_nsec;
+	if(gpu_stats_on){
+		double tp4 = gpu_now();
+
 		gpu_nspmv++;
 		gpu_convin  += tp1-tp0;
 		gpu_encode  += tp2-tp1;
 		gpu_commit  += tp3-tp2;
 		gpu_convout += tp4-tp3;
-		if(gpu_stats_on)
-			gpu_stats();
+		gpu_stats();
 	}
 	return 1;
 }
