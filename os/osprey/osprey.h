@@ -131,8 +131,10 @@ void		ospreysemgive(Ospreyproc*, ulong sem);
 
 /*
  * The packet path.  A block handed in is the container's, charged
- * against its network caps; taking one out copies the bytes into the
- * container's data area and gives the block back to the caller to free.
+ * against its network caps; taking one out hands the block back and
+ * credits the caps again.  Nothing is copied: the card wrote the packet
+ * into the container's own memory, so what a caller wants is where it
+ * is, and the block is the caller's to free.
  */
 int		ospreypktput(Ospreyproc*, void *block, ulong len);
 int		ospreypktget(Ospreyproc*, void **block, ulong *len);

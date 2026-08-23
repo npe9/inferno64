@@ -37,7 +37,7 @@ enum {
 	Qticket,
 	Qbench,
 
-	Statuslen	= 8*1024,	/* every core and container line */
+	Statuslen	= 32*1024,	/* every core and container line */
 	Snaplen		= 64*1024,	/* every container as a checkpoint */
 	Nfd		= 16,		/* chans a container may hold open */
 	Rbtlr		= 16,		/* allocb's trailer room, kept clear of */

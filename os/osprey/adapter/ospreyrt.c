@@ -1942,7 +1942,12 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 
 	ready();
 	p = buf;
-	e = buf + nbuf;
+	/*
+	 * Room is kept at the end to say so if the rest did not fit.  A
+	 * status that stops in the middle of a container looks exactly
+	 * like a machine with fewer containers on it.
+	 */
+	e = buf + nbuf - 16;
 	p = seprint(p, e, "now %llud hz %llud cores %lud procs %lud"
 		" arena %llud slice %lud data %lud pagesize %lud\n",
 		now, hz, (ulong)Ncore, (ulong)Nproc,
@@ -2026,5 +2031,7 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			p = seprint(p, e, "name %llud %s %s\n", q->id,
 				q->ns.name[n].local, q->ns.name[n].global);
 	}
+	if(p >= e - 1)
+		p = seprint(p, buf + nbuf, "truncated\n");
 	return p - buf;
 }
