@@ -1,0 +1,72 @@
+.TH PDETEST 1
+.SH NAME
+pdetest \- test the five-point Laplacian
+.SH SYNOPSIS
+.B pdetest
+.SH DESCRIPTION
+.B Pdetest
+checks
+.IR math (2)'s
+.B lap5
+against the Limbo stencil it replaced, which is kept inside the test as
+the statement of what the operator is.
+.PP
+The interior of that kernel is easy and the border is not.
+It exists so that the interior loop can run without a boundary test in
+it, which means the edges are computed by separate code, once, for each
+boundary condition.
+Getting one of those wrong changes a handful of cells out of thousands
+\(em invisible in a solve, and invisible in a convergence study.
+So this compares every cell against the reference rather than checking
+that a solve still looks reasonable.
+.PP
+All three boundary conditions are checked.
+A solve run to try the thing out uses one of them and leaves the other
+two unexercised, which is exactly what happened:
+.B lap5
+was measured on
+.B clamp
+alone and shipped before periodic and zero had ever been compared
+against anything.
+.PP
+Grids one cell wide are checked too, in both directions, along with a
+grid that is all border and no interior.
+The border walk treats rows and columns separately and guards against
+those cases, and the guards had never run.
+.PP
+One case does not use the reference at all: the discrete Laplacian of a
+plane is zero everywhere inside, whatever the spacing.
+That catches a sign or a spacing error which comparing against a
+reference cannot, because a reference written from the same
+misunderstanding would agree.
+.SH SOURCE
+.B /appl/cmd/pdetest.b
+.SH SEE ALSO
+.IR math-linalg (2),
+.IR pde (2),
+.IR sh-verify (1),
+.IR sparsetest (1)
+.SH BUGS
+The comparison is a tolerance rather than an equality, because a C loop
+may contract a multiply and an add into a fused one where Limbo does
+not.
+In practice the two agree exactly here, so the tolerance has never been
+what let a run pass; removing the border walk, or exchanging
+.I dx
+for
+.IR dy ,
+makes it fail loudly, which is how that was established.
+.PP
+Only the stencil is tested.
+Nothing here exercises
+.IR pde (2)'s
+time stepping, its solver plumbing, or the equations built on top \(em
+.B wave
+and
+.B gray
+have no test of their own.
+.PP
+Two dimensions only.
+.IR amr (2)
+uses a three-dimensional seven-point stencil, which shares none of this
+code and has no test either.

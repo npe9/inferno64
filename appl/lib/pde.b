@@ -155,16 +155,32 @@ lapvec(f: ref Field, x: array of real, ix, iy: int): real
 
 # (I - dt*diffusivity*L)x, the backward-Euler system operator: exactly
 # what a solver needs, no matrix ever assembled.
-diffuseop(x: array of real): array of real
+#
+# This runs once per Krylov iteration and was 78 to 82 per cent of a solve as a
+# Limbo loop, so it goes through math(2): lap5 for the stencil, then axpby to
+# combine, which is y = 1*x + (-c)*lap. Two C calls and no loop here at all.
+# The Limbo version is kept below as the fallback and as the statement of what
+# the operator is - pdetest(1) checks the two against each other.
+applyop(x: array of real, c: real): array of real
 {
 	f := opfield;
 	y := array[len x] of real;
+	if(math != nil){
+		math->lap5(f.nx, f.ny, f.dx, f.dy, f.bc, x, y);
+		math->axpby(1.0, x, -c, y);
+		return y;
+	}
 	for(iy := 0; iy < f.ny; iy++)
 		for(ix := 0; ix < f.nx; ix++){
 			i := iy*f.nx+ix;
-			y[i] = x[i] - opdt*opdiffusivity*lapvec(f,x,ix,iy);
+			y[i] = x[i] - c*lapvec(f,x,ix,iy);
 		}
 	return y;
+}
+
+diffuseop(x: array of real): array of real
+{
+	return applyop(x, opdt*opdiffusivity);
 }
 
 # Runs the backward-Euler implicit diffusion solve for one step, using
@@ -210,14 +226,7 @@ solvediffuse(p: ref Problem, dt: real): string
 # replaced, "solver cg" is valid here too, not just gmres.
 waveop(x: array of real): array of real
 {
-	f := opfield;
-	y := array[len x] of real;
-	for(iy := 0; iy < f.ny; iy++)
-		for(ix := 0; ix < f.nx; ix++){
-			i := iy*f.nx+ix;
-			y[i] = x[i] - opq*lapvec(f,x,ix,iy);
-		}
-	return y;
+	return applyop(x, opq);
 }
 
 solvewave(p: ref Problem, dt: real): string

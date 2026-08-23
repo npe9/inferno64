@@ -928,6 +928,26 @@ Math_spmv(void *fp)
 }
 
 void
+Math_lap5(void *fp)
+{
+	F_Math_lap5 *f;
+	int n;
+
+	f = fp;
+	if(f->nx <= 0 || f->ny <= 0)
+		error(exMathia);
+	n = f->nx * f->ny;
+	if(f->x->len != n || f->y->len != n)
+		error(exMathia);	/* incompatible lengths */
+	if(f->bc < 0 || f->bc > 2)
+		error(exMathia);
+	if(f->x->data == f->y->data)
+		error(exMathia);	/* must not be the same array */
+	lap5(f->nx, f->ny, f->dx, f->dy, f->bc,
+		(double*)(f->x->data), (double*)(f->y->data));
+}
+
+void
 Math_axpby(void *fp)
 {
 	F_Math_axpby *f;

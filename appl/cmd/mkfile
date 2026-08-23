@@ -87,6 +87,7 @@ TARG=\
 	adectest.dis\
 	krylovtest.dis\
 	mltest.dis\
+	pdetest.dis\
 	playmovie.dis\
 	sparsetest.dis\
 	vecbench.dis\

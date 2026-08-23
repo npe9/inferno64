@@ -34,6 +34,12 @@ Math: module
 	# operation a Krylov solve spends nearly all its time in.
 	spmv:		fn(rowptr, colidx: array of int,
 			val, x, y: array of real);
+
+	# y = the five-point Laplacian of x on an nx by ny grid. bc matches
+	# pde(2)'s: 0 clamps to the edge, 1 wraps, 2 reads zero outside.
+	# x and y must be nx*ny long and must not be the same array.
+	lap5:		fn(nx, ny: int, dx, dy: real, bc: int,
+			x, y: array of real);
 	cbrt:		fn(x: real): real;
 	ceil:		fn(x: real): real;
 	copysign:	fn(x, s: real): real;

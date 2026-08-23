@@ -306,10 +306,36 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    change. Neither substitutes for the other, and the profile said which to do
    where.
 
-3. **`amr(2)` and `pde(2)` on GPU — also needs re-deriving** against the C
-   matvec baseline above. Note that a stencil sweep in Limbo is exactly the
-   kind of loop `math->spmv` just showed is 9-10x off what C does, so a C
-   stencil builtin is the cheaper experiment and should be run first.
+3. **`amr(2)` and `pde(2)` on GPU — the cheap experiment was run, and `pde(2)`
+   is now 5-6x faster with no GPU at all.** The recommendation here was to try
+   a C stencil builtin before any Metal work. Measured first: `pde(2)`'s
+   `diffuseop` — the operator applied once per Krylov iteration — was **78 to
+   82 per cent** of a solve, the same Amdahl position `sparse->matvec` had
+   been in. `math->lap5` is that stencil in C, and `diffuseop`/`waveop` are now
+   two C calls and no Limbo loop: `lap5` for the stencil, then the existing
+   `axpby` to combine, since `y = 1*x + (-c)*lap` is exactly its shape.
+
+   | grid | 100 implicit steps, before | after |
+   |---|---|---|
+   | 128² | 3.41s | 0.58s |
+   | 256² | 28.10s | 5.26s |
+
+   Results agree to 5.5e-16 relative after a hundred successive GMRES solves,
+   and `verify(2)`'s `laplacianorder` is unchanged.
+
+   **`lap5` shipped measured on `clamp` alone**, with periodic and zero never
+   compared against anything — the border is where such a kernel goes wrong,
+   and it is separate code per boundary condition precisely so the interior
+   loop can be branchless. `pdetest(1)` now compares every cell against the
+   Limbo reference for all three, plus grids one cell wide and a grid that is
+   all border. Controls: removing the border walk fails 16 cases, exchanging
+   `dx` for `dy` differs in 945 cells.
+
+   What this does **not** settle is the GPU question, which still needs
+   re-deriving — but the CPU baseline it would be measured against has just
+   moved by 5-6x, which is the same trap the old GPU table fell into. Note
+   also that `amr(2)`'s 3-D seven-point stencil shares none of this code and
+   still has no test at all.
 
    Both are *stencil* sweeps, not SpMV, so
    they need a second Metal kernel — and no matrix upload at all, so the

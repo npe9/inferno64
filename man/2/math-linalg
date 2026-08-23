@@ -1,6 +1,6 @@
 .TH MATH-LINALG 2
 .SH NAME
-Math: dot, norm1, norm2, iamax, axpby, spmv, gemm, sort \- linear algebra primitives
+Math: dot, norm1, norm2, iamax, axpby, spmv, lap5, gemm, sort \- linear algebra primitives
 .SH SYNOPSIS
 .EX
 include	"math.m";
@@ -11,6 +11,7 @@ norm1, norm2: fn(x: array of real): real;
 iamax: fn(x: array of real): int;
 axpby: fn(a: real, x: array of real, b: real, y: array of real);
 spmv: fn(rowptr, colidx: array of int, val, x, y: array of real);
+lap5: fn(nx, ny: int, dx, dy: real, bc: int, x, y: array of real);
 gemm: fn(transa, transb: int,  # upper case N or T
 		m, n, k: int, alpha: real,
 		a: array of real, lda: int,
@@ -93,6 +94,41 @@ The row loop and its summation order are unchanged, so results differ from
 the Limbo version only by the compiler contracting a multiply and an add into
 a fused one: about two units in the last place, which does not change a CG
 iteration count.
+.PP
+.PP
+.BI lap5( "nx , ny , dx , dy , bc , x , y" )
+sets
+.I y
+to the five-point Laplacian of
+.I x
+on an
+.I nx
+by
+.I ny
+grid of spacing
+.I dx
+by
+.IR dy .
+Both arrays are
+.IR nx * ny
+long, laid out by rows, and must not be the same array.
+.I Bc
+says what lies outside the grid and takes
+.IR pde (2)'s
+own values: 0 clamps to the edge, 1 wraps, 2 reads zero.
+.PP
+This is what an implicit PDE solve spends its time in \(em applied once
+per Krylov iteration, it was 78 to 82 per cent of a
+.IR pde (2)
+solve when it was written in Limbo, and replacing it took a
+256\(mu256 hundred-step implicit diffusion from 28.1s to 5.3s.
+.PP
+The interior loop has no boundary test in it; the edges are computed
+separately, once.
+That is where such a kernel goes wrong, so
+.IR pdetest (1)
+compares every cell against the obvious version for all three boundary
+conditions and for grids one cell wide.
 .PP
 For the infinity norm, the function
 iamax(x)
