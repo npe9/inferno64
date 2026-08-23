@@ -316,6 +316,34 @@ treats two clicks less than 500ms apart as a double click.
 See
 .IR inputtest (1)
 for what was measured.
+.SS "Recording the schedule"
+.TP
+.B INFERNO_SCHED_RECORD=\fIfile\fP
+Write the order in which Dis execution actually happened: every quantum given
+to a process, and every point at which the virtual machine changed hands.
+.PP
+Dis execution is serialised \(em exactly one process executes instructions at a
+time, see
+.IR refstress (1)
+\(em so this is a sequence of discrete handoffs rather than an arbitrary
+interleaving, which is what makes recording it tractable.
+.PP
+Four sites are recorded, not one.
+.B Vmachine 's
+loop, where a process is taken off the head of the run queue, only says which
+one began a fresh quantum;
+.B acquire
+puts its process back at the
+.I head
+of that queue and returns into the middle of the
+.B xec
+call it left, so a process that makes a system call and comes back never passes
+through the loop.
+Recording only the loop would miss every interleaving caused by host calls,
+which is most of them.
+.PP
+.IR Schedcmp (1)
+compares two of these, and reports what was found.
 .SH EXAMPLE
 To start
 .B wm/logon

@@ -1,0 +1,91 @@
+.TH SCHEDCMP 1
+.SH NAME
+schedcmp \- compare recorded Dis schedules
+.SH SYNOPSIS
+.B schedcmp
+[
+.B -v
+]
+.I file1 file2
+.RI [ file3 ...]
+.SH DESCRIPTION
+.B Schedcmp
+compares schedules recorded by
+.B INFERNO_SCHED_RECORD
+(see
+.IR emu (1)),
+and answers the question that decides whether forcing a schedule on a later
+run would be worth anything: how much do two runs of the same session actually
+differ?
+.PP
+That is not one number, so it reports several \(em all events, then with
+.B iyield
+removed, then quanta alone, then the points where the virtual machine changed
+hands, then the order of processes irrespective of what each did.
+.PP
+Removing
+.B iyield
+matters more than anything else.
+A yield is a
+.B vmachine
+kproc handing the slot to a process already waiting for it: host-thread
+bookkeeping that changes nothing about which Dis program runs when.
+Left in, it swamps the comparison.
+.PP
+.B -v
+also prints each schedule's event counts.
+.SH EXAMPLE
+Three runs of the same sequential shell session:
+.IP
+.EX
+all events                lengths 588 589 591   identical=no
+without iyield            lengths 420 420 420   identical=YES
+quanta only               lengths  74  74  74   identical=YES
+host-call boundaries      lengths 346 346 346   identical=YES
+pid order, without iyield lengths 420 420 420   identical=YES
+.EE
+.PP
+So Dis execution here is already exactly reproducible, and the only thing
+that varied was the yields.
+.SH "WHAT WAS MEASURED"
+Three regimes, and they differ:
+.IP
+.EX
+session                     non-yield events  order identical
+sequential shell                         420  yes
+wm, with input replayed                  931  no, diverges at 270
+refstress, 16 processes        50592 - 67440  no, diverges at 145
+.EE
+.PP
+The middle row is the interesting one.
+Two replays of the same
+.IR wm (1)
+session do exactly the same
+.I amount
+of work \(em 190 quanta and 741 handoffs, both runs \(em and do it in a
+different order.
+The bottom row does not even agree on the amount.
+.PP
+That is what says where forcing a recorded schedule could pay: not in a
+sequential session, which needs no help, and not under heavy contention, where
+the work itself differs so a forced order would be impossible to follow.
+.SH SOURCE
+.B /appl/cmd/schedcmp.b
+.SH SEE ALSO
+.IR emu (1),
+.IR refstress (1),
+.IR inputtest (1)
+.SH BUGS
+It compares schedules, which say which process ran and in what order, not what
+any of them computed.
+.PP
+Comparing across
+.B -c0
+and
+.B -c1
+is refused rather than reported, because the interpreter and the compiler
+reach system calls at different points and the comparison would measure only
+that.
+.PP
+A schedule that overflowed its ring says so when recorded, but nothing here
+re-checks it.

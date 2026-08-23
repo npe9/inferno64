@@ -1048,6 +1048,17 @@ acquire(void)
 		isched.runtl = p;
 
 	strcpy(up->text, "dis");
+	/*
+	 * This is a serialisation point and vmachine's loop cannot see it:
+	 * the prog goes back at the *head* and returns into the middle of the
+	 * xec() call it left, without passing through the loop at all.
+	 */
+	/*
+	 * Not live either: delprog() releases the slot and then takes it back,
+	 * both while tearing a prog down, so the module link here can be as
+	 * dead as it is in release().
+	 */
+	schedrecord('a', p, 0);
 }
 
 void
@@ -1055,6 +1066,9 @@ release(void)
 {
 	Proc *p, **pq;
 	int f;
+
+	/* not live: delprog() releases the slot while tearing a prog down */
+	schedrecord('r', up->type == Interp? currun(): nil, 0);
 
 	if(up->type == Interp)
 		up->iprog = isave();
@@ -1104,6 +1118,7 @@ iyield(void)
 	isched.idlevmq = up;
 
 	unlock(&isched.l);
+	schedrecord('y', nil, 0);
 	osready(p);		/* wake up acquiring kproc */
 	strcpy(up->text, "yield");
 	osblock();		/* sleep */
@@ -1379,6 +1394,7 @@ vmachine(void *a)
 
 		r = isched.runhd;
 		if(r != nil) {
+			schedrecord('q', r, 1);
 			o = r->osenv;
 			up->env = o;
 

@@ -451,6 +451,7 @@ rt wm-misc
 run sh
 runas runas
 rwrite sh-file2chan
+schedcmp schedcmp
 secstore secstore
 send sh-tk
 sendmail sendmail

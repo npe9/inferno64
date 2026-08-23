@@ -79,6 +79,7 @@ port
 	proc
 	qio
 	random
+	schedrec
 	sysfile
 	uqid
 

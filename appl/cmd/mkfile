@@ -92,6 +92,7 @@ TARG=\
 	pdetest.dis\
 	playmovie.dis\
 	refstress.dis\
+	schedcmp.dis\
 	sparsetest.dis\
 	styxlog.dis\
 	styxreplay.dis\

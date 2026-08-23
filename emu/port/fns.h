@@ -114,6 +114,9 @@ void		mouseresize(int, int);
 extern void	(*inputmousehook)(int, int, int, ulong);
 extern void	(*inputresizehook)(int, int);
 void		inputrecinit(void);
+void		schedrecinit(void);
+struct Prog;		/* interp.h is not included by everything that includes this */
+void		schedrecord(int, struct Prog*, int);
 void		inputrecord(int, int, int, int);
 int		inputreplaying(void);
 void		gkbdputc1(Queue*, int);

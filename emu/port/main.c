@@ -370,6 +370,7 @@ emuinit(void *imod)
 	}
 
 	inputrecinit();
+	schedrecinit();
 
 	kproc("main", disinit, imod, KPDUPFDG|KPDUPPG|KPDUPENVG);
 
