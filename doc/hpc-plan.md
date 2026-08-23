@@ -96,6 +96,60 @@ makes bugs 2 and 3 — both seen twice, never reproduced — reproducible.
 The third thing that escapes is a program's own `bind` of a kernel device; see
 the gotcha below, because it is the one that bites silently.
 
+#### Driving the whole system: input record/replay (`55e2c738`)
+
+Replaying a *name space* drives one program. Driving the **OS** means replaying
+the *input*, and that needs a seam below every bind — because the programs that
+matter here are exactly the ones that bind `#i` and vanish from a Styx trace.
+
+`mousetrack()` and `gkbdputc()` are that seam: every platform's window driver
+already calls them, and no Limbo program can get underneath.
+
+```
+INFERNO_INPUT_RECORD=/wm.in emu -r . /dis/wm/wm.dis wm/sh   # and type
+INFERNO_INPUT_REPLAY=/wm.in emu -r . /dis/wm/wm.dis wm/sh   # and do not
+```
+
+Verified on a real `wm` session: 30 events recorded while typing at the host,
+then `inputrec: 30 events replayed`, and the replayed session's Shell window
+shows the identical `; echo hellothere` with nothing touched. On the single-
+program test the gaps came back to within a millisecond or two (`0/11/23/36/50`
+→ `0/6/21/33/48`), and pointer states plus **the device's own msec** came back
+byte for byte.
+
+**The control is not "with the injector off"** — that only shows events arrive.
+It is a trace with the event order *reversed against the same timeline*, which
+replays as `111,108,108,101,104`. That distinguishes order, which is the actual
+claim.
+
+It is `emu/port/inputrec.c` plus two splits (`mousetrack`/`mousetrackt`,
+`gkbdputc`/`gkbdputc1`) and **no platform file changes at all**, which is what
+keeps Nt/Plan9/9front/X11 safe when none of them can be built here.
+
+Three mistakes, all of which looked identical from outside — *no input arrived*:
+
+- **A kproc starts with a fresh fd group and no name space.** The drain proc
+  could not see the descriptor opened for it: the file was created, the header
+  written, and every event vanished. `KPDUPFDG|KPDUPPG`.
+- **Times must be relative to the session, not the first event.** Anchoring on
+  the first event injects it the instant emu boots, before the session's
+  programs exist; the recording lands in a queue and is read out in one burst.
+  Order survives, timing does not — a failure that looks like success, and it
+  is what the first replay here did.
+- **A recording with no window on screen is empty.** No key window means the
+  driver never calls `gkbdputc`. The first traces were 16 bytes, a header and
+  nothing else, for a reason that had nothing to do with the recorder.
+
+And one thing that had to *not* be changed: `pointerwrite`'s commented-out
+`mousetrack` stays commented out. `setpointer()` already warps the host cursor,
+which generates the event, so injecting as well would double it — the existing
+mechanism is disabled on purpose.
+
+`inputtest(1)` is the instrument. Its `-p` mode exposes the trap in measuring
+this: `/dev/pointer` reports *state*, not a queue, so a fast reader repeats
+samples and the repeat count differs run to run with nothing wrong. Compare
+distinct consecutive states.
+
 ### GPU offload — working, and now a loss at every size that fits here
 
 **Read this before doing any more GPU work.** The measurements below that made
