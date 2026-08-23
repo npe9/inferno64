@@ -250,7 +250,13 @@ in the
 .CW "#pragma varargck"
 parser, and
 .CW %z
-as a known verb sized to the pointer.
+as a known verb sized to the pointer.  9front does not need the cast
+that turned up in
+.CW archmp.c
+because the file is theirs for a 32 bit kernel, where a long is the
+width of a pointer;
+.CW arith
+types a pointer difference identically in both compilers.
 .IP \(bu 2
 .CW funct.c :
 a hundred byte buffer for a name built from a struct tag.

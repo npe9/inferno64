@@ -313,9 +313,10 @@ pcmpinit(void)
 	while(p < e) switch(*p){
 	default:
 		/*
-		 * %z is a pointer-wide verb; a pointer difference here is
-		 * a long, which is half of one on amd64.  The compiler did
-		 * not say so until it learned the verb.
+		 * %z is a pointer-wide verb.  A pointer difference is a
+		 * long, which is the width of a pointer in the 32 bit
+		 * kernel this file comes from and half of one here; the
+		 * compiler did not say so until it learned the verb.
 		 */
 		print("pcmpinit: unknown PCMP type 0x%uX (e-p 0x%zuX)\n",
 			*p, (uintptr)(e-p));
