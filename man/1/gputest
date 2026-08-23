@@ -93,11 +93,15 @@ not diagonal \(em
 .IR gpubench (1)
 covers real matrices, on one handle.
 .PP
-This test is heavily concurrent and so is itself vulnerable to the
-scheduler hang described in
-.IR fdstresstest (1):
-roughly one run in ten produces no output and never exits, which is that
-bug and not this one.
-Run it under an external timeout and count a timeout separately from a
-failure, or the hang will swamp whatever you were trying to measure \(em
-it masked this test's own signal completely until the two were separated.
+This test is heavily concurrent, and until the scheduler hang described
+in
+.IR fdstresstest (1)
+was fixed it was itself vulnerable to it: measured against the unfixed
+binary in one session, 25 runs gave 11 passes, 8 hangs and 6 crashes;
+against the fixed one, 25 passes and nothing else.
+.PP
+Run it under an external timeout anyway, and count a timeout separately
+from a failure.
+That is not superstition: while the hang was live it swamped this test's
+own signal completely, and reading the two together nearly caused a
+working fix to be reverted as useless.

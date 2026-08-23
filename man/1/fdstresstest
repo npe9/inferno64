@@ -1,6 +1,6 @@
 .TH FDSTRESSTEST 1
 .SH NAME
-fdstresstest \- reproduce a scheduler hang under concurrent fd use
+fdstresstest \- exercise concurrent fd use against a shared descriptor group
 .SH SYNOPSIS
 .B fdstresstest
 .SH DESCRIPTION
@@ -22,11 +22,45 @@ external timeout:
 .EX
 	timeout 30 emu-g -c0 -r . /dis/fdstresstest.dis
 .EE
-It hung on roughly three runs in ten under
-.BR -c0 ,
-and one in six under
-.BR -c1 .
-.SH DIAGNOSIS
+It used to hang, and that is what it was written for.
+Measured on the build that had the bug: 67 hangs in 150 runs under
+.BR -c1 ,
+26 in 80 under
+.BR -c0 .
+It now passes.
+.SH "THE BUG IT FOUND"
+.IR Emu (1)'s
+.B unlock
+had no release barrier.
+It called
+.BR coherencefn ,
+a function pointer set once in
+.B main
+to an empty function on every platform, and then stored zero into the
+lock word with a plain store.
+On x86 that is nearly harmless; on arm64 the stores a critical section
+made could become visible after the store that released the lock, so the
+next thread to take it \(em whose
+.B _tas
+does have acquire semantics \(em could read state the previous holder
+had finished writing but not published.
+A process pushed onto
+.B isched.vmq
+could therefore vanish from that queue with nobody popping it, which is
+exactly the state described below.
+.PP
+One instruction:
+.B "str wzr, [x19]"
+became
+.BR "stlr wzr, [x19]" .
+Interleaved against the unfixed binary in one session, 150 pairs:
+67 hangs to none.
+See
+.B doc/hpc-plan.md
+for the full account, including why three earlier attempts missed it.
+.SH "THE HANG, AS IT WAS"
+Kept because it is what the test looks for, and because a regression
+would look like this again.
 Sampling the native threads of a hung
 .IR emu (1)
 shows the deadlock clearly.
@@ -70,13 +104,15 @@ and
 are lock-protected, so this is not the
 .B Chan
 reference counting.
-What has not been established is how the accounting between
+None of them was the cause, and neither was the accounting between
 .BR acquire ,
 .B release
 and
-.B iyield
-reaches a state where every thread is parked, and that is where anyone
-picking this up should start.
+.BR iyield ,
+which was audited and found sound.
+The queue really was manipulated only under
+.BR isched.l ;
+what failed was that releasing that lock published nothing.
 .PP
 Note that
 .B acquire
@@ -94,7 +130,15 @@ instead.
 .SH SEE ALSO
 .IR emu (1)
 .SH BUGS
-The bug it reproduces is unfixed.
+It is a regression test for one specific fault and cannot show that the
+scheduler is correct, only that this hang has not come back.
+.PP
+Only the release side of the lock was ever wrong, and only that was
+changed.
+.BR Lock ()'s
+spin abandons the exclusive monitor on each failed attempt without
+.BR clrex ,
+which nothing here examines.
 .PP
 It has no internal watchdog on purpose.
 Adding one stopped the hang reproducing entirely \(em the extra
