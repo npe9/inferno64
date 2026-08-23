@@ -165,7 +165,7 @@ say
 .B ok
 or
 .B FAIL
-a line at a time.  Twenty-six lines, all
+a line at a time.  Twenty-seven lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1

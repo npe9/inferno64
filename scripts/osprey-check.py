@@ -108,6 +108,20 @@ CHECKS = [
    "echo output 5 256 17 >/n/osprey/ctl; sleep 2",
    "echo submit 5 close 0 >/n/osprey/ctl; sleep 2; cat /n/osprey/reply"],
   "5 close done"),
+ ("sixteen hundred requests from eight processes at once, none lost",
+  ["for(c in 11 12 13 14 15 16 17 18) echo create $c 40000000 800000000 200000000 >/n/osprey/ctl",
+   "echo attach 11 0 >/n/osprey/ctl; echo attach 12 1 >/n/osprey/ctl",
+   "echo attach 13 2 >/n/osprey/ctl; echo attach 14 3 >/n/osprey/ctl",
+   "echo attach 15 0 >/n/osprey/ctl; echo attach 16 1 >/n/osprey/ctl",
+   "echo attach 17 2 >/n/osprey/ctl; echo attach 18 3 >/n/osprey/ctl",
+   "for(c in 11 12 13 14 15 16 17 18) echo limit $c 4194304 65536 64 >/n/osprey/ctl",
+   "for(c in 11 12 13 14 15 16 17 18) echo serve $c >/n/osprey/ctl",
+   "for(c in 11 12 13 14 15 16 17 18) { { for(i in `{seq 1 200}) "
+   "echo submit $c alloc 4096 >/n/osprey/ctl } & }; echo launched",
+   "sleep 25; grep '^proc 1[1-8] ' /n/osprey/status | "
+   "sed 's/.*mem /mem /; s/ net.*//' | sort | uniq -c",
+   "for(c in 11 12 13 14 15 16 17 18) echo exit $c >/n/osprey/ctl"],
+  "8 mem 819200 of 4194304"),
  ("a container held to its reservation",
   ["{ while(){} } &",
    "b=$apid; echo create 6 5000000 100000000 100000000 >/n/osprey/ctl",
@@ -132,9 +146,9 @@ def main():
                                COM2, '600'],
                               stdout=open(COM2LOG, 'w'),
                               stderr=subprocess.DEVNULL)
-    argv = ['./scripts/osprey-console.py', '-q', '-p', '2',
+    argv = ['./scripts/osprey-console.py', '-q', '-p', '4',
             '-2', 'unix:%s,server,nowait' % COM2, '-l', LOG, '-S',
-            '-d', ROOT + '/.qemu/9front-root.qcow2', '-t', '260',
+            '-d', ROOT + '/.qemu/9front-root.qcow2', '-t', '320',
             '-e', r'user\[glenda\]: =', '-u', '% ']
     for c in SETUP:
         argv += ['-c', c]

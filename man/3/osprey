@@ -685,8 +685,8 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .SH CHECKING
 .PP
 .B /scripts/osprey-check.py
-boots one kernel and asks it for everything a single machine can be made
-to show: a request submitted and collected through the mapped ring with
+boots one kernel on four cores and asks it for everything a single
+machine can be made to show: a request submitted and collected through the mapped ring with
 nobody writing
 .BR service ,
 a select woken by a semaphore on the arm it was given, a page written by
@@ -696,7 +696,8 @@ checkpoint, an attribute written over
 .IR pip (5)
 that nobody else sees until the fid that wrote it is closed, an
 operation the kernel refuses put on another container's ring and
-answered there, what a round trip costs, a container held to a
+answered there, what a round trip costs, sixteen hundred requests from
+eight processes at once with none lost, a container held to a
 five-per-cent reservation while an identical process beside it is not,
 and a uart driven by a task, whose bytes are watched leaving the second
 serial port.
