@@ -92,6 +92,7 @@ TARG=\
 	playmovie.dis\
 	refstress.dis\
 	sparsetest.dis\
+	styxreplay.dis\
 	vecbench.dis\
 	qttest.dis\
 	vstreamtest.dis\

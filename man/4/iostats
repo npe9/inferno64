@@ -25,7 +25,7 @@ which allows it to gather statistics of file system
 use at the level of the file system protocol of
 .IR intro (5).
 When the program exits,
-a report is printed on standard error.
+a report is printed on standard output.
 .PP
 The report consists of three sections.
 The first section reports the amount
@@ -138,6 +138,23 @@ instructions at a time, see
 \(em so the schedule is a sequence of discrete handoffs rather than an
 arbitrary interleaving, which is a far smaller thing to record than it
 would be on a machine that ran them side by side.
+.SS "The report"
+It goes to standard
+.IR output ,
+not standard error as this page used to say, which is easy to miss when
+a traced program's own output is being captured.
+.PP
+Its times are microseconds.
+They were being divided by a million and labelled milliseconds, which
+made every line read 0 ms, and by 1.0e9 to make a rate, which claimed
+6860585 Kb/sec for reading a twenty-kilobyte file.
+Both came from
+.B /dev/time
+reporting microseconds while the function that reads it is called
+.BR nsec .
+.PP
+.IR Styxreplay (1)
+serves a trace back to a program.
 .SH SOURCE
 .B /appl/cmd/iostats.b
 .SH BUGS

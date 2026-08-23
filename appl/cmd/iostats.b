@@ -74,7 +74,9 @@ tracewriter(fd: ref Sys->FD, c: chan of (int, big, array of byte))
 		sys->write(fd, a, len a);
 	}
 }
-Ns2ms: con big 1000000;
+# /dev/time is microseconds - see nsec() below - and these operations take tens
+# of them, so the report gives microseconds rather than rounding every line to
+# 0 ms as it used to.
 
 Rpc: adt
 {
@@ -425,10 +427,10 @@ results()
 {
 	stderr := sys->fildes(2);
 	rpc := stats.rpc[tagof Tmsg.Read];
-	brpsec := real stats.totread / ((real rpc.time/1.0e9)+.000001);
+	brpsec := real stats.totread / ((real rpc.time/1.0e6)+.000001);
 
 	rpc = stats.rpc[tagof Tmsg.Write];
-	bwpsec := real stats.totwrite / ((real rpc.time/1.0e9)+.000001);
+	bwpsec := real stats.totwrite / ((real rpc.time/1.0e6)+.000001);
 
 	ttime := big 0;
 	for(n := 0; n < len stats.rpc; n++){
@@ -438,7 +440,7 @@ results()
 		ttime += rpc.time;
 	}
 
-	bppsec := real stats.nproto / ((real ttime/1.0e9)+.000001);
+	bppsec := real stats.nproto / ((real ttime/1.0e6)+.000001);
 
 	sys->fprint(stderr, "\nread      %bud bytes, %g Kb/sec\n", stats.totread, brpsec/1024.0);
 	sys->fprint(stderr, "write     %bud bytes, %g Kb/sec\n", stats.totwrite, bwpsec/1024.0);
@@ -446,19 +448,19 @@ results()
 	sys->fprint(stderr, "rpc       %ud count\n\n", stats.nrpc);
 
 	sys->fprint(stderr, "%-10s %5s %5s %5s %5s %5s           T        R\n", 
-	      "Message", "Count", "Low", "High", "Time", "  Avg");
+	      "Message", "Count", "Low", "High", "Time", "    Avg");
 
 	for(n = 0; n < len stats.rpc; n++){
 		rpc = stats.rpc[n];
 		if(rpc == nil || rpc.count == big 0)
 			continue;
-		sys->fprint(stderr, "%-10s %5bud %5bud %5bud %5bud %5bud ms %8bud %8bud bytes\n", 
+		sys->fprint(stderr, "%-10s %5bud %5bud %5bud %5bud %7bud us %8bud %8bud bytes\n", 
 			rpc.name, 
 			rpc.count,
-			rpc.lo/Ns2ms,
-			rpc.hi/Ns2ms,
-			rpc.time/Ns2ms,
-			rpc.time/Ns2ms/rpc.count,
+			rpc.lo,
+			rpc.hi,
+			rpc.time,
+			rpc.time/rpc.count,
 			rpc.bin,
 			rpc.bout);
 	}
@@ -619,11 +621,13 @@ fatal(s: string)
 # nanoseconds (emu/port/devcons.c, case Qtime). Everything derived from this is
 # therefore in microseconds.
 #
-# One consequence is not fixed here because it could not be tested: the report
-# divides these values by Ns2ms, a million, and prints the result as
-# milliseconds, which would make it a thousand times too small. The report did
-# not appear at all in any run made while adding the -t flag below, so why it
-# is silent should be established before anyone changes the arithmetic.
+# That was being divided by a million and printed as milliseconds, which is a
+# thousand times too small, and by 1.0e9 to make a rate, which is a thousand
+# times too large. The report goes to standard OUTPUT, not standard error as
+# its manual page says, which is why it looked as though it never appeared:
+# reading a 20KB file claimed 6860585 Kb/sec and 0 ms for every operation.
+# Both are fixed; the divisors are now 1000 for milliseconds and 1.0e6 for
+# seconds.
 nsec(fd: ref Sys->FD): big
 {
 	buf := array[100] of byte;

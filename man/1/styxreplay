@@ -1,0 +1,105 @@
+.TH STYXREPLAY 1
+.SH NAME
+styxreplay \- run a program against a recorded name space
+.SH SYNOPSIS
+.B styxreplay
+[
+.B -v
+]
+[
+.B -n
+]
+.I tracefile
+.I cmd
+.RI [ args ...]
+.SH DESCRIPTION
+.B Styxreplay
+runs
+.I cmd
+with a name space that answers from a recording made by
+.B iostats -t
+(see
+.IR iostats (4)),
+in the order and at the pace it answered originally.
+.PP
+Because devices in Inferno are files, that covers a great deal that is
+usually outside a recording: pointer and keyboard input, the draw
+protocol, anything under
+.BR /chan ,
+and reads of
+.B /dev/time
+and
+.BR /dev/random .
+A session driven by hand can therefore be run again without the hand.
+.SS Pacing
+Each reply is held back for as long as it took originally, so a program
+that waited two seconds for somebody to click waits two seconds again.
+That is the point of recording times rather than only messages.
+.PP
+.B -n
+answers immediately instead, which is what one wants when the question
+is what the program computes rather than when.
+.SS Divergence
+If
+.I cmd
+asks for something other than what it asked for when the trace was made,
+.B styxreplay
+reports both requests and stops.
+.PP
+This is the useful output rather than an error.
+The recording determines everything the program learns through its name
+space, so a divergence means something outside the name space is
+affecting it \(em and where it first happens is exactly what one wants
+to know.
+.SS What is compared
+Not bytes.
+Tags and fids are the client's own bookkeeping and it is free to number
+them differently on a second run; the first version of this program
+compared bytes and reported a divergence on the very first
+.BR attach ,
+where the only difference was fid 34 against fid 23.
+.PP
+No translation table is needed either, which is the part worth knowing:
+a reply never mentions a fid.
+.B Rwalk
+and
+.B Ropen
+carry qids, which are the server's names for things and come from the
+trace.
+So the client may number its fids however it likes, and what is compared
+is what each request actually asks for \(em the path walked, the mode
+opened, the range read, the bytes written.
+.SH EXAMPLE
+Record a run, then reproduce it:
+.IP
+.EX
+iostats -t /trace.styx sh /tmp/session.sh
+styxreplay /trace.styx sh /tmp/session.sh
+.EE
+.SH SOURCE
+.B /appl/cmd/styxreplay.b
+.SH SEE ALSO
+.IR iostats (4),
+.IR intro (5)
+.SH BUGS
+Two things escape a trace, so two things can make a replay diverge for
+reasons that are not the program's fault.
+.B Sys->millisec
+and
+.B Sys->sleep
+are system calls rather than files, so a program that paces itself with
+those is not fully recorded; one that reads
+.B /dev/time
+is.
+And the order in which a program's own processes run is not recorded \(em
+though that is a smaller gap here than elsewhere, since Dis execution is
+serialised, so the schedule is a sequence of discrete handoffs rather
+than an arbitrary interleaving.
+.PP
+A program whose behaviour depends on a reply it has not yet asked for
+cannot be replayed by this at all: the recording is a sequence of
+exchanges, not a model of the server.
+.PP
+Nothing verifies that the trace came from the same program.
+Replaying one program's name space into another will simply diverge,
+usually immediately, which is at least an honest way to find out.
