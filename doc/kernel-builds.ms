@@ -11,14 +11,15 @@ relative to the root of the Inferno source tree.
 The target output directory has the form
 .CW flavor/objtype .
 For example:
-.IP
-.CW Inferno/amd64/	 native Inferno headers, libraries, and binaries
-.br
-.CW 9front/amd64/	 native 9front headers, libraries, and binaries
-.br
-.CW Osprey/amd64/	 Osprey headers, libraries, and binaries
-.br
-.CW MacOSX/arm64/	 host-side tools built on this Mac
+.IP "\f(CWInferno/amd64/\fP" 18
+native Inferno headers, libraries and binaries
+.IP "\f(CW9front/amd64/\fP" 18
+native 9front headers, libraries and binaries
+.IP "\f(CWOsprey/amd64/\fP" 18
+Osprey headers, libraries and binaries
+.IP "\f(CWMacOSX/arm64/\fP" 18
+host-side tools built on this Mac
+.LP
 .PP
 .CW MacOSX/arm64/bin
 contains the host programs such as
