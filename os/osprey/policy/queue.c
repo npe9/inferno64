@@ -5,7 +5,7 @@ queueinit(Queue *q, Message *message, uvlong size)
 {
 	if(q == nil || message == nil || size == 0)
 		return -1;
-	q->message = message;
+	q->message = (uchar*)message - (uchar*)q;
 	q->size = size;
 	q->put = 0;
 	q->get = 0;
@@ -17,13 +17,13 @@ queueput(Queue *q, Message *m)
 {
 	uvlong put, get;
 
-	if(q == nil || q->message == nil || m == nil || q->size == 0)
+	if(q == nil || q->message == 0 || m == nil || q->size == 0)
 		return -1;
 	put = q->put;
 	get = q->get;
 	if(q->size == 0 || put - get >= q->size)
 		return -1;
-	q->message[put % q->size] = *m;
+	QMESSAGE(q)[put % q->size] = *m;
 	queuebarrier();		/* message visible before the index */
 	q->put = put + 1;
 	return 0;
@@ -34,14 +34,14 @@ queueget(Queue *q, Message *m)
 {
 	uvlong put, get;
 
-	if(q == nil || q->message == nil || m == nil || q->size == 0)
+	if(q == nil || q->message == 0 || m == nil || q->size == 0)
 		return -1;
 	get = q->get;
 	put = q->put;
 	if(get == put)
 		return -1;
 	queuebarrier();		/* index read before the message */
-	*m = q->message[get % q->size];
+	*m = QMESSAGE(q)[get % q->size];
 	q->get = get + 1;
 	return 0;
 }

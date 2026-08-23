@@ -77,7 +77,7 @@ enum {
 };
 
 struct Queue {
-	void	*message;	/* a kernel address; not usable here */
+	vlong	message;	/* bytes from this head to the messages */
 	uvlong	size;
 	uvlong	put;
 	uvlong	get;

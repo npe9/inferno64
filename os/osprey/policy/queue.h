@@ -21,12 +21,21 @@ struct Message {
 	uvlong	arg[MessageWords-3];
 };
 
+/*
+ * A ring head sits in memory a user process maps, so it may not carry a
+ * kernel address: where the messages are is said as a byte offset from
+ * the head itself, which means the same thing at whatever address the
+ * span happens to be mapped, and tells whoever reads it nothing about
+ * where the kernel is.
+ */
 struct Queue {
-	Message	*message;
+	vlong	message;	/* bytes from this head to the messages */
 	uvlong	size;
 	volatile uvlong	put;
 	volatile uvlong	get;
 };
+
+#define QMESSAGE(q)	((Message*)((uchar*)(q) + (q)->message))
 
 /*
  * Supplied by the architecture adapter.  A ring may be shared between a

@@ -1559,10 +1559,10 @@ snapqueue(char *p, char *e, char *name, Queue *q)
 	uvlong i;
 	int j;
 
-	if(q == nil || q->message == nil || q->size == 0)
+	if(q == nil || q->message == 0 || q->size == 0)
 		return p;
 	for(i = q->get; i != q->put; i++){
-		m = &q->message[i % q->size];
+		m = &QMESSAGE(q)[i % q->size];
 		p = seprint(p, e, "queued %s %llud %llud %llud",
 			name, m->op, m->sequence, m->container);
 		for(j = 0; j < MessageWords-3; j++)

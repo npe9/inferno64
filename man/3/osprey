@@ -482,7 +482,7 @@ Each ring head is
 .IP
 .nf
 struct Queue {
-	void	*message;	/* a kernel address; not usable */
+	vlong	message;	/* bytes from here to the messages */
 	uvlong	size;
 	uvlong	put;
 	uvlong	get;
@@ -741,12 +741,17 @@ are the grants somebody with the key wrote.
 .IR cons (3)
 .SH BUGS
 .BR wait ,
-.BR send ,
-.B recv
+.B send
 and
 .B bind
-are refused; process, IPC and network requests belong to the user-level
-services described in the Osprey plan.
+are refused by the kernel; process and IPC requests belong to the
+user-level services described in the Osprey plan, and a container with a
+server named by
+.B delegate
+has them answered there.
+.B recv
+takes a packet from the queue of a container that has been given an
+interface, and is refused by a container that has not.
 .PP
 Scheduling is driven by the clock.  A container with no process bound to
 it is billed for whatever its core's run queue says it is running, which
@@ -812,9 +817,6 @@ are for a person to compare, and until somebody has compared them the key
 may have been agreed with anybody who was on the wire.  Nothing repeats
 the exchange, so a key lasts until it is changed, and changing it makes
 every ticket and every checkpoint written under the old one worthless.
-.PP
-The kernel address in each ring head is visible to whoever may attach
-that slice.
 .PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes
