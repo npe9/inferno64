@@ -486,7 +486,16 @@ reports who a container is for, and who it has been handed to.
 segattach(0, "osprey0", 0, slicesize)
 .fi
 .PP
-At the start of it a process finds
+The map is written by the kernel and read by whoever has the slice.  It
+is in memory the container may write, so the kernel puts it back from
+what it knows before every use of it: what a container writes there is
+its own view and nothing more.  The two ring indices are the exception,
+since moving them is how a ring is worked; a ring whose indices say it
+holds more than it can hold is left alone rather than served, and a
+.B submit
+against one is refused rather than waiting for room that will not come.
+.PP
+At the start of it a process findsAt the start of it a process finds
 .IP
 .nf
 struct Ospreymap {
@@ -726,8 +735,9 @@ service processes costing nothing at all, a container held to a
 five-per-cent reservation while an identical process beside it is not,
 the wire
 .IR pip (5)
-is spoken on given back when it is turned off, and a session that
-outlived a
+is spoken on given back when it is turned off, a container that
+scribbles over its own map not taking the machine with it, and a session
+that outlived a
 .B reset
 told there is no such session.
 .PP

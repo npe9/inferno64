@@ -3087,6 +3087,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		for(i = 0; i < Ospreynarg; i++)
 			arg[i] = 3 + i < cb->nf ?
 				strtoull(cb->f[3+i], nil, 0) : 0;
+		if(!ospreyringsane(p))
+			error("the container's ring indices are not usable");
 		/* the queue-full path: wait for the dispatcher to make room */
 		while(ospreyrequestfull(p)){
 			if((x = ospreyindex(p)) < 0)
@@ -3520,6 +3522,18 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		}
 		if(op == conf.nproc)
 			error(Enonexist);
+		/*
+		 * One process, one container.  A process already bound
+		 * somewhere else is let go there first: otherwise two slots
+		 * hold the same process, both stop and start it against
+		 * their own budgets, and one of them can leave it stopped
+		 * with nothing to start it again.
+		 */
+		for(op = 0; op < nelem(ospreyprocs); op++)
+			if(op != x && ospreyprocs[op] == q){
+				ospreyprocs[op] = nil;
+				ospreystopped[op] = 0;
+			}
 		if(ospreyprocs[x] != nil && ospreyprocs[x] != q)
 			ospreyprocs[x]->osprey = nil;
 		ospreyprocs[x] = q;

@@ -92,6 +92,7 @@ int		ospreymessage(Ospreyproc*, uvlong off, uvlong *op, uvlong *arg);
 int		ospreyanswer(Ospreyproc*, uvlong off, long status);
 int		ospreyoutput(Ospreyproc*, uvlong off, uvlong len);
 int		ospreyoutputready(Ospreyproc*);
+int		ospreyringsane(Ospreyproc*);
 int		ospreyrequestfull(Ospreyproc*);
 int		ospreyreplyready(Ospreyproc*);
 

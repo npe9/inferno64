@@ -67,6 +67,7 @@ struct Ospreyproc {
 	int	pid;		/* the process billed to this container, or 0 */
 	uvlong	version;	/* writes to its attributes */
 	uvlong	slice;		/* byte offset of this container in the arena */
+	uvlong	npage;		/* pages held; the map's copy is only published */
 	Ospreymap *map;		/* the slice itself */
 	char	segname[Segnamelen];	/* the segment that is this slice */
 	char	owner[Userlen];		/* whoever made it */
@@ -434,6 +435,70 @@ ospreyarenasize(void)
 	return pagebase + (uvlong)Npage*Pagesize;
 }
 
+/*
+ * A ring head is in memory the container maps and may write.  What the
+ * kernel must not do is believe what it finds there: where the messages
+ * are and how many there is room for are the kernel's own, and a
+ * container that puts a wild offset in message would otherwise have the
+ * kernel write a message wherever it said.  Only put and get are the
+ * container's to move, and they are taken modulo a size it does not
+ * choose.  This puts the geometry back before every use of a ring.
+ */
+static void mapfix(Ospreyproc*);
+
+static void
+mapfix(Ospreyproc *p)
+{
+	Ospreymap *m;
+	Process *r;
+
+	if(p == nil || p->used == 0 || p->map == nil)
+		return;
+	/*
+	 * Everything the kernel goes on to believe is put back from what
+	 * it knows, not read from what is there.  A container may write
+	 * every byte of this; what it writes is its own view.
+	 */
+	m = p->map;
+	m->magic = Ospreymagic;
+	m->id = p->process.id;
+	m->size = Nqueue;
+	m->msgsize = sizeof(Message);
+	m->requestqueue = ROUNDUP(sizeof(Ospreymap), Align);
+	m->replyqueue = m->requestqueue + sizeof(Queue);
+	m->outputqueue = m->replyqueue + sizeof(Queue);
+	m->sem = ROUNDUP(m->outputqueue + sizeof(Queue), Align);
+	m->nsem = Nsem;
+	m->request = ROUNDUP(m->sem + Nsem*sizeof(Sem), Align);
+	m->reply = m->request + Nqueue*sizeof(Message);
+	m->output = m->reply + Nqueue*sizeof(Message);
+	m->data = ROUNDUP(m->output + Nqueue*sizeof(Message), Align);
+	m->pktbuf = ROUNDUP(m->data + Ndata, Align);
+	m->npktbuf = Npktbuf;
+	m->pktbufsize = Pktbufsize;
+	m->page = m->data + Ndata - Maxpage*sizeof(uvlong);
+	m->maxpage = Maxpage;
+	m->pagesize = Pagesize;
+	m->datalen = Ndata - Maxpage*sizeof(uvlong);
+	m->npage = p->npage;
+	r = &p->process;
+	if(r->requests != nil){
+		r->requests->message = (uchar*)r->requeststorage
+			- (uchar*)r->requests;
+		r->requests->size = Nqueue;
+	}
+	if(r->replies != nil){
+		r->replies->message = (uchar*)r->repliestorage
+			- (uchar*)r->replies;
+		r->replies->size = Nqueue;
+	}
+	if(r->output != nil){
+		r->output->message = (uchar*)r->outputstorage
+			- (uchar*)r->output;
+		r->output->size = Nqueue;
+	}
+}
+
 uvlong
 ospreyslice(Ospreyproc *p)
 {
@@ -515,6 +580,7 @@ ospreydatalen(Ospreyproc *p)
 static uvlong*
 pagelist(Ospreyproc *p)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->map == nil)
 		return nil;
 	return (uvlong*)((uchar*)p->map + p->map->page);
@@ -531,13 +597,14 @@ ospreypagealloc(Ospreyproc *p)
 	uvlong *l;
 	int i;
 
-	if((l = pagelist(p)) == nil || p->map->npage >= p->map->maxpage)
+	if((l = pagelist(p)) == nil || p->npage >= Maxpage)
 		return -1;
 	for(i = 0; i < Npage; i++)
 		if(pagetaken[i] == 0){
 			pagetaken[i] = 1;
-			l[p->map->npage] = pagebase + (uvlong)i*Pagesize;
-			return p->map->npage++;
+			l[p->npage] = pagebase + (uvlong)i*Pagesize;
+			p->map->npage = ++p->npage;
+			return (int)p->npage - 1;
 		}
 	return -1;
 }
@@ -550,13 +617,14 @@ pagedrop(Ospreyproc *p, int i, uvlong *off)
 
 	if((l = pagelist(p)) == nil)
 		return -1;
-	n = p->map->npage;
+	n = p->npage;
 	if(i < 0 || (uvlong)i >= n)
 		return -1;
 	*off = l[i];
 	for(; (uvlong)i < n-1; i++)
 		l[i] = l[i+1];
-	p->map->npage = n-1;
+	p->npage = n-1;
+	p->map->npage = p->npage;
 	return 0;
 }
 
@@ -583,11 +651,12 @@ ospreypageflip(Ospreyproc *from, Ospreyproc *to, int i)
 
 	if(from == nil || to == nil || from == to)
 		return -1;
-	if((l = pagelist(to)) == nil || to->map->npage >= to->map->maxpage)
+	if((l = pagelist(to)) == nil || to->npage >= Maxpage)
 		return -1;
 	if(pagedrop(from, i, &off) < 0)
 		return -1;
-	l[to->map->npage++] = off;
+	l[to->npage++] = off;
+	to->map->npage = to->npage;
 	return 0;
 }
 
@@ -599,7 +668,7 @@ ospreyholdspage(Ospreyproc *p, uvlong off)
 
 	if((l = pagelist(p)) == nil)
 		return 0;
-	for(j = 0; j < p->map->npage; j++)
+	for(j = 0; j < p->npage; j++)
 		if(l[j] == off)
 			return 1;
 	return 0;
@@ -660,6 +729,7 @@ ospreyarenaaddr(uvlong off, ulong len)
 void*
 ospreydata(Ospreyproc *p, uvlong off, ulong len)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->map == nil)
 		return nil;
 	if(off >= p->map->datalen || len > p->map->datalen - off)
@@ -816,9 +886,34 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	return p;
 }
 
+/*
+ * Whether a container's rings can be worked at all.  The two indices
+ * are the container's to move and it may move them to nonsense; a ring
+ * saying it holds more than it can hold will never come right, so
+ * waiting for room in it is waiting for ever.
+ */
+int
+ospreyringsane(Ospreyproc *p)
+{
+	Process *r;
+
+	mapfix(p);
+	if(p == nil || p->used == 0)
+		return 0;
+	r = &p->process;
+	if(r->requests->put - r->requests->get > r->requests->size)
+		return 0;
+	if(r->replies->put - r->replies->get > r->replies->size)
+		return 0;
+	if(r->output->put - r->output->get > r->output->size)
+		return 0;
+	return 1;
+}
+
 int
 ospreyrequestfull(Ospreyproc *p)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return 1;
 	return queuefull(p->process.requests);
@@ -827,6 +922,7 @@ ospreyrequestfull(Ospreyproc *p)
 int
 ospreyreplyready(Ospreyproc *p)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return 0;
 	return !queueempty(p->process.replies);
@@ -901,7 +997,7 @@ ospreyexit(Ospreyproc *p)
 		uvlong *l, off, j;
 
 		if((l = pagelist(p)) != nil)
-			for(j = 0; j < p->map->npage; j++){
+			for(j = 0; j < p->npage; j++){
 				off = l[j];
 				if(off >= pagebase
 				&& off < pagebase + (uvlong)Npage*Pagesize)
@@ -1118,6 +1214,7 @@ ospreysubmit(Ospreyproc *p, uvlong op, uvlong *arg)
 	Request r;
 	int i;
 
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return -1;
 	memset(&r, 0, sizeof r);
@@ -1139,6 +1236,7 @@ ospreycollect(Ospreyproc *p, uvlong *op, long *status, uvlong *arg)
 	Reply r;
 	int i;
 
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return -1;
 	memset(&r, 0, sizeof r);
@@ -1270,6 +1368,7 @@ ospreyroute(Ospreyproc *s)
 	Message m;
 	int n;
 
+	mapfix(s);
 	/*
 	 * Only a container that answers for others has anything here to
 	 * route.  Draining anyone else's reply ring would take the answers
@@ -1291,6 +1390,7 @@ ospreyroute(Ospreyproc *s)
 int
 ospreyservicep(Ospreyproc *p, uvlong now)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->serving)
 		return -1;
 	ready();
@@ -1301,6 +1401,7 @@ ospreyservicep(Ospreyproc *p, uvlong now)
 static Sem*
 semof(Ospreyproc *p, ulong i)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->map == nil || i >= p->map->nsem)
 		return nil;
 	return (Sem*)((uchar*)p->map + p->map->sem) + i;
@@ -1400,6 +1501,7 @@ arms(Ospreyproc *p, uvlong armoff, int narms, Arm *a)
 	Ospreyarm *o;
 	int i;
 
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->map == nil)
 		return -1;
 	if(narms <= 0 || narms > Narm)
@@ -1497,6 +1599,7 @@ ospreymessage(Ospreyproc *p, uvlong off, uvlong *op, uvlong *arg)
 	Message *m;
 	int i;
 
+	mapfix(p);
 	if((m = ospreydata(p, off, sizeof(Message))) == nil)
 		return -1;
 	*op = m->op;
@@ -1512,6 +1615,7 @@ ospreyanswer(Ospreyproc *p, uvlong off, long status)
 	Message *m;
 	Reply r;
 
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return -1;
 	if((m = ospreydata(p, off, sizeof(Message))) == nil)
@@ -1534,6 +1638,7 @@ ospreyoutput(Ospreyproc *p, uvlong off, uvlong len)
 {
 	Message m;
 
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return -1;
 	if(ospreydata(p, off, (ulong)len) == nil)
@@ -1549,6 +1654,7 @@ ospreyoutput(Ospreyproc *p, uvlong off, uvlong len)
 int
 ospreyoutputready(Ospreyproc *p)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return 0;
 	return !queueempty(p->process.output);
@@ -1557,6 +1663,7 @@ ospreyoutputready(Ospreyproc *p)
 int
 ospreyrequestready(Ospreyproc *p)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0)
 		return 0;
 	return !queueempty(p->process.requests);
@@ -2026,7 +2133,7 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			p = seprint(p, e, "segment %llud %s %lud\n",
 				q->id, procs[i].segname, slicesize);
 			p = seprint(p, e, "pages %llud", q->id);
-			for(j = 0; l != nil && j < procs[i].map->npage; j++)
+			for(j = 0; l != nil && j < procs[i].npage; j++)
 				p = seprint(p, e, " %llud", l[j]);
 			p = seprint(p, e, "\n");
 		}
