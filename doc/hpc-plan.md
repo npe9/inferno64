@@ -2211,6 +2211,7 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 | `fdstresstest` | the scheduler hang | **hangs on failure**, run under `timeout` |
 | `gpubench` | cpu vs GPU solve timings | not pass/fail, prints numbers |
 | `sessiontest` | session(2) decoding, and that decode/compile are inverses | headless; found 4 real bugs |
+| `styxtest` | that styxlog(1) reads a trace as the right paths | headless; guards the tag-keying bug |
 | `clicktest -e -n` | that a scripted click/drag works a real Tk widget | GUI; **needs `-e`/`-n` or it only reports** |
 | `schedcmp` | how much two runs' Dis schedules differ | not pass/fail, prints numbers |
 | `inputtest` | what input the system actually received | GUI; the instrument, not a test |

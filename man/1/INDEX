@@ -501,6 +501,7 @@ strut strut
 styxlisten listen
 styxlog styxlog
 styxreplay styxreplay
+styxtest styxtest
 sum sum
 sweeper wm-misc
 symmetry symmetry

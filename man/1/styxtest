@@ -1,0 +1,66 @@
+.TH STYXTEST 1
+.SH NAME
+styxtest \- check that a trace is read as the right paths
+.SH SYNOPSIS
+.B styxtest
+.SH DESCRIPTION
+.B Styxtest
+builds Styx traces with known contents, runs
+.IR styxlog (1)
+over them, and checks which paths it says were opened.
+.PP
+A trace is messages about numbered fids, and a walk is what gives a fid its
+meaning.
+Following those is the whole of what
+.IR styxlog (1)
+does, and the way to get it wrong is subtle enough to have happened.
+.SH "WHAT IT CHECKS"
+That a single walk names its fid; that two walks in flight at once keep their
+own paths, whether their replies come back in order or not; that a walk which
+stopped early or failed outright leaves the fid unnamed; and that a clunked fid
+is forgotten, so a later fid of the same number does not inherit the old name.
+.PP
+It builds the traces rather than making them, because every interesting case
+is about concurrency and none of them can be produced by tracing one program.
+The trace is a documented format, so it is written directly \(em the same
+reason
+.IR sessiontest (1)
+builds recordings.
+.SH "THE BUG IT GUARDS"
+A single slot for the walk in flight.
+It is correct for one process and silently wrong for two, because their walks
+interleave and one process's reply then takes the other's path.
+The output stays entirely plausible, which is why nothing noticed until a
+concurrent trace was looked at deliberately.
+.PP
+Putting that bug back makes exactly the two interleaved checks fail and leaves
+the single-walk one passing, which is the shape the fault really had.
+.SH SOURCE
+.B /appl/cmd/styxtest.b
+.SH SEE ALSO
+.IR styxlog (1),
+.IR styxreplay (1),
+.IR iostats (4),
+.IR sessiontest (1)
+.PP
+.B /doc/session.ms
+\(em
+.IR "Recording and Replaying an Inferno Session" ,
+a tutorial covering all of this and how it was checked.
+.SH BUGS
+It checks the reading of a trace, not the making of one.
+That
+.B iostats -t
+writes what actually crossed is not tested here.
+.PP
+.IR Styxreplay (1)
+is not covered at all.
+Its claim \(em that a recorded program replays byte for byte \(em needs a
+program to run, so it is an integration test rather than this kind, and it has
+been checked by hand and not since.
+.PP
+It reports through the same standard output it redirects while running
+.IR styxlog (1),
+restoring it afterwards.
+If that redirection ever fails the results go into the captured file and the
+run looks silent.
