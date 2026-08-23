@@ -64,11 +64,25 @@ triggers; a compiled one can have exactly the one.
 \(em
 .IR "Recording and Replaying an Inferno Session" ,
 a tutorial covering all of this and how it was checked.
+.SS "Performing, as far as it can be done headlessly"
+It also plays actions and reads them back off
+.B /dev/keyboard ,
+which needs no window and no pointer device, so it belongs in the ordinary run
+rather than with
+.IR clicktest (1).
+Without it nothing guarded
+.B Action.play
+in a test that can be run without looking at anything.
+.PP
+The pointer half is not here, because there is no pointer device to write to on
+a system with no screen.
 .SH BUGS
-It checks decoding and compiling, not performing.
-That a recording becomes the right script is tested here; that the script then
-delivers the same keystrokes was checked by hand, by running one against a
-fresh session and comparing what arrived.
+It checks decoding and compiling, and performing only as far as the keyboard.
+That a recording becomes the right script is tested here, and so is that
+playing an action puts it into the system.
+What is not tested here is a pointer action reaching a widget, which needs a
+screen; see
+.IR clicktest (1).
 .PP
 Nothing here covers a recording made by the real hardware, only recordings in
 the format the real hardware produces.

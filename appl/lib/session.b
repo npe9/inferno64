@@ -120,23 +120,16 @@ quote(s: string): string
 	return q + "'";
 }
 
-opendevs(): string
+# Each device is opened when something needs it, not both up front. A system
+# with no pointer device at all - emu-g - would otherwise refuse to type,
+# because opening /dev/pointerin failed, which has nothing to do with typing.
+putkey(s: string): string
 {
 	if(kfd == nil){
 		kfd = sys->open("/dev/keyboard", Sys->OWRITE);
 		if(kfd == nil)
 			return sprint("cannot open /dev/keyboard: %r");
 	}
-	if(pfd == nil){
-		pfd = sys->open("/dev/pointerin", Sys->OWRITE);
-		if(pfd == nil)
-			return sprint("cannot open /dev/pointerin: %r");
-	}
-	return nil;
-}
-
-putkey(s: string): string
-{
 	b := array of byte s;
 	if(sys->write(kfd, b, len b) != len b)
 		return sprint("write to /dev/keyboard: %r");
@@ -155,6 +148,11 @@ putkey(s: string): string
 # what the stamps claim.
 putptr(x, y, b, msec: int): string
 {
+	if(pfd == nil){
+		pfd = sys->open("/dev/pointerin", Sys->OWRITE);
+		if(pfd == nil)
+			return sprint("cannot open /dev/pointerin: %r");
+	}
 	s := array of byte sprint("%d %d %d %d", x, y, b, msec);
 	if(sys->write(pfd, s, len s) != len s)
 		return sprint("write to /dev/pointerin: %r");
@@ -163,8 +161,7 @@ putptr(x, y, b, msec: int): string
 
 Action.play(a: self ref Action): string
 {
-	if((e := opendevs()) != nil)
-		return e;
+	e: string;
 	t := sys->millisec();
 	case a.kind {
 	Atype =>

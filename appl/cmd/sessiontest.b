@@ -135,6 +135,69 @@ cat(a: array of array of Ev): array of Ev
 	return r;
 }
 
+# Playing actions really does put them into the system.
+#
+# The keyboard half of this needs no window and no pointer device, so it
+# belongs in the ordinary headless run rather than with clicktest(1), which
+# needs wm and a screen. Without it nothing guards Action.play at all in a
+# test that can be run without looking at anything.
+playcheck()
+{
+	kfd := sys->open("/dev/keyboard", Sys->OREAD);
+	if(kfd == nil){
+		print("FAIL played actions reach the system: /dev/keyboard: %r\n");
+		failed++;
+		return;
+	}
+	got := chan[1] of string;
+	spawn reader(kfd, 8, got);
+	sys->sleep(200);
+
+	acts := array[] of {
+		ref Action(Session->Atype, 0, "hi", 0, 0, 0, 0, 0),
+		ref Action(Session->Akey, 0, "Return", 0, 0, 0, 0, 0),
+		ref Action(Session->Atype, 0, "there", 0, 0, 0, 0, 0),
+	};
+	for(i := 0; i < len acts; i++)
+		if((e := acts[i].play()) != nil){
+			print("FAIL played actions reach the system: %s\n", e);
+			failed++;
+			return;
+		}
+
+	spawn timeout(3000, got);
+	s := <-got;
+	want := "hi\nthere";
+	if(s == want){
+		print("ok   played actions reach the system\n");
+		return;
+	}
+	print("FAIL played actions reach the system\n");
+	print("     wanted %d bytes %q, got %d bytes %q\n", len want, want, len s, s);
+	failed++;
+}
+
+reader(fd: ref Sys->FD, want: int, c: chan of string)
+{
+	s := "";
+	buf := array[64] of byte;
+	while(len s < want){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		s += string buf[0:n];
+	}
+	c <-= s;
+}
+
+# a chan[1] so that whichever of these loses the race is not left blocked -
+# a blocked process keeps emu alive after everything else has finished
+timeout(ms: int, c: chan of string)
+{
+	sys->sleep(ms);
+	c <-= "(timed out)";
+}
+
 # every kind of action, through write() and back through read()
 fixedpoint()
 {
@@ -284,6 +347,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	# script - otherwise a recording cannot be edited and used, which is the
 	# whole reason compiling exists
 	fixedpoint();
+
+	# and the actions must actually reach the system when played
+	playcheck();
 
 	sys->remove(tmp);
 	if(failed){
