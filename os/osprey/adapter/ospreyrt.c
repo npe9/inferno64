@@ -117,7 +117,8 @@ static struct {
 static char *attrnames[] = {
 	"core", "state", "budget", "used", "period", "deadline",
 	"besteffort", "periods", "mode", "memory", "memused",
-	"netbytes", "netmax", "packets", "requests", "replies", "output",
+	"netbytes", "netmax", "packetmax", "packets",
+	"requests", "replies", "output",
 	"slice", "data", "pid", "version", nil,
 };
 
@@ -259,6 +260,8 @@ ospreyattr(Ospreyproc *p, char *name, char *buf, long nbuf)
 		s = seprint(s, e, "%lud", c->netbytes);
 	else if(strcmp(name, "netmax") == 0)
 		s = seprint(s, e, "%lud", c->netmax);
+	else if(strcmp(name, "packetmax") == 0)
+		s = seprint(s, e, "%lud", c->packetmax);
 	else if(strcmp(name, "packets") == 0)
 		s = seprint(s, e, "%lud", (ulong)pktqcount(&p->pktq));
 	else if(strcmp(name, "requests") == 0)
@@ -282,7 +285,8 @@ ospreyattr(Ospreyproc *p, char *name, char *buf, long nbuf)
 
 /* the attributes that may be written: a container's own policy */
 static char *writable[] = {
-	"budget", "period", "deadline", "memory", "netmax", "mode", nil,
+	"budget", "period", "deadline", "memory", "netmax", "packetmax",
+	"mode", nil,
 };
 
 int
@@ -318,6 +322,8 @@ ospreysetattr(Ospreyproc *p, char *name, char *val)
 		c->memory = strtoul(val, nil, 0);
 	else if(strcmp(name, "netmax") == 0)
 		c->netmax = strtoul(val, nil, 0);
+	else if(strcmp(name, "packetmax") == 0)
+		c->packetmax = strtoul(val, nil, 0);
 	else if(strcmp(name, "mode") == 0){
 		if(strcmp(val, "strict") == 0)
 			containerstrict(c, 1);

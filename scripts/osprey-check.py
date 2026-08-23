@@ -27,7 +27,8 @@ COM2LOG = tempfile.mktemp(prefix='osprey-com2-', suffix='.out')
 
 SETUP = [
  "9660srv -r -f /dev/sdF2/data cd9660 >[2]/dev/null & sleep 1; mkdir -p /n/cd; "
- "mount /srv/cd9660 /n/cd; rm -f /tmp/ring; cp /n/cd/bin/ring /tmp/ring; chmod +x /tmp/ring",
+ "mount /srv/cd9660 /n/cd; rm -f /tmp/ring /tmp/pip; cp /n/cd/bin/ring /tmp/ring; cp /n/cd/bin/pip /tmp/pip; "
+ "chmod +x /tmp/ring /tmp/pip",
  "bind '#O' /n/osprey; sz=`{grep arena /n/osprey/status | sed 's/.*slice //; s/ .*//'}; "
  "for(c in 1 2) { echo create $c 40000000 800000000 200000000 >/n/osprey/ctl; "
  "echo attach $c 0 >/n/osprey/ctl; echo limit $c 262144 65536 64 >/n/osprey/ctl }; echo ready",
@@ -70,6 +71,17 @@ CHECKS = [
    "sleep 1; o=`{awk '/^proc 7/{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)+64}' /n/osprey/status}",
    "dd -if /n/osprey/arena -bs 1 -iseek $o -count 4 >[2]/dev/null; echo"],
   "2000"),
+ ("an attribute written over pi-p, seen by the fid that wrote it",
+  ["echo limit 1 262144 65536 64 >/n/osprey/ctl",
+   "x=`{/tmp/pip open 1 /1 write 1 packetmax 55 read 1 packetmax}; echo $x"],
+  "'55'"),
+ ("and by nobody else until that fid is closed",
+  ["/tmp/pip open 2 /1 read 2 packetmax close 2"],
+  "'64'"),
+ ("and by everybody after it",
+  ["/tmp/pip -s $x(5) close 1",
+   "/tmp/pip open 3 /1 read 3 packetmax close 3"],
+  "'55'"),
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string

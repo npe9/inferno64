@@ -72,9 +72,13 @@ into
 .I nfid
 and opens it: the walk, the clone and the open of 9P in one message.  A
 group begins with
-.BR Tsession ,
-and the session it settles on is remembered against the connection, so a
-client need not name it again in every group.
+.BR Tsession .
+Over
+.B #O/pip
+the session it settles on is remembered against the connection, so a
+client need not name it again in every group; on a wire there is no
+connection to remember it against and every group says which session it
+is for.
 .SH TRANSPORT
 .PP
 Pip is spoken over
@@ -196,6 +200,7 @@ reports:
 .BR memused ,
 .BR netbytes ,
 .BR netmax ,
+.BR packetmax ,
 .BR packets ,
 .BR requests ,
 .BR replies ,
@@ -210,7 +215,8 @@ Of those,
 .BR period ,
 .BR deadline ,
 .BR memory ,
-.B netmax
+.BR netmax ,
+.B packetmax
 and
 .B mode
 may be written; the rest are what the container has done rather than what
