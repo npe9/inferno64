@@ -52,6 +52,8 @@ enum {
 	Maxpage		= 8,	/* pages one container may hold */
 	Pktbufsize	= 2112,	/* one of them, room for 2048 and a trailer */
 	Segnamelen	= 16,
+	Ngrant		= 4,	/* others the owner may hand it to */
+	Userlen		= 28,
 	Narm		= 16,	/* arms one select may offer */
 	Align		= 64,
 };
@@ -67,6 +69,8 @@ struct Ospreyproc {
 	uvlong	slice;		/* byte offset of this container in the arena */
 	Ospreymap *map;		/* the slice itself */
 	char	segname[Segnamelen];	/* the segment that is this slice */
+	char	owner[Userlen];		/* whoever made it */
+	char	grant[Ngrant][Userlen];	/* and whoever they handed it to */
 	Ospreyproc *server;	/* answers what the kernel will not */
 	int	serving;	/* is that server for someone */
 	Pktq	pktq;		/* packets given to this container */
@@ -116,6 +120,87 @@ static char *attrnames[] = {
 	"netbytes", "netmax", "packets", "requests", "replies",
 	"slice", "data", "pid", "version", nil,
 };
+
+void
+ospreysetowner(Ospreyproc *p, char *user)
+{
+	if(p == nil || p->used == 0 || user == nil)
+		return;
+	strncpy(p->owner, user, Userlen-1);
+	p->owner[Userlen-1] = '\0';
+}
+
+char*
+ospreyowner(Ospreyproc *p)
+{
+	return p == nil || p->used == 0 ? nil : p->owner;
+}
+
+char*
+ospreygranted(Ospreyproc *p, int i)
+{
+	if(p == nil || p->used == 0 || i < 0 || i >= Ngrant)
+		return nil;
+	return p->grant[i][0] == '\0' ? nil : p->grant[i];
+}
+
+int
+ospreygrant(Ospreyproc *p, char *user)
+{
+	int i;
+
+	if(p == nil || p->used == 0 || user == nil || *user == '\0')
+		return -1;
+	if(strlen(user) >= Userlen)
+		return -1;
+	for(i = 0; i < Ngrant; i++)
+		if(strcmp(p->grant[i], user) == 0)
+			return 0;
+	for(i = 0; i < Ngrant; i++)
+		if(p->grant[i][0] == '\0'){
+			strcpy(p->grant[i], user);
+			return 0;
+		}
+	return -1;
+}
+
+int
+ospreyrevoke(Ospreyproc *p, char *user)
+{
+	int i;
+
+	if(p == nil || p->used == 0 || user == nil)
+		return -1;
+	for(i = 0; i < Ngrant; i++)
+		if(strcmp(p->grant[i], user) == 0){
+			p->grant[i][0] = '\0';
+			return 0;
+		}
+	return -1;
+}
+
+/*
+ * Whether a container is that user's to have.  A container with no owner
+ * is anyone's: nothing has claimed it.
+ */
+int
+ospreymay(Ospreyproc *p, char *user)
+{
+	int i;
+
+	if(p == nil || p->used == 0)
+		return 0;
+	if(p->owner[0] == '\0')
+		return 1;
+	if(user == nil)
+		return 0;
+	if(strcmp(p->owner, user) == 0)
+		return 1;
+	for(i = 0; i < Ngrant; i++)
+		if(p->grant[i][0] != '\0' && strcmp(p->grant[i], user) == 0)
+			return 1;
+	return 0;
+}
 
 uvlong
 ospreyversion(Ospreyproc *p)
@@ -1412,6 +1497,11 @@ ospreysnapwrite(char *buf, long nbuf)
 		p = seprint(p, e, "netbytes %lud\n", c->netbytes);
 		p = seprint(p, e, "netpackets %lud\n", c->netpackets);
 		p = seprint(p, e, "version %llud\n", q->version);
+		if(q->owner[0] != '\0')
+			p = seprint(p, e, "owner %s\n", q->owner);
+		for(j = 0; j < Ngrant; j++)
+			if(q->grant[j][0] != '\0')
+				p = seprint(p, e, "grant %s\n", q->grant[j]);
 		p = seprint(p, e, "requests %llud %llud\n",
 			r->requests->put, r->requests->get);
 		p = seprint(p, e, "replies %llud %llud\n",
@@ -1540,7 +1630,10 @@ ospreysnapread(char *text, long n)
 		} else if(strcmp(key, "name") == 0){
 			b = snapword(&line);
 			nsbind(&r->ns, a, b);
-		}
+		} else if(strcmp(key, "owner") == 0)
+			ospreysetowner(p, a);
+		else if(strcmp(key, "grant") == 0)
+			ospreygrant(p, a);
 	}
 	return made;
 }
@@ -1674,7 +1767,13 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			uvlong j;
 
 			l = pagelist(&procs[i]);
-				p = seprint(p, e, "segment %llud %s %lud\n",
+				p = seprint(p, e, "owner %llud %s", q->id,
+				procs[i].owner[0] ? procs[i].owner : "-");
+			for(j = 0; j < Ngrant; j++)
+				if(procs[i].grant[j][0] != '\0')
+					p = seprint(p, e, " %s", procs[i].grant[j]);
+			p = seprint(p, e, "\n");
+			p = seprint(p, e, "segment %llud %s %lud\n",
 				q->id, procs[i].segname, slicesize);
 			p = seprint(p, e, "pages %llud", q->id);
 			for(j = 0; l != nil && j < procs[i].map->npage; j++)

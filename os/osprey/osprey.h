@@ -198,6 +198,19 @@ int		ospreysetattr(Ospreyproc*, char *name, char *val);
 int		ospreyattrwritable(char *name);
 uvlong		ospreyversion(Ospreyproc*);
 
+/*
+ * Who a container is for.  The owner is whoever made it; the owner may
+ * hand the right to others by name, and the kernel enforces that without
+ * knowing anything about them beyond the name.  Grants travel in a
+ * checkpoint, so they cross to another machine with the container.
+ */
+void		ospreysetowner(Ospreyproc*, char *user);
+char*		ospreyowner(Ospreyproc*);
+int		ospreygrant(Ospreyproc*, char *user);
+int		ospreyrevoke(Ospreyproc*, char *user);
+int		ospreymay(Ospreyproc*, char *user);
+char*		ospreygranted(Ospreyproc*, int i);
+
 int		ospreyop(char *name);
 char*		ospreyopname(uvlong op);
 char*		ospreystatusname(long status);

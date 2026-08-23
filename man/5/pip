@@ -57,6 +57,9 @@ Rlease		lease[8]
 Rerror		ename[s]
 .fi
 .PP
+A container is only opened by whoever it is for; see
+.IR osprey (3).
+.PP
 .B Topen
 walks the name from the root, clones
 .I fid

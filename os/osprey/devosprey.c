@@ -185,6 +185,8 @@ enum {
 	CMdelegate,
 	CMpage,
 	CMflip,
+	CMgrant,
+	CMrevoke,
 };
 
 static Cmdtab ospreycmd[] = {
@@ -217,6 +219,8 @@ static Cmdtab ospreycmd[] = {
 	CMdelegate,	"delegate",	3,
 	CMpage,		"page",		3,
 	CMflip,		"flip",		4,
+	CMgrant,	"grant",	3,
+	CMrevoke,	"revoke",	3,
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
@@ -778,8 +782,16 @@ ospreyentitled(int slot)
 
 	if(slot < 0 || slot >= nelem(ospreyprocs))
 		return 0;
+	/*
+	 * Whoever the container is for may have it, wherever they are
+	 * running; so may the process bound to it and the processes that
+	 * one started, which is how a container reaches its own memory
+	 * before anyone has been named.
+	 */
+	if(ospreymay(ospreyat(slot), up != nil ? up->user : nil))
+		return 1;
 	if((q = ospreyprocs[slot]) == nil)
-		return 0;	/* nobody is bound to it, so nobody may have it */
+		return 0;
 	for(r = up, i = 0; r != nil && i < 64; r = r->parent, i++)
 		if(r == q)
 			return 1;
@@ -1377,6 +1389,11 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			piperror(ps, tag, "no such container");
 			break;
 		}
+		if(id != 0 && !ospreymay(ospreylookup(id),
+			up != nil ? up->user : nil)){
+			piperror(ps, tag, "not yours");
+			break;
+		}
 		if((nf = pipnewfid(ps, nfid)) == nil){
 			piperror(ps, tag, "fid in use or no free fids");
 			break;
@@ -1807,11 +1824,12 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMcreate:
-		if(ospreycreate(strtoull(cb->f[1], nil, 0),
+		if((p = ospreycreate(strtoull(cb->f[1], nil, 0),
 			strtoull(cb->f[2], nil, 0),
 			strtoull(cb->f[3], nil, 0),
-			strtoull(cb->f[4], nil, 0)) == nil)
+			strtoull(cb->f[4], nil, 0))) == nil)
 			error(Enodev);
+		ospreysetowner(p, up->user);
 		break;
 
 	case CMattach:
@@ -1900,6 +1918,27 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		for(p = ospreynext(nil); p != nil; p = ospreynext(p))
 			ospreyroute(p);
 		ospreywakeup();
+		break;
+
+	case CMgrant:
+		/*
+		 * The owner hands the right to another, by name.  Nothing
+		 * here knows anything about that name; it is enough that
+		 * whoever comes with it is called that.
+		 */
+		p = ospreyproc(cb->f[1]);
+		if(!ospreymay(p, up->user))
+			error(Eperm);
+		if(ospreygrant(p, cb->f[2]) < 0)
+			error(Ebadarg);
+		break;
+
+	case CMrevoke:
+		p = ospreyproc(cb->f[1]);
+		if(!ospreymay(p, up->user))
+			error(Eperm);
+		if(ospreyrevoke(p, cb->f[2]) < 0)
+			error(Enonexist);
 		break;
 
 	case CMpage:

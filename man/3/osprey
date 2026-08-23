@@ -159,6 +159,18 @@ Give the container's
 semaphore.  This is what an interrupt does for the task that serves its
 device, and what one task does for another waiting on it.
 .TP
+.BI grant " id user"
+.PD 0
+.TP
+.BI revoke " id user"
+.PD
+Hand the right to a container to another, by name, or take it back.
+Only whoever the container is already for may do either.  Nothing here
+knows anything about that name: it is enough that whoever comes with it
+is called that, which is what makes it a delegation and not a lookup.
+Grants are written into a checkpoint, so they cross to another machine
+with the container.
+.TP
 .BI page " id " [ alloc | i ]
 Take a page for the container, or give back the one it holds at that
 place in its list.
@@ -368,12 +380,19 @@ Each container's slice is a segment of its own, named
 and reported with its size by
 .BR status ,
 so that attaching one gets that container's memory and nobody else's.
-A name is not enough to have it: a container's memory is for the process
-bound to it by
+A name is not enough to have it.  A container is for whoever made it,
+and for whoever they have handed it to with
+.BR grant ,
+wherever those are running; and for the process bound to it by
 .B bindproc
-and the processes that one started, and a page is for whichever container
-holds it, so the right to a page goes with the page when it is handed
-over.  A container with no process bound to it is nobody's.
+and the processes that one started, which is how a container reaches its
+own memory before anyone has been named.  A page is for whichever
+container holds it, so the right to a page goes with the page when it is
+handed over.  A container that nobody owns and nothing is bound to is
+nobody's.
+.PP
+.B status
+reports who a container is for, and who it has been handed to.
 .IP
 .nf
 segattach(0, "osprey0", 0, slicesize)

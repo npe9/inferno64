@@ -75,6 +75,13 @@ and a page is for whichever container holds it.  A container takes a page, write
 another, which attaches the same page and finds what was written: the
 page is mapped, not copied.
 .PP
+.B "Delegated authorisation."
+A container is for whoever made it, and for whoever they hand it to by
+name.  The kernel enforces that at a segment and at a \[*p]p open, and
+knows nothing about the names beyond what it is told; the grants are
+written into a checkpoint, so they cross to another machine with the
+container.
+.PP
 .B "Migration."
 A container carried to another machine over a wire: its checkpoint in an
 ethernet frame of its own type, read back into a kernel that had never
@@ -94,10 +101,10 @@ Everything the plan and the presentation describe that a kernel of this
 shape can do is done.  What is left is either a different kernel, or work
 neither source spells out.
 .PP
-.B "1.  Delegated authentication."
-The presentation asks for authentication delegated across a distributed
-system.  Nothing here does anything about who is asking: a container is
-whoever can write to the device.
+.B "1.  Proving who is asking."
+A name is taken for what it says.  Nothing signs a grant or proves that
+whoever presents a name is entitled to it, so the delegation is only as
+good as the machine it is on.
 .PP
 .B "2.  \[*p]p as its own transport."
 It is spoken over a file.  The presentation has it able to be the
