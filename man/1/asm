@@ -41,6 +41,26 @@ arguments.
 .B /appl/cmd/asm
 .br
 .B /appl/cmd/disdump.b
+.SH DIAGNOSTICS
+A label used as a branch destination but never defined is reported as
+.RB \(lq "undefined label" \(rq.
+It used to resolve silently to zero, which made a misspelled or deleted
+label into a branch to the first instruction of the module \(em a program
+that restarts forever, with nothing said.
+.SH BUGS
+That check covers a bare label name, which is the way to write a branch
+destination.
+It does not cover
+.BI $ name\fP:
+the dollar form is an expression evaluated as it is parsed, so an
+identifier in it is worth whatever it was worth at that moment, which
+for a label is zero.
+.B "bnew 96(fp),$0,$top"
+therefore assembles, branches to the first instruction, and loops.
+Write
+.B top
+rather than
+.BR $top .
 .SH "SEE ALSO"
 .IR emu (1),
 .IR limbo (1)

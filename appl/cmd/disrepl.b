@@ -117,6 +117,7 @@ wrapper(): list of string
 Scratch: con "80 96 104 112 120 128 136 144";
 
 session: list of string;		# typed instructions, most recent first
+broken := 0;			# the program does not currently assemble
 ctxt: ref Draw->Context;
 
 # All input arrives on one channel, from one reader process. That is what lets
@@ -407,6 +408,7 @@ build(): string
 run(): int
 {
 	e := build();
+	broken = e != nil;
 	if(e != nil){
 		print("%s\n", e);
 		return 0;
@@ -437,6 +439,14 @@ init(c: ref Draw->Context, argv: list of string)
 	if(tl argv != nil)
 		usage();
 	ctxt = c;
+
+	# These are loaded on every line, so say so once and by name rather
+	# than reporting it as a failure to run the first instruction typed.
+	for(t := "/dis/asm.dis" :: "/dis/disdump.dis" :: nil; t != nil; t = tl t)
+		if(sys->stat(hd t).t0 < 0){
+			print("disrepl: %s is missing - mk it in appl/cmd\n", hd t);
+			raise "fail:no tools";
+		}
 
 	# asm writes its output beside the input, by name, in the working
 	# directory - so the working directory has to be the one Dfile names.
@@ -489,10 +499,13 @@ init(c: ref Draw->Context, argv: list of string)
 			else {
 				print("dropped: %s\n", str->drop(hd session, "\t"));
 				session = tl session;
-				run();
+				if(!run())
+					print("the program no longer assembles - " +
+						"drop more, or add what it needs\n");
 			}
 		".clear" =>
 			session = nil;
+			broken = 0;
 			print("cleared\n");
 		".asm" =>
 			for(l := assembly(); l != nil; l = tl l)
@@ -511,8 +524,15 @@ init(c: ref Draw->Context, argv: list of string)
 			}
 			# Instructions are tab-indented, which is what the
 			# assembler's grammar expects of a statement.
+			# Only blame the new line if the program assembled
+			# before it. Otherwise the breakage is something
+			# already in the session - most easily arrived at by
+			# dropping a label another line still branches to -
+			# and taking the new line out would leave the user
+			# unable to add the very line that fixes it.
+			wasbroken := broken;
 			session = "\t" + line :: session;
-			if(!run()){
+			if(!run() && !wasbroken){
 				session = tl session;
 				print("not added\n");
 			}

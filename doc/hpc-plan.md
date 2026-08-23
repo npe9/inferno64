@@ -448,10 +448,21 @@ moment `devgpu` is built without a hardware backend — a Linux port, or adding
    **(a) is built.** `disrepl(1)`. Four things it turned up that were not
    obvious from reading:
 
-   - **A branch target must be a bare label, not `$label`.** `bnew ...,$top`
-     does not fail — it assembles as the immediate 0 and branches to the first
-     instruction, so the program restarts forever. `asm` gives no warning. This
-     was the first loop written, and it hung for two minutes.
+   - **`asm` resolved an undefined label to zero, silently.** A branch to a
+     misspelled or dropped label became a branch to the first instruction of
+     the module — a program that restarts forever, with nothing reported. Fixed
+     in `appl/cmd/asm/asm.b`: a symbol now records whether it was ever defined
+     as a label, and a destination referring to an undefined one is a
+     diagnostic. Forward references within a file still work, because the flag
+     is set in the pass that assigns program counters and checked in the pass
+     that emits.
+   - **The `$label` form is still silently wrong and cannot easily be fixed.**
+     `bnew ...,$top` assembles: the dollar form is an expression evaluated as it
+     is parsed, so the identifier is worth zero and the branch goes to
+     instruction zero. Only the bare form carries a symbol as far as the fixup.
+     Diagnosing it would mean rejecting identifiers in constant expressions
+     generally, which has other uses. Documented in `man/1/asm` BUGS instead.
+     This was the first loop written here, and it hung for two minutes.
    - **The host interrupt is not usable.** On this platform emu wires SIGINT to
      `cleanexit` (`emu/MacOSX/os.c`), so the usual interrupt character takes
      the whole emulator down and the session with it. Stopping a running
@@ -1377,6 +1388,19 @@ anyone seeing it again should reach for that comment first rather than treat it
 as new.
 
 ### 7. Smaller, noted, unfixed
+
+**`emu-g` faulted once in the console keyboard slave**, at startup, and did not
+reproduce in five further runs of the same command:
+
+```
+dopoolalloc -> kmalloc -> qproduce -> kbdslave -> tramp
+SYS: process kbd faults: dereference of nil
+```
+
+Seen while running `disrepl` with piped stdin. Recorded because a one-off with
+no note is indistinguishable from a fresh bug next time; it is *not* one of
+bugs 1-6 above.
+
 
 - ~~`metal_present_geom()` consumes `mtl_zclear` before creating its encoder~~
   **fixed.** All three geom passes (`metal_present_geom`, the 3-D triangle

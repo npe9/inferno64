@@ -92,6 +92,7 @@ Sym: adt
 	lexval:	int;
 	value:	int;
 	ds:	int;
+	defined: int;	# has appeared as a label, so value means something
 };
 
 Desc: adt
@@ -552,7 +553,7 @@ enter(name: string, stype: int): ref Sym
 		h = ~h;
 	h %= Hashsize;
 
-	s = ref Sym(name, stype, 0, 0);
+	s = ref Sym(name, stype, 0, 0, 0);
 	hash[h] = s :: hash[h];
 	return s;
 }
@@ -1005,8 +1006,10 @@ assem(i: ref Inst)
 	pc := 0;
 	for(f = i; f != nil; f = f.link) {
 		f.pc = pc++;
-		if(f.sym != nil)
+		if(f.sym != nil){
 			f.sym.value = f.pc;
+			f.sym.defined = 1;
+		}
 	}
 
 	if(pcentry >= pc)
@@ -1034,6 +1037,12 @@ assem(i: ref Inst)
 
 	for(f = i; f != nil; f = f.link) {
 		if(f.dst != nil && f.dst.sym != nil) {
+			# An undefined label used to resolve silently to zero,
+			# so a misspelled or dropped one produced a branch to
+			# the first instruction of the module - a program that
+			# restarts forever, with nothing reported.
+			if(!f.dst.sym.defined)
+				diag("undefined label: " + f.dst.sym.name);
 			f.dst.mode = AIMM;
 			f.dst.val = f.dst.sym.value;
 		}

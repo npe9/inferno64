@@ -59,13 +59,19 @@ bnew 96(fp),$0,top
 .PP
 which leaves 15 in
 .BR s0 .
+A label that is not defined is now reported \(em
+.IR asm (1)
+used to resolve one silently to zero \(em but only in that bare form.
 Writing
 .B $top
-instead does not fail.
-It assembles, as the immediate 0, and branches to the first instruction
-of the module \(em so the program restarts forever.
+instead does not fail: the dollar form is an expression evaluated as it
+is parsed, so the identifier is worth zero, and the branch goes to the
+first instruction of the module and the program restarts forever.
 This is worth stating because it is what the first loop written here
-did, and the assembler gives no warning.
+did.
+Because the program is assembled again after every line, a branch
+forward to a label that has not been typed yet is also an undefined
+label, and is refused until the label exists.
 .SS Commands
 .TP
 .B .list
