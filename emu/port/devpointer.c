@@ -16,6 +16,7 @@
 enum{
 	Qdir,
 	Qpointer,
+	Qpointerin,
 	Qcursor
 };
 
@@ -45,6 +46,7 @@ static
 Dirtab pointertab[]={
 	".",			{Qdir, 0, QTDIR},	0,	0555,
 	"pointer",		{Qpointer},	0,	0666,
+	"pointerin",		{Qpointerin},	0,	0222,
 	"cursor",		{Qcursor},		0,	0222,
 };
 
@@ -281,6 +283,7 @@ pointerwrite(Chan* c, void* va, long n, vlong off)
 	char *a = va;
 	char buf[128];
 	int b, x, y;
+	ulong msec;
 	Drawcursor cur;
 
 	USED(&off);
@@ -298,9 +301,46 @@ pointerwrite(Chan* c, void* va, long n, vlong off)
 			b = strtoul(a, 0, 0);
 		else
 			b = mouse.v.b;
-		/*mousetrack(b, x, y, msec);*/
+		/*
+		 * Warps the host cursor and deliberately does not inject: the
+		 * warp makes the host generate the event itself, so injecting
+		 * as well would deliver it twice. Write to pointerin to inject
+		 * without a warp.
+		 */
 		setpointer(x, y);
 		USED(b);
+		break;
+	case Qpointerin:
+		/*
+		 * Inject a pointer event as though the host had delivered it,
+		 * for a script driving the system - see session(2). Writing to
+		 * /dev/keyboard already does this for keys; this is the same
+		 * thing for the mouse.
+		 *
+		 * "x y buttons [msec]". The optional msec is what makes a
+		 * scripted double click work: consumers compare the deltas of
+		 * the time the event carries (appl/acme/text.b treats two
+		 * clicks less than 500ms apart as one), so a script that means
+		 * a double click has to say so rather than hope that two
+		 * writes land close enough together.
+		 *
+		 * No setpointer: injecting and warping would deliver the event
+		 * twice, once here and once from the host's response.
+		 */
+		if(n > sizeof buf-1)
+			n = sizeof buf -1;
+		memmove(buf, va, n);
+		buf[n] = 0;
+		a = buf;
+		x = strtoul(a, &a, 0);
+		if(a == buf)
+			error(Ebadarg);
+		y = strtoul(a, &a, 0);
+		b = strtoul(a, &a, 0);
+		msec = strtoul(a, &a, 0);
+		if(msec == 0)
+			msec = osmillisec();
+		mousetrackt(b, x, y, 0, msec);
 		break;
 	case Qcursor:
 		/* TO DO: perhaps interpret data as an Image */

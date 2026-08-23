@@ -120,6 +120,7 @@ TARG=\
 	registries.dis\
 	rfc822.dis\
 	riff.dis\
+	session.dis\
 	scoretable.dis\
 	scorestore.dis\
 	scsiio.dis\

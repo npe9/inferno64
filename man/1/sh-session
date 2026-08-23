@@ -1,0 +1,142 @@
+.TH SH-SESSION 1
+.SH NAME
+sh-session \- drive and describe a session from the shell
+.SH SYNOPSIS
+.B load session
+.PP
+.B session script
+.I recording
+.br
+.B session play
+.I recording
+.br
+.B session type
+.I text
+.br
+.B session key
+.I name
+.br
+.B session click
+.I x y
+.RI [ button ]
+.br
+.B session doubleclick
+.I x y
+.RI [ button ]
+.br
+.B session drag
+.I x0 y0 x1 y1
+.RI [ button ]
+.br
+.B session move
+.I x y
+.br
+.B session wait
+.I seconds
+.br
+.B session pause
+.RI [ seconds ]
+.SH DESCRIPTION
+.B Session
+turns a recording made by
+.B INFERNO_INPUT_RECORD
+(see
+.IR emu (1))
+into shell, and runs it.
+.PP
+.B Script
+prints the recording as a script.
+.B Play
+runs one directly.
+The remaining verbs are the actions themselves, which is what a printed script
+is made of.
+.SH EXAMPLE
+A session recorded by typing at it:
+.IP
+.EX
+% session script /sess.in
+# 7 actions, 18.405s
+session type 'echo hello'
+session wait 1.997
+session key Return
+session wait 1.978
+session type 'quitall'
+session wait 1.364
+session key Return
+.EE
+.PP
+Thirty-seven key presses and releases, said in a way that can be read, edited
+and run.
+Running it against a fresh
+.IR wm (1)
+delivers the same nineteen keystrokes the recording captured, in the same
+order.
+.SS "Stopping in the middle"
+.B Pause
+waits for a line on the console.
+With a number it waits that long instead, which is what an unattended script
+wants: standard input here is
+.BR #c/cons ,
+not whatever the host redirected, so a bare
+.B pause
+in a script with nobody at the console waits for ever.
+While it waits the system underneath is running normally, so the machine can be
+used \(em windows opened, things typed \(em and then the script carries on.
+.IP
+.EX
+session type 'echo one'
+session key Return
+session pause
+session type 'echo two'
+session key Return
+.EE
+.PP
+There is no protocol for this and there does not need to be one.
+A script that has stopped is a shell that has not been given its next line, and
+nothing about the rest of the system is suspended while that is true.
+That is the reason for making the recording into shell rather than into a
+player with its own controls.
+.SH "TWO WAYS TO REPLAY, AND THEY ARE NOT THE SAME"
+.B INFERNO_INPUT_REPLAY
+feeds the recorded events back below every bind, at the times they originally
+arrived.
+It is faithful \(em same events, same order, same gaps \(em and it cannot be
+interrupted, because the real keyboard and mouse are ignored for the duration.
+.PP
+This feeds
+.I actions
+through
+.B /dev/keyboard
+and
+.BR /dev/pointerin .
+It is approximate: everything is re-timed, a window resize cannot be performed
+at all, and a pointer position means whatever is at those coordinates now.
+It can be stopped anywhere, edited, and run in pieces.
+.PP
+Use the first to reproduce a session, the second to demonstrate one or to take
+it over.
+.SH SOURCE
+.B /appl/cmd/sh/session.b
+.SH SEE ALSO
+.IR sh (1),
+.IR emu (1),
+.IR session (2),
+.IR pointer (3)
+.SH BUGS
+A timed
+.B pause
+is a plain sleep rather than a console read raced against a timer, because the
+losing reader would stay blocked on the console and a blocked process keeps
+.I emu
+alive after everything else has finished.
+So a timed pause cannot be cut short by pressing return.
+.PP
+.B Session resize
+parses and then refuses: the host owns the window size.
+.PP
+Coordinates are absolute and are not scaled to the window, so a script recorded
+against one window size clicks the wrong things in another.
+.PP
+Nothing checks that a script matches the system it is run against.
+It types and clicks where it is told, and if the windows are elsewhere it will
+say so to whatever is there.

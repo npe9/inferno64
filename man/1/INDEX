@@ -467,6 +467,7 @@ sh-expr sh-expr
 sh-file2chan sh-file2chan
 sh-mload sh-mload
 sh-regex sh-regex
+sh-session sh-session
 sh-sexprs sh-sexprs
 sh-std sh-std
 sh-string sh-string

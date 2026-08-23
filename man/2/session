@@ -1,0 +1,104 @@
+.TH SESSION 2
+.SH NAME
+session \- what a person did to a session
+.SH SYNOPSIS
+.EX
+include "session.m";
+session := load Session Session->PATH;
+
+Atype, Akey, Aclick, Adouble, Adrag, Amove, Await, Aresize, Apause: con iota;
+
+Action: adt {
+    kind:   int;
+    at:     int;
+    text:   string;
+    x, y:   int;
+    x2, y2: int;
+    b:      int;
+
+    script: fn(a: self ref Action): string;
+    play:   fn(a: self ref Action): string;
+};
+
+init:  fn(): string;
+read:  fn(path: string): (array of ref Action, string);
+parse: fn(words: list of string): (ref Action, string);
+span:  fn(a: array of ref Action): int;
+.EE
+.SH DESCRIPTION
+A recording made by
+.B INFERNO_INPUT_RECORD
+(see
+.IR emu (1))
+is key presses and releases and pointer states.
+It reproduces a session exactly and reads like nothing at all.
+.B Session
+turns it into
+.IR actions :
+typed this, clicked there, waited.
+.PP
+.B Read
+decodes a recording.
+.B Script
+renders one action as a line of shell, and
+.B parse
+reads such a line back, so a script edited by hand is understood by the same
+code that wrote it.
+.B Play
+performs an action.
+.B Span
+is how long the whole recording lasts, in milliseconds.
+.SS "What the decoding does"
+Releases are dropped.
+Runs of printable keys become one
+.B Atype
+with the text.
+A press and release of a button at one place is a click; two of those within
+500ms is a double click; one with movement between is a drag.
+Movement with no button held is reported only where it stops, because a menu
+tracks the pointer and a replay that never moves never opens one.
+Quiet longer than 250ms becomes an explicit wait.
+.SS "How an action is performed"
+Through the two files the system already has for it:
+.B /dev/keyboard
+which has always accepted written keys, and
+.B /dev/pointerin
+(see
+.IR pointer (3)).
+Both are below every bind, so this drives
+.IR wm (1)
+and its clients and anything they started.
+.PP
+A click is written with explicit times rather than left to the clock, because a
+consumer decides a double click from the difference between the times the
+events carry.
+.SH SOURCE
+.B /appl/lib/session.b
+.SH SEE ALSO
+.IR sh-session (1),
+.IR emu (1),
+.IR pointer (3),
+.IR cons (3)
+.SH BUGS
+.B Aresize
+decodes but cannot be performed: the host owns the window size.
+A recording that resized the window replays into whatever size the window
+already has, and since pointer coordinates are absolute, the clicks then land
+somewhere else.
+.PP
+A key release cannot be told from the German dead keys
+.RB ( Grave ,
+.BR Acute ,
+.BR Circumflex ).
+.B Keyup
+is
+.B Spec|0x800
+and German is
+.BR Spec|0xf00 ,
+so the ranges overlap.
+That is in the encoding rather than here, and it means a German keyboard's dead
+keys decode as releases and vanish.
+.PP
+It reads what arrived, not what was meant.
+A key held down long enough to repeat is several presses and decodes as
+several characters, which is what the system saw.

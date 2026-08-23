@@ -7,6 +7,8 @@ pointer \- mouse and stylus interface
 .B /dev/cursor
 .br
 .B /dev/pointer
+.br
+.B /dev/pointerin
 .SH DESCRIPTION
 The
 .I pointer
@@ -60,6 +62,41 @@ and
 .I msec
 are ignored.
 .PP
+Writing
+.IR "x y buttons" " [" msec ]
+to
+.B pointerin
+delivers a pointer event as though the host had produced one, for a program
+driving the system rather than watching it \(em what writing to
+.B /dev/keyboard
+has always done for keys (see
+.IR cons (3)).
+It is a separate file from
+.B pointer
+because the two do opposite things: that one moves the cursor and delivers
+nothing, this one delivers an event and does not move the cursor.
+.PP
+Injecting and warping together would deliver the event twice, once here and
+once from the host's own response to the warp.
+That is why
+.B pointer
+has never injected, and why this is not a third meaning for a write to it.
+.PP
+The optional
+.I msec
+is what makes a scripted double click work.
+A consumer decides that two clicks are one double click from the difference of
+the times the events carry \(em
+.B appl/acme/text.b
+uses 500ms \(em so a program that means a double click has to say when the
+clicks happened rather than hope two writes land close enough together.
+Without it the event is stamped with the current time.
+.PP
+See
+.IR session (2),
+which is built on this and on
+.BR /dev/keyboard .
+.PP
 Writing an
 .IR image (6)
 file to the
@@ -77,4 +114,6 @@ format.
 .SH SEE ALSO
 .IR wm (1),
 .IR draw-intro (2),
+.IR session (2),
+.IR cons (3),
 .IR image (6)

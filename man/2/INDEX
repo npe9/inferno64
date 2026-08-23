@@ -302,6 +302,7 @@ popup popup
 plot plot
 populationmodel populationmodel
 security security-0intro
+session session
 trajectory trajectory
 pow math-elem
 pow10 math-elem
