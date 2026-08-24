@@ -63,12 +63,11 @@ five thousand in a run, and says so in an exit status.
 .SH "WHAT IT SHOWS SO FAR"
 Five thousand
 .B newwindow
-calls and three hundred Tk toplevels in one process, and four hundred across
-eight processes, none failed.
+calls and three hundred Tk toplevels in one process, and four thousand eight
+hundred across sixteen processes at once, none failed.
 .PP
 Read that narrowly.
-It says sequential creation is clean at those counts, and concurrent creation is
-clean at rather smaller ones.
+It says creation is clean at those counts, sequential and concurrent.
 It does not clear the open bug and it was never going to: that bug is reported
 .I after a resize
 and nothing here resizes anything, since the host owns the window size.

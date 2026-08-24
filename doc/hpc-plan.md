@@ -1683,17 +1683,17 @@ used was a fixed-size Tk window, which would not resize on a real screen change
 either. A client that fills the screen would be needed to tell the two apart.)
 
 **`wmtest(1)` (new) makes windows in bulk**, sequentially or in *p* processes at
-once: 5000 `newwindow` calls and 300 Tk toplevels in one process, and 400 across
-eight, none failed.
+once: 5000 `newwindow` calls and 300 Tk toplevels in one process, and **4800
+across sixteen processes at once**, none failed.
 
 Read that narrowly, because it is narrower than it sounds. **Nobody proposed
 window churn as the mechanism**, so ruling it out settles little; what it says is
-that sequential creation is clean at those counts and concurrent creation is
-clean at smaller ones. The concurrent mode is the one worth running — the fault
+that creation is clean at those counts, sequential and concurrent. The
+concurrent mode is the one worth running — the fault
 was characterised on a build where `unlock()` had no release barrier, so it
 looked like a race, and one process making windows one after another is close to
-the least likely way to provoke a race. Concurrent runs are also much slower, so
-the counts there are lower than one would like.
+the least likely way to provoke a race. Concurrent runs are much slower — the
+4800-window run takes several minutes — so run it in the background.
 
 It did find that a client cannot say `wmctl "exit"` and carry on: that tells wm
 the *client* is finished and wm takes the whole client away, so the first version
