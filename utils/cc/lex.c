@@ -464,7 +464,7 @@ l1:
 		cp = symb;
 		if(c != 'L')
 			goto talph;
-		*cp++ = c;
+		SYMBPUT(cp, c);
 		c = GETC();
 		if(c == '\'') {
 			/* L'x' */
@@ -505,7 +505,7 @@ l1:
 		c1 = GETC();
 		if(isdigit(c1)) {
 			cp = symb;
-			*cp++ = c;
+			SYMBPUT(cp, c);
 			c = c1;
 			c1 = 0;
 			goto casedot;
@@ -720,21 +720,28 @@ talph:
 	for(;;) {
 		if(c >= Runeself) {
 			for(c1=0;;) {
-				cp[c1++] = c;
+				if(cp+c1 < symb+NSYMB-4)
+					cp[c1] = c;
+				c1++;
 				if(fullrune(cp, c1))
 					break;
 				c = GETC();
 			}
-			cp += c1;
+			if(cp+c1 < symb+NSYMB-4)
+				cp += c1;
+			else
+				cp = symb+NSYMB-4;
 			c = GETC();
 			continue;
 		}
 		if(!isalnum(c) && c != '_')
 			break;
-		*cp++ = c;
+		SYMBPUT(cp, c);
 		c = GETC();
 	}
 	*cp = 0;
+	if(SYMBFULL(cp))
+		yyerror("symbol too large: %s", symb);
 	if(debug['L'])
 		print("%L: %s\n", lineno, symb);
 	peekc = c;
@@ -766,18 +773,18 @@ tnum:
 	if(c != '0') {
 		c1 |= Numdec;
 		for(;;) {
-			*cp++ = c;
+			SYMBPUT(cp, c);
 			c = GETC();
 			if(isdigit(c))
 				continue;
 			goto dc;
 		}
 	}
-	*cp++ = c;
+	SYMBPUT(cp, c);
 	c = GETC();
 	if(c == 'x' || c == 'X')
 		for(;;) {
-			*cp++ = c;
+			SYMBPUT(cp, c);
 			c = GETC();
 			if(isdigit(c))
 				continue;
@@ -793,7 +800,7 @@ tnum:
 		goto dc;
 	for(;;) {
 		if(c >= '0' && c <= '7') {
-			*cp++ = c;
+			SYMBPUT(cp, c);
 			c = GETC();
 			continue;
 		}
@@ -820,6 +827,8 @@ ncu:
 		goto ncu;
 	}
 	*cp = 0;
+	if(SYMBFULL(cp))
+		yyerror("constant too large: %s", symb);
 	peekc = c;
 	if(mpatov(symb, &yylval.vval))
 		yyerror("overflow in constant");
@@ -864,7 +873,7 @@ nret:
 
 casedot:
 	for(;;) {
-		*cp++ = c;
+		SYMBPUT(cp, c);
 		c = GETC();
 		if(!isdigit(c))
 			break;
@@ -873,16 +882,16 @@ casedot:
 		goto caseout;
 
 casee:
-	*cp++ = 'e';
+	SYMBPUT(cp, 'e');
 	c = GETC();
 	if(c == '+' || c == '-') {
-		*cp++ = c;
+		SYMBPUT(cp, c);
 		c = GETC();
 	}
 	if(!isdigit(c))
 		yyerror("malformed fp constant exponent");
 	while(isdigit(c)) {
-		*cp++ = c;
+		SYMBPUT(cp, c);
 		c = GETC();
 	}
 
@@ -896,6 +905,8 @@ caseout:
 		c1 |= Numflt;
 	}
 	*cp = 0;
+	if(SYMBFULL(cp))
+		yyerror("constant too large: %s", symb);
 	peekc = c;
 	if(mpatof(symb, &yylval.dval)) {
 		yyerror("overflow in float constant");

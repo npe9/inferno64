@@ -1022,7 +1022,43 @@ compiler hands back when it refuses one, so the set the optimiser works
 from is the same either way.  What the bug did was corrupt the
 compiler's own stack, and what that hit depended on the frame; here it
 hit padding until one more local moved things and it hit a live pointer.
-Nothing in the tree needs rebuilding on account of it.  Finding it took AddressSanitizer, which is worth saying
+Nothing in the tree needs rebuilding on account of it.
+.PP
+Having the compiler under AddressSanitizer was worth more than the one
+bug.  Every compile the Osprey kernel does \- a hundred and twenty-eight
+of them, replayed with the real command lines \- is clean under it.  But
+the class the bug belongs to is not: these compilers were written where
+a
+.CW ulong
+is thirty-two bits and a name is short, and this tree builds them
+somewhere neither is true.  Reading for more of the same found the
+lexer.
+.CW symb
+is the fixed global a token is built in, fifteen hundred bytes of it,
+and
+.CW macbody
+has always clamped its writes into it \-
+.CW "if(cp <= symb+NSYMB-4)"
+\- while
+.CW lex.c
+did not, in eleven places.  So an identifier or a constant longer than
+that wrote past the end of a global with whatever the source said.  Four
+thousand characters of it and
+.CW 6c
+exited zero and wrote an object; under the sanitizer it is a wild
+pointer in
+.CW dodecl .
+Every write into
+.CW symb
+goes through
+.CW SYMBPUT
+now, and a token that reaches the end is truncated and said so, which is
+what the macro processor always did.
+.PP
+.CW scripts/cc-check.sh
+asks all nine compilers for all three: a function with two hundred
+variables, a four thousand character name, and a four thousand digit
+number.  Twenty-seven lines.  Finding it took AddressSanitizer, which is worth saying
 because the crash was in
 .CW regopt
 reading a corrupt free list and the write was in

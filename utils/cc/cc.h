@@ -22,6 +22,19 @@ typedef	Rune	TRune;	/* target system type */
 #define	NHUNK		50000L
 #define	BUFSIZ		8192
 #define	NSYMB		1500
+/*
+ * symb is where the lexer builds a name or a number before it is looked
+ * up or converted, and it is a fixed global.  The macro processor has
+ * always clamped its writes into it -- see macbody -- and the lexer did
+ * not, so an identifier or a constant longer than this wrote past the
+ * end of a global with whatever the source said.  What the compiler did
+ * afterwards depended on what was there: 6c exited zero on a four
+ * thousand character name and wrote an object.  Every write into symb
+ * goes through this, and a token that reaches the end is truncated and
+ * said so.
+ */
+#define	SYMBPUT(cp, c)	do{ if((cp) < symb+NSYMB-4) *(cp)++ = (c); }while(0)
+#define	SYMBFULL(cp)	((cp) >= symb+NSYMB-4)
 #define	NHASH		1024
 #define	STRINGSZ	200
 #define	HISTSZ		20

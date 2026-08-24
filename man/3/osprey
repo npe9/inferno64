@@ -1612,9 +1612,16 @@ bit
 .B ulong
 the optimiser handed out numbers it could not address and wrote past a
 .B Bits
-on the stack.  It is fixed and
+on the stack.  It is fixed, and so is a second of the same kind found by reading for
+it: the lexer built a name or a number in
+.BR symb ,
+a fixed global, without the bound the macro processor beside it has
+always had, so a four thousand character identifier wrote past the end
+of it and
+.I 6c
+exited zero and wrote an object.
 .B /scripts/cc-check.sh
-is the check.  It had not been spoiling objects:
+is the check for both, over all nine compilers.  It had not been spoiling objects:
 .I ospreywrite
 is the only function in this kernel whose variables the optimiser cannot
 all track, and building
