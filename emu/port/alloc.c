@@ -197,8 +197,20 @@ static int	poolpoison = -1;	/* -1 = not yet looked up */
 static int
 poisonon(void)
 {
-	if(poolpoison < 0)
+	if(poolpoison < 0){
 		poolpoison = getenv("INFERNO_POOLPOISON") != nil;
+		/*
+		 * Say so, once. A run that reports no corruption is worth
+		 * nothing unless the checking was actually happening, and
+		 * there was no way to tell the two apart from the output: both
+		 * are silence. The same reasoning as faultprobe(1).
+		 *
+		 * print() from inside the allocator is already what
+		 * poisoncheck does, so it is not a new risk here.
+		 */
+		if(poolpoison)
+			print("POOLPOISON: on, free blocks are poisoned and checked\n");
+	}
 	return poolpoison;
 }
 
