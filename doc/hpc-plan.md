@@ -1751,9 +1751,25 @@ output, no missing PASS.** The confirmation is the point: poisoning used to say
 nothing when enabled and nothing when it found nothing, and those are the same
 silence, so it now says `POOLPOISON: on` once.
 
-What that run can still not see: a hang *after* the results are written (one
-before would show as a missing PASS), and a quiet wrong answer from anything the
-component tests do not themselves check.
+And `wmtest -k` closes the last of the four classes for the case it most applies
+to: four coloured labels in a wm window keep their colours across continuous
+resizing, five runs, nothing changed — with the check *seen to fail* when two
+are recoloured between readings. That is the shape of the resize faults this
+tree actually had (a white block after a grow, icons going blank), where nothing
+faults and nothing is reported.
+
+Two wrong turns there, both instructive. Windows on a screen this program
+allocates itself do **not** survive a host resize — the display image is
+replaced underneath — so they go uniformly background-coloured every time; the
+first version reported that as twenty-four failures, which looked like a
+discovery and was the documented consequence of doing something unsupported.
+And a window's channel need not be the one a colour was given in: decoding the
+bytes got every one reversed and called every window broken. **Compare a widget
+with itself and no encoding is needed.**
+
+What is *still* not seen: a hang after the results are written (one before shows
+as a missing PASS), and a quiet wrong answer from anything the component tests do
+not check themselves.
 
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
@@ -2315,6 +2331,12 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 
 A pixel count once reported a renderer dropping *every* segment as "120% of
 software". Count the thing that actually differs.
+
+**A control that does not compile looks exactly like a control that found
+nothing.** The negative control for the pixel check used `/* */`, which Limbo
+does not have; `mk` failed, the old binary ran, and the control dutifully
+reported no change. Do not suppress build output when the whole point of the run
+is that the build changed something.
 
 **A watcher that has never seen a failure has not been shown to see one.**
 A resize stress harness reported no faults across a batch and it was worth
