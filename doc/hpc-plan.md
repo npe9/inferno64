@@ -2288,6 +2288,7 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 | `gpubench` | cpu vs GPU solve timings | not pass/fail, prints numbers |
 | `sessiontest` | session(2) decoding, and that decode/compile are inverses | headless; found 4 real bugs |
 | `styxtest` | that styxlog(1) reads a trace as the right paths | headless; guards the tag-keying bug |
+| `faultprobe` | *nothing* — it fails on purpose, to calibrate a watcher | run it under a harness before trusting that harness |
 | `clicktest -e -n` | that a scripted click/drag works a real Tk widget | GUI; **needs `-e`/`-n` or it only reports** |
 | `wmtest` | window creation, in bulk | GUI; wm's first automated test; result goes to a file |
 | `schedcmp` | how much two runs' Dis schedules differ | not pass/fail, prints numbers |
@@ -2296,6 +2297,22 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 
 A pixel count once reported a renderer dropping *every* segment as "120% of
 software". Count the thing that actually differs.
+
+**A watcher that has never seen a failure has not been shown to see one.**
+A resize stress harness reported no faults across a batch and it was worth
+nothing, because nothing established it could see one. `faultprobe(1)` fails on
+purpose, three ways, and under `wm` they do not look alike:
+
+```
+nil dereference   disfault: dereference of nil, and a backtrace
+array bounds      sh: /dis/faultprobe.dis: exception: array bounds error
+unhandled raise   sh: ...: exception: <whatever was raised>
+```
+
+The harness was matching `broken|faults|panic|abort` — which sees the first and
+**misses the other two entirely**. This is the same rule as the negative control,
+pointed at the instrument instead of the fix: run the probe, then believe the
+watcher.
 
 Two more of the same kind, both from the scripted-input work. **At the device,
 a press and a release are present and correctly stamped whether or not they are
