@@ -1063,6 +1063,7 @@ evalnode(Node *n, Env *e, char *err, int nerr)
 			ax += x->nd;
 		if(ax < 0 || ax >= x->nd){
 			snprint(err, nerr, "Softmax: axis outside the tensor");
+			free(r.v);
 			return -1;
 		}
 		/* stride of the axis, and how many rows there are along it */
@@ -1098,10 +1099,12 @@ evalnode(Node *n, Env *e, char *err, int nerr)
 		if(strcmp(n->op, "Reshape") == 0){
 			if(y == nil){
 				snprint(err, nerr, "Reshape wants a shape");
+				free(r.v);
 				return -1;
 			}
 			if(y->nel > Maxdim){
 				snprint(err, nerr, "Reshape: too many dimensions");
+				free(r.v);
 				return -1;
 			}
 			rem = x->nel;
@@ -1151,7 +1154,7 @@ evalnode(Node *n, Env *e, char *err, int nerr)
 		for(i = 0; i < x->nd; i++){
 			if(perm[i] < 0 || perm[i] >= x->nd){
 				snprint(err, nerr, "Transpose: perm outside the tensor");
-				return -1;
+				return -1;	/* nothing allocated yet */
 			}
 			r.d[i] = x->d[perm[i]];
 		}
@@ -1189,7 +1192,7 @@ evalnode(Node *n, Env *e, char *err, int nerr)
 			v = lookup(e, n->in[i]);
 			if(v == nil || v->nd != x->nd){
 				snprint(err, nerr, "Concat: inputs do not agree");
-				return -1;
+				return -1;	/* nothing allocated yet */
 			}
 			r.d[ax] += v->d[ax];
 		}
@@ -1377,7 +1380,7 @@ mlsoft_setshape(void *h, char *name, char **dims, int ndims, char *err, int nerr
 {
 	Soft *s = h;
 	Vin *w;
-	int i;
+	int i, slot;
 
 	if(s == nil)
 		return -1;
@@ -1390,22 +1393,30 @@ mlsoft_setshape(void *h, char *name, char **dims, int ndims, char *err, int nerr
 		seterr(err, nerr, "too many dimensions");
 		return -1;
 	}
-	for(i = 0; i < s->nsh; i++)
-		if(strcmp(s->shname[i], w->name) == 0)
+	/*
+	 * The slot is kept in a variable of its own rather than in the loop
+	 * counter. Reusing the counter put the dimensions in the last slot
+	 * allocated instead of the one just found, which is only wrong when an
+	 * already-pinned input is pinned again after some other input has been
+	 * pinned - so it coincided with correct behaviour in every case a
+	 * single-input model can reach.
+	 */
+	for(slot = 0; slot < s->nsh; slot++)
+		if(strcmp(s->shname[slot], w->name) == 0)
 			break;
-	if(i == s->nsh){
+	if(slot == s->nsh){
 		if(s->nsh >= nelem(s->shname)){
 			seterr(err, nerr, "too many shapes are pinned");
 			return -1;
 		}
-		s->shname[i] = strdup(w->name);
-		if(s->shname[i] == nil)
+		s->shname[slot] = strdup(w->name);
+		if(s->shname[slot] == nil)
 			return -1;
 		s->nsh++;
 	}
-	s->shnd[i] = ndims;
+	s->shnd[slot] = ndims;
 	for(i = 0; i < ndims; i++)
-		s->shdim[s->nsh-1][i] = strtoll(dims[i], nil, 10);
+		s->shdim[slot][i] = strtoll(dims[i], nil, 10);
 	return 0;
 }
 

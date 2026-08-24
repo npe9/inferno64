@@ -140,6 +140,45 @@ or
 .BR take ,
 which exist for models with more than one of either.
 .PP
+.IR ml (3)
+advertises twenty-two operators for the software backend and the two fixtures
+between them reach seven:
+.BR Gemm ,
+.BR Tanh ,
+.BR Relu ,
+.BR Concat ,
+.BR Transpose ,
+.B Add
+and
+.BR Softmax .
+Nothing here runs
+.BR MatMul ,
+.BR Sub ,
+.BR Mul ,
+.BR Div ,
+.BR Pow ,
+.BR Sigmoid ,
+.BR Exp ,
+.BR Log ,
+.BR Sqrt ,
+.BR Neg ,
+.BR Abs ,
+.BR Identity ,
+.BR Reshape ,
+.B Flatten
+or
+.BR Constant .
+.BR Reshape 's
+handling of \-1 and 0 in a shape is the one of those most likely to be wrong,
+since it is the only one with any logic in it.
+.PP
+.B ctl
+.B shape
+is exercised on the software backend only, and only on a model with one input.
+Re-pinning an input that is already pinned when another input has been pinned
+since is not reached, which needs a model with two inputs; that case had a real
+bug in it, found by reading rather than by this test.
+.PP
 Where there is no host backend the only check on the wider fixture is that
 each
 .B Softmax

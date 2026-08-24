@@ -265,6 +265,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	stale();
 	backends(mod);
 	wider();
+	pinned(mod);
 
 	if(fail)
 		raise "fail:test";
@@ -326,6 +327,52 @@ backends(mod: string)
 	if(!fail)
 		print("  host %#q and soft agree: (%g, %g) against (%g, %g)\n",
 			hdev, hy[0], hy[1], sy[0], sy[1]);
+}
+
+#
+# ctl "shape".
+#
+# Everything above lets the device work the open dimension out from how many
+# bytes arrived, which is the common case and the one say(1) does not use. The
+# other way is to say the shape outright, and on the software backend that path
+# had never been executed by anything: mltest inferred, and say(1) pins but only
+# ever on the host backend. Unexecuted code that is nonetheless documented is
+# the thing worth a test.
+#
+# Pinning "2 3" and writing six values must give four back, the same as writing
+# six values with the dimension left open - the two routes to the same shape
+# have to agree.
+#
+pinned(mod: string)
+{
+	x := array[6] of real;
+	x[0] = 1.0; x[1] = 2.0; x[2] = 3.0;
+	x[3] = 1.0; x[4] = 2.0; x[5] = 3.0;
+
+	(dev, y) := runpin(mod, "soft", "2 3", x, 4);
+	if(y == nil){
+		bad(sprint("soft, shape pinned: %s", dev));
+		return;
+	}
+	for(i := 0; i < 4; i++){
+		w := 14.5;
+		if(i % 2 == 1)
+			w = 139.5;
+		if(y[i] - w > 0.01 || w - y[i] > 0.01)
+			bad(sprint("soft, shape pinned: y[%d] = %g, expected %g", i, y[i], w));
+	}
+	# That check alone cannot tell a pin that worked from a pin that was
+	# ignored: with the shape dropped the open dimension is worked out from
+	# the same six values and gives the same four back. So pin a shape the
+	# model cannot use. "3 2" is six values too, so the byte count is no
+	# help - only actually honouring the pin makes the Gemm's inner
+	# dimensions disagree.
+	(edev, ey) := runpin(mod, "soft", "3 2", x, 4);
+	if(ey != nil)
+		bad("ctl shape \"3 2\" was accepted; the pin is being ignored");
+	else if(!fail)
+		print("  soft with ctl shape: \"2 3\" gives four values, \"3 2\" is refused (%s)\n",
+			edev);
 }
 
 #
@@ -406,6 +453,12 @@ hashost(): int
 # output, or an error and nil.
 runon(mod, be: string, x: array of real, nout: int): (string, array of real)
 {
+	return runpin(mod, be, "", x, nout);
+}
+
+# As runon, but pinning the input's shape with ctl "shape" first.
+runpin(mod, be, shape: string, x: array of real, nout: int): (string, array of real)
+{
 	ctl := sys->open("/dev/ml/clone", Sys->ORDWR);
 	if(ctl == nil)
 		return (sprint("clone: %r"), nil);
@@ -432,6 +485,8 @@ runon(mod, be: string, x: array of real, nout: int): (string, array of real)
 	}
 	if(sys->fprint(ctl, "load") < 0)
 		return (sprint("load: %r"), nil);
+	if(shape != "" && sys->fprint(ctl, "shape %s", shape) < 0)
+		return (sprint("shape: %r"), nil);
 
 	ifd := sys->open(dir + "/info", Sys->OREAD);
 	ib := array[8192] of byte;
