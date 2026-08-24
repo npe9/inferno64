@@ -870,9 +870,10 @@ knows nothing about any of it.  It settles two things nothing before it
 could: that a frame a container built and handed to the card really
 arrives at the other end of the wire, because the other end answers it
 -- eight echo requests, eight replies -- and that once the driver's own
-two hundred and fifty-six receive buffers have been used up the frames
+two hundred and fifty-six receive buffers have been used up some frames
 land in the container's, which four hundred more pings show as
-.B "direct 14 copied 396" .
+.B "direct 14 copied 396"
+\- the path firing, not the ordinary case; the paragraph above says why.
 .PP
 Each says
 .B ok
@@ -1207,8 +1208,19 @@ reported
 .B "direct 0 copied 5" .
 Four hundred pings later it reported
 .B "direct 14 copied 396" :
-the head does come round, and once it has, the frames land in the
-container's own buffers with nothing copying them.  The address of the
+the head does come round, and the path does fire, but fourteen of four
+hundred and ten is not the ordinary case and will not become one at this
+buffer count.  A container lends the interface sixteen receive buffers
+against a ring two hundred and fifty-six slots deep, and gets one back
+per
+.B recv
+\- the one
+.B recv
+before it was holding \- so at most sixteen slots of the ring can hold a
+container's buffer at once and they return one at a time.  What makes
+direct delivery the ordinary case is lending as many buffers as the ring
+is deep, which is the demonstration-scale limit above and not a
+different mechanism.  The address of the
 interface a container was given is on the same line, as
 .BR ea ,
 since a container that builds an arp body needs to put its own address

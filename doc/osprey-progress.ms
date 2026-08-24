@@ -357,7 +357,16 @@ card's head comes round again \- but the man page read as though direct
 delivery were the ordinary case, and it is not until a ring's worth of
 traffic has gone by.  Four hundred pings later it is
 .CW "direct 14 copied 396" ,
-which is the first time that path has been seen to fire at all.  And
+which is the first time that path has been seen to fire at all \- and
+also fourteen frames in four hundred and ten, which is not the ordinary
+case.  The reason is a number, not a bug: a container lends the
+interface sixteen receive buffers against a ring two hundred and
+fifty-six slots deep, and gets one back per
+.CW recv ,
+so no more than sixteen of those slots can hold a container's buffer at
+a time.  Direct delivery becomes the ordinary case when a container
+lends as many buffers as the ring is deep, which is the
+demonstration-scale limit below.  And
 .CW ospreymapsizes ,
 which
 .CW ospreylendbufs
@@ -471,7 +480,11 @@ after four hundred pings, where five frames had given
 .CW "direct 0 copied 5" .
 Both are checked by
 .CW /scripts/osprey-check-net.py ,
-which is where the numbers come from.
+which is where the numbers come from.  Fourteen of four hundred and ten
+is the path firing and not the path being the ordinary one; that it is
+not depends on
+.CW Npktbuf ,
+which is in the next gap but one.
 .NH 2
 Still short a name space
 .PP
@@ -494,7 +507,9 @@ Every limit is a compile-time constant in
 .CW os/osprey/adapter/ospreyrt.c
 and none can be set from a configuration file: sixteen containers,
 eight cores, sixteen messages to a ring, eight semaphores, thirty-two
-packets held, sixteen receive and eight transmit buffers, eight private
+packets held, sixteen receive and eight transmit buffers \- which is what
+holds direct packet delivery to a few frames in a hundred, since igbe's
+receive ring is two hundred and fifty-six deep \- eight private
 names, four grants, eight pages to a container, sixteen arms to a
 .CW select .
 For a system whose subject is predictable clouds these are not
