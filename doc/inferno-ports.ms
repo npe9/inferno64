@@ -601,20 +601,42 @@ caller,
 .CW randominit() ,
 holds a qlock until it does \- so whatever reads random state next,
 plausibly something in module loading, blocks behind it indefinitely.
+.PP
+The clock interrupt itself is not the gap: QEMU's own state, not this
+board's source, settled that.
 .CW -d\ int
-during the hang shows the clock interrupt landing normally, around
-142 a second, so the interrupt itself reaches the CPU; something
-between that interrupt and this kproc's particular
-.CW Timer
-entry does not.
-.CW os/inferno/pc64/i8253.c
-is the likeliest place to hold the answer \- compare
+during the hang shows a vector landing about 140 times a second, and
+QEMU monitor's
+.CW "info lapic"
+names it \- the local APIC timer, in periodic mode, targeting vector
+50, exactly the vector in the trace.
+.CW "info pic"
+shows why it is not the legacy 8253 instead: IRQ0 is masked in both
+the PIC's own IMR and the IOAPIC's pin 0 redirection entry.  So
+.CW hzclock()
+is being driven, on schedule, straight off the local APIC \- and
+.CW port/portclock.c 's
+.CW timerintr() ,
+the function that walks the
+.CW Timers[]
+list
+.CW timeradd()
+queues
+.CW randomseed() 's
+periodic callback on, is a separate entry point this board's own ISR
+would have to call in addition, the way
 .CW os/inferno/pc/i8253.c 's
-.CW timerintr(ureg,\ 0)
-call from its own ISR \- but wasn't there to read while chasing this:
-this worktree is shared with at least one other concurrent session,
-under active, large scale reorganisation of this board's source at
-the time of writing.
+does
+.RI ( timerintr(ureg,\0) ,
+right beside the
+.CW hzclock()
+call its own ISR makes).  Whether pc64's ISR makes that second call is
+the open question, and
+.CW os/inferno/pc64/i8253.c
+is where it would be \- but the file wasn't on disk to read while
+chasing this: this worktree is shared with at least one other
+concurrent session, under active, large scale reorganisation of this
+board's source at the time of writing.
 .NH 1
 How a native kernel provides networking
 .PP
