@@ -38,7 +38,17 @@ enum {
 	Qbench,
 
 	Statuslen	= 32*1024,	/* every core and container line */
-	Snaplen		= 64*1024,	/* every container as a checkpoint */
+	/*
+	 * Every container as a checkpoint.  A container that has written
+	 * its whole data area is about nine and a third kilobytes of it,
+	 * measured, since the data goes whatever the rings hold; sixteen
+	 * of those is about a hundred and fifty, and at sixty-four
+	 * kilobytes the eighth container was refused.  What it is for is
+	 * a checkpoint of the whole machine, so it is sized for the whole
+	 * machine.  A checkpoint carried by mig is a different limit and
+	 * a much smaller one: that is one ethernet frame.
+	 */
+	Snaplen		= 192*1024,
 	Nfd		= 16,		/* chans a container may hold open */
 	Rbtlr		= 16,		/* allocb's trailer room, kept clear of */
 	Pipethertype	= 0x910a,	/* frames that carry a pi-p group */

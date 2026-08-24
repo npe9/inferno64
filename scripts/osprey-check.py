@@ -443,6 +443,20 @@ CHECKS = [
    "echo reset >/n/osprey/ctl",
    "/tmp/pip -s $y(5) read 1 budget"],
   "write failed: no session"),
+ # and after the reset every slot is free, which is when a checkpoint of
+ # a whole machine can be asked for.  A container that has written its
+ # whole data area is about nine and a third kilobytes of checkpoint,
+ # since the data goes whatever the rings hold, so sixteen of them is
+ # about a hundred and fifty: at the old Snaplen the eighth was refused.
+ ("a checkpoint of every container the machine holds, none of them empty",
+  ["w=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "fn fill { for(i in `{seq 0 60}) echo poke $1 "
+   "`{echo $i 64 | awk '{print $1*$2}'} $w >/n/osprey/ctl }",
+   "for(c in `{seq 1 16}) echo create $c 4000000 800000000 200000000 >/n/osprey/ctl",
+   "for(c in `{seq 1 16}) echo attach $c 0 >/n/osprey/ctl",
+   "for(c in `{seq 1 16}) fill $c",
+   "echo held `{grep -c '^container ' /n/osprey/snap}"],
+  "held 16"),
 ]
 
 def plain(s):

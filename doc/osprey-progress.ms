@@ -212,7 +212,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Seventy-seven lines, all
+a line at a time.  Seventy-eight lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -1099,6 +1099,33 @@ only to move the numbers.  It is also why
 .CW *ospreysem
 has a ceiling of sixty-four where the other four have only the arena's:
 the copy has to go somewhere fixed.
+.PP
+Two limits were then asked what the changes had done to them, one of
+which turned out to be fine.
+.CW Statuslen
+is thirty-two kilobytes and
+.CW *ospreysem
+is settable now, so a machine with sixteen containers holding sixty-four
+semaphores each ought to have been near it: measured, that status is
+eleven thousand two hundred bytes with the trailing
+.CW "key none"
+line still on it, so nothing is cut and the arithmetic that said
+otherwise was wrong.  Worth having asked, and worth saying it was
+refuted rather than fixed.
+.PP
+The other had moved a long way.  Making the data area unconditional put
+about nine and a third kilobytes of checkpoint behind every container
+that has written all of its own, where an idle one used to be two
+hundred and forty; at
+.CW "Snaplen = 64*1024"
+the eighth such container was refused, and that cliff arrived with the
+change and nothing said so.
+.CW snap
+is a checkpoint of the whole machine, so it is sized for the whole
+machine now: a hundred and ninety-two kilobytes, and sixteen full
+containers come to a hundred and forty-nine thousand three hundred and
+ninety-nine bytes of it.  The check fills every container the machine
+can hold and counts them in what comes back.
 .PP
 Environments were the other half of the question and are a shorter
 answer: nothing in

@@ -1494,7 +1494,18 @@ refuses to send a checkpoint that did not fit rather than sending half
 of one, since what it sends it destroys.  Reading
 .B snap
 refuses for the same reason when every container together does not fit
-in the device's buffer.
+in the device's buffer, and how much that is has been measured rather
+than guessed at.  A container that has written its whole data area is
+about nine and a third kilobytes of checkpoint, since the data goes
+whatever the rings hold; at the old sixty-four kilobytes the eighth such
+container was refused, which is a cliff that arrived with that change
+and nothing said so.  The buffer is a hundred and ninety-two kilobytes
+now, which is what sixteen of them come to with room over: a checkpoint
+of
+.B snap
+is a checkpoint of the whole machine, so it is sized for the whole
+machine.  The check fills every container the machine can hold and
+counts them in what comes back.
 .PP
 A container carries one process.  Two processes billed to one container,
 were the device to allow it, could charge it from two cores at once and
