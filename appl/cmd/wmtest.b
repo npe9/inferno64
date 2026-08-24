@@ -82,9 +82,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	direct := 0;
 	procs := 1;
 	quit := 0;
+	pixels := 0;
 	result := "/wmtest.result";
 	arg->init(argv);
-	arg->setusage("wmtest [-n windows] [-p procs] [-d] [-q] [-r resultfile]");
+	arg->setusage("wmtest [-n windows] [-p procs] [-d] [-k] [-q] [-r resultfile]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'n' =>	n = int arg->earg();
@@ -92,6 +93,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		'r' =>	result = arg->earg();
 		'p' =>	procs = int arg->earg();	# make them concurrently
 		'q' =>	quit++;		# end the session when finished
+		'k' =>	pixels++;	# draw into them and check the pixels come back
 		* =>	arg->usage();
 		}
 
@@ -105,6 +107,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	rfd = sys->create(result, Sys->OWRITE, 8r666);
 	quitwhendone = quit;
 
+	if(pixels){
+		checkpixels(ctxt, n);
+		return;
+	}
 	if(direct){
 		newwindows(ctxt, n, procs);
 		return;
@@ -215,6 +221,144 @@ maker(screen: ref Screen, n, who: int, done: chan of int)
 		w = nil;
 	}
 	done <-= bad;
+}
+
+#
+# Windows that exist are not windows that are right.
+#
+# Everything else here asks whether a window was made; nothing asks whether
+# what was drawn into it is still there. That is the shape of the resize bugs
+# this tree has actually had - a white block after a grow, icons going blank -
+# where nothing faults, nothing is reported, and the pixels are simply wrong.
+# It is the failure class faultprobe(1) calls a quiet wrong answer, and no
+# amount of watching the output finds it.
+#
+# The windows are wm's, through tkclient(2), and not a screen of this
+# program's own. A screen allocated on the display image does not survive a
+# host resize - the image is replaced underneath it - so windows on one go
+# uniformly background-coloured, every time, and reporting that as a fault
+# would be reporting the documented behaviour of doing something unsupported.
+# An earlier version of this did exactly that and looked like a discovery.
+#
+# Each widget is located again through Tk before the second reading, because a
+# resize is allowed to move it. What is not allowed is for it to stop being
+# the colour it was.
+#
+Nlabel: con 4;
+
+labelcfg := array[] of {
+	"frame .f",
+	"label .a -text A -bg #cc4444 -width 60 -height 40",
+	"label .b -text B -bg #44cc44 -width 60 -height 40",
+	"label .c -text C -bg #4444cc -width 60 -height 40",
+	"label .d -text D -bg #cccc44 -width 60 -height 40",
+	"pack .a .b .c .d -in .f -side left",
+	"pack .f",
+	"update",
+};
+
+lname := array[] of {".a", ".b", ".c", ".d"};
+
+checkpixels(ctxt: ref Draw->Context, nil: int)
+{
+	tkclient->init();
+	(t, nil) := tkclient->toplevel(ctxt, "", "wmtest pixels", 0);
+	if(t == nil){
+		say(sprint("wmtest: toplevel: nil: %r\n"));
+		raise "fail:toplevel";
+	}
+	for(i := 0; i < len labelcfg; i++)
+		tk->cmd(t, labelcfg[i]);
+	tkclient->onscreen(t, nil);
+	tk->cmd(t, "update");
+
+	first := array[Nlabel] of array of byte;
+	for(i = 0; i < Nlabel; i++)
+		first[i] = widgetpixel(t, lname[i]);
+
+	bad := 0;
+	distinct := 0;
+	for(i = 0; i < Nlabel; i++){
+		if(first[i] == nil){
+			say(sprint("wmtest: %s: cannot read a pixel: %r\n", lname[i]));
+			bad++;
+			continue;
+		}
+		for(j := i+1; j < Nlabel; j++)
+			if(first[j] != nil && !samebytes(first[i], first[j]))
+				distinct++;
+	}
+	# four labels of four colours must read back as four things, or the
+	# comparison below would pass for a window that was blank throughout
+	if(distinct == 0){
+		say("wmtest: the labels all read back alike, so this proves nothing\n");
+		bad++;
+	}
+
+	sys->sleep(3000);		# whatever is going to disturb them, does
+
+	tk->cmd(t, "update");
+	for(i = 0; i < Nlabel; i++){
+		if(first[i] == nil)
+			continue;
+		again := widgetpixel(t, lname[i]);
+		if(again == nil){
+			say(sprint("wmtest: %s: cannot read a pixel: %r\n", lname[i]));
+			bad++;
+			continue;
+		}
+		if(!samebytes(first[i], again)){
+			say(sprint("wmtest: %s changed under it: %s then %s\n",
+				lname[i], hex(first[i]), hex(again)));
+			bad++;
+		}
+	}
+	report("labels drawn and read back", Nlabel, bad);
+}
+
+#
+# One pixel from the middle of a named widget, found through Tk so that a
+# widget which has been moved is still read where it now is.
+#
+# The bytes are not decoded, deliberately: a window's channel is not
+# necessarily the one a colour was given in, and the first attempt at this
+# assumed an order, got every byte reversed, and reported every window broken
+# when nothing was wrong with any of them. Comparing a widget with itself
+# needs no encoding at all.
+#
+widgetpixel(t: ref Tk->Toplevel, w: string): array of byte
+{
+	if(t.image == nil)
+		return nil;
+	x := int tk->cmd(t, w + " cget -actx");
+	y := int tk->cmd(t, w + " cget -acty");
+	dw := int tk->cmd(t, w + " cget -actwidth");
+	dh := int tk->cmd(t, w + " cget -actheight");
+	if(dw <= 2 || dh <= 2)
+		return nil;
+	p := Point(t.image.r.min.x + x + dw/2, t.image.r.min.y + y + dh/2);
+	buf := array[4] of byte;
+	if(t.image.readpixels(Rect(p, Point(p.x+1, p.y+1)), buf) <= 0)
+		return nil;
+	return buf;
+}
+
+samebytes(a, b: array of byte): int
+{
+	if(len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
+}
+
+hex(a: array of byte): string
+{
+	s := "";
+	for(i := 0; i < len a; i++)
+		s += sprint("%.2ux", int a[i]);
+	return s;
 }
 
 report(what: string, n, bad: int)

@@ -11,6 +11,9 @@ wmtest \- make and unmake windows, repeatedly
 .B -d
 ]
 [
+.B -k
+]
+[
 .B -q
 ]
 [
@@ -63,6 +66,10 @@ calls
 directly instead.
 .B -p
 makes them in that many processes at once.
+.B -k
+does something else again: it puts four coloured labels in one
+.IR wm (1)
+window, reads a pixel from each, waits, and reads them again.
 Both are worth having: Tk's toplevel does a great deal besides call
 .BR newwindow ,
 so a failure through it does not say where the failure was.
@@ -81,6 +88,12 @@ Its value is the rate.
 A person driving a session by hand makes a few windows a minute; this makes
 five thousand in a run, and says so in an exit status.
 .SH "WHAT IT SHOWS SO FAR"
+With
+.BR -k ,
+four labels in a wm window keep their colours across continuous resizing: five
+runs, nothing changed, and recolouring two of them between the readings reports
+exactly those two, so the check has been seen to fail.
+.PP
 Five thousand
 .B newwindow
 calls and three hundred Tk toplevels in one process, and four thousand eight
@@ -114,7 +127,37 @@ The fault was first characterised on a build where
 .B unlock
 had no release barrier, so it looked like a race, and one process making
 windows one after another is close to the least likely way to provoke a race.
-.SH "A CLIENT MAY NOT SAY EXIT AND CARRY ON"
+.SH "WINDOWS THAT EXIST ARE NOT WINDOWS THAT ARE RIGHT"
+Everything else here asks whether a window was made.
+.B -k
+asks whether what was drawn into it is still there, which is the shape of the
+resize faults this tree has actually had \(em a white block after a grow, icons
+going blank \(em where nothing faults, nothing is reported, and the pixels are
+simply wrong.
+No amount of watching the output finds that.
+.PP
+The windows are
+.IR wm (1)'s,
+through
+.IR tkclient (2),
+and not a screen of this program's own.
+A screen allocated on the display image does not survive a host resize, because
+the image is replaced underneath it, so windows on one go uniformly
+background-coloured every time.
+An earlier version of this did that and reported twenty-four failures under
+resizing, which looked like a discovery and was the documented consequence of
+doing something unsupported.
+.PP
+Each widget is found again through Tk before the second reading, because a
+resize is allowed to move it.
+What is not allowed is for it to stop being the colour it was.
+.PP
+The bytes are not decoded.
+A window's channel is not necessarily the one a colour was given in; the first
+attempt assumed an order, got every byte reversed, and called every window
+broken when none of them was.
+Comparing a widget with itself needs no encoding at all.
+.SH "A CLIENT MAY NOT SAY EXIT AND CARRY ON\"
 .B tkclient->wmctl(t, "exit")
 tells
 .IR wm (1)
