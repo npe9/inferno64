@@ -48,7 +48,12 @@ A read blocks until there is one.
 .PP
 .IR Libtk (2)
 writes here when the keyboard focus moves, which is the one place in the system
-that knows a person's attention has changed.
+that knows a person's attention has changed, and \(em when
+.B announce
+is
+.B all
+\(em when text appears in a text widget, which is where a shell window's output
+goes.
 A button announces its own label \(em
 .B "Save changes button"
 \(em falling back on the widget's name where it has no text.
@@ -61,6 +66,14 @@ speak /dev/voice/screen &
 .PP
 and nothing in it needs to know what a widget is.
 .PP
+Output is announced a line at a time.
+A shell window inserts the characters you type through the same path its output
+takes, so announcing every insertion would read each letter back as it was
+pressed and then read the line again when it echoed; the fragments are held
+until a newline, which makes both into one utterance and keeps
+.B libtk
+from having to know any of this.
+.PP
 Widgets holding text the person typed, entry and text, are deliberately not
 read out on arrival: announcing the contents of a field when it takes focus is
 how a screen reader reads a password aloud.
@@ -72,6 +85,18 @@ A screen reader is saying where you are now, and a backlog of where you used to
 be is worse than useless because you have to sit through it.
 .SS ctl
 Reading gives the rate, the pitch, the speed and how many samples are waiting.
+.TP
+.BI announce " off|focus|all"
+What reaches
+.BR screen .
+.B Focus
+is the default: where the keyboard is.
+.B All
+adds text as it appears, which is a different order of chattiness \(em focus
+changes when a person does something, and output arrives whenever the machine
+feels like it.
+.B Off
+says nothing at all.
 .TP
 .BI pitch " hz"
 The fundamental, 40 to 400.

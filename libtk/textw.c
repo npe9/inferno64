@@ -4,6 +4,8 @@
 #include "tk.h"
 #include "textw.h"
 
+extern void voiceannouncetext(char*);   /* voice(3); see man 3 voice */
+
 /*
  * useful text widget info to be found at:
  * :/coordinate.systems		- what coord. systems are in use
@@ -2949,6 +2951,8 @@ tktextinsert(Tk *tk, char *arg, char **val)
 			}
 		}
 		e = tktinsert(tk, &ins, tbuf, tagit);
+		if(e == nil)
+			voiceannouncetext(tbuf);	/* voice(3) */
 		if(tagit != nil) {
 			free(tagit);
 			tagit = nil;

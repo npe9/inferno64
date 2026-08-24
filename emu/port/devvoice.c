@@ -205,7 +205,13 @@ static Voice voice;
 enum {
 	Nannounce	= 16,
 	Announcemax	= 256,
+
+	Anoff,			/* say nothing */
+	Anfocus,		/* where the keyboard is - the default */
+	Anall,			/* and what appears on the screen */
 };
+
+static int anlevel = Anfocus;
 
 static struct {
 	Lock	lk;
@@ -219,7 +225,7 @@ static struct {
 void
 voiceannounce(char *what)
 {
-	if(what == nil || *what == '\0')
+	if(anlevel == Anoff || what == nil || *what == '\0')
 		return;
 	lock(&screen.lk);
 	if(screen.n == Nannounce){
@@ -239,6 +245,55 @@ announced(void *a)
 {
 	USED(a);
 	return screen.n > 0;
+}
+
+/*
+ * Text appearing on the screen, as opposed to the keyboard moving.
+ *
+ * It is off unless asked for, because it is a different order of chattiness:
+ * focus changes when a person does something, and output arrives whenever the
+ * machine feels like it.
+ *
+ * Whole lines only. A shell window inserts the characters you type one at a
+ * time through the same path the output takes, so announcing every insert
+ * would read back each letter as you pressed it and then read the line again
+ * when it echoed. Holding the fragments until a newline turns both into one
+ * sensible utterance, and it keeps libtk from having to know any of this.
+ */
+static struct {
+	Lock	lk;
+	char	buf[Announcemax];
+	int	n;
+} pending;
+
+void
+voiceannouncetext(char *what)
+{
+	char line[Announcemax];
+	int i, got;
+
+	if(anlevel < Anall || what == nil)
+		return;
+	for(; *what != '\0'; what++){
+		got = 0;
+		lock(&pending.lk);
+		if(*what == '\n' || pending.n >= Announcemax-1){
+			memmove(line, pending.buf, pending.n);
+			line[pending.n] = '\0';
+			pending.n = 0;
+			got = 1;
+		}
+		if(*what != '\n')
+			pending.buf[pending.n++] = *what;
+		unlock(&pending.lk);
+		if(got){
+			/* a line of nothing but spaces is not worth saying */
+			for(i = 0; line[i] == ' ' || line[i] == '\t'; i++)
+				;
+			if(line[i] != '\0')
+				voiceannounce(line);
+		}
+	}
 }
 
 static ulong rngstate = 1;
@@ -506,8 +561,9 @@ voiceread(Chan *c, void *va, long n, vlong off)
 	switch((ulong)c->qid.path){
 	case Qctl:
 		snprint(buf, sizeof buf,
-			"rate %d\npitch %d\nspeed %d\nsamples %d\n",
-			Rate, voice.pitch, voice.speed, voice.npcm);
+			"rate %d\npitch %d\nspeed %d\nsamples %d\nannounce %s\n",
+			Rate, voice.pitch, voice.speed, voice.npcm,
+			anlevel == Anoff? "off": anlevel == Anfocus? "focus": "all");
 		return readstr(off, va, n, buf);
 
 	case Qpcm:
@@ -572,6 +628,15 @@ voicewrite(Chan *c, void *va, long n, vlong off)
 			if(v < 40 || v > 400)
 				error("pitch is 40 to 400 Hz");
 			voice.pitch = v;
+		}else if(strcmp(cb->f[0], "announce") == 0 && cb->nf == 2){
+			if(strcmp(cb->f[1], "off") == 0)
+				anlevel = Anoff;
+			else if(strcmp(cb->f[1], "focus") == 0)
+				anlevel = Anfocus;
+			else if(strcmp(cb->f[1], "all") == 0)
+				anlevel = Anall;
+			else
+				error("announce is off, focus or all");
 		}else if(strcmp(cb->f[0], "speed") == 0 && cb->nf == 2){
 			v = atoi(cb->f[1]);
 			if(v < 20 || v > 800)
