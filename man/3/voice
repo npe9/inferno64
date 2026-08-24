@@ -9,6 +9,8 @@ voice \- speech synthesis
 .B /dev/voice/phonemes
 .br
 .B /dev/voice/pcm
+.br
+.B /dev/voice/screen
 .SH DESCRIPTION
 The
 .I voice
@@ -40,6 +42,34 @@ was trained on, so the same phonemes drive either.
 A symbol this device does not know is skipped rather than refused: a screen
 reader that stops dead on an unexpected diacritic is worse than one that
 carries on without it.
+.SS screen
+What the interface has to say about itself, one announcement per line.
+A read blocks until there is one.
+.PP
+.IR Libtk (2)
+writes here when the keyboard focus moves, which is the one place in the system
+that knows a person's attention has changed.
+A button announces its own label \(em
+.B "Save changes button"
+\(em falling back on the widget's name where it has no text.
+.PP
+That makes the screen reader a pipeline of things that already exist:
+.IP
+.EX
+speak /dev/voice/screen &
+.EE
+.PP
+and nothing in it needs to know what a widget is.
+.PP
+Widgets holding text the person typed, entry and text, are deliberately not
+read out on arrival: announcing the contents of a field when it takes focus is
+how a screen reader reads a password aloud.
+.PP
+When the ring is full the
+.I oldest
+announcement is dropped.
+A screen reader is saying where you are now, and a backlog of where you used to
+be is worse than useless because you have to sit through it.
 .SS ctl
 Reading gives the rate, the pitch, the speed and how many samples are waiting.
 .TP
@@ -77,6 +107,24 @@ is the whole point; this is for the screen, where the words arrive unbidden
 and latency is.
 .SH SOURCE
 .B /emu/port/devvoice.c
+.br
+.B /libtk/ebind.c
+.SH "TK NEEDS VOICE"
+.B Libtk
+calls this device's
+.B voiceannounce
+directly, so a configuration with
+.B tk
+in it must also have
+.BR voice .
+Every one in this tree does, and the configuration that has a voice and no Tk,
+.BR emu-g ,
+never links
+.B libtk
+at all.
+The hook lives in the device rather than in
+.B libtk
+for that reason: the device is present in strictly more configurations.
 .SH SEE ALSO
 .IR say (1),
 .IR phon (2),

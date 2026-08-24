@@ -41,7 +41,14 @@ it reads standard input, so it composes:
 ls /dev | speak
 speak /tmp/notes
 speak -t 'the disk is full'
+speak /dev/voice/screen &	# the screen reader
 .EE
+.PP
+That last one is the whole screen reader.
+.IR Voice (3)'s
+.B screen
+file gives one announcement per line and blocks until there is one, so reading
+it out loud is what this program already does.
 .PP
 .B -p
 and
@@ -54,6 +61,9 @@ writes the samples to a file instead of
 which is how this gets tested without listening to it.
 .B -q
 stops it reporting words it could not say.
+.B -n
+prints the sounds and says nothing, which is how any of this gets checked
+without listening to it.
 .PP
 A line is not begun until the one before it has been heard, so a pipe paces
 itself rather than queueing everything at once and talking over itself.

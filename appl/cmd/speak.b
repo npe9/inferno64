@@ -75,7 +75,9 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	if((e := phon->init(lexicon)) != nil)
 		fatal(e);
-	if(!dryrun && sys->bind("#V", "/dev", Sys->MAFTER) < 0)
+	# Always attempt it - a dry run still has to reach a file that lives on
+	# the device - but only insist where the device will actually be used.
+	if(sys->bind("#V", "/dev", Sys->MAFTER) < 0 && !dryrun)
 		fatal(sprint("bind #V: %r"));
 
 	if(pitch != 0 || speed != 0){

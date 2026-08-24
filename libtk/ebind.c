@@ -3,6 +3,9 @@
 #include "tk.h"
 #include <kernel.h>
 #include <interp.h>
+#include "label.h"
+
+extern void voiceannounce(char*);   /* voice(3) */
 
 enum
 {
@@ -546,6 +549,79 @@ focusdirty(Tk *tk)
 	}
 }
 
+/*
+ * Say what has the keyboard, for anyone who cannot see it.
+ *
+ * voiceannounce() is voice(3)'s, and this is the only thing in libtk that
+ * calls it. A configuration with tk must therefore also have voice; every one
+ * in this tree does, and emu-g - which has voice and no tk - never links this
+ * file at all.
+ *
+ * This is the one place keyboard focus changes, which is what makes it the
+ * right place: everything that moves the focus, whether a click, a Tab, or a
+ * program calling "focus", arrives here.
+ */
+static char*
+tkclassname(int t)
+{
+	switch(t){
+	case TKlabel:		return "label";
+	case TKbutton:		return "button";
+	case TKcheckbutton:	return "check button";
+	case TKradiobutton:	return "radio button";
+	case TKmenubutton:	return "menu button";
+	case TKchoicebutton:	return "choice button";
+	case TKcascade:		return "menu item";
+	case TKmenu:		return "menu";
+	case TKentry:		return "entry";
+	case TKtext:		return "text";
+	case TKlistbox:		return "list";
+	case TKscrollbar:	return "scroll bar";
+	case TKscale:		return "scale";
+	case TKcanvas:		return "canvas";
+	case TKframe:		return "frame";
+	case TKpanel:		return "panel";
+	}
+	return "widget";
+}
+
+/*
+ * The label family all keep their text in the same place, which is most of
+ * what a person needs to hear. Widgets that hold text the person typed - entry
+ * and text - are deliberately not read out here: announcing the contents of a
+ * field on arrival is how a screen reader reads a password aloud.
+ */
+static char*
+tkannouncetext(Tk *tk)
+{
+	switch(tk->type){
+	case TKlabel:
+	case TKbutton:
+	case TKcheckbutton:
+	case TKradiobutton:
+	case TKmenubutton:
+	case TKcascade:
+		return TKobj(TkLabel, tk)->text;
+	}
+	return nil;
+}
+
+static void
+tkannouncefocus(Tk *tk)
+{
+	char buf[128];
+	char *text;
+
+	if(tk == nil || tk->name == nil)
+		return;
+	text = tkannouncetext(tk);
+	if(text != nil && *text != '\0')
+		snprint(buf, sizeof buf, "%s %s", text, tkclassname(tk->type));
+	else
+		snprint(buf, sizeof buf, "%s %s", tk->name->name, tkclassname(tk->type));
+	voiceannounce(buf);
+}
+
 void
 tksetkeyfocus(TkTop *top, Tk *new, int dir)
 {
@@ -558,6 +634,7 @@ tksetkeyfocus(TkTop *top, Tk *new, int dir)
 	if(old == new)
 		return;
 	c->tkkeygrab = new;
+	tkannouncefocus(new);
 	if(top->focused == 0)
 		return;
 	if(old != nil && old != top->root){

@@ -49,6 +49,7 @@ enum {
 	Qctl,
 	Qphonemes,
 	Qpcm,
+	Qscreen,
 
 	Rate		= 16000,	/* samples per second */
 	Maxsamples	= Rate * 30,	/* half a minute is plenty for one write */
@@ -183,6 +184,62 @@ struct Voice
 };
 
 static Voice voice;
+
+/*
+ * What the interface has to say about itself.
+ *
+ * Anything in the system that knows a person's attention has moved - libtk
+ * when the keyboard focus changes, and in principle anything else - calls
+ * voiceannounce(). A reader blocks on /dev/voice/screen and speaks whatever
+ * comes out, so the screen reader is `speak /dev/voice/screen &` and not a
+ * program that has to understand widgets.
+ *
+ * The hook lives here rather than in libtk because this file is linked into
+ * every configuration that has the device, and libtk is not: emu-g has a voice
+ * and no Tk at all. libtk holds the reference, and only where it is linked.
+ *
+ * A full ring drops the OLDEST entry. A screen reader is telling you where you
+ * are now; a backlog of places you used to be is worse than useless, because
+ * you have to sit through it to find out.
+ */
+enum {
+	Nannounce	= 16,
+	Announcemax	= 256,
+};
+
+static struct {
+	Lock	lk;
+	Rendez	r;
+	char	msg[Nannounce][Announcemax];
+	int	rd;
+	int	wr;
+	int	n;
+} screen;
+
+void
+voiceannounce(char *what)
+{
+	if(what == nil || *what == '\0')
+		return;
+	lock(&screen.lk);
+	if(screen.n == Nannounce){
+		screen.rd = (screen.rd + 1) % Nannounce;
+		screen.n--;
+	}
+	strncpy(screen.msg[screen.wr], what, Announcemax-1);
+	screen.msg[screen.wr][Announcemax-1] = '\0';
+	screen.wr = (screen.wr + 1) % Nannounce;
+	screen.n++;
+	unlock(&screen.lk);
+	Wakeup(&screen.r);
+}
+
+static int
+announced(void *a)
+{
+	USED(a);
+	return screen.n > 0;
+}
 
 static ulong rngstate = 1;
 
@@ -363,9 +420,9 @@ static int
 voicegen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 {
 	Qid q;
-	static char *files[] = { "ctl", "phonemes", "pcm" };
-	static int ftype[] = { Qctl, Qphonemes, Qpcm };
-	static int fperm[] = { 0666, 0222, 0444 };
+	static char *files[] = { "ctl", "phonemes", "pcm", "screen" };
+	static int ftype[] = { Qctl, Qphonemes, Qpcm, Qscreen };
+	static int fperm[] = { 0666, 0222, 0444, 0444 };
 
 	USED(name); USED(tab); USED(ntab);
 	q.vers = 0;
@@ -464,6 +521,29 @@ voiceread(Chan *c, void *va, long n, vlong off)
 			rv = n;
 		memmove(va, (uchar*)voice.pcm + off, rv);
 		qunlock(&voice.l);
+		return rv;
+
+	case Qscreen:
+		/*
+		 * One announcement per read, and it blocks until there is one.
+		 * That is what lets the screen reader be `speak
+		 * /dev/voice/screen`: a program that reads lines from a file,
+		 * with no idea it is a device.
+		 */
+		Sleep(&screen.r, announced, nil);
+		lock(&screen.lk);
+		if(screen.n == 0){
+			unlock(&screen.lk);
+			return 0;
+		}
+		rv = strlen(screen.msg[screen.rd]);
+		if(rv > n - 1)
+			rv = n - 1;
+		memmove(va, screen.msg[screen.rd], rv);
+		((char*)va)[rv++] = '\n';
+		screen.rd = (screen.rd + 1) % Nannounce;
+		screen.n--;
+		unlock(&screen.lk);
 		return rv;
 	}
 	error(Ebadarg);
