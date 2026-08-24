@@ -573,7 +573,18 @@ and
 \- because those five do nothing but lay out a slice: everything they
 size is in the container's own slice and reached through the map, and
 nothing in the adapter or the device indexes an array with them.  A
-value below what the tree was built with is refused rather than obeyed.
+value below what the tree was built with is refused rather than obeyed,
+and so is one that would make the whole arena more than sixty-four
+megabytes.  That second ceiling is what makes the refusal worth
+anything:
+.CW xspanalloc
+panics rather than returning nothing, so without it a number too big
+would stop the kernel at
+.CW devinit
+and read as a broken kernel rather than as a line of
+.CW plan9.ini
+that should not have been written \- which is the third time in this
+work that a configuration fault has worn that disguise.
 That one of them mattered is measured, not argued: with
 .CW *ospreypktbuf
 left at sixteen, four hundred pings give

@@ -623,7 +623,16 @@ The whole arena is one allocation of a slice times sixteen, so raising
 one of these raises what the kernel asks for at boot.  A value smaller
 than the compiled-in one is refused and said so on the console rather
 than obeyed: what is in the tree is already a demonstration's size and
-taking memory away from it breaks a check rather than a container.  The
+taking memory away from it breaks a check rather than a container.  So
+is one that would make the whole arena more than sixty-four megabytes,
+and that ceiling is the reason the refusal is worth anything:
+.I xspanalloc
+panics rather than returning nothing, so a number that asked for more
+than the machine has would stop the kernel at
+.I devinit
+and read as a broken kernel rather than as a line of
+.B plan9.ini
+that should not have been written.  The
 numbers not here \- containers, cores, packets a container may hold,
 private names, pages, arms to a
 .B select

@@ -106,6 +106,19 @@ static char *statename(int);
  * opposite reason -- Nproc, Ncore, Npkt, Nname and Maxpage size arrays
  * that are compiled in.
  */
+#define ROUNDUP(n, a)	(((n)+(a)-1) & ~((uvlong)(a)-1))
+
+enum {
+	/*
+	 * The most the whole arena may come to.  It is a ceiling on a
+	 * configuration, not a design limit: sixteen slices of four
+	 * megabytes each is already far past anything the checks ask for,
+	 * and what it is really for is that the number below it is refused
+	 * out loud rather than panicking the machine.
+	 */
+	Maxarena	= 64*1024*1024,
+};
+
 static ulong nqueue = Nqueue;
 static ulong ndata = Ndata;
 static ulong nsem = Nsem;
@@ -115,6 +128,34 @@ static ulong ntxbuf = Ntxbuf;
 static uchar *arena;		/* the shared span, or nil until given one */
 static ulong arenasize;
 static ulong slicesize;
+
+/*
+ * What a slice would come to with the limits as they stand, and what the
+ * whole arena would come to with it.  In uvlongs, because the point of
+ * working it out is to refuse a number too big for the ulong the slice
+ * size is kept in.
+ */
+static uvlong
+trialslice(void)
+{
+	uvlong n;
+
+	n = ROUNDUP(sizeof(Ospreymap), Align)
+		+ ROUNDUP(3*sizeof(Queue), Align)
+		+ ROUNDUP((uvlong)nsem*sizeof(Sem), Align)
+		+ ROUNDUP(3*(uvlong)nqueue*sizeof(Message), Align)
+		+ ROUNDUP((uvlong)ndata, Align)
+		+ (uvlong)npktbuf*Pktbufsize
+		+ (uvlong)ntxbuf*Txbufsize;
+	return ROUNDUP(n, Pagesize);
+}
+
+static uvlong
+trialarena(void)
+{
+	return ROUNDUP(trialslice() * Nproc, Pagesize)
+		+ (uvlong)Npage*Pagesize;
+}
 
 /*
  * Set one of them, by the name the kernel reads out of its configuration
@@ -128,7 +169,7 @@ static ulong slicesize;
 int
 ospreysetsize(char *what, ulong n, ulong max)
 {
-	ulong *v, floor;
+	ulong *v, floor, old;
 
 	if(arena != nil || slicesize != 0 || what == nil)
 		return -1;
@@ -146,14 +187,27 @@ ospreysetsize(char *what, ulong n, ulong max)
 		return -1;
 	if(n < floor || (max != 0 && n > max))
 		return -1;
+	old = *v;
 	*v = n;
+	/*
+	 * The arena is one allocation, and xspanalloc panics rather than
+	 * returning nothing when it cannot make it: a number here that
+	 * asks for more memory than a machine has would stop the kernel at
+	 * devinit, before there is a console worth reading, and read as a
+	 * broken kernel rather than as a refused line of plan9.ini.  So
+	 * the ceiling is what the whole arena would come to, worked out
+	 * here in uvlongs, before anything asks for it.
+	 */
+	if(trialarena() > Maxarena){
+		*v = old;
+		return -1;
+	}
 	return 0;
 }
 
 static uvlong pagebase;		/* the pages, after every slice */
 static uchar pagetaken[Npage];
 
-#define ROUNDUP(n, a)	(((n)+(a)-1) & ~((uvlong)(a)-1))
 
 static struct {
 	char	*name;
@@ -458,18 +512,11 @@ sizes(void)
 {
 	if(slicesize != 0)
 		return;
-	slicesize = ROUNDUP(sizeof(Ospreymap), Align)
-		+ ROUNDUP(3*sizeof(Queue), Align)
-		+ ROUNDUP(nsem*sizeof(Sem), Align)
-		+ ROUNDUP(3*nqueue*sizeof(Message), Align)
-		+ ROUNDUP(ndata, Align)
-		+ npktbuf*Pktbufsize
-		+ ntxbuf*Txbufsize;
 	/*
 	 * A whole number of pages: a slice is a segment of its own, and a
 	 * segment is attached in pages.
 	 */
-	slicesize = ROUNDUP(slicesize, Pagesize);
+	slicesize = (ulong)trialslice();
 }
 
 int
