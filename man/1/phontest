@@ -1,0 +1,76 @@
+.TH PHONTEST 1
+.SH NAME
+phontest \- check the pronunciation lexicon say(1) reads
+.SH SYNOPSIS
+.B phontest
+.SH DESCRIPTION
+.B Phontest
+checks
+.IR phon (2)
+and the lexicon it reads.
+It prints
+.B PASS
+or a
+.B FAIL
+line per problem.
+.SH "WHAT CAN AND CANNOT BE TESTED"
+Nothing in this system can hear.
+A wrong entry in the lexicon produces a word that is said wrong, and every
+structural check still passes, so this test does not claim to establish that the
+lexicon sounds right.
+Two things can be established and both are.
+.SS "The five phrases that were heard"
+The narration in
+.B /lib/demo/tour.sh
+was originally written by hand in the voice's own symbols, and listened to,
+before any of this existed.
+Phonemising the English of those five phrases must give back exactly those
+strings.
+.PP
+That pins two different things at once: the fifteen words they use, which are
+the only entries in the lexicon anything has ever verified by ear, and the way
+words are joined together \(em which is the part a change to
+.IR phon (2)
+would otherwise break silently.
+Shortening one entry by a single symbol fails the phrase check and two of the
+shape checks.
+.SS "Every symbol is one the voice knows"
+Each symbol of each entry is looked up in the model's own
+.BR phoneme_id_map .
+This catches the class of mistake the file is most prone to, and one instance
+in particular: the voice knows the script
+.B g
+at U+0261 and does not know
+.SM ASCII
+.BR g .
+In most fonts they are the same shape.
+Substituting one for the other in two entries is caught by name.
+.SS "The tour is sayable"
+Every word
+.B /lib/demo/tour.sh
+narrates is looked up.
+Without this a tour with a missing word still fails \(em
+.IR say (1)
+refuses it by name \(em but it fails part way through, after some of the
+narration has been spoken, which is a poor way to find out.
+.PP
+Also checked: a word that is not in the lexicon is refused and the error is the
+word itself; with two missing, it is the first; case does not change the sounds;
+punctuation the voice knows survives and spacing does not reach the sounds.
+.SH SOURCE
+.B /appl/cmd/phontest.b
+.SH SEE ALSO
+.IR say (1),
+.IR phon (2)
+.SH BUGS
+The five pinned phrases use fifteen words.
+The other hundred and thirty-odd entries are checked for symbols the voice
+knows and for nothing else, because there is nothing else to check them
+against \(em there is no second implementation to compare with, as
+.IR mltest (1)
+has.
+.PP
+It checks the tour in
+.B /lib/demo
+and no other script.
+A tutorial kept elsewhere is not covered until it is run.

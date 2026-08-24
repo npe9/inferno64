@@ -12,12 +12,22 @@ say \- speak, through ml(3)
 .I units
 ]
 [
+.B -l
+.I lexicon
+]
+[
 .B -o
 .I file
 ]
 [
 .B -i
 ]
+.B -t
+.I text
+|
+.B -p
+.I phonemes
+|
 .I id ...
 .SH DESCRIPTION
 .B Say
@@ -30,6 +40,22 @@ with
 as signed 16-bit little-endian mono.
 .B -i
 first prints what the model declares.
+.B -n
+prints the sounds and speaks nothing, which is how a tutorial's narration is
+checked without loading sixty megabytes of model.
+.PP
+.B -t
+takes English.
+Each word is looked up in a lexicon by
+.IR phon (2)
+\(em
+.B -l
+names a different one \(em and a word that is not there stops
+.B say
+and names the word, rather than being guessed at.
+That front end is deliberately outside the synthesizer: turning spelling into
+sounds is a separate job with its own failure mode, and a wrong guess is silent
+where a refusal is not.
 .PP
 .B -u
 asks

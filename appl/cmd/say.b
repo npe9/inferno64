@@ -21,8 +21,14 @@ implement Command;
 # the processor - so it is not this system's bug to fix. -u all asks for the
 # accelerator anyway, and short utterances do work there.
 #
-#	say 1 0 20 0 59 0 24 0 120 0 27 0 100 0 2
+#	say -t 'hello'			# English, through the lexicon in phon(2)
 #	say -p "h@l'oU"			# the same thing, in the voice's own symbols
+#	say 1 0 20 0 59 0 24 0 120 0 27 0 100 0 2
+#
+# -t is the front end that belongs on top rather than inside: phon(2) looks
+# each word up in a lexicon and refuses a word it does not have, naming it,
+# rather than guessing at English spelling. -p is still there for a sound the
+# lexicon cannot spell.
 #
 # The model wants its ids interleaved with the pad symbol and wrapped in begin
 # and end, which is the sequence above: it says "hello". -p does that
@@ -41,6 +47,8 @@ include "bufio.m";
 include "json.m";
 	json: JSON;
 	JValue: import json;
+include "phon.m";
+	phon: Phon;
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -182,8 +190,11 @@ init(nil: ref Draw->Context, argv: list of string)
 	out := "/dev/audio";
 	showinfo := 0;
 	phonemes := "";
+	english := "";
+	lexicon := "";
+	dryrun := 0;
 	arg->init(argv);
-	arg->setusage("say [-v voice] [-u units] [-o file] [-i] -p phonemes | id...");
+	arg->setusage("say [-v voice] [-u units] [-o file] [-i] [-n] [-l lexicon] -t text | -p phonemes | id...");
 	while((o := arg->opt()) != 0)
 		case o {
 		'u' =>	units = arg->earg();
@@ -191,10 +202,28 @@ init(nil: ref Draw->Context, argv: list of string)
 		'o' =>	out = arg->earg();
 		'i' =>	showinfo++;
 		'p' =>	phonemes = arg->earg();
+		't' =>	english = arg->earg();
+		'n' =>	dryrun++;
+		'l' =>	lexicon = arg->earg();
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
 	ids: array of int;
+	if(english != ""){
+		phon = load Phon Phon->PATH;
+		if(phon == nil)
+			fatal(sprint("load phon: %r"));
+		if((e := phon->init(lexicon)) != nil)
+			fatal(e);
+		(ph, err) := phon->text(english);
+		if(err != nil){
+			where := lexicon;
+			if(where == "")
+				where = Phon->LEX;
+			fatal(sprint("%s is not in the lexicon; add it to %s", err, where));
+		}
+		phonemes = ph;
+	}
 	if(phonemes != ""){
 		ids = phonemeids(voice, phonemes);
 	}else{
@@ -203,6 +232,13 @@ init(nil: ref Draw->Context, argv: list of string)
 		ids = array[len argv] of int;
 		for(i := 0; argv != nil; (i, argv) = (i+1, tl argv))
 			ids[i] = int hd argv;
+	}
+
+	# -n stops here: the sounds are what a tutorial author wants to see, and
+	# printing them costs nothing next to loading sixty megabytes of model.
+	if(dryrun){
+		print("%s\n", phonemes);
+		return;
 	}
 
 	if(sys->bind("#N", "/dev", Sys->MAFTER) < 0)

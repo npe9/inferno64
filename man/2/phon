@@ -1,0 +1,92 @@
+.TH PHON 2
+.SH NAME
+phon \- English words in a voice model's own sounds
+.SH SYNOPSIS
+.EX
+include "phon.m";
+phon := load Phon Phon->PATH;
+
+LEX: con "/lib/ml/en_US.lex";
+
+init:  fn(path: string): string;
+word:  fn(w: string): (string, string);
+text:  fn(s: string): (string, string);
+words: fn(): list of string;
+.EE
+.SH DESCRIPTION
+.I Phon
+turns English into the phoneme symbols a voice model was trained on, so that
+.IR say (1)
+can be given words instead of sounds.
+.PP
+.B Init
+reads a lexicon and returns nil, or why it could not.
+A
+.I path
+of nil reads
+.BR LEX .
+The file is a word, a tab, and the sounds, one line per word;
+.B #
+begins a comment.
+A word listed twice is an error rather than a silent choice between the two.
+.PP
+.B Word
+looks up one word, already stripped of punctuation.
+It returns the sounds, or nil and the word that is not known.
+.B Text
+does a whole line: it separates words, ignores case, keeps the punctuation the
+voice was trained with because that is how a line is paced, and drops anything
+else rather than sending a model a symbol it has never seen.
+It returns the sounds, or nil and the
+.I first
+word it does not know, so that an author fixes them in the order they appear.
+.PP
+.B Words
+returns every word in the lexicon, sorted.
+.SH "IT IS A LOOKUP, AND ONLY A LOOKUP"
+There are no letter-to-sound rules here and there will not be.
+English spelling does not reduce to rules; a rule set that is right four times
+in five gives a narrator that is wrong every fifth word, and
+.I nothing in this system can hear that it happened .
+A wrong pronunciation passes every check a program can make.
+.PP
+So a word that is not in the lexicon is an error naming the word, which someone
+fixes by adding a line.
+That is the whole design.
+The alternative is not "a guess instead of an error" but "a guess instead of a
+correction", and the guess is silent.
+.SH SOURCE
+.B /appl/lib/phon.b
+.br
+.B /lib/ml/en_US.lex
+.SH SEE ALSO
+.IR say (1),
+.IR phontest (1),
+.IR ml (3)
+.SH DIAGNOSTICS
+Every call returns a string saying what went wrong rather than raising.
+.B Text
+and
+.B word
+return the offending word itself as the error, not a sentence about it, so a
+caller can say where to add it.
+.SH BUGS
+The lexicon is small and hand-authored.
+.IR phontest (1)
+checks that every symbol in it is one the voice knows, and that five phrases
+which had been listened to come back exactly \(em but nothing anywhere checks
+how any other entry
+.I sounds ,
+and nothing can.
+An entry that is wrong will be said wrong, and the file is where to fix it.
+.PP
+One pronunciation per word.
+English has words whose sound depends on their part of speech \(em
+.B read
+and
+.B read
+are the same five letters \(em and this cannot express that.
+.PP
+Numbers are not spelled out.
+.B 1993
+is looked up as a word, is not in the lexicon, and is refused.

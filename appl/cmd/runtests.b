@@ -38,6 +38,8 @@ Test: adt {
 
 # Run here. All of these work with no display and no window manager.
 headless := array[] of {
+	Test("phontest", nil,
+		"the pronunciation lexicon say(1) reads, and that the tour is sayable"),
 	Test("sessiontest", nil,
 		"session(2) decoding, compiling, and playing to the keyboard"),
 	Test("styxtest", nil,

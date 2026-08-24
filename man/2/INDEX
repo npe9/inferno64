@@ -291,6 +291,7 @@ pathname names
 pcpart disks
 pctl sys-pctl
 pfile palmfile
+phon phon
 pipe sys-pipe
 pktostr security-oldauth
 plumbmsg plumbmsg

@@ -102,6 +102,7 @@ TARG=\
 	plumbing.dis\
 	pop3.dis\
 	popup.dis\
+	phon.dis\
 	plot.dis\
 	powerman.dis\
 	profile.dis\

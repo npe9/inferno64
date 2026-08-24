@@ -409,6 +409,7 @@ pause sleep
 pctl sh-std
 pen keyboard
 perms math-misc
+phontest phontest
 pi math-misc
 pid sh-std
 pinboard pinboard

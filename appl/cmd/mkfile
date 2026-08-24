@@ -90,6 +90,7 @@ TARG=\
 	amrtest.dis\
 	krylovtest.dis\
 	mltest.dis\
+	phontest.dis\
 	pdetest.dis\
 	playmovie.dis\
 	quitall.dis\
