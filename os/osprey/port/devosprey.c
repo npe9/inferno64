@@ -625,6 +625,16 @@ static long ospreyuartlen[16];
 static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
 static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
+/*
+ * And its transmit buffers, also in the span.  The Blocks are kept so
+ * that a container naming buffer i can be given the Block that stands
+ * for it; a Block that is not on the pool's free list is one the card
+ * still has, and the container is told to try again rather than being
+ * allowed to write over a frame in flight.
+ */
+static Bpool ospreytxpool[16];
+static Block *ospreytxblk[16][8];
+static int ospreyntxblk[16];
 static Block *ospreyheld[16];		/* the packet the container is reading */
 static ulong ospreydirect[16];		/* packets that arrived in the span */
 static ulong ospreycopied[16];		/* and packets that had to be moved */
@@ -711,6 +721,62 @@ ospreycountcopied(Ospreyproc *p)
 
 	x = ospreyindex(p);
 	return x < 0 || x >= nelem(ospreycopied) ? 0 : ospreycopied[x];
+}
+
+/* lend the container's transmit buffers to nobody yet: they are its own */
+static int
+ospreylendtx(Ospreyproc *p, int x)
+{
+	Bpool *pool;
+	Block *b;
+	uchar *a;
+	uvlong off, size, n, i;
+
+	if(ospreytxsizes(p, &off, &n, &size) < 0 || n == 0)
+		return -1;
+	if(n > nelem(ospreytxblk[0]))
+		n = nelem(ospreytxblk[0]);
+	pool = &ospreytxpool[x];
+	memset(pool, 0, sizeof *pool);
+	pool->size = size - Rbtlr;
+	pool->align = 8;
+	ospreyntxblk[x] = 0;
+	for(i = 0; i < n; i++){
+		if((a = ospreyat_off(p, off + i*size, size)) == nil)
+			return -1;
+		if((b = mallocz(sizeof(Block), 1)) == nil)
+			return -1;
+		b->base = a;
+		b->lim = a + size;
+		b->rp = b->wp = a;
+		b->pool = pool;
+		b->flag = BINTR;
+		b->list = pool->head;
+		pool->head = b;
+		ospreytxblk[x][i] = b;
+		ospreyntxblk[x] = i+1;
+	}
+	return 0;
+}
+
+/* take it off that list; the card will put it back when it is done */
+static int
+ospreytxtake(Bpool *pool, Block *b)
+{
+	Block **l;
+	int got;
+
+	got = 0;
+	ilock(pool);
+	for(l = &pool->head; *l != nil; l = &(*l)->list)
+		if(*l == b){
+			*l = b->list;
+			b->list = nil;
+			got = 1;
+			break;
+		}
+	iunlock(pool);
+	return got;
 }
 
 static Block*
@@ -1479,6 +1545,59 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 		if(result[0] == ~0ULL)
 			return StatusError;
 		return StatusDone;
+
+	case OpSend:
+		/*
+		 * Put a frame the container wrote in one of its own transmit
+		 * buffers on the wire.  arg[0] names the buffer and arg[1]
+		 * how much of it to send.  Nothing is copied: the Block that
+		 * stands for that buffer is queued to the interface and the
+		 * card reads the frame out of the container's slice.  The
+		 * Block comes back to the container's pool when the card has
+		 * finished with it, which is what makes the buffer safe to
+		 * write again; a container that asks before then is told to
+		 * retry rather than allowed to change a frame in flight.
+		 */
+		{
+			Ether *e;
+			Block *b;
+			uvlong txoff, txn, txsize;
+			ulong len;
+			int bi;
+
+			if((e = (Ether*)ospreyether[x]) == nil){
+				result[0] = 1;
+				return StatusError;
+			}
+			bi = (int)arg[0];
+			if(bi < 0 || bi >= ospreyntxblk[x]){
+				result[0] = 2;
+				result[1] = ospreyntxblk[x];
+				return StatusError;
+			}
+			if(ospreytxsizes(p, &txoff, &txn, &txsize) < 0){
+				result[0] = 3;
+				return StatusError;
+			}
+			len = (ulong)arg[1];
+			if(len < 14 || len > txsize - Rbtlr){
+				result[0] = 4;
+				result[1] = txsize;
+				return StatusError;
+			}
+			b = ospreytxblk[x][bi];
+			if(!ospreytxtake(&ospreytxpool[x], b))
+				return StatusRetry;
+			b->rp = b->base;
+			b->wp = b->base + len;
+			b->flag = BINTR;
+			e->outpackets++;
+			qbwrite(e->oq, b);
+			if(e->transmit != nil)
+				e->transmit(e);
+			result[0] = len;
+			return StatusDone;
+		}
 
 	case OpClose:
 		i = (int)arg[0];
@@ -3468,6 +3587,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if(ospreyether[x] != nil && ospreyether[x] != et)
 			ospreyputether(p);	/* give the last one back first */
 		if(ospreylendbufs(p, x) < 0)
+			error(Enomem);
+		if(ospreylendtx(p, x) < 0)
 			error(Enomem);
 		ospreyether[x] = et;
 		ospreyethersem[x] = i;

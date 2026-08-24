@@ -48,6 +48,14 @@ struct Ospreymap {
 	uvlong	npage;		/* how many are held */
 	uvlong	maxpage;	/* how many may be */
 	uvlong	pagesize;
+	uvlong	txbuf;		/* transmit buffers, the other half of the
+				 * lending: the container writes a frame in
+				 * one of these and the card reads it from
+				 * there.  Appended after pagesize so that a
+				 * program with a shorter copy of this map
+				 * still reads every field it knows. */
+	uvlong	ntxbuf;
+	uvlong	txbufsize;
 };
 
 /*
@@ -144,6 +152,7 @@ ulong		ospreypktcount(Ospreyproc*);
 extern ulong	(*ospreypktdirect)(Ospreyproc*);
 extern ulong	(*ospreypktcopied)(Ospreyproc*);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
+int		ospreytxsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);
 uvlong		ospreyoff_at(Ospreyproc*, void *addr);
 

@@ -47,10 +47,12 @@ enum {
 	Nsem		= 8,	/* semaphores per container */
 	Npkt		= 32,	/* packets a container may hold */
 	Npktbuf		= 16,	/* receive buffers it lends an interface */
+	Ntxbuf		= 8,	/* and transmit buffers it fills itself */
 	Npage		= 32,	/* pages that may be handed about */
 	Pagesize	= 4096,
 	Maxpage		= 8,	/* pages one container may hold */
 	Pktbufsize	= 2112,	/* one of them, room for 2048 and a trailer */
+	Txbufsize	= 2112,
 	Segnamelen	= 16,
 	Ngrant		= 4,	/* others the owner may hand it to */
 	Userlen		= 28,
@@ -409,7 +411,8 @@ sizes(void)
 		+ ROUNDUP(Nsem*sizeof(Sem), Align)
 		+ ROUNDUP(3*Nqueue*sizeof(Message), Align)
 		+ ROUNDUP(Ndata, Align)
-		+ Npktbuf*Pktbufsize;
+		+ Npktbuf*Pktbufsize
+		+ Ntxbuf*Txbufsize;
 	/*
 	 * A whole number of pages: a slice is a segment of its own, and a
 	 * segment is attached in pages.
@@ -481,6 +484,9 @@ mapfix(Ospreyproc *p)
 	m->pktbuf = ROUNDUP(m->data + Ndata, Align);
 	m->npktbuf = Npktbuf;
 	m->pktbufsize = Pktbufsize;
+	m->txbuf = ROUNDUP(m->pktbuf + Npktbuf*Pktbufsize, Align);
+	m->ntxbuf = Ntxbuf;
+	m->txbufsize = Txbufsize;
 	m->page = m->data + Ndata - Maxpage*sizeof(uvlong);
 	m->maxpage = Maxpage;
 	m->pagesize = Pagesize;
@@ -692,11 +698,25 @@ ospreypageoff(uvlong i)
 int
 ospreymapsizes(Ospreyproc *p, uvlong *off, uvlong *n, uvlong *size)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->map == nil)
 		return -1;
 	*off = p->map->pktbuf;
 	*n = p->map->npktbuf;
 	*size = p->map->pktbufsize;
+	return 0;
+}
+
+/* the same for the buffers it fills and the card reads */
+int
+ospreytxsizes(Ospreyproc *p, uvlong *off, uvlong *n, uvlong *size)
+{
+	mapfix(p);
+	if(p == nil || p->used == 0 || p->map == nil)
+		return -1;
+	*off = p->map->txbuf;
+	*n = p->map->ntxbuf;
+	*size = p->map->txbufsize;
 	return 0;
 }
 

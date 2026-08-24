@@ -298,6 +298,82 @@ This is one personality for the file operations, and the kernel it runs
 beside is unchanged.  Nothing has been taken out of the kernel; what is
 real is that the path exists and something outside really uses it.
 .NH 1
+Packets, the other half of the lending
+.PP
+The plan's user-level services section asks for two things: protocol
+stacks and packet processing in user space, and shared packet buffers
+with zero-copy paths.
+.CW os/osprey/cmd/p9srv.c
+did the file half of the first.  This is the buffer half of the second,
+on the transmit side; receive was already there.
+.PP
+A container that has been given an interface now has transmit buffers
+of its own in its slice \-
+.CW txbuf ,
+.CW ntxbuf
+and
+.CW txbufsize ,
+appended to the map so that a program with a shorter copy of it still
+reads every field it knows \- and a
+.CW send
+request names one of them and a length.  Nothing is copied: the Block
+that stands for that buffer is queued to the interface and the card
+reads the frame out of the container's slice, which is the mirror of
+.CW ospreylendbufs
+lending it the receive side.  The Block returns to the container's pool
+when the card is done, and until then a
+.CW send
+naming that buffer is answered
+.CW retry .
+.PP
+What is demonstrated is that a container's
+.CW send
+from its own buffer is accepted \-
+.CW "send done 64"
+\- and that a second
+.CW send
+of the same buffer is refused with
+.CW retry
+while the card still has it.  What is not demonstrated is that the
+frame arrived at the other end: the machine on the far side of the wire
+was listening for it and its log says nothing, and that is not yet
+explained.
+.PP
+Two things measured on the way, both of which correct what was written
+before.  A container claiming an interface and being sent five frames
+saw
+.CW "direct 0 copied 5" :
+the zero-copy receive path did not fire once.  That is consistent with
+the code rather than against it \- igbe's receive ring is two hundred
+and fifty-six deep and full of the driver's own buffers before the
+interface is given away, so a container's buffer is not used until the
+card's head comes round again \- but the man page read as though direct
+delivery were the ordinary case, and it is not until a ring's worth of
+traffic has gone by.  And
+.CW ospreymapsizes ,
+which
+.CW ospreylendbufs
+uses, read the container's map without fixing it first; it worked only
+because something else had fixed the map earlier.  Both it and the new
+.CW ospreytxsizes
+call
+.CW mapfix
+now, which is what every other reader of that map does and why
+.CW mapfix
+exists.
+.PP
+What is left of the plan's sentence is the protocol stack itself: a
+program that takes frames with
+.CW recv ,
+answers ARP and ICMP with
+.CW send ,
+and needs from the kernel one more thing it has not got \- a way to be
+told when a transmit buffer comes back, rather than offering it and
+being refused.  A semaphore given when the Block returns to the pool is
+the shape the talk already uses for an interrupt, and
+.CW Bpool
+has nowhere to hang it yet.
+.NH 1
 Not attempted
 .PP
 The presentation describes a microkernel with library operating systems

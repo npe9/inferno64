@@ -52,6 +52,16 @@ struct Ospreymap {
 	uvlong	sem;
 	uvlong	nsem;
 	uvlong	selected;
+	uvlong	pktbuf;
+	uvlong	npktbuf;
+	uvlong	pktbufsize;
+	uvlong	page;
+	uvlong	npage;
+	uvlong	maxpage;
+	uvlong	pagesize;
+	uvlong	txbuf;		/* the frames it fills and the card reads */
+	uvlong	ntxbuf;
+	uvlong	txbufsize;
 };
 
 typedef struct Sem Sem;
@@ -404,6 +414,60 @@ ringmain(int argc, char **argv)
 	if(argc == 3){
 		flush();
 		return;
+	}
+
+	if(strcmp(argv[3], "frame") == 0 && argc > 4){
+		/*
+		 * Put a frame in the container's first transmit buffer and
+		 * hand it to the interface.  Nothing copies it: the buffer
+		 * is in this slice, which is where the card reads it from.
+		 * The type is pi-p's, so a machine on the other end of the
+		 * wire with pipether on says what it saw.
+		 */
+		uchar *f;
+		long len, k;
+
+		len = (long)num(argv[4]);
+		if(len < 64)
+			len = 64;
+		if((uvlong)len > m->txbufsize)
+			len = m->txbufsize;
+		f = base + m->txbuf;
+		for(k = 0; k < 6; k++)
+			f[k] = 0xff;			/* to everybody */
+		for(k = 6; k < 12; k++)
+			f[k] = 0x02;			/* from this container */
+		f[12] = 0x91; f[13] = 0x0a;		/* pi-p */
+		for(k = 14; k < len; k++)
+			f[k] = (uchar)k;
+		outs("frame at "); outd(m->txbuf);
+		outs(" of "); outd(m->ntxbuf);
+		outs(" buffers, "); outd(m->txbufsize);
+		outs(" each\n");
+		flush();
+
+		memset(&msg, 0, sizeof msg);
+		msg.op = (uvlong)oplookup("send");
+		msg.sequence = rq->put + 1;
+		msg.container = m->id;
+		msg.arg[2] = 0;				/* buffer */
+		msg.arg[3] = (uvlong)len;
+		rm[rq->put % rq->size] = msg;
+		rq->put++;
+		outs("submitted send of "); outd(len); outs("\n");
+		flush();
+		for(i = 0; i < Nwait; i++){
+			if(pq->put != pq->get){
+				msg = pm[pq->get % pq->size];
+				pq->get++;
+				outs("send "); outs(name(statusname, msg.arg[0]));
+				outs(" "); outd(msg.arg[2]); outs("\n");
+				flush();
+				return;
+			}
+			sleep(100);
+		}
+		die("no reply to send");
 	}
 
 	if(strcmp(argv[3], "bench") == 0 && argc > 4){

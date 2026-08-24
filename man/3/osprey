@@ -1004,6 +1004,27 @@ nothing yet answers.
 .B recv
 takes a packet from the queue of a container that has been given an
 interface, and is refused by a container that has not.
+.B send
+puts one on the wire from the other half of the same lending: a
+container that has been given an interface also has transmit buffers of
+its own in its slice \-
+.BR txbuf ,
+.B ntxbuf
+and
+.B txbufsize
+in the map \- and
+.B send
+names one of them and how much of it to send.  Nothing is copied: the
+Block that stands for that buffer is queued to the interface and the
+card reads the frame out of the container's slice.  The Block comes
+back to the container's pool when the card has finished with it, and
+until then a
+.B send
+naming that buffer again is answered
+.BR retry ,
+so a container cannot write over a frame in flight.  What it cannot yet
+do is ask to be told when that happens; it must offer the buffer and be
+refused.
 .PP
 .I p9srv
 is a personality for the file operations and nothing else.  A container
@@ -1106,7 +1127,16 @@ reports how a container's packets have been arriving.
 .PP
 Only the interfaces whose driver takes its receive buffers from the
 interface's pool can be lent them; of the drivers in this kernel that is
-the igbe.  And a card writing into memory a process has mapped is a card
+the igbe.  And the lending is slower to take effect than it reads:
+igbe's receive ring is two hundred and fifty-six deep and is filled with
+the driver's own buffers before the interface is given away, so a
+container's buffer put into a ring slot is not used until the card's
+head comes round to it again.  Every packet before that is copied.  With
+five packets sent to a container that had claimed an interface,
+.B status
+reported
+.B "direct 0 copied 5" ;
+what it reports after a ring's worth has not been measured.  And a card writing into memory a process has mapped is a card
 writing where that process may write too, which a container that is not
 trusted with its own packets should not be given.
 .PP
