@@ -46,6 +46,21 @@ carries on without it.
 What the interface has to say about itself, one announcement per line.
 A read blocks until there is one.
 .PP
+It can also be written.
+.IR Libtk (2)
+is the usual writer but there is no reason it should be the only one: a program
+that has finished a long job has as much right to say so as a button has to
+name itself, and a person who cannot see the screen has no other way to be
+told.
+.IP
+.EX
+echo 'the backup has finished' > /dev/voice/screen
+.EE
+.PP
+A written announcement counts as a person's business rather than the machine's
+chatter, so it interrupts what is being said, which is most of what makes it
+worth writing.
+.PP
 .IR Libtk (2)
 writes here when the keyboard focus moves, which is the one place in the system
 that knows a person's attention has changed, and \(em when
@@ -90,7 +105,17 @@ announcement is dropped.
 A screen reader is saying where you are now, and a backlog of where you used to
 be is worse than useless because you have to sit through it.
 .SS ctl
-Reading gives the rate, the pitch, the speed and how many samples are waiting.
+Reading gives the rate, the pitch, the speed, how many samples are waiting, how
+many announcements are queued
+.RB ( waiting ),
+how many of those came from a person acting rather than the machine talking
+.RB ( urgent ),
+and the announce level.
+.PP
+.B Urgent
+is what a reader polls between chunks of sound to decide whether to stop.
+Output does not interrupt output: if it did, anything printing faster than it
+can be read would never be read at all, every line cut off by the next.
 .TP
 .BI announce " off|focus|all"
 What reaches

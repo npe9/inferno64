@@ -67,6 +67,16 @@ without listening to it.
 .PP
 A line is not begun until the one before it has been heard, so a pipe paces
 itself rather than queueing everything at once and talking over itself.
+.PP
+When the input is
+.BR /dev/voice/screen ,
+a line already being said is abandoned as soon as a person's own action queues
+something newer, and the sound already written is flushed \(em otherwise
+closing the audio device would wait for it, which is the whole problem.
+A reader that has to finish telling you about the last screen before it can
+tell you about this one is unusable.
+Output does not interrupt output; see
+.IR voice (3).
 .SH "WHY NOT SAY(1)"
 .IR Say (1)
 speaks one utterance and exits, having loaded sixty megabytes of model to do
@@ -136,8 +146,10 @@ Both readings have three pieces, so counting them does not choose between them,
 and the wrong one sounds exactly as confident as the right one.
 Spelling cannot be wrong.
 .PP
-It reads lines, so it cannot be interrupted part way through one, and there is
-no way to stop it short of killing it.
-A reader people actually use needs both.
+Interruption only applies when reading
+.BR /dev/voice/screen ,
+and only at a tenth-of-a-second boundary.
+A file or a pipe is read to the end, because nothing is going to supersede it,
+and there is still no way to stop that short of killing it.
 .PP
 Nothing here has been listened to by whoever wrote it.

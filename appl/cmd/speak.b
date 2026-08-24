@@ -35,6 +35,10 @@ Rate:	con 16000;		# voice(3) says so on its ctl file
 stderr:	ref Sys->FD;
 quiet:	int;
 dryrun:	int;
+watching: int;		# reading voice(3)'s screen file, so interruptible
+vctl:	ref Sys->FD;	# held open to ask how many announcements are waiting
+
+Chunk:	con 3200;	# a tenth of a second at 16kHz, 16-bit, one channel
 out:	string;
 
 fatal(s: string)
@@ -102,6 +106,17 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 	for(; argv != nil; argv = tl argv){
+		#
+		# Reading the announcements is the case where being interrupted
+		# matters: a reader that has to finish the last screen before it
+		# can tell you about this one is unusable. Anything else - a
+		# file, a pipe - is read to the end, because nothing is going to
+		# supersede it.
+		#
+		if(hd argv == "/dev/voice/screen"){
+			watching = 1;
+			vctl = sys->open("/dev/voice/ctl", Sys->OREAD);
+		}
 		b := bufio->open(hd argv, Bufio->OREAD);
 		if(b == nil){
 			fprint(stderr, "speak: %s: %r\n", hd argv);
@@ -300,6 +315,45 @@ words(s: string): list of string
 	return l;
 }
 
+#
+# How many announcements are waiting that a person's own action produced.
+# Asked between chunks of audio, so it must not block, which is why it reads
+# ctl and not the screen file.
+#
+# Output does not interrupt output. If it did, anything printing faster than it
+# can be read would never be read at all - every line cut off by the next.
+#
+waiting(): int
+{
+	b := array[256] of byte;
+
+	if(vctl == nil)
+		return 0;
+	n := sys->pread(vctl, b, len b, big 0);
+	if(n <= 0)
+		return 0;
+	s := string b[0:n];
+	for(i := 0; i < len s; i++){
+		if(i != 0 && s[i-1] != '\n')
+			continue;
+		if(i+7 <= len s && s[i:i+7] == "urgent "){
+			j := i+7;
+			v := 0;
+			while(j < len s && s[j] >= '0' && s[j] <= '9')
+				v = v*10 + int s[j++] - '0';
+			return v;
+		}
+		if(0 && i+8 <= len s && s[i:i+8] == "waiting "){
+			j := i+8;
+			v := 0;
+			while(j < len s && s[j] >= '0' && s[j] <= '9')
+				v = v*10 + int s[j++] - '0';
+			return v;
+		}
+	}
+	return 0;
+}
+
 play(b: array of byte)
 {
 	if(out == "/dev/audio"){
@@ -316,8 +370,36 @@ play(b: array of byte)
 		af = sys->open(out, Sys->OWRITE);
 	if(af == nil)
 		fatal(sprint("%s: %r", out));
-	if(sys->write(af, b, len b) != len b)
-		fatal(sprint("write %s: %r", out));
+
+	#
+	# A chunk at a time, so there is somewhere to notice that what is being
+	# said has been overtaken. Writing the whole utterance would block until
+	# it had all been queued and then, on close, until it had all been
+	# heard, and by then it is too late to not say it.
+	#
+	for(o := 0; o < len b; o += Chunk){
+		e := o + Chunk;
+		if(e > len b)
+			e = len b;
+		if(sys->write(af, b[o:e], e-o) != e-o)
+			fatal(sprint("write %s: %r", out));
+		if(watching && waiting() > 0){
+			#
+			# The person has done something, so what is being said
+			# is out of date. Throw away what has been written and
+			# not yet heard: closing would otherwise wait for it,
+			# which is the whole problem.
+			#
+			if(out == "/dev/audio"){
+				cfd := sys->open("/dev/audioctl", Sys->OWRITE);
+				if(cfd != nil)
+					sys->fprint(cfd, "flush");
+			}
+			if(!quiet)
+				fprint(stderr, "speak: interrupted\n");
+			return;
+		}
+	}
 	# closing /dev/audio is what waits for the sound to finish, so this
 	# returns when the line has been heard and the next one can start
 	af = nil;

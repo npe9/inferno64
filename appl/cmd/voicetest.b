@@ -95,6 +95,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	speed();
 	pitch();
 	announce();
+	screenfile();
 
 	if(fail)
 		raise "fail:test";
@@ -240,6 +241,84 @@ announce()
 	# and something that is not a level must be refused
 	if(sys->fprint(ctl, "announce sideways") >= 0)
 		bad("ctl accepted an announce level that does not exist");
+}
+
+#
+# Announcements: written, counted, and read back.
+#
+# This is what lets the reading half be tested with no window system: libtk is
+# the usual writer of this file but not the only one it will take, so a test
+# can put an announcement there itself and see it come out.
+#
+screenfile()
+{
+	cmd("announce focus");
+	if(field("waiting") != 0)
+		bad(sprint("started with %d announcements waiting", field("waiting")));
+
+	fd := sys->open("/dev/voice/screen", Sys->ORDWR);
+	if(fd == nil){
+		bad(sprint("open screen: %r"));
+		return;
+	}
+	msg := "the backup has finished";
+	b := array of byte msg;
+	if(sys->write(fd, b, len b) != len b){
+		bad(sprint("write screen: %r"));
+		return;
+	}
+	if(field("waiting") != 1)
+		bad(sprint("after one announcement, waiting is %d", field("waiting")));
+	# written announcements are a person's business, not the machine's
+	if(field("urgent") != 1)
+		bad(sprint("after one announcement, urgent is %d", field("urgent")));
+
+	rb := array[512] of byte;
+	n := sys->read(fd, rb, len rb);
+	if(n <= 0){
+		bad(sprint("read screen: %r"));
+		return;
+	}
+	got := string rb[0:n];
+	if(len got > 0 && got[len got - 1] == '\n')
+		got = got[0:len got - 1];
+	if(got != msg)
+		bad(sprint("announced %#q, read back %#q", msg, got));
+	if(field("waiting") != 0)
+		bad(sprint("after reading it, waiting is %d", field("waiting")));
+
+	# and "announce off" must swallow it
+	cmd("announce off");
+	sys->write(fd, b, len b);
+	if(field("waiting") != 0)
+		bad("announce off still queued an announcement");
+	cmd("announce focus");
+}
+
+# one numeric field of ctl
+field(name: string): int
+{
+	fd := sys->open("/dev/voice/ctl", Sys->OREAD);
+	if(fd == nil)
+		return -1;
+	b := array[512] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return -1;
+	s := string b[0:n];
+	for(i := 0; i < len s; i++){
+		if(i != 0 && s[i-1] != '\n')
+			continue;
+		if(i + len name + 1 <= len s && s[i:i+len name] == name &&
+		   s[i+len name] == ' '){
+			j := i + len name + 1;
+			v := 0;
+			while(j < len s && s[j] >= '0' && s[j] <= '9')
+				v = v*10 + int s[j++] - '0';
+			return v;
+		}
+	}
+	return -1;
 }
 
 reported(): string

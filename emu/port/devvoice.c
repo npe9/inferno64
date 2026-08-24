@@ -279,6 +279,27 @@ voiceannounce(char *what)
 	Wakeup(&screen.r);
 }
 
+/*
+ * How many queued announcements came from a person acting rather than from the
+ * machine talking. A reader stops what it is saying for one of these and not
+ * for the others: output interrupting output would mean that anything which
+ * prints faster than it can be read is never read at all, each line cut off by
+ * the next.
+ */
+static int
+urgent(void)
+{
+	int i, n;
+
+	n = 0;
+	lock(&screen.lk);
+	for(i = 0; i < screen.n; i++)
+		if(screen.kind[(screen.rd + i) % Nannounce] != Anall)
+			n++;
+	unlock(&screen.lk);
+	return n;
+}
+
 static int
 announced(void *a)
 {
@@ -520,7 +541,7 @@ voicegen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 	Qid q;
 	static char *files[] = { "ctl", "phonemes", "pcm", "screen" };
 	static int ftype[] = { Qctl, Qphonemes, Qpcm, Qscreen };
-	static int fperm[] = { 0666, 0222, 0444, 0444 };
+	static int fperm[] = { 0666, 0222, 0444, 0666 };
 
 	USED(name); USED(tab); USED(ntab);
 	q.vers = 0;
@@ -604,8 +625,8 @@ voiceread(Chan *c, void *va, long n, vlong off)
 	switch((ulong)c->qid.path){
 	case Qctl:
 		snprint(buf, sizeof buf,
-			"rate %d\npitch %d\nspeed %d\nsamples %d\nannounce %s\n",
-			Rate, voice.pitch, voice.speed, voice.npcm,
+			"rate %d\npitch %d\nspeed %d\nsamples %d\nwaiting %d\nurgent %d\nannounce %s\n",
+			Rate, voice.pitch, voice.speed, voice.npcm, screen.n, urgent(),
 			anlevel == Anoff? "off": anlevel == Anfocus? "focus": "all");
 		return readstr(off, va, n, buf);
 
@@ -689,6 +710,32 @@ voicewrite(Chan *c, void *va, long n, vlong off)
 			error(Ebadarg);
 		poperror();
 		free(cb);
+		return n;
+
+	case Qscreen:
+		/*
+		 * Anything can announce something. libtk is the usual writer
+		 * but there is no reason it should be the only one: a program
+		 * that has finished a long job has as much right to say so as
+		 * a button has to name itself, and a person who cannot see the
+		 * screen has no other way to be told.
+		 *
+		 * Written announcements count as a person's business rather
+		 * than the machine's chatter, so they interrupt what is being
+		 * said - which is what makes them worth writing.
+		 */
+		if(n <= 0)
+			return 0;
+		s = malloc(n + 1);
+		if(s == nil)
+			error(Enomem);
+		memmove(s, va, n);
+		s[n] = '\0';
+		while(n > 0 && (s[n-1] == '\n' || s[n-1] == '\r'))
+			s[--n] = '\0';
+		if(n > 0)
+			voiceannounce(s);
+		free(s);
 		return n;
 
 	case Qphonemes:

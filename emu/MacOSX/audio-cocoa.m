@@ -51,6 +51,7 @@ static AudioQueueRef inq;
 static Ring outring;
 static Ring inring;
 static int out_running;
+static void flush_out(void);
 static int in_running;
 
 static int
@@ -364,6 +365,22 @@ audio_ctl_write(Chan *c, void *va, long n, vlong off)
 	int r;
 
 	USED(c); USED(off);
+	/*
+	 * "flush" throws away sound that has been written but not yet heard.
+	 *
+	 * Everything else here is a format setting, which is why this is
+	 * handled before audioparse rather than inside it. It exists because a
+	 * writer cannot take back what it has queued any other way: closing
+	 * the file waits for it deliberately, and a screen reader that has to
+	 * finish reading the last screen before it can tell you about this one
+	 * is unusable. See voice(3).
+	 */
+	if(n >= 5 && strncmp((char*)va, "flush", 5) == 0){
+		qlock(&outlock);
+		flush_out();
+		qunlock(&outlock);
+		return n;
+	}
 	tmp = av;
 	r = audioparse((char*)va, (int)n, &tmp);
 	if(r < 0)
@@ -388,6 +405,23 @@ audio_ctl_write(Chan *c, void *va, long n, vlong off)
  * does, every time. It made speech that was cut off, with no error anywhere,
  * because nothing about the write was wrong.
  */
+/*
+ * Discard what is queued, in the ring and in the buffers CoreAudio already
+ * holds. AudioQueueReset is what returns the enqueued buffers rather than
+ * playing them; without it the four buffers in flight - a quarter of a second -
+ * would still be heard after a flush, which is long enough to sound like the
+ * flush did not work.
+ */
+static void
+flush_out(void)
+{
+	lock(&outring.lk);
+	outring.r = outring.w = outring.n = 0;
+	unlock(&outring.lk);
+	if(outq != nil)
+		AudioQueueReset(outq);
+}
+
 static void
 drain_out(void)
 {
