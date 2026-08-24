@@ -343,8 +343,20 @@ userinit(void)
 {
 	Proc *p;
 
+	/*
+	 * newforthproc() is for a running process to spawn another
+	 * Forth kproc: it calls waserror() and reads up->user, both of
+	 * which need a live up.  There is no process yet at all here --
+	 * this call built the address it read up->nerrlab through from
+	 * a garbage 32-bit count found at physical address 0x330, giving
+	 * setlabel() a bogus Label* and a page fault on its first store.
+	 * Every other board's userinit() builds its first process with
+	 * plain newproc() for exactly this reason; do the same here and
+	 * let init0, once it is actually running as up, be the first
+	 * Forth process the ordinary way.
+	 */
 	up = nil;
-	if((p = newforthproc()) == nil){
+	if((p = newproc()) == nil){
 		panic("no procs for userinit");
 	}
 
