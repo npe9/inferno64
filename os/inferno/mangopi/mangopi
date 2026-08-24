@@ -1,0 +1,177 @@
+# mangopi - a MangoPi MQ-Pro: an Allwinner D1, which is a T-Head C906.
+# Console only.
+#
+# The D1 is RV64GC and this kernel uses nothing beyond that, so the core
+# is the one the RISC-V boards already run on; QEMU's -cpu thead-c906
+# with -M virt runs the same kernel.  What is only here is the board's
+# memory map, its DesignWare UART and its interrupt numbers.  See
+# mangopi(6) for what is proved and what is not.
+#
+# There is no ip stack, no ethernet, no storage and no draw: the D1's
+# EMAC, its SD host and its display are not written.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+	ssl
+	cap
+	kprof
+
+# the order matters: a library with an undefined symbol at the end
+# makes the loader complain
+lib
+	interp
+	keyring
+	sec
+	mp
+	math
+	kern
+
+# the portable kernel this board takes, and its own code beside it.
+# archmangopi and the rest are objects and nothing more; naming them
+# under misc would have mkdevc build a PCArch table for them, which is
+# the PC's abstraction and not this board's.
+port
+	alarm
+	alloc
+	allocb
+# the board has its own auth.c, named in the mkfile
+	chan
+	dev
+	dial
+	dis
+	discall
+# edf wants a microsecond clock this board does not export
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+# randommangopi is this board's entropy; the portable random.c wants a
+# libsec newer than the one this tree shares
+	sysfile
+	taslock
+	xalloc
+
+	archmangopi
+	randommangopi
+	screenmangopi
+
+# uartdw is this board's PhysUart -- mkdevc turns a misc name beginning
+# uart into <rest>physuart, so uartdw gives dwphysuart.
+misc
+	uartdw
+
+mod
+	sys
+	keyring
+	crypt
+	math
+
+init
+	mangopiinit
+
+code
+	int main_pool_pcnt = 40;
+	int heap_pool_pcnt = 40;
+	int image_pool_pcnt = 20;
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+# The Limbo userland, the same set the other 64 bit boards carry.  A bare
+# name whose $ROOT counterpart is a directory makes an empty directory in
+# the embedded root; a name that is a file embeds its bytes.  Dis is
+# bytecode and has no architecture, so these are the files appl/cmd and
+# appl/lib install for every target, not riscv64 ones.
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/n	/
+	/net	/
+	/net.alt	/
+	/nvfs	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/dis/lib
+	/dis/svc
+	/dis/wm
+	/osinit.dis
+	/dis/init
+	/dis/shutdown
+	/dis/basename.dis
+	/dis/bind.dis
+	/dis/cat.dis
+	/dis/cd.dis
+	/dis/diskparts
+	/dis/echo.dis
+	/dis/ftest.dis
+	/dis/grep.dis
+	/dis/ls.dis
+	/dis/mntgen.dis
+	/dis/mount.dis
+	/dis/memfs.dis
+	/dis/dossrv.dis
+	/dis/ns.dis
+	/dis/ps.dis
+	/dis/pwd.dis
+	/dis/read.dis
+	/dis/sh.dis
+	/dis/sh.dis
+	/dis/sh/std.dis
+	/dis/unmount.dis
+	/dis/9660srv.dis
+	/dis/disk/fdisk.dis
+	/dis/disk/kfs.dis
+	/dis/disk/kfs64.dis
+	/dis/disk/kfscmd.dis
+	/dis/disk/prep.dis
+	/dis/ip/dhcp.dis
+	/dis/ip/ping.dis
+	/dis/auth/factotum.dis
+	/dis/disk/calc.tab.dis
+	/dis/disk/pedit.dis
+	/dis/lib/arg.dis
+	/dis/lib/auth.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
+	/dis/lib/disks.dis
+	/dis/lib/env.dis
+	/dis/lib/factotum.dis
+	/dis/lib/filepat.dis
+	/dis/lib/ip.dis
+	/dis/lib/names.dis
+	/dis/lib/nametree.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/readdir.dis
+	/dis/lib/regex.dis
+	/dis/lib/ssl.dis
+	/dis/lib/string.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxpersist.dis
+	/dis/lib/styxservers.dis
+	/dis/lib/timers.dis
+	/dis/lib/workdir.dis

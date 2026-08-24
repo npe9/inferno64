@@ -1,0 +1,88 @@
+<../../../mkconfig
+
+#Configurable parameters
+
+CONF=mangopi
+CONFLIST=mangopi
+
+SYSTARG=$OSTARG
+OBJTYPE=riscv64
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+IPDIR=../ip
+INITDIR=../init
+PORTDIR=../port
+
+#end configurable parameters
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+# The board is loaded into DRAM with nothing under it, so the kernel
+# starts at the bottom of DRAM.
+KTZERO=0x40000000
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$DEVS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+
+CFLAGS=-wFV -I. -I../port -I../ip -I../riscv -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+# Two of the same thing: an ELF, which a loader that reads one wants,
+# and the headerless image xfel writes straight into DRAM.
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD -o $target -H5 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	$LD -o $CONF.bin -H1 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	cp $target $INSTALLDIR/$target
+	cp $CONF.bin $INSTALLDIR/$CONF.bin
+
+CLEANEXTRA=$CONF.bin
+
+<../port/portmkfile
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+# xfel ddr d1; xfel write 0x40000000 mangopi.bin; xfel exec 0x40000000

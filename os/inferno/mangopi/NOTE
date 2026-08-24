@@ -1,0 +1,50 @@
+MangoPi MQ-Pro
+==============
+
+An Allwinner D1: one T-Head C906, which is RV64GC, with 512M of DDR3.
+The kernel runs in M-mode, identity mapped, the same way the other
+RISC-V boards here do.
+
+What is proved
+--------------
+
+Everything in this directory except four addresses and the width of a
+UART register has been executed.  Building it with PHYSDRAM, CLINT, PLIC
+and UART0 set to what QEMU's -M virt has, the UART read a byte at a time
+rather than a word, and Uart0IRQ set to 10, gives a kernel that boots to
+an interactive Inferno shell under
+
+	qemu-system-riscv64 -M virt -cpu thead-c906 -bios none -kernel imangopi
+
+which is the same core this board carries.  So l.s, trap.c, clock.c,
+main.c, archmangopi.c, uartdw.c, the configuration and mangopiinit all
+run; what is not run is the board.
+
+What is not
+-----------
+
+The D1's own numbers: DRAM at 0x40000000, the CLINT at 0x14000000, the
+PLIC at 0x10000000, UART0 at 0x02500000 with its registers a word apart
+and its interrupt on PLIC source 18, and the 24MHz the CLINT counts at.
+Those are from the D1 user manual and its device tree, and no board has
+been asked whether they are right.
+
+Running it
+----------
+
+The kernel wants its DRAM already up, which the boot ROM's SPL does when
+it loads off a card, and which xfel does over USB:
+
+	xfel ddr d1
+	xfel write 0x40000000 mangopi.bin
+	xfel exec 0x40000000
+
+mangopi.bin is the headerless image the mkfile links beside the ELF.
+Console is UART0 on the debug header at 115200.
+
+What is missing
+---------------
+
+The EMAC, the SD host and the display.  There is no ip stack, no
+storage and no draw in the configuration because there are no drivers
+for them.

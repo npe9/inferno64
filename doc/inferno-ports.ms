@@ -51,6 +51,7 @@ os/inferno/
   virt/       QEMU -M virt, riscv64
   sifiveu/    SiFive Unleashed
   spike/      the Spike simulator
+  mangopi/    MangoPi MQ-Pro, an Allwinner D1
   armv7m/     shared Cortex-M code
   mps2/       ARM MPS2 AN500, a Cortex-M7 in QEMU
   teensy41/   Teensy 4.1, an NXP i.MX RT1062
