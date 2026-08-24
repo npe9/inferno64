@@ -507,75 +507,114 @@ now.
 Past that,
 .CW pc64
 reaches
-.CW schedinit() ,
-runs
+.CW schedinit()
+and runs
 .CW init0
-as a real scheduled process, and \- this board's
+as a real scheduled process.  That
 .CW init0
-calls
+was 9ferno's own: it called
 .CW goforth() ,
-not
-.CW disinit("/osinit.dis") ,
-which is present in the source but commented out \- interprets
+interpreting
 .CW init.f ,
-a Forth script at the root of the tree, to completion: it builds the
-namespace
-.RI ( bind
-.CW #l0 ,
-.CW #p ,
-.CW #f
-and the rest, printed back by two
-.CW ns
-dumps), does arithmetic, defines a word and calls it, and prints
-.CW "end of init.f" .
-Getting that far needed a QEMU with a NIC the kernel's own driver
-binds to \-
-.CW -device virtio-net-pci ,
-matching the
-.CW ethervirtio
-entry in the board's
-.CW dev
-list \- since
-.CW init.f
-binds
-.CW #l0
-unconditionally and a missing card fails that bind with
-.CW Enodev .
-What
-.CW init.f
-does after finishing is not yet answered: the interpreter prints
-.CW "unable to restore input from the stack, aborting.."
-and stops responding to typed input in this test, which reads as the
-Forth outer interpreter trying to fall back to something after the
-top level
-.CW include
-returns and not finding it, but nothing here yet proves whether that
-is supposed to be an interactive prompt, a hang, or a return into
+a Forth script at the root of the tree, in place of the Dis boot
+every other board here takes \- the config carries the same 55 file
+Dis root, but nothing in
 .CW init0
-that ends in the
-.CW panic("init0")
-that function falls into if
-.CW goforth()
-ever returns.
-.PP
-Whether Forth or Dis is meant to be this board's shell is a decision
-this tree has not made, not a bug: the config carries the same
-55 file Dis root every other board takes, but nothing in
-.CW init0
-calls
+called
 .CW disinit
-to load it.
+to load it.  It got there: init.f built a namespace, did arithmetic,
+defined and called a word, and printed
+.CW "end of init.f" ,
+this board's entire init script.  That is no longer this board's
+path.  This tree wants an Inferno native kernel, not 9ferno's Forth
+one, so
+.CW init0
+now calls
+.CW disinit("/osinit.dis")
+instead \-
+.CW os/inferno/init/disinit.b ,
+the same initial program every other board runs.  Doing that needed
+.CW userinit()
+to populate
+.CW up->env ,
+the
+.CW Osenv
+.CW disinit()
+and
+.CW schedmod()
+read the namespace through, alongside the flat
+.CW p->pgrp / fgrp / egrp
+fields
+.CW devproc.c
+and the rest of the portable device layer read directly \-
+.CW portdat.h
+already carries both, with a comment recording that exact reason, and
+every other board's
+.CW userinit()
+keeps them pointed at the same objects; pc64's now does too.  One more
+Forth era leftover was in the way:
+.CW init0
+had its own
+.CW kopen("#c/cons")
+sequence opening fd 0\-2 on the process's shared
+.CW Fgrp
+before
+.CW disinit()
+got a chance to, and
+.CW disinit()
+opens those same three fds itself for the newly scheduled interp
+process sharing that
+.CW Fgrp \-
+opened twice, its own
+.CW kopen()
+found 0\-2 taken, got fd 3, and panicked on its
+.CW "!= 0"
+check.  Removed;
+.CW disinit()
+is now the only place that opens the console.
 .CW newforthproc()
-also links a process into the
+also linked its process into the
 .CW fhead / ftail
 list
 .CW devforth.c
 walks to build
-.CW #f
-'s directory; building the first process with
+.CW #f 's
+directory; building the first process with
 .CW newproc()
-instead means process 1 will not appear there, which matters only if
-something is meant to read it.
+instead means process 1 does not appear there, which has not come up
+as mattering.
+.PP
+With both fixed,
+.CW pc64
+reaches
+.CW "Initial Dis: \(dq/osinit.dis\(dq" ,
+genuinely loading and scheduling it, and that is where the port now
+stands: nothing has been observed to print past that line yet, though
+QEMU's own trace shows real execution happening, not a stall at one
+instruction.  Traced as far as
+.CW port/random.c 's
+.CW randomseed() ,
+a kproc whose entropy-gathering loop only ends once a periodic
+.CW Timer 's
+callback has filled a 64 byte buffer a few bits at a time, and whose
+caller,
+.CW randominit() ,
+holds a qlock until it does \- so whatever reads random state next,
+plausibly something in module loading, blocks behind it indefinitely.
+.CW -d\ int
+during the hang shows the clock interrupt landing normally, around
+142 a second, so the interrupt itself reaches the CPU; something
+between that interrupt and this kproc's particular
+.CW Timer
+entry does not.
+.CW os/inferno/pc64/i8253.c
+is the likeliest place to hold the answer \- compare
+.CW os/inferno/pc/i8253.c 's
+.CW timerintr(ureg,\ 0)
+call from its own ISR \- but wasn't there to read while chasing this:
+this worktree is shared with at least one other concurrent session,
+under active, large scale reorganisation of this board's source at
+the time of writing.
 .NH 1
 How a native kernel provides networking
 .PP
