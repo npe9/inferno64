@@ -60,3 +60,20 @@
   architecture behavior unless the difference cannot reasonably be expressed
   through Inferno configuration or runtime capability handling. Document the
   necessity next to any unavoidable conditional.
+- `long` is 32 bits.  This is a Plan 9 / Inferno idiom: the compilers,
+  loaders and object formats under `utils`, and the kernels they build,
+  were written where `sizeof(long) == 4`, and much of the code says
+  `long` to mean a 32-bit word or a 32-bit field in an object file.  The
+  host these tools are built on has a 64-bit `long`, which silently
+  breaks that assumption: a struct of `long` fields laid out as bytes is
+  twice the width the file expects, and a count derived from
+  `sizeof(long)*8` is twice what the bit set it indexes can hold.  You
+  cannot redefine the `long` keyword, so honour the idiom instead: where
+  a `long` holds a 32-bit quantity, give it a 32-bit type — `int`, or an
+  explicit pair of 32-bit words — rather than assuming the host's width.
+  The symptoms are a compiler or loader that miscompiles only on a 64-bit
+  host, and they have already been paid for three times: `NVAR` in
+  `utils/cc/cc.h` (a variable count in units of `sizeof(long)`), the
+  `Ieee` struct in every loader's `datblk` (two 32-bit words cast to
+  bytes), and `symb` overruns aside.  Look here first when a number comes
+  out wrong on the host but the sources look right.
