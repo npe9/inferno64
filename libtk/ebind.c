@@ -661,6 +661,19 @@ tksetglobalfocus(TkTop *top, int in)
 				tkdeliver(tk, TkFocusin, (void*)0);
 				focusdirty(tk);
 			}
+			/*
+			 * Arriving in a window is a bigger move than stepping
+			 * between two things inside one, and a person who
+			 * cannot see it has nothing else to tell them it
+			 * happened. What is announced is where they now are:
+			 * Tk has no title to give - that belongs to wm - so
+			 * the widget holding the keyboard is the best answer
+			 * available, and it is the useful one.
+			 */
+			if(tk != nil && tk != top->root)
+				tkannouncefocus(tk);
+			else
+				voiceannounce("window");
 		}else{
 			if(tk != nil && tk != top->root){
 				tkdeliver(tk, TkFocusout, nil);

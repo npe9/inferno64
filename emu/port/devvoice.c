@@ -213,6 +213,8 @@ enum {
 
 static int anlevel = Anfocus;
 
+static char lastqueued[Announcemax];
+
 static struct {
 	Lock	lk;
 	Rendez	r;
@@ -223,10 +225,28 @@ static struct {
 	int	n;
 } screen;
 
-/* with the lock held */
+/*
+ * With the lock held.
+ *
+ * An announcement identical to the one before it is dropped. Arriving in a
+ * window announces the widget holding the keyboard, and so does taking the
+ * keyboard, so creating a window said the same thing twice; but the rule is
+ * worth having generally, because a screen reader that repeats itself is one
+ * the person stops trusting to be telling them something new.
+ */
 static void
 queue(int kind, char *what)
 {
+	/*
+	 * Against the last thing queued, not the last thing still in the ring.
+	 * A reader drains this as fast as it arrives, so the ring is usually
+	 * empty and comparing against it would never match - which is exactly
+	 * what happened, and it looked like the check was not there at all.
+	 */
+	if(strcmp(lastqueued, what) == 0)
+		return;
+	strncpy(lastqueued, what, Announcemax-1);
+	lastqueued[Announcemax-1] = '\0';
 	if(screen.n == Nannounce){
 		screen.rd = (screen.rd + 1) % Nannounce;
 		screen.n--;
@@ -649,12 +669,22 @@ voiceread(Chan *c, void *va, long n, vlong off)
 		 * That is what lets the screen reader be `speak
 		 * /dev/voice/screen`: a program that reads lines from a file,
 		 * with no idea it is a device.
+		 *
+		 * The wake can be spurious: dropoutput(), called from a LATER
+		 * voiceannounce(), can purge the very entry this reader was
+		 * woken for - if that later announcement is itself a dedup
+		 * no-op against lastqueued, nothing replaces it and screen.n
+		 * is back to 0 by the time this locks. A file that documents
+		 * "a read blocks until there is one" must never hand back
+		 * EOF for that: it looked like end of file to a plain `cat`,
+		 * which took it as one and quietly stopped reading. Loop
+		 * instead of returning 0.
 		 */
-		Sleep(&screen.r, announced, nil);
 		lock(&screen.lk);
-		if(screen.n == 0){
+		while(screen.n == 0){
 			unlock(&screen.lk);
-			return 0;
+			Sleep(&screen.r, announced, nil);
+			lock(&screen.lk);
 		}
 		rv = strlen(screen.msg[screen.rd]);
 		if(rv > n - 1)

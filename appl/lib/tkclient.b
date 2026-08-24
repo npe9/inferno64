@@ -69,6 +69,36 @@ makedrawcontext(): ref Draw->Context
 	return wmlib->makedrawcontext();
 }
 
+#
+# Say which window the keyboard has moved to, for anyone who cannot see it.
+#
+# Tk itself announces the widget that takes the keyboard, which says where you
+# are inside the window and not which window it is - two shell windows announce
+# exactly the same widget. The title is the missing half, and this layer is
+# where the title lives.
+#
+# Best effort: where there is no voice(3) the open fails and nothing happens.
+# A window must not fail to take the keyboard because nobody is listening.
+#
+announce(top: ref Tk->Toplevel)
+{
+	# the same place the "task" handler reads it from
+	title := cmd(top, ".Wm_t.title cget -text");
+	if(title == nil || title == "" || title[0] == '!')
+		return;
+	fd := sys->open("/dev/voice/screen", Sys->OWRITE);
+	if(fd == nil){
+		# the device may not be in this program's namespace yet
+		if(sys->bind("#V", "/dev", Sys->MAFTER) < 0)
+			return;
+		fd = sys->open("/dev/voice/screen", Sys->OWRITE);
+		if(fd == nil)
+			return;
+	}
+	b := array of byte (title + " window");
+	sys->write(fd, b, len b);
+}
+
 toplevel(ctxt: ref Draw->Context, topconfig: string, title: string, buts: int): (ref Tk->Toplevel, chan of string)
 {
 	if(dispath == nil)
@@ -163,6 +193,8 @@ wmctl(top: ref Tk->Toplevel, req: string): string
 		in := int qword(req, next).t0 != 0;
 		cmd(top, "focus -global " + string in);
 		cmd(top, "update");
+		if(in)
+			announce(top);
 	"task" =>
 		(r, nil) := splitqword(req, next);
 		if(r.t0 == r.t1) {
