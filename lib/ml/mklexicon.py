@@ -29,6 +29,10 @@ import subprocess
 import sys
 
 WORDS = "/usr/share/dict/words"
+
+# The tree's own prose. See harvest().
+TREE = ["man", "doc"]
+TREEMIN = 3
 VOICE = "lib/ml/voices/en_US-lessac-low.onnx.json"
 OUT = "lib/ml/en_US.dict"
 
@@ -102,6 +106,60 @@ def inflect(w):
     return out
 
 
+def harvest(have):
+    """Words this system uses that a word list from 1913 does not have.
+
+    Measured before it was written: ten to eighteen percent of the words in
+    this tree's own man pages are missing from the dictionary, and they fall
+    into two kinds with opposite right answers. Acronyms - fp, ip, ctl, fd, cb
+    - want spelling out, which speak(1) already does and which letter-to-sound
+    rules would mangle into a word. Real technical English - byte, descriptor,
+    endpoint, plugin - just needs a pronunciation, and espeak-ng has one.
+
+    So the vocabulary of the tree is harvested and the second kind added. Two
+    rules separate them. Four letters or more with at least one vowel, which
+    admits byte and descriptor and excludes ctl, fp, gpu and sys - better heard
+    as letters. And a word must occur TREEMIN times: real words recur, and a
+    variable name mentioned once does not.
+
+    Prose only, man and doc. Harvesting the source as well was tried and pulled
+    in identifiers - "mlaqp" became ˈɛmlˈækp and "zzzi" became a word - which
+    is worse than spelling them, because it sounds like language. In prose those
+    two occur zero times and once; byte occurs 960 times.
+    """
+    import os
+    import re
+
+    import collections
+    count = collections.Counter()
+    word = re.compile(r"[A-Za-z']+")
+    for top in TREE:
+        for dirpath, dirnames, files in os.walk(top):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for f in files:
+                if f.endswith((".dis", ".sbl", ".onnx", ".dict", ".png",
+                               ".jpg", ".gz", ".pcm", ".wav")):
+                    continue
+                path = os.path.join(dirpath, f)
+                try:
+                    if os.path.getsize(path) > 2_000_000:
+                        continue
+                    text = open(path, errors="ignore").read()
+                except OSError:
+                    continue
+                text = re.sub(r"^\.\w+", " ", text, flags=re.M)  # troff macros
+                for w in word.findall(text):
+                    w = w.strip("'").lower()
+                    if len(w) < 4 or w in have:
+                        continue
+                    if not any(c in "aeiouy" for c in w):
+                        continue
+                    if not w.isascii() or not w.replace("'", "").isalpha():
+                        continue
+                    count[w] += 1
+    return {w for w, c in count.items() if c >= TREEMIN}
+
+
 def phonemise(words):
     """espeak-ng, one word per line, in bulk.
 
@@ -137,8 +195,11 @@ def main():
         for f in inflect(w):
             if f not in have:
                 extra.add(f)
-    words = sorted(have | extra)
-    print("%d with inflections (%d generated)" % (len(words), len(extra)))
+    have |= extra
+    tree = harvest(have)
+    print("%d with inflections (%d generated)" % (len(have), len(extra)))
+    print("%d more from this tree's own text" % len(tree))
+    words = sorted(have | tree)
     ipa = phonemise(words)
 
     # spot-check alignment at both ends and the middle rather than trusting

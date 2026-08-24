@@ -61,9 +61,16 @@ it down somewhere that outranks the generated file.
 .PP
 The dictionary is built by
 .B /lib/ml/mklexicon.py
-from the system word list, using
+from the system word list and from this tree's own manual pages, using
 .I espeak-ng
 on the host.
+A word is taken from the prose only if it is four letters or more, has a vowel,
+and occurs at least three times: real words recur, and a variable name
+mentioned once does not.
+Harvesting the source as well was tried and pulled in identifiers \(em
+.B mlaqp
+became a pronounceable word \(em which is worse than spelling them, because it
+sounds like language.
 That is a build-time dependency and never a run-time one.
 .I Espeak-ng
 is the right source rather than a convenient one: this voice's
@@ -90,10 +97,35 @@ A wrong pronunciation passes every check a program can make.
 .PP
 That argument is about narration, where the words are chosen in advance and a
 refusal costs one line in a file.
-It does not settle the question for reading a screen, where the words arrive
-unbidden and a refusal is silence: there, rules under the dictionary are the
-standard arrangement and the right one, because approximate beats absent.
-This does not have them yet.
+Reading a screen looked like it needed rules underneath the dictionary, because
+there the words arrive unbidden and a refusal is silence.
+Measuring what is actually missing says otherwise.
+.PP
+Of the words in this tree's own manual pages, fifteen percent were not in the
+dictionary, and they fell into two kinds with opposite right answers.
+Real technical English \(em
+.BR byte ,
+.BR descriptor ,
+.BR endpoint ,
+.B plugin
+\(em an 1913 word list does not have and
+.I espeak-ng
+does, so they are harvested from the prose and added; that took the miss rate
+to under four percent.
+What is left is almost entirely acronyms:
+.BR fp ,
+.BR ip ,
+.BR ctl ,
+.BR wm ,
+.BR fd ,
+.BR tcp .
+Those want spelling out, which
+.IR speak (1)
+does, and letter-to-sound rules would turn each of them into a word.
+.PP
+So rules would now be applied almost exclusively to the words they are worst
+at. They are still absent, and the case for adding them is weaker than it
+looked rather than stronger.
 .PP
 So today a word that is not in either file is an error naming the word, which someone
 fixes by adding a line.
