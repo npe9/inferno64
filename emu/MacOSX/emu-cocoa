@@ -23,6 +23,7 @@ dev
 	audio	audio-cocoa
 	gpu	win-gpu
 	ml	mlonnx mlsoft
+	voice
 	mem
 
 lib

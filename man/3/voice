@@ -1,0 +1,116 @@
+.TH VOICE 3
+.SH NAME
+voice \- speech synthesis
+.SH SYNOPSIS
+.B bind -a '#V' /dev
+.PP
+.B /dev/voice/ctl
+.br
+.B /dev/voice/phonemes
+.br
+.B /dev/voice/pcm
+.SH DESCRIPTION
+The
+.I voice
+device turns phonemes into sound.
+Write the sounds to
+.BR phonemes ,
+read the samples from
+.BR pcm :
+.IP
+.EX
+bind -a '#V' /dev
+echo -n 'hɛlˈoʊ' > /dev/voice/phonemes
+cp /dev/voice/pcm /tmp/hello.pcm
+.EE
+.PP
+The samples are signed 16-bit, little-endian, one channel, at the rate
+.B ctl
+reports \(em 16000 Hz.
+.B Pcm
+holds the last utterance and is readable until the next write replaces it.
+.PP
+The symbols are espeak's
+.SM IPA ,
+which is what
+.IR phon (2)
+produces and what the neural voice behind
+.IR say (1)
+was trained on, so the same phonemes drive either.
+A symbol this device does not know is skipped rather than refused: a screen
+reader that stops dead on an unexpected diacritic is worse than one that
+carries on without it.
+.SS ctl
+Reading gives the rate, the pitch, the speed and how many samples are waiting.
+.TP
+.BI pitch " hz"
+The fundamental, 40 to 400.
+.TP
+.BI speed " percent"
+How fast to say it, 20 to 800, against the durations in the table.
+Higher is faster.
+.SH "WHY THIS AND NOT THE MODEL"
+.IR Say (1)
+speaks through
+.IR ml (3)
+and a sixty megabyte
+.SM VITS
+model.
+It sounds far better than this and cannot be the basis of a screen reader, for
+two reasons that are not going to change.
+It uses eleven operators the software backend does not implement, two hundred
+and fifty-eight convolutions among them, so it does not run on native Inferno
+at all.
+And it costs upwards of a second an utterance, where a system that reads out
+what you type has to answer before the next key is pressed.
+.PP
+So this is a formant synthesizer: three resonators driven by a buzz or a hiss,
+which is how DECtalk and eSpeak work and why they are still what people
+actually read screens with.
+It is a few kilobytes of state, it runs anywhere, it is far faster than real
+time, and it stays intelligible at the rates people really use.
+It does not sound natural and is not trying to.
+.PP
+The two are not rivals.
+The model is for narration, where the words are chosen in advance and quality
+is the whole point; this is for the screen, where the words arrive unbidden
+and latency is.
+.SH SOURCE
+.B /emu/port/devvoice.c
+.SH SEE ALSO
+.IR say (1),
+.IR phon (2),
+.IR ml (3),
+.IR audio (3)
+.SH DIAGNOSTICS
+Writing an unknown verb to
+.B ctl
+or a pitch or speed outside its range is an error.
+Unknown phonemes are not.
+.SH BUGS
+It takes phonemes, not text.
+Turning English into phonemes needs a dictionary,
+.IR phon (2)
+has one, and there is no reason to have a second copy in the kernel: Limbo is
+as native as C on a machine that runs Dis in the kernel.
+.PP
+It does not play anything.
+The samples have to be carried to
+.IR audio (3)
+by whoever wanted them, which also means telling that device the rate and
+channel count first \(em it infers nothing.
+.PP
+Three formants, no fourth or fifth, no nasal zero, and stops are a burst
+without a closure.
+The phoneme table is one set of vowel targets from the literature rather than
+anything measured, and stress and length marks in the input are ignored, so
+everything is said flat and at one speed.
+.PP
+Nothing here has been listened to by the people who wrote it.
+What is checked is that the output has energy where the table says it should:
+.B /ɑ/
+comes back with peaks at 700 and 1100 Hz against targets of 730 and 1090, and
+.B /i/
+with one at 2300 against 2290.
+That establishes the resonators are doing what they are told and says nothing
+about whether the result is intelligible.
