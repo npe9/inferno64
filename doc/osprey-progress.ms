@@ -1365,6 +1365,70 @@ space a global name is resolved in.  That
 .CW Pgrp
 is the buddy's, deliberately, and is no longer any container's.
 .NH 1
+Cutting toward the paper's kernel
+.PP
+The direction changed here.  Until now the work built the Osprey policy
+layer inside a Plan 9 kernel and let a container replace the file and
+network personalities from user space.  The instruction now is to cut
+the Plan 9 kernel functionality out \- process groups, the rfork that
+copies a name space, the whole file and device personality \- until what
+is left is the kernel the paper dictates: fast message passing, address
+space maintenance, interrupt handling, and process scheduling, and
+nothing else in the kernel.  A task, not a Plan 9 process, is the unit;
+files are reached over \[*p]p from a library operating system, not from
+a kernel file server.
+.PP
+The obstacle is the boot, and naming it is half the plan.  The first
+process today,
+.CW proc0
+in
+.CW os/osprey/port/userinit.c ,
+builds a
+.CW Pgrp ,
+an
+.CW Egrp ,
+an
+.CW Fgrp
+and an
+.CW Rgrp ,
+resolves a name space through
+.CW namec ,
+loads Plan 9
+.CW initcode
+into a text segment, and drops to the Plan 9 shell.  That shell is what
+every check in this document runs on.  Cutting the groups and the name
+space out means that boot cannot come up, so a microkernel needs an
+Osprey init task to boot into instead: a task that uses only message
+passing, a segment for its address space, and the scheduler, with no
+.CW Pgrp
+and no
+.CW namec .
+.PP
+So the cut is done constructively, not by deleting first and having
+nothing to test for a long time.  A second configuration,
+.CW upc64 ,
+shares the machine layer \- the trap, interrupt, mmu, clock and console
+code, which are the kernel's real job \- and carries a stripped device
+list: only
+.CW arch ,
+.CW cons ,
+.CW uart ,
+.CW segment
+and
+.CW osprey ,
+which are the four services and a console to watch them on.  Its
+.CW userinit
+starts an Osprey init task directly, with no groups and no
+.CW initcode .
+When that task can do from the microkernel what a container does now \-
+message passing, select, semaphores, a segment it maps, a driver served
+by a task \- the Plan 9 configuration
+.CW pc64
+and the personality devices it carries are deleted.  Until then
+.CW pc64
+is kept only as the testbed the fifty-eight-line check still runs on, and
+its retirement is the measure of the work, not its persistence.
+.NH 1
 The gaps, by why they are gaps
 .PP
 Five kinds, and they are not equally hard.  The first cannot be closed
