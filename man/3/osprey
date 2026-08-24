@@ -646,6 +646,26 @@ It is not a library operating system in the sense the plan means.  A
 Plan 9 kernel is still underneath, answering what the policy layer does
 not; this is that kernel's request ABI made into a library, so that a
 program need not work out the span's shape for itself.
+None of these programs can do floating point.  They supply their own
+.I _main
+because the C library's cannot be linked with them, and without it a
+double is nought: a program that says
+.B "m = 1.5"
+and prints the bits of
+.B m
+prints sixteen zeroes.  It is not the kernel \-
+.I awk
+on the same machine prints
+.B 3.000000
+and
+.B 2.718282
+for
+.B 1.5+1.5
+and
+.BR exp(1) .
+Nothing here wants floating point, and this is written down so that the
+next thing that does knows to find out why before trusting a number.
+.PP
 .I ring
 is deliberately not built on it: it exists to show the ring unmediated,
 and would show nothing if it used something else to work it.

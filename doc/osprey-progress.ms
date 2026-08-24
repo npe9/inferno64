@@ -1180,6 +1180,71 @@ containers come to a hundred and forty-nine thousand three hundred and
 ninety-nine bytes of it.  The check fills every container the machine
 can hold and counts them in what comes back.
 .PP
+Another session is working on this branch at the same time, on the
+Inferno boards, and found a fault in the compilers worth recording here
+because it reaches this kernel.
+.CW mkvar
+gives the two halves of a union separate entries when their offsets
+differ, and neither then looks address-taken, so a double whose high
+word is written through the other arm of the union can be kept in a
+register while the write goes to memory and be returned stale.
+.CW libkern/frexp-386.c ,
+which is what amd64 builds, is exactly that shape:
+.CW ldexp
+scales by writing
+.CW x.ms .
+They fixed
+.CW jc
+and
+.CW tc ,
+where a board boots and
+.CW fptest (1)
+can say so, and left the other seven alone for want of anything to say
+whether it worked.
+.PP
+What can be said from here is where it lands.  Nothing in the Osprey
+kernel's sources calls
+.CW exp ,
+.CW pow ,
+.CW ldexp
+or
+.CW frexp ,
+and nothing formats a float; but
+.CW frexp
+and
+.CW ldexp
+are in the linked kernel all the same, pulled in by something in the
+print path, where
+.CW exp
+and
+.CW pow
+are not.  So the routines that fix repairs are carried by this kernel
+and, as far as the sources say, never reached \- which is a reason to
+leave
+.CW 6c
+to whoever can run a number through it, and not a reason to think it is
+absent.
+.PP
+Trying to run one from here is what turned up something else: an Osprey
+command cannot do floating point at all.  These programs supply their
+own
+.CW _main
+because the C library's cannot be linked with them, and without it a
+double is nought \- a program that sets a variable to 1.5 and prints its
+bits prints sixteen zeroes.  The kernel is not at fault:
+.CW awk
+on the same machine gets
+.CW 3.000000
+and
+.CW 2.718282
+out of
+.CW 1.5+1.5
+and
+.CW exp(1) .
+It is written down in
+.I osprey (3)
+so the next program that wants a number knows to find out why first.
+.PP
 Environments were the other half of the question and are a shorter
 answer: nothing in
 .CW os/osprey
