@@ -194,7 +194,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Sixty-three lines, all
+a line at a time.  Sixty-five lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -665,6 +665,22 @@ and the one that did not says
 .CW "segattach osprey7: permission denied" .
 The name of a slice is a capability, and that is the line that says so.
 .PP
+The other half of the rule is shown against the very slice that refusal
+names.  A container's memory is also for the process bound to it and the
+processes that one started, which is how a container reaches its own
+slice before anybody has been named;
+.CW bindproc
+binds a process of
+.CW none 's
+to the container that said
+.CW "permission denied" ,
+and a
+.I ring
+that process starts says
+.CW "mapped osprey7" .
+Same user, same container, same segment name: the only difference is
+which process is asking, which is the whole of what the rule says.
+.PP
 Getting there needed one thing that is worth writing down.
 .CW auth/none
 builds a name space of its own, in which
@@ -674,7 +690,10 @@ is
 and not glenda's, so the first version failed with
 .CW "/tmp/ring: file does not exist"
 \- which reads exactly like the refusal being looked for and is not one.
-The binary the server runs has to be somewhere both users see.
+The binary the server runs has to be somewhere both users see, and
+.CW none
+writes nowhere in glenda's home either, so the two share a directory
+made for it.
 .NH 2
 Demonstration scale
 .PP

@@ -970,7 +970,7 @@ in
 where twelve hundred give
 .BR "direct 953 copied 257" .
 .PP
-Together they are sixty-three lines.  Each says
+Together they are sixty-five lines.  Each says
 .B ok
 or
 .B FAIL
@@ -1197,10 +1197,23 @@ the one that delegated says
 the one that did not says
 .BR "segattach osprey7: permission denied" .
 It is one step and not a chain: a server's own server is not thereby
-given what its clients have.  What is still not demonstrated is a
-container whose bound process started the asking one, which is the other
-half of
-.IR ospreyentitledself .
+given what its clients have.
+.PP
+The other half of the same rule \- that a container's memory is also for
+the process bound to it and the processes that one started, which is how
+a container reaches its own slice before anybody has been named \- is
+shown against the very slice the line above refused.
+.B bindproc
+binds a process of
+.BR none 's
+to the container that said
+.BR "permission denied" ,
+and a
+.I ring
+that process starts says
+.BR "mapped osprey7" .
+Same user, same container, same segment: the only difference is which
+process is asking.
 .PP
 .I netsrv
 is the other personality, and the one the plan asks for by name: the

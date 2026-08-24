@@ -219,9 +219,31 @@ CHECKS = [
  ("and refused the one that delegated to nobody",
   ["s5=`{grep '^proc 75 ' /n/osprey/status | sed 's/.*slice //; s/ .*//'}",
    "g5=osprey^`{echo $s5 $sz | awk '{print int($1/$2)}'}; echo other $g5",
-   "auth/none /usr/glenda/ring9 $g5 $sz | sed 1q",
-   "for(c in 71 72 75) echo exit $c >/n/osprey/ctl"],
+   "auth/none /usr/glenda/ring9 $g5 $sz | sed 1q"],
   "segattach"),
+ # the other half of the same rule: a container's memory is also for the
+ # process bound to it and the processes that one started, which is how
+ # a container reaches its own slice before anybody has been named.  The
+ # container is glenda's and the process is none's, so nothing but the
+ # parent chain can let it in.
+ ("a process the container's own started, reaching it though it is not "
+  "the container's user",
+  # none writes nowhere glenda's home allows, so the two share a
+  # directory made for it
+  ["rm -rf /usr/glenda/nw; mkdir /usr/glenda/nw; chmod 777 /usr/glenda/nw",
+   "echo '#!/bin/rc' >/usr/glenda/nonetry",
+   "echo 'echo '^'$pid'^' >/usr/glenda/nw/pid' >>/usr/glenda/nonetry",
+   "echo 'sleep 6' >>/usr/glenda/nonetry",
+   "echo /usr/glenda/ring9 $g5 $sz '>[2=1] >/usr/glenda/nw/out' "
+   ">>/usr/glenda/nonetry",
+   "chmod 755 /usr/glenda/nonetry",
+   "auth/none /usr/glenda/nonetry &",
+   "sleep 2; echo bindproc 75 `{cat /usr/glenda/nw/pid} >/n/osprey/ctl",
+   "sleep 9; sed 1q /usr/glenda/nw/out"],
+  "mapped"),
+ ("with the slots given back",
+  ["for(c in 71 72 75) echo exit $c >/n/osprey/ctl; echo gone"],
+  "gone"),
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string
