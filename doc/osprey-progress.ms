@@ -56,11 +56,33 @@ interface takes its receive buffers from the container's own slice, so a
 packet is written straight into memory the container has mapped and
 reading one is being told where it is.
 .PP
+.B "The packet path, the other way."
+A container that has been given an interface also fills transmit buffers
+in its own slice, and
+.CW send
+names one and a length: the card reads the frame out of the slice and
+nothing copies it.  Which buffers may be written is a word of bits in
+the map that the kernel keeps, and a semaphore says when one comes back,
+so a container with all of them in flight waits in the same
+.CW select
+as everything else.  The source address is the kernel's to write.
+.PP
+.B "A protocol stack outside the kernel."
+.CW os/osprey/cmd/netsrv.c
+answers ARP and ICMP echo for an address the kernel has never heard of,
+over those buffers, and a second machine on the wire pings it.  It is
+the talk's driver task with all three of its arms and nothing above
+icmp: what it demonstrates is that the path is real, not that there is a
+usable stack outside the kernel.
+.PP
 .B "A service outside the kernel."
 A container may name another as its server.  Requests the kernel does not
 implement are put on the server's ring with the container and sequence
 they came from, an ordinary process takes them and answers them through
-the same rings and the same select, and the answer is routed home.
+the same rings and the same select, and the answer is routed home.  The
+server forks a process with a name space of its own for each container
+it answers for, so what one container binds is not what another sees and
+not what the server sees.
 .PP
 .B "\[*p]p."
 The session protocol: sessions that outlive the connection carrying them,
@@ -163,14 +185,16 @@ times what it costs now.
 What proves it
 .PP
 .CW scripts/osprey-check.py
-boots one kernel and
+boots one kernel,
 .CW scripts/osprey-check-wire.py
-boots two on one wire; between them they ask for everything above and
-say
+boots two on one wire, and
+.CW scripts/osprey-check-net.py
+boots two more and pings a container's own protocol stack from the
+second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Forty-seven lines, all
+a line at a time.  Fifty-eight lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
