@@ -646,14 +646,22 @@ It is not a library operating system in the sense the plan means.  A
 Plan 9 kernel is still underneath, answering what the policy layer does
 not; this is that kernel's request ABI made into a library, so that a
 program need not work out the span's shape for itself.
-None of these programs can do floating point.  They supply their own
-.I _main
-because the C library's cannot be linked with them, and without it a
-double is nought: a program that says
-.B "m = 1.5"
-and prints the bits of
-.B m
-prints sixteen zeroes.  It is not the kernel \-
+A double does not work in these programs.  What was measured: a variable
+set to 1.5 reads back as sixteen zero bits, whether the 1.5 came from a
+literal or from the program's own data;
+.B a
+.B >
+.B 1.0
+is false and
+.B b
+.B ==
+.B 3.0
+is true at the same time, which is not two wrong answers but a
+comparison that is not happening; and a cast to an integer gives nought.
+Some constant expressions are folded and come out right, which is what
+makes it look as though arithmetic works.
+.PP
+It is not the kernel.
 .I awk
 on the same machine prints
 .B 3.000000
@@ -663,8 +671,17 @@ for
 .B 1.5+1.5
 and
 .BR exp(1) .
-Nothing here wants floating point, and this is written down so that the
-next thing that does knows to find out why before trusting a number.
+What it looks like is the library: these programs supply their own
+.I _main
+because
+.B /Osprey/amd64/lib/libc.a
+holds one this loader will not read \-
+.B "opcode out of range 678, probably not a .6 file"
+\- and that library is not built by this tree at all but left in it, so
+whatever its startup arranges, a program here does not get.  Nothing in
+.B /os/osprey/cmd
+wants a double, and this is written down so the next thing that does
+knows to settle it before trusting a number.
 .PP
 .I ring
 is deliberately not built on it: it exists to show the ring unmediated,

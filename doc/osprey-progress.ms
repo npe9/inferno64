@@ -1225,13 +1225,22 @@ leave
 to whoever can run a number through it, and not a reason to think it is
 absent.
 .PP
-Trying to run one from here is what turned up something else: an Osprey
-command cannot do floating point at all.  These programs supply their
-own
-.CW _main
-because the C library's cannot be linked with them, and without it a
-double is nought \- a program that sets a variable to 1.5 and prints its
-bits prints sixteen zeroes.  The kernel is not at fault:
+Trying to run one from here turned up something else, and getting it
+right took three goes.  A double does not work in an Osprey command: a
+variable set to 1.5 reads back as sixteen zero bits, from a literal or
+from the program's own data alike;
+.CW "a > 1.0"
+is false and
+.CW "b == 3.0"
+is true in the same run, which is not two wrong answers but a comparison
+that is not happening; a cast to an integer gives nought.  The first
+version of this said the programs cannot do floating point at all, and
+the first probe said
+.CW "arithmetic yes" ,
+both of which were wrong \- some constant expressions fold and come out
+right, which is what makes it look as though arithmetic works.
+.PP
+It is not the kernel:
 .CW awk
 on the same machine gets
 .CW 3.000000
@@ -1241,9 +1250,17 @@ out of
 .CW 1.5+1.5
 and
 .CW exp(1) .
-It is written down in
-.I osprey (3)
-so the next program that wants a number knows to find out why first.
+What it looks like is the library.  These programs supply their own
+.CW _main
+because the one in
+.CW Osprey/amd64/lib/libc.a
+will not load \-
+.CW "opcode out of range 678, probably not a .6 file"
+\- and that library is not built by this tree at all: it is untracked,
+dated before this work began, and one of its members is in a format this
+loader does not read.  So it is the same hole as the 386 kernel's, seen
+from the other side: there is no Osprey userland built here, only one
+left here.
 .PP
 Environments were the other half of the question and are a shorter
 answer: nothing in
