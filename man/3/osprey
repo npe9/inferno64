@@ -594,6 +594,35 @@ The message must be stored before the index that publishes it, and the
 index read before the message it refers to; the kernel side uses
 .IR coherence (10.2)
 for that, and a machine that reorders stores needs the same on this side.
+.SS The span as a library
+.PP
+.B /os/osprey/libosprey9
+is all of the above as C: attach a slice and check it, put a request on
+the ring and take its answer, build the arms and wait on them, and the
+file operations written the way a program would rather write them.
+.I p9srv
+and
+.I netsrv
+are built on it.  What matters about it is not the convenience: the map,
+the ring head, the message, the arm and the semaphore had a copy in each
+of those programs, and a field added to the map in the kernel had to be
+added by hand to each copy or that program would read the wrong bytes,
+which is a bug nothing catches.  The library includes the kernel's own
+declarations \- 
+.B /os/osprey/port/ospreyabi.h
+for the map and the arm,
+.B /os/osprey/policy
+for the message, the ring head and the semaphore \- installed into
+.B /Osprey/include/osprey
+from the one place each is written.
+.PP
+It is not a library operating system in the sense the plan means.  A
+Plan 9 kernel is still underneath, answering what the policy layer does
+not; this is that kernel's request ABI made into a library, so that a
+program need not work out the span's shape for itself.
+.I ring
+is deliberately not built on it: it exists to show the ring unmediated,
+and would show nothing if it used something else to work it.
 .SS How big a slice is
 .PP
 Five of the numbers above are read from
@@ -862,6 +891,8 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/cmd/p9srv.c
 .br
 .B /os/osprey/cmd/netsrv.c
+.br
+.B /os/osprey/libosprey9
 .br
 .B /os/osprey/adapter/ospreyrt.c
 .br

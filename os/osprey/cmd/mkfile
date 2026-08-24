@@ -5,13 +5,21 @@ OBJTYPE=amd64
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
 BIN=$ROOT/Osprey/$OBJTYPE/bin
+# the container-side library, and the headers it installs
+O9LIB=$ROOT/Osprey/$OBJTYPE/lib/libosprey9.a
+CFLAGS=$CFLAGS -I$ROOT/Osprey/include/osprey
 TARG=ring pip mig p9srv netsrv
 OFILES=ring.$O pip.$O mig.$O p9srv.$O netsrv.$O
 
-all:V:	$TARG
+all:V:	o9lib $TARG
 
-install:V: $TARG
+install:V: o9lib $TARG
 	cp $TARG $BIN/
+
+# the container-side library and its headers, which these are built
+# against: there is no mkfile above this one to order the two
+o9lib:V:
+	cd $ROOT/os/osprey/libosprey9; mk install
 
 ring:	ring.$O
 	$LD -l -o $target ring.$O $ROOT/Osprey/$OBJTYPE/lib/libc.a
@@ -23,10 +31,10 @@ mig:	mig.$O
 	$LD -l -o $target mig.$O $ROOT/Osprey/$OBJTYPE/lib/libc.a
 
 p9srv:	p9srv.$O
-	$LD -l -o $target p9srv.$O $ROOT/Osprey/$OBJTYPE/lib/libc.a
+	$LD -l -o $target p9srv.$O $O9LIB $ROOT/Osprey/$OBJTYPE/lib/libc.a
 
 netsrv:	netsrv.$O
-	$LD -l -o $target netsrv.$O $ROOT/Osprey/$OBJTYPE/lib/libc.a
+	$LD -l -o $target netsrv.$O $O9LIB $ROOT/Osprey/$OBJTYPE/lib/libc.a
 
 %.$O:	%.c
 	$CC $CFLAGS $stem.c

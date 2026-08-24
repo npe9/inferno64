@@ -49,66 +49,16 @@
  */
 #include <u.h>
 #include <libc.h>
-
-typedef struct Ospreymap Ospreymap;
-typedef struct Queue Queue;
-typedef struct Message Message;
-typedef struct Arm Arm;
-typedef struct Client Client;
+#include <osprey9.h>
 
 enum {
-	Ospreymagic	= 0x4f53505259ULL,
-	Nword		= 5,
-	Narm		= 8,
 	Nfd		= 16,
 	Nclient		= 16,
 	Nslice		= 16,	/* slices to look through by default */
 	Namelen		= 256,
 };
 
-/*
- * The head of every slice.  Only the fields up to selected are read
- * here, and they must stay in the order osprey.h gives them; adding a
- * field there before one of these moves it silently.
- */
-struct Ospreymap {
-	uvlong	magic;
-	uvlong	id;
-	uvlong	size;
-	uvlong	msgsize;
-	uvlong	requestqueue;
-	uvlong	replyqueue;
-	uvlong	outputqueue;
-	uvlong	request;
-	uvlong	reply;
-	uvlong	output;
-	uvlong	data;
-	uvlong	datalen;
-	uvlong	sem;
-	uvlong	nsem;
-	uvlong	selected;
-};
-
-struct Queue {
-	vlong	message;
-	uvlong	size;
-	uvlong	put;
-	uvlong	get;
-};
-
-struct Message {
-	uvlong	op;
-	uvlong	sequence;
-	uvlong	container;
-	uvlong	arg[Nword];
-};
-
-struct Arm {
-	uvlong	op;
-	uvlong	obj;
-	uvlong	buf;
-};
-
+typedef struct Client Client;
 /*
  * A container this server answers for.  Each has a process of its own,
  * forked with a name space of its own, and the pipe by which the process
@@ -123,149 +73,28 @@ struct Client {
 	int	mine;		/* set in the process that answers for it */
 };
 
-enum {				/* arm operations, as ospreyselect reads them */
-	OSlast,
-	OSnoop,
-	OSget,
-	OSput,
-	OSdown,
-};
-
-enum {				/* request operations, as syscall.h orders them */
-	Opread,
-	Opwrite,
-	Opopen,
-	Opclose,
-	Opwait,
-	Opsend,
-	Oprecv,
-	Opstat,
-	Opbind,
-	Opalloc,
-	Opyield,
-	Oppoll,
-	Opgone,			/* not a request: a container has gone */
-};
-
-enum {				/* reply status, as syscall.h orders it */
-	Stpending,
-	Stdone,
-	Sterror,
-};
-
 enum {
 	Qrequests,
 	Qreplies,
 };
 
-static char obuf[512];
-static int on;
-static int verbose;
+static Osprey o;
 
+static int verbose;
 static Client client[Nclient];
 static int nclient;
 
 static void childloop(Client*, int);
 
-static uvlong dataoff;		/* from this server's own map, never a client's */
-static uvlong datalen;
 static uvlong slicesize;
 static int nslice = Nslice;
-static int ctlfd = -1;
-static uvlong myid;
-
-static void
-flush(void)
-{
-	if(on > 0)
-		write(1, obuf, on);
-	on = 0;
-}
-
-static void
-outs(char *s)
-{
-	while(*s != '\0' && on < sizeof obuf - 1)
-		obuf[on++] = *s++;
-}
-
-static void
-outd(uvlong v)
-{
-	char b[24];
-	int i;
-
-	i = sizeof b;
-	b[--i] = '\0';
-	do {
-		b[--i] = '0' + (int)(v % 10);
-		v /= 10;
-	} while(v != 0 && i > 0);
-	outs(b+i);
-}
-
-static void
-die(char *s)
-{
-	outs("p9srv: ");
-	outs(s);
-	outs("\n");
-	flush();
-	exits(s);
-}
-
-static uvlong
-num(char *s)
-{
-	uvlong v;
-
-	v = 0;
-	while(*s >= '0' && *s <= '9')
-		v = v*10 + (*s++ - '0');
-	return v;
-}
-
-static char*
-catstr(char *d, char *s)
-{
-	while(*s != '\0')
-		*d++ = *s++;
-	return d;
-}
-
-static char*
-catnum(char *d, uvlong v)
-{
-	char b[24];
-	int i;
-
-	i = sizeof b;
-	b[--i] = '\0';
-	do {
-		b[--i] = '0' + (int)(v % 10);
-		v /= 10;
-	} while(v != 0 && i > 0);
-	return catstr(d, b+i);
-}
-
 /*
- * Wait on the arms just built, or hand back what they hold.  A select is
- * the only trap this program takes: everything it does with the message
- * is done in the mapped slice.
+ * From this server's own map, never a client's: a container may write
+ * every byte of its map, and a server that believed one would be told
+ * to read and write wherever that container liked.
  */
-static int
-selectarms(int narm)
-{
-	char buf[64], *e;
-
-	e = buf;
-	e = catstr(e, "select ");
-	e = catnum(e, myid);
-	e = catstr(e, " 0 ");
-	e = catnum(e, narm);
-	e = catstr(e, "\n");
-	return write(ctlfd, buf, e-buf) < 0 ? -1 : 0;
-}
+static uvlong dataoff;
+static uvlong datalen;
 
 /*
  * Which slice a container's memory is, asked of the kernel.  The id a
@@ -301,11 +130,11 @@ slotof(uvlong id)
 			e = p + strlen(p);	/* the last line ends the walk */
 		if(strncmp(p, "proc ", 5) != 0)
 			continue;
-		if(num(p+5) != id)
+		if(o9num(p+5) != id)
 			continue;
 		for(l = p+5; *l != '\0'; l++)
 			if(strncmp(l, " slice ", 7) == 0){
-				off = num(l+7);
+				off = o9num(l+7);
 				if(slicesize == 0)
 					return -1;
 				return (int)(off / slicesize);
@@ -338,8 +167,8 @@ clientof(uvlong id)
 		return nil;
 	if((slot = slotof(id)) < 0 || slot >= nslice)
 		return nil;
-	e = catstr(name, "osprey");
-	e = catnum(e, (uvlong)slot);
+	e = o9catstr(name, "osprey");
+	e = o9catnum(e, (uvlong)slot);
 	*e = '\0';
 	/*
 	 * The slice is attached before the fork and not after: a segment
@@ -375,8 +204,8 @@ clientof(uvlong id)
 	case 0:
 		c->mine = 1;
 		close(pfd[0]);
-		if(ctlfd >= 0)
-			close(ctlfd);
+		if(o.ctlfd >= 0)
+			close(o.ctlfd);
 		/* the pipes of every other container this server answers for */
 		for(i = 0; i < Nclient; i++)
 			if(&client[i] != c && client[i].pipe >= 0)
@@ -387,8 +216,8 @@ clientof(uvlong id)
 	close(pfd[1]);
 	c->pipe = pfd[0];
 	if(verbose){
-		outs("serving container "); outd(id);
-		outs(" in "); outs(name); outs("\n"); flush();
+		o9outs("serving container "); o9outd(id);
+		o9outs(" in "); o9outs(name); o9outs("\n"); o9flush();
 	}
 	return c;
 }
@@ -438,56 +267,56 @@ answer(Client *c, Message *mp)
 	int i, fd;
 
 	switch(mp->op){
-	case Opopen:
+	case ReqOpen:
 		if((a = clientname(c, mp->arg[2])) == nil)
-			return Sterror;
+			return ReplyError;
 		for(i = 0; i < Nfd; i++)
 			if(c->fd[i] < 0)
 				break;
 		if(i == Nfd)
-			return Sterror;
+			return ReplyError;
 		if((fd = open(a, (int)mp->arg[3])) < 0)
-			return Sterror;
+			return ReplyError;
 		c->fd[i] = fd;
 		mp->arg[2] = i;
 		if(verbose){
-			outs("open '"); outs(a); outs("' -> "); outd(i);
-			outs("\n"); flush();
+			o9outs("open '"); o9outs(a); o9outs("' -> "); o9outd(i);
+			o9outs("\n"); o9flush();
 		}
-		return Stdone;
+		return ReplyDone;
 
-	case Opread:
-	case Opwrite:
+	case ReqRead:
+	case ReqWrite:
 		i = (int)mp->arg[2];
 		if(i < 0 || i >= Nfd || c->fd[i] < 0)
-			return Sterror;
+			return ReplyError;
 		off = mp->arg[3];
 		cnt = mp->arg[4];
 		if((a = clientdata(c, off, cnt)) == nil)
-			return Sterror;
-		if(mp->op == Opread)
+			return ReplyError;
+		if(mp->op == ReqRead)
 			n = read(c->fd[i], a, (long)cnt);
 		else
 			n = write(c->fd[i], a, (long)cnt);
 		if(n < 0)
-			return Sterror;
+			return ReplyError;
 		mp->arg[2] = (uvlong)n;
-		return Stdone;
+		return ReplyDone;
 
-	case Opstat:
+	case ReqStat:
 		i = (int)mp->arg[2];
 		if(i < 0 || i >= Nfd || c->fd[i] < 0)
-			return Sterror;
+			return ReplyError;
 		off = mp->arg[3];
 		cnt = mp->arg[4];
 		if((a = clientdata(c, off, cnt)) == nil)
-			return Sterror;
+			return ReplyError;
 		if((n = fstat(c->fd[i], (uchar*)a, (long)cnt)) < 0)
-			return Sterror;
+			return ReplyError;
 		mp->arg[2] = (uvlong)n;
-		return Stdone;
+		return ReplyDone;
 
-	case Opbind:
+	case ReqBind:
 		/*
 		 * The kernel refuses this: a container has no name space of
 		 * its own there, only the name table the policy layer keeps.
@@ -499,24 +328,24 @@ answer(Client *c, Message *mp)
 		 * device.
 		 */
 		if((a = clientname(c, mp->arg[2])) == nil)
-			return Sterror;
+			return ReplyError;
 		if((e = clientname(c, mp->arg[3])) == nil)
-			return Sterror;
+			return ReplyError;
 		if(bind(a, e, (int)mp->arg[4]) < 0)
-			return Sterror;
+			return ReplyError;
 		if(verbose){
-			outs("bind '"); outs(a); outs("' '"); outs(e);
-			outs("'\n"); flush();
+			o9outs("bind '"); o9outs(a); o9outs("' '"); o9outs(e);
+			o9outs("'\n"); o9flush();
 		}
-		return Stdone;
+		return ReplyDone;
 
-	case Opclose:
+	case ReqClose:
 		i = (int)mp->arg[2];
 		if(i < 0 || i >= Nfd || c->fd[i] < 0)
-			return Sterror;
+			return ReplyError;
 		close(c->fd[i]);
 		c->fd[i] = -1;
-		return Stdone;
+		return ReplyDone;
 	}
 	/*
 	 * A personality answers what it implements and says so about the
@@ -524,7 +353,7 @@ answer(Client *c, Message *mp)
 	 * named this server named it for everything the kernel does not
 	 * keep for itself.
 	 */
-	return Sterror;
+	return ReplyError;
 }
 
 /*
@@ -576,8 +405,8 @@ gone(uvlong id)
 		c->base = nil;
 		c->id = 0;
 		if(verbose){
-			outs("container "); outd(id);
-			outs(" gone\n"); flush();
+			o9outs("container "); o9outd(id);
+			o9outs(" gone\n"); o9flush();
 		}
 		return;
 	}
@@ -588,56 +417,41 @@ serve(Message *mp)
 {
 	Client *c;
 
-	if(mp->op == Opgone){
+	if(mp->op == ReqGone){
 		gone(mp->container);
 		return -1;
 	}
 	if((c = clientof(mp->container)) == nil)
-		return Sterror;
+		return ReplyError;
 	if(write(c->pipe, mp, sizeof *mp) != sizeof *mp)
-		return Sterror;
+		return ReplyError;
 	if(readn(c->pipe, mp, sizeof *mp) != sizeof *mp)
-		return Sterror;
+		return ReplyError;
 	return (int)mp->arg[0];
 }
 
 static void
 srvmain(int argc, char **argv)
 {
-	uchar *base;
-	Ospreymap *m;
-	Arm *a;
 	Message *mp;
-	uvlong bufoff;
 	int st;
 
 	if(argc < 3)
-		die("usage: p9srv segment size [nslice]");
-	slicesize = num(argv[2]);
+		o9die("usage: p9srv segment size [nslice]");
+	slicesize = o9num(argv[2]);
 	if(argc > 3)
-		nslice = (int)num(argv[3]);
+		nslice = (int)o9num(argv[3]);
 	if(argc > 4 && strcmp(argv[4], "-v") == 0)
 		verbose = 1;
 
-	base = (uchar*)segattach(0, argv[1], 0, slicesize);
-	if(base == (uchar*)-1)
-		die("segattach failed");
-	m = (Ospreymap*)base;
-	if(m->magic != Ospreymagic)
-		die("no container mapped there");
-	myid = m->id;
-	dataoff = m->data;
-	datalen = m->datalen;
+	if(o9attach(&o, argv[1], slicesize) < 0)
+		o9die(o.err);
+	dataoff = o.map->data;
+	datalen = o.map->datalen;
+	mp = o9armmsg(&o);
 
-	if((ctlfd = open("/n/osprey/ctl", OWRITE)) < 0)
-		die("cannot open /n/osprey/ctl");
-
-	a = (Arm*)(base + dataoff);
-	bufoff = (uvlong)(Narm*sizeof(Arm));
-	mp = (Message*)(base + dataoff + bufoff);
-
-	outs("p9srv container "); outd(myid);
-	outs(" serving\n"); flush();
+	o9outs("p9srv container "); o9outd(o.id);
+	o9outs(" serving\n"); o9flush();
 
 	for(;;){
 		/*
@@ -646,11 +460,10 @@ srvmain(int argc, char **argv)
 		 * select over several; a personality has only the one
 		 * source, so this is that shape with one arm in it.
 		 */
-		a[0].op = OSget; a[0].obj = Qrequests; a[0].buf = bufoff;
-		a[1].op = OSlast; a[1].obj = 0; a[1].buf = 0;
-		if(selectarms(2) < 0)
-			die("select for a request failed");
-		if(m->selected == ~0ULL)
+		o9arm(&o, 0, OSget, Qrequests);
+		if((st = o9select(&o, 1)) == -1)
+			o9die("the kernel will not wait for this container");
+		if(st < 0)
 			continue;
 
 		if((st = serve(mp)) < 0)
@@ -662,10 +475,9 @@ srvmain(int argc, char **argv)
 		 * with; that is how the kernel knows whose it is.
 		 */
 		mp->arg[0] = (uvlong)st;
-		a[0].op = OSput; a[0].obj = Qreplies; a[0].buf = bufoff;
-		a[1].op = OSlast; a[1].obj = 0; a[1].buf = 0;
-		if(selectarms(2) < 0)
-			die("select to answer failed");
+		o9arm(&o, 0, OSput, Qreplies);
+		if(o9select(&o, 1) < 0)
+			o9die("the answer could not be put back");
 	}
 }
 

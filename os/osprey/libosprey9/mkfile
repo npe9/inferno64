@@ -1,0 +1,56 @@
+<../../../mkconfig
+
+# The container-side library.  It is compiled against the Osprey user
+# headers, not the kernel ones: a program that links it is an ordinary
+# process that has mapped a slice.
+SYSTARG=Osprey
+OBJTYPE=amd64
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+LIB=$ROOT/Osprey/$OBJTYPE/lib/libosprey9.a
+INC=$ROOT/Osprey/include
+# the policy headers include one another by bare name, as they do in the
+# kernel, so the directory they are installed in has to be searched
+CFLAGS=$CFLAGS -I$INC/osprey
+OFILES=osprey9.$O
+
+# The declarations of everything in the shared span, installed from the
+# one place each is written: nothing here is a copy that has to be kept
+# in step by hand.
+HFILES=\
+	$INC/osprey9.h\
+	$INC/osprey/ospreyabi.h\
+	$INC/osprey/queue.h\
+	$INC/osprey/syscall.h\
+	$INC/osprey/sem.h\
+
+all install:V: $HFILES $OFILES $LIB
+
+$LIB: $OFILES
+	iar vu $target $prereq
+
+$INC/osprey9.h: osprey9.h
+	mkdir -p $INC
+	cp osprey9.h $target
+
+$INC/osprey/ospreyabi.h: $ROOT/os/osprey/port/ospreyabi.h
+	mkdir -p $INC/osprey
+	cp $prereq $target
+
+$INC/osprey/queue.h: $ROOT/os/osprey/policy/queue.h
+	mkdir -p $INC/osprey
+	cp $prereq $target
+
+$INC/osprey/syscall.h: $ROOT/os/osprey/policy/syscall.h
+	mkdir -p $INC/osprey
+	cp $prereq $target
+
+$INC/osprey/sem.h: $ROOT/os/osprey/policy/sem.h
+	mkdir -p $INC/osprey
+	cp $prereq $target
+
+osprey9.$O: osprey9.c $HFILES
+	$CC $CFLAGS osprey9.c
+
+clean:V:
+	rm -f *.[$OS]

@@ -22,192 +22,24 @@
  * to the ether control message.  The address is the one this program
  * answers for.
  *
- * As with ring(1) and p9srv(1) the program uses only the system calls
- * out of the library and formats its own output: the library here was
- * built by a newer compiler than this loader reads.
+ * Everything about the shape of the span, and the code that works it,
+ * is in os/osprey/libosprey9: the structures here are the kernel's own
+ * declarations rather than a copy of them.  The program still formats
+ * its own output, through the library's o9out..., because the C
+ * library's print cannot be linked with these.
  */
 #include <u.h>
 #include <libc.h>
-
-typedef struct Ospreymap Ospreymap;
-typedef struct Queue Queue;
-typedef struct Message Message;
-typedef struct Arm Arm;
+#include <osprey9.h>
 
 enum {
-	Ospreymagic	= 0x4f53505259ULL,
-	Nword		= 5,
-	Narm		= 8,
 	Eaddrlen	= 6,
 	Ehdrlen		= 14,
 };
 
-struct Ospreymap {
-	uvlong	magic;
-	uvlong	id;
-	uvlong	size;
-	uvlong	msgsize;
-	uvlong	requestqueue;
-	uvlong	replyqueue;
-	uvlong	outputqueue;
-	uvlong	request;
-	uvlong	reply;
-	uvlong	output;
-	uvlong	data;
-	uvlong	datalen;
-	uvlong	sem;
-	uvlong	nsem;
-	uvlong	selected;
-	uvlong	pktbuf;
-	uvlong	npktbuf;
-	uvlong	pktbufsize;
-	uvlong	page;
-	uvlong	npage;
-	uvlong	maxpage;
-	uvlong	pagesize;
-	uvlong	txbuf;
-	uvlong	ntxbuf;
-	uvlong	txbufsize;
-	uvlong	txavail;
-};
-
-struct Queue {
-	vlong	message;
-	uvlong	size;
-	uvlong	put;
-	uvlong	get;
-};
-
-struct Message {
-	uvlong	op;
-	uvlong	sequence;
-	uvlong	container;
-	uvlong	arg[Nword];
-};
-
-struct Arm {
-	uvlong	op;
-	uvlong	obj;
-	uvlong	buf;
-};
-
-enum {				/* arm operations */
-	OSlast,
-	OSnoop,
-	OSget,
-	OSput,
-	OSdown,
-};
-
-enum {				/* request operations, as syscall.h orders them */
-	Opread, Opwrite, Opopen, Opclose, Opwait, Opsend,
-	Oprecv, Opstat, Opbind, Opalloc, Opyield, Oppoll,
-};
-
-enum {				/* reply status */
-	Stpending, Stdone, Sterror, Stblocked, Stretry,
-};
-
-static char obuf[512];
-static int on;
-
-static uchar *base;
-static Ospreymap *map;
-static Queue *rq, *pq;
-static Message *rm, *pm;
-static int ctlfd = -1;
-static uvlong myid;
+static Osprey o;
 static uchar myea[Eaddrlen];
 static uchar myip[4];
-
-
-static void
-flush(void)
-{
-	if(on > 0)
-		write(1, obuf, on);
-	on = 0;
-}
-
-static void
-outs(char *s)
-{
-	while(*s != '\0' && on < sizeof obuf - 1)
-		obuf[on++] = *s++;
-}
-
-static void
-outd(uvlong v)
-{
-	char b[24];
-	int i;
-
-	i = sizeof b;
-	b[--i] = '\0';
-	do {
-		b[--i] = '0' + (int)(v % 10);
-		v /= 10;
-	} while(v != 0 && i > 0);
-	outs(b+i);
-}
-
-static void
-outhex(uvlong v, int digits)
-{
-	char b[20];
-	int i;
-
-	for(i = digits; i > 0; i--){
-		b[i-1] = "0123456789abcdef"[v & 0xf];
-		v >>= 4;
-	}
-	b[digits] = '\0';
-	outs(b);
-}
-
-static void
-die(char *s)
-{
-	outs("netsrv: ");
-	outs(s);
-	outs("\n");
-	flush();
-	exits(s);
-}
-
-static uvlong
-num(char *s)
-{
-	uvlong v;
-
-	v = 0;
-	while(*s >= '0' && *s <= '9')
-		v = v*10 + (*s++ - '0');
-	return v;
-}
-
-static char*
-catstr(char *d, char *s)
-{
-	while(*s != '\0')
-		*d++ = *s++;
-	return d;
-}
-
-static char*
-catnum(char *d, uvlong v)
-{
-	char b[24];
-	int i;
-
-	i = sizeof b;
-	b[--i] = '\0';
-	do {
-		b[--i] = '0' + (int)(v % 10);
-		v /= 10;
-	} while(v != 0 && i > 0);
-	return catstr(d, b+i);
-}
 
 static int
 hexval(int c)
@@ -251,7 +83,7 @@ findea(void)
 			e = p + strlen(p);
 		if(strncmp(p, "packets ", 8) != 0)
 			continue;
-		if(num(p+8) != myid)
+		if(o9num(p+8) != o.id)
 			continue;
 		for(l = p+8; *l != '\0'; l++){
 			if(strncmp(l, " ea ", 4) != 0)
@@ -279,7 +111,7 @@ parseip4(char *s, uchar *to)
 	int i;
 
 	for(i = 0; i < 4; i++){
-		v = num(s);
+		v = o9num(s);
 		if(v > 255)
 			return -1;
 		to[i] = (uchar)v;
@@ -292,54 +124,6 @@ parseip4(char *s, uchar *to)
 		}
 	}
 	return 0;
-}
-
-/*
- * Wait on the arms just built.  This is the only trap the program
- * takes: taking a packet, building an answer and handing it back are
- * all done in the mapped slice.
- */
-static int
-selectarms(int narm)
-{
-	char buf[64], *e;
-
-	e = buf;
-	e = catstr(e, "select ");
-	e = catnum(e, myid);
-	e = catstr(e, " 0 ");
-	e = catnum(e, narm);
-	e = catstr(e, "\n");
-	return write(ctlfd, buf, e-buf) < 0 ? -1 : 0;
-}
-
-/* put one request on this container's own ring and wait for its answer */
-static int
-ask(uvlong op, uvlong a0, uvlong a1, uvlong a2, Message *rep)
-{
-	Message msg;
-	int i;
-
-	if(rq->put - rq->get >= rq->size)
-		return -1;
-	memset(&msg, 0, sizeof msg);
-	msg.op = op;
-	msg.sequence = rq->put + 1;
-	msg.container = myid;
-	msg.arg[2] = a0;
-	msg.arg[3] = a1;
-	msg.arg[4] = a2;
-	rm[rq->put % rq->size] = msg;
-	rq->put++;
-	for(i = 0; i < 200; i++){
-		if(pq->put != pq->get){
-			*rep = pm[pq->get % pq->size];
-			pq->get++;
-			return 0;
-		}
-		sleep(5);
-	}
-	return -1;
 }
 
 static ushort
@@ -384,8 +168,8 @@ freebuf(void)
 	uvlong avail;
 	int i;
 
-	avail = map->txavail;
-	for(i = 0; i < (int)map->ntxbuf && i < 64; i++)
+	avail = o.map->txavail;
+	for(i = 0; i < (int)o.map->ntxbuf && i < 64; i++)
 		if(avail & (1ULL<<i))
 			return i;
 	return -1;
@@ -396,15 +180,10 @@ sendbuf(int bi, long len)
 {
 	Message rep;
 
-	if(ask(Opsend, (uvlong)bi, (uvlong)len, 0, &rep) < 0){
-		outs("netsrv: no answer to send\n");
-		flush();
-		return -1;
-	}
-	if(rep.arg[0] != Stdone){
-		outs("netsrv: send status "); outd(rep.arg[0]);
-		outs(" why "); outd(rep.arg[2]); outs("\n");
-		flush();
+	if(o9call(&o, ReqSend, (uvlong)bi, (uvlong)len, 0, &rep) < 0){
+		o9outs("netsrv: send refused, status "); o9outd(rep.arg[0]);
+		o9outs(" why "); o9outd(rep.arg[2]); o9outs("\n");
+		o9flush();
 		return -1;
 	}
 	return 0;
@@ -432,12 +211,12 @@ answerarp(uchar *f, long n)
 	if(memcmp(a+24, myip, 4) != 0)			/* not for us */
 		return 0;
 	if((bi = freebuf()) < 0){
-		outs("netsrv: no free transmit buffer for arp\n");
-		flush();
+		o9outs("netsrv: no free transmit buffer for arp\n");
+		o9flush();
 		return 0;
 	}
 
-	t = base + map->txbuf + (uvlong)bi*map->txbufsize;
+	t = o.base + o.map->txbuf + (uvlong)bi*o.map->txbufsize;
 	memmove(t, a+8, Eaddrlen);			/* to whoever asked */
 	memset(t+Eaddrlen, 0, Eaddrlen);		/* the kernel fills this */
 	hnputs(t+12, 0x0806);
@@ -481,14 +260,14 @@ answerping(uchar *f, long n)
 		return 0;
 	iclen = iplen - hl;
 	if((bi = freebuf()) < 0){
-		outs("netsrv: no free transmit buffer for echo\n");
-		flush();
+		o9outs("netsrv: no free transmit buffer for echo\n");
+		o9flush();
 		return 0;
 	}
-	if((uvlong)(Ehdrlen + 20 + iclen) > map->txbufsize)
+	if((uvlong)(Ehdrlen + 20 + iclen) > o.map->txbufsize)
 		return 0;
 
-	t = base + map->txbuf + (uvlong)bi*map->txbufsize;
+	t = o.base + o.map->txbuf + (uvlong)bi*o.map->txbufsize;
 	memmove(t, f+Eaddrlen, Eaddrlen);		/* back where it came from */
 	memset(t+Eaddrlen, 0, Eaddrlen);
 	hnputs(t+12, 0x0800);
@@ -514,55 +293,38 @@ answerping(uchar *f, long n)
 static void
 srvmain(int argc, char **argv)
 {
-	Arm *a;
 	Message rep;
-	uvlong bufoff, slicesize, off;
+	uvlong slicesize, off;
 	long n, got, arps, pings;
 	int rxsem, txsem, i;
 
 	if(argc < 6)
-		die("usage: netsrv segment size rxsem txsem a.b.c.d");
-	slicesize = num(argv[2]);
-	rxsem = (int)num(argv[3]);
-	txsem = (int)num(argv[4]);
+		o9die("usage: netsrv segment size rxsem txsem a.b.c.d");
+	slicesize = o9num(argv[2]);
+	rxsem = (int)o9num(argv[3]);
+	txsem = (int)o9num(argv[4]);
 	if(parseip4(argv[5], myip) < 0)
-		die("that is not an address");
-
-	base = (uchar*)segattach(0, argv[1], 0, slicesize);
-	if(base == (uchar*)-1)
-		die("segattach failed");
-	map = (Ospreymap*)base;
-	if(map->magic != Ospreymagic)
-		die("no container mapped there");
-	myid = map->id;
-	rq = (Queue*)(base + map->requestqueue);
-	pq = (Queue*)(base + map->replyqueue);
-	rm = (Message*)(base + map->request);
-	pm = (Message*)(base + map->reply);
-
-	if((ctlfd = open("/n/osprey/ctl", OWRITE)) < 0)
-		die("cannot open /n/osprey/ctl");
+		o9die("that is not an address");
+	if(o9attach(&o, argv[1], slicesize) < 0)
+		o9die(o.err);
 	if(findea() < 0)
-		die("this container has no interface");
+		o9die("this container has no interface");
 
-	a = (Arm*)(base + map->data);
-	bufoff = (uvlong)(Narm*sizeof(Arm));
-
-	outs("netsrv container "); outd(myid);
-	outs(" ea ");
+	o9outs("netsrv container "); o9outd(o.id);
+	o9outs(" ea ");
 	for(i = 0; i < Eaddrlen; i++){
-		outhex(myea[i], 2);
+		o9outhex(myea[i], 2);
 		if(i < Eaddrlen-1)
-			outs(":");
+			o9outs(":");
 	}
-	outs(" ip ");
+	o9outs(" ip ");
 	for(i = 0; i < 4; i++){
-		outd(myip[i]);
+		o9outd(myip[i]);
 		if(i < 3)
-			outs(".");
+			o9outs(".");
 	}
-	outs("\n");
-	flush();
+	o9outs("\n");
+	o9flush();
 
 	got = arps = pings = 0;
 	for(;;){
@@ -573,27 +335,24 @@ srvmain(int argc, char **argv)
 		 * requests above go on, and this program is the only one
 		 * putting them there.
 		 */
-		a[0].op = OSdown; a[0].obj = (uvlong)rxsem; a[0].buf = bufoff;
-		a[1].op = OSdown; a[1].obj = (uvlong)txsem; a[1].buf = bufoff;
-		a[2].op = OSlast; a[2].obj = 0; a[2].buf = 0;
-		if(selectarms(3) < 0)
-			die("select failed");
+		o9arm(&o, 0, OSdown, (uvlong)rxsem);
+		o9arm(&o, 1, OSdown, (uvlong)txsem);
 		/*
 		 * A transmit buffer coming back needs nothing done: the
 		 * kernel has already set its bit in the map.  The arm is
 		 * here so that a program with every buffer in flight waits
 		 * rather than spins.
 		 */
-		if(map->selected != 0)
+		if((i = o9select(&o, 2)) == -1)
+			o9die("the kernel will not wait for this container");
+		if(i != 0)
 			continue;
 
 		/*
 		 * Take the packet.  The reply says where in this slice the
 		 * card put it; the frame is read where it lies.
 		 */
-		if(ask(Oprecv, 0, 0, 0, &rep) < 0)
-			continue;
-		if(rep.arg[0] != Stdone)
+		if(o9call(&o, ReqRecv, 0, 0, 0, &rep) < 0)
 			continue;
 		off = rep.arg[2];
 		n = (long)rep.arg[3];
@@ -602,12 +361,12 @@ srvmain(int argc, char **argv)
 		got++;
 		if(n < Ehdrlen)
 			continue;
-		switch(nhgets(base + off + 12)){
+		switch(nhgets(o.base + off + 12)){
 		case 0x0806:
-			arps += answerarp(base + off, n);
+			arps += answerarp(o.base + off, n);
 			break;
 		case 0x0800:
-			pings += answerping(base + off, n);
+			pings += answerping(o.base + off, n);
 			break;
 		}
 		/*
@@ -616,11 +375,11 @@ srvmain(int argc, char **argv)
 		 * spends its time in the driver rather than answering.
 		 */
 		if((got % 16) == 0){
-			outs("netsrv "); outd(got);
-			outs(" frames, "); outd(arps);
-			outs(" arp, "); outd(pings);
-			outs(" echo\n");
-			flush();
+			o9outs("netsrv "); o9outd(got);
+			o9outs(" frames, "); o9outd(arps);
+			o9outs(" arp, "); o9outd(pings);
+			o9outs(" echo\n");
+			o9flush();
 		}
 	}
 }

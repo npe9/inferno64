@@ -477,6 +477,60 @@ no fragmentation, no UDP, no TCP \- so what it demonstrates is that the
 path is real and that the kernel needs to know nothing about it, not
 that there is a usable stack outside the kernel.
 .NH 1
+The span as a library
+.PP
+Three programs had a copy of the map, the ring head, the message, the
+arm and the semaphore, and each copy had to be kept in step with the
+kernel by hand: appending
+.CW txavail
+to the map meant appending it to
+.CW ring.c
+and to
+.CW netsrv.c
+as well, and a copy that had not been kept up would read the wrong bytes
+and say nothing about it.
+.CW os/osprey/libosprey9
+is the one place now.  It includes the kernel's own declarations rather
+than repeating them \-
+.CW os/osprey/port/ospreyabi.h ,
+which is the map and the arm split out of
+.CW os/osprey/port/osprey.h
+so that both sides can include it, and
+.CW os/osprey/policy
+for the message, the ring head and the semaphore \- and installs them
+into
+.CW Osprey/include/osprey
+from those files.  Over that it puts attaching a slice, submitting and
+collecting, building arms and waiting on them, the file operations, and
+the output and number formatting all three had written for themselves,
+since the C library's own print cannot be linked with these.
+.CW p9srv.c
+went from 687 lines to 497 and
+.CW netsrv.c
+from 639 to 396.
+.PP
+It is not a library operating system in the sense the plan means, and
+the section below that says so still says so.  A Plan 9 kernel is still
+underneath answering what the policy layer does not; this is that
+kernel's request ABI made into a library.
+.CW ring.c
+is deliberately left as it was: it exists to show the ring unmediated,
+and would show nothing if it used something else to work it.
+.PP
+Converting them found one bug that was not there before and one shape
+worth keeping.  The bug was mine: the old programs died when a select
+was refused and the new ones asked again, so a server whose container
+had been destroyed spun instead of stopping, and the round-trip
+measurement went from 48 microseconds to 2.4 milliseconds \- the check
+that measures it is what noticed.
+.CW o9select
+now tells a refusal apart from an empty wait, and a refusal is a reason
+to stop.  The shape worth keeping is that a server checks a client's
+request against
+.I its own
+map's bounds and never the client's, which is now said in the one place
+the bounds are kept rather than in each program.
+.NH 1
 The gaps, by why they are gaps
 .PP
 Five kinds, and they are not equally hard.  The first cannot be closed
