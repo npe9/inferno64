@@ -1950,6 +1950,31 @@ enum {
 	Snapchunk = 32,		/* bytes of data area to a line */
 };
 
+/*
+ * The counts, what has ever been given and what has ever been taken.
+ * The last two are accounting and go with it so that a container's
+ * account of itself does not restart at zero on another machine.
+ */
+static char*
+snapsem(char *p, char *e, Ospreyproc *q)
+{
+	Sem *sm;
+	ulong n;
+
+	if(q->map == nil)
+		return p;
+	ospreylocksem();
+	for(n = 0; n < nsem; n++){
+		sm = (Sem*)((uchar*)q->map + q->map->sem) + n;
+		if(sm->count == 0 && sm->given == 0 && sm->taken == 0)
+			continue;
+		p = seprint(p, e, "sem %lud %llud %llud %llud\n",
+			n, sm->count, sm->given, sm->taken);
+	}
+	ospreyunlocksem();
+	return p;
+}
+
 static char*
 snapdata(char *p, char *e, Ospreyproc *q)
 {
@@ -2040,9 +2065,24 @@ ospreysnapwrite(char *buf, long nbuf)
 		p = snapqueue(p, e, "requests", r->requests);
 		p = snapqueue(p, e, "replies", r->replies);
 		p = snapqueue(p, e, "output", r->output);
-		if(!queueempty(r->requests) || !queueempty(r->replies)
-		|| !queueempty(r->output))
-			p = snapdata(p, e, q);
+		/*
+		 * The data area whatever the rings hold.  It used to be
+		 * written only when a message was in flight, on the argument
+		 * that the data was there for the message to name; but the
+		 * area is the container's memory, and a container that had
+		 * built its select arms and was waiting on them lost them
+		 * for no saving at all -- snapdata skips a chunk that is
+		 * still zero, so an area nothing has written costs nothing.
+		 */
+		p = snapdata(p, e, q);
+		/*
+		 * And its semaphores, which are the one thing the microkernel
+		 * itself keeps for a container that a checkpoint did not
+		 * carry.  A task waiting on one, or one given and not yet
+		 * taken, is state; dropping it makes a container that
+		 * migrates lose a wakeup it was owed.
+		 */
+		p = snapsem(p, e, q);
 		for(j = 0; j < r->ns.n; j++)
 			p = seprint(p, e, "name %s %s\n",
 				r->ns.name[j].local, r->ns.name[j].global);
@@ -2204,6 +2244,19 @@ ospreysnapread(char *text, long n)
 					break;
 				d[len] = (hi<<4) | lo;
 			}
+		} else if(strcmp(key, "sem") == 0){
+			Sem *sm;
+			ulong sn;
+
+			sn = (ulong)strtoull(a, nil, 0);
+			if(r == nil || p == nil || p->map == nil || sn >= nsem)
+				continue;
+			sm = (Sem*)((uchar*)p->map + p->map->sem) + sn;
+			ospreylocksem();
+			sm->count = strtoull(snapword(&line), nil, 0);
+			sm->given = strtoull(snapword(&line), nil, 0);
+			sm->taken = strtoull(snapword(&line), nil, 0);
+			ospreyunlocksem();
 		} else if(strcmp(key, "name") == 0){
 			b = snapword(&line);
 			nsbind(&r->ns, a, b);

@@ -203,7 +203,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Seventy-one lines, all
+a line at a time.  Seventy-four lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -736,6 +736,22 @@ is a name
 .I p9srv
 made in its own process and the kernel never saw.  The check has both
 of those, a line each.
+.PP
+Asking what else a checkpoint dropped found two more, both of them the
+microkernel's own and neither a personality's.  The semaphores were not
+carried at all: a container's counts, and what had been given and taken,
+started again from nothing on the other machine, so a task that was owed
+a wakeup lost it.  They are three numbers each and eight of them, and
+they go now.  And the data area went only when a ring was not empty, on
+the argument that the data was there for a message to name \- but the
+area is the container's memory, and a container that had built its
+select arms and was waiting on them lost them for no saving at all,
+since
+.CW snapdata
+skips a chunk that is still zero.  Both are checked on one machine and
+the semaphore again across the wire, where a container is given one four
+times, carried to a kernel that had never heard of it, and found holding
+.CW 4/4/0 .
 .PP
 Environments were the other half of the question and are a shorter
 answer: nothing in

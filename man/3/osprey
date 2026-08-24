@@ -1409,10 +1409,20 @@ period.
 .PP
 A message that was in flight goes with a container and so does the data
 area, so a request that named a buffer is answered against the buffer it
-named.  The container's packets, its pages and the channels the kernel
-holds for it do not go: a container that had already opened something
-comes back having to open it again, and one whose request to open was
-still on the ring has that request answered where it arrives.
+named.  The data area goes whether a message was in flight or not: it
+used to go only when a ring was not empty, so a container that had built
+its select arms and was waiting on them lost them, and for no saving,
+since a chunk of it that is still zero is not written either way.  The
+semaphores go too \- their counts and what has been given and taken \-
+which is the one thing the microkernel itself kept for a container that
+a checkpoint did not carry, so a container that migrated used to arrive
+having lost a wakeup it was owed.
+.PP
+The container's packets, its pages and the channels the kernel holds for
+it do not go: a container that had already opened something comes back
+having to open it again, and one whose request to open was still on the
+ring has that request answered where it arrives.  Its names do go, and
+so open what they name there.
 .PP
 A checkpoint is one ethernet frame when
 .I mig

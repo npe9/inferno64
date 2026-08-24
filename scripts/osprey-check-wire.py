@@ -77,6 +77,9 @@ SRC = [
  "bind '#O' /n/osprey; echo key sekrit >/n/osprey/ctl",
  "echo create 42 40000000 800000000 200000000 >/n/osprey/ctl",
  "echo attach 42 0 >/n/osprey/ctl; echo bind 42 home /usr/glenda >/n/osprey/ctl",
+ # a semaphore given and not yet taken is state the microkernel keeps for
+ # the container, and it goes with it
+ "for(i in 1 2 3 4) echo semup 42 6 >/n/osprey/ctl",
  "echo '#### migrate'; sleep 8; /tmp/mig send",
  "echo '#### left'; grep -c '^proc ' /n/osprey/status",
  # now the other machine holds a different key
@@ -102,6 +105,7 @@ DST = [
  # the names came with it, so they still resolve here: a container's
  # name space is its own table and not a Pgrp, which is what lets it
  # cross at all
+ "echo '#### sem'; grep '^sem 42 ' /n/osprey/status | awk '{print \"sem6\", $9}'",
  "echo '#### opened'; echo poke 42 0 home >/n/osprey/ctl",
  "echo submit 42 open 0 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
  "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply",
@@ -156,6 +160,9 @@ def main():
                     'restarted' in dst and 'name 42 home /usr/glenda' in dst))
     results.append(("and gone from the one it left",
                     between(src, 'left', 'end').find('\n0\n') >= 0))
+    results.append(("a semaphore's count arriving with it, given four times "
+                    "and taken none",
+                    'sem6 4/4/0' in between(dst, 'sem', 'opened')))
     results.append(("and the names it carried still opening what they name there",
                     '42 open done' in between(dst, 'opened', 'refuse')))
     results.append(("a checkpoint signed by a key the other end does not hold, refused",
