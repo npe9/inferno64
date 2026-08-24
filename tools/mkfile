@@ -4,4 +4,22 @@ DIRS=\
 	libstyx\
 	styxtest\
 
+#
+#	Two host programs that turn a Plan 9 image into the shape some
+#	other boot loader insists on.  They are built with the host's own
+#	compiler, not the tree's, because nothing about them is Inferno.
+#
+TOOLS=\
+	aout2efi\
+	aout2imxrt\
+
 <$ROOT/mkfiles/mksubdirs
+
+all:V:	$TOOLS
+install:V: $TOOLS
+
+aout2efi:	aout2efi.c
+	$CC -o $target aout2efi.c
+
+aout2imxrt:	aout2imxrt.c
+	$CC -o $target aout2imxrt.c

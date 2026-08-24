@@ -1,0 +1,103 @@
+<../../../mkconfig
+
+#Configurable parameters
+
+CONF=teensy41
+CONFLIST=teensy41
+
+SYSTARG=$OSTARG
+OBJTYPE=thumb
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+INITDIR=../init
+PORTDIR=../port
+ARCHDIR=../armv7m
+
+#end configurable parameters
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+# The text runs out of the flash where the boot ROM maps it, starting
+# after the eight kilobytes of boot headers tools/aout2imxrt puts first;
+# the core reads its initial stack pointer and reset address from the
+# first two words there.  The data segment is linked into OCRAM2, and
+# os/inferno/armv7m/l.s copies it out of the flash before anything reads
+# a variable.  -R0 stops the linker rounding the data address up and away
+# from the one given here.
+KTZERO=0x60002000
+KDATA=0x20200000
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	fpu.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$DEVS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+	$ARCHDIR/armv7m.h\
+
+CFLAGS=-wFV -I. -I$ARCHDIR -I../port -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/aout2imxrt
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
+	$ROOT/tools/aout2imxrt -v $target $CONF.bin $CONF.hex
+	cp $target $INSTALLDIR/$target
+	cp $CONF.bin $CONF.hex $INSTALLDIR
+
+$ROOT/tools/aout2imxrt:
+	cd $ROOT/tools; mk aout2imxrt
+
+CLEANEXTRA=$CONF.bin $CONF.hex
+
+<../port/portmkfile
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+l.$O:	$ARCHDIR/l.s mem.h $ARCHDIR/armv7m.h
+	$AS $ASFLAGS -I. $ARCHDIR/l.s
+
+%.$O:	$ARCHDIR/%.c
+	$CC $CFLAGS $ARCHDIR/$stem.c
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+# teensy_loader_cli --mcu=TEENSY41 -w iteensy41.hex

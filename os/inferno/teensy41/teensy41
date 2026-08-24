@@ -1,0 +1,147 @@
+# teensy41 - a Teensy 4.1: an NXP i.MX RT1062, which is a Cortex-M7 with
+# eight megabytes of flash and a megabyte of RAM.
+#
+# The core is the same one os/inferno/mps2 runs on under QEMU, and
+# everything the two share is in os/inferno/armv7m.  What is only here is
+# the board: its clock tree, its FlexRAM, and the LPUART on pins 0 and 1.
+# Nothing here has been run on a board -- there is no emulator for this
+# part -- so see teensy41(6) for what is proved and what is not.
+#
+# Serial only: no ip stack, no ethernet, no storage, no draw.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+	ssl
+	cap
+	kprof
+
+# the order matters: a library with an undefined symbol at the end
+# makes the loader complain
+lib
+	interp
+	keyring
+	sec
+	mp
+	math
+	kern
+
+# the portable kernel this board takes, and its own code beside it.
+# archteensy41 and the rest are objects and nothing more; naming them
+# under misc would have mkdevc build a PCArch table for them, which is
+# the PC's abstraction and not this board's.
+port
+	alarm
+	alloc
+	allocb
+# the board has its own auth.c, named in the mkfile
+	chan
+	dev
+	dial
+	dis
+	discall
+# edf wants a microsecond clock this board does not export
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+# randomarmv7m is the entropy these boards have; the portable random.c
+# wants a libsec newer than the one this tree shares
+	sysfile
+	taslock
+	xalloc
+
+	archteensy41
+	randomarmv7m
+	screenarmv7m
+
+# uartlpuart is this board's PhysUart -- mkdevc turns a misc name
+# beginning uart into <rest>physuart, so uartlpuart gives lpuartphysuart.
+misc
+	uartlpuart
+
+mod
+	sys
+	keyring
+	crypt
+	math
+
+init
+	armv7minit
+
+code
+	int main_pool_pcnt = 40;
+	int heap_pool_pcnt = 40;
+	int image_pool_pcnt = 20;
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+# The Limbo userland, taken from /dis32: a Dis word is four bytes on this
+# board, and a module compiled for eight will not load.  See
+# mkfiles/mkdis and the note in mkconfig.
+#
+# This is a much smaller set than the boards with memory to spare carry.
+# The root is embedded in the data segment and the data segment is in the
+# 512K of OCRAM2, so every module here costs heap.  What is left out is
+# what a board with no disk and no network cannot use anyway: the file
+# servers, the disk tools, factotum and the rest.
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/n	/
+	/net	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/dis/lib
+	/dis/sh
+	/osinit.dis
+	/dis/basename.dis	/dis32/basename.dis
+	/dis/bind.dis	/dis32/bind.dis
+	/dis/cat.dis	/dis32/cat.dis
+	/dis/cd.dis	/dis32/cd.dis
+	/dis/date.dis	/dis32/date.dis
+	/dis/echo.dis	/dis32/echo.dis
+	/dis/grep.dis	/dis32/grep.dis
+	/dis/ls.dis	/dis32/ls.dis
+	/dis/memfs.dis	/dis32/memfs.dis
+	/dis/mntgen.dis	/dis32/mntgen.dis
+	/dis/mount.dis	/dis32/mount.dis
+	/dis/ns.dis	/dis32/ns.dis
+	/dis/ps.dis	/dis32/ps.dis
+	/dis/pwd.dis	/dis32/pwd.dis
+	/dis/read.dis	/dis32/read.dis
+	/dis/sh.dis	/dis32/sh.dis
+	/dis/sh/std.dis	/dis32/sh/std.dis
+	/dis/unmount.dis	/dis32/unmount.dis
+	/dis/lib/arg.dis	/dis32/lib/arg.dis
+	/dis/lib/bufio.dis	/dis32/lib/bufio.dis
+	/dis/lib/daytime.dis	/dis32/lib/daytime.dis
+	/dis/lib/env.dis	/dis32/lib/env.dis
+	/dis/lib/filepat.dis	/dis32/lib/filepat.dis
+	/dis/lib/names.dis	/dis32/lib/names.dis
+	/dis/lib/nametree.dis	/dis32/lib/nametree.dis
+	/dis/lib/readdir.dis	/dis32/lib/readdir.dis
+	/dis/lib/string.dis	/dis32/lib/string.dis
+	/dis/lib/styx.dis	/dis32/lib/styx.dis
+	/dis/lib/styxservers.dis	/dis32/lib/styxservers.dis
+	/dis/lib/workdir.dis	/dis32/lib/workdir.dis

@@ -51,6 +51,9 @@ os/inferno/
   virt/       QEMU -M virt, riscv64
   sifiveu/    SiFive Unleashed
   spike/      the Spike simulator
+  armv7m/     shared Cortex-M code
+  mps2/       ARM MPS2 AN500, a Cortex-M7 in QEMU
+  teensy41/   Teensy 4.1, an NXP i.MX RT1062
 .fi
 .PP
 A directory of shared code for a family of boards is part of that
@@ -75,6 +78,14 @@ HTIF, the GEM ethernet and the PCI ECAM window that
 and
 .CW spike
 share.  What a board directory holds is what only that board has.
+.CW armv7m
+is the same kind: the vector table, the exception path and SysTick that
+every Cortex-M has, with
+.CW mps2
+and
+.CW teensy41
+beside it.  See
+.I armv7m-ports (6).
 .PP
 The
 .CW NOTE
