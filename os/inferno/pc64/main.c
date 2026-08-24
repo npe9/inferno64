@@ -291,8 +291,14 @@ init0(void)
 
 	spllo();
 	if(waserror()){
-		print("init0: waserror() loop\n");
-		panic("init0: %r");
+		/*
+		 * %r is a documented no-op in this kernel (see
+		 * ../port/print.c) -- it only works from Limbo, where
+		 * lib9's errfmt() installs it.  print up->errstr
+		 * directly or this prints its prefix and nothing else.
+		 */
+		print("init0: waserror() loop: %s\n", up->errstr);
+		panic("init0: %s", up->errstr);
 	}
 	/*
 	 * These are o.k. because rootinit is null.

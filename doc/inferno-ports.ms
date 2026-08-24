@@ -469,17 +469,113 @@ of its own.
 .PP
 With that fixed
 .CW pc64
-now runs real 64-bit kernel code: it takes the 32-to-64-bit transition
-in
+runs real 64-bit kernel code: it takes the 32-to-64-bit transition in
 .CW l.s ,
 loads its page tables, enables long mode, and reaches
 .CW main.c ,
-where it takes a page fault writing through a stack pointer in
-unmapped memory before ever reaching a shell.  That is a further
-boot-order bug of its own \- the minimal identity map
-.CW _warp64
-builds does not yet cover wherever that pointer is meant to land \- and
-is where the port now stands.
+where it took a page fault immediately after printing
+.CW userinit... .
+That one was
+.CW pc64
+'s own:
+.CW userinit()
+built the kernel's first process with
+.CW newforthproc() ,
+a call meant for an already-running process to spawn another Forth
+kernel process, which reads
+.CW up->user
+and calls
+.CW waserror() \-
+both need a live
+.CW up ,
+and there is no process at all yet at the point
+.CW userinit()
+runs.
+.CW up->nerrlab
+read a 32 bit count from physical address
+.CW 0x330 ,
+real BIOS data rather than a struct field, and the garbage address
+.CW waserror()
+built from it faulted on its first store.  Every other board's
+.CW userinit()
+uses plain
+.CW newproc() ,
+which touches no per-process state, for exactly this reason; so does
+.CW pc64
+now.
+.PP
+Past that,
+.CW pc64
+reaches
+.CW schedinit() ,
+runs
+.CW init0
+as a real scheduled process, and \- this board's
+.CW init0
+calls
+.CW goforth() ,
+not
+.CW disinit("/osinit.dis") ,
+which is present in the source but commented out \- interprets
+.CW init.f ,
+a Forth script at the root of the tree, to completion: it builds the
+namespace
+.RI ( bind
+.CW #l0 ,
+.CW #p ,
+.CW #f
+and the rest, printed back by two
+.CW ns
+dumps), does arithmetic, defines a word and calls it, and prints
+.CW "end of init.f" .
+Getting that far needed a QEMU with a NIC the kernel's own driver
+binds to \-
+.CW -device virtio-net-pci ,
+matching the
+.CW ethervirtio
+entry in the board's
+.CW dev
+list \- since
+.CW init.f
+binds
+.CW #l0
+unconditionally and a missing card fails that bind with
+.CW Enodev .
+What
+.CW init.f
+does after finishing is not yet answered: the interpreter prints
+.CW "unable to restore input from the stack, aborting.."
+and stops responding to typed input in this test, which reads as the
+Forth outer interpreter trying to fall back to something after the
+top level
+.CW include
+returns and not finding it, but nothing here yet proves whether that
+is supposed to be an interactive prompt, a hang, or a return into
+.CW init0
+that ends in the
+.CW panic("init0")
+that function falls into if
+.CW goforth()
+ever returns.
+.PP
+Whether Forth or Dis is meant to be this board's shell is a decision
+this tree has not made, not a bug: the config carries the same
+55 file Dis root every other board takes, but nothing in
+.CW init0
+calls
+.CW disinit
+to load it.
+.CW newforthproc()
+also links a process into the
+.CW fhead / ftail
+list
+.CW devforth.c
+walks to build
+.CW #f
+'s directory; building the first process with
+.CW newproc()
+instead means process 1 will not appear there, which matters only if
+something is meant to read it.
 .NH 1
 How a native kernel provides networking
 .PP
