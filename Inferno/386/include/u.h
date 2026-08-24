@@ -6,7 +6,16 @@ typedef unsigned int	uint;
 typedef   signed char	schar;
 typedef	long long	vlong;
 typedef	unsigned long long uvlong;
+/*
+ * intptr and usize beside uintptr, and the WORD pair at the end, as the
+ * amd64 header has had them and this one had not: without them
+ * include/kern.h does not compile, so nothing in the tree could be
+ * built for this object type at all.  The widths are 9front's for the
+ * same machine.
+ */
+typedef long		intptr;
 typedef unsigned long	uintptr;
+typedef unsigned long	usize;
 typedef	uint		Rune;
 typedef union FPdbleword FPdbleword;
 typedef long		jmp_buf[2];
@@ -18,6 +27,19 @@ typedef unsigned char	u8int;
 typedef unsigned short	u16int;
 typedef unsigned int	u32int;
 typedef unsigned long long u64int;
+typedef signed char	s8int;
+typedef signed short	s16int;
+typedef signed int	s32int;
+typedef signed long long s64int;
+/* the short names the rest of this tree uses; see the amd64 header */
+typedef unsigned char	u8;
+typedef unsigned short	u16;
+typedef unsigned int	u32;
+typedef unsigned long long u64;
+typedef signed char	s8;
+typedef signed short	s16;
+typedef signed int	s32;
+typedef signed long long s64;
 
 /* FCR */
 #define	FPINEX	(1<<5)
@@ -62,3 +84,6 @@ typedef	char*	va_list;
 	(sizeof(mode) == 2)?\
 		((mode*)(list += 4))[-2]:\
 		((mode*)(list += sizeof(mode)))[-1])
+
+typedef intptr		WORD;
+typedef uintptr		UWORD;

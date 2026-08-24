@@ -5,16 +5,34 @@
  *
  * Both return the value the memory holds afterwards, which is what a
  * caller freeing on "did I take it to zero" needs.
+ *
+ * The amd64 file beside this one does it in one instruction with XADDL,
+ * which 8a has no word for and the 386 did not have until the 486.  A
+ * compare and exchange in a loop says the same thing: read what is
+ * there, work out what it should become, and put it back only if
+ * nothing else changed it meanwhile.  The 386 also takes its argument
+ * off the stack rather than in RARG; this file was a copy of the amd64
+ * one, RARG and all, and had never been assembled.
  */
 
 TEXT	ainc(SB), $0			/* int ainc(int*) */
-	MOVL	$1, AX
-	LOCK; XADDL AX, (RARG)		/* AX = old, (RARG) = old+1 */
-	ADDL	$1, AX
+	MOVL	p+0(FP), BX
+_incloop:
+	MOVL	(BX), AX		/* AX is what CMPXCHGL compares */
+	MOVL	AX, CX
+	ADDL	$1, CX
+	LOCK; CMPXCHGL CX, (BX)
+	JNE	_incloop
+	MOVL	CX, AX
 	RET
 
 TEXT	adec(SB), $0			/* int adec(int*) */
-	MOVL	$-1, AX
-	LOCK; XADDL AX, (RARG)		/* AX = old, (RARG) = old-1 */
-	SUBL	$1, AX
+	MOVL	p+0(FP), BX
+_decloop:
+	MOVL	(BX), AX
+	MOVL	AX, CX
+	SUBL	$1, CX
+	LOCK; CMPXCHGL CX, (BX)
+	JNE	_decloop
+	MOVL	CX, AX
 	RET
