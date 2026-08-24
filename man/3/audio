@@ -73,7 +73,10 @@ is
 .BR rate ,
 .I value
 represents the
-rate at which the data was recorded in Hz. The default is 22050.
+rate at which the data was recorded in Hz.
+The rates accepted are 8000, 11025, 16000, 22050, 44100 and 48000, and
+.B the default is 8000 ,
+not 22050 as this page said until the default was read rather than trusted.
 If the
 .I source
 is
@@ -185,6 +188,36 @@ does for video.
 .B /os/*/devaudio.c
 .br
 .B /os/*/devcs4231.c
+.SS "A writer must set the format"
+The device does not infer anything from what is written to it.
+It starts at 8000 Hz, two channels, 16 bits, and samples in any other shape are
+read as though they were that \(em 16kHz mono written straight is heard as
+interleaved stereo at half the rate, which is noise, and no error is reported
+because nothing about the write is wrong.
+So write
+.BR rate ,
+.B chans
+and
+.B bits
+to
+.B audioctl
+first.
+Reading
+.B audioctl
+back shows the current value of each before its alternatives, which is how to
+tell that a setting took.
+.SS "Closing waits for the sound to finish"
+A write to
+.B audio
+returns when the samples have been queued, not when they have been played.
+Closing the file waits for them: for the ring to empty and then for the buffers
+the host has already taken.
+.PP
+This matters to any program that writes something and exits, which used to lose
+all but the first tenth of a second of it.
+A program that wants to stop sound
+.I now
+should not rely on close to do it.
 .SH SEE ALSO
 .IR auplay (1)
 .br
