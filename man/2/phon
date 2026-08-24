@@ -81,14 +81,21 @@ That is what makes it usable on a machine with no memory to spare, and it is
 why
 .B mklexicon.py
 must keep emitting sorted output.
-.SH "IT IS A LOOKUP, AND ONLY A LOOKUP"
-There are no letter-to-sound rules here and there will not be.
+.SH "IT IS A LOOKUP"
+There are no letter-to-sound rules here.
 English spelling does not reduce to rules; a rule set that is right four times
 in five gives a narrator that is wrong every fifth word, and
 .I nothing in this system can hear that it happened .
 A wrong pronunciation passes every check a program can make.
 .PP
-So a word that is not in the lexicon is an error naming the word, which someone
+That argument is about narration, where the words are chosen in advance and a
+refusal costs one line in a file.
+It does not settle the question for reading a screen, where the words arrive
+unbidden and a refusal is silence: there, rules under the dictionary are the
+standard arrangement and the right one, because approximate beats absent.
+This does not have them yet.
+.PP
+So today a word that is not in either file is an error naming the word, which someone
 fixes by adding a line.
 That is the whole design.
 The alternative is not "a guess instead of an error" but "a guess instead of a
