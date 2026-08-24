@@ -998,7 +998,31 @@ back and
 .CW 6c
 and
 .CW 8c
-exit 139.  Finding it took AddressSanitizer, which is worth saying
+exit 139.
+.PP
+The question that follows is whether it had been quietly spoiling
+objects all along, and the answer is no, which is worth having asked.
+Rebuilding the kernel with
+.CW -ww
+names every function whose variables the optimiser could not all track:
+in the whole Osprey kernel there is one,
+.CW ospreywrite ,
+with twenty-three of them.  So that function had been compiled by a
+compiler writing one word past a
+.CW Bits
+on its own stack, on every build, for as long as it has been this size.
+Building
+.CW devosprey.c
+through the mkfile with each compiler in turn gives the same object
+byte for byte.  That is not luck: a variable numbered past the end gets
+a
+.CW Bits
+with no bit set in the part that is read, which is what the fixed
+compiler hands back when it refuses one, so the set the optimiser works
+from is the same either way.  What the bug did was corrupt the
+compiler's own stack, and what that hit depended on the frame; here it
+hit padding until one more local moved things and it hit a live pointer.
+Nothing in the tree needs rebuilding on account of it.  Finding it took AddressSanitizer, which is worth saying
 because the crash was in
 .CW regopt
 reading a corrupt free list and the write was in

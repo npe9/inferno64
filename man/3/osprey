@@ -1614,7 +1614,14 @@ the optimiser handed out numbers it could not address and wrote past a
 .B Bits
 on the stack.  It is fixed and
 .B /scripts/cc-check.sh
-is the check.
+is the check.  It had not been spoiling objects:
+.I ospreywrite
+is the only function in this kernel whose variables the optimiser cannot
+all track, and building
+.B devosprey.c
+with the compiler before the fix and after it gives the same object byte
+for byte.  What the bug corrupted was the compiler's own stack, which
+hit padding until one more local moved things.
 .PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes
