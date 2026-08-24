@@ -146,9 +146,14 @@ text(s: string): (string, string)
 		if(i >= len s)
 			break;
 
-		# leading punctuation, then the word, then trailing punctuation
+		#
+		# Leading punctuation, then the word, then trailing punctuation.
+		# An apostrophe is stripped at either end and kept in between, so
+		# a quoted 'watch' loses its quotes and don't keeps its own - which
+		# is the only rule that gets both right without looking further.
+		#
 		pre := "";
-		while(i < len s && keptpunct(s[i]) && !isword(s, i)){
+		while(i < len s && keptpunct(s[i])){
 			pre[len pre] = s[i];
 			i++;
 		}
@@ -181,13 +186,6 @@ text(s: string): (string, string)
 		out = join(out, pre + ipa + post);
 	}
 	return (out, nil);
-}
-
-# is there a letter at s[i]? used to tell a leading quote from a word
-isword(s: string, i: int): int
-{
-	c := s[i];
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
 join(a, b: string): string

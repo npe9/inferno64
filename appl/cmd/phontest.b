@@ -222,6 +222,20 @@ shape()
 	else if(c != "wˈɑːtʃ, wˈɑːtʃ.")
 		bad(sprint("punctuation is not kept: %#q", c));
 
+	# An apostrophe belongs to the word in the middle and to the punctuation
+	# at either end. Both rules come from the same loop, so one test would
+	# not tell a working rule from a lucky one.
+	(q, eq) := phon->text("'watch'");
+	if(eq != nil)
+		bad(sprint("a quoted word made %s unknown", eq));
+	else if(q != "'wˈɑːtʃ'")
+		bad(sprint("quotes around a word: %#q", q));
+	(ap, eap) := phon->text("don't");
+	if(eap != nil)
+		bad(sprint("an apostrophe inside a word made %#q unknown", eap));
+	else if(ap != "dˈoʊnt")
+		bad(sprint("apostrophe inside a word: %#q", ap));
+
 	# extra spacing must not reach the sounds
 	(d, ed) := phon->text("   watch    watch   ");
 	if(ed != nil || d != "wˈɑːtʃ wˈɑːtʃ")

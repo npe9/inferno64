@@ -122,6 +122,7 @@ demo	dˈɛmoʊ
 device	dɪvˈaɪs
 devices	dɪvˈaɪsɪz
 directory	daɪɹˈɛktɚɹi
+don't	dˈoʊnt
 drive	dɹˈaɪv
 drives	dɹˈaɪvz
 driving	dɹˈaɪvɪŋ
