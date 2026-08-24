@@ -891,18 +891,36 @@ Movtab	ymovtab[] =
 	{AMOVQ,	Yml,	Ycr4,	4,	0x0f,0x22,4,0},
 	{AMOVQ,	Yml,	Ycr8,	4,	0x0f,0x22,8,0},
 
-/* mov dr */
+/*
+ * mov dr.  There are four address registers, not one: a watchpoint is
+ * set by writing DR0 to DR3 and saying which of them in DR7, so a kernel
+ * that has any use for these at all uses DR1, DR2 and DR3 as well.  6a
+ * has always taken them; only the table said no, and it said so as
+ * "doasm: notfound", which does not sound like a missing table entry.
+ */
 	{AMOVL,	Ydr0,	Yml,	3,	0x0f,0x21,0,0},
+	{AMOVL,	Ydr1,	Yml,	3,	0x0f,0x21,1,0},
+	{AMOVL,	Ydr2,	Yml,	3,	0x0f,0x21,2,0},
+	{AMOVL,	Ydr3,	Yml,	3,	0x0f,0x21,3,0},
 	{AMOVL,	Ydr6,	Yml,	3,	0x0f,0x21,6,0},
 	{AMOVL,	Ydr7,	Yml,	3,	0x0f,0x21,7,0},
 	{AMOVQ,	Ydr0,	Yml,	3,	0x0f,0x21,0,0},
+	{AMOVQ,	Ydr1,	Yml,	3,	0x0f,0x21,1,0},
+	{AMOVQ,	Ydr2,	Yml,	3,	0x0f,0x21,2,0},
+	{AMOVQ,	Ydr3,	Yml,	3,	0x0f,0x21,3,0},
 	{AMOVQ,	Ydr6,	Yml,	3,	0x0f,0x21,6,0},
 	{AMOVQ,	Ydr7,	Yml,	3,	0x0f,0x21,7,0},
 
 	{AMOVL,	Yml,	Ydr0,	4,	0x0f,0x23,0,0},
+	{AMOVL,	Yml,	Ydr1,	4,	0x0f,0x23,1,0},
+	{AMOVL,	Yml,	Ydr2,	4,	0x0f,0x23,2,0},
+	{AMOVL,	Yml,	Ydr3,	4,	0x0f,0x23,3,0},
 	{AMOVL,	Yml,	Ydr6,	4,	0x0f,0x23,6,0},
 	{AMOVL,	Yml,	Ydr7,	4,	0x0f,0x23,7,0},
 	{AMOVQ,	Yml,	Ydr0,	4,	0x0f,0x23,0,0},
+	{AMOVQ,	Yml,	Ydr1,	4,	0x0f,0x23,1,0},
+	{AMOVQ,	Yml,	Ydr2,	4,	0x0f,0x23,2,0},
+	{AMOVQ,	Yml,	Ydr3,	4,	0x0f,0x23,3,0},
 	{AMOVQ,	Yml,	Ydr6,	4,	0x0f,0x23,6,0},
 	{AMOVQ,	Yml,	Ydr7,	4,	0x0f,0x23,7,0},
 
