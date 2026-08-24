@@ -6,7 +6,7 @@
 
 #include "emu-cocoa.root.h"
 
-ulong ndevs = 31;
+ulong ndevs = 32;
 
 extern Dev rootdevtab;
 extern Dev consdevtab;
@@ -30,6 +30,7 @@ extern Dev eiadevtab;
 extern Dev audiodevtab;
 extern Dev gpudevtab;
 extern Dev mldevtab;
+extern Dev voicedevtab;
 extern Dev memdevtab;
 Dev* devtab[]={
 	&rootdevtab,
@@ -54,6 +55,7 @@ Dev* devtab[]={
 	&audiodevtab,
 	&gpudevtab,
 	&mldevtab,
+	&voicedevtab,
 	&memdevtab,
 	nil,
 	nil,
