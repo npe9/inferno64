@@ -1088,15 +1088,29 @@ question, and looks for those bytes in the object either way round,
 since a machine that stores them the other way is as right.  And it said
 .CW FAIL
 for every compiler at first with the fix in place, which was neither the
-check nor the compilers:
+check nor the compilers: the binaries being asked were the old ones.
+Removing
+.CW o.out
+and building again fixed it, and the explanation written here first \-
+that
 .CW "mk install"
 in a compiler's directory does not relink when only
 .CW libcc.a
-has changed underneath it, so nine stale binaries were being asked.
-Removing
-.CW o.out
-first is what makes a rebuild of the shared library reach them, and it
-is worth knowing before believing any measurement taken across one.
+has changed underneath it \- is wrong.  Tested both ways: touching
+.CW libcc.a
+relinks, and editing
+.CW mpatof.c ,
+building
+.CW utils/cc
+and then building
+.CW utils/6c
+gives a compiler with the edit in it.  What left nine stale binaries was
+not established, and the likeliest thing is one of my own rebuild loops
+with its errors sent to
+.CW /dev/null .
+What survives is smaller and duller than a build-system bug and worth
+more than one: check that the compiler you are measuring is the one you
+think, rather than that the loop which was meant to build it ran.
 Thirty-six lines.  Finding it took AddressSanitizer, which is worth saying
 because the crash was in
 .CW regopt
