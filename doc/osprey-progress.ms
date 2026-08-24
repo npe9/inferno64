@@ -876,6 +876,49 @@ now, bounded, so it still fails if the number never arrives \- which is
 what it is actually about.  The two new lines beside it were written the
 same way rather than with a sleep.
 .PP
+Asking which control messages no check exercises found eleven, and three
+of them looked a container up without asking who was writing where every
+other one that names a container asks:
+.CW poke ,
+which writes into a container's data area;
+.CW detach ,
+which takes it off its core; and the second argument of
+.CW delegate ,
+which is the container whose ring the requests will go on and which is
+thereby given the right to reach the asking container's slice.  All
+three ask now, and
+.CW delegate
+wants the server to be a container the caller may have.
+.PP
+And then the check written for them said
+.CW ok
+for the wrong reason, which is the more useful half of the story.  It ran
+the three as
+.CW none
+and each was refused \- at
+.CW open ,
+not at the command:
+.CW ctl
+is mode 0664 and belongs to whoever booted the machine, so another user
+cannot write a control message at all.  The holes were latent and not
+live, what a grant buys another user is a segment and a
+.I \[*p]p
+session rather than the control file, and the three fixes are defence in
+depth against a
+.CW ctl
+that is opened up later \- which is not as simple as changing the mode,
+since the commands that name no container have nothing to check and
+should not be anybody's.  The check lines are gone: they could not reach
+the code they were written for, and a line that passes without reaching
+it is worse than no line.  The fixes are in and unchecked, and both
+documents say so.
+.PP
+The same run turned up a second way to pass without proving anything.
+The harness reads everything between a check's markers, which includes
+the commands as they were echoed, so an expected string that appears in
+the command itself always matches.  One of the four was doing exactly
+that.
+.PP
 Environments were the other half of the question and are a shorter
 answer: nothing in
 .CW os/osprey

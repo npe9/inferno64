@@ -3497,7 +3497,14 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		break;
 
 	case CMdetach:
-		if(ospreydetach(ospreyproc(cb->f[1])) < 0)
+		/*
+		 * ospreymine and not ospreyproc: taking a container off the
+		 * core it was attached to is a thing only whoever the
+		 * container is for may do, as attaching it was.  This looked
+		 * the container up without asking who was writing, which
+		 * meant anybody could stop anybody's.
+		 */
+		if(ospreydetach(ospreymine(cb->f[1])) < 0)
 			error(Ebadarg);
 		break;
 
@@ -3792,6 +3799,17 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				error(Ebadarg);
 			break;
 		}
+		/*
+		 * Naming a container as your server puts your requests on
+		 * its ring and gives it the right to reach your slice, so it
+		 * has to be a container you may have: its own, or one whose
+		 * owner has granted you.  Anyone could name anyone before,
+		 * which made a container's ring a place a stranger could put
+		 * work.
+		 */
+		if(!ospreymay(ospreyproc(cb->f[2]),
+			up != nil ? up->user : nil))
+			error(Eperm);
 		if(ospreydelegate(p, ospreyproc(cb->f[2])) < 0)
 			error(Ebadarg);
 		break;
@@ -4115,7 +4133,13 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * arena.  A process that has segattached it writes there
 		 * itself; this is for the shell.
 		 */
-		p = ospreyproc(cb->f[1]);
+		/*
+		 * ospreymine and not ospreyproc: this writes into a
+		 * container's own data area, which is its memory.  It is
+		 * here for the shell, and being here for the shell is not a
+		 * reason for it to be here for everybody.
+		 */
+		p = ospreymine(cb->f[1]);
 		i = strlen(cb->f[3]);
 		if((nm = ospreydata(p, strtoull(cb->f[2], nil, 0), i+1)) == nil)
 			error(Ebadarg);
@@ -4161,6 +4185,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		p = ospreymine(cb->f[1]);
 		if(ospreyunbind(p, cb->f[2]) < 0)
 			error(Enonexist);
+		/* a server keeps a copy of these; taking one away changes it */
+		ospreytellandwake(p, OpBind);
 		break;
 	}
 	qunlock(&ospreylock);

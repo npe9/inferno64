@@ -1556,6 +1556,40 @@ may have been agreed with anybody who was on the wire.  Nothing repeats
 the exchange, so a key lasts until it is changed, and changing it makes
 every ticket and every checkpoint written under the old one worthless.
 .PP
+Three control messages looked a container up without asking who was
+writing, where every other one that names a container asks:
+.BR poke ,
+which writes into a container's data area,
+.BR detach ,
+which takes it off the core it was attached to, and the second argument
+of
+.BR delegate ,
+which is the container whose ring the requests will go on and which is
+thereby given the right to reach the asking container's slice.  All
+three ask now, and
+.B delegate
+wants the server to be a container the caller may have \- its own, or
+one whose owner has granted them.
+.PP
+None of that was reachable.
+.B ctl
+is mode 0664 and belongs to whoever booted the machine, so another user
+cannot write a control message at all; what a grant buys them is a
+segment and a
+.IR pip (5)
+session, which is where the checks that were already there do the work.
+The three are defence in depth against a
+.B ctl
+that is opened up later, and opening it up is not as simple as changing
+the mode: the commands that name no container \-
+.BR key ,
+.BR pair ,
+.BR balance ,
+.B schedule
+\- have nothing to check and should not be anybody's.  For the same
+reason none of the three has a line in the check: a check would have to
+write a control message as another user, and another user cannot.
+.PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes
 .B submit
