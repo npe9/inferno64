@@ -52,55 +52,22 @@
 #include <osprey9.h>
 
 enum {
+	Nname		= 8,	/* names a container may have; the kernel's */
+	Nnamelen	= 32,	/* and how long one may be; also the kernel's */
 	Nfd		= 16,
 	Nclient		= 16,
 	Nslice		= 16,	/* slices to look through by default */
 	Namelen		= 256,
 };
 
+typedef struct Name Name;
+
+struct Name {
+	char	local[Nnamelen];
+	char	global[Nnamelen];
+};
+
 typedef struct Client Client;
-/*
- * What a name means to the container that asked.  The container's own
- * table is the kernel's, and status is where it is read from -- not from
- * anything the container wrote, for the reason slotof gives.  A name the
- * table does not hold is left as it stands.
- */
-static char*
-resolve(uvlong id, char *local, char *buf, int nbuf)
-{
-	static char st[33*1024];
-	char *p, *e, *f[4];
-	long n, t;
-	int fd, i;
-
-	if((fd = open("/n/osprey/status", OREAD)) < 0)
-		return local;
-	for(t = 0; t < sizeof st - 1; t += n)
-		if((n = read(fd, st+t, sizeof st - 1 - t)) <= 0)
-			break;
-	close(fd);
-	if(t <= 0)
-		return local;
-	st[t] = '\0';
-	for(p = st; *p != '\0'; p = e){
-		if((e = strchr(p, '\n')) != nil)
-			*e++ = '\0';
-		else
-			e = p + strlen(p);
-		if(strncmp(p, "name ", 5) != 0)
-			continue;
-		if(tokenize(p, f, 4) != 4)
-			continue;
-		if(o9num(f[1]) != id || strcmp(f[2], local) != 0)
-			continue;
-		for(i = 0; i < nbuf-1 && f[3][i] != '\0'; i++)
-			buf[i] = f[3][i];
-		buf[i] = '\0';
-		return buf;
-	}
-	return local;
-}
-
 /*
  * A container this server answers for.  Each has a process of its own,
  * forked with a name space of its own, and the pipe by which the process
@@ -113,11 +80,18 @@ struct Client {
 	int	fd[Nfd];
 	int	pipe;		/* -1 in the parent until the child exists */
 	int	mine;		/* set in the process that answers for it */
-};
-
-enum {
-	Qrequests,
-	Qreplies,
+	/*
+	 * The container's own names, copied from status.  Reading status
+	 * for every open cost more than the open: with two containers a
+	 * read is about a tenth of a millisecond and with twelve about
+	 * eight tenths, against a round trip of fifty microseconds.  So
+	 * they are read once and kept, and the kernel says when they
+	 * change -- which it must, since bind is answered before anything
+	 * is forwarded and this server never sees one.
+	 */
+	Name	name[Nname];
+	int	nname;
+	int	known;		/* the names have been read at least once */
 };
 
 static Osprey o;
@@ -127,6 +101,79 @@ static Client client[Nclient];
 static int nclient;
 
 static void childloop(Client*, int);
+
+/*
+ * Read a container's own names out of status -- not out of anything the
+ * container wrote, for the reason slotof gives.  Once per container, and
+ * again whenever the kernel says they have changed.
+ */
+static void
+readnames(Client *c)
+{
+	static char st[33*1024];
+	char *p, *e, *f[4];
+	long n, t;
+	int fd, i;
+
+	c->nname = 0;
+	c->known = 1;
+	if((fd = open("/n/osprey/status", OREAD)) < 0)
+		return;
+	for(t = 0; t < sizeof st - 1; t += n)
+		if((n = read(fd, st+t, sizeof st - 1 - t)) <= 0)
+			break;
+	close(fd);
+	if(t <= 0)
+		return;
+	st[t] = '\0';
+	for(p = st; *p != '\0'; p = e){
+		if((e = strchr(p, '\n')) != nil)
+			*e++ = '\0';
+		else
+			e = p + strlen(p);
+		if(strncmp(p, "name ", 5) != 0)
+			continue;
+		if(tokenize(p, f, 4) != 4 || o9num(f[1]) != c->id)
+			continue;
+		if(c->nname >= Nname)
+			break;
+		for(i = 0; i < Nnamelen-1 && f[2][i] != '\0'; i++)
+			c->name[c->nname].local[i] = f[2][i];
+		c->name[c->nname].local[i] = '\0';
+		for(i = 0; i < Nnamelen-1 && f[3][i] != '\0'; i++)
+			c->name[c->nname].global[i] = f[3][i];
+		c->name[c->nname].global[i] = '\0';
+		c->nname++;
+	}
+	if(verbose){
+		o9outs("names for "); o9outd(c->id);
+		o9outs(": "); o9outd((uvlong)c->nname);
+		o9outs("\n"); o9flush();
+	}
+}
+
+/*
+ * What a name means to the container that asked.  A name its table does
+ * not hold is left as it stands, and whatever answers makes what it can
+ * of it.
+ */
+static char*
+resolve(Client *c, char *local)
+{
+	int i;
+
+	if(!c->known)
+		readnames(c);
+	for(i = 0; i < c->nname; i++)
+		if(strcmp(c->name[i].local, local) == 0)
+			return c->name[i].global;
+	return local;
+}
+
+enum {
+	Qrequests,
+	Qreplies,
+};
 
 static uvlong slicesize;
 static int nslice = Nslice;
@@ -306,7 +353,7 @@ clientname(Client *c, uvlong off)
 static int
 answer(Client *c, Message *mp)
 {
-	char namebuf[Namelen], *a;
+	char *a;
 	uvlong off, cnt;
 	long n;
 	int i, fd;
@@ -315,7 +362,7 @@ answer(Client *c, Message *mp)
 	case ReqOpen:
 		if((a = clientname(c, mp->arg[2])) == nil)
 			return ReplyError;
-		a = resolve(c->id, a, namebuf, sizeof namebuf);
+		a = resolve(c, a);
 		for(i = 0; i < Nfd; i++)
 			if(c->fd[i] < 0)
 				break;
@@ -400,6 +447,8 @@ childloop(Client *c, int fd)
 	for(;;){
 		if(readn(fd, &m, sizeof m) != sizeof m)
 			exits(nil);
+		if(m.arg[1] != 0)
+			c->known = 0;
 		m.arg[0] = (uvlong)answer(c, &m);
 		if(write(fd, &m, sizeof m) != sizeof m)
 			exits(nil);
@@ -446,15 +495,35 @@ static int
 serve(Message *mp)
 {
 	Client *c;
+	int i;
 
 	if(mp->op == ReqGone){
 		gone(mp->container);
 		return -1;
 	}
+	/*
+	 * The kernel saying a container's names have changed.  It comes on
+	 * the same ring a request does and wants no reply; what it is for
+	 * is that bind is answered in the policy layer and never reaches
+	 * here, so nothing else would tell this server its copy is stale.
+	 */
+	if(mp->op == ReqBind){
+		for(i = 0; i < Nclient; i++)
+			if(client[i].id == mp->container && client[i].pipe >= 0)
+				client[i].known = 0;
+		return -1;
+	}
 	if((c = clientof(mp->container)) == nil)
 		return ReplyError;
+	/*
+	 * The child holds its own copy of this record and does the
+	 * resolving, so a cache the parent dropped has to be dropped
+	 * there too; the message carries it.
+	 */
+	mp->arg[1] = (uvlong)(c->known == 0);
 	if(write(c->pipe, mp, sizeof *mp) != sizeof *mp)
 		return ReplyError;
+	c->known = 1;
 	if(readn(c->pipe, mp, sizeof *mp) != sizeof *mp)
 		return ReplyError;
 	return (int)mp->arg[0];

@@ -203,7 +203,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Sixty-eight lines, all
+a line at a time.  Seventy-one lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -691,6 +691,30 @@ same answer to
 whether it has named a server or not, which it did not when the name
 space was a thing a personality forked.
 .PP
+Two things had to be measured rather than assumed.  Reading
+.CW status
+for every open cost more than the open: with two containers a read is
+about a tenth of a millisecond and with twelve about eight tenths,
+against a round trip of about fifty microseconds \- so between two and
+sixteen times the thing it was for, growing with the number of
+containers.  So a server reads a container's names once and keeps them,
+and the kernel tells it when they change, on the same ring and by the
+same mechanism as
+.CW gone ,
+because
+.CW bind
+is answered before anything is forwarded and a server cannot see one.
+The check binds a name, reads through it, binds the same name to another
+file and reads again; with that message ignored it reads the first file
+both times, and two other lines fail as well.
+.PP
+And a name in this table is at most thirty-one bytes.  That was
+decorative while nothing resolved through it and is not any more:
+.CW nsbind
+copied a name in and cut it short at the limit, so a container binding a
+longer one would silently have opened something else.  It refuses now,
+and the check binds a name too long and is told so.
+.PP
 The line that says it worked is on the wire: a container binds a name,
 is checkpointed into an ethernet frame, is restarted on a machine that
 had never heard of it, and opens what that name names there.  The
@@ -930,8 +954,12 @@ The copying is the ring's first fill and nothing after it.
 The rest are still compile-time constants in
 .CW os/osprey/adapter/ospreyrt.c
 because each of them sizes an array that is compiled in: sixteen
-containers, eight cores, thirty-two packets held, eight private names,
-four grants, eight pages to a container, sixteen arms to a
+containers, eight cores, thirty-two packets held, eight private names \-
+and a name is at most thirty-one bytes, which used to be decorative and
+is not any more, since every
+.CW open
+a container makes is resolved through that table \- four grants, eight
+pages to a container, sixteen arms to a
 .CW select .
 Making those settable is not a configuration change but an allocation
 change, and it is the honest reason they are not.  For a system whose

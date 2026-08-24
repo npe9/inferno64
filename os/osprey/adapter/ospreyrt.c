@@ -1428,8 +1428,13 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 				rep->status = ReplyError;
 				return 0;
 			}
-			rep->status = ospreybind(q, l, g) < 0
-				? ReplyError : ReplyDone;
+			if(ospreybind(q, l, g) < 0){
+				rep->status = ReplyError;
+				return 0;
+			}
+			if(ospreynamed != nil)
+				ospreynamed(q, ReqBind);
+			rep->status = ReplyDone;
 			return 0;
 		}
 	}
@@ -1669,6 +1674,13 @@ ospreypktget(Ospreyproc *p, void **block, ulong *len)
 ulong	(*ospreypktdirect)(Ospreyproc*);
 ulong	(*ospreypktcopied)(Ospreyproc*);
 int	(*ospreyetherea)(Ospreyproc*, uchar*);
+/*
+ * How the kernel says something to a container's server.  The device
+ * owns it, since waking a server is a device matter; this layer uses it
+ * to say that a container's names have changed, which a server cannot
+ * see for itself because bind is answered here and never forwarded.
+ */
+void	(*ospreynamed)(Ospreyproc*, int op);
 
 /*
  * The device says which of a container's transmit buffers are free; this

@@ -196,6 +196,21 @@ CHECKS = [
    "o=`{awk '/^proc 61/{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)+640}' /n/osprey/status}",
    "dd -if /n/osprey/arena -bs 1 -iseek $o -count 14 >[2]/dev/null; echo"],
   "p9srv-answered"),
+ # a server keeps a copy of a container's names, so the kernel has to say
+ # when they change; without that word this reads the file it read before
+ ("the same name bound again, and read as the file it now names",
+  ["echo submit 61 close 2 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1",
+   "echo poke 61 320 /tmp/onlyb/proof >/n/osprey/ctl",
+   "echo submit 61 bind 128 320 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1",
+   "echo submit 61 open 128 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1",
+   "echo submit 61 read 2 704 32 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1",
+   "o=`{awk '/^proc 61/{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)+704}' /n/osprey/status}",
+   "dd -if /n/osprey/arena -bs 1 -iseek $o -count 17 >[2]/dev/null; echo"],
+  "container-64-only"),
  # and the same to a container with no server at all: naming is the
  # policy layer's, so it is answered the same way for everybody, which
  # is what it was not when it was a Pgrp a personality forked
@@ -210,9 +225,27 @@ CHECKS = [
   "63 bind done"),
  ("and opened through it by the kernel's own personality",
   ["echo submit 63 open 128 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 1; cat /n/osprey/reply"],
+  "63 open done"),
+ # the same container, the same personality, a second name: what a
+ # global name stands for is the answering personality's, and /n/only is
+ # a name p9srv made in its own process and the kernel never saw
+ ("and a second name of its own that this personality cannot reach",
+  ["echo poke 63 256 hidden >/n/osprey/ctl",
+   "echo poke 63 320 /n/only/proof >/n/osprey/ctl",
+   "echo submit 63 bind 256 320 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+   "sleep 1; echo submit 63 open 256 0 >/n/osprey/ctl",
+   "echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply"],
+  "63 open error"),
+ # a name in this table decides what an open opens, so half a name is
+ # not a smaller answer but a different one
+ ("a name too long for the table refused rather than cut short",
+  ["echo poke 63 384 toolong >/n/osprey/ctl",
+   "echo poke 63 448 /tmp/only/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/n/osprey/ctl",
+   "echo submit 63 bind 384 448 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
    "sleep 1; cat /n/osprey/reply",
    "echo exit 63 >/n/osprey/ctl"],
-  "63 open done"),
+  "63 bind error"),
  ("a process of the server's own for each container it answers for",
   ["sleep 1; ps | awk '/p9srv/{n++}END{print \"procs\", n+0}'"],
   "procs 3"),

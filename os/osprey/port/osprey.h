@@ -107,6 +107,8 @@ int		ospreytellserver(Ospreyproc*, int op);
  */
 char*		ospreyname(Ospreyproc*, uvlong off);
 char*		ospreyresolve(Ospreyproc*, char *local);
+/* the device's way of telling a container's server something */
+extern void	(*ospreynamed)(Ospreyproc*, int op);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 int		ospreytxsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);

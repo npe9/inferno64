@@ -335,7 +335,12 @@ the
 request writes and the same one every
 .B open
 is resolved through, and it is written into the container's checkpoint,
-so the names go with it to another machine.
+so the names go with it to another machine.  A name is at most
+thirty-one bytes and a container may hold eight; one that does not fit
+is refused rather than cut short, since what is in this table decides
+what an
+.B open
+opens and half a name is not a smaller answer but a different one.
 .TP
 .BI unbind " id local"
 Remove one.  A name is at most 31 characters and a container holds at
@@ -1321,7 +1326,26 @@ pipe and takes the answer back the same way; only the message goes
 through the pipe, since what it points at is in the span both have
 mapped.
 .PP
-What that fork does not give, and used to, is a name space.  It was
+A server keeps a copy of the names of every container it answers for,
+read out of
+.B status
+once rather than once for each
+.BR open .
+That is not a nicety: with two containers a status read is about a tenth
+of a millisecond and with twelve about eight tenths, against a round
+trip of about fifty microseconds, so resolving a name that way cost from
+two to sixteen times the open it was for, and grew with the number of
+containers.  Since
+.B bind
+is answered before anything is forwarded, a server cannot see a
+container's names change, so the kernel tells it: the same message on
+the same ring that
+.B gone
+uses, and the copy is read again.  The check binds a name, reads through
+it, binds the same name to a different file and reads again; with the
+message ignored it reads the first file both times.
+.PP
+What the fork does not give, and used to, is a name space.  It was
 .B RFNAMEG
 as well, and a container's names were a Pgrp: a Plan 9 object no
 checkpoint can carry, so a container that migrated arrived having lost

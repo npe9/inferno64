@@ -628,6 +628,7 @@ static int ospreyethersem[16];		/* the semaphore its packets give */
 static int ospreytxsem[16];		/* and the one a freed transmit buffer gives */
 static void ospreytxdone(Bpool*);
 static void ospreytxavail(int);
+static void ospreytellandwake(Ospreyproc*, int);
 static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
 /*
  * And its transmit buffers, also in the span.  The Blocks are kept so
@@ -1236,6 +1237,28 @@ done:
 	pexit("osprey server", 1);
 }
 
+/*
+ * Say something to a container's server on the ring its requests go on,
+ * and wake it.  A server waiting in select is asleep on its own
+ * rendezvous, not on the one the service kproc uses, so wake both:
+ * which of the two is answering for this container is not this code's
+ * business.  Nothing replies to these; they are the kernel telling a
+ * server something about a container it answers for.
+ */
+static void
+ospreytellandwake(Ospreyproc *p, int op)
+{
+	int x;
+
+	if(ospreytellserver(p, op) < 0)
+		return;
+	x = ospreyindex(ospreyserverof(p));
+	if(x >= 0 && x < nelem(ospreyselrend)){
+		wakeup(&ospreyselrend[x]);
+		wakeup(&ospreyservrend[x]);
+	}
+}
+
 static void
 ospreyclock(int core)
 {
@@ -1566,6 +1589,7 @@ ospreyinit(void)
 	ospreypktdirect = ospreycountdirect;
 	ospreypktcopied = ospreycountcopied;
 	ospreyetherea = ospreycardea;
+	ospreynamed = ospreytellandwake;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 }
@@ -3422,19 +3446,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * and there is nothing left to say whose the server's fds,
 		 * mapping and process were.
 		 */
-		if(ospreytellserver(p, OpGone) == 0){
-			/*
-			 * A server waiting in select is asleep on its own
-			 * rendezvous, not on the one the service kproc uses,
-			 * so wake both: which of the two is answering for
-			 * this container is not this code's business.
-			 */
-			x = ospreyindex(ospreyserverof(p));
-			if(x >= 0 && x < nelem(ospreyselrend)){
-				wakeup(&ospreyselrend[x]);
-				wakeup(&ospreyservrend[x]);
-			}
-		}
+		ospreytellandwake(p, OpGone);
 		ospreyclosefds(p);
 		ospreyputproc(p);
 		ospreyputserver(p);
@@ -4043,8 +4055,15 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 
 	case CMbind:
 		p = ospreymine(cb->f[1]);
+		/*
+		 * A server keeps a copy of a container's names, so it has to
+		 * be told when they change; it cannot see this happen, since
+		 * the request that changes them is answered before anything
+		 * is forwarded.
+		 */
 		if(ospreybind(p, cb->f[2], cb->f[3]) < 0)
 			error(Ebadarg);
+		ospreytellandwake(p, OpBind);
 		break;
 
 	case CMunbind:
