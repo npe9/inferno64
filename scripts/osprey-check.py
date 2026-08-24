@@ -415,11 +415,23 @@ CHECKS = [
    "c=`{ps|grep ospreypip|wc -l}",
    "echo wire $a $b $c; echo pipether ether0 off >/n/osprey/ctl"],
   "wire 2 0 2"),
- ("a container that scribbles over its own map not taking the machine with it",
+ # a server asks status for a container's slice precisely so as not to
+ # believe the container's own map, so status must not be repeating what
+ # it finds there.  Nothing is serviced between the scribble and the
+ # read: a request being serviced puts the map back, which is what made
+ # the first version of this line pass whether the bug was there or not.
+ ("a scribbled map not moving where status says the data area is",
   ["echo create 41 40000000 800000000 200000000 >/n/osprey/ctl",
    "echo attach 41 0 >/n/osprey/ctl; echo limit 41 262144 65536 64 >/n/osprey/ctl",
-   "echo serve 41 >/n/osprey/ctl",
    "sl=`{grep '^proc 41' /n/osprey/status | sed 's/.*slice //; s/ .*//'}",
+   "d1=`{awk '/^proc 41 /{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)}' /n/osprey/status}",
+   "dd -if /dev/random -of /n/osprey/arena -bs 1 -oseek $sl -count 320 >[2]/dev/null",
+   "d2=`{awk '/^proc 41 /{for(i=1;i<=NF;i++)if($i==\"data\")print $(i+1)}' /n/osprey/status}",
+   "if(~ $d1 $d2) echo unmoved $d2",
+   "if(! ~ $d1 $d2) echo moved $d1 to $d2"],
+  "unmoved"),
+ ("and the container that did it not taking the machine with it",
+  ["echo serve 41 >/n/osprey/ctl",
    "dd -if /dev/random -of /n/osprey/arena -bs 1 -oseek $sl -count 320 >[2]/dev/null",
    "echo submit 41 alloc 4096 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
    "sleep 2; grep '^proc 41' /n/osprey/status | sed 's/.*mem /mem /; s/ net.*//'",
@@ -494,13 +506,25 @@ def main():
     except OSError:
         com2 = ''
 
-    # only what a check's own commands produced counts as its answer;
-    # searching the whole log finds the text in an echoed command
+    # only what a check's own commands produced counts as its answer.
+    # The console echoes each command after its prompt, so a line that
+    # begins with one is what was typed rather than what came back, and
+    # an expected string that appears in the command would otherwise
+    # always match -- which is a check that passes whatever the machine
+    # does.  Two lines in this file were doing exactly that before the
+    # echoes were dropped here.
     parts = {}
     for i in range(len(CHECKS)):
         a = log.find("#### %d\n" % i)
         b = log.find("#### %d\n" % (i+1))
-        parts[i] = log[a:b] if a >= 0 and b > a else ''
+        raw = log[a:b] if a >= 0 and b > a else ''
+        # the commands themselves, taken out by what was typed rather
+        # than by the prompt they follow: a background job's output
+        # arrives on the same console line as the next prompt, and
+        # dropping whole prompt lines dropped that too
+        for c in CHECKS[i][1]:
+            raw = raw.replace(c, '')
+        parts[i] = raw
 
     bad = 0
     for i, (what, _, want) in enumerate(CHECKS):

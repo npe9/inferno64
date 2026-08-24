@@ -212,7 +212,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Seventy-eight lines, all
+a line at a time.  Seventy-nine lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -1368,29 +1368,57 @@ Two orders of magnitude, and structural rather than tuning: a round
 trip here wakes a Plan 9 kernel process to answer it.  The talk's
 number is a microkernel's, and this is not one.
 .NH 2
-A class of bug worth naming
+A class of bug worth naming, and closed
 .PP
 The container may write every byte of its own map, which is why
 .CW mapfix
 exists and rewrites the whole of it from the kernel's own constants
-before it is used.  Of the ten places in
-.CW os/osprey/adapter/ospreyrt.c
-that read or write through
-.CW p->map ,
-five call
-.CW mapfix
-first and five do not.  Three of those five only write.  The two that
-read \-
+before it is used.  This document used to say that of the readers in
+.CW os/osprey/adapter/ospreyrt.c ,
+two \-
 .CW ospreydataoffset
 and
 .CW ospreydatalen
-\- are safe only because their callers happen to call
+\- were safe only because their callers happened to call
 .CW ospreydata ,
-which does fix the map, first.  That is the same accident that let
+which does fix the map, first: the same accident that let
 .CW ospreymapsizes
 work for as long as it did and left
 .CW ospreytxsizes
-failing the moment it was written.
+failing the moment it was written.  They call it themselves now, and a
+sweep of every function in the file that reads through
+.CW p->map
+says none is left without it.
+.PP
+It was not a hypothetical.
+.CW status
+prints what
+.CW ospreydataoffset
+returns, and a server reads
+.CW status
+for a container's slice precisely so as not to believe that container's
+own map \- so without the fix a container could scribble a false data
+offset into its map and have the kernel repeat it back as its own
+account.  Written to and then asked, the machine said
+.CW "data 7122474062569137221"
+where the truth was 3648.
+.PP
+Proving that took two goes, and the second found something worse than
+the bug.  The check compares what
+.CW status
+says before and after the scribble, and it passed with the fault put
+back in.  It was not the check: the harness reads everything between a
+check's markers, and the console echoes each command, so the word
+.CW unmoved
+in
+.CW "if(~ $d1 $d2) echo unmoved"
+matched the command rather than the answer.  That is the second line in
+this file to have passed that way, so the harness takes the commands out
+of what it reads now \- by what was typed, not by the prompt they follow,
+because a background job's output arrives on the same console line as the
+next prompt and dropping whole prompt lines dropped that too.  With the
+commands gone and the fault in, the line fails, which is what a check is
+for.
 .NH 2
 One instance where the plan asks for a choice
 .PP

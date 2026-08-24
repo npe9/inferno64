@@ -1663,6 +1663,21 @@ and stores the numbers after.  That is why
 has a ceiling of sixty-four where the other four have only the arena's:
 the copy has to go somewhere fixed.
 .PP
+A container may write every byte of its own map, so nothing in the
+kernel believes what it finds there:
+.I mapfix
+puts the geometry back from the kernel's own constants before any of it
+is read, and every reader in
+.B /os/osprey/adapter/ospreyrt.c
+calls it.  Two did not until lately, and
+.B status
+prints what one of them returns \- so a container could scribble a false
+data offset into its map and have the kernel repeat it as its own
+account of where that container's data area is, which is the one thing a
+server reads
+.B status
+to avoid.
+.PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes
 .B submit

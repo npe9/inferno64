@@ -713,6 +713,17 @@ ospreynproc(void)
 uvlong
 ospreydataoffset(Ospreyproc *p)
 {
+	/*
+	 * mapfix first, like every other reader of this map.  These two
+	 * were the last that did not, and were safe only because their
+	 * callers happened to call ospreydata, which does, before them --
+	 * an accident, and the same one that let ospreymapsizes work for
+	 * as long as it did.  status prints what this returns, and a
+	 * server asks status precisely so as not to believe a container's
+	 * own map: without the fix a container could scribble a false
+	 * data offset into its map and have the kernel repeat it.
+	 */
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->map == nil)
 		return 0;
 	return p->slice + p->map->data;
@@ -721,6 +732,7 @@ ospreydataoffset(Ospreyproc *p)
 uvlong
 ospreydatalen(Ospreyproc *p)
 {
+	mapfix(p);
 	if(p == nil || p->used == 0 || p->map == nil)
 		return 0;
 	return p->map->datalen;
