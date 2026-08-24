@@ -5,7 +5,7 @@
 # everything the two share is in os/inferno/armv7m.  What is only here is
 # the board: its clock tree, its FlexRAM, and the LPUART on pins 0 and 1.
 # Nothing here has been run on a board -- there is no emulator for this
-# part -- so see teensy41(6) for what is proved and what is not.
+# part -- so see the NOTE beside this file for what is proved and what is not.
 #
 # Serial only: no ip stack, no ethernet, no storage, no draw.
 
@@ -121,6 +121,7 @@ root
 	/dis/cd.dis	/dis32/cd.dis
 	/dis/date.dis	/dis32/date.dis
 	/dis/echo.dis	/dis32/echo.dis
+	/dis/fptest.dis	/dis32/fptest.dis
 	/dis/grep.dis	/dis32/grep.dis
 	/dis/ls.dis	/dis32/ls.dis
 	/dis/memfs.dis	/dis32/memfs.dis

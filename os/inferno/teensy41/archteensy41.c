@@ -13,7 +13,7 @@
  *
  * None of this has been run on a board.  It is written from the i.MX
  * RT1062 reference manual, chapters 14 (clocks), 12 (pins and the
- * general purpose registers) and 9 (boot); see teensy41(6) for what that
+ * general purpose registers) and 9 (boot); see os/inferno/teensy41/NOTE for what that
  * means and what would be checked first.
  */
 

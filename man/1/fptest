@@ -1,0 +1,78 @@
+.TH FPTEST 1
+.SH NAME
+fptest \- check that floating point arithmetic is right
+.SH SYNOPSIS
+.B fptest
+.SH DESCRIPTION
+.I Fptest
+does arithmetic whose answers are known and prints each one with what it
+should have been and whether it matched.  It is meant for a new port: a
+code generator or a linker that encodes floating point wrongly will get
+integers and strings right long before it gets these right, so a shell
+prompt is not evidence that the real instructions work.
+.PP
+Each line exercises something a back end has to encode on its own: a
+load and a store, an array subscript, the four arithmetic operations,
+negation, a comparison, the conversions between an integer and a real in
+both directions, and the rounding that
+.B int
+of a real does.  The rest goes through
+.IR math (2)
+and so through the library behind it.  The last line is
+.B FPTEST-OK
+or
+.B FPTEST-FAIL
+with a count.
+.SH SOURCE
+.B /appl/cmd/fptest.b
+.SH SEE ALSO
+.IR math (2)
+.SH BUGS
+.B exp
+and
+.B pow
+fail on every native kernel in this tree, and have since before there was
+a test to say so.  The cause is in the compilers rather than in either of
+them: fdlibm scales a result by adding to the exponent field of a local
+double through a pointer, and
+.IR 5c ,
+.I tc
+and
+.I jc
+all keep that local in a register while writing the memory it also has an
+address for, so the scaling is lost and the unscaled value is returned.
+Two lines reproduce it:
+.IP
+.EX
+double
+scale(double a, double b, int k)
+{
+	double y;
+
+	y = a + b;
+	((FPdbleword*)&y)->hi += (k<<20);
+	return y;
+}
+.EE
+.PP
+Every one of the three emits the add into the return register, then reads
+and writes
+.B y+4
+in memory, then returns the register.  The compilers give the two halves
+of
+.B y
+separate entries in
+.B mkvar
+because their offsets differ, and neither entry then looks address-taken.
+The same code written through a
+.B FPdbleword
+by value rather than through a pointer compiles correctly, which is the
+shape a fix in
+.B /libmath/fdlibm
+would take; the other fix is in
+.B mkvar
+itself, marking entries that overlap.
+.PP
+The test says
+.B FPTEST-FAIL
+until one of those is done.  That is on purpose.

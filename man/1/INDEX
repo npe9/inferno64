@@ -298,6 +298,7 @@ fmt fmt
 fn sh-std
 fonted fonted
 fortune fortune
+fptest fptest
 freq freq
 fs fs
 ftest ftest

@@ -49,7 +49,7 @@
 
 /*
  * Entry.  The board arrives here in M-mode with its DRAM already up,
- * from the SPL the boot ROM loaded or from xfel; see mangopi(6).  The
+ * from the SPL the boot ROM loaded or from xfel; see os/inferno/mangopi/NOTE.  The
  * D1 has one hart, but the check is kept so that anything else that
  * lands here is parked rather than running the same startup twice.
  * Stack is SB-relative so RV64 lui sign-extension is avoided.

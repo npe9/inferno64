@@ -84,6 +84,54 @@ the numbers are worth writing down;
 .CW os/inferno/nucleof303/NOTE
 has them.
 .NH 1
+What the floating point was checked with
+.PP
+A shell prompt is not evidence that the floating point works: a shell is
+integer and string work, and the twenty or so encodings
+.CW utils/tl/thumb.c
+gained are the largest new thing in this port.
+.I fptest (1)
+is what says so.  It does arithmetic whose answers are known \- a load
+and a store, an array subscript, the four operations, negation, a
+comparison, the conversions each way, and the rounding
+.CW int
+of a real does \- and prints each one against what it should have been.
+It is in the root of
+.CW mps2
+and of
+.CW teensy41 ,
+and every line of it passes on the Cortex-M7.
+.PP
+It found three things.  Two were mine: the two words of a
+.CW vlong
+constant emitted high word first by
+.CW tc ,
+and \- older, and in
+.CW 5l
+and
+.CW vl
+as well as
+.CW tl
+\- an
+.CW Ieee
+allocated eight bytes when a host whose
+.CW long
+is eight needs sixteen, so every double in a data segment came out as
+zero.  The third is not mine and is not new:
+.CW exp
+and
+.CW pow
+are wrong on every native kernel in this tree, RISC-V ones included,
+because
+.CW 5c ,
+.CW tc
+and
+.CW jc
+all keep a local double in a register while writing the memory it has
+also been given an address for.  The reproducer and the two shapes a fix
+could take are in
+.I fptest (1).
+.NH 1
 The toolchain
 .PP
 An ARMv7-M core has no ARM state.  Every instruction in a kernel for one

@@ -7,7 +7,7 @@
 # virtual serial port is wired to.
 #
 # There is no root file system in this configuration and no Limbo
-# userland.  80K of RAM is not enough to hold either; see nucleof303(6)
+# userland.  80K of RAM is not enough to hold either; see the NOTE beside this file
 # for what does fit and what does not.
 
 dev
@@ -90,7 +90,7 @@ code
 root
 # Nothing.  There is no room for a Limbo userland on this board and
 # nowhere to put one; osinit.dis is the whole of it, and even that is
-# more than the memory will hold.  See nucleof303(6).
+# more than the memory will hold.  See the NOTE beside this file.
 	/chan	/
 	/dev	/
 	/dis

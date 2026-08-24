@@ -523,8 +523,13 @@ zaddr(uchar *p, Adr *a, Sym *h[])
 		while(nhunk < sizeof(Ieee))
 			gethunk();
 		a->ieee = (Ieee*)hunk;
-		nhunk -= NSNAME;
-		hunk += NSNAME;
+		/*
+		 * An Ieee is two longs, which is sixteen bytes on a host
+		 * whose long is eight, and NSNAME is eight.  Advancing by
+		 * NSNAME left the next allocation on top of the high word.
+		 */
+		nhunk -= sizeof(Ieee);
+		hunk += sizeof(Ieee);
 
 		a->ieee->l = p[4] | (p[5]<<8) |
 			(p[6]<<16) | (p[7]<<24);

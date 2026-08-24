@@ -5,7 +5,7 @@
 # is the one the RISC-V boards already run on; QEMU's -cpu thead-c906
 # with -M virt runs the same kernel.  What is only here is the board's
 # memory map, its DesignWare UART and its interrupt numbers.  See
-# mangopi(6) for what is proved and what is not.
+# the NOTE beside this file for what is proved and what is not.
 #
 # There is no ip stack, no ethernet, no storage and no draw: the D1's
 # EMAC, its SD host and its display are not written.

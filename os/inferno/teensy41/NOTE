@@ -1,0 +1,55 @@
+Teensy 4.1
+==========
+
+An NXP i.MX RT1062: a Cortex-M7 at 600MHz with eight megabytes of serial
+NOR flash and a megabyte of RAM.
+
+What is proved
+--------------
+
+The core.  os/inferno/armv7m is shared with os/inferno/mps2, which QEMU
+models as an AN500 MPS2 and which boots to an interactive Inferno shell:
+the vector table, the exception path, interrupt masking on PRIMASK, the
+exclusive monitor, coherence, SysTick, and the copy of the data segment
+out of the image into where it was linked all run there.  The whole of
+libinterp runs there.  So does the floating point this tree's Thumb
+linker encodes as VFP; appl/cmd/fptest.b is what says so.
+
+The image is checked as far as it can be without a board: the FlexSPI
+configuration block, the image vector table and the boot data are at the
+offsets chapter 9 of the i.MX RT1060 reference manual gives them, hold
+the values that manual gives for a serial NOR part in quad mode, and the
+first two words of the kernel are a stack pointer in OCRAM2 and a reset
+address in flash with its Thumb bit set.
+
+What is not
+-----------
+
+Everything that is only this board's, because there is no emulator for
+this part and this was written without one of the boards:
+
+	the ARM PLL taken to 600MHz and halved
+	the FlexRAM given over entirely to DTCM
+	the watchdogs stopped
+	the pin multiplexing for LPUART6 on pins 0 and 1
+	the LPUART divisor for 115200 out of an 80MHz clock
+
+The first things to check on a real board are, in order: whether the ROM
+accepts the FlexSPI configuration block at all, whether anything comes
+out of pin 1 at 115200, and whether the clock the LPUART divides really
+is the 80MHz this assumes.
+
+Running it
+----------
+
+	teensy_loader_cli --mcu=TEENSY41 -w iteensy41.hex
+
+teensy41.bin is the same image as a plain binary.  Console is pin 1
+(transmit) and pin 0 (receive) at 115200, which the board calls Serial1.
+
+What is missing
+---------------
+
+USB, the SD card, ethernet and the display.  There is no ip stack, no
+storage and no draw in the configuration because there are no drivers
+for them.

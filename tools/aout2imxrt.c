@@ -19,7 +19,7 @@
  *
  * The layout and the field names are the ones in chapter 9 of the
  * i.MX RT1060 reference manual, "System Boot".  Nothing here has been
- * programmed onto a device; see teensy41(6).
+ * programmed onto a device; see os/inferno/teensy41/NOTE.
  */
 #include <stdint.h>
 #include <stdio.h>

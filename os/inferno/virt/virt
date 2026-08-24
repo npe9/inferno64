@@ -151,6 +151,7 @@ root
 	/dis/cd.dis
 	/dis/diskparts
 	/dis/echo.dis
+	/dis/fptest.dis
 	/dis/ftest.dis
 	/dis/grep.dis
 	/dis/ls.dis

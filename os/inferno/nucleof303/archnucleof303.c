@@ -9,7 +9,7 @@
 /*
  * What only the NUCLEO-F303RE has: a clock tree to program and a
  * console.  Nothing here has been run on a board; it is written from
- * RM0316 and the NUCLEO-64 schematic.  See nucleof303(6).
+ * RM0316 and the NUCLEO-64 schematic.  See os/inferno/nucleof303/NOTE.
  */
 
 extern char bdata[];

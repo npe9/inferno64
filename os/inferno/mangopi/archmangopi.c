@@ -9,7 +9,7 @@
  * What only the MangoPi MQ-Pro has.  The board arrives here with its
  * DRAM already brought up -- either by the SPL the boot ROM loaded off
  * the card, or by xfel over USB -- so there is no memory controller work
- * to do; see mangopi(6) for how it is loaded.
+ * to do; see os/inferno/mangopi/NOTE for how it is loaded.
  *
  * The clocks are left where the loader put them.  The D1's UARTs hang
  * off a 24MHz APB out of reset and stay there, and the CLINT counts at

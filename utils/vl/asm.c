@@ -682,7 +682,7 @@ datblk(long s, long n, int str)
 	Prog *p;
 	char *cast;
 	long l, fl, j, d;
-	int i, c;
+	int i, c, iw[2];
 
 	memset(buf.dbuf, 0, n+100);
 	for(p = datap; p != P; p = p->link) {

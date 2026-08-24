@@ -592,7 +592,7 @@ datblk(long s, long n, int str)
 	Prog *p;
 	char *cast;
 	long a, l, fl, j, d;
-	int i, c;
+	int i, c, iw[2];
 
 	memset(buf.dbuf, 0, n+100);
 	for(p = datap; p != P; p = p->link) {
@@ -638,7 +638,16 @@ datblk(long s, long n, int str)
 				}
 				break;
 			case 8:
-				cast = (char*)p->to.ieee;
+				/*
+				 * The two halves are 32 bit values whatever
+				 * the host's long is.  Lay them out as a
+				 * pair of those rather than casting the
+				 * struct, whose fields are twice as wide as
+				 * the file's on a 64 bit host.
+				 */
+				iw[0] = p->to.ieee->l;
+				iw[1] = p->to.ieee->h;
+				cast = (char*)iw;
 				for(; i<c; i++) {
 					buf.dbuf[l] = cast[fnuxi8[i]];
 					l++;

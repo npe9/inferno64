@@ -126,6 +126,7 @@ root
 	/dis/cd.dis	/dis32/cd.dis
 	/dis/diskparts
 	/dis/echo.dis	/dis32/echo.dis
+	/dis/fptest.dis	/dis32/fptest.dis
 	/dis/ftest.dis	/dis32/ftest.dis
 	/dis/grep.dis	/dis32/grep.dis
 	/dis/ls.dis	/dis32/ls.dis
