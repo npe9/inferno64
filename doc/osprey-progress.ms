@@ -1289,6 +1289,46 @@ and
 .CW "compares yes" ,
 and that is a line in the single-machine check.
 .PP
+That the whole math path works now follows without running it.
+.CW exp
+is the six coefficients above, correctly rounded since
+.CW mpatof
+was fixed, combined by
+.CW ldexp ,
+which is the scale-through-a-pointer idiom that
+.CW fpbits
+prints right; there is nothing left in
+.CW exp
+for the three faults to hide in.  It could not be run from a command
+anyway, and the reason is worth pinning down because it is the concrete
+shape of the missing userland.  The programs link
+.CW Osprey/amd64/lib/libc.a ,
+which is not built by this tree \- there is no recipe for it anywhere in
+the mkfiles, it is an untracked artifact dated before this work, and its
+members carry nonsense modes
+.CW ( "rws-ws-w-" on abort.6 )
+and a format this
+.CW 6l
+will not read
+.CW ( "opcode out of range 678" on exp, pow and log ) .
+The members
+.I ring
+and
+.I p9srv
+happen to use read; the math and the startup do not, which is why every
+Osprey command supplies its own
+.CW _main
+and its own output.  This tree's own
+.CW iar
+is not the cause: a library it builds carries
+.CW rw-r--r--
+members this loader reads, as
+.CW libosprey9.a
+does.  The fix is a libc built from source with this toolchain, which is
+the userland the plan's
+.I "User-level services"
+section is about and which no part of this tree yet holds.
+.PP
 One more thing came out of it, and it belongs to the fact that two
 sessions are working in one tree.  Relinking any of these programs gave
 a binary with no library in it \- 253 bytes of text where
