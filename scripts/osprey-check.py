@@ -55,6 +55,14 @@ CHECKS = [
  ("a double in an Osprey command holding its value through the loader",
   ["/tmp/fpbits"],
   "3.0 4008000000000000"),
+ # and the compiler: fdlibm scales a result by writing the high word of
+ # a local double through a pointer, and 6c kept the double in a
+ # register across the write and returned it unscaled -- 1.5 for what
+ # should be 3.0 -- until its mkvar marked overlapping entries as
+ # address-taken, as the other session's fix to jc and tc does
+ ("and a double whose high word is written through a pointer, scaled",
+  ["/tmp/fpbits | grep scale"],
+  "scale 4008000000000000"),
  ("a file opened and read by a program that only uses the library",
   ["/tmp/o9cat osprey0 $sz /dev/osversion"],
   "arms intact, read"),

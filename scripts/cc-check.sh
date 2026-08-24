@@ -115,7 +115,7 @@ OVEOF
 
 # which compilers have had the fix; the rest have no board here to say
 # whether it worked, so they are reported and not counted against
-fixed=" jc tc "
+fixed=" jc tc 6c "
 
 # and a double through the loader as well as the compiler.  Ieee holds a
 # double as two longs, l and h, which are 32 bit values in the object
@@ -189,7 +189,9 @@ for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 	# times the eight-byte move mentions it.
 	# in $TMP: some of these still write the object beside the source
 	if ( cd "$TMP" && "$cc" -S overlap.c >overlap.s 2>/dev/null ); then
-		st=`grep -c '	MOVD	F[0-9]*,y' "$TMP/overlap.s"`
+		# the store of the double to its slot before the half-write:
+		# MOVD Fn,y on the machines with F registers, MOVSD Xn,y on amd64
+		st=`grep -c '	MOVD	F[0-9]*,y\|	MOVSD	X[0-9]*,y' "$TMP/overlap.s"`
 		case "$fixed" in
 		*" $cc "*)
 			if [ "$st" -ge 1 ]; then

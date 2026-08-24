@@ -664,6 +664,29 @@ the loader and the kernel, as bits rather than a value:
 .B "3.0 4008000000000000" ,
 .BR "compares yes" .
 .PP
+The compiler had a fault of its own that only a running machine could
+show, and this one showed it.  fdlibm scales a result by adding to the
+exponent field of a local double through a pointer, and
+.I 6c
+kept the double in a register across that write and returned it
+unscaled:
+.I fpbits
+prints
+.B scale(1.0, 0.5, 1)
+and got
+.B 3ff8000000000000
+\- 1.5, where 3.0 is right.  Another session had found the same in
+.I jc
+and
+.I tc ,
+fixed them, and left
+.I 6c
+alone for want of a board that boots with it; its fix is in
+.I 6c
+now, the listing stores the double before the half-write and reloads it
+after, and the line reads
+.BR "scale 4008000000000000" .
+.PP
 .I ring
 is deliberately not built on it: it exists to show the ring unmediated,
 and would show nothing if it used something else to work it.
