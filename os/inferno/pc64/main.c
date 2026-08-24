@@ -328,18 +328,20 @@ init0(void)
 	}
 	kproc("alarm", alarmkproc, 0, 0);
 
-	if(kopen("#c/cons", OREAD) != 0)
-		panic("failed to make fd0 from #c/cons");
-	kopen("#c/cons", OWRITE);
-	kopen("#c/cons", OWRITE);
-
-	/* the space at the end is needed to recognize init.f as a word */
-	up->args = " include init.f ";
-	up->nargs = strlen(up->args);
-	print("init0: args len %d: %s\n", up->nargs, up->args);
-	goforth(up->fmem);
-	/* disinit("/osinit.dis"); */
-	/* disinit("/osinit.dis"); */
+	/*
+	 * This kernel came from 9ferno (github.com/gophone2015), whose
+	 * own userland is a Forth interpreter -- goforth(up->fmem) ran
+	 * init.f, this board's equivalent of init.rc, from here, and
+	 * needed fd0/1/2 on #c/cons open on init0's own fgrp for it.
+	 * This tree wants an Inferno native kernel: userinit() now
+	 * populates up->env the way every other board does, so the real
+	 * Inferno init can run instead, and disinit() below opens
+	 * #c/cons itself -- opening it twice on the one shared fgrp left
+	 * disinit()'s own kopen() finding fd 0-2 already taken and
+	 * handing back fd 3, which its "!= 0" check then panicked on.
+	 */
+	poperror();
+	disinit("/osinit.dis");
 	/* init0 will never return */
 	panic("init0");
 }
@@ -366,10 +368,25 @@ userinit(void)
 		panic("no procs for userinit");
 	}
 
-	p->fgrp = newfgrp(nil);
-	p->egrp = newegrp();
-	p->pgrp = newpgrp();
+	/*
+	 * disinit()/schedmod() read the process's namespace through
+	 * up->env (Osenv), the Inferno VM convention; devproc.c and the
+	 * rest of the portable device layer read it through p->pgrp
+	 * directly, the 9front convention this Proc struct also carries.
+	 * Populate both, pointing at the same objects, the way every
+	 * other board's userinit() does -- portdat.h's comment on Osenv
+	 * says exactly this is why it is kept alongside the flat fields.
+	 */
+	p->env = &p->defenv;
+	memset(p->env, 0, sizeof(*p->env));
+	p->env->errstr = p->env->errbuf0;
+	p->env->syserrstr = p->env->errbuf1;
+
+	p->fgrp = p->env->fgrp = newfgrp(nil);
+	p->egrp = p->env->egrp = newegrp();
+	p->pgrp = p->env->pgrp = newpgrp();
 	kstrdup(&p->user, eve);
+	kstrdup(&p->env->user, eve);
 
 	strcpy(p->text, "*init*");
 	/*
