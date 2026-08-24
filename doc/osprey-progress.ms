@@ -884,10 +884,53 @@ value is not yet shown to be selected by anything.
 .PP
 The half of that which can be answered without a second machine is
 answered above: the layer the adapter binds to the machine compiles for
-two others, so what is portable is portable.  The other half is a
-machine layer for the 9front-derived
-.CW os/osprey/port ,
-and it is a port and not a configuration.
+two others, so what is portable is portable.  The other half wants a
+second target, and there are two candidates of very different sizes.
+.PP
+The near one is 386, and it is nearer than it looks.
+.CW os/osprey/pc
+is not merely the drivers
+.CW pc64
+shares: it carries 9front's whole 386 machine layer \-
+.CW l.s ,
+.CW mem.h ,
+.CW dat.h ,
+.CW fns.h ,
+.CW io.h
+and a
+.CW pc
+configuration \- so nothing of the machine has to be written.  What is
+missing is the tree's own cross-build plumbing for that object type: a
+.CW mkfiles/mkfile-Osprey-386 ,
+an
+.CW Osprey/386
+with headers and libraries in it, and
+.CW os/osprey/pc/mkfile
+converted from the native Plan 9 form it was inherited in, which begins
+.CW </$objtype/mkfile
+and cannot run here at all.
+.PP
+What stops that today is not Osprey.  The kernel links
+.CW libsec ,
+.CW libmp
+and
+.CW libfis
+out of
+.CW Inferno/$OBJTYPE/lib ,
+and building
+.CW libmp
+for 386 in this tree fails in
+.CW include/kern.h
+at line 325, because
+.CW Inferno/386/include/u.h
+has no
+.CW intptr :
+the 386 side of the Inferno tree was never brought up to the
+sixty-four-bit-aware headers the rest of it uses.  That is a repair to
+Inferno's 386 target and not to Osprey's, and it is the first thing a
+386 Osprey kernel would need.
+.PP
+The far one is a machine of another family.
 .CW os/inferno
 has riscv64 boards \-
 .CW virt ,
@@ -895,7 +938,8 @@ has riscv64 boards \-
 .CW spike
 \- and they sit on the Inferno port layer, which is a different set of
 sources with different contracts; they will not compose with this one.
-What a second Osprey machine needs is what any new 9front machine needs:
+Such a target needs what any new 9front machine needs written from
+nothing:
 .CW l.s ,
 .CW mmu.c ,
 .CW trap.c ,
@@ -903,8 +947,7 @@ What a second Osprey machine needs is what any new 9front machine needs:
 a clock and a console, against
 .CW os/osprey/port 's
 .CW portdat.h .
-That is the size of the thing, and it is written down here rather than
-begun.
+Both sizes are written down here rather than begun.
 .NH 1
 Not attempted
 .PP
