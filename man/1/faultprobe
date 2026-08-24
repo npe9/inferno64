@@ -1,0 +1,71 @@
+.TH FAULTPROBE 1
+.SH NAME
+faultprobe \- fault on purpose, to calibrate a harness
+.SH SYNOPSIS
+.B faultprobe
+[
+.B -b
+]
+[
+.B -e
+]
+.SH DESCRIPTION
+.B Faultprobe
+fails, deliberately, in one of three ways: dereferencing nil by default,
+indexing past the end of an array with
+.BR -b ,
+or raising an exception nobody handles with
+.BR -e .
+.PP
+It exists because a harness that watches for failures is only as good as its
+ability to see one, and in this tree that is not obvious.
+.IR Wm (1)
+intercepts Limbo's
+.B print
+into its own Log window, so a good deal of what a program says while
+.I wm
+is running never reaches whatever started it.
+A run reporting no faults may mean there were none, or may mean the watcher was
+reading the wrong stream, and nothing in the log tells the two apart.
+.PP
+So run this under the harness in question and see whether the harness notices.
+If it does not, it cannot be trusted to notice a real one.
+.SH "WHAT IT FOUND IMMEDIATELY"
+The three failures do not look alike from outside, which is the whole point.
+Under
+.IR wm (1):
+.IP
+.EX
+nil dereference   disfault: dereference of nil, and a backtrace
+array bounds      sh: /dis/faultprobe.dis: exception: array bounds error
+unhandled raise   sh: ...: exception: <whatever was raised>
+.EE
+.PP
+A watcher looking for
+.BR broken ,
+.BR faults ,
+.B panic
+or
+.B abort
+\(em which is what the resize stress harness was using \(em sees the first and
+misses the other two entirely.
+It had been reporting no faults across a batch of runs, and that was worth
+exactly nothing until this said so.
+.SH SOURCE
+.B /appl/cmd/faultprobe.b
+.SH SEE ALSO
+.IR wmtest (1),
+.IR clicktest (1),
+.IR emu (1)
+.SH BUGS
+Three ways to fail, out of many.
+A process that hangs, one that exits quietly with the wrong answer, and one
+that corrupts something and carries on are all failures this cannot imitate,
+and a harness that catches all three of these still catches none of those.
+.PP
+It says nothing about
+.I where
+output goes, only whether it arrives.
+Working out that the Log window was swallowing something takes reading
+.IR wm (1),
+not running this.

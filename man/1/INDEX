@@ -289,6 +289,7 @@ env sh-std
 exit sh
 expr sh-expr
 factor math-misc
+faultprobe faultprobe
 fc fc
 fcp cp
 fibonacci math-misc
