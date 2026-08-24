@@ -1641,6 +1641,17 @@ with the compiler before the fix and after it gives the same object byte
 for byte.  What the bug corrupted was the compiler's own stack, which
 hit padding until one more local moved things.
 .PP
+An interrupt giving a semaphore takes the lock that guards them, and
+every packet that arrives gives one, so nothing that formats or parses
+is done while holding it:
+.B status
+and a checkpoint copy the counts out under it and print them after
+letting it go, and a checkpoint being read takes its line apart first
+and stores the numbers after.  That is why
+.B *ospreysem
+has a ceiling of sixty-four where the other four have only the arena's:
+the copy has to go somewhere fixed.
+.PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes
 .B submit

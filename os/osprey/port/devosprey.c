@@ -1582,7 +1582,7 @@ static struct {
 } ospreysizeconf[] = {
 	{ "*ospreyqueue",	"queue",	0 },
 	{ "*ospreydata",	"data",		0 },
-	{ "*ospreysem",		"sem",		0 },
+	{ "*ospreysem",		"sem",		64 },
 	{ "*ospreypktbuf",	"pktbuf",	0 },
 	{ "*ospreytxbuf",	"txbuf",	Maxtxbuf },
 };

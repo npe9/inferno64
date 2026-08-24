@@ -45,6 +45,12 @@ enum {
 	Nname		= 8,	/* private namespace entries per container */
 	Ndata		= 4096,	/* names and i/o buffers per container */
 	Nsem		= 8,	/* semaphores per container */
+	/*
+	 * and the most it may be set to.  status and the checkpoint copy
+	 * the counts out under the semaphore lock and print them after
+	 * letting it go, which wants somewhere fixed to copy them to.
+	 */
+	Nsemmax		= 64,
 	Npkt		= 32,	/* packets a container may hold */
 	Npktbuf		= 16,	/* receive buffers it lends an interface */
 	Ntxbuf		= 8,	/* and transmit buffers it fills itself */
@@ -2033,26 +2039,39 @@ static char*
 snapsem(char *p, char *e, Ospreyproc *q)
 {
 	Sem *sm;
+	uvlong c[Nsemmax], g[Nsemmax], t[Nsemmax];
 	ulong n;
 
 	if(q->map == nil)
 		return p;
+	/*
+	 * Taken under the lock, printed outside it.  An interrupt giving a
+	 * semaphore takes this lock -- every packet that arrives does --
+	 * and seprint is not the sort of work to hold it across, the less
+	 * so now that how many semaphores there are is a configuration.
+	 *
+	 * semof and not the offset out of the map: a container may write
+	 * every byte of its own map, and mapfix is what puts the geometry
+	 * back.  Reading the field raw is the bug this file has already
+	 * had twice.
+	 */
 	ospreylocksem();
-	for(n = 0; n < nsem; n++){
-		/*
-		 * semof and not the offset out of the map: a container may
-		 * write every byte of its own map, and mapfix is what puts
-		 * the geometry back.  Reading the field raw is the bug this
-		 * file has already had twice.
-		 */
-		if((sm = semof(q, n)) == nil)
+	for(n = 0; n < nsem && n < nelem(c); n++){
+		if((sm = semof(q, n)) == nil){
+			c[n] = g[n] = t[n] = 0;
 			continue;
-		if(sm->count == 0 && sm->given == 0 && sm->taken == 0)
-			continue;
-		p = seprint(p, e, "sem %lud %llud %llud %llud\n",
-			n, sm->count, sm->given, sm->taken);
+		}
+		c[n] = sm->count;
+		g[n] = sm->given;
+		t[n] = sm->taken;
 	}
 	ospreyunlocksem();
+	for(n = 0; n < nsem && n < nelem(c); n++){
+		if(c[n] == 0 && g[n] == 0 && t[n] == 0)
+			continue;
+		p = seprint(p, e, "sem %lud %llud %llud %llud\n",
+			n, c[n], g[n], t[n]);
+	}
 	return p;
 }
 
@@ -2327,6 +2346,7 @@ ospreysnapread(char *text, long n)
 			}
 		} else if(strcmp(key, "sem") == 0){
 			Sem *sm;
+			uvlong sc, sg, st;
 			ulong sn;
 
 			sn = (ulong)strtoull(a, nil, 0);
@@ -2341,10 +2361,19 @@ ospreysnapread(char *text, long n)
 			 */
 			if(r == nil || p == nil || (sm = semof(p, sn)) == nil)
 				return -1;
+			/*
+			 * Parsed first and stored after: an interrupt giving
+			 * a semaphore wants this lock, and taking a line of
+			 * text apart is not the sort of work to hold it
+			 * across.
+			 */
+			sc = strtoull(snapword(&line), nil, 0);
+			sg = strtoull(snapword(&line), nil, 0);
+			st = strtoull(snapword(&line), nil, 0);
 			ospreylocksem();
-			sm->count = strtoull(snapword(&line), nil, 0);
-			sm->given = strtoull(snapword(&line), nil, 0);
-			sm->taken = strtoull(snapword(&line), nil, 0);
+			sm->count = sc;
+			sm->given = sg;
+			sm->taken = st;
 			ospreyunlocksem();
 		} else if(strcmp(key, "name") == 0){
 			b = snapword(&line);
@@ -2482,6 +2511,7 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 	char *p, *e;
 	Process *q;
 	Task *t;
+	uvlong semc[Nsemmax], semg[Nsemmax], semt[Nsemmax];
 	ulong i, n;
 
 	ready();
@@ -2570,16 +2600,23 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		}
 		p = seprint(p, e, "\n");
 		p = seprint(p, e, "sem %llud", q->id);
+		/* under the lock, printed outside it; snapsem says why */
 		ospreylocksem();
-		for(n = 0; n < nsem; n++){
+		for(n = 0; n < nsem && n < nelem(semc); n++){
 			Sem *sm = semof(&procs[i], n);
 
-			if(sm == nil)
+			if(sm == nil){
+				semc[n] = semg[n] = semt[n] = 0;
 				continue;
-			p = seprint(p, e, " %llud/%llud/%llud",
-				sm->count, sm->given, sm->taken);
+			}
+			semc[n] = sm->count;
+			semg[n] = sm->given;
+			semt[n] = sm->taken;
 		}
 		ospreyunlocksem();
+		for(n = 0; n < nsem && n < nelem(semc); n++)
+			p = seprint(p, e, " %llud/%llud/%llud",
+				semc[n], semg[n], semt[n]);
 		p = seprint(p, e, "\n");
 		for(n = 0; n < q->ns.n; n++)
 			p = seprint(p, e, "name %llud %s %s\n", q->id,

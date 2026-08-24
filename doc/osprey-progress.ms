@@ -1085,6 +1085,21 @@ number of blocks there are.  Three runs of the flood since, and the
 first failing run is the reason the check runs the flood at all rather
 than eight pings.
 .PP
+That panic named a class, so the class got the same treatment as the
+others: every interrupt lock in the device and the adapter, and what
+runs while it is held.  The device's are all short and bounded now.  The
+adapter's semaphore lock was not: an interrupt giving a semaphore takes
+it and every packet that arrives gives one, and
+.CW status
+and the checkpoint writer held it across a
+.CW seprint
+per semaphore, while the checkpoint reader held it across taking a line
+of text apart.  All three copy or parse outside the lock now and hold it
+only to move the numbers.  It is also why
+.CW *ospreysem
+has a ceiling of sixty-four where the other four have only the arena's:
+the copy has to go somewhere fixed.
+.PP
 Environments were the other half of the question and are a shorter
 answer: nothing in
 .CW os/osprey
