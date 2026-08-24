@@ -1,0 +1,82 @@
+.TH VOICETEST 1
+.SH NAME
+voicetest \- check the speech device
+.SH SYNOPSIS
+.B voicetest
+.SH DESCRIPTION
+.B Voicetest
+checks
+.IR voice (3).
+It prints
+.B PASS
+or a
+.B FAIL
+line per problem.
+It needs no display and no window manager.
+.SH "WHAT IT ESTABLISHES"
+Nothing in this system can hear, so this does not claim the speech is
+intelligible.
+It claims what can be established from the samples themselves.
+.PP
+That writing phonemes makes a sound: not merely that samples came back, since
+silence is samples too, but that a tenth of them or more carry signal.
+And that a symbol the device does not know is skipped rather than silencing the
+whole utterance.
+.PP
+That
+.B speed
+does what it says.
+Twice the speed must be half the samples, within a tenth.
+.SS "Pitch, by correlating the sound with itself"
+This is the check worth having.
+Everything else about the device could be right while the voice source ran at
+one fixed rate, and the result would still be speech-shaped sound of the
+correct length \(em it would just always be the same voice.
+.PP
+A voiced source repeating every
+.I P
+samples makes a waveform that resembles itself
+.I P
+samples later.
+At 16000 Hz, 100 Hz is 160 samples and 200 Hz is 80.
+So the test is not whether the number in
+.B ctl
+changed; it is whether the sound repeats at the period that number implies.
+.PP
+At
+.B "pitch 100"
+the waveform correlates 0.88 with itself at a lag of 160 samples and
+.B \-0.49
+at 80 \(em anti-correlated at half a period, which is what a periodic wave
+does.
+At
+.B "pitch 200"
+both lags are high, 0.86 and 0.86, because 80 samples is now one period and 160
+is two.
+.PP
+Both controls have been seen to fail.
+Fixing the source at 100 Hz regardless of
+.B ctl
+fails the pitch check by name; ignoring
+.B speed
+reports 4800 samples where 2400 were wanted.
+.SH SOURCE
+.B /appl/cmd/voicetest.b
+.SH SEE ALSO
+.IR voice (3),
+.IR speak (1),
+.IR runtests (1)
+.SH BUGS
+It does not check that any particular phoneme sounds like that phoneme.
+The formant targets are verified once, by hand, by taking the spectrum of a
+held vowel and seeing the peaks land near the table \(em that is written up in
+.IR voice (3)
+and is not repeated here, because a discrete Fourier transform in Limbo over
+enough samples to be meaningful is slower than the rest of this test together.
+.PP
+The
+.B announce
+levels are only checked to be accepted and reported back.
+What each one lets through needs a window system and a focus to move, so it is
+checked by hand under
+.IR wm (1).
