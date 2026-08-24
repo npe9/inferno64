@@ -570,6 +570,7 @@ wm-sh wm-sh
 wm/man man
 wm/mprof mprof
 wm/prof prof
+wmtest wmtest
 xcaliber xcaliber
 xd xd
 yacc yacc

@@ -1,0 +1,99 @@
+.TH WMTEST 1
+.SH NAME
+wmtest \- make and unmake windows, repeatedly
+.SH SYNOPSIS
+.B wmtest
+[
+.B -n
+.I windows
+]
+[
+.B -d
+]
+[
+.B -r
+.I resultfile
+]
+.SH DESCRIPTION
+.B Wmtest
+creates windows and lets them go, a hundred times by default, and says whether
+any of it failed.
+It writes its verdict to
+.I resultfile
+.RB ( /wmtest.result
+by default) as well as printing it, because
+.IR wm (1)
+intercepts
+.B print
+into its own Log window where whatever started the test cannot see it.
+.PP
+By default it goes through
+.IR tkclient (2)
+toplevels, which is how a program normally gets a window.
+.B -d
+calls
+.B Screen.newwindow
+directly instead.
+Both are worth having: Tk's toplevel does a great deal besides call
+.BR newwindow ,
+so a failure through it does not say where the failure was.
+.PP
+It also asks each window its size rather than assuming it worked, since a
+window that exists with no size is the same failure wearing a different hat.
+.SH "WHY IT EXISTS"
+.IR Wm (1)
+had no automated test of any kind, which is awkward for the part of it with an
+open bug:
+.B Screen.newwindow
+has been seen to return nil, rarely, and the report was never reproduced.
+.PP
+This is not a clever test.
+Its value is the rate.
+A person driving a session by hand makes a few windows a minute; this makes
+five thousand in a run, and says so in an exit status.
+.SH "WHAT IT SHOWS SO FAR"
+Five thousand
+.B newwindow
+calls and three hundred Tk toplevels, none failed.
+.PP
+That does not clear the open bug, because the bug is reported
+.I after a resize
+and nothing here resizes anything \(em nothing can, since the host owns the
+window size.
+What it does is remove plain window churn as an explanation, which was worth
+knowing before looking anywhere else.
+.SH "A CLIENT MAY NOT SAY EXIT AND CARRY ON"
+.B tkclient->wmctl(t, "exit")
+tells
+.IR wm (1)
+that the client is finished, and
+.I wm
+then takes the whole client away \(em not just that window.
+A loop which made a window, used it, and said
+.B exit
+died silently on its first pass, having written nothing.
+.PP
+Dropping the reference to the toplevel is what unmaps one window without ending
+the program.
+.SH SOURCE
+.B /appl/cmd/wmtest.b
+.SH SEE ALSO
+.IR wm (1),
+.IR nowmtest (1),
+.IR clicktest (1),
+.IR tkclient (2)
+.PP
+.B doc/hpc-plan.md
+bug 2.
+.SH BUGS
+It does not resize anything, which is the condition the bug it was written for
+is reported under.
+See the plan for why that cannot be driven from inside.
+.PP
+Windows are made and dropped in one process.
+Two processes making windows at once would be a different test and probably a
+better one for a fault that was first seen on a build with no release barrier
+in
+.BR unlock .
+.PP
+It leaves the last window on the screen when it finishes.

@@ -99,6 +99,7 @@ TARG=\
 	sparsetest.dis\
 	styxlog.dis\
 	styxtest.dis\
+	wmtest.dis\
 	styxreplay.dis\
 	vecbench.dis\
 	qttest.dis\

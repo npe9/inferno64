@@ -1682,6 +1682,14 @@ react. (The in-process check was inconclusive rather than negative: the client
 used was a fixed-size Tk window, which would not resize on a real screen change
 either. A client that fills the screen would be needed to tell the two apart.)
 
+**Plain window churn is not it.** `wmtest(1)` (new) makes windows and lets them
+go: **5000 `Screen.newwindow` calls and 300 Tk toplevels, none failed**. That
+does not clear the bug, since the report is *after a resize* and nothing here
+resizes — but it removes churn alone as the explanation, which was worth knowing
+before looking anywhere else. It also found that a client cannot say
+`wmctl "exit"` and carry on: that tells wm the *client* is finished and wm takes
+it away, so the first version of the loop died silently on its first pass.
+
 So bug 2 needs either a way to drive the host window from outside — accessibility
 does not see this app, and synthetic clicks do not reach it — or a test hook that
 calls `screenresize()` directly, which would be a different event from the one
@@ -1699,6 +1707,13 @@ idle). A failed Metal pass now warns once per process and counts in
 A real ordering bug *was* found next to it and fixed (`66acdf8c`): the GPU
 readback overwrote `gscreen` with the texture *after* the CPU fallback had drawn
 into it, discarding the fallback. Do not assume that was the reported symptom.
+
+**Not re-established in 31 consecutive runs** of `line3test` on the current
+build (`emu-cocoa`, `-c1`), every one of them `software 60/60, draw3ddev 60/60`.
+That is not proof it is gone — it was only ever seen twice — but it does raise
+the bar: a hypothesis that predicts a failure rate above about one in thirty is
+already contradicted, and anyone re-opening this should say what rate they
+expect before running it.
 
 ### 4. `trapUSR1` took a non-local exit from an async signal handler — **FIXED**
 
@@ -2232,6 +2247,7 @@ All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 | `sessiontest` | session(2) decoding, and that decode/compile are inverses | headless; found 4 real bugs |
 | `styxtest` | that styxlog(1) reads a trace as the right paths | headless; guards the tag-keying bug |
 | `clicktest -e -n` | that a scripted click/drag works a real Tk widget | GUI; **needs `-e`/`-n` or it only reports** |
+| `wmtest` | window creation, in bulk | GUI; wm's first automated test; result goes to a file |
 | `schedcmp` | how much two runs' Dis schedules differ | not pass/fail, prints numbers |
 | `inputtest` | what input the system actually received | GUI; the instrument, not a test |
 | `temple/numericstest`, `temple/smoketest` | pre-existing | |
