@@ -594,6 +594,16 @@ The message must be stored before the index that publishes it, and the
 index read before the message it refers to; the kernel side uses
 .IR coherence (10.2)
 for that, and a machine that reorders stores needs the same on this side.
+.PP
+Nothing in the span is a pointer, which is what lets the same slice be
+mapped at more than one address \- the talk asks for exactly that.
+.B "ring Isegment sizeP twice"
+attaches one a second time, checks that the two are the same memory by
+writing through one and reading through the other, and then works the
+ring through the second alone: the map is read there, the ring heads are
+found from it there, and the request is put there.  In the check the two
+mappings come out sixty thousand bytes apart and the request is answered
+.BR "poll done" .
 .SS The span as a library
 .PP
 .B /os/osprey/libosprey9
@@ -970,7 +980,7 @@ in
 where twelve hundred give
 .BR "direct 953 copied 257" .
 .PP
-Together they are sixty-five lines.  Each says
+Together they are sixty-six lines.  Each says
 .B ok
 or
 .B FAIL

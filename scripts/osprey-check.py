@@ -52,6 +52,12 @@ CHECKS = [
  ("a file opened and read by a program that only uses the library",
   ["/tmp/o9cat osprey0 $sz /dev/osversion"],
   "arms intact, read"),
+ # the talk says segments may be shared at different addresses, and
+ # everything in the span is an offset rather than a pointer so that
+ # they may; nothing until now attached one twice to find out.
+ ("the same slice mapped a second time somewhere else, and worked there",
+  ["/tmp/ring osprey0 $sz twice | sed 1d"],
+  "through the second mapping, reply poll done"),
  ("a select woken by a semaphore, on the arm that was given",
   ["{ /tmp/ring osprey1 $sz wait 3 & }; sleep 2; echo semup 2 3 >/n/osprey/ctl",
    "sleep 2; echo waited"],

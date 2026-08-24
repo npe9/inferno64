@@ -8,6 +8,7 @@
  *
  * usage: ring segment size [op [arg ...]]
  *        ring segment size page PAGESEG [text]
+ *        ring segment size twice
  *
  * The segment is the container's own -- osprey0, osprey1 and so on, as
  * status reports -- and the size is that segment's, not the whole span's.
@@ -414,6 +415,82 @@ ringmain(int argc, char **argv)
 	if(argc == 3){
 		flush();
 		return;
+	}
+
+	if(strcmp(argv[3], "twice") == 0){
+		/*
+		 * The talk says segments may be shared at different
+		 * addresses, and everything in this span is an offset
+		 * rather than a pointer so that they may.  This attaches
+		 * the same slice a second time -- the kernel puts it
+		 * wherever there is room, which is not where the first one
+		 * is -- and then works the ring through the second mapping
+		 * alone: the map is read there, the ring heads are found
+		 * from it there, and the request is put there.  A pointer
+		 * anywhere in the span would make that go wrong, and
+		 * nothing else in this check would notice.
+		 */
+		uchar *vb;
+		Ospreymap *mb;
+		Queue *rqb, *pqb;
+		Message *rmb, *pmb;
+
+		vb = (uchar*)segattach(0, argv[1], 0, arenasize);
+		if(vb == (uchar*)-1){
+			char e[ERRMAX];
+
+			e[0] = '\0';
+			errstr(e, sizeof e);
+			outs("ring: second segattach: "); outs(e); outs("\n");
+			flush();
+			exits("segattach");
+		}
+		if(vb == va)
+			die("the second mapping is the first one");
+		outs("mapped twice, "); outd((uvlong)(vb > va ? vb - va : va - vb));
+		outs(" bytes apart\n");
+
+		mb = (Ospreymap*)vb;
+		if(mb->magic != Ospreymagic || mb->id != m->id)
+			die("the second mapping is not the same container");
+		/* the same memory: what is written through one is in the other */
+		{
+			uchar *pa, *pb;
+
+			pa = base + m->data + m->datalen - 1;
+			pb = vb + mb->data + mb->datalen - 1;
+			*pa = 0x5a;
+			if(*pb != 0x5a)
+				die("the two mappings are not the same memory");
+			*pa = 0;
+		}
+
+		rqb = (Queue*)(vb + mb->requestqueue);
+		pqb = (Queue*)(vb + mb->replyqueue);
+		rmb = (Message*)(vb + mb->request);
+		pmb = (Message*)(vb + mb->reply);
+		if(rqb->put - rqb->get >= mb->size)
+			die("request ring full");
+		memset(&msg, 0, sizeof msg);
+		msg.op = (uvlong)oplookup("poll");
+		msg.sequence = rqb->put + 1;
+		msg.container = mb->id;
+		rmb[rqb->put % mb->size] = msg;
+		rqb->put++;
+		for(i = 0; i < Nwait; i++){
+			if(pqb->put != pqb->get){
+				msg = pmb[pqb->get % mb->size];
+				pqb->get++;
+				outs("through the second mapping, reply ");
+				outs(name(opname, msg.op));
+				outs(" "); outs(name(statusname, msg.arg[0]));
+				outs("\n");
+				flush();
+				return;
+			}
+			sleep(100);
+		}
+		die("no reply through the second mapping");
 	}
 
 	if(strcmp(argv[3], "frame") == 0 && argc > 4){

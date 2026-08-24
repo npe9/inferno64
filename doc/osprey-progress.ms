@@ -194,7 +194,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Sixty-five lines, all
+a line at a time.  Sixty-six lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -476,6 +476,22 @@ answers is ARP for one address and echo and nothing else \- no routing,
 no fragmentation, no UDP, no TCP \- so what it demonstrates is that the
 path is real and that the kernel needs to know nothing about it, not
 that there is a usable stack outside the kernel.
+.NH 1
+The same slice at two addresses
+.PP
+The talk says segments may be shared at different addresses, and every
+field in this span is an offset rather than a pointer so that they may.
+Nothing had ever attached one twice to find out.
+.CW "ring \fIsegment size\fP twice"
+does: it attaches the slice a second time, refuses to go on if the
+kernel gave it the same address, checks the two are the same memory by
+writing a byte through one and reading it through the other, and then
+works the ring through the second mapping alone \- the map read there,
+the ring heads found from it there, the request put there.  The two come
+out sixty thousand bytes apart and the request is answered
+.CW "poll done" .
+A pointer anywhere in the span would break that and nothing else in the
+check would have noticed.
 .NH 1
 The span as a library
 .PP
