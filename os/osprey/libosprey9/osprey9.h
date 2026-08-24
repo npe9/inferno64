@@ -56,9 +56,10 @@ enum {
 	 */
 	O9armend = O9narm*sizeof(Ospreyarm),
 	O9msgend = O9armend + sizeof(Message),
+	O9namelen = 256,		/* the most a name may be */
 	O9name	= O9msgend,		/* a name a request points at */
-	O9name2	= O9name + 256,		/* and the second one bind wants */
-	O9iobuf	= O9name2 + 256,	/* what read and write move */
+	O9name2	= O9name + O9namelen,	/* and the second one bind wants */
+	O9iobuf	= O9name2 + O9namelen,	/* what read and write move */
 
 	O9nothing = -2,	/* o9select: the wait ended and no arm was ready */
 };
@@ -82,6 +83,7 @@ struct Osprey {
 	uvlong	armbuf;		/* and the message buffer after them */
 	uvlong	id;
 	uvlong	size;		/* bytes in the slice */
+	uvlong	sequence;	/* what the last o9submit published */
 	int	ctlfd;
 	char	*err;		/* what the last call that failed said */
 };
@@ -104,8 +106,15 @@ uvlong	o9datalen(Osprey*);
  * Put a request on this container's own ring and wait for its answer,
  * with no trap taken either way.  op is one of the Req... values.  The
  * three argument words are the request's own; the reply's are read out
- * of rep.  o9submit and o9collect are the two halves, for a program that
- * wants several in flight.
+ * of rep.
+ *
+ * o9submit and o9collect are the two halves, for a program that wants
+ * several in flight, and a program that does that has one thing to do
+ * for itself: o9collect gives whatever reply is next on the ring, not
+ * the answer to any particular request, so it must match
+ * .sequence against what o9submit left in o->sequence.  o9call does
+ * that matching and refuses a reply that is not its own, so it is safe
+ * to use only when nothing else of this container's is outstanding.
  */
 int	o9submit(Osprey*, int op, uvlong a0, uvlong a1, uvlong a2);
 int	o9collect(Osprey*, Message *rep, int tries);

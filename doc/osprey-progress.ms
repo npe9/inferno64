@@ -606,12 +606,24 @@ one.  The policy layer needs only
 .CW pool.h
 and
 .CW fcall.h ,
-so the Inferno headers for those machines do; the library needs a
+so the Inferno headers for those machines do.  The library is a smaller
+claim than the policy layer and should be read as one: it needs a
 .CW libc.h ,
-which 9front has for 386 and Inferno has for nothing, having
+and what it gets is a thirty-two bit
+.CW u.h
+out of
+.CW 9front/386/include
+together with the architecture-independent
+.CW 9front/include/libc.h .
+That catches an assumption about the width of a type, which is what was
+wanted, and it is not an Osprey 386 userland, because there is not one.
+Inferno has no
+.CW libc.h
+for any machine, having
 .CW lib9.h
-instead.  And it catches what a compiler catches and no more: a pointer
-cast to a
+instead, which is why the riscv64 column has only the policy layer in
+it.  And the whole thing catches what a compiler catches and no more: a
+pointer cast to a
 .CW ulong
 compiles on both, so a check like this is a floor and not a proof.
 .NH 1
@@ -854,6 +866,45 @@ which does fix the map, first.  That is the same accident that let
 work for as long as it did and left
 .CW ospreytxsizes
 failing the moment it was written.
+.NH 2
+One instance where the plan asks for a choice
+.PP
+Of the plan's eight sections seven are built and checked.  The eighth is
+.I "Architecture adapter" ,
+which says the adapter "is selected by
+.CW OBJTYPE
+and the architecture mkfile", and exactly one exists:
+.CW os/osprey/adapter/ospreyrt.c
+with
+.CW os/osprey/pc
+and
+.CW os/osprey/pc64
+under it.  A thing selected by a variable that has only ever had one
+value is not yet shown to be selected by anything.
+.PP
+The half of that which can be answered without a second machine is
+answered above: the layer the adapter binds to the machine compiles for
+two others, so what is portable is portable.  The other half is a
+machine layer for the 9front-derived
+.CW os/osprey/port ,
+and it is a port and not a configuration.
+.CW os/inferno
+has riscv64 boards \-
+.CW virt ,
+.CW sifiveu ,
+.CW spike
+\- and they sit on the Inferno port layer, which is a different set of
+sources with different contracts; they will not compose with this one.
+What a second Osprey machine needs is what any new 9front machine needs:
+.CW l.s ,
+.CW mmu.c ,
+.CW trap.c ,
+.CW main.c ,
+a clock and a console, against
+.CW os/osprey/port 's
+.CW portdat.h .
+That is the size of the thing, and it is written down here rather than
+begun.
 .NH 1
 Not attempted
 .PP

@@ -217,6 +217,7 @@ o9submit(Osprey *o, int op, uvlong a0, uvlong a1, uvlong a2)
 	m.arg[2] = a0;
 	m.arg[3] = a1;
 	m.arg[4] = a2;
+	o->sequence = m.sequence;
 	o->reqmsg[q->put % q->size] = m;
 	/*
 	 * The message must be stored before the index that publishes it.
@@ -249,10 +250,23 @@ o9collect(Osprey *o, Message *rep, int tries)
 int
 o9call(Osprey *o, int op, uvlong a0, uvlong a1, uvlong a2, Message *rep)
 {
+	uvlong seq;
+
 	if(o9submit(o, op, a0, a1, a2) < 0)
 		return -1;
+	seq = o->sequence;
 	if(o9collect(o, rep, 400) < 0)
 		return -1;
+	/*
+	 * The ring gives what is next on it, which is this request's
+	 * answer only if nothing else of this container's was in flight.
+	 * A reply belonging to something else, taken as this one's, would
+	 * be a wrong answer that looked like a right one.
+	 */
+	if(rep->sequence != seq){
+		o->err = "that reply is the answer to some other request";
+		return -1;
+	}
 	if(rep->arg[0] != ReplyDone){
 		o->err = "the request was refused";
 		return -1;
@@ -268,6 +282,10 @@ putname(Osprey *o, uvlong off, char *s)
 	long n;
 
 	n = strlen(s) + 1;
+	if(n > O9namelen){
+		o->err = "that name is longer than the room kept for one";
+		return -1;
+	}
 	if((a = o9data(o, off, (uvlong)n)) == nil)
 		return -1;
 	memmove(a, s, n);

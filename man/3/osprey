@@ -992,9 +992,14 @@ with
 .I 8c
 against the 386 headers and with
 .I kc
-against the riscv64 headers, and the container-side library with
-.I 8c
-as well, treating any output at all as a failure.  What that settles is
+against the riscv64 headers, treating any output at all as a failure.
+The container-side library goes with the first of those, against a
+thirty-two bit
+.B u.h
+and an architecture-independent
+.BR libc.h ,
+which catches an assumption about the width of a type and is not an
+Osprey 386 userland: there is not one.  What that settles is
 the claim
 .B /os/osprey/policy/README
 makes and nothing else checked: that the layer depends on nothing of the
