@@ -29,7 +29,24 @@ include "tkclient.m";
 	tkclient: Tkclient;
 include "arg.m";
 
+Quitter: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+
+# End the "wmtest"le session, so that a run which finished can be told from one
+# that hung. Without this every GUI run is killed by a timeout and reports the
+# same status either way, which makes a hang invisible: nothing is printed and
+# nothing breaks. quitall(1) is loaded rather than reimplemented.
+quitsession()
+{
+	q := load Quitter "/dis/quitall.dis";
+	if(q == nil){
+		sys->print("%s: cannot load /dis/quitall.dis: %r\n", "wmtest");
+		return;
+	}
+	q->init(nil, "quitall" :: nil);
+}
+
 rfd: ref Sys->FD;
+quitwhendone := 0;
 
 say(s: string)
 {
@@ -64,15 +81,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	n := 100;
 	direct := 0;
 	procs := 1;
+	quit := 0;
 	result := "/wmtest.result";
 	arg->init(argv);
-	arg->setusage("wmtest [-n windows] [-p procs] [-d] [-r resultfile]");
+	arg->setusage("wmtest [-n windows] [-p procs] [-d] [-q] [-r resultfile]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'n' =>	n = int arg->earg();
 		'd' =>	direct++;	# Screen.newwindow itself, with no Tk above it
 		'r' =>	result = arg->earg();
 		'p' =>	procs = int arg->earg();	# make them concurrently
+		'q' =>	quit++;		# end the session when finished
 		* =>	arg->usage();
 		}
 
@@ -84,6 +103,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# wm's Log window intercepts sys->print, so a result printed there is
 	# invisible to whatever started this. It goes to a file.
 	rfd = sys->create(result, Sys->OWRITE, 8r666);
+	quitwhendone = quit;
 
 	if(direct){
 		newwindows(ctxt, n, procs);
@@ -201,8 +221,12 @@ report(what: string, n, bad: int)
 {
 	if(bad == 0){
 		say(sprint("wmtest: %d %s, none failed\nPASS\n", n, what));
+		if(quitwhendone)
+			quitsession();
 		return;
 	}
 	say(sprint("wmtest: %d %s, %d failed\nFAIL\n", n, what, bad));
+	if(quitwhendone)
+		quitsession();
 	raise "fail:test";
 }

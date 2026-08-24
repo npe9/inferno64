@@ -11,6 +11,9 @@ wmtest \- make and unmake windows, repeatedly
 .B -d
 ]
 [
+.B -q
+]
+[
 .B -r
 .I resultfile
 ]
@@ -33,6 +36,23 @@ A session with
 in it does not end when this does, so whatever runs it either waits and reads
 the file or kills the session \(em and killing the session takes the status
 with it.
+.PP
+.B -q
+ends the session once the verdict has been written, which buys one thing and
+not another.
+It buys a
+.I hang
+being visible: a run that finishes exits at once, so a run still going when the
+timeout fires was stuck.
+Without it every run is killed by the timeout and reports the same status
+whether it worked or hung, which is the one failure nothing else here catches
+\(em see
+.IR faultprobe (1).
+.PP
+It does not buy pass or fail in the status.
+Ending the session takes this process with it, so nothing after that runs and
+no exception propagates.
+The verdict is still the file.
 .PP
 By default it goes through
 .IR tkclient (2)

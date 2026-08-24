@@ -16,6 +16,10 @@ indexing past the end of an array with
 .BR -b ,
 or raising an exception nobody handles with
 .BR -e .
+.B -h
+does not fail at all: it hangs, which is worse, because nothing is printed and
+nothing breaks and a watcher looking for something said out loud sees a run
+that went perfectly until it was killed.
 .PP
 It exists because a harness that watches for failures is only as good as its
 ability to see one, and in this tree that is not obvious.
@@ -51,6 +55,16 @@ or
 misses the other two entirely.
 It had been reporting no faults across a batch of runs, and that was worth
 exactly nothing until this said so.
+.PP
+.B -h
+is not caught by any of that, by construction: a hang says nothing.
+Catching it needs a run that ends by itself when it succeeds, so that one still
+going when the timeout fires is known to be stuck \(em which is what
+.B -q
+is for in
+.IR wmtest (1)
+and
+.IR clicktest (1).
 .SH SOURCE
 .B /appl/cmd/faultprobe.b
 .SH SEE ALSO
@@ -58,10 +72,10 @@ exactly nothing until this said so.
 .IR clicktest (1),
 .IR emu (1)
 .SH BUGS
-Three ways to fail, out of many.
-A process that hangs, one that exits quietly with the wrong answer, and one
-that corrupts something and carries on are all failures this cannot imitate,
-and a harness that catches all three of these still catches none of those.
+Four ways to fail, out of many.
+One that exits quietly with the wrong answer, and one that corrupts something
+and carries on, are still failures this cannot imitate, and a harness that
+catches all four of these still catches neither of those.
 .PP
 It says nothing about
 .I where

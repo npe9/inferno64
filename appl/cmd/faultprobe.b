@@ -17,6 +17,7 @@ implement Command;
 #	faultprobe		# dereference nil
 #	faultprobe -b		# index past the end of an array
 #	faultprobe -e		# raise an exception nobody handles
+#	faultprobe -h		# hang, which is not a fault at all
 #
 # All three are broken in the sense progexit() means: emu prints
 # "[module] Broken: pid N ..." through C, not through Limbo, so the question
@@ -44,14 +45,24 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 	how := 'n';
 	arg->init(argv);
-	arg->setusage("faultprobe [-b] [-e]");
+	arg->setusage("faultprobe [-b] [-e] [-h]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'b' =>	how = 'b';
 		'e' =>	how = 'e';
+		'h' =>	how = 'h';
 		* =>	arg->usage();
 		}
 
+	if(how == 'h'){
+		# Not a fault: nothing is printed, nothing breaks, and a
+		# watcher looking for something said out loud sees a run that
+		# went perfectly until it was killed. Distinguishing this from
+		# success needs the run to end by itself when it succeeds.
+		print("faultprobe: hanging\n");
+		c := chan of int;
+		<-c;
+	}
 	print("faultprobe: about to fault\n");
 	case how {
 	'b' =>

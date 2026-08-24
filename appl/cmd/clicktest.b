@@ -30,6 +30,22 @@ include "tkclient.m";
 	tkclient: Tkclient;
 include "arg.m";
 
+Quitter: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+
+# End the "clicktest"le session, so that a run which finished can be told from one
+# that hung. Without this every GUI run is killed by a timeout and reports the
+# same status either way, which makes a hang invisible: nothing is printed and
+# nothing breaks. quitall(1) is loaded rather than reimplemented.
+quitsession()
+{
+	q := load Quitter "/dis/quitall.dis";
+	if(q == nil){
+		sys->print("%s: cannot load /dis/quitall.dis: %r\n", "clicktest");
+		return;
+	}
+	q->init(nil, "quitall" :: nil);
+}
+
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
 cfg := array[] of {
@@ -83,9 +99,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	menu := 0;
 	item := 2;
 	expect := "";
+	quit := 0;
 	want := 0;
 	arg->init(argv);
-	arg->setusage("clicktest [-m] [-i item] [-e what -n count] [-w wherefile] [-r resultfile] [-t seconds]");
+	arg->setusage("clicktest [-m] [-i item] [-e what -n count] [-q] [-w wherefile] [-r resultfile] [-t seconds]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'w' =>	where = arg->earg();
@@ -95,6 +112,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		'i' =>	item = int arg->earg();	# which item to aim the drag at
 		'e' =>	expect = arg->earg();	# what should arrive
 		'n' =>	want = int arg->earg();	# and how many times
+		'q' =>	quit++;		# end the session when finished
 		* =>	arg->usage();
 		}
 
@@ -226,17 +244,25 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# in its exit status, so a script can fail. Without them it only
 	# reports, which is what it was built to do.
 	if(expect != "" || want != 0){
-		if(want != 0 && n != want){
-			sys->print("clicktest: FAIL wanted %d presses, got %d\n", want, n);
-			raise "fail:count";
-		}
-		if(wrong != 0){
-			sys->print("clicktest: FAIL %d of %d presses were not %s\n",
+		# the verdict is written before the session is ended, because
+		# ending it takes this process with it and nothing after would
+		# run - which is also why -q cannot make the exit status carry
+		# pass or fail, only finished or hung
+		v := "clicktest: PASS\n";
+		if(want != 0 && n != want)
+			v = sprint("clicktest: FAIL wanted %d presses, got %d\n", want, n);
+		else if(wrong != 0)
+			v = sprint("clicktest: FAIL %d of %d presses were not %s\n",
 				wrong, n, expect);
-			raise "fail:wrong";
-		}
-		sys->print("clicktest: PASS\n");
-	}
+		sys->print("%s", v);
+		if(rfd != nil)
+			fprint(rfd, "%s", v);
+		if(quit)
+			quitsession();
+		if(v[10] == 'F')
+			raise "fail:test";
+	}else if(quit)
+		quitsession();
 }
 
 timeout(secs: int, c: chan of string)
