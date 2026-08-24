@@ -4,6 +4,22 @@ clicktest \- does a scripted click work a widget?
 .SH SYNOPSIS
 .B clicktest
 [
+.B -m
+]
+[
+.B -i
+.I item
+]
+[
+.B -e
+.I what
+.B -n
+.I count
+]
+[
+.B -q
+]
+[
 .B -w
 .I wherefile
 ]
