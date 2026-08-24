@@ -2313,6 +2313,12 @@ a watchdog to `fdstresstest` stopped the hang reproducing entirely.
 
 All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 
+**`runtests`** runs the ones that need no screen and names the ones it does not.
+It is a program rather than a shell loop so that one test failing does not stop
+the rest being tried, and it keeps each test's output so a failure can say what
+the test said. **The file is the verdict**: emu does not carry a Dis program's
+exit status out, so a run with a failing test exits 0 exactly like a clean one.
+
 | command | checks | notes |
 |---|---|---|
 | `keyuptest` | key-release events not inserted as text | GUI; verified by negative control |

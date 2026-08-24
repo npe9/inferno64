@@ -1,0 +1,106 @@
+.TH RUNTESTS 1
+.SH NAME
+runtests \- run the tests and say which failed
+.SH SYNOPSIS
+.B runtests
+[
+.B -l
+]
+[
+.B -v
+]
+[
+.B -r
+.I resultfile
+]
+.SH DESCRIPTION
+.B Runtests
+runs the tests that need no screen and reports each one, then names the ones it
+did not run.
+.B -l
+says what it would run and runs nothing.
+.B -v
+lets each test's own output through instead of keeping it.
+.PP
+There was no way to do this before.
+The tests existed, they were listed in
+.BR doc/hpc-plan.md ,
+and each had a page saying how to run it \(em but running them meant running
+each by hand and remembering which need a flag before they check anything at
+all rather than merely reporting.
+.SH "WHY IT IS A PROGRAM AND NOT A SCRIPT"
+Each test is loaded and run in this process, and its exceptions are caught.
+One test failing must not stop the rest from being tried, which is exactly what
+a shell loop would do at the first non-zero status.
+.PP
+A test's own output is kept rather than discarded, because when one does fail
+its last words are the only detail there is: Limbo gives the variable in an
+exception clause a type of its own, so what was actually raised cannot be
+turned into a string here.
+The verdict line carries the last thing the test said.
+.SH "THE FILE IS THE VERDICT"
+.B Emu
+does not carry a Dis program's exit status out to whatever started it: a run
+with a failing test exits 0 exactly like a clean one.
+Anything deciding automatically has to read
+.I resultfile
+.RB ( /runtests.result
+by default), which ends in
+.B PASS
+or
+.BR FAIL .
+.PP
+This is the same caveat as
+.IR wmtest (1)
+and
+.IR clicktest (1)
+and for the same reason.
+.SH EXAMPLE
+.IP
+.EX
+% runtests
+sessiontest      ok
+styxtest         ok
+refstress        ok
+
+3 of 3 ran clean.
+Not covered here, and each needs a screen: wmtest, clicktest, ...
+.EE
+.PP
+With a fault put into the decoder on purpose, to show it can say so:
+.IP
+.EX
+sessiontest      FAIL reported failure: sessiontest: 2 checks failed
+styxtest         ok
+refstress        ok
+.EE
+.PP
+The other two still ran, which is the point.
+.SH SOURCE
+.B /appl/cmd/runtests.b
+.SH SEE ALSO
+.IR sessiontest (1),
+.IR styxtest (1),
+.IR refstress (1),
+.IR wmtest (1),
+.IR clicktest (1),
+.IR faultprobe (1)
+.PP
+.B doc/hpc-plan.md
+has the full table, including what each graphical test checks.
+.SH BUGS
+It runs three tests.
+The numerics and graphics tests are not in it: the graphical ones need a screen
+and a window manager and some end the session deliberately, which would take
+this program with them, and the numerics ones were not written to be run from
+inside another program.
+Naming them is not the same as running them.
+.PP
+A test that spawns children may still let their output past, since only this
+process's own descriptors are redirected.
+.PP
+Nothing here has a timeout.
+A test that hangs hangs the run, and
+.IR fdstresstest (1)
+is documented to do exactly that on failure, which is one of the reasons it is
+not in the list.

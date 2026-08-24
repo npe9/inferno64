@@ -453,6 +453,7 @@ rreadone sh-file2chan
 rt wm-misc
 run sh
 runas runas
+runtests runtests
 rwrite sh-file2chan
 schedcmp schedcmp
 secstore secstore

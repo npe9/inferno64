@@ -99,6 +99,7 @@ TARG=\
 	sparsetest.dis\
 	styxlog.dis\
 	faultprobe.dis\
+	runtests.dis\
 	styxtest.dis\
 	wmtest.dis\
 	styxreplay.dis\
