@@ -176,9 +176,11 @@ against the kernel this file describes.
 .NH 1
 Next, in order
 .PP
-Everything the plan and the presentation describe that a kernel of this
-shape can do is done.  What is left is a different kernel, and the things
-below, which neither source spells out.
+Most of what the plan and the presentation describe that a kernel of
+this shape can do is done.  What is left is a different kernel; one
+half of a sentence in the plan that is not started -- the protocol
+stack in user space, of which only the buffers underneath it are
+built; and the things below, which neither source spells out.
 .PP
 .B "1.  Knowing who agreed the key."
 The exchange is with whoever answers.  A person comparing two
@@ -373,6 +375,130 @@ being refused.  A semaphore given when the Block returns to the pool is
 the shape the talk already uses for an interrupt, and
 .CW Bpool
 has nowhere to hang it yet.
+.NH 1
+The gaps, by why they are gaps
+.PP
+Six kinds, and they are not equally hard.  The first cannot be closed
+without writing a different kernel; the last four can be closed from
+here.
+.NH 2
+Unreachable from a Plan 9 kernel
+.PP
+The microkernel itself, a library operating system linked into the task
+that uses it, and processes that share an address space migrating as a
+group.  The measure of it is the file count: the Osprey kernel is 95
+portable sources, 121 machine sources and 25 in the ip stack, against
+10 in
+.CW policy
+and one adapter.  Nine tenths of what is linked is a personality
+sitting on the wrong side of the line the talk draws.  What can be done
+from here \- and is \- is to let a container replace that personality
+for itself.
+.NH 2
+Built and unproven
+.PP
+Two, both from the packet work.
+.CW send
+returns
+.CW done
+and the card is handed the container's own buffer, but the machine on
+the other side of the wire heard nothing and that is not explained.
+And the zero-copy receive path has never once been seen to fire: five
+frames to a container that had claimed an interface gave
+.CW "direct 0 copied 5" .
+The code says it should, after a ring's worth of traffic has replaced
+the driver's own buffers; nothing has yet sent a ring's worth.
+.NH 2
+Designed, one mechanism short
+.PP
+A container cannot be told when a transmit buffer comes back; it must
+offer the buffer and be answered
+.CW retry .
+.CW Bpool
+in
+.CW os/osprey/port/portdat.h
+has nowhere to hang a hook, and
+.CW freeb
+runs at interrupt level, so what belongs there is a call short enough
+to give a semaphore \- which is the shape the talk already uses for an
+interrupt, and which
+.CW select
+already waits on.  Everything that would transmit at a rate waits on
+this one thing.
+.NH 2
+Not started
+.PP
+The protocol stack.  The plan's sentence is
+.RB \(lq "move protocol stacks, packet processing, and most file-system policy into user-space services" \(rq ;
+.CW os/osprey/cmd/p9srv.c
+is the file-system half, the buffers under the packet half are built,
+and the program that would take frames with
+.CW recv ,
+answer ARP and ICMP, and reply with
+.CW send
+does not exist.
+.PP
+Two things it would need that are also missing: a container has no
+address of its own to put in a frame \- there is no
+.CW ether
+attribute, though
+.CW ospreyattr
+is where one would go \- and a container has no name space of its own.
+.CW bind
+is answered by
+.I p9srv
+in
+.I its
+name space; two containers sharing a server share its names, which is
+not what a private name space means.
+.NH 2
+Demonstration scale
+.PP
+Every limit is a compile-time constant in
+.CW os/osprey/adapter/ospreyrt.c
+and none can be set from a configuration file: sixteen containers,
+eight cores, sixteen messages to a ring, eight semaphores, thirty-two
+packets held, sixteen receive and eight transmit buffers, eight private
+names, four grants, eight pages to a container, sixteen arms to a
+.CW select .
+For a system whose subject is predictable clouds these are not
+footnotes; the shape is right and the numbers are a demonstration's.
+.NH 2
+Latency
+.PP
+The talk measures a send, a receive and a context switch together at
+270 nanoseconds.  What this kernel measures, through the mapped ring
+with no trap taken at all, is 46483, 49889, 46800 and 50551 nanoseconds
+on four runs of
+.CW #O/bench ,
+and four hundred round trips in a hundredth to a fiftieth of a second.
+Two orders of magnitude, and structural rather than tuning: a round
+trip here wakes a Plan 9 kernel process to answer it.  The talk's
+number is a microkernel's, and this is not one.
+.NH 2
+A class of bug worth naming
+.PP
+The container may write every byte of its own map, which is why
+.CW mapfix
+exists and rewrites the whole of it from the kernel's own constants
+before it is used.  Of the ten places in
+.CW os/osprey/adapter/ospreyrt.c
+that read or write through
+.CW p->map ,
+five call
+.CW mapfix
+first and five do not.  Three of those five only write.  The two that
+read \-
+.CW ospreydataoffset
+and
+.CW ospreydatalen
+\- are safe only because their callers happen to call
+.CW ospreydata ,
+which does fix the map, first.  That is the same accident that let
+.CW ospreymapsizes
+work for as long as it did and left
+.CW ospreytxsizes
+failing the moment it was written.
 .NH 1
 Not attempted
 .PP

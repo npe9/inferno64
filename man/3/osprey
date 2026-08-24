@@ -985,22 +985,22 @@ are the grants somebody with the key wrote.
 .SH SEE ALSO
 .IR cons (3)
 .SH BUGS
-.BR wait ,
-.B send
-and
-.B bind
-are refused by the kernel; process and IPC requests belong to the
-user-level services described in the Osprey plan, and a container with a
-server named by
-.B delegate
-has them answered there.
-.I p9srv
-answers
-.BR bind ;
 .B wait
-and
+is answered by nobody: not by the policy layer, not by the kernel, and
+not by
+.IR p9srv .
+Process requests belong to the user-level services the Osprey plan
+describes, and a container with a server named by
+.B delegate
+has them answered there if that server implements them.
+.B bind
+is refused by the kernel and answered by
+.IR p9srv ,
+in the server's own name space rather than in one of the container's.
 .B send
-nothing yet answers.
+and
+.B recv
+the kernel does answer, in the section above.
 .B recv
 takes a packet from the queue of a container that has been given an
 interface, and is refused by a container that has not.
