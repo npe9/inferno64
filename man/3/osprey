@@ -984,7 +984,30 @@ in
 where twelve hundred give
 .BR "direct 953 copied 257" .
 .PP
-Together they are sixty-six lines.  Each says
+.PP
+.B /scripts/osprey-check-portable.sh
+boots nothing.  It compiles every source in
+.B /os/osprey/policy
+with
+.I 8c
+against the 386 headers and with
+.I kc
+against the riscv64 headers, and the container-side library with
+.I 8c
+as well, treating any output at all as a failure.  What that settles is
+the claim
+.B /os/osprey/policy/README
+makes and nothing else checked: that the layer depends on nothing of the
+machine it was written on.  Everything else in the tree builds it with
+.I 6c
+against the amd64 headers, where a dependence on a header that exists
+only there, or on the width of a type, is invisible.  It catches what a
+compiler catches, which is not every width assumption: a pointer cast to
+a
+.B ulong
+compiles on both.
+.PP
+The three above are sixty-six lines.  Each says
 .B ok
 or
 .B FAIL

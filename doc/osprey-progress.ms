@@ -578,6 +578,43 @@ request against
 map's bounds and never the client's, which is now said in the one place
 the bounds are kept rather than in each program.
 .NH 1
+Portable, and now checked to be
+.PP
+.CW os/osprey/policy/README
+says the layer is kept independent of Proc, Mach, device drivers and
+architecture trap code, and the plan says the same in more words.
+Nothing checked it.  Everything in the tree builds it with
+.CW 6c
+against the amd64 headers, where a dependence on a header that exists
+only there, or on the width of a type, is invisible.
+.CW scripts/osprey-check-portable.sh
+builds every policy source with
+.CW 8c
+against the 386 headers \- thirty-two bit, which is where a layer
+written on amd64 usually breaks \- and with
+.CW kc
+against the riscv64 headers, and the container-side library with
+.CW 8c
+beside them.  Any output at all is a failure, warnings included.  Both
+pass as they stand, which is the answer that was wanted and not the one
+that was expected.
+.PP
+It boots nothing and links nothing: the objects are thrown away, since
+there is no Osprey build for either machine and the point is not to make
+one.  The policy layer needs only
+.CW u.h ,
+.CW pool.h
+and
+.CW fcall.h ,
+so the Inferno headers for those machines do; the library needs a
+.CW libc.h ,
+which 9front has for 386 and Inferno has for nothing, having
+.CW lib9.h
+instead.  And it catches what a compiler catches and no more: a pointer
+cast to a
+.CW ulong
+compiles on both, so a check like this is a floor and not a proof.
+.NH 1
 The gaps, by why they are gaps
 .PP
 Five kinds, and they are not equally hard.  The first cannot be closed
