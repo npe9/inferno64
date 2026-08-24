@@ -30,129 +30,34 @@ int	mptof(Mp*, double*);
 int
 mpatof(char *s, double *d)
 {
-	Mp a, b;
-	int dp, c, f, ef, ex, zer;
-	double d1, d2;
+	char *e;
+	double v;
 
-	dp = 0;		/* digits after decimal point */
-	f = 0;		/* sign */
-	ex = 0;		/* exponent */
-	zer = 1;	/* zero */
-	memset(&a, 0, sizeof(a));
-	for(;;) {
-		switch(c = *s++) {
-		default:
-			goto bad;
-		case '-':
-			f = 1;
-		case ' ':
-		case  '\t':
-		case  '+':
-			continue;
-		case '.':
-			dp = 1;
-			continue;
-		case '1':
-		case '2':
-		case '3':
-		case '4':
-		case '5':
-		case '6':
-		case '7':
-		case '8':
-		case '9':
-			zer = 0;
-		case '0':
-			mpint(&b, c-'0');
-			mpmul(&a, 10);
-			mpadd(&a, &b);
-			if(dp)
-				dp++;
-			continue;
-		case 'E':
-		case 'e':
-			ex = 0;
-			ef = 0;
-			for(;;) {
-				c = *s++;
-				if(c == '+' || c == ' ' || c == '\t')
-					continue;
-				if(c == '-') {
-					ef = 1;
-					continue;
-				}
-				if(c >= '0' && c <= '9') {
-					ex = ex*10 + (c-'0');
-					continue;
-				}
-				break;
-			}
-			if(ef)
-				ex = -ex;
-		case 0:
-			break;
-		}
-		break;
-	}
-	if(a.ovf)
-		goto bad;
-	if(zer) {
-		*d = 0;
-		return 0;
-	}
-	if(dp)
-		dp--;
-	dp -= ex;
-	if(dp > 0) {
-		/*
-		 * must divide by 10**dp
-		 */
-		if(mptof(&a, &d1))
-			goto bad;
-
-		/*
-		 * trial exponent of 8**dp
-		 * 8 (being between 5 and 10)
-		 * should pick up all underflows
-		 * in the division of 5**dp.
-		 */
-		d2 = frexp(d1, &ex);
-		d2 = ldexp(d2, ex-3*dp);
-		if(d2 == 0)
-			goto bad;
-
-		/*
-		 * decompose each 10 into 5*2.
-		 * create 5**dp in fixed point
-		 * and then play with the exponent
-		 * for the remaining 2**dp.
-		 * note that 5**dp will overflow
-		 * with as few as 134 input digits.
-		 */
-		mpint(&a, 1);
-		mppow(&a, 5, dp);
-		if(mptof(&a, &d2))
-			goto bad;
-		d1 = frexp(d1/d2, &ex);
-		d1 = ldexp(d1, ex-dp);
-		if(d1 == 0)
-			goto bad;
-	} else {
-		/*
-		 * must multiply by 10**|dp| --
-		 * just do it in fixed point.
-		 */
-		mppow(&a, 10, -dp);
-		if(mptof(&a, &d1))
-			goto bad;
-	}
-	if(f)
-		d1 = -d1;
-	*d = d1;
+	/*
+	 * The value is what strtod makes of it, which is correctly
+	 * rounded; what was here rounded three times where once is
+	 * wanted.  It took the digits into an exact integer, rounded that
+	 * to a double, built five to the power of the digits after the
+	 * point, rounded that to a double, and divided -- so a constant
+	 * could come out one unit in the last place from the double
+	 * nearest it.  Of the six coefficients libkern's exp carries, two
+	 * did: one high and one low.  A library of coefficients is
+	 * exactly where that shows.
+	 *
+	 * strtod is lib9's, which every one of these compilers already
+	 * links, so this is the same conversion on every host the tree
+	 * builds on -- which is the reason the compiler had its own in
+	 * the first place, and is met either way.
+	 */
+	v = strtod(s, &e);
+	if(e == s)
+		return 1;			/* nothing it would take */
+	while(*e == ' ' || *e == '\t')
+		e++;
+	if(*e != '\0')
+		return 1;			/* and something left over */
+	*d = v;
 	return 0;
-
-bad:
-	return 1;
 }
 
 /*

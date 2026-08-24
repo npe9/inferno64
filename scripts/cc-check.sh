@@ -53,6 +53,33 @@ echo "int $long;" >"$TMP/longname.c"
 echo "int f(void){ return $long; }" >>"$TMP/longname.c"
 echo "long g(void){ return $digits; }" >"$TMP/longnum.c"
 
+# and a set of decimal constants against the double nearest each of
+# them.  mpatof took the digits into an exact integer, rounded that to a
+# double, built five to the power of the digits after the point, rounded
+# that to a double, and divided -- three roundings where one is wanted --
+# so better than a fifth of decimal literals came out one unit in the
+# last place from the nearest double: eighty-six of four hundred random
+# ones, and two of the six coefficients libkern's exp carries.  The
+# twelve below are ones it got wrong, with the bytes of the right answer
+# beside them, worked out where correct rounding was not in question.
+cat >"$TMP/fp.c" <<'FPEOF'
+double v[] = {
+	.26018159083016613186e-33,
+	.59797114710497465075e-19,
+	.28907866661760313721e3,
+	.38885393363387500474e-16,
+	.5167612220297299752882001e27,
+	.2731672326865635515e-38,
+	.4620168493407224704558530e-1,
+	.2086828890931002516780083e22,
+	.98415377602077642e13,
+	.0410423468535606883e-30,
+	.679247082276544e-8,
+	.760926030926002675e-26,
+};
+FPEOF
+fpbits="ed3a2752739df538 abad226a24a6f13b 475eed3742117240 7dcc57a0786a863c f32aaa1f47b77a45 5ab34b83cabeed37 1bb69f4bbfa7a73f 33bdf36224485c44 879f77b9d2e6a142 1a5fcd5d54a36a39 84b10f91662c3d3e 6f443213f1d6823a"
+
 bad=0
 for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 	if ! command -v "$cc" >/dev/null 2>&1; then
@@ -66,6 +93,30 @@ for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 	else
 		echo "FAIL $cc would not take a function with $N variables"
 		echo "$out" | sed 's/^/     /' | head -3
+		bad=1
+	fi
+
+	# the object holds each constant as eight bytes; a machine that
+	# puts them the other way round is as right, so both orders count
+	if "$cc" -o "$TMP/fp.out" "$TMP/fp.c" >/dev/null 2>&1; then
+		hex=`od -A n -v -t x1 <"$TMP/fp.out" | tr -d ' \012'`
+		miss=0
+		for b in $fpbits; do
+			rev=`echo $b | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\8\7\6\5\4\3\2\1/'`
+			case "$hex" in
+			*$b*) ;;
+			*$rev*) ;;
+			*) miss=`expr $miss + 1`;;
+			esac
+		done
+		if [ $miss -eq 0 ]; then
+			echo "ok   $cc put every constant at the double nearest it"
+		else
+			echo "FAIL $cc had $miss constants that were not the nearest double"
+			bad=1
+		fi
+	else
+		echo "FAIL $cc would not compile the constants"
 		bad=1
 	fi
 

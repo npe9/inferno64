@@ -1643,7 +1643,12 @@ of it and
 .I 6c
 exited zero and wrote an object.
 .B /scripts/cc-check.sh
-is the check for both, over all nine compilers.  It had not been spoiling objects:
+is the check, over all nine compilers, and it covers a third of the same
+kind:
+.I mpatof
+rounded a decimal constant three times where once is wanted, so
+better than a fifth of decimal literals came out one unit in the last
+place from the double nearest them.  It had not been spoiling objects:
 .I ospreywrite
 is the only function in this kernel whose variables the optimiser cannot
 all track, and building

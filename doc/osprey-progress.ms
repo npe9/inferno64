@@ -1056,9 +1056,48 @@ now, and a token that reaches the end is truncated and said so, which is
 what the macro processor always did.
 .PP
 .CW scripts/cc-check.sh
-asks all nine compilers for all three: a function with two hundred
-variables, a four thousand character name, and a four thousand digit
-number.  Twenty-seven lines.  Finding it took AddressSanitizer, which is worth saying
+asks all nine compilers for all four, and the fourth came from somewhere
+else: another session working on this branch, testing the floating
+point, noticed that the compilers round a decimal constant to the
+nearest double only sometimes, wrote it down in
+.CW fptest (1)
+and left it there.  It is
+.CW mpatof
+in
+.CW utils/cc ,
+and what it did was round three times where once is wanted \- the digits
+into an exact integer and that to a double, five to the power of the
+digits after the point and that to a double, and then a division.
+Measured against correct rounding, eighty-six of four hundred random
+decimal literals came out a unit in the last place away from the nearest
+double, and two of the six coefficients
+.CW libkern/exp.c
+carries: one high and one low.  It is
+.CW strtod
+now, which is
+.CW lib9 's,
+which every one of these compilers already links \- so the conversion is
+the same on every host the tree builds on, which is the reason the
+compiler had one of its own and is met either way.  Nought of four
+hundred after.
+.PP
+Two things about doing that are worth keeping.  The check carries twelve
+of the constants the old conversion got wrong with the bytes of the
+right answer beside them, worked out where correct rounding was not in
+question, and looks for those bytes in the object either way round,
+since a machine that stores them the other way is as right.  And it said
+.CW FAIL
+for every compiler at first with the fix in place, which was neither the
+check nor the compilers:
+.CW "mk install"
+in a compiler's directory does not relink when only
+.CW libcc.a
+has changed underneath it, so nine stale binaries were being asked.
+Removing
+.CW o.out
+first is what makes a rebuild of the shared library reach them, and it
+is worth knowing before believing any measurement taken across one.
+Thirty-six lines.  Finding it took AddressSanitizer, which is worth saying
 because the crash was in
 .CW regopt
 reading a corrupt free list and the write was in
