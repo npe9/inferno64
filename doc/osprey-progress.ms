@@ -194,7 +194,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Sixty-one lines, all
+a line at a time.  Sixty-three lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -643,6 +643,38 @@ everything open in its name space, and detaching the slice.  It is the
 only message that travels the other way along the path a request takes,
 and the only one in the list a container cannot ask for.  The check
 counts the server's processes before and after and finds one fewer.
+.NH 2
+Enforced and now shown
+.PP
+The right a delegating container gives its server over its own memory
+was enforced from the start and demonstrated by nothing: every container
+in the check is glenda's, so a server reached a client's slice as its
+owner would anyway, and the rule was never the reason.  A server of
+another user is what the rule is for, and
+.CW auth/none
+gives one.  Two containers of glenda's, alike in everything except that
+one has delegated to a container
+.CW none
+has been granted: asked for by a
+.I ring
+running as
+.CW none ,
+the one that delegated says
+.CW "mapped osprey5"
+and the one that did not says
+.CW "segattach osprey7: permission denied" .
+The name of a slice is a capability, and that is the line that says so.
+.PP
+Getting there needed one thing that is worth writing down.
+.CW auth/none
+builds a name space of its own, in which
+.CW /tmp
+is
+.CW none 's
+and not glenda's, so the first version failed with
+.CW "/tmp/ring: file does not exist"
+\- which reads exactly like the refusal being looked for and is not one.
+The binary the server runs has to be somewhere both users see.
 .NH 2
 Demonstration scale
 .PP

@@ -970,7 +970,7 @@ in
 where twelve hundred give
 .BR "direct 953 copied 257" .
 .PP
-Together they are sixty-one lines.  Each says
+Together they are sixty-three lines.  Each says
 .B ok
 or
 .B FAIL
@@ -1185,11 +1185,22 @@ here is that the path exists and one personality really uses it, not
 that any of the kernel has been taken out.
 .PP
 The right a delegating container gives its server over its own memory is
-enforced but not demonstrated: in
-.I osprey-check
-every container is glenda's, so the server reaches the client's slice as
-its owner would anyway.  A server run by another user is what the rule is
-for.
+a capability and is checked as one.  Two containers of glenda's, alike
+in everything but that one has delegated to a container
+.B none
+has been granted, are asked for by a
+.I ring
+run under
+.IR auth/none :
+the one that delegated says
+.BR "mapped osprey5" ,
+the one that did not says
+.BR "segattach osprey7: permission denied" .
+It is one step and not a chain: a server's own server is not thereby
+given what its clients have.  What is still not demonstrated is a
+container whose bound process started the asking one, which is the other
+half of
+.IR ospreyentitledself .
 .PP
 .I netsrv
 is the other personality, and the one the plan asks for by name: the

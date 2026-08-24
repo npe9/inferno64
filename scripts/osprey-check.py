@@ -200,6 +200,28 @@ CHECKS = [
    # wants eight of them at once
    "for(c in 61 62) echo exit $c >/n/osprey/ctl"],
   "procs 2"),
+ # the rule the man page called enforced but not demonstrated: every
+ # container in this check is glenda's, so a server reaches a client's
+ # slice as its owner would anyway.  auth/none gives a server of another
+ # user, which is what the rule is for.
+ ("a server run by another user reaching a container that delegated to it",
+  ["for(c in 71 72 75) echo create $c 40000000 800000000 200000000 >/n/osprey/ctl",
+   "for(c in 71 72 75) echo attach $c 0 >/n/osprey/ctl",
+   "echo grant 72 none >/n/osprey/ctl; echo delegate 71 72 >/n/osprey/ctl",
+   "s1=`{grep '^proc 71 ' /n/osprey/status | sed 's/.*slice //; s/ .*//'}",
+   "g1=osprey^`{echo $s1 $sz | awk '{print int($1/$2)}'}; echo client $g1",
+   # auth/none builds a name space of its own, in which /tmp is none's
+   # rather than glenda's; the copy the server runs has to be somewhere
+   # both users see.
+   "cp /tmp/ring /usr/glenda/ring9; chmod 755 /usr/glenda/ring9",
+   "auth/none /usr/glenda/ring9 $g1 $sz | sed 1q"],
+  "mapped"),
+ ("and refused the one that delegated to nobody",
+  ["s5=`{grep '^proc 75 ' /n/osprey/status | sed 's/.*slice //; s/ .*//'}",
+   "g5=osprey^`{echo $s5 $sz | awk '{print int($1/$2)}'}; echo other $g5",
+   "auth/none /usr/glenda/ring9 $g5 $sz | sed 1q",
+   "for(c in 71 72 75) echo exit $c >/n/osprey/ctl"],
+  "segattach"),
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string
