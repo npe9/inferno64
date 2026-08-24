@@ -203,7 +203,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Seventy-four lines, all
+a line at a time.  Seventy-five lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -752,6 +752,60 @@ skips a chunk that is still zero.  Both are checked on one machine and
 the semaphore again across the wire, where a container is given one four
 times, carried to a kernel that had never heard of it, and found holding
 .CW 4/4/0 .
+.PP
+Making the data area unconditional has a price and it was measured
+rather than assumed.  An empty container's checkpoint is 238 bytes; one
+that has opened a file and read fifty-five bytes through it is 455; one
+whose whole four-kilobyte data area has been written is 9792.  A
+checkpoint
+.I mig
+carries is one ethernet frame, so that last one does not fit \- which
+is a second way to reach a limit the document already described, and
+until now the only way there was a ring full of messages.  What it costs
+is what the container has actually used, since
+.CW snapdata
+does not write a chunk that is still zero.
+.PP
+Asking the same question of the policy layer once more \- what is
+written that nothing reads, and read that nothing writes \- found two
+more.
+.CW memrelease
+was called from nowhere at all: a container's
+.CW alloc
+charged its memory and there was no operation of any kind that gave any
+back, so
+.CW memused
+only ever grew and the memory cap could be reached by a container that
+was using none of it.  There is a
+.CW memfree
+control message now, beside the
+.CW netfree
+that memory's half was missing.  And a frame a container sent was not
+charged against its network caps though a packet it received was, which
+was true from the moment the transmit path was written and was never the
+intent: a send is charged while the card has the buffer and given back
+when the card is finished, which is the same rule as the receive side's.
+Twelve hundred pings each way is a quarter of a megabyte if nothing is
+given back; what the container is left holding is a hundred and
+fifty-six bytes, and the check says so.
+.PP
+Two things about the semaphore work itself, both of the class this
+document already names.  The checkpoint's own reader and its writer
+reached the semaphores through
+.CW map->sem
+rather than through
+.CW semof ,
+which is the accessor that calls
+.CW mapfix
+first \- a container may write every byte of its own map, and this file
+had already had that bug twice; the status printer was doing it too.
+All three go through
+.CW semof
+now.  And a checkpoint written where a container had more semaphores
+than this kernel gives one is refused rather than read in part, which
+matters because
+.CW *ospreysem
+is settable and two machines may now disagree.
 .PP
 Environments were the other half of the question and are a shorter
 answer: nothing in

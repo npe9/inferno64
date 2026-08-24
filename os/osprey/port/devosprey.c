@@ -495,6 +495,7 @@ enum {
 	CMmigrate,
 	CMnetcharge,
 	CMnetfree,
+	CMmemfree,
 	CMbindproc,
 	CMunbindproc,
 	CMserve,
@@ -554,6 +555,7 @@ static Cmdtab ospreycmd[] = {
 	CMunbindproc,	"unbindproc",	2,
 	CMnetcharge,	"netcharge",	4,
 	CMnetfree,	"netfree",	4,
+	CMmemfree,	"memfree",	3,
 };
 
 static QLock ospreylock;
@@ -627,7 +629,7 @@ static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
 static int ospreytxsem[16];		/* and the one a freed transmit buffer gives */
 static void ospreytxdone(Bpool*);
-static void ospreytxavail(int);
+static uvlong ospreytxavail(int);
 static void ospreytellandwake(Ospreyproc*, int);
 static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
 /*
@@ -650,6 +652,14 @@ static Bpool ospreytxpool[16];
  */
 static Block *ospreytxblk[16][Maxtxbuf];
 static int ospreyntxblk[16];
+/*
+ * What each transmit buffer was charged for and which of them are
+ * charged.  A frame in flight is network the container is using, and
+ * its caps bound that the same way they bound a packet waiting to be
+ * taken; the charge is given back when the card has finished.
+ */
+static ulong ospreytxlen[16][Maxtxbuf];
+static uvlong ospreytxheld[16];
 static Block *ospreyheld[16];		/* the packet the container is reading */
 static ulong ospreydirect[16];		/* packets that arrived in the span */
 static ulong ospreycopied[16];		/* and packets that had to be moved */
@@ -801,15 +811,27 @@ static void
 ospreytxdone(Bpool *pool)
 {
 	Ospreyproc *p;
-	int i;
+	uvlong avail;
+	int i, j;
 
 	for(i = 0; i < nelem(ospreytxpool); i++){
 		if(pool != &ospreytxpool[i])
 			continue;
-		ospreytxavail(i);
-		if(ospreytxsem[i] < 0)
-			return;
+		avail = ospreytxavail(i);
 		if((p = ospreyat(i)) == nil)
+			return;
+		/*
+		 * Whichever frames have gone, give their charges back: a
+		 * buffer whose bit was held and is free again is one the
+		 * card has finished with.  freeb says a block came back and
+		 * not which one, so the mask is what says.
+		 */
+		for(j = 0; j < ospreyntxblk[i]; j++)
+			if((ospreytxheld[i] & avail & (1ULL<<j)) != 0){
+				ospreynetrelease(p, ospreytxlen[i][j], 1);
+				ospreytxheld[i] &= ~(1ULL<<j);
+			}
+		if(ospreytxsem[i] < 0)
 			return;
 		ospreysemgive(p, ospreytxsem[i]);
 		return;
@@ -823,7 +845,7 @@ ospreytxdone(Bpool *pool)
  * no trap to find a buffer.  This runs at interrupt level from freeb, so
  * it does nothing but walk a list of eight and write one word.
  */
-static void
+static uvlong
 ospreytxavail(int x)
 {
 	Ospreyproc *p;
@@ -833,9 +855,9 @@ ospreytxavail(int x)
 	int i;
 
 	if(x < 0 || x >= nelem(ospreytxpool))
-		return;
+		return 0;
 	if((p = ospreyat(x)) == nil)
-		return;
+		return 0;
 	pool = &ospreytxpool[x];
 	m = 0;
 	ilock(pool);
@@ -847,6 +869,7 @@ ospreytxavail(int x)
 			}
 	iunlock(pool);
 	ospreysettxavail(p, m);
+	return m;
 }
 
 /* take it off that list; the card will put it back when it is done */
@@ -1741,9 +1764,24 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 				result[1] = txsize;
 				return StatusError;
 			}
+			/*
+			 * A frame going out is network the container is
+			 * using, and its caps are what bound that.  Charged
+			 * while it is in flight and given back when the card
+			 * has finished with it, which is the same rule a
+			 * packet coming in is held to.
+			 */
+			if(ospreynetcharge(p, len, 1) < 0){
+				result[0] = 5;
+				return StatusError;
+			}
 			b = ospreytxblk[x][bi];
-			if(!ospreytxtake(&ospreytxpool[x], b))
+			if(!ospreytxtake(&ospreytxpool[x], b)){
+				ospreynetrelease(p, len, 1);
 				return StatusRetry;
+			}
+			ospreytxlen[x][bi] = len;
+			ospreytxheld[x] |= 1ULL<<bi;
 			ospreytxavail(x);
 			b->rp = b->base;
 			b->wp = b->base + len;
@@ -3743,6 +3781,11 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				((Ether*)ospreyether[x])->rbpool = nil;
 			ospreytxsem[x] = -1;
 			ospreytxpool[x].done = nil;
+			/* give back what the card was still holding for it */
+			for(i = 0; i < ospreyntxblk[x]; i++)
+				if((ospreytxheld[x] & (1ULL<<i)) != 0)
+					ospreynetrelease(p, ospreytxlen[x][i], 1);
+			ospreytxheld[x] = 0;
 			ospreysettxavail(p, 0);
 			ospreyether[x] = nil;
 			if(ospreyheld[x] != nil){
@@ -4009,6 +4052,17 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		p = ospreymine(cb->f[1]);
 		ospreynetrelease(p, strtoul(cb->f[2], nil, 0),
 			strtoul(cb->f[3], nil, 0));
+		break;
+
+	case CMmemfree:
+		/*
+		 * What alloc charges, given back.  Without it memused only
+		 * ever grew: a container could ask for memory up to its
+		 * limit and then never ask again, however little of it it
+		 * was still using.
+		 */
+		p = ospreymine(cb->f[1]);
+		ospreymemrelease(p, strtoul(cb->f[2], nil, 0));
 		break;
 
 	case CMcheckpoint:

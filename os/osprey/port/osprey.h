@@ -59,6 +59,7 @@ void		ospreysetpid(Ospreyproc*, int pid);
 int		ospreymigrate(Ospreyproc*, ulong core, uvlong now);
 int		ospreycharge(ulong core, uvlong amount, uvlong now);
 int		ospreylimit(Ospreyproc*, ulong memory, ulong netbytes, ulong netpackets);
+void		ospreymemrelease(Ospreyproc*, ulong bytes);
 int		ospreynetcharge(Ospreyproc*, ulong bytes, ulong packets);
 void		ospreynetrelease(Ospreyproc*, ulong bytes, ulong packets);
 

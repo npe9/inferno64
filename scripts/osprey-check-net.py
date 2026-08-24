@@ -63,6 +63,11 @@ STACK = [
  "sleep 5; echo '#### ea'; grep '^packets 7' /n/osprey/status",
  "sleep 45; echo '#### seen'; grep '^packets 7' /n/osprey/status",
  "sleep 90; echo '#### flood'; grep '^packets 7' /n/osprey/status",
+ # every packet in and every frame out is charged against the
+ # container's network caps while it is in flight and given back when it
+ # is taken or when the card has finished with it, so after twelve
+ # hundred of each there should be nothing outstanding
+ "echo '#### caps'; grep '^proc 7 ' /n/osprey/status | sed 's/.* net /net /; s/ requests.*//'",
  "echo '#### end'",
 ]
 # and the ordinary one, which knows nothing about any of it
@@ -157,6 +162,16 @@ def main():
                     "buffers while the rest arrive in the container's "
                     "(%d direct, %d copied)" % (d2, c2),
                     seen2 is not None and c2 <= 300 and d2 > 2*c2))
+
+    # every packet in and every frame out is charged while it is in
+    # flight; twelve hundred of each would be a quarter of a megabyte if
+    # nothing were given back, and what is left is whatever the card and
+    # the queue are holding at that instant
+    m = re.search(r'^net (\d+) of (\d+)$', between(stack2, 'caps', 'end'), re.M)
+    results.append(("with only what is in flight still charged against its "
+                    "network caps (%s of a quarter megabyte charged)"
+                    % (m.group(1) if m else 'no line'),
+                    m is not None and int(m.group(1)) < 8192))
 
     bad = 0
     for what, ok in results:

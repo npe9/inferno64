@@ -105,6 +105,11 @@ on the clock charges the container for the cycles whichever core is
 running that process spends in it, and the budget stops the process when
 it is spent.  A process that exits stops being billed on its own.
 .TP
+.BI memfree " id bytes"
+Give back memory
+.B alloc
+charged.
+.TP
 .BI netcharge " id bytes packets"
 .PD 0
 .TP
@@ -1395,11 +1400,29 @@ is a policy fiction until
 makes it a real one.
 .PP
 A packet is charged against a container's network caps while it sits in
-its queue and given back when it is taken, so the caps bound what is
-waiting rather than what has ever arrived.  Nothing else a container
-does over the network is charged unless something writes
+its queue and given back when it is taken, and a frame the container
+sends is charged while the card has it and given back when the card has
+finished, so the caps bound what is in flight rather than what has ever
+gone by.  Sending used not to be charged at all.  After twelve hundred
+pings each way \- a quarter of a megabyte if nothing were given back \-
+a container is left holding a hundred and fifty-six bytes, which is what
+the card had at that instant.  Nothing else a container does over the
+network is charged unless something writes
 .B netcharge
 for it.
+.PP
+.B alloc
+charges a container's memory and
+.B memfree
+gives it back.  Until
+.B memfree
+was written nothing did:
+.B alloc
+was half a mechanism, the policy layer's
+.I memrelease
+was called from nowhere at all, and a container could ask for memory up
+to its limit and then never ask again however little of it it was still
+using.
 .PP
 A checkpoint records what a container has used, but what it has used is
 counted against a period of a clock the machine it arrives at does not
@@ -1426,8 +1449,14 @@ so open what they name there.
 .PP
 A checkpoint is one ethernet frame when
 .I mig
-carries it, so a container with a great many messages in flight does not
-fit;
+carries it, and there are two ways to be too big for one.  A container
+with a great many messages in flight is the first.  The second is new:
+the data area goes whatever the rings hold, so a container that has
+written all four kilobytes of its own has a checkpoint of about nine and
+a half, where an empty container's is two hundred and thirty-eight bytes
+and one that has opened a file and read fifty-five bytes through it is
+four hundred and fifty-five.  A chunk that is still zero is not written,
+so what it costs is what the container has actually used.  Either way,
 .I mig
 refuses to send a checkpoint that did not fit rather than sending half
 of one, since what it sends it destroys.  Reading

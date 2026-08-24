@@ -1304,6 +1304,21 @@ ospreylimit(Ospreyproc *p, ulong memory, ulong netbytes, ulong netpackets)
  * it is taken; netcharge and netfree are for whatever else a container
  * is told to account for.
  */
+/*
+ * The other half of alloc.  It charges a container's memory and returns
+ * what it now holds; until this was written nothing gave any back, so
+ * memused only ever grew and memrelease in the policy layer was called
+ * from nowhere at all.  The network side had both halves from the start;
+ * this is memory's netfree.
+ */
+void
+ospreymemrelease(Ospreyproc *p, ulong bytes)
+{
+	if(p == nil || p->used == 0)
+		return;
+	memrelease(&p->process.container, bytes);
+}
+
 int
 ospreynetcharge(Ospreyproc *p, ulong bytes, ulong packets)
 {
@@ -1965,7 +1980,14 @@ snapsem(char *p, char *e, Ospreyproc *q)
 		return p;
 	ospreylocksem();
 	for(n = 0; n < nsem; n++){
-		sm = (Sem*)((uchar*)q->map + q->map->sem) + n;
+		/*
+		 * semof and not the offset out of the map: a container may
+		 * write every byte of its own map, and mapfix is what puts
+		 * the geometry back.  Reading the field raw is the bug this
+		 * file has already had twice.
+		 */
+		if((sm = semof(q, n)) == nil)
+			continue;
 		if(sm->count == 0 && sm->given == 0 && sm->taken == 0)
 			continue;
 		p = seprint(p, e, "sem %lud %llud %llud %llud\n",
@@ -2249,9 +2271,17 @@ ospreysnapread(char *text, long n)
 			ulong sn;
 
 			sn = (ulong)strtoull(a, nil, 0);
-			if(r == nil || p == nil || p->map == nil || sn >= nsem)
-				continue;
-			sm = (Sem*)((uchar*)p->map + p->map->sem) + sn;
+			/*
+			 * A checkpoint written where a container had more
+			 * semaphores than this kernel gives one is refused
+			 * rather than read in part: the limits are settable
+			 * now, so two machines may disagree about how many
+			 * there are, and a container that arrives holding
+			 * some of what it held is worse than one that does
+			 * not arrive.
+			 */
+			if(r == nil || p == nil || (sm = semof(p, sn)) == nil)
+				return -1;
 			ospreylocksem();
 			sm->count = strtoull(snapword(&line), nil, 0);
 			sm->given = strtoull(snapword(&line), nil, 0);
@@ -2483,8 +2513,10 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		p = seprint(p, e, "sem %llud", q->id);
 		ospreylocksem();
 		for(n = 0; n < nsem; n++){
-			Sem *sm = (Sem*)((uchar*)procs[i].map
-				+ procs[i].map->sem) + n;
+			Sem *sm = semof(&procs[i], n);
+
+			if(sm == nil)
+				continue;
 			p = seprint(p, e, " %llud/%llud/%llud",
 				sm->count, sm->given, sm->taken);
 		}
