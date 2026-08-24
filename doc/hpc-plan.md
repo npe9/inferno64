@@ -1744,6 +1744,17 @@ any run**. The detector for that was calibrated with `faultprobe(1)` first,
 which mattered: the version used before it was calibrated matched one failure
 class out of three and would have reported the same clean result either way.
 
+Then 10 more of the same **with `INFERNO_POOLPOISON` on**, which is the detector
+for the remaining class — corruption that carries on — and which was written for
+bug 5. **10 runs, poisoning confirmed on in every one, no corruption, no fault
+output, no missing PASS.** The confirmation is the point: poisoning used to say
+nothing when enabled and nothing when it found nothing, and those are the same
+silence, so it now says `POOLPOISON: on` once.
+
+What that run can still not see: a hang *after* the results are written (one
+before would show as a missing PASS), and a quiet wrong answer from anything the
+component tests do not themselves check.
+
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
 Seen twice, never reproduced under control — and, like bug 2, seen on a build
