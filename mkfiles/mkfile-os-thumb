@@ -1,15 +1,17 @@
 TARGMODEL=	Inferno
 TARGSHTYPE=	sh
-CPUS=		arm
+CPUS=		thumb
 OBJDIR=		Inferno/thumb		#force everything to point to inferno directory
 
 O=		t
-OS=		5t
+OS=		v851ok0q2t6j
 
 AR=		iar
 ARFLAGS=	vu
 ARPREFIX=
 
+# 5a assembles the ARM assembler syntax; -t marks the object Thumb so
+# that tl encodes it with the Thumb encodings.
 AS=		5a
 ASFLAGS=	-t
 
@@ -17,8 +19,10 @@ CC=		tc
 CFLAGS=		-wFV -I$ROOT/Inferno/thumb/include -I$ROOT/include
 ANSICPP= -p
 
-LD=		5l
-LDFLAGS=
+# -M: the target is an ARMv7-M core, which has no ARM state.  See
+# utils/tl/l.h.
+LD=		tl
+LDFLAGS=	-M
 
 SYSLIBS=	#-lc
 

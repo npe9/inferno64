@@ -28,6 +28,11 @@ ALWAYS=\
 
 #
 #	Utils we build on Posix and Nt, which already exist on Plan 9.
+#	tc and tl are the Thumb toolchain: tc is an ARM code generator
+#	constrained to what the Thumb encodings can express, 5a -t
+#	assembles the same ARM assembler syntax into a Thumb object, and
+#	tl encodes both.  They are how the Cortex-M boards under
+#	os/inferno are built.
 #
 NOTPLAN9=\
 	5a\
@@ -51,6 +56,8 @@ NOTPLAN9=\
 	ja\
 	jc\
 	jl\
+	tc\
+	tl\
 	mk\
 	ksize\
 	kstrip\
@@ -74,14 +81,6 @@ NTONLY=\
 	sed\
 	test\
 	tr\
-
-#
-# Thumb-1
-#
-OBSOLETE=\
-	ta\
-	tc\
-	tl\
 
 all:QV:		all-$TARGMODEL
 clean:QV:	clean-$TARGMODEL

@@ -387,6 +387,7 @@ struct
 	"CASE",		LTYPED, ACASE,
 	"END",		LTYPEE, AEND,
 	"WORD",		LTYPEH, AWORD,
+	"HWORD",	LTYPEH, AHWORD,
 	"NOP",		LTYPEI, ANOP,
 
 	"MCR",		LTYPEJ, 0,
@@ -555,6 +556,15 @@ outcode(int a, int scond, Gen *g1, int reg, Gen *g2)
 {
 	int sf, st, t;
 	Sym *s;
+
+	/*
+	 * -t assembles for Thumb.  tc marks each TEXT it generates with
+	 * ALLTHUMBS (utils/tc/sgen.c) and the linker reads that bit per
+	 * function, not per file, so an assembled TEXT has to carry it
+	 * too or utils/tl encodes the function as ARM.
+	 */
+	if(a == ATEXT && thechar == 't')
+		reg |= ALLTHUMBS;
 
 	/* hack to make B.NE etc. work: turn it into the corresponding conditional */
 	if(a == AB){

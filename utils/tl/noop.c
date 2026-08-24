@@ -239,7 +239,10 @@ noops(void)
 				curtext->mark |= LEAF;
 			}
 #ifdef CALLEEBX
-			if(p->from.sym->foreign){
+			if(p->from.sym->foreign && mprofile)
+				diag("%s: an interworking veneer is ARM code, which an ARMv7-M core cannot execute",
+					p->from.sym->name);
+			if(p->from.sym->foreign && !mprofile){
 				if(thumb)
 					// don't allow literal pool to seperate these
 					p = adword(0xe28f7001, 0xe12fff17, p); // arm add 1, pc, r7 and bx r7

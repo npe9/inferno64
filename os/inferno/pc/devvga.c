@@ -301,7 +301,7 @@ vgaread(Chan* c, void* a, s32 n, s64 off)
 	u32 offset = off;
 	char chbuf[30];
 
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 
 	case Qdir:
 		return devdirread(c, a, n, vgadir, nvgadir, devgen);
@@ -555,7 +555,7 @@ vgawrite(Chan* c, void* a, s32 n, s64 off)
 	Cmdbuf *cb;
 	VGAscr *scr;
 
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 
 	case Qdir:
 		error(Eperm);

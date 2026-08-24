@@ -304,6 +304,14 @@ EXTERN	int	dtype;
 EXTERN	int	armv4;
 EXTERN	int	thumb;
 EXTERN	int	seenthumb;
+/*
+ * -M: the target is an ARMv7-M core (Cortex-M).  Such a core has no ARM
+ * state at all, so every instruction this linker emits must be a Thumb
+ * one: the interworking veneers, and the fallback to ARM code that
+ * utils/tl/obj.c:puntfp() takes for floating point, would both fault.
+ * mprofile turns each of those into a diagnostic naming the function.
+ */
+EXTERN	int	mprofile;
 EXTERN	int	armsize;
 
 EXTERN	int	doexp, dlm;

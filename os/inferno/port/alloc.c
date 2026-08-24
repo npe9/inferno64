@@ -527,7 +527,7 @@ poolfmt11(char *d, int nd, uintptr v)
 }
 
 int
-poolread(char *va, int count, u64 offset)
+poolread(char *va, int count, uintptr offset)
 {
 	Pool *p;
 	int n, i, signed_off;
@@ -934,7 +934,7 @@ poolsize(Pool *p, uintptr max, int contig)
 {
 	void *x;
 
-	print("poolsize max %llud contig %d\n", max, contig);
+	print("poolsize max %zud contig %d\n", max, contig);
 	p->maxsize = max;
 	if(max == 0)
 		p->ressize = max;

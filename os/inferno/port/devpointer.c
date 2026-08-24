@@ -188,7 +188,7 @@ pointerclose(Chan* c)
 {
 	if((c->flag & COPEN) == 0)
 		return;
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 	case Qpointer:
 		qlock(&mouse.q);
 		if(decref(&mouse.ref) == 0){
@@ -206,7 +206,7 @@ pointerread(Chan* c, void* a, s32 n, s64)
 	char tmp[128];
 	int l;
 
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 	case Qdir:
 		return devdirread(c, a, n, pointertab, nelem(pointertab), devgen);
 	case Qpointer:

@@ -1,24 +1,30 @@
 TARGMODEL=	Inferno
 TARGSHTYPE=	rc
-CPUS=		arm mips 386 amd64
+CPUS=		thumb
 
 O=		t
-OS=		v851ok0q2t6
+OS=		v851ok0q2t6j
 
 AR=		iar
 ARFLAGS=	vu
 
-AS=5a -t
-ASFLAGS=
+# 5a assembles the ARM assembler syntax; -t marks the object Thumb so
+# that tl encodes it with the Thumb encodings.  There is no separate
+# Thumb assembler.
+AS=		5a
+ASFLAGS=	-t
 
 CC=		tc
 CFLAGS=		-wFV -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/Inferno/include -I$ROOT/include
 ANSICPP= -p
 
-LD=5l
-LDFLAGS=
+# -M says the target is an ARMv7-M core, which has no ARM state: tl then
+# refuses to emit any ARM instruction rather than emitting one that would
+# fault.  See utils/tl/l.h.
+LD=		tl
+LDFLAGS=	-M
 
 SYSLIBS=	#-lc
 
-YACC=		yacc
+YACC=		iyacc
 YFLAGS=		-d

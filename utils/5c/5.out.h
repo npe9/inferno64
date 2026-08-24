@@ -156,6 +156,16 @@ enum	as
 	ALDREXD,
 	ASTREXD,
 
+	/*
+	 * A halfword of raw text, the way WORD is a word of it.  Thumb
+	 * instructions are two bytes, so a Thumb-2 or ARMv7-M encoding
+	 * that this assembler has no mnemonic for -- MRS, MSR, CPSID,
+	 * DSB, ISB, LDREX on an M-profile core -- can be written down
+	 * only if a halfword can be emitted on its own.  Only the Thumb
+	 * linker encodes it; see utils/tl/thumb.c.
+	 */
+	AHWORD,
+
 	ALAST,
 };
 

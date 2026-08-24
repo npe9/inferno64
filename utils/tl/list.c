@@ -61,6 +61,10 @@ Pconv(Fmt *fp)
 		sprint(str, "WORD %ld", p->to.offset);
 		break;
 
+	case AHWORD:
+		sprint(str, "HWORD %ld", p->to.offset);
+		break;
+
 	case ADWORD:
 		sprint(str, "DWORD %ld %ld", p->from.offset, p->to.offset);
 		break;

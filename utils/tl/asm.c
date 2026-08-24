@@ -1792,6 +1792,14 @@ chipfloat(Ieee *e)
 	Ieee *p;
 	int n;
 
+	/*
+	 * The eight constants below are the FPA's, and VFP has no such
+	 * thing.  Saying there is no chip constant sends every floating
+	 * point immediate to memory, which VFP loads happily.
+	 */
+	if(mprofile)
+		return -1;
+
 	for(n = sizeof(chipfloats)/sizeof(chipfloats[0]); --n >= 0;){
 		p = &chipfloats[n];
 		if(p->l == e->l && p->h == e->h)

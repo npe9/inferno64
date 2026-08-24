@@ -608,7 +608,7 @@ consopen(Chan *c, u32 omode)
 {
 	c->aux = nil;
 	c = devopen(c, omode, consdir, nelem(consdir), devgen);
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 	case Qconsctl:
 		if(!iseve()){
 			print("consopen not eve\n");
@@ -642,7 +642,7 @@ consopen(Chan *c, u32 omode)
 static void
 consclose(Chan *c)
 {
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 	case Qconsctl:
 		/* last close of control file turns off raw */
 		qlock(&kbd);
@@ -675,7 +675,7 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 	if(n <= 0)
 		return n;
 	o = up;
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 
 	case Qdir:
 		return devdirread(c, buf, n, consdir, nelem(consdir), devgen);
@@ -916,7 +916,7 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 	int x;
 
 	a = va;
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 	case Qcons:
 		/*
 		 * Can't page fault in putstrn, so copy the data locally.

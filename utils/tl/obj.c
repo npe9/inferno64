@@ -89,6 +89,9 @@ main(int argc, char *argv[])
 		if(a)
 			INITRND = atolwhex(a);
 		break;
+	case 'M':	/* ARMv7-M: Thumb only, no ARM state */
+		mprofile = 1;
+		break;
 	case 'H':
 		a = ARGF();
 		if(a)
@@ -957,6 +960,9 @@ loop:
 	case ATEXT:
 		setarch(p);
 		setthumb(p);
+		if(mprofile && !thumb)
+			diag("%s: ARM code in an ARMv7-M link; the file wants tc, or 5a -t",
+				p->from.sym != S ? p->from.sym->name : noname);
 		p->align = 4;
 		if(curtext != P) {
 			histtoauto();
@@ -1022,8 +1028,6 @@ loop:
 	case AMOVDF:
 	// case AMOVF:
 	// case AMOVD:
-	case ACMPF:
-	case ACMPD:
 	case AADDF:
 	case AADDD:
 	case ASUBF:
@@ -1067,8 +1071,24 @@ loop:
 		}
 		goto casedef;
 
-	case AMOVD:
+	case ACMPF:
+	case ACMPD:
+		/*
+		 * The FPA could compare against one of eight constants it
+		 * held itself, and VFP has no such thing, so on an ARMv7-M
+		 * target the constant goes to memory the way MOVD's does.
+		 * Both widths become a double: an F register holds a
+		 * double whatever the memory format was.
+		 */
 		if(thumb)
+			puntfp(p);
+		if(skip)
+			goto casedef;
+		if(!mprofile || p->from.type != D_FCONST)
+			goto casedef;
+		/* fall through, with the double literal */
+	case AMOVD:
+		if(p->as == AMOVD && thumb)
 			puntfp(p);
 		if(skip)
 			goto casedef;
@@ -1484,6 +1504,15 @@ ieeedtod(Ieee *ieeep)
 static void
 puntfp(Prog *p)
 {
+	if(mprofile){
+		/*
+		 * An ARMv7-M core has no ARM state to fall back to, and
+		 * does not need one: utils/tl/thumb.c encodes the
+		 * floating point as VFP.
+		 */
+		USED(p);
+		return;
+	}
 	USED(p);
 	/* floating point - punt for now */
 	curtext->reg = NREG;	/* ARM */

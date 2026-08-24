@@ -12,6 +12,36 @@ static void mult(Prog *, int, int);
 static void numr(Prog *, int, int, int);
 static void regis(Prog *, int, int, int);
 static void dis(int, int);
+static void t2(long, long*, long*);
+static long vfpopd(int);
+static long vfpmem(int, int, int, int, int);
+
+/*
+ * The ARMv7-M floating point extension (VFPv4-D16 on a Cortex-M4, FPv5
+ * on a Cortex-M7).  utils/tc is an ARM code generator and emits the FPA
+ * instructions the original ARM port used; the FPA does not exist on any
+ * of these cores, so the encodings below are the VFP ones and the
+ * mapping between the two is made here.
+ *
+ * An FPA register held one extended value whatever the memory format
+ * was, so MOVF and MOVD differed only in what they read and wrote.  VFP
+ * has separate single and double views of the same registers, so this
+ * follows the FPA: every F register is a D register and holds a double,
+ * and single precision appears only at the memory boundary, where MOVF
+ * widens on the way in and rounds on the way out.  Arithmetic on a C
+ * float is therefore done in double, which is what the FPA did too.
+ *
+ * S30, the low half of D15, is the scratch that narrowing and widening
+ * need.  utils/tc allocates F0 to F7 (FREGEXT is 7), so D15 is free; it
+ * is the same register 5.out.h names FREGTMP.
+ */
+#define	FPSCRATCH	30		/* S30, the low half of D15 */
+#define	FPCONSTREG	15		/* D15, for a constant loaded from memory */
+#define	Sv(n)		((n)>>1)	/* the Vd field of a single register */
+#define	Sb(n)		((n)&1)		/* and its D, N or M bit */
+
+#define	VFPARITH(base, vd, vn, vm)	((base)|((vd)<<12)|((vn)<<16)|(vm))
+
 
 // build a constant using neg, add and shift - only worth it if < 6 bytes */
 static int
@@ -46,6 +76,15 @@ immoreg(int off, Prog *p)
 	int v = 1;
 	int as = p->as;
 
+	if(as == AMOVF || as == AMOVD){
+		/*
+		 * VLDR and VSTR take a signed byte of offset scaled by
+		 * four, either way from the base register.
+		 */
+		if(off >= -1020 && off <= 1020 && (off&3) == 0)
+			return C_FOREG;
+		return C_GOREG;
+	}
 	if(off < 0)
 		return C_GOREG;
 	if(as == AMOVW)
@@ -80,6 +119,12 @@ immacon(int off, Prog *p, int t1, int t2)
 static int
 immauto(int off, Prog *p)
 {
+	if(p->as == AMOVF || p->as == AMOVD){
+		mult(p, off, 4);
+		if(off >= 0 && off <= 1020)
+			return C_FAUTO;
+		return C_LAUTO;
+	}
 	if(p->as != AMOVW)
 		diag("bad op in immauto");
 	mult(p, off, 4);
@@ -153,10 +198,8 @@ thumbaclass(Adr *a, Prog *p)
 		diag("D_SHIFT in thumbaclass");
 		return C_SHIFT;
 	case D_FREG:
-		diag("D_FREG in thumbaclass");
 		return C_FREG;
 	case D_FPCR:
-		diag("D_FPCR in thumbaclass");
 		return C_FCR;
 	case D_OREG:
 		switch(a->name) {
@@ -221,7 +264,12 @@ thumbaclass(Adr *a, Prog *p)
 		}
 		return C_GOK;
 	case D_FCONST:
-		diag("D_FCONST in thumaclass");
+		/*
+		 * chipfloat says no under -M (utils/tl/obj.c), so every
+		 * floating point constant has been turned into a memory
+		 * reference before it reaches here.
+		 */
+		diag("floating point immediate in thumbaclass");
 		return C_FCON;
 	case D_CONST:
 		switch(a->name) {
@@ -380,6 +428,7 @@ Optab thumboptab[] =
 	{ ABXRET,		C_NONE,		C_NONE,		C_REG,		45,	2,	0 },
 	{ ABXRET,		C_NONE,		C_NONE,		C_HREG,		45,	2,	0 },
 	{ ASWI,		C_NONE,		C_NONE,		C_LCON,		16,	2,	0 },
+	{ AHWORD,	C_NONE,		C_NONE,		C_LCON,		52,	2,	0 },
 	{ AWORD,		C_NONE,		C_NONE,		C_LCON,		17,	4,	0 },
 	{ AWORD,		C_NONE,		C_NONE,		C_GCON,		17,	4,	0 },
 	{ AWORD,		C_NONE,		C_NONE,		C_LEXT,		17,	4, 	0 },
@@ -450,10 +499,78 @@ Optab thumboptab[] =
 	{ AMOVHU,	C_REG,		C_NONE,		C_LEXT,		31,	4,	0,	LTO },
 	{ AMOVBU,	C_REG,		C_NONE,		C_LEXT,		31,	4,	0,	LTO },
 
+	/*
+	 * Floating point.  MOVD moves a double, which is what an F
+	 * register holds, so it is one VLDR or VSTR; MOVF has to widen or
+	 * round as well, so every one of its forms is one instruction
+	 * longer.  The three addressing cases are an offset VLDR can
+	 * reach, an absolute address, and a base register with an offset
+	 * it cannot, which is built in REGTMPT the way case 31 does it.
+	 */
+	{ AMOVD,		C_FREG,		C_NONE,		C_FAUTO,		60,	4,	REGSP },
+	{ AMOVD,		C_FREG,		C_NONE,		C_FOREG,		60,	4,	0 },
+	{ AMOVD,		C_FAUTO,		C_NONE,		C_FREG,		61,	4,	REGSP },
+	{ AMOVD,		C_FOREG,		C_NONE,		C_FREG,		61,	4,	0 },
+	{ AMOVD,		C_FREG,		C_NONE,		C_LEXT,		62,	6,	0,	LTO },
+	{ AMOVD,		C_LEXT,		C_NONE,		C_FREG,		63,	6,	0,	LFROM },
+	{ AMOVD,		C_FREG,		C_NONE,		C_LAUTO,		64,	8,	REGSP,	LTO },
+	{ AMOVD,		C_FREG,		C_NONE,		C_GOREG,		64,	8,	0,	LTO },
+	{ AMOVD,		C_LAUTO,		C_NONE,		C_FREG,		65,	8,	REGSP,	LFROM },
+	{ AMOVD,		C_GOREG,		C_NONE,		C_FREG,		65,	8,	0,	LFROM },
+	{ AMOVF,		C_FREG,		C_NONE,		C_FAUTO,		66,	8,	REGSP },
+	{ AMOVF,		C_FREG,		C_NONE,		C_FOREG,		66,	8,	0 },
+	{ AMOVF,		C_FAUTO,		C_NONE,		C_FREG,		67,	8,	REGSP },
+	{ AMOVF,		C_FOREG,		C_NONE,		C_FREG,		67,	8,	0 },
+	{ AMOVF,		C_FREG,		C_NONE,		C_LEXT,		68,	10,	0,	LTO },
+	{ AMOVF,		C_LEXT,		C_NONE,		C_FREG,		69,	10,	0,	LFROM },
+	{ AMOVF,		C_FREG,		C_NONE,		C_LAUTO,		70,	12,	REGSP,	LTO },
+	{ AMOVF,		C_FREG,		C_NONE,		C_GOREG,		70,	12,	0,	LTO },
+	{ AMOVF,		C_LAUTO,		C_NONE,		C_FREG,		71,	12,	REGSP,	LFROM },
+	{ AMOVF,		C_GOREG,		C_NONE,		C_FREG,		71,	12,	0,	LFROM },
+
+	{ AADDD,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ AADDD,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+	{ ASUBD,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ ASUBD,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+	{ AMULD,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ AMULD,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+	{ ADIVD,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ ADIVD,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+	{ AADDF,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ AADDF,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+	{ ASUBF,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ ASUBF,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+	{ AMULF,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ AMULF,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+	{ ADIVF,		C_FREG,		C_NONE,		C_FREG,		72,	4,	0 },
+	{ ADIVF,		C_FREG,		C_REG,		C_FREG,		72,	4,	0 },
+
+	/* register to register: an F register always holds a double */
+	{ AMOVD,		C_FREG,		C_NONE,		C_FREG,		73,	4,	0 },
+	{ AMOVF,		C_FREG,		C_NONE,		C_FREG,		73,	4,	0 },
+	{ AMOVFD,	C_FREG,		C_NONE,		C_FREG,		73,	4,	0 },
+	/* double to single has to round, so it is a pair of converts */
+	{ AMOVDF,	C_FREG,		C_NONE,		C_FREG,		74,	8,	0 },
+
+	{ ACMPD,		C_FREG,		C_REG,		C_NONE,		75,	8,	0 },
+	{ ACMPF,		C_FREG,		C_REG,		C_NONE,		75,	8,	0 },
+	{ ACMPD,		C_LEXT,		C_REG,		C_NONE,		80,	14,	0,	LFROM },
+	{ ACMPF,		C_LEXT,		C_REG,		C_NONE,		80,	14,	0,	LFROM },
+
+	/* between an F register and a core register */
+	{ AMOVDW,	C_FREG,		C_NONE,		C_REG,		76,	8,	0 },
+	{ AMOVFW,	C_FREG,		C_NONE,		C_REG,		76,	8,	0 },
+	{ AMOVWD,	C_REG,		C_NONE,		C_FREG,		77,	8,	0 },
+	{ AMOVWF,	C_REG,		C_NONE,		C_FREG,		77,	8,	0 },
+
+	{ AMOVW,		C_REG,		C_NONE,		C_FCR,		78,	4,	0 },
+	{ AMOVW,		C_FCR,		C_NONE,		C_REG,		79,	4,	0 },
+
+
 	{ AXXX,		C_NONE,		C_NONE,		C_NONE,		0,	2,	0 },
 };
 
-#define OPCNTSZ	52
+#define OPCNTSZ	80
 int opcount[OPCNTSZ];
 
 // is this too pessimistic ?
@@ -806,6 +923,211 @@ if(debug['G']) print("%ulx: %s: thumb\n", (ulong)(p->pc), p->from.sym->name);
 		thumbaclass(&p->to, p);
 		o1 = instoffset&0xffff;
 		o2 = (instoffset>>16)&0xffff;
+		break;
+	case 60:		/* MOVD Fs, o(R) */
+	case 61:		/* MOVD o(R), Fs */
+	{
+		int ld, rbase, freg;
+
+		ld = o->type == 61;
+		if(ld){
+			thumbaclass(&p->from, p);
+			rbase = p->from.reg;
+			freg = rt;
+		}else{
+			thumbaclass(&p->to, p);
+			rbase = p->to.reg;
+			freg = rf;
+		}
+		if(rbase == NREG)
+			rbase = o->param;
+		t2(vfpmem(ld, 0, freg, rbase, instoffset), &o1, &o2);
+		break;
+	}
+	case 62:		/* MOVD Fs, *addr */
+	case 63:		/* MOVD *addr, Fs */
+	{
+		int ld, freg;
+
+		ld = o->type == 63;
+		if(ld){
+			thumbaclass(&p->from, p);
+			freg = rt;
+		}else{
+			thumbaclass(&p->to, p);
+			freg = rf;
+		}
+		o1 = mv(p, REGTMPT, instoffset);
+		t2(vfpmem(ld, 0, freg, REGTMPT, 0), &o2, &o3);
+		break;
+	}
+	case 64:		/* MOVD Fs, O(R), O too big for VSTR */
+	case 65:		/* MOVD O(R), Fs, likewise */
+	{
+		int ld, rbase, freg;
+
+		ld = o->type == 65;
+		if(ld){
+			thumbaclass(&p->from, p);
+			rbase = p->from.reg;
+			freg = rt;
+		}else{
+			thumbaclass(&p->to, p);
+			rbase = p->to.reg;
+			freg = rf;
+		}
+		if(rbase == NREG)
+			rbase = o->param;
+		o1 = mv(p, REGTMPT, instoffset);
+		if(rbase == REGSP)
+			o2 = (0x111<<6) | ((REGSP-8)<<3) | REGTMPT;
+		else{
+			if(rbase == REGTMPT)
+				diag("floating point base register is the loader's own");
+			lowreg(p, rbase);
+			o2 = (0x6<<10) | (rbase<<6) | (REGTMPT<<3) | REGTMPT;
+		}
+		t2(vfpmem(ld, 0, freg, REGTMPT, 0), &o3, &o4);
+		break;
+	}
+	case 66:		/* MOVF Fs, o(R): round to single, then store it */
+	case 67:		/* MOVF o(R), Fs: load a single, then widen it */
+	{
+		int ld, rbase, freg;
+
+		ld = o->type == 67;
+		if(ld){
+			thumbaclass(&p->from, p);
+			rbase = p->from.reg;
+			freg = rt;
+		}else{
+			thumbaclass(&p->to, p);
+			rbase = p->to.reg;
+			freg = rf;
+		}
+		if(rbase == NREG)
+			rbase = o->param;
+		if(ld){
+			t2(vfpmem(1, 1, FPSCRATCH, rbase, instoffset), &o1, &o2);
+			t2(0xeeb70ac0 | (freg<<12) | (Sb(FPSCRATCH)<<5) | Sv(FPSCRATCH),
+				&o3, &o4);
+		}else{
+			t2(0xeeb70bc0 | (Sv(FPSCRATCH)<<12) | (Sb(FPSCRATCH)<<22) | freg,
+				&o1, &o2);
+			t2(vfpmem(0, 1, FPSCRATCH, rbase, instoffset), &o3, &o4);
+		}
+		break;
+	}
+	case 68:		/* MOVF Fs, *addr */
+	case 69:		/* MOVF *addr, Fs */
+	{
+		int ld, freg;
+
+		ld = o->type == 69;
+		if(ld){
+			thumbaclass(&p->from, p);
+			freg = rt;
+		}else{
+			thumbaclass(&p->to, p);
+			freg = rf;
+		}
+		o1 = mv(p, REGTMPT, instoffset);
+		if(ld){
+			t2(vfpmem(1, 1, FPSCRATCH, REGTMPT, 0), &o2, &o3);
+			t2(0xeeb70ac0 | (freg<<12) | (Sb(FPSCRATCH)<<5) | Sv(FPSCRATCH),
+				&o4, &o5);
+		}else{
+			t2(0xeeb70bc0 | (Sv(FPSCRATCH)<<12) | (Sb(FPSCRATCH)<<22) | freg,
+				&o2, &o3);
+			t2(vfpmem(0, 1, FPSCRATCH, REGTMPT, 0), &o4, &o5);
+		}
+		break;
+	}
+	case 70:		/* MOVF Fs, O(R), O too big */
+	case 71:		/* MOVF O(R), Fs, likewise */
+	{
+		int ld, rbase, freg;
+
+		ld = o->type == 71;
+		if(ld){
+			thumbaclass(&p->from, p);
+			rbase = p->from.reg;
+			freg = rt;
+		}else{
+			thumbaclass(&p->to, p);
+			rbase = p->to.reg;
+			freg = rf;
+		}
+		if(rbase == NREG)
+			rbase = o->param;
+		o1 = mv(p, REGTMPT, instoffset);
+		if(rbase == REGSP)
+			o2 = (0x111<<6) | ((REGSP-8)<<3) | REGTMPT;
+		else{
+			if(rbase == REGTMPT)
+				diag("floating point base register is the loader's own");
+			lowreg(p, rbase);
+			o2 = (0x6<<10) | (rbase<<6) | (REGTMPT<<3) | REGTMPT;
+		}
+		if(ld){
+			t2(vfpmem(1, 1, FPSCRATCH, REGTMPT, 0), &o3, &o4);
+			t2(0xeeb70ac0 | (freg<<12) | (Sb(FPSCRATCH)<<5) | Sv(FPSCRATCH),
+				&o5, &o6);
+		}else{
+			t2(0xeeb70bc0 | (Sv(FPSCRATCH)<<12) | (Sb(FPSCRATCH)<<22) | freg,
+				&o3, &o4);
+			t2(vfpmem(0, 1, FPSCRATCH, REGTMPT, 0), &o5, &o6);
+		}
+		break;
+	}
+	case 72:		/* ADDD and the rest: Fd = Fn op Fm */
+		if(r == NREG)
+			r = rt;
+		t2(VFPARITH(vfpopd(p->as), rt, r, rf), &o1, &o2);
+		break;
+	case 73:		/* MOVD Fm, Fd, which is all an F register ever holds */
+		t2(0xeeb00b40 | (rt<<12) | rf, &o1, &o2);
+		break;
+	case 74:		/* MOVDF Fm, Fd: round to single and widen back */
+		t2(0xeeb70bc0 | (Sv(FPSCRATCH)<<12) | (Sb(FPSCRATCH)<<22) | rf,
+			&o1, &o2);
+		t2(0xeeb70ac0 | (rt<<12) | (Sb(FPSCRATCH)<<5) | Sv(FPSCRATCH),
+			&o3, &o4);
+		break;
+	case 75:		/* CMPD Fm, Fn: compare, then put the flags in APSR */
+		t2(0xeeb40bc0 | (r<<12) | rf, &o1, &o2);
+		t2(0xeef1fa10, &o3, &o4);
+		break;
+	case 76:		/* MOVDW Fm, R: to an integer, rounding toward zero */
+		t2(0xeebd0bc0 | (Sv(FPSCRATCH)<<12) | (Sb(FPSCRATCH)<<22) | rf,
+			&o1, &o2);
+		t2(0xee100a10 | (Sv(FPSCRATCH)<<16) | (Sb(FPSCRATCH)<<7) | (rt<<12),
+			&o3, &o4);
+		break;
+	case 77:		/* MOVWD R, Fd: from an integer */
+		t2(0xee000a10 | (Sv(FPSCRATCH)<<16) | (Sb(FPSCRATCH)<<7) | (rf<<12),
+			&o1, &o2);
+		t2(0xeeb80bc0 | (rt<<12) | (Sb(FPSCRATCH)<<5) | Sv(FPSCRATCH),
+			&o3, &o4);
+		break;
+	case 80:		/* CMPD *addr, Fn: the constant is in memory */
+		thumbaclass(&p->from, p);
+		o1 = mv(p, REGTMPT, instoffset);
+		t2(vfpmem(1, 0, FPCONSTREG, REGTMPT, 0), &o2, &o3);
+		t2(0xeeb40bc0 | (r<<12) | FPCONSTREG, &o4, &o5);
+		t2(0xeef1fa10, &o6, &o7);
+		break;
+	case 78:		/* MOVW R, FPSCR */
+		t2(0xeee10a10 | (rf<<12), &o1, &o2);
+		break;
+	case 79:		/* MOVW FPSCR, R */
+		t2(0xeef10a10 | (rt<<12), &o1, &o2);
+		break;
+	case 52:		/* AHWORD: one halfword of raw text */
+		thumbaclass(&p->to, p);
+		if(instoffset < 0 || instoffset > 0xffff)
+			diag("HWORD $%lux is not a halfword", instoffset);
+		o1 = instoffset&0xffff;
 		break;
 	case 18:		/* AMOVW O(SP), R and AMOVW O(PC), R */
 		thumbaclass(&p->from, p);
@@ -1209,6 +1531,60 @@ if(debug['G']) print("%ulx: %s: thumb\n", (ulong)(p->pc), p->from.sym->name);
 		if(o->size > 12) dis(o7, p->pc+12);
 		// if(o->size > 14) dis(o8, p->pc+14);
 	}
+}
+
+
+/* split a 32 bit Thumb-2 encoding into the two halfwords, first one first */
+static void
+t2(long w, long *hi, long *lo)
+{
+	*hi = (w>>16) & 0xffff;
+	*lo = w & 0xffff;
+}
+
+/* the double precision three-register form of an arithmetic opcode */
+static long
+vfpopd(int a)
+{
+	switch(a){
+	case AADDF:
+	case AADDD:	return 0xee300b00;
+	case ASUBF:
+	case ASUBD:	return 0xee300b40;
+	case AMULF:
+	case AMULD:	return 0xee200b00;
+	case ADIVF:
+	case ADIVD:	return 0xee800b00;
+	}
+	diag("vfpopd: %A", a);
+	return 0;
+}
+
+/* VLDR or VSTR, double or single, with a byte of offset scaled by four */
+static long
+vfpmem(int ld, int single, int freg, int rbase, int off)
+{
+	long o;
+	int u;
+
+	u = 1;
+	if(off < 0){
+		u = 0;
+		off = -off;
+	}
+	if((off & 3) || off > 1020)
+		diag("vfpmem: offset %d", off);
+	off /= 4;
+	o = 0xed000a00 | (u<<23) | (rbase<<16) | (off & 0xff);
+	if(!single)
+		o |= 1<<8;			/* 1011 rather than 1010 */
+	if(ld)
+		o |= 1<<20;
+	if(single)
+		o |= (Sv(freg)<<12) | (Sb(freg)<<22);
+	else
+		o |= freg<<12;
+	return o;
 }
 
 static long

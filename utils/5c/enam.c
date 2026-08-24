@@ -100,5 +100,6 @@ char*	anames[] =
 	"STREX",
 	"LDREXD",
 	"STREXD",
+	"HWORD",
 	"LAST",
 };

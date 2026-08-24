@@ -1,13 +1,25 @@
 #
 #	thumb-specific files
 #
+#	What is hand written here is what the compiler has no word for on
+#	an ARMv7-M core: the exclusive monitor, SDIV and UDIV, the long
+#	multiply, and the floating point control word.  The rest is the
+#	portable C, which is correct and slow, and that is the right order
+#	to do it in.
+#
+#	The 386 and portable files are named rather than thumb ones
+#	because they are the little-endian versions.  The Thumb files this
+#	directory used to carry were for a big-endian ARM with an FPA, and
+#	neither of those is an ARMv7-M core.
+#
 TARGFILES=\
-	frexp-thumb.$O\
-	getfcr-thumb.$O\
-	memmove-thumb.$O\
-	memset-thumb.$O\
-	nan-thumb.$O\
-	strchr-thumb.$O\
-	vlop-thumb.$O\
-	vlrt-thumb.$O\
+	ainc-thumb.$O\
 	div-thumb.$O\
+	getfcr-thumb.$O\
+	vlop-thumb.$O\
+	vlrt-arm.$O\
+	frexp-386.$O\
+	nan-386.$O\
+	memmove.$O\
+	memset.$O\
+	strchr.$O\

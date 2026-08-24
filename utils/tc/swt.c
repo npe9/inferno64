@@ -354,10 +354,25 @@ gextern(Sym *s, Node *a, long o, long w)
 {
 
 	if(a->op == OCONST && typev[a->type->etype]) {
-		gpseudo(ADATA, s, nod32const(a->vconst>>32));
+		/*
+		 * A vlong is two words, and which one comes first is the
+		 * machine's endianness.  This used to emit the high word
+		 * first unconditionally, which is right only on a
+		 * big-endian ARM; every ARMv7-M core is little-endian, and
+		 * a 64 bit initialiser -- a Qid path in a device table,
+		 * say -- came out with its halves swapped.  utils/5c has
+		 * always had the test; this is the same one.
+		 */
+		if(align(0, types[TCHAR], Aarg1))	/* isbigendian */
+			gpseudo(ADATA, s, nod32const(a->vconst>>32));
+		else
+			gpseudo(ADATA, s, nod32const(a->vconst));
 		p->from.offset += o;
 		p->reg = 4;
-		gpseudo(ADATA, s, nod32const(a->vconst));
+		if(align(0, types[TCHAR], Aarg1))	/* isbigendian */
+			gpseudo(ADATA, s, nod32const(a->vconst));
+		else
+			gpseudo(ADATA, s, nod32const(a->vconst>>32));
 		p->from.offset += o + 4;
 		p->reg = 4;
 		return;

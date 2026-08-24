@@ -236,8 +236,8 @@ void		pgrpcpy(Pgrp*, Pgrp*);
 ulong		pidalloc(Proc*);
 #define		waserror()	setlabel(&up->errlab[up->nerrlab++])
 #define		poperror()	up->nerrlab--
-int		poolread(char*, int, u64);
-void		poolsize(Pool *, u64, int);
+int		poolread(char*, int, uintptr);
+void		poolsize(Pool *, uintptr, int);
 int		postnote(Proc *, int, char *, int);
 int		pprint(char*, ...);
 int		preempted(void);

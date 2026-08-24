@@ -176,7 +176,7 @@ kprofread(Chan *c, void *va, s32 n, s64 offset)
 	ulong w, *bp;
 	uchar *a, *ea;
 
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 	case Qdir:
 		return devdirread(c, va, n, kproftab, nelem(kproftab), devgen);
 
@@ -217,7 +217,7 @@ kprofwrite(Chan *c, void *vp, s32 n, s64 offset)
 	USED(offset);
 
 	a = vp;
-	switch((u64)c->qid.path){
+	switch((ulong)c->qid.path){
 	case Qctl:
 		if(strncmp(a, "startclr", 8) == 0){
 			memset((char *)kprof.buf, 0, kprof.nbuf*SZ);
