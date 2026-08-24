@@ -32,7 +32,7 @@ SETUP = [
  "9660srv -r -f /dev/sdF2/data cd9660 >[2]/dev/null & sleep 1; mkdir -p /n/cd; "
  "mount /srv/cd9660 /n/cd; echo mounted",
  # a long line loses a character to the console, so the copying is its own
- "for(b in ring pip p9srv) { rm -f /tmp/$b; cp /n/cd/bin/$b /tmp/$b; chmod +x /tmp/$b }",
+ "for(b in ring pip p9srv o9cat) { rm -f /tmp/$b; cp /n/cd/bin/$b /tmp/$b; chmod +x /tmp/$b }",
  "bind '#O' /n/osprey; sz=`{grep arena /n/osprey/status | sed 's/.*slice //; s/ .*//'}; "
  "for(c in 1 2) { echo create $c 40000000 800000000 200000000 >/n/osprey/ctl; "
  "echo attach $c 0 >/n/osprey/ctl; echo limit $c 262144 65536 64 >/n/osprey/ctl }; echo ready",
@@ -49,6 +49,9 @@ CHECKS = [
  ("a second one, through the same mapped ring",
   ["/tmp/ring osprey0 $sz alloc 4096"],
   "reply alloc done 4096"),
+ ("a file opened and read by a program that only uses the library",
+  ["/tmp/o9cat osprey0 $sz /dev/osversion"],
+  "arms intact, read"),
  ("a select woken by a semaphore, on the arm that was given",
   ["{ /tmp/ring osprey1 $sz wait 3 & }; sleep 2; echo semup 2 3 >/n/osprey/ctl",
    "sleep 2; echo waited"],

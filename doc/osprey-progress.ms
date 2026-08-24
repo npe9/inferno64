@@ -194,7 +194,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Sixty lines, all
+a line at a time.  Sixty-one lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -517,6 +517,37 @@ kernel's request ABI made into a library.
 is deliberately left as it was: it exists to show the ring unmediated,
 and would show nothing if it used something else to work it.
 .PP
+Two defects in the library itself, neither of which any of the sixty
+lines would have caught, because nothing called the part of it they were
+in.  The names a request points at were put at the head of the data
+area, where the arms already were: a program that opened a file and then
+waited wrote the name over its own arms, and nothing said so.  The
+offsets are worked out from one another now \- the arms, then the
+message an arm took or put, then the names, then the buffer \- so that
+changing the number of arms moves the rest rather than overlapping them.
+And
+.CW os/osprey/cmd/mkfile
+rebuilt the library when a shared header changed but not the programs,
+which would have gone on linking objects compiled against the old
+layout: exactly the bug the library was written to remove, moved from
+three copies to two stale objects.
+.PP
+.CW os/osprey/cmd/o9cat.c
+is why the first of those is now known to be fixed rather than believed
+to be.
+.I p9srv
+answers with ordinary system calls and
+.I netsrv
+only ever submits, so between them they never called
+.CW o9open
+or
+.CW o9read ;
+o9cat does nothing else, and says whether the arm it built before
+opening is still there afterwards.  Put the old offsets back and the
+check says
+.CW FAIL ,
+which is the only thing that makes a check worth having.
+.PP
 Converting them found one bug that was not there before and one shape
 worth keeping.  The bug was mine: the old programs died when a select
 was refused and the new ones asked again, so a server whose container
@@ -614,6 +645,17 @@ and the only one in the list a container cannot ask for.  The check
 counts the server's processes before and after and finds one fewer.
 .NH 2
 Demonstration scale
+.PP
+One of these was measured rather than assumed, and turned out not to
+matter.
+.CW Npkt ,
+the packets a container may hold, is thirty-two, and a flood arriving
+faster than a container drains it would be dropped there; under twelve
+hundred pings twenty milliseconds apart
+.I netsrv
+took twelve hundred frames and answered eleven hundred and ninety-eight,
+so the queue was not what limited anything.  The rest below are written
+down as what they are rather than changed.
 .PP
 Five of the limits are now read from
 .CW plan9.ini

@@ -117,7 +117,7 @@ layout(Osprey *o)
 	o->outmsg = (Message*)(o->base + m->output);
 	o->sem = (Sem*)(o->base + m->sem);
 	o->arm = (Ospreyarm*)(o->base + m->data);
-	o->armbuf = m->data + (uvlong)(O9narm*sizeof(Ospreyarm));
+	o->armbuf = m->data + (uvlong)O9armend;
 }
 
 int

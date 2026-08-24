@@ -8,8 +8,8 @@ BIN=$ROOT/Osprey/$OBJTYPE/bin
 # the container-side library, and the headers it installs
 O9LIB=$ROOT/Osprey/$OBJTYPE/lib/libosprey9.a
 CFLAGS=$CFLAGS -I$ROOT/Osprey/include/osprey
-TARG=ring pip mig p9srv netsrv
-OFILES=ring.$O pip.$O mig.$O p9srv.$O netsrv.$O
+TARG=ring pip mig p9srv netsrv o9cat
+OFILES=ring.$O pip.$O mig.$O p9srv.$O netsrv.$O o9cat.$O
 
 all:V:	o9lib $TARG
 
@@ -36,7 +36,22 @@ p9srv:	p9srv.$O
 netsrv:	netsrv.$O
 	$LD -l -o $target netsrv.$O $O9LIB $ROOT/Osprey/$OBJTYPE/lib/libc.a
 
-%.$O:	%.c
+o9cat:	o9cat.$O
+	$LD -l -o $target o9cat.$O $O9LIB $ROOT/Osprey/$OBJTYPE/lib/libc.a
+
+# Every one of these embeds structures the shared headers define, so
+# each must be rebuilt when any of them changes.  Without this a field
+# added to the map in the kernel leaves an object here reading the old
+# layout, which is the bug the library exists to remove.
+INC=$ROOT/Osprey/include
+HFILES=\
+	$INC/osprey9.h\
+	$INC/osprey/ospreyabi.h\
+	$INC/osprey/queue.h\
+	$INC/osprey/syscall.h\
+	$INC/osprey/sem.h\
+
+%.$O:	%.c $HFILES
 	$CC $CFLAGS $stem.c
 
 clean:V:

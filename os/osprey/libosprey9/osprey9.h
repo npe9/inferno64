@@ -48,12 +48,17 @@ enum {
 	 * where its arguments are as offsets into that area, since what
 	 * answers it is in another address space or in the kernel and a
 	 * pointer would mean nothing there.  The arms come first, then the
-	 * message an arm took or put; a program that wants the rest of the
-	 * area for itself has it from O9iobuf + whatever it reads at once.
+	 * message an arm took or put, and the names and the i/o buffer
+	 * after those: a program that opened a file and then waited would
+	 * otherwise have written the name over its own arms.  Every one of
+	 * these is worked out from the two before it, so that changing the
+	 * number of arms moves the rest rather than overlapping them.
 	 */
-	O9name	= 0,	/* a name a request points at */
-	O9name2	= 256,	/* and the second one bind wants */
-	O9iobuf	= 512,	/* what read and write move */
+	O9armend = O9narm*sizeof(Ospreyarm),
+	O9msgend = O9armend + sizeof(Message),
+	O9name	= O9msgend,		/* a name a request points at */
+	O9name2	= O9name + 256,		/* and the second one bind wants */
+	O9iobuf	= O9name2 + 256,	/* what read and write move */
 
 	O9nothing = -2,	/* o9select: the wait ended and no arm was ready */
 };
