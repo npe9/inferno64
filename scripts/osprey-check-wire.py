@@ -43,7 +43,17 @@ def pair(port, a, b, amac='52:54:00:00:c1:01', bmac='52:54:00:00:c1:02'):
     t2 = threading.Thread(target=run,
         args=(b, 'socket,id=n0,connect=:%d' % port, logs[1], 3, bmac))
     t1.start(); t2.start(); t1.join(); t2.join()
-    return [plain(open(l, errors='replace').read()) for l in logs], logs
+    # the commands themselves come out of what is read back: the console
+    # echoes each one, so a string a check looks for that also appears in
+    # a command would match the command rather than the answer, and the
+    # check would pass whatever the machine did.  Three did.
+    out = []
+    for l, cmds in zip(logs, (a, b)):
+        t = plain(open(l, errors='replace').read())
+        for c in cmds:
+            t = t.replace(c, '')
+        out.append(t)
+    return out, logs
 
 # the machine that answers, and the one that asks
 SERVER = [
