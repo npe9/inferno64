@@ -1419,6 +1419,21 @@ because a background job's output arrives on the same console line as the
 next prompt and dropping whole prompt lines dropped that too.  With the
 commands gone and the fault in, the line fails, which is what a check is
 for.
+.PP
+And the other two harnesses read their logs the same way, so they were
+asked the same question mechanically: which of the strings a check looks
+for also appears in a command it sent.  Three did \-
+.CW Rread
+and
+.CW Rauth
+on the wire, and
+.CW 10.9.0.1
+in the network check, whose arp section runs on to an
+.CW ip/ping
+naming that very address.  All three still pass with the commands taken
+out, so none of them was hiding a failure; but a line that would pass
+whatever the machine did is not a line worth having, and all three
+harnesses take the commands out now.
 .NH 2
 One instance where the plan asks for a choice
 .PP
