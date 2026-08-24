@@ -362,3 +362,8 @@ os/pc64/primitives.s
 os/pc64/words.s
 os/pc64/forth.h
 .aider*
+
+# ONNX Runtime, fetched not vendored: 41MB of third-party dylib has no
+# business in a source tree. See man/3/ml for where to get it.
+*.dylib
+MacOSX/*/include/onnxruntime/

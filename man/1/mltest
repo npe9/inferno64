@@ -16,9 +16,9 @@ compiles and runs it, and the answer comes back through
 marshalling.
 .PP
 It runs against
-.BR /lib/ml/linear.mlmodel ,
+.BR /lib/ml/linear.onnx ,
 built by
-.B mkmlmodel.py
+.B mkonnxmodel.py
 alongside the emu source with weights chosen by hand rather than
 trained, so the answer is known in advance:
 .I y

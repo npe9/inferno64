@@ -19,8 +19,27 @@ ml \- machine-learning inference device
 The
 .I ml
 device runs a trained model on whatever inference hardware the host has.
-On Apple silicon that is CoreML, and so in practice the Neural Engine;
-elsewhere the device exists but reports that it has no backend.
+The model is
+.SM ONNX ,
+which is the point: the same file runs everywhere, and what each host does
+with it underneath is the host's business.
+.PP
+On Apple silicon that underneath is
+.I onnxruntime
+handing the parts of the graph it can to CoreML, and so in practice to the
+Neural Engine.
+macOS cannot do this in a system framework \(em CoreML compiles
+.B .mlmodel
+and
+.B .mlpackage
+and nothing else, and Apple's own Python converter dropped
+.SM ONNX
+\(em so the conversion happens inside
+.I onnxruntime
+rather than in the operating system.
+.PP
+Where the library is not linked the device exists but reports that it has no
+backend.
 .PP
 Opening
 .B /dev/ml/clone
@@ -203,6 +222,33 @@ Discard the model and start over.
 Errors from the host's inference framework are passed through, so a
 malformed model or a wrong input size reports what the framework said
 rather than a generic failure.
+.SH "THE LIBRARY"
+.I Onnxruntime
+is fetched, not vendored: 41MB of third-party dylib has no business in a
+source tree, and it is twenty times the size of the emulator that links it.
+.PP
+Take the macOS release from
+.B github.com/microsoft/onnxruntime
+and put its
+.B lib
+and
+.B include
+where the build looks:
+.IP
+.EX
+cp lib/libonnxruntime.*.dylib $ROOT/MacOSX/arm64/lib/
+cd $ROOT/MacOSX/arm64/lib
+ln -s libonnxruntime.*.dylib libonnxruntime.1.dylib
+ln -s libonnxruntime.*.dylib libonnxruntime.dylib
+cp include/*.h $ROOT/MacOSX/arm64/include/onnxruntime/
+.EE
+.PP
+Both links are needed and the first is easy to miss: the dylib's install name
+is
+.BR @rpath/libonnxruntime.1.dylib ,
+so a build that links against
+.B libonnxruntime.dylib
+alone will link and then fail to start.
 .SH BUGS
 This runs a compiled model graph, and that is all it does.
 The Neural Engine has no public interface outside CoreML, so
@@ -214,12 +260,17 @@ solve or a
 stencil sweep, and it is not a general compute device.
 It is worth having for inference and for nothing else.
 .PP
-Only multi-array features are handled.
-A model taking images, dictionaries or sequences reports its features as
+Only tensors are handled.
+A model taking a map or a sequence reports that feature as
 .B opaque
 in
 .B info
 and cannot be fed.
+.PP
+A model may leave at most one dimension of an input open.
+Two cannot be worked out from the amount written, and guessing which to grow
+would be inventing an answer, so such a model is refused rather than fed
+something plausible.
 .PP
 There is no way to enumerate the compute units the host has, only to ask
 for one and read back what happened.

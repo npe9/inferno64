@@ -25,5 +25,7 @@ SYSLIBS=\
 	-framework CoreML\
 	-framework Metal\
 	-framework QuartzCore\
+	-L$ROOT/MacOSX/$OBJTYPE/lib -lonnxruntime\
+	-Wl,-rpath,$ROOT/MacOSX/$OBJTYPE/lib\
 
 

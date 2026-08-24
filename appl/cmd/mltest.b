@@ -4,7 +4,7 @@ implement Command;
 # Tests ml(3) end to end: the model crosses as bytes, the device compiles and
 # runs it, and the answer comes back.
 #
-# The fixture is a linear model built by emu/MacOSX/mkmlmodel.py with weights
+# The fixture is a linear model built by emu/port/mkonnxmodel.py with weights
 # chosen by hand, so the answer is known in advance:
 #
 #	y = Wx + b,  W = [[1,2,3],[10,20,30]],  b = [0.5,-0.5]
@@ -26,9 +26,35 @@ include "draw.m";
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
-Model:	con "/lib/ml/linear.mlmodel";
+Model:	con "/lib/ml/linear.onnx";
 
 fail := 0;
+
+# f32 across ml(3)'s big-endian wire. math(2) marshals f64 and there is no
+# f32 equivalent, so the four bytes are laid out here.
+putf32(v: array of real): array of byte
+{
+	b := array[4*len v] of byte;
+	for(i := 0; i < len v; i++){
+		u := math->realbits32(real v[i]);
+		b[4*i] = byte (u >> 24);
+		b[4*i+1] = byte (u >> 16);
+		b[4*i+2] = byte (u >> 8);
+		b[4*i+3] = byte u;
+	}
+	return b;
+}
+
+getf32(b: array of byte): array of real
+{
+	v := array[len b / 4] of real;
+	for(i := 0; i < len v; i++){
+		u := (int b[4*i] << 24) | (int b[4*i+1] << 16) |
+			(int b[4*i+2] << 8) | int b[4*i+3];
+		v[i] = math->bits32real(u);
+	}
+	return v;
+}
 
 bad(s: string)
 {
@@ -127,22 +153,27 @@ init(nil: ref Draw->Context, argv: list of string)
 	print("%s", info);
 
 	# The declared element type is checked rather than assumed. This model
-	# is f64; guessing f32 would write half the bytes.
-	if(!has(info, "in x f64 3"))
-		bad("info does not describe input x as f64 [3]");
-	if(!has(info, "out y f64 2"))
-		bad("info does not describe output y as f64 [2]");
+	# is f32; guessing f64 would write twice the bytes.
+	#
+	# The -1 is the batch dimension, which the model leaves open. That it
+	# is reported rather than guessed at is the whole reason for the ONNX
+	# backend: a model with a variable-length input could not be fed at all
+	# before, because every write was sized against a fixed declared shape.
+	if(!has(info, "in x f32 -1 3"))
+		bad("info does not describe input x as f32 [-1 3]");
+	if(!has(info, "out y f32 -1 2"))
+		bad("info does not describe output y as f32 [-1 2]");
 	if(!has(info, "device "))
 		bad("info does not say what ran the model");
 	if(fail)
 		raise "fail:test";
 
-	# Feed it. export_real writes big-endian IEEE754 doubles, which is
-	# what the device's wire is, so no marshalling by hand.
+	# Feed it one row. The device's wire is big-endian whatever the host
+	# is, and this model is f32, so the four bytes of each value go out
+	# most significant first.
 	x := array[3] of real;
 	x[0] = 1.0; x[1] = 2.0; x[2] = 3.0;
-	xb := array[8*len x] of byte;
-	math->export_real(xb, x);
+	xb := putf32(x);
 	infd := sys->open(dir + "/in", Sys->OWRITE);
 	if(infd == nil){
 		bad(sprint("open in: %r"));
@@ -163,14 +194,13 @@ init(nil: ref Draw->Context, argv: list of string)
 		bad(sprint("open out: %r"));
 		raise "fail:test";
 	}
-	yb := array[16] of byte;
+	yb := array[8] of byte;			# two f32
 	n = sys->readn(ofd, yb, len yb);
 	if(n != len yb){
 		bad(sprint("read output: got %d of %d bytes: %r", n, len yb));
 		raise "fail:test";
 	}
-	y := array[2] of real;
-	math->import_real(yb, y);
+	y := getf32(yb);
 
 	want := array[] of { 14.5, 139.5 };
 	for(i := 0; i < len y; i++)
@@ -181,9 +211,39 @@ init(nil: ref Draw->Context, argv: list of string)
 	# Without this the size check has never been seen to do anything, and
 	# a silently short input is exactly the failure that returns a
 	# plausible number.
-	short := array[8] of byte;
+	# 10 bytes is not a whole number of f32 values, so it cannot be any
+	# batch size at all.
+	short := array[10] of byte;
 	if(sys->write(infd, short, len short) >= 0)
-		bad("a 8-byte input was accepted for a 24-byte feature");
+		bad("a 10-byte input was accepted for a feature of 4-byte values");
+
+	# And the open dimension really is open: two rows, twice the bytes,
+	# twice the answer back. Before the ONNX backend this was the case
+	# that could not be expressed at all.
+	x2 := array[6] of real;
+	x2[0] = 1.0; x2[1] = 2.0; x2[2] = 3.0;
+	x2[3] = 1.0; x2[4] = 2.0; x2[5] = 3.0;
+	xb2 := putf32(x2);
+	if(sys->write(infd, xb2, len xb2) != len xb2)
+		bad(sprint("write two rows: %r"));
+	else if(sys->fprint(ctl, "run") < 0)
+		bad(sprint("run two rows: %r"));
+	else {
+		ofd2 := sys->open(dir + "/out", Sys->OREAD);
+		yb2 := array[16] of byte;		# four f32
+		if(ofd2 == nil || sys->readn(ofd2, yb2, len yb2) != len yb2)
+			bad("two rows did not give four values back");
+		else {
+			y2 := getf32(yb2);
+			for(k := 0; k < 4; k++){
+				w := 14.5;
+				if(k % 2 == 1)
+					w = 139.5;
+				if(y2[k] - w > 0.01 || w - y2[k] > 0.01)
+					bad(sprint("two rows: y[%d] = %g, expected %g", k, y2[k], w));
+			}
+		}
+	}
 
 	# What "device" reports has to track what was asked for, or it is not
 	# a report at all. A constant string would pass every check above.

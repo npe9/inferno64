@@ -18,7 +18,7 @@ dev
 	eia
 #	audio	audio
 	gpu
-	ml	win-ml
+	ml	mlonnx
 	mem
 
 lib
