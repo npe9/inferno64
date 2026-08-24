@@ -13,6 +13,14 @@ implement Command;
 # it badly here would make a working synthesizer look broken. A front end
 # belongs on top of this, not inside it.
 #
+# It runs on the processor, not the neural engine, and that is deliberate:
+# above about forty phonemes onnxruntime's CoreML provider faults inside
+# Apple's BNNS convolution and takes the model server with it. That was
+# measured outside Inferno entirely - the same five utterances through a
+# fifteen-line driver, three of five dead on CoreML and five of five good on
+# the processor - so it is not this system's bug to fix. -u all asks for the
+# accelerator anyway, and short utterances do work there.
+#
 #	say 1 0 20 0 59 0 24 0 120 0 27 0 100 0 2
 #	say -p "h@l'oU"			# the same thing, in the voice's own symbols
 #
@@ -170,13 +178,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	json->init(bufio);
 
 	voice := Voice;
+	units := "cpu";
 	out := "/dev/audio";
 	showinfo := 0;
 	phonemes := "";
 	arg->init(argv);
-	arg->setusage("say [-v voice] [-o file] [-i] -p phonemes | id...");
+	arg->setusage("say [-v voice] [-u units] [-o file] [-i] -p phonemes | id...");
 	while((o := arg->opt()) != 0)
 		case o {
+		'u' =>	units = arg->earg();
 		'v' =>	voice = arg->earg();
 		'o' =>	out = arg->earg();
 		'i' =>	showinfo++;
@@ -223,6 +233,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		total += n;
 	}
 	mfd = nil;
+	cmd("units " + units);
 	cmd("load");
 
 	if(showinfo){

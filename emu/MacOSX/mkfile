@@ -29,9 +29,18 @@ COCOAFLAGS=
 <mkfile-$OBJTYPE	# arm64/amd64 set CONF/SYSLIBS/COCOA*
 
 # Console emu-g: drop AppKit main() / Cocoa (mkfile-arm64 defaults).
-<| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox -framework Foundation -framework CoreML -L'$ROOT'/MacOSX/'$OBJTYPE'/lib -lonnxruntime -Wl,-rpath,'$ROOT'/MacOSX/'$OBJTYPE'/lib'; fi
+<| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox -framework Foundation -framework CoreML'; fi
 
 <| $SHELLNAME ../port/mkdevlist $CONF	#sets $IP, $DEVS, $PORT, $LIBS
+
+# mlsrv runs a model in a process of its own. It is the only thing that links
+# onnxruntime: emu cannot, because it aliases the libc allocators into the
+# Inferno pool and onnxruntime uses several that the aliasing does not cover.
+# See emu/port/mlsrv.c.
+ORTDIR=$ROOT/MacOSX/$OBJTYPE
+$INSTALLDIR/mlsrv:	../port/mlsrv.c
+	cc -O2 -I$ORTDIR/include/onnxruntime -o $target ../port/mlsrv.c \
+		-L$ORTDIR/lib -lonnxruntime -Wl,-rpath,$ORTDIR/lib
 
 OBJ=\
 	asm-$OBJTYPE.$O\

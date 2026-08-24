@@ -1,65 +1,54 @@
 /*
- * ml(3)'s backend: run a portable model graph, on whatever the host has.
+ * ml(3)'s backend: talk to mlsrv, which runs the model in a process of its
+ * own.
  *
- * The model format is ONNX, and that is the point of this file. What came
- * before took CoreML's own .mlmodel, which made the *model file* a host
- * artefact: the same trained network had to exist once per platform, and
- * ml(3)'s interface talked in CoreML's vocabulary - multi-array features,
- * opaque sequence features - which is host structure showing through a
- * device that is supposed to virtualize a capability. ONNX in, and the host
- * does whatever it must underneath.
+ * This file used to link onnxruntime directly, and that cannot be made to
+ * work. emu aliases the libc allocators into the Inferno pool - malloc,
+ * mallocz, free, realloc, calloc - and onnxruntime uses several the aliasing
+ * does not cover: posix_memalign, aligned_alloc, malloc_size, and the
+ * malloc_zone calls. So it allocated on one heap and freed on the other, and
+ * the corruption surfaced later, inside Apple's neural library, as a jump to
+ * a small address. One utterance per emu worked; the second did not, and
+ * under wm often the first did not either.
  *
- * On Apple silicon that underneath is still CoreML and so still the Neural
- * Engine: onnxruntime's CoreML execution provider takes the parts of the
- * graph it can and runs them there. macOS has no way to do this in a system
- * framework - CoreML compiles .mlmodel and .mlpackage and nothing else, and
- * Apple's own Python converter dropped ONNX - so the conversion happens
- * inside onnxruntime rather than in the operating system.
+ * That was not fixable by tuning. Bigger pools did not help, nor did running
+ * onnxruntime on one thread; the pool already aligns to 16. Wrapping the rest
+ * of the surface is not possible - malloc_zone_* is not a wrappable interface
+ * - and removing the aliasing does not link, because emu's own code needs the
+ * wrap symbols.
  *
- * This file is portable C on purpose, even though only MacOSX links it
- * today. The onnxruntime C API is the same everywhere, so a platform that
- * wants ml(3) needs a conf line and the library, not a new backend. That is
- * the second reason for the change: ml(3) was macOS-only because its backend
- * was, not because the device was.
+ * So the library lives where the aliasing is not. emu starts mlsrv with
+ * oscmd(), the same way devcmd(3) starts any host command, and speaks a
+ * length-delimited protocol to it over a pipe. emu links no part of
+ * onnxruntime now, which is worth more than the bug it fixes: a device that
+ * virtualizes a host capability should not share an address space with the
+ * thing it virtualizes, and this is what ignoring that looks like.
  *
- * The library is fetched, not vendored: 41MB of third-party dylib has no
- * business in a source tree. man/3/ml says where to get it.
+ * One server per model instance. Its lifetime is the instance's: closing the
+ * pipe ends it, which is what mlsrv does when its read gives end of file.
  */
 
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
-
-#include	<onnxruntime_c_api.h>
-#ifdef	MACOSX_ARM64
-#include	<coreml_provider_factory.h>
-#endif
+#include	<errno.h>
 
 typedef struct Mlmodel Mlmodel;
-typedef struct Mlin Mlin;
-
-struct Mlin {
-	char*		name;
-	OrtValue*	val;
-	int64_t		pin[16];	/* shape pinned by ctl, or unset */
-	size_t		npin;
-};
 
 struct Mlmodel {
-	OrtSession*	session;
-	OrtSessionOptions* opts;
-	size_t		nin;
-	size_t		nout;
-	char**		innames;
-	char**		outnames;
-	Mlin*		in;		/* what has been written so far */
-	OrtValue**	out;		/* results of the last run */
-	char*		provider;	/* what was asked for */
+	void*	proc;		/* oscmd handle, for killing it */
+	int	fd[3];		/* to it, from it, its complaints */
+	int	dead;
 };
 
-static const OrtApi *ort;
-static OrtEnv *ortenv;
-static OrtMemoryInfo *ortmem;
+enum {
+	Oopen	= 'o',
+	Oinfo	= 'i',
+	Oshape	= 's',
+	Owrite	= 'w',
+	Orun	= 'r',
+	Oget	= 'g',
+};
 
 void*	mlort_open(unsigned char*, int, char*, char*, int);
 void	mlort_close(void*);
@@ -69,55 +58,6 @@ int	mlort_run(void*, char*, int);
 int	mlort_getoutput(void*, char*, unsigned char*, int, char*, int);
 int	mlort_setshape(void*, char*, char**, int, char*, int);
 
-/*
- * A status is an allocated object even when nothing went wrong is not the
- * case - it is nil then - but a call that fails and whose failure is not
- * worth reporting still hands one over, and dropping it leaks the message.
- * These are calls on type information ORT has just handed us, where a failure
- * would mean ORT disagreeing with itself.
- */
-static void
-ign(OrtStatus *st)
-{
-	if(st != nil)
-		ort->ReleaseStatus(st);
-}
-
-/*
- * ml(3)'s wire is big-endian, whatever the host is, and that is the device's
- * contract rather than this backend's choice: a client marshals with
- * math(2)'s export_real and expects the same bytes to mean the same thing
- * whichever machine reads them. The CoreML backend swapped here and so does
- * this one. Getting it wrong would not fail loudly - it would return a
- * plausible-looking wrong number, which is exactly what the fixture's
- * asymmetric weights were chosen to catch.
- */
-static int
-bigendian(void)
-{
-	static const ushort one = 1;
-	return *(const uchar*)&one == 0;
-}
-
-static void
-swapbytes(void *dst, const void *src, long n, int esz)
-{
-	uchar *d;
-	const uchar *s;
-	long i;
-	int j;
-
-	d = dst;
-	s = src;
-	if(esz <= 1){
-		memmove(dst, src, n);
-		return;
-	}
-	for(i = 0; i + esz <= n; i += esz)
-		for(j = 0; j < esz; j++)
-			d[i+j] = s[i+esz-1-j];
-}
-
 static void
 seterr(char *err, int nerr, char *s)
 {
@@ -126,113 +66,165 @@ seterr(char *err, int nerr, char *s)
 }
 
 /*
- * An OrtStatus is an allocated object, not a code: leaking one per failed
- * call would leak the message with it.
+ * Both of these retry on EINTR, and must. emu knocks a thread out of a
+ * blocking host call by delivering SIGUSR1 to it - that is the whole purpose
+ * of the signal, and os.c says so - so any read or write that blocks here will
+ * sooner or later come back short with EINTR and nothing wrong.
+ *
+ * Not retrying looked exactly like a server that had crashed. Three utterances
+ * in five failed at the run step, and only at the run step: the other
+ * exchanges answer in microseconds, while a run blocks for about a second and
+ * is the only one a signal has time to land in.
  */
 static int
-oerr(OrtStatus *st, char *err, int nerr)
+allwrite(int fd, void *b, int n)
 {
-	if(st == nil)
-		return 0;
-	seterr(err, nerr, (char*)ort->GetErrorMessage(st));
-	ort->ReleaseStatus(st);
-	return -1;
-}
+	int put, r;
 
-static char*
-typename(ONNXTensorElementDataType t)
-{
-	switch(t){
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:	return "f64";
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:	return "f32";
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:	return "f16";
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:	return "i64";
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:	return "i32";
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:	return "i8";
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:	return "u8";
-	}
-	return "opaque";
-}
-
-static int
-elemsize(ONNXTensorElementDataType t)
-{
-	switch(t){
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:	return 8;
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:	return 8;
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:	return 4;
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:	return 4;
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:	return 2;
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:	return 1;
-	case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:	return 1;
-	}
-	return 0;
-}
-
-static int
-ortinit(char *err, int nerr)
-{
-	if(ort != nil)
-		return 0;
-	ort = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-	if(ort == nil){
-		seterr(err, nerr, "onnxruntime is a different version from this build");
-		return -1;
-	}
-	if(oerr(ort->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "inferno", &ortenv), err, nerr) < 0){
-		ort = nil;
-		return -1;
-	}
-	if(oerr(ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &ortmem), err, nerr) < 0){
-		ort = nil;
-		return -1;
-	}
-	return 0;
-}
-
-/* the names of a model's inputs or outputs, copied out of ORT's allocator */
-static char**
-names(OrtSession *s, int isin, size_t n, char *err, int nerr)
-{
-	OrtAllocator *al;
-	char **v, *p;
-	size_t i;
-
-	if(oerr(ort->GetAllocatorWithDefaultOptions(&al), err, nerr) < 0)
-		return nil;
-	v = malloc(n * sizeof(char*));
-	if(v == nil)
-		return nil;
-	memset(v, 0, n * sizeof(char*));
-	for(i = 0; i < n; i++){
-		OrtStatus *st;
-		if(isin)
-			st = ort->SessionGetInputName(s, i, al, &p);
-		else
-			st = ort->SessionGetOutputName(s, i, al, &p);
-		if(oerr(st, err, nerr) < 0){
-			free(v);
-			return nil;
+	for(put = 0; put < n; put += r){
+		r = write(fd, (char*)b + put, n - put);
+		if(r < 0 && errno == EINTR){
+			r = 0;
+			continue;
 		}
-		v[i] = strdup(p);
-		al->Free(al, p);
+		if(r <= 0)
+			return -1;
 	}
-	return v;
+	return 0;
+}
+
+static int
+allread(int fd, void *b, int n)
+{
+	int got, r;
+
+	for(got = 0; got < n; got += r){
+		r = read(fd, (char*)b + got, n - got);
+		if(r < 0 && errno == EINTR){
+			r = 0;
+			continue;
+		}
+		if(r <= 0)
+			return -1;
+	}
+	return 0;
+}
+
+/*
+ * What the server had to say for itself. Its stderr is a pipe nothing else
+ * reads, so when it dies the complaint is sitting there unread; without this
+ * every death looks the same from here, which is to say it looks like nothing.
+ *
+ * Only called once the exchange has already failed, so the pipe is at end of
+ * file and this does not block.
+ */
+static void
+srvwhy(Mlmodel *m, char *what, char *err, int nerr)
+{
+	char buf[512];
+	int n;
+
+	n = 0;
+	if(m->fd[2] >= 0){
+		n = read(m->fd[2], buf, sizeof(buf)-1);
+		if(n < 0)
+			n = 0;
+	}
+	buf[n] = '\0';
+	while(n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r'))
+		buf[--n] = '\0';
+	if(n > 0)
+		snprint(err, nerr, "%s: %s", what, buf);
+	else
+		seterr(err, nerr, what);
+}
+
+static void
+put32(uchar *p, ulong v)
+{
+	p[0] = v>>24; p[1] = v>>16; p[2] = v>>8; p[3] = v;
+}
+
+static ulong
+get32(uchar *p)
+{
+	return ((ulong)p[0]<<24) | ((ulong)p[1]<<16) | ((ulong)p[2]<<8) | p[3];
+}
+
+/*
+ * One exchange. The reply's payload is returned in *rb when wanted, and the
+ * caller frees it; an error reply becomes the error string instead.
+ *
+ * A server that has died takes the instance with it rather than being
+ * restarted quietly: a model half loaded into a process that is gone is not
+ * something to paper over.
+ */
+static int
+rpc(Mlmodel *m, int op, void *a, int na, void *b, int nb, uchar **rb, int *nrb,
+	char *err, int nerr)
+{
+	uchar hdr[5], *p;
+	ulong n;
+
+	if(m->dead){
+		seterr(err, nerr, "the model server has gone");
+		return -1;
+	}
+	hdr[0] = op;
+	put32(hdr+1, na + nb);
+	if(allwrite(m->fd[0], hdr, 5) < 0 ||
+	   (na > 0 && allwrite(m->fd[0], a, na) < 0) ||
+	   (nb > 0 && allwrite(m->fd[0], b, nb) < 0)){
+		m->dead = 1;
+		seterr(err, nerr, "cannot reach the model server");
+		return -1;
+	}
+	if(allread(m->fd[1], hdr, 5) < 0){
+		m->dead = 1;
+		srvwhy(m, "the model server gave no answer", err, nerr);
+		return -1;
+	}
+	n = get32(hdr+1);
+	p = nil;
+	if(n > 0){
+		p = malloc(n + 1);
+		if(p == nil){
+			m->dead = 1;
+			seterr(err, nerr, "out of memory");
+			return -1;
+		}
+		if(allread(m->fd[1], p, n) < 0){
+			free(p);
+			m->dead = 1;
+			seterr(err, nerr, "the model server stopped mid-answer");
+			return -1;
+		}
+		p[n] = 0;
+	}
+	if(hdr[0] != 0){
+		seterr(err, nerr, p != nil? (char*)p: "the model server said no");
+		free(p);
+		return -1;
+	}
+	if(rb != nil){
+		*rb = p;
+		*nrb = n;
+	}else
+		free(p);
+	return 0;
 }
 
 void*
 mlort_open(unsigned char *spec, int nspec, char *units, char *err, int nerr)
 {
 	Mlmodel *m;
-	OrtStatus *st;
+	char *argv[2];
+	char *u;
 
 	if(spec == nil || nspec <= 0){
 		seterr(err, nerr, "empty model");
 		return nil;
 	}
-	if(ortinit(err, nerr) < 0)
-		return nil;
-
 	m = malloc(sizeof(Mlmodel));
 	if(m == nil){
 		seterr(err, nerr, "out of memory");
@@ -240,76 +232,33 @@ mlort_open(unsigned char *spec, int nspec, char *units, char *err, int nerr)
 	}
 	memset(m, 0, sizeof(Mlmodel));
 
-	if(oerr(ort->CreateSessionOptions(&m->opts), err, nerr) < 0){
+	/*
+	 * Found on the host's path, as any other host command is, or named
+	 * outright when it is somewhere else - which it will be for anyone who
+	 * has not installed the tree's bin directory.
+	 */
+	argv[0] = getenv("INFERNO_MLSRV");
+	if(argv[0] == nil || argv[0][0] == '\0')
+		argv[0] = "mlsrv";
+	argv[1] = nil;
+	if(waserror()){
 		free(m);
+		seterr(err, nerr, "cannot start mlsrv: it must be on the host's path");
+		return nil;
+	}
+	m->proc = oscmd(argv, 0, nil, m->fd);
+	poperror();
+	if(m->proc == nil){
+		free(m);
+		seterr(err, nerr, "cannot start mlsrv");
 		return nil;
 	}
 
-	/*
-	 * The compute units asked for. Where a provider will not attach, the
-	 * failure is not fatal: the graph still runs, on the CPU provider, and
-	 * info says what was asked for rather than pretending it happened.
-	 */
-	/*
-	 * One thread, on purpose, and this is not a performance choice.
-	 *
-	 * emu aliases the libc allocators to its own pool for the whole
-	 * process (see LDFLAGS in emu/MacOSX/mkfile-arm64), so every malloc
-	 * onnxruntime makes - and every one BNNS makes underneath it - comes
-	 * out of the Inferno pool. That pool is reached from threads the VM
-	 * knows about. Left to itself onnxruntime runs its graph on a worker
-	 * pool of its own, and those threads allocate too.
-	 *
-	 * On its own that survives. With wm running, so that the VM is
-	 * allocating at the same time, it faults inside BNNS - reliably, and
-	 * not for want of memory: bigger pools do not help, and the same model
-	 * in the same emu with no window manager is fine.
-	 *
-	 * So the graph runs on the thread that asked for it.
-	 */
-	ign(ort->SetIntraOpNumThreads(m->opts, 1));
-	ign(ort->SetInterOpNumThreads(m->opts, 1));
-
-	m->provider = strdup("cpu");
-#ifdef MACOSX_ARM64
-	if(units == nil || *units == '\0' || strcmp(units, "cpu") != 0){
-		st = OrtSessionOptionsAppendExecutionProvider_CoreML(m->opts, 0);
-		if(st == nil){
-			free(m->provider);
-			m->provider = strdup("coreml");
-		}else
-			ort->ReleaseStatus(st);
-	}
-#else
-	USED(units);
-#endif
-
-	/*
-	 * From memory: devml.c already holds the whole model, so writing it to
-	 * a temporary file and handing over a path would be a copy for nothing.
-	 */
-	if(oerr(ort->CreateSessionFromArray(ortenv, spec, nspec, m->opts, &m->session), err, nerr) < 0){
-		ort->ReleaseSessionOptions(m->opts);
-		free(m->provider);
-		free(m);
-		return nil;
-	}
-	if(oerr(ort->SessionGetInputCount(m->session, &m->nin), err, nerr) < 0 ||
-	   oerr(ort->SessionGetOutputCount(m->session, &m->nout), err, nerr) < 0){
+	u = units != nil && *units != '\0'? units: "all";
+	if(rpc(m, Oopen, u, strlen(u)+1, spec, nspec, nil, nil, err, nerr) < 0){
 		mlort_close(m);
 		return nil;
 	}
-	m->innames = names(m->session, 1, m->nin, err, nerr);
-	m->outnames = names(m->session, 0, m->nout, err, nerr);
-	m->in = malloc(m->nin * sizeof(Mlin));
-	m->out = malloc(m->nout * sizeof(OrtValue*));
-	if(m->innames == nil || m->outnames == nil || m->in == nil || m->out == nil){
-		seterr(err, nerr, "out of memory");
-		mlort_close(m);
-		return nil;
-	}
-	memset(m->in, 0, m->nin * sizeof(Mlin));
-	memset(m->out, 0, m->nout * sizeof(OrtValue*));
 	return m;
 }
 
@@ -317,438 +266,119 @@ void
 mlort_close(void *h)
 {
 	Mlmodel *m = h;
-	size_t i;
 
 	if(m == nil)
 		return;
-	if(m->in != nil){
-		for(i = 0; i < m->nin; i++)
-			if(m->in[i].val != nil)
-				ort->ReleaseValue(m->in[i].val);
-		free(m->in);
+	/* closing the pipe is how mlsrv is told to stop */
+	if(m->fd[0] >= 0)
+		close(m->fd[0]);
+	if(m->fd[1] >= 0)
+		close(m->fd[1]);
+	if(m->fd[2] >= 0)
+		close(m->fd[2]);
+	if(m->proc != nil){
+		oscmdkill(m->proc);
+		oscmdfree(m->proc);
 	}
-	if(m->out != nil){
-		for(i = 0; i < m->nout; i++)
-			if(m->out[i] != nil)
-				ort->ReleaseValue(m->out[i]);
-		free(m->out);
-	}
-	if(m->innames != nil){
-		for(i = 0; i < m->nin; i++)
-			free(m->innames[i]);
-		free(m->innames);
-	}
-	if(m->outnames != nil){
-		for(i = 0; i < m->nout; i++)
-			free(m->outnames[i]);
-		free(m->outnames);
-	}
-	if(m->session != nil)
-		ort->ReleaseSession(m->session);
-	if(m->opts != nil)
-		ort->ReleaseSessionOptions(m->opts);
-	free(m->provider);
 	free(m);
-}
-
-/*
- * A dimension of -1 is one the model leaves open - a sequence whose length is
- * decided by the caller. It is reported as -1 rather than guessed at, and a
- * write fills it in; see mlort_setinput.
- */
-static int
-describe(OrtSession *s, int isin, size_t n, char **nm, char *buf, int nbuf, int o)
-{
-	OrtTypeInfo *ti;
-	const OrtTensorTypeAndShapeInfo *si;
-	ONNXTensorElementDataType t;
-	size_t nd, i, j;
-	int64_t d[16];
-
-	for(i = 0; i < n; i++){
-		OrtStatus *st;
-		if(isin)
-			st = ort->SessionGetInputTypeInfo(s, i, &ti);
-		else
-			st = ort->SessionGetOutputTypeInfo(s, i, &ti);
-		if(st != nil){
-			ort->ReleaseStatus(st);
-			o += snprint(buf+o, nbuf-o, "%s %s opaque\n", isin? "in": "out", nm[i]);
-			continue;
-		}
-		si = nil;
-		ign(ort->CastTypeInfoToTensorInfo(ti, &si));
-		if(si == nil){
-			o += snprint(buf+o, nbuf-o, "%s %s opaque\n", isin? "in": "out", nm[i]);
-			ort->ReleaseTypeInfo(ti);
-			continue;
-		}
-		ign(ort->GetTensorElementType(si, &t));
-		ign(ort->GetDimensionsCount(si, &nd));
-		if(nd > nelem(d))
-			nd = nelem(d);
-		ign(ort->GetDimensions(si, d, nd));
-		o += snprint(buf+o, nbuf-o, "%s %s %s", isin? "in": "out", nm[i], typename(t));
-		for(j = 0; j < nd; j++)
-			o += snprint(buf+o, nbuf-o, " %lld", (long long)d[j]);
-		o += snprint(buf+o, nbuf-o, "\n");
-		ort->ReleaseTypeInfo(ti);
-	}
-	return o;
 }
 
 int
 mlort_info(void *h, char *buf, int nbuf)
 {
 	Mlmodel *m = h;
-	int o;
+	uchar *p;
+	int n;
+	char err[ERRMAX];
 
 	if(m == nil || buf == nil || nbuf <= 0)
 		return -1;
-	o = 0;
-	o = describe(m->session, 1, m->nin, m->innames, buf, nbuf, o);
-	o = describe(m->session, 0, m->nout, m->outnames, buf, nbuf, o);
-	/*
-	 * With only the CPU provider registered, "cpu" is not a claim about
-	 * what was asked for - it is the only thing that can have run it, and
-	 * saying so is accurate.
-	 *
-	 * With CoreML registered it is a different matter: onnxruntime takes
-	 * the parts of the graph CoreML will have and leaves the rest on the
-	 * CPU, and it does not report which went where. So that line says the
-	 * provider was asked for rather than that it ran, because reporting a
-	 * request as though it were a result is the mistake gpu(3) shipped
-	 * once and ml(3)'s rule is to say so instead.
-	 */
-	if(strcmp(m->provider, "cpu") == 0)
-		o += snprint(buf+o, nbuf-o, "device cpu\n");
-	else
-		o += snprint(buf+o, nbuf-o,
-			"device %s requested (onnxruntime does not report which provider ran each node)\n",
-			m->provider);
-	return o;
+	err[0] = '\0';
+	if(rpc(m, Oinfo, nil, 0, nil, 0, &p, &n, err, sizeof(err)) < 0)
+		return -1;
+	if(n > nbuf-1)
+		n = nbuf-1;
+	memmove(buf, p, n);
+	buf[n] = '\0';
+	free(p);
+	return n;
 }
 
-static int
-findname(char **v, size_t n, char *name, char *err, int nerr, char *what)
+int
+mlort_setshape(void *h, char *name, char **dims, int ndims, char *err, int nerr)
 {
-	size_t i;
-	char buf[128];
+	Mlmodel *m = h;
+	char buf[256];
+	int i, o;
 
-	if(name != nil && name[0] != '\0'){
-		for(i = 0; i < n; i++)
-			if(strcmp(v[i], name) == 0)
-				return (int)i;
-		snprint(buf, sizeof buf, "no %s named %s", what, name);
-		seterr(err, nerr, buf);
+	if(m == nil)
 		return -1;
-	}
-	if(n != 1){
-		snprint(buf, sizeof buf, "model has %lud %ss: name one", (ulong)n, what);
-		seterr(err, nerr, buf);
-		return -1;
-	}
-	return 0;
+	o = snprint(buf, sizeof buf, "%s", name != nil? name: "");
+	o++;				/* the terminating nul is the separator */
+	for(i = 0; i < ndims; i++)
+		o += snprint(buf+o, sizeof buf - o, "%s%s", i? " ": "", dims[i]);
+	return rpc(m, Oshape, buf, o+1, nil, 0, nil, nil, err, nerr);
 }
 
 int
 mlort_setinput(void *h, char *name, unsigned char *b, int n, char *err, int nerr)
 {
 	Mlmodel *m = h;
-	OrtTypeInfo *ti;
-	const OrtTensorTypeAndShapeInfo *si;
-	ONNXTensorElementDataType t;
-	size_t nd, j, nopen;
-	int64_t d[16];
-	long fixed, count;
-	int i, esz;
-	char buf[160];
+	char nm[128];
+	int o;
 
 	if(m == nil)
 		return -1;
-	if((i = findname(m->innames, m->nin, name, err, nerr, "input")) < 0)
-		return -1;
-	if(oerr(ort->SessionGetInputTypeInfo(m->session, i, &ti), err, nerr) < 0)
-		return -1;
-	si = nil;
-	ign(ort->CastTypeInfoToTensorInfo(ti, &si));
-	if(si == nil){
-		ort->ReleaseTypeInfo(ti);
-		seterr(err, nerr, "input is not a tensor");
-		return -1;
-	}
-	ign(ort->GetTensorElementType(si, &t));
-	ign(ort->GetDimensionsCount(si, &nd));
-	if(nd > nelem(d))
-		nd = nelem(d);
-	ign(ort->GetDimensions(si, d, nd));
-	ort->ReleaseTypeInfo(ti);
-
-	esz = elemsize(t);
-	if(esz == 0){
-		seterr(err, nerr, "input has an element type this does not handle");
-		return -1;
-	}
-	if(n % esz != 0){
-		snprint(buf, sizeof buf, "input %s is %s: %d bytes is not a whole number of values",
-			m->innames[i], typename(t), n);
-		seterr(err, nerr, buf);
-		return -1;
-	}
-	count = n / esz;
-
-	/*
-	 * Fill in whatever the model left open. One open dimension can be
-	 * worked out from the amount written; two cannot, and guessing which
-	 * to grow would be inventing an answer.
-	 */
-	if(m->in[i].npin == nd){
-		/* the caller has said what the open dimensions are */
-		fixed = 1;
-		for(j = 0; j < nd; j++){
-			d[j] = m->in[i].pin[j];
-			fixed *= (long)d[j];
-		}
-		if(count != fixed){
-			snprint(buf, sizeof buf,
-				"input %s was shaped for %ld %s values, got %ld",
-				m->innames[i], fixed, typename(t), count);
-			seterr(err, nerr, buf);
-			return -1;
-		}
-		goto haveshape;
-	}
-	fixed = 1;
-	nopen = 0;
-	for(j = 0; j < nd; j++){
-		if(d[j] < 0)
-			nopen++;
-		else
-			fixed *= (long)d[j];
-	}
-	if(nopen > 1){
-		seterr(err, nerr,
-			"input leaves more than one dimension open: say which with \"shape\"");
-		return -1;
-	}
-	if(fixed <= 0){
-		seterr(err, nerr, "input has a zero dimension");
-		return -1;
-	}
-	if(nopen == 1){
-		if(count % fixed != 0){
-			snprint(buf, sizeof buf,
-				"input %s takes a multiple of %ld %s values, got %ld",
-				m->innames[i], fixed, typename(t), count);
-			seterr(err, nerr, buf);
-			return -1;
-		}
-		for(j = 0; j < nd; j++)
-			if(d[j] < 0)
-				d[j] = count / fixed;
-	}else if(count != fixed){
-		snprint(buf, sizeof buf, "input %s wants %ld %s values, got %ld",
-			m->innames[i], fixed, typename(t), count);
-		seterr(err, nerr, buf);
-		return -1;
-	}
-
-haveshape:
-	if(m->in[i].val != nil){
-		ort->ReleaseValue(m->in[i].val);
-		m->in[i].val = nil;
-	}
-	free(m->in[i].name);
-	m->in[i].name = strdup(m->innames[i]);
-	/*
-	 * ORT does not copy: the tensor points at this buffer, so it has to
-	 * outlive the run. devml.c's own copy is freed when the next input is
-	 * written, which is after the run, so a copy is made here rather than
-	 * relying on that.
-	 */
-	{
-		void *copy = malloc(n);
-		if(copy == nil){
-			seterr(err, nerr, "out of memory");
-			return -1;
-		}
-		if(bigendian())
-			memmove(copy, b, n);
-		else
-			swapbytes(copy, b, n, esz);
-		if(oerr(ort->CreateTensorWithDataAsOrtValue(ortmem, copy, n, d, nd, t,
-				&m->in[i].val), err, nerr) < 0){
-			free(copy);
-			return -1;
-		}
-	}
-	return 0;
+	o = snprint(nm, sizeof nm, "%s", name != nil? name: "") + 1;
+	return rpc(m, Owrite, nm, o, b, n, nil, nil, err, nerr);
 }
 
 int
 mlort_run(void *h, char *err, int nerr)
 {
 	Mlmodel *m = h;
-	const char **innames, **outnames;
-	const OrtValue **invals;
-	size_t i;
-	int r;
-	char buf[128];
 
 	if(m == nil)
 		return -1;
-	for(i = 0; i < m->nin; i++)
-		if(m->in[i].val == nil){
-			snprint(buf, sizeof buf, "input %s was not written", m->innames[i]);
-			seterr(err, nerr, buf);
-			return -1;
-		}
-	for(i = 0; i < m->nout; i++)
-		if(m->out[i] != nil){
-			ort->ReleaseValue(m->out[i]);
-			m->out[i] = nil;
-		}
-	innames = malloc(m->nin * sizeof(char*));
-	invals = malloc(m->nin * sizeof(OrtValue*));
-	outnames = malloc(m->nout * sizeof(char*));
-	if(innames == nil || invals == nil || outnames == nil){
-		free(innames); free(invals); free(outnames);
-		seterr(err, nerr, "out of memory");
-		return -1;
-	}
-	for(i = 0; i < m->nin; i++){
-		innames[i] = m->innames[i];
-		invals[i] = m->in[i].val;
-	}
-	for(i = 0; i < m->nout; i++)
-		outnames[i] = m->outnames[i];
-
-	r = oerr(ort->Run(m->session, nil, innames, invals, m->nin,
-			outnames, m->nout, m->out), err, nerr);
-	free(innames); free(invals); free(outnames);
-	return r;
+	return rpc(m, Orun, nil, 0, nil, 0, nil, nil, err, nerr);
 }
 
 int
 mlort_getoutput(void *h, char *name, unsigned char *b, int nbuf, char *err, int nerr)
 {
 	Mlmodel *m = h;
-	OrtTensorTypeAndShapeInfo *si;
-	ONNXTensorElementDataType t;
-	size_t count;
-	void *p;
-	int i, esz, n;
-	char buf[128];
+	char nm[128];
+	uchar *p;
+	int o, n;
 
 	if(m == nil)
 		return -1;
-	if((i = findname(m->outnames, m->nout, name, err, nerr, "output")) < 0)
+	o = snprint(nm, sizeof nm, "%s", name != nil? name: "") + 1;
+	if(rpc(m, Oget, nm, o, nil, 0, &p, &n, err, nerr) < 0)
 		return -1;
-	if(m->out[i] == nil){
-		seterr(err, nerr, "nothing has been run yet");
-		return -1;
-	}
-	if(oerr(ort->GetTensorTypeAndShape(m->out[i], &si), err, nerr) < 0)
-		return -1;
-	ign(ort->GetTensorElementType(si, &t));
-	ign(ort->GetTensorShapeElementCount(si, &count));
-	ort->ReleaseTensorTypeAndShapeInfo(si);
-	esz = elemsize(t);
-	if(esz == 0){
-		seterr(err, nerr, "output has an element type this does not handle");
-		return -1;
-	}
-	n = (int)(count * esz);
 	/*
 	 * devml.c asks how big the result is before it has anywhere to put it,
-	 * so a nil buffer is a question rather than a too-small read.
+	 * so a nil buffer is a question rather than a too-small read. The
+	 * answer is fetched either way, which costs one extra round trip per
+	 * run and keeps the server free of any memory of what it last said.
 	 */
-	if(b == nil)
+	if(b == nil){
+		free(p);
 		return n;
+	}
 	if(n > nbuf){
-		snprint(buf, sizeof buf, "output %s is %d bytes, the read asked for %d",
-			m->outnames[i], n, nbuf);
-		seterr(err, nerr, buf);
+		free(p);
+		seterr(err, nerr, "the output does not fit the read");
 		return -1;
 	}
-	if(oerr(ort->GetTensorMutableData(m->out[i], &p), err, nerr) < 0)
-		return -1;
-	if(bigendian())
-		memmove(b, p, n);
-	else
-		swapbytes(b, p, n, esz);
+	memmove(b, p, n);
+	free(p);
 	return n;
 }
 
 /*
- * Pin the dimensions a model leaves open.
- *
- * One open dimension can be worked out from the amount written; a model that
- * takes a batch of sequences leaves two, and no amount of counting bytes says
- * which of them the caller meant. So the caller says. What is checked here is
- * that the shape has the right number of dimensions and does not contradict
- * the ones the model fixed - a client cannot use this to reshape an input the
- * model was definite about.
- */
-int
-mlort_setshape(void *h, char *name, char **dims, int ndims, char *err, int nerr)
-{
-	Mlmodel *m = h;
-	OrtTypeInfo *ti;
-	const OrtTensorTypeAndShapeInfo *si;
-	size_t nd, j;
-	int64_t d[16];
-	int i;
-	char buf[160];
-
-	if(m == nil)
-		return -1;
-	if((i = findname(m->innames, m->nin, name, err, nerr, "input")) < 0)
-		return -1;
-	if(oerr(ort->SessionGetInputTypeInfo(m->session, i, &ti), err, nerr) < 0)
-		return -1;
-	si = nil;
-	ign(ort->CastTypeInfoToTensorInfo(ti, &si));
-	if(si == nil){
-		ort->ReleaseTypeInfo(ti);
-		seterr(err, nerr, "input is not a tensor");
-		return -1;
-	}
-	ign(ort->GetDimensionsCount(si, &nd));
-	if(nd > nelem(d))
-		nd = nelem(d);
-	ign(ort->GetDimensions(si, d, nd));
-	ort->ReleaseTypeInfo(ti);
-
-	if((size_t)ndims != nd){
-		snprint(buf, sizeof buf, "input %s has %lud dimensions, %d were given",
-			m->innames[i], (ulong)nd, ndims);
-		seterr(err, nerr, buf);
-		return -1;
-	}
-	for(j = 0; j < nd; j++){
-		long v = strtol(dims[j], nil, 10);
-		if(v <= 0){
-			seterr(err, nerr, "a dimension must be a positive number");
-			return -1;
-		}
-		if(d[j] >= 0 && d[j] != v){
-			snprint(buf, sizeof buf,
-				"input %s fixes dimension %lud at %lld, not %ld",
-				m->innames[i], (ulong)j, (long long)d[j], v);
-			seterr(err, nerr, buf);
-			return -1;
-		}
-		m->in[i].pin[j] = v;
-	}
-	m->in[i].npin = nd;
-	return 0;
-}
-
-/*
- * Installed into devml.c's nullable hooks at load time, exactly as the CoreML
- * backend did. Where this file is not linked they stay nil and ml(3) reports
- * that it has no backend, rather than the device being compiled away.
+ * Installed into devml.c's nullable hooks at load time. Where this file is not
+ * linked they stay nil and ml(3) reports that it has no backend.
  */
 extern void*	(*mlopenmodel)(unsigned char*, int, char*, char*, int);
 extern void	(*mlclosemodel)(void*);
