@@ -34,6 +34,7 @@ Rate:	con 16000;		# voice(3) says so on its ctl file
 
 stderr:	ref Sys->FD;
 quiet:	int;
+dryrun:	int;
 out:	string;
 
 fatal(s: string)
@@ -58,7 +59,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	speed := 0;
 	out = "/dev/audio";
 	arg->init(argv);
-	arg->setusage("speak [-l lexicon] [-p pitch] [-s speed] [-o file] [-q] [-t text] [file ...]");
+	arg->setusage("speak [-l lexicon] [-p pitch] [-s speed] [-o file] [-q] [-n] [-t text] [file ...]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'l' =>	lexicon = arg->earg();
@@ -66,6 +67,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		's' =>	speed = int arg->earg();
 		'o' =>	out = arg->earg();
 		'q' =>	quiet++;
+		'n' =>	dryrun++;
 		't' =>	text = arg->earg();
 		* =>	arg->usage();
 		}
@@ -73,7 +75,7 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	if((e := phon->init(lexicon)) != nil)
 		fatal(e);
-	if(sys->bind("#V", "/dev", Sys->MAFTER) < 0)
+	if(!dryrun && sys->bind("#V", "/dev", Sys->MAFTER) < 0)
 		fatal(sprint("bind #V: %r"));
 
 	if(pitch != 0 || speed != 0){
@@ -140,6 +142,12 @@ utter(line: string)
 			return;
 	}
 
+	# -n is how the reading of a line gets looked at without listening to it
+	if(dryrun){
+		print("%s\n", ph);
+		return;
+	}
+
 	fd := sys->open("/dev/voice/phonemes", Sys->OWRITE);
 	if(fd == nil)
 		fatal(sprint("open /dev/voice/phonemes: %r"));
@@ -204,20 +212,70 @@ readable(s: string): string
 }
 
 #
-# Say the words that are known and skip the ones that are not, rather than
-# saying nothing. A screen reader that goes silent on an unfamiliar word has
-# failed at the one thing it is for.
+# The letters, as they are named when a word is spelled out.
+#
+# From espeak-ng, like the dictionary, so they are in the voice's own symbols
+# and as trustworthy as everything else here - except A, where espeak read the
+# spelling "ay" as the word that rhymes with eye. The dictionary's own entry
+# for "a" is the letter and is used instead.
+#
+letters := array[] of {
+	"ˈeɪ", "bˈiː", "sˈiː", "dˈiː", "ˈiː", "ˈɛf", "dʒˈiː", "ˈeɪtʃ",
+	"ˈaɪ", "dʒˈeɪ", "kˈeɪ", "ˈɛl", "ˈɛm", "ˈɛn", "ˈoʊ", "pˈiː",
+	"kjˈuː", "ˈɑːɹ", "ˈɛs", "tˈiː", "jˈuː", "vˈiː", "dˈʌbəl juː",
+	"ˈɛks", "wˈaɪ", "zˈiː"
+};
+
+#
+# Say what can be said, and for the rest fall back rather than going silent.
+#
+# Skipping an unknown word was the first answer and it is not good enough:
+# "consctl" and "hoststdin" are most of what there is to read on this system,
+# and a reader that omits them is telling you the wrong thing about your own
+# machine. So an unknown word is tried two more ways before being given up on.
+#
+# It is spelled out, letter by letter, which is what a screen reader does with
+# a string it cannot pronounce and is exactly right: it conveys the token with
+# no invention at all.
+#
+# Splitting it into words that run together was tried first and removed. It is
+# the obvious idea - "hoststdin" ought to come apart into host, std, in - and
+# what it actually produced was "hosts td in", because the longest prefix that
+# is a word is "hosts" and "td" is in the dictionary too. Both readings have
+# three pieces, so counting them does not choose between them, and the wrong
+# one sounds exactly as confident as the right one. Spelling cannot be wrong.
 #
 besteffort(line: string): string
 {
 	said := "";
 	for(l := words(line); l != nil; l = tl l){
-		(ph, err) := phon->text(hd l);
+		w := hd l;
+		(ph, err) := phon->text(w);
 		if(err != nil)
+			ph = spell(w);
+		if(ph == "")
+			ph = spell(w);
+		if(ph == "")
 			continue;
 		if(said != "")
 			said += " ";
 		said += ph;
+	}
+	return said;
+}
+
+spell(w: string): string
+{
+	said := "";
+	for(i := 0; i < len w; i++){
+		c := w[i];
+		if(c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		if(c < 'a' || c > 'z')
+			continue;
+		if(said != "")
+			said += " ";
+		said += letters[c - 'a'];
 	}
 	return said;
 }

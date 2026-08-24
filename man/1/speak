@@ -85,8 +85,8 @@ digits become their names, because
 .B 4
 is not a word and an error code is exactly the thing being read out.
 .PP
-A word that is in neither the lexicon nor the dictionary is skipped and the
-rest of the line is still said.
+A word that is in neither the lexicon nor the dictionary is spelled out, letter
+by letter, and the rest of the line is still said.
 That is the opposite of
 .IR say (1)'s
 choice and deliberate: there the words are chosen in advance and a refusal is a
@@ -100,18 +100,31 @@ failure at the one thing this is for.
 .IR voice (3),
 .IR audio (3)
 .SH BUGS
-It skips what it cannot pronounce rather than spelling it out.
-.B consctl
-and
+Spelling is exact and slow.
 .B hoststdin
-are read as nothing at all, where a real screen reader would fall back on
-letter-to-sound rules or spell the word.
+is nine letters read out one at a time, where letter-to-sound rules would give
+a word-shaped approximation in a fraction of the time.
 .IR Phon (2)
 has no rules; this is where their absence is felt.
 .PP
-Nothing splits runs-together identifiers.
-.B consctl
-is two words to a person and one to this.
+Splitting identifiers into the words they are made of was tried and removed.
+It is the obvious idea \(em
+.B hoststdin
+ought to come apart into
+.BR host ,
+.B std
+and
+.B in
+\(em and what it produced was
+.BR "hosts td in" ,
+because the longest prefix that is a word is
+.B hosts
+and
+.B td
+is in the dictionary too.
+Both readings have three pieces, so counting them does not choose between them,
+and the wrong one sounds exactly as confident as the right one.
+Spelling cannot be wrong.
 .PP
 It reads lines, so it cannot be interrupted part way through one, and there is
 no way to stop it short of killing it.
