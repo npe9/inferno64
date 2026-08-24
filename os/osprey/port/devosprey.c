@@ -3225,15 +3225,146 @@ ospreyread(Chan *c, void *a, long n, vlong offset)
 	}
 }
 
+/*
+ * The bigger control messages are functions of their own.  What
+ * forced it was the compiler: 6c segfaults on ospreywrite once it is
+ * given one more live pointer local, and that function was nine
+ * hundred lines and thirty-nine cases.  Each of these runs under the
+ * lock the caller holds and errors the same way it did.
+ */
+static void
+ospreyctlether(Cmdbuf *cb)
+{
+	Ospreyproc *p;
+	void *et;
+	int i, x;
+
+	/*
+	 * Give the container an ethernet interface: its packets are
+	 * charged to the container's network caps and queued for it,
+	 * and each gives the named semaphore.
+	 */
+	p = ospreymine(cb->f[1]);
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyether))
+		error(Ebadarg);
+	if(strcmp(cb->f[2], "off") == 0){
+		if(ospreyether[x] != nil)
+			((Ether*)ospreyether[x])->rbpool = nil;
+		ospreytxsem[x] = -1;
+		ospreytxpool[x].done = nil;
+		/* give back what the card was still holding for it */
+		for(i = 0; i < ospreyntxblk[x]; i++)
+			if((ospreytxheld[x] & (1ULL<<i)) != 0)
+				ospreynetrelease(p, ospreytxlen[x][i], 1);
+		ospreytxheld[x] = 0;
+		ospreysettxavail(p, 0);
+		ospreyether[x] = nil;
+		if(ospreyheld[x] != nil){
+			freeb(ospreyheld[x]);
+			ospreyheld[x] = nil;
+		}
+		wakeup(&ospreyselrend[x]);
+		return;
+	}
+	if(cb->nf != 4 && cb->nf != 5)
+		error(Ecmdargs);
+	i = atoi(cb->f[3]);
+	if(i < 0 || (ulong)i >= ospreynsem())
+		error(Ebadarg);
+	/*
+	 * A fifth field names the semaphore a transmit buffer gives
+	 * when the card has finished with it.  Without one a
+	 * container has to offer a buffer and be refused, which is
+	 * what it had to do before there was anywhere to say this.
+	 */
+	if(cb->nf == 5){
+		ospreytxsem[x] = atoi(cb->f[4]);
+		if(ospreytxsem[x] < 0
+		|| (ulong)ospreytxsem[x] >= ospreynsem())
+			error(Ebadarg);
+	} else
+		ospreytxsem[x] = -1;
+	if((et = etherlookup(cb->f[2])) == nil)
+		error(Enonexist);
+	if(ospreyether[x] != nil && ospreyether[x] != et)
+		ospreyputether(p);	/* give the last one back first */
+	if(ospreylendbufs(p, x) < 0)
+		error(Enomem);
+	if(ospreylendtx(p, x) < 0)
+		error(Enomem);
+	ospreyether[x] = et;
+	ospreyethersem[x] = i;
+	((Ether*)et)->rbpool = &ospreyrbpool[x];
+}
+
+static void
+ospreyctluart(Cmdbuf *cb)
+{
+	Ospreyproc *p;
+	Uart *ut;
+	int i, x;
+
+	/*
+	 * Hand a uart to the container: from here its interrupt does
+	 * nothing but give the named semaphore, and a task of the
+	 * container's does the work.  The console's uart is refused;
+	 * losing it would take the machine with it.
+	 */
+	p = ospreymine(cb->f[1]);
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyuart))
+		error(Ebadarg);
+	if(strcmp(cb->f[2], "off") == 0){
+		if(ospreyuart[x] != nil){
+			if(ospreyuart[x]->phys->taskenable != nil)
+				(*ospreyuart[x]->phys->taskenable)(ospreyuart[x], 0);
+			(*ospreyuart[x]->phys->intrmask)(ospreyuart[x], 1);
+		}
+		ospreyuart[x] = nil;
+		ospreyuarting[x] = 0;
+		wakeup(&ospreyselrend[x]);
+		return;
+	}
+	i = atoi(cb->f[3]);
+	if(i < 0 || (ulong)i >= ospreynsem())
+		error(Ebadarg);
+	if((ut = uartlookup(cb->f[2])) == nil)
+		error(Enonexist);
+	if(ut->console || ut->special)
+		error(Eperm);
+	/*
+	 * All four, not two: without send the task would have
+	 * nothing to write with and would drop what it was given
+	 * without telling anyone.
+	 */
+	if(ut->phys->interrupt == nil || ut->phys->intrmask == nil
+	|| ut->phys->send == nil || ut->phys->taskenable == nil)
+		error(Ebadarg);
+	if(ospreyuart[x] != nil && ospreyuart[x] != ut)
+		ospreyputuart(p);	/* and the last uart */
+	ospreyuart[x] = ut;
+	ospreyuartsem[x] = i;
+	if(ut->phys->taskenable != nil)
+		(*ut->phys->taskenable)(ut, 1);
+	if(ospreyuarting[x] == 0){
+		ospreyuarting[x] = 1;
+		if(waserror()){
+			ospreyuarting[x] = 0;
+			ospreyuart[x] = nil;
+			nexterror();
+		}
+		kproc("ospreyuart", ospreyuarttask, p);
+		poperror();
+	}
+}
+
 static long
 ospreywrite(Chan *c, void *a, long n, vlong offset)
 {
 	Cmdbuf *cb;
 	Cmdtab *ct;
 	Ospreyproc *p;
+	Ospreyproc *q2;
 	Proc *q;
-	Uart *ut;
-	void *et;
 	Selwait sw;
 	char *nm;
 	uvlong arg[Ospreynarg];
@@ -3807,126 +3938,19 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * which made a container's ring a place a stranger could put
 		 * work.
 		 */
-		if(!ospreymay(ospreyproc(cb->f[2]),
-			up != nil ? up->user : nil))
+		q2 = ospreyproc(cb->f[2]);
+		if(!ospreymay(q2, up != nil ? up->user : nil))
 			error(Eperm);
-		if(ospreydelegate(p, ospreyproc(cb->f[2])) < 0)
+		if(ospreydelegate(p, q2) < 0)
 			error(Ebadarg);
 		break;
 
 	case CMether:
-		/*
-		 * Give the container an ethernet interface: its packets are
-		 * charged to the container's network caps and queued for it,
-		 * and each gives the named semaphore.
-		 */
-		p = ospreymine(cb->f[1]);
-		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyether))
-			error(Ebadarg);
-		if(strcmp(cb->f[2], "off") == 0){
-			if(ospreyether[x] != nil)
-				((Ether*)ospreyether[x])->rbpool = nil;
-			ospreytxsem[x] = -1;
-			ospreytxpool[x].done = nil;
-			/* give back what the card was still holding for it */
-			for(i = 0; i < ospreyntxblk[x]; i++)
-				if((ospreytxheld[x] & (1ULL<<i)) != 0)
-					ospreynetrelease(p, ospreytxlen[x][i], 1);
-			ospreytxheld[x] = 0;
-			ospreysettxavail(p, 0);
-			ospreyether[x] = nil;
-			if(ospreyheld[x] != nil){
-				freeb(ospreyheld[x]);
-				ospreyheld[x] = nil;
-			}
-			wakeup(&ospreyselrend[x]);
-			break;
-		}
-		if(cb->nf != 4 && cb->nf != 5)
-			error(Ecmdargs);
-		i = atoi(cb->f[3]);
-		if(i < 0 || (ulong)i >= ospreynsem())
-			error(Ebadarg);
-		/*
-		 * A fifth field names the semaphore a transmit buffer gives
-		 * when the card has finished with it.  Without one a
-		 * container has to offer a buffer and be refused, which is
-		 * what it had to do before there was anywhere to say this.
-		 */
-		if(cb->nf == 5){
-			ospreytxsem[x] = atoi(cb->f[4]);
-			if(ospreytxsem[x] < 0
-			|| (ulong)ospreytxsem[x] >= ospreynsem())
-				error(Ebadarg);
-		} else
-			ospreytxsem[x] = -1;
-		if((et = etherlookup(cb->f[2])) == nil)
-			error(Enonexist);
-		if(ospreyether[x] != nil && ospreyether[x] != et)
-			ospreyputether(p);	/* give the last one back first */
-		if(ospreylendbufs(p, x) < 0)
-			error(Enomem);
-		if(ospreylendtx(p, x) < 0)
-			error(Enomem);
-		ospreyether[x] = et;
-		ospreyethersem[x] = i;
-		((Ether*)et)->rbpool = &ospreyrbpool[x];
+		ospreyctlether(cb);
 		break;
-
 	case CMuart:
-		/*
-		 * Hand a uart to the container: from here its interrupt does
-		 * nothing but give the named semaphore, and a task of the
-		 * container's does the work.  The console's uart is refused;
-		 * losing it would take the machine with it.
-		 */
-		p = ospreymine(cb->f[1]);
-		if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyuart))
-			error(Ebadarg);
-		if(strcmp(cb->f[2], "off") == 0){
-			if(ospreyuart[x] != nil){
-				if(ospreyuart[x]->phys->taskenable != nil)
-					(*ospreyuart[x]->phys->taskenable)(ospreyuart[x], 0);
-				(*ospreyuart[x]->phys->intrmask)(ospreyuart[x], 1);
-			}
-			ospreyuart[x] = nil;
-			ospreyuarting[x] = 0;
-			wakeup(&ospreyselrend[x]);
-			break;
-		}
-		i = atoi(cb->f[3]);
-		if(i < 0 || (ulong)i >= ospreynsem())
-			error(Ebadarg);
-		if((ut = uartlookup(cb->f[2])) == nil)
-			error(Enonexist);
-		if(ut->console || ut->special)
-			error(Eperm);
-		/*
-		 * All four, not two: without send the task would have
-		 * nothing to write with and would drop what it was given
-		 * without telling anyone.
-		 */
-		if(ut->phys->interrupt == nil || ut->phys->intrmask == nil
-		|| ut->phys->send == nil || ut->phys->taskenable == nil)
-			error(Ebadarg);
-		if(ospreyuart[x] != nil && ospreyuart[x] != ut)
-			ospreyputuart(p);	/* and the last uart */
-		ospreyuart[x] = ut;
-		ospreyuartsem[x] = i;
-		if(ut->phys->taskenable != nil)
-			(*ut->phys->taskenable)(ut, 1);
-		if(ospreyuarting[x] == 0){
-			ospreyuarting[x] = 1;
-			if(waserror()){
-				ospreyuarting[x] = 0;
-				ospreyuart[x] = nil;
-				nexterror();
-			}
-			kproc("ospreyuart", ospreyuarttask, p);
-			poperror();
-		}
+		ospreyctluart(cb);
 		break;
-
 	case CMtick:
 		/*
 		 * Have the clock interrupt give one of the container's

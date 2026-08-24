@@ -919,6 +919,27 @@ the commands as they were echoed, so an expected string that appears in
 the command itself always matches.  One of the four was doing exactly
 that.
 .PP
+And the compiler said something about the shape of the code while this
+was going on.  Adding one live pointer local to
+.CW ospreywrite
+made
+.CW 6c
+stop with a segmentation fault \- no diagnostic, just a signal \- every
+time, and take it away and it compiled.  An unused
+.CW int
+was fine, so what it is is a live one.  The function was nine hundred
+and sixty-eight lines with thirty-nine cases in one switch, which is
+past what that compiler will carry.  The two biggest cases,
+.CW ether
+and
+.CW uart ,
+are functions of their own now, which took their own locals with them;
+with those gone the extra local compiles and the function is eight
+hundred and sixty-one lines.  It is still the largest thing in the file
+and the next case to be added should come out the same way, and this is
+written down because the next person to hit it will otherwise think they
+have broken something.
+.PP
 Environments were the other half of the question and are a shorter
 answer: nothing in
 .CW os/osprey
