@@ -32,8 +32,22 @@ typedef	Rune	TRune;	/* target system type */
 #define	SIGN(n)		((uvlong)1<<(n-1))
 #define	MASK(n)		(SIGN(n)|(SIGN(n)-1))
 
+/*
+ * A Bits is worked in lanes of thirty-two, whatever the width of the
+ * type it is kept in: bits.c does b[n/32] and 1L<<(n%32) and 32*i +
+ * bitno, and so does every reg.c.  NVAR was BITS*sizeof(ulong)*8, which
+ * is that same number where a ulong is thirty-two bits and twice it
+ * where a ulong is sixty-four.  So on a sixty-four bit host mkvar would
+ * hand out variable numbers blsh could not address, and blsh wrote past
+ * the end of the Bits it was given -- which is on the stack, so what it
+ * wrote over was whatever the caller had.  A function with more than a
+ * hundred and sixty optimisable variables killed the compiler with no
+ * diagnostic, somewhere else entirely and later.  Plan 9 never saw it:
+ * a ulong is thirty-two bits there.
+ */
+#define	BITSPERLANE	32
 #define	BITS	5
-#define	NVAR	(BITS*sizeof(ulong)*8)
+#define	NVAR	(BITS*BITSPERLANE)
 struct	Bits
 {
 	ulong	b[BITS];

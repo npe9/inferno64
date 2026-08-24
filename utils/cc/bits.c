@@ -65,7 +65,7 @@ bnum(Bits a)
 
 	for(i=0; i<BITS; i++)
 		if(b = a.b[i])
-			return 32*i + bitno(b);
+			return BITSPERLANE*i + bitno(b);
 	diag(Z, "bad in bnum");
 	return 0;
 }
@@ -76,14 +76,14 @@ blsh(uint n)
 	Bits c;
 
 	c = zbits;
-	c.b[n/32] = 1L << (n%32);
+	c.b[n/BITSPERLANE] = 1L << (n%BITSPERLANE);
 	return c;
 }
 
 int
 bset(Bits a, uint n)
 {
-	if(a.b[n/32] & (1L << (n%32)))
+	if(a.b[n/BITSPERLANE] & (1L << (n%BITSPERLANE)))
 		return 1;
 	return 0;
 }

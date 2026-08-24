@@ -1590,18 +1590,31 @@ the mode: the commands that name no container \-
 reason none of the three has a line in the check: a check would have to
 write a control message as another user, and another user cannot.
 .PP
-.I 6c
-will not compile
 .I ospreywrite
-with one more live pointer local in it: it stops with a segmentation
-fault and no diagnostic, and taking the local away compiles.  The
-function is the device's whole control-message switch and was nine
-hundred and sixty-eight lines;
+is the device's whole control-message switch and was nine hundred and
+sixty-eight lines;
 .B ether
 and
 .B uart
-are functions of their own now, which is enough for the moment, and the
-next control message worth more than a few lines should be one too.
+are functions of their own now and the next control message worth more
+than a few lines should be one too.  What prompted that was a compiler
+that died on the function, and the compiler was wrong rather than the
+function too big:
+.B NVAR
+in
+.B /utils/cc/cc.h
+counted variables in units of
+.IR sizeof(ulong) ,
+where
+.B bits.c
+addresses them in lanes of thirty-two, so on a host with a sixty-four
+bit
+.B ulong
+the optimiser handed out numbers it could not address and wrote past a
+.B Bits
+on the stack.  It is fixed and
+.B /scripts/cc-check.sh
+is the check.
 .PP
 A ring carries one producer and one consumer.  Two processes submitting
 to the same container, or a process submitting while another writes

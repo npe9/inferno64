@@ -918,27 +918,93 @@ The harness reads everything between a check's markers, which includes
 the commands as they were echoed, so an expected string that appears in
 the command itself always matches.  One of the four was doing exactly
 that.
+.NH 1
+The compiler, which was wrong
 .PP
-And the compiler said something about the shape of the code while this
-was going on.  Adding one live pointer local to
+Adding one live pointer local to
 .CW ospreywrite
 made
 .CW 6c
-stop with a segmentation fault \- no diagnostic, just a signal \- every
-time, and take it away and it compiled.  An unused
-.CW int
-was fine, so what it is is a live one.  The function was nine hundred
-and sixty-eight lines with thirty-nine cases in one switch, which is
-past what that compiler will carry.  The two biggest cases,
-.CW ether
+stop with a segmentation fault \- no diagnostic, just the signal \-
+every time, and taking it away compiled.  The first answer was to say
+the function was too big and split its two largest cases out, which
+worked; the function is eight hundred and sixty-one lines now instead of
+nine hundred and sixty-eight and is better for it.  But "too big for the
+compiler" is not a diagnosis, and the compiler was wrong.
+.PP
+A
+.CW Bits
+is the compiler's set of variable numbers, and
+.CW utils/cc/bits.c
+works it in lanes of thirty-two:
+.CW blsh
+does
+.CW b[n/32]
 and
-.CW uart ,
-are functions of their own now, which took their own locals with them;
-with those gone the extra local compiles and the function is eight
-hundred and sixty-one lines.  It is still the largest thing in the file
-and the next case to be added should come out the same way, and this is
-written down because the next person to hit it will otherwise think they
-have broken something.
+.CW 1L<<(n%32) ,
+.CW bnum
+does
+.CW 32*i+bitno ,
+and so does every
+.CW reg.c .
+The number of variables the optimiser will track was
+.CW "NVAR = BITS*sizeof(ulong)*8" .
+Those are the same number where a
+.CW ulong
+is thirty-two bits \- which is what it is on Plan 9, where these
+compilers come from, whatever the machine \- and twice it where a
+.CW ulong
+is sixty-four, which is what
+.CW lib9.h
+makes it on this host.  So
+.CW mkvar
+would hand out variable numbers from a hundred and sixty to three
+hundred and nineteen,
+.CW blsh
+would write
+.CW b[5]
+through
+.CW b[9]
+of a five-word
+.CW Bits ,
+and the
+.CW Bits
+is a local: what it wrote over was whatever the caller had on the stack.
+The compiler then died later and somewhere else, with a pointer that had
+become 1.
+.PP
+It is one line.
+.CW NVAR
+is
+.CW BITS*BITSPERLANE
+now, with
+.CW BITSPERLANE
+defined beside it and used in
+.CW bits.c
+so the two cannot drift again, and a function with more variables than
+that gets the graceful path the code always had: the excess is not
+tracked,
+.CW mkvar
+says so under
+.CW -ww ,
+and the function compiles.  Every compiler in the tree shares that
+header \- there are nine \- and every one of them had it.
+.PP
+.CW scripts/cc-check.sh
+is the check: a generated function with two hundred variables in it,
+compiled by all nine.  Put the old
+.CW NVAR
+back and
+.CW 6c
+and
+.CW 8c
+exit 139.  Finding it took AddressSanitizer, which is worth saying
+because the crash was in
+.CW regopt
+reading a corrupt free list and the write was in
+.CW blsh
+two passes earlier; a watchpoint on the corrupted pointer showed only
+the compiler's own honest writes to it.
 .PP
 Environments were the other half of the question and are a shorter
 answer: nothing in
