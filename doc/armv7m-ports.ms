@@ -130,7 +130,15 @@ and
 all keep a local double in a register while writing the memory it has
 also been given an address for.  The reproducer and the two shapes a fix
 could take are in
-.I fptest (1).
+.I fptest (1),
+along with a fourth and smaller one that turned up beside it: the
+compilers round a decimal constant to the nearest double only sometimes,
+and
+.CW tc
+and
+.CW jc
+are wrong in the same direction on the same constants, so that too is
+shared and not either back end's.
 .NH 1
 The toolchain
 .PP

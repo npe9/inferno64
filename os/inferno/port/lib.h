@@ -104,12 +104,25 @@ extern	int	fmtstrcpy(Fmt*, char*);
 extern	int	fltconv(Fmt*);
 
 /*
- * math
+ * math.  These are all in libkern, and a kernel file that calls one
+ * without a declaration gets an int back silently: the compilers assume
+ * int for an undeclared function and -wFV says nothing about it.  The
+ * set here is the one include/kern.h declares for everything else.
  */
 extern int	isNaN(double);
 extern int	isInf(double, int);
+extern double	NaN(void);
+extern double	Inf(int);
+extern double	fabs(double);
 extern double	floor(double);
+extern double	ceil(double);
 extern double	frexp(double, int*);
+extern double	ldexp(double, int);
+extern double	modf(double, double*);
+extern double	sqrt(double);
+extern double	exp(double);
+extern double	log(double);
+extern double	pow(double, double);
 extern double	pow10(int);
 
 /*
