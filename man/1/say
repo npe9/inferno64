@@ -1,0 +1,97 @@
+.TH SAY 1
+.SH NAME
+say \- speak, through ml(3)
+.SH SYNOPSIS
+.B say
+[
+.B -v
+.I voice
+]
+[
+.B -o
+.I file
+]
+[
+.B -i
+]
+.I id ...
+.SH DESCRIPTION
+.B Say
+runs a voice model and writes the result to
+.B /dev/audio
+\(em or to
+.I file
+with
+.BR -o ,
+as signed 16-bit little-endian mono.
+.B -i
+first prints what the model declares.
+.PP
+The voice is a VITS model: phoneme numbers in, a waveform out, with no vocoder
+or formant synthesis in between.
+That is the reason for putting it behind
+.IR ml (3)
+rather than building a synthesizer \(em the interesting part is a trained
+network, and the device already runs those.
+.SH "IT TAKES PHONEMES, NOT TEXT"
+Turning text into phonemes is a different job with a different failure mode,
+which is English spelling, and doing it badly here would make a working
+synthesizer look broken.
+A front end belongs on top of this, not inside it.
+.PP
+The ids are the voice's own, from the
+.B phoneme_id_map
+in its
+.B .onnx.json
+file.
+This model wants them interleaved with the pad symbol and wrapped in begin and
+end:
+.IP
+.EX
+say 1 0 20 0 59 0 24 0 120 0 27 0 100 0 2
+say: 11008 samples, .688 seconds at 16000 Hz
+.EE
+.PP
+which is
+.BR hello .
+.SH "IT NEEDS A BIGGER POOL THAN THE DEFAULT"
+A voice is tens of megabytes and
+.IR emu (1)'s
+main pool is 32MB, so the model does not fit and the write fails with
+.BR "out of memory: kernel" .
+.IP
+.EX
+emu -pmain=512m -pheap=512m ...
+.EE
+.SH "WHAT WAS CHECKED"
+Not by listening, which cannot be automated and does not regress.
+The output of
+.B hello
+is 0.69 seconds, which is right for the word; its peak is 20187 of 32767, so it
+is neither silent nor clipped; six of its seventeen frames are near-silent,
+which is the lead-in and lead-out of a short utterance; its envelope varies by
+a factor of five thousand within the utterance, where noise would be flat; and
+it crosses zero 3033 times a second, which is the voiced-speech range rather
+than a tone or a hiss.
+.PP
+Saying the word twice gives 0.94 seconds rather than 0.69 \(em longer, and not
+double, because the model's duration predictor treats the phrase as a unit.
+.SH SOURCE
+.B /appl/cmd/say.b
+.SH SEE ALSO
+.IR ml (3),
+.IR audio (3)
+.SH BUGS
+One voice, named in the source as a default.
+.PP
+It holds the whole waveform before writing any of it, so a long utterance is a
+long silence and then all of it at once.
+A model that can be run in pieces would stream; this one is asked for a phrase
+and answers with a phrase.
+.PP
+Nothing checks that the ids belong to the voice.
+An id past the end of its table is the voice's problem, and what it does about
+it is not defined here.
+.PP
+The scales \(em how noisy, how fast, how variable \(em are fixed at what the
+voice's own configuration recommends.

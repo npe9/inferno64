@@ -455,6 +455,7 @@ run sh
 runas runas
 runtests runtests
 rwrite sh-file2chan
+say say
 schedcmp schedcmp
 secstore secstore
 send sh-tk

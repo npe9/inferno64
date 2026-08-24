@@ -140,6 +140,34 @@ on a wire that carried
 .BR f32 .
 Where the host will not say, the line says so rather than echoing the
 request back.
+.SS "Dimensions a model leaves open"
+A model may declare a dimension it does not fix, and
+.B info
+reports that as
+.BR -1 .
+A sequence model usually leaves two: how many sequences, and how long they
+are.
+.PP
+One open dimension needs nothing said about it \(em the amount written decides
+it.
+Two cannot be worked out from a byte count, so the client says:
+.IP
+.EX
+feed input
+shape 1 15
+.EE
+.PP
+for one sequence of fifteen.
+.B Shape
+applies to the input
+.B feed
+selected, and must follow
+.BR load ,
+since until then there is nothing to check it against.
+It cannot contradict a dimension the model fixed.
+.PP
+Guessing instead would be inventing an answer, and the answer would be a
+plausible-looking wrong one.
 .SS Running it
 Write the input to
 .BR in ,

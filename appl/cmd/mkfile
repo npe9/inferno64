@@ -95,6 +95,7 @@ TARG=\
 	quitall.dis\
 	refstress.dis\
 	sessiontest.dis\
+	say.dis\
 	schedcmp.dis\
 	sparsetest.dis\
 	styxlog.dis\

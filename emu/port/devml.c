@@ -99,6 +99,7 @@ int	(*mlmodelinfo)(void *m, char *buf, int nbuf);
 int	(*mlsetinput)(void *m, char *name, uchar *b, int n, char *err, int nerr);
 int	(*mlrunmodel)(void *m, char *err, int nerr);
 int	(*mlgetoutput)(void *m, char *name, uchar *b, int nbuf, char *err, int nerr);
+int	(*mlsetshape)(void *m, char *name, char **dims, int ndims, char *err, int nerr);
 
 typedef struct Mstate Mstate;
 struct Mstate
@@ -522,6 +523,28 @@ mlctl(Mstate *m, char *buf)
 			error(Ebadarg);
 		free(m->feed);
 		m->feed = strdup(fields[1]);
+		return;
+	}
+	/*
+	 * Pin the dimensions a model leaves open. One open dimension can be
+	 * worked out from the amount written; two cannot, and a model that
+	 * takes a batch of sequences has two. Rather than invent an answer,
+	 * the client says: "shape 1 24" for one sequence of twenty-four.
+	 * Applies to the input "feed" selected, and must follow "load",
+	 * because until then there is nothing to check it against.
+	 */
+	if(strcmp(fields[0], "shape") == 0){
+		char serr[ERRMAX];
+
+		if(nf < 2)
+			error(Ebadarg);
+		if(m->m == nil)
+			error(Enomodel);
+		if(mlsetshape == nil)
+			error(Enobackend);
+		serr[0] = '\0';
+		if(mlsetshape(m->m, m->feed, fields+1, nf-1, serr, sizeof(serr)) < 0)
+			error(serr[0] ? serr : "that shape does not fit the model");
 		return;
 	}
 	if(strcmp(fields[0], "take") == 0){

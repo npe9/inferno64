@@ -367,3 +367,6 @@ os/pc64/forth.h
 # business in a source tree. See man/3/ml for where to get it.
 *.dylib
 MacOSX/*/include/onnxruntime/
+
+# voice models: tens of megabytes each, fetched not vendored
+lib/ml/voices/

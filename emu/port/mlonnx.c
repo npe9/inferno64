@@ -41,6 +41,8 @@ typedef struct Mlin Mlin;
 struct Mlin {
 	char*		name;
 	OrtValue*	val;
+	int64_t		pin[16];	/* shape pinned by ctl, or unset */
+	size_t		npin;
 };
 
 struct Mlmodel {
@@ -65,6 +67,7 @@ int	mlort_info(void*, char*, int);
 int	mlort_setinput(void*, char*, unsigned char*, int, char*, int);
 int	mlort_run(void*, char*, int);
 int	mlort_getoutput(void*, char*, unsigned char*, int, char*, int);
+int	mlort_setshape(void*, char*, char**, int, char*, int);
 
 /*
  * A status is an allocated object even when nothing went wrong is not the
@@ -479,6 +482,22 @@ mlort_setinput(void *h, char *name, unsigned char *b, int n, char *err, int nerr
 	 * worked out from the amount written; two cannot, and guessing which
 	 * to grow would be inventing an answer.
 	 */
+	if(m->in[i].npin == nd){
+		/* the caller has said what the open dimensions are */
+		fixed = 1;
+		for(j = 0; j < nd; j++){
+			d[j] = m->in[i].pin[j];
+			fixed *= (long)d[j];
+		}
+		if(count != fixed){
+			snprint(buf, sizeof buf,
+				"input %s was shaped for %ld %s values, got %ld",
+				m->innames[i], fixed, typename(t), count);
+			seterr(err, nerr, buf);
+			return -1;
+		}
+		goto haveshape;
+	}
 	fixed = 1;
 	nopen = 0;
 	for(j = 0; j < nd; j++){
@@ -488,7 +507,8 @@ mlort_setinput(void *h, char *name, unsigned char *b, int n, char *err, int nerr
 			fixed *= (long)d[j];
 	}
 	if(nopen > 1){
-		seterr(err, nerr, "input leaves more than one dimension open");
+		seterr(err, nerr,
+			"input leaves more than one dimension open: say which with \"shape\"");
 		return -1;
 	}
 	if(fixed <= 0){
@@ -513,6 +533,7 @@ mlort_setinput(void *h, char *name, unsigned char *b, int n, char *err, int nerr
 		return -1;
 	}
 
+haveshape:
 	if(m->in[i].val != nil){
 		ort->ReleaseValue(m->in[i].val);
 		m->in[i].val = nil;
@@ -640,6 +661,71 @@ mlort_getoutput(void *h, char *name, unsigned char *b, int nbuf, char *err, int 
 }
 
 /*
+ * Pin the dimensions a model leaves open.
+ *
+ * One open dimension can be worked out from the amount written; a model that
+ * takes a batch of sequences leaves two, and no amount of counting bytes says
+ * which of them the caller meant. So the caller says. What is checked here is
+ * that the shape has the right number of dimensions and does not contradict
+ * the ones the model fixed - a client cannot use this to reshape an input the
+ * model was definite about.
+ */
+int
+mlort_setshape(void *h, char *name, char **dims, int ndims, char *err, int nerr)
+{
+	Mlmodel *m = h;
+	OrtTypeInfo *ti;
+	const OrtTensorTypeAndShapeInfo *si;
+	size_t nd, j;
+	int64_t d[16];
+	int i;
+	char buf[160];
+
+	if(m == nil)
+		return -1;
+	if((i = findname(m->innames, m->nin, name, err, nerr, "input")) < 0)
+		return -1;
+	if(oerr(ort->SessionGetInputTypeInfo(m->session, i, &ti), err, nerr) < 0)
+		return -1;
+	si = nil;
+	ign(ort->CastTypeInfoToTensorInfo(ti, &si));
+	if(si == nil){
+		ort->ReleaseTypeInfo(ti);
+		seterr(err, nerr, "input is not a tensor");
+		return -1;
+	}
+	ign(ort->GetDimensionsCount(si, &nd));
+	if(nd > nelem(d))
+		nd = nelem(d);
+	ign(ort->GetDimensions(si, d, nd));
+	ort->ReleaseTypeInfo(ti);
+
+	if((size_t)ndims != nd){
+		snprint(buf, sizeof buf, "input %s has %lud dimensions, %d were given",
+			m->innames[i], (ulong)nd, ndims);
+		seterr(err, nerr, buf);
+		return -1;
+	}
+	for(j = 0; j < nd; j++){
+		long v = strtol(dims[j], nil, 10);
+		if(v <= 0){
+			seterr(err, nerr, "a dimension must be a positive number");
+			return -1;
+		}
+		if(d[j] >= 0 && d[j] != v){
+			snprint(buf, sizeof buf,
+				"input %s fixes dimension %lud at %lld, not %ld",
+				m->innames[i], (ulong)j, (long long)d[j], v);
+			seterr(err, nerr, buf);
+			return -1;
+		}
+		m->in[i].pin[j] = v;
+	}
+	m->in[i].npin = nd;
+	return 0;
+}
+
+/*
  * Installed into devml.c's nullable hooks at load time, exactly as the CoreML
  * backend did. Where this file is not linked they stay nil and ml(3) reports
  * that it has no backend, rather than the device being compiled away.
@@ -650,6 +736,7 @@ extern int	(*mlmodelinfo)(void*, char*, int);
 extern int	(*mlsetinput)(void*, char*, unsigned char*, int, char*, int);
 extern int	(*mlrunmodel)(void*, char*, int);
 extern int	(*mlgetoutput)(void*, char*, unsigned char*, int, char*, int);
+extern int	(*mlsetshape)(void*, char*, char**, int, char*, int);
 
 __attribute__((constructor))
 static void
@@ -661,4 +748,5 @@ mlhwinit(void)
 	mlsetinput = mlort_setinput;
 	mlrunmodel = mlort_run;
 	mlgetoutput = mlort_getoutput;
+	mlsetshape = mlort_setshape;
 }
