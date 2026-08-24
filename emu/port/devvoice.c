@@ -217,10 +217,55 @@ static struct {
 	Lock	lk;
 	Rendez	r;
 	char	msg[Nannounce][Announcemax];
+	int	kind[Nannounce];
 	int	rd;
 	int	wr;
 	int	n;
 } screen;
+
+/* with the lock held */
+static void
+queue(int kind, char *what)
+{
+	if(screen.n == Nannounce){
+		screen.rd = (screen.rd + 1) % Nannounce;
+		screen.n--;
+	}
+	strncpy(screen.msg[screen.wr], what, Announcemax-1);
+	screen.msg[screen.wr][Announcemax-1] = '\0';
+	screen.kind[screen.wr] = kind;
+	screen.wr = (screen.wr + 1) % Nannounce;
+	screen.n++;
+}
+
+/*
+ * Throw away queued output, keeping anything the person's own actions
+ * produced. Called when the focus moves, because that IS a person acting: they
+ * have stopped caring about whatever was scrolling past, and making them sit
+ * through it before hearing where they now are is the single most tiring thing
+ * a screen reader does.
+ */
+static void
+dropoutput(void)
+{
+	int i, j, n;
+
+	j = screen.rd;
+	n = 0;
+	for(i = 0; i < screen.n; i++){
+		int k = (screen.rd + i) % Nannounce;
+		if(screen.kind[k] == Anall)
+			continue;
+		if(j != k){
+			memmove(screen.msg[j], screen.msg[k], Announcemax);
+			screen.kind[j] = screen.kind[k];
+		}
+		j = (j + 1) % Nannounce;
+		n++;
+	}
+	screen.wr = j;
+	screen.n = n;
+}
 
 void
 voiceannounce(char *what)
@@ -228,14 +273,8 @@ voiceannounce(char *what)
 	if(anlevel == Anoff || what == nil || *what == '\0')
 		return;
 	lock(&screen.lk);
-	if(screen.n == Nannounce){
-		screen.rd = (screen.rd + 1) % Nannounce;
-		screen.n--;
-	}
-	strncpy(screen.msg[screen.wr], what, Announcemax-1);
-	screen.msg[screen.wr][Announcemax-1] = '\0';
-	screen.wr = (screen.wr + 1) % Nannounce;
-	screen.n++;
+	dropoutput();
+	queue(Anfocus, what);
 	unlock(&screen.lk);
 	Wakeup(&screen.r);
 }
@@ -290,8 +329,12 @@ voiceannouncetext(char *what)
 			/* a line of nothing but spaces is not worth saying */
 			for(i = 0; line[i] == ' ' || line[i] == '\t'; i++)
 				;
-			if(line[i] != '\0')
-				voiceannounce(line);
+			if(line[i] != '\0'){
+				lock(&screen.lk);
+				queue(Anall, line);
+				unlock(&screen.lk);
+				Wakeup(&screen.r);
+			}
 		}
 	}
 }

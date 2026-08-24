@@ -78,6 +78,12 @@ Widgets holding text the person typed, entry and text, are deliberately not
 read out on arrival: announcing the contents of a field when it takes focus is
 how a screen reader reads a password aloud.
 .PP
+Moving the focus discards any output still queued.
+That is a person acting: they have stopped caring about whatever was scrolling
+past, and making them sit through it before hearing where they now are is the
+most tiring thing a screen reader does.
+Announcements the person's own actions produced are kept.
+.PP
 When the ring is full the
 .I oldest
 announcement is dropped.
