@@ -30,7 +30,7 @@ LOGS=	httpd.debug\
 	httpd.rewrite\
 	httpd.suff\
 
-DISBIN=$ROOT/dis/svc/httpd
+DISBIN=$ROOT/$DISROOT/svc/httpd
 
 <$ROOT/mkfiles/mkdis
 

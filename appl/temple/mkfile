@@ -104,7 +104,7 @@ TARG=\
 	zing.dis\
 	zoneout.dis
 
-DISBIN=$ROOT/dis/temple
+DISBIN=$ROOT/$DISROOT/temple
 
 <$ROOT/mkfiles/mkdis
 

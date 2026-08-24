@@ -9,6 +9,6 @@ SYSMODULES=\
 	draw.m\
 	string.m\
 
-DISBIN=$ROOT/dis/mpc
+DISBIN=$ROOT/$DISROOT/mpc
 
 <$ROOT/mkfiles/mkdis

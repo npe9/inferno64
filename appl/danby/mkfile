@@ -180,7 +180,7 @@ TARG=\
 	twomagnet.dis\
 	bernoulli.dis\
 
-DISBIN=$ROOT/dis/danby
+DISBIN=$ROOT/$DISROOT/danby
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs

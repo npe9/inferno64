@@ -162,6 +162,6 @@ TARG=\
 	windpendulum.dis\
 	yoyo.dis\
 
-DISBIN=$ROOT/dis/danby/plugin
+DISBIN=$ROOT/$DISROOT/danby/plugin
 
 <$ROOT/mkfiles/mkdis

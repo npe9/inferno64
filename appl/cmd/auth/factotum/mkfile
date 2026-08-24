@@ -21,7 +21,7 @@ SYSMODULES=\
 MODULES=\
 	authio.m\
 
-DISBIN=$ROOT/dis/auth
+DISBIN=$ROOT/$DISROOT/auth
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs

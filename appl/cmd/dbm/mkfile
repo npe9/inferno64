@@ -14,6 +14,6 @@ SYSMODULES=\
 	bufio.m\
 	dbm.m\
 
-DISBIN=$ROOT/dis/dbm
+DISBIN=$ROOT/$DISROOT/dbm
 
 <$ROOT/mkfiles/mkdis

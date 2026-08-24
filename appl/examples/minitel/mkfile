@@ -19,6 +19,6 @@ SYSMODULES=\
 	tk.m\
 	wmlib.m\
 
-DISBIN=$ROOT/dis/wm/minitel
+DISBIN=$ROOT/$DISROOT/wm/minitel
 
 <$ROOT/mkfiles/mkdis

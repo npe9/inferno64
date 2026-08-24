@@ -17,6 +17,6 @@ SYSMODULES=\
 	sexprs.m\
 	spki.m\
 
-DISBIN=$ROOT/dis/spki
+DISBIN=$ROOT/$DISROOT/spki
 
 <$ROOT/mkfiles/mkdis

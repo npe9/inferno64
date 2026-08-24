@@ -114,11 +114,12 @@ errstr.h:	$PORTDIR/error.h
 $INITDIR/%.dis:	$INITDIR/%.b
 		cd ../init; mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE $stem.dis
 
-$ROOT/libinterp/runt.h:
+$ROOT/libinterp/w$DISWORD/runt.h:
 		cd $ROOT/libinterp
-		mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE runt.h
+		mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE w$DISWORD/runt.h
 
-RUNT=$ROOT/libinterp/runt.h		# for culling dependencies
+# for culling dependencies; one per Dis word size, see libinterp/mkfile
+RUNT=$ROOT/libinterp/w$DISWORD/runt.h
 INTERP=$ROOT/include/interp.h
 
 alloc.$O:	$INTERP

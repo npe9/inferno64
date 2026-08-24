@@ -19,6 +19,6 @@ SYSMODULES=\
 MODULES=\
 	../authio.m\
 
-DISBIN=$ROOT/dis/auth/proto
+DISBIN=$ROOT/$DISROOT/auth/proto
 
 <$ROOT/mkfiles/mkdis

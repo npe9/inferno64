@@ -42,6 +42,6 @@ SYSMODULES=\
 	math/polyhedra.m\
 	math/camerapath.m\
 
-DISBIN=$ROOT/dis/math
+DISBIN=$ROOT/$DISROOT/math
 
 <$ROOT/mkfiles/mkdis

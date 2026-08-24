@@ -35,5 +35,22 @@ OBJTYPE=arm64
 #
 OBJDIR=$SYSTARG/$OBJTYPE
 
+#
+#	How wide a Dis word is on the target, in bytes.  include/isa.h
+#	makes it follow the size of a pointer, so a 32 bit target sets
+#	DISWORD=4 in its mkfiles/mkfile-$SYSTARG-$OBJTYPE and everything
+#	else takes the 8 here.  limbo is a host program and needs telling
+#	(-W), and libinterp's generated module tables are built one set
+#	per width.
+#
+DISWORD=8
+
+#
+#	Where the compiled Limbo goes.  One tree per Dis word size: the
+#	64 bit one is /dis, and a 32 bit target builds /dis32 beside it
+#	with DISROOT=dis32 DISWORD=4.
+#
+DISROOT=dis
+
 <$ROOT/mkfiles/mkhost-$SYSHOST			# variables appropriate for host system
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	# variables used to build target object type

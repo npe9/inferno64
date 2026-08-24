@@ -1663,7 +1663,6 @@ main(int argc, char *argv[])
 	fmtinstall('v', expconv);		/* src expression */
 	fmtinstall('V', expconv);		/* src expression in '' */
 	lexinit();
-	typeinit();
 	optabinit();
 
 	gendis = 1;
@@ -1772,6 +1771,17 @@ main(int argc, char *argv[])
 		superwarn = dowarn;
 		dowarn = 1;
 		break;
+	case 'W':
+		/* the size of a Dis word on the machine this is for */
+		s = ARGF();
+		if(s == nil)
+			usage();
+		iby2wd = atoi(s);
+		if(iby2wd != 4 && iby2wd != 8){
+			fprint(2, "limbo: -W takes 4 or 8, not %s\n", s);
+			usage();
+		}
+		break;
 	case 'x':
 		ext = ARGF();
 		break;
@@ -1788,6 +1798,12 @@ main(int argc, char *argv[])
 		usage();
 		break;
 	}ARGEND
+
+	/*
+	 * After the flags, not before: typeinit sizes the built-in types,
+	 * and -W says how wide a Dis word is.
+	 */
+	typeinit();
 
 	if((root = getroot()) != nil){
 		char *r;

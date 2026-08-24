@@ -14,6 +14,6 @@ SYSMODULES= \
 	daytime.m\
 	libc0.m\
 
-DISBIN=$ROOT/dis
+DISBIN=$ROOT/$DISROOT
 
 <$ROOT/mkfiles/mkdis

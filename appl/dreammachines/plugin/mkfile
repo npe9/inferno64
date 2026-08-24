@@ -5,6 +5,6 @@ TARG=\
 	toycpu.dis\
 	tutor.dis\
 
-DISBIN=$ROOT/dis/dreammachines/plugin
+DISBIN=$ROOT/$DISROOT/dreammachines/plugin
 
 <$ROOT/mkfiles/mkdis

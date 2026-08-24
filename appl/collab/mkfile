@@ -34,7 +34,7 @@ SYSMODULES=\
 	security.m\
 	sys.m\
 
-DEST=$ROOT/dis/collab
+DEST=$ROOT/$DISROOT/collab
 
 ALL = $SERVERS $CLIENTS $LIB $MAIN
 

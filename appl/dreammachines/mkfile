@@ -27,7 +27,7 @@ TARG=\
 	toycpu.dis\
 	videosynth.dis\
 
-DISBIN=$ROOT/dis/dreammachines
+DISBIN=$ROOT/$DISROOT/dreammachines
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs

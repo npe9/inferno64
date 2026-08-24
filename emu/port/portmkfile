@@ -111,12 +111,12 @@ errstr.h:	../port/error.h
 ../init/%.dis:	../init/%.b
 		cd ../init; mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE $stem.dis
 
-$ROOT/libinterp/runt.h:
+$ROOT/libinterp/w$DISWORD/runt.h:
 		cd $ROOT/libinterp
-		mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE runt.h
+		mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE w$DISWORD/runt.h
 
 INTERP=$ROOT/include/interp.h
-RUNT=$ROOT/libinterp/runt.h		# for culling dependencies
+RUNT=$ROOT/libinterp/w$DISWORD/runt.h		# for culling dependencies
 
 alloc.$O: ../../include/pool.h\
 		$INTERP
@@ -127,17 +127,17 @@ devdraw.$O:	$ROOT/include/draw.h\
 devmem.$O:	$INTERP
 devpipe.$O:	$INTERP
 devprof.$O:	$INTERP
-devprog.$O:	$ROOT/libinterp/runt.h\
+devprog.$O:	$ROOT/libinterp/w$DISWORD/runt.h\
 			$INTERP
 devsign.$O:	$INTERP
 devsign.$O: $ROOT/libkeyring/keys.h
-devsrv.$O:	$ROOT/libinterp/runt.h\
+devsrv.$O:	$ROOT/libinterp/w$DISWORD/runt.h\
 		$INTERP
 devtk.$O:	$INTERP
 dis.$O:	$INTERP
 discall.$O:	$INTERP
 exception.$O:	$INTERP
-inferno.$O:	$ROOT/libinterp/runt.h\
+inferno.$O:	$ROOT/libinterp/w$DISWORD/runt.h\
 		$INTERP
 devmnt.$O: ../../include/fcall.h
 main.$O:	$ROOT/include/version.h

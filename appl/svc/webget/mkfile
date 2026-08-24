@@ -29,7 +29,7 @@ SYSMODULES=\
 	url.m\
 	webget.m\
 
-DISBIN=$ROOT/dis/svc/webget
+DISBIN=$ROOT/$DISROOT/svc/webget
 
 <$ROOT/mkfiles/mkdis
 

@@ -14,6 +14,6 @@ SYSMODULES= \
 	uris.m\
 	xpointers.m\
 
-DISBIN=$ROOT/dis/lib/w3c
+DISBIN=$ROOT/$DISROOT/lib/w3c
 
 <$ROOT/mkfiles/mkdis

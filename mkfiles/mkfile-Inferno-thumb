@@ -14,6 +14,9 @@ ARFLAGS=	vu
 AS=		5a
 ASFLAGS=	-t
 
+# an ARMv7-M core is 32 bit, so a Dis word is four bytes
+DISWORD=	4
+
 CC=		tc
 CFLAGS=		-wFV -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/Inferno/include -I$ROOT/include
 ANSICPP= -p

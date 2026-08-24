@@ -30,18 +30,18 @@ SYSMODULES=\
 	tk.m\
 	wmlib.m\
 
-DISBIN=$ROOT/dis/mpeg
+DISBIN=$ROOT/$DISROOT/mpeg
 
 <$ROOT/mkfiles/mkdis
 
 all:V:		mpeg.dis
 
-install:V:	$ROOT/dis/mpeg/mpeg.dis
+install:V:	$ROOT/$DISROOT/mpeg/mpeg.dis
 
-$ROOT/dis/mpeg/mpeg.dis:	mpeg.dis
+$ROOT/$DISROOT/mpeg/mpeg.dis:	mpeg.dis
 	rm -f $target && cp mpeg.dis $target
 
 mpeg.dis:	$MODULES $SYS_MODULE
 
 nuke:V:
-	rm -f $ROOT/dis/mpeg/mpeg.dis
+	rm -f $ROOT/$DISROOT/mpeg/mpeg.dis

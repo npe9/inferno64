@@ -58,7 +58,7 @@ HFILES=\
 	io.h\
 
 # use the CFLAGS set in ../../mkfiles/mkfile-Inferno-amd64
-CFLAGS=$CFLAGS -I$ROOT/libinterp -I$ROOT/libip -I../inferno
+CFLAGS=$CFLAGS -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp -I$ROOT/libip -I../inferno
 KERNDATE=`{$NDATE}
 
 default:V: i$CONF i$CONF.acid

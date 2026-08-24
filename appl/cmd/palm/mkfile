@@ -11,6 +11,6 @@ MODULES=\
 SYSMODULES=\
 	palm.m\
 
-DISBIN=$ROOT/dis/palm
+DISBIN=$ROOT/$DISROOT/palm
 
 <$ROOT/mkfiles/mkdis

@@ -49,7 +49,7 @@ SYSMODULES=\
 	sys.m\
 	unbundle.m\
 
-DISBIN=$ROOT/dis/alphabet/fs
+DISBIN=$ROOT/$DISROOT/alphabet/fs
 
 <$ROOT/mkfiles/mkdis
 LIMBOFLAGS=-F $LIMBOFLAGS

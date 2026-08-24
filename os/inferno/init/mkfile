@@ -11,8 +11,14 @@ installall:V: all
 clean nuke:V:
 	rm -f *.dis *.sbl
 
+#
+#	-W says how wide a Dis word is on the board this init program is
+#	for; mkconfig sets DISWORD and a 32 bit target's mkfile overrides
+#	it.  A board's mkfile passes it down when it builds its init.
+#
 INCLD=\
 	-I$ROOT/module\
+	-W $DISWORD\
 
 %.dis:	%.b
 	limbo $INCLD -gw $stem.b

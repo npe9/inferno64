@@ -60,7 +60,7 @@ HFILES=\
 	io.h\
 	$ARCHDIR/armv7m.h\
 
-CFLAGS=-wFV -I. -I$ARCHDIR -I../port -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp
+CFLAGS=-wFV -I. -I$ARCHDIR -I../port -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
 KERNDATE=`{$NDATE}
 
 default:V: i$CONF
@@ -76,7 +76,7 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 <../port/portmkfile
 
 ../init/$INIT.dis:	../init/$INIT.b
-	cd ../init; mk $INIT.dis
+	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
 
 clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
 main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h

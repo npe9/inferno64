@@ -15,7 +15,7 @@ SYSMODULES= \
 	tk.m\
 	tkclient.m\
 
-DISBIN=$ROOT/dis/demo/whiteboard
+DISBIN=$ROOT/$DISROOT/demo/whiteboard
 
 <$ROOT/mkfiles/mkdis
 

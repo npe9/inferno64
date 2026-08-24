@@ -47,7 +47,7 @@ CFLAGS='-DROOT="'$ROOT'"'\
 	'-DOBJTYPE="'$OBJTYPE'"'\
 	-DEMU -I. -I../port\
 	-I$ROOT/$SYSTARG/$OBJTYPE/include\
-	-I$ROOT/include -I$ROOT/libinterp\
+	-I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp\
 	$CTHREADFLAGS $CFLAGS $EMUOPTIONS\
 
 KERNDATE=`{$NDATE}

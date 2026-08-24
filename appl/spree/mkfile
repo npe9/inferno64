@@ -39,7 +39,7 @@ MODULES=\
 	styx.m\
 	styxservers.m\
 
-DEST=$ROOT/dis/spree
+DEST=$ROOT/$DISROOT/spree
 
 ALL= ${ENGINES:%=$DEST/%} \
 	${CLIENTS:%=$DEST/%} \
@@ -50,7 +50,7 @@ all:V: $ENGINES $CLIENTS $LIB $MAIN
 
 install:V:	$ALL
 
-$ROOT/dis/spree/%.dis:	%.dis
+$ROOT/$DISROOT/spree/%.dis:	%.dis
 	cp $prereq $target
 
 %.dis:	%.b

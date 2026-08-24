@@ -13,6 +13,6 @@ SYSMODULES= \
 	strokes.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/lib/strokes
+DISBIN=$ROOT/$DISROOT/lib/strokes
 
 <$ROOT/mkfiles/mkdis

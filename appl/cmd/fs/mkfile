@@ -32,7 +32,7 @@ TARG=\
 	void.dis\
 
 
-INS=	${TARG:%=$ROOT/dis/fs/%}
+INS=	${TARG:%=$ROOT/$DISROOT/fs/%}
 
 SYSMODULES=\
 	bufio.m\
@@ -42,7 +42,7 @@ SYSMODULES=\
 	bundle.m\
 	fslib.m\
 
-DISBIN=$ROOT/dis/fs
+DISBIN=$ROOT/$DISROOT/fs
 
 <$ROOT/mkfiles/mkdis
 

@@ -23,7 +23,7 @@ SYSMODULES=\
 	string.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/alphabet/abc
+DISBIN=$ROOT/$DISROOT/alphabet/abc
 
 <$ROOT/mkfiles/mkdis
 LIMBOFLAGS=-F $LIMBOFLAGS

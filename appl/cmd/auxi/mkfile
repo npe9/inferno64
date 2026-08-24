@@ -19,6 +19,6 @@ SYSMODULES=\
 	styx.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/auxi
+DISBIN=$ROOT/$DISROOT/auxi
 
 <$ROOT/mkfiles/mkdis

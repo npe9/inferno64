@@ -19,6 +19,6 @@ SYSMODULES=\
 	regex.m\
 	string.m\
 
-DISBIN=$ROOT/dis/wm/brutus
+DISBIN=$ROOT/$DISROOT/wm/brutus
 
 <$ROOT/mkfiles/mkdis

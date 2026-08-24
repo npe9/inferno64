@@ -16,6 +16,6 @@ SYSMODULES= \
 	spki.m\
 	encoding.m\
 
-DISBIN=$ROOT/dis/lib/spki
+DISBIN=$ROOT/$DISROOT/lib/spki
 
 <$ROOT/mkfiles/mkdis

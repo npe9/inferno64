@@ -17,6 +17,6 @@ SYSMODULES=\
 	styxconv.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/lib/styxconv
+DISBIN=$ROOT/$DISROOT/lib/styxconv
 
 <$ROOT/mkfiles/mkdis

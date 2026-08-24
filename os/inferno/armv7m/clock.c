@@ -86,6 +86,7 @@ clockintr(Ureg *u)
 	fastcount += (uvlong)systreload + 1;
 	m->ticks++;
 
+
 	if(kproftick != nil && u != nil)
 		kproftick((ulong)u->pc);
 

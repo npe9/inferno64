@@ -2,7 +2,7 @@
 #include "kernel.h"
 #include "isa.h"
 #include "interp.h"
-#include "../libinterp/keyringif.h"
+#include "keyringif.h"
 #include "../include/mp.h"
 #include "libsec.h"
 #include "keys.h"

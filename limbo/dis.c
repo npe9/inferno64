@@ -1,5 +1,12 @@
 #include "limbo.h"
 
+/*
+ * The size of a Dis word for the module being emitted; see -W in
+ * ../limbo/limbo.y and the note in ../limbo/limbo.h.  The default is the
+ * host's, which is what every target with the same word size wants.
+ */
+int	iby2wd = sizeof(intptr);
+
 static	void	disbig(long, Long);
 static	void	disbyte(long, int);
 static	void	disbytes(long, void*, int);

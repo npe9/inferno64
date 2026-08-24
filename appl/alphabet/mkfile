@@ -15,8 +15,8 @@ TARG=\
 	proxy.dis\
 	reports.dis\
 
-INS=${TARG:%=$ROOT/dis/alphabet/%} \
-	$ROOT/dis/sh/alphabet.dis
+INS=${TARG:%=$ROOT/$DISROOT/alphabet/%} \
+	$ROOT/$DISROOT/sh/alphabet.dis
 
 MODULES=\
 
@@ -30,7 +30,7 @@ SYSMODULES=\
 	sh.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/alphabet
+DISBIN=$ROOT/$DISROOT/alphabet
 
 <$ROOT/mkfiles/mkdis
 LIMBOFLAGS=-F $LIMBOFLAGS
@@ -42,8 +42,8 @@ nuke:V: clean
 uninstall:V:
 	rm -f $INS
 
-$ROOT/dis/sh/alphabet.dis: alphabet.shmod.dis
-	rm -f $ROOT/dis/sh/alphabet.dis && cp alphabet.shmod.dis $ROOT/dis/sh/alphabet.dis
+$ROOT/$DISROOT/sh/alphabet.dis: alphabet.shmod.dis
+	rm -f $ROOT/$DISROOT/sh/alphabet.dis && cp alphabet.shmod.dis $ROOT/$DISROOT/sh/alphabet.dis
 
 <$ROOT/mkfiles/mksubdirs
 

@@ -27,6 +27,6 @@ SYSMODULES=\
 	tk.m\
 	tkclient.m\
 
-DISBIN=$ROOT/dis/wm
+DISBIN=$ROOT/$DISROOT/wm
 
 <$ROOT/mkfiles/mkdis

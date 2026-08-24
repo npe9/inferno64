@@ -19,6 +19,6 @@ SYSMODULES= \
 	sys.m\
 	x509.m\
 
-DISBIN=$ROOT/dis/lib/crypt
+DISBIN=$ROOT/$DISROOT/lib/crypt
 
 <$ROOT/mkfiles/mkdis

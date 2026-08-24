@@ -221,7 +221,7 @@ SYSMODULES=\
 	webget.m\
 	workdir.m\
 
-DISBIN=$ROOT/dis
+DISBIN=$ROOT/$DISROOT
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs

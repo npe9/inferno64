@@ -42,12 +42,27 @@ typedef	struct Typelist	Typelist;
 typedef	double		Real;
 typedef	s64int		Long;
 
+/*
+ * The size of a Dis word.  ../include/isa.h makes IBY2WD follow the size
+ * of a pointer, which is right for the interpreter -- that is compiled
+ * for the machine it will run on -- and wrong for the compiler, which is
+ * a host program and has to be able to emit modules for a machine whose
+ * word is not the size of the host's.  -W sets it; without -W it is the
+ * host's, so nothing changes unless it is asked for.
+ *
+ * The frame offsets below follow it and so cannot be enum members.
+ */
+#undef	IBY2WD
+#define	IBY2WD		iby2wd
+extern	int		iby2wd;
+
+#define	STemp		(NREG * IBY2WD)
+#define	RTemp		(STemp+IBY2WD)
+#define	DTemp		(RTemp+IBY2WD)
+#define	MaxTemp		(DTemp+IBY2WD)
+
 enum
 {
-	STemp		= NREG * IBY2WD,
-	RTemp		= STemp+IBY2WD,
-	DTemp		= RTemp+IBY2WD,
-	MaxTemp		= DTemp+IBY2WD,
 	MaxReg		= 1<<16,
 	MaxAlign	= IBY2LG,
 	StrSize		= 256,

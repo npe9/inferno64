@@ -72,15 +72,15 @@ SYSMODULES=\
 	tk.m\
 	tkclient.m\
 
-DISBIN=$ROOT/dis/charon
+DISBIN=$ROOT/$DISROOT/charon
 
 all:V:	charon.dis
 
 <$ROOT/mkfiles/mkdis
 
-install:V:	$ROOT/dis/charon.dis
+install:V:	$ROOT/$DISROOT/charon.dis
 
-$ROOT/dis/charon.dis:	charon.dis
+$ROOT/$DISROOT/charon.dis:	charon.dis
 	rm -f $target && cp charon.dis $target
 
 charon.dis:	$MODULES $SYS_MODULES
@@ -89,4 +89,4 @@ img.dis:	img.b $MODULE $SYS_MODULE
 	limbo $LIMBOFLAGS -c -gw img.b
 
 nuke:V:
-	rm -f $ROOT/dis/charon.dis
+	rm -f $ROOT/$DISROOT/charon.dis

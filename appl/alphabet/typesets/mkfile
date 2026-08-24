@@ -24,7 +24,7 @@ SYSMODULES=\
 	alphabet/grid.m\
 	alphabet/gridtypes.m\
 
-DISBIN=$ROOT/dis/alphabet
+DISBIN=$ROOT/$DISROOT/alphabet
 
 <$ROOT/mkfiles/mkdis
 

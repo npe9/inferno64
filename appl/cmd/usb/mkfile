@@ -6,6 +6,6 @@ TARG=\
 SYSMODULES=\
 	usb.m\
 
-DISBIN=$ROOT/dis/usb
+DISBIN=$ROOT/$DISROOT/usb
 
 <$ROOT/mkfiles/mkdis

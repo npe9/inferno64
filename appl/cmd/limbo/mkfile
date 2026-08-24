@@ -30,6 +30,6 @@ SYSMODULES= \
 	string.m\
 	sys.m\
 
-DISBIN=$ROOT/dis
+DISBIN=$ROOT/$DISROOT
 
 <$ROOT/mkfiles/mkdis

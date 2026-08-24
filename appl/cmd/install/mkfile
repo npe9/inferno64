@@ -38,6 +38,6 @@ SYSMODULES=\
 	bufio.m\
 	string.m\
 
-DISBIN=$ROOT/dis/install
+DISBIN=$ROOT/$DISROOT/install
 
 <$ROOT/mkfiles/mkdis

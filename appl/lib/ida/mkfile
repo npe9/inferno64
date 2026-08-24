@@ -11,7 +11,7 @@ SYSMODULES= \
 	rand.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/lib/ida
+DISBIN=$ROOT/$DISROOT/lib/ida
 
 <$ROOT/mkfiles/mkdis
 # force compilation

@@ -19,23 +19,23 @@ TARG=sh.dis\
 	uq.dis\
 	verify.dis\
 
-INS=	$ROOT/dis/sh.dis\
-	$ROOT/dis/sh/arg.dis\
-	$ROOT/dis/sh/expr.dis\
-	$ROOT/dis/sh/file2chan.dis\
-	$ROOT/dis/sh/mload.dis\
-	$ROOT/dis/sh/mpexpr.dis\
-	$ROOT/dis/sh/regex.dis\
-	$ROOT/dis/sh/std.dis\
-	$ROOT/dis/sh/string.dis\
-#	$ROOT/dis/sh/tk.dis\
-	$ROOT/dis/sh/echo.dis\
-	$ROOT/dis/sh/csv.dis\
-	$ROOT/dis/sh/test.dis\
-	$ROOT/dis/sh/mesh.dis\
-	$ROOT/dis/sh/pde.dis\
-	$ROOT/dis/sh/uq.dis\
-	$ROOT/dis/sh/verify.dis\
+INS=	$ROOT/$DISROOT/sh.dis\
+	$ROOT/$DISROOT/sh/arg.dis\
+	$ROOT/$DISROOT/sh/expr.dis\
+	$ROOT/$DISROOT/sh/file2chan.dis\
+	$ROOT/$DISROOT/sh/mload.dis\
+	$ROOT/$DISROOT/sh/mpexpr.dis\
+	$ROOT/$DISROOT/sh/regex.dis\
+	$ROOT/$DISROOT/sh/std.dis\
+	$ROOT/$DISROOT/sh/string.dis\
+#	$ROOT/$DISROOT/sh/tk.dis\
+	$ROOT/$DISROOT/sh/echo.dis\
+	$ROOT/$DISROOT/sh/csv.dis\
+	$ROOT/$DISROOT/sh/test.dis\
+	$ROOT/$DISROOT/sh/mesh.dis\
+	$ROOT/$DISROOT/sh/pde.dis\
+	$ROOT/$DISROOT/sh/uq.dis\
+	$ROOT/$DISROOT/sh/verify.dis\
 
 SYSMODULES=\
 	bufio.m\
@@ -54,7 +54,7 @@ SYSMODULES=\
 	tk.m\
 	tkclient.m\
 
-DISBIN=$ROOT/dis/sh
+DISBIN=$ROOT/$DISROOT/sh
 
 <$ROOT/mkfiles/mkdis
 
@@ -72,7 +72,7 @@ clean:V:
 uninstall:V:
 	rm -f $INS
 
-$ROOT/dis/sh.dis:	sh.dis
-	rm -f $ROOT/dis/sh.dis && cp sh.dis $ROOT/dis/sh.dis
+$ROOT/$DISROOT/sh.dis:	sh.dis
+	rm -f $ROOT/$DISROOT/sh.dis && cp sh.dis $ROOT/$DISROOT/sh.dis
 
 %.dis: ${SYSMODULES:%=$MODDIR/%}

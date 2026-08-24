@@ -22,6 +22,6 @@ SYSMODULES=\
 	string.m\
 	lock.m\
 
-DISBIN=$ROOT/dis/ip/ppp
+DISBIN=$ROOT/$DISROOT/ip/ppp
 
 <$ROOT/mkfiles/mkdis

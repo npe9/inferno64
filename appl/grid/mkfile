@@ -43,12 +43,12 @@ SYSMODULES= \
 	tkclient.m\
 	workdir.m\
 
-DISBIN=$ROOT/dis/grid
+DISBIN=$ROOT/$DISROOT/grid
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs
 
-$ROOT/dis/demo/readjpg.dis:	readjpg.dis
+$ROOT/$DISROOT/demo/readjpg.dis:	readjpg.dis
 	rm -f $target && cp readjpg.dis $target
 
 readjpg.dis:	readjpg.b $MODULE $SYS_MODULE

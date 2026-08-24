@@ -23,6 +23,6 @@ SYSMODULES=\
 	tables.m\
 	zip.m\
 
-DISBIN=$ROOT/dis/zip
+DISBIN=$ROOT/$DISROOT/zip
 
 <$ROOT/mkfiles/mkdis

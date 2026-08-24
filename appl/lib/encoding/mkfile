@@ -11,6 +11,6 @@ MODULES=\
 SYSMODULES= \
 	encoding.m\
 
-DISBIN=$ROOT/dis/lib/encoding
+DISBIN=$ROOT/$DISROOT/lib/encoding
 
 <$ROOT/mkfiles/mkdis

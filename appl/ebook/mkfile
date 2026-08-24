@@ -31,6 +31,6 @@ SYSMODULES=\
 	tk.m\
 	xml.m\
 
-DISBIN=$ROOT/dis/ebook
+DISBIN=$ROOT/$DISROOT/ebook
 
 <$ROOT/mkfiles/mkdis

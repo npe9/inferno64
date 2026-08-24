@@ -8,6 +8,6 @@ SYSMODULES=\
 	sys.m\
 	draw.m\
 
-DISBIN=$ROOT/dis/games
+DISBIN=$ROOT/$DISROOT/games
 
 <$ROOT/mkfiles/mkdis

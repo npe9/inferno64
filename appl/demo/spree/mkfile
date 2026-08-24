@@ -9,7 +9,7 @@ MODULES=\
 
 SYSMODULES= \
 
-DISBIN=$ROOT/dis/demo/spree
+DISBIN=$ROOT/$DISROOT/demo/spree
 
 <$ROOT/mkfiles/mkdis
 

@@ -15,6 +15,6 @@ SYSMODULES=\
 	filepat.m\
 	bufio.m\
 
-DISBIN=$ROOT/dis/tiny
+DISBIN=$ROOT/$DISROOT/tiny
 
 <$ROOT/mkfiles/mkdis

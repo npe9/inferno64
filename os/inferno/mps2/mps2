@@ -83,7 +83,7 @@ mod
 	math
 
 init
-	shell
+	armv7minit
 
 code
 	int main_pool_pcnt = 40;
@@ -94,11 +94,14 @@ code
 	int panicreset = 0;
 
 root
-# The Limbo userland.  A bare
+# The Limbo userland, taken from /dis32: a Dis word is four bytes on
+# this board, and a module compiled for eight will not load.  See
+# mkfiles/mkdis and the note in mkconfig.  A bare
 # name whose $ROOT counterpart is a directory makes an empty directory in
 # the embedded root; a name that is a file embeds its bytes.  Dis is
-# bytecode and has no architecture, so these are the files appl/cmd and
-# appl/lib install for every target, not riscv64 ones.
+# bytecode, but not architecture-independent here: its word follows the
+# size of a pointer, so these are the ones appl/cmd and appl/lib install
+# under DISROOT=dis32 DISWORD=4.
 	/chan	/
 	/dev	/
 	/dis
@@ -117,61 +120,61 @@ root
 	/osinit.dis
 	/dis/init
 	/dis/shutdown
-	/dis/basename.dis
-	/dis/bind.dis
-	/dis/cat.dis
-	/dis/cd.dis
+	/dis/basename.dis	/dis32/basename.dis
+	/dis/bind.dis	/dis32/bind.dis
+	/dis/cat.dis	/dis32/cat.dis
+	/dis/cd.dis	/dis32/cd.dis
 	/dis/diskparts
-	/dis/echo.dis
-	/dis/ftest.dis
-	/dis/grep.dis
-	/dis/ls.dis
-	/dis/mntgen.dis
-	/dis/mount.dis
-	/dis/memfs.dis
-	/dis/dossrv.dis
-	/dis/ns.dis
-	/dis/ps.dis
-	/dis/pwd.dis
-	/dis/read.dis
-	/dis/sh.dis
-	/dis/sh.dis
-	/dis/sh/std.dis
-	/dis/unmount.dis
-	/dis/9660srv.dis
-	/dis/disk/fdisk.dis
-	/dis/disk/kfs.dis
-	/dis/disk/kfs64.dis
-	/dis/disk/kfscmd.dis
-	/dis/disk/prep.dis
-	/dis/ip/dhcp.dis
-	/dis/ip/ping.dis
-	/dis/auth/factotum.dis
-	/dis/disk/calc.tab.dis
-	/dis/disk/pedit.dis
-	/dis/lib/arg.dis
-	/dis/lib/auth.dis
-	/dis/lib/bufio.dis
-	/dis/lib/daytime.dis
-	/dis/lib/dhcpclient.dis
-	/dis/lib/dial.dis
-	/dis/lib/disks.dis
-	/dis/lib/env.dis
-	/dis/lib/factotum.dis
-	/dis/lib/filepat.dis
-	/dis/lib/ip.dis
-	/dis/lib/names.dis
-	/dis/lib/nametree.dis
-	/dis/lib/rand.dis
-	/dis/lib/random.dis
-	/dis/lib/readdir.dis
-	/dis/lib/regex.dis
-	/dis/lib/ssl.dis
-	/dis/lib/string.dis
-	/dis/lib/styx.dis
-	/dis/lib/styxconv/new2old.dis
-	/dis/lib/styxconv/ostyx.dis
-	/dis/lib/styxpersist.dis
-	/dis/lib/styxservers.dis
-	/dis/lib/timers.dis
-	/dis/lib/workdir.dis
+	/dis/echo.dis	/dis32/echo.dis
+	/dis/ftest.dis	/dis32/ftest.dis
+	/dis/grep.dis	/dis32/grep.dis
+	/dis/ls.dis	/dis32/ls.dis
+	/dis/mntgen.dis	/dis32/mntgen.dis
+	/dis/mount.dis	/dis32/mount.dis
+	/dis/memfs.dis	/dis32/memfs.dis
+	/dis/dossrv.dis	/dis32/dossrv.dis
+	/dis/ns.dis	/dis32/ns.dis
+	/dis/ps.dis	/dis32/ps.dis
+	/dis/pwd.dis	/dis32/pwd.dis
+	/dis/read.dis	/dis32/read.dis
+	/dis/sh.dis	/dis32/sh.dis
+	/dis/sh.dis	/dis32/sh.dis
+	/dis/sh/std.dis	/dis32/sh/std.dis
+	/dis/unmount.dis	/dis32/unmount.dis
+	/dis/9660srv.dis	/dis32/9660srv.dis
+	/dis/disk/fdisk.dis	/dis32/disk/fdisk.dis
+	/dis/disk/kfs.dis	/dis32/disk/kfs.dis
+	/dis/disk/kfs64.dis	/dis32/disk/kfs64.dis
+	/dis/disk/kfscmd.dis	/dis32/disk/kfscmd.dis
+	/dis/disk/prep.dis	/dis32/disk/prep.dis
+	/dis/ip/dhcp.dis	/dis32/ip/dhcp.dis
+	/dis/ip/ping.dis	/dis32/ip/ping.dis
+	/dis/auth/factotum.dis	/dis32/auth/factotum.dis
+	/dis/disk/calc.tab.dis	/dis32/disk/calc.tab.dis
+	/dis/disk/pedit.dis	/dis32/disk/pedit.dis
+	/dis/lib/arg.dis	/dis32/lib/arg.dis
+	/dis/lib/auth.dis	/dis32/lib/auth.dis
+	/dis/lib/bufio.dis	/dis32/lib/bufio.dis
+	/dis/lib/daytime.dis	/dis32/lib/daytime.dis
+	/dis/lib/dhcpclient.dis	/dis32/lib/dhcpclient.dis
+	/dis/lib/dial.dis	/dis32/lib/dial.dis
+	/dis/lib/disks.dis	/dis32/lib/disks.dis
+	/dis/lib/env.dis	/dis32/lib/env.dis
+	/dis/lib/factotum.dis	/dis32/lib/factotum.dis
+	/dis/lib/filepat.dis	/dis32/lib/filepat.dis
+	/dis/lib/ip.dis	/dis32/lib/ip.dis
+	/dis/lib/names.dis	/dis32/lib/names.dis
+	/dis/lib/nametree.dis	/dis32/lib/nametree.dis
+	/dis/lib/rand.dis	/dis32/lib/rand.dis
+	/dis/lib/random.dis	/dis32/lib/random.dis
+	/dis/lib/readdir.dis	/dis32/lib/readdir.dis
+	/dis/lib/regex.dis	/dis32/lib/regex.dis
+	/dis/lib/ssl.dis	/dis32/lib/ssl.dis
+	/dis/lib/string.dis	/dis32/lib/string.dis
+	/dis/lib/styx.dis	/dis32/lib/styx.dis
+	/dis/lib/styxconv/new2old.dis	/dis32/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis	/dis32/lib/styxconv/ostyx.dis
+	/dis/lib/styxpersist.dis	/dis32/lib/styxpersist.dis
+	/dis/lib/styxservers.dis	/dis32/lib/styxservers.dis
+	/dis/lib/timers.dis	/dis32/lib/timers.dis
+	/dis/lib/workdir.dis	/dis32/lib/workdir.dis

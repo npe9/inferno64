@@ -22,6 +22,6 @@ SYSMODULES= \
 	tkclient.m\
 	workdir.m\
 
-DISBIN=$ROOT/dis/grid/lib
+DISBIN=$ROOT/$DISROOT/grid/lib
 
 <$ROOT/mkfiles/mkdis

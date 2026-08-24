@@ -31,7 +31,7 @@ SYSMODULES=\
 	string.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/ip
+DISBIN=$ROOT/$DISROOT/ip
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs

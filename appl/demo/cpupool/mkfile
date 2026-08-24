@@ -13,7 +13,7 @@ SYSMODULES= \
 	registries.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/demo/cpupool
+DISBIN=$ROOT/$DISROOT/demo/cpupool
 
 <$ROOT/mkfiles/mkdis
 

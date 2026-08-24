@@ -1,7 +1,20 @@
 BINTARG=${TARG:%=$DISBIN/%}
 MODDIR=$ROOT/module
 SYS_MODULE=${SYSMODULES:%=$MODDIR/%}
-LIMBOFLAGS=-I$MODDIR
+LIMBOFLAGS=-I$MODDIR -W $DISWORD
+
+#
+#	A module compiled for one Dis word size is not the module for the
+#	other, and the .dis left in the source directory carries no mark
+#	saying which it is.  Every .dis therefore depends on a stamp named
+#	for the width, and making the stamp removes the other one, so that
+#	changing DISWORD rebuilds rather than quietly reinstalling what is
+#	already there.
+#
+DISSTAMP=.disword-$DISWORD
+
+$DISSTAMP:
+	rm -f .disword-* && touch $target
 
 all:V:		$TARG
 
@@ -16,7 +29,7 @@ nuke:V:		nuke-std
 $DISBIN/%.dis:	%.dis
 	rm -f $DISBIN/$stem.dis && cp $stem.dis $DISBIN/$stem.dis
 
-%.dis:		$MODULES $SYS_MODULE
+%.dis:		$MODULES $SYS_MODULE $DISSTAMP
 
 %.dis:		%.b
 	limbo $LIMBOFLAGS -gw $stem.b
@@ -28,7 +41,7 @@ $DISBIN/%.dis:	%.dis
 %.installall:V:	$DISBIN/%.dis
 
 clean-std:V:
-	rm -f *.dis *.sbl
+	rm -f *.dis *.sbl .disword-*
 
 nuke-std:V:	clean-std
 	cd $DISBIN; rm -f $TARG
