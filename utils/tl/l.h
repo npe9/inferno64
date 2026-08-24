@@ -312,6 +312,15 @@ EXTERN	int	seenthumb;
  * mprofile turns each of those into a diagnostic naming the function.
  */
 EXTERN	int	mprofile;
+/*
+ * -F: the target's floating point extension is single precision only,
+ * which is what a Cortex-M4 has (FPv4-SP).  utils/tl/thumb.c gives every
+ * F register a double, the way the FPA this replaces did, so every
+ * floating point instruction it emits is a double precision one and none
+ * of them exists on such a core.  This says so at link time instead of
+ * leaving a fault to be found later.
+ */
+EXTERN	int	singlefp;
 EXTERN	int	armsize;
 
 EXTERN	int	doexp, dlm;

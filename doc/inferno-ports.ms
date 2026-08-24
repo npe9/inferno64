@@ -55,6 +55,7 @@ os/inferno/
   armv7m/     shared Cortex-M code
   mps2/       ARM MPS2 AN500, a Cortex-M7 in QEMU
   teensy41/   Teensy 4.1, an NXP i.MX RT1062
+  nucleof303/ ST NUCLEO-F303RE, an STM32F303RE
 .fi
 .PP
 A directory of shared code for a family of boards is part of that

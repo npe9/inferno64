@@ -15,6 +15,7 @@ any of them meant:
 armv7m/     the core: vectors, exceptions, spl, SysTick, no MMU
 mps2/       ARM MPS2 with the AN500 image \- a Cortex-M7 in QEMU
 teensy41/   Teensy 4.1, an NXP i.MX RT1062
+nucleof303/ ST NUCLEO-F303RE, an STM32F303RE
 .fi
 .PP
 .CW armv7m
@@ -62,6 +63,26 @@ the LPUART.  The first things to check on a real board are, in order:
 whether the ROM accepts the FlexSPI configuration block at all, whether
 anything comes out of pin 1 at 115200, and whether the clock the LPUART
 divides really is the 80MHz this assumes.
+.PP
+.B nucleof303
+does not fit.  That is a measurement rather than an opinion: with the
+smallest configuration that still links \- no root file system, no Limbo,
+no ip \- the text is 259416 bytes, which the 512K of flash holds, and the
+data and bss together are 88928, which the 80K of RAM does not, before
+any heap at all.  Its floating point is the second wall: a Cortex-M4 has
+FPv4-SP and no double precision, and
+.CW utils/tl/thumb.c
+gives every
+.CW F
+register a
+.CW D
+register, so
+.CW "tl -M -F"
+names every function that would fault.  The board support is here
+because it is what a Cortex-M4 with more memory would want and because
+the numbers are worth writing down;
+.CW os/inferno/nucleof303/NOTE
+has them.
 .NH 1
 The toolchain
 .PP

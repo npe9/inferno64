@@ -1,0 +1,57 @@
+NUCLEO-F303RE
+=============
+
+An STM32F303RE: a Cortex-M4 with 512K of flash, 64K of SRAM and 16K of
+core coupled memory, and a floating point extension that is single
+precision only.
+
+This kernel does not fit, and this is what that means in numbers.
+
+What was measured
+-----------------
+
+Linked with the configuration beside this file, which is the smallest
+one that still links -- no root file system, no Limbo, no ip, no ssl, no
+capabilities, no profiling:
+
+	text	259416	  flash is 524288, so this fits
+	data	 50368
+	bss	 38560
+		------
+		 88928	  RAM is 81920, so this does not
+
+That is before any heap at all.  Inferno wants hundreds of kilobytes of
+heap to load a Dis module into, and there is none left.
+
+The second wall
+---------------
+
+Even with the memory, the floating point would not work.  The Cortex-M4
+has FPv4-SP, which has no double precision instructions, and
+utils/tl/thumb.c gives every F register a D register -- the way the FPA
+it replaces held one value whatever the memory format was.  Linking with
+
+	tl -M -F ...
+
+names every function that would fault: the Dis interpreter's real
+arithmetic, its conversions, and everything in libmath.  A Cortex-M4
+needs software double precision before it can run any of this, either as
+calls the linker emits or as emulation from the fault, which is what
+os/inferno/port/fpiarm.c did for the FPA on ARM.
+
+What is here anyway
+-------------------
+
+The board itself: the clock tree taken to 64MHz off the internal
+oscillator with the flash wait states and the APB1 divider that go with
+it, and the USART the ST-LINK's virtual serial port is wired to on PA2
+and PA3.  None of it has been run.  It is written from RM0316 and the
+NUCLEO-64 schematic, and it is the part that a Cortex-M4 with more
+memory -- an STM32F4 or F7 -- would want, since those differ from this
+in their memory and their peripherals and not in their core.
+
+What would have to change
+-------------------------
+
+Software double precision, and a board with at least a quarter of a
+megabyte of RAM.  Neither is a change to this directory.

@@ -92,6 +92,9 @@ main(int argc, char *argv[])
 	case 'M':	/* ARMv7-M: Thumb only, no ARM state */
 		mprofile = 1;
 		break;
+	case 'F':	/* the target has single precision floating point only */
+		singlefp = 1;
+		break;
 	case 'H':
 		a = ARGF();
 		if(a)

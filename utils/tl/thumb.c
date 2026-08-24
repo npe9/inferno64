@@ -16,6 +16,8 @@ static void t2(long, long*, long*);
 static long vfpopd(int);
 static long vfpmem(int, int, int, int, int);
 
+static Sym *lastsinglefp;
+
 /*
  * The ARMv7-M floating point extension (VFPv4-D16 on a Cortex-M4, FPv5
  * on a Cortex-M7).  utils/tc is an ARM code generator and emits the FPA
@@ -769,6 +771,20 @@ thumbasmout(Prog *p, Optab *o)
 	rt = p->to.reg;
 	r = p->reg;
 	o1 = o2 = o3 = o4 = o5 = o6 = o7 = 0;
+	/*
+	 * Types 60 to 77 and 80 are the floating point ones, and every one
+	 * of them emits a double precision instruction: an F register here
+	 * is a D register.  A core with single precision only has none of
+	 * them.  Say so once for the function rather than for each
+	 * instruction in it.
+	 */
+	if(singlefp && ((o->type >= 60 && o->type <= 77) || o->type == 80)){
+		if(curtext != P && curtext->from.sym != S
+		&& curtext->from.sym != lastsinglefp){
+			lastsinglefp = curtext->from.sym;
+			diag("uses double precision floating point, which this target has not");
+		}
+	}
 if(debug['P']) print("%ulx: %P	type %d %d\n", (ulong)(p->pc), p, o->type, p->align);
 	opcount[o->type] += o->size;
 	switch(o->type) {

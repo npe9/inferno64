@@ -1,0 +1,103 @@
+# nucleof303 - an ST NUCLEO-F303RE: an STM32F303RE, which is a Cortex-M4
+# with 512K of flash and 80K of RAM.
+#
+# The core is an ARMv7-M like the ones os/inferno/mps2 and
+# os/inferno/teensy41 run on, so os/inferno/armv7m is shared.  What is
+# only here is the board: its clock tree and the USART the ST-LINK's
+# virtual serial port is wired to.
+#
+# There is no root file system in this configuration and no Limbo
+# userland.  80K of RAM is not enough to hold either; see nucleof303(6)
+# for what does fit and what does not.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+
+# the order matters: a library with an undefined symbol at the end
+# makes the loader complain
+lib
+	interp
+	keyring
+	sec
+	mp
+	math
+	kern
+
+# the portable kernel this board takes, and its own code beside it.
+# archnucleof303 and the rest are objects and nothing more; naming them
+# under misc would have mkdevc build a PCArch table for them, which is
+# the PC's abstraction and not this board's.
+port
+	alarm
+	alloc
+	allocb
+# the board has its own auth.c, named in the mkfile
+	chan
+	dev
+	dis
+	discall
+# edf wants a microsecond clock this board does not export
+	dial
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+# randomarmv7m is the entropy these boards have; the portable random.c
+# wants a libsec newer than the one this tree shares
+	sysfile
+	taslock
+	xalloc
+
+	archnucleof303
+	randomarmv7m
+	screenarmv7m
+
+# uartstm32 is this board's PhysUart -- mkdevc turns a misc name
+# beginning uart into <rest>physuart, so uartstm32 gives stm32physuart.
+misc
+	uartstm32
+
+mod
+	sys
+
+init
+	armv7minit
+
+code
+	int main_pool_pcnt = 40;
+	int heap_pool_pcnt = 40;
+	int image_pool_pcnt = 20;
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+# Nothing.  There is no room for a Limbo userland on this board and
+# nowhere to put one; osinit.dis is the whole of it, and even that is
+# more than the memory will hold.  See nucleof303(6).
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/n	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/osinit.dis
