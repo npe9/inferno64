@@ -62,6 +62,24 @@ CHECKS = [
   ["{ /tmp/ring osprey1 $sz wait 3 & }; sleep 2; echo semup 2 3 >/n/osprey/ctl",
    "sleep 2; echo waited"],
   "select returned, arm 1"),
+ # the policy layer has had runtimeblock and runtimewake from the start
+ # and nothing called either, so a container asleep in a select called
+ # itself runnable however long it waited
+ # waited for rather than slept for: how long a backgrounded program
+ # takes to reach its select is not what is being measured, and a fixed
+ # sleep made this fail about one run in four
+ ("a container waiting in a select saying so",
+  ["{ /tmp/ring osprey1 $sz wait 4 & }",
+   "for(i in 1 2 3 4 5 6 7 8){ if(grep -s '^proc 2 core [0-9]* blocked' "
+   "/n/osprey/status) break; sleep 1 }",
+   "grep '^proc 2 ' /n/osprey/status | sed 's/proc 2 core [0-9]* /state /; s/ budget.*//'"],
+  "state blocked"),
+ ("and runnable again once it has been given what it waited for",
+  ["echo semup 2 4 >/n/osprey/ctl",
+   "for(i in 1 2 3 4 5 6 7 8){ if(grep -s '^proc 2 core [0-9]* runnable' "
+   "/n/osprey/status) break; sleep 1 }",
+   "grep '^proc 2 ' /n/osprey/status | sed 's/proc 2 core [0-9]* /state /; s/ budget.*//'"],
+  "state runnable"),
  ("a page handed from one container to another, mapped and not copied",
   ["echo page 1 alloc >/n/osprey/ctl",
    "/tmp/ring osprey0 $sz page ospreypage0 'handed over'",
@@ -381,10 +399,20 @@ CHECKS = [
   ["ps | awk '$2=='^$u",
    "echo kill >/proc/$b/ctl; echo kill >/proc/$u/ctl; echo done"],
   "!Stopped"),
+ # each count is waited for rather than read straight away: a kproc
+ # takes a moment to start and a moment to finish, and reading the
+ # number before it has is what made this fail about one run in four.
+ # Waiting bounded still fails if the number never arrives, which is
+ # what the check is actually about.
  ("the wire pi-p is spoken on given back when it is turned off",
-  ["echo pipether ether0 on >/n/osprey/ctl; a=`{ps|grep ospreypip|wc -l}",
-   "echo pipether ether0 off >/n/osprey/ctl; b=`{ps|grep ospreypip|wc -l}",
-   "echo pipether ether0 on >/n/osprey/ctl; sleep 1; c=`{ps|grep ospreypip|wc -l}",
+  ["fn waitpip { for(i in 1 2 3 4 5 6 7 8){ "
+   "if(~ `{ps|grep ospreypip|wc -l} $1) break; sleep 1 } }",
+   "echo pipether ether0 on >/n/osprey/ctl; waitpip 2",
+   "a=`{ps|grep ospreypip|wc -l}",
+   "echo pipether ether0 off >/n/osprey/ctl; waitpip 0",
+   "b=`{ps|grep ospreypip|wc -l}",
+   "echo pipether ether0 on >/n/osprey/ctl; waitpip 2",
+   "c=`{ps|grep ospreypip|wc -l}",
    "echo wire $a $b $c; echo pipether ether0 off >/n/osprey/ctl"],
   "wire 2 0 2"),
  ("a container that scribbles over its own map not taking the machine with it",

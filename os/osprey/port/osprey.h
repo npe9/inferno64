@@ -19,6 +19,9 @@ uvlong		ospreyarenasize(void);
 uvlong		ospreyslice(Ospreyproc*);
 char*		ospreysegname(Ospreyproc*);
 char*		ospreypagesegname(uvlong off);
+/* the rule that forms a slice's name and a page's, in one place */
+char*		ospreyslicename(int slot);
+char*		ospreypagename(uvlong i);
 uvlong		ospreyslicesize(void);
 int		ospreyindex(Ospreyproc*);
 ulong		ospreycoreof(Ospreyproc*);
@@ -59,13 +62,15 @@ void		ospreysetpid(Ospreyproc*, int pid);
 int		ospreymigrate(Ospreyproc*, ulong core, uvlong now);
 int		ospreycharge(ulong core, uvlong amount, uvlong now);
 int		ospreylimit(Ospreyproc*, ulong memory, ulong netbytes, ulong netpackets);
+/* a container that is waiting, and one with something to wait for */
+int		ospreyblock(Ospreyproc*);
+int		ospreyunblock(Ospreyproc*, uvlong now);
 void		ospreymemrelease(Ospreyproc*, ulong bytes);
 int		ospreynetcharge(Ospreyproc*, ulong bytes, ulong packets);
 void		ospreynetrelease(Ospreyproc*, ulong bytes, ulong packets);
 
 int		ospreysubmit(Ospreyproc*, uvlong op, uvlong *arg);
 int		ospreycollect(Ospreyproc*, uvlong *op, long *status, uvlong *arg);
-int		ospreyservice(uvlong now);
 int		ospreyservicep(Ospreyproc*, uvlong now);
 int		ospreydelegate(Ospreyproc*, Ospreyproc *server);
 Ospreyproc*	ospreyserverof(Ospreyproc*);

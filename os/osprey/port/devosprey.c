@@ -631,6 +631,8 @@ static int ospreytxsem[16];		/* and the one a freed transmit buffer gives */
 static void ospreytxdone(Bpool*);
 static uvlong ospreytxavail(int);
 static void ospreytellandwake(Ospreyproc*, int);
+static void ospreyawake(int, uvlong);
+static uvlong ospreynow(void);
 static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
 /*
  * And its transmit buffers, also in the span.  The Blocks are kept so
@@ -1268,6 +1270,24 @@ done:
  * business.  Nothing replies to these; they are the kernel telling a
  * server something about a container it answers for.
  */
+/*
+ * A container's own process is about to wait, and has stopped waiting.
+ * The policy layer has had runtimeblock and runtimewake from the start
+ * and nothing called either, so a container asleep in a select stayed on
+ * its core's run queue and called itself runnable however long it
+ * waited.  The wake is guarded by the container's identity as well as
+ * its slot: the sleep drops the lock, and the slot may hold somebody
+ * else by the time it returns.
+ */
+static void
+ospreyawake(int x, uvlong id)
+{
+	Ospreyproc *q;
+
+	if((q = ospreyat(x)) != nil && ospreyid(q) == id)
+		ospreyunblock(q, ospreynow());
+}
+
 static void
 ospreytellandwake(Ospreyproc *p, int op)
 {
@@ -1518,14 +1538,14 @@ ospreypublish(void)
 		USED(p);
 	}
 	/*
-	 * The containers do not exist yet, so their segments are named
-	 * from the same rule the adapter uses.
+	 * The containers do not exist yet, so the names come from the
+	 * adapter, which is where the rule that forms one lives.
 	 */
 	for(i = 0; i < ospreynproc() && ospreynseg < nelem(ospreyseg); i++){
 		ps = &ospreyseg[ospreynseg];
 		ps->attr = SG_PHYSICAL;
 		ps->name = smalloc(16);
-		snprint(ps->name, 16, "osprey%d", i);
+		snprint(ps->name, 16, "%s", ospreyslicename(i));
 		ps->pa = PADDR(ospreybase) + (uvlong)i*sz;
 		ps->size = sz;
 		if(addphysseg(ps) != nil)
@@ -1539,7 +1559,7 @@ ospreypublish(void)
 		ps = &ospreyseg[ospreynseg];
 		ps->attr = SG_PHYSICAL;
 		ps->name = smalloc(16);
-		snprint(ps->name, 16, "ospreypage%llud", n);
+		snprint(ps->name, 16, "%s", ospreypagename(n));
 		ps->pa = PADDR(ospreybase) + off + n*BY2PG;
 		ps->size = BY2PG;
 		if(addphysseg(ps) != nil)
@@ -3217,6 +3237,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	Selwait sw;
 	char *nm;
 	uvlong arg[Ospreynarg];
+	uvlong waitid;		/* whose wait it is, across a sleep */
 	int i, op, x;
 
 	if((ulong)c->qid.path == Qarena)
@@ -3274,14 +3295,18 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			while(!ospreyreplyready(p)){
 				if((x = ospreyindex(p)) < 0)
 					error(Enonexist);
+				waitid = ospreyid(p);
+				ospreyblock(p);
 				qunlock(&ospreylock);
 				if(waserror()){
 					qlock(&ospreylock);
+					ospreyawake(x, waitid);
 					nexterror();
 				}
 				sleep(&ospreyreplyrend[x], ospreyreply, p);
 				poperror();
 				qlock(&ospreylock);
+				ospreyawake(x, waitid);
 				p = ospreyproc(cb->f[0]);
 			}
 			ospreycollect(p, &op, &status, arg);
@@ -3532,14 +3557,18 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		while(ospreyrequestfull(p)){
 			if((x = ospreyindex(p)) < 0)
 				error(Enonexist);
+			waitid = ospreyid(p);
+			ospreyblock(p);
 			qunlock(&ospreylock);
 			if(waserror()){
 				qlock(&ospreylock);
+				ospreyawake(x, waitid);
 				nexterror();
 			}
 			sleep(&ospreyroomrend[x], ospreyroom, p);
 			poperror();
 			qlock(&ospreylock);
+			ospreyawake(x, waitid);
 			p = ospreymine(cb->f[1]);
 		}
 		if(ospreysubmit(p, op, arg) < 0)
@@ -3931,14 +3960,18 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		while((i = ospreyselectready(p, sw.armoff, sw.narms)) == -1){
 			if((x = ospreyindex(p)) < 0)
 				error(Enonexist);
+			waitid = ospreyid(p);
+			ospreyblock(p);
 			qunlock(&ospreylock);
 			if(waserror()){
 				qlock(&ospreylock);
+				ospreyawake(x, waitid);
 				nexterror();
 			}
 			sleep(&ospreyselrend[x], ospreyselok, &sw);
 			poperror();
 			qlock(&ospreylock);
+			ospreyawake(x, waitid);
 			p = ospreymine(cb->f[1]);
 			sw.p = p;
 		}
@@ -4095,14 +4128,18 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		while(!ospreyreplyready(p)){
 			if((x = ospreyindex(p)) < 0)
 				error(Enonexist);
+			waitid = ospreyid(p);
+			ospreyblock(p);
 			qunlock(&ospreylock);
 			if(waserror()){
 				qlock(&ospreylock);
+				ospreyawake(x, waitid);
 				nexterror();
 			}
 			sleep(&ospreyreplyrend[x], ospreyreply, p);
 			poperror();
 			qlock(&ospreylock);
+			ospreyawake(x, waitid);
 			p = ospreymine(cb->f[1]);
 		}
 		break;

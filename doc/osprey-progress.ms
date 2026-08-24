@@ -83,6 +83,15 @@ the same rings and the same select, and the answer is routed home.  The
 server forks a process with a descriptor group of its own for each
 container it answers for, so what it opens for one is not in another's.
 .PP
+.B "A container that says when it is waiting."
+A container's own process blocking takes it off its core's run queue and
+marks it
+.CW blocked ,
+and waking puts it back, so the scheduler chooses between containers
+that can run and
+.CW status
+says which is which.  Its reservation refills while it waits.
+.PP
 .B "A name space a container carries."
 What a container calls a thing is its own table in the policy layer, is
 written into its checkpoint, and is what every
@@ -203,7 +212,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Seventy-five lines, all
+a line at a time.  Seventy-seven lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -806,6 +815,66 @@ than this kernel gives one is refused rather than read in part, which
 matters because
 .CW *ospreysem
 is settable and two machines may now disagree.
+.PP
+A last pass with the same question, this time mechanical: every function
+the policy layer defines, against every call site in
+.CW os/osprey .
+Three were called from nowhere at all.
+.CW runtimeblock
+and
+.CW runtimewake
+are the policy layer's own account of a container that is waiting \-
+off its core's run queue, marked
+.CW ProcessBlocked
+\- and nothing called either, so a container asleep in a select stayed
+on the run queue and called itself
+.CW runnable
+however long it waited: the scheduler chose between containers that
+could run and containers that could not, the state in
+.CW status
+was never anything but
+.CW runnable ,
+and a checkpoint carried that.  A container's own process now blocks and
+wakes at each of the four places it sleeps \- a select, a reply, room on
+a ring, and the reply wait \- with the wake guarded by the container's
+identity as well as its slot, since the sleep drops the lock and the slot
+may hold somebody else by the time it returns.  Its period refills while
+it waits, because a reservation is time it is owed whether it is running
+or not.
+.PP
+The third,
+.CW runtimeservice ,
+was a loop over every container that the device had replaced with a
+per-container call and its own guards.  It is gone, and so is
+.CW ospreyservice ,
+which was the adapter's copy of the same idea.  The rule this settled
+on: a duplicate mechanism with fewer guards than the real one is a trap
+for whoever calls it next and is removed, while a plain accessor nothing
+happens to call is not, and stays.
+.PP
+The same pass over the adapter found the naming rule in two places.
+.CW devosprey.c
+formed
+.CW osprey%d
+and
+.CW ospreypage%llud
+itself when it published the segments, with a comment saying it used the
+same rule as the adapter; and a name here is a capability, so two copies
+of the rule that decides which container's memory a name reaches is not
+a thing to keep by hand.  It is
+.CW ospreyslicename
+and
+.CW ospreypagename
+now, in the adapter, and the device and the create path both ask.
+.PP
+And a check that had been failing about one run in four turned out to be
+the check.
+.CW "the wire \[*p]p is spoken on given back when it is turned off"
+counted kernel processes immediately after asking for them to start and
+to stop; a kproc takes a moment to do either.  It waits for the number
+now, bounded, so it still fails if the number never arrives \- which is
+what it is actually about.  The two new lines beside it were written the
+same way rather than with a sleep.
 .PP
 Environments were the other half of the question and are a shorter
 answer: nothing in

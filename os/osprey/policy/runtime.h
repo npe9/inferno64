@@ -23,6 +23,5 @@ int runtimeexit(Runtime*, Process*);
 int runtimebalance(Runtime*, uvlong);
 Task* runtimenext(Runtime*, ulong, uvlong);
 int runtimeserve(Runtime*, Process*, Handler, void*);
-int runtimeservice(Runtime*, Handler, void*);
 
 #endif

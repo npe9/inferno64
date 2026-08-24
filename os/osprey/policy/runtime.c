@@ -152,18 +152,3 @@ runtimeserve(Runtime *r, Process *p, Handler handler, void *arg)
 	return 1;
 }
 
-int
-runtimeservice(Runtime *r, Handler handler, void *arg)
-{
-	ulong i;
-
-	if(r == nil || handler == nil || r->process == nil)
-		return -1;
-	for(i = 0; i < r->nprocess; i++){
-		if(r->process[i] == nil)
-			continue;
-		if(runtimeserve(r, r->process[i], handler, arg) > 0)
-			return 1;
-	}
-	return 0;
-}

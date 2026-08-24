@@ -626,6 +626,37 @@ ospreyslicesize(void)
  * A container's slice is a segment of its own, so that attaching one
  * gets that container's memory and nobody else's.
  */
+/*
+ * The name of a slice and the name of a page.  A name here is a
+ * capability and not merely a name, so the rule that forms one is
+ * written once: the device publishes these segments before any
+ * container exists and cannot ask a container for its own name, and it
+ * used to form them from a copy of this rule with a comment saying so.
+ * Two copies of a rule that decides which container's memory a name
+ * reaches is not a thing to keep by hand.
+ */
+char*
+ospreyslicename(int slot)
+{
+	static char buf[Segnamelen];
+
+	if(slot < 0 || slot >= Nproc)
+		return nil;
+	seprint(buf, buf + sizeof buf, "osprey%d", slot);
+	return buf;
+}
+
+char*
+ospreypagename(uvlong i)
+{
+	static char buf[Segnamelen];
+
+	if(i >= Npage)
+		return nil;
+	seprint(buf, buf + sizeof buf, "ospreypage%llud", i);
+	return buf;
+}
+
 char*
 ospreysegname(Ospreyproc *p)
 {
@@ -645,7 +676,9 @@ ospreypagesegname(uvlong off)
 	if(off < pagebase || off >= pagebase + (uvlong)Npage*Pagesize)
 		return nil;
 	i = (off - pagebase)/Pagesize;
-	s = seprint(buf, buf+sizeof buf, "ospreypage%llud", i);
+	if((s = ospreypagename(i)) == nil)
+		return nil;
+	s = seprint(buf, buf+sizeof buf, "%s", s);
 	USED(s);
 	return buf;
 }
@@ -952,7 +985,8 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	memset(p, 0, sizeof *p);
 
 	p->slice = (uvlong)slot * slicesize;
-	seprint(p->segname, p->segname + Segnamelen, "osprey%d", slot);
+	seprint(p->segname, p->segname + Segnamelen, "%s",
+		ospreyslicename(slot));
 	base = arena + p->slice;
 	memset(base, 0, slicesize);
 	m = (Ospreymap*)base;
@@ -1267,9 +1301,19 @@ ospreytick(ulong core, Ospreyproc *running, uvlong amount, uvlong now)
 	 */
 	for(i = 0; i < Nproc; i++){
 		q = plist[i];
-		if(q == nil || q->core != core || q->state != ProcessRunnable)
+		if(q == nil || q->core != core)
 			continue;
+		if(q->state != ProcessRunnable && q->state != ProcessBlocked)
+			continue;
+		/*
+		 * A period refills whether the container is waiting or not:
+		 * a reservation is time it is owed, and it is owed it while
+		 * it waits.  What a waiting container does not get is a
+		 * place on the run queue, since there is nothing to run.
+		 */
 		containerrefill(&q->container, now);
+		if(q->state != ProcessRunnable)
+			continue;
 		if(q->container.strict == 0 || budgetok(&q->task, amount)){
 			if(q->task.runnable == 0)
 				coreenqueue(c, &q->task, now);
@@ -1333,6 +1377,43 @@ ospreynetrelease(Ospreyproc *p, ulong bytes, ulong packets)
 	if(p == nil || p->used == 0)
 		return;
 	netrelease(&p->process.container, bytes, packets);
+}
+
+/*
+ * A container that is waiting, and one that has been given something to
+ * wait for.  The policy layer has had both of these from the start and
+ * nothing called either, so a container blocked in a select stayed on
+ * its core's run queue and said "runnable" in status however long it
+ * waited: the scheduler chose between containers that could run and
+ * containers that could not, and a checkpoint carried a state that was
+ * never anything else.
+ */
+int
+ospreyblock(Ospreyproc *p)
+{
+	int r;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	ready();
+	lockall();
+	r = runtimeblock(&runtime, &p->process);
+	unlockall();
+	return r;
+}
+
+int
+ospreyunblock(Ospreyproc *p, uvlong now)
+{
+	int r;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	ready();
+	lockall();
+	r = runtimewake(&runtime, &p->process, now);
+	unlockall();
+	return r;
 }
 
 int
@@ -1484,28 +1565,6 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 	}
 	rep->status = ospreykernop((Ospreyproc*)p, req->message.op,
 		&req->message.arg[2], &rep->message.arg[2]);
-	return 0;
-}
-
-/*
- * Serve one request from whichever container has one.  A container that
- * answers for others is passed over: what is on its ring is there for the
- * process serving it, and the kernel answering it first would take the
- * work away from exactly the service this exists to allow.
- */
-int
-ospreyservice(uvlong now)
-{
-	int i;
-
-	ready();
-	runtime.now = now;
-	for(i = 0; i < Nproc; i++){
-		if(procs[i].used == 0 || procs[i].serving)
-			continue;
-		if(runtimeserve(&runtime, &procs[i].process, dispatch, nil) > 0)
-			return 1;
-	}
 	return 0;
 }
 

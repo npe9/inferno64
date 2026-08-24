@@ -1399,6 +1399,27 @@ is a policy fiction until
 .B bindproc
 makes it a real one.
 .PP
+A container that is waiting says so.  It comes off its core's run queue
+while its own process sleeps \- in a
+.BR select ,
+waiting for a reply, or waiting for room on its ring \- and goes back on
+when it is woken, so
+.B status
+says
+.B blocked
+rather than
+.BR runnable ,
+and the scheduler chooses between containers that can run.  Its period
+still refills while it waits: a reservation is time the container is
+owed and it is owed it whether it is running or not.  The policy layer
+has had
+.I runtimeblock
+and
+.I runtimewake
+from the start and nothing called either, so until now a container
+asleep in a select called itself runnable however long it waited, and a
+checkpoint carried a state that was never anything else.
+.PP
 A packet is charged against a container's network caps while it sits in
 its queue and given back when it is taken, and a frame the container
 sends is charged while the card has it and given back when the card has
