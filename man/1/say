@@ -31,7 +31,9 @@ say \- speak, through ml(3)
 .I id ...
 .SH DESCRIPTION
 .B Say
-runs a voice model and writes the result to
+runs a voice model, through
+.IR voice (2),
+and writes the result to
 .B /dev/audio
 \(em or to
 .I file
@@ -56,6 +58,19 @@ and names the word, rather than being guessed at.
 That front end is deliberately outside the synthesizer: turning spelling into
 sounds is a separate job with its own failure mode, and a wrong guess is silent
 where a refusal is not.
+.PP
+Either
+.B -t
+or
+.B -p
+can be given more than once, in any order relative to each other.
+Each repeat is another utterance, spoken in the order given, through one model
+load \(em not one load per utterance, which is what made a script with several
+lines to say cost seconds it did not need to.
+Flags must come before any bare
+.I id...
+arguments; this parser stops looking for flags at the first one it does not
+recognise.
 .PP
 .B -u
 asks
@@ -125,29 +140,39 @@ Saying the word twice gives 0.94 seconds rather than 0.69 \(em longer, and not
 double, because the model's duration predictor treats the phrase as a unit.
 .SH SOURCE
 .B /appl/cmd/say.b
+.br
+.B /appl/lib/voice.b
 .SH SEE ALSO
+.IR voice (2),
+.IR speakertest (1),
+.IR phon (2),
 .IR ml (3),
 .IR audio (3)
 .SH BUGS
-.B "One utterance per emu process."
-The second faults inside the host's neural library.
-.I Emu
-aliases the libc allocators into its own pool and
-.I onnxruntime
-uses several the aliasing does not cover \(em
-.BR posix_memalign ,
-.BR aligned_alloc ,
-the
-.B malloc_zone
-calls \(em so it allocates on one heap and frees on the other.
-It is not memory exhaustion and not threading; both were tried.
-See
-.B doc/hpc-plan.md
-for the diagnosis and what fixing it would take.
+Flags must come before any bare
+.I id...
+arguments \(em see DESCRIPTION.
+A flag placed after one is silently swallowed as more ids rather than
+rejected: the parser stops recognising flags at the first argument it does
+not know what to do with, and Limbo's
+.B int
+of something that is not a number is 0 rather than an error, so it does not
+even fail loudly.
 .PP
-This is why
-.B /lib/demo/tour.sh
-does not yet run: it speaks five times.
+.B -o
+to a file, given more than one
+.B -t
+or
+.BR -p ,
+keeps only the last utterance: each write to a named file starts it over,
+where
+.B /dev/audio
+does not.
+See
+.IR voice (2)'s
+own BUGS for why \(em it is
+.BR play 's
+behaviour, not something this front end adds to it.
 .PP
 One voice, named in the source as a default.
 .PP

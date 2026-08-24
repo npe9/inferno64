@@ -92,6 +92,7 @@ TARG=\
 	mltest.dis\
 	phontest.dis\
 	voicetest.dis\
+	speakertest.dis\
 	speak.dis\
 	pdetest.dis\
 	playmovie.dis\

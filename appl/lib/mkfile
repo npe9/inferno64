@@ -103,6 +103,7 @@ TARG=\
 	pop3.dis\
 	popup.dis\
 	phon.dis\
+	voice.dis\
 	plot.dis\
 	powerman.dis\
 	profile.dis\

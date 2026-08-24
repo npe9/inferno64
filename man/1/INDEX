@@ -488,6 +488,7 @@ slice sh-string
 sort sort
 span span
 speak speak
+speakertest speakertest
 split sh-std
 splitl sh-string
 splitr sh-string

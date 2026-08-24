@@ -1,0 +1,94 @@
+.TH SPEAKERTEST 1
+.SH NAME
+speakertest \- check voice(2), the held-open voice model
+.SH SYNOPSIS
+.B speakertest
+.SH DESCRIPTION
+.B Speakertest
+checks
+.IR voice (2)
+and, because
+.IR say (1)
+is built on it, protects
+.I say
+from a regression in either the model-loading or the per-utterance protocol
+that used to live in
+.I say
+itself.
+It prints
+.B PASS
+or a
+.B FAIL
+line per problem.
+.PP
+It needs the model and a pool big enough to hold it, so it is not part of
+.IR runtests (1)'s
+default sweep \(em run it the way
+.IR say (1)
+documents:
+.IP
+.EX
+emu -pmain=512m -pheap=512m ... speakertest
+.EE
+.SH "WHAT CAN AND CANNOT BE TESTED"
+Nothing here can hear, so \(em like
+.IR voicetest (1)
+and
+.IR phontest (1)
+\(em this does not claim any utterance sounds right.
+Two things can be established and both are.
+.SS "A second utterance is fast"
+That is the entire reason this module exists rather than
+.I say
+loading the model for itself each time.
+The check is a ratio, not a fixed number of milliseconds: a second call to
+.B speak
+must take under a quarter of what
+.B open
+took to load the model.
+Speed only means anything relative to the cost it is not paying again \(em on
+a slower machine both numbers move together, so a ratio is what survives
+moving to different hardware and a fixed threshold would not.
+.SS "feedids agrees with speak"
+.IR Say (1)'s
+lowest-level form, bare phoneme ids typed by hand, calls
+.B feedids
+directly to show the model's own input rather than have
+.B speak
+build the same sequence invisibly.
+This reconstructs that sequence independently \(em by calling
+.B lookup
+itself rather than reusing
+.BR speak 's
+internals \(em and checks that feeding it through
+.B feedids
+gives an utterance comparable in length to what
+.B speak
+returns, with real signal in it.
+.PP
+Not the same bytes: a
+.SM VITS
+voice is stochastic by design, and this test found that out by trying exact
+equality first.
+It failed on the first sample by under a thousandth, which is
+.IR voice (2)
+working as documented, not a bug in either function \(em see its BUGS.
+.SH SOURCE
+.B /appl/cmd/speakertest.b
+.SH SEE ALSO
+.IR say (1),
+.IR voice (2),
+.IR phontest (1),
+.IR voicetest (1)
+.SH BUGS
+The speed check is a ratio against one machine's model-load time, on one run.
+It has not been seen to be flaky, but it has also not been run enough times
+on enough machines to promise it never will be.
+.PP
+It also spot-checks
+.B pcmbytes
+and a
+.B play
+to a file, neither of which needs the model, but neither is the point of this
+test and both would be caught just as well by any caller that used them
+wrong.
