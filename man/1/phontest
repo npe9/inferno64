@@ -45,10 +45,12 @@ at U+0261 and does not know
 .BR g .
 In most fonts they are the same shape.
 Substituting one for the other in two entries is caught by name.
-.SS "The tour is sayable"
-Every word
-.B /lib/demo/tour.sh
+.SS "The tutorials are sayable"
+Every word every script in
+.B /lib/demo
 narrates is looked up.
+The whole directory rather than a named file, so that writing a new tutorial
+puts it under this check without anyone having to remember to.
 Without this a tour with a missing word still fails \(em
 .IR say (1)
 refuses it by name \(em but it fails part way through, after some of the
@@ -70,7 +72,7 @@ against \(em there is no second implementation to compare with, as
 .IR mltest (1)
 has.
 .PP
-It checks the tour in
+It checks
 .B /lib/demo
-and no other script.
-A tutorial kept elsewhere is not covered until it is run.
+and nowhere else.
+A tutorial kept somewhere else is not covered until it is run.

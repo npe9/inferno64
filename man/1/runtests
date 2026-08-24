@@ -131,10 +131,10 @@ In both cases the other tests still ran, which is the point.
 has the full table, including what each graphical test checks.
 .SH "ONE TEST REACHES OUTSIDE appl"
 .IR phontest (1)
-checks that every word
-.B /lib/demo/tour.sh
-narrates is in the lexicon, so editing the tour to say a new word without
-adding that word makes this suite fail rather than the demo.
+checks that every word the tutorials in
+.B /lib/demo
+narrate is in the lexicon, so editing one to say a new word without adding that
+word makes this suite fail rather than the demo.
 That is deliberate \(em a tutorial should be known to be sayable before anyone
 runs it \(em but it is the only test here that depends on a file outside
 .BR /appl ,

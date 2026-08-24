@@ -36,7 +36,7 @@ include "phon.m";
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
 Voice:	con "/lib/ml/voices/en_US-lessac-low.onnx.json";
-Tour:	con "/lib/demo/tour.sh";
+Demos:	con "/lib/demo";
 
 fail := 0;
 
@@ -67,7 +67,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	symbols();
 	refuses();
 	shape();
-	covers(Tour);
+	covers(Demos);
 
 	if(fail)
 		raise "fail:test";
@@ -166,19 +166,50 @@ refuses()
 }
 
 #
-# Every word the tour narrates has to be in the lexicon.
+# Every word every tutorial narrates has to be in the lexicon.
 #
-# Without this the tour still fails on a missing word - say(1) refuses it by
+# Without this a tutorial still fails on a missing word - say(1) refuses it by
 # name - but it fails part way through, after some of the narration has already
-# been spoken, which is a poor way to find out. Checking the script here means a
-# tutorial is known to be sayable before anyone runs it.
+# been spoken, which is a poor way to find out. Checking the scripts here means
+# a tutorial is known to be sayable before anyone runs it.
 #
-covers(path: string)
+# The whole directory rather than one named file, so that writing a new
+# tutorial puts it under this check without anyone remembering to.
+#
+covers(dir: string)
+{
+	fd := sys->open(dir, Sys->OREAD);
+	if(fd == nil){
+		bad(sprint("%s: %r", dir));
+		return;
+	}
+	nsaid := 0;
+	nfile := 0;
+	for(;;){
+		(nd, d) := sys->dirread(fd);
+		if(nd <= 0)
+			break;
+		for(i := 0; i < nd; i++){
+			nm := d[i].name;
+			if(len nm < 3 || nm[len nm - 3:] != ".sh")
+				continue;
+			nfile++;
+			nsaid += narration(dir + "/" + nm);
+		}
+	}
+	if(nfile == 0)
+		bad(sprint("%s holds no tutorials; this check tested nothing", dir));
+	else if(nsaid == 0)
+		bad(sprint("%s: %d scripts and no narration in any of them", dir, nfile));
+}
+
+# every `say -t` line in one script. Returns how many it found.
+narration(path: string): int
 {
 	b := bufio->open(path, Bufio->OREAD);
 	if(b == nil){
 		bad(sprint("%s: %r", path));
-		return;
+		return 0;
 	}
 	n := 0;
 	while((l := b.gets('\n')) != nil){
@@ -198,8 +229,7 @@ covers(path: string)
 			bad(sprint("%s narrates %#q, which is not in the lexicon", path, err));
 	}
 	b = nil;
-	if(n == 0)
-		bad(sprint("%s has no narration lines; this check tested nothing", path));
+	return n;
 }
 
 #

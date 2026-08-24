@@ -178,3 +178,13 @@ voice	vˈɔɪs
 world	wˈɜːld
 write	ɹˈaɪt
 written	ɹˈɪtən
+
+# --- added for lib/demo/namespace.sh -----------------------------------------
+another	ɐnˈʌðɚ
+bound	bˈaʊnd
+different	dˈɪfɹənt
+else	ˈɛls
+has	hˈæz
+own	ˈoʊn
+sees	sˈiːz
+view	vjˈuː
