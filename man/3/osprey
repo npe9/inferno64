@@ -275,12 +275,17 @@ the server leaves on its reply ring is routed back to them.  The server
 is an ordinary process with the span mapped: nothing of the service is in
 the kernel but the routing.
 .TP
-.BI ether " id name " [ n | off ]
+.BI ether " id name " [ "n" [ t ] | off ]
 Give the container the ethernet interface called
 .I name
 -- \fBether0\fP -- with each packet giving the container's
 .IR n th
-semaphore.  A packet that arrives for a claimed interface is charged
+semaphore.  A
+.I t
+after it names a second semaphore, which is given when the card has
+finished with a transmit buffer, so that a container with every buffer
+in flight can wait rather than offer one and be refused.  A packet that
+arrives for a claimed interface is charged
 against the container's network caps and queued for it whole, without
 being copied and without reaching the rest of the network stack.  A
 container that is over its caps, or has no room, refuses the packet and
@@ -812,6 +817,8 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .br
 .B /os/osprey/cmd/p9srv.c
 .br
+.B /os/osprey/cmd/netsrv.c
+.br
 .B /os/osprey/adapter/ospreyrt.c
 .br
 .B /os/osprey/devosprey.c
@@ -854,11 +861,24 @@ checkpoint signed by a key the other end does not hold refused with the
 container kept where it was, and one too big for a frame refused rather
 than half sent.
 .PP
+.B /scripts/osprey-check-net.py
+boots two on one wire as well, gives one machine's interface to a
+container, runs
+.I netsrv
+in it and pings that container's address from the other machine, which
+knows nothing about any of it.  It settles two things nothing before it
+could: that a frame a container built and handed to the card really
+arrives at the other end of the wire, because the other end answers it
+-- eight echo requests, eight replies -- and that once the driver's own
+two hundred and fifty-six receive buffers have been used up the frames
+land in the container's, which four hundred more pings show as
+.B "direct 14 copied 396" .
+.PP
 Each says
 .B ok
 or
 .B FAIL
-a line at a time and keeps its logs when anything failed.  Both want
+a line at a time and keeps its logs when anything failed.  All three want
 .B .qemu/9front-root.qcow2
 and an ISO built by
 .BR /scripts/mkosprey-efi-iso.sh .
@@ -1022,9 +1042,25 @@ until then a
 .B send
 naming that buffer again is answered
 .BR retry ,
-so a container cannot write over a frame in flight.  What it cannot yet
-do is ask to be told when that happens; it must offer the buffer and be
-refused.
+so a container cannot write over a frame in flight.  Which buffers may
+be written is in
+.B txavail
+in the map, one bit each, set while that buffer's block is on the free
+list: a container finds a buffer with a load out of memory it has
+already mapped, and needs no trap and no refusal to do it.  The
+semaphore named as
+.IR t
+to
+.B ether
+is given when a buffer comes back, so a container with all of them in
+flight waits on it in the same
+.B select
+as everything else.  The source address of a frame is not the
+container's to write: the kernel puts the interface's own address in it
+as
+.I etheroq
+does, so a container may say what it likes about where a frame is going
+and nothing about where it came from.
 .PP
 .I p9srv
 is a personality for the file operations and nothing else.  A container
@@ -1056,6 +1092,39 @@ enforced but not demonstrated: in
 every container is glenda's, so the server reaches the client's slice as
 its owner would anyway.  A server run by another user is what the rule is
 for.
+.PP
+.I netsrv
+is the other personality, and the one the plan asks for by name: the
+protocol stack outside the kernel.  It is the talk's driver task with
+all three of its arms \- its own request ring, the semaphore a received
+packet gives, and the semaphore a transmit buffer gives when the card
+has finished with it \- and what it does between them is arp and icmp
+echo, so that a machine on the other end of the wire can ping an address
+the kernel has never heard of.  Nothing copies a frame: the card writes
+into the container's receive buffers,
+.B netsrv
+reads the frame where it lies, builds its answer in one of the
+container's transmit buffers, and the card reads it out of the same
+slice.  What is answered is arp for one address and echo, and nothing
+else: there is no routing, no fragmentation, no udp and no tcp, and
+nothing above icmp.  It is a demonstration that the path is real and
+that the kernel needs to know nothing about it, not a stack anybody
+should use.
+.PP
+.I netsrv
+takes the address of the interface it was given from the
+.B ea
+on the
+.B status
+line rather than from anywhere it could have been told wrongly, and it
+takes a transmit buffer from
+.B txavail
+in its own map.  Its one trap per frame is the
+.B recv
+and the
+.B send
+themselves; the arms, the frame and the answer are all in memory it has
+mapped.
 .PP
 .I p9srv
 lets nothing go.  A container that exits leaves the files it had opened
@@ -1135,8 +1204,15 @@ head comes round to it again.  Every packet before that is copied.  With
 five packets sent to a container that had claimed an interface,
 .B status
 reported
-.B "direct 0 copied 5" ;
-what it reports after a ring's worth has not been measured.  And a card writing into memory a process has mapped is a card
+.B "direct 0 copied 5" .
+Four hundred pings later it reported
+.B "direct 14 copied 396" :
+the head does come round, and once it has, the frames land in the
+container's own buffers with nothing copying them.  The address of the
+interface a container was given is on the same line, as
+.BR ea ,
+since a container that builds an arp body needs to put its own address
+in it and has no other way to learn it.  And a card writing into memory a process has mapped is a card
 writing where that process may write too, which a container that is not
 trusted with its own packets should not be given.
 .PP

@@ -540,7 +540,7 @@ static Cmdtab ospreycmd[] = {
 	CMselect,	"select",	4,
 	CMtick,		"tick",		3,
 	CMuart,		"uart",		4,
-	CMether,	"ether",	4,
+	CMether,	"ether",	0,
 	CMdelegate,	"delegate",	3,
 	CMpage,		"page",		3,
 	CMflip,		"flip",		4,
@@ -624,6 +624,9 @@ static uvlong ospreyuartoff[16];	/* what is left of the last work taken */
 static long ospreyuartlen[16];
 static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
+static int ospreytxsem[16];		/* and the one a freed transmit buffer gives */
+static void ospreytxdone(Bpool*);
+static void ospreytxavail(int);
 static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
 /*
  * And its transmit buffers, also in the span.  The Blocks are kept so
@@ -714,6 +717,21 @@ ospreycountdirect(Ospreyproc *p)
 	return x < 0 || x >= nelem(ospreydirect) ? 0 : ospreydirect[x];
 }
 
+/* the address of the card this container was given, for what it builds */
+static int
+ospreycardea(Ospreyproc *p, uchar *ea)
+{
+	Ether *e;
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyether))
+		return 0;
+	if((e = (Ether*)ospreyether[x]) == nil)
+		return 0;
+	memmove(ea, e->ea, 6);
+	return 6;
+}
+
 static ulong
 ospreycountcopied(Ospreyproc *p)
 {
@@ -740,6 +758,7 @@ ospreylendtx(Ospreyproc *p, int x)
 	memset(pool, 0, sizeof *pool);
 	pool->size = size - Rbtlr;
 	pool->align = 8;
+	pool->done = ospreytxdone;
 	ospreyntxblk[x] = 0;
 	for(i = 0; i < n; i++){
 		if((a = ospreyat_off(p, off + i*size, size)) == nil)
@@ -756,7 +775,66 @@ ospreylendtx(Ospreyproc *p, int x)
 		ospreytxblk[x][i] = b;
 		ospreyntxblk[x] = i+1;
 	}
+	ospreytxavail(x);
 	return 0;
+}
+
+/*
+ * A transmit buffer has come back from the card.  This runs from freeb,
+ * which runs at interrupt level, so it does what an interrupt does here:
+ * gives the container's semaphore.  A task waiting in select on that arm
+ * is told its buffer is its own again.
+ */
+static void
+ospreytxdone(Bpool *pool)
+{
+	Ospreyproc *p;
+	int i;
+
+	for(i = 0; i < nelem(ospreytxpool); i++){
+		if(pool != &ospreytxpool[i])
+			continue;
+		ospreytxavail(i);
+		if(ospreytxsem[i] < 0)
+			return;
+		if((p = ospreyat(i)) == nil)
+			return;
+		ospreysemgive(p, ospreytxsem[i]);
+		return;
+	}
+}
+
+/*
+ * Say in the container's map which transmit buffers it may write.  A bit
+ * is set while that buffer's block is on the free list, which is when
+ * the card has finished with it; the container reads the word and needs
+ * no trap to find a buffer.  This runs at interrupt level from freeb, so
+ * it does nothing but walk a list of eight and write one word.
+ */
+static void
+ospreytxavail(int x)
+{
+	Ospreyproc *p;
+	Bpool *pool;
+	Block *b;
+	uvlong m;
+	int i;
+
+	if(x < 0 || x >= nelem(ospreytxpool))
+		return;
+	if((p = ospreyat(x)) == nil)
+		return;
+	pool = &ospreytxpool[x];
+	m = 0;
+	ilock(pool);
+	for(b = pool->head; b != nil; b = b->list)
+		for(i = 0; i < ospreyntxblk[x]; i++)
+			if(ospreytxblk[x][i] == b){
+				m |= 1ULL<<i;
+				break;
+			}
+	iunlock(pool);
+	ospreysettxavail(p, m);
 }
 
 /* take it off that list; the card will put it back when it is done */
@@ -1443,6 +1521,7 @@ ospreyinit(void)
 	ospreysegok = ospreysegentitled;
 	ospreypktdirect = ospreycountdirect;
 	ospreypktcopied = ospreycountcopied;
+	ospreyetherea = ospreycardea;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 }
@@ -1588,9 +1667,17 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 			b = ospreytxblk[x][bi];
 			if(!ospreytxtake(&ospreytxpool[x], b))
 				return StatusRetry;
+			ospreytxavail(x);
 			b->rp = b->base;
 			b->wp = b->base + len;
 			b->flag = BINTR;
+			/*
+			 * The source address is the kernel's to write, as it
+			 * is in etheroq: a container may say what it likes
+			 * about where a frame is going and nothing about
+			 * where it came from.
+			 */
+			memmove(((Etherpkt*)b->rp)->s, e->ea, Eaddrlen);
 			e->outpackets++;
 			qbwrite(e->oq, b);
 			if(e->transmit != nil)
@@ -3571,6 +3658,9 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if(strcmp(cb->f[2], "off") == 0){
 			if(ospreyether[x] != nil)
 				((Ether*)ospreyether[x])->rbpool = nil;
+			ospreytxsem[x] = -1;
+			ospreytxpool[x].done = nil;
+			ospreysettxavail(p, 0);
 			ospreyether[x] = nil;
 			if(ospreyheld[x] != nil){
 				freeb(ospreyheld[x]);
@@ -3579,9 +3669,24 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			wakeup(&ospreyselrend[x]);
 			break;
 		}
+		if(cb->nf != 4 && cb->nf != 5)
+			error(Ecmdargs);
 		i = atoi(cb->f[3]);
 		if(i < 0 || (ulong)i >= ospreynsem())
 			error(Ebadarg);
+		/*
+		 * A fifth field names the semaphore a transmit buffer gives
+		 * when the card has finished with it.  Without one a
+		 * container has to offer a buffer and be refused, which is
+		 * what it had to do before there was anywhere to say this.
+		 */
+		if(cb->nf == 5){
+			ospreytxsem[x] = atoi(cb->f[4]);
+			if(ospreytxsem[x] < 0
+			|| (ulong)ospreytxsem[x] >= ospreynsem())
+				error(Ebadarg);
+		} else
+			ospreytxsem[x] = -1;
 		if((et = etherlookup(cb->f[2])) == nil)
 			error(Enonexist);
 		if(ospreyether[x] != nil && ospreyether[x] != et)

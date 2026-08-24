@@ -177,10 +177,15 @@ against the kernel this file describes.
 Next, in order
 .PP
 Most of what the plan and the presentation describe that a kernel of
-this shape can do is done.  What is left is a different kernel; one
-half of a sentence in the plan that is not started -- the protocol
-stack in user space, of which only the buffers underneath it are
-built; and the things below, which neither source spells out.
+this shape can do is done.  Both halves of the plan's user-level
+services sentence are now built and checked: the file-system half in
+.CW os/osprey/cmd/p9srv.c
+and the protocol stack in
+.CW os/osprey/cmd/netsrv.c ,
+which is pinged from another machine over buffers nothing copies.  What
+is left is a different kernel; a name space of a container's own, which
+both servers want and neither has; and the things below, which neither
+source spells out.
 .PP
 .B "1.  Knowing who agreed the key."
 The exchange is with whoever answers.  A person comparing two
@@ -336,10 +341,9 @@ from its own buffer is accepted \-
 .CW send
 of the same buffer is refused with
 .CW retry
-while the card still has it.  What is not demonstrated is that the
-frame arrived at the other end: the machine on the far side of the wire
-was listening for it and its log says nothing, and that is not yet
-explained.
+while the card still has it.  That the frame arrives at the other end
+was settled later, by the stack in user space below: the machine on the
+far side of the wire pings the container and gets eight answers back.
 .PP
 Two things measured on the way, both of which correct what was written
 before.  A container claiming an interface and being sent five frames
@@ -351,7 +355,9 @@ and fifty-six deep and full of the driver's own buffers before the
 interface is given away, so a container's buffer is not used until the
 card's head comes round again \- but the man page read as though direct
 delivery were the ordinary case, and it is not until a ring's worth of
-traffic has gone by.  And
+traffic has gone by.  Four hundred pings later it is
+.CW "direct 14 copied 396" ,
+which is the first time that path has been seen to fire at all.  And
 .CW ospreymapsizes ,
 which
 .CW ospreylendbufs
@@ -363,24 +369,82 @@ call
 now, which is what every other reader of that map does and why
 .CW mapfix
 exists.
+.NH 1
+The stack in user space
 .PP
-What is left of the plan's sentence is the protocol stack itself: a
-program that takes frames with
-.CW recv ,
-answers ARP and ICMP with
-.CW send ,
-and needs from the kernel one more thing it has not got \- a way to be
-told when a transmit buffer comes back, rather than offering it and
-being refused.  A semaphore given when the Block returns to the pool is
-the shape the talk already uses for an interrupt, and
+The rest of the plan's sentence, and the piece it was named for.
+.CW os/osprey/cmd/netsrv.c
+is the talk's driver task with all three of its arms \- its own request
+ring, the semaphore a received packet gives, and the semaphore a
+transmit buffer gives when the card has finished with it \- and between
+them it answers ARP for one address and ICMP echo.  A machine on the
+other end of the wire configures an address, runs
+.CW ip/ping ,
+and is answered by a program the kernel knows nothing about, over
+frames nothing copies in either direction.
+.PP
+Three things the kernel had to grow for it, each the smallest thing
+that would do.
 .CW Bpool
-has nowhere to hang it yet.
+in
+.CW os/osprey/port/portdat.h
+gained a
+.CW done
+hook,
+.CW freeb
+in
+.CW os/osprey/port/allocb.c
+calls it after dropping the lock, and
+.CW ospreytxdone
+in
+.CW os/osprey/port/devosprey.c
+gives the container the semaphore named as the fifth field of the
+.CW ether
+control message.  The card's own address is reported as
+.CW ea
+on the
+.CW packets
+line of
+.CW status ,
+because a container that builds an ARP body needs to put its own address
+in it and had no way to learn it; and
+.CW send
+now stamps the source address of every frame from the interface, the way
+.CW etheroq
+does, so a container may say what it likes about where a frame is going
+and nothing about where it came from.  And
+.CW txavail
+in the map says which transmit buffers may be written, one bit each, set
+while that buffer's block is on the free list: finding a buffer is a
+load out of memory the container has already mapped.
+.PP
+That last one replaced a first attempt that counted rather than named.
+.I netsrv
+kept its own idea of which buffers were free and marked one free
+whenever the transmit semaphore fired, which is right about how many
+are free and wrong about which; the fifth frame it sent named a buffer
+still in flight and was answered
+.CW retry ,
+and three pings out of eight came back.  The kernel is the one that
+knows, so the kernel is the one that says.
+.PP
+.CW /scripts/osprey-check-net.py
+is the check: two kernels on one wire, an interface given to a container
+on the first, and
+.CW ip/ping
+on the second.  Eight requests, eight replies, and four hundred more to
+use up the driver's receive ring.  What
+.I netsrv
+answers is ARP for one address and echo and nothing else \- no routing,
+no fragmentation, no UDP, no TCP \- so what it demonstrates is that the
+path is real and that the kernel needs to know nothing about it, not
+that there is a usable stack outside the kernel.
 .NH 1
 The gaps, by why they are gaps
 .PP
-Six kinds, and they are not equally hard.  The first cannot be closed
-without writing a different kernel; the last four can be closed from
-here.
+Five kinds, and they are not equally hard.  The first cannot be closed
+without writing a different kernel; the rest can be closed from here,
+and two of them have been since this was written.
 .NH 2
 Unreachable from a Plan 9 kernel
 .PP
@@ -395,61 +459,33 @@ sitting on the wrong side of the line the talk draws.  What can be done
 from here \- and is \- is to let a container replace that personality
 for itself.
 .NH 2
-Built and unproven
+Built and proven since
 .PP
-Two, both from the packet work.
-.CW send
-returns
-.CW done
-and the card is handed the container's own buffer, but the machine on
-the other side of the wire heard nothing and that is not explained.
-And the zero-copy receive path has never once been seen to fire: five
-frames to a container that had claimed an interface gave
+Both of these were open and both are closed.  A frame a container built
+and handed to the card does arrive at the other end of the wire, because
+the other end answers it: eight echo requests, eight replies.  And the
+zero-copy receive path does fire, once the driver's two hundred and
+fifty-six queued buffers have been used up \-
+.CW "direct 14 copied 396"
+after four hundred pings, where five frames had given
 .CW "direct 0 copied 5" .
-The code says it should, after a ring's worth of traffic has replaced
-the driver's own buffers; nothing has yet sent a ring's worth.
+Both are checked by
+.CW /scripts/osprey-check-net.py ,
+which is where the numbers come from.
 .NH 2
-Designed, one mechanism short
+Still short a name space
 .PP
-A container cannot be told when a transmit buffer comes back; it must
-offer the buffer and be answered
-.CW retry .
-.CW Bpool
-in
-.CW os/osprey/port/portdat.h
-has nowhere to hang a hook, and
-.CW freeb
-runs at interrupt level, so what belongs there is a call short enough
-to give a semaphore \- which is the shape the talk already uses for an
-interrupt, and which
-.CW select
-already waits on.  Everything that would transmit at a rate waits on
-this one thing.
-.NH 2
-Not started
-.PP
-The protocol stack.  The plan's sentence is
-.RB \(lq "move protocol stacks, packet processing, and most file-system policy into user-space services" \(rq ;
-.CW os/osprey/cmd/p9srv.c
-is the file-system half, the buffers under the packet half are built,
-and the program that would take frames with
-.CW recv ,
-answer ARP and ICMP, and reply with
-.CW send
-does not exist.
-.PP
-Two things it would need that are also missing: a container has no
-address of its own to put in a frame \- there is no
-.CW ether
-attribute, though
-.CW ospreyattr
-is where one would go \- and a container has no name space of its own.
+The protocol stack is built.  What
+.I netsrv
+still shares with
+.I p9srv
+is that a container has no name space of its own:
 .CW bind
 is answered by
 .I p9srv
 in
 .I its
-name space; two containers sharing a server share its names, which is
+name space, so two containers sharing a server share its names, which is
 not what a private name space means.
 .NH 2
 Demonstration scale

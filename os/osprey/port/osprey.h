@@ -56,6 +56,14 @@ struct Ospreymap {
 				 * still reads every field it knows. */
 	uvlong	ntxbuf;
 	uvlong	txbufsize;
+	/*
+	 * Which transmit buffers the container may write, one bit each.
+	 * The kernel sets a bit while that buffer's block is on the free
+	 * list, which is exactly when the card has no use for it: a
+	 * container reads this out of its own map and needs to ask nobody
+	 * which buffer is safe to fill.
+	 */
+	uvlong	txavail;
 };
 
 /*
@@ -151,6 +159,13 @@ int		ospreypktget(Ospreyproc*, void **block, ulong *len);
 ulong		ospreypktcount(Ospreyproc*);
 extern ulong	(*ospreypktdirect)(Ospreyproc*);
 extern ulong	(*ospreypktcopied)(Ospreyproc*);
+/*
+ * The ethernet address of the interface a container has been given,
+ * so that it can put its own address in what it builds.  Six bytes
+ * into ea; zero if it has no interface.
+ */
+extern int	(*ospreyetherea)(Ospreyproc*, uchar *ea);
+void		ospreysettxavail(Ospreyproc*, uvlong);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 int		ospreytxsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);

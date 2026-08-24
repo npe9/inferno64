@@ -165,6 +165,15 @@ struct Bpool
 	ulong	size;			/* block size */
 	ulong	align;			/* block alignment */
 
+	/*
+	 * Called when a Block comes back to this pool, after the lock is
+	 * dropped.  freeb runs at interrupt level, so what goes here must
+	 * be as short as an interrupt handler: giving a semaphore is what
+	 * Osprey puts here, so that a container waiting in select is told
+	 * its transmit buffer is its own again.
+	 */
+	void	(*done)(Bpool*);
+
 	Lock;
 	Block	*head;			/* freelist head */
 };

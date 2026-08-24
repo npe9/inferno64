@@ -1517,6 +1517,20 @@ ospreypktget(Ospreyproc *p, void **block, ulong *len)
 /* how a container's packets have been arriving; the device keeps count */
 ulong	(*ospreypktdirect)(Ospreyproc*);
 ulong	(*ospreypktcopied)(Ospreyproc*);
+int	(*ospreyetherea)(Ospreyproc*, uchar*);
+
+/*
+ * The device says which of a container's transmit buffers are free; this
+ * puts it where the container can read it without asking.  mapfix does
+ * not touch it: it is not geometry, it is what the card is doing.
+ */
+void
+ospreysettxavail(Ospreyproc *p, uvlong m)
+{
+	if(p == nil || p->used == 0 || p->map == nil)
+		return;
+	p->map->txavail = m;
+}
 
 ulong
 ospreypktcount(Ospreyproc *p)
@@ -2198,9 +2212,17 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 				p = seprint(p, e, " %llud", l[j]);
 			p = seprint(p, e, "\n");
 		}
-		p = seprint(p, e, "packets %llud direct %lud copied %lud held %lud\n",
+		p = seprint(p, e, "packets %llud direct %lud copied %lud held %lud",
 			q->id, ospreypktdirect(&procs[i]),
 			ospreypktcopied(&procs[i]), pktqcount(&procs[i].pktq));
+		if(ospreyetherea != nil){
+			uchar ea[6];
+
+			if(ospreyetherea(&procs[i], ea) > 0)
+				p = seprint(p, e, " ea %.2ux%.2ux%.2ux%.2ux%.2ux%.2ux",
+					ea[0], ea[1], ea[2], ea[3], ea[4], ea[5]);
+		}
+		p = seprint(p, e, "\n");
 		p = seprint(p, e, "sem %llud", q->id);
 		ospreylocksem();
 		for(n = 0; n < Nsem; n++){

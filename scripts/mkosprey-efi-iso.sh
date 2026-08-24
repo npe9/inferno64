@@ -63,7 +63,7 @@ cp "$LOADER" "$TREE/EFI/BOOT/BOOTX64.EFI"
 cp "$KERNEL" "$TREE/amd64/9pc64"
 # the user-space ring program, when it has been built
 mkdir -p "$TREE/bin"
-for b in ring pip mig p9srv; do
+for b in ring pip mig p9srv netsrv; do
 	if [ -f "$ROOT/Osprey/amd64/bin/$b" ]; then
 		cp "$ROOT/Osprey/amd64/bin/$b" "$TREE/bin/$b"
 	fi

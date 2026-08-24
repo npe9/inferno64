@@ -104,6 +104,8 @@ freeb(Block *b)
 		b->list = p->head;
 		p->head = b;
 		iunlock(p);
+		if(p->done != nil)
+			(*p->done)(p);
 		return;
 	}
 
