@@ -9,7 +9,7 @@
 
 #include "pc64.root.h"
 
-ulong ndevs = 33;
+ulong ndevs = 36;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev archdevtab;
@@ -19,8 +19,11 @@ extern Dev mntdevtab;
 extern Dev pipedevtab;
 extern Dev bindevtab;
 extern Dev procdevtab;
+extern Dev progdevtab;
 extern Dev rtcdevtab;
+extern Dev srvdevtab;
 extern Dev ssldevtab;
+extern Dev dupdevtab;
 extern Dev capdevtab;
 extern Dev readydevtab;
 extern Dev shmdevtab;
@@ -35,7 +38,7 @@ extern Dev audiodevtab;
 extern Dev uartdevtab;
 extern Dev sddevtab;
 extern Dev tinyfsdevtab;
-Dev* devtab[33]={
+Dev* devtab[36]={
 	&rootdevtab,
 	&consdevtab,
 	&archdevtab,
@@ -45,8 +48,11 @@ Dev* devtab[33]={
 	&pipedevtab,
 	&bindevtab,
 	&procdevtab,
+	&progdevtab,
 	&rtcdevtab,
+	&srvdevtab,
 	&ssldevtab,
+	&dupdevtab,
 	&capdevtab,
 	&readydevtab,
 	&shmdevtab,
@@ -109,6 +115,21 @@ PhysUart* physuart[] = {
 
 #include <draw.h>
 #include <memdraw.h>
+#include "screen.h"
+extern VGAdev vgasoftdev;
+VGAdev* vgadev[] = {
+	&vgasoftdev,
+	nil,
+};
+
+extern VGAcur vgasoftcur;
+extern VGAcur vgasoftcur;
+VGAcur* vgacur[] = {
+	&vgasoftcur,
+	&vgasoftcur,
+	nil,
+};
+
 #include "ip.h"
 extern void tcpinit(Fs*);
 extern void udpinit(Fs*);

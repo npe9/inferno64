@@ -96,7 +96,7 @@ extern	int	isupperrune(Rune);
 extern	void*	malloc(ulong);
 extern	void*	mallocz(ulong, int);
 extern	void	free(void*);
-extern	uintptr	msize(void*);
+extern	ulong	msize(void*);
 extern	void*	calloc(ulong, ulong);
 extern	void*	realloc(void*, ulong);
 extern	void		setmalloctag(void*, uintptr);

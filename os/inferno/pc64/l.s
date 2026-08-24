@@ -35,10 +35,25 @@ TEXT _protected<>(SB), 1, $-4
 /*
  * Must be 4-byte aligned.
  */
+/*
+ * flags: bit0 page-align modules, bit1 want a memory map, bit16 use the
+ * load addresses below rather than the ELF header's.  Bit2, asking for
+ * a video mode, is deliberately not set: this board's screen.c only
+ * acts on one if bootargs.c found a *bootscreen= line, which it can
+ * build only from vesabootscreenconf(), which this configuration does
+ * not carry (see stubs.c) because there is no VGAdev linked to hand a
+ * mode to.  Asking for one anyway is what makes a QEMU built without
+ * VBE support in its multiboot loader print "multiboot knows VBE. we
+ * don't" -- a warning, not a failure (hw/i386/multiboot.c prints it
+ * and keeps loading the kernel regardless), but a pointless one since
+ * there is nothing here to receive the mode it would have supplied.
+ * GRUB and other real loaders answer the request whether it is made
+ * or not, so nothing is lost by not asking.
+ */
 TEXT _multibootheader<>(SB), 1, $-4
 	LONG	$0x1BADB002			/* magic */
-	LONG	$0x00010007			/* flags */
-	LONG	$-(0x1BADB002 + 0x00010007)	/* checksum */
+	LONG	$0x00010003			/* flags */
+	LONG	$-(0x1BADB002 + 0x00010003)	/* checksum */
 	LONG	$_multibootheader<>-KZERO(SB)	/* header_addr */
 	LONG	$_protected<>-KZERO(SB)		/* load_addr */
 	LONG	$edata-KZERO(SB)		/* load_end_addr */

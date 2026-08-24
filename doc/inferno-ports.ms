@@ -429,16 +429,57 @@ now, which is where portable code goes, and the boards take it through
 rule for a portable source rather than each holding their own.  All
 three still run a shell with it there.
 .PP
-What stops
 .CW pc64
-now is not plumbing: it compiles and fails in
-.CW fpu.c
-on an
-.CW FPU
-type that
-.CW os/inferno/port/portdat.h
-does not know.  That is a porting gap in the amd64 Inferno kernel and a
-piece of work of its own.
+now compiles, links and installs.  Getting it to run at all found a
+real
+.CW 6l
+bug, not a
+.CW pc64
+one:
+.CW follow()
+threads the whole program into one fall-through order with a single
+top level call to
+.CW xfol() ,
+which returns the instant it reaches an unconditional jump or a return
+with no outstanding recursive branch target queued to resume it \-
+ordinarily safe, because some conditional branch nearly always sits
+between there and the next function to keep a recursive call alive.
+.CW os/inferno/pc64/l.s 's
+multiboot entry trampoline, the very first code
+.CW 6l
+threads for this kernel, is nothing but a straight-line copy loop
+ending in an indirect
+.CW JMP ,
+with no conditional branch anywhere before it: the single top level
+call returned there, and the other 130 object files in the link \-
+every function in the kernel \- were never marked, appended, or given
+a
+.CW pc .
+The kernel still linked, still installed, and still looked entered
+under QEMU; what it actually ran was 128 bytes of assembler before
+falling into whatever came after it in memory by chance, which
+depended on the exact link.
+.CW 6l
+now records where every function starts before the first
+.CW xfol()
+call, and resumes it from whichever of them are still unmarked once
+that call returns, until all of them are: the same one-block-at-a-time
+algorithm, just not abandoned after the first block that has no branch
+of its own.
+.PP
+With that fixed
+.CW pc64
+now runs real 64-bit kernel code: it takes the 32-to-64-bit transition
+in
+.CW l.s ,
+loads its page tables, enables long mode, and reaches
+.CW main.c ,
+where it takes a page fault writing through a stack pointer in
+unmapped memory before ever reaching a shell.  That is a further
+boot-order bug of its own \- the minimal identity map
+.CW _warp64
+builds does not yet cover wherever that pointer is meant to land \- and
+is where the port now stands.
 .NH 1
 How a native kernel provides networking
 .PP

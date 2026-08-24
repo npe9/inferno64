@@ -10,18 +10,18 @@ dev
 	pipe
 	bin
 	proc
-#	prog
+	prog
 	rtc
-#	srv
+	srv
 	ssl
-#	dup
+	dup
 	cap
 	ready
 	shm
 
 	ether		netif
 	bridge		netif log
-	ip	ip ipv6 ipaux iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
 	draw	screen vga vgax cga
 #	mouse		mouse
@@ -55,7 +55,7 @@ ip
 lib
 	aml
 	fis
-#	interp
+	interp
 	keyring
 	memlayer
 	memdraw
@@ -65,7 +65,11 @@ lib
 	mp
 	math
 	kern
-	ip
+# not libip: that is the hosted helper library, and its readipifc.c
+# opens and reads /net/ipifc.  A native kernel has its own ip stack --
+# the ip section above, with os/inferno/ip/ipaux.c -- and upstream
+# Inferno's native configurations link no ip library at all.  This is
+# what os/inferno/virt does.
 
 link
 ##	ether82557	pci
@@ -87,6 +91,14 @@ misc
 	archacpi	mp apic squidboy ec hpet
 	archmp		mp apic squidboy
 	mtrr
+# devvga wants a table of display devices and one of cursors, and
+# mkdevc builds both from the misc names that begin vga.  The screen
+# itself is the boot loader's framebuffer -- bootscreeninit in screen.c
+# -- which wants nothing done to it, so the one display device is
+# vgasoft's, which has no hooks at all, and the cursor is the one drawn
+# into the framebuffer.  The drivers in ../pc are against the 386
+# board's screen.h and do not compile against this one.
+	vgasoft	+cur
 
 	bios32
 	cga
@@ -153,15 +165,16 @@ port
 	alloc
 	allocb
 	auth
+	bo
 	chan
 	dev
 	dial
-#	dis
-#	discall
+	dis
+	discall
 	edf
-#	exception
-#	exportfs TODO for forth
-#	inferno TODO for forth
+	exception
+	exportfs
+	inferno
 	iomap
 	irq
 	latin1

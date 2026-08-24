@@ -119,13 +119,50 @@ brchain(Prog *p)
 void
 follow(void)
 {
+	Prog *p, **fns;
+	int i, n;
 
 	if(debug['v'])
 		Bprint(&bso, "%5.2f follow\n", cputime());
 	Bflush(&bso);
+
+	/*
+	 * xfol() walks one extended basic block at a time and returns
+	 * the instant it reaches an AJMP or a return with no outstanding
+	 * recursive branch target to resume -- normally that only
+	 * happens with the whole program appended, because some
+	 * conditional branch nearly always sits between here and there
+	 * to keep a recursive xfol(p->link) call alive.  A function that
+	 * is nothing but straight-line code ending in an indirect JMP
+	 * (multiboot's 32-to-64-bit entry trampoline in
+	 * os/inferno/pc64/l.s is exactly this) has no such branch, so
+	 * when it is the first thing reached from textp the single top
+	 * level xfol(textp) call below returns with the other 99% of the
+	 * program -- every other function in every other file -- never
+	 * marked, appended, or given a pc.  Record every function's
+	 * entry point here, before xfol() gets a chance to rewrite any
+	 * p->link for branch-inversion, then resume xfol() from whichever
+	 * of them are still unmarked once it returns, until all of them
+	 * are: same one-block-at-a-time algorithm, just not abandoned
+	 * after the first block with no branch of its own.
+	 */
+	n = 0;
+	for(p = textp; p != P; p = p->link)
+		if(p->as == ATEXT)
+			n++;
+	fns = malloc(n * sizeof(fns[0]));
+	i = 0;
+	for(p = textp; p != P; p = p->link)
+		if(p->as == ATEXT)
+			fns[i++] = p;
+
 	firstp = prg();
 	lastp = firstp;
 	xfol(textp);
+	for(i = 0; i < n; i++)
+		if(fns[i]->mark == 0)
+			xfol(fns[i]);
+	free(fns);
 	lastp->link = P;
 	firstp = firstp->link;
 }
@@ -229,8 +266,18 @@ loop:
 	if(a == AJMP || a == ARET || a == AIRETL || a == AIRETQ || a == AIRETW ||
 	   a == ARETFL || a == ARETFQ || a == ARETFW)
 		return;
+	/*
+	 * A TEXT's pcond is not a branch target: obj.c chains the list of
+	 * text symbols through that field, so every function points at
+	 * the next one.  Reading it as a branch here inverted the
+	 * relation of a TEXT, which relinv has no answer for, whenever
+	 * the instruction after the TEXT had already been reached -- a
+	 * branch into the first instruction of the next function, which
+	 * is what threaded code does.  os/inferno/pc64/forth.s does it
+	 * twice.
+	 */
 	if(p->pcond != P)
-	if(a != ACALL) {
+	if(a != ACALL && a != ATEXT) {
 		q = brchain(p->link);
 		if(q != P && q->mark)
 		if(a != ALOOP) {

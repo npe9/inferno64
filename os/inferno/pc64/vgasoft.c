@@ -48,3 +48,14 @@ VGAcur vgasoftcur =
 	swload,
 	swmove,
 };
+
+/*
+ * A display with nothing to do: the framebuffer the boot loader handed
+ * over is already mapped and already showing, and screen.c leaves every
+ * one of these hooks alone when it is nil.  devvga wants a table with
+ * something in it; this is that something.
+ */
+VGAdev vgasoftdev =
+{
+	"soft",
+};

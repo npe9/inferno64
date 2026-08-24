@@ -854,3 +854,42 @@ bootscreenconf(VGAscr *scr)
 	}
 	ksetenv("*bootscreen", conf, 1);
 }
+
+/*
+ * What /dev/cursor writes arrives as a Drawcursor: a hot spot, a
+ * rectangle whose width is a multiple of eight, and the clear rows
+ * followed by the set rows, packed.  The display's cursor is sixteen by
+ * sixteen; anything larger is clipped to that, and nothing written is
+ * the arrow again.  The offset is where the top left corner sits
+ * relative to the hot spot, which is the way Plan 9 has always held it.
+ */
+void
+drawcursor(Drawcursor *c)
+{
+	Cursor curs;
+	uchar *bc, *bs;
+	int i, h, w, bpl;
+
+	if(c->data == nil){
+		cursoroff();
+		return;
+	}
+	memset(&curs, 0, sizeof curs);
+	curs.offset.x = -c->hotx;
+	curs.offset.y = -c->hoty;
+	h = (c->maxy - c->miny)/2;
+	if(h > CURSHGT)
+		h = CURSHGT;
+	bpl = (c->maxx - c->minx)/8;
+	w = bpl;
+	if(w > CURSWID/BI2BY)
+		w = CURSWID/BI2BY;
+	bc = c->data;
+	bs = c->data + h*bpl;
+	for(i = 0; i < h; i++){
+		memmove(curs.clr + i*(CURSWID/BI2BY), bc + i*bpl, w);
+		memmove(curs.set + i*(CURSWID/BI2BY), bs + i*bpl, w);
+	}
+	setcursor(&curs);
+	cursoron();
+}
