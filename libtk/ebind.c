@@ -618,7 +618,16 @@ tkannouncefocus(Tk *tk)
 	if(text != nil && *text != '\0')
 		snprint(buf, sizeof buf, "%s %s", text, tkclassname(tk->type));
 	else
-		snprint(buf, sizeof buf, "%s %s", tk->name->name, tkclassname(tk->type));
+		/*
+		 * No label to fall back on. tk->name->name is a Tcl/Tk widget
+		 * PATH - ".ft.t", say - not a word, and not meant to be one:
+		 * every shell window's main text pane hits this branch on
+		 * every focus, since text/entry widgets never have a
+		 * tkannouncetext(). Speaking the path is speaking an
+		 * identifier as if it were prose; the class alone is what a
+		 * person actually needs.
+		 */
+		snprint(buf, sizeof buf, "%s", tkclassname(tk->type));
 	voiceannounce(buf);
 }
 

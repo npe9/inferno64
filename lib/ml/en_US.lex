@@ -114,6 +114,48 @@ namespace	nˈeɪmspeɪs
 shell	ʃˈɛl
 styx	stˈɪks
 
+# --- Unix and Inferno folklore: how these are actually said, not spelled by
+# rule. espeak-ng's own guess was the starting point for every line below and
+# was wrong for most of them - it tried to pronounce consonant clusters that
+# have no vowel (libtk, mkfs), or spelled out letters where usage has settled
+# on a blended word instead (chmod as "ch-mod", not "C-H-mod"; fsck as "fisk",
+# not spelled at all). Where espeak's answer already matched how people say a
+# word - chown, libdraw, libsec, awk - it is used unchanged. Nothing here is
+# checked by anyone's ear yet, same caveat as the rest of this file.
+awk	ˈɔːk
+chmod	tʃmˈɑːd
+chown	tʃˈaʊn
+fsck	fˈɪsk
+ioctl	ˈaɪoʊkəntɹˈoʊl
+libdraw	lˈɪbdɹɔː
+libmp	lˈɪb ˈɛm pˈiː
+libsec	lˈɪbsɛk
+libtk	lˈɪb tˈiː kˈeɪ
+mk	mˈeɪk
+mkdir	mˈeɪkdˌɪɹ
+mkfile	mˈeɪkfˈaɪl
+mkfs	mˈeɪk ˈɛf ˈɛs
+rmdir	ˈɑːɹˈɛmdˌɪɹ
+
+# --- two-letter commands: read as letters, the way nobody reads "ls" as a
+# word. Also fd, ctl, ip, tcp, fp - the acronyms phon(2)'s own man page
+# names as needing this.
+cd	sˌiːdˈiː
+cp	sˌiːpˈiː
+ctl	sˌiːtˌiːˈɛl
+fd	ˌɛfdˈiː
+fp	ˌɛfpˈiː
+ip	ˌaɪpˈiː
+ln	ˌɛlˈɛn
+ls	ˌɛlˈɛs
+mv	ˌɛmvˈiː
+ps	pˌiːˈɛs
+rm	ˌɑːɹˈɛm
+sh	ˌɛsˈeɪtʃ
+tcp	tˌiːsˌiːpˈiː
+wc	dˌʌbəljˌuːsˈiː
+wm	dˌʌbəljˌuːˈɛm
+
 # --- what a tutorial talks about --------------------------------------------
 anything	ˈɛniθˌɪŋ
 command	kəmˈænd
