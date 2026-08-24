@@ -60,6 +60,48 @@ enum {
 
 typedef struct Client Client;
 /*
+ * What a name means to the container that asked.  The container's own
+ * table is the kernel's, and status is where it is read from -- not from
+ * anything the container wrote, for the reason slotof gives.  A name the
+ * table does not hold is left as it stands.
+ */
+static char*
+resolve(uvlong id, char *local, char *buf, int nbuf)
+{
+	static char st[33*1024];
+	char *p, *e, *f[4];
+	long n, t;
+	int fd, i;
+
+	if((fd = open("/n/osprey/status", OREAD)) < 0)
+		return local;
+	for(t = 0; t < sizeof st - 1; t += n)
+		if((n = read(fd, st+t, sizeof st - 1 - t)) <= 0)
+			break;
+	close(fd);
+	if(t <= 0)
+		return local;
+	st[t] = '\0';
+	for(p = st; *p != '\0'; p = e){
+		if((e = strchr(p, '\n')) != nil)
+			*e++ = '\0';
+		else
+			e = p + strlen(p);
+		if(strncmp(p, "name ", 5) != 0)
+			continue;
+		if(tokenize(p, f, 4) != 4)
+			continue;
+		if(o9num(f[1]) != id || strcmp(f[2], local) != 0)
+			continue;
+		for(i = 0; i < nbuf-1 && f[3][i] != '\0'; i++)
+			buf[i] = f[3][i];
+		buf[i] = '\0';
+		return buf;
+	}
+	return local;
+}
+
+/*
  * A container this server answers for.  Each has a process of its own,
  * forked with a name space of its own, and the pipe by which the process
  * that owns the ring hands it a request and takes the answer back.  What
@@ -189,13 +231,16 @@ clientof(uvlong id)
 	if(pipe(pfd) < 0)
 		return nil;
 	/*
-	 * A name space of its own, and a file descriptor group of its own
-	 * so that what it opens for its container is not in anybody
-	 * else's.  Its memory is a copy, which is why the record above is
+	 * A file descriptor group of its own, so that what this server
+	 * opens for one container is not in another's.  Not a name space:
+	 * a container's names are its own table in the kernel's policy
+	 * layer, which is where something that has to survive a migration
+	 * belongs, and a Pgrp is a Plan 9 object no checkpoint could
+	 * carry.  Its memory is a copy, which is why the record above is
 	 * filled in first: the child reads its own copy of it and the two
 	 * never write to each other's.
 	 */
-	switch(rfork(RFPROC|RFNAMEG|RFFDG|RFREND)){
+	switch(rfork(RFPROC|RFFDG|RFREND)){
 	case -1:
 		c->id = 0;
 		close(pfd[0]);
@@ -261,7 +306,7 @@ clientname(Client *c, uvlong off)
 static int
 answer(Client *c, Message *mp)
 {
-	char *a, *e;
+	char namebuf[Namelen], *a;
 	uvlong off, cnt;
 	long n;
 	int i, fd;
@@ -270,6 +315,7 @@ answer(Client *c, Message *mp)
 	case ReqOpen:
 		if((a = clientname(c, mp->arg[2])) == nil)
 			return ReplyError;
+		a = resolve(c->id, a, namebuf, sizeof namebuf);
 		for(i = 0; i < Nfd; i++)
 			if(c->fd[i] < 0)
 				break;
@@ -316,29 +362,13 @@ answer(Client *c, Message *mp)
 		mp->arg[2] = (uvlong)n;
 		return ReplyDone;
 
-	case ReqBind:
-		/*
-		 * The kernel refuses this: a container has no name space of
-		 * its own there, only the name table the policy layer keeps.
-		 * Here it is the ordinary bind, in the name space of the
-		 * process this server forked for this container and nobody
-		 * else -- so what one container binds, another container of
-		 * the same server does not see, and neither does the server.
-		 * That is the whole difference between a personality and a
-		 * device.
-		 */
-		if((a = clientname(c, mp->arg[2])) == nil)
-			return ReplyError;
-		if((e = clientname(c, mp->arg[3])) == nil)
-			return ReplyError;
-		if(bind(a, e, (int)mp->arg[4]) < 0)
-			return ReplyError;
-		if(verbose){
-			o9outs("bind '"); o9outs(a); o9outs("' '"); o9outs(e);
-			o9outs("'\n"); o9flush();
-		}
-		return ReplyDone;
-
+	/*
+	 * bind is not here.  A name space is not a personality: what a
+	 * container calls a thing is its own, lives in the policy layer's
+	 * table, and is written into its checkpoint, so it crosses to
+	 * another machine with it.  The kernel answers it in dispatch()
+	 * before anything is forwarded, and this server never sees it.
+	 */
 	case ReqClose:
 		i = (int)mp->arg[2];
 		if(i < 0 || i >= Nfd || c->fd[i] < 0)

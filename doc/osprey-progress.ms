@@ -80,9 +80,18 @@ A container may name another as its server.  Requests the kernel does not
 implement are put on the server's ring with the container and sequence
 they came from, an ordinary process takes them and answers them through
 the same rings and the same select, and the answer is routed home.  The
-server forks a process with a name space of its own for each container
-it answers for, so what one container binds is not what another sees and
-not what the server sees.
+server forks a process with a descriptor group of its own for each
+container it answers for, so what it opens for one is not in another's.
+.PP
+.B "A name space a container carries."
+What a container calls a thing is its own table in the policy layer, is
+written into its checkpoint, and is what every
+.CW open
+is resolved through \- so a container that crosses to another machine
+opens what its names name there.
+.CW bind
+is answered as mechanism, before anything is forwarded, and a
+personality's part is only to say what a global name stands for here.
 .PP
 .B "\[*p]p."
 The session protocol: sessions that outlive the connection carrying them,
@@ -194,7 +203,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Sixty-six lines, all
+a line at a time.  Sixty-eight lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -285,19 +294,13 @@ which is what says the answer came from the program and not from the
 kernel around it.
 .PP
 .CW bind
-is the one the kernel has no answer for at all: a container has no name
-space of its own there, only the name table the policy layer keeps, so
-.CW ReqBind
-is refused and always was.  The personality has one for each container
-it answers for, because it is a program and can fork one; a container
-that names it can build a name space and then open a name that no name
-space on the machine held before it asked, and what it builds there
-belongs to it alone.
-The check does exactly that, has the container ask the personality for
-the shape of the file it opened through that bind and finds the file's
-own name in what comes back, and has the same
-.CW bind
-refused to a container the kernel still answers for.
+was the one the kernel had no answer for at all, and the first version
+of this had the personality answer it by forking a name space.  That was
+wrong, and the section
+.I "A name space that can migrate"
+below says why and what replaced it: naming is mechanism, the container
+already had a table for it, and a personality's job is to say what a
+name stands for here and not to keep the name.
 .PP
 Two things about this tree came out of building it, and both are the
 same shape as the compiler that could not compile its own kernels.  The
@@ -627,6 +630,110 @@ pointer cast to a
 .CW ulong
 compiles on both, so a check like this is a floor and not a proof.
 .NH 1
+A name space that can migrate
+.PP
+Osprey is a microkernel and its containers migrate, and both of those
+say the same thing about a name space: it is state a container carries,
+so it must live somewhere a checkpoint can reach.  A
+.CW Pgrp
+is not such a place.  It is a Plan 9 object, it is full of
+.CW Chan s,
+and nothing could write one into an ethernet frame and read it back on
+another machine.  Giving each container a forked
+.CW Pgrp
+therefore gave it a name space that was real until the moment it
+mattered: a container that migrated arrived having lost every name it
+had bound, and nothing said so.
+.PP
+The right place was already there and doing nothing.  The policy layer
+has
+.CW Ns
+in
+.CW os/osprey/policy/ns.c
+\- a table of local name against global name, one per container, with
+.CW nsbind ,
+.CW nsunbind
+and
+.CW nslookup
+\- and
+.CW snap.c
+writes it into a checkpoint as
+.CW "name \fIlocal global\fP"
+lines and reads it back.  It was written, it was reported in
+.CW status ,
+it crossed the wire with a container, and
+.CW nslookup
+was called from nowhere at all.  A container's names migrated perfectly
+and meant nothing anywhere.
+.PP
+So the name a container asks to open is now looked up in that table
+first, on both paths: in
+.CW ospreykernop
+where the kernel's own personality answers, and in
+.CW p9srv ,
+which reads the container's names out of
+.CW status
+for the same reason it reads the slice from there rather than believing
+a container's map.  A name the table does not hold is left as it stands
+and resolved by whoever is answering, which is the buddy operating
+system doing what a buddy is for.  And
+.CW bind
+is answered in
+.CW dispatch()
+beside
+.CW yield ,
+.CW poll
+and
+.CW alloc ,
+before anything is forwarded: naming is mechanism.  A container has the
+same answer to
+.CW bind
+whether it has named a server or not, which it did not when the name
+space was a thing a personality forked.
+.PP
+The line that says it worked is on the wire: a container binds a name,
+is checkpointed into an ethernet frame, is restarted on a machine that
+had never heard of it, and opens what that name names there.  The
+.CW RFNAMEG
+version could not have had that line at all.
+.PP
+Two things fell out of it.  A container that has no server now gets
+.CW bind
+and gets it answered, where before it was refused \- the same mechanism
+for everybody, which is what mechanism means.  And what a global name
+stands for is genuinely the answering personality's: a container that
+binds a local name to
+.CW /n/only/proof
+opens it through
+.I p9srv
+and is refused by the kernel's own personality, because
+.CW /n/only
+is a name
+.I p9srv
+made in its own process and the kernel never saw.  The check has both
+of those, a line each.
+.PP
+Environments were the other half of the question and are a shorter
+answer: nothing in
+.CW os/osprey
+opens
+.CW #e
+or touches an
+.CW Egrp
+\- not the device, not the adapter, not the policy layer, not either
+personality, not the library.
+.CW devenv.c
+is linked because the kernel still carries a Plan 9 userland to be a
+buddy to, and no container reaches it.
+.CW pgrp.c
+is linked for the same reason and for one more: the service process a
+container names with
+.CW serve
+runs in the name space of whoever asked for it, and that is the name
+space a global name is resolved in.  That
+.CW Pgrp
+is the buddy's, deliberately, and is no longer any container's.
+.NH 1
 The gaps, by why they are gaps
 .PP
 Five kinds, and they are not equally hard.  The first cannot be closed
@@ -669,7 +776,7 @@ in
 and the same check with it set to the ring's depth gives
 .CW "direct 953 copied 257" .
 .NH 2
-Closed since, in the personality
+Closed since, and once the wrong way
 .PP
 A container had no name space of its own:
 .CW bind
@@ -678,20 +785,20 @@ was answered by
 in
 .I its
 name space, so two containers of one server shared its names, which is
-not what a private name space means.  It has one now, and it is the
-personality's to give, not the kernel's \- which is the whole argument
-for putting the personality outside in the first place.  The first
-request from a container has the server attach that container's slice
-and fork a process for it with
+not what a private name space means.  The first answer was to have the
+personality fork one per container, with
 .CW RFNAMEG
 and
-.CW RFFDG ;
-the process holding the request ring hands that process the message down
-a pipe and takes the answer back, and only the message goes through the
-pipe, since what it points at is in the span both have mapped.  The
-check has two containers of one server bind different directories over
-the same name and read different files through it, and the server's own
-name space hold neither.
+.CW RFFDG ,
+on the argument that a name space is a personality's to give.  That was
+wrong, and the section
+.I "A name space that can migrate"
+below says how.  What is right about it and stayed is the fork itself:
+the server gives each container a descriptor group of its own, so what
+it opens for one is not in another's, and the process holding the
+request ring hands that process the message down a pipe and takes the
+answer back, only the message going through the pipe since what it
+points at is in the span both have mapped.
 .PP
 With that the server holds three things for a container \- a process, a
 pipe and a mapping \- and until now it held all three for ever, since

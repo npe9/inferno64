@@ -1600,6 +1600,15 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 			n = Namelen;
 		if((e = memchr(a, 0, n)) == nil || e == a)
 			return StatusError;
+		/*
+		 * The container's own name space first.  What a container
+		 * calls a thing is in its own table, which travels in its
+		 * checkpoint; what the name stands for here is this
+		 * personality's business.  A name the table does not hold is
+		 * left as it stands and resolved by the kernel around it,
+		 * which is what a buddy operating system is for.
+		 */
+		a = ospreyresolve(p, a);
 		for(i = 0; i < Nfd; i++)
 			if(ospreyfd[x][i] == nil)
 				break;

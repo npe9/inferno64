@@ -100,6 +100,13 @@ void		ospreysettxavail(Ospreyproc*, uvlong);
 int		ospreysetsize(char*, ulong n, ulong max);
 /* put a message about a container on its server's ring; no reply comes */
 int		ospreytellserver(Ospreyproc*, int op);
+/*
+ * The container's own name space: a name it points at, and what that
+ * name stands for here.  The table travels in the checkpoint, so these
+ * are the names that cross to another machine with the container.
+ */
+char*		ospreyname(Ospreyproc*, uvlong off);
+char*		ospreyresolve(Ospreyproc*, char *local);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 int		ospreytxsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);

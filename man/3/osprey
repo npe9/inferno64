@@ -329,7 +329,13 @@ Put that back.  For a checkpoint that leaves the kernel, read and write
 .BR snap .
 .TP
 .BI bind " id local global"
-Add a private name to the container's namespace.
+Add a private name to the container's namespace.  This is the same table
+the
+.B bind
+request writes and the same one every
+.B open
+is resolved through, and it is written into the container's checkpoint,
+so the names go with it to another machine.
 .TP
 .BI unbind " id local"
 Remove one.  A name is at most 31 characters and a container holds at
@@ -769,21 +775,16 @@ waits on its request ring, performs each
 .BR write ,
 .BR stat ,
 .B close
-and
+with the ordinary system calls, and puts the answer back.  It refuses
+everything else rather than falling back into the kernel.
 .B bind
-with the ordinary system calls in its own name space, and puts the
-answer back.  It refuses everything else rather than falling back into
-the kernel.
-.B bind
-is the one the kernel has no answer for at all -- a container has no
-name space of its own there, only the name table the policy layer keeps
--- and is the clearest of them: the two names are offsets in the asking
-container's data area, the third argument is the ordinary
-.IR bind (2)
-flag word, and what it changes is the server's name space, which is the
-container's name space for as long as that server answers for it.  A
-container may then open a name that no name space on the machine had
-before it asked for it.
+is not among them: a name space is not a personality, and the policy
+layer answers it in
+.IR dispatch ()
+before anything reaches a server.  What the server does with the table
+is read it: a name a container asks to open is looked up in that
+container's own names first, and what comes back is opened in the
+server's process.
 .PP
 .I p9srv
 is started as
@@ -1154,9 +1155,28 @@ describes, and a container with a server named by
 .B delegate
 has them answered there if that server implements them.
 .B bind
-is refused by the kernel and answered by
-.IR p9srv ,
-in a name space of the asking container's own.
+is answered by the policy layer itself, in
+.IR dispatch (),
+before anything is forwarded: it puts a name in the container's own
+table, which is the same table the
+.B bind
+control message writes and the same one every
+.B open
+is resolved through.  A container has that table whether it has named a
+server or not, so the answer is the same either way.  Naming is
+mechanism and not personality \- what a container calls a thing is its
+own and travels in its checkpoint, and what the name stands for on this
+machine is whatever answers for the container.  Two personalities may
+therefore make different things of one global name, and do: a container
+that binds a local name to
+.B /n/only/proof
+opens it through
+.I p9srv
+and is refused by the kernel's own personality, because
+.B /n/only
+is a name
+.I p9srv
+made in its own process.
 .B send
 and
 .B recv
@@ -1291,20 +1311,39 @@ themselves; the arms, the frame and the answer are all in memory it has
 mapped.
 .PP
 .I p9srv
-gives each container it answers for a name space of its own.  The first
-request from a container has the server attach that container's slice
-and then fork a process for it with
-.B RFNAMEG
-and
+gives each container it answers for a descriptor group of its own.  The
+first request from a container has the server attach that container's
+slice and then fork a process for it with
 .BR RFFDG ,
-so what the container binds and what it opens are in a name space and a
-descriptor group that no other container of the same server shares, and
-that the server itself does not share either.  The process that owns the
-request ring hands that process the message down a pipe and takes the
-answer back the same way; only the message goes through the pipe, since
-what it points at is in the span both have mapped.  A container's name
-space starts as a copy of the server's, which is what a name space
-forked from another one has always meant here.
+so what the server opens for one container is not in another's.  The
+process that owns the request ring hands that process the message down a
+pipe and takes the answer back the same way; only the message goes
+through the pipe, since what it points at is in the span both have
+mapped.
+.PP
+What that fork does not give, and used to, is a name space.  It was
+.B RFNAMEG
+as well, and a container's names were a Pgrp: a Plan 9 object no
+checkpoint can carry, so a container that migrated arrived having lost
+every name it had bound, while the table the policy layer keeps \- which
+does cross, and is in
+.B status
+and in every checkpoint \- resolved nothing at all.  The table is what
+resolves a name now, on both paths, and the check migrates a container
+to another machine and opens through a name it bound before it left.
+.PP
+Environments are not in any of this.  Nothing in
+.BR os/osprey ,
+in either personality or in the library, opens
+.B #e
+or touches an Egrp; the device is in the kernel for the Plan 9 userland
+the kernel still carries, which is the buddy operating system, and no
+container reaches it.  A Pgrp is still made for the service process a
+container names with
+.BR serve ,
+and that one is the buddy's: it is the name space the global name a
+container's table gives is resolved in, and it is deliberately not the
+container's.
 .PP
 A container that goes is said so to its server.
 .B exit

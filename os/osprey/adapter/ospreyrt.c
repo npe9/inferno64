@@ -1403,6 +1403,35 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 		rep->message.arg[2] = p->container.memused;
 		rep->status = ReplyDone;
 		return 0;
+
+	case ReqBind:
+		/*
+		 * A name space is not a personality.  What a container calls
+		 * a thing is its own, is in its own table, and is written
+		 * into its checkpoint, so it crosses to another machine with
+		 * it; what that name stands for on this machine is what a
+		 * personality knows.  So this is answered here and not
+		 * forwarded, and it needs no Pgrp: a Pgrp is a Plan 9 object
+		 * that no checkpoint could carry.
+		 *
+		 * arg[2] is the local name and arg[3] the global one, in the
+		 * order the bind control message takes them and the order
+		 * the table itself is written in.
+		 */
+		{
+			Ospreyproc *q;
+			char *l, *g;
+
+			q = (Ospreyproc*)p;
+			if((l = ospreyname(q, req->message.arg[2])) == nil
+			|| (g = ospreyname(q, req->message.arg[3])) == nil){
+				rep->status = ReplyError;
+				return 0;
+			}
+			rep->status = ospreybind(q, l, g) < 0
+				? ReplyError : ReplyDone;
+			return 0;
+		}
 	}
 
 	/*
@@ -2205,6 +2234,47 @@ ospreybind(Ospreyproc *p, char *local, char *global)
 	if(p == nil || p->used == 0)
 		return -1;
 	return nsbind(&p->process.ns, local, global);
+}
+
+/*
+ * A name a request points at: NUL terminated, inside the container's own
+ * data area, and no longer than a name may be.  The bounds are the
+ * kernel's, since a container may write every byte of its own map.
+ */
+char*
+ospreyname(Ospreyproc *p, uvlong off)
+{
+	char *a, *e;
+	uvlong n;
+
+	if((a = ospreydata(p, off, 1)) == nil)
+		return nil;
+	n = ospreydatalen(p) - off;
+	if(n > Nnamelen)
+		n = Nnamelen;
+	if((e = memchr(a, 0, n)) == nil || e == a)
+		return nil;
+	return a;
+}
+
+/*
+ * What a name means to this container.  The table is the policy layer's
+ * Ns: it is the container's own, it is written into a checkpoint and
+ * read back out of one, so it goes where the container goes.  A name
+ * with no entry is not refused; it is left as it stands, and whoever
+ * answers for the container makes what it can of it.  That is the buddy
+ * operating system underneath doing what a buddy is for.
+ */
+char*
+ospreyresolve(Ospreyproc *p, char *local)
+{
+	char *g;
+
+	if(p == nil || p->used == 0 || local == nil)
+		return local;
+	if((g = nslookup(&p->process.ns, local)) != nil)
+		return g;
+	return local;
 }
 
 int

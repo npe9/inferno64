@@ -99,6 +99,12 @@ DST = [
  "bind '#O' /n/osprey; echo key sekrit >/n/osprey/ctl",
  "echo '#### arrived'; /tmp/mig recv",
  "grep '^name 42' /n/osprey/status",
+ # the names came with it, so they still resolve here: a container's
+ # name space is its own table and not a Pgrp, which is what lets it
+ # cross at all
+ "echo '#### opened'; echo poke 42 0 home >/n/osprey/ctl",
+ "echo submit 42 open 0 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
+ "sleep 2; echo service 4 >/n/osprey/ctl; sleep 1; cat /n/osprey/reply",
  "echo key other >/n/osprey/ctl; echo '#### refuse'; /tmp/mig recv",
  "sleep 12; echo '#### only'; grep -c '^proc ' /n/osprey/status",
  "echo '#### end'",
@@ -150,6 +156,8 @@ def main():
                     'restarted' in dst and 'name 42 home /usr/glenda' in dst))
     results.append(("and gone from the one it left",
                     between(src, 'left', 'end').find('\n0\n') >= 0))
+    results.append(("and the names it carried still opening what they name there",
+                    '42 open done' in between(dst, 'opened', 'refuse')))
     results.append(("a checkpoint signed by a key the other end does not hold, refused",
                     'would not take it' in between(dst, 'refuse', 'only')))
     results.append(("and the container kept, since nothing said it arrived",
