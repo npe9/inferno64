@@ -1234,6 +1234,74 @@ stencil sweep. It is worth having for inference, not for the numerics. Only
 multi-array features are handled; anything else reports as `opaque` in `info`
 and cannot be fed.
 
+### `ml(3)` since: ONNX, a process boundary, and a software backend
+
+Three things changed and the two paragraphs above are stale where they conflict
+with this. `emu/MacOSX/win-ml.m` no longer exists.
+
+**The model format is ONNX, not `.mlmodel`.** CoreML compiles `.mlmodel` and
+`.mlpackage` and nothing else, and Apple's own converter dropped ONNX, so the
+conversion happens inside `onnxruntime` rather than in the operating system.
+That also bought the thing the CoreML fixture could not express: a model may
+leave a dimension open, `info` reports it as `-1`, and the device fills it in
+from how many bytes were written.
+
+**`onnxruntime` is in a process of its own, and this is not a workaround.** emu
+aliases the libc allocators into the Inferno pool, and `onnxruntime` allocates
+through several the aliasing does not cover — `posix_memalign`,
+`aligned_alloc`, `malloc_size`, the `malloc_zone_*` calls. Memory went out on
+one heap and came back on the other, and there is no way to wrap the rest:
+`malloc_zone_*` is not a wrappable interface, and dropping the aliasing does
+not link because emu's own code needs the wrap symbols. So `mlsrv` links the
+library, emu starts it with `oscmd()` like any host command, and emu links no
+part of `onnxruntime` at all — `otool -L` reports none. **A device that
+virtualizes a host capability should not share an address space with the thing
+it virtualizes**, and this is the general lesson, not a detail about one
+library.
+
+**The crash that motivated the move was a different bug, and the boundary is
+what found it.** With the library out of emu the segfault was still there, and
+the crash report put it inside Apple's BNNS convolution reached through the
+CoreML provider, with no Inferno allocator anywhere in the stack. It reproduces
+outside Inferno entirely — a fifteen-line Python driver speaking the same
+protocol kills the server on three of five utterances — and it is not random:
+short inputs live, long ones die, at about forty phonemes, and every one
+survives on the CPU provider. So `say(1)` asks for `units cpu`. **The first
+diagnosis was wrong and stood for a while**; what settled it was reproducing
+the failure with Inferno removed from the picture, which is the only move that
+could have.
+
+**There is now a software backend, and it is the whole of `ml(3)` where there
+is no host.** `emu/port/mlsoft.c` reads the ONNX protobuf itself and evaluates
+the graph with libmath's `gemm`, so a machine with no accelerator and the
+native kernel both get a working device instead of "no backend". It is not an
+ONNX runtime: it does the operators listed in `ml(3)` and an operator outside
+that set is an error naming the operator, never a wrong answer. No `Conv`, so
+the voice will not load on it.
+
+Two backends need a rule, and `ml.h` makes one: a backend is seven functions in
+a struct, `devml` picks one at load and holds it for the model's lifetime.
+Last-constructor-wins would have been the accident here.
+
+**What proves the software path is the comparison, not the test passing.**
+`mltest(1)` runs the same model through both and requires agreement to a part
+in ten thousand. `lib/ml/mlp.onnx` exists because `linear.onnx` is a single
+`Gemm` and agreeing on one `Gemm` says nothing about broadcasting, `Softmax`,
+`Transpose` or `Concat`; the wider fixture reaches all of them and the two
+agree to 6e-08. Breaking the broadcast stretch rule moves that to 0.57 — **but
+every `Softmax` row still summed to one**, and the row sum is the only check
+available with no host backend, which is exactly native Inferno. On native this
+fixture proves the graph ran and says little about whether it ran correctly.
+
+**Native is prepared, not done.** `devml.c`, `ml.h` and `mlsoft.c` carry both
+kernels' include prologues and the native `Dev` table's extra entries, so the
+port is `cp` plus one line in the configuration's `dev` section — `ml mlsoft`,
+never `mlonnx`. It has not been built as part of a native kernel, because that
+tree is not ours to build here. What was checked is that both files compile
+against the native tree's own headers with every call declared, the only
+exception being `USED`, a compiler builtin `os/inferno/alloc.c` uses the same
+way.
+
 ### What this means for the rest of the plan
 
 Item 2 (device-resident vectors) wants the same *property* — a big thing that
