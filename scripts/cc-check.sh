@@ -117,6 +117,32 @@ OVEOF
 # whether it worked, so they are reported and not counted against
 fixed=" jc tc "
 
+# and a double through the loader as well as the compiler.  Ieee holds a
+# double as two longs, l and h, which are 32 bit values in the object
+# file whatever the host's long is; every loader laid the eight bytes of
+# a double out by casting that struct to bytes, which on a host with a
+# 64 bit long copies l and the four zero bytes above it and never h.  So
+# 1.5, whose low word is zero, linked as eight zero bytes, and every
+# double in every program these loaders link was wrong -- the compilers'
+# objects were right and the binaries were not.  This links a program
+# holding two doubles with each loader and looks for their bytes in it,
+# either way round, since a machine that stores them the other way is as
+# right.
+cat >"$TMP/dbl.c" <<'DBLEOF'
+double v = 1.5;
+double w = -2.5;
+char *r;
+void
+_main(char *argv0)
+{
+	if(v > w)
+		r = argv0;
+	for(;;)
+		;
+}
+DBLEOF
+dblbits="3ff8000000000000 c004000000000000"
+
 bad=0
 for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 	if ! command -v "$cc" >/dev/null 2>&1; then
@@ -184,6 +210,32 @@ for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 		esac
 	else
 		echo "FAIL $cc would not compile the overlap case"
+		bad=1
+	fi
+
+	# the loader that goes with this compiler
+	ld=`echo $cc | sed 's/c$/l/'`
+	if command -v "$ld" >/dev/null 2>&1 \
+	&& "$cc" -o "$TMP/dbl.$ld" "$TMP/dbl.c" >/dev/null 2>&1 \
+	&& "$ld" -l -o "$TMP/dbl.out" "$TMP/dbl.$ld" >/dev/null 2>&1; then
+		hex=`od -A n -v -t x1 <"$TMP/dbl.out" | tr -d ' \012'`
+		miss=0
+		for b in $dblbits; do
+			rev=`echo $b | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\8\7\6\5\4\3\2\1/'`
+			case "$hex" in
+			*$b*) ;;
+			*$rev*) ;;
+			*) miss=`expr $miss + 1`;;
+			esac
+		done
+		if [ $miss -eq 0 ]; then
+			echo "ok   $ld kept both doubles whole through the link"
+		else
+			echo "FAIL $ld lost $miss of two doubles in the link"
+			bad=1
+		fi
+	else
+		echo "FAIL $ld would not link a program with a double in it"
 		bad=1
 	fi
 

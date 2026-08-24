@@ -212,7 +212,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Seventy-nine lines, all
+a line at a time.  Eighty lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -1225,42 +1225,59 @@ leave
 to whoever can run a number through it, and not a reason to think it is
 absent.
 .PP
-Trying to run one from here turned up something else, and getting it
-right took three goes.  A double does not work in an Osprey command: a
-variable set to 1.5 reads back as sixteen zero bits, from a literal or
-from the program's own data alike;
+Trying to run a number from here turned up something else, and getting
+it right took four goes, of which the first three were wrong in
+different ways and are worth keeping for that.  A double did not work in
+an Osprey command: a variable set to 1.5 read back as sixteen zero bits,
+from a literal or from the program's own data alike, and
 .CW "a > 1.0"
-is false and
+was false while
 .CW "b == 3.0"
-is true in the same run, which is not two wrong answers but a comparison
-that is not happening; a cast to an integer gives nought.  The first
-version of this said the programs cannot do floating point at all, and
-the first probe said
-.CW "arithmetic yes" ,
-both of which were wrong \- some constant expressions fold and come out
-right, which is what makes it look as though arithmetic works.
+was true in the same run.  The first account said the programs cannot do
+floating point at all; the second said it looked like the library, since
+these programs cannot link the C library's startup; the third measured
+more carefully and still blamed the library.  All three were guesses
+dressed as findings.  What settled it was comparing the object with the
+binary: the object held 1.5 and the linked program held eight zero
+bytes, so the fault was in
+.CW 6l
+and nowhere else.
 .PP
-It is not the kernel:
-.CW awk
-on the same machine gets
-.CW 3.000000
+.CW Ieee
+holds a double as two longs, and every loader laid the eight bytes out
+by casting that struct to bytes, which on a host with a sixty-four bit
+long copies the low word and the four zero bytes above it and never the
+high word.  The other session had found and fixed exactly this in
+.CW 5l
 and
-.CW 2.718282
-out of
-.CW 1.5+1.5
+.CW tl ,
+the two it could boot, and left the other seven; the same edit is in all
+nine now, and
+.CW scripts/cc-check.sh
+links a program holding two doubles with each and looks for their bytes.
+On the machine,
+.CW fpbits
+prints
+.CW "1.5 3ff8000000000000" ,
+.CW "3.0 4008000000000000"
 and
-.CW exp(1) .
-What it looks like is the library.  These programs supply their own
-.CW _main
-because the one in
-.CW Osprey/amd64/lib/libc.a
-will not load \-
-.CW "opcode out of range 678, probably not a .6 file"
-\- and that library is not built by this tree at all: it is untracked,
-dated before this work began, and one of its members is in a format this
-loader does not read.  So it is the same hole as the 386 kernel's, seen
-from the other side: there is no Osprey userland built here, only one
-left here.
+.CW "compares yes" ,
+and that is a line in the single-machine check.
+.PP
+One more thing came out of it, and it belongs to the fact that two
+sessions are working in one tree.  Relinking any of these programs gave
+a binary with no library in it \- 253 bytes of text where
+.CW o9cat
+has four thousand \- and the cause was an uncommitted one-line change
+to
+.CW utils/6l/pass.c
+in the working tree, the other session's, which my rebuild of the loader
+had compiled in.  A loader built from the committed
+.CW pass.c
+links 4053 bytes of text for the same program.  That file is not mine
+to touch and is not touched; the loader installed here is built from
+the committed source, and this is written down so that whoever next
+finds every program shrinking knows where to look.
 .PP
 Environments were the other half of the question and are a shorter
 answer: nothing in

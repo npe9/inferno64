@@ -8,8 +8,8 @@ BIN=$ROOT/Osprey/$OBJTYPE/bin
 # the container-side library, and the headers it installs
 O9LIB=$ROOT/Osprey/$OBJTYPE/lib/libosprey9.a
 CFLAGS=$CFLAGS -I$ROOT/Osprey/include/osprey
-TARG=ring pip mig p9srv netsrv o9cat
-OFILES=ring.$O pip.$O mig.$O p9srv.$O netsrv.$O o9cat.$O
+TARG=ring pip mig p9srv netsrv o9cat fpbits
+OFILES=ring.$O pip.$O mig.$O p9srv.$O netsrv.$O o9cat.$O fpbits.$O
 
 all:V:	o9lib $TARG
 
@@ -38,6 +38,9 @@ netsrv:	netsrv.$O
 
 o9cat:	o9cat.$O
 	$LD -l -o $target o9cat.$O $O9LIB $ROOT/Osprey/$OBJTYPE/lib/libc.a
+
+fpbits:	fpbits.$O
+	$LD -l -o $target fpbits.$O $O9LIB $ROOT/Osprey/$OBJTYPE/lib/libc.a
 
 # Every one of these embeds structures the shared headers define, so
 # each must be rebuilt when any of them changes.  Without this a field

@@ -248,7 +248,7 @@ datblk(long s, long n)
 	uchar *cast;
 	long l, fl, j;
 	vlong o;
-	int i, c;
+	int i, c, iw[2];
 
 	memset(buf.dbuf, 0, n+Dbufslop);
 	for(p = datap; p != P; p = p->link) {
@@ -293,7 +293,16 @@ datblk(long s, long n)
 				}
 				break;
 			case 8:
-				cast = (uchar*)&p->to.ieee;
+				/*
+				 * The two halves are 32 bit values whatever
+				 * the host's long is.  Lay them out as a
+				 * pair of those rather than casting the
+				 * struct, whose fields are twice as wide as
+				 * the file's on a 64 bit host.
+				 */
+				iw[0] = p->to.ieee.l;
+				iw[1] = p->to.ieee.h;
+				cast = (uchar*)iw;
 				if(debug['a'] && i == 0) {
 					Bprint(&bso, pcstr, l+s+INITDAT);
 					for(j=0; j<c; j++)

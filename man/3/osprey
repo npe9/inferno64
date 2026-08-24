@@ -646,42 +646,23 @@ It is not a library operating system in the sense the plan means.  A
 Plan 9 kernel is still underneath, answering what the policy layer does
 not; this is that kernel's request ABI made into a library, so that a
 program need not work out the span's shape for itself.
-A double does not work in these programs.  What was measured: a variable
-set to 1.5 reads back as sixteen zero bits, whether the 1.5 came from a
-literal or from the program's own data;
-.B a
-.B >
-.B 1.0
-is false and
-.B b
-.B ==
-.B 3.0
-is true at the same time, which is not two wrong answers but a
-comparison that is not happening; and a cast to an integer gives nought.
-Some constant expressions are folded and come out right, which is what
-makes it look as though arithmetic works.
-.PP
-It is not the kernel.
-.I awk
-on the same machine prints
-.B 3.000000
-and
-.B 2.718282
-for
-.B 1.5+1.5
-and
-.BR exp(1) .
-What it looks like is the library: these programs supply their own
-.I _main
-because
-.B /Osprey/amd64/lib/libc.a
-holds one this loader will not read \-
-.B "opcode out of range 678, probably not a .6 file"
-\- and that library is not built by this tree at all but left in it, so
-whatever its startup arranges, a program here does not get.  Nothing in
-.B /os/osprey/cmd
-wants a double, and this is written down so the next thing that does
-knows to settle it before trusting a number.
+A double did not work in these programs, and the reason was every
+loader in the tree.
+.I Ieee
+holds a double as two longs, low word and high, which are thirty-two bit
+values in the object file whatever the host's long is; every loader laid
+the eight bytes of a double out by casting that struct to bytes, which
+on a host with a sixty-four bit long copies the low word and the four
+zero bytes above it and never the high word.  So 1.5, whose low word is
+zero, linked as eight zero bytes, and a program that set a variable to
+1.5 read back sixteen zero bits while the compiler's object held the
+right value.  All nine loaders lay the two words out as a pair now, and
+.I fpbits
+prints what a double comes to once it has been through the compiler,
+the loader and the kernel, as bits rather than a value:
+.B "1.5 3ff8000000000000" ,
+.B "3.0 4008000000000000" ,
+.BR "compares yes" .
 .PP
 .I ring
 is deliberately not built on it: it exists to show the ring unmediated,
@@ -963,6 +944,8 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/cmd/netsrv.c
 .br
 .B /os/osprey/cmd/o9cat.c
+.br
+.B /os/osprey/cmd/fpbits.c
 .br
 .B /os/osprey/libosprey9
 .br
