@@ -350,6 +350,58 @@ so results differ from the host backend in the last bits.
 .IR mltest (1)
 runs the same model both ways and requires them to agree to about a part in
 ten thousand.
+.SH "NATIVE INFERNO"
+.BR devml.c ,
+.B ml.h
+and
+.B mlsoft.c
+carry both kernels' include prologues and the native
+.B Dev
+table's extra
+.B devreset
+and
+.B devshutdown
+entries, so they are copied rather than edited:
+.IP
+.EX
+cp emu/port/devml.c emu/port/ml.h emu/port/mlsoft.c os/inferno/
+.EE
+.PP
+Then add the device to the configuration's
+.B dev
+section, next to
+.B prog
+and
+.BR srv :
+.IP
+.EX
+	ml	mlsoft
+.EE
+.PP
+The
+.B lib
+section already has
+.BR math ,
+which is all the software backend needs.
+Do not add
+.BR mlonnx :
+it wants a host process, and there is no host.
+.PP
+This has not been built as part of a native kernel here.
+What was checked is that both files compile against the native tree's own
+headers \(em
+.BR u.h ,
+.BR lib.h ,
+.BR mem.h ,
+.B os/pc/dat.h
+and
+.B os/pc/fns.h
+\(em with every function they call declared by those headers, the sole
+exception being
+.BR USED ,
+which is a compiler builtin the existing
+.B os/inferno
+sources use the same way.
 .SH DIAGNOSTICS
 Errors from the host's inference framework are passed through, so a
 malformed model or a wrong input size reports what the framework said

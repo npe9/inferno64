@@ -63,9 +63,23 @@
  * fails cleanly rather than being #ifdef'd out. Plain C types only, so a
  * backend needs no Inferno headers.
  */
+/*
+ * Two include blocks because there are two kernels. emu defines EMU; the
+ * native tree wants its own prologue and its error.h by path. Everything
+ * below this is the same file for both, which is the point: see ml.h.
+ */
+#ifdef EMU
 #include	"dat.h"
 #include	"fns.h"
 #include	"error.h"
+#else
+#include	"u.h"
+#include	"../inferno/lib.h"
+#include	"mem.h"
+#include	"dat.h"
+#include	"fns.h"
+#include	"../inferno/error.h"
+#endif
 #include	"ml.h"
 
 enum
@@ -678,7 +692,13 @@ Dev mldevtab = {
 	'N',
 	"ml",
 
+#ifndef EMU
+	devreset,
+#endif
 	devinit,
+#ifndef EMU
+	devshutdown,
+#endif
 	mlattach,
 	mlwalk,
 	mlstat,
