@@ -161,7 +161,8 @@ for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 	# once as the half being written.  A compiler that kept it in a
 	# register emits no store of the whole thing, so count how many
 	# times the eight-byte move mentions it.
-	if "$cc" -S "$TMP/overlap.c" >"$TMP/overlap.s" 2>/dev/null; then
+	# in $TMP: some of these still write the object beside the source
+	if ( cd "$TMP" && "$cc" -S overlap.c >overlap.s 2>/dev/null ); then
 		st=`grep -c '	MOVD	F[0-9]*,y' "$TMP/overlap.s"`
 		case "$fixed" in
 		*" $cc "*)
