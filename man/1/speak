@@ -1,0 +1,120 @@
+.TH SPEAK 1
+.SH NAME
+speak \- read something out
+.SH SYNOPSIS
+.B speak
+[
+.B -l
+.I lexicon
+]
+[
+.B -p
+.I pitch
+]
+[
+.B -s
+.I speed
+]
+[
+.B -o
+.I file
+]
+[
+.B -q
+]
+[
+.B -t
+.I text
+]
+[
+.I file ...
+]
+.SH DESCRIPTION
+.B Speak
+reads its input out loud, a line at a time, through
+.IR voice (3).
+With no
+.I file
+it reads standard input, so it composes:
+.IP
+.EX
+ls /dev | speak
+speak /tmp/notes
+speak -t 'the disk is full'
+.EE
+.PP
+.B -p
+and
+.B -s
+set the pitch in Hz and the speed as a percentage; both are
+.IR voice (3)'s.
+.B -o
+writes the samples to a file instead of
+.BR /dev/audio ,
+which is how this gets tested without listening to it.
+.B -q
+stops it reporting words it could not say.
+.PP
+A line is not begun until the one before it has been heard, so a pipe paces
+itself rather than queueing everything at once and talking over itself.
+.SH "WHY NOT SAY(1)"
+.IR Say (1)
+speaks one utterance and exits, having loaded sixty megabytes of model to do
+it \(em between one and two seconds whatever is being said.
+That is right for narration and useless for reading: nothing can be piped into
+it, and a second and a half a line is not reading, it is waiting.
+.PP
+So this goes through
+.IR voice (3),
+which synthesizes natively and far faster than real time.
+It sounds much worse.
+That is the trade, and for reading a screen it is the right way round.
+.SH "WHAT IT DOES TO A LINE"
+The first thing this was given to read was
+.B ls /dev
+and it said nothing at all.
+Every line is a path,
+.B /dev/cons
+is one token with no spaces in it, and no dictionary has an entry for
+.BR devcons .
+Silence, from the most ordinary output there is.
+.PP
+So slash, dot, dash, underscore and the other characters that hold identifiers
+together become spaces, which turns a path into the words it is made of, and
+digits become their names, because
+.B 4
+is not a word and an error code is exactly the thing being read out.
+.PP
+A word that is in neither the lexicon nor the dictionary is skipped and the
+rest of the line is still said.
+That is the opposite of
+.IR say (1)'s
+choice and deliberate: there the words are chosen in advance and a refusal is a
+correction waiting to be made, here they arrive unbidden and silence is a
+failure at the one thing this is for.
+.SH SOURCE
+.B /appl/cmd/speak.b
+.SH SEE ALSO
+.IR say (1),
+.IR phon (2),
+.IR voice (3),
+.IR audio (3)
+.SH BUGS
+It skips what it cannot pronounce rather than spelling it out.
+.B consctl
+and
+.B hoststdin
+are read as nothing at all, where a real screen reader would fall back on
+letter-to-sound rules or spell the word.
+.IR Phon (2)
+has no rules; this is where their absence is felt.
+.PP
+Nothing splits runs-together identifiers.
+.B consctl
+is two words to a person and one to this.
+.PP
+It reads lines, so it cannot be interrupted part way through one, and there is
+no way to stop it short of killing it.
+A reader people actually use needs both.
+.PP
+Nothing here has been listened to by whoever wrote it.

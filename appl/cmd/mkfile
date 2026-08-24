@@ -91,6 +91,7 @@ TARG=\
 	krylovtest.dis\
 	mltest.dis\
 	phontest.dis\
+	speak.dis\
 	pdetest.dis\
 	playmovie.dis\
 	quitall.dis\
