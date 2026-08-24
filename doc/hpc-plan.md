@@ -2313,7 +2313,11 @@ a watchdog to `fdstresstest` stopped the hang reproducing entirely.
 
 All follow the `appl/cmd/*test.b` convention and have `man/1` pages.
 
-**`runtests`** runs the ones that need no screen and names the ones it does not.
+**`runtests`** runs the ones that need no screen; **`runtests -g`, started under
+`wm`, runs the ones that do** (nowmtest, line3test, keyuptest, wmtest, wmtest -k).
+Four are still run by neither and are named rather than quietly omitted:
+`clicktest` has to be *driven*, `drawdecodetest` wants a clip, `gputest` is slow,
+and `fdstresstest` hangs on failure so it needs a timeout around it.
 It is a program rather than a shell loop so that one test failing does not stop
 the rest being tried, and it keeps each test's output so a failure can say what
 the test said. **The file is the verdict**: emu does not carry a Dis program's

@@ -24,6 +24,8 @@ include "sys.m";
 	print, sprint, fprint: import sys;
 include "draw.m";
 include "arg.m";
+include "session.m";
+	session: Session;
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -44,25 +46,32 @@ headless := array[] of {
 		"that exactly one process executes Dis at a time"),
 };
 
-# Not run here, and why. Each is a real check; none can be run from inside
-# another program without a screen.
+# Run with -g, which needs a screen and so needs this to be started under
+# wm(1). None is given -q: that would end the session and take this program
+# with it.
 graphical := array[] of {
-	Test("wmtest", "-q",
-		"window creation in bulk; -k that what was drawn is still there"),
-	Test("clicktest", "-e press -n 1 -q",
-		"that a scripted click and drag work a real Tk widget"),
 	Test("nowmtest", nil,
 		"that a draw context works with no window manager"),
 	Test("line3test", nil,
 		"the draw3d GPU line provider against the software one"),
 	Test("keyuptest", nil,
 		"that key releases are not inserted as text"),
+	Test("wmtest", "-n 40",
+		"window creation in bulk"),
+	Test("wmtest", "-k",
+		"that what was drawn into a window is still there"),
+};
+
+# Still not run by anything here, and why.
+notrun := array[] of {
+	Test("clicktest", "-e press -n 2",
+		"a scripted click on a Tk widget; has to be driven, see -g"),
 	Test("drawdecodetest", nil,
-		"video decoding into a draw image"),
+		"video decoding into a draw image; wants a clip to hand"),
 	Test("gputest", nil,
-		"gpu(3) against the software path"),
+		"gpu(3) against the software path; slow, and wants a GPU"),
 	Test("fdstresstest", nil,
-		"the scheduler; hangs on failure, so run it under a timeout"),
+		"the scheduler; hangs on failure, so it needs a timeout around it"),
 };
 
 Capture: con "/runtests.out";
@@ -86,9 +95,14 @@ lastwords(): string
 		return nil;
 	(nil, lines) := sys->tokenize(string buf[0:n], "\n");
 	last := "";
-	for(; lines != nil; lines = tl lines)
-		if(hd lines != nil)
-			last = hd lines;
+	for(; lines != nil; lines = tl lines){
+		l := hd lines;
+		# a bare verdict is not detail: the line before it says how
+		# many of what went wrong, which is what a reader wants
+		if(l == nil || l == "PASS" || l == "FAIL")
+			continue;
+		last = l;
+	}
 	if(last == "")
 		return nil;
 	return ": " + last;
@@ -96,11 +110,11 @@ lastwords(): string
 
 usage()
 {
-	fprint(sys->fildes(2), "usage: runtests [-l] [-v] [-r resultfile]\n");
+	fprint(sys->fildes(2), "usage: runtests [-g] [-l] [-v] [-r resultfile]\n");
 	raise "fail:usage";
 }
 
-init(nil: ref Draw->Context, argv: list of string)
+init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
@@ -111,14 +125,16 @@ init(nil: ref Draw->Context, argv: list of string)
 	# 'list' is a Limbo keyword
 	listonly := 0;
 	verbose := 0;
+	gui := 0;
 	result := "/runtests.result";
 	arg->init(argv);
-	arg->setusage("runtests [-l] [-v] [-r resultfile]");
+	arg->setusage("runtests [-g] [-l] [-v] [-r resultfile]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'l' =>	listonly++;	# say what would run, and run nothing
 		'v' =>	verbose++;	# let each test's own output through
 		'r' =>	result = arg->earg();
+		'g' =>	gui++;		# also the ones that need a screen
 		* =>	arg->usage();
 		}
 	if(arg->argv() != nil)
@@ -135,23 +151,38 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 
+	tests := headless;
+	if(gui){
+		if(ctxt == nil){
+			fprint(sys->fildes(2),
+				"runtests: -g needs a window context; run it under wm\n");
+			raise "fail:context";
+		}
+		tests = graphical;
+	}
 	failed := 0;
-	for(i := 0; i < len headless; i++){
-		t := headless[i];
+	for(i := 0; i < len tests; i++){
+		t := tests[i];
+		# the arguments are part of the name here: the same test twice
+		# with different flags is two different checks, and a listing
+		# that says "wmtest" twice says nothing about which failed
+		label := t.name;
+		if(t.args != nil)
+			label += " " + t.args;
 		if(!verbose)
-			print("%-16s ", t.name);
-		e := run(t, verbose);
+			print("%-20s ", label);
+		e := run(t, ctxt, verbose);
 		if(e == nil){
 			if(!verbose)
 				print("ok\n");
 			else
-				print("%-16s ok\n", t.name);
+				print("%-20s ok\n", label);
 			continue;
 		}
 		if(!verbose)
 			print("FAIL %s\n", e);
 		else
-			print("%-16s FAIL %s\n", t.name, e);
+			print("%-20s FAIL %s\n", label, e);
 		failed++;
 	}
 
@@ -159,7 +190,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	# program's exit status out to whatever started it: a run with a failing
 	# test exits 0 exactly like a clean one. Anything deciding automatically
 	# has to read this.
-	verdict := sprint("%d of %d ran clean\n", len headless - failed, len headless);
+	verdict := sprint("%d of %d ran clean\n", len tests - failed, len tests);
 	if(failed)
 		verdict += "FAIL\n";
 	else
@@ -168,12 +199,20 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(rfd != nil)
 		fprint(rfd, "%s", verdict);
 
-	print("\n%d of %d ran clean.\n", len headless - failed, len headless);
-	print("Not covered here, and each needs a screen: ");
-	for(i = 0; i < len graphical; i++){
+	print("\n%d of %d ran clean.\n", len tests - failed, len tests);
+	rest := graphical;
+	what := "need a screen, so run runtests -g under wm";
+	if(gui){
+		rest = notrun;
+		what = "are not run by this at all";
+	}
+	print("These %s: ", what);
+	for(i = 0; i < len rest; i++){
 		if(i)
 			print(", ");
-		print("%s", graphical[i].name);
+		print("%s", rest[i].name);
+		if(rest[i].args != nil)
+			print(" %s", rest[i].args);
 	}
 	print(".\n");
 	sys->remove(Capture);
@@ -193,7 +232,7 @@ args(s: string): list of string
 	return l;
 }
 
-run(t: Test, verbose: int): string
+run(t: Test, ctxt: ref Draw->Context, verbose: int): string
 {
 	m := load Command "/dis/" + t.name + ".dis";
 	if(m == nil)
@@ -220,7 +259,7 @@ run(t: Test, verbose: int): string
 	}
 	err: string;
 	{
-		m->init(nil, t.name :: args(t.args));
+		m->init(ctxt, t.name :: args(t.args));
 	}exception{
 	"fail:*" =>
 		err = "reported failure";

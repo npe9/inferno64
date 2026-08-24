@@ -4,6 +4,9 @@ runtests \- run the tests and say which failed
 .SH SYNOPSIS
 .B runtests
 [
+.B -g
+]
+[
 .B -l
 ]
 [
@@ -17,6 +20,9 @@ runtests \- run the tests and say which failed
 .B Runtests
 runs the tests that need no screen and reports each one, then names the ones it
 did not run.
+.B -g
+runs the ones that do need a screen instead, and must itself be started under
+.IR wm (1).
 .B -l
 says what it would run and runs nothing.
 .B -v
@@ -38,7 +44,26 @@ its last words are the only detail there is: Limbo gives the variable in an
 exception clause a type of its own, so what was actually raised cannot be
 turned into a string here.
 The verdict line carries the last thing the test said.
-.SH "THE FILE IS THE VERDICT"
+.SS "The graphical ones"
+None of them is given
+.BR -q .
+That flag ends the session, which would take this program with it before it
+could report anything at all.
+.PP
+Four are still not run by anything here and are named rather than quietly
+omitted.
+.IR Clicktest (1)
+has to be
+.I driven
+\(em something must click on it \(em which is a different shape from starting a
+test and waiting;
+.IR drawdecodetest (1)
+wants a clip to hand;
+.IR gputest (1)
+is slow and wants a GPU; and
+.IR fdstresstest (1)
+hangs on failure, so it needs a timeout around it that this cannot provide.
+.SH "THE FILE IS THE VERDICT\"
 .B Emu
 does not carry a Dis program's exit status out to whatever started it: a run
 with a failing test exits 0 exactly like a clean one.
@@ -59,23 +84,39 @@ and for the same reason.
 .IP
 .EX
 % runtests
-sessiontest      ok
-styxtest         ok
-refstress        ok
+sessiontest          ok
+styxtest             ok
+refstress            ok
 
 3 of 3 ran clean.
-Not covered here, and each needs a screen: wmtest, clicktest, ...
 .EE
 .PP
-With a fault put into the decoder on purpose, to show it can say so:
+Under
+.IR wm (1),
+with
+.BR -g :
 .IP
 .EX
-sessiontest      FAIL reported failure: sessiontest: 2 checks failed
-styxtest         ok
-refstress        ok
+nowmtest             ok
+line3test            ok
+keyuptest            ok
+wmtest -n 40         ok
+wmtest -k            ok
 .EE
 .PP
-The other two still ran, which is the point.
+The arguments are part of the name, because the same test with different flags
+is a different check and a listing saying
+.B wmtest
+twice says nothing about which of them failed.
+.PP
+With a fault put in on purpose, to show it can say so:
+.IP
+.EX
+sessiontest          FAIL reported failure: sessiontest: 2 checks failed
+wmtest -k            FAIL reported failure: wmtest: 4 labels drawn and read back, 1 failed
+.EE
+.PP
+In both cases the other tests still ran, which is the point.
 .SH SOURCE
 .B /appl/cmd/runtests.b
 .SH SEE ALSO
@@ -89,12 +130,12 @@ The other two still ran, which is the point.
 .B doc/hpc-plan.md
 has the full table, including what each graphical test checks.
 .SH BUGS
-It runs three tests.
-The numerics and graphics tests are not in it: the graphical ones need a screen
-and a window manager and some end the session deliberately, which would take
-this program with them, and the numerics ones were not written to be run from
-inside another program.
-Naming them is not the same as running them.
+It runs three tests without
+.BR -g ,
+and five with it.
+The numerics tests are in neither: they were not written to be run from inside
+another program.
+Naming a test is not the same as running it.
 .PP
 A test that spawns children may still let their output past, since only this
 process's own descriptors are redirected.
