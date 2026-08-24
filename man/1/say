@@ -8,6 +8,10 @@ say \- speak, through ml(3)
 .I voice
 ]
 [
+.B -u
+.I units
+]
+[
 .B -o
 .I file
 ]
@@ -26,6 +30,23 @@ with
 as signed 16-bit little-endian mono.
 .B -i
 first prints what the model declares.
+.PP
+.B -u
+asks
+.IR ml (3)
+for particular compute units.
+The default is
+.BR cpu ,
+and deliberately: above about forty phonemes
+.IR onnxruntime 's
+CoreML provider faults inside Apple's
+.SM BNNS
+convolution and takes the model server with it.
+That was measured outside Inferno entirely \(em the same five utterances
+through a fifteen-line driver, three of five dead on CoreML and five of five
+good on the processor \(em so it is not this system's bug to fix.
+.B "-u all"
+asks for the accelerator anyway, and short utterances do work there.
 .PP
 The voice is a VITS model: phoneme numbers in, a waveform out, with no vocoder
 or formant synthesis in between.

@@ -382,6 +382,7 @@ mklist sh-sexprs
 mktext sh-sexprs
 mktextlist sh-sexprs
 mload sh-mload
+mltest mltest
 monitor grid-monitor
 mount bind
 mpexpr sh-expr

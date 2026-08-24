@@ -264,6 +264,7 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	stale();
 	backends(mod);
+	wider();
 
 	if(fail)
 		raise "fail:test";
@@ -294,7 +295,9 @@ init(nil: ref Draw->Context, argv: list of string)
 #
 backends(mod: string)
 {
-	(sdev, sy) := runon(mod, "soft");
+	x := array[3] of real;
+	x[0] = 1.0; x[1] = 2.0; x[2] = 3.0;
+	(sdev, sy) := runon(mod, "soft", x, 2);
 	if(sy == nil){
 		bad(sprint("software backend: %s", sdev));
 		return;
@@ -306,7 +309,7 @@ backends(mod: string)
 	if(sdev[0:4] != "soft")
 		bad(sprint("asked for the software backend, info reports %#q", sdev));
 
-	(hdev, hy) := runon(mod, "host");
+	(hdev, hy) := runon(mod, "host", x, 2);
 	if(hy == nil){
 		print("  software backend alone: y = (%g, %g); no host backend here (%s)\n",
 			sy[0], sy[1], hdev);
@@ -325,6 +328,67 @@ backends(mod: string)
 			hdev, hy[0], hy[1], sy[0], sy[1]);
 }
 
+#
+# The rest of the operator set.
+#
+# The fixture above is a single Gemm. Agreeing with onnxruntime on one Gemm
+# says nothing about broadcasting, Softmax, Transpose or Concat, and those are
+# where a hand-written evaluator goes wrong: an axis off by one, a stride taken
+# from the wrong shape, a broadcast that is right only because both operands
+# happened to be the same size.
+#
+# lib/ml/mlp.onnx reaches all of them - see emu/port/mkonnxmodel.py for why it
+# is shaped as it is. Two rows go in, so the batch dimension is open and the
+# broadcast really does have to stretch.
+#
+# There are two checks and they are independent. Softmax makes every row sum to
+# one, which holds with no oracle at all and is what native Inferno gets. And
+# where there is a host backend, the two must agree elementwise - onnxruntime
+# being a real implementation of these operators is the whole point of
+# comparing against it rather than against numbers this tree computed itself.
+#
+Wider:	con "/lib/ml/mlp.onnx";
+
+wider()
+{
+	x := array[8] of real;
+	x[0] = 0.5;  x[1] = -1.0; x[2] = 2.0;  x[3] = 0.25;
+	x[4] = -0.5; x[5] = 1.5;  x[6] = -2.0; x[7] = 0.75;
+
+	(sdev, sy) := runon(Wider, "soft", x, 12);
+	if(sy == nil){
+		bad(sprint("wider fixture on soft: %s", sdev));
+		return;
+	}
+	for(r := 0; r < 2; r++){
+		sum := 0.0;
+		for(i := 0; i < 6; i++)
+			sum += sy[r*6 + i];
+		if(sum - 1.0 > 0.001 || 1.0 - sum > 0.001)
+			bad(sprint("soft: softmax row %d sums to %g, not 1", r, sum));
+	}
+
+	(nil, hy) := runon(Wider, "host", x, 12);
+	if(hy == nil){
+		if(!fail)
+			print("  Gemm Tanh Relu Concat Transpose Add Softmax on soft: rows sum to 1\n");
+		return;
+	}
+	worst := 0.0;
+	for(i := 0; i < 12; i++){
+		d := hy[i] - sy[i];
+		if(d < 0.0)
+			d = -d;
+		if(d > worst)
+			worst = d;
+	}
+	if(worst > 0.0001)
+		bad(sprint("wider fixture: backends differ by %g", worst));
+	else
+		print("  Gemm Tanh Relu Concat Transpose Add Softmax: host and soft differ by %g\n",
+			worst);
+}
+
 # Is a host backend linked at all? "backend host" is refused when it is not,
 # and that refusal is the only honest way to ask.
 hashost(): int
@@ -340,7 +404,7 @@ hashost(): int
 
 # Load and run the fixture on a named backend. Returns the device line and the
 # output, or an error and nil.
-runon(mod, be: string): (string, array of real)
+runon(mod, be: string, x: array of real, nout: int): (string, array of real)
 {
 	ctl := sys->open("/dev/ml/clone", Sys->ORDWR);
 	if(ctl == nil)
@@ -375,8 +439,6 @@ runon(mod, be: string): (string, array of real)
 		return (sprint("info: %r"), nil);
 	dev := devof(string ib[0:n]);
 
-	x := array[3] of real;
-	x[0] = 1.0; x[1] = 2.0; x[2] = 3.0;
 	xb := putf32(x);
 	infd := sys->open(dir + "/in", Sys->OWRITE);
 	if(infd == nil || sys->write(infd, xb, len xb) != len xb)
@@ -384,7 +446,7 @@ runon(mod, be: string): (string, array of real)
 	if(sys->fprint(ctl, "run") < 0)
 		return (sprint("run: %r"), nil);
 	ofd := sys->open(dir + "/out", Sys->OREAD);
-	yb := array[8] of byte;
+	yb := array[4*nout] of byte;
 	if(ofd == nil || sys->readn(ofd, yb, len yb) != len yb)
 		return (sprint("read output: %r"), nil);
 	return (dev, getf32(yb));

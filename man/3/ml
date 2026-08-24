@@ -37,9 +37,41 @@ and nothing else, and Apple's own Python converter dropped
 \(em so the conversion happens inside
 .I onnxruntime
 rather than in the operating system.
+.SS "Two backends"
+There are two, and which one runs a model is settled when it is loaded.
+.TP
+.B soft
+This system's own arithmetic, in
+.BR mlsoft.c .
+It reads the
+.SM ONNX
+file itself and evaluates the graph with
+.IR math (2)'s
+.BR gemm ,
+so it needs nothing from the host at all.
+It is always present, and on native Inferno and on any machine with no
+accelerator it is the whole of
+.IR ml .
+It implements the operators listed under
+.B "THE SOFTWARE BACKEND"
+below and no others.
+.TP
+.B host
+The host's inference framework \(em on Apple silicon
+.I onnxruntime
+as above.
+Present only where there is such a host, so it is absent on native Inferno
+and on an
+.I emu
+built without it.
 .PP
-Where the library is not linked the device exists but reports that it has no
-backend.
+.B auto
+is the default and prefers the host where there is one, which is what lets the
+same program run on both.
+.B "backend soft"
+pins the software path, which is how the two are compared;
+.B "backend host"
+is an error where there is no host backend, rather than a quiet fallback.
 .PP
 Opening
 .B /dev/ml/clone
@@ -206,8 +238,24 @@ whose length does not match the feature's declared shape and type is
 refused, with an error naming both sizes.
 .SS ctl
 .TP
+.BI backend " host|soft|auto"
+Which backend runs the model.
+Like
+.B units
+this is part of the configuration a model is loaded with, so set it before
+.BR load ;
+it is then fixed for that model's lifetime, so an instance cannot change
+backend underneath a
+.BR run .
+.TP
 .BI units " cpu|gpu|ane|all"
 Which compute units to ask for.
+This is the host backend's idea \(em it names silicon for the host's framework
+to dispatch to \(em and the software backend has none, reporting
+.B soft
+on its
+.B device
+line whatever is asked.
 This is part of the configuration a model is loaded with, so set it
 before
 .BR load ;
@@ -240,17 +288,103 @@ Discard the model and start over.
 .SH SOURCE
 .B /emu/port/devml.c
 .br
-.B /emu/MacOSX/win-ml.m
+.B /emu/port/ml.h
+.br
+.B /emu/port/mlsoft.c
+.br
+.B /emu/port/mlonnx.c
+.br
+.B /emu/port/mlsrv.c
 .SH SEE ALSO
 .IR mltest (1),
 .IR gpu (3),
 .IR draw (3),
 .IR math (2)
+.SH "THE SOFTWARE BACKEND"
+.B mlsoft.c
+is not an
+.SM ONNX
+runtime and does not try to be.
+It implements
+.BR Gemm ,
+.BR MatMul ,
+.BR Add ,
+.BR Sub ,
+.BR Mul ,
+.BR Div ,
+.BR Pow ,
+.BR Relu ,
+.BR Sigmoid ,
+.BR Tanh ,
+.BR Exp ,
+.BR Log ,
+.BR Sqrt ,
+.BR Neg ,
+.BR Abs ,
+.BR Identity ,
+.BR Softmax ,
+.BR Reshape ,
+.BR Flatten ,
+.BR Transpose ,
+.B Concat
+and
+.BR Constant ,
+with numpy broadcasting on the binary operators.
+That is a feed-forward numeric model: a multi-layer perceptron, a regressor, a
+classifier.
+An operator outside the set is an error naming the operator, never a wrong
+answer.
+.PP
+In particular there is no
+.BR Conv ,
+so the voice
+.IR say (1)
+uses will not load on this backend; it wants some forty distinct operators
+including convolution, sequence slicing and a random normal generator.
+.PP
+Everything is computed in
+.BR f64 ,
+and models are usually
+.BR f32 ,
+so results differ from the host backend in the last bits.
+.IR mltest (1)
+runs the same model both ways and requires them to agree to about a part in
+ten thousand.
 .SH DIAGNOSTICS
 Errors from the host's inference framework are passed through, so a
 malformed model or a wrong input size reports what the framework said
 rather than a generic failure.
 .SH "THE LIBRARY"
+The host backend does not link
+.I onnxruntime
+into
+.IR emu ,
+and cannot.
+.I Emu
+aliases the libc allocators into the Inferno pool, and
+.I onnxruntime
+allocates through several the aliasing does not cover \(em
+.BR posix_memalign ,
+.BR aligned_alloc ,
+.BR malloc_size ,
+the
+.B malloc_zone
+calls \(em so memory went out on one heap and came back on the other.
+So the library lives in
+.BR mlsrv ,
+a program of its own that
+.I emu
+starts with
+.IR oscmd (),
+the same way
+.IR cmd (3)
+starts any host command, and speaks a length-delimited protocol to over a pipe.
+.PP
+.B mlsrv
+must be findable when a model is loaded on the host backend.
+It is looked up on the host's path, or named outright by
+.BR $INFERNO_MLSRV .
+.PP
 .I Onnxruntime
 is fetched, not vendored: 41MB of third-party dylib has no business in a
 source tree, and it is twenty times the size of the emulator that links it.
@@ -278,6 +412,22 @@ so a build that links against
 .B libonnxruntime.dylib
 alone will link and then fail to start.
 .SH BUGS
+.IR Onnxruntime 's
+CoreML provider faults inside Apple's
+.SM BNNS
+convolution on some models above a certain input length, taking
+.B mlsrv
+with it.
+It reproduces outside Inferno entirely, so it is not this system's bug, but it
+is why
+.IR say (1)
+asks for
+.BR "units cpu" .
+Because the library is in a process of its own, such a crash is an error on
+.B ctl
+rather than the end of
+.IR emu .
+.PP
 This runs a compiled model graph, and that is all it does.
 The Neural Engine has no public interface outside CoreML, so
 .I ml

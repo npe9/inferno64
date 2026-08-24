@@ -77,6 +77,55 @@ Given a
 .I model
 argument it uses that file instead, in which case only the checks that
 hold for any model are meaningful.
+.SS "The wider fixture"
+.B /lib/ml/linear.onnx
+is a single
+.BR Gemm .
+Agreeing with
+.I onnxruntime
+on one
+.B Gemm
+says nothing about broadcasting,
+.BR Softmax ,
+.B Transpose
+or
+.BR Concat ,
+which is where a hand-written evaluator goes wrong: an axis off by one, a
+stride taken from the wrong shape, a broadcast that is right only because both
+operands happened to be the same size.
+.PP
+.B /lib/ml/mlp.onnx
+reaches all of them in one graph, with two rows in so the batch dimension is
+open and the broadcast has to stretch.
+The two backends agree on it to 6e\-08, which is
+.B f32
+rounding.
+Dropping the stretch rule from the broadcast moves that to 0.57.
+.SS "The two backends are compared"
+Proving that whichever backend ran gives the right answer says nothing about
+the other one.
+.I Mltest
+loads the same fixture on each in turn and requires them to agree.
+Not to the bit \(em the software backend computes in
+.B f64
+and
+.I onnxruntime
+in
+.B f32
+\(em but to about a part in ten thousand, which is far tighter than any
+structural mistake.
+Flipping a single transpose flag in the software backend's row-major to
+column-major
+.B gemm
+mapping makes it report 21.5 and 41.5 against the host's 14.5 and 139.5, so the
+comparison has been seen to fail when it should.
+.PP
+Where there is no host backend \(em native Inferno, or an
+.I emu
+built without one \(em there is nothing to compare against, and the software
+path standing alone is the whole result.
+.I Mltest
+says which of the two happened rather than passing silently.
 .SH SOURCE
 .B /appl/cmd/mltest.b
 .SH SEE ALSO
@@ -90,6 +139,19 @@ Nothing here exercises
 or
 .BR take ,
 which exist for models with more than one of either.
+.PP
+Where there is no host backend the only check on the wider fixture is that
+each
+.B Softmax
+row sums to one, and that is much weaker than it looks.
+Breaking the software backend's broadcasting deliberately \(em dropping the
+rule that a dimension of 1 stretches \(em moves the result by 0.57 against the
+host, and every row still sums to one, because
+.B Softmax
+normalises whatever it is given.
+So on native Inferno this fixture proves the graph ran and says little about
+whether it ran correctly.
+The oracle is what has the power here, and native Inferno has no oracle.
 .PP
 Nothing is timed, so this says the device is correct and nothing at all
 about whether reaching the Neural Engine through it is worth doing.
