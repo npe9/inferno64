@@ -30,9 +30,6 @@ implement Command;
 # rather than guessing at English spelling. -p is still there for a sound the
 # lexicon cannot spell.
 #
-# -o writes the voice's own 16kHz samples; only the audio device gets the
-# resampling, because a file should hold what the model produced.
-#
 # The model wants its ids interleaved with the pad symbol and wrapped in begin
 # and end, which is the sequence above: it says "hello". -p does that
 # arranging, reading the symbol table out of the voice's own .json - which is
@@ -59,14 +56,11 @@ Voice:	con "/lib/ml/voices/en_US-lessac-low.onnx";
 Rate:	con 16000;		# what this voice was trained at
 
 #
-# What /dev/audio will accept. Its rate table is 8000, 11025, 22050 and 44100
-# and nothing else - 16000 is not in it - and it defaults to TWO channels. So
-# the voice's own samples cannot be handed to it as they are: written straight,
-# 16kHz mono is read as 22050 stereo, which is a fifth of a second of noise
-# where a second of speech should be. It made no sound worth hearing and no
-# error, because there is nothing wrong with the write.
+# /dev/audio has to be told what is coming. It defaults to two channels at a
+# rate of its own choosing, and this voice is 16000 mono, so samples written
+# straight are read as interleaved stereo at the wrong rate - noise, with no
+# error, because nothing about the write is wrong.
 #
-Devrate:	con 22050;
 
 ctl:	ref Sys->FD;
 dir:	string;
@@ -185,30 +179,6 @@ phonemeids(voice, ph: string): array of int
 	}
 	ids[n++] = 2;
 	return ids[0:n];
-}
-
-#
-# Linear interpolation. Speech recorded at 16kHz has nothing above 8kHz in it,
-# so resampling up to 22050 invents no detail it has to be careful about and
-# the simplest interpolation is enough.
-#
-resample(x: array of real, was, want: int): array of real
-{
-	if(was == want)
-		return x;
-	n := int (real len x * real want / real was);
-	y := array[n] of real;
-	for(i := 0; i < n; i++){
-		pos := real i * real was / real want;
-		k := int pos;
-		if(k + 1 >= len x){
-			y[i] = x[len x - 1];
-			continue;
-		}
-		f := pos - real k;
-		y[i] = x[k] * (1.0 - f) + x[k+1] * f;
-	}
-	return y;
 }
 
 init(nil: ref Draw->Context, argv: list of string)
@@ -335,18 +305,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	print("say: %d samples, %g seconds at %d Hz\n",
 		len pcm, real len pcm / real Rate, Rate);
 
-	# The device has to be told what is coming: it defaults to stereo at
-	# 22050, and it will not take this voice's 16000 at all. Only when the
-	# output IS the device - a file keeps the model's own rate.
+	# Only when the output IS the device; a file just holds the samples.
 	if(out == "/dev/audio"){
 		cfd := sys->open("/dev/audioctl", Sys->OWRITE);
 		if(cfd == nil)
 			fatal(sprint("open /dev/audioctl: %r"));
-		if(sys->fprint(cfd, "rate %d", Devrate) < 0 ||
+		if(sys->fprint(cfd, "rate %d", Rate) < 0 ||
 		   sys->fprint(cfd, "chans 1") < 0 ||
 		   sys->fprint(cfd, "bits 16") < 0)
 			fatal(sprint("set the audio format: %r"));
-		pcm = resample(pcm, Rate, Devrate);
 	}
 
 	# signed 16-bit, little-endian. The samples come back between -1 and 1.

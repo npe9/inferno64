@@ -377,6 +377,43 @@ audio_ctl_write(Chan *c, void *va, long n, vlong off)
 	return n;
 }
 
+/*
+ * Wait for what has been written to actually play.
+ *
+ * A write returns when the samples are in the ring, not when they have been
+ * heard: the ring holds two seconds at speech rates and CoreAudio holds four
+ * buffers more on top of that. Closing used to sleep 100ms and then stop the
+ * queue immediately, so everything past the first tenth of a second was thrown
+ * away - which is exactly what a program that writes one utterance and exits
+ * does, every time. It made speech that was cut off, with no error anywhere,
+ * because nothing about the write was wrong.
+ */
+static void
+drain_out(void)
+{
+	int n, waited, inflight;
+
+	for(waited = 0; waited < 30000; waited += 5) {
+		lock(&outring.lk);
+		n = outring.n;
+		unlock(&outring.lk);
+		if(n == 0)
+			break;
+		osmillisleep(5);
+	}
+	/*
+	 * An empty ring only means CoreAudio has taken the samples; it still
+	 * holds NBuffers of them, and stopping now cuts that much off the end.
+	 * There is no "the last buffer played" callback that does not race with
+	 * the queue refilling itself, so wait out their playing time, which the
+	 * format gives exactly.
+	 */
+	if(av.out.rate > 0) {
+		inflight = (NBuffers * BufFrames * 1000) / av.out.rate;
+		osmillisleep(inflight + 20);
+	}
+}
+
 void
 audio_file_close(Chan *c)
 {
@@ -392,8 +429,7 @@ audio_file_close(Chan *c)
 		qlock(&outlock);
 		if(--out_refcnt <= 0) {
 			out_refcnt = 0;
-			/* Let queued samples drain briefly. */
-			osmillisleep(100);
+			drain_out();
 			stop_out();
 		}
 		qunlock(&outlock);
