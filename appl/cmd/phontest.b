@@ -64,6 +64,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	}
 
 	pinned();
+	dictionary();
 	symbols();
 	refuses();
 	shape();
@@ -163,6 +164,39 @@ refuses()
 	(nil, err2) := phon->text("zzzqx and qqxxz");
 	if(err2 != "zzzqx")
 		bad(sprint("with two words missing the error named %#q, not the first", err2));
+}
+
+#
+# The generated dictionary, if there is one.
+#
+# It is optional - the hand-written lexicon alone is a working system - so its
+# absence is reported rather than failed. What must not happen is a dictionary
+# that is present and finds nothing, which is what a broken search or a file
+# that stopped being sorted would look like, and which would otherwise show up
+# only as words mysteriously missing.
+#
+dictionary()
+{
+	n := phon->dictwords();
+	if(n == 0){
+		print("  no dictionary; the hand-written lexicon is on its own\n");
+		return;
+	}
+	# words that are certainly not hand-written, spread through the file so
+	# a search that only works near one end is caught
+	for(l := list of {"abandon", "jumps", "mounted", "opened", "zebra"};
+	    l != nil; l = tl l){
+		(ipa, e) := phon->word(hd l);
+		if(e != nil)
+			bad(sprint("%#q is not in the dictionary of %d words", hd l, n));
+		else if(ipa == nil)
+			bad(sprint("%#q gave no sounds", hd l));
+	}
+	# and one that must NOT be there, or the search is answering anything
+	(nil, e2) := phon->word("qqzzxqqzz");
+	if(e2 == nil)
+		bad("the dictionary answered a word that is not in it");
+	print("  %d words in the dictionary, searched on disk\n", n);
 }
 
 #

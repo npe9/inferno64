@@ -370,3 +370,8 @@ MacOSX/*/include/onnxruntime/
 
 # voice models: tens of megabytes each, fetched not vendored
 lib/ml/voices/
+
+# The pronunciation dictionary is generated, 34MB of it, and rebuilding it is
+# one command: python3 lib/ml/mklexicon.py, which needs espeak-ng on the host
+# and nothing at run time. Same reason as the voice above.
+lib/ml/en_US.dict

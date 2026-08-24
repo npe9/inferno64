@@ -17,10 +17,20 @@ Phon: module
 {
 	PATH:	con "/dis/lib/phon.dis";
 
-	# the lexicon init() reads when given no path of its own
+	# The hand-written lexicon, read into memory. Small, and it WINS over the
+	# dictionary: espeak gives "a" as the letter, ˈeɪ, where an article is
+	# almost always meant.
 	LEX:	con "/lib/ml/en_US.lex";
 
-	# Read a lexicon. Returns nil, or why it could not.
+	# The generated dictionary - a quarter of a million words, sorted, and
+	# binary-searched on disk rather than read in. It costs no memory and no
+	# load time, which is what makes it usable on a small machine and what
+	# makes a lookup fast enough to read a screen with.
+	DICT:	con "/lib/ml/en_US.dict";
+
+	# Read the hand-written lexicon and open the dictionary. Returns nil, or
+	# why it could not. A missing dictionary is not an error - the lexicon
+	# alone still works, and says so through dictwords().
 	init:	fn(path: string): string;
 
 	# One word, already stripped of punctuation and case. Returns the
@@ -32,7 +42,11 @@ Phon: module
 	# dropped. Returns the sounds, or nil and the first word not known.
 	text:	fn(s: string): (string, string);
 
-	# Every word in the lexicon, sorted. For a test that wants to check the
-	# symbols without knowing what is in the file.
+	# Every word in the hand-written lexicon, sorted. For a test that wants
+	# to check the symbols without knowing what is in the file.
 	words:	fn(): list of string;
+
+	# How many words the dictionary holds, or 0 if there is none. Only so a
+	# test can tell "no dictionary" from "a dictionary that finds nothing".
+	dictwords: fn(): int;
 };
