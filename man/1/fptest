@@ -25,8 +25,6 @@ or
 with a count.
 .SH SOURCE
 .B /appl/cmd/fptest.b
-.SH SEE ALSO
-.IR math (2)
 .SH HISTORY
 .B exp
 and
@@ -78,29 +76,6 @@ builds with them, so there is nothing here that would say whether it
 worked.
 
 .PP
-.SH BUGS
-One thing
-.I fptest
-does not catch, because it is nine significant figures below what the
-test compares: the compilers round a decimal constant to the nearest double
-only sometimes.  Of
-.IP
-.EX
-1.4142135623730950488016887	3ff6a09e667f3bcd
-1.4426950408889634073599247	3ff71547652b82fe
-0.2080384346694663001443843411e7	413fbe8058c0fb3f
-0.6002720360238832528230907598e7	4156e608170e272d
-.EE
-.PP
-only the last comes out right; the other three are one unit in the last
-place off.
-.I Tc
-and
-.I jc
-are wrong in the same direction on the same three, so it is the shared
-conversion in
-.B /utils/cc
-and not either back end.  Nothing in this tree depends on the last bit of
-a literal, but a library of coefficients \- which is what
-.B /libmath/fdlibm
-is \- is exactly where it would show.
+.SH SEE ALSO
+.IR math (2),
+.B /scripts/cc-check.sh

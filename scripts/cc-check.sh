@@ -1,5 +1,5 @@
 #!/bin/sh
-# Ask every compiler this tree builds for three things it used to get
+# Ask every compiler this tree builds for four things it used to get
 # wrong, and say so.
 #
 # A function with more variables than the optimiser can track.  A Bits is
@@ -19,8 +19,17 @@
 # end of a global with whatever the source said, and 6c exited zero on a
 # four thousand character name and wrote an object.
 #
-# What is wanted from all three is a diagnostic or a clean compile, and
-# in no case a signal.
+# A local double whose exponent field is written through a pointer,
+# which is how fdlibm scales a result.  The two halves of it get separate
+# entries in mkvar because their offsets differ, so neither looked
+# address-taken; the compiler kept the double in a register, wrote the
+# memory, and returned the register.  exp and pow were wrong on every
+# native kernel in this tree because of it -- exp(1) returned e/2 -- and
+# it is fixed in the two compilers that have a board here.  See
+# fptest(1).
+#
+# What is wanted from the first three is a diagnostic or a clean compile,
+# and in no case a signal; from the last, a store.
 #
 # usage: scripts/cc-check.sh
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
@@ -80,6 +89,34 @@ double v[] = {
 FPEOF
 fpbits="ed3a2752739df538 abad226a24a6f13b 475eed3742117240 7dcc57a0786a863c f32aaa1f47b77a45 5ab34b83cabeed37 1bb69f4bbfa7a73f 33bdf36224485c44 879f77b9d2e6a142 1a5fcd5d54a36a39 84b10f91662c3d3e 6f443213f1d6823a"
 
+# A double the compiler is asked to keep in memory because something
+# else writes half of it.  The store of the sum is what has to be there:
+# without it the function returns the value it computed before the
+# exponent was changed.
+cat >"$TMP/overlap.c" <<'OVEOF'
+typedef union {
+	double	d;
+	struct {
+		unsigned long	lo;
+		unsigned long	hi;
+	} w;
+} Cheat;
+
+double
+scale(double a, double b, int k)
+{
+	double y;
+
+	y = a + b;
+	((Cheat*)&y)->w.hi += (k<<20);
+	return y;
+}
+OVEOF
+
+# which compilers have had the fix; the rest have no board here to say
+# whether it worked, so they are reported and not counted against
+fixed=" jc tc "
+
 bad=0
 for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 	if ! command -v "$cc" >/dev/null 2>&1; then
@@ -117,6 +154,35 @@ for cc in 0c 5c 6c 8c jc kc qc tc vc; do
 		fi
 	else
 		echo "FAIL $cc would not compile the constants"
+		bad=1
+	fi
+
+	# The assembly names the local twice: once as the double it is and
+	# once as the half being written.  A compiler that kept it in a
+	# register emits no store of the whole thing, so count how many
+	# times the eight-byte move mentions it.
+	if "$cc" -S "$TMP/overlap.c" >"$TMP/overlap.s" 2>/dev/null; then
+		st=`grep -c '	MOVD	F[0-9]*,y' "$TMP/overlap.s"`
+		case "$fixed" in
+		*" $cc "*)
+			if [ "$st" -ge 1 ]; then
+				echo "ok   $cc kept a double in memory when half of it was written"
+			else
+				echo "FAIL $cc left a double in a register while writing half of it"
+				bad=1
+			fi
+			;;
+		*)
+			if [ "$st" -ge 1 ]; then
+				echo "ok   $cc kept a double in memory when half of it was written"
+			else
+				echo "note $cc leaves a double in a register while writing half of it;"
+				echo "     the same fix as jc and tc applies, and no board here builds with it"
+			fi
+			;;
+		esac
+	else
+		echo "FAIL $cc would not compile the overlap case"
 		bad=1
 	fi
 

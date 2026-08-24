@@ -142,14 +142,21 @@ marks entries that overlap now, and
 .I fptest
 passes on the Cortex-M7 and on RISC-V.  The account is in
 .I fptest (1),
-along with a fourth and smaller one that turned up beside it: the
-compilers round a decimal constant to the nearest double only sometimes,
-and
+and the check that would notice it coming back is in
+.CW scripts/cc-check.sh
+beside the three that were already there.
+.PP
+A fourth turned up beside it and is not written up here because it is not
+this port's: the compilers rounded a decimal constant to the nearest
+double only sometimes, and
 .CW tc
 and
 .CW jc
-are wrong in the same direction on the same constants, so that too is
-shared and not either back end's.
+were wrong in the same direction on the same constants, so it was the
+shared conversion.  Another session on this branch fixed it while this
+was being written; its check is in
+.CW scripts/cc-check.sh
+too.
 .NH 1
 The toolchain
 .PP
