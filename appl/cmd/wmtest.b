@@ -63,14 +63,16 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	n := 100;
 	direct := 0;
+	procs := 1;
 	result := "/wmtest.result";
 	arg->init(argv);
-	arg->setusage("wmtest [-n windows] [-d] [-r resultfile]");
+	arg->setusage("wmtest [-n windows] [-p procs] [-d] [-r resultfile]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'n' =>	n = int arg->earg();
 		'd' =>	direct++;	# Screen.newwindow itself, with no Tk above it
 		'r' =>	result = arg->earg();
+		'p' =>	procs = int arg->earg();	# make them concurrently
 		* =>	arg->usage();
 		}
 
@@ -84,7 +86,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	rfd = sys->create(result, Sys->OWRITE, 8r666);
 
 	if(direct){
-		newwindows(ctxt, n);
+		newwindows(ctxt, n, procs);
 		return;
 	}
 
@@ -125,7 +127,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 # was; this calls Screen.newwindow directly, which is the function the open
 # bug names.
 #
-newwindows(ctxt: ref Draw->Context, n: int)
+newwindows(ctxt: ref Draw->Context, n, procs: int)
 {
 	disp := ctxt.display;
 	if(disp == nil){
@@ -149,23 +151,50 @@ newwindows(ctxt: ref Draw->Context, n: int)
 			raise "fail:screen";
 		}
 	}
+	# Sequentially by default, and concurrently when asked. The concurrent
+	# shape is the one worth running: the fault this is aimed at was first
+	# characterised on a build where unlock() had no release barrier, so it
+	# looked like a race, and one process making windows one after another
+	# is close to the least likely way to provoke a race.
+	if(procs < 1)
+		procs = 1;
+	each := n / procs;
+	if(each < 1)
+		each = 1;
+	done := chan of int;
+	for(i := 0; i < procs; i++)
+		spawn maker(screen, each, i, done);
+	bad := 0;
+	for(i = 0; i < procs; i++)
+		bad += <-done;
+	report(sprint("newwindow calls in %d processes", procs), each*procs, bad);
+}
+
+maker(screen: ref Screen, n, who: int, done: chan of int)
+{
 	bad := 0;
 	for(i := 0; i < n; i++){
-		r := Rect(Point(10, 10), Point(210, 110));
+		# a different rectangle per process, so they are not all
+		# fighting over one piece of the screen and nothing is hidden
+		# by two windows happening to coincide
+		x := 10 + (who % 4) * 60;
+		y := 10 + (who / 4) * 40;
+		r := Rect(Point(x, y), Point(x+200, y+100));
 		w := screen.newwindow(r, Draw->Refbackup, Draw->White);
 		if(w == nil){
-			say(sprint("wmtest: newwindow %d of %d: nil: %r\n", i, n));
+			say(sprint("wmtest: process %d, newwindow %d of %d: nil: %r\n",
+				who, i, n));
 			bad++;
 			continue;
 		}
 		if(w.r.dx() != r.dx() || w.r.dy() != r.dy()){
-			say(sprint("wmtest: newwindow %d of %d gave %dx%d, wanted %dx%d\n",
-				i, n, w.r.dx(), w.r.dy(), r.dx(), r.dy()));
+			say(sprint("wmtest: process %d, newwindow %d of %d gave %dx%d, wanted %dx%d\n",
+				who, i, n, w.r.dx(), w.r.dy(), r.dx(), r.dy()));
 			bad++;
 		}
 		w = nil;
 	}
-	report("newwindow calls", n, bad);
+	done <-= bad;
 }
 
 report(what: string, n, bad: int)

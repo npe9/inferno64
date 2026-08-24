@@ -1682,13 +1682,22 @@ react. (The in-process check was inconclusive rather than negative: the client
 used was a fixed-size Tk window, which would not resize on a real screen change
 either. A client that fills the screen would be needed to tell the two apart.)
 
-**Plain window churn is not it.** `wmtest(1)` (new) makes windows and lets them
-go: **5000 `Screen.newwindow` calls and 300 Tk toplevels, none failed**. That
-does not clear the bug, since the report is *after a resize* and nothing here
-resizes — but it removes churn alone as the explanation, which was worth knowing
-before looking anywhere else. It also found that a client cannot say
-`wmctl "exit"` and carry on: that tells wm the *client* is finished and wm takes
-it away, so the first version of the loop died silently on its first pass.
+**`wmtest(1)` (new) makes windows in bulk**, sequentially or in *p* processes at
+once: 5000 `newwindow` calls and 300 Tk toplevels in one process, and 400 across
+eight, none failed.
+
+Read that narrowly, because it is narrower than it sounds. **Nobody proposed
+window churn as the mechanism**, so ruling it out settles little; what it says is
+that sequential creation is clean at those counts and concurrent creation is
+clean at smaller ones. The concurrent mode is the one worth running — the fault
+was characterised on a build where `unlock()` had no release barrier, so it
+looked like a race, and one process making windows one after another is close to
+the least likely way to provoke a race. Concurrent runs are also much slower, so
+the counts there are lower than one would like.
+
+It did find that a client cannot say `wmctl "exit"` and carry on: that tells wm
+the *client* is finished and wm takes the whole client away, so the first version
+of the loop died silently on its first pass having written nothing.
 
 So bug 2 needs either a way to drive the host window from outside — accessibility
 does not see this app, and synthetic clicks do not reach it — or a test hook that

@@ -27,6 +27,13 @@ intercepts
 .B print
 into its own Log window where whatever started the test cannot see it.
 .PP
+.B "The file is the verdict, not the exit status."
+A session with
+.IR wm (1)
+in it does not end when this does, so whatever runs it either waits and reads
+the file or kills the session \(em and killing the session takes the status
+with it.
+.PP
 By default it goes through
 .IR tkclient (2)
 toplevels, which is how a program normally gets a window.
@@ -34,6 +41,8 @@ toplevels, which is how a program normally gets a window.
 calls
 .B Screen.newwindow
 directly instead.
+.B -p
+makes them in that many processes at once.
 Both are worth having: Tk's toplevel does a great deal besides call
 .BR newwindow ,
 so a failure through it does not say where the failure was.
@@ -54,14 +63,21 @@ five thousand in a run, and says so in an exit status.
 .SH "WHAT IT SHOWS SO FAR"
 Five thousand
 .B newwindow
-calls and three hundred Tk toplevels, none failed.
+calls and three hundred Tk toplevels in one process, and four hundred across
+eight processes, none failed.
 .PP
-That does not clear the open bug, because the bug is reported
+Read that narrowly.
+It says sequential creation is clean at those counts, and concurrent creation is
+clean at rather smaller ones.
+It does not clear the open bug and it was never going to: that bug is reported
 .I after a resize
-and nothing here resizes anything \(em nothing can, since the host owns the
-window size.
-What it does is remove plain window churn as an explanation, which was worth
-knowing before looking anywhere else.
+and nothing here resizes anything, since the host owns the window size.
+.PP
+The concurrent mode is the one worth running.
+The fault was first characterised on a build where
+.B unlock
+had no release barrier, so it looked like a race, and one process making
+windows one after another is close to the least likely way to provoke a race.
 .SH "A CLIENT MAY NOT SAY EXIT AND CARRY ON"
 .B tkclient->wmctl(t, "exit")
 tells
@@ -90,10 +106,8 @@ It does not resize anything, which is the condition the bug it was written for
 is reported under.
 See the plan for why that cannot be driven from inside.
 .PP
-Windows are made and dropped in one process.
-Two processes making windows at once would be a different test and probably a
-better one for a fault that was first seen on a build with no release barrier
-in
-.BR unlock .
+Concurrent mode shares one screen between its processes, which is the
+interesting case and not the only one; separate screens per process is another
+test.
 .PP
 It leaves the last window on the screen when it finishes.
