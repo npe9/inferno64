@@ -102,7 +102,7 @@ and of
 .CW teensy41 ,
 and every line of it passes on the Cortex-M7.
 .PP
-It found three things.  Two were mine: the two words of a
+It found three things, and all three are fixed.  Two were mine: the two words of a
 .CW vlong
 constant emitted high word first by
 .CW tc ,
@@ -117,19 +117,30 @@ as well as
 allocated eight bytes when a host whose
 .CW long
 is eight needs sixteen, so every double in a data segment came out as
-zero.  The third is not mine and is not new:
+zero.  The third was not mine and was not new:
 .CW exp
 and
 .CW pow
-are wrong on every native kernel in this tree, RISC-V ones included,
+were wrong on every native kernel in this tree, RISC-V ones included,
 because
 .CW 5c ,
 .CW tc
 and
 .CW jc
-all keep a local double in a register while writing the memory it has
-also been given an address for.  The reproducer and the two shapes a fix
-could take are in
+all kept a local double in a register while writing the memory it had
+also been given an address for.  The two halves of that double get
+separate entries in
+.CW mkvar
+because their offsets differ, and neither entry then looks
+address-taken;
+.CW mkvar
+in
+.CW tc
+and
+.CW jc
+marks entries that overlap now, and
+.I fptest
+passes on the Cortex-M7 and on RISC-V.  The account is in
 .I fptest (1),
 along with a fourth and smaller one that turned up beside it: the
 compilers round a decimal constant to the nearest double only sometimes,

@@ -27,21 +27,18 @@ with a count.
 .B /appl/cmd/fptest.b
 .SH SEE ALSO
 .IR math (2)
-.SH BUGS
+.SH HISTORY
 .B exp
 and
 .B pow
-fail on every native kernel in this tree, and have since before there was
-a test to say so.  The cause is in the compilers rather than in either of
-them: fdlibm scales a result by adding to the exponent field of a local
-double through a pointer, and
-.IR 5c ,
-.I tc
-and
-.I jc
-all keep that local in a register while writing the memory it also has an
-address for, so the scaling is lost and the unscaled value is returned.
-Two lines reproduce it:
+were wrong on every native kernel in this tree, and had been since before
+there was a test to say so:
+.B exp(1)
+returned
+.IR e /2.
+The cause was in the compilers rather than in either of them.  fdlibm
+scales a result by adding to the exponent field of a local double through
+a pointer:
 .IP
 .EX
 double
@@ -55,32 +52,37 @@ scale(double a, double b, int k)
 }
 .EE
 .PP
-Every one of the three emits the add into the return register, then reads
-and writes
+.IR 5c ,
+.I tc
+and
+.I jc
+all emitted the add into the return register, then read and wrote
 .B y+4
-in memory, then returns the register.  The compilers give the two halves
-of
+in memory, then returned the register, so the scaling was lost.  The two
+halves of
 .B y
-separate entries in
+get separate entries in
 .B mkvar
-because their offsets differ, and neither entry then looks address-taken.
-The same code written through a
-.B FPdbleword
-by value rather than through a pointer compiles correctly, which is the
-shape a fix in
-.B /libmath/fdlibm
-would take; the other fix is in
+because their offsets differ, and neither entry then looked
+address-taken.
 .B mkvar
-itself, marking entries that overlap.
+in
+.I tc
+and
+.I jc
+now marks entries that overlap, and both of them keep such a variable in
+memory.  The same edit applies to the other seven compilers, whose
+.B mkvar
+is the same function, and has not been made there: no board in this tree
+builds with them, so there is nothing here that would say whether it
+worked.
+
 .PP
-The test says
-.B FPTEST-FAIL
-until one of those is done.  That is on purpose.
-.PP
-A smaller one, which
+.SH BUGS
+One thing
 .I fptest
-does not catch because it is nine significant figures below what the test
-compares: the compilers round a decimal constant to the nearest double
+does not catch, because it is nine significant figures below what the
+test compares: the compilers round a decimal constant to the nearest double
 only sometimes.  Of
 .IP
 .EX
