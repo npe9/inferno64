@@ -11,11 +11,24 @@ implement Command;
 # to do it. That is right for narration and useless for reading: nothing can be
 # piped into it, and a second and a half per line is not reading, it is waiting.
 #
-# This goes through voice(3), which synthesizes natively and answers in less
-# time than it takes to say the words. It reads a line at a time and does not
-# start the next until the last has been heard, so a pipe paces itself: `ls /dev
-# | speak` reads the list out at speaking speed rather than queueing all of it
-# at once and talking over itself.
+# voice(3) - the formant synthesizer - is always available and is what makes
+# reading interruptible: it answers in less time than it takes to say the
+# words, so a pipe paces itself and a person moving the keyboard again is heard
+# right away rather than after whatever it was already saying finishes.
+#
+# The voice(2) neural model is used instead, per utterance, when it can be:
+# it is the same voice say(1) narrates with, so a screen reader and a tutorial
+# sound like the same speaker rather than two different ones. Held open the way
+# say(1) now holds it, a second utterance costs tens of milliseconds, not the
+# second and a half of loading it fresh - fast enough to read with, once the
+# first utterance has paid to load it. Where it cannot be used at all - no
+# ml(3), no room in the pool for sixty megabytes - this falls back to
+# voice(3) for the whole run, silently: a screen reader must not refuse to
+# read because the better voice is not available. And where the NEURAL voice
+# specifically refuses one utterance - an unknown phoneme, unlike voice(3)
+# which skips one rather than refusing the utterance - this falls back to
+# voice(3) for just that line, not the run: the point of falling back at all
+# is that something is still said.
 #
 include "sys.m";
 	sys: Sys;
@@ -27,10 +40,13 @@ include "bufio.m";
 	Iobuf: import bufio;
 include "phon.m";
 	phon: Phon;
+include "voice.m";
+	voice: Voice;
+	Speaker: import voice;
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
-Rate:	con 16000;		# voice(3) says so on its ctl file
+Rate:	con 16000;		# voice(3) says so on its ctl file; voice(2) matches it
 
 stderr:	ref Sys->FD;
 quiet:	int;
@@ -40,6 +56,8 @@ vctl:	ref Sys->FD;	# held open to ask how many announcements are waiting
 
 Chunk:	con 3200;	# a tenth of a second at 16kHz, 16-bit, one channel
 out:	string;
+
+sp: ref Speaker;	# nil if the neural voice could not be opened at all
 
 fatal(s: string)
 {
@@ -54,21 +72,27 @@ init(nil: ref Draw->Context, argv: list of string)
 	arg := load Arg Arg->PATH;
 	bufio = load Bufio Bufio->PATH;
 	phon = load Phon Phon->PATH;
-	if(arg == nil || bufio == nil || phon == nil)
+	voice = load Voice Voice->PATH;
+	if(arg == nil || bufio == nil || phon == nil || voice == nil)
 		fatal(sprint("load: %r"));
 
 	lexicon := "";
 	text := "";
 	pitch := 0;
 	speed := 0;
+	units := "cpu";
+	formantonly := 0;
 	out = "/dev/audio";
 	arg->init(argv);
-	arg->setusage("speak [-l lexicon] [-p pitch] [-s speed] [-o file] [-q] [-n] [-t text] [file ...]");
+	arg->setusage("speak [-l lexicon] [-p pitch] [-s speed] [-u units] [-f] " +
+		"[-o file] [-q] [-n] [-t text] [file ...]");
 	while((o := arg->opt()) != 0)
 		case o {
 		'l' =>	lexicon = arg->earg();
 		'p' =>	pitch = int arg->earg();
 		's' =>	speed = int arg->earg();
+		'u' =>	units = arg->earg();
+		'f' =>	formantonly++;
 		'o' =>	out = arg->earg();
 		'q' =>	quiet++;
 		'n' =>	dryrun++;
@@ -92,6 +116,29 @@ init(nil: ref Draw->Context, argv: list of string)
 			fatal(sprint("pitch: %r"));
 		if(speed != 0 && sys->fprint(ctl, "speed %d", speed) < 0)
 			fatal(sprint("speed: %r"));
+	}
+
+	#
+	# The better voice, when it can be had. Never fatal: a dry run has
+	# nothing to open, and a screen reader that refuses to read because
+	# the neural model would not fit is worse than one that reads in the
+	# plainer voice. -f skips even trying, for a caller that would rather
+	# not pay to find out - a small pool, or wanting the lower latency
+	# every time rather than only after the first utterance.
+	#
+	if(!dryrun && !formantonly){
+		if((ve := voice->init()) != nil){
+			if(!quiet)
+				fprint(stderr, "speak: neural voice not available: %s\n", ve);
+		}else{
+			(s, err) := voice->open(nil, units);
+			if(s == nil){
+				if(!quiet)
+					fprint(stderr,
+						"speak: neural voice not available: %s\n", err);
+			}else
+				sp = s;
+		}
 	}
 
 	if(text != ""){
@@ -163,6 +210,23 @@ utter(line: string)
 	if(dryrun){
 		print("%s\n", ph);
 		return;
+	}
+
+	#
+	# The neural voice first, when it is open at all. It refuses the whole
+	# utterance on one unknown phoneme - unlike voice(3), which skips one -
+	# so a refusal here falls back to voice(3) for this line only, the same
+	# way an unknown WORD above already falls back to spelling: something is
+	# still said.
+	#
+	if(sp != nil){
+		(pcm, e) := sp.speak(ph);
+		if(pcm != nil){
+			play(voice->pcmbytes(pcm));
+			return;
+		}
+		if(!quiet)
+			fprint(stderr, "speak: %s\n", e);
 	}
 
 	fd := sys->open("/dev/voice/phonemes", Sys->OWRITE);

@@ -16,6 +16,13 @@ speak \- read something out
 .I speed
 ]
 [
+.B -u
+.I units
+]
+[
+.B -f
+]
+[
 .B -o
 .I file
 ]
@@ -31,8 +38,19 @@ speak \- read something out
 ]
 .SH DESCRIPTION
 .B Speak
-reads its input out loud, a line at a time, through
-.IR voice (3).
+reads its input out loud, a line at a time.
+Each utterance goes through
+.IR voice (2),
+the same neural voice
+.IR say (1)
+narrates with - when it can, and through
+.IR voice (3),
+the formant synthesizer, when it cannot: no room for sixty megabytes of model,
+no
+.IR ml (3),
+or
+.BR -f ,
+which skips even trying.
 With no
 .I file
 it reads standard input, so it composes:
@@ -54,16 +72,27 @@ it out loud is what this program already does.
 and
 .B -s
 set the pitch in Hz and the speed as a percentage; both are
-.IR voice (3)'s.
+.IR voice (3)'s,
+and apply only to what
+.I that
+voice says - whatever falls back to it, or everything, under
+.BR -f .
+.B -u
+is
+.IR ml (3)'s
+compute units for the neural voice, "cpu" by default; see
+.IR say (1)
+for why.
 .B -o
 writes the samples to a file instead of
 .BR /dev/audio ,
 which is how this gets tested without listening to it.
 .B -q
-stops it reporting words it could not say.
+stops it reporting words it could not say, or a fallback taking place.
 .B -n
 prints the sounds and says nothing, which is how any of this gets checked
-without listening to it.
+without listening to it - and skips opening the neural voice at all, since a
+dry run never speaks either one.
 .PP
 A line is not begun until the one before it has been heard, so a pipe paces
 itself rather than queueing everything at once and talking over itself.
@@ -77,18 +106,37 @@ A reader that has to finish telling you about the last screen before it can
 tell you about this one is unusable.
 Output does not interrupt output; see
 .IR voice (3).
-.SH "WHY NOT SAY(1)"
+.SH "WHY NOT JUST SAY(1)"
 .IR Say (1)
 speaks one utterance and exits, having loaded sixty megabytes of model to do
 it \(em between one and two seconds whatever is being said.
 That is right for narration and useless for reading: nothing can be piped into
 it, and a second and a half a line is not reading, it is waiting.
 .PP
-So this goes through
-.IR voice (3),
-which synthesizes natively and far faster than real time.
-It sounds much worse.
-That is the trade, and for reading a screen it is the right way round.
+.IR Voice (2)
+is the same model, held open rather than loaded fresh per utterance, the way
+.I say
+itself now holds it: the first utterance still costs the load, but every one
+after that costs tens of milliseconds, which is fast enough to read with.
+So this uses it by default \(em the screen someone hears about should sound
+like the same voice
+.I say
+narrates a tutorial with, not a different one.
+.PP
+.IR Voice (3),
+the formant synthesizer, is what this falls back to: for the whole run if the
+neural voice could not be opened at all, or for one line if it refuses that
+line specifically \(em it has no equivalent of skipping one unknown symbol the
+way
+.IR voice (3)
+does, so an unknown phoneme there is a whole utterance the neural voice will
+not attempt. It sounds much worse and is far faster to fail into, which is
+what a fallback is for: a screen reader must not go silent because the better
+voice is not available, or is pickier about one line than the rest.
+.B -f
+skips the neural voice unconditionally, for reading anywhere the extra memory
+is not worth it, or the first utterance costing a model-load's worth of
+silence is not acceptable.
 .SH "WHAT IT DOES TO A LINE"
 The first thing this was given to read was
 .B ls /dev
@@ -116,10 +164,20 @@ failure at the one thing this is for.
 .B /appl/cmd/speak.b
 .SH SEE ALSO
 .IR say (1),
+.IR voice (2),
 .IR phon (2),
 .IR voice (3),
 .IR audio (3)
 .SH BUGS
+Falling back to
+.IR voice (3)
+mid-run, one line at a time, means a single session can be heard switching
+between two different-sounding voices - whenever the neural voice refuses a
+line the formant one would have skipped a symbol in instead.
+That is deliberate, not an oversight: see "WHY NOT JUST SAY(1)" above.
+Nothing here decides which voice to use ahead of time by looking at the line;
+it only finds out by trying.
+.PP
 Spelling is exact and slow.
 .B hoststdin
 is nine letters read out one at a time, where letter-to-sound rules would give
