@@ -95,9 +95,14 @@ CHECKS = [
   ["/tmp/pip -s $x(5) close 1",
    "/tmp/pip open 3 /1 read 3 packetmax close 3"],
   "'55'"),
- ("an operation the kernel refuses put on another container's ring",
+ # the two are on different cores on purpose: the talk's message passing
+ # is between cores, and every other delegation here has both ends on
+ # core 0, where nothing crosses.
+ ("an operation the kernel refuses put on another container's ring, on "
+  "another core",
   ["for(c in 8 9) echo create $c 40000000 800000000 200000000 >/n/osprey/ctl",
-   "for(c in 8 9) echo attach $c 0 >/n/osprey/ctl",
+   "echo attach 8 0 >/n/osprey/ctl; echo attach 9 3 >/n/osprey/ctl",
+   "grep -h '^proc [89] ' /n/osprey/status | sed 's/ state.*//'",
    "echo delegate 8 9 >/n/osprey/ctl",
    "echo submit 8 send 7 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
    # rc reads a bare name= as an assignment, so awk -v is spelled out

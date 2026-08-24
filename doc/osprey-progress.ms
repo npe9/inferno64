@@ -680,6 +680,20 @@ the one that delegated says
 and the one that did not says
 .CW "segattach osprey7: permission denied" .
 The name of a slice is a capability, and that is the line that says so.
+One more thing was on core 0 that had no business being there: every
+delegation in the check had both containers on it, so nothing routed a
+message between cores, which is the first thing the talk says its
+message passing does.  The pair that carries a request to somebody
+else's ring and takes the answer back is now
+.CW "attach 8 0"
+and
+.CW "attach 9 3" ,
+and
+.CW status
+is read to show it really is
+.CW "proc 8 core 0"
+and
+.CW "proc 9 core 3" .
 .PP
 The other half of the rule is shown against the very slice that refusal
 names.  A container's memory is also for the process bound to it and the

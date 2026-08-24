@@ -934,8 +934,12 @@ name, a request still in flight and the buffer it names carried across a
 checkpoint, an attribute written over
 .IR pip (5)
 that nobody else sees until the fid that wrote it is closed, an
-operation the kernel refuses put on another container's ring and
-answered there, what a round trip costs with a trap and without one, a
+operation the kernel refuses put on another container's ring on another
+core and answered there, a slice mapped a second time somewhere else and
+worked through the second mapping, a slice reached by a server of
+another user because the container delegated to it and refused to the
+same server for a container that did not, what a round trip costs with a
+trap and without one, a
 uart driven by a task whose bytes are watched leaving the second serial
 port, sixteen hundred requests from eight processes at once with none
 lost, the pages a container held coming back when it exits, eight idle
