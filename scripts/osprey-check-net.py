@@ -62,22 +62,25 @@ STACK = [
  "/tmp/netsrv $sg $sz 3 4 10.9.0.1 &",
  "sleep 5; echo '#### ea'; grep '^packets 7' /n/osprey/status",
  "sleep 45; echo '#### seen'; grep '^packets 7' /n/osprey/status",
- "sleep 60; echo '#### flood'; grep '^packets 7' /n/osprey/status",
+ "sleep 90; echo '#### flood'; grep '^packets 7' /n/osprey/status",
  "echo '#### end'",
 ]
 # and the ordinary one, which knows nothing about any of it
-ASKER = [
- CD,
- "sleep 14; ip/ipconfig ether /net/ether0 10.9.0.2 255.255.255.0",
- "sleep 16; echo '#### ping'; ip/ping -n 8 10.9.0.1",
- "echo '#### arp'; cat /net/arp",
- # the driver queued its own receive buffers before the interface was
- # given away, and uses them up before it takes one of the container's.
- # There are 256 of them, so a slow ping never gets that far.
- "echo '#### flood'; ip/ping -n 400 -i 20 10.9.0.1 >/dev/null >[2=1]",
- "echo flooded",
- "echo '#### end'",
-]
+def asker(flood):
+    return [
+     CD,
+     "sleep 14; ip/ipconfig ether /net/ether0 10.9.0.2 255.255.255.0",
+     "sleep 16; echo '#### ping'; ip/ping -n 8 10.9.0.1",
+     "echo '#### arp'; cat /net/arp",
+     # the driver queued its own receive buffers before the interface was
+     # given away, and uses them up before it takes one of the
+     # container's.  There are 256 of them, so a slow ping never gets
+     # that far.
+     "echo '#### flood'; ip/ping -n %d -i 20 10.9.0.1 >/dev/null >[2=1]"
+        % flood,
+     "echo flooded",
+     "echo '#### end'",
+    ]
 
 def between(log, a, b):
     i = log.find('#### ' + a)
@@ -90,16 +93,19 @@ def pkts(log, mark, nextmark):
                   between(log, mark, nextmark), re.M)
     return m
 
+def iso(ini=''):
+    env = dict(os.environ, OSPREY_NOBOOTPROMPT='local!/dev/sdE0/fs')
+    if ini:
+        env['OSPREY_INI'] = ini
+    subprocess.run(['sh', os.path.join(ROOT, 'scripts/mkosprey-efi-iso.sh')],
+                   env=env, check=True, stdout=subprocess.DEVNULL)
+
 def main():
     keep = '-k' in sys.argv[1:]
     results = []
 
-    subprocess.run(['sh', os.path.join(ROOT, 'scripts/mkosprey-efi-iso.sh')],
-                   env=dict(os.environ,
-                            OSPREY_NOBOOTPROMPT='local!/dev/sdE0/fs'),
-                   check=True, stdout=subprocess.DEVNULL)
-
-    (stack, asker), logs = pair(17895, STACK, ASKER)
+    iso()
+    (stack, ask1), logs = pair(17895, STACK, asker(400))
 
     ea = pkts(stack, 'ea', 'seen')
     results.append(("a container told the address of the card it was given",
@@ -108,13 +114,13 @@ def main():
                     re.search(r'netsrv container 7 ea .* ip 10\.9\.0\.1',
                               stack) is not None))
 
-    ping = between(asker, 'ping', 'arp')
+    ping = between(ask1, 'ping', 'arp')
     got = len(re.findall(r'^\d+: rtt', ping, re.M))
     results.append(("an arp for that address answered by that program",
                     re.search(r'10\.9\.0\.1\s+' + (ea.group(4) if ea and ea.group(4)
                               else 'nothing'),
-                              between(asker, 'arp', 'end').replace(':', '')) is not None
-                    or '10.9.0.1' in between(asker, 'arp', 'end')))
+                              between(ask1, 'arp', 'end').replace(':', '')) is not None
+                    or '10.9.0.1' in between(ask1, 'arp', 'end')))
     results.append(("eight echo requests answered, so the frames it built "
                     "reached the other machine (%d back)" % got, got >= 6))
 
@@ -131,6 +137,26 @@ def main():
     results.append(("frames arriving in the container's own buffers once the "
                     "driver's are used up (%d direct, %d copied)" % (d, c),
                     d > 0))
+
+    # and again with a slice big enough to lend the interface as many
+    # buffers as its ring is deep, which is what the number above is
+    # short of.  Nothing in the kernel changes; plan9.ini does.
+    iso('*ospreypktbuf=256')
+    (stack2, ask2), logs2 = pair(17897, STACK, asker(1200))
+    logs = logs + logs2
+
+    results.append(("the same eight answered with a slice that big "
+                    "(%d back)" % len(re.findall(r'^\d+: rtt', between(ask2, 'ping', 'arp'), re.M)),
+                    len(re.findall(r'^\d+: rtt', between(ask2, 'ping', 'arp'), re.M)) >= 6))
+    seen2 = pkts(stack2, 'flood', 'end')
+    d2 = int(seen2.group(1)) if seen2 else 0
+    c2 = int(seen2.group(2)) if seen2 else 0
+    # the copies are the ring's first fill and nothing after it: the
+    # driver's own two hundred and fifty-six buffers, used once each.
+    results.append(("and then the copying stopping at the driver's own "
+                    "buffers while the rest arrive in the container's "
+                    "(%d direct, %d copied)" % (d2, c2),
+                    seen2 is not None and c2 <= 300 and d2 > 2*c2))
 
     bad = 0
     for what, ok in results:

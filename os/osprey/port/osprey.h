@@ -166,6 +166,12 @@ extern ulong	(*ospreypktcopied)(Ospreyproc*);
  */
 extern int	(*ospreyetherea)(Ospreyproc*, uchar *ea);
 void		ospreysettxavail(Ospreyproc*, uvlong);
+/*
+ * Set one of the limits that lay out a slice, before there is an arena:
+ * queue, data, sem, pktbuf or txbuf.  A limit below the compiled-in one
+ * is refused; max, when it is not zero, is the caller's own ceiling.
+ */
+int		ospreysetsize(char*, ulong n, ulong max);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 int		ospreytxsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);

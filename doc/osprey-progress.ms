@@ -360,14 +360,17 @@ traffic has gone by.  Four hundred pings later it is
 .CW "direct 14 copied 396" ,
 which is the first time that path has been seen to fire at all \- and
 also fourteen frames in four hundred and ten, which is not the ordinary
-case.  The reason is a number, not a bug: a container lends the
+case.  The reason was a number, not a bug: a container lent the
 interface sixteen receive buffers against a ring two hundred and
-fifty-six slots deep, and gets one back per
+fifty-six slots deep, and got one back per
 .CW recv ,
-so no more than sixteen of those slots can hold a container's buffer at
-a time.  Direct delivery becomes the ordinary case when a container
-lends as many buffers as the ring is deep, which is the
-demonstration-scale limit below.  And
+so no more than sixteen of those slots could hold a container's buffer
+at a time.  That number is
+.CW *ospreypktbuf
+now; set to the ring's own depth it is
+.CW "direct 953 copied 257"
+over twelve hundred pings, and the copying is the ring's first fill and
+nothing after it.  And
 .CW ospreymapsizes ,
 which
 .CW ospreylendbufs
@@ -482,10 +485,15 @@ after four hundred pings, where five frames had given
 Both are checked by
 .CW /scripts/osprey-check-net.py ,
 which is where the numbers come from.  Fourteen of four hundred and ten
-is the path firing and not the path being the ordinary one; that it is
-not depends on
+is the path firing and not the path being the ordinary one; what it
+depended on was
 .CW Npktbuf ,
-which is in the next gap but one.
+which is now
+.CW *ospreypktbuf
+in
+.CW plan9.ini ,
+and the same check with it set to the ring's depth gives
+.CW "direct 953 copied 257" .
 .NH 2
 Closed since, in the personality
 .PP
@@ -513,17 +521,38 @@ name space hold neither.
 .NH 2
 Demonstration scale
 .PP
-Every limit is a compile-time constant in
+Five of the limits are now read from
+.CW plan9.ini
+\-
+.CW *ospreyqueue ,
+.CW *ospreydata ,
+.CW *ospreysem ,
+.CW *ospreypktbuf
+and
+.CW *ospreytxbuf
+\- because those five do nothing but lay out a slice: everything they
+size is in the container's own slice and reached through the map, and
+nothing in the adapter or the device indexes an array with them.  A
+value below what the tree was built with is refused rather than obeyed.
+That one of them mattered is measured, not argued: with
+.CW *ospreypktbuf
+left at sixteen, four hundred pings give
+.CW "direct 14 copied 396" ;
+set to two hundred and fifty-six, which is igbe's receive ring, twelve
+hundred give
+.CW "direct 953 copied 257" .
+The copying is the ring's first fill and nothing after it.
+.PP
+The rest are still compile-time constants in
 .CW os/osprey/adapter/ospreyrt.c
-and none can be set from a configuration file: sixteen containers,
-eight cores, sixteen messages to a ring, eight semaphores, thirty-two
-packets held, sixteen receive and eight transmit buffers \- which is what
-holds direct packet delivery to a few frames in a hundred, since igbe's
-receive ring is two hundred and fifty-six deep \- eight private
-names, four grants, eight pages to a container, sixteen arms to a
+because each of them sizes an array that is compiled in: sixteen
+containers, eight cores, thirty-two packets held, eight private names,
+four grants, eight pages to a container, sixteen arms to a
 .CW select .
-For a system whose subject is predictable clouds these are not
-footnotes; the shape is right and the numbers are a demonstration's.
+Making those settable is not a configuration change but an allocation
+change, and it is the honest reason they are not.  For a system whose
+subject is predictable clouds these are not footnotes; the shape is
+right and the numbers are a demonstration's.
 .NH 2
 Latency
 .PP

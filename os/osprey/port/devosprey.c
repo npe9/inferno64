@@ -635,8 +635,18 @@ static Bpool ospreyrbpool[16];		/* its receive buffers, in the span */
  * still has, and the container is told to try again rather than being
  * allowed to write over a frame in flight.
  */
+enum {
+	Maxtxbuf	= 64,	/* bits in txavail; see below */
+};
+
 static Bpool ospreytxpool[16];
-static Block *ospreytxblk[16][8];
+/*
+ * The one limit the device does index an array with, and the reason
+ * txbuf has a ceiling where the other four have none: txavail in the map
+ * is one word of bits, so a container can be lent no more transmit
+ * buffers than there are bits in it.
+ */
+static Block *ospreytxblk[16][Maxtxbuf];
 static int ospreyntxblk[16];
 static Block *ospreyheld[16];		/* the packet the container is reading */
 static ulong ospreydirect[16];		/* packets that arrived in the span */
@@ -1490,14 +1500,47 @@ ospreypublish(void)
 	}
 }
 
+/*
+ * The limits a plan9.ini may set, and the ceiling on each.  Zero is no
+ * ceiling: what stops the other four is the memory the arena wants,
+ * which is one allocation of a slice times Nproc and fails visibly.
+ */
+static struct {
+	char	*conf;
+	char	*name;
+	ulong	max;
+} ospreysizeconf[] = {
+	{ "*ospreyqueue",	"queue",	0 },
+	{ "*ospreydata",	"data",		0 },
+	{ "*ospreysem",		"sem",		0 },
+	{ "*ospreypktbuf",	"pktbuf",	0 },
+	{ "*ospreytxbuf",	"txbuf",	Maxtxbuf },
+};
+
 static void
 ospreyinit(void)
 {
 	uvlong size;
+	char *cf;
 	int i;
 
 	if(ospreybase != nil)
 		return;
+	/*
+	 * How big a slice is, before there is one.  Each of these is a
+	 * count the container reads out of its own map and nothing here
+	 * indexes an array with, except txbuf, which has a ceiling for the
+	 * reason its declaration gives.  A value below what the tree was
+	 * built with is refused by the adapter rather than obeyed.
+	 */
+	for(i = 0; i < nelem(ospreysizeconf); i++){
+		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
+			continue;
+		if(ospreysetsize(ospreysizeconf[i].name,
+			strtoul(cf, nil, 0), ospreysizeconf[i].max) < 0)
+			print("osprey: %s=%s refused\n",
+				ospreysizeconf[i].conf, cf);
+	}
 	size = PGROUND(ospreyarenasize());
 	ospreybase = xspanalloc(size, BY2PG, 0);
 	if(ospreybase == nil)

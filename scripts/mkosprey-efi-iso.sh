@@ -9,6 +9,7 @@
 # usage: scripts/mkosprey-efi-iso.sh [iso]
 #
 # OSPREY_NOBOOTPROMPT=local!/dev/sdE0/fs skips the bootrc bootargs prompt.
+# OSPREY_INI adds lines to plan9.ini, newline separated.
 
 set -e
 
@@ -45,6 +46,11 @@ if [ -n "$OSPREY_NOBOOTPROMPT" ]; then
 fi
 if [ -n "$OSPREY_USER" ]; then
 	echo "user=$OSPREY_USER" >>"$CFG"
+fi
+# OSPREY_INI holds whatever else the kernel is to read, one line each:
+# the *osprey... limits that say how big a container's slice is.
+if [ -n "$OSPREY_INI" ]; then
+	printf '%s\n' "$OSPREY_INI" >>"$CFG"
 fi
 echo 'fs0:\EFI\BOOT\BOOTX64.EFI' >"$NSH"
 

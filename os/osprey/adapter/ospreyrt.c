@@ -96,9 +96,60 @@ enum {
 static int forward(Ospreyproc*, Request*);
 static char *statename(int);
 
+/*
+ * The five limits that do nothing but lay out a slice.  They are
+ * variables rather than constants because a slice is memory and how much
+ * of it a container gets is a configuration, not a design: everything
+ * they size lives in the container's own slice and is reached through
+ * the map, so nothing in this file or the device indexes an array with
+ * them.  The other limits in the enum above are not here for exactly the
+ * opposite reason -- Nproc, Ncore, Npkt, Nname and Maxpage size arrays
+ * that are compiled in.
+ */
+static ulong nqueue = Nqueue;
+static ulong ndata = Ndata;
+static ulong nsem = Nsem;
+static ulong npktbuf = Npktbuf;
+static ulong ntxbuf = Ntxbuf;
+
 static uchar *arena;		/* the shared span, or nil until given one */
 static ulong arenasize;
 static ulong slicesize;
+
+/*
+ * Set one of them, by the name the kernel reads out of its configuration
+ * and passes straight through.  Only before there is an arena: the whole
+ * span is one allocation whose size these decide, and every container in
+ * it is laid out the same way.  A limit smaller than the compiled-in one
+ * is refused rather than obeyed, since what is in the tree is already a
+ * demonstration's size and taking memory away from it breaks a check
+ * rather than a container.
+ */
+int
+ospreysetsize(char *what, ulong n, ulong max)
+{
+	ulong *v, floor;
+
+	if(arena != nil || slicesize != 0 || what == nil)
+		return -1;
+	if(strcmp(what, "queue") == 0)
+		v = &nqueue, floor = Nqueue;
+	else if(strcmp(what, "data") == 0)
+		v = &ndata, floor = Ndata;
+	else if(strcmp(what, "sem") == 0)
+		v = &nsem, floor = Nsem;
+	else if(strcmp(what, "pktbuf") == 0)
+		v = &npktbuf, floor = Npktbuf;
+	else if(strcmp(what, "txbuf") == 0)
+		v = &ntxbuf, floor = Ntxbuf;
+	else
+		return -1;
+	if(n < floor || (max != 0 && n > max))
+		return -1;
+	*v = n;
+	return 0;
+}
+
 static uvlong pagebase;		/* the pages, after every slice */
 static uchar pagetaken[Npage];
 
@@ -398,7 +449,7 @@ ospreyncore(void)
 ulong
 ospreynsem(void)
 {
-	return Nsem;
+	return nsem;
 }
 
 static void
@@ -408,11 +459,11 @@ sizes(void)
 		return;
 	slicesize = ROUNDUP(sizeof(Ospreymap), Align)
 		+ ROUNDUP(3*sizeof(Queue), Align)
-		+ ROUNDUP(Nsem*sizeof(Sem), Align)
-		+ ROUNDUP(3*Nqueue*sizeof(Message), Align)
-		+ ROUNDUP(Ndata, Align)
-		+ Npktbuf*Pktbufsize
-		+ Ntxbuf*Txbufsize;
+		+ ROUNDUP(nsem*sizeof(Sem), Align)
+		+ ROUNDUP(3*nqueue*sizeof(Message), Align)
+		+ ROUNDUP(ndata, Align)
+		+ npktbuf*Pktbufsize
+		+ ntxbuf*Txbufsize;
 	/*
 	 * A whole number of pages: a slice is a segment of its own, and a
 	 * segment is attached in pages.
@@ -470,43 +521,43 @@ mapfix(Ospreyproc *p)
 	m = p->map;
 	m->magic = Ospreymagic;
 	m->id = p->process.id;
-	m->size = Nqueue;
+	m->size = nqueue;
 	m->msgsize = sizeof(Message);
 	m->requestqueue = ROUNDUP(sizeof(Ospreymap), Align);
 	m->replyqueue = m->requestqueue + sizeof(Queue);
 	m->outputqueue = m->replyqueue + sizeof(Queue);
 	m->sem = ROUNDUP(m->outputqueue + sizeof(Queue), Align);
-	m->nsem = Nsem;
-	m->request = ROUNDUP(m->sem + Nsem*sizeof(Sem), Align);
-	m->reply = m->request + Nqueue*sizeof(Message);
-	m->output = m->reply + Nqueue*sizeof(Message);
-	m->data = ROUNDUP(m->output + Nqueue*sizeof(Message), Align);
-	m->pktbuf = ROUNDUP(m->data + Ndata, Align);
-	m->npktbuf = Npktbuf;
+	m->nsem = nsem;
+	m->request = ROUNDUP(m->sem + nsem*sizeof(Sem), Align);
+	m->reply = m->request + nqueue*sizeof(Message);
+	m->output = m->reply + nqueue*sizeof(Message);
+	m->data = ROUNDUP(m->output + nqueue*sizeof(Message), Align);
+	m->pktbuf = ROUNDUP(m->data + ndata, Align);
+	m->npktbuf = npktbuf;
 	m->pktbufsize = Pktbufsize;
-	m->txbuf = ROUNDUP(m->pktbuf + Npktbuf*Pktbufsize, Align);
-	m->ntxbuf = Ntxbuf;
+	m->txbuf = ROUNDUP(m->pktbuf + npktbuf*Pktbufsize, Align);
+	m->ntxbuf = ntxbuf;
 	m->txbufsize = Txbufsize;
-	m->page = m->data + Ndata - Maxpage*sizeof(uvlong);
+	m->page = m->data + ndata - Maxpage*sizeof(uvlong);
 	m->maxpage = Maxpage;
 	m->pagesize = Pagesize;
-	m->datalen = Ndata - Maxpage*sizeof(uvlong);
+	m->datalen = ndata - Maxpage*sizeof(uvlong);
 	m->npage = p->npage;
 	r = &p->process;
 	if(r->requests != nil){
 		r->requests->message = (uchar*)r->requeststorage
 			- (uchar*)r->requests;
-		r->requests->size = Nqueue;
+		r->requests->size = nqueue;
 	}
 	if(r->replies != nil){
 		r->replies->message = (uchar*)r->repliestorage
 			- (uchar*)r->replies;
-		r->replies->size = Nqueue;
+		r->replies->size = nqueue;
 	}
 	if(r->output != nil){
 		r->output->message = (uchar*)r->outputstorage
 			- (uchar*)r->output;
-		r->output->size = Nqueue;
+		r->output->size = nqueue;
 	}
 }
 
@@ -859,33 +910,33 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	m = (Ospreymap*)base;
 	m->magic = Ospreymagic;
 	m->id = id;
-	m->size = Nqueue;
+	m->size = nqueue;
 	m->msgsize = sizeof(Message);
 	m->requestqueue = ROUNDUP(sizeof(Ospreymap), Align);
 	m->replyqueue = m->requestqueue + sizeof(Queue);
 	m->outputqueue = m->replyqueue + sizeof(Queue);
 	m->sem = ROUNDUP(m->outputqueue + sizeof(Queue), Align);
-	m->nsem = Nsem;
-	m->request = ROUNDUP(m->sem + Nsem*sizeof(Sem), Align);
-	m->reply = m->request + Nqueue*sizeof(Message);
-	m->output = m->reply + Nqueue*sizeof(Message);
-	m->data = ROUNDUP(m->output + Nqueue*sizeof(Message), Align);
-	m->pktbuf = ROUNDUP(m->data + Ndata, Align);
-	m->npktbuf = Npktbuf;
+	m->nsem = nsem;
+	m->request = ROUNDUP(m->sem + nsem*sizeof(Sem), Align);
+	m->reply = m->request + nqueue*sizeof(Message);
+	m->output = m->reply + nqueue*sizeof(Message);
+	m->data = ROUNDUP(m->output + nqueue*sizeof(Message), Align);
+	m->pktbuf = ROUNDUP(m->data + ndata, Align);
+	m->npktbuf = npktbuf;
 	m->pktbufsize = Pktbufsize;
 	/*
 	 * The pages a container holds are named at the end of its data
 	 * area, as offsets into the whole arena rather than into the
 	 * slice: a page is not part of any slice, and moves between them.
 	 */
-	m->page = m->data + Ndata - Maxpage*sizeof(uvlong);
+	m->page = m->data + ndata - Maxpage*sizeof(uvlong);
 	m->npage = 0;
 	m->maxpage = Maxpage;
 	m->pagesize = Pagesize;
-	m->datalen = Ndata - Maxpage*sizeof(uvlong);
+	m->datalen = ndata - Maxpage*sizeof(uvlong);
 	m->selected = ~0ULL;
 	p->map = m;
-	for(i = 0; i < Nsem; i++)
+	for(i = 0; i < nsem; i++)
 		seminit((Sem*)(base + m->sem) + i, 0);
 
 	rq = (Queue*)(base + m->requestqueue);
@@ -897,7 +948,7 @@ ospreycreate(uvlong id, uvlong budget, uvlong period, uvlong deadline)
 	lockall();
 	pktqinit(&p->pktq, p->pktp, Npkt);
 	if(processinit(&p->process, id, budget, period, deadline,
-		rq, pq, oq, rm, pm, om, Nqueue, p->name, Nname) < 0){
+		rq, pq, oq, rm, pm, om, nqueue, p->name, Nname) < 0){
 		unlockall();
 		return nil;
 	}
@@ -2149,7 +2200,7 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 	p = seprint(p, e, "now %llud hz %llud cores %lud procs %lud"
 		" arena %llud slice %lud data %lud pagesize %lud\n",
 		now, hz, (ulong)Ncore, (ulong)Nproc,
-		ospreyarenasize(), slicesize, (ulong)Ndata,
+		ospreyarenasize(), slicesize, ndata,
 		(ulong)Pagesize);
 	for(i = 0; i < Ncore; i++){
 		/*
@@ -2225,7 +2276,7 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		p = seprint(p, e, "\n");
 		p = seprint(p, e, "sem %llud", q->id);
 		ospreylocksem();
-		for(n = 0; n < Nsem; n++){
+		for(n = 0; n < nsem; n++){
 			Sem *sm = (Sem*)((uchar*)procs[i].map
 				+ procs[i].map->sem) + n;
 			p = seprint(p, e, " %llud/%llud/%llud",

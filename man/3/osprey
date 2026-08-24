@@ -594,6 +594,41 @@ The message must be stored before the index that publishes it, and the
 index read before the message it refers to; the kernel side uses
 .IR coherence (10.2)
 for that, and a machine that reorders stores needs the same on this side.
+.SS How big a slice is
+.PP
+Five of the numbers above are read from
+.B plan9.ini
+before the arena is made, since they do nothing but lay out a slice:
+.TP
+.B *ospreyqueue
+Messages in each of the three rings; 16.
+.TP
+.B *ospreydata
+Bytes of data area, names and page table together; 4096.
+.TP
+.B *ospreysem
+Semaphores; 8.
+.TP
+.B *ospreypktbuf
+Receive buffers the container lends an interface; 16.  A card's receive
+ring is deeper than that \- igbe's is 256 \- and what the container has
+not lent, the driver fills with its own and copies out of.
+.TP
+.B *ospreytxbuf
+Transmit buffers it fills itself; 8, and at most 64, because
+.B txavail
+is one word of bits.
+.PP
+The whole arena is one allocation of a slice times sixteen, so raising
+one of these raises what the kernel asks for at boot.  A value smaller
+than the compiled-in one is refused and said so on the console rather
+than obeyed: what is in the tree is already a demonstration's size and
+taking memory away from it breaks a check rather than a container.  The
+numbers not here \- containers, cores, packets a container may hold,
+private names, pages, arms to a
+.B select
+\- size arrays that are compiled in, and are in the enum at the head of
+.BR /os/osprey/adapter/ospreyrt.c .
 .SH A DRIVER SERVED BY A TASK
 .PP
 .B uart
@@ -870,10 +905,16 @@ knows nothing about any of it.  It settles two things nothing before it
 could: that a frame a container built and handed to the card really
 arrives at the other end of the wire, because the other end answers it
 -- eight echo requests, eight replies -- and that once the driver's own
-two hundred and fifty-six receive buffers have been used up some frames
-land in the container's, which four hundred more pings show as
-.B "direct 14 copied 396"
-\- the path firing, not the ordinary case; the paragraph above says why.
+two hundred and fifty-six receive buffers have been used up the frames
+land in the container's.  It runs twice: once as the kernel is built,
+where four hundred pings give
+.B "direct 14 copied 396" ,
+and once with
+.B *ospreypktbuf=256
+in
+.BR plan9.ini ,
+where twelve hundred give
+.BR "direct 953 copied 257" .
 .PP
 Each says
 .B ok
@@ -1225,18 +1266,23 @@ reported
 Four hundred pings later it reported
 .B "direct 14 copied 396" :
 the head does come round, and the path does fire, but fourteen of four
-hundred and ten is not the ordinary case and will not become one at this
-buffer count.  A container lends the interface sixteen receive buffers
-against a ring two hundred and fifty-six slots deep, and gets one back
-per
+hundred and ten is not the ordinary case at that buffer count.  A
+container lending sixteen receive buffers against a ring two hundred and
+fifty-six slots deep, and getting one back per
 .B recv
 \- the one
 .B recv
-before it was holding \- so at most sixteen slots of the ring can hold a
-container's buffer at once and they return one at a time.  What makes
-direct delivery the ordinary case is lending as many buffers as the ring
-is deep, which is the demonstration-scale limit above and not a
-different mechanism.  The address of the
+before it was holding \- can have no more than sixteen of those slots
+holding a buffer of its own.  How many it lends is
+.B *ospreypktbuf
+in
+.BR plan9.ini ,
+and with it set to the ring's own depth the same twelve hundred pings
+give
+.B "direct 953 copied 257" :
+the copying is the ring's first fill, the driver's own buffers used once
+each, and everything after it arrives where the container can read it
+without anything moving it there.  The address of the
 interface a container was given is on the same line, as
 .BR ea ,
 since a container that builds an arp body needs to put its own address
