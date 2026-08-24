@@ -212,7 +212,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Eighty lines, all
+a line at a time.  Eighty-one lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -1219,11 +1219,36 @@ print path, where
 and
 .CW pow
 are not.  So the routines that fix repairs are carried by this kernel
-and, as far as the sources say, never reached \- which is a reason to
+and, as far as the sources say, never reached.  That was the reason to
 leave
 .CW 6c
-to whoever can run a number through it, and not a reason to think it is
-absent.
+to whoever could run a number through it \- and once the loaders were
+right, this machine could.
+.CW fpbits
+carries the idiom itself, a double whose high word is added to through
+a pointer, and printed
+.CW "scale 3ff8000000000000"
+where
+.CW 4008000000000000
+is right: 1.5 for 3.0, the fault exactly as they described it, and the
+.CW -S
+listing shows
+.CW y
+never leaving
+.CW X0
+while
+.CW "ADDL AX, y+-4(SP)"
+writes to memory.  Their
+.CW mkvar
+fix is in
+.CW 6c
+now, adapted to its signature; the listing stores the double before the
+half-write and reloads it after, the check they wrote counts
+.CW 6c
+among the fixed, and the line on the machine reads
+.CW "scale 4008000000000000" .
+The other five compilers with the fault are left as they left them, for
+the reason they gave: nothing here boots with them.
 .PP
 Trying to run a number from here turned up something else, and getting
 it right took four goes, of which the first three were wrong in
