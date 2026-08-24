@@ -183,8 +183,7 @@ services sentence are now built and checked: the file-system half in
 and the protocol stack in
 .CW os/osprey/cmd/netsrv.c ,
 which is pinged from another machine over buffers nothing copies.  What
-is left is a different kernel; a name space of a container's own, which
-both servers want and neither has; and the things below, which neither
+is left is a different kernel, and the things below, which neither
 source spells out.
 .PP
 .B "1.  Knowing who agreed the key."
@@ -265,9 +264,11 @@ kernel around it.
 is the one the kernel has no answer for at all: a container has no name
 space of its own there, only the name table the policy layer keeps, so
 .CW ReqBind
-is refused and always was.  The personality has one, because it is a
-program, and a container that names it can build a name space and then
-open a name that no name space on the machine held before it asked.
+is refused and always was.  The personality has one for each container
+it answers for, because it is a program and can fork one; a container
+that names it can build a name space and then open a name that no name
+space on the machine held before it asked, and what it builds there
+belongs to it alone.
 The check does exactly that, has the container ask the personality for
 the shape of the file it opened through that bind and finds the file's
 own name in what comes back, and has the same
@@ -486,20 +487,29 @@ not depends on
 .CW Npktbuf ,
 which is in the next gap but one.
 .NH 2
-Still short a name space
+Closed since, in the personality
 .PP
-The protocol stack is built.  What
-.I netsrv
-still shares with
-.I p9srv
-is that a container has no name space of its own:
+A container had no name space of its own:
 .CW bind
-is answered by
+was answered by
 .I p9srv
 in
 .I its
-name space, so two containers sharing a server share its names, which is
-not what a private name space means.
+name space, so two containers of one server shared its names, which is
+not what a private name space means.  It has one now, and it is the
+personality's to give, not the kernel's \- which is the whole argument
+for putting the personality outside in the first place.  The first
+request from a container has the server attach that container's slice
+and fork a process for it with
+.CW RFNAMEG
+and
+.CW RFFDG ;
+the process holding the request ring hands that process the message down
+a pipe and takes the answer back, and only the message goes through the
+pipe, since what it points at is in the span both have mapped.  The
+check has two containers of one server bind different directories over
+the same name and read different files through it, and the server's own
+name space hold neither.
 .NH 2
 Demonstration scale
 .PP

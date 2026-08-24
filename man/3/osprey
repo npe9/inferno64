@@ -1017,7 +1017,7 @@ has them answered there if that server implements them.
 .B bind
 is refused by the kernel and answered by
 .IR p9srv ,
-in the server's own name space rather than in one of the container's.
+in a name space of the asking container's own.
 .B send
 and
 .B recv
@@ -1128,11 +1128,27 @@ themselves; the arms, the frame and the answer are all in memory it has
 mapped.
 .PP
 .I p9srv
+gives each container it answers for a name space of its own.  The first
+request from a container has the server attach that container's slice
+and then fork a process for it with
+.B RFNAMEG
+and
+.BR RFFDG ,
+so what the container binds and what it opens are in a name space and a
+descriptor group that no other container of the same server shares, and
+that the server itself does not share either.  The process that owns the
+request ring hands that process the message down a pipe and takes the
+answer back the same way; only the message goes through the pipe, since
+what it points at is in the span both have mapped.  A container's name
+space starts as a copy of the server's, which is what a name space
+forked from another one has always meant here.
+.PP
+.I p9srv
 lets nothing go.  A container that exits leaves the files it had opened
-open in the server and its slice attached, and the table of containers
-the server has answered for only grows; a server that has answered for
-sixteen of them answers nothing for the seventeenth.  Nothing tells a
-server that a container has gone.
+open in the server, its slice attached, and now a process of its own
+running, and the table of containers the server has answered for only
+grows; a server that has answered for sixteen of them answers nothing
+for the seventeenth.  Nothing tells a server that a container has gone.
 .PP
 Scheduling is driven by the clock.  A container with no process bound to
 it is billed for whatever its core's run queue says it is running, which

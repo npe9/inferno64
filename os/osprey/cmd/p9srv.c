@@ -109,11 +109,18 @@ struct Arm {
 	uvlong	buf;
 };
 
-/* a container this server answers for, and what it has open here */
+/*
+ * A container this server answers for.  Each has a process of its own,
+ * forked with a name space of its own, and the pipe by which the process
+ * that owns the ring hands it a request and takes the answer back.  What
+ * the request names is in the shared span, not in the pipe.
+ */
 struct Client {
 	uvlong	id;
 	uchar	*base;
 	int	fd[Nfd];
+	int	pipe;		/* -1 in the parent until the child exists */
+	int	mine;		/* set in the process that answers for it */
 };
 
 enum {				/* arm operations, as ospreyselect reads them */
@@ -156,6 +163,8 @@ static int verbose;
 
 static Client client[Nclient];
 static int nclient;
+
+static void childloop(Client*, int);
 
 static uvlong dataoff;		/* from this server's own map, never a client's */
 static uvlong datalen;
@@ -316,7 +325,7 @@ clientof(uvlong id)
 	Client *c;
 	char name[32], *e;
 	uchar *va;
-	int i, slot;
+	int i, slot, pfd[2];
 
 	for(i = 0; i < nclient; i++)
 		if(client[i].id == id)
@@ -328,14 +337,52 @@ clientof(uvlong id)
 	e = catstr(name, "osprey");
 	e = catnum(e, (uvlong)slot);
 	*e = '\0';
+	/*
+	 * The slice is attached before the fork and not after: a segment
+	 * attached in one process afterwards is not in the other, whatever
+	 * its type.  This one is SG_PHYSICAL, which fork shares rather
+	 * than copies, so the child writes where the client will read.
+	 */
 	va = (uchar*)segattach(0, name, 0, slicesize);
 	if(va == (uchar*)-1)
 		return nil;
-	c = &client[nclient++];
+	c = &client[nclient];
 	c->id = id;
 	c->base = va;
+	c->pipe = -1;
+	c->mine = 0;
 	for(i = 0; i < Nfd; i++)
 		c->fd[i] = -1;
+	if(pipe(pfd) < 0)
+		return nil;
+	/*
+	 * A name space of its own, and a file descriptor group of its own
+	 * so that what it opens for its container is not in anybody
+	 * else's.  Its memory is a copy, which is why the record above is
+	 * filled in first: the child reads its own copy of it and the two
+	 * never write to each other's.
+	 */
+	nclient++;
+	switch(rfork(RFPROC|RFNAMEG|RFFDG|RFREND)){
+	case -1:
+		nclient--;
+		close(pfd[0]);
+		close(pfd[1]);
+		return nil;
+	case 0:
+		c->mine = 1;
+		close(pfd[0]);
+		if(ctlfd >= 0)
+			close(ctlfd);
+		/* the pipes of every container forked before this one */
+		for(i = 0; i < nclient-1; i++)
+			if(client[i].pipe >= 0)
+				close(client[i].pipe);
+		childloop(c, pfd[1]);
+		exits(nil);
+	}
+	close(pfd[1]);
+	c->pipe = pfd[0];
 	if(verbose){
 		outs("serving container "); outd(id);
 		outs(" in "); outs(name); outs("\n"); flush();
@@ -374,21 +421,18 @@ clientname(Client *c, uvlong off)
 }
 
 /*
- * Answer one request in this server's own name space.  Nothing here
- * enters the kernel except the ordinary system call the operation is:
- * that is the whole of the point.
+ * Answer one request in the name space of the container it came from.
+ * This runs in that container's own process; nothing here enters the
+ * kernel except the ordinary system call the operation is, which is the
+ * whole of the point.
  */
 static int
-serve(Message *mp)
+answer(Client *c, Message *mp)
 {
-	Client *c;
 	char *a, *e;
 	uvlong off, cnt;
 	long n;
 	int i, fd;
-
-	if((c = clientof(mp->container)) == nil)
-		return Sterror;
 
 	switch(mp->op){
 	case Opopen:
@@ -444,10 +488,12 @@ serve(Message *mp)
 		/*
 		 * The kernel refuses this: a container has no name space of
 		 * its own there, only the name table the policy layer keeps.
-		 * Here it is the ordinary bind, in the server's name space,
-		 * which is the container's name space for as long as this
-		 * server answers for it.  That is the whole difference
-		 * between a personality and a device.
+		 * Here it is the ordinary bind, in the name space of the
+		 * process this server forked for this container and nobody
+		 * else -- so what one container binds, another container of
+		 * the same server does not see, and neither does the server.
+		 * That is the whole difference between a personality and a
+		 * device.
 		 */
 		if((a = clientname(c, mp->arg[2])) == nil)
 			return Sterror;
@@ -476,6 +522,45 @@ serve(Message *mp)
 	 * keep for itself.
 	 */
 	return Sterror;
+}
+
+/*
+ * A container's own process.  It reads a request, performs it in its own
+ * name space and writes the answer back.  Only the message travels the
+ * pipe; what the message points at is in the span both processes have
+ * mapped, so nothing is copied through it.
+ */
+static void
+childloop(Client *c, int fd)
+{
+	Message m;
+
+	for(;;){
+		if(readn(fd, &m, sizeof m) != sizeof m)
+			exits(nil);
+		m.arg[0] = (uvlong)answer(c, &m);
+		if(write(fd, &m, sizeof m) != sizeof m)
+			exits(nil);
+	}
+}
+
+/*
+ * Hand the request to the process that holds that container's name space
+ * and wait for it.  One request at a time: this end of the ring has one
+ * consumer, and making it more than one would need a second.
+ */
+static int
+serve(Message *mp)
+{
+	Client *c;
+
+	if((c = clientof(mp->container)) == nil)
+		return Sterror;
+	if(write(c->pipe, mp, sizeof *mp) != sizeof *mp)
+		return Sterror;
+	if(readn(c->pipe, mp, sizeof *mp) != sizeof *mp)
+		return Sterror;
+	return (int)mp->arg[0];
 }
 
 static void
