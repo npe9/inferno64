@@ -910,25 +910,72 @@ converted from the native Plan 9 form it was inherited in, which begins
 .CW </$objtype/mkfile
 and cannot run here at all.
 .PP
-What stops that today is not Osprey.  The kernel links
-.CW libsec ,
-.CW libmp
-and
-.CW libfis
-out of
-.CW Inferno/$OBJTYPE/lib ,
-and building
-.CW libmp
-for 386 in this tree fails in
-.CW include/kern.h
-at line 325, because
+Every library such a kernel links now builds for 386, which is as far as
+it goes without a userland.  Getting there was five repairs, and every
+one of them was something that had never been compiled rather than
+something that had gone wrong.
 .CW Inferno/386/include/u.h
-has no
-.CW intptr :
-the 386 side of the Inferno tree was never brought up to the
-sixty-four-bit-aware headers the rest of it uses.  That is a repair to
-Inferno's 386 target and not to Osprey's, and it is the first thing a
-386 Osprey kernel would need.
+had
+.CW uintptr
+and neither
+.CW intptr
+nor
+.CW usize ,
+so
+.CW include/kern.h
+did not compile and nothing at all could be built for the object type;
+.CW mkfiles/mkfile-Inferno-386
+named the host
+.CW ar
+rather than the tree's
+.CW iar ,
+so every library stopped at the archive step;
+.CW libkern/ainc-386.s
+was a copy of the amd64 file, RARG and
+.CW XADDL
+and all, and
+.CW 8a
+has no word for
+.CW XADDL
+\- the 386 had no such instruction until the 486 \- so it is a
+.CW CMPXCHGL
+loop now;
+.CW Osprey/386/include
+held the Inferno hosted set, whose
+.CW lib9.h
+includes
+.CW u.h
+itself and redefines every floating-point macro; and
+.CW os/osprey/kernlib/getcallerpc.s
+was amd64 only and named unconditionally, so it is
+.CW getcallerpc-amd64.s
+with a 386 file beside it and the mkfile picks by
+.CW OBJTYPE .
+With those,
+.CW libmp ,
+.CW libsec ,
+.CW libfis ,
+.CW libkern ,
+.CW libosprey ,
+.CW libospreykern
+and
+.CW libaml
+all build for 386.
+.PP
+What stops the kernel itself is not the kernel.  The boot filesystem a
+configuration names embeds prebuilt
+.CW paqfs
+and
+.CW factotum
+binaries \-
+.CW os/osprey/pc64/pc64
+names them under
+.CW Osprey/amd64/bin
+\- and those exist for amd64 only.  A 386 kernel needs a 386 userland to
+put in its boot filesystem before it needs anything else, and that is a
+9front userland and a
+.CW libc
+for the object type, which this tree does not have.
 .PP
 The far one is a machine of another family.
 .CW os/inferno
