@@ -1737,6 +1737,13 @@ said before.
 Anyone re-opening it now has a lever, and should say what failure rate they
 expect before running it.
 
+A wider stress on the same lever — 14 runs of `wm` with windows being created
+and destroyed, a Tk client up, and direct `newwindow` in four processes, all
+under resizes every 150ms — produced **no fault output and no missing PASS in
+any run**. The detector for that was calibrated with `faultprobe(1)` first,
+which mattered: the version used before it was calibrated matched one failure
+class out of three and would have reported the same clean result either way.
+
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
 Seen twice, never reproduced under control — and, like bug 2, seen on a build
