@@ -250,6 +250,26 @@ mlort_open(unsigned char *spec, int nspec, char *units, char *err, int nerr)
 	 * failure is not fatal: the graph still runs, on the CPU provider, and
 	 * info says what was asked for rather than pretending it happened.
 	 */
+	/*
+	 * One thread, on purpose, and this is not a performance choice.
+	 *
+	 * emu aliases the libc allocators to its own pool for the whole
+	 * process (see LDFLAGS in emu/MacOSX/mkfile-arm64), so every malloc
+	 * onnxruntime makes - and every one BNNS makes underneath it - comes
+	 * out of the Inferno pool. That pool is reached from threads the VM
+	 * knows about. Left to itself onnxruntime runs its graph on a worker
+	 * pool of its own, and those threads allocate too.
+	 *
+	 * On its own that survives. With wm running, so that the VM is
+	 * allocating at the same time, it faults inside BNNS - reliably, and
+	 * not for want of memory: bigger pools do not help, and the same model
+	 * in the same emu with no window manager is fine.
+	 *
+	 * So the graph runs on the thread that asked for it.
+	 */
+	ign(ort->SetIntraOpNumThreads(m->opts, 1));
+	ign(ort->SetInterOpNumThreads(m->opts, 1));
+
 	m->provider = strdup("cpu");
 #ifdef MACOSX_ARM64
 	if(units == nil || *units == '\0' || strcmp(units, "cpu") != 0){

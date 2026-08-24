@@ -82,6 +82,26 @@ double, because the model's duration predictor treats the phrase as a unit.
 .IR ml (3),
 .IR audio (3)
 .SH BUGS
+.B "One utterance per emu process."
+The second faults inside the host's neural library.
+.I Emu
+aliases the libc allocators into its own pool and
+.I onnxruntime
+uses several the aliasing does not cover \(em
+.BR posix_memalign ,
+.BR aligned_alloc ,
+the
+.B malloc_zone
+calls \(em so it allocates on one heap and frees on the other.
+It is not memory exhaustion and not threading; both were tried.
+See
+.B doc/hpc-plan.md
+for the diagnosis and what fixing it would take.
+.PP
+This is why
+.B /lib/demo/tour.sh
+does not yet run: it speaks five times.
+.PP
 One voice, named in the source as a default.
 .PP
 It holds the whole waveform before writing any of it, so a long utterance is a

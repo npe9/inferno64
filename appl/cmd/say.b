@@ -14,10 +14,12 @@ implement Command;
 # belongs on top of this, not inside it.
 #
 #	say 1 0 20 0 59 0 24 0 120 0 27 0 100 0 2
+#	say -p "h@l'oU"			# the same thing, in the voice's own symbols
 #
-# The model this was written against wants its ids interleaved with the pad
-# symbol and wrapped in begin and end, which is the sequence above: it says
-# "hello".
+# The model wants its ids interleaved with the pad symbol and wrapped in begin
+# and end, which is the sequence above: it says "hello". -p does that
+# arranging, reading the symbol table out of the voice's own .json - which is
+# a lookup, not a front end: it still will not read English spelling.
 #
 include "sys.m";
 	sys: Sys;
@@ -26,6 +28,11 @@ include "draw.m";
 include "math.m";
 	math: Math;
 include "arg.m";
+include "bufio.m";
+	bufio: Bufio;
+include "json.m";
+	json: JSON;
+	JValue: import json;
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -102,32 +109,91 @@ feed(name: string, shape: string, data: array of byte)
 		fatal(sprint("write %s: %r", name));
 }
 
+#
+# The voice's symbols, turned into the numbers it wants.
+#
+# The table is the voice's own, in the .json beside it, so this is a lookup
+# and not a front end: it takes the sounds, still not the spelling. What it
+# adds is the arrangement the model expects - begin, then every symbol
+# followed by the pad, then end - which is fiddly to get right by hand and
+# identical for every utterance.
+#
+phonemeids(voice, ph: string): array of int
+{
+	cfg := voice + ".json";
+	b := bufio->open(cfg, Bufio->OREAD);
+	if(b == nil)
+		fatal(sprint("%s: %r", cfg));
+	(v, err) := json->readjson(b);
+	if(v == nil)
+		fatal(sprint("%s: %s", cfg, err));
+	m := v.get("phoneme_id_map");
+	if(m == nil)
+		fatal(cfg + " has no phoneme_id_map");
+
+	# begin, pad, then each symbol and a pad, then end
+	ids := array[2 + 2*len ph + 1] of int;
+	n := 0;
+	ids[n++] = 1;
+	ids[n++] = 0;
+	for(i := 0; i < len ph; i++){
+		e := m.get(ph[i:i+1]);
+		if(e == nil)
+			fatal(sprint("%s has no symbol %s", cfg, ph[i:i+1]));
+		pick a := e {
+		Array =>
+			if(len a.a == 0)
+				fatal(sprint("symbol %s has no id", ph[i:i+1]));
+			pick n0 := a.a[0] {
+			Int =>	ids[n++] = int n0.value;
+			Real =>	ids[n++] = int n0.value;
+			* =>	fatal(sprint("symbol %s has a strange id", ph[i:i+1]));
+			}
+		* =>
+			fatal(sprint("symbol %s is not an array of ids", ph[i:i+1]));
+		}
+		ids[n++] = 0;
+	}
+	ids[n++] = 2;
+	return ids[0:n];
+}
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	math = load Math Math->PATH;
 	arg := load Arg Arg->PATH;
-	if(math == nil || arg == nil)
+	bufio = load Bufio Bufio->PATH;
+	json = load JSON JSON->PATH;
+	if(math == nil || arg == nil || bufio == nil || json == nil)
 		fatal(sprint("load: %r"));
+	json->init(bufio);
 
 	voice := Voice;
 	out := "/dev/audio";
 	showinfo := 0;
+	phonemes := "";
 	arg->init(argv);
-	arg->setusage("say [-v voice] [-o file] [-i] id...");
+	arg->setusage("say [-v voice] [-o file] [-i] -p phonemes | id...");
 	while((o := arg->opt()) != 0)
 		case o {
 		'v' =>	voice = arg->earg();
 		'o' =>	out = arg->earg();
 		'i' =>	showinfo++;
+		'p' =>	phonemes = arg->earg();
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
-	if(argv == nil)
-		arg->usage();
-	ids := array[len argv] of int;
-	for(i := 0; argv != nil; (i, argv) = (i+1, tl argv))
-		ids[i] = int hd argv;
+	ids: array of int;
+	if(phonemes != ""){
+		ids = phonemeids(voice, phonemes);
+	}else{
+		if(argv == nil)
+			arg->usage();
+		ids = array[len argv] of int;
+		for(i := 0; argv != nil; (i, argv) = (i+1, tl argv))
+			ids[i] = int hd argv;
+	}
 
 	if(sys->bind("#N", "/dev", Sys->MAFTER) < 0)
 		fatal(sprint("bind #N: %r"));
@@ -188,7 +254,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	# /dev/audio takes signed 16-bit, little-endian, and this voice is
 	# 16kHz mono. The samples come back between -1 and 1.
 	w := array[2*len pcm] of byte;
-	for(i = 0; i < len pcm; i++){
+	for(i := 0; i < len pcm; i++){
 		s := int (pcm[i] * 32767.0);
 		if(s > 32767)
 			s = 32767;

@@ -2219,6 +2219,44 @@ bugs 1-6 above.
 
 ---
 
+## Open bug: onnxruntime and emu's allocator aliasing cannot share a process
+
+**`say(1)` works once per `emu` process and then corrupts the heap.** The
+second utterance faults inside `libBNNS` with a jump to address `0x4`; under
+`wm` the first one is often enough, because the VM is allocating too.
+
+Root cause, from `nm` rather than from guessing. `mkfile-arm64` aliases the libc
+allocators into the Inferno pool:
+
+```
+-Wl,-alias,___wrap_malloc,_malloc   (and mallocz, free, realloc, calloc)
+```
+
+and `libonnxruntime` imports **`posix_memalign`, `aligned_alloc`, `malloc_size`,
+`malloc_zone_malloc`, `malloc_zone_free`, `malloc_zone_realloc`** — none of
+which is wrapped. So it allocates on the real heap and frees into Inferno's
+pool, and the reverse. Cross-allocator free; the corruption surfaces later, in
+whatever next uses the pool.
+
+Not fixable by tuning: bigger pools do not help, and neither does
+`SetIntraOpNumThreads(1)` (tried both — it is not exhaustion and not ORT's
+worker threads). Alignment is not it either: the pool already aligns to 16.
+
+Three ways out, none of them small.
+
+- **Wrap the rest of the surface.** `malloc_zone_*` is effectively unwrappable,
+  so this would be a partial fix that fails later and less obviously.
+- **Stop aliasing for builds that link onnxruntime.** Removing `LDFLAGS`
+  outright does not link — emu's own code needs the wrap symbols — so this means
+  giving the pool a real `malloc` back, and changes what `-p` accounts for.
+- **Run inference out of process**, with `ml(3)` as a client of a small server
+  that does not have the aliasing. Heaviest, and the only one that isolates
+  41MB of third-party library from the VM by construction — which, given this
+  bug, is an argument in its favour rather than against.
+
+Until then `say` is one utterance per process, which is enough for
+`mltest` and not enough for `lib/demo/tour.sh`.
+
 ## Gotchas that cost real time
 
 **A trace records the name space, so `bind "#dev"` escapes it.** `iostats(4)`
