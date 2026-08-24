@@ -104,8 +104,16 @@ freeb(Block *b)
 		b->list = p->head;
 		p->head = b;
 		iunlock(p);
+		/*
+		 * The block goes to the hook as well as the pool: a caller
+		 * that keeps its own account of which buffers are out needs
+		 * to know which one came back, and working it out by walking
+		 * the pool's free list is a walk under a lock at interrupt
+		 * level, which is exactly how long a list that ever comes to
+		 * hold a cycle stops the machine.
+		 */
 		if(p->done != nil)
-			(*p->done)(p);
+			(*p->done)(p, b);
 		return;
 	}
 

@@ -628,7 +628,7 @@ static long ospreyuartlen[16];
 static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
 static int ospreytxsem[16];		/* and the one a freed transmit buffer gives */
-static void ospreytxdone(Bpool*);
+static void ospreytxdone(Bpool*, Block*);
 static uvlong ospreytxavail(int);
 static void ospreytellandwake(Ospreyproc*, int);
 static void ospreyawake(int, uvlong);
@@ -810,29 +810,33 @@ ospreylendtx(Ospreyproc *p, int x)
  * is told its buffer is its own again.
  */
 static void
-ospreytxdone(Bpool *pool)
+ospreytxdone(Bpool *pool, Block *b)
 {
 	Ospreyproc *p;
-	uvlong avail;
 	int i, j;
 
 	for(i = 0; i < nelem(ospreytxpool); i++){
 		if(pool != &ospreytxpool[i])
 			continue;
-		avail = ospreytxavail(i);
-		if((p = ospreyat(i)) == nil)
-			return;
 		/*
-		 * Whichever frames have gone, give their charges back: a
-		 * buffer whose bit was held and is free again is one the
-		 * card has finished with.  freeb says a block came back and
-		 * not which one, so the mask is what says.
+		 * Which buffer came back is what freeb says now, so this
+		 * runs at interrupt level without a lock and without walking
+		 * anything: the frame's charge is given back and its bit
+		 * cleared, and the word the container reads follows from the
+		 * bits alone.
 		 */
 		for(j = 0; j < ospreyntxblk[i]; j++)
-			if((ospreytxheld[i] & avail & (1ULL<<j)) != 0){
-				ospreynetrelease(p, ospreytxlen[i][j], 1);
-				ospreytxheld[i] &= ~(1ULL<<j);
-			}
+			if(ospreytxblk[i][j] == b)
+				break;
+		if(j == ospreyntxblk[i])
+			return;		/* not one of this container's */
+		if((p = ospreyat(i)) == nil)
+			return;
+		if((ospreytxheld[i] & (1ULL<<j)) != 0){
+			ospreynetrelease(p, ospreytxlen[i][j], 1);
+			ospreytxheld[i] &= ~(1ULL<<j);
+		}
+		ospreytxavail(i);
 		if(ospreytxsem[i] < 0)
 			return;
 		ospreysemgive(p, ospreytxsem[i]);
@@ -841,49 +845,48 @@ ospreytxdone(Bpool *pool)
 }
 
 /*
- * Say in the container's map which transmit buffers it may write.  A bit
- * is set while that buffer's block is on the free list, which is when
- * the card has finished with it; the container reads the word and needs
- * no trap to find a buffer.  This runs at interrupt level from freeb, so
- * it does nothing but walk a list of eight and write one word.
+ * Say in the container's map which transmit buffers it may write.  A
+ * buffer is either in flight or free and ospreytxheld says which, so
+ * this is one word of arithmetic: it used to be a walk of the pool's
+ * free list under the pool's lock, which is a walk at interrupt level
+ * over a list this code does not own, and a list that ever came to hold
+ * a cycle stopped the machine there.  It did: a flood of eight hundred
+ * frames ended in "ilock ... held by pc" with the holder and the waiter
+ * in the same function.
  */
 static uvlong
 ospreytxavail(int x)
 {
 	Ospreyproc *p;
-	Bpool *pool;
-	Block *b;
-	uvlong m;
-	int i;
+	uvlong all;
 
 	if(x < 0 || x >= nelem(ospreytxpool))
 		return 0;
 	if((p = ospreyat(x)) == nil)
 		return 0;
-	pool = &ospreytxpool[x];
-	m = 0;
-	ilock(pool);
-	for(b = pool->head; b != nil; b = b->list)
-		for(i = 0; i < ospreyntxblk[x]; i++)
-			if(ospreytxblk[x][i] == b){
-				m |= 1ULL<<i;
-				break;
-			}
-	iunlock(pool);
-	ospreysettxavail(p, m);
-	return m;
+	if(ospreyntxblk[x] <= 0)
+		return 0;
+	all = ospreyntxblk[x] >= 64 ? ~0ULL : (1ULL<<ospreyntxblk[x]) - 1;
+	all &= ~ospreytxheld[x];
+	ospreysettxavail(p, all);
+	return all;
 }
 
 /* take it off that list; the card will put it back when it is done */
 static int
-ospreytxtake(Bpool *pool, Block *b)
+ospreytxtake(Bpool *pool, Block *b, int nblk)
 {
 	Block **l;
-	int got;
+	int got, n;
 
 	got = 0;
 	ilock(pool);
-	for(l = &pool->head; *l != nil; l = &(*l)->list)
+	/*
+	 * Bounded by the number of blocks there are: the list cannot
+	 * honestly be longer, and an unbounded walk of a list under a lock
+	 * is a machine that stops rather than a fault that is reported.
+	 */
+	for(l = &pool->head, n = 0; *l != nil && n <= nblk; l = &(*l)->list, n++)
 		if(*l == b){
 			*l = b->list;
 			b->list = nil;
@@ -1796,7 +1799,7 @@ ospreykernop(Ospreyproc *p, uvlong op, uvlong *arg, uvlong *result)
 				return StatusError;
 			}
 			b = ospreytxblk[x][bi];
-			if(!ospreytxtake(&ospreytxpool[x], b)){
+			if(!ospreytxtake(&ospreytxpool[x], b, ospreyntxblk[x])){
 				ospreynetrelease(p, len, 1);
 				return StatusRetry;
 			}

@@ -1217,7 +1217,18 @@ be written is in
 .B txavail
 in the map, one bit each, set while that buffer's block is on the free
 list: a container finds a buffer with a load out of memory it has
-already mapped, and needs no trap and no refusal to do it.  The
+already mapped, and needs no trap and no refusal to do it.  What
+.B txavail
+holds is worked out from which buffers are in flight and not by walking
+the pool's free list: that walk was under the pool's lock at interrupt
+level, and a flood of eight hundred frames ended in
+.B "ilock ... held by pc"
+with the holder and the waiter in the same function.
+.I freeb
+says which block came back as well as which pool it belongs to, so the
+completion needs no lock and no walk at all, and the one walk left \-
+unlinking a block a container has asked to send \- is bounded by the
+number of blocks there are.  The
 semaphore named as
 .IR t
 to

@@ -1066,6 +1066,25 @@ reading a corrupt free list and the write was in
 two passes earlier; a watchpoint on the corrupted pointer showed only
 the compiler's own honest writes to it.
 .PP
+The transmit accounting added a machine-stopper and the check found it.
+Under a flood of twelve hundred frames the second machine died at eight
+hundred and sixteen with
+.CW "panic: ilock ... key 0xdeaddead ... held by pc ... proc 407" ,
+the holder and the waiter in the same function.  What the completion
+path did was work out which buffers were free by walking the pool's free
+list under the pool's lock, at interrupt level, over a list this code
+does not own: an unbounded walk under a lock is not a fault that gets
+reported, it is a machine that stops, and it stopped.
+.PP
+.CW freeb
+says which block came back now, not only which pool, so the completion
+clears one bit and gives one charge back with no lock and no walk, and
+the word the container reads follows from the bits.  The one walk left
+\- unlinking a block a container has asked to send \- is bounded by the
+number of blocks there are.  Three runs of the flood since, and the
+first failing run is the reason the check runs the flood at all rather
+than eight pings.
+.PP
 Environments were the other half of the question and are a shorter
 answer: nothing in
 .CW os/osprey

@@ -172,7 +172,7 @@ struct Bpool
 	 * Osprey puts here, so that a container waiting in select is told
 	 * its transmit buffer is its own again.
 	 */
-	void	(*done)(Bpool*);
+	void	(*done)(Bpool*, Block*);
 
 	Lock;
 	Block	*head;			/* freelist head */
