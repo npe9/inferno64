@@ -172,6 +172,8 @@ void		ospreysettxavail(Ospreyproc*, uvlong);
  * is refused; max, when it is not zero, is the caller's own ceiling.
  */
 int		ospreysetsize(char*, ulong n, ulong max);
+/* put a message about a container on its server's ring; no reply comes */
+int		ospreytellserver(Ospreyproc*, int op);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 int		ospreytxsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);
 void*		ospreyat_off(Ospreyproc*, uvlong off, ulong len);

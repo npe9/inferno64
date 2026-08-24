@@ -185,10 +185,18 @@ CHECKS = [
    "echo poke 63 192 /n/other >/n/osprey/ctl",
    "echo submit 63 bind 128 192 0 >/n/osprey/ctl; echo service 4 >/n/osprey/ctl",
    "sleep 1; cat /n/osprey/reply",
+   "echo exit 63 >/n/osprey/ctl"],
+  "63 bind error"),
+ ("a process of the server's own for each container it answers for",
+  ["sleep 1; ps | awk '/p9srv/{n++}END{print \"procs\", n+0}'"],
+  "procs 3"),
+ ("and one fewer when a container goes, without anything asking",
+  ["echo exit 64 >/n/osprey/ctl; sleep 3",
+   "ps | awk '/p9srv/{n++}END{print \"procs\", n+0}'",
    # give the slots back: there are only sixteen, and the check below
    # wants eight of them at once
-   "for(c in 61 63 64 62) echo exit $c >/n/osprey/ctl"],
-  "63 bind error"),
+   "for(c in 61 62) echo exit $c >/n/osprey/ctl"],
+  "procs 2"),
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string

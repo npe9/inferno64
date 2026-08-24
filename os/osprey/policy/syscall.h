@@ -20,6 +20,15 @@ enum {
 	ReqAlloc,
 	ReqYield,
 	ReqPoll,
+	/*
+	 * Not a request a container makes: the kernel puts this on a
+	 * server's ring when a container that server answers for has gone,
+	 * so that the server can let go of what it was holding for it.
+	 * Appended rather than inserted, so that a program built against
+	 * an older copy of this list still numbers everything else the
+	 * same.  Nothing answers it; there is nobody left to answer to.
+	 */
+	ReqGone,
 };
 
 enum {

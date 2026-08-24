@@ -144,6 +144,7 @@ enum {				/* request operations, as syscall.h orders them */
 	Opalloc,
 	Opyield,
 	Oppoll,
+	Opgone,			/* not a request: a container has gone */
 };
 
 enum {				/* reply status, as syscall.h orders it */
@@ -327,9 +328,12 @@ clientof(uvlong id)
 	uchar *va;
 	int i, slot, pfd[2];
 
-	for(i = 0; i < nclient; i++)
-		if(client[i].id == id)
+	for(i = 0; i < Nclient; i++)
+		if(client[i].id == id && client[i].pipe >= 0)
 			return &client[i];
+	for(nclient = 0; nclient < Nclient; nclient++)
+		if(client[nclient].id == 0)
+			break;
 	if(nclient >= Nclient)
 		return nil;
 	if((slot = slotof(id)) < 0 || slot >= nslice)
@@ -362,10 +366,9 @@ clientof(uvlong id)
 	 * filled in first: the child reads its own copy of it and the two
 	 * never write to each other's.
 	 */
-	nclient++;
 	switch(rfork(RFPROC|RFNAMEG|RFFDG|RFREND)){
 	case -1:
-		nclient--;
+		c->id = 0;
 		close(pfd[0]);
 		close(pfd[1]);
 		return nil;
@@ -374,9 +377,9 @@ clientof(uvlong id)
 		close(pfd[0]);
 		if(ctlfd >= 0)
 			close(ctlfd);
-		/* the pipes of every container forked before this one */
-		for(i = 0; i < nclient-1; i++)
-			if(client[i].pipe >= 0)
+		/* the pipes of every other container this server answers for */
+		for(i = 0; i < Nclient; i++)
+			if(&client[i] != c && client[i].pipe >= 0)
 				close(client[i].pipe);
 		childloop(c, pfd[1]);
 		exits(nil);
@@ -549,11 +552,46 @@ childloop(Client *c, int fd)
  * and wait for it.  One request at a time: this end of the ring has one
  * consumer, and making it more than one would need a second.
  */
+/*
+ * A container this server answered for has gone.  Closing the pipe ends
+ * the process that held its name space -- its read returns nothing --
+ * and with the process goes everything it had open there.  What is left
+ * is this end of the pipe and the mapping of a slice that is about to be
+ * somebody else's, and both are let go here.
+ */
+static void
+gone(uvlong id)
+{
+	Client *c;
+	int i;
+
+	for(i = 0; i < Nclient; i++){
+		c = &client[i];
+		if(c->id != id || c->pipe < 0)
+			continue;
+		close(c->pipe);
+		c->pipe = -1;
+		if(c->base != nil)
+			segdetach(c->base);
+		c->base = nil;
+		c->id = 0;
+		if(verbose){
+			outs("container "); outd(id);
+			outs(" gone\n"); flush();
+		}
+		return;
+	}
+}
+
 static int
 serve(Message *mp)
 {
 	Client *c;
 
+	if(mp->op == Opgone){
+		gone(mp->container);
+		return -1;
+	}
 	if((c = clientof(mp->container)) == nil)
 		return Sterror;
 	if(write(c->pipe, mp, sizeof *mp) != sizeof *mp)
@@ -615,7 +653,8 @@ srvmain(int argc, char **argv)
 		if(m->selected == ~0ULL)
 			continue;
 
-		st = serve(mp);
+		if((st = serve(mp)) < 0)
+			continue;	/* nothing to answer, and nobody to */
 
 		/*
 		 * The answer goes back in the same message, which still

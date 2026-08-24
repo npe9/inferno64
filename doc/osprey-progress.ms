@@ -194,7 +194,7 @@ second; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
-a line at a time.  Fifty-eight lines, all
+a line at a time.  Sixty lines, all
 .BR ok ,
 against the kernel this file describes.
 .NH 1
@@ -542,6 +542,22 @@ pipe, since what it points at is in the span both have mapped.  The
 check has two containers of one server bind different directories over
 the same name and read different files through it, and the server's own
 name space hold neither.
+.PP
+With that the server holds three things for a container \- a process, a
+pipe and a mapping \- and until now it held all three for ever, since
+nothing told it a container had gone.
+.CW exit
+now puts a message on the server's request ring before it takes anything
+apart, with the container's identity on it and the operation
+.CW gone ,
+and there is no reply because what the message says is that there is
+nobody left to reply to.
+.I p9srv
+answers it by closing the pipe, which ends the process and with it
+everything open in its name space, and detaching the slice.  It is the
+only message that travels the other way along the path a request takes,
+and the only one in the list a container cannot ask for.  The check
+counts the server's processes before and after and finds one fewer.
 .NH 2
 Demonstration scale
 .PP

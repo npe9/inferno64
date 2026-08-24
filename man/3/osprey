@@ -916,7 +916,7 @@ in
 where twelve hundred give
 .BR "direct 953 copied 257" .
 .PP
-Together they are fifty-eight lines.  Each says
+Together they are sixty lines.  Each says
 .B ok
 or
 .B FAIL
@@ -1051,6 +1051,8 @@ are the grants somebody with the key wrote.
 is answered by nobody: not by the policy layer, not by the kernel, and
 not by
 .IR p9srv .
+It is the one request in the list with no meaning here, since nothing in
+the list starts a process for a container to wait for.
 Process requests belong to the user-level services the Osprey plan
 describes, and a container with a server named by
 .B delegate
@@ -1184,12 +1186,24 @@ what it points at is in the span both have mapped.  A container's name
 space starts as a copy of the server's, which is what a name space
 forked from another one has always meant here.
 .PP
+A container that goes is said so to its server.
+.B exit
+puts a message on the server's request ring, with the container's
+identity on it and the operation
+.BR gone ,
+before anything else about the container is taken apart; there is no
+reply, since what the message says is that there is nobody left to reply
+to.
 .I p9srv
-lets nothing go.  A container that exits leaves the files it had opened
-open in the server, its slice attached, and now a process of its own
-running, and the table of containers the server has answered for only
-grows; a server that has answered for sixteen of them answers nothing
-for the seventeenth.  Nothing tells a server that a container has gone.
+answers it by closing the pipe to that container's process, which ends
+it and with it everything it had open, and detaching the slice.  What
+the server holds for a container is a process, a pipe and a mapping, and
+after
+.B gone
+it holds none of them; the check counts the processes before and after.
+This is the one message that goes the other way along the path a request
+takes, and it is the only thing in the request list a container cannot
+ask for.
 .PP
 Scheduling is driven by the clock.  A container with no process bound to
 it is billed for whatever its core's run queue says it is running, which

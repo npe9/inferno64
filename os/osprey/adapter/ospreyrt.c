@@ -164,6 +164,7 @@ static struct {
 	{"open",	ReqOpen},
 	{"close",	ReqClose},
 	{"wait",	ReqWait},
+	{"gone",	ReqGone},
 	{"send",	ReqSend},
 	{"recv",	ReqRecv},
 	{"stat",	ReqStat},
@@ -1473,6 +1474,29 @@ ospreyserverof(Ospreyproc *p)
  * container that serves others should not also be asking, since its
  * reply ring is where its answers go.
  */
+/*
+ * Tell a container's server something about that container, on the same
+ * ring its requests go on and with its identity on the message, since
+ * that is how a server knows whose anything is.  There is no reply: what
+ * the message says is that there is nothing left to reply to.
+ */
+int
+ospreytellserver(Ospreyproc *p, int op)
+{
+	Ospreyproc *s;
+	Message m;
+
+	if(p == nil || p->used == 0 || (s = p->server) == nil || s->used == 0)
+		return -1;
+	memset(&m, 0, sizeof m);
+	m.op = op;
+	m.container = p->process.id;
+	m.sequence = 0;
+	if(queuefull(s->process.requests) || queueput(s->process.requests, &m) < 0)
+		return -1;
+	return 0;
+}
+
 int
 ospreyroute(Ospreyproc *s)
 {

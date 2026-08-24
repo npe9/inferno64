@@ -66,6 +66,7 @@ enum {
 	OpAlloc,
 	OpYield,
 	OpPoll,
+	OpGone,			/* the kernel to a server, about a container that has gone */
 };
 
 enum {
@@ -3407,6 +3408,24 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 	case CMexit:
 		/* the chans first: cclose can sleep, and exit takes locks */
 		p = ospreymine(cb->f[1]);
+		/*
+		 * Tell its server first: after this the container is gone
+		 * and there is nothing left to say whose the server's fds,
+		 * mapping and process were.
+		 */
+		if(ospreytellserver(p, OpGone) == 0){
+			/*
+			 * A server waiting in select is asleep on its own
+			 * rendezvous, not on the one the service kproc uses,
+			 * so wake both: which of the two is answering for
+			 * this container is not this code's business.
+			 */
+			x = ospreyindex(ospreyserverof(p));
+			if(x >= 0 && x < nelem(ospreyselrend)){
+				wakeup(&ospreyselrend[x]);
+				wakeup(&ospreyservrend[x]);
+			}
+		}
 		ospreyclosefds(p);
 		ospreyputproc(p);
 		ospreyputserver(p);
