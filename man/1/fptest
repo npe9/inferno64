@@ -69,11 +69,24 @@ in
 and
 .I jc
 now marks entries that overlap, and both of them keep such a variable in
-memory.  The same edit applies to the other seven compilers, whose
+memory.
+.I 6c
+has the same fix now, adapted to its own
 .B mkvar
-is the same function, and has not been made there: no board in this tree
-builds with them, so there is nothing here that would say whether it
-worked.
+signature, and it was verified the same way this test verifies the
+others: a command that scales a double through a pointer,
+.CW fpbits
+.RI ( os/osprey/cmd/fpbits.c ),
+run on a kernel this tree boots to a shell.  That kernel is Osprey's own
+.CW os/osprey/pc64/9pc64 ,
+not an Inferno board, because no Inferno kernel that links
+.I 6c
+reaches a shell yet.  The same edit applies to the other
+six compilers, whose
+.B mkvar
+is the same function, and has not been made there: no board in this
+tree builds with them, so there is nothing here that would say whether
+it worked.
 
 .PP
 .SH SEE ALSO
