@@ -68,9 +68,26 @@ hundred across sixteen processes at once, none failed.
 .PP
 Read that narrowly.
 It says creation is clean at those counts, sequential and concurrent.
-It does not clear the open bug and it was never going to: that bug is reported
-.I after a resize
-and nothing here resizes anything, since the host owns the window size.
+The bug it is aimed at is reported
+.I after a resize ,
+and nothing here resizes anything.
+Something can, now:
+.B INFERNO_RESIZE_TEST
+(see
+.IR emu (1))
+resizes the window on a timer, and with it running \(em every 300ms \(em 2400
+.B newwindow
+calls across eight processes and 250 Tk toplevels through
+.IR wm (1)
+also came through with nothing failing.
+.PP
+That last one is the relevant number.
+.B -d
+allocates its own screen, because a client under
+.IR wm (1)
+has none to borrow, so it is not exercising wm's; the Tk path goes through
+.IR tkclient (2)
+to wm, which is where the reported failure lives.
 .PP
 The concurrent mode is the one worth running.
 The fault was first characterised on a build where

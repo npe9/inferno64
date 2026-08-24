@@ -1714,6 +1714,29 @@ Confirmed it really resizes rather than merely ticking: with it on, `/dev/pointe
 delivers `r` records cycling 800×600 / 1024×768 / 640×480 — **40 of them in a
 short run, and 0 with the hook off**.
 
+#### And with the trigger present, it still does not happen
+
+| what | resizes | result |
+|---|---|---|
+| 2400 `newwindow` calls, 8 processes | every 300ms | none failed |
+| 250 Tk toplevels through `wm` | every 300ms | none failed, no nil |
+
+The second row is the relevant one: `wmtest -d` allocates its *own* screen,
+because a client under wm has no `Context.screen`, so it is not exercising wm's.
+The Tk path goes through `tkclient` to wm, which is where the reported failure
+lives.
+
+So the condition is now drivable and the failure does not appear. **The leading
+hypothesis is that it was a casualty of bug 1** — it was characterised on a build
+where every `unlock()` was a plain store, and that build no longer exists. That
+is a hypothesis and not a finding: 250 windows against a fault seen twice in
+normal use is not a lot of evidence, and the honest position is that it is *not
+reproducible with the trigger present*, which is a good deal more than could be
+said before.
+
+Anyone re-opening it now has a lever, and should say what failure rate they
+expect before running it.
+
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
 Seen twice, never reproduced under control — and, like bug 2, seen on a build
