@@ -4462,6 +4462,72 @@ setupmenu(void)
 	[viewitem setSubmenu:viewmenu];
 }
 
+/*
+ * A test hook: resize the window over and over, from outside.
+ *
+ * doc/hpc-plan.md bug 2 - Screen.newwindow() returning nil - is reported after
+ * a resize, and nothing inside Inferno can cause one. screenresize() is
+ * reachable only from this thread, there is no control file, and session(2)'s
+ * resize verb deliberately refuses. So the bug could not be provoked at all,
+ * and wmtest(1) can only show that creating windows without resizing is clean.
+ *
+ * This drives the real path rather than an imitation of it: it sets the
+ * window's content size and lets Cocoa's own callbacks run, which is the
+ * sequence a person dragging the corner produces - setFrameSize, screenresize,
+ * drawscreenresize, mouseresize. That is the point of doing it here instead of
+ * calling screenresize directly, which would be a different event and would
+ * have to be reported as one.
+ *
+ *	INFERNO_RESIZE_TEST=ms  emu ...
+ *
+ * Guarded by an environment variable and doing nothing without one, the same
+ * shape as the hook that forced bug 4's signal-handler path to run. It is for
+ * provoking a fault, not a feature: an operating system resizing its own
+ * display behind the user's back is not something to leave switched on.
+ */
+static int resizetest_ms;
+static int resizetest_which;
+
+static void resizetest_tick(void);
+
+static void
+resizetest_once(void)
+{
+	static const int sizes[][2] = { {1024,768}, {800,600}, {1024,768}, {640,480} };
+	int n;
+
+	if(win == nil)
+		return;
+	n = resizetest_which++ % (int)(sizeof sizes / sizeof sizes[0]);
+	[win setContentSize:NSMakeSize(sizes[n][0], sizes[n][1])];
+}
+
+static void
+resizetest_tick(void)
+{
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+			(int64_t)resizetest_ms * NSEC_PER_MSEC),
+		dispatch_get_main_queue(), ^{
+			resizetest_once();
+			resizetest_tick();
+		});
+}
+
+static void
+resizetest_start(void)
+{
+	char *p;
+
+	p = getenv("INFERNO_RESIZE_TEST");
+	if(p == nil || *p == '\0')
+		return;
+	resizetest_ms = atoi(p);
+	if(resizetest_ms < 50)
+		resizetest_ms = 50;
+	print("resizetest: resizing the window every %dms\n", resizetest_ms);
+	resizetest_tick();
+}
+
 static void
 createwindow(void)
 {
@@ -4529,6 +4595,7 @@ createwindow(void)
 	present_dirty = 1;
 	present_softscreen();
 
+	resizetest_start();
 }
 
 void

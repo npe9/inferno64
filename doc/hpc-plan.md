@@ -1699,10 +1699,20 @@ It did find that a client cannot say `wmctl "exit"` and carry on: that tells wm
 the *client* is finished and wm takes the whole client away, so the first version
 of the loop died silently on its first pass having written nothing.
 
-So bug 2 needs either a way to drive the host window from outside — accessibility
-does not see this app, and synthetic clicks do not reach it — or a test hook that
-calls `screenresize()` directly, which would be a different event from the one
-being investigated and would have to be labelled as such.
+**So a hook was added — and it drives the real path, not an imitation.**
+`INFERNO_RESIZE_TEST=ms` (win-cocoa.m, guarded by the environment variable and
+doing nothing without it) sets the window's content size on a timer and lets
+Cocoa's own callbacks run, which is the sequence a person dragging the corner
+produces: `setFrameSize` → `screenresize` → `drawscreenresize` → `mouseresize`.
+That is why it is done there rather than by calling `screenresize()` directly,
+which would be a different event and would have to be reported as one.
+
+It is platform-specific because the capability is; no port or conf file changes.
+Same shape as the hook that forced bug 4's signal-handler path to run.
+
+Confirmed it really resizes rather than merely ticking: with it on, `/dev/pointer`
+delivers `r` records cycling 800×600 / 1024×768 / 640×480 — **40 of them in a
+short run, and 0 with the hook off**.
 
 ### 3. draw3d intermittently rendered 0 of 60 segments
 

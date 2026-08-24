@@ -316,7 +316,28 @@ treats two clicks less than 500ms apart as a double click.
 See
 .IR inputtest (1)
 for what was measured.
-.SS "Recording the schedule"
+.SS "Resizing the window, for a test"
+.TP
+.B INFERNO_RESIZE_TEST=\fIms\fP
+Resize the window every
+.I ms
+milliseconds, cycling through a few sizes.
+Hosted on the native window system only, because only the host can resize a
+window: nothing inside Inferno can, which is the whole reason this exists.
+.PP
+It drives the real path rather than an imitation of it \(em it sets the
+window's size and lets the window system's own callbacks run, the same sequence
+a person dragging the corner produces.
+Calling the resize routine directly would be a different event and would have
+to be reported as one.
+.PP
+For provoking a fault, not a feature.
+An operating system resizing its own display behind the user's back is not
+something to leave switched on, so it does nothing unless the variable is set.
+See
+.B doc/hpc-plan.md
+bug 2.
+.SS "Recording the schedule\"
 .TP
 .B INFERNO_SCHED_RECORD=\fIfile\fP
 Write the order in which Dis execution actually happened: every quantum given
