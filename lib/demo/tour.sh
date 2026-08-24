@@ -6,6 +6,14 @@
 # say(1) through ml(3), on the voice's own phoneme symbols.
 
 load session
+load std
+
+# A window for the typing to land in. session(1)'s keystrokes go to
+# /dev/keyboard, which reaches whichever window has the focus - so there has to
+# BE one. Without this the tour typed into nothing, which is why it was
+# committed as a tour that could not yet run.
+wm/sh &
+session wait 1.5
 
 say -p 'ðɪs ɪz ɪnfˈɜːnoʊ'	# this is inferno
 session wait 0.4
