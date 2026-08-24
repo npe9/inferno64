@@ -2287,43 +2287,34 @@ bugs 1-6 above.
 
 ---
 
-## Open bug: onnxruntime and emu's allocator aliasing cannot share a process
+## Closed bug: onnxruntime and emu's allocator aliasing cannot share a process
 
-**`say(1)` works once per `emu` process and then corrupts the heap.** The
-second utterance faults inside `libBNNS` with a jump to address `0x4`; under
-`wm` the first one is often enough, because the VM is allocating too.
+**RESOLVED — see Item 6 in detail, above.** This section originally proposed
+three ways out and picked none of them; "run inference out of process" is
+exactly what shipped as `mlsrv`. The paragraphs this replaces made a specific
+allocator-aliasing diagnosis, kept here in summary because it turned out to
+be wrong in a way worth restating rather than erasing.
 
-Root cause, from `nm` rather than from guessing. `mkfile-arm64` aliases the libc
-allocators into the Inferno pool:
+That diagnosis was the reasoning that justified building `mlsrv` in the first
+place, and it is real — `posix_memalign`,
+`aligned_alloc`, `malloc_size` and the `malloc_zone_*` calls really are
+outside what `mkfile-arm64`'s `-Wl,-alias` covers. What it was NOT, as Item 6
+found once the library was actually out of emu's process, is the cause of the
+crash it was invoked to explain: with `onnxruntime` moved out, the crash was
+still there, unconnected to any Inferno allocator, and turned out to be
+Apple's BNNS convolution faulting under the CoreML provider on inputs above
+about forty phonemes — fixed not by the process boundary but by `say(1)`
+asking for `units cpu`. **The first diagnosis stood for a while and was
+wrong**; the process boundary was the right architectural call for an
+unrelated, correct reason (an address-space you virtualise should not share
+memory with the thing being virtualised), and it does also mean a crash in
+the library can no longer corrupt emu's own pool — it just was not, in the
+end, what had been crashing.
 
-```
--Wl,-alias,___wrap_malloc,_malloc   (and mallocz, free, realloc, calloc)
-```
-
-and `libonnxruntime` imports **`posix_memalign`, `aligned_alloc`, `malloc_size`,
-`malloc_zone_malloc`, `malloc_zone_free`, `malloc_zone_realloc`** — none of
-which is wrapped. So it allocates on the real heap and frees into Inferno's
-pool, and the reverse. Cross-allocator free; the corruption surfaces later, in
-whatever next uses the pool.
-
-Not fixable by tuning: bigger pools do not help, and neither does
-`SetIntraOpNumThreads(1)` (tried both — it is not exhaustion and not ORT's
-worker threads). Alignment is not it either: the pool already aligns to 16.
-
-Three ways out, none of them small.
-
-- **Wrap the rest of the surface.** `malloc_zone_*` is effectively unwrappable,
-  so this would be a partial fix that fails later and less obviously.
-- **Stop aliasing for builds that link onnxruntime.** Removing `LDFLAGS`
-  outright does not link — emu's own code needs the wrap symbols — so this means
-  giving the pool a real `malloc` back, and changes what `-p` accounts for.
-- **Run inference out of process**, with `ml(3)` as a client of a small server
-  that does not have the aliasing. Heaviest, and the only one that isolates
-  41MB of third-party library from the VM by construction — which, given this
-  bug, is an argument in its favour rather than against.
-
-Until then `say` is one utterance per process, which is enough for
-`mltest` and not enough for `lib/demo/tour.sh`.
+`say(1)` now holds a model open across many utterances via `voice(2)`
+(`appl/lib/voice.b`) rather than reloading it per call; three utterances
+through one `say` invocation measured at 0.6s against 1.6s for three separate
+invocations. `lib/demo/tour.sh` has run for a while.
 
 ## Gotchas that cost real time
 
