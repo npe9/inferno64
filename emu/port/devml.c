@@ -66,6 +66,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"error.h"
+#include	"ml.h"
 
 enum
 {
@@ -87,19 +88,21 @@ enum
 #define	MKPATH(s, t)	((((s)+1) << 4) | (t))
 
 /*
- * Nullable backend hooks. Every one reports failure by returning -1 (or nil)
- * and filling err, so the device never has to guess why something did not
- * work - the message the host framework gave is what reaches the caller's
- * %r, which is the only way a wrong model or a wrong input size is
- * diagnosable from Limbo.
+ * The host's backend, where the host has one. mlonnx.c sets this when it is
+ * linked; nothing sets it on native Inferno, and ml.h explains what follows
+ * from that. mlsoftbe is not a pointer because it is never absent.
  */
-void*	(*mlopenmodel)(uchar *spec, int nspec, char *units, char *err, int nerr);
-void	(*mlclosemodel)(void *m);
-int	(*mlmodelinfo)(void *m, char *buf, int nbuf);
-int	(*mlsetinput)(void *m, char *name, uchar *b, int n, char *err, int nerr);
-int	(*mlrunmodel)(void *m, char *err, int nerr);
-int	(*mlgetoutput)(void *m, char *name, uchar *b, int nbuf, char *err, int nerr);
-int	(*mlsetshape)(void *m, char *name, char **dims, int ndims, char *err, int nerr);
+Mlbackend	*mlhostbe;
+
+static Mlbackend*
+whichbe(char *want)
+{
+	if(strcmp(want, "soft") == 0)
+		return &mlsoftbe;
+	if(strcmp(want, "host") == 0)
+		return mlhostbe;		/* nil, and Enobackend, if none */
+	return mlhostbe != nil? mlhostbe: &mlsoftbe;
+}
 
 typedef struct Mstate Mstate;
 struct Mstate
@@ -113,6 +116,8 @@ struct Mstate
 	int	aspec;
 
 	void	*m;		/* backend model, or nil until "load" */
+	Mlbackend *b;		/* which backend holds it, fixed at "load" */
+	char	bewant[8];	/* "host", "soft" or "auto" */
 	char	units[16];
 	char	*feed;		/* selected input name, or nil for the only one */
 	char	*take;		/* selected output name, or nil */
@@ -171,6 +176,7 @@ newinstance(void)
 	m->inuse = 1;
 	m->id = nextid++;
 	strcpy(m->units, "all");
+	strcpy(m->bewant, "auto");
 	unlock(&mtablock);
 	return i;
 }
@@ -180,16 +186,20 @@ static void
 mlfree(Mstate *m)
 {
 	void *bm;
+	Mlbackend *b;
 
 	bm = m->m;
+	b = m->b;
 	m->m = nil;
-	if(bm != nil && mlclosemodel != nil)
-		mlclosemodel(bm);
+	m->b = nil;
+	if(bm != nil && b != nil)
+		b->close(bm);
 	free(m->spec);	m->spec = nil;	m->nspec = m->aspec = 0;
 	free(m->feed);	m->feed = nil;
 	free(m->take);	m->take = nil;
 	free(m->out);	m->out = nil;	m->nout = 0;
 	strcpy(m->units, "all");
+	strcpy(m->bewant, "auto");
 	m->inuse = 0;
 }
 
@@ -399,7 +409,7 @@ mlread(Chan *c, void *va, long n, vlong off)
 	case Qinfo:
 		if(m->m == nil)
 			error(Enomodel);
-		if(mlmodelinfo == nil)
+		if(m->b == nil)
 			error(Enobackend);
 		buf = malloc(8192);
 		if(buf == nil)
@@ -408,7 +418,7 @@ mlread(Chan *c, void *va, long n, vlong off)
 			free(buf);
 			nexterror();
 		}
-		if(mlmodelinfo(m->m, buf, 8192) < 0)
+		if(m->b->info(m->m, buf, 8192) < 0)
 			error("cannot describe the model");
 		rv = readstr(off, va, n, buf);
 		poperror();
@@ -443,18 +453,21 @@ domodelload(Mstate *m)
 {
 	char err[ERRMAX];
 	void *bm;
+	Mlbackend *b;
 
-	if(mlopenmodel == nil)
+	b = whichbe(m->bewant);
+	if(b == nil)
 		error(Enobackend);
 	if(m->nspec == 0)
 		error("no model bytes were written");
 	err[0] = '\0';
-	bm = mlopenmodel(m->spec, m->nspec, m->units, err, sizeof(err));
+	bm = b->open(m->spec, m->nspec, m->units, err, sizeof(err));
 	if(bm == nil)
 		error(err[0] ? err : "cannot load the model");
-	if(m->m != nil && mlclosemodel != nil)
-		mlclosemodel(m->m);
+	if(m->m != nil && m->b != nil)
+		m->b->close(m->m);
 	m->m = bm;
+	m->b = b;
 }
 
 static void
@@ -466,15 +479,15 @@ dorun(Mstate *m)
 
 	if(m->m == nil)
 		error(Enomodel);
-	if(mlrunmodel == nil || mlgetoutput == nil)
+	if(m->b == nil)
 		error(Enobackend);
 	err[0] = '\0';
-	if(mlrunmodel(m->m, err, sizeof(err)) < 0)
+	if(m->b->run(m->m, err, sizeof(err)) < 0)
 		error(err[0] ? err : "the model did not run");
 
 	/* Ask how big the result is, then fetch it. */
 	err[0] = '\0';
-	nb = mlgetoutput(m->m, m->take, nil, 0, err, sizeof(err));
+	nb = m->b->getoutput(m->m, m->take, nil, 0, err, sizeof(err));
 	if(nb < 0)
 		error(err[0] ? err : "no output");
 	b = malloc(nb == 0 ? 1 : nb);
@@ -485,7 +498,7 @@ dorun(Mstate *m)
 		nexterror();
 	}
 	err[0] = '\0';
-	if(mlgetoutput(m->m, m->take, b, nb, err, sizeof(err)) < 0)
+	if(m->b->getoutput(m->m, m->take, b, nb, err, sizeof(err)) < 0)
 		error(err[0] ? err : "cannot read the output");
 	poperror();
 	free(m->out);
@@ -503,6 +516,23 @@ mlctl(Mstate *m, char *buf)
 	if(nf == 0)
 		return;
 
+	if(strcmp(fields[0], "backend") == 0){
+		/*
+		 * Which of the two runs it. Like "units" this takes effect at
+		 * load, because it decides who is holding the model. "auto"
+		 * prefers the host where there is one, which is what makes a
+		 * program written on emu work unchanged on native.
+		 */
+		if(nf != 2)
+			error(Ebadarg);
+		if(strcmp(fields[1], "host") != 0 && strcmp(fields[1], "soft") != 0 &&
+		   strcmp(fields[1], "auto") != 0)
+			error("backend must be host, soft or auto");
+		if(strcmp(fields[1], "host") == 0 && mlhostbe == nil)
+			error(Enobackend);
+		snprint(m->bewant, sizeof(m->bewant), "%s", fields[1]);
+		return;
+	}
 	if(strcmp(fields[0], "units") == 0){
 		if(nf < 2)
 			error(Ebadarg);
@@ -540,10 +570,10 @@ mlctl(Mstate *m, char *buf)
 			error(Ebadarg);
 		if(m->m == nil)
 			error(Enomodel);
-		if(mlsetshape == nil)
+		if(m->b == nil)
 			error(Enobackend);
 		serr[0] = '\0';
-		if(mlsetshape(m->m, m->feed, fields+1, nf-1, serr, sizeof(serr)) < 0)
+		if(m->b->setshape(m->m, m->feed, fields+1, nf-1, serr, sizeof(serr)) < 0)
 			error(serr[0] ? serr : "that shape does not fit the model");
 		return;
 	}
@@ -559,9 +589,10 @@ mlctl(Mstate *m, char *buf)
 		return;
 	}
 	if(strcmp(fields[0], "reset") == 0){
-		if(m->m != nil && mlclosemodel != nil)
-			mlclosemodel(m->m);
+		if(m->m != nil && m->b != nil)
+			m->b->close(m->m);
 		m->m = nil;
+		m->b = nil;
 		free(m->spec); m->spec = nil; m->nspec = m->aspec = 0;
 		free(m->out); m->out = nil; m->nout = 0;
 		return;
@@ -627,10 +658,10 @@ mlwrite(Chan *c, void *va, long n, vlong off)
 	case Qin:
 		if(m->m == nil)
 			error(Enomodel);
-		if(mlsetinput == nil)
+		if(m->b == nil)
 			error(Enobackend);
 		err[0] = '\0';
-		if(mlsetinput(m->m, m->feed, va, n, err, sizeof(err)) < 0)
+		if(m->b->setinput(m->m, m->feed, va, n, err, sizeof(err)) < 0)
 			error(err[0] ? err : "cannot set the input");
 		break;
 

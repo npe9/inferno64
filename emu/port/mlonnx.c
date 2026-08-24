@@ -31,6 +31,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
+#include	"ml.h"
 #include	<errno.h>
 
 typedef struct Mlmodel Mlmodel;
@@ -377,26 +378,24 @@ mlort_getoutput(void *h, char *name, unsigned char *b, int nbuf, char *err, int 
 }
 
 /*
- * Installed into devml.c's nullable hooks at load time. Where this file is not
- * linked they stay nil and ml(3) reports that it has no backend.
+ * Installed at load time, because this file is only linked where the host has
+ * something to talk to. Where it is not, mlhostbe stays nil and ml(3) uses the
+ * software backend without anyone having to ask for it.
  */
-extern void*	(*mlopenmodel)(unsigned char*, int, char*, char*, int);
-extern void	(*mlclosemodel)(void*);
-extern int	(*mlmodelinfo)(void*, char*, int);
-extern int	(*mlsetinput)(void*, char*, unsigned char*, int, char*, int);
-extern int	(*mlrunmodel)(void*, char*, int);
-extern int	(*mlgetoutput)(void*, char*, unsigned char*, int, char*, int);
-extern int	(*mlsetshape)(void*, char*, char**, int, char*, int);
+static Mlbackend hostbe = {
+	"host",
+	mlort_open,
+	mlort_close,
+	mlort_info,
+	mlort_setinput,
+	mlort_run,
+	mlort_getoutput,
+	mlort_setshape,
+};
 
 __attribute__((constructor))
 static void
 mlhwinit(void)
 {
-	mlopenmodel = mlort_open;
-	mlclosemodel = mlort_close;
-	mlmodelinfo = mlort_info;
-	mlsetinput = mlort_setinput;
-	mlrunmodel = mlort_run;
-	mlgetoutput = mlort_getoutput;
-	mlsetshape = mlort_setshape;
+	mlhostbe = &hostbe;
 }

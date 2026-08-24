@@ -250,11 +250,20 @@ init(nil: ref Draw->Context, argv: list of string)
 	# Loading the same model on a second instance with "units cpu" must
 	# say cpu, whatever the first one said - which holds on a machine with
 	# no neural engine too.
-	dev2 := loaded(mod, "cpu");
-	if(dev2 != "cpu")
-		bad(sprint("asked for cpu, info reports device %#q", dev2));
+	# Compute units are the host backend's idea: they name silicon for the
+	# host's framework to dispatch to. The software backend has none - it is
+	# the arithmetic - so where there is no host backend there is nothing
+	# for this check to check, and asserting it anyway would fail the very
+	# configuration the software path exists for.
+	dev2 := "no host backend, so no compute units to ask for";
+	if(hashost()){
+		dev2 = loaded(mod, "cpu");
+		if(dev2 != "cpu")
+			bad(sprint("asked for cpu, info reports device %#q", dev2));
+	}
 
 	stale();
+	backends(mod);
 
 	if(fail)
 		raise "fail:test";
@@ -263,6 +272,122 @@ init(nil: ref Draw->Context, argv: list of string)
 	print("  ran on %#q by default, %#q when cpu was asked for\n",
 		devof(info), dev2);
 	print("PASS\n");
+}
+
+#
+# The two backends must agree.
+#
+# Up to here the test proves that whichever backend ran is present and gives
+# the right answer. That is not the same as the software backend being
+# correct: it has its own ONNX reader, its own broadcasting and its own use of
+# libmath's column-major gemm for a row-major graph, and any of those could be
+# wrong in a way that still produces two plausible numbers.
+#
+# So run the same model both ways and compare. The software path computes in
+# f64 and onnxruntime in f32, so they are not required to be identical - only
+# to agree to about a part in ten thousand, which a transposed matrix or a
+# swapped output does not.
+#
+# Where there is no host backend at all, which is the native Inferno case and
+# the case this backend exists for, there is nothing to compare against and
+# the software path standing alone is the whole answer. Say which happened.
+#
+backends(mod: string)
+{
+	(sdev, sy) := runon(mod, "soft");
+	if(sy == nil){
+		bad(sprint("software backend: %s", sdev));
+		return;
+	}
+	want := array[] of { 14.5, 139.5 };
+	for(i := 0; i < len want; i++)
+		if(sy[i] - want[i] > 0.01 || want[i] - sy[i] > 0.01)
+			bad(sprint("soft: y[%d] = %g, expected %g", i, sy[i], want[i]));
+	if(sdev[0:4] != "soft")
+		bad(sprint("asked for the software backend, info reports %#q", sdev));
+
+	(hdev, hy) := runon(mod, "host");
+	if(hy == nil){
+		print("  software backend alone: y = (%g, %g); no host backend here (%s)\n",
+			sy[0], sy[1], hdev);
+		return;
+	}
+	for(i = 0; i < len want; i++){
+		d := hy[i] - sy[i];
+		if(d < 0.0)
+			d = -d;
+		if(d > 0.0001 * (want[i] + 1.0))
+			bad(sprint("backends disagree at y[%d]: host %g, soft %g",
+				i, hy[i], sy[i]));
+	}
+	if(!fail)
+		print("  host %#q and soft agree: (%g, %g) against (%g, %g)\n",
+			hdev, hy[0], hy[1], sy[0], sy[1]);
+}
+
+# Is a host backend linked at all? "backend host" is refused when it is not,
+# and that refusal is the only honest way to ask.
+hashost(): int
+{
+	ctl := sys->open("/dev/ml/clone", Sys->ORDWR);
+	if(ctl == nil)
+		return 0;
+	b := array[32] of byte;
+	if(sys->read(ctl, b, len b) <= 0)
+		return 0;
+	return sys->fprint(ctl, "backend host") >= 0;
+}
+
+# Load and run the fixture on a named backend. Returns the device line and the
+# output, or an error and nil.
+runon(mod, be: string): (string, array of real)
+{
+	ctl := sys->open("/dev/ml/clone", Sys->ORDWR);
+	if(ctl == nil)
+		return (sprint("clone: %r"), nil);
+	b := array[32] of byte;
+	n := sys->read(ctl, b, len b);
+	if(n <= 0)
+		return (sprint("read clone: %r"), nil);
+	(id, nil) := str->toint(str->drop(string b[0:n], " "), 10);
+	dir := sprint("/dev/ml/%d", id);
+
+	if(sys->fprint(ctl, "backend %s", be) < 0)
+		return (sprint("%r"), nil);
+	mfd := sys->open(mod, Sys->OREAD);
+	wfd := sys->open(dir + "/model", Sys->OWRITE);
+	if(mfd == nil || wfd == nil)
+		return (sprint("open: %r"), nil);
+	blk := array[8192] of byte;
+	for(;;){
+		k := sys->read(mfd, blk, len blk);
+		if(k <= 0)
+			break;
+		if(sys->write(wfd, blk[0:k], k) != k)
+			return (sprint("write model: %r"), nil);
+	}
+	if(sys->fprint(ctl, "load") < 0)
+		return (sprint("load: %r"), nil);
+
+	ifd := sys->open(dir + "/info", Sys->OREAD);
+	ib := array[8192] of byte;
+	if(ifd == nil || (n = sys->read(ifd, ib, len ib)) <= 0)
+		return (sprint("info: %r"), nil);
+	dev := devof(string ib[0:n]);
+
+	x := array[3] of real;
+	x[0] = 1.0; x[1] = 2.0; x[2] = 3.0;
+	xb := putf32(x);
+	infd := sys->open(dir + "/in", Sys->OWRITE);
+	if(infd == nil || sys->write(infd, xb, len xb) != len xb)
+		return (sprint("write input: %r"), nil);
+	if(sys->fprint(ctl, "run") < 0)
+		return (sprint("run: %r"), nil);
+	ofd := sys->open(dir + "/out", Sys->OREAD);
+	yb := array[8] of byte;
+	if(ofd == nil || sys->readn(ofd, yb, len yb) != len yb)
+		return (sprint("read output: %r"), nil);
+	return (dev, getf32(yb));
 }
 
 # Load the model on a fresh instance with the given compute units, and return

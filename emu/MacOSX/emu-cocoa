@@ -22,7 +22,7 @@ dev
 	eia
 	audio	audio-cocoa
 	gpu	win-gpu
-	ml	mlonnx
+	ml	mlonnx mlsoft
 	mem
 
 lib
