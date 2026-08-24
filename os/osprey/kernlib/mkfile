@@ -2,6 +2,9 @@ MKSHELL=rc
 <../../../mkconfig
 
 SYSTARG=Osprey
+# amd64 unless the caller says otherwise; mk gives a variable set on the
+# command line precedence over one set here, which is how the 386 kernel
+# builds this library for itself.
 OBJTYPE=amd64
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 CFLAGS=$CFLAGS -I$ROOT/libkern
@@ -20,7 +23,7 @@ OFILES=\
 	ctype.$O\
 	eipfmt.$O\
 	equivip.$O\
-	getcallerpc.$O\
+	getcallerpc-$OBJTYPE.$O\
 	hmac.$O\
 	ipaux.$O\
 	iplocalonifc.$O\
