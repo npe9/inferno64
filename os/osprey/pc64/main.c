@@ -394,3 +394,31 @@ pcibiosinit(int *, int *)
 {
 	return -1;
 }
+
+/*
+ * Last-resort console: a direct polled write to COM1, owing nothing to
+ * the uart driver or the console device.  This is the debug putchar seL4
+ * keeps - the one output that must work before any driver task exists
+ * and after the console has moved to userspace.  It is not the fast
+ * path; it is the path that must never depend on anything, so it drives
+ * the 8250 by hand rather than through consuart.
+ */
+void
+kdebugputc(int c)
+{
+	int i;
+	enum { Com1 = 0x3F8, Thr = 0, Lsr = 5, Thre = 0x20 };
+
+	if(c == '\n')
+		kdebugputc('\r');
+	for(i = 0; i < 100000 && (inb(Com1+Lsr) & Thre) == 0; i++)
+		;
+	outb(Com1+Thr, c);
+}
+
+void
+kdebugputs(char *s, int n)
+{
+	while(n-- > 0)
+		kdebugputc(*s++);
+}

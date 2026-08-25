@@ -61,6 +61,8 @@ def main():
     results.append(("and a kernel task exits through pexit and the stubbed group closes cleanly",
                     'osprey micro: a kernel task exited, teardown clean' in t
                     and 'panic' not in t))
+    results.append(("and the bare console writes straight to the 8250, owing nothing to a device",
+                    'osprey micro: bare console (kdebugputc) works' in t))
 
     bad = 0
     for what, ok in results:

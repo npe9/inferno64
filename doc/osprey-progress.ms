@@ -1663,6 +1663,30 @@ runs for real, and the file, rendezvous and environment closes and the
 dot close are each guarded by a nil a kernel task has.  If any stub were
 wrong this panics; the fourth check asserts the task exited and the
 kernel did not, which is the teardown being clean.
+.NH 2
+Cut B begins: the last-resort console
+.LP
+The second large cut turns cons, uart and rtc into userspace driver
+tasks.  Its first piece, and the one that must exist before any of the
+others can be removed, is a console that owes nothing to a device: a
+panic must be able to reach the screen before the first driver task runs
+and after the console has moved out of the kernel.  seL4 keeps exactly
+this and no more, a debug putchar.  kdebugputc, in the machine's own
+main.c, is it: a direct polled write to the 8250 at COM1, waiting on the
+line-status register and writing the byte itself rather than going
+through consuart and the uart driver.  The microkernel proves it at boot
+by writing one line straight through kdebugputc, which the fifth check
+asserts appears; with cons still present, so the fast path and the
+last-resort path can be compared, which is why this piece is built first.
+.PP
+Finding it cost an afternoon to a mistake worth recording: the amd64
+machine has its own main.c and mmu.c under the pc64 directory that shadow
+the 32-bit ones under pc, and an edit to the wrong one is not a
+compile error but a kernel that boots the 32-bit code in a 64-bit
+address space and faults early with a physical address used as a
+virtual one.  An inconsistent incremental build made it look like a
+name-space or PCI-BIOS problem in turn; a clean rebuild, the only honest
+test, showed the tree was sound and the edit was in the wrong file.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an

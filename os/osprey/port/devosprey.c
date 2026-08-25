@@ -1637,6 +1637,16 @@ ospreymicroboot(void)
 
 	print("osprey micro: a task, no plan 9 boot\n");
 	/*
+	 * Prove the last-resort console before relying on the device stack:
+	 * this line is written straight to COM1 by kdebugputc, owing nothing
+	 * to consuart or devcons, which is the output a panic will need once
+	 * the console is a userspace driver task.
+	 */
+	{
+		static char m[] = "osprey micro: bare console (kdebugputc) works\n";
+		kdebugputs(m, sizeof m - 1);
+	}
+	/*
 	 * The arena is set up in the device init hook, which the Plan 9
 	 * boot runs in init0 and this boot skips.  It is idempotent, so
 	 * ensure it here before the first container.

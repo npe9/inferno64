@@ -64,6 +64,8 @@ void	i8253timerset(uvlong);
 void	idle(void);
 void	idlehands(void);
 int	inb(int);
+void	kdebugputc(int);
+void	kdebugputs(char*, int);
 void	insb(int, void*, int);
 ushort	ins(int);
 void	inss(int, void*, int);
