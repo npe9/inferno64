@@ -868,8 +868,8 @@ OP(mcall)
 		l = &ml->links[o].u;
 		DBG("\t\tlink o %d %s\n",
 			o, ml->links[o].name);
-		DBG("\t\text o %d %s sig 0x%x\n",
-			o, ml->m->ext[o].name, ml->m->ext[o].sig);
+		DBG("\t\tlink o %d %s frame 0x%p\n",
+			o, ml->links[o].name, ml->links[o].frame);
 	}else{
 		l = &ml->m->ext[-o-1].u;
 		DBG("\t\text o %d %s sig 0x%x\n",
