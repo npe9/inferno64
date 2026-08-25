@@ -1029,20 +1029,70 @@ just no longer reaches them off an uninitialised field, and
 .CW dumpregs()
 now prints plain register names.
 .PP
-Reaching an interactive shell has not been observed: this test boots
-.CW ipc64
-directly with no disk or CD attached, and
-.CW /dis/init 's
-device-probing \-
-.CW "mount\ {mntgen}\ /n" ,
-the
-.CW /dev/sd*
-scan in
-.CW showlocaldevs \-
-throws array-bounds and fd-out-of-range errors that read as this
-environment genuinely having no boot medium to find, not a further
-kernel bug \- unconfirmed without a real disk image built against this
-board's namespace to test against.
+The array-bounds error that followed
+.CW "spawn\ sh\ -n\ /dis/init"
+turned out not to be about a missing boot medium at all \- that was
+this section's own guess, and it was wrong.  A temporary print inside
+.CW OP(indc)
+(the string-index bytecode instruction) plus
+.CW "limbo\ -S" 's
+instruction-numbered assembly listing traced it to a real bug in
+.CW appl/cmd/sh/sh.b ,
+line 1114,
+.CW parsewaitstatus() :
+.EX
+	for (i := 0; i < len status; i++)
+		if (status[i] == ' ')
+			break;
+	if (i == len status - 1 || status[i+1] != '"')
+.EE
+The guard only catches the space landing on the last byte of
+.CW status .
+An empty
+.CW status
+leaves the loop untouched at
+.CW i==0 ,
+and
+.CW "len\ status-1"
+is
+.CW \-1 \-
+.CW 0==\-1
+is false, so
+.CW status[i+1]
+reads one past an empty string, an array bounds error nothing here
+catches (the graceful
+.CW ctxt.fail()
+two lines down is never reached).
+.CW >=
+closes both the original case and the empty one.
+.CW sh.b
+is shared across every Inferno target this tree builds, not
+board-specific: reachable by any board's shell hitting an empty wait
+read, just never exercised by one until pc64 got far enough to try.
+.PP
+Fixed, this turns a silent interpreter-level crash into
+.CW "sh:\ bad\ exit\ status\ ''" \-
+a clean, readable diagnostic \- and lets execution proceed past it.
+What is actually behind the empty read is not found: the same boot,
+run repeatedly, does not take the same path twice.  Most runs now
+print
+.CW "sh:\ bad\ exit\ status\ ''"
+once or twice and go quiet; one run got further, past that, into
+.CW "sh:\ badmodule()\ cannot\ load\ /dis/lib/filepat.dis:"
+\- a file that is both listed in
+.CW pc64 's
+.CW root
+section and present on disk, so
+.I that
+failure is not a missing file either, and is not yet explained; and a
+rarer run still hit an unrelated page fault during the same window,
+not reproduced on retry.  This is now the frontier: a real Inferno
+init running a real shell against a real script, failing in ordinary,
+catchable ways instead of dying silently, with the specific next
+question being why a wait-file read or a module load comes back empty
+on some runs and not others in the same few hundred milliseconds of
+boot \- not a missing disk, which was this section's second wrong
+guess about why nothing worked.
 .NH 1
 How a native kernel provides networking
 .PP
