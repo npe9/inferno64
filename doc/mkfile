@@ -15,6 +15,7 @@ FILES = \
 	sh.ps \
 	dis.ps \
 	session.ps \
+	mission.ps \
 	acid.ps \
 	acidpaper.ps \
 	acidtut.ps \
