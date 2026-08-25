@@ -63,6 +63,8 @@ def main():
                     and 'panic' not in t))
     results.append(("and the bare console writes straight to the 8250, owing nothing to a device",
                     'osprey micro: bare console (kdebugputc) works' in t))
+    results.append(("and a select over arms wakes on a real interrupt, the clock's, with no name space",
+                    'osprey micro: a select woke on the clock interrupt' in t))
 
     bad = 0
     for what, ok in results:

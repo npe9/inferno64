@@ -1674,6 +1674,37 @@ ospreymicroboot(void)
 			if(ospreycollect(p, &op, &status, arg) == 0)
 				n++;
 		}
+
+		/*
+		 * The paper's central primitive: a select over arms woken by
+		 * an interrupt.  Ask the clock to give the container a
+		 * semaphore on every tick, wait on it with an OSdown arm, and
+		 * a few ticks later the arm is ready - a driver task's select
+		 * driven by a real interrupt, with no name space in reach.
+		 */
+		{
+			Ospreyarm *arm;
+			int x, woke;
+
+			woke = 0;
+			x = ospreyindex(p);
+			arm = ospreydata(p, 0, sizeof(Ospreyarm));
+			if(x >= 0 && ospreynsem() > 0 && arm != nil){
+				arm->op = OSdown;
+				arm->obj = 0;
+				arm->buf = 0;
+				ospreyticksem[x] = 0;
+				for(i = 0; i < 200 && ospreyselectready(p, 0, 1) < 0; i++)
+					tsleep(&up->sleep, return0, nil, 5);
+				ospreyticksem[x] = -1;
+				woke = ospreyselectready(p, 0, 1) >= 0;
+			}
+			if(woke)
+				print("osprey micro: a select woke on the clock interrupt's semaphore\n");
+			else
+				print("osprey micro: the clock tick never reached the select\n");
+		}
+
 		ospreyexit(p);
 	}
 	poperror();

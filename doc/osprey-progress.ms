@@ -1716,6 +1716,20 @@ The register primitives and the bare panic console stay in the kernel;
 the policy moves out.  That is a build on a mechanism that is already
 proven, and it is where Cut B goes next.
 .PP
+The first use of it is now in the microkernel boot, and it is the
+paper's central primitive shown for the first time driven by a real
+interrupt with no name space anywhere in reach.  The boot asks the clock
+to give its container a semaphore on every tick - the way a device
+interrupt hands work to the task that serves it - waits on that
+semaphore with an OSdown arm, and a few ticks later the arm is ready.
+That is a driver task's select over arms, woken by the clock's
+interrupt, running as a container in the scheduler like any other task.
+A sixth microkernel check asserts it.  With it the microkernel now shows
+all four services and the primitive that ties them together: message
+passing through the request ring, the address space its arena is,
+process teardown through pexit, and a select over arms woken by an
+interrupt - the shape every driver task will take.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
