@@ -2436,6 +2436,198 @@ own call site rather than inside every
 .CW acquire() / release()
 globally \- is still the next useful step.
 .NH 1
+Execution does continue past the mount \- several Progs, not one
+.PP
+Two narrower passes, neither touching a hot path this time.
+.PP
+First: three prints inside
+.CW Sys_mount()
+itself
+.RB ( "about to release()" ", " "released, about to kmount()" ", " "kmount() returned N, about to acquire()" ", " "acquired, about to return" ),
+plus two more bracketing the single
+.CW l\->runt(f)
+call site in
+.CW OP(mcall)
+.RB ( libinterp/xec.c ),
+filtered to fire only when the runtime function being called is named
+.CW "\(dqmount\(dq"
+(comparing against
+.CW ml\->links[o].name ,
+not the
+.CW ml\->m\->ext[o]
+table the shipped
+.CW DBG
+line next to it had been reading \- see the commit fixing that line).
+All four
+.CW Sys_mount()
+prints and both
+.CW OP(mcall)
+prints fired, in order, on every one of several repeat boots, with no
+panic.  This is the most literal answer this document has ever gotten
+to
+.I "does control return from the mount syscall" :
+yes, all the way back through
+.CW l\->runt(f) 's
+own call site, with a fifth print confirming
+.CW p\->kill
+is
+.CW (nil)
+right there \- no pending exception, so
+.CW OP(mcall) 's
+own
+.CW "if(p\->kill\ !=\ nil)\ error(p\->kill);"
+is not what silences anything.
+.PP
+Second, and this changes the shape of the whole investigation: a
+print in
+.CW vmachine()
+.RB ( os/inferno/port/dis.c ),
+placed only where it already checks
+.CW "tready(nil)\ ==\ 0"
+before sleeping (so it fires on a real idle transition, not per
+instruction, capped by a static counter so it stops after a handful
+of hits), dumping
+.CW "isched.runhd / runtl / vmq"
+and walking the
+.CW isched.head
+list printing every Prog's pid, state and module.  The very first
+attempt showed something no earlier capture in this document had:
+after the mount, the system is not sitting on one stuck Prog \- there
+are
+.I six .
+The settled picture, several dumps in, restarted only by real idle
+transitions over real wall-clock time:
+.RS
+.nf
+.CW "prog pid 1  state 5 (Prelease)  mod $Sys"
+.CW "prog pid 3  state 5 (Prelease)  mod $Sys"
+.CW "prog pid 4  state 2 (Precv)     mod Mntgen"
+.CW "prog pid 5  state 0 (Palt)      mod Nametree"
+.CW "prog pid 6  state 5 (Prelease)  mod $Sys"
+.fi
+.RE
+(pid 2 appeared in an earlier dump and was gone by this one \- a Prog
+that ran to completion and was cleanly reaped, not evidence of
+anything wrong.)
+.PP
+Extending the same print to call the tree's own
+.CW wmtracedump()
+.RB ( libinterp/xec.c ,
+already built \- a per-Prog ring buffer of the last instructions
+.CW xec()
+dispatched, meant for exactly this kind of question and never before
+pointed at a live idle system) for every non-ready Prog resolved two
+of the five by name:
+.IP \(bu 2
+Pid 4, module
+.CW Mntgen ,
+blocked in
+.CW Precv
+at
+.CW mntgen.dis
+pc 74 \- waiting to receive its
+.I next
+Styx request.  This is
+.CW {mntgen} ,
+the server side of
+.CW "mount\ {mntgen}\ /n" ,
+sitting exactly where a synthetic filesystem server should sit once
+its one attach has been answered and nothing further has arrived.
+Not a bug on its own account.
+.IP \(bu 2
+Pid 5, module
+.CW Nametree ,
+blocked in
+.CW Palt
+at
+.CW nametree.dis
+pc 58, waiting on one of several channels.  Not yet resolved further
+\- worth returning to, since unlike
+.CW Mntgen
+it is not obviously a persistent service with nothing left to do.
+.PP
+A second run, with the same
+.CW wmtracedump()
+call widened to cover
+.CW Prelease
+too (the state pid 1/3/6 are all sitting in \- released the
+interpreter for a blocking host call, not yet back), added one more
+fact before crashing under its own print volume (see below): one of
+those
+.CW $Sys -context
+Progs, pid 2 in that capture, was not idling in the shell at all \-
+its trace showed it deep inside
+.CW /dis/mount.dis
+itself, the Limbo-level
+.CW mount
+command that
+.CW sh.dis
+spawns to run the
+.CW mount
+builtin.  That is the missing link this document had not had before:
+.CW sh.dis
+does not call
+.CW Sys\->mount()
+directly \- it spawns a separate Prog running
+.CW mount.dis ,
+which spawns
+.CW Mntgen
+as the
+.CW {mntgen}
+child, and
+.I that
+Prog is what calls
+.CW Sys\->mount() .
+Three Progs deep for one shell line, not one.
+.PP
+The crash that ended that second run \- another
+.CW "panic:\ general\ protection\ violation" ,
+registers holding the literal bytes of the string
+.CW "spawn\ a\ "
+where pointers should be \- is almost certainly this print volume's
+own doing again, in the same family as the
+.CW consw()
+fault two sections back: six Progs, several with 100+-entry
+.CW wmtracedump()
+call, printed once per idle transition, is enough traffic through
+.CW putstrn() /
+the console queue to plausibly scramble something even without
+touching a hot dispatch path this time.  Not chased further \- the
+data already collected (the first, clean run) stands on its own and
+is not undermined by a second run's self-inflicted crash.
+.PP
+Where this leaves the investigation: the boot is not silently
+exiting
+.RB ( p\->kill
+confirmed
+.CW nil ,
+several Progs confirmed still alive and distinctly placed), and it is
+not the scheduler losing a wakeup at the
+.CW acquire() / release()
+level (the token handoff traced cleanly in the earlier section, and
+none of the five Progs above are queued on
+.CW isched.vmq
+waiting for a token that never comes \- they are blocked on
+Limbo-level channels or still inside host syscalls).
+.CW Mntgen 's
+wait is accounted for and benign.  What is not yet accounted for:
+.CW Nametree 's
+.CW alt ,
+and \- more directly on point \- why none of the three
+.CW Prelease
+Progs (one of which is
+.CW mount.dis
+itself, mid-syscall) ever returns to
+.CW acquire()
+again to resume
+.CW sh.dis
+past the mount line.  The next diagnostic is narrower still: which
+specific host call each of pid 1/3/6 is blocked inside \- a print at
+entry to whatever
+.CW release()
+call preceded each one, not a scheduler-wide dump, to avoid repeating
+this section's own crash.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
