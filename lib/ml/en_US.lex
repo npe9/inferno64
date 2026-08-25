@@ -392,3 +392,11 @@ bigrams	bˈaɪɡɹæmz
 line	lˈaɪn
 lowercase	lˈoʊɚkˌeɪs
 talks	tˈɔːks
+
+# --- added for lib/demo/inferno-for-dante.sh ---------------------------------
+dante	dˈɑːnteɪ
+dantes	dˈɑːnteɪz
+longfellow	lˈɔːŋfˌɛloʊ
+longfellows	lˈɔːŋfˌɛloʊz
+terza	tˈɛrtsə
+tokenizer	tˈoʊkənaɪzɚ

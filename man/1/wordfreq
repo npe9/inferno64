@@ -1,0 +1,88 @@
+.TH WORDFREQ 1
+.SH NAME
+wordfreq \- count words, most frequent first
+.SH SYNOPSIS
+.B wordfreq
+[
+.B -b
+]
+[
+.B -n
+.I count
+]
+[
+.I file
+]
+.SH DESCRIPTION
+.I Wordfreq
+reads
+.I file
+(standard input if none given), splits it into words - a word is a
+maximal run of the letters
+.BR a - z
+and
+.BR A - Z ,
+anything else is a separator, so case is kept and a possessive like
+.B mountain's
+splits into
+.B mountain
+and
+.BR s ,
+same as
+.IR tr (1)'s
+.B -cs A-Za-z
+would - and prints each distinct word with its count, most frequent
+first, ties broken by the word itself so the output is the same from one
+run to the next.
+.TP
+.B -b
+Count adjacent word pairs (bigrams) instead of single words: each output
+line is a count followed by the two words, space-separated.
+.TP
+.BI -n " count"
+Print only the
+.I count
+most frequent entries.
+.SH EXAMPLE
+.TP
+.EX
+wordfreq -n 10 genesis
+wordfreq -b -n 10 genesis
+.EE
+.IP
+The ten most common words, then the ten most common word pairs.
+.SH SOURCE
+.B /appl/cmd/wordfreq.b
+.SH SEE ALSO
+.IR sort (1),
+.IR uniq (1),
+.IR tr (1),
+.IR sh-regex (1)
+.SH BUGS
+This is
+.B tr -cs A-Za-z | sort | uniq -c | sort -nr
+- and, with
+.BR -b ,
+the bigram pipeline built from
+.IR paste (1)
+and
+.IR tail (1)
+besides - as one program rather than four processes and three pipes.
+Written for
+.IR lib/demo/inferno-for-dante.sh ,
+which uses no
+.IR tr ,
+.IR sort ,
+.IR uniq ,
+.IR grep
+or
+.I sed
+at all: this is the part of that exercise which genuinely needs a real
+program instead of a shell one-liner - counting and sorting a whole
+corpus - where
+.I sh-regex
+(1)'s
+.B match
+and
+.B ${re ...}
+cover the filtering and substitution natively instead.

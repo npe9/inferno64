@@ -225,6 +225,7 @@ TARG=\
 	wish.dis\
 	wmexport.dis\
 	wmimport.dis\
+	wordfreq.dis\
 	xargs.dis\
 	xd.dis\
 	yacc.dis\

@@ -582,6 +582,7 @@ wm/man man
 wm/mprof mprof
 wm/prof prof
 wmtest wmtest
+wordfreq wordfreq
 xcaliber xcaliber
 xd xd
 yacc yacc
