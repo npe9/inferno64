@@ -1385,6 +1385,104 @@ catch it without perturbing the timing the way every print-based probe
 in this section has: a QEMU-GDB-stub watchpoint on the specific
 memory this pipe's data passes through, set once and left alone,
 rather than another instrumented rebuild.
+.PP
+Tried, next session, and half right.
+.CW lldb 's
+.CW gdb-remote
+against QEMU's
+.CW \-s
+does connect and does read live guest memory without disturbing
+anything \- confirmed by polling
+.CW Fgrp.fd
+every half second while the guest ran normally underneath, address
+stable across the whole run, matching every prior print-based
+observation.  A hardware watchpoint on
+.CW fd[4] 's
+own memory, armed the same way, did not work: once set, the guest's
+apparent progress stopped almost entirely \- QEMU's software MMU has
+to check every memory access against an armed watchpoint's range when
+there is no hardware acceleration for it, and this environment has
+neither KVM nor HVF, so the guest that normally reaches
+.CW "spawn\ sh\ -n\ /dis/init"
+in a couple of seconds sat there for minutes without visibly
+advancing further.  Killed, not fixed \- this is an environment
+limit, not a bug to chase.
+.PP
+A breakpoint, not a watchpoint, is what actually worked: cheap for
+TCG the way an ordinary PC compare is cheap, unlike a checked memory
+range.  A breakpoint on
+.CW fdclose()
+itself, synchronous
+.CW Continue() ,
+its
+.CW (Fgrp*,\ fd,\ flag)
+arguments read straight off the stack at kencc's own calling
+convention (arguments above the return address, not in registers)
+each time it fired, ran at normal speed and produced a clean trace of
+every fd this boot closed, tagged by which
+.CW Fgrp
+each one belonged to.
+.PP
+It surfaced something upstream of everything this section had been
+chasing.  Before any fd in
+.CW Mount 's
+own group closed at all, the guest printed
+.CW "sh:\ badmodule()\ cannot\ load\ /dis/lib/styx.dis:" \-
+on a different run, the identical message for
+.CW string.dis
+instead.  Both files exist, both are correctly listed in
+.CW pc64 's
+.CW root
+section, and this load is
+.CW mntgen.b 's
+own \- loading
+.I its
+copy of
+.CW Styx
+so it can serve one, at the very top of its
+.CW init() ,
+before mntgen has done anything else \- not the kernel's own load of
+.CW osinit.dis
+or
+.CW sh.dis ,
+which this section has never once seen fail.  Traced into
+.CW libinterp/readmod.c :
+every other failure exit sets an error string before returning nil;
+the branch where
+.CW kread()
+returns something other than the requested length didn't, leaving
+whatever
+.CW up->errstr
+last held \- often nothing \- for
+.CW badmodule() 's
+.CW %r
+to print.  Fixed for the short-positive-read case, which is this
+function's own finding and had nothing upstream to set a message for
+it.  The negative-count case, a real
+.CW kread()/error()
+failure that should already carry its own message, was left alone on
+the assumption that message survives back to the caller \- except the
+.CW string.dis
+run's empty
+.CW %r
+on what reads as this same call site says that assumption isn't
+verified, so it is recorded open, not closed.
+.PP
+One more thing the same breakpoint trace turned up, not yet chased:
+.CW mntgen.b
+declares
+.CW "refcounts\ :=\ array[10]\ of\ Entry;"
+very near the top of the same file whose
+.CW load\ Styx
+call is failing \- a length-10 array, the exact length the earlier
+un-gated
+.CW OP(indx)
+bounds print reported for the garbage-index crash two sessions ago.
+Not confirmed as the same array, but the coincidence is specific
+enough to be the first thing worth checking with this same
+breakpoint technique, on
+.CW indx
+itself, next.
 .NH 1
 How a native kernel provides networking
 .PP
