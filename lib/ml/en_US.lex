@@ -398,5 +398,9 @@ dante	dˈɑːnteɪ
 dantes	dˈɑːnteɪz
 longfellow	lˈɔːŋfˌɛloʊ
 longfellows	lˈɔːŋfˌɛloʊz
+std	ˌɛstˌiːdˈiː
 terza	tˈɛrtsə
 tokenizer	tˈoʊkənaɪzɚ
+tokenizing	tˈoʊkənaɪzɪŋ
+virgilius	vɚdʒˈɪliəs
+wordfreqs	wˈɜːdfɹˌiːks

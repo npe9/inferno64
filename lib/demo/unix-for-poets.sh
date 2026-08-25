@@ -18,14 +18,16 @@
 # combined flags beyond what their own man pages document; check those
 # before changing a line below.
 #
-# What this does NOT reproduce: this tree has no awk, and roughly the back
-# half of the talk - field selection, associative arrays, the KWIC and
-# concordance programs - is built entirely on awk. Writing an awk of its own
-# was judged a separate, much larger project than demoing the actions of
-# this one, so those exercises are simply not attempted here. Everything
-# through the bigram exercise, which is most of what the talk is remembered
-# for, is run for real below, on the real text, through this tree's own
-# tools - not paraphrased.
+# This tree has no awk, and the back half of the talk - field selection,
+# numeric filtering, palindromes, the KWIC and concordance programs - is
+# built entirely on it. Everything through the bigram exercise, which is
+# most of what the talk is remembered for, is run for real below, on the
+# real text, through this tree's own tools - not paraphrased. The rest is
+# not skipped, only moved: see lib/demo/inferno-for-dante.sh, which runs
+# it all natively through this shell's own regex/string/expr modules and
+# one small Limbo program (wordfreq(1)) instead of writing an awk of its
+# own - a bigger and separately-scoped thing to build than reproducing
+# this one talk, which is what that file is actually about.
 #
 # Quoting note: this is rc-style quoting, not the outer shell's - only
 # single quotes are special, and a literal single quote inside a quoted
@@ -136,6 +138,6 @@ session wait 2.2
 
 say -t 'that is unix for poets: tokenize, sort, count, and look at what comes out'
 session wait 1.8
-say -t 'this tree has no awk yet, so the field selection and the concordance program from the second half of the talk are not run here'
+say -t 'the field selection and the concordance program from the second half of the talk are not here, but they are not skipped either: inferno for dante runs them, natively'
 session wait 2.4
 say -t 'everything above this line ran on the real text, through real commands, not paraphrased'
