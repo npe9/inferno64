@@ -9,7 +9,8 @@
 #define	A(r)	*((Array**)(r))
 
 Module*	modules;
-int	dontcompile = 1; /* TODO compiler is broken on amd64 atleast */
+/* JIT selection is controlled by cflag (-c); individual modules may opt out. */
+int	dontcompile;
 
 static s32
 operand(uchar **p)

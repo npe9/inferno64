@@ -76,6 +76,8 @@ void modinit(void){
 	loadermodinit();
 }
 
+	/* libinterp/load.c already defines dontcompile=1 as the default;
+	 * redeclaring it here duplicate-symbols against libinterp.a. */
 	int macjit = 1;
 	void setpointer(int x, int y){USED(x); USED(y);}
 	ulong strtochan(char *s){USED(s); return ~0;}

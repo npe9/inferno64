@@ -1,6 +1,14 @@
 #ifdef __APPLE_CC__	/* look for a better way */
+/*
+ * newer SDKs guard NSIG/sys_signame (sys/signal.h) on
+ * !_POSIX_C_SOURCE || _DARWIN_C_SOURCE, and lib9.h itself pulls in
+ * <unistd.h> -- which processes and include-guards sys/signal.h --
+ * before this file gets a chance to touch either macro.  So set
+ * _DARWIN_C_SOURCE before including lib9.h, not after.
+ */
+#define _DARWIN_C_SOURCE
 #include "lib9.h"
-#undef _POSIX_C_SOURCE 
+#undef _POSIX_C_SOURCE
 #undef getwd
 
 #include	<unistd.h>
