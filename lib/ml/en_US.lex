@@ -156,6 +156,81 @@ tcp	tˌiːsˌiːpˈiː
 wc	dˌʌbəljˌuːsˈiː
 wm	dˌʌbəljˌuːˈɛm
 
+# --- computer science: broader folklore, not specific to this system or to
+# Unix. Same method as the section above - espeak-ng's own guess for the
+# whole batch first, kept where it already matches how people say the word
+# (linux, cache, daemon, deque, trie, gnu, boolean, ascii, gui, yaml, nginx -
+# nginx's own project explains "engine x", which is exactly what espeak
+# guessed unprompted), overridden by hand only where it did not.
+#
+# Three kinds of wrong, worth naming because they recur: spelling out
+# letters where usage settled on a blended word (json as "jay-ee-ess-oh-en"
+# corrected to "Jason", its own creator's stated pronunciation); the reverse,
+# guessing a blended word where usage spells it (nosql blended into one
+# invented word, corrected to "no-sequel"); and a consonant cluster with no
+# vowel to carry it, which is not a pronunciation at all (argv, argc, stdin/
+# stdout/stderr all end or run through one and needed a letter or a word
+# spliced in to make them sayable at all).
+#
+# gif keeps the hard g despite its creator's own stated preference for
+# "jif" - not a correction, a choice: usage decides a folklore pronunciation
+# and the hard g is what most people actually say. char is genuinely split
+# between "char" (this) and "care" among C programmers; there is no settled
+# answer to defer to, so this is a choice too, not a fact.
+acme	ˈækmi
+api	ˌeɪpˌiːˈaɪ
+argc	ˈɑːɹɡ sˈiː
+argv	ˈɑːɹɡ vˈiː
+ascii	ˈæski
+boolean	bˈuːliən
+cache	kˈæʃ
+char	tʃˈɑːɹ
+cli	sˌiːˌɛlˈaɪ
+cron	kɹˈɑːn
+css	sˌiːˌɛsˈɛs
+daemon	dˈiːmən
+deque	dˈɛk
+dns	dˌiːˌɛnˈɛs
+emacs	ˈiːmæks
+ftp	ˌɛftˌiːpˈiː
+gif	ɡˈɪf
+gnu	ɡənˈuː
+gui	ɡˈuːi
+html	ˌeɪtʃtˌiːˌɛmˈɛl
+http	ˌeɪtʃtˌiːtˌiːpˈiː
+https	ˌeɪtʃtˌiːtˈiːpˌiːˈɛs
+json	dʒˈeɪsən
+jwt	dʒˈɑːt
+kubernetes	kˌuːbɚnˈɛɾiːz
+linux	lˈɪnʌks
+malloc	mˈælɑːk
+mutex	mjˈuːɾɛks
+nan	nˈæn
+nginx	ˈɛndʒɪn ˌɛks
+nosql	nˈoʊsˈiːkwəl
+oauth	ˈoʊʌθ
+printf	pɹˈɪnt ˈɛf
+rc	ˌɑːɹsˈiː
+regex	ɹˈɛdʒɛks
+rest	ɹˈɛst
+soap	sˈoʊp
+sql	sˈiːkwəl
+ssh	ˌɛsˌɛsˈeɪtʃ
+stderr	ˌɛstˌiːdˌiːˈɛɹ
+stdin	ˌɛstˌiːdˌiːˈɪn
+stdout	ˌɛstˌiːdˌiːˈaʊt
+syscall	sˈɪskɔːl
+toml	tˈɑːməl
+trie	tɹˈaɪ
+unicode	jˈuːnɪkˌoʊd
+url	jˌuːˈɑːɹˈɛl
+utf8	jˌuːtˌiːˈɛf ˈeɪt
+uuid	jˌuːjˌuːˌaɪdˈiː
+venti	vˈɛnti
+vim	vˈɪm
+xml	ˌɛksˌɛmˈɛl
+yaml	jˈæməl
+
 # --- what a tutorial talks about --------------------------------------------
 anything	ˈɛniθˌɪŋ
 command	kəmˈænd
