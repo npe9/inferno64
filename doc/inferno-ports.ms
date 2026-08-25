@@ -2240,6 +2240,115 @@ diagnostic print itself \- it did its job.  The
 .CW Xhdr
 padding is the fix, and is what is committed.
 .NH 1
+The mount round-trip, finally observed
+.PP
+With the misalignment fixed, the
+.CW mountio()
+send/reply tracing this document has been planning to add since two
+sections ago was put back \- entry, sent, and reply prints, and one
+more on
+.CW Sys_mount() 's
+own return value, the same shape used earlier in this document.  One
+boot produced, for the first time anywhere in this investigation,
+a complete and clean round trip:
+.RS
+.nf
+.CW "mountio: entry tag 1 fid 32 T104 pid 1"
+.CW "mountio: sent tag 1 fid 32 T104 pid 1"
+.CW "mountio: reply tag 1 T104 R105 pid 1"
+.CW "Sys_mount: fd ... on /n ret 16 errstr ... pid 1"
+.fi
+.RE
+T104 is
+.CW Tattach ,
+R105 is
+.CW Rattach :
+.CW mntgen
+answered its attach, the reply was muxed back to the waiting rpc, and
+.CW kmount()
+returned a real, positive mount id, all inside one print-visible
+sequence for the first time.  (The
+.CW fd
+and
+.CW errstr
+fields on that last line are not trustworthy as printed \- the print
+sits after
+.CW acquire() ,
+reading
+.CW f
+and
+.CW up->errstr
+again from outside the window
+.CW release() / acquire()
+actually protects, and
+.CW errstr
+in particular is a leftover per-process buffer that is never
+guaranteed clear on success; the
+.CW ret
+value alone, 16, is the one field this print can be trusted for, and
+it agrees with every earlier capture that also saw a successful
+mount.)
+.PP
+And then, again, nothing.  No second
+.CW mountio()
+entry, no further console output at all \- not even
+.CW /dis/init 's
+own unconditional
+.CW "echo\ $bootargs" ,
+the very next non-comment line after
+.CW "mount\ {mntgen}\ /n"
+in the script, which needs no I/O and no
+.CW mountio()
+traffic to run.  Reading
+.CW /dis/init
+end to end: after the mount, execution should fall through
+.CW "sysname=$sys" ,
+print
+.CW bootargs ,
+skip the whole
+.CW "and\ {ftest\ -e\ '#e/bootargs'}"
+block (nothing set
+.CW bootargs=
+on this invocation's command line), and reach the script's last
+line,
+.RS
+.nf
+.CW "sh -n -l -i #-l # to run the /lib/sh/profile"
+.fi
+.RE
+an
+.I interactive
+shell, meant to block reading the console for a command \- which,
+given this document's own earlier finding that
+.CW console=0
+wires console output only, with keyboard input coming solely from
+.CW devkbd
+and nothing in
+.CW qemu-boot.sh
+connecting anything to it, would be indistinguishable from exactly
+this: total silence, near-zero CPU, forever.  If that is what is
+happening, the boot is not stuck at all \- it has reached the
+interactive prompt this whole document has been aiming at, and is
+correctly waiting for a keystroke the harness cannot deliver.
+.PP
+That is not yet established, though, and the more literal reading of
+what was captured argues against it: zero console output appeared
+between the successful
+.CW Sys_mount
+return and the process going quiet, and
+.CW echo
+should be visible immediately, well before any namespace work or a
+shell prompt.  If execution really did reach
+.CW "echo\ $bootargs" ,
+that line is missing.  The gap this leaves is narrow \- between
+.CW kmount()
+returning inside
+.CW Sys_mount()
+and the calling proc, pid 1, executing its next few bytecode
+instructions \- and points at the syscall-return/scheduling path
+rather than at mount, namespace, or heap corruption, all three of
+which are now independently accounted for.  Not yet instrumented.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
