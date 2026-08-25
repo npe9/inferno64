@@ -1676,28 +1676,100 @@ and then goes quiet \- CPU usage drops to near zero and stays there,
 confirmed idle rather than crashed for over a minute of wall clock \-
 exactly the shape the earlier eight-boot
 .CW ind*
-attempt already recorded for six of its eight runs.  That is the
-control this section needed: the fault reproduces on the current tree
-with nothing added, which is what makes the next instrumented boot's
-trace trustworthy rather than an artifact of the prints themselves.
+attempt already recorded for six of its eight runs.  That establishes
+a hang, on the plain tree, with nothing added; it does not by itself
+establish which fault causes it \- an overstatement in an earlier
+draft of this entry, corrected here rather than left standing.
 .PP
-Instrumented for that next boot: prints in
+Instrumented to find out: prints in
 .CW freeFD() ,
 in
-.CW fdclose() 's
-nil-ing of a live slot (moved outside the
-.CW Fgrp
-lock after a first draft held it across a
-.CW print()
-call \- a spinlock stretched across console I/O on every fd close in
-the system, caught before it was ever booted), in
 .CW fdtochan() 's
 failure branch, and in
 .CW Sys_pctl() 's
-FORKFD case, each carrying the pid and (where the type is visible) the
-running module name or the old and new
-.CW Fgrp
-pointers.
+FORKFD case, each carrying the running Prog's id and module name where
+the type made that visible.
+.CW fdclose()
+itself was instrumented once and the print then removed \- it fires on
+every fd close system-wide, which is exactly the kind of broad,
+hot-path perturbation this section had already been warned about, and
+a narrower print in
+.CW freeFD()
+answers the same question with less of it.
+.PP
+The trace this produced refutes the previous entry's leading
+hypothesis rather than confirming it.  At the point mount.b's
+.CW popen()
+forks
+.CW runcmd 's
+file-descriptor group
+.RB ( "FORKFD:\ ofg\ 7967c08\ nfg\ 7989888" ),
+fd 4 later fails with
+.CW "f\ 7967c08" \-
+the
+.I pre-fork
+group, exactly as guessed.  But the Prog reporting the failure is not
+a sibling holding a stale reference to that group; it is the same Prog
+that owns 7967c08 in the first place, reported under the same kernel
+process id both times.  Cross-process FORKFD staleness needed a
+different Prog on one side of the close and the use; there wasn't
+one, so that mechanism is not what is happening here, and the
+.CW mkfd() /
+.CW handle\->grp
+reasoning built on it in the previous entry does not hold up.
+.PP
+Worse for that entry: the
+.CW fdtochan
+failure line came from
+.I inside
+.CW freeFD() 's
+own call to
+.CW kfgrpclose() ,
+whose only two statements are exactly
+.CW fdtochan()
+followed by
+.CW fdclose() ,
+and whose comment says outright that this check exists because
+.CW "fdclose\ takes\ care\ of\ processes\ racing\ through\ here" .
+.CW kfgrpclose()
+wraps the whole thing in
+.CW waserror()
+and returns
+\-1
+on exactly this failure, silently.  So the message this section spent
+a full sitting chasing is not a crash and not the hang's cause; it is
+a closer finding a slot already empty, on a path the original authors
+built to tolerate that outcome without complaint.  It surfaced at all
+only because this section put an unconditional print on
+.CW fdtochan() 's
+failure branch \- useful for finding it, misleading about what finding
+it meant.
+.PP
+What is still true and still useful:
+.CW fdclose()
+does get called twice in a row on the same
+.RB ( grp ", " fd )
+pair at several points in this trace, including the one at fd 4 in
+7967c08, which is consistent with
+.CW popen() 's
+own local
+.CW fds[0]
+and
+.CW runcmd 's
+.CW stdin
+parameter aliasing the same pipe end and each independently dropping
+their reference to it \- ordinary, and handled.  What remains
+completely open is why the guest goes idle afterward: nothing in this
+trace explains the hang itself, only rules out one candidate
+explanation for it.  The next instrumentation this wants is at
+installation rather than closing \-
+.CW newfd() /
+.CW newfd2() \-
+paired against the same
+.RB ( grp ", " fd )
+tuples, to see whether fd 4 in 7967c08 was ever actually needed again
+after this exchange or whether the hang is somewhere else in the
+mount\(midmntgen conversation entirely.  Not yet done.
 .NH 1
 How a native kernel provides networking
 .PP
