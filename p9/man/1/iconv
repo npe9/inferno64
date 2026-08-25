@@ -1,0 +1,97 @@
+.TH ICONV 1
+.SH NAME
+iconv \- convert an image's pixel-channel format, in Limbo
+.SH SYNOPSIS
+.B iconv
+[
+.B -u
+]
+[
+.BI -c\  chanstr
+]
+[
+.I file
+]
+.SH DESCRIPTION
+.I Iconv
+is a structural Limbo translation of Plan 9's own
+.IR iconv (1)
+.RB ( sys/src/cmd/iconv.c ,
+102 lines in the 9front tree) \(em an image pixel-channel converter,
+not the better-known Unix text-encoding
+.IR iconv .
+See
+.B doc/plan9-port.md
+in the source tree for the translation-not-workalike distinction. It
+lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Iconv
+reads an image (standard input, or
+.I file
+if given), converts it to a channel format, and writes the result to
+standard output. With no
+.BR -c ,
+the output channel format is the same as the input's \(em still a real
+conversion pass, not a bare copy, since it goes through image
+allocation and drawing exactly as
+.B -c
+does.
+.SS Options
+.TP
+.BI -c\  chanstr
+Convert to the channel format described by
+.IR chanstr
+(e.g.
+.BR r8g8b8 ,
+.BR k8 ,
+\&...). A malformed descriptor is an error.
+.TP
+.B -u
+Write the result in an uncompressed, easy-to-parse format instead of
+the normal (possibly compressed) image file format: a single text
+header line \(em the channel descriptor and the image's four rectangle
+coordinates, each right-justified in an 11-character field and
+separated by a space, with a trailing space \(em followed immediately
+by the raw pixel bytes, one scanline at a time, with no further
+framing.
+.SH SOURCE
+.B /p9/cmd/iconv.b
+(translated from
+.BR sys/src/cmd/iconv.c )
+.SH SEE ALSO
+.IR iconvtest (1)
+.SH BUGS
+Unlike every other translation in
+.BR p9/cmd ,
+this one does not port any image-codec logic: this tree's own
+.B Draw
+module (see
+.BR draw (2))
+already wraps Plan 9's real
+.BR libdraw / libmemdraw
+C functions directly for channel-descriptor parsing, image allocation,
+compositing, and the standard image file format, so
+.I iconv
+here is mostly wiring those together in the same order the original
+C does. Only
+.BR -u 's
+hand-rolled output format (which has no
+.B Draw
+equivalent) and the
+.B bytesperline
+calculation it needs (translated directly from this tree's own
+.B libdraw/bytesperline.c )
+are actually new code.
+.PP
+Because the conversion itself is pre-existing, already-shipped Inferno
+functionality rather than something this translation implements,
+.IR iconvtest (1)
+checks the real conversions it exercises only by shape (channel
+descriptor, depth, rectangle) rather than exact pixel values \(em see
+its own description for why.

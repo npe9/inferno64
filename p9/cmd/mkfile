@@ -19,6 +19,8 @@ TARG=\
 	crc32test.dis\
 	split.dis\
 	splittest.dis\
+	iconv.dis\
+	iconvtest.dis\
 
 MODULES=\
 

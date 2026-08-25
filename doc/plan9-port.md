@@ -880,3 +880,46 @@ below.
     `nextfile()`'s sequential suffix naming, `openf()`'s own "grep" -
     not "split" - typo in its error message) is identical between the
     two trees and never carried this caveat.
+13. **`p9/cmd/iconv.b` - a real translation of `sys/src/cmd/iconv.c`
+    (102 lines): done**, next off the backlog and a different shape of
+    job from every translation before it. `iconv` converts an image's
+    pixel-channel format (not text encoding, despite the name) - and
+    this tree's own `Draw` module (`module/draw.m`) already wraps Plan
+    9's real `libdraw`/`libmemdraw` C functions directly, checked in
+    `libinterp/draw.c` rather than assumed: `Chans.mk()` calls
+    `strtochan()`, `Chans.text()` calls `chantostr()`, `Chans.depth()`
+    calls `chantodepth()`, and `Display.readimage`/`writeimage`/
+    `newimage`/`Image.draw`/`readpixels` are the same shapes as
+    `readmemimage`/`writememimage`/`allocmemimage`/`memimagedraw`/
+    `unloadmemimage`. So this translation is mostly wiring those
+    together in the same order the C does, not porting an image codec -
+    the only genuinely new code is `-u`'s hand-rolled uncompressed
+    output format (no `Draw` equivalent) and the `bytesperline`
+    calculation it needs, translated directly from this tree's own
+    `libdraw/bytesperline.c` (the exact function `Draw`'s own internals
+    already use), kept in its non-obvious `rect.min.x<0` branch rather
+    than simplified to the common-case formula that only agrees with it
+    when `min.x` happens to be 0.
+
+    `p9/cmd/iconvtest.b` (6 cases) drives it entirely with real image
+    files - a hand-specified 2x2 image with exact byte values (not
+    drawn from anything), an identity round-trip (both with and
+    without an explicit `-c` matching the source), `-u`'s exact header
+    format and raw bytes, an unrecognised option, and a bad `-c`
+    descriptor. Deliberately does *not* re-verify the actual pixel-
+    conversion math for a real channel change (e.g. grey to RGB) - that
+    math is pre-existing, already-shipped Inferno functionality this
+    translation wires together rather than implements, so that one case
+    checks only the resulting shape (channel descriptor, depth,
+    rectangle), not exact pixel values, which would just be re-testing
+    `Image.draw()` itself. Confirmed with a negative control (broke the
+    `-u` header's field width by one character; only the one test
+    exercising that format failed, restored, 6/6 passed again).
+
+    One real bug caught while writing the test, not the translation:
+    Limbo's `array of byte` compares by reference with `==`/`!=`, not
+    content - the first draft's identity checks reported the right byte
+    *count* but still failed, because the arrays themselves, not their
+    bytes, were being compared. Fixed with a manual element-wise
+    `byteseq()` helper; worth remembering for any future test that
+    compares byte arrays in this tree.

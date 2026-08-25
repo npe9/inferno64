@@ -1,0 +1,75 @@
+.TH ICONVTEST 1
+.SH NAME
+iconvtest \- regression test for iconv(1)
+.SH SYNOPSIS
+.B iconvtest
+.SH DESCRIPTION
+.I Iconvtest
+loads
+.BR /p9/dis/iconv.dis 's
+in-process test seam,
+.BR run(display,\ args,\ inpath,\ outpath) ,
+and checks it against golden output for: an identity conversion (no
+.BR -c )
+round-tripping pixel bytes exactly;
+.B -c
+with the source's own channel descriptor, also an exact round-trip;
+.BR -u 's
+documented header format followed by exact raw pixel bytes; a real
+conversion to a different channel format, checked by shape (channel
+descriptor, depth, rectangle) rather than exact pixel values; an
+unrecognised option; and a malformed
+.B -c
+descriptor.
+.PP
+Like
+.IR splittest (1)
+and
+.IR jointest (1),
+this test drives
+.I iconv
+entirely with real files, since its whole job is real image files: it
+builds a small, fully hand-specified 2x2 image (exact byte values, not
+drawn from anything, so the identity checks have a real, controlled
+expected value), writes it, calls
+.BR run ,
+and reads the result back \(em removing every file it created when
+done, whether or not anything failed.
+.PP
+This test does not re-verify Inferno's own pixel-channel conversion
+math \(em
+.IR iconv (1)
+wires together pre-existing, already-shipped
+.B Draw
+module functionality rather than reimplementing an image format (see
+its own BUGS), so the one case here that performs a real conversion to
+a different channel format is checked only for the shape it should
+produce, not exact pixel values, which would just be re-testing
+.B Image.draw
+itself.
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/iconvtest.b
+.SH SEE ALSO
+.IR iconv (1)
+.SH BUGS
+Runs
+.I iconv
+in-process via its
+.B run
+seam, which takes an already-open
+.B Display
+and real file paths directly \(em so it does exercise real image
+allocation, conversion, and file I/O, but not
+.IR iconv 's
+own
+.BR init ,
+its standard-input/standard-output defaulting, or its window-system
+.B Context
+handling, none of which
+.B run
+goes through.
