@@ -1,0 +1,26 @@
+module Sys
+
+// Ember interface for Inferno $Sys.
+// Signatures must match module/sys.m; unused members are stripped
+// from the LDT by narrowmods.
+
+const PATH = "$Sys"
+
+type FD struct {
+	fd int
+}
+
+func bind(s string, on string, flags int) int
+func create(s string, mode int, perm int) ref FD
+func fildes(fd int) ref FD
+func fprint(fd ref FD, s string, ...) int
+func mount(fd ref FD, afd ref FD, on string, flags int, spec string) int
+func open(s string, mode int) ref FD
+func print(s string, ...) int
+func read(fd ref FD, buf []byte, n int) int
+func remove(s string) int
+func seek(fd ref FD, off big, start int) big
+func sleep(period int) int
+func sprint(s string, ...) string
+func unmount(s1 string, s2 string) int
+func write(fd ref FD, buf []byte, n int) int

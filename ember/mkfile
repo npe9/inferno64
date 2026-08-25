@@ -3,18 +3,30 @@
 TARG=ember
 
 OFILES=	ast.$O\
+	check.$O\
+	com.$O\
+	disw.$O\
+	gen.$O\
+	iface.$O\
 	lex.$O\
 	main.$O\
+	optab.$O\
 	parse.$O\
+	types.$O\
 
 HFILES=	ember.h\
+	$ROOT/include/isa.h\
 
 LIBS=	bio\
+	sec\
+	mp\
 	9\
 
 BIN=$ROOT/$OBJDIR/bin
 
 <$ROOT/mkfiles/mkone-$SHELLTYPE
+
+CFLAGS='-DINCPATH="'$ROOT/ember/module'"' $CFLAGS
 
 test:V:	$O.out
 	./tests/run.sh

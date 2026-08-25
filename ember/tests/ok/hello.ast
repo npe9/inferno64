@@ -2,11 +2,11 @@
   (name Hello)
   (import
     (name sys)
-    (const "sys.m")
+    (const "sys")
   )
   (import
     (name draw)
-    (const "draw.m")
+    (const "draw")
   )
   (fndecl
     (name init)

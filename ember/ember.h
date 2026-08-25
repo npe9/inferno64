@@ -12,6 +12,11 @@
  * (gen.c, optab.c), and the .dis writer (dis.c).  this header
  * follows the structure of limbo/limbo.h so the two compilers
  * stay easy to read side by side while porting that logic.
+ *
+ * long-term shape matches limbo: this C tree is the bootstrap;
+ * the self-hosted compiler lives at appl/cmd/ember/ (cf.
+ * appl/cmd/limbo/).  keep modules and algorithms portable to that
+ * port — prefer Inferno module capabilities over host-only libc.
  */
 
 /* internal dis ops */
@@ -438,6 +443,7 @@ enum
 	Kif,
 	Kimport,
 	Kinterface,
+	Klist,
 	Kload,
 	Kmatch,
 	Kmodule,
@@ -546,6 +552,7 @@ enum
 	Oind,				/* indirection (codegen) */
 	Oused,				/* expression used as statement (codegen) */
 	Onothing,			/* nop (codegen) */
+	Ochan,				/* chan T alloc: left size or nil, right type expr (cleared after check) */
 
 	Oend
 };
@@ -677,6 +684,8 @@ Desc	*enterdesc(uchar*, long, long);
 long	descmap(Decl*, uchar*, long);
 long	tdescmap(Type*, uchar*, long);
 void	teqclass(Type*);
+Teq	*modclass(void);
+void	narrowmods(void);
 int	tequal(Type*, Type*);
 u32	sign(Decl*);
 Type	*mkiface(Decl*);
@@ -686,6 +695,8 @@ int	declconv(Fmt*);
 
 /* gen.c */
 void	genstart(void);
+Node	*retalloc(Node*, Node*);
+Decl	*resolveldts(Decl*, Decl**);
 int	pushblock(void);
 void	popblock(void);
 void	tinit(void);
@@ -723,7 +734,8 @@ void	disinst(Inst*);
 /* optab.c */
 void	optabinit(void);
 
-/* iface.c */
+/* iface.c — ember .ei interfaces (not limbo .m) */
+void	addincpath(char*);
 Decl	*readiface(char*, Src*);
 
 /* check.c */

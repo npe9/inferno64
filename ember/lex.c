@@ -63,6 +63,7 @@ static	Keywd	keywords[] =
 	"if",		Kif,
 	"import",	Kimport,
 	"interface",	Kinterface,
+	"list",		Klist,
 	"load",		Kload,
 	"match",	Kmatch,
 	"module",	Kmodule,

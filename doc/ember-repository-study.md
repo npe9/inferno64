@@ -4,18 +4,33 @@ This document is the Phase 0 deliverable for Ember, a successor language to
 Limbo. It records what exists in the `inferno64` tree, with file paths, so
 that every Ember design decision can be checked against the real system.
 
-The governing rule: **extend Inferno, do not replace it**. Ember is a new
-front end for the existing Limbo/Dis tool chain. Dis, the VM, the scheduler,
-module loading, namespaces, Styx/9P, and the garbage collector are assumed
-correct and are not modified.
+Governing rules:
+
+1. **Extend Inferno, do not replace it.** Ember is a new front end for the
+   existing Limbo/Dis tool chain. Dis, the VM, the scheduler, module loading,
+   namespaces, Styx/9P, and the garbage collector are assumed correct and
+   are not modified.
+2. **Self-host Ember the way Limbo self-hosts Limbo.** The C compiler under
+   `ember/` is the bootstrap (same role as `limbo/`). The durable compiler
+   lives as Ember source under `appl/cmd/ember/` (same role as
+   `appl/cmd/limbo/`), builds to `ember.dis`, and is the one used once it
+   can compile itself. The C tree remains as the bootstrap and as a
+   differential oracle; it is not the long-term implementation.
+3. **Ember owns its module interfaces.** Imports resolve against Ember
+   `.ei` headers under `ember/module/` (search path `-I`, default
+   `$ROOT/ember/module`). Limbo's `module/*.m` files are not read. An
+   `.ei` file is Ember syntax with signatures only (no function bodies).
+   Runtime interop with existing Dis builtins (e.g. `$Sys`) is expressed
+   by writing Ember headers that describe those modules, not by parsing
+   Limbo.
 
 Contents:
 
 1. Repository map
-2. The Limbo compiler (`limbo/`)
+2. The Limbo compiler (`limbo/`) — including the Limbo-in-Limbo self-host
 3. The Dis object format (`.dis`)
 4. The Dis runtime (`libinterp/`, `emu/port/`)
-5. The module interface system (`module/*.m`, signatures)
+5. The module interface system (Ember `.ei` headers; Dis signatures)
 6. How existing language features are represented in Dis
 7. Applications suitable as a validation suite (`appl/`)
 8. Build system
@@ -23,6 +38,7 @@ Contents:
 10. Where Ember hooks in (recommendation)
 11. Reuse decisions: attempted, adopted, rejected
 12. Where Dis is not expressive enough (watch list)
+13. Self-hosting plan (Ember in Ember)
 
 ---
 
@@ -30,22 +46,25 @@ Contents:
 
 Directories that matter for a language front end:
 
-    limbo/          the Limbo compiler (C, yacc). ~20 files, one binary.
-    include/isa.h   Dis instruction set, addressing modes, header flags
-    include/interp.h runtime structs: Module, Modlink, Frame, REG, Prog, Type
-    libinterp/      the Dis VM: loader, interpreter, GC, channels, JIT
-    emu/port/       hosted emulator portable core: scheduler, exceptions
-    emu/MacOSX/     host bindings for this machine (arm64 Mach-O)
-    module/         ~182 Limbo interface files (.m): sys.m, draw.m, bufio.m...
-    appl/           Limbo applications: cmd/, lib/, wm/, math/, ...
-    dis/            compiled .dis binaries, mirroring appl/
-    mkfiles/        mk build rules (mkone, mkdis, mksyslib, per-host/target)
-    mkconfig        ROOT, SYSHOST=MacOSX, OBJTYPE=arm64, OBJDIR
-    doc/limbo/      the Limbo paper, syntax summary, tutorial
-    doc/dis.ms      the Dis VM specification
-    man/6/dis       .dis file format man page; man/6/sbl debug format
-    tests/          ad-hoc language/VM samples (adt.b, alt.b, tuple.b...)
-    ember/          NEW: the Ember front end (this project)
+    limbo/              Limbo bootstrap compiler (C, yacc). Host binary.
+    appl/cmd/limbo/     Limbo self-host: same compiler in Limbo -> limbo.dis
+    include/isa.h       Dis instruction set, addressing modes, header flags
+    include/interp.h    runtime structs: Module, Modlink, Frame, REG, Prog, Type
+    libinterp/          the Dis VM: loader, interpreter, GC, channels, JIT
+    emu/port/           hosted emulator portable core: scheduler, exceptions
+    emu/MacOSX/         host bindings for this machine (arm64 Mach-O)
+    module/             ~182 Limbo interface files (.m): sys.m, draw.m, bufio.m...
+    appl/               Limbo applications: cmd/, lib/, wm/, math/, ...
+    dis/                compiled .dis binaries, mirroring appl/
+    mkfiles/            mk build rules (mkone, mkdis, mksyslib, per-host/target)
+    mkconfig            ROOT, SYSHOST=MacOSX, OBJTYPE=arm64, OBJDIR
+    doc/limbo/          the Limbo paper, syntax summary, tutorial
+    doc/dis.ms          the Dis VM specification
+    man/6/dis           .dis file format man page; man/6/sbl debug format
+    tests/              ad-hoc language/VM samples (adt.b, alt.b, tuple.b...)
+    ember/              NEW: Ember bootstrap front end (C; this project)
+    ember/module/       Ember .ei interfaces (sys.ei, draw.ei, …)
+    appl/cmd/ember/     TARGET: Ember self-host (Ember source -> ember.dis)
 
 Host binaries live in `MacOSX/arm64/bin/` (`limbo`, `emu`, `emu-g`, `mk`,
 `iyacc`, ...). The tree also carries a 64-bit port: `WORD`/`IBY2WD` is
@@ -54,11 +73,23 @@ is unchanged (see section 3.6).
 
 ---
 
-## 2. The Limbo compiler (`limbo/`)
+## 2. The Limbo compiler (`limbo/` and `appl/cmd/limbo/`)
 
-One C program, built from `limbo/mkfile` (`TARG=limbo`), grammar in yacc.
+Limbo is dual-hosted, and Ember copies this shape:
+
+| Role | Limbo | Ember (target) |
+|---|---|---|
+| Bootstrap (native host binary) | `limbo/` (C + yacc) | `ember/` (C, recursive descent) |
+| Self-host (runs under Dis) | `appl/cmd/limbo/` → `limbo.dis` | `appl/cmd/ember/` → `ember.dis` |
+
+The C program is built from `limbo/mkfile` (`TARG=limbo`), grammar in yacc.
 `main()` is in `limbo/limbo.y:1639`; per-file driver `translate()` at
-`limbo.y:1857`.
+`limbo.y:1857`. The Limbo-in-Limbo sources under `appl/cmd/limbo/`
+(`limbo.b`, `lex.b`, `types.b`, `typecheck.b`, `com.b`, `ecom.b`, `gen.b`,
+`dis.b`, …) are the same pipeline expressed in Limbo; `appl/cmd/limbo/mkfile`
+builds them with the bootstrap `limbo` via `mkdis` into `$ROOT/dis`.
+Self-hosting is therefore already a first-class Inferno pattern, not an
+afterthought.
 
 ### 2.1 Phase structure
 
@@ -405,8 +436,10 @@ How to run on this host:
   a smoke program both JIT and interpreted. Ember adds its own runner at
   `ember/tests/run.sh` (`mk test`).
 
-The Ember front end follows the same pattern: `ember/mkfile` with
-`TARG=ember`, `mkone-sh`, installed next to `limbo`.
+The Ember bootstrap follows the same C pattern: `ember/mkfile` with
+`TARG=ember`, `mkone-sh`, installed next to `limbo`. Once the self-host
+exists, `appl/cmd/ember/mkfile` follows the `appl/cmd/limbo/mkfile`
+`mkdis` pattern (`ember -I$ROOT/module …` producing `ember.dis`).
 
 ---
 
@@ -531,7 +564,7 @@ by side while porting logic.
 | closures | lambda lifting: env adt + lifted top-level fn; escaping values are `(env, (module,index))` pairs called via `IMFRAME`/`IMCALL` |
 | multiple returns | tuple layout (flat bytes), as limbo does |
 | `chan`/`<-`/`spawn` | `INEWCW...`, `ISEND`/`IRECV`, `ISPAWN` |
-| `import x "y.m"` | Ember reads the `.m` interface (small Limbo-interface parser in the resolver), emits LDT imports with matching sigs, `ILOAD` at load site |
+| `import x "y"` | Ember reads `y.ei` from the interface path, emits LDT imports with Ember-computed sigs, `ILOAD` at load site |
 | `load M path` | `ILOAD` + `linkmod` LDT, verbatim semantics |
 
 ### Interop answer (hard requirement from the brief)
@@ -559,7 +592,7 @@ places on exported C ABI, and no loss versus today.
 | limbo sign() algorithm | **ported verbatim** (canonical type string + MD5 fold, libsec) — interop requires bit-equality |
 | limbo layout/descriptor logic | **ported as reference**: layouts must be identical only for interop-visible types (values crossing a module boundary); Ember-internal layout is free to differ, checked for correctness (GC soak), not for resemblance |
 | limbo yacc grammar/lexer | **not reused** for Ember source: Ember needs Go-style ASI, `match`, `?`, generic brackets; grafting these onto the LALR grammar was tried on paper and produced conflicts around `[`/index vs type-args and `{` composite literals vs blocks. A hand recursive-descent parser (as Go itself uses) is ~1.4k lines and self-contained (`ember/parse.c`) |
-| `.m` interface files | **reused as the interop surface**: Ember's resolver parses `.m` module declarations (a small, stable subset of Limbo syntax) to type imports and compute signatures; no new interface format |
+| `.m` interface files | **not used**: Ember has its own `.ei` headers (`ember/module/*.ei`), written in Ember syntax with bodyless `func`s. Limbo `.m` is never parsed. Builtin Dis modules like `$Sys` are described by Ember headers when needed |
 | Limbo polymorphism (dictionary passing) | **not used** for Ember generics (brief mandates monomorphization; erasure also cannot type Ember's `func` values); interop with polymorphic Limbo APIs deferred until a concrete need appears |
 | Limbo exceptions | not surfaced in Ember M1 feature set; `Result`/`?` are plain values; handler-table emission reserved for interop |
 | Dis changes | none proposed; the six-point justification protocol in the brief was not triggered anywhere |
@@ -638,6 +671,80 @@ None of these blocks the initial feature set: modules, imports, structs,
 arrays, strings, functions, closures, inference, ADTs, match, Option,
 Result, `?`, generics, channels, and spawn all lower cleanly onto Dis as
 it stands. The gaps shape *how* they lower (12.1, 12.2), not *whether*.
+
+---
+
+## 13. Self-hosting plan (Ember in Ember)
+
+Ember's end state matches Limbo's: a bootstrap compiler that can compile a
+self-hosted compiler that can compile itself.
+
+    ember/                 C bootstrap (host binary `ember`)
+         |
+         | compiles
+         v
+    appl/cmd/ember/*.e  -> ember.dis   (self-host, runs under emu)
+         |
+         | compiles (including itself)
+         v
+    appl/cmd/ember/*.e  -> ember.dis   (fixed point)
+
+### Why this is a hard requirement
+
+- Inferno already treats self-hosting as the real Limbo (`appl/cmd/limbo/`).
+  Ember that only exists as C would be a second-class citizen next to it.
+- Self-hosting is the acceptance test for the language: if Ember cannot
+  express its own compiler (parser, scopes, types, monomorphization,
+  Dis emit, `.m` interop), the feature set is incomplete.
+- Differential testing becomes three-way: C ember vs Ember ember vs limbo
+  behavior/contracts on shared inputs.
+
+### Implications for the C bootstrap (now)
+
+Write the C front end so a later port is mechanical, not a redesign:
+
+- Keep modules small and parallel to `appl/cmd/limbo/`'s split
+  (`lex`, `parse`/`nodes`, `types`, `check`, `iface`, `gen`, `disw`, …).
+  The Limbo self-host file list is the template for `appl/cmd/ember/`.
+- Prefer algorithms and data layouts that map cleanly onto Ember
+  (`struct`/`pick`, slices, `ref`, modules) rather than C idioms that
+  fight the eventual port (heavy pointer arithmetic, ad-hoc arena tricks
+  that have no Ember equivalent).
+- Do **not** depend on host libc beyond what Inferno modules already
+  provide (`sys`, `bufio`, `string`, `keyring` for MD5 sigs, etc.).
+  Anything the self-host cannot import from Ember `.ei` / Inferno
+  modules (`sys`, `bufio`, …) is debt.
+- The `.m` interface reader (`ember/iface.c`) is load-bearing for
+  self-host bootstrapping: the first Ember ember will still `import`
+  Limbo system modules unchanged.
+
+### Milestone framing (extends M1–M3)
+
+| Milestone | Deliverable | Self-host relevance |
+|---|---|---|
+| M1 | C parse → AST (`ember/` today) | Surface syntax must be enough to write the compiler later |
+| M2 | resolve / typecheck / `.ei` imports | Needed before any non-trivial Ember program |
+| M3 | elaborate + lower → `.dis` | Bootstrap can emit runnable modules |
+| M4 | C ember compiles `echo`/`cat`/interop suite | Language expressive enough for utilities |
+| M5 | Port compiler to `appl/cmd/ember/*.e`; C ember builds `ember.dis` | First self-host binary |
+| M6 | `ember.dis` rebuilds itself bit-identical (or behavior-identical under the exact-contract rules in §10); C ember becomes bootstrap-only | Fixed point |
+
+M5/M6 are the Limbo analogue of building `appl/cmd/limbo` with the C
+`limbo` and then trusting `limbo.dis`. Until M6, prefer fixing bugs in
+the C bootstrap and re-porting over maintaining divergent semantics.
+
+### What "done" means
+
+Ember is self-hosted when:
+
+1. `appl/cmd/ember/` exists and is the primary compiler source of truth;
+2. `$ROOT/dis/ember.dis` (or the installed path next to `limbo.dis`) is
+   produced by compiling that tree;
+3. that `ember.dis`, run under `emu`, recompiles `appl/cmd/ember/` to an
+   equivalent `ember.dis` (same exports/sigs/behavior; code section may
+   differ under §10's free-to-differ rules);
+4. the C `ember/` binary is retained only for cold bootstrap and as a
+   cross-check, the same way `limbo/` stands beside `appl/cmd/limbo/`.
 
 ---
 

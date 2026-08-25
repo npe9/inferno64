@@ -237,6 +237,26 @@ disdatum(long offset, Node *n)
 		break;
 	case Tany:
 		break;
+	case Tcase: {
+		Case *c;
+		Label *lab;
+		int i;
+
+		c = n->ty->cse;
+		disint(offset, c->nlab);
+		offset += IBY2WD;
+		for(i = 0; i < c->nlab; i++){
+			lab = &c->labs[i];
+			disint(offset, lab->start->val);
+			offset += IBY2WD;
+			disint(offset, lab->stop->val+1);
+			offset += IBY2WD;
+			disint(offset, lab->inst->pc);
+			offset += IBY2WD;
+		}
+		disint(offset, c->iwild ? c->iwild->pc : -1);
+		break;
+	}
 	case Tiface:
 		disint(offset, n->val);
 		offset += IBY2WD;

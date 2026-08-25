@@ -107,6 +107,7 @@ char *opname[] =
 	/* Oind */	"ind",
 	/* Oused */	"used",
 	/* Onothing */	"nothing",
+	/* Ochan */	"chan",
 	/* Oend */	"end",
 };
 

@@ -13,7 +13,8 @@
  *	Const      = "const" id "=" expr ";" .
  *	Func       = "func" [ "(" id TypeExpr ")" ] id [ "[" ids "]" ]
  *			"(" params ")" [ results ] Block .
- *	TypeExpr   = "[" "]" TypeExpr | "chan" TypeExpr | "ref" TypeExpr
+ *	TypeExpr   = "[" "]" TypeExpr | "chan" TypeExpr | "list" TypeExpr
+ *	             | "ref" TypeExpr
  *		   | "func" signature | "struct" "{" fields "}"
  *		   | "pick" "{" tags "}" | "(" types ")"
  *		   | name [ "." name ] [ "[" types "]" ] .
@@ -248,8 +249,16 @@ psignature(int named)
 	Src src;
 
 	params = nil;
-	pexpect('(', "function signature");
+	src = pexpect('(', "function signature");
 	while(cur() != ')' && cur() != Beof){
+		if(paccept(Edots)){
+			/* bare ... : Limbo-style varargs marker (like "*") */
+			p = mkn(Ofield, nil, nil);
+			p->src = src;
+			p->flags |= NVARARG;
+			params = mkseq(params, p);
+			break;
+		}
 		if(named){
 			ids = pnamelist("parameter");
 			if(paccept(Edots)){
@@ -319,6 +328,13 @@ ptype(void)
 		lexskip();
 		t = ptype();
 		n = mkn(Otchan, nil, t);
+		n->src.start = src.start;
+		n->src.stop = t->src.stop;
+		return n;
+	case Klist:
+		lexskip();
+		t = ptype();
+		n = mkn(Otlist, nil, t);
 		n->src.start = src.start;
 		n->src.stop = t->src.stop;
 		return n;
@@ -497,6 +513,23 @@ poperand(void)
 		n->src.start = src.start;
 		n->src.stop = n->right->src.stop;
 		return n;
+	case Kchan: {
+		Node *sz, *te;
+
+		/* channel allocation: chan T  or  chan[size] T */
+		lexskip();
+		sz = nil;
+		if(cur() == '['){
+			lexskip();
+			sz = pexpr();
+			pexpect(']', "channel size");
+		}
+		te = ptype();
+		n = mkn(Ochan, sz, te);
+		n->src.start = src.start;
+		n->src.stop = te->src.stop;
+		return n;
+	}
 	default:
 		synerr("expected an expression");
 		psync();
@@ -911,9 +944,13 @@ ppattern(void)
 	t = tk();
 	src = t->src;
 	switch(t->t){
-	case Econst:
+	case Econst: {
+		Long v;
+
+		v = t->ival;
 		lexskip();
-		return mkconst(&src, t->ival);
+		return mkconst(&src, v);
+	}
 	case '-': {
 		Long v;
 
@@ -928,9 +965,13 @@ ppattern(void)
 		lexskip();
 		return mkconst(&src, -v);
 	}
-	case Esconst:
+	case Esconst: {
+		Sym *s;
+
+		s = t->sym;
 		lexskip();
-		return mksconst(&src, t->sym);
+		return mksconst(&src, s);
+	}
 	case Knil:
 		lexskip();
 		return mknil(&src);
@@ -1100,7 +1141,10 @@ pblock(void)
 }
 
 /*
- * "func" [ "(" id TypeExpr ")" ] id [ "[" ids "]" ] signature Block
+ * "func" [ "(" id TypeExpr ")" ] id [ "[" ids "]" ] signature [ Block ]
+ *
+ * a missing body (terminated by ';') is an interface declaration,
+ * used in .ei module headers.
  */
 static Node*
 pfndecl(void)
@@ -1124,11 +1168,16 @@ pfndecl(void)
 	}
 	sig = psignature(1);
 	sig->aux = polys;
-	body = pblock();
+	body = nil;
+	if(cur() == '{')
+		body = pblock();
 	n = mkn(Ofndecl, name, sig);
 	n->aux = body;
 	n->src.start = src.start;
-	n->src.stop = body->src.stop;
+	if(body != nil)
+		n->src.stop = body->src.stop;
+	else
+		n->src.stop = sig->src.stop;
 	return n;
 }
 

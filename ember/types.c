@@ -183,6 +183,9 @@ typeinit(void)
 
 	descriptors = nil;
 	memset(eqclass, 0, sizeof eqclass);
+
+	fmtinstall('T', typeconv);
+	fmtinstall('D', declconv);
 }
 
 Type*
@@ -398,6 +401,9 @@ sizetype(Type *t)
 	case Tchan:
 	case Tarray:
 	case Tlist:
+		sizetype(t->tof);
+		t->size = t->align = IBY2WD;
+		break;
 	case Tmodule:
 	case Tfix:
 	case Tpoly:
@@ -686,6 +692,64 @@ tdescmap(Type *t, uchar *map, long offset)
  * structural classes; the class identity feeds both signature
  * recursion markers and type equality
  */
+Teq*
+modclass(void)
+{
+	return eqclass[Tmodule];
+}
+
+/*
+ * drop unreferenced members from imported module interfaces so
+ * the HASLDT section only lists names/sigs we actually call.
+ * refs are counted on the module's own decls during check; copy
+ * them onto the iface clones first (as limbo's checkrefs does).
+ */
+void
+narrowmods(void)
+{
+	Teq *eq;
+	Decl *id, *last, *m;
+	Type *t;
+	long offset;
+
+	for(eq = modclass(); eq != nil; eq = eq->eq){
+		for(id = eq->ty->ids; id != nil; id = id->next){
+			if(id->iface != nil)
+				id->iface->refs += id->refs;
+			if(id->store == Dtype && id->ty != nil && id->ty->kind == Tadt){
+				for(m = id->ty->ids; m != nil; m = m->next)
+					if(m->iface != nil)
+						m->iface->refs += m->refs;
+			}
+		}
+	}
+
+	for(eq = modclass(); eq != nil; eq = eq->eq){
+		t = eq->ty->tof;
+		if(t == nil)
+			continue;
+		if(t->linkall == 0){
+			last = nil;
+			for(id = t->ids; id != nil; id = id->next){
+				if(id->refs == 0){
+					if(last == nil)
+						t->ids = id->next;
+					else
+						last->next = id->next;
+				}else
+					last = id;
+			}
+			t->ok &= ~OKsized;
+			sizetype(t);
+		}
+		offset = 0;
+		for(id = t->ids; id != nil; id = id->next)
+			id->offset = offset++;
+		if(t->decl != nil && t->decl->init != nil)
+			t->decl->init->val = offset;
+	}
+}
+
 void
 teqclass(Type *t)
 {
@@ -1048,6 +1112,11 @@ sign(Decl *d)
 	md5(sig, sigend, md5sig, nil);
 	for(i = 0; i < MD5dlen; i += 4)
 		t->sig ^= md5sig[i+0] | (md5sig[i+1]<<8) | (md5sig[i+2]<<16) | (md5sig[i+3]<<24);
+	if(signdump != nil){
+		seprint(buf, buf+sizeof(buf), "%s", d->sym->name);
+		if(strcmp(buf, signdump) == 0)
+			print("signed %s type %T len %d sig %#ux\n", d->sym->name, t, sigend, t->sig);
+	}
 	free(sig);
 	return t->sig;
 }

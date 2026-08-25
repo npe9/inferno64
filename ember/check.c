@@ -4,11 +4,9 @@
  * resolver and type checker.
  *
  * walks the parsed tree, resolving names against nested scopes,
- * mapping ember surface types onto the backend (limbo-model)
- * types from types.c, and annotating expression nodes with their
- * types.  imports are resolved by reading the limbo .m interface
- * (iface.c), so ember code calls limbo modules through exactly
- * the frame and signature contracts limbo itself would use.
+ * mapping ember surface types onto the backend type model in
+ * types.c, and annotating expression nodes with their types.
+ * imports are resolved from ember .ei interfaces (iface.c).
  *
  * the output feeds com.c: every name node points at its Decl,
  * every expression carries its Type, and module calls point at
@@ -34,8 +32,12 @@ static	Type	*curret;
 
 static	void	fnchk(Decl*);
 static	void	stchk(Node*);
+static	void	matchcheck(Node*);
 static	Type	*echk(Node*);
 static	Type	*stype(Node*);
+static	Case	*matchlabels(Node*, Type*, int);
+static	int	casecmp(Type*, Node*, Node*);
+static	void	casesort(Type*, Label*, Label*, int, int);
 
 static void
 nerror(Node *n, char *fmt, ...)
@@ -74,21 +76,41 @@ popscope(void)
 	return scopes[scope--];
 }
 
+/*
+ * install a chain of decls (limbo installids).  next pointers
+ * are preserved so argument/field lists stay intact; the chain
+ * is appended to the current scope.
+ */
+static void
+installids(Decl *ids)
+{
+	Decl *d, *last;
+	Sym *s;
+
+	last = nil;
+	for(d = ids; d != nil; d = d->next){
+		d->scope = scope;
+		s = d->sym;
+		if(s != nil){
+			d->old = s->decl;
+			s->decl = d;
+		}
+		last = d;
+	}
+	if(ids != nil){
+		if(scopes[scope] == nil)
+			scopes[scope] = ids;
+		else
+			scopeends[scope]->next = ids;
+		scopeends[scope] = last;
+	}
+}
+
 static void
 install(Decl *d)
 {
-	Sym *s;
-
-	s = d->sym;
-	d->scope = scope;
-	d->old = s->decl;
-	s->decl = d;
 	d->next = nil;
-	if(scopes[scope] == nil)
-		scopes[scope] = d;
-	else
-		scopeends[scope]->next = d;
-	scopeends[scope] = d;
+	installids(d);
 }
 
 static Decl*
@@ -133,11 +155,49 @@ stype(Node *n)
 		return mktype(&n->src, Tlist, stype(n->right), nil);
 	case Otref:
 		t = stype(n->right);
-		if(t->kind != Tadt && t->kind != Tfn && t->kind != Tadtpick){
+		if(t->kind != Tadt && t->kind != Tfn && t->kind != Tadtpick
+		&& t->kind != Terror && t->kind != Tpoly){
 			nerror(n, "ref requires an adt or function type");
 			return terror;
 		}
 		return mktype(&n->src, Tref, t, nil);
+	case Otstruct:
+		t = mktype(&n->src, Tadt, nil, nil);
+		{
+			Decl *ids, *last, *d;
+			Node *f, *names, *id;
+
+			ids = last = nil;
+			for(p = n->left; p != nil; p = p->right){
+				f = p;
+				if(p->op == Oseq)
+					f = p->left;
+				for(names = f->left; names != nil; names = names->right){
+					id = names;
+					if(names->op == Oseq)
+						id = names->left;
+					d = mkdecl(&id->src, Dfield, stype(f->right));
+					d->sym = id->sym;
+					if(ids == nil)
+						ids = d;
+					else
+						last->next = d;
+					last = d;
+					if(names->op != Oseq)
+						break;
+				}
+				if(p->op != Oseq)
+					break;
+			}
+			t->ids = ids;
+		}
+		t->ok |= OKverify;
+		return t;
+	case Otpick:
+		/* tags attached by typedec */
+		t = mktype(&n->src, Tadt, nil, nil);
+		t->ok |= OKverify;
+		return t;
 	case Ottuple: {
 		Decl *idl, *last;
 		char buf[32];
@@ -178,6 +238,12 @@ stype(Node *n)
 				f = p->left;
 			if(f->op != Ofield)
 				fatal("bad param node in stype");
+			if(f->flags & NVARARG && f->right == nil && f->left == nil){
+				ft->varargs = 1;
+				if(p->op != Oseq)
+					break;
+				continue;
+			}
 			if(f->flags & NVARARG)
 				ft->varargs = 1;
 			t = stype(f->right);
@@ -397,6 +463,8 @@ echk(Node *n)
 					n->ty = terror;
 					return n->ty;
 				case Dfn:
+				case Dglobal:
+				case Dtype:
 					d->refs++;
 					id->refs++;
 					n->op = Omdot;
@@ -409,10 +477,6 @@ echk(Node *n)
 					n->right->ty = id->ty;
 					n->ty = id->ty;
 					return n->ty;
-				case Dglobal:
-					nerror(n, "module data access not yet supported");
-					n->ty = terror;
-					return n->ty;
 				default:
 					nerror(n, "cannot use %s.%s here", n->left->sym->name, n->sym->name);
 					n->ty = terror;
@@ -421,7 +485,22 @@ echk(Node *n)
 			}
 		}
 		t = echk(n->left);
-		nerror(n, "field selection on %T not yet supported", t);
+		if(t->kind == Tref)
+			t = t->tof;
+		if(t != nil && t->kind == Tadt){
+			Decl *id;
+
+			for(id = t->ids; id != nil; id = id->next)
+				if(id->sym == n->sym){
+					n->decl = id;
+					n->ty = id->ty;
+					return n->ty;
+				}
+			nerror(n, "%T has no field %s", t, n->sym->name);
+			n->ty = terror;
+			return n->ty;
+		}
+		nerror(n, "field selection on %T", t);
 		n->ty = terror;
 		return n->ty;
 	case Ocall: {
@@ -430,10 +509,36 @@ echk(Node *n)
 		Type *ft;
 		int i;
 
-		/* callee */
+		/* callee: allow name, mod.fn, or builtins */
+		if(n->left->op == Oname && strcmp(n->left->sym->name, "len") == 0){
+			Node *a, *e;
+
+			a = n->right;
+			if(a == nil){
+				nerror(n, "len needs an argument");
+				n->ty = terror;
+				return n->ty;
+			}
+			if(a->op == Oseq)
+				e = a->left;
+			else
+				e = a;
+			t = echk(e);
+			if(t->kind != Tarray && t->kind != Tstring && t->kind != Tlist){
+				nerror(n, "len of %T", t);
+				n->ty = terror;
+				return n->ty;
+			}
+			n->op = Olen;
+			n->left = e;
+			n->right = nil;
+			n->ty = tint;
+			return n->ty;
+		}
 		switch(n->left->op){
 		case Oname:
 		case Odot:
+		case Omdot:
 			break;
 		default:
 			nerror(n, "cannot call this expression");
@@ -614,6 +719,145 @@ echk(Node *n)
 		}
 		n->ty = t;
 		return n->ty;
+	case Oindex:
+		t = echk(n->left);
+		echk(n->right);
+		if(t->kind == Tarray){
+			n->op = Oindx;
+			n->ty = t->tof;
+			return n->ty;
+		}
+		if(t->kind == Tstring){
+			n->op = Oinds;
+			n->ty = tint;	/* rune */
+			return n->ty;
+		}
+		nerror(n, "cannot index %T", t);
+		n->ty = terror;
+		return n->ty;
+	case Oslice:
+		t = echk(n->left);
+		if(n->right != nil){
+			if(n->right->left != nil)
+				echk(n->right->left);
+			if(n->right->right != nil)
+				echk(n->right->right);
+		}
+		if(t->kind != Tarray && t->kind != Tstring){
+			nerror(n, "cannot slice %T", t);
+			n->ty = terror;
+			return n->ty;
+		}
+		n->ty = t;
+		return n->ty;
+	case Ochk:
+		t = echk(n->left);
+		/* Result[T,E]-style: for now require ref adt with tags; type is first tag payload later */
+		if(t->kind == Tref)
+			t = t->tof;
+		if(t == nil || t->kind != Tadt || t->tags == nil){
+			nerror(n, "? requires a pick adt (Result)");
+			n->ty = terror;
+			return n->ty;
+		}
+		/* provisional: type of ? is the adt itself until elaboration */
+		n->ty = t;
+		return n->ty;
+	case Oref:
+		t = echk(n->left);
+		if(t->kind != Tadt){
+			nerror(n, "ref of non-adt %T", t);
+			n->ty = terror;
+			return n->ty;
+		}
+		n->ty = mktype(&n->src, Tref, t, nil);
+		return n->ty;
+	case Ochan:
+		if(n->left != nil){
+			t = echk(n->left);
+			if(t != tint && t != terror)
+				nerror(n, "channel size must be int, not %T", t);
+		}
+		t = mktype(&n->src, Tchan, stype(n->right), nil);
+		sizetype(t);
+		n->right = nil;	/* type expr consumed; ecom sees only size */
+		n->ty = t;
+		return n->ty;
+	case Orcv:
+		t = echk(n->left);
+		if(t->kind != Tchan){
+			nerror(n, "receive from non-channel %T", t);
+			n->ty = terror;
+			return n->ty;
+		}
+		n->ty = t->tof;
+		return n->ty;
+	case Osnd:
+		t = echk(n->left);
+		tr = echk(n->right);
+		if(t->kind != Tchan){
+			nerror(n, "send to non-channel %T", t);
+			n->ty = terror;
+			return n->ty;
+		}
+		if(!assignable(t->tof, tr, n->right))
+			nerror(n, "cannot send %T on %T", tr, t);
+		n->ty = tnone;
+		return n->ty;
+	case Ocomposite:
+		t = stype(n->left);
+		for(p = n->right; p != nil; p = p->right){
+			Node *e;
+
+			e = p;
+			if(p->op == Oseq)
+				e = p->left;
+			if(e->op == Oelem)
+				echk(e->right);
+			else
+				echk(e);
+			if(p->op != Oseq)
+				break;
+		}
+		n->ty = t;
+		return n->ty;
+	case Otuple:
+		{
+			Decl *ids, *last, *d;
+			char buf[32];
+			int i;
+
+			ids = last = nil;
+			i = 0;
+			for(p = n->left; p != nil; p = p->right){
+				Node *e;
+
+				e = p;
+				if(p->op == Oseq)
+					e = p->left;
+				t = echk(e);
+				d = mkdecl(&e->src, Dfield, t);
+				seprint(buf, buf+sizeof(buf), "t%d", i++);
+				d->sym = enter(buf, 0);
+				if(ids == nil)
+					ids = d;
+				else
+					last->next = d;
+				last = d;
+				if(p->op != Oseq)
+					break;
+			}
+			n->ty = mktype(&n->src, Ttuple, nil, ids);
+			return n->ty;
+		}
+	case Ofunclit:
+		nerror(n, "closures not yet typechecked");
+		n->ty = terror;
+		return n->ty;
+	case Oload:
+		nerror(n, "load not yet typechecked");
+		n->ty = terror;
+		return n->ty;
 	default:
 		nerror(n, "unsupported expression %O", n->op);
 		n->ty = terror;
@@ -645,6 +889,7 @@ daschk(Node *n)
 		nerror(n, ":= of nil needs a type");
 		t = terror;
 	}
+	sizetype(t);
 	d = mkdecl(&lhs->src, Dlocal, t);
 	d->sym = lhs->sym;
 	install(d);
@@ -652,17 +897,198 @@ daschk(Node *n)
 	lhs->ty = t;
 	n->ty = t;
 
-	/* record the local on the current function */
+	/* record the local on the current function (link, not next) */
 	d->link = nil;
 	if(curfn->locals == nil)
 		curfn->locals = d;
 	else{
 		Decl *e;
 
-		for(e = curfn->locals; e->next != nil; e = e->next)
+		for(e = curfn->locals; e->link != nil; e = e->link)
 			;
-		e->next = d;
+		e->link = d;
 	}
+}
+
+/*
+ * walk comma-separated patterns in an Ocase left.
+ * for a single pattern, pats is the pattern node itself.
+ */
+static Node*
+nextpat(Node **pp)
+{
+	Node *n, *q;
+
+	n = *pp;
+	if(n == nil)
+		return nil;
+	if(n->op == Oseq){
+		q = n->left;
+		*pp = n->right;
+		return q;
+	}
+	*pp = nil;
+	return n;
+}
+
+static int
+casecmp(Type *ty, Node *a, Node *b)
+{
+	USED(ty);
+	if(a->val < b->val)
+		return -1;
+	if(a->val > b->val)
+		return 1;
+	return 0;
+}
+
+static void
+casesort(Type *t, Label *aux, Label *labs, int start, int stop)
+{
+	int n, top, mid, base;
+
+	n = stop - start;
+	if(n <= 1)
+		return;
+	top = mid = start + n / 2;
+	casesort(t, aux, labs, start, top);
+	casesort(t, aux, labs, mid, stop);
+	n = 0;
+	base = start;
+	while(base < top && mid < stop){
+		if(casecmp(t, labs[base].start, labs[mid].start) <= 0)
+			aux[n++] = labs[base++];
+		else
+			aux[n++] = labs[mid++];
+	}
+	if(base < top)
+		memmove(&aux[n], &labs[base], (top-base) * sizeof *aux);
+	else if(mid < stop)
+		memmove(&aux[n], &labs[mid], (stop-mid) * sizeof *aux);
+	memmove(&labs[start], &aux[0], (stop-start) * sizeof *labs);
+}
+
+static Case*
+matchlabels(Node *arms, Type *ctype, int nlab)
+{
+	Node *p, *arm, *pat, *q, *wild, *stop;
+	Label *labs, *aux;
+	Case *c;
+	int i, e;
+
+	labs = allocmem(nlab * sizeof *labs);
+	memset(labs, 0, nlab * sizeof *labs);
+	i = 0;
+	wild = nil;
+	for(p = arms; p != nil; ){
+		arm = p;
+		if(p->op == Oseq){
+			arm = p->left;
+			p = p->right;
+		}else
+			p = nil;
+		if(arm->left == nil){
+			wild = arm;
+			continue;
+		}
+		for(pat = arm->left; (q = nextpat(&pat)) != nil; ){
+			labs[i].start = q;
+			labs[i].stop = q;
+			labs[i].node = arm;
+			i++;
+		}
+	}
+	if(i != nlab)
+		fatal("matchlabels: bad label count %d vs %d", nlab, i);
+
+	aux = allocmem(nlab * sizeof *aux);
+	casesort(ctype, aux, labs, 0, nlab);
+	for(i = 0; i < nlab; i++){
+		stop = labs[i].stop;
+		if(casecmp(ctype, labs[i].start, stop) > 0)
+			nerror(labs[i].start, "unmatchable case label");
+		for(e = i + 1; e < nlab; e++){
+			if(casecmp(ctype, labs[e].start, stop) <= 0)
+				nerror(labs[e].start, "case label %lld overlaps %lld",
+					(vlong)labs[e].start->val, (vlong)stop->val);
+			if(ctype != tint
+			|| labs[e].start->val != stop->val+1
+			|| labs[e].node != labs[i].node)
+				break;
+			stop = labs[e].stop;
+		}
+		if(e != i + 1){
+			labs[i].stop = stop;
+			memmove(&labs[i+1], &labs[e], (nlab-e) * sizeof *labs);
+			nlab -= e - (i + 1);
+		}
+	}
+	free(aux);
+
+	c = allocmem(sizeof *c);
+	memset(c, 0, sizeof *c);
+	c->nlab = nlab;
+	c->labs = labs;
+	c->wild = wild;
+	return c;
+}
+
+static void
+matchcheck(Node *n)
+{
+	Type *t, *pt, *ct;
+	Node *p, *arm, *pat, *q, *wild;
+	Case *c;
+	int nlab, ok;
+
+	t = echk(n->left);
+	ok = 1;
+	if(t != tint && t != terror){
+		nerror(n, "match subject must be int, not %T", t);
+		ok = 0;
+	}
+	wild = nil;
+	nlab = 0;
+	for(p = n->right; p != nil; ){
+		arm = p;
+		if(p->op == Oseq){
+			arm = p->left;
+			p = p->right;
+		}else
+			p = nil;
+		if(arm->left == nil){
+			if(wild != nil)
+				nerror(arm, "match has more than one default");
+			wild = arm;
+		}else{
+			for(pat = arm->left; (q = nextpat(&pat)) != nil; ){
+				if(q->op == Opat){
+					nerror(q, "tag patterns not yet supported");
+					ok = 0;
+					continue;
+				}
+				pt = echk(q);
+				if(pt != tint && pt != terror){
+					nerror(q, "case label must be int, not %T", pt);
+					ok = 0;
+				}else if(q->op != Oconst){
+					nerror(q, "case label is not constant");
+					ok = 0;
+				}else
+					nlab++;
+			}
+		}
+		pushscope();
+		stchk(arm->right);
+		popscope();
+	}
+	if(!ok || t != tint)
+		return;
+	c = matchlabels(n->right, tint, nlab);
+	ct = mktype(&n->src, Tcase, nil, nil);
+	ct->cse = c;
+	sizetype(ct);
+	n->ty = ct;
 }
 
 static void
@@ -704,6 +1130,9 @@ stchk(Node *n)
 				if(n->left->op == Ocall && n->left->ty != tnone && n->left->ty != terror)
 					nerror(n, "spawned function must not return a value");
 				return;
+			case Osnd:
+				echk(n);
+				return;
 			case Onothing:
 				return;
 			default:
@@ -728,6 +1157,9 @@ stchk(Node *n)
 				stchk(n->aux);
 				popscope();
 			}
+			return;
+		case Omatch:
+			matchcheck(n);
 			return;
 		case Ofor:
 			pushscope();
@@ -775,30 +1207,133 @@ fnchk(Decl *d)
 	body = d->init->aux;
 
 	pushscope();
-	for(arg = d->ty->ids; arg != nil; arg = arg->next)
-		if(arg->sym != nil)
-			install(arg);
-	stchk(body);
-	/* args were installed manually: pop without breaking the arg chain */
-	{
-		Decl *a;
-
-		for(a = scopes[scope]; a != nil; a = a->old){
-			/* nothing: args restored below */
-			break;
+	/* bind args without appending to the scope chain (repushids) */
+	for(arg = d->ty->ids; arg != nil; arg = arg->next){
+		if(arg->sym != nil){
+			arg->scope = scope;
+			arg->old = arg->sym->decl;
+			arg->sym->decl = arg;
 		}
 	}
-	/* restore syms for args */
-	for(arg = d->ty->ids; arg != nil; arg = arg->next)
-		if(arg->sym != nil && arg->sym->decl == arg)
+	stchk(body);
+	for(arg = d->ty->ids; arg != nil; arg = arg->next){
+		if(arg->sym != nil && arg->sym->decl == arg){
 			arg->sym->decl = arg->old;
-	scope--;
+			arg->old = nil;
+		}
+	}
+	popscope();
 	curfn = nil;
 }
 
 /*
  * add a function to the module
  */
+static void
+typedec(Node *n)
+{
+	Decl *d;
+	Type *t;
+
+	d = mkdecl(&n->src, Dtype, nil);
+	d->sym = n->left->sym;
+	d->dot = impdecl;
+	install(d);
+
+	t = stype(n->right);
+	if(n->right->op == Otpick){
+		Decl *tags, *last, *tag;
+		Node *p, *tg;
+
+		tags = last = nil;
+		for(p = n->right->left; p != nil; p = p->right){
+			tg = p;
+			if(p->op == Oseq)
+				tg = p->left;
+			tag = mkdecl(&tg->src, Dtag, nil);
+			tag->sym = tg->left->sym;
+			tag->ty = mktype(&tg->src, Tadtpick, nil, nil);
+			if(tg->right != nil){
+				/* reuse stype field walk via fake Otstruct */
+				Node fake;
+				Type *ft;
+
+				fake = *n->right;
+				fake.op = Otstruct;
+				fake.left = tg->right;
+				ft = stype(&fake);
+				tag->ty->ids = ft->ids;
+			}
+			tag->ty->tof = t;
+			tag->ty->decl = tag;
+			tag->dot = d;
+			if(tags == nil)
+				tags = tag;
+			else
+				last->next = tag;
+			last = tag;
+			if(p->op != Oseq)
+				break;
+		}
+		t->tags = tags;
+	}
+	if(n->aux != nil){
+		/* type parameters present — mark as poly for later mono */
+		USED(n->aux);
+	}
+	d->ty = t;
+	t->decl = d;
+	sizetype(t);
+	teqclass(t);
+}
+
+static void
+vardec(Node *n)
+{
+	Decl *d;
+	Type *t;
+	Node *names, *id;
+
+	t = nil;
+	if(n->right != nil)
+		t = stype(n->right);
+	if(n->aux != nil){
+		Type *it;
+
+		it = echk(n->aux);
+		if(t == nil)
+			t = it;
+		else if(!assignable(t, it, n->aux))
+			nerror(n, "cannot initialize %T from %T", t, it);
+	}
+	if(t == nil){
+		nerror(n, "variable needs a type");
+		t = terror;
+	}
+	for(names = n->left; names != nil; names = names->right){
+		id = names;
+		if(names->op == Oseq)
+			id = names->left;
+		d = mkdecl(&id->src, Dglobal, t);
+		d->sym = id->sym;
+		d->init = n->aux;
+		d->dot = impdecl;
+		install(d);
+		d->link = nil;
+		if(moduledecls == nil)
+			moduledecls = d;
+		else{
+			Decl *e;
+
+			for(e = moduledecls; e->link != nil; e = e->link)
+				;
+			e->link = d;
+		}
+		if(names->op != Oseq)
+			break;
+	}
+}
+
 static void
 fndecl(Node *n)
 {
@@ -809,9 +1344,16 @@ fndecl(Node *n)
 		nerror(n, "methods not yet supported");
 		return;
 	}
+	if(n->aux == nil){
+		nerror(n, "function requires a body (interfaces belong in .ei files)");
+		return;
+	}
 	t = stype(n->right);
 	t->ok |= OKverify;
 	sizetype(t);
+	for(d = t->ids; d != nil; d = d->next)
+		sizetype(d->ty);
+	sizetype(t->tof);
 	d = mkdecl(&n->src, Dfn, t);
 	d->sym = n->left->sym;
 	d->init = n;
@@ -883,10 +1425,10 @@ check(Node *tree)
 			break;
 		}
 		case Ovardecl:
-			nerror(decl, "module variables not yet supported");
+			vardec(decl);
 			break;
 		case Otypedecl:
-			nerror(decl, "type declarations not yet supported");
+			typedec(decl);
 			break;
 		default:
 			nerror(decl, "unsupported declaration %O", decl->op);
@@ -900,24 +1442,29 @@ check(Node *tree)
 		return;
 
 	/*
-	 * module interface: all top level functions are exported
+	 * module interface: all top-level functions are exported.
+	 * chain the real fn decls so mkiface (via teqclass) can
+	 * build the Dis linkage table.
 	 */
 	impdecl->ty->ids = nil;
 	{
-		Decl *last, *dd;
+		Decl *last;
 
 		last = nil;
 		for(i = 0; i < nfns; i++){
-			dd = dupdecl(fns[i]);
-			dd->next = nil;
-			fns[i]->link = dd;	/* interface copy */
-			if(impdecl->ty->ids == nil)
-				impdecl->ty->ids = dd;
+			fns[i]->next = nil;
+			if(last == nil)
+				impdecl->ty->ids = fns[i];
 			else
-				last->next = dd;
-			last = dd;
+				last->next = fns[i];
+			last = fns[i];
 		}
 	}
+	sizetype(impdecl->ty);
+	teqclass(impdecl->ty);
+	/* export every top-level function from this module */
+	if(impdecl->ty->tof != nil)
+		impdecl->ty->tof->linkall = 1;
 
 	/*
 	 * second pass: check function bodies

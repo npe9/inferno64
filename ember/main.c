@@ -1,29 +1,49 @@
 #include "ember.h"
 
 /*
- * ember compiler driver.
+ * ember bootstrap compiler driver (C).
  *
- * the full pipeline is
+ *	parse -> typecheck -> lower -> .dis
  *
- *	parse -> resolve -> typecheck -> elaborate -> core ir -> lower -> dis
+ * this tree is the bootstrap, matching limbo/.  the lasting compiler
+ * is intended to be self-hosted as appl/cmd/ember/ *.e -> ember.dis.
  *
- * milestone 1 implements parse -> ast only.  ember compiles to
- * dis directly; the limbo compiler is used as a reference for
- * layout, signatures, and instruction selection, not linked in.
- *
- * usage: ember [-A] [-f] file.e ...
+ * usage: ember [-A] [-c] [-f] [-I path] [-o outfile] file.e
  *	-A	print the ast and exit
+ *	-c	typecheck only (no .dis)
+ *	-D name	dump the interface signature computed for decl "name"
  *	-f	abort on fatal errors (debugging)
+ *	-I	add a directory to the .ei interface search path
+ *	-o	output .dis path (default: replace .e with .dis)
  */
 
 static	int	toterrors;
 static	int	dumpast;
+static	int	checkonly;
+static	char	*outarg;
 
 static void
 usage(void)
 {
-	fprint(2, "usage: ember [-A] [-f] file.e ...\n");
+	fprint(2, "usage: ember [-A] [-c] [-D name] [-f] [-I path] [-o outfile] file.e\n");
 	exits("usage");
+}
+
+static char*
+defout(char *in)
+{
+	char *p, *o;
+	int n;
+
+	n = strlen(in);
+	o = allocmem(n + 5);
+	strcpy(o, in);
+	p = strrchr(o, '.');
+	if(p != nil && strchr(p, '/') == nil)
+		strcpy(p, ".dis");
+	else
+		strcat(o, ".dis");
+	return o;
 }
 
 static void
@@ -31,15 +51,45 @@ translate(char *in)
 {
 	Node *prog;
 	Biobuf bo;
+	char *out;
 
 	infile = in;
 	errors = 0;
 	tree = parse(in);
-	if(errors == 0 && dumpast && tree != nil){
+	if(tree == nil){
+		toterrors += errors;
+		return;
+	}
+	if(dumpast){
 		Binit(&bo, 1, OWRITE);
 		astprint(&bo, tree, 0);
 		Bterm(&bo);
+		toterrors += errors;
+		return;
 	}
+	check(tree);
+	if(errors){
+		toterrors += errors;
+		return;
+	}
+	if(checkonly){
+		toterrors += errors;
+		return;
+	}
+	out = outarg;
+	if(out == nil)
+		out = defout(in);
+	outfile = out;
+	bout = Bopen(out, OWRITE);
+	if(bout == nil){
+		fprint(2, "ember: can't write %s: %r\n", out);
+		errors++;
+		toterrors += errors;
+		return;
+	}
+	modcom();
+	Bterm(bout);
+	bout = nil;
 	prog = tree;
 	USED(prog);
 	toterrors += errors;
@@ -48,16 +98,41 @@ translate(char *in)
 void
 main(int argc, char *argv[])
 {
+	char *s;
 	int i;
 
 	lexinit();
+	typeinit();
+
+#ifdef INCPATH
+	addincpath(INCPATH);
+#endif
 
 	ARGBEGIN{
 	case 'A':
 		dumpast = 1;
 		break;
+	case 'c':
+		checkonly = 1;
+		break;
 	case 'f':
 		isfatal = 1;
+		break;
+	case 'I':
+		s = ARGF();
+		if(s == nil)
+			usage();
+		addincpath(s);
+		break;
+	case 'D':
+		signdump = ARGF();
+		if(signdump == nil)
+			usage();
+		break;
+	case 'o':
+		outarg = ARGF();
+		if(outarg == nil)
+			usage();
 		break;
 	default:
 		usage();
@@ -66,6 +141,10 @@ main(int argc, char *argv[])
 
 	if(argc == 0)
 		usage();
+	if(argc > 1 && outarg != nil){
+		fprint(2, "ember: -o with multiple files\n");
+		exits("usage");
+	}
 	for(i = 0; i < argc; i++){
 		if(argc > 1)
 			print("%s:\n", argv[i]);

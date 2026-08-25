@@ -33,6 +33,7 @@ static	int	addrmode[Rend] =
 static	Decl	*wtemp;
 static	Decl	*bigtemp;
 static	int	ntemp;
+static	Node	retnode;
 static	Inst	zinst;
 
 	int	*blockstack;
@@ -43,6 +44,18 @@ static	int	lenblockstack;
 void
 genstart(void)
 {
+	Decl *d;
+
+	d = mkdecl(&nosrc, Dlocal, tint);
+	d->sym = enter(".ret", 0);
+	d->offset = IBY2WD * REGRET;
+
+	retnode = znode;
+	retnode.op = Oname;
+	retnode.addable = Rreg;
+	retnode.decl = d;
+	retnode.ty = tint;
+
 	zinst.op = INOP;
 	zinst.sm = Anone;
 	zinst.dm = Anone;
@@ -55,6 +68,52 @@ genstart(void)
 	blocks = -1;
 	blockdep = 0;
 	nblocks = 0;
+}
+
+Node*
+retalloc(Node *n, Node *nn)
+{
+	if(nn->ty == tnone)
+		return nil;
+	*n = znode;
+	n->op = Oind;
+	n->addable = Radr;
+	n->left = mkn(Oname, nil, nil);
+	*n->left = retnode;
+	n->left->src = n->src;
+	n->ty = nn->ty;
+	return n;
+}
+
+/*
+ * peel Tiface globals into *dd for the HASLDT section; return the rest.
+ */
+Decl*
+resolveldts(Decl *d, Decl **dd)
+{
+	Decl *d1, *ld1, *d2, *ld2, *n;
+
+	d1 = d2 = nil;
+	ld1 = ld2 = nil;
+	for(; d != nil; d = n){
+		n = d->next;
+		d->next = nil;
+		if(d->ty != nil && d->ty->kind == Tiface){
+			if(d2 == nil)
+				d2 = d;
+			else
+				ld2->next = d;
+			ld2 = d;
+		}else{
+			if(d1 == nil)
+				d1 = d;
+			else
+				ld1->next = d;
+			ld1 = d;
+		}
+	}
+	*dd = d2;
+	return d1;
 }
 
 int
