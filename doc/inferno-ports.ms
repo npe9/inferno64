@@ -2090,6 +2090,156 @@ itself to catch the first moment
 .CW up
 stops being 8-byte aligned.
 .NH 1
+Found: the misalignment, real and deterministic, not a race
+.PP
+The instrumentation was added.  It fired on every single boot, before
+any panic, with the same two numbers every time:
+.RS
+.nf
+.CW "sched: up misaligned 0x6ec2054 index 0 runproc-caller 0x111fd8"
+.CW "sched: up misaligned 0x6ec32b4 index 1 runproc-caller 0x111fd8"
+.fi
+.RE
+.CW index
+here is
+.CW "p - procalloc.arena" ,
+plain C pointer subtraction \- and it is exactly
+.CW 0
+and
+.CW 1 .
+.CW p
+genuinely is
+.CW &procalloc.arena[0]
+and
+.CW &procalloc.arena[1] ;
+the array indexing is not the problem.  The base of the array itself
+is misaligned, on every boot, identically.  That is not a race
+signature \- that is a deterministic bug that a race had been
+mistaken for, because it only produces a fault when whatever reads
+the misaligned pointer later happens to care.
+.PP
+.CW procalloc.arena
+comes from
+.CW xalloc()
+in
+.CW port/xalloc.c ,
+which carves blocks out of a hole list and returns a pointer to a
+private
+.CW Xhdr 's
+.CW data
+member:
+.RS
+.nf
+.CW "struct Xhdr {"
+.CW "	u64	size;"
+.CW "	u32	magix;"
+.CW "	char	data[1];"
+.CW "};"
+.fi
+.RE
+.CW size
+is 8 bytes,
+.CW magix
+is 4:
+.CW data
+begins at byte offset 12 from the header.  The header itself sits on
+an address that
+.CW xallocz()
+keeps rounded to
+.CW BY2V
+(the machine's word size) by rounding the total request
+.RB ( "size\ +=\ BY2V\ +\ sizeof(Xhdr);\ size\ &=\ ~(BY2V-1);" )
+before carving it off the hole \- so the header is always
+.CW BY2V
+\-aligned.  On a 32-bit port,
+.CW BY2V
+is 4, and 12 is already a multiple of 4:
+.CW data
+comes out aligned by construction, and this code has apparently been
+fine on every board this tree has run on until now.  On
+.CW pc64 ,
+.CW BY2V
+is 8, and 12 is not a multiple of 8:
+.CW data
+always comes out 4 bytes short of 8-byte alignment, unconditionally,
+for
+.I every
+.CW xalloc()
+call on this board \- procs, and anything else that goes through it.
+This is the 32-to-64-bit assumption this tree keeps tripping over,
+just in a header layout instead of a
+.CW long .
+.PP
+The fix pads the header:
+.RS
+.nf
+.CW "struct Xhdr {"
+.CW "	u64	size;"
+.CW "	u32	magix;"
+.CW "	u32	pad;"
+.CW "	char	data[1];"
+.CW "};"
+.fi
+.RE
+16 bytes, a multiple of 8 on this board and still a multiple of 4 on
+every 32-bit one, so nothing there regresses.
+.CW port/xalloc.c
+is shared code, not board-specific, and no other caller assumes
+.CW sizeof(Xhdr)
+is 12 anywhere in this tree.
+.PP
+Rebuilt clean (the diagnostic print removed, only the header padding
+kept) and run ten times.  Zero of ten hit the misalignment print;
+zero hit the GC/heap general protection violation that this whole
+investigation started from \- a real change, since the pre-fix
+sessions immediately above this one hit that panic on roughly half
+of every batch that reached this far.  One of ten hit a new,
+different panic:
+.RS
+.nf
+.CW "alloc:D2B: 784c2b8 in heap: in free blk at 784c298 ..."
+.CW "panic: alloc:D2B 784c2b8 (from 2bdbb4/319af8)"
+.fi
+.RE
+this is the
+.I pool
+allocator's own consistency check
+.RB ( os/inferno/port/alloc.c ,
+.CW "heapmem / mainmem" ,
+a wholly separate header family from
+.CW xalloc() 's
+.CW Xhdr ) ,
+correctly catching a pointer into a block already marked free \- a
+real, still-open bug, but a different and better-behaved one: it is
+caught by name at a checked boundary instead of silently corrupting
+memory until something faults at random.  Whether it predates this
+fix and was simply never reached, or is newly exposed by it, is not
+yet known.  One of ten got further than any capture in this entire
+document: past
+.CW "spawn\ sh\ -n\ /dis/init"
+to
+.RS
+.nf
+.CW "mount: can't load /dis/lib/dial.dis:"
+.fi
+.RE
+with an empty exception string \- new territory, not yet chased.  The
+remaining eight of ten sat idle at
+.CW "spawn\ sh\ -n\ /dis/init"
+through the observation window, the same point every boot in this
+document reaches before whatever happens next \- so the original
+stall this document opened with is
+.B not
+resolved by this fix; what changed is that the wild-pointer panic
+that had been competing with it for which failure showed up first is
+now gone, or nearly so, in ten runs.
+.PP
+Not committing the
+.CW sched()
+diagnostic print itself \- it did its job.  The
+.CW Xhdr
+padding is the fix, and is what is committed.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no

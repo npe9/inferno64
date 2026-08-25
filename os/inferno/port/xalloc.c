@@ -29,6 +29,14 @@ struct Xhdr
 {
 	u64	size;
 	u32	magix;
+	u32	pad;	/* size+magix is 12 bytes; on a 64-bit port (BY2V==8)
+			 * that leaves data mis-aligned by 4 against every
+			 * caller expecting an 8-byte-aligned block (Proc,
+			 * any struct holding a pointer or uintptr).  Was
+			 * silently fine on 32-bit ports (BY2V==4), where 12
+			 * is already a multiple of 4.  Padding the header to
+			 * 16 bytes keeps data BY2V-aligned on both.
+			 */
 	char	data[1];
 };
 
