@@ -1694,14 +1694,27 @@ than on a userland that does not.  An interrupt already gives a
 container a semaphore it selects on: ospreyticksem for the clock,
 ospreyuartsem for the uart, ospreyethersem for a packet, and the uart's
 output is already staged for a task to drive.  Device memory is already
-lent to a container through a Physseg.  What remains is to write the
-driver as a task that selects on its interrupt's semaphore and reaches
-its registers through that mapping or a served read, in the order the
-review set: rtc first, because it proves register access from a task
-with no interrupt to complicate it; then uart, which proves the whole
-interrupt-to-semaphore-to-task path for a real driver; then cons last,
-and cons never fully leaves, because the bare console above stays in the
-kernel as the panic path.
+lent to a container through a Physseg.  Reading the device to plan the driver tasks turned up that one of them
+is already built and tested.  The osprey device carries a uart command,
+documented in osprey(3) and exercised by the Plan 9 check, that binds a
+uart to a container: the container's task selects on the semaphore the
+uart's interrupt gives and drives the port through the kernel's thin
+uart primitive - intrmask, the staged send - rather than by touching
+registers itself.  That is the paper's driver-as-a-task, and it settles
+the model this kernel uses: not seL4's map-the-registers-into-userspace,
+but a thin register primitive kept in the kernel with the driver policy -
+when to read, when to write, how to buffer - run as a container task
+above it.  It is the more honest shape for a kernel whose tasks migrate,
+because a mapped register is pinned to a machine and a served primitive
+is not.
+.PP
+So the uart driver task exists.  What remains of Cut B is to use it: to
+have the microkernel run a container as its console's driver rather than
+the kernel's own devcons path, and to do the same for the clock, whose
+interrupt already gives a container a semaphore through ospreyticksem.
+The register primitives and the bare panic console stay in the kernel;
+the policy moves out.  That is a build on a mechanism that is already
+proven, and it is where Cut B goes next.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
