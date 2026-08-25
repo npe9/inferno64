@@ -17,6 +17,8 @@ TARG=\
 	factortest.dis\
 	crc32.dis\
 	crc32test.dis\
+	split.dis\
+	splittest.dis\
 
 MODULES=\
 

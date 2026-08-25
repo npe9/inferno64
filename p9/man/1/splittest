@@ -1,0 +1,68 @@
+.TH SPLITTEST 1
+.SH NAME
+splittest \- regression test for split(1)
+.SH SYNOPSIS
+.B splittest
+.SH DESCRIPTION
+.I Splittest
+loads
+.BR /p9/dis/split.dis 's
+in-process test seam,
+.BR run(args) ,
+and checks it against golden output for: default sequential splitting,
+.BR -e 's
+capture-group and no-capture-group forms, that a line before the first
+pattern match is silently dropped,
+.BR -x ,
+.BR -i 's
+effect on both matching and the resulting captured filename's case, and
+that
+.B -s
+only affects capture-group-derived filenames, not sequential ones.
+.PP
+Unlike most
+.B p9/cmd
+tests,
+.IR split 's
+whole job is creating real files, so this test drives it entirely
+with real files: it writes a real input file, calls
+.BR run 's
+seam with a real trailing file operand, reads the resulting output
+files back, and removes every file it created (input and output alike)
+when done, whether or not anything failed.
+.PP
+Every case was checked against
+.BR plan9port 's
+real
+.I split
+binary first (this tree's local checkout \(em see
+.IR split (1)'s
+BUGS for why plan9port, not 9front, is the reference for this specific
+file), not assumed from reading
+.BR split.b .
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/splittest.b
+.SH SEE ALSO
+.IR split (1)
+.SH BUGS
+Runs
+.I split
+in-process via its
+.B run
+seam, which is exactly
+.IR split 's
+own post-argv0 argument handling \(em so it does exercise real option
+parsing and real file creation, but not
+.IR split 's
+own
+.B init
+or its standard-input (no
+.I file
+argument) path, neither of which
+.B run
+goes through.

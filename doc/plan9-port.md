@@ -812,8 +812,41 @@ below.
     a middle tier; `file`/`tar` are `dc.c`-sized undertakings, not a
     quick pass.
 
-    **`split.c` investigated, not yet translated - a real finding, not
-    a completed port.** Reading it found a genuine, confirmed divergence
+    **`p9/cmd/split.b` - done**, resolving the finding below with
+    explicit direction: use plan9port as the reference when a 9front/
+    plan9port divergence can't be independently verified. Translated
+    from plan9port's copy of `split.c`, not 9front's, per that
+    direction - the finding below is what made that a deliberate choice
+    rather than an accident. Full CLI (`-n`/`-l`, `-e` in both its
+    capture-group and no-group forms, `-f`/`-s`, `-x`, `-i`, the
+    sequential `aa`/`ab`/.../`zz` suffix naming) translated, including
+    the confirmed-real "line before the first pattern match is silently
+    dropped" behaviour (see below) and `openf()`'s own "grep" - not
+    "split" - typo, preserved rather than corrected. Regex matching and
+    submatch extraction use this tree's own existing `regex(2)` module
+    (`module/regex.m`'s `execute`/`executese`, already Inferno-native,
+    not built for this translation) - its submatch array is index-0-
+    whole-match/index-1-first-group, the same convention as `Resub`,
+    confirmed against this tree's own `sed.b`/`grep.b` usage rather than
+    guessed at. `-i`'s case-folding was confirmed (not assumed) to
+    affect the resulting *captured filename's* case too, not just
+    matching, since match positions are computed against the folded
+    text and then sliced from it directly. `p9/cmd/splittest.b` (8
+    cases) drives it entirely with real files (a `run(args)` seam,
+    since split's whole job is creating files, the same shape as
+    `join.b`'s `runfiles`), all checked against plan9port's real
+    `split` binary first; confirmed with a negative control (broke the
+    sequential suffix increment so every split reused one file; the 3
+    cases exercising that path failed immediately and distinctly,
+    restored, 8/8 passed again). One real bug in the *translation*
+    itself, not the source, was caught in the same pass: the test
+    seam's `run()` assumed `bufio`/`regex` were already loaded, but
+    they're only loaded in `init()` - calling `run()` directly (as the
+    test does) hung the VM ("module not loaded") until `run()` was
+    given the same defensive self-load every other seam in this tree
+    already has.
+
+    **The underlying finding, unchanged: a genuine, confirmed divergence**
     between 9front's `sys/src/cmd/split.c` and plan9port's own copy of
     the same file (`diff`'d directly, not assumed): 9front's version
     declares its `Resub match[2]` *before* the pattern-mode loop, zeroes
@@ -839,14 +872,11 @@ below.
     related to the source itself) - so this finding rests on tracing
     unambiguous C semantics (a zeroed struct, a null-pointer check, a
     global pointer that is never itself reassigned), not on a live
-    binary the way `primes`/`factor`/`join`/`crc32` were each verified.
-    Flagged here rather than translated against unverified assumptions:
-    the next person picking this up should either get a real arm64 (or
-    otherwise working) 9front build to confirm this one behaviour
-    directly, or accept the hand-traced reasoning above and say so
-    explicitly in `split.b`'s header comment rather than silently
-    treating it as oracle-confirmed the way the others were. The
+    binary the way `primes`/`factor`/`join`/`crc32` were each verified -
+    resolved by translating plan9port's copy directly instead (item
+    above), per explicit direction that this is an acceptable oracle
+    for a 9front divergence that can't be verified independently. The
     remaining behaviour (default `-n` line-count mode, `-x`/`-i`,
     `nextfile()`'s sequential suffix naming, `openf()`'s own "grep" -
     not "split" - typo in its error message) is identical between the
-    two trees and does not carry this caveat.
+    two trees and never carried this caveat.

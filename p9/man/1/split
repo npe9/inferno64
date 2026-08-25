@@ -1,0 +1,134 @@
+.TH SPLIT 1
+.SH NAME
+split \- split a file into pieces, in Limbo
+.SH SYNOPSIS
+.B split
+[
+.BI -n\  num
+]
+[
+.BI -e\  exp
+]
+[
+.BI -f\  stem
+]
+[
+.BI -s\  suff
+]
+[
+.B -x
+]
+[
+.B -i
+]
+[
+.I file
+]
+.SH DESCRIPTION
+.I Split
+is a structural Limbo translation of Plan 9's
+.IR split (1),
+not a behavioral workalike \(em see
+.B doc/plan9-port.md
+in the source tree for the distinction, and for a real, confirmed
+divergence between two Plan 9 lineages on this specific file that this
+translation had to resolve (see BUGS). It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+With no
+.I file
+argument, standard input is split; otherwise
+.I file
+is.
+.PP
+In its default mode,
+.I split
+writes every
+.I num
+lines (default 1000, set by
+.B -n
+or its historic synonym
+.BR -l )
+of input to a new file, named by
+.I stem
+(default
+.BR x )
+followed by a two-letter suffix starting at
+.BR aa ,
+.BR ab ,
+.BR ac ,
+\&... up to
+.BR zz ;
+running out of suffixes stops splitting (reported once to standard
+error) rather than erroring.
+.PP
+.BI -e\  exp
+switches to pattern mode instead: each input line is checked against
+the regular expression
+.IR exp .
+If
+.I exp
+has a parenthesized group, a match starts a new file named by the
+matched text of that group (plus
+.BR -s 's
+suffix, if given) \(em
+.I stem
+is not used at all in this case. Without a group, a match instead
+starts a new
+.I stem
+-named file the same way the default mode does (so
+.B -s
+has no effect there either \(em it only ever applies to a group-derived
+name). Either way the matching line itself is included in the new
+file, unless
+.B -x
+is given, which drops it from both the old and new file's output.
+.B -i
+makes the match (and, when a group is used, the resulting filename)
+case-insensitive by folding both the pattern and each line to lower
+case before comparing.
+.SH SOURCE
+.B /p9/cmd/split.b
+(translated from
+.BR sys/src/cmd/split.c )
+.SH SEE ALSO
+.IR splittest (1)
+.SH BUGS
+This translation is of
+.BR plan9port 's
+copy of
+.BR split.c ,
+not 9front's - the two have genuinely diverged on this file (checked by
+diffing them, not assumed). 9front's copy opens a real default output
+file before reading any input in pattern mode; plan9port's does not, so
+in plan9port (and this translation) any input line
+.I before
+the first pattern match is silently dropped \(em no output file is open
+yet to receive it, and nothing reports this. Confirmed directly against
+the real plan9port binary. A live 9front binary to confirm its own
+(probably different, non-dropping) behaviour directly was not available
+on this machine (its plan9port libraries are x86_64-only, an
+environment limit); the choice to translate plan9port's copy here
+follows explicit direction to do so when a 9front/plan9port divergence
+cannot be independently verified.
+.PP
+.BR openf ()'s
+own error message on failing to create an output file says
+.RB \(lq grep \(rq,
+not
+.RB \(lq split \(rq
+\(em a real copy-paste typo in the original, preserved rather than
+corrected.
+.PP
+Regular-expression matching and submatch extraction use this tree's own
+.IR regex (2)
+module, an existing Inferno regex engine, not Plan 9's
+.IR regexp (2)
+reimplemented \(em the two are different implementations of a similar
+grammar, not guaranteed to agree on every edge case, though ordinary
+patterns (anchors, groups, character classes) behave the same.
