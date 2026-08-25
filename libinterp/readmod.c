@@ -69,6 +69,22 @@ readmod(char *path, Module *m, int sync)
 	n = kread(fd, code, length);
 	if(n != length) {
 		DBG("readmod kread failed on path %s length %d, read n %d\n", path, length, n);
+		/*
+		 * Every other failure exit in this function sets an error
+		 * string before falling through to done/done1 -- this one
+		 * didn't, so a caller reading %r after a load that failed
+		 * here (mntgen.b's badmodule() is exactly this pattern) saw
+		 * an empty string instead of a reason.  A short, positive n
+		 * is this function's own finding, with nothing upstream to
+		 * have set a message for it, so it gets one here.  n<0 is a
+		 * real kread error that should have left its own message in
+		 * up->errstr via error() -- except boot logs against this
+		 * exact call site have shown an empty %r on that path too
+		 * (loading string.dis, not this one's styx.dis), so that
+		 * assumption needs verifying, not trusting; not fixed here.
+		 */
+		if(n >= 0)
+			kwerrstr("short read loading module: got %d of %d bytes", n, length);
 		free(code);
 		code = nil;
 	}
