@@ -1521,15 +1521,56 @@ a ping from another machine through the hook, so
 .CW scripts/osprey-check-net.py
 passes nine of nine.
 .PP
-What is left to cut is named by what is kept.  And the always-linked port
-sources \-
+Swap and env are cut too, each as its own step: swap because the
+microkernel does not page, its five symbols defined as their real
+no-swap no-ops; env because an environment is a name-space thing kept in
+a library operating system.  The microkernel is six devices now \-
+.CW arch ,
+.CW cons ,
+.CW osprey ,
+.CW rtc ,
+.CW segment
+and
+.CW uart
+\- which is the four services, a console, and the clock.  The clock
+stays because it is the scheduler's, and because the AP-start path
+writes the warm-reset vector through it; taking it out would strand the
+scheduler's tick and the other processors, so it is not an extra to
+shed but the timekeeping the fourth service is built on.  Sixty-eight
+kilobytes of text against pc64's three and a half megabytes.
+.PP
+What is left is not a device but the always-linked port sources behind
+them:
 .CW chan.c ,
-.CW cache.c ,
+.CW pgrp.c ,
+.CW cache.c
+and
 .CW sysfile.c ,
-the swap and environment code \- are the Plan 9 name space and file
-machinery the paper puts in a library operating system, which the
-deepest cut removes from the kernel outright.  Each is a step with the
-same boot to test it on.
+which are the name space, the process groups the instruction named
+first, and the file machinery.  These are woven into the kernel, not
+bound to it through a device table: thirty-three uses of a process's
+.CW pgrp
+across the port layer, and the name resolution
+.CW chan.c
+does for every open.  The microkernel boot touches none of it \- a
+kernel task has a nil
+.CW pgrp
+and opens nothing \- so the code is linked and dormant rather than
+reached, which is why the boot stands with it present.  Removing it from
+the binary is the deep cut, and it is where cutting becomes writing a
+different
+.CW proc.c
+and
+.CW chan.c :
+the mkfile links one set of port sources into both configurations, so
+the microkernel cannot drop
+.CW pgrp.c
+while pc64 keeps it without the port source list becoming
+per-configuration, and the code that would go is entangled with the proc
+and segment code that stays.  That is the boundary the paper draws when
+it calls the microkernel unreachable from a Plan 9 kernel, reached now
+from the other side: the device personality is gone, and what remains is
+the name-space machinery itself.
 .NH 1
 The gaps, by why they are gaps
 .PP
