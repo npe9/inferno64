@@ -328,6 +328,7 @@ struct Type
 	Type	*tof;
 	Decl	*ids;
 	Decl	*tags;			/* tagged fields in an adt */
+	Decl	*meths;			/* adt methods, chained via Decl.link */
 	Case	*cse;			/* case or goto labels */
 	Type	*teq;			/* temporary equiv class for equiv checking */
 	Teq	*eq;			/* real equiv class */

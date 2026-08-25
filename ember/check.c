@@ -484,24 +484,79 @@ echk(Node *n)
 				}
 			}
 		}
-		t = echk(n->left);
-		if(t->kind == Tref)
-			t = t->tof;
-		if(t != nil && t->kind == Tadt){
-			Decl *id;
+		{
+			Type *bt;
+			int isref;
 
-			for(id = t->ids; id != nil; id = id->next)
-				if(id->sym == n->sym){
-					n->decl = id;
-					n->ty = id->ty;
-					return n->ty;
-				}
-			nerror(n, "%T has no field %s", t, n->sym->name);
+			bt = echk(n->left);
+			t = bt;
+			isref = bt != nil && bt->kind == Tref;
+			if(isref)
+				t = bt->tof;
+			if(t != nil && t->kind == Tadt){
+				Decl *id;
+
+				for(id = t->ids; id != nil; id = id->next)
+					if(id->sym == n->sym){
+						Node *off, *addr;
+						Type *fty;
+
+						fty = id->ty;
+						if(!isref){
+							/*
+							 * base.field where base is a
+							 * plain (non-ref) struct value:
+							 * needs an address-of an
+							 * arbitrary lvalue, which this
+							 * compiler doesn't have yet.
+							 */
+							nerror(n, "field access on value-typed %T not yet supported (use a ref receiver)", t);
+							n->ty = terror;
+							return n->ty;
+						}
+						/*
+						 * base.field, base : ref adt -> lower
+						 * to Oind(Oadd(base, $offset)), same
+						 * shape limbo/ecom.c's rewrite() builds
+						 * for Odot.  n->right (the parsed
+						 * field-name label) is discarded, not
+						 * reused, to keep this simple.
+						 */
+						off = mkconst(&n->src, id->offset);
+						off->ty = tint;
+						addr = mkn(Oadd, n->left, off);
+						addr->src = n->src;
+						addr->ty = tint;
+						n->op = Oind;
+						n->left = addr;
+						n->right = nil;
+						n->decl = id;
+						n->ty = fty;
+						return n->ty;
+					}
+				/*
+				 * not a field: maybe a bound method.  leaves n
+				 * as Odot (op unchanged) with n->decl set to
+				 * the Dfn; Ocall recognizes this shape and
+				 * desugars recv.m(args) -> m(recv, args) after
+				 * this returns -- no addressing rewrite needed
+				 * here since the receiver is just passed as an
+				 * ordinary argument, value or ref alike.
+				 */
+				for(id = t->meths; id != nil; id = id->link)
+					if(id->sym == n->sym){
+						n->decl = id;
+						n->ty = id->ty;
+						n->right = nil;
+						return n->ty;
+					}
+				nerror(n, "%T has no field or method %s", t, n->sym->name);
+				n->ty = terror;
+				return n->ty;
+			}
+			nerror(n, "field selection on %T", t);
 			n->ty = terror;
-			return n->ty;
 		}
-		nerror(n, "field selection on %T", t);
-		n->ty = terror;
 		return n->ty;
 	case Ocall: {
 		Node *a;
@@ -551,6 +606,31 @@ echk(Node *n)
 				nerror(n, "call of a non-function");
 			n->ty = terror;
 			return n->ty;
+		}
+
+		/*
+		 * bound method: n->left is still Odot (echk's Odot case
+		 * leaves it that way when the name resolved to a method,
+		 * not a field), with n->left->decl the Dfn and
+		 * n->left->left the receiver expression.  Desugar
+		 * recv.m(args) into m(recv, args) so the rest of Ocall,
+		 * and all of com.c, see an ordinary local call -- the
+		 * callee's Tfn already has the receiver as ids[0]
+		 * (fndecl prepended it).
+		 */
+		if(n->left->op == Odot && n->left->decl != nil && n->left->decl->store == Dfn){
+			Decl *meth;
+			Node *recvexpr, *callee;
+
+			meth = n->left->decl;
+			recvexpr = n->left->left;
+			n->right = mkseq(recvexpr, n->right);
+			callee = mkn(Oname, nil, nil);
+			callee->src = n->left->src;
+			callee->sym = meth->sym;
+			callee->decl = meth;
+			callee->ty = meth->ty;
+			n->left = callee;
 		}
 
 		/* check fixed args */
@@ -1177,6 +1257,57 @@ stchk(Node *n)
 		case Obreak:
 		case Ocont:
 			return;
+		case Ovardecl: {
+			Type *vt;
+			Node *names, *id;
+			Decl *d;
+
+			vt = nil;
+			if(n->right != nil)
+				vt = stype(n->right);
+			if(n->aux != nil){
+				Node *it;
+
+				it = echk(n->aux);
+				if(vt == nil)
+					vt = it;
+				else if(!assignable(vt, it, n->aux))
+					nerror(n, "cannot initialize %T from %T", vt, it);
+			}
+			if(vt == nil){
+				nerror(n, "variable needs a type");
+				vt = terror;
+			}
+			sizetype(vt);
+			for(names = n->left; names != nil; names = names->right){
+				id = names;
+				if(names->op == Oseq)
+					id = names->left;
+				d = mkdecl(&id->src, Dlocal, vt);
+				d->sym = id->sym;
+				d->init = n->aux;
+				install(d);
+				id->decl = d;
+				id->ty = vt;
+
+				/* record the local on the current function
+				 * (link, not next) -- same bookkeeping as
+				 * daschk's, above. */
+				d->link = nil;
+				if(curfn->locals == nil)
+					curfn->locals = d;
+				else{
+					Decl *e;
+
+					for(e = curfn->locals; e->link != nil; e = e->link)
+						;
+					e->link = d;
+				}
+				if(names->op != Oseq)
+					break;
+			}
+			return;
+		}
 		case Oret:
 			if(n->left == nil){
 				if(curret != tnone)
@@ -1337,29 +1468,65 @@ vardec(Node *n)
 static void
 fndecl(Node *n)
 {
-	Decl *d;
-	Type *t;
+	Decl *d, *rd;
+	Type *t, *rt, *bt;
+	Node *nm, *recv;
+	Sym *fsym;
 
-	if(n->left->op == Omethod){
-		nerror(n, "methods not yet supported");
-		return;
+	nm = n->left;
+	recv = nil;
+	fsym = nm->sym;
+	bt = nil;
+	if(nm->op == Omethod){
+		recv = nm->left;
+		fsym = nm->right->sym;
 	}
 	if(n->aux == nil){
 		nerror(n, "function requires a body (interfaces belong in .ei files)");
 		return;
 	}
 	t = stype(n->right);
+	if(recv != nil){
+		/*
+		 * a method's receiver is just its first argument,
+		 * prepended to the parameter list stype() already built;
+		 * the body then sees it as an ordinary bound name (no
+		 * special-casing needed there).  recv.m(args) at call
+		 * sites desugars to m(recv, args) in Ocall, below.
+		 */
+		rt = stype(recv->right);
+		bt = rt;
+		if(bt->kind == Tref)
+			bt = bt->tof;
+		if(bt->kind != Tadt){
+			nerror(n, "receiver type must be a struct or ref struct, not %T", rt);
+			return;
+		}
+		rd = mkdecl(&recv->left->src, Darg, rt);
+		rd->sym = recv->left->sym;
+		rd->implicit = 1;
+		rd->next = t->ids;
+		t->ids = rd;
+	}
 	t->ok |= OKverify;
 	sizetype(t);
 	for(d = t->ids; d != nil; d = d->next)
 		sizetype(d->ty);
 	sizetype(t->tof);
 	d = mkdecl(&n->src, Dfn, t);
-	d->sym = n->left->sym;
+	d->sym = fsym;
 	d->init = n;
 	d->offset = idoffsets(t->ids, MaxTemp, IBY2WD);
-	d->dot = impdecl;
-	install(d);
+	if(recv != nil){
+		/* exported as "Type.method" (disw.c:dismod), not installed
+		 * into ordinary scope: only recv.m(...) can reach it. */
+		d->dot = bt->decl;
+		d->link = bt->meths;
+		bt->meths = d;
+	}else{
+		d->dot = impdecl;
+		install(d);
+	}
 
 	if(nfns >= lenfns){
 		lenfns = nfns + 32;

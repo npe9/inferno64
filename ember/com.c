@@ -200,17 +200,57 @@ sumark(Node *n)
 		}
 		break;
 	case Oind:
-		if(left->addable == Rreg)
+		/*
+		 * ind() column of limbo/ecom.c's addressability table
+		 * (sumark's comment there); ember's port only had the
+		 * Rreg/Rmreg rows, which is enough for a bare *p but not
+		 * for *(p+offset) -- i.e. p.field on a ref receiver, which
+		 * lowers to Oind(Oadd(p, $offset)) in check.c's Odot case.
+		 */
+		switch(left->addable){
+		case Rreg:
 			n->addable = Radr;
-		else if(left->addable == Rmreg)
+			break;
+		case Rmreg:
 			n->addable = Rmadr;
+			break;
+		case Rareg:
+			n->addable = Rreg;
+			break;
+		case Ramreg:
+			n->addable = Rmreg;
+			break;
+		case Raadr:
+			n->addable = Radr;
+			break;
+		case Ramadr:
+			n->addable = Rmadr;
+			break;
+		}
 		break;
 	case Oadd:
+		/* "almost addressable" rows of the same table */
 		if(right != nil && right->addable == Rconst){
-			if(left->addable == Rreg || left->addable == Rareg)
+			switch(left->addable){
+			case Rareg:
 				n->addable = Rareg;
-			else if(left->addable == Raadr)
+				break;
+			case Ramreg:
+				n->addable = Ramreg;
+				break;
+			case Rreg:
 				n->addable = Raadr;
+				break;
+			case Rmreg:
+				n->addable = Ramadr;
+				break;
+			case Raadr:
+				n->addable = Raadr;
+				break;
+			case Ramadr:
+				n->addable = Ramadr;
+				break;
+			}
 		}
 		break;
 	case Olen:
@@ -559,18 +599,31 @@ ecom(Src *src, Node *nto, Node *n)
 	case Orsh:
 		if(nto == nil)
 			nto = talloc(&tres, n->ty, nil);
-		if(right->addable < Ralways){
-			if(left->addable >= Rcant)
-				left = eacom(left, &tl, nto);
-		}else if(left->temps <= right->temps){
-			right = ecom(&right->src, talloc(&tr, right->ty, nil), right);
-			if(left->addable >= Rcant)
-				left = eacom(left, &tl, nto);
+		/*
+		 * Dis binary ops compute d = m OP s, and s and m are not
+		 * symmetric: m can't be Radr/Rmadr (genop/genrawop reject
+		 * Afpind/Ampind there -- the ISA has no double-indirect
+		 * middle operand), so it's *left*, not right, that must be
+		 * forced through a real ecom (materializing it into a
+		 * plain register) whenever it isn't trivially addressable;
+		 * right tolerates Radr/Rmadr fine and only needs eacom's
+		 * lighter touch.  Matches limbo/ecom.c's ecom() here
+		 * (limbo checks left->addable < Ralways, not right's) --
+		 * this port had them swapped, which worked until something
+		 * (a ref receiver's field read) actually produced a
+		 * Radr-addressable left operand.
+		 */
+		if(left->addable < Ralways){
+			if(right->addable >= Rcant)
+				right = eacom(right, &tr, nto);
+		}else if(right->temps <= left->temps){
+			left = ecom(&left->src, talloc(&tl, left->ty, nto), left);
+			if(right->addable >= Rcant)
+				right = eacom(right, &tr, nil);
 		}else{
-			left = eacom(left, &tl, nil);
-			right = ecom(&right->src, talloc(&tr, right->ty, nil), right);
+			right = eacom(right, &tr, nto);
+			left = ecom(&left->src, talloc(&tl, left->ty, nil), left);
 		}
-		/* Dis binary ops compute d = m OP s */
 		genop(src, n->op, right, left, nto);
 		tfree(&tl);
 		tfree(&tr);
@@ -767,6 +820,27 @@ scom(Node *n)
 			ecom(&n->src, n->left, n->right);
 			popblock();
 			return;
+		case Ovardecl: {
+			Node *names, *id;
+
+			/* no initializer: the frame slot already reads as
+			 * the zero value (IFRAME clears the new frame). */
+			if(n->aux == nil)
+				return;
+			for(names = n->left; names != nil; names = names->right){
+				id = names;
+				if(names->op == Oseq)
+					id = names->left;
+				pushblock();
+				sumark(n->aux);
+				sumark(id);
+				ecom(&id->src, id, n->aux);
+				popblock();
+				if(names->op != Oseq)
+					break;
+			}
+			return;
+		}
 		case Oaddas: case Osubas: case Omulas: case Odivas: case Omodas:
 		case Oandas: case Ooras: case Oxoras: case Olshas: case Orshas:
 			pushblock();
