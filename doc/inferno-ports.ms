@@ -2628,6 +2628,131 @@ entry to whatever
 call preceded each one, not a scheduler-wide dump, to avoid repeating
 this section's own crash.
 .NH 1
+A candidate mechanism: devproc.c doesn't know its own wait qid
+.PP
+Took the narrower approach that closing paragraph asked for, but
+smaller still: instead of guessing which
+.CW release()
+call site to watch, extended the
+.CW vmachine()
+idle print from the previous section to call the tree's own
+.CW wmtracedump()
+\- capped at 3 entries, not the full 256, and fired at most twice \-
+for every
+.CW Prelease
+Prog specifically, the three left unresolved there.  Low volume by
+design, to not repeat that section's self-inflicted crash.
+.PP
+It didn't get far enough to resolve which of pid 1/3/6 is which
+before something else interrupted the run, but what printed first is
+its own answer, unprompted:
+.RS
+.nf
+.CW "unknown qid in procwread"
+.CW "sh panic: error on wait read: "
+.fi
+.RE
+The first line is
+.CW devproc.c 's
+own
+.CW procwread() ,
+printing exactly what it says on a qid its second dispatch switch
+doesn't recognize.  The second is
+.CW sh.dis
+itself, not a kernel panic \- no register dump, no
+.CW dumpstack ,
+just
+.CW appl/cmd/sh/sh.b 's
+own
+.CW waitfor() :
+.RS
+.nf
+.CW "n := sys->read(ctxt.waitfd, buf, len buf);"
+.CW "if(n < 0)"
+.CW "	panic(sys->sprint(\(dqerror on wait read: %r\(dq));"
+.fi
+.RE
+.CW ctxt.waitfd
+comes from
+.CW waitfd() ,
+which opens
+.CW "#p/<pid>/wait"
+(falling back to
+.CW /prog/<pid>/wait )
+\- the per-process wait file every shell reads to reap the children it
+spawned for a pipeline or a background job.  Devproc.c's own
+directory table lists it correctly
+.RB ( "\(dqwait\(dq,\ {Qwait},\ 0,\ 0400" ) ,
+and there is a
+.CW case\ Qwait
+in
+.CW procread() 's
+.I first
+switch, well above the
+.I second
+switch's
+.CW default:
+that actually printed.  For that default to fire, the chan this read
+landed on has to carry some qid that is neither
+.CW Qwait
+nor any of the second switch's other named cases \- meaning either
+the open that produced
+.CW ctxt.waitfd
+didn't really resolve to the wait file's qid, or something between
+open and this particular read swapped what that fd refers to.  Not
+yet which.  This is the same neighbourhood \- fd/qid bookkeeping
+across a fork/spawn boundary \- as the fd-4 chase two major sections
+back in this document, though that one is fully explained and
+retracted as a red herring; this is a new instance, not a reopening
+of the old one.
+.PP
+Whether this is
+.I the
+mechanism behind the post-mount silence, or one more nondeterministic
+failure mode alongside the general-protection-violation panics and
+the pool and file-name faults already catalogued, is not settled by
+one occurrence: this exact message never appeared in any of the
+several earlier successful captures in the previous two sections,
+which reached the same settled
+.CW Prelease
+state without it.  What makes it worth recording ahead of settling
+that question: unlike a GPF at an opaque PC, this is a named,
+reproducible-looking mechanism with a source line on each end
+.RB ( devproc.c 's
+print, and
+.CW sh.b 's
+.CW waitfor() ) ,
+and
+.CW sh.b 's
+own
+.CW panic()
+would explain total silence afterward directly \- a shell that
+panics inside
+.CW waitfor()
+this early is a shell that stops running the rest of
+.CW /dis/init
+without any of this document's earlier theories (scheduler token
+loss, GC heap corruption, a correctly-blocked interactive prompt)
+needing to be true at all.
+.PP
+Next: reproduce this deliberately rather than wait for it \- print
+the qid actually carried by
+.CW ctxt.waitfd 's
+chan right where
+.CW procwread()
+hits its
+.CW default:
+case (already free, since that print already exists and already
+fires; the missing half is dumping the qid value alongside it), and
+separately check what
+.CW sh.b
+run created the child whose exit
+.CW waitfor()
+was reaping \- likely the
+.CW {mntgen}
+pipeline setup itself, which is exactly the kind of fork/pipe/fd
+juggling the earlier fd-4 chase was also chasing.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
