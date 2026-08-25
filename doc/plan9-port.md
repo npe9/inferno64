@@ -811,3 +811,42 @@ below.
     `split`/`iconv` are `crc32`-sized next candidates; `pr`/`patch` are
     a middle tier; `file`/`tar` are `dc.c`-sized undertakings, not a
     quick pass.
+
+    **`split.c` investigated, not yet translated - a real finding, not
+    a completed port.** Reading it found a genuine, confirmed divergence
+    between 9front's `sys/src/cmd/split.c` and plan9port's own copy of
+    the same file (`diff`'d directly, not assumed): 9front's version
+    declares its `Resub match[2]` *before* the pattern-mode loop, zeroes
+    it, and calls `matchfile(match)` once, unconditionally, before
+    reading any input; plan9port's version has no such call at all (its
+    `match` is declared fresh inside the loop). Tracing what that one
+    extra call does - `matchfile()` on an all-zero `Resub` always falls
+    through to `nextfile()`, which does a real `create()`/`Binit()` on
+    the global `Biobuf` `output` points at - means 9front's `split -e`
+    starts with a properly-initialised, open default output file
+    *before* the first input line is even read, while plan9port's
+    starts with an un-initialised static `Biobuf`. Confirmed against
+    the real plan9port `split` binary that this actually matters: lines
+    in the input *before* the first pattern match are silently dropped
+    entirely under plan9port (checked directly - they appear in no
+    output file at all), which the reasoning above says 9front's extra
+    call would not do - those lines should land in the first
+    default-named file instead. This could not be independently
+    confirmed against a live 9front binary - this machine's plan9port
+    build is x86_64-only (a native arm64 `9c`/`9l` compile of the actual
+    9front source, patched only for its `Resub` field-naming difference,
+    linked but failed at that architecture boundary, not for any reason
+    related to the source itself) - so this finding rests on tracing
+    unambiguous C semantics (a zeroed struct, a null-pointer check, a
+    global pointer that is never itself reassigned), not on a live
+    binary the way `primes`/`factor`/`join`/`crc32` were each verified.
+    Flagged here rather than translated against unverified assumptions:
+    the next person picking this up should either get a real arm64 (or
+    otherwise working) 9front build to confirm this one behaviour
+    directly, or accept the hand-traced reasoning above and say so
+    explicitly in `split.b`'s header comment rather than silently
+    treating it as oracle-confirmed the way the others were. The
+    remaining behaviour (default `-n` line-count mode, `-x`/`-i`,
+    `nextfile()`'s sequential suffix naming, `openf()`'s own "grep" -
+    not "split" - typo in its error message) is identical between the
+    two trees and does not carry this caveat.
