@@ -1,0 +1,23 @@
+# Apple Silicon: Cocoa graphics (CONF=emu-cocoa). Console: mk CONF=emu-g
+CONF=emu-cocoa
+COCOAOBJ=main-cocoa.$O
+COCOAFLAGS='-Dmain=emumain'
+
+# Redirect libc allocators to Inferno pool (GNU ld --wrap equivalent).
+# Mach-O C symbols get an extra leading underscore.
+LDFLAGS=\
+	-Wl,-alias,___wrap_malloc,_malloc\
+	-Wl,-alias,___wrap_mallocz,_mallocz\
+	-Wl,-alias,___wrap_free,_free\
+	-Wl,-alias,___wrap_realloc,_realloc\
+	-Wl,-alias,___wrap_calloc,_calloc
+
+SYSLIBS=\
+	-lm\
+	-lpthread\
+	-framework Cocoa\
+	-framework CoreFoundation\
+	-framework IOKit\
+	-framework AudioToolbox\
+
+

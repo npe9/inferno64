@@ -1,4 +1,27 @@
--	still interp mode only, jit not complete
--	mkfile uses Carbon only; mkfile-x11 uses X11R6 from Apple
--	both powerpc and x86 versions compiled from this source
--	mkfile-g doesn't include graphics (uses emu-g not emu as configuration)
+MacOSX arm64 (Apple Silicon)
+
+-	Default emu is Cocoa (`emu-cocoa`), installed as `MacOSX/arm64/bin/emu`
+-	JIT is on by default (`cflag=1`); use `-c0` for the interpreter
+-	arm64 JIT: IMCALL/IMFRAME/IINDC inlined; `das` for `-c4+`; mmap freed on unload
+-	User is `inferno` unless `/usr/<host-login>` exists under the Inferno root
+-	Default window 1024×768 (`-gWxH` to override); window is resizable
+-	Resize keeps softscreen fixed and scales the blit (aspect locked)
+-	Fullscreen: View → Enter Full Screen (⌃⌘F)
+-	`#A` audio via CoreAudio (`/dev/audio`, `/dev/audioctl`)
+-	IPv6 dual-stack (`ipif6-posix`)
+-	Console-only build: `mk CONF=emu-g install` → `emu-g` only (does not replace `emu`)
+
+Try:
+	emu wm/wm
+	emu -c0 wm/wm		# interpreter
+	emu -g1280x800 wm/wm
+
+Notes:
+-	Fresh binaries are ad-hoc codesigned on install (needed on modern macOS)
+-	1 Inferno pixel = 1 point; Retina uses layer contentsScale for sharp upscale
+-	FP exception traps are left off (Apple Silicon + host frameworks)
+-	386/power: Carbon `win.c`; `mkfile-x11` uses X11
+-	Host CFLAGS use `-O2` (`mkfiles/mkfile-MacOSX-arm64`)
+-	`libmemdraw` load/unload/line must use `sizeof(u32)` for `Memimage.width`
+	strides (not `sizeof(ulong)`); on LP64 the wrong stride smashed the image
+	pool and crashed `wm/colors` in `flushimage`
