@@ -67,6 +67,10 @@ collect && section == "misc"{
 collect && section == "port"{
 	sub(/^[ \t]*/, "");
 	port[nport++] = $0;
+	next;	# a collected port line is data, never a section header:
+		# without this, stripping the indent above lets a line whose
+		# first token contains dev/ip/link/misc/port fall through to
+		# the section rule below and silently truncate the config.
 }
 $0 ~ /^[^ \t]/{
 	if($1 ~ "(bootdir|dev|ip|link|misc|port)"){

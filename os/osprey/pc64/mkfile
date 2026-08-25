@@ -74,6 +74,7 @@ PORTOBJALL=\
 	tod.$O\
 	xalloc.$O\
 	userinit.$O\
+	kerncore.$O\
 	ospreyrt.$O\
 
 PORTOBJ=`{if [ "$CONF" = upc64 ]; then \

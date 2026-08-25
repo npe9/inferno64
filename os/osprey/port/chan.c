@@ -51,109 +51,6 @@ isdotdot(char *p)
 	return p[0]=='.' && p[1]=='.' && p[2]=='\0';
 }
 
-long
-incref(Ref *r)
-{
-	long old, new;
-
-	do {
-		old = r->ref;
-		new = old+1;
-	} while(!cmpswap(&r->ref, old, new));
-	return new;
-}
-
-long
-decref(Ref *r)
-{
-	long old, new;
-
-	do {
-		old = r->ref;
-		if(old <= 0)
-			panic("decref pc=%#p", getcallerpc(&r));
-		new = old-1;
-	} while(!cmpswap(&r->ref, old, new));
-	return new;
-}
-
-/*
- * Rather than strncpy, which zeros the rest of the buffer, kstrcpy
- * truncates if necessary, always zero terminates, does not zero fill,
- * and puts ... at the end of the string if it's too long.  Usually used to
- * save a string in up->genbuf;
- */
-void
-kstrcpy(char *s, char *t, int ns)
-{
-	int nt;
-
-	nt = strlen(t);
-	if(nt < ns){
-		memmove(s, t, nt);
-		s[nt] = '\0';
-		return;
-	}
-	/* too long, truncate */
-	nt = ns-1;
-	memmove(s, t, nt);
-	s[nt] = '\0';
-	/* append ... if there is space */
-	ns -= 4;
-	if(ns < 0)
-		return;
-	/* look for first byte of UTF-8 sequence by skipping continuation bytes */
-	while(ns>0 && (s[--ns]&0xC0)==0x80)
-		;
-	strcpy(s+ns, "...");
-}
-
-int
-emptystr(char *s)
-{
-	if(s == nil)
-		return 1;
-	if(s[0] == '\0')
-		return 1;
-	return 0;
-}
-
-/*
- * Atomically replace *p with copy of s
- */
-void
-kstrdup(char **p, char *s)
-{
-	int n;
-	char *t, *prev;
-
-	n = strlen(s);
-	/* if it's a user, we can wait for memory; if not, something's very wrong */
-	if(up != nil)
-		t = smalloc(n+1);
-	else{
-		t = malloc(n+1);
-		if(t == nil)
-			panic("kstrdup: no memory");
-	}
-	setmalloctag(t, getcallerpc(&p));
-	memmove(t, s, n);
-	t[n] = '\0';
-	prev = *p;
-	*p = t;
-	free(prev);
-}
-
-void
-chandevreset(void)
-{
-	int i;
-
-	todinit();	/* avoid later reentry causing infinite recursion */
-	for(i=0; devtab[i] != nil; i++)
-		devtab[i]->reset();
-}
-
 static void closeproc(void*);
 
 void
@@ -164,18 +61,6 @@ chandevinit(void)
 	for(i=0; devtab[i] != nil; i++)
 		devtab[i]->init();
 	kproc("closeproc", closeproc, nil);
-}
-
-void
-chandevshutdown(void)
-{
-	int i;
-	
-	/* shutdown in reverse order */
-	for(i=0; devtab[i] != nil; i++)
-		;
-	for(i--; i >= 0; i--)
-		devtab[i]->shutdown();
 }
 
 Chan*

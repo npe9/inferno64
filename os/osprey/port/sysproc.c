@@ -295,15 +295,6 @@ shargs(char *s, int n, char **ap, int nap)
 	return i;
 }
 
-ulong
-beswal(ulong l)
-{
-	uchar *p;
-
-	p = (uchar*)&l;
-	return (p[0]<<24) | (p[1]<<16) | (p[2]<<8) | p[3];
-}
-
 uvlong
 beswav(uvlong v)
 {
@@ -686,12 +677,6 @@ sysexec(va_list list)
 	if(up->hang)
 		up->procctl = Proc_stopme;
 	return execregs(entry, ssize, nargs);
-}
-
-int
-return0(void*)
-{
-	return 0;
 }
 
 uintptr
