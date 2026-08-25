@@ -159,7 +159,7 @@ disvar(long size, Decl *d)
 	ndatum = 0;
 
 	for(; d != nil; d = d->next)
-		if(d->store == Dglobal && d->init != nil)
+		if(d->store == Dglobal && d->init != nil && !d->runinit)
 			disdatum(d->offset, d->init);
 
 	disflush(-1, -1, 0);

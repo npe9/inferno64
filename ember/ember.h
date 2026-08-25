@@ -217,6 +217,7 @@ struct Decl
 	Decl	*importid;		/* identifier imported */
 
 	Node	*init;			/* data initialization */
+	uchar	runinit;		/* Dglobal: init isn't a compile-time constant -- disw.c's disdatum() can't encode it into the data section, so it needs real store code, emitted into entrydecl's prologue instead (com.c fncom) */
 	int	tref;			/* 1 => is a tmp; >=2 => tmp in use */
 	char	cycle;			/* can create a cycle */
 	char	cyc;			/* so labelled in source */

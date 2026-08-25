@@ -1790,7 +1790,16 @@ stchk(Node *n)
 			 */
 			if(n->left->op == Oseq && curret->kind == Ttuple)
 				n->left = mkn(Otuple, n->left, nil);
-			t = echk(n->left);
+			/*
+			 * "return Point{x: 1, y: 2}": same reasoning as
+			 * Ovardecl/vardec's composite-literal cases -- there's
+			 * somewhere to store this one, retalloc()'s destination
+			 * (com.c), so go through compositefields() directly
+			 * rather than echk()'s general Ocomposite case, which
+			 * still refuses a bare value with nowhere given to put
+			 * it.
+			 */
+			t = n->left->op == Ocomposite ? compositefields(n->left) : echk(n->left);
 			/*
 			 * echk's Otuple case builds a fresh Ttuple from the
 			 * actual value expressions (mktype(), no sizetype())
@@ -1945,7 +1954,18 @@ vardec(Node *n)
 	if(n->aux != nil){
 		Type *it;
 
-		it = echk(n->aux);
+		/*
+		 * "var origin = Point{x: 0, y: 0}": a value composite
+		 * literal is usable here the same way it is for Ovardecl's
+		 * local case -- through compositefields() directly, not
+		 * echk() (whose general Ocomposite case still refuses a
+		 * bare value) -- since this now has somewhere to store one:
+		 * a non-constant global initializer (which a composite
+		 * literal always is, having no Oconst shape of its own)
+		 * gets emitted as real code into entrydecl's prologue
+		 * (fncom(), com.c), below.
+		 */
+		it = n->aux->op == Ocomposite ? compositefields(n->aux) : echk(n->aux);
 		if(t == nil)
 			t = it;
 		else if(!assignable(t, it, n->aux))
@@ -1962,6 +1982,24 @@ vardec(Node *n)
 		d = mkdecl(&id->src, Dglobal, t);
 		d->sym = id->sym;
 		d->init = n->aux;
+		/*
+		 * disw.c's disdatum() encodes a global's initializer straight
+		 * into the module's data section -- but it does that by
+		 * blindly reading n->val/n->rval/n->decl->sym off whatever
+		 * node d->init is, fields that only mean anything on an
+		 * Oconst (or, recursively, a composite/tuple of them).  a
+		 * non-constant initializer -- a call, arithmetic on anything
+		 * but literals, anything with actual work to do at runtime
+		 * -- silently read garbage there instead of erroring: "var x
+		 * = five() + 1" compiled clean and read back 0 at runtime,
+		 * not 6.  mark it instead: disvar() (disw.c) skips a
+		 * runinit'd global's datum, and fncom() (com.c) emits it as
+		 * real store code in entrydecl's prologue, the same place
+		 * imports already get autoloaded before the user's own
+		 * init() body runs.
+		 */
+		if(n->aux != nil && n->aux->op != Oconst)
+			d->runinit = 1;
 		d->dot = impdecl;
 		install(d);
 		d->link = nil;

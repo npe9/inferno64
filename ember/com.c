@@ -876,8 +876,26 @@ ecom(Src *src, Node *nto, Node *n)
 		genrawop(src, INEWZ, mktn(at), nil, dst);
 		if(left->op == Ocomposite)
 			storecomposite(src, dst, left);
-		if(nto != nil && nto != dst)
+		if(nto != nil && nto != dst){
 			genmove(src, Mas, n->ty, dst, nto);
+			/*
+			 * dst was talloc(&tres, ...)'d above (the nto->addable
+			 * check that got here means nto itself couldn't serve
+			 * as dst directly); its value is now copied into nto,
+			 * so it's done -- never freeing it left every "ref
+			 * T{...}" landing anywhere but a plain fresh local
+			 * (e.g. "return ref T{...}", where nto is retalloc()'s
+			 * Oind(retnode), Radr not Rreg) leak a permanently
+			 * "in use" temp, caught by tdecls()'s end-of-function
+			 * tref==1 check ("temporary .tN has 1 references") --
+			 * untriggered until a composite literal was actually
+			 * used as a return value, not because it was rare, but
+			 * because every prior test happened to assign straight
+			 * into a fresh local, where dst and nto are the same
+			 * node and this branch is never taken at all.
+			 */
+			tfree(&tres);
+		}
 		return nto != nil ? nto : dst;
 	}
 	case Otuple: {
@@ -1251,8 +1269,24 @@ scom(Node *n)
 		case Oret:
 			pushblock();
 			if(n->left != nil){
-				sumark(n->left);
-				ecom(&n->src, retalloc(&tret, n->left), n->left);
+				if(n->left->op == Ocomposite){
+					/*
+					 * "return Point{x: 1, y: 2}": retalloc()'s
+					 * Oind(retnode) is the same genuine indirection
+					 * Otuple's ecom case (com.c) stores through --
+					 * retnode is the caller-supplied return address,
+					 * not a plain local -- so storecomposite() takes
+					 * retnode itself as its base, unwrapped, same as
+					 * that case does with its own nto->left.
+					 */
+					Node *dst;
+
+					dst = retalloc(&tret, n->left);
+					storecomposite(&n->src, dst->left, n->left);
+				}else{
+					sumark(n->left);
+					ecom(&n->src, retalloc(&tret, n->left), n->left);
+				}
 			}
 			genrawop(&n->src, IRET, nil, nil, nil);
 			popblock();
@@ -1455,6 +1489,42 @@ fncom(Decl *decl)
 				autoload(dl->d);
 	}
 	popblock();
+
+	if(decl == entrydecl){
+		/*
+		 * a module-level "var x = expr" whose expr isn't a compile-
+		 * time constant (vardec(), check.c, sets runinit for those
+		 * -- disw.c's disdatum() can only encode a literal into the
+		 * data section, not run code) gets its store emitted here,
+		 * in entrydecl's prologue: the same place imports already
+		 * get autoloaded before the user's own init() body runs, so
+		 * every global is set up before anything can observe it.
+		 */
+		for(d = moduledecls; d != nil; d = d->link){
+			Node *g;
+
+			if(!d->runinit)
+				continue;
+			pushblock();
+			g = mkn(Oname, nil, nil);
+			g->src = d->init->src;
+			g->decl = d;
+			g->ty = d->ty;
+			sumark(g);
+			if(d->init->op == Ocomposite){
+				Node *adr;
+
+				adr = mkn(Oadr, dupn(g), nil);
+				adr->src = g->src;
+				adr->ty = g->ty;
+				storecomposite(&g->src, adr, d->init);
+			}else{
+				sumark(d->init);
+				ecom(&g->src, g, d->init);
+			}
+			popblock();
+		}
+	}
 
 	scom(body);
 
