@@ -1591,6 +1591,47 @@ tasks \- the same driver-task work, not more device deletion \- and a
 bare panic console kept in the kernel the way seL4 keeps a debug putchar,
 because the kernel must be able to report a fault before any userspace
 driver exists.
+.NH 2
+The two large cuts: a plan
+.LP
+Two cuts remain, and they are not more of the device-list deletion that
+took the kernel from twenty-four devices to six.  Each is structural.
+.PP
+The first is the port-source cut, the name space and everything Plan 9
+built on it.  It is staged.  Stage one, done, cuts the process groups,
+the file system calls, the process system calls and the system-call
+trace formatter: pgrp.c, sysfile.c, sysproc.c and syscallfmt.c are no
+longer linked into the microkernel.  The subtlety that shaped it is that
+pgrp.c was not all name space.  Five of its functions \- newpgrp,
+newrgrp, closepgrp, closergrp and the resource wait \- are the lifecycle
+of a process's and a rendezvous's group and of waiting on a scarce
+resource, which the scheduler itself needs: proc.c's kproc makes a group
+and the rendezvous path locks one.  Those five moved into proc.c, where
+they belong, so both kernels still have them and only the microkernel
+loses the name-space half.  What the remaining linked code still names
+from the cut files \- the file-descriptor group, the mount operations,
+the system-call entry points \- is stubbed in the microkernel's own
+configuration as loud panics, because a kernel process holds no file
+group, opens no descriptor, mounts nothing and takes no system call, so
+none is reached; two utilities that are real, the byte swap the reboot
+path uses and the do-nothing sleep predicate the whole kernel uses, are
+kept as real code, not stubs.  Verified: the task still boots, its ring
+still answers, it still reaches idle, and pc64 is untouched at all
+fifty-eight of its checks.
+.PP
+Stage two is chan.c itself, the name resolution.  It is deeper because
+chan.c is not only name space: the device bring-up at boot, the
+reference counting the whole kernel uses, and the string and path
+helpers all live inside it, so cutting it means giving those a home the
+way the group lifecycle got one, and turning namec and the channel
+operations into panics.  That is the point the paper calls writing a
+different chan.c.
+.PP
+The second cut is the driver tasks, described above as the seL4 shape:
+cons, uart and rtc leave the kernel and become tasks that hold an
+interrupt and a mapping of their device's registers.  It is the larger
+build because it needs the userland those tasks run in, and it is taken
+up after the port-source cut is complete.
 .NH 1
 The gaps, by why they are gaps
 .PP

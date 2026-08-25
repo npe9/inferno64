@@ -103,5 +103,46 @@ port
 	void envcpy(Egrp *a, Egrp *b)		{ USED(a,b); }
 	char *getconfenv(void)			{ return nil; }
 
+	/*
+	 * The name space, the file syscalls and the process syscalls are
+	 * cut from this kernel: pgrp.c, sysfile.c and sysproc.c are not
+	 * linked.  A kernel process holds no file group, opens no file
+	 * descriptor, mounts nothing and takes no user system call, so the
+	 * name-space and syscall entry points below are never reached; a
+	 * panic marks it if the assumption ever fails.  The process,
+	 * rendezvous and resource-group lifecycle those files used to also
+	 * hold now lives in proc.c and is linked.
+	 */
+	void closefgrp(Fgrp *a)			{ USED(a); panic("microkernel: closefgrp"); }
+	Fgrp *dupfgrp(Fgrp *a)			{ USED(a); panic("microkernel: dupfgrp"); return nil; }
+	void forceclosefgrp(void)		{ panic("microkernel: forceclosefgrp"); }
+	int newfd(Chan *a, int b)		{ USED(a,b); panic("microkernel: newfd"); return -1; }
+	Chan *fdtochan(int a, int b, int c, int d){ USED(a,b,c,d); panic("microkernel: fdtochan"); return nil; }
+	int openmode(ulong a)			{ USED(a); panic("microkernel: openmode"); return 0; }
+	Mount *newmount(Chan *a, int b, char *c){ USED(a,b,c); panic("microkernel: newmount"); return nil; }
+	void mountfree(Mount *a)		{ USED(a); panic("microkernel: mountfree"); }
+	int donotify(Ureg *a)			{ USED(a); panic("microkernel: donotify"); return 0; }
+	int dosyscall(ulong a, Sargs *b, uintptr *c){ USED(a,b,c); panic("microkernel: dosyscall"); return 0; }
+
+	/*
+	 * beswal is a pure byte-swap the reboot path uses; it is real, not
+	 * a stub.  werrstr formatted an error into a user process's error
+	 * string, which a kernel process does not have, so it does nothing.
+	 */
+	ulong beswal(ulong l)
+	{
+		uchar *p;
+
+		p = (uchar*)&l;
+		return (p[0]<<24) | (p[1]<<16) | (p[2]<<8) | p[3];
+	}
+	void werrstr(char *a, ...)		{ USED(a); }
+
+	/*
+	 * return0 is the do-nothing sleep predicate the whole kernel uses;
+	 * it lived in the cut sysproc.c but is core, so it is real here.
+	 */
+	int return0(void *a)			{ USED(a); return 0; }
+
 bootdir
 	boot

@@ -2096,3 +2096,101 @@ pidfree(Proc *p)
 	p->pid = p->noteid = p->parentpid = 0;
 }
 
+
+/*
+ * Process, rendezvous and resource-group lifecycle.  These belong to the
+ * scheduler's process service, not to the name space; they were moved out
+ * of pgrp.c so a microkernel that carries no name space still creates and
+ * destroys the groups its kernel processes and rendezvous need.  The
+ * name-space group operations (pgrpcpy, the fd group, mounts) stay in
+ * pgrp.c and are absent from the microkernel.
+ */
+Pgrp*
+newpgrp(void)
+{
+	Pgrp *p;
+
+	p = malloc(sizeof(Pgrp));
+	if(p == nil)
+		error(Enomem);
+	p->ref = 1;
+	return p;
+}
+
+Rgrp*
+newrgrp(void)
+{
+	Rgrp *r;
+
+	r = malloc(sizeof(Rgrp));
+	if(r == nil)
+		error(Enomem);
+	r->ref = 1;
+	return r;
+}
+
+void
+closergrp(Rgrp *r)
+{
+	if(decref(r) == 0)
+		free(r);
+}
+
+void
+closepgrp(Pgrp *p)
+{
+	Mhead **h, **e, *f;
+	Mount *m;
+
+	if(decref(p))
+		return;
+
+	e = &p->mnthash[MNTHASH];
+	for(h = p->mnthash; h < e; h++) {
+		while((f = *h) != nil){
+			*h = f->hash;
+			wlock(&f->lock);
+			m = f->mount;
+			f->mount = nil;
+			wunlock(&f->lock);
+			mountfree(m);
+			putmhead(f);
+		}
+	}
+	free(p);
+}
+
+enum {
+	Whinesecs = 10,		/* frequency of out-of-resources printing */
+};
+
+void
+resrcwait(char *reason)
+{
+	static ulong lastwhine;
+	ulong now;
+	char *p;
+
+	if(up == nil)
+		panic("resrcwait: %s", reason);
+
+	p = up->psstate;
+	if(reason != nil) {
+		if(waserror()){
+			up->psstate = p;
+			nexterror();
+		}
+		up->psstate = reason;
+		now = seconds();
+		/* don't tie up the console with complaints */
+		if(now - lastwhine > Whinesecs) {
+			lastwhine = now;
+			print("%s\n", reason);
+		}
+	}
+	tsleep(&up->sleep, return0, 0, 100+nrand(200));
+	if(reason != nil) {
+		up->psstate = p;
+		poperror();
+	}
+}

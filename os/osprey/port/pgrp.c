@@ -22,61 +22,6 @@ nextmount(void)
 	return n;
 }
 
-Pgrp*
-newpgrp(void)
-{
-	Pgrp *p;
-
-	p = malloc(sizeof(Pgrp));
-	if(p == nil)
-		error(Enomem);
-	p->ref = 1;
-	return p;
-}
-
-Rgrp*
-newrgrp(void)
-{
-	Rgrp *r;
-
-	r = malloc(sizeof(Rgrp));
-	if(r == nil)
-		error(Enomem);
-	r->ref = 1;
-	return r;
-}
-
-void
-closergrp(Rgrp *r)
-{
-	if(decref(r) == 0)
-		free(r);
-}
-
-void
-closepgrp(Pgrp *p)
-{
-	Mhead **h, **e, *f;
-	Mount *m;
-
-	if(decref(p))
-		return;
-
-	e = &p->mnthash[MNTHASH];
-	for(h = p->mnthash; h < e; h++) {
-		while((f = *h) != nil){
-			*h = f->hash;
-			wlock(&f->lock);
-			m = f->mount;
-			f->mount = nil;
-			wunlock(&f->lock);
-			mountfree(m);
-			putmhead(f);
-		}
-	}
-	free(p);
-}
-
 static void
 pgrpinsert(Mount **order, Mount *m)
 {
@@ -291,34 +236,4 @@ mountfree(Mount *m)
 	}
 }
 
-void
-resrcwait(char *reason)
-{
-	static ulong lastwhine;
-	ulong now;
-	char *p;
-
-	if(up == nil)
-		panic("resrcwait: %s", reason);
-
-	p = up->psstate;
-	if(reason != nil) {
-		if(waserror()){
-			up->psstate = p;
-			nexterror();
-		}
-		up->psstate = reason;
-		now = seconds();
-		/* don't tie up the console with complaints */
-		if(now - lastwhine > Whinesecs) {
-			lastwhine = now;
-			print("%s\n", reason);
-		}
-	}
-	tsleep(&up->sleep, return0, 0, 100+nrand(200));
-	if(reason != nil) {
-		up->psstate = p;
-		poperror();
-	}
-}
 
