@@ -1688,6 +1688,21 @@ virtual one.  An inconsistent incremental build made it look like a
 name-space or PCI-BIOS problem in turn; a clean rebuild, the only honest
 test, showed the tree was sound and the edit was in the wrong file.
 .PP
+The rest of Cut B, the driver tasks themselves, rests on mechanisms the
+osprey device already carries, so it is a build on what exists rather
+than on a userland that does not.  An interrupt already gives a
+container a semaphore it selects on: ospreyticksem for the clock,
+ospreyuartsem for the uart, ospreyethersem for a packet, and the uart's
+output is already staged for a task to drive.  Device memory is already
+lent to a container through a Physseg.  What remains is to write the
+driver as a task that selects on its interrupt's semaphore and reaches
+its registers through that mapping or a served read, in the order the
+review set: rtc first, because it proves register access from a task
+with no interrupt to complicate it; then uart, which proves the whole
+interrupt-to-semaphore-to-task path for a real driver; then cons last,
+and cons never fully leaves, because the bare console above stays in the
+kernel as the panic path.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
