@@ -27,6 +27,10 @@ And it argues that accessibility, treated as a first-class property of the
 system rather than an add-on, is not a separate feature competing for effort
 with that goal.
 It is close to being the same goal, approached from a different angle.
+Smalltalk answered a version of this question already, earlier and in real
+respects better; this project is a parallel evolutionary path rather than a
+rejection of that one, chosen because its substrate sits closer to how
+software most people will actually go on to touch is built.
 .PP
 This is a placeholder: a statement of the problem and the argument, written
 down before it is fully proven out, so that the shape of the claim exists
@@ -116,6 +120,47 @@ Reproducing it here, once faithfully with this tree's own small tools and
 once by showing what this shell's own loadable modules already cover instead
 of a language it was never handed, is an attempt to show a design philosophy
 being taught by demonstration rather than by assertion.
+.NH
+A different answer to the same question
+.PP
+This is not the first attempt at a system that teaches itself.
+Smalltalk answered the same question decades earlier, and in several real
+respects answered it better: an image that is always live, a browser that is
+also the debugger that is also the way anything in the system gets read, no
+gap between inspecting a running object and changing what it does next.
+Nothing built for this fork is a live image.
+A session recording approximates continuity by replaying it; a REPL like
+.CW disrepl
+approximates liveness by recompiling and rerunning everything typed so far
+from scratch, an approximation it documents about itself rather than hides.
+Where Smalltalk's environment simply
+.I is
+the thing being explained, this one is closer to a commentary running
+alongside a system that was not built to be looked at this way, and Smalltalk
+getting there first, and arguably more completely, should be said plainly
+rather than left for a reader to assume was never noticed.
+.PP
+The two are a genuine fork in evolutionary path, not a hierarchy with one
+correct answer.
+This project's substrate was chosen anyway, and the reason is a different
+axis than "which environment is the better one to build a live, explaining
+system on top of."
+Dis and Limbo \(em a bytecode virtual machine underneath a statically typed,
+C-shaped source language, processes and namespaces and files as the uniform
+interface to everything \(em sit close to how the software most people will
+actually go on to touch is built: the bytecode-VM lineage that runs most
+deployed code, typed compiled languages with C-family syntax, and the
+Unix-shaped process-and-file model underneath nearly all of it, including the
+scientific-computing infrastructure this same tree's own numerical work sits
+inside.
+Learning to read
+.I this
+system is learning to read the shape of a great deal of software that is not
+this system, in a way learning to read a Smalltalk image, for all its real
+virtues, teaches a shape of thing fewer people will encounter again.
+That transfer is the bet: not that this lineage is the better environment in
+the abstract, but that time spent understanding it is time that keeps paying
+off outside it.
 .NH
 Accessibility as the same problem, not a second one
 .PP
