@@ -1634,6 +1634,28 @@ ospreymicroexit(void *)
  * program attaches that.  The exokernel gives the program its ring; the
  * program works it in user space.
  */
+/*
+ * Service the request ring of the container the calling process is bound
+ * to.  This is the one trap a program takes to work its ring: it puts a
+ * request in the ring in its own memory, calls this to have the kernel
+ * carry it, and reads the reply back from the ring, again in memory.
+ */
+void
+ospreyservicecaller(void)
+{
+	Ospreyproc *p;
+	int i;
+
+	qlock(&ospreylock);
+	for(i = 0; i < nelem(ospreyprocs); i++)
+		if(ospreyprocs[i] == up){
+			if((p = ospreyat(i)) != nil)
+				ospreyservicep(p, fastticks(nil));
+			break;
+		}
+	qunlock(&ospreylock);
+}
+
 int
 ospreyuserprep(void)
 {

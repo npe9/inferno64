@@ -160,6 +160,19 @@ port
 		kdebugputs(kb, len);
 		return len;
 	}
+	uintptr xsleep(va_list list)
+	{
+		USED(list);
+		/*
+		 * The program's yield-and-service call.  It puts a request in
+		 * its ring, calls this, and the kernel carries the request and
+		 * leaves the reply in the ring.  Reusing SLEEP's number keeps
+		 * the interface to what a program's libc already has a stub
+		 * for; a yield that services the ring is what it means here.
+		 */
+		ospreyservicecaller();
+		return 0;
+	}
 	uintptr xexits(va_list list)
 	{
 		USED(list);
@@ -191,6 +204,8 @@ port
 		for(i = 0; i < (int)sizeof kn - 1 && name[i] != 0; i++)
 			kn[i] = name[i];
 		kn[i] = 0;
+		if(len == 0)
+			len = ospreyslicesize();	/* the whole slice */
 		{
 			uintptr r;
 			if(waserror()){
@@ -205,6 +220,7 @@ port
 
 	Xsyscall *systab[] = {
 		[8]	xexits,		/* EXITS */
+		[17]	xsleep,		/* SLEEP: yield and service the ring */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
 	};
