@@ -68,14 +68,18 @@ enum {					/* LapicESR */
 };
 
 enum {					/* LapicTIMER */
-					/* [17] Timer Mode (RW) */
+					/* [18:17] Timer Mode (RW).  The
+					 * comment this replaced called bit
+					 * 18 alone a separate "Timer Base"
+					 * field with CLKIN/TMBASE/DIVIDER
+					 * options; no such field exists.
+					 * Bits 18:17 together are the
+					 * three-way timer mode the SDM
+					 * actually documents. */
 	LapicONESHOT	= 0x00000000,	/* One-shot */
 	LapicPERIODIC	= 0x00020000,	/* Periodic */
-
-					/* [19:18] Timer Base (RW) */
-	LapicCLKIN	= 0x00000000,	/* use CLKIN as input */
-	LapicTMBASE	= 0x00040000,	/* use TMBASE */
-	LapicDIVIDER	= 0x00080000,	/* use output of the divider */
+	LapicDEADLINE	= 0x00040000,	/* TSC-deadline: CPUID.1H:ECX[24] */
+	LapicCLKIN	= 0x00000000,	/* harmless: ORs in as 0 either way */
 };
 
 static uchar lapictdxtab[] = {		/* LapicTDCR */
@@ -102,6 +106,22 @@ struct Apictimer
 };
 
 static Apictimer lapictimer[MAXMACH];
+
+/*
+ * CPUID.01H:ECX[24]: every CPU with TSC-deadline mode has an invariant
+ * TSC to go with it, so once this is true every machno can arm the
+ * timer with a single WRMSR of a raw TSC value -- no periodic reload,
+ * no oscillator calibration, and no window in which the reload can
+ * race a Tperiodic timer's own timerdel() the way lapictimerset()'s
+ * old TICR-reprogramming path can.  Set once from lapictimerinit(),
+ * read from every machno's lapiconline() and every lapictimerset()
+ * call after.
+ */
+static int lapicdeadline;
+
+enum {
+	MsrTscDeadline	= 0x6E0,
+};
 
 static ulong
 lapicr(int r)
@@ -186,6 +206,17 @@ lapiconline(void)
 {
 	Apictimer *a;
 
+	if(lapicdeadline){
+		/*
+		 * No TICR/TDCR reload and nothing to desynchronise:
+		 * each machno arms its own deadline independently with
+		 * a WRMSR, so there is no shared oscillator to stagger.
+		 */
+		lapicw(LapicTIMER, LapicDEADLINE|(VectorPIC+IrqTIMER));
+		lapicw(LapicTPR, 0);
+		return;
+	}
+
 	a = &lapictimer[m->machno];
 
 	/*
@@ -216,6 +247,26 @@ lapictimerinit(void)
 	uvlong x, v, hz;
 	Apictimer *a;
 	int s;
+
+	if(m->machno == 0){
+		/*
+		 * TSC-deadline mode needs no reload-rate calibration at
+		 * all: lapictimerset() below will just WRMSR a raw TSC
+		 * value.  Requiring fastclock==tscticks, not only
+		 * m->havetsc, guarantees the "next" it is handed is
+		 * already in TSC units -- archacpi's identify() only
+		 * selects tscticks when m->havetsc, so in practice this
+		 * is the CPUID bit deciding alone, but nothing here
+		 * should assume that stays true if a board's arch ever
+		 * keeps hpetread as fastclock on TSC-deadline hardware.
+		 */
+		if((m->cpuidcx & (1<<24)) && m->havetsc && arch->fastclock == tscticks)
+			lapicdeadline = 1;
+		print("lapictimerinit: cpuidcx=%#lux havetsc=%d fastclock==tscticks=%d lapicdeadline=%d\n",
+			m->cpuidcx, m->havetsc, arch->fastclock == tscticks, lapicdeadline);
+	}
+	if(lapicdeadline)
+		return;
 
 	if(m->machno != 0){
 		lapictimer[m->machno] = lapictimer[0];
@@ -478,6 +529,19 @@ lapictimerset(uvlong next)
 {
 	vlong period;
 	Apictimer *a;
+
+	if(lapicdeadline){
+		/*
+		 * next is already a raw TSC value: fastticks() is
+		 * tscticks() whenever lapicdeadline got set, and every
+		 * caller computes next by adding to a fastticks() it
+		 * read itself.  Writing 0 would disarm the timer, but
+		 * timeradd()/timerintr() never pass a deadline that
+		 * isn't already in the future by at least one tick.
+		 */
+		wrmsr(MsrTscDeadline, next);
+		return;
+	}
 
 	a = &lapictimer[m->machno];
 	period = next - fastticks(nil);

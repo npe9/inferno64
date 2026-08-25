@@ -639,31 +639,114 @@ correctly \- so the mechanism that walks
 .CW Timers[]
 and fires
 .CW randomseed() 's
-periodic callback is wired right, and a print added to
+periodic callback is wired right.  This board's arch selection is also
+already right, on a second look: the
+.CW "mpintrassign: can't find bus type 12"
+line every boot prints reads like
+.CW archmp
+lost arbitration to
+.CW archacpi \-
+it has not.
+.CW archacpi.intrassign
+is
+.CW mpintrassign
+too, the same shared legacy PCI-IRQ-routing helper, called regardless
+of which arch does system identification; a print added to
+.CW identify()
+(checked, then removed) confirmed
+.CW archacpi
+finds a valid RSDP, passes its checksum, finds the MADT, and wins.  So
+.CW pc64
+already runs a defensible modern stack: ACPI MADT for identification,
+HPET as the calibration source, TSC as the fast clock, the local APIC
+for the interrupt-driven tick.
+.PP
+What was missing was TSC-deadline mode, the one step further real
+hardware from the last several years takes: write a future TSC value
+straight into
+.CW IA32_TSC_DEADLINE
+and get one one-shot interrupt exactly there, instead of the periodic
+reload
+.CW lapictimerset()
+did \- rewriting
+.CW LapicTICR
+to hit the next software deadline, then letting the counter free-run
+at that period until the next rewrite.
+.CW os/inferno/pc/apic.c
+now takes that path whenever
+.CW CPUID.1H:ECX[24]
+says the CPU has it: no oscillator calibration, no periodic reload,
+one
+.CW wrmsr
+per deadline, gated on
+.CW arch->fastclock\ ==\ tscticks
+so the value handed to it is already a raw TSC reading.  It could not
+be verified fixing anything here: this session's QEMU is pure TCG, no
+KVM or HVF, and does not expose the deadline CPUID bit under any
+.CW -cpu
+model tried, including
+.CW max
+and
+.CW Icelake-Server
+\- the latter reporting back as
+.CW "GenuineIntel P6 family 6 model 14" ,
+a CPU that does not exist, which is TCG's own ceiling and not this
+kernel's bug.  The code degrades to the previous periodic path exactly
+as before when the bit is absent, verified unchanged.
+.PP
+A print added to
 .CW randomsample()
 (in
 .CW port/random.c ,
-genuinely portable and never in question) proves it runs: nbuf climbs
-cleanly, four samples per byte, all the way to 63.  It stops there,
-every time, for at least sixty seconds, one byte short of the 64 the
-loop is waiting for.  Something specific to finishing \- most likely
-in
+genuinely portable and never in question) showed the periodic path
+running correctly, not racing: nbuf climbs cleanly, four samples per
+byte, all the way to 64, and
+.CW randomseed()
+'s own loop exits, calls
+.CW timerdel() ,
+runs
+.CW sha512() ,
+.CW setupChachastate() ,
+.CW qunlock(rs)
+and returns \- every step confirmed printing in turn.  The earlier
+theory that
 .CW timerintr() 's
-unconditional
 .CW tadd()
-re-queue of a
-.CW Tperiodic
-timer racing
+races
 .CW randomseed() 's
-own
 .CW timerdel()
-once
-.CW nbuf
-reaches 64, since
-.CW timerdel()
-already carries a comment admitting exactly this hazard \- is where
-this now points, not a wiring gap.  The diagnostic print is not kept;
-this is what it showed.
+right at completion does not survive this: nothing hangs there at all.
+.PP
+It hangs one level up, in the kproc's own exit path, and adding the
+diagnostic print changed the symptom from silence to a real fault:
+.CW pexit()
+prints and runs to its own
+.CW sched() ,
+and QEMU's
+.CW -d\ int
+trace of that run shows why nothing comes back \- a
+.B "general protection fault on IRETQ" ,
+the shared trap dispatcher's own return instruction
+.RI ( os/inferno/pc/apic.c 's
+neighbour
+.CW trap.c ,
+compiled for pc64 the same shared way), triggered by a UART interrupt
+landing while
+.CW up
+is a heap-allocated interpreter process \- one
+.CW disinit() 's
+.CW schedmod()
+created, not one built through
+.CW newproc()
+/
+.CW kproc() .
+That is a stack or context corruption on return from a nested
+interrupt during a process switch, most likely something about how
+the Dis interpreter's process differs from a plain kproc's that this
+board's shared trap assembly does not account for \- not the Timer
+subsystem, which is exonerated.  The diagnostic prints are not kept;
+this is what they showed, and it is a sharper, truer place to resume
+than where this section previously pointed.
 .NH 1
 How a native kernel provides networking
 .PP
