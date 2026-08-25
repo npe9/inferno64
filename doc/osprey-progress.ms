@@ -1744,6 +1744,23 @@ must release ospreylock and let the task contend for it, the way the
 control-file path releases it between one write and the next.  That is
 the next step, and it is a careful one, not a large one.
 .PP
+It was attempted and is not yet landed, and the honest record is worth
+keeping.  The lock hand-off worked: a second container was created, the
+second serial port bound to it with ospreyctluart's logic, the driver
+task spawned, a line queued through ospreyoutput, and the boot released
+ospreylock and waited while the task ran.  The task reported the send
+complete - it bound the right port, COM2 and not the console, and drove
+its output length to zero - but the bytes did not arrive on the second
+serial port the harness watches, though the boot loader's own writes to
+that port did.  So the send succeeds at the register and the port is the
+right one, yet nothing reaches the emulated line.  The difference from
+the Plan 9 path, where the same uart command works, is that there the
+port is opened through the device before it is driven, and the direct
+bind skips whatever that opening does; calling the port's enable did not
+close the gap.  Resolving it needs the emulator's serial state looked at
+directly rather than more guessing, so it was reverted to keep the
+microkernel at the six checks that pass, and it is where this picks up.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
