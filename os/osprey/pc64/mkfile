@@ -42,7 +42,7 @@ DEVS=`{$KERNELSHELL $DEVCONF/mkdevlist $CONF}
 # the reduced list is chosen by CONF below.  What the remaining port
 # code still references from the cut sources is stubbed in upc64's own
 # port section.
-PORTOBJCUT=pgrp.$O sysfile.$O sysproc.$O syscallfmt.$O chan.$O cache.$O
+PORTOBJCUT=pgrp.$O sysfile.$O sysproc.$O syscallfmt.$O chan.$O cache.$O auth.$O rdb.$O
 PORTOBJALL=\
 	alarm.$O\
 	alloc.$O\
@@ -78,7 +78,7 @@ PORTOBJALL=\
 	ospreyrt.$O\
 
 PORTOBJ=`{if [ "$CONF" = upc64 ]; then \
-	for o in $PORTOBJALL; do echo $o; done | grep -vxF -e pgrp.$O -e sysfile.$O -e sysproc.$O -e syscallfmt.$O -e chan.$O -e cache.$O; \
+	for o in $PORTOBJALL; do echo $o; done | grep -vxF -e pgrp.$O -e sysfile.$O -e sysproc.$O -e syscallfmt.$O -e chan.$O -e cache.$O -e auth.$O -e rdb.$O; \
 	else echo $PORTOBJALL; fi}
 
 OBJ=\

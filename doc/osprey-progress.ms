@@ -1640,6 +1640,20 @@ mount, no file cache, no process group, no file or process system call.
 What is left is the four services the paper keeps and the devices that
 serve them.
 .PP
+Two more Plan 9 sources went with the same idiom: auth.c, the
+authentication - fversion, fauth, the host owner and host domain - and
+rdb.c, the remote kernel debugger.  Their callers were the file and
+process system calls, already cut.  What still named them was the
+console device: iseve, which asks whether the caller is the host owner,
+and the writes to the owner and domain files.  A microkernel has one
+trust domain, managed by the library operating system above it, so iseve
+returns true and the rest are console file handlers this kernel has no
+name space to reach, so they panic.  The one subtlety was the host
+owner string itself: it must stay nil until userinit sets it, because
+userinit sets it with kstrdup, which frees the old value, and a string
+literal cannot be freed - a real double-free the boot caught at once and
+inspection would not have.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
