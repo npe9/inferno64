@@ -77,8 +77,20 @@ randomseed(void*)
 	*/
 	s = smalloc(sizeof(Seedbuf));
 
-	if(hwrandbuf != nil)
+	if(hwrandbuf != nil){
+		/*
+		 * A board's hwrandbuf fills s->buf directly from a real
+		 * hardware source (RDRAND on modern x86); the loop below
+		 * only ever learns the buffer is full by watching nbuf,
+		 * which nothing but its own timing-jitter path advances.
+		 * Without this, setting hwrandbuf changed nothing: every
+		 * board still paid the full ~60-90s of timer samples this
+		 * loop takes to fill 64 bytes four samples at a time,
+		 * hardware entropy already sitting there unused.
+		 */
 		(*hwrandbuf)(s->buf, sizeof(s->buf));
+		s->nbuf = sizeof(s->buf);
+	}
 
 	/* Frequency close but not equal to HZ */
 	up->tns = (vlong)(MS2HZ+3)*1000000LL;

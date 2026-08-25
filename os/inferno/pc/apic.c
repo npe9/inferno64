@@ -262,8 +262,6 @@ lapictimerinit(void)
 		 */
 		if((m->cpuidcx & (1<<24)) && m->havetsc && arch->fastclock == tscticks)
 			lapicdeadline = 1;
-		print("lapictimerinit: cpuidcx=%#lux havetsc=%d fastclock==tscticks=%d lapicdeadline=%d\n",
-			m->cpuidcx, m->havetsc, arch->fastclock == tscticks, lapicdeadline);
 	}
 	if(lapicdeadline)
 		return;

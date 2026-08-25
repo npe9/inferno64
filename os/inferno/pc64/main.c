@@ -441,8 +441,7 @@ poolsizeinit(void)
 	print("poolsizeinit conf.npage %zd\n", conf.npage);
 	poolsize(mainmem, ((conf.npage*main_pool_pcnt)/100)*BY2PG, 0);
 	poolsize(heapmem, ((conf.npage*heap_pool_pcnt)/100)*BY2PG, 0);
-	/* TODO causes a double fault now. needs to be fixed
-	poolsize(imagmem, ((conf.npage*image_pool_pcnt)/100)*BY2PG, 1); */
+	poolsize(imagmem, ((conf.npage*image_pool_pcnt)/100)*BY2PG, 1);
 	print("after poolsizeinit\n");
 }
 
