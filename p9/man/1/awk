@@ -1,0 +1,202 @@
+.TH AWK 1
+.SH NAME
+awk \- pattern-action language, in Limbo
+.SH SYNOPSIS
+.B awk
+[
+.B -F
+.I fs
+]
+[
+.B -v
+.I var=value
+]
+[
+.B -f
+.I progfile
+|
+.I 'program'
+]
+[
+.I file ...
+]
+.SH DESCRIPTION
+.I Awk
+is a Limbo-native workalike for a bounded subset of the AWK language,
+compiled to Dis and run by
+.IR emu ,
+not a host binary \(em see
+.B doc/plan9-port.md
+in the source tree for why that distinction is the point of this
+command's existing at all.
+It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ,
+kept out of the regular userspace on purpose; see
+.B p9/dis/README
+for how to bind it in.
+.PP
+For each
+.I file
+(standard input if none are given),
+.I awk
+splits each line into fields on
+.I fs
+(a single literal character, or plain whitespace \(em runs collapsed,
+leading/trailing ignored \(em by default) and, for each pattern-action
+pair in
+.I program
+whose pattern matches, executes the action.
+A missing action defaults to printing the whole line; a missing
+pattern always matches.
+.B BEGIN
+and
+.B END
+actions run once, before the first line and after the last.
+.PP
+.B -F
+sets the field separator.
+.B -v
+assigns a variable before
+.B BEGIN
+runs.
+.B -f
+reads the program from
+.I progfile
+instead of the command line (repeatable; the files are concatenated).
+.SS Language covered
+Patterns:
+.BR BEGIN ,
+.BR END ,
+.BI / regex /,
+any expression (true if non-zero/non-empty), and the empty pattern.
+Statements:
+.BR print ,
+.BR printf ,
+.BR if / else ,
+.BR while ,
+C-style
+.BR for (\c
+.IR init ; cond ; post ),
+.BI for( "k in arr" ")",
+.BR next ,
+blocks, and expression statements.
+Expressions: the usual arithmetic, comparison, and logical operators;
+string concatenation by juxtaposition;
+.B ~
+and
+.B !~
+regex match; ternary
+.BR ?: ;
+.BR ++ / -- ,
+prefix and postfix; assignment and
+.BR += / -= / *= / /= / %= ;
+.B $
+field reference; associative arrays.
+Builtins:
+.BR length ,
+.BR substr ,
+.BR index ,
+.BR split ,
+.BR sprintf ,
+.BR toupper ,
+.BR tolower ,
+.BR int .
+Special variables:
+.BR NR ,
+.BR NF ,
+.BR FS ,
+.BR OFS ,
+.BR ORS ,
+.BR FILENAME .
+.B printf
+honors width, left-align
+.RB ( - ),
+zero-pad
+.RB ( 0 ),
+and precision, for
+.BR %s / %d / %i / %f / %g / %e / %c / %% .
+.SH SOURCE
+.B /p9/cmd/awk.b
+.SH SEE ALSO
+.IR awktest (1),
+.B doc/plan9-port.md
+.SH BUGS
+This is a deliberately bounded subset, not the full POSIX grammar, and
+every gap below is a scoping choice made to keep the interpreter a
+single readable file, not an oversight found later:
+.PP
+No user-defined functions
+.RB ( function
+.IR name ( args )
+.BR { ... } ),
+and no
+.B getline.
+No
+.BR break / continue
+(loops run to completion or exit via
+.BR next ).
+No output redirection
+.RB ( print
+.B >
+.IR file ),
+so
+.B print
+and
+.B printf
+always take a bare, comma-separated argument list \(em
+.B print(a,b)
+with enclosing parens fails to parse; write
+.B print a, b
+instead.
+.PP
+A bare newline is never a statement terminator, unlike real awk;
+statements must be
+.B ;
+separated (a block's closing
+.B }
+ends the last one without a semicolon).
+.PP
+.B FS
+longer than one character is matched as a literal substring, not a
+regular expression.
+.PP
+.B printf
+precision is clamped to 0\(en6 digits for
+.BR %f / %g / %e ,
+since Limbo's
+.B sys->sprint
+requires its format argument to be a compile-time string constant \(em
+a precision parsed from the awk program at run time can't be handed to
+it directly, so the conversion goes through one of a fixed set of
+literal format strings keyed on the parsed precision instead of a
+freshly built one.
+.PP
+A side-effecting index or field-number expression \(em
+.B arr[i++]
+or
+.BR $(i++) \(em
+evaluates that subexpression twice, once to read the current value and
+once to write the new one.
+.PP
+Associative-array enumeration order
+.RB ( for
+.RI ( k " in " arr ))
+is unspecified, matching POSIX awk \(em
+.IR awktest (1)
+checks it as a set, not as an exact sequence.
+.PP
+Correctness for what
+.I is
+covered is gated on matching
+.BR utils/awk 's
+own C implementation, byte for byte, on the same program and input \(em
+not on this description, and not on the POSIX text from memory.
+.PP
+No regex-cache: every
+.BI / regex /
+literal and
+.B ~
+match recompiles its pattern. Fine at the scale this was built for;
+worth revisiting first if performance ever matters here.

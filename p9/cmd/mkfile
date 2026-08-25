@@ -1,9 +1,8 @@
 <../../mkconfig
 
-# Populate this with the .dis targets as workalikes are written - e.g.
-#	TARG=\
-#		awk.dis\
 TARG=\
+	awk.dis\
+	awktest.dis\
 
 MODULES=\
 

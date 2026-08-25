@@ -169,18 +169,30 @@ below.
    `p9/dis/` only, confirmed nothing lands in the tree's real `/dis`.
    `.gitignore` covers `p9/dis/**/*.dis` and `p9/cmd/*.dis`/`*.sbl` the same
    way the existing `/dis/**/*.dis` line does for the shared tree.
-3. **Next: a Limbo awk, in `p9/cmd/awk.b`.** Scope it as a bounded subset,
-   not the full POSIX grammar - field splitting (`$0`, `$1`..`$NF`, `NF`, `NR`),
-   `BEGIN`/`END`, `/regex/` and boolean patterns, `print`/`printf`,
-   arithmetic/comparison/concatenation, associative arrays, and a handful
-   of builtins (`length`, `substr`, `split`). Gate correctness on the
-   working C awk as a reference oracle, not on reading the language spec:
-   run the same program and input through both `utils/awk/o.out` and
-   `p9/dis/awk.dis`, byte-diff the output - the same shape of check that
-   caught real bugs comparing `corpus hist` against `wordfreq` earlier in
-   this tree's history. Use the exercises in `inferno-for-dante.sh` as the
-   first test programs, since they're already known-good against real awk.
-   Not yet started.
+3. **A Limbo awk, in `p9/cmd/awk.b`: done.** A bounded subset, not the
+   full POSIX grammar - see `p9/man/1/awk`'s BUGS for the exact, complete
+   list of what's out of scope and why each one is a scoping choice, not
+   an oversight (no user functions, no `getline`, no `break`/`continue`,
+   no output redirection, `FS` longer than one char is literal not regex,
+   `printf` precision clamped to 0-6 digits, `for (k in arr)` order
+   unspecified). What's in: field splitting, `BEGIN`/`END`, `/regex/` and
+   boolean patterns, `print`/`printf` with width/precision, arithmetic,
+   string concatenation, `~`/`!~`, ternary, `++`/`--` prefix and postfix,
+   compound assignment, associative arrays with `for (k in arr)`, and
+   `length`/`substr`/`index`/`split`/`sprintf`/`toupper`/`tolower`/`int`.
+   Gated on the working C awk as a reference oracle, not on the language
+   spec from memory: the same program and input run through both
+   `utils/awk/o.out` and `p9/dis/awk.dis`, byte-diffed - 19 real awk
+   programs this way (field selection, arithmetic, patterns, printf,
+   loops, arrays, builtins), 18 byte-identical, the 19th (array
+   enumeration order) verified equivalent as a set instead, since POSIX
+   leaves that order unspecified and the two implementations picked
+   different ones. `p9/cmd/awktest.b` (`man/1` page alongside) keeps this
+   as a permanent, repeatable check via `awk.dis`'s own in-process test
+   seam (`runstring(prog, input)`, no subprocess or file I/O needed) -
+   confirmed to actually catch a real break with a negative control
+   (deliberately broke `+`, the test failed with exactly that program's
+   wrong output and nothing else, restored, all 20 passed again).
 4. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
    tree's `/bin` list**, not recollection, to get an actual missing-count
    instead of the "a lot is already here" qualitative claim above. Still
