@@ -97,7 +97,7 @@ proc.$O:	$TARGDIR/$objtype/include/ureg.h
 sysproc.$O:	$TARGDIR/$objtype/include/ureg.h
 devproc.$O:	$TARGDIR/$objtype/include/ureg.h
 portclock.$O:	$TARGDIR/$objtype/include/ureg.h
-userinit.$O:	initcode.i
+userinit.$O:	initcode.i userprog.i
 trap.$O:	$PORTDIR/systab.h
 devpipe.$O:	$PORTDIR/netif.h
 netif.$O:	$PORTDIR/netif.h

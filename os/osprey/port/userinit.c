@@ -16,6 +16,7 @@
  * to startboot() (see port/initcode.c).
  */
 #include	"initcode.i"
+#include	"userprog.i"
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -54,8 +55,8 @@ proc0(void*)
 		up->seg[TSEG]->flushme = 1;
 		p = newpage(UTZERO, nil);
 		k = kmap(p);
-		memmove((uchar*)VA(k), initcode, sizeof(initcode));
-		memset((uchar*)VA(k)+sizeof(initcode), 0, BY2PG-sizeof(initcode));
+		memmove((uchar*)VA(k), userprog, sizeof(userprog));
+		memset((uchar*)VA(k)+sizeof(userprog), 0, BY2PG-sizeof(userprog));
 		kunmap(k);
 		segpage(up->seg[TSEG], p);
 		up->kp = 0;
