@@ -12,8 +12,8 @@ func (r ref Rect) area() int {
 
 func init() {
 	full := ref Rect{minx: 1, miny: 2, maxx: 5, maxy: 9}
-	sys.print("full: %d %d %d %d area=%d\n",
-		full.minx, full.miny, full.maxx, full.maxy, full.area());
+	sys.print("full: %d %d %d %d\n", full.minx, full.miny, full.maxx, full.maxy)
+	sys.print("area=%d\n", full.area())
 
 	// unset fields of a keyed literal read as the zero value.
 	partial := ref Rect{minx: 7, maxy: 3}

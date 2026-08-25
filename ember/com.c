@@ -33,6 +33,7 @@ static	int	opcommute[Oend];
 static Node	*sumark(Node*);
 static Node	*ecom(Src*, Node*, Node*);
 static Node	*eacom(Node*, Node*, Node*);
+static void	storecomposite(Src*, Node*, Node*);
 static void	scom(Node*);
 static void	callcom(Src*, int, Node*, Node*);
 static void	casecom(Node*);
@@ -517,6 +518,56 @@ bcom(Node *n, int iftrue, Inst *b)
 	return bb;
 }
 
+/*
+ * recursively store a composite literal's elements, given the
+ * (un-dereferenced) address of where its own storage starts -- base
+ * is an Oadd chain (or, at the top call, a plain Rreg/Rmreg pointer
+ * node) that composes correctly with a further Oadd on top of it,
+ * the same "Raadr composes with Raadr" row ecom's Oref case already
+ * relies on for a single level of fields.
+ *
+ * called once per element: a scalar value gets a fresh Oind wrapped
+ * around base+offset and ecom()'d in directly, same as a single-level
+ * composite literal; a *nested* composite literal (a struct-typed
+ * field, e.g. Rect{min: Point{x:1,y:2}}) instead recurses with
+ * base+offset as the new base -- no Oind for it, since its own
+ * fields need the address composed further, not dereferenced yet.
+ */
+static void
+storecomposite(Src *src, Node *base, Node *composite)
+{
+	Node *p, *e;
+
+	for(p = composite->right; p != nil; p = p->right){
+		e = p;
+		if(p->op == Oseq)
+			e = p->left;
+		if(e->decl != nil){
+			Node *off, *addr;
+
+			off = mkconst(&e->src, e->decl->offset);
+			off->ty = tint;
+			addr = mkn(Oadd, dupn(base), off);
+			addr->src = e->src;
+			addr->ty = tint;
+			if(e->right->op == Ocomposite)
+				storecomposite(src, addr, e->right);
+			else{
+				Node *ind;
+
+				sumark(e->right);
+				ind = mkn(Oind, addr, nil);
+				ind->src = e->src;
+				ind->ty = e->decl->ty;
+				sumark(ind);
+				ecom(src, ind, e->right);
+			}
+		}
+		if(p->op != Oseq)
+			break;
+	}
+}
+
 static Node*
 ecom(Src *src, Node *nto, Node *n)
 {
@@ -742,39 +793,15 @@ ecom(Src *src, Node *nto, Node *n)
 		 * whatever garbage a reused pool block last held.
 		 */
 		Type *at;
-		Node *p, *e, *dst;
+		Node *dst;
 
 		at = left->ty;
 		dst = nto;
 		if(dst == nil || (dst->addable != Rreg && dst->addable != Rmreg))
 			dst = talloc(&tres, n->ty, nil);
 		genrawop(src, INEWZ, mktn(at), nil, dst);
-		if(left->op == Ocomposite){
-			for(p = left->right; p != nil; p = p->right){
-				e = p;
-				if(p->op == Oseq)
-					e = p->left;
-				if(e->decl != nil){
-					Node *base, *off, *addr, *ind;
-
-					sumark(e->right);
-					base = dupn(dst);
-					off = mkconst(&e->src, e->decl->offset);
-					off->ty = tint;
-					addr = mkn(Oadd, base, off);
-					addr->src = e->src;
-					addr->ty = tint;
-					sumark(addr);
-					ind = mkn(Oind, addr, nil);
-					ind->src = e->src;
-					ind->ty = e->decl->ty;
-					sumark(ind);
-					ecom(&e->src, ind, e->right);
-				}
-				if(p->op != Oseq)
-					break;
-			}
-		}
+		if(left->op == Ocomposite)
+			storecomposite(src, dst, left);
 		if(nto != nil && nto != dst)
 			genmove(src, Mas, n->ty, dst, nto);
 		return nto != nil ? nto : dst;
@@ -969,6 +996,33 @@ scom(Node *n)
 			scom(n->left);
 			return;
 		case Odas:
+			/*
+			 * "p := Point{x: 1, y: 2}": daschk (check.c) guarantees
+			 * n->left is a bare Oname here (it errors otherwise),
+			 * i.e. a fresh local -- always Rreg/Rmreg, never an
+			 * indirect lvalue -- so it's safe to route a composite
+			 * RHS through storecomposite() the same way Ovardecl's
+			 * case below does, Oadr-wrapping the local itself as
+			 * the base address to store into.  Oas doesn't get this
+			 * (its LHS can be any lvalue, not guaranteed simple),
+			 * so a composite RHS there still goes through ecom(),
+			 * which still refuses it -- consistent with check.c's
+			 * stchk Oas case, deliberately not extended to match.
+			 */
+			pushblock();
+			sumark(n->right);
+			sumark(n->left);
+			if(n->right->op == Ocomposite){
+				Node *adr;
+
+				adr = mkn(Oadr, dupn(n->left), nil);
+				adr->src = n->src;
+				adr->ty = n->left->ty;
+				storecomposite(&n->src, adr, n->right);
+			}else
+				ecom(&n->src, n->left, n->right);
+			popblock();
+			return;
 		case Oas:
 			pushblock();
 			sumark(n->right);
@@ -990,7 +1044,15 @@ scom(Node *n)
 				pushblock();
 				sumark(n->aux);
 				sumark(id);
-				ecom(&id->src, id, n->aux);
+				if(n->aux->op == Ocomposite){
+					Node *adr;
+
+					adr = mkn(Oadr, dupn(id), nil);
+					adr->src = id->src;
+					adr->ty = id->ty;
+					storecomposite(&id->src, adr, n->aux);
+				}else
+					ecom(&id->src, id, n->aux);
 				popblock();
 				if(names->op != Oseq)
 					break;

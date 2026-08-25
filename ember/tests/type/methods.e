@@ -19,6 +19,6 @@ func (r ref Rect) area() int {
 }
 
 func init() {
-	var r ref Rect
+	r := ref Rect{minx: 0, miny: 0, maxx: 4, maxy: 3}
 	sys.print("area %d\n", r.area())
 }

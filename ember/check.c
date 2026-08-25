@@ -633,18 +633,29 @@ compositefields(Node *n)
 		}
 
 		/*
-		 * a struct-typed field means storing another struct's
-		 * fields inline into this one's memory, which needs a real
-		 * recursive store, not the single genmove a scalar field
-		 * gets in com.c's Oref case; not implemented yet, so refuse
-		 * cleanly rather than miscompile.
+		 * tagged (pick) adts and tuples still need a real recursive
+		 * store this compiler doesn't have (a pick's storage isn't
+		 * just "fields at fixed offsets" -- it needs its tag word
+		 * set too); refuse those cleanly.  a plain struct-typed
+		 * field is fine: if the value is itself a composite literal
+		 * (the only way to construct a struct *value*, since a bare
+		 * name can't denote one -- see echk's Ocomposite case),
+		 * recurse into compositefields() the same way this
+		 * function's own caller (Oref's echk case) does, so nested
+		 * fields get the same field-matching and offset-stashing
+		 * treatment; com.c's Oref case (storecomposite()) walks the
+		 * resulting nested e->decl chain to do the actual recursive
+		 * store.
 		 */
-		if(fd != nil && (fd->ty->kind == Tadt || fd->ty->kind == Tadtpick || fd->ty->kind == Ttuple)){
-			nerror(e, "composite literal field %s: nested struct fields not yet supported", fd->sym->name);
+		if(fd != nil && (fd->ty->kind == Tadtpick || fd->ty->kind == Ttuple)){
+			nerror(e, "composite literal field %s: tagged/tuple fields not yet supported", fd->sym->name);
 			fd = nil;
 		}
 
-		vt = echk(e->right);
+		if(e->right->op == Ocomposite)
+			vt = compositefields(e->right);
+		else
+			vt = echk(e->right);
 		if(fd != nil){
 			fty = fd->ty;
 			if(!assignable(fty, vt, e->right))
@@ -1263,7 +1274,15 @@ daschk(Node *n)
 		nerror(n, "unsupported := form");
 		return;
 	}
-	t = echk(n->right);
+	/*
+	 * "p := Point{x: 1, y: 2}": same reasoning as Ovardecl's case
+	 * above -- go through compositefields() directly so a value
+	 * composite literal is usable here (there's a fresh local's
+	 * frame slot to store into, in scom's Odas case, com.c), rather
+	 * than echk() hitting the general Ocomposite case and refusing
+	 * it as a bare value.
+	 */
+	t = n->right->op == Ocomposite ? compositefields(n->right) : echk(n->right);
 	if(t == tnone){
 		nerror(n, ":= of a void expression");
 		t = terror;
@@ -1583,7 +1602,19 @@ stchk(Node *n)
 			if(n->aux != nil){
 				Node *it;
 
-				it = echk(n->aux);
+				/*
+				 * "var p Point = Point{x: 1, y: 2}" (or ":= Point{...}",
+				 * daschk below): a value-typed composite literal is
+				 * usable here, unlike as a general expression (echk's
+				 * Ocomposite case still refuses that), because scom's
+				 * Ovardecl case (com.c) has an address to store into --
+				 * the new local's own frame slot -- the same way an
+				 * enclosing ref T{...}'s Oref case does for a nested
+				 * field.  go through compositefields() directly, same
+				 * as Oref's echk case, rather than echk() (which would
+				 * hit the general Ocomposite case and refuse it).
+				 */
+				it = n->aux->op == Ocomposite ? compositefields(n->aux) : echk(n->aux);
 				if(vt == nil)
 					vt = it;
 				else if(!assignable(vt, it, n->aux))
