@@ -703,6 +703,7 @@ void	popblock(void);
 void	tinit(void);
 Decl	*tdecls(void);
 Node	*talloc(Node*, Type*, Node*);
+Node	*mktn(Type*);
 void	tfree(Node*);
 Inst	*mkinst(void);
 Inst	*nextinst(void);

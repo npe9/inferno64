@@ -35,6 +35,7 @@ static	void	stchk(Node*);
 static	void	matchcheck(Node*);
 static	Type	*echk(Node*);
 static	Type	*stype(Node*);
+static	Type	*compositefields(Node*);
 static	Case	*matchlabels(Node*, Type*, int);
 static	int	casecmp(Type*, Node*, Node*);
 static	void	casesort(Type*, Label*, Label*, int, int);
@@ -397,6 +398,106 @@ modmember(Type *mt, Sym *s)
 		if(id->sym == s)
 			return id;
 	return nil;
+}
+
+/*
+ * T{ [key:] value, ... }; pcomposite() always wraps each element in
+ * an Oelem(key-or-nil, value).  match each element to a field of t
+ * (t = the type named by n->left), all-keyed or all-positional
+ * (mixing is an error, like Go), and stash the matched Decl on the
+ * Oelem node itself (e->decl) for com.c's Oref case to read the
+ * field's offset back out at codegen time.
+ *
+ * e->left is the parsed field-name label (an undecl'd Oname pname()
+ * built) -- same trap as Odot's field label: sumark() walks every
+ * node's left/right unconditionally, so it must be cleared once
+ * consumed, not left for sumark to trip over.
+ *
+ * shared by echk's Ocomposite and Oref cases: a composite literal is
+ * only usable as an expression through "ref T{...}", so the
+ * *standalone* Ocomposite case reuses this purely for its
+ * diagnostics (an unknown field name is still reported), then still
+ * refuses the expression.
+ */
+static Type*
+compositefields(Node *n)
+{
+	Type *t;
+	Decl *fid;
+	int keyed;
+	Node *p;
+
+	t = stype(n->left);
+	if(t->kind != Tadt){
+		nerror(n, "composite literal of non-struct type %T", t);
+		n->ty = terror;
+		return n->ty;
+	}
+	if(t->tags != nil){
+		nerror(n, "composite literal of tagged type %T not yet supported", t);
+		n->ty = terror;
+		return n->ty;
+	}
+	keyed = -1;
+	fid = t->ids;
+	for(p = n->right; p != nil; p = p->right){
+		Node *e;
+		Type *fty, *vt;
+		Decl *fd;
+
+		e = p;
+		if(p->op == Oseq)
+			e = p->left;
+
+		fd = nil;
+		if(e->left != nil){
+			if(keyed == 0)
+				nerror(e, "cannot mix keyed and positional elements in %T composite literal", t);
+			keyed = 1;
+			for(fd = t->ids; fd != nil; fd = fd->next)
+				if(fd->sym == e->left->sym)
+					break;
+			if(fd == nil)
+				nerror(e, "%T has no field %s", t, e->left->sym->name);
+		}else{
+			if(keyed == 1)
+				nerror(e, "cannot mix keyed and positional elements in %T composite literal", t);
+			keyed = 0;
+			fd = fid;
+			if(fd == nil)
+				nerror(e, "too many elements in %T composite literal", t);
+			else
+				fid = fid->next;
+		}
+
+		/*
+		 * a struct-typed field means storing another struct's
+		 * fields inline into this one's memory, which needs a real
+		 * recursive store, not the single genmove a scalar field
+		 * gets in com.c's Oref case; not implemented yet, so refuse
+		 * cleanly rather than miscompile.
+		 */
+		if(fd != nil && (fd->ty->kind == Tadt || fd->ty->kind == Tadtpick || fd->ty->kind == Ttuple)){
+			nerror(e, "composite literal field %s: nested struct fields not yet supported", fd->sym->name);
+			fd = nil;
+		}
+
+		vt = echk(e->right);
+		if(fd != nil){
+			fty = fd->ty;
+			if(!assignable(fty, vt, e->right))
+				nerror(e, "cannot use %T as %T for field %s in composite literal", vt, fty, fd->sym->name);
+			e->decl = fd;
+		}
+		e->left = nil;
+
+		if(p->op != Oseq)
+			break;
+	}
+	if(keyed == 0 && fid != nil)
+		nerror(n, "too few elements in %T composite literal", t);
+	n->ty = t;
+	return n->ty;
 }
 
 /*
@@ -844,7 +945,17 @@ echk(Node *n)
 		n->ty = t;
 		return n->ty;
 	case Oref:
-		t = echk(n->left);
+		/*
+		 * "ref T{...}" is how a composite literal is actually
+		 * usable (com.c's Oref case allocates and stores its
+		 * fields); go straight to compositefields() rather than
+		 * through echk(Ocomposite) below, which exists only to
+		 * reject a *bare* composite literal cleanly.
+		 */
+		if(n->left->op == Ocomposite)
+			t = compositefields(n->left);
+		else
+			t = echk(n->left);
 		if(t->kind != Tadt){
 			nerror(n, "ref of non-adt %T", t);
 			n->ty = terror;
@@ -885,21 +996,20 @@ echk(Node *n)
 		n->ty = tnone;
 		return n->ty;
 	case Ocomposite:
-		t = stype(n->left);
-		for(p = n->right; p != nil; p = p->right){
-			Node *e;
-
-			e = p;
-			if(p->op == Oseq)
-				e = p->left;
-			if(e->op == Oelem)
-				echk(e->right);
-			else
-				echk(e);
-			if(p->op != Oseq)
-				break;
-		}
-		n->ty = t;
+		/*
+		 * a bare (non-ref) composite literal typechecks its fields
+		 * via compositefields() -- so a typo'd field name or wrong
+		 * count is still reported -- but is otherwise refused: it
+		 * would need com.c to store into a value-typed local/global
+		 * in place, the same address-of-arbitrary-lvalue capability
+		 * Odot's field-access case above is missing.  "ref T{...}"
+		 * (Oref's case) is the supported path; it never reaches
+		 * here since it calls compositefields() directly.
+		 */
+		t = compositefields(n);
+		if(t != terror)
+			nerror(n, "composite literal %T{...} used as a value not yet supported (write ref %T{...} to allocate)", t, t);
+		n->ty = terror;
 		return n->ty;
 	case Otuple:
 		{

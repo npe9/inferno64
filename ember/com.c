@@ -171,6 +171,16 @@ sumark(Node *n)
 		case Dfn:
 			n->addable = Rpc;
 			break;
+		case Dtype:
+			/*
+			 * a type name used as a value: only reachable as
+			 * Ocomposite's or a bare "ref T"'s left child, where
+			 * it's never loaded or stored -- ecom's Oref case
+			 * reads the type off n->ty, not off this node -- so
+			 * plain "not addressable" is correct, not a stopgap.
+			 */
+			n->addable = Rcant;
+			break;
 		default:
 			fatal("sumark: bad store %d for %s", n->decl->store,
 				n->decl->sym ? n->decl->sym->name : "?");
@@ -651,6 +661,71 @@ ecom(Src *src, Node *nto, Node *n)
 			patch(pp, nextinst());
 			return nto;
 		}
+	case Oref: {
+		/*
+		 * "ref T{...}" (left is Ocomposite) or a bare "ref T"
+		 * (left names a type): allocate a new T and, for the
+		 * composite form, store each element's value at its
+		 * field's offset.  the field-address arithmetic below
+		 * (dupn(dst) as the base of an Oadd) needs dst itself to
+		 * be a plain Rreg/Rmreg value -- sumark's Oadd table has
+		 * no row for a bare Radr/Rmadr base -- so an nto that
+		 * isn't already one of those (an indirect store target, or
+		 * none at all) gets a fresh register temp instead, moved
+		 * into the real nto only at the end.  Unlike limbo/ecom.c's
+		 * Oref (function refs, tagged-pick pickdupcom, an fnptr
+		 * indirection) this only ever sees a plain, non-tagged adt
+		 * -- check.c's compositefields()/Oref case already refused
+		 * anything else.
+		 *
+		 * INEWZ, not limbo's plain INEW: heap()/heapz() (heap.c)
+		 * differ only in memset-ing the new block, and limbo can
+		 * get away with the unzeroed one because ref T(...) is a
+		 * tuple call that always supplies every field.  ember's
+		 * "key: value" composite literals are Go-style and may
+		 * leave fields unset (compositefields() only requires
+		 * *all* fields for a positional literal, not a keyed one),
+		 * so an unset field must actually read as zero, not
+		 * whatever garbage a reused pool block last held.
+		 */
+		Type *at;
+		Node *p, *e, *dst;
+
+		at = left->ty;
+		dst = nto;
+		if(dst == nil || (dst->addable != Rreg && dst->addable != Rmreg))
+			dst = talloc(&tres, n->ty, nil);
+		genrawop(src, INEWZ, mktn(at), nil, dst);
+		if(left->op == Ocomposite){
+			for(p = left->right; p != nil; p = p->right){
+				e = p;
+				if(p->op == Oseq)
+					e = p->left;
+				if(e->decl != nil){
+					Node *base, *off, *addr, *ind;
+
+					sumark(e->right);
+					base = dupn(dst);
+					off = mkconst(&e->src, e->decl->offset);
+					off->ty = tint;
+					addr = mkn(Oadd, base, off);
+					addr->src = e->src;
+					addr->ty = tint;
+					sumark(addr);
+					ind = mkn(Oind, addr, nil);
+					ind->src = e->src;
+					ind->ty = e->decl->ty;
+					sumark(ind);
+					ecom(&e->src, ind, e->right);
+				}
+				if(p->op != Oseq)
+					break;
+			}
+		}
+		if(nto != nil && nto != dst)
+			genmove(src, Mas, n->ty, dst, nto);
+		return nto != nil ? nto : dst;
+	}
 	default:
 		fatal("ecom: unsupported %O", n->op);
 		break;

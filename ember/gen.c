@@ -227,6 +227,27 @@ talloc(Node *n, Type *t, Node *nok)
 	return n;
 }
 
+/*
+ * a type-descriptor operand ($t), for INEW: names the type being
+ * allocated, addressed as Rdesc/Adesc.  limbo/ecom.c's mktn() ported
+ * as-is; genaddr's Rdesc case reads n->ty->decl, not n->decl, but
+ * mktn sets both the way limbo's does.
+ */
+Node*
+mktn(Type *t)
+{
+	Node *n;
+
+	n = mkn(Oname, nil, nil);
+	usedesc(mktdesc(t));
+	n->ty = t;
+	n->decl = t->decl;
+	if(n->decl == nil)
+		fatal("mktn t %T nil decl", t);
+	n->addable = Rdesc;
+	return n;
+}
+
 void
 tfree(Node *n)
 {

@@ -3,10 +3,14 @@
 *.obj
 [8qkv965o].out
 [8qkv965o].emu
+[8qkv965o].emu-g
 obj.out
 obj.map
 vc*.pdb
 *.a
+
+# mkconfig-installed host toolchain (ember, emu-g, iyacc, limbo, ndate)
+/MacOSX/arm64/bin/
 
 # yacc artifacts
 y.output
