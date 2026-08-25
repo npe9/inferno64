@@ -1571,6 +1571,26 @@ and segment code that stays.  That is the boundary the paper draws when
 it calls the microkernel unreachable from a Plan 9 kernel, reached now
 from the other side: the device personality is gone, and what remains is
 the name-space machinery itself.
+.PP
+The yardstick for how far this goes is seL4, which provides no devices
+at all: its kernel is endpoints and notifications for message passing,
+thread and address-space objects, and interrupt-handler capabilities, and
+every driver \- disk, network, console, clock \- is a userspace task that
+holds an interrupt capability and a mapping of the device's registers.
+The only hardware the kernel touches is what it cannot delegate: the
+interrupt controller, and a timer for the scheduling tick.  Measured
+against that, six devices is not the floor.  osprey and segment are the
+real kernel mechanisms, message passing and address spaces; the interrupt
+and scheduling core is legitimate; but cons, uart and rtc are drivers
+that seL4 would put in userspace, each a task that selects on the
+semaphore its interrupt gives, which is the very shape the paper
+describes for a driver and which pc64 already has one instance of in the
+uart served by a task.  So the seL4-minimal end state is two kernel
+devices, osprey and segment, with cons, uart and rtc moved out to driver
+tasks \- the same driver-task work, not more device deletion \- and a
+bare panic console kept in the kernel the way seL4 keeps a debug putchar,
+because the kernel must be able to report a fault before any userspace
+driver exists.
 .NH 1
 The gaps, by why they are gaps
 .PP
