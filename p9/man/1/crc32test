@@ -1,0 +1,53 @@
+.TH CRC32TEST 1
+.SH NAME
+crc32test \- regression test for crc32(1)
+.SH SYNOPSIS
+.B crc32test
+.SH DESCRIPTION
+.I Crc32test
+loads
+.BR /p9/dis/crc32.dis 's
+in-process test seam,
+.BR runstring(args,\ input) ,
+and checks it against golden output for the empty string, several short
+strings, and both custom
+.RB ( -i / -x )
+and non-default
+.RB ( -p )
+parameters.
+.PP
+The default-parameter cases are checked against an independent oracle
+\(em Python's
+.B zlib.crc32
+\(em which computes the same standard CRC-32 this program's own
+defaults implement, but shares no code with this translation. The
+custom-parameter case has no such off-the-shelf oracle, so it was
+checked against a from-scratch Python re-implementation of
+.BR crc32.c 's
+own table-based algorithm (independent of this Limbo translation, not
+derived from it) before being written down as a golden value.
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/crc32test.b
+.SH SEE ALSO
+.IR crc32 (1)
+.SH BUGS
+Runs
+.I crc32
+in-process via its
+.B runstring
+seam, which only exercises the "read one input" path \(em not
+.IR crc32 's
+own
+.BR init ,
+argument-count handling, multiple real
+.I file
+arguments, or the per-file open/read failure bookkeeping (a failure on
+one file not stopping the rest, reported only at the end), none of
+which
+.B runstring
+goes through.

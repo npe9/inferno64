@@ -1,0 +1,103 @@
+.TH CRC32 1
+.SH NAME
+crc32 \- compute a CRC-32 checksum, in Limbo
+.SH SYNOPSIS
+.B crc32
+[
+.BI -x\  xorval
+]
+[
+.BI -i\  initial
+]
+[
+.BI -p\  poly
+]
+[
+.I file
+\&...
+]
+.SH DESCRIPTION
+.I Crc32
+is a structural Limbo translation of Plan 9's real
+.IR crc32 (1)
+.RB ( sys/src/cmd/crc32.c ,
+99 lines in the 9front tree), not a behavioral workalike \(em see
+.B doc/plan9-port.md
+in the source tree for the distinction. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+With no arguments,
+.I crc32
+computes the standard CRC-32 (the one used by gzip, zip, and Ethernet)
+of standard input and prints it in hex, followed by a newline. With one
+or more
+.I file
+arguments, it computes and prints the checksum of each in turn, each
+line followed by a tab and the file's name; a file that cannot be
+opened or read is reported to standard error and skipped, but does not
+stop the remaining files from being processed \(em the overall failure
+is only signalled once, after everything has been attempted.
+.SS Options
+.TP
+.BI -x\  xorval
+Value XORed with the running checksum both before the first byte and
+after the last (default all-ones \(em the standard CRC-32's final
+complement).
+.TP
+.BI -i\  initial
+Initial register value before
+.B -x
+is applied (default 0).
+.TP
+.BI -p\  poly
+The (reflected) generator polynomial (default
+.BR 0xedb88320 ,
+the standard CRC-32/zlib/PKZIP/Ethernet polynomial).
+.PP
+Each of
+.BR -x / -i / -p 's
+values may be decimal, or (following the original's own
+.B strtol
+base-0 convention) hex with a leading
+.B 0x
+or octal with a leading
+.BR 0 .
+.SH SOURCE
+.B /p9/cmd/crc32.b
+(translated from
+.BR sys/src/cmd/crc32.c )
+.SH SEE ALSO
+.IR crc32test (1)
+.SH BUGS
+An unrecognised option is a usage error here, unlike
+.IR join (1),
+whose original silently ignores one \(em a genuine difference between
+the two originals' own conventions, not unified away by this port.
+.PP
+The original's
+.B u32int
+(32-bit unsigned) arithmetic, including a right shift that must be
+logical rather than sign-extending, is carried as Limbo
+.B big
+masked to 32 bits throughout \(em Limbo's own
+.B int
+right-shift sign-extends, which would corrupt this algorithm outright;
+see
+.BR crc32.b 's
+header comment for why a masked, always-non-negative
+.B big
+sidesteps the problem without needing a separate logical-shift
+operator (Limbo has none for a signed type).
+.PP
+.BR strtol 's
+own edge cases (leading whitespace, overflow, an explicit sign) are
+not reproduced bit-for-bit, only its base-0 hex/octal/decimal auto-
+detection \(em unlike
+.IR join (1),
+there is no known real divergence in ordinary use of this option
+worth preserving here.

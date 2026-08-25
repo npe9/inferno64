@@ -763,3 +763,51 @@ below.
     counting condition; 19 of 20 cases failed immediately, the sole
     survivor being the one case that already expected a failure;
     restored, 20/20 passed again).
+12. **`p9/cmd/crc32.b` - a real translation of `sys/src/cmd/crc32.c` (99
+    lines): done**, one of the item-9 backlog candidates, and the first
+    one picked up under the corrected methodology from scratch (not a
+    redo). Computes the standard reflected CRC-32 (the one used by
+    gzip/zip/Ethernet) with configurable `-x`/`-i`/`-p`.
+
+    The one real translation problem: the C's `u32int` arithmetic
+    includes a right shift that must be logical (zero-fill), but
+    Limbo's own `int` right-shift sign-extends (documented in
+    `doc/limbo/limbo.ms`), and Limbo has no separate logical-shift
+    operator for a signed type. Solved by carrying every value as
+    `big` masked to 32 bits rather than `int` - since a masked value is
+    always non-negative, its sign bit is always 0, so a plain
+    (arithmetic) right shift never needs to fill with 1s in the first
+    place and is exactly the logical shift this algorithm needs, with
+    no separate operator required. `ARGBEGIN`/`EARGF` (Plan 9 libc's
+    own option macros) use the same attached-suffix-or-next-word
+    convention as `join.b`'s `getoptarg()`, ported the same way, since
+    it's the same convention. `strtol(s,0,0)`'s base-0 hex/octal/
+    decimal auto-detection is a small from-scratch `parsenum()`, not a
+    bug-for-bug port of `strtol`'s own edge cases (no known real
+    divergence worth preserving there, unlike `join.b`'s `atoi()`).
+    `exits(error)`'s "keep processing every file, report failure only
+    at the very end" shape is the same idiom as `join.b`'s `discard`
+    bookkeeping, translated the same way.
+
+    Verified against an independent oracle (Python's `zlib.crc32`,
+    which implements the same standard CRC-32 this program's defaults
+    do, but shares no code with the translation) for five default-
+    parameter cases, and against a from-scratch Python re-
+    implementation of `crc32.c`'s own table algorithm (not derived from
+    the Limbo translation) for a custom `-i`/`-x` case - all match.
+    `p9/cmd/crc32test.b` (7 cases) keeps these as a permanent test via
+    `runstring(args, input)`; confirmed with a negative control (broke
+    the final XOR-with-`xorval` into an AND; 6 of 7 cases failed
+    immediately - the seventh only checks "produces non-empty output",
+    which survived - restored, 7/7 passed again).
+
+    Checked which of the remaining item-9 candidates have real Plan 9
+    source before picking the next one (same discipline as the
+    dc/join check): `split.c` (195 lines), `pr.c` (666), `file.c`
+    (1772), `tar.c` (1588), `patch.c` (839), and `iconv.c` (102) all
+    exist in `sys/src/cmd/`; `dict` does not (confirmed 404 against the
+    9front tree - it was a guess in item 8's list that didn't pan out).
+    Line counts fetched but not yet read in full or translated -
+    `split`/`iconv` are `crc32`-sized next candidates; `pr`/`patch` are
+    a middle tier; `file`/`tar` are `dc.c`-sized undertakings, not a
+    quick pass.
