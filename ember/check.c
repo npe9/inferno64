@@ -765,35 +765,66 @@ echk(Node *n)
 						Type *fty;
 
 						fty = id->ty;
-						if(!isref){
-							/*
-							 * base.field where base is a
-							 * plain (non-ref) struct value:
-							 * needs an address-of an
-							 * arbitrary lvalue, which this
-							 * compiler doesn't have yet.
-							 */
-							nerror(n, "field access on value-typed %T not yet supported (use a ref receiver)", t);
-							n->ty = terror;
-							return n->ty;
-						}
 						/*
-						 * base.field, base : ref adt -> lower
-						 * to Oind(Oadd(base, $offset)), same
-						 * shape limbo/ecom.c's rewrite() builds
-						 * for Odot.  n->right (the parsed
+						 * base.field -> Oind(Oadd(base', $offset)),
+						 * same shape limbo/ecom.c's rewrite()
+						 * builds for Odot.  n->right (the parsed
 						 * field-name label) is discarded, not
 						 * reused, to keep this simple.
+						 *
+						 * base' is base itself when base : ref adt
+						 * (n->left already IS the pointer value to
+						 * offset-and-dereference), but base : plain
+						 * struct *value* needs base' = Oadr(base)
+						 * first -- an explicit "address of this
+						 * value's own storage" marker.  without it,
+						 * sumark's Oadd/Oind tables would treat a
+						 * value's frame slot exactly like a ref
+						 * pointer's and emit a *real* dereference
+						 * (Afpind) of whatever bytes happen to be
+						 * sitting in that slot -- wrong, since a
+						 * value struct's slot already IS the field
+						 * data, not a pointer to it.  Oadr's own
+						 * sumark case (com.c) exists precisely so
+						 * this Oind collapses back to a plain
+						 * Rreg/Rmreg (no dereference) instead of
+						 * Radr/Rmadr, for exactly this reason --
+						 * ported from limbo/ecom.c's identical
+						 * Oadr-wraps-non-ref-bases rule, which this
+						 * port originally (32d6cb90) skipped as
+						 * "not yet supported", not realizing the
+						 * wrap was the missing piece, not a whole
+						 * separate feature.
+						 *
+						 * n->decl is set to the field only for the
+						 * ref case: Radr's genaddr case (gen.c)
+						 * ignores n->decl and recurses into n->left
+						 * regardless, but Rreg's *checks* n->decl
+						 * first and, if set, uses it directly
+						 * instead of recursing -- which for the
+						 * value case would skip right over the
+						 * Oadr/Oadd chain that computes the real
+						 * offset.  leaving it nil there is
+						 * required, not just tidier.
 						 */
 						off = mkconst(&n->src, id->offset);
 						off->ty = tint;
-						addr = mkn(Oadd, n->left, off);
+						if(isref)
+							addr = mkn(Oadd, n->left, off);
+						else{
+							Node *adr;
+
+							adr = mkunary(Oadr, n->left);
+							adr->src = n->src;
+							adr->ty = bt;
+							addr = mkn(Oadd, adr, off);
+						}
 						addr->src = n->src;
 						addr->ty = tint;
 						n->op = Oind;
 						n->left = addr;
 						n->right = nil;
-						n->decl = id;
+						n->decl = isref ? id : nil;
 						n->ty = fty;
 						return n->ty;
 					}

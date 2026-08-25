@@ -105,6 +105,7 @@ char *opname[] =
 	/* Oleq */	"leq",
 	/* Ogeq */	"geq",
 	/* Oind */	"ind",
+	/* Oadr */	"adr",
 	/* Oused */	"used",
 	/* Onothing */	"nothing",
 	/* Ochan */	"chan",

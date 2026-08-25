@@ -210,6 +210,37 @@ sumark(Node *n)
 			break;
 		}
 		break;
+	case Oadr:
+		/*
+		 * "address of" a value's own storage -- injected by
+		 * check.c's Odot case around a non-ref base (p.field, p a
+		 * plain struct value, not behind a ref) so the ADD+IND
+		 * below composes it through the *same* Rareg/Raadr lineage
+		 * as a genuine ref pointer would, rather than the bare
+		 * Rreg/Rmreg one: Oind's case (right below) collapses an
+		 * Oadr-rooted chain back to a plain Rreg/Rmreg (no real
+		 * dereference -- correct, since the frame slot already IS
+		 * the struct's data, not a pointer to it), whereas a bare
+		 * Rreg base run through the same ADD would produce Raadr
+		 * -> Radr, a genuine Afpind dereference -- correct for a
+		 * *ref* receiver's field, wrong for a value one.  ported
+		 * from limbo/ecom.c's identical sumark case.
+		 */
+		switch(left->addable){
+		case Rreg:
+			n->addable = Rareg;
+			break;
+		case Rmreg:
+			n->addable = Ramreg;
+			break;
+		case Radr:
+			n->addable = Raadr;
+			break;
+		case Rmadr:
+			n->addable = Ramadr;
+			break;
+		}
+		break;
 	case Oind:
 		/*
 		 * ind() column of limbo/ecom.c's addressability table
@@ -548,7 +579,28 @@ ecom(Src *src, Node *nto, Node *n)
 		tfree(&tl);
 		return nto;
 	case Oind:
-		if(left->addable >= Rcant)
+		/*
+		 * left (n->left) is never actually read below -- genmove
+		 * addresses *n* (whose own addable sumark has already fully
+		 * collapsed to one of Radr/Rmadr/Rreg/Rmreg, all < Rcant,
+		 * for every input its own table handles), via genaddr's
+		 * independent, purely static recursion through n->left --
+		 * so materializing left into a temp here is always wasted
+		 * work when left is Rareg/Ramreg/Raadr/Ramadr (the "almost
+		 * addressable" classes Oind's sumark case consumes): those
+		 * exist *only* to be resolved by that genaddr recursion,
+		 * never as a runtime-computable value, and forcing one
+		 * through ecom's ordinary arithmetic path crashes outright
+		 * when the chain roots at Oadr (check.c's value-typed
+		 * base.field lowering) -- Oadr has no case in ecom() because
+		 * "address of a local's own frame slot" isn't a value to
+		 * compute, only a marker for sumark's tables to route
+		 * through.  left->addable >= Rcant but outside that set
+		 * (Rpc/Rmpc/Rldt) still gets the original treatment.
+		 */
+		if(left->addable >= Rcant
+		&& left->addable != Rareg && left->addable != Ramreg
+		&& left->addable != Raadr && left->addable != Ramadr)
 			left = eacom(left, &tl, nil);
 		if(nto != nil)
 			genmove(src, Mas, n->ty, n, nto);

@@ -580,6 +580,7 @@ enum
 	Oandand, Ooror,
 	Oeq, Oneq, Olt, Ogt, Oleq, Ogeq,
 	Oind,				/* indirection (codegen) */
+	Oadr,				/* address-of a value's own storage (codegen); see sumark's Oadr case */
 	Oused,				/* expression used as statement (codegen) */
 	Onothing,			/* nop (codegen) */
 	Ochan,				/* chan T alloc: left size or nil, right type expr (cleared after check) */
