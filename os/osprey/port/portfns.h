@@ -177,6 +177,7 @@ int		(*ospreyuartintr)(Uart*);
 /* the interface is passed untyped: Ether belongs to etherif.h, which
  * the port headers do not and should not include */
 int		(*ospreyetheriq)(void*, Block*);
+void*		(*ospreyetherlookup)(char*);
 /* whether this process may attach a segment of that name */
 int		(*ospreysegok)(char*);
 Uart*		uartlookup(char*);

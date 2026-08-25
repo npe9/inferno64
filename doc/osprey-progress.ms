@@ -1494,12 +1494,34 @@ on its ring, and
 .CW scripts/osprey-check-micro.py
 still passes.
 .PP
-What is left to cut is named by what is kept.  The packet path binds the
-osprey device to
-.CW etherlookup ,
-and until that call goes through a hook the way
-.CW ospreyethergive
-does, the ether and ip stack cannot leave.  And the always-linked port
+The network is cut too.  The osprey device named an interface by calling
+.CW etherlookup
+in the ether device directly; it goes through the
+.CW ospreyetherlookup
+pointer now, which the ether device fills at reset the way it already
+took a received packet through
+.CW ospreyetheriq .
+A kernel with no ether device leaves the pointer nil and the osprey
+device's ether control message fails rather than failing to link.  With
+that, the whole ether and ip stack \- the drivers, the media, tcp, udp
+and the rest \- leaves upc64, which is down to eight devices:
+.CW arch ,
+.CW cons ,
+.CW env ,
+.CW osprey ,
+.CW rtc ,
+.CW segment ,
+.CW swap
+and
+.CW uart .
+The stack was most of the kernel: upc64 is seventy-seven kilobytes of
+text where pc64 is three and a half megabytes.  The microkernel still
+boots its task and answers four of four requests, and pc64 still answers
+a ping from another machine through the hook, so
+.CW scripts/osprey-check-net.py
+passes nine of nine.
+.PP
+What is left to cut is named by what is kept.  And the always-linked port
 sources \-
 .CW chan.c ,
 .CW cache.c ,

@@ -3359,7 +3359,8 @@ ospreyctlether(Cmdbuf *cb)
 			error(Ebadarg);
 	} else
 		ospreytxsem[x] = -1;
-	if((et = etherlookup(cb->f[2])) == nil)
+	if(ospreyetherlookup == nil
+	|| (et = ospreyetherlookup(cb->f[2])) == nil)
 		error(Enonexist);
 	if(ospreyether[x] != nil && ospreyether[x] != et)
 		ospreyputether(p);	/* give the last one back first */
@@ -3859,7 +3860,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		}
 		if(pipserving)
 			break;
-		if(etherlookup(cb->f[1]) == nil)
+		if(ospreyetherlookup == nil || ospreyetherlookup(cb->f[1]) == nil)
 			error(Enonexist);
 		nm = smalloc(strlen(cb->f[1])+1);
 		strcpy(nm, cb->f[1]);

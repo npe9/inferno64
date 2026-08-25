@@ -541,6 +541,14 @@ static void netconsole(int);
 static void
 etherreset(void)
 {
+	/*
+	 * The osprey device names an interface with this, the way it
+	 * takes a received packet through ospreyetheriq.  A microkernel
+	 * that carries no ether device leaves the pointer nil and its
+	 * ether control message fails rather than failing to link.
+	 */
+	ospreyetherlookup = etherlookup;
+
 	Ether *ether;
 	int cardno, ctlrno;
 

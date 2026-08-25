@@ -6,10 +6,10 @@
 # the message passing (osprey), address spaces (segment), the console
 # (cons, uart), the machine's interrupt and scheduling bring-up (arch and
 # the misc entries), rtc because the AP start path writes the warm-reset
-# vector through it, env and swap because the always-linked port code
-# still calls into them, and the ether and ip stack, whose only tie to
-# the kept osprey device is etherlookup and which a later cut removes
-# once that call goes through a hook.  mnt, srv and shr leave a few
+# vector through it, and env and swap because the always-linked port code
+# still calls into them.  The ether and ip stack is gone now that the
+# osprey device names an interface through the ospreyetherlookup hook
+# rather than calling etherlookup directly.  mnt, srv and shr leave a few
 # symbols behind that the port core references but the microkernel boot
 # never reaches; the port section below stubs them with a panic, so a
 # stub that ever fires is a loud bug and not silent breakage.
@@ -21,19 +21,8 @@ dev
 	rtc
 	osprey
 
-	ether		netif
-	bridge		log
-	ip		arp chandial ip ipv6 ipaux iproute netlog nullmedium pktmedium inferno
-
 	uart
 	segment
-
-link
-	cputemp		pci
-	etherigbe	pci ethermii
-	ethermedium
-	loopbackmedium
-	netdevmedium
 
 misc
 	headless
@@ -49,17 +38,6 @@ misc
 	uartisa
 	uartpci		pci
 
-ip
-	tcp
-	udp
-	rudp
-	ipifc
-	icmp
-	icmp6
-	igmp
-	gre
-	ipmux
-	il
 
 port
 	int cpuserver = 0;
