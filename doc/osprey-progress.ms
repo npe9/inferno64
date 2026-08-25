@@ -1464,10 +1464,50 @@ What is proved is small and real: the four services stand and a task runs
 on them with the Plan 9 boot cut away.  What upc64 still carries is
 pc64's whole device list and the port sources behind it \- the file and
 name-space personality is linked, merely not entered on this path.  The
-next cuts strip that device list toward the four services and let the
-task reach its message ring the way a container does, over a segment it
-maps, rather than through a kernel call; each is a step with the same
-boot to test it on.
+next cut is done: the device list is stripped.  upc64 carries eleven
+devices where pc64 carries twenty-four, having lost root, pnp, pipe,
+proc, mnt, srv, shr, dup, cap, kprof, fs, and the sd and audio stacks \-
+the file and name-space personality.  What is kept is
+.CW cons ,
+.CW arch ,
+.CW uart ,
+.CW segment
+and
+.CW osprey ,
+the four services and a console, plus
+.CW rtc ,
+.CW swap ,
+.CW env
+and the ether and ip stack, which the always-linked port code and the
+osprey device's own packet path still reference at link time and which
+later cuts remove.  Removing
+.CW mnt ,
+.CW srv
+and
+.CW shr
+left symbols the port core names that the microkernel boot never
+reaches; the config's port section stubs each with a panic, and none
+fires, which is the evidence they are personality and not mechanism.
+Data fell from three hundred and thirty-seven kilobytes to two hundred
+and sixty-three.  The task still boots and answers four of four requests
+on its ring, and
+.CW scripts/osprey-check-micro.py
+still passes.
+.PP
+What is left to cut is named by what is kept.  The packet path binds the
+osprey device to
+.CW etherlookup ,
+and until that call goes through a hook the way
+.CW ospreyethergive
+does, the ether and ip stack cannot leave.  And the always-linked port
+sources \-
+.CW chan.c ,
+.CW cache.c ,
+.CW sysfile.c ,
+the swap and environment code \- are the Plan 9 name space and file
+machinery the paper puts in a library operating system, which the
+deepest cut removes from the kernel outright.  Each is a step with the
+same boot to test it on.
 .NH 1
 The gaps, by why they are gaps
 .PP
