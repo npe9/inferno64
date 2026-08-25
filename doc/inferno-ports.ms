@@ -1073,26 +1073,168 @@ read, just never exercised by one until pc64 got far enough to try.
 Fixed, this turns a silent interpreter-level crash into
 .CW "sh:\ bad\ exit\ status\ ''" \-
 a clean, readable diagnostic \- and lets execution proceed past it.
-What is actually behind the empty read is not found: the same boot,
-run repeatedly, does not take the same path twice.  Most runs now
-print
+That message asks its own question: why did the wait read come back
+empty at all?  It was not a race.
+.CW port/devproc.c 's
+.CW procread() ,
+the file server behind
+.CW #p/PID/wait ,
+had its
+.CW Qwait
+case body entirely commented out, falling straight through to
+.CW "return\ 0" .
+Every read of a wait file returned zero bytes immediately, unconditionally,
+never blocking, no matter what \-
+.CW sh.b 's
+.CW waitfor()
+only checks
+.CW "n\ <\ 0"
+as an error; a same-turn empty read looks like nothing happened, gets
+handed to
+.CW parsewaitstatus()
+as an empty string, and that is the
+.CW ''
+in every occurrence of this message this section has recorded.
+.CW prochaswaitq() ,
+the wake condition
+.CW sleep()
+uses while genuinely waiting, was separately stubbed the same way \-
+.CW "return\ 0"
+unconditionally \- so restoring
+.CW Qwait
+alone would have swapped an instant wrong answer for an eternal
+hang.  Both go back to the single commit that introduced this
+.CW devproc.c
+(9ferno, November 2021) \- five weeks before this board's
+.CW mod
+list was emptied for Forth, meaning no Dis process ever got far
+enough to load
+.CW Sys ,
+spawn a child, and call
+.CW wait()
+on it until this session.  Unfinished work waiting five years for a
+caller, not a regression.  The state these two stubs needed to read
+was never in question:
+.CW port/proc.c 's
+.CW pexit()
+already correctly populates
+.CW p->waitq / p->nwait
+and wakes
+.CW p->waitr
+on every child exit \- proven by this same kernel's separate, working,
+.I native
+wait path
+.RI ( proc.c 's
+.CW haswaitq() ,
+used by
+.CW waitfor() 's
+non-file-based sibling) \- so uncommenting both stubs was sufficient.
+With both restored,
 .CW "sh:\ bad\ exit\ status\ ''"
-once or twice and go quiet; one run got further, past that, into
-.CW "sh:\ badmodule()\ cannot\ load\ /dis/lib/filepat.dis:"
-\- a file that is both listed in
-.CW pc64 's
-.CW root
-section and present on disk, so
-.I that
-failure is not a missing file either, and is not yet explained; and a
-rarer run still hit an unrelated page fault during the same window,
-not reproduced on retry.  This is now the frontier: a real Inferno
-init running a real shell against a real script, failing in ordinary,
-catchable ways instead of dying silently, with the specific next
-question being why a wait-file read or a module load comes back empty
-on some runs and not others in the same few hundred milliseconds of
-boot \- not a missing disk, which was this section's second wrong
-guess about why nothing worked.
+has not reproduced in any run since.
+.PP
+Past it, a new failure appears in its place, reliably: mounting
+.CW mntgen
+via
+.CW /dis/init 's
+.CW "mount\ {mntgen}\ /n"
+loads
+.CW Mount ,
+.CW Nametree ,
+.CW Styxservers
+and
+.CW mntgen
+itself \- all confirmed, by a temporary
+.CW lookmod()
+trace, to resolve
+.CW $Sys
+correctly, so this is not a repeat of the modinit finding \- and then
+.CW Mount
+hits
+.CW "fd\ out\ of\ range\ or\ not\ open"
+on file descriptor 4, reproducibly, in the large majority of runs.
+.CW appl/cmd/mount.b 's
+.CW popen()
+opens exactly that pipe
+.RI ( sys->pipe(fds) ,
+which a kernel-level trace confirms allocates fds 3 and 4 successfully)
+to connect
+.CW mntgen
+as a child process, then
+.CW spawn s
+a helper thread that calls
+.CW "sys->pctl(Sys->FORKFD,\ nil)"
+to give
+.I itself
+a private copy of the file-descriptor group before running
+.CW mntgen \-
+by Limbo's own semantics that fork should not touch
+.CW Mount 's
+own, separate copy of the same group, and reading every layer
+involved \-
+.CW newprog() 's
+osenv copy on
+.CW spawn ,
+.CW dupfgrp() ,
+.CW pctl() 's
+.CW Sys_FORKFD
+case \- confirms each one behaves as documented in isolation.
+.PP
+One concrete, tested lead came out of this: the kernel process that
+picks up a released Dis program when the original blocks is spun up
+via
+.CW "kproc(\(dqdis\(dq,\ vmachine,\ nil,\ 0)"
+in
+.CW port/dis.c 's
+.CW release() ,
+with
+.CW flags=0 \-
+meaning it inherits none of pgrp/fgrp/egrp from its recycled
+.CW Proc
+slot, unlike
+.CW proc.c 's
+.CW rptproc() ,
+which uses this identical acquire/release pattern and passes
+.CW KPDUP
+for exactly that reason.  Fixed to match.  A/B tested with and
+without the flag, same failure both times: this kproc's own
+per-iteration loop already resyncs
+.CW up->fgrp
+from the current Prog's
+.CW osenv
+before every instruction dispatch, which is enough to mask flags=0
+for any Prog that actually reaches that loop.  Kept anyway \- a kproc
+about to run arbitrary user Dis code has no business starting from a
+stale group left by an unrelated prior occupant of its
+.CW Proc
+slot \- but it is not this bug.
+.CW Fgrp
+pointer values traced across the failure (a temporary print in
+.CW newfd2()
+and in
+.CW fdtochan() )
+show the
+.I same
+live
+.CW Fgrp
+object, correctly shared, at both the successful allocation and the
+failed lookup: not a stale pointer, not a wrong group, not the kproc
+handoff.  Something between
+.CW popen() 's
+.CW sys->pipe()
+and
+.CW Mount 's
+next use of the returned
+.CW ref\ Sys->FD
+clears slot 4 specifically out of a group that is genuinely still the
+right one.  This is the frontier now, characterized precisely enough
+to resume without repeating the trace: a real Inferno init running a
+real shell against a real script, past two structural fixes (modinit,
+the wait file) into an ordinary pipe/fd lifecycle bug in shared,
+board-independent kernel code, ordinary enough that some other board
+exercising the same
+.CW popen()
+path would hit it too.
 .NH 1
 How a native kernel provides networking
 .PP
