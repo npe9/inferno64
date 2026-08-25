@@ -1270,6 +1270,73 @@ daschk(Node *n)
 	Node *lhs;
 
 	lhs = n->left;
+	if(lhs->op == Oseq){
+		/*
+		 * "n, s := multi()": destructure a multi-valued call's
+		 * result into fresh locals, one per name, typed from the
+		 * RHS's Ttuple fields in order.  scom's Odas case (com.c)
+		 * does the actual destructuring at codegen time -- call the
+		 * RHS once into a fresh tuple-shaped temp, then copy each
+		 * field out.  general "a, b = ..." (existing variables, via
+		 * plain Oas) isn't supported yet: only := guarantees every
+		 * LHS name is a fresh Oname, the same scoping this function
+		 * already relies on for its single-name path below.
+		 */
+		Node *p, *id;
+		Decl *fd;
+		int nlhs, nrhs;
+
+		t = echk(n->right);
+		if(t->kind != Ttuple){
+			nerror(n, "multiple assignment needs a multi-valued call on the right, not %T", t);
+			return;
+		}
+		nlhs = 0;
+		for(p = lhs; p != nil; p = p->right){
+			nlhs++;
+			if(p->op != Oseq)
+				break;
+		}
+		nrhs = 0;
+		for(fd = t->ids; fd != nil; fd = fd->next)
+			nrhs++;
+		if(nlhs != nrhs){
+			nerror(n, "assignment count mismatch: %d = %d", nlhs, nrhs);
+			return;
+		}
+		fd = t->ids;
+		for(p = lhs; p != nil; p = p->right){
+			id = p;
+			if(p->op == Oseq)
+				id = p->left;
+			if(id->op != Oname){
+				nerror(n, "unsupported := form");
+				return;
+			}
+			sizetype(fd->ty);
+			d = mkdecl(&id->src, Dlocal, fd->ty);
+			d->sym = id->sym;
+			install(d);
+			id->decl = d;
+			id->ty = fd->ty;
+
+			d->link = nil;
+			if(curfn->locals == nil)
+				curfn->locals = d;
+			else{
+				Decl *e;
+
+				for(e = curfn->locals; e->link != nil; e = e->link)
+					;
+				e->link = d;
+			}
+			fd = fd->next;
+			if(p->op != Oseq)
+				break;
+		}
+		n->ty = t;
+		return;
+	}
 	if(lhs->op != Oname){
 		nerror(n, "unsupported := form");
 		return;
@@ -1660,7 +1727,40 @@ stchk(Node *n)
 					nerror(n, "missing return value");
 				return;
 			}
+			/*
+			 * "return a, b" -- pexprlist() (parse.c) leaves multiple
+			 * return values as a bare Oseq chain, the same shape
+			 * Otuple's own left already expects (its echk case
+			 * walks n->left via ->right, exactly like this).  wrap
+			 * once, here, only when there's more than one value
+			 * (Oseq present) and the function's declared return
+			 * type is itself a tuple -- a single-value return stays
+			 * untouched, and com.c's Oret case (scom) below never
+			 * needs to know the difference: ecom() gets a new
+			 * Otuple case (com.c) that stores its elements the same
+			 * way a bare (non-ref) composite literal's fields do.
+			 */
+			if(n->left->op == Oseq && curret->kind == Ttuple)
+				n->left = mkn(Otuple, n->left, nil);
 			t = echk(n->left);
+			/*
+			 * echk's Otuple case builds a fresh Ttuple from the
+			 * actual value expressions (mktype(), no sizetype())
+			 * -- unlike curret (the function's *declared* return
+			 * type, already sizetype()'d once in fndecl(), when the
+			 * function itself was declared).  com.c's new Otuple
+			 * case (ecom) reads this fresh type's own field offsets
+			 * directly, so it needs sizing here, not just curret's.
+			 * skipping this left every field's offset at its
+			 * zero-initialized default -- every value landed at the
+			 * same address, overwriting each other; two same-sized
+			 * int fields happened not to show it (whichever losing
+			 * write's value simply never got read back out), but an
+			 * int followed by a string corrupted the string
+			 * pointer's own bytes outright.
+			 */
+			if(t->kind == Ttuple)
+				sizetype(t);
 			if(curret == tnone)
 				nerror(n, "function returns no value");
 			else if(!assignable(curret, t, n->left))

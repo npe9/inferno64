@@ -825,6 +825,57 @@ ecom(Src *src, Node *nto, Node *n)
 			genmove(src, Mas, n->ty, dst, nto);
 		return nto != nil ? nto : dst;
 	}
+	case Otuple: {
+		/*
+		 * "return a, b": check.c's Oret case wraps a multi-value
+		 * return into Otuple(Oseq-of-values, nil) when the function's
+		 * declared return type is itself a tuple, reusing echk's
+		 * pre-existing Otuple case (originally for parenthesised-
+		 * tuple expressions) to type each value and build the
+		 * Ttuple's field list (n->ty->ids, offsets included, from
+		 * sizetype()). Only reachable this way for now: Otuple isn't
+		 * itself surface syntax elsewhere yet (no tuple-typed locals,
+		 * no destructuring assignment), so nto is always exactly
+		 * retalloc()'s Oind(retnode) -- a Radr-addressable "wherever
+		 * the caller wants this written" -- and the store just needs
+		 * retnode itself (nto->left, Rreg) as a base to add each
+		 * field's offset onto, the same Oind(Oadd(base, $offset))
+		 * shape storecomposite() already builds, walked positionally
+		 * against n->ty->ids instead of by e->decl.
+		 */
+		Node *p, *e, *base;
+		Decl *fd;
+
+		base = nto;
+		if(base != nil && base->op == Oind)
+			base = base->left;
+		fd = n->ty->ids;
+		for(p = n->left; p != nil; p = p->right){
+			Node *off, *addr, *ind;
+
+			e = p;
+			if(p->op == Oseq)
+				e = p->left;
+			if(fd != nil && base != nil){
+				sumark(e);
+				off = mkconst(&e->src, fd->offset);
+				off->ty = tint;
+				addr = mkn(Oadd, dupn(base), off);
+				addr->src = e->src;
+				addr->ty = tint;
+				sumark(addr);
+				ind = mkn(Oind, addr, nil);
+				ind->src = e->src;
+				ind->ty = fd->ty;
+				sumark(ind);
+				ecom(&e->src, ind, e);
+				fd = fd->next;
+			}
+			if(p->op != Oseq)
+				break;
+		}
+		return nto;
+	}
 	default:
 		fatal("ecom: unsupported %O", n->op);
 		break;
@@ -1029,6 +1080,59 @@ scom(Node *n)
 			 * stchk Oas case, deliberately not extended to match.
 			 */
 			pushblock();
+			if(n->left->op == Oseq){
+				/*
+				 * "n, s := multi()": daschk (check.c) already
+				 * checked the RHS is Ttuple-typed with a field
+				 * count matching the LHS name count.  call it
+				 * once into a fresh tuple-shaped temp, then copy
+				 * each field out to its destructured local.
+				 *
+				 * the temp is a plain local *value* (not behind
+				 * a ref), same shape as any value-typed struct
+				 * local -- so reading its fields needs the same
+				 * Oadr-wrapped, no-real-dereference addressing
+				 * check.c's Odot case uses for p.x on a value
+				 * struct, not Otuple's own ecom case just above
+				 * (the *opposite* case: retalloc()'s destination
+				 * is retnode, a genuine indirection the callee
+				 * writes through, not a plain local).
+				 */
+				Node tuptemp, *p, *id, *adr, *off, *addr, *ind;
+				Decl *fd;
+
+				sumark(n->right);
+				talloc(&tuptemp, n->right->ty, nil);
+				ecom(&n->src, &tuptemp, n->right);
+
+				fd = n->right->ty->ids;
+				for(p = n->left; p != nil; p = p->right){
+					id = p;
+					if(p->op == Oseq)
+						id = p->left;
+					sumark(id);
+					adr = mkn(Oadr, dupn(&tuptemp), nil);
+					adr->src = id->src;
+					adr->ty = n->right->ty;
+					off = mkconst(&id->src, fd->offset);
+					off->ty = tint;
+					addr = mkn(Oadd, adr, off);
+					addr->src = id->src;
+					addr->ty = tint;
+					sumark(addr);
+					ind = mkn(Oind, addr, nil);
+					ind->src = id->src;
+					ind->ty = fd->ty;
+					sumark(ind);
+					ecom(&id->src, id, ind);
+					fd = fd->next;
+					if(p->op != Oseq)
+						break;
+				}
+				tfree(&tuptemp);
+				popblock();
+				return;
+			}
 			sumark(n->right);
 			sumark(n->left);
 			if(n->right->op == Ocomposite){
