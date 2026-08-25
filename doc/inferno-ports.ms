@@ -1478,11 +1478,38 @@ call is failing \- a length-10 array, the exact length the earlier
 un-gated
 .CW OP(indx)
 bounds print reported for the garbage-index crash two sessions ago.
-Not confirmed as the same array, but the coincidence is specific
-enough to be the first thing worth checking with this same
-breakpoint technique, on
-.CW indx
-itself, next.
+Not confirmed as the same array; tried, and the attempt itself is
+the finding.  Four addresses (the failure-path call site inside each
+of
+.CW "indx / indw / indf / indl" ,
+found by disassembling the binary directly rather than connecting
+first \- no live process needed for that, only the file's own bytes
+at
+.CW KTZERO
+plus its header size) got breakpoints instead of one, on the theory
+that four rarely-hit sites cost nothing extra.  They didn't hit: the
+guest sat at 6% of normal CPU time over more than a minute of wall
+clock, past the point every unwatched run reaches a crash, a bad
+load, or a shell attempt within one or two seconds.  That retracts
+part of the previous entry, not just extends it \- watchpoints are
+not uniquely expensive here after all;
+.I any
+armed stop point seems to cost this pure-TCG guest a great deal, and
+.CW fdclose() 's
+apparent speed earlier was probably favorable timing (an early,
+frequent call site caught before the cost compounded) rather than
+evidence breakpoints are free.  Killed without a hit.  The
+.CW array[10]
+coincidence stands exactly where it stood before this attempt \-
+plausible, unconfirmed \- and what would actually test it without
+this overhead is a single, disposable
+.CW kwerrstr()
+or bare
+.CW print()
+added at the two ind* sites directly in source, one boot, revert
+after: a method already used successfully elsewhere in this file,
+set aside here only because the same information looked reachable
+without a rebuild.  It wasn't, this time.
 .NH 1
 How a native kernel provides networking
 .PP
