@@ -6,8 +6,9 @@
 # the message passing (osprey), address spaces (segment), the console
 # (cons, uart), the machine's interrupt and scheduling bring-up (arch and
 # the misc entries), rtc because the AP start path writes the warm-reset
-# vector through it, and env and swap because the always-linked port code
-# still calls into them.  The ether and ip stack is gone now that the
+# vector through it, and env because the always-linked port code still
+# calls into it.  swap is gone: the microkernel does not page, and the
+# port section stubs the five swap symbols as their real no-swap no-ops.  The ether and ip stack is gone now that the
 # osprey device names an interface through the ospreyetherlookup hook
 # rather than calling etherlookup directly.  mnt, srv and shr leave a few
 # symbols behind that the port core references but the microkernel boot
@@ -15,7 +16,6 @@
 # stub that ever fires is a loud bug and not silent breakage.
 dev
 	cons
-	swap
 	arch
 	env
 	rtc
@@ -76,6 +76,19 @@ port
 	void (*proctrace)(Proc*, int, vlong) = nil;
 	void addbootfile(char *a, uchar *b, ulong c)
 	{ USED(a,b,c); }
+
+	/*
+	 * The microkernel does not swap.  With no swap device no page is
+	 * ever paged out, so releasing or duplicating a swap reference
+	 * does nothing and there are no pages to reclaim; these are the
+	 * real no-swap behaviour, not a pretence.
+	 */
+	int needpages(void *a)		{ USED(a); return 0; }
+	void kickpager(void)		{ }
+	void putswap(Page *a)		{ USED(a); }
+	int swapcount(uintptr a)	{ USED(a); return 0; }
+	void dupswap(Page *a)		{ USED(a); }
+	Image *swapimage = nil;		/* nil: no page is ever the swap image */
 
 bootdir
 	boot
