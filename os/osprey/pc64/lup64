@@ -1,0 +1,111 @@
+# lup64 - the Osprey microkernel hosting the 9front personality as a
+# library: an Osprey task calls namec and the file code directly, in
+# process, to open and read real files and serve them to containers.
+#
+# The device list is cut toward the paper's kernel.  Gone are the file
+# and name-space personality devices: root, pnp, pipe, proc, mnt, srv,
+# shr, dup, cap, kprof, fs, and the sd and audio stacks.  What is kept is
+# the message passing (osprey), address spaces (segment), the console
+# (cons, uart), the machine's interrupt and scheduling bring-up (arch and
+# the misc entries), rtc because the AP start path writes the warm-reset
+# vector through it, and env because the always-linked port code
+# once called into it.  swap and env are gone now: the microkernel does not page, and the
+# port section stubs the five swap symbols as their real no-swap no-ops.  The ether and ip stack is gone now that the
+# osprey device names an interface through the ospreyetherlookup hook
+# rather than calling etherlookup directly.  mnt, srv and shr leave a few
+# symbols behind that the port core references but the microkernel boot
+# never reaches; the port section below stubs them with a panic, so a
+# stub that ever fires is a loud bug and not silent breakage.
+dev
+	root
+	cons
+	arch
+	rtc
+	osprey
+
+	uart
+	segment
+
+misc
+	headless
+	pci		pcipc
+# archgeneric first: the fallback the others inherit unset entries from.
+	archgeneric	i8259 i8253
+	archacpi	mp apic squidboy ec
+	archmp		mp apic squidboy
+	mp		apic squidboy hpet
+	mtrr
+
+	uarti8250
+	uartisa
+	uartpci		pci
+
+
+port
+	int cpuserver = 0;
+	int ospreymicro = 1;
+	int ospreylibos = 1;
+
+	/*
+	 * Stubs for the symbols the always-linked port core references
+	 * from the mnt, srv and shr devices this microkernel does not
+	 * carry.  The microkernel boot mounts nothing, reads no cached
+	 * file, and renames no host owner, so none of these is reached; a
+	 * panic marks it loudly if the assumption ever fails.
+	 */
+	Chan* mntattach(Chan *a, Chan *b, char *c, int d)
+	{ USED(a,b,c,d); panic("microkernel: mntattach"); return 0; }
+	Chan* mntauth(Chan *a, char *b)
+	{ USED(a,b); panic("microkernel: mntauth"); return 0; }
+	int mntversion(Chan *a, char *b, int c, int d)
+	{ USED(a,b,c,d); panic("microkernel: mntversion"); return 0; }
+	void muxclose(Mnt *a)
+	{ USED(a); panic("microkernel: muxclose"); }
+	void mntrahinit(Mntrah *a)
+	{ USED(a); panic("microkernel: mntrahinit"); }
+	long mntrahread(Mntrah *a, Chan *b, uchar *c, long d, vlong e)
+	{ USED(a,b,c,d,e); panic("microkernel: mntrahread"); return 0; }
+	void srvrenameuser(char *a, char *b)
+	{ USED(a,b); panic("microkernel: srvrenameuser"); }
+	void shrrenameuser(char *a, char *b)
+	{ USED(a,b); panic("microkernel: shrrenameuser"); }
+
+	/*
+	 * proctrace is the scheduler's tracing hook, a pointer devproc
+	 * set; with no devproc it is nil and tracing is simply off.
+	 * addbootfile is how devroot took the embedded boot files, which
+	 * a microkernel has no name space to mount, so it ignores them.
+	 */
+	void (*proctrace)(Proc*, int, vlong) = nil;
+
+
+	/*
+	 * The microkernel does not swap.  With no swap device no page is
+	 * ever paged out, so releasing or duplicating a swap reference
+	 * does nothing and there are no pages to reclaim; these are the
+	 * real no-swap behaviour, not a pretence.
+	 */
+	int needpages(void *a)		{ USED(a); return 0; }
+	void kickpager(void)		{ }
+	void putswap(Page *a)		{ USED(a); }
+	int swapcount(uintptr a)	{ USED(a); return 0; }
+	void dupswap(Page *a)		{ USED(a); }
+	Image *swapimage = nil;		/* nil: no page is ever the swap image */
+
+	/*
+	 * The microkernel has no environment.  An environment is a name
+	 * space thing, kept in a library operating system, not the kernel.
+	 * ksetenv, newegrp, closeegrp and envcpy are reached only from
+	 * init0, rfork and reboot, none of which this boot runs; they are
+	 * defensive no-ops so that a kernel process exiting with a nil
+	 * egrp, or any stray call, does nothing rather than fault.
+	 */
+	void ksetenv(char *a, char *b, int c)	{ USED(a,b,c); }
+	Egrp *newegrp(void)			{ return nil; }
+	void closeegrp(Egrp *a)			{ USED(a); }
+	void envcpy(Egrp *a, Egrp *b)		{ USED(a,b); }
+	char *getconfenv(void)			{ return nil; }
+
+
+bootdir
+	boot

@@ -2,7 +2,7 @@ MKSHELL=rc
 <../../../mkconfig
 
 CONF=pc64
-CONFLIST=pc64 upc64
+CONFLIST=pc64 upc64 lup64
 
 SYSTARG=Osprey
 OBJTYPE=amd64

@@ -1612,6 +1612,7 @@ static struct {
 static void ospreyinit(void);
 
 static int ospreymicroexited;
+extern int ospreylibos;
 
 /*
  * A kernel task that returns walks pexit past the group closes the
@@ -1773,6 +1774,39 @@ ospreymicroboot(void)
 	qunlock(&ospreylock);
 	print("osprey micro: %d of 4 requests answered, last status %ld\n",
 		n, status);
+
+	/*
+	 * 9front as a library operating system, not the kernel's own
+	 * dispatch.  With ospreylibos this task sets up a name space and
+	 * calls namec and the file code directly, in process, on the
+	 * osprey core, to open and read a real file.  The personality is a
+	 * library the task links and calls; nothing here traps into a
+	 * separate kernel, and the core does only what a microkernel does -
+	 * schedule this task and hold its memory.  The pure microkernel
+	 * upc64 cuts all of this out; lup64 links it back as the library.
+	 */
+	if(ospreylibos){
+		Chan *lc;
+		char lbuf[64];
+		long ln;
+
+		if(waserror())
+			print("osprey lib: the 9front library could not read the file: %s\n", up->errstr);
+		else {
+			up->slash = namec("#/", Atodir, 0, 0);
+			pathclose(up->slash->path);
+			up->slash->path = newpath("/");
+			up->dot = cclone(up->slash);
+			lc = namec("#c/osversion", Aopen, OREAD, 0);
+			ln = devtab[lc->type]->read(lc, lbuf, sizeof lbuf - 1, 0);
+			if(ln < 0)
+				ln = 0;
+			lbuf[ln] = 0;
+			cclose(lc);
+			poperror();
+			print("osprey lib: the 9front library opened #c/osversion and read \"%s\"\n", lbuf);
+		}
+	}
 
 	/*
 	 * Exercise process teardown before idling: spawn a kernel task and
