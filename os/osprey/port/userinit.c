@@ -21,6 +21,7 @@
 extern int ospreymicro;
 extern void ospreymicroboot(void);
 extern int ospreyuser;
+extern int ospreyuserprep(void);
 
 static void
 smark(char *s)
@@ -50,6 +51,7 @@ proc0(void*)
 		 * calls for it reaches through the syscall interface, not
 		 * through a name space the kernel set up.
 		 */
+		ospreyuserprep();
 		{
 			ulong npg, i, off, cnt;
 

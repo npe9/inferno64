@@ -74,5 +74,21 @@ startboot(char*, char**)
 			write(2, buf, n);
 	}
 	puts("osprey user: that file came from the library in user space, not from the kernel\n");
+
+	/*
+	 * And the microkernel's message ring, mapped into this program with
+	 * segattach - the address-space service.  A real personality
+	 * library reaches its files over this ring to a file server rather
+	 * than holding them; mapping it is the first step of that.
+	 */
+	{
+		uchar *ring;
+
+		ring = (uchar*)segattach(0, "osprey0", 0, 4096);
+		if(ring != (uchar*)-1)
+			puts("osprey user: mapped its container's message ring with segattach\n");
+		else
+			puts("osprey user: could not map the message ring\n");
+	}
 	exits(nil);
 }

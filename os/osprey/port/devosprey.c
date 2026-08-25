@@ -1627,6 +1627,35 @@ ospreymicroexit(void *)
 	ospreymicroexited = 1;
 }
 
+/*
+ * Prepare a container for a user program and bind this process to it, so
+ * the program may map the container's slice - its message ring - with
+ * segattach.  Returns the slice index, whose name is ospreyN; the
+ * program attaches that.  The exokernel gives the program its ring; the
+ * program works it in user space.
+ */
+int
+ospreyuserprep(void)
+{
+	Ospreyproc *p;
+	int x;
+
+	ospreyinit();
+	x = -1;
+	qlock(&ospreylock);
+	if(!waserror()){
+		p = ospreycreate(1, 40000000ULL, 800000000ULL, 200000000ULL);
+		if(p != nil){
+			x = ospreyindex(p);
+			if(x >= 0 && x < nelem(ospreyprocs))
+				ospreyprocs[x] = up;
+		}
+		poperror();
+	}
+	qunlock(&ospreylock);
+	return x;
+}
+
 void
 ospreymicroboot(void)
 {

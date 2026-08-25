@@ -168,8 +168,44 @@ port
 			tsleep(&up->sleep, return0, nil, 1000);
 		return 0;
 	}
+	/*
+	 * segattach maps a named segment into the program's address space.
+	 * A library-OS program maps its container's ring this way and then
+	 * works it in memory; this is the address-space service, one of the
+	 * microkernel's four, offered as a call.  The name is validated and
+	 * copied; validnamedup is the name space's and this kernel has none.
+	 */
+	uintptr xsegattach(va_list list)
+	{
+		int attr, i;
+		char *name;
+		uintptr va;
+		ulong len;
+		char kn[64];
+
+		attr = va_arg(list, int);
+		name = va_arg(list, char*);
+		va = va_arg(list, uintptr);
+		len = va_arg(list, ulong);
+		validaddr((uintptr)name, 1, 0);
+		for(i = 0; i < (int)sizeof kn - 1 && name[i] != 0; i++)
+			kn[i] = name[i];
+		kn[i] = 0;
+		{
+			uintptr r;
+			if(waserror()){
+				print("osprey user: segattach(%s) failed: %s\n", kn, up->errstr);
+				return (uintptr)-1;
+			}
+			r = segattach(attr, kn, va, len);
+			poperror();
+			return r;
+		}
+	}
+
 	Xsyscall *systab[] = {
 		[8]	xexits,		/* EXITS */
+		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
 	};
 	int nsyscall = nelem(systab);
