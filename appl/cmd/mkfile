@@ -152,6 +152,7 @@ TARG=\
 	nsbuild.dis\
 	os.dis\
 	p.dis\
+	paste.dis\
 	pause.dis\
 	playski.dis\
 	plumb.dis\
@@ -167,6 +168,7 @@ TARG=\
 	rcmd.dis\
 	rdp.dis\
 	read.dis\
+	rev.dis\
 	rioimport.dis\
 	rm.dis\
 	runas.dis\

@@ -1,0 +1,31 @@
+.TH REV 1
+.SH NAME
+rev \- reverse the characters of each line
+.SH SYNOPSIS
+.B rev
+.RI [ file ...]
+.SH DESCRIPTION
+.I Rev
+copies each
+.I file
+(standard input if none given) to standard output with the characters of
+every line reversed, last character first. Runes are reversed whole, not
+their encoded bytes, so a line of Unicode text reverses correctly rather
+than being scrambled.
+.PP
+The classic use is sorting on the end of a line instead of the start:
+reversing, sorting, then reversing back groups lines by how they end.
+.SH EXAMPLE
+.TP
+.EX
+tr -cs A-Za-z '\en' <genesis | sort | uniq | rev | sort | rev
+.EE
+.IP
+Unique words from
+.B genesis,
+grouped by the last few letters they share rather than the first.
+.SH SOURCE
+.B /appl/cmd/rev.b
+.SH SEE ALSO
+.IR sort (1),
+.IR tac (1)

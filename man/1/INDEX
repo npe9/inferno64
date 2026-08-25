@@ -405,6 +405,7 @@ p p
 parse sh-std
 parts math-misc
 passwd passwd
+paste paste
 pause sleep
 pctl sh-std
 pen keyboard
@@ -445,6 +446,7 @@ register grid-register
 report sh-test
 rerror sh-file2chan
 rescue sh-std
+rev rev
 reversi wm-misc
 rget sh-file2chan
 rm tiny

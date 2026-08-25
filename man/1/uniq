@@ -4,7 +4,7 @@ uniq \- report repeated lines in a file
 .SH SYNOPSIS
 .B uniq
 [
-.B -ud
+.B -udc
 ]
 [
 .I file
@@ -26,6 +26,24 @@ Print unique lines.
 .TP
 .B -d
 Print (one copy of) duplicated lines.
+.TP
+.B -c
+Precede each printed line with the number of times it occurred.
+May be combined with
+.B -u
+or
+.B -d
+to also restrict which lines are printed; alone it prints a count for
+every line.
+.SH EXAMPLE
+.TP
+.EX
+tr -cs A-Za-z '\en' <genesis | sort | uniq -c | sort -nr
+.EE
+.IP
+Word frequencies in
+.BR genesis ,
+most common first.
 .SH SOURCE
 .B /appl/cmd/uniq.b
 .SH "SEE ALSO"

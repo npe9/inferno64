@@ -1,0 +1,43 @@
+.TH PASTE 1
+.SH NAME
+paste \- merge corresponding lines of several files
+.SH SYNOPSIS
+.B paste
+.I file
+.RI [ file ...]
+.SH DESCRIPTION
+.I Paste
+reads one line at a time from each
+.I file
+(the name
+.L -
+means standard input) and writes them to standard output joined by tabs,
+one output line per set of input lines. When files run out of lines at
+different times, the missing fields are left empty rather than stopping
+the merge early; output continues until every file is exhausted.
+.PP
+The classic use is putting a file back together with a copy of itself
+shifted by one line, to pair each item with the one that follows it.
+.SH EXAMPLE
+.TP
+.EX
+tr -cs A-Za-z '\en' <genesis >words
+tail +2 words >next
+paste words next | sort | uniq -c | sort -nr
+.EE
+.IP
+The most common word pairs (bigrams) in
+.BR genesis .
+.SH SOURCE
+.B /appl/cmd/paste.b
+.SH BUGS
+No
+.B -d
+(alternate delimiters) or
+.B -s
+(serial, one file's lines joined onto a single output line): neither was
+needed to merge parallel files line by line, which is the one thing this
+was built for.
+.SH SEE ALSO
+.IR tail (1),
+.IR sort (1)
