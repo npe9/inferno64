@@ -57,8 +57,11 @@ def main():
     results = []
     results.append(("xup64 enters user mode on the microkernel",
                     'osprey: touser' in t))
-    results.append(("and a user program runs there and reaches the kernel through a system call",
-                    'osprey user: a user program on the microkernel' in t))
+    results.append(("and a library-OS program runs there, its file operations from a user-space personality library",
+                    'opening a file through its personality library' in t))
+    results.append(("and that library, not the kernel, served the file's contents",
+                    'osprey-libos personality, version 1' in t
+                    and 'came from the library in user space' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'osprey user: the program exited' in t and 'panic' not in t))
 

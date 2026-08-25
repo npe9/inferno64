@@ -50,15 +50,34 @@ proc0(void*)
 		 * calls for it reaches through the syscall interface, not
 		 * through a name space the kernel set up.
 		 */
-		up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE / BY2PG);
-		up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, 1);
-		up->seg[TSEG]->flushme = 1;
-		p = newpage(UTZERO, nil);
-		k = kmap(p);
-		memmove((uchar*)VA(k), userprog, sizeof(userprog));
-		memset((uchar*)VA(k)+sizeof(userprog), 0, BY2PG-sizeof(userprog));
-		kunmap(k);
-		segpage(up->seg[TSEG], p);
+		{
+			ulong npg, i, off, cnt;
+
+			npg = (sizeof(userprog) + BY2PG - 1) / BY2PG;
+			up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE / BY2PG);
+			up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, npg);
+			up->seg[TSEG]->flushme = 1;
+			/*
+			 * The program has no data segment - its strings live on
+			 * the stack, as initcode's do - so its whole image is
+			 * text, loaded a page at a time.  This carries a bigger
+			 * program than initcode: an application and the
+			 * personality library it links.
+			 */
+			for(i = 0; i < npg; i++){
+				off = i * BY2PG;
+				cnt = sizeof(userprog) - off;
+				if(cnt > BY2PG)
+					cnt = BY2PG;
+				p = newpage(UTZERO + off, nil);
+				k = kmap(p);
+				memmove((uchar*)VA(k), userprog + off, cnt);
+				if(cnt < BY2PG)
+					memset((uchar*)VA(k) + cnt, 0, BY2PG - cnt);
+				kunmap(k);
+				segpage(up->seg[TSEG], p);
+			}
+		}
 		up->kp = 0;
 		up->noswap = 0;
 		up->privatemem = 0;
