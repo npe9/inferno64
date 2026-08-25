@@ -1730,6 +1730,20 @@ passing through the request ring, the address space its arena is,
 process teardown through pexit, and a select over arms woken by an
 interrupt - the shape every driver task will take.
 .PP
+The piece after this is the same select serving a real named device
+rather than the clock: bind a uart to the container, feed a string
+through ospreyoutput onto its output queue, and watch it leave the
+machine on the second serial port, which the check harness already
+supports.  Every mechanism it needs is in hand - ospreyctluart binds and
+spawns ospreyuarttask, ospreyoutput queues the work, COM2 exists.  The
+one thing to get right, found by reading the code rather than by running
+it, is the lock: ospreyuarttask takes ospreylock around its own select,
+so the boot cannot hold that lock while it waits for the task to run, as
+it does through the poll loop and the clock demonstration.  The boot
+must release ospreylock and let the task contend for it, the way the
+control-file path releases it between one write and the next.  That is
+the next step, and it is a careful one, not a large one.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
