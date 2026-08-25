@@ -19,6 +19,7 @@
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
+extern int ospreyuser;
 
 static void
 smark(char *s)
@@ -39,6 +40,34 @@ proc0(void*)
 	spllo();
 	smark("osprey: proc0\n");
 	print("proc0: start\n");
+	if(ospreyuser){
+		/*
+		 * A user program on the microkernel: set up its text and
+		 * stack and enter user mode, with no Plan 9 name space.  This
+		 * is the exokernel path a library-OS program runs on - the
+		 * kernel gives it an address space and lets it run; what it
+		 * calls for it reaches through the syscall interface, not
+		 * through a name space the kernel set up.
+		 */
+		up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE / BY2PG);
+		up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, 1);
+		up->seg[TSEG]->flushme = 1;
+		p = newpage(UTZERO, nil);
+		k = kmap(p);
+		memmove((uchar*)VA(k), initcode, sizeof(initcode));
+		memset((uchar*)VA(k)+sizeof(initcode), 0, BY2PG-sizeof(initcode));
+		kunmap(k);
+		segpage(up->seg[TSEG], p);
+		up->kp = 0;
+		up->noswap = 0;
+		up->privatemem = 0;
+		procpriority(up, PriNormal, 0);
+		procsetup(up);
+		flushmmu();
+		smark("osprey: touser\n");
+		init0();
+		panic("init0 returned");
+	}
 	if(ospreymicro){
 		/* the microkernel boot: an Osprey task, no Plan 9 personality */
 		ospreymicroboot();

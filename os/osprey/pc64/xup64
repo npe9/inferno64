@@ -1,0 +1,211 @@
+# xup64 - the Osprey microkernel running a user program: the exokernel
+# path a library-OS program runs on.  Same cut core as upc64, but it
+# enters user mode instead of running a kernel task.
+#
+# The device list is cut toward the paper's kernel.  Gone are the file
+# and name-space personality devices: root, pnp, pipe, proc, mnt, srv,
+# shr, dup, cap, kprof, fs, and the sd and audio stacks.  What is kept is
+# the message passing (osprey), address spaces (segment), the console
+# (cons, uart), the machine's interrupt and scheduling bring-up (arch and
+# the misc entries), rtc because the AP start path writes the warm-reset
+# vector through it, and env because the always-linked port code
+# once called into it.  swap and env are gone now: the microkernel does not page, and the
+# port section stubs the five swap symbols as their real no-swap no-ops.  The ether and ip stack is gone now that the
+# osprey device names an interface through the ospreyetherlookup hook
+# rather than calling etherlookup directly.  mnt, srv and shr leave a few
+# symbols behind that the port core references but the microkernel boot
+# never reaches; the port section below stubs them with a panic, so a
+# stub that ever fires is a loud bug and not silent breakage.
+dev
+	cons
+	arch
+	rtc
+	osprey
+
+	uart
+	segment
+
+misc
+	headless
+	pci		pcipc
+# archgeneric first: the fallback the others inherit unset entries from.
+	archgeneric	i8259 i8253
+	archacpi	mp apic squidboy ec
+	archmp		mp apic squidboy
+	mp		apic squidboy hpet
+	mtrr
+
+	uarti8250
+	uartisa
+	uartpci		pci
+
+
+port
+	int cpuserver = 0;
+	int ospreymicro = 0;
+	int ospreyuser = 1;
+
+	/*
+	 * Stubs for the symbols the always-linked port core references
+	 * from the mnt, srv and shr devices this microkernel does not
+	 * carry.  The microkernel boot mounts nothing, reads no cached
+	 * file, and renames no host owner, so none of these is reached; a
+	 * panic marks it loudly if the assumption ever fails.
+	 */
+	Chan* mntattach(Chan *a, Chan *b, char *c, int d)
+	{ USED(a,b,c,d); panic("microkernel: mntattach"); return 0; }
+	Chan* mntauth(Chan *a, char *b)
+	{ USED(a,b); panic("microkernel: mntauth"); return 0; }
+	int mntversion(Chan *a, char *b, int c, int d)
+	{ USED(a,b,c,d); panic("microkernel: mntversion"); return 0; }
+	void muxclose(Mnt *a)
+	{ USED(a); panic("microkernel: muxclose"); }
+	void mntrahinit(Mntrah *a)
+	{ USED(a); panic("microkernel: mntrahinit"); }
+	long mntrahread(Mntrah *a, Chan *b, uchar *c, long d, vlong e)
+	{ USED(a,b,c,d,e); panic("microkernel: mntrahread"); return 0; }
+	void srvrenameuser(char *a, char *b)
+	{ USED(a,b); panic("microkernel: srvrenameuser"); }
+	void shrrenameuser(char *a, char *b)
+	{ USED(a,b); panic("microkernel: shrrenameuser"); }
+
+	/*
+	 * proctrace is the scheduler's tracing hook, a pointer devproc
+	 * set; with no devproc it is nil and tracing is simply off.
+	 * addbootfile is how devroot took the embedded boot files, which
+	 * a microkernel has no name space to mount, so it ignores them.
+	 */
+	void (*proctrace)(Proc*, int, vlong) = nil;
+	void addbootfile(char *a, uchar *b, ulong c)
+	{ USED(a,b,c); }
+
+	/*
+	 * The microkernel does not swap.  With no swap device no page is
+	 * ever paged out, so releasing or duplicating a swap reference
+	 * does nothing and there are no pages to reclaim; these are the
+	 * real no-swap behaviour, not a pretence.
+	 */
+	int needpages(void *a)		{ USED(a); return 0; }
+	void kickpager(void)		{ }
+	void putswap(Page *a)		{ USED(a); }
+	int swapcount(uintptr a)	{ USED(a); return 0; }
+	void dupswap(Page *a)		{ USED(a); }
+	Image *swapimage = nil;		/* nil: no page is ever the swap image */
+
+	/*
+	 * The microkernel has no environment.  An environment is a name
+	 * space thing, kept in a library operating system, not the kernel.
+	 * ksetenv, newegrp, closeegrp and envcpy are reached only from
+	 * init0, rfork and reboot, none of which this boot runs; they are
+	 * defensive no-ops so that a kernel process exiting with a nil
+	 * egrp, or any stray call, does nothing rather than fault.
+	 */
+	void ksetenv(char *a, char *b, int c)	{ USED(a,b,c); }
+	Egrp *newegrp(void)			{ return nil; }
+	void closeegrp(Egrp *a)			{ USED(a); }
+	void envcpy(Egrp *a, Egrp *b)		{ USED(a,b); }
+	char *getconfenv(void)			{ return nil; }
+
+	/*
+	 * The name space, the file syscalls and the process syscalls are
+	 * cut from this kernel: pgrp.c, sysfile.c and sysproc.c are not
+	 * linked.  A kernel process holds no file group, opens no file
+	 * descriptor, mounts nothing and takes no user system call, so the
+	 * name-space and syscall entry points below are never reached; a
+	 * panic marks it if the assumption ever fails.  The process,
+	 * rendezvous and resource-group lifecycle those files used to also
+	 * hold now lives in proc.c and is linked.
+	 */
+	void closefgrp(Fgrp *a)			{ USED(a); panic("microkernel: closefgrp"); }
+	Fgrp *dupfgrp(Fgrp *a)			{ USED(a); panic("microkernel: dupfgrp"); return nil; }
+	void forceclosefgrp(void)		{ panic("microkernel: forceclosefgrp"); }
+	int newfd(Chan *a, int b)		{ USED(a,b); panic("microkernel: newfd"); return -1; }
+	Chan *fdtochan(int a, int b, int c, int d){ USED(a,b,c,d); panic("microkernel: fdtochan"); return nil; }
+	int openmode(ulong a)			{ USED(a); panic("microkernel: openmode"); return 0; }
+	Mount *newmount(Chan *a, int b, char *c){ USED(a,b,c); panic("microkernel: newmount"); return nil; }
+	void mountfree(Mount *a)		{ USED(a); panic("microkernel: mountfree"); }
+	int donotify(Ureg *a)			{ USED(a); panic("microkernel: donotify"); return 0; }
+	int dosyscall(ulong a, Sargs *b, uintptr *c){ USED(a,b,c); panic("microkernel: dosyscall"); return 0; }
+
+	/*
+	 * chan.c and cache.c, the name resolution and the file cache, are
+	 * cut too.  Most of chan.c is name space and is stubbed below as
+	 * panics: this kernel resolves no name, clones or closes no
+	 * channel, walks no path.  The kernel infrastructure chan.c also
+	 * held that is not name space - the reference counting, the string
+	 * helpers, the device bring-up main() calls at boot - moved to
+	 * kerncore.c and is linked into every configuration.  Only
+	 * chandevinit is reproduced here, to drop its one name-space line:
+	 * the kproc that drains the channel-close queue, which a kernel
+	 * with no channels never fills.
+	 */
+	void chandevinit(void)
+	{
+		Dev **d;
+
+		/*
+		 * The one line dropped from the shared chandevinit in
+		 * kerncore.c: no kproc to drain the channel-close queue,
+		 * which a kernel with no channels never fills.  Iterated by
+		 * pointer, not devtab[i], so no line begins with "devtab":
+		 * see scripts/check-config-portlines.sh.
+		 */
+		for(d = devtab; *d != nil; d++)
+			(*d)->init();
+	}
+
+	/*
+	 * The name space proper: unreachable in a kernel that resolves no
+	 * name, so each is a loud panic.
+	 */
+	Chan *namec(char *a, int b, int c, ulong d)
+	{ USED(a,b,c,d); panic("microkernel: namec"); return nil; }
+	Chan *cclone(Chan *a)		{ USED(a); panic("microkernel: cclone"); return nil; }
+	void cclose(Chan *a)		{ USED(a); panic("microkernel: cclose"); }
+	void ccloseq(Chan *a)		{ USED(a); panic("microkernel: ccloseq"); }
+	char *chanpath(Chan *a)		{ USED(a); panic("microkernel: chanpath"); return nil; }
+	int eqchantdqid(Chan *a, int b, int c, Qid d, int e)
+	{ USED(a,b,c,d,e); panic("microkernel: eqchantdqid"); return 0; }
+	void isdir(Chan *a)		{ USED(a); panic("microkernel: isdir"); }
+	Chan *newchan(void)		{ panic("microkernel: newchan"); return nil; }
+	Path *newpath(char *a)		{ USED(a); panic("microkernel: newpath"); return nil; }
+	void pathclose(Path *a)		{ USED(a); panic("microkernel: pathclose"); }
+	void putmhead(Mhead *a)		{ USED(a); panic("microkernel: putmhead"); }
+	char *validnamedup(char *a, int b){ USED(a,b); panic("microkernel: validnamedup"); return nil; }
+
+	/*
+	 * werrstr formatted an error into a user process's error string,
+	 * which a kernel process does not have, so it does nothing.  beswal
+	 * (the reboot byte swap) and return0 (the sleep predicate) are not
+	 * here: they are real in kerncore.c, linked into every config.
+	 */
+	void werrstr(char *a, ...)		{ USED(a); }
+
+	/*
+	 * auth.c and rdb.c are cut: Plan 9 authentication and the remote
+	 * kernel debugger.  iseve asked whether the caller is the host
+	 * owner; a microkernel has one trust domain, managed by the library
+	 * operating system above it, so everyone is, and it returns true.
+	 * The host-owner and host-domain writes are console file handlers
+	 * this kernel has no name space to reach, so they panic.
+	 */
+	int iseve(void)				{ return 1; }
+	long userwrite(char *a, int n)		{ USED(a,n); panic("microkernel: userwrite"); return 0; }
+	long hostownerwrite(char *a, int n)	{ USED(a,n); panic("microkernel: hostownerwrite"); return 0; }
+	long hostdomainwrite(char *a, int n)	{ USED(a,n); panic("microkernel: hostdomainwrite"); return 0; }
+
+	/*
+	 * The host owner and host domain that auth.c defined, and the
+	 * debugger entry that rdb.c did.  eve is nil until userinit sets it
+	 * with kstrdup, exactly as auth.c left it: kstrdup frees the old
+	 * value, so eve must never point at a string literal.  rdb was the
+	 * console's ^T debugger, which devcons still names when it arms
+	 * consdebug, so it is a quiet no-op rather than a debugger this
+	 * kernel does not carry.
+	 */
+	char *eve;
+	char hostdomain[48];	/* DOMLEN in authsrv.h, not included here */
+	void rdb(void)				{ }
+
+bootdir
+	boot

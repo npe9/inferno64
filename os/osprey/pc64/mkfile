@@ -2,7 +2,7 @@ MKSHELL=rc
 <../../../mkconfig
 
 CONF=pc64
-CONFLIST=pc64 upc64
+CONFLIST=pc64 upc64 xup64
 
 SYSTARG=Osprey
 OBJTYPE=amd64
@@ -77,7 +77,7 @@ PORTOBJALL=\
 	kerncore.$O\
 	ospreyrt.$O\
 
-PORTOBJ=`{if [ "$CONF" = upc64 ]; then \
+PORTOBJ=`{if [ "$CONF" = upc64 -o "$CONF" = xup64 ]; then \
 	for o in $PORTOBJALL; do echo $o; done | grep -vxF -e pgrp.$O -e sysfile.$O -e sysproc.$O -e syscallfmt.$O -e chan.$O -e cache.$O -e auth.$O -e rdb.$O; \
 	else echo $PORTOBJALL; fi}
 
