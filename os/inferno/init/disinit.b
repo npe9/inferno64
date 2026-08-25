@@ -55,8 +55,14 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	# set clock
 	#	does not handle bootp provided time source
+	# port/devcons.c's writetime() takes #c/time in plain seconds
+	# (it multiplies by 1e9 itself to get nsec) -- the same unit
+	# #r/rtc already returns.  The *1000000 this 9ferno code carried
+	# turned ~1.8e9 seconds into a ~1.8e15 write, past writetime()'s
+	# 12-byte buffer: "bad time control" on every boot, unconditionally,
+	# since this call has never run in this tree until now (pc64's mod
+	# section was empty, so Sys never loaded and init() never got this far).
 	now := getclock("#r/rtc");
-	now *= big 1000000;
 	setclock("#c/time", now);
 
 	# TODO '#c/sysenv' seems obsolete

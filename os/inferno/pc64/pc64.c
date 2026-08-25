@@ -85,7 +85,13 @@ void links(void){
 	ethervirtiolink();
 }
 
+extern void sysmodinit(void);
+extern void keyringmodinit(void);
+extern void cryptmodinit(void);
 void modinit(void){
+	sysmodinit();
+	keyringmodinit();
+	cryptmodinit();
 }
 
 extern PCArch archgeneric;

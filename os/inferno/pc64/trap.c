@@ -253,11 +253,18 @@ trap(Ureg *ureg)
 	vno = ureg->type;
 	if(irqhandled(ureg, vno) == 0 /* TODO && (!user || !usertrap(vno)) */){
 		dumpregs(ureg);
-		if(up->fmem != nil){
-			dumpforthregs(ureg);
-			dumprstack(ureg->r11, ureg->r8, ureg->r12);
-			dumppstack(ureg->r11, ureg->dx, ureg->r12);
-		}
+		/*
+		 * up->fmem was 9ferno's Forth process memory pointer.
+		 * This board runs the real Inferno init now, not Forth
+		 * (see main.c's userinit()/init0()), and nothing on this
+		 * path ever sets fmem again -- it is uninitialised on
+		 * every Proc newproc() allocates, so this check was
+		 * reading garbage and, on a garbage-nonzero read, dumping
+		 * Forth's return/parameter stacks over an ordinary Dis
+		 * fault.  Forth is off the critical path for this port;
+		 * dumpforthregs()/dumprstack()/dumppstack() stay for the
+		 * 9ferno board that still uses them, just not called here.
+		 */
 /*		if(user == 0){ */
 			ureg->sp = (uintptr)&ureg->sp;
 			_dumpstack(ureg);
@@ -287,13 +294,23 @@ dumpregs(Ureg* ureg)
 	else
 		iprint("cpu%d: registers for kernel\n", m->machno);
 
-	iprint("  AX %.16lluX  BX TOP %.16lluX  CX %.16lluX\n",
+	/*
+	 * TOP/PSP/RSP/IP/W/UP/UPE were 9ferno's Forth VM register
+	 * aliases for BX/DX/R8/R9/R10/R11/R12 -- this board's Forth
+	 * calling convention kept Forth's own state in these; it isn't
+	 * running Forth anymore (see main.c's userinit()), and printing
+	 * Forth labels over an ordinary Dis fault's registers just
+	 * misled diagnosis.  R14/R15 keep their up/m labels below:
+	 * those are this port's real amd64 convention, dedicating those
+	 * two registers to the up/m globals, not Forth-specific.
+	 */
+	iprint("  AX %.16lluX  BX %.16lluX  CX %.16lluX\n",
 		ureg->ax, ureg->bx, ureg->cx);
-	iprint("  DX PSP %.16lluX  SI %.16lluX  DI %.16lluX\n",
+	iprint("  DX %.16lluX  SI %.16lluX  DI %.16lluX\n",
 		ureg->dx, ureg->si, ureg->di);
-	iprint("  BP %.16lluX  R8 RSP %.16lluX  R9 IP %.16lluX\n",
+	iprint("  BP %.16lluX  R8 %.16lluX  R9 %.16lluX\n",
 		ureg->bp, ureg->r8, ureg->r9);
-	iprint(" R10 W %.16lluX R11 UP %.16lluX R12 UPE %.16lluX\n",
+	iprint(" R10 %.16lluX R11 %.16lluX R12 %.16lluX\n",
 		ureg->r10, ureg->r11, ureg->r12);
 	iprint(" R13 %.16lluX R14 up %.16lluX R15 m %.16lluX\n",
 		ureg->r13, ureg->r14, ureg->r15);

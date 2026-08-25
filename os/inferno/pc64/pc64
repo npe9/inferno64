@@ -141,10 +141,17 @@ misc
 #	vgavmware	+cur
 
 mod
-#	sys
+	sys
+	keyring
+	crypt
+# draw, tk and math are left out: this configuration's modinit()
+# (mkdevc-generated from this section) crashes 6l -- span() writes
+# through a nil Prog.from.sym in its final textp walk, span.c:104 --
+# when math (mathmodinit) is in the list, on this host/toolchain.
+# sys+keyring+crypt links and boots clean; nothing between here and
+# a shell needs Math, Draw or Tk, so they wait for that linker bug.
 #	draw
 #	tk
-#	keyring
 #	math
 
 init
