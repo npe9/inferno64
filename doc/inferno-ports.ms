@@ -1913,6 +1913,183 @@ harness, not the kernel.  Recorded in
 .CW qemu-boot.sh
 itself so this is not attempted cold again.
 .NH 1
+The mount stall was never a stall
+.PP
+The planned next instrumentation \- a print in
+.CW devmnt.c 's
+.CW mountio()
+on send and on reply, by tag \- was added and built.  None of its
+three prints (entry, sent, reply) ever fired.  In their place, twice
+in one capture, the boot hit
+.RS
+.nf
+.CW "panic: general protection violation"
+.fi
+.RE
+with the Mount proc, pid 9, as context.  That is a different symptom
+from the near-zero-CPU idle sit the previous section describes, and
+the instrumentation was new, so the obvious question came first:
+does this reproduce on the plain tree, or did adding three prints to
+.CW mountio()
+introduce it?
+.PP
+.CW devmnt.c
+was reverted, and
+.CW ipc64
+rebuilt clean \- byte-identical in size to the pre-instrumentation
+baseline.  One clean boot is not a control; a single quiet run and a
+single crashing run both happen under a genuine race either way.  Four
+clean boots were taken instead, and all four failed, no two of them
+alike:
+.IP \(bu 2
+.CW "panic: loading \(dq/osinit.dis\(dq: file does not exist" ,
+before
+.CW "Welcome to Inferno..."
+ever prints \- the earliest possible failure point, on a file that
+every other boot in this whole document finds without trouble.
+.IP \(bu 2
+general protection violation, proc
+.CW "<nil>\ 1" ,
+immediately after
+.CW "Welcome to Inferno..." ,
+before
+.CW sh.dis
+even loads.
+.IP \(bu 2
+general protection violation, proc
+.CW "dis\ 9" ,
+after
+.CW "spawn\ sh\ -n\ /dis/init" \-
+the same shape as the instrumented run above, on the same pid.
+.IP \(bu 2
+no panic within the observation window, idle at low CPU shortly after
+.CW "spawn\ sh\ -n\ /dis/init" \-
+indistinguishable, this far in, from the earlier section's stall.
+.PP
+So the panic is real and reproduces on the untouched tree; the
+.CW mountio()
+prints did not cause it, and are not yet a useful diagnostic because
+the boot dies before they would fire on at least two of these four
+paths.  It is also not one deterministic failure with cosmetic
+variation \- it is a genuine race that lands at different points on
+different runs, which four of the previous section's own idle-stall
+observations are now better read as: the same race simply not
+tripping within the observation window, not a fifth distinct
+behaviour.
+.PP
+The first pass at reading the panic's fault PC against
+.CW ipc64 's
+own symbol table (the same hand-written a.out parser used earlier in
+this document, no
+.CW nm / inm
+needed) took the nearest preceding
+.CW T
+symbol without checking the following one, and landed on
+.CW adec+0x3c \-
+suggestive, since
+.CW adec()
+is the function behind the
+.CW ADEC()
+GC refcount-decrement macro, but wrong: the gap to the next captured
+symbol was almost 4 KB, far bigger than
+.CW adec()
+itself, so the attribution was unproven.  Resolving both bounding
+symbols and checking the gap width fixes this.  The two crashing PCs
+captured from the clean-tree runs above resolve to
+.RS
+.nf
+.CW "newstack+0x45  (gap to next symbol: 295 bytes)"
+.CW "destroy+0xeb   (gap to next symbol: 316 bytes)"
+.fi
+.RE
+both small enough to trust.
+.CW newstack()
+.RB ( libinterp/stack.c )
+and
+.CW destroy()
+.RB ( libinterp/heap.c )
+are both Dis heap/frame management, not one function twice \- and
+.CW destroy() 's
+own body calls
+.CW ADEC(&h\->ref)
+a few lines in, so the original
+.CW adec+0x3c
+misread was not baseless: the compiler most likely inlined
+.CW adec()
+into
+.CW destroy() ,
+which is why no separate
+.CW adec
+frame appears on the corrected walk.  The refcount-decrement theory
+survives the correction; only its attribution needed fixing.
+.PP
+One register is worth recording on its own.
+.CW R14
+carries
+.CW up
+on this port (see the boards-and-registers section above), and both
+captured crash dumps show it holding a value ending in hex
+.CW 4
+\-
+.CW 0x6EC2054
+and
+.CW 0x6ECB354 \-
+neither an 8-byte-aligned address.  Every
+.CW Proc*
+this kernel hands out comes from
+.CW &procalloc.arena[i] ,
+plain C array indexing on a struct that (containing pointers) is at
+least pointer-aligned, so a legitimate
+.CW up
+can never end in anything but
+.CW 0 .
+Both crashes show the same wrong low nibble, which is a corruption
+signature, not noise: consistent with an index computed in 4-byte
+units somewhere upstream landing in a slot meant to hold an 8-byte
+pointer, in the shape of this tree's own recurring 32-bit-.CW long
+assumption (see the Osprey doc's note on the idiom, carried into this
+document's memory as a standing suspect).  No such site has been
+found yet \- every direct assignment to
+.CW up
+was checked
+.RB ( "proc.c:281's\ up\ =\ p;" ,
+plus
+.CW main.c 's
+two boot-time
+.CW "up\ =\ nil" \(dq s),
+and the interrupt entry/exit in
+.CW pc64/l.s
+saves and restores
+.CW R14
+with matched
+.CW "PUSHQ / POPQ" ,
+not narrower \- so the corruption is not at any of the places a
+register-variable port would obviously get this wrong, and remains
+open.
+.PP
+State of play: a real, reproducible, nondeterministic fault exists
+inside Dis heap/frame management, independent of any diagnostic
+added this session, with a corrupted
+.CW up
+present at at least two of its manifestations.  Not yet fixed.  The
+next diagnostic is not another print in
+.CW mountio() \-
+the boot rarely reaches it \- but tracing backward from
+.CW newstack()
+and
+.CW destroy()
+to find where
+.CW p->R.M
+(consumed by
+.CW newstack() )
+or the heap pointer passed to
+.CW destroy()
+first goes bad, and separately, instrumenting
+.CW sched()
+itself to catch the first moment
+.CW up
+stops being 8-byte aligned.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
