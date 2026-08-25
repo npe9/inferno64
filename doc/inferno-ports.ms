@@ -602,8 +602,8 @@ caller,
 holds a qlock until it does \- so whatever reads random state next,
 plausibly something in module loading, blocks behind it indefinitely.
 .PP
-The clock interrupt itself is not the gap: QEMU's own state, not this
-board's source, settled that.
+The clock interrupt itself is not the gap: QEMU's own state settled
+that.
 .CW -d\ int
 during the hang shows a vector landing about 140 times a second, and
 QEMU monitor's
@@ -614,29 +614,56 @@ names it \- the local APIC timer, in periodic mode, targeting vector
 shows why it is not the legacy 8253 instead: IRQ0 is masked in both
 the PIC's own IMR and the IOAPIC's pin 0 redirection entry.  So
 .CW hzclock()
-is being driven, on schedule, straight off the local APIC \- and
-.CW port/portclock.c 's
-.CW timerintr() ,
-the function that walks the
+is being driven, on schedule, straight off the local APIC.
+.PP
+.CW os/inferno/pc64
+carries no local
+.CW i8253.c
+of its own to check \- an earlier version of this section wrongly
+took that for files lost to another session sharing this worktree.
+They were never local: pc64's own mkfile compiles
+.CW %.$O:\ ../pc/%.c
+for anything it has no rule of its own for, so
+.CW i8253.c ,
+.CW apic.c
+and the rest of the PC-hardware layer it shares with
+.CW os/inferno/pc
+build straight from there, every time, which
+.CW mk\ i8253.6
+after removing the stale object confirms.
+.CW os/inferno/pc/apic.c 's
+.CW lapicclock() ,
+the local APIC's own ISR, does call
+.CW timerintr(u,\0)
+correctly \- so the mechanism that walks
 .CW Timers[]
-list
-.CW timeradd()
-queues
+and fires
 .CW randomseed() 's
-periodic callback on, is a separate entry point this board's own ISR
-would have to call in addition, the way
-.CW os/inferno/pc/i8253.c 's
-does
-.RI ( timerintr(ureg,\0) ,
-right beside the
-.CW hzclock()
-call its own ISR makes).  Whether pc64's ISR makes that second call is
-the open question, and
-.CW os/inferno/pc64/i8253.c
-is where it would be \- but the file wasn't on disk to read while
-chasing this: this worktree is shared with at least one other
-concurrent session, under active, large scale reorganisation of this
-board's source at the time of writing.
+periodic callback is wired right, and a print added to
+.CW randomsample()
+(in
+.CW port/random.c ,
+genuinely portable and never in question) proves it runs: nbuf climbs
+cleanly, four samples per byte, all the way to 63.  It stops there,
+every time, for at least sixty seconds, one byte short of the 64 the
+loop is waiting for.  Something specific to finishing \- most likely
+in
+.CW timerintr() 's
+unconditional
+.CW tadd()
+re-queue of a
+.CW Tperiodic
+timer racing
+.CW randomseed() 's
+own
+.CW timerdel()
+once
+.CW nbuf
+reaches 64, since
+.CW timerdel()
+already carries a comment admitting exactly this hazard \- is where
+this now points, not a wiring gap.  The diagnostic print is not kept;
+this is what it showed.
 .NH 1
 How a native kernel provides networking
 .PP
