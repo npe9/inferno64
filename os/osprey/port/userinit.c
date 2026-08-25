@@ -17,6 +17,9 @@
  */
 #include	"initcode.i"
 
+extern int ospreymicro;
+extern void ospreymicroboot(void);
+
 static void
 smark(char *s)
 {
@@ -36,6 +39,11 @@ proc0(void*)
 	spllo();
 	smark("osprey: proc0\n");
 	print("proc0: start\n");
+	if(ospreymicro){
+		/* the microkernel boot: an Osprey task, no Plan 9 personality */
+		ospreymicroboot();
+		panic("ospreymicroboot returned");
+	}
 	if(waserror())
 		panic("proc0: %s", up->errstr);
 

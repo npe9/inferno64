@@ -1597,6 +1597,68 @@ static struct {
 	{ "*ospreytxbuf",	"txbuf",	Maxtxbuf },
 };
 
+/*
+ * The microkernel's first task, when a configuration asks for it with
+ * ospreymicro.  It boots into an Osprey task rather than into the Plan 9
+ * shell: no Pgrp, no name space, no initcode.  It drives the policy
+ * layer directly -- create a container, submit requests to its ring,
+ * let the dispatcher answer them, collect the replies -- which is the
+ * paper's message passing with nothing of Plan 9 above it, and then it
+ * idles.  What it proves is that the four services the paper keeps
+ * (message passing, address spaces through the segment the arena is,
+ * interrupts and the scheduler that runs this task) stand with the Plan
+ * 9 boot cut away.  os/osprey/port/userinit.c calls it from proc0.
+ */
+static void ospreyinit(void);
+
+void
+ospreymicroboot(void)
+{
+	Ospreyproc *p;
+	uvlong arg[Ospreynarg], op;
+	long status;
+	int i, n;
+
+	print("osprey micro: a task, no plan 9 boot\n");
+	/*
+	 * The arena is set up in the device init hook, which the Plan 9
+	 * boot runs in init0 and this boot skips.  It is idempotent, so
+	 * ensure it here before the first container.
+	 */
+	ospreyinit();
+	status = -1;
+	n = 0;
+	qlock(&ospreylock);
+	if(waserror()){
+		qunlock(&ospreylock);
+		print("osprey micro: error: %s\n", up->errstr);
+		for(;;)
+			tsleep(&up->sleep, return0, nil, 1000);
+	}
+	p = ospreycreate(1, 40000000ULL, 800000000ULL, 200000000ULL);
+	if(p == nil)
+		print("osprey micro: no container, arena not ready\n");
+	else {
+		for(i = 0; i < 4; i++){
+			memset(arg, 0, sizeof arg);
+			if(ospreysubmit(p, ospreyop("poll"), arg) < 0)
+				break;
+			while(ospreyservicep(p, fastticks(nil)) > 0)
+				;
+			if(ospreycollect(p, &op, &status, arg) == 0)
+				n++;
+		}
+		ospreyexit(p);
+	}
+	poperror();
+	qunlock(&ospreylock);
+	print("osprey micro: %d of 4 requests answered, last status %ld\n",
+		n, status);
+	print("osprey micro: idle\n");
+	for(;;)
+		tsleep(&up->sleep, return0, nil, 1000);
+}
+
 static void
 ospreyinit(void)
 {

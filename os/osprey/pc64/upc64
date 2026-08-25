@@ -1,0 +1,144 @@
+# upc64 - the Osprey microkernel: boots an Osprey task, no Plan 9 shell.
+# Device list still pc64's; it is stripped toward the four services in
+# later steps.  What differs now is the boot: ospreymicro is set, so
+# proc0 runs ospreymicroboot instead of Plan 9 init.
+dev
+	root
+	cons
+	swap
+	arch
+	pnp		pci
+	env
+	pipe
+	proc
+	mnt
+	srv
+	shr
+	dup
+	rtc
+	cap
+	kprof
+	fs
+	osprey
+
+	ether		netif
+	bridge		log
+	ip		arp chandial ip ipv6 ipaux iproute netlog nullmedium pktmedium inferno
+
+	sd
+#	floppy		dma
+#	lpt
+
+	audio		dma
+#	pccard
+#	i82365		cis
+	uart
+	
+	segment
+
+link
+#	devpccard	pci
+#	devi82365
+	cputemp		pci
+#	ether2000	ether8390
+#	ether589	etherelnk3
+#	ether8003	ether8390
+# should be obsoleted by igbe
+#	ether82543gc	pci
+#	ether82557	pci
+#	ether83815	pci
+#	etherdp83820	pci ethermii
+#	etherec2t	ether8390
+#	etherelnk3	pci
+#	etherga620	pci
+	etherigbe	pci ethermii
+#	etherm10g	pci
+#	ethervgbe	pci ethermii
+#	ethervt6102	pci ethermii
+#	ethervt6105m	pci ethermii
+#	ethersmc	devi82365 cis
+#	etherwavelan	wavelan devi82365 cis pci
+	ethermedium
+	loopbackmedium
+	netdevmedium
+#	pcmciamodem
+
+#	audiosb16	dma
+#	audioac97	pci audioac97mix
+	audiohda	pci
+
+	pmmc		pci
+
+misc
+	headless
+	pci		pcipc
+# archgeneric must come first: it is the fallback the others inherit
+# their unset entries from, and the one used when none of them identify.
+# acpi before mp: a machine with both describes itself more fully in its
+# ACPI tables, and firmware that boots us over UEFI leaves no MP table.
+	archgeneric	i8259 i8253
+	archacpi	mp apic squidboy ec
+	archmp		mp apic squidboy
+	mp		apic squidboy hpet
+	mtrr
+
+	sdide		pci sdscsi
+#	sdmylex		pci sdscsi
+	sdiahci		pci sdscsi led
+#	sdodin		pci sdscsi led
+	sdvirtio	pci sdscsi
+	sdvirtio10	pci sdscsi virtio10pc
+	sdmmc		pci pmmc
+	sdnvme		pci
+	sdloop
+	sdram
+
+	uarti8250
+	uartisa
+	uartpci		pci
+
+#	vga3dfx		+cur
+#	vgaark2000pv	+cur
+#	vgabt485	=cur
+#	vgaclgd542x	+cur
+#	vgaclgd546x	+cur
+#	vgact65545	+cur
+#	vgacyber938x	+cur
+#	vgaet4000	+cur
+#	vgageode	+cur
+#	vgahiqvideo	+cur
+#	vgai81x		+cur
+#	vgamach64xx	+cur
+#	vgamga2164w	+cur
+#	vgamga4xx	+cur
+#	vganeomagic	+cur
+#	vganvidia	+cur
+#	vgargb524	=cur
+#	vgas3		+cur vgasavage
+#	vgat2r4		+cur
+#	vgatvp3020	=cur
+#	vgatvp3026	=cur
+#	vgavmware	+cur
+
+
+ip
+	tcp
+	udp
+	rudp
+	ipifc
+	icmp
+	icmp6
+	igmp
+	gre
+	ipmux
+	il
+
+port
+	int cpuserver = 0;
+	int ospreymicro = 1;
+
+bootdir
+	boot
+	../../../Osprey/amd64/bin/paqfs	paqfs
+	../../../Osprey/amd64/bin/auth/factotum	factotum
+	$CONF.bootfs.paq	bootfs.paq

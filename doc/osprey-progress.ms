@@ -1428,6 +1428,46 @@ and the personality devices it carries are deleted.  Until then
 .CW pc64
 is kept only as the testbed the fifty-eight-line check still runs on, and
 its retirement is the measure of the work, not its persistence.
+.PP
+The first cut is built and boots.
+.CW os/osprey/pc64/upc64
+is the configuration; it sets
+.CW ospreymicro ,
+and
+.CW proc0
+branches on it to
+.CW ospreymicroboot
+in
+.CW os/osprey/port/devosprey.c
+rather than building the Plan 9 groups and name space and dropping to
+the shell.  That task ensures the arena, creates a container, submits
+four requests to its message ring, lets the dispatcher answer them, and
+collects four replies \- status
+.CW done
+on every one \- then idles.  The console shows
+.CW "osprey micro: a task, no plan 9 boot"
+and
+.CW "osprey micro: 4 of 4 requests answered" ,
+and
+.CW "proc0: groups"
+never prints, so no
+.CW Pgrp
+is made on that path.
+.CW scripts/osprey-check-micro.py
+boots it and checks those three things.
+.CW pc64
+still boots the Plan 9 shell with
+.CW ospreymicro
+zero, so the fifty-eight-line check is unaffected.
+.PP
+What is proved is small and real: the four services stand and a task runs
+on them with the Plan 9 boot cut away.  What upc64 still carries is
+pc64's whole device list and the port sources behind it \- the file and
+name-space personality is linked, merely not entered on this path.  The
+next cuts strip that device list toward the four services and let the
+task reach its message ring the way a container does, over a segment it
+maps, rather than through a kernel call; each is a step with the same
+boot to test it on.
 .NH 1
 The gaps, by why they are gaps
 .PP
