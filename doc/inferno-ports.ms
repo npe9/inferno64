@@ -1510,6 +1510,26 @@ added at the two ind* sites directly in source, one boot, revert
 after: a method already used successfully elsewhere in this file,
 set aside here only because the same information looked reachable
 without a rebuild.  It wasn't, this time.
+.PP
+Done immediately after, for exactly this reason: all four
+.CW ind*
+prints extended with the same module-name lookup the debugger attempt
+was trying to get to, eight plain boots, no debugger anywhere in the
+loop.  None of the eight hit it either \- six sat silent at
+.CW "spawn\ sh\ -n\ /dis/init" ,
+two hit unrelated crashes already on record.  This closes the
+question of
+.I method
+\- direct instrumentation remains the right tool and was not the
+obstacle \- while leaving the
+.CW array[10]
+question exactly where it was: plausible, specific, and still
+unconfirmed after roughly twenty boots across both attempts.  Whatever
+triggers it is rare enough that catching it wants either many more
+tries than one sitting affords or the specific condition the one run
+that did hit it had \- a live interactive pipe into the emulator's
+stdin, not a captured log \- reproduced deliberately rather than
+hoped for.
 .NH 1
 How a native kernel provides networking
 .PP
