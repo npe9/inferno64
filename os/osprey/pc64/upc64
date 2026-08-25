@@ -6,8 +6,8 @@
 # the message passing (osprey), address spaces (segment), the console
 # (cons, uart), the machine's interrupt and scheduling bring-up (arch and
 # the misc entries), rtc because the AP start path writes the warm-reset
-# vector through it, and env because the always-linked port code still
-# calls into it.  swap is gone: the microkernel does not page, and the
+# vector through it, and env because the always-linked port code
+# once called into it.  swap and env are gone now: the microkernel does not page, and the
 # port section stubs the five swap symbols as their real no-swap no-ops.  The ether and ip stack is gone now that the
 # osprey device names an interface through the ospreyetherlookup hook
 # rather than calling etherlookup directly.  mnt, srv and shr leave a few
@@ -17,7 +17,6 @@
 dev
 	cons
 	arch
-	env
 	rtc
 	osprey
 
@@ -89,6 +88,20 @@ port
 	int swapcount(uintptr a)	{ USED(a); return 0; }
 	void dupswap(Page *a)		{ USED(a); }
 	Image *swapimage = nil;		/* nil: no page is ever the swap image */
+
+	/*
+	 * The microkernel has no environment.  An environment is a name
+	 * space thing, kept in a library operating system, not the kernel.
+	 * ksetenv, newegrp, closeegrp and envcpy are reached only from
+	 * init0, rfork and reboot, none of which this boot runs; they are
+	 * defensive no-ops so that a kernel process exiting with a nil
+	 * egrp, or any stray call, does nothing rather than fault.
+	 */
+	void ksetenv(char *a, char *b, int c)	{ USED(a,b,c); }
+	Egrp *newegrp(void)			{ return nil; }
+	void closeegrp(Egrp *a)			{ USED(a); }
+	void envcpy(Egrp *a, Egrp *b)		{ USED(a,b); }
+	char *getconfenv(void)			{ return nil; }
 
 bootdir
 	boot
