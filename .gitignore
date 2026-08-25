@@ -115,6 +115,10 @@ y.debug
 /dis/**/*.dis
 /acme/dis/*.dis
 /acme/**/*.dis
+/p9/dis/**/*.dis
+/p9/dis/**/*.sbl
+/p9/cmd/*.dis
+/p9/cmd/*.sbl
 /os/init/*.dis
 /os/init/*.sbl
 

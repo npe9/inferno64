@@ -1,0 +1,12 @@
+Build output for p9/cmd goes here (compiled .dis files, gitignored - see
+.gitignore's /p9/dis entries and p9/cmd/mkfile's DISBIN).
+
+This directory is kept separate from the tree's regular /dis on purpose -
+see doc/plan9-port.md, "Rule: Limbo-native, in a separate bindable tree".
+Nothing here is on a running emu's default namespace until you ask for it:
+
+	bind -a /p9/dis /dis
+
+This file exists only so the empty directory survives being checked in;
+delete it if that ever stops being true (i.e. once a tracked non-.dis file
+lives here for some other reason).

@@ -14,6 +14,23 @@ the build. This is not a "write 400 programs" project. It's an inventory
 problem first, a handful of real gaps second, and one wiring fix that
 looks like a much bigger problem than it is.
 
+## Rule: Limbo-native, in a separate bindable tree
+
+Everything built for this plan from here on is Limbo, compiled to Dis, run by
+`emu` - "working in Inferno proper as native code," in the words this rule was
+given in. It lives under `p9/cmd/` (man pages under `p9/man/1/`), not
+`appl/cmd/` - `p9/cmd/mkfile` sets `DISBIN=$ROOT/p9/dis` instead of the shared
+`$ROOT/dis`, so an ordinary `mk install` there cannot shadow or collide with
+anything in the regular userspace. Bringing a built tool into a running
+namespace is one explicit step, not a build-time default:
+
+	bind -a $ROOT/p9/dis /dis
+
+This reverses the framing of "what should NOT be ported," below, for anything
+new: the C/`utils/` route stays valid for what's already built there (see the
+awk disambiguation right after it), but it is not how anything further gets
+added under this plan.
+
 ## What's already ported (checked, not recalled)
 
 **Command-line tools, self-attributed.** `grep -rl "Lucent Public
@@ -85,6 +102,15 @@ unconditionally is the kind of change that's easy to get right for the
 platform in front of you and easy to get wrong for the one you can't
 test.
 
+**Disambiguation, now that the rule above exists:** this awk is a
+host-native binary built by the kencc toolchain in `utils/` - it runs as an
+ordinary OS process on whatever machine built it, never touches Dis or
+`emu`, and is not what "working in Inferno proper as native code" means. It
+stays; it was real, correct, tested work and nobody asked for it to be
+undone. But "awk: done" above should not be read as satisfying this plan's
+Limbo-native item - it isn't, see the Limbo awk item under "Order of work,"
+below.
+
 ## What's missing
 
 **Genuinely absent, not yet checked further:**
@@ -123,28 +149,49 @@ test.
   for. Porting `rc` itself would mean maintaining two shells with
   overlapping jobs; extending `sh(1)`'s existing module system when a
   real gap shows up is the better use of the same effort.
-- **`awk` as a *language reimplemented in Limbo*.** Its actual C source
-  is already here (see above) - reimplementing it in Limbo would be
-  redoing real, working, tested work for no benefit over wiring in the
-  C build. If it turns out the C build genuinely can't be made to work
-  (untried assumption, not a finding), that changes this entry, but
-  start from "wire it in," not "rewrite it."
+- ~~`awk` as a *language reimplemented in Limbo*~~ **superseded by the rule
+  above.** This entry argued against a Limbo awk on the grounds that the C
+  source already works, which is true but answers a different question:
+  the C build is a host binary, not something that runs in Inferno proper.
+  The rule now explicitly asks for the Limbo one, in `p9/cmd/`, alongside
+  the C build rather than instead of it - see the Order of work entry
+  below.
 
 ## Order of work, cheapest first
 
 1. ~~`cd utils/awk && mk`~~ **Done** - built, fixed, linked, tested for
-   real. See the awk section above.
-2. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
+   real. See the awk section above, and its disambiguation: this is the
+   host C build, not the Limbo-native item below.
+2. **`p9/` scaffold: done.** `p9/cmd/mkfile` (following `appl/cmd/mkfile`'s
+   own `<$ROOT/mkfiles/mkdis`/`mksubdirs` pattern, but with
+   `DISBIN=$ROOT/p9/dis` instead of the shared `$ROOT/dis`) verified with a
+   throwaway smoke-test command: `mk install` compiles and installs into
+   `p9/dis/` only, confirmed nothing lands in the tree's real `/dis`.
+   `.gitignore` covers `p9/dis/**/*.dis` and `p9/cmd/*.dis`/`*.sbl` the same
+   way the existing `/dis/**/*.dis` line does for the shared tree.
+3. **Next: a Limbo awk, in `p9/cmd/awk.b`.** Scope it as a bounded subset,
+   not the full POSIX grammar - field splitting (`$0`, `$1`..`$NF`, `NF`, `NR`),
+   `BEGIN`/`END`, `/regex/` and boolean patterns, `print`/`printf`,
+   arithmetic/comparison/concatenation, associative arrays, and a handful
+   of builtins (`length`, `substr`, `split`). Gate correctness on the
+   working C awk as a reference oracle, not on reading the language spec:
+   run the same program and input through both `utils/awk/o.out` and
+   `p9/dis/awk.dis`, byte-diff the output - the same shape of check that
+   caught real bugs comparing `corpus hist` against `wordfreq` earlier in
+   this tree's history. Use the exercises in `inferno-for-dante.sh` as the
+   first test programs, since they're already known-good against real awk.
+   Not yet started.
+4. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
    tree's `/bin` list**, not recollection, to get an actual missing-count
    instead of the "a lot is already here" qualitative claim above. Still
-   open - the next cheapest thing here.
-3. **Wire an Inferno-native troff/ms toolchain**, or explicitly decide
+   open.
+5. **Wire an Inferno-native troff/ms toolchain**, or explicitly decide
    this tree keeps depending on the host's groff and say so in
    `CLAUDE.md` rather than leaving it an implicit, undocumented
    dependency. Still open.
-4. Everything else on a case-by-case basis once (2) produces a real list
+6. Everything else on a case-by-case basis once (4) produces a real list
    - no blanket estimate for "the rest" is offered here, on purpose,
    since a plan that says "37 remain, here are the 6 that need real
    design work" is the only useful shape of an answer to "port
    everything," and this document doesn't yet have that list. Still
-   open, and blocked on (2).
+   open, and blocked on (4).

@@ -99,3 +99,14 @@ BUGS what the test does *not* cover.
 **Man pages**: verify with `groff -man -Tutf8 -k -ww`. `.TQ` does not exist here — use two `.TP`
 blocks. Inside `.EX`, write `\en` not a raw newline escape, and never start a line with `'` or `.`.
 The section `INDEX` files are hand-curated; do not blindly regenerate them.
+
+**A Plan 9 userspace workalike is Limbo, in `p9/`, not C in `utils/`.** `utils/` builds
+host-native binaries with the kencc toolchain — real work, but not "running in Inferno
+proper," since it never touches Dis or `emu`. Anything meant as a native-to-Inferno
+workalike for a Plan 9 userspace tool (awk, and whatever else `doc/plan9-port.md` turns
+up) is Limbo source compiled to Dis, and lives under `p9/cmd/`, not `appl/cmd/` — kept out
+of the regular userspace so it doesn't have to compete with or shadow the real thing.
+`p9/cmd/mkfile` sets `DISBIN=$ROOT/p9/dis` (not the shared `$ROOT/dis`), so `mk install`
+there is inert until someone deliberately runs `bind -a $ROOT/p9/dis /dis`. `appl/cmd/`'s
+existing 212-file `.b` tree is not touched by this rule — it already holds the real ports
+that took over the regular userspace, and stays where it is.

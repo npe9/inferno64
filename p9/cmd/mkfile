@@ -1,0 +1,20 @@
+<../../mkconfig
+
+# Populate this with the .dis targets as workalikes are written - e.g.
+#	TARG=\
+#		awk.dis\
+TARG=\
+
+MODULES=\
+
+SYSMODULES=\
+
+# Compiled .dis files land here, NOT in $ROOT/dis - this tree is kept
+# separate from the regular userspace on purpose (see doc/plan9-port.md,
+# "Rule: Limbo-native, in a separate bindable tree"). Bring it into view
+# in a running namespace with:
+#	bind -a $ROOT/p9/dis /dis
+DISBIN=$ROOT/p9/dis
+
+<$ROOT/mkfiles/mkdis
+<$ROOT/mkfiles/mksubdirs
