@@ -26,8 +26,8 @@ func init() {
 
 	// composite literal nested inside a ref allocation's own fields.
 	r := ref Rect{min: Point{x: 1, y: 2}, max: Point{x: 5, y: 9}}
-	sys.print("r: min=%d,%d max=%d,%d\n", r.min.x, r.min.y, r.max.x, r.max.y)
-	sys.print("dx=%d\n", r.dx())
+	sys.print("r: min=%d,%d max=%d,%d dx=%d\n",
+		r.min.x, r.min.y, r.max.x, r.max.y, r.dx());
 
 	// a partially-keyed nested literal still zero-fills what's unset.
 	s := ref Rect{min: Point{x: 7}}

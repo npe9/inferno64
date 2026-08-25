@@ -358,12 +358,31 @@ callcom(Src *src, int op, Node *n, Node *ret)
 			ind->addable = Roff;
 		/*
 		 * varargs frame layout is call-site specific; use a local
-		 * descriptor (limbo does the same).  Fixed-arity module
-		 * calls take the callee frame type via IMFRAME.
+		 * descriptor (limbo/ecom.c does the same, in the equivalent
+		 * spot: nfn->decl = dupdecl(nfn->right->decl)).  this port
+		 * had dropped the dupdecl() -- aliasing nfn->decl straight
+		 * onto ind->decl, the *shared* Decl for the imported
+		 * function (the same object at every call site to it, e.g.
+		 * every "sys.print(...)" in a module) -- so the very next
+		 * line, meant to be call-site-local, instead overwrote that
+		 * shared Decl's own .desc every time any varargs call to the
+		 * same function was compiled.  resolvepcs() (gen.c) resolves
+		 * every IFRAME referencing that Decl to whichever descriptor
+		 * happened to be set *last*, module-wide -- not the one each
+		 * call site's own instructions were generated against.  An
+		 * earlier call needing a *larger* frame than a later call to
+		 * the same function silently got the later, smaller one: the
+		 * interpreter allocates too little memory and every argument
+		 * store past that boundary corrupts whatever's adjacent on
+		 * the stack. Two same-or-larger-later calls never triggered
+		 * it, which is why this went unnoticed: found by (and
+		 * written up with the minimal repro in) dea42341, fixed here.
+		 * Fixed-arity module calls take the callee frame type via
+		 * IMFRAME, unaffected -- they don't build a per-call-site
+		 * Tfn/desc at all.
 		 */
 		if(nfn->ty->varargs){
-			if(nfn->decl == nil)
-				nfn->decl = ind->decl;
+			nfn->decl = dupdecl(ind->decl);
 			nfn->decl->desc = gendesc(ind->decl,
 				idoffsets(nfn->ty->ids, MaxTemp, MaxAlign),
 				nfn->ty->ids);
