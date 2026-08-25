@@ -621,8 +621,7 @@ prochaswaitq(void *x)
 
 	c = (Chan *)x;
 	p = proctab(SLOT(c->qid));
-/*	return p->pid != PID(c->qid) || p->waitq != nil; */
-	return 0;
+	return p->pid != PID(c->qid) || p->waitq != nil;
 }
 
 static void
@@ -891,7 +890,7 @@ procread(Chan *c, void *va, s32 n, s64 off)
 	uintptr addr;
 /*	Segment *s; */
 	Ureg kur;
-/*	Waitq *wq; */
+	Waitq *wq;
 	Proc *p;
 	
 	offset = off;
@@ -1052,7 +1051,7 @@ procread(Chan *c, void *va, s32 n, s64 off)
 */		return 0;
 
 	case Qwait:
-/*		if(!canqlock(&p->qwaitr))
+		if(!canqlock(&p->qwaitr))
 			error(Einuse);
 
 		if(waserror()) {
@@ -1089,7 +1088,6 @@ procread(Chan *c, void *va, s32 n, s64 off)
 		free(wq);
 		offset = 0;
 		goto statbufread;
-*/		return 0;
 	}
 
 	eqlock(&p->debug);
