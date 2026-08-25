@@ -127,7 +127,7 @@ below.
   for `doc/*.ms` papers (the `-ms` package). These papers are still
   rendered by the **host's** `groff` (confirmed: resolves to
   `/opt/homebrew/bin/groff` on this machine). Genuinely out of scope for
-  now - see item 6 below for why.
+  now - see item 7 below for why.
   **Correction:** this bullet previously claimed the *whole* troff/man
   toolchain was absent ("nothing under `appl/` or `utils/` provides it").
   That was wrong, and should have been checked before being written -
@@ -136,7 +136,7 @@ below.
   driving two existing shipped consumers: `appl/cmd/man2txt.b` (plain-text
   rendering) and `appl/cmd/man2speak.b` (speech, for the screen-reader
   path). It already handles the great majority of the request/escape
-  vocabulary enumerated below for item 6 - `.TH .SH .SS .TP .TF .IP .RS
+  vocabulary enumerated below for item 7 - `.TH .SH .SS .TP .TF .IP .RS
   .RE .PP .LP .HP .sp .br .nf .fi .ig .1C .2C .DT .EX .EE`, the font
   macros (`.B .I .SM .L` and the two-letter combinations `.BI .BR .IB
   .IR .RB .RI .LR .RL`), and inline escapes including `\-  \. \\ \e \|
@@ -145,7 +145,7 @@ below.
   reading `parsemacro`'s case list rather than assumed: `.ta` (tab
   stops), `.in`/`.ti` (indent/temporary-indent, present as stubs that
   just call `state.brk()`), and no standalone `.ft` request (only the
-  inline `\f` escape works). See item 6, revised below, for what's
+  inline `\f` escape works). See item 7, revised below, for what's
   actually still open given this.
 - `9p`-family user tools (Plan 9's own `9p`, `import`, `srv` command-line
   tools, as distinct from the `styx*` diagnostic tools built earlier this
@@ -226,8 +226,8 @@ below.
    scale. No macros (`[...]x`), no strings, no `?`/input, no `z`/`Z`, no
    `i`/`o` radix change. Numbers are exact fixed-point `big` integers
    (mantissa, fraction-digit count), not floats - dc's own arithmetic is
-   arbitrary-precision, and Limbo's native `big` type made matching that
-   directly straightforward rather than approximating it with floats.
+   exact within its precision, and this representation matches that
+   directly rather than approximating it with floats.
    Precision/rounding rules (what each operator's result scale is, and
    when it truncates rather than staying exact) were reverse-engineered
    against `/usr/bin/dc` with targeted probes *before* writing any code,
@@ -236,10 +236,42 @@ below.
    be more particular than expected (multiply's truncation threshold
    depends on both operand scales *and* the scale register at once).
    34 programs checked this way during development, all byte-identical;
-   `p9/cmd/dctest.b` keeps 28 of them as a permanent regression test via
-   the same in-process `runstring(prog)` seam as `awktest.b`, confirmed
-   with a negative control (broke `+` into `-`, 6 of 28 tests failed with
-   exactly the corrupted output, restored, all 28 passed again).
+   `p9/cmd/dctest.b` keeps 28 of them (now 30, see below) as a permanent
+   regression test via the same in-process `runstring(prog)` seam as
+   `awktest.b`, confirmed with a negative control (broke `+` into `-`, 6 of
+   28 tests failed with exactly the corrupted output, restored, all 28
+   passed again).
+
+   **CORRECTION, found while building item 9 (bc) below on the same
+   arithmetic: `big` is not arbitrary precision.** The line above
+   claiming "Limbo's native `big` type made matching [dc's arbitrary-
+   precision arithmetic] directly straightforward" was an assumption
+   written down as fact, never checked against the compiler source -
+   `limbo/limbo.h` defines it outright (`"Tbig, /* 64 bit int */"`); real
+   arbitrary-precision integers in this tree are a separate thing,
+   `module/ipints.m`'s `IPint`. Found by `bc`'s own `sqrt(2)` at a
+   moderate scale printing a nonsense *negative* number with no error at
+   all; traced to `dc.b` itself with the same input (`10k 2 v p`), which
+   diverged from the host's `1.4142135623` the same way. Swept `Nk 2 v p`
+   for N=1..20 against the host: N=1..9 match exactly, N=10 is the first
+   divergence - the point where an internal value needs more than the
+   ~18-19 significant decimal digits a signed 64-bit integer holds, and
+   the multiply silently wrapped around instead of erroring.
+   **Fixed**, not worked around: every multiply and add/sub that touches
+   a `big` mantissa now goes through `bigmul`/`bigadd`/`bigsub`/`bigneg`,
+   which detect the wraparound (a multiply that doesn't divide back out
+   cleanly, an add/sub whose sign the operands didn't predict) and fail
+   with "precision exceeded" instead of returning a wrong answer.
+   `p9/cmd/dctest.b` gained 2 tests for the exact boundary (30 total):
+   scale 9 still matches the host, scale 10 now fails loudly where it
+   used to silently print garbage; negative control confirmed (reverted
+   just the overflow check inside `bigmul`, rebuilt, the new scale-10
+   test failed exactly as expected with no error raised, restored,
+   30/30 passed again).
+   `p9/man/1/dc`'s DESCRIPTION and BUGS, this file, and the memory this
+   session keeps were all corrected in place rather than left to mislead
+   the next reader - the same "correct the record" case as item 7's
+   troff claim, below.
 5. **`p9/cmd/m4.b` - a macro processor: done.** Bounded subset: `define`,
    `undefine`, `$1`-`$9`/`$#`/`$0`, `ifdef`, `ifelse` (including the
    chained-triplet form), `include`, `dnl`, default `` ` '' `` quoting
@@ -283,7 +315,53 @@ below.
    against the *working* implementation, then fixed against a fresh,
    explicit oracle check rather than adjusted to whatever the code
    happened to produce.
-6. **A troff-equivalent for this tree's own `man/1` corpus, text output
+6. **`p9/cmd/bc.b` - the calculator language: done.** An infix front end
+   over `dc.b`'s own already-verified exact fixed-point arithmetic
+   (copied in, not shared via a module, so `dc.b`'s working code stays
+   untouched) - a recursive-descent parser and tree-walking evaluator,
+   not string-rescanning like `m4.b`, since `bc`'s functions and loops
+   genuinely need to run the same body more than once. Bounded: numbers,
+   `+ - * / % ^` (unary `-` binds *tighter* than `^`, confirmed against
+   the oracle - `-2^2` is `(-2)^2` = 4, not -4, a real corner most bc
+   descriptions get backwards), comparisons and `&& || !`, `=` and every
+   compound assign, postfix `++`/`--`, `if`/`while`/`for`, `define`
+   functions with `auto` locals (dynamic-scoped: shadows a same-named
+   global for the call only, restored on return) and recursion, and the
+   `sqrt`/`length`/`scale` builtins. No `ibase`/`obase`, no `-l` mathlib,
+   no strings/`print`, no arrays, no prefix `++`/`--`; one real grammar
+   corner - a bare, unparenthesized assignment whose right side touches
+   a relational operator parses differently in the real oracle (`y = 3 >
+   2` is `(y = 3) > 2`, not `y = (3 > 2)`) - is checked against the host,
+   understood, and deliberately not replicated (parens are required
+   instead) rather than silently gotten wrong; see `p9/man/1/bc`'s BUGS
+   for the exact reasoning.
+
+   The oracle here is Gavin Howard's bc 7.x (the real `/usr/bin/bc` on
+   this machine), not the older AT&T/GNU bc most manuals describe - every
+   behavioral rule above, plus `length(x)` counting only `x`'s mantissa
+   digits regardless of scale (`length(0.001)` is 1, not 4) and a
+   compound assignment being silent exactly like a plain `=` (not
+   printing, which this file's own first-draft test wrongly expected),
+   was checked with targeted probes before writing code, not read off a
+   manual from memory. 28 programs checked this way, all matching after
+   two real bugs found *during* that probing were fixed: the unary-
+   minus/power precedence above (found because the very first negative-
+   power test failed), and `auto` never actually restoring a shadowed
+   global on return (found via a probe built specifically to check
+   shadowing, not a coincidence). `p9/cmd/bctest.b` keeps 30 of the 28
+   plus the 2 precision-boundary tests below as a permanent regression
+   test via the same `runstring(prog)` seam as `dctest.b`, confirmed with
+   a negative control (broke `+` into `-`, 3 tests failed immediately and
+   a 4th cascaded into an infinite loop and an out-of-memory abort before
+   it could even report - itself confirming the corruption, just more
+   dramatically than a clean failure - restored, 40/40 passed again).
+
+   Shares item 4's `big`-is-64-bits-not-arbitrary-precision correction
+   directly (the bug was *found* through `bc`, then traced back to
+   `dc.b`): the same `bigmul`/`bigadd`/`bigsub`/`bigneg` overflow checks
+   apply here too, and `bctest.b` checks the identical boundary (`sqrt(2)`
+   at scale 9 matches, scale 10 now fails loudly instead of wrapping).
+7. **A troff-equivalent for this tree's own `man/1` corpus, text output
    only - the concrete answer to "wire an Inferno-native troff/ms
    toolchain": done, but not by building one.** This item was scoped
    (see the grep-derived vocabulary that used to sit here) before
@@ -387,7 +465,7 @@ below.
    weight today, so matching `groff -Tutf8`'s escape-code choices would
    have been reverse-engineering a state machine for a consumer that
    doesn't exist in this tree.
-7. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
+8. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
    tree's `/bin` list: done.** The local `9front/` checkout mentioned
    above turned out to be headers/APE + two prebuilt binaries only, not
    source, exactly as this doc predicted ("not checked, and the right
@@ -416,7 +494,7 @@ below.
    match by name; 272 (after also correcting for `acme`) do not.**
 
    That raw 272 overstates the real gap by a lot, the same way the old
-   "genuinely absent" troff claim overstated item 6 - a name not
+   "genuinely absent" troff claim overstated item 7 - a name not
    matching isn't the same as a missing capability. Categorized by
    what's actually true of each, not just "missing":
    - **18 native per-arch toolchain tools** (`1a`/`1c`/`1l` through
@@ -432,7 +510,7 @@ below.
      this doc's existing "missing and genuinely hard" bucket.
    - **40 troff/print-toolchain tools** (`eqn`/`tbl`/`pic`/`grap`/
      `troff`/every `post*` PostScript-driver name/`gs`) - already
-     decided in item 6 above: this tree keeps depending on the host's
+     decided in item 7 above: this tree keeps depending on the host's
      `groff` for `doc/*.ms`, and `gs` alone (a full Ghostscript) is out
      of scope by size regardless.
    - **12 of Plan 9's own GUI/editor stack** (`rio`/`riow`/`sam`/
@@ -469,16 +547,17 @@ below.
      responsibly guess at them without reading their actual source -
      flagged as needing individual research, not silently dropped or
      silently counted as gaps.
-8. Everything else on a case-by-case basis, now that (7) gives a real
+9. Everything else on a case-by-case basis, now that (8) gives a real
    list instead of a blanket estimate: of the 272 raw misses, 154 sort
    cleanly into "not actually a gap" (already covered under a different
    name, already a deliberate design decision elsewhere in this doc, or
    out of scope by category - native toolchain, hardware, GUI stack,
    troff/print), leaving on the order of a dozen genuinely plausible,
    scoped, standalone candidates (`file`/`patch`/`tar`/`join`/`split`/
-   `iconv`/`pr`/`dict`/`bc`/`hoc`/`primes`+`factor`/`crc32` above) worth
-   picking up the same way `awk`/`dc`/`m4` were - plus three coherent
-   subsystem-sized questions (fs-servers, mail, ssh/tls) that are each
-   real design work, not a quick port, and a genuinely unclassified
-   residual that needs someone to look at the actual 9front source
+   `iconv`/`pr`/`dict`/`hoc`/`primes`+`factor`/`crc32` above - `bc` was
+   one of these and is now done, item 6 above) worth picking up the same
+   way `awk`/`dc`/`m4`/`bc` were - plus three coherent subsystem-sized
+   questions (fs-servers, mail, ssh/tls) that are each real design work,
+   not a quick port, and a genuinely unclassified residual that needs
+   someone to look at the actual 9front source
    before it can be triaged further. Still open, and this is that list.

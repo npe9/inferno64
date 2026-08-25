@@ -3,10 +3,26 @@ implement Dc;
 # A Limbo-native workalike for a bounded subset of dc(1), the RPN desk
 # calculator - see doc/plan9-port.md's "Rule: Limbo-native, in a separate
 # bindable tree". Numbers are exact fixed-point big integers (mantissa,
-# fraction-digit count), not floats: dc's own arithmetic is arbitrary
-# precision, and Limbo's native `big` type makes matching that exactly
-# straightforward rather than approximating it - see p9/man/1/dc's BUGS
-# for the one place register width is bounded (a-z/A-Z only).
+# fraction-digit count), not floats - dc's own arithmetic is exact within
+# its precision, and this representation matches that directly instead
+# of approximating it with floats.
+#
+# CORRECTION, found only after this file was first written and marked
+# done: `big` is NOT arbitrary precision. `limbo/limbo.h` defines it
+# outright ("Tbig, /* 64 bit int */") - real arbitrary-precision integers
+# in this tree are a separate thing, `module/ipints.m`'s IPint. The
+# original version of this comment claimed "Limbo's native `big` type
+# makes matching [dc's arbitrary-precision arithmetic] exactly
+# straightforward" - that was an assumption written down as fact, never
+# checked against the compiler source, and it was wrong: every multiply
+# and every scale-up silently wrapped at 64 bits with no error at all.
+# Found via `10k 2 v p` (sqrt(2) at scale 10) diverging from the host's
+# `1.4142135623` to a nonsense negative number - see p9/man/1/dc's BUGS
+# for the measured threshold (matches host output through roughly 18-19
+# total significant digits, matching signed 64-bit integer range, then
+# diverges) and `bigmul`/`bigadd`/`bigsub`/`bigneg` below, which turn
+# that silent wraparound into a loud "precision exceeded" failure
+# instead of a wrong answer.
 #
 # Correctness, precision and rounding rules below (add/sub take the max
 # of operand scales, exactly; multiply's natural scale is the sum of
@@ -89,11 +105,52 @@ peek(): Dnum
 	return hd stack;
 }
 
+# big is a 64-bit signed integer in this Limbo (limbo/limbo.h: "Tbig,
+# /* 64 bit int */" - real arbitrary precision lives in module/ipints.m
+# instead), NOT arbitrary precision - see this file's header comment
+# for the correction and p9/man/1/dc's BUGS for the measured limit.
+# These two helpers turn a silent 64-bit wraparound (which produced a
+# wrong, sometimes negative, answer with no error at all) into a loud
+# failure - checked the standard way: an overflowing multiply changes
+# what dividing back out gives you; an overflowing add/sub changes the
+# sign in a way the operands didn't predict.
+bigmul(a: big, b: big): big
+{
+	r := a * b;
+	if(a != big 0 && r/a != b)
+		fail("precision exceeded (big is a 64-bit integer here, not arbitrary precision)");
+	return r;
+}
+
+bigadd(a: big, b: big): big
+{
+	r := a + b;
+	if((b > big 0 && r < a) || (b < big 0 && r > a))
+		fail("precision exceeded (big is a 64-bit integer here, not arbitrary precision)");
+	return r;
+}
+
+bigsub(a: big, b: big): big
+{
+	return bigadd(a, bigneg(b));
+}
+
+bigneg(a: big): big
+{
+	# the one value whose negation itself overflows a signed 64-bit
+	# big (the minimum representable value) - vanishingly unlikely
+	# for a desk-calculator input, but checked rather than assumed.
+	r := -a;
+	if(a != big 0 && (r > big 0) == (a > big 0))
+		fail("precision exceeded (big is a 64-bit integer here, not arbitrary precision)");
+	return r;
+}
+
 big10pow(n: int): big
 {
 	r := big 1;
 	for(i := 0; i < n; i++)
-		r *= big 10;
+		r = bigmul(r, big 10);
 	return r;
 }
 
@@ -102,7 +159,7 @@ scaleup(d: Dnum, tf: int): big
 {
 	if(d.f == tf)
 		return d.m;
-	return d.m * big10pow(tf - d.f);
+	return bigmul(d.m, big10pow(tf - d.f));
 }
 
 # truncate a mantissa (currently f digits) down to nf digits, toward zero
@@ -118,7 +175,7 @@ dadd(a: Dnum, b: Dnum): Dnum
 	tf := a.f;
 	if(b.f > tf)
 		tf = b.f;
-	return Dnum(scaleup(a, tf) + scaleup(b, tf), tf);
+	return Dnum(bigadd(scaleup(a, tf), scaleup(b, tf)), tf);
 }
 
 dsub(a: Dnum, b: Dnum): Dnum
@@ -126,12 +183,12 @@ dsub(a: Dnum, b: Dnum): Dnum
 	tf := a.f;
 	if(b.f > tf)
 		tf = b.f;
-	return Dnum(scaleup(a, tf) - scaleup(b, tf), tf);
+	return Dnum(bigsub(scaleup(a, tf), scaleup(b, tf)), tf);
 }
 
 dmul(a: Dnum, b: Dnum): Dnum
 {
-	m := a.m * b.m;
+	m := bigmul(a.m, b.m);
 	sumf := a.f + b.f;
 	capf := scale;
 	if(a.f > capf)
@@ -151,8 +208,8 @@ ddiv(a: Dnum, b: Dnum): Dnum
 		fail("divide by zero");
 	# result at exactly `scale` fraction digits:
 	#   m = trunc(a.m * 10^(scale+b.f) / (b.m * 10^a.f))
-	num := a.m * big10pow(scale + b.f);
-	den := b.m * big10pow(a.f);
+	num := bigmul(a.m, big10pow(scale + b.f));
+	den := bigmul(b.m, big10pow(a.f));
 	return Dnum(num / den, scale);
 }
 
@@ -199,7 +256,7 @@ dsqrt(a: Dnum): Dnum
 	shift := 2*scale - a.f;
 	n: big;
 	if(shift >= 0)
-		n = a.m * big10pow(shift);
+		n = bigmul(a.m, big10pow(shift));
 	else
 		n = a.m / big10pow(-shift);
 	return Dnum(bigisqrt(n), scale);

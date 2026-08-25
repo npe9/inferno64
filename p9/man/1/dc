@@ -50,10 +50,11 @@ and more digits, with a leading
 .B _
 for a negative literal (a bare
 .B \-
-is the subtraction operator, not part of a number). Arithmetic is exact,
-arbitrary-precision fixed-point \(em not floating point \(em matching real
+is the subtraction operator, not part of a number). Arithmetic is exact
+fixed-point \(em not floating point \(em matching real
 .IR dc 's
-own arithmetic rather than approximating it.
+own arithmetic rather than approximating it, but only up to a real
+precision limit; see BUGS.
 .SS Commands
 .TP
 .B + - * /
@@ -172,3 +173,39 @@ current scale; and a value that comes out to exactly zero prints a bare
 regardless of its scale. All of this is checked byte-for-byte against
 .B /usr/bin/dc
 on the same program, not asserted from documentation.
+.PP
+Numbers are exact only up to a real limit, and it is a narrower one than
+first assumed: Limbo's
+.B big
+is a 64-bit signed integer here, not arbitrary precision (real
+arbitrary-precision integers in this tree are a different thing,
+.IR ipints (2)),
+so every internal multiply and scale-up is bounded by that width. Found
+by sweeping
+.BI n "k 2 v p"
+(square root of 2 at scale
+.IR n )
+for
+.I n
+1 through 20 against the host's real
+.IR dc :
+.I n
+1 through 9 match exactly; at
+.I n
+10 the two diverge \(em the real
+.I dc
+prints
+.BR 1.4142135623 ,
+this one used to print a nonsense negative number instead, silently,
+with no error at all, because the internal multiply wrapped around at
+the 64-bit boundary. That is now caught rather than silently wrong:
+.B dc
+fails with
+.B "precision exceeded"
+instead of printing a wrapped-around answer, the moment any internal
+value would need more than roughly 18\(en19 significant decimal
+digits to represent exactly. This is a real, load-bearing limit for
+large scales combined with
+.BR ^ ,
+not a cosmetic one \(em check for it (a raised failure, not a wrong
+answer) rather than assuming any given computation fits.

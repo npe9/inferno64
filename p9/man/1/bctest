@@ -1,0 +1,70 @@
+.TH BCTEST 1
+.SH NAME
+bctest \- regression test for bc(1)
+.SH SYNOPSIS
+.B bctest
+.SH DESCRIPTION
+.I Bctest
+loads
+.BR /p9/dis/bc.dis 's
+in-process test seam,
+.BR runstring(prog) ,
+and checks a representative subset of the programs used to develop
+.IR bc (1)
+against golden output: arithmetic and its scale/precision rules,
+comparisons and logical operators, control flow
+.RB ( if / while / for ),
+functions with
+.BR auto ,
+recursion, postfix
+.BR ++ / \-\- ,
+and the
+.BR sqrt / length / scale
+builtins. Every expected string was checked once against the host's
+real
+.IR bc ,
+including two that were themselves wrong on first draft and caught by
+the test failing against a
+.I working
+implementation: unary minus binding tighter than
+.B ^
+(so
+.B \-2^2
+is 4, not \-4), and a compound assignment
+.RB ( += ", etc.)"
+being silent exactly like a plain
+.B =
+rather than printing.
+.PP
+Also checks the one precision boundary
+.IR dc (1)
+shares with this program: Limbo's
+.B big
+is a 64-bit integer, not arbitrary precision, so
+.B sqrt(2)
+at scale 9 still matches the host exactly, and at scale 10 this program
+now fails loudly
+.RB ( "precision exceeded" )
+instead of silently printing a wrapped-around wrong answer.
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/bctest.b
+.SH SEE ALSO
+.IR bc (1)
+.SH BUGS
+Runs
+.I bc
+in-process via its
+.B runstring
+seam, not as a spawned subprocess reading real files and standard
+input/output \(em so it does not exercise
+.IR bc 's
+own
+.BR init ,
+argument parsing
+.RB ( -e / -f ),
+or file I/O at all.

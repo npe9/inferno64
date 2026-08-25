@@ -78,6 +78,18 @@ init(nil: ref Context, nil: list of string)
 	check("comment to end of line", "3 4 + p # five", "7\n");
 	check("exact zero prints bare 0 regardless of scale", "3 k 0 p", "0\n");
 
+	# `big` is a 64-bit integer here, not arbitrary precision (see the
+	# CORRECTION in dc.b's header comment) - scale 9 is the last one
+	# that still matches the host's real dc for sqrt(2); scale 10 is
+	# the first that silently wrapped to a wrong (negative!) answer
+	# before bigmul/bigadd/bigsub started detecting it. Both numbers
+	# were found by sweeping N=1..20 against the host oracle, not
+	# assumed.
+	check("sqrt still exact at the last scale that fits in 64 bits",
+		"9 k 2 v p", "1.414213562\n");
+	checkfails("sqrt past the 64-bit limit fails loudly instead of wrapping",
+		"10 k 2 v p");
+
 	sys->print("%d passed, %d failed\n", npass, nfail);
 	if(nfail > 0)
 		raise "fail:test failure";
@@ -93,4 +105,26 @@ check(desc: string, prog: string, want: string)
 	nfail++;
 	sys->fprint(stderr, "FAIL %s\n  prog: %q\n  want: %q\n  got:  %q\n",
 		desc, prog, want, got);
+}
+
+# for a program that's expected to raise (dc.b's fail() does `raise
+# "fail:dc"`), not to produce output - runstring() would otherwise
+# propagate that exception straight out and kill this whole test
+# process, not just fail one check.
+checkfails(desc: string, prog: string)
+{
+	err: string;
+	{
+		dc->runstring(prog);
+	} exception e {
+	"*" =>
+		err = e;
+	}
+	if(err != nil){
+		npass++;
+		return;
+	}
+	nfail++;
+	sys->fprint(stderr, "FAIL %s\n  prog: %q\n  expected a raised failure, got none\n",
+		desc, prog);
 }
