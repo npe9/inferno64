@@ -1603,41 +1603,101 @@ off the same group before the fork, is exactly what the next boot's
 instrumentation is built to answer; reasoned from the source, not
 yet confirmed against a running kernel.
 .PP
-Also settled this sitting: the QEMU invocation itself, lost across a
-context boundary and reconstructed at real cost.
+Also settled this sitting, at real cost and after one wrong turn: the
+QEMU invocation itself, lost across a context boundary.
 .CW ipc64
 carries a multiboot header (magic
 .CW 0x1BADB002
 at file offset 72), so QEMU's own
 .CW \-kernel
-loader hands it to the guest directly \- no BIOS/PXE negotiation, no
-separate boot loader \- which is the chain that actually reaches
-.CW "Inferno release built at ..." .
-.CW \-boot\ n
-forces iPXE's own DHCP/TFTP path instead, which also works but is a
-different, far noisier and slower chain; comparing logs across the
-two is comparing different boots.  And
-.CW "\-serial mon:stdio \-display none"
-emits nothing for this kernel at all \- only
-.CW \-nographic
-(which multiplexes the emulated VGA text console onto stdio) shows
-any boot output, a distinction that cost most of a session to
-re-derive once already.  Recorded this time as
-.CW os/inferno/pc64/qemu-boot.sh
-rather than left to be lost again.
+loader hands it straight to the guest \- but SeaBIOS still runs first
+and still prints its own banner, and iPXE's too when a NIC is present;
+that part is normal, and the first pass at this misread it as evidence
+.CW \-kernel
+was silently falling back to a full BIOS/PXE boot.  It wasn't.  The
+multiboot jump happens right after, with no further BIOS or PXE
+activity \- confirmed by checking the header's own address fields and
+checksum, which were valid and matched the kernel's own printed memory
+map exactly, ruling out a malformed header as the cause of the seven
+runs in a row that produced no kernel output at all.
 .PP
-Instrumented for the next boot: prints in
+The actual cause: no boot argument can reach the kernel under
+.CW \-kernel
+except through the multiboot command line \-
+.CW \-append
+\- since there is no disk and so no
+.CW plan9.ini .
+Without one,
+.CW getconf(\*(lqconsole\*(rq)
+returns nil everywhere, and pc64 links both a VGA console
+.RB ( screen.6 ,
+.CW vgasoft.6 ,
+.CW cga.6 )
+and a serial one
+.RB ( uarti8250.6 ).
+With no
+.CW console=
+argument the guest picked one silently and wrote everything to it;
+.CW \-nographic
+mirrors COM1, not VGA text, so when the guest chose VGA every line of
+kernel output went somewhere QEMU's console flags were never reading
+from.  The guest sat at very close to 100% CPU the whole time \-
+genuinely running, not hung \- which is what made this take a session
+to tell apart from a wrong boot chain or a silent crash: a stopped
+guest, a hung one and a live one writing to the wrong device all look
+identical from the invoking end.
+.CW "\-append\ 'console=0'"
+is the fix, confirmed against the historical capture's own printed
+.CW "Boot\ configuration"
+dump, which carries exactly that
+.CW console=0
+entry.
+.PP
+.CW \-boot\ n
+forces iPXE's own DHCP/TFTP path instead of the multiboot jump, which
+also works but is a different, far noisier and slower chain; comparing
+logs across the two is comparing different boots.  And
+.CW "\-serial mon:stdio \-display none"
+emits nothing for this kernel at all, regardless of
+.CW \-append
+\- only
+.CW \-nographic
+shows any boot output.  Recorded this time as
+.CW os/inferno/pc64/qemu-boot.sh
+rather than left to be lost again, with the wrong turn left in its own
+comment rather than edited away: the fastest way to lose this a third
+time is to remember only the answer and not the diagnostic that got
+there.
+.PP
+With the console fixed, a plain unmodified boot (the tree as it
+stands, no diagnostic prints anywhere) reaches
+.CW "spawn\ sh\ -n\ /dis/init"
+and then goes quiet \- CPU usage drops to near zero and stays there,
+confirmed idle rather than crashed for over a minute of wall clock \-
+exactly the shape the earlier eight-boot
+.CW ind*
+attempt already recorded for six of its eight runs.  That is the
+control this section needed: the fault reproduces on the current tree
+with nothing added, which is what makes the next instrumented boot's
+trace trustworthy rather than an artifact of the prints themselves.
+.PP
+Instrumented for that next boot: prints in
 .CW freeFD() ,
 in
 .CW fdclose() 's
-nil-ing of a live slot, in
+nil-ing of a live slot (moved outside the
+.CW Fgrp
+lock after a first draft held it across a
+.CW print()
+call \- a spinlock stretched across console I/O on every fd close in
+the system, caught before it was ever booted), in
 .CW fdtochan() 's
 failure branch, and in
 .CW Sys_pctl() 's
-FORKFD case, each carrying the pid and (where the type is visible)
-the running module name or the old and new
+FORKFD case, each carrying the pid and (where the type is visible) the
+running module name or the old and new
 .CW Fgrp
-pointers.  Not yet run to completion as this entry is written.
+pointers.
 .NH 1
 How a native kernel provides networking
 .PP
