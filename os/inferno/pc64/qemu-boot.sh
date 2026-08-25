@@ -33,10 +33,21 @@
 #     the same silent-VGA-console stall, since the missing console=
 #     argument is what actually matters, not the NIC.
 #
-# TCG is slow: reaching a shell prompt from a cold boot takes minutes of
-# real wall-clock time, not seconds.  '-no-reboot' turns a triple fault
-# into a stopped guest instead of a silent reboot loop, so a hang and a
-# crash are distinguishable.
+# TCG is slow: a cold boot to the mount step below takes the better part
+# of a minute of real wall-clock time, not seconds.  '-no-reboot' turns a
+# triple fault into a stopped guest instead of a silent reboot loop, so a
+# hang and a crash are distinguishable.
+#
+# 'console=0' is OUTPUT only.  os/inferno/port/devuart.c's uartinit wires
+# a console uart's output queue to serialoq (the kernel print() target)
+# but never assigns a matching input queue; keyboard input still comes
+# only from devkbd.  So feeding bytes into this invocation's stdin (a
+# fifo, a pipe, anything) cannot deliver a keystroke to the guest no
+# matter how alive the guest is -- an apparently silent shell proves
+# nothing about whether it's waiting for input.  Confirmed the hard way:
+# an echoed test command never came back across a live-pipe boot, before
+# this was traced to the source and understood as a harness limit rather
+# than evidence about the guest.
 #
 # Usage: ./qemu-boot.sh [extra qemu args...] | tee /tmp/pc64boot.out
 

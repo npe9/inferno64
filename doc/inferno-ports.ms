@@ -1758,18 +1758,160 @@ and
 .CW runcmd 's
 .CW stdin
 parameter aliasing the same pipe end and each independently dropping
-their reference to it \- ordinary, and handled.  What remains
-completely open is why the guest goes idle afterward: nothing in this
-trace explains the hang itself, only rules out one candidate
-explanation for it.  The next instrumentation this wants is at
-installation rather than closing \-
-.CW newfd() /
-.CW newfd2() \-
-paired against the same
+their reference to it \- ordinary, and handled.
+.PP
+Four more things settled this sitting, each correcting something the
+previous entry got wrong rather than just adding to it.
+.PP
+First: the
+.CW error("")
+at
+.CW "R.FP\ ==\ nil"
+in
+.CW xec.c
+(around line 771) is not a fault at all.  It is commented in the
+source as the designed mechanism by which a Dis Prog's last frame
+unwinds \- "clear error, if any, goto vmachine()'s waserror() and call
+progexit() there."  So the
+.CW "error nil error err"
+line this section has been chasing since the very first capture is a
+Prog terminating, full stop; it carries no information about success
+or failure on its own.
+.PP
+Second: a discriminator print placed between
+.CW closefgrp()
+and
+.CW acquire()
+inside
+.CW freeFD()
+showed both completing even on the fd-4-in-7967c08 path that returns
+.CW "r\ \-1" .
+The guest is not stuck inside
+.CW freeFD() .
+.PP
+Third, and this is the one that overturns the previous entry's closing
+paragraph: a print placed directly on
+.CW Sys_mount() 's
+return value, needing no Limbo rebuild and unreachable by any namespace
+question, shows
+.RS
+.nf
+.CW "Sys_mount: fd 4 on /n ret 16 errstr  pid 1"
+.fi
+.RE
+\-
+.CW ret
+is 16, not negative, and
+.CW errstr
+is empty.
+.CW mount.b 's
+own
+.CW "if(ok\ <\ 0)"
+never fires,
+.CW fail()
+is never called, nothing is raised.  The mount succeeds.  So the
+.CW error("")
+Prog-exit noted above is
+.CW mount.b 's
+.CW init()
+returning normally after a successful mount, not an uncaught
+exception unwinding the whole script \- the theory that
+.CW "sh\ -n" 's
+no-namespace-fork semantics let a mount failure kill the entire boot
+script is not what is happening, and is retracted here.
+.PP
+The fd-4 double close itself is now fully explained, and it is
+ordinary.
+.CW bindmount()
+in
+.CW sysfile.c
+(the C function behind
+.CW kmount() ),
+after
+.CW cmount()
+has installed the new mount in the namespace, does this itself:
+.RS
+.nf
+.CW "if(ismount){"
+.CW "	fdclose(up\->fgrp, fd, 0);"
+.CW "	..."
+.CW "}"
+.fi
+.RE
+The kernel closes the fd it was handed as the deliberate last step of
+a successful mount \- the fd was only ever needed to reach
+.CW mntattach() ,
+and once
+.CW cmount()
+has taken the connection into the namespace the fd table entry is
+surplus.  This happens
+.I inside
+the
+.CW Sys_mount()
+call, before it returns.  Later, when mount.b's own Limbo-level
+.CW ref\ Sys\->FD
+value for that same fd is dropped (function return, reassignment,
+whatever triggers its GC finalizer), its
+.CW freeFD()
+tries the same
 .RB ( grp ", " fd )
-tuples, to see whether fd 4 in 7967c08 was ever actually needed again
-after this exchange or whether the hang is somewhere else in the
-mount\(midmntgen conversation entirely.  Not yet done.
+pair a second time and finds it already empty \- exactly the shape
+this section spent so long on, and exactly what
+.CW kfgrpclose() 's
+own comment already said it was built to tolerate.  No cross-process
+race, no stale
+.CW handle\->grp ,
+no torn-down mount channel: one kernel-mandated close followed by one
+harmless Limbo-level echo of it.
+.PP
+What is not yet explained: across every capture, plain or
+instrumented, nothing has ever been observed after
+.CW Sys_mount 's
+return \- not
+.CW "sysname=$sys" 's
+effects, not the unconditional
+.CW "echo\ $bootargs" ,
+nothing \- across four runs on this build ranging from about 40 seconds
+to 4 minutes 15 seconds of wall clock before each was killed, all
+staying at near-zero CPU throughout.  With the mount confirmed to
+succeed and the fd story now fully accounted for, this stall has no
+remaining explanation in hand.  The next instrumentation is a print in
+.CW devmnt.c 's
+.CW mountio()
+on send and on reply, by tag, to see whether the shell's next steps
+after
+.CW mount
+ever touch
+.CW /n
+at all, and if so whether anything answers.  Not yet done.
+.PP
+Fourth, a harness limit rather than a kernel finding, but one that
+forecloses a whole class of future test and so belongs here: this
+sitting tried to settle the open question above by feeding a live
+command through a held-open fifo into a
+.CW \-nographic
+boot and watching for its echo.  None came, across a boot given nearly
+four minutes to reach whatever state it was going to reach.  That
+result turned out to be uninterpretable rather than negative:
+.CW "console=0"
+wires the console uart's
+.I output
+queue to
+.CW serialoq
+(the kernel
+.CW print()
+target) in
+.CW devuart.c 's
+.CW uartinit ,
+but assigns no matching input queue anywhere; keyboard input on this
+board still comes only from
+.CW devkbd ,
+which this invocation never wires to anything QEMU's console
+multiplexes stdin into.  So no echo was ever possible here regardless
+of whether the guest was alive and waiting \- the test measured the
+harness, not the kernel.  Recorded in
+.CW qemu-boot.sh
+itself so this is not attempted cold again.
 .NH 1
 How a native kernel provides networking
 .PP
