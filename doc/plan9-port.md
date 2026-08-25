@@ -202,17 +202,53 @@ below.
    confirmed to actually catch a real break with a negative control
    (deliberately broke `+`, the test failed with exactly that program's
    wrong output and nothing else, restored, all 20 passed again).
-4. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
+4. **`p9/cmd/dc.b` - an RPN desk calculator.** POSIX `dc`, bounded: push a
+   number; `+ - * / % ^`; stack ops `p n f c d r`; named registers `sN`/`lN`
+   for a-z (one value each, no register stacks); `k` sets output precision.
+   No macros (`[...]x`), no strings, no `?`/input. Host `/usr/bin/dc` is the
+   reference oracle - same program and input through both, byte-diffed,
+   exactly the awk method. Not yet started.
+5. **`p9/cmd/m4.b` - a macro processor.** Bounded subset: `define`,
+   `undefine`, positional arguments (`$1`.."$9`, `$#`, `$0`), `ifdef`,
+   `ifelse`, `include`, quoting with the default `` ` ''` delimiters,
+   `dnl`. No `divert`, no `sysval`/`syscmd`, no changequote/changecom. Host
+   `/usr/bin/m4` is the reference oracle, same method. Not yet started.
+   Lower priority than (4): more moving parts (rescanning, quote depth),
+   less immediately useful to this fork's own corpus than (6) below.
+6. **A troff-equivalent for this tree's own `man/1` corpus, text output
+   only (an nroff, not a typesetting troff) - the concrete answer to
+   "wire an Inferno-native troff/ms toolchain."** Scoped from evidence, not
+   guessed: grepping every request (`^\.XX`) and escape actually used
+   across all 507 pages in `man/1/` gives an exact, closed vocabulary -
+   `.TH .SH .SS .PP .LP .P .TP .TF .IP .RS .RE .br .sp .ne .fi .nf .ta .PD
+   .ns .HP .EX .EE .if`, the font-alternating macro family (`.B .I .R .L
+   .CW .SM` and every two-letter combination of `B I R L`, decoded
+   generically from the macro name's letters rather than hardcoding each
+   pair), and escapes `\- \fP \fI \fR \fB \f1 \f2 \(em \(bu \(mu \(rq \(lq
+   \(mi \(en \e \\`. Exactly one page (`units`) uses `.de`/`.TS` (macro
+   definition, a table) and is explicitly out of scope for v1 rather than
+   forcing the whole engine to support macro definitions and `tbl`
+   preprocessing for one file; two pages (`spriteedit`) use undefined
+   `.MESH`/`.SPRITE`-family requests that render as a no-op today and stay
+   that way. `doc/*.ms` (the `-ms` package, `.TS`/`.TE` tables via `tbl`,
+   `eqn`) is explicitly out of scope for v1 - a different, larger macro
+   package with a real preprocessor dependency, not something to fold into
+   a man-page renderer by accident. Oracle: `groff -man -Tutf8 -k -ww` on
+   the same page, byte-diffed against this engine's own `-Tutf8`-equivalent
+   output, for as many of the 506 in-scope pages as pass - report the exact
+   count and list what doesn't, not a rounded-off "most of them." This is
+   the biggest item here; if it eats the rest of the session, that's the
+   right call given it's the one gap `CLAUDE.md`/this doc have named
+   explicitly and left open the longest. Not yet started.
+7. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
    tree's `/bin` list**, not recollection, to get an actual missing-count
-   instead of the "a lot is already here" qualitative claim above. Still
-   open.
-5. **Wire an Inferno-native troff/ms toolchain**, or explicitly decide
-   this tree keeps depending on the host's groff and say so in
-   `CLAUDE.md` rather than leaving it an implicit, undocumented
-   dependency. Still open.
-6. Everything else on a case-by-case basis once (4) produces a real list
+   instead of the "a lot is already here" qualitative claim above. Lower
+   priority than (4)-(6): needs an actual reference tree to diff against,
+   which none of (4)-(6) do (they all have a host oracle already installed
+   and checked, above). Still open.
+8. Everything else on a case-by-case basis once (7) produces a real list
    - no blanket estimate for "the rest" is offered here, on purpose,
    since a plan that says "37 remain, here are the 6 that need real
    design work" is the only useful shape of an answer to "port
    everything," and this document doesn't yet have that list. Still
-   open, and blocked on (4).
+   open, and blocked on (7).
