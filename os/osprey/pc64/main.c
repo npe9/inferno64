@@ -403,12 +403,46 @@ pcibiosinit(int *, int *)
  * path; it is the path that must never depend on anything, so it drives
  * the 8250 by hand rather than through consuart.
  */
+enum {
+	Com1	= 0x3F8,	/* COM1 base */
+	Thr	= 0,		/* transmit holding (DLAB=0) */
+	Dll	= 0,		/* divisor latch low (DLAB=1) */
+	Dlm	= 1,		/* divisor latch high (DLAB=1) */
+	Ier	= 1,		/* interrupt enable */
+	Fcr	= 2,		/* FIFO control */
+	Lcr	= 3,		/* line control */
+	Lsr	= 5,		/* line status */
+	Thre	= 0x20,		/* transmit holding empty */
+	Dlab	= 0x80,		/* divisor latch access */
+};
+
+/*
+ * Configure COM1 for 115200 8N1 the first time the last-resort console
+ * is used, so it owes nothing to firmware or the uart driver having set
+ * the port up.  Idempotent: done once, guarded by a static flag.
+ */
+static void
+kdebugsetup(void)
+{
+	static int done;
+
+	if(done)
+		return;
+	done = 1;
+	outb(Com1+Ier, 0);		/* no interrupts: this is polled */
+	outb(Com1+Lcr, Dlab);		/* divisor latch */
+	outb(Com1+Dll, 1);		/* 115200 = 115200/1 */
+	outb(Com1+Dlm, 0);
+	outb(Com1+Lcr, 3);		/* 8 bits, no parity, 1 stop; DLAB off */
+	outb(Com1+Fcr, 0xC7);		/* enable and clear the FIFOs */
+}
+
 void
 kdebugputc(int c)
 {
 	int i;
-	enum { Com1 = 0x3F8, Thr = 0, Lsr = 5, Thre = 0x20 };
 
+	kdebugsetup();
 	if(c == '\n')
 		kdebugputc('\r');
 	for(i = 0; i < 100000 && (inb(Com1+Lsr) & Thre) == 0; i++)
