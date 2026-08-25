@@ -1530,6 +1530,114 @@ tries than one sitting affords or the specific condition the one run
 that did hit it had \- a live interactive pipe into the emulator's
 stdin, not a captured log \- reproduced deliberately rather than
 hoped for.
+.PP
+Both halves of that conclusion needed correcting, in the next
+sitting, without a live pipe anywhere.  A capture from a plain
+captured boot, no interactive stdin involved, already showed the
+real fault, and it had been sitting in the tree the whole time:
+.IP
+.nf
+readmod: builtin lookup $Sys -> a26ca0 modules head /dis/mntgen.dis
+readmod: builtin lookup $Sys -> a26ca0 modules head /dis/lib/styx.dis
+readmod: builtin lookup $Sys -> a26ca0 modules head /dis/lib/styxservers.dis
+readmod: builtin lookup $Sys -> a26ca0 modules head /dis/lib/nametree.dis
+fdtochan: bad fd 4 maxfd 5 up->pid 9 up->text dis mod Mount
+error err fd out of range or not open caller 0x27a5b3 up->pid 9
+error nil error err  caller 0x2b67db up->pid 9
+.fi
+.PP
+So the live-pipe precondition from the previous entry does not hold;
+retracted here rather than left standing.  The four
+.CW ind*
+prints had been reapplied a third time, unchanged, before this was
+noticed \- caught and reverted before a rebuild, since repeating an
+already-negative result without changing anything about the attempt
+would have added nothing.
+.PP
+.CW fdtochan()
+itself reads
+.CW "fd<0\ ||\ f\->maxfd<fd\ ||\ f\->fd[fd]==nil" .
+fd 4 against maxfd 5 passes the range half of that test outright \-
+the failure is the third clause, a nil slot, not an out-of-range
+index.  The message
+.CW "fd\ out\ of\ range\ or\ not\ open"
+had been read as a range bug through every earlier pass at this;
+it is a lifetime bug \- something closed slot 4 out from under a
+process still holding it \- and every earlier hypothesis aimed at
+the wrong class of cause.
+.PP
+.CW mount.b 's
+.CW popen()
+opens a pipe, spawns
+.CW runcmd
+sharing its fd group, and
+.CW runcmd
+does
+.CW "sys\->pctl(Sys\->FORKFD,\ nil)" ,
+dups its stdin fd to 0, then drops the
+.CW stdin
+variable.  Limbo has no explicit
+.CW close ;
+dropping the last reference is the only way to close a
+.CW ref\ Sys\->FD ,
+via the
+.CW freeFD()
+finalizer.
+.CW mkfd()
+captures
+.CW up\->env\->fgrp
+into the handle at creation time, before the fork; FORKFD then
+rebinds
+.CW o\->fgrp
+to a fresh, duplicated group for whatever runs afterward, but every
+.CW Sys_FD
+value created earlier keeps pointing at the group it was actually
+made in.  A
+.CW stdin\ =\ nil
+after FORKFD therefore closes fd 4 in the
+.I pre-fork
+group \- shared with whichever other process still holds that
+group \- not in the fork's own private copy.  Whether that pre-fork
+group is the parent Mount process itself, or another sibling spawned
+off the same group before the fork, is exactly what the next boot's
+instrumentation is built to answer; reasoned from the source, not
+yet confirmed against a running kernel.
+.PP
+Also settled this sitting: the QEMU invocation itself, lost across a
+context boundary and reconstructed at real cost.
+.CW ipc64
+carries a multiboot header (magic
+.CW 0x1BADB002
+at file offset 72), so QEMU's own
+.CW \-kernel
+loader hands it to the guest directly \- no BIOS/PXE negotiation, no
+separate boot loader \- which is the chain that actually reaches
+.CW "Inferno release built at ..." .
+.CW \-boot\ n
+forces iPXE's own DHCP/TFTP path instead, which also works but is a
+different, far noisier and slower chain; comparing logs across the
+two is comparing different boots.  And
+.CW "\-serial mon:stdio \-display none"
+emits nothing for this kernel at all \- only
+.CW \-nographic
+(which multiplexes the emulated VGA text console onto stdio) shows
+any boot output, a distinction that cost most of a session to
+re-derive once already.  Recorded this time as
+.CW os/inferno/pc64/qemu-boot.sh
+rather than left to be lost again.
+.PP
+Instrumented for the next boot: prints in
+.CW freeFD() ,
+in
+.CW fdclose() 's
+nil-ing of a live slot, in
+.CW fdtochan() 's
+failure branch, and in
+.CW Sys_pctl() 's
+FORKFD case, each carrying the pid and (where the type is visible)
+the running module name or the old and new
+.CW Fgrp
+pointers.  Not yet run to completion as this entry is written.
 .NH 1
 How a native kernel provides networking
 .PP
