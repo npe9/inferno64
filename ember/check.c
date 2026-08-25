@@ -30,12 +30,17 @@ static	int	scope;
 static	Decl	*curfn;
 static	Type	*curret;
 
+enum { MaxTinstDepth = 16 };
+static	Decl	*tinstack[MaxTinstDepth];	/* generic templates currently being instantiated */
+static	int	tinstdepth;
+
 static	void	fnchk(Decl*);
 static	void	stchk(Node*);
 static	void	matchcheck(Node*);
 static	Type	*echk(Node*);
 static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
+static	Type	*tinstantiate(Node*);
 static	Case	*matchlabels(Node*, Type*, int);
 static	int	casecmp(Type*, Node*, Node*);
 static	void	casesort(Type*, Label*, Label*, int, int);
@@ -133,6 +138,146 @@ declbuiltin(char *name, Type *t)
 	install(d);
 	if(t->decl == nil)
 		t->decl = d;
+}
+
+/*
+ * "Name[arg, arg, ...]" (Otinst): resolve one instantiation of a
+ * generic struct template (see the Type.tparams/tbody comment,
+ * ember.h), monomorphizing it into its own concrete Type the first
+ * time this exact argument list is used, and returning the cached
+ * one after that -- so two composite literals both writing
+ * "Pair[int, string]" get the *same* Type, not two that merely
+ * compare equal (tequal isn't even taught about this; identity is
+ * what mktdesc/genaddr/etc. all key off of already).
+ */
+static Type*
+tinstantiate(Node *n)
+{
+	Decl *td, *pd;
+	Type *tt, *inst, **argv;
+	Ginst *ti;
+	Node *p, *a, *pn;
+	int i, nargs, nparams, match;
+
+	if(n->left->op != Oname){
+		nerror(n, "bad generic type reference");
+		return terror;
+	}
+	td = lookup(n->left->sym);
+	if(td == nil || td->store != Dtype){
+		nerror(n, "%s is not a type", n->left->sym->name);
+		return terror;
+	}
+	n->left->decl = td;
+	tt = td->ty;
+	if(tt == nil || tt->tparams == nil){
+		nerror(n, "%T is not a generic type", tt);
+		return terror;
+	}
+
+	nargs = 0;
+	for(p = n->right; p != nil; p = p->right){
+		nargs++;
+		if(p->op != Oseq)
+			break;
+	}
+	argv = allocmem(nargs * sizeof(Type*));
+	i = 0;
+	for(p = n->right; p != nil; p = p->right){
+		a = p;
+		if(p->op == Oseq)
+			a = p->left;
+		argv[i++] = stype(a);
+		if(p->op != Oseq)
+			break;
+	}
+
+	nparams = 0;
+	for(p = tt->tparams; p != nil; p = p->right){
+		nparams++;
+		if(p->op != Oseq)
+			break;
+	}
+	if(nargs != nparams){
+		nerror(n, "%s needs %d type argument%s, got %d", td->sym->name,
+			nparams, nparams == 1 ? "" : "s", nargs);
+		return terror;
+	}
+
+	for(ti = tt->tinsts; ti != nil; ti = ti->next){
+		match = 1;
+		for(i = 0; i < nargs; i++)
+			if(ti->args[i] != argv[i]){
+				match = 0;
+				break;
+			}
+		if(match)
+			return ti->ty;
+	}
+
+	for(i = 0; i < tinstdepth; i++)
+		if(tinstack[i] == td){
+			nerror(n, "%s: recursive generic instantiation not yet supported", td->sym->name);
+			return terror;
+		}
+	if(tinstdepth >= MaxTinstDepth){
+		nerror(n, "generic types nested too deeply");
+		return terror;
+	}
+	tinstack[tinstdepth++] = td;
+
+	/*
+	 * bind each type-parameter name to its concrete argument type in
+	 * a fresh scope, then re-stype() the template's raw, unresolved
+	 * body: Otstruct's field loop (stype's own case) calls
+	 * stype(f->right) per field, and a field type written as the
+	 * bare name "A" resolves through ordinary scope lookup (stype's
+	 * Oname case) to whatever's bound here -- no substitution walker
+	 * needed, the existing type checker just runs again with
+	 * different names in scope.
+	 */
+	pushscope();
+	i = 0;
+	for(p = tt->tparams; p != nil; p = p->right){
+		pn = p;
+		if(p->op == Oseq)
+			pn = p->left;
+		pd = mkdecl(&pn->src, Dtype, argv[i]);
+		pd->sym = pn->sym;
+		install(pd);
+		i++;
+		if(p->op != Oseq)
+			break;
+	}
+	inst = stype(tt->tbody);
+	popscope();
+	tinstdepth--;
+
+	{
+		Decl *id;
+		char buf[256], *bp, *be;
+
+		id = mkdecl(&n->src, Dtype, inst);
+		bp = buf;
+		be = buf + sizeof buf;
+		bp = seprint(bp, be, "%s[", td->sym->name);
+		for(i = 0; i < nargs; i++)
+			bp = seprint(bp, be, "%s%T", i ? ", " : "", argv[i]);
+		seprint(bp, be, "]");
+		id->sym = enter(buf, 0);
+		inst->decl = id;
+	}
+	sizetype(inst);
+	teqclass(inst);
+
+	ti = allocmem(sizeof *ti);
+	ti->nargs = nargs;
+	ti->args = argv;
+	ti->ty = inst;
+	ti->next = tt->tinsts;
+	tt->tinsts = ti;
+
+	return inst;
 }
 
 /*
@@ -278,8 +423,25 @@ stype(Node *n)
 			nerror(n, "%s is not a type", n->sym->name);
 			return terror;
 		}
+		if(d->ty != nil && d->ty->tparams != nil){
+			nerror(n, "%s needs type arguments, e.g. %s[...]", n->sym->name, n->sym->name);
+			return terror;
+		}
 		n->decl = d;
 		return d->ty;
+	case Otinst:
+	case Oindex:
+		/*
+		 * ptypename() (used for a field's declared type, a var's
+		 * type, etc.) always produces Otinst for "Name[args]"; the
+		 * general expression grammar (ppostfix's '[' case, used
+		 * everywhere a composite literal's type-before-'{' comes
+		 * from) can't tell an index from a type instantiation at
+		 * parse time and always produces Oindex instead, deferring
+		 * to the type checker -- so both land here, and both have
+		 * the same left/right shape (name, Oseq-of-args).
+		 */
+		return tinstantiate(n);
 	case Odot: {
 		/* module member type: mod.Type */
 		Decl *md, *id;
@@ -1493,6 +1655,30 @@ typedec(Node *n)
 	d->dot = impdecl;
 	install(d);
 
+	if(n->aux != nil){
+		/*
+		 * generic struct template: "type Pair[A, B] struct {...}".
+		 * A and B aren't types yet -- they're placeholders bound
+		 * only per instantiation -- so don't stype() the body now;
+		 * stash the parameter names and the raw AST for
+		 * tinstantiate() (stype's Otinst case, i.e. an actual use
+		 * like "Pair[int, string]") to resolve later, once per
+		 * distinct argument list.  see the Type.tparams/tbody
+		 * comment in ember.h.
+		 */
+		if(n->right->op != Otstruct){
+			nerror(n, "generic type %s: only struct bodies are supported (not tagged/pick types)", d->sym->name);
+			d->ty = terror;
+			return;
+		}
+		t = mktype(&n->src, Tadt, nil, nil);
+		t->tparams = n->aux;
+		t->tbody = n->right;
+		d->ty = t;
+		t->decl = d;
+		return;
+	}
+
 	t = stype(n->right);
 	if(n->right->op == Otpick){
 		Decl *tags, *last, *tag;
@@ -1529,10 +1715,6 @@ typedec(Node *n)
 				break;
 		}
 		t->tags = tags;
-	}
-	if(n->aux != nil){
-		/* type parameters present — mark as poly for later mono */
-		USED(n->aux);
 	}
 	d->ty = t;
 	t->decl = d;
@@ -1606,6 +1788,40 @@ fndecl(Node *n)
 	if(n->aux == nil){
 		nerror(n, "function requires a body (interfaces belong in .ei files)");
 		return;
+	}
+	if(n->right->aux != nil){
+		/*
+		 * func swap[A, B](...) -- own type parameters on a
+		 * (non-method) function.  scoped out along with generic
+		 * methods below: monomorphizing a struct type by
+		 * re-stype()-ing its body with the parameter names bound
+		 * (tinstantiate(), above) doesn't extend to a *function*
+		 * body, which needs its own per-instantiation compiled
+		 * code, not just a per-instantiation Type.
+		 */
+		nerror(n, "generic functions not yet supported");
+		return;
+	}
+	if(recv != nil){
+		Node *rty;
+
+		rty = recv->right;
+		if(rty->op == Otref)
+			rty = rty->right;
+		if(rty->op == Otinst || rty->op == Oindex){
+			/*
+			 * func (p ref Pair[A, B]) m(...) -- a method on a
+			 * generic receiver, its own type parameters implicitly
+			 * bound from the receiver's instantiation.  same gap as
+			 * generic functions just above: needs per-instantiation
+			 * compiled code.  caught here, before stype(recv->right)
+			 * below would otherwise try to resolve A/B as if they
+			 * were ordinary (unbound) type names and fail with a
+			 * confusing "A is not a type" instead.
+			 */
+			nerror(n, "generic methods not yet supported");
+			return;
+		}
 	}
 	t = stype(n->right);
 	if(recv != nil){

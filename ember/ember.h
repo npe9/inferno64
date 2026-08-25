@@ -44,6 +44,7 @@ typedef	struct Sym	Sym;
 typedef	struct Szal	Szal;
 typedef	struct Tattr	Tattr;
 typedef	struct Teq	Teq;
+typedef	struct Ginst	Ginst;
 typedef	struct Type	Type;
 
 typedef	double		Real;
@@ -334,6 +335,34 @@ struct Type
 	Teq	*eq;			/* real equiv class */
 	Sym	*idsym;			/* Tid/Tarrow/Tdot: unresolved member name */
 	Sym	*modsym;		/* Tarrow/Tdot: unresolved qualifier name */
+
+	/*
+	 * generic struct template (Otypedecl.aux != nil): tparams is the
+	 * Oseq/Oname chain of type-parameter names, tbody the raw
+	 * Otstruct/Otpick AST -- unresolved, re-stype()'d once per
+	 * distinct instantiation with the names temporarily bound in
+	 * scope (see tinstantiate(), check.c).  a template's own ids
+	 * stay nil; it's never a usable type by itself, only through
+	 * Otinst ("Pair[int, string]").  nil on every ordinary type.
+	 */
+	Node	*tparams;
+	Node	*tbody;
+	Ginst	*tinsts;		/* cache: one entry per distinct instantiation */
+};
+
+/*
+ * one cached instantiation of a generic struct template.  named Ginst,
+ * not Tinst, to stay clear of the pre-existing (and, in ember,
+ * unused) Tinst *Type kind* above -- limbo's own "instantiated adt",
+ * carried into ember's enum but never wired up; a different, unrelated
+ * thing from this cache-entry struct.
+ */
+struct Ginst
+{
+	int	nargs;
+	Type	**args;
+	Type	*ty;
+	Ginst	*next;
 };
 
 /*
