@@ -1162,7 +1162,8 @@ procread(Chan *c, void *va, s32 n, s64 off)
 		break;
 
 	default:
-		print("unknown qid in procwread\n");
+		print("unknown qid in procwread: path %#llux QID %ld SLOT %ld PID %ld (Qwait is %d), reader pid %ud\n",
+			c->qid.path, QID(c->qid), SLOT(c->qid), PID(c->qid), Qwait, up->pid);
 		error(Egreg);
 	}
 
