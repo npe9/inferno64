@@ -1227,14 +1227,113 @@ and
 next use of the returned
 .CW ref\ Sys->FD
 clears slot 4 specifically out of a group that is genuinely still the
-right one.  This is the frontier now, characterized precisely enough
-to resume without repeating the trace: a real Inferno init running a
-real shell against a real script, past two structural fixes (modinit,
-the wait file) into an ordinary pipe/fd lifecycle bug in shared,
-board-independent kernel code, ordinary enough that some other board
-exercising the same
+right one.
+.PP
+It is a GC finalizer, caught directly.
+.CW port/inferno.c 's
+.CW freeFD()
+runs when a Limbo
+.CW ref\ Sys->FD
+object's last reference drops; if the wrapped fd is still open it
+calls
+.CW kfgrpclose() ,
+closing the real kernel fd.  A print there, across several runs,
+shows fd 4 in
+.CW Mount 's
+own group closed under
+.CW Mount 's
+own kernel process \- sometimes while
+.CW Sys_mount()
+is still using it (the failure this section has been chasing), and,
+in other runs, cleanly
+.I after
+.CW kmount()
+has already returned success: bracketing
+.CW Sys_mount()
+with entry/exit prints, one run showed
+.CW "kmount\ returned\ 16" \-
+success \- followed by
+.CW freeFD 's
+close of that same fd, in that order, no failure at all.  So the
+mechanism is not broken; it is racing something, and which side wins
+varies by run.
+.PP
+Tried and ruled out:
 .CW popen()
-path would hit it too.
+returning
+.CW fds[1]
+straight out of its local array, on the theory that the array's own
+scope-exit cleanup might race the return-value transfer.  Rewritten
+to copy the element into a plain local first, held across the
+.CW spawn ,
+and returned from there instead \- rebuilt, reinstalled, reboot-tested
+against the same
+.CW freeFD
+trace: fd 4 in
+.CW Mount 's
+group still closes early on some runs, identically.  Not the array
+return.
+.PP
+What the successful run's silence afterward turned out to hold: past
+a clean mount,
+.CW /dis/init
+reaches its last line,
+.CW "sh\ -n\ -l\ -i" \-
+a real interactive shell, whose default prompt
+.RI ( sh.b ,
+.CW "\(dq;\ \(dq" )
+is two characters, easy to miss in a boot log and never yet
+distinguished from silence by any run in this section.  Testing it
+needed a live pipe into the emulator's stdin rather than a captured
+log, and that test surfaced a third, deeper failure mode past both
+the modinit and the fd questions: a genuine Styx-protocol fault in
+the mount\(midmntgen exchange itself.  One run logged
+.CW "mountio:\ proc\ dis\ pid\ 9:\ convS2M\ returned\ 0\ for\ tag\ 1\ fid\ 32\ T104"
+from
+.CW port/devmnt.c \-
+a Styx reply the kernel's mount-maintenance process could not
+decode \- immediately followed by the same
+.CW freeFD
+close of fd 4, consistent with
+.CW kmount()
+giving up on a connection that stopped making sense.  A later run
+under the same live-pipe test hit
+.CW OP(indx) 's
+existing, un-gated bounds print with an index of
+.CW \-1152874825133430486
+against a length-10 array \- not an off-by-one, a garbage 64-bit
+value \- inside whatever message-dispatch table on the mntgen side
+that number was supposed to select from, and the emulator then sat
+silent, alive but unresponsive, for the rest of that run: kmount()
+left waiting on a mntgen that had just taken a fatal, uncaught
+exception on the other end of the pipe.
+.PP
+Put together, this is no longer one bug: mount sometimes succeeds
+outright: sometimes the shared fd goes missing under
+.CW Mount
+mid-call: and sometimes the two sides of the Styx conversation
+mntgen speaks over that pipe \- built from
+.CW nametree ,
+.CW styxservers
+and the new-format
+.CW styx
+library, none of which this board's native kernel had ever run before
+this session \- desynchronize into garbage.  All three read as facets
+of one source: the pipe both sides of this handshake share, and
+whatever about its timing or its message framing this native kernel
+does differently from whatever kernel last exercised
+.CW mntgen 's
+Styx server code successfully.  That is the frontier now, characterized
+precisely enough that resuming it does not mean repeating this trace:
+a real Inferno init running a real interactive shell command, three
+structural fixes deep (modinit, the wait file, and the shell crash
+each of those two exposed), into a Styx-over-pipe correctness problem
+in shared, board-independent kernel and library code \- ordinary
+enough that any board exercising
+.CW mntgen
+this way would meet it too, and specific enough now that the next
+session's first move should be a message-level trace of that one
+pipe, not another boot log.
 .NH 1
 How a native kernel provides networking
 .PP
