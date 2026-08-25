@@ -1611,6 +1611,22 @@ static struct {
  */
 static void ospreyinit(void);
 
+static int ospreymicroexited;
+
+/*
+ * A kernel task that returns walks pexit past the group closes the
+ * microkernel stubbed: closepgrp, now in proc.c, runs for real, and
+ * closefgrp, closergrp, closeegrp and cclose are all guarded by nil,
+ * which a kernel task's fd group, rendezvous group, environment and dot
+ * all are.  If any of those stubs were wrong this panics; the boot
+ * reaching idle afterwards is the proof it did not.
+ */
+static void
+ospreymicroexit(void *)
+{
+	ospreymicroexited = 1;
+}
+
 void
 ospreymicroboot(void)
 {
@@ -1654,6 +1670,20 @@ ospreymicroboot(void)
 	qunlock(&ospreylock);
 	print("osprey micro: %d of 4 requests answered, last status %ld\n",
 		n, status);
+
+	/*
+	 * Exercise process teardown before idling: spawn a kernel task and
+	 * let it exit through pexit and the stubbed group closes.
+	 */
+	ospreymicroexited = 0;
+	kproc("micro-exit", ospreymicroexit, nil);
+	for(i = 0; i < 200 && ospreymicroexited == 0; i++)
+		tsleep(&up->sleep, return0, nil, 10);
+	if(ospreymicroexited)
+		print("osprey micro: a kernel task exited, teardown clean\n");
+	else
+		print("osprey micro: kernel task never ran\n");
+
 	print("osprey micro: idle\n");
 	for(;;)
 		tsleep(&up->sleep, return0, nil, 1000);

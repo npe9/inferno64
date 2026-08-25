@@ -5,7 +5,8 @@ upc64 is the kernel the paper dictates, cut toward: it boots into an
 Osprey task rather than the Plan 9 shell.  proc0 sets up no Pgrp, no name
 space and no initcode; it runs ospreymicroboot, which creates a
 container, submits requests to its message ring, lets the dispatcher
-answer them, and collects the replies.  That exercises the four services
+answer them, collects the replies, and lets a kernel task exit
+through pexit to exercise the teardown the cut left stubbed.  That exercises the four services
 the paper keeps -- message passing, the segment its arena is, interrupts
 and the scheduler -- with the Plan 9 boot removed.
 
@@ -57,6 +58,9 @@ def main():
                     m is not None and m.group(1) == '4'))
     results.append(("and it reaches its idle loop rather than panicking",
                     'osprey micro: idle' in t and 'panic' not in t))
+    results.append(("and a kernel task exits through pexit and the stubbed group closes cleanly",
+                    'osprey micro: a kernel task exited, teardown clean' in t
+                    and 'panic' not in t))
 
     bad = 0
     for what, ok in results:

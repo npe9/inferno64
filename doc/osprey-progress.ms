@@ -1654,6 +1654,16 @@ userinit sets it with kstrdup, which frees the old value, and a string
 literal cannot be freed - a real double-free the boot caught at once and
 inspection would not have.
 .PP
+The microkernel check grew a fourth line for this cut.  The first three
+prove the boot reaches a task and its ring answers; none of them walks
+the teardown the cut left stubbed, because the boot task idles rather
+than exits.  So the boot now spawns a kernel task that returns, which
+takes it through pexit and the group closes: closepgrp, moved to proc.c,
+runs for real, and the file, rendezvous and environment closes and the
+dot close are each guarded by a nil a kernel task has.  If any stub were
+wrong this panics; the fourth check asserts the task exited and the
+kernel did not, which is the teardown being clean.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
