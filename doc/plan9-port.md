@@ -388,14 +388,97 @@ below.
    have been reverse-engineering a state machine for a consumer that
    doesn't exist in this tree.
 7. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
-   tree's `/bin` list**, not recollection, to get an actual missing-count
-   instead of the "a lot is already here" qualitative claim above. Lower
-   priority than (4)-(6): needs an actual reference tree to diff against,
-   which none of (4)-(6) do (they all have a host oracle already installed
-   and checked, above). Still open.
-8. Everything else on a case-by-case basis once (7) produces a real list
-   - no blanket estimate for "the rest" is offered here, on purpose,
-   since a plan that says "37 remain, here are the 6 that need real
-   design work" is the only useful shape of an answer to "port
-   everything," and this document doesn't yet have that list. Still
-   open, and blocked on (7).
+   tree's `/bin` list: done.** The local `9front/` checkout mentioned
+   above turned out to be headers/APE + two prebuilt binaries only, not
+   source, exactly as this doc predicted ("not checked, and the right
+   first move for anyone picking this up") - so the real reference used
+   is `github.com/9front/9front` (a nightly-synced mirror of the actual
+   `git.9front.org` source, confirmed live), fetched via GitHub's tree
+   API rather than a full clone: `sys/src/cmd/`'s 166 direct source
+   files plus, for each of its 134 subdirectories, that subdirectory's
+   own `mkfile` `TARG=` (handling the 6 that build more than one binary,
+   e.g. `vac` -> `vac`/`unvac`/`vacfs`, and the 7 with no direct `TARG=`
+   because they nest further, e.g. `upas`, `cwfs`, `postscript`, whose
+   immediate subdirectory names were used instead, library-looking ones
+   like `common`/`libFLAC` excluded). After dropping build-system
+   plumbing that isn't a command at all (`mkfile`/`mkone`/`mklib`/etc.,
+   picked up as false positives on the first pass, along with stray
+   `.h` names from the fallback path) - **379 real Plan 9 commands.**
+
+   Diffed against this tree's own commands, unioned across every place
+   a command legitimately lives here, not just `appl/cmd/` (missing
+   this was the first-pass mistake: comparing against `appl/cmd/` alone
+   put `awk`/`dc`/`acme` in the "missing" column even though all three
+   exist, just under `p9/cmd/`, `utils/`, and `appl/acme/`
+   respectively) - `appl/cmd/`'s 405 `.b` basenames (recursive) +
+   `p9/cmd/`'s 6 + `utils/`'s ~60 host-native builds + the ~60 tool
+   names already installed to `MacOSX/arm64/bin/`. **106 of the 379
+   match by name; 272 (after also correcting for `acme`) do not.**
+
+   That raw 272 overstates the real gap by a lot, the same way the old
+   "genuinely absent" troff claim overstated item 6 - a name not
+   matching isn't the same as a missing capability. Categorized by
+   what's actually true of each, not just "missing":
+   - **18 native per-arch toolchain tools** (`1a`/`1c`/`1l` through
+     `9a`/`9l`, `cpp`, `pcc`, `pgen`, ...) - compile *native* Plan 9
+     binaries for architectures; irrelevant to a Dis/Limbo target the
+     same way the rest of `utils/`'s own toolchain already is, not a
+     real gap.
+   - **39 Plan 9 fs-servers** (`cwfs`/`hjfs`/`hgfs`/`nfs`/`ratfs`/`gefs`/
+     `ramfs`/`webfs`/... ) - Plan 9's fs-server-over-9P model; this
+     tree already has its own device/`#`-namespace answer to the same
+     problem (see `emu/port/srv.c`, the styx tooling built earlier this
+     session). A real design question each, not a raw port, matching
+     this doc's existing "missing and genuinely hard" bucket.
+   - **40 troff/print-toolchain tools** (`eqn`/`tbl`/`pic`/`grap`/
+     `troff`/every `post*` PostScript-driver name/`gs`) - already
+     decided in item 6 above: this tree keeps depending on the host's
+     `groff` for `doc/*.ms`, and `gs` alone (a full Ghostscript) is out
+     of scope by size regardless.
+   - **12 of Plan 9's own GUI/editor stack** (`rio`/`riow`/`sam`/
+     `samterm`/`mothra`/`page`/...) - superseded by this tree's own
+     `wm`/Tk, the same reasoning this doc already gives for not
+     porting `rc`. Not a gap; a different design, already made.
+   - **24 hardware/device drivers** (the `nusb` family - `kb`/`joy`/
+     `cam`/`ether`/`serial`/`battery`/`disk` - plus audio codecs -
+     `flacdec`/`mp3dec`/`oggdec`/`sundec`/...) - real Plan 9 hardware
+     support; out of scope for this hosted VM the same way bare-metal
+     kernel work belongs to `os/`, not `appl/`.
+   - **15 upas mail-subsystem tools**, **6 ssh/tls networking tools** -
+     genuine, coherent subsystems nobody has looked at yet; each is its
+     own real design question (an MTA/mailbox model, a TLS client/server
+     pair), not a same-day fix.
+   - **118 residual** - didn't cleanly fit a bucket above by pattern,
+     and include known measurement noise from this method itself
+     (`tests`, `init`, and `9netics32.16k`/`9netics64.8k`/`choline`/
+     `emelie`, which are fossil/venti *instance names* nested under
+     `cwfs/`, not general commands - an artifact of the subdirectory
+     fallback, not real entries) alongside several already resolved by
+     this doc under a different name and not rechecked carefully enough
+     on the first pass (`rc` - see "What should NOT be ported" above;
+     `strip` - this tree already has `kstrip`; `plot`/`graph`/`fplot` -
+     this tree's own `plot.m`; `expect` - this tree's own
+     `session(2)`/`sh-session(1)`; `pump` - this tree's own
+     `appl/cmd/ip/dhcp.b`) plus a real, if smaller, set of plausible,
+     self-contained, low-effort gaps worth someone's actual time -
+     `file`, `patch`, `tar`, `join`, `split`, `iconv`, `pr`, `dict`,
+     `bc`, `hoc`, `primes`/`factor`, `crc32` are the ones with enough
+     name-recognition to be confident about; the rest of the residual
+     (`atazz`/`zuke`/`spred`/`sprog`/`dtracy`/`flambe`/... and similar)
+     are 9front-specific or obscure enough that this pass could not
+     responsibly guess at them without reading their actual source -
+     flagged as needing individual research, not silently dropped or
+     silently counted as gaps.
+8. Everything else on a case-by-case basis, now that (7) gives a real
+   list instead of a blanket estimate: of the 272 raw misses, 154 sort
+   cleanly into "not actually a gap" (already covered under a different
+   name, already a deliberate design decision elsewhere in this doc, or
+   out of scope by category - native toolchain, hardware, GUI stack,
+   troff/print), leaving on the order of a dozen genuinely plausible,
+   scoped, standalone candidates (`file`/`patch`/`tar`/`join`/`split`/
+   `iconv`/`pr`/`dict`/`bc`/`hoc`/`primes`+`factor`/`crc32` above) worth
+   picking up the same way `awk`/`dc`/`m4` were - plus three coherent
+   subsystem-sized questions (fs-servers, mail, ssh/tls) that are each
+   real design work, not a quick port, and a genuinely unclassified
+   residual that needs someone to look at the actual 9front source
+   before it can be triaged further. Still open, and this is that list.
