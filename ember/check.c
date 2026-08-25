@@ -1366,6 +1366,18 @@ stchk(Node *n)
 			return;
 		case Obreak:
 		case Ocont:
+			/*
+			 * validating the label itself (that one was given, that
+			 * it names an enclosing loop) needs a loop-nesting stack
+			 * matching com.c's labdep/labels[]; rather than duplicate
+			 * that here, com.c's labeldepth() is the sole source of
+			 * both "break/continue outside loop" and "label not
+			 * found" -- already true pre-labels for the outside-loop
+			 * case (bccom always checked labdep, never stchk).
+			 */
+			return;
+		case Olabel:
+			stchk(n->right);
 			return;
 		case Ovardecl: {
 			Type *vt;

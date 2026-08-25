@@ -24,6 +24,7 @@ enum { MaxLab = 32 };
 
 static	Inst	*breaks[MaxLab];
 static	Inst	*conts[MaxLab];
+static	Sym	*labels[MaxLab];	/* label naming the loop/match at this depth, or nil */
 static	int	labdep;
 
 static	int	oprelinvert[Oend];
@@ -733,6 +734,34 @@ ecom(Src *src, Node *nto, Node *n)
 	return nto;
 }
 
+/*
+ * which breaks[]/conts[] slot does "break"/"continue" (n->left == nil)
+ * or "break LABEL"/"continue LABEL" (n->left == the label Oname) target?
+ * unlabeled always means the innermost enclosing loop/match (labdep-1);
+ * a label searches outward from there for the matching Olabel (scom's
+ * own case records labels[d] = sym right before entering the for/match
+ * that occupies slot d).  returns -1 (having already reported the
+ * error) if there's no such depth.
+ */
+static int
+labeldepth(Node *n)
+{
+	int i;
+
+	if(n->left == nil){
+		if(labdep <= 0){
+			error(n->src.start, "break/continue outside loop");
+			return -1;
+		}
+		return labdep - 1;
+	}
+	for(i = labdep - 1; i >= 0; i--)
+		if(labels[i] == n->left->sym)
+			return i;
+	error(n->src.start, "label %s not found", n->left->sym->name);
+	return -1;
+}
+
 static void
 bccom(Node *n, Inst **bs)
 {
@@ -1016,15 +1045,42 @@ scom(Node *n)
 				patch(p, nextinst());
 			patch(breaks[labdep], nextinst());
 			return;
-		case Obreak:
+		case Obreak: {
+			int d;
+
 			pushblock();
-			bccom(n, &breaks[labdep-1]);
+			d = labeldepth(n);
+			if(d >= 0)
+				bccom(n, &breaks[d]);
 			popblock();
 			return;
-		case Ocont:
+		}
+		case Ocont: {
+			int d;
+
 			pushblock();
-			bccom(n, &conts[labdep-1]);
+			d = labeldepth(n);
+			if(d >= 0)
+				bccom(n, &conts[d]);
 			popblock();
+			return;
+		}
+		case Olabel:
+			/*
+			 * "LABEL: stmt" -- record which loop/match slot this
+			 * label names *before* descending into it: Ofor/Omatch
+			 * below claim slot labdep (then labdep++), so setting
+			 * labels[labdep] here, right before scom(n->right)
+			 * enters one of those, lines up with the slot it's
+			 * about to claim.  n->right is ordinarily a for or
+			 * match -- anything else just leaves this label
+			 * unreachable by any break/continue, same as an unused
+			 * label in Go.
+			 */
+			if(labdep >= MaxLab)
+				fatal("label stack overflow");
+			labels[labdep] = n->left->sym;
+			scom(n->right);
 			return;
 		case Omatch:
 			if(n->ty == nil || n->ty->cse == nil){
