@@ -123,12 +123,30 @@ below.
 ## What's missing
 
 **Genuinely absent, not yet checked further:**
-- Plan 9's own `troff`/`ms`/`tbl`/`eqn` toolchain. This tree's man pages
-  and `doc/*.ms` papers are all troff *source*, rendered by the **host's**
-  `groff` (confirmed: `groff` resolves to `/opt/homebrew/bin/groff` on
-  this machine, nothing under `appl/` or `utils/` provides it). Every man
-  page in this tree depends on a tool that isn't itself part of the
-  tree - worth fixing on its own, independent of anything else here.
+- Plan 9's own `tbl`/`eqn` preprocessors and a real typesetting `troff`
+  for `doc/*.ms` papers (the `-ms` package). These papers are still
+  rendered by the **host's** `groff` (confirmed: resolves to
+  `/opt/homebrew/bin/groff` on this machine). Genuinely out of scope for
+  now - see item 6 below for why.
+  **Correction:** this bullet previously claimed the *whole* troff/man
+  toolchain was absent ("nothing under `appl/` or `utils/` provides it").
+  That was wrong, and should have been checked before being written -
+  `appl/lib/parseman.b` (806 lines) is a real, working, Inferno-native
+  troff-macro parser purpose-built for this tree's own `man/1` corpus,
+  driving two existing shipped consumers: `appl/cmd/man2txt.b` (plain-text
+  rendering) and `appl/cmd/man2speak.b` (speech, for the screen-reader
+  path). It already handles the great majority of the request/escape
+  vocabulary enumerated below for item 6 - `.TH .SH .SS .TP .TF .IP .RS
+  .RE .PP .LP .HP .sp .br .nf .fi .ig .1C .2C .DT .EX .EE`, the font
+  macros (`.B .I .SM .L` and the two-letter combinations `.BI .BR .IB
+  .IR .RB .RI .LR .RL`), and inline escapes including `\-  \. \\ \e \|
+  \& \(bu \(em \(mi \(mu \(*m \(*G \(*p \(*b \(<= \(-> \fR \fI \fB
+  \f0`-`\f5 \fP \*R \*(xx`. What it does *not* handle, confirmed by
+  reading `parsemacro`'s case list rather than assumed: `.ta` (tab
+  stops), `.in`/`.ti` (indent/temporary-indent, present as stubs that
+  just call `state.brk()`), and no standalone `.ft` request (only the
+  inline `\f` escape works). See item 6, revised below, for what's
+  actually still open given this.
 - `9p`-family user tools (Plan 9's own `9p`, `import`, `srv` command-line
   tools, as distinct from the `styx*` diagnostic tools built earlier this
   session, which are new instrumentation, not ports of anything).
@@ -266,30 +284,109 @@ below.
    explicit oracle check rather than adjusted to whatever the code
    happened to produce.
 6. **A troff-equivalent for this tree's own `man/1` corpus, text output
-   only (an nroff, not a typesetting troff) - the concrete answer to
-   "wire an Inferno-native troff/ms toolchain."** Scoped from evidence, not
-   guessed: grepping every request (`^\.XX`) and escape actually used
-   across all 507 pages in `man/1/` gives an exact, closed vocabulary -
-   `.TH .SH .SS .PP .LP .P .TP .TF .IP .RS .RE .br .sp .ne .fi .nf .ta .PD
-   .ns .HP .EX .EE .if`, the font-alternating macro family (`.B .I .R .L
-   .CW .SM` and every two-letter combination of `B I R L`, decoded
-   generically from the macro name's letters rather than hardcoding each
-   pair), and escapes `\- \fP \fI \fR \fB \f1 \f2 \(em \(bu \(mu \(rq \(lq
-   \(mi \(en \e \\`. Exactly one page (`units`) uses `.de`/`.TS` (macro
-   definition, a table) and is explicitly out of scope for v1 rather than
-   forcing the whole engine to support macro definitions and `tbl`
-   preprocessing for one file; two pages (`spriteedit`) use undefined
-   `.MESH`/`.SPRITE`-family requests that render as a no-op today and stay
-   that way. `doc/*.ms` (the `-ms` package, `.TS`/`.TE` tables via `tbl`,
-   `eqn`) is explicitly out of scope for v1 - a different, larger macro
-   package with a real preprocessor dependency, not something to fold into
-   a man-page renderer by accident. Oracle: `groff -man -Tutf8 -k -ww` on
-   the same page, byte-diffed against this engine's own `-Tutf8`-equivalent
-   output, for as many of the 506 in-scope pages as pass - report the exact
-   count and list what doesn't, not a rounded-off "most of them." This is
-   the biggest item here; if it eats the rest of the session, that's the
-   right call given it's the one gap `CLAUDE.md`/this doc have named
-   explicitly and left open the longest. Not yet started.
+   only - the concrete answer to "wire an Inferno-native troff/ms
+   toolchain": done, but not by building one.** This item was scoped
+   (see the grep-derived vocabulary that used to sit here) before
+   checking whether anything already did this. It did: `module/man.m`
+   (`Parseman`) plus `appl/lib/parseman.b` (806 lines) is a real,
+   working, Inferno-native troff-macro parser purpose-built for this
+   corpus, already consumed by two shipped commands, `appl/cmd/man2txt.b`
+   (plain text) and `appl/cmd/man2speak.b` (speech, the screen-reader
+   path). Writing a second one in `p9/cmd/` alongside it would have been
+   exactly the "maintaining two of the same thing" mistake this document
+   itself argues against for `rc` - so this item became *assess the
+   existing engine against the real corpus, then fix what's actually
+   broken*, not build.
+
+   **Measurement first, not assumption:** ran `man2txt` over all 507 real
+   pages in `man/1/` (`INDEX` excluded) via a driver script, one `emu`
+   invocation per page (`timeout 10` each; a `while read` loop's stdin
+   must be redirected from `/dev/null` for the inner `emu` calls, or the
+   loop's own input file gets consumed as if it were the *program's*
+   stdin - cost one confusing false start). Result: 507/507 exit 0, 0
+   bytes of stderr anywhere, 0 empty-output pages. The engine never
+   crashes on this corpus; every gap in it is a silent no-op, not a
+   fault - so the only way to find what's missing is to diff rendered
+   output, not to watch for errors.
+
+   **What the case-list in `parsemacro` actually does not handle**,
+   confirmed by reading the code rather than assumed from the earlier
+   grep: no `.ta` (tab stops), no `.ne` (need-N-lines), no `.ns`
+   (no-space mode), no `.if` (conditional), no standalone `.ft` request
+   (only the inline `\f` escape works), and `.in`/`.ti` present only as
+   stubs (`state.brk()`, indent logic commented out). Cross-checked
+   against where each is actually *used* in the in-scope corpus, not
+   just whether it's supported, since an unused gap costs nothing to
+   leave alone:
+   - `.ta`, `.if`: used only in `units`, already out of scope (see
+     below) for its `.de`/`.TS` usage - not a live gap.
+   - `.in`, `.ti`: used in **zero** pages in `man/1/`. Confirmed stubs,
+     genuinely dead code paths for this corpus - left alone.
+   - `.ne`: used in 3 pages (`acme`, `fc`, `sh`), every one of them the
+     classic "keep this heading with what follows" page-break hint
+     (`.ne 1.2i` / `.SH ...`). Text output has no pages. Checked, not
+     assumed: a no-op is the *correct* behavior here, not a gap - left
+     alone.
+   - `.ns`: used in 2 pages (`acme` ×3, `ar` ×1), always as `.br` `.ns`
+     before a second `.TP`, the idiom for grouping two tag lines (e.g.
+     acme's `c`/`i` key-binding entries) under one shared body. Left as
+     a no-op, this produced a real, visible defect: the grouped entries
+     rendered with a spurious blank line between them, so `c` appeared
+     to have no description and `i` looked like a separate entry.
+     **Fixed** - `.ns` now sets `state.newpara = 1`, which is exactly
+     what suppresses `paragraph()`'s next blank-line emission.
+   - `.ft`: used in exactly 2 pages (`fantics`, `tutor`), both `.ft L`
+     around a verbatim block then bare `.ft` to return to the prior
+     font. **Fixed** - added as a request, mapped through the same
+     letter table `\f` already uses, plus a new `state.prevfont` field
+     on `ParseState` for the bare (return-to-previous) form. Invisible
+     in `man2txt`'s own output specifically, since that consumer never
+     applies font to rendering at all (just flattens `Text.text`) - the
+     fix is real at the parser level, just not observable through this
+     one consumer.
+
+   **Two further bugs found by reading the code for the gaps above, not
+   by grepping for them - both far more widely triggered than the pages
+   that led to finding them:**
+   - `.L`/`.LR`/`.RL` (the literal-font macros) built `Text` records
+     directly from raw macro parameters, never calling `parsetext` -
+     so any escape inside a `.L`-quoted term leaked raw (found via
+     `acme`'s `` .LR .*\en? . `` rendering literally as `\en?` instead of
+     `\n?`). Separately, `.L` *also* manually wrapped its text in
+     `` `...' `` quotes while `addtext()` already does that itself for
+     `FONT_LITERAL` text when `ql` is set - double-quoting every `.L`
+     term tree-wide (`` ``x'' `` instead of `` `x' ``). Fixed by dropping
+     `.L`'s manual quoting and routing all three through `parsetext`
+     (for `.LR`/`.RL`, by reusing `altattr()`, the exact same
+     alternating-font helper `.BI`/`.BR`/`.IB`/`.IR`/`.RB`/`.RI` already
+     use - `FONT_LITERAL` is just another font value to it).
+   - `.SH`/`.SS` heading text called `addstring()` directly on raw
+     params instead of `parsetext()`, leaking inline escapes in
+     headings (found via `inputtest`'s
+     `` .SS \fB-w\fP, and why a recording can be empty ``, rendering the
+     `\fB`/`\fP` literally). Fixed the same way, matching every other
+     text-bearing request.
+
+   **Verification:** re-ran the full 507-page sweep after the fix and
+   diffed every page's output against the pre-fix baseline. 22 pages
+   changed, 485 identical - reviewed all 22 diffs by hand, every one a
+   clean improvement (the `.L` double-quote fix alone touched 18 pages
+   never grepped for it going in: `acme ar basename cal cleanname comm
+   dd diff kill miniterm mk paste rcmd read sendmail tail tiny tr units
+   webgrab yacc`; `acme`/`ar` additionally show the `.ns` blank-line
+   fix). Zero regressions. Negative control: reverted just the `.L` fix,
+   rebuilt, confirmed `basename`'s output regressed to the double-quoted
+   form, restored, confirmed it was single-quoted again.
+
+   Change lives in `appl/lib/parseman.b` - not `p9/cmd/`, since this is
+   a fix to the tree's own existing shared library, not a new Plan
+   9-workalike command; `man2speak.b`'s speech path uses the identical
+   engine and needed no changes of its own to pick up every fix above.
+   `groff`-equivalent ANSI/SGR output formatting was considered and
+   dropped: neither `man2txt` nor `man2speak` renders font as color or
+   weight today, so matching `groff -Tutf8`'s escape-code choices would
+   have been reverse-engineering a state machine for a consumer that
+   doesn't exist in this tree.
 7. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
    tree's `/bin` list**, not recollection, to get an actual missing-count
    instead of the "a lot is already here" qualitative claim above. Lower

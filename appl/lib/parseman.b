@@ -34,6 +34,7 @@ ParseState: adt[T]
 	ntlsetindent: int;	#copy prevailindent to indent on n.t.l
 	prevailindent: int;
 	curfont: int;
+	prevfont: int;	# font before the last actual change, for .ft/\fP
 	curattr: int;
 	verbatim: int;
 	pspace: int;
@@ -60,7 +61,7 @@ parseman[T](fd: ref Sys->FD, metrics: Metrics, ql: int, viewer: T, setline: chan
 	}
 {
 	iob := bufio->fopen(fd, Sys->OREAD);
-	state := ref ParseState[T](metrics, ql, 0, nil, nil, 0, 0, metrics.indent, FONT_ROMAN, 0, 0, 1, nil, 0, 1, 0, "", nil, viewer, setline);
+	state := ref ParseState[T](metrics, ql, 0, nil, nil, 0, 0, metrics.indent, FONT_ROMAN, FONT_ROMAN, 0, 0, 1, nil, 0, 1, 0, "", nil, viewer, setline);
 	while ((l := iob.gets('\n')) != nil) {
 		if (l[len l -1] == '\n')
 			l = l[0: len l - 1];
@@ -246,7 +247,7 @@ parsemacro[T](state: ref ParseState[T], t: string)
 		"L" =>
 			state.curfont = FONT_LITERAL;
 			if (params != nil) {
-				str := "`";
+				str := "";
 				for (pl := params; pl != nil;) {
 					str += hd pl;
 					if ((pl = tl pl) != nil)
@@ -254,36 +255,26 @@ parsemacro[T](state: ref ParseState[T], t: string)
 					else
 						break;
 				}
-				str += "'";
-				state.addstring(str);
+				# run through parsetext (not addstring) so \-,\e,\(xx
+				# etc. inside the literal get processed same as .B/.I;
+				# addtext() itself adds the `...' quoting for
+				# FONT_LITERAL text when state.ql is set, so don't
+				# add it here too (was double-quoting before this fix).
+				textl := parsetext(state, str);
+				for (; textl != nil; textl = tl textl)
+					state.addtext(hd textl::nil);
 				state.curfont = FONT_ROMAN;
 			}
 		"LR" =>
-			if (params != nil) {
-				l := Text(FONT_LITERAL, state.curattr, hd params, 0, nil);
-				t: list of Text;
-				params = tl params;
-				if (params == nil)
-					t = l :: nil;
-				else {
-					r := Text(FONT_ROMAN, state.curattr, hd params, 0, nil);
-					t = l :: r :: nil;
-				}
-				state.addtext(t);
-			}
+			# was building Text directly from raw params (no escape
+			# processing, e.g. acme's `.LR .*\en? .` leaked the \e
+			# literally); altattr already does exactly this
+			# alternating-font-per-param dance correctly for
+			# BI/BR/IB/IR/RB/RI, and FONT_LITERAL is just another
+			# font value to it.
+			altattr(state, FONT_LITERAL, FONT_ROMAN, params);
 		"RL" =>
-			if (params != nil) {
-				r := Text(FONT_ROMAN, state.curattr, hd params, 0, nil);
-				t: list of Text;
-				params = tl params;
-				if (params == nil)
-					t = r :: nil;
-				else {
-					l := Text(FONT_LITERAL, state.curattr, hd params, 0, nil);
-					t = r :: l :: nil;
-				}
-				state.addtext(t);
-			}
+			altattr(state, FONT_ROMAN, FONT_LITERAL, params);
 		"DT" =>
 			# not yet supported
 			;
@@ -351,8 +342,15 @@ parsemacro[T](state: ref ParseState[T], t: string)
 			state.heading = 1;
 			state.verbatim = 0;
 
-			for (pl := params; pl != nil; pl = tl pl)
-				state.addstring(hd pl);
+			# addstring() skipped escape processing entirely (found
+			# via inputtest's ".SS \fB-w\fP, ..." leaking \fB/\fP
+			# raw); parsetext() is what every other text-bearing
+			# request (.B/.I/.IP/.TP's tag) already uses.
+			for (pl := params; pl != nil; pl = tl pl) {
+				textl := parsetext(state, hd pl);
+				for (; textl != nil; textl = tl textl)
+					state.addtext(hd textl::nil);
+			}
 
 			state.heading = 0;
 			state.brk();
@@ -366,8 +364,15 @@ parsemacro[T](state: ref ParseState[T], t: string)
 			state.indent = state.metrics.ssindent;
 			state.heading = 2;
 
-			for (pl := params; pl != nil; pl = tl pl)
-				state.addstring(hd pl);
+			# addstring() skipped escape processing entirely (found
+			# via inputtest's ".SS \fB-w\fP, ..." leaking \fB/\fP
+			# raw); parsetext() is what every other text-bearing
+			# request (.B/.I/.IP/.TP's tag) already uses.
+			for (pl := params; pl != nil; pl = tl pl) {
+				textl := parsetext(state, hd pl);
+				for (; textl != nil; textl = tl textl)
+					state.addtext(hd textl::nil);
+			}
 
 			state.heading = 0;
 			state.brk();
@@ -411,6 +416,45 @@ parsemacro[T](state: ref ParseState[T], t: string)
 				if (i == 0)
 					i = state.metrics.indent;
 				state.prevailindent = state.indent + i;
+			}
+		"ns" =>
+			# no-space mode: suppress the vertical space the *next*
+			# paragraph()-driven request would otherwise emit -
+			# used in this corpus as `.br` `.ns` before a second
+			# `.TP` to group two tag lines under one shared body
+			# (e.g. acme's "c"/"i" key bindings). paragraph() only
+			# emits its pspace blank line(s) when newpara == 0, so
+			# forcing it to 1 here skips exactly one such gap, the
+			# same effect real troff's .ns has here (confirmed
+			# against the rendered output: acme's "c"/"i" entries
+			# had a spurious blank line between them before this).
+			state.newpara = 1;
+		"ft" =>
+			# standalone font-change request - same font letters
+			# and "return to previous font" semantics as \f/\fP
+			# inline (see parsetext), just applied to state.curfont
+			# directly rather than a run of text. Only two real
+			# uses in this corpus (fantics, tutor), both `.ft L`
+			# then a later bare `.ft` to return to roman.
+			newfont := state.curfont;
+			if (params == nil)
+				newfont = state.prevfont;
+			else
+				case hd params {
+				"0" or "R" =>
+					newfont = FONT_ROMAN;
+				"1" or "I" =>
+					newfont = FONT_ITALIC;
+				"2" =>
+					newfont = FONT_ROMAN;
+				"5" or "L" =>
+					newfont = FONT_BOLD;
+				"P" =>
+					newfont = state.prevfont;
+				}
+			if (newfont != state.curfont) {
+				state.prevfont = state.curfont;
+				state.curfont = newfont;
 			}
 		* =>
 			;
