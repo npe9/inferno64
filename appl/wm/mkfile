@@ -57,6 +57,7 @@ TARG=\
 	snake.dis\
 	stopwatch.dis\
 	sweeper.dis\
+	talkctl.dis\
 	task.dis\
 	telnet.dis\
 	tetris.dis\

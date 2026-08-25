@@ -29,6 +29,15 @@ Gap:	con 250;	# ms of quiet that becomes an explicit wait
 Dblms:	con 500;	# two clicks closer than this are one double click
 Slop:	con 4;		# pixels a click may move and still be a click
 
+# A talk played with `session wait` can be slowed, sped up or paused from
+# outside it - talkctl(1) is a floating control that writes here. Checked
+# only at a wait, in Tick-sized slices, the same interrupt granularity
+# speak(1) uses for /dev/voice/screen. No file, or a file that doesn't
+# parse, means speed 1 and not paused - the file existing at all must
+# never change a talk that nobody is steering.
+Talkctl: con "/tmp/talk-ctl";
+Tick: con 100;		# ms between checks of Talkctl during a wait
+
 kfd, pfd: ref Sys->FD;
 
 init(): string
@@ -159,6 +168,28 @@ putptr(x, y, b, msec: int): string
 	return nil;
 }
 
+# (speed, paused). Anything that isn't a clean read of two tokens - no
+# file, a short read, garbage that `real`/`int` silently turn into 0 -
+# falls back to speed 1, not paused, rather than stalling or racing.
+readtalkctl(): (real, int)
+{
+	fd := sys->open(Talkctl, Sys->OREAD);
+	if(fd == nil)
+		return (1.0, 0);
+	buf := array[64] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0)
+		return (1.0, 0);
+	(nf, toks) := sys->tokenize(string buf[0:n], " \t\n");
+	if(nf < 2)
+		return (1.0, 0);
+	speed := real hd toks;
+	paused := int hd tl toks;
+	if(speed <= 0.0)
+		speed = 1.0;
+	return (speed, paused);
+}
+
 Action.play(a: self ref Action): string
 {
 	e: string;
@@ -216,7 +247,22 @@ Action.play(a: self ref Action): string
 		sys->sleep(20);
 		return putptr(a.x2, a.y2, 0, t+130);
 	Await =>
-		sys->sleep(a.x);
+		remaining := a.x;
+		while(remaining > 0){
+			(speed, paused) := readtalkctl();
+			if(paused){
+				sys->sleep(Tick);
+				continue;
+			}
+			step := Tick;
+			if(step > remaining)
+				step = remaining;
+			d := int (real step / speed);
+			if(d < 1)
+				d = 1;
+			sys->sleep(d);
+			remaining -= step;
+		}
 		return nil;
 	Aresize =>
 		return "resize cannot be performed: the host owns the window size";

@@ -34,14 +34,22 @@
 # built that way, as one quoted word, not by switching to double quotes,
 # which this shell does not treat as quoting at all.
 
+# wm/talkctl (man/1/talkctl) is a floating pause/slower/faster control for
+# this and any other lib/demo/*.sh talk - unrelated to the tools below,
+# not something the corpus exercises need, so it goes up before the
+# narration starts rather than being folded into it.
+
 load session
 load std
 
+wm/talkctl &
 wm/sh &
 session wait 1.5
 
 say -t 'unix for poets, a tutorial by kenneth church at bell labs'
 session wait 0.4
+say -t 'a floating control just opened: pause, slower and faster, if you want to steer this'
+session wait 0.6
 say -t 'the same idea it always was: treat text as data, and read it with small tools'
 session wait 0.6
 say -t 'the text is genesis, the same corpus his own tutorial used'

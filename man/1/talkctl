@@ -1,0 +1,62 @@
+.TH TALKCTL 1
+.SH NAME
+talkctl \- pause, resume or repace a running talk
+.SH SYNOPSIS
+.B wm/talkctl
+.SH DESCRIPTION
+.I Talkctl
+is a small floating window with three controls -
+.BR Pause / Resume ,
+.B Slower
+and
+.B Faster
+- for a narrated talk of the kind
+.IR lib/demo/*.sh
+runs: say(1) narrating, session(2) driving a shell window. It has no
+connection to the talk itself; it only writes a speed and a paused flag to
+.BR /tmp/talk-ctl ,
+which every
+.B session wait
+- the action that paces a talk between its typed commands - reads back,
+checking a few times a second while it waits.
+.PP
+The same three actions are bound to keys, so a script can drive this the
+same way it drives everything else:
+.B p
+or the space bar toggles pause,
+.B s
+and
+.B f
+step the speed down or up through
+0.25, 0.5, 1, 2, 4, 8,
+and
+.B r
+resets to normal pace and unpauses.
+.PP
+No talk needs to be running for this to open, and no control needs to be
+running for a talk to play at its ordinary pace: with
+.B /tmp/talk-ctl
+absent, or holding anything this has never written, a wait behaves exactly
+as if this program did not exist.
+.SH LIMITS
+This reaches only the gaps between actions - the
+.B session wait
+calls a talk's pacing is built from. It does not reach
+.IR say (1)
+itself: narration is a separate process that blocks the talk until the
+line is spoken, and there is no way to slow down or interrupt a voice
+mid-utterance from outside it (the neural voice has no speed control at
+all).
+.B Pause
+takes effect at the next wait, which in the worst case is one utterance's
+length away, not immediately - a real limit on what pausing a talk can
+mean here, not an oversight.
+.SH SOURCE
+.B /appl/wm/talkctl.b
+.SH SEE ALSO
+.IR say (1),
+.IR speak (1)
+.SH BUGS
+Speed and pause are both process-global through the one file, so two
+talks running at once share one control - there is no way to steer them
+independently.

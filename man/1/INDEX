@@ -516,6 +516,7 @@ sweeper wm-misc
 symmetry symmetry
 tail tail
 take sh-string
+talkctl talkctl
 talons talons
 task wm-misc
 tcs tcs
