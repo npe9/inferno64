@@ -1334,6 +1334,57 @@ enough that any board exercising
 this way would meet it too, and specific enough now that the next
 session's first move should be a message-level trace of that one
 pipe, not another boot log.
+.PP
+Two candidate causes were checked directly and ruled out before that
+message-level trace was attempted.
+.CW port/devmnt.c 's
+.CW mntattach()
+sets
+.CW "r->request.uname\ =\ up->user" \-
+a live pointer into the kernel process's own field, not a copy \- and
+.CW Sys_mount() 's
+.CW release()
+runs before this, so a stale-pointer race if that kernel process were
+recycled mid-call was a real possibility.  Printed at both
+.CW sizeS2M()
+and the later
+.CW convS2M()
+across five runs: identical pointer, identical seven-byte
+.CW \(dqinferno\(dq
+content, every time, with no
+.CW convS2M
+failure in any of the five \- consistent with the earlier pattern of
+this specific failure not showing up once instrumentation lands near
+it, but the pointer itself is not moving.  Separately,
+.CW mntrpcread() 's
+.CW doread()
+accumulates short reads in a loop against
+.CW qlen(m->q)
+before ever parsing a length prefix, and
+.CW mntversion() 's
+own reply loop does the same against
+.CW GBIT32(msg) \-
+both read the length-prefixed, streamed way a byte-oriented pipe
+requires, not by assuming one
+.CW read()
+returns one whole message.  Neither looks like the source.
+.PP
+The
+.CW OP(indx)
+family's un-gated bounds print, already in this source from before
+this session, was extended with the module name and Dis-level PC of
+whichever program hit it, hoping to catch the garbage-index crash
+with enough context to read its Limbo source line the way
+.CW sh.b 's
+bug was found.  Six more runs, none of them hit it \- rarer than the
+fd race, not reproduced again this session.  That diagnostic is
+reverted along with everything else tried this round; nothing in this
+paragraph changed the tree.  What
+.I would
+catch it without perturbing the timing the way every print-based probe
+in this section has: a QEMU-GDB-stub watchpoint on the specific
+memory this pipe's data passes through, set once and left alone,
+rather than another instrumented rebuild.
 .NH 1
 How a native kernel provides networking
 .PP
