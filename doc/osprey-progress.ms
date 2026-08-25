@@ -1760,6 +1760,39 @@ bind skips whatever that opening does; calling the port's enable did not
 close the gap.  Resolving it needs the emulator's serial state looked at
 directly rather than more guessing, so it was reverted to keep the
 microkernel at the six checks that pass, and it is where this picks up.
+.NH 2
+A file operation answered outside the kernel
+.LP
+The point of the cut is that a personality \- opening a name, reading
+it, the shape of a file \- is a program above the kernel, not code
+inside it, and the microkernel now shows one such operation answered
+that way.  A second container is made the first one's server.  The
+client submits an open.  Servicing the client does not reach the
+kernel's own personality in ospreykernop, whose open calls namec, which
+is a panic in this kernel: dispatch forwards the request to the server's
+request ring instead, stamped with the client's identity.  The boot then
+plays the server in the same loop \- not as a task, so no lock is
+released and nothing contends for it, the mistake the uart round-trip
+made \- reading the forwarded request off the server's ring with a get
+arm, answering it done, routing the answer back to the client, and the
+client collecting it.  A seventh check asserts the open completed with no
+panic, and the completion is the whole proof: the kernel's cut
+personality could not have answered, it would have faulted in namec, so
+that the client got a done at all means the other container did.
+.PP
+This is not p9srv and it is not the 9front personality, and the
+difference is the honest part.  p9srv is that personality: an ordinary
+user program that answers a container's open and read with ordinary
+system calls in its own name space, and it runs and is tested on the
+Plan 9 kernel, where the whole of 9front is still present to provide
+those system calls.  The microkernel cannot host it, and the reason is
+exact: running a program is loading and exec, which are sysproc.c, which
+the cut removed.  So what is proven here is the delegation path the
+kernel keeps \- a request carried to another container and its answer
+carried back, the kernel doing nothing but the carrying \- with the boot
+standing in for the program a server would be.  Hosting the real p9srv
+is the next thing, and it needs the one capability the cut took out: a
+way to load and start a program in a container.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
