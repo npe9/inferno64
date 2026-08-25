@@ -1832,11 +1832,30 @@ assert it, and the ospreyuser flag leaves upc64 and pc64 untouched.
 This is a library operating system in the shape the paper means: the OS
 personality implemented as a library, run on top of the microkernel, the
 kernel providing only its four services and a minimal interface to them.
-It is minimal \- a couple of files, not 9front's name resolution, and
-the files are held in the library rather than reached over the ring \-
-but the architecture is right, which lup64's was not.  Growing the
-library toward real 9front file semantics, and having it reach its files
-over the ring to a server rather than hold them, is the work from here.
+It is minimal \- a couple of files, not 9front's name resolution \- but
+the architecture is right, which lup64's was not.
+.PP
+The program also uses the ring, which is how a library operating system
+reaches what it does not hold.  It maps its container's slice with
+segattach \- the address-space service, one of the four, offered as a
+call \- after the kernel binds it to a container so it is entitled to
+that slice.  Then it does a message-passing round trip in the shape the
+paper gives: it puts a request in the ring in its own memory, calls the
+kernel once to service the ring, and reads the reply back from the ring;
+only the service is a trap, submit and collect are memory.  The request
+it sends is poll, which the kernel answers itself as a mechanism, but a
+file request would be forwarded the same way to a server.  Six checks
+assert all of this, and the flag that turns it on leaves upc64 and pc64
+untouched.
+.PP
+So the loop is closed in the right shape: a program on top of the
+microkernel, its OS personality a library it links, reaching the kernel
+through a minimal interface \- an address space, a mapped ring, message
+passing over it, and exit.  What remains is to grow the personality
+library toward real 9front file semantics and to write the file server it
+would talk to over the ring, so that the files it serves are reached by
+message passing rather than held; that server is another program on the
+same microkernel, and building it is the work from here.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
