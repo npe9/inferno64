@@ -807,10 +807,12 @@ below.
     (1772), `tar.c` (1588), `patch.c` (839), and `iconv.c` (102) all
     exist in `sys/src/cmd/`; `dict` does not (confirmed 404 against the
     9front tree - it was a guess in item 8's list that didn't pan out).
-    Line counts fetched but not yet read in full or translated -
-    `split`/`iconv` are `crc32`-sized next candidates; `pr`/`patch` are
-    a middle tier; `file`/`tar` are `dc.c`-sized undertakings, not a
-    quick pass.
+    Line counts fetched but not yet read in full or translated at this
+    point - `split`/`iconv` turned out to be `crc32`-sized next
+    candidates (done, below); `pr`/`patch` were guessed at as "a middle
+    tier" from line count alone. **That guess was wrong, corrected once
+    `pr.c` was actually read (see below) - line count predicts nothing
+    about translation cost here.**
 
     **`p9/cmd/split.b` - done**, resolving the finding below with
     explicit direction: use plan9port as the reference when a 9front/
@@ -923,3 +925,49 @@ below.
     bytes, were being compared. Fixed with a manual element-wise
     `byteseq()` helper; worth remembering for any future test that
     compares byte arrays in this tree.
+
+    **`pr.c` (666 lines) read, NOT translated - the "middle tier" guess
+    above was wrong, and reading it is what proved that, not further
+    line-count guessing.** `pr.c` is dc.c-class despite being a third
+    the size: not an algorithm but a pile of coupled global mutable
+    state whose invariants only make sense together - a `peekc` static
+    variable and an `Etabc`/`Etabn` pair implementing a "return this
+    character now, expand a tab into more of it next call" trick;
+    `Nspace`/`Lcolpos`/`Pcolpos` bookkeeping for backspace/escape
+    overstrike (underlining via `char BS char` sequences); a
+    preallocated `Rune` buffer (`Buffer`/`Bufend`/`Colpts[]`) that pages
+    an entire multi-column spread into memory with raw pointer
+    arithmetic before printing it column-by-column; a `balance()` pass
+    that re-walks that buffer to redistribute a short last page evenly
+    across columns; heavy `case X: case Y:` switch fallthrough used
+    deliberately (e.g. `put()`'s fallthrough chain, `-n`'s option parse
+    falling into `-b`'s). None of this is a quick translation regardless
+    of line count.
+
+    The blocking problem, though, is the same *class* as `split.c`'s,
+    not the density: **there is no verified oracle for it.** plan9port's
+    `pr` might diverge from 9front's the way `split` did (checked, not
+    assumed, for `split` - not yet checked for `pr`, and with this much
+    interacting state a `diff` alone wouldn't settle it the way it did
+    for `split`'s one extra function call), and there is still no
+    working way to build and run 9front's own source on this machine
+    (arm64, plan9port's libraries are x86_64-only) to compare against
+    directly. Translating this much coupled state against golden values
+    nobody could verify would be guessing, not translating.
+
+    **The sizing lesson this run actually supports:** what makes a
+    translation cheap here is not line count, it's whether Inferno
+    already provides the primitive the C leans on - `bufio`'s
+    seek/offset for `join`'s duplicate-key algorithm, this tree's own
+    `regex(2)` for `split`'s pattern mode, `Draw` for `iconv`'s whole
+    job. `pr.c` leans on nothing Inferno already has; every line of its
+    state machine would be new code, and none of it is checkable without
+    a working 9front build. `patch.c` (839 lines) is unread and
+    therefore genuinely unsized, not "middle tier" - the same mistake
+    should not be repeated for it without reading it first.
+
+    Backlog march stopped here for this session: six real translations
+    (`primes`/`factor`/`join`/`crc32`/`split`/`iconv`) landed and
+    verified is the result; `pr` would have been the first one this
+    session couldn't verify, which is exactly the signal to stop rather
+    than push through on an assumption.
