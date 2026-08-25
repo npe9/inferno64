@@ -22,9 +22,18 @@ given in. It lives under `p9/cmd/` (man pages under `p9/man/1/`), not
 `appl/cmd/` - `p9/cmd/mkfile` sets `DISBIN=$ROOT/p9/dis` instead of the shared
 `$ROOT/dis`, so an ordinary `mk install` there cannot shadow or collide with
 anything in the regular userspace. Bringing a built tool into a running
-namespace is one explicit step, not a build-time default:
+namespace is one explicit step, not a build-time default - run from *inside*
+emu, not the host shell:
 
-	bind -a $ROOT/p9/dis /dis
+	bind -a /p9/dis /dis
+
+That's an in-namespace path, not `$ROOT/p9/dis` - emu's own `/` is not the
+host filesystem root (an absolute host path fails to resolve inside emu; it's
+whatever directory emu was launched from), so this reaches the real `p9/dis`
+only when emu's cwd is the tree checkout, same as every other `emu`/`mk`
+invocation already assumes. Verified end to end, not just written down: `bind
+-a /p9/dis /dis` then `awk -f prog.awk file` resolves `awk` by bare name and
+runs it correctly.
 
 This reverses the framing of "what should NOT be ported," below, for anything
 new: the C/`utils/` route stays valid for what's already built there (see the

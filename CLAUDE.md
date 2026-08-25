@@ -107,6 +107,12 @@ workalike for a Plan 9 userspace tool (awk, and whatever else `doc/plan9-port.md
 up) is Limbo source compiled to Dis, and lives under `p9/cmd/`, not `appl/cmd/` — kept out
 of the regular userspace so it doesn't have to compete with or shadow the real thing.
 `p9/cmd/mkfile` sets `DISBIN=$ROOT/p9/dis` (not the shared `$ROOT/dis`), so `mk install`
-there is inert until someone deliberately runs `bind -a $ROOT/p9/dis /dis`. `appl/cmd/`'s
-existing 212-file `.b` tree is not touched by this rule — it already holds the real ports
-that took over the regular userspace, and stays where it is.
+there is inert until someone deliberately runs, from *inside* a running emu, `bind -a
+/p9/dis /dis` — an in-namespace path, not a host one prefixed with `$ROOT`; emu's own `/`
+is not the host filesystem root (confirmed: an absolute host path fails to resolve inside
+emu), it's whatever directory emu was launched from, so this only reaches the real
+`p9/dis` when emu's cwd is the tree checkout, same as every other `mk`/`emu` invocation in
+this file already assumes. Verified end to end: `bind -a /p9/dis /dis` then `awk -f
+prog.awk file` resolves `awk` by bare name and runs it. `appl/cmd/`'s existing 212-file
+`.b` tree is not touched by this rule — it already holds the real ports that took over the
+regular userspace, and stays where it is.
