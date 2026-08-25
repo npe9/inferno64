@@ -907,7 +907,18 @@ release(void)
 		isched.creating = 1;
 		unlock(&isched.l);
 		if(f == 0)
-			kproc("dis", vmachine, nil, 0);
+			/*
+			 * flags=0 left this kproc's pgrp/fgrp/egrp at
+			 * whatever newproc()'s recycled Proc slot last
+			 * had -- rptproc(), the same acquire()/release()
+			 * pattern this loop uses, passes KPDUP for exactly
+			 * this reason.  The per-iteration up->fgrp = o->fgrp
+			 * below resyncs before every xec(), but code that
+			 * can run before this kproc's first loop iteration
+			 * (startup(), the waserror() scaffolding) still sees
+			 * whatever newproc() handed it otherwise.
+			 */
+			kproc("dis", vmachine, nil, KPDUP);
 		return;
 	}
 	p = *pq;
