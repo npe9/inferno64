@@ -2348,6 +2348,36 @@ and the calling proc, pid 1, executing its next few bytecode
 instructions \- and points at the syscall-return/scheduling path
 rather than at mount, namespace, or heap corruption, all three of
 which are now independently accounted for.  Not yet instrumented.
+.PP
+It was, immediately after: a print at the top of
+.CW consread() 's
+.CW Qcons
+case, the one place a
+.CW sh\ -n\ -l\ -i
+prompt would block reading the console.  Three minutes and six
+seconds, and it never fired once.  That rules out the interactive-
+prompt theory from the previous section outright \- the calling proc
+never reaches a console read at all, so the silence is not this
+document's own
+.CW console=0 -is-output-only
+finding manifesting as a correctly-blocked shell.  Whatever
+.CW /dis/init
+does between the mount returning and going quiet, it does not get
+as far as
+.CW consread() .
+Reverted before committing, as the diagnostic before it was.
+.PP
+So: kernel-level mount confirmed complete and correct
+.RB ( T104 / R105 ,
+.CW ret\ 16 ) ,
+GC/heap misalignment fixed and independently verified over ten
+boots, and the interactive-shell-prompt theory now excluded by a
+three-minute negative result on the one call that theory predicted
+would fire.  What is left is exactly the gap named at the end of the
+previous section \- between
+.CW kmount()
+returning and pid 1's next bytecode \- narrower now than at any
+earlier point in this document, but still open.
 .NH 1
 How a native kernel provides networking
 .PP
