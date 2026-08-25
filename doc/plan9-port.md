@@ -202,12 +202,26 @@ below.
    confirmed to actually catch a real break with a negative control
    (deliberately broke `+`, the test failed with exactly that program's
    wrong output and nothing else, restored, all 20 passed again).
-4. **`p9/cmd/dc.b` - an RPN desk calculator.** POSIX `dc`, bounded: push a
-   number; `+ - * / % ^`; stack ops `p n f c d r`; named registers `sN`/`lN`
-   for a-z (one value each, no register stacks); `k` sets output precision.
-   No macros (`[...]x`), no strings, no `?`/input. Host `/usr/bin/dc` is the
-   reference oracle - same program and input through both, byte-diffed,
-   exactly the awk method. Not yet started.
+4. **`p9/cmd/dc.b` - an RPN desk calculator: done.** POSIX `dc`, bounded:
+   push a number; `+ - * / % ^ v`; stack ops `p n f c d r`; named registers
+   `sN`/`lN` for a-z/A-Z (one value each, no register stacks); `k` sets
+   scale. No macros (`[...]x`), no strings, no `?`/input, no `z`/`Z`, no
+   `i`/`o` radix change. Numbers are exact fixed-point `big` integers
+   (mantissa, fraction-digit count), not floats - dc's own arithmetic is
+   arbitrary-precision, and Limbo's native `big` type made matching that
+   directly straightforward rather than approximating it with floats.
+   Precision/rounding rules (what each operator's result scale is, and
+   when it truncates rather than staying exact) were reverse-engineered
+   against `/usr/bin/dc` with targeted probes *before* writing any code,
+   not read off the POSIX text from memory - the same discipline as the
+   awk oracle, applied one step earlier because the rules turned out to
+   be more particular than expected (multiply's truncation threshold
+   depends on both operand scales *and* the scale register at once).
+   34 programs checked this way during development, all byte-identical;
+   `p9/cmd/dctest.b` keeps 28 of them as a permanent regression test via
+   the same in-process `runstring(prog)` seam as `awktest.b`, confirmed
+   with a negative control (broke `+` into `-`, 6 of 28 tests failed with
+   exactly the corrupted output, restored, all 28 passed again).
 5. **`p9/cmd/m4.b` - a macro processor.** Bounded subset: `define`,
    `undefine`, positional arguments (`$1`.."$9`, `$#`, `$0`), `ifdef`,
    `ifelse`, `include`, quoting with the default `` ` ''` delimiters,

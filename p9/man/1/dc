@@ -1,0 +1,174 @@
+.TH DC 1
+.SH NAME
+dc \- desk calculator, in Limbo
+.SH SYNOPSIS
+.B dc
+[
+.B -e
+.I script
+]
+[
+.B -f
+.I scriptfile
+]
+[
+.I file ...
+]
+.SH DESCRIPTION
+.I Dc
+is a Limbo-native workalike for a bounded subset of
+.IR dc (1),
+the reverse-Polish desk calculator, compiled to Dis and run by
+.IR emu ,
+not a host binary \(em see
+.B doc/plan9-port.md
+in the source tree. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Dc
+reads a program from
+.I file
+arguments (concatenated in order), or standard input if none are given,
+or from
+.B -e
+.I script
+and
+.B -f
+.I scriptfile
+arguments (repeatable, and combinable with each other, evaluated in the
+order given before any files). A dc program is a sequence of numbers and
+single-character commands operating on a stack.
+.PP
+A number is pushed by writing it: digits, an optional
+.B .
+and more digits, with a leading
+.B _
+for a negative literal (a bare
+.B \-
+is the subtraction operator, not part of a number). Arithmetic is exact,
+arbitrary-precision fixed-point \(em not floating point \(em matching real
+.IR dc 's
+own arithmetic rather than approximating it.
+.SS Commands
+.TP
+.B + - * /
+Pop two values, apply the operator, push the result.
+.B /
+truncates toward zero to the current scale (see
+.BR k ,
+below); the others are exact except where noted.
+.TP
+.B %
+Modulo: computes
+.I a
+\-
+.RI ( a / b ,
+truncated to the current scale)
+.RI * " b" .
+.TP
+.B ^
+Power. The exponent must be an integer (positive or negative); a
+negative exponent divides 1 by the positive power, using the current
+scale.
+.TP
+.B v
+Square root, truncated to the current scale.
+.TP
+.B p
+Print the top of the stack, followed by a newline, without removing it.
+.TP
+.B n
+Pop the top of the stack and print it, without a trailing newline.
+.TP
+.B f
+Print the whole stack, one value per line, top first, without clearing
+it.
+.TP
+.B c
+Clear the stack.
+.TP
+.B d
+Duplicate the top of the stack.
+.TP
+.B r
+Swap the top two values.
+.TP
+.BI s x
+Pop the top of the stack into register
+.IR x .
+.TP
+.BI l x
+Push a copy of register
+.IR x .
+.TP
+.BI k
+Pop the top of the stack and set it as the scale (number of fraction
+digits kept by
+.BR / ,
+.BR % ,
+.BR ^ ,
+and
+.BR v );
+must be a non-negative integer.
+.TP
+.B #
+Comment to end of line.
+.TP
+.B q
+Stop processing the program.
+.SH SOURCE
+.B /p9/cmd/dc.b
+.SH SEE ALSO
+.IR dctest (1)
+.SH BUGS
+This is a deliberately bounded subset. No macros
+.RI ( [ ... ] ,
+.BR x ),
+no conditional or looping execution
+.RB ( < ,
+.BR > ,
+.BR = ,
+.BR ! ),
+no strings, no
+.B ?
+(read a line as input), no
+.B z / Z
+(stack depth / digit count), and no
+.B i / o
+(input/output radix \(em always base 10 in and out).
+.PP
+Register names are single letters,
+.B a
+through
+.B z
+and
+.B A
+through
+.BR Z ,
+not real
+.IR dc 's
+arbitrary single byte; each register holds one value, not real
+.IR dc 's
+register stack (pushing a second value into an already-occupied register
+simply replaces it).
+.PP
+Precision and rounding were reverse-engineered against the host's own
+.I dc
+with targeted probes, not read off the POSIX text from memory \(em see
+the comment at the top of
+.B p9/cmd/dc.b
+for exactly what was checked before any of this was written: add and
+subtract take the max of the two operands' scales, exactly; multiply's
+natural scale is the sum of the operands' scales, truncated toward zero
+only if that sum exceeds the larger of the current scale and the two
+operands' scales; divide, modulo and square root always truncate to the
+current scale; and a value that comes out to exactly zero prints a bare
+.B 0
+regardless of its scale. All of this is checked byte-for-byte against
+.B /usr/bin/dc
+on the same program, not asserted from documentation.

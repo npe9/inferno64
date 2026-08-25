@@ -3,6 +3,8 @@
 TARG=\
 	awk.dis\
 	awktest.dis\
+	dc.dis\
+	dctest.dis\
 
 MODULES=\
 

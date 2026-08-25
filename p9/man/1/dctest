@@ -1,0 +1,43 @@
+.TH DCTEST 1
+.SH NAME
+dctest \- regression test for dc(1)
+.SH SYNOPSIS
+.B dctest
+.SH DESCRIPTION
+.I Dctest
+loads
+.BR /p9/dis/dc.dis 's
+in-process test seam,
+.BR runstring(prog) ,
+and checks a representative subset of the programs used to develop
+.IR dc (1)
+against golden output: arithmetic, the precision/scale rules for
+.BR + / - / * / / ,
+square root, registers, and stack operations
+.RB ( p ", " n ", " f ", " c ", " d ", " r ).
+Every expected string was checked once against
+.BR /usr/bin/dc ,
+the host's real
+.IR dc .
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/dctest.b
+.SH SEE ALSO
+.IR dc (1)
+.SH BUGS
+Runs
+.I dc
+in-process via its
+.B runstring
+seam, not as a spawned subprocess reading real files and standard
+input/output \(em so it does not exercise
+.IR dc 's
+own
+.BR init ,
+argument parsing
+.RB ( -e / -f ),
+or file I/O at all.
