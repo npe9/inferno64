@@ -1793,6 +1793,45 @@ carried back, the kernel doing nothing but the carrying \- with the boot
 standing in for the program a server would be.  Hosting the real p9srv
 is the next thing, and it needs the one capability the cut took out: a
 way to load and start a program in a container.
+.NH 2
+9front as a library operating system on the core
+.LP
+The demonstration above answered with a fixed reply because the pure
+microkernel has no personality to answer with; the paper's reason for
+that is that a personality is a library, and the honest response to
+making 9front a library operating system on the microkernel is to link
+the library and have a task call it.  A library operating system does
+not need loading and exec: its code is linked into the task and called
+in process.  So lup64 is the same Osprey core as upc64 \- message
+passing, address spaces, interrupts, scheduling \- with the 9front
+personality linked back in as a library: chan.c, namec, pgrp.c and the
+file devices.  It is far smaller than pc64, a quarter of a megabyte
+against three and a half, because it links the file library and the
+console and root devices and none of the ip, disk, audio or mount
+stacks.
+.PP
+lup64 boots into an Osprey task, not the Plan 9 shell, and that task
+does what a library operating system does.  It sets up a name space and
+calls namec and the file code directly, in process, to open and read a
+real file \- the console's osversion, which reads 2000 \- with nothing
+trapping into a separate kernel.  Then it does the thing that makes it a
+personality and not just a linked library: it answers another
+container's file operation.  A bare client container with no personality
+of its own delegates to a server; the client asks to read a file; the
+request is carried to the server, whose 9front library does the namec
+and the read and writes the bytes into the client's own memory; the
+answer is carried back, and the client holds the real contents of the
+file.  The kernel did nothing but carry the messages and schedule the
+tasks.  Five checks assert it, and the flag that turns it on leaves the
+pure microkernel upc64 and the Plan 9 kernel pc64 untouched.
+.PP
+This is what the paper means by a library operating system beside the
+microkernel, reached from a working direction: not the whole of 9front
+and not p9srv, which is still the user-program form and still needs the
+exec the cut removed, but the 9front file personality itself \- its name
+resolution, its channels, its devices \- running as a library a task
+links and calls, on a core that keeps only the four services, and
+serving a container that brought none of it.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
