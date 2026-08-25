@@ -20,6 +20,22 @@ which is the same core this board carries.  So l.s, trap.c, clock.c,
 main.c, archmangopi.c, uartdw.c, the configuration and mangopiinit all
 run; what is not run is the board.
 
+That command does not reproduce it against what is committed now: mem.h
+carries the D1's own numbers (see "What is not" below), and running the
+committed kernel under -M virt this way faults trying to store to
+0x2500004 -- UART0 at the D1's real address, which virt has no device
+at -- a few instructions after entering at the wrong physical address
+entirely, since PHYSDRAM alone does not move the kernel: mkfile's own
+KTZERO=0x40000000, independent of mem.h's, has to move with it or the
+two disagree about where the linked image starts.  To reproduce the
+QEMU run above: PHYSDRAM in mem.h and KTZERO in mkfile both need QEMU
+virt's 0x80000000, alongside CLINT, PLIC and UART0, then a clean
+rebuild.  Verified 2026-08-24 with PHYSDRAM/KTZERO alone (0x40000000 to
+0x80000000, nothing else changed): the immediate crash at the wrong
+entry point is gone and the D1's real UART0 address is what the kernel
+then faults writing to, which is consistent with the rest of the
+addresses being exactly as untested as they were.
+
 What is not
 -----------
 
