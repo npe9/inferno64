@@ -398,9 +398,19 @@ dante	dˈɑːnteɪ
 dantes	dˈɑːnteɪz
 longfellow	lˈɔːŋfˌɛloʊ
 longfellows	lˈɔːŋfˌɛloʊz
-std	ˌɛstˌiːdˈiː
+std	stˈʌd
 terza	tˈɛrtsə
 tokenizer	tˈoʊkənaɪzɚ
 tokenizing	tˈoʊkənaɪzɪŋ
 virgilius	vɚdʒˈɪliəs
 wordfreqs	wˈɜːdfɹˌiːks
+
+# --- added for corpus(1) (inferno-for-dante.sh, second half) ------------------
+cooccur	kˌoʊəkˈɜːr
+inferni	ɪnfˈɜːnaɪ
+mmap	ˈɛmmˈæp
+pconc	pˈiːkˈɑːŋk
+prodeunt	proʊdˈeɪənt
+regis	rˈiːdʒɪs
+vexilla	vɛksˈɪlə
+wordfreq	wˈɜːdfɹˈiːk

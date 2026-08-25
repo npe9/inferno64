@@ -1,0 +1,141 @@
+.TH CORPUS 1
+.SH NAME
+corpus \- an interned-corpus toolchain
+.SH SYNOPSIS
+.B corpus intern
+[
+.I file
+]
+.I wordlist widx corpus
+.br
+.B corpus print
+.I wordlist widx corpus
+.br
+.B corpus hist
+.I wordlist widx corpus
+.br
+.B corpus bigrams
+.I wordlist widx corpus
+.br
+.B corpus mi
+.I wordlist widx corpus
+.br
+.B corpus tscore
+.I wordlist widx corpus
+.br
+.B corpus refs
+.I wordlist widx corpus word
+.br
+.B corpus pconc
+.I wordlist widx corpus context
+.RB [ < "refs output" ]
+.SH DESCRIPTION
+.I Corpus
+is the second half of Kenneth Church's "Unix for Poets" tutorial, after
+its own move from repeated string comparison to an
+.I interned
+representation: every distinct word in a text is assigned a small
+integer once, and everything after that - counting, bigram generation,
+significance scoring, concordancing - operates on those integers instead
+of re-comparing strings. That is the part of the idea that is genuinely
+portable; the mmap half of the original is not, since Limbo is a
+garbage-collected virtual machine language with no route to raw pages,
+and is not attempted here.
+.PP
+.B Intern
+reads
+.I file
+(standard input if none given), splits it into words exactly as
+.IR wordfreq (1)
+does, and writes three files matching the original tutorial's own
+formats:
+.I wordlist
+(the distinct words, NUL-delimited, in the order first seen),
+.I wordlist.idx
+(one big-endian 32-bit int per word: its byte offset in
+.IR wordlist ),
+and
+.I corpus
+(one big-endian 32-bit int per token of the input, in order: which word
+it is).
+.PP
+.B Print
+is the exact inverse of
+.BR intern :
+it reads
+.I corpus
+and writes the text back out, one word per line.
+.PP
+.B Hist
+counts how often each word occurs - by indexing an array with the
+corpus's own integers, not by sorting or hashing strings - and prints
+each word with its count, most frequent first.
+.B Bigrams
+does the same for adjacent word pairs, encoding each pair as one integer
+(id1 times the vocabulary size plus id2) and sorting those, the direct
+integer analogue of
+.IR uniq (1)'s
+.BR -c .
+.PP
+.B Mi
+and
+.B tscore
+print each bigram with a significance score, most significant first.
+.B Mi
+is pointwise mutual information,
+.RI log2( N \(mu count( w1 , w2 )/(count( w1 )\(mu count( w2 ))),
+which favours rare pairs that almost only ever occur together over
+frequent ones - it is the score that finds a foreign phrase quoted once
+in an English text, because the words in it cooccur nowhere else.
+.B Tscore
+is
+.RI (count( w1 , w2 )\(mi count( w1 )\(mu count( w2 )/ N )/sqrt(count( w1 , w2 )),
+which instead favours frequent, statistically dependable pairs. In both,
+.I N
+is the number of
+.B tokens
+in the corpus, not the number of distinct words - using the wrong one
+scales every score by the same constant and the ranking still looks
+plausible, which is exactly why it is spelled out here.
+.PP
+.B Refs
+prints every position (a 0-based token index) at which
+.I word
+occurs, one per line.
+.B Pconc
+reads such a list of positions from standard input and prints, for
+each, the
+.I context
+tokens either side of it - a keyword-in-context concordance, the same
+pipeline shape as the tutorial's own
+.B "refs <pattern> | pconc" .
+.SH EXAMPLE
+.TP
+.EX
+corpus intern genesis wordlist wordlist.idx corpus
+corpus hist wordlist wordlist.idx corpus
+corpus mi wordlist wordlist.idx corpus
+corpus refs wordlist wordlist.idx corpus Pharaoh |
+	corpus pconc wordlist wordlist.idx corpus 6
+.EE
+.SH SOURCE
+.B /appl/cmd/corpus.b
+.SH SEE ALSO
+.IR wordfreq (1),
+.IR rev (1),
+.IR paste (1)
+.SH BUGS
+.B Bigrams
+counts by sorting the encoded pair integers - Church's own
+.B count_by_sorting
+- and not by the hash-table alternative he also shows,
+.BR count_by_hashing ,
+which is faster on a large corpus; not implemented, to keep this to one
+working technique rather than two half-finished ones.
+.B Refs
+scans the whole corpus for every query rather than building and reusing
+a persisted inverted index the way the tutorial's own
+.B conc
+file does; fine at the scale this was built and tested against, and the
+first thing to change if a much larger corpus made repeated queries
+slow.

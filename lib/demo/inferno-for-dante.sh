@@ -19,11 +19,16 @@
 # had no example script anywhere using match/getlines/${re ...} together
 # before this one), not a fact about anyone's history with awk.
 #
-# The tools that ARE new here are wordfreq(1), rev(1) and paste(1)
-# (appl/cmd/*.b) - none Unix transliterations the way tr/sort/uniq/grep/
-# sed are (this tree's own copies of those say so in their file headers);
-# these three did not exist until they were needed to run this and
-# unix-for-poets.sh for real. Nothing below spawns tr, sort, uniq, grep,
+# The tools that ARE new here are wordfreq(1), rev(1), paste(1) and
+# corpus(1) (appl/cmd/*.b) - none Unix transliterations the way tr/sort/
+# uniq/grep/sed are (this tree's own copies of those say so in their
+# file headers); none of the four existed until they were needed to run
+# this and unix-for-poets.sh for real. corpus(1) is the actual second
+# half of Church's talk: intern a text into small integers once, then
+# count, generate bigrams and score them by mutual information and
+# t-score against the integers instead of the strings - the part of his
+# mmap-based toolchain that is genuinely portable, since Limbo has no
+# analogue for mmap itself. Nothing below spawns tr, sort, uniq, grep,
 # sed, comm or wc.
 #
 # Corpus: Dante's Inferno, Longfellow's 1867 translation (public domain,
@@ -159,8 +164,46 @@ session wait 2.4
 say -t 'the three line shape survived the translation. the rhyme did not, and this talk is not going to pretend it did'
 session wait 2.4
 
-say -t 'that is the whole of unix for poets: tokenizing, counting, sorting, filtering, substituting, field selection, palindromes and a keyword index'
+say -t 'now the second half of churches own talk: not mmap, limbo has no such thing, but the idea underneath it, interning'
+session wait 2.2
+say -t 'assign every distinct word a small integer once, and count, sort and score integers instead of comparing strings over and over'
+session wait 2.4
+session type 'corpus intern /lib/demo/dante-inferno.txt /tmp/uop-wordlist /tmp/uop-widx /tmp/uop-corpus'
+session key Return
+session wait 1.8
+say -t 'thirty seven thousand tokens, fifty eight hundred distinct words, interned once'
+session wait 2.0
+
+say -t 'counted from those integers directly, this should be the exact same answer wordfreq already gave'
+session wait 1.2
+session type 'corpus hist /tmp/uop-wordlist /tmp/uop-widx /tmp/uop-corpus | sed -e 5q'
+session key Return
+session wait 2.2
+say -t 'and it is: checked byte for byte against wordfreqs own output before this was trusted'
+session wait 2.0
+
+say -t 'mutual information now, which favors rare pairs that almost only ever occur together, over merely frequent ones'
+session wait 1.6
+say -t 'so many bigrams tie for the highest possible score that the top five alone would be a different five every run, so filter for one of them instead'
+session wait 2.4
+session type 'corpus mi /tmp/uop-wordlist /tmp/uop-widx /tmp/uop-corpus | getlines {if {match ''Vexilla|Regis|prodeunt|Inferni'' $line} {echo $line}}'
+session key Return
 session wait 2.6
+say -t 'vexilla, regis, prodeunt, inferni: that is not noise, it is a line of latin quoted once, the banners of the king of hell advance'
+session wait 2.6
+say -t 'those words cooccur nowhere else in the whole poem, which is exactly what mutual information is built to notice'
+session wait 2.4
+
+say -t 'last one: a proper concordance, refs finding every position of a word, pconc printing the context around each'
+session wait 1.8
+session type 'corpus refs /tmp/uop-wordlist /tmp/uop-widx /tmp/uop-corpus Virgilius | corpus pconc /tmp/uop-wordlist /tmp/uop-widx /tmp/uop-corpus 6'
+session key Return
+session wait 2.6
+say -t 'the same five virgilius lines as before, this time from a real inverted index query, not a line by line scan'
+session wait 2.4
+
+say -t 'that is the whole of unix for poets, both halves: tokenizing, counting, sorting, filtering, substituting, field selection, palindromes, a keyword index, and now interning, mutual information and a concordance'
+session wait 3.0
 say -t 'none of it spawned tr, sort, uniq, grep or sed, and none of it needed a pattern action language written for it either'
 session wait 2.4
 say -t 'plan nine had an awk. this just did not need to write one to still get everything the talk asked for'

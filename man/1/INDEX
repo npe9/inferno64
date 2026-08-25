@@ -62,6 +62,7 @@ colors wm-misc
 comm comm
 connect collab
 cook cook
+corpus corpus
 cp cp
 cprof cprof
 cpu cpu

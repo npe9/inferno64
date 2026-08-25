@@ -50,6 +50,7 @@ TARG=\
 	cmp.dis\
 	comm.dis\
 	cook.dis\
+	corpus.dis\
 	cprof.dis\
 	cp.dis\
 	cpu.dis\
