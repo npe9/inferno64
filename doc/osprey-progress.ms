@@ -1794,44 +1794,49 @@ standing in for the program a server would be.  Hosting the real p9srv
 is the next thing, and it needs the one capability the cut took out: a
 way to load and start a program in a container.
 .NH 2
-9front as a library operating system on the core
+A library operating system on the microkernel, the right way
 .LP
-The demonstration above answered with a fixed reply because the pure
-microkernel has no personality to answer with; the paper's reason for
-that is that a personality is a library, and the honest response to
-making 9front a library operating system on the microkernel is to link
-the library and have a task call it.  A library operating system does
-not need loading and exec: its code is linked into the task and called
-in process.  So lup64 is the same Osprey core as upc64 \- message
-passing, address spaces, interrupts, scheduling \- with the 9front
-personality linked back in as a library: chan.c, namec, pgrp.c and the
-file devices.  It is far smaller than pc64, a quarter of a megabyte
-against three and a half, because it links the file library and the
-console and root devices and none of the ip, disk, audio or mount
-stacks.
+A first answer to this got the shape wrong and is worth recording as a
+wrong turn.  It linked the 9front personality into the kernel binary and
+had a kernel task call namec directly.  That is not a library operating
+system; it is a smaller monolithic kernel.  A library operating system
+is the personality implemented as a library that a program links and
+runs on top of the microkernel, in its own space, reaching the kernel
+only through the kernel's own interface.  The personality must be above
+the kernel, not in it.  That config, lup64, was removed.
 .PP
-lup64 boots into an Osprey task, not the Plan 9 shell, and that task
-does what a library operating system does.  It sets up a name space and
-calls namec and the file code directly, in process, to open and read a
-real file \- the console's osversion, which reads 2000 \- with nothing
-trapping into a separate kernel.  Then it does the thing that makes it a
-personality and not just a linked library: it answers another
-container's file operation.  A bare client container with no personality
-of its own delegates to a server; the client asks to read a file; the
-request is carried to the server, whose 9front library does the namec
-and the read and writes the bytes into the client's own memory; the
-answer is carried back, and the client holds the real contents of the
-file.  The kernel did nothing but carry the messages and schedule the
-tasks.  Five checks assert it, and the flag that turns it on leaves the
-pure microkernel upc64 and the Plan 9 kernel pc64 untouched.
+The right shape needs the microkernel to run a user program, which the
+cut removed with sysproc.c and which the wrong turn dodged rather than
+built.  xup64 builds it.  It is the same cut core as upc64, but instead
+of running a kernel task it sets up a user program's text and stack and
+enters user mode, with no name space: the exokernel gives the program an
+address space and lets it run.  The program reaches the kernel through a
+system-call interface of two calls and no more: write, which puts bytes
+on the console, and exit.  There is no open, no bind, no name to resolve
+in the kernel; those are the personality's, and the personality is a
+library the program links.  Verified from the boot: xup64 reaches user
+mode, and a program's first system call traps into the kernel \- at
+first the panic stub the cut left, then, once the two calls were real,
+the program's own output.
 .PP
-This is what the paper means by a library operating system beside the
-microkernel, reached from a working direction: not the whole of 9front
-and not p9srv, which is still the user-program form and still needs the
-exec the cut removed, but the 9front file personality itself \- its name
-resolution, its channels, its devices \- running as a library a task
-links and calls, on a core that keeps only the four services, and
-serving a container that brought none of it.
+On that interface runs the library operating system.  userprog is a
+program that opens and reads a file not through the kernel but through
+persopen and persread, a personality it links and calls in its own
+address space: a name space of a couple of files and the open and read
+over it.  It prints that it is opening a file through its personality
+library, then the file's contents, served by that library and not the
+kernel, then that they came from user space, and exits.  The kernel
+carried none of it but the write of the output and the exit.  Four checks
+assert it, and the ospreyuser flag leaves upc64 and pc64 untouched.
+.PP
+This is a library operating system in the shape the paper means: the OS
+personality implemented as a library, run on top of the microkernel, the
+kernel providing only its four services and a minimal interface to them.
+It is minimal \- a couple of files, not 9front's name resolution, and
+the files are held in the library rather than reached over the ring \-
+but the architecture is right, which lup64's was not.  Growing the
+library toward real 9front file semantics, and having it reach its files
+over the ring to a server rather than hold them, is the work from here.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
