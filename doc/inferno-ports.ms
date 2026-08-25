@@ -543,7 +543,7 @@ the
 and
 .CW schedmod()
 read the namespace through, alongside the flat
-.CW p->pgrp / fgrp / egrp
+.CW "p->pgrp / fgrp / egrp"
 fields
 .CW devproc.c
 and the rest of the portable device layer read directly \-
@@ -574,7 +574,7 @@ check.  Removed;
 is now the only place that opens the console.
 .CW newforthproc()
 also linked its process into the
-.CW fhead / ftail
+.CW "fhead / ftail"
 list
 .CW devforth.c
 walks to build
@@ -747,6 +747,136 @@ board's shared trap assembly does not account for \- not the Timer
 subsystem, which is exonerated.  The diagnostic prints are not kept;
 this is what they showed, and it is a sharper, truer place to resume
 than where this section previously pointed.
+.PP
+That IRETQ fault has not reproduced since, across many more runs with
+a lighter diagnostic, and the
+.CW up
+it named was narrower than described: not a
+.CW schedmod()
+interpreter process at all, but
+.CW pid=1 ,
+.CW kp=0 \-
+init0 itself, still running
+.CW vmachine() .
+.CW schedmod()
+was never the right suspect; it does not build a kernel
+.CW Proc
+in the first place, only a Dis-level
+.CW Prog
+.CW vmachine() 's
+own loop interleaves within whichever kernel process called it.  Real
+diagnosis turned out to need less machinery, not more: printing on
+every interrupt entry, unconditionally, from inside the interrupt path
+itself, is pathological with a polled UART console \- each character
+the print writes completes with its own THRE interrupt, which the
+same unconditional print then reports on, without bound.  That
+explains both the earlier fault and the earlier silences: how much
+was printed changed what ran long enough to observe, which is not
+evidence of a race, only of a diagnostic that competed with what it
+was trying to watch.  A print gated to fire only when the vector or
+pid actually changes avoids the feedback and was the one used for
+everything below.
+.PP
+Chasing why nothing gets past
+.CW "Initial Dis:"
+found the actual, reproducible fault, and it was neither of the above:
+.B "panic: loading \(dq/osinit.dis\(dq: out of memory: main" .
+.CW os/inferno/pc64/main.c 's
+.CW poolsizeinit()
+had the image pool's
+.CW poolsize()
+call commented out \-
+.RI ( "TODO causes a double fault now. needs to be fixed" ) \-
+leaving
+.CW imagmem
+at whatever tiny size it starts with while
+.CW mainmem
+and
+.CW heapmem
+got their full, correctly computed shares.  Loading a Dis module
+allocates image memory; an unsized image pool is exactly what running
+out of it loading the very first one looks like.  Re-enabling it does
+not reproduce the double fault the TODO describes \- a full \~100MB
+contiguous allocate-then-free completes cleanly, unchanged since
+whatever caused it, most likely fixed as a side effect of one of this
+session's earlier corrections elsewhere in the boot path.
+.PP
+Getting far enough to hit that panic reliably needed the slow path
+gone, which turned into a second real fix.
+.CW randomseed() 's
+entropy loop was never a Timer bug \- established above \- but it
+still spends four \~7ms local-APIC ticks per byte, sixty-plus seconds
+for the 64 byte buffer it wants, entirely because nothing on this
+board supplies
+.CW random.c 's
+.CW hwrandbuf
+hook.  The hardware to do it instantly was already written and never
+connected:
+.CW "rdrand32 / rdrand64 / rdrandbuf"
+are complete in
+.CW pc64/l.s ,
+raw-byte encoded since kencc's assembler predates the RDRAND mnemonic,
+but
+.CW os/inferno/pc/devarch.c
+gated setting
+.CW hwrandbuf
+to them behind
+.CW "strcmp(m->cpuidid,\ \(dqGenuineIntel\(dq)"
+as well as the RDRAND CPUID bit \- RDRAND is a plain ISA feature, not
+Intel-specific, AMD has carried it since Zen, and this excluded every
+AMD chip that reports the bit correctly, unlike the vendor-neutral Pat
+and Mtrr checks right beside it.  Fixed to test the bit alone.  Even
+wired up, though, it would have done nothing:
+.CW randomseed()
+calls
+.CW hwrandbuf
+to fill
+.CW s->buf
+directly, then enters a loop watching
+.CW s->nbuf ,
+which only the slow timing-jitter callback ever advances \- sourcing
+entropy from real hardware and then waiting on a counter that fill
+never touches.  Now sets
+.CW nbuf\ =\ sizeof(s->buf)
+right after a successful
+.CW hwrandbuf
+call, which is what the loop was actually waiting to learn.
+.CW -cpu\ max
+under this session's QEMU (pure TCG, no KVM or HVF; the default
+.CW -cpu
+model here predates RDRAND in real silicon and correctly reports it
+absent, which is why this needed a non-default model to verify at
+all) confirms all three pieces together: identify() finds a valid
+RSDP and MADT and stays on
+.CW archacpi
+as before,
+.CW hwrandbuf
+gets set to
+.CW rdrandbuf ,
+and
+.CW randomseed() 's
+kproc completes too fast to ever be caught mid-execution by an
+interrupt \- in a trap() trace that, before this fix, showed it as the
+only thing running for the entire sampled window.
+.PP
+With all three landed, pc64 reaches
+.CW "Initial Dis:"
+and, per
+.CW -d\ exec ,
+genuinely keeps executing varied code afterward:
+.CW up->type
+becomes
+.CW Interp ,
+and instruction traces show real, changing work \- module parsing,
+apparently, plus at least one legitimate bounded routine (clearing a
+row of the VGA text buffer that nothing is watching) called often
+enough to dominate a short trace, which reads as wasted but not stuck.
+It has not yet been observed reaching a shell in the runs this session
+had time for, the longest given eight minutes.  Nothing found so far
+points to a further bug blocking it; what remains unconfirmed is
+simply how long un-JIT'd Dis bytecode interpretation takes under pure
+TCG CPU emulation on a non-x86 host, which is expected to be slow, not
+broken.
 .NH 1
 How a native kernel provides networking
 .PP
