@@ -1,0 +1,51 @@
+.TH FACTORTEST 1
+.SH NAME
+factortest \- regression test for factor(1)
+.SH SYNOPSIS
+.B factortest
+.SH DESCRIPTION
+.I Factortest
+loads
+.BR /p9/dis/factor.dis 's
+in-process test seam,
+.BR runstring(args) ,
+and checks a representative set of numbers against golden output: 1
+(no factors), a small prime, a composite with repeated small factors,
+a larger prime that exercises the trial-division wheel out to its own
+square-root bound, a perfect number, and multiple arguments factored
+in one call.
+.PP
+.IR Factor (1)
+is a translation of Plan 9's own
+.B sys/src/cmd/factor.c
+rather than a workalike, so every expected value here was checked
+independently (a from-scratch trial-division factorization, not
+derived from this file's own wheel logic), then cross-checked
+separately during development against both GNU coreutils'
+.I factor
+and the real Plan 9
+.I factor
+binary (this tree's local
+.B plan9port
+checkout) - all three agree on every case here.
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/factortest.b
+.SH SEE ALSO
+.IR factor (1)
+.SH BUGS
+Runs
+.I factor
+in-process via its
+.B runstring
+seam, not as a spawned subprocess reading real standard input - so it
+does not exercise
+.IR factor 's
+own
+.B init ,
+or its zero-argument (read numbers from standard input until a
+non-positive sentinel) form, at all.

@@ -11,6 +11,10 @@ TARG=\
 	bctest.dis\
 	join.dis\
 	jointest.dis\
+	primes.dis\
+	primestest.dis\
+	factor.dis\
+	factortest.dis\
 
 MODULES=\
 

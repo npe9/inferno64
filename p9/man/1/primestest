@@ -1,0 +1,64 @@
+.TH PRIMESTEST 1
+.SH NAME
+primestest \- regression test for primes(1)
+.SH SYNOPSIS
+.B primestest
+.SH DESCRIPTION
+.I Primestest
+loads
+.BR /p9/dis/primes.dis 's
+in-process test seam,
+.BR runstring(args) ,
+and checks a bounded
+.RI ( start
+.IR finish )
+range against golden output for each of several cases: a range within
+the pre-listed small-primes table, a range entirely past it (one sieve
+segment), a range straddling the table's own boundary, equal
+.IR start / finish
+(both prime and both composite),
+.I finish
+below
+.IR start ,
+and a
+.I start
+of 0.
+.PP
+.IR Primes (1)
+is a translation of Plan 9's own
+.B sys/src/cmd/primes.c
+rather than a workalike, so its real oracle is the algorithm's own
+unambiguous mathematical definition (every expected value here was
+checked independently, not derived from the sieve's own logic), cross-
+checked separately during development against the real
+.I primes
+binary (this tree's local
+.B plan9port
+checkout) for ranges where their command-line forms align.
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/primestest.b
+.SH SEE ALSO
+.IR primes (1)
+.SH BUGS
+Runs
+.I primes
+in-process via its
+.B runstring
+seam, not as a spawned subprocess reading real standard input - so it
+does not exercise
+.IR primes 's
+own
+.B init
+or its zero-argument (read
+.I start
+from standard input) form at all. Nor does it test the unbounded
+(one-argument, no
+.IR finish )
+form, since that runs indefinitely by design and would never return
+from an in-process call; that form was checked manually against the
+real oracle during development instead.

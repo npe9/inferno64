@@ -40,6 +40,65 @@ new: the C/`utils/` route stays valid for what's already built there (see the
 awk disambiguation right after it), but it is not how anything further gets
 added under this plan.
 
+## CORRECTION: translate the real Plan 9 C source, don't reinvent from a host oracle
+
+`dc`, `m4`, `bc`, and `join` (items 4-6 and the `join` entry under item 9,
+above) were each built as a **bounded behavioral workalike**: probe a host
+tool (macOS's `/usr/bin/dc`, `bc`, `join` - none of them Plan 9's own) with
+targeted test programs, reverse-engineer the rules that pass every probe, and
+implement to match. That discipline is sound *when there's no Plan 9 source to
+translate* - the whole reason it was used at all - but for two of those four,
+there **was** real Plan 9 source sitting unread the entire time: 9front's
+`sys/src/cmd/dc.c` (2297 lines - Plan 9's own dc long predates POSIX dc and is
+structurally quite different, e.g. macro definitions and register *stacks*,
+neither of which `p9/cmd/dc.b` implements) and `sys/src/cmd/join.c` (368
+lines). Building against the wrong oracle for those two means real behavioral
+differences from actual Plan 9 almost certainly exist, silently.
+
+`m4` and `bc` are not affected by this correction - 9front's `sys/src/cmd/`
+has no source for either (checked via the same tree fetch used for item 8's
+enumeration below): Plan 9 never shipped them, so a bounded workalike against
+the closest available Unix tool was the only option regardless, not a
+methodology mistake.
+
+**Going forward, the rule is: check for real Plan 9 C source first (the
+9front tree already fetched for item 8, or fetch the one file needed), and
+translate it - structure, variable names, algorithm - into Limbo, the same
+way `appl/cmd`'s existing transliterations (`sort`/`uniq`/`tr`/`wc`/`grep`/
+`sed`/`tac`, see "What's already ported" below) work.** A bounded, oracle-
+probed workalike is the fallback only when no Plan 9 source exists at all.
+`p9/cmd/primes.b` and `p9/cmd/factor.b` (a new item, below) are the first two
+done this way, translated line-for-line from `sys/src/cmd/primes.c` and
+`sys/src/cmd/factor.c`; `dc.b`/`join.b` are flagged for the same treatment,
+not yet redone.
+
+**Translation notes worth carrying forward, found doing the first two:**
+- C's `double` is Limbo's `real` (both IEEE double) - a direct match, not an
+  approximation, for any Plan 9 C source that deliberately uses `double` for
+  exact-integer range beyond 32 bits (both `primes.c` and `factor.c` do,
+  explicitly, up to 2^53).
+- `modf(x, &ip)` (C's fractional-part-return, integer-part-out-parameter
+  split) has no direct Limbo equivalent; every real call site in these two
+  files only wanted one half of that split, so each was translated to
+  whichever of `math->floor` or `math->fmod`-equals-zero actually matches the
+  intent, not forced into one generic pattern.
+- Two Limbo-specific gotchas cost real time: `big` is a reserved *type*
+  keyword, not just an identifier some Plan 9 code happens to use as a
+  variable name (`primes.c`'s own `double big = ...` collided directly);
+  and reusing the same loop-counter name (`i`) via `:=` twice in one
+  enclosing block is a compile error, not shadowing, unlike C's per-block
+  scoping - both are the same class of gotcha as `p9/cmd/m4.b`'s `tl`-is-
+  reserved finding, just newly triggered by literal C variable names this
+  time instead of invented ones.
+- A real translation bug, not a methodology one: `primes.c`'s `pt[]` table
+  has 50 entries; a first pass miscounted it as 49 by eye rather than
+  actually counting, silently dropping the table's last prime (229) from
+  any range starting inside the table. Found by a test straddling the
+  table's own 230 boundary against an independent primality check, not by
+  inspection - the same lesson as every oracle-verification section above,
+  now applying to literal-array-transcription mistakes as much as to
+  behavioral-rule mistakes.
+
 ## What's already ported (checked, not recalled)
 
 **Command-line tools, self-attributed.** `grep -rl "Lucent Public
@@ -600,3 +659,30 @@ below.
    confirmed with a negative control (broke the cross-product loop into
    first-match-only, the duplicate-key test failed with exactly the
    truncated output, restored, 14/14 passed again).
+
+   **Flagged for redoing as a real translation, per the correction
+   above: `join.b` was built as a workalike against macOS's `join`, not
+   from `sys/src/cmd/join.c` (368 lines), which does exist.** Not yet
+   redone.
+10. **`p9/cmd/primes.b` and `p9/cmd/factor.b` - real translations of
+    `sys/src/cmd/primes.c` and `factor.c`: done**, the first two built
+    under the correction above rather than the earlier workalike
+    discipline. Both use a segmented/incremental wheel sieve (structure,
+    variable names, and the wheel arrays themselves taken directly from
+    the C), both take numbers as Limbo `real` (matching the originals'
+    deliberate use of C `double` for exact-integer range past 2^53), and
+    both keep the C's own argument-handling shape: `primes [start
+    [finish]]` (zero arguments reads `start` from standard input, one
+    argument means no upper limit, `finish` below `start` exits cleanly,
+    above 2^53 is an error); `factor [number ...]` (no arguments reads
+    numbers from standard input until a non-positive sentinel).
+    See the CORRECTION section above for the translation notes and the
+    one real bug found (`primes.c`'s 50-entry small-primes table
+    miscounted as 49). Both verified against an independent primality/
+    factorization check (not derived from either file's own sieve
+    logic) and cross-checked against real binaries where available
+    (this tree's local `plan9port` checkout has genuine Plan 9 `primes`
+    and `factor`; GNU coreutils' `factor` agrees too). `p9/cmd/
+    primestest.b` (7 cases) and `p9/cmd/factortest.b` (9 cases) keep
+    these as permanent tests via `runstring(args)`; both confirmed with
+    a negative control.

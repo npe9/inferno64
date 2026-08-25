@@ -1,0 +1,78 @@
+.TH PRIMES 1
+.SH NAME
+primes \- generate primes, in Limbo
+.SH SYNOPSIS
+.B primes
+[
+.I start
+[
+.I finish
+]
+]
+.SH DESCRIPTION
+.I Primes
+is a line-for-line Limbo translation of Plan 9's own
+.IR primes (1)
+.RB ( sys/src/cmd/primes.c ),
+not a behavioral workalike reverse-engineered from a host tool - see
+.B doc/plan9-port.md
+in the source tree for the distinction. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Primes
+prints, one per line, every prime from
+.I start
+through
+.I finish
+inclusive. If
+.I finish
+is omitted, it prints indefinitely (until interrupted); if
+.I start
+is also omitted, it reads a single line from standard input as
+.I start
+instead (blank lines are skipped). A
+.I start
+of 0 is treated as 1.
+.I Finish
+below
+.I start
+exits cleanly with no output;
+.I finish
+above 2\u53\d (the largest integer a 64-bit float can represent
+exactly, which is also the largest number this program will ever
+consider) is an error.
+.PP
+Uses the same segmented wheel sieve as the original: numbers below 230
+come from a pre-computed table; above that, 8000-number-wide segments
+are sieved one at a time using wheel-mod-30 increments, so the process
+can run indefinitely without needing more memory as the range grows.
+.SH SOURCE
+.B /p9/cmd/primes.b
+(translated from
+.BR sys/src/cmd/primes.c )
+.SH SEE ALSO
+.IR primestest (1),
+.IR factor (1)
+.SH BUGS
+Every number here is Limbo's
+.B real
+(IEEE double), exactly matching the C original's use of
+.B double
+for the same reason: exact integer representation up to 2\u53\d, beyond
+what a 32-bit integer could hold. This program was never rewritten to
+use exact/arbitrary-precision integers and inherits the original's own
+range limit as a result, not a limit specific to this port.
+.PP
+The pre-listed table's element count was miscounted by one on the
+first translation attempt (49 instead of the real 50), silently
+dropping 229 from any range whose
+.I start
+fell in the table's own range - found by a test straddling the
+230 boundary against an independent primality check, not by
+inspection; see
+.IR primestest (1).

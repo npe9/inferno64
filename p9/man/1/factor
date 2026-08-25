@@ -1,0 +1,68 @@
+.TH FACTOR 1
+.SH NAME
+factor \- factor a number, in Limbo
+.SH SYNOPSIS
+.B factor
+[
+.I number
+\&...
+]
+.SH DESCRIPTION
+.I Factor
+is a line-for-line Limbo translation of Plan 9's own
+.IR factor (1)
+.RB ( sys/src/cmd/factor.c ),
+not a behavioral workalike reverse-engineered from a host tool - see
+.B doc/plan9-port.md
+in the source tree for the distinction, and
+.IR primes (1),
+a companion port from the same source file family. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+With arguments,
+.I factor
+prints each
+.I number
+followed by its prime factors, one per line, each indented five spaces,
+in non-decreasing order, repeated per multiplicity (so
+.B 12
+is followed by
+.BR 2 ,
+.BR 2 ,
+then
+.BR 3 ).
+A blank line follows each number's factors.
+.PP
+With no arguments,
+.I factor
+reads numbers one per line from standard input, factoring each in
+turn, until a line's value is zero or negative (which is treated as an
+end marker, not itself factored or reported as an error) or standard
+input ends.
+.SH SOURCE
+.B /p9/cmd/factor.b
+(translated from
+.BR sys/src/cmd/factor.c )
+.SH SEE ALSO
+.IR factortest (1),
+.IR primes (1)
+.SH BUGS
+Every number here is Limbo's
+.B real
+(IEEE double), exactly matching the C original's use of
+.B double
+for the same reason
+.IR primes (1)
+does - see its BUGS for the range limit that follows from that choice.
+.PP
+The trial-division wheel used past the 2/3/5/7 pre-checks starts its
+index at 1, not 0, in the original C - a real, easy-to-miss detail
+carried over deliberately rather than "cleaned up" to match
+.IR primes.b 's
+own, differently-indexed wheel loop; the two files' wheels are
+different sequences besides.
