@@ -2378,6 +2378,63 @@ previous section \- between
 .CW kmount()
 returning and pid 1's next bytecode \- narrower now than at any
 earlier point in this document, but still open.
+.PP
+One attempt at that instrumentation, for the record.
+.CW acquire() / release()
+in
+.CW port/dis.c
+are the token-passing pair guarding which host kproc is currently
+allowed to run Dis bytecode: a syscall that blocks calls
+.CW release()
+first (handing the token to another queued kproc, or if none are
+queued, marking the system idle and spawning a fresh
+.CW vmachine()
+kproc as a backstop) and
+.CW acquire()
+after, to get a token back before resuming.  Printing both branches
+of each showed pid 1 and its partner kproc (5, later 11) trading the
+token back and forth many dozens of times in the ordinary run-up to
+and past the mount, in the expected
+.CW "queue,\ empty\ 1\ /\ resumed\ /\ handoff"
+rhythm \- nothing about that handoff looked stuck.  It did not run to
+a conclusion: the print volume itself (one line per acquire and
+release, on every syscall, from several concurrently-printing kprocs)
+triggered a different, new panic,
+.RS
+.nf
+.CW "TYPE 0E ... CR2 ffffffffffffffff"
+.CW "panic: page fault"
+.fi
+.RE
+faulting inside
+.CW consw() ,
+the console write handler \- dereferencing what is almost certainly
+.CW H ,
+Dis's nil-heap sentinel, conventionally
+.CW (void*)-1
+in this tree.
+.CW up
+in this capture was properly 8-byte aligned
+.RB ( 0x6ec2200 ) ,
+so the earlier fix holds; this looks like a genuine but separate
+latent race in
+.CW consw()
+under concurrent heavy console traffic from multiple kprocs at once,
+almost certainly self-inflicted by the sheer print rate of this
+particular diagnostic rather than anything a normal boot would ever
+trigger.  Reverted before committing, like every diagnostic in this
+document.  Filed here rather than chased further: it answers a
+different question (is
+.CW consw()
+race-free under a print load no ordinary boot produces) than the one
+this section is trying to answer (why does execution stop after
+.CW kmount() )
+and conflating the two would cost more than it would settle.  The acquire()/release() instrumentation, done more
+sparingly \- one line at
+.CW Sys_mount() 's
+own call site rather than inside every
+.CW acquire() / release()
+globally \- is still the next useful step.
 .NH 1
 How a native kernel provides networking
 .PP
