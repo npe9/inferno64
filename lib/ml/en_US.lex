@@ -386,3 +386,9 @@ has	hˈæz
 own	ˈoʊn
 sees	sˈiːz
 view	vjˈuː
+
+# --- added for lib/demo/unix-for-poets.sh ------------------------------------
+bigrams	bˈaɪɡɹæmz
+line	lˈaɪn
+lowercase	lˈoʊɚkˌeɪs
+talks	tˈɔːks
