@@ -107,12 +107,93 @@ you	juː
 your	jʊɹ
 
 # --- this system's own words ------------------------------------------------
+# appl was not among the sweep's misses below - the dictionary already had
+# an entry - but its answer was espeak's raw, uncorrected guess ("uh-pull",
+# rhyming with "pull"), heard in a sentence that used it and corrected here
+# to how everyone actually says the top of this tree: like the fruit.
+appl	ˈæpəl
 dis	dˈɪs
 kernel	kˈɜːnəl
 limbo	lˈɪmboʊ
 namespace	nˈeɪmspeɪs
 shell	ʃˈɛl
 styx	stˈɪks
+
+# --- appl/cmd and appl/*, swept: every command and directory name in this
+# tree, checked against phon(2) by an actual program (wordsweep.b, not kept -
+# a one-off list-and-check, not a permanent test) rather than read down the
+# list by eye. 270 names in, 60 missing. Two left out here as not worth a
+# line: test-only binaries no tutorial is ever going to narrate
+# (line3test, progstem_probe), and one compound too specific to be worth
+# its own entry (os.purgatorio) - though purgatorio alone is, since Dis's
+# own directory names already play the same Dante joke this one does.
+#
+# Letters, not blended words, for anything that is an acronym with no
+# accepted spoken form of its own - cpu, usb, pwd, ml, ndb, mdb and the rest
+# of the three-letter Plan9 tool names. Blended real words where usage has
+# one - chgrp following chmod/chown's own "ch-" pattern; tclsh as "tickle
+# shell", Tcl's own well-known folklore pronunciation, not spelled at all;
+# tac as the real word "tack", which is the joke - it is cat spelled
+# backwards and reverses cat's output. X2Y names (bit2gif, man2html, raw2iaf)
+# read the 2 as "to", the convention it is there to abbreviate.
+9660srv	nˈaɪn sˈɪks sˈɪks ˈoʊ sˈɜːv
+9export	nˈaɪn ɛkspˈɔːɹt
+9srvfs	nˈaɪn sˈɜːv ˈɛf ˈɛs
+9win	nˈaɪn wˈɪn
+apl	ˈeɪ pˈiː ˈɛl
+asm	ˈeɪ ˈɛs ˈɛm
+avr	ˈeɪ vˈiː ˈɑːɹ
+bit2gif	bˈɪt tə ɡˈɪf
+cddb	sˈiː dˈiː dˈiː bˈiː
+chgrp	tʃɡɹˈuːp
+cmd	sˈiː ˈɛm dˈiː
+cmp	sˈiː ˈɛm pˈiː
+cpu	sˈiː pˈiː jˈuː
+dbfs	dˈiː bˈiː ˈɛf ˈɛs
+dbm	dˈiː bˈiː ˈɛm
+dd	dˈiː dˈiː
+du	dˈiː jˈuː
+env	ˈiː ˈɛn vˈiː
+fc	ˈɛf sˈiː
+fcp	ˈɛf sˈiː pˈiː
+fmt	ˈɛf ˈɛm tˈiː
+ftpfs	ˈɛf tˈiː pˈiː ˈɛf ˈɛs
+gif2bit	ɡˈɪf tə bˈɪt
+hd	ˈeɪtʃ dˈiː
+lib	lˈɪb
+m4	ˈɛm fˈɔːɹ
+man2html	mˈæn tə ˌeɪtʃtˌiːˌɛmˈɛl
+man2txt	mˈæn tə tˈɛkst
+mc	ˈɛm sˈiː
+md5sum	ˈɛm dˈiː fˈaɪv sˈʌm
+mdb	ˈɛm dˈiː bˈiː
+ml	ˈɛm ˈɛl
+mpc	ˈɛm pˈiː sˈiː
+ndb	ˈɛn dˈiː bˈiː
+promptstring	pɹˈɑːmptstɹɪŋ
+purgatorio	pˌɜːɡɐtˈɔːɹɪˌoʊ
+pwd	pˈiː dˈʌbəl juː dˈiː
+raw2iaf	rˈɔː tə ˈaɪ ˈeɪ ˈɛf
+rcmd	ˈɑːɹ sˈiː ˈɛm dˈiː
+rdp	ˈɑːɹ dˈiː pˈiː
+seq	sˈɛk
+sha1sum	ˈɛs ˈeɪtʃ ˈeɪ wˈʌn sˈʌm
+speakertest	spˈiːkɚ tˈɛst
+src	sˈoːɹs
+svc	ˈɛs vˈiː sˈiː
+tac	tˈæk
+tcl	tˈɪkəl
+tclsh	tˈɪkəl ʃˈɛl
+tcs	tˈiː sˈiː ˈɛs
+tkcmd	tˈiː kˈeɪ sˈiː ˈɛm dˈiː
+tl	tˈiː ˈɛl
+tr	tˈiː ˈɑːɹ
+trfs	tˈiː ˈɑːɹ ˈɛf ˈɛs
+ttffs	tˈiː tˈiː ˈɛf ˈɛf ˈɛs
+unidata	jˈuːnɪdˌeɪɾə
+usb	jˈuː ˈɛs bˈiː
+wav2iaf	wˈæv tə ˈaɪ ˈeɪ ˈɛf
+xd	ˈɛks dˈiː
 
 # --- Unix and Inferno folklore: how these are actually said, not spelled by
 # rule. espeak-ng's own guess was the starting point for every line below and
