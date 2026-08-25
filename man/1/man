@@ -230,7 +230,8 @@ script
 .br
 .B /appl/lib/parseman.b
 .SH "SEE ALSO"
-.IR wm (1)
+.IR wm (1),
+.IR man2speak (1)
 .SH BUGS
 .I Man2txt
 only knows about

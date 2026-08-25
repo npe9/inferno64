@@ -63,4 +63,14 @@ session wait 1.8
 say -t 'that is the whole idea: a screen reader that already knows everything the window manager and libtk know'
 session wait 2.5
 
+say -t 'one more thing this reader already does: documentation, not just window names'
+session wait 1.8
+say -t 'a man page is real troff, with real structure, and man two speak keeps that structure instead of throwing it away'
+session wait 2.4
+session type 'man2speak /man/1/wordfreq | sentences | speak'
+session key Return
+session wait 3.0
+say -t 'headings on their own, sentences cut where a sentence actually ends: the same system reading its own tools aloud'
+session wait 2.6
+
 say -t 'move between the two windows now, and listen for each one being announced'

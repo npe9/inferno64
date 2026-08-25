@@ -133,6 +133,7 @@ TARG=\
 	lstar.dis\
 	m4.dis\
 	man2html.dis\
+	man2speak.dis\
 	man2txt.dis\
 	mc.dis\
 	md5sum.dis\

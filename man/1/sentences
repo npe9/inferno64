@@ -40,11 +40,20 @@ first, it pauses where a person reading it aloud would:
 .EX
 man2txt /man/1/paste | sentences | speak
 .EE
+.IP
+For a man page specifically,
+.IR man2speak (1)
+is better than
+.I man2txt
+here: it keeps section headings out of the paragraphs that follow them,
+which this program - having only blank lines to go on - cannot recover
+once they're gone.
 .SH SOURCE
 .B /appl/cmd/sentences.b
 .SH SEE ALSO
 .IR speak (1),
-.IR man2txt (1)
+.IR man2txt (1),
+.IR man2speak (1)
 .SH BUGS
 Sentence boundaries are detected by punctuation alone: an abbreviation
 like

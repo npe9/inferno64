@@ -1,0 +1,67 @@
+.TH MAN2SPEAK 1
+.SH NAME
+man2speak \- a man page as text, structured for reading aloud
+.SH SYNOPSIS
+.B man2speak
+.I file
+.RI [ file " ...]"
+.SH DESCRIPTION
+.I Man2speak
+parses
+.I file
+- real troff, the same parser
+.IR man2txt (1)
+uses,
+.B /appl/lib/parseman.b
+- and writes it back out as text, differing from
+.I man2txt
+in exactly one way: a
+.B .SH
+or
+.B .SS
+heading is given its own paragraph, a blank line before it and after,
+rather than run straight into the body text that follows it.
+.PP
+.I Man2txt
+already knows which text came from a heading - parseman's
+.B Text
+adt carries a
+.B heading
+field for exactly that - and throws it away, because a terminal reader
+doesn't need the distinction to look right on screen. Piped through
+.IR sentences (1),
+which only has blank lines to go on, that loss shows: a heading fuses
+into the paragraph after it, so
+.B "NAME"
+and
+.B "paste - merge corresponding lines of several files"
+come out as one run rather than two. This keeps the one bit of
+structure
+.I sentences
+needs and throws away nothing else, so
+.IP
+.EX
+man2speak /man/1/paste | sentences | speak
+.EE
+.IP
+reads the heading as its own utterance and the body as the sentences it
+actually is.
+.SH SOURCE
+.B /appl/cmd/man2speak.b
+.SH SEE ALSO
+.IR man (1),
+.IR sentences (1),
+.IR speak (1)
+.SH BUGS
+Understands headings and running text; does not understand troff
+tables
+.RB ( .TS / .TE )
+or equations
+.RB ( .EQ / .EN ) ,
+because
+.I parseman
+doesn't parse them either. No man page in this tree uses either; some
+.B doc/*.ms
+papers do, which is a different, unattempted problem - reading a table
+aloud needs its own convention (row and column context per cell, not a
+paragraph to reflow), not a fix to this.

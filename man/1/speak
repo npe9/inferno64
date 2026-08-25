@@ -60,7 +60,7 @@ ls /dev | speak
 speak /tmp/notes
 speak -t 'the disk is full'
 speak /dev/voice/screen &	# the screen reader
-man2txt /man/1/paste | sentences | speak	# prose, not one-thing-per-line
+man2speak /man/1/paste | sentences | speak	# a man page, read like prose
 .EE
 .PP
 That fourth one is the whole screen reader.
@@ -77,7 +77,14 @@ piped straight through, it pauses mid-sentence and runs through the
 period at the end of the next one.
 .IR Sentences (1)
 reflows wrapped text back into one sentence per line first, so the
-pauses land where a person reading it aloud would put them.
+pauses land where a person reading it aloud would put them, and
+.IR man2speak (1)
+does the same parsing
+.I man2txt
+does but keeps a section heading out of the paragraph that follows it,
+which
+.I sentences
+has no way to recover once it's gone.
 .IR Voice (3)'s
 .B screen
 file gives one announcement per line and blocks until there is one, so reading
@@ -180,6 +187,7 @@ failure at the one thing this is for.
 .SH SEE ALSO
 .IR say (1),
 .IR sentences (1),
+.IR man2speak (1),
 .IR voice (2),
 .IR phon (2),
 .IR voice (3),
