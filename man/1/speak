@@ -60,9 +60,24 @@ ls /dev | speak
 speak /tmp/notes
 speak -t 'the disk is full'
 speak /dev/voice/screen &	# the screen reader
+man2txt /man/1/paste | sentences | speak	# prose, not one-thing-per-line
 .EE
 .PP
-That last one is the whole screen reader.
+That fourth one is the whole screen reader.
+.PP
+The last one matters for anything that reads like a paragraph rather
+than a directory listing.
+.I Speak
+paces itself one input line at a time, which is exactly right for
+.B "ls /dev"
+and exactly wrong for a man page that
+.IR man2txt (1)
+has wrapped at a fixed column with no regard for where a sentence ends -
+piped straight through, it pauses mid-sentence and runs through the
+period at the end of the next one.
+.IR Sentences (1)
+reflows wrapped text back into one sentence per line first, so the
+pauses land where a person reading it aloud would put them.
 .IR Voice (3)'s
 .B screen
 file gives one announcement per line and blocks until there is one, so reading
@@ -164,6 +179,7 @@ failure at the one thing this is for.
 .B /appl/cmd/speak.b
 .SH SEE ALSO
 .IR say (1),
+.IR sentences (1),
 .IR voice (2),
 .IR phon (2),
 .IR voice (3),

@@ -1,0 +1,63 @@
+.TH SENTENCES 1
+.SH NAME
+sentences \- reflow column-wrapped prose into one sentence per line
+.SH SYNOPSIS
+.B sentences
+[
+.I file
+]
+.SH DESCRIPTION
+.I Sentences
+reads
+.I file
+(standard input if none given) and writes it back out with exactly one
+sentence per line, regardless of how the input's own lines were broken.
+A blank line still ends a paragraph, but every other line between two
+blank lines is joined into one run of text first, with the wraps that
+wanted the line to fit a fixed column removed, and only then cut again -
+at a
+.BR . ,
+.B !
+or
+.B ?
+followed by white space or the end of the paragraph, not at wherever the
+original line happened to end.
+.PP
+This exists for
+.IR speak (1),
+which reads one utterance per input line - the right thing for
+.B ls /dev
+or a directory listing, one item to a line, and the wrong thing for
+prose that
+.IR man2txt (1)
+or any other formatter has wrapped at 65 columns with no regard for
+where a sentence ends. Piped straight through
+.IR speak ,
+a wrapped man page pauses in the middle of a sentence and runs straight
+through the period at the end of the next one; piped through this
+first, it pauses where a person reading it aloud would:
+.IP
+.EX
+man2txt /man/1/paste | sentences | speak
+.EE
+.SH SOURCE
+.B /appl/cmd/sentences.b
+.SH SEE ALSO
+.IR speak (1),
+.IR man2txt (1)
+.SH BUGS
+Sentence boundaries are detected by punctuation alone: an abbreviation
+like
+.B e.g.
+or
+.B Mr.
+ends a sentence early, the same wrong way any rule this simple does.
+Fixing that needs real abbreviation knowledge, which this does not have.
+.PP
+A block of code or shell commands inside a man page's
+.B EXAMPLE
+section has no sentence-ending punctuation of its own, so it is joined
+into one long run rather than split sensibly - this reflows prose, and a
+shell pipeline is not prose. Reading an
+.B EXAMPLE
+section understandably is a different problem, not attempted here.

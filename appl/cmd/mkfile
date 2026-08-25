@@ -175,6 +175,7 @@ TARG=\
 	runas.dis\
 	sed.dis\
 	sendmail.dis\
+	sentences.dis\
 	seq.dis\
 	sha1sum.dis\
 	sleep.dis\

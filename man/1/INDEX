@@ -465,6 +465,7 @@ schedcmp schedcmp
 secstore secstore
 send sh-tk
 sendmail sendmail
+sentences sentences
 session grid-session
 sessiontest sessiontest
 set sh
