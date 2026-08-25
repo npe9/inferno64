@@ -5,6 +5,8 @@ TARG=\
 	awktest.dis\
 	dc.dis\
 	dctest.dis\
+	m4.dis\
+	m4test.dis\
 
 MODULES=\
 

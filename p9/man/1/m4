@@ -1,0 +1,181 @@
+.TH M4 1
+.SH NAME
+m4 \- macro processor, in Limbo
+.SH SYNOPSIS
+.B m4
+[
+.B -e
+.I script
+]
+[
+.B -f
+.I scriptfile
+]
+[
+.I file ...
+]
+.SH DESCRIPTION
+.I M4
+is a Limbo-native workalike for a bounded subset of
+.IR m4 (1),
+the macro processor, compiled to Dis and run by
+.IR emu ,
+not a host binary \(em see
+.B doc/plan9-port.md
+in the source tree. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I M4
+reads a program (its input text, with macro calls expanded in place) from
+.I file
+arguments (concatenated in order), or standard input if none are given,
+or from
+.B -e
+.I script
+and
+.B -f
+.I scriptfile
+arguments (repeatable, evaluated before any files), and writes the
+expanded result to standard output.
+.PP
+Ordinary text is copied through unchanged. A run of letters, digits and
+underscores starting with a letter or underscore is a potential macro
+name; if it names a defined macro, it is replaced by that macro's
+expansion, which is itself rescanned for further macro calls before
+being emitted \(em the same rescanning real
+.IR m4 (1)
+does, including on a macro's own stored body at every later invocation,
+not only on freshly-read text.
+.PP
+A name is invoked with arguments only if
+.B (
+follows it immediately, with no intervening space; arguments are
+separated by top-level commas (not ones inside nested parentheses or
+quotes) and are themselves expanded before being substituted into the
+macro's body. A bare name with no parentheses has zero arguments; an
+explicit
+.B ()
+has exactly one, the empty string \(em these differ in
+.B $#
+even though
+.B $1
+is the empty string either way.
+.PP
+Quoting uses the default
+.B ` \&...\ '
+pair (backtick / apostrophe), nested (an inner
+.RB ` ... '
+pair keeps its own markers literally in the output; only the outermost
+pair is stripped) and suppresses macro scanning inside. A
+.B #
+starts a comment that runs to end of line and is copied to the output
+verbatim, without any macro expansion inside it \(em this is
+.IR m4 's
+real default behavior, not a bounded-scope simplification, and it is
+easy to trip over: an unquoted
+.B #
+inside an argument swallows the rest of the line, including whatever
+would have closed the argument list.
+.SS Builtins
+.TP
+.BI define( name , body )
+Define
+.I name
+to expand to
+.I body
+on every later invocation, with
+.BR $1 through
+.BR $9 ,
+.BR $0 ,
+and
+.B $#
+in
+.I body
+substituted at call time (never at define time) with that call's
+arguments, the macro's own name, and the argument count.
+.TP
+.BI undefine( name )
+Remove
+.IR name 's
+definition; it is no longer recognized as a macro.
+.TP
+.BI ifdef( name , then , [ else ])
+.I then
+if
+.I name
+is currently defined,
+.I else
+(empty if omitted) otherwise.
+.TP
+.BI ifelse( a , b , then " [, " a2 , b2 , then2 ", ... ] [, " default ])
+Compares
+.I a
+to
+.IR b ;
+if equal, the result is
+.IR then .
+Otherwise, if a further
+.IR a2 , b2 , then2
+triple is given, repeats the comparison with it, and so on; if nothing
+matches and a trailing, un-tripled argument remains, that is the
+default result.
+.TP
+.BI include( filename )
+Reads
+.I filename
+and rescans its content as more input.
+.TP
+.B dnl
+Discards everything from itself to the end of the line, including the
+newline \(em unlike other builtins, it does not look for a following
+.B (
+at all.
+.SH SOURCE
+.B /p9/cmd/m4.b
+.SH SEE ALSO
+.IR m4test (1)
+.SH BUGS
+This is a deliberately bounded subset. No
+.BR divert / undivert
+(output diversion), no
+.BR changequote / changecom
+(the quote and comment delimiters are always the defaults above), no
+.BR syscmd / esyscmd
+(shelling out), no
+.B eval
+(arithmetic expressions \(em a genuinely common builtin in real
+.IR m4 ,
+left out because this bounded scope has no expression evaluator; see
+.IR dc (1)
+for a separate calculator), no
+.BR len / substr / index / translit / format ,
+no
+.BR pushdef / popdef
+(macro definition stacks \(em
+.B define
+always simply overwrites).
+.PP
+.BR define ", " undefine ", " ifdef ", " ifelse ", " include ", and " dnl
+are always recognized as builtins and can never be redefined or
+undefined, unlike real
+.IR m4 ,
+where they are just regular (if predefined) macros like any other.
+.PP
+Every rule about argument collection, quoting, and comments above was
+checked against the host's own
+.I m4
+with targeted probes before any of this was written, not read off the
+.I m4
+manual from memory \(em including the default
+.B #
+comment behavior, found only because an early test program with an
+unquoted
+.B #
+in it produced a real oracle error
+.RB ( "end of file in argument list" )
+that had to be tracked down rather than assumed away.

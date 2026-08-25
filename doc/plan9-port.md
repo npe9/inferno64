@@ -222,13 +222,49 @@ below.
    the same in-process `runstring(prog)` seam as `awktest.b`, confirmed
    with a negative control (broke `+` into `-`, 6 of 28 tests failed with
    exactly the corrupted output, restored, all 28 passed again).
-5. **`p9/cmd/m4.b` - a macro processor.** Bounded subset: `define`,
-   `undefine`, positional arguments (`$1`.."$9`, `$#`, `$0`), `ifdef`,
-   `ifelse`, `include`, quoting with the default `` ` ''` delimiters,
-   `dnl`. No `divert`, no `sysval`/`syscmd`, no changequote/changecom. Host
-   `/usr/bin/m4` is the reference oracle, same method. Not yet started.
-   Lower priority than (4): more moving parts (rescanning, quote depth),
-   less immediately useful to this fork's own corpus than (6) below.
+5. **`p9/cmd/m4.b` - a macro processor: done.** Bounded subset: `define`,
+   `undefine`, `$1`-`$9`/`$#`/`$0`, `ifdef`, `ifelse` (including the
+   chained-triplet form), `include`, `dnl`, default `` ` '' `` quoting
+   (nested, one level stripped per invocation - including on a macro's
+   *stored* body at every later call, not just fresh text). No `divert`,
+   no `changequote`/`changecom`, no `syscmd`/`esyscmd`, no `eval` (a
+   genuinely common real-m4 builtin, left out since this scope has no
+   expression evaluator - see `dc` for that, separately), no
+   `pushdef`/`popdef`. The five multi-arg builtins plus `dnl` can never
+   be redefined/undefined, unlike real m4 where they're ordinary macros.
+   Implementation is a single recursive `scanexpand(string): string` -
+   collect a macro's raw arguments (respecting quote/paren nesting),
+   recursively expand each, substitute into the body, then recursively
+   rescan the result - rather than a literal character-stream-with-
+   pushback model, since the bounded scope (no `divert`) doesn't need
+   real interleaved I/O. Every behavioral rule (argument whitespace
+   trimming, `name` vs `name()` differing in `$#`, quote nesting, and
+   critically the default `#`-starts-a-comment convention) was
+   reverse-engineered against the host's own `m4` with targeted probes
+   before writing code, not read off the manual from memory - the `#`
+   rule specifically was *found*, not looked up: an early test program
+   with an unquoted `#` produced a real oracle error ("end of file in
+   argument list") that had to be tracked down. One probing mistake is
+   worth recording rather than hiding: two early tests referenced `$0`
+   in a macro body with no guard, which (correctly, matching real m4)
+   recurses forever on rescan since `$0` re-invokes the macro by name -
+   this ran the host's own `gm4` into a multi-gigabyte runaway output
+   before the mistake was caught, requiring the process be killed. Not a
+   bug in this engine or in real m4; a self-inflicted unbounded test
+   input, avoided afterward by piping exploratory probes through
+   `timeout` *and* `head -c` together, since `timeout` alone doesn't cap
+   how much a tight loop can print before its clock runs out.
+   21 programs checked against the host oracle this way, 21/21
+   identical; `p9/cmd/m4test.b` keeps 19 of them (via the same
+   `runstring(prog)` in-process seam as `awktest.b`/`dctest.b`) as a
+   permanent regression test, confirmed with a negative control (an
+   off-by-one in `$1`-`$9` substitution, 2 of 19 tests failed with
+   exactly that corruption, restored, all 19 passed again). Two of the
+   test's own first-draft expected values were themselves wrong (assumed
+   behavior instead of checking it) and were caught by the test failing
+   against the *working* implementation, then fixed against a fresh,
+   explicit oracle check rather than adjusted to whatever the code
+   happened to produce.
 6. **A troff-equivalent for this tree's own `man/1` corpus, text output
    only (an nroff, not a typesetting troff) - the concrete answer to
    "wire an Inferno-native troff/ms toolchain."** Scoped from evidence, not
