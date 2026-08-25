@@ -1574,6 +1574,54 @@ stchk(Node *n)
 				daschk(n);
 				return;
 			case Oas:
+				if(n->left->op == Oseq){
+					/*
+					 * "a, b = f()": same destructuring as daschk's
+					 * ":=" case above, but every LHS name is an
+					 * *existing* variable (echk()'d, not declared)
+					 * -- unlike :=, Oas's LHS can in general be any
+					 * lvalue, but multi-assignment is scoped to
+					 * plain names here, same as := effectively is
+					 * (daschk already errors on anything else).
+					 */
+					Node *p, *id;
+					Decl *fd;
+					Type *rt, *lt;
+					int nlhs, nrhs;
+
+					rt = echk(n->right);
+					if(rt->kind != Ttuple){
+						nerror(n, "multiple assignment needs a multi-valued call on the right, not %T", rt);
+						return;
+					}
+					nlhs = 0;
+					for(p = n->left; p != nil; p = p->right){
+						nlhs++;
+						if(p->op != Oseq)
+							break;
+					}
+					nrhs = 0;
+					for(fd = rt->ids; fd != nil; fd = fd->next)
+						nrhs++;
+					if(nlhs != nrhs){
+						nerror(n, "assignment count mismatch: %d = %d", nlhs, nrhs);
+						return;
+					}
+					fd = rt->ids;
+					for(p = n->left; p != nil; p = p->right){
+						id = p;
+						if(p->op == Oseq)
+							id = p->left;
+						lt = echk(id);
+						if(lt != terror && !assignable(lt, fd->ty, nil))
+							nerror(n, "cannot assign %T to %T", fd->ty, lt);
+						fd = fd->next;
+						if(p->op != Oseq)
+							break;
+					}
+					n->ty = rt;
+					return;
+				}
 				t = echk(n->right);
 				echk(n->left);
 				if(n->left->ty != terror && !assignable(n->left->ty, t, n->right))

@@ -34,6 +34,7 @@ static Node	*sumark(Node*);
 static Node	*ecom(Src*, Node*, Node*);
 static Node	*eacom(Node*, Node*, Node*);
 static void	storecomposite(Src*, Node*, Node*);
+static void	destructure(Src*, Node*, Node*);
 static void	scom(Node*);
 static void	callcom(Src*, int, Node*, Node*);
 static void	casecom(Node*);
@@ -587,6 +588,60 @@ storecomposite(Src *src, Node *base, Node *composite)
 	}
 }
 
+/*
+ * "lhs, lhs, ... = rhs" where rhs is a multi-valued call (Ttuple
+ * result): call rhs once into a fresh tuple-shaped temp, then copy
+ * each field out to its destructured LHS name.  shared by Odas
+ * ("n, s := f()", every lhs a fresh Oname just declared by daschk)
+ * and Oas ("a, b = f()", every lhs an existing, already-echk()'d
+ * name) -- both check.c paths already validated the RHS is Ttuple-
+ * typed with a matching field count before this runs, so no error
+ * handling is needed here, just the store.
+ *
+ * the temp is a plain local *value* (not behind a ref), same shape
+ * as any value-typed struct local -- so reading its fields needs
+ * the same Oadr-wrapped, no-real-dereference addressing check.c's
+ * Odot case uses for p.x on a value struct, not Otuple's own ecom
+ * case (the *opposite* case: retalloc()'s destination is retnode, a
+ * genuine indirection the callee writes through, not a plain local).
+ */
+static void
+destructure(Src *src, Node *lhs, Node *rhs)
+{
+	Node tuptemp, *p, *id, *adr, *off, *addr, *ind;
+	Decl *fd;
+
+	sumark(rhs);
+	talloc(&tuptemp, rhs->ty, nil);
+	ecom(src, &tuptemp, rhs);
+
+	fd = rhs->ty->ids;
+	for(p = lhs; p != nil; p = p->right){
+		id = p;
+		if(p->op == Oseq)
+			id = p->left;
+		sumark(id);
+		adr = mkn(Oadr, dupn(&tuptemp), nil);
+		adr->src = id->src;
+		adr->ty = rhs->ty;
+		off = mkconst(&id->src, fd->offset);
+		off->ty = tint;
+		addr = mkn(Oadd, adr, off);
+		addr->src = id->src;
+		addr->ty = tint;
+		sumark(addr);
+		ind = mkn(Oind, addr, nil);
+		ind->src = id->src;
+		ind->ty = fd->ty;
+		sumark(ind);
+		ecom(&id->src, id, ind);
+		fd = fd->next;
+		if(p->op != Oseq)
+			break;
+	}
+	tfree(&tuptemp);
+}
+
 static Node*
 ecom(Src *src, Node *nto, Node *n)
 {
@@ -1084,52 +1139,9 @@ scom(Node *n)
 				/*
 				 * "n, s := multi()": daschk (check.c) already
 				 * checked the RHS is Ttuple-typed with a field
-				 * count matching the LHS name count.  call it
-				 * once into a fresh tuple-shaped temp, then copy
-				 * each field out to its destructured local.
-				 *
-				 * the temp is a plain local *value* (not behind
-				 * a ref), same shape as any value-typed struct
-				 * local -- so reading its fields needs the same
-				 * Oadr-wrapped, no-real-dereference addressing
-				 * check.c's Odot case uses for p.x on a value
-				 * struct, not Otuple's own ecom case just above
-				 * (the *opposite* case: retalloc()'s destination
-				 * is retnode, a genuine indirection the callee
-				 * writes through, not a plain local).
+				 * count matching the LHS name count.
 				 */
-				Node tuptemp, *p, *id, *adr, *off, *addr, *ind;
-				Decl *fd;
-
-				sumark(n->right);
-				talloc(&tuptemp, n->right->ty, nil);
-				ecom(&n->src, &tuptemp, n->right);
-
-				fd = n->right->ty->ids;
-				for(p = n->left; p != nil; p = p->right){
-					id = p;
-					if(p->op == Oseq)
-						id = p->left;
-					sumark(id);
-					adr = mkn(Oadr, dupn(&tuptemp), nil);
-					adr->src = id->src;
-					adr->ty = n->right->ty;
-					off = mkconst(&id->src, fd->offset);
-					off->ty = tint;
-					addr = mkn(Oadd, adr, off);
-					addr->src = id->src;
-					addr->ty = tint;
-					sumark(addr);
-					ind = mkn(Oind, addr, nil);
-					ind->src = id->src;
-					ind->ty = fd->ty;
-					sumark(ind);
-					ecom(&id->src, id, ind);
-					fd = fd->next;
-					if(p->op != Oseq)
-						break;
-				}
-				tfree(&tuptemp);
+				destructure(&n->src, n->left, n->right);
 				popblock();
 				return;
 			}
@@ -1148,6 +1160,16 @@ scom(Node *n)
 			return;
 		case Oas:
 			pushblock();
+			if(n->left->op == Oseq){
+				/*
+				 * "a, b = f()": same destructuring as Odas above,
+				 * but every LHS name is an existing variable
+				 * (echk()'d in check.c's Oas case, not declared).
+				 */
+				destructure(&n->src, n->left, n->right);
+				popblock();
+				return;
+			}
 			sumark(n->right);
 			sumark(n->left);
 			ecom(&n->src, n->left, n->right);
