@@ -1,0 +1,61 @@
+.TH JOINTEST 1
+.SH NAME
+jointest \- regression test for join(1)
+.SH SYNOPSIS
+.B jointest
+.SH DESCRIPTION
+.I Jointest
+loads
+.BR /p9/dis/join.dis 's
+in-process test seam,
+.BR runstring(args,\ in1,\ in2) ,
+and checks a representative subset of the programs used to develop
+.IR join (1)
+against golden output: the default matched format,
+.BR -a / -v
+unpairable-line handling (including that
+.B -v
+suppresses matched output entirely, unlike
+.BR -a ),
+duplicate-key cross products,
+.BR -o / -e
+field selection and replacement,
+.BR -1 / -2
+field selection, and the
+.B -t
+separator. Every expected string was checked once against the host's
+real
+.IR join .
+.PP
+Also checks a real bug this file's own probing caught: an early version
+of
+.B -o
+field-order handling produced its fields backwards
+.RB ( "0,1.2,2.2"
+came out
+.BR "2.2,1.2,0" )
+from a double-reversal mistake, found by comparing
+.B -o
+output against the host rather than by inspection.
+.PP
+Prints one line per failure to standard error, a final
+.IR N " passed, " N " failed"
+summary to standard output, and exits with a non-nil status if
+anything failed.
+.SH SOURCE
+.B /p9/cmd/jointest.b
+.SH SEE ALSO
+.IR join (1)
+.SH BUGS
+Runs
+.I join
+in-process via its
+.B runstring
+seam, not as a spawned subprocess reading real files and standard
+input/output \(em so it does not exercise
+.IR join 's
+own
+.BR init ,
+argument parsing, file I/O, or the
+.B -
+(stdin) file argument at all.

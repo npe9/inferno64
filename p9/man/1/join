@@ -1,0 +1,194 @@
+.TH JOIN 1
+.SH NAME
+join \- relational join of two sorted files, in Limbo
+.SH SYNOPSIS
+.B join
+[
+.BI -a\  n
+|
+.BI -v\  n
+]
+[
+.BI -e\  string
+]
+[
+.BI -o\  list
+]
+[
+.BI -t\  char
+]
+[
+.BI -1\  field
+]
+[
+.BI -2\  field
+]
+.I file1 file2
+.SH DESCRIPTION
+.I Join
+is a Limbo-native workalike for a bounded subset of
+.IR join (1),
+compiled to Dis and run by
+.IR emu ,
+not a host binary \(em see
+.B doc/plan9-port.md
+in the source tree. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Join
+reads
+.I file1
+and
+.IR file2 ,
+each already sorted on its join field (this program does not sort them
+itself, same as real
+.IR join ),
+and writes one output line for every pair of lines \(em one from each
+file \(em whose join fields are equal: the join field's value, then
+.IR file1 's
+remaining fields, then
+.IR file2 's
+remaining fields. If either
+.I file1
+or
+.I file2
+is
+.BR - ,
+standard input is read for that one.
+.PP
+Lines with a repeated key on either side produce every combination, not
+just the first: a key appearing twice in
+.I file1
+and twice in
+.I file2
+produces four output lines.
+.PP
+The default field separator is a run of one or more spaces and/or tabs
+(leading whitespace before the first field is skipped entirely); the
+default
+.I output
+field separator is always a single space, regardless of what the input
+used.
+.SS Options
+.TP
+.BI -a\  n
+In addition to the default matched output, also emit a line for every
+unpairable line in file
+.I n
+(1 or 2).
+.TP
+.BI -v\  n
+Emit
+.I only
+the unpairable lines from file
+.I n
+\(em unlike
+.BR -a ,
+this suppresses the default matched output entirely.
+.B -v 1
+and
+.B -v 2
+may both be given.
+.TP
+.BI -e\  string
+Replace an empty output field with
+.I string
+(most useful with
+.B -a
+and
+.BR -o ,
+where an unpaired line has nothing to contribute for the other file's
+fields).
+.TP
+.BI -o\ list
+Choose exactly which fields appear, and in what order, instead of the
+default format.
+.I List
+is one or more comma-separated elements (repeatable
+.B -o
+options concatenate, in the order given), each either
+.B 0
+(the join field's value) or
+.IB filenum . field
+(1-based field
+.I field
+of file
+.IR filenum ).
+A field reference past the end of a line's actual fields \(em including
+every
+.IB n . field
+reference for the file that has no matching line \(em reads as empty
+(or the
+.B -e
+string).
+.TP
+.BI -t\  char
+Use
+.I char
+as the field separator for splitting
+.I and
+for output, in place of the whitespace-run default; every occurrence of
+.I char
+is a separator (no collapsing).
+.TP
+.BI -1\  field
+Join on
+.IR field 's-th
+field of
+.I file1
+(1-based) instead of the first.
+.TP
+.BI -2\  field
+The same, for
+.IR file2 .
+.SH SOURCE
+.B /p9/cmd/join.b
+.SH SEE ALSO
+.IR jointest (1)
+.SH BUGS
+This is a deliberately bounded subset: no bare
+.B -a
+(historic, meaning both files at once), no
+.BR -j / -j1 / -j2
+(historic synonyms for
+.BR -1 / -2 ),
+no multi-argument
+.B -o
+(historic; use commas or repeat
+.B -o
+instead) \(em the real
+.IR join (1)'s
+own manual calls all of these "compatibility" options that "should not
+be used", so none are ported.
+.PP
+Input is assumed already sorted on its join field, exactly like the
+real oracle: this program does not sort, check, or warn, so unsorted
+input can silently miss real matches once the merge scan has advanced
+past them \(em checked against the host directly (an out-of-order key
+in one file caused a real pair to go unreported, with no error), not
+assumed to be safe.
+.PP
+A join-field index past the end of a particular line's fields compares
+as the empty string rather than raising an error \(em also checked
+against the host, which does the same (silently, exit status 0) rather
+than treating it as malformed input.
+.PP
+Field-value comparison is plain byte-for-byte string comparison, not
+locale-aware collation; for ordinary ASCII sorted input (the common
+case for a "C" locale) this matches the host directly, but is not
+guaranteed to match a locale-specific
+.IR sort (1)
+in every case.
+.PP
+Every rule above (default separator vs. output separator, cross-product
+on duplicate keys, `-v` suppressing matched output entirely rather than
+just adding to it, out-of-range field handling) was checked against the
+host's own
+.I join
+(macOS/BSD, POSIX-conformant) with targeted probes before writing any of
+this, not read off a manual from memory.

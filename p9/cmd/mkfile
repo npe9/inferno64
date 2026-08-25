@@ -9,6 +9,8 @@ TARG=\
 	m4test.dis\
 	bc.dis\
 	bctest.dis\
+	join.dis\
+	jointest.dis\
 
 MODULES=\
 

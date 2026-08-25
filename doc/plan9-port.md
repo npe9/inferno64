@@ -561,3 +561,42 @@ below.
    not a quick port, and a genuinely unclassified residual that needs
    someone to look at the actual 9front source
    before it can be triaged further. Still open, and this is that list.
+
+   **`hoc` does *not* collapse into `bc` despite looking like a variant
+   of the same evaluator** - checked, not assumed, before continuing to
+   list them as if they were the same size of job. `hoc` exists on this
+   host (`plan9port`'s build); `echo '1/3' | hoc` prints
+   `0.3333333333333333` - IEEE double, not `bc`'s exact fixed-point.
+   Reusing `bc.b`'s parser *shape* (recursive descent, the same kind of
+   `define`/control-flow grammar) is plausible, but the numeric core
+   would need to be Limbo's `real`, not the `Dnum`/`big` arithmetic - a
+   different foundation, not a reskin. Demoted accordingly: `hoc` is
+   still a reasonable candidate, just not the near-free one `bc`'s
+   existing work would have made it.
+
+   **`p9/cmd/join.b` - relational join of two sorted files: done**, one
+   of the candidates from this list. A classic sorted merge-join over
+   two pointers, cross-producting every combination on a duplicate key
+   (checked against the oracle, not assumed - a key appearing twice on
+   each side produces all four combinations). Bounded: default and
+   `-1`/`-2` field selection, `-t` separator, `-o` field list (comma or
+   repeated, `0` or `file.field`), `-a`/`-v` unpairable-line handling
+   (`-v` suppresses the default matched output entirely, unlike `-a`,
+   which adds to it), `-e` empty-field replacement, `-` for stdin. No
+   bare `-a` / `-j` / `-j1` / `-j2` / multi-argument `-o` - the real
+   `join(1)`'s own manual calls these "compatibility" options that
+   "should not be used", so none are ported. Input is assumed already
+   sorted, same as the oracle: neither sorts nor validates, so unsorted
+   input can silently miss real matches - checked directly (an out-of-
+   order key made a real pair go unreported, no error), not assumed
+   safe. 14 programs checked against the host's real `join`, all
+   matching after one real bug found during that same probing: an early
+   version of `-o`'s field-order handling produced its output backwards
+   (`0,1.2,2.2` came out `2.2,1.2,0`) from a double-reversal mistake -
+   caught by comparing `-o` output against the host, not by inspection.
+   `p9/cmd/jointest.b` keeps all 14 as a permanent test via
+   `runstring(args, in1, in2)` - a two-input extension of `awk.b`'s
+   `runstring(prog, input)` seam, since `join` always takes two files -
+   confirmed with a negative control (broke the cross-product loop into
+   first-match-only, the duplicate-key test failed with exactly the
+   truncated output, restored, 14/14 passed again).
