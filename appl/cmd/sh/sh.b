@@ -1111,7 +1111,13 @@ parsewaitstatus(ctxt: ref Context, status: string): (int, string, string)
 	for (i := 0; i < len status; i++)
 		if (status[i] == ' ')
 			break;
-	if (i == len status - 1 || status[i+1] != '"')
+	# i==len status-1 only catches the space landing on the last
+	# byte; an empty status leaves the loop with i unchanged at 0,
+	# and len status-1 is -1, so that equality is false and
+	# status[i+1] read one past an empty string -- an array bounds
+	# error uncaught by any exception handler here, not the
+	# graceful ctxt.fail() below.  >= catches both.
+	if (i >= len status - 1 || status[i+1] != '"')
 		ctxt.fail("bad wait read",
 			sys->sprint("sh: bad exit status '%s'", status));
 
