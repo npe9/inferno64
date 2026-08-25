@@ -7,7 +7,6 @@ OFILES=\
 	lex.$O\
 	lib.$O\
 	main.$O\
-	missing95.$O\
 	parse.$O\
 	proctab.$O\
 	run.$O\
@@ -20,9 +19,6 @@ HFILES=\
 	ytab.h\
 
 LIBS=bio			# order is important
-
-CFLAGS=$CFLAGS -QIfdiv-
-LDFLAGS=$LDFLAGS setargv.obj
 
 BIN=$ROOT/$OBJDIR/bin
 

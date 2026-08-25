@@ -47,22 +47,43 @@ territory, not touched for this plan). The letter-to-architecture mapping
 recalling, not re-derived here - confirm against `utils/*/mkfile` or
 Plan 9's own docs before quoting it as fact anywhere else.
 
-**awk's actual source is already here, at `utils/awk/`** - the real
-files (`b.c lex.c lib.c main.c parse.c run.c tran.c ytab.c`, an
-`awkgram.y` yacc grammar, its own working `mkfile`), not a stub. Checked
-directly: it is **not** referenced anywhere in `utils/mkfile`'s `ALWAYS`,
-`NOTPLAN9`, or `NTONLY` lists, the three lists every top-level `mk`
-target (`all-Posix`, `all-Nt`, `all-Plan9`, `all-9front`) walks. So it
-never gets built by an ordinary `mk` of this tree - not because it's
-unported, but because nothing asks for it. **This reframes "port awk" as
-"add `awk` to the right list in `utils/mkfile` and confirm it links
-against this tree's `libbio`," not "implement or port a language."** Not
-yet attempted - `utils/` shows unrelated dirty files in `6c`, `6l`, `cc`
-(likely the parallel kernel work already noted as off-limits territory)
-and running a build there wasn't attempted this session to avoid
-stepping on that. **Next concrete step: `cd utils/awk && mk` on a clean
-checkout (or after confirming with whoever owns `utils/`'s current dirty
-state), see what breaks.**
+**UPDATE: done.** awk's actual source was already here, at `utils/awk/`
+- the real files (`b.c lex.c lib.c main.c parse.c run.c tran.c ytab.c`,
+an `awkgram.y` yacc grammar, its own working `mkfile`), not a stub - and
+it was not referenced anywhere in `utils/mkfile`'s `ALWAYS`, `NOTPLAN9`,
+or `NTONLY` lists, the three lists every top-level `mk` target walks, so
+it never got built by an ordinary `mk` of this tree. Attempting
+`cd utils/awk && mk` on this host (macOS/arm64, clang) surfaced exactly
+three small, well-understood portability problems, all now fixed, none
+of them a real "port a language" job:
+
+1. `mkfile` hardcoded `-QIfdiv-` (a Watcom/OpenWatcom flag) into `CFLAGS`
+   and `setargv.obj` (an MSVC/Watcom wildcard-expansion object) into
+   `LDFLAGS`, unconditionally - clang rejects the first outright. Both
+   were Windows-only leftovers from whenever this last built on Nt;
+   removed.
+2. awk's own internal C function `getline` (`run.c`, `proto.h`,
+   `proctab.c`) collides with POSIX's standard library `getline()`,
+   added to `<stdio.h>` well after this "one true awk" source was first
+   written. Renamed the internal one to `awkgetline` in all three places
+   - the awk *language* keyword `getline` (in `lex.c`/`maketab.c`, what
+   a `.awk` script actually types) is untouched, since that's a
+   different string entirely from the C identifier.
+3. `missing95.c` is a complete, working Windows-95-era shim for
+   `popen`/`pclose`/`system()`, built via `<windows.h>`/Win32 calls -
+   dead weight and a hard compile error on any Posix host. Removed from
+   `OFILES`.
+
+Rebuilt clean after all three, linked, and ran for real:
+`$1`/`$NF` field selection, exactly the exercise this whole thread
+started from, produces correct output. `awk` added to `utils/mkfile`'s
+`NOTPLAN9` list (Plan 9 itself already has its own, hence not `ALWAYS`),
+so a normal build now produces it. Not yet done: confirming the fix
+doesn't regress an actual Nt build (nothing here builds on Windows to
+check against) - flagged, not verified, since removing Windows-only code
+unconditionally is the kind of change that's easy to get right for the
+platform in front of you and easy to get wrong for the one you can't
+test.
 
 ## What's missing
 
@@ -111,20 +132,19 @@ state), see what breaks.**
 
 ## Order of work, cheapest first
 
-1. **`cd utils/awk && mk`** - find out whether the vendored source
-   actually builds against this tree's current `libbio`/`libregexp` as-is.
-   This single check determines whether "port awk" is a one-line
-   `mkfile` edit or a real porting job, and nothing else here should be
-   estimated until it's done.
+1. ~~`cd utils/awk && mk`~~ **Done** - built, fixed, linked, tested for
+   real. See the awk section above.
 2. **Enumerate `appl/cmd/` against a real Plan 9 (or 9front) source
    tree's `/bin` list**, not recollection, to get an actual missing-count
-   instead of the "a lot is already here" qualitative claim above.
+   instead of the "a lot is already here" qualitative claim above. Still
+   open - the next cheapest thing here.
 3. **Wire an Inferno-native troff/ms toolchain**, or explicitly decide
    this tree keeps depending on the host's groff and say so in
    `CLAUDE.md` rather than leaving it an implicit, undocumented
-   dependency.
+   dependency. Still open.
 4. Everything else on a case-by-case basis once (2) produces a real list
    - no blanket estimate for "the rest" is offered here, on purpose,
    since a plan that says "37 remain, here are the 6 that need real
    design work" is the only useful shape of an answer to "port
-   everything," and this document doesn't yet have that list.
+   everything," and this document doesn't yet have that list. Still
+   open, and blocked on (2).
