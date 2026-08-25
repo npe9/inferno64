@@ -1809,6 +1809,84 @@ ospreymicroboot(void)
 	}
 
 	/*
+	 * And the same library answering another container's file
+	 * operation, which is the whole point: a bare client container,
+	 * with no personality of its own, delegates to a server; the client
+	 * asks to read a file; the request is carried to the server, whose
+	 * 9front library does the namec and the read and writes the bytes
+	 * into the client's own memory; the answer is carried back.  The
+	 * kernel does nothing but the carrying.  Played in one loop, no task
+	 * and no lock released, as the delegation above is.
+	 */
+	if(ospreylibos){
+		Ospreyproc *cl, *sv;
+		Ospreyarm *arm;
+		Chan *fc;
+		uvlong carg[Ospreynarg], cop, roff, dest;
+		long cstatus, fn;
+		char *cd;
+		char fbuf[64];
+		int served;
+
+		served = 0;
+		roff = 256;
+		dest = 512;
+		qlock(&ospreylock);
+		if(waserror())
+			qunlock(&ospreylock);
+		else {
+			cl = ospreycreate(4, 40000000ULL, 800000000ULL, 200000000ULL);
+			sv = ospreycreate(5, 40000000ULL, 800000000ULL, 200000000ULL);
+			if(cl != nil && sv != nil && ospreydelegate(cl, sv) == 0){
+				memset(carg, 0, sizeof carg);
+				carg[0] = dest;			/* where the client wants the bytes */
+				carg[1] = sizeof fbuf - 1;	/* how many */
+				if(ospreysubmit(cl, ospreyop("read"), carg) == 0){
+					ospreyservicep(cl, fastticks(nil));
+					if(ospreyrequestready(sv)
+					&& (arm = ospreydata(sv, 0, sizeof(Ospreyarm))) != nil){
+						arm->op = OSget;
+						arm->obj = 0;
+						arm->buf = roff;
+						if(ospreyselect(sv, 0, 1) == 0){
+							/* the server's 9front library reads the real file */
+							fn = 0;
+							fc = namec("#c/osversion", Aopen, OREAD, 0);
+							fn = devtab[fc->type]->read(fc, fbuf, sizeof fbuf - 1, 0);
+							cclose(fc);
+							if(fn < 0)
+								fn = 0;
+							/* and writes it into the client's own memory */
+							if((cd = ospreydata(cl, dest, fn)) != nil)
+								memmove(cd, fbuf, fn);
+							ospreyanswer(sv, roff, fn);
+							ospreyroute(sv);
+							if(ospreycollect(cl, &cop, &cstatus, carg) == 0
+							&& cstatus == fn && fn > 0
+							&& (cd = ospreydata(cl, dest, fn)) != nil){
+								cd[fn] = 0;
+								served = 1;
+								print("osprey lib: the 9front library served container %lld the file it read, \"%s\"\n",
+									(uvlong)ospreyid(cl), cd);
+							}
+						}
+					}
+				}
+			}
+			if(!served)
+				print("osprey lib: the library did not serve the client\n");
+			if(cl != nil){
+				ospreydelegate(cl, nil);
+				ospreyexit(cl);
+			}
+			if(sv != nil)
+				ospreyexit(sv);
+			poperror();
+			qunlock(&ospreylock);
+		}
+	}
+
+	/*
 	 * Exercise process teardown before idling: spawn a kernel task and
 	 * let it exit through pexit and the stubbed group closes.
 	 */

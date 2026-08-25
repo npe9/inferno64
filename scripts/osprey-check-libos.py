@@ -63,6 +63,8 @@ def main():
                     'osprey lib: the 9front library opened' in t))
     results.append(("and that library opened and read a real file through namec",
                     'read "' in t and 'osprey lib' in t and 'could not read' not in t))
+    results.append(("and that library answered another container's read, serving it the real file's contents",
+                    'osprey lib: the 9front library served container' in t))
     results.append(("and it reached idle without a panic in the library or the core",
                     'osprey micro: idle' in t and 'panic' not in t))
 
