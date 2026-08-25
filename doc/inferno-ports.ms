@@ -861,22 +861,188 @@ only thing running for the entire sampled window.
 .PP
 With all three landed, pc64 reaches
 .CW "Initial Dis:"
-and, per
-.CW -d\ exec ,
-genuinely keeps executing varied code afterward:
-.CW up->type
-becomes
-.CW Interp ,
-and instruction traces show real, changing work \- module parsing,
-apparently, plus at least one legitimate bounded routine (clearing a
-row of the VGA text buffer that nothing is watching) called often
-enough to dominate a short trace, which reads as wasted but not stuck.
-It has not yet been observed reaching a shell in the runs this session
-had time for, the longest given eight minutes.  Nothing found so far
-points to a further bug blocking it; what remains unconfirmed is
-simply how long un-JIT'd Dis bytecode interpretation takes under pure
-TCG CPU emulation on a non-x86 host, which is expected to be slow, not
-broken.
+and stays there, silent, indefinitely \- an 8-minute background run
+never produced another line.  A busy
+.CW -d\ exec
+trace right after that point was read, in an earlier draft of this
+section, as evidence the interpreter was doing real work; it wasn't
+evidence of anything of the kind.  A QEMU monitor's
+.CW "info registers" ,
+sampled five times over several seconds, showed
+.CW HLT=1
+at the same fixed address every time: the kernel scheduler had
+.CW nrdy==0
+and was parked in
+.CW l.s 's
+.CW halt() ,
+not running anything.  That is the second time this section reported
+"still executing, just slow" from an instruction trace and the second
+time that was wrong; the lesson worth keeping is the method, not the
+correction \- a busy trace does not distinguish a working interpreter
+from an idle one sampled between two of its very last instructions,
+and asking the scheduler directly does.
+.PP
+What actually starved the scheduler was
+.CW modinit() .
+.CW os/inferno/pc64/pc64 's
+.CW mod
+section \- the list that becomes
+.CW sysmodinit() ,
+.CW drawmodinit() ,
+and so on, in the
+.CW mkdevc \-generated
+.CW pc64.c \-
+had every entry commented out, so
+.CW modinit()
+generated empty.  No Dis program on this board could ever load
+.CW Sys :
+.CW schedmod() 's
+very first
+.CW Prog ,
+running
+.CW disinit.b 's
+.CW init() ,
+hit
+.CW "sys\ =\ load\ Sys\ Sys->PATH"
+before its first statement, got
+.CW nil
+back, and the next call through it \-
+.CW "stderr\ =\ sys->fildes(2)"
+\- raised
+.CW "mframe:\ module\ not\ loaded"
+with an empty
+.CW error()
+unwind straight through
+.CW vmachine() 's
+outer
+.CW waserror() :
+.CW progexit()
+with a blank
+.CW estr ,
+no console output, ever.  This is why nothing followed
+.CW "Initial\ Dis:" ,
+on every configuration this board has run since the switch away from
+Forth, and it explains the entire silence this section spent three
+revisions trying to attribute to a race, a GPF, and finally an
+interpreter that was merely slow.
+.PP
+Uncommenting
+.CW sys
+alone was enough to reach
+.CW "Welcome\ to\ Inferno..." \-
+.CW disinit.b 's
+own first line.
+.CW keyring
+and
+.CW crypt
+link and boot clean alongside it;
+.CW draw ,
+.CW tk
+and
+.CW math
+are still commented out, because
+.CW math
+(specifically
+.CW mathmodinit )
+reproducibly crashes
+.CW 6l
+on this host and toolchain \-
+.CW span()
+writes through a nil
+.CW Prog.from.sym
+in its final
+.CW textp
+walk,
+.CW span.c:104 \-
+independent of anything above and not yet root-caused.  Nothing
+between here and a shell needs
+.CW Draw ,
+.CW Tk
+or
+.CW Math ,
+so that bug is parked, not blocking, and documented in the config
+file itself.
+.PP
+Past
+.CW Sys ,
+.CW disinit.b
+got one statement further before erroring silently again:
+.CW "now\ :=\ getclock(\(dq#r/rtc\(dq);\ now\ *=\ big\ 1000000;\ setclock(\(dq#c/time\(dq,\ now)" .
+.CW #r/rtc
+returns plain seconds; the
+.CW *1000000
+turned that into a write about a million times too large,
+overrunning
+.CW port/devcons.c 's
+.CW writetime() \-
+a 12-byte buffer expecting the same plain-seconds unit
+.CW #r/rtc
+already returns \-
+.CW "bad\ time\ control" ,
+unconditionally, on the only boot in this tree's history that ever
+reached this line: this is 9ferno's original disinit.b, carried
+verbatim, and with
+.CW mod
+empty Sys never loaded, so this call never ran, so this bug was never
+seen, until today.  The
+.CW *1000000
+served no purpose against this port's actual write contract; removed.
+.PP
+With both fixed, pc64 reaches
+.CW "Welcome to Inferno...\(rq ,
+.CW "loading /dis/sh.dis" ,
+.CW "spawn sh -n /dis/init" \-
+a real Inferno init spawning a real shell against a real script,
+further than this board has ever gotten.  One run of this hit a
+genuine general protection fault during that spawn.  Tracking it down
+found a second real bug, in the fault path itself:
+.CW trap.c 's
+.CW dumpregs()
+mixed 9ferno Forth VM register aliases
+.RI ( "BX TOP, DX PSP, R8 RSP, R9 IP, R10 W, R11 UP, R12 UPE" )
+into what is now an ordinary x86 register dump, and
+.CW trap()
+additionally called
+.CW "dumpforthregs() / dumprstack() / dumppstack()"
+behind an
+.CW "if(up->fmem\ !=\ nil)"
+guard on a
+.CW Proc
+field nothing on this board's actual boot path \-
+.CW newproc() ,
+not
+.CW newforthproc() \-
+has set since the switch off Forth.  The guard was reading whatever
+garbage sat in that word, and on a garbage-nonzero read,
+.CW dumprstack() / dumppstack()
+walk memory computed from it.  That is the likeliest source of the
+GPF itself, not just of a confusing report of one: after removing the
+dead path, the same test has run clean, twice, where it faulted
+before.
+.CW dumpforthregs() ,
+.CW dumprstack()
+and
+.CW dumppstack()
+are unchanged and still correct for 9ferno's own board; pc64's
+.CW trap()
+just no longer reaches them off an uninitialised field, and
+.CW dumpregs()
+now prints plain register names.
+.PP
+Reaching an interactive shell has not been observed: this test boots
+.CW ipc64
+directly with no disk or CD attached, and
+.CW /dis/init 's
+device-probing \-
+.CW "mount\ {mntgen}\ /n" ,
+the
+.CW /dev/sd*
+scan in
+.CW showlocaldevs \-
+throws array-bounds and fd-out-of-range errors that read as this
+environment genuinely having no boot medium to find, not a further
+kernel bug \- unconfirmed without a real disk image built against this
+board's namespace to test against.
 .NH 1
 How a native kernel provides networking
 .PP
