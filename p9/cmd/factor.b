@@ -1,7 +1,9 @@
 implement Factor;
 
-# A line-for-line Limbo translation of Plan 9's real factor(1) -
+# A structural Limbo translation of Plan 9's real factor(1) -
 # sys/src/cmd/factor.c in the 9front tree - not a behavioral workalike.
+# ("Structural" not "line-for-line": every deviation from the source
+# is listed below, same standard as primes.b.)
 # Same translation choices as p9/cmd/primes.b (a companion port from
 # the same file family): C's `double` is Limbo's `real`; `modf(x,&ip)`
 # divisibility checks become `fmod(x,y)==0.0` (exact for the integer

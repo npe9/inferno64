@@ -8,35 +8,76 @@ jointest \- regression test for join(1)
 loads
 .BR /p9/dis/join.dis 's
 in-process test seam,
-.BR runstring(args,\ in1,\ in2) ,
-and checks a representative subset of the programs used to develop
-.IR join (1)
-against golden output: the default matched format,
-.BR -a / -v
-unpairable-line handling (including that
-.B -v
-suppresses matched output entirely, unlike
-.BR -a ),
-duplicate-key cross products,
-.BR -o / -e
-field selection and replacement,
-.BR -1 / -2
-field selection, and the
+.BR runfiles(args,\ path1,\ path2) ,
+and checks it against golden output for: the default matched format,
+.B -a
+unpairable-line handling in both its attached
+.RB ( -a1 )
+and separate-word
+.RB ( "-a 1" )
+forms,
+.BR -e ,
+duplicate-key cross products, unrecognised options being silently
+ignored,
+.BR -- ,
+both
+.B -o
+forms (comma-list and legacy space-separated) including that a later
+.B -o
+replaces rather than concatenates with an earlier one,
+.BR -1 / -2 ,
+.BR -j / -j1 / -j2 ,
+the
 .B -t
-separator. Every expected string was checked once against the host's
-real
-.IR join .
+separator, and default-separator collapsing.
 .PP
-Also checks a real bug this file's own probing caught: an early version
-of
+Unlike every other
+.B p9/cmd
+test,
+.I runfiles
+takes two real file paths rather than two strings:
+.IR join 's
+own algorithm is seek-based (see
+.IR join (1)
+and
+.BR join.b 's
+header comment) and there is nothing to seek in an in-memory string, so
+this test writes real temporary files
+.RI ( /jointest1.txt ", " /jointest2.txt )
+and reads real output back.
+.PP
+Also checks the three real bugs preserved from the original (see
+.IR join (1)'s
+BUGS): the multi-digit
 .B -o
-field-order handling produced its fields backwards
-.RB ( "0,1.2,2.2"
-came out
-.BR "2.2,1.2,0" )
-from a double-reversal mistake, found by comparing
+field-number bug
+.RB ( "-o 1.10,2.2" ,
+checked to insert a spurious extra column, not error, after an initial
+guess that it would error turned out wrong against the real oracle);
+that an out-of-range
 .B -o
-output against the host rather than by inspection.
+field
+.RB ( "-o 1.0" ,
+which segfaults the real
+.I join )
+falls back to the
+.B -e
+string rather than crashing; and that a truncated line (100 or more
+fields) is reported as a failure only after whatever output had already
+happened.
+.PP
+Every expected string here was checked against a real Plan 9
+.I join
+binary first (this tree's local
+.B plan9port
+checkout), not assumed from reading
+.BR join.b .
+An earlier draft of two expectations here (repeated
+.B -o
+concatenating, and one
+.B -j
+test's own input data) turned out to be wrong until checked this way
+\(em both fixed to match the real binary, not the other way around.
 .PP
 Prints one line per failure to standard error, a final
 .IR N " passed, " N " failed"
@@ -50,12 +91,29 @@ anything failed.
 Runs
 .I join
 in-process via its
-.B runstring
-seam, not as a spawned subprocess reading real files and standard
-input/output \(em so it does not exercise
+.B runfiles
+seam, which takes real file paths directly \(em so it does exercise
+real seeking, unlike a string-based seam, but it still does not exercise
 .IR join 's
 own
 .BR init ,
-argument parsing, file I/O, or the
+argument-count/usage validation, or the
 .B -
-(stdin) file argument at all.
+(standard input) file argument, none of which
+.B runfiles
+goes through.
+.PP
+Does not check that output already emitted before a truncation failure
+survives intact \(em there is no seam for reading
+.IR join 's
+output separately from whether it raised, since
+.I join
+prints the failure only after all matching output has already happened;
+the test only checks that the failure occurs, not what came before it.
+.PP
+Does not exercise
+.B join - -
+(both files from standard input, neither seekable, a hard error in the
+original) at all \(em real files are always seekable, so
+.I runfiles
+cannot construct that case.

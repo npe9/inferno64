@@ -660,10 +660,10 @@ below.
    first-match-only, the duplicate-key test failed with exactly the
    truncated output, restored, 14/14 passed again).
 
-   **Flagged for redoing as a real translation, per the correction
-   above: `join.b` was built as a workalike against macOS's `join`, not
-   from `sys/src/cmd/join.c` (368 lines), which does exist.** Not yet
-   redone.
+   **Superseded: `join.b` was built as a workalike against macOS's
+   `join`, not from `sys/src/cmd/join.c` (368 lines), which does exist -
+   redone as a real translation, item 11 below.** The writeup above is
+   kept as a record of what the workalike did, not current.
 10. **`p9/cmd/primes.b` and `p9/cmd/factor.b` - real translations of
     `sys/src/cmd/primes.c` and `factor.c`: done**, the first two built
     under the correction above rather than the earlier workalike
@@ -686,3 +686,80 @@ below.
     primestest.b` (7 cases) and `p9/cmd/factortest.b` (9 cases) keep
     these as permanent tests via `runstring(args)`; both confirmed with
     a negative control.
+11. **`p9/cmd/join.b` redone as a real translation of `sys/src/cmd/
+    join.c` (368 lines): done**, replacing the workalike from item 9.
+    The one genuinely large structural fact: Plan 9's join does not
+    load both files into memory and merge two arrays (what the workalike
+    did, and what a typical POSIX join does) - it drives the match loop
+    off whichever file is seekable (a real seek probe, matching the C's
+    `ftell()>=0` check) and handles a run of duplicate keys on the other
+    file by rewinding it to a bookmarked byte offset and re-reading -
+    `seek1()`/`seek2()`, mirror images exactly as in the source, using
+    `bufio`'s `Iobuf.offset()`/`.seek()` as the direct analogue of
+    `ftell`/`fseek`. This matters observably, not just internally:
+    `join - -` (both inputs from standard input, neither seekable) is a
+    hard error in the real join, which a buffered merge would never
+    notice - translating the seek algorithm as written was necessary to
+    keep that, not an optional faithfulness exercise.
+
+    Because the algorithm is seek-based, `runfiles(args, path1, path2)`
+    - the test seam - takes two real file paths, the only `p9/cmd` test
+    seam that does not operate on in-memory strings; there is nothing to
+    seek in a string, so bending the algorithm to fit the old seam shape
+    would have been exactly the "substitute an equivalent algorithm"
+    mistake this rewrite exists to avoid (per the advisor consulted
+    before starting: translate what's there, don't assume the seeking is
+    just an implementation detail).
+
+    Full CLI surface translated, not just the algorithm: `-j`/`-j1`/`-j2`
+    alongside `-1`/`-2` (Plan 9 has both); both `-o` argument forms (a
+    comma list, and the historic space-separated form - not a deprecated
+    compat shim here, unlike BSD's framing of its own equivalent, so both
+    are real and both are ported, correcting the old workalike's BUGS
+    entry that said otherwise); `getoptarg()`'s attached-suffix-or-next-
+    word convention (`-a1` and `-a 1` both work; `-j`'s value is always a
+    separate word, unlike `-a`/`-e`/`-t`/`-1`/`-2`); unrecognised options
+    silently ignored (no `default:` case in the original's switch); the
+    `NFLD` (100) field cap and its `discard` counter, reported as a
+    failure only at the very end, after whatever output already
+    happened. `atoi()`'s C leniency (silently stops at the first
+    non-digit, no error) is now `catoi()`, replacing a stricter helper
+    that doesn't match the source. Limbo strings are already rune-
+    indexed Unicode sequences, so the comparison (`comp()`/`runecmp()`)
+    and field splitting needed no chartorune/runetochar translation step
+    at all - Limbo is a closer match to what this C is doing than C's
+    own manual Rune juggling.
+
+    Three real, reproducible bugs in the source are preserved rather
+    than fixed, all three checked against a real Plan 9 join binary
+    (this tree's local `plan9port` checkout, confirmed to be the same
+    source by its identical usage string) before writing anything down,
+    not assumed from reading the code - one initial guess (that a multi-
+    digit `-o` field number would error) was wrong until checked this
+    way: (1) `oparse()`'s scan-pointer misalignment on a 2+-digit `-o`
+    field number doesn't error or drop the field, it silently inserts a
+    spurious extra join-key output column (`-o 1.10,2.2` produces three
+    columns, not two); (2) an `-o` spec for a nonexistent field 0 (`-o
+    1.0`) is undefined behaviour - confirmed to segfault the real binary
+    - so the translation substitutes the `-e` string instead of
+    reproducing a crash; (3) a join field configured past some line's
+    actual field count reads memory-layout-dependent leftover data in
+    the original (also confirmed capable of segfaulting it, not simply
+    "keeps the previous line's value" as first guessed), replaced here
+    with a safe, well-defined "keeps the last value actually written"
+    rule rather than an attempt at bit-for-bit fidelity to something
+    with no well-defined value to be faithful to. Full detail in
+    `join.b`'s header comment.
+
+    `p9/cmd/jointest.b` rewritten for the new seam and CLI surface: 20
+    cases (attached/separate `-a`, `-e`, unrecognised-option and `--`
+    handling, duplicate-key cross product, both `-o` forms including
+    that a later `-o` replaces rather than concatenates with an earlier
+    one - an old test assumption that turned out wrong once checked
+    against the real binary and was fixed to match it, not the reverse -
+    `-1`/`-2`, `-j`/`-j1`/`-j2`, `-t`, default-separator collapsing, and
+    the three preserved bugs above), all checked against the real binary
+    first. Confirmed with a negative control (inverted the truncation-
+    counting condition; 19 of 20 cases failed immediately, the sole
+    survivor being the one case that already expected a failure;
+    restored, 20/20 passed again).

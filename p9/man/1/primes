@@ -11,7 +11,7 @@ primes \- generate primes, in Limbo
 ]
 .SH DESCRIPTION
 .I Primes
-is a line-for-line Limbo translation of Plan 9's own
+is a structural Limbo translation of Plan 9's own
 .IR primes (1)
 .RB ( sys/src/cmd/primes.c ),
 not a behavioral workalike reverse-engineered from a host tool - see

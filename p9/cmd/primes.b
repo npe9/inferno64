@@ -1,11 +1,12 @@
 implement Primes;
 
-# A line-for-line Limbo translation of Plan 9's real primes(1) -
+# A structural Limbo translation of Plan 9's real primes(1) -
 # sys/src/cmd/primes.c in the 9front tree - not a behavioral workalike
 # reverse-engineered from a host oracle. Structure, variable names, and
 # the segmented wheel-sieve algorithm follow the C source directly;
 # only the C-specific idioms below were translated to their Limbo
-# equivalent rather than transliterated literally:
+# equivalent rather than transliterated literally (so "line-for-line"
+# overclaims it - every deviation from the source is listed here):
 #
 #   - C's `double` is Limbo's `real` (both IEEE double) - used for every
 #     number here exactly as the C does, since the whole point of using

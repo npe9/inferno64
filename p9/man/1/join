@@ -5,8 +5,6 @@ join \- relational join of two sorted files, in Limbo
 .B join
 [
 .BI -a\  n
-|
-.BI -v\  n
 ]
 [
 .BI -e\  string
@@ -23,16 +21,25 @@ join \- relational join of two sorted files, in Limbo
 [
 .BI -2\  field
 ]
+[
+.BI -j\  field
+]
+[
+.BI -j1\  field
+]
+[
+.BI -j2\  field
+]
 .I file1 file2
 .SH DESCRIPTION
 .I Join
-is a Limbo-native workalike for a bounded subset of
-.IR join (1),
-compiled to Dis and run by
-.IR emu ,
-not a host binary \(em see
+is a structural Limbo translation of Plan 9's real
+.IR join (1)
+.RB ( sys/src/cmd/join.c ,
+368 lines in the 9front tree), not a behavioral workalike reverse-
+engineered from a host tool \(em see
 .B doc/plan9-port.md
-in the source tree. It lives under
+in the source tree for the distinction. It lives under
 .B p9/cmd
 rather than
 .BR appl/cmd ;
@@ -46,10 +53,9 @@ reads
 and
 .IR file2 ,
 each already sorted on its join field (this program does not sort them
-itself, same as real
-.IR join ),
-and writes one output line for every pair of lines \(em one from each
-file \(em whose join fields are equal: the join field's value, then
+itself), and writes one output line for every pair of lines \(em one
+from each file \(em whose join fields are equal: the join field's
+value, then
 .IR file1 's
 remaining fields, then
 .IR file2 's
@@ -59,7 +65,13 @@ or
 .I file2
 is
 .BR - ,
-standard input is read for that one.
+standard input is read for that one \(em but not both:
+.I join
+picks whichever file is randomly seekable to drive its match loop
+(needed to replay a run of duplicate keys on the other side without
+buffering it), and errors if neither is, which is exactly what
+.B join - -
+does.
 .PP
 Lines with a repeated key on either side produce every combination, not
 just the first: a key appearing twice in
@@ -72,8 +84,12 @@ The default field separator is a run of one or more spaces and/or tabs
 (leading whitespace before the first field is skipped entirely); the
 default
 .I output
-field separator is always a single space, regardless of what the input
-used.
+field separator is always a single space unless
+.B -t
+was given, in which case it is whatever string was attached to
+.BR -t 's
+argument (see below \(em usually just the one separator character, but
+not always).
 .SS Options
 .TP
 .BI -a\  n
@@ -81,37 +97,33 @@ In addition to the default matched output, also emit a line for every
 unpairable line in file
 .I n
 (1 or 2).
-.TP
-.BI -v\  n
-Emit
-.I only
-the unpairable lines from file
-.I n
-\(em unlike
-.BR -a ,
-this suppresses the default matched output entirely.
-.B -v 1
-and
-.B -v 2
-may both be given.
+.I N
+may be attached
+.RB ( -a1 )
+or a separate word
+.RB ( "-a 1" ).
 .TP
 .BI -e\  string
-Replace an empty output field with
-.I string
-(most useful with
-.B -a
-and
+Replace an empty (or, for
 .BR -o ,
-where an unpaired line has nothing to contribute for the other file's
-fields).
+out-of-range) output field with
+.IR string .
 .TP
 .BI -o\ list
 Choose exactly which fields appear, and in what order, instead of the
 default format.
 .I List
-is one or more comma-separated elements (repeatable
+is either a single comma-separated argument (e.g.
+.BR 0,1.2,2.2 ,
+attachable directly as
+.BR -o0,1.2,2.2 )
+or, historically, one field spec per following word (e.g.
+.BR "-o 0 1.2 2.2" ) \(em
+both forms are real and both are ported; a later
 .B -o
-options concatenate, in the order given), each either
+entirely replaces an earlier one rather than concatenating with it
+(checked against the real binary, not assumed \(em see BUGS). Each
+element is either
 .B 0
 (the join field's value) or
 .IB filenum . field
@@ -119,76 +131,108 @@ options concatenate, in the order given), each either
 .I field
 of file
 .IR filenum ).
-A field reference past the end of a line's actual fields \(em including
-every
-.IB n . field
-reference for the file that has no matching line \(em reads as empty
-(or the
-.B -e
-string).
 .TP
 .BI -t\  char
 Use
 .I char
-as the field separator for splitting
-.I and
-for output, in place of the whitespace-run default; every occurrence of
+as the field separator for splitting, in place of the whitespace-run
+default; every occurrence of
 .I char
-is a separator (no collapsing).
+is a separator (no collapsing). Only the first character of
+.BR -t 's
+argument is used for splitting \(em but the whole argument becomes the
+output separator, so an accidentally multi-character
+.B -t
+argument still splits on just its first character while printing all
+of it between output fields (a real, easy-to-miss detail of the
+original, carried over rather than tidied up).
 .TP
-.BI -1\  field
+.BI -1\  field\  ", " -2\  field
 Join on
 .IR field 's-th
-field of
+field (1-based) of
 .I file1
-(1-based) instead of the first.
+/
+.I file2
+instead of the first.
 .TP
-.BI -2\  field
-The same, for
-.IR file2 .
+.BI -j\  field\  ", " -j1\  field\  ", " -j2\  field
+Historic synonyms for
+.BR -1 / -2 :
+plain
+.B -j
+sets both fields at once,
+.B -j1
+is the same as
+.BR -1 ,
+.B -j2
+is the same as
+.BR -2 .
+Unlike
+.BR -1 / -2 ,
+.BR -j 's
+value is always a separate following word, never attached.
 .SH SOURCE
 .B /p9/cmd/join.b
+(translated from
+.BR sys/src/cmd/join.c )
 .SH SEE ALSO
 .IR jointest (1)
 .SH BUGS
-This is a deliberately bounded subset: no bare
-.B -a
-(historic, meaning both files at once), no
-.BR -j / -j1 / -j2
-(historic synonyms for
-.BR -1 / -2 ),
-no multi-argument
-.B -o
-(historic; use commas or repeat
-.B -o
-instead) \(em the real
-.IR join (1)'s
-own manual calls all of these "compatibility" options that "should not
-be used", so none are ported.
+An unrecognised single-dash option is silently ignored, not an error \(em
+the original's option switch has no default case, and this is translated
+faithfully rather than "improved".
 .PP
-Input is assumed already sorted on its join field, exactly like the
-real oracle: this program does not sort, check, or warn, so unsorted
-input can silently miss real matches once the merge scan has advanced
-past them \(em checked against the host directly (an out-of-order key
-in one file caused a real pair to go unreported, with no error), not
-assumed to be safe.
-.PP
-A join-field index past the end of a particular line's fields compares
-as the empty string rather than raising an error \(em also checked
-against the host, which does the same (silently, exit status 0) rather
-than treating it as malformed input.
-.PP
-Field-value comparison is plain byte-for-byte string comparison, not
-locale-aware collation; for ordinary ASCII sorted input (the common
-case for a "C" locale) this matches the host directly, but is not
-guaranteed to match a locale-specific
-.IR sort (1)
-in every case.
-.PP
-Every rule above (default separator vs. output separator, cross-product
-on duplicate keys, `-v` suppressing matched output entirely rather than
-just adding to it, out-of-range field handling) was checked against the
-host's own
+A line with 100 or more fields is truncated at the 100th (matching the
+original's fixed
+.B NFLD
+limit); if this happens anywhere in either input,
 .I join
-(macOS/BSD, POSIX-conformant) with targeted probes before writing any of
-this, not read off a manual from memory.
+still produces whatever output the truncated data leads to, and only
+reports the failure at the very end, after that output has already been
+emitted \(em also a faithful translation of the original's own ordering,
+not a defect introduced here.
+.PP
+Field comparison is plain code-point-by-code-point string comparison
+(Limbo strings are already rune-indexed, matching the original's own
+UTF-32 Rune-based comparison exactly, with no conversion step needed),
+not locale-aware collation.
+.PP
+Three real bugs in the original are preserved rather than fixed, and are
+documented in detail in
+.BR join.b 's
+header comment (all three checked against a real Plan 9 join binary,
+not just read off the source): a multi-digit
+.B -o
+field number in the comma-list form
+.RB ( "-o 1.10,2.2" )
+silently inserts a spurious extra join-key output column, from a scan-
+pointer misalignment in the original's
+.BR oparse (); an
+.B -o
+spec referencing a nonexistent field 0
+.RB ( "-o 1.0" )
+is undefined behaviour in the original (confirmed: segfaults the real
+binary) \(em this translation substitutes the
+.B -e
+replacement string instead of a crash, since there is no well-defined
+value to reproduce; and a join field configured past some line's actual
+field count reads memory-layout-dependent leftover data in the original
+(also confirmed capable of segfaulting it), which this translation
+replaces with "the last value actually written to that field index,
+forever" \(em safe and well-defined, but not a faithful reproduction of
+the original's own crash-prone behaviour, since there is nothing
+well-defined there to be faithful to.
+.PP
+.B join - -
+(both files from standard input, neither seekable) is documented as a
+hard error by the original and by this translation's logic, but is not
+exercised by
+.IR jointest (1),
+whose seam takes two real file paths directly rather than driving
+.IR join 's
+own
+.BR init ,
+standard input included \(em see
+.IR jointest (1)'s
+own BUGS.
