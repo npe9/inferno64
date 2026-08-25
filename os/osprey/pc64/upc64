@@ -125,6 +125,138 @@ port
 	int dosyscall(ulong a, Sargs *b, uintptr *c){ USED(a,b,c); panic("microkernel: dosyscall"); return 0; }
 
 	/*
+	 * chan.c and cache.c, the name resolution and the file cache, are
+	 * cut too.  Most of chan.c is name space and is stubbed below as
+	 * panics: this kernel resolves no name, clones or closes no
+	 * channel, walks no path.  But chan.c also held kernel
+	 * infrastructure that is not name space at all - the reference
+	 * counting the whole kernel turns on, two string helpers, and the
+	 * device bring-up main() calls at boot - so those are kept here as
+	 * real code.  chandevinit drops only the one piece that is name
+	 * space, the kproc that drains the channel-close queue, which a
+	 * kernel with no channels never fills.
+	 */
+	long incref(Ref *r)
+	{
+		long old, new;
+
+		do {
+			old = r->ref;
+			new = old+1;
+		} while(!cmpswap(&r->ref, old, new));
+		return new;
+	}
+	long decref(Ref *r)
+	{
+		long old, new;
+
+		do {
+			old = r->ref;
+			if(old <= 0)
+				panic("decref pc=%#p", getcallerpc(&r));
+			new = old-1;
+		} while(!cmpswap(&r->ref, old, new));
+		return new;
+	}
+	void kstrcpy(char *s, char *t, int ns)
+	{
+		int nt;
+
+		nt = strlen(t);
+		if(nt < ns){
+			memmove(s, t, nt);
+			s[nt] = '\0';
+			return;
+		}
+		nt = ns-1;
+		memmove(s, t, nt);
+		s[nt] = '\0';
+		ns -= 4;
+		if(ns < 0)
+			return;
+		while(ns>0 && (s[--ns]&0xC0)==0x80)
+			;
+		strcpy(s+ns, "...");
+	}
+	int emptystr(char *s)
+	{
+		if(s == nil)
+			return 1;
+		if(s[0] == '\0')
+			return 1;
+		return 0;
+	}
+	void kstrdup(char **p, char *s)
+	{
+		int n;
+		char *t, *prev;
+
+		n = strlen(s);
+		if(up != nil)
+			t = smalloc(n+1);
+		else{
+			t = malloc(n+1);
+			if(t == nil)
+				panic("kstrdup: no memory");
+		}
+		setmalloctag(t, getcallerpc(&p));
+		memmove(t, s, n);
+		t[n] = '\0';
+		prev = *p;
+		*p = t;
+		free(prev);
+	}
+	/*
+	 * These iterate devtab by pointer, not devtab[i], on purpose: a
+	 * port-section line whose first token contains "dev" is misread by
+	 * mkdevc as a new section header and would silently truncate this
+	 * config.  Starting each line with "for" or "(*d)" avoids that.
+	 */
+	void chandevreset(void)
+	{
+		Dev **d;
+
+		todinit();
+		for(d = devtab; *d != nil; d++)
+			(*d)->reset();
+	}
+	void chandevinit(void)
+	{
+		Dev **d;
+
+		for(d = devtab; *d != nil; d++)
+			(*d)->init();
+	}
+	void chandevshutdown(void)
+	{
+		Dev **d;
+
+		for(d = devtab; *d != nil; d++)
+			;
+		for(d--; d >= devtab; d--)
+			(*d)->shutdown();
+	}
+
+	/*
+	 * The name space proper: unreachable in a kernel that resolves no
+	 * name, so each is a loud panic.
+	 */
+	Chan *namec(char *a, int b, int c, ulong d)
+	{ USED(a,b,c,d); panic("microkernel: namec"); return nil; }
+	Chan *cclone(Chan *a)		{ USED(a); panic("microkernel: cclone"); return nil; }
+	void cclose(Chan *a)		{ USED(a); panic("microkernel: cclose"); }
+	void ccloseq(Chan *a)		{ USED(a); panic("microkernel: ccloseq"); }
+	char *chanpath(Chan *a)		{ USED(a); panic("microkernel: chanpath"); return nil; }
+	int eqchantdqid(Chan *a, int b, int c, Qid d, int e)
+	{ USED(a,b,c,d,e); panic("microkernel: eqchantdqid"); return 0; }
+	void isdir(Chan *a)		{ USED(a); panic("microkernel: isdir"); }
+	Chan *newchan(void)		{ panic("microkernel: newchan"); return nil; }
+	Path *newpath(char *a)		{ USED(a); panic("microkernel: newpath"); return nil; }
+	void pathclose(Path *a)		{ USED(a); panic("microkernel: pathclose"); }
+	void putmhead(Mhead *a)		{ USED(a); panic("microkernel: putmhead"); }
+	char *validnamedup(char *a, int b){ USED(a,b); panic("microkernel: validnamedup"); return nil; }
+
+	/*
 	 * beswal is a pure byte-swap the reboot path uses; it is real, not
 	 * a stub.  werrstr formatted an error into a user process's error
 	 * string, which a kernel process does not have, so it does nothing.

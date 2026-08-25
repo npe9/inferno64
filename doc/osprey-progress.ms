@@ -1619,13 +1619,26 @@ kept as real code, not stubs.  Verified: the task still boots, its ring
 still answers, it still reaches idle, and pc64 is untouched at all
 fifty-eight of its checks.
 .PP
-Stage two is chan.c itself, the name resolution.  It is deeper because
-chan.c is not only name space: the device bring-up at boot, the
-reference counting the whole kernel uses, and the string and path
-helpers all live inside it, so cutting it means giving those a home the
-way the group lifecycle got one, and turning namec and the channel
-operations into panics.  That is the point the paper calls writing a
-different chan.c.
+Stage two, done, is chan.c and cache.c themselves, the name resolution
+and the file cache.  It was deeper because chan.c was not only name
+space: the device bring-up main() calls at boot, the reference counting
+the whole kernel turns on, and two string helpers all lived inside it.
+Those are kept, as real code in the microkernel's configuration - the
+reference counting and the string helpers verbatim, the three device
+bring-up functions rewritten only to iterate the device table by pointer
+rather than by index, because a configuration line whose first token
+begins with the letters of a section name is misread by the config
+compiler as a new section and silently truncates the file; a real bug in
+mkdevc that this cut was the first to provoke, worked around in the
+configuration rather than in the shared tool.  Everything that is name
+space - namec, the channel clone and close, the path and mount-head
+operations - is a loud panic, because a kernel that resolves no name
+reaches none of it.  Verified: the task boots, its ring answers, it
+reaches idle, and pc64 is unchanged at all fifty-eight checks.  With
+this the microkernel has no name space at all: no namec, no channel, no
+mount, no file cache, no process group, no file or process system call.
+What is left is the four services the paper keeps and the devices that
+serve them.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
