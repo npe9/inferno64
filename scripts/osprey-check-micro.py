@@ -65,6 +65,9 @@ def main():
                     'osprey micro: bare console (kdebugputc) works' in t))
     results.append(("and a select over arms wakes on a real interrupt, the clock's, with no name space",
                     'osprey micro: a select woke on the clock interrupt' in t))
+    results.append(("and a container answers another's open by delegation, which the kernel's cut personality could not",
+                    'osprey micro: a delegated open was answered by a server container' in t
+                    and 'panic' not in t))
 
     bad = 0
     for what, ok in results:

@@ -1705,6 +1705,68 @@ ospreymicroboot(void)
 				print("osprey micro: the clock tick never reached the select\n");
 		}
 
+
+		/*
+		 * A file operation answered by another container, not by the
+		 * kernel: the delegation the paper calls a personality.  A
+		 * second container is made the client's server; the client
+		 * submits an open; servicing the client forwards it to the
+		 * server's request ring rather than to ospreykernop, whose
+		 * open reaches namec, a panic in this kernel.  Playing the
+		 * server in the same loop rather than as a task - so no lock
+		 * is released and no second process contends for it - the
+		 * boot reads the forwarded request off the server's ring with
+		 * an OSget arm, answers it done, routes the answer to the
+		 * client, and the client collects it.  The open completing at
+		 * all is the proof the server answered: the kernel's own
+		 * personality could not, it would have panicked in namec.
+		 *
+		 * This is not p9srv and not "the 9front personality".  p9srv
+		 * is that - an ordinary user program answering with ordinary
+		 * system calls - and this kernel cannot host it, because
+		 * loading and running a program is sysproc.c, which the cut
+		 * removed.  What runs here is the delegation path itself,
+		 * with the boot standing in for the server a program would be.
+		 */
+		{
+			Ospreyproc *sv;
+			Ospreyarm *arm;
+			uvlong sarg[Ospreynarg], sop, roff;
+			long sstatus;
+			int answered;
+
+			answered = 0;
+			roff = 256;
+			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
+			if(sv != nil && ospreydelegate(p, sv) == 0){
+				memset(sarg, 0, sizeof sarg);
+				if(ospreysubmit(p, ospreyop("open"), sarg) == 0){
+					ospreyservicep(p, fastticks(nil));
+					if(ospreyrequestready(sv)
+					&& (arm = ospreydata(sv, 0, sizeof(Ospreyarm))) != nil){
+						arm->op = OSget;
+						arm->obj = 0;		/* the request ring */
+						arm->buf = roff;	/* where the request lands */
+						if(ospreyselect(sv, 0, 1) == 0){
+							ospreyanswer(sv, roff, StatusDone);
+							ospreyroute(sv);
+							if(ospreycollect(p, &sop, &sstatus, sarg) == 0
+							&& sstatus == StatusDone)
+								answered = 1;
+						}
+					}
+				}
+			}
+			if(answered)
+				print("osprey micro: a delegated open was answered by a server container, not the kernel\n");
+			else
+				print("osprey micro: the delegated open was not answered\n");
+			if(sv != nil){
+				ospreydelegate(p, nil);
+				ospreyexit(sv);
+			}
+		}
+
 		ospreyexit(p);
 	}
 	poperror();
