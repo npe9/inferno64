@@ -41,7 +41,9 @@ static	Type	*echk(Node*);
 static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
+static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int);
 static	Decl	*tinstantiatefn(Node*);
+static	Decl	*inferfn(Node*);
 static	Case	*matchlabels(Node*, Type*, int);
 static	int	casecmp(Type*, Node*, Node*);
 static	void	casesort(Type*, Label*, Label*, int, int);
@@ -282,24 +284,25 @@ tinstantiate(Node *n)
 }
 
 /*
- * "name[arg, arg, ...](args)" (echk's Ocall case, when the callee is
- * Otinst/Oindex rather than a plain name): resolve one instantiation
- * of a generic function template (see fndecl()'s comment, and the
- * Decl.tparams/finsts comment in ember.h), the same "bind the
- * parameter names in a scope, re-run the existing checker" approach
- * tinstantiate() (above) uses for generic struct types -- except a
- * function's *body* has to be checked too, and check()'s ordinary
- * two-pass structure (fndecl() for every signature, then fnchk() for
- * every body, much later) has nowhere to keep the type-parameter
- * scope alive that long.  so this does the whole thing right here,
- * synchronously, while the scope is still pushed: build the
- * instantiated signature (fndecl()'s own non-generic logic, just
- * inlined since there's no receiver to worry about -- a generic
- * method is a separate, unimplemented case), fnchk() the body
- * immediately, then mark the result "checked" so check()'s later
- * pass (which will still reach it, since it walks fns[] by index
- * against a length that keeps growing) skips it rather than
- * re-checking it with the bindings gone.
+ * shared engine behind both ways of resolving one instantiation of a
+ * generic function template (see fndecl()'s comment, and the
+ * Decl.tparams/finsts comment in ember.h) once its type arguments are
+ * already known -- td came from either an explicit "name[args](...)"
+ * (tinstantiatefn(), below) or inference from a plain call's argument
+ * types (inferfn(), below).  same "bind the parameter names in a
+ * scope, re-run the existing checker" approach tinstantiate() (above)
+ * uses for generic struct types -- except a function's *body* has to
+ * be checked too, and check()'s ordinary two-pass structure (fndecl()
+ * for every signature, then fnchk() for every body, much later) has
+ * nowhere to keep the type-parameter scope alive that long.  so this
+ * does the whole thing right here, synchronously, while the scope is
+ * still pushed: build the instantiated signature (fndecl()'s own
+ * non-generic logic, just inlined since there's no receiver to worry
+ * about -- a generic method is a separate, unimplemented case),
+ * fnchk() the body immediately, then mark the result "checked" so
+ * check()'s later pass (which will still reach it, since it walks
+ * fns[] by index against a length that keeps growing) skips it
+ * rather than re-checking it with the bindings gone.
  *
  * curfn/curret are check.c's own reentrancy hazard here: fnchk()
  * sets them unconditionally and clears curfn on return, without
@@ -310,53 +313,13 @@ tinstantiate(Node *n)
  * saved and restored explicitly around the nested call.
  */
 static Decl*
-tinstantiatefn(Node *n)
+tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs)
 {
-	Decl *td, *pd, *savedcurfn;
-	Type *ft, *savedcurret, **argv;
+	Decl *pd, *savedcurfn;
+	Type *ft, *savedcurret;
 	Ginst *fi;
-	Node *p, *a, *pn;
-	int i, nargs, nparams, match;
-
-	if(n->left->op != Oname){
-		nerror(n, "bad generic function reference");
-		return nil;
-	}
-	td = lookup(n->left->sym);
-	if(td == nil || td->store != Dfn || td->tparams == nil){
-		nerror(n, "%s is not a generic function", n->left->sym->name);
-		return nil;
-	}
-	n->left->decl = td;
-
-	nargs = 0;
-	for(p = n->right; p != nil; p = p->right){
-		nargs++;
-		if(p->op != Oseq)
-			break;
-	}
-	argv = allocmem(nargs * sizeof(Type*));
-	i = 0;
-	for(p = n->right; p != nil; p = p->right){
-		a = p;
-		if(p->op == Oseq)
-			a = p->left;
-		argv[i++] = stype(a);
-		if(p->op != Oseq)
-			break;
-	}
-
-	nparams = 0;
-	for(p = td->tparams; p != nil; p = p->right){
-		nparams++;
-		if(p->op != Oseq)
-			break;
-	}
-	if(nargs != nparams){
-		nerror(n, "%s needs %d type argument%s, got %d", td->sym->name,
-			nparams, nparams == 1 ? "" : "s", nargs);
-		return nil;
-	}
+	Node *p, *pn;
+	int i, match;
 
 	for(fi = td->finsts; fi != nil; fi = fi->next){
 		match = 1;
@@ -371,11 +334,11 @@ tinstantiatefn(Node *n)
 
 	for(i = 0; i < tinstdepth; i++)
 		if(tinstack[i] == td){
-			nerror(n, "%s: recursive generic instantiation not yet supported", td->sym->name);
+			error(src->start, "%s: recursive generic instantiation not yet supported", td->sym->name);
 			return nil;
 		}
 	if(tinstdepth >= MaxTinstDepth){
-		nerror(n, "generic functions nested too deeply");
+		error(src->start, "generic functions nested too deeply");
 		return nil;
 	}
 	tinstack[tinstdepth++] = td;
@@ -425,7 +388,7 @@ tinstantiatefn(Node *n)
 			sizetype(dd->ty);
 		sizetype(ft->tof);
 
-		fnd = mkdecl(&n->src, Dfn, ft);
+		fnd = mkdecl(src, Dfn, ft);
 		bp = buf;
 		be = buf + sizeof buf;
 		bp = seprint(bp, be, "%s[", td->sym->name);
@@ -467,6 +430,156 @@ tinstantiatefn(Node *n)
 		tinstdepth--;
 		return fnd;
 	}
+}
+
+/*
+ * "name[arg, arg, ...](args)" (echk's Ocall case, when the callee is
+ * Otinst/Oindex rather than a plain name): the explicit-instantiation
+ * front end to tinstantiatefncore() -- resolve td, parse the bracketed
+ * type-argument list into argv, hand off.
+ */
+static Decl*
+tinstantiatefn(Node *n)
+{
+	Decl *td;
+	Type **argv;
+	Node *p, *a;
+	int i, nargs, nparams;
+
+	if(n->left->op != Oname){
+		nerror(n, "bad generic function reference");
+		return nil;
+	}
+	td = lookup(n->left->sym);
+	if(td == nil || td->store != Dfn || td->tparams == nil){
+		nerror(n, "%s is not a generic function", n->left->sym->name);
+		return nil;
+	}
+	n->left->decl = td;
+
+	nargs = 0;
+	for(p = n->right; p != nil; p = p->right){
+		nargs++;
+		if(p->op != Oseq)
+			break;
+	}
+	argv = allocmem(nargs * sizeof(Type*));
+	i = 0;
+	for(p = n->right; p != nil; p = p->right){
+		a = p;
+		if(p->op == Oseq)
+			a = p->left;
+		argv[i++] = stype(a);
+		if(p->op != Oseq)
+			break;
+	}
+
+	nparams = 0;
+	for(p = td->tparams; p != nil; p = p->right){
+		nparams++;
+		if(p->op != Oseq)
+			break;
+	}
+	if(nargs != nparams){
+		nerror(n, "%s needs %d type argument%s, got %d", td->sym->name,
+			nparams, nparams == 1 ? "" : "s", nargs);
+		return nil;
+	}
+
+	return tinstantiatefncore(&n->src, td, argv, nargs);
+}
+
+/*
+ * "name(args)" (echk's Ocall case, plain callee, no explicit "[...]"):
+ * infer a generic function's type arguments from the call's own
+ * argument types, rather than requiring them spelled out.  scoped to
+ * the simple, common shape -- a parameter whose *entire* declared
+ * type is one bare type-parameter name ("func f[T](x T)") -- walked
+ * the same way stype()'s own Otfunc case flattens a parameter list
+ * (outer loop over Ofields, inner loop over each field's names, so
+ * "a, b T" binds both a and b to the same argument-derived T); a
+ * parameter type that only *contains* a type parameter somewhere
+ * inside it (a generic type instantiated with one, a slice of one)
+ * isn't unified against, and any type parameter that never appears
+ * this way just doesn't get inferred -- reported cleanly asking for
+ * an explicit "f[...](...)" rather than guessed at.  returns nil
+ * (silently, no error) when n->left doesn't name a generic function
+ * template at all, so callers can fall through to the ordinary,
+ * non-generic call path.
+ */
+static Decl*
+inferfn(Node *n)
+{
+	Decl *td;
+	Type **argv;
+	Node *p, *f, *ids, *id, *a, *arg;
+	int i, nparams;
+
+	if(n->left->op != Oname)
+		return nil;
+	td = lookup(n->left->sym);
+	if(td == nil || td->store != Dfn || td->tparams == nil)
+		return nil;
+	n->left->decl = td;
+
+	nparams = 0;
+	for(p = td->tparams; p != nil; p = p->right){
+		nparams++;
+		if(p->op != Oseq)
+			break;
+	}
+	argv = allocmem(nparams * sizeof(Type*));
+	for(i = 0; i < nparams; i++)
+		argv[i] = nil;
+
+	a = n->right;
+	for(p = td->init->right->left; p != nil && a != nil; p = p->right){
+		f = p;
+		if(p->op == Oseq)
+			f = p->left;
+		for(ids = f->left; ids != nil && a != nil; ids = ids->right){
+			id = ids;
+			if(ids->op == Oseq)
+				id = ids->left;
+			USED(id);
+			arg = a;
+			if(a->op == Oseq)
+				arg = a->left;
+			if(f->right != nil && f->right->op == Oname){
+				Node *tp, *tpn;
+				int j;
+
+				j = 0;
+				for(tp = td->tparams; tp != nil; tp = tp->right){
+					tpn = tp;
+					if(tp->op == Oseq)
+						tpn = tp->left;
+					if(tpn->sym == f->right->sym){
+						if(argv[j] == nil)
+							argv[j] = echk(arg);
+						break;
+					}
+					j++;
+					if(tp->op != Oseq)
+						break;
+				}
+			}
+			a = a->op == Oseq ? a->right : nil;
+			if(ids->op != Oseq)
+				break;
+		}
+		if(p->op != Oseq)
+			break;
+	}
+
+	for(i = 0; i < nparams; i++)
+		if(argv[i] == nil){
+			nerror(n, "cannot infer all type arguments for %s; use %s[...] explicitly",
+				td->sym->name, td->sym->name);
+			return nil;
+		}
+
+	return tinstantiatefncore(&n->src, td, argv, nparams);
 }
 
 /*
@@ -1105,6 +1218,29 @@ echk(Node *n)
 			Decl *fnd;
 
 			fnd = tinstantiatefn(n->left);
+			if(fnd == nil){
+				n->ty = terror;
+				return n->ty;
+			}
+			n->left = mkn(Oname, nil, nil);
+			n->left->src = fnd->src;
+			n->left->sym = fnd->sym;
+			n->left->decl = fnd;
+			n->left->ty = fnd->ty;
+			ft = fnd->ty;
+		}else if(n->left->op == Oname && lookup(n->left->sym) != nil
+		&& lookup(n->left->sym)->store == Dfn && lookup(n->left->sym)->tparams != nil){
+			/*
+			 * "swap(1, "one")": no explicit "[...]", but the callee
+			 * names a generic function template -- try inferring
+			 * the type arguments from the call's own argument types
+			 * (inferfn()) instead of requiring them spelled out.
+			 * same replace-the-callee-with-a-resolved-Oname shape as
+			 * the explicit case above.
+			 */
+			Decl *fnd;
+
+			fnd = inferfn(n);
 			if(fnd == nil){
 				n->ty = terror;
 				return n->ty;
