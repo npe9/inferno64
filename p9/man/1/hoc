@@ -163,6 +163,35 @@ here. Characterized, not fixed - matching it would need a full
 this tree doesn't have, just to chase a formatting-library difference
 below either implementation's own code.
 .PP
+.BR read() ,
+which pulls its number directly off the current input stream (see
+above), also diverges from the real oracle in one narrow corner: a
+value immediately followed by REAL end of file, with nothing after it
+at all (no trailing newline), is silently dropped there rather than
+being read successfully - confirmed directly:
+.B "read(x)"
+on
+.RB "" "...1 2 3" ,
+with no trailing newline, reads
+.B 1
+and
+.B 2
+but reports failure for
+.BR 3 ,
+discarding it with no error printed. The likely cause (unverifiable
+without the underlying bio library's own source): scanning a number
+needs to peek one further character to confirm where it ends, and
+when that peek meets true EOF rather than a delimiter, the real
+oracle's number scanner appears to fail the whole number just
+scanned rather than accepting the digits already found. This port's
+own number reader has no such discarding behavior - a number
+immediately followed by true EOF parses successfully here - left
+unreproduced as a below-hoc's-own-code library quirk, the same class
+of divergence as the
+.B %.17g
+note above. A file whose last value is followed by a trailing newline
+(the overwhelmingly common case) never hits this at all.
+.PP
 No recursion-depth cap: the original stops a runaway recursive call
 at a clean 100-frame limit; this port recurses natively through
 Limbo's own interpreter call stack instead, so it fails some other way

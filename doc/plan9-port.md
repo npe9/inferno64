@@ -633,6 +633,12 @@ below.
    still a reasonable candidate, just not the near-free one `bc`'s
    existing work would have made it.
 
+   **Done: `hoc` - item 18 above.** Not a reskin of `bc.b` in the end
+   either, as predicted - its own threaded-code execution model, real
+   (not fixed-point) arithmetic, and streaming read()-shares-the-
+   parser's-own-stream requirement needed a genuinely different
+   design, not bc.b's pre-lexed-array approach.
+
    **`p9/cmd/join.b` - relational join of two sorted files: done**, one
    of the candidates from this list. A classic sorted merge-join over
    two pointers, cross-producting every combination on a duplicate key
@@ -1470,3 +1476,93 @@ below.
     without `-n`), a real `-m` merge case (`T6`), and the tab-expansion
     branch (`T13`/`T14`) - the strongest, most automatically-repeatable
     verification any file in this backlog has had.
+
+18. **`p9/cmd/hoc.b` - a real translation of hoc6, Kernighan and
+    Pike's desk-calculator language from "The Unix Programming
+    Environment"** (plan9port's `src/cmd/hoc` - `code.c`/`hoc.y`/
+    `init.c`/`math.c`/`symbol.c`), one of the "residual" real Plan 9
+    commands from item 9's own list. Unlike every other file in this
+    backlog, no local 9front source tree could be located to diff
+    against plan9port's copy (the same "headers/APE + two prebuilt
+    binaries only, not source" checkout item 8 already found) - this
+    is translated and verified directly against plan9port's own hoc
+    binary with that divergence honestly unverified rather than
+    diffed clean, per this tree's existing "plan9port ok when a 9front
+    difference can't be checked" allowance (the same one split.c's
+    entry above uses). hoc6 is a well-documented, widely archived
+    program, so the risk is believed low but is not zero the way a
+    diffed file's is.
+
+    The original's own threaded-code VM (an array of C function
+    pointers with operands stored inline via pointer casts) has no
+    Limbo equivalent and isn't reproduced; every OBSERVABLE behavior
+    is, checked against the oracle: a streaming tokenizer (not a
+    pre-lexed array the way `bc.b` uses) sharing one character-level
+    pushback with `read()`, since `read()` pulls raw numbers off the
+    SAME input stream the parser is still consuming - confirmed with
+    the classic `while(read(x))` idiom, whose data lives after the
+    loop's own closing brace in the same file, since a whole top-level
+    construct is fully parsed (and its terminating newline consumed)
+    before it starts executing at all. Several non-obvious rules were
+    confirmed empirically before being trusted: unary minus binds
+    LOOSER than `^` here (the opposite of this tree's own bc.b/dc.b
+    precedence - `-2^2` is -4, not 4); `&&`/`||` do NOT short-circuit
+    (both operands always evaluated); binary `%` (real fmod) is not
+    the same operation as `%=` (truncate-then-integer-modulo); a bare
+    `return`/`return expr` inside the WRONG kind of definition (proc
+    vs func) parses fine and only fails the first time that specific
+    statement actually executes, not at parse time; calling a
+    procedure from inside an expression, or redefining a builtin name
+    as a func/proc, are both parse-time syntax errors instead.
+
+    THREE findings surfaced along the way, two general enough to get
+    their own memory files:
+
+    - Limbo's `int x` on a `real` ROUNDS to nearest - it does NOT
+      truncate toward zero like C's `(long)` cast. Silently wrong
+      until caught by testing (`x=7.5; x%=2` gave 0 instead of the
+      oracle's 1). See `inferno-rio-int-real-rounds`.
+    - This emu build crashes (a native disfault) if a Limbo exception
+      unwinds through any function frame lacking its own exception
+      handler - confirmed down to a minimal 1-frame passthrough probe.
+      Wrapping this file's ~20 parser/evaluator functions in trivial
+      catch-and-rethrow blocks was the first fix attempted; the actual
+      fix is a plain `hadeerror` flag instead, checked at the handful
+      of places that would otherwise do something unsafe with a
+      post-error value - arguably more faithful anyway, since the
+      original's own setjmp/longjmp is itself a single non-local jump
+      with no per-frame unwinding either. See
+      `inferno-rio-exception-frame-bug`.
+    - A REAL BUG IN THE TRANSLATION ITSELF, found only by testing: the
+      top-level driver's own one-token lookahead, if allowed to
+      pre-fetch the token AFTER a unit's own terminating newline
+      BEFORE that unit executes, silently consumes (off the raw
+      character stream) whatever `read()` was about to read - a
+      `while(read(x))` loop that should have printed three values
+      printed none at all. Fixed by deferring that lookahead to the
+      START of the NEXT loop iteration, after execution, rather than
+      right after recognizing the current unit's own terminator -
+      yacc's own LALR(1) parser never has this problem since it only
+      calls its lexer again lazily, when the FOLLOWING construct
+      actually needs it. Confirmed with a genuine negative control:
+      reintroducing the eager lookahead reproduced the exact silent-
+      data-loss symptom in the test suite, restoring the fix cleared
+      it.
+
+    Two more divergences characterized, not fixed, both "below either
+    side's own code" the same way a formatting-library gap would be:
+    every printed number uses `%.17g` verbatim, matching the source,
+    but the real oracle's own `print()` (Plan9's libfmt) appears to
+    print the shortest decimal that still round-trips, capped at 17
+    significant digits, not always exactly 17 the way glibc's (and
+    Limbo's) `%.17g` does (`0.1` prints as `0.1` there,
+    `0.10000000000000001` here) - matching it would need a `strtod()`
+    this tree doesn't have. Separately, `read()` on a number
+    immediately followed by REAL end of file (no trailing newline)
+    silently drops that value on the real oracle - likely a quirk of
+    the underlying bio library's own number-scanning peek-ahead, not
+    of hoc's own `varread()` logic; this port's own reader has no such
+    discarding behavior. `p9/cmd/hoctest.b`'s own T5/T5b/T17 exercise
+    these three findings directly; every other case (integers, short
+    exact decimals, control flow, error-path fidelity) compares
+    byte-exact. 31 cases pass.

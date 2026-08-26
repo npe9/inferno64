@@ -221,6 +221,25 @@ implement Hoc;
 # with a digit-count tolerance rather than exact string equality for
 # exactly this reason; every case using integers or short exact
 # decimals (the vast majority) still compares byte-exact.
+#
+# A SECOND characterized-not-fixed divergence, found probing read():
+# a number immediately followed by REAL end of file, with nothing
+# after it at all (no trailing newline), is silently DROPPED by the
+# real oracle - `read(x)` on "...1 2 3" (no trailing newline) reads 1
+# and 2 successfully but reports failure for 3, discarding it, with
+# no error printed at all. The likely explanation (unverifiable
+# without Bgetd()'s own source): scanning a number needs to peek one
+# further character to confirm where it ends, and when that peek
+# meets true EOF rather than a delimiter, Bgetd() appears to fail the
+# WHOLE number just scanned rather than accepting the digits already
+# found. This port's own readfloat() has no such discarding behaviour
+# - a number immediately followed by true EOF parses successfully -
+# left unreproduced as a below-hoc's-own-code library quirk, the same
+# class of divergence as the %.17g formatting note above. A trailing
+# newline after the file's last value (the overwhelmingly common
+# case) does not trigger this at all - it hits the ordinary "leftover
+# newline not skipped by the next read()" behaviour instead, which
+# this port DOES match exactly (see hoctest.b's own T5/T5b).
 
 include "sys.m";
 	sys: Sys;
@@ -1759,7 +1778,6 @@ emit(s: string)
 # execute-it-immediately loop (rundriver(), replacing run()) ---
 
 pendingargs: list of string;
-bingen: int;	# bumped every time moreinput() switches `bin`
 
 # moreinput: advance `bin`/`infile`/`lineno` to the next pending
 # command-line argument - "-" for stdin, "-eEXPR"/"-e EXPR" for an
@@ -1805,7 +1823,6 @@ moreinput(): int
 		}
 		npb = 0;
 		peektok = nil;
-		bingen++;
 		return 1;
 	}
 }
@@ -1813,16 +1830,34 @@ moreinput(): int
 # rundriver: parses one top-level unit (a func/proc defn, filed away
 # with nothing to execute, or a runnable stmt/expr/asgn, executed
 # immediately) and repeats, switching files via moreinput() at real
-# EOF, until there is nothing left at all. Any parse or runtime error
-# sets hadeerror (see hocerror()'s own header comment on why this is a
-# flag, not a Limbo exception) and has already seeked the CURRENT
-# `bin` to its own end - so this checks hadeerror after parsing (to
-# skip executing a unit that never fully parsed) and again after
-# executing, and either way it is the ONE place that needs to notice
-# "did bin just change out from under an already-buffered lookahead
-# token" and resync curtok by re-lexing - whether that change came
-# from an error's own EOF-seek or from read() switching files in the
-# middle of a still-running top-level unit.
+# EOF, until there is nothing left at all.
+#
+# A REAL BUG, found by testing (a read()-loop test that should have
+# printed three values printed none at all): this must NOT call
+# advance() to fetch a fresh lookahead token right after recognizing a
+# unit's own trailing TNEWLINE/TEOF, before executing that unit -
+# doing so pre-lexes (and so pre-CONSUMES, off the raw character
+# stream) the token that comes AFTER this unit, which for something
+# like `while (read(x)) print x*2," "` is the very data read() is
+# about to read! yacc's own LALR(1) parser never has this problem: it
+# only calls its lexer again lazily, when it actually needs the next
+# token to keep parsing the FOLLOWING construct, which for this
+# grammar only happens once the current one has already finished
+# executing. Recognizing curtok as TNEWLINE/TEOF does NOT need to
+# advance PAST it to know the current unit is done - lexone() already
+# consumed the newline character itself off the raw stream to produce
+# that very token (a bare '\n' needs no further lookahead to
+# recognize), so leaving curtok exactly there is already the correct
+# stream position for read() to pick up from. The fix: after parsing a
+# unit, only CHECK that curtok is a valid terminator - never advance()
+# past it - and execute. The NEXT iteration's own skipnewlines() (or
+# the TEOF check right after it) is what naturally fetches the first
+# fresh token afterward, by construction always reading from whatever
+# `bin` currently is - which for free also handles read() having
+# switched `bin` to a different file mid-execution, or an error having
+# seeked `bin` to its own end, without this needing to track either
+# case explicitly the way an earlier draft's now-removed `bingen`
+# bookkeeping did.
 rundriver()
 {
 	if(!moreinput())
@@ -1837,24 +1872,17 @@ rundriver()
 			continue;
 		}
 		hadeerror = 0;
-		g := bingen;
 		if(curtok.kind == TFUNC || curtok.kind == TPROC){
 			parsedefn();
 		} else {
 			s := parsestmt();
-			if(!hadeerror){
-				if(curtok.kind == TNEWLINE)
-					advance();
-				else if(curtok.kind != TEOF)
-					fail("expected newline");
-			}
+			if(!hadeerror && curtok.kind != TNEWLINE && curtok.kind != TEOF)
+				fail("expected newline");
 			if(!hadeerror){
 				rs := ref Ret(0, 0.0, 0, "");
 				execstmt(s, rs);
 			}
 		}
-		if(hadeerror || bingen != g)
-			advance();
 	}
 }
 
@@ -1879,7 +1907,6 @@ resetstate()
 	lineno = 1;
 	infile = nil;
 	indef = 0;
-	bingen = 0;
 	hadeerror = 0;
 	everhaderror = 0;
 	pendingargs = nil;

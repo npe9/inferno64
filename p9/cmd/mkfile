@@ -30,6 +30,7 @@ TARG=\
 	pr.dis\
 	prtest.dis\
 	hoc.dis\
+	hoctest.dis\
 
 MODULES=\
 

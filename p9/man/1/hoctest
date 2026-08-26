@@ -1,0 +1,73 @@
+.TH HOCTEST 1
+.SH NAME
+hoctest \- regression test for hoc(1)
+.SH SYNOPSIS
+.B hoctest
+.SH DESCRIPTION
+.I Hoctest
+loads
+.BR /p9/dis/hoc.dis 's
+in-process test seam,
+.BR run(argv) ,
+and checks it against a real, live oracle: plan9port's own
+.B hoc
+binary, run through this emu's host-command-execution device
+.RB ( #C ,
+see
+.IR cmd (3)),
+on the identical file this same case wrote under
+.BR /hoctest ,
+with the identical arguments. Adapted directly from
+.IR prtest (1)'s
+own
+.BR runhost() / hostroot() ,
+except stdout and stderr come back as two SEPARATE buffers rather than
+one concatenated one, since several cases here compare stdout exactly
+while only checking that stderr reported SOMETHING (hoc's own
+diagnostics embed a file path and line number that differ between an
+Inferno path and a host path, the same way
+.IR pr (1)'s
+own page-header date differs - not worth reproducing exactly for
+every error case here).
+.PP
+Most cases compare stdout byte-exact. A few (constants, a
+transcendental builtin) compare through a numeric-tolerance check
+instead: every printed number here uses
+.IR hoc (1)'s
+own
+.B "%.17g"
+verbatim, but the real oracle's
+.B print()
+appears to print the shortest decimal that still round-trips, capped
+at 17 significant digits, not always exactly 17 - so an irrational
+value's last digit or two may legitimately differ between the two
+sides without either being wrong (see
+.IR hoc (1)'s
+own BUGS). The tolerance check splits both outputs into whitespace-
+separated tokens and requires either an exact match or, for a token
+that parses as a bare number on both sides, a relative difference
+under 1e-13; anything that doesn't parse as a number falls back to
+requiring an exact match.
+.SH SOURCE
+.B /p9/cmd/hoctest.b
+.SH SEE ALSO
+.IR hoc (1)
+.SH BUGS
+.B T5
+and
+.B T5b
+exercise the real, oracle-confirmed quirk that
+.BR read() 's
+own leading-whitespace skip never skips a newline, so a loop reading
+one newline-separated value per line only ever completes its first
+iteration before hitting what looks like a non-numeric character (see
+.IR hoc (1)'s
+own BUGS) - genuine behavior, not a bug in either binary, but easy to
+mistake for one when writing a hoc script by hand.
+.PP
+Does not exercise multi-line function/procedure bodies more elaborate
+than the recursion/procedure-call cases already here, nested
+control-flow combinations beyond what T3/T5 already need, or the
+.RB ( "-e" )
+flag combined with a syntax error partway through a multi-statement
+inline expression.
