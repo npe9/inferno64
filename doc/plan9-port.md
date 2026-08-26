@@ -2233,24 +2233,47 @@ below.
     scorer used to pick the best of the 8 standard mask patterns) has
     `sc = abs(cnt - s*s/2) / (s*s/20) * N4;` at its balance-penalty
     step - a plain `=`, not `+=`, discarding every penalty point the
-    preceding row-run-length scan already accumulated into `sc`.
-    Comparing the (bc-fixed) C oracle's output against `segno` (a
-    real, independent, pip-installable pure-Python QR encoder) forcing
-    both to the SAME version/level/mask still showed 70 of 625 module
-    cells differing, even though the C oracle's own output decodes
-    perfectly - meaning this is most likely a legitimate divergence in
-    mask-selection tie-breaking between two independently-valid
-    implementations (QR's spec permits any of the 8 masks; it doesn't
-    mandate a single canonical "best"), not a second decode-breaking
-    bug. The translation's own verification therefore does NOT use
-    byte-comparison against a different implementation like `segno` -
-    it uses the bc-fixed real C source itself (same algorithm, so
-    genuinely byte-identical output is the correct expectation there).
-    The `=` in `evaluate()` is translated literally, bug included,
-    since it's a real (if likely inconsequential - it only affects
-    which of 8 already-valid masks gets picked, never correctness)
-    divergence in the deployed source, not undefined behavior forcing
-    a decision the way `bc` did.
+    preceding row-run-length scan already accumulated into `sc`. An
+    earlier pass at this writeup claimed comparing the (bc-fixed) C
+    oracle against `segno` (a real, independent, pip-installable
+    pure-Python QR encoder) "forcing both to the SAME version/level/
+    mask still showed 70 of 625 module cells differing" - **that
+    specific claim was re-checked after this port shipped and does
+    not hold up, and is corrected here rather than left to mislead the
+    next reader.** Re-run with every parameter actually pinned
+    identical - version, level, mode forced to byte (not left to
+    segno's own segment-optimizer), the SAME mask forced on both sides
+    via `segno.make(..., mask=N)` and a small C-side patch bypassing
+    `evaluate()` entirely, and `boost_error=False` (segno silently
+    upgrades the error-correction level by default otherwise) - the
+    two implementations are **byte-identical: 0 of 1369 module cells
+    differ**, confirmed on a version-3/level-Q case. The original
+    70/625 almost certainly came from one of those parameters not
+    actually being pinned (most likely segno's own `boost_error`
+    default silently comparing two different effective EC levels).
+    What IS real and independently confirmed, with no segno involved
+    at all: a pure C-vs-C sweep of the buggy (`=`) oracle against a
+    `+=`-patched build of the identical source, across versions
+    {1,2,3,5,7,10} x levels {L,M,Q,H} x four payload lengths, shows the
+    `=`/`+=` difference changes which of the 8 masks gets picked in
+    roughly half of those cases - so the bug is real and measurably
+    changes mask selection, just never via the segno comparison the
+    original text credited. (This also settles, by direct evidence
+    rather than argument, a reviewer's suspicion that the 70/625
+    figure was really this port's own `r++` translation bug - finding
+    three, below - leaking into the comparison: `r++` never existed
+    anywhere but the Limbo translation, which was written strictly
+    after this C-only finding, so it could not have been present in a
+    C-oracle-vs-segno comparison.) The translation's own verification
+    therefore does NOT use byte-comparison against a different
+    implementation like `segno` - it uses the bc-fixed real C source
+    itself (same algorithm, so genuinely byte-identical output is the
+    correct expectation there, now doubly confirmed). The `=` in
+    `evaluate()` is translated literally, bug included, since it's a
+    real (if inconsequential to correctness - it only affects which of
+    8 already-valid masks gets picked, never decodability) divergence
+    in the deployed source, not undefined behavior forcing a decision
+    the way `bc` did.
 
     **A third finding, in the same function, found the hard way after
     the translation itself was written and tested against real 9front
