@@ -2174,6 +2174,7 @@ echk(Node *n)
 			case Oname:
 			case Odot:
 			case Omdot:
+			case Ocall:
 				break;
 			default:
 				nerror(n, "cannot call this expression");
