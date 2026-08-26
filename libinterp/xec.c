@@ -325,6 +325,31 @@ OP(movp)
 
 	sv = P(s);
 	if(sv != H) {
+		/*
+		 * Probe: batch10 caught two page faults at this AINC, same
+		 * PC both times, CR2 a small negative value (-20) -- the
+		 * same family as destroy()'s earlier "bad v" captures
+		 * (0, 18, and CR2 -32/-56/-20 before that), not a wild
+		 * pointer.  sv is read out of a Frame/Modlink pointer slot
+		 * by P(s); if that slot was never written a real heap
+		 * pointer or H, this is where it first gets used as one.
+		 * Same currun()+dumpstack() technique as destroy(), so a
+		 * capture here can be compared directly against those.
+		 * See doc/inferno-ports.ms.
+		 */
+		if((uintptr)sv < 0x1000) {
+			Prog *xp;
+			extern void dumpstack(void);
+
+			xp = currun();
+			if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+				print("movp: bad sv %p, running Dis pid %d module %s PC %#p\n",
+					sv, xp->pid, xp->R.M->m->name, xp->R.PC);
+			else
+				print("movp: bad sv %p, currun() nil or has no module\n", sv);
+			dumpstack();
+			abort();
+		}
 		h = D2H(sv);
 		AINC(&h->ref);
 		Setmark(h);
@@ -381,6 +406,58 @@ OP(mnewz)
 	*wp = H2D(WORD*, h);
 	destroy(t);
 }
+
+/*
+ * Check a frame descriptor against the frame it describes.
+ *
+ * The first cut of this probe compared t->np*8*sizeof(WORD) against
+ * t->size as a whole, and that is too strict: initmem()/freeptrs() gate
+ * every w[i] access behind "if(c != 0)" for each map byte, so a trailing
+ * map byte that is all zero bits is walked (p++, w += 8) but never
+ * dereferenced -- harmless, however far past t->size its nominal 8 words
+ * would reach.  That first version fired on 11 of 12 boots in batch9,
+ * always with the identical t->np 2 t->size 72 in module Init -- and a
+ * check that fires the same way on (almost) every boot cannot be the
+ * nondeterministic crash this hunt has been chasing; it is a static fact
+ * about Init's own compiled type table, not runtime corruption.  See
+ * doc/inferno-ports.ms.
+ *
+ * The real invariant is per bit, not per byte: only a *set* bit names a
+ * word initmem()/freeptrs() will actually touch, and BIT(c, nb) in
+ * freeptrs() names w[7-nb] -- word index i*8+(7-nb) for map byte i.
+ * Flag only a set bit whose word falls outside t->size.
+ */
+static void
+checkframedesc(Type *t, char *op, char *name)
+{
+	uchar *p, *ep;
+	int i, nb, c, wi;
+
+	if(t->np == 0)
+		return;
+	p = t->map;
+	ep = p + t->np;
+	i = 0;
+	while(p < ep) {
+		c = *p;
+		if(c != 0) {
+			for(nb = 0; nb < 8; nb++) {
+				if((c & (1<<nb)) == 0)
+					continue;
+				wi = i*8 + (7-nb);
+				if((uintptr)(wi+1)*sizeof(WORD*) > (uintptr)t->size) {
+					print("%s: descriptor overflow byte %d bit %d word %d "
+						"needs %lud bytes t->size %d t->np %d module %s\n",
+						op, i, nb, wi, (ulong)(wi+1)*sizeof(WORD*),
+						t->size, t->np, name);
+					abort();
+				}
+			}
+		}
+		p++;
+		i++;
+	}
+}
 OP(frame)
 {
 	Type *t;
@@ -401,6 +478,7 @@ OP(frame)
 	f->mr = nil;
 	DBG("frame frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
+	checkframedesc(t, "OP(frame)", R.M->m->name);
 	if (t->np)
 		initmem(t, f);
 	T(d) = f;
@@ -442,6 +520,7 @@ OP(mframe)
 	f->mr = nil;
 	DBG("\t\tmframe frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
+	checkframedesc(t, "OP(mframe)", ml->m->name);
 	if (t->np)
 		initmem(t, f);
 	T(d) = f;

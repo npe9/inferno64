@@ -4781,6 +4781,161 @@ in the same change that replaces it with whatever the
 reading turns up.
 
 .NH 1
+The overflow probe's first version was checking the wrong thing
+.PP
+The
+.CW OP(frame) / OP(mframe)
+descriptor probe from the previous section was tightened before its
+first real batch even finished: comparing
+.CW t->np*8*sizeof(WORD)
+against
+.CW t->size
+as a single number is too strict.
+.CW initmem() / freeptrs()
+gate every
+.CW w[i]
+access behind
+.CW "if(c != 0)"
+for each map byte in turn; a trailing map byte that is entirely zero
+bits still gets walked
+.RB ( p++ ,
+.CW "w += 8" ),
+but nothing is ever read or written for it, however far past
+.CW t->size
+its nominal eight words would reach.  Ran the first version anyway,
+twelve boots: it fired on eleven of them, every time with the
+identical
+.CW "t->np 2 t->size 72"
+in module
+.CW Init .
+A check that fires the same way on all but one boot cannot be the
+crash this hunt has been chasing \- everything else in this
+investigation has been allocation-order dependent, never the same
+capture twice.  It is a static fact about
+.CW Init 's
+own compiled type table, not runtime corruption, and is retracted as
+a finding in the same paragraph it is reported, per this document's
+own house rule.
+.PP
+Rewrote the check per bit instead of per byte, matching
+.CW freeptrs()
+'s own walk exactly:
+.CW BIT(c,\ nb)
+names
+.CW w[7-nb]
+for map byte
+.CW i ,
+so the word index is
+.CW i*8+(7-nb) .
+The tightened probe
+.RB ( checkframedesc() ,
+shared by both opcodes) only flags a
+.I set
+bit whose word falls outside
+.CW t->size ,
+printing the byte index, bit, computed word offset and both sizes
+before the same
+.CW abort() .
+Confirmed
+.CW WORD
+is
+.CW intptr
+(8 bytes) and
+.CW STRUCTALIGN
+is
+.CW sizeof(intptr)
+(also 8) on this port before trusting the rewrite \-
+.CW interp.h 's
+.CW "Type.map[STRUCTALIGN]"
+is a minimum placeholder, not a hard cap;
+.CW t->np
+can and does exceed it for a frame with more pointer slots than one
+map byte covers, allocated with extra trailing space.  Ran the
+tightened probe: twelve boots, zero descriptor-overflow hits \-
+this branch closes cleanly.  It also retires the
+.CW mcall / freeptrs
+theory the previous section's
+.CW dumpstack()
+trace suggested: frame creation and frame cleanup agree on every
+pointer slot they touch, so the stale value
+.CW freeptrs()
+handed to
+.CW destroy()
+is not a size mismatch between the two.
+.PP
+Four of the twelve boots still crashed
+.RB ( alloc:D2B ,
+a general protection violation, two page faults) \- this probe
+was never expected to touch the underlying bug, only to settle
+whether its own check was sound.  Both page faults landed at the
+identical PC,
+.CW ainc+5 ,
+called from
+.CW movp+47
+(OP(movp)'s
+.CW AINC(&h->ref) ),
+called from
+.CW mcall+212 ,
+with
+.CW CR2
+a small negative value
+.RB ( \-20 ,
+both times) \- the same family as
+.CW destroy() 's
+earlier "bad v" captures
+.RB ( 0 ,
+.CW 18 ,
+and CR2
+.CW "-32 / -56 / -20"
+before that), not a wild pointer.
+.CW OP(movp)
+reads
+.CW sv\ =\ P(s) ;
+if it is not
+.CW H
+it goes straight to
+.CW "D2H(sv)"
+and
+.CW AINC(&h->ref)
+with no validity check \- the same shape of bug as
+.CW destroy() ,
+in a second, independent opcode, both landing on a pointer-typed
+slot holding a small non-H garbage value rather than a real heap
+address or the nil sentinel.  Added the identical
+.CW currun()\ +\ dumpstack()
+probe to
+.CW OP(movp)
+that
+.CW destroy()
+already carries, so a capture here is directly comparable.  Two
+independent opcodes hitting the same failure shape narrows the
+search: the defect is upstream of both consumers, in whatever
+writes (or fails to write) a pointer-typed slot before either
+opcode reads it.
+.PP
+Ran the
+.CW OP(movp)
+probe: twelve boots, two crashes
+.RB ( alloc:D2B ,
+and a new one-off,
+.CW "panic: init0: clone failed" ,
+not chased), neither at
+.CW movp .
+A much lower crash rate than this hunt's usual near-50%, and the
+specific
+.CW ainc
+page fault did not recur \- consistent with everything else in this
+investigation being allocation-order dependent rather than
+per-build deterministic, not evidence the mechanism is fixed or
+that batch10's capture was a fluke.  Both
+.CW OP(frame) / OP(mframe)
+and
+.CW OP(movp)
+stay in place, low-cost and firing only on an already-exceptional
+value; next capture at either compounds directly on what is here.
+Not fixed.
+
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
