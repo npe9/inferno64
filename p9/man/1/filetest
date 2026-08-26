@@ -95,3 +95,34 @@ ASCII-hex face-image format) are covered lightly or not at all here.
 Each is still translated in
 .BR file.b ,
 just not independently verified to the same depth as the cases above.
+.PP
+.B T6
+builds only one of the three tar checksum-field layouts
+.IR istar ()
+accepts (6 octal digits, NUL, space); see
+.IR file (1)'s
+own BUGS for the other two, neither exercised here.
+.PP
+Does not test
+.IR file 's
+own CLI argument parsing (that lives in
+.BR init ,
+which
+.B run
+bypasses entirely) \(em including the
+.B -m
+flag's own parsing, which was fixed during this same translation to
+require an exact
+.B "\-m"
+argument rather than accepting any
+.BR -m -prefixed
+word
+.RB ( "\-mjunk" )
+as the flag and silently swallowing the rest, and to leave a bare
+.B "\-"
+alone as a filename rather than erroring on it, matching the
+original's ARGBEGIN convention. Fixed by inspection and reasoning
+about the parse, not exercised by a test here since
+.B run
+never goes through
+.BR init .

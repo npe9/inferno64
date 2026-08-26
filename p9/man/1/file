@@ -157,3 +157,27 @@ here substitutes the raw byte value for
 .B Runeerror
 to match Plan 9's own convention, since the classifiers built on top
 of it depend on that specific bucketing.
+.PP
+Three classifiers
+.RB ( longoff (),
+.IR isoffstr (),
+.IR istar ())
+seek the open file descriptor (to 256K, 32K, and 0 respectively) and
+never restore the original position afterward \(em faithful to the C,
+which does the same, and harmless here because
+.B buf
+is already fully read before any classifier runs, so nothing
+downstream re-reads from
+.BR fd .
+Noted so a future classifier added after these in the dispatch order
+does not silently assume the descriptor is still at its start.
+.PP
+.IR istar ()'s
+checksum field parser accepts any of the three real-world tar
+checksum-field layouts (6 octal digits + NUL + space, 7 digits + NUL,
+6 digits + space + NUL) by the same logic the original's
+.B strtol(hdr->chksum,\ 0,\ 8)
+uses \(em skip leading whitespace, stop at the first non-octal
+character \(em but only one layout is exercised by
+.IR filetest (1)'s
+own hand-built tar header; see that page's BUGS.

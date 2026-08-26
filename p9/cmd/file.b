@@ -1741,9 +1741,9 @@ init(nil: ref Context, argv: list of string)
 	tail := args;
 	while(tail != nil){
 		w := hd tail;
-		if(len w >= 2 && w[0]=='-' && w[1]=='m')
+		if(w == "-m")
 			mime = 1;
-		else if(len w >= 1 && w[0] == '-'){
+		else if(len w >= 2 && w[0] == '-'){
 			sys->fprint(stderr, "usage: file [-m] [file...]\n");
 			raise "fail:usage";
 		} else
