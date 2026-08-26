@@ -45,8 +45,27 @@ func init() {
 	sys.print("e=%d,%d\n", p.x, p.y)
 
 	// nested struct fields, and the same unset-field zeroing, one
-	// level deeper
+	// level deeper.  case f's inner literal ("min: Point{x: 3, y: 4}")
+	// is itself exhaustive but the *outer* Rect literal still omits
+	// "max" -- exhaustiveness has to be decided per level, driven by
+	// what the outer literal itself sets, not by whether a nested
+	// literal that IS present happens to be complete.
 	r := Rect{min: Point{x: 1, y: 2}, max: Point{x: 9, y: 8}}
 	r = Rect{min: Point{x: 3, y: 4}}
 	sys.print("f=%d,%d min max=%d,%d\n", r.min.x, r.min.y, r.max.x, r.max.y)
+
+	// the same unset-field zeroing again, but on a ":=" that
+	// re-executes inside a loop body: its frame slot is only zero
+	// "for free" the very first time (IFRAME clears a whole frame
+	// once, at the function's prologue, not per iteration) -- a
+	// later iteration reusing the same slot must still read an unset
+	// field as zero, not whatever the previous iteration's q.y = 42
+	// left behind.  found broken this way before storecomposite()'s
+	// own Odas call site learned to check compositexhaustive() too,
+	// not just Oas's.
+	for i := 0; i < 3; i++ {
+		q := Point{x: i}
+		sys.print("g%d=%d,%d\n", i, q.x, q.y)
+		q.y = 42
+	}
 }

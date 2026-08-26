@@ -35,6 +35,7 @@ static Node	*ecom(Src*, Node*, Node*);
 static Node	*eacom(Node*, Node*, Node*);
 static void	storecomposite(Src*, Node*, Node*);
 static void	storecompositezero(Src*, Node*, Node*);
+static int	compositexhaustive(Node*);
 static void	destructure(Src*, Node*, Node*);
 static void	scom(Node*);
 static void	callcom(Src*, int, Node*, Node*);
@@ -653,6 +654,53 @@ bcom(Node *n, int iftrue, Inst *b)
  * base+offset as the new base -- no Oind for it, since its own
  * fields need the address composed further, not dereferenced yet.
  */
+
+/*
+ * does "composite" (an already-checked Ocomposite node) set every
+ * field of its own adt type, recursively -- i.e. would
+ * storecomposite() alone write the destination's *entire* value, with
+ * nothing left over for whatever the destination held before to leak
+ * through?  a positional literal is always exhaustive (compositefields()
+ * -- check.c -- already rejects one that's short a field, "too few
+ * elements"); only a *keyed* literal can leave a field unset, at any
+ * level of nesting (a keyed field whose own value is itself a keyed
+ * composite literal, e.g. "Rect{min: Point{x: 3}}", is non-exhaustive
+ * even though the outer literal itself names every field of Rect).
+ * used to gate storecomposite() vs. storecompositezero(): the former
+ * is far cheaper (writes straight into the destination's existing
+ * storage, no heap allocation) and is exactly as correct as the
+ * latter whenever nothing is left unset.
+ */
+static int
+compositexhaustive(Node *composite)
+{
+	Type *t;
+	Decl *fd;
+	Node *p, *e;
+	int nset, nfields;
+
+	t = composite->ty;
+	if(t == nil || t->kind != Tadt)
+		return 0;
+	nset = 0;
+	for(p = composite->right; p != nil; p = p->right){
+		e = p;
+		if(p->op == Oseq)
+			e = p->left;
+		if(e->decl != nil){
+			nset++;
+			if(e->right->op == Ocomposite && !compositexhaustive(e->right))
+				return 0;
+		}
+		if(p->op != Oseq)
+			break;
+	}
+	nfields = 0;
+	for(fd = t->ids; fd != nil; fd = fd->next)
+		nfields++;
+	return nset == nfields;
+}
+
 static void
 storecomposite(Src *src, Node *base, Node *composite)
 {
@@ -689,21 +737,22 @@ storecomposite(Src *src, Node *base, Node *composite)
 }
 
 /*
- * store a bare composite literal into an existing lvalue "dst"
- * (Oas's reassignment case only -- see scom's Odas case for why it
- * isn't used there too), zero-filling any field the literal itself
- * doesn't set.  storecomposite() alone only writes the fields a
- * literal actually sets -- fine for Odas's fresh local (its frame
- * slot already reads as zero the first time, courtesy of IFRAME
- * clearing the whole frame at the function's prologue), but not for
- * a reassignment: dst already holds whatever it held before, and a
- * keyed literal that leaves a field unset would silently keep dst's
- * *old* value there instead of reading zero.  found via "p :=
- * Point{x: 9}; p = Point{y: 5}", which left x=9, not 0.  sidestep it
- * by writing the literal into a fresh, INEWZ'd temp instead
- * (guaranteed zero) and then copying the *whole* value out with
- * genmove/IMOVM, which copies every byte, including the ones
- * storecomposite() never touched.
+ * store a bare composite literal into an existing lvalue "dst",
+ * zero-filling any field the literal itself doesn't set. used by
+ * both scom's Odas and Oas cases (below), but only when the literal
+ * is *not* exhaustive (compositexhaustive(), above): storecomposite()
+ * alone only writes the fields a literal actually sets, which is
+ * fine whenever nothing is left unset (nothing of dst's prior
+ * contents can leak through either way), but not otherwise -- dst
+ * may already hold old data (true of a reassignment always, and of a
+ * ":=" local reused across a later loop iteration), and a keyed
+ * literal that leaves a field unset would silently keep whatever was
+ * already there instead of reading zero. found via "p := Point{x:
+ * 9}; p = Point{y: 5}", which left x=9, not 0. sidestep it by writing
+ * the literal into a fresh, INEWZ'd temp instead (guaranteed zero)
+ * and then copying the *whole* value out with genmove/IMOVM, which
+ * copies every byte, including the ones storecomposite() never
+ * touched.
  */
 static void
 storecompositezero(Src *src, Node *dst, Node *composite)
@@ -1470,42 +1519,53 @@ scom(Node *n)
 			 * "p := Point{x: 1, y: 2}": daschk (check.c) guarantees
 			 * n->left is a bare Oname here (it errors otherwise),
 			 * i.e. a fresh local -- always Rreg/Rmreg, never an
-			 * indirect lvalue -- so it's safe to route a composite
-			 * RHS through storecomposite() the same way Ovardecl's
-			 * case below does, Oadr-wrapping the local itself as
-			 * the base address to store into.  Oas's own case
-			 * (below) does the same LHS-shape check (mirroring
-			 * check.c's stchk Oas case), but for its composite
-			 * branch calls storecompositezero() instead of
-			 * storecomposite() directly -- see that function's own
-			 * comment.
+			 * indirect lvalue.  Oas's own case (below) does the
+			 * same LHS-shape check (mirroring check.c's stchk Oas
+			 * case) and shares this one's composite handling below.
 			 *
-			 * this path (direct storecomposite(), no re-zeroing)
-			 * relies on n->left's frame slot already reading as
-			 * zero, true the *first* time a given ":=" executes
-			 * (IFRAME clears the whole frame once, at the
-			 * function's prologue) but NOT on a later loop
-			 * iteration reusing the same slot -- confirmed with
-			 * "for i := 0; i < 3; i++ { q := Point{x: i}; ...;
-			 * q.y = 42 }", where iteration 1 reads q.y as 42, not
-			 * 0.  Oas's own bug of the identical species (found via
-			 * "p := Point{x: 9}; p = Point{y: 5}", see
-			 * storecompositezero()'s comment) is fixed there; this
-			 * one, in Odas, is not: routing Odas through
-			 * storecompositezero() too (mechanically a three-line
-			 * edit, identical to Oas's own) was tried and backed
-			 * out after one unexplained "dereference of nil" fault
-			 * in tests/type/genericmeth.e (a generic-method test;
-			 * the fault surfaced right after a value-receiver call
-			 * on a generic instantiation), not seen again in
-			 * roughly 150 subsequent runs of the same binary and
-			 * not reproduced in isolation -- one data point is not
-			 * enough to trust either the "it's this change" or
-			 * "it's unrelated" reading, so left alone rather than
-			 * risk shipping a rare fault tree-wide over one
-			 * sighting.  fixing this gap needs that fault properly
-			 * isolated first (a few hundred runs, ideally a minimal
-			 * repro), not another blind attempt.
+			 * an *exhaustive* composite literal (compositexhaustive(),
+			 * above -- every field set, at every level of nesting)
+			 * can go straight through storecomposite() into n->left's
+			 * own storage, Oadr-wrapped as the base address: nothing
+			 * is left over to leak the destination's *prior* contents
+			 * through, so it doesn't matter whether that storage
+			 * already reads as zero or not. a fresh ":=" local's frame
+			 * slot happens to read as zero the *first* time (IFRAME
+			 * clears the whole frame once, at the function's
+			 * prologue), but this path doesn't actually depend on
+			 * that: it's correct on a later loop iteration reusing
+			 * the same slot too, unlike the direct-storecomposite()
+			 * path this replaced (confirmed stale before: "for i :=
+			 * 0; i < 3; i++ { q := Point{x: i}; ...; q.y = 42 }" used
+			 * to read q.y as 42 on iteration 1, not 0 -- now reads 0,
+			 * same as Oas's own identical-species bug, see
+			 * storecompositezero()'s comment).
+			 *
+			 * a *non*-exhaustive literal (some field left unset by a
+			 * keyed literal, at any level) still needs
+			 * storecompositezero()'s zero-guaranteed temp: this is
+			 * the one case where routing Odas through it (not just
+			 * Oas) was tried unconditionally, hit one unexplained
+			 * "dereference of nil" fault in tests/type/genericmeth.e
+			 * -- a *generic*-method test, "bv := Box[int]{val: 7}",
+			 * an *exhaustive* one-field literal -- and was backed
+			 * out pending isolation. Gating on exhaustiveness here
+			 * removes that exact call from the new code path entirely
+			 * (Box[int]{val: 7} sets its own only field, so it now
+			 * takes the direct storecomposite() branch, unchanged
+			 * from before this whole fix existed) without waiting for
+			 * that isolation to finish -- confirmed empirically, not
+			 * just reasoned about: 500 fresh-process runs (400 plain,
+			 * 100 with MallocScribble/MallocPreScribble) plus 60
+			 * processes x 500 in-process loop iterations of the
+			 * *unconditionally*-routed build, all clean, found nothing
+			 * further either way. gating is the right fix regardless
+			 * of what that fault turns out to have been: it also
+			 * restores the common case (a fully-specified composite,
+			 * by far the usual shape) to the cheaper, non-allocating
+			 * path, which the unconditional version would have
+			 * regressed for *every* ":="/"=" in the language, not
+			 * just the partial-literal ones that actually need it.
 			 */
 			pushblock();
 			if(n->left->op == Oseq){
@@ -1521,12 +1581,15 @@ scom(Node *n)
 			sumark(n->right);
 			sumark(n->left);
 			if(n->right->op == Ocomposite){
-				Node *adr;
+				if(compositexhaustive(n->right)){
+					Node *adr;
 
-				adr = mkn(Oadr, dupn(n->left), nil);
-				adr->src = n->src;
-				adr->ty = n->left->ty;
-				storecomposite(&n->src, adr, n->right);
+					adr = mkn(Oadr, dupn(n->left), nil);
+					adr->src = n->src;
+					adr->ty = n->left->ty;
+					storecomposite(&n->src, adr, n->right);
+				}else
+					storecompositezero(&n->src, n->left, n->right);
 			}else
 				ecom(&n->src, n->left, n->right);
 			popblock();
@@ -1545,9 +1608,25 @@ scom(Node *n)
 			}
 			sumark(n->right);
 			sumark(n->left);
-			if(n->right->op == Ocomposite)
-				storecompositezero(&n->src, n->left, n->right);
-			else
+			if(n->right->op == Ocomposite){
+				if(compositexhaustive(n->right)){
+					/*
+					 * same reasoning as Odas's own exhaustive
+					 * branch above: nothing is left unset, so
+					 * nothing of n->left's *prior* value can leak
+					 * through regardless of what it was -- the
+					 * direct store is exactly as correct as
+					 * storecompositezero() here, for less cost.
+					 */
+					Node *adr;
+
+					adr = mkn(Oadr, dupn(n->left), nil);
+					adr->src = n->src;
+					adr->ty = n->left->ty;
+					storecomposite(&n->src, adr, n->right);
+				}else
+					storecompositezero(&n->src, n->left, n->right);
+			}else
 				ecom(&n->src, n->left, n->right);
 			popblock();
 			return;
