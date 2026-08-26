@@ -41,6 +41,7 @@ static	Type	*echk(Node*);
 static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
+static	Decl	*tinstantiatefn(Node*);
 static	Case	*matchlabels(Node*, Type*, int);
 static	int	casecmp(Type*, Node*, Node*);
 static	void	casesort(Type*, Label*, Label*, int, int);
@@ -278,6 +279,194 @@ tinstantiate(Node *n)
 	tt->tinsts = ti;
 
 	return inst;
+}
+
+/*
+ * "name[arg, arg, ...](args)" (echk's Ocall case, when the callee is
+ * Otinst/Oindex rather than a plain name): resolve one instantiation
+ * of a generic function template (see fndecl()'s comment, and the
+ * Decl.tparams/finsts comment in ember.h), the same "bind the
+ * parameter names in a scope, re-run the existing checker" approach
+ * tinstantiate() (above) uses for generic struct types -- except a
+ * function's *body* has to be checked too, and check()'s ordinary
+ * two-pass structure (fndecl() for every signature, then fnchk() for
+ * every body, much later) has nowhere to keep the type-parameter
+ * scope alive that long.  so this does the whole thing right here,
+ * synchronously, while the scope is still pushed: build the
+ * instantiated signature (fndecl()'s own non-generic logic, just
+ * inlined since there's no receiver to worry about -- a generic
+ * method is a separate, unimplemented case), fnchk() the body
+ * immediately, then mark the result "checked" so check()'s later
+ * pass (which will still reach it, since it walks fns[] by index
+ * against a length that keeps growing) skips it rather than
+ * re-checking it with the bindings gone.
+ *
+ * curfn/curret are check.c's own reentrancy hazard here: fnchk()
+ * sets them unconditionally and clears curfn on return, without
+ * saving/restoring anything, because until now nothing ever called
+ * it from inside another function's own fnchk() -- exactly what
+ * happens here, called via echk() while the *caller's* body (whoever
+ * writes "swap[int, string](...)") is itself still being checked.
+ * saved and restored explicitly around the nested call.
+ */
+static Decl*
+tinstantiatefn(Node *n)
+{
+	Decl *td, *pd, *savedcurfn;
+	Type *ft, *savedcurret, **argv;
+	Ginst *fi;
+	Node *p, *a, *pn;
+	int i, nargs, nparams, match;
+
+	if(n->left->op != Oname){
+		nerror(n, "bad generic function reference");
+		return nil;
+	}
+	td = lookup(n->left->sym);
+	if(td == nil || td->store != Dfn || td->tparams == nil){
+		nerror(n, "%s is not a generic function", n->left->sym->name);
+		return nil;
+	}
+	n->left->decl = td;
+
+	nargs = 0;
+	for(p = n->right; p != nil; p = p->right){
+		nargs++;
+		if(p->op != Oseq)
+			break;
+	}
+	argv = allocmem(nargs * sizeof(Type*));
+	i = 0;
+	for(p = n->right; p != nil; p = p->right){
+		a = p;
+		if(p->op == Oseq)
+			a = p->left;
+		argv[i++] = stype(a);
+		if(p->op != Oseq)
+			break;
+	}
+
+	nparams = 0;
+	for(p = td->tparams; p != nil; p = p->right){
+		nparams++;
+		if(p->op != Oseq)
+			break;
+	}
+	if(nargs != nparams){
+		nerror(n, "%s needs %d type argument%s, got %d", td->sym->name,
+			nparams, nparams == 1 ? "" : "s", nargs);
+		return nil;
+	}
+
+	for(fi = td->finsts; fi != nil; fi = fi->next){
+		match = 1;
+		for(i = 0; i < nargs; i++)
+			if(fi->args[i] != argv[i]){
+				match = 0;
+				break;
+			}
+		if(match)
+			return fi->decl;
+	}
+
+	for(i = 0; i < tinstdepth; i++)
+		if(tinstack[i] == td){
+			nerror(n, "%s: recursive generic instantiation not yet supported", td->sym->name);
+			return nil;
+		}
+	if(tinstdepth >= MaxTinstDepth){
+		nerror(n, "generic functions nested too deeply");
+		return nil;
+	}
+	tinstack[tinstdepth++] = td;
+
+	pushscope();
+	i = 0;
+	for(p = td->tparams; p != nil; p = p->right){
+		pn = p;
+		if(p->op == Oseq)
+			pn = p->left;
+		pd = mkdecl(&pn->src, Dtype, argv[i]);
+		pd->sym = pn->sym;
+		install(pd);
+		i++;
+		if(p->op != Oseq)
+			break;
+	}
+
+	{
+		Decl *fnd;
+		Decl *dd;
+		Node *tn;
+		char buf[256], *bp, *be;
+
+		/*
+		 * a fresh, independent copy of the whole template, not
+		 * td->init itself: unlike a generic struct's field-type
+		 * names (only ever consulted to build a Type, then never
+		 * read again), a function body is walked directly by
+		 * codegen (fncom(), com.c reads decl->init->aux) using the
+		 * exact same nodes echk() just mutated in place (Oname.decl/
+		 * ty, via lookup()) -- so two instantiations sharing the
+		 * template's own nodes would corrupt each other: whichever
+		 * got fnchk()'d last silently wins for *both*, since fncom()
+		 * for either one reads the same, already-overwritten tree.
+		 * confirmed empirically, not just reasoned about: identity
+		 * [int] and identity[string] both compiled to a "movp"
+		 * (pointer) return before this fix, identity[int]'s wrongly
+		 * so -- both had ended up sharing whichever body the second
+		 * instantiation's typecheck left behind.
+		 */
+		tn = dupntree(td->init);
+		ft = stype(tn->right);
+		ft->ok |= OKverify;
+		sizetype(ft);
+		for(dd = ft->ids; dd != nil; dd = dd->next)
+			sizetype(dd->ty);
+		sizetype(ft->tof);
+
+		fnd = mkdecl(&n->src, Dfn, ft);
+		bp = buf;
+		be = buf + sizeof buf;
+		bp = seprint(bp, be, "%s[", td->sym->name);
+		for(i = 0; i < nargs; i++)
+			bp = seprint(bp, be, "%s%T", i ? ", " : "", argv[i]);
+		seprint(bp, be, "]");
+		fnd->sym = enter(buf, 0);
+		fnd->init = tn;
+		fnd->offset = idoffsets(ft->ids, MaxTemp, IBY2WD);
+		fnd->dot = impdecl;
+		/*
+		 * not install()ed under its own name (there isn't one to
+		 * install under besides the template's, already taken) --
+		 * only reachable through this instantiation path, same as
+		 * a bound method.
+		 */
+
+		if(nfns >= lenfns){
+			lenfns = nfns + 32;
+			fns = reallocmem(fns, lenfns * sizeof *fns);
+		}
+		fns[nfns++] = fnd;
+
+		savedcurfn = curfn;
+		savedcurret = curret;
+		fnchk(fnd);
+		curfn = savedcurfn;
+		curret = savedcurret;
+		fnd->checked = 1;
+
+		fi = allocmem(sizeof *fi);
+		fi->nargs = nargs;
+		fi->args = argv;
+		fi->decl = fnd;
+		fi->next = td->finsts;
+		td->finsts = fi;
+
+		popscope();
+		tinstdepth--;
+		return fnd;
+	}
 }
 
 /*
@@ -895,17 +1084,50 @@ echk(Node *n)
 			n->ty = tint;
 			return n->ty;
 		}
-		switch(n->left->op){
-		case Oname:
-		case Odot:
-		case Omdot:
-			break;
-		default:
-			nerror(n, "cannot call this expression");
-			n->ty = terror;
-			return n->ty;
+		if(n->left->op == Otinst || n->left->op == Oindex){
+			/*
+			 * "swap[int, string](1, "one")": the callee parsed as a
+			 * type-instantiation-shaped expression (ptypename()
+			 * always produces Otinst; the general expression grammar
+			 * -- what a call's own callee position goes through --
+			 * can't tell an index from an instantiation and produces
+			 * Oindex instead, same ambiguity stype()'s own Otinst/
+			 * Oindex cases already resolve for a type use).
+			 * tinstantiatefn() resolves it to a concrete, already-
+			 * fully-checked Dfn; replace the callee with a plain
+			 * Oname naming it, same shape a resolved bound method
+			 * gets below -- but read ft directly off the Decl rather
+			 * than falling into the shared echk(Oname) path further
+			 * down, which resolves purely by symbol lookup and would
+			 * never find this one: an instantiation is deliberately
+			 * not install()ed under any name (see tinstantiatefn()).
+			 */
+			Decl *fnd;
+
+			fnd = tinstantiatefn(n->left);
+			if(fnd == nil){
+				n->ty = terror;
+				return n->ty;
+			}
+			n->left = mkn(Oname, nil, nil);
+			n->left->src = fnd->src;
+			n->left->sym = fnd->sym;
+			n->left->decl = fnd;
+			n->left->ty = fnd->ty;
+			ft = fnd->ty;
+		}else{
+			switch(n->left->op){
+			case Oname:
+			case Odot:
+			case Omdot:
+				break;
+			default:
+				nerror(n, "cannot call this expression");
+				n->ty = terror;
+				return n->ty;
+			}
+			ft = echk(n->left);
 		}
-		ft = echk(n->left);
 		if(ft->kind != Tfn){
 			if(ft != terror)
 				nerror(n, "call of a non-function");
@@ -2039,15 +2261,36 @@ fndecl(Node *n)
 	}
 	if(n->right->aux != nil){
 		/*
-		 * func swap[A, B](...) -- own type parameters on a
-		 * (non-method) function.  scoped out along with generic
-		 * methods below: monomorphizing a struct type by
-		 * re-stype()-ing its body with the parameter names bound
-		 * (tinstantiate(), above) doesn't extend to a *function*
-		 * body, which needs its own per-instantiation compiled
-		 * code, not just a per-instantiation Type.
+		 * func swap[A, B](...): store as an unresolved template,
+		 * same idea as typedec()'s generic-struct case, except a
+		 * function needs its *body* checked and compiled per
+		 * instantiation too, not just a Type resolved -- so this
+		 * doesn't stype() the signature or add anything to fns[]
+		 * here; tinstantiatefn() (below), reached from echk's Ocall
+		 * case for an explicit "swap[int, string](...)" call site,
+		 * does the whole thing at once: bind the parameter names in
+		 * a scope, re-run this same signature-building logic and a
+		 * full fnchk() against the body while that scope is still
+		 * live (check()'s ordinary second pass runs far too late
+		 * for that -- by the time it would reach an instantiated
+		 * Dfn, its type-parameter bindings are long gone), then pop
+		 * the scope and mark the result "checked" so that second
+		 * pass skips it.  methods with a generic receiver (the
+		 * check just below) aren't included; a method can't have
+		 * its own type parameters independent of the receiver's,
+		 * and instantiating *through* a generic receiver is its own
+		 * unimplemented case.
 		 */
-		nerror(n, "generic functions not yet supported");
+		if(recv != nil){
+			nerror(n, "generic methods not yet supported");
+			return;
+		}
+		d = mkdecl(&n->src, Dfn, nil);
+		d->sym = fsym;
+		d->init = n;
+		d->tparams = n->right->aux;
+		d->dot = impdecl;
+		install(d);
 		return;
 	}
 	if(recv != nil){
@@ -2222,6 +2465,28 @@ check(Node *tree)
 	/*
 	 * second pass: check function bodies
 	 */
-	for(i = 0; i < nfns; i++)
+	for(i = 0; i < nfns; i++){
+		/*
+		 * a generic function's instantiation (tinstantiatefn(),
+		 * above) already ran fnchk() on itself, eagerly, while its
+		 * type-parameter bindings were still in scope -- this loop
+		 * still reaches it regardless (nfns keeps growing as new
+		 * instantiations get appended mid-loop, from inside
+		 * whichever earlier fns[i]'s own body called them; i<nfns
+		 * is re-evaluated every iteration, so it always catches up),
+		 * but by then those bindings are long gone, so re-running
+		 * fnchk() here -- besides being redundant -- would silently
+		 * corrupt it: every stchk/echk mutation the first pass made
+		 * in place (locals installed with fresh Decls, Odas/Odot
+		 * nodes rewritten, ...) gets *redone* on top of itself,
+		 * against whatever the module's ordinary top-level scope
+		 * happens to have instead of A/B, producing exactly the kind
+		 * of nonsense codegen a "compiled fine, wrong values or a
+		 * crash at runtime" bug looks like -- not a second, harmless
+		 * no-op check.
+		 */
+		if(fns[i]->checked)
+			continue;
 		fnchk(fns[i]);
+	}
 }

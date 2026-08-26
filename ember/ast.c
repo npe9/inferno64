@@ -227,6 +227,33 @@ dupn(Node *old)
 }
 
 /*
+ * deep duplicate of a whole subtree (left/right/aux, recursively) --
+ * unlike dupn(), which only copies one node's own fields, sharing
+ * whatever it points at.  needed wherever the *same* template AST is
+ * about to be re-typechecked more than once (check.c's
+ * tinstantiatefn(): a generic function's body, unlike a generic
+ * struct's field-type names, is walked directly by codegen later,
+ * not just consulted to build a Type and then never read again --
+ * so two instantiations sharing template nodes that echk() mutates
+ * in place (Oname.decl/ty, set via lookup()) corrupt each other:
+ * whichever was checked last silently wins for both, since fncom()
+ * (com.c) reads the identical, already-mutated nodes for either.
+ */
+Node*
+dupntree(Node *n)
+{
+	Node *m;
+
+	if(n == nil)
+		return nil;
+	m = dupn(n);
+	m->left = dupntree(n->left);
+	m->right = dupntree(n->right);
+	m->aux = dupntree(n->aux);
+	return m;
+}
+
+/*
  * append an item to an Oseq chain; either side may be nil
  */
 Node*

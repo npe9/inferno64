@@ -230,6 +230,24 @@ struct Decl
 	Inst	*pc;			/* start of function */
 
 	Desc	*desc;			/* heap descriptor */
+
+	/*
+	 * Dfn generics: tparams set marks this Dfn as an unresolved
+	 * generic function template ("func swap[A, B](...)"), init
+	 * holding its raw Ofndecl node instead of a checked one.
+	 * finsts caches instantiations by argument-type identity, one
+	 * per distinct "swap[X, Y](...)" call site, same shape as
+	 * Type.tinsts (ember.h) does for generic struct types. checked
+	 * marks an instantiated Dfn whose body was already fnchk()'d
+	 * eagerly, at instantiation time (with its type parameters
+	 * still bound in scope -- check.c's ordinary two-pass fnchk()
+	 * loop runs far too late for that), so the module's normal
+	 * second pass skips it rather than re-checking it with those
+	 * bindings gone.
+	 */
+	Node	*tparams;
+	Ginst	*finsts;
+	uchar	checked;
 };
 
 struct Desc
@@ -362,7 +380,8 @@ struct Ginst
 {
 	int	nargs;
 	Type	**args;
-	Type	*ty;
+	Type	*ty;			/* generic struct types: the instantiated Type */
+	Decl	*decl;			/* generic functions: the instantiated Dfn */
 	Ginst	*next;
 };
 
@@ -688,6 +707,7 @@ Node	*mknil(Src*);
 Node	*mkseq(Node*, Node*);
 Node	*rotater(Node*);
 Node	*dupn(Node*);
+Node	*dupntree(Node*);
 void	astprint(Biobuf*, Node*, int);
 int	opconv(Fmt*);
 
