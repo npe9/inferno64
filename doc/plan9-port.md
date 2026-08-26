@@ -639,6 +639,27 @@ below.
    parser's-own-stream requirement needed a genuinely different
    design, not bc.b's pre-lexed-array approach.
 
+   **`dict` checked and ruled out - real Plan 9 source exists (both
+   plan9port and 9front, near-identical, ~8,300 lines across 17 files),
+   but it's oversized on data-dependency grounds, not source-availability
+   or network-dependency grounds.** Despite the name, `dict.c` (698
+   lines) + `utils.c` (581) is an `ed`-style *local* dictionary browser -
+   no sockets, no live server, an ed-like address parser (`/re/`,
+   `#offset`, `.`, `+`/`-`) over a prebuilt binary text blob plus a
+   sorted index. But every one of its per-format backends
+   (oed.c/ahd.c/pcollins*.c/robert.c/movie.c/slang.c/world.c, >2,800
+   lines combined) parses a proprietary commercial dictionary layout
+   whose actual data ships with NEITHER tree - confirmed by reading
+   plan9port's own `dict/README`, which offers only two backends with
+   real obtainable data (pgw.c for Project Gutenberg's Webster's,
+   roget.c for the Thesaurus), fetched separately at install time from
+   an external site. `gb2312.c`/`jis208.c` (2,167 lines combined) are
+   pure embedded character-encoding lookup tables, no logic to
+   translate. Scoped down to "just the engine wired to the one format
+   with real data" is still ~2,900 lines and would need fetching and
+   installing an external multi-hundred-KB data tarball at test time -
+   a dependency no other file in this backlog has needed. Skipped.
+
    **`p9/cmd/join.b` - relational join of two sorted files: done**, one
    of the candidates from this list. A classic sorted merge-join over
    two pointers, cross-producting every combination on a duplicate key
@@ -1566,3 +1587,82 @@ below.
     these three findings directly; every other case (integers, short
     exact decimals, control flow, error-path fidelity) compares
     byte-exact. 31 cases pass.
+
+    Follow-up (a later pass, before moving on): an advisor review of
+    the finished commit flagged that `closenough()`'s tolerance branch
+    (the mechanism standing behind the `%.17g` divergence claim above)
+    could in principle be passing T17 by lucky exact-string match
+    rather than actually exercising the tolerance path, and that the
+    Bgetd/real-EOF hypothesis rested on one observation rather than a
+    discriminating test. Both checked directly rather than left as
+    inference: a temporary diagnostic print in `closenough()` confirmed
+    the tolerance branch fires for all three constant tokens compared
+    in T17 (PI/E/DEG each differ from the oracle in their last digit,
+    exactly as predicted); and a second oracle probe - the same number
+    sequence but with a trailing space instead of nothing before EOF -
+    read cleanly (`1 2 3` -> `2 4 6`) where the no-trailing-delimiter
+    case still drops the last value, confirming the cause is
+    specifically the number-scanner's own delimiter-peek meeting true
+    EOF, not "last value in the file" more generally. Both notes stand
+    as verified, not just documented; no code changed either time.
+
+19. **`dict` scoped and ruled out - not started.** Real Plan 9 source
+    exists in both trees (plan9port's `src/cmd/dict/`, 9front's
+    `sys/src/cmd/dict/`, near-identical), correcting an earlier,
+    unchecked note in this backlog's own tracking memory that claimed
+    it had none. Despite the name it is not a network DICT-protocol
+    (RFC 2229) client - it is a self-contained, `ed`-style local
+    dictionary browser (`/re/`, `#offset`, `.`, `+`/`-` addressing) over
+    a prebuilt binary text blob plus a sorted index; no sockets, no
+    live server. The engine itself (`dict.c` 698 + `utils.c` 581 +
+    headers 282 = ~1,560 lines) is genuinely pr.b/hoc.b-sized. What
+    rules it out is data, not code or network: every one of its format
+    backends (`oed.c`/`ahd.c`/`pcollins*.c`/`robert.c`/`movie.c`/
+    `slang.c`/`world.c`, >2,800 lines combined) parses a proprietary
+    commercial dictionary layout whose data ships with NEITHER tree -
+    confirmed by reading plan9port's own `dict/README`, which offers
+    only two backends with real, obtainable data (`pgw.c` for Project
+    Gutenberg's Webster's, `roget.c` for the Thesaurus), fetched
+    separately from an external site at install time; `gb2312.c`/
+    `jis208.c` (2,167 lines) are pure embedded character-encoding
+    lookup tables, no logic to translate. Total real source: ~8,300
+    lines across 17 files. Even scoped down to "engine + the one
+    backend with real data" is still ~2,900 lines and needs fetching an
+    external data tarball just to test - a dependency nothing else in
+    this backlog has needed. Skipped.
+
+20. **`dc.b`'s redo scoped, deliberately still not started - a
+    different SIZE of job than anything on this list, not just the
+    next item on it.** `sys/src/cmd/dc.c` (2,298 lines; plan9port's
+    copy is 2,287, a 78-line diff that is entirely 9front-side
+    robustness fixes - buffer-overflow guards, nil checks - not
+    algorithm changes, so plan9port's real `dc` binary is a valid live
+    oracle the same way pr's was). The blocker: dc is Plan 9's own
+    predecessor to POSIX `dc`, with true arbitrary-precision decimal
+    arithmetic (a hand-rolled `Blk`/bignum allocator, `salloc`/
+    `morehd`/`release`) and named registers that are *stacks*, not
+    single values (`sptr->val` push/pop) - plus macro strings that get
+    executed as further input, and a `!` shell-out (`execl("/bin/rc",
+    ...)`) with no Inferno equivalent, a documented drop like tar.b's
+    own `-z`. This tree has no arbitrary-precision integer with dc's
+    needed shape: `big` is a fixed 64-bit type (see
+    `inferno-rio-big-is-64bit`), and the one real bignum this tree
+    has, `module/ipints.m`'s `IPint`, is shaped for cryptographic
+    modular arithmetic - no decimal scale concept, no
+    truncate-toward-zero semantics dc needs. So the actual first step
+    isn't translating any of dc.c's 2,298 lines; it's building (or
+    adapting IPint into) a scale-aware arbitrary-precision decimal
+    layer first, a multi-session subsystem prerequisite that none of
+    file/tar/pr/hoc needed - each of those translations was cheap
+    specifically because Inferno already had the primitive the C
+    leaned on (bufio seek, regex(2), Draw, ustar-as-a-spec); dc fails
+    that test outright. The EXISTING `p9/cmd/dc.b` is not a partial
+    translation to extend - it's a different program, a bounded 64-bit
+    fixed-point workalike (`Dnum{m:big; f:int}`) verified against the
+    WRONG oracle (macOS's own `/usr/bin/dc`, not Plan 9's) - it must be
+    replaced wholesale, not built on. With `dict` ruled out above, this
+    closes the item-9 backlog list as a source of quick next files;
+    what's left is dc's subsystem-sized redo, plus the three
+    already-flagged coherent subsystem questions (fs-servers, mail,
+    ssh/tls) and the unclassified 9front-specific residual - all real
+    design work, not a next file to read cold.
