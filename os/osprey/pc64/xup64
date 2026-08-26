@@ -174,6 +174,13 @@ port
 		 * for; a yield that services the ring is what it means here.
 		 */
 		ospreyservicecaller();
+		/*
+		 * Yield after servicing, so a server task the request was
+		 * forwarded to gets the processor to answer it.  Without this
+		 * the program's retry loop is a tight spin that starves the
+		 * server and no reply ever lands.
+		 */
+		tsleep(&up->sleep, return0, nil, 2);
 		return 0;
 	}
 	uintptr xexits(va_list list)

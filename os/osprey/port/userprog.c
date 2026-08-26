@@ -86,7 +86,7 @@ startboot(char*, char**)
 	 * memory; only the service is a trap.
 	 */
 	{
-		enum { Ospreymagic = 0x4f53505259ULL, ReqPoll = 11, ReplyDone = 1 };
+		enum { Ospreymagic = 0x4f53505259ULL, ReqRead = 0, ReplyDone = 1 };
 		typedef struct {
 			uvlong	magic, id, size, msgsize;
 			uvlong	requestqueue, replyqueue, outputqueue;
@@ -117,22 +117,36 @@ startboot(char*, char**)
 			repm = (Msg*)((uchar*)pq + pq->message);
 
 			memset(&m, 0, sizeof m);
-			m.op = ReqPoll;
+			m.op = ReqRead;			/* a file op, forwarded to the server */
 			seq = rq->put + 1;
 			m.sequence = seq;
 			m.container = map->id;
 			reqm[rq->put % rq->size] = m;
 			rq->put++;			/* publish: submit, no trap */
 
-			sleep(0);			/* the one trap: service the ring */
+			{
+				int tries;
+				for(tries = 0; tries < 400 && pq->put == pq->get; tries++)
+					sleep(1);	/* service until the server's reply lands */
+			}
 
 			if(pq->put != pq->get){
 				rep = repm[pq->get % pq->size];
 				pq->get++;		/* collect, no trap */
-				if(rep.sequence == seq && rep.arg[0] == ReplyDone)
-					puts("osprey user: submitted a poll on the ring, the kernel serviced it, and the answer came back\n");
-				else
-					puts("osprey user: a reply came back but was not the poll's answer\n");
+				if(rep.sequence == seq && (long)rep.arg[0] > 0){
+					char fb[32];
+					long fn, k;
+
+					fn = (long)rep.arg[0];		/* the server's byte count */
+					if(fn > (long)sizeof fb - 1)
+						fn = sizeof fb - 1;
+					for(k = 0; k < fn; k++)		/* bytes packed from arg[2] */
+						fb[k] = ((char*)&rep.arg[2])[k];
+					puts("osprey user: the personality library fetched a file over the ring from the server: ");
+					write(2, fb, fn);
+					puts("\n");
+				} else
+					puts("osprey user: a reply came back but carried no file\n");
 			} else
 				puts("osprey user: no reply came back on the ring\n");
 		}

@@ -1665,6 +1665,69 @@ ospreyservicecaller(void)
 	qunlock(&ospreylock);
 }
 
+/*
+ * A file server, as a task, for the library-OS program to reach over the
+ * ring.  It answers the requests its clients forward to it - here with a
+ * fixed file's bytes, packed into the reply message's spare argument
+ * words, which is the whole point: the client's personality library asks
+ * for a file by message passing and the server, another task, answers,
+ * the kernel only carrying it.  A real one would read the bytes from
+ * storage; this holds them, as p9srv holds a name space.
+ *
+ * It polls rather than sleeps on a rendezvous, to keep the locking plain:
+ * it takes the lock only to look and to answer, never across a wait, so
+ * it cannot deadlock against the client's own service call.
+ */
+static void
+ospreyfileserver(void *a)
+{
+	Ospreyproc *sv = a;
+	Ospreyarm *arm;
+	uchar *md;
+	uvlong op, sarg[Ospreynarg], roff;
+	static char filebytes[] = "a file the server holds, sent over the ring";
+
+	roff = 256;
+	for(;;){
+		qlock(&ospreylock);
+		if(ospreyindex(sv) < 0){
+			qunlock(&ospreylock);
+			break;			/* the server container is gone */
+		}
+		if(ospreyrequestready(sv)
+		&& (arm = ospreydata(sv, 0, sizeof(Ospreyarm))) != nil){
+			arm->op = OSget;
+			arm->obj = 0;			/* the request ring */
+			arm->buf = roff;
+			if(ospreyselect(sv, 0, 1) == 0
+			&& ospreymessage(sv, roff, &op, sarg) == 0){
+				long n;
+
+				USED(op);
+				n = sizeof filebytes - 1;
+				if(n > 3*(int)sizeof(uvlong))	/* fits in arg[2..4] */
+					n = 3*sizeof(uvlong);
+				/*
+				 * Pack the bytes into the reply's spare args.  The
+				 * request Message the select left at roff carries the
+				 * client's identity, which answer and route use to
+				 * send this back to whoever asked; arg[0] and arg[1]
+				 * answer reserves for the status and flag, so the
+				 * bytes go from arg[2], at offset 40 in the message.
+				 */
+				if((md = ospreydata(sv, roff, ospreymsgsize())) != nil){
+					memmove(md + 5*sizeof(uvlong), filebytes, n);
+					ospreyanswer(sv, roff, n);
+					ospreyroute(sv);
+				}
+			}
+		}
+		qunlock(&ospreylock);
+		tsleep(&up->sleep, return0, nil, 5);
+	}
+	pexit("file server done", 1);
+}
+
 int
 ospreyuserprep(void)
 {
@@ -1677,6 +1740,8 @@ ospreyuserprep(void)
 	if(!waserror()){
 		p = ospreycreate(1, 40000000ULL, 800000000ULL, 200000000ULL);
 		if(p != nil){
+			Ospreyproc *sv;
+
 			x = ospreyindex(p);
 			if(x >= 0 && x < nelem(ospreyprocs)){
 				ospreyprocs[x] = up;
@@ -1690,6 +1755,16 @@ ospreyuserprep(void)
 				 */
 				up->osprey = p;
 				ospreysetpid(p, up->pid);
+			}
+			/*
+			 * A file server for the program to reach over the ring:
+			 * a second container the client delegates to, with a task
+			 * of its own that answers the client's read requests.
+			 */
+			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
+			if(sv != nil){
+				ospreydelegate(p, sv);
+				kproc("osprey-fs", ospreyfileserver, sv);
 			}
 		}
 		poperror();
