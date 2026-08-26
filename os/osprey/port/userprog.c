@@ -206,13 +206,169 @@ putint(int v)
 	write(2, m, k);
 }
 
+/* build "osprey<n>", a container's slice name, into buf */
+static void
+slicename(char *buf, int n)
+{
+	int i, d, started, div;
+
+	i = 0;
+	buf[i++]='o'; buf[i++]='s'; buf[i++]='p'; buf[i++]='r'; buf[i++]='e'; buf[i++]='y';
+	if(n == 0)
+		buf[i++]='0';
+	else {
+		started = 0;
+		for(div = 1000000000; div > 0; div /= 10){
+			d = (n/div)%10;
+			if(d != 0 || started){
+				buf[i++]='0'+d;
+				started = 1;
+			}
+		}
+	}
+	buf[i] = 0;
+}
+
+/* parse "s <a> <b>" into a and b */
+static void
+parse2(char *s, int *a, int *b)
+{
+	while(*s != 0 && (*s < '0' || *s > '9')) s++;
+	for(*a = 0; *s >= '0' && *s <= '9'; s++) *a = *a*10 + (*s - '0');
+	while(*s != 0 && (*s < '0' || *s > '9')) s++;
+	for(*b = 0; *s >= '0' && *s <= '9'; s++) *b = *b*10 + (*s - '0');
+}
+
+static int
+streq(char *a, char *b)
+{
+	while(*a != 0 && *a == *b){ a++; b++; }
+	return *a == 0 && *b == 0;
+}
+
+/*
+ * The file server, as its own user program rather than a kernel task.
+ * It maps two slices with the address-space service: its own ring, where
+ * the microkernel routes the client's forwarded requests, and the
+ * client's slice, which delegation entitles it to reach so it can read
+ * the name to open and write the bytes to read.  It works both rings in
+ * user memory - no trap to read a request or write a reply - and sleeps
+ * only to have the kernel route what it has answered back to the client.
+ * Two user tasks then exchange the open and read messages, the kernel
+ * carrying them and nothing more.
+ */
+static void
+ospreyserver(char *arg0)
+{
+	int ownslot, clientslot, iters;
+	char oname[16], cname[16], nbuf[64];
+	uchar *base, *cbase, *cdata;
+	Omap *map, *cmap;
+	Queue *rq, *pq;
+	Msg *reqm, *repm;
+
+	parse2(arg0, &ownslot, &clientslot);
+	slicename(oname, ownslot);
+	slicename(cname, clientslot);
+
+	base = (uchar*)segattach(0, oname, 0, 0);
+	if(base == (uchar*)-1){
+		puts("osprey server: could not map its own ring\n");
+		return;
+	}
+	map = (Omap*)base;
+	if(map->magic != Ospreymagic){
+		puts("osprey server: its own slice carries no ring map\n");
+		return;
+	}
+	rq = (Queue*)(base + map->requestqueue);
+	pq = (Queue*)(base + map->replyqueue);
+	reqm = (Msg*)((uchar*)rq + rq->message);
+	repm = (Msg*)((uchar*)pq + pq->message);
+
+	cbase = (uchar*)segattach(0, cname, 0, 0);
+	if(cbase == (uchar*)-1){
+		puts("osprey server: could not map the client's slice\n");
+		return;
+	}
+	cmap = (Omap*)cbase;
+	cdata = cbase + cmap->data;
+
+	puts("osprey server: a user-mode file server; its own ring and its client's slice are mapped\n");
+
+	for(iters = 0; iters < 6000; iters++){
+		while(rq->get != rq->put){
+			Msg req, rep;
+			uvlong off, len, fd, dest, most;
+			char *content;
+			long i, nb;
+			int fi;
+
+			req = reqm[rq->get % rq->size];
+			rq->get++;
+
+			for(i = 0; i < (long)sizeof rep; i++)
+				((uchar*)&rep)[i] = 0;
+			rep.container = req.container;	/* whose it is - how the kernel routes it home */
+			rep.sequence = req.sequence;
+
+			if(req.op == ReqOpen){
+				off = req.arg[2];
+				len = req.arg[3];
+				if(len > sizeof nbuf - 1)
+					len = sizeof nbuf - 1;
+				for(i = 0; i < (long)len; i++)
+					nbuf[i] = (char)cdata[off + i];
+				nbuf[len] = 0;
+				fi = -1;
+				if(streq(nbuf, "greeting"))
+					fi = 0;
+				else if(streq(nbuf, "motd"))
+					fi = 1;
+				rep.arg[2] = (uvlong)fi;		/* the handle */
+				rep.arg[0] = fi >= 0 ? ReplyDone : 2;	/* status */
+			} else if(req.op == ReqRead){
+				fd = req.arg[2];
+				dest = req.arg[3];
+				most = req.arg[4];
+				content = nil;
+				if(fd == 0)
+					content = "hello from the file server, reached over the ring, not held in the client\n";
+				else if(fd == 1)
+					content = "the osprey microkernel serves this file from a task by message passing; the personality that opened it is a library, above the kernel, not in it\n";
+				nb = 0;
+				if(content != nil){
+					while(content[nb] != 0)
+						nb++;
+					if(nb > (long)most)
+						nb = most;
+					for(i = 0; i < nb; i++)
+						cdata[dest + i] = (uchar)content[i];
+				}
+				rep.arg[0] = (uvlong)nb;		/* byte count */
+			} else
+				rep.arg[0] = 2;				/* an op we do not answer */
+
+			repm[pq->put % pq->size] = rep;
+			pq->put++;
+		}
+		sleep(1);	/* route what we answered home, and yield */
+	}
+	puts("osprey server: done\n");
+}
+
 void
-startboot(char*, char**)
+startboot(char *arg0, char**)
 {
 	char buf[256];
 	int fd;
 	long n;
 	Ring r;
+
+	if(arg0 != nil && arg0[0] == 's'){	/* the server role */
+		ospreyserver(arg0);
+		exits(nil);
+	}
 
 	puts("osprey user: a program on the microkernel, whose file personality is a library\n");
 

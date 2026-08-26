@@ -1892,9 +1892,70 @@ personality is a library it links; and, reached by an open-and-read
 protocol over the ring, a file server that is another task on the same
 microkernel, answering in its own name space.  What is small is the
 content, not the structure - two held files, not storage behind a real
-tree, and a server that is a kernel task rather than its own user
-program.  Growing those is the work from here; the structure is the
-library operating system the paper describes.
+tree.  The server, though, is no longer a kernel task: it is its own user
+program now, described next.  Growing the content is the work from here;
+the structure is the library operating system the paper describes.
+.NH 1
+The file server as its own user task
+.PP
+The file server started as a kernel task, which the plan recorded as the
+one thing still on the wrong side of the line: a server answering the
+client's opens and reads, but from inside the kernel.  It is now a second
+user program, and two user tasks exchange the messages while the kernel
+only routes them.
+.PP
+A kernel process reaches user mode the same way the first program did.
+proc0 becomes a user task by loading its image into its own address
+space and calling touser; a kernel process does no differently, because
+the kernel-process flag is only about scheduling.  So the server is
+spawned as a kernel process whose entry loads the same program image,
+binds itself to its own container the way attach binds - the slot and the
+process's back-pointer both, or the clock's reaper clears it - and enters
+user mode with one argument that names its role and the two slices it is
+to map.  The shared image branches on that argument: with it, the program
+is the server; without it, the client.
+.PP
+In user space the server maps two slices with the address-space service.
+Its own ring is where the microkernel routes the client's forwarded
+requests, and it reads them straight out of that ring in its own memory,
+no trap to collect a request.  The client's slice it maps too, which
+delegation entitles it to - the name to open and the buffer to read into
+are offsets in the client's slice, so a server that could not reach it
+could answer nothing.  It resolves the name in its own small table,
+copies the file's bytes into the client's slice, writes the reply into
+its own reply ring, and sleeps - and the only thing the sleep is for is to
+have the kernel route what it answered back to the client.  Submit and
+collect are memory on both sides; the two traps in the whole exchange are
+the two sleeps that move a request forward and a reply home.
+.PP
+One kernel change made this work, and it is small: the service call a
+task makes now also routes, for a task that answers for others, whatever
+that task has replied.  It was already what the kernel did for a server
+at other moments; doing it on the server's own service call is what lets
+a user-space server's replies reach its client with no kernel task
+driving it.  It is a no-op for a task that serves no one, so the ordinary
+caller is unaffected.
+.PP
+What this does not do, and the docs should say so plainly: the server
+polls its ring, sleeping a little between looks, rather than selecting on
+it.  The talk's shape for a driver or a server is a task that selects on
+its message queue and blocks until something arrives, and this kernel's
+select is built - but xup64's minimal syscall interface does not expose
+it, so the user server polls instead.  A select syscall is the natural
+next piece, built and verified on its own rather than bundled here.  The
+structure the milestone asked for is here: two user tasks, each its own
+container and ring, exchanging an open and a read, the kernel carrying and
+routing the messages and answering none of them.
+.PP
+A note on the console this surfaced.  With two user tasks writing to the
+bare COM1, the boot marker lost a byte and a check that matched it exactly
+failed - not the exchange, the console.  The fix was to wait for the
+UART's transmit register between bytes, which the client's console path
+already did and the boot marker did not.  A lock around whole strings was
+tried and taken back out: it would have held a spinlock across an
+unbounded hardware wait, which turns a panic on another core into a silent
+hang - the one time the console matters most.  The per-byte wait is what
+carried it; strings from two tasks may interleave, which reads fine.
 .NH 1
 User-level drivers over exposed hardware
 .PP

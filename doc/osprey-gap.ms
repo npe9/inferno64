@@ -103,7 +103,9 @@ Library OS and buddy OS \- PARTIAL
 .PP
 Built: a library-OS program on the microkernel whose personality is a
 user-space library, opening and reading files over the ring from a server
-task; the buddy relationship on pc64, where what the policy layer cannot
+that is itself a second user program - two user tasks exchanging the open
+and read, the kernel only routing them, which is the shape the paper
+draws; the buddy relationship on pc64, where what the policy layer cannot
 answer the Plan 9 kernel around it does.
 .PP
 Missing, and this is the largest gap: the library OS is minimal.  It has

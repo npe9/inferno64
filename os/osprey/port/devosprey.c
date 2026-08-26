@@ -1653,6 +1653,14 @@ ospreyservicecaller(void)
 			if((p = ospreyat(i)) != nil){
 				before = ospreyrequestready(p);
 				r = ospreyservicep(p, fastticks(nil));
+				/*
+				 * If this container answers for others, send what
+				 * it has answered home.  ospreyroute is a no-op for
+				 * a container that serves no one, so this is safe for
+				 * the ordinary caller and is what lets a user-space
+				 * server's replies reach its client on its own sleep.
+				 */
+				ospreyroute(p);
 				after = ospreyreplyready(p);
 				if(svcdiag < 4){
 					svcdiag++;
@@ -1664,109 +1672,6 @@ ospreyservicecaller(void)
 		}
 	qunlock(&ospreylock);
 }
-
-/*
- * A file server, as a task, for the library-OS program to reach over the
- * ring.  It answers the requests its clients forward to it: an open
- * resolves a name in the server's own small name space and returns a
- * handle; a read copies that file's bytes into the asking client's data
- * area - which delegation entitles the server to reach - and returns the
- * count.  This is p9srv's shape in miniature: a program, in its own name
- * space, answering opens and reads for whoever asked, the kernel only
- * carrying the message.  A real one would read the bytes from storage;
- * this holds them.
- *
- * It polls rather than sleeps on a rendezvous, to keep the locking plain:
- * it takes the lock only to look and to answer, never across a wait, so
- * it cannot deadlock against the client's own service call.
- */
-static char *ospreyfsname[] = {
-	"greeting",
-	"motd",
-};
-static char *ospreyfsdata[] = {
-	"hello from the file server, reached over the ring, not held in the client\n",
-	"the osprey microkernel serves this file from a task by message passing; the personality that opened it is a library, above the kernel, not in it\n",
-};
-
-static void
-ospreyfileserver(void *a)
-{
-	Ospreyproc *sv = a, *client;
-	Ospreyarm *arm;
-	uchar *md, *cd;
-	uvlong op, sarg[Ospreynarg], roff, clientid;
-	int fi, k;
-	long n;
-	char nbuf[64];
-
-	roff = 256;
-	for(;;){
-		qlock(&ospreylock);
-		if(ospreyindex(sv) < 0){
-			qunlock(&ospreylock);
-			break;			/* the server container is gone */
-		}
-		if(ospreyrequestready(sv)
-		&& (arm = ospreydata(sv, 0, sizeof(Ospreyarm))) != nil){
-			arm->op = OSget;
-			arm->obj = 0;
-			arm->buf = roff;
-			if(ospreyselect(sv, 0, 1) == 0
-			&& ospreymessage(sv, roff, &op, sarg) == 0
-			&& (md = ospreydata(sv, roff, ospreymsgsize())) != nil){
-				/* the request Message carries the client's id at word 2 */
-				clientid = *(uvlong*)(md + 2*sizeof(uvlong));
-				client = ospreylookup(clientid);
-				if(client == nil){
-					ospreyanswer(sv, roff, StatusError);
-					ospreyroute(sv);
-				} else if(op == (uvlong)ospreyop("open")){
-					/* name at sarg[0] in the client, length sarg[1] */
-					cd = ospreydata(client, sarg[0], sarg[1]);
-					fi = -1;
-					if(cd != nil){
-						n = sarg[1];
-						if(n > (long)sizeof nbuf - 1)
-							n = sizeof nbuf - 1;
-						for(k = 0; k < n; k++)
-							nbuf[k] = cd[k];
-						nbuf[n] = 0;
-						for(k = 0; k < nelem(ospreyfsname); k++)
-							if(strcmp(nbuf, ospreyfsname[k]) == 0){
-								fi = k;
-								break;
-							}
-					}
-					/* the handle goes back in the reply's arg[2], at word 5 */
-					*(uvlong*)(md + 5*sizeof(uvlong)) = (uvlong)fi;
-					ospreyanswer(sv, roff, fi >= 0 ? StatusDone : StatusError);
-					ospreyroute(sv);
-				} else if(op == (uvlong)ospreyop("read")){
-					/* handle sarg[0], dest sarg[1], most sarg[2] */
-					fi = (int)sarg[0];
-					n = 0;
-					if(fi >= 0 && fi < nelem(ospreyfsdata)
-					&& (cd = ospreydata(client, sarg[1], sarg[2])) != nil){
-						n = strlen(ospreyfsdata[fi]);
-						if(n > (long)sarg[2])
-							n = sarg[2];
-						memmove(cd, ospreyfsdata[fi], n);
-					}
-					ospreyanswer(sv, roff, n);	/* status = byte count */
-					ospreyroute(sv);
-				} else {
-					ospreyanswer(sv, roff, StatusError);
-					ospreyroute(sv);
-				}
-			}
-		}
-		qunlock(&ospreylock);
-		tsleep(&up->sleep, return0, nil, 5);
-	}
-	pexit("file server done", 1);
-}
-
 
 /*
  * Expose the frame buffer the firmware set up as a physical segment, so a
@@ -2020,6 +1925,43 @@ ospreyframebuffer(void)
 	return 0;
 }
 
+extern void ospreyloadprog(void);
+extern void ospreyenteruser(char*);
+
+static int ospreyuserclientslot = -1;
+
+/*
+ * The file server as its own user task, not a kernel task.  It is
+ * spawned as a kproc that then enters user mode: a kproc reaches user
+ * mode the same way proc0 does, by loading the program into its own
+ * address space and calling touser - the kernel-process flag is only
+ * about scheduling, and ospreyenteruser clears it.  Bound to its own
+ * container the way attach binds - the slot and the process's back-
+ * pointer both, or the clock's reaper clears it - it is a peer of the
+ * first task, in user space, with its own ring.  arg0 tells the shared
+ * image which role to run and which slices to map: its own ring, and the
+ * client's slice, which delegation entitles a server to reach.
+ */
+static void
+ospreyuserserver(void *a)
+{
+	Ospreyproc *sv = a;
+	char arg[24];
+	int x;
+
+	x = ospreyindex(sv);
+	qlock(&ospreylock);
+	if(x >= 0 && x < nelem(ospreyprocs)){
+		ospreyprocs[x] = up;
+		up->osprey = sv;
+		ospreysetpid(sv, up->pid);
+	}
+	qunlock(&ospreylock);
+	snprint(arg, sizeof arg, "s %d %d", x, ospreyuserclientslot);
+	ospreyloadprog();
+	ospreyenteruser(arg);		/* never returns */
+}
+
 int
 ospreyuserprep(void)
 {
@@ -2035,6 +1977,7 @@ ospreyuserprep(void)
 			Ospreyproc *sv;
 
 			x = ospreyindex(p);
+			ospreyuserclientslot = x;
 			if(x >= 0 && x < nelem(ospreyprocs)){
 				ospreyprocs[x] = up;
 				/*
@@ -2058,10 +2001,17 @@ ospreyuserprep(void)
 			 * a second container the client delegates to, with a task
 			 * of its own that answers the client's read requests.
 			 */
+			/*
+			 * The file server the client reaches over the ring is
+			 * now its own user program, not a kernel task: a second
+			 * container the client delegates to, run in user mode by
+			 * ospreyuserserver.  Two user tasks then exchange the
+			 * open and read messages, the kernel only routing them.
+			 */
 			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
 			if(sv != nil){
 				ospreydelegate(p, sv);
-				kproc("osprey-fs", ospreyfileserver, sv);
+				kproc("osprey-fs", ospreyuserserver, sv);
 			}
 		}
 		poperror();

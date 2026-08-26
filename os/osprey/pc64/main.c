@@ -453,6 +453,14 @@ kdebugputc(int c)
 void
 kdebugputs(char *s, int n)
 {
+	/*
+	 * No lock here: kdebugputc waits for the UART per byte, which is what
+	 * makes each byte land, but it is also an unbounded hardware wait, and
+	 * holding a spinlock across it would turn a panic on another core into
+	 * a silent hang.  Whole-string interleaving between two user tasks is
+	 * harmless to read and was never the failure; dropped bytes were, and
+	 * the per-byte wait fixes those.
+	 */
 	while(n-- > 0)
 		kdebugputc(*s++);
 }
