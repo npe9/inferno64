@@ -7,6 +7,7 @@
 #include	"ureg.h"
 #include	"../port/error.h"
 #include	"tos.h"
+#include	<interp.h>
 
 Vctl *vctl[256];	/* defined in pc/irq.c */
 
@@ -288,11 +289,31 @@ trap(Ureg *ureg)
 void
 dumpregs(Ureg* ureg)
 {
+	Prog *xp;
+
 	if(up)
 		iprint("cpu%d: registers for %s %ud\n",
 			m->machno, up->text, up->pid);
 	else
 		iprint("cpu%d: registers for kernel\n", m->machno);
+
+	/*
+	 * up->text/up->pid above name the HOST kproc (almost always
+	 * "dis", one of a small pool of vmachine() workers multiplexing
+	 * many Dis Progs -- see doc/inferno-ports.ms's "/prog exposes
+	 * the wrong kind of process" section for the same host/Dis-level
+	 * distinction elsewhere in this port) -- not which Limbo module
+	 * was actually executing when this trap fired.  currun() is the
+	 * same lookup Sys_pctl() already trusts for that.  No symbol
+	 * table is needed for this half of the picture: a Dis module
+	 * name is already a printable string.
+	 */
+	xp = currun();
+	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+		iprint("  running Dis pid %d module %s PC %#p\n",
+			xp->pid, xp->R.M->m->name, xp->R.PC);
+	else
+		iprint("  currun() nil or has no module\n");
 
 	/*
 	 * TOP/PSP/RSP/IP/W/UP/UPE were 9ferno's Forth VM register

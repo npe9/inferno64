@@ -3322,11 +3322,186 @@ seen once and never chased.  That this session's two real fixes
 (device letter, bootargs quoting) hold up cleanly on every boot that
 survives long enough to exercise them, while the surrounding kernel
 still crashes unpredictably on a large fraction of boots for reasons
-unrelated to either fix, is the honest state to end this session's
+unrelated to either fix, was the honest state to end that session's
 work in: the specific stall this whole document set out to explain
 is fixed and confirmed; a broader, separate, still-uncaught source of
 boot-time nondeterminism remains, affecting whether any given boot
 survives long enough to show it.
+.NH 1
+Naming the Dis module a native trap can't name itself
+.PP
+Every crash this document has ever captured names the wrong process.
+.CW os/inferno/pc64/trap.c 's
+.CW dumpregs()
+prints
+.CW "up->text\ up->pid" \-
+the
+.I host
+kproc's own name and pid, almost always the literal string
+.CW "dis" ,
+one of a small, fixed pool of
+.CW vmachine()
+workers multiplexing every live Dis Prog (the same host/Dis-level
+distinction this document's own
+.CW #p / #P
+section is built on).  Three different fault types were read this
+session as \(dqpid 9 crashing again\(dq before checking this; they
+were, at most, the same
+.I host
+kproc, which says nothing about which Limbo module was actually
+running.  And no address in any of these dumps has ever been
+resolved to a function: the linked
+.CW ipc64
+binary carries no symbol table
+.CW inm
+or
+.CW acid
+can read (checked directly \-
+.CW "inm\ ipc64"
+returns nothing while
+.CW "inm\ main.6"
+lists a full table for the same object before linking, and
+.CW acid
+gets as far as loading its own
+.CW $ROOT/lib/acid/port
+module before reporting
+.CW "no\ symbol\ information"
+for the binary itself), so every native PC in every capture this
+whole document has recorded has been unreadable.
+.PP
+Fixed the readable half without needing a symbol table at all:
+.CW dumpregs()
+now also calls
+.CW currun() \-
+the same lookup
+.CW Sys_pctl()
+already trusts to name the calling Dis Prog \- and prints its pid,
+its currently-executing module's name, and its Dis-level
+.CW R.PC .
+A Limbo module name is already a string; no linker support needed.
+One boot with this in place was immediately more informative than
+every earlier capture combined:
+.RS
+.nf
+.CW "cpu0: registers for <nil> 1"
+.CW "  running Dis pid 1 module \e$Sys PC 0x7966e08"
+.CW "..."
+.CW "panic: general protection violation"
+.fi
+.RE
+landing right after
+.CW disinit.b 's
+own
+.CW "spawn\ sh\ -n\ /dis/init"
+print \- meaning the crash sits at or just past the handoff into
+.CW sh.dis 's
+own
+.CW init() ,
+not anywhere this session's two fixes touch.
+.PP
+Narrowed one specific candidate and ruled it out cleanly:
+.CW appl/cmd/sh/sh.b 's
+.CW init()
+makes its first real
+.CW Sys
+builtin call at
+.CW "sys->pctl(Sys->FORKFD,\ nil)" ,
+and
+.CW Sys_pctl() 's
+.CW Sys_FORKFD
+branch
+.RB ( os/inferno/port/inferno.c )
+is a
+.CW BlockingPctl
+flag \- it calls
+.CW release()
+before touching
+.CW o->fgrp ,
+the first time in this whole investigation a blocking
+.CW pctl
+call has ever been reached and exercised, and exactly the kind of
+release-a-window-then-touch-shared-state shape that has produced
+real bugs elsewhere in this document.  Bracketed it with four
+print points \- entry, post-release,
+.CW dupfgrp()
+returned, the movefd/close loop done, post
+.CW closefgrp() \-
+and ran it seven times across two boots.  All seven completed
+cleanly, each step in order, no crash: pid 1
+.RB ( Sh ) ,
+pid 3
+.RB ( Mount ) ,
+then pids 10 and 11
+.RB ( Sh
+again, from the fallback shell path).
+.CW Sys_pctl 's
+.CW Sys_FORKFD
+body itself is not the fault site.
+.PP
+What the crash cluster does share, across every capture this session
+made: it lands somewhere in the narrow window from
+.CW disinit.b 's
+.CW "spawn\ sh\ -n\ /dis/init"
+print through
+.CW sh.b 's
+own
+.CW initialise() \-
+which, unlike the now-cleared
+.CW FORKFD
+call, is a much richer surface: seven
+.CW load
+calls in a row
+.RB ( Filepat ,
+.CW String ,
+.CW Bufio ,
+two
+.CW "$self"
+reloads of
+.CW sh.dis
+itself
+.RB ( Sh
+and
+.CW Shellbuiltin ) ,
+.CW Env ,
+.CW Arg ) ,
+each through the same
+.CW OP(iload) /
+.CW readmod() /
+.CW linkmod()
+machinery this document's previous section already caught failing
+once, transiently, as
+.CW "\e$Sys\ not\ loaded" .
+The two
+.CW $self
+reloads are the most structurally interesting: a module taking out
+a fresh reference to
+.I itself
+while it is the one currently executing is a narrower, more
+self-referential case than any other
+.CW load
+site in this tree, and this session did not get far enough to test
+it directly.
+.PP
+Not fixed.  The
+.CW dumpregs()
+enhancement is real and committed \- every future capture, in this
+session or the next, will name its Dis module for free.  The crash
+itself is not: seven clean
+.CW FORKFD
+runs narrow where it is not, and one detailed capture narrows where
+it might be, but no repeated, filtered instrumentation of
+.CW initialise() 's
+own
+.CW load
+calls has been tried yet.  That is the concrete next step, in the
+same shape as this section's own
+.CW FORKFD
+bracket: one print per
+.CW load
+call in
+.CW appl/cmd/sh/sh.b 's
+.CW initialise() ,
+naming which of the seven is running when the next capture lands.
 .NH 1
 How a native kernel provides networking
 .PP
