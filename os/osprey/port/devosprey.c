@@ -1796,6 +1796,7 @@ enum {
 	Kbddata	= 0x60,
 	Kbdstat	= 0x64,
 	Kbdready = 0x01,
+	Auxdata	= 0x20,		/* status bit: the output byte is from the aux (mouse) port */
 	Kbdirq	= 1,		/* IrqKBD */
 };
 static uchar *ospreykbdring;	/* cached kernel pointer into the container slice */
@@ -1809,7 +1810,7 @@ ospreykbdintr(Ureg*, void*)
 	uvlong wp;
 
 	st = inb(Kbdstat);
-	if(!(st & Kbdready))
+	if(!(st & Kbdready) || (st & Auxdata))	/* not ready, or a mouse byte */
 		return;
 	c = inb(Kbddata);
 	if(ospreykbdring != nil){
@@ -1850,7 +1851,13 @@ ospreykbdenable(Ospreyproc *p, int sem)
 	while(inb(Kbdstat) & 0x02)
 		;
 	outb(Kbddata, c | 0x01);	/* enable keyboard interrupt */
-	intrenable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
+	/*
+	 * The interrupt itself is registered only once both devices have
+	 * finished programming the shared controller - see ospreyinputarm.
+	 * Registering IRQ1 here would let a keypress fire ospreykbdintr and
+	 * drain the command byte off port 0x60 in the middle of the mouse's
+	 * read-modify-write of that same byte, silently disabling one device.
+	 */
 }
 
 /*
@@ -1866,7 +1873,6 @@ enum {
 	Mouseoff = 2048,	/* the aux-byte ring, past the keyboard ring */
 	Mousen	= 256,
 	Mouseirq = 12,		/* IrqMOUSE - the i8042 aux device */
-	Auxdata	= 0x20,		/* status bit: the byte is from the aux port */
 };
 static uchar *ospreymousering;
 static Ospreyproc *ospreymouseproc;
@@ -1950,7 +1956,22 @@ ospreymouseenable(Ospreyproc *p, int sem)
 	i8042cmd(0xD4);			/* route the next data byte to the aux port */
 	i8042wdata(0xF4);		/* tell the mouse to report movement */
 	i8042rdata();			/* eat its ACK (0xFA) */
-	intrenable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
+	/* the interrupt is registered by ospreyinputarm, after all programming */
+}
+
+/*
+ * Register both input interrupts, once ospreykbdenable and
+ * ospreymouseenable have finished programming the shared i8042.  Kept
+ * apart from the programming so no handler can run while the command
+ * byte is being read and rewritten.
+ */
+void
+ospreyinputarm(void)
+{
+	if(ospreykbdring != nil)
+		intrenable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
+	if(ospreymousering != nil)
+		intrenable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
 }
 
 int
@@ -2026,9 +2047,11 @@ ospreyuserprep(void)
 				 */
 				up->osprey = p;
 				ospreysetpid(p, up->pid);
-				/* expose the keyboard and mouse interrupts */
+				/* expose the keyboard and mouse interrupts:
+				 * program both devices, then arm the interrupts */
 				ospreykbdenable(p, 1);
 				ospreymouseenable(p, 2);
+				ospreyinputarm();
 			}
 			/*
 			 * A file server for the program to reach over the ring:
