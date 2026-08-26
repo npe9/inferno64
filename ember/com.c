@@ -479,20 +479,27 @@ callcom(Src *src, int op, Node *n, Node *ret)
 /*
  * call through a function *value* (n->left is Oind of the tfnptr
  * pointer -- check.c's Ocall case wraps a call-through-a-value callee
- * exactly this way): decompose the two-word tfnptr back into an
- * Omdot(mod, ind)-shaped callee and hand it to the *existing*
- * callcom() Omdot path unchanged.  ind is a freshly built Oind node
- * with no decl, so callcom's "if(ind->decl != nil) ind->addable =
- * Roff" guard leaves it at whatever plain sumark(Oind) rules already
- * gave it (Radr/Rmadr, an ordinary indirect load) instead of decl-
- * offset addressing -- exactly what libinterp/xec.c's mcall/mframe
- * want for their own "m" operand regardless of where the value came
- * from.  ported from limbo/ecom.c's fpcall(), unchanged in shape.
+ * exactly this way): decompose the tfnptr back into an Omdot(mod,
+ * ind)-shaped callee and hand it to the *existing* callcom() Omdot
+ * path unchanged.  ind is a freshly built Oind node with no decl, so
+ * callcom's "if(ind->decl != nil) ind->addable = Roff" guard leaves
+ * it at whatever plain sumark(Oind) rules already gave it (Radr/
+ * Rmadr, an ordinary indirect load) instead of decl-offset
+ * addressing -- exactly what libinterp/xec.c's mcall/mframe want for
+ * their own "m" operand regardless of where the value came from.
+ * mod/ind ported from limbo/ecom.c's fpcall(), unchanged in shape;
+ * env is new -- every function value is actually a call to a
+ * synthesized wrapper whose real first parameter is env (check.c's
+ * envfn()/synthfvwrap()), so it's prepended to n->right as though the
+ * caller had written it as an ordinary (if invisible) first argument
+ * -- callcom()'s existing per-argument loop (unmodified) then writes
+ * it at whatever offset envfn()'s idoffsets() gave that parameter,
+ * the same way it writes any other.
  */
 static void
 fpcall(Src *src, int op, Node *n, Node *nto)
 {
-	Node tp, *e, *mod, *ind;
+	Node tp, *e, *mod, *ind, *env;
 
 	tp.decl = nil;
 	e = n->left->left;
@@ -500,12 +507,17 @@ fpcall(Src *src, int op, Node *n, Node *nto)
 		e = eacom(e, &tp, nil);
 	mod = mkunary(Oind, e);
 	ind = mkunary(Oind, mkbin(Oadd, dupn(e), mkconst(src, IBY2WD)));
+	env = mkunary(Oind, mkbin(Oadd, dupn(e), mkconst(src, 2*IBY2WD)));
 	n->left = mkbin(Omdot, mod, ind);
 	n->left->ty = e->ty->tof;
+	n->right = mkseq(env, n->right);
 	mod->ty = tint;
 	ind->ty = tint;
 	ind->left->ty = tint;
 	ind->left->right->ty = tint;
+	env->ty = tany;
+	env->left->ty = tint;
+	env->left->right->ty = tint;
 	sumark(n);
 	callcom(src, op, n, nto);
 	tfree(&tp);
@@ -720,29 +732,38 @@ ecom(Src *src, Node *nto, Node *n)
 			 * here at all -- callcom() addresses a Dfn callee via
 			 * its own Rpc/ICALL handling, entirely separate from
 			 * genmove).  represented the way limbo/ecom.c's Oref
-			 * case does: a heap-allocated two-word tfnptr{any t0,
-			 * int t1} (types.c) -- t0 this module's own linkage,
-			 * always "self" (ember doesn't support taking an
-			 * *imported* module's function as a value, only a
-			 * local one, matching this whole branch's established
-			 * scope), via the ISELF instruction (no Oself node
-			 * needed, since self is the only case); t1 this
-			 * function's own index in the module's interface
-			 * (mkiface, types.c), forced Rnoff (self/negative-
-			 * offset) instead of sumark's ordinary Rpc for a
-			 * Dfn-Oname -- disw.c's Anoff writes -(iface->offset+1),
-			 * decoded by mcall/mframe's (libinterp/xec.c) "o<0"
-			 * branch as an index into this module's own export
-			 * table, not an imported module's link table.  calling
-			 * back through the result is fpcall()'s job, below --
-			 * decomposing it back into an Omdot the *existing*
-			 * callcom() Omdot path already knows how to emit, no
-			 * changes needed there at all.
+			 * case does, extended by one word: a heap-allocated
+			 * tfnptr{any t0, int t1, any t2} (types.c) -- t0 this
+			 * module's own linkage, always "self" (ember doesn't
+			 * support taking an *imported* module's function as a
+			 * value, only a local one, matching this whole branch's
+			 * established scope), via the ISELF instruction (no
+			 * Oself node needed, since self is the only case); t1
+			 * *not* this Dfn's own index but its synthesized "$fv"
+			 * wrapper's (check.c's synthfvwrap()) -- every function
+			 * value, closure or not, is called through a wrapper
+			 * whose real first parameter is env, so com.c's calling
+			 * side (fpcall(), below) never needs to know which kind
+			 * of value it's actually calling -- forced Rnoff (self/
+			 * negative-offset) instead of sumark's ordinary Rpc for
+			 * a Dfn-Oname, decoded by mcall/mframe's (libinterp/
+			 * xec.c) "o<0" branch as an index into this module's own
+			 * export table; t2 the environment, left nil (INEWZ's
+			 * own initmem() already sets every pointer-mapped word
+			 * to H, the correct "nothing here" value -- see the
+			 * INEWZ comment below) since a plain function reference
+			 * captures nothing.  calling back through the result is
+			 * fpcall()'s job (com.c) -- decomposing it back into an
+			 * Omdot the *existing* callcom() Omdot path already
+			 * knows how to emit, no changes needed there at all.
 			 */
 			Node *dst, ind0, off, addr, ind1, tfn;
-			Decl *d;
+			Decl *d, *wd;
 
 			d = n->decl;
+			wd = d->wrapdecl;
+			if(wd == nil)
+				fatal("ecom: %s has no function-value wrapper", d->sym->name);
 			dst = nto;
 			if(dst == nil || (dst->addable != Rreg && dst->addable != Rmreg))
 				dst = talloc(&tres, n->ty, nil);
@@ -793,8 +814,8 @@ ecom(Src *src, Node *nto, Node *n)
 
 			tfn = znode;
 			tfn.op = Oname;
-			tfn.decl = d;
-			tfn.sym = d->sym;
+			tfn.decl = wd;
+			tfn.sym = wd->sym;
 			tfn.ty = tint;
 			tfn.addable = Rnoff;
 			genmove(src, Mas, tint, &tfn, &ind1);

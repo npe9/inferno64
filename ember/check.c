@@ -41,6 +41,8 @@ static	Type	*echk(Node*);
 static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
+static	Type	*envfn(Src*, Type*);
+static	Decl	*synthfvwrap(Src*, Decl*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
@@ -454,6 +456,164 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 }
 
 /*
+ * given a function value's own *public* Tfn (no env -- a real Dfn's
+ * own signature, or a parameter/local's declared "func(...) ..."),
+ * build the internal shape every function value actually carries at
+ * runtime: an "env any" parameter prepended to a dupdecl()'d copy of
+ * the original parameter list, offset from MaxTemp the same way a
+ * real function's own parameters are (fndecl() does the identical
+ * sizetype+idoffsets sequence).  a closure and a plain, non-capturing
+ * function value share this exact shape -- only whether the runtime
+ * env field ends up nil differs (com.c's ecom() Oname/Dfn case, and
+ * later, an actual closure literal) -- so com.c's calling code
+ * (fpcall()) never needs to know which kind of value it's calling
+ * through.
+ */
+static Type*
+envfn(Src *src, Type *pub)
+{
+	Decl *ids, *last, *p, *np;
+	Type *ft;
+
+	ids = last = mkdecl(src, Darg, tany);
+	ids->sym = enter(".env", 0);
+	for(p = pub->ids; p != nil; p = p->next){
+		np = dupdecl(p);
+		np->next = nil;
+		last->next = np;
+		last = np;
+	}
+	ft = mktype(src, Tfn, pub->tof, ids);
+	ft->varargs = pub->varargs;
+	ft->hasenv = 1;
+	ft->ok |= OKverify;
+	sizetype(ft);
+	for(p = ft->ids; p != nil; p = p->next)
+		sizetype(p->ty);
+	sizetype(ft->tof);
+	idoffsets(ft->ids, MaxTemp, IBY2WD);
+	return ft;
+}
+
+/*
+ * synthesize (once, cached as fn->wrapdecl) the "function value
+ * wrapper" every value of fn -- taken as a bare name, per echk's
+ * Oname case below -- is actually called through: a fresh top-level
+ * Dfn with envfn()'s env-prepended signature, whose body just calls
+ * fn directly (by name -- an ordinary direct call, unaffected by any
+ * of this: Ocall's own callee-shape check devirtualizes it, same as
+ * any other literal-name call) with its own parameters and returns
+ * whatever fn returns.  shares fn->valty's same envfn() Tfn object
+ * (built once, right here) so the wrapper's real signature and every
+ * call site going through fpcall() are reading the identical,
+ * identically-offset Tfn -- not two independently-derived shapes that
+ * could silently drift apart.
+ *
+ * added to fns[] (hence checked, exported, and given a .iface entry)
+ * the same way a generic instantiation is: synchronously, from inside
+ * echk(), while check()'s pass-2 loop can still reach it -- see
+ * ed352cc8 for why the module-interface build had to move after that
+ * loop for this to work at all (a generic instantiation never needed
+ * an .iface entry -- it's only ever called directly, by PC -- so this
+ * ordering requirement was invisible until a wrapper, reached
+ * indirectly via Rnoff/.iface->offset, needed one).
+ */
+static Decl*
+synthfvwrap(Src *src, Decl *fn)
+{
+	Decl *wd, *arg;
+	Node *call, *args, *body, *stmt;
+	Type *wt;
+	char buf[StrSize];
+
+	if(fn->wrapdecl != nil)
+		return fn->wrapdecl;
+
+	if(fn->ty->tof == tnone){
+		Node en;
+
+		en.src = *src;
+		nerror(&en, "%s: functions with no return value can't be used as a value yet", fn->sym->name);
+		return nil;
+	}
+
+	wt = envfn(src, fn->ty);
+	fn->valty = mktype(src, Tref, wt, nil);
+
+	wd = mkdecl(src, Dfn, wt);
+	seprint(buf, buf+sizeof(buf), "%s$fv", fn->sym->name);
+	wd->sym = enter(buf, 0);
+	wd->dot = impdecl;
+	/*
+	 * fndecl()'s own equivalent: d->offset = idoffsets(t->ids,
+	 * MaxTemp, IBY2WD) -- the frame size through the end of the
+	 * parameter region, which fncom() (com.c) later *extends* to
+	 * cover locals/temps too (decl->offset = idoffsets(loc,
+	 * decl->offset, MaxAlign), starting from whatever this already
+	 * is).  envfn() already idoffsets()'d wt->ids itself (each
+	 * parameter's own .offset), but its return value -- this total
+	 * -- was discarded there; left at mkdecl()'s zero default, the
+	 * wrapper's own locals/temps would be laid out starting from 0,
+	 * overlapping its parameters instead of following them (real,
+	 * not theoretical: "wrote off end of decl map" from gendesc()
+	 * building a too-small frame descriptor from the resulting
+	 * bogus size).  idoffsets() is idempotent given the same
+	 * already-offset input, so recomputing it here just to capture
+	 * the total is safe, not a second, diverging computation.
+	 */
+	wd->offset = idoffsets(wt->ids, MaxTemp, IBY2WD);
+
+	/* fn(arg1, arg2, ...) -- every wrapper param but env, in order */
+	call = mkname(src, fn->sym);
+	args = nil;
+	for(arg = wt->ids->next; arg != nil; arg = arg->next)
+		args = mkseq(args, mkname(src, arg->sym));
+	call = mkn(Ocall, call, rotater(args));
+
+	stmt = mkn(Oret, call, nil);
+	body = mkn(Oscope, stmt, nil);
+
+	wd->init = mkn(Ofndecl, nil, nil);
+	wd->init->aux = body;
+
+	if(nfns >= lenfns){
+		lenfns = nfns + 32;
+		fns = reallocmem(fns, lenfns * sizeof *fns);
+	}
+	fns[nfns++] = wd;
+
+	{
+		/*
+		 * fnchk() sets curfn/curret unconditionally and clears
+		 * curfn (to nil, not the caller's) on return -- safe from
+		 * check()'s own top-level pass-2 loop, not from here: this
+		 * runs nested, from inside echk(), itself called while the
+		 * function actually referencing fn as a value is *its own*
+		 * fnchk() is still in progress.  same reentrancy hazard
+		 * tinstantiatefncore() already guards against, missed here
+		 * at first: without this, whatever check.c code runs right
+		 * after synthfvwrap() returns sees curfn==nil and crashes
+		 * (daschk() dereferencing it unconditionally, confirmed the
+		 * hard way -- a segfault compiling funcvalue.e, not caught
+		 * by any earlier, simpler test that never called this from
+		 * inside a caller with locals of its own left to check).
+		 */
+		Decl *savedcurfn;
+		Type *savedcurret;
+
+		savedcurfn = curfn;
+		savedcurret = curret;
+		fnchk(wd);
+		curfn = savedcurfn;
+		curret = savedcurret;
+	}
+	wd->checked = 1;
+
+	fn->wrapdecl = wd;
+	return wd;
+}
+
+/*
  * "name[arg, arg, ...](args)" (echk's Ocall case, when the callee is
  * Otinst/Oindex rather than a plain name): the explicit-instantiation
  * front end to tinstantiatefncore() -- resolve td, parse the bracketed
@@ -757,8 +917,8 @@ stype(Node *n)
 				 * case (below) without going through this
 				 * per-parameter loop at all, so it's never
 				 * wrapped here.  com.c represents a function
-				 * value as a two-word tfnptr (types.c), always
-				 * behind a pointer -- Tref matches every other
+				 * value as a tfnptr (types.c), always behind a
+				 * pointer -- Tref matches every other
 				 * heap-allocated value's own representation
 				 * (composite literals, etc.), and lets the
 				 * existing Tref-generic machinery (genmove,
@@ -784,9 +944,19 @@ stype(Node *n)
 				 * value (confirmed: without this, "apply(inc,
 				 * 10)" ran and printed a wrong result instead of
 				 * faulting outright).
+				 *
+				 * envfn() (below) does this idoffsets() itself,
+				 * plus one more thing a bare Tref{Tfn} can't:
+				 * every function value -- capturing (a future
+				 * closure literal) or not (echk()'s Oname case,
+				 * synthfvwrap()) -- is actually called through a
+				 * synthesized wrapper whose real first parameter
+				 * is an "env any"; a parameter declared "f
+				 * func(int) int" has to carry that same
+				 * env-prepended shape too, or it can never
+				 * tequal() a real value's own type.
 				 */
-				idoffsets(t->ids, MaxTemp, IBY2WD);
-				t = mktype(&f->src, Tref, t, nil);
+				t = mktype(&f->src, Tref, envfn(&f->src, t), nil);
 			}
 			if(f->left == nil){
 				/*
@@ -1138,45 +1308,28 @@ echk(Node *n)
 			 * (an argument, a := RHS, ...), not Ocall's own
 			 * callee -- that shape is special-cased directly in
 			 * Ocall below (a literal "f(...)" compiles to a
-			 * direct call, unaffected by this), so the only
-			 * other places a Dfn-Oname's type is read are
-			 * genuine value uses, which need the same Tref{Tfn}
-			 * a function-typed parameter's own type already
-			 * carries (stype()'s Otfunc case, above) so the two
-			 * sides of a call like apply(inc, x) actually match.
+			 * direct call, unaffected by this).  every function
+			 * value -- this one or an eventual closure literal --
+			 * is actually called through a synthesized "$fv"
+			 * wrapper (synthfvwrap(), above) whose own signature
+			 * has an env parameter prepended; d->valty is that
+			 * wrapper's Tref{Tfn}, not d's own bare signature, so
+			 * a call like apply(inc, x) type-checks inc's value
+			 * against a parameter's identically env-prepended
+			 * "func(int) int" (stype()'s Otfunc case) and com.c's
+			 * fpcall() always finds an env slot to write, whether
+			 * this particular value turns out to carry one or not.
 			 *
-			 * cached on the Decl (valty), built+sizetype()'d
-			 * *once*: a fresh mktype() every reference was a
-			 * real, found-the-hard-way bug -- the new Type's
-			 * OKsized bit is never set, so it silently carries
-			 * size=0 (mktype()'s zero-init) forever, since
-			 * nothing else in this path calls sizetype() on it.
-			 * com.c's talloc()/idoffsets() trust a type's own
-			 * .size to lay out frame slots; a size-0 temp
-			 * advances the frame offset by zero, so whatever
-			 * gets talloc()'d *next* silently lands at the exact
-			 * same offset -- confirmed by instrumenting
-			 * idoffsets() directly: ".t1 off=72 size=0" followed
-			 * immediately by another temp at "off=72" too. Two
-			 * unrelated locals sharing one frame slot is normally
-			 * fine (non-overlapping lifetimes, an ordinary space
-			 * optimization) *except* the function's single, static
-			 * GC frame descriptor has no notion of "sometimes a
-			 * pointer" -- it marked that offset a pointer because
-			 * the temp holding my tfnptr was declared there, and
-			 * kept treating it as one for the rest of the
-			 * function's life, including *after* the slot was
-			 * silently overwritten by something else (another
-			 * call's frame pointer) that was never a refcounted
-			 * heap pointer at all.  frame teardown then destroy()s
-			 * that non-pointer bit pattern, corrupting the heap --
-			 * an alloc:D2B panic or a segfault in some *unrelated*
-			 * process moments later, never at the actual store,
-			 * which is what made this take so long to pin down.
+			 * synthfvwrap() caches both wrapdecl and valty on d,
+			 * built together from the exact same envfn() Tfn
+			 * object -- built once, sizetype()'d and idoffsets()'d
+			 * once (see synthfvwrap()'s own comment for why a
+			 * fresh, never-sized Tref per reference was a real bug
+			 * here, found the hard way).
 			 */
-			if(d->valty == nil){
-				d->valty = mktype(&n->src, Tref, d->ty, nil);
-				sizetype(d->valty);
+			if(synthfvwrap(&n->src, d) == nil){
+				n->ty = terror;
+				return n->ty;
 			}
 			n->ty = d->valty;
 		}
@@ -1358,7 +1511,9 @@ echk(Node *n)
 		Node *a;
 		Decl *arg;
 		Type *ft;
-		int i;
+		int i, isvalcall;
+
+		isvalcall = 0;
 
 		/* callee: allow name, mod.fn, or builtins */
 		if(n->left->op == Oname && strcmp(n->left->sym->name, "len") == 0){
@@ -1440,6 +1595,31 @@ echk(Node *n)
 			n->left->decl = fnd;
 			n->left->ty = fnd->ty;
 			ft = fnd->ty;
+		}else if(n->left->op == Oname && lookup(n->left->sym) != nil && lookup(n->left->sym)->store == Dfn){
+			/*
+			 * a literal "f(...)": resolved directly, *without*
+			 * going through echk()'s own Oname case -- that case
+			 * unconditionally synthesizes a "$fv" wrapper for any
+			 * Dfn it sees (synthfvwrap(), a real cost: a whole
+			 * extra function, fnchk()'d, added to fns[]), needed
+			 * only for a genuine *value* use.  a literal direct
+			 * call never needs one at all (callcom's ordinary
+			 * Rpc/ICALL path, unaffected by any of this) -- calling
+			 * echk() here regardless, then discarding the wrap,
+			 * used to be merely wasteful; now it's actively wrong,
+			 * synthesizing (and fnchk()ing) a wrapper for *every*
+			 * function ever called directly, including one this
+			 * branch doesn't support yet (void-returning), turning
+			 * plain calls like "counter()" -- a declared, never-
+			 * taken-as-a-value builtin -- into a hard error.
+			 */
+			Decl *fnd;
+
+			fnd = lookup(n->left->sym);
+			fnd->refs++;
+			n->left->decl = fnd;
+			n->left->ty = fnd->ty;
+			ft = fnd->ty;
 		}else{
 			switch(n->left->op){
 			case Oname:
@@ -1452,18 +1632,7 @@ echk(Node *n)
 				return n->ty;
 			}
 			ft = echk(n->left);
-			if(n->left->op == Oname && n->left->decl != nil && n->left->decl->store == Dfn){
-				/*
-				 * a literal "f(...)": echk's Oname case
-				 * (above) just wrapped d->ty as Tref{Tfn}, the
-				 * representation a function *value* needs --
-				 * but naming a known function directly compiles
-				 * as an ordinary direct call (callcom's
-				 * Rpc/ICALL path, com.c), which wants the bare,
-				 * unwrapped signature, so undo the wrap.
-				 */
-				ft = n->left->ty = n->left->decl->ty;
-			}else if(ft != nil && ft->kind == Tref && ft->tof != nil && ft->tof->kind == Tfn){
+			if(ft != nil && ft->kind == Tref && ft->tof != nil && ft->tof->kind == Tfn){
 				/*
 				 * calling *through* a function value instead
 				 * -- a parameter, local, global, or field, not
@@ -1480,6 +1649,7 @@ echk(Node *n)
 				ind->ty = ft->tof;
 				n->left = ind;
 				ft = ft->tof;
+				isvalcall = 1;
 			}
 		}
 		if(ft->kind != Tfn){
@@ -1514,8 +1684,15 @@ echk(Node *n)
 			n->left = callee;
 		}
 
-		/* check fixed args */
+		/*
+		 * check fixed args -- a value-call's ft->ids leads with the
+		 * synthesized wrapper's "env any" parameter (envfn(),
+		 * synthfvwrap(), above), which the user never writes at the
+		 * call site: skip it here, com.c's fpcall() supplies it.
+		 */
 		arg = ft->ids;
+		if(isvalcall && arg != nil)
+			arg = arg->next;
 		i = 0;
 		for(a = n->right; a != nil; a = a->right){
 			Node *e;

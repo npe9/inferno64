@@ -231,6 +231,7 @@ struct Decl
 
 	Desc	*desc;			/* heap descriptor */
 	Type	*valty;			/* Dfn: this function used as a plain *value*'s type -- Tref{ty}, cached (built+sizetype()'d once, check.c's echk() Oname case) so every reference to the same function shares one sized type instead of a fresh, never-sized one per use */
+	Decl	*wrapdecl;		/* Dfn: the synthesized "$fv" wrapper (env any prepended, calls this fn directly) every function value -- capturing or not -- is actually called through; cached alongside valty, built by the same site (check.c's synthfvwrap()) */
 
 	/*
 	 * Dfn generics: tparams set marks this Dfn as an unresolved
@@ -339,6 +340,7 @@ struct Type
 	Src	src;
 	uchar	kind;
 	uchar	varargs;		/* if a function, ends with vargs? */
+	uchar	hasenv;			/* Tfn built by check.c's envfn(): ids[0] is a synthesized "env any" leading parameter, an internal calling-convention detail (function values, check.c/com.c) invisible outside this module -- rtsign() (types.c) skips it when signing this Tfn for the module's own exported interface, the same way Limbo's tfnptr carries no environment at all to sign */
 	uchar	ok;			/* set when type is verified */
 	uchar	linkall;		/* put all iface fns in external linkage? */
 	uchar	rec;			/* in the middle of recursive type */

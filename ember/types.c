@@ -183,22 +183,34 @@ typeinit(void)
 
 	/*
 	 * a function *value* (as opposed to a call target): a module
-	 * pointer plus a function-table index, matching limbo/types.c's
-	 * tfnptr exactly (field names/offsets included) since it's the
-	 * same underlying Dis representation -- module calls (IMCALL)
-	 * already take exactly this pair.  com.c builds one via INEW,
-	 * not ordinary genmove (there's no plain "move a function value"
-	 * instruction; the two-word pair is materialized explicitly).
+	 * pointer plus a function-table index -- t0/t1 match limbo/
+	 * types.c's tfnptr exactly (field names/offsets included), since
+	 * it's the same underlying Dis representation module calls
+	 * (IMCALL) already take.  t2, an extension beyond limbo (whose
+	 * function values carry no environment at all -- Dis's IMCALL/
+	 * IMFRAME have no slot for one), is the environment: nil for a
+	 * plain, non-capturing value (com.c's ecom() Oname/Dfn case), an
+	 * env-adt pointer for an actual closure.  every function value,
+	 * closure or not, is a call to a synthesized wrapper whose real
+	 * first parameter is env (check.c's envfn()/synthfvwrap()), so
+	 * com.c's calling side (fpcall()) never needs to know which kind
+	 * it has -- it always reads and passes t2.  com.c builds a
+	 * tfnptr via INEW[Z], not ordinary genmove (there's no plain
+	 * "move a function value" instruction; the word triple is
+	 * materialized explicitly).
 	 */
 	{
-		Decl *id0, *id1;
+		Decl *id0, *id1, *id2;
 
 		tfnptr = mktype(&nosrc, Ttuple, nil, nil);
 		id0 = mkdecl(&nosrc, Dfield, tany);
 		id0->sym = enter("t0", 0);
 		id1 = mkdecl(&nosrc, Dfield, tint);
 		id1->sym = enter("t1", 0);
+		id2 = mkdecl(&nosrc, Dfield, tany);
+		id2->sym = enter("t2", 0);
 		id0->next = id1;
+		id1->next = id2;
 		tfnptr->ids = id0;
 		sizetype(tfnptr);
 	}
@@ -1230,7 +1242,21 @@ rtsign(Type *t, uchar *sig, int lensig, int spos)
 	case Tfn:
 		if(t->varargs != 0)
 			sig[spos++] = SIGVARARGS;
-		spos = idsign(t->ids, 0, sig, lensig, spos);
+		/*
+		 * hasenv: this Tfn is check.c's envfn() shape (a function
+		 * value's internal calling convention -- an "env any"
+		 * leading parameter), not a real, user-visible signature.
+		 * skip it: any (Tany) has no sigkind at all (limbo/types.c's
+		 * own sigkind[] table doesn't either -- any was never meant
+		 * to be a signable, user-declared field/parameter type in
+		 * either compiler), and more to the point, the env slot is
+		 * an implementation detail invisible outside this module --
+		 * a func(int) int parameter should sign identically whether
+		 * or not the value passed through it happens to close over
+		 * anything, the same way Limbo's own tfnptr carries no
+		 * environment at all to sign.
+		 */
+		spos = idsign(t->hasenv && t->ids != nil ? t->ids->next : t->ids, 0, sig, lensig, spos);
 		return rtsign(t->tof, sig, lensig, spos);
 	case Ttuple:
 		return idsign(t->ids, 0, sig, lensig, spos);
