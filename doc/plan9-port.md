@@ -1927,3 +1927,53 @@ below.
     `urlencode`, `news`), none of them requiring the subsystem-level
     design work the doc correctly still flags for the rest of upas,
     ssh/tls, and the residual bucket at large.
+
+22. **`ascii.b`/`urlencode.b` (both DONE)**: the first two of the
+    seven candidates above finished. `ascii.b` (181-line C, ~370-line
+    Limbo) is the cleanest single-pass translation in this backlog to
+    date - no host files, no bignum layer, no exception plumbing, only
+    argv in and stdout out; 18/18 test cases pass against plan9port's
+    real binary as a live oracle, masking exactly the one documented
+    9front/plan9port label divergence (0x0c is "ff " vs "np "). But
+    "clean" did not mean bug-free: an advisor review before the first
+    commit caught two real translation bugs neither obvious from
+    reading the C nor caught by the tests as first written (every
+    case then stayed under code 128). `puttext()`'s `-t` path did
+    `sys->sprint("%c", n)`, which for n>127 emits the UTF-8 ENCODING of
+    rune n (2 bytes), not the one raw byte the original's own
+    `Bputc(&bin, n)` writes; `putnum()` indexed its argument by RUNE
+    (`s[i]`), not by byte, so a multi-byte UTF-8 argument produced one
+    code per rune instead of one per byte - the same rune/byte
+    confusion `urlencode.b`'s own design note warns about, here missed
+    on the first pass anyway. Fixing both required switching the
+    output path from `string` to `array of byte` throughout (matching
+    `urlencode.b`'s own byte-transparent design), which introduced,
+    then itself caught via negative control, a THIRD bug: an
+    unnecessary per-call byte reversal that double-reversed against
+    the accumulator's own single bulk reversal at the end (every table
+    label came out spelled backwards - "nul" as "lun" - until fixed).
+    Two new test cases (`ascii -t ff`, `ascii -8n 'é'`) pin both fixes
+    down against the oracle.
+
+    `urlencode.b` (103-line 9front-only C, no plan9port copy exists,
+    ~250-line Limbo) established a new oracle-construction precedent
+    for this backlog: no prebuilt binary for it exists anywhere on
+    this host, so `urlencodetest.b` BUILDS the real oracle itself,
+    every run, compiling the actual 9front source directly with host
+    `clang -arch x86_64` against plan9port's own prebuilt (x86_64-only)
+    `libbio`/`lib9` - a genuine working binary of the real source, not
+    a stand-in, via the same `#C` host-command device every other
+    oracle in this backlog uses. Building this surfaced a second
+    general finding: a `#C` host command runs in the HOST's own
+    filesystem namespace (see `cmd(3)`'s own note), so `sys->stat()`/
+    `sys->remove()` - which only ever see Inferno's namespace - can
+    never confirm a build artifact that only exists on the host; the
+    only reliable success/failure signal from Inferno's own side is
+    the `#C` `wait` file's own exit-status field. Translation itself
+    found one real, negative-control-confirmed bug: both `encode()`'s
+    and `decode()`'s multi-byte emissions (`%XY`) pushed their bytes in
+    reverse order, a genuine translation trap once a single final bulk
+    list-reversal is already in play for the one-byte-per-iteration
+    case (correct there, wrong the moment more than one byte is pushed
+    per iteration) - caught by testing against the built oracle, not
+    by re-reading. 13/13 test cases pass.

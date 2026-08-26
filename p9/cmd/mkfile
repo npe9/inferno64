@@ -31,6 +31,10 @@ TARG=\
 	prtest.dis\
 	hoc.dis\
 	hoctest.dis\
+	ascii.dis\
+	asciitest.dis\
+	urlencode.dis\
+	urlencodetest.dis\
 
 MODULES=\
 

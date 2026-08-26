@@ -1,0 +1,80 @@
+.TH URLENCODETEST 1
+.SH NAME
+urlencodetest \- regression test for urlencode(1)
+.SH SYNOPSIS
+.B urlencodetest
+.SH DESCRIPTION
+.I Urlencodetest
+loads
+.BR /p9/dis/urlencode.dis 's
+in-process test seam,
+.BR run(argv,\ input) ,
+and checks it against a real, live oracle - but unlike every other
+oracle in this backlog, that oracle does not already exist anywhere on
+this host: no plan9port copy of urlencode(1) exists, and no prebuilt
+binary for it either.
+.PP
+Instead,
+.I urlencodetest
+BUILDS the real oracle itself, every run, by invoking
+.B clang
+(via
+.IR cmd (3),
+the same
+.B #C
+host-command-execution device every other oracle in this backlog
+uses) directly against the ACTUAL 9front source
+.RB ( /Users/npe/src/plan9front/sys/src/cmd/urlencode.c )
+and plan9port's own prebuilt
+.BR libc / libbio
+(x86_64-only on this host, hence the explicit
+.B "-arch x86_64"
+in the build command). If the build ever fails - a moved checkout, a
+missing compiler - this test fails loudly with the compiler's own
+error text rather than silently skipping the comparison.
+.PP
+A real finding from building this test, not previously seen anywhere
+else in this backlog: the built oracle binary lives entirely in the
+HOST's own filesystem namespace (see
+.IR cmd (3)'s
+own note that a host command "runs in the host operating system's own
+file name space", not Inferno's) - so
+.BR sys->stat() / sys->remove()
+(which only ever see INFERNO's own namespace) can never see it, and an
+early version of this test's own success check using
+.B sys->stat()
+always reported failure even when the real host build had genuinely
+succeeded. The
+.B #C
+.B wait
+file's own exit-status field (its last, quoted field - empty for
+success, confirmed directly by probing both a clean and a failing host
+command) is the only reliable signal available from Inferno's own side
+for a command whose output lives purely on the host.
+.PP
+Piping
+.I input
+into the built oracle's stdin uses the same
+.B "winfd = nil"
+pattern
+.IR dc.b 's
+own test suite established (see the
+.B inferno-rio-cmd-device-oracle
+memory) - dropping the last reference to the write-side
+.B data
+file forces an immediate close, delivering real end-of-file to the
+oracle's stdin.
+.SH SOURCE
+.B /p9/cmd/urlencodetest.b
+.SH SEE ALSO
+.IR urlencode (1)
+.SH BUGS
+Does not exercise the
+.I file
+command-line-argument path (every case here drives
+.BR run() 's
+own
+.I input
+byte array directly, matching
+.BR urlencode.b 's
+own test-seam scope - see its man page).

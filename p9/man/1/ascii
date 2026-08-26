@@ -1,0 +1,134 @@
+.TH ASCII 1
+.SH NAME
+ascii \- print ASCII/character-encoding names
+.SH SYNOPSIS
+.B ascii
+[
+.B -8cnt
+] [
+.BR -d | -o | -x " | " -b " n"
+] [
+.I text
+]
+.SH DESCRIPTION
+.I Ascii
+is a real, structural translation of Plan 9's own
+.IR ascii (1)
+(from
+.BR sys/src/cmd/ascii.c ),
+compiled to Dis and run by
+.IR emu ,
+not a host binary. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+With no arguments,
+.I ascii
+prints a table of the first 128 (or, with
+.BR -8 ,
+256) character codes, each row showing the code (in the current base,
+default hexadecimal) and the character's name or printable form, eight
+per line.
+.PP
+With one or more
+.I text
+arguments,
+.I ascii
+either prints the numeric code of each character in
+.I text
+.RB ( -n ,
+or when
+.I text
+does not parse as a number in the current base), or treats
+.I text
+itself as a number (in the current base) and prints the NAME of that
+character code
+.RB ( -c ,
+or when
+.I text
+DOES parse as a number and neither
+.B -n
+nor
+.B -c
+was given).
+.B -t
+is like
+.B -c
+but prints the raw character byte instead of its name.
+.SS Options
+.TP
+.B -8
+Use 256 characters (extended/Latin-1) instead of 128 (ASCII only).
+.TP
+.BR -x / -o / -d
+Print codes in hexadecimal (default) / octal / decimal.
+.TP
+.BI -b " n"
+Print codes in base
+.I n
+(2 through 36).
+.TP
+.B -n
+Force numeric-code-of-each-character mode, even if
+.I text
+looks like a number.
+.TP
+.B -c
+Force treat-argument-as-a-code, print-its-name mode.
+.TP
+.B -t
+Like
+.BR -c ,
+but print the raw byte instead of the name.
+.PP
+All boolean flags may be bundled in one word
+.RB ( "ascii -8x" " is the same as " "ascii -8 -x" ),
+confirmed directly against the real binary before writing the option
+parser, not assumed from the source's own
+.B ARGBEGIN
+macro expansion.
+.SH SOURCE
+.B /p9/cmd/ascii.b
+(translated from
+.BR sys/src/cmd/ascii.c ;
+see its own header comment for the full derivation)
+.SH SEE ALSO
+.IR asciitest (1)
+.SH BUGS
+Diffed against plan9port's own copy before translating: identical
+except ONE table entry - 9front labels character 0x0c (form feed)
+.BR "ff " ;
+plan9port labels it
+.BR "np " " (new page)."
+This translates 9front's own label, matching the repository's stated
+primary target; plan9port's real
+.B ascii
+binary (used as the live oracle in
+.IR asciitest (1),
+since it is the copy actually installed on this host) will print
+.B "np "
+on that one row where this port prints
+.BR "ff " " -"
+a confirmed, understood divergence from the ORACLE, not from 9front's
+own source, which is what is actually being translated.
+.PP
+Output is byte-, not rune-, based throughout: the
+.B -t
+flag writes a raw byte (0-255, including ones that are not valid
+standalone UTF-8), and a
+.I text
+argument is read byte-by-byte, not rune-by-rune, matching the C's own
+.RB ( "*s++&0377" )
+byte-wise iteration. See
+.BR ascii.b 's
+own header comment for two real translation bugs this caught (the
+.B -t
+path emitting a rune's UTF-8 encoding instead of the one raw byte;
+.B -8n
+counting one code per rune instead of one per byte for a non-ASCII
+argument), both found only once tests exercising a code above 127
+were added.

@@ -1,0 +1,37 @@
+.TH ASCIITEST 1
+.SH NAME
+asciitest \- regression test for ascii(1)
+.SH SYNOPSIS
+.B asciitest
+.SH DESCRIPTION
+.I Asciitest
+loads
+.BR /p9/dis/ascii.dis 's
+in-process test seam,
+.BR run(argv) ,
+and checks it against a real, live oracle: plan9port's own
+.B ascii
+binary, run through this emu's host-command-execution device
+.RB ( #C ,
+see
+.IR cmd (3)),
+with identical arguments on both sides. Simpler than most of this
+backlog's own test suites - ascii(1) needs no host files, only argv in
+and stdout out.
+.PP
+Every case masks the one documented, confirmed
+.BR ff / np
+label divergence (see
+.IR ascii (1)'s
+own BUGS) before comparing, so it never hides a REAL divergence behind
+a general tolerance rule - only that one specific, already-understood
+byte sequence is substituted.
+.SH SOURCE
+.B /p9/cmd/asciitest.b
+.SH SEE ALSO
+.IR ascii (1)
+.SH BUGS
+Does not exercise a file-argument-as-input case (ascii(1) has none -
+every operand is treated as literal text or a code, never a filename),
+nor extreme base values beyond a couple of representative ones (2, 8,
+10, 16, 36).

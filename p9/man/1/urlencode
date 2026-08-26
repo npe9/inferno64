@@ -1,0 +1,84 @@
+.TH URLENCODE 1
+.SH NAME
+urlencode \- URL percent-encode/decode filter
+.SH SYNOPSIS
+.B urlencode
+[
+.B -d
+]
+[
+.I file
+]
+.SH DESCRIPTION
+.I Urlencode
+is a real, structural translation of Plan 9's own
+.IR urlencode (1)
+(from
+.BR sys/src/cmd/urlencode.c ,
+9front only - see BUGS), compiled to Dis and run by
+.IR emu ,
+not a host binary. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+With no
+.B -d
+,
+.I urlencode
+copies
+.I file
+(or standard input) to standard output, percent-encoding every byte
+that is not a letter, digit, or one of
+.BR "/$-_@.!*'()," ,
+and turning a space into
+.BR + .
+With
+.BR -d ,
+it does the reverse: a
+.B +
+becomes a space, and a
+.B %
+followed by two hex digits becomes the byte those digits spell out.
+.PP
+A malformed
+.B %
+sequence during decode is handled leniently rather than treated as an
+error: if the character right after
+.B %
+is not a hex digit, only the
+.B %
+itself is emitted literally and that character is reprocessed on its
+own; if the SECOND character is not a hex digit, both the
+.B %
+and the (valid) first digit are emitted literally, and the second
+character is reprocessed on its own.
+.SH SOURCE
+.B /p9/cmd/urlencode.b
+(translated from
+.BR sys/src/cmd/urlencode.c ;
+see its own header comment for the full derivation, including a real
+translation bug found and fixed, negative-control-confirmed)
+.SH SEE ALSO
+.IR urlencodetest (1)
+.SH BUGS
+No plan9port copy of this file exists, and no prebuilt binary for it
+existed on this host either - unlike every other file in this
+backlog's own oracle situation. Rather than translate unverified, the
+real oracle was BUILT from the actual 9front source at test time (see
+.IR urlencodetest (1)'s
+own header comment) - a new precedent for this backlog: a file with no
+prebuilt binary anywhere is not automatically unverifiable if the host
+has a C toolchain that can build the actual source directly.
+.PP
+Operates on
+.B "array of byte"
+throughout, not Limbo
+.BR string ,
+since this is a byte-transparent filter - decoding can reconstruct any
+byte 0-255, including ones that are not valid standalone UTF-8, and a
+string round-trip could corrupt exactly the high-byte values this
+command exists to handle faithfully.
