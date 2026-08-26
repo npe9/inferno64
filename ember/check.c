@@ -669,6 +669,38 @@ declownedby(Decl *d, Decl *fn)
 }
 
 /*
+ * record that closure's body captures orig (dedup by decl identity;
+ * prepended, like this file's other Dlists -- imports, above -- so
+ * whatever order captures ends up in, capty's own fields are built by
+ * walking it the same way, so the two always line up) and that node n
+ * is one of the references to it -- used by echk's Oname case,
+ * consumed by synthfunclit() after fnchk() returns, once every capture
+ * is known and capty can be built.  a decl already in the list isn't
+ * re-added, but n is *always* recorded: every occurrence needs its own
+ * fixup, not just the first.
+ */
+static void
+addcapture(Decl *closure, Decl *orig, Node *n)
+{
+	Dlist *p;
+
+	for(p = closure->captures; p != nil; p = p->next)
+		if(p->d == orig)
+			goto found;
+	p = allocmem(sizeof *p);
+	p->d = orig;
+	p->next = closure->captures;
+	closure->captures = p;
+found:
+	if(closure->ncapuses >= closure->lencapuses){
+		closure->lencapuses += 32;
+		closure->capuses = reallocmem(closure->capuses,
+			closure->lencapuses * sizeof *closure->capuses);
+	}
+	closure->capuses[closure->ncapuses++] = n;
+}
+
+/*
  * "func(params) ret { body }" as a value (echk's Ofunclit case, below):
  * lift the literal into a fresh top-level Dfn with envfn()'s
  * env-prepended signature, exactly like synthfvwrap()'s wrapper except
@@ -678,15 +710,24 @@ declownedby(Decl *d, Decl *fn)
  * (Oname/Dfn case) build its tfnptr with zero changes, the same code
  * path a plain function value already goes through.
  *
- * phase 2 of the closure-lowering plan only: the literal's env (t2 of
- * the tfnptr) is always nil here, same as a non-capturing plain
- * function value -- any reference inside the body to a Darg/Dlocal not
- * owned by ld itself (declownedby(), above) is an actual capture,
- * unsupported so far, and rejected below.  echk's Oname case checks
- * this for every name reference as it resolves each one, gated on
- * curclosure so it can never fire outside of checking a closure's own
- * body (curclosure is nil everywhere else, including the entire rest
- * of this compiler's own test suite) -- see its own comment.
+ * a reference inside the body to a Darg/Dlocal not owned by ld itself
+ * (declownedby(), above) is a capture; echk's Oname case checks this
+ * for every name reference as it resolves each one, gated on curclosure
+ * so it can never fire outside of checking a closure's own body
+ * (curclosure is nil everywhere else, including the entire rest of
+ * this compiler's own test suite) -- see its own comment.  phase 3 of
+ * the closure-lowering plan (doc/ember-repository-study.md, by-value
+ * captures): a capture one level deep (reaching directly into
+ * ld->enclosing's own frame) is recorded (addcapture()) rather than
+ * rejected; anything further out still is.  once fnchk() returns
+ * below, every recorded capture becomes a field of a synthesized
+ * captures adt (ld->capty) and every recorded use gets rewritten to
+ * read/write through it instead of the original decl -- see the
+ * Decl.captures/capuses/capty comment, ember.h, for why that rewrite
+ * has to happen here and not deferred to codegen.  the literal's env
+ * (t2 of the tfnptr) stays nil only when captures is nil -- com.c's
+ * ecom() (Oname/Dfn case) allocates and populates the real captures
+ * adt instance when it isn't.
  */
 static Decl*
 synthfunclit(Node *n)
@@ -719,6 +760,8 @@ synthfunclit(Node *n)
 	}
 	fns[nfns++] = ld;
 
+	ld->enclosing = curfn;
+
 	/* same reentrancy save/restore as synthfvwrap()'s own fnchk(wd) call */
 	savedcurfn = curfn;
 	savedcurret = curret;
@@ -729,6 +772,100 @@ synthfunclit(Node *n)
 	curfn = savedcurfn;
 	curret = savedcurret;
 	ld->checked = 1;
+
+	if(ld->captures != nil){
+		Decl *fids, *flast, *fd, *tdecl;
+		Dlist *cl;
+		char fbuf[32];
+		int i;
+
+		/*
+		 * build the captures adt: one Dfield per entry of
+		 * ld->captures, walked in the same order addcapture() built
+		 * it in, so a capuses fixup below can find a use's field by
+		 * *position*, not by matching names or decls a second time.
+		 * field names are synthesized (".capN") purely so mktdesc()/
+		 * disw.c have *something* to print -- nothing ever looks one
+		 * up by name, this adt is never surfaced to the user or the
+		 * module's exported interface.
+		 */
+		fids = flast = nil;
+		i = 0;
+		for(cl = ld->captures; cl != nil; cl = cl->next){
+			fd = mkdecl(&n->src, Dfield, cl->d->ty);
+			seprint(fbuf, fbuf+sizeof(fbuf), ".cap%d", i++);
+			fd->sym = enter(fbuf, 0);
+			if(fids == nil)
+				fids = fd;
+			else
+				flast->next = fd;
+			flast = fd;
+		}
+		ld->capty = mktype(&n->src, Tadt, nil, fids);
+		ld->capty->ok |= OKverify;
+		/*
+		 * an ordinary struct gets its .decl from typedec() (a real,
+		 * install()ed Dtype); this one is synthesized and never
+		 * install()ed, but still needs .decl set the same way --
+		 * mktdesc() (types.c) and mktn() (gen.c, INEWZ's own type
+		 * operand) both read it, mktdesc() self-healing with a
+		 * throwaway one if it's nil, but relying on that here would
+		 * be one more never-explicitly-sized-anything trap to walk
+		 * into blind, having just spent a turn finding the last one.
+		 */
+		tdecl = mkdecl(&n->src, Dtype, ld->capty);
+		seprint(fbuf, fbuf+sizeof(fbuf), "%s$env", ld->sym->name);
+		tdecl->sym = enter(fbuf, 0);
+		ld->capty->decl = tdecl;
+		sizetype(ld->capty);
+		for(fd = ld->capty->ids; fd != nil; fd = fd->next)
+			sizetype(fd->ty);
+
+		/*
+		 * now fix up every recorded use: rewrite each in place from
+		 * a plain Oname (still reading correctly-typed, but wrongly
+		 * -addressed off the *original* decl) into the same
+		 * Oind(Oadd(base, $offset)) shape echk's own Odot case builds
+		 * for an ordinary "p.field" -- must happen before check()
+		 * returns (see the Decl.capuses comment, ember.h) since com.c's
+		 * sumark() decides addressing straight off decl->store, before
+		 * ecom() ever runs.
+		 */
+		for(i = 0; i < ld->ncapuses; i++){
+			Node *un, *envref, *off, *addr;
+			Type *envrefty;
+			Dlist *cl2;
+			int pos;
+
+			un = ld->capuses[i];
+			pos = 0;
+			for(cl2 = ld->captures; cl2 != nil; cl2 = cl2->next, pos++)
+				if(cl2->d == un->decl)
+					break;
+			fd = ld->capty->ids;
+			while(pos-- > 0)
+				fd = fd->next;
+
+			envref = mkname(&un->src, ld->ty->ids->sym);
+			envref->decl = ld->ty->ids;
+			envrefty = mktype(&un->src, Tref, ld->capty, nil);
+			sizetype(envrefty);
+			envref->ty = envrefty;
+
+			off = mkconst(&un->src, fd->offset);
+			off->ty = tint;
+
+			addr = mkn(Oadd, envref, off);
+			addr->src = un->src;
+			addr->ty = tint;
+
+			un->op = Oind;
+			un->left = addr;
+			un->right = nil;
+			un->decl = fd;
+			un->ty = fd->ty;
+		}
+	}
 
 	return ld;
 }
@@ -1121,8 +1258,39 @@ stype(Node *n)
 				break;
 		}
 		ft->ids = args;
-		if(n->right != nil)
+		if(n->right != nil){
 			ft->tof = stype(n->right);
+			if(ft->tof->kind == Tfn){
+				/*
+				 * a return type that's itself function-shaped
+				 * ("func mk(...) func(int) int {...}") is just as
+				 * much a function *value*'s type as a parameter
+				 * declared "f func(int) int" is (the comment on
+				 * this same case's parameter loop, above, explains
+				 * why *that* gets wrapped) -- the value returned
+				 * has to be a real, callable tfnptr (env-prepended,
+				 * envfn()), not the bare signature fndecl() builds
+				 * for a function's *own* top-level type.  this
+				 * wraps unconditionally, whether the enclosing
+				 * Otfunc is itself someone's own top-level signature
+				 * (fndecl()) or another value's type (the parameter
+				 * loop, or this same case recursively) -- either
+				 * way, *this* function's return position holds a
+				 * value, not a signature, the moment its own type
+				 * is function-shaped.  missing this made returning
+				 * *any* function value -- capturing or not -- from
+				 * a function declared to return one a compile
+				 * error ("cannot return ref fn(...) as fn(...)":
+				 * the value side always envfn()-wraps via
+				 * synthfvwrap()/synthfunclit(), this return-type
+				 * side never did), not something specific to
+				 * closures -- found via a closure that outlives its
+				 * creating frame, the case that actually needs a
+				 * heap-allocated env to be worth anything.
+				 */
+				ft->tof = mktype(&n->src, Tref, envfn(&n->src, ft->tof), nil);
+			}
+		}
 		return ft;
 	}
 	case Oname:
@@ -1428,19 +1596,40 @@ echk(Node *n)
 			 * body right now (curclosure == the closure's lifted
 			 * Dfn) and d -- a parameter or local -- isn't one of
 			 * its own: a reference reaching outward into an
-			 * enclosing function's frame, i.e. an actual capture.
-			 * only real captures trip this: an *ordinary* function
-			 * body never has any other function's scope open at
-			 * the same time, so lookup() could never hand back a
-			 * foreign Darg/Dlocal there -- this can only fire while
-			 * curclosure is non-nil, i.e. nowhere else in the
-			 * compiler or its own test suite.  phase 2 of the
-			 * closure-lowering plan (doc/ember-repository-study.md)
-			 * stops here; lambda-lifting a real env adt is phase 3.
+			 * enclosing scope, i.e. an actual capture.  only real
+			 * captures trip this: an *ordinary* function body never
+			 * has any other function's scope open at the same time,
+			 * so lookup() could never hand back a foreign Darg/
+			 * Dlocal there -- this can only fire while curclosure is
+			 * non-nil, i.e. nowhere else in the compiler or its own
+			 * test suite.
+			 *
+			 * phase 3 (by-value captures, doc/ember-repository-
+			 * study.md) supports this only one level deep: d must
+			 * belong to curclosure->enclosing, the function or
+			 * closure this literal syntactically appears in, not
+			 * something further out reached *through* an
+			 * intermediate closure -- transitively chasing a capture
+			 * through more than one lambda-lifted frame is real, but
+			 * genuinely harder (the intermediate closure would need
+			 * its *own* matching capture, plumbed through when its
+			 * own value is constructed) and not attempted here.
+			 * declownedby(d, curclosure->enclosing) is exactly the
+			 * boundary: true only when d is *directly* one of
+			 * enclosing's own params/locals, which is also exactly
+			 * what guarantees every accepted capture is read by a
+			 * plain, ordinarily-addressable reference at the point
+			 * this closure's own value gets constructed (com.c's
+			 * ecom(), Oname/Dfn case) -- enclosing's own frame is
+			 * what's live and addressable right there, nothing
+			 * further out.
 			 */
-			nerror(n, "closures with captures not yet supported (%s is from an enclosing function)", n->sym->name);
-			n->ty = terror;
-			return n->ty;
+			if(!declownedby(d, curclosure->enclosing)){
+				nerror(n, "closures capturing through more than one enclosing function are not yet supported (%s)", n->sym->name);
+				n->ty = terror;
+				return n->ty;
+			}
+			addcapture(curclosure, d, n);
 		}
 		if(d->store == Dfn && d->ty != nil){
 			/*

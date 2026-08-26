@@ -250,6 +250,48 @@ struct Decl
 	Node	*tparams;
 	Ginst	*finsts;
 	uchar	checked;
+
+	/*
+	 * Dfn built by check.c's synthfunclit(): a closure literal's own
+	 * captured-variable state (phase 3 of the closure-lowering plan,
+	 * doc/ember-repository-study.md, by-value captures).  enclosing is
+	 * the Dfn/closure whose body this literal syntactically appears
+	 * in, set once at synthfunclit() entry -- captures further out
+	 * than that (through more than one enclosing function/closure) are
+	 * rejected, not chased transitively; every supported capture is
+	 * always a plain, ordinarily-addressable local/arg of enclosing at
+	 * the point this closure's own value is constructed.
+	 *
+	 * captures is the set of enclosing's own Darg/Dlocal decls this
+	 * closure's body actually reads or writes, deduplicated by decl
+	 * identity (order doesn't matter beyond being the same order
+	 * capty's own fields are built in -- check.c's addcapture()); capuses is every Oname node
+	 * (echk's Oname case, gated on curclosure) that referenced one of
+	 * them, in encounter order -- both built *during* fnchk() of this
+	 * closure's own body, without touching those nodes yet: the field
+	 * offset each capture lands at isn't known until the whole body
+	 * has been walked and every capture is accounted for.  capty is
+	 * the adt built from captures immediately after fnchk() returns --
+	 * one Dfield per capture, in the same order -- nil if captures is
+	 * nil (a plain, non-capturing closure, same as any other function
+	 * value: env stays nil).  synthfunclit() then walks capuses and
+	 * rewrites each node in place into an Oind(Oadd(env-as-Tref{capty},
+	 * $offset)) chain, the same shape check.c's own Odot case builds
+	 * for an ordinary "p.field" -- so this happens, and must happen,
+	 * before check() returns: com.c's sumark() classifies a plain
+	 * Oname's addressing straight off decl->store (Rreg for any
+	 * Darg/Dlocal, regardless of *whose* frame it actually belongs
+	 * to), so an un-rewritten capture reference left as Oname would
+	 * silently address its own slot in the *enclosing* function's
+	 * frame instead of reading through env -- wrong memory, not a
+	 * compile error.
+	 */
+	Decl	*enclosing;
+	Dlist	*captures;
+	Node	**capuses;
+	int	ncapuses;
+	int	lencapuses;
+	Type	*capty;
 };
 
 struct Desc

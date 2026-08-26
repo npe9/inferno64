@@ -503,8 +503,38 @@ fpcall(Src *src, int op, Node *n, Node *nto)
 
 	tp.decl = nil;
 	e = n->left->left;
-	if(e->addable >= Rcant)
-		e = eacom(e, &tp, nil);
+	/*
+	 * >= Rcant alone isn't enough: sumark()'s own Oind case (above)
+	 * only has a rule for a base that's Rreg/Rmreg/Rareg/Ramreg/Raadr/
+	 * Ramadr -- not for one that's *already* Radr/Rmadr (an
+	 * already-indirect expression, e.g. a struct field read through a
+	 * ref, check.c's Odot case's own Oind(Oadd(...)) -- exactly the
+	 * shape a captured function-valued variable reads through, this
+	 * branch's own env-adt field access, synthfunclit()).  left
+	 * unhandled there, mod = mkunary(Oind, e) below silently defaults
+	 * to Rcant (sumark's own unconditional "n->addable = Rcant" before
+	 * its op switch, never overwritten since Radr/Rmadr match none of
+	 * the switch's cases) and callcom's "mod->addable >= Rcant" guard
+	 * then fatals ("module not addressable") on a value that's
+	 * perfectly callable, just one indirection too deep to address
+	 * directly -- Radr/Rmadr sit numerically *below* Rcant in the
+	 * enum, so the original ">= Rcant" check never saw them coming.
+	 * every call-through-a-value site before a captured function
+	 * value existed had e as a plain Rreg/Rmreg local or parameter,
+	 * never a field read, so this never came up until now.
+	 */
+	if(e->addable == Radr || e->addable == Rmadr || e->addable >= Rcant){
+		/*
+		 * eacom() (above) won't do it: its own guard is the same
+		 * "< Rcant" test ("if(n->addable < Rcant) return n"), so
+		 * calling it on an Radr/Rmadr node just hands the identical
+		 * node back unchanged -- materialize directly instead,
+		 * eacom()'s own body minus that guard.
+		 */
+		ecom(&e->src, talloc(&tp, e->ty, nil), e);
+		tp.src = e->src;
+		e = &tp;
+	}
 	mod = mkunary(Oind, e);
 	ind = mkunary(Oind, mkbin(Oadd, dupn(e), mkconst(src, IBY2WD)));
 	env = mkunary(Oind, mkbin(Oadd, dupn(e), mkconst(src, 2*IBY2WD)));
@@ -751,8 +781,11 @@ ecom(Src *src, Node *nto, Node *n)
 			 * export table; t2 the environment, left nil (INEWZ's
 			 * own initmem() already sets every pointer-mapped word
 			 * to H, the correct "nothing here" value -- see the
-			 * INEWZ comment below) since a plain function reference
-			 * captures nothing.  calling back through the result is
+			 * INEWZ comment below) for a plain function reference or
+			 * a non-capturing closure, populated with a fresh
+			 * captures-adt instance below (check.c's synthfunclit(),
+			 * phase 3 of the closure-lowering plan) when d->captures
+			 * says otherwise.  calling back through the result is
 			 * fpcall()'s job (com.c) -- decomposing it back into an
 			 * Omdot the *existing* callcom() Omdot path already
 			 * knows how to emit, no changes needed there at all.
@@ -819,6 +852,79 @@ ecom(Src *src, Node *nto, Node *n)
 			tfn.ty = tint;
 			tfn.addable = Rnoff;
 			genmove(src, Mas, tint, &tfn, &ind1);
+
+			if(d->captures != nil){
+				/*
+				 * a capturing closure literal (check.c's
+				 * synthfunclit(), phase 3 of the closure-lowering
+				 * plan): t2 isn't left nil -- allocate a fresh
+				 * instance of d's captures adt and copy each
+				 * captured variable's *current* value into it (by
+				 * value: a later mutation on either side, inside
+				 * the closure or back in the enclosing function,
+				 * is not visible to the other -- the choice made
+				 * for this branch, ../doc/ember-repository-study.md).
+				 * every captured decl here is, by construction
+				 * (check.c's declownedby(d, curclosure->enclosing)
+				 * check), one of *this* function's own params/
+				 * locals -- an ordinary, plain-addressable read,
+				 * same field-store idiom storecomposite() (above)
+				 * uses for an ordinary composite literal's fields.
+				 */
+				Node capinst, ind2, off2, addr2;
+				Type *captref;
+				Decl *fd;
+				Dlist *cl;
+
+				captref = mktype(src, Tref, d->capty, nil);
+				sizetype(captref);
+
+				talloc(&capinst, captref, nil);
+				genrawop(src, INEWZ, mktn(d->capty), nil, &capinst);
+
+				fd = d->capty->ids;
+				for(cl = d->captures; cl != nil; cl = cl->next, fd = fd->next){
+					Node *foff, *faddr, *find, *val;
+
+					foff = mkconst(src, fd->offset);
+					foff->ty = tint;
+					faddr = mkn(Oadd, dupn(&capinst), foff);
+					faddr->src = *src;
+					faddr->ty = tint;
+
+					val = mkname(src, cl->d->sym);
+					val->decl = cl->d;
+					val->ty = cl->d->ty;
+					sumark(val);
+
+					find = mkn(Oind, faddr, nil);
+					find->src = *src;
+					find->ty = fd->ty;
+					sumark(find);
+
+					ecom(src, find, val);
+				}
+
+				off2 = znode;
+				off2.op = Oconst;
+				off2.val = 2*IBY2WD;
+				off2.ty = tint;
+				sumark(&off2);
+				addr2 = znode;
+				addr2.op = Oadd;
+				addr2.left = dupn(dst);
+				addr2.right = &off2;
+				addr2.ty = tint;
+				sumark(&addr2);
+				ind2 = znode;
+				ind2.op = Oind;
+				ind2.left = &addr2;
+				ind2.ty = captref;
+				sumark(&ind2);
+
+				genmove(src, Mas, captref, &capinst, &ind2);
+				tfree(&capinst);
+			}
 
 			if(nto != nil && nto != dst){
 				genmove(src, Mas, n->ty, dst, nto);
