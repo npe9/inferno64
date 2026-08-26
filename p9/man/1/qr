@@ -1,0 +1,169 @@
+.TH QR 1
+.SH NAME
+qr \- QR code encoder
+.SH SYNOPSIS
+.B qr
+[
+.B -LMQHna
+] [
+.B -v
+.I ver
+] [
+.I file
+]
+.SH DESCRIPTION
+.I Qr
+is a real, structural translation of Plan 9's own
+.IR qr (1)
+.RB ( sys/src/cmd/qr.c ,
+1188 lines - see BUGS for a real, severe bug found in the actual
+9front source while this translation was written), compiled to Dis
+and run by
+.IR emu ,
+not a host binary. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Qr
+reads
+.I file
+(or standard input) and encodes it as a QR code (ISO/IEC 18004),
+writing a short fixed header
+.RB ( "k8 0 0 side side " ,
+five space-padded fields) followed by one raw byte per module
+.RB ( 0
+or
+.BR 16rff ,
+i.e.
+.B 255 )
+to standard output - a raw one-channel-per-pixel image meant to be
+piped into a separate image tool, not a viewable file by itself.
+.TP
+.B -L -M -Q -H
+Error-correction level, lowest to highest redundancy (recovering
+roughly 7%, 15%, 25%, and 30% of codewords respectively). Default is
+.BR -M .
+.TP
+.B -v
+.I ver
+Force a specific QR version (1-40, larger means more modules and more
+capacity) instead of letting
+.I qr
+pick the smallest version that fits the input.
+.TP
+.B -n
+Numeric mode: the input must be digits only.
+.TP
+.B -a
+Alphanumeric mode: the input must be drawn from QR's own restricted
+alphanumeric alphabet (digits, upper-case letters, space, and
+.BR $%*+-./: ).
+.PP
+With neither
+.B -n
+nor
+.BR -a ,
+the input is encoded in byte mode (any byte value at all).
+.SH SOURCE
+.B /p9/cmd/qr.b
+(translated from
+.BR qr.c ;
+see its own header comment for the full derivation, including the
+real encode() bug this section's BUGS describes)
+.SH SEE ALSO
+.IR qrtest (1)
+.SH BUGS
+.B qr.c
+itself - the real, deployed 9front source, not this translation -
+has a genuine, severe bug:
+.BR encode() 's
+own local bit-count cursor
+.RB ( bc )
+is used before ever being initialized, which is undefined behaviour
+in C. Confirmed by building the real source and decoding its own
+output with a real, independent QR decoder: every QR code version 2
+and above came out corrupted, depending on whatever value happened to
+be on the stack at that point, while version 1 (reached without a
+version-search loop running first) happened to decode correctly by
+accident. THIS TRANSLATION DOES NOT AND CANNOT REPRODUCE THAT BUG -
+Limbo guarantees every declared local starts zero-valued, so there is
+no way to write the equivalent of the C's own uninitialized read here.
+This translation is therefore unconditionally correct where the real
+9front binary is only environment-dependently correct. See
+.IR qrtest (1)
+and the
+.B inferno-rio-qr-encoder-bug
+project memory for the full derivation.
+.PP
+A second, smaller, and much less consequential oddity in the same
+source:
+.BR evaluate() ,
+the scorer used to pick the best of the 8 standard QR mask patterns,
+discards the row-scan penalty it just computed
+.RB ( "sc = ..." ,
+not
+.BR "sc += ..." )
+before adding the column-scan and block penalties. This one is an
+ordinary (not undefined-behaviour) divergence and IS translated
+literally, mask-selection quirk included - it appears to only affect
+which of the 8 (all individually valid) masks gets picked, not
+correctness; see
+.IR qrtest (1)
+for how this shaped the test suite's own oracle-comparison strategy.
+.PP
+The real C source's own
+.B main()
+reads at most one 8192-byte
+.BR readn()
+from standard input and silently truncates anything longer with no
+warning - a real, deliberately preserved limitation of the CLI entry
+point specifically (this translation's own
+.B run()
+test seam has no such limit; it accepts whatever byte array it is
+given).
+.PP
+A third oddity in
+.BR evaluate() ,
+found the hard way, not by re-reading: its run-length scan sets a
+local run counter to 0 on every color change but never increments it
+anywhere - checked twice directly against the real source, since this
+looks exactly like a missing increment. It is not one: the counter is
+provably always 0 at the "5 or more consecutive modules" penalty
+check, so that entire scoring rule is DEAD CODE in the real, deployed
+source. An early translation pass added the "missing" increment,
+assuming an oversight; this changed which of the 8 masks scores best
+on many inputs, causing widespread module-content mismatches with
+matching side/length (traced with a minimal single-case diff probe,
+confirmed with a genuine negative control - reintroducing the
+increment reproduces the exact divergence). Left as dead code here,
+translated literally, matching the real source.
+.PP
+Two real TRANSLATION bugs (not source bugs), both found only by
+running the test suite, not by re-reading:
+.B run()
+itself did not defensively reload
+.B sys
+the way every other test-seam
+.B run()
+in this backlog does (see
+.IR cb (1)'s
+own
+.BR loadmods() ) -
+missing here, it crashed
+.I emu
+itself (a native fault, misreported by the crash handler as an
+unrelated "module not loaded") the first time
+.IR qrtest (1)
+called
+.B run()
+directly, since
+.I qr.b's
+own
+.B init()
+had never run to load it. And the evaluate() dead-counter mistake
+above was itself introduced by this translation, not present in the
+source, before being caught and reverted.

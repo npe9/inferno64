@@ -37,6 +37,8 @@ TARG=\
 	urlencodetest.dis\
 	cb.dis\
 	cbtest.dis\
+	qr.dis\
+	qrtest.dis\
 
 MODULES=\
 

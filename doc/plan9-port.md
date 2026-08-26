@@ -2163,3 +2163,155 @@ below.
     `resetstate()` (absent from the C source) exists solely for the
     in-process test seam's own repeated `run()` calls, the same
     lesson `pr.b`'s own `Colw` bug taught earlier in this backlog.
+
+25. **`qr.c` (1188 lines, QR encoder) - DONE (`qr.b`/`qrtest.b`). A
+    severe, confirmed bug found in the real, deployed 9front source
+    before any Limbo was written, recorded here durably regardless of
+    how far the port itself gets - it turned out to be one of three
+    real findings this file produced.**
+
+    **The bug:** `encode()`'s local variable `bc` (the bit-count
+    cursor for the `bits()` packing accumulator) is passed to `bits()`
+    by address on its very first call without ever being initialized.
+    C gives no zero-initialization guarantee for a plain local - this
+    is a genuine read of undefined, stack-garbage-dependent memory,
+    not a stylistic nit. Confirmed empirically, not just by inspection:
+    a real build of the actual 9front source (`clang -arch x86_64`
+    against plan9port's prebuilt libs, the same oracle-building
+    pattern `urlencodetest.b` established) produced QR codes that an
+    independent, real decoder (`zxing-cpp`, installed via a throwaway
+    venv - a mature C++ QR reader wheel with no system dependency)
+    could not read back correctly for EVERY version 2 and above, at
+    every error-correction level, regardless of encoding mode - while
+    version 1 (side 29, the smallest) happened to decode correctly.
+    That split is exactly what stack-garbage-dependent undefined
+    behavior looks like: whatever the compiler/runtime happened to
+    leave on the stack at that point was zero often enough for the
+    simplest, shortest-call-path case (version 1, chosen without a
+    version search) to look "fine" by accident, while any code path
+    that does more work first (formsel()'s own version-search loop
+    before falling through to encode()) picks up different residue and
+    breaks - which is why even a wholly-unrelated change (adding one
+    `fprint` debug line to a completely different part of `qrcode()`)
+    changed which inputs happened to decode correctly, since it altered
+    the stack layout underneath the same uninitialized read.
+
+    Root-caused (not guessed) by dumping the actual codeword byte
+    array `codewords()` returns for a trivial 2-byte "Hi" payload at
+    both version 1 and version 2: the version-2 dump showed page after
+    page of `00 00 00 01` before any real content appeared, nothing
+    like a byte-mode header+payload+padding sequence should look.
+    Tracing `bits()`'s own accumulator arithmetic by hand confirmed
+    that `bc` starting at anything other than 0 desyncs the whole
+    packing sequence from the very first byte. Isolated to exactly one
+    line with a negative-control-style sweep: patching only `bc = 0;`
+    into `encode()` (leaving the `malloc()` - not `calloc()` - alone)
+    made a 100-case sweep across all four error-correction levels and
+    a wide span of lengths/versions decode with byte-exact recovered
+    content, zero failures (the only "failures" left afterward were
+    inputs genuinely too large for version 40 at that level - a real
+    capacity limit, not a bug, confirmed against `formsel()`'s own
+    "too many bits" rejection). The `malloc`-vs-`calloc` half of the
+    fix turned out to be unnecessary on its own - `bits()`'s own
+    shift-and-truncate arithmetic naturally shifts any garbage in the
+    unused high bits of the accumulator byte out of the window once
+    `bc` correctly tracks how many bits are actually buffered, so only
+    the counter itself needed fixing, not the buffer contents.
+
+    **Why this cannot be reproduced in the Limbo translation, and
+    doesn't need a fidelity decision:** unlike a preserved logic bug
+    (join.c's segfaulting field-0, dc.c's `pushp2arr()` global-clobber),
+    this one is undefined behavior with no analogue in Limbo at all -
+    Limbo *guarantees* every declared variable starts zero-valued.
+    There is no way to write a Limbo `bc: int;` that reads stack
+    garbage on first use, so the translation is unconditionally correct
+    here where the C source is only environment-dependently correct.
+    Stated plainly rather than silently fixed-without-comment, per this
+    backlog's own standing rule about correcting a wrong record.
+
+    **A second, separate oddity:** `evaluate()` (the mask-quality
+    scorer used to pick the best of the 8 standard mask patterns) has
+    `sc = abs(cnt - s*s/2) / (s*s/20) * N4;` at its balance-penalty
+    step - a plain `=`, not `+=`, discarding every penalty point the
+    preceding row-run-length scan already accumulated into `sc`.
+    Comparing the (bc-fixed) C oracle's output against `segno` (a
+    real, independent, pip-installable pure-Python QR encoder) forcing
+    both to the SAME version/level/mask still showed 70 of 625 module
+    cells differing, even though the C oracle's own output decodes
+    perfectly - meaning this is most likely a legitimate divergence in
+    mask-selection tie-breaking between two independently-valid
+    implementations (QR's spec permits any of the 8 masks; it doesn't
+    mandate a single canonical "best"), not a second decode-breaking
+    bug. The translation's own verification therefore does NOT use
+    byte-comparison against a different implementation like `segno` -
+    it uses the bc-fixed real C source itself (same algorithm, so
+    genuinely byte-identical output is the correct expectation there).
+    The `=` in `evaluate()` is translated literally, bug included,
+    since it's a real (if likely inconsequential - it only affects
+    which of 8 already-valid masks gets picked, never correctness)
+    divergence in the deployed source, not undefined behavior forcing
+    a decision the way `bc` did.
+
+    **A third finding, in the same function, found the hard way after
+    the translation itself was written and tested against real 9front
+    files failed to catch it (there was no oracle mismatch to catch,
+    since it was introduced by an assumption, not a copy error):**
+    `evaluate()`'s own run-length scan sets its counter to 0 on every
+    color change but never increments it anywhere in the real
+    source - checked twice directly against the C, since this reads
+    exactly like a missing `r++`. It is not one: the counter is
+    provably always 0 at the "5 or more consecutive modules" penalty
+    check, so that whole scoring rule is DEAD CODE in the deployed
+    source. The first translation pass added the "missing" increment,
+    assuming an oversight rather than checking - this changed which of
+    the 8 masks scored best on roughly half of `qrtest.b`'s own cases,
+    producing outputs with matching side/length but different module
+    content (a symptom distinct enough from a placement or bit-packing
+    bug to point straight at mask *selection*). Found by running the
+    full test suite (48 of 102 cases failed with exactly this
+    signature), isolated with a minimal single-case standalone diff
+    probe (version 2, level Q) built outside the test suite itself,
+    and confirmed with a genuine negative control: reintroducing the
+    increment reproduced the exact byte-level divergence on that one
+    case; removing it again returned it to zero differences. Left as
+    dead code, translated literally, matching the source - the same
+    "read the actual arithmetic, don't assume the fix is obvious"
+    lesson as `dc.c`'s own dead `readc()` branch, but this time the
+    trap was translating an *assumed* fix rather than the source
+    itself.
+
+    **A fourth, unrelated finding in the test seam:** `run()` did not
+    defensively reload `sys` the way every other test-seam `run()` in
+    this backlog does (`cb.b`'s own `loadmods()`, etc.) - missing this
+    crashed `emu` itself natively the very first time `qrtest.b` called
+    `run()` directly (real `init()` never having run to load `sys`),
+    misreported by the crash handler as an unrelated "module not
+    loaded" rather than a clean, catchable exception. Traced with a
+    minimal standalone probe calling `run()` directly, bypassing
+    `qrtest.b` entirely, down to the exact missing guard. Two separate,
+    unrelated test-SIZING mistakes surfaced immediately afterward, once
+    the crash stopped masking them: an early `t1versions` draft used
+    one 58-byte message for every forced version (exceeding version
+    1's own capacity at every level), and its replacement still got the
+    arithmetic wrong at 8 bytes - byte mode's own header/terminator
+    overhead means an 8-byte payload needs 10 bytes of real capacity,
+    one more than version 1's smallest (`-H`) provides; 7 bytes needs
+    exactly 9, fitting precisely. `t3autoversion`'s own largest size
+    was separately lowered from 1500 to 1200 bytes once the same
+    rejection appeared at version 40's own `-H` ceiling (1276 data
+    bytes, the smallest of the four levels at the largest version).
+
+    Final state: 102 of 102 `qrtest.b` cases pass, byte-for-byte,
+    against the bc-fixed real C oracle, across every forced version 1
+    through 40, all four error-correction levels, all three encoding
+    modes, both bundled and separate `-v` forms, and the oversized-
+    payload rejection path.
+
+    Verification tooling: a throwaway Python venv
+    (`pip install zxing-cpp pillow segno reedsolo`, no system zbar
+    dependency needed) for the interactive investigation that found
+    the `bc` bug and cross-checked the `evaluate()` `=`/`+=` oddity,
+    plus the same `#C`-driven `clang` oracle-build pattern this
+    backlog has used since `urlencode.b` for `qrtest.b`'s own
+    automated, repeatable oracle (deliberately NOT dependent on the
+    Python venv - see `qrtest.b`'s own header comment for why).

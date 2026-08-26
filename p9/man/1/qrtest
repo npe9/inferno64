@@ -1,0 +1,172 @@
+.TH QRTEST 1
+.SH NAME
+qrtest \- regression test for qr(1)
+.SH SYNOPSIS
+.B qrtest
+.SH DESCRIPTION
+.I Qrtest
+loads
+.BR /p9/dis/qr.dis 's
+in-process test seam,
+.BR run(args,\ data) ,
+and checks it byte-for-byte against a live oracle - built, unusually
+for this backlog, from a
+.I patched
+copy of the real 9front source rather than the unmodified source
+itself. See
+.IR qr (1)'s
+own BUGS: the real
+.B qr.c
+has a genuine uninitialized-variable bug
+.RB ( encode() 's
+own
+.BR bc )
+that corrupts its own output non-deterministically for QR version 2
+and above, so building the unmodified source would fail its own test
+runs for reasons that are the source's own accident, not this port's.
+.BR buildoracle()
+instead reads the real source via
+.IR cmd (3)'s
+.BR cat ,
+applies the single-line
+.B "bc = 0;"
+fix (isolated during this port's own development by a negative-control
+sweep - see the
+.B inferno-rio-qr-encoder-bug
+memory) as a plain Limbo string substitution, writes the patched copy
+back out via
+.IR cmd (3)
+again, and compiles
+.I that
+copy with
+.B clang
+against plan9port's prebuilt
+.BR libbio / lib9 ,
+same as every other built oracle in this backlog since
+.IR urlencodetest (1)
+established the pattern. Every other byte of the real source is
+untouched.
+.PP
+Because
+.I qr.b
+implements the identical algorithm as the (patched) oracle, genuine
+byte-for-byte agreement is the right expectation here - unlike
+comparing against a
+.I different
+QR encoder (segno, zxing's own encoder, etc.), which would
+legitimately differ in which of the 8 standard mask patterns it picks
+without either side being wrong; QR's own spec permits any of the 8.
+See
+.IR qr (1)'s
+own BUGS for the related
+.BR evaluate() " oddity."
+.SH CASES
+.TP
+.I t1versions
+A range of forced versions (1, 2, 3, 5, 7, 10, 15, 20, 27, 40) across
+all four error-correction levels, byte mode - exercises single-block
+through many-interleaved-block codeword layouts. Two payload sizes,
+not one - see BUGS for why a single size doesn't work at every forced
+version.
+.TP
+.I t2modes
+Numeric, alphanumeric, and byte mode (including raw control and
+high-bit bytes, to catch anything that assumes printable ASCII).
+.TP
+.I t3autoversion
+No
+.B -v
+- lets
+.BR formsel() 's
+own version-search pick the smallest fit, across payload sizes
+straddling several version-capacity boundaries, at all four levels.
+.TP
+.I t4bundledv
+Attached
+.RB ( -v3 )
+vs separate
+.RB ( "-v 3" )
+version-flag forms, matching
+.IR cb (1)'s
+own precedent of checking bundled-flag parsing against a real binary
+rather than assuming it.
+.TP
+.I t5toolarge
+A payload too large for version 40 even at the lowest-redundancy
+level must fail exactly like
+.BR qrcode() 's
+own nil-return contract - checked against the real oracle's own
+non-zero exit status, not just "produces different output".
+.SH SOURCE
+.B /p9/cmd/qrtest.b
+.SH SEE ALSO
+.IR qr (1)
+.SH BUGS
+Does not independently re-verify the
+.B bc
+finding via an external QR decoder every run - that was established
+once, empirically, during this port's own development (a real build
+of the unmodified source, decoded with
+.BR zxing-cpp ,
+a real independent decoder installed into a throwaway Python venv)
+and is recorded in
+.B doc/plan9-port.md
+and the
+.B inferno-rio-qr-encoder-bug
+memory rather than re-run here: pulling a Python venv and a native
+decoder library into this suite's own dependencies would make it
+markedly less reproducible than every other oracle in this backlog,
+for a finding that does not need re-demonstrating on every run.
+.PP
+Does not exercise
+.IR qr (1)'s
+own CLI
+.I file
+argument path or its 8192-byte
+.B readn()
+truncation limit - every case here drives
+.BR run() 's
+own
+.I data
+byte array directly.
+.PP
+This suite's own development caught two of its own test-sizing
+mistakes, not qr.b bugs, both by getting a real "too many bits"
+rejection where none was intended: an early
+.I t1versions
+draft used one 58-byte message for every forced version, exceeding
+version 1's own capacity at every level; the fix (7 bytes) still
+required checking
+.BR formsel() 's
+own arithmetic directly rather than assuming byte-mode "8 data bytes"
+means "8 bytes of capacity is enough" - the mode/count/terminator
+overhead means an 8-byte payload actually needs 10 bytes of real
+capacity, one more than version 1's smallest
+.RB ( -H )
+level provides. Separately,
+.I t3autoversion 's
+largest size was lowered from 1500 to 1200 bytes after the same
+rejection appeared at version 40's own
+.B -H
+capacity (1276 data bytes, the smallest of the four levels at the
+largest version).
+.PP
+A real, severe TRANSLATION bug in
+.BR qr.b " itself -"
+not this test file, but found only by running this suite - is
+recorded in
+.IR qr (1)'s
+own BUGS: an early translation pass of
+.BR evaluate() 's
+run-length scan added an increment the real C source does not have,
+assuming a missing
+.B r++
+was an oversight in the source rather than the source's own dead
+code. This changed which mask
+.I qr.b
+itself picked as "best" on about half of this suite's own cases,
+producing matching side/length but mismatched module content - caught
+by this suite's own byte comparison, then isolated to one minimal
+case (version 2, level Q) with a standalone diff probe outside this
+file, and confirmed with a genuine negative control before being
+fixed.
