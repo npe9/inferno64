@@ -229,17 +229,26 @@ space, per the architecture.  rio then runs against it, off the disk.
 .NH 1
 Status of the graphics path
 .PP
-Built and shown: step 1 is done and then some.  The microkernel exposes
-the firmware's frame buffer as a physical segment; a user program maps it
-with segattach and draws \- colour bars first, then a windowed desktop of
-two overlapping windows with borders, title bars and a cursor \- entirely
-in user space, the kernel knowing nothing of what is drawn.  That is the
-exokernel model for the display, working and screenshotted.
+Built and shown: step 1 is done, and the input half with it.  The
+microkernel exposes the firmware's frame buffer as a physical segment; a
+user program maps it with segattach and draws \- colour bars first, then a
+windowed desktop of two overlapping windows with borders, title bars and a
+cursor \- entirely in user space, the kernel knowing nothing of what is
+drawn.  And the two input devices are exposed the seL4 way as well: the
+keyboard's interrupt and the mouse's are each a short kernel handler that
+reads the one byte and hands it on into a ring in the container's mapped
+data area, raising a semaphore; the user program's keyboard driver draws a
+square per key and its mouse driver assembles the PS/2 packets, moves the
+cursor and reads the buttons, all above the kernel.  Driven from the
+outside, keys echo their scancodes and the cursor moves to where it is
+aimed and marks a click there.  That is the exokernel model for the
+display and its input, working and screenshotted.
 .PP
 Not built: a user-level draw service (the (CW/dev/drawP role) that
 multiplexes the display among clients using libmemdraw, which is what rio
-and its clients would talk to; input driver tasks on the mouse and
-keyboard interrupt semaphores; and the 9front personality as a library
-with exec, under which rio would run.  And rio itself is an import this
-tree does not contain.  The distance to a real rio is therefore a draw
-service and an input path here, and a userland import from 9front there.
+and its clients would talk to; and the 9front personality as a library
+with a name space and exec, under which rio would run.  And rio itself is
+an import this tree does not contain.  The distance to a real rio is
+therefore a draw service that shares the display among clients here, and a
+userland import from 9front there; the frame buffer and the input path
+below such a service are built.

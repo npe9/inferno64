@@ -1895,6 +1895,66 @@ content, not the structure - two held files, not storage behind a real
 tree, and a server that is a kernel task rather than its own user
 program.  Growing those is the work from here; the structure is the
 library operating system the paper describes.
+.NH 1
+User-level drivers over exposed hardware
+.PP
+The talk gives a driver a shape: a task on its message queue, its
+interrupt's semaphore and its output queue, with the kernel doing only
+the least an interrupt must.  seL4 says the same in its own words \- the
+kernel exposes a device's memory as frames a program may map and each
+interrupt as a notification a program waits on, and the driver is a user
+program.  The microkernel does exactly that for three real devices now,
+and the drivers that use them run in user space, above the kernel, in
+xup64's program.
+.PP
+The first is the display.  UEFI hands the kernel a linear frame buffer
+and names it in a boot argument \- on this machine 1280 by 800, 32 bits a
+pixel, at a physical address.  The microkernel publishes it as a named
+physical segment, the way it publishes a container's slice, so the
+program maps it with segattach \- the address-space service, one of the
+four \- and writes pixels.  It draws a grey desktop, two overlapping
+windows each with a border, a title bar and a body, and a cursor.  The
+kernel multiplexes nothing and knows nothing of what is drawn; it exposed
+the memory and the driver did the rest.  This is the exokernel model for
+graphics, and it is why the draw stack does not go back in the kernel: it
+belongs here.
+.PP
+The second and third are the keyboard and the mouse, and they show the
+interrupt half of the model.  Each is a short handler in the kernel that
+does only what the talk allows an interrupt to do.  On the keyboard's
+interrupt the handler reads the one scancode byte from the i8042 and
+writes it into a ring in the container's own data area \- the area the
+program has already mapped \- and raises a semaphore.  On the mouse's
+interrupt, twelve, the handler reads one aux byte the same way into a
+second ring and raises a second semaphore.  The kernel enables the two
+interrupts at the controller itself, since it runs no keyboard
+initialisation of its own, and links no keyboard or mouse device: the
+hardware is exposed, the driver is above.
+.PP
+Above the kernel, in the same program, the drivers read those rings.  The
+keyboard driver draws a square per key press and echoes the scancode to
+the console.  The mouse driver assembles the three-byte PS/2 packets,
+sign-extends the movement, moves the cursor sprite over the desktop \-
+saving and restoring the pixels under it, so it lifts cleanly \- and marks
+a left button press.  Driven from the outside: sending
+.CW "hello osprey"
+makes the keyboard driver echo the exact scancodes and draw a square per
+key, and moving and clicking the mouse moves the cursor to the place
+aimed at and leaves a click mark there \- the console prints the click at
+the cursor's moved position, which is the packet path, the cursor
+arithmetic and the button bit all working from the exposed ring.  None of
+it is in the kernel.
+.PP
+So both halves of the driver model are live above the microkernel:
+exposed device memory drives a user-level graphics driver, and exposed
+interrupts drive user-level keyboard and mouse drivers, each an interrupt
+handed on as a semaphore and a ring.  This is the path the gap analysis
+lays out toward rio: the display and the input are user-level drivers
+now, and what remains between here and rio is a user-level draw service
+that multiplexes the display among clients, and the 9front personality as
+a library with a name space and exec, under which rio would run.  Those
+are content and userland; the driver model beneath them is built and
+shown.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an

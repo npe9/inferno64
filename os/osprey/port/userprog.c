@@ -151,6 +151,61 @@ fbwindow(ulong *fb, int stride, int x, int y, int w, int h)
 	fbrect(fb, stride, x+2, y+22, w-4, h-24, 0x00ffffff);	/* body */
 }
 
+enum { Cw = 12, Ch = 18 };	/* the cursor sprite */
+
+/* save the pixels a cursor is about to cover, so it can be lifted cleanly */
+static void
+savebox(ulong *fb, int stride, int x, int y, ulong *buf)
+{
+	int i, j;
+
+	for(j = 0; j < Ch; j++)
+		for(i = 0; i < Cw; i++)
+			buf[j*Cw + i] = fb[(y+j)*stride + (x+i)];
+}
+
+static void
+restorebox(ulong *fb, int stride, int x, int y, ulong *buf)
+{
+	int i, j;
+
+	for(j = 0; j < Ch; j++)
+		for(i = 0; i < Cw; i++)
+			fb[(y+j)*stride + (x+i)] = buf[j*Cw + i];
+}
+
+/* a black arrow with a white edge, so it shows on any background */
+static void
+drawcursor(ulong *fb, int stride, int x, int y)
+{
+	int i, j;
+
+	for(j = 0; j < 16; j++)
+		for(i = 0; i <= j && i < 8; i++){
+			fb[(y+j)*stride + (x+i)] = 0;			/* body */
+			if(i == 0 || i == j || i == 7)
+				fb[(y+j)*stride + (x+i)] = 0x00ffffff;	/* edge */
+		}
+}
+
+/* a small unsigned decimal, for the console report */
+static void
+putint(int v)
+{
+	char m[12];
+	int k = 0, j;
+
+	if(v == 0)
+		m[k++] = '0';
+	for(j = k; v > 0; v /= 10)
+		m[k++] = '0' + v%10;
+	/* reverse the digits we pushed */
+	for(j = 0; j < (k - 0)/2; j++){
+		char t = m[j]; m[j] = m[k-1-j]; m[k-1-j] = t;
+	}
+	write(2, m, k);
+}
+
 void
 startboot(char*, char**)
 {
@@ -221,57 +276,97 @@ startboot(char*, char**)
 			/* two windows, each a border, a title bar and a body */
 			fbwindow(fb, Fbw, 150, 120, 520, 360);
 			fbwindow(fb, Fbw, 560, 320, 560, 400);
-			/* a mouse arrow */
-			for(y = 0; y < 16; y++)
-				for(x = 0; x <= y && x < 10; x++)
-					fb[(400+y)*Fbw + (640+x)] = 0;
 			puts("osprey user: and drew a windowed desktop to the frame buffer the microkernel exposed\n");
 
 			/*
-			 * A user-level keyboard driver: read scancodes out of
-			 * the ring the microkernel's short interrupt handler
-			 * fills in this program's own data area, and for each
-			 * key draw a square on the frame buffer and echo the
-			 * scancode.  The interrupt is exposed; the driver is
-			 * here, above the kernel.
+			 * User-level keyboard and mouse drivers, the exokernel way.
+			 * The microkernel exposes two interrupts, each filling a ring
+			 * in this program's own data area and raising a semaphore;
+			 * these drivers, above the kernel, read the rings.  The
+			 * keyboard draws a square per key; the mouse assembles the
+			 * three-byte PS/2 packets, moves a cursor sprite over the
+			 * desktop and marks a left click.  The kernel knows nothing of
+			 * squares, cursors or clicks.
 			 */
 			{
-				enum { Kbdoff = 1024, Kbdn = 256 };
-				uchar *ring = r.base + r.map->data + Kbdoff;
-				uvlong *wpp = (uvlong*)ring;
-				uchar *bytes = ring + 8;
-				uvlong rp;
-				int i, keys;
+				enum { Kbdoff = 1024, Kbdn = 256, Mouseoff = 2048, Mousen = 256 };
+				uchar *kring = r.base + r.map->data + Kbdoff;
+				uvlong *kwp = (uvlong*)kring;
+				uchar *kbytes = kring + 8;
+				uchar *mring = r.base + r.map->data + Mouseoff;
+				uvlong *mwp = (uvlong*)mring;
+				uchar *mbytes = mring + 8;
+				uvlong krp, mrp;
+				ulong save[Cw*Ch];
+				int i, keys, clicks, moved, cx, cy, pkt[3], pi;
 
-				puts("osprey user: keyboard driver reading exposed scancodes\n");
-				rp = *wpp;		/* ignore anything before we start */
-				keys = 0;
-				for(i = 0; i < 2000 && keys < 40; i++){
-					while(rp != *wpp && keys < 40){
-						uchar sc = bytes[rp % Kbdn];
-						char m[8];
-						int k = 0, sq;
+				puts("osprey user: keyboard and mouse drivers reading exposed rings\n");
+				krp = *kwp;		/* ignore anything before we start */
+				mrp = *mwp;
+				keys = 0; clicks = 0; moved = 0; pi = 0;
+				cx = 640; cy = 400;
+				savebox(fb, Fbw, cx, cy, save);
+				drawcursor(fb, Fbw, cx, cy);
+				for(i = 0; i < 6000 && keys < 40 && clicks < 20; i++){
+					/* keyboard: a square per key press, marching across */
+					while(krp != *kwp && keys < 40){
+						uchar sc = kbytes[krp % Kbdn];
+						int y0, x0, yy, xx;
+						ulong col;
 
-						rp++;
+						krp++;
 						if(sc & 0x80)	/* key release */
 							continue;
-						/* a square per key press, marching across */
-						sq = keys;
-						{
-							int y0 = 40 + (sq/16)*40, x0 = 40 + (sq%16)*40, yy, xx;
-							ulong col = 0x00ff00 + (sc<<8);
-							for(yy = 0; yy < 32; yy++)
-								for(xx = 0; xx < 32; xx++)
-									fb[(y0+yy)*Fbw + (x0+xx)] = col;
-						}
-						m[k++]='k'; m[k++]='b'; m[k++]='='; 
-						m[k++]='0'+((sc/100)%10); m[k++]='0'+((sc/10)%10); m[k++]='0'+(sc%10); m[k++]='\n';
-						write(2, m, k);
+						y0 = 40 + (keys/16)*40; x0 = 40 + (keys%16)*40;
+						col = 0x00ff00 + (sc<<8);
+						for(yy = 0; yy < 32; yy++)
+							for(xx = 0; xx < 32; xx++)
+								fb[(y0+yy)*Fbw + (x0+xx)] = col;
+						puts("kb="); putint(sc); puts("\n");
 						keys++;
+					}
+					/* mouse: assemble packets, move the cursor, read buttons */
+					while(mrp != *mwp){
+						uchar b = mbytes[mrp % Mousen];
+						int dx, dy, ncx, ncy;
+
+						mrp++;
+						if(pi == 0 && !(b & 0x08))	/* resync: byte 0 has bit 3 set */
+							continue;
+						pkt[pi++] = b;
+						if(pi < 3)
+							continue;
+						pi = 0;
+						dx = pkt[1]; dy = pkt[2];
+						if(pkt[0] & 0x10) dx -= 256;	/* X sign */
+						if(pkt[0] & 0x20) dy -= 256;	/* Y sign */
+						ncx = cx + dx;
+						ncy = cy - dy;			/* screen Y grows downward */
+						if(ncx < 0) ncx = 0;
+						if(ncx > Fbw-Cw) ncx = Fbw-Cw;
+						if(ncy < 0) ncy = 0;
+						if(ncy > Fbh-Ch) ncy = Fbh-Ch;
+						if(ncx != cx || ncy != cy){
+							restorebox(fb, Fbw, cx, cy, save);
+							cx = ncx; cy = ncy;
+							savebox(fb, Fbw, cx, cy, save);
+							drawcursor(fb, Fbw, cx, cy);
+							moved++;
+						}
+						if(pkt[0] & 0x01){	/* left click: a red mark beside the cursor */
+							int mx = cx + Cw, my = cy, yy, xx;
+							if(mx > Fbw-6) mx = Fbw-6;
+							for(yy = 0; yy < 6; yy++)
+								for(xx = 0; xx < 6; xx++)
+									fb[(my+yy)*Fbw + (mx+xx)] = 0x00ff0000;
+							puts("click@"); putint(cx); puts(","); putint(cy); puts("\n");
+							clicks++;
+						}
 					}
 					sleep(5);
 				}
-				puts("osprey user: keyboard driver done\n");
+				puts("osprey user: mouse moved "); putint(moved);
+				puts(" steps; drivers done\n");
 			}
 		}
 	}

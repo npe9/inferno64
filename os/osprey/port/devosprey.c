@@ -1853,6 +1853,106 @@ ospreykbdenable(Ospreyproc *p, int sem)
 	intrenable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
 }
 
+/*
+ * A user-level mouse driver, the exokernel way, exactly as the keyboard.
+ * The microkernel's short IRQ12 handler reads one byte from the i8042
+ * aux (mouse) port and hands it on - into a second ring in this
+ * container's exposed data area - and raises a second semaphore.  The
+ * driver, in user space above the kernel, assembles the three-byte PS/2
+ * packets, moves a cursor and reads the buttons.  No kernel mouse
+ * device; the hardware is exposed, the driver is above.
+ */
+enum {
+	Mouseoff = 2048,	/* the aux-byte ring, past the keyboard ring */
+	Mousen	= 256,
+	Mouseirq = 12,		/* IrqMOUSE - the i8042 aux device */
+	Auxdata	= 0x20,		/* status bit: the byte is from the aux port */
+};
+static uchar *ospreymousering;
+static Ospreyproc *ospreymouseproc;
+static int ospreymousesem;
+
+static void
+ospreymouseintr(Ureg*, void*)
+{
+	int st, c;
+	uvlong wp;
+
+	st = inb(Kbdstat);
+	if(!(st & Kbdready) || !(st & Auxdata))
+		return;
+	c = inb(Kbddata);
+	if(ospreymousering != nil){
+		wp = *(uvlong*)ospreymousering;
+		(ospreymousering + 8)[wp % Mousen] = (uchar)c;
+		*(uvlong*)ospreymousering = wp + 1;
+		if(ospreymouseproc != nil)
+			ospreysemgive(ospreymouseproc, ospreymousesem);
+	}
+}
+
+/* wait for the input buffer to drain, then write a controller command */
+static void
+i8042cmd(int cmd)
+{
+	int i;
+
+	for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
+		;
+	outb(Kbdstat, cmd);
+}
+
+/* wait for the input buffer to drain, then write a data byte */
+static void
+i8042wdata(int b)
+{
+	int i;
+
+	for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
+		;
+	outb(Kbddata, b);
+}
+
+/* read one byte the controller has put in its output buffer, or -1 */
+static int
+i8042rdata(void)
+{
+	int i;
+
+	for(i = 0; i < 100000; i++)
+		if(inb(Kbdstat) & Kbdready)
+			return inb(Kbddata);
+	return -1;
+}
+
+void
+ospreymouseenable(Ospreyproc *p, int sem)
+{
+	uchar *r;
+	int c;
+
+	if((r = ospreydata(p, Mouseoff, 8 + Mousen)) == nil)
+		return;
+	memset(r, 0, 8 + Mousen);
+	ospreymousering = r;
+	ospreymouseproc = p;
+	ospreymousesem = sem;
+
+	i8042cmd(0xA8);			/* enable the aux (mouse) port */
+	i8042cmd(0x20);			/* read the command byte */
+	c = i8042rdata();
+	if(c < 0)
+		c = 0;
+	c |= 0x02;			/* aux interrupt enable (IRQ12) */
+	c &= ~0x20;			/* aux clock enable (0 = enabled) */
+	i8042cmd(0x60);			/* write the command byte */
+	i8042wdata(c);
+	i8042cmd(0xD4);			/* route the next data byte to the aux port */
+	i8042wdata(0xF4);		/* tell the mouse to report movement */
+	i8042rdata();			/* eat its ACK (0xFA) */
+	intrenable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
+}
+
 int
 ospreyframebuffer(void)
 {
@@ -1926,8 +2026,9 @@ ospreyuserprep(void)
 				 */
 				up->osprey = p;
 				ospreysetpid(p, up->pid);
-				/* expose the keyboard interrupt to this container */
+				/* expose the keyboard and mouse interrupts */
 				ospreykbdenable(p, 1);
+				ospreymouseenable(p, 2);
 			}
 			/*
 			 * A file server for the program to reach over the ring:
