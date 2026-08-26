@@ -3561,6 +3561,143 @@ sample of which module
 names when a crash lands with no added instrumentation at all in
 its neighbourhood.
 .NH 1
+Eleven boots, one shape: this is corruption, not a race
+.PP
+Did exactly that.  Eleven plain, unbracketed boots across this
+session and the last \- no diagnostics active in the crash's own
+neighbourhood \- crashed seven times: two
+.CW cclone
+panics, one
+.CW cclose
+panic, one
+.CW alloc:D2B ,
+and three general protection violations naming three different Dis
+modules
+.RB ( Init ,
+.CW Sh ,
+.CW \e$Sys )
+or none at all.  That is not a rare, occasional fault \- it is the
+.I majority
+outcome, and the previous section's caution about reading too much
+into five bracketed samples was itself read too narrowly: the real
+correction is that this session simply had not run enough boots,
+of any kind, to see the true shape until now.
+.PP
+Seven crashes, four symptom families, no two at the same Dis module
+or even the same side of
+.CW disinit.b 's
+handoff into
+.CW sh.dis \-
+one before
+.CW "Welcome\ to\ Inferno..."
+even prints, with no Dis code running yet at all.  That last fact
+alone rules out any theory pinned to a specific piece of Limbo
+bytecode: whatever this is can happen before the interpreter has
+executed a single instruction.  And
+.CW cclone /
+.CW cclose 's
+shared panic condition
+.RB ( "c\ ==\ nil\ ||\ c->ref\ <\ 1\ ||\ c->flag&CFREE" )
+alongside
+.CW alloc:D2B 's
+.CW "in\ free\ blk" \-
+a block the allocator's own bookkeeping says is already free, being
+touched again \- describe the same fact from two different call
+sites: something is handing out, or continuing to use, memory that
+should not be touched.  Read as one bug with several detection
+points rather than several unrelated bugs, which is what this
+document's earlier sections, working from far fewer samples, had
+no way to see.
+.PP
+Tested the most concrete candidate this shape suggests \- a timer
+interrupt corrupting state very early, since
+.CW init0()
+calls
+.CW spllo()
+(enabling interrupts) before its own first
+.CW cclone()
+call, and 9 of 11 boots' crashes cluster within seconds of that
+window.  Capped, filtered print at
+.CW portclock.c 's
+.CW hzclock() ,
+firing only its first eight calls per boot: every field checked
+.RB ( m->proc ,
+.CW up ,
+.CW up->state ,
+.CW active.machs ,
+.CW active.exiting )
+was sane and self-consistent all eight times, in a boot that went
+on to crash later anyway.  Ruled out, at least for early ticks: the
+clock handler is not running with garbage state when it fires.
+Reverted before this commit.
+.PP
+One new, concrete thread pulled from that same boot's crash, not
+yet followed: this run's fault \(em general protection violation,
+.CW currun()
+nil (no Dis Prog was current, the first time that has been true in
+any capture) \(em put the identical 64-bit pattern,
+.CW F000FF53F000FF53 ,
+in both
+.CW BP
+and
+.CW CX .
+Two different registers holding one register's worth of value
+repeated is the signature of both having been loaded from the same
+corrupted location, not two independent bad values.  Grepped this
+port for it: not a deliberate poison constant anywhere in this
+tree, not
+.CW badc0c0a ,
+not
+.CW H
+.RB ( 0xffff...ff ) .
+But
+.CW pc64/memory.c
+fixes
+.CW 0xF0000\(en0xFFFFF
+as this board's own BIOS ROM address range in two places, and
+.CW F000FF53
+sits inside it \- the low 32 bits read as a real-mode-style
+segment:offset,
+.CW F000:FF53 ,
+in the same neighbourhood as the reset vector.  A pointer that
+should hold a kernel heap address instead holding raw BIOS ROM
+content, replicated across both halves of a 64-bit read, is
+consistent with an uninitialised or never-written memory location
+being read as if it were live heap \- worth checking next against
+.CW memory.c 's
+own reservation of that range, and against wherever
+.CW currun()
+being nil at this exact fault points: whatever pointer chain
+.CW dumpregs()
+was mid-read on when this landed.
+.PP
+Not fixed, and, honestly, not close: this is pre-existing, general
+memory corruption whose trigger has not been isolated, discovered
+from far fewer samples than eleven boots turns out to need.  The
+concrete next steps, in order of cost: (1) enough further plain
+boots to get
+.CW dumpregs() 's
+module-name field into double digits of samples, since three
+readings is not enough to say whether
+.I any
+particular module is favoured or the corruption is truly
+indifferent to what is running; (2) grep this tree for
+.CW F000FF53
+and neighbouring constants, since a repeated, recognisable literal
+is the cheapest kind of lead this document has had all session; (3)
+the
+.CW alloc:D2B
+capture's full block dump
+.RB ( "size\ 100 ,\ ec\ 0x78bb498" )
+matched loosely against
+.CW libinterp/heap.c 's
+.CW Heap
+header and
+.CW include/interp.h 's
+.CW Modlink
+layout, to see whether the corrupted block's shape names its own
+type the way a Dis module name already named the crashing context.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
