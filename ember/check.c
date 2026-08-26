@@ -41,9 +41,10 @@ static	Type	*echk(Node*);
 static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
-static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int);
+static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
+static	Decl	*tinstantiatemeth(Decl*, Type*);
 static	Case	*matchlabels(Node*, Type*, int);
 static	int	casecmp(Type*, Node*, Node*);
 static	void	casesort(Type*, Label*, Label*, int, int);
@@ -280,6 +281,15 @@ tinstantiate(Node *n)
 	ti->next = tt->tinsts;
 	tt->tinsts = ti;
 
+	/*
+	 * reverse link, for a generic-receiver method lookup on this
+	 * specific instantiation (echk's Odot case, below) to find its
+	 * way back to the template's methtmpl and the arguments to
+	 * instantiate one with.
+	 */
+	inst->gtemplate = tt;
+	inst->ginst = ti;
+
 	return inst;
 }
 
@@ -313,7 +323,7 @@ tinstantiate(Node *n)
  * saved and restored explicitly around the nested call.
  */
 static Decl*
-tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs)
+tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 {
 	Decl *pd, *savedcurfn;
 	Type *ft, *savedcurret;
@@ -382,6 +392,17 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs)
 		 */
 		tn = dupntree(td->init);
 		ft = stype(tn->right);
+		if(recvarg != nil){
+			/*
+			 * a generic method's receiver, prepended to the checked
+			 * parameter list exactly the way an ordinary method's
+			 * is in fndecl() -- before sizetype()/fnchk() below, so
+			 * the body sees it as an ordinary bound name in scope,
+			 * same as any other method's receiver.
+			 */
+			recvarg->next = ft->ids;
+			ft->ids = recvarg;
+		}
 		ft->ok |= OKverify;
 		sizetype(ft);
 		for(dd = ft->ids; dd != nil; dd = dd->next)
@@ -486,7 +507,7 @@ tinstantiatefn(Node *n)
 		return nil;
 	}
 
-	return tinstantiatefncore(&n->src, td, argv, nargs);
+	return tinstantiatefncore(&n->src, td, argv, nargs, nil);
 }
 
 /*
@@ -579,7 +600,39 @@ inferfn(Node *n)
 			return nil;
 		}
 
-	return tinstantiatefncore(&n->src, td, argv, nparams);
+	return tinstantiatefncore(&n->src, td, argv, nparams, nil);
+}
+
+/*
+ * echk's Odot case (below), on a field/method lookup miss against an
+ * *instantiated* generic type's meths (always nil -- instantiating a
+ * struct never copies methods over): mtd is the matching entry found
+ * on t->gtemplate->methtmpl instead (a generic-receiver method
+ * template, fndecl()'s doing), t the specific instantiation the
+ * lookup was against (e.g. Box[int]'s own Type).  the type arguments
+ * are already decided -- t->ginst->args, the same ones that produced
+ * t itself -- so there's no explicit-vs-inferred choice to make the
+ * way a bare call has; this is really just tinstantiatefncore() with
+ * one more thing to build first: the receiver argument itself, whose
+ * type is t (or ref t) and whose name is whatever the method template
+ * declared ("b" in "func (b ref Box[T]) get() T").
+ */
+static Decl*
+tinstantiatemeth(Decl *mtd, Type *t)
+{
+	Decl *rd;
+	Node *recv;
+	Type *rt;
+	int isref;
+
+	recv = mtd->init->left->left;	/* Ofndecl.left(Omethod).left = the receiver Ofield */
+	isref = recv->right->op == Otref;
+	rt = isref ? mktype(&mtd->src, Tref, t, nil) : t;
+	rd = mkdecl(&recv->left->src, Darg, rt);
+	rd->sym = recv->left->sym;
+	rd->implicit = 1;
+
+	return tinstantiatefncore(&mtd->src, mtd, t->ginst->args, t->ginst->nargs, rd);
 }
 
 /*
@@ -1157,6 +1210,31 @@ echk(Node *n)
 						n->right = nil;
 						return n->ty;
 					}
+				if(t->gtemplate != nil){
+					/*
+					 * t is a generic type's own instantiation (e.g.
+					 * Box[int]); its meths is always nil (instantiating
+					 * a struct never copies methods over), but a method
+					 * declared with a generic receiver lives on the
+					 * *template*'s methtmpl instead (fndecl()) -- found
+					 * here, it's instantiated on the spot with the same
+					 * type arguments (t->ginst) that produced t itself.
+					 */
+					Decl *mtd, *fnd;
+
+					for(mtd = t->gtemplate->methtmpl; mtd != nil; mtd = mtd->link)
+						if(mtd->sym == n->sym){
+							fnd = tinstantiatemeth(mtd, t);
+							if(fnd == nil){
+								n->ty = terror;
+								return n->ty;
+							}
+							n->decl = fnd;
+							n->ty = fnd->ty;
+							n->right = nil;
+							return n->ty;
+						}
+				}
 				nerror(n, "%T has no field or method %s", t, n->sym->name);
 				n->ty = terror;
 				return n->ty;
@@ -2439,14 +2517,38 @@ fndecl(Node *n)
 			/*
 			 * func (p ref Pair[A, B]) m(...) -- a method on a
 			 * generic receiver, its own type parameters implicitly
-			 * bound from the receiver's instantiation.  same gap as
-			 * generic functions just above: needs per-instantiation
-			 * compiled code.  caught here, before stype(recv->right)
-			 * below would otherwise try to resolve A/B as if they
-			 * were ordinary (unbound) type names and fail with a
-			 * confusing "A is not a type" instead.
+			 * bound from the receiver's instantiation ("A"/"B" here
+			 * are the *method's* own binding names for the same
+			 * positions as Pair's tparams -- not necessarily spelled
+			 * the same as Pair's own, though they conventionally
+			 * are).  stored as an unresolved template on the
+			 * *type* template's own Type (methtmpl, ember.h), not
+			 * fns[] or ordinary scope -- reached from echk's Odot
+			 * case (below) via a specific instantiation's gtemplate/
+			 * ginst reverse link, the same "bind the names in a
+			 * scope, dupntree()+re-check" core generic functions
+			 * already use (tinstantiatefncore()), just with the
+			 * arguments coming from the receiver's own instantiation
+			 * instead of an explicit "[...]" or inference.
 			 */
-			nerror(n, "generic methods not yet supported");
+			Decl *btd;
+
+			if(rty->left->op != Oname){
+				nerror(n, "bad generic receiver type");
+				return;
+			}
+			btd = lookup(rty->left->sym);
+			if(btd == nil || btd->store != Dtype || btd->ty == nil || btd->ty->tparams == nil){
+				nerror(n, "%s is not a generic type", rty->left->sym->name);
+				return;
+			}
+			d = mkdecl(&n->src, Dfn, nil);
+			d->sym = fsym;
+			d->init = n;
+			d->tparams = rty->right;
+			d->dot = btd;
+			d->link = btd->ty->methtmpl;
+			btd->ty->methtmpl = d;
 			return;
 		}
 	}

@@ -367,6 +367,20 @@ struct Type
 	Node	*tparams;
 	Node	*tbody;
 	Ginst	*tinsts;		/* cache: one entry per distinct instantiation */
+	Decl	*methtmpl;		/* generic template: methods declared with a generic receiver, chained via Decl.link -- each an unresolved template (Decl.tparams set), distinct from meths (resolved Dfn methods on a concrete type, which stays nil on a template). nil on every ordinary type. */
+
+	/*
+	 * the reverse of the above: on a Type tinstantiate() (check.c)
+	 * produced (e.g. Box[int]'s own Type), gtemplate is the template
+	 * Type it came from (Box's) and ginst the cache entry (args
+	 * included) that produced it -- so a method lookup that misses
+	 * this instantiation's own meths (always nil; instantiating a
+	 * struct never copies methods over) can find gtemplate->methtmpl
+	 * instead and instantiate the method with the same arguments.
+	 * nil on every non-instantiated type, template included.
+	 */
+	Type	*gtemplate;
+	Ginst	*ginst;
 };
 
 /*
