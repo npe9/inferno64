@@ -230,6 +230,7 @@ struct Decl
 	Inst	*pc;			/* start of function */
 
 	Desc	*desc;			/* heap descriptor */
+	Type	*valty;			/* Dfn: this function used as a plain *value*'s type -- Tref{ty}, cached (built+sizetype()'d once, check.c's echk() Oname case) so every reference to the same function shares one sized type instead of a fresh, never-sized one per use */
 
 	/*
 	 * Dfn generics: tparams set marks this Dfn as an unresolved

@@ -37,6 +37,7 @@ static void	storecomposite(Src*, Node*, Node*);
 static void	destructure(Src*, Node*, Node*);
 static void	scom(Node*);
 static void	callcom(Src*, int, Node*, Node*);
+static void	fpcall(Src*, int, Node*, Node*);
 static void	casecom(Node*);
 static Inst	*bcom(Node*, int, Inst*);
 static void	fncom(Decl*);
@@ -318,7 +319,7 @@ static void
 callcom(Src *src, int op, Node *n, Node *ret)
 {
 	Node frame, toff, tadd, pass, *a, *mod, *ind, *nfn, *args, *e;
-	Node tmod;
+	Node tmod, tind;
 	Decl *d;
 	Inst *in;
 	long off;
@@ -355,7 +356,26 @@ callcom(Src *src, int op, Node *n, Node *ret)
 		ind = nfn->right;
 		if(mod->addable >= Rcant)
 			fatal("callcom: module not addressable");
-		if(ind->decl != nil)
+		if(ind->op != Oname && ind->addable >= Ralways){
+			/*
+			 * fpcall()'s freshly built ind (Oind(Oadd(...)),
+			 * reading a *runtime* function-table index out of a
+			 * tfnptr value) sumark()s to Radr -- a genuine
+			 * indirect load (Afpind) -- which genrawop's own
+			 * guard refuses as a middle operand (no double-
+			 * indirect addressing mode exists for it).  limbo/
+			 * ecom.c's callcom hits this exact case and handles
+			 * it identically: materialize it into a plain temp
+			 * (an ordinary register load, Rreg/Afp) first. this
+			 * port had dropped this branch, keeping only the
+			 * plain-Oname Roff case below -- unreachable until a
+			 * call *through a function value* (as opposed to a
+			 * plain "mod.fn(...)") existed at all.
+			 */
+			talloc(&tind, ind->ty, nil);
+			ecom(&ind->src, &tind, ind);
+			ind = &tind;
+		}else if(ind->decl != nil)
 			ind->addable = Roff;
 		/*
 		 * varargs frame layout is call-site specific; use a local
@@ -451,7 +471,44 @@ callcom(Src *src, int op, Node *n, Node *ret)
 			iop = IMSPAWN;
 		genrawop(src, iop, &frame, ind, mod);
 	}
+	if(ind == &tind)
+		tfree(&tind);
 	tfree(&frame);
+}
+
+/*
+ * call through a function *value* (n->left is Oind of the tfnptr
+ * pointer -- check.c's Ocall case wraps a call-through-a-value callee
+ * exactly this way): decompose the two-word tfnptr back into an
+ * Omdot(mod, ind)-shaped callee and hand it to the *existing*
+ * callcom() Omdot path unchanged.  ind is a freshly built Oind node
+ * with no decl, so callcom's "if(ind->decl != nil) ind->addable =
+ * Roff" guard leaves it at whatever plain sumark(Oind) rules already
+ * gave it (Radr/Rmadr, an ordinary indirect load) instead of decl-
+ * offset addressing -- exactly what libinterp/xec.c's mcall/mframe
+ * want for their own "m" operand regardless of where the value came
+ * from.  ported from limbo/ecom.c's fpcall(), unchanged in shape.
+ */
+static void
+fpcall(Src *src, int op, Node *n, Node *nto)
+{
+	Node tp, *e, *mod, *ind;
+
+	tp.decl = nil;
+	e = n->left->left;
+	if(e->addable >= Rcant)
+		e = eacom(e, &tp, nil);
+	mod = mkunary(Oind, e);
+	ind = mkunary(Oind, mkbin(Oadd, dupn(e), mkconst(src, IBY2WD)));
+	n->left = mkbin(Omdot, mod, ind);
+	n->left->ty = e->ty->tof;
+	mod->ty = tint;
+	ind->ty = tint;
+	ind->left->ty = tint;
+	ind->left->right->ty = tint;
+	sumark(n);
+	callcom(src, op, n, nto);
+	tfree(&tp);
 }
 
 static Inst*
@@ -656,12 +713,108 @@ ecom(Src *src, Node *nto, Node *n)
 
 	switch(n->op){
 	case Oname:
+		if(n->decl != nil && n->decl->store == Dfn){
+			/*
+			 * a bare function name used as a plain *value*, not
+			 * Ocall's own direct callee (that path never reaches
+			 * here at all -- callcom() addresses a Dfn callee via
+			 * its own Rpc/ICALL handling, entirely separate from
+			 * genmove).  represented the way limbo/ecom.c's Oref
+			 * case does: a heap-allocated two-word tfnptr{any t0,
+			 * int t1} (types.c) -- t0 this module's own linkage,
+			 * always "self" (ember doesn't support taking an
+			 * *imported* module's function as a value, only a
+			 * local one, matching this whole branch's established
+			 * scope), via the ISELF instruction (no Oself node
+			 * needed, since self is the only case); t1 this
+			 * function's own index in the module's interface
+			 * (mkiface, types.c), forced Rnoff (self/negative-
+			 * offset) instead of sumark's ordinary Rpc for a
+			 * Dfn-Oname -- disw.c's Anoff writes -(iface->offset+1),
+			 * decoded by mcall/mframe's (libinterp/xec.c) "o<0"
+			 * branch as an index into this module's own export
+			 * table, not an imported module's link table.  calling
+			 * back through the result is fpcall()'s job, below --
+			 * decomposing it back into an Omdot the *existing*
+			 * callcom() Omdot path already knows how to emit, no
+			 * changes needed there at all.
+			 */
+			Node *dst, ind0, off, addr, ind1, tfn;
+			Decl *d;
+
+			d = n->decl;
+			dst = nto;
+			if(dst == nil || (dst->addable != Rreg && dst->addable != Rmreg))
+				dst = talloc(&tres, n->ty, nil);
+			/*
+			 * INEWZ, not limbo's plain INEW (its Oref case, the
+			 * reference this was ported from): libinterp/xec.c's
+			 * OP(self) unconditionally does "t = *mp; *mp = ml;
+			 * destroy(t)" -- decref/free()ing whatever *was*
+			 * already sitting in t0 before overwriting it, the
+			 * ordinary "replace an old pointer with a new one"
+			 * pattern.  a fresh, unzeroed INEW block's t0 is
+			 * whatever garbage a previously freed pool block last
+			 * held; ISELF has no way to tell that from a real,
+			 * live Modlink* and destroys it anyway, corrupting
+			 * whatever it actually pointed to -- silent on a
+			 * *first* allocation from a fresh page (zero already
+			 * by construction), which is exactly what made a
+			 * hand-traced instruction dump insist this was
+			 * correct right up until an actual VM run faulted.
+			 * same zero-unset-fields reasoning as the Oref
+			 * composite-literal case's own INEWZ, above.
+			 */
+			genrawop(src, INEWZ, mktn(tfnptr), nil, dst);
+
+			ind0 = znode;
+			ind0.op = Oind;
+			ind0.left = dupn(dst);
+			ind0.ty = tany;
+			sumark(&ind0);
+			genrawop(src, ISELF, nil, nil, &ind0);
+
+			off = znode;
+			off.op = Oconst;
+			off.val = IBY2WD;
+			off.ty = tint;
+			sumark(&off);
+			addr = znode;
+			addr.op = Oadd;
+			addr.left = dupn(dst);
+			addr.right = &off;
+			addr.ty = tint;
+			sumark(&addr);
+			ind1 = znode;
+			ind1.op = Oind;
+			ind1.left = &addr;
+			ind1.ty = tint;
+			sumark(&ind1);
+
+			tfn = znode;
+			tfn.op = Oname;
+			tfn.decl = d;
+			tfn.sym = d->sym;
+			tfn.ty = tint;
+			tfn.addable = Rnoff;
+			genmove(src, Mas, tint, &tfn, &ind1);
+
+			if(nto != nil && nto != dst){
+				genmove(src, Mas, n->ty, dst, nto);
+				tfree(&tres);
+			}
+			return nto != nil ? nto : dst;
+		}
+		/* fall through */
 	case Oconst:
 		if(nto != nil)
 			genmove(src, Mas, n->ty, n, nto);
 		return nto;
 	case Ocall:
-		callcom(src, Ocall, n, nto);
+		if(left->op == Oind)
+			fpcall(src, Ocall, n, nto);
+		else
+			callcom(src, Ocall, n, nto);
 		return nto;
 	case Ospawn:
 		callcom(src, Ospawn, left, nto);

@@ -748,6 +748,46 @@ stype(Node *n)
 			if(f->flags & NVARARG)
 				ft->varargs = 1;
 			t = stype(f->right);
+			if(t->kind == Tfn){
+				/*
+				 * a function type used as a *value*'s type (a
+				 * parameter, e.g. "f func(int) int"), not a
+				 * function's own signature -- fndecl() builds
+				 * the latter straight from stype()'s Otfunc
+				 * case (below) without going through this
+				 * per-parameter loop at all, so it's never
+				 * wrapped here.  com.c represents a function
+				 * value as a two-word tfnptr (types.c), always
+				 * behind a pointer -- Tref matches every other
+				 * heap-allocated value's own representation
+				 * (composite literals, etc.), and lets the
+				 * existing Tref-generic machinery (genmove,
+				 * assignable, ...) carry it with no changes.
+				 *
+				 * idoffsets() here matters, not just tidiness:
+				 * fndecl() calls idoffsets(t->ids, MaxTemp,
+				 * IBY2WD) on a *real* function's own parameter
+				 * list, reserving the register-spill temp
+				 * region (MaxTemp) before the first argument --
+				 * every actual Dfn's frame is laid out that
+				 * way.  this Tfn is built by the exact same
+				 * stype() Otfunc case but *without* going
+				 * through fndecl(), so left alone its ids stay
+				 * at mkdecl()'s zero-initialized offsets --
+				 * fpcall()/callcom() write a call-through-this-
+				 * value's arguments at *those* (wrong, 0-based)
+				 * offsets, while the real callee (any actual
+				 * "func(int) int"-shaped Dfn) reads them at its
+				 * own MaxTemp-based ones: silent frame
+				 * corruption, not a compile error, caught only
+				 * by actually running a call through a function
+				 * value (confirmed: without this, "apply(inc,
+				 * 10)" ran and printed a wrong result instead of
+				 * faulting outright).
+				 */
+				idoffsets(t->ids, MaxTemp, IBY2WD);
+				t = mktype(&f->src, Tref, t, nil);
+			}
 			if(f->left == nil){
 				/*
 				 * an *anonymous* parameter -- psignature(named=0)
@@ -1092,6 +1132,54 @@ echk(Node *n)
 		d->refs++;
 		n->decl = d;
 		n->ty = d->ty;
+		if(d->store == Dfn && d->ty != nil){
+			/*
+			 * a bare function name used as a plain *value*
+			 * (an argument, a := RHS, ...), not Ocall's own
+			 * callee -- that shape is special-cased directly in
+			 * Ocall below (a literal "f(...)" compiles to a
+			 * direct call, unaffected by this), so the only
+			 * other places a Dfn-Oname's type is read are
+			 * genuine value uses, which need the same Tref{Tfn}
+			 * a function-typed parameter's own type already
+			 * carries (stype()'s Otfunc case, above) so the two
+			 * sides of a call like apply(inc, x) actually match.
+			 *
+			 * cached on the Decl (valty), built+sizetype()'d
+			 * *once*: a fresh mktype() every reference was a
+			 * real, found-the-hard-way bug -- the new Type's
+			 * OKsized bit is never set, so it silently carries
+			 * size=0 (mktype()'s zero-init) forever, since
+			 * nothing else in this path calls sizetype() on it.
+			 * com.c's talloc()/idoffsets() trust a type's own
+			 * .size to lay out frame slots; a size-0 temp
+			 * advances the frame offset by zero, so whatever
+			 * gets talloc()'d *next* silently lands at the exact
+			 * same offset -- confirmed by instrumenting
+			 * idoffsets() directly: ".t1 off=72 size=0" followed
+			 * immediately by another temp at "off=72" too. Two
+			 * unrelated locals sharing one frame slot is normally
+			 * fine (non-overlapping lifetimes, an ordinary space
+			 * optimization) *except* the function's single, static
+			 * GC frame descriptor has no notion of "sometimes a
+			 * pointer" -- it marked that offset a pointer because
+			 * the temp holding my tfnptr was declared there, and
+			 * kept treating it as one for the rest of the
+			 * function's life, including *after* the slot was
+			 * silently overwritten by something else (another
+			 * call's frame pointer) that was never a refcounted
+			 * heap pointer at all.  frame teardown then destroy()s
+			 * that non-pointer bit pattern, corrupting the heap --
+			 * an alloc:D2B panic or a segfault in some *unrelated*
+			 * process moments later, never at the actual store,
+			 * which is what made this take so long to pin down.
+			 */
+			if(d->valty == nil){
+				d->valty = mktype(&n->src, Tref, d->ty, nil);
+				sizetype(d->valty);
+			}
+			n->ty = d->valty;
+		}
 		return n->ty;
 	case Odot:
 		/* module member, adt field, or tuple field */
@@ -1364,6 +1452,35 @@ echk(Node *n)
 				return n->ty;
 			}
 			ft = echk(n->left);
+			if(n->left->op == Oname && n->left->decl != nil && n->left->decl->store == Dfn){
+				/*
+				 * a literal "f(...)": echk's Oname case
+				 * (above) just wrapped d->ty as Tref{Tfn}, the
+				 * representation a function *value* needs --
+				 * but naming a known function directly compiles
+				 * as an ordinary direct call (callcom's
+				 * Rpc/ICALL path, com.c), which wants the bare,
+				 * unwrapped signature, so undo the wrap.
+				 */
+				ft = n->left->ty = n->left->decl->ty;
+			}else if(ft != nil && ft->kind == Tref && ft->tof != nil && ft->tof->kind == Tfn){
+				/*
+				 * calling *through* a function value instead
+				 * -- a parameter, local, global, or field, not
+				 * a literal top-level name.  wrap the callee in
+				 * Oind so ecom's Ocall dispatch (com.c) routes
+				 * to fpcall() instead of callcom()'s direct-call
+				 * path, the same "left->op==Oind" convention
+				 * limbo/ecom.c's Ocall dispatch uses.
+				 */
+				Node *ind;
+
+				ind = mkunary(Oind, n->left);
+				ind->src = n->left->src;
+				ind->ty = ft->tof;
+				n->left = ind;
+				ft = ft->tof;
+			}
 		}
 		if(ft->kind != Tfn){
 			if(ft != terror)
