@@ -95,8 +95,8 @@ write it (in the same
 .BR --- / +++ /@@
 format it came in) to
 .I rejfile
-and keep going; the run as a whole still succeeds if every other hunk
-applied.
+and keep going. See BUGS: the exit status does not reflect that some
+hunks were rejected.
 .TP
 .B -n
 Dry run: parse and report which files would be touched, without
@@ -112,6 +112,14 @@ undo a patch that has already been applied.
 .SH SEE ALSO
 .IR patchtest (1)
 .SH BUGS
+With
+.BR -r ,
+a run that rejects one or more hunks and applies the rest still exits
+successfully \(em the exit status does not distinguish a fully-applied
+patch from a partially-applied one; only the stderr line per rejected
+hunk (and the reject file's own contents) says so. This matches the
+original.
+.PP
 plan9port ships a file at
 .B src/cmd/scat/patch.c
 that shares this program's filename but is a completely different tool

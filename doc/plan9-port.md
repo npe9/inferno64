@@ -1102,7 +1102,12 @@ below.
     35 individual assertions); both mechanism-specific negative
     controls (fuzz-carry, finish-on-failure) and the dry-run
     nil-dereference are all confirmed, not merely asserted. `pr.c`
-    remains the only backlog item genuinely blocked on "no checkable
-    reference exists at all" - `patch.c` looked like it might join it
+    remains the only backlog item genuinely *blocked* ("no checkable
+    reference exists at all") - `patch.c` looked like it might join it
     but did not, because its correctness criterion lives outside any
-    Plan 9 binary in the first place.
+    Plan 9 binary in the first place. `dc.b` (2297 lines, a dedicated-
+    effort item, not started per the advisor's earlier call) and
+    `file.c`/`tar.c` (1772/1588 lines) are a different status again:
+    genuinely *unread*, not blocked - no line has been spent guessing
+    their difficulty from size, the same mistake `pr.c`'s original
+    "middle tier" line proved wrong once.

@@ -1058,7 +1058,13 @@ parseopts(args: list of string): list of string
 
 # doone: parse one patch file/stream and apply it - main()'s per-file
 # body, minus the loop that drives it (init()/run() do that, since they
-# differ in how ok gates the NEXT file).
+# differ in how ok gates the NEXT file). Always starts finish() from 1,
+# unlike the C's `ok = finish(ok)` which threads the RUNNING ok through
+# - but init()'s own loop condition (ok != 0) already stops calling
+# doone() again the moment one file's result is 0, exactly mirroring
+# the C's `for(i = 0; ok && i < argc; i++)`, so finish() is never
+# actually reached with an already-0 ok in either version: checked by
+# tracing the loop, not assumed.
 doone(pathorname: string, iob: ref Iobuf): int
 {
 	if(iob == nil)

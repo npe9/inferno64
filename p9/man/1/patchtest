@@ -90,3 +90,21 @@ its standard-input defaulting, or its window-system
 handling, none of which
 .B run
 goes through.
+.PP
+.B -d
+(used by every case here) calls
+.BR chdir (2),
+which is per-process and outlives the
+.B run
+call that made it \(em a real
+.I patch
+invocation never notices, since the process exits right after, but
+this test process keeps running across all eleven cases in the same
+directory. Every case here uses only absolute paths for its own file
+I/O (never a relative one that would depend on the directory
+.I patch
+itself left the process in), so this is not currently a live bug \(em
+but a future case relying on the directory this test started in,
+added after some other case's
+.BR -d ,
+would fail confusingly for this reason.
