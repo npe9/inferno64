@@ -958,7 +958,22 @@ poolsize(Pool *p, uintptr max, int contig)
 static void
 _poolfault(void *v, char *msg, uintptr c)
 {
+	Prog *xp;
+
 	auditmemloc(msg, v);
+	/*
+	 * Same trick as pc64/trap.c's dumpregs() enhancement: name the
+	 * Dis Prog and module current when the allocator itself catches
+	 * a bad pointer, since the two native PCs already printed below
+	 * cannot be resolved to a function without a symbol table this
+	 * port's linked kernel does not carry.  See doc/inferno-ports.ms.
+	 */
+	xp = currun();
+	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+		print("_poolfault: running Dis pid %d module %s PC %#p\n",
+			xp->pid, xp->R.M->m->name, xp->R.PC);
+	else
+		print("_poolfault: currun() nil or has no module\n");
 	panic("%s %p (from %p/%zux)", msg, v, getcallerpc(&v), c);
 }
 

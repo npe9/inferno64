@@ -3714,6 +3714,74 @@ header and
 layout, to see whether the corrupted block's shape names its own
 type the way a Dis module name already named the crashing context.
 .NH 1
+Addresses do not recur: struct-matching the payload is not worth it
+.PP
+Ran the experiment.  Gave
+.CW alloc:D2B
+the same treatment as the native trap: enhanced
+.CW alloc.c 's
+.CW _poolfault()
+\- what
+.CW include/pool.h 's
+.CW D2B
+macro actually calls, through the
+.CW poolfault
+function pointer it is the sole assignment of \- to also print
+.CW currun() 's
+Dis pid, module, and PC.  Same trick, kept permanent the same way,
+on a path that only fires already exceptional.
+.PP
+Five more plain boots: three clean, one general protection
+violation naming a fifth distinct module
+.RB ( Env ,
+pid 3 \- the previous section's four-way split holds), and one more
+.CW alloc:D2B ,
+this time naming
+.CW Sh ,
+pid 1.  That capture decides the question the previous section
+raised: its address
+.RB ( 0x310440 )
+and caller pc
+.RB ( 0x2610ec )
+match neither of the two earlier
+.CW alloc:D2B
+captures
+.RB ( 0x784c2b8 / 0x2bdc2b
+and
+.CW "0x784a9b8 / 0x2bdc2b" ) \-
+not even the same order of magnitude, where the first two at least
+shared a caller.  Three captures, three different addresses, two
+different callers.  Allocation-order dependent, per the previous
+section's own test: matching the payload dump against
+.CW Heap
+or
+.CW Modlink
+is now known not worth doing, decided by the cheap experiment
+rather than by more manual struct arithmetic.
+.PP
+Six named-module captures across this whole crash-hunt now:
+.CW Init ,
+.CW Sh
+(twice, two different fault types),
+.CW $Sys ,
+.CW Env ,
+and one
+.CW currun()
+nil.  No module repeats in a way that suggests it is the culprit
+rather than the victim \- the plainest remaining reading is what the
+first of these sections already said: the corruption is indifferent
+to what is running, which points at something scheduled independently
+of Dis execution (a clock tick, a GC epoch, an interrupt handler)
+rather than at a bug in any one piece of Limbo bytecode or its
+loader.  Not fixed.  The
+.CW _poolfault()
+enhancement is committed and permanent; every future
+.CW alloc:D2B
+capture, in this session or the next, will carry its module context
+for free, the same standing offer
+.CW dumpregs()
+already made for native traps.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
