@@ -196,6 +196,37 @@ of segattaching the ring, which already works; then grow the draw service
 and the personality above it.  rio is the far end of that line, and every
 step toward it keeps the draw stack in the library OS where it belongs.
 .NH 1
+The 9front disk as the milestone
+.PP
+The disk image the tests already mount \- (CW.qemu/9front-root.qcow2P,
+a full 9front installation with an hjfs root \- is the milestone, because
+it already holds rio.  Booted from it, the Osprey kernel reaches a 9front
+rc prompt as glenda, and (CW/bin/rioP is there.  So rio is not an
+import after all: the userland, rio included, is on the disk.  What is
+missing is only the way to run it.
+.PP
+Two concrete blockers were found by trying:
+.IP \(bu 2
+rio wants (CW/dev/drawP, and it is not there \- the kernel that boots
+the disk carries no draw device, no frame-buffer driver, no mouse.  They
+can be added to the config, but:
+.IP \(bu 2
+the draw device does not compile.  (CWos/osprey/port/devdraw.cP and the
+(CWdraw.hP it includes are from different draw-protocol versions:
+devdraw.c indexes (CWWarpP as a 3x3 array ((CWw[i][j]P), the header
+defines it as a struct ((CWlong m[3][3]P).  That one is a line to fix,
+but it is a symptom \- the draw code and the headers must be reconciled
+to one protocol version, the same version the disk's rio speaks, before
+any draw device links at all.
+.PP
+So the milestone has a clear shape and a real first task.  The draw-code
+reconciliation is needed on either path \- a user-space devdraw is
+derived from this same code \- so it is the honest next step, ahead of the
+architectural choice of where the draw device runs.  After it: the frame
+buffer (already exposed to user space here), a mouse and keyboard path,
+and a devdraw that speaks the disk rio's protocol version \- in user
+space, per the architecture.  rio then runs against it, off the disk.
+.NH 1
 Status of the graphics path
 .PP
 Built and shown: step 1 is done and then some.  The microkernel exposes
