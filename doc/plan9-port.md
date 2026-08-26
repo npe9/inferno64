@@ -2338,3 +2338,139 @@ below.
     backlog has used since `urlencode.b` for `qrtest.b`'s own
     automated, repeatable oracle (deliberately NOT dependent on the
     Python venv - see `qrtest.b`'s own header comment for why).
+
+26. **`news.c` (239 lines, prints/tracks `/lib/news` items) - DONE
+    (`news.b`/`newstest.b`).** Source:
+    `/Users/npe/src/plan9front/sys/src/cmd/news.c` (pulled from outside
+    this repo, same as `cb.c`/`qr.c` were). The cheaper of the two
+    named backlog items left after `qr.b` (the other, `upas/marshal.c`
+    at 1832 real lines, was deliberately deferred - its own testing
+    would need an outward-facing decision about sending real mail that
+    this backlog hasn't needed to make yet).
+
+    **The one fidelity decision worth stating up front:** the real
+    source has no flag to point `/lib/news` or `$home/lib/newstime`
+    anywhere else - both are hardcoded absolute paths in the C, not
+    parameters, and this translation keeps them exactly that way
+    rather than inventing a `-d dir` override the real tool never had.
+    This makes the fixture problem a test-suite concern, not a
+    subsystem one: `newstest.b` creates and removes a real `/lib/news`
+    directory in the live emu namespace for the duration of the test,
+    and drives `$home` itself via `Env->setenv` rather than depending
+    on whatever ambient `$home` this host happens to already have.
+    `newstest.b`'s own `refuseifexists()` checks both paths before
+    touching either, and refuses to run at all if something is already
+    there, rather than silently overwriting real content.
+
+    Three C helpers were replaced by existing Limbo modules rather than
+    re-derived, each a direct match to what the C function does:
+    `getenv("home")` -> `Env->getenv("home")` (Inferno's env is
+    case-sensitive and uses the same lowercase names as Plan 9's, so
+    this is exact, not an approximation); `dirreadall()`+`qsort(...,
+    fcmp)` -> `Readdir->init(NEWS, Readdir->MTIME)`; and
+    `asctime(localtime(mtime))` -> `Daytime->local()`'s field
+    breakdown, reformatted by hand rather than via `Daytime->text()`
+    (whose own format differs in three ways from Plan 9's asctime - it
+    zero-pads the day where asctime space-pads it, it adds a time-zone
+    field asctime doesn't have, and asctime's own trailing `"\n"` is
+    part of its return value, not appended by the caller - reproduced
+    here by keeping both the format string's own literal `"\n"` and
+    the hand-built date string's own trailing `"\n"`, matching the
+    doubled newline, and the resulting blank line before each item's
+    body, that the real source's `"...%s\n"` format around an
+    already-`"\n"`-terminated `asctime()` produces).
+
+    **A real, surprising finding about that Readdir substitution, found
+    only by testing, not assumed from the flag's own name:** the first
+    translation pass used `Readdir->MTIME | Readdir->DESCENDING`,
+    reasoning (wrongly) that "DESCENDING" would mean newest-first,
+    matching `fcmp`'s own `x = b->time - a->time; x<0 => -1` (larger
+    time sorts first). `newstest.b`'s own ordering check failed
+    immediately - the three fixture items came out oldest-first, not
+    newest-first. Isolated with a standalone three-file probe outside
+    the test suite (create three files with a real `sys->sleep`
+    between each, dump both `MTIME` and `MTIME|DESCENDING` orderings
+    directly): plain `MTIME` gave newest-first; `MTIME|DESCENDING` gave
+    oldest-first - the reverse of what the flag's own name suggests.
+    Not this tree's bug to fix (`Readdir` is a shared library module
+    used elsewhere), just a surprising behavior worth recording rather
+    than silently working around - fixed by dropping `DESCENDING`
+    entirely, and confirmed the ordering check now passes.
+
+    **A real bug in this translation's own first test draft, caught by
+    the test itself failing in a way that pointed at the test, not
+    `news.b`:** after adding a new item and confirming a plain
+    (boundary-moving) default call showed it as new, the draft then
+    called `-a` and `-n` and asserted a *further* default call still
+    showed that same item again - failing, because the earlier default
+    call had already consumed it (real `news`'s own default mode always
+    moves the "last read" mark; only `-a`/`-n` don't). Fixed by
+    reordering the cases to check `-a`/`-n` (each run twice, to confirm
+    neither moves the mark) *before* ever making the one boundary-
+    consuming default call, then confirming a further default call
+    afterward sees nothing - the same real behavior, verified without
+    the self-contradicting assumption.
+
+    **Negative control:** gutting the ignore-list filter (`isignored()`
+    forced to always return 0) took the suite from 27/0 to 24/3, with
+    the failures showing `core` and `dead.letter` printed as real items
+    - confirming those checks catch a genuine regression rather than
+    passing vacuously. Restored, re-verified 27/0.
+
+    **An advisor review of the just-committed work (called per standing
+    practice, before moving to the next backlog item) flagged three
+    things as asserted but not directly checked - all three were
+    checked, not argued past, and two came back clean, one caught a
+    real gap in the test (not in `news.b`):**
+
+    1. Does `sys->create` with `OWRITE` on a file that ALREADY exists
+       actually advance its modification time, or could it silently
+       no-op - which would mean `$home/lib/newstime` only ever gets
+       its FIRST-ever timestamp, and every run after the first would
+       wrongly reprint everything forever? The suite's existing cases
+       never distinguished "create where nothing existed" (t2) from
+       "create on a file that already exists" (every call after).
+       Checked with a standalone probe first (create, fstat, sleep,
+       create again on the same path, fstat again: mtime does
+       advance), then added `t3b` to `newstest.b` itself asserting
+       exactly this with a real `sys->stat` before/after. A negative
+       control (patching `news.b` to skip the create when the file
+       already exists) confirmed `t3b` catches it: the marker stops
+       advancing and the very next default call wrongly shows nothing
+       new, exactly the real-world symptom this would have been.
+
+    2. Does `Readdir->init` hand back `.`/`..` as if they were real
+       directory entries (Plan 9's own `dirreadall()` never does,
+       unlike POSIX `readdir()`)? Checked with a standalone probe
+       (a real directory, one real file, dump what comes back): only
+       the one real file - no `.`/`..` at all. Added two permanent
+       `checknotcontains` assertions to `t1` anyway, since news.b's
+       own ignore list has no entry for either and nothing else would
+       catch a change in this behavior.
+
+    3. `pr.b:512`'s own precedent for `%2d` (space-padding, matching
+       asctime's day-of-month field) was cited but never independently
+       confirmed to actually space-pad rather than zero-pad on this
+       runtime - if both files assumed wrong, neither one's own
+       existing use would have exposed it. Checked with a standalone
+       probe (`sys->print("[%2d]", 5)` and `[%.2d]`): `%2d` gives
+       `" 5"`, `%.2d` gives `"05"`, confirming the format string is
+       correct. Not encoded as a permanent test case (the suite's own
+       fixture files are all created "today", so a single-digit day
+       depends on when the suite happens to run) - recorded in
+       `newstest.b`'s own man page BUGS instead of built as a fragile
+       date-dependent assertion.
+
+    Final state: 31 of 31 `newstest.b` cases pass (27 plus the four
+    added above), covering the missing-`/lib/news` failure path,
+    no-`$home` behavior (every item prints, every time, including a
+    hand-traced check of the body's tab-reindentation and
+    blank-line-collapsing, and confirmation that no stray `.`/`..`
+    entries leak through), the `$home`-tracked boundary across
+    first-run/repeat-run/new-item scenarios (including the marker
+    file's own modification time genuinely advancing on a SECOND
+    create, not just its first), `-a`/`-n` non-side-effecting
+    behavior, explicit-file-argument ordering independent of the mtime
+    scan, and the bad-option failure path. Full 20-suite regression
+    across this backlog (`asciitest` through `urlencodetest`, plus
+    `newstest` itself) - zero failures.

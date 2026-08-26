@@ -1,0 +1,109 @@
+.TH NEWS 1
+.SH NAME
+news \- print news items
+.SH SYNOPSIS
+.B news
+[
+.B -a
+|
+.B -n
+] [
+.I file ...
+]
+.SH DESCRIPTION
+.I News
+is a real, structural translation of Plan 9's own
+.IR news (1)
+.RB ( sys/src/cmd/news.c ,
+239 lines), compiled to Dis and run by
+.IR emu ,
+not a host binary. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+With no arguments,
+.I news
+prints every item under
+.B /lib/news
+whose modification time is newer than the last time
+.I news
+was run by this user, newest first, and then records the current time
+as the new "last read" mark. With
+.B -a
+it prints every item regardless of that mark, without updating it.
+With
+.B -n
+it prints only the names of new items, one line prefixed
+.BR news: ,
+also without updating the mark. Given explicit
+.I file
+arguments, it prints exactly those items from
+.B /lib/news
+in the order given, ignoring the modification-time scan entirely.
+.PP
+Two names, "core" and "dead.letter", are never listed even if present
+and new - the same fixed ignore list the real source has.
+.SH FILES
+.TP
+.B /lib/news
+directory of news items; hardcoded, like the real source - see BUGS.
+.TP
+.B $home/lib/newstime
+per-user marker of when news was last read; its modification time (not
+its content) is what matters. Only touched when
+.B -a
+and
+.B -n
+are absent.
+.SH SOURCE
+.B /p9/cmd/news.b
+(translated from
+.BR news.c ;
+see its own header comment for the full derivation)
+.SH SEE ALSO
+.IR newstest (1)
+.SH BUGS
+The real source has no flag to point
+.B /lib/news
+or
+.B $home/lib/newstime
+anywhere else - both paths are hardcoded absolute paths in the C, not
+parameters, and this translation keeps them exactly that way rather
+than inventing an override the real tool never had. This makes testing
+this program a real-namespace-fixture exercise; see
+.IR newstest (1)
+for how that is done without touching any real content.
+.PP
+The real source's own directory-sort comparator
+(qsort with a hand-rolled
+.B fcmp
+that treats larger modification time as sorting first) is replaced
+here by
+.BR Readdir 's
+.B MTIME
+sort key - deliberately
+.I not
+.B MTIME|DESCENDING,
+despite that flag's name: a standalone probe (three files, distinct
+modification times) showed plain
+.B MTIME
+gives newest-first here and
+.B MTIME|DESCENDING
+gives oldest-first, the reverse of what the name suggests. Not this
+tree's bug to fix, just confirmed by testing rather than assumed from
+the flag's name - see
+.B news.b's
+own header comment.
+.PP
+.BR asctime (2)'s
+own output format (space-padded day, no time zone field, and a
+trailing newline that is part of the returned string, not added by the
+caller) is reproduced by hand from
+.BR Daytime->local() 's
+field breakdown, not by calling
+.BR Daytime->text() ,
+whose own format differs in exactly those three ways.

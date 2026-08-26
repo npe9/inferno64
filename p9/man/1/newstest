@@ -1,0 +1,134 @@
+.TH NEWSTEST 1
+.SH NAME
+newstest \- regression test for news(1)
+.SH SYNOPSIS
+.B newstest
+.SH DESCRIPTION
+.I Newstest
+loads
+.BR /p9/dis/news.dis 's
+in-process test seam,
+.BR run(args) ,
+and checks its returned output string against hand-traced expectations
+- there is no independent oracle binary built here (unlike
+.IR cbtest (1)
+or
+.IR qrtest (1)):
+.IR news (1)'s
+own behaviour is tied tightly enough to real host directory
+modification times and
+.B $home
+that hand-tracing the real algorithm on a controlled fixture is the
+actual verification, not a difference from this backlog's usual style.
+.PP
+Because
+.IR news (1)
+has no flag to point
+.B /lib/news
+or
+.B $home/lib/newstime
+anywhere but their real, hardcoded paths (see
+.IR news (1)'s
+own BUGS), this suite creates and removes a real directory at
+.B /lib/news
+and a real per-user marker under a
+.B $home
+it points at itself via
+.BR Env->setenv ,
+restoring whatever
+.B $home
+this process had beforehand when done.
+.B refuseifexists()
+checks both paths before touching either, and refuses to run at all if
+something is already there, rather than silently overwriting real
+content that might belong to something else on this host.
+.SH CASES
+.TP
+.I t0
+.B /lib/news
+missing entirely fails cleanly, checked before the fixture directory
+is created.
+.TP
+.I t1
+With no
+.B $home
+set at all, every non-ignored item prints, newest first, every time -
+there is no way to persist a "last read" mark without one. Includes a
+hand-traced check of the body-text tab-reindentation and blank-line
+collapsing (see BUGS).
+.TP
+.I t2 / t3 / t3b / t4-t6
+With
+.B $home
+set: the first run (no marker file yet) prints everything and writes
+the marker; an immediate second run sees nothing new.
+.I t3b
+checks something an advisor review flagged as unverified: that
+run()'s marker write - a plain
+.B sys->create
+on a file that, by
+.IR t3 ,
+already exists - actually advances its modification time rather than
+silently no-op'ing on an existing file. Checked directly by
+.BR sys->stat -ing
+the marker before and after a further call, not assumed; a negative
+control (forcing the marker write to skip files that already exist)
+confirmed this specific assertion catches it - the marker stops
+advancing and the very next default call wrongly shows nothing new
+forever, the real-world symptom this would cause.
+.PP
+After a new item is added,
+.B -n
+and
+.B -a
+are each checked twice in a row, before any boundary-moving call is
+ever made, to confirm neither one moves the "last read" mark by
+itself; only then does a plain default call (the one real
+.I news
+itself would make) consume the new item, and a further default call
+afterward confirms it is now gone.
+.TP
+.I t7
+Explicit named file arguments print in the order given, not
+modification-time order, and bypass the boundary/ignore-list logic
+entirely.
+.TP
+.I t8
+An unknown flag fails cleanly.
+.SH SOURCE
+.B /p9/cmd/newstest.b
+.SH SEE ALSO
+.IR news (1)
+.SH BUGS
+Does not exercise multiple distinct
+.B $home
+users concurrently, or any permission-denied path on
+.B /lib/news
+or the marker file - this host's filesystem backend does not make
+either easy to force reliably.
+.PP
+Relies on a real
+.B sys->sleep
+between fixture files (not a busy loop) to guarantee strictly
+increasing modification times, since this host's own modification-time
+granularity is not assumed finer than one second; this makes the suite
+take several real seconds to run, not a fast unit test.
+.PP
+Does not exercise
+.BR news.b 's
+own date formatting on a single-digit day of month (asctime's
+space-padding, as opposed to zero-padding, only shows up then) - this
+suite's own fixture files are all created "today", so whether that
+falls on such a day depends on when the suite is run. Checked
+directly instead, once, with a standalone probe printing
+.B %2d
+and
+.B %.2d
+against known values (space-pads and zero-pads respectively, as
+expected) rather than encoded as a fragile date-dependent case here.
+.PP
+The body-text hand-trace
+.RB ( t1 )
+covers exactly one input shape (a run of three consecutive blank
+lines collapsing to one) - not every bol/bop transition the real
+algorithm can reach.

@@ -39,6 +39,8 @@ TARG=\
 	cbtest.dis\
 	qr.dis\
 	qrtest.dis\
+	news.dis\
+	newstest.dis\
 
 MODULES=\
 
