@@ -228,6 +228,19 @@ destroy(void *v)
 	if(v == H)
 		return;
 
+	/*
+	 * Probe: three page faults this crash-hunt landed inside this
+	 * function's own D2B check below, at CR2 values of -32, -56, -20
+	 * -- not wild addresses, small integers near zero.  v was never
+	 * a valid pointer to begin with; catch that here, before D2B
+	 * turns it into an unreadable fault address, and name who called
+	 * destroy() with it.  See doc/inferno-ports.ms.
+	 */
+	if((uintptr)v < 0x1000) {
+		print("destroy: bad v %p from %#p\n", v, getcallerpc(&v));
+		abort();
+	}
+
 	h = D2H(v);
 	{ Bhdr *b; D2B(b, h); }		/* consistency check */
 

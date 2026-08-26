@@ -4581,6 +4581,84 @@ the seven callers of
 .CW cunique()
 narrow to whichever can hold a chan across a window where something
 else already freed it \- worth tracing then, not before.
+.NH 1
+The first capture that names a value instead of an address
+.PP
+Added the probe
+.CW destroy()
+needed: three page faults this hunt landed inside its own
+.CW D2B
+consistency check, at CR2 values of
+.CW -32 ,
+.CW -56 ,
+and
+.CW -20
+\- not wild addresses, small integers near zero, and
+.CW destroy() 's
+own
+.CW "v == H"
+check already excludes the nil-heap sentinel, so
+.CW v
+was never a valid pointer to begin with.  Added a check for
+.CW "(uintptr)v < 0x1000"
+right after that guard, printing
+.CW v
+and
+.CW getcallerpc(&v)
+before an
+.CW abort() \-
+.CW panic()
+itself isn't linkable from
+.CW libinterp
+(it's kernel-only;
+.CW error() / errorf()
+are the portable idiom here but raise a catchable Limbo exception,
+which is the wrong tool when the point is to stop hard and be seen,
+so this follows
+.CW gc.c 's
+own existing
+.CW abort()
+precedent instead).
+.PP
+Ran it: twelve boots, three crashes \- a general protection
+violation, a new one-off signature
+.RB ( "panic: init0: bad attach specifier" ,
+one line, not chased), and the probe itself, firing for the first
+time:
+.CW "destroy: bad v 0 from 0x32" .
+.CW v==0
+is the first capture in this entire hunt to name a bad
+.I value
+rather than a bad address \- every
+.CW "D2B / cclone / cclose / GPF"
+capture before this one has only ever pointed at where the
+corruption was noticed, never at what the corruption actually was.
+Worth stating plainly as the methodological result it is,
+independent of whatever the root cause turns out to be.
+.PP
+The
+.CW "from 0x32"
+half is not trustworthy, though \- 0x32 is nowhere near this port's
+text segment
+.RB ( INITTEXT
+.CW 0x200000 ),
+so it isn't a real caller pc.
+.CW getcallerpc(&v)
+depends on the frame already being laid out the way it is at the
+two places elsewhere in this tree that use the same trick
+successfully
+.RB ( D2B 's
+own
+.CW getcallerpc(&dp)
+and
+.CW poolfault() 's
+.CW getcallerpc(&v) ),
+both of which read it after the value in question has already been
+used, not from inside an early-exit guard at the top of the
+function the way this probe does.  Calling it from a different
+point in the prologue broke the assumption; the read is garbage,
+not evidence of anything.  Recorded as a probe defect to fix, not a
+second data point about stack corruption.
 
 .NH 1
 How a native kernel provides networking
