@@ -3486,22 +3486,80 @@ Not fixed.  The
 .CW dumpregs()
 enhancement is real and committed \- every future capture, in this
 session or the next, will name its Dis module for free.  The crash
-itself is not: seven clean
-.CW FORKFD
-runs narrow where it is not, and one detailed capture narrows where
-it might be, but no repeated, filtered instrumentation of
+itself is not, and a second round of the same bracketing technique
+narrowed further without closing it.  Tried the concrete next step
+this section itself proposed: one
+.CW sys->print()
+after each of
 .CW initialise() 's
-own
+eight
 .CW load
-calls has been tried yet.  That is the concrete next step, in the
-same shape as this section's own
+calls in
+.CW appl/cmd/sh/sh.b
+(the first,
+.CW "sys\ =\ load\ Sys\ Sys->PATH" ,
+included even though it is the least suspicious of the eight \- it
+is also the only one whose completion could not otherwise be told
+apart from the next).  Three full boots, each running
+.CW initialise()
+twice (once for
+.CW "sh\ -n\ /dis/init"
+itself, once more for the fallback fork this session's
+.CW dis/init
+fix routes through when no
+.CW bootargs=
+is given) \- 24 individual
+.CW load
+completions, zero failures.  Every one of
+.CW initialise() 's
+.CW load
+calls, both
+.CW $self
+reloads included, is now cleared the same way
 .CW FORKFD
-bracket: one print per
-.CW load
-call in
-.CW appl/cmd/sh/sh.b 's
-.CW initialise() ,
-naming which of the seven is running when the next capture lands.
+was: by direct, repeated, successful exercise, not by argument.
+.PP
+What this leaves is narrower still but also harder: two clusters of
+evidence that do not point at the same place.  The one detailed
+capture that named a module
+.RB ( \e$Sys ,
+pid 1, right after
+.CW "spawn\ sh\ -n\ /dis/init" )
+came from a boot with
+.I neither
+of this section's brackets active \- and both brackets, run
+immediately after, came back clean every time.  Read plainly rather
+than stretched: either the fault sits in a
+.CW $Sys
+call this section has not yet bracketed (everything
+.CW initialise()
+and
+.CW Sys_pctl 's
+.CW FORKFD
+path call is now cleared; what remains between
+.CW "spawn\ sh\ -n\ /dis/init"
+and
+.CW initialise() 's
+own first line is vanishingly little code to instrument next), or
+the added print volume of each bracket itself is changing the
+timing enough to avoid whatever the race actually needs \- a real
+possibility this document has already met once, in the
+.CW consw()
+self-inflicted panic several sections back, though there the
+volume was orders of magnitude higher.  Both are testable, and
+this session did not get to either: instrument the few lines
+between
+.CW disinit.b 's
+own
+.CW "sh->init(nil,\ ...)"
+call and
+.CW initialise() 's
+own first statement next, and separately, run several plain,
+unbracketed boots back to back specifically to build a larger
+sample of which module
+.CW dumpregs()
+names when a crash lands with no added instrumentation at all in
+its neighbourhood.
 .NH 1
 How a native kernel provides networking
 .PP
