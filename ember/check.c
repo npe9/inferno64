@@ -29,6 +29,8 @@ static	int	scope;
 
 static	Decl	*curfn;
 static	Type	*curret;
+static	Decl	*curclosure;		/* non-nil while fnchk()ing an Ofunclit's own body -- see synthfunclit() */
+static	int	nclosures;		/* per-file counter for $closureN synthesized names */
 
 enum { MaxTinstDepth = 16 };
 static	Decl	*tinstack[MaxTinstDepth];	/* generic templates currently being instantiated */
@@ -43,6 +45,8 @@ static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
 static	Type	*envfn(Src*, Type*);
 static	Decl	*synthfvwrap(Src*, Decl*);
+static	Decl	*synthfunclit(Node*);
+static	int	declownedby(Decl*, Decl*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
@@ -539,6 +543,33 @@ synthfvwrap(Src *src, Decl *fn)
 
 	wt = envfn(src, fn->ty);
 	fn->valty = mktype(src, Tref, wt, nil);
+	/*
+	 * every OTHER Tref built anywhere in this compiler goes through
+	 * sizetype() before anything structural reads it -- daschk()
+	 * (":=") always sizetype()s its RHS's type first, for exactly
+	 * this reason.  this one didn't, and it's not just tidiness:
+	 * idoffsets() (types.c) reads a type's .size/.align to compute
+	 * *the next* temp's offset; left unsized (both 0, sizetype()'s
+	 * own OKsized guard never having run), a plain function value
+	 * passed as a call argument got a real, distinct frame offset of
+	 * its own from com.c's talloc() -- but idoffsets() then failed to
+	 * *advance past* it (0-sized), so whatever temp was allocated
+	 * right after silently landed on the exact same offset instead of
+	 * the next one.  invisible for a call not itself nested inside
+	 * another call's own argument list (nothing else needed an
+	 * offset before this function's frame was done with it) -- found
+	 * nested ("outer(inner(f, x))"): inner's own call-frame temp
+	 * (IFRAME/IMFRAME, still needed to actually execute the call)
+	 * aliased the function value's tfnptr temp, so building the
+	 * tfnptr overwrote the frame pointer -- INEWZ's own "destroy
+	 * whatever was here before" (see the INEWZ comment in com.c's
+	 * ecom, Oname/Dfn case) then destroy()d that raw frame pointer as
+	 * though it were a stale heap value, garbage neither D2H nor D2B
+	 * survives.  sizetype() on a Tref is IBY2WD/IBY2WD unconditionally
+	 * (types.c) regardless of what it points to, so this is a fixed,
+	 * cheap call, not something that needs to happen lazily.
+	 */
+	sizetype(fn->valty);
 
 	wd = mkdecl(src, Dfn, wt);
 	seprint(buf, buf+sizeof(buf), "%s$fv", fn->sym->name);
@@ -611,6 +642,95 @@ synthfvwrap(Src *src, Decl *fn)
 
 	fn->wrapdecl = wd;
 	return wd;
+}
+
+/*
+ * is d one of fn's own parameters (fn->ty->ids) or locals (fn->locals,
+ * threaded through ->link -- see daschk()'s "record the local on the
+ * current function" comment)?  used by synthfunclit(), below, to tell
+ * a closure literal's own bound names from a free reference to
+ * something in an enclosing function -- a real capture, not yet
+ * supported (phase 2 of the closure-lowering plan, doc/ember-
+ * repository-study.md: the env-prepended calling convention -- envfn(),
+ * synthfvwrap(), above -- first, real captures later).
+ */
+static int
+declownedby(Decl *d, Decl *fn)
+{
+	Decl *p;
+
+	for(p = fn->ty->ids; p != nil; p = p->next)
+		if(p == d)
+			return 1;
+	for(p = fn->locals; p != nil; p = p->link)
+		if(p == d)
+			return 1;
+	return 0;
+}
+
+/*
+ * "func(params) ret { body }" as a value (echk's Ofunclit case, below):
+ * lift the literal into a fresh top-level Dfn with envfn()'s
+ * env-prepended signature, exactly like synthfvwrap()'s wrapper except
+ * the body is the literal's own, not a synthesized call-through -- so
+ * ld needs no separate wrapper of its own: it already has the right
+ * shape, hence "ld->wrapdecl = ld" below, which lets com.c's ecom()
+ * (Oname/Dfn case) build its tfnptr with zero changes, the same code
+ * path a plain function value already goes through.
+ *
+ * phase 2 of the closure-lowering plan only: the literal's env (t2 of
+ * the tfnptr) is always nil here, same as a non-capturing plain
+ * function value -- any reference inside the body to a Darg/Dlocal not
+ * owned by ld itself (declownedby(), above) is an actual capture,
+ * unsupported so far, and rejected below.  echk's Oname case checks
+ * this for every name reference as it resolves each one, gated on
+ * curclosure so it can never fire outside of checking a closure's own
+ * body (curclosure is nil everywhere else, including the entire rest
+ * of this compiler's own test suite) -- see its own comment.
+ */
+static Decl*
+synthfunclit(Node *n)
+{
+	Decl *ld, *savedcurfn, *savedclosure;
+	Type *savedcurret;
+	Type *pubt, *wt;
+	char buf[StrSize];
+
+	pubt = stype(n->right);
+	if(pubt->tof == tnone){
+		nerror(n, "closures with no return value not yet supported");
+		return nil;
+	}
+
+	wt = envfn(&n->src, pubt);
+
+	ld = mkdecl(&n->src, Dfn, wt);
+	seprint(buf, buf+sizeof(buf), "$closure%d", nclosures++);
+	ld->sym = enter(buf, 0);
+	ld->dot = impdecl;
+	ld->offset = idoffsets(wt->ids, MaxTemp, IBY2WD);	/* see synthfvwrap()'s own comment on this line */
+	ld->init = mkn(Ofndecl, nil, nil);
+	ld->init->aux = n->aux;
+	ld->wrapdecl = ld;
+
+	if(nfns >= lenfns){
+		lenfns = nfns + 32;
+		fns = reallocmem(fns, lenfns * sizeof *fns);
+	}
+	fns[nfns++] = ld;
+
+	/* same reentrancy save/restore as synthfvwrap()'s own fnchk(wd) call */
+	savedcurfn = curfn;
+	savedcurret = curret;
+	savedclosure = curclosure;
+	curclosure = ld;
+	fnchk(ld);
+	curclosure = savedclosure;
+	curfn = savedcurfn;
+	curret = savedcurret;
+	ld->checked = 1;
+
+	return ld;
 }
 
 /*
@@ -1302,6 +1422,26 @@ echk(Node *n)
 		d->refs++;
 		n->decl = d;
 		n->ty = d->ty;
+		if(curclosure != nil && (d->store == Darg || d->store == Dlocal) && !declownedby(d, curclosure)){
+			/*
+			 * synthfunclit() (above) is checking an Ofunclit's own
+			 * body right now (curclosure == the closure's lifted
+			 * Dfn) and d -- a parameter or local -- isn't one of
+			 * its own: a reference reaching outward into an
+			 * enclosing function's frame, i.e. an actual capture.
+			 * only real captures trip this: an *ordinary* function
+			 * body never has any other function's scope open at
+			 * the same time, so lookup() could never hand back a
+			 * foreign Darg/Dlocal there -- this can only fire while
+			 * curclosure is non-nil, i.e. nowhere else in the
+			 * compiler or its own test suite.  phase 2 of the
+			 * closure-lowering plan (doc/ember-repository-study.md)
+			 * stops here; lambda-lifting a real env adt is phase 3.
+			 */
+			nerror(n, "closures with captures not yet supported (%s is from an enclosing function)", n->sym->name);
+			n->ty = terror;
+			return n->ty;
+		}
 		if(d->store == Dfn && d->ty != nil){
 			/*
 			 * a bare function name used as a plain *value*
@@ -1997,10 +2137,49 @@ echk(Node *n)
 			n->ty = mktype(&n->src, Ttuple, nil, ids);
 			return n->ty;
 		}
-	case Ofunclit:
-		nerror(n, "closures not yet typechecked");
-		n->ty = terror;
+	case Ofunclit: {
+		Decl *ld;
+
+		/*
+		 * lift the literal into a fresh top-level Dfn (synthfunclit(),
+		 * above) and rewrite this node in place into an ordinary
+		 * Oname referring to it -- mutating n directly, not
+		 * reassigning some ancestor's pointer to a fresh node, the
+		 * same in-place-rewrite style Odot's Oind case (below) already
+		 * uses.  synthfunclit() copies n->aux into ld->init->aux
+		 * *before* returning -- fncom() (com.c) reads a function's
+		 * body from decl->init->aux, never from any Oname's own aux,
+		 * so ld's own codegen no longer depends on this node at all --
+		 * clear right/aux here so this really is a leaf Oname, not one
+		 * with a whole signature and body still dangling off it: left
+		 * unset, com.c's generic sumark() walks every node's left/
+		 * right unconditionally and crashes ("Oname without decl") on
+		 * the signature's own unresolved-decl type-name nodes; aux
+		 * doesn't crash anything (sumark never reads it) but a dump
+		 * (-a, ast.c's astprint(), which walks left/right/aux on every
+		 * node regardless of op) would otherwise print the entire
+		 * literal a second time, nested under what claims to be a bare
+		 * name.  from here on this node behaves exactly like any other
+		 * Dfn-Oname (echk's own Oname case, above) with ld->wrapdecl
+		 * == ld already cached, so com.c's ecom() builds its tfnptr
+		 * with zero changes: env (t2) stays nil, same as a plain
+		 * non-capturing function value -- the capture check inside
+		 * synthfunclit() already refused anything else.
+		 */
+		ld = synthfunclit(n);
+		if(ld == nil){
+			n->ty = terror;
+			return n->ty;
+		}
+		n->op = Oname;
+		n->decl = ld;
+		n->sym = ld->sym;
+		n->right = nil;
+		n->aux = nil;
+		n->ty = mktype(&n->src, Tref, ld->ty, nil);
+		sizetype(n->ty);	/* see synthfvwrap()'s valty comment: an unsized Tref here silently misled idoffsets() */
 		return n->ty;
+	}
 	case Oload:
 		nerror(n, "load not yet typechecked");
 		n->ty = terror;
