@@ -34,6 +34,7 @@ static Node	*sumark(Node*);
 static Node	*ecom(Src*, Node*, Node*);
 static Node	*eacom(Node*, Node*, Node*);
 static void	storecomposite(Src*, Node*, Node*);
+static void	storecompositezero(Src*, Node*, Node*);
 static void	destructure(Src*, Node*, Node*);
 static void	scom(Node*);
 static void	callcom(Src*, int, Node*, Node*);
@@ -685,6 +686,52 @@ storecomposite(Src *src, Node *base, Node *composite)
 		if(p->op != Oseq)
 			break;
 	}
+}
+
+/*
+ * store a bare composite literal into an existing lvalue "dst"
+ * (Oas's reassignment case only -- see scom's Odas case for why it
+ * isn't used there too), zero-filling any field the literal itself
+ * doesn't set.  storecomposite() alone only writes the fields a
+ * literal actually sets -- fine for Odas's fresh local (its frame
+ * slot already reads as zero the first time, courtesy of IFRAME
+ * clearing the whole frame at the function's prologue), but not for
+ * a reassignment: dst already holds whatever it held before, and a
+ * keyed literal that leaves a field unset would silently keep dst's
+ * *old* value there instead of reading zero.  found via "p :=
+ * Point{x: 9}; p = Point{y: 5}", which left x=9, not 0.  sidestep it
+ * by writing the literal into a fresh, INEWZ'd temp instead
+ * (guaranteed zero) and then copying the *whole* value out with
+ * genmove/IMOVM, which copies every byte, including the ones
+ * storecomposite() never touched.
+ */
+static void
+storecompositezero(Src *src, Node *dst, Node *composite)
+{
+	Node tmp, ind;
+	Type *rt;
+
+	/* size/descriptor the temp off dst->ty rather than
+	 * composite->ty: assignable() only accepts the two when
+	 * tequal() holds, which for Tadt is structural (idequal()
+	 * over both ids and storespace, so identical field
+	 * offsets/types), so today they're always the same size
+	 * either way -- but driving the allocation and the final
+	 * copy off the same type keeps that invariant from mattering
+	 * here at all. */
+	rt = mktype(src, Tref, dst->ty, nil);
+	sizetype(rt);
+	talloc(&tmp, rt, nil);
+	genrawop(src, INEWZ, mktn(dst->ty), nil, &tmp);
+	storecomposite(src, &tmp, composite);
+
+	ind = znode;
+	ind.op = Oind;
+	ind.left = &tmp;
+	ind.ty = dst->ty;
+	sumark(&ind);
+	genmove(src, Mas, dst->ty, &ind, dst);
+	tfree(&tmp);
 }
 
 /*
@@ -1426,11 +1473,39 @@ scom(Node *n)
 			 * indirect lvalue -- so it's safe to route a composite
 			 * RHS through storecomposite() the same way Ovardecl's
 			 * case below does, Oadr-wrapping the local itself as
-			 * the base address to store into.  Oas doesn't get this
-			 * (its LHS can be any lvalue, not guaranteed simple),
-			 * so a composite RHS there still goes through ecom(),
-			 * which still refuses it -- consistent with check.c's
-			 * stchk Oas case, deliberately not extended to match.
+			 * the base address to store into.  Oas's own case
+			 * (below) does the same LHS-shape check (mirroring
+			 * check.c's stchk Oas case), but for its composite
+			 * branch calls storecompositezero() instead of
+			 * storecomposite() directly -- see that function's own
+			 * comment.
+			 *
+			 * this path (direct storecomposite(), no re-zeroing)
+			 * relies on n->left's frame slot already reading as
+			 * zero, true the *first* time a given ":=" executes
+			 * (IFRAME clears the whole frame once, at the
+			 * function's prologue) but NOT on a later loop
+			 * iteration reusing the same slot -- confirmed with
+			 * "for i := 0; i < 3; i++ { q := Point{x: i}; ...;
+			 * q.y = 42 }", where iteration 1 reads q.y as 42, not
+			 * 0.  Oas's own bug of the identical species (found via
+			 * "p := Point{x: 9}; p = Point{y: 5}", see
+			 * storecompositezero()'s comment) is fixed there; this
+			 * one, in Odas, is not: routing Odas through
+			 * storecompositezero() too (mechanically a three-line
+			 * edit, identical to Oas's own) was tried and backed
+			 * out after one unexplained "dereference of nil" fault
+			 * in tests/type/genericmeth.e (a generic-method test;
+			 * the fault surfaced right after a value-receiver call
+			 * on a generic instantiation), not seen again in
+			 * roughly 150 subsequent runs of the same binary and
+			 * not reproduced in isolation -- one data point is not
+			 * enough to trust either the "it's this change" or
+			 * "it's unrelated" reading, so left alone rather than
+			 * risk shipping a rare fault tree-wide over one
+			 * sighting.  fixing this gap needs that fault properly
+			 * isolated first (a few hundred runs, ideally a minimal
+			 * repro), not another blind attempt.
 			 */
 			pushblock();
 			if(n->left->op == Oseq){
@@ -1470,7 +1545,10 @@ scom(Node *n)
 			}
 			sumark(n->right);
 			sumark(n->left);
-			ecom(&n->src, n->left, n->right);
+			if(n->right->op == Ocomposite)
+				storecompositezero(&n->src, n->left, n->right);
+			else
+				ecom(&n->src, n->left, n->right);
 			popblock();
 			return;
 		case Ovardecl: {

@@ -2757,6 +2757,30 @@ stchk(Node *n)
 					n->ty = rt;
 					return;
 				}
+				if(n->left->op == Oname && n->right->op == Ocomposite){
+					/*
+					 * "p = Point{x: 1, y: 2}" where p already exists:
+					 * same reasoning as daschk()'s own ":=" case
+					 * (above) -- go through compositefields()
+					 * directly, rather than echk() hitting the
+					 * general Ocomposite case and refusing it as a
+					 * bare value.  restricted to a bare Oname LHS,
+					 * same as Odas's own restriction (and for the
+					 * same underlying reason, per com.c's Odas
+					 * comment): the store this lowers to (com.c's
+					 * scom Oas case's storecompositezero() call)
+					 * needs a plain, unconditionally addressable name
+					 * (Rreg/Rmreg) as its destination -- an arbitrary
+					 * lvalue (p.field = ..., arr[i] = ...) isn't
+					 * attempted here, deliberately, same boundary
+					 * Odas already draws.
+					 */
+					t = compositefields(n->right);
+					echk(n->left);
+					if(n->left->ty != terror && t != terror && !assignable(n->left->ty, t, n->right))
+						nerror(n, "cannot assign %T to %T", t, n->left->ty);
+					return;
+				}
 				t = echk(n->right);
 				echk(n->left);
 				if(n->left->ty != terror && !assignable(n->left->ty, t, n->right))
