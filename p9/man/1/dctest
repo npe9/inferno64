@@ -83,6 +83,21 @@ only checks that this port's own seam completes without crashing (an
 emu process crash would abort this whole suite, not just fail one
 check), not that its output matches a process that cannot finish.
 .PP
+.B t9shellout
+similarly only checks SHAPE (that the host command actually ran and
+that the trailing
+.B !
+banner appeared), never comparing byte-exact against the oracle: the
+real
+.B dc
+forks
+.BR /bin/rc ,
+this port runs the host's own
+.B sh
+instead (see
+.IR dc (1)'s
+own BUGS), so the two sides' output can never match by construction.
+.PP
 Does not exercise
 .BR ? 's
 own interactive-read-bypassing-macros behavior (needs a real terminal-
