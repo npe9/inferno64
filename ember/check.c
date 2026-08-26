@@ -956,31 +956,49 @@ tinstantiatefn(Node *n)
  * own end-of-loop "argv[i] == nil" check is what actually reports an
  * unresolvable type parameter.
  *
- * NOT unified through, deliberately (falls into the default: case,
- * binds nothing): Otfunc ("f func(T) U", a function-typed parameter)
- * and Ottuple (a multi-result type used as one) -- a type parameter
- * that only ever appears inside one of those still needs an explicit
- * "f[...](...)".  tests/ok/generics.e's own map2[T, U](xs []T, f
- * func(T) U) is exactly this shape for U: xs alone infers T, but U
- * only appears inside f's own signature, so calling map2 without an
- * explicit [T, U] fails with "cannot infer all type arguments" even
- * though every argument's type is fully known at the call site --
- * real unification through a function type is a bigger step (walking
- * two signatures' parameter lists and return types pairwise) than
- * this file otherwise needed, so left for whenever that gap actually
- * blocks something.  Otchan and Otref are real, tested branches
- * (tests/type/genericinfer2.e); Otlist is implemented identically but
+ * Otfunc ("f func(T) U", a function-typed parameter) unifies through
+ * both its parameter list and its return type: pt's own Otfunc syntax
+ * is the template's *unresolved* signature (an Oseq of Ofield, each
+ * possibly binding several names to one type, exactly the shape
+ * stype()'s own Otfunc case and inferfn()'s outer loop already walk),
+ * matched positionally against at's real Tfn -- unwrapped from the
+ * Tref every function-typed *value* is represented behind (com.c's
+ * tfnptr; stype()'s own Otfunc case, above, wraps a function-typed
+ * parameter's type in exactly this Tref for the identical reason),
+ * skipping at's own synthetic leading "env any" parameter
+ * (Type.hasenv, envfn()) since pt's syntax never has one -- an
+ * ordinary user-written function signature knows nothing about
+ * ember's own function-value calling convention.  tests/ok/
+ * generics.e's own map2[T, U](xs []T, f func(T) U) is exactly this
+ * shape for U: xs alone used to infer T, but U only appeared inside
+ * f's own signature, so calling map2 without an explicit [T, U] used
+ * to fail with "cannot infer all type arguments" even though every
+ * argument's type was fully known at the call site.
+ *
+ * NOT unified through, still (falls into the default: case, binds
+ * nothing): Ottuple, i.e. a type parameter that only appears inside a
+ * function-typed parameter's own *multi*-result type ("f func(T)
+ * (U, V)") -- a real, deliberately deferred gap one level deeper than
+ * map2's own shape needed; a type parameter buried only there still
+ * needs an explicit "f[...](...)".
+ *
+ * Otchan, Otref, and now Otfunc are real, tested branches (tests/
+ * type/genericinfer2.e); Otlist is implemented identically but
  * *untested* -- not because list-of-T unification doesn't work, but
  * because no list literal syntax exists yet to construct a "list T"
  * argument with at all ("::"/Ocons is in the AST enum but was never
- * wired into the parser), the same gap that also leaves Otarray's own
- * test unable to use a literal.
+ * wired into the parser -- and, one layer deeper, "nil" itself has no
+ * ecom() codegen case in this compiler at all, a separate, real design
+ * fork -- see the ember-language-status memory file, not chased here),
+ * the same gap that also leaves Otarray's own test unable to use a
+ * literal.
  */
 static void
 unifytparam(Node *pt, Type *at, Decl *tparams, Type **argv)
 {
-	Node *tp, *tpn, *ta, *targ;
-	Decl *itd;
+	Node *tp, *tpn, *ta, *targ, *pp, *pf, *pids;
+	Decl *itd, *pd;
+	Type *ft;
 	int j, i;
 
 	if(pt == nil || at == nil || at == terror)
@@ -1050,6 +1068,42 @@ unifytparam(Node *pt, Type *at, Decl *tparams, Type **argv)
 				break;
 			ta = ta->right;
 		}
+		return;
+	case Otfunc:
+		/*
+		 * "f func(T) U": at is a function *value*'s type, always
+		 * Tref{Tfn}, the same wrap stype()'s own Otfunc case (above)
+		 * gives a function-typed parameter -- unwrap it before
+		 * comparing against pt's own bare (unwrapped) signature
+		 * syntax.
+		 */
+		if(at->kind != Tref || at->tof == nil || at->tof->kind != Tfn)
+			return;
+		ft = at->tof;
+		pd = ft->ids;
+		if(ft->hasenv && pd != nil)
+			pd = pd->next;	/* skip the synthetic "env any" (envfn()) */
+		for(pp = pt->left; pp != nil && pd != nil; pp = pp->right){
+			pf = pp;
+			if(pp->op == Oseq)
+				pf = pp->left;
+			if(pf->left == nil){
+				/* an anonymous parameter: one type, one pd */
+				unifytparam(pf->right, pd->ty, tparams, argv);
+				pd = pd->next;
+			}else{
+				for(pids = pf->left; pids != nil && pd != nil; pids = pids->right){
+					unifytparam(pf->right, pd->ty, tparams, argv);
+					pd = pd->next;
+					if(pids->op != Oseq)
+						break;
+				}
+			}
+			if(pp->op != Oseq)
+				break;
+		}
+		if(pt->right != nil)
+			unifytparam(pt->right, ft->tof, tparams, argv);
 		return;
 	default:
 		/* a concrete/unparameterized type: nothing to unify */

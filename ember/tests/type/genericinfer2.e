@@ -5,8 +5,9 @@ import sys "sys"
 // genericinfer.e covers the original, narrower inference (a parameter
 // whose *entire* declared type is one bare type-parameter name).
 // this file covers the newer, structural cases: a type parameter
-// buried one level inside a slice, a chan, a ref, or another generic
-// type's own instantiation (including two of those nested together).
+// buried one level inside a slice, a chan, a ref, a function-typed
+// parameter's own signature, or another generic type's own
+// instantiation (including two of those nested together).
 //
 // no array/slice *composite literal* syntax exists yet in this
 // compiler ("[]int{...}" -- compositefields() only accepts adt
@@ -85,6 +86,53 @@ func recvfrom[T](c chan T) T {
 	return <-c
 }
 
+// "f func(T) U": unifies through a function-typed parameter's own
+// signature -- both its parameter type and its return type.
+// tests/ok/generics.e's own map2[T, U](xs []T, f func(T) U) []U is
+// the original motivating shape for this (that file is parse-only,
+// see tests/run.sh's own tests/ok/ handling, so apply() here is a
+// directly callable, runtime-verified stand-in for the same
+// function-typed-parameter half of it).
+func apply[T, U](f func(T) U, x T) U {
+	return f(x)
+}
+
+// a *void* function-typed parameter ("f func(T)", no result): pt's
+// own Otfunc syntax has a nil right (psignature()'s "no results"
+// default) for this shape, so unifytparam()'s Otfunc case must not
+// try to recurse into a return type that doesn't exist.
+func applyvoid[T](f func(T), x T) {
+	f(x)
+}
+
+// unlike apply()/applyvoid() above (both of which also take a plain
+// "x T" argument, so T is separately inferable from that alone --
+// this branch is redundant work for T there, only U genuinely needs
+// it), T here appears *nowhere* except inside f's own signature: if
+// unifytparam()'s Otfunc case only unified the return type and not
+// the parameter list, this would regress to "cannot infer all type
+// arguments" while apply()/applyvoid() kept compiling, silently
+// hiding exactly that half of the mechanism.
+func countargs[T](f func(T)) int {
+	return 1
+}
+
+func double(x int) int {
+	return x * 2
+}
+
+func greet(name string) string {
+	return "hi " + name
+}
+
+func shout(x int) {
+	sys.print("shout=%d\n", x)
+}
+
+func whisper(s string) {
+	sys.print("whisper=%s\n", s)
+}
+
 func init(argv []string) {
 	sys.print("slicelen=%d\n", slicelen(argv))
 
@@ -109,4 +157,18 @@ func init(argv []string) {
 	c := chan int
 	spawn feed(c, 77)
 	sys.print("recvfrom=%d\n", recvfrom(c))
+
+	sys.print("apply_int=%d\n", apply(double, 21))
+	sys.print("apply_str=%s\n", apply(greet, "ember"))
+	applyvoid(shout, 5)
+
+	// countargs(shout)'s own T=int and countargs(whisper)'s T=string
+	// come *only* from unifying against each function's own parameter
+	// type -- if that half of Otfunc's unification ever regressed,
+	// both calls below would fail to compile at all ("cannot infer
+	// all type arguments"), not silently misbehave at runtime; a
+	// clean compile plus the correct count is the actual evidence
+	// here, the same way genericinfer.e's own inference tests prove
+	// themselves by compiling without an explicit "[...]" at all.
+	sys.print("countargs=%d,%d\n", countargs(shout), countargs(whisper))
 }
