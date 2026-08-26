@@ -1203,3 +1203,127 @@ below.
     14 cases pass. `file.c`'s own `dict[]` bug and the dtype adaptation
     are both exercised with real files, not asserted from reading the
     translation.
+
+16. **`p9/cmd/tar.b` - a real translation of `sys/src/cmd/tar.c` (1588
+    lines): done.** The best-verified oracle situation in this whole
+    backlog: ustar is a format both ends agree on independently of any
+    Plan 9 binary, and a real `tar` exists on this host. Confirmed
+    bidirectionally by hand during development (not automated - see
+    below): the host's `tar --format ustar` archive extracted
+    byte-identically by this translation; this translation's own
+    archive extracted byte-identically by the host's real `tar`; the
+    host's *default* format (PAX, not plain ustar) extracted correctly
+    too; and a 130-character filename round-tripped correctly in both
+    directions (host writes a PAX long name and this reads it; this
+    writes one and the host reads it). All four passed clean on the
+    first real attempt, which says more about the up-front design work
+    (see below) than about luck.
+
+    What compiled clean on the first `limbo` invocation, with zero
+    fix-iterate cycles - a first in this backlog - came from front-
+    loading the design work before writing any Limbo: reading the
+    whole 1588-line file first, then working out every translation
+    decision (data representation, which C mechanisms have no Inferno
+    equivalent, which known Limbo gotchas would bite) on paper before
+    touching the editor, rather than discovering them one compile
+    error at a time the way `file.b` did.
+
+    Three C mechanisms this file leans on have no Inferno equivalent,
+    checked directly rather than assumed:
+
+    - **No fork/exec anywhere in `module/*.m`** (grepped, not assumed) -
+      Dis processes are threads in one module image, not new host
+      processes, so there is no way to pipe archive bytes through
+      gzip/bzip2/compress the way the original's `push()`/
+      `pushclose()` do. `comps[]`, `compmethod()`, `push()`,
+      `pushclose()`, and `-z`'s actual behaviour are dropped, not
+      ported (~60 of the 1588 lines). The sharper half of this: the
+      original's `extract()` auto-decompresses by the archive's own
+      filename suffix *unconditionally*, no flag needed - this
+      translation can't do that silently, so it fails loudly and
+      immediately on a recognisably-compressed archive name instead of
+      reading compressed bytes as raw tar and failing an opaque
+      checksum check three lines later. On create, `-z` is only ever
+      invoked when actually asked for in the original too, so an
+      unflagged `.tar.gz`-named create still writes an uncompressed
+      file here exactly as it would upstream.
+    - **No `getwd()`** - the original's `addtoar()`/`addtreetoar()`
+      `chdir()` into each subdirectory during recursive descent and
+      recover the start directory via `getwd()` afterward; Sys has
+      `chdir` but nothing to read the current directory back, so there
+      is no general way to recover from a chdir that didn't fully
+      unwind. This translation never chdirs at all - it threads full
+      relative paths through recursion instead, and folds the two
+      mutually-recursive functions into one as a direct consequence.
+      Same archive contents, different mechanism.
+    - **No ternary operator** (re-confirmed, not re-discovered -
+      `file.b`'s own `choosestr()` comment already flagged this) -
+      every conditional value assignment here is a plain `if`/`else`.
+
+    One simplification made deliberately rather than forced: the
+    original batches several Tblocks per underlying read()/write() via
+    a shared-buffer/cursor scheme (`getblk()`/`curblk`/`endblk`/
+    `gothowmany()`) for throughput. This translation reads and writes
+    exactly one 512-byte block at a time - identical bytes on the
+    wire, more syscalls, no format difference, far fewer moving parts
+    to get wrong. `nblock`/`blkoff`/`nexthdr`/the seekable-skip-ahead
+    optimisation all go with it, since they exist purely to make that
+    buffering scheme fast.
+
+    A second simplification Limbo's dynamic arrays make possible that
+    C's fixed buffers didn't allow: the original's PAX-header parser
+    (`parsepax()`) is the one function in this file with genuinely
+    hard control flow - a `goto` landing mid-loop, carrying a
+    length-prefix scan buffer across archive-block boundaries because
+    C's on-stack buffer can't grow to hold a record that spans blocks.
+    This translation's `parsepax()` (and `getname()`, for GNU long
+    names) instead reads every block the record needs into one
+    contiguous array first, then parses that buffer in a single
+    straight-line pass with no cross-block state and no goto-equivalent
+    at all - the streaming constraint the original's structure works
+    around simply doesn't apply once the buffer can grow.
+
+    A real bug in the source, found by reading it side by side with
+    itself, not by testing: `parsehdr()` sets *both* the recorded
+    owner name and the recorded group name from the archive's owner-
+    name field - the group assignment should read the separate
+    `gname` field one line below it in the same C struct, which the
+    two header-*writing* functions (`mkhdr()`, `mkpaxhdr()`) both
+    populate correctly, making the read-side omission unambiguous.
+    Preserved exactly, not corrected, per this tree's translate-
+    what's-there discipline - the same choice as `file.c`'s `dict[]`
+    bug, but found the opposite way (by reading, not by a failing
+    test): a throwaway probe confirmed this host filesystem's own
+    `fwstat` refuses to set an arbitrary string gid at all, so a real
+    extract-then-restat check of this specific field isn't reliable
+    enough in this environment to build into the automated suite.
+
+    Symlinks/hardlinks/fifos needed *no* adaptation on extract at all -
+    the original already just reports "can't make (sym)link"/"can't
+    make fifo" and skips rather than creating one, since Plan 9 has no
+    on-disk symlink concept either. One of the few places translating
+    "what's there" required nothing extra.
+
+    `tartest.b`'s nine cases mix hand-built ustar/PAX/GNU-longname byte
+    sequences (independently derivable, same discipline as `file.b`'s
+    fixtures) with a real create-then-extract round trip through both
+    halves of this translation together. The PAX-override case (T5)
+    was confirmed sensitive with a genuine negative control: temporarily
+    disabling the `path=` override in `parsepax()` made the case fail
+    exactly as predicted, restored afterward. That same negative-control
+    run also surfaced a minor, expected-once-you-see-it test-hygiene gap:
+    a case that raises mid-test skips its own cleanup, the same property
+    every other `run()`-seam test in this tree already has, and left a
+    stray fixture file that had to be cleaned up by hand before the
+    suite would pass clean again - not a defect in a normal run, but
+    worth recording rather than silently working around.
+
+    A small follow-up fix to `file.b`, found by an advisor review after
+    `file.b` itself was already committed: `-m`'s own option parsing
+    checked `len w >= 2 && w[1] == 'm'`, which let `-mjunk`/`-mxyz` set
+    mime and silently swallow the rest, and mishandled a bare `-`
+    (which the original's ARGBEGIN treats as a filename, not an
+    option). Fixed to require an exact `"-m"`. `tar.b`'s own option
+    parser (`parseargs()`, reproducing `TARGBEGIN`'s bundled-keyletter-
+    plus-next-word-value convention rather than `ARGBEGIN`'s) was
+    designed with this exact class of bug in mind from the start.

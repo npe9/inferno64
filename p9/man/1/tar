@@ -1,0 +1,231 @@
+.TH TAR 1
+.SH NAME
+tar \- manipulate tape (or any medium) archives, in Limbo
+.SH SYNOPSIS
+.B tar
+.B {crtx}[PRTfgikmpsuvz]
+[
+.I archive
+] [
+.I file1 file2 ...
+]
+.SH DESCRIPTION
+.I Tar
+is a structural Limbo translation of Plan 9's real
+.IR tar (1)
+.RB ( sys/src/cmd/tar.c ,
+1588 lines in the 9front tree), not a behavioral workalike \(em see
+.B doc/plan9-port.md
+in the source tree for the distinction, and
+.B tar.b 's
+own header comment for the fuller derivation this page summarises. It
+lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Tar
+reads
+.I POSIX
+ustar archives (with GNU long-name and PAX extended-header support for
+interop with foreign archives) and writes plain ustar archives, using
+PAX extended headers of its own when a name is too long to fit the
+100-byte ustar name field. Verified bidirectionally against the real
+host
+.B tar
+(bsdtar/libarchive) during development in both directions and in both
+the plain-ustar and PAX-default archive formats \(em see
+.IR tartest (1)'s
+own header comment for the exact commands and results, since that
+check can't be run as part of the automated suite (see BUGS).
+.PP
+Option parsing follows the original's own
+.B TARGBEGIN
+convention, not the
+.B ARGBEGIN
+convention every other p9/cmd tool uses: only the
+.I first
+argument word is scanned for keyletters (so
+.B "tar xvf archive file"
+is the bundled form, same as any Unix tar), and the
+.BR f ", " g ", and " u
+keyletters each consume the
+.I next whole argument word
+as a value, not an attached one.
+.SS Options
+.TP
+.B c
+Create a new archive.
+.TP
+.B r
+Append to an existing archive.
+.TP
+.B t
+List the archive's table of contents.
+.TP
+.B x
+Extract.
+.TP
+.B f\ archive
+Use
+.I archive
+instead of standard input/output.
+.TP
+.B g\ gid
+Numeric gid to record for created members (default 0).
+.TP
+.B u\ uid
+Numeric uid to record for created members (default 0).
+.TP
+.BR i
+Ignore read errors on the archive rather than stopping.
+.TP
+.BR k
+Don't overwrite existing files on extract.
+.TP
+.BR m
+Don't restore modification times on extract.
+.TP
+.BR p ", " P
+Write (
+.BR p ,
+the default) or don't write (
+.BR P )
+POSIX ustar extensions.
+.TP
+.BR R
+Don't strip a leading
+.B /
+or
+.B #
+from extracted names.
+.TP
+.BR s
+Resync past a corrupted archive header instead of failing.
+.TP
+.BR T
+Restore modification times, uid, and gid on extract (subject to the
+BUGS note on the last two).
+.TP
+.BR v
+Verbose: list names (create) or a permission-string/size/name line
+(extract/list) as each member is processed.
+.TP
+.BR z
+Compress/decompress with gzip. Not supported here \(em see BUGS.
+.SH SOURCE
+.B /p9/cmd/tar.b
+(translated from
+.BR sys/src/cmd/tar.c )
+.SH SEE ALSO
+.IR tartest (1)
+.SH BUGS
+Compression
+.RB ( -z )
+is not ported: Limbo has no fork/exec (checked directly against
+.B module/sys.m ,
+not assumed), so there is no way to pipe archive data through
+gzip/bzip2/compress the way the original's
+.BR push ()/ pushclose ()
+do. On
+.BR create ,
+this only matters if
+.B -z
+is actually given (matching the original, which only invokes a
+compressor when both
+.B -z
+and
+.B -c
+are set) \(em a plain
+.B "tar cf foo.tar.gz ..."
+with no
+.B -z
+still writes an uncompressed (if confusingly-named) archive here, same
+as the real binary would. On
+.BR extract ,
+the original auto-detects compression by the archive's own filename
+suffix
+.RI ( .tar.gz ", " .tgz ", "
+etc.)
+.I unconditionally,
+with no flag needed \(em so this port cannot silently match that
+behaviour. Rather than read the compressed bytes as raw tar and fail
+an opaque checksum error a few lines of output later, extraction on a
+recognisably-compressed archive name fails immediately with a clear
+message naming the suffix and the reason.
+.PP
+A real bug preserved from the original, found by reading the source
+side by side with itself, not by testing: the header-parsing
+.B parsehdr()
+sets both the recorded owner name and the recorded group name from the
+archive's
+.I owner
+name field \(em the group-name assignment should read the separate
+.B gname
+field one line below it in the same C struct, which the two
+header-writing functions
+.RB ( mkhdr (),
+.IR mkpaxhdr ())
+both populate correctly, making the read-side omission unambiguous.
+Every group name this program has ever reported on extract or list is
+silently the file's owner name instead. Preserved exactly, not
+corrected, per this tree's translate-what's-there discipline \(em see
+.IR file (1)'s
+own
+.B dict[]
+bug for the precedent. Unlike that one, this was caught by reading,
+not by a failing test: a real extract-then-restat check of this
+specific field turned out not to be reliable in this environment
+either \(em see
+.IR tartest (1)'s
+own BUGS.
+.PP
+The original's
+.BR addtoar ()/ addtreetoar ()
+.B chdir()
+into each subdirectory during archive creation and rely on
+.B getwd()
+to recover the starting directory afterward. Sys has
+.B chdir
+but no
+.BR getwd ,
+so there is no general way to ask "where was I" if a nested descent
+didn't fully unwind \(em this translation never chdirs at all instead,
+threading full relative paths through recursion directly. Same archive
+contents, different internal mechanism; the two functions are folded
+into one as a result.
+.PP
+Block buffering is simplified: the original reads/writes several
+Tblocks (a few kilobytes) per underlying I/O call for throughput, via
+a shared-buffer/cursor scheme
+.RB ( getblk (),
+.IR curblk , " " endblk ,
+.IR gothowmany ()).
+This translation reads and writes exactly one 512-byte block at a
+time \(em identical bytes on the wire and identical archive contents,
+more syscalls, no observable format difference.
+.PP
+.IR longoff ()-style
+seeking is not an issue here since no classifier in this file seeks
+past what it has already read fully into memory \(em unlike
+.IR file (1)'s
+own three fd-seeking classifiers, noted on that page.
+.PP
+Verbose
+.RB ( -v )
+listing's permission-string column is a hand-written 9-character rwx
+approximation, not the original's real
+.B %M
+.RI ( dirmodefmt )
+verb \(em no setuid/sticky/special-bit rendering. Cosmetic only.
+.PP
+.B access(name,\ AEXIST)
+has no
+.B Sys
+equivalent; every existence check here is
+.B sys->stat()
+succeeding or not, which is what the original's own call reduces to on
+this filesystem model regardless.

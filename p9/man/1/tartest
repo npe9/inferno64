@@ -1,0 +1,104 @@
+.TH TARTEST 1
+.SH NAME
+tartest \- regression test for tar(1)
+.SH SYNOPSIS
+.B tartest
+.SH DESCRIPTION
+.I Tartest
+loads
+.BR /p9/dis/tar.dis 's
+in-process test seam,
+.BR run(argv) ,
+and checks it against expected output for nine cases, each built from
+either a hand-constructed ustar/PAX/GNU-longname byte sequence under
+.B /tartest
+or a real directory tree round-tripped through
+.BR tar 's
+own create and extract verbs together, cleaned up whether or not a
+case fails. See
+.IR tar (1)
+and
+.B tar.b 's
+own header comment for the translation decisions each case targets.
+.PP
+Cases worth calling out specifically:
+.TP
+.B T5
+Builds a PAX extended header naming
+.B path=paxlongname.txt
+ahead of a regular ustar header whose own
+.B name
+field is the short placeholder
+.BR shortname.txt ,
+then checks that extraction used the PAX name, not the ustar one, and
+that no file named
+.B shortname.txt
+was created at all. Confirmed sensitive with a negative control:
+temporarily disabling the PAX
+.B path=
+override in
+.B parsepax()
+made this case fail exactly as predicted (the placeholder name was
+used instead), restored afterward.
+.TP
+.B T7 / T8
+The same corrupted-checksum header, once without resync (expects a
+hard failure) and once with
+.B -s
+given (expects
+.IR readhdrblk ()
+to skip block-by-block past the bad header and its data block and
+recover the next good one). Diagnostic noise from the resync scan
+itself (it briefly treats the skipped data block as a candidate
+header and prints a bogus "empty checksum" warning while doing so) is
+expected and matches what the original's own resync loop would print
+in the same situation \(em not a bug.
+.SH SOURCE
+.B /p9/cmd/tartest.b
+.SH SEE ALSO
+.IR tar (1)
+.SH BUGS
+The stronger oracle \(em a real host
+.B tar
+(bsdtar/libarchive) reading archives this
+.B tar
+wrote, and vice versa, in both plain-ustar and PAX-default formats,
+including a 130-character filename in both directions \(em was run by
+hand outside emu during development, not as part of this automated
+suite: Limbo has no fork/exec, so a test running inside emu cannot
+invoke a host binary at all. The exact commands and results are
+recorded in this file's own header comment as a permanent record
+instead of a re-run one.
+.PP
+Relatedly, an attempt to verify the
+.IR tar (1)-documented
+uid/gid field-swap bug via a real extract-with-\c
+.B -T
+-then-restat round trip was tried and abandoned: this host filesystem
+backend's
+.B fwstat
+rejects setting an arbitrary string gid outright (confirmed by a
+throwaway probe, not assumed), making that check environment-dependent
+rather than a reliable regression test. The bug itself is still
+real and still documented \(em see
+.IR tar (1)'s
+own BUGS \(em just not exercised here.
+.PP
+A case that raises through
+.BR fail ()
+partway through (as happens if a fixture is built wrong, or during the
+negative control above) skips that case's own end-of-function cleanup,
+same as every other run()-seam test in this tree \(em a stray fixture
+under
+.B /tartest
+from an aborted run can leak into the next one. Encountered once
+during this file's own development (cleaned up by hand, not a defect
+in a passing run) and noted here rather than papered over.
+.PP
+Does not exercise
+.B tar r
+(append to an existing archive),
+.BR -k / -R / -i ,
+or the base-256 huge-file-size encoding path \(em all translated in
+.BR tar.b ,
+none independently verified to the same depth as the cases above.

@@ -25,6 +25,8 @@ TARG=\
 	patchtest.dis\
 	file.dis\
 	filetest.dis\
+	tar.dis\
+	tartest.dis\
 
 MODULES=\
 
