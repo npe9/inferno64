@@ -1779,6 +1779,80 @@ ospreyfileserver(void *a)
 static Physseg ospreyfbseg;
 int ospreyfbw, ospreyfbh, ospreyfbd;
 
+/*
+ * A user-level keyboard driver, the seL4/Osprey way: the interrupt is
+ * exposed to user space, not handled by a kernel driver.  The short
+ * handler here does only what the talk allows an interrupt to do - reads
+ * the one scancode byte and hands it on - writing it into a ring in the
+ * container's own data area, which the container has mapped, and raising
+ * the semaphore the driver task waits on.  The driver, in user space,
+ * reads the scancodes out of the segment it already holds and does the
+ * rest.  No kernel keyboard device; the hardware is exposed, the driver
+ * is above.
+ */
+enum {
+	Kbdoff	= 1024,		/* the scancode ring, past the request message */
+	Kbdn	= 256,
+	Kbddata	= 0x60,
+	Kbdstat	= 0x64,
+	Kbdready = 0x01,
+	Kbdirq	= 1,		/* IrqKBD */
+};
+static uchar *ospreykbdring;	/* cached kernel pointer into the container slice */
+static Ospreyproc *ospreykbdproc;
+static int ospreykbdsem;
+
+static void
+ospreykbdintr(Ureg*, void*)
+{
+	int st, c;
+	uvlong wp;
+
+	st = inb(Kbdstat);
+	if(!(st & Kbdready))
+		return;
+	c = inb(Kbddata);
+	if(ospreykbdring != nil){
+		wp = *(uvlong*)ospreykbdring;
+		(ospreykbdring + 8)[wp % Kbdn] = (uchar)c;
+		*(uvlong*)ospreykbdring = wp + 1;
+		if(ospreykbdproc != nil)
+			ospreysemgive(ospreykbdproc, ospreykbdsem);
+	}
+}
+
+void
+ospreykbdenable(Ospreyproc *p, int sem)
+{
+	uchar *r;
+	int c;
+
+	if((r = ospreydata(p, Kbdoff, 8 + Kbdn)) == nil)
+		return;
+	memset(r, 0, 8 + Kbdn);
+	ospreykbdring = r;
+	ospreykbdproc = p;
+	ospreykbdsem = sem;
+	/*
+	 * Make sure the controller will interrupt: set command-byte bit 0
+	 * (keyboard interrupt enable).  Firmware usually leaves it on, but
+	 * the microkernel runs no keyboard init, so do not assume it.
+	 */
+	while(inb(Kbdstat) & 0x02)
+		;
+	outb(Kbdstat, 0x20);		/* read command byte */
+	while(!(inb(Kbdstat) & Kbdready))
+		;
+	c = inb(Kbddata);
+	while(inb(Kbdstat) & 0x02)
+		;
+	outb(Kbdstat, 0x60);		/* write command byte */
+	while(inb(Kbdstat) & 0x02)
+		;
+	outb(Kbddata, c | 0x01);	/* enable keyboard interrupt */
+	intrenable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
+}
+
 int
 ospreyframebuffer(void)
 {
@@ -1852,6 +1926,8 @@ ospreyuserprep(void)
 				 */
 				up->osprey = p;
 				ospreysetpid(p, up->pid);
+				/* expose the keyboard interrupt to this container */
+				ospreykbdenable(p, 1);
 			}
 			/*
 			 * A file server for the program to reach over the ring:

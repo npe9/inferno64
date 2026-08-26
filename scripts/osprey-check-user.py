@@ -67,6 +67,8 @@ def main():
                     'serves this file from a task by message passing' in t))
     results.append(("and a user-level graphics driver draws to the frame buffer the microkernel exposed",
                     'drew a windowed desktop to the frame buffer' in t))
+    results.append(("and a user-level keyboard driver reads scancodes from an exposed ring an interrupt fills",
+                    'keyboard driver reading exposed scancodes' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'the program exited' in t and 'panic' not in t))
 

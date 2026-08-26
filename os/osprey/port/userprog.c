@@ -226,6 +226,53 @@ startboot(char*, char**)
 				for(x = 0; x <= y && x < 10; x++)
 					fb[(400+y)*Fbw + (640+x)] = 0;
 			puts("osprey user: and drew a windowed desktop to the frame buffer the microkernel exposed\n");
+
+			/*
+			 * A user-level keyboard driver: read scancodes out of
+			 * the ring the microkernel's short interrupt handler
+			 * fills in this program's own data area, and for each
+			 * key draw a square on the frame buffer and echo the
+			 * scancode.  The interrupt is exposed; the driver is
+			 * here, above the kernel.
+			 */
+			{
+				enum { Kbdoff = 1024, Kbdn = 256 };
+				uchar *ring = r.base + r.map->data + Kbdoff;
+				uvlong *wpp = (uvlong*)ring;
+				uchar *bytes = ring + 8;
+				uvlong rp;
+				int i, keys;
+
+				puts("osprey user: keyboard driver reading exposed scancodes\n");
+				rp = *wpp;		/* ignore anything before we start */
+				keys = 0;
+				for(i = 0; i < 2000 && keys < 40; i++){
+					while(rp != *wpp && keys < 40){
+						uchar sc = bytes[rp % Kbdn];
+						char m[8];
+						int k = 0, sq;
+
+						rp++;
+						if(sc & 0x80)	/* key release */
+							continue;
+						/* a square per key press, marching across */
+						sq = keys;
+						{
+							int y0 = 40 + (sq/16)*40, x0 = 40 + (sq%16)*40, yy, xx;
+							ulong col = 0x00ff00 + (sc<<8);
+							for(yy = 0; yy < 32; yy++)
+								for(xx = 0; xx < 32; xx++)
+									fb[(y0+yy)*Fbw + (x0+xx)] = col;
+						}
+						m[k++]='k'; m[k++]='b'; m[k++]='='; 
+						m[k++]='0'+((sc/100)%10); m[k++]='0'+((sc/10)%10); m[k++]='0'+(sc%10); m[k++]='\n';
+						write(2, m, k);
+						keys++;
+					}
+					sleep(5);
+				}
+				puts("osprey user: keyboard driver done\n");
+			}
 		}
 	}
 	exits(nil);
