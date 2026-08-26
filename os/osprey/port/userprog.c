@@ -176,5 +176,36 @@ startboot(char*, char**)
 	}
 	puts("osprey user: and read it over the ring from the server, not the kernel:\n");
 	write(2, buf, n);
+
+	/*
+	 * A user-level graphics driver: map the frame buffer the microkernel
+	 * exposed as a physical segment and draw to it.  The kernel
+	 * multiplexes the display and knows nothing of what is drawn; this
+	 * program, in user space, owns the pixels.  A real driver would read
+	 * the geometry from the microkernel; this uses the mode the firmware
+	 * set (1280x800, 32-bit) and draws colour bars to show it drew.
+	 */
+	{
+		enum { Fbw = 1280, Fbh = 800 };
+		ulong *fb, *px;
+		int x, y, band;
+		static ulong colour[] = {
+			0x00ff0000, 0x0000ff00, 0x000000ff,
+			0x00ffff00, 0x0000ffff, 0x00ffffff,
+		};
+
+		fb = (ulong*)segattach(0, "framebuffer", 0, Fbw*Fbh*4);
+		if(fb == (ulong*)-1)
+			puts("osprey user: could not map the frame buffer\n");
+		else {
+			for(y = 0; y < Fbh; y++){
+				band = (y * 6) / Fbh;
+				px = fb + y*Fbw;
+				for(x = 0; x < Fbw; x++)
+					px[x] = colour[band];
+			}
+			puts("osprey user: and drew colour bars to the frame buffer the microkernel exposed\n");
+		}
+	}
 	exits(nil);
 }

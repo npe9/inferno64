@@ -22,6 +22,7 @@ extern int ospreymicro;
 extern void ospreymicroboot(void);
 extern int ospreyuser;
 extern int ospreyuserprep(void);
+extern int ospreyframebuffer(void);
 
 static void
 smark(char *s)
@@ -52,6 +53,7 @@ proc0(void*)
 		 * through a name space the kernel set up.
 		 */
 		ospreyuserprep();
+		ospreyframebuffer();
 		{
 			ulong npg, i, off, cnt;
 

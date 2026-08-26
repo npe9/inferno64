@@ -53,6 +53,7 @@ int		ospreydetach(Ospreyproc*);
 int		ospreyexit(Ospreyproc*);
 void		ospreymicroboot(void);
 int		ospreyuserprep(void);
+int		ospreyframebuffer(void);
 void		ospreyservicecaller(void);
 int		ospreybalance(uvlong now);
 uvlong		ospreyschedule(ulong core, uvlong now);

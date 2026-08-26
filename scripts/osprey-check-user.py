@@ -65,6 +65,8 @@ def main():
                     'opened a file at the server over the ring' in t))
     results.append(("and reads the file's full contents back over the ring, served by the task not the kernel",
                     'serves this file from a task by message passing' in t))
+    results.append(("and a user-level graphics driver draws to the frame buffer the microkernel exposed",
+                    'drew colour bars to the frame buffer' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'the program exited' in t and 'panic' not in t))
 

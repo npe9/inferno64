@@ -1768,6 +1768,63 @@ ospreyfileserver(void *a)
 }
 
 
+/*
+ * Expose the frame buffer the firmware set up as a physical segment, so a
+ * user-level graphics driver can map it and draw.  The microkernel
+ * multiplexes the display and knows nothing of windows; the draw stack is
+ * above it.  The dimensions the driver needs are put in the first pixels'
+ * worth of a tiny second segment, so the driver reads them without a
+ * name space to ask.
+ */
+static Physseg ospreyfbseg;
+int ospreyfbw, ospreyfbh, ospreyfbd;
+
+int
+ospreyframebuffer(void)
+{
+	char *s;
+	int x, y, z;
+	uvlong pa;
+	ulong sz;
+
+	if((s = getconf("*bootscreen")) == nil)
+		return -1;
+	/* WIDTHxHEIGHTxDEPTH CHAN PA [SZ] */
+	x = strtoul(s, &s, 0);
+	if(x == 0 || *s++ != 'x')
+		return -1;
+	y = strtoul(s, &s, 0);
+	if(y == 0 || *s++ != 'x')
+		return -1;
+	z = strtoul(s, &s, 0);
+	if(*s != ' ')
+		return -1;
+	if((s = strchr(s+1, ' ')) == nil)		/* past CHAN */
+		return -1;
+	pa = strtoull(s+1, &s, 0);
+	if(pa == 0)
+		return -1;
+	sz = 0;
+	if(*s == ' ')
+		sz = strtoul(s+1, nil, 0);
+	if(sz < (ulong)x*y*(z+7)/8)
+		sz = x*y*(z+7)/8;
+
+	ospreyfbw = x;
+	ospreyfbh = y;
+	ospreyfbd = z;
+	memset(&ospreyfbseg, 0, sizeof ospreyfbseg);
+	ospreyfbseg.attr = SG_PHYSICAL;
+	ospreyfbseg.name = "framebuffer";
+	ospreyfbseg.pa = pa;
+	ospreyfbseg.size = sz;
+	if(addphysseg(&ospreyfbseg) == nil)
+		return -1;
+	print("osprey fb: exposed %dx%dx%d at pa %#llux size %lud as \"framebuffer\"\n",
+		x, y, z, pa, sz);
+	return 0;
+}
+
 int
 ospreyuserprep(void)
 {
