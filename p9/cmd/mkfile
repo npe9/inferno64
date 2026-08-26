@@ -27,6 +27,8 @@ TARG=\
 	filetest.dis\
 	tar.dis\
 	tartest.dis\
+	pr.dis\
+	prtest.dis\
 
 MODULES=\
 

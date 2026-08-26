@@ -1,0 +1,133 @@
+.TH PRTEST 1
+.SH NAME
+prtest \- regression test for pr(1)
+.SH SYNOPSIS
+.B prtest
+.SH DESCRIPTION
+.I Prtest
+loads
+.BR /p9/dis/pr.dis 's
+in-process test seam,
+.BR run(argv) ,
+and checks it against a real, live oracle: plan9port's own
+.B pr
+binary, run through this emu's host-command-execution device
+.RB ( #C ,
+see
+.IR cmd (3))
+on the identical file this same case wrote under
+.BR /prtest ,
+with the identical flags. Both outputs are normalised (see below) and
+compared; every fixture is cleaned up whether or not its case fails.
+.PP
+This is the first p9/cmd test in this tree to compare against a real
+reference binary automatically, on every run, rather than a hand-built
+fixture or a one-off manual check: Limbo has no fork/exec of its own
+(checked directly against
+.BR module/sys.m ),
+but this emu exposes a real host-command-execution device anyway (see
+.IR cmd (3)),
+and
+.B runhost()
+below drives it, adapted from
+.BR appl/cmd/os.b 's
+own working use of the same device. Host commands run in the HOST's
+own filesystem namespace, not Inferno's, so
+.B hostroot()
+first runs
+.B /bin/pwd
+through the same device to discover the real host path this checkout
+lives at, dynamically, rather than assuming one.
+.PP
+.B Normalize():
+the only genuine, expected difference between the two outputs is the
+page header's own date/time \(em this emu's
+.B Daytime
+module and the host's real
+.B ctime()
+may resolve different time zones, a real environmental fact, not a
+bug in either binary (see
+.IR pr (1)'s
+own BUGS). Every header line has everything up to its own first
+double-space replaced with a fixed placeholder before comparing,
+leaving the filename/"Page N" portion \(em which DOES still get
+compared \(em intact.
+.PP
+.B T4
+exercises the real
+.BR \-n / \-b
+fallthrough bug documented in
+.IR pr (1)'s
+own BUGS directly: a 20-line file in 3 columns with a short page
+length, once plain (last page ragged) and once with
+.B \-n
+added and no
+.B \-b
+at all (last page balanced anyway). Confirmed sensitive with a
+genuine negative control during development: temporarily breaking
+.BR balance ()'s
+own line-skip loop (it must advance one character past each
+newline it finds, matching the original's
+.B "while(*s++ != '\en')"
+post-increment \(em Limbo has no post-increment operator, so this is
+its own explicit statement) made this case's output truncate to a
+single line partway through the first page, restored afterward.
+.PP
+.B T13
+and
+.B T14
+exercise
+.BR get() 's
+.B Etabn/peekc
+input-tab-expansion branch, flagged by review as the trickiest
+untested state in the file: on a tab character,
+.B peekc
+is set to a
+.I count
+.RI ( Inpos%Etabn ),
+not a flag, and the next call to
+.B get()
+tests it as a boolean and clears it \(em so one tab expands to either
+one or two output characters depending on where it fell. T13 runs a
+single-column file (where
+.B Etabn
+stays 0 unless
+.B \-e
+is given) both plain and with
+.B \-e4
+explicit; T14 runs the same tab-bearing content through two columns,
+where
+.IR pr (1)'s
+own
+.B findopt()
+forces
+.B Etabn=DEFTAB
+even with no
+.B \-e
+given at all, so the same branch fires implicitly too.
+.SH SOURCE
+.B /p9/cmd/prtest.b
+.SH SEE ALSO
+.IR pr (1)
+.SH BUGS
+Does not exercise
+.B \-i
+(output tab compression) beyond its default, formfeed combined with
+multi-column output, or the empty-merge-set failure path
+.RI ( pr (1)'s
+own BUGS on merge mode's all-or-nothing behaviour) \(em all
+translated in
+.BR pr.b ,
+none independently verified to the same depth as the cases above.
+.PP
+.B T1
+is the only case run without
+.B \-t
+(so the header, including the filename, is actually compared, not
+just normalised away) \(em it
+.B chdir()s
+into
+.B /prtest
+and uses a bare filename on both sides specifically so the two
+processes report the identical name in their own headers, since
+neither side strips or rewrites the path it's given.

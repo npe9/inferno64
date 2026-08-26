@@ -926,9 +926,11 @@ below.
     `byteseq()` helper; worth remembering for any future test that
     compares byte arrays in this tree.
 
-    **`pr.c` (666 lines) read, NOT translated - the "middle tier" guess
-    above was wrong, and reading it is what proved that, not further
-    line-count guessing.** `pr.c` is dc.c-class despite being a third
+    **`pr.c` (666 lines) read, NOT translated (at the time) - the
+    "middle tier" guess above was wrong, and reading it is what proved
+    that, not further line-count guessing. SUPERSEDED: see item 17 -
+    both blocking problems below turned out to be resolvable, and
+    `pr.b` is done.** `pr.c` is dc.c-class despite being a third
     the size: not an algorithm but a pile of coupled global mutable
     state whose invariants only make sense together - a `peekc` static
     variable and an `Etabc`/`Etabn` pair implementing a "return this
@@ -939,32 +941,34 @@ below.
     an entire multi-column spread into memory with raw pointer
     arithmetic before printing it column-by-column; a `balance()` pass
     that re-walks that buffer to redistribute a short last page evenly
-    across columns; heavy `case X: case Y:` switch fallthrough used
-    deliberately (e.g. `put()`'s fallthrough chain, `-n`'s option parse
-    falling into `-b`'s). None of this is a quick translation regardless
-    of line count.
+    across columns; heavy `case X: case Y:` switch fallthrough, assumed
+    here to be all deliberate (e.g. `put()`'s fallthrough chain, `-n`'s
+    option parse falling into `-b`'s) - **that assumption about `-n`
+    falling into `-b` was wrong, corrected in item 17: it's a real bug,
+    not a deliberate design, confirmed against the oracle this entry
+    said didn't exist yet.** None of this is a quick translation
+    regardless of line count.
 
-    The blocking problem, though, is the same *class* as `split.c`'s,
-    not the density: **there is no verified oracle for it.** plan9port's
-    `pr` might diverge from 9front's the way `split` did (checked, not
-    assumed, for `split` - not yet checked for `pr`, and with this much
-    interacting state a `diff` alone wouldn't settle it the way it did
-    for `split`'s one extra function call), and there is still no
-    working way to build and run 9front's own source on this machine
-    (arm64, plan9port's libraries are x86_64-only) to compare against
-    directly. Translating this much coupled state against golden values
-    nobody could verify would be guessing, not translating.
+    The blocking problem, at the time, was thought to be the same
+    *class* as `split.c`'s: **no verified oracle.** plan9port's `pr`
+    might diverge from 9front's the way `split` did (checked, not
+    assumed, for `split` - not yet checked for `pr` at the time), and
+    there was still no working way to build and run 9front's own
+    source on this machine (arm64, plan9port's libraries are x86_64-
+    only) to compare against directly. **Both turned out to be non-
+    blockers: diffing the two sources found no algorithmic divergence
+    at all (item 17), and the user pointed out this emu's own #C host-
+    command device, which runs plan9port's real binary directly rather
+    than needing a locally-built 9front one.**
 
-    **The sizing lesson this run actually supports:** what makes a
-    translation cheap here is not line count, it's whether Inferno
-    already provides the primitive the C leans on - `bufio`'s
+    **The sizing lesson this run actually supports (still true):** what
+    makes a translation cheap here is not line count, it's whether
+    Inferno already provides the primitive the C leans on - `bufio`'s
     seek/offset for `join`'s duplicate-key algorithm, this tree's own
     `regex(2)` for `split`'s pattern mode, `Draw` for `iconv`'s whole
-    job. `pr.c` leans on nothing Inferno already has; every line of its
-    state machine would be new code, and none of it is checkable without
-    a working 9front build. `patch.c` (839 lines) is unread and
-    therefore genuinely unsized, not "middle tier" - the same mistake
-    should not be repeated for it without reading it first.
+    job. `patch.c` (839 lines) is unread and therefore genuinely
+    unsized, not "middle tier" - the same mistake should not be
+    repeated for it without reading it first.
 
     Backlog march stopped here for this session: six real translations
     (`primes`/`factor`/`join`/`crc32`/`split`/`iconv`) landed and
@@ -1327,3 +1331,142 @@ below.
     parser (`parseargs()`, reproducing `TARGBEGIN`'s bundled-keyletter-
     plus-next-word-value convention rather than `ARGBEGIN`'s) was
     designed with this exact class of bug in mind from the start.
+
+17. **`p9/cmd/pr.b` - a real translation of `sys/src/cmd/pr.c` (666
+    lines): done.** Previously left explicitly blocked (see this file's
+    own earlier entry, now marked superseded) on two grounds that both
+    turned out to be wrong when actually checked, at the user's direct
+    prompting on both counts:
+
+    - **"No verified oracle."** Diffing 9front's `pr.c` against
+      plan9port's own copy (same move that resolved `split.c`, applied
+      here for the first time on this file) finds only `NFILES 20` vs
+      `10`, three Plan-9-only `Blethal()` calls plan9port's portable
+      bio doesn't have, and two `#define err pr_err`/`#define getdate
+      prgetdate` collision-avoidance macros for plan9port's shared
+      libc - nothing touching the actual formatting algorithm.
+      plan9port's `pr` binary runs the same algorithm 9front's does,
+      making it a genuine oracle, not a fallback with known divergence
+      risk like `split.c`'s.
+    - **"No way to run a reference binary from inside a test."** This
+      emu exposes a real host-command-execution device, `#C` (see
+      `man/3/cmd`, `emu/port/devcmd.c`) - checked directly after the
+      user pointed it out, not found independently. It runs a host
+      process in the *host's own* filesystem namespace (not Inferno's)
+      with stdin/stdout/stderr reachable through synthetic files under
+      `/cmd/n/`. `appl/cmd/os.b` already has a complete, working
+      example of driving it (clone → read the allocated connection
+      number → open `wait` *before* writing `exec` to `ctl` → `data`
+      opened separately for read and write, not one `ORDWR`) -
+      `prtest.b`'s own `runhost()` is adapted directly from it.
+      `prtest.b` uses this to run plan9port's real `pr` on the exact
+      same input as `pr.dis`'s own `run()` seam, on every test
+      execution, not as a one-off manual check - discovering the real
+      host path this checkout lives at dynamically via `/bin/pwd`
+      through the same device, rather than hard-coding one. This is a
+      genuinely stronger oracle situation than any other file in this
+      backlog: `patch.c`/`file.c` relied on hand-derived expectations,
+      `tar.c`'s host-binary cross-check was real but done once by hand
+      outside the automated suite (no fork/exec was known at the time)
+      - `pr.c`'s test suite runs the live comparison itself, every
+      time. (This also means `tar.b`'s own header comment, which
+      stated flatly "no fork/exec anywhere Limbo can reach," was too
+      broad - true at the `Sys`-module level, checked by grep, but the
+      capability exists via `#C`; corrected there in one paragraph
+      rather than retrofitting compression support onto an already-
+      verified file.)
+
+    Structure, established before writing anything (per the `pr.c`
+    lesson recorded in patch.c/file.c/tar.c already): `findopt()` gates
+    the whole page-buffering machinery on `Ncols != 1 && Multi == 0`,
+    so there are three execution shapes sharing one `get()`/`put()`
+    core - plain single-file streaming, `-m`/`-a` merge (no buffer, one
+    column per open file), and `-N` multi-column (a full page read into
+    one flat rune buffer up front, sliced into per-column ranges).
+    Translated and verified against the oracle in that order, simplest
+    first, since it validates most of the file's coupled state before
+    the pointer-arithmetic-heavy part is even reached. `Colpts[]`'s raw
+    `Rune*` pairs (a column's own end being *the next column's start*)
+    became `array of ref Colp` holding integer indices into a shared
+    `array of int` buffer - `ref` because `get()`/`nexbuf()`/`balance()`
+    all mutate a column's position through aliases of the same entry,
+    integer indices instead of pointers since Limbo bounds-checks array
+    access anyway.
+
+    A real bug in the source, found by reading it and CONFIRMED against
+    the oracle (correcting this file's own earlier, wrong assumption
+    that the fallthrough was deliberate): `findopt()`'s `case 'n':`
+    falls into `case 'b':` with no `continue` between them, unlike
+    every other case - so `-n` unconditionally also sets `Balance = 1`.
+    Confirmed empirically: `pr -3 -l15` on a 20-line file leaves its
+    last page ragged; `pr -n -3 -l15` on the identical file balances
+    that same last page, with no `-b` given at all. Reproduced
+    explicitly (`Balance = 1` duplicated at the end of the `'n'` arm),
+    not silently corrected, same precedent as `file.c`'s `dict[]` and
+    `tar.c`'s uid/gid bugs.
+
+    A second, vestigial finding, found by reading, not by testing: the
+    `err`/`Lasterr`/`Err` linked-list "deferred error message"
+    mechanism the original's own header comment above `mustopen()`
+    describes is never actually populated anywhere in the file -
+    grepped for every assignment to `Lasterr`/`e_nextp`, found none.
+    The real failure path prints immediately via `cerror()` at the
+    point of failure; `errprint()` in practice only flushes output and
+    walks an always-empty list. Translated as what it actually does.
+
+    Two real bugs in the *translation*, both found only by tracing
+    actual output against the oracle after an initial draft passed
+    every case except one (`-n` combined with multi-column on a file
+    whose last page needed balancing) - neither would have been caught
+    by re-reading the Limbo source, only by comparing against ground
+    truth: `nexbuf()`'s own `bline` (per-page line counter, feeding
+    `Colpts[].lno`) was incremented at the *top* of each line-read
+    attempt rather than only after a line completed successfully,
+    off-by-one whenever EOF landed mid-attempt (the original's own
+    `bline++` is a for-loop update-expression, which C skips entirely
+    on an early `return` - an easy thing to get backwards translating
+    to an explicit statement). `balance()`'s own line-skip loop
+    (`while(Buffer[s] != '\n') s++;`, translating the original's
+    `while(*s++ != '\n')`) never advanced `s` *past* the newline it
+    found, since Limbo has no post-increment operator and the
+    equivalent explicit `s++` was written as a comment describing what
+    should happen, not as an actual statement doing it - silently
+    turning every subsequent "skip N more lines" attempt into a no-op,
+    since the loop's own condition was already false before it ran.
+    The visible symptom was output truncating to a single character
+    after the very first page-buffered row under `-n` - traced with
+    temporary instrumentation (dumping `Colpts[]`'s own state right
+    before the first read) rather than found by re-reading, then
+    confirmed with a genuine negative control (disabling the `s++`
+    fix reproduced the exact truncation, restored, reconfirmed all 13
+    cases passing).
+
+    13 cases passed; an advisor review before committing caught two
+    more gaps neither the translation-writing nor the 13 cases had
+    surfaced. First, `Colw` was declared mid-file with no reset in
+    `resetstate()` - invisible in a single run, but a latent test-
+    isolation bug since `run()` is invoked repeatedly in one process
+    and `findopt()`'s own "bad option" `fail()` path returns before
+    `Colw` would be (re)assigned. Moved up with the other globals and
+    reset explicitly, same as `peekc` already was. Second, and more
+    substantive: `get()`'s `Etabn`/`peekc` input-tab-expansion branch -
+    where `peekc` holds a *count*, not a flag, so a tab expands to one
+    or two output characters depending on `Inpos%Etabn` - had never
+    been exercised by any of the 13 cases with an actual tab in the
+    input, even though the multi-column cases already forced
+    `Etabn=DEFTAB` by way of `findopt()`'s own rule. Two more cases
+    (`T13`, `T14`) added: a tab-bearing file run both plain and with
+    `-e4` explicit (single column, where `Etabn` stays 0 unless asked
+    for), and the same content through two columns (where `Etabn`
+    defaults on implicitly). Both passed against the oracle first try.
+    A third question the advisor raised - whether `fail()`'s trailing
+    `boutc('\n')` on a bad option matches the original - was checked
+    directly rather than left as a guess: plan9port's real `pr -Q`
+    also writes exactly one stray `\n` to stdout before its `bad
+    option` message to stderr, so that behavior is faithful too, not
+    an oversight.
+
+    16 cases pass now, including the `-n`/`-b` bug (`T4`, both with and
+    without `-n`), a real `-m` merge case (`T6`), and the tab-expansion
+    branch (`T13`/`T14`) - the strongest, most automatically-repeatable
+    verification any file in this backlog has had.

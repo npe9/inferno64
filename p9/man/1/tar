@@ -125,10 +125,24 @@ Compress/decompress with gzip. Not supported here \(em see BUGS.
 .SH BUGS
 Compression
 .RB ( -z )
-is not ported: Limbo has no fork/exec (checked directly against
+is not ported: Limbo itself has no fork/exec (checked directly
+against
 .B module/sys.m ,
-not assumed), so there is no way to pipe archive data through
-gzip/bzip2/compress the way the original's
+not assumed). This emu does expose a real host-command-execution
+device
+.RB ( #C ,
+see
+.IR cmd (3),
+and
+.IR pr (1)'s
+own use of it) - not used here anyway, since it runs a host process in
+the
+.I host's
+own filesystem namespace, not Inferno's, and piping this archive's
+own already-open Inferno-side data through a host compressor via that
+device would need its own bridging design, not attempted as part of
+this file. So there is no way, as translated, to pipe archive data
+through gzip/bzip2/compress the way the original's
 .BR push ()/ pushclose ()
 do. On
 .BR create ,

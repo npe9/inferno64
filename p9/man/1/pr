@@ -1,0 +1,191 @@
+.TH PR 1
+.SH NAME
+pr \- print files in pages and columns, with headings, in Limbo
+.SH SYNOPSIS
+.B pr
+.B {+page}[bdefhilmnoprstw...]
+[
+.I file ...
+]
+.SH DESCRIPTION
+.I Pr
+is a structural Limbo translation of Plan 9's real
+.IR pr (1)
+.RB ( sys/src/cmd/pr.c ,
+666 lines in the 9front tree), not a behavioral workalike \(em see
+.B doc/plan9-port.md
+in the source tree for the distinction, and
+.B pr.b 's
+own header comment for the fuller derivation this page summarises. It
+lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Pr
+paginates one or more files (or standard input) with a page
+header giving the file's modification date, name, and page number,
+and can lay the output out in multiple side-by-side columns or merge
+several files column by column.
+.PP
+Verified against a real, live oracle: plan9port's own
+.B pr
+binary, run through this emu's host-command-execution device
+.RB ( #C ,
+see
+.IR cmd (3))
+on identical input, byte-diffed against this translation's own
+output \(em see
+.IR prtest (1)'s
+own header comment for how, and why this file (previously left
+blocked with "no checkable oracle exists") could be tackled at all.
+.SS Options
+.TP
+.BI + n
+Begin output at page
+.IR n .
+.TP
+.B \-n
+Number each line of output (see BUGS for a real side effect this has).
+.TP
+.BI \- N
+A bare column count, e.g.
+.BR \-3 .
+Print in
+.I N
+columns.
+.TP
+.B \-a
+Merge/mate the named files, numbering every merged line individually.
+.TP
+.BI \-m " file2 ..."
+Merge/mate the named files, one line from each per output line. See
+.IR pr.b 's
+own header comment on how oddly this mode reaches its own printing
+logic at all.
+.TP
+.B \-b
+Balance the last, partial page's columns evenly rather than leaving
+it ragged.
+.TP
+.B \-d
+Double-space output.
+.TP
+.BI \-e "\fR[\fPc\fR]\fP[\fPn\fP]"
+Expand input tabs (optionally set with character
+.I c
+and/or width
+.IR n ,
+default 8).
+.TP
+.B \-f
+Use a formfeed between pages instead of blank lines.
+.TP
+.BI \-h " text"
+Use
+.I text
+as the page header instead of the file name.
+.TP
+.BI \-i "\fR[\fPc\fR]\fP[\fPn\fP]"
+Replace runs of output blanks with tabs (optionally set with character
+.I c
+and/or width
+.IR n ,
+default 8).
+.TP
+.BI \-l " n"
+Set the page length to
+.I n
+lines (default 66).
+.TP
+.BI \-o " n"
+Offset every line by
+.I n
+extra columns.
+.TP
+.B \-p
+Pad with a blank (or formfeed, with
+.BR -f )
+page after an odd-numbered last page.
+.TP
+.BI \-s "\fR[\fPc\fR]\fP"
+Separate columns with character
+.I c
+(default tab) instead of spaces.
+.TP
+.B \-t
+Suppress the page header/footer entirely.
+.TP
+.BI \-w " n"
+Set the line width to
+.I n
+(default 72 for multi-column output, 512 otherwise).
+.SH SOURCE
+.B /p9/cmd/pr.b
+(translated from
+.BR sys/src/cmd/pr.c )
+.SH SEE ALSO
+.IR prtest (1)
+.SH BUGS
+A real bug in the source, found by reading it and CONFIRMED against
+the oracle: option parsing's
+.B \-n
+case falls through into the
+.B \-b
+case with no
+.B continue
+in between (every other option ends with one) \(em so
+.B \-n
+unconditionally also enables last-page balancing, as an apparent
+copy-paste/missing-continue mistake. Confirmed empirically: on a
+20-line file laid out in 3 columns with a short page length,
+.B "pr \-3"
+leaves its last page ragged, but
+.B "pr \-n \-3"
+on the same file balances that same last page, with no
+.B \-b
+given at all. Reproduced explicitly here, not silently "fixed" \(em
+see
+.IR file (1)'s
+own
+.B dict[]
+bug and
+.IR tar (1)'s
+own uid/gid bug for the precedent this tree follows on found-not-
+fixed defects.
+.PP
+A second, vestigial finding, found by reading, not by testing: the
+original's own deferred-error-message mechanism (a linked list its own
+header comment describes, meant to defer a "can't open" report so it
+doesn't disturb page alignment) is never actually populated anywhere
+in the source \(em grepped for every place that would append to it,
+found none. The real failure path prints immediately at the point of
+failure instead; translated as what it actually does, not as the
+deferred mechanism the stale comment describes.
+.PP
+The page header's date/time comes from Inferno's own
+.B Daytime
+module rather than reproducing the original's fixed-offset slice of a
+.BR ctime ()-style
+buffer (see
+.B pr.b 's
+own header comment for why that specific approach was rejected).
+Its accuracy depends on this emu's own
+.B /locale/timezone
+configuration matching the host's real time zone \(em a real,
+separate environmental fact, not a bug in this translation: if the two
+disagree, the displayed hour will be off by the zone difference, same
+as it would be for any other Inferno program relying on
+.BR daytime (2).
+.PP
+Only the whole-file translation choices are novel here; the merge
+.RB ( \-m / \-a )
+mode's own real trigger \(em an already-open file set being handed to
+the shared print routine via the same "no files named" fallback path
+every other mode uses for reading standard input \(em is preserved
+exactly as found, including the original's real all-or-nothing
+behaviour: if even one file in a merge set fails to open, printing is
+suppressed for the whole operation, not just the one bad file.

@@ -16,10 +16,20 @@ implement Tar;
 #
 # WHAT THE MISSING fork()/exec() REMOVES. Checked, not assumed: grep
 # across module/*.m turns up no fork/exec/pipe-to-a-host-command
-# primitive anywhere Limbo can reach - Dis processes are lightweight
-# threads inside one module image, not new host processes, and there
-# is no equivalent of Plan 9's push()/pushclose() piping stdin/stdout
-# through gzip/bzip2/compress. So comps[], compmethod(), push(),
+# primitive anywhere Limbo itself reaches - Dis processes are
+# lightweight threads inside one module image, not new host processes.
+# CORRECTION, from a later file in this same backlog (pr.b, see
+# doc/plan9-port.md item 17): that grep was too narrow. This emu does
+# expose a real host-command-execution device, #C (see man/3/cmd) -
+# checked directly after the user pointed it out, not found
+# independently here. It stays unused for -z anyway, not because the
+# capability doesn't exist, but because #C runs a host process in the
+# HOST's own filesystem namespace, not Inferno's - piping an already-
+# open Inferno-side archive file descriptor through a host gzip
+# process via #C's /cmd/n/data would need its own bridging design
+# (this archive's own fd isn't a host path #C's "exec" can just open),
+# a separate undertaking from this already-verified file, not
+# attempted here. So comps[], compmethod(), push(),
 # pushclose(), Pushstate, and the -z keyletter's actual compression
 # behaviour are all dropped, not ported - about 60 of the C's 1588
 # lines. The real behaviour change, and the sharper half of it:
