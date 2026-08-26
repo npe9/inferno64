@@ -1,0 +1,176 @@
+.TH HOC 1
+.SH NAME
+hoc \- interactive desk-calculator language, in Limbo
+.SH SYNOPSIS
+.B hoc
+[
+.I file
+|
+.BI \-e " expr"
+| \- ] ...
+.SH DESCRIPTION
+.I Hoc
+is a structural Limbo translation of hoc6, Kernighan and Pike's desk-
+calculator language from
+.IR "The Unix Programming Environment" ,
+plan9port's
+.B src/cmd/hoc
+(no 9front source tree could be found on this host to diff against -
+see BUGS). It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+Each command-line argument is processed in order: a bare
+.B \-
+or the absence of any arguments reads from standard input;
+.BI \-e " expr"
+(attached or as a separate argument) runs
+.I expr
+as a one-line program; anything else is a file name. Errors abandon
+the rest of the CURRENT argument and move on to the next one, the same
+way the original's own
+.BR setjmp / longjmp
+recovery does (see BUGS) - hoc always exits 0 regardless.
+.SS Language
+A program is a sequence of statements and function/procedure
+definitions, one top-level construct parsed and (if not a definition)
+executed immediately before the next is even looked at - this matters
+for
+.BR read() ,
+below. Expressions use the usual arithmetic
+.RB ( + - * / % ^ ),
+comparison
+.RB ( == "" != "" < "" <= "" > "" >= ),
+logical
+.RB ( && "" || ! ),
+assignment
+.RB ( = "" += "" -= "" *= "" /= "" %= ),
+and increment/decrement
+.RB ( ++ / -- ,
+both prefix and postfix). A bare top-level expression prints its own
+value; a bare top-level assignment does not.
+.PP
+.B print
+.I expr-or-string , ...
+prints each item separated by nothing but a single trailing space
+after each NUMERIC item - there is no added newline at all, so a
+script wanting one ends its list with an explicit
+.B "\e"n\e""
+string.
+.B _
+(underscore) is a real variable holding the last value a bare
+top-level expression printed.
+.PP
+.BI read( var )
+reads one number directly off the CURRENT input stream (the same
+stream the program's own text is coming from) into
+.I var ,
+evaluating to 1 on success or 0 at real end of input. Since a whole
+top-level construct - including a
+.B while
+loop's entire body - is fully parsed before any of it executes, the
+classic idiom
+.B "while (read(x)) ..."
+reads data values that appear AFTER the loop's own closing brace in
+the same file, not interleaved with it.
+.PP
+.BR func " and " proc
+define a function (must return a value) or procedure (must not) taking
+by-value parameters; recursion works by temporarily rebinding the same
+shared global for the duration of one call, restored on return.
+.B return
+with no expression is only valid inside a
+.B proc
+(and vice versa for
+.BR "return expr" ),
+but this is a RUNTIME check the first time that particular
+.B return
+actually executes, not a parse-time one - a
+.B func
+containing an untaken
+.B return
+with no value never trips it.
+.PP
+Built in:
+.BR sin ", " cos ", " tan ", " atan ", " asin ", " acos ", " sinh ", "
+.BR cosh ", " tanh ", " log ", " log10 ", " exp ", " sqrt ", " int ", "
+.BR abs ", "
+and the constants
+.BR PI ", " E ", " GAMMA ", " DEG ", " PHI .
+.SH SOURCE
+.B /p9/cmd/hoc.b
+(translated from plan9port's
+.BR src/cmd/hoc ;
+see its own header comment for the full derivation)
+.SH SEE ALSO
+.IR hoctest (1)
+.SH BUGS
+No 9front copy of hoc's source could be located on this host to diff
+against plan9port's (the usual first check for this backlog) - see
+.B doc/plan9-port.md
+and
+.B hoc.b 's
+own header comment. hoc6 is a well-documented, widely archived
+program, so the risk of an unnoticed divergence is believed low, but
+unlike this backlog's other files, it is honestly unverified rather
+than diffed clean.
+.PP
+Two of
+.BR && / || 's
+operands are ALWAYS both evaluated - they do not short-circuit, unlike
+most other languages including this tree's own bc(1)/dc(1) - confirmed
+directly, not assumed:
+.B "print (0 && (1/0))"
+still reports a division by zero.
+.PP
+Binary
+.B %
+is a real
+.BR fmod() ;
+.B %=
+is not the same operation - it truncates BOTH operands to an integer
+FIRST, then does integer modulo
+.RI ( "7.5 % 2"
+is 1.5, but
+.RI ( "x=7.5; x %= 2" )
+gives 1) - a real asymmetry in the original, preserved rather than
+"fixed" for consistency. That truncation uses Limbo's 32-bit
+.BR int ,
+not the host's own 64-bit C
+.BR long ,
+an unreproduced platform detail for very large operands.
+.PP
+Every printed number uses
+.B "%.17g"
+verbatim, matching the source - but the real oracle's own
+.B print()
+(Plan9's libfmt) appears to print the shortest decimal that still
+round-trips to the same value, capped at 17 significant digits, not
+always exactly 17 the way this port's (and glibc's)
+.B %.17g
+does:
+.B "print 0.1"
+shows
+.B 0.1
+on the real binary but
+.B 0.10000000000000001
+here. Characterized, not fixed - matching it would need a full
+.B strtod()
+this tree doesn't have, just to chase a formatting-library difference
+below either implementation's own code.
+.PP
+No recursion-depth cap: the original stops a runaway recursive call
+at a clean 100-frame limit; this port recurses natively through
+Limbo's own interpreter call stack instead, so it fails some other way
+past that point rather than with that specific message.
+.PP
+No fixed-length identifier/string caps (the original's own 100-byte C
+buffer, with a "name too long"/"string too long" error) - Limbo
+strings aren't a fixed buffer, so there's nothing to hit. A final
+top-level construct with no trailing newline before EOF is accepted
+here (the real oracle reports a syntax error there instead) - a small,
+deliberate leniency, not a faithfully-reproduced edge case.
