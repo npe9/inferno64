@@ -146,9 +146,17 @@ kbdfs) from the bootfs on pc64.  So a 9front userspace does run on this
 kernel \- through the kernel's own personality, not through the library
 OS.
 .IP \(bu 2
-rio itself, libdraw, and the graphics commands are not present as
-buildable source in this tree.  This is an Inferno tree with a 9front
-kernel; the 9front graphics userland would have to be brought in.
+libdraw, libmemdraw and libmemlayer \- the compositing libraries \- are
+present, as C source ((CWlibdraw/P, (CWlibmemdraw/P) and prebuilt
+in (CW9front/amd64/libP.  So the pixel-pushing a draw service needs is
+in hand.
+.IP \(bu 2
+rio itself, and the 9front graphics commands, are NOT present as source
+in this tree, and there is no 9front (CWsys/srcP.  This is an Inferno
+tree with a 9front kernel; the window manager and its userland would have
+to be brought in from 9front.  This is the hard boundary on the word
+\(lqrun rio\(rq: the architecture can be built to the edge of it here,
+but the rio binary is an import, not a build.
 .PP
 The draw stack does not go back in the kernel.  The architecture is the
 exokernel one throughout: the microkernel exposes the hardware \- the
@@ -187,3 +195,20 @@ user-level driver \- because it is bounded and it is the graphics analogue
 of segattaching the ring, which already works; then grow the draw service
 and the personality above it.  rio is the far end of that line, and every
 step toward it keeps the draw stack in the library OS where it belongs.
+.NH 1
+Status of the graphics path
+.PP
+Built and shown: step 1 is done and then some.  The microkernel exposes
+the firmware's frame buffer as a physical segment; a user program maps it
+with segattach and draws \- colour bars first, then a windowed desktop of
+two overlapping windows with borders, title bars and a cursor \- entirely
+in user space, the kernel knowing nothing of what is drawn.  That is the
+exokernel model for the display, working and screenshotted.
+.PP
+Not built: a user-level draw service (the (CW/dev/drawP role) that
+multiplexes the display among clients using libmemdraw, which is what rio
+and its clients would talk to; input driver tasks on the mouse and
+keyboard interrupt semaphores; and the 9front personality as a library
+with exec, under which rio would run.  And rio itself is an import this
+tree does not contain.  The distance to a real rio is therefore a draw
+service and an input path here, and a userland import from 9front there.
