@@ -1,0 +1,35 @@
+Diagnostic tools for the pc64 native-crash hunt (see doc/inferno-ports.ms).
+Neither script needs anything beyond a stock python3.
+
+resolve_ipc64_syms.py <ipc64-binary> <hex-addr> [hex-addr ...]
+	Resolves native (C-level) fault PCs against ipc64's own symbol
+	table.  inm/acid both report "no symbol information" for this
+	binary; the table is in the file (6l's default HEADTYPE=2 fat
+	a.out header, asmsym() runs unless -s is passed, and neither -H
+	nor -s appear in this board's link line) but this host's inm/acid
+	can't read it.  Must be re-run against the *exact* ipc64 that
+	produced a given capture -- addresses shift across unrelated
+	rebuilds, even with no source change.
+
+resolve_sbl.py <path.sbl> <inst-index> [inst-index ...]
+	Resolves a Dis module's own instruction index (not a native PC)
+	to a source file:line:col, using the .sbl file the Limbo compiler
+	already writes next to every .dis file (limbo/sbl.c's format,
+	parsed directly here -- delta-encoded against running file/line
+	state exactly as the emitter tracks it).  This sidesteps disdump
+	entirely, which is important: disdump.dis has no handling for a
+	Limbo `case` statement's jump table, and gets an "illegal dis
+	instruction" exception on any module that has one (bufio.dis,
+	string.dis, ls.dis, sh.dis all trip it; env.dis and cat.dis, which
+	don't use `case`, disassemble fine). Validated against a known
+	capture: env.dis inst 57 -> appl/lib/env.b:41, matching disdump's
+	own reading of the same instruction exactly, and ninst from both
+	tools agreeing (146 for env.dis, 6111 for sh.dis).
+
+	The off-by-one that matters for both scripts: a currun()-based
+	probe (see destroy()/OP(movp)/OP(mcall) in libinterp) prints
+	xp->R.PC - xp->R.M->m->prog, but xec()'s dispatch loop does
+	"op = R.PC->op; R.PC++; optab[op]();" -- PC is already advanced to
+	the *next* instruction by the time any probe inside that
+	instruction's handler runs.  The instruction actually executing
+	when a probe fires is always the printed index minus one.

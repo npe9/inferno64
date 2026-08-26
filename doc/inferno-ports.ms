@@ -5225,6 +5225,139 @@ family this round \- no
 capture occurred to exercise it.  Consistent with this hunt's
 standing nondeterminism, not a result either way.  The scan stays
 in place for the next one.
+.NH 1
+A durable resolver, two named sites in sh.b, and a clean negative
+.PP
+Wrote a permanent replacement for the
+.CW disdump
+detour: a parser reading a
+.CW .sbl
+file directly
+.RB ( limbo/sbl.c 's
+own format, delta-encoded against running file/line state exactly
+as the emitter tracks it \- see
+.CW os/inferno/pc64/tools/README ) .
+Every
+.CW .b / .m
+compile already writes one next to its
+.CW .dis ,
+so this needs no VM, no
+.CW case
+table walking, nothing but the file already on disk.  Validated
+against the one capture already cross-checked by hand:
+.CW env.dis
+inst 57 resolves to
+.CW env.b:41 ,
+matching the earlier
+.CW disdump
+reading exactly, and both tools agree on
+.CW ninst
+(146 for
+.CW env.dis ,
+6111 for
+.CW sh.dis ).
+Saved as
+.CW os/inferno/pc64/tools/resolve_sbl.py ,
+alongside
+.CW resolve_ipc64_syms.py
+moved there from the scratchpad it had been living in \- both are
+now durable, not session-local.
+.PP
+Stated once, prominently, because every capture from here on
+depends on it:
+.CW xec() 's
+dispatch does
+.CW "op\ =\ R.PC->op;\ R.PC++;\ optab[op]();" \-
+PC is advanced
+.I before
+the handler runs, so a probe's printed instruction index is always
+one more than the instruction actually executing.  Resolve
+.CW "index\ -\ 1" ,
+not the printed value.
+.PP
+Resolved the three
+.CW Sh
+captures from the thirty-boot batch with the corrected index.  They
+are not one finding, they are two, and they should not be read as
+one:
+.IP \(bu 2
+.CW "inst 5147 (destroy, v=0)"
+resolves to
+.CW sh.b:2339 ,
+inside
+.CW "while ((c = l.getc()) != '\\n' && c != l.EOF)" \-
+a lexer character-read loop.  No array growth anywhere near it, a
+different function entirely from the other two, and a different
+bad value.  Filed as its own, separate, unexplained site.
+.IP \(bu 2
+.CW "inst 5615 (movp, sv=18)"
+and
+.CW "inst 5618 (destroy, v=18)"
+resolve four lines apart in
+.CW yyparse() \-
+.CW "yys\ =\ (array[len\ yys\ *\ 2]\ of\ YYS)[0:]\ =\ yys;"
+(2788) and
+.CW "yys[yyp].yyv\ =\ yyval;"
+(2792), the shift-stack's own growth-then-index sequence.  Two
+different boots, so per this hunt's own standing rule this reads as
+the same
+.I code path
+misbehaving twice, not one write observed by two readers.  The
+value
+.CW 18
+now recurs in three captures across the whole investigation
+(this hunt's earlier "value differs between captures" note still
+holds for
+.CW 0
+vs
+.CW 18 ,
+but
+.CW 18
+itself is not a one-off).
+.PP
+.CW YYS
+is
+.CW "{ yyv: YYSTYPE; yys: int }" ,
+and
+.CW YYSTYPE
+is
+.CW "{ node: ref Node; word: string; redir: ref Redir; optype: int }" \-
+three pointers and an int, wrapped in another int.  Exactly the
+shape where an int-typed store landing one slot off would write a
+small integer where a type's map says pointer.  Built a minimal
+Limbo program on the host, matching this layout field-for-field
+(same order, same
+.CW "ref / string / ref / int"
+sequence, a nonzero sentinel in both int fields so a wrongly-treated-
+as-pointer slot would show), doing exactly what
+.CW yyparse()
+does: grow an
+.CW "array of YYS"
+by chained slice-assignment, then assign a whole
+.CW YYSTYPE
+into a freshly grown slot.  Ran clean under the hosted
+.CW emu \-
+every fresh slot's pointer fields came back nil, both int fields
+came back zero, and the post-growth whole-struct assignment worked
+with no corruption.
+.PP
+That result is real but narrower than "array-of-nested-ADT growth
+is ruled out.''  It ran on hosted
+.CW emu \-
+arm64, a different VM binary, no SMP, no
+.CW release() / acquire()
+interleaving with another kproc \- not pc64, which is where every
+capture in this entire hunt has come from.  What this actually
+shows: this construct is not deterministically broken in isolation
+on hosted
+.CW emu .
+Whether it holds under pc64's own concurrency is untested.  Not
+fixed.  Still no probe added beyond what the last commit already
+carries; the next step, not yet taken, is checking
+.CW "array of YYS" 's
+own compiled type map against this exact field layout rather than
+adding more runtime instrumentation.
+
 
 
 .NH 1
