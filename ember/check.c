@@ -2816,32 +2816,21 @@ check(Node *tree)
 		return;
 
 	/*
-	 * module interface: all top-level functions are exported.
-	 * chain the real fn decls so mkiface (via teqclass) can
-	 * build the Dis linkage table.
-	 */
-	impdecl->ty->ids = nil;
-	{
-		Decl *last;
-
-		last = nil;
-		for(i = 0; i < nfns; i++){
-			fns[i]->next = nil;
-			if(last == nil)
-				impdecl->ty->ids = fns[i];
-			else
-				last->next = fns[i];
-			last = fns[i];
-		}
-	}
-	sizetype(impdecl->ty);
-	teqclass(impdecl->ty);
-	/* export every top-level function from this module */
-	if(impdecl->ty->tof != nil)
-		impdecl->ty->tof->linkall = 1;
-
-	/*
-	 * second pass: check function bodies
+	 * second pass: check function bodies.  runs *before* the module
+	 * interface is built (below), not after -- fns[] keeps growing
+	 * during this loop (generic instantiations, and now function-
+	 * value wrapper synthesis, both append to it from inside an
+	 * earlier fns[i]'s own body-check; i<nfns is re-evaluated every
+	 * iteration so it always catches up), and mkiface (via teqclass,
+	 * below) needs the *final* fns[] to give every exported Dfn --
+	 * including anything synthesized mid-pass -- an .iface entry.
+	 * generic instantiations never needed this (they're only ever
+	 * called directly, by PC, never taken as a value), which is why
+	 * this ordering requirement went unnoticed until a function-value
+	 * wrapper -- reached indirectly via Rnoff/.iface->offset, not a
+	 * direct call -- needed one and silently got none: encoded as an
+	 * unresolved "$-1", the same failure signature a truly orphaned
+	 * descriptor produces (see the function-values commit).
 	 */
 	for(i = 0; i < nfns; i++){
 		/*
@@ -2867,4 +2856,30 @@ check(Node *tree)
 			continue;
 		fnchk(fns[i]);
 	}
+
+	/*
+	 * module interface: all top-level functions are exported.
+	 * chain the real fn decls (the *final* list, including anything
+	 * synthesized during the pass above) so mkiface (via teqclass)
+	 * can build the Dis linkage table.
+	 */
+	impdecl->ty->ids = nil;
+	{
+		Decl *last;
+
+		last = nil;
+		for(i = 0; i < nfns; i++){
+			fns[i]->next = nil;
+			if(last == nil)
+				impdecl->ty->ids = fns[i];
+			else
+				last->next = fns[i];
+			last = fns[i];
+		}
+	}
+	sizetype(impdecl->ty);
+	teqclass(impdecl->ty);
+	/* export every top-level function from this module */
+	if(impdecl->ty->tof != nil)
+		impdecl->ty->tof->linkall = 1;
 }
