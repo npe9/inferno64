@@ -19,6 +19,10 @@ TARG=\
 	newns.dis\
 	passwd.dis\
 	rsagen.dis\
+	rsa2ssh.dis\
+	rsa2sshtest.dis\
+	ssh2rsa.dis\
+	ssh2rsatest.dis\
 	secstore.dis\
 	signer.dis\
 	verify.dis\

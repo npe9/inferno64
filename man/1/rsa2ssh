@@ -1,0 +1,89 @@
+.TH RSA2SSH 1
+.SH NAME
+rsa2ssh \- convert a Plan 9 RSA key to OpenSSH authorized_keys format
+.SH SYNOPSIS
+.B auth/rsa2ssh
+[
+.B -c
+.I comment
+]
+[
+.I file
+]
+.SH DESCRIPTION
+.I Rsa2ssh
+is a real, structural translation of Plan 9's own
+.B auth/rsa2ssh
+(from
+.BR sys/src/cmd/auth/rsa2ssh.c ,
+9front), compiled to Dis and run by
+.IR emu .
+It lives under
+.B appl/cmd/auth
+alongside its sibling
+.IR rsagen (1),
+not under
+.BR p9/cmd ,
+since its whole job is converting the SAME "key ..." attribute-line
+format this tree's own keyring/factotum ecosystem already uses (see
+.IR rsagen (1)'s
+own output) into the "ssh-rsa ..." line an OpenSSH
+.B authorized_keys
+file expects - a real Inferno-native tie-in, not a host-userspace
+filter with none.
+.PP
+.I Rsa2ssh
+reads a Plan 9 RSA public or private key -
+.RB ( proto=rsa ,
+.B ek
+and
+.B n
+attributes at minimum) - from
+.I file
+or standard input, and writes one line:
+.B ssh-rsa
+followed by the key's standard base64-encoded SSH wire encoding,
+followed by
+.IR comment .
+.SH EXAMPLES
+Generate a fresh key and configure a remote Unix system to allow use
+of that key for logins (the same recipe as Plan 9's own
+.IR rsa (8)):
+.IP
+.EX
+auth/rsagen -t 'service=ssh role=client' >key
+auth/rsa2ssh key | ssh unix 'cat >>.ssh/authorized_keys'
+.EE
+.SH SOURCE
+.B appl/cmd/auth/rsa2ssh.b
+(translated from
+.BR sys/src/cmd/auth/rsa2ssh.c ,
+plus the shared
+.BR put4 / putn / putmp2
+wire-format helpers from the same directory's
+.BR rsa2any.c ;
+see its own header comment for the full derivation)
+.SH SEE ALSO
+.IR rsa2sshtest (1),
+.IR ssh2rsa (1),
+.IR rsagen (1)
+.SH BUGS
+Only the one real behavior
+.BR rsa2any.c 's
+.B getrsakey()
+needs is translated (read a "key ..." line, require
+.BR proto=rsa ,
+pull
+.B ek
+/
+.B n
+out as hex) - not its general quoted-attribute-value parsing (Plan 9's
+.B _parseattr()
+convention), since every field this command reads is always a plain
+hex or decimal token with no spaces or quotes in every key line this
+tree's own tools produce; not its "missing/wrong size: warn and
+correct" self-healing logic either, since a key missing a usable
+.B size
+attribute is not something
+.IR rsagen (1) 's
+own output ever produces.

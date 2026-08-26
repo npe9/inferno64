@@ -1,0 +1,51 @@
+.TH RSA2SSHTEST 1
+.SH NAME
+rsa2sshtest \- regression test for rsa2ssh(1)
+.SH SYNOPSIS
+.B rsa2sshtest
+.SH DESCRIPTION
+.I Rsa2sshtest
+loads
+.BR /dis/auth/rsa2ssh.dis 's
+in-process test seam,
+.BR run(argv,\ keyline) ,
+and checks it against a real, live oracle: plan9port's own
+.B rsa2ssh
+binary (this host's only installed copy), run through
+.IR emu 's
+host-command-execution device
+.RB ( #C ,
+see
+.IR cmd (3)).
+.PP
+The oracle needs
+.B -2
+to get the
+.B ssh-rsa
+-format output this file translates - unpatched, plan9port's own copy
+still defaults to an older plain-decimal format 9front's own
+.B rsa2ssh.c
+dropped entirely; confirmed directly against the binary before writing
+this test, not assumed (see
+.IR rsa2ssh (1)'s
+own SOURCE entry).
+.PP
+Test keys are real RSA moduli (from
+.B "openssl genrsa"
+and
+.BR ssh-keygen ),
+cross-checked field-by-field against
+.BR "openssl rsa -text" 's
+own independent decoding before use here - not placeholder hex.
+.SH SOURCE
+.B appl/cmd/auth/rsa2sshtest.b
+.SH SEE ALSO
+.IR rsa2ssh (1)
+.SH BUGS
+Does not exercise the
+.I file
+command-line-argument path (every case here drives
+.BR run() 's
+own
+.I keyline
+string directly).

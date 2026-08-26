@@ -1,0 +1,72 @@
+.TH SSH2RSATEST 1
+.SH NAME
+ssh2rsatest \- regression test for ssh2rsa(1)
+.SH SYNOPSIS
+.B ssh2rsatest
+.SH DESCRIPTION
+.I Ssh2rsatest
+loads
+.BR /dis/auth/ssh2rsa.dis 's
+in-process test seam,
+.BR run(argv,\ input) .
+No prebuilt binary and no plan9port copy of
+.IR ssh2rsa (1)
+exist on this host (see its own BUGS) - so instead of a binary oracle,
+this test generates a FRESH real OpenSSH key every run via
+.B #C
+.RI ( ssh-keygen ),
+strips the PEM armor and base64-decodes it (also via
+.BR #C ,
+the real pipeline's own
+.IR pemdecode (1)
+job - see
+.IR ssh2rsa (1)'s
+own DESCRIPTION), and feeds the raw binary blob straight to
+.BR run() .
+.PP
+Correctness is then checked INDEPENDENTLY of any Plan 9 code, using
+this tree's own
+.B module/ipints.m
+arithmetic directly: the extracted
+.RI ( n ,
+.IR ek ,
+.IR dk ,
+.IR p ,
+.IR q )
+must satisfy
+.I p*q==n
+and
+.IR "ek*dk === 1 (mod p\-1)"
+and
+.IR "(mod q\-1)"
+- the defining identities for a valid RSA private exponent and modulus
+factorization, not a comparison against anyone else's implementation,
+re-derived live every run rather than replayed from a fixed session.
+(This does not re-verify the precomputed CRT values
+.IR kp / kq / c2 ,
+which come from
+.B crypt->rsafill()
+itself, not from this file's own extraction code - those were checked
+once by hand with Python during development, cross-checked against
+.BR "openssl rsa -text" 's
+own independent decoding of the same key material - see
+.IR doc/plan9-port.md
+for that derivation.)
+.PP
+One case generates an encrypted (passphrase-protected) key and
+confirms it is correctly rejected with
+.BR "private key seems encrypted" ,
+matching the source - this translation has no decryption support at
+all, by design (see
+.IR ssh2rsa (1)).
+.SH SOURCE
+.B appl/cmd/auth/ssh2rsatest.b
+.SH SEE ALSO
+.IR ssh2rsa (1)
+.SH BUGS
+Depends on a working
+.B ssh-keygen
+on the host (via
+.BR #C );
+if it is missing, the affected cases fail loudly with a diagnostic
+rather than silently skipping.

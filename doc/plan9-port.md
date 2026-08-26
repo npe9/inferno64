@@ -1977,3 +1977,81 @@ below.
     case (correct there, wrong the moment more than one byte is pushed
     per iteration) - caught by testing against the built oracle, not
     by re-reading. 13/13 test cases pass.
+
+23. **`rsa2ssh.b`/`ssh2rsa.b` (both DONE)**: two more of item 21's
+    seven candidates (`sys/src/cmd/auth/rsa2ssh.c`, 56 lines, plus the
+    shared `put4`/`putn`/`putmp2` helpers from the same directory's
+    `rsa2any.c`; `sys/src/cmd/auth/ssh2rsa.c`, 204 lines) - convert
+    between a Plan 9 "key proto=rsa ..." line and an OpenSSH
+    `ssh-rsa ...`/`openssh-key-v1` key, in both directions.
+
+    **These two BREAK the `p9/cmd/` placement pattern every other file
+    in this backlog (including ascii.b/urlencode.b above) followed -
+    deliberately, not by oversight.** They live in `appl/cmd/auth/`
+    instead, alongside the existing `rsagen.b`/`getpk.b` siblings,
+    because their whole job is producing/consuming the SAME key-
+    attribute-line format this tree's own keyring/factotum ecosystem
+    already uses - a real Inferno-native tie-in `ascii`/`urlencode`/
+    `dc` never had (pure host-userspace filters, zero interaction with
+    any Inferno-specific subsystem). CLAUDE.md's `p9/cmd/` rule is
+    written about "a native-to-Inferno workalike for a Plan 9
+    userspace tool" - these two aren't that in the relevant sense, any
+    more than `rsagen.b` (which has never lived in `p9/cmd/`) is. Any
+    remaining item-21 candidate that similarly turns out to interact
+    with an existing Inferno-native module/ecosystem, rather than
+    being a pure text/data filter, should get the same appl/cmd/
+    treatment - check this before defaulting to p9/cmd/ by analogy.
+
+    Module choice matches `rsagen.b`'s own precedent too: `module/
+    crypt.m` + `module/ipints.m`, not `module/keyring.m`'s own
+    separate `IPint`/`RSApk`/`RSAsk` - keyring.m's generic `SK`/`PK`
+    are opaque ("key and system parameters are hidden"), which rules
+    them out for a command whose whole job is pulling `ek`/`n`/`dk`/
+    `p`/`q` back OUT of a key numerically.
+
+    `getrsakey()` (`rsa2any.c`, shared with `auth/dsa2ssh`) is not
+    translated as a general-purpose library function - only the one
+    behavior `rsa2ssh.b` needs (read a "key ..." line, require
+    `proto=rsa`, pull `ek`/`n` out as hex via a plain space-tokenizer,
+    not the full quoted-attribute-value grammar `_parseattr()`
+    supports, since no field this command reads is ever quoted or
+    space-containing in practice).
+
+    Verification, strongest in this backlog to date: `rsa2ssh.b`
+    tested byte-for-byte against plan9port's real `rsa2ssh` binary via
+    `#C` (needing `-2` to get the current `ssh-rsa` format - unpatched,
+    plan9port's own copy still defaults to an older plain-decimal
+    format 9front's `rsa2ssh.c` dropped entirely, confirmed directly
+    against the binary before writing the test). `ssh2rsa.b` has no
+    prebuilt binary or plan9port copy anywhere on this host (same
+    situation `urlencode.b` was first in) - instead, `ssh2rsatest.b`
+    generates a FRESH real OpenSSH key every run via `#C` (`ssh-
+    keygen`), strips the PEM armor and base64-decodes it (also via
+    `#C` - the real pipeline's own `auth/pemdecode` job, out of this
+    file's scope), and independently verifies the result using this
+    tree's OWN `ipints.m` arithmetic: `p*q==n` and `ek*dk≡1 (mod p-1)`
+    and `(mod q-1)` - the actual defining identities of a valid RSA
+    private key, re-derived live every run rather than compared
+    against any other implementation (so it cannot inherit a bug from
+    a reference). One case confirms an encrypted key is correctly
+    rejected with "private key seems encrypted" (no decryption support
+    at all, matching the source). A full round-trip - a real
+    `ssh-keygen` key through `ssh2rsa.b` then `rsa2ssh.b` - lands
+    byte-identical on `ssh-keygen -y`'s own public-key extraction,
+    tying both files together end to end.
+
+    One real translation bug, caught by advisor review before commit:
+    `ssh2rsa.b`'s private-section length guard was `pv < 8` where the
+    source's own `p+8>=e` translates to `pv <= 8` - off by one,
+    though not a crash (the very next bounds check catches the same
+    malformed input either way, just via a different error message).
+    Fixed to match the source exactly, since the whole point is 1:1
+    fidelity even where the looser version was harmless. A second
+    advisor-flagged concern (`rsa2sshtest.b`'s no-trailing-newline
+    case looked like it might be vacuous, since `convert()`'s strip
+    is a no-op when there's no newline to strip) was checked with a
+    genuine negative control rather than accepted or dismissed on
+    reasoning alone: forcing an UNCONDITIONAL strip broke exactly that
+    one case while every newline-terminated case kept passing -
+    confirming the case does independently exercise the conditional,
+    not that it was redundant with the others.

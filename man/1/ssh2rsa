@@ -1,0 +1,86 @@
+.TH SSH2RSA 1
+.SH NAME
+ssh2rsa \- convert an OpenSSH private key to Plan 9 RSA key format
+.SH SYNOPSIS
+.B auth/ssh2rsa
+[
+.I file
+]
+.SH DESCRIPTION
+.I Ssh2rsa
+is a real, structural translation of Plan 9's own
+.B auth/ssh2rsa
+(from
+.BR sys/src/cmd/auth/ssh2rsa.c ,
+9front). See
+.IR rsa2ssh (1)'s
+own DESCRIPTION for why this sits under
+.B appl/cmd/auth
+rather than
+.BR p9/cmd .
+.PP
+.I Ssh2rsa
+reads an RSA private key stored in the binary
+.B openssh-key-v1
+format - the format
+.B ssh-keygen
+actually writes, base64-armored between
+.B "-----BEGIN OPENSSH PRIVATE KEY-----"
+markers - from
+.I file
+or standard input, and prints a Plan 9
+.B "key service=ssh proto=rsa ..."
+line, the same key-attribute-line format
+.IR rsagen (1)
+already emits.
+.PP
+This command only ever sees the ALREADY-BASE64-DECODED binary blob.
+The real pipeline it is meant to sit in, converting an
+.B id_rsa
+as output by Unix
+.BR ssh-keygen :
+.IP
+.EX
+auth/pemdecode 'OPENSSH PRIVATE KEY' id_rsa | auth/ssh2rsa
+.EE
+.LP
+stripping the PEM armor and base64-decoding it is
+.IR pemdecode (1)'s
+job, not this command's.
+.PP
+Only a single
+.RB ( nkeys==1 ),
+unencrypted (
+.B none
+cipher) RSA key is supported - matching the source exactly. An
+encrypted key correctly fails with
+.BR "private key seems encrypted" .
+.SH SOURCE
+.B appl/cmd/auth/ssh2rsa.b
+(translated from
+.BR sys/src/cmd/auth/ssh2rsa.c ;
+see its own header comment for the full derivation)
+.SH SEE ALSO
+.IR ssh2rsatest (1),
+.IR rsa2ssh (1),
+.IR rsagen (1)
+.SH BUGS
+No plan9port copy of this file exists, and no prebuilt binary for it
+existed on this host either (same situation
+.IR urlencode (1)
+was first in) - verified instead against a real
+.B ssh-keygen
+-generated key, cross-checked field-by-field against
+.BR "openssl rsa -text" 's
+independent decoding of the same key material (see
+.IR ssh2rsatest (1) 's
+own header comment).
+.PP
+Real key-component length fields are read as a plain 32-bit
+.B int
+- like the source's own
+.B u32int
+.B GET4()
+macro, this has no defined behavior once a length exceeds 2^31, but
+every real RSA key component is a few hundred bytes at most, so this
+is never reachable on real input.
