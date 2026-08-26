@@ -118,7 +118,88 @@ User-level services
 Move protocol stacks, packet processing, and most file-system policy into
 user-space services.  Add shared packet buffers and zero-copy paths, then
 provide a buddy operating system and a library OS against the native Osprey
-request ABI.
+request ABI.  File-system policy for the boards this tree already targets
+means two device classes, not one: eMMC and SD, and raw NOR or NAND flash
+with no controller of its own.
+.CW os/inferno/port/devsd.c
+and
+.CW sdscsi.c
+are the reference for the first;
+.CW devflash.c ,
+.CW "flashcfi8.c / flashcfi16.c" ,
+and
+.CW flashnand.c
+are the reference for the second.  Osprey does not reuse them \- the
+architecture adapter is where a board's storage controller is bound \- but
+they say what the adapter must expose upward: block read/write for eMMC and
+SD, and page program/erase with bad-block tracking for raw flash.
+.NH 1
+Storage tradespace
+.PP
+The boards this tree already builds for split cleanly into two storage
+tiers, and they need different filesystem designs, not different tuning of
+one design.
+.IP \(bu 2
+.B "eMMC and SD"
+(the class
+.CW virt ,
+.CW sifiveu ,
+and
+.CW mangopi
+target): wear-leveling, bad-block remapping, and erase are inside the
+controller.  The kernel sees an ordinary block device.  Any conventional
+file system works; the open question is only which one, and \[*p]p's own
+protocol \- attributes as strings, versions committed on close \- does not
+require any of them to support in-place update.
+.IP \(bu 2
+.B "Raw NOR/SPI-NAND flash"
+(the class
+.CW mps2 ,
+.CW nucleof303 ,
+and
+.CW teensy41
+target): no controller between the kernel and the cells.  Wear-leveling,
+bad-block tracking, and erase-before-write are the file system's problem,
+not hidden below it.  A conventional in-place file system \- even a
+journaled one \- writes the same physical cells enough times to wear them
+out inside a normal deployment lifetime, and journal replay after a crash
+is not bounded by anything the scheduler knows about.
+.PP
+That second constraint is the one that matters most for a kernel whose
+whole premise is predictability.  Log-structured storage \- write only to
+fresh space, reclaim old space by copying its still-live data forward \-
+solves wear-leveling and power-loss safety in the same design, and it is
+already what \[*p]p asks of a file: a version is immutable once written,
+and committed as a unit when the file closes.  Nothing in that protocol
+wants an in-place overwrite.  What a log-structured file system does need,
+and what a Plan 9 kernel does not normally give it, is a place to put
+reclamation.  JFFS2, UBIFS, and F2FS all run compaction as background
+kernel work with no accounting against anything \- exactly the unbounded
+stall this plan's own scheduler section rules out for interrupt handling.
+Osprey already has the right primitive for it: reclamation is a task, it
+reports the period it needs, and time beyond its reservation is accounted
+as best-effort the same as any other task's.  A compaction task that
+misses its reservation shows up in the same accounting a slow network
+driver would, instead of vanishing into an unmeasured kernel stall.
+.PP
+The tradeoff this leaves is where the reservation is spent.  A tight
+reservation makes reclamation fall behind under sustained write load,
+which shows up as write latency once free segments run out \- a
+measurable, boundable failure, not a silent one, but a real one on a
+teensy41-class node logging continuously.  A generous reservation
+protects write latency at the cost of CPU the rest of the system could
+have used.  Sizing it is a per-board decision (log volume expected of a
+sensor node is not log volume expected of a gateway), not a kernel-wide
+constant, so the request ABI should carry it as a parameter the storage
+service task sets at start, not a compiled-in default.
+.PP
+Recommendation: build the block-device path first \- it is the eMMC/SD
+tier, it needs no new erase/wear-leveling logic, and it validates the
+user-level file-system-as-service model this plan already calls for.
+Build the raw-flash log-structured service second, against the same
+request ABI, with reclamation as an ordinary scheduled task from the
+start rather than added once compaction stalls are already visible on
+real hardware.
 .NH 1
 Checkpoint and validation
 .PP
