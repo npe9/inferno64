@@ -748,21 +748,44 @@ stype(Node *n)
 			if(f->flags & NVARARG)
 				ft->varargs = 1;
 			t = stype(f->right);
-			for(ids = f->left; ids != nil; ids = ids->right){
-				Node *id;
-
-				id = ids;
-				if(ids->op == Oseq)
-					id = ids->left;
-				d = mkdecl(&id->src, Darg, t);
-				d->sym = id->sym;
+			if(f->left == nil){
+				/*
+				 * an *anonymous* parameter -- psignature(named=0)
+				 * (parse.c) is how a function *type* (not a
+				 * declaration) parses its parameter list, e.g.
+				 * "f func(int) int"'s own "int": one bare type, no
+				 * name, since there's nothing to bind it to.  the
+				 * loop below only ever adds an arg per *name*, so
+				 * without this an anonymous parameter's type was
+				 * silently dropped entirely -- "func(int) int"
+				 * type-checked to zero parameters, not one, and
+				 * calling such a value ("f(x)") failed with "too
+				 * many arguments" for any real argument at all.
+				 */
+				d = mkdecl(&f->src, Darg, t);
+				d->sym = nil;
 				if(args == nil)
 					args = d;
 				else
 					last->next = d;
 				last = d;
-				if(ids->op != Oseq)
-					break;
+			}else{
+				for(ids = f->left; ids != nil; ids = ids->right){
+					Node *id;
+
+					id = ids;
+					if(ids->op == Oseq)
+						id = ids->left;
+					d = mkdecl(&id->src, Darg, t);
+					d->sym = id->sym;
+					if(args == nil)
+						args = d;
+					else
+						last->next = d;
+					last = d;
+					if(ids->op != Oseq)
+						break;
+				}
 			}
 			if(p->op != Oseq)
 				break;
