@@ -1785,7 +1785,145 @@ below.
     both sides, so unlike hoc.b's floating-point `%.17g` divergence, no
     numeric-tolerance comparison is needed anywhere here). With `dict`
     ruled out above, this closes the item-9 backlog list as a source of
-    quick next files; what remains open is the three already-flagged
-    coherent subsystem questions (fs-servers, mail, ssh/tls) and the
-    unclassified 9front-specific residual - all real design work, not
-    a next file to read cold.
+    quick next files.
+
+21. **The three coherent subsystem questions and the unclassified
+    residual, actually scoped by reading source rather than left as a
+    standing "real design work" note.** Each of the three subsystem
+    questions turned out to contain at least one genuinely cheap,
+    self-contained sub-piece hiding inside an otherwise correctly-
+    flagged multi-session project - the same shape of finding as
+    `dc.c` needing no bignum layer after all, just checked three more
+    times before assuming a whole bucket was uniformly out of reach.
+
+    **upas (mail): still a genuine ~33,000-45,000-line MTA-plus-
+    mailbox-model project** (plan9port's 15 dirs vs 9front's 20, which
+    adds `imap4d`/`dkim`/`spf`/`qfrom`/`Mail`) - `fs` (the mailbox-as-
+    9P-filesystem hub), `smtp`/`smtpd` (live SMTP + DNS MX + greylist),
+    `nfs`/`imap4d` (IMAP client/server), `pop3` (server), `send`/`q`/
+    `ml` (routing/queue/list daemons) all either need live sockets+DNS
+    or are welded to Plan 9's specific mbox-append/lock-file
+    conventions - exactly the design question the doc already named.
+    Checked, not assumed: EVERY tool, including the seemingly "local
+    logic only" ones, pulls in `common/`'s own mbox-format helpers
+    (`appendfiletombox`, `mboxpath`, the `"From "`-line escaping
+    rules), so "no network" doesn't mean "no dependency" here. This
+    tree already has a working, if smaller, native mail stack solving
+    the CLIENT side of the same problem a different way (pull/push
+    instead of mount-a-mailbox): `appl/lib/smtp.b`/`pop3.b` (SMTP/POP3
+    clients over `dial.m`), `module/rfc822.m`+`appl/lib/rfc822.b` (a
+    real RFC822/MIME header lexer, though its own comments flag
+    address-parsing and multipart as unfinished), `appl/cmd/
+    sendmail.b` (plain-text-only CLI mailer), and Acme's own `Mail.b`/
+    `Mailpop3.b`/`Mailp.b` (a full POP3 Tk mail client, 5,119 lines,
+    already written) - the same "already a non-gap, just a different
+    architecture" reasoning this doc gives `pump`/`dhcp.b`. **One real
+    exception: `upas/marshal.c` (1,918 lines, single file) - builds a
+    MIME message (multipart, base64/quoted-printable, attachments,
+    address/alias handling) then execs `sendmail` for delivery.**
+    Traced its actual calls into `common/`: only `getlog`/`mboxpath`
+    (locates the user's own config files) - it never touches the mbox-
+    append/lock code at all. Needs no DNS, no sockets, no new mailbox
+    format - just somewhere to hand off the finished message, which
+    `smtp.b`/`sendmail.b` already are. A real, pr.b/hoc.b/dc.b-scale
+    candidate that would fill a capability this tree's own
+    `sendmail.b` genuinely lacks (CLI MIME/attachment composition).
+
+    **ssh/tls: the doc's "6 tools" undersold TLS and correctly flagged
+    SSH, but for a more specific reason than assumed.** The real
+    inventory (9front-only; plan9port assumes the host's OpenSSH):
+    `ssh.c` (1,459 lines, a complete from-scratch SSH2 client - KEX,
+    userauth, cipher/MAC framing, channel multiplexing, no supporting
+    library of its own), `sshnet.c` (1,451, tunnels a remote TCP stack
+    as a `/net`-style 9P tree over an ssh session), `sshfs.c` (1,431,
+    full SFTP-as-9P-server), `tlsclient.c`/`tlssrv.c` (174/136, THIN
+    wrappers - the real work is in libsec's `tlshand.c`+`devtls.c`,
+    ~5,445 lines, shared library not duplicated per-tool), `auth/
+    rsa2ssh.c` (56, RSA key -> ssh-rsa wire format + base64), `auth/
+    ssh2rsa.c` (204, parses an `openssh-key-v1` blob into an RSA
+    struct - and itself explicitly REFUSES encrypted keys rather than
+    implementing bcrypt-pbkdf, so this port doesn't need to either).
+    Checked, not assumed, whether this tree already has the crypto
+    primitive that would make the TLS pair cheap: `module/keyring.m`
+    (RSA/DSA/ElGamal, AES/DES/IDEA/RC4/Blowfish, MD4/MD5/SHA1/SHA2,
+    HMAC, real C-native primitives already exposed to Limbo) plus a
+    COMPLETE, already-working, production-used TLS implementation
+    written entirely in Limbo (`appl/lib/crypt/ssl3.b` 5,557 lines +
+    `x509.b`/`pkcs.b`/`asn1.b`/`sslsession.b` ~5,900 more, driving
+    `https://` in `appl/svc/webget/http.b` and `appl/charon` today) -
+    genuinely surprising, not something a prior pass had surfaced.
+    **But its own cipher table is pure SSLv3 vintage** (RC4/DES/3DES/
+    IDEA with MD5/SHA1, `SSL_VERSION_3_0` only - no TLS version
+    negotiation, no AES, no ECDHE, no AEAD; `emu/port/devssl.c`'s own
+    cipher enum has no AES either) - a protocol essentially no real
+    server has accepted since POODLE (2014). So `tlsclient.b`/
+    `tlssrv.b` as thin wrappers around `ssl3.b` (150-300 lines each,
+    same shape as the C originals) are cheap ONLY if an SSLv3-only
+    client/server pair is an acceptable deliverable - making them
+    genuinely useful against the modern internet is its own uplift
+    project (new cipher suites, AEAD records, AES in `devssl.c`), the
+    design question the doc flagged, just one layer further down than
+    assumed: half-answered at 1990s security level, not unanswered.
+    **`rsa2ssh.b` and `ssh2rsa.b` ARE genuinely cheap, same-day
+    candidates right now** - `keyring.m`'s `IPint` byte/base64
+    conversions plus `appl/lib/encoding/base64.b` cover everything
+    both C originals do, at well under pr.b/hoc.b scale (roughly
+    100-150 and 200-300 Limbo lines respectively). The SSH client/net/
+    fs trio (~4,341 lines combined, no Limbo equivalent anywhere in
+    this tree) remains genuinely out of scope for a single session -
+    concurrent multiplexed-session protocol work, categorically
+    different from a bounded compute-and-print translation, and larger
+    than `dc.c` (2,297 lines), the biggest single-file translation
+    done in this backlog so far.
+
+    **The unclassified 9front-specific residual: genuinely contains
+    good candidates, not mostly noise as the caution anticipated.**
+    The raw 118/272-name lists from the original gap-analysis pass
+    were never actually embedded in this doc (confirmed by grep - only
+    12 pre-classified candidates and 6 example "obscure" names were
+    ever written down); reconstructed by enumerating 9front's
+    `sys/src/cmd/` (293 entries, resolving each `mkfile TARG=` to real
+    binary names) and diffing against everything already in this tree
+    (`appl/cmd`, `p9/cmd`, `utils/`, native binaries) - 178 names with
+    no match anywhere, the same shape of list minus this pass's
+    narrower non-toolchain-shaped tally. Of ~22 individually read at
+    the source level: **five clean, zero-subsystem-dependency, right-
+    sized candidates** - `cb`/`cbtype.c` (1,061 lines combined, a C
+    source beautifier/reformatter, libc+bio only, no naming collision
+    anywhere in this tree), `qr.c` (1,188 lines, a QR-code encoder that
+    deliberately avoids `draw.h`/`memdraw.h` entirely, hand-rolling its
+    own Plan 9 image-file header instead), `ascii.c` (181 lines, prints
+    an ASCII/character-encoding table), `urlencode.c` (103 lines, a URL
+    percent-encode/decode filter), `news.c` (239 lines, prints items
+    from a news-drop directory) - none has an existing equivalent or
+    name collision in this tree, confirmed by checking, not assumed.
+    Two more looked promising on line count and dependency alone but
+    have real "low value here" caveats worth stating rather than
+    ranking blind: `col.c` (295 lines, genuinely absent and portable,
+    but its only real producer is nroff/troff overstrike output, and
+    item 7 already commits this tree to the host's `groff`); `ecp.c`
+    (617 lines, portable read/write/seek logic, but its whole reason to
+    exist - per-sector retry against failing physical media - has
+    nothing to retry against in a hosted VM with no raw disk devices,
+    degenerating to a slower `cp`). `flambe` (one of the doc's own
+    example "obscure" names) was searched for across the entire 9front
+    checkout and genuinely does not exist in this snapshot - an honest
+    negative result, not assumed either way. The rest of the sample
+    sorted cleanly into subsystem-bound (image/GUI: `crop`/`resize`/
+    `rotate`/`resample`/`getmap`/`histogram`/`tweak`/`spred`/`zuke`/
+    `stats`; networking: `con`/`rx`/`aan`/`execnet`/`webcookies`/`ndb`;
+    Venti: `unvac`/`vac`), 9front/kernel-specific (`pstree`/`snap`/
+    `seg`/`dtracy`/`pipefile`/`atazz`/`fax` - Plan 9 process-model or
+    hardware conventions this hosted VM's own `/prog` namespace doesn't
+    share), or genuinely low-value/niche (`astro` ~4,300 lines across
+    29 files, oversized despite no subsystem dependency; `forp`/`sat`/
+    `sprog`/`mapd`/`exsort`/`mtime`/`pbd`, mostly trivial or tied to a
+    subsystem - spell-checking, Venti disk maintenance - this tree
+    doesn't have).
+
+    **Net result of this scoping pass: at least seven concrete, real,
+    right-sized next candidates now identified and named** (`upas/
+    marshal`, `rsa2ssh`, `ssh2rsa`, `cb`/`cbtype`, `qr`, `ascii`,
+    `urlencode`, `news`), none of them requiring the subsystem-level
+    design work the doc correctly still flags for the rest of upas,
+    ssh/tls, and the residual bucket at large.
