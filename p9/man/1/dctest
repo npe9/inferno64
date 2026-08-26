@@ -8,36 +8,90 @@ dctest \- regression test for dc(1)
 loads
 .BR /p9/dis/dc.dis 's
 in-process test seam,
-.BR runstring(prog) ,
-and checks a representative subset of the programs used to develop
-.IR dc (1)
-against golden output: arithmetic, the precision/scale rules for
-.BR + / - / * / / ,
-square root, registers, and stack operations
-.RB ( p ", " n ", " f ", " c ", " d ", " r ).
-Every expected string was checked once against
-.BR /usr/bin/dc ,
-the host's real
-.IR dc .
+.BR run(argv,\ stdintext) ,
+and checks it against a real, live oracle: plan9port's own
+.B dc
+binary, run through this emu's host-command-execution device
+.RB ( #C ,
+see
+.IR cmd (3)),
+given the SAME stdin text (and, for one case, the same file argument)
+on both sides.
 .PP
-Prints one line per failure to standard error, a final
-.IR N " passed, " N " failed"
-summary to standard output, and exits with a non-nil status if
-anything failed.
+Unlike every other
+.B p9/cmd
+translation's own test suite so far, dc scripts are normally driven
+entirely over standard input rather than a host filename, so the
+oracle helper here pipes a string directly into the real
+.BR dc 's
+stdin via
+.BR /cmd/ N /data
+opened for writing \(em closed immediately afterward (dropping the
+last Limbo reference, which synchronously closes the underlying pipe,
+since Dis's memory model is reference-counted rather than a deferred
+tracing garbage collector) so the real
+.B dc
+sees genuine end-of-file on its own stdin and can finish, rather than
+blocking forever waiting for more input that will never arrive. This
+was found the hard way, by a genuine hang during this suite's own
+development, not anticipated from
+.IR cmd (3)'s
+own documentation \(em see
+.BR dc.b 's
+header comment and the
+.B inferno-rio-cmd-device-oracle
+memory for the full account.
+.PP
+One case
+.RB ( t10filethenstdin )
+also exercises the confirmed "file argument, then fall back to
+stdin" behavior, writing a real host file under
+.B /dctest
+(via
+.IR hostroot() ,
+copied from
+.IR prtest (1)/ hoctest (1)'s
+own convention) and passing it as
+.BR run() 's
+own
+.I argv
+on the Inferno side, a matching
+.B dir
+directive on the oracle side.
+.PP
+Every case compares stdout byte-exact \(em dc's own arithmetic is
+exact fixed-point decimal on both sides, so unlike
+.IR hoc (1)'s
+own floating-point
+.B %.17g
+divergence, no numeric-tolerance comparison is needed anywhere here.
 .SH SOURCE
 .B /p9/cmd/dctest.b
 .SH SEE ALSO
 .IR dc (1)
 .SH BUGS
-Runs
-.I dc
-in-process via its
-.B runstring
-seam, not as a spawned subprocess reading real files and standard
-input/output \(em so it does not exercise
-.IR dc 's
-own
-.BR init ,
-argument parsing
-.RB ( -e / -f ),
-or file I/O at all.
+.B t11crashsafety
+deliberately does NOT compare against the oracle: the real plan9port
+.B dc
+SIGSEGVs (confirmed directly, exit 139) on
+.BR "5 :r" \(em
+too few values on the stack for
+.BR : \(em
+since the original writes the new array register's table entry before
+checking whether the value to store was actually available. That case
+only checks that this port's own seam completes without crashing (an
+emu process crash would abort this whole suite, not just fail one
+check), not that its output matches a process that cannot finish.
+.PP
+Does not exercise
+.BR ? 's
+own interactive-read-bypassing-macros behavior (needs a real terminal-
+like stdin interleaving this seam's single up-front
+.I stdintext
+string can't easily represent), nested
+.B x
+recursion deeper than the one factorial case, or the
+.B Y
+debug command's own (deliberately non-original-format, see
+.BR dc.b 's
+own header comment) allocator-counter output.

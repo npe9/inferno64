@@ -4,208 +4,255 @@ dc \- desk calculator, in Limbo
 .SH SYNOPSIS
 .B dc
 [
-.B -e
-.I script
-]
-[
-.B -f
-.I scriptfile
-]
-[
-.I file ...
+.I file
 ]
 .SH DESCRIPTION
 .I Dc
-is a Limbo-native workalike for a bounded subset of
+is a real, structural translation of Plan 9's own
 .IR dc (1),
-the reverse-Polish desk calculator, compiled to Dis and run by
+the reverse-Polish desk calculator, from
+.BR sys/src/cmd/dc.c ,
+compiled to Dis and run by
 .IR emu ,
-not a host binary \(em see
-.B doc/plan9-port.md
-in the source tree. It lives under
+not a host binary. It lives under
 .B p9/cmd
 rather than
 .BR appl/cmd ;
 see
 .B p9/dis/README
-for how to bind it in.
+for how to bind it in. This REPLACES an earlier
+.B p9/cmd/dc.b
+wholesale \(em that file was a bounded 64-bit fixed-point workalike
+reverse-engineered against the wrong oracle (macOS's own
+.BR /usr/bin/dc ,
+not Plan 9's) \(em see
+.B doc/plan9-port.md
+in the source tree for the full history.
 .PP
-.I Dc
-reads a program from
+With no argument,
+.I dc
+reads its program from standard input. With one
 .I file
-arguments (concatenated in order), or standard input if none are given,
-or from
-.B -e
-.I script
-and
-.B -f
-.I scriptfile
-arguments (repeatable, and combinable with each other, evaluated in the
-order given before any files). A dc program is a sequence of numbers and
-single-character commands operating on a stack.
+argument, it runs that file's commands first, then keeps reading
+further commands from standard input once the file runs out \(em
+confirmed directly against the real binary before writing any Limbo,
+not assumed. A dc program is a sequence of numbers and single-
+character commands operating on a stack. Arithmetic is exact fixed-
+point decimal, not floating point, at whatever precision the script
+itself asks for via the scale register (see
+.B k
+below) \(em not an approximation with a precision ceiling, since this
+port's numbers grow to whatever size a computation needs, the same way
+the original's own dynamically-growing buffers do.
 .PP
-A number is pushed by writing it: digits, an optional
+A number is pushed by writing it: digits (and
+.BR A \(en F
+as hex digits, interpreted according to the current input base \(em
+see
+.BR i / I
+below), an optional
 .B .
 and more digits, with a leading
 .B _
 for a negative literal (a bare
 .B \-
-is the subtraction operator, not part of a number). Arithmetic is exact
-fixed-point \(em not floating point \(em matching real
-.IR dc 's
-own arithmetic rather than approximating it, but only up to a real
-precision limit; see BUGS.
+is the subtraction operator, not part of a number).
 .SS Commands
 .TP
-.B + - * /
-Pop two values, apply the operator, push the result.
-.B /
-truncates toward zero to the current scale (see
-.BR k ,
-below); the others are exact except where noted.
+.B + \- * /
+Add, subtract, multiply, divide the top two values. Divide truncates
+its result to the current scale register (see
+.BR k ).
 .TP
 .B %
-Modulo: computes
-.I a
-\-
-.RI ( a / b ,
-truncated to the current scale)
-.RI * " b" .
-.TP
-.B ^
-Power. The exponent must be an integer (positive or negative); a
-negative exponent divides 1 by the positive power, using the current
-scale.
+Modulo \(em NOT the same operation as
+.B %=
+would be in a C-like language: this is dc's own asymmetric pair, see
+BUGS.
 .TP
 .B v
-Square root, truncated to the current scale.
+Square root, to the current scale register.
 .TP
-.B p
-Print the top of the stack, followed by a newline, without removing it.
+.B ^
+Exponentiation to an integer power (positive or, with a leading
+.BR _ ,
+negative). The result's own scale is
+.BR max(k,\ base's\ own\ scale) ,
+NOT the base's scale multiplied by the exponent \(em confirmed by hand-
+tracing the source before trusting it, see BUGS.
 .TP
-.B n
-Pop the top of the stack and print it, without a trailing newline.
+.B _
+(prefix) Negate a following numeric literal.
 .TP
-.B f
-Print the whole stack, one value per line, top first, without clearing
-it.
+.BR p " " f
+Print the top of the stack, or the whole stack top-to-bottom
+.RB ( f ).
 .TP
-.B c
-Clear the stack.
+.B P
+Pop the top of stack and print it as a literal string of characters
+(its own digit/byte values, not formatted as a number) with no
+trailing newline.
 .TP
 .B d
 Duplicate the top of the stack.
 .TP
-.B r
-Swap the top two values.
+.B c
+Clear the entire stack.
+.TP
+.BR z " " Z
+Push the current stack depth
+.RB ( z ),
+or pop and push back the number of significant decimal digits in the
+popped value
+.RB ( Z ).
 .TP
 .BI s x
-Pop the top of the stack into register
-.IR x .
+Pop and store into register
+.IR x
+(a single raw byte, or
+.BI < N >
+for an extended register number). Registers
+.BI >= 221
+can ALSO be used as arrays (see
+.BR : / ; ,
+below) \(em
+.B s
+on such a register stores a plain scalar there.
 .TP
+.BI S x
+Push a NEW value frame onto register
+.IR x Ns 's
+own stack (registers hold a LIFO stack of values, not a single slot);
+.BI L x
+pops that frame back onto the calculator stack;
 .BI l x
-Push a copy of register
+reads the current top frame without popping it.
+.TP
+.BI value\ index : x
+Store
+.I value
+at
+.I index
+(0\(en2047) of array register
 .IR x .
+.BI index ; x
+loads it back (0 if never set).
 .TP
-.BI k
-Pop the top of the stack and set it as the scale (number of fraction
-digits kept by
-.BR / ,
-.BR % ,
-.BR ^ ,
-and
-.BR v );
-must be a non-negative integer.
+.B [ ... ]
+Push a macro (a literal string of dc commands, not executed yet).
 .TP
-.B #
-Comment to end of line.
+.B x
+Execute the macro on top of the stack.
+.TP
+.BR < " " > " " =
+Pop and compare the top two values; if the comparison holds, execute
+the macro in the named register (read the same way
+.BR s / l 's
+own register argument is).
+.TP
+.BR i / I " " o / O
+Set/query the input base
+.RB ( i / I ,
+default 10) or output base
+.RB ( o / O ,
+default 10).
+.TP
+.BR k / K
+Set/query the scale register (number of decimal digits division,
+square root, and similar keep).
 .TP
 .B q
-Stop processing the program.
+Quit \(em or, inside a nested macro, unwind one level; a bare
+.B Q
+(preceded by a popped count) unwinds that many.
+.TP
+.B !
+Followed by a line of text: run it as a host shell command (see BUGS
+\(em the original forks
+.BR /bin/rc ,
+a Plan 9 program this host does not have).
 .SH SOURCE
 .B /p9/cmd/dc.b
+(translated from
+.BR sys/src/cmd/dc.c ;
+see its own header comment for the full derivation, every real bug
+found and fixed, and every deliberate simplification)
 .SH SEE ALSO
 .IR dctest (1)
 .SH BUGS
-This is a deliberately bounded subset. No macros
-.RI ( [ ... ] ,
-.BR x ),
-no conditional or looping execution
-.RB ( < ,
-.BR > ,
-.BR = ,
-.BR ! ),
-no strings, no
-.B ?
-(read a line as input), no
-.B z / Z
-(stack depth / digit count), and no
-.B i / o
-(input/output radix \(em always base 10 in and out).
+Binary
+.B %
+is dc's own real modulo (matching the sign/magnitude convention of the
+division it's paired with); this is NOT the same operation a
+.B %=
+assignment-operator convention would suggest in a C-like language \(em
+dc has no separate
+.BR %= ,
+so this note exists only to flag that the asymmetry other translations
+in this backlog found between binary
+.B %
+and an assignment form (see
+.IR hoc (1)'s
+own BUGS) does not apply here; dc's
+.B %
+is simply real modulo, full stop.
 .PP
-Register names are single letters,
-.B a
-through
-.B z
-and
-.B A
-through
-.BR Z ,
-not real
-.IR dc 's
-arbitrary single byte; each register holds one value, not real
-.IR dc 's
-register stack (pushing a second value into an already-occupied register
-simply replaces it).
-.PP
-Precision and rounding were reverse-engineered against the host's own
-.I dc
-with targeted probes, not read off the POSIX text from memory \(em see
-the comment at the top of
-.B p9/cmd/dc.b
-for exactly what was checked before any of this was written: add and
-subtract take the max of the two operands' scales, exactly; multiply's
-natural scale is the sum of the operands' scales, truncated toward zero
-only if that sum exceeds the larger of the current scale and the two
-operands' scales; divide, modulo and square root always truncate to the
-current scale; and a value that comes out to exactly zero prints a bare
-.B 0
-regardless of its scale. All of this is checked byte-for-byte against
-.B /usr/bin/dc
-on the same program, not asserted from documentation.
-.PP
-Numbers are exact only up to a real limit, and it is a narrower one than
-first assumed: Limbo's
-.B big
-is a 64-bit signed integer here, not arbitrary precision (real
-arbitrary-precision integers in this tree are a different thing,
-.IR ipints (2)),
-so every internal multiply and scale-up is bounded by that width. Found
-by sweeping
-.BI n "k 2 v p"
-(square root of 2 at scale
-.IR n )
-for
-.I n
-1 through 20 against the host's real
-.IR dc :
-.I n
-1 through 9 match exactly; at
-.I n
-10 the two diverge \(em the real
-.I dc
+.BI value\ exponent ^
+result scale is
+.BR max(k,\ value's\ own\ scale) ,
+not
+.IR value 's
+scale multiplied by the exponent \(em confirmed directly:
+.B "2.5 2 ^ p"
 prints
-.BR 1.4142135623 ,
-this one used to print a nonsense negative number instead, silently,
-with no error at all, because the internal multiply wrapped around at
-the 64-bit boundary. That is now caught rather than silently wrong:
-.B dc
-fails with
-.B "precision exceeded"
-instead of printing a wrapped-around answer, the moment any internal
-value would need more than roughly 18\(en19 significant decimal
-digits to represent exactly. This is a real, load-bearing limit for
-large scales combined with
-.BR ^ ,
-not a cosmetic one \(em check for it (a raised failure, not a wrong
-answer) rather than assuming any given computation fits.
+.BR 6.2 ,
+not
+.B 6.25
+(the mathematically exact
+.BR 2.5\(S2 ).
+Read from tracing
+.B dcexp()
+and the
+.B ^
+command by hand before trusting it, not assumed from the source's own
+variable names.
+.PP
+A dc script that stores a plain scalar into a register numbered
+.B >= 221
+(one that
+.B :
+/
+.B ;
+could also address as an array), or that uses
+.B :
+with fewer than two values on the calculator stack, does something the
+real Plan 9 binary handles by writing into memory in a way that
+crashes it outright (confirmed directly \(em exit 139, SIGSEGV, on
+.BR "5 :r" ) \(em
+this port never crashes on either case, substituting a safe empty
+array or a plain "stack empty" message instead. See
+.BR dc.b 's
+own header comment for the full reasoning \(em the same class of
+deliberate substitution as this backlog's
+.IR join (1)
+port, which does the same for an out-of-range
+.B \-o
+field that also segfaults the real
+.BR join .
+.PP
+The
+.B !
+shell-out runs the HOST's own
+.B sh
+(via
+.IR cmd (3)),
+not
+.BR /bin/rc ,
+which this host does not have \(em a deliberate substitution, not an
+oversight.
+.PP
+No 9front-vs-plan9port divergence found (the two copies differ by only
+78 lines, all 9front-side robustness fixes \(em nil checks, buffer-
+overflow guards \(em not algorithm changes), so both were treated as
+one source and plan9port's real binary used as the live oracle
+throughout.

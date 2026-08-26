@@ -1631,38 +1631,161 @@ below.
     external data tarball just to test - a dependency nothing else in
     this backlog has needed. Skipped.
 
-20. **`dc.b`'s redo scoped, deliberately still not started - a
-    different SIZE of job than anything on this list, not just the
-    next item on it.** `sys/src/cmd/dc.c` (2,298 lines; plan9port's
-    copy is 2,287, a 78-line diff that is entirely 9front-side
-    robustness fixes - buffer-overflow guards, nil checks - not
-    algorithm changes, so plan9port's real `dc` binary is a valid live
-    oracle the same way pr's was). The blocker: dc is Plan 9's own
-    predecessor to POSIX `dc`, with true arbitrary-precision decimal
-    arithmetic (a hand-rolled `Blk`/bignum allocator, `salloc`/
-    `morehd`/`release`) and named registers that are *stacks*, not
-    single values (`sptr->val` push/pop) - plus macro strings that get
-    executed as further input, and a `!` shell-out (`execl("/bin/rc",
-    ...)`) with no Inferno equivalent, a documented drop like tar.b's
-    own `-z`. This tree has no arbitrary-precision integer with dc's
-    needed shape: `big` is a fixed 64-bit type (see
-    `inferno-rio-big-is-64bit`), and the one real bignum this tree
-    has, `module/ipints.m`'s `IPint`, is shaped for cryptographic
-    modular arithmetic - no decimal scale concept, no
-    truncate-toward-zero semantics dc needs. So the actual first step
-    isn't translating any of dc.c's 2,298 lines; it's building (or
-    adapting IPint into) a scale-aware arbitrary-precision decimal
-    layer first, a multi-session subsystem prerequisite that none of
-    file/tar/pr/hoc needed - each of those translations was cheap
-    specifically because Inferno already had the primitive the C
-    leaned on (bufio seek, regex(2), Draw, ustar-as-a-spec); dc fails
-    that test outright. The EXISTING `p9/cmd/dc.b` is not a partial
-    translation to extend - it's a different program, a bounded 64-bit
-    fixed-point workalike (`Dnum{m:big; f:int}`) verified against the
-    WRONG oracle (macOS's own `/usr/bin/dc`, not Plan 9's) - it must be
-    replaced wholesale, not built on. With `dict` ruled out above, this
-    closes the item-9 backlog list as a source of quick next files;
-    what's left is dc's subsystem-sized redo, plus the three
-    already-flagged coherent subsystem questions (fs-servers, mail,
-    ssh/tls) and the unclassified 9front-specific residual - all real
-    design work, not a next file to read cold.
+20. **`p9/cmd/dc.b` redone as a real translation of `sys/src/cmd/dc.c`
+    (2,298 lines; plan9port's copy is 2,287, a 78-line diff that is
+    entirely 9front-side robustness fixes - buffer-overflow guards,
+    nil checks - not algorithm changes, so plan9port's real `dc`
+    binary is a valid live oracle the same way pr's was): done.**
+    REPLACES the earlier `p9/cmd/dc.b` wholesale, not built on it -
+    that file was a bounded 64-bit fixed-point workalike
+    (`Dnum{m:big; f:int}`) verified against the WRONG oracle (macOS's
+    own `/usr/bin/dc`, not Plan 9's).
+
+    **A prior scoping pass (this same item, first version) concluded
+    dc needed an arbitrary-precision decimal layer built FIRST, as a
+    multi-session prerequisite, since `big` is a fixed 64-bit type and
+    the tree's one real bignum (`module/ipints.m`'s `IPint`) is shaped
+    for cryptographic modular arithmetic. That assessment was WRONG,
+    corrected only by actually reading the source rather than
+    reasoning about what it must need: dc.c carries its OWN complete
+    arbitrary-precision arithmetic already, entirely within a single
+    data structure (`Blk` - a growable byte buffer with four cursors,
+    doing quadruple duty as a base-100 digit array, a two's-
+    complement-style negative-number representation at that radix, a
+    literal string/macro buffer, and - via a raw pointer-cast
+    reinterpretation the code calls `Wblk` - a resizable array of
+    `Blk*`). There was never a missing primitive to build; translating
+    that ONE buffer abstraction faithfully (as `array of int` plus two
+    cursors, matching each C macro's exact pointer arithmetic - `beg`
+    is always index 0 and never needs its own field, `last` is always
+    `len buf`) and then porting every arithmetic routine line-by-line
+    on top of it was the whole job, the same "translate the buffer,
+    then the algorithms on top of it" strategy that made file.c's
+    ~30 classifiers and tar.c's ustar-as-a-spec cheap despite their own
+    line counts. The corrected lesson: SCOPE FROM THE ACTUAL SOURCE,
+    not from a plausible-sounding assessment of what a program "must"
+    need - the same discipline `pr.c`'s "middle tier" guess and this
+    same backlog's `dict` "no source" guess both violated too.
+
+    Deliberately NOT reproduced, each for a stated reason: the
+    original's own free-list allocator (`salloc`/`morehd`/`hfree`,
+    `release()` returning memory to it) - pure C memory-management
+    plumbing with zero script-observable effect, made unnecessary by
+    Limbo's GC; the `Wblk` pointer-cast reinterpretation for array
+    registers - replaced with a genuine discriminated register kind
+    (`RegVal`, `Scalar` vs `Arrv`) giving identical behavior for any
+    well-formed script without an actual memory-layout hack Limbo has
+    no way to express; `readc()`'s own middle EOF-fallback branch,
+    confirmed DEAD CODE by reading it (`&readptr[0]` is `&(*(readptr+0))`
+    which is just `readptr` itself, so the condition is `readptr !=
+    readptr` - always false, and doubly unreachable regardless since
+    control only reaches that point when `readptr` is already zero);
+    and the `!` shell-out's `/bin/rc` (a Plan 9 program this host does
+    not have), substituted with the host's own `sh` via `#C`, the same
+    class of choice as this backlog's other host-facing corners. No
+    setjmp/longjmp anywhere in dc.c (unlike hoc.c) - every error path
+    is an ordinary `continue`/`return` at shallow, bounded depth, so no
+    Limbo exception is used for control flow at all; the one place
+    needing special handling, a literal `exits(0)` (immediate process
+    termination, not a jump to any caller), is reproduced with a plain
+    `finished` flag checked at the handful of call sites that could
+    reach it - deliberately avoiding hoc.b's own exception-frame-crash
+    class of risk from the start rather than needing to discover it.
+
+    THREE real bugs found, all confirmed with negative controls:
+
+    (1) A genuine TRANSLATION bug in the Blk buffer core itself: the
+    source's `sunputc(p)` macro is `*((p)->rd = --(p)->wt)` - decrement
+    `wt`, ALSO assign `rd = wt`, THEN dereference - and the first pass
+    at this file translated only the decrement-and-read half, missing
+    the `rd = wt` assignment entirely. This left `rd` one past the
+    buffer's real end after popping a number's scale byte, so the very
+    next cursor read (`sfbeg`/`sbackc`) silently read stale, already-
+    "removed" data instead of the actual last digit - `0k 1 3 / p`
+    wrongly reported "divide by 0" (reading a stale zero byte as the
+    divisor's last digit) and `5k 2 v p` wrongly reported "sqrt of neg
+    number". Root-caused by tracing the exact pointer arithmetic (not
+    just an intent-level paraphrase of the macro) after the symptom
+    appeared, fixed by adding the missing assignment, and confirmed
+    with a genuine negative control (reverting it reproduced the exact
+    same eight failures - spurious "divide by 0"/"sqrt of neg number"
+    across every base-conversion and division-adjacent case - restoring
+    it cleared them). The general lesson: a macro whose expression
+    carries an assignment INSIDE a dereference (`*(p->rd = expr)`) has
+    to be derived from the literal pointer arithmetic, not read for
+    apparent intent - this is the second time in this backlog a cursor
+    macro's exact semantics, not its obvious-looking shape, mattered
+    (see hoc.b's own driver-lookahead bug).
+
+    (2) `P` (pop and print as a literal string) appended an extra NUL
+    byte to its own output. The source's `sputc(p,0)` before the
+    `Bprint(&bout,"%s",...)` call exists ONLY to NUL-terminate for C's
+    own `"%s"` convention - the NUL itself is never actually printed,
+    just a stopping point Limbo strings have no equivalent need for.
+    The translation appended that same byte AND then read it back into
+    the output string, since Limbo strings aren't NUL-terminated and
+    the read loop had no reason to stop early. Found by byte-level
+    inspection (`%q`-formatted output looked identical on both sides
+    at a glance; only comparing lengths and individual byte values
+    surfaced the trailing `0`) rather than by re-reading the source a
+    second time. Fixed by not appending the byte at all.
+
+    (3) `pushp2arr()` (the mechanism carrying an array-register value
+    - loaded via `l`/`L` - back onto the plain calculator stack, which
+    has no representation for an array value otherwise) originally
+    stashed the array in a module-level global, consumed by the next
+    `save()` call. This was BROKEN, not just undocumented: `commnds()`'s
+    own `S`/`s` cases unconditionally cleared that global to a fresh
+    empty array immediately before calling `save()`, so the real
+    payload never survived to be read back - `3 0:<221> 5 1:<221>
+    l<221> S<222> 1;<222> p` (load a whole array register, store it
+    into a different one, read an element back) silently produced `0`
+    instead of the loaded value's own `5`, with no error at all. Caught
+    by an advisor review before committing, not by testing (the test
+    suite at that point had no case exercising this at all - added
+    afterward specifically because it was the exact shape needed to
+    catch this). Fixed by carrying the array payload directly on the
+    marker `Blk` itself (a new `arrval` field, nil on every ordinary
+    number/string Blk) rather than through a global every unrelated
+    command could clobber - confirmed with a genuine negative control
+    (reverting to the global-stash version reproduced the exact wrong
+    `0` result, restoring the fix cleared it).
+
+    A genuinely NEW `#C`-oracle finding, not seen in any prior file in
+    this backlog: feeding a live oracle process's STDIN (rather than
+    just reading its output, as every previous translation's test
+    suite did) needs the write-side `data` file reference explicitly
+    dropped (`winfd = nil;`) to force its close - Dis's memory model is
+    reference-counted, not a deferred tracing GC, so dropping the last
+    reference closes the underlying host pipe SYNCHRONOUSLY, delivering
+    real EOF to the child's stdin. Without this the child (correctly)
+    never sees EOF and blocks forever waiting for more input, and the
+    test harness's own read loop blocks right behind it waiting for
+    output that only comes once the child exits - found via a genuine
+    hang during development, isolated to this exact cause by a minimal
+    standalone probe, not documented anywhere in `man/3/cmd`. Recorded
+    in `inferno-rio-cmd-device-oracle` for whichever future translation
+    needs to pipe stdin into its own oracle next.
+
+    Two narrow, deliberate divergences, both matching this backlog's
+    join.b precedent for "the real binary crashes here, this port
+    doesn't": `:` with fewer than two values on the calculator stack
+    segfaults the real oracle (confirmed directly, exit 139 - the
+    original writes the new array register's table entry before
+    checking whether the trailing value-pop actually succeeded) - this
+    port prints "stack empty" and continues safely instead. Storing a
+    plain scalar into a register numbered `>= 221` (one `:`/`;` could
+    also address as an array) is the same class of thing one level
+    narrower - this port substitutes a fresh empty array rather than
+    storing the number's raw bytes for a later `;` to reinterpret as
+    pointers.
+
+    `dctest.b`, 50 cases, live-oracle comparison every run (byte-exact
+    throughout - dc's own arithmetic is exact fixed-point decimal on
+    both sides, so unlike hoc.b's floating-point `%.17g` divergence, no
+    numeric-tolerance comparison is needed anywhere here). With `dict`
+    ruled out above, this closes the item-9 backlog list as a source of
+    quick next files; what remains open is the three already-flagged
+    coherent subsystem questions (fs-servers, mail, ssh/tls) and the
+    unclassified 9front-specific residual - all real design work, not
+    a next file to read cold.
