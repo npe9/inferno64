@@ -248,8 +248,16 @@ destroy(void *v)
 
 		xp = currun();
 		if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
-			print("destroy: bad v %p, running Dis pid %d module %s PC %#p\n",
-				v, xp->pid, xp->R.M->m->name, xp->R.PC);
+			/*
+			 * The instruction index (PC - m->prog) is build-
+			 * independent -- a module's own compiled bytecode
+			 * doesn't move across kernel rebuilds, unlike the
+			 * raw PC pointer -- so it's directly disassemblable
+			 * with disdump against the same .dis file later.
+			 */
+			print("destroy: bad v %p, running Dis pid %d module %s PC %#p inst %d\n",
+				v, xp->pid, xp->R.M->m->name, xp->R.PC,
+				(int)(xp->R.PC - xp->R.M->m->prog));
 		else
 			print("destroy: bad v %p, currun() nil or has no module\n", v);
 		dumpstack();

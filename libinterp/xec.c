@@ -343,8 +343,10 @@ OP(movp)
 
 			xp = currun();
 			if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
-				print("movp: bad sv %p, running Dis pid %d module %s PC %#p\n",
-					sv, xp->pid, xp->R.M->m->name, xp->R.PC);
+				/* inst offset is build-independent; see destroy()'s comment. */
+				print("movp: bad sv %p, running Dis pid %d module %s PC %#p inst %d\n",
+					sv, xp->pid, xp->R.M->m->name, xp->R.PC,
+					(int)(xp->R.PC - xp->R.M->m->prog));
 			else
 				print("movp: bad sv %p, currun() nil or has no module\n", sv);
 			dumpstack();
@@ -406,58 +408,6 @@ OP(mnewz)
 	*wp = H2D(WORD*, h);
 	destroy(t);
 }
-
-/*
- * Check a frame descriptor against the frame it describes.
- *
- * The first cut of this probe compared t->np*8*sizeof(WORD) against
- * t->size as a whole, and that is too strict: initmem()/freeptrs() gate
- * every w[i] access behind "if(c != 0)" for each map byte, so a trailing
- * map byte that is all zero bits is walked (p++, w += 8) but never
- * dereferenced -- harmless, however far past t->size its nominal 8 words
- * would reach.  That first version fired on 11 of 12 boots in batch9,
- * always with the identical t->np 2 t->size 72 in module Init -- and a
- * check that fires the same way on (almost) every boot cannot be the
- * nondeterministic crash this hunt has been chasing; it is a static fact
- * about Init's own compiled type table, not runtime corruption.  See
- * doc/inferno-ports.ms.
- *
- * The real invariant is per bit, not per byte: only a *set* bit names a
- * word initmem()/freeptrs() will actually touch, and BIT(c, nb) in
- * freeptrs() names w[7-nb] -- word index i*8+(7-nb) for map byte i.
- * Flag only a set bit whose word falls outside t->size.
- */
-static void
-checkframedesc(Type *t, char *op, char *name)
-{
-	uchar *p, *ep;
-	int i, nb, c, wi;
-
-	if(t->np == 0)
-		return;
-	p = t->map;
-	ep = p + t->np;
-	i = 0;
-	while(p < ep) {
-		c = *p;
-		if(c != 0) {
-			for(nb = 0; nb < 8; nb++) {
-				if((c & (1<<nb)) == 0)
-					continue;
-				wi = i*8 + (7-nb);
-				if((uintptr)(wi+1)*sizeof(WORD*) > (uintptr)t->size) {
-					print("%s: descriptor overflow byte %d bit %d word %d "
-						"needs %lud bytes t->size %d t->np %d module %s\n",
-						op, i, nb, wi, (ulong)(wi+1)*sizeof(WORD*),
-						t->size, t->np, name);
-					abort();
-				}
-			}
-		}
-		p++;
-		i++;
-	}
-}
 OP(frame)
 {
 	Type *t;
@@ -478,7 +428,6 @@ OP(frame)
 	f->mr = nil;
 	DBG("frame frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
-	checkframedesc(t, "OP(frame)", R.M->m->name);
 	if (t->np)
 		initmem(t, f);
 	T(d) = f;
@@ -520,7 +469,6 @@ OP(mframe)
 	f->mr = nil;
 	DBG("\t\tmframe frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
-	checkframedesc(t, "OP(mframe)", ml->m->name);
 	if (t->np)
 		initmem(t, f);
 	T(d) = f;
@@ -955,15 +903,95 @@ OP(mcall)
 			-o-1, ml->m->ext[-o-1].name, ml->m->ext[-o-1].sig);
 	}
 	if(ml->prog == nil) {
-		l->runt(f);
+		/*
+		 * Probe: two independent opcodes (destroy(), called from
+		 * this same branch's freeptrs() below, and OP(movp)) have
+		 * both faulted on a pointer-typed slot holding a small
+		 * non-H garbage value rather than a real heap pointer.
+		 * f comes from T(s) -- Dis stack space, not a fresh
+		 * allocation -- and l->runt(f) is a native/builtin
+		 * function writing its return value(s) directly into f.
+		 * If f->t itself changes across that call, freeptrs()
+		 * below reads the frame against the wrong map and calls
+		 * destroy() on whatever bytes happen to be at the wrong
+		 * offset.  One-shot check for that specific mismatch,
+		 * not a general audit.  See doc/inferno-ports.ms.
+		 */
+		{
+			Type *savedt = f->t;
+
+			l->runt(f);
+			if(f->t != savedt) {
+				print("mcall: f->t changed across l->runt(f): was %p now %p module %s\n",
+					savedt, f->t, ml->m->name);
+				abort();
+			}
+		}
 		ADEC(&h->ref);
 		R.M = f->mr;
 		R.SP = R.FP;
 		R.FP = f->fp;
 		if(f->t == nil)
 			unextend(f);
-		else if (f->t->np)
+		else if (f->t->np) {
+			/*
+			 * Probe: a batch13 capture named the exact source
+			 * call site for the first time (Env->getenv()'s
+			 * sys->open(), via the instruction-offset field
+			 * added below) -- but Sys_open() itself is correct,
+			 * it nils *f->ret before release() and only ever
+			 * writes H or a real fd.  *f->ret is one slot; this
+			 * frame's map may cover others freeptrs() would
+			 * also walk (eg the ENVDIR+var string addc() built
+			 * before the call), and Sys_open never touches
+			 * those.  Scan every slot the map marks as a
+			 * pointer before freeptrs() runs; a slot that is
+			 * neither H nor plausibly a heap address names which
+			 * one is actually bad, not just that one exists.
+			 * See doc/inferno-ports.ms.
+			 */
+			uchar *mp, *mep;
+			WORD **fw;
+			int mi, bad;
+
+			fw = (WORD**)f;
+			mp = f->t->map;
+			mep = mp + f->t->np;
+			mi = 0;
+			bad = 0;
+			while(mp < mep) {
+				int c, nb;
+
+				c = *mp;
+				for(nb = 0; nb < 8 && c; nb++) {
+					if((c & (1<<nb)) == 0)
+						continue;
+					if((uintptr)fw[mi*8+(7-nb)] < 0x1000 &&
+					    fw[mi*8+(7-nb)] != H) {
+						bad = 1;
+						break;
+					}
+				}
+				if(bad)
+					break;
+				mp++;
+				mi++;
+			}
+			if(bad) {
+				Prog *xp;
+
+				print("mcall: bad slot in frame after l->runt, module %s\n",
+					ml->m->name);
+				showframe((void*)f, f->t);
+				xp = currun();
+				if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+					print("mcall: running Dis pid %d module %s PC %#p inst %d\n",
+						xp->pid, xp->R.M->m->name, xp->R.PC,
+						(int)(xp->R.PC - xp->R.M->m->prog));
+				abort();
+			}
 			freeptrs(f, f->t);
+		}
 		p = currun();
 		if(p->kill != nil)
 			error(p->kill);

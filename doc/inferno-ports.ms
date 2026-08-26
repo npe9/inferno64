@@ -4920,20 +4920,312 @@ probe: twelve boots, two crashes
 and a new one-off,
 .CW "panic: init0: clone failed" ,
 not chased), neither at
-.CW movp .
-A much lower crash rate than this hunt's usual near-50%, and the
-specific
+.CW movp ,
+and the specific
 .CW ainc
-page fault did not recur \- consistent with everything else in this
-investigation being allocation-order dependent rather than
-per-build deterministic, not evidence the mechanism is fixed or
-that batch10's capture was a fluke.  Both
-.CW OP(frame) / OP(mframe)
-and
+page fault did not recur.  Two of twelve is not distinguishable
+from this hunt's usual near-50% rate at this sample size \- said
+plainly rather than read as a signal, since this document has
+already had to retract one over-read finding this same round.
 .CW OP(movp)
-stay in place, low-cost and firing only on an already-exceptional
-value; next capture at either compounds directly on what is here.
-Not fixed.
+stays in place, low-cost and firing only on an already-exceptional
+value; the next capture compounds directly on what is here.
+.PP
+Advisor review of this round caught two more things worth acting
+on rather than filing.  First, the
+.CW OP(frame) / OP(mframe)
+descriptor probe had already done its job \- the tightened version
+ran clean, which retired the theory it was built to test \- so it
+was dead weight in shared
+.CW libinterp
+code and is removed (both call sites and the
+.CW checkframedesc()
+helper); the finding stays in the doc, the check does not need to
+keep running to be true.
+.PP
+Second, a sharper reading of the batch10 stack traces: both page
+faults resolved to
+.CW movp+47
+called from
+.CW mcall+212 \-
+.CW OP(mcall) ,
+the same opcode whose
+.CW freeptrs()
+cleanup produced the
+.CW destroy()
+captures.  That is narrower than "upstream of both consumers": two
+independent uses of a bad pointer slot, both reached through
+.CW mcall .
+In
+.CW OP(mcall) 's
+.CW "ml->prog == nil"
+branch,
+.CW f
+comes from
+.CW T(s) \-
+Dis stack space, not a fresh allocation \- and
+.CW l->runt(f)
+is a native/builtin function that writes its return value directly
+into
+.CW f .
+.CW OP(frame) / OP(mframe)
+'s own descriptor is now confirmed sound, but nothing has yet
+checked whether
+.CW f->t
+itself \- the pointer to that descriptor \- survives the native call
+unchanged.  Added a one-shot check: save
+.CW f->t
+before
+.CW l->runt(f) ,
+compare after: a mismatch means
+.CW freeptrs()
+below reads the frame against the wrong map, and calls
+.CW destroy()
+on whatever bytes sit at the wrong offset.  Not yet run.
+
+.NH 1
+The mcall f->t probe ran clean, and dumpstack() is not a real unwind
+.PP
+Ran the
+.CW OP(mcall)
+.CW f->t
+mismatch check: twenty boots, five crashes
+.RB ( "general protection violation" ,
+two page faults, one
+.CW alloc:D2B ,
+and one
+.CW destroy()
+probe hit) \- the mismatch check itself never fired.  That specific
+mechanism is refuted: whatever native call ran in any of these
+twenty boots,
+.CW f->t
+survived it unchanged, so
+.CW freeptrs() 's
+later cleanup was always reading the frame against the descriptor
+that actually built it.
+.PP
+The
+.CW destroy()
+hit
+.RB ( "destroy: bad v 0, running Dis pid 1 module Sh" )
+is the same shape as the two captures already on record, and its
+.CW dumpstack()
+output prompted a second look at what that dump actually shows.
+Resolving every address in it named
+.CW ret+239
+and
+.CW freeptrs+357/367
+near the top of the scan, with no
+.CW mcall
+address anywhere in this particular capture \- a real difference
+from the
+.CW "disinit -> ... -> mcall -> freeptrs -> destroy"
+chain an earlier capture produced.
+.CW OP(ret)
+carries the identical cleanup shape as
+.CW OP(mcall) 's
+native-call branch
+.RB ( "if(f->t\ ==\ nil)\ unextend(f);\ else\ if\ (f->t->np)\ freeptrs(f,\ f->t);" ) ,
+so this reads as
+.I "a different one of several structurally identical call sites"
+reaching the same
+.CW freeptrs()/destroy()
+pair, not a new mechanism.
+.PP
+Worth being precise about what
+.CW dumpstack()
+actually is, though, before trusting that reading too far:
+.CW ktrace 's
+scan walks a raw address range and resolves whatever look like text
+addresses, it does not walk frame pointers.  Addresses from
+opcodes that have already run and returned can still be sitting in
+stack bytes a later, unrelated call reuses, and get resolved right
+alongside addresses that are genuinely still on the call chain \-
+this capture's own
+.CW movp+184 ,
+.CW slicec+78
+and
+.CW bnec+37
+entries are almost certainly exactly that (none of those opcodes
+call each other, or
+.CW ret ,
+or
+.CW freeptrs ;
+they are peers dispatched one after another from the same
+.CW xec()
+loop).  Whether this particular
+.CW destroy()
+call came through
+.CW ret
+or
+.CW mcall
+is therefore a reasonable reading of the freshest, deepest entries
+in the scan, not a proven fact the way the disinit chain was \- and
+it does not change the underlying finding either way: a
+.CW Frame 's
+pointer-typed slot held a value that was neither
+.CW H
+nor a real heap pointer by the time some cleanup read it.
+.PP
+Added one cheap, durable improvement while this capture was in
+hand: both
+.CW destroy() 's
+and
+.CW OP(movp) 's
+probes now also print
+.CW "xp->R.PC\ -\ xp->R.M->m->prog" ,
+the instruction's offset into its module's own code array.  A raw
+.CW R.PC
+pointer is a heap address that moves every boot; this offset does
+not \- a module's compiled bytecode is fixed by
+.CW "disinit.b / sh.b" 's
+own source, unchanged across kernel rebuilds \- so the next capture
+can be handed straight to
+.CW disdump
+against the real
+.CW .dis
+file instead of staying an opaque address.  Not yet exercised
+against a real capture.
+.NH 1
+Naming a source line at last: Env->getenv()'s call to sys->open()
+.PP
+Ran the enhanced probes: twenty boots, five crashes
+.RB ( "general protection violation" ,
+.CW alloc:D2B
+twice at the same address across two different boots (
+.CW 78495b8 ,
+a coincidence of this kernel's own deterministic early heap layout
+before the divergence point, the same shape already filed in
+UPDATE 13 when addresses failed to recur \- not chased further),
+two
+.CW cclose
+panics with different
+.CW ref / flag
+values, and one
+.CW destroy()
+probe hit).  The
+.CW destroy()
+hit
+.RB ( "destroy: bad v 0, running Dis pid 1 module Env PC 0x79276c8 inst 58" )
+is the first capture this whole hunt has been able to turn into an
+actual source line.
+.PP
+.CW xec() 's
+dispatch loop does
+.CW "op\ =\ R.PC->op;\ R.PC++;\ optab[op]();"
+\- PC is advanced
+.I before
+the opcode handler runs, so inst 58 names the instruction
+.I executing ,
+not the one about to run: inst 57.  Ran the hosted
+.CW emu
+against
+.CW dis/lib/env.dis
+through
+.CW disdump
+(headless, no graphics needed \- `emu -r $ROOT disdump /dis/lib/env.dis`)
+and indexed its output 0-based.  Instruction 57 is
+.CW "mcall 72(fp), $2, 40(mp)" ,
+in a block (instructions 53\(en60) that matches
+.CW appl/lib/env.b 's
+.CW getenv()
+byte for byte: an
+.CW addc
+concatenating a string (the source's
+.CW "ENVDIR+var" ),
+a
+.CW movw\ $0
+(.CW Sys->OREAD ,
+which is 0), the
+.CW mcall
+itself, then a
+.CW bnew
+against the module's own nil constant that falls through to
+.CW "movp\ ...;\ ret"
+only when the call's result equals nil \- exactly
+.CW "if (fd == nil) return nil;" .
+This is
+.CW "fd := sys->open(ENVDIR+var, Sys->OREAD);" ,
+the first source-level call site this entire investigation has
+been able to name.
+.PP
+Read
+.CW Sys_open()
+.RB ( os/inferno/port/inferno.c )
+expecting to find the defect there and didn't: it destroys the old
+.CW *f->ret ,
+sets it to
+.CW H
+.I before
+.CW release() ,
+and only overwrites it with a real fd (never anything else) after
+.CW acquire() .
+Every path leaves
+.CW *f->ret
+either
+.CW H
+or a valid pointer \- correct on its own terms, and therefore not
+the explanation by itself.
+.CW *f->ret
+is one slot;
+.CW freeptrs()
+walks every slot the frame's map marks as a pointer, and this
+frame also carries the
+.CW "ENVDIR+var"
+string built by instruction 54's
+.CW addc
+into a different slot
+.CW Sys_open()
+never touches.  Which slot is actually bad was not yet checked.
+.PP
+Added a gated scan in
+.CW OP(mcall) 's
+native-call branch, right where
+.CW freeptrs(f,\ f->t)
+already runs: walk the same bit-per-word map
+.CW freeptrs()
+itself walks, and if any slot the map marks as a pointer holds a
+small non-
+.CW H
+value, print the running module/pid/PC/instruction index and the
+frame's own
+.CW showframe()
+dump (map bytes and every slot's raw contents \- already existed in
+this file, previously reachable only from a permanently disabled
+.CW "if(0)" )
+before aborting.  This names which specific slot is bad, not just
+that the frame has one somewhere.  Not yet run.
+.PP
+Standing blocker, said plainly rather than deferred again:
+.CW dumpstack()
+is still in
+.CW libinterp/heap.c
+and now also
+.CW xec.c ,
+board-specific and not linkable outside pc64.  Hosted
+.CW emu
+was rebuilt and run successfully this round to drive
+.CW disdump \-
+that binary predates these changes; the next build of
+.CW emu/
+(or any other board) will fail to link until
+.CW dumpstack()
+comes out.  pc64 remains the only buildable target.
+.PP
+Ran the gated frame-slot scan: twenty boots, four crashes
+.RB ( "general protection violation" ,
+a page fault, an
+.CW alloc:D2B ,
+one
+.CW cclose ) ,
+none in the
+.CW "destroy() / OP(movp) / OP(mcall)"
+family this round \- no
+.CW getenv() -shaped
+capture occurred to exercise it.  Consistent with this hunt's
+standing nondeterminism, not a result either way.  The scan stays
+in place for the next one.
+
 
 .NH 1
 How a native kernel provides networking
