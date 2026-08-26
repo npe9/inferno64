@@ -1869,28 +1869,32 @@ through a minimal interface - an address space, a mapped ring, message
 passing over that ring, and exit.
 .PP
 And the file server it talks to over the ring now exists, so the
-personality library reaches a file it does not hold.  The boot makes a
-second container, the server, delegates the client to it, and spawns a
-task that answers the client's reads.  The program submits a read on its
-ring; servicing it forwards the request to the server's ring rather than
-to the kernel, which has no personality to answer with; the server task
-reads it, answers with the file's bytes, and routes the reply back; the
-program reads the bytes out of the reply.  The kernel carried the
-messages and nothing else.  A bug found on the way is worth the line: the
-service call serviced and returned at once with no yield, so the retry
-loop was a tight spin that starved the server task, and the answer came
-only after the program had given up; making the service yield after
-servicing fixed it, and the fetch lands every time (xup64 six of six).
+personality library reaches files it does not hold, by a real open and
+read protocol.  The boot makes a second container, the server, delegates
+the client to it, and spawns a task that holds a small name space of a
+couple of files.  The library opens a file by name: it writes the name
+into its own data area and submits an open; the server reads the name out
+of the client's slice, which delegation entitles it to, resolves it, and
+returns a handle.  Then the library reads: it submits a read with the
+handle, and the server copies that file's bytes into the client's data
+area - so the answer is the whole file, not what fits in a reply - and
+returns the count, and the library reads the bytes out of its own memory.
+Both operations cross the ring, both run in user space, and the kernel
+carries the messages and nothing else.  Two bugs fell on the way, each a
+general one: the service call must yield after servicing or the retry
+loop starves the server task, and the flat-loaded program has no data
+segment, so its ring state lives on the stack, not in statics that are
+BSS the image does not load.
 .PP
 This is the paper's shape now in full, in miniature: a microkernel of
 four services and a minimal interface to them; a program on top whose OS
-personality is a library it links; and, reached by message passing over
-the ring, a file server that is another program on the same microkernel.
-What is small is the content, not the structure - the file is a held
-string capped at what fits in a reply's spare words, not a name space
-read from storage.  Growing that - the server writing into the client's
-data area for a longer answer, which delegation already entitles it to,
-and a real name space behind it - is the work from here.
+personality is a library it links; and, reached by an open-and-read
+protocol over the ring, a file server that is another task on the same
+microkernel, answering in its own name space.  What is small is the
+content, not the structure - two held files, not storage behind a real
+tree, and a server that is a kernel task rather than its own user
+program.  Growing those is the work from here; the structure is the
+library operating system the paper describes.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
