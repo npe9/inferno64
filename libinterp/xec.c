@@ -484,6 +484,44 @@ acheck(int tsz, int sz)
 	if((int)(sizeof(Array) + sizeof(Heap) + tsz*sz) < sz && tsz != 0)
 		error(exHeap);
 }
+/*
+ * Probe: the crash hunt's two closest destroy()/OP(movp) captures in
+ * module Sh (see doc/inferno-ports.ms, "A durable resolver, two named
+ * sites in sh.b") resolve four lines apart in yyparse()'s own
+ * shift-stack growth -- "array of YYS" doubled by a chained
+ * slice-assign, then a whole YYSTYPE struct written into a freshly
+ * grown slot.  YYS is {yyv: YYSTYPE; yys: int} and YYSTYPE is
+ * {node: ref Node; word: string; redir: ref Redir; optype: int} --
+ * three pointers and an int, wrapped in another int: five words,
+ * t->size 40 on this port (DISWORD 8).  A host-side repro of the
+ * exact same layout ran clean under hosted emu, but that is a
+ * different VM binary with no SMP and no release()/acquire()
+ * interleaving -- not evidence either way for pc64.  This checks the
+ * one thing the repro couldn't: whether the *real* sh.dis's own
+ * compiled type descriptor for this exact shape is what it should be
+ * (map byte 0xe0 -- bits set for words 0,1,2 (node/word/redir), clear
+ * for words 3,4 (optype/yys) -- see freeptrs()'s BIT(c,nb)->w[7-nb]
+ * for why the bit order runs that way).  One-shot per boot, gated on
+ * the module and the exact size so it can't fire on unrelated
+ * allocations elsewhere in a long-running shell session.
+ */
+static int probedarrtype;
+
+static void
+probearrtype(Type *t, int sz)
+{
+	if(probedarrtype || t->size != 40 || strcmp(R.M->m->name, "Sh") != 0)
+		return;
+	probedarrtype = 1;
+	print("newa: array of type size %d np %d map", t->size, t->np);
+	{
+		int i;
+		for(i = 0; i < t->np; i++)
+			print(" %#.2ux", t->map[i]);
+	}
+	print(" sz %d module %s\n", sz, R.M->m->name);
+}
+
 OP(newa)
 {
 	int sz;
@@ -493,6 +531,7 @@ OP(newa)
 
 	t = R.M->type[W(m)];
 	sz = W(s);
+	probearrtype(t, sz);
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
@@ -518,6 +557,7 @@ OP(newaz)
 
 	t = R.M->type[W(m)];
 	sz = W(s);
+	probearrtype(t, sz);
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;

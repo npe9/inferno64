@@ -5605,6 +5605,100 @@ bytes.
 .PP
 All three boards still run a shell with no ip library linked.
 .NH 1
+The type descriptor is correct on real pc64; three mechanisms closed
+.PP
+Checked the thing the host repro couldn't reach: the actual compiled
+type descriptor for
+.CW "array of YYS"
+in the real
+.CW sh.dis
+running on pc64 itself, not a hand-written stand-in.  Added a
+one-shot print in
+.CW OP(newa) / OP(newaz)
+(shared helper
+.CW probearrtype() ,
+gated on module
+.CW Sh
+and
+.CW t->size\ ==\ 40
+so it cannot fire on an unrelated allocation elsewhere in a long
+shell session) dumping
+.CW t->size ,
+.CW t->np
+and the map bytes.  Five boots, four hits, byte-identical every
+time:
+.CW "size 40 np 1 map 0xe0 sz 200" .
+.CW 0xe0
+is
+.CW "11100000" \-
+bits 7, 6, 5 set, matching the predicted layout exactly: word 0
+.RB ( node ,
+a pointer), word 1
+.RB ( word ,
+a pointer), word 2
+.RB ( redir ,
+a pointer) marked; word 3
+.RB ( optype ,
+an int) and word 4
+.RB ( yys ,
+an int) correctly left clear.  The compiler's type descriptor for
+this exact shape is right, on the real binary, not just in a
+hand-written repro.  That closes the type-descriptor theory for
+good, not just "probably fine.''
+.PP
+Checked which allocation this actually is before trusting that,
+per the standing rule that a capture's identity has to be confirmed
+before building on it:
+.CW sh.b:79
+declares
+.CW "YYMAXDEPTH: con 200" ,
+and
+.CW sh.b:2769
+is
+.CW "yys := array[YYMAXDEPTH] of YYS;" \-
+.CW sz\ 200
+is
+.I "yyparse() 's own initial allocation" ,
+not a guess at a growth event.  The shift stack starts at its full
+200-entry capacity from the first call; the doubling code at
+.CW sh.b:2788
+is a rare overflow fallback, only reached if a single parse ever
+needs to nest 200 levels deep \- worth keeping in view rather than
+assumed innocent, since an ordinary shell script hitting that path
+at all is itself unusual.
+.PP
+A third mechanism closes alongside these two, on inspection rather
+than a new probe:
+.CW acquire() / release()
+(
+.CW os/inferno/port/dis.c )
+is a single global queue
+.RB ( isched.vmq ,
+one lock,
+.CW isched.idle
+tracking whether any kproc holds the token) \- exactly one host
+kproc may execute Dis bytecode at any instant, on pc64 same as the
+hosted tree, regardless of how many physical CPUs this SMP kernel
+has.  Genuinely parallel bytecode execution was a candidate
+mechanism raised and set aside without checking two sections back;
+it is now checked and closed, not just dropped.
+.PP
+Three mechanisms now closed with direct evidence: the type
+descriptor is correct, the construct is not deterministically
+broken in isolation (previous section, host
+.CW emu ) ,
+and Dis bytecode never runs on two CPUs at once.  What remains
+open: whether something clobbers this array's memory
+.I between
+its correct creation and the moment
+.CW destroy() / OP(movp)
+read a bad slot back \- a use-after-free-into-reuse or an
+allocator-level bug neither a type check nor an isolated repro can
+see.  Watching one specific allocation's memory across that window
+needs a different technique than a print at a fixed instruction;
+choosing one is deferred, not started this round.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
