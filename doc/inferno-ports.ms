@@ -3631,8 +3631,8 @@ on to crash later anyway.  Ruled out, at least for early ticks: the
 clock handler is not running with garbage state when it fires.
 Reverted before this commit.
 .PP
-One new, concrete thread pulled from that same boot's crash, not
-yet followed: this run's fault \(em general protection violation,
+One thread from that same boot's crash, raised and then retracted:
+this run's fault \(em general protection violation,
 .CW currun()
 nil (no Dis Prog was current, the first time that has been true in
 any capture) \(em put the identical 64-bit pattern,
@@ -3641,55 +3641,71 @@ in both
 .CW BP
 and
 .CW CX .
-Two different registers holding one register's worth of value
-repeated is the signature of both having been loaded from the same
-corrupted location, not two independent bad values.  Grepped this
-port for it: not a deliberate poison constant anywhere in this
-tree, not
-.CW badc0c0a ,
-not
-.CW H
-.RB ( 0xffff...ff ) .
-But
-.CW pc64/memory.c
-fixes
+First read as two registers loaded from one shared corrupted
+location, and as a BIOS-ROM address given
+.CW pc64/memory.c 's
 .CW 0xF0000\(en0xFFFFF
-as this board's own BIOS ROM address range in two places, and
+reservation \- both wrong.
 .CW F000FF53
-sits inside it \- the low 32 bits read as a real-mode-style
-segment:offset,
-.CW F000:FF53 ,
-in the same neighbourhood as the reset vector.  A pointer that
-should hold a kernel heap address instead holding raw BIOS ROM
-content, replicated across both halves of a 64-bit read, is
-consistent with an uninitialised or never-written memory location
-being read as if it were live heap \- worth checking next against
-.CW memory.c 's
-own reservation of that range, and against wherever
+is the ordinary shape of a register that was simply never
+meaningfully loaded on this fault path (this exact value turns up
+in QEMU register dumps generically, not as content read from
+anywhere in this port); two registers sharing it on a
 .CW currun()
-being nil at this exact fault points: whatever pointer chain
-.CW dumpregs()
-was mid-read on when this landed.
+nil capture is consistent with a frame that was never established, not
+with a shared bad pointer.  No lead here after all \- said plainly
+so the next session does not chase
+.CW memory.c 's
+map for it.
+.PP
+Checked the header arithmetic behind the
+.CW alloc:D2B
+block dump properly this time, against
+.CW include/pool.h 's
+actual
+.CW Bhdr
+.RB ( "u32\ magic;\ uintptr\ size;\ intptr\ allocpc;\ intptr\ reallocpc;" ,
+32 bytes with padding on this LP64 port, confirmed against the
+dump: word0's
+.CW badc0c0a
+is
+.CW MAGIC_F
+in the low 32 bits, word1's
+.CW 100
+is
+.CW size ,
+and
+.CW fb+size
+.RB ( 784c298+0x100 )
+lands exactly on the panic's own
+.CW "next\ block\ 0x784c398" ).
+The freed payload itself, 224 bytes starting at
+.CW B2D(fb) ,
+carries two
+.CW H
+sentinels sixteen bytes apart alongside several pointers into the
+same
+.CW 0x78xxxxxx
+heap arena \- a real, promising shape, not yet matched to a named
+struct.
 .PP
 Not fixed, and, honestly, not close: this is pre-existing, general
 memory corruption whose trigger has not been isolated, discovered
 from far fewer samples than eleven boots turns out to need.  The
-concrete next steps, in order of cost: (1) enough further plain
-boots to get
-.CW dumpregs() 's
-module-name field into double digits of samples, since three
-readings is not enough to say whether
-.I any
-particular module is favoured or the corruption is truly
-indifferent to what is running; (2) grep this tree for
-.CW F000FF53
-and neighbouring constants, since a repeated, recognisable literal
-is the cheapest kind of lead this document has had all session; (3)
-the
+concrete next step, and the one that actually decides whether more
+of this is worth doing: several more
 .CW alloc:D2B
-capture's full block dump
-.RB ( "size\ 100 ,\ ec\ 0x78bb498" )
-matched loosely against
+captures, specifically to compare
+.I addresses .
+If the block address and
+.CW size\ 100
+recur, the corruption lands at a fixed heap offset and is
+bisectable; if both differ every time, it is allocation-order
+dependent, and matching one dump's payload shape against a struct
+layout is not worth the time it costs.  Only if addresses recur is
+it worth going on to match the payload's two
+.CW H
+sentinels and heap-pointer fields against
 .CW libinterp/heap.c 's
 .CW Heap
 header and
