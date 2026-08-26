@@ -471,25 +471,47 @@ startboot(char *arg0, char**)
 			 * squares, cursors or clicks.
 			 */
 			{
-				enum { Kbdoff = 1024, Kbdn = 256, Mouseoff = 2048, Mousen = 256 };
+				enum { Kbdoff = 1024, Kbdn = 256, Mouseoff = 2048, Mousen = 256, Armoff = 512 };
 				uchar *kring = r.base + r.map->data + Kbdoff;
 				uvlong *kwp = (uvlong*)kring;
 				uchar *kbytes = kring + 8;
 				uchar *mring = r.base + r.map->data + Mouseoff;
 				uvlong *mwp = (uvlong*)mring;
 				uchar *mbytes = mring + 8;
+				Arm *iarms = (Arm*)(r.base + r.map->data + Armoff);
 				uvlong krp, mrp;
 				ulong save[Cw*Ch];
-				int i, keys, clicks, moved, cx, cy, pkt[3], pi;
+				int i, keys, clicks, moved, cx, cy, pkt[3], pi, idle;
 
-				puts("osprey user: keyboard and mouse drivers reading exposed rings\n");
+				puts("osprey user: keyboard and mouse drivers selecting on their interrupt semaphores\n");
 				krp = *kwp;		/* ignore anything before we start */
 				mrp = *mwp;
 				keys = 0; clicks = 0; moved = 0; pi = 0;
 				cx = 640; cy = 400;
 				savebox(fb, Fbw, cx, cy, save);
 				drawcursor(fb, Fbw, cx, cy);
-				for(i = 0; i < 6000 && keys < 40 && clicks < 20; i++){
+				/*
+				 * The talk's driver shape: a task that selects on its
+				 * interrupt semaphores.  The keyboard's interrupt gives
+				 * semaphore 1 and the mouse's gives semaphore 2, both
+				 * exposed to this container; the driver waits with select
+				 * over a down on each, and wakes when either fires.  The
+				 * scancode or mouse byte itself is in the ring the handler
+				 * filled - the semaphore is the wake, the ring is the data.
+				 */
+				iarms[0].op = OSdown; iarms[0].obj = 1; iarms[0].buf = 0;	/* keyboard */
+				iarms[1].op = OSdown; iarms[1].obj = 2; iarms[1].buf = 0;	/* mouse */
+				/*
+				 * Count idle waits, not wakes: a burst of input should
+				 * keep the driver alive, so it only gives up after a run
+				 * of selects that timed out with nothing ready (~20s).
+				 */
+				idle = 0;
+				for(i = 0; idle < 100 && keys < 40 && clicks < 20 && i < 100000; i++){
+					if(oselect(Armoff, 2) < 0)	/* wait for a keyboard or mouse interrupt */
+						idle++;			/* nothing this time */
+					else
+						idle = 0;		/* woke on an event */
 					/* keyboard: a square per key press, marching across */
 					while(krp != *kwp && keys < 40){
 						uchar sc = kbytes[krp % Kbdn];
@@ -545,7 +567,6 @@ startboot(char *arg0, char**)
 							clicks++;
 						}
 					}
-					sleep(5);
 				}
 				puts("osprey user: mouse moved "); putint(moved);
 				puts(" steps; drivers done\n");

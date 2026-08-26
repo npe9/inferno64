@@ -71,8 +71,8 @@ def main():
                     'select over its ring' in t))
     results.append(("and a user-level graphics driver draws to the frame buffer the microkernel exposed",
                     'drew a windowed desktop to the frame buffer' in t))
-    results.append(("and user-level keyboard and mouse drivers read the rings the microkernel's interrupts fill",
-                    'keyboard and mouse drivers reading exposed rings' in t))
+    results.append(("and user-level keyboard and mouse drivers select on the interrupt semaphores the microkernel exposes",
+                    'selecting on their interrupt semaphores' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'the program exited' in t and 'panic' not in t))
 

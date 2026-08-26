@@ -2000,9 +2000,17 @@ interrupts at the controller itself, since it runs no keyboard
 initialisation of its own, and links no keyboard or mouse device: the
 hardware is exposed, the driver is above.
 .PP
-Above the kernel, in the same program, the drivers read those rings.  The
-keyboard driver draws a square per key press and echoes the scancode to
-the console.  The mouse driver assembles the three-byte PS/2 packets,
+Above the kernel, in the same program, the drivers wait on those
+interrupts the way the talk says a driver does: they select on the
+interrupt semaphores.  The keyboard's interrupt gives semaphore one and
+the mouse's gives semaphore two, both exposed to the container; the driver
+selects over a down on each and wakes when either fires, then reads the
+scancode or mouse byte out of the ring the short handler filled - the
+semaphore is the wake, the ring is the data.  This is the same select the
+file server waits on its ring with, on the other arm the talk names: a
+down on a semaphore rather than a get on a ring.  The keyboard driver
+draws a square per key press and echoes the scancode to the console.  The
+mouse driver assembles the three-byte PS/2 packets,
 sign-extends the movement, moves the cursor sprite over the desktop \-
 saving and restoring the pixels under it, so it lifts cleanly \- and marks
 a left button press.  Driven from the outside: sending
@@ -2016,8 +2024,9 @@ it is in the kernel.
 .PP
 So both halves of the driver model are live above the microkernel:
 exposed device memory drives a user-level graphics driver, and exposed
-interrupts drive user-level keyboard and mouse drivers, each an interrupt
-handed on as a semaphore and a ring.  This is the path the gap analysis
+interrupts drive user-level keyboard and mouse drivers that select on
+those interrupts' semaphores, each interrupt handed on as a semaphore the
+driver waits on and a ring the driver reads.  This is the path the gap analysis
 lays out toward rio: the display and the input are user-level drivers
 now, and what remains between here and rio is a user-level draw service
 that multiplexes the display among clients, and the 9front personality as
