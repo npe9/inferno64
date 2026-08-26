@@ -2753,6 +2753,256 @@ was reaping \- likely the
 pipeline setup itself, which is exactly the kind of fork/pipe/fd
 juggling the earlier fd-4 chase was also chasing.
 .NH 1
+Found: /prog exposes the wrong kind of process
+.PP
+.CW mount.dis
+itself first, since it was the easiest of the loose ends to close by
+reading rather than booting.
+.CW appl/cmd/mount.b
+traced end to end: for
+.CW "mount\ {mntgen}\ /n" ,
+.CW connect()
+sees the
+.CW {...}
+form, sets
+.CW doauth\ =\ 0 ,
+and calls
+.CW popen() ,
+which pipes, spawns a
+.CW runcmd
+Prog to run
+.CW mntgen
+as the pipe's other end, and blocks on a sync channel until
+.CW runcmd
+has forked its fd group and dup'd the pipe onto its stdin.  Back in
+.CW init() ,
+.CW authcvt()
+is a no-op
+.RB ( doauth
+is 0),
+.CW styxlog()
+is a no-op
+.RB ( showstyx
+defaults to 0), and then
+.CW "sys\->mount(fd,\ nil,\ mountpoint,\ flags,\ spec)"
+\- the call this whole document has been tracing.  On success,
+.CW init()
+just falls off the end.  No lingering read, no further blocking call.
+So the
+.CW mount.dis
+Prog seen sitting in
+.CW Prelease
+in the previous section's capture was not stuck there \- it was
+caught mid-syscall by a snapshot, exactly where a healthy run should
+be, and should exit cleanly moments later.  One dead end closed by
+reading alone, no boot needed.
+.PP
+That leaves the three
+.CW Prelease
+Progs themselves, and the wait-qid lead from the previous section
+pointed straight at the mechanism that would explain all of it at
+once: after
+.CW sh.dis
+runs any external command \- and
+.CW mount
+is the first one
+.CW /dis/init
+runs \- it calls
+.CW appl/cmd/sh/sh.b 's
+own
+.CW waitfor() ,
+which reads
+.CW ctxt.waitfd ,
+opened by
+.CW waitfd() :
+.RS
+.nf
+.CW "wf := string sys->pctl(0, nil) + \(dq/wait\(dq;"
+.CW "waitfd := sys->open(\(dq#p/\(dq+wf, Sys->OREAD);"
+.fi
+.RE
+.CW "sys->pctl(0,\ nil)"
+sets no
+.CW BlockingPctl
+bit, so
+.CW Sys_pctl()
+.RB ( os/inferno/port/inferno.c )
+runs none of its fork/namespace branches and just returns
+.CW "p->pid"
+where
+.CW "p\ =\ currun()"
+\- the calling
+.I Dis Prog's
+own pid, from
+.CW dis.c 's
+.CW newprog()
+counter.  That is the number
+.CW waitfd()
+opens as
+.CW "#p/<N>/wait" .
+.PP
+.CW os/inferno/port/devproc.c ,
+the
+.CW #p
+device backing that path, is built entirely on
+.CW proctab() /
+.CW procindex() ,
+walking
+.CW procalloc.arena
+\- the small, fixed pool of
+.I host
+kernel
+.CW Proc
+structures (the handful of
+.CW vmachine()
+kprocs and the boot kproc itself), not the potentially-thousands of
+Dis
+.CW Prog
+structures the isched scheduler juggles.  Its own comment says so
+plainly:
+.CW "23\ bits\ of\ process\ slot\ number\ (procindex())" ,
+.CW "32\ bits\ of\ pid,\ for\ consistency\ checking" \-
+consistency against a
+.I host
+Proc's pid, unconditionally.  Two prints, one at
+.CW Sys_pctl() 's
+return and one at
+.CW procgen() 's
+name-to-slot lookup, confirmed this directly rather than by
+inference:
+.RS
+.nf
+.CW "Sys_pctl: flags 0, returning Dis prog pid 1, host up->pid 1"
+.CW "procgen: walk to #p/1, wanted host pid 1, procindex gave slot 0, reader pid 1"
+.CW "Sys_pctl: flags 0, returning Dis prog pid 2, host up->pid 1"
+.CW "Sys_pctl: flags 0, returning Dis prog pid 3, host up->pid 1"
+.CW "procgen: walk to #p/3, wanted host pid 3, procindex gave slot 2, reader pid 1"
+.fi
+.RE
+Every one of these calls ran on the very same host kproc
+.RB ( "up->pid\ 1" ,
+the boot kproc that
+.CW disinit.b
+and then
+.CW sh.dis
+run directly in, never having released it yet) \- the Dis pid climbing
+1, 2, 3, 4\&.\|.\|. as successive Progs are spawned, entirely
+independent of the host pid, which stays 1 throughout.  And both
+walks that were attempted \- to
+.CW #p/1
+and
+.CW #p/3
+\- succeeded, each finding a real, unrelated host
+.CW Proc
+whose
+.I own
+pid happens to equal the Dis pid being searched for, purely by the
+coincidence of two independent counters both starting small during
+the same early boot window.  Whichever host kproc that is \- almost
+certainly one of the small number of
+.CW vmachine()
+workers, or the boot kproc itself \- has nothing to do with the Dis
+Prog
+.CW sh.dis
+actually wants to wait for.
+.PP
+This is the mechanism, not a guess dressed as one.  A Dis Prog
+exiting posts its wait status through
+.CW dis.c 's
+own machinery
+.RB ( delprog()
+calling
+.CW tellsomeone() ,
+which
+.CW qproduce() s
+onto
+.CW "Osenv.childq / waitq" ,
+Prog-level queues private to the Dis scheduler).
+.CW devproc.c 's
+.CW Qwait
+case reads from an entirely different structure:
+.CW Proc.waitq ,
+a host-level linked list populated only by
+.CW proc.c 's
+.CW pexit() 's
+own record when an actual
+.I host
+kernel process exits \- not when a Dis Prog does.
+.CW vmachine()
+kprocs loop forever; they essentially never exit.  So
+.CW sh.dis 's
+.CW "sys->read(ctxt.waitfd,\ ...)"
+is listening to a wait queue that a Dis-level child's exit can never
+reach, on a host process that was never going to signal anything in
+the first place.  It blocks forever, correctly by its own logic,
+watching the wrong thing.  This is not this document's earlier fd-4
+chase reopened \- that one is fully explained and stays retracted \-
+but it is the same neighbourhood: this port's process-identity
+bookkeeping not yet reconciled between Inferno's two-level process
+model (Dis Progs multiplexed onto a small host kproc pool, this
+document's own earlier discovery) and Plan 9-heritage code
+.RB ( devproc.c )
+written against a one-Proc-per-process assumption that no longer
+holds here.
+.PP
+This explains the whole document, not just this section.  Every
+earlier theory \- scheduler token loss, GC/heap corruption, a
+correctly-blocked interactive prompt, FORKFD staleness \- is either
+independently fixed, independently refuted, or simply not needed
+once this is true: a shell that blocks forever the first time it
+waits for any child it spawns explains total silence after
+.CW "mount\ {mntgen}\ /n"
+directly,
+.I because
+.CW mount
+is the first external command
+.CW /dis/init
+runs and waits for.  The occasional stranger failures elsewhere in
+this document \- the rare general protection violations, the
+.CW "unknown\ qid\ in\ procwread" /
+.CW "sh\ panic:\ error\ on\ wait\ read"
+capture two sections back \- are plausibly downstream symptoms of the
+same coincidental-pid-collision idea landing on a
+.I different
+host Proc slot on a different boot (one whose fields don't happen to
+line up as cleanly as
+.CW Qwait 's
+own consistency check expects), rather than separate bugs each
+needing their own explanation.
+.PP
+Not fixed this session.  A correct fix means teaching
+.CW devproc.c 's
+.CW Qwait
+path \- and, more broadly, most of what
+.CW procgen() /
+.CW procread() /
+.CW procwrite()
+expose \- to resolve against Dis
+.CW Prog
+and
+.CW Osenv
+state instead of
+.CW Proc ,
+including synthesizing a
+.CW Waitmsg -shaped
+read out of
+.CW Osenv.childq 's
+queued messages rather than
+.CW Proc.waitq 's
+linked list \- a real rewrite of a file that is not small, not a
+one-line patch, and worth doing carefully rather than rushed in the
+same sitting as finding it.  Recorded here at the level of detail a
+future session needs to start from: which two functions
+.RB ( Sys_pctl()
+and
+.CW procgen() ),
+which two data structures
+.RB ( Osenv.childq / waitq
+vs
+.CW Proc.waitq ),
+and the empirical trace above proving the mismatch rather than
+asserting it.
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no
