@@ -1843,23 +1843,34 @@ is entitled to that slice.  Five checks assert the program running, its
 personality library serving a file, and this mapping, and the flag that
 turns it on leaves upc64 and pc64 untouched.
 .PP
-A message-passing round trip over that ring \- the program putting a
-poll request in the ring in its own memory, trapping once to service it,
-and reading the reply back \- was built and seen to work, but it races:
-about half the time the service does not turn the request into a reply,
-and two hundred retries do not change it, so it is not a timing gap but a
-state one, not yet found.  Because the honest rule here is that a check
-asserts only what is real every time, the round trip was pulled back out
-rather than left as a flaky assertion; the segattach mapping it was built
-on is what stays, tested and stable.  Rooting out that race, then growing
-the personality toward real 9front file semantics and writing the file
-server it talks to over the ring, is the work from here.
+And a message-passing round trip over that ring: the program puts a poll
+request in the ring in its own memory, traps once to have the kernel
+service it, and reads the reply back from the ring - submit and collect
+are memory, only the service is a trap, which is the shape the paper
+gives.  Poll is a mechanism the kernel answers itself; a file request
+would be forwarded the same way to a server.  A sixth check asserts it.
 .PP
-So the loop is closed in the right shape as far as the mapping: a program
-on top of the microkernel, its OS personality a library it links,
-reaching the kernel through a minimal interface \- an address space, a
-mapped ring, and exit \- with the message passing over that ring
-demonstrated but not yet dependable.
+It did not work at first - about half the time no reply came back, per
+boot, and retries did not help - and finding out why is worth recording,
+because the cause was subtle and the method was not a guess.  Comparing
+the kernel's and the program's view of the ring showed the kernel never
+saw the request; narrowing further showed the service finding no
+container bound to the process at all.  The binding was being cleared:
+the boot bound the process to its container by setting the slot but not
+the process's own back-pointer to the container, and the clock's reaper
+clears any slot whose process claims no container, so a single tick
+between the bind and the first service undid it.  Binding the way attach
+does - the back-pointer too - fixed it, and the round trip now returns
+every time.
+.PP
+So the loop is closed in the right shape: a program on top of the
+microkernel, its OS personality a library it links, reaching the kernel
+through a minimal interface - an address space, a mapped ring, message
+passing over that ring, and exit.  What remains is to grow the
+personality library toward real 9front file semantics and to write the
+file server it would talk to over the ring, so the files it serves are
+reached by message passing rather than held; that server is another
+program on the same microkernel, and building it is the work from here.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
