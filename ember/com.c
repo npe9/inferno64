@@ -988,10 +988,65 @@ ecom(Src *src, Node *nto, Node *n)
 					faddr->src = *src;
 					faddr->ty = tint;
 
-					val = mkname(src, cl->d->sym);
-					val->decl = cl->d;
-					val->ty = cl->d->ty;
-					sumark(val);
+					if(declownedby(cl->d, d->enclosing)){
+						val = mkname(src, cl->d->sym);
+						val->decl = cl->d;
+						val->ty = cl->d->ty;
+						sumark(val);
+					}else{
+						/*
+						 * transitive capture (check.c's echk()
+						 * Oname case, the ancestor-chain walk):
+						 * cl->d isn't one of d->enclosing's own
+						 * params/locals, so d->enclosing must
+						 * itself be a closure that was forced to
+						 * capture cl->d too -- a pass-through
+						 * entry with no capuses of its own (see
+						 * addcapture()'s n==nil case, check.c) --
+						 * specifically so this read is possible.
+						 * read it the same way any *directly*
+						 * captured reference is read inside
+						 * d->enclosing's own body: through
+						 * d->enclosing's own env parameter
+						 * (always ids[0] -- every closure's own
+						 * signature is env-prepended via envfn(),
+						 * check.c), at cl->d's position in
+						 * d->enclosing->capty, found by walking
+						 * d->enclosing's own captures/capty in
+						 * lockstep -- the identical position-
+						 * matching check.c's synthfunclit()
+						 * already does for its own capuses fixup.
+						 */
+						Decl *efd;
+						Dlist *ecap;
+						Node *envref, *eoff, *eaddr;
+						Type *envrefty;
+
+						efd = d->enclosing->capty->ids;
+						for(ecap = d->enclosing->captures; ecap != nil; ecap = ecap->next, efd = efd->next)
+							if(ecap->d == cl->d)
+								break;
+						if(ecap == nil)
+							fatal("ecom: %s captured through %s with no forwarding capture",
+								cl->d->sym->name, d->enclosing->sym->name);
+
+						envref = mkname(src, d->enclosing->ty->ids->sym);
+						envref->decl = d->enclosing->ty->ids;
+						envrefty = mktype(src, Tref, d->enclosing->capty, nil);
+						sizetype(envrefty);
+						envref->ty = envrefty;
+
+						eoff = mkconst(src, efd->offset);
+						eoff->ty = tint;
+						eaddr = mkn(Oadd, envref, eoff);
+						eaddr->src = *src;
+						eaddr->ty = tint;
+
+						val = mkn(Oind, eaddr, nil);
+						val->src = *src;
+						val->ty = efd->ty;
+						sumark(val);
+					}
 
 					find = mkn(Oind, faddr, nil);
 					find->src = *src;

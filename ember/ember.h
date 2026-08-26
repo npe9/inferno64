@@ -256,21 +256,30 @@ struct Decl
 	 * captured-variable state (phase 3 of the closure-lowering plan,
 	 * doc/ember-repository-study.md, by-value captures).  enclosing is
 	 * the Dfn/closure whose body this literal syntactically appears
-	 * in, set once at synthfunclit() entry -- captures further out
-	 * than that (through more than one enclosing function/closure) are
-	 * rejected, not chased transitively; every supported capture is
-	 * always a plain, ordinarily-addressable local/arg of enclosing at
-	 * the point this closure's own value is constructed.
+	 * in, set once at synthfunclit() entry.  a capture can reach
+	 * further out than enclosing too, through one or more intermediate
+	 * closures (transitive captures, check.c's echk() Oname case) --
+	 * every closure strictly between this one and whichever function
+	 * actually owns the referenced decl gets it added to its *own*
+	 * captures as well, as a pure pass-through with no capuses entry
+	 * of its own (addcapture()'s n==nil case) -- so a captured decl in
+	 * *this* list is always either a plain, ordinarily-addressable
+	 * local/arg of enclosing, or (when enclosing is itself one of
+	 * those intermediate closures) one of enclosing's *own* captures
+	 * instead; com.c's ecom() (Oname/Dfn case) tells the two apart the
+	 * same way check.c does, via declownedby(d, enclosing).
 	 *
-	 * captures is the set of enclosing's own Darg/Dlocal decls this
-	 * closure's body actually reads or writes, deduplicated by decl
-	 * identity (order doesn't matter beyond being the same order
-	 * capty's own fields are built in -- check.c's addcapture()); capuses is every Oname node
-	 * (echk's Oname case, gated on curclosure) that referenced one of
-	 * them, in encounter order -- both built *during* fnchk() of this
-	 * closure's own body, without touching those nodes yet: the field
-	 * offset each capture lands at isn't known until the whole body
-	 * has been walked and every capture is accounted for.  capty is
+	 * captures is the set of decls this closure's body actually reads
+	 * or writes plus any forced through as pass-throughs, deduplicated
+	 * by decl identity (order doesn't matter beyond being the same
+	 * order capty's own fields are built in -- check.c's addcapture());
+	 * capuses is every Oname node (echk's Oname case, gated on
+	 * curclosure) that *directly* referenced one of them in this
+	 * closure's own body, in encounter order -- a pass-through capture
+	 * has none.  both built *during* fnchk() of this closure's own
+	 * body, without touching those nodes yet: the field offset each
+	 * capture lands at isn't known until the whole body has been
+	 * walked and every capture is accounted for.  capty is
 	 * the adt built from captures immediately after fnchk() returns --
 	 * one Dfield per capture, in the same order -- nil if captures is
 	 * nil (a plain, non-capturing closure, same as any other function
@@ -853,6 +862,7 @@ Decl	*readiface(char*, Src*);
 
 /* check.c */
 void	check(Node*);
+int	declownedby(Decl*, Decl*);	/* also used by com.c, transitive captures */
 
 /* com.c */
 void	modcom(void);

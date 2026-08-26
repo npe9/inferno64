@@ -46,7 +46,6 @@ static	Type	*tinstantiate(Node*);
 static	Type	*envfn(Src*, Type*);
 static	Decl	*synthfvwrap(Src*, Decl*);
 static	Decl	*synthfunclit(Node*);
-static	int	declownedby(Decl*, Decl*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
@@ -666,12 +665,13 @@ synthfvwrap(Src *src, Decl *fn)
  * threaded through ->link -- see daschk()'s "record the local on the
  * current function" comment)?  used by synthfunclit(), below, to tell
  * a closure literal's own bound names from a free reference to
- * something in an enclosing function -- a real capture, not yet
- * supported (phase 2 of the closure-lowering plan, doc/ember-
- * repository-study.md: the env-prepended calling convention -- envfn(),
- * synthfvwrap(), above -- first, real captures later).
+ * something in an enclosing function -- a real capture.  not static:
+ * com.c's own capture-construction code (ecom()'s Oname/Dfn case) needs
+ * the identical test, to tell a directly-owned capture from one that's
+ * only reachable by reading through an intermediate closure's own
+ * capture (transitive captures, below) -- see ember.h's declaration.
  */
-static int
+int
 declownedby(Decl *d, Decl *fn)
 {
 	Decl *p;
@@ -689,12 +689,23 @@ declownedby(Decl *d, Decl *fn)
  * record that closure's body captures orig (dedup by decl identity;
  * prepended, like this file's other Dlists -- imports, above -- so
  * whatever order captures ends up in, capty's own fields are built by
- * walking it the same way, so the two always line up) and that node n
- * is one of the references to it -- used by echk's Oname case,
- * consumed by synthfunclit() after fnchk() returns, once every capture
- * is known and capty can be built.  a decl already in the list isn't
- * re-added, but n is *always* recorded: every occurrence needs its own
- * fixup, not just the first.
+ * walking it the same way, so the two always line up) and, when n is
+ * non-nil, that node n is one of the references to it -- used by
+ * echk's Oname case, consumed by synthfunclit() after fnchk() returns,
+ * once every capture is known and capty can be built.  a decl already
+ * in the list isn't re-added, but n, when given, is *always* recorded:
+ * every occurrence needs its own fixup, not just the first.
+ *
+ * n is nil for a *transitive* capture (echk's Oname case, below): when
+ * a reference inside closure C0 reaches a decl owned two or more
+ * enclosing frames out, every closure strictly between C0 and the
+ * actual owner also needs the decl threaded through its own captures,
+ * purely so com.c can read it one frame at a time when each level's
+ * own tfnptr gets built -- but there's no literal reference to that
+ * decl inside an intermediate closure's own body syntax to rewrite (it
+ * was carved out into C0's own lifted Dfn already), so nothing goes
+ * into capuses for it.  capty is still built correctly either way:
+ * it's driven purely by captures, never by capuses.
  */
 static void
 addcapture(Decl *closure, Decl *orig, Node *n)
@@ -709,6 +720,8 @@ addcapture(Decl *closure, Decl *orig, Node *n)
 	p->next = closure->captures;
 	closure->captures = p;
 found:
+	if(n == nil)
+		return;
 	if(closure->ncapuses >= closure->lencapuses){
 		closure->lencapuses += 32;
 		closure->capuses = reallocmem(closure->capuses,
@@ -734,9 +747,12 @@ found:
  * (curclosure is nil everywhere else, including the entire rest of
  * this compiler's own test suite) -- see its own comment.  phase 3 of
  * the closure-lowering plan (doc/ember-repository-study.md, by-value
- * captures): a capture one level deep (reaching directly into
- * ld->enclosing's own frame) is recorded (addcapture()) rather than
- * rejected; anything further out still is.  once fnchk() returns
+ * captures): a capture reaching directly into ld->enclosing's own frame
+ * is recorded (addcapture()); one reaching further out, through one or
+ * more intermediate closures, is also recorded (transitive captures,
+ * same comment) -- every closure strictly between ld and whichever
+ * function actually owns the decl gets it threaded through as a pure
+ * pass-through capture of its own.  once fnchk() returns
  * below, every recorded capture becomes a field of a synthesized
  * captures adt (ld->capty) and every recorded use gets rewritten to
  * read/write through it instead of the original decl -- see the
@@ -1782,31 +1798,55 @@ echk(Node *n)
 			 * non-nil, i.e. nowhere else in the compiler or its own
 			 * test suite.
 			 *
-			 * phase 3 (by-value captures, doc/ember-repository-
-			 * study.md) supports this only one level deep: d must
-			 * belong to curclosure->enclosing, the function or
-			 * closure this literal syntactically appears in, not
-			 * something further out reached *through* an
-			 * intermediate closure -- transitively chasing a capture
-			 * through more than one lambda-lifted frame is real, but
-			 * genuinely harder (the intermediate closure would need
-			 * its *own* matching capture, plumbed through when its
-			 * own value is constructed) and not attempted here.
-			 * declownedby(d, curclosure->enclosing) is exactly the
-			 * boundary: true only when d is *directly* one of
-			 * enclosing's own params/locals, which is also exactly
-			 * what guarantees every accepted capture is read by a
-			 * plain, ordinarily-addressable reference at the point
-			 * this closure's own value gets constructed (com.c's
-			 * ecom(), Oname/Dfn case) -- enclosing's own frame is
-			 * what's live and addressable right there, nothing
-			 * further out.
+			 * transitive captures (through more than one enclosing
+			 * frame): walk curclosure's own ->enclosing chain out
+			 * until we reach whichever function/closure genuinely
+			 * owns d directly (anc, below) -- declownedby(d,
+			 * curclosure->enclosing) was the old, depth-1-only
+			 * version of exactly this test.  every closure strictly
+			 * between curclosure and anc (curclosure itself, plus
+			 * each intermediate ->enclosing link up to but not
+			 * including anc) needs d threaded through its *own*
+			 * captures too, so com.c can read it one frame at a time
+			 * when each level's own tfnptr gets built, each level
+			 * reading it from whichever frame is actually live and
+			 * addressable at *that* level's own construction site --
+			 * see com.c's ecom() (Oname/Dfn case) for the read side
+			 * of this.  only curclosure's own capture gets a real
+			 * capuses entry (n itself is what gets rewritten below,
+			 * same as before); every intermediate level's capture is
+			 * a pure pass-through with no direct reference of its
+			 * own to rewrite (addcapture()'s n==nil case, above).
+			 * an ordinary top-level function never sets ->enclosing
+			 * (only synthfunclit() does, on a closure's own lifted
+			 * Dfn), so this walk terminates in nil, not a cycle, if d
+			 * genuinely isn't reachable at all.
 			 */
-			if(!declownedby(d, curclosure->enclosing)){
-				nerror(n, "closures capturing through more than one enclosing function are not yet supported (%s)", n->sym->name);
+			Decl *anc, *cl;
+
+			anc = curclosure->enclosing;
+			while(anc != nil && !declownedby(d, anc))
+				anc = anc->enclosing;
+			if(anc == nil){
+				/*
+				 * believed unreachable: lookup() only ever hands
+				 * back a Darg/Dlocal that's genuinely visible in
+				 * the current scope, and that scope is exactly
+				 * the chain this loop walks (a lexically nested
+				 * closure's enclosing chain mirrors the actual
+				 * scope-push/pop nesting) -- so d not being owned
+				 * by anything on it would mean lookup() found a
+				 * decl that was never actually in scope, a bug
+				 * elsewhere, not a real capture shape.  kept as a
+				 * diagnostic rather than a fatal() in case that
+				 * belief is wrong.
+				 */
+				nerror(n, "cannot resolve capture of %s", n->sym->name);
 				n->ty = terror;
 				return n->ty;
 			}
+			for(cl = curclosure; cl->enclosing != anc; cl = cl->enclosing)
+				addcapture(cl->enclosing, d, nil);
 			addcapture(curclosure, d, n);
 		}
 		if(d->store == Dfn && d->ty != nil){
