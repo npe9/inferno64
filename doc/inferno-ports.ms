@@ -3002,6 +3002,263 @@ vs
 .CW Proc.waitq ),
 and the empirical trace above proving the mismatch rather than
 asserting it.
+.PP
+Two corrections to that paragraph, written before either was
+checked against the boot rather than reasoned about, and both wrong
+in the same direction: too pessimistic.
+.NH 1
+Found, for real: #p and #P collide on one letter
+.PP
+The previous section's fix estimate \- teaching
+.CW procgen() /
+.CW procread()
+to resolve against Dis
+.CW Prog
+state, a real rewrite \- was never necessary, and the mismatch it
+documented was a symptom, not the cause.  The cause is one character.
+.PP
+.CW os/inferno/port/devprog.c
+already implements exactly the mechanism the previous section
+proposed building: its
+.CW Qwait
+open does
+.CW "c\->aux\ =\ qopen(1024,\ Qmsg,\ nil,\ nil);\ o\->childq\ =\ c\->aux;" ,
+pointed at a Dis Prog's own
+.CW Osenv
+by
+.CW progpid() ,
+and
+.CW dis.c 's
+.CW killprog()
+already formats the exit message
+.CW "\(dq%d\ \e\(dq\(dq"
++ module name +
+.CW "\(dq\e\(dq:\(dq"
++ cause \- character for character what
+.CW appl/cmd/sh/sh.b 's
+.CW parsewaitstatus()
+parses.  Both ends of the real protocol already existed, already
+matched, and
+.CW sh.b 's
+own
+.CW waitfd()
+already knew to reach for it:
+.RS
+.nf
+.CW "waitfd := sys->open(\(dq#p/\(dq+wf, Sys->OREAD);"
+.CW "if (waitfd == nil) waitfd = sys->open(\(dq/prog/\(dq+wf, Sys->OREAD);"
+.fi
+.RE
+a primary attempt through
+.CW #p
+and a fallback through the bound path
+.CW /prog .
+The fallback never ran because the primary attempt never failed: it
+silently succeeded against the wrong device, every time, forever.
+.PP
+.CW os/inferno/port/devproc.c 's
+.CW Dev
+literal and
+.CW os/inferno/port/devprog.c 's
+both declared the same one-character device code:
+.RS
+.nf
+.CW "Dev procdevtab = { 'p', \(dqproc\(dq, ... };  \0\0/* devproc.c */"
+.CW "Dev progdevtab = { 'p', \(dqprog\(dq, ... };  \0\0/* devprog.c */"
+.fi
+.RE
+.CW chandevinit() 's
+own registration loop
+.RB ( os/inferno/port/chan.c )
+and the lookup it feeds
+.RB ( os/inferno/port/dev.c ,
+a plain linear scan for the first
+.CW devtab[i]\->dc\ ==\ c )
+keep whichever registers first under a duplicate letter and the
+second is simply never reachable.  The
+.CW pc64
+board's
+.CW dev
+list names
+.CW proc
+before
+.CW prog ,
+so
+.CW #p
+has meant
+.I devproc.c
+\- host
+.CW Proc
+introspection \- on every boot this whole document covers, and
+.I devprog.c \-
+the file that actually understands a Dis Prog's exit \- has been
+linked in, fully correct, and completely unreachable the entire
+time.  Confirmed empirically before touching either file: a filtered
+print at
+.CW procread() 's
+.CW Qwait
+entry fired for both Progs
+.CW sh.dis
+waited on, each blocking forever in
+.CW "sleep(&p\->waitr,\ prochaswaitq,\ c)"
+against a host
+.CW Proc
+that was never going to signal anything, exactly as the previous
+section described \- the point being that this
+.I is
+the previous section's mismatch, reachable in the first place only
+because of the letter collision, not despite it.
+.PP
+.CW os/inferno/init/disinit.b
+had already half-diagnosed this, in a comment nobody had acted on:
+its live
+.CW "sys->bind(\(dq#p\(dq,\ \(dq/prog\(dq,\ sys->MREPL);\ #\ prog\ device"
+sits two lines above a commented-out
+.CW "#\ sys->bind(\(dq#o\(dq,\ \(dq/proc\(dq,\ sys->MREPL);\ #\ proc\ device" \-
+this tree's own author already knew
+.CW #p
+should mean
+.I prog
+and some other letter should carry
+.I proc ,
+and had picked
+.CW o
+for it.  That letter is free: none of the devices linked into
+.CW ipc64
+\- checked across every
+.CW Dev
+struct in
+.CW os/inferno/port ,
+.CW os/inferno/pc64
+and
+.CW os/inferno/ip \-
+claim it.
+.PP
+The fix is one character in
+.CW os/inferno/port/devproc.c :
+.CW procdevtab 's
+.CW dc
+field and
+.CW procattach() 's
+.CW devattach()
+call both move from
+.CW 'p'
+to
+.CW 'o' .
+.CW devprog.c
+is untouched \- it was correct all along.  Nothing in
+.CW appl/ ,
+.CW dis/
+or
+.CW os/inferno/init
+opens
+.CW #p/trace
+or any other
+.CW devproc.c -only
+file by that path (checked; only
+.CW /prog/<pid>/...
+paths appear, all of which now mean
+.I devprog.c ,
+which is what every one of those call sites \-
+.CW appl/lib/debug.b ,
+.CW exception.b ,
+.CW titlebar.b ,
+.CW tkclient.b ,
+.CW wmclient.b
+and the rest \- was written against from the start.  Restoring
+.CW #o\ /proc
+itself (uncommenting
+.CW disinit.b 's
+line) is a separate, additive change, not needed for this fix and
+not yet made: nothing in this tree currently opens
+.CW #o
+or
+.CW /proc
+by path.
+.PP
+Booted with only the one-character change: the silent hang after
+.CW "mount\ {mntgen}\ /n"
+is gone.  No
+.CW Qwait
+diagnostic fires; no boot has reproduced it since.  Execution now
+runs
+.I past
+the point every earlier session in this document stalled at, into
+.CW /dis/init 's
+own script body \- the first time this has ever been observed.  This
+is the actual root cause this whole document has been chasing since
+its first section: not a scheduler bug, not GC corruption, not an
+architectural mismatch needing a rewrite, but two devices sharing one
+letter, with the wrong one listed first.
+.PP
+One claim from the previous section's closing paragraph does not
+survive this and should be retracted rather than carried forward:
+that the rare
+.CW "unknown\ qid\ in\ procwread" /
+.CW "sh\ panic:\ error\ on\ wait\ read"
+capture was plausibly the same coincidental-pid-collision idea
+landing on a different host Proc slot.  That capture hit
+.CW procread() 's
+.CW default:
+case \- meaning
+.CW QID(c\->qid)
+was not any recognized type at all, which the collision story does
+not account for.  It was reproduced zero times across the four
+repeat boots this document already recorded, and zero times more
+across the several boots run to reach this section.  It stays
+unexplained and unreproduced, not folded into this finding.
+.PP
+What replaces it as the open question: two new, so-far-unreproduced
+failures further into
+.CW /dis/init 's
+script than this document has ever previously observed execution
+reach.  One boot printed
+.CW "iload\ module\ \&$Sys\ not\ loaded\ ml\ ==\ nil"
+\- libinterp/xec.c 's
+own pre-existing
+.CW OP(iload)
+diagnostic, for the compiled-in
+.CW Sys
+module every single Limbo module loads via
+.CW "load\ Sys\ Sys->PATH" ,
+registered by
+.CW libinterp/runt.c 's
+.CW sysmodinit()
+through
+.CW os/inferno/pc64/pc64.c 's
+.CW modinit() ,
+called once, early, well before this point \- not reproduced on three
+further boots, so plausibly a scheduling-timing race exposed by
+paths that previously never ran this far or this concurrently,
+rather than a defect in the registration itself.  Two of four boots
+instead reached
+.CW "split:\ \&$ifs\ not\ set" ,
+.CW appl/cmd/sh/std.b 's
+own
+.CW sbuiltin_split()
+failing its explicit
+.CW ctxt.get(\(dqifs\(dq)\ ==\ nil
+check.  Neither of the two textual
+.CW ${split\ ...}
+call sites reachable from
+.CW /dis/init
+(both two-separator forms, not the bare one-argument form that
+triggers this check) should hit it as written; the leading
+candidate not yet confirmed is
+.CW "(connectmethod\ localdevice)\ =\ \&${split\ !\ \&$bootargs}" \-
+reachable only if
+.CW #e/bootargs
+exists but is empty, collapsing
+.CW $bootargs
+to zero words and leaving
+.CW split
+with only its own name and the separator, which is exactly the
+two-argument shape
+.CW sbuiltin_split()
+treats as the one-argument
+.CW ifs -needing
+form.  Not yet verified against a boot; the next session's first
+step.
 .NH 1
 How a native kernel provides networking
 .PP

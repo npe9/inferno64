@@ -287,7 +287,23 @@ dprocinit(void)
 static Chan*
 procattach(char *spec)
 {
-	return devattach('p', spec);
+	/*
+	 * NOT 'p' -- devprog.c's progdevtab also claims 'p' ("prog", the
+	 * Dis-level process device appl/cmd/sh/sh.b's waitfd() and every
+	 * other Limbo caller of #p/<pid>/... actually mean).  The two
+	 * collided under one letter, chandevinit()'s linear devtab scan
+	 * (dev.c) keeps whichever registers first, and "proc" is listed
+	 * before "prog" in this board's dev list -- so #p always meant
+	 * this device, host-level Proc introspection, and #p/<pid>/wait
+	 * blocked forever on an unrelated host Proc's own wait queue
+	 * whenever a Dis Prog pid happened to coincide with one, since
+	 * devprog.c's own working implementation was never reachable at
+	 * all.  os/inferno/init/disinit.b already names the intended,
+	 * distinct letter for this device in a comment it left commented
+	 * out: "#o", bound to "/proc".  See "Found: /prog exposes the
+	 * wrong kind of process" in doc/inferno-ports.ms.
+	 */
+	return devattach('o', spec);
 }
 
 static Walkqid*
@@ -1274,7 +1290,7 @@ procwrite(Chan *c, void *va, s32 n, s64 off)
 }
 
 Dev procdevtab = {
-	'p',
+	'o',
 	"proc",
 
 	devreset,
