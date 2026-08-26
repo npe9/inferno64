@@ -507,7 +507,12 @@ envfn(Src *src, Type *pub)
  * fn directly (by name -- an ordinary direct call, unaffected by any
  * of this: Ocall's own callee-shape check devirtualizes it, same as
  * any other literal-name call) with its own parameters and returns
- * whatever fn returns.  shares fn->valty's same envfn() Tfn object
+ * whatever fn returns -- or, when fn is void, just calls it and
+ * returns nothing itself (check.c's own Oret case rejects a non-nil
+ * return expression inside a void function, same rule for this
+ * synthesized body as for real code, so "return fn(...)" only works
+ * when fn actually returns something).  shares fn->valty's same
+ * envfn() Tfn object
  * (built once, right here) so the wrapper's real signature and every
  * call site going through fpcall() are reading the identical,
  * identically-offset Tfn -- not two independently-derived shapes that
@@ -532,14 +537,6 @@ synthfvwrap(Src *src, Decl *fn)
 
 	if(fn->wrapdecl != nil)
 		return fn->wrapdecl;
-
-	if(fn->ty->tof == tnone){
-		Node en;
-
-		en.src = *src;
-		nerror(&en, "%s: functions with no return value can't be used as a value yet", fn->sym->name);
-		return nil;
-	}
 
 	wt = envfn(src, fn->ty);
 	fn->valty = mktype(src, Tref, wt, nil);
@@ -601,8 +598,27 @@ synthfvwrap(Src *src, Decl *fn)
 		args = mkseq(args, mkname(src, arg->sym));
 	call = mkn(Ocall, call, rotater(args));
 
-	stmt = mkn(Oret, call, nil);
-	body = mkn(Oscope, stmt, nil);
+	if(fn->ty->tof == tnone){
+		/*
+		 * "return fn(...)" (the else branch, below) needs fn's own
+		 * return value -- fine when there is one, but check.c's
+		 * ordinary Oret case rejects *any* non-nil return expression
+		 * inside a void function ("function returns no value"),
+		 * true for this synthesized wrapper exactly as it's true for
+		 * user code: a void fn's own wrapper is void too (envfn()
+		 * passes pub->tof through unchanged).  "fn(...); return;" --
+		 * two statements, an expression-statement call discarding
+		 * the (nonexistent) result, then a bare return -- instead.
+		 */
+		Node *stmts;
+
+		stmts = mkseq(nil, mkn(Oexpr, call, nil));
+		stmts = mkseq(stmts, mkn(Oret, nil, nil));
+		body = mkn(Oscope, rotater(stmts), nil);
+	}else{
+		stmt = mkn(Oret, call, nil);
+		body = mkn(Oscope, stmt, nil);
+	}
 
 	wd->init = mkn(Ofndecl, nil, nil);
 	wd->init->aux = body;
@@ -738,10 +754,6 @@ synthfunclit(Node *n)
 	char buf[StrSize];
 
 	pubt = stype(n->right);
-	if(pubt->tof == tnone){
-		nerror(n, "closures with no return value not yet supported");
-		return nil;
-	}
 
 	wt = envfn(&n->src, pubt);
 
@@ -1934,13 +1946,15 @@ echk(Node *n)
 			 * only for a genuine *value* use.  a literal direct
 			 * call never needs one at all (callcom's ordinary
 			 * Rpc/ICALL path, unaffected by any of this) -- calling
-			 * echk() here regardless, then discarding the wrap,
-			 * used to be merely wasteful; now it's actively wrong,
+			 * echk() here regardless, then discarding the wrap, used
+			 * to be merely wasteful; now it's actively wrong,
 			 * synthesizing (and fnchk()ing) a wrapper for *every*
-			 * function ever called directly, including one this
-			 * branch doesn't support yet (void-returning), turning
-			 * plain calls like "counter()" -- a declared, never-
-			 * taken-as-a-value builtin -- into a hard error.
+			 * function ever called directly, whether or not anything
+			 * ever takes it as a value -- real, ordinary cost
+			 * (synthfvwrap()/synthfunclit() both support a void
+			 * return now, so it's no longer a hard error too, but
+			 * still unnecessary work for the overwhelming majority
+			 * of calls that are never used as a value at all).
 			 */
 			Decl *fnd;
 
