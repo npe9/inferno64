@@ -132,6 +132,25 @@ persread(Ring *r, int fd, char *buf, long max)
 	return n;
 }
 
+static void
+fbrect(ulong *fb, int stride, int x0, int y0, int w, int h, ulong colour)
+{
+	int x, y;
+
+	for(y = y0; y < y0+h; y++)
+		for(x = x0; x < x0+w; x++)
+			fb[y*stride + x] = colour;
+}
+
+/* a window: black border, blue title bar, white body - what rio draws */
+static void
+fbwindow(ulong *fb, int stride, int x, int y, int w, int h)
+{
+	fbrect(fb, stride, x, y, w, h, 0x00000000);		/* border */
+	fbrect(fb, stride, x+2, y+2, w-4, 20, 0x00224488);	/* title bar */
+	fbrect(fb, stride, x+2, y+22, w-4, h-24, 0x00ffffff);	/* body */
+}
+
 void
 startboot(char*, char**)
 {
@@ -187,24 +206,26 @@ startboot(char*, char**)
 	 */
 	{
 		enum { Fbw = 1280, Fbh = 800 };
-		ulong *fb, *px;
-		int x, y, band;
-		static ulong colour[] = {
-			0x00ff0000, 0x0000ff00, 0x000000ff,
-			0x00ffff00, 0x0000ffff, 0x00ffffff,
-		};
+		ulong *fb;
 
 		fb = (ulong*)segattach(0, "framebuffer", 0, Fbw*Fbh*4);
 		if(fb == (ulong*)-1)
 			puts("osprey user: could not map the frame buffer\n");
 		else {
-			for(y = 0; y < Fbh; y++){
-				band = (y * 6) / Fbh;
-				px = fb + y*Fbw;
+			int y, x;
+
+			/* the desktop */
+			for(y = 0; y < Fbh; y++)
 				for(x = 0; x < Fbw; x++)
-					px[x] = colour[band];
-			}
-			puts("osprey user: and drew colour bars to the frame buffer the microkernel exposed\n");
+					fb[y*Fbw + x] = 0x00777777;
+			/* two windows, each a border, a title bar and a body */
+			fbwindow(fb, Fbw, 150, 120, 520, 360);
+			fbwindow(fb, Fbw, 560, 320, 560, 400);
+			/* a mouse arrow */
+			for(y = 0; y < 16; y++)
+				for(x = 0; x <= y && x < 10; x++)
+					fb[(400+y)*Fbw + (640+x)] = 0;
+			puts("osprey user: and drew a windowed desktop to the frame buffer the microkernel exposed\n");
 		}
 	}
 	exits(nil);
