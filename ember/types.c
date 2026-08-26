@@ -181,6 +181,28 @@ typeinit(void)
 	tunknown->align = 1;
 	tunknown->ok = OKmask;
 
+	/*
+	 * a function *value* (as opposed to a call target): a module
+	 * pointer plus a function-table index, matching limbo/types.c's
+	 * tfnptr exactly (field names/offsets included) since it's the
+	 * same underlying Dis representation -- module calls (IMCALL)
+	 * already take exactly this pair.  com.c builds one via INEW,
+	 * not ordinary genmove (there's no plain "move a function value"
+	 * instruction; the two-word pair is materialized explicitly).
+	 */
+	{
+		Decl *id0, *id1;
+
+		tfnptr = mktype(&nosrc, Ttuple, nil, nil);
+		id0 = mkdecl(&nosrc, Dfield, tany);
+		id0->sym = enter("t0", 0);
+		id1 = mkdecl(&nosrc, Dfield, tint);
+		id1->sym = enter("t1", 0);
+		id0->next = id1;
+		tfnptr->ids = id0;
+		sizetype(tfnptr);
+	}
+
 	descriptors = nil;
 	memset(eqclass, 0, sizeof eqclass);
 
