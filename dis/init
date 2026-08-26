@@ -191,7 +191,16 @@ sysname=$sys
 #showlocaldevs
 echo $bootargs
 and {ftest -e '#e/bootargs'} {
-	(connectmethod localdevice) = ${split ! $bootargs}
+	# $"bootargs, not $bootargs: #e/bootargs existing but empty
+	# (the normal case with no bootargs= on the kernel command line)
+	# leaves unquoted $bootargs expanding to zero words, so split
+	# sees only "split" and "!" -- its own two-argument form, which
+	# means "no separator given, use $ifs" -- and fails with
+	# "split: $ifs not set" since nothing here ever sets one.
+	# $"bootargs squashes to exactly one word, empty or not, so
+	# split always gets its explicit separator and a value to split
+	# (tokenize()-ing an empty string against "!" is a no-op).
+	(connectmethod localdevice) = ${split ! $"bootargs}
 
 	# if local, start disks
 	# if tcp, bind ether0 as ipifc and get on with it

@@ -3257,8 +3257,76 @@ two-argument shape
 .CW sbuiltin_split()
 treats as the one-argument
 .CW ifs -needing
-form.  Not yet verified against a boot; the next session's first
-step.
+form.
+.PP
+Confirmed against a boot, with a filtered print in
+.CW sbuiltin_split()
+first: the failing call is exactly
+.CW "(connectmethod\ localdevice)\ =\ \&${split\ !\ \&$bootargs}" ,
+.CW #e/bootargs
+existing (empty) on this
+.CW -kernel
+multiboot invocation with no
+.CW bootargs=
+of its own.  Fixed in
+.CW dis/init
+by squashing:
+.CW "$bootargs"
+became
+.CW "$\(dqbootargs" ,
+which
+.CW sh.b 's
+.CW n_SQUASH
+always returns exactly one word, empty or not, so
+.CW split
+always gets its separator and a value.  Booted repeatedly after: the
+.CW ifs
+failure is gone, replaced by
+.CW dis/init 's
+own graceful, already-written fallback \-
+.CW "echo\ unsupported\ connect\ method:\ $connectmethod" \-
+which is exactly correct given no
+.CW bootargs=
+was passed.  Execution then continues into the
+.CW sysname
+lookup
+.RB ( ndb/query
+over a backquote reading
+.CW #l0/ether0/addr )
+before this session's testing stopped.
+.PP
+What stopped it was not a stall: repeat boots of this exact,
+unmodified build hit a genuine, pre-existing, nondeterministic crash
+at highly variable points \- one general protection violation and
+one
+.CW cclone
+panic before
+.CW disinit.b 's
+own first print even runs, one
+.CW "invalid\ opcode"
+panic reached only after
+.CW "unsupported\ connect\ method:" \-
+none reproducing the same fault two runs running, several crashing
+well before anywhere this session's fixes touch.  This matches, and
+is plausibly a continuation of, the boot-time flakiness this
+document's own second section already found and only partly fixed:
+the
+.CW xalloc.c
+misalignment fix
+.RB ( 1b45f8be )
+eliminated one deterministic source of it and was verified doing so,
+but its own write-up already noted a second, different pool-allocator
+fault
+.RB ( alloc:D2B )
+seen once and never chased.  That this session's two real fixes
+(device letter, bootargs quoting) hold up cleanly on every boot that
+survives long enough to exercise them, while the surrounding kernel
+still crashes unpredictably on a large fraction of boots for reasons
+unrelated to either fix, is the honest state to end this session's
+work in: the specific stall this whole document set out to explain
+is fixed and confirmed; a broader, separate, still-uncaught source of
+boot-time nondeterminism remains, affecting whether any given boot
+survives long enough to show it.
 .NH 1
 How a native kernel provides networking
 .PP
