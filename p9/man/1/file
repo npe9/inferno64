@@ -1,0 +1,159 @@
+.TH FILE 1
+.SH NAME
+file \- guess a file's type from its content, in Limbo
+.SH SYNOPSIS
+.B file
+[
+.B -m
+]
+[
+.I file ...
+]
+.SH DESCRIPTION
+.I File
+is a structural Limbo translation of Plan 9's real
+.IR file (1)
+.RB ( sys/src/cmd/file.c ,
+1772 lines in the 9front tree), not a behavioral workalike reverse-
+engineered from a host tool \(em see
+.B doc/plan9-port.md
+in the source tree for the distinction, and
+.B file.b 's
+own header comment for the fuller derivation this page summarises. It
+lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I File
+reads each
+.I file
+argument (or standard input, if none are given), and tries roughly
+thirty independent classifiers against its content in a fixed order,
+printing the description the first one to match reports. A directory
+is reported as such without being read; an empty file is reported as
+empty. With multiple
+.I file
+arguments, each result is preceded by the argument's own name, name
+columns aligned to the widest argument given.
+.SS Options
+.TP
+.B -m
+Print a MIME type instead of a human-readable description.
+.SH SOURCE
+.B /p9/cmd/file.b
+(translated from
+.BR sys/src/cmd/file.c )
+.SH SEE ALSO
+.IR filetest (1)
+.SH BUGS
+Two classifiers are not ported: the original's
+.BR isexec ()
+and
+.BR iscint ()
+recognise native Plan 9 executables and compiler/assembler
+intermediate files by calling
+.BR crackhdr ()/ objtype ()
+from Plan 9's libmach. libmach is not absent from this tree \(em it
+exists at
+.BR utils/libmach ,
+built with the kencc toolchain \(em but it is host-native C with no
+Limbo/Dis binding, and porting an entire executable-header-cracking
+library is a different, much larger undertaking than this file.
+Dropping these two is a real behaviour change:
+.B isexec
+was 4th in the original's own dispatch order, so a native Plan 9
+executable that would have been precisely identified there instead
+falls through every remaining classifier, typically landing on the
+entropy check
+.RB ( ismung ())
+or the final generic "binary" line.
+.PP
+The original gates most files behind a check that
+.B mbuf->type
+is a Plan 9 mounted-file or pipe channel type
+.RB ( 'M' / '|' ),
+treating anything else as a "special file" it refuses to read. That
+check does not transfer: this emu's own host-filesystem-backed files
+were checked directly (a real file, stat()ed and its
+.B dtype
+printed) and report
+.B 'U' ,
+not
+.BR 'M' \(em
+porting the exact character check would misclassify every ordinary
+file here as special and skip analysis entirely. Adapted rather than
+preserved: only directories are special-cased; everything else is read
+and classified regardless of its
+.BR dtype .
+.PP
+A real, preserved bug, found by testing this translation rather than
+by reading the source: the word-lookup table
+.B dict[]
+requires binary search, which requires the table to be sorted \(em and
+it is not. The word
+.B "bio"
+sits at its own position in the original (right after
+.BR "extern" ),
+but belongs six entries earlier, between
+.B "block"
+and
+.BR "char" .
+The result: a real search over the table as written silently fails to
+find
+.BR "data" ", " "dimension" ", " "double" ", " "extern" ", "
+and
+.BR "bio"
+even though all five are present \(em confirmed by simulating the
+exact search against the actual table order, not assumed. A C source
+file's own
+.B "#include <bio.h>"
+line is not counted toward the include-detection heuristic as a
+result; the other two heuristics
+.RI ( isc ()'s
+own declaration- and assignment-shaped checks) can still recognise
+such a file, so this narrows one detection path rather than breaking C
+recognition outright. Preserved as-is (a silent miscount, not a
+dangerous one) rather than sorted correctly, per this tree's
+translate-what's-there discipline; see
+.IR filetest (1)'s
+own case built specifically around this.
+.PP
+Content is read and matched as
+.B array of byte
+throughout, not
+.B string
+\(em the opposite choice from every other translation in
+.BR p9/cmd .
+.IR file 's
+whole job is sniffing raw bytes, and several of its own magic tables
+contain values that are not valid UTF-8 on their own (a PNG's leading
+.B 0x89
+byte, gzip's
+.BR 0x1f\ 0x9d ,
+the raw
+.B 0xff Ns -heavy
+Xilinx bitstream patterns); round-tripping those through a Limbo
+string would corrupt them, since converting a string back to bytes
+re-encodes each character as UTF-8 rather than returning the original
+byte.
+.PP
+Plan 9's
+.BR chartorune ()
+and Inferno's
+.B sys->byte2char()
+disagree about what an invalid byte sequence decodes to \(em Plan 9
+returns the raw byte value (landing it in the classifier's own
+"invalid runes" bucket), Inferno returns the literal constant
+.B Runeerror
+.RB ( 0xFFFD ),
+confirmed by reading
+.BR libinterp/runt.c 's
+own implementation, not assumed. The character-frequency histogram
+here substitutes the raw byte value for
+.B Runeerror
+to match Plan 9's own convention, since the classifiers built on top
+of it depend on that specific bucketing.

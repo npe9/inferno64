@@ -23,6 +23,8 @@ TARG=\
 	iconvtest.dis\
 	patch.dis\
 	patchtest.dis\
+	file.dis\
+	filetest.dis\
 
 MODULES=\
 

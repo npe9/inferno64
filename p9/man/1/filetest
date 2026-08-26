@@ -1,0 +1,97 @@
+.TH FILETEST 1
+.SH NAME
+filetest \- regression test for file(1)
+.SH SYNOPSIS
+.B filetest
+.SH DESCRIPTION
+.I Filetest
+loads
+.BR /p9/dis/file.dis 's
+in-process test seam,
+.BR run(mimeflag,\ path) ,
+and checks it against expected output for fourteen cases, each built
+from a real file under
+.BR /filetest ,
+cleaned up whether or not it fails. Every expected result is derived
+directly from the classifier tables' own definitions \(em a file
+starting with the four bytes 0x89 'P' 'N' 'G'
+.I is
+a PNG by this program's own table, checkable by constructing exactly
+those bytes, no reference binary needed \(em see
+.IR file (1)
+and
+.B file.b 's
+own header comment.
+.PP
+Two cases worth calling out specifically:
+.TP
+.B T7
+Exercises the preserved
+.B dict[]
+binary-search bug directly (see
+.IR file (1)'s
+own BUGS): two structurally identical two-line
+.B #include
+texts, differing only in which header is named. A control case naming
+.B stdio.h
+is correctly recognised as
+.RB ( "c program" ),
+since
+.B "stdio"
+is found by the table's search; a second case naming
+.B bio.h
+is not
+.RB ( "short Ascii" ),
+since
+.B "bio"
+sits out of sorted order in the table and the search silently misses
+it. Confirmed sensitive with a negative control: temporarily moving
+.B "bio"
+to its correct sorted position flipped the second case's result to
+.B "c program"
+too, exactly as expected if the fix actually mattered.
+.TP
+.B T8
+A first draft used "the quick brown fox jumps over the lazy dog" as
+its English-text sample \(em a pangram, deliberately packed with every
+letter including the rare ones
+.RB ( VJKQXZ ),
+which fails
+.IR isenglish ()'s
+own threshold (common letters must outnumber rare ones tenfold).
+Replaced with ordinary prose after simulating the exact heuristic
+against candidate text, not by guessing a fix.
+.SH SOURCE
+.B /p9/cmd/filetest.b
+.SH SEE ALSO
+.IR file (1)
+.SH BUGS
+Runs
+.I file
+in-process via its
+.B run
+seam, which takes an already-resolved real file path directly \(em so
+it does exercise real classification and file I/O, but not
+.IR file 's
+own
+.BR init ,
+its standard-input defaulting, its multi-argument column alignment, or
+its window-system
+.B Context
+handling, none of which
+.B run
+goes through.
+.PP
+Does not exercise every classifier
+.I file
+has \(em the per-format sniffers most likely to need real sample files
+from an external source
+.RI ( isp9font ()'s
+sibling-file probing,
+.IR iself ()'s
+architecture table,
+.IR isface ()'s
+ASCII-hex face-image format) are covered lightly or not at all here.
+Each is still translated in
+.BR file.b ,
+just not independently verified to the same depth as the cases above.

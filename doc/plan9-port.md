@@ -1107,7 +1107,99 @@ below.
     but did not, because its correctness criterion lives outside any
     Plan 9 binary in the first place. `dc.b` (2297 lines, a dedicated-
     effort item, not started per the advisor's earlier call) and
-    `file.c`/`tar.c` (1772/1588 lines) are a different status again:
-    genuinely *unread*, not blocked - no line has been spent guessing
-    their difficulty from size, the same mistake `pr.c`'s original
-    "middle tier" line proved wrong once.
+    `tar.c` (1588 lines) remain genuinely *unread*, not blocked - no
+    line has been spent guessing their difficulty from size, the same
+    mistake `pr.c`'s original "middle tier" line proved wrong once.
+    `file.c` (1772 lines) was read in full this session - see item 15.
+
+15. **`p9/cmd/file.b` - a real translation of `sys/src/cmd/file.c`
+    (1772 lines): done. Reading it in full (not sizing it from line
+    count) found a structure closer to `crc32.c` repeated thirty times
+    than to `pr.c`'s coupled state machine: roughly thirty independent
+    classifier functions over a shared read-once buffer, dispatched in
+    a fixed order, first match wins - ten shared globals (`buf`/`nbuf`/
+    `cfreq`/`wfreq`/`guess`/`mbuf`/`fd`/`fname`/`slash`/`mime`), all
+    read-mostly after `filetype()` sets them up. Each classifier's
+    correctness is independently checkable the same way `patch.c`'s
+    was: a file whose first four bytes are `\x89PNG` *is* a PNG by this
+    program's own table, no reference binary needed - `filetest.b`'s
+    fourteen cases are all built this way, real files with exact known
+    bytes, not golden output.
+
+    The one real design reversal from every translation before it:
+    content here is `array of byte` throughout, not `string`. Several
+    of the original's own magic-byte tables contain values that are
+    not valid UTF-8 on their own (PNG's leading `0x89`, gzip's `0x1f
+    0x9d`, two 52-byte Xilinx bitstream patterns that are mostly
+    `0xff`) - round-tripping those through a Limbo string would
+    corrupt them, since converting a string back to bytes re-encodes
+    each rune as UTF-8 rather than returning the original byte.
+
+    A genuine Plan-9-vs-Inferno divergence, checked rather than
+    glossed over: Plan 9's `chartorune()`, on a malformed byte
+    sequence, returns the raw byte value (landing it in the
+    classifier's own "invalid runes" bucket); Inferno's
+    `sys->byte2char()`, confirmed by reading its actual implementation
+    in `libinterp/runt.c`, instead returns the literal constant
+    `Runeerror` (0xFFFD) for the same case. The character-frequency
+    histogram this file's whole gross-classification step depends on
+    substitutes the raw byte for `Runeerror` to match Plan 9's own
+    convention, since every classifier built on that histogram
+    (`isc()`/`islimbo()`/`isas()`/`isenglish()`) depends on the
+    specific bucketing, not Inferno's.
+
+    Two classifiers are not ported: `isexec()` and `iscint()`, which
+    call `crackhdr()`/`objtype()` from Plan 9's libmach to recognise
+    native executables and compiler/assembler intermediate files.
+    Checked, not assumed, whether libmach exists anywhere in this tree
+    before writing that off: it does, at `utils/libmach`, built with
+    the kencc toolchain - but it is host-native C with no Limbo/Dis
+    binding, and porting a whole executable-header-cracking library is
+    a different, much larger undertaking than this file. Dropping
+    these two is a real behaviour change, stated plainly rather than
+    silently absorbed: `isexec` was 4th in the original's own dispatch
+    order, so a native Plan 9 executable now falls through to
+    `ismung()`'s entropy check or the generic "binary" line instead of
+    being precisely identified.
+
+    A second real adaptation, not a bug: the original gates most files
+    behind a check that `mbuf->type` is a Plan 9 mounted-file/pipe
+    channel type (`'M'`/`'|'`), treating anything else as "special" and
+    refusing to read it. Checked directly against this emu rather than
+    assumed to transfer: a real host-backed file here reports dtype
+    `'U'`, not `'M'` - porting the exact character check would have
+    misclassified every ordinary file as special. Adapted to gate only
+    on directories, letting everything else through to real
+    classification regardless of dtype.
+
+    A real, preserved bug found by *testing* the translation, not by
+    reading the source: `dict[]`'s binary search requires the table to
+    be sorted, and it is not - `"bio"` sits at its own position (right
+    after `"extern"`), six entries past where strcmp-order actually
+    places it, between `"block"` and `"char"`. Simulating the exact
+    search against the real (unsorted) table order found it silently
+    fails to find `"data"`, `"dimension"`, `"double"`, `"extern"`, and
+    `"bio"` even though all five are present. `filetest.b`'s own case
+    for this (two structurally identical `#include` texts, one naming
+    `stdio.h` and correctly recognised as C, one naming `bio.h` and
+    silently not) was confirmed sensitive with a negative control:
+    temporarily sorting `"bio"` into its correct position flipped the
+    second case's result too, exactly as predicted.
+
+    Real Limbo gotchas hit along the way, distinct from prior
+    translations: `pick` and `type` are both reserved words in this
+    Limbo (found by two one-line probe files after cryptic "syntax
+    error near `pick`" messages that turned out to have nothing to do
+    with the surrounding code) - the ternary-replacement helper is
+    `choosestr()`, the per-file classify-and-print function is
+    `typeone()`. A module-level `:=` array initializer cannot call a
+    function or construct a `ref` adt - confirmed by a minimal
+    standalone probe - so `language[]` (Unicode-script ranges, `ref
+    Lang` elements) is built by a plain function called from
+    `resetstate()` instead of initialized inline, and every magic-byte
+    table entry with a byte >= 0x80 is a literal `array[] of {byte
+    0x1f, byte 0x9d, ...}` rather than a function call wrapping one.
+
+    14 cases pass. `file.c`'s own `dict[]` bug and the dtype adaptation
+    are both exercised with real files, not asserted from reading the
+    translation.
