@@ -1866,11 +1866,31 @@ every time.
 So the loop is closed in the right shape: a program on top of the
 microkernel, its OS personality a library it links, reaching the kernel
 through a minimal interface - an address space, a mapped ring, message
-passing over that ring, and exit.  What remains is to grow the
-personality library toward real 9front file semantics and to write the
-file server it would talk to over the ring, so the files it serves are
-reached by message passing rather than held; that server is another
-program on the same microkernel, and building it is the work from here.
+passing over that ring, and exit.
+.PP
+And the file server it talks to over the ring now exists, so the
+personality library reaches a file it does not hold.  The boot makes a
+second container, the server, delegates the client to it, and spawns a
+task that answers the client's reads.  The program submits a read on its
+ring; servicing it forwards the request to the server's ring rather than
+to the kernel, which has no personality to answer with; the server task
+reads it, answers with the file's bytes, and routes the reply back; the
+program reads the bytes out of the reply.  The kernel carried the
+messages and nothing else.  A bug found on the way is worth the line: the
+service call serviced and returned at once with no yield, so the retry
+loop was a tight spin that starved the server task, and the answer came
+only after the program had given up; making the service yield after
+servicing fixed it, and the fetch lands every time (xup64 six of six).
+.PP
+This is the paper's shape now in full, in miniature: a microkernel of
+four services and a minimal interface to them; a program on top whose OS
+personality is a library it links; and, reached by message passing over
+the ring, a file server that is another program on the same microkernel.
+What is small is the content, not the structure - the file is a held
+string capped at what fits in a reply's spare words, not a name space
+read from storage.  Growing that - the server writing into the client's
+data area for a longer answer, which delegation already entitles it to,
+and a real name space behind it - is the work from here.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
