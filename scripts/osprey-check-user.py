@@ -64,6 +64,8 @@ def main():
                     and 'came from the library in user space' in t))
     results.append(("and it maps its container's message ring through the microkernel's address-space service",
                     'mapped its container\'s message ring with segattach' in t))
+    results.append(("and it does a message-passing round trip over that ring - submit, one trap to service, collect",
+                    'the answer came back' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'osprey user: the program exited' in t and 'panic' not in t))
 

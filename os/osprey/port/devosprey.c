@@ -1634,6 +1634,37 @@ ospreymicroexit(void *)
  * program attaches that.  The exokernel gives the program its ring; the
  * program works it in user space.
  */
+/*
+ * Service the request ring of the container the calling process is bound
+ * to.  This is the one trap a program takes to work its ring: it puts a
+ * request in the ring in its own memory, calls this to have the kernel
+ * carry it, and reads the reply back from the ring, again in memory.
+ */
+static int svcdiag;
+void
+ospreyservicecaller(void)
+{
+	Ospreyproc *p;
+	int i, r, before, after;
+
+	qlock(&ospreylock);
+	for(i = 0; i < nelem(ospreyprocs); i++)
+		if(ospreyprocs[i] == up){
+			if((p = ospreyat(i)) != nil){
+				before = ospreyrequestready(p);
+				r = ospreyservicep(p, fastticks(nil));
+				after = ospreyreplyready(p);
+				if(svcdiag < 4){
+					svcdiag++;
+					print("svc[%d]: reqready=%d serviced=%d replyready=%d\n",
+						i, before, r, after);
+				}
+			}
+			break;
+		}
+	qunlock(&ospreylock);
+}
+
 int
 ospreyuserprep(void)
 {
@@ -1647,8 +1678,19 @@ ospreyuserprep(void)
 		p = ospreycreate(1, 40000000ULL, 800000000ULL, 200000000ULL);
 		if(p != nil){
 			x = ospreyindex(p);
-			if(x >= 0 && x < nelem(ospreyprocs))
+			if(x >= 0 && x < nelem(ospreyprocs)){
 				ospreyprocs[x] = up;
+				/*
+				 * Bind the process to the container the way attach
+				 * does: setting the process's own back-pointer, not
+				 * just the slot.  Without it the clock's reaper sees
+				 * a slot whose process claims no container and clears
+				 * the binding on the next tick - the race that made
+				 * the ring round trip fail about half the time.
+				 */
+				up->osprey = p;
+				ospreysetpid(p, up->pid);
+			}
 		}
 		poperror();
 	}

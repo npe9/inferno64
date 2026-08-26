@@ -76,19 +76,66 @@ startboot(char*, char**)
 	puts("osprey user: that file came from the library in user space, not from the kernel\n");
 
 	/*
-	 * And the microkernel's message ring, mapped into this program with
-	 * segattach - the address-space service.  A real personality
-	 * library reaches its files over this ring to a file server rather
-	 * than holding them; mapping it is the first step of that.
+	 * And the microkernel's message ring.  This is how a library-OS
+	 * program reaches what it does not hold: it maps its container's
+	 * ring with segattach, puts a request in the ring in its own
+	 * memory, calls the kernel once to carry it, and reads the reply
+	 * back from the ring.  The request here is poll, a mechanism the
+	 * kernel answers itself; a file request would be forwarded the same
+	 * way to a file server.  submit and collect touch only mapped
+	 * memory; only the service is a trap.
 	 */
 	{
+		enum { Ospreymagic = 0x4f53505259ULL, ReqPoll = 11, ReplyDone = 1 };
+		typedef struct {
+			uvlong	magic, id, size, msgsize;
+			uvlong	requestqueue, replyqueue, outputqueue;
+			uvlong	request, reply, output;
+			uvlong	data, datalen, sem, nsem, selected;
+			uvlong	pktbuf, npktbuf, pktbufsize;
+			uvlong	page, npage, maxpage, pagesize;
+			uvlong	txbuf, ntxbuf, txbufsize;
+		} Omap;
+		typedef struct { vlong message; uvlong size, put, get; } Queue;
+		typedef struct { uvlong op, sequence, container, arg[5]; } Msg;
 		uchar *ring;
+		Omap *map;
+		Queue *rq, *pq;
+		Msg *reqm, *repm, m, rep;
+		uvlong seq;
 
-		ring = (uchar*)segattach(0, "osprey0", 0, 4096);
-		if(ring != (uchar*)-1)
-			puts("osprey user: mapped its container's message ring with segattach\n");
-		else
+		ring = (uchar*)segattach(0, "osprey0", 0, 0);
+		if(ring == (uchar*)-1)
 			puts("osprey user: could not map the message ring\n");
+		else if((map = (Omap*)ring)->magic != Ospreymagic)
+			puts("osprey user: what segattach mapped is not a container ring\n");
+		else {
+			puts("osprey user: mapped its container's message ring with segattach\n");
+			rq = (Queue*)(ring + map->requestqueue);
+			pq = (Queue*)(ring + map->replyqueue);
+			reqm = (Msg*)((uchar*)rq + rq->message);
+			repm = (Msg*)((uchar*)pq + pq->message);
+
+			memset(&m, 0, sizeof m);
+			m.op = ReqPoll;
+			seq = rq->put + 1;
+			m.sequence = seq;
+			m.container = map->id;
+			reqm[rq->put % rq->size] = m;
+			rq->put++;			/* publish: submit, no trap */
+
+			sleep(0);			/* the one trap: service the ring */
+
+			if(pq->put != pq->get){
+				rep = repm[pq->get % pq->size];
+				pq->get++;		/* collect, no trap */
+				if(rep.sequence == seq && rep.arg[0] == ReplyDone)
+					puts("osprey user: submitted a poll on the ring, the kernel serviced it, and the answer came back\n");
+				else
+					puts("osprey user: a reply came back but was not the poll's answer\n");
+			} else
+				puts("osprey user: no reply came back on the ring\n");
+		}
 	}
 	exits(nil);
 }
