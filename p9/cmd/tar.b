@@ -82,7 +82,10 @@ implement Tar;
 # semantics (path=/linkpath=/uname=/gname=/atime=/mtime=/size=, same
 # PAX record framing "LEN KEY=VALUE\n"), no goto-equivalent needed -
 # the streaming constraint the original's structure works around
-# simply doesn't apply here.
+# simply doesn't apply here. Both PAX header kinds (LF_PAXHDR, a
+# per-file header, and LF_PAXGLOBL, a global one carrying defaults for
+# every file after it) go through this same parsepax() - but only the
+# per-file kind is exercised by tartest.b's own T5; see BUGS.
 #
 # A REAL BUG IN THE SOURCE, found by reading it, not by testing it:
 # parsehdr() sets both hdr->uid and hdr->gid from bp->uname - the
@@ -1047,7 +1050,25 @@ addtoar(ar: ref FD, file: string, shortf: string)
 		blksleft := int ((dir.length+big (Tblock-1))/big Tblock);
 		for(abi := 0; abi < blksleft; abi++){
 			b := zeroblk();
-			nr := sys->read(fd, b, Tblock);
+			# readn, not read: read() alone may return short with more
+			# data still available (a pipe, a slow fs), which would
+			# shift the unread tail into the wrong block - readn loops
+			# until the block is full or genuine EOF (man/2/sys-read:
+			# "continues to read ... until nbytes have been read, or
+			# read returns a non-positive count"), matching the
+			# original's own ereadn(). b is already zeroed (zeroblk())
+			# so a real short read at EOF (the file's last, partial
+			# block) still pads correctly with no extra work, and an
+			# ignerrs-suppressed error leaves the same zero fill the
+			# original's cope() builds explicitly via memset(). Found
+			# by an advisor review, not by a failing test - a genuine
+			# negative control (temporarily reverting to plain read()
+			# and archiving a 2000-byte/4-block file) did NOT reproduce
+			# a failure: this host's regular-file reads never come back
+			# short in practice, so the bug is real by the documented
+			# read()/readn() contract and by matching ereadn(), not by
+			# an observed corruption here.
+			nr := sys->readn(fd, b, Tblock);
 			if(nr < 0){
 				if(!ignerrs)
 					fail("read error reading "+file);

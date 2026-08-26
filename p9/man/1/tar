@@ -222,6 +222,22 @@ approximation, not the original's real
 .RI ( dirmodefmt )
 verb \(em no setuid/sticky/special-bit rendering. Cosmetic only.
 .PP
+.B addtoar()
+reads each archived file's content via
+.B sys->readn()
+rather than a single
+.BR sys->read() ,
+matching the original's own
+.BR ereadn (): a bare
+.B read()
+may return fewer bytes than asked for with more still available (a
+pipe, a slow filesystem), which would otherwise shift the unread tail
+into the wrong archive block for any file over one block long. Found
+by a later review, not by a failing test \(em see
+.IR tartest (1)'s
+own BUGS for why a real negative control couldn't reproduce the
+corruption in this environment.
+.PP
 .B access(name,\ AEXIST)
 has no
 .B Sys

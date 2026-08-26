@@ -99,6 +99,29 @@ Does not exercise
 .B tar r
 (append to an existing archive),
 .BR -k / -R / -i ,
-or the base-256 huge-file-size encoding path \(em all translated in
+the base-256 huge-file-size encoding path, or the
+.B LF_PAXGLOBL
+(global, as opposed to per-file) PAX header kind \(em
+.B T5
+only builds a per-file PAX header. All translated in
 .BR tar.b ,
 none independently verified to the same depth as the cases above.
+.PP
+Every fixture file in T1\-T9 is small enough to round-trip in a single
+512-byte block. A later advisor review caught that
+.IR addtoar ()
+originally read file content with a single
+.B sys->read()
+call per block rather than
+.BR sys->readn () ,
+which would have silently corrupted any archived file large enough to
+receive a short read partway through \(em fixed, but a genuine negative
+control (reverting the fix and archiving a 2000-byte/4-block file)
+did NOT reproduce a failure here: this host's regular-file reads never
+come back short in practice, so the fix is real by
+.BR sys->readn ()'s
+own documented contract and by matching the original's
+.BR ereadn (),
+not by an observed corruption in this environment. See
+.IR tar (1)'s
+own note.
