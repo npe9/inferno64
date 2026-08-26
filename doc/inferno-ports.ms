@@ -4659,6 +4659,126 @@ function the way this probe does.  Calling it from a different
 point in the prologue broke the assumption; the read is garbage,
 not evidence of anything.  Recorded as a probe defect to fix, not a
 second data point about stack corruption.
+.PP
+Ran the moved version: twelve boots, three crashes
+.RB ( "unknown namec access 2" ,
+a page fault, and the probe again) \- and the probe's own capture,
+.CW "destroy: bad v 0 from 0x0" ,
+shows moving the
+.CW getcallerpc()
+call didn't fix it either; anchoring on
+.CW &h
+instead of
+.CW &v
+still read a caller pc nowhere near this port's text segment.  Two
+failed anchors is enough to stop guessing at frame timing.
+.PP
+Dropped
+.CW getcallerpc()
+for the two things that have actually worked throughout this whole
+hunt: the
+.CW currun()
+Dis-module trick
+.CW dumpregs() / _poolfault()
+already use, and a raw
+.CW dumpstack() \-
+board-specific, deliberately temporary.  Ran it: twelve boots, one
+crash, and it was the probe:
+.CW "destroy: bad v 18, running Dis pid 1 module $Sys PC 0xa3c818" ,
+firing before
+.CW "loading /dis/sh.dis"
+even prints \- earlier than any capture this whole hunt has landed,
+during
+.CW $Sys 's
+own module init.
+.CW v==18
+this time, not
+.CW 0
+\- across the two clean captures this probe has produced,
+.I "the value differs" ,
+which rules out "always reads a freshly-zeroed slot" and points at
+stale, reused stack contents instead.
+.PP
+The
+.CW dumpstack()
+output resolved to a complete, coherent chain for the first time in
+this entire hunt:
+.CW disinit
+\(->
+.CW vmachine
+\(->
+.CW startup
+\(-> ...  \(->
+.CW xec
+(the bytecode dispatch loop) \(->
+.CW mcall
+\(->
+.CW freeptrs
+\(->
+.CW destroy .
+.CW OP(mcall)
+in
+.CW libinterp/xec.c ,
+on its
+.CW "ml->prog == nil"
+branch (a call into a native/builtin function, not compiled Limbo
+bytecode), does
+.CW "l->runt(f)"
+and then, once the native call returns,
+.CW "if(f->t->np) freeptrs(f, f->t)"
+\- cleaning up whatever pointer-typed locals the frame
+.CW f
+held, using
+.CW f->t
+as the map of which slots are pointers.
+.CW f
+itself comes from
+.CW T(s) ,
+Dis-stack space that's reused across calls, not a fresh
+allocation \- and if the frame's own pointer slots were not all
+written
+.CW H
+by whatever created the frame, before this cleanup runs,
+.CW freeptrs()
+walks into whatever stale bytes are sitting in that reused stack
+region and hands them to
+.CW destroy()
+as if they were real old values.  That would explain the value
+differing between captures (different leftover stack contents),
+"indifferent to which module is running" (this is a property of the
+native-call cleanup path itself, exercised by any
+.CW sys->
+call from any module), and both very early and very late timing in
+one mechanism.  Not confirmed \- checked and not yet read:
+.CW OP(mcall)
+does not create
+.CW f ,
+it only cleans it up, so the actual defect (if this reading holds)
+would be in whatever earlier instruction
+.RB ( OP(frame) ,
+.CW newframe()
+in the same file) builds the frame, specifically whether frame
+creation initializes every slot the
+.I same
+.CW f->t
+declares, or a different, narrower descriptor \- a size/descriptor
+mismatch between the type that built the frame and the type that
+cleans it up would be permanent and exact, not a race, which fits
+the evidence better than a timing theory would.  Two clean captures
+both landing on this one path
+.RB ( mcall 's
+runt branch specifically) is what the evidence says; it does not
+yet license "any native call," only this one.
+.PP
+.CW dumpstack()
+is pc64-only and does not belong in shared
+.CW libinterp
+code past this investigation \- it must come out before any other
+board (or hosted emu) build is attempted, since nothing else links
+it.  Left in for now because this is still the active probe; pull it
+in the same change that replaces it with whatever the
+.CW OP(frame) / newframe()
+reading turns up.
 
 .NH 1
 How a native kernel provides networking

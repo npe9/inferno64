@@ -228,20 +228,34 @@ destroy(void *v)
 	if(v == H)
 		return;
 
+	h = D2H(v);
+
 	/*
-	 * Probe: three page faults this crash-hunt landed inside this
-	 * function's own D2B check below, at CR2 values of -32, -56, -20
-	 * -- not wild addresses, small integers near zero.  v was never
-	 * a valid pointer to begin with; catch that here, before D2B
-	 * turns it into an unreadable fault address, and name who called
-	 * destroy() with it.  See doc/inferno-ports.ms.
+	 * Probe: destroy(0) has now fired twice, same value both times,
+	 * both right as /dis/init starts running -- reproducible, not
+	 * random.  getcallerpc() has failed twice running (0x32, then
+	 * 0x0, anchored on two different locals) to name a real caller
+	 * pc from this early-exit guard, so this round drops it and asks
+	 * for the two things that have worked reliably all through this
+	 * crash-hunt instead: which Dis Prog/module was running (the
+	 * currun() trick dumpregs()/_poolfault() already use) and a raw
+	 * dumpstack() -- board-specific, deliberately temporary, revert
+	 * once a capture lands.  See doc/inferno-ports.ms.
 	 */
 	if((uintptr)v < 0x1000) {
-		print("destroy: bad v %p from %#p\n", v, getcallerpc(&v));
+		Prog *xp;
+		extern void dumpstack(void);
+
+		xp = currun();
+		if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+			print("destroy: bad v %p, running Dis pid %d module %s PC %#p\n",
+				v, xp->pid, xp->R.M->m->name, xp->R.PC);
+		else
+			print("destroy: bad v %p, currun() nil or has no module\n", v);
+		dumpstack();
 		abort();
 	}
 
-	h = D2H(v);
 	{ Bhdr *b; D2B(b, h); }		/* consistency check */
 
 	if(ADEC(&h->ref) > 0 || gchalt > 64) 	/* Protect 'C' thread stack */
