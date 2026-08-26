@@ -50,6 +50,7 @@ static	int	declownedby(Decl*, Decl*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
+static	void	unifytparam(Node*, Type*, Decl*, Type**);
 static	Decl	*tinstantiatemeth(Decl*, Type*);
 static	Case	*matchlabels(Node*, Type*, int);
 static	int	casecmp(Type*, Node*, Node*);
@@ -940,22 +941,139 @@ tinstantiatefn(Node *n)
 }
 
 /*
+ * unify one parameter's *raw, unresolved* declared-type syntax node
+ * (pt -- straight off the template's own Otfunc parameter list,
+ * check.c's own grammar shapes: Oname a bare type name, Otarray/
+ * Otchan/Otlist/Otref a container wrapping one element/target type,
+ * Otinst a generic type instantiated with its own type arguments)
+ * against the *already-checked* Type an actual call argument turned
+ * out to have (at), binding any of tparams found as a bare Oname
+ * into argv (by position, matching tparams' own order) -- first
+ * binding for a given parameter wins, later ones are ignored, same
+ * as inferfn()'s previous single-level version.  purely structural:
+ * a shape mismatch (pt wants an array, at isn't one) just fails to
+ * bind anything from that branch rather than erroring -- inferfn()'s
+ * own end-of-loop "argv[i] == nil" check is what actually reports an
+ * unresolvable type parameter.
+ *
+ * NOT unified through, deliberately (falls into the default: case,
+ * binds nothing): Otfunc ("f func(T) U", a function-typed parameter)
+ * and Ottuple (a multi-result type used as one) -- a type parameter
+ * that only ever appears inside one of those still needs an explicit
+ * "f[...](...)".  tests/ok/generics.e's own map2[T, U](xs []T, f
+ * func(T) U) is exactly this shape for U: xs alone infers T, but U
+ * only appears inside f's own signature, so calling map2 without an
+ * explicit [T, U] fails with "cannot infer all type arguments" even
+ * though every argument's type is fully known at the call site --
+ * real unification through a function type is a bigger step (walking
+ * two signatures' parameter lists and return types pairwise) than
+ * this file otherwise needed, so left for whenever that gap actually
+ * blocks something.  Otchan and Otref are real, tested branches
+ * (tests/type/genericinfer2.e); Otlist is implemented identically but
+ * *untested* -- not because list-of-T unification doesn't work, but
+ * because no list literal syntax exists yet to construct a "list T"
+ * argument with at all ("::"/Ocons is in the AST enum but was never
+ * wired into the parser), the same gap that also leaves Otarray's own
+ * test unable to use a literal.
+ */
+static void
+unifytparam(Node *pt, Type *at, Decl *tparams, Type **argv)
+{
+	Node *tp, *tpn, *ta, *targ;
+	Decl *itd;
+	int j, i;
+
+	if(pt == nil || at == nil || at == terror)
+		return;
+	switch(pt->op){
+	case Oname:
+		j = 0;
+		for(tp = tparams; tp != nil; tp = tp->right){
+			tpn = tp;
+			if(tp->op == Oseq)
+				tpn = tp->left;
+			if(tpn->sym == pt->sym){
+				if(argv[j] == nil)
+					argv[j] = at;
+				return;
+			}
+			j++;
+			if(tp->op != Oseq)
+				break;
+		}
+		return;
+	case Otarray:
+		if(at->kind != Tarray)
+			return;
+		unifytparam(pt->right, at->tof, tparams, argv);
+		return;
+	case Otchan:
+		if(at->kind != Tchan)
+			return;
+		unifytparam(pt->right, at->tof, tparams, argv);
+		return;
+	case Otlist:
+		if(at->kind != Tlist)
+			return;
+		unifytparam(pt->right, at->tof, tparams, argv);
+		return;
+	case Otref:
+		if(at->kind != Tref)
+			return;
+		unifytparam(pt->right, at->tof, tparams, argv);
+		return;
+	case Otinst:
+		/*
+		 * "Box[T]" as a parameter's own declared type, called with
+		 * an already-instantiated Box[int] argument: at->gtemplate
+		 * is the generic Type "Box[T]" itself instantiated from
+		 * (ember.h's own comment on Type.gtemplate/ginst), so
+		 * confirm pt->left actually names that same template (not
+		 * merely "some generic type or other") before trusting
+		 * at->ginst->args to line up positionally with pt->right.
+		 */
+		if(pt->left == nil || pt->left->op != Oname)
+			return;
+		if(at->kind != Tadt || at->gtemplate == nil || at->ginst == nil)
+			return;
+		itd = lookup(pt->left->sym);
+		if(itd == nil || itd->store != Dtype || itd->ty != at->gtemplate)
+			return;
+		ta = pt->right;
+		i = 0;
+		for(; ta != nil && i < at->ginst->nargs; i++){
+			targ = ta;
+			if(ta->op == Oseq)
+				targ = ta->left;
+			unifytparam(targ, at->ginst->args[i], tparams, argv);
+			if(ta->op != Oseq)
+				break;
+			ta = ta->right;
+		}
+		return;
+	default:
+		/* a concrete/unparameterized type: nothing to unify */
+		return;
+	}
+}
+
+/*
  * "name(args)" (echk's Ocall case, plain callee, no explicit "[...]"):
  * infer a generic function's type arguments from the call's own
- * argument types, rather than requiring them spelled out.  scoped to
- * the simple, common shape -- a parameter whose *entire* declared
- * type is one bare type-parameter name ("func f[T](x T)") -- walked
- * the same way stype()'s own Otfunc case flattens a parameter list
- * (outer loop over Ofields, inner loop over each field's names, so
- * "a, b T" binds both a and b to the same argument-derived T); a
- * parameter type that only *contains* a type parameter somewhere
- * inside it (a generic type instantiated with one, a slice of one)
- * isn't unified against, and any type parameter that never appears
- * this way just doesn't get inferred -- reported cleanly asking for
- * an explicit "f[...](...)" rather than guessed at.  returns nil
- * (silently, no error) when n->left doesn't name a generic function
- * template at all, so callers can fall through to the ordinary,
- * non-generic call path.
+ * argument types, rather than requiring them spelled out, via
+ * unifytparam() (above) -- walked the same way stype()'s own Otfunc
+ * case flattens a parameter list (outer loop over Ofields, inner
+ * loop over each field's names, so "a, b T" binds both a and b to
+ * the same argument-derived T).  a bare parameter ("x T") binds
+ * directly; a parameter type that only *contains* a type parameter
+ * (a slice of T, a chan of T, ref T, or a generic type instantiated
+ * with T -- "xs []T", "b Box[T]") unifies structurally, one level
+ * of nesting or more, via unifytparam()'s own recursion; any type
+ * parameter that never appears this way just doesn't get inferred --
+ * reported cleanly asking for an explicit "f[...](...)" rather than
+ * guessed at.  returns nil (silently, no error) when n->left doesn't
+ * name a generic function template at all, so callers can fall
+ * through to the ordinary, non-generic call path.
  */
 static Decl*
 inferfn(Node *n)
@@ -995,25 +1113,19 @@ inferfn(Node *n)
 			arg = a;
 			if(a->op == Oseq)
 				arg = a->left;
-			if(f->right != nil && f->right->op == Oname){
-				Node *tp, *tpn;
-				int j;
-
-				j = 0;
-				for(tp = td->tparams; tp != nil; tp = tp->right){
-					tpn = tp;
-					if(tp->op == Oseq)
-						tpn = tp->left;
-					if(tpn->sym == f->right->sym){
-						if(argv[j] == nil)
-							argv[j] = echk(arg);
-						break;
-					}
-					j++;
-					if(tp->op != Oseq)
-						break;
-				}
-			}
+			/*
+			 * echk() every argument up front, whether or not it
+			 * ends up unifying against anything -- unifytparam()
+			 * needs the checked Type to look inside (an array's
+			 * element type, a generic instantiation's own type
+			 * arguments), not just a bare parameter name match.
+			 * echk()ing the same node again is not new here: the
+			 * shared Ocall path further down (below tinstantiate-
+			 * fncore()'s return) always echk()s every argument a
+			 * second time anyway, against the now-instantiated
+			 * signature's real parameter types.
+			 */
+			unifytparam(f->right, echk(arg), td->tparams, argv);
 			a = a->op == Oseq ? a->right : nil;
 			if(ids->op != Oseq)
 				break;
