@@ -3782,6 +3782,608 @@ for free, the same standing offer
 .CW dumpregs()
 already made for native traps.
 .NH 1
+Two pools, not one arena: the D2B and chan crashes fire in different pools
+.PP
+Checked what the previous section left open rather than assumed it.
+.CW include/pool.h 's
+allocator keeps three named pools
+.RB ( main ,
+.CW heap ,
+.CW image ),
+and
+.CW alloc.c 's
+own
+.CW _auditmemloc()
+names which one it found the searched address in.  The three
+.CW alloc:D2B
+captures on record all read
+.CW "in heap:" \-
+.CW heapmem ,
+the GC-managed Dis object heap.
+.CW "cclone / cclose" 's
+bad-chan panics are against
+.CW Chan
+structures, and
+.CW newchan()
+allocates them through
+.CW smalloc() ,
+which is
+.CW mainmem
+only.  Different pools.  Reading this whole crash-hunt as "one
+corruption, several detection points" was an assumption the earlier
+sections never actually checked, and this much of it does not hold
+as stated: the two signatures fire in different pools.  Whether
+that means two separate bugs or one bug in code shared by both
+pools (below:
+.CW poolalloc / poolfree
+in
+.CW alloc.c
+are the same functions serving every
+.CW Pool ,
+.CW heapmem
+and
+.CW mainmem
+alike) is still open \- a later section finds a real fault inside
+.CW poolalloc()
+itself on the
+.CW heapmem
+side, which keeps a shared-code explanation live.
+.PP
+This does not touch the GPF captures, which are raw faults rather
+than allocator-detected corruption and are not attributable to a
+pool this way.
+.NH 1
+A real use-after-free window in delprog(), reachability not yet settled
+.PP
+Read
+.CW os/inferno/port/dis.c 's
+.CW delprog()
+looking specifically for the
+.CW mainmem
+half of the split above, since
+.CW "Pgrp / Fgrp / Egrp"
+are all
+.CW smalloc() 'd
+the same way
+.CW Chan
+is.
+.CW delprog()
+does
+.CW "o = p->osenv"
+then
+.CW release() ,
+then
+.CW closepgrp(o->pgrp) ,
+.CW closefgrp(o->fgrp) ,
+.CW closeegrp(o->egrp) ,
+.CW closesigs(o->sigs) ,
+then
+.CW acquire() .
+Only after that does it unlink
+.CW p
+from
+.CW proghash[]
+(via
+.CW pidlook() )
+and from
+.CW "isched.head / isched.tail" .
+.CW release()
+hands the single interpreter token to whatever other kproc is
+waiting, which runs ordinary Limbo bytecode until it blocks or
+finishes \- and
+.CW p
+is still fully reachable by pid through
+.CW progpid()
+the entire time, while
+.CW closepgrp()
+and
+.CW closefgrp()
+may already have freed what
+.CW o->pgrp
+and
+.CW o->fgrp
+point at.
+.CW os/inferno/port/devprog.c
+has eleven
+.CW progpid(PID(c->qid))
+call sites behind
+.CW #p ,
+and at least three dereference the group pointers directly without
+taking a reference first:
+.CW Qns
+does
+.CW "chanpath(o->pgrp->dot)" ,
+.CW Qnsgrp
+does
+.CW "((Osenv*)p->osenv)->pgrp->pgrpid" ,
+and
+.CW Qfd
+hands
+.CW o
+straight to
+.CW progfds() .
+Any of the three, hit during another prog's
+.CW delprog()
+window, reads through a pointer that may already be dangling \- the
+same shape as the observed
+.CW cclose / cclone
+"bad chan" signature, just one arena over from where those checks
+actually fire.
+.PP
+Two things looked like they would extend this finding and did not.
+.CW killgrp()
+also calls
+.CW progpid()
+in a loop, and its own comment already flags that state can change
+"eg, in delprog" \- but
+.CW killprog() 's
+switch returns 0 immediately on
+.CW Prelease
+or
+.CW Pexiting ,
+and every
+.CW p->state = Pexiting
+assignment in this file is inside
+.CW killprog()
+itself, set before it calls
+.CW delprog() .
+So a
+.CW killgrp()
+walk hitting a prog mid-teardown from
+.I that
+path is already guarded.
+.CW Sys_pctl()
+also releases the token while it later touches
+.CW p->osenv ,
+which looked at first like it multiplied the exposure \- but
+.CW Sys_pctl()
+is a prog acting on its own
+.CW osenv ,
+not a reader reaching another dying prog's, so it does not by
+itself put a second prog in the window.
+.PP
+One thing does NOT guard the ordinary case, though, and this is
+the actual finding worth keeping:
+.CW progexit() \-
+the path every prog takes when it exits normally, by returning or
+calling
+.CW exit() ,
+as opposed to being killed \- never sets
+.CW r->state = Pexiting
+anywhere before calling
+.CW delprog() .
+Checked by grepping every
+.CW "state = Pexiting"
+assignment in the file; all three are in
+.CW killprog() .
+So
+.CW devprog.c 's
+.CW Qstatus
+and
+.CW Qstack
+guards, which both check
+.CW "p->state == Pexiting"
+before touching a prog, correctly turn away a killed prog and do
+nothing at all for a normally-exiting one \- which is the common
+case, not the rare one.  Every module that finishes and returns
+during boot goes through this exact, unguarded window.
+.PP
+One reorder that looked obviously correct turned out not to be, and
+is worth recording so it is not tried again.  The natural fix reads
+as "unlink
+.CW p
+from
+.CW proghash[]
+and
+.CW isched.head/tail
+before
+.CW release() ,
+not after" \- close the window by making
+.CW p
+unreachable by pid before any other kproc can run.  This breaks a
+different invariant.
+.CW release() 's
+.CW Interp
+branch calls
+.CW isave() ,
+which is
+.CW "p = delrun(Prelease); p->R = R; return p;"
+in
+.CW libinterp/xec.c \-
+and
+.CW delrun()
+takes
+.I whatever
+is at
+.CW isched.runhd
+unconditionally, with no check that it is the caller's own prog.
+.CW delprog() 's
+own
+.CW "if(p == isched.runhd) isched.runhd = p->link"
+step, currently placed after
+.CW acquire() ,
+is exactly what keeps
+.CW p
+at
+.CW isched.runhd
+across the
+.CW release()
+call.  Move it earlier and
+.CW isave()
+saves the current register set into a
+.I different,
+unrelated prog instead \- corrupting that prog's saved state rather
+than fixing anything.  A correct fix has to close the
+.CW proghash[] /
+.CW isched.head/tail
+reachability window without touching
+.CW isched.runhd
+ordering at all: the candidate not yet tried is nulling
+.CW "o->pgrp / o->fgrp / o->egrp / o->sigs"
+immediately after each successful close, so a concurrent reader
+that finds
+.CW p
+during the window sees
+.CW nil
+rather than a dangling pointer \- which is also what
+.CW closepgrp() / closefgrp()
+already check for on entry, so the pattern is not new to this code.
+.PP
+Built, not yet applied: a diagnostic pair, capped and permanent-cost
+only on the path it instruments.
+.CW dis.c
+gets
+.CW disracepid
+(the pid currently inside a
+.CW delprog()
+close window, \-1 when none),
+.CW disracewindows
+and
+.CW disraceoverlaps
+(does a second window ever open while one is still open, which the
+single-int
+.CW disracepid
+cannot represent precisely if so), and reports whenever
+.CW gchalted
+(libinterp/gc.c's counter of times
+.CW rungc()
+found the GC blocked) changes across the window \- though that
+specific check turned out to measure the wrong arena:
+.CW rungc()
+only walks
+.CW heapmem ,
+and
+.CW delprog() 's
+own frees are all
+.CW mainmem ,
+so a
+.CW gchalted
+change here shows the guard firing, not anything about the frees
+this section is actually about.
+.CW devprog.c
+gets
+.CW disracecheck() ,
+called after all eleven
+.CW progpid()
+sites: a capped collision report if the pid found matches
+.CW disracepid ,
+and a capped reached-at-all counter (prints at count 1, 10, 100,
+1000) so that zero collisions can be told apart from "these paths
+never run during boot" \- the first cut of this instrument had only
+the collision check, which would have made a clean run
+uninterpretable.
+.PP
+Two batches of twelve plain boots each ran this build: 1 crash in
+the first twelve, 3 in the second, 4 in 24 total.  Not comparable to
+the eleven-boot, seven-crash baseline two sections back \- the added
+prints change timing, and 24 boots is still not enough to read a
+rate from on its own.  The reach counter fired in every boot that
+survived long enough to print it, capped output showing counts of
+1 and 10 per boot and never reaching 100 \- so the eleven
+.CW progpid()
+sites run on the order of tens of times per boot, confirming they
+are live code during an ordinary boot rather than dead paths only a
+deliberate
+.CW /prog
+read would exercise.  The collision check fired zero times in 24
+boots, and the overlap counter (does a second
+.CW delprog()
+window open while one is already open) also fired zero times.
+Neither is a clean negative on its own: the collision window is
+open for microseconds and a reader that runs tens of times per boot
+against a microsecond target is expected to miss even if the race
+is real.  Recorded as underpowered by construction, not as
+refutation.  All four crashes in this batch happened before pid 8's
+own
+.CW delprog()
+ever printed \- but that print is conditional on
+.CW gchalted
+changing, so "no
+.CW delprog:
+line before the panic" means "no window during which the GC was
+also attempted nearby," not "no
+.CW delprog()
+ran."  Caught before it became a written conclusion: earlier
+.CW gchalted
+checks answer a different question than the one asked here anyway,
+since
+.CW rungc()
+only walks
+.CW heapmem
+and
+.CW delprog() 's
+own frees are
+.CW mainmem \-
+that specific probe was measuring the wrong arena from the start.
+.NH 1
+Reading native crash addresses at last: unlocking ipc64's symbol table
+.PP
+Every crash-hunt section to this point has carried the same
+limitation:
+.CW inm main.6
+lists a full symbol table on the pre-link object,
+.CW inm ipc64
+and
+.CW acid ipc64
+both report nothing for the linked kernel, and every native
+.CW PC
+this hunt has captured has been an unreadable number.  Traced it
+down rather than working around it again.
+.CW utils/6l/obj.c
+defaults
+.CW HEADTYPE
+to 2 (native Plan9 a.out, "fat header" variant) when
+.CW -H
+is not given, which this build's link line never gives, and
+.CW utils/6l/span.c 's
+.CW asmsym()
+runs unconditionally unless
+.CW -s
+is passed, which it also is not \- so the symbols should be in the
+file, and a byte-for-byte diff confirmed they are:
+.CW ipc64
+is 1.1MB larger than its own reported text+data+bss, and
+.CW strings -a ipc64
+finds
+.CW delprog ,
+.CW currun ,
+.CW progexit
+and more as literal name strings in that trailing region.  Whatever
+.CW inm / acid
+do to read the symbol table from a linked Plan9 fat-header a.out on
+this host toolchain, it does not work for this binary; why is still
+open, and not worth more time against a working alternative.
+.PP
+The table's own format, read out of
+.CW utils/6l/span.c 's
+.CW putsymb() :
+each entry is an 8-byte big-endian value, a
+.CW "type-char | 0x80"
+byte, then either a null-terminated name (most types) or, for
+.CW Z / z
+(source-line tables), a leading byte and 2-byte pairs terminated by
+.CW 0x0000
+\- get that second case wrong and the whole rest of the table
+desyncs, which is what happened on the first pass.  The table
+itself starts nine bytes before the third occurrence of
+.CW "etext\e0"
+in the file; the first two are false positives inside unrelated
+embedded debug strings.
+.CW asmsym()
+writes
+.CW etext
+first, always.  A parser built this way against the current
+.CW ipc64
+resolved 26399 symbols, stopping exactly at the boundary with the
+separately-formatted pc-line table \- the parse is complete, not
+truncated.  Saved to
+.CW scratchpad/resolve_ipc64_syms.py
+for reuse; it must be re-run against whichever
+.CW ipc64
+build produced the capture being resolved, since addresses shift
+across rebuilds that have nothing to do with the crash path, and
+resolving an old capture's pc against a newer binary silently gives
+a wrong answer with no indication anything is wrong.
+.PP
+Resolved four addresses from captures already on record.  The
+earlier
+.CW alloc:D2B
+capture's caller pc
+.RB ( 0x2610ec )
+lands in
+.CW mallocalign
++519; this session's own new capture
+.RB ( "0x310598 not in pools" ,
+caller
+.CW 0x26129d )
+lands in
+.CW free
++121.  Both captures' second address \- what
+.CW _poolfault()
+calls
+.CW getcallerpc(&v) ,
+one frame further out than the
+.CW D2B
+site itself \- resolve to
+.CW freelist
++113 and
+.CW freelist
++257, and the two earlier "addresses do not recur" captures
+.RB ( 0x784c2b8 / 0x2bdc2b
+and
+.CW "0x784a9b8 / 0x2bdc2b" )
+both resolve their second address to the same
+.CW freelist
++113.  Three of four
+.CW alloc:D2B
+captures on record now share
+.CW freelist
+as the frame just outside the failing call \- the first thing in
+this entire hunt that repeats.
+.CW cclone: 0x263d95
+resolves to
+.CW cunique
++28, and
+.CW cunique
+does call
+.CW cclone
+at that point in
+.CW chan.c ,
+so the pairing holds.  The GPF capture's pc
+.RB ( 0x2f113b )
+resolves nearest to
+.CW dtoa
++4561, four and a half kilobytes past a float formatter's start \-
+too far to be
+.CW dtoa
+itself with any confidence; more likely a static function with no
+.CW T
+entry sitting after it.  Recorded as unresolved rather than named.
+.PP
+What
+.CW freelist
+recurring does not yet say is which side of it is wrong.
+.CW _poolfault() 's
+panic format is
+.CW "%s %p (from %p/%zux)"
+with
+.CW getcallerpc(&v)
+and the
+.CW c
+argument \-
+.CW c
+is the pc
+.CW D2B
+itself captured at the failing check, one frame further in than
+.CW getcallerpc(&v) .
+Both addresses name who tripped the check, in two different
+frames; neither says who wrote the bad bytes.
+.CW free / mallocalign
+calling into a
+.CW D2B
+check from inside
+.CW freelist
+is exactly what a correct pointer into an already-corrupted pool
+looks like, same as every capture before it.  Read
+.CW libinterp/heap.c 's
+.CW freelist()
+in full looking for a bug in its own tail-walk \- it iteratively
+frees a Limbo list's cons chain without recursion, correctly stops
+at a shared tail
+.RB ( ADEC(&th->ref) != 0 )
+rather than freeing memory another list still points at, and reads
+.CW l->tail
+before calling
+.CW poolfree()
+on the current node, so no ordering bug jumped out on inspection.
+One real gap: unlike
+.CW destroy() ,
+which does a
+.CW D2B
+consistency check immediately before its own
+.CW poolfree(heapmem, h) ,
+.CW freelist() 's
+per-node
+.CW poolfree(heapmem, th)
+inside the tail-walk loop had no such check \- so if the loop is
+ever handed an already-bad
+.CW th ,
+nothing would have noticed at the point of failure.  Added the same
+check there, not as a fix but as a probe: if it ever fires, this
+loop is downstream of corruption that predates it, same as every
+other capture; if it never fires while
+.CW "alloc:D2B / cclone / cclose"
+keep panicking elsewhere, this loop is cleared in one build.
+.PP
+Ran it: twelve boots, one crash, and the crash was not a
+.CW D2B
+panic at all \- a genuine CPU page fault
+.RB ( CR2
+.CW 0x100000008 ,
+plainly not a real address), naming
+.CW "module Sh pid 1"
+this time, not
+.CW currun()
+nil, with fault
+.CW PC
+resolving to
+.CW poolalloc
++100 \- inside the tree-walk at the very top of the function, right
+after
+.CW ilock(&p->l)
+and
+.CW p->root
+'s own tree is what it is walking.  So the probe answered a
+narrower question than it was built for (freelist's own
+.CW poolfree()
+call was never reached this run) while a wider one landed instead:
+.CW p->root
+itself, or a node reached from it, was already bad before this
+call started.  The contiguous top of the raw stack dump \-
+.CW dumpstack
+prints raw stack words, not a verified unwind, and only a
+contiguous run near the fault is trustworthy as a call chain \-
+reads
+.CW xec
+(the bytecode dispatch loop) into
+.CW "headp / consp / movp / cons"
+(Limbo list-cell instructions) into
+.CW nheap
+into
+.CW "poolfree / ilock / iunlock / freeptrs"
+into the faulting
+.CW poolalloc .
+.CW "sleep / iyield / vmachine / tready / udpstats / memdraw"
+further down are stale words left over from earlier, unrelated
+calls, not part of this chain.
+.PP
+Checked the mechanism that stack shape suggests: does anything
+callable from inside
+.CW poolalloc()
+or
+.CW poolfree()
+while
+.CW p->l
+is held re-enter either function on the same pool \- which would
+let two block-chain updates interleave under a lock that is not
+reentrancy-checked?  Read both in full.  Neither calls
+.CW "destroy() / freeptrs() / poolfree()"
+while
+.CW p->l
+is held; the "TBS xmerge" branch in
+.CW poolalloc()
+that does call
+.CW poolfree()
+recursively is dead code
+.RB ( "if(0 && ...)" ).
+.CW poolfree() 's
+own
+.CW D2B(b,v)
+check runs
+.I before
+.CW ilock(&p->l) ,
+which is a real gap \- an unlocked header read \- but a read alone
+does not explain a wild pointer written into
+.CW p->root .
+This specific reentrancy mechanism is ruled out by reading; the
+fault stands as a corrupted
+.CW p->root
+whose write is not yet located.  Not fixed.  Committed as three
+separate, clearly-labelled probes
+.RB ( disracepid / disracewindows / disraceoverlaps
+in
+.CW dis.c ,
+.CW disracecheck()
+in
+.CW devprog.c ,
+the
+.CW D2B
+check in
+.CW freelist() 's
+tail-walk) plus the symbol-table parser, all still open questions
+rather than a fix.
+
+.NH 1
 How a native kernel provides networking
 .PP
 The stack is in the kernel and it is reached as files.  There is no

@@ -172,6 +172,17 @@ freelist(Heap *h, int swept)
 		l = l->tail;
 		if(heapmonitor != nil)
 			heapmonitor(1, th, 0);
+		/*
+		 * Probe, not a fix: destroy() does this same D2B check
+		 * immediately before its own poolfree(heapmem, h) call,
+		 * but this iterative tail-walk's per-node poolfree(heapmem,
+		 * th) never did.  If th is already bad here, freelist() is
+		 * downstream of some earlier corruption, not upstream of
+		 * it; if this never fires while alloc:D2B/cclone/cclose
+		 * keep panicking elsewhere, freelist() itself is cleared.
+		 * See doc/inferno-ports.ms.
+		 */
+		{ Bhdr *b; D2B(b, th); }
 		poolfree(heapmem, th);
 	}
 }

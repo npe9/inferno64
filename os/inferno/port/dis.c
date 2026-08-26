@@ -39,6 +39,25 @@ uvlong	gcpartial;
 int keepbroken = 1;
 static Prog*	proghash[64];
 
+/*
+ * delprog() release()s the interpreter token while it closes p's
+ * pgrp/fgrp/egrp/sigs, but does not unlink p from proghash[]/isched
+ * until it reacquires -- so p is still reachable by pid through
+ * progpid() during that window, while o->pgrp etc may already be
+ * freed.  disracepid names the pid currently inside that window (-1
+ * when none is); devprog.c's progpid()-based read paths report a hit
+ * if they find it, and delprog itself reports whether the GC was
+ * blocked from running (via gchalt/gchalted, see include/interp.h and
+ * libinterp/gc.c) during the same window.  Diagnostic only, capped;
+ * see doc/inferno-ports.ms.
+ */
+int	disracepid = -1;
+int	disracehits;
+int	disracewindows;	/* delprog windows opened, total */
+int	disraceoverlaps;	/* windows opened while another was already open */
+extern ulong gchalted;
+
+
 static Progs*	delgrp(Prog*);
 static void	addgrp(Prog*, Prog*);
 void	printgrp(Prog*, char*);
@@ -231,12 +250,31 @@ delprog(Prog *p, char *msg)
 	tellsomeone(p, msg);	/* call before being removed from prog list */
 
 	o = p->osenv;
-	release();
-	closepgrp(o->pgrp);
-	closefgrp(o->fgrp);
-	closeegrp(o->egrp);
-	closesigs(o->sigs);
-	acquire();
+	{
+		ulong gcbefore;
+
+		gcbefore = gchalted;
+		disracewindows++;
+		if(disracepid != -1) {
+			disraceoverlaps++;
+			if(disraceoverlaps <= 8)
+				print("delprog: pid %d opening window while pid %d's was still open (overlap %d)\n",
+					p->pid, disracepid, disraceoverlaps);
+		}
+		disracepid = p->pid;
+		release();
+		closepgrp(o->pgrp);
+		closefgrp(o->fgrp);
+		closeegrp(o->egrp);
+		closesigs(o->sigs);
+		acquire();
+		disracepid = -1;
+		if(disracehits < 8 && gchalted != gcbefore) {
+			disracehits++;
+			print("delprog: pid %d gchalted %lud->%lud during close window\n",
+				p->pid, gcbefore, gchalted);
+		}
+	}
 
 	delgrp(p);
 
