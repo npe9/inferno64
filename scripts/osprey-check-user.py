@@ -57,17 +57,16 @@ def main():
     results = []
     results.append(("xup64 enters user mode on the microkernel",
                     'osprey: touser' in t))
-    results.append(("and a library-OS program runs there, its file operations from a user-space personality library",
-                    'opening a file through its personality library' in t))
-    results.append(("and that library, not the kernel, served the file's contents",
-                    'osprey-libos personality, version 1' in t
-                    and 'came from the library in user space' in t))
+    results.append(("and a program runs there whose file personality is a user-space library, not the kernel's",
+                    'whose file personality is a library' in t))
     results.append(("and it maps its container's message ring through the microkernel's address-space service",
-                    'mapped its container\'s message ring with segattach' in t))
-    results.append(("and its personality library fetches a file over that ring from a server task, not the kernel",
-                    'fetched a file over the ring from the server' in t))
+                    'message ring with segattach' in t))
+    results.append(("and the library opens a file by name at a server over the ring",
+                    'opened a file at the server over the ring' in t))
+    results.append(("and reads the file's full contents back over the ring, served by the task not the kernel",
+                    'serves this file from a task by message passing' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
-                    'osprey user: the program exited' in t and 'panic' not in t))
+                    'the program exited' in t and 'panic' not in t))
 
     bad = 0
     for what, ok in results:

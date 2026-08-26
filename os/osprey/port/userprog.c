@@ -2,61 +2,134 @@
  * userprog - a library-OS program for the Osprey microkernel.
  *
  * It runs on top of the microkernel and reaches the kernel only through
- * the minimal system-call interface - write and exit.  Its file
- * operations are not the kernel's: they are a personality it links as a
- * library and calls in its own address space.  persopen and persread
- * below are that library in miniature - a name space of a couple of
- * files and the open and read over it.  The kernel knows none of it.
- * This is what the paper means by a library operating system: the OS
- * personality implemented as a library, run on top of the microkernel.
+ * the minimal system-call interface - write, exit, segattach, and a
+ * yield-and-service call.  Its file operations are not the kernel's:
+ * they are a personality it links as a library.  Here the personality
+ * does not hold the files at all - it opens and reads them over the
+ * message ring from a file server, another task on the same microkernel.
+ * persopen and persread below are that library: they speak the open and
+ * read protocol over the ring, and the kernel only carries the messages.
+ * This is a library operating system in the paper's shape: the OS
+ * personality implemented as a library, run on top of the microkernel,
+ * reaching a server by message passing.
  *
  * As with initcode there is no separate loader: the whole image is
- * carried into the program's text, so it stays modest.
+ * carried into the program's text, so its strings live in that text and
+ * it keeps no data segment.
  */
 #include <u.h>
 #include <libc.h>
 
-/* the personality's name space: files and their contents */
-static char *pname[] = {
-	"/dev/osversion",
-	"/greeting",
-};
-static char *pdata[] = {
-	"osprey-libos personality, version 1\n",
-	"this file was served by a user-space personality library\n",
+enum {
+	Ospreymagic	= 0x4f53505259ULL,
+	ReqRead		= 0,
+	ReqOpen		= 2,
+	ReplyDone	= 1,
 };
 
-/* the personality's open: resolve a name to a handle */
-static int
-persopen(char *name)
-{
-	int i;
+typedef struct Omap Omap;
+struct Omap {
+	uvlong	magic, id, size, msgsize;
+	uvlong	requestqueue, replyqueue, outputqueue;
+	uvlong	request, reply, output;
+	uvlong	data, datalen, sem, nsem, selected;
+	uvlong	pktbuf, npktbuf, pktbufsize;
+	uvlong	page, npage, maxpage, pagesize;
+	uvlong	txbuf, ntxbuf, txbufsize;
+};
+typedef struct Queue Queue;
+struct Queue { vlong message; uvlong size, put, get; };
+typedef struct Msg Msg;
+struct Msg { uvlong op, sequence, container, arg[5]; };
 
-	for(i = 0; i < nelem(pname); i++)
-		if(strcmp(name, pname[i]) == 0)
-			return i;
-	return -1;
-}
-
-/* the personality's read: the file's contents */
-static long
-persread(int fd, char *buf, long max)
-{
-	long n;
-
-	if(fd < 0 || fd >= nelem(pdata))
-		return -1;
-	n = strlen(pdata[fd]);
-	if(n > max)
-		n = max;
-	memmove(buf, pdata[fd], n);
-	return n;
-}
+/* the ring this program's container was given, laid over its slice; kept
+ * on the stack, not in statics, because the program has no data segment */
+typedef struct Ring Ring;
+struct Ring {
+	uchar	*base;
+	Omap	*map;
+	Queue	*rq, *pq;
+	Msg	*reqm, *repm;
+};
 
 static void
 puts(char *s)
 {
 	write(2, s, strlen(s));
+}
+
+/*
+ * One request over the ring: put the message in the ring in our own
+ * memory, trap once to have the kernel service it (which forwards it to
+ * our server), and read the reply back.  Returns the reply's status
+ * word, or -1 if none came; fills *rep with the whole reply.
+ */
+static long
+ringcall(Ring *r, uvlong op, uvlong a0, uvlong a1, uvlong a2, Msg *rep)
+{
+	Msg m;
+	uvlong seq;
+	int tries;
+
+	memset(&m, 0, sizeof m);
+	m.op = op;
+	m.container = r->map->id;
+	m.arg[2] = a0;
+	m.arg[3] = a1;
+	m.arg[4] = a2;
+	seq = r->rq->put + 1;
+	m.sequence = seq;
+	r->reqm[r->rq->put % r->rq->size] = m;
+	r->rq->put++;				/* submit: memory, no trap */
+
+	for(tries = 0; tries < 400 && r->pq->put == r->pq->get; tries++)
+		sleep(1);			/* service and yield until the reply lands */
+
+	if(r->pq->put == r->pq->get)
+		return -1;
+	*rep = r->repm[r->pq->get % r->pq->size];
+	r->pq->get++;				/* collect: memory, no trap */
+	if(rep->sequence != seq)
+		return -1;
+	return (long)rep->arg[0];		/* the status word */
+}
+
+/* the personality's open: resolve a name at the server, return a handle */
+static int
+persopen(Ring *r, char *name)
+{
+	Msg rep;
+	uchar *data;
+	long n, status;
+
+	data = r->base + r->map->data;		/* our data area */
+	for(n = 0; name[n] != 0; n++)		/* put the name where the server reads it */
+		data[n] = name[n];
+	status = ringcall(r, ReqOpen, 0, n, 0, &rep);
+	if(status != ReplyDone)
+		return -1;
+	return (int)rep.arg[2];			/* the handle the server returned */
+}
+
+/* the personality's read: the server copies the file into our data area */
+static long
+persread(Ring *r, int fd, char *buf, long max)
+{
+	Msg rep;
+	uchar *data;
+	long n, k;
+	uvlong dest;
+
+	dest = 128;				/* where in our data area the bytes land */
+	n = ringcall(r, ReqRead, (uvlong)fd, dest, (uvlong)max, &rep);
+	if(n <= 0)
+		return n;
+	if(n > max)
+		n = max;
+	data = r->base + r->map->data;
+	for(k = 0; k < n; k++)
+		buf[k] = data[dest + k];
+	return n;
 }
 
 void
@@ -65,91 +138,43 @@ startboot(char*, char**)
 	char buf[256];
 	int fd;
 	long n;
+	Ring r;
 
-	puts("osprey user: a program on the microkernel, opening a file through its personality library\n");
-	fd = persopen("/dev/osversion");
-	if(fd >= 0){
-		n = persread(fd, buf, sizeof buf);
-		if(n > 0)
-			write(2, buf, n);
+	puts("osprey user: a program on the microkernel, whose file personality is a library\n");
+
+	r.base = (uchar*)segattach(0, "osprey0", 0, 0);
+	if(r.base == (uchar*)-1){
+		puts("osprey user: could not map the message ring\n");
+		exits(nil);
 	}
-	puts("osprey user: that file came from the library in user space, not from the kernel\n");
+	r.map = (Omap*)r.base;
+	if(r.map->magic != Ospreymagic){
+		puts("osprey user: what segattach mapped is not a container ring\n");
+		exits(nil);
+	}
+	puts("osprey user: mapped its container's message ring with segattach\n");
+	r.rq = (Queue*)(r.base + r.map->requestqueue);
+	r.pq = (Queue*)(r.base + r.map->replyqueue);
+	r.reqm = (Msg*)((uchar*)r.rq + r.rq->message);
+	r.repm = (Msg*)((uchar*)r.pq + r.pq->message);
 
 	/*
-	 * And the microkernel's message ring.  This is how a library-OS
-	 * program reaches what it does not hold: it maps its container's
-	 * ring with segattach, puts a request in the ring in its own
-	 * memory, calls the kernel once to carry it, and reads the reply
-	 * back from the ring.  The request here is poll, a mechanism the
-	 * kernel answers itself; a file request would be forwarded the same
-	 * way to a file server.  submit and collect touch only mapped
-	 * memory; only the service is a trap.
+	 * The whole point: the personality library opens a name and reads
+	 * the file, both over the ring to the server, both in user space,
+	 * the kernel only carrying the messages.
 	 */
-	{
-		enum { Ospreymagic = 0x4f53505259ULL, ReqRead = 0, ReplyDone = 1 };
-		typedef struct {
-			uvlong	magic, id, size, msgsize;
-			uvlong	requestqueue, replyqueue, outputqueue;
-			uvlong	request, reply, output;
-			uvlong	data, datalen, sem, nsem, selected;
-			uvlong	pktbuf, npktbuf, pktbufsize;
-			uvlong	page, npage, maxpage, pagesize;
-			uvlong	txbuf, ntxbuf, txbufsize;
-		} Omap;
-		typedef struct { vlong message; uvlong size, put, get; } Queue;
-		typedef struct { uvlong op, sequence, container, arg[5]; } Msg;
-		uchar *ring;
-		Omap *map;
-		Queue *rq, *pq;
-		Msg *reqm, *repm, m, rep;
-		uvlong seq;
-
-		ring = (uchar*)segattach(0, "osprey0", 0, 0);
-		if(ring == (uchar*)-1)
-			puts("osprey user: could not map the message ring\n");
-		else if((map = (Omap*)ring)->magic != Ospreymagic)
-			puts("osprey user: what segattach mapped is not a container ring\n");
-		else {
-			puts("osprey user: mapped its container's message ring with segattach\n");
-			rq = (Queue*)(ring + map->requestqueue);
-			pq = (Queue*)(ring + map->replyqueue);
-			reqm = (Msg*)((uchar*)rq + rq->message);
-			repm = (Msg*)((uchar*)pq + pq->message);
-
-			memset(&m, 0, sizeof m);
-			m.op = ReqRead;			/* a file op, forwarded to the server */
-			seq = rq->put + 1;
-			m.sequence = seq;
-			m.container = map->id;
-			reqm[rq->put % rq->size] = m;
-			rq->put++;			/* publish: submit, no trap */
-
-			{
-				int tries;
-				for(tries = 0; tries < 400 && pq->put == pq->get; tries++)
-					sleep(1);	/* service until the server's reply lands */
-			}
-
-			if(pq->put != pq->get){
-				rep = repm[pq->get % pq->size];
-				pq->get++;		/* collect, no trap */
-				if(rep.sequence == seq && (long)rep.arg[0] > 0){
-					char fb[32];
-					long fn, k;
-
-					fn = (long)rep.arg[0];		/* the server's byte count */
-					if(fn > (long)sizeof fb - 1)
-						fn = sizeof fb - 1;
-					for(k = 0; k < fn; k++)		/* bytes packed from arg[2] */
-						fb[k] = ((char*)&rep.arg[2])[k];
-					puts("osprey user: the personality library fetched a file over the ring from the server: ");
-					write(2, fb, fn);
-					puts("\n");
-				} else
-					puts("osprey user: a reply came back but carried no file\n");
-			} else
-				puts("osprey user: no reply came back on the ring\n");
-		}
+	fd = persopen(&r, "motd");
+	if(fd < 0){
+		puts("osprey user: the server did not open the file\n");
+		exits(nil);
 	}
+	puts("osprey user: the personality library opened a file at the server over the ring\n");
+	n = persread(&r, fd, buf, sizeof buf - 1);
+	if(n <= 0){
+		puts("osprey user: the server returned no bytes\n");
+		exits(nil);
+	}
+	puts("osprey user: and read it over the ring from the server, not the kernel:\n");
+	write(2, buf, n);
 	exits(nil);
 }

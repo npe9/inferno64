@@ -1667,25 +1667,38 @@ ospreyservicecaller(void)
 
 /*
  * A file server, as a task, for the library-OS program to reach over the
- * ring.  It answers the requests its clients forward to it - here with a
- * fixed file's bytes, packed into the reply message's spare argument
- * words, which is the whole point: the client's personality library asks
- * for a file by message passing and the server, another task, answers,
- * the kernel only carrying it.  A real one would read the bytes from
- * storage; this holds them, as p9srv holds a name space.
+ * ring.  It answers the requests its clients forward to it: an open
+ * resolves a name in the server's own small name space and returns a
+ * handle; a read copies that file's bytes into the asking client's data
+ * area - which delegation entitles the server to reach - and returns the
+ * count.  This is p9srv's shape in miniature: a program, in its own name
+ * space, answering opens and reads for whoever asked, the kernel only
+ * carrying the message.  A real one would read the bytes from storage;
+ * this holds them.
  *
  * It polls rather than sleeps on a rendezvous, to keep the locking plain:
  * it takes the lock only to look and to answer, never across a wait, so
  * it cannot deadlock against the client's own service call.
  */
+static char *ospreyfsname[] = {
+	"greeting",
+	"motd",
+};
+static char *ospreyfsdata[] = {
+	"hello from the file server, reached over the ring, not held in the client\n",
+	"the osprey microkernel serves this file from a task by message passing; the personality that opened it is a library, above the kernel, not in it\n",
+};
+
 static void
 ospreyfileserver(void *a)
 {
-	Ospreyproc *sv = a;
+	Ospreyproc *sv = a, *client;
 	Ospreyarm *arm;
-	uchar *md;
-	uvlong op, sarg[Ospreynarg], roff;
-	static char filebytes[] = "a file the server holds, sent over the ring";
+	uchar *md, *cd;
+	uvlong op, sarg[Ospreynarg], roff, clientid;
+	int fi, k;
+	long n;
+	char nbuf[64];
 
 	roff = 256;
 	for(;;){
@@ -1697,27 +1710,53 @@ ospreyfileserver(void *a)
 		if(ospreyrequestready(sv)
 		&& (arm = ospreydata(sv, 0, sizeof(Ospreyarm))) != nil){
 			arm->op = OSget;
-			arm->obj = 0;			/* the request ring */
+			arm->obj = 0;
 			arm->buf = roff;
 			if(ospreyselect(sv, 0, 1) == 0
-			&& ospreymessage(sv, roff, &op, sarg) == 0){
-				long n;
-
-				USED(op);
-				n = sizeof filebytes - 1;
-				if(n > 3*(int)sizeof(uvlong))	/* fits in arg[2..4] */
-					n = 3*sizeof(uvlong);
-				/*
-				 * Pack the bytes into the reply's spare args.  The
-				 * request Message the select left at roff carries the
-				 * client's identity, which answer and route use to
-				 * send this back to whoever asked; arg[0] and arg[1]
-				 * answer reserves for the status and flag, so the
-				 * bytes go from arg[2], at offset 40 in the message.
-				 */
-				if((md = ospreydata(sv, roff, ospreymsgsize())) != nil){
-					memmove(md + 5*sizeof(uvlong), filebytes, n);
-					ospreyanswer(sv, roff, n);
+			&& ospreymessage(sv, roff, &op, sarg) == 0
+			&& (md = ospreydata(sv, roff, ospreymsgsize())) != nil){
+				/* the request Message carries the client's id at word 2 */
+				clientid = *(uvlong*)(md + 2*sizeof(uvlong));
+				client = ospreylookup(clientid);
+				if(client == nil){
+					ospreyanswer(sv, roff, StatusError);
+					ospreyroute(sv);
+				} else if(op == (uvlong)ospreyop("open")){
+					/* name at sarg[0] in the client, length sarg[1] */
+					cd = ospreydata(client, sarg[0], sarg[1]);
+					fi = -1;
+					if(cd != nil){
+						n = sarg[1];
+						if(n > (long)sizeof nbuf - 1)
+							n = sizeof nbuf - 1;
+						for(k = 0; k < n; k++)
+							nbuf[k] = cd[k];
+						nbuf[n] = 0;
+						for(k = 0; k < nelem(ospreyfsname); k++)
+							if(strcmp(nbuf, ospreyfsname[k]) == 0){
+								fi = k;
+								break;
+							}
+					}
+					/* the handle goes back in the reply's arg[2], at word 5 */
+					*(uvlong*)(md + 5*sizeof(uvlong)) = (uvlong)fi;
+					ospreyanswer(sv, roff, fi >= 0 ? StatusDone : StatusError);
+					ospreyroute(sv);
+				} else if(op == (uvlong)ospreyop("read")){
+					/* handle sarg[0], dest sarg[1], most sarg[2] */
+					fi = (int)sarg[0];
+					n = 0;
+					if(fi >= 0 && fi < nelem(ospreyfsdata)
+					&& (cd = ospreydata(client, sarg[1], sarg[2])) != nil){
+						n = strlen(ospreyfsdata[fi]);
+						if(n > (long)sarg[2])
+							n = sarg[2];
+						memmove(cd, ospreyfsdata[fi], n);
+					}
+					ospreyanswer(sv, roff, n);	/* status = byte count */
+					ospreyroute(sv);
+				} else {
+					ospreyanswer(sv, roff, StatusError);
 					ospreyroute(sv);
 				}
 			}
@@ -1727,6 +1766,7 @@ ospreyfileserver(void *a)
 	}
 	pexit("file server done", 1);
 }
+
 
 int
 ospreyuserprep(void)
