@@ -1,0 +1,200 @@
+.TH CBTEST 1
+.SH NAME
+cbtest \- regression test for cb(1)
+.SH SYNOPSIS
+.B cbtest
+.SH DESCRIPTION
+.I Cbtest
+loads
+.BR /p9/dis/cb.dis 's
+in-process test seam,
+.BR run(argv,\ input) ,
+and checks it against a real, live oracle - built fresh from the
+ACTUAL 9front source every run
+.RB ( sys/src/cmd/cb/{cb.c,cbtype.c} ,
+compiled via host
+.B clang
+against plan9port's prebuilt
+.BR libbio / lib9 ,
+through the same
+.IR cmd (3)
+device
+.IR urlencodetest (1)
+established), not plan9port's own prebuilt
+.B cb
+binary - see
+.IR cb (1)'s
+own BUGS for why that binary is deliberately not trusted as a
+reference here.
+.PP
+Twelve cases across six groups, each comparing
+.BR cb.b 's
+own output against the built oracle's, byte for byte:
+.TP
+.I t1simple / t2ifelse
+Small hand-written snippets exercising basic reindentation and, with
+.BR t2ifelsestrict ,
+the
+.B -s
+flag.
+.TP
+.I t3edge
+A hand-built file
+.RB ( EDGE )
+covering
+.BR switch / case ,
+.BR do / while ,
+the
+.B ::
+generator operator, the ternary
+.BR ?: ,
+string/character-literal escapes, and both C and C++-style comments -
+run in default, strict
+.RB ( -s ),
+and join
+.RB ( -j )
+modes.
+.TP
+.I t4flags
+Bundled-flag parsing
+.RB ( -sj
+as one argument) and the
+.B -l
+width flag in both its bundled
+.RI ( -l 40)
+and separate
+.RI ( -l\ 40)
+forms - run against the real
+.B cb.c
+source rather than
+.BR EDGE ,
+because
+.BR EDGE 's
+own lines are all short enough that
+.B -l 40
+is a no-op on it (checked directly against the oracle: no-flag,
+.BR -l40 ,
+and
+.B -l\ 40
+all produce byte-identical output on
+.BR EDGE ).
+.B Cb.c
+itself has lines long enough that
+.B -l\ 40
+visibly folds them (1,041 output lines unflagged vs 1,284 with
+.BR -l\ 40 ,
+confirmed against the oracle), so the bundled-vs-separate comparison
+actually exercises the parser rather than merely confirming two
+no-ops match.
+.TP
+.I t5realfile
+The real
+.B cb.c
+source itself (1,259 lines, read via
+.IR cmd (3)'s
+.B cat
+rather than
+.BR sys->open() ,
+since the path is a HOST absolute path and Inferno's own namespace is
+not the host filesystem root), in default and strict modes - checked
+by hand against the built oracle before this suite existed, alongside
+four other real, unrelated files already in this tree's own
+checkouts
+.RB ( auth/ssh2rsa.c ,
+.BR primes.c ,
+.BR join.c ,
+and
+.B tar.c
+- 1,588 lines - all byte-identical in default, strict, join, and
+.B -l 40
+modes), reconfirmed here as a live regression case for
+.B cb.c
+specifically.
+.TP
+.I t6stateisolation
+Two independent
+.B run()
+calls must not contaminate each other - the same lesson
+.IR pr (1)'s
+own test suite established for its
+.B Colw
+bug. An UNBALANCED snippet (an open brace with no matching close) is
+run first to leave
+.BR clevidx ,
+the
+.B ind[]
+indent stack, and several
+.BR getch()/getnext()
+lookahead scalars dirty at EOF in a way well-formed C would return to
+zero on its own; a plain
+.B EDGE
+run follows and is checked against
+.BR EDGE 's
+own known default-mode oracle output. Verified by an actual negative
+control, not assumed: gutting every scalar reset in
+.BR cb.b 's
+own
+.B resetstate()
+(keeping only the array reallocations a from-nil first call still
+needs) made this case fail alongside 9 of the other 11 cases - and
+separately showed that
+.B clevidx
+leaking BY ITSELF is not independently observable, since
+.B resetstate()
+reallocates the whole
+.B ind[]
+array fresh every call regardless of
+.BR clevidx 's
+own value; it takes the combination of scalars leaking together to
+move the output.
+.SH SOURCE
+.B /p9/cmd/cbtest.b
+.SH SEE ALSO
+.IR cb (1)
+.SH BUGS
+Translating
+.BR cb.c 's
+own
+.B lookup(char *first, char *last)
+found a real bug in this port's first translation pass, by testing
+real files and diffing output - not by re-reading the code. The C
+function is called with pointers into either of two different
+buffers depending on call site (the current-token buffer at some
+sites, the temp/lookahead buffer at others); the first Limbo pass
+hardcoded it to always read the current-token buffer, so every
+lookahead-buffer call site silently matched against the wrong data.
+The visible symptom was severe: an
+.B else
+or
+.B case
+keyword sitting in the lookahead buffer right after a closing
+.B }
+went unrecognized, collapsing indentation for the rest of any file
+containing an
+.BR if{}else{} " construct."
+Isolated with a minimal reproducer, root-caused with temporary
+diagnostic instrumentation, fixed by making the buffer an explicit
+parameter, and confirmed with a genuine negative control: reverting
+just the affected call sites reproduced 10 of 12 failures (only the
+two cases not exercising a lookahead-buffer path still passed); restoring the fix returned the suite to 12 of 12.
+.PP
+Does not exercise
+.IR cb (1)'s
+own multi-file command-line invocation (its
+.B init()
+opens each
+.I file
+argument in a loop with no state reset between files, matching the C
+source's own preserved behavior) - every case here drives
+.BR run() 's
+own single
+.I input
+byte array directly, matching
+.BR cb.b 's
+own test-seam scope.
+.PP
+Building the oracle depends on a live host
+.B clang
+and a checked-out 9front source tree at a fixed path; if either is
+missing, the whole suite fails loudly with the compiler's own error
+text rather than silently skipping the comparison.

@@ -35,6 +35,8 @@ TARG=\
 	asciitest.dis\
 	urlencode.dis\
 	urlencodetest.dis\
+	cb.dis\
+	cbtest.dis\
 
 MODULES=\
 

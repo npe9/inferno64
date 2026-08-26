@@ -1,0 +1,176 @@
+.TH CB 1
+.SH NAME
+cb \- C program beautifier
+.SH SYNOPSIS
+.B cb
+[
+.B -sj
+] [
+.B -l
+.I n
+] [
+.I file
+\&...
+]
+.SH DESCRIPTION
+.I Cb
+is a real, structural translation of Plan 9's own
+.IR cb (1)
+.RB ( sys/src/cmd/cb/{cb.c,cb.h,cbtype.c,cbtype.h} ,
+1259 real C lines total - an earlier scoping estimate in
+.B doc/plan9-port.md
+had this at 1,061; both were wrong, see BUGS), compiled to Dis and run
+by
+.IR emu ,
+not a host binary. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+With no arguments,
+.I cb
+reformats standard input to standard output, reindenting C source
+according to Plan 9's own house indentation conventions - one tab per
+brace level, operators and keywords set off with the spacing this
+tree's own
+.B cb.h
+tables specify, comments and string/character literals passed through
+byte-for-byte. Given one or more
+.IR file s,
+each is reformatted in turn, its own output written to standard
+output (not back to the file).
+.TP
+.B -s
+Strict mode: a top-level declaration whose brace would otherwise sit
+at tab stop 0 is instead placed at tab stop 1, matching the C source's
+own
+.B strict
+flag exactly.
+.TP
+.B -j
+Join mode: an
+.B else
+that would otherwise start its own line is joined onto the closing
+.B }
+of the preceding
+.B if
+block's braces instead.
+.TP
+.B -l
+.I n
+Sets the target line width used for the comment-folding heuristic
+(default 2048, effectively unlimited) - a comment line longer than
+.I n
+columns is folded, with a
+.B "/* code folded from here */"
+marker inserted. Bundled
+.RI ( -l 40)
+and separate
+.RI ( -l\ 40)
+forms are both accepted, matching the C source's own
+.B ARGBEGIN
+bundling behavior.
+.SH SOURCE
+.B /p9/cmd/cb.b
+(translated from
+.BR cb.c / cb.h / cbtype.c / cbtype.h ;
+see its own header comment for the full derivation)
+.SH SEE ALSO
+.IR cbtest (1)
+.SH BUGS
+This tree's own
+.B doc/plan9-port.md
+scoping pass, done before any code was written, estimated the combined
+translation at roughly 1,061 real C lines; a direct count of the four
+source files put it at 1,259. Both the scoping estimate and (in the
+other direction) a separate later projection of 1,850-1,950 Limbo
+lines were wrong - the actual translation came out to about 1,650
+Limbo lines. Recorded here because this is now the third line-count
+estimate in this backlog's own documentation to miss, in both
+directions; the lesson is that the ratio isn't predictive, not which
+way it tends to be off.
+.PP
+.I Cb.b
+deliberately does NOT use plan9port's own prebuilt
+.B cb
+binary as a test oracle, even though one exists on this host: it has
+genuinely diverged from 9front's own source in at least three ways -
+split continuation lines are indented with four spaces instead of a
+tab, the
+.B ::
+(Icon-style generator) case is removed entirely, and its own
+.B ARGBEGIN
+bundled-flag parsing is silently broken for at least one flag
+combination. Using it as an oracle would fail
+.I cbtest (1)'s
+cases for reasons that are plan9port's own divergence, not this port's
+- the oracle is built from the actual 9front source instead (see
+.IR cbtest (1)).
+.PP
+The C source's own
+.B cbtype.c
+table is indexed
+.B (_cbtype_+1)[c]
+for
+.B c
+ranging over
+.B -1..127
+only (EOF, matching C's own
+.B int
+promotion of a
+.B char
+argument, deliberately selects the table's leading zero entry at index
+0). A byte with the high bit set - anything in
+.B 128..255
+- indexes past the C table's real 129 entries, which is undefined
+behavior in C but would be a hard bounds-check exception in Limbo.
+This translation sizes the table to 257 entries instead of 129 (valid
+for
+.B c
+in
+.BR -1..255 ,
+with the added entries defaulting to zero) so that a high-bit byte is
+DEFINED to behave as an ordinary, non-special character rather than
+faulting - a deliberate divergence from the C source's own undefined
+behavior, not a fidelity gap, and stated here plainly rather than left
+implicit.
+.PP
+The C source's own
+.B main()
+never resets any of
+.BR cb.h 's
+global state between multiple
+.I file
+arguments on one command line - each file after the first inherits
+whatever
+.BR clevidx / dolevel / opflag /
+etc. its predecessor left behind. This translation preserves that
+behavior exactly in its own
+.B init()
+(the real CLI entry point's multi-file loop); it is the in-process
+test seam's own
+.B run()
+that resets all such state at the top of every call, via a dedicated
+.B resetstate()
+not present in the C source at all - needed because
+.I cbtest (1)
+calls
+.B run()
+repeatedly in one process, unlike a real invocation's single pass.
+Multi-file-argument invocation itself is not exercised by
+.IR cbtest (1)
+(see its own BUGS) - only the single-input seam is.
+.PP
+Translating
+.BR lookup() 's
+own C signature
+.RB ( "char *first, char *last" ,
+addressing either of two conceptually distinct buffers depending on
+call site) surfaced a real bug in this translation's first pass, found
+by testing real files and diffing output, not by re-reading the code -
+see
+.IR cbtest (1)'s
+own BUGS for the full account.

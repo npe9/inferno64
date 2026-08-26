@@ -2055,3 +2055,111 @@ below.
     one case while every newline-terminated case kept passing -
     confirming the case does independently exercise the conditional,
     not that it was redundant with the others.
+
+24. **`p9/cmd/cb.b`/`cbtest.b` (both DONE)**: `sys/src/cmd/cb/{cb.c,
+    cb.h,cbtype.c,cbtype.h}` - the C program beautifier/reindenter,
+    the largest single translation in this backlog to date. A
+    scoping research agent, dispatched before any code was written,
+    put the combined source at roughly 1,061 lines; a direct count of
+    the four real files put it at 1,259 - the scoping estimate was
+    wrong, and the translation itself came out to about 1,650 Limbo
+    lines against a separate 1,850-1,950 projection from the same
+    scoping pass, also wrong, in the other direction. This is now the
+    third line-count estimate in this doc to miss on either side; the
+    lesson recorded is that the ratio isn't predictive at all, not
+    which way it skews.
+
+    **`cbtest.b` deliberately does NOT use plan9port's own prebuilt
+    `cb` binary as an oracle, even though one exists on this host** -
+    diffing against it directly during manual verification showed it
+    has genuinely diverged from 9front's own source: split
+    continuation lines indented with four spaces instead of a tab,
+    the `::` (Icon-style generator) case removed entirely, and its
+    own `ARGBEGIN` bundled-flag parsing silently broken for at least
+    one combination. Using it would fail on ordinary input for
+    reasons that are plan9port's own divergence, not this port's -
+    `cbtest.b` instead builds a fresh oracle from the actual 9front
+    source every run, via the same `#C`-driven `clang` pattern
+    `urlencodetest.b` established.
+
+    Two translation hazards were identified by a dedicated research
+    agent's scoping pass *before* any code was written, and both held
+    up: (1) `cbtype.c`'s own ctype-style table is indexed
+    `(_cbtype_+1)[c]` for `c` in `-1..127` only; a byte with the high
+    bit set indexes past the C table's real 129 entries, undefined
+    behavior in C but a hard bounds-check exception in Limbo - fixed
+    by sizing the Limbo table to 257 entries (the extra ones
+    defaulting to zero) so a high-bit byte is DEFINED to behave as an
+    ordinary character, a deliberate and documented divergence from
+    the C source's own UB, not a fidelity gap. (2) whether `unget()`
+    needed an extra pushback layer on top of `appl/lib/bufio.b`'s own
+    `Iobuf.ungetb()` - checked directly by reading `bufio.b`'s source
+    rather than assumed, and it didn't: `ungetb()` already implements
+    the identical single-level, argument-discarding "undo the last
+    getb()" semantics as the C source's own `Bungetc()`.
+
+    **One real, severe translation bug was found - not by re-reading,
+    but by running real files through both implementations and
+    diffing the output.** `cb.c`'s own `lookup(char *first, char
+    *last)` takes raw pointers that address EITHER of two
+    conceptually distinct buffers depending on call site (the
+    current-token buffer at some sites, the temp/lookahead buffer at
+    others - `getnext()`'s own return value). Limbo has no
+    buffer-agnostic pointer to match this with; the first translation
+    pass hardcoded `lookup()` to always read the current-token
+    buffer, so every lookahead-buffer call site silently matched
+    against the wrong data. The symptom was severe: an `else` or
+    `case` keyword sitting in the lookahead buffer right after a
+    closing `}` went unrecognized, collapsing indentation for the
+    rest of any file containing an `if{}else{}` construct - isolated
+    with a minimal reproducer, root-caused with temporary `sys->
+    fprint` instrumentation, fixed by making the buffer an explicit
+    parameter (`lookupbuf(buf,first,last)`, with `lookupstr()`/
+    `lookuptemp()` wrappers at the two call-site families), and
+    confirmed with a genuine negative control: reverting just the
+    affected call sites reproduced 10 of 12 test failures (only the
+    two cases not exercising a lookahead-buffer path still passed);
+    restoring the fix returned the suite to 12 of 12.
+
+    Verification breadth: beyond the 12-case oracle-backed
+    `cbtest.b` suite, the translation was checked by hand against five
+    real, unrelated C files already in this tree's own checkouts -
+    `cb.c` itself (1,259 lines), `auth/ssh2rsa.c`, `primes.c`,
+    `join.c`, and `tar.c` (1,588 lines) - across default, strict,
+    join, and `-l 40` modes, all byte-identical, plus a hand-built
+    edge-case file covering `switch`/`case`, `do`/`while`, `::`, the
+    ternary `?:`, string/character-literal escapes, and both comment
+    styles.
+
+    An advisor review of the test suite itself, before commit, caught
+    two cases that were weaker than their own comments claimed and
+    both were fixed with direct verification rather than argued past:
+    a bundled-vs-separate `-l 40` case that ran against the
+    hand-built edge file, where the flag turns out to be a no-op
+    (confirmed directly against the oracle - no-flag/`-l40`/`-l 40`
+    all byte-identical there), so it proved nothing about attached-
+    argument parsing; moved to the real `cb.c` source, where `-l 40`
+    demonstrably folds lines (1,041 output lines unflagged vs 1,284
+    flagged). And a state-isolation case that ran two balanced,
+    well-nested inputs in sequence, which `resetstate()`'s own
+    unconditional call at the top of every `run()` combined with
+    balanced C's own tendency to return indentation state to zero at
+    EOF meant it could barely discriminate anything; replaced with an
+    UNBALANCED (unclosed-brace) perturbing input, and its own
+    discriminating power checked with a genuine negative control -
+    gutting every scalar reset in `resetstate()` (keeping only the
+    array reallocations a from-nil first call still needs) caused
+    this case to fail alongside 9 of the other 11, while also
+    revealing that a leaked `clevidx` ALONE is not independently
+    observable (since `resetstate()` reallocates the whole `ind[]`
+    array fresh regardless of `clevidx`'s own value) - it takes
+    several scalars leaking together to move the output, which is
+    what the final version's perturbing input triggers.
+
+    The C source's own `main()` never resets any of `cb.h`'s global
+    state between multiple `file` arguments on one command line - a
+    real, minor, deliberately preserved behavior; `cb.b`'s `init()`
+    (the real CLI entry point) matches this exactly, while a dedicated
+    `resetstate()` (absent from the C source) exists solely for the
+    in-process test seam's own repeated `run()` calls, the same
+    lesson `pr.b`'s own `Colw` bug taught earlier in this backlog.
