@@ -67,6 +67,8 @@ def main():
                     'serves this file from a task by message passing' in t))
     results.append(("and the server that answered is itself a user program, its own ring and its client's slice mapped",
                     'a user-mode file server; its own ring and its client' in t))
+    results.append(("and it waited for that request with select over its ring's arm, the talk's central call in user space",
+                    'select over its ring' in t))
     results.append(("and a user-level graphics driver draws to the frame buffer the microkernel exposed",
                     'drew a windowed desktop to the frame buffer' in t))
     results.append(("and user-level keyboard and mouse drivers read the rings the microkernel's interrupts fill",

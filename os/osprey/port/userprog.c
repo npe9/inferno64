@@ -41,6 +41,9 @@ typedef struct Queue Queue;
 struct Queue { vlong message; uvlong size, put, get; };
 typedef struct Msg Msg;
 struct Msg { uvlong op, sequence, container, arg[5]; };
+typedef struct Arm Arm;
+struct Arm { uvlong op, obj, buf; };	/* a select arm: op, ring/sem, message offset */
+enum { OSget = 2, OSdown = 4 };		/* the talk's MSget / MSdown */
 
 /* the ring this program's container was given, laid over its slice; kept
  * on the stack, not in statics, because the program has no data segment */
@@ -56,6 +59,17 @@ static void
 puts(char *s)
 {
 	write(2, s, strlen(s));
+}
+
+/*
+ * select over arms.  The kernel maps the DUP syscall number to select
+ * for this minimal interface, so dup carries the two words: the arms'
+ * offset in our data area and how many.  Returns which arm was ready.
+ */
+static int
+oselect(int armoff, int narms)
+{
+	return dup(narms, armoff);
 }
 
 /*
@@ -295,17 +309,29 @@ ospreyserver(char *arg0)
 	cdata = cbase + cmap->data;
 
 	puts("osprey server: a user-mode file server; its own ring and its client's slice are mapped\n");
+	puts("osprey server: waiting for requests with select over its ring's arm\n");
 
-	for(iters = 0; iters < 6000; iters++){
-		while(rq->get != rq->put){
+	{
+		enum { Armoff = 0, Reqbuf = 256 };	/* arm at data[0]; a request lands at data[256] */
+		Arm *arm = (Arm*)(base + map->data + Armoff);
+		Msg *reqp = (Msg*)(base + map->data + Reqbuf);
+
+		USED(rq); USED(reqm);
+		for(iters = 0; iters < 150; iters++){	/* up to ~30s of waiting, then finish */
 			Msg req, rep;
 			uvlong off, len, fd, dest, most;
 			char *content;
 			long i, nb;
-			int fi;
+			int fi, a;
 
-			req = reqm[rq->get % rq->size];
-			rq->get++;
+			/* wait for a request with select: a get on the request ring */
+			arm->op = OSget;
+			arm->obj = 0;			/* the request ring */
+			arm->buf = Reqbuf;		/* where the message is taken to */
+			a = oselect(Armoff, 1);
+			if(a != 0)			/* nothing ready this time; look again */
+				continue;
+			req = *reqp;			/* the request select took into our data area */
 
 			for(i = 0; i < (long)sizeof rep; i++)
 				((uchar*)&rep)[i] = 0;
@@ -351,8 +377,8 @@ ospreyserver(char *arg0)
 
 			repm[pq->put % pq->size] = rep;
 			pq->put++;
+			/* the reply is routed home by select's own service on the next wait */
 		}
-		sleep(1);	/* route what we answered home, and yield */
 	}
 	puts("osprey server: done\n");
 }

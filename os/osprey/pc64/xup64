@@ -46,6 +46,7 @@ port
 	int ospreyuser = 1;
 
 	extern void ospreyservicecaller(void);
+	extern int ospreyselectcaller(uvlong, int);
 	extern uvlong ospreyslicesize(void);
 
 	/*
@@ -228,7 +229,27 @@ port
 		}
 	}
 
+	/*
+	 * select: the talk's central call, offered to a user task.  The task
+	 * names arms in its own data area - a get on a ring, a down on an
+	 * interrupt's semaphore - and this returns which one was ready,
+	 * having performed it.  It reuses the DUP number the way SLEEP is
+	 * reused for service: the program's libc already has a dup stub, and
+	 * the minimal interface spends spare numbers rather than inventing an
+	 * ABI.  The two words a dup carries are the arm count and the offset
+	 * of the arms in the caller's data area.
+	 */
+	uintptr xselect(va_list list)
+	{
+		int narms, armoff;
+
+		narms = va_arg(list, int);
+		armoff = va_arg(list, int);
+		return (uintptr)ospreyselectcaller((uvlong)(ulong)armoff, narms);
+	}
+
 	Xsyscall *systab[] = {
+		[5]	xselect,	/* DUP number reused: select over arms */
 		[8]	xexits,		/* EXITS */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
 		[30]	xsegattach,	/* SEGATTACH */

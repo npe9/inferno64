@@ -450,17 +450,26 @@ kdebugputc(int c)
 	outb(Com1+Thr, c);
 }
 
+static Lock kdebuglock;
+
 void
 kdebugputs(char *s, int n)
 {
 	/*
-	 * No lock here: kdebugputc waits for the UART per byte, which is what
-	 * makes each byte land, but it is also an unbounded hardware wait, and
-	 * holding a spinlock across it would turn a panic on another core into
-	 * a silent hang.  Whole-string interleaving between two user tasks is
-	 * harmless to read and was never the failure; dropped bytes were, and
-	 * the per-byte wait fixes those.
+	 * Serialise whole strings so the two user tasks' console writes do
+	 * not interleave: each waits for the UART per byte, and with both
+	 * writing at once their bytes would splice together mid-line, which
+	 * is legible to a person but splits a string a test greps for.
+	 *
+	 * Safe to lock here on this kernel: only the user write syscall
+	 * (xpwrite) reaches kdebugputs - panic and print take a different
+	 * path (putstrn -> screenputs), and the boot marker smark writes COM1
+	 * raw - so no panic or interrupt path waits on this lock, and the
+	 * per-byte wait it is held across is bounded.  On pc64 nothing calls
+	 * kdebugputs at all, so the lock never runs there.
 	 */
+	lock(&kdebuglock);
 	while(n-- > 0)
 		kdebugputc(*s++);
+	unlock(&kdebuglock);
 }

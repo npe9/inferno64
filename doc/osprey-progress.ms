@@ -1936,16 +1936,24 @@ a user-space server's replies reach its client with no kernel task
 driving it.  It is a no-op for a task that serves no one, so the ordinary
 caller is unaffected.
 .PP
-What this does not do, and the docs should say so plainly: the server
-polls its ring, sleeping a little between looks, rather than selecting on
-it.  The talk's shape for a driver or a server is a task that selects on
-its message queue and blocks until something arrives, and this kernel's
-select is built - but xup64's minimal syscall interface does not expose
-it, so the user server polls instead.  A select syscall is the natural
-next piece, built and verified on its own rather than bundled here.  The
-structure the milestone asked for is here: two user tasks, each its own
-container and ring, exchanging an open and a read, the kernel carrying and
-routing the messages and answering none of them.
+The server waits for its requests with select, the talk's central call,
+now offered to a user task.  It names one arm in its own data area - a get
+on its request ring - and the select returns when that arm is ready,
+having taken the request into a buffer the arm named, exactly the shape
+the talk draws for a task that selects on its message queue.  The syscall
+reuses the DUP number the way service reuses SLEEP: the program's libc
+already has the stub, and the minimal interface spends spare numbers
+rather than inventing an ABI.  What is honest to say: the block underneath
+is a yield-and-retry, not a rendezvous - the kernel checks the arm, and if
+nothing is ready yields the processor and looks again, which is what lets
+the client run to forward the next request.  A true rendezvous wakeup, so
+a selecting task sleeps until an interrupt or a message actually wakes it,
+is the refinement from here; the call and its arms are what the milestone
+needed, and they are here.  The same select serves the reply home before
+it waits again, so a server answers and waits on the one call.  Two user
+tasks, each its own container and ring, exchange an open and a read, the
+kernel carrying and routing the messages, answering none of them, and the
+server expressing its wait as the talk's select over an arm.
 .PP
 A note on the console this surfaced.  With two user tasks writing to the
 bare COM1, the boot marker lost a byte and a check that matched it exactly

@@ -57,6 +57,7 @@ int		ospreyframebuffer(void);
 void		ospreykbdenable(Ospreyproc*, int);
 void		ospreymouseenable(Ospreyproc*, int);
 void		ospreyservicecaller(void);
+int		ospreyselectcaller(uvlong, int);
 int		ospreybalance(uvlong now);
 uvlong		ospreyschedule(ulong core, uvlong now);
 int		ospreytick(ulong core, Ospreyproc *running, uvlong amount, uvlong now);

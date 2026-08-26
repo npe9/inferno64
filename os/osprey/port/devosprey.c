@@ -1674,6 +1674,46 @@ ospreyservicecaller(void)
 }
 
 /*
+ * The select call, for a user task.  It names arms in its own data area -
+ * a get on one of its rings, a down on an interrupt's semaphore - and
+ * this blocks until one is ready, performs that one, and returns which
+ * arm it was, the way the talk's select does.  The block is a yield-and-
+ * retry, like the service call: the minimal interface has no rendezvous
+ * wakeup, so this polls readiness and yields the processor between looks,
+ * which lets the peer that will make an arm ready - a client forwarding a
+ * request, an interrupt giving a semaphore - run.  Anything the task has
+ * answered is routed home first, so a server both answers and waits for
+ * the next request on the one call.
+ */
+int
+ospreyselectcaller(uvlong armoff, int narms)
+{
+	Ospreyproc *p;
+	int i, tries;
+
+	p = nil;
+	qlock(&ospreylock);
+	for(i = 0; i < nelem(ospreyprocs); i++)
+		if(ospreyprocs[i] == up){
+			p = ospreyat(i);
+			break;
+		}
+	qunlock(&ospreylock);
+	if(p == nil)
+		return -1;
+	for(tries = 0; tries < 100; tries++){	/* ~200ms, then report nothing ready */
+		qlock(&ospreylock);
+		ospreyroute(p);
+		i = ospreyselect(p, armoff, narms);
+		qunlock(&ospreylock);
+		if(i >= 0)
+			return i;
+		tsleep(&up->sleep, return0, nil, 2);
+	}
+	return -1;
+}
+
+/*
  * Expose the frame buffer the firmware set up as a physical segment, so a
  * user-level graphics driver can map it and draw.  The microkernel
  * multiplexes the display and knows nothing of windows; the draw stack is
