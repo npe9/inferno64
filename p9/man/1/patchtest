@@ -1,0 +1,92 @@
+.TH PATCHTEST 1
+.SH NAME
+patchtest \- regression test for patch(1)
+.SH SYNOPSIS
+.B patchtest
+.SH DESCRIPTION
+.I Patchtest
+loads
+.BR /p9/dis/patch.dis 's
+in-process test seam,
+.BR run(opts,\ patchpath) ,
+and checks it against hand-derived expected output for eleven cases,
+each built from real files under
+.BR /patchtest ,
+cleaned up whether or not it fails. Every expected result is derived
+directly from the unified diff format's own specification, not copied
+from any reference binary \(em see
+.IR patch (1)
+and
+.B patch.b 's
+own header comment for why no such binary is available to check
+against here.
+.PP
+Every case uses
+.B -d
+to chdir to the test directory and bare filenames (no leading
+.BR / )
+inside the patch text's headers \(em not a style choice:
+.IR patch 's
+own header parsing strips any leading
+.B /
+unconditionally, so a header path is never absolute; see
+.IR patch (1).
+.PP
+The two cases most worth calling out specifically, since a single-hunk
+test can't reach either:
+.TP
+.B T3
+Exercises
+.BR search ()/ searchln ()'s
+cross-hunk fuzz carry directly: two hunks in a file that is uniformly
+shifted from what the diff assumes, where the second hunk's own
+context text appears twice \(em once as a decoy an
+.I unadjusted
+search would reach first, once at the real, shifted target that only
+the fuzz offset carried forward from the first hunk's own match
+reaches directly. Confirmed sensitive with a negative control
+(temporarily forcing the carried fuzz to 0 made this case edit the
+decoy instead \(em see the session notes for the exact derivation).
+.TP
+.B T10
+Exercises
+.BR finish ()'s
+cleanup-on-failure path: one file's hunk applies cleanly (its
+.B .tmp
+file gets written) while a second file's hunk fails to match with no
+.BR -r ,
+so the whole run fails. Checks (via
+.BR readdir (2))
+that no
+.B .tmp
+file is left behind afterward, which only happens because
+.BR fail ()
+now calls
+.BR finish (0)
+before raising \(em also confirmed sensitive with a negative control
+(temporarily reverting that call left a stray
+.B .tmp
+file, and this check caught it; a plain "is the original file
+untouched" check would not have, since
+.B blat()
+never touches the original either way).
+.SH SOURCE
+.B /p9/cmd/patchtest.b
+.SH SEE ALSO
+.IR patch (1)
+.SH BUGS
+Runs
+.I patch
+in-process via its
+.B run
+seam, which takes already-parsed options and a real patch-file path
+directly \(em so it does exercise real parsing, searching, and file
+I/O, but not
+.IR patch 's
+own
+.BR init ,
+its standard-input defaulting, or its window-system
+.B Context
+handling, none of which
+.B run
+goes through.

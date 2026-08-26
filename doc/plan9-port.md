@@ -971,3 +971,138 @@ below.
     verified is the result; `pr` would have been the first one this
     session couldn't verify, which is exactly the signal to stop rather
     than push through on an assumption.
+
+14. **`p9/cmd/patch.b` - a real translation of `sys/src/cmd/patch.c`
+    (839 lines): done, resolving the "unread and unsized" note above,
+    and a different resolution to the oracle problem than either
+    `split.c` (plan9port diverges but is checkable) or `pr.c` (no
+    checkable reference exists at all). Checking whether plan9port has
+    a usable `patch` first, the same discipline as `split`/`pr`,
+    surfaced a genuine trap: plan9port ships a file at exactly
+    `src/cmd/scat/patch.c`, same basename, but it is a *completely
+    different program* - a star-catalog sky-region tool ("scat" = star
+    catalog), not a divergent copy of the text-diff `patch`. Diffing
+    them showed this immediately (declination/right-ascension math,
+    "41253 square degrees in the sky"); recorded here so nobody
+    mistakes that file for a usable oracle later. No plan9port `patch`
+    binary exists on this machine either.
+
+    What actually unblocks this one, where `pr.c` stayed blocked: patch
+    applies the *unified diff format*, which is specified independently
+    of any Plan 9 binary. `pr.c`'s correctness was only ever definable
+    as "whatever `Nspace`/`Lcolpos`/`Pcolpos` produce" - no external
+    ground truth existed even in principle. For `patch.c`, the correct
+    result of applying a given hunk to a given file is derivable by
+    hand from the diff format itself, so `patchtest.b`'s eleven cases
+    are hand-constructed files and hunks with hand-derived expected
+    output, not golden output copied from a reference implementation.
+
+    The hardest part was `parse()`'s control flow: the C is a
+    goto-based state machine (labels `comment:`/`patch:`/`hunk:`/
+    `out:`), and every `goto comment`/`goto patch` turned out to jump
+    to the exact same place - re-examine the current line as a
+    candidate new file-section start, without reading a fresh one - so
+    both collapse into one `pending`-line mechanism in the Limbo
+    version; `goto hunk` is different (reuses the established old/new
+    paths) and gets its own inner per-file loop. Traced by hand against
+    the C before trusting it, per the advisor's explicit instruction,
+    which is what surfaced a genuine bug in the original along the way:
+    a "--- "-prefixed header line with an empty filename makes the C's
+    `goto comment` re-derive the identical failure on the identical
+    line forever - a real infinite loop in Plan 9 patch on malformed
+    input, not reproduced here (would mean this translation hangs the
+    emu VM, a strictly worse failure mode) - a hard parse error is
+    raised instead, documented as a deliberate deviation.
+
+    `search()`/`searchln()`'s fuzz algorithm - flagged as the other
+    high-risk spot, since its correctness only shows up *across*
+    hunks - is tested directly, not just translated and trusted:
+    `patchtest.b`'s T3 builds a file uniformly shifted from what a
+    two-hunk diff assumes, with the second hunk's context text
+    duplicated once as a decoy an unadjusted search would reach first
+    and once at the real, shifted target only the fuzz offset carried
+    forward from the first hunk's own match reaches directly. A
+    negative control (temporarily forcing the carried fuzz to 0)
+    confirmed the test actually depends on the mechanism: it edited the
+    decoy instead of the real target, exactly as predicted.
+
+    A real translation bug, not a source bug, caught by that same
+    testing discipline: context lines (` ` in a hunk body) were
+    appended to `h.old`/`h.new` *with* their leading space marker still
+    attached, instead of stripped like the `-`/`+` cases - a mechanical
+    slip translating the C's `addold(&h, ln)` (which strips internally)
+    into Limbo code with no such helper. Caught immediately by the
+    simplest possible test (`t1basicadd`, one add to a three-line
+    file), which is worth noting for its own sake: even the "obviously
+    correct" cases here needed to actually run against a real file, not
+    just be read over.
+
+    A second real translation bug, `finish()`-adjacent: `Fbuf` is
+    modeled as `ref Fbuf` (needed since it's built dynamically by
+    `slurp()`), but in `-n` (dry run), `slurp()` is never called at
+    all - so `f` stays nil, and `blat()`'s final call unconditionally
+    read `f.mode`, a hard nil-dereference fault. The C's equivalent
+    field read is on an uninitialised *stack* struct - harmless garbage
+    in C (dry run never uses the value for a real `create()` either),
+    but Limbo enforces nil-ref-dereference as a fault rather than
+    silently returning garbage. Not something reasoning about the
+    translation caught in advance - the `-n` test case crashed the emu
+    VM outright, and that crash is what led to the fix (a small
+    `fmode()` helper defaulting to a sane mode when `f` is nil).
+
+    The advisor's second flagged risk, `finish()`'s cleanup-on-failure
+    path, needed its own fix, not just its own test: the C's `fail()`
+    calls `finish(0)` unconditionally before ever printing or exiting,
+    so *any* hard failure cleans up whatever `.tmp` files an earlier,
+    successful part of the same `apply()` already wrote. The first
+    draft's Limbo `fail()` didn't do this at all. `patchtest.b`'s T10
+    (one file applies cleanly, a second file's hunk fails to match with
+    no `-r`) exercises it, checking via `readdir(2)` that no stray
+    `.tmp` file survives - not merely that the first file's *original*
+    content is untouched, which would be true either way, since
+    `blat()` never touches the original (only `finish()`'s rename step
+    does, and that never runs on this path regardless). A negative
+    control (temporarily reverting the `finish(0)` call) confirmed the
+    stray-`.tmp` check catches the regression the "original untouched"
+    check would have missed entirely.
+
+    A real, deliberately-preserved behaviour worth stating plainly
+    rather than leaving implicit: `finish()` only ever removes a hunk
+    group's *old* file when old and new paths are equal (an in-place
+    edit, via a real same-directory rename using `fwstat` with just
+    `.name` set - `wstat` cannot rename across directories). A
+    rename-shaped patch (old path differs from new, e.g. `git diff -M`
+    output) writes the new file but leaves the old one behind -
+    confirmed by reading `finish()` line by line, not guessed, and
+    translated as-is rather than "fixed", since there is no oracle to
+    confirm which behaviour real Plan 9 patch intends here either.
+    `patchtest.b`'s T11 documents this rather than treating it as a
+    defect to paper over.
+
+    Also found while writing the test, initially mistaken for a
+    translation bug before re-reading the C: any leading `/` in a
+    header path is stripped *unconditionally*, even at the default
+    `-p0` - `fileheader()`'s strip loop only runs `strip` times, but a
+    `while(*s=='/') s++` right after it, outside that loop, always
+    runs. Real Plan 9 patch never opens a header path as absolute; it
+    always resolves against cwd (or `-d`) - a first draft of
+    `patchtest.b` used full paths directly in headers and got "unable
+    to find hunk offset" everywhere until this was traced down. Every
+    case now uses `-d` plus bare filenames, which is also the realistic
+    way this tool is actually invoked.
+
+    Reused rather than reimplemented: `cleanname()` from this tree's
+    own `module/names.m`, not a hand-rolled path canonicaliser - same
+    "check for an existing mechanism first" discipline as `regex(2)`
+    for `split.b` and `Draw` for `iconv.b`. `patchtest.b` also pulled in
+    `readdir(2)` for the stray-`.tmp` check above, the same module
+    `cp.b` already uses for directory listing.
+
+    35 cases pass (`patchtest.b`'s own 11 top-level checks expand into
+    35 individual assertions); both mechanism-specific negative
+    controls (fuzz-carry, finish-on-failure) and the dry-run
+    nil-dereference are all confirmed, not merely asserted. `pr.c`
+    remains the only backlog item genuinely blocked on "no checkable
+    reference exists at all" - `patch.c` looked like it might join it
+    but did not, because its correctness criterion lives outside any
+    Plan 9 binary in the first place.

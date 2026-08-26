@@ -21,6 +21,8 @@ TARG=\
 	splittest.dis\
 	iconv.dis\
 	iconvtest.dis\
+	patch.dis\
+	patchtest.dis\
 
 MODULES=\
 

@@ -1,0 +1,158 @@
+.TH PATCH 1
+.SH NAME
+patch \- apply a unified diff to real files, in Limbo
+.SH SYNOPSIS
+.B patch
+[
+.B -nR
+]
+[
+.BI -d\  dir
+]
+[
+.BI -p\  nstrip
+]
+[
+.BI -r\  rejfile
+]
+[
+.I patch ...
+]
+.SH DESCRIPTION
+.I Patch
+is a structural Limbo translation of Plan 9's real
+.IR patch (1)
+.RB ( sys/src/cmd/patch.c ,
+839 lines in the 9front tree), not a behavioral workalike reverse-
+engineered from a host tool \(em see
+.B doc/plan9-port.md
+in the source tree for the distinction, and
+.B patch.b 's
+own header comment for why this one has no live oracle to check
+against at all (neither 9front nor plan9port, which does not ship the
+same program under this name \(em see BUGS) and is instead verified
+against the unified diff format's own specification directly. It lives
+under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Patch
+reads each
+.I patch
+argument (or standard input, if none are given) as a unified diff, and
+applies every hunk it contains to the files its own
+.BR --- / +++
+headers name, in place. A patch with hunks for multiple files applies
+all of them in one run, grouped and applied in
+.RI ( oldpath ", " oldline )
+order regardless of the order hunks appear in the patch text.
+.PP
+Any leading
+.B /
+characters in a header path are stripped unconditionally \(em even at
+the default
+.BR -p 0
+\(em so header paths are always resolved relative to the current
+directory (or
+.BR -d ),
+never as absolute paths. This is a real property of the original, not
+a limitation of this translation; see
+.B patch.b 's
+own header comment.
+.PP
+For each target file, the whole new content is assembled in memory and
+written to a
+.IB new .tmp pid
+file next to it, then renamed into place once every hunk for that file
+has been resolved \(em so a failure partway through one file's hunks
+does not leave it partially modified; see
+.B finish()
+in
+.B patch.b
+and BUGS below for the one case (a header pair whose old and new paths
+differ) where the original file is not removed even on success.
+.SS Options
+.TP
+.BI -d\  dir
+Change to
+.I dir
+before applying (after parsing the patch itself), so every header path
+resolves relative to it.
+.TP
+.BI -p\  nstrip
+Strip
+.I nstrip
+leading slash-delimited path components from each header path before
+the unconditional leading-slash strip above.
+.TP
+.BI -r\  rejfile
+Instead of stopping at the first hunk whose context can't be found,
+write it (in the same
+.BR --- / +++ /@@
+format it came in) to
+.I rejfile
+and keep going; the run as a whole still succeeds if every other hunk
+applied.
+.TP
+.B -n
+Dry run: parse and report which files would be touched, without
+writing anything.
+.TP
+.B -R
+Apply every hunk backwards \(em swap old and new throughout \(em to
+undo a patch that has already been applied.
+.SH SOURCE
+.B /p9/cmd/patch.b
+(translated from
+.BR sys/src/cmd/patch.c )
+.SH SEE ALSO
+.IR patchtest (1)
+.SH BUGS
+plan9port ships a file at
+.B src/cmd/scat/patch.c
+that shares this program's filename but is a completely different tool
+(a star-catalog sky-region utility, "scat" = star catalog) \(em not a
+divergent copy of Plan 9's text-diff
+.IR patch ,
+and not usable as a reference for this translation. See
+.B patch.b 's
+header comment for the full reasoning on why the unified diff format
+itself substitutes for a live oracle here.
+.PP
+Patch headers are read as Limbo strings (this tree's usual convention
+for line-oriented text), not raw bytes the whole way through the way
+the original's C buffers are. A target file containing genuinely
+invalid UTF-8 (a binary file, or text in another encoding) is not
+guaranteed to round-trip byte-exactly through this translation.
+.PP
+A hunk-set whose old and new paths differ (a patch that renames a
+file, e.g.
+.BR "git diff -M" 's
+output) writes the new content to the new path but never removes the
+old one \(em confirmed by reading the original's
+.B finish()
+line by line, not guessed, and preserved rather than "fixed" since
+there is no oracle to confirm which behaviour real Plan 9 patch
+intends; see
+.IR patchtest (1)'s
+own T11.
+.PP
+A "--- " header line whose filename is empty after stripping leading
+whitespace is a genuine infinite loop in the original C (its
+.B goto comment
+re-examines the same failing line forever) \(em not reproduced here;
+this translation raises a parse error instead of hanging the emu VM.
+See
+.B patch.b 's
+header comment.
+.PP
+.BR close (2)'s
+own failure, which the original folds into a combined check alongside
+.BR rename ()/ remove (),
+has no Limbo equivalent to check (file descriptors are closed by the
+garbage collector, not an explicit call that can fail) and is simply
+not there.
