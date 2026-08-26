@@ -4365,11 +4365,118 @@ check runs
 which is a real gap \- an unlocked header read \- but a read alone
 does not explain a wild pointer written into
 .CW p->root .
-This specific reentrancy mechanism is ruled out by reading; the
-fault stands as a corrupted
+What this reading actually establishes, no broader: no path in
+.CW alloc.c
+writes
 .CW p->root
-whose write is not yet located.  Not fixed.  Committed as three
-separate, clearly-labelled probes
+or the tree links without
+.CW p->l
+held.
+.PP
+Two more candidates this suggested, both checked and both closed.
+First: is this genuinely single-core, so that
+.CW ilock() 's
+local interrupt-disable is sufficient on its own without needing to
+trust the spinlock's cross-CPU behavior?  Not inferred from the
+absence of
+.CW -smp
+on the
+.CW qemu-boot.sh
+command line \- confirmed by source.
+.CW conf.nmach = 1
+is set once, in
+.CW pc64/main.c 's
+.CW mach0init() ,
+and grepping
+.CW "pc64 / pc / port"
+for every assignment to
+.CW nmach
+finds no other write, including in
+.CW mp.c
+and
+.CW squidboy.c
+(both linked, both live in
+.CW ../pc ).
+.CW "mpintrassign: can't find bus type 12, number 0" ,
+in every boot log, is MP-table parsing for interrupt routing, not
+evidence of an AP ever starting.  Single mach, by construction, on
+this port.  Cross-core races are not the mechanism here.
+.PP
+Second: does
+.CW poolcompact()
+run arbitrary code under
+.CW p->l
+via its
+.CW pool->move
+callback \- it rewrites
+.CW pool->root
+from scratch and calls
+.CW pool->move(old, new)
+for every live block it relocates, and it runs from inside
+.CW poolalloc() 's
+own locked region.  Grepped every
+.CW poolsetcompact()
+call in the tree: exactly one,
+.CW libmemdraw/draw.c
+setting
+.CW imagmem 's
+mover to
+.CW memimagemove .
+Neither
+.CW mainmem
+nor
+.CW heapmem
+\- the two pools every capture in this hunt belongs to \- ever gets a
+.CW move
+callback, and
+.CW poolcompact() 's
+own first line is
+.CW "if(pool->move == nil || ...) return 0;" .
+The whole compaction path \- the
+.CW pool->root = nil
+rebuild, the
+.CW memmove
+of live blocks,
+.CW poolalloc() 's
+recursive retry \- is dead code for both pools in every capture this
+hunt has on record.  Not merely locked correctly: inactive.
+.PP
+Read
+.CW pooladd()
+and
+.CW pooldel()
+in full, the actual size-keyed BST-with-equal-size-rings that
+.CW p->root
+is \- the standard textbook shape (find in-order successor from the
+right subtree's leftmost node, promote it, fix up both children's
+parent pointers), including the easy-to-miss case where the
+successor is not the deleted node's immediate right child.  Traced
+every branch by hand; found no defect.  This does not mean the
+algorithm is correct, only that inspection did not find where it
+isn't \- diminishing returns against a genuinely nontrivial pointer
+algorithm read by eye rather than proven.
+.PP
+So: not fixed, no smoking gun in
+.CW alloc.c 's
+own logic despite a real search, four live things ruled out
+(reentrant locking, cross-core races, the move/compact path, and \-
+provisionally, by inspection only \- the tree algorithm itself).
+Built one more probe on the strength of what's left: does
+.CW poolfree()
+ever receive a pointer whose header is already wrong at the moment
+it arrives?
+.CW D2B
+only checks the magic byte; added the same size/quanta-alignment
+check
+.CW _auditmemloc()
+uses to classify a block, at
+.CW poolfree() 's
+entry, panicking with the caller's pc if it fails.  This is the one
+thing no capture in this whole hunt has pinned down: whether a
+corrupt-or-stale pointer arrives at
+.CW poolfree() ,
+or whether otherwise-valid frees are what corrupts the tree.
+Committed as four separate, clearly-labelled probes
 .RB ( disracepid / disracewindows / disraceoverlaps
 in
 .CW dis.c ,
@@ -4380,8 +4487,100 @@ the
 .CW D2B
 check in
 .CW freelist() 's
-tail-walk) plus the symbol-table parser, all still open questions
+tail-walk, the header-validity check at
+.CW poolfree() 's
+entry) plus the symbol-table parser, all still open questions
 rather than a fix.
+.PP
+Ran the
+.CW poolfree()
+entry probe: twelve boots, five crashes.  A note for every batch
+count in this whole document, not just this one \- every boot is run
+under
+.CW timeout 100 ,
+and a real panic followed by an idle/spinning guest still exits
+.CW 124
+once the timeout fires, the same code a genuinely clean boot exits
+with.  Reading
+.CW 124
+as "no crash" without checking the log for
+.CW panic
+is a mistake this session made once already, on this same batch,
+before rereading it.  Of the five: two
+.CW cclone
+panics with the identical caller pc across both, two general
+protection violations (one naming
+.CW $Sys
+pid 1, one
+.CW currun()
+nil), and one new signature never seen before in this hunt \-
+.CW "panic: initfrag" ,
+from
+.CW os/inferno/ip/ip.c ,
+the IP fragment-reassembly table's own init-time size check.  A
+different subsystem, seen once in 48 boots this session; recorded
+and not chased further here.  None of the five was a
+.CW D2B
+panic, so the entry probe did not come back clean \- it came back
+.I unexercised :
+no D2B-family crash happened to occur in this batch to test it
+against.  Not evidence valid pointers reach
+.CW poolfree() ;
+evidence only that this batch didn't ask the question.
+.PP
+The identical
+.CW cclone
+caller pc, across two crashes in one batch, resolves to
+.CW cunique
++28 \- the exact call site
+.CW "nc = cclone(c);"
+inside
+.CW cunique() ,
+line 575 of
+.CW chan.c .
+A third, earlier
+.CW cclone
+capture (the "reading native crash addresses" section, two sections
+back) resolves to the same
+.CW cunique
++28 against
+.I its
+own build.  Three
+.CW cclone
+panics, one exact call site, across three different builds \- the
+strongest recurrence in this whole hunt.
+.CW cunique() 's
+own check is
+.CW "if(c->ref != 1)" ,
+which does not exclude
+.CW "c->ref <= 0" ;
+.CW cclone() 's
+panic condition is
+.CW "c == nil || c->ref < 1 || c->flag&CFREE" ,
+three clauses ORed into one panic that prints only the caller pc \-
+no capture on record can say which clause actually fired, and a
+refcount underflow and a chan already returned to the free list and
+reused are different bugs with different fixes.  Enhanced all three
+of this signature's panic sites
+.RB ( cclose() ,
+.CW ccloseq() ,
+.CW cclone() )
+to print
+.CW c ,
+.CW c->ref ,
+and
+.CW c->flag
+alongside the caller pc, guarding the
+.CW c==nil
+case separately since the other two fields aren't readable then.
+Not yet run.  The next
+.CW cclone
+capture will say which of the three conditions fired; if it's
+.CW c->flag&CFREE ,
+the seven callers of
+.CW cunique()
+narrow to whichever can hold a chan across a window where something
+else already freed it \- worth tracing then, not before.
 
 .NH 1
 How a native kernel provides networking

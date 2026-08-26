@@ -532,8 +532,18 @@ closeproc(void *)
 void
 cclose(Chan *c)
 {
-	if(c == nil || c->ref < 1 || c->flag&CFREE)
-		panic("cclose %#p", getcallerpc(&c));
+	if(c == nil || c->ref < 1 || c->flag&CFREE) {
+		/*
+		 * Which of the three OR'd conditions actually fired is
+		 * a different bug each time (refcount underflow vs. a
+		 * chan already returned to the free list and reused) --
+		 * print c/c->ref/c->flag, not just the caller pc, so a
+		 * capture can tell which.  See doc/inferno-ports.ms.
+		 */
+		if(c == nil)
+			panic("cclose %#p: c nil", getcallerpc(&c));
+		panic("cclose %#p: c %#p ref %d flag %#ux", getcallerpc(&c), c, c->ref, c->flag);
+	}
 
 	if(decref(c))
 		return;
@@ -556,8 +566,11 @@ cclose(Chan *c)
 void
 ccloseq(Chan *c)
 {
-	if(c == nil || c->ref < 1 || c->flag&CFREE)
-		panic("ccloseq %#p", getcallerpc(&c));
+	if(c == nil || c->ref < 1 || c->flag&CFREE) {
+		if(c == nil)
+			panic("ccloseq %#p: c nil", getcallerpc(&c));
+		panic("ccloseq %#p: c %#p ref %d flag %#ux", getcallerpc(&c), c, c->ref, c->flag);
+	}
 
 	if(decref(c) == 0)
 		closechanq(c);
@@ -851,8 +864,11 @@ cclone(Chan *c)
 	Chan *nc;
 	Walkqid *wq;
 
-	if(c == nil || c->ref < 1 || c->flag&CFREE)
-		panic("cclone: %#p", getcallerpc(&c));
+	if(c == nil || c->ref < 1 || c->flag&CFREE) {
+		if(c == nil)
+			panic("cclone: %#p: c nil", getcallerpc(&c));
+		panic("cclone: %#p: c %#p ref %d flag %#ux", getcallerpc(&c), c, c->ref, c->flag);
+	}
 	wq = devtab[c->type]->walk(c, nil, nil, 0);
 	if(wq == nil)
 		error("clone failed");

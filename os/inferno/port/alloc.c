@@ -411,6 +411,20 @@ poolfree(Pool *p, void *v)
 
 	D2B(b, v);
 
+	/*
+	 * Probe: D2B only checks the magic byte, not size/alignment, and
+	 * runs before ilock(&p->l) below -- so a stale-but-magic-shaped
+	 * pointer could reach this point undetected.  _auditmemloc()
+	 * treats these same two conditions (a live magic, a nonzero
+	 * quanta-aligned size) as what makes a block trustworthy; apply
+	 * them here too, at the moment poolfree() receives v, rather than
+	 * only when something else later stumbles onto the damage.  See
+	 * doc/inferno-ports.ms.
+	 */
+	if((b->magic != MAGIC_A && b->magic != MAGIC_I) ||
+	   b->size <= 0 || (b->size & p->quanta))
+		poolfault(v, "poolfree:badhdr", getcallerpc(&p));
+
 	ilock(&p->l);
 	p->nfree++;
 	p->cursize -= b->size;
