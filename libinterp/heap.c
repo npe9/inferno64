@@ -263,7 +263,15 @@ destroy(void *v)
 		extern void dumpstack(void);
 
 		xp = currun();
-		if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+		/*
+		 * xp->R (currun()'s Prog struct) is only refreshed at the
+		 * start and end of xec()'s whole PQUANTA=2048-instruction
+		 * quantum, not per instruction -- during the quantum it is
+		 * stale by however many instructions have run since entry.
+		 * The plain global R is live at exactly this point instead;
+		 * see badptrslot()'s comment in xec.c for the full story.
+		 */
+		if(R.M != nil && R.M->m != nil)
 			/*
 			 * The instruction index (PC - m->prog) is build-
 			 * independent -- a module's own compiled bytecode
@@ -272,10 +280,10 @@ destroy(void *v)
 			 * with disdump against the same .dis file later.
 			 */
 			print("destroy: bad v %p, running Dis pid %d module %s PC %#p inst %d\n",
-				v, xp->pid, xp->R.M->m->name, xp->R.PC,
-				(int)(xp->R.PC - xp->R.M->m->prog));
+				v, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
+				(int)(R.PC - R.M->m->prog));
 		else
-			print("destroy: bad v %p, currun() nil or has no module\n", v);
+			print("destroy: bad v %p, R.M nil or has no module\n", v);
 		/*
 		 * R.FP is *not* usable here: both of freeptrs()'s callers
 		 * (OP(ret), OP(mcall)'s native branch) restore R.FP to the

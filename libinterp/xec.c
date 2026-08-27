@@ -346,11 +346,25 @@ badptrslot(void *bad, void *addr, char *which)
 	int i;
 
 	xp = currun();
-	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil){
+	/*
+	 * xp->R (currun()'s Prog struct, i.e. p->R) is NOT the live
+	 * register file -- xec() only copies R into p->R at entry and
+	 * p->R back out at the very end of its whole PQUANTA=2048
+	 * instruction quantum (see xec(), further down this file).  For
+	 * every instruction in between, including this one, p->R is stale
+	 * by however many instructions have run so far this quantum.  The
+	 * live state, valid at exactly this point, is the plain global R
+	 * -- already in scope here, no currun() needed to reach it.  Every
+	 * xp->R.FP/SP/TS/PC read in this file's probes was reading that
+	 * stale copy; scanframe() (below) already got this right for its
+	 * own module name and left the xp->R version only as a redundant
+	 * second print.  See doc/inferno-ports.ms.
+	 */
+	if(R.M != nil && R.M->m != nil){
 		/* inst offset is build-independent; see destroy()'s comment. */
 		print("movp: bad %s %p, running Dis pid %d module %s PC %#p inst %d\n",
-			which, bad, xp->pid, xp->R.M->m->name, xp->R.PC,
-			(int)(xp->R.PC - xp->R.M->m->prog));
+			which, bad, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
+			(int)(R.PC - R.M->m->prog));
 		/*
 		 * By the time an opcode handler runs, xec()'s dispatch loop
 		 * has already done R.PC++ past it -- so the instruction that
@@ -364,11 +378,10 @@ badptrslot(void *bad, void *addr, char *which)
 		 * mode was direct; if it was indirect instead, addr is [some
 		 * other object's pointer] + a small offset, and that
 		 * comparison never meant anything.  This byte settles which.
-		 * See doc/inferno-ports.ms.
 		 */
-		print("movp: (R.PC-1)->add %#.2ux\n", (xp->R.PC - 1)->add);
+		print("movp: (R.PC-1)->add %#.2ux\n", (R.PC - 1)->add);
 	}else
-		print("movp: bad %s %p, currun() nil or has no module\n", which, bad);
+		print("movp: bad %s %p, R.M nil or has no module\n", which, bad);
 	base = (intptr*)addr - 4;
 	print("movp: memory around %s slot %#p:\n", which, addr);
 	for(i = 0; i < 10; i++) {
@@ -387,14 +400,14 @@ badptrslot(void *bad, void *addr, char *which)
 	 * live top frame (initmem() should have covered it) or beyond SP,
 	 * in that unclaimed tail.  See doc/inferno-ports.ms.
 	 */
-	if(xp != nil){
-		Frame *cf = (Frame*)xp->R.FP;
+	{
+		Frame *cf = (Frame*)R.FP;
 		print("movp: R.FP %#p R.SP %#p R.TS %#p frame t->size %d "
 			"(addr - FP = %ld, SP - FP = %ld)\n",
-			xp->R.FP, xp->R.SP, xp->R.TS,
+			R.FP, R.SP, R.TS,
 			cf != nil ? cf->t->size : -1,
-			(long)((uchar*)addr - xp->R.FP),
-			(long)(xp->R.SP - xp->R.FP));
+			(long)((uchar*)addr - R.FP),
+			(long)(R.SP - R.FP));
 		/*
 		 * A batch34 capture put addr well past both SP and the
 		 * current frame's own t->size, raising a question this
@@ -990,11 +1003,19 @@ scanframe(Frame *f, char *opname)
 
 		print("%s: bad slot in frame, module %s\n", opname, R.M->m->name);
 		showframe((void*)f, f->t);
+		/*
+		 * currun()->R (xp->R below) is stale mid-quantum -- see
+		 * badptrslot()'s comment above -- so this second print used
+		 * to name a different instruction/module than the first one
+		 * above it, which already reads the live global R correctly.
+		 * Kept as R directly rather than removed, since pid still
+		 * needs xp.
+		 */
 		xp = currun();
-		if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+		if(R.M != nil && R.M->m != nil)
 			print("%s: running Dis pid %d module %s PC %#p inst %d\n",
-				opname, xp->pid, xp->R.M->m->name, xp->R.PC,
-				(int)(xp->R.PC - xp->R.M->m->prog));
+				opname, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
+				(int)(R.PC - R.M->m->prog));
 		abort();
 	}
 }

@@ -982,12 +982,20 @@ _poolfault(void *v, char *msg, uintptr c)
 	 * cannot be resolved to a function without a symbol table this
 	 * port's linked kernel does not carry.  See doc/inferno-ports.ms.
 	 */
+	/*
+	 * xp->R (currun()'s Prog struct) is only refreshed at the start
+	 * and end of xec()'s whole PQUANTA=2048-instruction quantum, not
+	 * per instruction -- mid-quantum it can be stale by up to 2048
+	 * instructions.  The plain global R (libinterp/xec.c) is live at
+	 * exactly this point instead; see badptrslot()'s comment in
+	 * libinterp/xec.c for the full story.  See doc/inferno-ports.ms.
+	 */
 	xp = currun();
-	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+	if(R.M != nil && R.M->m != nil)
 		print("_poolfault: running Dis pid %d module %s PC %#p\n",
-			xp->pid, xp->R.M->m->name, xp->R.PC);
+			xp != nil ? xp->pid : -1, R.M->m->name, R.PC);
 	else
-		print("_poolfault: currun() nil or has no module\n");
+		print("_poolfault: R.M nil or has no module\n");
 	panic("%s %p (from %p/%zux)", msg, v, getcallerpc(&v), c);
 }
 

@@ -7399,6 +7399,171 @@ type map, not inferred from address arithmetic, and stand regardless
 of which addressing mode produced the bad address.
 
 .NH 1
+The addressing-mode capture led somewhere better: the probes themselves were stale
+.PP
+The batch from the last section landed a capture almost immediately:
+a
+.CW movp
+with a bad
+.I destination
+this time
+.RN ( dv ,
+not
+.CW sv
+like every earlier one), addressing byte
+.CW 0x01
+(direct
+.CW R.FP
+addressing, by the
+.CW USRC / UDST
+decoding worked out there), and a frame-bounds line that made no
+sense at all:
+.CW "addr - FP = -245448" .
+Not a small overshoot past
+.CW t->size
+like the last two sections found \- a quarter of a megabyte
+.I before
+.CW R.FP ,
+nowhere near any plausible compiled-in frame offset.  A direct-mode
+address that far from the frame it's supposedly
+.CW R.FP
+-relative to isn't a bigger version of the same overshoot; it's a
+sign the comparison itself is broken.
+.PP
+It is.  Every probe in this hunt that named "the current instruction"
+or "the current frame" \- module, PC, instruction index, R.FP, R.SP,
+R.TS \- read them through
+.CW currun()->R ,
+i.e.
+.CW p->R ,
+the
+.I Prog 's
+own saved copy of its register file.  That copy is not live.
+.CW xec(Prog\ *p)
+does
+.CW "R = p->R"
+once, at entry, into the plain global
+.CW R
+.RN ( libinterp/xec.c ,
+declared
+.CW "REG R;" ,
+one instance, not per-Prog); every instruction in the quantum runs
+against that global; and only after the whole quantum ends \-
+.CW "PQUANTA = 2048"
+instructions later, in the ordinary case \- does
+.CW "p->R = R"
+write the live state back.  For every instruction in between,
+.CW p->R
+is however many instructions stale since the quantum began, up to
+2047 of them.  The probes were reading that stale copy the entire
+time; the live state, valid at exactly the point a probe fires, was
+sitting in the plain global
+.CW R ,
+already in scope in every one of these functions, no
+.CW currun()
+needed to reach it.
+.PP
+This is the same mistake this hunt already caught once before, in a
+narrower form: the
+.CW destroy()
+probe reading
+.CW R.FP
+after
+.CW OP(ret) / OP(mcall)
+had restored it to the caller's frame.  That fix (globals set inside
+.CW freeptrs()
+itself) sidestepped the general problem without naming it.  This
+capture named it: not one call site restoring
+.CW R.FP
+early, but every probe in the file reaching for the wrong copy of
+the whole register file, by construction, every time.
+.PP
+Fixed at all four sites that had it \-
+.CW badptrslot()
+and
+.CW scanframe()
+.RN ( libinterp/xec.c ),
+.CW destroy()
+.RN ( libinterp/heap.c ),
+and
+.CW _poolfault()
+.RN ( os/inferno/port/alloc.c ,
+the earliest of the four, the one the others' comments credited as
+"the same trick").  Each now reads the plain
+.CW R
+directly for module/PC/frame identification, and only uses
+.CW currun()
+for what it's actually good for: the
+.CW pid .
+Rebuilt clean, no new warnings at any of the four sites.
+.PP
+This retroactively explains the contradiction that surfaced it.  The
+addressing byte
+.CW "(R.PC-1)->add"
+this batch was built to capture is itself computed from
+.CW xp->R.PC ,
+so in the batch that just ran, it named the addressing mode of
+whatever instruction happened to sit at the
+.I stale
+PC \- not necessarily the
+.CW movp
+that actually faulted.  The wild
+.CW "addr - FP"
+number is exactly what you'd expect when the reported mode and the
+reported frame both refer to a different point in execution than the
+one that actually produced
+.CW addr .
+None of this batch's captures \- this one or the three that followed
+it before the fix landed \- are usable for addressing-mode or
+frame-bounds conclusions; the raw bad-slot address and value are
+still fine, since bad-pointer detection reads
+.CW R.d / R.s
+directly, not through
+.CW currun() ,
+but the diagnostic context around them is not.  A fresh batch is
+running against the fixed binary.
+.PP
+One more thread worth naming, checked partway and not yet finished:
+.CW libinterp/gc.c 's
+.CW rootset()
+walks
+.CW root->R.SP
+and
+.CW root->R.EX
+to find each Prog's live stack extent for marking, for every Prog on
+.CW isched.head ,
+using the identical
+.CW p->R
+field this section just found stale mid-quantum.
+.CW rungc()
+is called from
+.CW vmachine() 's
+scheduler loop only after
+.CW r->xec(r)
+has already returned for that iteration, and on a normal quantum exit
+.CW p->R
+is freshly written back by then \- so the ordinary case looks safe on
+inspection.  What isn't checked yet: whether a native C-level
+.CW error()
+raised from deep inside a quantum (the same class of unwind the
+.CW kbind()
+fix earlier in this document was about) can reach
+.CW vmachine() 's
+own
+.CW waserror()
+without ever reaching
+.CW xec() 's
+trailing
+.CW "p->R = R" ,
+leaving that Prog's
+.CW p->R
+stale for longer than one quantum \- and if so, whether
+.CW rootset()
+can run against it in that state before it's torn down.  Flagged, not
+established; the next step is finding a capture with GC running near
+it, not reasoning further from the source alone.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
