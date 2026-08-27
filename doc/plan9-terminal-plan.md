@@ -256,18 +256,43 @@ as line count grows.
 
 ## Progress on (2), rc in Limbo
 
-Three slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
+Four slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
 separately with what it verified named in the commit message rather
 than "part N of M": word.c's word-list operations plus var.c's
 variable/keyword tables (`17b39312`, 26 assertions), glob.c's pure
 pattern-matching logic plus word.c's `subwords` (`c220ab3d`, 54
-assertions total), then tree.c's node constructors plus the real
-`klook` (`65b133a4`, 77 assertions total). All three slices were
-chosen the same way - real, directly testable value semantics,
-nothing needing a parser or a running thread yet; the third slice
-confirmed directly that tree.c is independent of the lexer/grammar
-pair (it's called BY grammar actions, not coupled to the lexer the
-way the lexer and grammar are coupled to each other).
+assertions total), tree.c's node constructors plus the real `klook`
+(`65b133a4`, 77 assertions total), then lex.c's tokenizer (139
+assertions total). The first three were chosen the same way - real,
+directly testable value semantics, nothing needing a parser or a
+running thread yet; the third confirmed directly that tree.c is
+independent of the lexer/grammar pair (it's called BY grammar
+actions, not coupled to the lexer the way the lexer and grammar are
+coupled to each other).
+
+The fourth (lex.c) looked like it should have been blocked by that
+same coupling - in the real source, `syn.y`'s yacc output is what
+`lex.c` returns, so upstream the two can't be built or verified
+apart. That coupling turned out not to bind this translation at all:
+the `Rc` module interface declares its own `Tokbase`/iota token
+constants directly, so nothing here needs a grammar to generate them
+first. The lexer was translated and fully tested standalone, from an
+in-memory string rather than `rc`'s real `runq->cmdfd` thread input
+(there is no Thread yet), dropping the real source's interactive
+bookkeeping (`doprompt`/`pprompt`/the `flag['V']` echo) for the same
+reason. Two real findings came out of tests that initially failed:
+`skipwhite()` consumes a comment's body but not its trailing
+newline, which becomes a genuine `'\n'` token, not silently-discarded
+whitespace - a wrong test assumption otherwise, caught only because
+the corrected version then crashed the next assertion on an
+unguarded nil `Tree` (a bare single-character token legitimately has
+no tree); and the real upstream check rejecting duplication of a
+heredoc/append fd (`t->type==DUP && (t->rtype==HERE ||
+t->rtype==APPEND)`) is unreachable dead code in `utils/rcsh/lex.c` -
+every path that sets `t->type=DUP` unconditionally overwrites
+`t->rtype` first, so real rc genuinely accepts `<<[2=1]`/`>>[2=1]`.
+Both findings were resolved by fixing the test's expectation to match
+traced, verified real behavior, not by changing the translation.
 
 Things worth carrying forward, found only by building this far:
 `copywords`/`subwords`-shaped C code using a manual end-of-list
@@ -295,12 +320,12 @@ spread comparison) - the other is covered by a different, pre-existing
 test's absolute-value assertions. Documented in rctest.b as two
 mechanisms working together, not overclaimed as one.
 
-What's left of the *portable core* is the harder-to-verify half: the
-lexer, grammar, and `Tree` node machinery are not independent of each
-other (confirmed directly, not assumed - `syn.y`'s yacc output is what
-`lex.c` returns), so unlike the two slices done so far, this next
-piece can't be split into small independently-testable units the same
-way - it has to be built and verified together, closer to how
+What's left of the *portable core* is the grammar (`syn.y`) and the
+code-vector execution engine. The grammar is the one piece that
+genuinely can't be split further the way lex.c turned out to be: it
+doesn't just consume tokens this translation already defines
+independently, it has to produce actual parse structure from them,
+which means building and verifying it as one unit, closer to how
 `p9/cmd/hoc.b` (hand-written recursive descent, the established
 precedent in this backlog for a yacc-based real source) was built.
 
