@@ -256,7 +256,7 @@ as line count grows.
 
 ## Progress on (2), rc in Limbo
 
-Five slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
+Six slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
 separately with what it verified named in the commit message rather
 than "part N of M": word.c's word-list operations plus var.c's
 variable/keyword tables (`17b39312`, 26 assertions), glob.c's pure
@@ -355,13 +355,37 @@ from `syn.y`, not checked against real-world usage since no `rc` man
 page was available here); the keyword-demotion rule (`word: keyword
 {$1->type=WORD;}`, so `echo if` treats `if` as a plain argument) is
 handled once, shared by every non-first word position; and
-`simplemung()`/`heredoc()` are each only partially real, documented
-as such rather than silently approximated (both need machinery -
-`pfnc.c`'s `%t` printer, exec.c-level source reading for a heredoc
-body - not translated yet). Two negative controls confirmed the
-precedence-derivation and `pskipnl()` findings actually matter:
-reverting either produced exactly the one predicted failure, nothing
-else.
+`heredoc()` is only partially real (needs exec.c-level source reading
+for a heredoc body - not translated yet). Two negative controls
+confirmed the precedence-derivation and `pskipnl()` findings actually
+matter: reverting either produced exactly the one predicted failure,
+nothing else.
+
+The sixth slice is `pcmd.c` (`c9dcbbde`, 208 assertions total), real
+rc's own `%t` tree-to-source pretty-printer - brought forward ahead of
+`code.c` on purpose, since two things were blocked on it before either
+could be real: `code.c`'s own `fnstr()` (the source text
+`Xasync`/`Xbackq`/`Xsubshell`/`Xpipe` hand `exec.c` as what to
+actually run) and `simplemung()`'s own `str` field, deferred since the
+fourth slice. Both are done now. Pure tree-to-string recursion, no
+`runq`/Thread dependency - real `pcmd()` writes into an `Io` buffer
+via `pfmt`; this translation just concatenates strings directly, no
+buffered-writer machinery needed. Real `pcmd()`'s own `pdeglob()`
+helper is not a new function here - it's glob.c's own `deglob()`,
+reused directly. Tested by round-tripping this parser's own real
+output (`testparseprint()` = `parsecmd()` then `pcmd()`), the same
+reuse the parser's own tests already got from the lexer. Two real
+findings, both in `pcmd.c`'s own `DUP` case, from round-trip tests
+that failed first: that case prints ONLY its own bracket syntax,
+dropping the rest of a DUP-prefixed command from its own display
+string entirely (real, not a gap - `code.c`'s own `DUP` case still
+compiles the rest of the command regardless of what gets displayed);
+and printing a tree parsed from `>[2=1]` genuinely produces `>[1=2]` -
+`lex.c`'s own bracket parser stores the two fd numbers into `fd0`/
+`fd1` in the opposite order from how `pcmd.c` prints them back, both
+verified directly against the real source. Two negative controls
+(swapping the print order; reverting `deglob()` to a no-op) each
+produced exactly the predicted failures.
 
 What's left of the *portable core* is the code-vector execution
 engine (`code.c`), the one piece genuinely gated on having a working
