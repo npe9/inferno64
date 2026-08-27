@@ -6330,6 +6330,83 @@ if the rate holds, this is generic to any active NIC; if it drops,
 is the specific place to read.
 
 .NH 1
+Not driver-specific; open whether it needs DMA or just interrupts
+.PP
+The
+.CW igb
+batch finished: 37 of 40 reached
+.CW "spawn\ sh"
+(the
+.CW virtio-net
+batches reached 35 and 37, so depth is genuinely matched this time),
+.CW "invalid\ opcode"
+hit 7 of 40, and 13 of 40 crashed at all.  Stated as precisely as the
+sample supports, not as "somewhat lower": pooled against the
+.CW "restrict=on\ virtio-net"
+batch's 12/40, the
+.CW "invalid\ opcode"
+rates (17.5% vs 30%) are 1.3 standard errors apart \- not
+distinguishable at
+.CW n=40
+each.  The total-crash rates (32.5% vs 57.5%) are 2.2 standard errors
+apart, borderline, and not built on: that count mixes several
+unrelated one-off panic families, so a difference in it is an
+observation to note and set aside, not a finding.  The clean result
+is the one signature tracked consistently across every batch in this
+whole thread:
+.B zero
+with no NIC at all, comparable double-digit percentages with either
+of two unrelated driver families
+.RB ( ethervirtio.c
+and
+.CW ether82563.c 's
+.CW i82576
+support) once a device is actually attached.  Not driver-specific.
+.PP
+That still conflates two different claims: "an active NIC is
+sufficient" and "an active interrupt source is sufficient," and
+these batches cannot tell them apart \- every boot already has a
+timer tick and a console UART regardless of any NIC.  What a NIC
+specifically adds is interrupt
+.I volume
+and DMA writes into kernel memory that neither the timer nor the
+UART perform.  Telling those apart needs a boot with heavy interrupt
+traffic and no DMA, and the obvious candidate \- a plain
+.CW "\-nic\ none"
+boot, if it could reach depth \- turned out to be worth checking
+properly rather than assumed broken.  Instrumented
+.CW disinit.b
+with a print after every early bind
+.RB ( kept ,
+not reverted \- a permanent, low-noise depth marker for every future
+boot log, not a throwaway probe) and rebuilt.  One boot with no NIC
+localizes the stall exactly: the last line is
+.CW "bound\ #e" ,
+never
+.CW "bound\ #l0" .
+Read
+.CW etherattach()
+.RB ( os/inferno/port/devether.c )
+expecting to find the cause and didn't: with no controller ever
+probed,
+.CW "etherxx[ctlrno]\ ==\ nil"
+should raise
+.CW Enodev
+immediately, before
+.CW devattach()
+is even called \- a fast error, not a hang, on the reading done so
+far.  Recorded as a real, separate, open finding rather than chased
+to ground this round: something makes
+.CW "sys\->bind(\*(lq#l0\*(rq,\ \*(lq/net\*(rq,\ ...)"
+block indefinitely when zero Ethernet controllers exist, contradicting
+the fast-error path the source appears to promise, and until that's
+understood
+.CW "\-nic\ none"
+stays unusable as a depth-matched control.  The DMA-versus-interrupts
+question stays open because of it, not because it was judged
+unimportant.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

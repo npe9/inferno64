@@ -32,23 +32,36 @@ init(nil: ref Draw->Context, nil: list of string)
 	# set up basic devices, ignoring errors
 	# 9front does this in the shell. Can move them to dis/init later
 	sys->bind("#b", "/dev", sys->MAFTER);	# kbd
+	sys->print("bound #b\n");
 	sys->bind("#c", "/dev", sys->MAFTER);	# console device
+	sys->print("bound #c\n");
 	sys->bind("#d", "/fd", Sys->MREPL);		# dup(3)
+	sys->print("bound #d\n");
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);	# environment
+	sys->print("bound #e\n");
 #	sys->bind("#i", "/dev", sys->MREPL);	# draw device
 	sys->bind("#l0", "/net", sys->MAFTER);	# Ethernet device
+	sys->print("bound #l0\n");
 	sys->bind("#m","/dev",sys->MAFTER);     # pointer/mouse
+	sys->print("bound #m\n");
 	sys->bind("#p", "/prog", sys->MREPL);	# prog device
+	sys->print("bound #p\n");
 	sys->bind("#r", "/dev", sys->MAFTER);	# rtc
+	sys->print("bound #r\n");
 	sys->bind("#s", "/chan", sys->MREPL);	# server registry
+	sys->print("bound #s\n");
 	sys->bind("#t", "/dev", sys->MAFTER);	# serial line
+	sys->print("bound #t\n");
 #	sys->bind("#v","/dev",sys->MAFTER);     # VGA
 	sys->bind("#I0", "/net", sys->MAFTER);	# IP
+	sys->print("bound #I0\n");
 	sys->bind("#P","/dev",sys->MAFTER);		# arch
+	sys->print("bound #P\n");
 #	sys->bind("#P/realmode","/dev",sys->MAFTER); # not in the arch(3). What is this for?
 #	sys->bind("#P/realmodemem","/dev",sys->MAFTER);# not in the arch(3). What is this for?
 #	sys->bind("#O", "/dev", sys->MAFTER);	# Modem
 	sys->bind("#S", "/dev", sys->MAFTER);	# Disks
+	sys->print("bound #S\n");
 #	sys->bind("#T","/dev",sys->MAFTER);		# Touchscreen
 #	sys->bind("#W","/dev",sys->MAFTER);		# Flash
 #	sys->bind("#o", "/proc", sys->MREPL);	# proc device
