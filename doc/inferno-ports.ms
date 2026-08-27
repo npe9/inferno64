@@ -7895,6 +7895,49 @@ reinterpreted as the wrong shape.  Rebuilt, same two pre-existing
 unrelated warnings only.  Fresh batch running.
 
 .NH 1
+A second module-data capture, in a different module
+.PP
+Module
+.CW Sh
+this time, not
+.CW Arg :
+.CW "bad sv 0" ,
+addressing byte
+.CW 0x05 .
+.CW "USRC(0x05) = 0 = AMP" :
+module-pointer direct again, the same family as the
+.CW Arg
+capture several sections back.  No rebuild needed to read this one;
+the existing probe already decodes both families correctly.  The
+frame-bounds line is nonsense in the same expected way
+.RN ( "addr - FP = 115391592" ) ,
+for the same reason: an AMP-direct read never touches
+.CW R.FP .
+.PP
+Module-level data is no longer a single data point.  Two different
+modules
+.RN ( Arg
+and now
+.CW Sh
+itself), same addressing family, same shape of finding: a slot in the
+module's own persistent global-data area holding something other than
+.CW H .
+Between this and the earlier check that
+.CW m->origmp
+starts fully zeroed and correctly populated at load
+.RN ( heapz() ,
+not the unzeroed
+.CW "heap() / nheap()" ),
+the running tally of contexts this hunt has now seen the bad value
+in, each independently confirmed not to be an initialization gap
+where checked: a stack frame slot beyond
+.CW initmem() 's
+reach, a heap object's own field, a module's persistent global data,
+and \- the sharpest one yet \- a field reached through an otherwise-
+valid pointer chain.  Four shapes, one recurring symptom.  Batch
+still running.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
