@@ -8764,6 +8764,153 @@ execution \- the first real narrowing this hunt has had, if it lands.
 A fresh batch runs against this build next.
 
 .NH 1
+The landmark site recurs, and a real resolver gap surfaces
+.PP
+180 boots, six lanes, the
+.CW freeptrs()
+teardown check running alongside the existing blanket
+.CW movp
+print: 12 captures
+.RN ( "6.7%, the highest rate this hunt has measured" ) ,
+spanning five modules
+.RN ( Sh ,
+.CW Init ,
+.CW Env ,
+.CW Mount ,
+.CW Shellbuiltin )
+and, once every instruction was actually resolved rather than
+assumed from the module name, eight genuinely new distinct source
+lines
+.RN ( env.b:63 ,
+.CW env.b:44 ,
+.CW env.b:31 ,
+.CW disinit.b:88 ,
+.CW disinit.b:173 ,
+.CW mount.b:207 ,
+.CW mount.b:209 ,
+.CW std.b:558 )
+on top of the eight this hunt already had, plus one recurrence of the
+landmark site below.
+.PP
+Two results stand out from the rest.
+.CW freeptrs()
+fired once, for real: object
+.CW 0xa3d600 ,
+size 232, np 4, map
+.CW "00 b1 e0 08" ,
+word 10
+.RN ( "genuinely marked a pointer -- byte 1 bit 5" ) ,
+value 0, caught at the exact moment
+.CW env.b:63 's
+.CW "(a, nil) := readdir->init(...)"
+tore its calling context down.  This is the mechanism working exactly
+as built: state checked at teardown, not a read that happened to hit
+a bad slot.  And one capture landed on the exact line the whole
+hunt's own landmark
+.RN ( b06f5340 ,
+"The first capture with correct indexing" above)
+first resolved to:
+.CW sh.b:838 ,
+.CW "spawn externalexec(mod, ctxt.drawcontext, argv, npath, extstart, ctxt.keepfds);" \-
+the same
+.CW mod
+argument, recurring independently in a completely different boot.
+Two
+.CW mount.b
+captures
+.RN ( lines
+207 and 209, both inside a
+.CW spawn / pipe
+setup passing
+.CW sh
+and
+.CW fds
+as arguments) sit in the same shape: argument marshaling immediately
+around a
+.CW spawn
+statement.  Three independent sites now share that pattern, which is
+worth watching for without yet being a finding \- plenty of this
+hunt's other captures
+.RN ( addbuiltin() 's
+array-slice-shift,
+.CW hashadd() 's
+array-element cons)
+have no
+.CW spawn
+nearby at all.
+.PP
+Resolving the
+.CW Shellbuiltin
+capture
+.RN ( PC
+.CW 0x7975938 ,
+inst 1431)
+surfaced a real gap in this hunt's own source-resolution method, not
+just this one capture: fifteen separate files under
+.CW appl/cmd/sh/
+.RN ( echo.b ,
+.CW test.b ,
+.CW std.b ,
+.CW arg.b ,
+and eleven more) all declare
+.CW "implement Shellbuiltin;" ,
+so the module name alone never identifies which
+.CW .sbl
+to resolve against \- every prior
+.CW "module Shellbuiltin"
+mention in this hunt (there had been none before this batch) would
+have needed the same disambiguation.
+.CW Sh
+has the same problem on a smaller scale
+.RN ( sh.b ,
+.CW mload.b ,
+and
+.CW appl/tiny/sh.b
+all implement it), and
+.CW Init
+worse \- thirteen board-specific init variants share the name.
+Disambiguated here by instruction-count range (only
+.CW std.sbl 's
+1967 instructions cover index 1431; every other Shellbuiltin file is
+too short) and confirmed by the resolved line
+.RN ( "std.b:558,
+inside a
+.CW for
+loop calling
+.CW ctxt.run() ,
+a real builtin's real body) being plausible.  Every
+.CW Sh
+capture this hunt has ever resolved was checked against
+.CW mload.sbl 's
+own 649-instruction ceiling and appl/tiny's absence from this build;
+none of them are close enough to that boundary to be ambiguous, and
+every one names a real, recognizable
+.CW sh.b
+function
+.RN ( addbuiltin() ,
+.CW hashadd() ,
+.CW runexternal() ,
+and now this batch's
+.CW sh.b:838
+spawn line).  Worth remembering as a standing check for any future
+capture in a shared-name module, not just this one.
+.PP
+Net picture after seventeen distinct source-line captures (eight from
+before this batch, eight new, plus the landmark counted once) and one
+teardown catch: still no single site, still both recurring values
+.RN ( 0
+and
+.CW 0x18 ) ,
+now across five modules instead of three.  The corruption is not
+rare in the way a race needing exact double-digit-microsecond timing
+would be \- 6.7% under this stress load is common enough that the
+next real narrowing is more likely to come from reading what these
+sites share
+.RN ( spawn
+proximity, module-data vs.\ stack-frame vs.\ teardown-time) than from
+another blind batch.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
