@@ -904,17 +904,34 @@ kopen(char *path, int mode)
 {
 	int fd;
 	Chan *c;
+	extern void checktracked(void);
+	extern char *trackpoint;
 
 	if(waserror())
 		return -1;
 
 	openmode(mode);                         /* error check only */
+	/*
+	 * Narrowing the landmark write past "somewhere in readmod()"
+	 * further still: readmod:after-kopen caught it (readmod.c), so
+	 * the write is inside kopen() itself.  namec() (path/namespace
+	 * resolution -- mount table, bind, devtab dispatch) is the one
+	 * complex call in here; newfd() is comparatively small.
+	 * Bracketing both narrows it before reading namec() itself.
+	 * pc64-only, temporary.  See doc/inferno-ports.ms.
+	 */
+	trackpoint = "kopen:before-namec";
+	checktracked();
 	c = namec(path, Aopen, mode, 0);
+	trackpoint = "kopen:after-namec";
+	checktracked();
 	if(waserror()){
 		cclose(c);
 		nexterror();
 	}
 	fd = newfd(c, mode);
+	trackpoint = "kopen:after-newfd";
+	checktracked();
 	if(fd < 0)
 		error(Enofd);
 	poperror();

@@ -240,6 +240,8 @@ freelist(Heap *h, int swept)
 		 * See doc/inferno-ports.ms.
 		 */
 		{ Bhdr *b; D2B(b, th); }
+		/* same free-time clear as destroy()'s -- see its comment */
+		trackclear(th, poolmsize(heapmem, th));
 		poolfree(heapmem, th);
 	}
 }
@@ -252,9 +254,26 @@ freemodlink(Heap *h, int swept)
 	ml = H2D(Modlink*, h);
 	if(ml->m->rt == DYNMOD)
 		freedyndata(ml);
-	else if(!swept)
+	else if(!swept){
+		/*
+		 * Narrowing the landmark write's exact location within
+		 * OP(iload)'s destroy(t) cascade: checktracked() normally
+		 * runs once per Dis instruction, too coarse to see which
+		 * of these two calls -- destroy(ml->MP), unload(ml->m) --
+		 * the tracked word changes inside.  Bracketing both with
+		 * an extra check narrows it to one or the other on the
+		 * next capture.  pc64-only, temporary.  See
+		 * doc/inferno-ports.ms.
+		 */
+		trackpoint = "freemodlink:before-destroyMP";
+		checktracked();
 		destroy(ml->MP);
+		trackpoint = "freemodlink:after-destroyMP";
+		checktracked();
+	}
 	unload(ml->m);
+	trackpoint = "freemodlink:after-unload";
+	checktracked();
 }
 
 int
@@ -382,6 +401,21 @@ destroy(void *v)
 		gcunlock();
 		freetype(t);
 	}
+	/*
+	 * Same free-time clear as unextend()/unframe()/destroystack()
+	 * (stack.c, xec.c) for the mainmem side -- this is the heapmem
+	 * side of the identical gap: a heap object's own registration
+	 * (heap()/heapz()/heaparray(), typetagp == &h->t) needs clearing
+	 * before poolfree() hands this block back, or a later, unrelated
+	 * poolalloc(heapmem, ...) that never calls initmemtt() (there
+	 * isn't one today, every heapmem call site does -- but nothing
+	 * enforces that) leaves the stale entry to fire on ordinary
+	 * reuse.  h *is* the pointer poolalloc(heapmem, ...) returned
+	 * (D2B's dp), so poolmsize() on it directly gives the whole
+	 * block, header included.  pc64-only, temporary tracker
+	 * plumbing.  See doc/inferno-ports.ms.
+	 */
+	trackclear(h, poolmsize(heapmem, h));
 	poolfree(heapmem, h);
 }
 
@@ -563,8 +597,18 @@ static Trackslot track[NTRACK];
 /* set by xec()'s dispatch loop just before optab[op]() runs */
 Modlink	*trackM;
 Inst	*trackPC;
+/*
+ * Optional finer-grained checkpoint name for an extra checktracked()
+ * call inserted somewhere inside one op's C call tree (narrower than
+ * "which Dis instruction"), e.g. freemodlink()'s bracketing calls
+ * around destroy(ml->MP) and unload(ml->m).  "instr" (the default,
+ * set once per Dis instruction, same granularity as before) unless
+ * something more specific overrides it right before its own call.
+ * pc64-only, temporary.  See doc/inferno-ports.ms.
+ */
+char	*trackpoint = "instr";
 
-static void
+void
 trackclear(void *base, long size)
 {
 	int i;
@@ -634,8 +678,8 @@ checktracked(void)
 			continue;
 		}
 		print("track: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx "
-			"regpid %d\n",
-			track[i].addr, track[i].val, v, track[i].regpid);
+			"regpid %d checkpoint %s\n",
+			track[i].addr, track[i].val, v, track[i].regpid, trackpoint);
 		print("track: instruction that just ran: PC %#p op %#.2ux "
 			"add %#.2ux module %s pid %d inst %d\n",
 			trackPC, trackPC->op, trackPC->add,
@@ -688,8 +732,39 @@ checktracked(void)
 		 * the enclosing dispatch, not the writer.
 		 */
 		print("track: R.FP %#p R.SP %#p R.MP %#p R.d %#p\n", R.FP, R.SP, R.MP, R.d);
-		dumpstack();
-		abort();
+		/*
+		 * R.EX/R.TS: the current process's live extent chain head
+		 * and top-of-current-extent.  A tracked object that is a
+		 * Frame belonging to a *dead* stack extent (one unextend()
+		 * already detached, whose memory mallocz()/smalloc() can now
+		 * hand back out of the same mainmem pool) will not appear
+		 * anywhere in the chain reachable from R.EX -- decisive
+		 * against the "stray writer" reading of a hit, as opposed to
+		 * the "stale tracked slot over recycled memory" reading.
+		 * pc64-only, temporary.  See doc/inferno-ports.ms.
+		 */
+		print("track: R.EX %#p R.TS %#p\n", R.EX, R.TS);
+		/*
+		 * Deliberately not dumpstack()+abort() here anymore, for
+		 * one experiment: after the free-time trackclear() fixes
+		 * (unextend()/unframe()/destroystack() in stack.c/xec.c,
+		 * destroy()/freelist() here), the residual hits all show
+		 * checkpoint "instr" with R.d == this exact address --
+		 * this op's own ordinary write, old value H, new value a
+		 * plain 0, same-frame (R.FP == obj).  That shape is
+		 * consistent with a live frame's word being conservatively
+		 * marked pointer in its type's map while actually holding
+		 * a non-pointer local at this program point (two Limbo
+		 * locals with non-overlapping lifetimes sharing one frame
+		 * offset) -- exactly the same *kind* of map-imprecision
+		 * getclock() demonstrated earlier, just within one frame's
+		 * lifetime instead of across reuse.  Dropping the slot and
+		 * continuing, instead of stopping the boot, is the only way
+		 * to tell that reading from a genuine crash: if the system
+		 * still reaches a working shell after a hit, the write was
+		 * benign.  pc64-only, temporary.  See doc/inferno-ports.ms.
+		 */
+		track[i].addr = nil;
 	}
 }
 

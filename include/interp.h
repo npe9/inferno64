@@ -494,8 +494,10 @@ extern	void		initarray(Type*, Array*);
 extern	void		initmem(Type*, void*);
 extern	void		initmemtt(Type*, void*, Type**);
 extern	void		checktracked(void);
+extern	void		trackclear(void*, long);	/* pc64-only tracker -- see heap.c */
 extern	Modlink*	trackM;	/* set by xec()'s dispatch loop -- see heap.c */
 extern	Inst*		trackPC;
+extern	char*		trackpoint;	/* finer-grained checkpoint name -- see heap.c */
 extern	void		irestore(Prog*);
 extern	Prog*		isave(void);
 extern	void		keyringmodinit(void);

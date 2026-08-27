@@ -1105,7 +1105,22 @@ scanframe(Frame *f, char *opname)
 			print("%s: running Dis pid %d module %s PC %#p inst %d\n",
 				opname, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
 				(int)((R.PC - 1) - R.M->m->prog));
-		abort();
+		/*
+		 * Not aborting, for the same reason and at the same time
+		 * as checktracked()'s own abort() was dropped (heap.c):
+		 * both sh.b:2479 and string.b:414 -- the two captures this
+		 * scan has resolved to real source -- are ordinary,
+		 * unremarkable `s[len s] = c;`/`+=` string-append code, no
+		 * bug of their own.  The working hypothesis this tests is
+		 * that f->t->map is a whole-function conservative union
+		 * (every word any lexical scope in the function ever uses
+		 * as a pointer, not "is a pointer right now"), so a scan at
+		 * this exact program point can spuriously flag a live,
+		 * legitimate non-pointer local as bad.  If the process
+		 * keeps running correctly after this prints, that is
+		 * evidence for the hypothesis, not proof; still pc64-only,
+		 * temporary.  See doc/inferno-ports.ms.
+		 */
 	}
 }
 OP(ret)
@@ -1181,14 +1196,32 @@ OP(iload)
 		}
 	}
 	else {
+		/*
+		 * Narrowing the landmark write further: freemodlink()'s
+		 * own bracketing (heap.c) found the write does NOT happen
+		 * inside destroy(t)'s cascade after all -- every checkpoint
+		 * there came back clean, meaning it happens somewhere else
+		 * in this op's body.  Bracketing readmod()/linkmod() (the
+		 * calls that compute the NEW value, not the ones that
+		 * release the old one) next.  pc64-only, temporary.  See
+		 * doc/inferno-ports.ms.
+		 */
+		trackpoint = "iload:before-readmod";
+		checktracked();
 		m = readmod(n, lookmod(n), 1);
+		trackpoint = "iload:after-readmod";
+		checktracked();
 		ml = linkmod(m, ldt, 1);
+		trackpoint = "iload:after-linkmod";
+		checktracked();
 	}
 	if(ml == nil)
 		print("iload module %s not loaded ml == nil\n", n);
 	mp = R.d;
 	t = *mp;
 	*mp = ml;
+	trackpoint = "iload:before-destroyt";
+	checktracked();
 	destroy(t);
 }
 OP(mcall)
@@ -2086,6 +2119,24 @@ destroystack(REG *reg)
 			if(t == nil)
 				t = sx->reg.TR;
 			m = f->mr;
+			/*
+			 * This whole-process teardown path frees every
+			 * extent in the chain without going through
+			 * unextend()/unframe() -- neither of which this
+			 * loop calls -- so it needs its own trackclear(),
+			 * same reasoning as theirs (see unextend()'s
+			 * comment in stack.c): otherwise every frame torn
+			 * down here leaves a stale tracked registration
+			 * that the next unrelated mainmem allocation to
+			 * land on this memory, and zero, gets misreported
+			 * against.  Cleared per frame, using the frame's
+			 * own t->size, rather than the whole extent at
+			 * once -- portable (no pool-size API, which isn't
+			 * available to every kernel libinterp builds
+			 * against), and exact.  pc64-only, temporary
+			 * tracker plumbing.  See doc/inferno-ports.ms.
+			 */
+			trackclear(f, t->size);
 			if (t->np)
 				freeptrs(f, t);
 			if(m != nil) {
@@ -2239,6 +2290,7 @@ xec(Prog *p)
 		 */
 		trackM = R.M;
 		trackPC = R.PC - 1;
+		trackpoint = "instr";
 		optab[op]();
 		/*
 		 * checkwatch() (below) held one frame instance at a time

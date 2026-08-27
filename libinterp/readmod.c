@@ -28,11 +28,25 @@ readmod(char *path, Module *m, int sync)
 	length = 0;
 	dynld = 0;
 
+	/*
+	 * Narrowing the landmark write further: readmod:before-parsemod
+	 * (below) caught it, ruling parsemod() out entirely -- the write
+	 * happens somewhere in this earlier stretch instead, which is
+	 * exactly where release()/acquire() bracket real kernel syscalls
+	 * (kopen/kdirfstat/kread/kclose).  pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	trackpoint = "readmod:before-release";
+	checktracked();
 	if(sync)
 		release();
+	trackpoint = "readmod:after-release";
+	checktracked();
 
 	d = nil;
 	fd = kopen(path, OREAD);
+	trackpoint = "readmod:after-kopen";
+	checktracked();
 	if(fd < 0){
 		DBG("readmod path %s, fd < 0\n", path);
 		goto done;
@@ -42,6 +56,8 @@ readmod(char *path, Module *m, int sync)
 		DBG("readmod (d = kdirfstat(fd)) == nil for path %s\n", path);
 		goto done;
 	}
+	trackpoint = "readmod:after-kdirfstat";
+	checktracked();
 
 	if(m != nil) {
 		if(d->dev == m->dev && d->type == m->dtype &&
@@ -65,8 +81,12 @@ readmod(char *path, Module *m, int sync)
 	code = mallocz(length, 0);
 	if(code == nil)
 		goto done;
+	trackpoint = "readmod:after-mallocz";
+	checktracked();
 
 	n = kread(fd, code, length);
+	trackpoint = "readmod:after-kread";
+	checktracked();
 	if(n != length) {
 		DBG("readmod kread failed on path %s length %d, read n %d\n", path, length, n);
 		/*
@@ -91,13 +111,27 @@ readmod(char *path, Module *m, int sync)
 done:
 	if(fd >= 0)
 		kclose(fd);
+	trackpoint = "readmod:after-kclose";
+	checktracked();
 done1:
 	if(sync)
 		acquire();
+	trackpoint = "readmod:after-acquire";
+	checktracked();
 	if(m != nil && ans == nil)
 		unload(m);
+	/*
+	 * Narrowing the landmark write past "somewhere in readmod()":
+	 * bracketing parsemod() specifically, the one call in this
+	 * function that does any real interpretation of untrusted bytes.
+	 * pc64-only, temporary.  See doc/inferno-ports.ms.
+	 */
+	trackpoint = "readmod:before-parsemod";
+	checktracked();
 	if(code != nil) {
 		ans = parsemod(path, code, length, d);
+		trackpoint = "readmod:after-parsemod";
+		checktracked();
 		free(code);
 	}
 	else if(dynld){
