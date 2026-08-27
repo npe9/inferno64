@@ -1,0 +1,15 @@
+#!/bin/rc
+# build the server and a libdraw client, run the server, draw through it
+rm -rf /tmp/draw; mkdir -p /tmp/draw; cp /n/cd/src/draw/* /tmp/draw/; cd /tmp/draw
+echo '=== build server ==='
+for(f in devdraw kshim main){ 6c -I. $f.c || echo cc-$f FAIL }
+6l -o draw devdraw.6 kshim.6 main.6 /amd64/lib/lib9p.a /amd64/lib/libmemlayer.a /amd64/lib/libmemdraw.a && echo server-linked
+echo '=== build client ==='
+6c dtest.c && 6l -o dtest dtest.6 /amd64/lib/libdraw.a && echo client-linked
+echo '=== run ==='
+draw=/tmp/draw/draw
+$draw
+sleep 1
+/tmp/draw/dtest &
+sleep 3
+echo drawdemo-done

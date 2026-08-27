@@ -23,6 +23,14 @@ usage(void)
 extern Dev drawdevtab;
 #define D (&drawdevtab)
 
+/*
+ * memdraw's shared images (memopaque/memwhite/memblack/memones).  In the
+ * kernel these are set up by the port screen init; the device never does
+ * it.  A user-space server must call this itself, or every mask defaults
+ * to a nil memopaque and memdraw faults reading mask->layer.
+ */
+extern void memimageinit(void);
+
 static void
 fsattach(Req *r)
 {
@@ -171,6 +179,7 @@ main(int argc, char **argv)
 	}ARGEND;
 	USED(argc, argv);
 
+	memimageinit();
 	D->reset();
 	D->init();
 	postmountsrv(&drawsrv, nil, mtpt, MBEFORE);

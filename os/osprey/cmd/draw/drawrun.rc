@@ -1,0 +1,15 @@
+#!/bin/rc
+# run the freshly built draw server and see that it serves /dev/draw
+if(! test -x /tmp/draw/draw){
+	echo no-binary
+	exit
+}
+echo '=== starting draw server ==='
+/tmp/draw/draw
+sleep 2
+echo '=== /dev/draw ==='
+ls -l /dev/draw >[2]/tmp/lserr
+cat /tmp/lserr >[1=2]
+echo '=== /dev/draw/new stat ==='
+ls -l '/dev/draw/new' >[2]/dev/null
+echo drawrun-done
