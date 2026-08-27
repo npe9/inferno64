@@ -69,6 +69,10 @@ cp "$LOADER" "$TREE/EFI/BOOT/BOOTX64.EFI"
 cp "$KERNEL" "$TREE/amd64/9pc64"
 # the user-space ring program, when it has been built
 mkdir -p "$TREE/bin"
+mkdir -p "$TREE/src"
+for c in "$ROOT"/os/osprey/cmd/*.c "$ROOT"/os/osprey/cmd/*.rc; do
+	[ -f "$c" ] && cp "$c" "$TREE/src/`basename "$c"`"
+done
 for b in ring pip mig p9srv netsrv o9cat fpbits fb; do
 	if [ -f "$ROOT/Osprey/amd64/bin/$b" ]; then
 		cp "$ROOT/Osprey/amd64/bin/$b" "$TREE/bin/$b"

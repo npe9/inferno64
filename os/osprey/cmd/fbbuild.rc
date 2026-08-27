@@ -1,0 +1,14 @@
+#!/bin/rc
+# build fbdraw natively on the disk and run it - carried on the boot ISO,
+# so the whole build is one file, not commands typed over the serial line
+cp /n/cd/src/fbdraw.c /tmp/fbdraw.c
+cd /tmp
+echo '=== 6c ==='
+6c fbdraw.c
+echo cc-done
+echo '=== 6l ==='
+6l -o fbdraw fbdraw.6 /amd64/lib/libmemdraw.a
+echo ld-done
+ls -l /tmp/fbdraw
+/tmp/fbdraw
+echo ran-fbdraw

@@ -2076,36 +2076,29 @@ does not use, refuses until its new form is written; everything rio needs
 is on the current protocol.  So a user-space draw server derived from this
 code speaks the version the disk's rio speaks.
 .PP
-One prerequisite for that server is found and worth recording, because it
-is a real wall.  A user-space program cross-built here cannot link the
-prebuilt 9front
+The compositing library works over the exposed frame buffer, and the way
+to it is to build where the toolchain and the libraries already agree.
+The host's linker cannot read the prebuilt 9front
 .CW libmemdraw.a
-- the compositing library the server needs.  The library was built by a
-newer toolchain than this host's linker reads, and where
-.CW libc.a
-only refused a couple of members (which is why these programs supply
-their own _main), libmemdraw's objects are unreadable outright:
-.CW "opcode out of range 665, probably not a .6 file"
-on memimagedraw.  A small program that composites with it compiles and
-then fails at the link.  It is not libmemdraw alone.  Even the
-.CW libc.a
-these programs already use has the same wall a step deeper: its simplest
-members link - write, segattach, errstr, memmove, the ones fb needs - but
+or even libc's
 .CW malloc
-(poolalloc) does not, the same "opcode out of range" on the object.  fb
-never called malloc, so it never hit it; anything with a real library
-does.  The tree's own from-source memdraw is Inferno's, a different
-universe (its malloc would call an Inferno system call the 9front kernel
-does not have), so it cannot be borrowed either.  So the wall is the whole
-prebuilt 9front library stack: its complex members were built by a newer
-toolchain than this host's linker reads, and no 9front C source is
-vendored to rebuild them here.  A cross-built user-space draw stack - or
-any cross-built program that allocates - needs those libraries rebuilt
-from 9front source with a matching toolchain first.  The raw-pixel path
-(fb) is as far as a program gets here on libc's simplest calls alone.  A from-scratch personality on the pure microkernel is
-the other direction, and a far larger one: the library OS has no exec, no
-name space and four syscalls, so a 9front personality there is the Plan 9
-upper half rewritten, which the buddy-kernel path does not need.
+- those objects were built by a newer compiler than plan9port's linker
+here reads, which is a red herring: it is a fact about cross-linking
+foreign objects, not about the library being out of reach.  The disk is a
+full 9front development machine - 6a, 6c, 6l, mk, the matching libc and
+libmemdraw, and all of /sys/src, rio's source included - so a program of
+the personality is built there, natively, against those very libraries.
+.CW os/osprey/cmd/fbdraw.c ,
+carried onto the boot ISO as source, is compiled and linked on the disk
+with its own 6c and 6l against its own libmemdraw, and run: it allocates a
+memory image with the library, fills a background and draws two rectangles
+with memimagedraw, and blits the result to the exposed frame buffer - and
+it is on the screen.  So the compositing core a draw server needs builds
+and runs; nothing about it was a wall, only the host cross-link was.  The
+draw server is written and built the same way, on the disk against the
+disk's libraries, and a from-source stack in the tree - the userland built
+with the utils toolchain, which is the same kencc - is the reproducible
+version of the same thing.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
