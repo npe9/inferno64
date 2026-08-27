@@ -256,7 +256,7 @@ as line count grows.
 
 ## Progress on (2), rc in Limbo
 
-Six slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
+Seven slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
 separately with what it verified named in the commit message rather
 than "part N of M": word.c's word-list operations plus var.c's
 variable/keyword tables (`17b39312`, 26 assertions), glob.c's pure
@@ -387,9 +387,54 @@ verified directly against the real source. Two negative controls
 (swapping the print order; reverting `deglob()` to a no-op) each
 produced exactly the predicted failures.
 
-What's left of the *portable core* is the code-vector execution
-engine (`code.c`), the one piece genuinely gated on having a working
-grammar to feed it - the parser now exists to do that.
+The seventh slice is `code.c` (`26e1cb7e`, 219 assertions total) -
+`outcode()`/`codeswitch()`/`iscase()`/`compile()`, a pure tree walk
+emitting a linear instruction vector. Still no `runq`/Thread
+dependency beyond `iflast` (a module-global standing in for
+`runq->iflast`, same category as `curlocal`/`nlchar`), and still
+nothing that RUNS the vector - that's `exec.c`, not translated yet.
+Stops exactly at `compile()`: `codecopy()`/`codefree()` are
+reference-counting/bulk-free bookkeeping, the same "no counterpart
+under a real GC" category as `tree.c`'s own `Treenodes`/`freenodes`.
+`Codecell` (op/int/string on every cell, since Limbo has no untagged
+union) plus a real growable array with a fill pointer (not a list -
+`stuffdot()` needs random-access mutation of an already-emitted cell
+to patch a forward jump) replace real `Code`'s C union and
+`morecode()`'s `realloc`. Opcodes are plain ints, deliberately
+starting at 1 so `compile()`'s own trailing null-sentinel cell (0)
+can never be mistaken for a real instruction - a first version
+started them at 0 and produced exactly that collision, caught by the
+compiler itself (two case labels evaluating to the same value).
+Tested by compiling this parser's own real output (`testcompile()` =
+`parsecmd()` then `compile()` then a new `codeshape()` dump).
+
+Three real bugs found in this translation itself (not upstream), all
+by tests that crashed or failed first: the `'='` case's own epilogue
+crashed outright on a bare assignment with no trailing command
+(`"x=5"`) - real code.c reuses one mutable `t` throughout via
+`c0`/`c1`/`c2` macros re-evaluated fresh at each use, with an explicit
+`t=tt` reset before returning ("so tests below will work", its own
+comment); this translation dropped that reset, wrongly assuming
+Limbo's case-arm scoping would protect the function's own `t`
+parameter from an inner `t = tt` assignment - it doesn't, since that's
+a plain reassignment of the shared parameter, not a new shadowing
+declaration, so `t` was left nil by the time code just past the case
+block dereferenced it. `codeswitch()` had two further bugs of the
+identical shape (the same mutable-pointer style mistranslated into
+separate-purpose locals), producing a structurally wrong instruction
+sequence for any switch with more than a trivial body - both caught by
+comparing a test expectation derived from an independent hand-trace of
+the real algorithm against what the function actually emitted. Two
+negative controls (reverting each fix) reproduced exactly the
+predicted failure/crash.
+
+What's left of the *portable core* is `exec.c` - the piece that
+actually RUNS a compiled instruction vector, gated on `code.c` existing
+to produce one, which it now does. This is also where the platform
+layer's one flagged real risk lives: `Xbackq`'s (and `Xasync`'s/
+`Xpipe`'s) reliance on genuine Unix `fork()`, which has no direct
+Limbo equivalent - a real design problem, not more mechanical
+translation.
 
 ## What this plan is not
 
