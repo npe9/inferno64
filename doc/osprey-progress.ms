@@ -2087,12 +2087,22 @@ only refused a couple of members (which is why these programs supply
 their own _main), libmemdraw's objects are unreadable outright:
 .CW "opcode out of range 665, probably not a .6 file"
 on memimagedraw.  A small program that composites with it compiles and
-then fails at the link.  No buildable 9front libmemdraw source is vendored
-either, only the object.  So the draw server's real first task is a
-linkable libmemdraw: its source brought in and built with this toolchain,
-or the toolchain gap closed.  Until then a user-space draw stack cannot be
-cross-built here, however small; the raw-pixel path (fb) works because it
-needs no library but libc's simplest calls.  A from-scratch personality on the pure microkernel is
+then fails at the link.  It is not libmemdraw alone.  Even the
+.CW libc.a
+these programs already use has the same wall a step deeper: its simplest
+members link - write, segattach, errstr, memmove, the ones fb needs - but
+.CW malloc
+(poolalloc) does not, the same "opcode out of range" on the object.  fb
+never called malloc, so it never hit it; anything with a real library
+does.  The tree's own from-source memdraw is Inferno's, a different
+universe (its malloc would call an Inferno system call the 9front kernel
+does not have), so it cannot be borrowed either.  So the wall is the whole
+prebuilt 9front library stack: its complex members were built by a newer
+toolchain than this host's linker reads, and no 9front C source is
+vendored to rebuild them here.  A cross-built user-space draw stack - or
+any cross-built program that allocates - needs those libraries rebuilt
+from 9front source with a matching toolchain first.  The raw-pixel path
+(fb) is as far as a program gets here on libc's simplest calls alone.  A from-scratch personality on the pure microkernel is
 the other direction, and a far larger one: the library OS has no exec, no
 name space and four syscalls, so a 9front personality there is the Plan 9
 upper half rewritten, which the buddy-kernel path does not need.
