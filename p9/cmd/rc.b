@@ -40,6 +40,55 @@ implement Rc;
 # There is no Thread/runq yet - `curlocal` below stands in for it,
 # always nil until code.c/exec.c introduce a real running thread, at
 # which point `vlook` starts consulting the real thing instead.
+#
+# Second slice: glob.c's pure pattern-matching logic (deglob, match,
+# matchfn, and a reduced haswild standing in for globsize - see below)
+# plus word.c's subwords, deferred from the first slice because it
+# needs deglob. glob.c's directory-walking half (globdir, glob,
+# globsort, globlist, globlist1) stays deferred - it needs runq's
+# argument stack and real directory reads, the same "needs a running
+# thread" boundary as pushword/popword/pushlist/poplist already are.
+#
+# A real simplification, not a mechanical translation: match()'s real
+# source manually decodes UTF-8 byte sequences itself (equtf/nextutf/
+# unicode helpers, operating on a raw `char*` byte stream), because
+# C's `char*` has no idea what a multi-byte code point is. Limbo's
+# `string` type already IS a rune sequence - `s[i]` is already a
+# decoded code point, not a raw byte - so those three helpers have no
+# Limbo equivalent needed at all; this translation indexes strings
+# directly instead. The `GLOB` escape sentinel (rune value 2, matching
+# the real `((char)0x02)`) is an ordinary rune value and lives inside
+# ordinary Limbo `string`s throughout this file - no `array of byte`
+# anywhere here, unlike marshal.b's `Outbuf`, because glob patterns
+# and file names are always textual, never arbitrary binary content.
+# rctest.b's test patterns embed the GLOB sentinel as a RAW U+0002
+# byte written directly into the source file, not as a textual escape
+# sequence - Limbo parses a literal control character inside a string
+# literal exactly the same as it would parse an escape for the same
+# rune, so this is equivalent, not a workaround. It is also invisible
+# in an ordinary editor: anyone touching a glob pattern in rctest.b
+# must confirm the byte survived (e.g. dump the line's repr()),
+# since a tool that normalizes or strips control characters would
+# silently turn a wildcard test into a literal-character test while
+# every assertion still compiles and the test names still read the
+# same.
+#
+# One real, deliberate behavioral divergence, not an oversight: real
+# match()'s `[...]` case has no bounds check for a pattern that runs
+# out before the closing `]`, or for `GLOB` as the pattern's very last
+# rune with nothing after it - both read past the string's own NUL
+# terminator in C (undefined behavior on a well-formed C string, since
+# a real caller-supplied pattern ending in a syntax error is not
+# expected). Limbo strings carry their own length and bounds-check
+# every index at runtime, so an equivalent out-of-bounds read would
+# not silently continue - it would abort the whole program in a way
+# nothing here can recover from. This translation adds explicit
+# `return 0` guards at exactly those two spots instead, matching the
+# real source's own EXISTING syntax-error-returns-0 handling in every
+# other branch of the same function, and named here as a divergence
+# specifically because it changes what an actually-malformed pattern
+# does (a clean "no match" instead of undefined behavior), not because
+# it changes what a well-formed one does.
 
 include "sys.m";
 	sys: Sys;
@@ -71,6 +120,12 @@ Rc: module
 	testsetvar:	fn(name: string, val: ref Word);
 	testiskeyword:	fn(name: string): int;
 	testwordlist:	fn(words: list of string): ref Word;	# helper for tests
+
+	testdeglob:	fn(s: string): string;
+	testmatch:	fn(s: string, p: string, stop: int): int;
+	testmatchfn:	fn(s: string, p: string): int;
+	testhaswild:	fn(p: string): int;
+	testsubwords:	fn(val: ref Word, wlen: int, sub: ref Word, a: ref Word): ref Word;
 };
 
 # --- word.c: word lists ---------------------------------------------
@@ -164,6 +219,196 @@ testwordlist(words: list of string): ref Word
 	if(words == nil)
 		return nil;
 	return newword(hd words, testwordlist(tl words));
+}
+
+# subwords: the `$var(n m ...)' subscript operator. sub is a word list
+# of subscript specs, walked in the real source's own reverse order
+# (it recurses before doing anything, so the LAST subscript is
+# resolved first, prepended as the recursion unwinds - the final
+# result is in the original subscript order). Each subscript is
+# deglobbed (unescaping a literal digit is unlikely but matches the
+# source), then parsed as a run of leading decimal digits (anything
+# after the digits, or a non-digit subscript entirely, is simply
+# ignored - matching the real source's own unchecked `while('0'<=*s
+# && *s<='9')` scan, not a translation gap).
+subwords(val: ref Word, wlen: int, sub: ref Word, a: ref Word): ref Word
+{
+	if(sub == nil)
+		return a;
+	a = subwords(val, wlen, sub.next, a);
+	s := deglob(sub.word);
+	n := 0;
+	i := 0;
+	while(i < len s && s[i] >= '0' && s[i] <= '9'){
+		n = n*10 + (s[i] - '0');
+		i++;
+	}
+	if(n < 1 || wlen < n)
+		return a;
+	v := val;
+	for(; n != 1; n--)
+		v = v.next;
+	return newword(v.word, a);
+}
+
+testsubwords(val: ref Word, wlen: int, sub: ref Word, a: ref Word): ref Word
+{
+	return subwords(val, wlen, sub, a);
+}
+
+# --- glob.c (partial): pure pattern-matching logic ------------------
+#
+# See this file's own header comment for why match()'s manual UTF-8
+# decoding has no Limbo equivalent, why GLOB lives in an ordinary
+# string, and for the one deliberate divergence (explicit bounds
+# guards where the real source would read past its own NUL
+# terminator on a malformed pattern).
+
+Glob: con 2;	# real rc's ((char)0x02) escape sentinel
+
+deglob(s: string): string
+{
+	r := "";
+	n := len s;
+	for(i := 0; i < n; i++){
+		if(s[i] == Glob)
+			i++;
+		if(i < n)
+			r += s[i:i+1];
+	}
+	return r;
+}
+
+# does p contain at least one real glob metacharacter (as opposed to
+# only escaped-literal-GLOB sequences or plain characters) - the
+# boolean the real source's globsize() computes as a side effect of
+# sizing a malloc buffer Limbo strings don't need. GLOB as the very
+# last rune with nothing after it (malformed, never produced by real
+# code) is treated here as "not a wildcard"; the real globsize() would
+# read past the string's own NUL terminator and count it as one, which
+# isn't meaningful to replicate for an input that shouldn't occur.
+haswild(p: string): int
+{
+	isglob := 0;
+	n := len p;
+	i := 0;
+	while(i < n){
+		if(p[i] == Glob){
+			i++;
+			if(i < n && p[i] != Glob)
+				isglob++;
+		}
+		i++;
+	}
+	return isglob != 0;
+}
+
+# does s match pattern p, stopping the scan of p at the sentinel rune
+# `stop' (real rc calls this with stop=='/' to match one path
+# component at a time out of a `/'-separated pattern).
+match(s: string, p: string, stop: int): int
+{
+	sn := len s;
+	pn := len p;
+	si := 0;
+	pi := 0;
+	while(pi < pn && p[pi] != stop){
+		if(p[pi] != Glob){
+			if(si >= sn || p[pi] != s[si])
+				return 0;
+		}else{
+			pi++;
+			if(pi >= pn)
+				return 0;	# GLOB with nothing after it -
+						# see header comment
+			case p[pi] {
+			Glob =>
+				if(si >= sn || s[si] != Glob)
+					return 0;
+			'*' =>
+				for(;;){
+					if(match(s[si:], p[pi+1:], stop))
+						return 1;
+					if(si >= sn)
+						break;
+					si++;
+				}
+				return 0;
+			'?' =>
+				if(si >= sn)
+					return 0;
+			'[' =>
+				if(si >= sn)
+					return 0;
+				c := s[si];
+				pi++;
+				compl := pi < pn && p[pi] == '~';
+				if(compl)
+					pi++;
+				hit := 0;
+				while(1){
+					if(pi >= pn)
+						return 0;	# unterminated [...]
+					if(p[pi] == ']')
+						break;
+					lo := p[pi];
+					pi++;
+					hi := lo;
+					if(pi < pn && p[pi] == '-'){
+						pi++;
+						if(pi >= pn)
+							return 0;	# unterminated [...]
+						hi = p[pi];
+						pi++;
+						if(hi < lo){
+							t := lo;
+							lo = hi;
+							hi = t;
+						}
+					}
+					if(lo <= c && c <= hi)
+						hit = 1;
+				}
+				if(compl)
+					hit = !hit;
+				if(hit == 0)
+					return 0;
+			}
+		}
+		si++;
+		pi++;
+	}
+	return si >= sn;
+}
+
+# . and .. are only matched by patterns starting with `.'
+matchfn(s: string, p: string): int
+{
+	if(len s > 0 && s[0] == '.' &&
+	   (len s == 1 || (s[1] == '.' && len s == 2)) &&
+	   (len p == 0 || p[0] != '.'))
+		return 0;
+	return match(s, p, '/');
+}
+
+testdeglob(s: string): string
+{
+	return deglob(s);
+}
+
+testmatch(s: string, p: string, stop: int): int
+{
+	return match(s, p, stop);
+}
+
+testmatchfn(s: string, p: string): int
+{
+	return matchfn(s, p);
+}
+
+testhaswild(p: string): int
+{
+	return haswild(p);
 }
 
 # --- var.c: variables and the keyword table -------------------------

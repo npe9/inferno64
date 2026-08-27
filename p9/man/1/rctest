@@ -7,18 +7,26 @@ rctest \- regression test for rc's word-list/variable-table foundation
 .B Rctest
 exercises
 .IR rc (1)'s
-first translated slice - word lists
+two translated slices - word lists
 .RI ( newword ,
 .IR count ,
 .IR copywords ,
 .IR list2str ,
-.IR conclist )
-and the variable/keyword tables
+.IR conclist ,
+.IR subwords ),
+the variable/keyword tables
 .RI ( hash ,
 .IR gvlook ,
 .IR vlook ,
 .IR setvar ,
-.IR iskeyword )
+.IR iskeyword ),
+and
+.BR glob.c 's
+pure pattern-matching logic
+.RI ( deglob ,
+.IR match ,
+.IR matchfn ,
+.IR haswild )
 - through
 .BR rc.dis 's
 own test-seam functions, calling
@@ -28,6 +36,24 @@ first to populate the internal tables the same way
 own
 .B init()
 would.
+.PP
+Every pattern that means to use a glob metacharacter spells out the
+real escape sentinel explicitly (rune value 2, matching real
+.IR rc 's
+own
+.BR ((char)0x02) ),
+embedded as a raw byte written directly into
+.BR rc.b 's
+own source, not as a textual escape sequence - Limbo parses a literal
+control character inside a string literal the same as it would an
+escape for the same rune. That byte is invisible in an ordinary
+editor: anyone touching a glob pattern here must confirm it survived
+whatever tool they used, since silently losing it turns a wildcard
+test into a literal-character test with no compile error and no
+obviously wrong test name. A bare
+.BR * / ? /[
+with no escape in front is a literal character to these functions,
+not a wildcard, the same as in the real source.
 .PP
 .B hash() 's
 expected values were computed independently in Python from the real

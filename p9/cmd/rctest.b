@@ -44,6 +44,12 @@ Rc: module
 	testsetvar:	fn(name: string, val: ref Word);
 	testiskeyword:	fn(name: string): int;
 	testwordlist:	fn(words: list of string): ref Word;
+
+	testdeglob:	fn(s: string): string;
+	testmatch:	fn(s: string, p: string, stop: int): int;
+	testmatchfn:	fn(s: string, p: string): int;
+	testhaswild:	fn(p: string): int;
+	testsubwords:	fn(val: ref Word, wlen: int, sub: ref Word, a: ref Word): ref Word;
 };
 
 Word: adt
@@ -137,6 +143,73 @@ init(nil: ref Context, nil: list of string)
 	checkint("iskeyword(\"\") == 0", rc->testiskeyword(""), 0);
 	checkint("\"for\" and \"if\" get different token values",
 		rc->testiskeyword("for") != rc->testiskeyword("if"), 1);
+
+	# --- deglob() ---
+	checkstr("deglob(GLOB *) == \"*\" (unescape a literal asterisk)",
+		rc->testdeglob("*"), "*");
+	checkstr("deglob(plain) == plain (nothing to unescape)",
+		rc->testdeglob("plain"), "plain");
+	checkstr("deglob(GLOB GLOB) == GLOB (an escaped literal GLOB char)",
+		rc->testdeglob(""), "");
+
+	# --- haswild() ---
+	checkint("haswild(plain) == 0", rc->testhaswild("plain"), 0);
+	checkint("haswild(GLOB *) == 1 (a real wildcard)",
+		rc->testhaswild("*"), 1);
+	checkint("haswild(GLOB GLOB) == 0 (only an escaped literal, no "+
+		"real wildcard)", rc->testhaswild(""), 0);
+	checkint("haswild(a GLOB ? b) == 1", rc->testhaswild("a?b"), 1);
+
+	# --- match() ---
+	checkint("match(abc, abc, 0) == 1 (literal match)",
+		rc->testmatch("abc", "abc", 0), 1);
+	checkint("match(abc, abd, 0) == 0 (literal mismatch)",
+		rc->testmatch("abc", "abd", 0), 0);
+	checkint("match(abc, a GLOB * , 0) == 1 (* matches \"bc\")",
+		rc->testmatch("abc", "a*", 0), 1);
+	checkint("match(abc, GLOB *, 0) == 1 (* matches the whole string)",
+		rc->testmatch("abc", "*", 0), 1);
+	checkint("match(\"\", GLOB *, 0) == 1 (* matches empty)",
+		rc->testmatch("", "*", 0), 1);
+	checkint("match(abc, a GLOB ? c, 0) == 1 (? matches exactly one char)",
+		rc->testmatch("abc", "a?c", 0), 1);
+	checkint("match(ac, a GLOB ? c, 0) == 0 (? needs a char that isn't there)",
+		rc->testmatch("ac", "a?c", 0), 0);
+	checkint("match(abc, GLOB [a-c] bc, 0) == 1 (in-range bracket class)",
+		rc->testmatch("abc", "[a-c]bc", 0), 1);
+	checkint("match(dbc, GLOB [a-c] bc, 0) == 0 (out-of-range)",
+		rc->testmatch("dbc", "[a-c]bc", 0), 0);
+	checkint("match(abc, GLOB [~a-c] bc, 0) == 0 (negated, in-range so excluded)",
+		rc->testmatch("abc", "[~a-c]bc", 0), 0);
+	checkint("match(dbc, GLOB [~a-c] bc, 0) == 1 (negated, out-of-range so included)",
+		rc->testmatch("dbc", "[~a-c]bc", 0), 1);
+	checkint("match(dir, dir/file, '/') == 1 (stop truncates the pattern scan)",
+		rc->testmatch("dir", "dir/file", '/'), 1);
+	checkint("match(dirx, dir/file, '/') == 0 (extra char past the stop point)",
+		rc->testmatch("dirx", "dir/file", '/'), 0);
+	checkint("match(GLOB, GLOB GLOB, 0) == 1 (a literal GLOB byte matches itself)",
+		rc->testmatch("", "", 0), 1);
+
+	# --- matchfn() (the "." and ".." exclusion wrapper) ---
+	checkint("matchfn(\".\", GLOB *) == 0 (dot excluded by a wildcard pattern)",
+		rc->testmatchfn(".", "*"), 0);
+	checkint("matchfn(\"..\", GLOB *) == 0 (dot-dot excluded too)",
+		rc->testmatchfn("..", "*"), 0);
+	checkint("matchfn(\".\", . GLOB *) == 1 (pattern itself starts with '.')",
+		rc->testmatchfn(".", ".*"), 1);
+	checkint("matchfn(foo, GLOB *) == 1 (non-dot name, ordinary match)",
+		rc->testmatchfn("foo", "*"), 1);
+
+	# --- subwords(): $var(n m ...) subscripting ---
+	vals := rc->testwordlist("v1" :: "v2" :: "v3" :: "v4" :: "v5" :: nil);
+	sub1 := rc->testwordlist("2" :: "4" :: nil);
+	checkstr("subwords picks out elements 2 and 4, in that order",
+		rc->testlist2str(rc->testsubwords(vals, 5, sub1, nil)), "v2 v4");
+	sub2 := rc->testwordlist("0" :: "6" :: "3" :: nil);
+	checkstr("subwords silently drops out-of-range subscripts (0 and 6)",
+		rc->testlist2str(rc->testsubwords(vals, 5, sub2, nil)), "v3");
+	checkptr("subwords(val, 5, nil, nil) == nil (no subscripts at all)",
+		rc->testsubwords(vals, 5, nil, nil) == nil);
 
 	sys->print("%d passed, %d failed\n", npass, nfail);
 	if(nfail > 0)

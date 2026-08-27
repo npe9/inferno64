@@ -35,13 +35,37 @@ pipes) to design against Limbo's
 and channel model from scratch, since there is no Posix reference to
 translate that part from.
 .PP
-This version implements only the first slice: word lists and the
-variable/keyword tables from
+This version implements two slices, both with no parser or execution
+engine yet - see BUGS. The first is word lists and the variable/
+keyword tables from
 .B word.c
 and
-.BR var.c ,
-translated and tested with no parser or execution engine yet -
-see BUGS.
+.BR var.c .
+The second is
+.BR glob.c 's
+pure pattern-matching logic
+.RI ( deglob ,
+.IR match ,
+.IR matchfn ,
+and a reduced
+.I haswild
+standing in for
+.BR globsize 's
+buffer-sizing side effect, which Limbo strings don't need) plus
+.BR word.c 's
+.IR subwords ,
+deferred from the first slice because it needs
+.BR deglob .
+.BR glob.c 's
+directory-walking half
+.RI ( globdir ,
+.IR glob ,
+.IR globsort ,
+.IR globlist )
+stays deferred - it needs a real argument stack and real directory
+reads, the same boundary the first slice's deferred
+.IR pushword / popword / pushlist / poplist
+already are.
 .B Running
 .B rc
 does nothing but populate its internal tables and print a note saying
@@ -57,13 +81,35 @@ in this tree - the real source being translated.
 in this tree - the sizing and sequencing document this translation
 follows.
 .SH BUGS
-No lexer, grammar, or execution engine yet - this is the word-list and
-variable-table foundation only, chosen as the first slice specifically
-because it has real, testable value semantics without needing either
-of those (a lexer alone cannot be tested meaningfully, since real
+No lexer, grammar, or execution engine yet - both slices built so far
+were chosen specifically because they have real, testable value
+semantics without needing any of those (a lexer alone cannot be tested
+meaningfully, since real
 .IR rc 's
 own lexer and grammar are not independent of each other: yacc generates
 the token constants the lexer returns).
+.PP
+.B match() 's
+real source manually decodes UTF-8 byte sequences itself, because C's
+.B char*
+has no idea what a multi-byte code point is. Limbo's
+.B string
+type already is a rune sequence, so this translation indexes strings
+directly instead - a real simplification, not a mechanical translation,
+noted in
+.BR rc.b 's
+own header comment.
+.PP
+.BR match() 's
+.B [...]
+bracket-class case has one deliberate behavioral divergence from the
+real source: a pattern that runs out before its closing
+.B ]
+returns 0 (no match) here, where the real source would read past its
+own string's NUL terminator - undefined behavior in C, but a Limbo
+array-bounds crash if translated as-is, since Limbo strings check
+every index at runtime. Only a malformed pattern is affected; a
+well-formed one behaves identically.
 .PP
 Real
 .I rc
