@@ -1,0 +1,16 @@
+#!/bin/rc
+# build rio from source on the disk, to confirm the graphics userland
+# builds natively with the disk's own toolchain and libraries
+@{
+	cd /sys/src/cmd/rio
+	mk clean >[2]/dev/null
+	echo '=== building rio ==='
+	if(mk >[2]/tmp/rio.err)
+		echo rio-build-ok
+	if not {
+		echo rio-build-FAIL
+		tail -5 /tmp/rio.err
+	}
+	ls -l /sys/src/cmd/rio/6.rio >[2]/dev/null
+}
+echo riobuild-done
