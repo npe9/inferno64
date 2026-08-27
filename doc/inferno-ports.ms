@@ -6956,6 +6956,122 @@ than let finish and risk a mixed-binary read \- a clean batch against
 the corrected binary is running.  Result in the next section.
 
 .NH 1
+Beyond SP, in the same live block \- and the same source line again
+.PP
+Took several batches to land one \- eighty-three clean no-NIC boots
+with the corrected diagnostic in place produced zero
+.CW destroy() / OP(movp)
+hits before the next one finally landed
+.RB ( "1 in roughly 40\-90" ,
+consistent with the small counts already on record, not a change in
+rate).  It was
+.CW OP(movp) ,
+not
+.CW destroy() ,
+so it needed none of the
+.CW "freeptrsv / freeptrst / freeptrsslot"
+fix from last section \- that opcode never restores
+.CW R.FP
+before it fires, so its reading has been trustworthy all along.
+.PP
+Resolved the source line first, the way every capture in this
+document has: instruction 2315 (2316 printed, minus one for
+.CW xec() 's
+pre-increment)
+.RB ( resolve_sbl.py )
+lands on
+.CW sh.b:1061 \-
+the same line number
+.CW "A durable resolver, two named sites in sh.b"
+named for an earlier capture.  Checked what's actually there before
+trusting the match: it is
+.I not
+the same line any more.
+.CW sh.b
+has moved under this multi-session investigation the way any live
+source file does, and today's line 1061 is
+.CW "waitfd\ :=\ sys\->open(\*(lq#p/\*(rq+wf,\ Sys\->OREAD);" ,
+inside
+.CW waitfd() ,
+a different function entirely from the
+.CW keepfds
+cons the earlier capture named.  Recorded as its own small correction
+\- a coincidence of line numbers across two source-file states, not
+the same site recurring \- rather than silently building on the old
+label.
+.PP
+What the diagnostic actually answers: the destination slot sits at
+.CW "R.d\ =\ 0xa306a8" ,
+344 bytes past
+.CW R.FP
+.RB ( 0xa30550 ) .
+.CW R.SP
+sits only 104 bytes past
+.CW R.FP ,
+and the current top frame's own
+.CW t\->size
+is 112 \- both well short of 344.
+.CW auditmemloc()
+places the slot inside the same live
+.CW mainmem
+block as
+.CW R.FP
+itself
+.RB ( "block at 0xa302c0" ,
+spanning past both
+.CW R.FP
+and
+.CW R.TS ) ,
+so this is genuinely part of this Prog's own stack extent, not a
+wild address or a different pool entirely \- and it sits
+.B beyond
+both the current frame's declared bounds and the current stack
+pointer.  Whatever wrote
+.CW 0x18
+there did so into memory this exact call chain, at this exact moment,
+has not claimed through any frame's own
+.CW initmem() .
+.PP
+One thing this capture does not settle, flagged rather than papered
+over: by the time
+.CW P(d)
+resolves to a concrete address,
+.CW R.d
+is already just a raw pointer
+.RB ( "P(r)\ =\ *((WORD**)(R.r))" ,
+.CW libinterp/xec.c ) \-
+the addressing mode that produced it (frame-local, module-level, or
+an indirect dereference through an already-loaded pointer) is settled
+earlier in the dispatch loop, before
+.CW OP(movp)
+ever runs, and nothing in this capture says which one applies to
+.I this
+instruction.
+.CW waitfd :=
+declaring a fresh local inside its own function reads like a plain
+frame-local target, which is what
+.CW t->size
+should then bound \- and doesn't.  Whether that means
+.CW R.FP
+names a frame other than
+.CW waitfd() 's
+own at this exact point, or the addressing here isn't frame-local at
+all, is the next question this specific capture raises rather than
+answers.
+.PP
+The recurring value is the other thread worth keeping open, not
+closed: this is the
+.B fourth
+capture across the whole investigation reading back the same
+.CW 0x18 \-
+"A durable resolver, two named sites in sh.b" put the count at three
+before this one.  Four hits on one specific byte value, across
+captures now known to span at least two different source constructs
+and two different opcodes, is a pattern a coincidence theory has to
+work harder to explain than a shared mechanism does \- but naming
+that mechanism is still open work, not concluded here.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
