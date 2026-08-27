@@ -318,6 +318,63 @@ OP(indb)
 	}
 	W(m) = (WORD)(a->data+i*sizeof(BYTE));
 }
+/*
+ * Probe: batch10 caught two page faults right after this check's own
+ * AINC call site, same PC both times, CR2 a small negative value
+ * (-20) -- the same family as destroy()'s "bad v" captures (0, 18),
+ * not a wild pointer.  Both sv (P(s), the value being read) and dv
+ * (P(d), the value about to be overwritten and destroyed) are read
+ * out of Frame/array/Modlink pointer slots by OP(movp); if either was
+ * never written a real heap pointer or H, this is where it first gets
+ * used as one.  Originally only sv was guarded -- a batch18 capture
+ * landed in destroy()'s own generic check instead (module Bufio, no
+ * frame-cleanup scanframe() anywhere near it), which only makes sense
+ * if it came through dv's plain "destroy(dv)" at the end of this same
+ * opcode, a path this probe never covered.  Guarding dv here, at the
+ * point of use, gets the slot's address (R.d) the same way sv's check
+ * already gets R.s -- destroy()'s own check never has an address to
+ * work with, since every caller hands it just a value.
+ * See doc/inferno-ports.ms.
+ */
+static void
+badptrslot(void *bad, void *addr, char *which)
+{
+	Prog *xp;
+	extern void dumpstack(void);
+	extern void (*auditmemloc)(char*, void*);
+	intptr *base, *wp;
+	int i;
+
+	xp = currun();
+	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+		/* inst offset is build-independent; see destroy()'s comment. */
+		print("movp: bad %s %p, running Dis pid %d module %s PC %#p inst %d\n",
+			which, bad, xp->pid, xp->R.M->m->name, xp->R.PC,
+			(int)(xp->R.PC - xp->R.M->m->prog));
+	else
+		print("movp: bad %s %p, currun() nil or has no module\n", which, bad);
+	base = (intptr*)addr - 4;
+	print("movp: memory around %s slot %#p:\n", which, addr);
+	for(i = 0; i < 10; i++) {
+		wp = base + i;
+		print("  %#p: %zx\n", wp, *wp);
+	}
+	/*
+	 * The discriminating question this hunt hasn't asked yet: is the
+	 * slot itself (not the bad value in it) inside a block the pool
+	 * allocator still considers live, or one it's already freed?  A
+	 * freed block names a use-after-free directly, closing every
+	 * remaining "corrupted while still live" theory at once.
+	 * auditmemloc() (alloc.c) already walks the pool's chain for
+	 * exactly this -- same magic/size validation the poolfree probe
+	 * uses, reused here rather than duplicated.  See
+	 * doc/inferno-ports.ms.
+	 */
+	auditmemloc(which, addr);
+	dumpstack();
+	abort();
+}
+
 OP(movp)
 {
 	Heap *h;
@@ -325,38 +382,15 @@ OP(movp)
 
 	sv = P(s);
 	if(sv != H) {
-		/*
-		 * Probe: batch10 caught two page faults at this AINC, same
-		 * PC both times, CR2 a small negative value (-20) -- the
-		 * same family as destroy()'s earlier "bad v" captures
-		 * (0, 18, and CR2 -32/-56/-20 before that), not a wild
-		 * pointer.  sv is read out of a Frame/Modlink pointer slot
-		 * by P(s); if that slot was never written a real heap
-		 * pointer or H, this is where it first gets used as one.
-		 * Same currun()+dumpstack() technique as destroy(), so a
-		 * capture here can be compared directly against those.
-		 * See doc/inferno-ports.ms.
-		 */
-		if((uintptr)sv < 0x1000) {
-			Prog *xp;
-			extern void dumpstack(void);
-
-			xp = currun();
-			if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
-				/* inst offset is build-independent; see destroy()'s comment. */
-				print("movp: bad sv %p, running Dis pid %d module %s PC %#p inst %d\n",
-					sv, xp->pid, xp->R.M->m->name, xp->R.PC,
-					(int)(xp->R.PC - xp->R.M->m->prog));
-			else
-				print("movp: bad sv %p, currun() nil or has no module\n", sv);
-			dumpstack();
-			abort();
-		}
+		if((uintptr)sv < 0x1000)
+			badptrslot(sv, R.s, "sv");
 		h = D2H(sv);
 		AINC(&h->ref);
 		Setmark(h);
 	}
 	dv = P(d);
+	if(dv != H && (uintptr)dv < 0x1000)
+		badptrslot(dv, R.d, "dv");
 	P(d) = sv;
 	destroy(dv);
 }
@@ -824,6 +858,67 @@ showREG(void)
 		R.TS, R.EX, R.M, R.IC,
 		R.xpc, R.s, R.d, R.m);
 }
+
+/*
+ * Probe: scan a frame's pointer-typed slots (per its own f->t->map,
+ * same walk freeptrs() does) for a value that is neither H nor a
+ * plausible heap address, before freeptrs() runs.  Originally added
+ * only to OP(mcall)'s native-call branch; also wired into OP(ret)
+ * below, because getc() (appl/cmd/sh/sh.b's lexer method, one of the
+ * two captures this hunt has resolved to a real source line) is an
+ * ordinary Limbo method call, not a native one -- it returns through
+ * OP(ret), never through OP(mcall)'s "ml->prog == nil" branch, so
+ * that branch's own scan could never have caught it.  Same for
+ * yyparse()'s array-growth code: no native call happens anywhere
+ * near it either.  On reflection this hunt's whole dumpstack()-based
+ * "mcall or ret" uncertainty (see doc/inferno-ports.ms, "The mcall
+ * f->t probe ran clean") likely resolves in favour of ret for both
+ * Sh captures on exactly this reasoning -- checked here rather than
+ * asserted.  See doc/inferno-ports.ms.
+ */
+static void
+scanframe(Frame *f, char *opname)
+{
+	uchar *mp, *mep;
+	WORD **fw;
+	int mi, bad;
+
+	fw = (WORD**)f;
+	mp = f->t->map;
+	mep = mp + f->t->np;
+	mi = 0;
+	bad = 0;
+	while(mp < mep) {
+		int c, nb;
+
+		c = *mp;
+		for(nb = 0; nb < 8 && c; nb++) {
+			if((c & (1<<nb)) == 0)
+				continue;
+			if((uintptr)fw[mi*8+(7-nb)] < 0x1000 &&
+			    fw[mi*8+(7-nb)] != H) {
+				bad = 1;
+				break;
+			}
+		}
+		if(bad)
+			break;
+		mp++;
+		mi++;
+	}
+	if(bad) {
+		Prog *xp;
+
+		print("%s: bad slot in frame, module %s\n", opname, R.M->m->name);
+		showframe((void*)f, f->t);
+		xp = currun();
+		if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+			print("%s: running Dis pid %d module %s PC %#p inst %d\n",
+				opname, xp->pid, xp->R.M->m->name, xp->R.PC,
+				(int)(xp->R.PC - xp->R.M->m->prog));
+		abort();
+	}
+}
 OP(ret)
 {
 	Frame *f;
@@ -848,8 +943,10 @@ OP(ret)
 
 	if(f->t == nil)
 		unextend(f);
-	else if (f->t->np)
+	else if (f->t->np) {
+		scanframe(f, "OP(ret)");
 		freeptrs(f, f->t);
+	}
 
 	if(m != nil) {
 		if(R.M->compiled != m->compiled) {
@@ -975,61 +1072,18 @@ OP(mcall)
 			unextend(f);
 		else if (f->t->np) {
 			/*
-			 * Probe: a batch13 capture named the exact source
-			 * call site for the first time (Env->getenv()'s
-			 * sys->open(), via the instruction-offset field
-			 * added below) -- but Sys_open() itself is correct,
+			 * A batch13 capture named the exact source call
+			 * site for the first time (Env->getenv()'s
+			 * sys->open()) -- but Sys_open() itself is correct,
 			 * it nils *f->ret before release() and only ever
 			 * writes H or a real fd.  *f->ret is one slot; this
 			 * frame's map may cover others freeptrs() would
-			 * also walk (eg the ENVDIR+var string addc() built
-			 * before the call), and Sys_open never touches
-			 * those.  Scan every slot the map marks as a
-			 * pointer before freeptrs() runs; a slot that is
-			 * neither H nor plausibly a heap address names which
-			 * one is actually bad, not just that one exists.
-			 * See doc/inferno-ports.ms.
+			 * also walk, which Sys_open never touches.
+			 * scanframe() (above OP(ret)) is the shared version
+			 * of this check, now also wired into OP(ret) for
+			 * the same reason.  See doc/inferno-ports.ms.
 			 */
-			uchar *mp, *mep;
-			WORD **fw;
-			int mi, bad;
-
-			fw = (WORD**)f;
-			mp = f->t->map;
-			mep = mp + f->t->np;
-			mi = 0;
-			bad = 0;
-			while(mp < mep) {
-				int c, nb;
-
-				c = *mp;
-				for(nb = 0; nb < 8 && c; nb++) {
-					if((c & (1<<nb)) == 0)
-						continue;
-					if((uintptr)fw[mi*8+(7-nb)] < 0x1000 &&
-					    fw[mi*8+(7-nb)] != H) {
-						bad = 1;
-						break;
-					}
-				}
-				if(bad)
-					break;
-				mp++;
-				mi++;
-			}
-			if(bad) {
-				Prog *xp;
-
-				print("mcall: bad slot in frame after l->runt, module %s\n",
-					ml->m->name);
-				showframe((void*)f, f->t);
-				xp = currun();
-				if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
-					print("mcall: running Dis pid %d module %s PC %#p inst %d\n",
-						xp->pid, xp->R.M->m->name, xp->R.PC,
-						(int)(xp->R.PC - xp->R.M->m->prog));
-				abort();
-			}
+			scanframe(f, "OP(mcall)");
 			freeptrs(f, f->t);
 		}
 		p = currun();

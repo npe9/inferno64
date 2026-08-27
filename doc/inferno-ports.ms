@@ -5699,6 +5699,250 @@ needs a different technique than a print at a fixed instruction;
 choosing one is deferred, not started this round.
 
 .NH 1
+Frame cleanup was never the mechanism: a third module, and dv
+.PP
+Wired the same per-slot scan
+.RB ( scanframe() )
+into
+.CW OP(ret) 's
+cleanup, not just
+.CW OP(mcall) 's
+native-call branch \- factored the two copies into one shared
+function first.  The reasoning: sh.b's
+.CW getc()
+is an ordinary Limbo method call, not a native one, so it returns
+through
+.CW OP(ret) ;
+.CW yyparse() 's
+array growth calls no native function either.  Both of this hunt's
+named Sh sites return through
+.CW ret ,
+never through
+.CW mcall 's
+native branch, so that branch's own scan could never have reached
+either of them.  This also settles, on reflection rather than
+another capture, the "mcall or ret" uncertainty two sections back
+in favour of
+.CW ret
+for both.
+.PP
+Ran it: thirty boots, ten crashes
+.RB ( "GPF" \|\c
+.RB ( x3 ) ,
+.CW alloc:D2B
+.RB ( x2 ) ,
+.CW cclone:\ c\ nil
+.RB ( x2 ) ,
+page fault, and one new one-off,
+.CW "init0: bad attach specifier" ,
+not chased) \- and one
+.CW destroy()
+hit, in a
+.I third
+module,
+.CW Bufio ,
+never seen in this hunt before.
+.CW scanframe()
+did not fire, in either
+.CW mcall
+or
+.CW ret .
+That is the actual result, and it says something specific: whatever
+frame
+.CW freeptrs()
+walked when this fired had every slot the map marks as a pointer
+looking fine to the same check that would have caught a bad one.
+The bad value
+.CW destroy()
+found did not come from frame cleanup at all.
+.PP
+Resolved
+.CW bufio.dis
+inst 429 (the printed 430, minus one) through
+.CW resolve_sbl.py :
+.CW bufio.b:271 ,
+.CW "r\ =\ int\ b.buffer[b.index];"
+\- a plain byte-array index inside
+.CW Iobuf 's
+own low-level read, called from
+.I "sh.b's own getc()"
+via
+.CW "bufio->lex.f.getc()" .
+Nothing pointer-typed in that line itself, which fits: this
+.CW destroy()
+call is not cleaning up anything this line wrote, it is
+.CW OP(movp) 's
+own
+.CW "destroy(dv)" \-
+the value already sitting in a slot, overwritten and destroyed on
+every ordinary pointer assignment, anywhere in any module, all the
+time.
+.CW OP(movp) 's
+probe only ever guarded
+.CW sv
+(the value being read in); the
+.I destination
+slot's old value,
+.CW dv ,
+had no guard at all, so a bad
+.CW dv
+could only ever be caught one level removed, inside
+.CW destroy() 's
+own check, with no slot address to show.
+.PP
+Closed that gap: refactored
+.CW sv 's
+guard into a shared
+.CW badptrslot()
+helper (bad value, slot address, which of
+.CW "sv / dv" )
+and added the identical check for
+.CW dv
+right where
+.CW OP(movp)
+already reads it, before
+.CW destroy(dv) .
+Now every slot
+.CW OP(movp)
+touches, read or overwritten, is checked at the point of use, with
+its address on hand for the same memory-around-slot dump
+.CW sv 's
+guard already does.  Three named sites now, in three different
+modules
+.RB ( Env ,
+.CW Sh ,
+.CW Bufio ) ,
+via at least two different mechanisms
+.RB ( freeptrs()
+cleanup for the
+.CW Env
+capture,
+.CW movp 's
+own
+.CW dv
+overwrite for
+.CW Bufio ) \-
+this reads less like a bug in any one piece of Limbo source and
+more like something at a level every module shares.  Not yet
+narrowed further; not fixed.
+
+.NH 1
+A substantive capture, a fourth module that doesn't fit, and a real check
+.PP
+A process note before the results: the previous section's batch was
+cut short at ten of forty boots to switch binaries, discarding that
+progress for a change (
+.CW scanframe()
+in
+.CW OP(ret) )
+that the very
+.CW destroy()
+check already running would have caught regardless.  Batches are
+the scarce resource in this hunt; that kill should not have
+happened, and the standing plan going forward is to let a running
+batch finish even when a better-instrumented binary is ready,
+rather than discard boots already spent.
+.PP
+Ran the
+.CW dv
+guard: forty boots, seven crashes in the usual unrelated families
+.RB ( GPF
+.RB ( x2 ) ,
+.CW alloc:D2B ,
+page fault,
+.CW "unknown namec access 2" ,
+plus two new one-offs, not chased), and two hits in the
+.CW destroy() / OP(movp)
+family \- one of them the first genuinely informative memory dump
+this probe has produced.
+.PP
+.CW "movp: bad sv 0"
+in module
+.CW Sh
+dumped ten words around the slot.  Eight of them are heap pointers
+evenly spaced 0x80 apart \- consistent with a chain of same-size
+allocations, most plausibly
+.CW List
+nodes from a
+.CW ::
+chain (this capture resolves, via the same off-by-one-corrected
+.CW resolve_sbl.py
+lookup as every capture since UPDATE 17, to
+.CW sh.b:1061 ,
+.CW "keepfds\ =\ fd1\ ::\ keepfds;" ,
+inside redirect processing) \- and the one slot that breaks the
+pattern holds exactly
+.CW 0 ,
+immediately followed by a legitimate
+.CW H
+.RB ( -1 )
+one word later.  That is the sharpest data point this hunt has on
+record: not a wild address, not a plausible small integer, but the
+.I "wrong sentinel" \-
+native kernel C's own
+.CW nil
+is
+.CW "(void*)0"
+.RB ( Inferno/amd64/include/u.h ) ,
+a completely different bit pattern from Dis's own empty-heap-pointer
+.CW H
+.RB ( "(void*)(-1)" ,
+interp.h).  Chased this directly: read
+.CW Sys_open() ,
+.CW Sys_read() ,
+.CW Sys_readn()
+and
+.CW Sys_pctl() \-
+the four native functions most plausibly upstream of a
+list-of-fds/file-open path \- all four correct, all four use
+.CW H
+where a Dis-visible pointer output needs it and
+.CW nil
+only for their own native C locals (which is correct and cannot be
+distinguished from the bug by grepping for the string
+.CW nil ).
+Four checked, zero found; this line of attack does not converge
+by inspection and is not narrowing further without catching the
+write directly.
+.PP
+Second capture, not chased into the same story:
+.CW "destroy:\ bad\ v\ 0"
+in module
+.CW Styxservers ,
+running Dis
+.I "pid 4" \-
+every capture on record before this one, across every module, was
+pid 1.  A different Prog entirely does not fit "the same
+.CW yys / keepfds
+lineage gets corrupted later"; it is either a much more general
+mechanism than the Sh-specific framing of the last several sections
+suggests, or a second, separate bug.  Recorded as open and
+unexplained, not folded into the Sh narrative it happens to share a
+value with.
+.PP
+Added the check the sv/dv memory dump was always missing: whether
+the
+.I slot
+itself \- not the bad value in it \- sits inside a block the pool
+allocator still considers live, or one already on the free list.
+That distinguishes a stray write into live memory from a genuine
+use-after-free in one step, and
+.CW alloc.c
+already has the function for it:
+.CW _auditmemloc() ,
+exported as
+.CW auditmemloc() ,
+walks the pool's own chain with the same magic/size validation the
+.CW poolfree
+probe already uses, and reports which block (free, allocated, or
+immutable) contains any address handed to it \- built for exactly
+this, reused rather than duplicated.  Wired into
+.CW badptrslot() ,
+called on the slot address right before the existing
+.CW dumpstack()/abort() .
+Not yet run.  Not fixed.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
