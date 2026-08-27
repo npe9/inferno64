@@ -56,6 +56,12 @@ def main():
 		help='take the shot when this pattern appears rather than when '
 		     'the commands run out; lets a foreground program (rio) own '
 		     'the console while the shot still fires')
+	ap.add_argument('--display', default='none',
+		help='qemu display backend; "cocoa" opens a live window on macOS '
+		     'you can drive with the mouse (default none, headless)')
+	ap.add_argument('--hold', action='store_true',
+		help='after the commands run, keep qemu running rather than '
+		     'killing it, so a live --display window stays interactive')
 	a = ap.parse_args()
 
 	if a.build:
@@ -74,7 +80,7 @@ def main():
 		'-drive', 'if=pflash,format=raw,unit=0,readonly=on,file=%s/.qemu/edk2-code.fd' % ROOT,
 		'-drive', 'if=pflash,format=raw,unit=1,file=%s/.qemu/edk2-vars-run.fd' % ROOT,
 		'-cdrom', a.iso,
-		'-display', 'none', '-monitor', 'none', '-no-reboot',
+		'-display', a.display, '-monitor', 'none', '-no-reboot',
 		'-serial', 'stdio',
 	]
 	qmpsock = None
@@ -199,10 +205,26 @@ def main():
 						elif f[0] == 'u': mbtn(f[1], False)
 						elif f[0] == 's': time.sleep(float(f[1]))
 						elif f[0] == 'k': send(':'.join(f[1:]))
+						elif f[0] == 'K':
+							qmp("send-key", {"keys":[
+								{"type":"qcode","data":f[1]}]})
+							time.sleep(0.08)
 				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
 				qs.close()
 			except Exception as e:
 				sys.stderr.write('screendump failed: %s\n' % e)
+		if a.hold and status == 0:
+			# keep qemu alive and its serial drained so a live --display
+			# window stays interactive until it is closed
+			os.set_blocking(p.stdout.fileno(), True)
+			while True:
+				b = p.stdout.read(4096)
+				if not b:
+					break
+				log.write(b); log.flush()
+				if not a.quiet:
+					sys.stdout.write(b.decode('utf-8', 'replace'))
+					sys.stdout.flush()
 	finally:
 		p.kill()
 		p.wait()

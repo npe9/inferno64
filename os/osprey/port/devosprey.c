@@ -1764,6 +1764,7 @@ ospreyselectcaller(uvlong armoff, int narms)
  */
 static Physseg ospreyfbseg;
 static Physseg ospreymouseseg;
+static Physseg ospreykbdseg;
 int ospreyfbw, ospreyfbh, ospreyfbd;
 extern int ospreyuser;		/* 0 = full personality (pc64), 1 = xup64 user path */
 
@@ -1985,25 +1986,36 @@ static int
 ospreymouseexpose(void)
 {
 	static int done;
-	uchar *r;
+	uchar *km, *mm;
 	int c;
 
 	if(done)
 		return 0;
-	r = xspanalloc(BY2PG, BY2PG, 0);
-	if(r == nil)
+	km = xspanalloc(BY2PG, BY2PG, 0);	/* keyboard scancode ring */
+	mm = xspanalloc(BY2PG, BY2PG, 0);	/* mouse aux-byte ring */
+	if(km == nil || mm == nil)
 		return -1;
-	memset(r, 0, 8 + Mousen);
-	ospreymousering = r;
-	ospreymouseproc = nil;		/* polled: no semaphore, no wakeup */
+	memset(km, 0, 8 + Kbdn);
+	memset(mm, 0, 8 + Mousen);
+	ospreykbdring = km;
+	ospreykbdproc = nil;		/* polled: no semaphore, no wakeup */
+	ospreykbdsem = 0;
+	ospreymousering = mm;
+	ospreymouseproc = nil;
 	ospreymousesem = 0;
 
-	/* program the i8042 aux port (the sequence ospreymouseenable uses) */
-	i8042cmd(0xA8);			/* enable the aux port */
+	/*
+	 * Program both devices into the shared i8042 command byte in one
+	 * read-modify-write, then arm the interrupts - never arm one while
+	 * the other's command byte is still being written, or a keypress
+	 * can drain port 0x60 mid-sequence and silently disable a device.
+	 */
+	i8042cmd(0xA8);			/* enable the aux (mouse) port */
 	i8042cmd(0x20);			/* read the command byte */
 	c = i8042rdata();
 	if(c < 0)
 		c = 0;
+	c |= 0x01;			/* keyboard interrupt enable (IRQ1) */
 	c |= 0x02;			/* aux interrupt enable (IRQ12) */
 	c &= ~0x20;			/* aux clock enable (0 = enabled) */
 	i8042cmd(0x60);			/* write the command byte */
@@ -2012,17 +2024,24 @@ ospreymouseexpose(void)
 	i8042wdata(0xF4);		/* tell the mouse to report movement */
 	i8042rdata();			/* eat its ACK */
 
+	memset(&ospreykbdseg, 0, sizeof ospreykbdseg);
+	ospreykbdseg.attr = SG_PHYSICAL;
+	ospreykbdseg.name = "kbdring";
+	ospreykbdseg.pa = PADDR(km);
+	ospreykbdseg.size = BY2PG;
 	memset(&ospreymouseseg, 0, sizeof ospreymouseseg);
 	ospreymouseseg.attr = SG_PHYSICAL;
 	ospreymouseseg.name = "mousering";
-	ospreymouseseg.pa = PADDR(r);
+	ospreymouseseg.pa = PADDR(mm);
 	ospreymouseseg.size = BY2PG;
-	if(addphysseg(&ospreymouseseg) == nil)
+	if(addphysseg(&ospreykbdseg) == nil || addphysseg(&ospreymouseseg) == nil)
 		return -1;
+	intrenable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
 	intrenable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
 	done = 1;
-	print("osprey mouse: exposed aux ring at pa %#llux as \"mousering\"\n",
-		(uvlong)PADDR(r));
+	print("osprey input: exposed kbd ring pa %#llux as \"kbdring\", "
+		"mouse ring pa %#llux as \"mousering\"\n",
+		(uvlong)PADDR(km), (uvlong)PADDR(mm));
 	return 0;
 }
 
