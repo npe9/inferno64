@@ -1085,6 +1085,34 @@ unifytparam(Node *pt, Type *at, Decl *tparams, Type **argv)
 			ta = ta->right;
 		}
 		return;
+	case Ottuple:
+		/*
+		 * "(T, U)" as a function-typed parameter's own multi-
+		 * result return type -- "f func(int) (T, U)", reached via
+		 * Otfunc's own pt->right recursion below when the callee's
+		 * signature returns more than one value. at is the real
+		 * argument's return Type at that point, always a plain
+		 * Ttuple built by stype()'s own Ottuple case (above, one
+		 * Dfield per component, in order) -- Ttuple has no
+		 * gtemplate/ginst the way Tadt does, so unlike Otinst just
+		 * above there's nothing to confirm beyond the kind check:
+		 * walk pt->left's own raw type list against at->ids's
+		 * Dfield list positionally, the same two-list shape
+		 * Otinst's and Otfunc's own loops already use.
+		 */
+		if(at->kind != Ttuple)
+			return;
+		pd = at->ids;
+		for(ta = pt->left; ta != nil && pd != nil; ta = ta->right){
+			targ = ta;
+			if(ta->op == Oseq)
+				targ = ta->left;
+			unifytparam(targ, pd->ty, tparams, argv);
+			pd = pd->next;
+			if(ta->op != Oseq)
+				break;
+		}
+		return;
 	case Otfunc:
 		/*
 		 * "f func(T) U": at is a function *value*'s type, always
