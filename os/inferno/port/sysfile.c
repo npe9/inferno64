@@ -842,7 +842,26 @@ bindmount(int ismount, int fd, int afd, char* arg0, char* arg1, int flag, char* 
 int
 kbind(char *new, char *old, int flags)
 {
-	return bindmount(0, -1, -1, new, old, flags, nil);
+	int ret;
+
+	/*
+	 * bindmount()'s ismount==0 (bind) path resolves arg0 with a bare
+	 * namec(), unlike its ismount==1 (mount) path and unlike kopen(),
+	 * which both wrap their first namec() in a waserror().  Sys_bind()
+	 * (port/inferno.c) calls release() before this, expecting to reach
+	 * its own matching acquire() unconditionally; with nothing here to
+	 * catch a namec() failure, error() unwinds straight past both
+	 * Sys_bind()'s acquire() and OP(mcall)'s dispatch, and this kproc's
+	 * Dis-execution token is never reacquired -- the whole VM goes
+	 * silent forever.  Confirmed directly: sys->bind("#l0", "/net", ...)
+	 * with no NIC attached hung 180s+ with zero further output before
+	 * this fix.  See doc/inferno-ports.ms.
+	 */
+	if(waserror())
+		return -1;
+	ret = bindmount(0, -1, -1, new, old, flags, nil);
+	poperror();
+	return ret;
 }
 
 int

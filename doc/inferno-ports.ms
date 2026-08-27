@@ -6663,6 +6663,104 @@ control to compare against, which section still owes a fix to the
 hang before that test means anything.
 
 .NH 1
+The #l0 hang, fixed \- and the crash survives with no NIC at all
+.PP
+Traced the propagation the earlier sections stopped short of.
+.CW namec() 's
+.CW "#"
+branch calls
+.CW devtab[t]->attach()
+directly, with a
+.CW waserror()
+already in place around it \- that part is fine.  Followed the call
+one level further: for
+.CW sys->bind()
+specifically
+.RB ( bindmount() 's
+.CW ismount==0
+path, taken by
+.CW kbind() ) ,
+the very first
+.CW namec()
+call resolving the new path has
+.B no
+.CW waserror()
+anywhere between it and
+.CW Sys_bind()
+.RB ( os/inferno/port/inferno.c ) .
+Compare
+.CW kopen() ,
+which every earlier success in this document has gone through
+without incident: it wraps its whole body in
+.CW "if(waserror())\ return\ \-1;"
+before ever calling
+.CW namec() .
+.CW kbind()
+had nothing.
+.PP
+That gap is fatal in a specific way tied to how this interpreter
+runs native calls at all.
+.CW Sys_bind()
+calls
+.CW release()
+before entering the kernel, then
+.CW acquire()
+after \- the pair that hands this kproc's claim on Dis execution back
+and forth, per
+.CW os/inferno/port/dis.c ,
+read closely two sections ago.  If
+.CW namec()
+inside
+.CW kbind()
+raises (exactly what
+.CW etherattach()
+does via
+.CW error(Enodev)
+when no controller was ever probed), nothing in the whole call chain
+from there back up through
+.CW kbind() ,
+.CW Sys_bind() ,
+and
+.CW "OP(mcall)"
+catches it \- the unwind skips straight past the
+.CW acquire()
+call that was never optional.  This kproc's Dis-execution token is
+released and never reclaimed.  Nothing else was waiting to reclaim it
+either, on the single Dis Prog these boots run this early.  Silence,
+forever \- exactly what a hundred and eighty seconds of nothing
+looked like.
+.PP
+Fixed the same way
+.CW kopen()
+already does it: wrapped
+.CW kbind() 's
+body in its own
+.CW waserror() ,
+returning
+.CW \-1
+on any failure instead of letting one escape.  Rebuilt, booted with
+.CW "\-nic\ none" :
+.CW "bound\ #l0"
+prints, every bind after it prints, boot reaches
+.CW "loading\ /dis/sh.dis"
+and
+.CW "spawn\ sh\ \-n\ /dis/init" \-
+the same depth every NIC-attached batch has reached all session,
+finally without a NIC at all.  A second boot went further still and
+crashed on its own:
+.CW "destroy:\ bad\ v\ 0"
+in module
+.CW Sh ,
+pid 3 \- the same failure shape this whole document has chased, with
+no NIC, no driver, no attach-time kproc, present at all.
+.B "One boot is an anecdote, not a rate \-"
+but it is a
+.I "positive"
+anecdote against the leading theory of the last several sections, not
+a confounded null result like the batches before the fix.  A real
+rate needs a real batch; the control now exists to run one.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
