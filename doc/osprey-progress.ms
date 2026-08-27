@@ -2145,10 +2145,39 @@ faulted on the first mask;
 .CW main
 now calls it before
 .CW drawreset .
-What remains between here and rio on this line is the mouse - the
-.CW #m
-plumbing, where the exposed-interrupt driver already exists - and rio
-itself, off the disk against this service.
+.PP
+The mouse is a user-level driver of the same kind, and with it rio runs.
+The kernel exposes the PS/2 aux byte stream the way it exposes the frame
+buffer: a dedicated page holds a ring the IRQ12 handler fills, published
+as the physical segment
+.CW mousering
+.CW ( ospreymouseexpose
+in devosprey.c, run at init on the full personality; xup64 keeps its own
+container path, so the two never both arm the interrupt).
+.CW os/osprey/cmd/draw/mouse.c
+segattaches that page, decodes the three-byte packets into an absolute
+position and a button mask, and serves
+.CW /dev/mouse
+in the format
+.CW libdraw
+reads.  Nothing privileged is in the driver - it does no
+.CW in
+or
+.CW out ,
+only reads the exposed page - and nothing about the mouse is in the
+kernel beyond filling the ring.  With
+.CW /dev/draw
+and
+.CW /dev/mouse
+both served from user space,
+.CW rio
+starts against them and paints its desktop on the exposed frame buffer:
+the Plan 9 window system running on a draw stack and an input driver that
+are ordinary programs above the microkernel, no kernel graphics and no
+kernel mouse.  What is not yet shown is a click reaching rio's menu - the
+event path from the exposed interrupt through the driver into rio - which
+is the next thing to demonstrate.  The three configs still check: pc64
+58, upc64 7, xup64 10.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an

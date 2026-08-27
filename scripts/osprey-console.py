@@ -44,6 +44,9 @@ def main():
 		help='a second serial port, e.g. unix:/tmp/com2,server,nowait')
 	ap.add_argument('--shot', default=None,
 		help='screendump to this file (ppm) once the run reaches its end')
+	ap.add_argument('--click', default=None,
+		help='before the shot, move the mouse and hold this button down '
+		     '(left|middle|right), or "move" to only move; needs --shot')
 	a = ap.parse_args()
 
 	if a.build:
@@ -146,6 +149,21 @@ def main():
 				qs = socket.socket(socket.AF_UNIX); qs.connect(qmpsock)
 				qf = qs.makefile('rw'); qf.readline()
 				qf.write(json.dumps({"execute":"qmp_capabilities"})+chr(10)); qf.flush(); qf.readline()
+				def qmp(cmd, args):
+					qf.write(json.dumps({"execute":cmd,"arguments":args})+chr(10))
+					qf.flush(); qf.readline()
+				# optionally drive the mouse before the shot: move a little,
+				# then hold a button down so a menu that opens on press shows.
+				if a.click:
+					for _ in range(8):
+						qmp("input-send-event", {"events":[
+							{"type":"rel","data":{"axis":"x","value":30}},
+							{"type":"rel","data":{"axis":"y","value":20}}]})
+						time.sleep(0.05)
+					if a.click != 'move':
+						qmp("input-send-event", {"events":[
+							{"type":"btn","data":{"button":a.click,"down":True}}]})
+						time.sleep(0.4)
 				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
 				qs.close()
 			except Exception as e:

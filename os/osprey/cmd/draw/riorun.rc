@@ -1,0 +1,20 @@
+#!/bin/rc
+# build the user-level draw and mouse servers, start both, then run rio
+rm -rf /tmp/draw; mkdir -p /tmp/draw; cp /n/cd/src/draw/* /tmp/draw/; cd /tmp/draw
+echo '=== build draw server ==='
+for(f in devdraw kshim main){ 6c -I. $f.c || echo cc-$f FAIL }
+6l -o draw devdraw.6 kshim.6 main.6 /amd64/lib/lib9p.a /amd64/lib/libmemlayer.a /amd64/lib/libmemdraw.a && echo draw-linked
+echo '=== build mouse server ==='
+6c mouse.c && 6l -o mouse mouse.6 /amd64/lib/lib9p.a && echo mouse-linked
+/tmp/draw/draw
+sleep 1
+/tmp/draw/mouse
+sleep 1
+echo '=== /dev ==='
+ls -l /dev/mouse /dev/draw >[2=1]
+echo '=== rio ==='
+rio >[2]/tmp/rioerr &
+sleep 6
+echo '=== rioerr ==='
+cat /tmp/rioerr >[2=1]
+echo riorun-done

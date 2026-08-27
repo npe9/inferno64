@@ -1763,7 +1763,9 @@ ospreyselectcaller(uvlong armoff, int narms)
  * name space to ask.
  */
 static Physseg ospreyfbseg;
+static Physseg ospreymouseseg;
 int ospreyfbw, ospreyfbh, ospreyfbd;
+extern int ospreyuser;		/* 0 = full personality (pc64), 1 = xup64 user path */
 
 /*
  * A user-level keyboard driver, the seL4/Osprey way: the interrupt is
@@ -1966,6 +1968,62 @@ ospreyinputarm(void)
 		intrenable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
 	if(ospreymousering != nil)
 		intrenable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
+}
+
+/*
+ * Expose the PS/2 aux (mouse) byte stream to the full personality the
+ * same way the frame buffer is exposed: a dedicated page holds the ring
+ * (an 8-byte write count, then Mousen raw aux bytes), the aux interrupt
+ * fills it, and the page is published as the physical segment
+ * "mousering" for a user-level mouse driver to segattach and poll.  No
+ * container and no semaphore are involved - the driver polls the write
+ * count - so this is independent of the xup64 container path, which arms
+ * the same interrupt into a container slice instead; only one of the two
+ * runs on a given kernel (this on pc64, that on xup64).
+ */
+static int
+ospreymouseexpose(void)
+{
+	static int done;
+	uchar *r;
+	int c;
+
+	if(done)
+		return 0;
+	r = xspanalloc(BY2PG, BY2PG, 0);
+	if(r == nil)
+		return -1;
+	memset(r, 0, 8 + Mousen);
+	ospreymousering = r;
+	ospreymouseproc = nil;		/* polled: no semaphore, no wakeup */
+	ospreymousesem = 0;
+
+	/* program the i8042 aux port (the sequence ospreymouseenable uses) */
+	i8042cmd(0xA8);			/* enable the aux port */
+	i8042cmd(0x20);			/* read the command byte */
+	c = i8042rdata();
+	if(c < 0)
+		c = 0;
+	c |= 0x02;			/* aux interrupt enable (IRQ12) */
+	c &= ~0x20;			/* aux clock enable (0 = enabled) */
+	i8042cmd(0x60);			/* write the command byte */
+	i8042wdata(c);
+	i8042cmd(0xD4);			/* route the next data byte to the aux port */
+	i8042wdata(0xF4);		/* tell the mouse to report movement */
+	i8042rdata();			/* eat its ACK */
+
+	memset(&ospreymouseseg, 0, sizeof ospreymouseseg);
+	ospreymouseseg.attr = SG_PHYSICAL;
+	ospreymouseseg.name = "mousering";
+	ospreymouseseg.pa = PADDR(r);
+	ospreymouseseg.size = BY2PG;
+	if(addphysseg(&ospreymouseseg) == nil)
+		return -1;
+	intrenable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
+	done = 1;
+	print("osprey mouse: exposed aux ring at pa %#llux as \"mousering\"\n",
+		(uvlong)PADDR(r));
+	return 0;
 }
 
 int
@@ -2336,7 +2394,14 @@ ospreyinit(void)
 	 * way in for a user-level draw stack.  Idempotent, so the xup64 boot
 	 * calling it as well is harmless.
 	 */
-	ospreyframebuffer();
+	/*
+	 * Where a frame buffer is exposed and this is the full personality,
+	 * also expose the PS/2 mouse as a physical segment for a user-level
+	 * mouse driver (rio needs /dev/mouse).  Not on xup64, whose proc0
+	 * arms the same interrupt into a container instead.
+	 */
+	if(ospreyframebuffer() == 0 && !ospreyuser)
+		ospreymouseexpose();
 }
 
 /*
