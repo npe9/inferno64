@@ -556,6 +556,7 @@ struct Trackslot
 	Type	*t;	/* object's own type at registration, for context and validation */
 	void	*obj;	/* object base, so wordidx = addr - obj can be shown */
 	Type	**typetagp;	/* nil, or &container's current type field */
+	int	regpid;	/* currun()'s pid at registration, -1 if none */
 };
 static Trackslot track[NTRACK];
 
@@ -582,8 +583,11 @@ trackclear(void *base, long size)
 static void
 trackreg(uintptr *addr, Type *t, void *obj, Type **typetagp)
 {
-	int i, start;
+	int i, start, pid;
+	Prog *pr;
 
+	pr = currun();
+	pid = pr != nil ? pr->pid : -1;
 	start = (int)(((uintptr)addr >> 3) % NTRACK);
 	i = start;
 	do {
@@ -593,6 +597,7 @@ trackreg(uintptr *addr, Type *t, void *obj, Type **typetagp)
 			track[i].t = t;
 			track[i].obj = obj;
 			track[i].typetagp = typetagp;
+			track[i].regpid = pid;
 			return;
 		}
 		i = (i + 1) % NTRACK;
@@ -602,6 +607,7 @@ trackreg(uintptr *addr, Type *t, void *obj, Type **typetagp)
 	track[start].t = t;
 	track[start].obj = obj;
 	track[start].typetagp = typetagp;
+	track[start].regpid = pid;
 }
 
 void
@@ -627,8 +633,9 @@ checktracked(void)
 			track[i].addr = nil;
 			continue;
 		}
-		print("track: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx\n",
-			track[i].addr, track[i].val, v);
+		print("track: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx "
+			"regpid %d\n",
+			track[i].addr, track[i].val, v, track[i].regpid);
 		print("track: instruction that just ran: PC %#p op %#.2ux "
 			"add %#.2ux module %s pid %d inst %d\n",
 			trackPC, trackPC->op, trackPC->add,
@@ -643,6 +650,19 @@ checktracked(void)
 			for(j = 0; j < t->np; j++)
 				print(" %#.2ux", t->map[j]);
 			print("\n");
+			/*
+			 * typetagp - obj: offsetof(Frame, t) is 24 on this
+			 * port (lr/fp/mr/t, 8 bytes each) -- if this prints
+			 * 24, obj is very likely a Frame* (typetagp ==
+			 * &f->t); any other value means an array-element
+			 * registration (typetagp is &a->t, unrelated to the
+			 * per-element obj) or a heap object (see the
+			 * ref/color print below).  Not proof by itself, but
+			 * cheap, and has settled every case checked so far.
+			 */
+			print("track: typetagp %#p obj %#p diff %#zx\n",
+				track[i].typetagp, track[i].obj,
+				(uintptr)track[i].typetagp - (uintptr)track[i].obj);
 			/*
 			 * registered via heapz()/heap() (typetagp == &h->t
 			 * for this exact h) -- print the heap header so a

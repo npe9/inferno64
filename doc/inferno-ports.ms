@@ -9204,8 +9204,75 @@ refcount that's off by one somewhere in that teardown path rather
 than a stray pointer computation.
 Which function owns the size-128 frame, and what inside
 .CW destroy() 's
-cascade actually writes to it, is the next thing to pin down \- not
-yet done.
+cascade actually writes to it, is the next thing to pin down.
+.PP
+Two more checks, both fast:
+recording which process registered a tracked word
+.RN ( regpid ,
+.CW currun()->pid
+at
+.CW trackreg()
+time) and printing it alongside the hit shows
+.CW regpid
+matching the currently-running pid \- the corrupted frame belongs to
+the
+.I same
+process that's running
+.CW iload ,
+not a different one caught by
+.CW checktracked() 's
+own process-agnostic sweep.
+That rules out scheduler interleaving as the explanation for this
+particular capture, though the mechanism remains a real limitation
+worth remembering for others: it checks every registered word every
+instruction regardless of which process is currently dispatching, so
+a hit's
+.CW trackM / trackPC
+name whichever instruction happens to be running when a bad
+transition is
+.I noticed ,
+which is only the actual writer when
+.CW regpid
+also matches.
+.PP
+The type the corrupted frame belongs to
+.RN ( sh.dis 's
+own id 70, size 128, map 00 f9) is not unique to one function \-
+thirteen different
+.CW IFRAME
+sites in the first 1300 instructions alone construct a frame of
+this exact shape, an ordinary consequence of the compiler interning
+identical
+.RN ( size ,
+map) pairs across unrelated call sites.
+Static analysis alone can't say which one without also knowing the
+real call path, and the obvious source for that \-
+.CW dumpstack() \-
+turned out not to help: it is
+.CW callwithureg(_dumpstack) ,
+a raw linear scan of every word from the current stack pointer to
+.CW estack ,
+not a frame-pointer unwind.
+Feeding one capture's dump through
+.CW resolve_ipc64_syms.py
+resolved entries including
+.CW linkmod ,
+.CW nheap ,
+.CW newmp
+and, notably,
+.CW rungc \-
+but a conservative scan finds whatever word-sized bit patterns happen
+to still be sitting in stack memory, including stale return addresses
+from calls that already returned, so
+.CW rungc 's
+appearance here is not evidence it was running at the moment of the
+hit.
+Worth remembering as a lead \- a GC pass triggered by
+.CW nheap() 's
+allocation, walking live frames while one of them is mid-update, is
+exactly the shape of bug this capture has \- but not established, and
+a real native backtrace (frame-pointer or DWARF-based, not this
+conservative scan) is what would actually settle it.
 .PP
 .CW checktracked() ,
 .CW checkfreeptr() ,
