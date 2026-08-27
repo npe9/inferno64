@@ -301,6 +301,24 @@ destroy(void *v)
 			"(slot - v = %ld)\n",
 			freeptrsv, freeptrst != nil ? freeptrst->size : -1,
 			freeptrsslot, (long)((uchar*)freeptrsslot - (uchar*)freeptrsv));
+		/*
+		 * A 'c7' capture put the bad slot INSIDE freeptrst->size (80
+		 * of 96) for the first time -- every earlier destroy()/movp
+		 * capture landed past the object's own bounds.  Whether an
+		 * in-bounds offset is a real pointer slot per the type's own
+		 * map (an init gap on a legitimate field) or not (freeptrs()
+		 * walking a slot the map never marked, a type-descriptor
+		 * problem this hunt hasn't found before) is answered
+		 * directly by printing the map, not guessed at.  See
+		 * doc/inferno-ports.ms.
+		 */
+		if(freeptrst != nil) {
+			int i;
+			print("destroy: freeptrst->np %d map", freeptrst->np);
+			for(i = 0; i < freeptrst->np; i++)
+				print(" %#.2ux", freeptrst->map[i]);
+			print("\n");
+		}
 		dumpstack();
 		abort();
 	}

@@ -7789,6 +7789,49 @@ printed cleanly.  Rebuilt, same two pre-existing unrelated warnings,
 nothing new.  Fresh batch running.
 
 .NH 1
+The first in-bounds capture, and a check queued rather than guessed at
+.PP
+A
+.CW destroy()
+capture, module
+.CW Mount
+this time:
+.CW "bad v 0x18"
+\- the recurring value, again \- with
+.CW freeptrst->size
+96 and the bad slot 80 bytes into the object.  80 is
+.I less
+than 96.  Every earlier capture in this hunt, stack or heap, landed
+past the object's own declared size; this is the first one to land
+.I inside
+it.
+.PP
+That changes the question.  An in-bounds slot holding
+.CW 0x18
+instead of
+.CW H
+is either a legitimate pointer field the allocator's own
+.CW initmem()
+never reached (an init gap on a real field, the same shape as every
+earlier finding, just not needing an overshoot to explain it), or an
+offset
+.CW freeptrs()
+walked because a bit in the type's own map says to, when that offset
+isn't really a pointer at all \- a type-descriptor problem this hunt
+has ruled out twice already (String, Iobuf) but not for whatever type
+this is.  The map settles it directly, so
+.CW destroy()
+now prints
+.CW freeptrst->np
+and the full
+.CW map
+array alongside the size, the same way
+.CW probenewtype()
+already does for
+.CW OP(new) .
+Rebuilt clean, no new warnings.  Fresh batch running.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
