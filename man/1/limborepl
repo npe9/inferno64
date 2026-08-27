@@ -139,6 +139,17 @@ not compile; call
 yourself and end the line with
 .B ;
 for those, exactly as before this was added.
+.PP
+This inherits the one consequence of replaying the whole session on
+every new line (see DESCRIPTION above): an auto-printed value is not
+printed once and forgotten, it is printed again every time a later
+line triggers a fresh rebuild-and-rerun, since the block that prints it
+is still there in the accumulated program. A five-line session with
+three auto-printed expressions in it therefore prints far more than
+three lines by the end - each one reappearing, in order, on every
+later run. This is the same trade the rest of the session already
+makes, not something particular to auto-printing, but it is far more
+visible here than it was when nothing printed itself by default.
 .SS Commands
 .TP
 .B .list
