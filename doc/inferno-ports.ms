@@ -7093,6 +7093,117 @@ rather than inferring it from one number.  Rebuilt; a batch is
 running.
 
 .NH 1
+The same shape, on the heap this time \- and heap() doesn't zero either
+.PP
+The next capture landed on
+.CW sv ,
+not
+.CW dv ,
+in module
+.CW Bufio ,
+and the frame
+.CW showframe()
+dumped turned out not to be the right thing to look at:
+.CW R.FP
+names the currently
+.I executing
+frame, not the frame (if any) that owns the bad slot, and for this
+capture the bad slot isn't on the stack at all.
+.CW auditmemloc()
+says so directly: "in heap: in block at 784d880 ... size 100" \- a
+256-byte
+.CW heapmem
+block, not
+.CW mainmem .
+.CW "addr\ \-\ FP"
+came out as a nine-digit garbage number for exactly that reason \-
+subtracting a heap address from a stack address is not a meaningful
+offset, and printing it anyway for every capture rather than only
+the stack-shaped ones was worth noticing and not repeating.
+.PP
+Read for the same question this section has been asking all along:
+does the allocation path that produced this block zero what it hands
+out, the way
+.CW malloc()
+and
+.CW smalloc()
+do?
+.CW OP(new)
+.RB ( libinterp/xec.c )
+calls
+.CW heap() ,
+not
+.CW heapz() \-
+and
+.CW heap()
+.RB ( libinterp/heap.c )
+goes straight to
+.CW initmem(t,\ H2D(void*,\ h))
+with no
+.CW memset()
+first.
+.CW heapz()
+.RB ( OP(newz) 's
+own path) does memset the whole object to zero before calling
+.CW initmem() ;
+plain
+.CW OP(new)
+relies on
+.CW initmem()
+alone, exactly the same shape as
+.CW newstack() 's
+.CW "mallocz(l,\ 0)" \-
+a second allocation path in this same interpreter, entirely
+independent of the first, following the identical pattern: zero
+pointer slots covered by the type map, leave everything else as
+whatever the pool had.
+.PP
+Checked which Iobuf field this could be before calling it settled.
+.CW module/bufio.m 's
+.CW Iobuf
+adt declares nine data fields in order:
+.CW fd
+.RB ( "ref\ Sys\->FD" ,
+pointer),
+.CW buffer
+.RB ( "array\ of\ byte" ,
+pointer), then seven plain
+.CW int / big
+fields with no pointers at all.  Two pointer fields, and the block
+this capture hit was walked as
+.CW "t->np\ 2" ,
+matching \- but that
+.CW t->np
+came from the
+.I "current stack frame's"
+type, dumped by the same
+.CW showframe()
+call that had the wrong frame in hand for this capture; it says
+nothing about
+.CW Iobuf 's
+own compiled descriptor, which nothing here has looked at directly
+yet.  The bad slot's own offset from
+.CW B2D
+(120 bytes, minus whatever
+.CW sizeof(Heap)
+costs) lands past where nine fields of eight bytes each would end \-
+consistent with the same "beyond what's declared" shape as the stack
+capture, on a different allocation path, but not confirmed the way
+the
+.CW YYS
+descriptor was confirmed in an earlier section: by printing
+.CW Iobuf 's
+own
+.CW "t->size / t->np / map"
+at the moment it's allocated, not inferred from a field count.  Not
+done this round.  What's solid: a second, independent allocation
+path in this interpreter shares the exact same zero-only-what-
+initmem()-covers discipline as the first, and a second, independent
+capture shows the identical symptom \- a pointer slot reading back a
+small non-H value \- on that path.  Two allocation paths, two
+captures, one shape.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
