@@ -366,49 +366,74 @@ static uintptr watchval;
 
 enum { ARGWORDOFF = 4 * sizeof(WORD) };	/* MP+0x20, the 0x18 slot */
 
+/*
+ * A stress-loop batch (400 extra "sh -n -c 'true'" spawns inserted into
+ * dis/init, each parsing real flags through Sh's own Arg.opt() and
+ * addbuiltin() paths -- see dis/init's own comment) found a bad DV in
+ * three test boots where 150 boots against the Arg watch alone found
+ * nothing: module Sh, PC 0x79504b0, value 0x18 again, pid 172 (deep
+ * into the loop).  Resolved (resolve_sbl.py, appl/cmd/sh/sh.sbl) to
+ * sh.b:1531, "b.ba[n+1:] = b.ba[n:b.n];" inside addbuiltin() -- an
+ * array-slice shift insertion, run once per builtin registration, so
+ * once per spawned sh.  The bad slot is addbuiltin()'s own frame,
+ * word 16 (offset 128, t->size 152, t->np 3, map 00 e9 e0) -- checked
+ * against that same map and genuinely marked a pointer (bit 7 of byte
+ * 2 set), with H correctly sitting in the neighboring words (12, 15,
+ * 17, 18) that haven't been assigned yet.  Not a type-descriptor gap.
+ * A second, independent watch below, armed on this exact frame shape
+ * rather than "any frame's first word" -- the earlier broad version's
+ * own lesson (see "Neither generalization was the right move" above)
+ * was that an untargeted watch dilutes across whatever's current;
+ * this one is targeted the same way the Arg watch is, just frame-
+ * scoped instead of module-data-scoped, so it disarms on teardown.
+ */
+static int watch2armed;
+static uintptr *watch2addr;
+static uintptr watch2val;
+static void *watch2frame;
+static Type *watch2type;
+
+enum { SHFRAMEWORD = 16 };	/* addbuiltin()'s frame, the 0x18 slot */
+
+static int
+sameshframe(Type *t)
+{
+	return t != nil && t->size == 152 && t->np == 3
+		&& t->map[0] == 0x00 && t->map[1] == 0xe9 && t->map[2] == 0xe0;
+}
+
 static void
 checkwatch(void)
 {
 	extern void dumpstack(void);
+	Frame *cf;
 
 	if(!watcharmed){
-		if(R.M == nil || R.M->m == nil || R.M->m->name == nil)
-			return;
-		if(strcmp(R.M->m->name, "Arg") != 0)
-			return;
-		if(R.MP == nil)
-			return;
-		watchaddr = (uintptr*)(R.MP + ARGWORDOFF);
-		watchval = *watchaddr;
-		watcharmed = 1;
-		print("watch: armed on Arg module MP %#p + %#ux (curropt slot) "
-			"= %#p, current val %#zx\n",
-			R.MP, ARGWORDOFF, watchaddr, watchval);
-		if(R.M->type != nil && R.M->type[0] != nil){
-			Type *mt = R.M->type[0];
-			int i, wordno, byteno, bitno, isptr;
+		if(R.M != nil && R.M->m != nil && R.M->m->name != nil
+		&& strcmp(R.M->m->name, "Arg") == 0 && R.MP != nil){
+			watchaddr = (uintptr*)(R.MP + ARGWORDOFF);
+			watchval = *watchaddr;
+			watcharmed = 1;
+			print("watch: armed on Arg module MP %#p + %#ux (curropt slot) "
+				"= %#p, current val %#zx\n",
+				R.MP, ARGWORDOFF, watchaddr, watchval);
+			if(R.M->type != nil && R.M->type[0] != nil){
+				Type *mt = R.M->type[0];
+				int i, wordno, byteno, bitno, isptr;
 
-			wordno = ARGWORDOFF / sizeof(WORD);
-			byteno = wordno / 8;
-			bitno = 7 - (wordno % 8);
-			isptr = byteno < mt->np && (mt->map[byteno] & (1 << bitno)) != 0;
-			print("watch: Arg type[0]->np %d map", mt->np);
-			for(i = 0; i < mt->np; i++)
-				print(" %#.2ux", mt->map[i]);
-			print(" -- word %d (byte %d bit %d) is %sa declared pointer\n",
-				wordno, byteno, bitno, isptr ? "" : "NOT ");
-		}else
-			print("watch: Arg module has no type[0] to check\n");
-		return;
-	}
-	if(*watchaddr != watchval){
-		/*
-		 * A change to a value that looks like a real pointer (the
-		 * same >= 0x1000 threshold badptrslot()/movp already use
-		 * elsewhere) is legitimate -- an ordinary assignment into
-		 * this slot.  Track it and keep watching; only a change TO
-		 * a bad value is the finding.
-		 */
+				wordno = ARGWORDOFF / sizeof(WORD);
+				byteno = wordno / 8;
+				bitno = 7 - (wordno % 8);
+				isptr = byteno < mt->np && (mt->map[byteno] & (1 << bitno)) != 0;
+				print("watch: Arg type[0]->np %d map", mt->np);
+				for(i = 0; i < mt->np; i++)
+					print(" %#.2ux", mt->map[i]);
+				print(" -- word %d (byte %d bit %d) is %sa declared pointer\n",
+					wordno, byteno, bitno, isptr ? "" : "NOT ");
+			}else
+				print("watch: Arg module has no type[0] to check\n");
+		}
+	}else if(*watchaddr != watchval){
 		if((void*)*watchaddr == H || (uintptr)*watchaddr >= 0x1000){
 			print("watch: legitimate change addr %#p old %#zx new %#zx, "
 				"instruction PC %#p op %#.2ux add %#.2ux module %s\n",
@@ -416,11 +441,51 @@ checkwatch(void)
 				R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
 				R.M != nil && R.M->m != nil ? R.M->m->name : "?");
 			watchval = *watchaddr;
+		}else{
+			print("watch: Arg curropt CHANGED TO BAD VALUE addr %#p old %#zx "
+				"new %#zx\n", watchaddr, watchval, *watchaddr);
+			print("watch: instruction that just ran: PC %#p op %#.2ux "
+				"add %#.2ux module %s pid %d\n",
+				R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
+				R.M != nil && R.M->m != nil ? R.M->m->name : "?",
+				currun() != nil ? currun()->pid : -1);
+			dumpstack();
+			abort();
+		}
+	}
+
+	cf = (Frame*)R.FP;
+	if(!watch2armed){
+		if(cf != nil && sameshframe(cf->t)){
+			watch2frame = cf;
+			watch2type = cf->t;
+			watch2addr = (uintptr*)(R.FP + SHFRAMEWORD * sizeof(WORD));
+			watch2val = *watch2addr;
+			watch2armed = 1;
+			print("watch2: armed on Sh addbuiltin() frame %#p word %d "
+				"= %#p, current val %#zx\n",
+				cf, SHFRAMEWORD, watch2addr, watch2val);
+		}
+		return;
+	}
+	if((Frame*)watch2frame != cf || cf->t != watch2type){
+		/* frame torn down/reused -- disarm quietly, not a finding */
+		watch2armed = 0;
+		return;
+	}
+	if(*watch2addr != watch2val){
+		if((void*)*watch2addr == H || (uintptr)*watch2addr >= 0x1000){
+			print("watch2: legitimate change addr %#p old %#zx new %#zx, "
+				"instruction PC %#p op %#.2ux add %#.2ux module %s\n",
+				watch2addr, watch2val, *watch2addr,
+				R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
+				R.M != nil && R.M->m != nil ? R.M->m->name : "?");
+			watch2val = *watch2addr;
 			return;
 		}
-		print("watch: Arg curropt CHANGED TO BAD VALUE addr %#p old %#zx "
-			"new %#zx\n", watchaddr, watchval, *watchaddr);
-		print("watch: instruction that just ran: PC %#p op %#.2ux "
+		print("watch2: Sh addbuiltin() slot CHANGED TO BAD VALUE addr %#p "
+			"old %#zx new %#zx\n", watch2addr, watch2val, *watch2addr);
+		print("watch2: instruction that just ran: PC %#p op %#.2ux "
 			"add %#.2ux module %s pid %d\n",
 			R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
 			R.M != nil && R.M->m != nil ? R.M->m->name : "?",
