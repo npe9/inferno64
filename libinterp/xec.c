@@ -1610,8 +1610,34 @@ OP(consp)
 	Heap *h;
 	WORD *sv;
 
-	l = cons(IBY2WD, R.d);
 	sv = P(s);
+	/*
+	 * Probe: checkmarkptr() (gc.c) has been catching Tptr-typed list
+	 * cells (exactly this op's own payload type, size 8 np 1 map
+	 * 0x80 -- see doc/inferno-ports.ms) holding a small non-H value
+	 * at GC mark time, dominating the residual pc64 boot-crash
+	 * signal once the free-time trackclear() fixes landed (15/30
+	 * boots).  GC's own attribution (R.M/R.PC at mark time) is
+	 * worthless -- mark isn't tied to a specific instruction -- so
+	 * this checks the one place that IS reliably attributed: the
+	 * source operand this op is about to cons, right as it reads it.
+	 * If sv is bad here, the write that produced it happened before
+	 * this op ever ran and is attributed correctly for the first
+	 * time; if sv is always fine here, the corruption -- if it's
+	 * real and not another instrumentation artifact -- happens after
+	 * this op, inside cons()'s own allocation or later.  pc64-only,
+	 * temporary.  See doc/inferno-ports.ms.
+	 */
+	if(sv != H && (uintptr)sv < 0x1000) {
+		extern void dumpstack(void);
+		print("consp: bad sv %#p, running Dis pid %d module %s PC %#p inst %d\n",
+			sv, currun() != nil ? currun()->pid : -1,
+			R.M != nil && R.M->m != nil ? R.M->m->name : "?", R.PC,
+			R.M != nil && R.M->m != nil ? (int)((R.PC - 1) - R.M->m->prog) : -1);
+		dumpstack();
+		abort();
+	}
+	l = cons(IBY2WD, R.d);
 	if(sv != H) {
 		h = D2H(sv);
 		AINC(&h->ref);

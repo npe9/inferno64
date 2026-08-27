@@ -9362,6 +9362,351 @@ batch, before any other board or the hosted
 target is built from this tree.
 
 .NH 1
+Freed, not cleared
+.PP
+The tracker's own comment (see
+.I "Every watched slot, not one sampled slot" )
+had already named a second stale-registration channel and left it
+open: an object freed and its memory recycled by an allocation that
+never calls
+.CW initmem()
+at all leaves a tracked word stale with no clear ever triggered.
+.CW typetagp
+validation was believed to close it well enough \- a stale entry only
+survives if the new occupant's own writes happen to miss the exact
+word
+.CW typetagp
+points at.  That belief was wrong, and this round found the concrete
+case: a Dis stack frame's extent
+( unextend() ,
+unframe() ,
+stack.c)
+and a heap object
+( destroy() ,
+freelist() ,
+heap.c)
+were both freed back to
+.CW mainmem / heapmem
+without ever calling
+.CW trackclear() ,
+and
+.CW destroystack()
+(the whole-process teardown path, xec.c) walked and freed every
+extent in a process's chain the same way, bypassing
+.CW unextend()/unframe()
+entirely.  When that freed memory was next handed to a plain kernel
+allocation \- a
+.CW Path
+struct, built by
+.CW copypath()
+(chan.c) via
+.CW smalloc() ,
+in the capture that pinned this down \- and that allocation's own
+.CW memset()
+zeroed it,
+.CW typetagp
+validation passed anyway: the field it was checking sat outside the
+small
+.CW Path
+block's own extent, untouched by the reuse, so the stale entry
+survived and reported the zeroing as a live pointer word going bad.
+.PP
+Fixed by clearing at free time instead of waiting for reuse to maybe
+catch it.
+.CW unextend()/unframe()
+clear exactly
+.CW [R.EX,\0R.TS)
+\- the extent about to be freed, using registers
+.CW extend()
+itself set to the extent's own base and end and that nothing touches
+again before the free \- with no pool API needed, so the fix stays
+portable across every
+.CW libinterp
+target.
+.CW destroystack()
+has no per-extent size available during its chain walk, so it clears
+each frame individually, by its own
+.CW t->size ,
+as it tears the frame down; exact, and no new dependency either.
+.CW destroy()/freelist()
+sit on the
+.CW heapmem
+side of the identical gap: since the freed pointer
+.CW h
+is exactly what
+.CW poolalloc(heapmem,\0...)
+returned,
+.CW poolmsize(heapmem,\0h)
+gives the whole block directly, and
+.CW heapmem/poolmsize
+were already used unconditionally elsewhere in this file, so this is
+no new dependency either.
+.CW trackclear()
+itself was made non-static, with an
+.CW extern
+in
+.CW interp.h ,
+to reach it from
+.CW stack.c
+and
+.CW xec.c .
+.PP
+Measured in batches of parallel boots, grep for
+.CW "track:\0CHANGED" :
+before this fix, effectively every boot fired it (about 10 of 10);
+after, 4 of 16, then 2 of 20 once a real
+.CW mk
+gotcha was caught and worked around.
+.CW mk\0ipc64
+can silently skip the final
+.CW 6l
+relink after a
+.CW libinterp.a -only
+change lands \- nothing downstream of the archive update forces
+.CW pc64.6
+or the link step to be considered stale \- so a build that only
+touches
+.CW libinterp/*.c
+needs
+.CW rm\0ipc64
+first, or a verified fresh
+.CW 6l
+line in the build's own output, before trusting a boot against it.
+Every boot batch measurement in this section was taken against a
+build checked this way.
+.PP
+This did not close the investigation.  It closed a real, separate gap
+in the tracker's own soundness, worth having regardless of how the
+underlying question resolves, and it took the hit rate from
+"almost every boot" to "the low tens of percent" \- which is itself
+the strongest evidence yet that most of what four-plus sessions of
+this hunt had been chasing was the instrument, not the kernel.  What
+is left is smaller, and different in shape from what came before.
+.PP
+.CW checktracked()
+(heap.c) and
+.CW scanframe()
+(xec.c, the pre-existing full-frame return-time scan this hunt has
+also called
+.CW badptrslot() -style
+in earlier notes) no longer
+.CW dumpstack()+abort()
+on a hit \- they log and continue, dropping the stale slot or just
+printing.  This was necessary to tell "the write is real corruption"
+from "the write is benign and execution continues correctly" apart,
+which stopping the boot on every hit could never distinguish.  Both
+remain pc64-only, temporary, and are now silently non-fatal by
+deliberate choice \- a quiet boot is evidence of nothing on its own;
+grep the log for
+.CW "track:\0CHANGED"
+and
+.CW "bad\0slot\0in\0frame"
+before calling any boot clean.
+.CW checkmarkptr()
+(gc.c) is
+.I not
+included in that softening and still aborts \- see below, it is now
+the signal actually being chased.
+.PP
+The residual
+.CW checktracked() / scanframe()
+signal, once the free-time clears above stopped the bulk of the
+noise, resolved to two source lines via
+.CW resolve_sbl.py :
+sh.b:2479
+( word[len\0word]\0=\0c;
+inside the shell's tokenizer,
+.CW gettok() )
+and string.b:414
+( s[len\0s]\0=\0' ' ;
+inside
+.CW quote() ).
+Both are ordinary, unremarkable string-append code with no bug of
+their own, and the first working theory this round \- that a Dis
+frame's
+.CW Type
+map is a whole-function conservative union, so a marked-pointer word
+can legitimately hold a live non-pointer local at some points in a
+function's execution \- does not survive a closer look and should not
+be re-derived next time.
+.CW freeptrs() ,
+called at every
+.CW OP(ret) ,
+walks a frame's
+.I entire
+map and calls
+.CW destroy()
+on every word it marks, unconditionally.  If a marked word could
+legitimately hold a small int at return time,
+.CW freeptrs()
+would compute
+.CW D2H()
+on that int and write through a near-null pointer on perfectly
+ordinary returns, on every platform this interpreter runs on.  It does
+not.  The invariant \- a marked word holds
+.CW H
+or a real pointer whenever
+.CW freeptrs()/GC
+can observe it \- is load-bearing and real, not a checker artifact, and
+a marked word holding a small int at that point is a violation of it.
+That is also, in hindsight, exactly the shape of the
+.CW destroy:\0bad\0v
+crash that opened this whole investigation.
+.PP
+Two supporting readings from the same pass also do not hold up and are
+retracted rather than carried forward.  "Every bad value observed
+across this hunt has been small, never large garbage" was read as
+evidence the checkers were over-eager; it runs backward.
+.CW scanframe()
+tests
+.CW "<\00x1000\0&&\0!=\0H" ;
+.CW checkmarkptr()
+tests
+.CW ">=\00x1000" .
+Both are blind to large garbage by construction, so a small-value
+signature is a property of the instruments, not of the bug.  And a
+.CW showframe()
+dump from one capture, showing several small-looking integers at
+various words in the frame, was read as showing widespread
+map-imprecision; it shows nothing of the kind \-
+.CW showframe()
+prints every word in a frame regardless of the map, and most of a
+frame's words are legitimately ints.  Only the one word
+.CW scanframe()
+itself flagged is in evidence.
+.PP
+One attribution gap is still open and should be closed before trusting
+another source resolution built on it: a
+.CW scanframe()
+capture during this same pass printed
+.CW "module\0String\0...\0inst\08632" ,
+but
+.CW resolve_sbl.py
+reports the
+.CW String
+module has 941 instructions \- that print is self-refuting, so
+misattribution is still happening in at least some of these captures.
+The two resolved sites above (Sh 5383 of 6111, String 704 of 941) are
+in range and stand, but any future
+.CW module/inst
+print should be gated on
+.CW inst\0<\0ninst
+before a source-level conclusion is built on it.
+.NH 2
+A different, dominant signal: Tptr list cells
+.PP
+Once the free-time
+.CW trackclear()
+fixes and the non-fatal softening above landed, a batch of 30 boots
+put a different checker \- 
+.CW checkmarkptr() ,
+gc.c, added and validated clean over 6 boots in an earlier session \-
+in front for the first time: 15 of 30 boots hit it, later batches
+confirmed 12\-15 of 20\-30, well above the residual
+.CW checktracked()/scanframe()
+rate.  It had not been rare; it had been masked, first by the
+tracker's own free-time gap flooding the log with unrelated hits, then
+by
+.CW checktracked() / scanframe()
+stopping the boot before
+.CW checkmarkptr()
+ever got a chance to run.
+.PP
+Every capture reports a word holding a small value, never
+.CW H ,
+inside a heap object
+.CW markheap()
+is walking during GC mark.  The dominant shape, 9 of the first 15
+captures: object size 8, one pointer word (np 1), map
+.CW {0x80} ,
+value exactly
+.CW 0 .
+That triple \- size 8, np 1, map
+.CW {0x80} \-
+is
+.CW Tptr 's
+own static initializer in heap.c
+( Type\0Tptr\0=\0{\01,\00,\0markheap,\0sizeof(WORD*),\01,\00,\00,\0{0x80}\0} ),
+not a module-defined type, which is why the type pointer
+(0x312a60, stable across boots against the same binary) never matched
+any
+.CW dtype()
+call site in the source.  A second, rarer shape (one capture) had size
+.CW -1 ,
+which looked at first like a corrupted
+.CW Type
+until the same search found it too: that is
+.CW Tmodlink 's
+own literal size field, by design, not damage.
+.PP
+.CW Tptr
+is the payload type
+.CW OP(consp)
+gives a list cell when it conses a pointer-typed value:
+.CW l->t\0=\0&Tptr;\0...\0*(WORD**)l->data\0=\0sv; .
+.CW markheap()
+'s caller (list marking) walks each cell's own
+.CW l->data
+against its own
+.CW l->t ,
+which is why the "object" a
+.CW checkmarkptr()
+hit names is
+.CW l->data
+itself \- a field inside a live, GC-reachable list cell, not a
+separately Heap-boxed value of its own.  Reading
+.CW OP(consp)
+end to end for a reentrancy window \- a moment where
+.CW l->t
+is already set to a real type but
+.CW l->data
+still holds whatever the fresh allocation handed back, unwritten \-
+turned up none: nothing between
+.CW l->t\0=\0&Tptr;
+and the write to
+.CW l->data
+can call back into the allocator or trigger a compaction pass, and the
+one call that can (
+.CW cons() 's
+own
+.CW nheap() )
+runs earlier, while
+.CW l->t
+is still
+.CW nil .
+Added a check at the one place in this path that gets genuinely
+reliable attribution \- GC's own
+.CW R.M/R.PC
+print is worthless, mark is not tied to any one instruction, but the
+source operand
+.CW OP(consp)
+is about to cons is checked right as the op reads it, with the same
+op's own real
+.CW R.PC .
+20 boots, 0 hits: the value handed to
+.CW OP(consp)
+is never bad.  Whatever happens, happens after a correctly-built cell
+already exists, not during its construction.
+.PP
+That points at a stale, uncleared root rather than a corrupting write:
+something holding a live-looking reference to a list cell that should
+have been decref'd and dropped, walked by GC as if it still named a
+real, current object, when what is actually there is either recycled
+(freed, pool-reused) memory or a legitimately unreferenced-but-not-yet-
+swept cell.  Not yet checked: whether
+.CW poolcompact() 's
+.CW move
+callback (alloc.c, wired via
+.CW poolsetcompact() )
+ever runs reentrant against a live list chain mid-walk; whether GC can
+be entered via interrupt-time reentrancy rather than only at
+allocation time, which the concurrency section above left unexamined
+for exactly this reason; and \- most directly \- whichever code path
+drops the last reference to a list cell, whether it reliably clears
+every root that pointed at it or can leave one dangling.  That is
+where this resumes.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
