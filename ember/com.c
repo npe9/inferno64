@@ -58,6 +58,7 @@ static void	fncom(Decl*);
 static void	autoload(Decl*);
 static Decl	*globalsconst(Node*);
 static Decl	*globaliconst(Node*);
+static Decl	*globalrconst(Node*);
 static long	modfix(Decl*);
 static Decl	*appglobal(Decl*);
 static void	bcinit(void);
@@ -123,6 +124,66 @@ globalsconst(Node *n)
 	d->refs++;
 	n->decl = d;
 	n->ty = tstring;
+	return d;
+}
+
+/*
+ * a real literal, e.g. "x := 3.5": always routed through a global
+ * constant, mirroring globaliconst()'s own large-int case
+ * unconditionally rather than trying a small-immediate fast path
+ * first -- there is no "real immediate" addressing mode in Dis (the
+ * immediate operand is a plain word-sized int; Treal is IBY2LG,
+ * genuinely a different, wider representation, not just a big
+ * number), so every real constant needs a real data-segment slot
+ * regardless of its value. disw.c's disdatum() (already has a Treal
+ * case, ported alongside every other primitive type's global-
+ * initializer support, just never reachable from a plain expression
+ * constant until this) writes the actual 8 bytes.
+ *
+ * keys the anonymous global by the double's own raw 64-bit bit
+ * pattern, formatted through the *integer* path (matching
+ * globaliconst()'s own already-proven-working "%lld", not "%g"/
+ * "%.17g") -- found the hard way: this compiler's own host-side
+ * seprint() silently produces the *identical*, value-independent
+ * string for every distinct real value ("%g" isn't a registered fmt
+ * verb in ember's own toolchain -- lib9/fltfmt.c's _efgfmt() exists
+ * but is never fmtinstall()'d anywhere in this tree -- so it prints
+ * literally nothing for the value and garbles the trailing text
+ * instead of erroring), which collided every real constant onto one
+ * shared global and silently replayed the *first* one's value for
+ * every later one -- confirmed by instrumenting the key string
+ * directly and by lldb'ing an unrelated crash the same broken verb
+ * caused when mixed with a later "%s" in a debug fprint (argument-
+ * list misalignment, not a race or memory bug). the bit-pattern key
+ * is exact by construction -- no round-trip precision question the
+ * way a decimal key would have, and NaN/-0.0 (which don't compare
+ * equal to themselves/each other under ==) still get correct,
+ * distinct keys since this compares bits, not values.
+ */
+static Decl*
+globalrconst(Node *n)
+{
+	Decl *d;
+	char buf[32];
+	Sym *s;
+	union { double d; vlong v; } u;
+
+	u.d = n->rval;
+	seprint(buf, buf+sizeof(buf), ".r.%lld", u.v);
+	s = enter(buf, 0);
+	d = s->decl;
+	if(d == nil || d->store != Dglobal){
+		d = mkdecl(&n->src, Dglobal, treal);
+		d->sym = s;
+		s->decl = d;
+		d->init = dupn(n);
+		d->init->ty = treal;
+		d->init->decl = d;
+		appglobal(d);
+	}
+	d->refs++;
+	n->decl = d;
+	n->addable = Rmreg;
 	return d;
 }
 
@@ -220,6 +281,29 @@ sumark(Node *n)
 			break;
 		case Tstring:
 			globalsconst(n);
+			n->addable = Rmreg;
+			break;
+		case Treal:
+			/*
+			 * a bare real literal ("x := 3.5") had no case here at
+			 * all -- confirmed pre-existing and unrelated to
+			 * anything else touched this session, via the same
+			 * minimal non-varargs repro ("x := 3.5") failing
+			 * identically outside any function-value/varargs
+			 * context. globalrconst() (above) mirrors globaliconst()
+			 * exactly. Tbig and Tbyte constant literals are NOT
+			 * given a case here even though they're the same class
+			 * of gap: confirmed genuinely unreachable in this
+			 * compiler as it stands, not just untested -- neither
+			 * type has any literal syntax of its own (no numeric
+			 * suffix), and assignable()'s strict tequal() check (no
+			 * implicit widening) rejects a plain int literal in a
+			 * byte- or big-typed context outright ("cannot use int
+			 * as byte", confirmed empirically) -- so nothing in this
+			 * compiler can ever construct a Tbig- or Tbyte-typed
+			 * Oconst node for these cases to fire on.
+			 */
+			globalrconst(n);
 			n->addable = Rmreg;
 			break;
 		default:
