@@ -1,0 +1,241 @@
+# Inferno as a Plan 9 terminal personality: a plan
+
+Written 2026-08-27, after being asked to audit the existing `p9/cmd/`
+Limbo-translation backlog against a much bigger, previously undocumented
+goal: **Inferno should be able to act as a Plan 9 terminal - the role
+`drawterm` plays for non-Plan-9 hosts - and go further than `drawterm`
+does, by being able to compile a real Plan 9 source tree from inside
+itself, using Limbo-native tools running under Dis/`emu`, not host
+binaries.** `doc/plan9-port.md`'s own closed backlog (21 command-line
+utilities, individually translated and tested) never claimed to be this,
+and auditing it against this bar found real, substantial gaps - but also
+real, substantial existing assets nobody had credited yet. Both are
+below, checked directly against this tree as it stands today, not
+recalled.
+
+## The three separable pieces, and what's real about each
+
+This goal splits into three genuinely independent projects. They don't
+block each other's *value* - each is separately useful even if the
+other two never happen - but two of them share a real, checked
+dependency (below).
+
+### 1. Protocol/auth/namespace interoperability - smallest in code, blocked on a test target
+
+**More already exists than the earlier audit credited.** `module/styx.m`
+- Inferno's own native mount protocol module, used by `mount()`,
+`import`, `cpu`, everything - declares `VERSION: con "9P2000"` and
+defines the identical message set to real Plan 9's wire protocol
+(`Tversion`..`Rwstat`, the same tag numbering, the same `STATFIXLEN`
+fixed-length stat layout). This is not a look-alike sharing a name by
+coincidence; it is structurally the real thing. `appl/cmd/auth/factotum/
+proto/p9any.b` is a real implementation of Plan 9's own `p9any` auth
+negotiation. `appl/cmd/import.b`, `appl/cmd/9export.b`, `appl/cmd/cpu.b`
+are real dial-auth-mount machinery, the same shape as `drawterm`'s job.
+
+**What's unverified, and is the actual crux question:** `import.b` dials
+a remote host's own `exportfs` service and layers Inferno-specific
+framing (`impo nofilter clear/ssl`) on top of the raw dial - it does not
+connect bare to a real Plan 9 cpu-server listener. Whether any of this
+stack - `styx.m`'s 9P2000 encoding, `p9any`'s negotiation, `cpu.b`'s
+session setup - can actually complete a handshake with an unmodified
+Plan 9 or 9front box has never been tested in this tree. There is no
+evidence either way; this is a real unknown, not a known-working thing
+described unclearly.
+
+**Correction to an earlier pass of this audit: `9front/` is not
+headers-only.** An initial listing sampled only the first 20 of 195
+files and happened to land entirely inside `include/`, which was then
+wrongly generalized. The real listing (`find 9front -type f -not -path
+'*/include/*'`) shows a full compiled amd64 library set - real `ar`
+archives for `libc`, `libbio`, `libauth`, `lib9p`, `libthread`,
+`libdraw`, and about thirty more, plus **two real binaries**:
+`9front/amd64/9pc64` and `9front/amd64/bin/auth/factotum` (a genuine
+compiled factotum). This is a substantially more complete build than
+"headers-only" claimed, and that claim should not have been written
+without checking past the first page of results.
+
+**But it is not neutral, stock 9front either - it's a different, parallel
+effort's own variant, and that matters for what it can answer.** The same
+library set includes `libosprey.a` and `lib9front.a` alongside the
+standard libraries, and `os/pc64/9front/` (Codex's own native kernel
+work, not this plan's territory, not touched here) sits next to compiled
+objects named `osprey.6`, `osprey-core.6`, `osprey-process.6`,
+`osprey-queue.6`, `osprey-edf.6` - consistent with the Osprey microkernel
+work tracked elsewhere in this project's memory, not a vanilla upstream
+9front build. That reframes the open question: it isn't just "is
+`9pc64` bootable," it's **"is this a stock 9front whose behavior matches
+real Plan 9 servers, or an Osprey-personality build that may differ from
+one in exactly the ways this plan needs to test" - and separately,
+whether it runs a `cpu` or `exportfs` listener at all** (a kernel image
+and a factotum binary don't by themselves imply a running, dialable
+service). Both questions should be answered by whoever owns that work,
+not assumed from a file listing.
+
+### 2. `rc` in Limbo - not a from-scratch design, a real translation, and the one with a genuine semantic gap
+
+`doc/plan9-port.md` explicitly ruled `rc` itself out of scope ("What
+should NOT be ported"), on the grounds that `sh(1)` already covers its
+role. That call doesn't survive contact with this goal. A real, current
+9front `mkfile` (fetched live from `github.com/9front/9front`,
+`sys/src/cmd/mkfile`, during this audit) hands every recipe body to a
+shell, and is saturated with `rc`-specific syntax inline in those
+recipes - backquote command substitution, `rc`'s `~` list-matching
+operator, `rc`'s own `for(...)` loop syntax:
+
+```
+YTARG=`{ls | sed -n '/\.y$/s/\.y$//p'}
+NOMK=$NOMK test `{~ $objtype (386 amd64) || echo $PCONLY} ...
+%.cpus:V:
+	for(objtype in $CPUS) mk $MKFLAGS $stem
+```
+
+`appl/cmd/mk/mk.b` (4190 lines, genuine Limbo-native `mk`, previously
+uncredited in the earlier audit) cannot make real Plan 9 mkfiles do
+anything useful without a shell that understands this syntax. `sh(1)`
+does not, and was never meant to - it's Inferno's own shell, not a
+compatibility layer.
+
+**The good news, found doing this audit: this is not a from-scratch
+language project.** `utils/rcsh/` already contains a real, structurally
+complete `rc` implementation as native C source - 4436 lines across the
+canonical rc source layout (`lex.c`, `syn.y`, `glob.c`, `exec.c`,
+`simple.c`, `tree.c`, `var.c`, `word.c` - the same file names as
+upstream Plan 9 `rc` source, not a rewrite). Checked directly, not
+assumed from the file names: `syn.y` has `FOR`/`WHILE`/`TWIDDLE` (the
+`~` operator) as real grammar tokens; `exec.c`/`code.c`/`pfnc.c` have a
+real `Xbackq` opcode implementing backquote command substitution. Its
+own `mkfile` comment calls it "a stripped-down version of rc," currently
+built only for the Windows Nt/95 target (`utils/mkfile:67`) - what
+exactly is stripped is not yet characterized here (worth checking
+against a real upstream `rc.c` diff before translating, the same
+oracle-comparison discipline every other item in the closed backlog
+used), but the core grammar and execution engine are present, not stubs.
+
+This makes `rc` a translation project, methodologically identical to
+everything already in the closed `p9/cmd/` backlog (`cb.b`, `marshal.b`,
+etc.) - just the largest single item attempted so far, at roughly 3.5x
+`marshal.b`'s size (the current largest, ~1620 lines).
+
+**The one real, calibrated risk, not just a size risk:** `rc`'s
+backquote/subshell model (`Xbackq` in the real source) works by forking
+a real child process and capturing its stdout - genuine Unix `fork()`
+semantics. Limbo has no `fork()`; it has channels and `spawn`. This is
+exactly the class of gap `doc/plan9-port.md` already names for *other*
+programs ("Anything relying on Plan 9's `libthread` coroutine model or
+raw process/fork semantics... would need a real design, not a
+transliteration") - and it lands squarely inside `rc`'s own execution
+engine, not at the edges. Translating the grammar (`syn.y`) and word/
+glob handling should be direct, line-for-line work; translating
+`exec.c`'s process-substitution model onto Limbo's `spawn`/channel model
+is a real design problem, sized only once actually attempted, not
+knowable in advance from a line count.
+
+### 3. A C compiler/assembler/linker in Limbo - the largest piece, and genuinely just a big translation
+
+**Confirmed missing, no hedge, checked again during this audit:** no
+Limbo-native C compiler, assembler, or linker exists anywhere in this
+tree. The only C toolchain present is the pre-existing native `kencc`
+suite in `utils/` (`0c 5c 6c 8c 9c kc qc vc` and matching linkers/
+assemblers) - real, and already used to build the native kernels in
+`os/`, but a host binary that never touches Dis or `emu`. It doesn't
+count toward this goal any more than the native `awk` build counted
+toward the Limbo-`awk` item in the closed backlog (see that doc's own
+disambiguation of exactly this distinction).
+
+**Real sizes, for one full architecture's toolchain (amd64: `6c`/`6l`/
+`6a`), counted directly, not estimated:**
+
+| component | lines |
+|---|---|
+| `cc/` shared frontend (lexer, parser, type checker - `.c`+`.h`) | 13,864 |
+| `6c` backend (codegen) | 8,337 |
+| `6l` linker | 6,166 |
+| `6a` assembler | 2,352 |
+| **total** | **~30,700** |
+
+(The `8`-family - 386 - is nearly identical in scale: 10,306 + 5,268 +
+2,022 against the same 13,864-line shared frontend.) This is roughly
+19x `rc`'s size and orders of magnitude past anything in the closed
+utility backlog. There is no existing Limbo-oriented precedent to build
+on for this one, unlike `rc` (which at least has the translation
+methodology proven at scale by now) - this would be the single largest
+translation this project has attempted, by a wide margin.
+
+**One point worth being precise about, since it's easy to get backwards:
+translating `6c`/`6l`/`6a` does not mean redesigning what they emit.**
+The compiler's own *execution environment* changes (it runs as Dis
+bytecode inside `emu`, same as everything else here); the *code it emits*
+does not - it should still emit real amd64 machine code, exactly like
+upstream `6c`/`6l`, because that's what makes the output genuinely
+useful (real, runnable Plan 9 binaries) rather than a toy. So this is
+direct transliteration in the same spirit as every other item in the
+closed backlog, not a "retarget the backend to Dis" redesign - the
+backend's actual job doesn't change, only the language and runtime the
+compiler-the-program is itself written in and executes under.
+
+**The real risk here isn't the target, it's C's raw-pointer/union-heavy
+internals at this scale.** Every item in the closed backlog hit small
+versions of this (`big` being a reserved word colliding with a literal
+C variable name in `primes.c`; `modf`'s no-equivalent split in
+`factor.c`; C's adjacent-string-literal concatenation missing in
+Limbo). A ~30,000-line optimizing compiler's symbol tables, in-place
+bit-twiddling on machine words, and pointer-comparison-as-identity
+idioms will hit this same class of gap far more often and in less
+mechanically-fixable ways. Sizing that precisely isn't possible without
+starting; it's flagged here so it isn't discovered as a surprise later.
+
+## Dependency graph and order of work
+
+- **(2) rc and (3) the compiler don't block each other.** Both are pure
+  translations of independent, already-real C source.
+- **(1) protocol verification doesn't block either.** It needs a real
+  test target, not engineering time from this tree, and can proceed in
+  parallel whenever one becomes available (see the `os/pc64/9front/
+  9pc64` note above).
+- **(2) meaningfully unblocks value before (3) exists - checked directly,
+  not just asserted.** `appl/cmd/mk/mk.b` was built and run (`mk.dis -n
+  -f <the real mkfile fetched above> cmds`) against the real 9front
+  `sys/src/cmd/mkfile`. Result: mixed, and informative. `mk.b`'s parser
+  handled the file's `${TARG:%=$O.%}` substitution-pattern expansion
+  without crashing, correctly walked the dependency graph to
+  `cmds -> $O.cp -> 8.cp`, and failed cleanly with `mk: don't know how to
+  make '8.cp'` - expected, since only the one file was fetched, not
+  `cp.c` alongside it. But it also printed `usage: grep [-lnviLs] pattern
+  [file...]` before that - not present at all against a plain, rc-free
+  sanity-check mkfile (`all:V:\n\techo hello`, confirmed clean via the
+  same `-n` invocation) - consistent with one of the file's rc-specific
+  backquote expressions (most likely the `DIRS=` line, which combines
+  `rc`'s `^` string-concatenation and `(... $NOMK)` list-paren syntax
+  inside a piped `grep -v`) being handed to a shell that doesn't
+  understand `rc` syntax and misparsing it as bad `grep` arguments. This
+  is real, direct evidence for the dependency claim above, not an
+  assumption: `mk.b`'s dependency engine already does real, correct work
+  against a genuine Plan 9 mkfile, and `rc` is specifically what's
+  missing to make the rest of it work, not some other unnamed gap.
+  Confirming `mk.b`'s own target-attribute (`:V:`/`:Q:`/`:D:`) and
+  `$stem`/`$target`/`$prereq` support against Plan 9's dialect - untested
+  beyond this one file - remains open and should be checked early in (2),
+  since a mismatch there would be a second blocker independent of `rc`.
+- **(3) is the largest and highest-risk piece, and its payoff is gated on
+  (2).** A real mkfile's compile recipes (`$CC $CFLAGS $stem.c`) are
+  themselves `rc` command lines; a working compiler without a working
+  shell to invoke it from a real mkfile is much less useful than the
+  reverse.
+
+**Recommended order: (2) first, (1) in parallel as a target becomes
+available, (3) last** - both because (3) is gated on (2) for real payoff,
+and because attempting the ~30,000-line compiler translation before the
+methodology has been proven at `rc`'s ~4,400-line scale (itself 3.5x
+anything done so far) would be sizing the biggest, riskiest piece first,
+with the least evidence about how well the translation approach holds up
+as line count grows.
+
+## What this plan is not
+
+Not an implementation - no code has been written toward any of the three
+pieces yet. This is a sizing and sequencing document, written because
+the honest answer to "did you implement this" was no, the earlier
+backlog answered a much narrower question, and the right next step was
+established to be scoping all three pieces properly before committing
+engineering time to any one of them.
