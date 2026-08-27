@@ -8905,10 +8905,57 @@ now across five modules instead of three.  The corruption is not
 rare in the way a race needing exact double-digit-microsecond timing
 would be \- 6.7% under this stress load is common enough that the
 next real narrowing is more likely to come from reading what these
-sites share
-.RN ( spawn
-proximity, module-data vs.\ stack-frame vs.\ teardown-time) than from
-another blind batch.
+sites share than from another blind batch.
+.PP
+Read
+.CW OP(spawn) ,
+.CW OP(mspawn) ,
+.CW OP(frame) ,
+and
+.CW newstack()
+end to end chasing the spawn-proximity pattern directly, rather than
+leaving it as an open question.  All four are correct.
+.CW OP(frame)
+.RN ( libinterp/xec.c )
+builds a spawn statement's own argument frame and always
+.CW initmem() s
+it \- either directly, when the fast path has room
+.RN ( "nsp\ <\ R.TS" ) ,
+or through
+.CW extend() ,
+already confirmed correct in the previous batch's write-up.
+.CW newstack()
+.RN ( libinterp/stack.c )
+then
+.CW memmove() s
+that already-initialized frame whole into the new process's stack;
+it has no
+.CW initmem()
+call of its own, but doesn't need one \- it is copying a frame
+.CW OP(frame)
+already built correctly, not building one from scratch.  Landmark's
+.CW mod
+was not corrupted by any of this machinery: it was a plain local in
+.CW runexternal() 's
+own frame, assigned validly at
+.CW sh.b:806
+and read again, already bad, thirty-two lines later at
+.CW sh.b:838 .
+The spawn-proximity pattern is better read as a lifetime-and-exposure
+effect than a spawn-mechanism bug: functions that eventually call
+.CW spawn
+tend to carry a
+.CW Modlink
+.RN ( or
+similar) local alive across a wide span of source \- exactly the
+.CW mod
+/
+.CW sh
+shape in all three spawn-adjacent captures \- giving the corruption a
+longer window to land in before that slot is finally read, not
+because
+.CW spawn
+itself does anything wrong to it.
 
 .NH 1
 Then
