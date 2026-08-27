@@ -379,6 +379,18 @@ badptrslot(void *bad, void *addr, char *which)
 			cf != nil ? cf->t->size : -1,
 			(long)((uchar*)addr - xp->R.FP),
 			(long)(xp->R.SP - xp->R.FP));
+		/*
+		 * A batch34 capture put addr well past both SP and the
+		 * current frame's own t->size, raising a question this
+		 * probe couldn't answer on its own: is R.FP even the frame
+		 * the compiler meant for this instruction, or is it some
+		 * other frame in the same call chain?  showframe() (already
+		 * used by scanframe()) dumps the whole frame's fields and
+		 * its type map, not just size -- the next capture gets that
+		 * context for free.  See doc/inferno-ports.ms.
+		 */
+		if(cf != nil && cf->t != nil)
+			showframe(cf, cf->t);
 	}
 	/*
 	 * The discriminating question this hunt hasn't asked yet: is the

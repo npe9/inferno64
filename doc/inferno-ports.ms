@@ -7070,6 +7070,27 @@ captures now known to span at least two different source constructs
 and two different opcodes, is a pattern a coincidence theory has to
 work harder to explain than a shared mechanism does \- but naming
 that mechanism is still open work, not concluded here.
+.PP
+The open question from that last capture \- is
+.CW R.FP
+even the frame the compiler meant for this instruction \- needs more
+than a size and two offsets to answer.  Wired
+.CW showframe()
+.RB ( already
+existing, already used by
+.CW scanframe() ,
+previously dead code everywhere else) into
+.CW badptrslot() 's
+.CW OP(movp)
+guard: the next capture gets the whole frame's fields and its type
+map dumped, not just
+.CW t\->size
+alone \- enough to check directly whether offset 344 could belong to
+.I any
+declared field of whatever frame is actually at
+.CW R.FP ,
+rather than inferring it from one number.  Rebuilt; a batch is
+running.
 
 .NH 1
 Then
