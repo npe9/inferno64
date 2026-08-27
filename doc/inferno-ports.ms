@@ -6761,6 +6761,81 @@ a confounded null result like the batches before the fix.  A real
 rate needs a real batch; the control now exists to run one.
 
 .NH 1
+The real batch: two separate signatures, two separate answers
+.PP
+The batch was killed at 37 of 40 boots by something outside this
+session's control, not a QEMU hang or a corrupted run \- the 37 on
+hand are clean, and 37 is enough to read plainly rather than wait for
+three more.  Depth: 35/37 printed
+.CW "bound\ #l0" ,
+34/37 reached
+.CW "spawn\ sh" \-
+the same range every NIC-attached batch this session has reached
+.RB ( 35\-37/40 ) .
+The control finally means what it says.
+.PP
+.B "Invalid opcode: zero, still."
+Not one of the 37 hit it, against 10, 12, and 7 out of 40 across the
+three NIC-attached batches on record.  Unconfounded this time \- these
+37 reach the same depth those did \- so this stands as a real result,
+not the earlier null that turned out to mean "never got there."
+Against a true rate anywhere near the NIC-attached batches' 25\-30%,
+zero in 37 tries is not a plausible draw.
+.B "This specific signature needs an active NIC."
+.PP
+.B "The signature this whole document was built around does not."
+Two of the 37 hit
+.CW "destroy:\ bad\ v\ 0" \-
+one of them the very second boot run after the fix, reported last
+section.  Compared directly against the two NIC-attached
+.CW restrict=on
+batches, counting only
+.CW destroy() / OP(movp)
+captures, not the whole panic grab-bag: virtio 2/40, igb 1/40, no-NIC
+2/37.
+.B "Indistinguishable, all three."
+The corruption this document opened with \- a pointer-typed slot
+holding
+.CW 0
+where
+.CW H
+belongs, at roughly one in twenty boots \- does not need a network
+card, a driver, or any of the attach-time kprocs two sections back
+went looking in.  It was never the NIC.
+.PP
+Read together, this reframes the last five sections rather than
+erasing them: this investigation has actually been running down
+.B two
+independent signatures that happened to share a batch.
+.CW "Invalid\ opcode"
+really is NIC-specific, by a result now clean of the confound that
+undermined every earlier attempt to say so \- worth its own thread,
+separately, another time.  The
+.CW destroy() / OP(movp)
+wrong-sentinel corruption \- named first, chased longest, the reason
+.CW auditmemloc() ,
+the liveness check, the type-descriptor confirmation, and every
+.CW sh.b
+capture on record exist \- runs at the same rate with or without a
+network card anywhere in the machine.  Whatever writes a
+.CW 0
+into a slot that should hold
+.CW H
+is native to Dis execution itself, or to kernel machinery every boot
+uses regardless of hardware \- not to anything this session's last
+five sections went looking for.  The search for
+.I that
+bug returns to where it stood before the NIC was ever a suspect: a
+slot inside a still-live block, corrupted between its correct
+creation and the moment
+.CW destroy()
+or
+.CW OP(movp)
+reads it back, by a mechanism neither the allocator, the frame
+descriptor, the SMP question, nor the network stack has turned out to
+be.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
