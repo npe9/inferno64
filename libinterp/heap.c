@@ -657,7 +657,17 @@ checktracked(void)
 				print("track: heap header ref %d color %d\n", h->ref, h->color);
 			}
 		}
-		print("track: R.FP %#p R.SP %#p R.MP %#p\n", R.FP, R.SP, R.MP);
+		/*
+		 * R.d: the current op's own destination-operand address,
+		 * still whatever the addressing decode set for this exact
+		 * instruction (ops don't reassign it after use).  Compare
+		 * against track[i].addr above -- if they match, this op's
+		 * own body wrote the bad value directly; if they don't,
+		 * the write happened somewhere deeper in its call tree
+		 * (e.g. inside a destroy() it calls), and this op is just
+		 * the enclosing dispatch, not the writer.
+		 */
+		print("track: R.FP %#p R.SP %#p R.MP %#p R.d %#p\n", R.FP, R.SP, R.MP, R.d);
 		dumpstack();
 		abort();
 	}

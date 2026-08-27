@@ -9170,18 +9170,42 @@ at its own top and returns
 .CW H
 on every failure path it has.
 That is checked and excluded, not merely unlikely.
-What is not yet established is where inside
+.PP
+Settling where inside
 .CW OP(iload) 's
-own call tree the write actually happens \- possibly
+own call tree the write happens needed one more print:
+.CW R.d ,
+the current op's own destination-operand address, alongside the hit,
+compared against the tracked address.
+They don't match \-
+.CW R.d
+is
+.CW mod 's
+own frame slot,
+.CW iload 's
+.CW "*mp = ml"
+target, while the tracked hit lands in a
+.I different ,
+unrelated-looking frame (a 128-byte, two-map-byte shape, word 11)
+elsewhere on the same call stack.
+So
 .CW iload
-itself, possibly inside the
-.CW destroy(t)
+did not write the bad value directly; the write happened somewhere
+inside
+.CW destroy(t) ,
+the call right after
+.CW "*mp = ml"
 that releases
 .CW mod 's
-old value \- and settling that needs one more print
-.RN ( R.d
-alongside the hit, compared against the tracked address) that has
-not been added yet.
+.I old
+value \- freeing one object appears to be corrupting a word in a
+second, still-live one, which is the shape of a premature free or a
+refcount that's off by one somewhere in that teardown path rather
+than a stray pointer computation.
+Which function owns the size-128 frame, and what inside
+.CW destroy() 's
+cascade actually writes to it, is the next thing to pin down \- not
+yet done.
 .PP
 .CW checktracked() ,
 .CW checkfreeptr() ,
