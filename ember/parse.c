@@ -666,22 +666,34 @@ static int
 binprec(int t, int *op)
 {
 	switch(t){
-	case '*':	*op = Omul; return 5;
-	case '/':	*op = Odiv; return 5;
-	case '%':	*op = Omod; return 5;
-	case Elsh:	*op = Olsh; return 5;
-	case Ersh:	*op = Orsh; return 5;
-	case '&':	*op = Oand; return 5;
-	case '+':	*op = Oadd; return 4;
-	case '-':	*op = Osub; return 4;
-	case '|':	*op = Oor; return 4;
-	case '^':	*op = Oxor; return 4;
-	case Eeq:	*op = Oeq; return 3;
-	case Eneq:	*op = Oneq; return 3;
-	case '<':	*op = Olt; return 3;
-	case Eleq:	*op = Oleq; return 3;
-	case '>':	*op = Ogt; return 3;
-	case Egeq:	*op = Ogeq; return 3;
+	case '*':	*op = Omul; return 6;
+	case '/':	*op = Odiv; return 6;
+	case '%':	*op = Omod; return 6;
+	case Elsh:	*op = Olsh; return 6;
+	case Ersh:	*op = Orsh; return 6;
+	case '&':	*op = Oand; return 6;
+	case '+':	*op = Oadd; return 5;
+	case '-':	*op = Osub; return 5;
+	case '|':	*op = Oor; return 5;
+	case '^':	*op = Oxor; return 5;
+	case Eeq:	*op = Oeq; return 4;
+	case Eneq:	*op = Oneq; return 4;
+	case '<':	*op = Olt; return 4;
+	case Eleq:	*op = Oleq; return 4;
+	case '>':	*op = Ogt; return 4;
+	case Egeq:	*op = Ogeq; return 4;
+	/*
+	 * "::" (Ocons): go has no equivalent operator to inherit a
+	 * precedence from, so this slot is a real, if low-stakes,
+	 * source-syntax-only choice -- placed where limbo's own yacc
+	 * table puts it: looser than every arithmetic/comparison op
+	 * above, tighter than &&/|| below.  right-associative (matching
+	 * limbo and every other cons-list language), unlike every other
+	 * operator here -- pbinary()'s own loop special-cases it below
+	 * to recurse at the *same* precedence instead of prec+1, so
+	 * "a :: b :: c" parses as "a :: (b :: c)".
+	 */
+	case Econs:	*op = Ocons; return 3;
 	case Eandand:	*op = Oandand; return 2;
 	case Eoror:	*op = Ooror; return 1;
 	}
@@ -700,7 +712,7 @@ pbinary(int prec)
 		if(p == 0 || p < prec)
 			return n;
 		lexskip();
-		r = pbinary(p+1);
+		r = pbinary(op == Ocons ? p : p+1);
 		n = mkbin(op, n, r);
 	}
 }

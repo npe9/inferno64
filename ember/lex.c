@@ -103,6 +103,7 @@ static	Keywd	tokwords[] =
 	"<<=",	Elsheq,
 	">>=",	Ersheq,
 	"...",	Edots,
+	"::",	Econs,
 	"identifier",	Eid,
 	"integer constant",	Econst,
 	"real constant",	Erconst,
@@ -696,6 +697,8 @@ loop:
 		c = Getc();
 		if(c == '=')
 			return Edeclas;
+		if(c == ':')
+			return Econs;
 		unGetc();
 		return ':';
 

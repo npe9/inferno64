@@ -301,6 +301,25 @@ sumark(Node *n)
 		}
 		break;
 	case Olen:
+	case Ocons:
+	case Ohd:
+	case Otl:
+		/*
+		 * same shape as Olen just above (single- or dual-operand,
+		 * result never directly addressable -- falls through to the
+		 * unconditional Rcant default already set at the top of
+		 * this function): each needs one more temp than its own
+		 * operand(s) already combined into n->temps by the generic
+		 * left/right logic above, to hold the destination ecom()
+		 * builds through eacom()/talloc(). Ocons needs it doubly
+		 * (both the materialized left *and* the fresh list-cell
+		 * destination this port always builds -- see ecom()'s
+		 * Ocons case, which deliberately drops limbo's sameaddr()
+		 * copy-elision optimization -- but the ordinary left/right
+		 * combining above already accounts for the two-operand
+		 * shape; this is the same "+1 for the op's own result slot"
+		 * bump Olen gets, not a second one).
+		 */
 		n->temps++;
 		break;
 	}
@@ -1278,6 +1297,46 @@ ecom(Src *src, Node *nto, Node *n)
 			fatal("ecom: len of %T", left->ty);
 			break;
 		}
+		tfree(&tl);
+		return nto;
+	case Ocons: {
+		/*
+		 * ported from limbo/ecom.c's identical case, simplified to
+		 * drop its sameaddr() copy-elision optimization -- always
+		 * materialize right into a fresh temp and Mcons the two
+		 * together, then move that into nto -- matching this port's
+		 * general preference (see nestedrefcomposite's own history)
+		 * for the plainer, always-correct shape over an optimization
+		 * that has to prove itself safe for every possible aliasing
+		 * of "nto" with the tree ecom() is about to walk anyway.
+		 */
+		Node tto;
+
+		if(nto == nil)
+			fatal("ecom: cons without destination");
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nil);
+		ecom(&right->src, talloc(&tto, n->ty, nto), right);
+		genmove(src, Mcons, left->ty, left, &tto);
+		genmove(src, Mas, nto->ty, &tto, nto);
+		tfree(&tl);
+		tfree(&tto);
+		return nto;
+	}
+	case Ohd:
+		if(nto == nil)
+			fatal("ecom: hd without destination");
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nto);
+		genmove(src, Mhd, nto->ty, left, nto);
+		tfree(&tl);
+		return nto;
+	case Otl:
+		if(nto == nil)
+			fatal("ecom: tl without destination");
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nto);
+		genmove(src, Mtl, left->ty, left, nto);
 		tfree(&tl);
 		return nto;
 	case Oneg:

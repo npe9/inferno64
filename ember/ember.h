@@ -548,6 +548,7 @@ enum
 	Elsheq,				/* <<= */
 	Ersheq,				/* >>= */
 	Edots,				/* ... */
+	Econs,				/* :: */
 
 	Kbreak,				/* keywords */
 	Kcase,

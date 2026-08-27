@@ -2308,6 +2308,42 @@ echk(Node *n)
 			n->ty = tint;
 			return n->ty;
 		}
+		if(n->left->op == Oname && (strcmp(n->left->sym->name, "hd") == 0
+		|| strcmp(n->left->sym->name, "tl") == 0)){
+			/*
+			 * "hd(xs)"/"tl(xs)": function-call-style builtins,
+			 * matching the *already-established* local convention
+			 * "len" uses just above -- not limbo's own keyword-
+			 * prefix-operator grammar ("hd xs"), which ember has no
+			 * equivalent lexer/parser support for and doesn't need
+			 * just for these two.
+			 */
+			int ishd;
+			Node *a, *e;
+
+			ishd = n->left->sym->name[0] == 'h';
+			a = n->right;
+			if(a == nil){
+				nerror(n, "%s needs an argument", ishd ? "hd" : "tl");
+				n->ty = terror;
+				return n->ty;
+			}
+			if(a->op == Oseq)
+				e = a->left;
+			else
+				e = a;
+			t = echk(e);
+			if(t->kind != Tlist || t->tof == nil){
+				nerror(n, "cannot %s %T", ishd ? "hd" : "tl", t);
+				n->ty = terror;
+				return n->ty;
+			}
+			n->op = ishd ? Ohd : Otl;
+			n->left = e;
+			n->right = nil;
+			n->ty = ishd ? t->tof : t;
+			return n->ty;
+		}
 		if(n->left->op == Otinst || n->left->op == Oindex){
 			/*
 			 * "swap[int, string](1, "one")": the callee parsed as a
@@ -2613,6 +2649,47 @@ echk(Node *n)
 		}
 		n->ty = t;
 		return n->ty;
+	case Ocons: {
+		Type *et;
+
+		et = echk(n->left);
+		tr = echk(n->right);
+		if(et == terror || tr == terror){
+			n->ty = terror;
+			return n->ty;
+		}
+		if(tr == tany){
+			/*
+			 * "x :: nil": bare nil (now an ordinary tany-typed
+			 * global read, see check()'s nildecl) infers the
+			 * list's own element type from the left side, exactly
+			 * mirroring limbo/typecheck.c's identical special case.
+			 * a fresh Tlist built here needs its own sizetype()
+			 * call -- unlike stype()'s Otlist case, this one has
+			 * no daschk()-style caller that sizes it afterward, and
+			 * an unsized Type silently defaulting to size=0 is
+			 * exactly the bug class 372f4524/c407e833 closed
+			 * structurally (talloc() now fatal()s on it, so a
+			 * mistake here would be loud, not a background fault --
+			 * still correct to get right rather than lean on that).
+			 */
+			n->ty = mktype(&n->src, Tlist, et, nil);
+			sizetype(n->ty);
+			return n->ty;
+		}
+		if(tr->kind != Tlist){
+			nerror(n, "cannot :: to %T", tr);
+			n->ty = terror;
+			return n->ty;
+		}
+		if(!assignable(tr->tof, et, n->left)){
+			nerror(n, "type mismatch in %T :: %T", et, tr);
+			n->ty = terror;
+			return n->ty;
+		}
+		n->ty = tr;
+		return n->ty;
+	}
 	case Oeq: case Oneq: case Olt: case Ogt: case Oleq: case Ogeq:
 		t = echk(n->left);
 		tr = echk(n->right);
