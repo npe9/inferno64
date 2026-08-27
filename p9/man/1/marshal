@@ -1,0 +1,278 @@
+.TH MARSHAL 1
+.SH NAME
+marshal \- compose a MIME mail message
+.SH SYNOPSIS
+.B marshal
+[
+.B -n
+] [
+.B -s
+.I subject
+] [
+.B -C
+.I ccrecipient
+] [
+.B -B
+.I bccrecipient
+] [
+.B -t
+.I type
+] [
+.B -a
+|
+.B -A
+.I attachment
+] [
+.B -R
+.I replymsg
+]
+.B -8
+|
+.I recipient-list
+.SH DESCRIPTION
+.I Marshal
+is a real, structural translation of Plan 9's own
+.IR marshal (1)
+.RB ( sys/src/cmd/upas/marshal/marshal.c ,
+1832 lines - see BUGS for the one deliberate scoping decision and two
+real translation bugs found while writing it), compiled to Dis and run
+by
+.IR emu ,
+not a host binary. It lives under
+.B p9/cmd
+rather than
+.BR appl/cmd ;
+see
+.B p9/dis/README
+for how to bind it in.
+.PP
+.I Marshal
+composes a MIME message from a set of headers - recipients (from
+.I recipient-list
+or, with
+.BR -8 ,
+from the message's own
+.B To:/Cc:/Bcc:
+lines), a subject, attachments, and (unless
+.BR -n )
+a message read from standard input - and writes the finished,
+RFC822/MIME-formatted bytes to standard output. See BUGS for what this
+translation deliberately does NOT do with those bytes once composed.
+.PP
+Local aliases (one per line in
+.BR $home/mail/names ,
+first word the alias name, remaining words its expansion addresses)
+are expanded recursively in every recipient list, including addresses
+that appear directly in
+.B To:/Cc:/Bcc:
+header lines read from standard input.
+.TP
+.B -n
+Do not read a message body (or headers) from standard input at all.
+.TP
+.B -s
+.I subject
+Set the
+.B Subject:
+header, RFC2047-encoded automatically if it contains any non-ASCII byte.
+.TP
+.B -C
+.I ccrecipient
+.TP
+.B -B
+.I bccrecipient
+Add a Cc:/Bcc: recipient (repeatable).
+.TP
+.B -t
+.I type
+Force the MIME content type of the
+.I next
+.B -a
+or
+.B -A
+attachment, instead of guessing it from the file's extension (or, if
+that fails, from
+.BR /lib/mimetype ).
+.TP
+.B -a
+.I attachment
+.TP
+.B -A
+.I attachment
+Attach a file, as a regular attachment
+.RB ( -a )
+or inline
+.RB ( -A ).
+Repeatable, mixed order.
+.TP
+.B -R
+.I replymsg
+Add an
+.B In-Reply-To:
+header naming the message ID recorded in
+.IB replymsg /messageid,
+if that file exists.
+.TP
+.B -8
+Take recipients from the message's own
+.B To:/Cc:/Bcc:
+header lines instead of from
+.IR recipient-list ,
+which must then be empty.
+.SH FILES
+.TP
+.B $home/mail/names
+local alias file - see DESCRIPTION.
+.TP
+.B $home/mail/headers
+a per-user default-headers file, read and prepended to every outgoing
+message regardless of
+.BR -n ,
+exactly like the real source's own (unconditional)
+.B $MAILROOT/box/<user>/headers
+read - see BUGS.
+.SH SOURCE
+.B /p9/cmd/marshal.b
+(translated from
+.BR marshal.c ;
+see its own header comment for the full derivation)
+.SH SEE ALSO
+.IR marshaltest (1)
+.SH BUGS
+.B THE ONE SCOPING DECISION, stated plainly, not as a capability gap
+like
+.IR tar (1)'s
+dropped compression: this translation is marshal's
+.B composition engine
+only - header parsing, RFC822 address tokenizing, recursive alias
+expansion, MIME multipart assembly, base64 body encoding, RFC2047
+header encoding - and stops exactly where the real source hands the
+finished message to a subprocess
+.RB ( sendmail() ,
+which then execs
+.BR sendmail ,
+then
+.BR /bin/upas/send ,
+optionally through a
+.B pgp
+filter, optionally also copying a local mailbox with real file
+locking under
+.BR -F / -S ).
+None of that subprocess machinery is translated, and neither are the
+flags whose only job is configuring it
+.RB ( -x / -# / -d / -p / -F / -S
+are simply not accepted at all - not stubbed to accept-and-no-op,
+since a no-op would misrepresent what those flags do for real). This
+is a genuine, deliberate difference from
+.IR tar (1)'s
+dropped compression, which still does its WHOLE job (archive/extract)
+on an uncompressed file - a
+.I marshal
+that composes a message and stops is a different program from the one
+in
+.BR sys/src/cmd/upas/marshal/ ,
+not a subset of it, because composing-then-delivering is the real
+program's one integrated action. Two things make this the right call
+anyway: this backlog's own standing rule that sending real mail is an
+outward-facing action needing explicit human intent, never something
+automated tooling should trigger as a side effect of a test suite; and
+Dis having no fork/exec at all (this backlog's own
+.IR tar (1)
+precedent), so there is no faithful way to run
+.B /bin/upas/send
+as a real subprocess regardless. The real destination for these bytes
+in this tree today is
+.B sendmail.b
+.RB ( appl/cmd/sendmail.b ,
+real SMTP via
+.BR dial.m ) -
+loading it as an in-process Command module and wiring a constructed
+pipe to it is a genuine follow-on design decision, deliberately left
+undone here, not silently absorbed.
+.PP
+A real, previously-total gap, found by re-reading the source's own
+control flow rather than by any test failing (no earlier test
+happened to exercise this file at all): the real source reads a
+per-user default-headers file
+.RB ( $MAILROOT/box/<user>/headers )
+.B UNCONDITIONALLY,
+regardless of
+.BR -n ,
+right after whatever stdin-derived headers were (or weren't) read -
+and its own header lines feed into the SAME "already seen" bitmask
+that suppresses the auto-generated Date:/From:/To:/Cc:/Subject:
+lines. An earlier draft of this translation omitted this file
+entirely. Fixed by adding the
+.B $home/mail/headers
+read (this tree's own stand-in for
+.BR $MAILROOT ,
+the same adaptation
+.B $home/mail/names
+already makes for the alias file) in the same unconditional place the
+real source has it, confirmed with
+.IR marshaltest (1)'s
+own
+.I t26
+and a negative control (disabling the read reproduces exactly those
+three failures).
+.PP
+A real TRANSLATION bug, caught only by testing, not by re-reading:
+.BR body() 's
+first draft emitted the message's own leading newline-or-first-byte
+immediately, then the
+.BR Content-Type / Content-Transfer-Encoding
+header pair, then the rest of the body - splicing that header into
+the middle of the body's own first line. The real source instead
+buffers the lead byte(s) together with its own read-ahead high-bit
+scan and only ever
+.B Bwrite() s
+that buffer
+.B after
+first printing the Content-Type header, if any - i.e. the header
+always comes before ANY body bytes reach the wire, never interleaved
+with them. Fixed to match that ordering, confirmed with
+.IR marshaltest (1)'s
+own
+.IR t18 / t20
+and a negative control (reverting to the interleaved order reproduces
+the exact splice).
+.PP
+A second real TRANSLATION bug, also caught only by testing: attachments
+built from
+.BR -a / -A
+flags were silently discarded, because
+.BR readheaders() 's
+own return value for its attachment list was assigned directly over
+whatever list the flag parser had already built, rather than being
+appended onto it (the real source passes a pointer already advanced to
+the flag-built list's own tail, so
+.B readheaders()
+naturally continues appending there rather than starting fresh).
+Fixed by threading the existing attachment list INTO
+.BR readheaders() ,
+confirmed with
+.IR marshaltest (1)'s
+own
+.IR t20 / t21
+and a negative control.
+.PP
+.BR mkattach() 's
+own fallback to exec'ing
+.B /bin/file -m
+to sniff an attachment's MIME type (when neither an explicit
+.BR -t ,
+the built-in extension table, nor
+.B /lib/mimetype
+matches) has no fork/exec available in Dis - this translation falls
+through to the exact SAME "safest default" the C itself already falls
+back to when that pipe/fork fails:
+.BR application/octet-stream .
+.PP
+The real source's own
+.B "if(headersrv == Nomessage && first == nil) exits(0);"
+shortcut - a genuinely empty invocation (no stdin headers/body at
+all, no attachments either) quietly succeeds without ever invoking
+.B sendmail
+- is not reproduced: without a delivery step to skip, "success" here
+just means composing whatever minimal message results (an empty
+body, still-valid headers), not a silent early exit.

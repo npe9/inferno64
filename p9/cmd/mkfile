@@ -41,6 +41,8 @@ TARG=\
 	qrtest.dis\
 	news.dis\
 	newstest.dis\
+	marshal.dis\
+	marshaltest.dis\
 
 MODULES=\
 

@@ -2474,3 +2474,149 @@ below.
     scan, and the bad-option failure path. Full 20-suite regression
     across this backlog (`asciitest` through `urlencodetest`, plus
     `newstest` itself) - zero failures.
+
+27. **`upas/marshal.c` (1832 lines, MIME message composer) - DONE
+    (`marshal.b`/`marshaltest.b`), the last named item from this
+    backlog's own doc item 21 candidate list.** Source:
+    `/Users/npe/src/plan9front/sys/src/cmd/upas/marshal/marshal.c`
+    (pulled from outside this repo, same as `cb.c`/`qr.c`/`news.c`
+    were). A dedicated scoping research pass (before any code was
+    written) read the entire file plus the shared `upas/common`
+    library it depends on, and specifically answered the question
+    this item had been deferred on: whether marshal itself performs
+    any real mail delivery or network I/O, or only composes a message
+    and hands it to something else. It's the latter - `main()` always
+    calls `sendmail()`, which forks and execs `sendmail`, then
+    `/bin/upas/send`, optionally through a `pgp` filter, optionally
+    (under `-F`/`-S`) also appending a copy into a real local mailbox
+    with real file locking, entirely inside that forked child.
+
+    **THE ONE SCOPING DECISION, stated plainly rather than framed as
+    a capability gap like `tar.c`'s dropped compression:** this
+    translation implements marshal's COMPOSITION ENGINE - header
+    parsing, RFC822 address tokenizing, recursive local-alias
+    expansion, MIME multipart assembly, base64 body encoding, RFC2047
+    header encoding - and stops exactly where the real source hands
+    the finished bytes to a subprocess. `sendmail()`, `pgpfilter()`,
+    `tee()`, `waitforsubprocs()`, and the flags whose only job is
+    configuring that handoff (`-x`/`-#`/`-d`: "run sendmail with these
+    args and write nothing"; `-p`: interpose pgp; `-F`/`-S`: also copy
+    into a local mailbox) are not translated at all - not stubbed to
+    accept-and-no-op, since a no-op would misrepresent what those
+    flags do for real. An advisor review during scoping made the
+    right distinction explicit: this is NOT the same shape as `tar.c`'s
+    dropped compression, which still does its whole job
+    (archive/extract) on everything but a compressed archive - a
+    `marshal` that composes a message and stops is a genuinely
+    different program from the one in `sys/src/cmd/upas/marshal/`,
+    not a subset of it, because composing-then-delivering is the real
+    program's one integrated action, not two separable features. Two
+    things make dropping it the right call anyway: this backlog's own
+    standing rule that sending real mail is an outward-facing action
+    needing explicit human intent, never something automated tooling
+    or its own test suite should trigger as a side effect; and Dis
+    having no fork/exec at all (this backlog's own `tar.b` precedent,
+    re-confirmed here), so there is no faithful way to run
+    `/bin/upas/send` as a real subprocess regardless. The real
+    destination for these bytes in this tree today is `sendmail.b`
+    (`appl/cmd/sendmail.b`, real SMTP via `dial.m`, already working) -
+    loading it as an in-process Command module and wiring a
+    constructed pipe to it is a genuine follow-on design decision of
+    its own, deliberately left undone here, not silently absorbed.
+
+    **This scoping pass also corrected an earlier, WRONG claim in
+    this very doc** (this item's own original one-line note, made
+    before the file was actually read): that marshal "never touches
+    the mbox-append/lock code at all." That was false on the facts -
+    `sendmail()`'s own forked child calls `foldername()`/
+    `openfolder()`/`closefolder()` directly under `-F`/`-S`, and
+    `openfolder()` really does take a real file lock - even though the
+    CONCLUSION (no mbox-format dependency for what actually gets
+    translated) still holds, for a different reason: `-F`/`-S` only
+    exist to configure the same dropped subprocess, so the whole
+    mbox-locking path leaves with it. Corrected in place rather than
+    left to mislead the next reader.
+
+    **A real risk, checked before writing a line of `readheaders()`,
+    not after:** whether bufio's backward `Iobuf.seek()` (used to push
+    a non-header line back for the body reader, matching the C's own
+    `Bseek(in, -Blinelen(in), 1)`) works on a non-seekable stdin PIPE,
+    not just a redirected file - this tree's own `inferno-rio-stdin-
+    eof-hang` finding already showed bufio misbehaving on redirected
+    stdin in a different way. A standalone probe (a real `Sys->pipe()`,
+    not a file) confirmed: a single-line rewind always lands inside
+    `Iobuf`'s own 8192-byte read-ahead buffer, which its own `seek()`
+    serves from memory without ever calling the underlying fd's real
+    seek - safe for exactly the distance this function ever rewinds.
+
+    **Verification is two different shapes for two different pieces,
+    not one uniform oracle:** the address tokenizer/alias-expansion
+    engine (`get822token()`/`expandline()`, the hardest single piece,
+    translated and verified first) was checked against a standalone
+    oracle harness built with this backlog's usual `#C`+`clang`
+    pattern - but `marshal.c` itself cannot be built standalone the way
+    `qr.c`/`cb.c` can (it needs the rest of `upas/common` merely to
+    link), so the harness instead copies every relevant function body
+    VERBATIM from the real source (only a driver `main()` and an
+    in-memory alias-list stub, replacing `readaliases()`'s own real
+    file read, are new) - kept outside this repo, not run automatically,
+    same category of verification as `qrtest.b`'s own non-reproduced
+    `bc` finding. The composition engine (`run()` - MIME assembly,
+    attachments, base64) has no such oracle at all (composing a
+    message IS marshal's own job here, not delegated to a library);
+    its 15 cases (`marshaltest.b`'s own `t17`-`t26`) check hand-traced
+    expectations directly, plus one real byte-for-byte base64
+    round-trip.
+
+    **Two real TRANSLATION bugs, both caught only by testing, not by
+    re-reading:** (1) `body()`'s first draft emitted the message's own
+    leading byte immediately, then the Content-Type/Content-Transfer-
+    Encoding header pair, then the rest of the body - splicing the
+    header into the middle of the body's own first line. The real
+    source instead buffers the lead byte(s) together with its own
+    high-bit scan and only ever writes that buffer AFTER first
+    printing the Content-Type header - the header always precedes ANY
+    body bytes on the wire, never interleaved with them. Found by
+    `t18`/`t20` failing with the header text spliced mid-line,
+    confirmed with a negative control (reverting the fix reproduces
+    the exact splice). (2) attachments built from `-a`/`-A` flags were
+    silently discarded entirely - `readheaders()`'s own returned
+    attachment list was assigned directly OVER whatever list the flag
+    parser had already built, rather than appended onto it (the real
+    source passes a pointer already advanced to the flag-built list's
+    own tail, so `readheaders()` naturally continues appending there).
+    Found by `t20`/`t21` failing with no multipart structure at all
+    despite `-a` being given, confirmed with a negative control.
+
+    **A real, previously-total GAP, found by re-reading the source's
+    own control flow after the rest was working, not by any test
+    failing (nothing had exercised this file at all):** the real
+    source reads a per-user default-headers file
+    (`$MAILROOT/box/<user>/headers`) UNCONDITIONALLY, regardless of
+    `-n`, right after whatever stdin-derived headers were or weren't
+    read - and its own lines feed into the SAME "already seen" bitmask
+    that suppresses the auto-generated Date:/From:/To:/Cc:/Subject:
+    lines. An earlier draft omitted this file entirely. Fixed by
+    adding the read in the same unconditional place the real source
+    has it, using `$home/mail/headers` as this tree's own stand-in for
+    `$MAILROOT` (the same adaptation `$home/mail/names` already makes
+    for the alias file) - confirmed with a new case (`t26`) and a
+    negative control (disabling the read reproduces exactly its three
+    assertions failing).
+
+    Two smaller, stated-not-silently-dropped divergences: `mkattach()`'s
+    own fallback to exec'ing `/bin/file -m` (when neither an explicit
+    `-t`, the extension table, nor `/lib/mimetype` matches) falls
+    through to the exact same "safest default" the C itself already
+    uses when that pipe/fork fails (`application/octet-stream`) rather
+    than inventing a new one; and the real source's own
+    `if(headersrv==Nomessage && first==nil) exits(0);` quiet-success
+    shortcut for a genuinely empty invocation is not reproduced - with
+    no delivery step to skip, this translation just composes whatever
+    minimal message results instead of exiting early.
+
+    Final state: 56 of 56 `marshaltest.b` cases pass (32 for the
+    address engine, 24 for composition). Full 21-suite regression
+    across this backlog (`asciitest` through `urlencodetest`, plus
+    `marshaltest` itself) - zero failures. This closes the doc item 21
+    candidate list entirely.

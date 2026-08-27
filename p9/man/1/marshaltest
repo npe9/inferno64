@@ -1,0 +1,150 @@
+.TH MARSHALTEST 1
+.SH NAME
+marshaltest \- regression test for marshal(1)
+.SH SYNOPSIS
+.B marshaltest
+.SH DESCRIPTION
+.I Marshaltest
+loads
+.BR /p9/dis/marshal.dis 's
+in-process test seams and checks them two different ways, matching
+the two very different pieces of
+.IR marshal (1)
+this suite covers.
+.PP
+The RFC822 address tokenizer and alias-expansion engine
+.RB ( get822token() / expandline() )
+is checked via
+.B testexpandline()
+against expectations that were themselves verified, during
+development, against a standalone oracle harness built with this
+backlog's usual
+.B #C
++
+.B clang
+pattern - but every function body in that harness was copied
+.B verbatim
+from the real
+.B marshal.c
+(only a driver
+.B main()
+and an in-memory alias-list stub, replacing
+.BR readaliases() 's
+own real file read, are new), since
+.B marshal.c
+itself cannot be built standalone the way
+.IR qr.c (1)
+or
+.IR cb.c (1)
+can - it needs the rest of
+.B upas/common
+(mbox paths, folder locking) merely to link, none of which the
+address engine itself ever calls. That harness was not kept in this
+repository and is not run automatically here - see BUGS.
+.PP
+The composition engine
+.RB ( run() ,
+covering header assembly, MIME multipart structure, base64 encoding,
+and attachment handling) has no such oracle at all - there is nothing
+to build standalone here, since composing a message IS marshal's own
+job, not a subset delegated to a library the way
+.IR iconv (1)'s
+pixel conversion was. These cases are checked by hand-tracing the
+real source's own algorithm against
+.BR checkcontains / checknotcontains
+assertions on the composed output, plus one real byte-for-byte
+base64 round-trip
+.RB ( t21 :
+encode a known binary attachment, decode the result back out of the
+composed message, compare against the original bytes exactly).
+.SH CASES
+.TP
+.I t1
+-
+.I t16
+The address engine - see this file's own header comment in the
+source for the full case list and the real findings they turned up
+(a stale C comment, and a genuinely non-converging self-referential
+alias bounded only by
+.BR rexpand() 's
+own 32-pass cap).
+.TP
+.I t17
+-
+.I t19
+Minimal composition (no attachments): headers present with no
+stdin body, an ASCII stdin body printed 7bit/US-ASCII, and a body
+with one high-bit byte switching to 8bit/UTF-8.
+.TP
+.I t20
+-
+.I t21
+Attachments: a directly-displayable
+.RB ( .txt )
+attachment passes through verbatim inside its own MIME part; an
+attachment with no recognized extension is base64-encoded and
+decoded back byte-for-byte against the original.
+.TP
+.I t22
+A high-bit
+.B -s
+subject is RFC2047 Q-encoded.
+.TP
+.I t23
+-
+.I t25
+An unknown flag, no recipients given at all, and attaching a
+nonexistent file each fail cleanly.
+.TP
+.I t26
+The user's own default-headers file
+.RB ( $home/mail/headers )
+is read regardless of
+.BR -n ,
+and a custom header there suppresses the matching auto-generated
+one - the real gap this suite's own development caught by re-reading
+the source, not by a test failing (see
+.IR marshal (1)'s
+own BUGS).
+.SH SOURCE
+.B /p9/cmd/marshaltest.b
+.SH SEE ALSO
+.IR marshal (1)
+.SH BUGS
+Does not re-verify the address engine's own oracle-derived
+expectations against a live, automatically-built oracle every run,
+unlike
+.IR qrtest (1)
+or
+.IR cbtest (1)
+- that harness needed the rest of
+.B upas/common
+merely to link (mbox paths, folder locking, none of which the address
+engine itself calls), which would have made this suite markedly less
+reproducible for a piece of verification that does not need
+re-demonstrating on every run. The expectations it produced are
+recorded as comments alongside each case in the source instead.
+.PP
+Does not exercise
+.BR -8 " (recipients taken from stdin's own To:/Cc:/Bcc: lines rather"
+than
+.IR recipient-list ),
+.BR -C / -B
+(Cc:/Bcc: recipients),
+.BR -R
+.RI ( In-Reply-To: ),
+or
+.B -t
+(forcing an attachment's MIME type) - each is a straightforward,
+independently-traceable path through code the other cases already
+exercise, not a gap discovered by trying and failing.
+.PP
+Does not exercise
+.IR marshal (1)'s
+own CLI entry point
+.RB ( init() 's
+own stdin-reading and stdout-writing) - every case here drives
+.BR run() 's
+own
+.I data
+byte array directly, matching this backlog's own convention.
