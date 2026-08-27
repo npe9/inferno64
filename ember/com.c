@@ -317,6 +317,91 @@ eacom(Node *n, Node *reg, Node *t)
 	return reg;
 }
 
+/*
+ * n is an Oind node -- "*base", or check.c's Odot-built Oind(Oadd(base,
+ * offset)) for "base.field" -- whose own addressability sumark left at
+ * Rcant because *its* base (n->left->left, the Oadd's own left) is
+ * itself already Radr/Rmadr: a *third* level of indirection, e.g.
+ * "o.in.v" where in is itself ref-typed, check.c's Odot case lowering
+ * that to Oind(Oadd(Oind(Oadd(o,inoff)), voffset)) -- the addressing
+ * enum has no representation for a third level at all (Addr, gen.c, is
+ * a single (decl,offset) pair), so this can't be fixed with another
+ * sumark() row, only an actual instruction split.  called from both
+ * sides of an assignment through such a chain: ecom's own Oind case
+ * (reading through it) and scom's Oas case (writing through it, where
+ * n never reaches ecom's per-op dispatch at all -- it's only ever
+ * sumark()'d and handed to genmove() as a destination) -- both need
+ * the identical fixup, so it lives here once rather than being
+ * duplicated at each call site.
+ *
+ * a no-op (returns nil) for any other shape, so every call site can
+ * call this unconditionally right after sumark() rather than each
+ * re-deriving the exact precondition.
+ *
+ * mechanism: materialize n->left->left -- the Oadd's own base, the
+ * thing that's already Radr/Rmadr -- into a fresh temp first, then let
+ * the *same* Rreg-rooted Oadd/Oind shape every single-level ref field
+ * access already uses (p.field on a plain ref parameter p: Oind(Oadd(p,
+ * offset)), p an ordinary Rreg local) take over unchanged once
+ * re-sumark()'d.
+ *
+ * two real, earlier, in-tree-reverted attempts at this exact
+ * materialization corrupted memory before converging on the version
+ * below (full history in the ember-language-status memory file, not
+ * repeated here): the first routed through ecom's general Oadd/
+ * arithmetic case, whose own talloc() nok-reuse aliased the
+ * materialized temp onto the caller's own destination frame slot; the
+ * second used an ordinary Tref-typed temp, correctly zeroed by
+ * initmem() and correctly incref'd/destroyed by IMOVP on its own --
+ * and was wrongly blamed for a crash inside a background GC thread's
+ * markheap() that a later, more careful isolation (two-step vs.
+ * directly-nested "ref Outer{in: ref Inner{...}}" composite literals)
+ * proved was a *different*, pre-existing bug in nested ref-typed
+ * composite-literal construction, unrelated to this fix entirely --
+ * see that bug's own writeup in memory.  this version sidesteps
+ * refcounting rather than trying to get it exactly right: base's own
+ * *type* is overridden to tint on a shallow copy before materializing
+ * it, so the recursive ecom() call below (dispatching back into
+ * ecom's own Oind case, since baseval's op is still Oind) reads n->ty
+ * as tint, not Tref -- genmove's own Mas+Tint row (movetab, optab.c)
+ * is IMOVW, an ordinary word copy with no incref/destroy() at all,
+ * unlike Mas+Tref's IMOVP -- exactly the same "this is an address, not
+ * a counted reference" treatment check.c's own Odot case already gives
+ * every *other* intermediate Oadd/Oind node it builds (their own ->ty
+ * is always tint, never the field's real type).  the returned temp
+ * itself is talloc()'d tint for the same reason: never marked as a
+ * pointer in the enclosing function's own GC descriptor, so the
+ * background collector has no reason to ever look at this frame word
+ * at all, whatever bit pattern happens to be sitting in it.
+ *
+ * the temp is heap-allocated (mkn()), not a stack-local Node the way
+ * eacom()'s own reg parameter usually is: n->left->left keeps
+ * referencing it after this function returns (until whatever genmove()
+ * eventually reads through n runs, at the call site, possibly several
+ * statements' worth of codegen later for the Oas case above) -- a
+ * stack-local would dangle the moment this function returned.  the
+ * caller is responsible for tfree()ing the returned node (nil-safe,
+ * so an always-called "tfree(fixdblind(...))"-style pairing works
+ * whether or not this function actually did anything).
+ */
+static Node*
+fixdblind(Node *n)
+{
+	Node *tres, *baseval;
+
+	if(n == nil || n->op != Oind || n->addable < Rcant
+	|| n->left == nil || n->left->op != Oadd)
+		return nil;
+	baseval = mkn(0, nil, nil);
+	*baseval = *n->left->left;
+	baseval->ty = tint;
+	tres = mkn(Oname, nil, nil);
+	ecom(&baseval->src, talloc(tres, tint, nil), baseval);
+	n->left->left = tres;
+	sumark(n);
+	return tres;
+}
+
 static void
 callcom(Src *src, int op, Node *n, Node *ret)
 {
@@ -812,10 +897,15 @@ destructure(Src *src, Node *lhs, Node *rhs)
 
 	fd = rhs->ty->ids;
 	for(p = lhs; p != nil; p = p->right){
+		Node *fixid;
+
 		id = p;
 		if(p->op == Oseq)
 			id = p->left;
 		sumark(id);
+		/* "o.in.v, x = f()": id can be a chained-ref lvalue, same
+		 * write-side gap fixdblind()'s own comment describes. */
+		fixid = fixdblind(id);
 		adr = mkn(Oadr, dupn(&tuptemp), nil);
 		adr->src = id->src;
 		adr->ty = rhs->ty;
@@ -830,6 +920,7 @@ destructure(Src *src, Node *lhs, Node *rhs)
 		ind->ty = fd->ty;
 		sumark(ind);
 		ecom(&id->src, id, ind);
+		tfree(fixid);
 		fd = fd->next;
 		if(p->op != Oseq)
 			break;
@@ -1158,10 +1249,16 @@ ecom(Src *src, Node *nto, Node *n)
 		&& left->addable != Rareg && left->addable != Ramreg
 		&& left->addable != Raadr && left->addable != Ramadr)
 			left = eacom(left, &tl, nil);
-		if(nto != nil)
-			genmove(src, Mas, n->ty, n, nto);
-		tfree(&tl);
-		return nto;
+		{
+			Node *fd;
+
+			fd = fixdblind(n);
+			if(nto != nil)
+				genmove(src, Mas, n->ty, n, nto);
+			tfree(&tl);
+			tfree(fd);
+			return nto;
+		}
 	case Olen:
 		if(left->addable >= Rcant)
 			left = eacom(left, &tl, nto);
@@ -1663,26 +1760,42 @@ scom(Node *n)
 			}
 			sumark(n->right);
 			sumark(n->left);
-			if(n->right->op == Ocomposite){
-				if(compositexhaustive(n->right)){
-					/*
-					 * same reasoning as Odas's own exhaustive
-					 * branch above: nothing is left unset, so
-					 * nothing of n->left's *prior* value can leak
-					 * through regardless of what it was -- the
-					 * direct store is exactly as correct as
-					 * storecompositezero() here, for less cost.
-					 */
-					Node *adr;
+			{
+				/*
+				 * "o.in.v = expr": n->left can be a chained-ref
+				 * Oind unresolved by sumark() alone, the write
+				 * side of the same gap fixdblind()'s own comment
+				 * (above) describes for ecom's Oind case -- n->left
+				 * never reaches that case at all here, it's only
+				 * ever sumark()'d and handed to ecom()/genmove() as
+				 * a destination, so this site needs the identical
+				 * fixup applied directly.
+				 */
+				Node *fd;
 
-					adr = mkn(Oadr, dupn(n->left), nil);
-					adr->src = n->src;
-					adr->ty = n->left->ty;
-					storecomposite(&n->src, adr, n->right);
+				fd = fixdblind(n->left);
+				if(n->right->op == Ocomposite){
+					if(compositexhaustive(n->right)){
+						/*
+						 * same reasoning as Odas's own exhaustive
+						 * branch above: nothing is left unset, so
+						 * nothing of n->left's *prior* value can leak
+						 * through regardless of what it was -- the
+						 * direct store is exactly as correct as
+						 * storecompositezero() here, for less cost.
+						 */
+						Node *adr;
+
+						adr = mkn(Oadr, dupn(n->left), nil);
+						adr->src = n->src;
+						adr->ty = n->left->ty;
+						storecomposite(&n->src, adr, n->right);
+					}else
+						storecompositezero(&n->src, n->left, n->right);
 				}else
-					storecompositezero(&n->src, n->left, n->right);
-			}else
-				ecom(&n->src, n->left, n->right);
+					ecom(&n->src, n->left, n->right);
+				tfree(fd);
+			}
 			popblock();
 			return;
 		case Ovardecl: {
@@ -1719,20 +1832,28 @@ scom(Node *n)
 			pushblock();
 			sumark(n->left);
 			sumark(n->right);
-			e = n->left;
-			if(e->addable >= Rcant)
-				fatal("scom: assignop lhs not addressable");
 			{
-				Node tr, *r;
+				/* "o.in.v += expr": see the Oas case's own comment
+				 * on fixdblind() -- the identical write-side gap. */
+				Node *fd;
 
-				r = n->right;
-				if(r->addable >= Rcant)
-					r = ecom(&r->src, talloc(&tr, r->ty, nil), r);
-				else
-					tr.decl = nil;
-				/* 2-operand form: e = e OP r */
-				genop(&n->src, n->op, r, nil, e);
-				tfree(&tr);
+				fd = fixdblind(n->left);
+				e = n->left;
+				if(e->addable >= Rcant)
+					fatal("scom: assignop lhs not addressable");
+				{
+					Node tr, *r;
+
+					r = n->right;
+					if(r->addable >= Rcant)
+						r = ecom(&r->src, talloc(&tr, r->ty, nil), r);
+					else
+						tr.decl = nil;
+					/* 2-operand form: e = e OP r */
+					genop(&n->src, n->op, r, nil, e);
+					tfree(&tr);
+				}
+				tfree(fd);
 			}
 			popblock();
 			return;
@@ -1740,10 +1861,18 @@ scom(Node *n)
 		case Odec:
 			pushblock();
 			sumark(n->left);
-			one = *mkconst(&n->src, 1);
-			one.ty = tint;
-			sumark(&one);
-			genop(&n->src, n->op == Oinc ? Oadd : Osub, &one, nil, n->left);
+			{
+				/* "o.in.v++": see the Oas case's own comment on
+				 * fixdblind() -- the identical write-side gap. */
+				Node *fd;
+
+				fd = fixdblind(n->left);
+				one = *mkconst(&n->src, 1);
+				one.ty = tint;
+				sumark(&one);
+				genop(&n->src, n->op == Oinc ? Oadd : Osub, &one, nil, n->left);
+				tfree(fd);
+			}
 			popblock();
 			return;
 		case Oexpr:
