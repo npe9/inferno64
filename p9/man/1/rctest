@@ -7,7 +7,7 @@ rctest \- regression test for rc's word-list/variable-table foundation
 .B Rctest
 exercises
 .IR rc (1)'s
-five translated slices - word lists
+six translated slices - word lists
 .RI ( newword ,
 .IR count ,
 .IR copywords ,
@@ -47,11 +47,18 @@ input stream, and
 .BR syn.y 's
 own grammar - hand-written recursive descent, exercised here via
 .BR treeshape() ,
-a test-only structural dump of a parsed tree (not real
-.IR rc 's
+a test-only structural dump of a parsed tree - and
+.BR pcmd.c 's
 own
 .B %t
-pretty-printer)
+tree-to-source pretty-printer, which IS real here
+.RI ( treeshape() " is a different, test-only tool for a different"
+job), exercised via
+.BR testparseprint() " (" parsecmd() " then " pcmd() )
+and
+.BR testparseprintfn() " (" parsecmd() " then " fnstr() ),
+round-tripping this same parser's own real output rather than
+hand-building a tree for every case
 - through
 .BR rc.dis 's
 own test-seam functions, calling
@@ -123,7 +130,7 @@ is all
 .B epimung
 itself looks at.
 .PP
-Five real findings surfaced by tests that initially failed, not by
+Seven real findings surfaced by tests that initially failed, not by
 inspection - see
 .IR rc (1)'s
 own BUGS for the full traces: a comment's own trailing newline is a
@@ -145,17 +152,29 @@ in
 .BR lex.c 's
 own word-stop set;
 .B "SWITCH word"
-takes a bare word, not a dedicated condition syntax; and this
-parser's own token-level
+takes a bare word, not a dedicated condition syntax; this parser's own
+token-level
 .B pskipnl()
 exists because the raw, character-level
 .B skipnl()
 this file's lexer tests already exercise is the wrong thing to call
 one layer up, in a grammar action - it would skip characters out from
 under a token this recursive-descent parser has already fetched as
-lookahead, unlike real yacc's own lazier lookahead timing. All five
-test expectations were corrected to match the real, verified behavior
-rather than the translation being changed to match a wrong assumption.
+lookahead, unlike real yacc's own lazier lookahead timing; and real
+.BR pcmd.c 's
+own
+.B DUP
+case both drops the rest of a DUP-prefixed command from its own
+display string, and prints its two fd numbers back in the opposite
+order from how
+.BR lex.c 's
+own bracket parser stored them - so a tree parsed from
+.B >[2=1]
+genuinely prints back as
+.BR >[1=2] .
+All seven test expectations were corrected to match the real,
+verified behavior rather than the translation being changed to match
+a wrong assumption.
 .SH SOURCE
 .B /p9/cmd/rctest.b
 .SH SEE ALSO

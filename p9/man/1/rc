@@ -35,9 +35,9 @@ pipes) to design against Limbo's
 and channel model from scratch, since there is no Posix reference to
 translate that part from.
 .PP
-This version implements five slices - a real grammar now, but still
-no execution engine - see BUGS. The first is word lists and the
-variable/keyword tables from
+This version implements six slices - a real grammar and a real
+tree-to-source printer now, but still no execution engine - see BUGS.
+The first is word lists and the variable/keyword tables from
 .B word.c
 and
 .BR var.c .
@@ -233,45 +233,113 @@ separately guarded, since every keyword already has its own case in
 the dispatch that would otherwise fall through to
 .IR first .
 .PP
-Two grammar actions are only partially real, both noted where
-they're defined:
-.B simplemung()
-builds the real SIMPLE node and does the real trailing-redirection
-percolation
-.RI ( tree.c 's
-own algorithm, not just field-copying), but leaves the node's
-.B str
-empty rather than calling
-.B "pfmt(s, \(dq%t\(dq, t)"
-- that needs the tree-to-source pretty-printer from
-.BR io.c / pfnc.c ,
-not translated yet.
+One grammar action is only partially real, noted where it's defined:
 .B heredoc()
 returns a clearly-marked placeholder WORD token in the real tag's
 own place - the real one opens a temp file that
 .B exec.c
 later fills with the heredoc body (source lines read up to a line
 matching the tag), needing a source-reading front end this
-translation doesn't have (no Thread, no interactive/file reader).
-Both let
-.BR <<TAG /braces/parens/simple
-commands parse into the right shape now; neither can run anything.
+translation doesn't have (no Thread, no interactive/file reader). It
+lets
+.B <<TAG
+parse into the right shape now (see the sixth slice's own BUGS entry
+below for what its printed form actually looks like); it cannot run
+anything.
+.B simplemung()
+itself is now fully real, including its
+.B str
+field, since
+.BR pcmd() " (the sixth slice, below) gave it a real"
+.B "pfmt(s, \(dq%t\(dq, t)"
+to call.
 .PP
 .BR treeshape() ,
 exposed only to
 .IR rctest (1),
 is a test-only structural dump
-.RI ( "(TYPENAME child...)" ),
-not real
+.RI ( "(TYPENAME child...)" )
+- a different tool for a different job than real
 .IR rc 's
 own
 .B %t
 pretty-printer (which reproduces
 .I rc
-source text) - it exists purely so a parser test can compare a whole
+source text): it exists purely so a parser test can compare a whole
 tree in one assertion instead of walking
 .BR .child / .ttype / .str
 by hand the way earlier slices had to.
+.PP
+The sixth is
+.BR pcmd.c ,
+real
+.IR rc 's
+own
+.B %t
+tree-to-source pretty-printer, brought forward ahead of
+.B code.c
+on purpose: two things were blocked on it before either could be
+real -
+.BR code.c 's
+own
+.B fnstr()
+(the source text
+.BR Xasync / Xbackq / Xsubshell / Xpipe
+hand
+.B exec.c
+as what to actually run) and
+.BR simplemung() 's
+own
+.B str
+field, deferred since the fourth slice. Both are done now:
+.B simplemung()
+sets a real
+.B str
+(see BUGS for what it actually contains), and
+.B fnstr()
+exists here as
+.IR pcmd() " with the statement separator forced to"
+.B ;
+instead of a real newline - real
+.IR rc 's
+own
+.B "\(dqchange to semicolon for bourne-proofing\(dq"
+comment on its global
+.B nl
+variable, which
+.B nlchar
+stands in for here the same way
+.B curlocal
+/
+.B iflast
+already stand in for other pieces of real
+.IR rc 's
+per-thread state this version doesn't have yet. Pure tree-to-string
+recursion with no
+.B runq
+/Thread dependency at all, same shape as
+.BR tree.c 's
+own node constructors - real
+.B pcmd()
+writes into an
+.B Io
+buffer via
+.BR pfmt ; this version needs none of that intermediate buffered-writer
+machinery at all, since Limbo string concatenation already builds the
+whole result directly, and returns the string rather than writing
+anywhere. Real
+.BR pcmd() 's
+own
+.B pdeglob()
+helper - print a word with each GLOB escape byte stripped, printing
+whatever follows it - is not a new function here: it is glob.c's own
+.BR deglob() ,
+byte for byte, reused directly rather than reimplemented. Tested by
+round-tripping this parser's own real output
+.RI ( testparseprint() " = " parsecmd() " then " pcmd() ),
+the same reuse the parser's own tests already got from the lexer,
+rather than hand-building a tree for every case. See BUGS for two
+real findings this turned up, both in the same upstream case.
 .B Running
 .B rc
 does nothing but populate its internal tables and print a note saying
@@ -305,6 +373,67 @@ translatable the same recursive-descent way
 translates a yacc-based real source, once the priority table's real
 precedence (two lines) was separated from its shift/reduce-conflict
 bookkeeping (everything else) - see DESCRIPTION for the full trace.
+.PP
+Two real findings, both in real
+.BR pcmd.c 's
+own
+.B DUP
+case, surfaced by the sixth slice's own round-trip tests
+(see DESCRIPTION). First: that case prints
+.B only
+its own bracket syntax
+.RI ( ">[fd0=fd1]" ) " - unlike every other redirection case, it prints"
+neither
+.I child0
+(a
+.B DUP
+token never has one -
+.B "redir: DUP"
+takes no operand) nor
+.IR child1 ,
+so a DUP-prefixed or DUP-percolated command's own rest-of-command
+text is silently absent from its
+.B own
+display string. Real, not a translation gap:
+.BR code.c 's
+own
+.B DUP
+case still emits
+.B "outcode(c1, eflag)"
+regardless of what
+.B pcmd()
+prints, so once
+.B code.c
+exists, execution of the rest of the command is unaffected - only
+this display text drops it. Second, more surprising: printing a tree
+parsed from
+.B >[2=1]
+genuinely produces
+.B >[1=2]
+- the two numbers come back swapped. Traced to two independently
+real facts, not one translation bug:
+.BR lex.c 's
+own bracket parser stores the fd
+.I before
+.B =
+into
+.B fd1
+and the fd
+.I after
+.B =
+into
+.B fd0
+.RI ( "t->fd1=t->fd0; t->fd0=0;"
+before re-parsing the second number - already the exact behavior
+slice 4's own lexer tests pin), while
+.BR pcmd.c 's
+.B DUP
+case prints
+.B "fd0=fd1"
+in that order. Both verified directly against
+.BR utils/rcsh/lex.c / pcmd.c ;
+this translation reproduces the same round-trip mismatch, it does not
+introduce one.
 .PP
 Two real findings surfaced by the grammar's own tests, both caught by
 a test that failed first, not by inspection:

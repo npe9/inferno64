@@ -160,6 +160,12 @@ Rc: module
 	testlexinit:	fn(s: string): ref Lexstate;
 	testlexnext:	fn(ls: ref Lexstate): (int, ref Tree);
 
+	# pcmd.c: the tree-to-source pretty-printer.
+	testpcmd:	fn(t: ref Tree): string;
+	testfnstr:	fn(t: ref Tree): string;
+	testparseprint:		fn(s: string): string;
+	testparseprintfn:	fn(s: string): string;
+
 	# syn.y: the grammar. Each of these lexes+parses a fresh string
 	# from scratch and returns the result as a treeshape() string
 	# (see rc.b's header comment) rather than a raw ref Tree, so
@@ -1131,6 +1137,199 @@ testlexnext(ls: ref Lexstate): (int, ref Tree)
 	return lexnext(ls);
 }
 
+# --- pcmd.c: the tree-to-source pretty-printer -----------------------
+#
+# Sixth slice, brought forward ahead of code.c on purpose: this is
+# what code.c's own fnstr() needs for four opcodes (Xasync/Xbackq/
+# Xsubshell/Xpipe all hand their child command's SOURCE TEXT to
+# exec.c, via fnstr()'s pfmt(s,"%t",t) call), and it's also
+# simplemung()'s own long-deferred `t.str` field (see this file's
+# earlier note on that, in the syn.y section below) - both blocked on
+# the exact same real function, so it gets done once, here, rather
+# than deferred twice.
+#
+# Purely a tree-to-string walk, no `runq`/Thread dependency at all -
+# same "real, testable value semantics" shape as tree.c's own node
+# constructors. Real pcmd() writes into an `Io` buffer via `pfmt`;
+# Limbo has no need for that intermediate buffered-writer abstraction
+# at all - string concatenation already builds the whole result
+# directly, so this returns a `string` rather than writing to
+# anything, and there is no Limbo counterpart to `Io`/`pfmt`/`pchr`/
+# `pstr` here (this translation's own version of the same
+# simplification already made for match()'s manual UTF-8 decoding:
+# the intermediate C machinery existed only because C has no
+# growable-string type, and Limbo already does).
+#
+# Real pcmd()'s own `pdeglob()` helper - print a word's string with
+# each GLOB escape byte stripped, printing whatever follows it - is
+# not a new function at all: it is glob.c's own `deglob()`, byte for
+# byte (skip a GLOB, then copy the next rune, whether or not that rune
+# was escaped). Reused directly rather than re-implemented.
+#
+# real rc's own global `nl` (`\n` normally, temporarily `;` inside
+# fnstr() - "change to semicolon for bourne-proofing", per its own
+# comment) is a real global there because pcmd() is a single global
+# function with no per-call parameter for it. `nlchar` below is the
+# same kind of module-global stand-in as `curlocal`/`iflast`, correct
+# for the same reason: there is exactly one thing calling pcmd() at a
+# time right now (no concurrent compilation), so a global is
+# equivalent to threading it as a parameter, until that stops being
+# true.
+nlchar := '\n';
+
+pcmd(t: ref Tree): string
+{
+	if(t == nil)
+		return "";
+	case t.ttype {
+	'$' =>		return "$" + pcmd(t.child[0]);
+	'"' =>		return "$\"" + pcmd(t.child[0]);
+	'&' =>		return pcmd(t.child[0]) + "&";
+	'^' =>		return pcmd(t.child[0]) + "^" + pcmd(t.child[1]);
+	'`' =>		return "`" + pcmd(t.child[0]);
+	Tandand =>	return pcmd(t.child[0]) + " && " + pcmd(t.child[1]);
+	Targlist =>	return pcmd(t.child[0]) + " " + pcmd(t.child[1]);
+	Tbang =>	return "! " + pcmd(t.child[0]);
+	Tbrace =>	return "{" + pcmd(t.child[0]) + "}";
+	Tcount =>	return "$#" + pcmd(t.child[0]);
+	Tfn =>		return "fn " + pcmd(t.child[0]) + " " + pcmd(t.child[1]);
+	Tif =>		return "if" + pcmd(t.child[0]) + pcmd(t.child[1]);
+	Tnot =>		return "if not " + pcmd(t.child[0]);
+	Toror =>	return pcmd(t.child[0]) + " || " + pcmd(t.child[1]);
+	Tpcmd or Tparen =>
+			return "(" + pcmd(t.child[0]) + ")";
+	Tsub =>		return "$" + pcmd(t.child[0]) + "(" + pcmd(t.child[1]) + ")";
+	Tsimple =>	return pcmd(t.child[0]);
+	Tsubshell =>	return "@ " + pcmd(t.child[0]);
+	Tswitch =>	return "switch " + pcmd(t.child[0]) + " " + pcmd(t.child[1]);
+	Ttwiddle =>	return "~ " + pcmd(t.child[0]) + " " + pcmd(t.child[1]);
+	Twhile =>	return "while " + pcmd(t.child[0]) + pcmd(t.child[1]);
+	';' =>
+		if(t.child[0] != nil){
+			if(t.child[1] != nil)
+				return pcmd(t.child[0]) + sys->sprint("%c", nlchar) +
+					pcmd(t.child[1]);
+			return pcmd(t.child[0]);
+		}
+		return pcmd(t.child[1]);
+	Twords =>
+		s := "";
+		if(t.child[0] != nil)
+			s = pcmd(t.child[0]) + " ";
+		return s + pcmd(t.child[1]);
+	Tfor =>
+		s := "for(" + pcmd(t.child[0]);
+		if(t.child[1] != nil)
+			s += " in " + pcmd(t.child[1]);
+		return s + ")" + pcmd(t.child[2]);
+	Tword =>
+		if(t.quoted)
+			return "'" + strreplace(t.str, "'", "''") + "'";
+		return deglob(t.str);
+	Tdup =>
+		s := sys->sprint(">[%d=", t.fd0);
+		if(t.rtype == Dupfd)
+			s += string t.fd1;
+		return s + "]";
+	Tpipefd or Tredir =>
+		s := "";
+		case t.rtype {
+		Here =>
+			s = "<<";
+			if(t.fd0 != 0)
+				s += sys->sprint("[%d]", t.fd0);
+		Read =>
+			s = "<";
+			if(t.fd0 != 0)
+				s += sys->sprint("[%d]", t.fd0);
+		Append =>
+			s = ">>";
+			if(t.fd0 != 1)
+				s += sys->sprint("[%d]", t.fd0);
+		Write =>
+			s = ">";
+			if(t.fd0 != 1)
+				s += sys->sprint("[%d]", t.fd0);
+		}
+		s += pcmd(t.child[0]);
+		if(t.child[1] != nil)
+			s += " " + pcmd(t.child[1]);
+		return s;
+	'=' =>
+		s := pcmd(t.child[0]) + "=" + pcmd(t.child[1]);
+		if(t.child[2] != nil)
+			s += " " + pcmd(t.child[2]);
+		return s;
+	Tpipe =>
+		s := pcmd(t.child[0]) + "|";
+		if(t.fd1 == 0){
+			if(t.fd0 != 1)
+				s += sys->sprint("[%d]", t.fd0);
+		}else
+			s += sys->sprint("[%d=%d]", t.fd0, t.fd1);
+		return s + pcmd(t.child[1]);
+	}
+	return sys->sprint("bad %d", t.ttype);
+}
+
+strreplace(s: string, pat: string, rep: string): string
+{
+	r := "";
+	i := 0;
+	n := len s;
+	fl := len pat;
+	while(i < n){
+		if(fl > 0 && i+fl <= n && s[i:i+fl] == pat){
+			r += rep;
+			i += fl;
+		}else{
+			r += s[i:i+1];
+			i++;
+		}
+	}
+	return r;
+}
+
+# fnstr(): pcmd() with the statement separator forced to `;` instead
+# of `\n` ("bourne-proofing" a multi-line compound command down to one
+# line of source text, e.g. for a job-control display or - the reason
+# code.c needs this at all - the text handed to Xasync/Xbackq/
+# Xsubshell/Xpipe as what exec.c actually runs).
+fnstr(t: ref Tree): string
+{
+	save := nlchar;
+	nlchar = ';';
+	s := pcmd(t);
+	nlchar = save;
+	return s;
+}
+
+testpcmd(t: ref Tree): string
+{
+	return pcmd(t);
+}
+
+testfnstr(t: ref Tree): string
+{
+	return fnstr(t);
+}
+
+# combined parse+print seams - real rc never runs pcmd() on anything
+# except a tree the grammar itself produced, so a round trip through
+# THIS translation's own parser is the natural way to test it, rather
+# than hand-building trees for every case.
+testparseprint(s: string): string
+{
+	pinit(s);
+	return pcmd(parsecmd());
+}
+
+testparseprintfn(s: string): string
+{
+	pinit(s);
+	return fnstr(parsecmd());
+}
+
 # --- syn.y: the grammar, hand-written recursive descent -------------
 #
 # Fifth slice. Real rc's grammar is yacc, generating an LALR table
@@ -1194,12 +1393,8 @@ testlexnext(ls: ref Lexstate): (int, ref Tree)
 # word position AFTER the first one; parseFirst() calls parseComword()
 # directly for its own first atom, which has no keyword case at all.
 #
-# Two grammar actions this slice's tests exercise are only partially
-# real, both explicitly noted where they're defined below:
-# `simplemung()` builds the real SIMPLE node and does the real
-# redirection-percolation loop, but leaves `t.str` empty rather than
-# calling `pfmt(s, "%t", t)` - that needs the tree-to-source pretty
-# printer from io.c/pfnc.c, not translated yet. `heredoc()` returns a
+# One grammar action this slice's tests exercise is only partially
+# real, explicitly noted where it's defined below: `heredoc()` returns a
 # clearly-marked placeholder WORD token in the real tag's place - the
 # real one opens a temp file that exec.c later fills with the heredoc
 # BODY (source lines read up to a line matching the tag), which needs
@@ -1398,12 +1593,18 @@ heredoc(tag: ref Tree): ref Tree
 	return token("#here-unimplemented:"+tag.str+"#", Tword);
 }
 
-# simplemung: real except t.str (see header comment) - builds the
-# SIMPLE node and does the real percolation of trailing DUP/REDIR
+# simplemung: now fully real, including t.str, once pcmd() (above)
+# existed to compute it - builds the SIMPLE node, sets its display
+# string from the ARGLIST-with-trailing-redirs shape exactly as it
+# was before percolation (matching real simplemung()'s own order:
+# t->str is set right after wrapping in SIMPLE, before the
+# percolation loop below reassigns `t` to a DUP/REDIR node that
+# absorbed it), then does the real percolation of trailing DUP/REDIR
 # nodes up to the new root, exactly as tree.c's own loop does.
 simplemung(t: ref Tree): ref Tree
 {
 	t = tree1(Tsimple, t);
+	t.str = pcmd(t);
 	u := t.child[0];
 	while(u != nil && u.ttype == Targlist){
 		if(u.child[1] != nil &&

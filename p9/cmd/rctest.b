@@ -71,6 +71,11 @@ Rc: module
 	testlexinit:	fn(s: string): ref Lexstate;
 	testlexnext:	fn(ls: ref Lexstate): (int, ref Tree);
 
+	testpcmd:	fn(t: ref Tree): string;
+	testfnstr:	fn(t: ref Tree): string;
+	testparseprint:		fn(s: string): string;
+	testparseprintfn:	fn(s: string): string;
+
 	testparseword:	fn(s: string): string;
 	testparsewords:	fn(s: string): string;
 	testparsesimple:	fn(s: string): string;
@@ -581,7 +586,7 @@ init(nil: ref Context, nil: list of string)
 
 	checkstr("parse: comword: `{brace} (backquote command substitution)",
 		rc->testparseword("`{echo hi}"),
-		"(` (BRACE (SIMPLE (ARGLIST (WORD:echo) (WORD:hi)))))");
+		"(` (BRACE (SIMPLE:echo hi (ARGLIST (WORD:echo) (WORD:hi)))))");
 
 	checkstr("parse: comword: (words) paren word-list",
 		rc->testparseword("(a b)"),
@@ -604,35 +609,42 @@ init(nil: ref Context, nil: list of string)
 		"(PAREN (WORDS (WORD:b)))) (WORD:c)))");
 
 	checkstr("parse: simple command, one word",
-		rc->testparsecmd("a"), "(SIMPLE (WORD:a))");
+		rc->testparsecmd("a"), "(SIMPLE:a (WORD:a))");
 
 	checkstr("parse: simple command, multiple words",
 		rc->testparsecmd("echo hi there"),
-		"(SIMPLE (ARGLIST (ARGLIST (WORD:echo) (WORD:hi)) "+
-		"(WORD:there)))");
+		"(SIMPLE:echo hi there (ARGLIST (ARGLIST (WORD:echo) "+
+		"(WORD:hi)) (WORD:there)))");
 
 	checkstr("parse: a keyword in argument position is a plain WORD, "+
 		"not a nested construct (`echo if` must not misparse)",
 		rc->testparsecmd("echo if"),
-		"(SIMPLE (ARGLIST (WORD:echo) (WORD:if)))");
+		"(SIMPLE:echo if (ARGLIST (WORD:echo) (WORD:if)))");
 
+	# the percolated SIMPLE node's own `str` still reads "echo hi >f",
+	# not just "echo hi" - real simplemung() computes it BEFORE the
+	# percolation loop runs, from the full original ARGLIST chain
+	# still including the trailing redir, exactly matching what a
+	# job-control display line for this command should show (the
+	# command as the user actually typed it, redirect included).
 	checkstr("parse: simplemung percolates a trailing redirection up "+
 		"to the tree's own root (real tree.c's own algorithm, not "+
-		"just field-copying)",
+		"just field-copying), while its own str keeps the original "+
+		"redirect visible",
 		rc->testparsecmd("echo hi >f"),
-		"(REDIR (WORD:f) (SIMPLE (ARGLIST (ARGLIST (WORD:echo) "+
-		"(WORD:hi)))))");
+		"(REDIR (WORD:f) (SIMPLE:echo hi >f (ARGLIST (ARGLIST "+
+		"(WORD:echo) (WORD:hi)))))");
 
 	checkstr("parse: pipe chain is left-associative (`%left PIPE`)",
 		rc->testparsecmd("a|b|c"),
-		"(PIPE (PIPE (SIMPLE (WORD:a)) (SIMPLE (WORD:b))) "+
-		"(SIMPLE (WORD:c)))");
+		"(PIPE (PIPE (SIMPLE:a (WORD:a)) (SIMPLE:b (WORD:b))) "+
+		"(SIMPLE:c (WORD:c)))");
 
 	checkstr("parse: && and || share one left-associative level "+
 		"(`%left ANDAND OROR` is a single line)",
 		rc->testparsecmd("a&&b||c"),
-		"(OROR (ANDAND (SIMPLE (WORD:a)) (SIMPLE (WORD:b))) "+
-		"(SIMPLE (WORD:c)))");
+		"(OROR (ANDAND (SIMPLE:a (WORD:a)) (SIMPLE:b (WORD:b))) "+
+		"(SIMPLE:c (WORD:c)))");
 
 	# The two cases traced by hand against syn.y's priority table
 	# before any of this was written (see rc.b's header comment) -
@@ -644,7 +656,7 @@ init(nil: ref Context, nil: list of string)
 		", not `!(a && b)` (BANG's own rule precedence is LOWER "+
 		"than ANDAND's, so yacc reduces `!a` before joining)",
 		rc->testparsecmd("! a && b"),
-		"(ANDAND (BANG:! (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+		"(ANDAND (BANG:! (SIMPLE:a (WORD:a))) (SIMPLE:b (WORD:b)))");
 
 	# `!` is deliberately absent from Wordstops in the real source
 	# (utils/rcsh/lex.c's own wordchr() - checked directly), so with
@@ -656,20 +668,20 @@ init(nil: ref Context, nil: list of string)
 	# wordchr()'s own stop-character string.
 	checkstr("parse: ! with no following space is not a token at all - "+
 		"it joins the word (real wordchr()'s stop-set has no '!')",
-		rc->testparsecmd("!a"), "(SIMPLE (WORD:!a))");
+		rc->testparsecmd("!a"), "(SIMPLE:!a (WORD:!a))");
 
 	checkstr("parse: a prefix redirection binds LOOSER than | - "+
 		"`>f a | b` is `>f (a|b)`, not `(>f a) | b` (the prefix "+
 		"redir's rule precedence, %prec BANG, is LOWER than PIPE's, "+
 		"so yacc shifts through the whole pipeline)",
 		rc->testparsecmd(">f a | b"),
-		"(REDIR (WORD:f) (PIPE (SIMPLE (WORD:a)) (SIMPLE (WORD:b))))");
+		"(REDIR (WORD:f) (PIPE (SIMPLE:a (WORD:a)) (SIMPLE:b (WORD:b))))");
 
 	checkstr("parse: @ (SUBSHELL) is a plain prefix, same precedence "+
 		"level as ! - also needs the same space (same wordchr() "+
 		"reason)",
 		rc->testparsecmd("@ a && b"),
-		"(ANDAND (SUBSHELL:@ (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+		"(ANDAND (SUBSHELL:@ (SIMPLE:a (WORD:a))) (SIMPLE:b (WORD:b)))");
 
 	# testparsesimple() parses at the atom/prefix level directly
 	# (parsecmdunit(), no PIPE or ANDAND/OROR loop above it) - the one
@@ -681,7 +693,7 @@ init(nil: ref Context, nil: list of string)
 	checkstr("parse: testparsesimple() stops at the atom/prefix level "+
 		"- it does not loop over && itself (that is parsecmd()'s "+
 		"own job, one level up)",
-		rc->testparsesimple("a && b"), "(SIMPLE (WORD:a))");
+		rc->testparsesimple("a && b"), "(SIMPLE:a (WORD:a))");
 	checkint("parse: ...confirmed by the leftover && still unconsumed",
 		rc->testcurtok(), Rc->Tandand);
 
@@ -701,7 +713,7 @@ init(nil: ref Context, nil: list of string)
 		"then attaches the rest of the command as a third child "+
 		"(mung3, reusing the `=` node - real tree.c's own trick)",
 		rc->testparsecmd("x=5 echo hi"),
-		"(= (WORD:x) (WORD:5) (SIMPLE (ARGLIST (WORD:echo) "+
+		"(= (WORD:x) (WORD:5) (SIMPLE:echo hi (ARGLIST (WORD:echo) "+
 		"(WORD:hi))))");
 
 	checkstr("parse: a bare assignment with nothing after it has an "+
@@ -711,7 +723,7 @@ init(nil: ref Context, nil: list of string)
 
 	checkstr("parse: IF, single line",
 		rc->testparsecmd("if(a) b"),
-		"(IF:if (PAREN (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+		"(IF:if (PAREN (SIMPLE:a (WORD:a))) (SIMPLE:b (WORD:b)))");
 
 	# IF's own rule precedence is the LOWEST in the whole table -
 	# lower even than ANDAND/OROR - specifically so its body always
@@ -721,27 +733,27 @@ init(nil: ref Context, nil: list of string)
 		"lowest rule precedence in the table, so it always grabs "+
 		"the full cmd)",
 		rc->testparsecmd("if(x) a && b"),
-		"(IF:if (PAREN (SIMPLE (WORD:x))) (ANDAND (SIMPLE (WORD:a)) "+
-		"(SIMPLE (WORD:b))))");
+		"(IF:if (PAREN (SIMPLE:x (WORD:x))) (ANDAND (SIMPLE:a (WORD:a)) "+
+		"(SIMPLE:b (WORD:b))))");
 
 	checkstr("parse: IF NOT (`if not cmd`, mung1 on the NOT token, "+
 		"discarding IF itself)",
 		rc->testparsecmd("if not a"),
-		"(NOT:not (SIMPLE (WORD:a)))");
+		"(NOT:not (SIMPLE:a (WORD:a)))");
 
 	checkstr("parse: WHILE, single line",
 		rc->testparsecmd("while(a) b"),
-		"(WHILE:while (PAREN (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+		"(WHILE:while (PAREN (SIMPLE:a (WORD:a))) (SIMPLE:b (WORD:b)))");
 
 	checkstr("parse: FOR with an explicit `in` word-list",
 		rc->testparsecmd("for(x in a b) c"),
 		"(FOR:for (WORD:x) (PAREN (WORDS (WORDS (WORD:a)) (WORD:b))) "+
-		"(SIMPLE (WORD:c)))");
+		"(SIMPLE:c (WORD:c)))");
 
 	checkstr("parse: FOR with no `in` (defaults to $*, left as a nil "+
 		"middle child here - exec.c's job to fill in, not parse.c's)",
 		rc->testparsecmd("for(x) c"),
-		"(FOR:for (WORD:x) (SIMPLE (WORD:c)))");
+		"(FOR:for (WORD:x) (SIMPLE:c (WORD:c)))");
 
 	# `SWITCH word` takes a bare `word`, NOT a `paren` the way IF/WHILE
 	# do (there is no dedicated "switch condition parens" rule in
@@ -756,7 +768,7 @@ init(nil: ref Context, nil: list of string)
 		"not a dedicated condition syntax (tree2 also discards the "+
 		"SWITCH token itself, matching tree2(SWITCH,$2,$4))",
 		rc->testparsecmd("switch(x) {a}"),
-		"(SWITCH (PAREN (WORDS (WORD:x))) (BRACE (SIMPLE (WORD:a))))");
+		"(SWITCH (PAREN (WORDS (WORD:x))) (BRACE (SIMPLE:a (WORD:a))))");
 
 	checkstr("parse: TWIDDLE (`~ word words`, rc's own pattern-match "+
 		"builtin - both operands are bare `word`/`words`, not `cmd`, "+
@@ -766,7 +778,7 @@ init(nil: ref Context, nil: list of string)
 
 	checkstr("parse: FN with a brace body",
 		rc->testparsecmd("fn f {a}"),
-		"(FN (WORDS (WORD:f)) (BRACE (SIMPLE (WORD:a))))");
+		"(FN (WORDS (WORD:f)) (BRACE (SIMPLE:a (WORD:a))))");
 
 	checkstr("parse: FN with no body (a bare function reference)",
 		rc->testparsecmd("fn f"),
@@ -775,13 +787,13 @@ init(nil: ref Context, nil: list of string)
 	checkstr("parse: body (used inside {}/()) treats a bare newline "+
 		"as a real separator, same as ; (`cmdsan: cmdsa|cmd '\\n'`)",
 		rc->testparsebody("a\nb"),
-		"(; (SIMPLE (WORD:a)) (SIMPLE (WORD:b)))");
+		"(; (SIMPLE:a (WORD:a)) (SIMPLE:b (WORD:b)))");
 
 	checkstr("parse: line (top level only) does NOT treat a bare "+
 		"newline as a separator - only ; and & chain further "+
 		"commands on the same line",
 		rc->testparseline("a;b"),
-		"(; (SIMPLE (WORD:a)) (SIMPLE (WORD:b)))");
+		"(; (SIMPLE:a (WORD:a)) (SIMPLE:b (WORD:b)))");
 
 	rc->testparseline("a\nb");
 	checkint("parse: line stops BEFORE an unconsumed bare newline "+
@@ -793,11 +805,168 @@ init(nil: ref Context, nil: list of string)
 		"after the paren, before the body, so a real newline there "+
 		"is skipped just like real rc's own multi-line if(x)\\n\\tcmd",
 		rc->testparsecmd("if(a)\n\tb"),
-		"(IF:if (PAREN (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+		"(IF:if (PAREN (SIMPLE:a (WORD:a))) (SIMPLE:b (WORD:b)))");
 
 	checkstr("parse: & backgrounds a cmd within a body",
 		rc->testparsebody("a& b"),
-		"(; (& (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+		"(; (& (SIMPLE:a (WORD:a))) (SIMPLE:b (WORD:b)))");
+
+	# --- pcmd.c: the tree-to-source pretty-printer -------------------
+	# Real rc never calls pcmd() on anything but a tree its own grammar
+	# produced, so these round-trip THIS translation's own parser
+	# (testparseprint = parsecmd() then pcmd()) rather than hand-build
+	# trees for every case - the same reuse this parser's own tests
+	# already got from the lexer.
+
+	checkstr("pcmd: a simple command reprints as its own words",
+		rc->testparseprint("echo hi there"), "echo hi there");
+
+	checkstr("pcmd: a pipe chain reprints with no spaces around |",
+		rc->testparseprint("a|b|c"), "a|b|c");
+
+	checkstr("pcmd: && / || reprint with their real spacing",
+		rc->testparseprint("a&&b||c"), "a && b || c");
+
+	# real pcmd.c's own templates for these are NOT uniform - "if%t%t"
+	# (no space) but "while %t%t" (a space after "while") - checked
+	# directly, not assumed uniform after a first draft of this test
+	# wrongly guessed IF's spacing applied to WHILE too.
+	checkstr("pcmd: if(cond)body has no space - the PAREN child "+
+		"already supplies both parens",
+		rc->testparseprint("if(a) b"), "if(a)b");
+
+	checkstr("pcmd: while(cond)body - unlike IF, real pcmd.c's own "+
+		"WHILE template has a space after the keyword",
+		rc->testparseprint("while(a) b"), "while (a)b");
+
+	# FOR's own grammar action (`tree1(PAREN,$5)` in BOTH real syn.y
+	# and this translation) wraps the `in` word-list in its own PAREN
+	# node, on top of the literal `for(...)` template's own parens -
+	# so printing it back genuinely doubles up: `for(x in (a b))c`,
+	# not `for(x in a b)c`. Checked against syn.y directly after a
+	# first draft of this test assumed the source-level spelling.
+	checkstr("pcmd: for(x in a b)body double-parenthesizes the `in` "+
+		"list on the way back out (a real FOR node's second child "+
+		"is itself a PAREN-wrapped word list, per FOR's own grammar "+
+		"action)",
+		rc->testparseprint("for(x in a b) c"), "for(x in (a b))c");
+
+	checkstr("pcmd: assign alone",
+		rc->testparseprint("x=5"), "x=5");
+
+	checkstr("pcmd: assign-prefix reprints with a space before the "+
+		"rest of the command",
+		rc->testparseprint("x=5 echo hi"), "x=5 echo hi");
+
+	checkstr("pcmd: a prefix redirection reprints, but pipe spacing "+
+		"still normalizes away (this is a pretty-printer, not a "+
+		"byte-exact echo of the original source)",
+		rc->testparseprint(">f a | b"), ">f a|b");
+
+	checkstr("pcmd: ! and @ reprint with their own required space",
+		rc->testparseprint("! a && b"), "! a && b");
+	checkstr("pcmd: ...same for @",
+		rc->testparseprint("@ a && b"), "@ a && b");
+
+	checkstr("pcmd: TWIDDLE",
+		rc->testparseprint("~ a b c"), "~ a b c");
+
+	checkstr("pcmd: FN with a brace body",
+		rc->testparseprint("fn f {a}"), "fn f {a}");
+
+	checkstr("pcmd: SWITCH - the bare-word argument finding from "+
+		"parsing shows up here too (the printed form still has the "+
+		"parens, since they were real PAREN nodes, not just display "+
+		"decoration), and real pcmd.c's own SWITCH template also has "+
+		"a space after the keyword, same as WHILE",
+		rc->testparseprint("switch(x) {a}"), "switch (x) {a}");
+
+	checkstr("pcmd: redirection arrows - write/append/read/here, "+
+		"each with a non-default fd bracketed",
+		rc->testparseprint(">[2]f cmd"), ">[2]f cmd");
+	checkstr("pcmd: ...append",
+		rc->testparseprint(">>[1]f cmd"), ">>f cmd");
+	checkstr("pcmd: ...read",
+		rc->testparseprint("<f cmd"), "<f cmd");
+	checkstr("pcmd: ...here, with an explicit fd - heredoc() is "+
+		"deferred (see rc(1)'s BUGS), so the tag itself prints as "+
+		"its own clearly-marked placeholder text rather than TAG, "+
+		"but the redirection arrow syntax around it is real",
+		rc->testparseprint("<<[3]TAG cmd"),
+		"<<[3]#here-unimplemented:TAG# cmd");
+
+	# real pcmd.c's own DUP case - verified directly, not assumed -
+	# prints ONLY the bracket syntax and nothing else: no child0 (DUP
+	# never has one - `redir: DUP` takes no operand) and, unlike every
+	# other redirection case, no child1 either. A DUP-prefixed or
+	# percolated command's rest-of-command text is silently absent
+	# from its own OWN display string in the real source. This is
+	# real, not a translation gap: code.c's own DUP case still emits
+	# `outcode(c1, eflag)` regardless of what pcmd() prints, so
+	# EXECUTION of the rest of the command is unaffected once code.c
+	# exists - only this display text drops it, matching upstream
+	# exactly rather than "fixing" an asymmetry the real source has.
+	#
+	# A second, more surprising real asymmetry in the same case, found
+	# by this test's own first draft (which assumed a naive round
+	# trip): lex.c's own bracket parser stores the fd BEFORE `=` (2)
+	# into fd1 and the fd AFTER `=` (1) into fd0 - `t->fd1=t->fd0;
+	# t->fd0=0;` before re-parsing the second number, checked directly
+	# against utils/rcsh/lex.c, and already the exact behavior slice
+	# 4's own lexer tests pin. pcmd.c's DUP case then prints
+	# `fd0=fd1` in THAT order - so printing a tree parsed from
+	# `>[2=1]` genuinely produces `>[1=2]`: the two numbers come back
+	# swapped, on top of the whole rest-of-command already being
+	# dropped. Both the lexer's own fd0/fd1 assignment and pcmd's own
+	# print order are independently verified against the real source,
+	# so this translation is reproducing a real upstream round-trip
+	# mismatch, not introducing one.
+	checkstr("pcmd: a DUP redirection prints only its own bracket "+
+		"syntax (the rest of the command is real rc's own silently "+
+		"dropped display text), and even that bracket's two numbers "+
+		"come back swapped from how they were written - >[2=1] "+
+		"prints as >[1=2], since lex.c's own parser stores them into "+
+		"fd0/fd1 in the opposite order from how pcmd.c prints them "+
+		"back (both verified directly; a real upstream asymmetry, "+
+		"not a bug in this translation)",
+		rc->testparseprint(">[2=1] cmd"), ">[1=2]");
+
+	checkstr("pcmd: ...a CLOSE redirection (DUP with no rhs fd, so no "+
+		"swap to observe) round-trips cleanly",
+		rc->testparseprint(">[2=] cmd"), ">[2=]");
+
+	checkstr("pcmd: a quoted word round-trips through real rc's own "+
+		"%Q quoting, doubling an embedded quote",
+		rc->testparseprint("'it''s'"), "'it''s'");
+
+	# real rc has no backslash-escaping for glob metacharacters at all
+	# (single quotes are the only way to get a literal `*`) - lexword()
+	# unconditionally inserts an internal GLOB marker before every raw
+	# `*`/`[`/`?`, wildcard or not, and printing always strips that
+	# marker back out (matching real pdeglob()'s own unconditional
+	# behavior) - so a bare, unquoted `a*b` round-trips through that
+	# internal representation and back to plain text indistinguishably
+	# from how it went in, exactly as real rc's own pretty-printer
+	# does; deglob() is reused directly for this rather than
+	# reimplemented, per rc.b's own header comment.
+	checkstr("pcmd: an unquoted glob metacharacter reprints as plain "+
+		"text - the internal GLOB marker lexword() inserts is "+
+		"stripped back out by deglob(), the same function glob.c's "+
+		"own matching already uses",
+		rc->testparseprint("a*b"), "a*b");
+
+	checkstr("pcmd: $/$\"/$#/$x(...) all reprint",
+		rc->testparseprint("$x"), "$x");
+	checkstr("pcmd: ...backquote",
+		rc->testparseprint("`{a}"), "`{a}");
+
+	checkstr("pcmd: fnstr() forces the ; statement separator instead "+
+		"of a real newline (\"bourne-proofing\", real rc's own "+
+		"phrase) - this is what code.c's Xasync/Xbackq/Xsubshell/"+
+		"Xpipe opcodes will hand exec.c as source text",
+		rc->testparseprintfn("{a\nb}"), "{a;b}");
+	checkstr("pcmd: ...plain pcmd() keeps the real newline instead",
+		rc->testparseprint("{a\nb}"), "{a\nb}");
 
 	sys->print("%d passed, %d failed\n", npass, nfail);
 	if(nfail > 0)
