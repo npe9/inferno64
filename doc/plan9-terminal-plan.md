@@ -256,22 +256,44 @@ as line count grows.
 
 ## Progress on (2), rc in Limbo
 
-Two slices done, both in `p9/cmd/rc.b`/`rctest.b`, each committed
+Three slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
 separately with what it verified named in the commit message rather
 than "part N of M": word.c's word-list operations plus var.c's
-variable/keyword tables (`17b39312`, 26 assertions), then glob.c's
-pure pattern-matching logic plus word.c's `subwords` (`c220ab3d`, 54
-assertions total). Both slices were chosen the same way - real,
-directly testable value semantics, nothing needing a parser or a
-running thread yet. Two things worth carrying forward, found only by
-building this far: `copywords`/`subwords`-shaped C code that uses a
-manual end-of-list pointer (`Word**`) has no Limbo equivalent
-(no address-of/pointer-to-pointer) and needs recursion instead - same
-result, different mechanism; and `match()`'s manual UTF-8 byte
-decoding (`equtf`/`nextutf`/`unicode`) has no Limbo equivalent needed
-at all, since Limbo's `string` type is already a rune sequence -
-dropping those three helpers is a real simplification the translation
-should make everywhere it recurs, not a one-off.
+variable/keyword tables (`17b39312`, 26 assertions), glob.c's pure
+pattern-matching logic plus word.c's `subwords` (`c220ab3d`, 54
+assertions total), then tree.c's node constructors plus the real
+`klook` (`65b133a4`, 77 assertions total). All three slices were
+chosen the same way - real, directly testable value semantics,
+nothing needing a parser or a running thread yet; the third slice
+confirmed directly that tree.c is independent of the lexer/grammar
+pair (it's called BY grammar actions, not coupled to the lexer the
+way the lexer and grammar are coupled to each other).
+
+Things worth carrying forward, found only by building this far:
+`copywords`/`subwords`-shaped C code using a manual end-of-list
+pointer (`Word**`) has no Limbo equivalent and needs recursion
+instead - same result, different mechanism; `match()`'s manual UTF-8
+byte decoding (`equtf`/`nextutf`/`unicode`) has no Limbo equivalent
+needed at all, since Limbo's `string` type is already a rune
+sequence; and real rc's `Treenodes`/`freenodes` bulk-free bookkeeping
+has no counterpart at all under a real garbage collector, not just an
+omitted `free()` call.
+
+One real methodology finding, from the third slice, worth flagging for
+any future cross-file test in this style: a "guard" comparing two
+files' independently-declared module-interface constants
+(`Rc->Tcount - Rc->Tfor`) is vacuous - module `con`s are resolved at
+compile time from each file's own copy, never fetched from the loaded
+module at runtime, so such a comparison can only ever check a file
+against itself. Caught by the same negative-control discipline used
+throughout this backlog (a deliberate drift left the guard passing
+anyway) and fixed with a real test-seam function that computes the
+value inside the loaded module at runtime instead. A second negative
+control then showed even the fixed guard only covers one of two
+possible drift shapes (a uniform base-offset shift isn't caught by a
+spread comparison) - the other is covered by a different, pre-existing
+test's absolute-value assertions. Documented in rctest.b as two
+mechanisms working together, not overclaimed as one.
 
 What's left of the *portable core* is the harder-to-verify half: the
 lexer, grammar, and `Tree` node machinery are not independent of each
