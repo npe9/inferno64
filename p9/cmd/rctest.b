@@ -68,6 +68,8 @@ Rc: module
 	testtoken:	fn(str: string, ttype: int): ref Tree;
 	testklook:	fn(name: string): ref Tree;
 	testtokenspread:	fn(): int;
+	testlexinit:	fn(s: string): ref Lexstate;
+	testlexnext:	fn(ls: ref Lexstate): (int, ref Tree);
 };
 
 Word: adt
@@ -94,6 +96,26 @@ Tree: adt
 	iskw:	int;
 	child:	array of ref Tree;
 };
+
+Lexstate: adt
+{
+	buf:		string;
+	pos:		int;
+	future:		int;
+	peekc:		int;
+	lastc:		int;
+	lastdol:	int;
+	lastword:	int;
+	inquote:	int;
+};
+
+Eof: con -1;
+Append: con 1;
+Write: con 2;
+Read: con 3;
+Here: con 4;
+Dupfd: con 5;
+Close: con 6;
 
 stderr: ref FD;
 rc: Rc;
@@ -348,6 +370,178 @@ init(nil: ref Context, nil: list of string)
 		notkw.ttype, Rc->Tword);
 	checkint("klook(\"somevar\") leaves iskw at 0", notkw.iskw, 0);
 
+	# --- lex.c: the tokenizer ---
+	checktokseq("lex: empty input is immediate Eof", "", Eof :: nil);
+	checktokseq("lex: plain word", "hello", Rc->Tword :: nil);
+
+	ls := rc->testlexinit("for");
+	(lt1, tr1) := rc->testlexnext(ls);
+	checkint("lex: \"for\" tokenizes as Tfor", lt1, Rc->Tfor);
+	checkint("lex: \"for\" sets iskw", tr1.iskw, 1);
+
+	ls = rc->testlexinit("format");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: \"format\" is NOT mistaken for the \"for\" keyword "+
+		"(exact match only)", lt1, Rc->Tword);
+	checkint("lex: \"format\" leaves iskw at 0", tr1.iskw, 0);
+
+	# skipwhite() only eats leading space/tab/cr and a comment's own
+	# body text - NOT the newline that ends the comment line. That
+	# newline becomes a real '\n' TOKEN (rc's own statement
+	# separator, matching cmdsan's grammar rule), not silently
+	# discarded whitespace the way it would be in a C-like language.
+	# A first draft of this test wrongly assumed full skipping,
+	# expected Tword directly, and got '\n' (10) instead - which then
+	# crashed the very next assertion, since a bare single-character
+	# token's Tree really is nil (yylval.tree is only ever set inside
+	# the cases that build one), and that next line dereferenced it
+	# unguarded. Both the wrong expectation and the missing nil guard
+	# are fixed here, not just the visible test failure.
+	ls = rc->testlexinit("  # a comment\n  hello");
+	(lt1, nil) = rc->testlexnext(ls);
+	checkint("lex: a comment's own newline is a real token, not "+
+		"silently skipped whitespace", lt1, '\n');
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: the word after that newline tokenizes correctly",
+		lt1, Rc->Tword);
+	checkstr("lex: word text survives comment/whitespace skipping",
+		tr1.str, "hello");
+
+	ls = rc->testlexinit("'a b'");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: quoted word tokenizes as Tword", lt1, Rc->Tword);
+	checkstr("lex: quoted word preserves the embedded space",
+		tr1.str, "a b");
+	checkint("lex: quoted word sets quoted", tr1.quoted, 1);
+
+	ls = rc->testlexinit("'it''s'");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkstr("lex: a doubled quote inside a quoted word is one "+
+		"literal quote character", tr1.str, "it's");
+
+	checktokseq("lex: &&", "&&", Rc->Tandand :: nil);
+	checktokseq("lex: ||", "||", Rc->Toror :: nil);
+	checktokseq("lex: & alone", "&", '&' :: nil);
+	checktokseq("lex: $ alone", "$", '$' :: nil);
+	checktokseq("lex: $#", "$#", Rc->Tcount :: nil);
+	checktokseq("lex: $\" (dollar-quote)", "$\"", '"' :: nil);
+	checktokseq("lex: ; alone", ";", ';' :: nil);
+	checktokseq("lex: ( alone", "(", '(' :: nil);
+	checktokseq("lex: x=5 tokenizes as WORD = WORD",
+		"x=5", Rc->Tword :: '=' :: Rc->Tword :: nil);
+
+	ls = rc->testlexinit(">");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: > tokenizes as Tredir", lt1, Rc->Tredir);
+	checkint("lex: > sets rtype Write", tr1.rtype, Write);
+	checkint("lex: > sets fd0 1", tr1.fd0, 1);
+
+	ls = rc->testlexinit(">>");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: >> sets rtype Append", tr1.rtype, Append);
+
+	ls = rc->testlexinit("<");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: < sets rtype Read", tr1.rtype, Read);
+	checkint("lex: < sets fd0 0", tr1.fd0, 0);
+
+	ls = rc->testlexinit("<<");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: << sets rtype Here", tr1.rtype, Here);
+
+	ls = rc->testlexinit("|");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: single | tokenizes as Tpipe", lt1, Rc->Tpipe);
+	checkint("lex: | sets fd0 1", tr1.fd0, 1);
+	checkint("lex: | sets fd1 0", tr1.fd1, 0);
+
+	ls = rc->testlexinit(">[2]");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: >[2] stays Tredir", lt1, Rc->Tredir);
+	checkint("lex: >[2] overrides fd0 to 2", tr1.fd0, 2);
+	checkint("lex: >[2] keeps rtype Write", tr1.rtype, Write);
+
+	ls = rc->testlexinit(">[2=1]");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: >[2=1] becomes Tdup", lt1, Rc->Tdup);
+	checkint("lex: >[2=1] sets fd0 to 1 (the SECOND number)", tr1.fd0, 1);
+	checkint("lex: >[2=1] sets fd1 to 2 (the FIRST number)", tr1.fd1, 2);
+	checkint("lex: >[2=1] sets rtype Dupfd", tr1.rtype, Dupfd);
+
+	ls = rc->testlexinit(">[2=]");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: >[2=] becomes Tdup", lt1, Rc->Tdup);
+	checkint("lex: >[2=] sets rtype Close", tr1.rtype, Close);
+	checkint("lex: >[2=] keeps fd0 as 2", tr1.fd0, 2);
+
+	ls = rc->testlexinit("|[2=1]");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: |[2=1] stays Tpipe (only REDIR becomes DUP, not PIPE)",
+		lt1, Rc->Tpipe);
+	checkint("lex: |[2=1] sets rtype Dupfd", tr1.rtype, Dupfd);
+	checkint("lex: |[2=1] sets fd0 to 1", tr1.fd0, 1);
+	checkint("lex: |[2=1] sets fd1 to 2", tr1.fd1, 2);
+
+	# A genuine finding in the REAL source, not a translation bug: the
+	# check "can't dup a heredoc/append fd" (utils/rcsh/lex.c's own
+	# `t->type==DUP && (t->rtype==HERE || t->rtype==APPEND)`) is
+	# unreachable dead code there. Traced by hand against the real C
+	# before writing this down: t->type only ever becomes DUP inside
+	# the `if(c=='=')` block, and EVERY path through that block
+	# unconditionally overwrites t->rtype to DUPFD or CLOSE first -
+	# so by the time the HERE/APPEND check runs, rtype can never still
+	# be HERE or APPEND. Real `rc` genuinely accepts `<<[2=1]` and
+	# `>>[2=1]` without complaint (a real dup of a heredoc/append fd,
+	# not a rejected one) - a first draft of this test wrongly assumed
+	# the naive reading of the check's intent instead of tracing what
+	# it actually does, and was corrected here instead of "fixing" the
+	# translation to match a behavior the real source doesn't have.
+	ls = rc->testlexinit("<<[2=1]");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: <<[2=1] succeeds (the HERE/APPEND dup guard is dead "+
+		"code in the real source - see comment above)", lt1, Rc->Tdup);
+	checkint("lex: <<[2=1] sets rtype Dupfd (overwriting HERE, per the "+
+		"real source's own logic)", tr1.rtype, Dupfd);
+	ls = rc->testlexinit(">>[2=1]");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: >>[2=1] succeeds for the same reason", lt1, Rc->Tdup);
+	checkint("lex: >>[2=1] sets rtype Dupfd (overwriting APPEND)",
+		tr1.rtype, Dupfd);
+	ls = rc->testlexinit("|[2=]");
+	(lt1, nil) = rc->testlexnext(ls);
+	checkint("lex: |[2=] is a syntax error (a pipe fd can't be closed)",
+		lt1, Eof);
+
+	# the lastword-triggered `^` insertion and SUB detection - both
+	# depend on exact adjacency (no intervening skipwhite), which is
+	# why the lookahead for them happens BEFORE skipwhite is called.
+	ls = rc->testlexinit("'a'b");
+	(lt1, tr1) = rc->testlexnext(ls);
+	checkint("lex: 'a'b first token is quoted Tword \"a\"", lt1, Rc->Tword);
+	checkstr("lex: 'a'b first token text", tr1.str, "a");
+	(lt2, nil) := rc->testlexnext(ls);
+	checkint("lex: 'a'b second token is an inserted ^ (adjacency, no gap)",
+		lt2, '^');
+	(lt3, tr3) := rc->testlexnext(ls);
+	checkint("lex: 'a'b third token is Tword \"b\"", lt3, Rc->Tword);
+	checkstr("lex: 'a'b third token text", tr3.str, "b");
+
+	ls = rc->testlexinit("x(1)");
+	(lt1, nil) = rc->testlexnext(ls);
+	checkint("lex: x(1) first token Tword \"x\"", lt1, Rc->Tword);
+	(lt2, nil) = rc->testlexnext(ls);
+	checkint("lex: x(1) second token Tsub (adjacent open paren)",
+		lt2, Rc->Tsub);
+	(lt3, tr3) = rc->testlexnext(ls);
+	checkint("lex: x(1) third token Tword \"1\"", lt3, Rc->Tword);
+	checkstr("lex: x(1) third token text", tr3.str, "1");
+	(lt4, nil) := rc->testlexnext(ls);
+	checkint("lex: x(1) fourth token literal )", lt4, ')');
+
+	checktokseq("lex: x (1) - a space before ( suppresses SUB detection "+
+		"(adjacency required)",
+		"x (1)", Rc->Tword :: '(' :: Rc->Tword :: ')' :: nil);
+
 	sys->print("%d passed, %d failed\n", npass, nfail);
 	if(nfail > 0)
 		raise "fail:test failure";
@@ -381,4 +575,32 @@ checkptr(desc: string, cond: int)
 	}
 	nfail++;
 	sys->fprint(stderr, "FAIL: %s\n", desc);
+}
+
+# tokenizes s from a fresh Lexstate and checks the resulting token
+# TYPE sequence against want, stopping at the first disagreement or
+# once want is exhausted (a real Eof reached before want runs out
+# counts as disagreeing with whatever want expected there).
+# Compares token TYPES only, deliberately - it never looks at the
+# Tree lexnext also returns, so it never has to know which token
+# classes carry one (a bare single-character token like ';' or '('
+# legitimately returns a nil Tree; a test that read .str/.rtype off
+# every result would need to special-case that, the way rc.b's
+# comment-newline test discovered the hard way - see rc(1)'s BUGS).
+checktokseq(desc: string, s: string, want: list of int)
+{
+	ls := rc->testlexinit(s);
+	i := 0;
+	for(w := want; w != nil; w = tl w){
+		(got, nil) := rc->testlexnext(ls);
+		if(got != hd w){
+			nfail++;
+			sys->fprint(stderr,
+				"FAIL: %s: token %d: got %d, want %d\n",
+				desc, i, got, hd w);
+			return;
+		}
+		i++;
+	}
+	npass++;
 }

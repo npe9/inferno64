@@ -7,7 +7,7 @@ rctest \- regression test for rc's word-list/variable-table foundation
 .B Rctest
 exercises
 .IR rc (1)'s
-three translated slices - word lists
+four translated slices - word lists
 .RI ( newword ,
 .IR count ,
 .IR copywords ,
@@ -39,7 +39,11 @@ node constructors
 plus the real
 .B klook
 from
-.BR var.c )
+.BR var.c ),
+and
+.BR lex.c 's
+tokenizer, from an in-memory string input rather than a real thread's
+input stream
 - through
 .BR rc.dis 's
 own test-seam functions, calling
@@ -110,6 +114,23 @@ not a real parse), since the chain's shape - not how it was produced -
 is all
 .B epimung
 itself looks at.
+.PP
+Two real findings surfaced by lexer tests that initially failed, not
+by inspection - see
+.IR rc (1)'s
+own BUGS for the full traces: a comment's own trailing newline is a
+real
+.B '\en'
+token in real
+.IR rc ,
+not silently-skipped whitespace, and
+.B <<[2=1]
+/
+.B >>[2=1]
+genuinely succeed in the real C source because its own HERE/APPEND
+dup-rejection check is unreachable dead code there. Both test
+expectations were corrected to match the real, verified behavior
+rather than the translation being changed to match a wrong assumption.
 .SH SOURCE
 .B /p9/cmd/rctest.b
 .SH SEE ALSO

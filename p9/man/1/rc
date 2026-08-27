@@ -35,8 +35,8 @@ pipes) to design against Limbo's
 and channel model from scratch, since there is no Posix reference to
 translate that part from.
 .PP
-This version implements three slices, all with no lexer, grammar, or
-execution engine yet - see BUGS. The first is word lists and the
+This version implements four slices, none with a grammar or execution
+engine yet - see BUGS. The first is word lists and the
 variable/keyword tables from
 .B word.c
 and
@@ -99,6 +99,41 @@ from
 /
 .BR pfnc.c )
 that doesn't exist yet.
+.PP
+The fourth is
+.BR lex.c ,
+the tokenizer - the first slice large enough, and coupled enough
+internally, that it isn't split further, and the first to abandon
+.IR rc 's
+own input source
+.RI ( runq->cmdfd ,
+the current thread's input) for an in-memory string, since there is
+no Thread yet and real lexical scanning doesn't care where its
+characters come from. Real
+.IR rc 's
+own interactive bookkeeping in
+.B getnext()
+.RI ( doprompt / pprompt()
+and a
+.B flag['V']-gated
+echo) is dropped, not translated, for the same reason - it's tied to
+a real Thread this version doesn't have yet. Word/glob/quote/
+redirection-arrow scanning, keyword lookup via
+.BR klook ,
+and the
+.B ^-insertion
+/
+.B SUB-detection
+adjacency logic for
+.RI ( $ var (n))
+subscripting are all translated and tested directly against a string
+input, with no lexer/grammar coupling problem in practice: this
+version supplies its own token constants (see the
+.B Rc
+module's own declaration), so - unlike real
+.IR rc ,
+where yacc generates those constants FROM the grammar - nothing here
+actually needs the grammar to exist first.
 .B Running
 .B rc
 does nothing but populate its internal tables and print a note saying
@@ -114,13 +149,72 @@ in this tree - the real source being translated.
 in this tree - the sizing and sequencing document this translation
 follows.
 .SH BUGS
-No lexer, grammar, or execution engine yet - every slice built so far
-was chosen specifically because it has real, testable value semantics
-without needing any of those (a lexer alone cannot be tested
-meaningfully, since real
+No grammar or execution engine yet - every slice built so far was
+chosen specifically because it has real, testable value semantics
+without needing either of those. The lexer turned out translatable
+and testable on its own after all, despite real
 .IR rc 's
-own lexer and grammar are not independent of each other: yacc generates
-the token constants the lexer returns).
+own lexer and grammar not being independent of each other there
+(yacc generates the token constants the lexer returns) - this
+version supplies its own token constants directly (the
+.B Rc
+module's own
+.B Tokbase
+declaration), so nothing here actually needs a grammar to exist
+first, unlike the real source.
+.PP
+A real, non-obvious finding about
+.IR rc 's
+own semantics, caught by a wrong test expectation rather than assumed:
+.B skipwhite()
+only consumes leading space/tab/cr and a comment's own body text - the
+newline that ends a comment line is
+.B not
+silently discarded whitespace. It becomes a real
+.B '\en'
+.B token
+(the statement separator real
+.IR rc 's
+grammar uses), the same as any other newline. A first draft of this
+lexer's own test assumed full C-style skipping, expected a word token
+directly after a comment, and got the newline token instead - which
+then crashed the very next assertion by dereferencing a
+.I nil
+.B Tree
+(correct for a bare single-character token) without checking first.
+Both the wrong expectation and the missing nil guard were fixed, not
+worked around.
+.PP
+A second real finding, this time in the
+.B upstream C source itself,
+not this translation: the check that rejects duplicating a heredoc or
+append file descriptor
+.RI ( t->type==DUP && (t->rtype==HERE || t->rtype==APPEND) )
+is unreachable dead code in
+.BR utils/rcsh/lex.c .
+Traced by hand against the real source after a test expecting
+.B <<[2=1]
+to fail instead succeeded:
+.B t->type
+only ever becomes
+.B DUP
+inside the
+.B if(c=='=')
+block, and every path through that block unconditionally overwrites
+.B t->rtype
+to
+.B DUPFD
+or
+.B CLOSE
+first - so the HERE/APPEND check can never see what it's looking for.
+Real
+.I rc
+genuinely accepts
+.B <<[2=1]
+and
+.B >>[2=1]
+without complaint. This translation reproduces that faithfully, not
+the naive reading of what the check appears to intend.
 .PP
 Real
 .IR rc 's

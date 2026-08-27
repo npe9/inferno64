@@ -19,11 +19,15 @@ implement Rc;
 # a checklist of responsibilities, not by anything to transliterate.
 #
 # This file is being built incrementally, in slices sized so each one
-# is independently testable without needing the rest - per plan, the
-# lexer and grammar are NOT independent of each other (yacc generates
-# the token constants lex.c returns), so lexer-first would have been
-# the weakest-verified slice in this whole backlog's history. The
-# first real slice, below, is word.c + var.c's pure list/table logic:
+# is independently testable without needing the rest. In the real
+# source, the lexer and grammar are NOT independent of each other -
+# yacc generates the token constants lex.c returns - but that coupling
+# doesn't bind THIS translation, since the Rc module interface below
+# declares its own Tokbase/iota token constants directly rather than
+# having them generated from a grammar; the fourth slice (see below)
+# translated lex.c standalone on exactly that basis, with real tests
+# passing before any grammar exists. The first real slice, below, is
+# word.c + var.c's pure list/table logic:
 # no parser, no execution engine, no `runq` (the real source's global
 # "currently running thread" pointer) needed at all for the functions
 # translated so far - real, direct, testable value semantics.
@@ -153,6 +157,8 @@ Rc: module
 	testtoken:	fn(str: string, ttype: int): ref Tree;
 	testklook:	fn(name: string): ref Tree;
 	testtokenspread:	fn(): int;
+	testlexinit:	fn(s: string): ref Lexstate;
+	testlexnext:	fn(ls: ref Lexstate): (int, ref Tree);
 };
 
 # --- word.c: word lists ---------------------------------------------
@@ -767,15 +773,367 @@ testsetvar(name: string, val: ref Word)
 	setvar(name, val);
 }
 
+# --- lex.c: the tokenizer ---------------------------------------------
+#
+# Fourth slice, and the first genuinely large one: real rc's lexer
+# reads from `runq->cmdfd` (the current thread's input), a dependency
+# every earlier slice deliberately avoided. There is no Thread yet, so
+# this version reads from an in-memory string instead (`Lexstate.buf`)
+# - real lexical behavior (word/glob/quote/redirection-arrow scanning)
+# doesn't care where its characters come from, only the real source's
+# own interactive bookkeeping does (`doprompt`/`pprompt()`/the
+# `flag['V']`-gated echo in `getnext()`), and that bookkeeping is
+# dropped here, not translated - deferred to when there's a real
+# Thread to prompt on behalf of.
+#
+# Two omissions are C-buffer artifacts, not rc language semantics, and
+# have no Limbo counterpart needed: `tok[NTOK]`'s fixed 8192-byte cap
+# (and the "token buffer too short" error it can raise) - Limbo
+# strings grow; and `addutf`'s manual multi-byte UTF-8 assembly - same
+# simplification as glob.c's match(), since Limbo strings are already
+# rune sequences. A token is accumulated with `sys->sprint("%c", c)`
+# per rune (confirmed against this tree's own p9/cmd/ascii.b, which
+# names the one real gotcha: that format verb genuinely emits a
+# proper multi-byte UTF-8 encoding for a rune above 127, which is
+# exactly what's wanted here - a raw single BYTE 0-255 would be the
+# wrong tool, and ascii.b's own header comment explains why for its
+# own, different, reason).
+#
+# yyerror() prints a real diagnostic to `err` and resyncs input to the
+# next newline - deferred with everything else that needs a Thread;
+# a lex error here just returns Eof/nil, the same "no valid token"
+# outcome the real source reaches right after calling it.
+#
+# Real rc.h's redirection-type constants (APPEND/WRITE/READ/HERE/
+# DUPFD/CLOSE = 1..6) are copied verbatim, not reassigned via the
+# Tokbase/iota scheme - they're plain #defines in the real source, not
+# yacc-generated tokens, so there's a real, specific numbering to be
+# faithful to rather than an internal-consistency-only choice.
+Append: con 1;
+Write: con 2;
+Read: con 3;
+Here: con 4;
+Dupfd: con 5;
+Close: con 6;
+
+Eof: con -1;
+
+Lexstate: adt
+{
+	buf:		string;
+	pos:		int;
+	future:		int;	# one-rune lookahead; Eof means "empty"
+	peekc:		int;	# backslash-newline pushback; Eof means "empty"
+	lastc:		int;
+	lastdol:	int;	# was the last token '$', '$#', or '"'?
+	lastword:	int;	# was the last token a word or word terminator?
+	inquote:	int;
+};
+
+lexinit(s: string): ref Lexstate
+{
+	return ref Lexstate(s, 0, Eof, Eof, 0, 0, 0, 0);
+}
+
+Wordstops: con "\n \t\r#;&|^$=`'{}()<>";
+Idstops: con "!\"#$%&'()+,-./:;<=>?@[\\]^`{|}~";
+
+inset(set: string, c: int): int
+{
+	for(i := 0; i < len set; i++)
+		if(set[i] == c)
+			return 1;
+	return 0;
+}
+
+wordchr(c: int): int
+{
+	return inset(Wordstops, c) == 0 && c != Eof;
+}
+
+idchr(c: int): int
+{
+	return c > ' ' && inset(Idstops, c) == 0;
+}
+
+rawgetc(ls: ref Lexstate): int
+{
+	if(ls.pos >= len ls.buf)
+		return Eof;
+	c := ls.buf[ls.pos];
+	ls.pos++;
+	return c;
+}
+
+# backslash-newline is a line continuation (becomes a space);
+# backslash followed by anything else is a literal backslash, with
+# the following character pushed back for the next call to see.
+getnext(ls: ref Lexstate): int
+{
+	c: int;
+	if(ls.peekc != Eof){
+		c = ls.peekc;
+		ls.peekc = Eof;
+		return c;
+	}
+	c = rawgetc(ls);
+	if(ls.inquote == 0 && c == '\\'){
+		c = rawgetc(ls);
+		if(c == '\n')
+			c = ' ';
+		else{
+			ls.peekc = c;
+			c = '\\';
+		}
+	}
+	return c;
+}
+
+nextc(ls: ref Lexstate): int
+{
+	if(ls.future == Eof)
+		ls.future = getnext(ls);
+	return ls.future;
+}
+
+advance(ls: ref Lexstate): int
+{
+	c := nextc(ls);
+	ls.lastc = ls.future;
+	ls.future = Eof;
+	return c;
+}
+
+nextis(ls: ref Lexstate, c: int): int
+{
+	if(nextc(ls) == c){
+		advance(ls);
+		return 1;
+	}
+	return 0;
+}
+
+skipwhite(ls: ref Lexstate)
+{
+	for(;;){
+		c := nextc(ls);
+		if(c == '#'){
+			for(;;){
+				c = nextc(ls);
+				if(c == '\n' || c == Eof)
+					break;
+				advance(ls);
+			}
+		}
+		if(c == ' ' || c == '\t' || c == '\r')
+			advance(ls);
+		else
+			return;
+	}
+}
+
+skipnl(ls: ref Lexstate)
+{
+	for(;;){
+		skipwhite(ls);
+		c := nextc(ls);
+		if(c != '\n')
+			return;
+		advance(ls);
+	}
+}
+
+# the shared arrow-parsing code real rc's '|'/'<'/'>' switch cases
+# fall through into (single '|', not '||', is a real PIPE token too).
+lexredir(ls: ref Lexstate, c0: int): (int, ref Tree)
+{
+	ls.lastdol = 0;
+	t := newtree();
+	case c0 {
+	'|' =>
+		t.ttype = Tpipe;
+		t.fd0 = 1;
+		t.fd1 = 0;
+	'>' =>
+		t.ttype = Tredir;
+		if(nextis(ls, c0))
+			t.rtype = Append;
+		else
+			t.rtype = Write;
+		t.fd0 = 1;
+	'<' =>
+		t.ttype = Tredir;
+		if(nextis(ls, c0))
+			t.rtype = Here;
+		else
+			t.rtype = Read;
+		t.fd0 = 0;
+	}
+	if(nextis(ls, '[')){
+		c := advance(ls);
+		if(c < '0' || c > '9')
+			return (Eof, nil);	# syntax error - see header comment
+		t.fd0 = 0;
+		do{
+			t.fd0 = t.fd0*10 + c - '0';
+			c = advance(ls);
+		}while(c >= '0' && c <= '9');
+		if(c == '='){
+			if(t.ttype == Tredir)
+				t.ttype = Tdup;
+			c = advance(ls);
+			if(c >= '0' && c <= '9'){
+				t.rtype = Dupfd;
+				t.fd1 = t.fd0;
+				t.fd0 = 0;
+				do{
+					t.fd0 = t.fd0*10 + c - '0';
+					c = advance(ls);
+				}while(c >= '0' && c <= '9');
+			}else{
+				if(t.ttype == Tpipe)
+					return (Eof, nil);
+				t.rtype = Close;
+			}
+		}
+		if(c != ']' ||
+		   (t.ttype == Tdup && (t.rtype == Here || t.rtype == Append)))
+			return (Eof, nil);
+	}
+	if(t.ttype == Tpipe)
+		skipnl(ls);
+	return (t.ttype, t);
+}
+
+lexquote(ls: ref Lexstate): (int, ref Tree)
+{
+	ls.lastdol = 0;
+	ls.lastword = 1;
+	ls.inquote = 1;
+	acc := "";
+	for(;;){
+		c := advance(ls);
+		if(c == Eof)
+			break;
+		if(c == '\''){
+			if(nextc(ls) != '\'')
+				break;
+			advance(ls);
+		}
+		acc += sys->sprint("%c", c);
+	}
+	t := token(acc, Tword);
+	t.quoted = 1;
+	return (t.ttype, t);
+}
+
+lexword(ls: ref Lexstate, c0: int): (int, ref Tree)
+{
+	acc := "";
+	c := c0;
+	for(;;){
+		if(c == '*' || c == '[' || c == '?' || c == Glob)
+			acc += sys->sprint("%c", Glob);
+		acc += sys->sprint("%c", c);
+		c = nextc(ls);
+		wantmore: int;
+		if(ls.lastdol)
+			wantmore = idchr(c);
+		else
+			wantmore = wordchr(c);
+		if(wantmore == 0)
+			break;
+		advance(ls);
+	}
+	ls.lastword = 1;
+	ls.lastdol = 0;
+	t := klook(acc);
+	if(t.ttype != Tword)
+		ls.lastword = 0;
+	t.quoted = 0;
+	return (t.ttype, t);
+}
+
+lexnext(ls: ref Lexstate): (int, ref Tree)
+{
+	d := nextc(ls);
+
+	if(ls.lastword){
+		ls.lastword = 0;
+		if(d == '('){
+			advance(ls);
+			return (Tsub, nil);
+		}
+		if(wordchr(d) || d == '\'' || d == '`' || d == '$' || d == '"')
+			return ('^', nil);
+	}
+	ls.inquote = 0;
+	skipwhite(ls);
+	c := advance(ls);
+
+	case c {
+	Eof =>
+		ls.lastdol = 0;
+		return (Eof, nil);
+	'$' =>
+		ls.lastdol = 1;
+		if(nextis(ls, '#'))
+			return (Tcount, nil);
+		if(nextis(ls, '"'))
+			return ('"', nil);
+		return ('$', nil);
+	'&' =>
+		ls.lastdol = 0;
+		if(nextis(ls, '&')){
+			skipnl(ls);
+			return (Tandand, nil);
+		}
+		return ('&', nil);
+	'|' =>
+		ls.lastdol = 0;
+		if(nextis(ls, '|')){
+			skipnl(ls);
+			return (Toror, nil);
+		}
+		return lexredir(ls, c);
+	'<' or '>' =>
+		return lexredir(ls, c);
+	'\'' =>
+		return lexquote(ls);
+	* =>
+		if(wordchr(c) == 0){
+			ls.lastdol = 0;
+			return (c, nil);
+		}
+		return lexword(ls, c);
+	}
+}
+
+testlexinit(s: string): ref Lexstate
+{
+	return lexinit(s);
+}
+
+testlexnext(ls: ref Lexstate): (int, ref Tree)
+{
+	return lexnext(ls);
+}
+
+# loads sys too, not just the keyword/variable tables - lexword() and
+# lexquote() need sys->sprint() to build a token one rune at a time
+# (see this file's header comment on why %c is the right tool for
+# that). Found the hard way: rctest.b calls bootstrap(), never init(),
+# so sys stayed nil and the first %c call crashed the whole module
+# with "module not loaded" until this was added here too.
 bootstrap()
 {
+	sys = load Sys Sys->PATH;
 	gvar = array[NVAR] of ref Var;
 	initkw();
 }
 
 init(nil: ref Draw->Context, nil: list of string)
 {
-	sys = load Sys Sys->PATH;
 	bootstrap();
 	print("rc: word-list/variable-table foundation only, no parser yet\n");
 }
