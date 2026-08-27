@@ -438,12 +438,42 @@ OP(movmp)
 		freeptrs(R.d, t);
 	memmove(R.d, R.s, t->size);
 }
+/*
+ * Same one-shot-per-boot idea as probearrtype() below, aimed at
+ * OP(new)'s type instead of OP(newa)'s: dump the compiled descriptor
+ * for whatever module Bufio allocates through heap() (not heapz(),
+ * so nothing here zeroes it first but initmem()), the way UPDATE 18
+ * confirmed YYS's descriptor on the real binary instead of trusting
+ * a field count.  Gated on module name alone, not a specific size --
+ * Bufio allocates more than one type, and any of them answers the
+ * same question.  See doc/inferno-ports.ms.
+ */
+static int probednewtype;
+
+static void
+probenewtype(Type *t)
+{
+	if(probednewtype || strcmp(R.M->m->name, "Bufio") != 0)
+		return;
+	probednewtype = 1;
+	print("new: type size %d np %d map", t->size, t->np);
+	{
+		int i;
+		for(i = 0; i < t->np; i++)
+			print(" %#.2ux", t->map[i]);
+	}
+	print(" module %s\n", R.M->m->name);
+}
+
 OP(new)
 {
 	Heap *h;
 	WORD **wp, *t;
+	Type *nt;
 
-	h = heap(R.M->type[W(s)]);
+	nt = R.M->type[W(s)];
+	probenewtype(nt);
+	h = heap(nt);
 	wp = R.d;
 	t = *wp;
 	*wp = H2D(WORD*, h);

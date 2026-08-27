@@ -7204,6 +7204,97 @@ small non-H value \- on that path.  Two allocation paths, two
 captures, one shape.
 
 .NH 1
+Iobuf's descriptor confirmed correct \- and the bad slot sits well past it
+.PP
+Closed the gap the last section left open, the same way UPDATE 18
+closed it for
+.CW YYS :
+a one-shot probe in
+.CW OP(new)
+.RB ( gated
+on module
+.CW Bufio
+this time, any type it allocates rather than one exact size, since
+.CW Bufio
+allocates more than
+.CW Iobuf )
+dumping the real, compiled descriptor rather than inferring one from
+a field count.  One boot, first hit:
+.CW "new:\ type\ size\ 72\ np\ 1\ map\ 0xc0\ module\ Bufio" .
+0xc0 is
+.CW 11000000 \-
+bits 7 and 6, naming words 0 and 1 by this hunt's own established bit
+order.  Matches
+.CW module/bufio.m 's
+field order exactly:
+.CW fd
+(word 0) and
+.CW buffer
+(word 1), the adt's only two pointer fields, correctly and only
+those two words marked.
+.B "Iobuf's descriptor is right, the same clean result YYS got."
+.PP
+Which makes the earlier capture's numbers worth finishing properly
+now that there's a real size to check them against, not a guess.
+.CW B2D
+is the pool's own data pointer \- the start of the
+.CW Heap
+header itself, not of Iobuf's own fields, which begin
+.CW sizeof(Heap)
+further in via
+.CW H2D() .
+The bad slot sat at
+.CW "B2D+0x78"
+\- byte offset 120 from the block's start.  Iobuf's own fields, at
+.CW t\->size\ 72 ,
+end at
+.CW "sizeof(Heap)+72" \-
+comfortably short of 120 under any plausible
+.CW "struct\ Heap"
+layout
+.RB ( color ,
+.CW ref ,
+a
+.CW Type*
+and an
+.CW hprof
+field, on the order of 24\-32 bytes), without pinning the exact
+figure down this round rather than guess at it.  Qualitatively firm
+either way: the bad slot sits inside a 256-byte pool block holding
+far more room than one
+.CW Heap+Iobuf
+pair needs (headers and pool size-class rounding account for some of
+that gap, not all of it), and it lands measurably past where
+Iobuf's own declared extent stops, not just past
+.CW B2D .
+.B "The instruction's own computed source address pointed measurably
+past the end of a correctly-described object, into space nothing
+in that object's own type ever claims."
+Not new padding uninitialized by chance: memory this specific
+allocation's own shape says doesn't belong to it at all.
+.PP
+Two captures, two allocation paths, two confirmed-correct type
+descriptors, and in both cases the bad slot sits measurably past
+where the relevant structure's own declared size says it should end
+\- past
+.CW t->size
+on the stack, past
+.CW t->size
+on the heap.  Not a type-descriptor bug either time.  Not (yet) an
+allocator-corruption bug in the sense this hunt has chased before \-
+.CW auditmemloc()
+found both slots inside blocks the pool still calls live.  What's
+left, stated plainly rather than diagnosed: something is computing a
+source or destination address that overshoots the object it was
+meant to land in, by an amount too large to be an off-by-one and
+too small to be a wild pointer, twice, on two unrelated types,
+through two unrelated opcodes.  Where that computation happens \-
+which instruction, which addressing mode, why it overshoots by
+roughly this much \- is the next question, and it needs a capture
+that names the computing instruction itself, not just where it
+landed.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
