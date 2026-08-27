@@ -7832,6 +7832,69 @@ already does for
 Rebuilt clean, no new warnings.  Fresh batch running.
 
 .NH 1
+The first indirect-mode capture: the pointer chain is fine, the field it reaches isn't
+.PP
+Module
+.CW Mount
+again:
+.CW "bad sv 0" ,
+addressing byte
+.CW 0x2d .
+.CW "USRC(0x2d) = 5 = AFP|AIND" :
+the first indirect-mode capture this hunt has gotten with a working
+probe.
+.CW DIND(FP,\ s)
+dereferences a pointer already sitting at
+.CW "R.FP + s.i.f" ,
+then adds
+.CW s.i.s .
+Decoded from the raw
+.CW .ind
+bytes by hand this time (0x58 as a word splits, little-endian, into
+.CW i.f=88 ,
+.CW i.s=0 ):
+the source address is whatever pointer lives at
+.CW FP+88 ,
+unchanged by a zero final offset.  The frame-bounds line is
+nonsense again
+.RN ( "addr - FP = -1089352" ),
+and that's expected now, the same way it was for the AMP-direct
+.CW Arg
+capture: an indirect final address has no reason to sit near
+.CW R.FP
+even when everything about the computation is correct.
+.PP
+This is the shape
+.I advisor
+predicted back when the addressing-mode question was first raised: an
+indirect-mode capture would mean the dereferenced pointer was valid,
+and the corruption is in the field it reached, not in the pointer
+chain.  That's exactly what this capture shows.
+.CW FP+88
+holds a working pointer \- dereferencing it lands on a real,
+plausible address
+.RN ( 0x785ea78 ,
+inside the same block the surrounding memory dump shows other
+in-range values in) \- and the
+.I field
+at that address, not the pointer that reached it, is what holds 0
+instead of
+.CW H .
+The pointer chain isn't the problem; whatever last wrote to that
+specific field, or failed to initialize it, is.
+.PP
+Fixed the probe for next time rather than hand-decoding again:
+.CW badptrslot()
+now checks
+.CW USRC / UDST
+and prints
+.CW i.f / i.s
+directly whenever the mode is indirect, instead of printing
+.CW .ind
+reinterpreted as the wrong shape.  Rebuilt, same two pre-existing
+unrelated warnings only.  Fresh batch running.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

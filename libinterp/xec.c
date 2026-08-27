@@ -395,6 +395,22 @@ badptrslot(void *bad, void *addr, char *which)
 		 */
 		print("movp: (R.PC-1)->s.ind %#zx (R.PC-1)->d.ind %#zx\n",
 			(uintptr)(R.PC - 1)->s.ind, (uintptr)(R.PC - 1)->d.ind);
+		/*
+		 * .ind is only the right field for a direct mode (USRC/UDST
+		 * == AMP or AFP).  An indirect mode (AMP|AIND, AFP|AIND)
+		 * uses the SAME union storage as two ushorts, .i.f and .i.s
+		 * (DIND(reg,xxx): dereference *(uintptr*)(R.reg+i.f), then
+		 * add i.s) -- printing .ind for those prints the union
+		 * reinterpreted as the wrong shape.  An 'a8' capture used
+		 * indirect addressing (add 0x2d) and had to be decoded by
+		 * hand from the .ind bytes; do it here instead.
+		 */
+		if(USRC((R.PC-1)->add) == (AMP|AIND) || USRC((R.PC-1)->add) == (AFP|AIND))
+			print("movp: (R.PC-1)->s.i.f %#ux (R.PC-1)->s.i.s %#ux\n",
+				(R.PC - 1)->s.i.f, (R.PC - 1)->s.i.s);
+		if(UDST((R.PC-1)->add) == (AMP|AIND) || UDST((R.PC-1)->add) == (AFP|AIND))
+			print("movp: (R.PC-1)->d.i.f %#ux (R.PC-1)->d.i.s %#ux\n",
+				(R.PC - 1)->d.i.f, (R.PC - 1)->d.i.s);
 	}else
 		print("movp: bad %s %p, R.M nil or has no module\n", which, bad);
 	base = (intptr*)addr - 4;
