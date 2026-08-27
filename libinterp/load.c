@@ -207,6 +207,18 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 	WORD lo, hi;
 	int lsize, id, tnp, tsz, siglen;
 	int de, isize, dsize, hsize, dasp;
+	/*
+	 * intptr, not long: this tree's own C toolchain (6c/kencc,
+	 * Plan9-derived) has a 32-bit long even on this 64-bit port --
+	 * see plan9-long-is-32-bits in this hunt's own notes -- and a
+	 * 32-bit addrlim mixed with intptr v/n in the bounds checks
+	 * below produced exactly the kind of silently-wrong arithmetic
+	 * that note warns about: a legitimate module (/osinit.dis, the
+	 * very first thing loaded at boot) tripped "data segment string
+	 * out of range" on every boot once those checks were added,
+	 * before this fix.  See doc/inferno-ports.ms.
+	 */
+	intptr addrlim, limstack[DADEPTH];
 	uchar *mod, sm, *istream, **isp, *si, *addr, *dastack[DADEPTH], *e, *b;
 	Link *l;
 	intptr i, n, v, pc, entry, entryt;
@@ -335,7 +347,21 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 	}
 	for(i = 0; i < hsize; i++) {
 		id = operand(isp);
-		if(id > hsize) {
+		/*
+		 * Was "id > hsize" -- off by one (m->type[] has hsize
+		 * elements, valid indices 0..hsize-1, so id==hsize slipped
+		 * through and "m->type[id] = pt" below wrote one Type*
+		 * past the end of the heap allocation) and missed negative
+		 * id entirely.  Same class of bug as the DIND/array-type-id
+		 * fixes elsewhere in this function, found in the same
+		 * audit.  Checked directly, not assumed to be the landmark
+		 * write: with this and the data-segment bounds checks both
+		 * in place, the landmark capture (sh.b's runexternal(),
+		 * 'mod') still reproduces unchanged, so this is real
+		 * hardening on its own merits, not the mechanism this hunt
+		 * has been chasing.  See doc/inferno-ports.ms.
+		 */
+		if(id < 0 || id >= hsize) {
 			kwerrstr("heap id range");
 			goto bad;
 		}
@@ -371,6 +397,7 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			m->origmp, h, pt);
 	}
 	addr = m->origmp;
+	addrlim = dsize;
 	dasp = 0;
 	DNP("\tvar\t@mp, size %d\n", dsize);
 	for(;;) {
@@ -381,18 +408,69 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 		if(n == 0)
 			n = operand(isp);
 		v = operand(isp);
+		/*
+		 * v is a data-segment offset read straight from the .dis
+		 * file (or, if some earlier byte in this same parse was
+		 * miscounted, from whatever garbage a misaligned read
+		 * lands on), and until this check existed it went straight
+		 * into "si = addr + v" with nothing to stop it landing
+		 * outside addr's own allocation -- every DEFB/DEFW/DEFL/
+		 * DEFF/DEFS/DEFA write below then wrote through si with no
+		 * bounds check at all.  A garbled or malicious v had a
+		 * completely open path to corrupt whatever memory happened
+		 * to follow that allocation.  This doesn't re-check each
+		 * case's own per-element size (n*sizeof(WORD) and friends),
+		 * so a v that lands just inside addrlim but whose full
+		 * write extends past it can still slip through -- coarse,
+		 * not exact, but closes the wide-open case.  See
+		 * doc/inferno-ports.ms.
+		 */
+		if(v < 0 || v >= addrlim) {
+			kwerrstr("data segment offset out of range");
+			goto bad;
+		}
 		si = addr + v;
+		/*
+		 * The check above only bounds v itself; a v that lands just
+		 * inside addrlim can still have a write that extends past
+		 * it once n and the per-element size are accounted for.
+		 * Checked exactly here, per case, rather than folded into
+		 * one general formula -- DEFS's n is a byte count, DEFB's
+		 * a byte count too, DEFW/DEFL/DEFF's a WORD/LONG/REAL
+		 * count, and DEFA/DIND don't loop over si by n at all.  See
+		 * doc/inferno-ports.ms.
+		 */
 		switch(DTYPE(sm)) {
 		default:
 			kwerrstr("bad data item");
 			goto bad;
 		case DEFS:
+			/*
+			 * Was checked against n, the string's own length --
+			 * wrong.  n bytes get read from istream to build a
+			 * new String object elsewhere; the only write at si
+			 * itself is the one pointer below ("*(String**)si =
+			 * s"), and asmstring() is debug-print-only (DNP,
+			 * compiled out), not a second write.  Confirmed live:
+			 * checking against n panicked on /osinit.dis, the
+			 * first module loaded at boot, on every boot -- a
+			 * false positive from checking the wrong quantity, not
+			 * evidence the module was actually malformed.
+			 */
+			if((intptr)sizeof(String*) > addrlim - v) {
+				kwerrstr("data segment string ref out of range");
+				goto bad;
+			}
 			s = c2string((char*)istream, n);
 			asmstring(v, si, s, n, istream);
 			istream += n;
 			*(String**)si = s;
 			break;
 		case DEFB:
+			if(n < 0 || (intptr)n > addrlim - v) {
+				kwerrstr("data segment bytes out of range");
+				goto bad;
+			}
 			DNP("\tbyte\t@mp+%d", v);
 			for(i = 0; i < n; i++){
 				DNP(",%d", *istream & 0xff);
@@ -401,6 +479,10 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			DNP(" n=%d\n", n);
 			break;
 		case DEFW:
+			if(n < 0 || (intptr)n*sizeof(WORD) > addrlim - v) {
+				kwerrstr("data segment words out of range");
+				goto bad;
+			}
 			DNP("\tword\t@mp+%d len %d:", v, n);
 			for(i = 0; i < n; i++) {
 				*(WORD*)si = disw(isp);
@@ -410,6 +492,10 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			DNP("\n");
 			break;
 		case DEFL:
+			if(n < 0 || (intptr)n*sizeof(LONG) > addrlim - v) {
+				kwerrstr("data segment longs out of range");
+				goto bad;
+			}
 			DNP("\tlong\t@mp+%d", v);
 			for(i = 0; i < n; i++) {
 				hi = disw(isp);
@@ -421,6 +507,10 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			DNP("\n");
 			break;
 		case DEFF:
+			if(n < 0 || (intptr)n*sizeof(REAL) > addrlim - v) {
+				kwerrstr("data segment reals out of range");
+				goto bad;
+			}
 			DNP("\treal\t@mp+%d", v);
 			for(i = 0; i < n; i++) {
 				DNP(" raw: ");
@@ -439,9 +529,28 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			DNP("\n");
 			break;
 		case DEFA:			/* Array */
+			/*
+			 * DEFA writes one WORD-sized array reference at si
+			 * (A(si) = ary, below) -- the general check above
+			 * only guaranteed v itself is in range, not a full
+			 * WORD past it.  v gets reused immediately below for
+			 * the array's type id and length, so this has to be
+			 * checked against si/addr directly rather than v.
+			 */
+			if((intptr)(si - addr) > addrlim - (intptr)sizeof(WORD)) {
+				kwerrstr("data segment array ref out of range");
+				goto bad;
+			}
 			DNP("\tarray\t@mp+%d", v);
 			v = disw(isp);
-			if(v < 0 || v > m->ntype) {
+			/*
+			 * Was "v > m->ntype" -- off by one, same class as
+			 * the DIND fix above: m->type[] has m->ntype
+			 * elements, valid indices 0..ntype-1, so v==ntype
+			 * used to pass this check and index one past the
+			 * end.  See doc/inferno-ports.ms.
+			 */
+			if(v < 0 || v >= m->ntype) {
 				kwerrstr("bad array type");
 				goto bad;
 			}
@@ -475,12 +584,23 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			}
 			DNP("\tindir\t@mp+%d", v);
 			v = disw(isp);
-			if(v > ary->len || v < 0 || dasp >= DADEPTH) {
+			/*
+			 * Was "v > ary->len" -- off by one, since valid
+			 * indices are 0..ary->len-1: v == ary->len is one
+			 * past the end and used to pass this check.  Found
+			 * in the same audit that added the addrlim tracking
+			 * below; both close the same class of gap (an offset
+			 * read from the file, trusted with no bound), so
+			 * fixed together.  See doc/inferno-ports.ms.
+			 */
+			if(v >= ary->len || v < 0 || dasp >= DADEPTH) {
 				kwerrstr("array init range");
 				goto bad;
 			}
 			dastack[dasp++] = addr;
+			limstack[dasp-1] = addrlim;
 			addr = ary->data+v*ary->t->size;
+			addrlim = (long)ary->t->size*(ary->len - v);
 			DNP(",%d,%zd 0x%zx\n",
 				v, (intptr)ary->data+v*ary->t->size,
 				(intptr)ary->data+v*ary->t->size);
@@ -492,6 +612,7 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			}
 			DNP("\tapop\n");
 			addr = dastack[--dasp];
+			addrlim = limstack[dasp];
 			break;
 		}
 	}
