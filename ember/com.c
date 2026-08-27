@@ -2261,6 +2261,18 @@ modcom(void)
 		d->next = nil;
 		appglobal(d);
 	}
+	/*
+	 * "nil" (check.c's check(), nildecl): a builtin, not a
+	 * module-authored decl, so it isn't threaded through
+	 * moduledecls -- only give it a real global-data-segment slot
+	 * (and thus an .offset from idoffsets(), below) if this file
+	 * actually used it, same as the imports loop just above skips
+	 * an unreferenced import.
+	 */
+	if(nildecl->refs > 0){
+		nildecl->next = nil;
+		appglobal(nildecl);
+	}
 	for(d = moduledecls; d != nil; d = d->link){
 		d->next = nil;
 		appglobal(d);

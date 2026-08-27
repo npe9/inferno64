@@ -206,11 +206,16 @@ mksconst(Src *src, Sym *s)
 Node*
 mknil(Src *src)
 {
-	Node *n;
-
-	n = mkn(Onil, nil, nil);
-	n->src = *src;
-	return n;
+	/*
+	 * matches limbo/nodes.c's own mknil(): "nil" is an ordinary
+	 * Oname referencing a single predeclared Dglobal (nildecl,
+	 * installed by check(), ember.h), not a dedicated AST op --
+	 * echk()'s existing Oname case (lookup, type from d->ty) and
+	 * ecom()'s existing Oname/Dglobal codegen both apply completely
+	 * unchanged, so there is no separate Onil case to write or keep
+	 * in sync anywhere downstream of the parser.
+	 */
+	return mkname(src, enter("nil", 0));
 }
 
 /*

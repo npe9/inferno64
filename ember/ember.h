@@ -730,6 +730,8 @@ Extern	Type	*treal;
 Extern	Type	*tstring;
 Extern	Type	*tunknown;
 
+Extern	Decl	*nildecl;		/* the predeclared Dglobal "nil" is bound to (Tany-typed, no initializer -- reads back as the module's own zero-filled global data, same trick as a fresh IFRAME); mknil() (ast.c) builds an ordinary Oname referencing it, matching limbo/decls.c's own nildecl -- no dedicated Onil codegen case needed anywhere */
+
 extern	int	*blockstack;
 extern	int	blockdep;
 extern	int	nblocks;

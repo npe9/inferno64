@@ -1944,6 +1944,14 @@ echk(Node *n)
 			n->ty = tint;
 		return n->ty;
 	case Onil:
+		/*
+		 * dead as of nildecl (see check(), below): mknil() (ast.c)
+		 * now builds an ordinary Oname referencing the predeclared
+		 * "nil" global instead of an Onil node, so this case is no
+		 * longer reachable from the parser -- kept only as a safe
+		 * fallback (matches nildecl's own tany typing exactly) in
+		 * case anything ever constructs one directly.
+		 */
 		n->ty = tany;
 		return n->ty;
 	case Oname:
@@ -3822,6 +3830,23 @@ check(Node *tree)
 	declbuiltin("byte", tbyte);
 	declbuiltin("real", treal);
 	declbuiltin("string", tstring);
+
+	/*
+	 * "nil" (matches limbo/decls.c's own declstart()): a single
+	 * predeclared Tany-typed Dglobal with no initializer.  mknil()
+	 * (ast.c) builds an ordinary Oname naming it, so every read of
+	 * a literal nil flows through the *existing* Oname/Dglobal
+	 * paths in both echk() and ecom() unchanged -- it reads back as
+	 * whatever this module's own global data segment is zero-filled
+	 * to at load, the same guarantee a fresh IFRAME already relies
+	 * on elsewhere in this compiler.  must be installed before any
+	 * source is checked, since mknil() already produced Oname nodes
+	 * referencing this exact symbol during parsing, before check()
+	 * ever ran.
+	 */
+	nildecl = mkdecl(&nosrc, Dglobal, tany);
+	nildecl->sym = enter("nil", 0);
+	install(nildecl);
 
 	pushscope();	/* module scope */
 
