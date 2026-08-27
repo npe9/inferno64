@@ -2866,6 +2866,45 @@ echk(Node *n)
 		t = mktype(&n->src, Tarray, stype(n->right), nil);
 		sizetype(t);
 		n->right = nil;	/* type expr consumed; ecom sees only size */
+		if(n->aux != nil){
+			/*
+			 * "[size]T{v, v, ...}" -- positional-only, no keyed/
+			 * sparse form (parse.c's own comment on this grammar
+			 * shape explains why): every element must be present,
+			 * so the count is checked here rather than left for
+			 * com.c to discover at codegen time or, worse, silently
+			 * write past/short of the allocated array. requiring
+			 * the size to be a literal Oconst (not just any
+			 * constant-foldable expression -- this compiler has no
+			 * general constant-folding pass to lean on, confold()
+			 * only ever runs on a nil comparison) is a real,
+			 * deliberate scope boundary: "[n]int{1,2,3}" for a
+			 * non-literal n fails loudly here ("must be a
+			 * constant"), not silently mismatched against whatever
+			 * n turns out to be at runtime.
+			 */
+			Node *p, *e;
+			int nelem;
+			Type *ety;
+
+			nelem = 0;
+			for(p = n->aux; p != nil; p = p->right){
+				e = p;
+				if(p->op == Oseq)
+					e = p->left;
+				ety = echk(e->right);
+				if(!assignable(t->tof, ety, e->right))
+					nerror(e, "cannot use %T as %T in array composite literal", ety, t->tof);
+				nelem++;
+				if(p->op != Oseq)
+					break;
+			}
+			if(n->left->op != Oconst || n->left->ty != tint)
+				nerror(n, "array composite literal size must be a constant");
+			else if(n->left->val != nelem)
+				nerror(n, "array size %lld does not match %d elements in composite literal",
+					n->left->val, nelem);
+		}
 		n->ty = t;
 		return n->ty;
 	case Orcv:

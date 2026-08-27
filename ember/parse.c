@@ -531,21 +531,35 @@ poperand(void)
 		return n;
 	}
 	case '[': {
-		Node *sz, *te;
+		Node *sz, *te, *elems, *e;
 
 		/*
-		 * array allocation, always zero-filled: "[size]T", mirroring
-		 * "chan[size] T" just above -- deliberately NOT limbo's
-		 * fuller "array[] of {v, v, ...}" value-list form, which
-		 * stays its own separate, still-open gap (compositefields()
-		 * only accepts adt types).  this exists purely so array-
-		 * typed code has *some* way to construct a real array value
-		 * from ember source at all -- previously arrays could only
-		 * ever be received as parameters, never constructed.  unlike
-		 * chan's size (optional, meaning "unbuffered"), an array's
-		 * size is always required: there's no equally meaningful
-		 * "bare array T" default the way an unbuffered channel is a
-		 * real, distinct concept from a buffered one.
+		 * array allocation, always zero-filled unless a value-list
+		 * body follows: "[size]T" or "[size]T{v, v, ...}", mirroring
+		 * "chan[size] T" just above. unlike chan's size (optional,
+		 * meaning "unbuffered"), an array's size is always required:
+		 * there's no equally meaningful "bare array T" default the
+		 * way an unbuffered channel is a real, distinct concept from
+		 * a buffered one.
+		 *
+		 * the "{...}" body is deliberately NOT limbo's fuller
+		 * "array[] of {v, v, ...}" form (ranges, wildcards, a
+		 * default for unset slots) -- positional-only, go's own
+		 * "[N]T{v, v, ...}" shape, and check.c's own Oarray case
+		 * requires the element count to exactly match the declared
+		 * size (no keyed/sparse form), so a literal is always fully
+		 * specified: com.c's own Oarray case never has to answer
+		 * storecomposite()'s "is this exhaustive" question the way
+		 * a struct literal does. reuses Oelem (key always nil here,
+		 * positional-only) and the same mkseq()/rotater() list-
+		 * building idiom pcomposite() uses just above, stored on
+		 * Oarray's own n->aux (its left/right are already spoken
+		 * for -- size and element type) rather than wrapped in a
+		 * separate Ocomposite node: istypeexpr() has no case for
+		 * Oarray (it's an allocation expression, not type syntax),
+		 * so the general "T{...}" composite-literal grammar just
+		 * below in this same postfix loop was never going to reach
+		 * this shape anyway -- simplest to keep it self-contained.
 		 */
 		lexskip();
 		sz = pexpr();
@@ -554,6 +568,26 @@ poperand(void)
 		n = mkn(Oarray, sz, te);
 		n->src.start = src.start;
 		n->src.stop = te->src.stop;
+		if(cur() == '{'){
+			Src bsrc;
+			int oblit;
+
+			oblit = noblit;
+			noblit = 0;
+			bsrc = pexpect('{', "array composite literal");
+			elems = nil;
+			while(cur() != '}' && cur() != Beof){
+				e = mkn(Oelem, nil, pexpr());
+				elems = mkseq(elems, e);
+				if(!paccept(',') && cur() != ';')
+					break;
+				paccept(';');	/* trailing comma newline */
+			}
+			bsrc.stop = pexpect('}', "array composite literal").stop;
+			noblit = oblit;
+			n->aux = rotater(elems);
+			n->src.stop = bsrc.stop;
+		}
 		return n;
 	}
 	default:

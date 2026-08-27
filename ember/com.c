@@ -438,6 +438,31 @@ sumark(Node *n)
 		 */
 		n->temps++;
 		break;
+	case Oarray:
+		/*
+		 * n->aux (a value-list body's Oseq/Oelem chain, when
+		 * present) isn't reached by this function's own generic
+		 * top-of-function left/right recursion above -- explicitly
+		 * recurse into it here so every element's own value
+		 * expression gets addressability/temps computed the same as
+		 * any other subexpression before ecom() ever dispatches on
+		 * it. one sumark() call on the chain's head is enough for
+		 * the whole thing: the chain's own Oseq nodes (left=Oelem,
+		 * right=next) and each Oelem (left=nil key, right=the actual
+		 * value expr) all get walked transitively by this same
+		 * function's ordinary recursion once it's entered on them.
+		 * addable/temps otherwise stay whatever the generic top-of-
+		 * function pass already computed from n->left (the size
+		 * expression) alone -- Oarray falls through to the
+		 * unconditional Rcant default like the group just above,
+		 * unchanged from before this case existed: it's never
+		 * embedded as an arbitrary subexpression the way Olen/Oindx/
+		 * etc. can be, always given a real destination directly by
+		 * Odas/Oas, so it doesn't need their "+1 for the op's own
+		 * result slot" bump.
+		 */
+		sumark(n->aux);
+		break;
 	}
 	return n;
 }
@@ -1547,11 +1572,42 @@ ecom(Src *src, Node *nto, Node *n)
 		 * zero-filled half of it -- the "arrayz ? INEWAZ : INEWA"
 		 * choice there also covers an unzeroed allocation
 		 * immediately overwritten by an "array[] of {v,...}" value
-		 * list, which this compiler doesn't have; always INEWAZ
-		 * here, unconditionally). mktn(n->ty->tof) is the *already
-		 * established* pattern this file's own INEWZ call sites use
-		 * (composite literals, tfnptr construction) for a type-
-		 * descriptor operand -- same idiom, different opcode.
+		 * list; always INEWAZ here, unconditionally -- see below for
+		 * why that's still correct once a value list is involved).
+		 * mktn(n->ty->tof) is the *already established* pattern this
+		 * file's own INEWZ call sites use (composite literals,
+		 * tfnptr construction) for a type-descriptor operand -- same
+		 * idiom, different opcode.
+		 *
+		 * n->aux, when non-nil, is a value-list body ("[3]int{1,2,
+		 * 3}") -- check.c's own Oarray case already validated every
+		 * element's type and that the count exactly matches the
+		 * declared size, so unlike a struct composite literal there
+		 * is no exhaustive-vs-not question to answer: ember's array
+		 * literals are positional-only, no keyed/sparse form (see
+		 * parse.c's own comment on this grammar shape), so a literal
+		 * that typechecked at all is *always* fully specified. That
+		 * means com.c never has to route this through storecomposite
+		 * ()/compositexhaustive() the way Odas/Oas do for structs --
+		 * this stays entirely self-contained inside ecom()'s own
+		 * Oarray case. The INEWAZ zero-fill above is redundant once
+		 * every slot is about to be overwritten below, kept anyway
+		 * for the "plainer, always-correct shape over a provably-
+		 * safe-but-fiddlier optimization" preference this file uses
+		 * throughout (Ocons, Oslice).
+		 *
+		 * each element is stored the identical way Oas's own Oindx
+		 * write branch stores into an *existing* array: a synthetic
+		 * Oindx node (nto as the array, i as a constant index) fed
+		 * through indxaddr(), the same mechanism ecom()'s own Oindx
+		 * case and every array lvalue call site already share --
+		 * indxaddr() reads only n->left/n->right/n->ty off the node
+		 * handed to it, never retains the node pointer itself, so a
+		 * single reused stack-local Node across iterations is safe.
+		 * limbo's own arraycom() is the fuller version of this
+		 * (ranges, wildcards, a default value for unset slots),
+		 * deliberately not ported: this branch's own array composite
+		 * literals don't have any of those forms to begin with.
 		 */
 		if(nto == nil)
 			fatal("ecom: array without destination");
@@ -1559,6 +1615,35 @@ ecom(Src *src, Node *nto, Node *n)
 			left = eacom(left, &tl, nto);
 		genrawop(src, INEWAZ, left, mktn(n->ty->tof), nto);
 		tfree(&tl);
+		if(n->aux != nil){
+			Node *p, *e;
+			int i;
+
+			i = 0;
+			for(p = n->aux; p != nil; p = p->right){
+				Node fake, *idx;
+				Indxaddr ia;
+
+				e = p;
+				if(p->op == Oseq)
+					e = p->left;
+				idx = mkconst(&e->src, i);
+				idx->ty = tint;
+				sumark(idx);
+				memset(&fake, 0, sizeof fake);
+				fake.op = Oindx;
+				fake.left = nto;
+				fake.right = idx;
+				fake.ty = n->ty->tof;
+				fake.src = e->src;
+				indxaddr(&ia, &e->src, &fake);
+				ecom(&e->src, &ia.ind, e->right);
+				indxaddrfree(&ia);
+				i++;
+				if(p->op != Oseq)
+					break;
+			}
+		}
 		return nto;
 	case Osnd:
 		if(right->addable < Rcant){
