@@ -479,31 +479,238 @@ scanptrs(void *vw, Type *t, void (*f)(void*))
 	}
 }
 
+/*
+ * checkwatch() (xec.c) held one frame instance at a time and
+ * disarmed on teardown; freeptrs() (above) checks every declared
+ * pointer word of every object, but only once, at teardown -- a
+ * 180-boot batch found it fires far less often than the blanket
+ * movp print does (1 vs 11), meaning most corruption gets read and
+ * caught before its owning frame ever tears down naturally.
+ *
+ * This is the broader version of the same idea: every word initmem()
+ * sets to H gets registered in a fixed hash table, and every
+ * registered word is compared every instruction, not sampled one at
+ * a time or checked once at exit.
+ *
+ * A first version of this comment claimed re-registration alone was
+ * enough -- "a reused address's next initmem() call supersedes
+ * whatever was tracked there before" -- and needed no separate
+ * deregistration step.  That is false, and a live capture (module
+ * Init, disinit.b's getclock()) demonstrated it: a stack address
+ * that had been word 9 of one frame shape (marked pointer) was
+ * reused, on the very next call through that stack slot, as word 9
+ * of a *different* frame shape (getclock's own, per its Type in
+ * disinit.dis) that does NOT mark that word pointer.  initmem() only
+ * ever registers the words a Type's own map marks; it never visits
+ * the words a *previous* occupant of the same memory marked that the
+ * new Type doesn't.  So the stale entry survived, and an entirely
+ * ordinary `now := big 0` -- confirmed by disassembling getclock()
+ * end to end: every touch of that word is IMOVL/ICVTCL/IBLTL, never
+ * a pointer-class op -- was misreported as a declared pointer word
+ * going bad.  trackclear() (every initmem() call clears any tracked
+ * entry inside its own [base, base+size) range first, unconditionally,
+ * before re-registering the words its own map actually marks) closes
+ * that specific channel, and callers that used to skip initmem()
+ * entirely when t->np was 0 (frame(), mframe(), extend(), heapz(),
+ * heap()) now call it unconditionally so the clear still happens.
+ * But trackclear() only runs on *creation*; nothing runs on teardown,
+ * and a second capture (module reported as "Env", inst 64) proved a
+ * second, still-open channel: an object can be freed and its memory
+ * recycled by an allocation that never calls initmem() at all (a raw
+ * pool/malloc chunk, a string body, ...), leaving a tracked word
+ * stale with no clear ever triggered.  That same capture also proved
+ * the printed module/inst were wrong on their own terms -- op 0x09 is
+ * IMCALL, a control transfer, so by the time checktracked() ran after
+ * optab[op]() both R.M and R.PC already described the *callee*, not
+ * the instruction that wrote the word.
+ *
+ * Both are closed the same way: don't trust registration to still be
+ * valid at report time, *validate* it there.  Every registration now
+ * carries typetagp, a pointer to wherever the current, authoritative
+ * type of the containing object lives -- &f->t for a frame, &h->t
+ * (via D2H) for a heap object, &a->t for an array element, all fields
+ * that get overwritten every time that memory is reused for something
+ * new, regardless of whether the new occupant calls initmem() or ever
+ * touches this particular word.  A hit only gets reported when
+ * *typetagp still equals the type recorded at registration; otherwise
+ * the slot is silently dropped as stale, no abort.  A nil typetagp
+ * (the plain initmem() entry point, kept for the JIT compilers'
+ * comp-*.c, which aren't built for pc64) skips validation entirely --
+ * so every pc64 call site now goes through initmemtt() with a real
+ * typetagp; only unexercised paths fall back to unvalidated.
+ *
+ * The attribution fix is separate: xec()'s dispatch loop now saves
+ * R.M and R.PC *before* calling optab[op](), and checktracked() prints
+ * those saved values instead of reconstructing from state that a
+ * control-transfer op may have already overwritten.  1024 slots, open
+ * addressing, table treated as generous enough that a full table
+ * (extremely unlikely given eviction-by-reuse) just overwrites its own
+ * hash slot rather than growing.  See doc/inferno-ports.ms.
+ */
+enum { NTRACK = 1024 };
+typedef struct Trackslot Trackslot;
+struct Trackslot
+{
+	uintptr	*addr;	/* nil = empty */
+	uintptr	val;
+	Type	*t;	/* object's own type at registration, for context and validation */
+	void	*obj;	/* object base, so wordidx = addr - obj can be shown */
+	Type	**typetagp;	/* nil, or &container's current type field */
+};
+static Trackslot track[NTRACK];
+
+/* set by xec()'s dispatch loop just before optab[op]() runs */
+Modlink	*trackM;
+Inst	*trackPC;
+
+static void
+trackclear(void *base, long size)
+{
+	int i;
+	uintptr lo, hi;
+
+	lo = (uintptr)base;
+	hi = lo + size;
+	for(i = 0; i < NTRACK; i++){
+		if(track[i].addr == nil)
+			continue;
+		if((uintptr)track[i].addr >= lo && (uintptr)track[i].addr < hi)
+			track[i].addr = nil;
+	}
+}
+
+static void
+trackreg(uintptr *addr, Type *t, void *obj, Type **typetagp)
+{
+	int i, start;
+
+	start = (int)(((uintptr)addr >> 3) % NTRACK);
+	i = start;
+	do {
+		if(track[i].addr == addr || track[i].addr == nil){
+			track[i].addr = addr;
+			track[i].val = *addr;
+			track[i].t = t;
+			track[i].obj = obj;
+			track[i].typetagp = typetagp;
+			return;
+		}
+		i = (i + 1) % NTRACK;
+	} while(i != start);
+	track[start].addr = addr;
+	track[start].val = *addr;
+	track[start].t = t;
+	track[start].obj = obj;
+	track[start].typetagp = typetagp;
+}
+
 void
-initmem(Type *t, void *vw)
+checktracked(void)
+{
+	extern void dumpstack(void);
+	int i, j, wordidx;
+	uintptr v;
+	Type *t;
+
+	for(i = 0; i < NTRACK; i++){
+		if(track[i].addr == nil)
+			continue;
+		v = *track[i].addr;
+		if(v == track[i].val)
+			continue;
+		if(v == (uintptr)H || v >= 0x1000){
+			track[i].val = v;
+			continue;
+		}
+		if(track[i].typetagp != nil && *track[i].typetagp != track[i].t){
+			/* stale: this memory belongs to a different object now */
+			track[i].addr = nil;
+			continue;
+		}
+		print("track: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx\n",
+			track[i].addr, track[i].val, v);
+		print("track: instruction that just ran: PC %#p op %#.2ux "
+			"add %#.2ux module %s pid %d inst %d\n",
+			trackPC, trackPC->op, trackPC->add,
+			trackM != nil && trackM->m != nil ? trackM->m->name : "?",
+			currun() != nil ? currun()->pid : -1,
+			trackM != nil && trackM->m != nil ? (int)(trackPC - trackM->m->prog) : -1);
+		t = track[i].t;
+		if(t != nil){
+			wordidx = (int)((uintptr*)track[i].addr - (uintptr*)track[i].obj);
+			print("track: object %#p word %d, type %#p size %d np %d map",
+				track[i].obj, wordidx, t, t->size, t->np);
+			for(j = 0; j < t->np; j++)
+				print(" %#.2ux", t->map[j]);
+			print("\n");
+			/*
+			 * registered via heapz()/heap() (typetagp == &h->t
+			 * for this exact h) -- print the heap header so a
+			 * freed-and-reused object is distinguishable from a
+			 * stray write to a live one.  Not printed for a frame
+			 * or array-element registration: there's no Heap
+			 * header sizeof(Heap) bytes before those, and reading
+			 * one would just print garbage.
+			 */
+			if(track[i].typetagp == &D2H(track[i].obj)->t){
+				Heap *h = D2H(track[i].obj);
+				print("track: heap header ref %d color %d\n", h->ref, h->color);
+			}
+		}
+		print("track: R.FP %#p R.SP %#p R.MP %#p\n", R.FP, R.SP, R.MP);
+		dumpstack();
+		abort();
+	}
+}
+
+void
+initmemtt(Type *t, void *vw, Type **typetagp)
 {
 	int c;
 	WORD **w;
 	uchar *p, *ep;
 
+	/*
+	 * Clear sizeof(Heap) bytes *before* vw too, not just [vw, vw+size).
+	 * A live tracked word can end up sitting where a *later*
+	 * allocation's Heap header (color/ref/t/hprof, sizeof(Heap) bytes
+	 * immediately before its own H2D()) lands rather than in that
+	 * allocation's data proper -- heap()/heapz() only trackclear()
+	 * their own data region, never the header just before it, so a
+	 * stale word there could in principle survive forever.  This is
+	 * suspected, not confirmed: a live capture (sh.b:1531,
+	 * addbuiltin(), 8/8 boots, a small never-varying value at a fixed
+	 * offset) stopped reproducing once this widening landed, which is
+	 * consistent with the header theory and shows the pre-widening
+	 * capture was an artifact of clearing too narrow a range -- but
+	 * the tracked word's landing inside a specific later allocation's
+	 * header was never directly verified.  See doc/inferno-ports.ms.
+	 */
+	trackclear((uchar*)vw - sizeof(Heap), t->size + sizeof(Heap));
 	w = (WORD**)vw;
 	p = t->map;
 	ep = p + t->np;
 	while(p < ep) {
 		c = *p;
 		if(c != 0) {
- 			if(BIT(c, 0)) w[7] = H;
-			if(BIT(c, 1)) w[6] = H;
-			if(BIT(c, 2)) w[5] = H;
-			if(BIT(c, 3)) w[4] = H;
-			if(BIT(c, 4)) w[3] = H;
-			if(BIT(c, 5)) w[2] = H;
-			if(BIT(c, 6)) w[1] = H;
-			if(BIT(c, 7)) w[0] = H;
+ 			if(BIT(c, 0)) { w[7] = H; trackreg((uintptr*)&w[7], t, vw, typetagp); }
+			if(BIT(c, 1)) { w[6] = H; trackreg((uintptr*)&w[6], t, vw, typetagp); }
+			if(BIT(c, 2)) { w[5] = H; trackreg((uintptr*)&w[5], t, vw, typetagp); }
+			if(BIT(c, 3)) { w[4] = H; trackreg((uintptr*)&w[4], t, vw, typetagp); }
+			if(BIT(c, 4)) { w[3] = H; trackreg((uintptr*)&w[3], t, vw, typetagp); }
+			if(BIT(c, 5)) { w[2] = H; trackreg((uintptr*)&w[2], t, vw, typetagp); }
+			if(BIT(c, 6)) { w[1] = H; trackreg((uintptr*)&w[1], t, vw, typetagp); }
+			if(BIT(c, 7)) { w[0] = H; trackreg((uintptr*)&w[0], t, vw, typetagp); }
 		}
 		p++;
 		w += 8;
 	}
+}
+
+void
+initmem(Type *t, void *vw)
+{
+	initmemtt(t, vw, nil);
 }
 
 Heap*
@@ -538,8 +745,7 @@ heapz(Type *t)
 	h->ref = 1;
 	h->color = mutator;
 	memset(H2D(void*, h), 0, t->size);
-	if(t->np)
-		initmem(t, H2D(void*, h));
+	initmemtt(t, H2D(void*, h), &h->t);
 	if(heapmonitor != nil)
 		heapmonitor(0, h, t->size);
 	return h;
@@ -558,8 +764,7 @@ heap(Type *t)
 	AINC(&t->ref);
 	h->ref = 1;
 	h->color = mutator;
-	if(t->np)
-		initmem(t, H2D(void*, h));
+	initmemtt(t, H2D(void*, h), &h->t);
 	if(heapmonitor != nil)
 		heapmonitor(0, h, t->size);
 	return h;
@@ -596,12 +801,14 @@ initarray(Type *t, Array *a)
 	uchar *p;
 
 	AINC(&t->ref);
-	if(t->np == 0)
+	if(t->np == 0){
+		trackclear(a->data, (long)t->size*a->len);
 		return;
+	}
 
 	p = a->data;
 	for(i = 0; i < a->len; i++) {
-		initmem(t, p);
+		initmemtt(t, p, &a->t);
 		p += t->size;
 	}
 }

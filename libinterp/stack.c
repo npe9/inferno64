@@ -112,8 +112,13 @@ extend(void)
 	R.EX = ns->stack;
 	R.TS = ns->stack + l;
 	R.SP = ns->reg.tos.fu + t->size;
-	if (t->np)
-		initmem(t, f);
+	/*
+	 * f->t itself is left nil here (unextend() below reads the type
+	 * back from ns->reg.TR, not f->t, for exactly this reason) -- so
+	 * ns->reg.TR, not &f->t, is the field that actually changes when
+	 * this memory is later reused, and the one to validate against.
+	 */
+	initmemtt(t, f, &ns->reg.TR);
 }
 
 void

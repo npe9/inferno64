@@ -8958,6 +8958,245 @@ because
 itself does anything wrong to it.
 
 .NH 1
+Every watched slot, not one sampled slot
+.PP
+Three generations of
+.CW checkwatch()
+(the type-fingerprint version, the any-frame's-first-word version,
+the Arg
+.CW curropt
+version) went to zero across more than three hundred combined boots.
+That was a coverage problem, not a rarity problem:
+a boot creates thousands of frames, and holding one instance at a time
+makes the odds of it being the one that goes bad negligible.
+.CW checkwatch()
+is gone, removed rather than kept dead.
+Its replacement,
+.CW checktracked() ,
+does not sample: every word
+.CW initmem()
+ever sets to
+.CW H
+gets registered in a fixed 1024-slot hash table, and every registered
+word is compared every instruction, not one chosen slot.
+It caught a live write-side transition on its first sanity boot.
+.PP
+The first capture through it was wrong, and finding out why it was
+wrong was most of the work.
+.CW disinit.b 's
+.CW getclock()
+does
+.CW "now := big 0"
+as its very first statement; the capture said that ordinary write hit
+a declared pointer word.
+Disassembling
+.CW getclock()
+end to end (a small hand-rolled decoder for the
+.CW .dis
+instruction and type-descriptor format, since this tree's own
+.CW disdump
+turned out to have an unrelated, unchased bug of its own) showed every
+touch of that word \- instructions 286, 306, 308, 309, 312 \- is
+.CW IMOVL ,
+.CW ICVTCL
+or
+.CW IBLTL ,
+never a pointer-class op, in every branch the function has.
+Pulling the module's own type table out of
+.CW disinit.dis
+confirmed the captured
+.CW Type
+really was
+.CW getclock() 's
+own frame descriptor (size 88, two map bytes, word 9 marked a
+pointer) and not some other function's shape coincidentally read back.
+So the map really did mark a
+.CW big
+local a pointer \- and the cause was not a compiler bug.
+It was the tracker: a stack address that had most recently held word
+9 of a
+.I different
+frame shape, one that legitimately marks that word a pointer, got
+reused by
+.CW getclock() 's
+own frame, whose map does not mark that word at all.
+.CW initmem()
+only ever registers the words a
+.CW Type 's
+own map marks; it never visits words a
+.I previous
+occupant of the same memory marked that the new occupant's map
+doesn't.
+The stale registration survived, and the entirely ordinary
+.CW "now := big 0"
+read as corruption.
+.PP
+Fixed with
+.CW trackclear() :
+every
+.CW initmem()
+call now clears any tracked entry inside its own
+.CW "[base, base+size)"
+range first, unconditionally, before re-registering the words its own
+map actually marks.
+Callers that used to skip
+.CW initmem()
+entirely when a type had no pointers
+.RN ( frame() ,
+.CW mframe() ,
+.CW extend() ,
+.CW heapz() ,
+.CW heap() )
+now call it unconditionally, since the clear has to happen even when
+there is nothing to re-register.
+.PP
+That closed one staleness channel but not the other, and a second
+capture proved the second channel open: an object can be freed and
+its memory recycled by an allocation that never calls
+.CW initmem()
+at all \- a raw pool allocation, a string body \- leaving a tracked
+word stale with no clear ever triggered.
+That same capture (module printed as
+.CW Env ,
+instruction 64) also proved the printed attribution itself was wrong
+on its own terms: the op was
+.CW IMCALL ,
+a control transfer, and
+.CW checktracked()
+ran
+.I after
+.CW optab[op]() ,
+by which point
+.CW R.M
+and
+.CW R.PC
+already described the callee, not the instruction that wrote the
+word.
+Neither of
+.CW Env 's
+own two
+.CW env.dis
+type tables had any entry matching the captured shape, which is what
+gave the misattribution away.
+.PP
+Both closed the same way: stop trusting registration to still be
+valid at report time, and validate it there instead.
+Every registration now carries
+.CW typetagp ,
+a pointer to wherever the current, authoritative type of the
+containing object lives \-
+.CW &f->t
+for a frame,
+.CW &h->t
+.RN ( via
+.CW D2H )
+for a heap object,
+.CW &a->t
+for an array element \- fields that get overwritten every time that
+memory is reused for something new, whether or not the new occupant
+calls
+.CW initmem()
+or ever touches this particular word.
+A hit is only reported when
+.CW *typetagp
+still equals the type recorded at registration; otherwise the slot is
+dropped as stale, silently, no abort.
+The attribution fix is separate:
+.CW xec() 's
+dispatch loop now saves
+.CW R.M
+and
+.CW R.PC
+.I before
+calling
+.CW optab[op]() ,
+and
+.CW checktracked()
+prints those saved values instead of reconstructing from state a
+control-transfer op may have already overwritten.
+.PP
+A third, narrower channel showed up after both of those landed: a
+capture at
+.CW sh.b:1531
+.RN ( addbuiltin() 's
+array-slice insert, the same site
+.CW checkwatch() 's
+stress-loop batch had already named once, see above) reproduced on
+8 of 8 boots \- deterministic, not the rare corruption this hunt is
+actually after, and a small never-varying value at a fixed offset on
+every single boot is itself the tell.
+.CW trackclear()
+only ever clears
+.CW "[vw, vw+t->size)" ,
+the object's data proper; it never reaches
+.CW sizeof(Heap)
+bytes
+.I before
+that, where a later allocation's own heap header
+.RN ( color / ref / t / hprof )
+can land.
+Widening the clear to start
+.CW sizeof(Heap)
+bytes earlier made that capture stop reproducing.
+That is consistent with the header theory and shows the pre-widening
+capture was an artifact of clearing too narrow a range \- but which
+later allocation's header the word actually landed in was never
+directly confirmed, and the write-up says so rather than claiming
+more than the boots showed.
+.PP
+With both known false-positive classes closed, a fourth capture
+reproduced on 7 of 8 boots with clean attribution
+.RN ( op
+.CW ILOAD ,
+which does not reassign
+.CW R.M )
+and passed the staleness check: the historic
+.CW runexternal()
+.CW mod
+site, this hunt's original landmark, now visible under a tracker that
+survives its own scrutiny.
+A worked theory about the failure path \-
+.CW iload 's
+.CW "linkmod()"
+returning a plain
+.CW nil
+instead of
+.CW H
+on a failed load \- turned out to be wrong on inspection:
+.CW linkmod()
+checks
+.CW "m == nil"
+at its own top and returns
+.CW H
+on every failure path it has.
+That is checked and excluded, not merely unlikely.
+What is not yet established is where inside
+.CW OP(iload) 's
+own call tree the write actually happens \- possibly
+.CW iload
+itself, possibly inside the
+.CW destroy(t)
+that releases
+.CW mod 's
+old value \- and settling that needs one more print
+.RN ( R.d
+alongside the hit, compared against the tracked address) that has
+not been added yet.
+.PP
+.CW checktracked() ,
+.CW checkfreeptr() ,
+and the
+.CW dumpstack() / abort()
+calls in both are pc64-only debugging, the same as
+.CW checkwatch()
+was before it: strip them, and the
+.CW dis/init
+stress loop that makes any of this practical to hit in a reasonable
+batch, before any other board or the hosted
+.CW emu
+target is built from this tree.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

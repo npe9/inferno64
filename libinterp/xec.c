@@ -319,181 +319,17 @@ OP(indb)
 	W(m) = (WORD)(a->data+i*sizeof(BYTE));
 }
 /*
- * A watchpoint, not a read-side probe.  b06f5340's capture (see
- * doc/inferno-ports.ms) was as clean as a read-side capture can get --
- * a real local pointer, correctly typed per its own frame's map,
- * inside t->size -- and named exactly where the corruption is READ
- * (sh.b:838, runexternal's 'mod'), not where it's WRITTEN.  No amount
- * of read-side context closes that gap.  This checks a slot's value
- * after every instruction, dispatch-loop-wide -- not filtered to any
- * one module or R.M, since the whole hypothesis is that some other
- * function's instruction computes an address that lands somewhere it
- * shouldn't -- and names the instruction that just ran the moment a
- * watched slot changes to a bad value.
- *
- * First version armed only on runexternal's own type fingerprint
- * (t->size 336, t->np 6, map 00 c7 77 9e 00 c0) -- one specific,
- * historically-bad site.  48 boots clean: that site alone is too rare
- * to hit in a reasonable batch, since this whole hunt's captures have
- * landed on a different type nearly every time (String, Iobuf, Mount,
- * Arg, Sh -- see the many sections above).  Generalized to ANY
- * pointer-bearing frame's first declared pointer word next -- 140+
- * boots, zero firings, no better than the site-specific version.
- *
- * Neither generalization was the right move.  The Arg site is the
- * ONE capture this whole hunt has reproduced on demand: PC 0x79665a0,
- * slot 0x7849bd0 (module Arg's MP+0x20), value 0x18, identical across
- * two separate boots (b4, e14 -- see "The Arg capture recurs" above).
- * Module data lives for the Modlink's whole lifetime, so a watch
- * armed there has no frame-teardown disarm problem at all -- arm once
- * and it stays live the rest of the boot.  Pointed here instead of at
- * a broad opportunistic sample.
- *
- * Arg's declared globals, in source order (appl/lib/arg.b): name
- * (string, word 0), args (list of string, word 1), usagemsg (string,
- * word 2), printusage (int, NOT a pointer, word 3), curropt (string,
- * word 4).  MP+0x20 is word 4 -- curropt, if the compiler laid the
- * globals out in declaration order.  Whether that word is actually
- * marked a pointer in Arg's own type[0] map has never been checked
- * live -- the probe that would show it (added in f365efdb) never got
- * a capture through it.  Printed at arm time below, before any
- * further hunting: if the map disagrees with the source-order guess,
- * "find the writer" may not even be the right question yet.
+ * checkwatch() lived here through three narrowing single-slot bets
+ * (runexternal()'s type fingerprint, then any pointer-bearing frame's
+ * first word, then Arg's curropt specifically) and every one of them
+ * went to zero across 300+ combined boots -- a coverage problem, not
+ * a rarity problem: a boot creates thousands of frames, and holding
+ * one instance at a time makes the odds of it being the one that
+ * goes bad negligible.  Removed rather than kept dead; superseded by
+ * checktracked() (libinterp/heap.c), which every initmem() call
+ * registers its own words into and which checks all of them, every
+ * instruction, not one sampled slot.  See doc/inferno-ports.ms.
  */
-static int watcharmed;
-static uintptr *watchaddr;
-static uintptr watchval;
-
-enum { ARGWORDOFF = 4 * sizeof(WORD) };	/* MP+0x20, the 0x18 slot */
-
-/*
- * A stress-loop batch (400 extra "sh -n -c 'true'" spawns inserted into
- * dis/init, each parsing real flags through Sh's own Arg.opt() and
- * addbuiltin() paths -- see dis/init's own comment) found a bad DV in
- * three test boots where 150 boots against the Arg watch alone found
- * nothing: module Sh, PC 0x79504b0, value 0x18 again, pid 172 (deep
- * into the loop).  Resolved (resolve_sbl.py, appl/cmd/sh/sh.sbl) to
- * sh.b:1531, "b.ba[n+1:] = b.ba[n:b.n];" inside addbuiltin() -- an
- * array-slice shift insertion, run once per builtin registration, so
- * once per spawned sh.  The bad slot is addbuiltin()'s own frame,
- * word 16 (offset 128, t->size 152, t->np 3, map 00 e9 e0) -- checked
- * against that same map and genuinely marked a pointer (bit 7 of byte
- * 2 set), with H correctly sitting in the neighboring words (12, 15,
- * 17, 18) that haven't been assigned yet.  Not a type-descriptor gap.
- * A second, independent watch below, armed on this exact frame shape
- * rather than "any frame's first word" -- the earlier broad version's
- * own lesson (see "Neither generalization was the right move" above)
- * was that an untargeted watch dilutes across whatever's current;
- * this one is targeted the same way the Arg watch is, just frame-
- * scoped instead of module-data-scoped, so it disarms on teardown.
- */
-static int watch2armed;
-static uintptr *watch2addr;
-static uintptr watch2val;
-static void *watch2frame;
-static Type *watch2type;
-
-enum { SHFRAMEWORD = 16 };	/* addbuiltin()'s frame, the 0x18 slot */
-
-static int
-sameshframe(Type *t)
-{
-	return t != nil && t->size == 152 && t->np == 3
-		&& t->map[0] == 0x00 && t->map[1] == 0xe9 && t->map[2] == 0xe0;
-}
-
-static void
-checkwatch(void)
-{
-	extern void dumpstack(void);
-	Frame *cf;
-
-	if(!watcharmed){
-		if(R.M != nil && R.M->m != nil && R.M->m->name != nil
-		&& strcmp(R.M->m->name, "Arg") == 0 && R.MP != nil){
-			watchaddr = (uintptr*)(R.MP + ARGWORDOFF);
-			watchval = *watchaddr;
-			watcharmed = 1;
-			print("watch: armed on Arg module MP %#p + %#ux (curropt slot) "
-				"= %#p, current val %#zx\n",
-				R.MP, ARGWORDOFF, watchaddr, watchval);
-			if(R.M->type != nil && R.M->type[0] != nil){
-				Type *mt = R.M->type[0];
-				int i, wordno, byteno, bitno, isptr;
-
-				wordno = ARGWORDOFF / sizeof(WORD);
-				byteno = wordno / 8;
-				bitno = 7 - (wordno % 8);
-				isptr = byteno < mt->np && (mt->map[byteno] & (1 << bitno)) != 0;
-				print("watch: Arg type[0]->np %d map", mt->np);
-				for(i = 0; i < mt->np; i++)
-					print(" %#.2ux", mt->map[i]);
-				print(" -- word %d (byte %d bit %d) is %sa declared pointer\n",
-					wordno, byteno, bitno, isptr ? "" : "NOT ");
-			}else
-				print("watch: Arg module has no type[0] to check\n");
-		}
-	}else if(*watchaddr != watchval){
-		if((void*)*watchaddr == H || (uintptr)*watchaddr >= 0x1000){
-			print("watch: legitimate change addr %#p old %#zx new %#zx, "
-				"instruction PC %#p op %#.2ux add %#.2ux module %s\n",
-				watchaddr, watchval, *watchaddr,
-				R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
-				R.M != nil && R.M->m != nil ? R.M->m->name : "?");
-			watchval = *watchaddr;
-		}else{
-			print("watch: Arg curropt CHANGED TO BAD VALUE addr %#p old %#zx "
-				"new %#zx\n", watchaddr, watchval, *watchaddr);
-			print("watch: instruction that just ran: PC %#p op %#.2ux "
-				"add %#.2ux module %s pid %d\n",
-				R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
-				R.M != nil && R.M->m != nil ? R.M->m->name : "?",
-				currun() != nil ? currun()->pid : -1);
-			dumpstack();
-			abort();
-		}
-	}
-
-	cf = (Frame*)R.FP;
-	if(!watch2armed){
-		if(cf != nil && sameshframe(cf->t)){
-			watch2frame = cf;
-			watch2type = cf->t;
-			watch2addr = (uintptr*)(R.FP + SHFRAMEWORD * sizeof(WORD));
-			watch2val = *watch2addr;
-			watch2armed = 1;
-			print("watch2: armed on Sh addbuiltin() frame %#p word %d "
-				"= %#p, current val %#zx\n",
-				cf, SHFRAMEWORD, watch2addr, watch2val);
-		}
-		return;
-	}
-	if((Frame*)watch2frame != cf || cf->t != watch2type){
-		/* frame torn down/reused -- disarm quietly, not a finding */
-		watch2armed = 0;
-		return;
-	}
-	if(*watch2addr != watch2val){
-		if((void*)*watch2addr == H || (uintptr)*watch2addr >= 0x1000){
-			print("watch2: legitimate change addr %#p old %#zx new %#zx, "
-				"instruction PC %#p op %#.2ux add %#.2ux module %s\n",
-				watch2addr, watch2val, *watch2addr,
-				R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
-				R.M != nil && R.M->m != nil ? R.M->m->name : "?");
-			watch2val = *watch2addr;
-			return;
-		}
-		print("watch2: Sh addbuiltin() slot CHANGED TO BAD VALUE addr %#p "
-			"old %#zx new %#zx\n", watch2addr, watch2val, *watch2addr);
-		print("watch2: instruction that just ran: PC %#p op %#.2ux "
-			"add %#.2ux module %s pid %d\n",
-			R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
-			R.M != nil && R.M->m != nil ? R.M->m->name : "?",
-			currun() != nil ? currun()->pid : -1);
-		dumpstack();
-		abort();
-	}
-}
 
 /*
  * Probe: batch10 caught two page faults right after this check's own
@@ -806,8 +642,7 @@ OP(frame)
 	f->mr = nil;
 	DBG("frame frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
-	if (t->np)
-		initmem(t, f);
+	initmemtt(t, f, &f->t);
 	T(d) = f;
 }
 /* from the module link loaded at src1 using the index src2
@@ -847,8 +682,7 @@ OP(mframe)
 	f->mr = nil;
 	DBG("\t\tmframe frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
-	if (t->np)
-		initmem(t, f);
+	initmemtt(t, f, &f->t);
 	T(d) = f;
 	DBG("\t\tframe at *R.d 0x%p is\n", *(intptr**)R.d);
 	if(0) showframe((void *)f, t);
@@ -1499,10 +1333,9 @@ cgetb(Channel *c, void *v)
 		R.m = &c->mid;
 		R.d = v;
 		c->mover();
-		if(a->t->np){
+		if(a->t->np)
 			freeptrs(w, a->t);
-			initmem(a->t, w);
-		}
+		initmemtt(a->t, w, &a->t);
 		return 1;
 	}
 	return 0;
@@ -2395,8 +2228,27 @@ xec(Prog *p)
 		dec[R.PC->add]();
 		op = R.PC->op;
 		R.PC++;
+		/*
+		 * Saved before optab[op]() runs, not reconstructed after:
+		 * a control-transfer op (mcall, spawn, ...) overwrites R.M
+		 * and/or R.PC as part of doing its job, and checktracked()
+		 * used to read the post-op values, misattributing every
+		 * such hit to wherever control landed rather than to the
+		 * instruction that actually wrote the word.  See
+		 * doc/inferno-ports.ms.
+		 */
+		trackM = R.M;
+		trackPC = R.PC - 1;
 		optab[op]();
-		checkwatch();
+		/*
+		 * checkwatch() (below) held one frame instance at a time
+		 * and went to zero across 300+ boots -- superseded by
+		 * checktracked() (heap.c), which every initmem() call
+		 * registers its own words into and which checks all of
+		 * them, every instruction, not one sampled slot.  See
+		 * doc/inferno-ports.ms.
+		 */
+		checktracked();
 /*		DBG(" end: %p: ", p);
 		DBG("%s ", R.M->m->name);
 		DBG("pid %d ", p->pid);
