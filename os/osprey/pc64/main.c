@@ -452,6 +452,28 @@ kdebugputc(int c)
 
 static Lock kdebuglock;
 
+/*
+ * A locked raw COM1 write for the boot marker (smark).  It shares
+ * kdebuglock with kdebugputs so the marker and the user tasks' console
+ * writes do not interleave, but it does NOT call kdebugsetup - that would
+ * disable COM1 interrupts, which is fatal to pc64's interrupt-driven
+ * console, and smark runs on every kernel.  It waits for the transmit
+ * register per byte, which is what keeps bytes from dropping.
+ */
+void
+kdebugmark(char *s, int n)
+{
+	int i;
+
+	lock(&kdebuglock);
+	while(n-- > 0){
+		for(i = 0; i < 100000 && (inb(0x3fd) & 0x20) == 0; i++)
+			;
+		outb(0x3f8, *s++);
+	}
+	unlock(&kdebuglock);
+}
+
 void
 kdebugputs(char *s, int n)
 {

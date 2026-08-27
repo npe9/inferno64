@@ -28,21 +28,14 @@ extern int ospreyframebuffer(void);
 static void
 smark(char *s)
 {
-	int i;
-
 	/*
-	 * Write the marker straight to COM1, waiting for the transmit
-	 * register between bytes so none is dropped when more than one task
-	 * shares the port.  Deliberately NOT through kdebugputs: that calls
-	 * kdebugsetup, which disables COM1 interrupts to drive the port
-	 * polled - right for the bare-console kernels, but on pc64 it would
-	 * kill the interrupt-driven console the moment proc0 marked the boot.
+	 * kdebugmark is a locked raw COM1 write: it shares the console lock
+	 * with the user tasks' writes so the marker does not interleave with
+	 * them (which was splicing a byte out of a string a check greps for),
+	 * and it does not call kdebugsetup, so it leaves pc64's interrupt-
+	 * driven console alone.
 	 */
-	while(*s != 0){
-		for(i = 0; i < 100000 && (inb(0x3fd) & 0x20) == 0; i++)
-			;
-		outb(0x3f8, *s++);
-	}
+	kdebugmark(s, strlen(s));
 }
 
 /*

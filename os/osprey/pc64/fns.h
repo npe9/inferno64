@@ -66,6 +66,7 @@ void	idlehands(void);
 int	inb(int);
 void	kdebugputc(int);
 void	kdebugputs(char*, int);
+void	kdebugmark(char*, int);
 void	insb(int, void*, int);
 ushort	ins(int);
 void	inss(int, void*, int);

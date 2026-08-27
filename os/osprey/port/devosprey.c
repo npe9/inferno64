@@ -1661,6 +1661,20 @@ ospreyservicecaller(void)
 				 * server's replies reach its client on its own sleep.
 				 */
 				ospreyroute(p);
+				/*
+				 * Servicing forwarded this container's requests to its
+				 * server's ring; wake that server if it is blocked in a
+				 * select, so a user-space server waiting on its message
+				 * queue answers at once rather than on a timeout.
+				 */
+				{
+					Ospreyproc *sv;
+					int sx;
+
+					if((sv = ospreyserverof(p)) != nil
+					&& (sx = ospreyindex(sv)) >= 0 && sx < nelem(ospreyselrend))
+						wakeup(&ospreyselrend[sx]);
+				}
 				after = ospreyreplyready(p);
 				if(svcdiag < 4){
 					svcdiag++;
@@ -1689,28 +1703,55 @@ int
 ospreyselectcaller(uvlong armoff, int narms)
 {
 	Ospreyproc *p;
-	int i, tries;
+	int i, slot;
 
 	p = nil;
+	slot = -1;
 	qlock(&ospreylock);
 	for(i = 0; i < nelem(ospreyprocs); i++)
 		if(ospreyprocs[i] == up){
 			p = ospreyat(i);
+			slot = i;
 			break;
 		}
 	qunlock(&ospreylock);
 	if(p == nil)
 		return -1;
-	for(tries = 0; tries < 100; tries++){	/* ~200ms, then report nothing ready */
+	{
+		Selwait sw;
+
+		sw.p = p;
+		sw.armoff = armoff;
+		sw.narms = narms;
 		qlock(&ospreylock);
-		ospreyroute(p);
-		i = ospreyselect(p, armoff, narms);
+		ospreyroute(p);			/* send home anything answered */
+		i = ospreyselectready(p, armoff, narms);
+		if(i == -1){
+			/*
+			 * Nothing ready: block on this container's select
+			 * rendezvous, which an interrupt (through ospreysemgive) or
+			 * a request forwarded to it wakes.  A short timeout so an
+			 * idle driver still returns and can give up, and so the
+			 * headless boot ends; a real event wakes it at once, which
+			 * is the point of blocking rather than the yield-and-retry
+			 * this replaces.  ospreyselok re-checks readiness, so a
+			 * wakeup between the check and the sleep is not lost.  Sleep
+			 * with the lock dropped, as the device's own select does.
+			 */
+			qunlock(&ospreylock);
+			tsleep(&ospreyselrend[slot], ospreyselok, &sw, 200);
+			qlock(&ospreylock);
+			if((p = ospreyat(slot)) != nil){
+				sw.p = p;
+				ospreyroute(p);
+				i = ospreyselectready(p, armoff, narms);
+			}
+		}
+		if(i >= 0 && p != nil)
+			i = ospreyselect(p, armoff, narms);
 		qunlock(&ospreylock);
-		if(i >= 0)
-			return i;
-		tsleep(&up->sleep, return0, nil, 2);
 	}
-	return -1;
+	return i;
 }
 
 /*
@@ -1762,8 +1803,12 @@ ospreykbdintr(Ureg*, void*)
 		wp = *(uvlong*)ospreykbdring;
 		(ospreykbdring + 8)[wp % Kbdn] = (uchar)c;
 		*(uvlong*)ospreykbdring = wp + 1;
-		if(ospreykbdproc != nil)
+		if(ospreykbdproc != nil){
+			int sx;
 			ospreysemgive(ospreykbdproc, ospreykbdsem);
+			if((sx = ospreyindex(ospreykbdproc)) >= 0 && sx < nelem(ospreyselrend))
+				wakeup(&ospreyselrend[sx]);	/* wake a driver blocked in select */
+		}
 	}
 }
 
@@ -1837,8 +1882,12 @@ ospreymouseintr(Ureg*, void*)
 		wp = *(uvlong*)ospreymousering;
 		(ospreymousering + 8)[wp % Mousen] = (uchar)c;
 		*(uvlong*)ospreymousering = wp + 1;
-		if(ospreymouseproc != nil)
+		if(ospreymouseproc != nil){
+			int sx;
 			ospreysemgive(ospreymouseproc, ospreymousesem);
+			if((sx = ospreyindex(ospreymouseproc)) >= 0 && sx < nelem(ospreyselrend))
+				wakeup(&ospreyselrend[sx]);	/* wake a driver blocked in select */
+		}
 	}
 }
 

@@ -1943,13 +1943,15 @@ having taken the request into a buffer the arm named, exactly the shape
 the talk draws for a task that selects on its message queue.  The syscall
 reuses the DUP number the way service reuses SLEEP: the program's libc
 already has the stub, and the minimal interface spends spare numbers
-rather than inventing an ABI.  What is honest to say: the block underneath
-is a yield-and-retry, not a rendezvous - the kernel checks the arm, and if
-nothing is ready yields the processor and looks again, which is what lets
-the client run to forward the next request.  A true rendezvous wakeup, so
-a selecting task sleeps until an interrupt or a message actually wakes it,
-is the refinement from here; the call and its arms are what the milestone
-needed, and they are here.  The same select serves the reply home before
+rather than inventing an ABI.  The block underneath is a real rendezvous
+now: a task with no ready arm sleeps, and it is woken the instant an arm
+becomes ready - an interrupt gives its semaphore and wakes the container's
+select, a request forwarded to a server's ring wakes that server - rather
+than waking on a timer to look again.  It keeps a short timeout as well,
+so an idle driver still returns and can give up and the headless boot
+ends, but a real event wakes it at once.  This is the paper's driver
+sleeping on its select and being woken by the interrupt, not polling.  The
+same select serves the reply home before
 it waits again, so a server answers and waits on the one call.  Two user
 tasks, each its own container and ring, exchange an open and a read, the
 kernel carrying and routing the messages, answering none of them, and the
