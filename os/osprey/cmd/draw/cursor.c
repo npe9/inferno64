@@ -24,25 +24,25 @@ enum {
 	Ch	= 16,
 };
 
-/* the arrow: 'X' outline (black), '.' body (white), ' ' transparent */
-static char *arrow[Ch] = {
-	"X               ",
-	"XX              ",
-	"X.X             ",
-	"X..X            ",
-	"X...X           ",
-	"X....X          ",
-	"X.....X         ",
-	"X......X        ",
-	"X.......X       ",
-	"X........X      ",
-	"X.....XXXX      ",
-	"X..X..X         ",
-	"X.X X..X        ",
-	"XX   X..X       ",
-	"X     X..X      ",
-	"       XXX      ",
+/*
+ * The Plan 9 arrow, exactly as the kernel's devmouse.c defines it: two
+ * 1-bit masks, two bytes per row.  "set" is the black pixels, "clr" the
+ * white outline around them; a pixel is transparent where neither is
+ * set.  The hotspot is at (-1,-1) from the sprite's top-left.
+ */
+static uchar curclr[32] = {
+	0xFF, 0xFF, 0x80, 0x01, 0x80, 0x02, 0x80, 0x0C,
+	0x80, 0x10, 0x80, 0x10, 0x80, 0x08, 0x80, 0x04,
+	0x80, 0x02, 0x80, 0x01, 0x80, 0x02, 0x8C, 0x04,
+	0x92, 0x08, 0x91, 0x10, 0xA0, 0xA0, 0xC0, 0x40,
 };
+static uchar curset[32] = {
+	0x00, 0x00, 0x7F, 0xFE, 0x7F, 0xFC, 0x7F, 0xF0,
+	0x7F, 0xE0, 0x7F, 0xE0, 0x7F, 0xF0, 0x7F, 0xF8,
+	0x7F, 0xFC, 0x7F, 0xFE, 0x7F, 0xFC, 0x73, 0xF8,
+	0x61, 0xF0, 0x60, 0xE0, 0x40, 0x40, 0x00, 0x00,
+};
+enum { Hotx = -1, Hoty = -1 };	/* the arrow's hotspot offset */
 
 static uchar	*ring;		/* the mousering page */
 static uvlong	rp;
@@ -96,6 +96,21 @@ track(void)
 	}
 }
 
+/* is sprite pixel (r,c) opaque?  1 = black, 0 = white, -1 = transparent */
+static int
+curpix(int r, int c)
+{
+	int byte, bit;
+
+	byte = r*2 + c/8;
+	bit = 7 - (c%8);
+	if((curset[byte] >> bit) & 1)
+		return 1;
+	if((curclr[byte] >> bit) & 1)
+		return 0;
+	return -1;
+}
+
 /* lift the sprite, restoring what was under it (call with oscurlock held) */
 void
 oscursoroff(void)
@@ -106,11 +121,11 @@ oscursoroff(void)
 		return;
 	for(r = 0; r < Ch; r++)
 		for(c = 0; c < Cw; c++){
-			if(arrow[r][c] == ' ')
+			if(curpix(r, c) < 0)
 				continue;
-			px = cx + c;
-			py = cy + r;
-			if(px < ospreyfbwid && py < ospreyfbhgt)
+			px = cx + Hotx + c;
+			py = cy + Hoty + r;
+			if(px >= 0 && py >= 0 && px < ospreyfbwid && py < ospreyfbhgt)
 				ospreyfb[py*ospreyfbwid + px] = save[r*Cw + c];
 		}
 	shown = 0;
@@ -120,21 +135,21 @@ oscursoroff(void)
 void
 oscursoron(void)
 {
-	int r, c, px, py;
+	int r, c, px, py, p;
 
 	if(shown)
 		return;
 	for(r = 0; r < Ch; r++)
 		for(c = 0; c < Cw; c++){
-			if(arrow[r][c] == ' ')
+			p = curpix(r, c);
+			if(p < 0)
 				continue;
-			px = cx + c;
-			py = cy + r;
-			if(px >= ospreyfbwid || py >= ospreyfbhgt)
+			px = cx + Hotx + c;
+			py = cy + Hoty + r;
+			if(px < 0 || py < 0 || px >= ospreyfbwid || py >= ospreyfbhgt)
 				continue;
 			save[r*Cw + c] = ospreyfb[py*ospreyfbwid + px];
-			ospreyfb[py*ospreyfbwid + px] =
-				arrow[r][c] == 'X' ? 0x000000 : 0xFFFFFF;
+			ospreyfb[py*ospreyfbwid + px] = p ? 0x000000 : 0xFFFFFF;
 		}
 	shown = 1;
 }
@@ -151,7 +166,7 @@ cursorproc(void)
 			oscursoron();
 			unlock(&oscurlock);
 		}
-		sleep(15);
+		sleep(5);
 	}
 }
 
