@@ -45,6 +45,7 @@ static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
 static	Type	*envfn(Src*, Type*);
 static	Decl	*synthfvwrap(Src*, Decl*);
+static	Decl	*synthimportwrap(Src*, Decl*, Decl*);
 static	Decl	*synthfunclit(Node*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
@@ -657,6 +658,129 @@ synthfvwrap(Src *src, Decl *fn)
 	wd->checked = 1;
 
 	fn->wrapdecl = wd;
+	return wd;
+}
+
+/*
+ * synthimportwrap(): the Odot analogue of synthfvwrap() (above) -- a
+ * value use of an *imported* module's function ("g := sys.print"),
+ * not a same-module one. id (the member's own Dfn, e.g. "print") is
+ * shared across every file that imports the same module: readiface()
+ * (iface.c) caches by path, so two files importing "sys" in one
+ * compiler invocation get the exact same Decl* for sys.print -- but a
+ * wrapper is a Dfn that must live in *this* module's own fns[] and
+ * interface, so it can't be cached directly on id the way
+ * synthfvwrap() caches on fn. cached instead through the ordinary
+ * install()/lookup() symbol table, under a name unique to this
+ * (alias, member) pair -- the "$fv" idea run through the ordinary
+ * declaration machinery instead of a dedicated field. alias itself
+ * (the import's own Dglobal, "v" in importchk()) is already unique
+ * per import statement, so this is safe even if the same underlying
+ * module were imported twice under different names in one file.
+ *
+ * this project compiles one file per invocation everywhere it's
+ * actually exercised (every test, tests/run.sh, this whole branch's
+ * history) even though main.c's translate() loop *can* run more than
+ * once per process -- and fns[]/imports/ifaces are none of them reset
+ * between calls, so multi-file-per-invocation compilation is already
+ * unsupported for reasons well beyond this function; not solved here.
+ *
+ * the wrapper's own value-type (Tref{envfn(id->ty)}, the shape a
+ * caller reading this function as a value actually needs) is cached
+ * on wd->valty -- reusing the same field/meaning synthfvwrap() gives
+ * a same-module Dfn, safe here because wd is never itself referenced
+ * from real Ember source (install()ed only under this synthesized,
+ * unspellable name) so nothing else could ever want wd->valty to mean
+ * something else.
+ */
+static Decl*
+synthimportwrap(Src *src, Decl *alias, Decl *id)
+{
+	Decl *wd, *arg;
+	Node *call, *args, *body, *stmt, *dot;
+	Type *wt;
+	Sym *wsym;
+	char buf[StrSize];
+
+	seprint(buf, buf+sizeof(buf), "%s.%s$fv", alias->sym->name, id->sym->name);
+	wsym = enter(buf, 0);
+	wd = lookup(wsym);
+	if(wd != nil)
+		return wd;
+
+	wt = envfn(src, id->ty);
+
+	wd = mkdecl(src, Dfn, wt);
+	wd->sym = wsym;
+	wd->dot = impdecl;
+	/* fndecl()'s own equivalent -- see synthfvwrap()'s identical line
+	 * for why the frame-size total, not just each param's own offset,
+	 * has to be captured here. */
+	wd->offset = idoffsets(wt->ids, MaxTemp, IBY2WD);
+
+	/* alias.member(arg1, arg2, ...) -- every wrapper param but env,
+	 * matching parse.c's own pprimary()/ptypename() Odot construction
+	 * ("mkbin(Odot, base, selector); n->sym = selector->sym") exactly,
+	 * so this reaches echk()'s ordinary Odot case looking identical to
+	 * a real "alias.member" the user could have written by hand. */
+	dot = mkbin(Odot, mkname(src, alias->sym), mkname(src, id->sym));
+	dot->sym = id->sym;
+	args = nil;
+	for(arg = wt->ids->next; arg != nil; arg = arg->next)
+		args = mkseq(args, mkname(src, arg->sym));
+	call = mkn(Ocall, dot, rotater(args));
+
+	if(id->ty->tof == tnone){
+		/* "alias.member(...); return;" -- see synthfvwrap()'s
+		 * identical void-return handling for why. */
+		Node *stmts;
+
+		stmts = mkseq(nil, mkn(Oexpr, call, nil));
+		stmts = mkseq(stmts, mkn(Oret, nil, nil));
+		body = mkn(Oscope, rotater(stmts), nil);
+	}else{
+		stmt = mkn(Oret, call, nil);
+		body = mkn(Oscope, stmt, nil);
+	}
+
+	wd->init = mkn(Ofndecl, nil, nil);
+	wd->init->aux = body;
+
+	if(nfns >= lenfns){
+		lenfns = nfns + 32;
+		fns = reallocmem(fns, lenfns * sizeof *fns);
+	}
+	fns[nfns++] = wd;
+	install(wd);
+
+	{
+		/* same fnchk() reentrancy hazard synthfvwrap() guards
+		 * against -- see its identical comment. */
+		Decl *savedcurfn;
+		Type *savedcurret;
+
+		savedcurfn = curfn;
+		savedcurret = curret;
+		fnchk(wd);
+		curfn = savedcurfn;
+		curret = savedcurret;
+	}
+	wd->checked = 1;
+
+	wd->valty = mktype(src, Tref, wt, nil);
+	sizetype(wd->valty);
+	/*
+	 * wd is already env-shaped (envfn() built wt) and belongs to
+	 * *this* module -- it needs no separate wrapper of its own, the
+	 * same "ld->wrapdecl = ld" self-reference synthfunclit() gives a
+	 * lifted closure literal for the identical reason. this is what
+	 * lets the caller (echk's Odot case, below) rewrite a value-use
+	 * into a plain Oname naming wd and fall straight into ecom()'s
+	 * *existing*, unmodified Oname/Dfn case (com.c) -- which reads
+	 * exactly this field (d->wrapdecl) to find what to build the
+	 * tfnptr's ISELF/Rnoff reference against.
+	 */
+	wd->wrapdecl = wd;
 	return wd;
 }
 
@@ -1661,6 +1785,33 @@ modmember(Type *mt, Sym *s)
 }
 
 /*
+ * is dot a literal "alias.fn" naming a directly-callable imported
+ * function -- an Odot whose left names an already-imported module
+ * (a Tmodule-typed Dglobal) and whose member resolves to a Dfn?
+ * the identical discrimination echk's own Odot case (below) uses to
+ * separate a module member from a struct field/bound method, factored
+ * out so Ocall's own fast path (below) can check it before echk(Odot)
+ * ever runs -- a bound method's own receiver is never itself a
+ * Tmodule-typed Dglobal, so this can never match one, by construction
+ * rather than by reasoning about what receivers happen to exist.
+ */
+static Decl*
+modcallee(Node *dot)
+{
+	Decl *alias, *id;
+
+	if(dot->op != Odot || dot->left->op != Oname)
+		return nil;
+	alias = lookup(dot->left->sym);
+	if(alias == nil || alias->ty == nil || alias->ty->kind != Tmodule || alias->store != Dglobal)
+		return nil;
+	id = modmember(alias->ty, dot->sym);
+	if(id == nil || id->store != Dfn)
+		return nil;
+	return id;
+}
+
+/*
  * T{ [key:] value, ... }; pcomposite() always wraps each element in
  * an Oelem(key-or-nil, value).  match each element to a field of t
  * (t = the type named by n->left), all-keyed or all-positional
@@ -1930,7 +2081,40 @@ echk(Node *n)
 						n->left->sym->name, n->sym->name);
 					n->ty = terror;
 					return n->ty;
-				case Dfn:
+				case Dfn: {
+					/*
+					 * a bare "alias.fn" used as a plain *value*,
+					 * not Ocall's own callee -- that shape is
+					 * special-cased directly in Ocall below (a
+					 * literal "alias.fn(...)" compiles to a direct
+					 * call, never reaching this branch at all, the
+					 * identical split echk's own Oname case already
+					 * draws for a same-module Dfn). synthimportwrap()
+					 * (above) is the Odot analogue of synthfvwrap():
+					 * builds (or finds, already cached by name) a
+					 * wrapper Dfn in *this* module that calls
+					 * through alias.fn, then hands back wd itself --
+					 * rewriting this node into a plain Oname naming
+					 * wd, exactly the shape a same-module function
+					 * value already is, lets ecom()'s existing
+					 * Oname/Dfn case (com.c) build the tfnptr with
+					 * zero changes there: it reads d->wrapdecl,
+					 * which synthimportwrap() sets to wd itself.
+					 */
+					Decl *wd;
+
+					wd = synthimportwrap(&n->src, d, id);
+					if(wd == nil){
+						n->ty = terror;
+						return n->ty;
+					}
+					n->op = Oname;
+					n->left = n->right = nil;
+					n->decl = wd;
+					n->sym = wd->sym;
+					n->ty = wd->valty;
+					return n->ty;
+				}
 				case Dglobal:
 				case Dtype:
 					d->refs++;
@@ -2195,6 +2379,41 @@ echk(Node *n)
 			fnd = lookup(n->left->sym);
 			fnd->refs++;
 			n->left->decl = fnd;
+			n->left->ty = fnd->ty;
+			ft = fnd->ty;
+		}else if(n->left->op == Odot && modcallee(n->left) != nil){
+			/*
+			 * a literal "alias.fn(...)": the Odot analogue of the
+			 * literal "f(...)" fast path just above, for the
+			 * identical reason -- without this, a direct call to
+			 * an imported function would fall into the general
+			 * echk(n->left) path below, which (per this session's
+			 * change to echk's own Odot case, above) now
+			 * unconditionally synthesizes a same-module wrapper
+			 * (synthimportwrap()) for *any* Dfn read through Odot,
+			 * needed only for a genuine value use ("g :=
+			 * alias.fn"). resolved directly to a bare Omdot
+			 * instead, matching Ocall's own pre-existing Omdot
+			 * dispatch (com.c's callcom()) completely unchanged --
+			 * modcallee()'s own guard is what keeps this from ever
+			 * matching a bound method call (obj.method(...)),
+			 * which reaches this same Odot shape but whose
+			 * receiver is never itself a Tmodule-typed Dglobal.
+			 */
+			Decl *alias, *fnd;
+
+			alias = lookup(n->left->left->sym);
+			fnd = modmember(alias->ty, n->left->sym);
+			alias->refs++;
+			fnd->refs++;
+			n->left->op = Omdot;
+			n->left->left->decl = alias;
+			n->left->left->ty = alias->ty;
+			n->left->right = mkn(Oname, nil, nil);
+			n->left->right->src = n->left->src;
+			n->left->right->sym = n->left->sym;
+			n->left->right->decl = fnd;
+			n->left->right->ty = fnd->ty;
 			n->left->ty = fnd->ty;
 			ft = fnd->ty;
 		}else{
