@@ -2074,7 +2074,25 @@ newer memdraw entry (a mask image and more points) and a wire form to
 match.  drawwarp is on the struct now, and the affine command, which rio
 does not use, refuses until its new form is written; everything rio needs
 is on the current protocol.  So a user-space draw server derived from this
-code speaks the version the disk's rio speaks.  A from-scratch personality on the pure microkernel is
+code speaks the version the disk's rio speaks.
+.PP
+One prerequisite for that server is found and worth recording, because it
+is a real wall.  A user-space program cross-built here cannot link the
+prebuilt 9front
+.CW libmemdraw.a
+- the compositing library the server needs.  The library was built by a
+newer toolchain than this host's linker reads, and where
+.CW libc.a
+only refused a couple of members (which is why these programs supply
+their own _main), libmemdraw's objects are unreadable outright:
+.CW "opcode out of range 665, probably not a .6 file"
+on memimagedraw.  A small program that composites with it compiles and
+then fails at the link.  No buildable 9front libmemdraw source is vendored
+either, only the object.  So the draw server's real first task is a
+linkable libmemdraw: its source brought in and built with this toolchain,
+or the toolchain gap closed.  Until then a user-space draw stack cannot be
+cross-built here, however small; the raw-pixel path (fb) works because it
+needs no library but libc's simplest calls.  A from-scratch personality on the pure microkernel is
 the other direction, and a far larger one: the library OS has no exec, no
 name space and four syscalls, so a 9front personality there is the Plan 9
 upper half rewritten, which the buddy-kernel path does not need.
