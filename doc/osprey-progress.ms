@@ -2035,6 +2035,44 @@ that multiplexes the display among clients, and the 9front personality as
 a library with a name space and exec, under which rio would run.  Those
 are content and userland; the driver model beneath them is built and
 shown.
+.NH 1
+Toward rio: the frame buffer reaches the full personality
+.PP
+A full 9front personality is already up.  Booting the disk on pc64
+reaches a glenda rc prompt with the whole userland - rc, the commands,
+and rio itself, all on the disk.  What stops the graphical login is not a
+personality but three devices the profile binds and the kernel does not
+carry: the draw device, the mouse and the usb host.  The draw stack
+belongs above the kernel, over the exposed frame buffer, so the first
+step toward rio is that frame buffer reaching an ordinary process of the
+full personality the exposed-address-space way.
+.PP
+It does now.  The kernel publishes the firmware frame buffer as the
+.CW framebuffer
+physical segment at ospreyinit, on every configuration, not only the
+microkernel path - the same publish the microkernel program already maps,
+now offered to the full personality too.  A small program of that
+personality,
+.CW os/osprey/cmd/fb.c ,
+cross-built on the host and carried in on the boot ISO the proven way
+(9660srv over the CD's data track), maps the segment with segattach and
+writes pixels straight into it.  Booted off the disk and run, it draws a
+full-screen gradient, a block and two bars - and they are on the screen,
+with no kernel graphics stack anywhere in the path.  The memory a driver
+needs is handed to a user program by name; the program draws.
+.PP
+That is the foundation every version of the draw stack stands on.  What
+comes next along this line is a user-level draw service - a program that
+owns the mapped frame buffer and answers the draw protocol rio speaks,
+multiplexing the display among windows, with the mouse and keyboard fed
+from the exposed interrupts already built - and then rio itself, off the
+disk, against that service.  Its draw code, devdraw.c, is present but an
+older protocol version (Warp as an array, not the struct the headers
+use), so it must be reconciled to the version the disk's rio speaks
+before it links.  A from-scratch personality on the pure microkernel is
+the other direction, and a far larger one: the library OS has no exec, no
+name space and four syscalls, so a 9front personality there is the Plan 9
+upper half rewritten, which the buddy-kernel path does not need.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an

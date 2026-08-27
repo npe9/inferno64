@@ -15,7 +15,7 @@ usage: scripts/osprey-console.py [-d disk] [-t secs] [-l log]
 and -c runs a shell command once the -u pattern has matched.
 """
 
-import argparse, os, re, subprocess, sys, time
+import argparse, json, os, re, socket, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -42,6 +42,8 @@ def main():
 		help='how the nic is attached, e.g. socket,id=n0,listen=:1234')
 	ap.add_argument('-2', '--serial2', default=None,
 		help='a second serial port, e.g. unix:/tmp/com2,server,nowait')
+	ap.add_argument('--shot', default=None,
+		help='screendump to this file (ppm) once the run reaches its end')
 	a = ap.parse_args()
 
 	if a.build:
@@ -63,6 +65,12 @@ def main():
 		'-display', 'none', '-monitor', 'none', '-no-reboot',
 		'-serial', 'stdio',
 	]
+	qmpsock = None
+	if a.shot:
+		qmpsock = a.shot + '.qmp'
+		try: os.unlink(qmpsock)
+		except OSError: pass
+		qemu += ['-qmp', 'unix:%s,server,nowait' % qmpsock]
 	if a.serial2:
 		qemu += ['-serial', a.serial2]
 	if a.net:
@@ -133,6 +141,15 @@ def main():
 					continue
 				status = 0
 				break
+		if a.shot and status == 0:
+			try:
+				qs = socket.socket(socket.AF_UNIX); qs.connect(qmpsock)
+				qf = qs.makefile('rw'); qf.readline()
+				qf.write(json.dumps({"execute":"qmp_capabilities"})+chr(10)); qf.flush(); qf.readline()
+				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
+				qs.close()
+			except Exception as e:
+				sys.stderr.write('screendump failed: %s\n' % e)
 	finally:
 		p.kill()
 		p.wait()
