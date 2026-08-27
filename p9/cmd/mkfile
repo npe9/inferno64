@@ -43,6 +43,8 @@ TARG=\
 	newstest.dis\
 	marshal.dis\
 	marshaltest.dis\
+	rc.dis\
+	rctest.dis\
 
 MODULES=\
 

@@ -96,40 +96,63 @@ anything useful without a shell that understands this syntax. `sh(1)`
 does not, and was never meant to - it's Inferno's own shell, not a
 compatibility layer.
 
-**The good news, found doing this audit: this is not a from-scratch
-language project.** `utils/rcsh/` already contains a real, structurally
-complete `rc` implementation as native C source - 4436 lines across the
-canonical rc source layout (`lex.c`, `syn.y`, `glob.c`, `exec.c`,
-`simple.c`, `tree.c`, `var.c`, `word.c` - the same file names as
-upstream Plan 9 `rc` source, not a rewrite). Checked directly, not
-assumed from the file names: `syn.y` has `FOR`/`WHILE`/`TWIDDLE` (the
-`~` operator) as real grammar tokens; `exec.c`/`code.c`/`pfnc.c` have a
-real `Xbackq` opcode implementing backquote command substitution. Its
-own `mkfile` comment calls it "a stripped-down version of rc," currently
-built only for the Windows Nt/95 target (`utils/mkfile:67`) - what
-exactly is stripped is not yet characterized here (worth checking
-against a real upstream `rc.c` diff before translating, the same
-oracle-comparison discipline every other item in the closed backlog
-used), but the core grammar and execution engine are present, not stubs.
+**Good news and a real correction, both found trying to build it as an
+oracle before writing any translation** (per standing practice: check for
+a real build before assuming one). `utils/rcsh/` contains a real,
+structurally complete `rc` **core** - `lex.c`, `syn.y`, `glob.c`,
+`exec.c`, `simple.c`, `tree.c`, `var.c`, `word.c`, `code.c`, `main.c`,
+`io.c`, `here.c`, `pcmd.c`, `pfnc.c`, `trap.c`, `rc.h` - 4,273 lines,
+excluding generated parser output (`y.tab.c`/`.h`) and one platform file
+(below). Checked directly, not assumed from file names: `syn.y` has
+`FOR`/`WHILE`/`TWIDDLE` (the `~` operator) as real grammar tokens;
+`exec.c`/`code.c`/`pfnc.c` have a real `Xbackq` opcode implementing
+backquote command substitution. This part is genuinely a translation
+project, methodologically identical to everything in the closed
+`p9/cmd/` backlog - the largest single item attempted so far, at roughly
+3.5x `marshal.b`'s size (current largest, ~1620 lines).
 
-This makes `rc` a translation project, methodologically identical to
-everything already in the closed `p9/cmd/` backlog (`cb.b`, `marshal.b`,
-etc.) - just the largest single item attempted so far, at roughly 3.5x
-`marshal.b`'s size (the current largest, ~1620 lines).
+**The correction: `utils/rcsh` was never a portable `rc`, and its own
+`mkfile` says so once you try to build it.** `cd utils/rcsh && mk` fails
+immediately - not with a portability bug of the kind `awk` hit (three
+small, fixable things), but with the `mkfile`'s own explicit rule:
+`Posix.c Inferno.c:QV: echo rcsh is only built on Windows NT or Windows
+95; exit 1`. There is no `Posix.c` in this directory, even though that
+exact convention exists for other tools in `utils/` (`utils/mk/Posix.c`,
+`utils/cc/Posix.c`, and others) - `rcsh`'s only platform file is
+`Nt.c` (549 lines, Win32 `HANDLE`/`CreateProcess`-based). **A Posix/
+Inferno platform binding for this `rc` core was never written at all,**
+not even natively in C, let alone in Limbo. (A first pass at this
+finding also flagged `rc.h`'s `#define INFERNO_KEEPENVIRON` as a
+possible sign someone had already scoped a portable build - checked
+directly, and it isn't: the same macro guards a Windows-only `#undef
+environ` shim in `Nt/386/include/lib9.h`, unrelated to Dis/Limbo
+portability, so that claim doesn't hold up.) So the honest split is:
+4,273 lines of real, portable, translatable rc-language core, plus an
+entirely new platform layer - sized only by what `Nt.c`'s own 18
+functions are responsible for (process spawn/wait, pipes, locking,
+path/exec resolution, directory reads), not by a line count, since it
+has to be designed against Limbo's `spawn`/channel model, not ported.
+It isn't starting from zero information, though: `utils/mk/Posix.c`
+(334 lines, native C, already in this tree, already used by `mk.b`'s
+own real counterpart) implements exactly the same category of
+responsibility for a different program - `execsh`/`pipecmd` (real
+fork+exec+pipe to run a recipe), `waitfor`/`expunge` (process wait),
+`exportenv` (environment plumbing). Not translatable source (it's
+built on real `fork()`, the thing Limbo doesn't have), but a concrete
+reference for what real Posix behavior this layer needs to reproduce
+through Limbo's own primitives - a meaningfully stronger starting point
+than none at all.
 
-**The one real, calibrated risk, not just a size risk:** `rc`'s
-backquote/subshell model (`Xbackq` in the real source) works by forking
-a real child process and capturing its stdout - genuine Unix `fork()`
-semantics. Limbo has no `fork()`; it has channels and `spawn`. This is
-exactly the class of gap `doc/plan9-port.md` already names for *other*
-programs ("Anything relying on Plan 9's `libthread` coroutine model or
-raw process/fork semantics... would need a real design, not a
-transliteration") - and it lands squarely inside `rc`'s own execution
-engine, not at the edges. Translating the grammar (`syn.y`) and word/
-glob handling should be direct, line-for-line work; translating
-`exec.c`'s process-substitution model onto Limbo's `spawn`/channel model
-is a real design problem, sized only once actually attempted, not
-knowable in advance from a line count.
+**This sharpens, rather than replaces, the risk already named below:**
+`rc`'s backquote/subshell model (`Xbackq`) calls into exactly this
+platform layer to fork a real child process and capture its stdout.
+Translating the grammar (`syn.y`) and word/glob handling (`word.c`/
+`glob.c`/`var.c`) should be direct, line-for-line work with a real
+oracle once a build exists somewhere to compare against (a native Posix
+build could be written for exactly this purpose, the same way other
+items in the backlog built a native oracle first); designing the
+platform layer that `exec.c` calls into is a real, from-scratch problem,
+sized only once actually attempted.
 
 ### 3. A C compiler/assembler/linker in Limbo - the largest piece, and genuinely just a big translation
 

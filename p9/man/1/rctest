@@ -1,0 +1,65 @@
+.TH RCTEST 1
+.SH NAME
+rctest \- regression test for rc's word-list/variable-table foundation
+.SH SYNOPSIS
+.B rctest
+.SH DESCRIPTION
+.B Rctest
+exercises
+.IR rc (1)'s
+first translated slice - word lists
+.RI ( newword ,
+.IR count ,
+.IR copywords ,
+.IR list2str ,
+.IR conclist )
+and the variable/keyword tables
+.RI ( hash ,
+.IR gvlook ,
+.IR vlook ,
+.IR setvar ,
+.IR iskeyword )
+- through
+.BR rc.dis 's
+own test-seam functions, calling
+.B bootstrap()
+first to populate the internal tables the same way
+.BR rc 's
+own
+.B init()
+would.
+.PP
+.B hash() 's
+expected values were computed independently in Python from the real
+algorithm in
+.BR utils/rcsh/var.c
+.RI ( h = sum( s [ i ]*( i +1))
+.I mod
+.IR n ,
+renormalized non-negative), not derived from this translation, so a
+transcription bug in
+.BR rc.b 's
+own
+.B hash()
+would actually be caught.
+.PP
+.BR conclist() 's
+expected result for unequal-length lists - the shorter list's last
+word is repeated against the longer list's remaining elements - is
+real
+.IR rc 's
+own documented
+.B ^
+behavior, traced by hand against the real recursive algorithm in
+.B utils/rcsh/word.c
+before being written down as a test case, not assumed.
+.SH SOURCE
+.B /p9/cmd/rctest.b
+.SH SEE ALSO
+.IR rc (1)
+.SH BUGS
+Covers only the slice of
+.I rc
+translated so far - see
+.IR rc (1)'s
+own BUGS for what that is and isn't.

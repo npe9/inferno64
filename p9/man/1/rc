@@ -1,0 +1,88 @@
+.TH RC 1
+.SH NAME
+rc \- command language (in progress - foundation only, no shell yet)
+.SH SYNOPSIS
+.B rc
+.SH DESCRIPTION
+.B Rc
+is a real translation of Plan 9's
+.IR rc (1),
+from
+.B utils/rcsh/
+in this tree - not a workalike. It is being built incrementally; see
+.B doc/plan9-terminal-plan.md
+for why (a real
+.I rc
+is what
+.IR mk (1)
+needs to run genuine Plan 9 mkfile recipes) and for the finding that
+changed this translation's shape before it started:
+.B utils/rcsh
+was never a portable
+.IR rc .
+Its own mkfile refuses to build for anything but Windows NT/95 -
+.B Nt.c
+is the only platform binding ever written, and no Posix binding ever
+existed here. So this translation is really two different kinds of
+work: a real, portable
+.I rc
+language core (lexer, grammar, word lists, variables, the code-vector
+execution engine) to translate directly from
+.BR utils/rcsh 's
+own source, and an entirely new platform layer (process spawn/wait,
+pipes) to design against Limbo's
+.B spawn
+and channel model from scratch, since there is no Posix reference to
+translate that part from.
+.PP
+This version implements only the first slice: word lists and the
+variable/keyword tables from
+.B word.c
+and
+.BR var.c ,
+translated and tested with no parser or execution engine yet -
+see BUGS.
+.B Running
+.B rc
+does nothing but populate its internal tables and print a note saying
+so; there is no shell to use yet.
+.SH FILES
+.B utils/rcsh/
+in this tree - the real source being translated.
+.SH SOURCE
+.B /p9/cmd/rc.b
+.SH SEE ALSO
+.IR mk (1),
+.B doc/plan9-terminal-plan.md
+in this tree - the sizing and sequencing document this translation
+follows.
+.SH BUGS
+No lexer, grammar, or execution engine yet - this is the word-list and
+variable-table foundation only, chosen as the first slice specifically
+because it has real, testable value semantics without needing either
+of those (a lexer alone cannot be tested meaningfully, since real
+.IR rc 's
+own lexer and grammar are not independent of each other: yacc generates
+the token constants the lexer returns).
+.PP
+Real
+.I rc
+frees
+.BR Word / List / Var / Redir
+cells explicitly throughout the source translated so far. Limbo has a
+real garbage collector; every one of those free paths is simply
+omitted, not translated - stated once here rather than at each
+omission.
+.PP
+.B vlook
+in the real source consults the currently running thread's local
+variables before falling back to the global table. There is no
+Thread yet, so this version's
+.B vlook
+always falls back to the global table - correct once there is
+exactly one, implicit scope (true right now, since nothing here can
+create a local variable yet), and due to change once
+.B code.c
+and
+.B exec.c
+introduce a real running thread with real local scopes.
