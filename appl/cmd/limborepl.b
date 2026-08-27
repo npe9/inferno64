@@ -11,13 +11,15 @@ implement Command;
 # limbo.b, 3107 lines) exactly the way disrepl reuses /dis/asm.dis.
 #
 # The one genuinely new problem disrepl never had to solve: Limbo source
-# has real grammar, and a typed line has to land in one of two different
-# places in the generated module - isdecl() below classifies each line as
-# a module-scope declaration (an adt, a bare module variable, or a
-# one-line function definition) or an ordinary statement that belongs
-# inside init()'s own body. Getting this classification wrong is the
-# actual risk in this file, not the process-management machinery below,
-# which is disrepl's own, unchanged in spirit.
+# has real grammar, and a typed line has to land in one of three different
+# places in the generated module - classify() below (via isdecl()) tags
+# each line as a module-scope declaration (an adt, a bare module
+# variable, or a one-line function definition), an ordinary statement
+# that belongs inside init()'s own body, or a bare expression whose
+# value should auto-print (see this comment's next paragraph). Getting
+# this classification wrong is the actual risk in this file, not the
+# process-management machinery below, which is disrepl's own, unchanged
+# in spirit.
 #
 # Redeclaration: Limbo forbids `x := ...` twice in one scope. This REPL
 # does not try to detect or rewrite that - type `x = ...` yourself after
@@ -26,10 +28,26 @@ implement Command;
 # limborepl's own BUGS for why this was chosen over silently rewriting
 # the user's input (doc/limbo-repl-plan.md's own option (b) over (a)).
 #
-# No implicit "print the last value" either - Limbo has none, and a
-# heuristic for "does this line look like an expression to wrap and
-# print" would misfire on real input often enough not to be worth it for
-# a v1. Call print() yourself, exactly as in an ordinary Limbo program.
+# A typed line with no trailing ';' or '}' auto-prints its own value,
+# TempleOS/HolyC-console style, instead of needing an explicit print()
+# call - this is the one thing that changed the whole file's design:
+# a line typed that way used to be simply a compile error (Limbo
+# requires a statement to end in ';'; only a control construct like
+# if/for/while/a bare block gets away with ending in '}' instead), so
+# the convention claims syntax that was previously dead rather than
+# reinterpreting anything that used to work. classify() below tags such
+# a line Expr; exprblock() wraps it as
+#	{ __replv := string (EXPR); sys->print("%s\n", __replv); }
+# using Limbo's own built-in cast of an arithmetic value (byte/int/big/
+# real) or string to string (doc/limbo/limbo.ms, "Casts to strings") -
+# confirmed live against the real compiler, including that the cast is
+# genuinely typechecked (a list, array, adt, ... fails to compile with
+# the language's own "cannot make a string from ..." diagnostic, not a
+# silently wrong answer). Each entry gets its own { } so __replv can be
+# declared fresh per line without colliding with any other auto-printed
+# line. A value that cast can't handle needs an explicit print() call
+# and a trailing ';', exactly as before this file's redesign - see
+# help() and man/1/limborepl's own BUGS for what is and isn't covered.
 #
 include "sys.m";
 	sys: Sys;
@@ -70,6 +88,10 @@ header := array[] of {
 	"}",
 };
 
+Decl: con 0;	# module-scope declaration - isdecl() said so
+Stmt: con 1;	# an ordinary statement, ending in ';' or '}'
+Expr: con 2;	# a bare expression - auto-print its value
+
 # One typed line, tagged with where it was classified to go. History is
 # most-recent-first, exactly like disrepl's own `session` - .drop needs
 # to remove the last thing typed regardless of which bucket it landed
@@ -77,7 +99,7 @@ header := array[] of {
 # ones.
 Entry: adt
 {
-	isdecl:	int;
+	kind:	int;
 	line:	string;
 };
 
@@ -144,8 +166,13 @@ help()
 	print("This REPL does not rewrite what you type - if you already wrote\n");
 	print("`x := 5;`, write `x = 6;` the next time, not another `:=`.\n");
 	print("\n");
-	print("There is no implicit printing of a typed expression's value -\n");
-	print("call print() yourself, as in ordinary Limbo.\n");
+	print("A line ending in ';' or '}' runs as an ordinary statement, same\n");
+	print("as always. A line that does NOT end that way is a bare\n");
+	print("expression - its value is printed automatically, TempleOS/HolyC\n");
+	print("console style, with no print() call of your own needed. This\n");
+	print("works for byte, int, big, real, and string values (Limbo's own\n");
+	print("string-cast); anything else (a list, array, adt, ...) needs an\n");
+	print("explicit print() call and a trailing ';', same as before.\n");
 	print("\n");
 	print("    .list     show the program so far\n");
 	print("    .drop     remove the last line\n");
@@ -157,7 +184,7 @@ help()
 	print("\n");
 	print("For example:  x := 6;\n");
 	print("              y := 7;\n");
-	print("              sys->print(\"%%d\\n\", x*y);        prints 42\n");
+	print("              x*y                                prints 42\n");
 	print("\n");
 	print("A program that runs longer than %d seconds is stopped and the\n", Limitms/1000);
 	print("line just typed is not kept.\n");
@@ -251,24 +278,64 @@ isdecl(line: string): int
 	return 0;
 }
 
+# classify: the one genuinely new problem this file's redesign added.
+# isdecl() (below) still says whether a line is a module-scope
+# declaration; what's new is telling an ordinary statement apart from a
+# bare expression whose value should auto-print, using the trailing
+# ';'/'}' convention explained in this file's own header comment.
+classify(line: string): int
+{
+	if(isdecl(line) != 0)
+		return Decl;
+	n := len line;
+	if(n > 0 && (line[n-1] == ';' || line[n-1] == '}'))
+		return Stmt;
+	return Expr;
+}
+
+# Wrap a bare expression so it evaluates and prints its own value - see
+# this file's own header comment for why this particular cast and why
+# each entry gets its own { }.
+exprblock(line: string): list of string
+{
+	return
+		"\t{" ::
+		"\t\t__replv := string (" + line + ");" ::
+		"\t\tsys->print(\"%s\\n\", __replv);" ::
+		"\t}" :: nil;
+}
+
 # The session's declarations, oldest first.
 decls(): list of string
 {
 	r: list of string;
 	for(h := history; h != nil; h = tl h)
-		if((hd h).isdecl != 0)
+		if((hd h).kind == Decl)
 			r = (hd h).line :: r;
 	return r;
 }
 
-# The session's statements, oldest first, tab-indented (Limbo does not
-# care about indentation, but it makes .src readable).
+# The session's statements and auto-print expressions, oldest first,
+# tab-indented (Limbo does not care about indentation, but it makes
+# .src readable). An Expr entry contributes exprblock()'s several
+# lines, not the bare line the user typed - that line by itself is not
+# something Limbo accepts as a statement (see the header comment).
 stmts(): list of string
 {
-	r: list of string;
+	oldest: list of ref Entry;
 	for(h := history; h != nil; h = tl h)
-		if((hd h).isdecl == 0)
-			r = "\t" + (hd h).line :: r;
+		oldest = hd h :: oldest;
+	r: list of string;
+	for(o := oldest; o != nil; o = tl o){
+		e := hd o;
+		case e.kind {
+		Stmt =>
+			r = append(r, "\t" + e.line);
+		Expr =>
+			for(b := exprblock(e.line); b != nil; b = tl b)
+				r = append(r, hd b);
+		}
+	}
 	return r;
 }
 
@@ -551,7 +618,7 @@ init(c: ref Draw->Context, argv: list of string)
 				continue;
 			}
 			wasbroken := broken;
-			history = ref Entry(isdecl(line), line) :: history;
+			history = ref Entry(classify(line), line) :: history;
 			if(!run() && !wasbroken){
 				history = tl history;
 				print("not added\n");

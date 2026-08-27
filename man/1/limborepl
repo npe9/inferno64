@@ -5,8 +5,10 @@ limborepl \- write Limbo programs at a prompt
 .B limborepl
 .SH DESCRIPTION
 .B Limborepl
-reads Limbo source one statement or declaration at a time and runs the
-program it builds up.
+reads Limbo source one statement, declaration, or expression at a time
+and runs the program it builds up, printing an expression's own value
+automatically - roughly the console TempleOS/HolyC gives, though the
+mechanism is Limbo's own, not a borrowed one (see PRINTING below).
 .PP
 It is
 .IR disrepl (1)'s
@@ -29,7 +31,7 @@ accumulated program is recompiled and rerun after each new one. A line
 with an effect outside the virtual machine happens again on every
 subsequent line, for the same reason it does in
 .IR disrepl (1).
-.SS Declarations and statements
+.SS Declarations, statements, and expressions
 Dis assembly has no declarations, so
 .IR disrepl (1)
 never had to decide where a typed line belongs. Limbo source does:
@@ -39,11 +41,13 @@ a line is either a module-scope
 .BR adt ,
 a bare typed variable, an
 .B include
-directive, or a complete one-line function definition) or an ordinary
+directive, or a complete one-line function definition), an ordinary
 .B statement
 that runs inside
 .BR init() 's
-own body. Each typed line is classified by a deliberately rough
+own body, or a bare
+.B expression
+(see PRINTING). Each typed line is classified by a deliberately rough
 heuristic, not parsed properly - see BUGS for exactly what it does and
 does not recognise.
 .PP
@@ -86,11 +90,55 @@ twice fails to compile like any other Limbo redeclaration error, and
 the line is rejected exactly like any other line that does not compile
 - see below.
 .SS Printing
-There is no implicit "print the last value" - a bare expression is not
-a complete Limbo statement in most positions, and guessing which lines
-are meant to be printed would misfire on real input. Call
+A line ending in
+.B ;
+or
+.B }
+runs as an ordinary statement, exactly as before. A line that does
+.B not
+end that way is a bare expression, and its value is printed
+automatically:
+.IP
+.EX
+limbo> x := 6;
+limbo> y := 7;
+limbo> x*y
+42
+.EE
+.PP
+This claims syntax that used to be simply rejected, not something that
+used to work a different way: a line with neither a trailing
+.B ;
+(required of an ordinary statement) nor a trailing
+.B }
+(the one way a control construct or bare block gets away without one)
+was already a compile error before this. What runs behind it is
+.IP
+.EX
+{ __replv := string (EXPR); sys->print("%s\en", __replv); }
+.EE
+.PP
+using Limbo's own built-in cast of an arithmetic value
+.RB ( byte ", " int ", " big ", or " real )
+or a
+.B string
+itself to
+.BR string ,
+each auto-printed line getting its own
+.B { }
+so
+.B __replv
+can be declared fresh every time without colliding with any other
+auto-printed line. A value of any other type -
+.BR list ", " array ", " adt ,
+a channel, a function value - fails to compile with Limbo's own
+.B "cannot make a string from ..."
+diagnostic, rejected and not kept exactly like any other line that does
+not compile; call
 .B print()
-yourself, exactly as in an ordinary Limbo program.
+yourself and end the line with
+.B ;
+for those, exactly as before this was added.
 .SS Commands
 .TP
 .B .list
@@ -216,6 +264,36 @@ any kind - a function body spanning more than one line, an
 written across several - are not supported at all in this version; they
 have to be written on one line, which is workable for small examples
 and unpleasant for anything larger.
+.PP
+The auto-print convention (see PRINTING) reads a trailing
+.B ;
+or
+.B }
+as "this is a statement" purely by looking at the last character of the
+typed line, so a line that was meant as an ordinary
+.B :=
+declaration but has its trailing
+.B ;
+left off by mistake is not caught as a typo - it compiles anyway, as an
+expression, because Limbo itself allows
+.B :=
+to appear as an expression, not only as a statement. Typing
+.B "x := 5"
+with the semicolon left off prints
+.B 5
+as if it had worked, but
+.B x
+does not persist to the next line: the auto-print mechanism gives it
+its own
+.BR { } ,
+so the declaration is scoped to that block alone. Confirmed directly,
+not assumed: compiled and run standalone, this shape produces only a
+compiler warning
+.RB ( "local x not referenced" ),
+not an error - the trap is silent by construction, not a bug that
+happens to reproduce. Always end a real assignment with
+.B ;
+to keep it.
 .PP
 A line that compiles and runs but raises an exception is kept in the
 session rather than discarded, as stated above - confirmed directly,
