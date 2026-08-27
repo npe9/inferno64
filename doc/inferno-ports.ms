@@ -8472,38 +8472,118 @@ looked like it did before 150 boots said otherwise.  This is a
 systemic pattern, not a local bug in
 .CW addbuiltin() .
 .PP
-The two values are not arbitrary.
 .CW libinterp/heap.c 's
 .CW heap() ,
-temporarily instrumented to print it and checked against a real
-boot rather than hand-computed, gives
+temporarily instrumented to print it and checked against a real boot
+rather than hand-computed, gives
 .CW "sizeof(Heap) = 24 (0x18)"
-exactly.
-.CW H2D(t,\ x)
-is
-.CW "((t)(((uchar*)(x))+sizeof(Heap)))" \-
-so
-.CW H2D(t,\0) \-
-turning a null
-.CW Heap*
-header into a data pointer without checking it first \- is exactly
+exactly, so
+.CW H2D(t,\0)
+does compute
 .CW 0x18 .
-A plain, unconverted null header would show up as the other value,
-.CW 0 .
-Both of this hunt's recurring bad values match the two ways a failed
-or absent allocation could leak into a pointer slot: the raw null, or
-null run through
+That is confirmation of one number, not of a mechanism \- 24 is small
+enough that plenty of unrelated things could produce it, and four of
+the seven captures hold plain
+.CW 0 ,
+which needs no
+.CW H2D
+story at all.  A scan of every
 .CW H2D()
-before anyone checked it.  Nothing in
+call site in
+.CW libinterp/
+found none that skip a null check \- every one either follows
 .CW heap() ,
 .CW heapz() ,
 or
 .CW heaparray()
-does that \- each checks
+(which check
 .CW poolalloc() 's
-return before touching it.  Where a
-.CW H2D()
-call sees an unchecked null, if anywhere, is not yet found.
+return themselves) or operates on a
+.CW Heap*
+already known live.  This lead stops here unless a live capture
+actually shows an unchecked null reaching one.
+.PP
+Two more checks, run against data already in hand rather than new
+captures.  First: does a watched slot ever start bad, meaning
+.CW initmem()
+never covered it and there is no writer to find?  Every
+.CW checkwatch()
+arm line across the whole 150\-boot batch was pulled
+.RN ( "grep, not eyeballed" ) :
+122 Arg arms, and roughly 116,000 Sh
+.CW addbuiltin()
+arms, every single real one reading
+.CW H
+.RN ( -0x1 )
+as its baseline (a handful of lines showing other values were
+console output from two concurrent
+.CW print() s
+interleaved on one line, confirmed by checking those boots' raw
+output).  Slots start correct.  Something writes them bad afterward;
+.I "find the writer"
+survives this check.
+.PP
+Second: do the four captures with a usable frame map
+.RN ( a9 ,
+.CW b11 ,
+.CW e12 ,
+.CW e8 \-
+.CW a5
+and
+.CW f22
+had
+.CW cf\->t\ ==\ nil ,
+no map to check;
+.CW d14 's
+printed frame belongs to an unrelated call, not the corrupted
+address) show the map disagreeing with reality at a
+.I constant
+offset \- the shape a wrong
+.CW initmem()
+write would leave?  They do not, mostly.  In three of the four
+.RN ( a9 ,
+.CW e12 ,
+.CW e8 ) ,
+every marked pointer word holds
+.CW H
+or a real pointer except the one bad word, and every unmarked word
+holds a small int consistent with its own local variable \- no
+shift, no second discrepancy.
+.CW b11
+alone shows a hint: word 10, unmarked in the type map, holds a
+value in the same address range as every genuine pointer in that
+frame, while word 9 (marked, expected a pointer) holds the bad
+.CW 0x18 .
+That could be a shifted write; it could equally be ordinary stack
+staleness landing by chance in this build's narrow heap address
+range.  It does not repeat in the other three, so it is recorded as
+a lead, not a finding.
+.PP
+Two further shapes in the seven worth keeping separate from the
+above.
+.CW d14
+is not like the other six: its indirect addressing dereferences a
+pointer that lands
+.I "outside every pool"
+.RN ( "auditmemloc() 's own \(dqnot in pools\(dq" ) ,
+not inside a live block holding a bad word \- this looks like
+corruption propagating through an already-bad pointer from some
+earlier point, not a fresh single-word event, and the frame
+.CW badptrslot()
+printed for it belongs to a different, unrelated call
+.RN ( "addr \- FP" ,
+94212344, nowhere near
+.CW t\->size ) .
+And
+.CW a5
+and
+.CW f22
+both hit
+.CW cf\->t\ ==\ nil
+\- the same shape the standalone
+.CW a2
+capture hit earlier in this hunt (see "The first capture with
+correct indexing" above) \- now 2 of 7 in one batch, not a one-off.
 .PP
 One capture's containing block was checked against
 .CW auditmemloc() ,
@@ -8511,17 +8591,26 @@ which already distinguishes a live block
 .RN ( "MAGIC_A, \(dqblock\(dq" )
 from a freed one
 .RN ( "MAGIC_F, \(dqfree blk\(dq" ) .
-The
+Checked against all seven of this batch's own captures, not just the
 .CW addbuiltin()
-stack-frame capture
-.RN ( stress3 )
-came back
-.CW "in main: in block at 79e4ff8"
-\- a live, allocated block, not a freed one.  That closes
-use-after-free for this specific capture: the slot is inside memory
-the allocator still considers live, holding a value its own type map
-says should be a pointer.  Whether the other six captures agree is
-not yet checked.
+one: six of the seven
+.RN ( a5 ,
+.CW a9 ,
+.CW b11 ,
+.CW e12 ,
+.CW e8 ,
+.CW f22 )
+print
+.CW "in main: in block at ..." \-
+.I "block" ,
+MAGIC_A, live \- for the block containing the bad slot, none printing
+.I "free blk" .
+That closes use-after-free across the whole batch, not one capture:
+every bad slot this batch caught sits inside memory the allocator
+still considers live, holding a value its own type map says should
+be a pointer.  The seventh
+.RN ( d14 )
+is the outside-every-pool case above, a different shape entirely.
 .PP
 .CW extend()
 and
@@ -8562,6 +8651,26 @@ been reverted \- it served its purpose, multiplying the hit rate from
 under 1% to 7 in 150
 .RN ( "4.7%" ) ,
 and the finding stands on its own without it staying in the tree.
+.PP
+Cleanup owed before any other board or hosted
+.CW emu
+builds:
+.CW checkwatch()
+lives in
+.CW libinterp/xec.c ,
+shared by every target, not just pc64 \- it costs a comparison per
+instruction dispatched, prints on every ordinary boot (the plain
+sanity boot that confirmed the stress-loop revert logged 120 routine
+arm/legitimate-change lines with no stress loop running at all), and
+.CW abort() s
+the whole process on a hit.  Same standing item as the temporary
+.CW dumpstack()
+calls added to
+.CW heap.c
+and
+.CW xec.c
+earlier in this hunt: fine for a pc64-only investigation running
+under a debugger's eye, not fine left in for anyone else.
 
 .NH 1
 Then
