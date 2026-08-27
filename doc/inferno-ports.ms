@@ -6407,6 +6407,72 @@ question stays open because of it, not because it was judged
 unimportant.
 
 .NH 1
+The #l0 hang, narrowed one step further and confirmed genuine
+.PP
+Followed the open finding one step further with a second round of
+exploratory prints in
+.CW etherattach()
+.RB ( os/inferno/port/devether.c ,
+reverted afterward \- this one earns no permanent place the way the
+.CW disinit.b
+markers did, it answered one question and its job is done).  The
+function is reached
+.RB ( "etherattach: spec 0" ) ,
+and
+.CW etherxx[0]
+reads back exactly
+.CW "0x0" ,
+confirming the nil case is really taken.  The last line ever printed
+is the one placed immediately before
+.CW "if(etherxx[ctlrno]\ ==\ nil)\ error(Enodev);" \-
+a print placed
+.I after
+that check, guarding the call to
+.CW devattach() ,
+never fires at all.  That is consistent with
+.CW error()
+actually being called \- it does not by itself explain why control
+never comes back.
+.PP
+Checked slow versus genuinely stuck before writing either word down:
+one boot at the usual ninety-second cap, unrevealing by construction
+since a cold boot to the mount step already takes most of a minute;
+a second boot given a hundred and eighty seconds \- three times a
+normal boot's wall-clock \- produced not one further byte of output.
+.B "Confirmed hung, not slow."
+The break sits somewhere in the path from
+.CW error(Enodev)
+raised inside
+.CW etherattach() ,
+back through whatever
+.CW namec()
+does with an attach that raises rather than returns, back through
+.CW devbind() ,
+back to
+.CW Sys_bind() ,
+back to
+.CW "sh->init()" 's
+own
+.CW disinit.b
+frame \- error() itself is load-bearing everywhere else in this same
+boot (every other bind, every
+.CW waserror()
+in
+.CW devmnt.c
+and
+.CW alloc.c
+already read this round), so the defect is most plausibly specific
+to this call site or this exact nesting, not to
+.CW error()
+in general.  Not narrowed further this round: the next step is
+instrumenting
+.CW namec() 's
+own attach handling rather than
+.CW etherattach()
+again, and that is real, separate work from the main hunt, not a
+continuation of it \- recorded here and left for its own turn.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
