@@ -8080,6 +8080,87 @@ that exact site; flagged so a future re-read doesn't trust an old
 unrelated warnings only.  Fresh batch running.
 
 .NH 1
+The first capture with correct indexing, resolved end to end, and no escape hatch left
+.PP
+The first capture against the off-by-one fix: module
+.CW Sh ,
+.CW "bad sv 18" ,
+addressing byte
+.CW 0x0d
+.RN ( "USRC(0x0d) = 1 = AFP" ,
+direct).
+.CW "s.ind = 0xa8"
+(168), and
+.CW "addr - FP"
+is
+.I exactly
+168.  Clean match, and this time
+.CW "inst 1801"
+names the
+.I real
+faulting instruction \- resolved via
+.CW tools/resolve_sbl.py
+against
+.CW appl/cmd/sh/sh.b
+to line 838, columns 22\-25:
+.CW mod ,
+the first argument of
+.CW "spawn externalexec(mod, ctxt.drawcontext, argv, npath, extstart, ctxt.keepfds)" .
+.CW mod
+is a local variable holding a loaded external command module,
+read here to hand off to the newly spawned Prog.
+.PP
+Frame
+.CW t->size
+is 336; 168 is well inside it, unlike most of this hunt's earlier
+stack captures.  That reopens the question the type map settles
+directly: is word 21
+.RN ( 168\ /\ 8 ,
+falling in
+.CW map[2] ,
+covering words 16\-23) actually marked a pointer?
+.CW freeptrs() 's
+own
+.CW BIT(c,\ nb)
+convention maps bit
+.I nb
+of a map byte to word
+.CW "7-nb"
+within its group of eight, so word 21 is position 5 within
+.CW map[2] ,
+bit
+.CW "7-5=2" .
+.CW "map[2] = 0x77" ,
+and
+.CW "0x77 & (1<<2) = 0x04" ,
+nonzero.  The bit is set.
+.CW mod
+is a real, correctly-declared pointer slot, inside the frame's own
+bounds, in a frame
+.CW initmem()
+should have covered when this call was made.
+.PP
+No escape hatch left for this one.  Not a stale probe (the fixed
+addressing/frame-bounds machinery matches exactly:
+.CW addr-FP
+equals
+.CW s.ind
+to the byte).  Not a type-descriptor gap (the map bit is set,
+checked directly rather than assumed).  Not an out-of-bounds tail
+past
+.CW t->size
+that a partial
+.CW initmem()
+coverage could excuse (168 is well inside 336).  Not module-level
+data, not a heap object, not an indirect pointer chase \- a plain
+local variable, in a frame that was properly sized and, per its own
+map, properly typed, holding
+.CW 0x18
+where a real, live module reference belonged.  Whatever writes this
+value does so into memory that every check available says should
+have been correct.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
