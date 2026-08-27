@@ -1174,16 +1174,25 @@ storecompositezero(Src *src, Node *dst, Node *composite)
  * case (the *opposite* case: retalloc()'s destination is retnode, a
  * genuine indirection the callee writes through, not a plain local).
  *
- * NOT handled: an Oindx lvalue here ("xs[i], y = f()") -- fixdblind()
- * is called per id below for the identical chained-ref-lvalue gap its
- * own comment describes, but (like every other lvalue call site) has
- * no case for Oindx, whose own sumark default leaves it Rcant.
- * confirmed this fails loudly at codegen ("can't deal with
- * addressable ... in genaddr"), not silently -- acceptable, matching
- * this branch's other documented, narrower gaps, but a real one:
- * fixing it needs its own indxaddr()-based branch here, structurally
- * the same as the one Oas/the compound-assignment family/Oinc-Odec
- * already have.
+ * "xs[i].a, y = f()" (a field chained off an array index, distinct
+ * from a bare Oindx target) already works here for free, confirmed by
+ * testing: check.c's Odot lowering produces the same Oind(Oadd(...))
+ * shape fixdblind() below already recognizes regardless of what op
+ * the destructure loop itself calls it from, and the new Oadr(Oindx)
+ * case ecom() gained for the plain-read/-write sites (see ecom()'s
+ * own Oadr case) makes fixdblind()'s materialization of that base
+ * compile too -- no changes needed here for that shape.
+ *
+ * a *bare* Oindx target ("xs[i], y = f()") is the one shape genuinely
+ * unhandled: fixdblind() only matches Oind, so it returns nil for an
+ * Oindx id outright, leaving id->addable at Oindx's own sumark
+ * default (Rcant) -- confirmed this used to fail loudly at codegen
+ * ("can't deal with addressable ... in genaddr"), not silently, same
+ * as every other lvalue call site before it got its own indxaddr()
+ * branch (Oas, the compound-assignment family, Oinc/Odec) -- fixed
+ * the identical way: route through indxaddr() instead of fixdblind(),
+ * and store through the synthetic ia.ind it returns rather than id
+ * itself.
  */
 static void
 destructure(Src *src, Node *lhs, Node *rhs)
@@ -1198,14 +1207,22 @@ destructure(Src *src, Node *lhs, Node *rhs)
 	fd = rhs->ty->ids;
 	for(p = lhs; p != nil; p = p->right){
 		Node *fixid;
+		Indxaddr ia;
+		int isindx;
 
 		id = p;
 		if(p->op == Oseq)
 			id = p->left;
 		sumark(id);
-		/* "o.in.v, x = f()": id can be a chained-ref lvalue, same
-		 * write-side gap fixdblind()'s own comment describes. */
-		fixid = fixdblind(id);
+		isindx = id->op == Oindx;
+		fixid = nil;
+		if(isindx)
+			indxaddr(&ia, &id->src, id);
+		else
+			/* "o.in.v, x = f()": id can be a chained-ref lvalue,
+			 * same write-side gap fixdblind()'s own comment
+			 * describes. */
+			fixid = fixdblind(id);
 		adr = mkn(Oadr, dupn(&tuptemp), nil);
 		adr->src = id->src;
 		adr->ty = rhs->ty;
@@ -1219,8 +1236,13 @@ destructure(Src *src, Node *lhs, Node *rhs)
 		ind->src = id->src;
 		ind->ty = fd->ty;
 		sumark(ind);
-		ecom(&id->src, id, ind);
-		tfree(fixid);
+		if(isindx){
+			ecom(&id->src, &ia.ind, ind);
+			indxaddrfree(&ia);
+		}else{
+			ecom(&id->src, id, ind);
+			tfree(fixid);
+		}
 		fd = fd->next;
 		if(p->op != Oseq)
 			break;
@@ -1556,13 +1578,19 @@ ecom(Src *src, Node *nto, Node *n)
 		 * addressable" classes Oind's sumark case consumes): those
 		 * exist *only* to be resolved by that genaddr recursion,
 		 * never as a runtime-computable value, and forcing one
-		 * through ecom's ordinary arithmetic path crashes outright
-		 * when the chain roots at Oadr (check.c's value-typed
-		 * base.field lowering) -- Oadr has no case in ecom() because
-		 * "address of a local's own frame slot" isn't a value to
-		 * compute, only a marker for sumark's tables to route
-		 * through.  left->addable >= Rcant but outside that set
-		 * (Rpc/Rmpc/Rldt) still gets the original treatment.
+		 * through ecom's ordinary arithmetic path used to crash
+		 * outright when the chain rooted at Oadr (check.c's
+		 * value-typed base.field lowering) -- ecom() had no case for
+		 * Oadr at all, because "address of a local's own frame slot"
+		 * isn't a value to compute, only a marker for sumark's
+		 * tables to route through.  that's since gained exactly one
+		 * case (an Oindx base -- see ecom()'s own Oadr case), for the
+		 * structurally identical situation where the base isn't a
+		 * frame slot but a computed array-element address; every
+		 * *other* Oadr shape (a plain local, a deref chain) still has
+		 * no case and still must never reach here.  left->addable >=
+		 * Rcant but outside that set (Rpc/Rmpc/Rldt) still gets the
+		 * original treatment.
 		 */
 		if(left->addable >= Rcant
 		&& left->addable != Rareg && left->addable != Ramreg
@@ -1847,6 +1875,50 @@ ecom(Src *src, Node *nto, Node *n)
 		}
 		return nto;
 	}
+	case Oadr:
+		if(left->op == Oindx){
+			/*
+			 * "bs[0].a": check.c's Odot lowering for a value
+			 * struct's own field wraps a non-ref base in Oadr
+			 * ("give me the address of this value's own storage,
+			 * don't load it") the same way it does for a plain
+			 * Oname base -- but an Oindx base has no *existing*
+			 * frame slot to take the address of; the address has
+			 * to be *computed*, via the identical real Dis
+			 * instruction indxaddr() already builds for a bare
+			 * Oindx read.  Oadr's whole point is "don't load" --
+			 * ia.addrtmp (already tint-typed, already exactly the
+			 * address a subsequent load would dereference) IS the
+			 * answer, with no further indirection needed; ia.ind
+			 * (the load wrapper indxaddr() also builds) goes
+			 * unused here and is freed the same as any other
+			 * indxaddr() caller.
+			 *
+			 * reachable, with the right (tint-overridden)
+			 * destination already set up, via fixdblind()'s own
+			 * existing, unmodified machinery: check.c's Odot
+			 * lowering always produces Oind(Oadd(Oadr(base),
+			 * $offset)), the exact Oind(Oadd(...)) shape
+			 * fixdblind() already recognizes and materializes
+			 * (base's own type overridden to tint on a shallow
+			 * copy, matching the identical "address, not a
+			 * counted value" treatment every other intermediate
+			 * Oadr/Oadd/Oind node in this file gets) -- already
+			 * wired into every read (ecom()'s own Oind case) and
+			 * write (Oas, the compound-assignment family, Oinc/
+			 * Odec) call site that needs it, unchanged.
+			 */
+			Indxaddr ia;
+
+			if(nto == nil)
+				fatal("ecom: adr(indx) without destination");
+			indxaddr(&ia, src, left);
+			genmove(src, Mas, tint, &ia.addrtmp, nto);
+			indxaddrfree(&ia);
+			return nto;
+		}
+		fatal("ecom: unsupported adr base %O", left->op);
+		break;
 	default:
 		fatal("ecom: unsupported %O", n->op);
 		break;

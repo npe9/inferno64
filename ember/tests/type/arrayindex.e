@@ -42,19 +42,17 @@ import sys "sys"
 // every other not-yet-supported composite-literal-write context
 // already hits).
 //
-// found while writing THIS file, scoped but not fixed: a field
-// access chained directly off an array index ("bs[0].a", not "r :=
-// bs[0]; r.a") fatals ("ecom: unsupported adr"). check.c's Odot
-// lowering for a value struct's own field ("p.field" on a non-ref
-// base) unconditionally wraps the base in Oadr, assuming sumark()
-// alone gives it real addressability the ordinary way -- exactly the
-// assumption fixdblind() and indxaddr() already exist to correct for
-// a chained-ref base and a bare array index respectively, but this
-// specific combination (Oadr directly wrapping an Oindx base) isn't
-// one either of those was written to catch. below, every array
-// element read goes through an intermediate local first ("r0 :=
-// bs[0]") to sidestep it -- confirmed to compile and run correctly on
-// its own, isolated from this gap.
+// found while writing THIS file, scoped at the time, later RESOLVED
+// (see tests/type/indxfield.e): a field access chained directly off
+// an array index ("bs[0].a", not "r := bs[0]; r.a") used to fatal
+// ("ecom: unsupported adr") -- check.c's Odot lowering for a value
+// struct's own field unconditionally wraps the base in Oadr, and
+// ecom() had no case for it when the base was Oindx. below, every
+// array element read still goes through an intermediate local first
+// ("r0 := bs[0]") -- not required anymore, just left as-is since it
+// already exercises the plain (non-chained) read/write paths this
+// file is actually about; indxfield.e is the dedicated test for the
+// chained case itself.
 
 type Big struct {
 	a, b int
