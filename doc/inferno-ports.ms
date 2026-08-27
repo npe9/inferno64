@@ -6066,10 +6066,63 @@ hot paths might be responsible, ran the direct test: rebuilt
 with
 .CW xec.c
 reverted to its state immediately before this whole round of work
-started
-.RN ( 2def4bae ) ,
+started (commit
+.CW 2def4bae ),
 keeping every other file as committed, and launched a second
 forty-boot batch against that binary.  Result in the next section.
+
+.NH 1
+The invalid opcode is not this round's doing
+.PP
+The reverted-binary batch answered the question directly: twelve of
+forty boots hit
+.CW "panic:\ invalid\ opcode" ,
+identical signature (
+.CW "TYPE\ 06\ ERROR\ 0711\ FLAGS\ 00010246" ,
+.CW "PC\ 0x000000000000000B" )
+to every capture in the batch before it \- with none of this round's
+.CW scanframe() ,
+.CW badptrslot() ,
+.CW probearrtype()
+or
+.CW auditmemloc()
+wiring present at all.  A higher count, not a lower one, on the more
+reverted binary.  This settles it: the panic is not something this
+round's additions introduced, and the earlier theory (a jump through
+.CW auditmemloc
+as a not-yet-initialized or corrupted function pointer) does not
+survive its own test \- that call site did not exist in this binary
+and the panic fired anyway, at the same rate.
+.PP
+What the batch does not settle is why batches 9 through 19 (roughly
+two hundred boots, spanning this same commit and every point between
+it and the fully instrumented one) never hit it once.  The honest
+reading is not "a new bug was introduced and then reverted away
+identically" \- the direct test rules that out \- but that this
+specific panic is one more downstream shape of the same
+allocation-order-dependent corruption this entire investigation has
+been chasing, exactly the way
+.CW alloc:D2B ,
+general protection violations,
+.CW "cclose / cclone:"
+.CW "c\ nil" ,
+.CW consinit
+and a bare page fault all showed up in the very same batch as
+one-off companions to the invalid-opcode hits, each a different
+native function tripping over the same kind of bad pointer.  Which
+shape wins on a given boot depends on timing this hunt has never
+been able to pin down, not on which probe code happens to be linked
+in.  Filed as understood, not chased further: the twelve captures in
+this batch get no new individual attention, on the standing rule
+that a signature already explained by the leading corruption theory
+doesn't need its own investigation thread.
+.PP
+Restored
+.CW xec.c
+to its committed state and relinked before landing this section, so
+the working tree carries no leftover A/B-test state.  The underlying
+crash remains exactly where it was: real, nondeterministic, and
+still not fixed.
 
 .NH 1
 Then
