@@ -9274,6 +9274,80 @@ exactly the shape of bug this capture has \- but not established, and
 a real native backtrace (frame-pointer or DWARF-based, not this
 conservative scan) is what would actually settle it.
 .PP
+The lead was worth checking directly rather than leaving as a maybe,
+and checking it ruled it out.
+.CW rootset()
+.RN ( libinterp/gc.c ,
+called once per completed GC epoch) walks every live process's every
+frame and calls
+.CW t->mark(t, f)
+on each; for an ordinary type that's
+.CW markheap() ,
+which \- unlike
+.CW freeptrs() ,
+guarded by
+.CW checkfreeptr()
+since earlier in this hunt \- trusted every declared-pointer word it
+was handed with no validation at all: not
+.CW H ,
+straight into
+.CW D2H()
+and
+.CW Setmark() ,
+writing
+.CW h->color
+wherever that resolved to.
+A small, non-H garbage value there is exactly this hunt's population
+.RN ( 0 ,
+.CW 0x18 ,
+.CW 0x80 ,
+...), and a write through a garbage-derived address, landing on some
+unrelated live object, is a mechanism that would explain the whole
+shape of this hunt in one place.
+Added
+.CW checkmarkptr() ,
+.CW freeptrs() 's
+.CW checkfreeptr()
+guard ported to
+.CW markheap() ,
+and ran six boots.
+It never fired \- not once, while
+.CW checktracked()
+caught the landmark site in five of the six.
+Every word
+.CW markheap()
+dereferenced across all six boots was either
+.CW H
+or a plausible pointer.
+That rules the mechanism out cleanly: the corruption is not GC
+blindly trusting a garbage pointer word during mark.
+Kept anyway, the same way
+.CW checkfreeptr()
+was kept after its own negative results \- it is real, permanent
+hardening at zero ordinary cost, and the next capture through it (if
+one ever comes) will say plainly that this specific path finally
+failed.
+.PP
+Also considered and set aside: a genuine SMP data race would explain
+cross-frame corruption without needing any single instruction to be
+at fault, since
+.CW R
+and
+.CW gc.c 's
+mark/sweep state
+.RN ( quanta ,
+.CW visit ,
+.CW gccolor ,
+...) are plain globals, not per-CPU or locked against concurrent
+access.
+.CW qemu-boot.sh
+does not pass
+.CW -smp ,
+and QEMU defaults to one vCPU without it, so this board boots single-
+CPU in every capture taken so far \- ruling out true concurrent
+execution as the explanation, though not interrupt-time reentrancy,
+which remains unexamined.
+.PP
 .CW checktracked() ,
 .CW checkfreeptr() ,
 and the

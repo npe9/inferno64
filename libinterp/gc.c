@@ -103,6 +103,51 @@ noptrs(Type *t, void *vw)
 
 static int markdepth;
 
+/*
+ * markheap() trusts every declared-pointer word it's handed: if it's
+ * not H, it's D2H()'d and Setmark()'d (h->color written) with no
+ * validation at all -- unlike freeptrs(), which has had checkfreeptr()
+ * guarding the same kind of word since earlier in this hunt.  A small,
+ * non-H garbage value here (this hunt's whole population: 0, 0x18,
+ * 0x80, ...) computes a garbage Heap*, and Setmark() then WRITES to
+ * whatever h->color happens to resolve to -- a live, unrelated
+ * object's memory, corrupting it, with no crash at the write site
+ * itself (an ordinary store, not a fault) to point at what happened.
+ * rootset() calls markheap() on every live process's every stack
+ * frame every GC pass (libinterp/gc.c's rootset()), so if this is the
+ * mechanism, it explains the shape this hunt has chased for four-plus
+ * sessions: a legitimate word somewhere holds transient garbage for
+ * an instant mid-computation (register spill, uninitialized temp,
+ * whatever), a GC pass lands on exactly that instant, and the mark
+ * write lands on a frame that has nothing to do with the code that
+ * produced the garbage.  Checked here, not assumed: see
+ * doc/inferno-ports.ms.
+ */
+static void
+checkmarkptr(WORD **q, Type *t, void *vw)
+{
+	extern void dumpstack(void);
+	uintptr val;
+	int wordidx, i;
+
+	val = (uintptr)*q;
+	if(val == (uintptr)H || val >= 0x1000)
+		return;
+	wordidx = (int)(q - (WORD**)vw);
+	print("markheap: bad word %#p (word %d of object %#p) val %#zx, "
+		"running Dis pid %d module %s PC %#p inst %d\n",
+		q, wordidx, vw, val,
+		currun() != nil ? currun()->pid : -1,
+		R.M != nil && R.M->m != nil ? R.M->m->name : "?", R.PC,
+		R.M != nil && R.M->m != nil ? (int)((R.PC - 1) - R.M->m->prog) : -1);
+	print("markheap: object type %#p size %d np %d map", t, t->size, t->np);
+	for(i = 0; i < t->np; i++)
+		print(" %#.2ux", t->map[i]);
+	print("\n");
+	dumpstack();
+	abort();
+}
+
 /* code simpler with a depth search compared to a width search*/
 void
 markheap(Type *t, void *vw)
@@ -125,6 +170,7 @@ markheap(Type *t, void *vw)
 			q = w;
 			for(m = 0x80; m != 0; m >>= 1) {
 				if((c & m) && *q != H) {
+					checkmarkptr(q, t, vw);
 					h = D2H(*q);
 					Setmark(h);
 					if(h->color == propagator && --visit >= 0 && markdepth < 64){
