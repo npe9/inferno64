@@ -2100,6 +2100,56 @@ disk's libraries, and a from-source stack in the tree - the userland built
 with the utils toolchain, which is the same kencc - is the reproducible
 version of the same thing.
 .PP
+The draw service itself is now built and running.
+.CW os/osprey/cmd/draw
+is the kernel's own
+.CW devdraw.c
+reused whole behind a small kernel-compat shim
+.CW ( kshim.c ,
+.CW kshim.h )
+and a
+.CW lib9p
+front end
+.CW ( main.c )
+that turns each 9P request into the device's own Chan entry points and
+its kernel-style error unwinding back into an Rerror.  The shim's
+.CW attachscreen
+hands the device the exposed
+.CW framebuffer
+segment as the screen's backing store, with
+.CW softscreen
+zero, so the compositing lands directly on the frame buffer and the
+flush is a no-op.  Mounted at
+.CW /dev ,
+it makes
+.CW /dev/draw ,
+and a real
+.CW libdraw
+client -
+.CW dtest.c ,
+built on the disk against the disk's
+.CW libdraw
+\-
+.CW initdraw s
+through it and draws two rectangles that are on the screen.  The whole
+draw stack is a user program above the microkernel; there is no kernel
+graphics.  One porting gap had to be closed for it: the device never
+calls
+.CW memimageinit ,
+which in the kernel is run from the port screen init, so the shared
+images
+.CW memopaque
+and the rest stayed nil and
+.CW memdraw
+faulted on the first mask;
+.CW main
+now calls it before
+.CW drawreset .
+What remains between here and rio on this line is the mouse - the
+.CW #m
+plumbing, where the exposed-interrupt driver already exists - and rio
+itself, off the disk against this service.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
