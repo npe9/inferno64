@@ -6588,6 +6588,81 @@ polling.  That is a materially smaller surface than the whole receive
 path just ruled out, and it is where the next read belongs.
 
 .NH 1
+What every driver actually starts, and a four-function read that found no smoking gun
+.PP
+Both drivers'
+.CW attach()
+starts new native kprocs \- confirmed by reading both, not assumed
+from one:
+.CW ethervirtio.c 's
+.CW rxproc / txproc
+and
+.CW ether82563.c 's
+.CW i82563rproc / i82563tproc
+(plus, on that driver, one of several link-monitor variants
+depending on PHY type).  This is genuinely new concurrency a no-NIC
+boot never has: cooperatively-scheduled kprocs that yield at
+.CW sleep() / qlock()
+contention, interleaving with whatever else is running on this
+session's confirmed single CPU, in a way nothing in a no-NIC boot
+does.  That kprocs exist is not itself a finding \- this kernel runs
+on kprocs throughout, several already active on any boot.  What would
+matter is what these particular ones touch that mainline code also
+touches, under a different locking discipline than the yield points
+they hit.  Checked that directly rather than reason from "concurrency
+exists": read all four functions for what they lock and what they
+call, the same shape of check that found and then killed the
+.CW openfile() / ethermux()
+mismatch two sections back.
+.PP
+Found no comparable mismatch.  Both drivers' ring state
+.RB ( ctlr->queue[] / desc[] / avail
+for virtio;
+.CW "tdba / rdba / tb[] / rb[]"
+for the 8256x family) is written only by the one kproc that owns
+that ring \- never shared with mainline code, never touched by the
+hardware interrupt handler either
+.RB ( ethervirtio.c 's
+.CW interrupt()
+only reads a status bit and calls
+.CW wakeup() ;
+it never touches
+.CW "desc[] / avail" ) ,
+and both follow the same idiom before publishing a ring update to the
+device: write the descriptor, call
+.CW coherence() ,
+.I then
+advance the index the device polls.  The one call both
+.CW rxproc
+functions make into genuinely shared code is
+.CW etheriq()/ethermux() ,
+already checked and killed on reachability last section \- and
+correcting a detail in how that section described it: the packet
+dispatch these
+.CW rxproc
+functions do runs in the kproc's own cooperatively-scheduled context,
+not inside the hardware interrupt handler itself, which only wakes
+the proc up.  Doesn't change the conclusion \- unreachable is
+unreachable either way \- but it's a real correction to how the
+mechanism was described, made because the more precise reading
+surfaced it, not because the earlier one was checked and found wrong
+some other way.
+.PP
+Net for this pass: the kproc-count theory is not refuted, but this
+specific four-function check does not confirm it either \- it is
+exactly as strong as it was before the read, a plausible mechanism
+without a located instance.  Recorded plainly rather than stretched:
+a session that adds real concurrency and then can't point at the
+shared structure it corrupts has narrowed the field, not closed the
+case.  The next test this theory wants is a clean one \- spawn dummy,
+NIC-independent kprocs that only sleep/wake on a timer, matching the
+scheduling shape without any driver at all, and see whether that
+alone reproduces anything \- but it needs a working no-NIC-equivalent
+control to compare against, which section still owes a fix to the
+.CW #l0
+hang before that test means anything.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
