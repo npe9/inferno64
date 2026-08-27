@@ -6298,12 +6298,36 @@ the device being present and attached, not whether real packets
 flow across it.  Still open, and the next test rather than a source
 read: whether this is
 .CW ethervirtio.c
-specifically or any active interrupt-driven NIC at all \- a batch
-with
+specifically or any active interrupt-driven NIC at all.
 .CW "\-device\ e1000"
+is not the right substitute \- none of the four ether drivers this
+kernel links
+.RB ( ether8169 ,
+.CW ether82563 ,
+.CW etherx550 ,
+.CW ethervirtio )
+answer to QEMU's default e1000 model's PCI id, checked directly by
+grep before trusting it again.
+.CW "\-device\ igb"
+does: it is QEMU's model of the Intel 82576, and
+.CW ether82563.c 's
+own controller table lists
+.CW i82576
+by name.  Confirmed with one boot before spending a batch on it \-
+.CW "#l0:\ i82576:\ 1000Mbps\ port\ 0xFEBA0000\ irq\ 11"
+attaches cleanly, reaches
+.CW "spawn\ sh" ,
+and crashed
+.RB ( "alloc:D2B" )
+on the very first try.  A forty-boot batch with
+.CW igb
 in place of
 .CW virtio-net ,
-same depth, entirely different driver, decides which.
+.CW "restrict=on"
+held constant, is running.  Same depth, entirely different driver:
+if the rate holds, this is generic to any active NIC; if it drops,
+.CW ethervirtio.c
+is the specific place to read.
 
 .NH 1
 Then
