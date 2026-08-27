@@ -578,10 +578,24 @@ callcom(Src *src, int op, Node *n, Node *ret)
 	talloc(&frame, tint, nil);
 	mod = ind = nil;
 	if(!local){
+		int realcallee;
+
 		mod = nfn->left;
 		ind = nfn->right;
 		if(mod->addable >= Rcant)
 			fatal("callcom: module not addressable");
+		/*
+		 * captured before the materialization branch just below can
+		 * reassign ind to &tind (a plain talloc()'d temp, which
+		 * *does* get its own real .decl from talloc() regardless of
+		 * whether the original ind came from a real callee or a
+		 * value-call's own synthetic address node) -- the varargs
+		 * branch further down needs to know whether *this*, the
+		 * original ind, ever named a real function, not whether
+		 * whatever ind currently points at happens to have some
+		 * Decl or other.
+		 */
+		realcallee = ind->decl != nil;
 		if(ind->op != Oname && ind->addable >= Ralways){
 			/*
 			 * fpcall()'s freshly built ind (Oind(Oadd(...)),
@@ -629,8 +643,42 @@ callcom(Src *src, int op, Node *n, Node *ret)
 		 * Tfn/desc at all.
 		 */
 		if(nfn->ty->varargs){
-			nfn->decl = dupdecl(ind->decl);
-			nfn->decl->desc = gendesc(ind->decl,
+			/*
+			 * !realcallee (captured above, before ind could be
+			 * reassigned to a materialized temp with its own,
+			 * unrelated .decl) means a call *through a function
+			 * value* (fpcall()'s own ind is a freshly built address-
+			 * computation node -- an Oind(Oadd(...)) reading a
+			 * runtime function-table index out of a tfnptr, never a
+			 * reference to any specific function's Decl) -- dupdecl()
+			 * needs a real Decl to clone *from*, structurally
+			 * nonsensical when the actual callee isn't known until
+			 * runtime.  no clone is needed at all, though: the frame
+			 * descriptor only has to describe *this call site's own*
+			 * argument layout, which is fully determined at compile
+			 * time by nfn->ty->ids (the varargs Tfn check.c already
+			 * built from the real, per-call-site argument types,
+			 * rescued from being discarded here by fpcall() -- see
+			 * its own comment) -- not by which function ends up
+			 * handling the call. confirmed by reading resolvepcs()
+			 * (gen.c): Adesc addressing (what in->sm is set to just
+			 * below) reads *only* d->desc off whatever Decl in->s.decl
+			 * points at -- .sym/.store/.offset/.iface, everything
+			 * dupdecl() would otherwise have cloned from a real
+			 * callee, are never consulted for this addressing mode.
+			 * gendesc()'s own first argument is provably unused too
+			 * (types.c: "USED(d)"), so there's nothing to lose by not
+			 * having a real Decl to pass it. a direct call still
+			 * dupdecl()s the real callee Decl, unchanged -- harmless
+			 * (if redundant) there since resolvepcs() ignores those
+			 * same fields regardless, and changing a path that
+			 * already works isn't this fix's job.
+			 */
+			if(realcallee)
+				nfn->decl = dupdecl(ind->decl);
+			else
+				nfn->decl = mkdecl(src, Dlocal, nfn->ty);
+			nfn->decl->desc = gendesc(nfn->decl,
 				idoffsets(nfn->ty->ids, MaxTemp, MaxAlign),
 				nfn->ty->ids);
 			in = genrawop(src, IFRAME, nil, nil, &frame);
@@ -726,8 +774,26 @@ static void
 fpcall(Src *src, int op, Node *n, Node *nto)
 {
 	Node tp, *e, *mod, *ind, *env;
+	Type *calleety;
 
 	tp.decl = nil;
+	/*
+	 * capture n->left's own .ty *before* n->left is replaced below --
+	 * for a varargs call, check.c's own Ocall case (echk(), the
+	 * "varargs calls get a per-call fn type" block) has already built
+	 * and attached a real, call-site-specific Tfn here (matching the
+	 * existing literal-varargs-call mechanism, real argument types,
+	 * real per-argument offsets from sizeids()) -- unconditionally
+	 * recomputing e->ty->tof below instead throws that away and
+	 * substitutes the value's own generic, non-per-call-site Tfn,
+	 * silently reverting every varargs call through a value to a
+	 * fixed-arity frame shape. for a non-varargs call this is a
+	 * no-op: n->left->ty and e->ty->tof are the exact same object
+	 * (check.c's own Oind-wrapping just above sets n->left->ty =
+	 * ft->tof := e's own ft->tof-equivalent), so nothing changes
+	 * there.
+	 */
+	calleety = n->left->ty;
 	e = n->left->left;
 	/*
 	 * >= Rcant alone isn't enough: sumark()'s own Oind case (above)
@@ -765,7 +831,7 @@ fpcall(Src *src, int op, Node *n, Node *nto)
 	ind = mkunary(Oind, mkbin(Oadd, dupn(e), mkconst(src, IBY2WD)));
 	env = mkunary(Oind, mkbin(Oadd, dupn(e), mkconst(src, 2*IBY2WD)));
 	n->left = mkbin(Omdot, mod, ind);
-	n->left->ty = e->ty->tof;
+	n->left->ty = calleety;
 	n->right = mkseq(env, n->right);
 	mod->ty = tint;
 	ind->ty = tint;

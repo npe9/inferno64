@@ -2579,6 +2579,29 @@ echk(Node *n)
 				nlast = na;
 				j++;
 			}
+			/*
+			 * a value-call's ft->ids leads with the synthesized
+			 * wrapper's own "env any" parameter (envfn()/
+			 * synthfvwrap(), the same skip the fixed-arg-checking
+			 * loop just above already applies to "arg") -- the user
+			 * never writes it at the call site, so it isn't present
+			 * in n->right at all, only in ft->ids (and, correctly,
+			 * still needs to stay in nft->ids just built above:
+			 * fpcall() (com.c) prepends a real env argument to
+			 * n->right at *codegen* time, so the runtime frame this
+			 * nft describes genuinely needs that slot). without this
+			 * adjustment, j overcounts by one for a value-call and
+			 * the loop below misaligns every real argument against
+			 * nft->ids by one position, silently dropping the LAST
+			 * real vararg (whichever argument would have filled the
+			 * slot env's own unaccounted-for presence ate) -- found
+			 * testing the value-call varargs fix (com.c's fpcall()/
+			 * callcom(), same session): confirmed via callcom()'s own
+			 * "too many args" fatal on a value-call passing more
+			 * varargs than happened to survive the misalignment.
+			 */
+			if(isvalcall)
+				j--;
 			i = 0;
 			for(a = n->right; a != nil; a = a->right){
 				Node *e;

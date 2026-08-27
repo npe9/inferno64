@@ -39,12 +39,22 @@ import sys "sys"
 // two known, pre-existing (not this feature's own) scope limits,
 // found while testing this and deliberately not triggered below:
 //
-// (1) calling *through* a value doesn't support varargs at all yet.
-// confirmed general, not specific to an imported function: a
-// hand-written same-module varargs function taken as a value and
-// called with more than its fixed arity hits the identical "callcom:
-// too many args" fatal fpcall()/callcom() already have for any
-// value-call. sys.sleep/sys.remove below are both non-varargs.
+// (1) RESOLVED (see tests/type/varargvalue.e) for a same-module
+// varargs function taken as a value: calling *through* a value now
+// correctly compiles and executes a varargs call, any number of
+// extra arguments, without corrupting the frame. still NOT possible,
+// a real but separate and deeper limitation: a *specifically
+// imported* varargs function like sys.print, called through a value,
+// since every import-function-value goes through synthimportwrap()'s
+// synthesized wrapper (this feature, above), and that wrapper's own
+// inner call is built once, at wrapper-construction time, from a
+// *fixed* parameter list with no way to relay whatever varargs its
+// own caller passed it onward to the real sys.print -- see
+// varargvalue.e's own header for the full mechanism and why this
+// isn't specific to values at all (no ember/limbo *source* function,
+// value or not, can introspect or forward its own received varargs;
+// only a native C builtin like sys.print itself can). sys.sleep/
+// sys.remove below are both non-varargs, unaffected either way.
 //
 // (2) a value-call whose own destination is itself forwarded (an
 // existing local being read back, or an argument slot a prior
