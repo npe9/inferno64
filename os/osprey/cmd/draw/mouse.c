@@ -24,6 +24,14 @@ enum {
 	Mousen	= 256,		/* ring capacity, matches the kernel */
 	Winw	= 1280,		/* the exposed frame buffer is 1280x800 */
 	Winh	= 800,
+	/*
+	 * We are the one decoder of the ring, so we publish the position we
+	 * compute into the same page (past the kernel's count-plus-bytes);
+	 * the draw server's cursor reads it there and draws the arrow at
+	 * exactly where /dev/mouse says the pointer is - one source, so the
+	 * cursor and the click point cannot drift apart.
+	 */
+	Posoff	= 512,		/* int mx, my */
 };
 
 static uchar	*ring;		/* the exposed page: [8]=count, then bytes */
@@ -101,6 +109,8 @@ fsread(Req *r)
 			sleep(5);
 	}
 	first = 0;
+	((int*)(ring + Posoff))[0] = mx;	/* publish for the cursor */
+	((int*)(ring + Posoff))[1] = my;
 	n = snprint(buf, sizeof buf, "m%11d %11d %11d %11d ",
 		mx, my, mb, (int)(nsec()/1000000));
 	/* a mouse is a stream: return the whole record, ignore the offset */
@@ -135,11 +145,13 @@ main(int argc, char **argv)
 	}ARGEND;
 	USED(argc, argv);
 
-	v = segattach(0, "mousering", 0, Mousen+16);
+	v = segattach(0, "mousering", 0, 4096);	/* whole page: we use Posoff */
 	if(v == (void*)-1)
 		sysfatal("segattach mousering: %r");
 	ring = v;
 	rp = *(uvlong*)ring;		/* start from the current tail */
+	((int*)(ring + Posoff))[0] = mx;	/* seed the published position */
+	((int*)(ring + Posoff))[1] = my;
 
 	mousesrv.tree = alloctree("glenda", "glenda", DMDIR|0555, nil);
 	if(mousesrv.tree == nil)

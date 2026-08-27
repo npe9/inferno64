@@ -19,9 +19,14 @@ extern int	ospreyfbwid, ospreyfbhgt;
 Lock	oscurlock;		/* shared with main.c's fswrite */
 
 enum {
-	Mousen	= 256,		/* mouse ring capacity, matches the kernel */
 	Cw	= 16,		/* cursor sprite is 16x16 */
 	Ch	= 16,
+	/*
+	 * The mouse driver decodes the ring and publishes the pointer
+	 * position here, in the same page; we only follow it, so the arrow
+	 * is always exactly where /dev/mouse says the pointer is.
+	 */
+	Posoff	= 512,		/* int mx, my - written by mouse.c */
 };
 
 /*
@@ -45,56 +50,8 @@ static uchar curset[32] = {
 enum { Hotx = -1, Hoty = -1 };	/* the arrow's hotspot offset */
 
 static uchar	*ring;		/* the mousering page */
-static uvlong	rp;
-static int	mx, my;		/* pointer position */
 static int	cx, cy, shown;	/* where the sprite currently sits */
 static ulong	save[Cw*Ch];	/* pixels lifted from under the sprite */
-
-static int
-nextbyte(void)
-{
-	uvlong count;
-
-	count = *(uvlong*)ring;
-	if(rp >= count)
-		return -1;
-	if(count - rp > Mousen)
-		rp = count - Mousen;
-	return ring[8 + (rp++ % Mousen)];
-}
-
-/* fold pending PS/2 packets into mx,my; return 1 if the pointer moved */
-static int
-track(void)
-{
-	static uchar pkt[3];
-	static int pn;
-	int b, dx, dy, moved;
-
-	moved = 0;
-	for(;;){
-		b = nextbyte();
-		if(b < 0)
-			return moved;
-		if(pn == 0 && !(b & 0x08))
-			continue;
-		pkt[pn++] = (uchar)b;
-		if(pn < 3)
-			continue;
-		pn = 0;
-		dx = pkt[1];
-		if(pkt[0] & 0x10)
-			dx -= 256;
-		dy = pkt[2];
-		if(pkt[0] & 0x20)
-			dy -= 256;
-		mx += dx;
-		my -= dy;
-		if(mx < 0) mx = 0; else if(mx >= ospreyfbwid) mx = ospreyfbwid-1;
-		if(my < 0) my = 0; else if(my >= ospreyfbhgt) my = ospreyfbhgt-1;
-		moved = 1;
-	}
-}
 
 /* is sprite pixel (r,c) opaque?  1 = black, 0 = white, -1 = transparent */
 static int
@@ -157,12 +114,17 @@ oscursoron(void)
 static void
 cursorproc(void)
 {
+	int px, py;
+
 	for(;;){
-		if(track()){
+		/* volatile: the position is written by another proc */
+		px = ((volatile int*)(ring + Posoff))[0];
+		py = ((volatile int*)(ring + Posoff))[1];
+		if(px != cx || py != cy){
 			lock(&oscurlock);
 			oscursoroff();
-			cx = mx;
-			cy = my;
+			cx = px;
+			cy = py;
 			oscursoron();
 			unlock(&oscurlock);
 		}
@@ -180,11 +142,10 @@ oscursorstart(void)
 {
 	void *v;
 
-	v = segattach(0, "mousering", 0, Mousen+16);
+	v = segattach(0, "mousering", 0, 4096);	/* whole page: we read Posoff */
 	if(v == (void*)-1)
 		return;			/* no mouse exposed: just no cursor */
 	ring = v;
-	rp = *(uvlong*)ring;
 
 	/*
 	 * Attach the frame buffer now, before the fork, so both this and
@@ -198,10 +159,10 @@ oscursorstart(void)
 			return;
 		ospreyfb = v;
 	}
-	mx = ospreyfbwid/2;
-	my = ospreyfbhgt/2;
-	cx = mx;
-	cy = my;
+	cx = ospreyfbwid/2;
+	cy = ospreyfbhgt/2;
+	((int*)(ring + Posoff))[0] = cx;	/* a valid position before mouse.c */
+	((int*)(ring + Posoff))[1] = cy;
 	switch(rfork(RFPROC|RFMEM|RFNOWAIT)){
 	case -1:
 		return;
