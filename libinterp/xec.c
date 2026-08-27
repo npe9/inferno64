@@ -324,31 +324,47 @@ OP(indb)
  * a real local pointer, correctly typed per its own frame's map,
  * inside t->size -- and named exactly where the corruption is READ
  * (sh.b:838, runexternal's 'mod'), not where it's WRITTEN.  No amount
- * of read-side context closes that gap; something between mod's
- * assignment (sh.b:810) and this read writes 0x18 into a slot nothing
- * in that source span touches again.  This checks the slot's value
+ * of read-side context closes that gap.  This checks a slot's value
  * after every instruction, dispatch-loop-wide -- not filtered to any
  * one module or R.M, since the whole hypothesis is that some other
- * function's instruction computes an address that lands here -- and
- * names the instruction that just ran the moment the value changes.
+ * function's instruction computes an address that lands somewhere it
+ * shouldn't -- and names the instruction that just ran the moment a
+ * watched slot changes to a bad value.
  *
- * Armed on sight of a frame matching runexternal's own type fingerprint
- * (t->size 336, t->np 6, map 00 c7 77 9e 00 c0, from b06f5340's own
- * capture) rather than a fixed address, since the frame's address
- * moves between boots.  Disarmed quietly, not fired, once the frame at
- * that address no longer matches the fingerprint -- ordinary teardown
- * and reuse, not a finding.
+ * First version armed only on runexternal's own type fingerprint
+ * (t->size 336, t->np 6, map 00 c7 77 9e 00 c0) -- one specific,
+ * historically-bad site.  48 boots clean: that site alone is too rare
+ * to hit in a reasonable batch, since this whole hunt's captures have
+ * landed on a different type nearly every time (String, Iobuf, Mount,
+ * Arg, Sh -- see the many sections above).  Generalized instead: arm
+ * on ANY frame with at least one declared pointer word (t->np > 0),
+ * watching its first one (found via the same BIT()/map convention
+ * freeptrs() uses).  One slot at a time still, but continuously
+ * re-armed on whatever frame is current whenever the previous one
+ * tears down -- broad, opportunistic sampling across the whole boot's
+ * execution instead of betting on one remembered site recurring.
  */
 static int watcharmed;
+static int watcheverarmed;
 static uintptr *watchaddr;
 static uintptr watchval;
+static void *watchframe;
+static Type *watchtype;
 
+/* byte offset of the first word t's own map marks as a pointer, or -1 */
 static int
-watchtypematch(Type *t)
+firstptrword(Type *t)
 {
-	return t != nil && t->size == 336 && t->np == 6
-		&& t->map[0] == 0x00 && t->map[1] == 0xc7 && t->map[2] == 0x77
-		&& t->map[3] == 0x9e && t->map[4] == 0x00 && t->map[5] == 0xc0;
+	int i, nb;
+
+	for(i = 0; i < t->np; i++){
+		if(t->map[i] == 0)
+			continue;
+		for(nb = 0; nb < 8; nb++)
+			if(t->map[i] & (1<<nb))
+				return (i*8 + (7-nb)) * sizeof(WORD);
+	}
+	return -1;
 }
 
 static void
@@ -356,20 +372,29 @@ checkwatch(void)
 {
 	Frame *cf;
 	extern void dumpstack(void);
+	int off;
 
 	if(!watcharmed){
 		cf = (Frame*)R.FP;
-		if(cf == nil || !watchtypematch(cf->t))
+		if(cf == nil || cf->t == nil || cf->t->np == 0)
 			return;
-		watchaddr = (uintptr*)(R.FP + 168);
+		off = firstptrword(cf->t);
+		if(off < 0)
+			return;
+		watchframe = cf;
+		watchtype = cf->t;
+		watchaddr = (uintptr*)(R.FP + off);
 		watchval = *watchaddr;
 		watcharmed = 1;
-		print("watch: armed at %#p (R.FP %#p) val %#zx\n",
-			watchaddr, R.FP, watchval);
+		if(!watcheverarmed){
+			watcheverarmed = 1;
+			print("watch: mechanism confirmed live, first arm at %#p "
+				"t->size %d np %d\n", watchaddr, cf->t->size, cf->t->np);
+		}
 		return;
 	}
-	cf = (Frame*)((uchar*)watchaddr - 168);
-	if(!watchtypematch(cf->t)){
+	cf = (Frame*)watchframe;
+	if(cf->t != watchtype){
 		/* frame torn down/reused -- disarm quietly, not a finding */
 		watcharmed = 0;
 		return;
@@ -378,23 +403,20 @@ checkwatch(void)
 		/*
 		 * A change to a value that looks like a real pointer (the
 		 * same >= 0x1000 threshold badptrslot()/movp already use
-		 * elsewhere) is legitimate -- sh.b:810's own 'mod := load
-		 * Command npath' writes exactly one of these, H to a real
-		 * pointer, and a first version of this check aborted on
-		 * that alone.  Track it and keep watching; only a change TO
-		 * a bad value is the finding.
+		 * elsewhere) is legitimate -- an ordinary assignment into
+		 * this slot.  Track it and keep watching; only a change TO
+		 * a bad value is the finding.  No print on the routine path
+		 * now -- with every pointer-bearing frame in scope this
+		 * fires far too often to log each one.
 		 */
 		if((void*)*watchaddr == H || (uintptr)*watchaddr >= 0x1000){
-			print("watch: legitimate change addr %#p old %#zx new %#zx, "
-				"instruction PC %#p op %#.2ux add %#.2ux module %s\n",
-				watchaddr, watchval, *watchaddr, R.PC - 1,
-				(R.PC-1)->op, (R.PC-1)->add,
-				R.M != nil && R.M->m != nil ? R.M->m->name : "?");
 			watchval = *watchaddr;
 			return;
 		}
-		print("watch: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx\n",
-			watchaddr, watchval, *watchaddr);
+		print("watch: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx "
+			"frame t->size %d np %d\n",
+			watchaddr, watchval, *watchaddr,
+			watchtype->size, watchtype->np);
 		print("watch: instruction that just ran: PC %#p op %#.2ux "
 			"add %#.2ux module %s pid %d\n",
 			R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,

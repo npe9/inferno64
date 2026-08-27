@@ -8244,6 +8244,53 @@ per instruction while armed.  A full batch is running now to catch a
 genuine bad-value transition.
 
 .NH 1
+One site is too rare; generalizing the watchpoint
+.PP
+48 boots against the
+.CW runexternal()
+-only watchpoint, clean every time \- four arm cycles per boot, always
+the same four addresses (this build has no ASLR), always a legitimate
+H-to-pointer transition, never a bad one.  That's not evidence the
+bug is fixed; it's evidence that one remembered site is too narrow a
+target.  This hunt's own capture history makes the point on its own:
+nearly every capture landed on a
+.I different
+type \- String, Iobuf, Mount, Arg, Sh's own
+.CW runexternal
+frame \- not the same one twice by coincidence (the one exception,
+the Arg site, recurred because it's an early, load-time site every
+boot passes through; most sites this hunt has caught are not).
+Betting an entire batch on one historical site recurring was worth
+one try, and the try was cheap; it wasn't going to be the productive
+long-run strategy.
+.PP
+Generalized instead of abandoned:
+.CW checkwatch()
+now arms on
+.I any
+frame with at least one declared pointer word
+.RN ( t->np\ >\ 0 ),
+watching its first one \- found by
+.CW firstptrword() ,
+walking the type's own map with the same
+.CW BIT()
+convention
+.CW freeptrs()
+uses, rather than a hardcoded offset.  Still one slot at a time, but
+continuously re-armed on whatever frame is current the moment the
+previous one tears down \- broad, opportunistic sampling across a
+whole boot's execution instead of a bet on one remembered site.  The
+routine "armed"/"legitimate change" prints came out; with every
+pointer-bearing frame in scope those would fire on nearly every
+function call and flood the log.  A one-shot
+.CW watcheverarmed
+flag prints once, the first time the mechanism arms at all, purely to
+confirm it's alive \- verified directly against a test boot
+.RN ( "t->size 128 np 2" ,
+a different type than either of this hunt's two hardcoded fingerprints
+ever were, which is the point).  A full batch is running now.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
