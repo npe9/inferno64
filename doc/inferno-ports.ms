@@ -8366,10 +8366,202 @@ as
 runs
 .RN ( "curropt = nextarg[2:]" ,
 line 101, called twice as different flags are parsed).  Neither
-transition landed on a bad value this boot.  A batch is running now,
-five lanes against this one fixed slot instead of scattered across
-whatever frame happens to be current \- the reproducible site, not a
-sample of everything.
+transition landed on a bad value this boot.
+.PP
+This section's own closing line called the Arg site
+.I "the reproducible site, not a sample of everything" .
+That was wrong, and 255 further boots said so directly: 150 boots
+against this exact slot, watched continuously for the entire boot
+the way module data allows, produced zero bad-value transitions.
+Two matching captures across two boots was a real coincidence, not a
+recurring site \- see the next section for what actually replaced it.
+
+.NH 1
+Two captures were luck; seven in one batch is the real shape
+.PP
+150 boots against the Arg watch alone, all clean, while
+.CW checkwatch()
+sat armed on
+.CW curropt
+the entire time.  Arg.opt() is exercised once per normal boot \- the
+top-level sh's own
+.CW -n
+flag parse \- and this hunt's own historical captures already put the
+true rate under 1% at that exposure.  Rather than run a much larger
+batch against one slot on faith, dis/init got a temporary stress loop
+instead: 300 extra
+.CW "sh -n -c 'true'"
+spawns early in boot (each parses real flags through the exact same
+Sh code every ordinary sh invocation runs), reverted once its purpose
+was served \- the finding below is what it was for.
+.PP
+First attempt used a
+.CW seq
+subprocess to generate the loop's word list and silently produced
+.I nothing :
+.CW seq
+isn't bound into this minimal no-disk/no-net root image, so the
+.CW for
+loop's list was empty and the loop body never ran once.  Caught by
+checking
+.CW checkwatch() 's
+own arm count against a test boot, not assumed \- a batch would have
+happily reported "150 boots, no firings" for a loop that silently did
+nothing.  Fixed with a literal
+.CW "1 2 3 ... 300"
+word list instead of a command substitution.
+.PP
+Three manual test boots against the fixed build landed a capture
+where 150 plain boots landed none: module Sh, PC
+.CW 0x79504b0 ,
+value
+.CW 0x18
+again, pid 172 \- deep into the loop.  Resolved
+.RN ( resolve_sbl.py ,
+.CW appl/cmd/sh/sh.sbl )
+to
+.CW sh.b:1531 ,
+.CW "b.ba[n+1:] = b.ba[n:b.n];"
+inside
+.CW addbuiltin() ,
+an array-slice-shift insertion run once per builtin registration, so
+once per spawned sh.  Checked against the frame's own type map
+.RN ( "t->size 152, np 3, map 00 e9 e0" ) :
+word 16 IS genuinely a declared pointer (bit 7 of byte 2 set), with
+.CW H
+correctly sitting in the neighboring not-yet-assigned words (12, 15,
+17, 18).  Not a type-descriptor gap, same as the Arg site.
+.PP
+.CW checkwatch()
+grew a second, independent watch alongside the Arg one: armed on any
+frame matching
+.CW addbuiltin() 's
+exact shape, watching word 16, frame-teardown-aware.  A 6-lane,
+150-boot batch ran against the combined build \- both watches active,
+stress loop in place.  Result:
+.I zero
+firings on either watch, across roughly 465,000 combined arm/disarm
+cycles on the second watch alone (individual test boots reached
+3,000\-4,000 arm cycles each).  But blanket
+.CW badptrslot()
+\- the plain "a movp just read a bad pointer" print that fires on
+.I any
+bad read anywhere, not just a watched slot \- caught
+.B seven
+separate captures across those same 150 boots that neither targeted
+watch saw coming.
+.PP
+The seven, resolved end to end:
+.LP
+.nf
+.ta 0.4i 1.6i 3.0i
+	boot	module:PC	source line	value
+	a5	Sh:0x7946a00	sh.b:806 (runexternal, "mod := load Command npath")	0
+	a9	Init:0xa3eeb0	disinit.b:193 ("b := sys->aprint(...)")	0
+	b11	Sh:0x7951e60	sh.b:1735 (revlist helper, "sl = tl sl")	0x18
+	d14	Sh:0x794efe0	sh.b:1445 (hashadd, "ht[idx] = v :: ht[idx]")	0
+	e12	Sh:0x7950408	sh.b:1529 (addbuiltin, "nb[0:] = b.ba[0:b.n]")	0x18
+	e8	String:0x792da48	string.b:419 ("argv = tl argv")	0
+	f22	Sh:0x7941ac8	sh.b:480 (list-reverse helper, "l = hd left :: l")	0x18
+.fi
+.PP
+Seven different source lines, three different modules, two recurring
+values.  No single writer explains a spread like that \- a wild write
+from one bad instruction clusters on one site, the way the Arg site
+looked like it did before 150 boots said otherwise.  This is a
+systemic pattern, not a local bug in
+.CW addbuiltin() .
+.PP
+The two values are not arbitrary.
+.CW libinterp/heap.c 's
+.CW heap() ,
+temporarily instrumented to print it and checked against a real
+boot rather than hand-computed, gives
+.CW "sizeof(Heap) = 24 (0x18)"
+exactly.
+.CW H2D(t,\ x)
+is
+.CW "((t)(((uchar*)(x))+sizeof(Heap)))" \-
+so
+.CW H2D(t,\0) \-
+turning a null
+.CW Heap*
+header into a data pointer without checking it first \- is exactly
+.CW 0x18 .
+A plain, unconverted null header would show up as the other value,
+.CW 0 .
+Both of this hunt's recurring bad values match the two ways a failed
+or absent allocation could leak into a pointer slot: the raw null, or
+null run through
+.CW H2D()
+before anyone checked it.  Nothing in
+.CW heap() ,
+.CW heapz() ,
+or
+.CW heaparray()
+does that \- each checks
+.CW poolalloc() 's
+return before touching it.  Where a
+.CW H2D()
+call sees an unchecked null, if anywhere, is not yet found.
+.PP
+One capture's containing block was checked against
+.CW auditmemloc() ,
+which already distinguishes a live block
+.RN ( "MAGIC_A, \(dqblock\(dq" )
+from a freed one
+.RN ( "MAGIC_F, \(dqfree blk\(dq" ) .
+The
+.CW addbuiltin()
+stack-frame capture
+.RN ( stress3 )
+came back
+.CW "in main: in block at 79e4ff8"
+\- a live, allocated block, not a freed one.  That closes
+use-after-free for this specific capture: the slot is inside memory
+the allocator still considers live, holding a value its own type map
+says should be a pointer.  Whether the other six captures agree is
+not yet checked.
+.PP
+.CW extend()
+and
+.CW newstack()
+.RN ( libinterp/stack.c )
+were read end to end looking for a stack-relocation bug \- a frame
+whose base moves without its pointer words following.  Neither does
+that:
+.CW newstack()
+.CW memmove() s
+an initial frame into a fresh extent and only ever runs once, at
+process start;
+.CW extend()
+never relocates a live frame at all \- it links a new
+.CW Stkext
+onto the existing chain for the
+.I next
+call's fresh frame, which gets its own
+.CW initmem()
+call
+.RN ( "if (t->np) initmem(t, f);" ,
+present and correct).  A frame already executing keeps its own
+address for its entire life.  That theory is closed, not confirmed.
+.PP
+Net effect on tooling: two increasingly narrow, increasingly targeted
+watchpoints \- one bet on a site that turned out to recur by chance,
+one bet on a frame shape seen bad exactly once \- both watched
+465,000+ slot-checks between them and caught nothing, while the
+blanket, untargeted print that has been in
+.CW OP(movp)
+since early in this hunt caught seven.  The lesson carries forward
+plainly: this corruption is not a fixed site to stake a watchpoint
+on.  It is a rare, systemic event that can land almost anywhere a
+pointer slot is read, and the tool that finds it is broad sampling
+under heavy load, not a narrower and narrower bet on where it last
+showed up.  The stress loop that produced this batch (dis/init) has
+been reverted \- it served its purpose, multiplying the hit rate from
+under 1% to 7 in 150
+.RN ( "4.7%" ) ,
+and the finding stands on its own without it staying in the tree.
 
 .NH 1
 Then
