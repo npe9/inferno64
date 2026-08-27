@@ -1,5 +1,47 @@
 # A Limbo (source) REPL: a plan
 
+**Status: DONE.** Built as `appl/cmd/limborepl.b`, following this plan
+directly - see `man/1/limborepl` for the user-facing documentation and
+its own BUGS for what was found while building it. In short: the
+architecture in this plan carries over exactly as predicted (compiling
+real Limbo source at runtime via `/dis/limbo.dis`, invoked as an
+ordinary Command the same way `disrepl(1)` invokes `/dis/asm.dis`, was
+confirmed end to end with a standalone probe before writing a line of
+the real file). The v1 spec below was built essentially as written,
+with two things worth recording because they weren't obvious from the
+plan alone:
+
+- The declaration/statement classifier needed one refinement past "does
+  the line look like `name: adt|module|fn ...`": a `name:` prefix is
+  ALSO how Limbo writes a labeled statement (`top: for(;;){...}`, a real
+  shape this very backlog's own `marshal.b` uses for `parseloop:`), and
+  the two are told apart only by what follows the colon - `for`/`while`/
+  `case`/`alt`/`pick`/`do` means it's a label on a statement, not a
+  declaration. Missing this would have silently misfiled every labeled
+  loop as module-scope garbage.
+- Redeclaration option (b) (require `=` yourself after the first `:=`)
+  was tried first per the plan's own suggestion and works well in
+  practice - confirmed directly: typing `x := 8;` after an earlier
+  `x := 6;` fails to compile with a real redeclaration error, is
+  rejected cleanly ("not added"), and the session continues unaffected.
+  No need was found to build option (a).
+
+An advisor review after the initial build found one real gap in the
+classifier, not caught by any test: Limbo's own multi-name declaration
+shape (`x, y: int;`) was misfiled as a statement, because the scan
+stopped at the first comma and never reached the `:`. That shape is
+*also* legal Limbo inside a function body (a local, not the
+module-scope global the line asked for), so it silently compiled
+instead of failing loudly - the exact "compiles but means something
+else" failure that's hardest to notice later. Fixed by scanning past
+`name (, name)*` before requiring the colon, confirmed by a negative
+control (reverting the scan reproduces the misfiling exactly) - see
+`man/1/limborepl`'s own BUGS. The same review asked whether a raising
+line leaves the session stuck; confirmed directly that it doesn't:
+`.drop` recovers cleanly once enough lines are dropped to remove the
+raising line itself, exactly as "kept because it did something real"
+implies.
+
 Written 2026-08-25, at the user's request for a plan rather than a build.
 Grounded in reading `disrepl(1)`'s actual source and man page and in
 checking, rather than assuming, that the pieces this would need actually

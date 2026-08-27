@@ -63,6 +63,7 @@ TARG=\
 	disdep.dis\
 	disdump.dis\
 	disrepl.dis\
+	limborepl.dis\
 	drawbind.dis\
 	dossrv.dis\
 	du.dis\

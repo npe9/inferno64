@@ -1,0 +1,257 @@
+.TH LIMBOREPL 1
+.SH NAME
+limborepl \- write Limbo programs at a prompt
+.SH SYNOPSIS
+.B limborepl
+.SH DESCRIPTION
+.B Limborepl
+reads Limbo source one statement or declaration at a time and runs the
+program it builds up.
+.PP
+It is
+.IR disrepl (1)'s
+own architecture moved up one compiler stage, from raw Dis assembly to
+Limbo source, following
+.B doc/limbo-repl-plan.md
+in this tree. Nothing here is a new compiler or interpreter:
+.I emu
+already runs Dis,
+.IR limbo (1)
+.RB ( /dis/limbo.dis ,
+an ordinary Inferno command like any other, not a special case) already
+compiles Limbo source into it. What this adds is the loop, and
+somewhere for a program to keep its state from one line to the next -
+the identical trade
+.IR disrepl (1)
+already makes: every line typed is kept, and the
+.B whole
+accumulated program is recompiled and rerun after each new one. A line
+with an effect outside the virtual machine happens again on every
+subsequent line, for the same reason it does in
+.IR disrepl (1).
+.SS Declarations and statements
+Dis assembly has no declarations, so
+.IR disrepl (1)
+never had to decide where a typed line belongs. Limbo source does:
+a line is either a module-scope
+.B declaration
+(an
+.BR adt ,
+a bare typed variable, an
+.B include
+directive, or a complete one-line function definition) or an ordinary
+.B statement
+that runs inside
+.BR init() 's
+own body. Each typed line is classified by a deliberately rough
+heuristic, not parsed properly - see BUGS for exactly what it does and
+does not recognise.
+.PP
+A function has to be written as ONE line, braces, semicolons and all:
+.IP
+.EX
+square(n: int): int { return n*n; }
+.EE
+.PP
+An extra module works the same way any Limbo program uses one - an
+.B include
+line and a variable declaration (both go to module scope), then a
+.B load
+call (an ordinary statement):
+.IP
+.EX
+include "string.m";
+str: String;
+str = load String String->PATH;
+sys->print("%d\en", str->toint("42", 10).t0);
+.EE
+.PP
+.B Sys
+is already loaded before any typed statement runs, so
+.B sys->print(...)
+works immediately with no
+.B load
+of your own.
+.SS Redeclaration
+Limbo forbids declaring the same name with
+.B :=
+twice in one scope, and the whole session is one scope once assembled.
+This program does not detect or rewrite that for you - write
+.B x = 6;
+the second time, not another
+.BR "x := 6;" .
+Typing the same
+.B :=
+twice fails to compile like any other Limbo redeclaration error, and
+the line is rejected exactly like any other line that does not compile
+- see below.
+.SS Printing
+There is no implicit "print the last value" - a bare expression is not
+a complete Limbo statement in most positions, and guessing which lines
+are meant to be printed would misfire on real input. Call
+.B print()
+yourself, exactly as in an ordinary Limbo program.
+.SS Commands
+.TP
+.B .list
+Show the program so far, in the order it was typed.
+.TP
+.B .drop
+Remove the last line (declaration or statement, whichever was typed
+most recently) and run again.
+.TP
+.B .clear
+Start again.
+.TP
+.B .src
+Show the Limbo source that would be compiled.
+.TP
+.B !
+Stop a program that is still running.
+.TP
+.B .quit
+Leave.
+.SS Stopping a program
+Typing
+.B !
+while a program is running stops it, for the same reason
+.IR disrepl (1)
+needs it: on this platform
+.I emu
+wires the host interrupt signal to a clean exit, so the usual interrupt
+character takes down the whole emulator, session and all, rather than
+just the one running program. The interrupt is a line of input like any
+other, arriving on the same channel and selected against the running
+program in one
+.BR alt .
+Input that arrives while a program is running and is not
+.B !
+is queued rather than acted on, so a session can be piped in without
+its next line being mistaken for an interrupt.
+.PP
+A program that runs for more than three seconds is stopped anyway, for
+when nobody is watching - the same backstop
+.IR disrepl (1)
+has, for the same reason: a typed infinite loop is not hypothetical,
+and confirmed directly during this program's own development (see
+BUGS).
+.PP
+A line that does not compile, or that has to be stopped, is not kept -
+a mistake would otherwise fail every line typed after it. A line that
+compiles and runs but raises an exception is kept, because it did
+something real.
+.SH FILES
+.TP
+.B /tmp/limborepl.b
+the Limbo source of the current session
+.TP
+.B /tmp/limborepl.dis
+the module compiled from it
+.SH SOURCE
+.B /appl/cmd/limborepl.b
+.SH SEE ALSO
+.IR disrepl (1),
+.IR limbo (1),
+.IR prog (3)
+.PP
+.B doc/limbo-repl-plan.md
+in this tree, written before this file and followed directly - the
+design reasoning, including the two options considered for
+redeclaration and why the simpler one (require
+.B =
+yourself) was chosen for this first version, lives there rather than
+being repeated here.
+.SH BUGS
+The declaration/statement classifier is deliberately rough, not a real
+parse. What it recognises as a declaration: a line beginning
+.BR "include \(dq...\(dq;" ;
+a line of the shape
+.IB name : rest
+- or
+.IB name ", " name "(, " name ")*: " rest ,
+Limbo's own multi-name shape such as
+.B "x, y: int;"
+-
+where
+.I rest
+does not itself begin with
+.BR for ,
+.BR while ,
+.BR case ,
+.BR alt ,
+.BR pick ,
+or
+.B do
+(that exclusion matters - a labeled loop like
+.B "top: for(;;){...}"
+is a
+.B statement,
+not a declaration, and the two are told apart only by what follows the
+colon); and a line beginning
+.IB name (
+whose own brace count balances back to zero by the end of the line (a
+one-line function definition, told apart from an ordinary function-call
+.I statement
+like
+.B "foo(1, 2, 3);"
+only by the presence of a brace at all). Anything else is a statement.
+The multi-name case was a real gap found by review, not by any test
+failing: without the comma scan,
+.B "x, y: int;"
+stopped at the comma, fell through as an ordinary statement, and
+silently compiled anyway, since the same text is
+.I also
+legal Limbo inside a function body - just a local instead of the
+module-scope global the line asked for, wrong in a way nothing pointed
+at until someone read the classifier expecting it to handle this shape
+and it did not. Confirmed by a negative control: reverting the comma
+scan reproduces exactly this misfiling.  This still misclassifies at
+least one real, if unusual, shape: a module-scope declaration that
+itself happens to end in
+.BR for / while /etc
+textually (there is none in ordinary use, but the heuristic does not
+know that) would be misfiled as a statement. Multi-line declarations of
+any kind - a function body spanning more than one line, an
+.B adt
+written across several - are not supported at all in this version; they
+have to be written on one line, which is workable for small examples
+and unpleasant for anything larger.
+.PP
+A line that compiles and runs but raises an exception is kept in the
+session rather than discarded, as stated above - confirmed directly,
+not just asserted: typing an out-of-bounds array read leaves the
+session raising the same exception on every later line, exactly as
+keeping it implies, and
+.B .drop
+recovers cleanly once enough lines are dropped to remove the raising
+line itself, with no special-casing needed to make that work.
+.PP
+The three-second timeout was tested directly during development, not
+assumed from
+.IR disrepl (1)'s
+own precedent: typing
+.B "for(;;);"
+was confirmed to be stopped at three seconds, the line correctly
+rejected (not kept), and the session continuing normally on the next
+line - the same verification
+.IR disrepl (1)'s
+own man page describes for its own timeout, repeated here rather than
+inherited on faith since compiling real Limbo source is a genuinely
+different code path from assembling Dis instructions.
+.PP
+Re-compiling the whole session after each line is quadratic in the
+length of the session, and worse in practice than
+.IR disrepl (1)'s
+own equivalent cost - a real
+.I limbo
+compile is heavier than assembling already-accumulated instructions.
+Fine for the short interactive sessions this is for; not addressed
+here.
+.PP
+There is no history, no editing beyond what the terminal provides, and
+no way to load a session from a file or save one to it - the same
+limitations
+.IR disrepl (1)
+has, unaddressed for the same reason: out of scope for a first version
+built to test whether the architecture carries over at all, which it
+does.
