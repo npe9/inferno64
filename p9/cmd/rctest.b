@@ -76,6 +76,8 @@ Rc: module
 	testparseprint:		fn(s: string): string;
 	testparseprintfn:	fn(s: string): string;
 
+	testcompile:	fn(s: string, eflag: int): string;
+
 	testparseword:	fn(s: string): string;
 	testparsewords:	fn(s: string): string;
 	testparsesimple:	fn(s: string): string;
@@ -967,6 +969,108 @@ init(nil: ref Context, nil: list of string)
 		rc->testparseprintfn("{a\nb}"), "{a;b}");
 	checkstr("pcmd: ...plain pcmd() keeps the real newline instead",
 		rc->testparseprint("{a\nb}"), "{a\nb}");
+
+	# --- code.c: tree-to-instruction-vector compilation --------------
+	# testcompile() = parsecmd() then compile() then codeshape() - the
+	# same real-parser-output reuse this whole file's later slices have
+	# used throughout, rather than hand-building a Tree for every case.
+
+	checkstr("code: a bare simple command, eflag off",
+		rc->testcompile("a", 0),
+		"0:Xmark 1:Xword(a) 3:Xsimple 4:Xreturn 5:?0");
+
+	checkstr("code: ...eflag on adds a trailing Xeflag after Xsimple",
+		rc->testcompile("a", 1),
+		"0:Xmark 1:Xword(a) 3:Xsimple 4:Xeflag 5:Xreturn 6:?0");
+
+	# IF's own condition is ALWAYS compiled with eflag forced to 0
+	# (`outcode(c0, 0)` in the real source, regardless of what eflag
+	# was passed to the IF node itself) - eflag=1 here on the whole
+	# call, but only the BODY's own Xsimple gets a trailing Xeflag.
+	# Xif's own operand is a forward jump target, patched by
+	# stuffdot() once the body's own code has been emitted - this is
+	# the cheapest real test of that backpatching working at all.
+	checkstr("code: IF - condition always compiles with eflag forced "+
+		"off, body honors the real eflag, and the jump target Xif "+
+		"patches in points past the body",
+		rc->testcompile("if(a) b", 1),
+		"0:Xmark 1:Xword(a) 3:Xsimple 4:Xif(12) 6:Xmark 7:Xword(b) "+
+		"9:Xsimple 10:Xeflag 11:Xwastrue 12:Xreturn 13:?0");
+
+	# WHILE's own backward jump (Xjump back to the loop test) and
+	# forward jump (Xtrue's own patched exit target) are two
+	# DIFFERENT patch mechanisms in the same instruction - this
+	# exercises both in one test.
+	# Xtrue itself carries the forward-jump int operand (`emitf(Xtrue);
+	# p=emiti(0);` in the real source, same 2-cell shape as Xif/Xifnot/
+	# Xfalse) - there is no separate Xif instruction here at all; a
+	# first draft of both this test and the ANDAND one below wrongly
+	# split them into "Xtrue" then "Xif(n)" as two instructions.
+	checkstr("code: WHILE - Xjump loops back to the saved test address, "+
+		"Xtrue's own forward jump exits past the body",
+		rc->testcompile("while(a) b", 0),
+		"0:Xsettrue 1:Xmark 2:Xword(a) 4:Xsimple 5:Xtrue(13) "+
+		"7:Xmark 8:Xword(b) 10:Xsimple 11:Xjump(0) 13:Xreturn "+
+		"14:?0");
+
+	checkstr("code: ANDAND - Xtrue's own forward jump skips the "+
+		"right-hand side on falsehood",
+		rc->testcompile("a && b", 0),
+		"0:Xmark 1:Xword(a) 3:Xsimple 4:Xtrue(10) 6:Xmark "+
+		"7:Xword(b) 9:Xsimple 10:Xreturn 11:?0");
+
+	checkstr("code: a pipe - fd0/fd1/the source text of the left side "+
+		"(via fnstr(), so ; not a real newline even inside a brace) "+
+		"and the jump Xreturn patches past",
+		rc->testcompile("a|b", 0),
+		"0:Xpipe(1,0,a,10) 5:Xmark 6:Xword(b) 8:Xsimple 9:Xreturn "+
+		"10:Xpipewait 11:Xreturn 12:?0");
+
+	checkstr("code: assign alone - Xassign, no local/unlocal pairing "+
+		"since there is no trailing command",
+		rc->testcompile("x=5", 0),
+		"0:Xmark 1:Xword(5) 3:Xmark 4:Xword(x) 6:Xassign 7:Xreturn "+
+		"8:?0");
+
+	checkstr("code: assign-prefix - Xlocal/Xunlocal bracket the "+
+		"trailing command instead of Xassign",
+		rc->testcompile("x=5 echo", 0),
+		"0:Xmark 1:Xword(5) 3:Xmark 4:Xword(x) 6:Xlocal 7:Xmark "+
+		"8:Xword(echo) 10:Xsimple 11:Xunlocal 12:Xreturn 13:?0");
+
+	checkstr("code: a write redirection - Xglob then Xwrite(fd0), the "+
+		"redirected command, then Xpopredir",
+		rc->testcompile(">f a", 0),
+		"0:Xmark 1:Xword(f) 3:Xglob 4:Xwrite(1) 6:Xmark 7:Xword(a) "+
+		"9:Xsimple 10:Xpopredir 11:Xreturn 12:?0");
+
+	checkstr("code: a DUP redirection - no Xglob (DUP has no word "+
+		"operand at all)",
+		rc->testcompile(">[2=1] a", 0),
+		"0:Xdup(1,2) 3:Xmark 4:Xword(a) 6:Xsimple 7:Xpopredir "+
+		"8:Xreturn 9:?0");
+
+	# Found and fixed two real bugs in codeswitch() itself while
+	# deriving this test (see codeswitch()'s own header comment for
+	# the full account): `tt` was computed from the wrong node (the
+	# constant outer BRACE rather than the current position's own
+	# child[1]), and the case-value walk used two disconnected
+	# variables instead of the real algorithm's single mutating
+	# pointer, so it never actually matched real code.c's own
+	# `for(t=c0->child[0];t->type==ARGLIST;t=c0) outcode(c1,eflag);`
+	# loop. Both were caught by comparing this test's own first-draft
+	# expectation, derived from a from-scratch hand-trace of the real
+	# algorithm, against what the function actually emitted - not the
+	# other way around. The switch subject itself is a bare `word`
+	# (`SWITCH word` in the grammar, not passed through `simplemung`),
+	# so it compiles as a plain `Xword`, with no `Xsimple` wrapping it
+	# - a third small error an even-earlier draft of this expectation
+	# had gotten wrong the same way.
+	checkstr("code: SWITCH with one case",
+		rc->testcompile("switch(x) {case a\nb}", 0),
+		"0:Xmark 1:Xword(x) 3:Xjump(7) 5:Xjump(18) 7:Xmark 8:Xword(a) "+
+		"10:Xcase(18) 12:Xmark 13:Xword(b) 15:Xsimple 16:Xjump(5) "+
+		"18:Xpopm 19:Xreturn 20:?0");
 
 	sys->print("%d passed, %d failed\n", npass, nfail);
 	if(nfail > 0)

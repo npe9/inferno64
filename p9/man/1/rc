@@ -35,9 +35,10 @@ pipes) to design against Limbo's
 and channel model from scratch, since there is no Posix reference to
 translate that part from.
 .PP
-This version implements six slices - a real grammar and a real
-tree-to-source printer now, but still no execution engine - see BUGS.
-The first is word lists and the variable/keyword tables from
+This version implements seven slices - a real grammar, a real
+tree-to-source printer, and a real compiler to an instruction vector
+now, but still nothing that RUNS one - see BUGS. The first is word
+lists and the variable/keyword tables from
 .B word.c
 and
 .BR var.c .
@@ -340,6 +341,94 @@ round-tripping this parser's own real output
 the same reuse the parser's own tests already got from the lexer,
 rather than hand-building a tree for every case. See BUGS for two
 real findings this turned up, both in the same upstream case.
+.PP
+The seventh is
+.BR code.c ,
+tree-to-instruction-vector compilation
+.RI ( outcode() / codeswitch() / iscase() / compile() ) -
+still a pure tree walk, still nothing that RUNS the vector it
+produces (that's
+.BR exec.c ,
+not translated yet). Stops exactly at
+.BR compile() ,
+the same boundary real
+.B code.c
+itself draws:
+.BR codecopy() / codefree()
+are reference-counting and bulk-free bookkeeping for the compiled
+vector, the same "no counterpart under a real garbage collector"
+category as
+.BR tree.c 's
+own
+.BR Treenodes / freenodes ,
+not translated for the same reason.
+.B cleanhere()
+is deferred along with
+.BR heredoc() .
+Real
+.B compile() 's
+own
+.B readhere()
+call is already commented out in the real source itself - that's
+upstream's own state, not something dropped here.
+.PP
+Real
+.B Code
+is a C union with no tag of its own; the real
+.BR emitf / emiti / emits
+macros just write whichever field a given instruction's own fixed
+layout calls for, and the reader (real
+.BR exec.c )
+knows which fields to expect at which offset from the opcode alone.
+.B Codecell
+here keeps all three fields on every cell instead of a union (Limbo
+has no untagged union) - costs a little memory, changes nothing about
+how any cell is used.
+.BR stuffdot() " (patching a forward jump target into an ALREADY-"
+EMITTED cell) needs random-access mutation of one earlier slot, so
+.B codebuf
+is a real growable array plus a fill pointer, grown in chunks the way
+real
+.B morecode()
+grows its own
+.BR realloc ,
+not a list.
+.BR emitop() / emitint() / emitstr()
+all return the index they wrote, matching the real macros' own
+C pre-increment idiom
+.RI ( "p=emiti(0)"
+captures the index just written, for a later
+.B stuffdot(p)
+to patch) - an off-by-one here would silently corrupt every jump
+target while still looking like a plausible address in a
+.B codeshape()
+dump, which is exactly the kind of bug this slice's own tests (below)
+are built to catch.
+.B runq->iflast
+(real
+.B outcode()
+reads and writes it, and
+.B "case NOT"
+raises a real error if it isn't set) is the same kind of real
+per-thread parse-time state
+.B curlocal
+/
+.B nlchar
+already stand in for - a module-global
+.B iflast
+does the same job, correct for the same reason: there is only one
+thing compiling at a time right now.
+.PP
+Tested by compiling this parser's own real output
+.RI ( testcompile() " = " parsecmd() " then " compile() " then a "
+test-only
+.BR codeshape() " dump, the same role " treeshape() " plays for a"
+parsed tree - not a real
+.I rc
+facility, since real debug tracing formats one instruction at a time
+as it EXECUTES, and nothing here executes anything yet). See BUGS for
+three real bugs this slice's own tests found and fixed, all in this
+translation, not upstream.
 .B Running
 .B rc
 does nothing but populate its internal tables and print a note saying
@@ -355,6 +444,74 @@ in this tree - the real source being translated.
 in this tree - the sizing and sequencing document this translation
 follows.
 .SH BUGS
+Three real bugs in this translation's own
+.BR code.c ,
+all found by
+.IR rctest (1)'s
+own tests failing first, none in the upstream source: the
+.B '='
+case's real source reuses ONE mutable
+.B t
+throughout via the
+.BR c0 / c1 / c2
+macros
+.RI ( t->child[0..2] ,
+re-evaluated fresh at each use, so their meaning changes every time
+.B t
+itself is reassigned) and explicitly resets
+.B t=tt
+right before its own
+.BR break ,
+"so tests below will work" (its own comment) - a first translation
+here dropped that reset, assuming Limbo's own case-arm scoping would
+protect the function's outer
+.B t
+parameter from an inner
+.B "t = tt"
+assignment; it does not, since that's a plain reassignment of the
+SAME shared parameter, not a new shadowing declaration, so the
+parameter was left pointing at
+.I nil
+(exactly where the reused loop variable's own exit condition leaves
+it) by the time the epilogue past the whole
+.B case
+block dereferenced it. Reproducible with nothing more than
+.BR "testcompile(\(dqx=5\(dq, 0)" ,
+a bare assignment with no trailing command - crashed the whole
+.B emu
+process outright, not merely a wrong answer. Fixed by restoring the
+real source's own
+.B t=tt
+reset rather than renaming the loop variable to route around the
+question of Limbo's scoping rules.
+.PP
+.BR codeswitch() 's
+own translation had two further real bugs of the identical kind
+(real code's single mutable
+.B t
+walked through fresh
+.BR c0 / c1
+macros, mistranslated by introducing separate-purpose local variables
+instead): its own
+.B tt
+was computed from the constant outer BRACE node
+.RI ( t.child[1] ,
+never changing) rather than from the CURRENT switch-body position's
+own second child, and the loop that compiles a case line's own value
+words used two disconnected walks instead of real code's single
+.B "for(t=c0->child[0];t->type==ARGLIST;t=c0) outcode(c1,eflag);"
+loop - producing a structurally different, wrong instruction sequence
+for every switch with more than the most trivial body. Both caught by
+comparing this slice's own test expectation - derived from a
+from-scratch hand-trace of the real algorithm, done BEFORE running
+anything - against what the function actually emitted, then fixing
+the function to match the trace once the trace itself was confirmed
+correct. See
+.BR codeswitch() 's
+own header comment in
+.B rc.b
+for the full derivation.
+.PP
 No execution engine yet - every slice built so far, now including the
 grammar, was chosen specifically because it has real, testable value
 semantics without one. The lexer turned out translatable and testable

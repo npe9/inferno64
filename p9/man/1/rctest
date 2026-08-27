@@ -7,7 +7,7 @@ rctest \- regression test for rc's word-list/variable-table foundation
 .B Rctest
 exercises
 .IR rc (1)'s
-six translated slices - word lists
+seven translated slices - word lists
 .RI ( newword ,
 .IR count ,
 .IR copywords ,
@@ -58,7 +58,14 @@ job), exercised via
 and
 .BR testparseprintfn() " (" parsecmd() " then " fnstr() ),
 round-tripping this same parser's own real output rather than
-hand-building a tree for every case
+hand-building a tree for every case; and
+.BR code.c 's
+tree-to-instruction-vector compiler
+.RI ( outcode() / codeswitch() / iscase() / compile() ),
+exercised via
+.BR testcompile() " (" parsecmd() " then " compile() " then "
+.BR codeshape() ),
+the same real-parser-output reuse again
 - through
 .BR rc.dis 's
 own test-seam functions, calling
@@ -175,6 +182,36 @@ genuinely prints back as
 All seven test expectations were corrected to match the real,
 verified behavior rather than the translation being changed to match
 a wrong assumption.
+.PP
+The seventh slice's own tests found three real bugs in
+.B rc.b
+itself, not upstream - see
+.IR rc (1)'s
+own BUGS for the full traces: the
+.B '='
+case's epilogue crashed outright on a bare assignment with no
+trailing command, because a translation of real code's single
+mutable
+.B t
+(reassigned through the whole function via
+.BR c0 / c1 / c2
+macros, with an explicit
+.B t=tt
+reset before returning) dropped that reset, leaving the function's
+own
+.B t
+parameter
+.I nil
+when the code just past the whole
+.B case
+block read it; and
+.BR codeswitch() " had two bugs of the same shape (real code's own"
+mutable-pointer style mistranslated into separate-purpose locals),
+producing a structurally wrong instruction sequence for any switch
+with more than a trivial body. All three were found by comparing a
+test expectation derived from an independent, from-scratch hand-trace
+of the real algorithm against what the function under test actually
+produced.
 .SH SOURCE
 .B /p9/cmd/rctest.b
 .SH SEE ALSO

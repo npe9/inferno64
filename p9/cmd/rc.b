@@ -166,6 +166,9 @@ Rc: module
 	testparseprint:		fn(s: string): string;
 	testparseprintfn:	fn(s: string): string;
 
+	# code.c: tree-to-instruction-vector compilation.
+	testcompile:	fn(s: string, eflag: int): string;
+
 	# syn.y: the grammar. Each of these lexes+parses a fresh string
 	# from scratch and returns the result as a treeshape() string
 	# (see rc.b's header comment) rather than a raw ref Tree, so
@@ -1893,6 +1896,621 @@ testparseline(s: string): string
 testcurtok(): int
 {
 	return curtok;
+}
+
+# --- code.c: tree-to-instruction-vector compilation ------------------
+#
+# Seventh slice: outcode()/codeswitch()/iscase()/compile() - a pure
+# tree walk emitting a linear instruction vector, still no runq/Thread
+# dependency of its own beyond `iflast` (below), and still nothing
+# that RUNS the vector - that's exec.c, not translated yet. Stops
+# exactly at `compile()`, per the same boundary real code.c itself
+# draws: `codecopy()`/`codefree()` are reference-counting and
+# bulk-free bookkeeping for the compiled vector, the same "no
+# counterpart under a real garbage collector" category as tree.c's own
+# `Treenodes`/`freenodes`, already documented once in this file -
+# not translated for the same reason, not re-noted at each omission.
+# `cleanhere()` (emits `Xdelhere`) is deferred along with `heredoc()`,
+# for the reason already given where `heredoc()` is defined. Real
+# `compile()`'s own `readhere()` call is already commented out in the
+# real source itself (`/* readhere(); */`) - that's upstream's own
+# state, not something dropped in translation.
+#
+# Real `Code` is a C union (`void(*f)(void)`, `int i`, `char *s`) with
+# no tag of its own - the real `emitf`/`emiti`/`emits` macros just
+# write whichever field a given instruction's own fixed layout calls
+# for, and the reader (exec.c, not translated yet) knows which fields
+# to expect at which offset from the opcode alone, the same contract
+# `outcode()` and `pfnc()` already share in the real source. `Codecell`
+# below keeps all three fields on every cell instead of a union
+# (Limbo has no untagged union), which costs a little memory and
+# changes nothing about how any cell is actually used.
+#
+# `stuffdot()` (patching a forward jump target into an ALREADY-EMITTED
+# cell, once the jump's real destination is known) needs random-access
+# mutation of a specific earlier slot - a `list of Codecell` cannot do
+# that, so `codebuf` is a real growable ARRAY plus a fill pointer
+# (`codep`), grown in chunks the way real `morecode()` grows its own
+# `realloc`, not a list. The real `emitf`/`emiti`/`emits` macros are
+# also C's pre-increment idiom in disguise: `p=emiti(0)` captures the
+# INDEX just written, for a later `stuffdot(p, ...)` to patch - so
+# `emitop`/`emitint`/`emitstr` below all return the index they wrote,
+# not the new fill pointer, on purpose (an off-by-one here would
+# silently corrupt every jump target while still looking like a
+# plausible address in a codeshape() dump - the two cheapest tests
+# that would catch it, `if(a) b` and `while(a) b`, both patch exactly
+# one forward jump and are in this slice's own test set).
+#
+# `runq->iflast` (real `outcode()` reads AND writes it, and `case NOT`
+# raises a real error - "'if not' does not follow 'if(...)'" - if it
+# isn't set) is real per-thread parse-time state, the same category as
+# `curlocal`/`nlchar` before it: a module-global `iflast` stands in for
+# it, correct for exactly the same reason those two already are -
+# there is only one thing compiling at a time right now.
+# real rc has no numeric opcode values at all - every `X...` is a
+# distinct C function's own address, so a null function pointer can
+# never collide with a real one. This translation's opcodes ARE plain
+# ints (same internal-consistency-only convention as the token
+# constants), so 0 is deliberately left unused by any real opcode
+# here - the whole chain starts at `Xbase`+1, not +0 - specifically so
+# compile()'s own trailing null-sentinel cell (0) can never be
+# mistaken for a real instruction by codeshape() or anything reading
+# this vector later. A first version put `Xmark` in its own separate
+# `con 1` statement and started this list's `iota` fresh at 0 -
+# meaning `Xappend` (this list's own first name) silently became
+# `Xmark+0`, i.e. the SAME value as `Xmark` itself; the compiler
+# caught it immediately as an overlapping case qualifier in opname()'s
+# own switch, not a value collision either the compiler or a
+# hand-check would otherwise have noticed. Fixed by putting `Xmark`
+# back in the SAME iota chain as everything else, first in the list.
+Xbase: con 0;
+Xmark, Xappend, Xasync, Xbang, Xclose, Xdup, Xeflag, Xexit, Xfalse,
+Xifnot, Xjump, Xpopm, Xread, Xreturn, Xtrue, Xif, Xwastrue, Xword,
+Xwrite, Xmatch, Xcase, Xconc, Xassign, Xdol, Xcount, Xlocal, Xunlocal,
+Xfn, Xdelfn, Xpipe, Xpipewait, Xrdcmds, Xbackq, Xpipefd, Xsubshell,
+Xdelhere, Xfor, Xglob, Xsimple, Xqdol, Xpopredir, Xsettrue, Xsub:
+	con Xbase+1+iota;
+
+Codecell: adt
+{
+	op:	int;	# meaningful only on a cell an opcode was emitted
+			# into - never inspected otherwise, same as the real
+			# union's own reader-side contract
+	ival:	int;
+	sval:	string;
+};
+
+codebuf: array of ref Codecell;
+codep: int;
+
+iflast := 0;
+
+growcode()
+{
+	nc := array[len codebuf + 100] of ref Codecell;
+	for(i := 0; i < len codebuf; i++)
+		nc[i] = codebuf[i];
+	codebuf = nc;
+}
+
+emitop(op: int): int
+{
+	if(codep >= len codebuf)
+		growcode();
+	i := codep;
+	codebuf[codep] = ref Codecell(op, 0, "");
+	codep++;
+	return i;
+}
+
+emitint(v: int): int
+{
+	if(codep >= len codebuf)
+		growcode();
+	i := codep;
+	codebuf[codep] = ref Codecell(0, v, "");
+	codep++;
+	return i;
+}
+
+emitstr(v: string): int
+{
+	if(codep >= len codebuf)
+		growcode();
+	i := codep;
+	codebuf[codep] = ref Codecell(0, 0, v);
+	codep++;
+	return i;
+}
+
+stuffdot(a: int)
+{
+	codebuf[a].ival = codep;
+}
+
+outcode(t: ref Tree, eflag: int)
+{
+	if(t == nil)
+		return;
+	if(t.ttype != Tnot && t.ttype != ';')
+		iflast = 0;
+	p, q: int;
+	case t.ttype {
+	'$' =>
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xdol);
+	'"' =>
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xqdol);
+	Tsub =>
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xmark);
+		outcode(t.child[1], eflag);
+		emitop(Xsub);
+	'&' =>
+		emitop(Xasync);
+		emitstr(fnstr(t.child[0]));
+	';' =>
+		outcode(t.child[0], eflag);
+		outcode(t.child[1], eflag);
+	'^' =>
+		emitop(Xmark);
+		outcode(t.child[1], eflag);
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xconc);
+	'`' =>
+		emitop(Xbackq);
+		emitstr(fnstr(t.child[0]));
+	Tandand =>
+		outcode(t.child[0], 0);
+		emitop(Xtrue);
+		p = emitint(0);
+		outcode(t.child[1], eflag);
+		stuffdot(p);
+	Targlist =>
+		outcode(t.child[1], eflag);
+		outcode(t.child[0], eflag);
+	Tbang =>
+		outcode(t.child[0], eflag);
+		emitop(Xbang);
+	Tpcmd or Tbrace =>
+		outcode(t.child[0], eflag);
+	Tcount =>
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xcount);
+	Tfn =>
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		if(t.child[1] != nil){
+			emitop(Xfn);
+			p = emitint(0);
+			emitstr(fnstr(t.child[1]));
+			outcode(t.child[1], eflag);
+			emitop(Xunlocal);
+			emitop(Xreturn);
+			stuffdot(p);
+		}else
+			emitop(Xdelfn);
+	Tif =>
+		outcode(t.child[0], 0);
+		emitop(Xif);
+		p = emitint(0);
+		outcode(t.child[1], eflag);
+		emitop(Xwastrue);
+		stuffdot(p);
+	Tnot =>
+		# real yyerror() prints and resyncs at the next newline -
+		# there is no Thread/input stream to resync here yet, so
+		# this just leaves the vector as-is past this point (the
+		# same "no valid result" outcome a lex/parse error already
+		# reaches elsewhere in this file) rather than raising
+		# something with nothing to catch it.
+		if(iflast)
+			emitop(Xifnot);
+		p = emitint(0);
+		outcode(t.child[0], eflag);
+		stuffdot(p);
+	Toror =>
+		outcode(t.child[0], 0);
+		emitop(Xfalse);
+		p = emitint(0);
+		outcode(t.child[1], eflag);
+		stuffdot(p);
+	Tparen =>
+		outcode(t.child[0], eflag);
+	Tsimple =>
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xsimple);
+		if(eflag)
+			emitop(Xeflag);
+	Tsubshell =>
+		emitop(Xsubshell);
+		emitstr(fnstr(t.child[0]));
+		if(eflag)
+			emitop(Xeflag);
+	Tswitch =>
+		codeswitch(t, eflag);
+	Ttwiddle =>
+		emitop(Xmark);
+		outcode(t.child[1], eflag);
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xmatch);
+		if(eflag)
+			emitop(Xeflag);
+	Twhile =>
+		q = codep;
+		emitop(Xsettrue);
+		outcode(t.child[0], 0);
+		emitop(Xtrue);
+		p = emitint(0);
+		outcode(t.child[1], eflag);
+		emitop(Xjump);
+		emitint(q);
+		stuffdot(p);
+	Twords =>
+		outcode(t.child[1], eflag);
+		outcode(t.child[0], eflag);
+	Tfor =>
+		emitop(Xmark);
+		if(t.child[1] != nil){
+			outcode(t.child[1], eflag);
+			emitop(Xglob);
+		}else{
+			emitop(Xmark);
+			emitop(Xword);
+			emitstr("*");
+			emitop(Xdol);
+		}
+		emitop(Xmark);		# dummy value for Xlocal
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xlocal);
+		p = emitop(Xfor);
+		q = emitint(0);
+		outcode(t.child[2], eflag);
+		emitop(Xjump);
+		emitint(p);
+		stuffdot(q);
+		emitop(Xunlocal);
+	Tword =>
+		emitop(Xword);
+		emitstr(t.str);
+	Tdup =>
+		if(t.rtype == Dupfd){
+			emitop(Xdup);
+			emitint(t.fd0);
+			emitint(t.fd1);
+		}else{
+			emitop(Xclose);
+			emitint(t.fd0);
+		}
+		outcode(t.child[1], eflag);
+		emitop(Xpopredir);
+	Tredir =>
+		emitop(Xmark);
+		outcode(t.child[0], eflag);
+		emitop(Xglob);
+		case t.rtype {
+		Append =>
+			emitop(Xappend);
+		Write =>
+			emitop(Xwrite);
+		Read or Here =>
+			emitop(Xread);
+		}
+		emitint(t.fd0);
+		outcode(t.child[1], eflag);
+		emitop(Xpopredir);
+	'=' =>
+		tt := t;
+		u := t;
+		while(u != nil && u.ttype == '=')
+			u = u.child[2];
+		if(u != nil){
+			for(t = tt; t.ttype == '='; t = t.child[2]){
+				emitop(Xmark);
+				outcode(t.child[1], eflag);
+				emitop(Xmark);
+				outcode(t.child[0], eflag);
+				emitop(Xlocal);
+			}
+			outcode(u, eflag);
+			for(t = tt; t.ttype == '='; t = t.child[2])
+				emitop(Xunlocal);
+		}else{
+			for(t = tt; t != nil; t = t.child[2]){
+				emitop(Xmark);
+				outcode(t.child[1], eflag);
+				emitop(Xmark);
+				outcode(t.child[0], eflag);
+				emitop(Xassign);
+			}
+		}
+		# `for(t=tt;...)` above walks the shared parameter `t` all
+		# the way to nil (that's its own loop-exit condition) - real
+		# code.c's own `t=tt;` reset right here, before its `break`,
+		# exists for exactly this reason ("so tests below will work",
+		# its own comment): without it, the epilogue just past this
+		# whole case block dereferences whatever `t` was last left
+		# pointing at, which - for a bare assignment with no trailing
+		# command ("x=5") - is nil. Found by testcompile("x=5", 0)
+		# crashing outright; restored to match the real source rather
+		# than routing around it with a differently-named variable.
+		t = tt;
+	Tpipe =>
+		emitop(Xpipe);
+		emitint(t.fd0);
+		emitint(t.fd1);
+		emitstr(fnstr(t.child[0]));
+		q = emitint(0);
+		outcode(t.child[1], eflag);
+		emitop(Xreturn);
+		stuffdot(q);
+		emitop(Xpipewait);
+	}
+	if(t.ttype != Tnot && t.ttype != ';')
+		iflast = t.ttype == Tif;
+	else if(t.child[0] != nil)
+		iflast = t.child[0].ttype == Tif;
+}
+
+# switch code looks like this (real code.c's own comment, unchanged):
+#	Xmark
+#	(get switch value)
+#	Xjump	1f
+# out:	Xjump	leave
+# 1:	Xmark
+#	(get case values)
+#	Xcase	1f
+#	(commands)
+#	Xjump	out
+# 1:	Xmark
+#	(get case values)
+#	Xcase	1f
+#	(commands)
+#	Xjump	out
+# 1:
+# leave:
+#	Xpopm
+# Real code.c's own version of this function reuses ONE mutable `t`
+# throughout, read through the `c0`/`c1` macros (`t->child[0]`/
+# `t->child[1]`) - since those macros are re-evaluated fresh at every
+# use, "c0" and "c1" mean something different every time `t` itself
+# has been reassigned since the last use. A first translation attempt
+# here mistranslated exactly that: it introduced separate `u`/`w`
+# variables for the case-value walk instead of reusing the same
+# walking pointer real `t`/`c0`/`c1` do, producing a walk that didn't
+# match the real algorithm at all (found by hand-deriving the real
+# trace for a concrete `switch(x){case a\nb}` and comparing against
+# what this function actually emitted); and it computed `tt` from the
+# ORIGINAL function parameter (`t.child[1]`, a constant, the BRACE
+# node) rather than from `body.child[1]` (`c1` relative to whatever
+# `body` - the real code's own `t` - currently pointed at). `body`
+# below plays the exact role real `t` does for the rest of this
+# function: the function's own parameter `t` is only ever read before
+# `body` is introduced.
+codeswitch(t: ref Tree, eflag: int)
+{
+	if(t.child[1].child[0].ttype != ';' ||
+	   iscase(t.child[1].child[0].child[0]) == 0){
+		# real yyerror("case missing in switch") - see the NOT
+		# case's own comment on why this just stops instead.
+		return;
+	}
+	emitop(Xmark);
+	outcode(t.child[0], eflag);
+	emitop(Xjump);
+	nextcase := emitint(0);
+	out := emitop(Xjump);
+	leave := emitint(0);
+	stuffdot(nextcase);
+	body := t.child[1].child[0];
+	while(body.ttype == ';'){
+		tt := body.child[1];
+		emitop(Xmark);
+		x := body.child[0].child[0];
+		while(x.ttype == Targlist){
+			outcode(x.child[1], eflag);
+			x = x.child[0];
+		}
+		emitop(Xcase);
+		nextcase = emitint(0);
+		body = tt;
+		for(;;){
+			if(body.ttype == ';'){
+				if(iscase(body.child[0]))
+					break;
+				outcode(body.child[0], eflag);
+				body = body.child[1];
+			}else{
+				outcode(body, eflag);
+				break;
+			}
+		}
+		emitop(Xjump);
+		emitint(out);
+		stuffdot(nextcase);
+	}
+	stuffdot(leave);
+	emitop(Xpopm);
+}
+
+iscase(t: ref Tree): int
+{
+	if(t.ttype != Tsimple)
+		return 0;
+	u := t.child[0];
+	while(u.ttype == Targlist)
+		u = u.child[0];
+	return u.ttype == Tword && u.quoted == 0 && u.str == "case";
+}
+
+# the trailing `emitf(0)` in real compile() is a null-function-pointer
+# SENTINEL cell, not an operand of Xreturn (Xreturn itself is a plain
+# 1-cell opcode, per opsize() above) - it's what real codefree()'s own
+# `for(p=cp+1;p->f;)` loop stops at. `emitop(0)` here is that same
+# sentinel, correctly distinguishable from every real opcode ONLY
+# because Xmark's own chain starts at 1, not 0 (see that declaration's
+# own comment) - opname(0) falls through to its numeric fallback
+# rather than ever being mistaken for a real instruction.
+compile(t: ref Tree, eflag: int): array of ref Codecell
+{
+	codebuf = array[100] of ref Codecell;
+	codep = 0;
+	outcode(t, eflag);
+	emitop(Xreturn);
+	emitop(0);
+	return codebuf[0:codep];
+}
+
+opname(op: int): string
+{
+	case op {
+	Xmark =>	return "Xmark";
+	Xappend =>	return "Xappend";
+	Xasync =>	return "Xasync";
+	Xbang =>	return "Xbang";
+	Xclose =>	return "Xclose";
+	Xdup =>		return "Xdup";
+	Xeflag =>	return "Xeflag";
+	Xexit =>	return "Xexit";
+	Xfalse =>	return "Xfalse";
+	Xifnot =>	return "Xifnot";
+	Xjump =>	return "Xjump";
+	Xpopm =>	return "Xpopm";
+	Xread =>	return "Xread";
+	Xreturn =>	return "Xreturn";
+	Xtrue =>	return "Xtrue";
+	Xif =>		return "Xif";
+	Xwastrue =>	return "Xwastrue";
+	Xword =>	return "Xword";
+	Xwrite =>	return "Xwrite";
+	Xmatch =>	return "Xmatch";
+	Xcase =>	return "Xcase";
+	Xconc =>	return "Xconc";
+	Xassign =>	return "Xassign";
+	Xdol =>		return "Xdol";
+	Xcount =>	return "Xcount";
+	Xlocal =>	return "Xlocal";
+	Xunlocal =>	return "Xunlocal";
+	Xfn =>		return "Xfn";
+	Xdelfn =>	return "Xdelfn";
+	Xpipe =>	return "Xpipe";
+	Xpipewait =>	return "Xpipewait";
+	Xrdcmds =>	return "Xrdcmds";
+	Xbackq =>	return "Xbackq";
+	Xpipefd =>	return "Xpipefd";
+	Xsubshell =>	return "Xsubshell";
+	Xdelhere =>	return "Xdelhere";
+	Xfor =>		return "Xfor";
+	Xglob =>	return "Xglob";
+	Xsimple =>	return "Xsimple";
+	Xqdol =>	return "Xqdol";
+	Xpopredir =>	return "Xpopredir";
+	Xsettrue =>	return "Xsettrue";
+	Xsub =>		return "Xsub";
+	}
+	return sys->sprint("?%d", op);
+}
+
+# how many cells - the opcode's own cell plus its fixed operand cells
+# - a given instruction occupies, matching outcode()'s own real
+# emission order exactly (cross-checked against, but derived
+# independently of, real codefree()'s own per-opcode classification -
+# see this file's header comment above codefree if that's ever ported:
+# codefree() itself appears to be MISSING Xif from its own "2 cells"
+# group, which this table does not reproduce, since nothing here
+# walks the vector for freeing - only for display).
+opsize(op: int): int
+{
+	case op {
+	Xasync or Xbackq or Xtrue or Xif or Xifnot or Xfalse or Xword or
+	Xclose or Xappend or Xwrite or Xread or Xjump or Xcase or
+	Xdelhere =>
+		return 2;
+	Xfn or Xdup or Xpipefd =>
+		return 3;
+	Xpipe =>
+		return 5;
+	* =>
+		return 1;
+	}
+}
+
+# renders one instruction (starting at code[i]) as "i:Op(operands)",
+# operands shown as whatever real outcode() actually put there (an
+# int shown plain, a string shown quoted) - and returns how many
+# cells it consumed, so codeshape() below can just keep asking for
+# the next instruction rather than know any of this itself.
+formatinstr(code: array of ref Codecell, i: int): (string, int)
+{
+	op := code[i].op;
+	sz := opsize(op);
+	name := opname(op);
+	s: string;
+	case op {
+	Xasync or Xbackq or Xdelhere =>
+		s = name + "(" + code[i+1].sval + ")";
+	Xword =>
+		s = name + "(" + code[i+1].sval + ")";
+	Xtrue or Xif or Xifnot or Xfalse or Xclose or Xappend or Xwrite or
+	Xread or Xjump or Xcase =>
+		s = name + "(" + string code[i+1].ival + ")";
+	Xfn =>
+		s = name + "(" + string code[i+1].ival + "," +
+			code[i+2].sval + ")";
+	Xdup =>
+		s = name + "(" + string code[i+1].ival + "," +
+			string code[i+2].ival + ")";
+	Xpipefd =>
+		s = name + "(" + string code[i+1].ival + "," +
+			string code[i+2].ival + ")";
+	Xpipe =>
+		s = name + "(" + string code[i+1].ival + "," +
+			string code[i+2].ival + "," + code[i+3].sval + "," +
+			string code[i+4].ival + ")";
+	* =>
+		s = name;
+	}
+	return (string i + ":" + s, sz);
+}
+
+# test-only dump of a compiled vector, the same role treeshape() plays
+# for a parsed tree - not a real rc facility (real rc's own debug
+# tracing, pfnc(), formats one instruction at a time as it EXECUTES,
+# via exec.c's runq->pc; there is no execution here yet to drive that,
+# so this instead renders the whole vector at once, directly from the
+# array compile() returns). Jump-target operands are printed AFTER
+# compile() has fully run, so a printed target already reflects
+# whatever stuffdot() patched it to - this is what a backpatching bug
+# (an off-by-one in emitint's own "return the index written, not the
+# new fill pointer") would show up as: a plausible-looking but wrong
+# address, not a crash.
+codeshape(code: array of ref Codecell): string
+{
+	s := "";
+	i := 0;
+	while(i < len code){
+		(instr, sz) := formatinstr(code, i);
+		if(i > 0)
+			s += " ";
+		s += instr;
+		i += sz;
+	}
+	return s;
+}
+
+testcompile(s: string, eflag: int): string
+{
+	pinit(s);
+	return codeshape(compile(parsecmd(), eflag));
 }
 
 # loads sys too, not just the keyword/variable tables - lexword() and
