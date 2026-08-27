@@ -6098,10 +6098,11 @@ What the batch does not settle is why batches 9 through 19 (roughly
 two hundred boots, spanning this same commit and every point between
 it and the fully instrumented one) never hit it once.  The honest
 reading is not "a new bug was introduced and then reverted away
-identically" \- the direct test rules that out \- but that this
-specific panic is one more downstream shape of the same
-allocation-order-dependent corruption this entire investigation has
-been chasing, exactly the way
+identically" \- the direct test rules that out.  Beyond that, read as
+a guess and labelled as one, not established: this specific panic
+.I may
+be one more downstream shape of the same allocation-order-dependent
+corruption this entire investigation has been chasing, the way
 .CW alloc:D2B ,
 general protection violations,
 .CW "cclose / cclone:"
@@ -6123,6 +6124,74 @@ to its committed state and relinked before landing this section, so
 the working tree carries no leftover A/B-test state.  The underlying
 crash remains exactly where it was: real, nondeterministic, and
 still not fixed.
+
+.NH 1
+Retraction: this rig has never run more than one CPU
+.PP
+An earlier section ("The type descriptor is correct on real pc64;
+three mechanisms closed") wrote that
+.CW acquire() / release()
+serialises Dis bytecode execution to one kproc at a time
+.I "regardless of how many physical CPUs this SMP kernel has" ,
+closing a genuinely-parallel-bytecode theory.  That sentence is true
+as written but misleading by omission, and worth retracting the way
+the
+.CW F000FF53
+reading was retracted earlier: it implied physical parallelism was
+in play and merely didn't matter to Dis execution.  It has not been
+in play at all.
+.PP
+.CW qemu-boot.sh
+has never passed
+.CW \-smp ,
+so every boot in this entire investigation \- every batch, every
+capture, all the way back \- has run under QEMU's default of one
+virtual CPU.  Checked two ways, not inferred from one: grepped all
+eighty boot logs on hand (this session's two batches) for
+.CW cpu1 /
+.CW cpu2 /
+.CW cpu3 \-
+zero matches in any of them.  Then booted once with
+.CW "\-smp\ 2"
+added: a
+.CW cpu1:
+line appears within the first couple seconds of output, proving
+.CW mpinit() / mpstartap()
+.RB ( os/inferno/pc/mp.c ,
+shared with the 32-bit
+.CW pc
+board) genuinely works and starts an AP the moment QEMU offers one \-
+the mechanism is real, it has simply never been exercised by this
+harness.  So the earlier "regardless of how many physical CPUs"
+framing had it backwards: this SMP-capable kernel has been tested,
+this entire investigation, as a uniprocessor.  Every corruption
+capture on record \- the wrong sentinel in
+.CW sh.b ,
+the fourth-module
+.CW Styxservers
+capture, the invalid-opcode panics, all of it \- happened with
+exactly one CPU ever running anything, kernel or Dis.  A cross-CPU
+race is not merely unlikely here; on the evidence in hand, it cannot
+be the mechanism, because there has never been a second CPU to race
+against.
+.PP
+That does not close the search, it redirects it: single-CPU
+nondeterminism still has a real, unglamorous source on a machine
+with a network card and a clock \- interrupts.  A timer tick, a
+keyboard event, or a virtio-net receive can all preempt the running
+kernel code asynchronously even with one CPU, and a driver or ISR
+that corrupts memory it shouldn't touch would look exactly like this
+hunt's pattern: allocation-order/timing dependent, indifferent to
+which Dis module happens to be running.  Not written up as a theory
+without a capture behind it \- the discriminating test is cheap and
+already running: a forty-boot batch with
+.CW "\-nic\ none"
+(the script's own comment about that flag only concerns console
+output, not crash rate, so it doesn't block this use of it).  If the
+corruption rate collapses, the network path is implicated with real
+evidence; if it's unchanged, the entire device-interrupt family is
+eliminated in one batch rather than a driver-by-driver read.  Result
+in the next section.
 
 .NH 1
 Then
