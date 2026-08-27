@@ -7559,9 +7559,39 @@ leaving that Prog's
 .CW p->R
 stale for longer than one quantum \- and if so, whether
 .CW rootset()
-can run against it in that state before it's torn down.  Flagged, not
-established; the next step is finding a capture with GC running near
-it, not reasoning further from the source alone.
+can run against it in that state before it's torn down.
+.PP
+Checked further, without waiting for a capture: it's closed, not open.
+.CW rungc()
+itself starts with
+.CW "if(gchalt) { gchalted++; return; }" ,
+and
+.CW progexit() 's
+exception path brackets exactly the risky window \-
+.CW destroystack(&R)
+then
+.CW delprog(r,\ msg)
+\- between
+.CW gclock() / gcunlock()
+.RN ( "gchalt++ / gchalt\-\-" ,
+.CW include/interp.h ).
+.CW destroystack()
+is also passed
+.CW &R ,
+the live global, not
+.CW &r->R
+\- so the one place a mid-error stack teardown happens already reads
+the right copy.  Outside that bracketed window,
+.CW rungc()
+only ever runs from the scheduler loop after
+.CW r->xec(r)
+has already returned for that iteration, by which point
+.CW p->R
+is freshly written back (quantum completed normally) or the Prog is
+mid-teardown under the same lock that keeps
+.CW rungc()
+out entirely.  No capture needed for this one; the guard was already
+there.
 
 .NH 1
 Then
