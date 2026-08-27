@@ -530,6 +530,32 @@ poperand(void)
 		n->src.stop = te->src.stop;
 		return n;
 	}
+	case '[': {
+		Node *sz, *te;
+
+		/*
+		 * array allocation, always zero-filled: "[size]T", mirroring
+		 * "chan[size] T" just above -- deliberately NOT limbo's
+		 * fuller "array[] of {v, v, ...}" value-list form, which
+		 * stays its own separate, still-open gap (compositefields()
+		 * only accepts adt types).  this exists purely so array-
+		 * typed code has *some* way to construct a real array value
+		 * from ember source at all -- previously arrays could only
+		 * ever be received as parameters, never constructed.  unlike
+		 * chan's size (optional, meaning "unbuffered"), an array's
+		 * size is always required: there's no equally meaningful
+		 * "bare array T" default the way an unbuffered channel is a
+		 * real, distinct concept from a buffered one.
+		 */
+		lexskip();
+		sz = pexpr();
+		pexpect(']', "array size");
+		te = ptype();
+		n = mkn(Oarray, sz, te);
+		n->src.start = src.start;
+		n->src.stop = te->src.stop;
+		return n;
+	}
 	default:
 		synerr("expected an expression");
 		psync();

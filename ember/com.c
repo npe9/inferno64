@@ -30,6 +30,18 @@ static	int	labdep;
 static	int	oprelinvert[Oend];
 static	int	opcommute[Oend];
 
+/* see indxaddr()'s own comment, below, for why this bundles three
+ * temps rather than returning just the one a caller actually reads/
+ * writes through. */
+typedef struct Indxaddr Indxaddr;
+struct Indxaddr
+{
+	Node	ind;		/* synthetic Oind wrapping addrtmp -- what the caller loads/stores through */
+	Node	addrtmp;	/* the computed element address, tint-typed */
+	Node	tl;		/* array expr's own materialization temp, if any (zeroed .decl if not) */
+	Node	tr;		/* index expr's own materialization temp, if any (zeroed .decl if not) */
+};
+
 static Node	*sumark(Node*);
 static Node	*ecom(Src*, Node*, Node*);
 static Node	*eacom(Node*, Node*, Node*);
@@ -304,6 +316,7 @@ sumark(Node *n)
 	case Ocons:
 	case Ohd:
 	case Otl:
+	case Oindx:
 		/*
 		 * same shape as Olen just above (single- or dual-operand,
 		 * result never directly addressable -- falls through to the
@@ -419,6 +432,113 @@ fixdblind(Node *n)
 	n->left->left = tres;
 	sumark(n);
 	return tres;
+}
+
+/*
+ * xs[i] (Oindx): unlike a struct field's constant offset (resolved
+ * entirely through sumark's static Radr/Rmadr addressing chain), an
+ * array index is a genuine runtime value needing a real, bounds-
+ * checked Dis instruction (IINDX/IINDB/IINDF/IINDL, one per element
+ * size -- ported from limbo/ecom.c's identical Oindx case, which
+ * hand-picks the opcode this same way rather than through disoptab's
+ * own [Oindx] row, itself only ever partially filled in in *both*
+ * compilers' optab.c) to compute the element's address.  that can't
+ * be folded into sumark's purely static machinery the way Oadd/Oind's
+ * chain can, so this resolves it into a genuine Oind node instead --
+ * the address goes into a fresh tint temp (the same "not a pointer,
+ * no incref/destroy" trick fixdblind() and check.c's own Odot
+ * lowering already use for every other intermediate address node),
+ * wrapped in a synthetic Oind -- from there, genmove()/genaddr() read
+ * or write through it exactly like an ordinary ref dereference
+ * (Oind(Oname)), the simplest case that machinery already fully
+ * supports.
+ *
+ * shared by ecom()'s own Oindx case (reads, including as an arbitrary
+ * subexpression -- eacom()'s generic "materialize if not directly
+ * addressable" path already calls back into ecom() for any Rcant node,
+ * which Oindx's own sumark default already is, so no separate wiring
+ * is needed for that direction) and every lvalue call site (Oas,
+ * the compound-assignment family, Oinc/Odec) that already has to
+ * special-case fixdblind() for the identical, structurally unrelated
+ * chained-ref-lvalue gap -- both are instances of the same standing
+ * invariant fixdblind()'s own comment states: sumark() alone is not
+ * sufficient to establish addressability at a write site.
+ *
+ * caller does the actual load/store through ia->ind, THEN calls
+ * indxaddrfree() -- not a plain tfree() -- once done.  ia->tl/ia->tr
+ * (the array/index expressions' own materialization temps, when
+ * eacom() needed one) must stay live, as genuine GC-tracked
+ * references to the array, for that entire span: ia->ind's own
+ * addrtmp is a raw, untracked address *into* the array's data
+ * (deliberately tint-typed, like every other intermediate address
+ * node in this file), not itself something the collector keeps the
+ * array alive for.  freeing tl/tr right after the genrawop below,
+ * before the caller's load/store runs, is exactly the bug limbo's
+ * own Oindx case carries a comment about ("array[] of {....} [index]
+ * frees array too early (before index value used)") -- limbo defers
+ * through tfreelater(), which this compiler has no port of (nothing
+ * else here has ever needed to defer a temp's free past its own
+ * statement); bundling all three temps into one struct the caller
+ * frees together, always after the load/store, gets the same result
+ * without needing that machinery.
+ */
+static void
+indxaddr(Indxaddr *ia, Src *src, Node *n)
+{
+	Node *left, *right;
+	int op;
+
+	left = n->left;
+	right = n->right;
+	memset(&ia->tl, 0, sizeof ia->tl);
+	memset(&ia->tr, 0, sizeof ia->tr);
+	if(right->addable < Rcant){
+		if(left->addable >= Rcant)
+			left = eacom(left, &ia->tl, nil);
+	}else if(left->temps < right->temps){
+		right = eacom(right, &ia->tr, nil);
+		if(left->addable >= Rcant)
+			left = eacom(left, &ia->tl, nil);
+	}else{
+		left = eacom(left, &ia->tl, nil);
+		right = eacom(right, &ia->tr, nil);
+	}
+	switch(n->ty->size){
+	case IBY2LG:
+		op = n->ty == treal ? IINDF : IINDL;
+		break;
+	case 1:
+		op = IINDB;
+		break;
+	default:
+		op = IINDX;
+		break;
+	}
+	talloc(&ia->addrtmp, tint, nil);
+	genrawop(src, op, left, &ia->addrtmp, right);
+
+	memset(&ia->ind, 0, sizeof ia->ind);
+	ia->ind.op = Oind;
+	ia->ind.left = &ia->addrtmp;
+	ia->ind.src = n->src;
+	ia->ind.ty = n->ty;
+	sumark(&ia->ind);
+}
+
+static void
+indxaddrfree(Indxaddr *ia)
+{
+	tfree(&ia->tl);
+	tfree(&ia->tr);
+	/* ia->ind is a synthetic Oind wrapper, never itself given a
+	 * .decl (only Oname-shaped nodes carry one) -- the actual
+	 * temp allocated by talloc() is ia->addrtmp, which ia->ind.left
+	 * points at; freeing ia->ind here would be a silent no-op
+	 * (tfree() returns immediately on a nil .decl), leaking
+	 * addrtmp's reference count on every single indexed write --
+	 * caught by tdecls()'s own end-of-function consistency check
+	 * ("temporary .bN has 1 references") on the very first test. */
+	tfree(&ia->addrtmp);
 }
 
 static void
@@ -903,6 +1023,17 @@ storecompositezero(Src *src, Node *dst, Node *composite)
  * Odot case uses for p.x on a value struct, not Otuple's own ecom
  * case (the *opposite* case: retalloc()'s destination is retnode, a
  * genuine indirection the callee writes through, not a plain local).
+ *
+ * NOT handled: an Oindx lvalue here ("xs[i], y = f()") -- fixdblind()
+ * is called per id below for the identical chained-ref-lvalue gap its
+ * own comment describes, but (like every other lvalue call site) has
+ * no case for Oindx, whose own sumark default leaves it Rcant.
+ * confirmed this fails loudly at codegen ("can't deal with
+ * addressable ... in genaddr"), not silently -- acceptable, matching
+ * this branch's other documented, narrower gaps, but a real one:
+ * fixing it needs its own indxaddr()-based branch here, structurally
+ * the same as the one Oas/the compound-assignment family/Oinc-Odec
+ * already have.
  */
 static void
 destructure(Src *src, Node *lhs, Node *rhs)
@@ -1219,6 +1350,25 @@ ecom(Src *src, Node *nto, Node *n)
 		genchan(src, left, n->ty->tof, nto);
 		tfree(&tl);
 		return nto;
+	case Oarray:
+		/*
+		 * ported from limbo/ecom.c's identical case (the always-
+		 * zero-filled half of it -- the "arrayz ? INEWAZ : INEWA"
+		 * choice there also covers an unzeroed allocation
+		 * immediately overwritten by an "array[] of {v,...}" value
+		 * list, which this compiler doesn't have; always INEWAZ
+		 * here, unconditionally). mktn(n->ty->tof) is the *already
+		 * established* pattern this file's own INEWZ call sites use
+		 * (composite literals, tfnptr construction) for a type-
+		 * descriptor operand -- same idiom, different opcode.
+		 */
+		if(nto == nil)
+			fatal("ecom: array without destination");
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nto);
+		genrawop(src, INEWAZ, left, mktn(n->ty->tof), nto);
+		tfree(&tl);
+		return nto;
 	case Osnd:
 		if(right->addable < Rcant){
 			if(left->addable >= Rcant)
@@ -1299,6 +1449,17 @@ ecom(Src *src, Node *nto, Node *n)
 		}
 		tfree(&tl);
 		return nto;
+	case Oindx: {
+		/* see indxaddr()'s own comment, above, for the full picture */
+		Indxaddr ia;
+
+		if(nto == nil)
+			fatal("ecom: indx without destination");
+		indxaddr(&ia, src, n);
+		genmove(src, Mas, ia.ind.ty, &ia.ind, nto);
+		indxaddrfree(&ia);
+		return nto;
+	}
 	case Ocons: {
 		/*
 		 * ported from limbo/ecom.c's identical case, simplified to
@@ -1819,6 +1980,30 @@ scom(Node *n)
 			}
 			sumark(n->right);
 			sumark(n->left);
+			if(n->left->op == Oindx){
+				/*
+				 * "xs[i] = expr": Oindx never gets real
+				 * addressability from sumark() alone -- a runtime
+				 * IINDX call, not a static offset, see indxaddr()'s
+				 * own comment -- so route through it directly
+				 * rather than through fixdblind()'s narrower,
+				 * differently-shaped chained-ref-Oind fixup just
+				 * below. a composite-literal RHS into an array slot
+				 * is deliberately not special-cased here: it falls
+				 * through to ecom()'s own "no Ocomposite case"
+				 * fatal, the same honest failure every other not-
+				 * yet-supported composite-literal-write context
+				 * already hits -- a real, narrower gap than plain
+				 * element assignment, left for later.
+				 */
+				Indxaddr ia;
+
+				indxaddr(&ia, &n->src, n->left);
+				ecom(&n->src, &ia.ind, n->right);
+				indxaddrfree(&ia);
+				popblock();
+				return;
+			}
 			{
 				/*
 				 * "o.in.v = expr": n->left can be a chained-ref
@@ -1891,6 +2076,25 @@ scom(Node *n)
 			pushblock();
 			sumark(n->left);
 			sumark(n->right);
+			if(n->left->op == Oindx){
+				/* "xs[i] += expr": see the Oas case's own comment
+				 * on indxaddr() -- the identical write-side gap,
+				 * a runtime address rather than a static offset. */
+				Indxaddr ia;
+				Node tr, *r;
+
+				indxaddr(&ia, &n->src, n->left);
+				r = n->right;
+				if(r->addable >= Rcant)
+					r = ecom(&r->src, talloc(&tr, r->ty, nil), r);
+				else
+					tr.decl = nil;
+				genop(&n->src, n->op, r, nil, &ia.ind);
+				tfree(&tr);
+				indxaddrfree(&ia);
+				popblock();
+				return;
+			}
 			{
 				/* "o.in.v += expr": see the Oas case's own comment
 				 * on fixdblind() -- the identical write-side gap. */
@@ -1920,6 +2124,21 @@ scom(Node *n)
 		case Odec:
 			pushblock();
 			sumark(n->left);
+			if(n->left->op == Oindx){
+				/* "xs[i]++": see the Oas case's own comment on
+				 * indxaddr() -- the identical write-side gap, a
+				 * runtime address rather than a static offset. */
+				Indxaddr ia;
+
+				indxaddr(&ia, &n->src, n->left);
+				one = *mkconst(&n->src, 1);
+				one.ty = tint;
+				sumark(&one);
+				genop(&n->src, n->op == Oinc ? Oadd : Osub, &one, nil, &ia.ind);
+				indxaddrfree(&ia);
+				popblock();
+				return;
+			}
 			{
 				/* "o.in.v++": see the Oas case's own comment on
 				 * fixdblind() -- the identical write-side gap. */

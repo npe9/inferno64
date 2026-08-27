@@ -2836,6 +2836,15 @@ echk(Node *n)
 		n->right = nil;	/* type expr consumed; ecom sees only size */
 		n->ty = t;
 		return n->ty;
+	case Oarray:
+		t = echk(n->left);
+		if(t != tint && t != terror)
+			nerror(n, "array size must be int, not %T", t);
+		t = mktype(&n->src, Tarray, stype(n->right), nil);
+		sizetype(t);
+		n->right = nil;	/* type expr consumed; ecom sees only size */
+		n->ty = t;
+		return n->ty;
 	case Orcv:
 		t = echk(n->left);
 		if(t->kind != Tchan){

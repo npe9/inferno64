@@ -673,6 +673,7 @@ enum
 	Oused,				/* expression used as statement (codegen) */
 	Onothing,			/* nop (codegen) */
 	Ochan,				/* chan T alloc: left size or nil, right type expr (cleared after check) */
+	Oarray,				/* array[size] T alloc, always zero-filled: left size, right type expr (cleared after check) -- deliberately NOT limbo's fuller "array[] of {v,...}" value-list form, which stays check.c's own separate, still-open compositefields()/Oindx-representation gap */
 
 	Oend
 };
