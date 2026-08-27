@@ -401,6 +401,8 @@ sumark(Node *n)
 	case Ohd:
 	case Otl:
 	case Oindx:
+	case Oslice:
+	case Oinds:
 		/*
 		 * same shape as Olen just above (single- or dual-operand,
 		 * result never directly addressable -- falls through to the
@@ -415,7 +417,24 @@ sumark(Node *n)
 		 * copy-elision optimization -- but the ordinary left/right
 		 * combining above already accounts for the two-operand
 		 * shape; this is the same "+1 for the op's own result slot"
-		 * bump Olen gets, not a second one).
+		 * bump Olen gets, not a second one). Oslice is the same
+		 * shape again: n->right is the Oseq(lo,hi) node, whose own
+		 * generic recursion above already folds lo's and hi's
+		 * combined complexity into n->temps before this switch runs
+		 * -- the ecom() Oslice case's own extra talloc()'d temp
+		 * (holding the resolved hi bound) is the "+1" this bump
+		 * accounts for, same as every other case in this group. this
+		 * is purely the register-pressure-ordering heuristic other
+		 * cases read via left->temps/right->temps comparisons (see
+		 * e.g. this file's own Oadd case) -- ecom()'s Oslice case
+		 * itself doesn't consult it, evaluating left/lo/hi in a
+		 * fixed left-to-right order instead of limbo's temps-driven
+		 * reordering (dropped along with sameaddr(), same reasoning
+		 * as Ocons) -- so an undercount here couldn't have produced
+		 * wrong codegen for Oslice itself, only steered some *other*,
+		 * unrelated node's own ordering heuristic slightly off; still
+		 * correct to include for the same reason every sibling case
+		 * in this group does.
 		 */
 		n->temps++;
 		break;
@@ -1627,6 +1646,34 @@ ecom(Src *src, Node *nto, Node *n)
 		}
 		tfree(&tl);
 		return nto;
+	case Oinds:
+		/*
+		 * "s[i]" on a string (check.c's Oindex case rewrites this to
+		 * Oinds, distinct from Oindx's array case, typed tint -- a
+		 * rune, not a byte): unlike Oindx/Oslice, this needs no
+		 * indxaddr()-style address computation of its own -- IINDC
+		 * (libinterp/string.c's OP(indc), read directly) takes the
+		 * string and the index directly and writes the decoded rune
+		 * straight to the destination, no in-place mutation of a
+		 * copied header the way ISLICEA needs. disoptab already has
+		 * a real row for Oinds (optab.c) selecting IINDC via genop()'s
+		 * own d->ty->kind lookup -- this case only had to supply the
+		 * addressing, the instruction selection was already there,
+		 * unlike Oindx/Oslice which both needed their own hand-picked
+		 * per-element-size opcode choice. simplified the same way
+		 * Ocons/Oslice both are: left then right, always materialized
+		 * in that fixed order, no temps-driven reordering.
+		 */
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nil);
+		if(right->addable >= Rcant)
+			right = eacom(right, &tr, nil);
+		if(nto == nil)
+			fatal("ecom: inds without destination");
+		genop(src, Oinds, left, right, nto);
+		tfree(&tl);
+		tfree(&tr);
+		return nto;
 	case Oindx: {
 		/* see indxaddr()'s own comment, above, for the full picture */
 		Indxaddr ia;
@@ -1636,6 +1683,68 @@ ecom(Src *src, Node *nto, Node *n)
 		indxaddr(&ia, src, n);
 		genmove(src, Mas, ia.ind.ty, &ia.ind, nto);
 		indxaddrfree(&ia);
+		return nto;
+	}
+	case Oslice: {
+		/*
+		 * "xs[lo:hi]" -- ported from limbo/ecom.c's identical case,
+		 * simplified to drop its sameaddr()-driven materialization-
+		 * order juggling (matching this port's general preference,
+		 * see Ocons's own comment above): always copy the base
+		 * array's own header into nto first via an ordinary genmove,
+		 * then ISLICEA/ISLICEC (libinterp/xec.c's OP(slicea), read
+		 * directly to confirm this rather than assumed from limbo's
+		 * own call shape) mutates nto's header in place from the
+		 * computed lo/hi bounds -- s=lo, m=hi, d=the array being
+		 * sliced, building a *new* Array header sharing the original
+		 * one's own data pointer (t->ref++, no copy) -- same aliasing
+		 * semantics as limbo and go: "ys := xs[1:3]" shares storage
+		 * with xs, it doesn't copy it.
+		 *
+		 * left, then lo, then hi, materialized in that order -- left-
+		 * to-right source-evaluation order, not limbo's own temps-
+		 * count-driven reordering (dropped along with sameaddr(), same
+		 * reasoning). a bound omitted ("xs[:n]"/"xs[n:]"/"xs[:]")
+		 * defaults to 0 (lo) or len(left) (hi) -- ember's parser
+		 * leaves an omitted bound as a plain nil pointer, not limbo's
+		 * own dedicated Onothing node, so nil is what's tested here.
+		 */
+		Node *lo, *hi, *tn;
+		Node ttn;
+		int op;
+
+		if(nto == nil)
+			fatal("ecom: slice without destination");
+		lo = right->left;
+		hi = right->right;
+
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nil);
+
+		if(lo == nil){
+			lo = mkconst(&n->src, 0);
+			lo->ty = tint;
+			sumark(lo);
+		}
+		if(lo->addable >= Rcant)
+			lo = eacom(lo, &tr, nil);
+
+		if(hi == nil){
+			tn = mkn(Olen, left, nil);
+			tn->src = n->src;
+			tn->ty = tint;
+			sumark(tn);
+		}else
+			tn = hi;
+		tn = ecom(&tn->src, talloc(&ttn, tint, nil), tn);
+
+		op = left->ty->kind == Tstring ? ISLICEC : ISLICEA;
+		genmove(src, Mas, left->ty, left, nto);
+		genrawop(src, op, lo, tn, nto);
+
+		tfree(&tl);
+		tfree(&tr);
+		tfree(&ttn);
 		return nto;
 	}
 	case Ocons: {
