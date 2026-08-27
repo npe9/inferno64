@@ -2066,10 +2066,15 @@ comes next along this line is a user-level draw service - a program that
 owns the mapped frame buffer and answers the draw protocol rio speaks,
 multiplexing the display among windows, with the mouse and keyboard fed
 from the exposed interrupts already built - and then rio itself, off the
-disk, against that service.  Its draw code, devdraw.c, is present but an
-older protocol version (Warp as an array, not the struct the headers
-use), so it must be reconciled to the version the disk's rio speaks
-before it links.  A from-scratch personality on the pure microkernel is
+disk, against that service.  Its draw code, devdraw.c, was an older protocol
+version and is now reconciled to the current one: it compiles clean
+against the headers again.  The divergence turned out to be small - the
+Warp matrix became a struct, and one command, the affine transform, has a
+newer memdraw entry (a mask image and more points) and a wire form to
+match.  drawwarp is on the struct now, and the affine command, which rio
+does not use, refuses until its new form is written; everything rio needs
+is on the current protocol.  So a user-space draw server derived from this
+code speaks the version the disk's rio speaks.  A from-scratch personality on the pure microkernel is
 the other direction, and a far larger one: the library OS has no exec, no
 name space and four syscalls, so a 9front personality there is the Plan 9
 upper half rewritten, which the buddy-kernel path does not need.

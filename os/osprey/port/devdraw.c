@@ -853,11 +853,11 @@ drawpoint(Point *p, uchar *a)
 }
 
 void
-drawwarp(Warp w, uchar *a)
+drawwarp(Warp *w, uchar *a)
 {
-	w[0][0] = BGLONG(a+0*3*4+0*4); w[0][1] = BGLONG(a+0*3*4+1*4); w[0][2] = BGLONG(a+0*3*4+2*4);
-	w[1][0] = BGLONG(a+1*3*4+0*4); w[1][1] = BGLONG(a+1*3*4+1*4); w[1][2] = BGLONG(a+1*3*4+2*4);
-	w[2][0] = BGLONG(a+2*3*4+0*4); w[2][1] = BGLONG(a+2*3*4+1*4); w[2][2] = BGLONG(a+2*3*4+2*4);
+	w->m[0][0] = BGLONG(a+0*3*4+0*4); w->m[0][1] = BGLONG(a+0*3*4+1*4); w->m[0][2] = BGLONG(a+0*3*4+2*4);
+	w->m[1][0] = BGLONG(a+1*3*4+0*4); w->m[1][1] = BGLONG(a+1*3*4+1*4); w->m[1][2] = BGLONG(a+1*3*4+2*4);
+	w->m[2][0] = BGLONG(a+2*3*4+0*4); w->m[2][1] = BGLONG(a+2*3*4+1*4); w->m[2][2] = BGLONG(a+2*3*4+2*4);
 }
 
 Point
@@ -1416,7 +1416,6 @@ drawmesg(Client *client, void *av, int n)
 	Refx *refx;
 	CScreen *cs;
 	Refreshfn reffn;
-	Warp w;
 
 	a = av;
 	m = 0;
@@ -1509,20 +1508,20 @@ drawmesg(Client *client, void *av, int n)
 
 		/* apply affine transform: 'a' dstid[4] R[4*4] srcid[4] P[2*4] M[3*3*4] smooth[1] */
 		case 'a':
-			printmesg(fmt="LRLPM", a, 0);
-			m = 1+4+4*4+4+2*4+3*3*4+1;
-			if(n < m)
-				error(Eshortdraw);
-			dst = drawimage(client, a+1);
-			dstid = BGLONG(a+1);
-			drawrectangle(&r, a+5);
-			src = drawimage(client, a+21);
-			drawpoint(&p, a+25);
-			drawwarp(w, a+33);
-			if(memaffinewarp(dst, r, src, p, w, a[33+3*3*4]) < 0)
-				error("memaffinewarp failed");
-			dstflush(dstid, dst, r);
-			continue;
+			/*
+			 * The affine transform's memdraw entry, memaffinewarp,
+			 * has a newer signature than this code was written to -
+			 * it takes a mask image and more points, and the wire
+			 * form of the command changed with it.  rio does not use
+			 * affine transforms, so rather than guess the new format
+			 * this refuses the command until it is reconciled to the
+			 * protocol version the disk's rio speaks; the drawwarp
+			 * helper above is already on the current struct Warp so
+			 * the rest of the draw code compiles.  USED keeps the
+			 * unused locals from warning.
+			 */
+			USED(client, a);
+			error("draw: affine transform not reconciled to the current protocol");
 
 		/* allocate screen: 'A' id[4] imageid[4] fillid[4] public[1] */
 		case 'A':
