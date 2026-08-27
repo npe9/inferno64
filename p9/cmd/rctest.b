@@ -33,6 +33,12 @@ Rc: module
 	PATH:		con "/p9/dis/rc.dis";
 	init:		fn(ctxt: ref Context, argv: list of string);
 	bootstrap:	fn();
+
+	Tokbase: con 256;
+	Tfor, Tin, Twhile, Tif, Tnot, Ttwiddle, Tbang, Tsubshell, Tswitch, Tfn,
+	Tword, Tredir, Tdup, Tpipe, Tsub, Tsimple, Targlist, Twords, Tbrace,
+	Tparen, Tpcmd, Tpipefd, Tandand, Toror, Tcount: con Tokbase+iota;
+
 	testhash:	fn(s: string, n: int): int;
 	testnewword:	fn(wd: string): ref Word;
 	testcount:	fn(w: ref Word): int;
@@ -50,6 +56,18 @@ Rc: module
 	testmatchfn:	fn(s: string, p: string): int;
 	testhaswild:	fn(p: string): int;
 	testsubwords:	fn(val: ref Word, wlen: int, sub: ref Word, a: ref Word): ref Word;
+
+	testnewtree:	fn(): ref Tree;
+	testtree1:	fn(ttype: int, c0: ref Tree): ref Tree;
+	testtree2:	fn(ttype: int, c0: ref Tree, c1: ref Tree): ref Tree;
+	testtree3:	fn(ttype: int, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree;
+	testmung1:	fn(t: ref Tree, c0: ref Tree): ref Tree;
+	testmung2:	fn(t: ref Tree, c0: ref Tree, c1: ref Tree): ref Tree;
+	testmung3:	fn(t: ref Tree, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree;
+	testepimung:	fn(comp: ref Tree, epi: ref Tree): ref Tree;
+	testtoken:	fn(str: string, ttype: int): ref Tree;
+	testklook:	fn(name: string): ref Tree;
+	testtokenspread:	fn(): int;
 };
 
 Word: adt
@@ -64,6 +82,17 @@ Var: adt
 	val:		ref Word;
 	changed:	int;
 	next:		cyclic ref Var;
+};
+
+Tree: adt
+{
+	ttype:	int;
+	rtype:	int;
+	fd0, fd1: int;
+	str:	string;
+	quoted:	int;
+	iskw:	int;
+	child:	array of ref Tree;
 };
 
 stderr: ref FD;
@@ -81,6 +110,39 @@ init(nil: ref Context, nil: list of string)
 		raise "fail:bad module";
 	}
 	rc->bootstrap();
+
+	# rctest.b hand-copies rc.b's entire token-constant iota chain (see
+	# both files' own comments on why). If the two lists ever drift -
+	# a name inserted or removed at either end - every constant after
+	# the drift point silently shifts to a different value in rc.b's
+	# REAL, compiled implementation, while rctest.b's own compile-time
+	# copy of the same names stays whatever it was last edited to.
+	# A bare `Rc->Tcount - Rc->Tfor` comparison here CANNOT catch that:
+	# module-interface `con`s are resolved at compile time from each
+	# file's own declaration, never fetched from the loaded module at
+	# runtime, so such a comparison only checks rctest.b's copy against
+	# itself - confirmed directly during development, not assumed: a
+	# deliberate drift introduced into rc.b left exactly that comparison
+	# passing, while the real klook() tests below (which exercise
+	# rc.b's actual runtime values) caught the same drift immediately.
+	# testtokenspread() is real data, computed inside rc.dis at
+	# runtime from rc.b's own actual constants - comparing THAT against
+	# rctest.b's expectation is the only way this guard can mean
+	# anything.
+	#
+	# One more thing confirmed, not assumed: testtokenspread() only
+	# catches a drift that changes the RELATIVE spacing inside the
+	# Tfor..Tcount chain (a name inserted or removed between them) - a
+	# second negative control (a name inserted BEFORE the whole chain,
+	# shifting every value uniformly) left testtokenspread() passing,
+	# since Tcount-Tfor stays the same when both shift together.
+	# klook()'s own tests below happen to catch that second case
+	# instead, because they compare rc.b's real runtime values against
+	# rctest.b's literal ABSOLUTE expectations (256, 266), not a
+	# difference. Both drift patterns are covered, but by two different
+	# mechanisms working together, not by this guard alone.
+	checkint("token-constant lists haven't drifted between rc.b and "+
+		"rctest.b (see comment above)", rc->testtokenspread(), 24);
 
 	# --- hash(), independently computed, not derived from rc.b ---
 	checkint("hash(\"path\", 521) == 28", rc->testhash("path", 521), 28);
@@ -210,6 +272,81 @@ init(nil: ref Context, nil: list of string)
 		rc->testlist2str(rc->testsubwords(vals, 5, sub2, nil)), "v3");
 	checkptr("subwords(val, 5, nil, nil) == nil (no subscripts at all)",
 		rc->testsubwords(vals, 5, nil, nil) == nil);
+
+	# --- tree.c: node constructors ---
+	nt := rc->testnewtree();
+	checkint("newtree() zero-initializes ttype", nt.ttype, 0);
+	checkstr("newtree() zero-initializes str", nt.str, "");
+	checkptr("newtree() zero-initializes all 3 children",
+		nt.child[0] == nil && nt.child[1] == nil && nt.child[2] == nil);
+
+	leaf := rc->testtoken("hello", Rc->Tword);
+	checkint("token() sets ttype", leaf.ttype, Rc->Tword);
+	checkstr("token() sets str", leaf.str, "hello");
+
+	t1 := rc->testtree1(Rc->Tbang, leaf);
+	checkint("tree1() sets ttype", t1.ttype, Rc->Tbang);
+	checkptr("tree1() sets child[0], leaves child[1]/[2] nil",
+		t1.child[0] == leaf && t1.child[1] == nil && t1.child[2] == nil);
+
+	c1 := rc->testtoken("a", Rc->Tword);
+	c2 := rc->testtoken("b", Rc->Tword);
+	t2 := rc->testtree2(Rc->Tandand, c1, c2);
+	checkptr("tree2() sets child[0] and child[1]",
+		t2.child[0] == c1 && t2.child[1] == c2 && t2.child[2] == nil);
+
+	# real tree3()'s one real optimization: a ';' node with either
+	# child nil returns the OTHER child directly instead of allocating
+	# a new node - checked here because it's a semantic shortcut, not
+	# just a constructor, and easy to lose in translation.
+	checkptr("tree3(';', c1, nil, nil) == c1, no new node allocated",
+		rc->testtree3(';', c1, nil, nil) == c1);
+	checkptr("tree3(';', nil, c2, nil) == c2, no new node allocated",
+		rc->testtree3(';', nil, c2, nil) == c2);
+	seq := rc->testtree3(';', c1, c2, nil);
+	checkptr("tree3(';', c1, c2, nil) with BOTH real allocates a new node",
+		seq != c1 && seq != c2 && seq.child[0] == c1 && seq.child[1] == c2);
+
+	m := rc->testtoken("m", Rc->Tredir);
+	m = rc->testmung1(m, c1);
+	checkptr("mung1() sets child[0] on the SAME node, doesn't allocate",
+		m.child[0] == c1);
+	m = rc->testmung2(m, c2, c1);
+	checkptr("mung2() overwrites child[0] and sets child[1]",
+		m.child[0] == c2 && m.child[1] == c1);
+	c3 := rc->testtoken("c", Rc->Tword);
+	m = rc->testmung3(m, c1, c2, c3);
+	checkptr("mung3() sets all three children",
+		m.child[0] == c1 && m.child[1] == c2 && m.child[2] == c3);
+
+	# epimung: walk an epilog chain (linked via child[1]) to its tail
+	# and attach comp there - built directly rather than via a real
+	# parse, since the chain shape is all epimung actually looks at.
+	r1 := rc->testtoken("r1", Rc->Tredir);
+	r2 := rc->testtoken("r2", Rc->Tredir);
+	r1 = rc->testmung1(r1, nil);	# r1.child[0] irrelevant to epimung
+	comp := rc->testtoken("comp", Rc->Tsimple);
+	# hand-link r1 -> r2 -> nil by reusing mung2 (child[1] is what
+	# epimung follows; child[0] is untouched by this test).
+	r1 = rc->testmung2(r1, nil, r2);
+	result := rc->testepimung(comp, r1);
+	checkptr("epimung() returns the chain's head unchanged", result == r1);
+	checkptr("epimung() attaches comp at the tail (r2.child[1])",
+		r2.child[1] == comp);
+	checkptr("epimung(comp, nil) == comp (no epilog at all)",
+		rc->testepimung(comp, nil) == comp);
+
+	# --- klook(): the real keyword lookup, now returning a Tree ---
+	forkw := rc->testklook("for");
+	checkint("klook(\"for\") sets ttype to the real keyword's token",
+		forkw.ttype, Rc->Tfor);
+	checkint("klook(\"for\") sets iskw", forkw.iskw, 1);
+	checkstr("klook(\"for\") keeps the original name in str",
+		forkw.str, "for");
+	notkw := rc->testklook("somevar");
+	checkint("klook(\"somevar\") (not a keyword) leaves ttype as Tword",
+		notkw.ttype, Rc->Tword);
+	checkint("klook(\"somevar\") leaves iskw at 0", notkw.iskw, 0);
 
 	sys->print("%d passed, %d failed\n", npass, nfail);
 	if(nfail > 0)

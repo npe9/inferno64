@@ -107,6 +107,21 @@ Rc: module
 	# (same convention as marshal.b's tests calling run(), not init()).
 	bootstrap:	fn();
 
+	# token constants, matching real rc's yacc-generated ones in
+	# spirit (single-character tokens use their own rune value below
+	# 256, named tokens are allocated above it - the same scheme yacc
+	# itself uses) - not required to match rc's own numeric values,
+	# since nothing outside this translation ever sees them; only
+	# internal consistency matters. Declared here, in the interface,
+	# rather than as a plain top-level `con` in the implementation,
+	# specifically so rctest.b can build meaningful Tree nodes to test
+	# against (a bare int literal in the test file would be opaque and
+	# would silently go stale if this list is ever reordered).
+	Tokbase: con 256;
+	Tfor, Tin, Twhile, Tif, Tnot, Ttwiddle, Tbang, Tsubshell, Tswitch, Tfn,
+	Tword, Tredir, Tdup, Tpipe, Tsub, Tsimple, Targlist, Twords, Tbrace,
+	Tparen, Tpcmd, Tpipefd, Tandand, Toror, Tcount: con Tokbase+iota;
+
 	# exposed for rctest.b - none of these need a parser or a
 	# running thread, per the header comment above.
 	testhash:	fn(s: string, n: int): int;
@@ -126,6 +141,18 @@ Rc: module
 	testmatchfn:	fn(s: string, p: string): int;
 	testhaswild:	fn(p: string): int;
 	testsubwords:	fn(val: ref Word, wlen: int, sub: ref Word, a: ref Word): ref Word;
+
+	testnewtree:	fn(): ref Tree;
+	testtree1:	fn(ttype: int, c0: ref Tree): ref Tree;
+	testtree2:	fn(ttype: int, c0: ref Tree, c1: ref Tree): ref Tree;
+	testtree3:	fn(ttype: int, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree;
+	testmung1:	fn(t: ref Tree, c0: ref Tree): ref Tree;
+	testmung2:	fn(t: ref Tree, c0: ref Tree, c1: ref Tree): ref Tree;
+	testmung3:	fn(t: ref Tree, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree;
+	testepimung:	fn(comp: ref Tree, epi: ref Tree): ref Tree;
+	testtoken:	fn(str: string, ttype: int): ref Tree;
+	testklook:	fn(name: string): ref Tree;
+	testtokenspread:	fn(): int;
 };
 
 # --- word.c: word lists ---------------------------------------------
@@ -411,18 +438,166 @@ testhaswild(p: string): int
 	return haswild(p);
 }
 
+# --- tree.c (partial): the Tree node constructors -------------------
+#
+# Third slice: the parse-tree constructors real rc's grammar actions
+# call (tree1/tree2/tree3/mung1/mung2/mung3/epimung/token), independent
+# of the lexer/grammar pair itself - these are called BY grammar
+# actions, not coupled to the lexer the way lex.c and syn.y are coupled
+# to each other, so they're testable now the same way word.c/var.c/
+# glob.c's pure pieces were. `simplemung` is deferred: it needs a
+# tree-to-source pretty-printer (`pfmt(s, "%t", t)` in the real source,
+# from io.c/pfnc.c) that doesn't exist yet, so it waits for that.
+#
+# Real rc's own Treenodes/freenodes machinery is a bulk-allocation
+# list kept ONLY so every tree node can be freed at once later - not
+# just "don't call free()" like every other omission so far, this
+# whole bookkeeping mechanism has no purpose to translate at all under
+# a real garbage collector, so the Tree adt below has no `next` field
+# corresponding to it.
+#
+# `type' is a reserved word in Limbo - the C source's own `type` field
+# is named `ttype` here, matching the same rename already used for
+# `type`-as-a-parameter elsewhere in this file (Kw.toktype).
+
+Tree: adt
+{
+	ttype:	int;
+	rtype:	int;
+	fd0, fd1: int;
+	str:	string;
+	quoted:	int;
+	iskw:	int;
+	child:	array of ref Tree;	# always length 3, matching child[3]
+};
+
+newtree(): ref Tree
+{
+	return ref Tree(0, 0, 0, 0, "", 0, 0, array[3] of ref Tree);
+}
+
+tree3(ttype: int, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree
+{
+	if(ttype == ';'){
+		if(c0 == nil)
+			return c1;
+		if(c1 == nil)
+			return c0;
+	}
+	t := newtree();
+	t.ttype = ttype;
+	t.child[0] = c0;
+	t.child[1] = c1;
+	t.child[2] = c2;
+	return t;
+}
+
+tree1(ttype: int, c0: ref Tree): ref Tree
+{
+	return tree3(ttype, c0, nil, nil);
+}
+
+tree2(ttype: int, c0: ref Tree, c1: ref Tree): ref Tree
+{
+	return tree3(ttype, c0, c1, nil);
+}
+
+mung1(t: ref Tree, c0: ref Tree): ref Tree
+{
+	t.child[0] = c0;
+	return t;
+}
+
+mung2(t: ref Tree, c0: ref Tree, c1: ref Tree): ref Tree
+{
+	t.child[0] = c0;
+	t.child[1] = c1;
+	return t;
+}
+
+mung3(t: ref Tree, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree
+{
+	t.child[0] = c0;
+	t.child[1] = c1;
+	t.child[2] = c2;
+	return t;
+}
+
+# epilog chains build up in forward order via repeated mung2(child[1] =
+# the rest of the chain); epimung walks to the tail (the first node
+# whose child[1] is nil) and attaches comp there.
+epimung(comp: ref Tree, epi: ref Tree): ref Tree
+{
+	if(epi == nil)
+		return comp;
+	p := epi;
+	while(p.child[1] != nil)
+		p = p.child[1];
+	p.child[1] = comp;
+	return epi;
+}
+
+token(str: string, ttype: int): ref Tree
+{
+	t := newtree();
+	t.ttype = ttype;
+	t.str = str;
+	return t;
+}
+
+testnewtree(): ref Tree
+{
+	return newtree();
+}
+
+testtree1(ttype: int, c0: ref Tree): ref Tree
+{
+	return tree1(ttype, c0);
+}
+
+testtree2(ttype: int, c0: ref Tree, c1: ref Tree): ref Tree
+{
+	return tree2(ttype, c0, c1);
+}
+
+testtree3(ttype: int, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree
+{
+	return tree3(ttype, c0, c1, c2);
+}
+
+testmung1(t: ref Tree, c0: ref Tree): ref Tree
+{
+	return mung1(t, c0);
+}
+
+testmung2(t: ref Tree, c0: ref Tree, c1: ref Tree): ref Tree
+{
+	return mung2(t, c0, c1);
+}
+
+testmung3(t: ref Tree, c0: ref Tree, c1: ref Tree, c2: ref Tree): ref Tree
+{
+	return mung3(t, c0, c1, c2);
+}
+
+testepimung(comp: ref Tree, epi: ref Tree): ref Tree
+{
+	return epimung(comp, epi);
+}
+
+testtoken(str: string, ttype: int): ref Tree
+{
+	return token(str, ttype);
+}
+
 # --- var.c: variables and the keyword table -------------------------
 
 NVAR: con 521;	# real rc's own hash-table size, "big enough" not tuned
 NKW: con 30;	# real rc's own keyword-table size
 
-# token constants, matching real rc's yacc-generated ones in spirit
-# (single-character tokens use their own rune value below 256, named
-# tokens are allocated above it - the same scheme yacc itself uses) -
-# not required to match rc's own numeric values, since nothing outside
-# this translation ever sees them; only internal consistency matters.
-Tokbase: con 256;
-Tfor, Tin, Twhile, Tif, Tnot, Ttwiddle, Tbang, Tsubshell, Tswitch, Tfn: con Tokbase+iota;
+# the token constants themselves are declared in the Rc module
+# interface above, not here - see that declaration's own comment for
+# why (rctest.b needs to build real Tree nodes to test against).
 
 Var: adt
 {
@@ -498,6 +673,48 @@ iskeyword(name: string): int
 testiskeyword(name: string): int
 {
 	return iskeyword(name);
+}
+
+# the real klook(), now that Tree exists (tree.c's section above) -
+# builds a real WORD-typed token, then overwrites its type and sets
+# iskw if the name turns out to be a reserved word. iskeyword() above
+# stays as its own tested function rather than being rewritten in
+# terms of this one, since existing tests already pin its behavior
+# directly.
+klook(name: string): ref Tree
+{
+	t := token(name, Tword);
+	for(p := kw[hash(name, NKW)]; p != nil; p = p.next){
+		if(p.name == name){
+			t.ttype = p.toktype;
+			t.iskw = 1;
+			break;
+		}
+	}
+	return t;
+}
+
+testklook(name: string): ref Tree
+{
+	return klook(name);
+}
+
+# rctest.b hand-copies the whole Tokbase/iota chain above into its own
+# mirror of this module's interface (see that declaration's own
+# comment for why). A bare `Rc->Tcount` reference from rctest.b does
+# NOT cross the module boundary at runtime - module interface `con`s
+# are compile-time constants, resolved from EACH file's own copy of
+# the declaration, so a `Rc->X` comparison in rctest.b can never
+# detect the two copies disagreeing (confirmed directly: a deliberate
+# drift introduced during development left such a check passing while
+# real behavioral tests like klook's caught the same drift instead).
+# This function returns the value as REAL DATA, computed here, at
+# runtime, inside this module - the only way rctest.b can actually
+# compare rc.b's real constants against its own copy instead of
+# silently trusting two independently-typed lists to agree.
+testtokenspread(): int
+{
+	return Tcount - Tfor;
 }
 
 newvar(name: string, next: ref Var): ref Var

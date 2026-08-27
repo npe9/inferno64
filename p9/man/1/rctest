@@ -7,7 +7,7 @@ rctest \- regression test for rc's word-list/variable-table foundation
 .B Rctest
 exercises
 .IR rc (1)'s
-two translated slices - word lists
+three translated slices - word lists
 .RI ( newword ,
 .IR count ,
 .IR copywords ,
@@ -20,13 +20,26 @@ the variable/keyword tables
 .IR vlook ,
 .IR setvar ,
 .IR iskeyword ),
-and
 .BR glob.c 's
 pure pattern-matching logic
 .RI ( deglob ,
 .IR match ,
 .IR matchfn ,
-.IR haswild )
+.IR haswild ),
+and
+.BR tree.c 's
+node constructors
+.RI ( tree1 ,
+.IR tree2 ,
+.IR tree3 ,
+.IR mung1 ,
+.IR mung2 ,
+.IR epimung ,
+.IR token ,
+plus the real
+.B klook
+from
+.BR var.c )
 - through
 .BR rc.dis 's
 own test-seam functions, calling
@@ -79,6 +92,24 @@ own documented
 behavior, traced by hand against the real recursive algorithm in
 .B utils/rcsh/word.c
 before being written down as a test case, not assumed.
+.PP
+.BR tree3() 's
+one real semantic optimization - a
+.B ';'
+node with either child nil returns the other child directly instead
+of allocating a new node - is checked explicitly (not just the
+constructor's ordinary field-setting behavior), since it's the kind of
+shortcut a translation can silently lose while still passing every
+other test.
+.PP
+.BR epimung() 's
+epilog-chain walk is tested against a chain built directly by hand
+(two tokens linked via
+.BR mung2 ,
+not a real parse), since the chain's shape - not how it was produced -
+is all
+.B epimung
+itself looks at.
 .SH SOURCE
 .B /p9/cmd/rctest.b
 .SH SEE ALSO

@@ -35,9 +35,9 @@ pipes) to design against Limbo's
 and channel model from scratch, since there is no Posix reference to
 translate that part from.
 .PP
-This version implements two slices, both with no parser or execution
-engine yet - see BUGS. The first is word lists and the variable/
-keyword tables from
+This version implements three slices, all with no lexer, grammar, or
+execution engine yet - see BUGS. The first is word lists and the
+variable/keyword tables from
 .B word.c
 and
 .BR var.c .
@@ -66,6 +66,39 @@ stays deferred - it needs a real argument stack and real directory
 reads, the same boundary the first slice's deferred
 .IR pushword / popword / pushlist / poplist
 already are.
+.PP
+The third is
+.BR tree.c 's
+parse-tree node constructors
+.RI ( tree1 ,
+.IR tree2 ,
+.IR tree3 ,
+.IR mung1 ,
+.IR mung2 ,
+.IR mung3 ,
+.IR epimung ,
+.IR token ),
+plus the real
+.B klook
+from
+.BR var.c ,
+now that
+.B Tree
+exists for it to build. These are called
+.B by
+grammar actions, not coupled to the lexer the way the lexer and
+grammar are coupled to each other, so they're testable the same way
+the first two slices were.
+.B simplemung
+is deferred - it needs a tree-to-source pretty-printer
+.RI ( pfmt (s,
+.RB \(dq %t \(dq,
+.IR t ),
+from
+.B io.c
+/
+.BR pfnc.c )
+that doesn't exist yet.
 .B Running
 .B rc
 does nothing but populate its internal tables and print a note saying
@@ -81,13 +114,27 @@ in this tree - the real source being translated.
 in this tree - the sizing and sequencing document this translation
 follows.
 .SH BUGS
-No lexer, grammar, or execution engine yet - both slices built so far
-were chosen specifically because they have real, testable value
-semantics without needing any of those (a lexer alone cannot be tested
+No lexer, grammar, or execution engine yet - every slice built so far
+was chosen specifically because it has real, testable value semantics
+without needing any of those (a lexer alone cannot be tested
 meaningfully, since real
 .IR rc 's
 own lexer and grammar are not independent of each other: yacc generates
 the token constants the lexer returns).
+.PP
+Real
+.IR rc 's
+own
+.B Treenodes
+/
+.B freenodes
+mechanism - a bulk-allocation list kept only so every parse-tree node
+can be freed at once - has no
+.B next
+field counterpart in this version's
+.B Tree
+at all, not just an omitted free path like the rest of this list: under
+a real garbage collector the whole bookkeeping list has nothing to do.
 .PP
 .B match() 's
 real source manually decodes UTF-8 byte sequences itself, because C's
