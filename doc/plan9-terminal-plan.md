@@ -256,7 +256,7 @@ as line count grows.
 
 ## Progress on (2), rc in Limbo
 
-Four slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
+Five slices done, all in `p9/cmd/rc.b`/`rctest.b`, each committed
 separately with what it verified named in the commit message rather
 than "part N of M": word.c's word-list operations plus var.c's
 variable/keyword tables (`17b39312`, 26 assertions), glob.c's pure
@@ -320,14 +320,52 @@ spread comparison) - the other is covered by a different, pre-existing
 test's absolute-value assertions. Documented in rctest.b as two
 mechanisms working together, not overclaimed as one.
 
-What's left of the *portable core* is the grammar (`syn.y`) and the
-code-vector execution engine. The grammar is the one piece that
-genuinely can't be split further the way lex.c turned out to be: it
-doesn't just consume tokens this translation already defines
-independently, it has to produce actual parse structure from them,
-which means building and verifying it as one unit, closer to how
-`p9/cmd/hoc.b` (hand-written recursive descent, the established
-precedent in this backlog for a yacc-based real source) was built.
+The fifth slice is `syn.y` itself - the grammar (`d5f40627`, 182
+assertions total), hand-written recursive descent following
+`p9/cmd/hoc.b`'s own precedent for a yacc-based real source. Real
+rc's `%left`/`%right` priority table is NOT a precedence-climbing
+chain the way `hoc.b`'s arithmetic operators are - most of it exists
+to resolve yacc shift/reduce conflicts in an ambiguous grammar, not to
+encode a clean operator hierarchy. Only two lines are real precedence
+(`%left ANDAND OROR`, loosest; `%left PIPE`, tighter) and became a
+loop-based chain; `%left BANG SUBSHELL` and the two `%prec BANG`
+annotations on `redir cmd`/`assign cmd` put all four prefix forms
+(`!`, `@`, a leading redirection, a leading assignment) at one shared
+level strictly between those two - confirmed by hand against two
+concrete cases before any code was written: `! a && b` is `(!a) && b`
+(a prefix's own operand must not extend through ANDAND/OROR), and
+`>f a | b` is `>f (a|b)` (that same operand DOES extend through
+PIPE). IF/WHILE/FOR/SWITCH sit at the opposite extreme on purpose -
+the lowest precedence in the whole table - so their body always
+shift-extends through everything (`if(x) a && b` is `if(x) (a&&b)`).
+
+Five real findings, all from tests that failed first: `!`/`@` are
+absent from `lex.c`'s own `wordchr()` stop-set, so `!a` with no space
+lexes as the single word `!a`, not a BANG prefix - real rc genuinely
+requires the space; this parser's own one-token lookahead pre-fetch
+means the raw, character-level `skipnl()` (correct everywhere else in
+the lexer) is the WRONG thing to call from a grammar action - unlike
+real yacc, which doesn't fetch a lookahead token for the following
+`cmd` until after a mid-rule action runs, fixed with a token-level
+`pskipnl()` equivalent, found by a multi-line `if(a)\n\tb` test that
+silently dropped `b` out of the tree; `SWITCH word` takes a bare
+word, not a dedicated condition syntax (`switch(x)` with no space is
+that word's own generic `(words)` paren-list form, derived directly
+from `syn.y`, not checked against real-world usage since no `rc` man
+page was available here); the keyword-demotion rule (`word: keyword
+{$1->type=WORD;}`, so `echo if` treats `if` as a plain argument) is
+handled once, shared by every non-first word position; and
+`simplemung()`/`heredoc()` are each only partially real, documented
+as such rather than silently approximated (both need machinery -
+`pfnc.c`'s `%t` printer, exec.c-level source reading for a heredoc
+body - not translated yet). Two negative controls confirmed the
+precedence-derivation and `pskipnl()` findings actually matter:
+reverting either produced exactly the one predicted failure, nothing
+else.
+
+What's left of the *portable core* is the code-vector execution
+engine (`code.c`), the one piece genuinely gated on having a working
+grammar to feed it - the parser now exists to do that.
 
 ## What this plan is not
 
