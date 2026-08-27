@@ -361,10 +361,23 @@ badptrslot(void *bad, void *addr, char *which)
 	 * second print.  See doc/inferno-ports.ms.
 	 */
 	if(R.M != nil && R.M->m != nil){
-		/* inst offset is build-independent; see destroy()'s comment. */
+		/*
+		 * inst offset is build-independent; see destroy()'s comment.
+		 * R.PC itself, though, is one past the movp that's actually
+		 * running -- xec()'s dispatch loop does R.PC++ before
+		 * optab[op]() ever runs (same fact the addressing-byte
+		 * extraction below already accounts for via R.PC-1).  This
+		 * line didn't, from the start of this hunt until an 'e14'
+		 * recapture of the Arg site resolved to a source line
+		 * ("return opt", arg.b:104) that didn't fit the addressing
+		 * mode, while R.PC-1's line ("args = tl args", arg.b:103, a
+		 * module-level list of string) fit exactly.  Every earlier
+		 * "inst N" this whole investigation has printed named the
+		 * instruction AFTER the one that actually faulted.
+		 */
 		print("movp: bad %s %p, running Dis pid %d module %s PC %#p inst %d\n",
 			which, bad, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
-			(int)(R.PC - R.M->m->prog));
+			(int)((R.PC - 1) - R.M->m->prog));
 		/*
 		 * By the time an opcode handler runs, xec()'s dispatch loop
 		 * has already done R.PC++ past it -- so the instruction that
@@ -1075,9 +1088,12 @@ scanframe(Frame *f, char *opname)
 		 */
 		xp = currun();
 		if(R.M != nil && R.M->m != nil)
+			/* R.PC-1 names the OP(ret)/OP(mcall) that's actually
+			 * running; see badptrslot()'s comment on the same
+			 * off-by-one, found via an 'e14' recapture. */
 			print("%s: running Dis pid %d module %s PC %#p inst %d\n",
 				opname, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
-				(int)(R.PC - R.M->m->prog));
+				(int)((R.PC - 1) - R.M->m->prog));
 		abort();
 	}
 }

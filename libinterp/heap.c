@@ -278,10 +278,14 @@ destroy(void *v)
 			 * doesn't move across kernel rebuilds, unlike the
 			 * raw PC pointer -- so it's directly disassemblable
 			 * with disdump against the same .dis file later.
+			 * R.PC-1 names the OP(ret)/OP(mcall)/OP(new) that's
+			 * actually running -- see badptrslot()'s comment in
+			 * xec.c on this same off-by-one, found via an 'e14'
+			 * recapture.
 			 */
 			print("destroy: bad v %p, running Dis pid %d module %s PC %#p inst %d\n",
 				v, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
-				(int)(R.PC - R.M->m->prog));
+				(int)((R.PC - 1) - R.M->m->prog));
 		else
 			print("destroy: bad v %p, R.M nil or has no module\n", v);
 		/*

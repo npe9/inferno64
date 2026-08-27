@@ -7993,6 +7993,93 @@ this exact capture, or the
 one, now answers it directly.  Fresh batch running.
 
 .NH 1
+The recapture resolves to the wrong line, and finds an off-by-one this whole hunt has carried since the start
+.PP
+The Arg capture recurred a second time
+.RN ( "'e14'" ,
+same PC, same
+.CW 0x18 ,
+a third occurrence of this exact site).  Resolved through
+.CW tools/resolve_sbl.py
+against
+.CW appl/lib/arg.b
+(the
+.CW Arg
+module specifically \- a same-named
+.CW appl/cmd/sh/arg.b
+compiles to a different module,
+.CW Shellbuiltin ,
+and isn't this one), instruction 71 named
+.CW arg.b:104 ,
+the token
+.CW opt
+in
+.CW "return opt;" \-
+a local
+.CW int ,
+never a pointer, nothing module-global about it at all.  That doesn't
+fit an AMP-direct capture even slightly.
+.PP
+Resolving the surrounding instructions one at a time
+.RN ( 67\-73 )
+instead of just 71 found the mismatch: instructions 67\-69 are
+.CW "curropt = nextarg[2:]"
+(line 102), 70 is
+.CW "args = tl args"
+(line 103, block 46), 71\-72 are
+.CW "return opt"
+(line 104, block 47).
+.CW args
+is declared
+.CW "list of string"
+at file scope
+.RN ( arg.b:11 ),
+a real module-global pointer \- exactly the shape an AMP-direct
+capture should point at, and instruction 70, not 71.
+.PP
+The cause: the very first "inst %d" this hunt ever printed
+.RN ( "(int)(R.PC - R.M->m->prog)" ,
+.CW badptrslot() ,
+present before this session's addressing-mode work started) used
+.CW R.PC
+directly.  Every addressing-byte and operand-field extraction added
+this session already accounts for
+.CW xec() 's
+dispatch loop doing
+.CW R.PC++
+before the opcode handler runs, and reads
+.CW R.PC-1
+instead \- but this one line, the oldest of them all, never got the
+same treatment.  It named the instruction
+.I after
+the one that actually faulted, for every capture this entire
+multi-session investigation has ever printed.  Fixed at all three
+sites that had it:
+.CW badptrslot()
+and
+.CW scanframe()
+.RN ( xec.c ),
+.CW destroy()
+.RN ( heap.c ).
+.PP
+What this does and doesn't retroactively change: every
+.I module
+name, every bad
+.I value ,
+every
+.I address
+this hunt has captured is unaffected \- those all come from the live
+data at the computed address, never from the instruction index.  What
+was wrong, potentially, is any conclusion drawn from resolving an
+"inst N" to a specific source line \- including, per the sh.b:1061
+section several back, a "coincidence" that was chalked up entirely to
+source drift between sessions and may have been partly this instead.
+Not re-litigated here without a fresh, correctly-indexed capture at
+that exact site; flagged so a future re-read doesn't trust an old
+"inst N" resolution at face value.  Rebuilt, same two pre-existing
+unrelated warnings only.  Fresh batch running.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
