@@ -1129,7 +1129,7 @@ drawread(Chan *c, void *a, long n, vlong off)
 	if(c->qid.type & QTDIR)
 		return devdirread(c, a, n, 0, 0, drawgen);
 	if(QID(c->qid) == Qwinname)
-		return readstr(off, a, n, screenname);
+		return kreadstr(off, a, n, screenname);
 
 	cl = drawclient(c);
 	dlock();
@@ -1170,7 +1170,7 @@ drawread(Chan *c, void *a, long n, vlong off)
 			getcolor(index, &red, &green, &blue);
 			m += sprint((char*)p+m, "%11d %11lud %11lud %11lud\n", index, red>>24, green>>24, blue>>24);
 		}
-		n = readstr(offset, a, n, (char*)p);
+		n = kreadstr(offset, a, n, (char*)p);
 		free(p);
 		break;
 

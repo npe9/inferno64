@@ -73,6 +73,10 @@ mkdir -p "$TREE/src"
 for c in "$ROOT"/os/osprey/cmd/*.c "$ROOT"/os/osprey/cmd/*.rc; do
 	[ -f "$c" ] && cp "$c" "$TREE/src/`basename "$c"`"
 done
+mkdir -p "$TREE/src/draw"
+for c in "$ROOT"/os/osprey/cmd/draw/*; do
+	[ -f "$c" ] && cp "$c" "$TREE/src/draw/`basename "$c"`"
+done
 for b in ring pip mig p9srv netsrv o9cat fpbits fb; do
 	if [ -f "$ROOT/Osprey/amd64/bin/$b" ]; then
 		cp "$ROOT/Osprey/amd64/bin/$b" "$TREE/bin/$b"

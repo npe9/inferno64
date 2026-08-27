@@ -15,8 +15,6 @@ typedef struct Ref	Ref;
 typedef struct Walkqid	Walkqid;
 typedef struct Dirtab	Dirtab;
 typedef struct Dev	Dev;
-typedef struct Cmdbuf	Cmdbuf;
-typedef struct Cmdtab	Cmdtab;
 typedef struct Chan	Mhead;		/* unused placeholder */
 
 /* Qid and Dir come from libc.h */
@@ -47,6 +45,7 @@ struct Chan {
 	void	*aux;
 	int	dev;
 	int	type;
+	int	dri;		/* directory read index */
 };
 
 struct Walkqid {
@@ -77,22 +76,11 @@ struct Dev {
 	void	(*create)(Chan*, char*, int, ulong);
 	void	(*close)(Chan*);
 	long	(*read)(Chan*, void*, long, vlong);
-	void	*bread;
+	void	(*bread)(void);
 	long	(*write)(Chan*, void*, long, vlong);
-	void	*bwrite;
+	void	(*bwrite)(void);
 	void	(*remove)(Chan*);
 	int	(*wstat)(Chan*, uchar*, int);
-};
-
-struct Cmdbuf {
-	char	*buf;
-	char	**f;
-	int	nf;
-};
-struct Cmdtab {
-	int	index;
-	char	*cmd;
-	int	narg;
 };
 
 /* the running "process": holds the error-label stack devdraw unwinds */
@@ -108,13 +96,13 @@ extern Uproc *up;
 #define waserror()	(up->nerrlab++, setjmp(up->errlab[up->nerrlab-1]))
 _Noreturn extern void	error(char*);
 _Noreturn extern void	nexterror(void);
+extern void	incref(Ref*);
+extern long	decref(Ref*);
 extern void	poperror(void);
 extern void	kerrstr(char*, uint);
 _Noreturn extern void	panic(char*, ...);
 
 /* refs and locks */
-extern void	incref(Ref*);
-extern long	decref(Ref*);
 
 /* allocation: smalloc never returns nil (errors instead) */
 extern void*	smalloc(ulong);
@@ -136,19 +124,18 @@ extern Chan*	devopen(Chan*, int, Dirtab*, int, Devgen*);
 extern int	devdir(Chan*, Qid, char*, vlong, char*, long, Dir*);
 extern int	devgen(Chan*, char*, Dirtab*, int, int, Dir*);
 extern long	devdirread(Chan*, char*, long, Dirtab*, int, Devgen*);
-extern long	readstr(long, char*, long, char*);
+extern long	kreadstr(long, char*, long, char*);
 extern int	openmode(int);
+extern void	devpermcheck(long, int);
 extern void	mkqid(Qid*, vlong, ulong, int);
-extern Cmdbuf*	parsecmd(char*, int);
-extern Cmdtab*	lookupcmd(Cmdbuf*, Cmdtab*, int);
 
 /* generic dev-table stubs devdraw names in its Dev entry */
 extern void	devreset(void);
 extern void	devinit(void);
 extern void	devshutdown(void);
 extern void	devcreate(Chan*, char*, int, ulong);
-extern void*	devbread;
-extern void*	devbwrite;
+extern void	devbread(void);
+extern void	devbwrite(void);
 extern void	devremove(Chan*);
 extern int	devwstat(Chan*, uchar*, int);
 

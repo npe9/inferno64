@@ -1,0 +1,25 @@
+#!/bin/rc
+# build the user-level /dev/draw server on the disk, against the disk's
+# own lib9p, libmemlayer and libmemdraw
+rm -rf /tmp/draw
+mkdir -p /tmp/draw
+cp /n/cd/src/draw/* /tmp/draw/
+cd /tmp/draw
+echo '=== compile ==='
+for(f in devdraw kshim main){
+	if(6c -I. $f.c >[2]/tmp/e)
+		echo cc-$f ok
+	if not {
+		echo cc-$f FAIL
+		sed 5q /tmp/e
+	}
+}
+echo '=== link ==='
+if(6l -o draw devdraw.6 kshim.6 main.6 /amd64/lib/lib9p.a /amd64/lib/libmemlayer.a /amd64/lib/libmemdraw.a >[2]/tmp/le)
+	echo ld ok
+if not {
+	echo ld FAIL
+	sed 8q /tmp/le
+}
+ls -l /tmp/draw/draw >[2]/dev/null
+echo drawbuild-done
