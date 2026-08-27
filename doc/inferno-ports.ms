@@ -7938,6 +7938,61 @@ valid pointer chain.  Four shapes, one recurring symptom.  Batch
 still running.
 
 .NH 1
+The Arg capture recurs \- same PC, same value \- and a probe to settle it
+.PP
+The same capture from several sections back, again: module
+.CW Arg ,
+.CW "bad sv 18" ,
+PC
+.CW 0x79665a0 ,
+instruction 71.
+.I Identical
+to the first Arg capture, not just the same shape \- the same
+instruction, the same bad value, in a completely separate boot.  That
+rules out a timing-dependent race as the whole explanation for at
+least this one: whatever puts
+.CW 0x18
+at this exact module-data offset does it the same way, every time
+this code path runs, not on some runs and not others.
+.PP
+.CW "s.ind = 0x20"
+(32) this time, a small and entirely plausible module-data offset \-
+no repeat of the earlier huge-delta anomaly.  Word index 4
+.RN ( "32 / 8" ),
+the fifth word of
+.CW Arg 's
+own persistent global data.  The open question is the same one the
+.CW c7
+heap capture asked and the same one
+.CW m->origmp 's
+construction already answered for the module-data area as a whole
+without answering for this one word specifically: does
+.CW Arg 's
+own type[0] map mark word 4 as a pointer?  If it does, this is a real
+field that something writes
+.CW 0x18
+into, reliably, on the way to instruction 71 \- worth finding in
+.CW appl/lib/arg.b
+directly, now that the site is pinned down to an exact instruction.
+If it doesn't, this is the first type-descriptor gap this hunt would
+have found in four checks.
+.CW badptrslot()
+now prints
+.CW R.M->type[0] 's
+.CW np
+and full
+.CW map
+whenever either operand is AMP-direct, the same
+.CW type[0]
+.CW m->origmp
+itself is built against in
+.CW load.c .
+Rebuilt, same two pre-existing unrelated warnings only.  A repeat of
+this exact capture, or the
+.CW Sh
+one, now answers it directly.  Fresh batch running.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

@@ -411,6 +411,28 @@ badptrslot(void *bad, void *addr, char *which)
 		if(UDST((R.PC-1)->add) == (AMP|AIND) || UDST((R.PC-1)->add) == (AFP|AIND))
 			print("movp: (R.PC-1)->d.i.f %#ux (R.PC-1)->d.i.s %#ux\n",
 				(R.PC - 1)->d.i.f, (R.PC - 1)->d.i.s);
+		/*
+		 * Two AMP-direct captures now (Arg, Sh) land on module-level
+		 * global data.  R.M->type[0] is that module's own data-area
+		 * descriptor (the same one m->origmp is built against in
+		 * load.c) -- printing its np/map here answers directly,
+		 * next time, whether the word this instruction's .ind names
+		 * is a declared pointer slot (an init gap on a real field)
+		 * or not (freeptrs()/movp walking a word the map never
+		 * marked, the same type-descriptor question already asked
+		 * of the 'c7' heap capture, now asked of module data too).
+		 */
+		if((USRC((R.PC-1)->add) == AMP || UDST((R.PC-1)->add) == AMP)
+		&& R.M->type != nil && R.M->type[0] != nil) {
+			Type *mt = R.M->type[0];
+			int i;
+			print("movp: R.M->type[0]->np %d map", mt->np);
+			for(i = 0; i < mt->np; i++)
+				print(" %#.2ux", mt->map[i]);
+			print(" (s.ind/8 = %zd, d.ind/8 = %zd)\n",
+				(intptr)(R.PC-1)->s.ind / sizeof(WORD),
+				(intptr)(R.PC-1)->d.ind / sizeof(WORD));
+		}
 	}else
 		print("movp: bad %s %p, R.M nil or has no module\n", which, bad);
 	base = (intptr*)addr - 4;
