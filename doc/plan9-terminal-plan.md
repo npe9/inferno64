@@ -254,11 +254,40 @@ anything done so far) would be sizing the biggest, riskiest piece first,
 with the least evidence about how well the translation approach holds up
 as line count grows.
 
+## Progress on (2), rc in Limbo
+
+Two slices done, both in `p9/cmd/rc.b`/`rctest.b`, each committed
+separately with what it verified named in the commit message rather
+than "part N of M": word.c's word-list operations plus var.c's
+variable/keyword tables (`17b39312`, 26 assertions), then glob.c's
+pure pattern-matching logic plus word.c's `subwords` (`c220ab3d`, 54
+assertions total). Both slices were chosen the same way - real,
+directly testable value semantics, nothing needing a parser or a
+running thread yet. Two things worth carrying forward, found only by
+building this far: `copywords`/`subwords`-shaped C code that uses a
+manual end-of-list pointer (`Word**`) has no Limbo equivalent
+(no address-of/pointer-to-pointer) and needs recursion instead - same
+result, different mechanism; and `match()`'s manual UTF-8 byte
+decoding (`equtf`/`nextutf`/`unicode`) has no Limbo equivalent needed
+at all, since Limbo's `string` type is already a rune sequence -
+dropping those three helpers is a real simplification the translation
+should make everywhere it recurs, not a one-off.
+
+What's left of the *portable core* is the harder-to-verify half: the
+lexer, grammar, and `Tree` node machinery are not independent of each
+other (confirmed directly, not assumed - `syn.y`'s yacc output is what
+`lex.c` returns), so unlike the two slices done so far, this next
+piece can't be split into small independently-testable units the same
+way - it has to be built and verified together, closer to how
+`p9/cmd/hoc.b` (hand-written recursive descent, the established
+precedent in this backlog for a yacc-based real source) was built.
+
 ## What this plan is not
 
-Not an implementation - no code has been written toward any of the three
-pieces yet. This is a sizing and sequencing document, written because
-the honest answer to "did you implement this" was no, the earlier
-backlog answered a much narrower question, and the right next step was
-established to be scoping all three pieces properly before committing
-engineering time to any one of them.
+This document started as pure sizing and sequencing, written because
+the honest answer to "did you implement this" was no, and the right
+next step was established to be scoping all three pieces properly
+before committing engineering time to any one of them. Implementation
+of (2) has since begun, per "Progress on (2)" above - this doc is now
+also the running log of that work, not only the plan for it. Pieces
+(1) and (3) remain unstarted.
