@@ -5943,6 +5943,135 @@ called on the slot address right before the existing
 Not yet run.  Not fixed.
 
 .NH 1
+The liveness check runs: a stray write, not a use-after-free
+.PP
+A forty-boot batch against the
+.CW auditmemloc()
+build produced two captures of the two checks it was built to answer,
+plus a signature never seen before.  Take the liveness answer first,
+since it is the one this whole thread has been building toward.
+.PP
+Boot 40 hit
+.CW "OP(movp)" 's
+.CW sv
+guard in module
+.CW Init ,
+inst 267, the same bad-sentinel shape as every capture before it: a
+pointer-typed slot holding
+.CW 0
+where
+.CW H
+was required, sitting among otherwise-valid neighbours.
+.CW auditmemloc()
+answered the question directly:
+.IP
+.nf
+.CW "sv: a3b3e8 in main: in block at a3b240 B2D 0xa3b260 size b00"
+.CW "  ec 0xa587c0 next block 0xa3bd40 searched address 0xa3b3e8"
+.fi
+.PP
+.CW _auditmemloc() 's
+own
+.CW msg
+strings are
+.CW "\ free\ blk\ " ,
+.CW "\ immutable\ block\ "
+and
+.CW "\ block\ " ;
+this dump says
+.CW block ,
+the
+.CW MAGIC_A
+case \- allocated, not freed.  The containing block (0xb00 bytes, in
+.CW mainmem ,
+the pool holding native kernel structures like a
+.CW Prog 's
+frame, not the Dis-GC'd
+.CW heapmem )
+is one the pool allocator still considers live.  That settles the
+question
+.CW auditmemloc()
+was added to answer, for this capture at least: this is a stray
+write into memory that is still in service, not a read of memory
+already handed back to the free list.  Use-after-free is ruled out
+here; whatever writes the
+.CW 0
+does so while the frame it lands in is still the frame using it.
+.PP
+Boot 28 hit
+.CW destroy() 's
+own older probe instead, in module
+.CW Sh ,
+inst 5728 \- a fifth capture of the same lexer/parser family, but no
+.CW auditmemloc()
+output, because that probe (in
+.CW heap.c )
+never got the same call added; only
+.CW badptrslot()
+in
+.CW xec.c
+did.  A gap worth closing the next time
+.CW destroy()
+itself fires with something to look at, but not blocking: the
+question it would answer was already answered by boot 40's capture
+in the same batch, on the same failure shape.
+.PP
+The batch's third finding does not fit anywhere in this narrative.
+Ten of the forty boots \- far above any other single signature this
+whole hunt has recorded, and zero occurrences across the roughly two
+hundred boots of every batch before this one \- hit a new panic:
+.CW "invalid\ opcode" ,
+CPU exception type 6, consistently at
+.CW "PC\ 0x000000000000000B" .
+Resolving addresses from one capture's
+.CW ktrace
+dump against
+.CW ipc64 's
+own symbol table named
+.CW dofmt+137 ,
+.CW vseprint+107
+and
+.CW xec+409 ,
+suggesting the fault lands during a
+.CW print()
+call, and several captures' immediately preceding boot output was a
+pre-existing
+.CW mountio()
+trace
+.CW ( os/inferno/port/devmnt.c ,
+not new this round).  A jump to
+.CW PC\ 0xB
+is what calling through a garbage function pointer looks like, and
+this batch's binary added exactly one new function pointer call on a
+hot path:
+.CW badptrslot() 's
+own call to
+.CW auditmemloc() ,
+itself a function pointer set by a static initializer in
+.CW alloc.c
+rather than called directly.  But the boot numbers do not support
+that as the sole mechanism: the invalid-opcode boots (3, 4, 6, 8, 16,
+25, 31, 37, 38, 39) and the two bad-pointer captures (28, 40) are
+disjoint \- ten boots hit the new panic without ever printing a
+.CW badptrslot()
+or
+.CW destroy()
+line first, so most of them cannot have gone through
+.CW auditmemloc()
+at all.  Rather than keep reasoning from source about which of this
+round's several new, larger functions on the
+.CW "OP(movp) / OP(mcall) / OP(ret) / OP(newa) / OP(newaz)"
+hot paths might be responsible, ran the direct test: rebuilt
+.CW ipc64
+with
+.CW xec.c
+reverted to its state immediately before this whole round of work
+started
+.RN ( 2def4bae ) ,
+keeping every other file as committed, and launched a second
+forty-boot batch against that binary.  Result in the next section.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
