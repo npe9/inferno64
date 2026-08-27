@@ -2171,13 +2171,19 @@ and
 .CW /dev/mouse
 both served from user space,
 .CW rio
-starts against them and paints its desktop on the exposed frame buffer:
-the Plan 9 window system running on a draw stack and an input driver that
-are ordinary programs above the microkernel, no kernel graphics and no
-kernel mouse.  What is not yet shown is a click reaching rio's menu - the
-event path from the exposed interrupt through the driver into rio - which
-is the next thing to demonstrate.  The three configs still check: pc64
-58, upc64 7, xup64 10.
+starts against them and paints its desktop on the exposed frame buffer,
+and a right-click opens its menu: the Plan 9 window system running,
+interactive, on a draw stack and an input driver that are ordinary
+programs above the microkernel, no kernel graphics and no kernel mouse.
+The whole event path is exercised end to end - a mouse move and a button
+press become PS/2 bytes at the i8042, the kernel's aux interrupt writes
+them into the exposed page, the driver decodes the packets and reports
+the move and the button on
+.CW /dev/mouse ,
+and rio moves the cursor to where the move aimed and pops its
+New/Resize/Move/Delete/Hide/Exit menu, whose text is drawn back through
+the user-level draw server (so devdraw's font path runs too).  The three
+configs still check: pc64 58, upc64 7, xup64 10.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
