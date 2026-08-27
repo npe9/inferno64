@@ -336,67 +336,69 @@ OP(indb)
  * historically-bad site.  48 boots clean: that site alone is too rare
  * to hit in a reasonable batch, since this whole hunt's captures have
  * landed on a different type nearly every time (String, Iobuf, Mount,
- * Arg, Sh -- see the many sections above).  Generalized instead: arm
- * on ANY frame with at least one declared pointer word (t->np > 0),
- * watching its first one (found via the same BIT()/map convention
- * freeptrs() uses).  One slot at a time still, but continuously
- * re-armed on whatever frame is current whenever the previous one
- * tears down -- broad, opportunistic sampling across the whole boot's
- * execution instead of betting on one remembered site recurring.
+ * Arg, Sh -- see the many sections above).  Generalized to ANY
+ * pointer-bearing frame's first declared pointer word next -- 140+
+ * boots, zero firings, no better than the site-specific version.
+ *
+ * Neither generalization was the right move.  The Arg site is the
+ * ONE capture this whole hunt has reproduced on demand: PC 0x79665a0,
+ * slot 0x7849bd0 (module Arg's MP+0x20), value 0x18, identical across
+ * two separate boots (b4, e14 -- see "The Arg capture recurs" above).
+ * Module data lives for the Modlink's whole lifetime, so a watch
+ * armed there has no frame-teardown disarm problem at all -- arm once
+ * and it stays live the rest of the boot.  Pointed here instead of at
+ * a broad opportunistic sample.
+ *
+ * Arg's declared globals, in source order (appl/lib/arg.b): name
+ * (string, word 0), args (list of string, word 1), usagemsg (string,
+ * word 2), printusage (int, NOT a pointer, word 3), curropt (string,
+ * word 4).  MP+0x20 is word 4 -- curropt, if the compiler laid the
+ * globals out in declaration order.  Whether that word is actually
+ * marked a pointer in Arg's own type[0] map has never been checked
+ * live -- the probe that would show it (added in f365efdb) never got
+ * a capture through it.  Printed at arm time below, before any
+ * further hunting: if the map disagrees with the source-order guess,
+ * "find the writer" may not even be the right question yet.
  */
 static int watcharmed;
-static int watcheverarmed;
 static uintptr *watchaddr;
 static uintptr watchval;
-static void *watchframe;
-static Type *watchtype;
 
-/* byte offset of the first word t's own map marks as a pointer, or -1 */
-static int
-firstptrword(Type *t)
-{
-	int i, nb;
-
-	for(i = 0; i < t->np; i++){
-		if(t->map[i] == 0)
-			continue;
-		for(nb = 0; nb < 8; nb++)
-			if(t->map[i] & (1<<nb))
-				return (i*8 + (7-nb)) * sizeof(WORD);
-	}
-	return -1;
-}
+enum { ARGWORDOFF = 4 * sizeof(WORD) };	/* MP+0x20, the 0x18 slot */
 
 static void
 checkwatch(void)
 {
-	Frame *cf;
 	extern void dumpstack(void);
-	int off;
 
 	if(!watcharmed){
-		cf = (Frame*)R.FP;
-		if(cf == nil || cf->t == nil || cf->t->np == 0)
+		if(R.M == nil || R.M->m == nil || R.M->m->name == nil)
 			return;
-		off = firstptrword(cf->t);
-		if(off < 0)
+		if(strcmp(R.M->m->name, "Arg") != 0)
 			return;
-		watchframe = cf;
-		watchtype = cf->t;
-		watchaddr = (uintptr*)(R.FP + off);
+		if(R.MP == nil)
+			return;
+		watchaddr = (uintptr*)(R.MP + ARGWORDOFF);
 		watchval = *watchaddr;
 		watcharmed = 1;
-		if(!watcheverarmed){
-			watcheverarmed = 1;
-			print("watch: mechanism confirmed live, first arm at %#p "
-				"t->size %d np %d\n", watchaddr, cf->t->size, cf->t->np);
-		}
-		return;
-	}
-	cf = (Frame*)watchframe;
-	if(cf->t != watchtype){
-		/* frame torn down/reused -- disarm quietly, not a finding */
-		watcharmed = 0;
+		print("watch: armed on Arg module MP %#p + %#ux (curropt slot) "
+			"= %#p, current val %#zx\n",
+			R.MP, ARGWORDOFF, watchaddr, watchval);
+		if(R.M->type != nil && R.M->type[0] != nil){
+			Type *mt = R.M->type[0];
+			int i, wordno, byteno, bitno, isptr;
+
+			wordno = ARGWORDOFF / sizeof(WORD);
+			byteno = wordno / 8;
+			bitno = 7 - (wordno % 8);
+			isptr = byteno < mt->np && (mt->map[byteno] & (1 << bitno)) != 0;
+			print("watch: Arg type[0]->np %d map", mt->np);
+			for(i = 0; i < mt->np; i++)
+				print(" %#.2ux", mt->map[i]);
+			print(" -- word %d (byte %d bit %d) is %sa declared pointer\n",
+				wordno, byteno, bitno, isptr ? "" : "NOT ");
+		}else
+			print("watch: Arg module has no type[0] to check\n");
 		return;
 	}
 	if(*watchaddr != watchval){
@@ -405,18 +407,19 @@ checkwatch(void)
 		 * same >= 0x1000 threshold badptrslot()/movp already use
 		 * elsewhere) is legitimate -- an ordinary assignment into
 		 * this slot.  Track it and keep watching; only a change TO
-		 * a bad value is the finding.  No print on the routine path
-		 * now -- with every pointer-bearing frame in scope this
-		 * fires far too often to log each one.
+		 * a bad value is the finding.
 		 */
 		if((void*)*watchaddr == H || (uintptr)*watchaddr >= 0x1000){
+			print("watch: legitimate change addr %#p old %#zx new %#zx, "
+				"instruction PC %#p op %#.2ux add %#.2ux module %s\n",
+				watchaddr, watchval, *watchaddr,
+				R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
+				R.M != nil && R.M->m != nil ? R.M->m->name : "?");
 			watchval = *watchaddr;
 			return;
 		}
-		print("watch: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx "
-			"frame t->size %d np %d\n",
-			watchaddr, watchval, *watchaddr,
-			watchtype->size, watchtype->np);
+		print("watch: Arg curropt CHANGED TO BAD VALUE addr %#p old %#zx "
+			"new %#zx\n", watchaddr, watchval, *watchaddr);
 		print("watch: instruction that just ran: PC %#p op %#.2ux "
 			"add %#.2ux module %s pid %d\n",
 			R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,

@@ -8288,7 +8288,88 @@ flag prints once, the first time the mechanism arms at all, purely to
 confirm it's alive \- verified directly against a test boot
 .RN ( "t->size 128 np 2" ,
 a different type than either of this hunt's two hardcoded fingerprints
-ever were, which is the point).  A full batch is running now.
+ever were, which is the point).  A full batch ran: 140 boots, the
+mechanism confirmed armed in 93% of them, zero bad-value firings.
+Same outcome as the site-specific version, for the same underlying
+reason \- broad opportunistic sampling still spreads its attention
+across whatever frame happens to be current, and this hunt's one
+genuinely reproducible site was never guaranteed to be among them on
+any given boot.
+
+.NH 1
+Neither generalization was the right move; go back to what recurs
+.PP
+Both watchpoint versions bet on breadth \- one fixed site, then any
+site \- and both came back with nothing.  The hunt already had a
+better target the whole time: the Arg capture, alone among every
+capture this investigation has made, reproduced on demand.  Same PC
+.RN ( 0x79665a0 ),
+same slot, same bad value
+.RN ( 0x18 ),
+across two separate, independently-run boots
+.RN ( b4\ and\ e14 ,
+see "The Arg capture recurs" above).  Module data lives for the whole
+Modlink's lifetime, so a watch armed there has no frame-teardown
+disarm problem at all \- arm once, on the first sight of module
+.CW Arg
+with a live
+.CW MP ,
+and it stays live for the rest of the boot with nothing to re-arm.
+.PP
+.CW checkwatch()
+now watches exactly one fixed word: Arg's module data at
+.CW MP+0x20 ,
+word index 4 by
+.CW appl/lib/arg.b 's
+own declaration order
+.RN ( name ,
+.CW args ,
+.CW usagemsg ,
+.CW printusage
+\- not a pointer \-
+.CW curropt ).
+Before hunting for a writer, the question the earlier type-map probe
+was built to answer and never got a live capture through: is that
+word actually marked a pointer in Arg's own
+.CW type[0]
+map, or is
+.CW movp
+reading a word the map never declared \- a different bug entirely,
+one no amount of write-watching would ever find?  Armed and checked
+directly against a real boot:
+.RN ( "np 2 map 0xff 0xb0" ) ,
+word 4 falls in byte 0, bit 3
+.RN ( "0xff & (1<<3)" ) ,
+set.  It is a declared pointer.  The map agrees with the source-order
+guess; finding the writer is the right hunt.
+.PP
+The same boot's own trace fills in what
+.CW curropt
+actually does across its life: armed at
+.CW H
+.RN ( -0x1 ) ,
+then two legitimate transitions,
+.CW H\ ->\ 0x7849bd0
+at PC
+.CW 0x7965f88
+.RN ( "add 0x08, indirect" )
+and
+.CW 0x7849bd0\ ->\ 0x7849b50
+at PC
+.CW 0x7966588
+.RN ( "add 0x00, direct" ) ,
+both tracked and neither a finding \- ordinary assignments into
+.CW curropt
+as
+.CW appl/lib/arg.b 's
+.CW opt()
+runs
+.RN ( "curropt = nextarg[2:]" ,
+line 101, called twice as different flags are parsed).  Neither
+transition landed on a bad value this boot.  A batch is running now,
+five lanes against this one fixed slot instead of scattered across
+whatever frame happens to be current \- the reproducible site, not a
+sample of everything.
 
 .NH 1
 Then
