@@ -8673,6 +8673,97 @@ earlier in this hunt: fine for a pc64-only investigation running
 under a debugger's eye, not fine left in for anyone else.
 
 .NH 1
+Coverage, not rarity: checking state at every teardown instead of one watched slot
+.PP
+Two plans considered next, both retired before spending a boot on
+either.  The
+.CW b11
+"unmarked word holds a pointer-looking value" hint from the previous
+section was a candidate for a constant-offset bug in
+.CW initmem() ;
+it didn't repeat in the other three checkable captures and is
+dropped.  A hardware watchpoint via QEMU's gdbstub
+.RN ( lldb
+supports
+.CW gdb-remote )
+needs a reproducible address to aim at first; a 60-boot run against
+the unchanged stress-loop binary produced exactly one capture and no
+repeat to test determinism against, so there was nothing to watch,
+and any address found would die on the next rebuild regardless.
+Neither plan survived contact with what the batches actually show.
+.PP
+That one boot's capture is still worth keeping: module Sh, PC
+.CW 0x794aa20 ,
+pid 1 (the top-level sh, not a stress-loop child), bad
+.I dv
+.RN ( "the destination's old value, before being overwritten" )
+value 0.  Resolved to
+.CW sh.b:1102 ,
+.CW "r := status[len status - 1];"
+\- an array-element read into a fresh local, an eighth distinct
+source line.  Destination addressing was AFP-indirect
+.RN ( "d.i.f 0x20, d.i.s 0" ) ,
+so the frame
+.CW badptrslot()
+printed (addr-FP came out negative) describes the
+.I current
+frame holding the array reference, not the array object the bad slot
+actually lives in \- the same limitation noted for
+.CW d14
+in the previous section, now confirmed on a second indirect capture.
+.PP
+The real diagnosis for why two increasingly targeted watchpoints
+caught nothing while the blanket
+.CW movp
+print caught nine: coverage, not rarity.
+.CW checkwatch()
+holds exactly one frame instance and disarms the moment that
+instance tears down; a boot that creates thousands of frames makes
+the odds negligible that the one instance being held is the one that
+goes bad.  No amount of re-aiming a single-slot watch fixes an
+asymmetry like that.
+.PP
+.CW freeptrs()
+.RN ( libinterp/heap.c )
+is a better vantage point for the identical fact.  It already walks
+every declared pointer word of every object, at the one moment that
+matters most \- teardown, immediately before handing each word to
+.CW destroy() ,
+which is the original crash shape this whole hunt started from.  A
+new
+.CW checkfreeptr()
+validates each word right there, before the
+.CW destroy()
+call: not
+.CW H
+and not
+.RN ( >=\ 0x1000 )
+prints the word's address and index within the object, the object's
+own type
+.RN ( size ,
+.CW np ,
+full map),
+.CW R.PC\-1 ,
+the module and pid, then
+.CW dumpstack()
+and
+.CW abort() .
+This runs at every frame's exit for the cost of one more comparison
+inside a loop that already has to run \- not one sampled frame per
+arm cycle, every frame, every time.  A sanity boot against the new
+build confirmed no false positives on ordinary teardown traffic.
+.PP
+If a frame comes back clean from
+.CW initmem()
+.RN ( the
+150-boot watch-baseline check, previous section)
+and dirty at
+.CW freeptrs() 's
+own teardown scan, the corruption is bounded to that one call's own
+execution \- the first real narrowing this hunt has had, if it lands.
+A fresh batch runs against this build next.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

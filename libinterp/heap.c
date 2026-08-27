@@ -40,6 +40,47 @@ void *freeptrsv;
 Type *freeptrst;
 WORD **freeptrsslot;
 
+/*
+ * checkwatch()/badptrslot() (xec.c) catch a bad pointer word only if
+ * they happen to be watching that exact frame instance, or if a
+ * movp happens to read it, at the moment it's bad -- across a
+ * 150-boot batch that caught nine real captures via the blanket
+ * movp print, a targeted single-slot watch caught zero, because a
+ * boot creates thousands of frame instances and the odds either
+ * watch is holding the one that goes bad are negligible.  freeptrs()
+ * is a better vantage point for the same fact: it walks every
+ * declared pointer word of *every* object at the one moment that
+ * matters -- teardown, right before handing each one to destroy() --
+ * so this check runs at every frame's exit, not one sampled instance
+ * per arm cycle, for the cost of a comparison already inside a loop
+ * that has to run anyway.  See doc/inferno-ports.ms.
+ */
+static void
+checkfreeptr(WORD **slot, Type *t, void *v)
+{
+	extern void dumpstack(void);
+	uintptr val;
+	int wordidx, i;
+
+	val = (uintptr)*slot;
+	if(val == (uintptr)H || val >= 0x1000)
+		return;
+	wordidx = (int)(slot - (WORD**)v);
+	print("freeptrs: bad word %#p (word %d of object %#p), running Dis "
+		"pid %d module %s PC %#p inst %d\n",
+		slot, wordidx, v,
+		currun() != nil ? currun()->pid : -1,
+		R.M != nil && R.M->m != nil ? R.M->m->name : "?", R.PC,
+		R.M != nil && R.M->m != nil ? (int)((R.PC - 1) - R.M->m->prog) : -1);
+	print("freeptrs: val %#zx, type %#p size %d np %d map",
+		val, t, t->size, t->np);
+	for(i = 0; i < t->np; i++)
+		print(" %#.2ux", t->map[i]);
+	print("\n");
+	dumpstack();
+	abort();
+}
+
 void
 freeptrs(void *v, Type *t)
 {
@@ -58,14 +99,14 @@ freeptrs(void *v, Type *t)
 	while(p < ep) {
 		c = *p;
 		if(c != 0) {
- 			if(BIT(c, 0) && (x = w[7]) != H) { freeptrsslot = &w[7]; destroy(x); }
-			if(BIT(c, 1) && (x = w[6]) != H) { freeptrsslot = &w[6]; destroy(x); }
- 			if(BIT(c, 2) && (x = w[5]) != H) { freeptrsslot = &w[5]; destroy(x); }
-			if(BIT(c, 3) && (x = w[4]) != H) { freeptrsslot = &w[4]; destroy(x); }
-			if(BIT(c, 4) && (x = w[3]) != H) { freeptrsslot = &w[3]; destroy(x); }
-			if(BIT(c, 5) && (x = w[2]) != H) { freeptrsslot = &w[2]; destroy(x); }
-			if(BIT(c, 6) && (x = w[1]) != H) { freeptrsslot = &w[1]; destroy(x); }
-			if(BIT(c, 7) && (x = w[0]) != H) { freeptrsslot = &w[0]; destroy(x); }
+ 			if(BIT(c, 0)) { checkfreeptr(&w[7], t, v); if((x = w[7]) != H) { freeptrsslot = &w[7]; destroy(x); } }
+			if(BIT(c, 1)) { checkfreeptr(&w[6], t, v); if((x = w[6]) != H) { freeptrsslot = &w[6]; destroy(x); } }
+ 			if(BIT(c, 2)) { checkfreeptr(&w[5], t, v); if((x = w[5]) != H) { freeptrsslot = &w[5]; destroy(x); } }
+			if(BIT(c, 3)) { checkfreeptr(&w[4], t, v); if((x = w[4]) != H) { freeptrsslot = &w[4]; destroy(x); } }
+			if(BIT(c, 4)) { checkfreeptr(&w[3], t, v); if((x = w[3]) != H) { freeptrsslot = &w[3]; destroy(x); } }
+			if(BIT(c, 5)) { checkfreeptr(&w[2], t, v); if((x = w[2]) != H) { freeptrsslot = &w[2]; destroy(x); } }
+			if(BIT(c, 6)) { checkfreeptr(&w[1], t, v); if((x = w[1]) != H) { freeptrsslot = &w[1]; destroy(x); } }
+			if(BIT(c, 7)) { checkfreeptr(&w[0], t, v); if((x = w[0]) != H) { freeptrsslot = &w[0]; destroy(x); } }
 		}
 		p++;
 		w += 8;
