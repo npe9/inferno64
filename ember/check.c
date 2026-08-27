@@ -2469,6 +2469,29 @@ echk(Node *n)
 			return n->ty;
 		}
 		n->ty = mktype(&n->src, Tref, t, nil);
+		/*
+		 * unlike Ochan just below (which sizes its freshly-made
+		 * type on the spot), this was missing -- and it mattered:
+		 * a top-level "x := ref T{...}" never noticed, since
+		 * daschk()/local declaration processing sizes x's own type
+		 * separately. but a *nested* "ref Outer{in: ref Inner{...}}"
+		 * has no declared local for the inner ref -- its type is
+		 * only ever consumed by com.c's Oref case for a compiler
+		 * temp (talloc(&tres, n->ty, nil), used whenever the outer
+		 * literal's own field address isn't a plain addressable
+		 * dst) -- so an unsized Tref (size=align=0, mktype's
+		 * zero-initialised default) went straight into idoffsets(),
+		 * which placed the temp at a zero-width slot overlapping
+		 * whatever frame offset came next. the temp's own pointer
+		 * then got silently clobbered by that later, unrelated
+		 * write (no destroy(), since the overlap was invisible to
+		 * both sides), while the frame's gc descriptor still marked
+		 * the offset as a live pointer -- a background mark cycle
+		 * would eventually dereference whatever garbage the other
+		 * write had left there. sizetype() is idempotent (OKsized
+		 * guard) so this is a no-op whenever T was already sized.
+		 */
+		sizetype(n->ty);
 		return n->ty;
 	case Ochan:
 		if(n->left != nil){
