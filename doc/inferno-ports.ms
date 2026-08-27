@@ -7594,6 +7594,81 @@ out entirely.  No capture needed for this one; the guard was already
 there.
 
 .NH 1
+The first capture from the fixed probe: module data, not a frame at all
+.PP
+The fresh batch's first capture, read with the corrected probe:
+.CW "bad sv 18"
+again \- the same recurring value as ever \- in module
+.CW Arg
+(the standard Limbo argument parser, imported by shell utilities),
+addressing byte
+.CW 0x00 .
+.CW "USRC(0x00) = 0 = AMP" :
+the source operand was module-pointer direct,
+.CW "R.s = R.MP + R.PC->s.ind" ,
+not frame-relative and not indirect.  The frame-bounds line
+.RN ( "addr - FP = 115398408" )
+looks exactly as nonsensical as the earlier, broken capture did \-
+but this time correctly so: an AMP-direct read doesn't touch
+.CW R.FP
+at all, so comparing the two was never meaningful for this
+instruction, and the large number is simply two addresses from
+unrelated memory regions (the module's own data area versus this
+Prog's stack) being subtracted.  This is a third, previously
+undistinguished context for where the bad value has now been seen:
+not a stack frame slot, not a heap object field, but a module's own
+persistent global data, addressed by module pointer plus a small
+compiled-in offset.
+.PP
+Worth checking before building anything on it: is this context's
+initialization as gapped as the stack and heap allocation paths
+turned out to be?  It is not.  A module's global-data area
+.RN ( m->origmp ,
+.CW libinterp/load.c )
+is allocated with
+.CW heapz() ,
+not the unzeroed
+.CW "heap() / nheap()" ,
+so it starts fully zeroed; the loader's data-section walk
+.RN ( DEFB / DEFW / DEFL / DEFF / DEFS / DEFA )
+then writes only the values the
+.CW .dis
+file's data section actually declares, exactly matching Limbo's own
+semantics for an uninitialized global (reads as zero/nil, and does,
+because
+.CW heapz()
+zeroed it \- not because every byte was explicitly written).  Where a
+module gets its own private copy instead of using
+.CW origmp
+directly
+.RN ( linkmod() ,
+.CW libinterp/link.c ),
+that copy comes from unzeroed
+.CW nheap() ,
+but
+.CW newmp()
+immediately
+.CW memmove() s
+the entire
+.CW t->size
+region from the zeroed template over it \- full coverage, not the
+partial, type-map-driven coverage
+.CW initmem()
+does elsewhere in this hunt.  Both paths land on a fully-defined
+region before the module ever runs a single instruction.
+.PP
+That closes the initialization question for this third context the
+same way it's closed for the other two: whatever wrote
+.CW 0x18
+into this slot did so
+.I after
+the module was loaded and its data area was already correct \- a
+live write during execution, not a gap at allocation time.  One
+capture from a working probe isn't enough to say whether "module
+data" is a fourth genuine target alongside the stack and heap cases,
+or a coincidence; the batch is still running.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
