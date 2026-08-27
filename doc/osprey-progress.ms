@@ -2202,6 +2202,35 @@ that executes what is typed, all above the microkernel with no kernel
 graphics and no kernel mouse.  The three configs still check: pc64 58,
 upc64 7, xup64 10.
 .PP
+The keyboard is a user-level driver of the same shape as the mouse.  The
+kernel exposes the PS/2 scancode stream as a second physical segment,
+.CW kbdring ,
+programming the keyboard and aux interrupt-enable bits in one
+command-byte write and arming IRQ1 and IRQ12 together;
+.CW os/osprey/cmd/draw/kbd.c
+maps it, tracks shift and control, translates set-1 scancodes through a
+US keymap into runes, and serves
+.CW /dev/kbd ,
+which rio reads in preference to
+.CW /dev/cons .
+And the cursor, which the kernel would draw were there a mouse device,
+is drawn by the one program that owns the screen: the draw server forks
+a proc that reads the same
+.CW mousering
+and composites an arrow onto the frame buffer, a lock shared with the
+draw path lifting it around every draw so the two never collide.  With
+these the desktop is usable on its own - a live window (osprey-console's
+.CW --display
+.CW cocoa )
+comes up with a tracking cursor, a terminal
+.CW ( rio
+.CW -i
+.CW window )
+and a keyboard that types into it.  So all three of display, pointer and
+keyboard are user programs above the microkernel, and nothing of the
+screen or the input hardware is in the kernel beyond exposing the frame
+buffer and filling the two interrupt rings.
+.PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an
 interrupt and a mapping of their device's registers.  It is the larger
