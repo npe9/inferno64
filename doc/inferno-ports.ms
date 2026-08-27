@@ -6220,55 +6220,90 @@ and
 .CW "spawn\ sh"
 appear in
 .B zero
-of the no-NIC boots, against most of the NIC-attached ones.  Reading
-.CW os/inferno/init/pcinit.b
-explains why directly: its
-.CW mount()
-is a real
-.CW "sys\->dial(\ \*(lqtcp!\*(rq+server+\*(lq!6666\*(rq\ )"
-over
-.CW /net ,
-bound from
-.CW #l / #I
-\- genuinely network-dependent, not a local mount dressed up to look
-like one.  With no NIC at all there is no
-.CW /net
-to dial through, so every one of these boots stops well short of
-.CW mountio() ,
-the exact code region every invalid-opcode capture on record has
-clustered around.  Zero crashes there is at least partly "the boot
-never got far enough to have the chance," not "the network path was
-removed and the bug went with it."  The
-.CW "\-nic\ none"
-result stands as read for one narrower claim \- something about
-reaching
-.CW mountio()
-matters \- but does not, on its own, tell network device/ISR apart
-from network traffic, and saying "the network path is implicated in
-the corruption" would overstate what one confounded batch shows.
-Neither the
-.CW Styxservers
-pid-4 capture nor the
-.CW sh.b
-wrong-sentinel captures are known to share whatever this batch
-suppressed; they were recorded on NIC-attached boots and nothing here
-says they don't have a different cause.
-.PP
-The batch that actually separates device from traffic is running:
-.CW "\-netdev\ user,id=net0,restrict=on\ \-device\ virtio\-net,netdev=net0" ,
-same device and interrupt path as every earlier boot, outbound
-traffic blocked at the QEMU user-net layer so DHCP times out but
-.CW #l / #I
-still bind and
+of the no-NIC boots, against most of the NIC-attached ones \- the
+depth comparison is real, not fair, exactly as suspected.  But the
+explanation first written here for
+.I why
+was wrong on two counts, caught and corrected in place rather than
+left standing further down the document: pc64 does not run
+.CW pcinit.b
+at all \- matching the log's own strings
+.RB ( "Welcome to Inferno..." ,
+.CW "loading /dis/sh.dis" ,
+.CW "spawn sh \-n /dis/init" )
+against source shows it runs
+.CW disinit.b ,
+a much smaller init that spawns
+.CW /dis/init
+as a shell script and does no network call of its own.  And no boot
+in
+.I any
+batch on record ever reaches a real
 .CW dial()
-still runs, reaching the same depth as a normal boot rather than
-stopping short of it.  If crashes return at anything like the normal
-rate, the device or its interrupt handler is implicated over the
-traffic it carries; if the batch stays as quiet as this one, the
-traffic path itself \- most concretely the
+or DHCP either: every log carries the line
+.CW "unsupported connect method:" ,
+proving
+.CW dis/init
+takes its empty-
+.CW bootargs
+fallback (none of these batches ever passed
+.CW bootargs= )
+every single time.  The
 .CW mountio()
-region already flagged \- moves to the top of the list.  Result in
-the next section.
+traces this whole thread has been reading as network activity are
+.CW dis/init 's
+.I first
+line,
+.CW "mount\ {mntgen}\ /n" ,
+a Styx mount of a
+.I local
+process over a pipe \- generic Styx-mount machinery, not evidence of
+anything reaching the wire.  Every "the crash clusters near network
+traffic" reading built on that string is retracted along with it.
+.PP
+What survives the correction is the empirical result, which the wrong
+reasoning never touched: without a NIC at all, boot output stops
+between
+.CW "Welcome\ to\ Inferno..."
+(disinit.b's first statement) and
+.CW "loading\ /dis/sh.dis"
+(printed a dozen-odd bind calls later) \- the only NIC-dependent binds
+in that stretch are
+.CW "#l0 / #I0" ,
+a plausible candidate for the stall, named here but not confirmed the
+way a print would confirm it.  Whatever the exact mechanism, this
+still means the
+.CW "\-nic\ none"
+batch is confounded on depth and its zero-crash result cannot be read
+as "network path removed, bug gone with it" \- there was no network
+path being exercised in the first place, in any batch, ever.
+.PP
+The batch that actually holds depth constant while removing outbound
+connectivity already ran, before this correction was written:
+.CW "\-netdev\ user,id=net0,restrict=on\ \-device\ virtio\-net,netdev=net0" ,
+same device and interrupt path as every earlier boot, traffic blocked
+at the QEMU user-net layer rather than the device missing.  It
+reached
+.CW "spawn\ sh"
+in 36 of 40 boots, matching the NIC-attached batches' 35 and 37 \-
+genuinely comparable depth at last \- and hit
+.CW "invalid\ opcode"
+in 12 of 40, matching those same batches' 10 and 12.  Blocking
+traffic changed nothing.  Read narrowly and correctly this time,
+since even this batch's own write-up (below) initially explained the
+match by an outbound
+.CW dial()
+timing out that never actually runs: what tracks the crash rate is
+the device being present and attached, not whether real packets
+flow across it.  Still open, and the next test rather than a source
+read: whether this is
+.CW ethervirtio.c
+specifically or any active interrupt-driven NIC at all \- a batch
+with
+.CW "\-device\ e1000"
+in place of
+.CW virtio-net ,
+same depth, entirely different driver, decides which.
 
 .NH 1
 Then
