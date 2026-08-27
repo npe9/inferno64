@@ -1971,11 +1971,14 @@ ospreyinputarm(void)
 int
 ospreyframebuffer(void)
 {
+	static int done;
 	char *s;
 	int x, y, z;
 	uvlong pa;
 	ulong sz;
 
+	if(done)			/* register the segment once, however many callers */
+		return 0;
 	if((s = getconf("*bootscreen")) == nil)
 		return -1;
 	/* WIDTHxHEIGHTxDEPTH CHAN PA [SZ] */
@@ -2009,6 +2012,7 @@ ospreyframebuffer(void)
 	ospreyfbseg.size = sz;
 	if(addphysseg(&ospreyfbseg) == nil)
 		return -1;
+	done = 1;
 	print("osprey fb: exposed %dx%dx%d at pa %#llux size %lud as \"framebuffer\"\n",
 		x, y, z, pa, sz);
 	return 0;
@@ -2325,6 +2329,14 @@ ospreyinit(void)
 	ospreynamed = ospreytellandwake;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
+	/*
+	 * Expose the firmware frame buffer as a physical segment here too,
+	 * not only on the microkernel path, so a process of the full 9front
+	 * personality can map it with segattach - the exposed-address-space
+	 * way in for a user-level draw stack.  Idempotent, so the xup64 boot
+	 * calling it as well is harmless.
+	 */
+	ospreyframebuffer();
 }
 
 /*

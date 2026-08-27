@@ -47,7 +47,7 @@ def main():
     log = tempfile.mktemp(prefix='osprey-user-', suffix='.log')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
-                    '-t', '150', '-e', 'the microkernel idles', '-c', 'echo done'],
+                    '-t', '150', '-u', 'the microkernel idles'],
                    env=env, capture_output=True, text=True)
     try:
         t = plain(open(log, errors='replace').read())
