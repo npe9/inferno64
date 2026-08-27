@@ -35,8 +35,8 @@ pipes) to design against Limbo's
 and channel model from scratch, since there is no Posix reference to
 translate that part from.
 .PP
-This version implements four slices, none with a grammar or execution
-engine yet - see BUGS. The first is word lists and the
+This version implements five slices - a real grammar now, but still
+no execution engine - see BUGS. The first is word lists and the
 variable/keyword tables from
 .B word.c
 and
@@ -134,6 +134,144 @@ module's own declaration), so - unlike real
 .IR rc ,
 where yacc generates those constants FROM the grammar - nothing here
 actually needs the grammar to exist first.
+.PP
+The fifth is
+.BR syn.y ,
+the grammar - hand-written recursive descent, following
+.IR hoc (1)'s
+own precedent for a yacc-based real source (a module-global
+.B curtok
+plus a parameterless
+.BR padvance() ,
+matching
+.IR hoc (1)'s
+own
+.B curtok
+/
+.BR advance() ,
+not the explicit-Lexstate-parameter style this file's own lexer
+section uses one layer down - the grammar is new machinery replacing
+yacc, not more of the lexer). Real
+.IR rc 's
+.B %left
+/
+.B %right
+priority table is
+.B not
+a precedence-climbing chain the way
+.IR hoc (1)'s
+arithmetic operators are - most of it resolves yacc shift/reduce
+conflicts in an ambiguous grammar rather than encoding a clean
+operator hierarchy. Two lines are real precedence and became the
+loop-based chain here:
+.B %left ANDAND OROR
+(loosest), then
+.B %left PIPE
+(tighter). The
+.B %left BANG SUBSHELL
+line and the two
+.B %prec BANG
+annotations on
+.B redir cmd
+and
+.B assign cmd
+put all four prefix forms
+.RI ( ! ,
+.IR @ ,
+a leading redirection, a leading assignment) at one shared level
+strictly between those two, confirmed by hand against two concrete
+cases before any of this was written, not assumed: BANG's own rule
+precedence is
+.B lower
+than ANDAND's, so
+.B "! a && b"
+is
+.B "(!a) && b"
+- the operand of any of those four prefixes is parsed by the
+PIPE-looping level, never the looser ANDAND/OROR-looping top level.
+A prefix redirection's rule precedence is
+.B lower
+than PIPE's, so
+.B ">f a | b"
+is
+.B ">f (a|b)"
+- that same operand
+.B does
+extend through PIPE. IF/WHILE/FOR/SWITCH sit at the
+.B opposite
+extreme on purpose: their own rule precedence is the lowest in the
+whole table, lower than ANDAND/OROR too, so their body always
+shift-extends through everything -
+.B "if(x) a && b"
+is
+.B "if(x) (a&&b)" .
+See BUGS for two real findings this precedence work turned up.
+.PP
+.BR word 's
+own
+.B "keyword {$1->type=WORD;}"
+alternative - a bare keyword can start a command
+.RI ( if ,
+.IR while ", ...)"
+but can never be the command's own name, so
+.B "echo if"
+must treat
+.I if
+as a plain argument word - is handled by demoting a keyword token's
+own
+.B ttype
+to
+.B Tword
+wherever a
+.I word
+(not
+.IR first )
+is expected; reaching
+.I first
+itself with a keyword token is structurally unreachable, not
+separately guarded, since every keyword already has its own case in
+the dispatch that would otherwise fall through to
+.IR first .
+.PP
+Two grammar actions are only partially real, both noted where
+they're defined:
+.B simplemung()
+builds the real SIMPLE node and does the real trailing-redirection
+percolation
+.RI ( tree.c 's
+own algorithm, not just field-copying), but leaves the node's
+.B str
+empty rather than calling
+.B "pfmt(s, \(dq%t\(dq, t)"
+- that needs the tree-to-source pretty-printer from
+.BR io.c / pfnc.c ,
+not translated yet.
+.B heredoc()
+returns a clearly-marked placeholder WORD token in the real tag's
+own place - the real one opens a temp file that
+.B exec.c
+later fills with the heredoc body (source lines read up to a line
+matching the tag), needing a source-reading front end this
+translation doesn't have (no Thread, no interactive/file reader).
+Both let
+.BR <<TAG /braces/parens/simple
+commands parse into the right shape now; neither can run anything.
+.PP
+.BR treeshape() ,
+exposed only to
+.IR rctest (1),
+is a test-only structural dump
+.RI ( "(TYPENAME child...)" ),
+not real
+.IR rc 's
+own
+.B %t
+pretty-printer (which reproduces
+.I rc
+source text) - it exists purely so a parser test can compare a whole
+tree in one assertion instead of walking
+.BR .child / .ttype / .str
+by hand the way earlier slices had to.
 .B Running
 .B rc
 does nothing but populate its internal tables and print a note saying
@@ -149,10 +287,10 @@ in this tree - the real source being translated.
 in this tree - the sizing and sequencing document this translation
 follows.
 .SH BUGS
-No grammar or execution engine yet - every slice built so far was
-chosen specifically because it has real, testable value semantics
-without needing either of those. The lexer turned out translatable
-and testable on its own after all, despite real
+No execution engine yet - every slice built so far, now including the
+grammar, was chosen specifically because it has real, testable value
+semantics without one. The lexer turned out translatable and testable
+on its own, despite real
 .IR rc 's
 own lexer and grammar not being independent of each other there
 (yacc generates the token constants the lexer returns) - this
@@ -161,7 +299,86 @@ version supplies its own token constants directly (the
 module's own
 .B Tokbase
 declaration), so nothing here actually needs a grammar to exist
-first, unlike the real source.
+first, unlike the real source. The grammar itself turned out
+translatable the same recursive-descent way
+.IR hoc (1)
+translates a yacc-based real source, once the priority table's real
+precedence (two lines) was separated from its shift/reduce-conflict
+bookkeeping (everything else) - see DESCRIPTION for the full trace.
+.PP
+Two real findings surfaced by the grammar's own tests, both caught by
+a test that failed first, not by inspection:
+.B !
+(BANG) and
+.B @
+(SUBSHELL) are deliberately absent from
+.BR lex.c 's
+own
+.BR wordchr() " stop-character set (checked directly against"
+.BR utils/rcsh/lex.c ),
+so with no following space neither is its own token at all -
+.B !a
+lexes as the single plain word
+.BR !a ,
+not BANG followed by a word. Real
+.I rc
+genuinely requires the space; a first draft of this grammar's own
+test assumed otherwise and got a very different, but not obviously
+wrong-looking, parse tree back. And this parser's own
+.B pskipnl()
+(the token-level equivalent of real
+.BR skipnl() ,
+used everywhere a grammar action needs to skip a run of blank/
+comment-only lines - after an
+.IR if / while / for
+condition's closing paren, before its body) exists because the raw,
+character-level
+.B skipnl()
+this file's lexer section already has is
+.B wrong
+to call from here: by the time a grammar action reaches that point,
+this parser has already
+.B padvance() 'd
+one token of lookahead past the closing
+.BR ) ,
+unlike real yacc, which for a definite reduce like
+.B "paren: '(' body ')'"
+does not fetch a lookahead token for the following
+.I cmd
+until
+.B after
+the mid-rule action runs. Calling the raw, stream-level
+.B skipnl()
+here would skip characters out from under an already-fetched token,
+leaving it stuck on a stale newline while the underlying stream moved
+on past it - found by a multi-line
+.B "if(a)\en\etb"
+test that silently dropped
+.B b
+out of the tree entirely.
+.PP
+A third, smaller finding, from the same tests, derived directly from
+.B syn.y
+itself rather than checked against any real-world script (no
+.I rc
+man page was available to consult here): real
+.B "SWITCH word"
+takes a bare
+.IR word ,
+not a dedicated condition syntax the way IF/WHILE's own
+.I paren
+does - there is no such rule in the grammar at all. So
+.B switch(x)
+written with no space parses as SWITCH followed by
+.IR word 's
+.B "own generic"
+.B "'(' words ')'"
+paren-word-list form (the same rule
+.B "x=(a b c)"
+would also use for a parenthesized word-list, per that same grammar),
+giving a PAREN-wrapped one-word list, not a condition - after this
+file's own first test draft assumed the C-like reading and
+failed.
 .PP
 A real, non-obvious finding about
 .IR rc 's

@@ -7,7 +7,7 @@ rctest \- regression test for rc's word-list/variable-table foundation
 .B Rctest
 exercises
 .IR rc (1)'s
-four translated slices - word lists
+five translated slices - word lists
 .RI ( newword ,
 .IR count ,
 .IR copywords ,
@@ -43,7 +43,15 @@ from
 and
 .BR lex.c 's
 tokenizer, from an in-memory string input rather than a real thread's
-input stream
+input stream, and
+.BR syn.y 's
+own grammar - hand-written recursive descent, exercised here via
+.BR treeshape() ,
+a test-only structural dump of a parsed tree (not real
+.IR rc 's
+own
+.B %t
+pretty-printer)
 - through
 .BR rc.dis 's
 own test-seam functions, calling
@@ -115,21 +123,38 @@ is all
 .B epimung
 itself looks at.
 .PP
-Two real findings surfaced by lexer tests that initially failed, not
-by inspection - see
+Five real findings surfaced by tests that initially failed, not by
+inspection - see
 .IR rc (1)'s
 own BUGS for the full traces: a comment's own trailing newline is a
 real
 .B '\en'
 token in real
 .IR rc ,
-not silently-skipped whitespace, and
+not silently-skipped whitespace;
 .B <<[2=1]
 /
 .B >>[2=1]
 genuinely succeed in the real C source because its own HERE/APPEND
-dup-rejection check is unreachable dead code there. Both test
-expectations were corrected to match the real, verified behavior
+dup-rejection check is unreachable dead code there;
+.B !
+/
+.B @
+need a following space to be their own token at all, since neither is
+in
+.BR lex.c 's
+own word-stop set;
+.B "SWITCH word"
+takes a bare word, not a dedicated condition syntax; and this
+parser's own token-level
+.B pskipnl()
+exists because the raw, character-level
+.B skipnl()
+this file's lexer tests already exercise is the wrong thing to call
+one layer up, in a grammar action - it would skip characters out from
+under a token this recursive-descent parser has already fetched as
+lookahead, unlike real yacc's own lazier lookahead timing. All five
+test expectations were corrected to match the real, verified behavior
 rather than the translation being changed to match a wrong assumption.
 .SH SOURCE
 .B /p9/cmd/rctest.b

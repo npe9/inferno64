@@ -159,6 +159,18 @@ Rc: module
 	testtokenspread:	fn(): int;
 	testlexinit:	fn(s: string): ref Lexstate;
 	testlexnext:	fn(ls: ref Lexstate): (int, ref Tree);
+
+	# syn.y: the grammar. Each of these lexes+parses a fresh string
+	# from scratch and returns the result as a treeshape() string
+	# (see rc.b's header comment) rather than a raw ref Tree, so
+	# rctest.b can compare a whole parse in one assertion.
+	testparseword:	fn(s: string): string;
+	testparsewords:	fn(s: string): string;
+	testparsesimple:	fn(s: string): string;
+	testparsecmd:	fn(s: string): string;
+	testparsebody:	fn(s: string): string;
+	testparseline:	fn(s: string): string;
+	testcurtok:	fn(): int;
 };
 
 # --- word.c: word lists ---------------------------------------------
@@ -1117,6 +1129,569 @@ testlexinit(s: string): ref Lexstate
 testlexnext(ls: ref Lexstate): (int, ref Tree)
 {
 	return lexnext(ls);
+}
+
+# --- syn.y: the grammar, hand-written recursive descent -------------
+#
+# Fifth slice. Real rc's grammar is yacc, generating an LALR table
+# from syn.y's `%left`/`%right` priority declarations; this is a
+# hand-written recursive-descent parser instead, following
+# p9/cmd/hoc.b's own precedent for a yacc-based real source (curtok/
+# padvance as module globals, not threaded parameters - matching
+# hoc.b's curtok/advance() convention, a deliberate departure from
+# this file's own lexer section, which threads Lexstate explicitly;
+# the grammar layer is new machinery replacing yacc, not more of the
+# lexer, so it gets its own convention rather than force-fitting one).
+#
+# The priority table is NOT a precedence-climbing chain the way
+# hoc.b's arithmetic operators are - most of it exists to resolve
+# yacc shift/reduce conflicts in an ambiguous grammar, not to encode a
+# clean operator hierarchy. Two lines are real precedence and become
+# the loop-based chain below:
+#
+#	%left ANDAND OROR	(loosest of the two real levels)
+#	%left PIPE		(tighter)
+#
+# `%left BANG SUBSHELL` and the two explicit `%prec BANG` annotations
+# on `redir cmd` and `assign cmd` are NOT "these bind like `!`" - they
+# put all four prefix forms (`!`, `@`, a leading redirection, a
+# leading assignment) at one shared precedence level that sits between
+# the two real ones: tighter than ANDAND/OROR, looser than PIPE. That
+# was checked by hand against two concrete cases before any code was
+# written, not assumed:
+#
+#   `!a && b`  - BANG's rule precedence (its own level, since no
+#   %prec override) is LOWER than ANDAND's, so on seeing ANDAND next
+#   yacc reduces `!a` first, then joins: `(!a) && b`. So the operand
+#   of BANG/SUBSHELL/a prefix redir/a prefix assign must NOT extend
+#   through ANDAND/OROR - it's parsed at the pipe level, not the
+#   looser top level.
+#
+#   `>f a | b`  - the prefix redir's rule precedence (%prec BANG) is
+#   LOWER than PIPE's, so on seeing PIPE next yacc shifts, extending
+#   the redirection's operand through the whole pipeline: `>f (a|b)`,
+#   not `(>f a) | b`. So that same operand DOES extend through PIPE -
+#   it has to be parsed by the level that itself loops on PIPE, not a
+#   bare atom.
+#
+# Both facts together mean: BANG/SUBSHELL/prefix-redir/prefix-assign
+# all recurse into parsePipend() (the PIPE-looping level) for their
+# operand, never into parseCmd() (the ANDAND/OROR-looping top level).
+# IF/WHILE/FOR/SWITCH sit at the OTHER extreme on purpose - their own
+# rule precedence is the LOWEST of anything in the table (lower than
+# ANDAND/OROR too), so their body always shift-extends through
+# everything: `if(x) a && b` is `if(x) (a&&b)`, not `(if(x) a) && b`.
+# Their bodies are parsed via the full parseCmd(), not parsePipend().
+#
+# `word: keyword {$1->type=WORD;}` vs `first: comword` (no keyword
+# alternative) is the other real trap: a bare keyword can start a
+# command (`if`, `while`, ...) but can NEVER be the command's own NAME
+# - `echo if` must treat `if` as a plain argument word, and a keyword
+# reaching the position where `first` is expected (i.e. every keyword
+# case in parseCmdUnit() below has already claimed it) is structurally
+# unreachable, not separately guarded. parseWordAtom() below is the
+# shared "an atom that may be a demoted keyword" step used by every
+# word position AFTER the first one; parseFirst() calls parseComword()
+# directly for its own first atom, which has no keyword case at all.
+#
+# Two grammar actions this slice's tests exercise are only partially
+# real, both explicitly noted where they're defined below:
+# `simplemung()` builds the real SIMPLE node and does the real
+# redirection-percolation loop, but leaves `t.str` empty rather than
+# calling `pfmt(s, "%t", t)` - that needs the tree-to-source pretty
+# printer from io.c/pfnc.c, not translated yet. `heredoc()` returns a
+# clearly-marked placeholder WORD token in the real tag's place - the
+# real one opens a temp file that exec.c later fills with the heredoc
+# BODY (source lines read up to a line matching the tag), which needs
+# a source-reading front end this translation doesn't have yet (no
+# Thread, no interactive/file reader). Both let `<<TAG`/braces/parens/
+# simple commands parse into the right SHAPE now; neither can actually
+# run anything yet, same as everything else in this file.
+#
+# treeshape() is a test-only structural dump (`(TYPENAME child...)`),
+# not real rc's own `%t` pretty-printer (which reproduces rc source
+# text) - it exists purely so parser tests can compare a whole tree in
+# one string instead of walking .child/.ttype/.str by hand the way
+# earlier slices had to.
+
+parls:	ref Lexstate;
+curtok:	int;
+curtree: ref Tree;
+
+pinit(s: string)
+{
+	parls = lexinit(s);
+	padvance();
+}
+
+padvance()
+{
+	(curtok, curtree) = lexnext(parls);
+}
+
+expect(tok: int): int
+{
+	if(curtok != tok)
+		return 0;
+	padvance();
+	return 1;
+}
+
+# real skipnl() operates directly on the raw Lexstate, correct for
+# every OTHER caller in this file (lexnext's own `&&`/`||`/pipe cases
+# all call it before ever fetching a lookahead token). It is NOT
+# correct here: by the time a grammar mid-rule reaches `{skipnl();}`,
+# this parser has already padvance()'d one token past the preceding
+# `)` - unlike yacc, which (for a definite reduce like `paren: '('
+# body ')'') doesn't fetch a lookahead token for `cmd` until AFTER the
+# mid-rule action runs. Calling the raw skipnl(parls) here would skip
+# characters from underneath an already-fetched curtok, leaving curtok
+# stuck on a stale `'\n'` while the underlying stream moved on past it
+# - found by a multi-line `if(a)\n\tb` test that silently parsed `b`
+# right out of the tree. This is the token-level equivalent instead:
+# real rc's own skipnl() loop (skip whitespace/comments, stop at
+# anything but a newline, otherwise consume it and repeat) already
+# happens naturally here because each padvance() re-runs lexnext()'s
+# own skipwhite() before deciding the next token.
+pskipnl()
+{
+	while(curtok == '\n')
+		padvance();
+}
+
+iskeywordtok(t: int): int
+{
+	return t >= Tfor && t <= Tfn;
+}
+
+startsword(t: int): int
+{
+	if(t == Tword || t == '$' || t == '"' || t == Tcount ||
+	   t == '`' || t == '(')
+		return 1;
+	return iskeywordtok(t);
+}
+
+# comword: the atomic word-forming constructs - never a bare keyword
+# (that's `word`'s/`parseWordAtom`'s job, one layer up).
+parsecomword(): ref Tree
+{
+	case curtok {
+	'$' =>
+		padvance();
+		w := parseword();
+		if(curtok == Tsub){
+			padvance();
+			wl := parsewords();
+			if(expect(')') == 0)
+				return nil;
+			return tree2(Tsub, w, wl);
+		}
+		return tree1('$', w);
+	'"' =>
+		padvance();
+		return tree1('"', parseword());
+	Tcount =>
+		padvance();
+		return tree1(Tcount, parseword());
+	Tword =>
+		t := curtree;
+		padvance();
+		return t;
+	'`' =>
+		padvance();
+		return tree1('`', parsebrace());
+	'(' =>
+		padvance();
+		wl := parsewords();
+		if(expect(')') == 0)
+			return nil;
+		return tree1(Tparen, wl);
+	}
+	return nil;	# not a comword - caller's mistake, matches the
+			# lexer's own "no valid token" -> nil convention
+}
+
+# the shared "atom that may be a demoted keyword" step - used for
+# every word position except the very first of a simple command.
+parsewordatom(): ref Tree
+{
+	if(iskeywordtok(curtok)){
+		t := curtree;
+		padvance();
+		t.ttype = Tword;	# `word: keyword {$1->type=WORD;}`
+		return t;
+	}
+	return parsecomword();
+}
+
+# word: keyword|comword, then a left-associative `^` chain - one loop
+# handles the whole chain (matching `%left '^'`), not recursion, the
+# same shape as this file's other left-associative chains below.
+parseword(): ref Tree
+{
+	t := parsewordatom();
+	while(curtok == '^'){
+		padvance();
+		t = tree2('^', t, parsewordatom());
+	}
+	return t;
+}
+
+# first: comword, then the same `^` chain - but the FIRST atom can
+# never be a bare keyword (see header comment).
+parsefirst(): ref Tree
+{
+	t := parsecomword();
+	while(curtok == '^'){
+		padvance();
+		t = tree2('^', t, parsewordatom());
+	}
+	return t;
+}
+
+# words: zero or more words, left-folded (`words: |words word
+# {tree2(WORDS,$1,$2)}` - empty list is a nil tree, matching $$=0).
+parsewords(): ref Tree
+{
+	t: ref Tree = nil;
+	while(startsword(curtok))
+		t = tree2(Twords, t, parseword());
+	return t;
+}
+
+# redir: REDIR word | DUP - a DUP-typed redir (`>[2=1]`) is complete
+# in the token itself, no trailing word.
+parseredir(): ref Tree
+{
+	t := curtree;
+	if(curtok == Tredir){
+		padvance();
+		w := parseword();
+		if(t.rtype == Here)
+			w = heredoc(w);
+		return mung1(t, w);
+	}
+	padvance();	# Tdup
+	return t;
+}
+
+# epilog: | redir epilog {mung2($1, $1->child[0], $2)} - builds the
+# forward chain epimung() later walks to its tail.
+parseepilog(): ref Tree
+{
+	if(curtok != Tredir && curtok != Tdup)
+		return nil;
+	r := parseredir();
+	rest := parseepilog();
+	return mung2(r, r.child[0], rest);
+}
+
+# heredoc: deferred (see header comment) - returns a clearly-marked
+# placeholder in the tag's own real return shape (token(name, WORD)),
+# not a crash and not silently wrong-but-plausible.
+heredoc(tag: ref Tree): ref Tree
+{
+	if(tag.ttype != Tword)
+		return nil;	# real yyerror("Bad here tag") - no Thread
+				# to unwind through yet, so: no valid tree
+	return token("#here-unimplemented:"+tag.str+"#", Tword);
+}
+
+# simplemung: real except t.str (see header comment) - builds the
+# SIMPLE node and does the real percolation of trailing DUP/REDIR
+# nodes up to the new root, exactly as tree.c's own loop does.
+simplemung(t: ref Tree): ref Tree
+{
+	t = tree1(Tsimple, t);
+	u := t.child[0];
+	while(u != nil && u.ttype == Targlist){
+		if(u.child[1] != nil &&
+		   (u.child[1].ttype == Tdup || u.child[1].ttype == Tredir)){
+			u.child[1].child[1] = t;
+			t = u.child[1];
+			u.child[1] = nil;
+		}
+		u = u.child[0];
+	}
+	return t;
+}
+
+# the atom/prefix level: everything that can start a `cmd`, including
+# the four prefix forms whose operand is parsePipend() (not the
+# looser parseCmd()) per the header comment's precedence trace.
+parsecmdunit(): ref Tree
+{
+	case curtok {
+	'{' =>
+		b := parsebrace();
+		e := parseepilog();
+		return epimung(b, e);
+	Tif =>
+		iftok := curtree;
+		padvance();
+		if(curtok == Tnot){
+			nottok := curtree;
+			padvance();
+			pskipnl();
+			return mung1(nottok, parsepipend());
+		}
+		p := parseparen();
+		pskipnl();
+		return mung2(iftok, p, parsecmd());	# IF: lowest
+							# precedence, grabs
+							# the full cmd
+	Twhile =>
+		whiletok := curtree;
+		padvance();
+		p := parseparen();
+		pskipnl();
+		return mung2(whiletok, p, parsecmd());
+	Tfor =>
+		fortok := curtree;
+		padvance();
+		if(expect('(') == 0)
+			return nil;
+		w := parseword();
+		if(curtok == Tin){
+			padvance();
+			wl := parsewords();
+			if(expect(')') == 0)
+				return nil;
+			pskipnl();
+			return mung3(fortok, w, tree1(Tparen, wl), parsecmd());
+		}
+		if(expect(')') == 0)
+			return nil;
+		pskipnl();
+		return mung3(fortok, w, nil, parsecmd());
+	Tswitch =>
+		padvance();
+		w := parseword();
+		pskipnl();
+		return tree2(Tswitch, w, parsebrace());
+	Ttwiddle =>
+		twtok := curtree;
+		padvance();
+		w := parseword();
+		return mung2(twtok, w, parsewords());
+	Tbang =>
+		bt := curtree;
+		padvance();
+		return mung1(bt, parsepipend());
+	Tsubshell =>
+		st := curtree;
+		padvance();
+		return mung1(st, parsepipend());
+	Tfn =>
+		padvance();
+		wl := parsewords();
+		if(curtok == '{')
+			return tree2(Tfn, wl, parsebrace());
+		return tree1(Tfn, wl);
+	Tredir or Tdup =>
+		r := parseredir();
+		return mung2(r, r.child[0], parsepipend());
+	* =>
+		if(startsword(curtok) == 0)
+			return nil;	# cmd: {$$=0} - nothing here starts one
+		f := parsefirst();
+		if(curtok == '='){
+			padvance();
+			v := parseword();
+			asgn := tree2('=', f, v);
+			return mung3(asgn, asgn.child[0], asgn.child[1],
+				     parsepipend());
+		}
+		# not an assignment - f is a simple command's own name;
+		# `simple: first | simple word | simple redir`
+		s := f;
+		for(;;){
+			if(startsword(curtok))
+				s = tree2(Targlist, s, parseword());
+			else if(curtok == Tredir || curtok == Tdup)
+				s = tree2(Targlist, s, parseredir());
+			else
+				break;
+		}
+		return simplemung(s);
+	}
+	return nil;
+}
+
+# the PIPE level: `cmd PIPE cmd`, left-associative - also what a
+# BANG/SUBSHELL/prefix-redir/prefix-assign's own operand is parsed by
+# (see header comment).
+parsepipend(): ref Tree
+{
+	l := parsecmdunit();
+	while(curtok == Tpipe){
+		pt := curtree;
+		padvance();
+		l = mung2(pt, l, parsecmdunit());
+	}
+	return l;
+}
+
+# the top level: `cmd ANDAND cmd | cmd OROR cmd`, one shared
+# left-associative level (`%left ANDAND OROR` is a single line).
+parsecmd(): ref Tree
+{
+	l := parsepipend();
+	while(curtok == Tandand || curtok == Toror){
+		op := curtok;
+		padvance();
+		l = tree2(op, l, parsepipend());
+	}
+	return l;
+}
+
+parseparen(): ref Tree
+{
+	if(expect('(') == 0)
+		return nil;
+	b := parsebody();
+	if(expect(')') == 0)
+		return nil;
+	return tree1(Tparen, b);
+}
+
+parsebrace(): ref Tree
+{
+	if(expect('{') == 0)
+		return nil;
+	b := parsebody();
+	if(expect('}') == 0)
+		return nil;
+	return tree1(Tbrace, b);
+}
+
+# body: used inside `{}`/`()` - unlike top-level `line`, a bare `\n`
+# also continues it (`cmdsan: cmdsa | cmd '\n'`), matching real rc
+# accepting unsemicoloned multi-line blocks inside braces.
+parsebody(): ref Tree
+{
+	c := parsecmd();
+	case curtok {
+	';' =>
+		padvance();
+		return tree2(';', c, parsebody());
+	'&' =>
+		padvance();
+		return tree2(';', tree1('&', c), parsebody());
+	'\n' =>
+		padvance();
+		return tree2(';', c, parsebody());
+	}
+	return c;
+}
+
+# line: top-level only - a bare `\n` ends it (does NOT continue, per
+# the outer `rc: line '\n'` rule consuming exactly one terminator);
+# only `;`/`&` chain further commands onto the same line.
+parseline(): ref Tree
+{
+	c := parsecmd();
+	case curtok {
+	';' =>
+		padvance();
+		return tree2(';', c, parseline());
+	'&' =>
+		padvance();
+		return tree2(';', tree1('&', c), parseline());
+	}
+	return c;
+}
+
+toknamestr(t: int): string
+{
+	case t {
+	';' =>		return ";";
+	'&' =>		return "&";
+	'=' =>		return "=";
+	'^' =>		return "^";
+	'$' =>		return "$";
+	'"' =>		return "\"";
+	'`' =>		return "`";
+	Tword =>	return "WORD";
+	Tredir =>	return "REDIR";
+	Tdup =>		return "DUP";
+	Tpipe =>	return "PIPE";
+	Tcount =>	return "COUNT";
+	Tsub =>		return "SUB";
+	Tsimple =>	return "SIMPLE";
+	Targlist =>	return "ARGLIST";
+	Twords =>	return "WORDS";
+	Tbrace =>	return "BRACE";
+	Tparen =>	return "PAREN";
+	Tandand =>	return "ANDAND";
+	Toror =>	return "OROR";
+	Tif =>		return "IF";
+	Twhile =>	return "WHILE";
+	Tfor =>		return "FOR";
+	Tswitch =>	return "SWITCH";
+	Ttwiddle =>	return "TWIDDLE";
+	Tbang =>	return "BANG";
+	Tsubshell =>	return "SUBSHELL";
+	Tfn =>		return "FN";
+	Tnot =>		return "NOT";
+	}
+	return sys->sprint("?%d", t);
+}
+
+# test-only structural dump - see header comment; not real rc's %t.
+treeshape(t: ref Tree): string
+{
+	if(t == nil)
+		return "nil";
+	s := "(" + toknamestr(t.ttype);
+	if(t.str != "")
+		s += ":" + t.str;
+	for(i := 0; i < len t.child; i++)
+		if(t.child[i] != nil)
+			s += " " + treeshape(t.child[i]);
+	return s + ")";
+}
+
+testparseword(s: string): string
+{
+	pinit(s);
+	return treeshape(parseword());
+}
+
+testparsewords(s: string): string
+{
+	pinit(s);
+	return treeshape(parsewords());
+}
+
+testparsesimple(s: string): string
+{
+	pinit(s);
+	return treeshape(parsecmdunit());
+}
+
+testparsecmd(s: string): string
+{
+	pinit(s);
+	return treeshape(parsecmd());
+}
+
+testparsebody(s: string): string
+{
+	pinit(s);
+	return treeshape(parsebody());
+}
+
+testparseline(s: string): string
+{
+	pinit(s);
+	return treeshape(parseline());
+}
+
+testcurtok(): int
+{
+	return curtok;
 }
 
 # loads sys too, not just the keyword/variable tables - lexword() and

@@ -70,6 +70,14 @@ Rc: module
 	testtokenspread:	fn(): int;
 	testlexinit:	fn(s: string): ref Lexstate;
 	testlexnext:	fn(ls: ref Lexstate): (int, ref Tree);
+
+	testparseword:	fn(s: string): string;
+	testparsewords:	fn(s: string): string;
+	testparsesimple:	fn(s: string): string;
+	testparsecmd:	fn(s: string): string;
+	testparsebody:	fn(s: string): string;
+	testparseline:	fn(s: string): string;
+	testcurtok:	fn(): int;
 };
 
 Word: adt
@@ -541,6 +549,255 @@ init(nil: ref Context, nil: list of string)
 	checktokseq("lex: x (1) - a space before ( suppresses SUB detection "+
 		"(adjacency required)",
 		"x (1)", Rc->Tword :: '(' :: Rc->Tword :: ')' :: nil);
+
+	# --- syn.y: the grammar ------------------------------------------
+	# treeshape() strings (see rc.b's own header comment) - a compact
+	# structural dump, not real rc's %t pretty-printer.
+
+	checkstr("parse: plain word", rc->testparseword("hello"),
+		"(WORD:hello)");
+
+	checkstr("parse: word: keyword demotes a bare keyword to WORD "+
+		"(`word: keyword {$1->type=WORD;}')",
+		rc->testparseword("if"), "(WORD:if)");
+
+	checkstr("parse: word: left-associative ^ chain",
+		rc->testparseword("a^b^c"),
+		"(^ (^ (WORD:a) (WORD:b)) (WORD:c))");
+
+	checkstr("parse: comword: $word", rc->testparseword("$x"),
+		"($ (WORD:x))");
+
+	checkstr("parse: comword: $word(sub words) - SUB via lexer "+
+		"adjacency",
+		rc->testparseword("$x(1 2)"),
+		"(SUB (WORD:x) (WORDS (WORDS (WORD:1)) (WORD:2)))");
+
+	checkstr("parse: comword: $\"word (dollar-quote prefix)",
+		rc->testparseword("$\"x"), "(\" (WORD:x))");
+
+	checkstr("parse: comword: $#word (COUNT)",
+		rc->testparseword("$#x"), "(COUNT (WORD:x))");
+
+	checkstr("parse: comword: `{brace} (backquote command substitution)",
+		rc->testparseword("`{echo hi}"),
+		"(` (BRACE (SIMPLE (ARGLIST (WORD:echo) (WORD:hi)))))");
+
+	checkstr("parse: comword: (words) paren word-list",
+		rc->testparseword("(a b)"),
+		"(PAREN (WORDS (WORDS (WORD:a)) (WORD:b)))");
+
+	checkstr("parse: comword: () empty paren word-list",
+		rc->testparseword("()"), "(PAREN)");
+
+	checkstr("parse: comword: unterminated ( is a parse error, not a "+
+		"crash (same nil convention as a lex error)",
+		rc->testparseword("("), "nil");
+
+	checkstr("parse: comword: nested parens in a word-list",
+		rc->testparseword("((a))"),
+		"(PAREN (WORDS (PAREN (WORDS (WORD:a)))))");
+
+	checkstr("parse: comword: a nested paren mixed with plain words",
+		rc->testparseword("(a (b) c)"),
+		"(PAREN (WORDS (WORDS (WORDS (WORD:a)) "+
+		"(PAREN (WORDS (WORD:b)))) (WORD:c)))");
+
+	checkstr("parse: simple command, one word",
+		rc->testparsecmd("a"), "(SIMPLE (WORD:a))");
+
+	checkstr("parse: simple command, multiple words",
+		rc->testparsecmd("echo hi there"),
+		"(SIMPLE (ARGLIST (ARGLIST (WORD:echo) (WORD:hi)) "+
+		"(WORD:there)))");
+
+	checkstr("parse: a keyword in argument position is a plain WORD, "+
+		"not a nested construct (`echo if` must not misparse)",
+		rc->testparsecmd("echo if"),
+		"(SIMPLE (ARGLIST (WORD:echo) (WORD:if)))");
+
+	checkstr("parse: simplemung percolates a trailing redirection up "+
+		"to the tree's own root (real tree.c's own algorithm, not "+
+		"just field-copying)",
+		rc->testparsecmd("echo hi >f"),
+		"(REDIR (WORD:f) (SIMPLE (ARGLIST (ARGLIST (WORD:echo) "+
+		"(WORD:hi)))))");
+
+	checkstr("parse: pipe chain is left-associative (`%left PIPE`)",
+		rc->testparsecmd("a|b|c"),
+		"(PIPE (PIPE (SIMPLE (WORD:a)) (SIMPLE (WORD:b))) "+
+		"(SIMPLE (WORD:c)))");
+
+	checkstr("parse: && and || share one left-associative level "+
+		"(`%left ANDAND OROR` is a single line)",
+		rc->testparsecmd("a&&b||c"),
+		"(OROR (ANDAND (SIMPLE (WORD:a)) (SIMPLE (WORD:b))) "+
+		"(SIMPLE (WORD:c)))");
+
+	# The two cases traced by hand against syn.y's priority table
+	# before any of this was written (see rc.b's header comment) -
+	# BANG/SUBSHELL/a prefix redir/a prefix assign all sit at one
+	# precedence level strictly between the two real ones (ANDAND/OROR
+	# loosest, PIPE tightest): their own operand extends through PIPE
+	# but stops at ANDAND/OROR.
+	checkstr("parse: ! binds tighter than && - `! a && b` is `(!a) && b`"+
+		", not `!(a && b)` (BANG's own rule precedence is LOWER "+
+		"than ANDAND's, so yacc reduces `!a` before joining)",
+		rc->testparsecmd("! a && b"),
+		"(ANDAND (BANG:! (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+
+	# `!` is deliberately absent from Wordstops in the real source
+	# (utils/rcsh/lex.c's own wordchr() - checked directly), so with
+	# no space it's not its own token at all: `!a` lexes as one plain
+	# WORD "!a", the same way a following digit or letter joins any
+	# other word character. Real rc genuinely requires the space -
+	# `!cmd` is not the same as `! cmd`. Confirmed as a real property
+	# of the upstream source, not a translation gap, by tracing
+	# wordchr()'s own stop-character string.
+	checkstr("parse: ! with no following space is not a token at all - "+
+		"it joins the word (real wordchr()'s stop-set has no '!')",
+		rc->testparsecmd("!a"), "(SIMPLE (WORD:!a))");
+
+	checkstr("parse: a prefix redirection binds LOOSER than | - "+
+		"`>f a | b` is `>f (a|b)`, not `(>f a) | b` (the prefix "+
+		"redir's rule precedence, %prec BANG, is LOWER than PIPE's, "+
+		"so yacc shifts through the whole pipeline)",
+		rc->testparsecmd(">f a | b"),
+		"(REDIR (WORD:f) (PIPE (SIMPLE (WORD:a)) (SIMPLE (WORD:b))))");
+
+	checkstr("parse: @ (SUBSHELL) is a plain prefix, same precedence "+
+		"level as ! - also needs the same space (same wordchr() "+
+		"reason)",
+		rc->testparsecmd("@ a && b"),
+		"(ANDAND (SUBSHELL:@ (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+
+	# testparsesimple() parses at the atom/prefix level directly
+	# (parsecmdunit(), no PIPE or ANDAND/OROR loop above it) - the one
+	# place that level's own boundary is directly observable: parsing
+	# "a && b" through it must stop at "a", leaving && unconsumed,
+	# rather than silently continuing (which is exactly what a wrong
+	# level assignment for a prefix operand would look like from the
+	# outside).
+	checkstr("parse: testparsesimple() stops at the atom/prefix level "+
+		"- it does not loop over && itself (that is parsecmd()'s "+
+		"own job, one level up)",
+		rc->testparsesimple("a && b"), "(SIMPLE (WORD:a))");
+	checkint("parse: ...confirmed by the leftover && still unconsumed",
+		rc->testcurtok(), Rc->Tandand);
+
+	# heredoc() is deferred (see rc(1)'s DESCRIPTION/BUGS) - it checks
+	# the here-tag is a real WORD token, exactly as real heredoc()'s
+	# own `if(tag->type!=WORD) yyerror(...)` does, and returns nil
+	# rather than a placeholder when it isn't. "<<$x" gives a `$x`
+	# comword tag ('$'-typed, not WORD), so this exercises that path:
+	# mung1(t, nil) leaves the REDIR node with no tag child at all,
+	# not a crash and not a silently-wrong placeholder.
+	checkstr("parse: heredoc() rejects a non-WORD tag the same way "+
+		"real yyerror(\"Bad here tag\") does - nil, not a crash "+
+		"or a wrong-but-plausible placeholder",
+		rc->testparsecmd("<<$x"), "(REDIR)");
+
+	checkstr("parse: assign-prefix builds `=` from `first`/`word`, "+
+		"then attaches the rest of the command as a third child "+
+		"(mung3, reusing the `=` node - real tree.c's own trick)",
+		rc->testparsecmd("x=5 echo hi"),
+		"(= (WORD:x) (WORD:5) (SIMPLE (ARGLIST (WORD:echo) "+
+		"(WORD:hi))))");
+
+	checkstr("parse: a bare assignment with nothing after it has an "+
+		"empty (nil) trailing cmd - `cmd: {$$=0}`'s base case",
+		rc->testparsecmd("x=5"),
+		"(= (WORD:x) (WORD:5))");
+
+	checkstr("parse: IF, single line",
+		rc->testparsecmd("if(a) b"),
+		"(IF:if (PAREN (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+
+	# IF's own rule precedence is the LOWEST in the whole table -
+	# lower even than ANDAND/OROR - specifically so its body always
+	# shift-extends through everything: `if(x) a && b` is
+	# `if(x) (a&&b)`, never `(if(x) a) && b`.
+	checkstr("parse: IF's body binds looser than && (IF has the "+
+		"lowest rule precedence in the table, so it always grabs "+
+		"the full cmd)",
+		rc->testparsecmd("if(x) a && b"),
+		"(IF:if (PAREN (SIMPLE (WORD:x))) (ANDAND (SIMPLE (WORD:a)) "+
+		"(SIMPLE (WORD:b))))");
+
+	checkstr("parse: IF NOT (`if not cmd`, mung1 on the NOT token, "+
+		"discarding IF itself)",
+		rc->testparsecmd("if not a"),
+		"(NOT:not (SIMPLE (WORD:a)))");
+
+	checkstr("parse: WHILE, single line",
+		rc->testparsecmd("while(a) b"),
+		"(WHILE:while (PAREN (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+
+	checkstr("parse: FOR with an explicit `in` word-list",
+		rc->testparsecmd("for(x in a b) c"),
+		"(FOR:for (WORD:x) (PAREN (WORDS (WORDS (WORD:a)) (WORD:b))) "+
+		"(SIMPLE (WORD:c)))");
+
+	checkstr("parse: FOR with no `in` (defaults to $*, left as a nil "+
+		"middle child here - exec.c's job to fill in, not parse.c's)",
+		rc->testparsecmd("for(x) c"),
+		"(FOR:for (WORD:x) (SIMPLE (WORD:c)))");
+
+	# `SWITCH word` takes a bare `word`, NOT a `paren` the way IF/WHILE
+	# do (there is no dedicated "switch condition parens" rule in
+	# syn.y at all) - so `switch(x)` with no space parses the SAME
+	# generic comword `'(' words ')'` paren-word-list every other word
+	# position uses (the same syntax `x=(a b c)` uses for an array
+	# literal), giving a PAREN-wrapped one-word list here, not a
+	# condition. Traced against syn.y directly after this test's first
+	# draft (which assumed C-like switch(...) parens) failed.
+	checkstr("parse: SWITCH takes a bare word - `switch(x)` with no "+
+		"space is that word's own generic (words) paren-list form, "+
+		"not a dedicated condition syntax (tree2 also discards the "+
+		"SWITCH token itself, matching tree2(SWITCH,$2,$4))",
+		rc->testparsecmd("switch(x) {a}"),
+		"(SWITCH (PAREN (WORDS (WORD:x))) (BRACE (SIMPLE (WORD:a))))");
+
+	checkstr("parse: TWIDDLE (`~ word words`, rc's own pattern-match "+
+		"builtin - both operands are bare `word`/`words`, not `cmd`, "+
+		"so neither gets wrapped in SIMPLE)",
+		rc->testparsecmd("~ a b c"),
+		"(TWIDDLE:~ (WORD:a) (WORDS (WORDS (WORD:b)) (WORD:c)))");
+
+	checkstr("parse: FN with a brace body",
+		rc->testparsecmd("fn f {a}"),
+		"(FN (WORDS (WORD:f)) (BRACE (SIMPLE (WORD:a))))");
+
+	checkstr("parse: FN with no body (a bare function reference)",
+		rc->testparsecmd("fn f"),
+		"(FN (WORDS (WORD:f)))");
+
+	checkstr("parse: body (used inside {}/()) treats a bare newline "+
+		"as a real separator, same as ; (`cmdsan: cmdsa|cmd '\\n'`)",
+		rc->testparsebody("a\nb"),
+		"(; (SIMPLE (WORD:a)) (SIMPLE (WORD:b)))");
+
+	checkstr("parse: line (top level only) does NOT treat a bare "+
+		"newline as a separator - only ; and & chain further "+
+		"commands on the same line",
+		rc->testparseline("a;b"),
+		"(; (SIMPLE (WORD:a)) (SIMPLE (WORD:b)))");
+
+	rc->testparseline("a\nb");
+	checkint("parse: line stops BEFORE an unconsumed bare newline "+
+		"(real rc's outer `rc: line '\\n'` rule consumes exactly "+
+		"one terminator itself, line doesn't reach across it)",
+		rc->testcurtok(), '\n');
+
+	checkstr("parse: multi-line IF via skipnl() - `{skipnl();}` runs "+
+		"after the paren, before the body, so a real newline there "+
+		"is skipped just like real rc's own multi-line if(x)\\n\\tcmd",
+		rc->testparsecmd("if(a)\n\tb"),
+		"(IF:if (PAREN (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
+
+	checkstr("parse: & backgrounds a cmd within a body",
+		rc->testparsebody("a& b"),
+		"(; (& (SIMPLE (WORD:a))) (SIMPLE (WORD:b)))");
 
 	sys->print("%d passed, %d failed\n", npass, nfail);
 	if(nfail > 0)
