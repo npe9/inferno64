@@ -26,6 +26,20 @@ void	(*heapmonitor)(int, void*, ulong);
 
 #define	BIT(bt, nb)	(bt & (1<<nb))
 
+/*
+ * By the time destroy() fires from either of freeptrs()'s two
+ * callers (OP(ret), OP(mcall)'s native branch), R.FP has already
+ * been restored to the *caller's* frame -- xec.c does "R.FP = f->fp"
+ * before calling freeptrs(f, f->t), not after.  destroy()'s own
+ * probe reading R.FP therefore names the wrong frame's bounds.  Set
+ * here, right where the real v/t/slot are still in hand, so
+ * destroy() can read the frame that actually owned the bad slot
+ * instead.  See doc/inferno-ports.ms.
+ */
+void *freeptrsv;
+Type *freeptrst;
+WORD **freeptrsslot;
+
 void
 freeptrs(void *v, Type *t)
 {
@@ -36,20 +50,22 @@ freeptrs(void *v, Type *t)
 	if(t->np == 0)
 		return;
 
+	freeptrsv = v;
+	freeptrst = t;
 	w = (WORD**)v;
 	p = t->map;
 	ep = p + t->np;
 	while(p < ep) {
 		c = *p;
 		if(c != 0) {
- 			if(BIT(c, 0) && (x = w[7]) != H) destroy(x);
-			if(BIT(c, 1) && (x = w[6]) != H) destroy(x);
- 			if(BIT(c, 2) && (x = w[5]) != H) destroy(x);
-			if(BIT(c, 3) && (x = w[4]) != H) destroy(x);
-			if(BIT(c, 4) && (x = w[3]) != H) destroy(x);
-			if(BIT(c, 5) && (x = w[2]) != H) destroy(x);
-			if(BIT(c, 6) && (x = w[1]) != H) destroy(x);
-			if(BIT(c, 7) && (x = w[0]) != H) destroy(x);
+ 			if(BIT(c, 0) && (x = w[7]) != H) { freeptrsslot = &w[7]; destroy(x); }
+			if(BIT(c, 1) && (x = w[6]) != H) { freeptrsslot = &w[6]; destroy(x); }
+ 			if(BIT(c, 2) && (x = w[5]) != H) { freeptrsslot = &w[5]; destroy(x); }
+			if(BIT(c, 3) && (x = w[4]) != H) { freeptrsslot = &w[4]; destroy(x); }
+			if(BIT(c, 4) && (x = w[3]) != H) { freeptrsslot = &w[3]; destroy(x); }
+			if(BIT(c, 5) && (x = w[2]) != H) { freeptrsslot = &w[2]; destroy(x); }
+			if(BIT(c, 6) && (x = w[1]) != H) { freeptrsslot = &w[1]; destroy(x); }
+			if(BIT(c, 7) && (x = w[0]) != H) { freeptrsslot = &w[0]; destroy(x); }
 		}
 		p++;
 		w += 8;
@@ -260,6 +276,23 @@ destroy(void *v)
 				(int)(xp->R.PC - xp->R.M->m->prog));
 		else
 			print("destroy: bad v %p, currun() nil or has no module\n", v);
+		/*
+		 * R.FP is *not* usable here: both of freeptrs()'s callers
+		 * (OP(ret), OP(mcall)'s native branch) restore R.FP to the
+		 * caller's frame before calling freeptrs(f, f->t) -- by the
+		 * time this fires, R.FP names the wrong frame entirely.
+		 * freeptrsv/freeptrst/freeptrsslot (set in freeptrs() itself,
+		 * right where the real v/t/slot are still in hand) name the
+		 * frame that actually owned this slot, and its exact offset
+		 * within it: whether that offset falls inside t->size (where
+		 * initmem() should have written H at creation) or beyond it,
+		 * in whatever a Stkext's mallocz(l, 0) left unclaimed.  See
+		 * doc/inferno-ports.ms.
+		 */
+		print("destroy: freeptrsv %#p freeptrst->size %d slot %#p "
+			"(slot - v = %ld)\n",
+			freeptrsv, freeptrst != nil ? freeptrst->size : -1,
+			freeptrsslot, (long)((uchar*)freeptrsslot - (uchar*)freeptrsv));
 		dumpstack();
 		abort();
 	}

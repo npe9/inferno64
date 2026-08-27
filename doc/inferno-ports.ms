@@ -6866,6 +6866,96 @@ descriptor, the SMP question, nor the network stack has turned out to
 be.
 
 .NH 1
+A probe's own bug, caught before trusting its first answer
+.PP
+Built the check the mallocz(l,0)-unzeroed theory needs: a diagnostic
+in both
+.CW destroy()
+.RB ( libinterp/heap.c )
+and
+.CW badptrslot()
+.RB ( OP(movp) 's
+guard,
+.CW libinterp/xec.c )
+printing the current frame's
+.CW "R.FP / R.SP / R.TS"
+and its
+.CW t->size ,
+so a captured bad slot's position relative to the frame that owns it
+could be read directly \- inside
+.CW t->size
+means
+.CW initmem()
+should have covered it at creation; beyond
+.CW R.SP ,
+in whatever the extent's
+.CW mallocz(l,\ 0)
+never zeroed, means it never was.
+.PP
+The first capture this ran against
+.RB ( destroy() ,
+module
+.CW String )
+printed
+.CW "R.FP\ 0xa308b8\ R.SP\ 0xa30938\ ...\ frame\ t\->size\ 112" \-
+.CW SP\-FP
+(128) already past
+.CW t\->size
+(112) on its own, which looked like exactly the kind of mismatch
+worth reading further into.  Reading further into it instead found a
+bug in the probe, not in the frame: by the time
+.CW destroy()
+fires from either of
+.CW freeptrs() 's
+two callers,
+.CW "OP(ret)"
+and
+.CW "OP(mcall)" 's
+native branch, both already ran
+.CW "R.FP\ =\ f\->fp"
+\-
+.I restoring
+.CW R.FP
+to the
+.B caller's
+frame \- before calling
+.CW "freeptrs(f,\ f\->t)" .
+.CW destroy() 's
+own probe reading
+.CW R.FP
+was therefore naming the wrong frame every single time it has ever
+fired through
+.CW freeptrs() ,
+not just this once; the printed numbers above describe some
+unrelated caller frame, not the one that actually held the bad
+slot.  Retracted before building anything on it, the same discipline
+this document has applied to its other three retractions \- caught
+this time before a commit landed the wrong reading, not after.
+.PP
+Fixed at the source of the confusion rather than patched around it:
+.CW freeptrs()
+itself knows
+.CW v ,
+.CW t ,
+and the exact slot address on every call into
+.CW destroy() \-
+three new globals
+.RB ( freeptrsv ,
+.CW freeptrst ,
+.CW freeptrsslot ) ,
+set right there, let
+.CW destroy() 's
+probe read the frame that actually owned the slot, with its exact
+offset within it, instead of guessing from a register that has
+already moved on.  A cleaner result than the register-based version
+even aimed for: an exact
+.CW "slot\ \-\ v"
+offset, not just a frame/stack-pointer comparison.  Rebuilt; the
+batch using the old, wrong-frame version was killed mid-run rather
+than let finish and risk a mixed-binary read \- a clean batch against
+the corrected binary is running.  Result in the next section.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

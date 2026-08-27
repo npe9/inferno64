@@ -360,6 +360,27 @@ badptrslot(void *bad, void *addr, char *which)
 		print("  %#p: %zx\n", wp, *wp);
 	}
 	/*
+	 * newstack()/extend() hand out their whole Stkext extent via
+	 * mallocz(l, 0) -- l bytes, unzeroed -- and initmem() only ever
+	 * writes H into the pointer slots the *current* frame's own type
+	 * map covers, at the moment that frame is created.  Anything past
+	 * the current top frame, out to R.TS, is stale bytes from whatever
+	 * this exact memory held before, not yet claimed by any frame.
+	 * Printing R.FP/SP/TS and the current frame's own t->size answers
+	 * directly, for this capture, whether the bad slot sits inside the
+	 * live top frame (initmem() should have covered it) or beyond SP,
+	 * in that unclaimed tail.  See doc/inferno-ports.ms.
+	 */
+	if(xp != nil){
+		Frame *cf = (Frame*)xp->R.FP;
+		print("movp: R.FP %#p R.SP %#p R.TS %#p frame t->size %d "
+			"(addr - FP = %ld, SP - FP = %ld)\n",
+			xp->R.FP, xp->R.SP, xp->R.TS,
+			cf != nil ? cf->t->size : -1,
+			(long)((uchar*)addr - xp->R.FP),
+			(long)(xp->R.SP - xp->R.FP));
+	}
+	/*
 	 * The discriminating question this hunt hasn't asked yet: is the
 	 * slot itself (not the bad value in it) inside a block the pool
 	 * allocator still considers live, or one it's already freed?  A
