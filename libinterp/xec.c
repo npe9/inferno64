@@ -319,6 +319,93 @@ OP(indb)
 	W(m) = (WORD)(a->data+i*sizeof(BYTE));
 }
 /*
+ * A watchpoint, not a read-side probe.  b06f5340's capture (see
+ * doc/inferno-ports.ms) was as clean as a read-side capture can get --
+ * a real local pointer, correctly typed per its own frame's map,
+ * inside t->size -- and named exactly where the corruption is READ
+ * (sh.b:838, runexternal's 'mod'), not where it's WRITTEN.  No amount
+ * of read-side context closes that gap; something between mod's
+ * assignment (sh.b:810) and this read writes 0x18 into a slot nothing
+ * in that source span touches again.  This checks the slot's value
+ * after every instruction, dispatch-loop-wide -- not filtered to any
+ * one module or R.M, since the whole hypothesis is that some other
+ * function's instruction computes an address that lands here -- and
+ * names the instruction that just ran the moment the value changes.
+ *
+ * Armed on sight of a frame matching runexternal's own type fingerprint
+ * (t->size 336, t->np 6, map 00 c7 77 9e 00 c0, from b06f5340's own
+ * capture) rather than a fixed address, since the frame's address
+ * moves between boots.  Disarmed quietly, not fired, once the frame at
+ * that address no longer matches the fingerprint -- ordinary teardown
+ * and reuse, not a finding.
+ */
+static int watcharmed;
+static uintptr *watchaddr;
+static uintptr watchval;
+
+static int
+watchtypematch(Type *t)
+{
+	return t != nil && t->size == 336 && t->np == 6
+		&& t->map[0] == 0x00 && t->map[1] == 0xc7 && t->map[2] == 0x77
+		&& t->map[3] == 0x9e && t->map[4] == 0x00 && t->map[5] == 0xc0;
+}
+
+static void
+checkwatch(void)
+{
+	Frame *cf;
+	extern void dumpstack(void);
+
+	if(!watcharmed){
+		cf = (Frame*)R.FP;
+		if(cf == nil || !watchtypematch(cf->t))
+			return;
+		watchaddr = (uintptr*)(R.FP + 168);
+		watchval = *watchaddr;
+		watcharmed = 1;
+		print("watch: armed at %#p (R.FP %#p) val %#zx\n",
+			watchaddr, R.FP, watchval);
+		return;
+	}
+	cf = (Frame*)((uchar*)watchaddr - 168);
+	if(!watchtypematch(cf->t)){
+		/* frame torn down/reused -- disarm quietly, not a finding */
+		watcharmed = 0;
+		return;
+	}
+	if(*watchaddr != watchval){
+		/*
+		 * A change to a value that looks like a real pointer (the
+		 * same >= 0x1000 threshold badptrslot()/movp already use
+		 * elsewhere) is legitimate -- sh.b:810's own 'mod := load
+		 * Command npath' writes exactly one of these, H to a real
+		 * pointer, and a first version of this check aborted on
+		 * that alone.  Track it and keep watching; only a change TO
+		 * a bad value is the finding.
+		 */
+		if((void*)*watchaddr == H || (uintptr)*watchaddr >= 0x1000){
+			print("watch: legitimate change addr %#p old %#zx new %#zx, "
+				"instruction PC %#p op %#.2ux add %#.2ux module %s\n",
+				watchaddr, watchval, *watchaddr, R.PC - 1,
+				(R.PC-1)->op, (R.PC-1)->add,
+				R.M != nil && R.M->m != nil ? R.M->m->name : "?");
+			watchval = *watchaddr;
+			return;
+		}
+		print("watch: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx\n",
+			watchaddr, watchval, *watchaddr);
+		print("watch: instruction that just ran: PC %#p op %#.2ux "
+			"add %#.2ux module %s pid %d\n",
+			R.PC - 1, (R.PC-1)->op, (R.PC-1)->add,
+			R.M != nil && R.M->m != nil ? R.M->m->name : "?",
+			currun() != nil ? currun()->pid : -1);
+		dumpstack();
+		abort();
+	}
+}
+
+/*
  * Probe: batch10 caught two page faults right after this check's own
  * AINC call site, same PC both times, CR2 a small negative value
  * (-20) -- the same family as destroy()'s "bad v" captures (0, 18),
@@ -2219,6 +2306,7 @@ xec(Prog *p)
 		op = R.PC->op;
 		R.PC++;
 		optab[op]();
+		checkwatch();
 /*		DBG(" end: %p: ", p);
 		DBG("%s ", R.M->m->name);
 		DBG("pid %d ", p->pid);

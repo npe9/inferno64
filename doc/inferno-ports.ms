@@ -8161,6 +8161,89 @@ value does so into memory that every check available says should
 have been correct.
 
 .NH 1
+A watchpoint, not another read-side probe
+.PP
+.CW b06f5340 's
+capture is as clean as a read-side capture can get, and that's
+exactly its limit: it names where the corruption is
+.I read
+.RN ( sh.b:838 ),
+not where it's
+.I written .
+No amount of context added to a read-side probe closes that gap \-
+the write happened at an unknown earlier instruction, possibly in a
+completely different function's frame.  What the capture does give,
+though, is a bounded window: 
+.CW mod
+is assigned once
+.RN ( sh.b:810 ,
+.CW "mod := load Command npath" ),
+read once at the capture site
+.RN ( sh.b:838 ),
+and nothing in the source between those two lines touches it again.
+The slot's address is fixed for
+.CW runexternal() 's
+whole frame lifetime.  That's checkable directly: watch the slot,
+not just read it.
+.PP
+.CW checkwatch()
+arms on sight of a frame matching
+.CW runexternal() 's
+own type fingerprint
+.RN ( t->size
+336,
+.CW t->np
+6, map
+.CW "00 c7 77 9e 00 c0" ,
+taken directly from
+.CW b06f5340 's
+own capture)
+.I "rather than a fixed address" ,
+since the frame's address moves between boots.  Once armed, it runs
+after every single instruction, dispatch-loop-wide \- not filtered to
+any one module or
+.CW R.M ,
+because the whole hypothesis is that some
+.I other
+function's instruction computes an address that lands here.  Disarms
+quietly, not as a finding, once the frame at that address no longer
+matches the fingerprint \- ordinary teardown and reuse.
+.PP
+First version aborted on any change at all, and immediately proved
+too eager: the very first boot armed, then fired on
+.CW mod 's
+.I own
+assignment
+.RN ( sh.b:810
+itself, H to a real pointer
+.CW 0x7859cd0 ) \-
+a completely legitimate write mistaken for the bug.  Fixed to
+distinguish a change to something that looks like a real pointer
+.RN ( >=
+.CW 0x1000 ,
+the same threshold
+.CW badptrslot() /
+.CW movp
+already use) from a change to a small non-
+.CW H
+value: the first kind updates the watched value and keeps going, the
+second kind is the actual finding \- prints the instruction that just
+ran
+.RN ( PC ,
+op,
+.CW add ,
+module) and aborts immediately.  A second boot armed, logged
+.CW mod 's
+legitimate assignment cleanly, and the boot went on to a native
+general protection fault \- an already-documented failure mode
+elsewhere in this hunt, not something the watchpoint caused; nothing
+about
+.CW checkwatch()
+writes memory or otherwise perturbs execution beyond one comparison
+per instruction while armed.  A full batch is running now to catch a
+genuine bad-value transition.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
