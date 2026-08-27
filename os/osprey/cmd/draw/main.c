@@ -31,6 +31,16 @@ extern Dev drawdevtab;
  */
 extern void memimageinit(void);
 
+/*
+ * The software cursor (cursor.c) draws onto the same frame buffer.  Its
+ * lock is held around every draw batch so a draw and the cursor never
+ * touch the frame buffer at once.
+ */
+extern Lock oscurlock;
+extern void oscursoron(void);
+extern void oscursoroff(void);
+extern void oscursorstart(void);
+
 static void
 fsattach(Req *r)
 {
@@ -134,7 +144,11 @@ fswrite(Req *r)
 		respond(r, up->errstr);
 		return;
 	}
+	lock(&oscurlock);		/* lift the cursor across the draw */
+	oscursoroff();
 	n = D->write(c, r->ifcall.data, r->ifcall.count, r->ifcall.offset);
+	oscursoron();
+	unlock(&oscurlock);
 	poperror();
 	r->ofcall.count = n;
 	respond(r, nil);
@@ -182,6 +196,7 @@ main(int argc, char **argv)
 	memimageinit();
 	D->reset();
 	D->init();
+	oscursorstart();		/* the software mouse cursor */
 	postmountsrv(&drawsrv, nil, mtpt, MBEFORE);
 	exits(nil);
 }

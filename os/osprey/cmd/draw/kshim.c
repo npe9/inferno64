@@ -322,6 +322,11 @@ int	devwstat(Chan*, uchar*, int){ error(Ebadusefd); return 0; }
 /* the screen: the frame buffer the microkernel exposes */
 enum { Wid = 1280, Hgt = 800 };
 
+/* the software cursor (cursor.c) composites straight onto these */
+ulong	*ospreyfb;
+int	ospreyfbwid = Wid;
+int	ospreyfbhgt = Hgt;
+
 int
 ishwimage(Memimage *i)
 {
@@ -351,9 +356,13 @@ attachscreen(Rectangle *r, ulong *chan, int *depth, int *width, int *softscreen)
 	ulong *fb;
 
 	if(!done){
-		fb = (ulong*)segattach(0, "framebuffer", 0, (ulong)Wid*Hgt*4);
-		if(fb == (ulong*)-1)
-			return nil;
+		fb = ospreyfb;		/* the cursor may have attached it first */
+		if(fb == nil){
+			fb = (ulong*)segattach(0, "framebuffer", 0, (ulong)Wid*Hgt*4);
+			if(fb == (ulong*)-1)
+				return nil;
+			ospreyfb = fb;
+		}
 		md.base = fb;
 		md.bdata = (uchar*)fb;
 		md.ref = 1;

@@ -6,7 +6,7 @@ mkdir -p /tmp/draw
 cp /n/cd/src/draw/* /tmp/draw/
 cd /tmp/draw
 echo '=== compile ==='
-for(f in devdraw kshim main){
+for(f in devdraw kshim main cursor){
 	if(6c -I. $f.c >[2]/tmp/e)
 		echo cc-$f ok
 	if not {
@@ -15,7 +15,7 @@ for(f in devdraw kshim main){
 	}
 }
 echo '=== link ==='
-if(6l -o draw devdraw.6 kshim.6 main.6 /amd64/lib/lib9p.a /amd64/lib/libmemlayer.a /amd64/lib/libmemdraw.a >[2]/tmp/le)
+if(6l -o draw devdraw.6 kshim.6 main.6 cursor.6 /amd64/lib/lib9p.a /amd64/lib/libmemlayer.a /amd64/lib/libmemdraw.a >[2]/tmp/le)
 	echo ld ok
 if not {
 	echo ld FAIL
