@@ -380,6 +380,21 @@ badptrslot(void *bad, void *addr, char *which)
 		 * comparison never meant anything.  This byte settles which.
 		 */
 		print("movp: (R.PC-1)->add %#.2ux\n", (R.PC - 1)->add);
+		/*
+		 * The 'b24' capture (see doc/inferno-ports.ms) reported a
+		 * direct AFP source mode (add byte 0x09) but an addr-FP
+		 * delta of ~115 million -- absurd for a compiled-in frame
+		 * offset in an 88-byte frame.  Direct mode computes
+		 * R.s = R.FP + R.PC->s.ind (or R.d = R.FP + R.PC->d.ind);
+		 * printing the raw .ind field settles whether the compiled
+		 * instruction's own operand -- part of the module's Inst
+		 * array, meant to be immutable after load -- actually holds
+		 * that huge value (code-segment corruption, a fourth,
+		 * different-shaped context from data/stack/heap/module-data)
+		 * or whether something else is wrong with this reading.
+		 */
+		print("movp: (R.PC-1)->s.ind %#zx (R.PC-1)->d.ind %#zx\n",
+			(uintptr)(R.PC - 1)->s.ind, (uintptr)(R.PC - 1)->d.ind);
 	}else
 		print("movp: bad %s %p, R.M nil or has no module\n", which, bad);
 	base = (intptr*)addr - 4;

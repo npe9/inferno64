@@ -7669,6 +7669,58 @@ data" is a fourth genuine target alongside the stack and heap cases,
 or a coincidence; the batch is still running.
 
 .NH 1
+A second capture points somewhere sharper still: the code itself
+.PP
+The next capture from the fixed probe, in module
+.CW Sh
+this time:
+.CW "bad sv a" ,
+addressing byte
+.CW 0x09 .
+.CW "USRC(0x09) = 1 = AFP" :
+direct frame-pointer addressing again, like the very first capture
+of this whole hunt.  But
+.CW "addr - FP"
+is
+.I "~115 million" ,
+in an 88-byte frame.  That's not the earlier probe bug back again \-
+this capture used the fixed probe, reading the live global
+.CW R
+directly, the same fix already checked against
+.CW xec() 's
+dispatch loop line by line.  If the addressing mode really is direct
+.RN ( "R.s = R.FP + R.PC->s.ind" )
+and
+.CW R.FP
+really is live and correct, then a 115-million-byte compiled-in frame
+offset can only come from one place: the
+.CW .ind
+field baked into this
+.I instruction
+itself, at load time, sitting in the module's own
+.CW Inst
+array \- code, not data, and supposedly immutable once a module is
+loaded and running.
+.PP
+Not confirmed yet, on purpose: this hunt has been burned twice now by
+committing to a reading before checking what it actually rested on.
+.CW badptrslot()
+now also prints
+.CW "(R.PC-1)->s.ind"
+and
+.CW "(R.PC-1)->d.ind"
+directly \- the raw compiled operand fields themselves, not an
+address derived from them \- so the next capture through this
+instruction (or another like it) says directly whether the field
+itself holds the huge value.  If it does, this is a fourth context
+for the bad-value hunt, and a different shape than the first three:
+not an allocation that left a slot uncovered, but a write landing
+in a module's supposedly-read-only compiled code.  A fresh batch is
+running against the rebuilt binary.
+
+.NH 1
+Then
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
