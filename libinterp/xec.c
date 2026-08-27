@@ -417,10 +417,19 @@ badptrslot(void *bad, void *addr, char *which)
 	 */
 	{
 		Frame *cf = (Frame*)R.FP;
+		/*
+		 * cf->t can genuinely be nil -- gc.c's rootset() already
+		 * handles exactly this by falling back to the Stkext's own
+		 * TR register -- so dereferencing it unconditionally isn't
+		 * a hypothetical: an 'a2' capture did exactly that and
+		 * printed a garbage t->size instead of crashing, because
+		 * whatever this port has mapped at a very low address
+		 * doesn't fault on read.  Guarded here instead of trusted.
+		 */
 		print("movp: R.FP %#p R.SP %#p R.TS %#p frame t->size %d "
 			"(addr - FP = %ld, SP - FP = %ld)\n",
 			R.FP, R.SP, R.TS,
-			cf != nil ? cf->t->size : -1,
+			(cf != nil && cf->t != nil) ? cf->t->size : -1,
 			(long)((uchar*)addr - R.FP),
 			(long)(R.SP - R.FP));
 		/*

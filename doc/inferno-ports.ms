@@ -7719,7 +7719,75 @@ in a module's supposedly-read-only compiled code.  A fresh batch is
 running against the rebuilt binary.
 
 .NH 1
-Then
+A third capture confirms the mechanism works, and finds a probe bug of its own
+.PP
+The next capture, before the fresh batch was killed for the previous
+section's probe rebuild: module
+.CW Init ,
+.CW "bad dv 0" ,
+addressing byte
+.CW 0x01
+.RN ( "UDST(0x01) = 1 = AFP" ,
+direct again, this time on the destination).  This one resolves
+cleanly:
+.CW "(R.PC-1)->d.ind"
+is
+.CW 0xa0
+(160), and the probe's own
+.CW "addr - FP"
+is exactly
+.CW 160 .
+Match.  The addressing mechanism computed exactly what the compiled
+instruction said to compute; nothing wrong with
+.CW R.FP
+or the mode decode here.  This is useful on its own: it shows the
+previous section's ~115-million-byte mismatch is not something wrong
+with direct-mode addressing in general \- most direct-mode captures,
+this one included, check out fine \- so that anomaly still needs its
+own matching capture before it's anything more than one unexplained
+number.
+.PP
+The bad value itself
+.RN ( 0 ,
+not
+.CW 0x18
+this time) fits the original stack-allocation finding rather than
+adding anything past it: SP-FP was 264 in an area
+.CW newstack()
+hands out unzeroed, so a slot reading 0 here is consistent with never
+having been covered by
+.CW initmem() ,
+holding whatever this physical memory looked like before Dis ever
+touched it \- plausibly literal zero, if it's memory the kernel handed
+out fresh rather than something
+.I else 's
+leftover bytes.
+.PP
+What wasn't clean: the frame-bounds line reported
+.CW "t->size -268370093" ,
+a number with no sane reading.  Traced to the probe, not the kernel:
+.CW cf->t
+was nil here, and the print dereferenced it anyway
+.RN ( "cf != nil ? cf->t->size : -1" ,
+checking only
+.CW cf ,
+never
+.CW cf->t ).
+.CW gc.c 's
+.CW rootset()
+already handles exactly this case \- a frame's
+.CW t
+can legitimately be nil, falling back to the Stkext's own
+.CW TR
+register \- so this wasn't a hypothetical to guard against, it's a
+real, reachable state this specific capture reached.  Fixed to check
+both pointers before dereferencing; this port's low physical memory
+happening to be readable (not faulting) is why a bad dereference
+produced a garbage number instead of a crash, which is its own small
+reminder not to read a printed value as ground truth just because it
+printed cleanly.  Rebuilt, same two pre-existing unrelated warnings,
+nothing new.  Fresh batch running.
+
 .NH 1
 Then
 .PP
