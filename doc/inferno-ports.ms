@@ -9703,8 +9703,43 @@ be entered via interrupt-time reentrancy rather than only at
 allocation time, which the concurrency section above left unexamined
 for exactly this reason; and \- most directly \- whichever code path
 drops the last reference to a list cell, whether it reliably clears
-every root that pointed at it or can leave one dangling.  That is
-where this resumes.
+every root that pointed at it or can leave one dangling.
+.PP
+.CW rungc()
+is a genuine multi-call incremental collector \- bounded
+.CW visit
+quota per call, state
+( base ,
+ptr ,
+limit )
+resumed across calls, mutator execution interleaved between them, not
+one mark pass run to completion \- so the standard risk for this shape
+of collector was worth checking directly: a mutator write of a pointer
+into an already-black
+( color\0==\0mutator ,
+already scanned this epoch) object, with nothing re-graying the value
+just stored, can leave a still-reachable object mis-colored
+.CW sweeper
+and it gets freed while live.  Checked the two general pointer-store
+paths,
+.CW OP(movp)
+and
+.CW OP(consp)
+itself: both call
+.CW Setmark()
+on the value being stored, unconditionally, before the store \- exactly
+the barrier this shape of collector needs, present and correct in
+both.  Freshly allocated objects are also allocated already-black
+( nheap()
+sets
+.CW h->color\0=\0mutator
+directly, reading the epoch's current color at allocation time), which
+correctly exempts a brand-new cell from this epoch's sweep regardless
+of when it gets linked in.  So a simple missing-barrier reading does
+not fit either of the two most obvious sites \- this is checked, not
+assumed, and does not rule out a barrier gap elsewhere (a less obvious
+store opcode, or channel send/receive), only narrows where one would
+have to be.  That is where this resumes.
 
 .NH 1
 Then
