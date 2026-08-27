@@ -163,6 +163,20 @@ talloc(Node *n, Type *t, Node *nok)
 	Desc *desc;
 	char buf[StrSize];
 
+	/*
+	 * a frame-slot allocation for a type check.c never ran
+	 * sizetype() on: idoffsets() (types.c) would place it at a
+	 * zero-width slot, silently overlapping whatever offset comes
+	 * next -- caught three separate times now (echk's Oname case
+	 * building a bare function value's wrapped Tref, synthfvwrap's
+	 * own analogous Tref, and Oref's own literal type), each time
+	 * only via a delayed, unrelated-looking background-thread
+	 * fault, never at the actual point the unsized type was built.
+	 * Tfn/Tainit legitimately size to 0 (sizetype()'s own cases);
+	 * nothing else placed in a frame should.
+	 */
+	if(t->size == 0 && t->kind != Tfn && t->kind != Tainit)
+		fatal("talloc: unsized type %T (kind %d) -- missing sizetype()?", t, t->kind);
 	ok = nil;
 	if(nok != nil)
 		ok = nok->decl;
