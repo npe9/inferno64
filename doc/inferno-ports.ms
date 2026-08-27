@@ -6194,6 +6194,83 @@ eliminated in one batch rather than a driver-by-driver read.  Result
 in the next section.
 
 .NH 1
+A striking drop, and a confound caught before trusting it
+.PP
+The
+.CW "\-nic\ none"
+batch: four of forty boots crashed at all, three general protection
+violations and one
+.CW "panic:\ loading" ;
+.B zero
+hit
+.CW "invalid\ opcode" ,
+against ten and twelve in the two batches immediately before it.
+Against a true rate anywhere near a quarter of boots, forty zeros in
+a row is not a plausible draw (roughly one chance in three hundred
+thousand).  Tempting to write this up as the network path implicated \- and
+before doing that, checked whether the comparison is even fair,
+because the earlier retraction was a reminder to check rather than
+infer.  It wasn't fair.  Grepped both batches for the depth markers
+every capture in this hunt has used to place a crash:
+.CW "Welcome\ to\ Inferno"
+appears in almost every boot of both (36/40 no-NIC, 37/40 with) \-
+but
+.CW mountio
+and
+.CW "spawn\ sh"
+appear in
+.B zero
+of the no-NIC boots, against most of the NIC-attached ones.  Reading
+.CW os/inferno/init/pcinit.b
+explains why directly: its
+.CW mount()
+is a real
+.CW "sys\->dial(\ \*(lqtcp!\*(rq+server+\*(lq!6666\*(rq\ )"
+over
+.CW /net ,
+bound from
+.CW #l / #I
+\- genuinely network-dependent, not a local mount dressed up to look
+like one.  With no NIC at all there is no
+.CW /net
+to dial through, so every one of these boots stops well short of
+.CW mountio() ,
+the exact code region every invalid-opcode capture on record has
+clustered around.  Zero crashes there is at least partly "the boot
+never got far enough to have the chance," not "the network path was
+removed and the bug went with it."  The
+.CW "\-nic\ none"
+result stands as read for one narrower claim \- something about
+reaching
+.CW mountio()
+matters \- but does not, on its own, tell network device/ISR apart
+from network traffic, and saying "the network path is implicated in
+the corruption" would overstate what one confounded batch shows.
+Neither the
+.CW Styxservers
+pid-4 capture nor the
+.CW sh.b
+wrong-sentinel captures are known to share whatever this batch
+suppressed; they were recorded on NIC-attached boots and nothing here
+says they don't have a different cause.
+.PP
+The batch that actually separates device from traffic is running:
+.CW "\-netdev\ user,id=net0,restrict=on\ \-device\ virtio\-net,netdev=net0" ,
+same device and interrupt path as every earlier boot, outbound
+traffic blocked at the QEMU user-net layer so DHCP times out but
+.CW #l / #I
+still bind and
+.CW dial()
+still runs, reaching the same depth as a normal boot rather than
+stopping short of it.  If crashes return at anything like the normal
+rate, the device or its interrupt handler is implicated over the
+traffic it carries; if the batch stays as quiet as this one, the
+traffic path itself \- most concretely the
+.CW mountio()
+region already flagged \- moves to the top of the list.  Result in
+the next section.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
