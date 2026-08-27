@@ -346,12 +346,28 @@ badptrslot(void *bad, void *addr, char *which)
 	int i;
 
 	xp = currun();
-	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil){
 		/* inst offset is build-independent; see destroy()'s comment. */
 		print("movp: bad %s %p, running Dis pid %d module %s PC %#p inst %d\n",
 			which, bad, xp->pid, xp->R.M->m->name, xp->R.PC,
 			(int)(xp->R.PC - xp->R.M->m->prog));
-	else
+		/*
+		 * By the time an opcode handler runs, xec()'s dispatch loop
+		 * has already done R.PC++ past it -- so the instruction that
+		 * actually produced addr is at R.PC-1, not R.PC.  Its add
+		 * field selects which dec[] function (D00..D08+, dec.c) built
+		 * addr: a direct mode (Dxx: R.MP/R.FP + a compiled-in ind) or
+		 * an indirect one (DIND: dereference a pointer already sitting
+		 * in a frame/module slot, then add a small field offset).
+		 * Every "past t->size" reading so far compared addr against
+		 * *this* frame's own bounds on the unstated assumption the
+		 * mode was direct; if it was indirect instead, addr is [some
+		 * other object's pointer] + a small offset, and that
+		 * comparison never meant anything.  This byte settles which.
+		 * See doc/inferno-ports.ms.
+		 */
+		print("movp: (R.PC-1)->add %#.2ux\n", (xp->R.PC - 1)->add);
+	}else
 		print("movp: bad %s %p, currun() nil or has no module\n", which, bad);
 	base = (intptr*)addr - 4;
 	print("movp: memory around %s slot %#p:\n", which, addr);
