@@ -682,7 +682,8 @@ Sys_sleep(void *fp)
 		*f->ret = limbosleep(f->period);
 		osleave();
 		poperror();
-	}
+	}else
+		*f->ret = 0;
 	acquire();
 }
 
