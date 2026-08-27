@@ -2182,8 +2182,18 @@ the move and the button on
 .CW /dev/mouse ,
 and rio moves the cursor to where the move aimed and pops its
 New/Resize/Move/Delete/Hide/Exit menu, whose text is drawn back through
-the user-level draw server (so devdraw's font path runs too).  The three
-configs still check: pc64 58, upc64 7, xup64 10.
+the user-level draw server (so devdraw's font path runs too).  Carried
+one step further, the same input path sweeps out a new window: select
+New from the menu, press button 3 at one corner and release at the
+other, and rio makes the window, spawns
+.CW rc
+in it, and draws the frame and the
+.CW %
+prompt - a usable terminal, swept and shelled entirely through the two
+user-level drivers.  So the desktop is not merely painted but worked:
+menu, window sweep, interactive shell, all above the microkernel with no
+kernel graphics and no kernel mouse.  The three configs still check:
+pc64 58, upc64 7, xup64 10.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an

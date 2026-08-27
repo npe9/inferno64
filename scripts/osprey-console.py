@@ -47,6 +47,10 @@ def main():
 	ap.add_argument('--click', default=None,
 		help='before the shot, move the mouse and hold this button down '
 		     '(left|middle|right), or "move" to only move; needs --shot')
+	ap.add_argument('--input', default=None,
+		help='before the shot, run a mouse sequence over QMP; comma-'
+		     'separated ops m:DX:DY (relative move), d:BUTTON / u:BUTTON '
+		     '(button down/up), s:SECONDS (pause); needs --shot')
 	a = ap.parse_args()
 
 	if a.build:
@@ -152,18 +156,34 @@ def main():
 				def qmp(cmd, args):
 					qf.write(json.dumps({"execute":cmd,"arguments":args})+chr(10))
 					qf.flush(); qf.readline()
+				def mrel(dx, dy):
+					# PS/2 deltas are one signed byte; send in small steps
+					while dx or dy:
+						sx = max(-100, min(100, dx)); dx -= sx
+						sy = max(-100, min(100, dy)); dy -= sy
+						qmp("input-send-event", {"events":[
+							{"type":"rel","data":{"axis":"x","value":sx}},
+							{"type":"rel","data":{"axis":"y","value":sy}}]})
+						time.sleep(0.03)
+				def mbtn(button, down):
+					qmp("input-send-event", {"events":[
+						{"type":"btn","data":{"button":button,"down":down}}]})
+					time.sleep(0.1)
 				# optionally drive the mouse before the shot: move a little,
 				# then hold a button down so a menu that opens on press shows.
 				if a.click:
-					for _ in range(8):
-						qmp("input-send-event", {"events":[
-							{"type":"rel","data":{"axis":"x","value":30}},
-							{"type":"rel","data":{"axis":"y","value":20}}]})
-						time.sleep(0.05)
+					mrel(240, 160)
 					if a.click != 'move':
-						qmp("input-send-event", {"events":[
-							{"type":"btn","data":{"button":a.click,"down":True}}]})
+						mbtn(a.click, True)
 						time.sleep(0.4)
+				# a general mouse sequence for multi-step interactions
+				if a.input:
+					for op in a.input.split(','):
+						f = op.split(':')
+						if f[0] == 'm':   mrel(int(f[1]), int(f[2]))
+						elif f[0] == 'd': mbtn(f[1], True)
+						elif f[0] == 'u': mbtn(f[1], False)
+						elif f[0] == 's': time.sleep(float(f[1]))
 				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
 				qs.close()
 			except Exception as e:
