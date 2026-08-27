@@ -6793,15 +6793,45 @@ batches, counting only
 .CW destroy() / OP(movp)
 captures, not the whole panic grab-bag: virtio 2/40, igb 1/40, no-NIC
 2/37.
-.B "Indistinguishable, all three."
-The corruption this document opened with \- a pointer-typed slot
+.B "Three counts of one and two events \- not enough to claim the
+rate is equal, only that nothing here separates them."
+Consistent with anything from roughly one to fifteen percent under
+any of the three conditions; a real rate comparison needs far more
+than four total captures.  What
+.I is
+solid at this sample size is the presence claim, not a rate claim:
+the corruption this document opened with \- a pointer-typed slot
 holding
 .CW 0
 where
 .CW H
-belongs, at roughly one in twenty boots \- does not need a network
-card, a driver, or any of the attach-time kprocs two sections back
-went looking in.  It was never the NIC.
+belongs \- fires with no network card, no driver, and none of the
+attach-time kprocs two sections back went looking in, present at all.
+It was never the NIC \- that much four small counts can say; how
+much rarer or more common it is without one, they can't.
+.PP
+Checked one more thing before trusting the comparison at all: do
+these no-NIC captures land at the same point in execution the
+NIC-attached ones do, or did the no-NIC boots just have less runway
+and land somewhere structurally different \- the same trap the first
+.CW "\-nic\ none"
+batch fell into, one layer deeper.  Grepped both captures against
+the last common milestone
+.RB ( "spawn sh" ) :
+both no-NIC
+.CW destroy()
+hits land one line after it (module
+.CW Env
+and
+.CW Readdir ,
+early library loads), and so do all three NIC-attached captures on
+record (module
+.CW String ,
+.CW Sh ,
+.CW Env ,
+each within a few lines of the same milestone).  Same point in
+execution, every time, on both sides of the comparison.  The
+presence claim holds on checked ground, not assumed ground.
 .PP
 Read together, this reframes the last five sections rather than
 erasing them: this investigation has actually been running down
