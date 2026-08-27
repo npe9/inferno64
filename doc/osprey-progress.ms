@@ -2190,10 +2190,17 @@ other, and rio makes the window, spawns
 in it, and draws the frame and the
 .CW %
 prompt - a usable terminal, swept and shelled entirely through the two
-user-level drivers.  So the desktop is not merely painted but worked:
-menu, window sweep, interactive shell, all above the microkernel with no
-kernel graphics and no kernel mouse.  The three configs still check:
-pc64 58, upc64 7, xup64 10.
+user-level drivers.  And it takes input: with rio run in the foreground
+so it owns
+.CW /dev/cons ,
+a line typed on the console reaches the focused window, and
+.CW echo
+.CW hello
+runs and prints its answer back into the window.  So the desktop is not
+merely painted but worked: menu, window sweep, and an interactive shell
+that executes what is typed, all above the microkernel with no kernel
+graphics and no kernel mouse.  The three configs still check: pc64 58,
+upc64 7, xup64 10.
 .PP
 The second cut is the driver tasks, described above as the seL4 shape:
 cons, uart and rtc leave the kernel and become tasks that hold an

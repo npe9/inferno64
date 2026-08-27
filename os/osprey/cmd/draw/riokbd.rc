@@ -1,0 +1,14 @@
+#!/bin/rc
+# build and start the draw and mouse servers, then run rio in the
+# foreground so it - not the login shell - owns /dev/cons and keystrokes
+# on the serial line reach the focused window.
+rm -rf /tmp/draw; mkdir -p /tmp/draw; cp /n/cd/src/draw/* /tmp/draw/; cd /tmp/draw
+for(f in devdraw kshim main){ 6c -I. $f.c || echo cc-$f FAIL }
+6l -o draw devdraw.6 kshim.6 main.6 /amd64/lib/lib9p.a /amd64/lib/libmemlayer.a /amd64/lib/libmemdraw.a && echo draw-linked
+6c mouse.c && 6l -o mouse mouse.6 /amd64/lib/lib9p.a && echo mouse-linked
+/tmp/draw/draw
+sleep 1
+/tmp/draw/mouse
+sleep 1
+echo rio-ready
+exec rio

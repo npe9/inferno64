@@ -48,9 +48,14 @@ def main():
 		help='before the shot, move the mouse and hold this button down '
 		     '(left|middle|right), or "move" to only move; needs --shot')
 	ap.add_argument('--input', default=None,
-		help='before the shot, run a mouse sequence over QMP; comma-'
+		help='before the shot, run a sequence over QMP/serial; comma-'
 		     'separated ops m:DX:DY (relative move), d:BUTTON / u:BUTTON '
-		     '(button down/up), s:SECONDS (pause); needs --shot')
+		     '(button down/up), s:SECONDS (pause), k:TEXT (type TEXT then '
+		     'Enter on the serial line); needs --shot')
+	ap.add_argument('--shot-on', default=None,
+		help='take the shot when this pattern appears rather than when '
+		     'the commands run out; lets a foreground program (rio) own '
+		     'the console while the shot still fires')
 	a = ap.parse_args()
 
 	if a.build:
@@ -99,6 +104,7 @@ def main():
 		pat, sep, reply = e.partition('=')
 		steps.append((re.compile(pat.encode(), re.M), reply if sep else None))
 	until = re.compile(a.until.encode(), re.M) if a.until else None
+	shot_on = re.compile(a.shot_on.encode(), re.M) if a.shot_on else None
 	cmds = list(a.command)
 
 	log = open(a.log, 'wb')
@@ -141,11 +147,19 @@ def main():
 					continue
 
 			if not steps and until is not None and until.search(seen):
-				seen = b''
-				deadline = time.time() + a.timeout
 				if cmds:
+					seen = b''
+					deadline = time.time() + a.timeout
 					send(cmds.pop(0))
 					continue
+				elif shot_on is None:
+					seen = b''
+					status = 0
+					break
+				# else: wait for shot_on while the foreground program runs
+
+			if not steps and shot_on is not None and not cmds \
+					and shot_on.search(seen):
 				status = 0
 				break
 		if a.shot and status == 0:
@@ -184,6 +198,7 @@ def main():
 						elif f[0] == 'd': mbtn(f[1], True)
 						elif f[0] == 'u': mbtn(f[1], False)
 						elif f[0] == 's': time.sleep(float(f[1]))
+						elif f[0] == 'k': send(':'.join(f[1:]))
 				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
 				qs.close()
 			except Exception as e:
