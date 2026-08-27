@@ -6473,6 +6473,121 @@ again, and that is real, separate work from the main hunt, not a
 continuation of it \- recorded here and left for its own turn.
 
 .NH 1
+A receive-path hypothesis, killed by one grep
+.PP
+Went looking for the shared mechanism the driver-agnostic finding
+implies and found a real ordering issue \- then checked whether it
+could actually fire in the boots on record before building anything
+on it, and it can't.  Worth recording exactly this way: the cheapest
+result an investigation can produce is a hypothesis killed in one
+grep, and it belongs on the record next to this document's other
+retractions, not quietly dropped.
+.PP
+.CW port/netif.c 's
+.CW openfile()
+(reached from
+.CW etherattach() 's
+peers via
+.CW netifopen() )
+allocates a new
+.CW Netfile ,
+sets
+.CW f\->in ,
+then does
+.CW "*fp\ =\ f;"
+\- publishing the pointer into
+.CW nif->f[] ,
+the same array
+.CW devether.c 's
+.CW ethermux()
+walks from interrupt context via
+.CW etheriq() ,
+with no lock either side agrees on
+.RB ( openfile()
+takes
+.CW qlock(nif) ,
+a sleeping lock, never
+.CW ilock() ;
+.CW ethermux()
+takes nothing at all) \- before
+.CW f\->inuse ,
+.CW netown() 's
+owner/mode, and the rest of the struct are set.  A real ordering gap:
+if an interrupt lands in that exact window, it would read a
+partially-set-up
+.CW Netfile
+through a pointer that's already visible.  Checked the one thing that
+would make that harmless before treating it as a lead: this tree's
+.CW malloc()
+.RB ( os/inferno/port/alloc.c )
+unconditionally
+.CW "memset(v,\ 0,\ size)" 's
+what it returns, so the fields in that window are zero, not garbage
+\- narrower than first read, but still a real gap between "visible"
+and "fully initialized" that a sufficiently unlucky field could still
+land in.
+.PP
+Whether it can explain anything on record turns on one fact this
+session already has: does any boot in any batch ever actually open a
+netfile on
+.CW #l0
+at all?
+.CW ethermux()
+only dereferences a slot once something has opened it; every slot
+starts and stays nil otherwise, walked and skipped every time.
+Grepped every log on hand
+.RB ( igb
+and
+.CW restrict=on
+batches, eighty boots) for
+.CW clone ,
+.CW ipifc ,
+and
+.CW ether0
+\- the only strings anything in
+.CW dis/init
+prints on that path.
+.B "One match, and it wasn't real:"
+.CW "init0:\ clone\ failed"
+is process
+.CW clone() ,
+a coincidental substring hit, not netif's.
+.B "Zero netfiles were ever opened, in any boot measured this
+session."
+.CW bindether0 ,
+.CW usedhcp ,
+and
+.CW mountfs
+\- the only callers of an ipifc clone open anywhere in
+.CW dis/init
+\- all sit inside the
+.CW connectmethod
+branches that the empty-
+.CW bootargs
+fallback never enters, confirmed twice already this document
+.RB ( "unsupported connect method:" ,
+every boot).
+.B "The hypothesis is killed for every boot this session actually
+measured, regardless of whether the ordering bug is real in
+general."
+It is real \- worth fixing on its own terms, not urgent, not
+attempted this round \- but it is not evidence about this crash.
+.PP
+This also sharpens the standing puzzle rather than reopening it: with
+.CW restrict=on
+the corresponding transmit and receive paths carry almost no real
+packets, and the crash rate held at the normal level anyway.  Whatever
+mechanism this is, it does not need a packet to actually arrive or
+depart \- it needs, at most, whatever a driver does with
+.I no
+confirmed peer: ring setup at
+.CW attach() ,
+transmit attempts that never get answered (ARP, DHCP, still really
+sent over the wire even restricted), link-state and timer-driven
+polling.  That is a materially smaller surface than the whole receive
+path just ruled out, and it is where the next read belongs.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
