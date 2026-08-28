@@ -12116,6 +12116,113 @@ lead rather than guessed at further this round: one hit in 30 boots,
 a different call site than either bug just fixed, and worth its own
 capture-driven investigation rather than a speculative patch.
 .NH 1
+The third incref(nil): forth's default namespace mode had no root
+.PP
+The previous section's open lead --
+.CW "incref: bad r 0x0"
+resolving to
+.CW namec+1273 ,
+inside one of
+.CW namec() Ns 's
+own
+.CW incref()
+calls directly rather than by way of
+.CW walk() --
+traced to
+.CW devforth.c Ns 's
+.CW newforthproc() .
+.CW newpgrp()
+only sets
+.CW "ref/pgrpid/progmode" ;
+.CW smalloc()
+zeroes the rest, so a fresh
+.CW Pgrp Ns 's
+.CW dot
+and
+.CW slash
+start
+.CW nil
+and rely on the caller to fill them in.
+.CW pgrpcpy()
+does that -- along with the mount table -- but
+.CW newforthproc()
+only calls it
+.CW "if(params->newns\ ==\ 0)" .
+.CW params.newns
+DEFAULTS TO 1
+.CW (parseparams() Ns 's
+own initializer), making the skipped branch the common case, not an
+edge one: any forth process started without explicitly requesting the
+shared-namespace flag got a
+.CW Pgrp
+with both
+.CW dot
+and
+.CW slash
+nil, and its first
+.CW namec()
+call -- opening
+.CW "/x" ,
+opening
+.CW "./x" ,
+anything -- read one of those two fields directly and
+.CW incref() Ns 'd
+it with no nil check, since
+.CW namec()
+has no reason to expect its own process group's root or current
+directory to be unset.
+.PP
+Fixed by cloning just
+.CW dot
+and
+.CW slash
+-- the same call
+.CW pgrpcpy()
+itself makes for those two fields -- when the mount-table copy is
+skipped.  "New namespace" means an independent, not-shared mount
+table (which
+.CW pgrpcpy()
+would also copy, and this path correctly continues to skip); it does
+not mean no root at all.  A namespace with no root cannot resolve
+.CW "/"
+or
+.CW "."
+at all, which is not a coherent namespace by any definition, empty or
+otherwise.
+.PP
+Built and boot-tested: 60 boots across two batches after this fix
+(30%, 13% panic rates, both in this round's established band), ZERO
+.CW "incref: bad r 0x0"
+captures in either batch -- the first time this signature has not
+appeared in a batch since it was first noticed, across all three of
+this round's incref(nil) fixes combined.
+.PP
+The same confirmation batch also produced the first fully
+self-consistent capture of the
+.CW _allocb
+diagnostic since its own double-evaluation bug was fixed:
+.CW "size\ 26\ sizeof(Block)\ 64\ msz\ 0\ Hdrspc\ 64" .
+.CW msz
+(captured once, per the earlier fix) genuinely is zero -- the pool
+handed
+.CW _allocb()
+a block whose own
+.CW b->size
+equals
+.CW BHDRSIZE
+exactly, despite a 161-byte request
+.CW (sizeof(Block)+size+Hdrspc+(BY2V-1)) .
+The block's magic passed
+.CW D2BPC Ns 's
+check (this is not a stray/corrupt pointer), so somewhere inside
+.CW poolalloc() Ns 's
+tree-search or split path a real block is ending up tagged with the
+wrong size.  This is a real, open, self-consistent lead -- one hit in
+60 boots this round, noted rather than chased further given the
+frequency-driven discipline the rest of this hunt has followed, but
+worth returning to: unlike the earlier msize() double-eval artifact,
+this number can now be trusted.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
