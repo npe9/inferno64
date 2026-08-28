@@ -12471,6 +12471,46 @@ case that first raised this suspicion could not be re-verified at all
 (addresses shift across rebuilds, and that build is gone), so it
 stays exactly as inconclusive as it was already documented to be.
 .NH 1
+Narrowing poolalloc's size=0 lead further, and a plausible bindmount capture
+.PP
+The exact-match chain check from the previous section did not fire
+on a third reproduction of the
+.CW "_allocb:\ lim\ <\ base\ ...\ msz\ 0"
+signature this round -- this time with a different requested size (2,
+not 26, further confirming it is not size-specific) -- ruling that
+specific hypothesis out.  Added the same style of check to the other
+tree-search branch:
+.CW q
+(the smallest BST node found with
+.CW "size\ >=\ wanted" ,
+by the descent's own invariant) is verified to actually satisfy that
+invariant right before use, rather than trusted implicitly.  Built
+and boot-tested: 50 boots, 8 panics (16%, in-band, no regression).
+Neither this new check nor the size=0 signature itself fired this
+batch -- narrows the remaining suspects toward the arena-extend path
+(which sets
+.CW size
+directly rather than via a tree lookup, structurally less likely) or
+something beneath
+.CW poolalloc()
+itself, if the bug is not simply rare enough to still need more
+boots.
+.PP
+The same batch surfaced a new
+.CW "cclose\ ...\ c\ nil"
+resolving to
+.CW bindmount+506 --
+unlike the
+.CW ccloseq / rread
+captures the resolver fix above uncovered as suspect, this one is
+plausible on inspection:
+.CW bindmount()
+genuinely calls
+.CW cclose()
+at several points in its own body.  Which specific call fired is not
+pinned down without disassembly this round; one hit, recorded as an
+open lead rather than chased further.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
