@@ -11938,6 +11938,184 @@ Rebuilt clean and boot-tested (25 boots, 9 panics, 36%, within this
 round's established band; none of the newly-tagged sites fired this
 particular batch, consistent with alloc:D2B's own low frequency).
 .NH 1
+Two real incref(nil) bugs, found from allocb.c's own diagnostic catching itself out
+.PP
+The alloc:D2B tagging round above turned up a second, unrelated
+signal along the way:
+.CW "checkb 0 qaddlist 1" ,
+a
+.CW Block
+whose
+.CW base
+exceeds its
+.CW lim
+by EXACTLY
+.CW Hdrspc
+(64) bytes, every single time, regardless of the block's overall size
+or address.  That precision -- not a scattered, size-proportional
+corruption -- pointed straight at
+.CW allocb.c Ns 's
+.CW _allocb() ,
+the only place
+.CW Hdrspc
+is used, and specifically at the arithmetic that sets
+.CW base
+and
+.CW lim
+from
+.CW sizeof(Block)
+and
+.CW msize(b) .
+A first version of a diagnostic added right there, panicking the
+moment
+.CW lim\ <\ base
+is computed, caught something more interesting than the bug it was
+built to catch:
+.CW msize(b) ,
+called twice in the same function on the same untouched block with
+nothing else running in between on this single-vCPU harness, returned
+two DIFFERENT values eight bytes of source apart -- 216 in the
+panic's own argument list, but something near zero moments earlier,
+when the first call set
+.CW b->lim
+(which resolved to
+.CW b->lim\ ==\ b
+itself).
+.CW msize()/poolmsize()
+disagreeing with itself across two calls on one block is a real,
+open question this hunt has not chased to ground yet.  Fixed the
+diagnostic itself first -- one
+.CW msize(b)
+call, captured in a local, reused everywhere -- so the next capture's
+numbers are self-consistent instead of self-contradicting.  No
+.CW "_allocb: lim < base"
+capture has recurred since; the original
+.CW "checkb 0 qaddlist 1"
+signature has not recurred either, in three 30-boot batches run since.
+.PP
+The same round's boot batches also surfaced
+.CW "incref: bad r 0x0" ,
+twice in one batch, both resolving to
+.CW walk+34 .
+.CW chan.c Ns 's
+.CW walk()
+opens with
+.CW "path\ =\ c->path;\ incref(path);" --
+the one
+.CW ->path
+incref site in this file with no
+.CW "if(path\ !=\ nil)"
+guard, though every other site
+.CW ( cclone() ,
+two direct sites elsewhere in
+.CW chan.c )
+already has one, since
+.CW c->path
+is a documented-nil-able field.  Resolving the stack both times traced
+back through
+.CW namec+680
+to
+.CW "namec()" Ns 's
+own call
+.CW "walk(&c,\ e.elems,\ e.nelems,\ nomount,\ &e.nerror)"
+with
+.CW e.nelems\ ==\ 0 --
+the common "resolve to this Chan itself" shape, where
+.CW walk() Ns 's
+loop body (the only place
+.CW addelem() ,
+the nil-unsafe consumer of
+.CW path ,
+gets called) never executes.  Guarded to match the rest of the file;
+verified nil-safe end to end for this case.
+.PP
+That fix did not fully close the signature: the next batch produced
+one more
+.CW "incref: bad r 0x0" ,
+still at
+.CW walk+34
+(the offset shifted with the edit, but landed back on the same
+label), still via
+.CW namec+680 .
+The survivor turned out to be
+.CW walk() Ns 's
+OTHER, top-of-function
+.CW incref(c) ,
+not the path one just fixed.  Tracing
+.CW namec()
+above its
+.CW walk()
+call found the actual gap: the
+.CW '/'
+and
+.I default
+cases just above the
+.CW '#'
+case each
+.CW incref()
+a
+.CW Chan
+they already hold, which already nil-checks via
+.CW badref()
+right where it happens; the
+.CW '#'
+case assigns
+.CW "c\ =\ devtab[t]->attach(...)"
+fresh, with no local
+.CW incref()
+and, until now, no nil check either -- so a device whose
+.CW attach()
+returns
+.CW nil
+instead of calling
+.CW error()
+sailed straight through to
+.CW walk() Ns 's
+own
+.CW incref(c)
+three lines later, with nothing along the way naming which device.
+Added the same nil check every other attach failure in that switch
+already has
+.CW (error(Ebadsharp)) ,
+plus a
+.CW print()
+naming the specific
+.CW devtab
+entry so the next occurrence identifies itself immediately.
+Confirmed hardware-live: the very next batch printed
+.CW "namec:\ attach()\ returned\ nil,\ devtab[6]->name\ pipe"
+and continued with a normal Chan-open error instead of a kernel
+panic.
+.I Why
+.CW devpipe.c Ns 's
+own
+.CW attach()
+can return
+.CW nil
+is not yet investigated -- this fix turns a kernel panic into a
+recoverable open-time error, which is the right shape regardless of
+that root cause, but the root cause itself is still open.
+.PP
+One more, different-looking
+.CW "incref: bad r 0x0"
+turned up in the batch that confirmed the attach fix, this time
+resolving to
+.CW namec+1273 --
+inside one of
+.CW namec() Ns 's
+own
+.CW incref()
+calls directly, not by way of
+.CW walk() .
+Most likely
+.CW up->pgrp->slash
+or
+.CW up->pgrp->dot
+itself nil for some process group, but this is noted here as an open
+lead rather than guessed at further this round: one hit in 30 boots,
+a different call site than either bug just fixed, and worth its own
+capture-driven investigation rather than a speculative patch.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
