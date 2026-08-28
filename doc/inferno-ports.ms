@@ -11788,6 +11788,156 @@ layer that duplication happens to occur -- that neither this hunt's
 Dis-level nor native-kernel-level instrumentation has caught in the
 act yet at either layer.
 .NH 1
+Ruling out the coherence/cmpswap function pointers, and a frequency check
+.PP
+The Path underflow the previous section documented left an obvious
+next question open: is
+.CW chan.c Ns 's
+CAS-based
+.CW incref()/decref()
+(a retry loop around
+.CW cmpswap() )
+safe on this port, or could the memory-ordering primitives underneath
+it be the missing increment?
+.CW devarch.c
+(shared from
+.CW ../pc/
+into every pc64 build via the mkfile's
+.CW %.$O:\ ../pc/%.c
+rule) declares both
+.CW coherence
+and
+.CW cmpswap
+as function pointers, defaulting to the weakest safe choice
+.CW ( nop
+and a splhi/splx-based
+.CW cmpswap386 )
+and only upgrading them --
+.CW mb586
+or
+.CW mfence
+for
+.CW coherence ,
+a real
+.CW LOCK\ CMPXCHG
+.CW cmpswap486
+for
+.CW cmpswap
+-- once
+.CW archinit()
+inspects the CPU's own reported family and feature bits.  Read in
+full, this upgrade happens at
+.CW main.c Ns 's
+line 184, immediately after
+.CW cpuidentify() ,
+and unconditionally before
+.CW mmuinit() ,
+.CW poolsizeinit() ,
+.CW procinit() ,
+or
+.CW userinit() --
+that is, before any
+.CW Path
+or
+.CW Chan
+the rest of the boot allocates and refcounts even exists.  It is also
+unconditionally before
+.CW arch->intrinit() ,
+the call that would launch any additional processors on a real
+multiprocessor.
+.PP
+That last point turns out to make the whole question moot for this
+hunt's own test harness:
+.CW qemu-boot.sh
+passes no
+.CW -smp
+flag at all, so QEMU boots a single vCPU every time.  With one core,
+.CW arch->intrinit() Ns 's
+AP-launch loop
+.CW (squidboy.c Ns 's
+.CW lapicstartap())
+finds no second processor to bring online and simply times out; there
+is no genuine concurrency for a release barrier or a compare-and-swap
+retry loop to race against, on this port, in this harness, as
+currently invoked.  On a true uniprocessor even the weaker default
+.CW cmpswap386
+(interrupts-off around a plain compare-and-store) would already be
+race-free against reentrant interrupts, since it disables the only
+thing on a single core that could interleave with it.  This thread is
+ruled out for the harness as it exists today, not because the code
+could never matter on real multiprocessor hardware, but because
+nothing in the reproducible boot path currently exercises more than
+one core.
+.PP
+Before chasing anything else, a frequency check the hunt's own
+standing discipline calls for and had not yet run for this specific
+capture: across the eight most recent batches logged this session
+(180 boots, 107 panics),
+.CW "decref pc="
+appears exactly twice.  General protection violation and page fault
+together account for roughly forty percent of all panics in the same
+window; alloc:D2B (heap corruption) captures appear four to eight
+times depending on how loosely near-duplicate messages are counted.
+The Path underflow was worth documenting in full because it was
+.I novel --
+a second, independently-confirmed layer for the same failure shape --
+not because it is frequent.  It remains an open, correctly-scoped
+finding; it is not this hunt's dominant panic type, and further
+instrumentation aimed specifically at it is not the best next use of
+effort while GPF/page-fault and alloc:D2B remain both more frequent
+and more tractable.
+.PP
+alloc:D2B turned out to be the more immediately actionable of the
+two: two independent boots this round produced byte-for-byte
+identical captures
+.CW ( "alloc:D2B:\ 312aa0\ not\ in\ pools\ (from\ 261314/2bf070)" ,
+twice, and the same shape at a different address with a different
+second pc, also twice), which resolved
+.CW 261314
+to
+.CW mallocalign+299 --
+inside the allocator's own compiled body, not inside whichever
+function called it.  Working out why cost real effort: the panic's
+own
+.CW "(from X/Y)"
+pair prints two different things
+.CW ( X
+is
+.CW _poolfault Ns 's
+own caller -- wherever the failing check physically sits in code;
+.CW Y
+is the explicit pc value that specific call site computed) that are
+easy to conflate, and none of alloc.c's seven plain
+.CW D2B(b,dp)
+call sites carried a distinguishing tag the way
+.CW heap.c Ns 's
+two
+.CW D2BPC
+sites already did earlier this hunt.  All seven
+.CW ( poolimmutable ,
+.CW poolmutable ,
+.CW free ,
+.CW setmalloctag ,
+.CW getmalloctag ,
+.CW setrealloctag ,
+.CW getrealloctag )
+pass their own real first parameter as the data pointer, so each was
+already correctly anchored per this hunt's established
+.CW getcallerpc()
+rule -- converting them to
+.CW D2BPC
+with an explicit tag changes only which string prints, not which pc
+value is computed, and makes the next capture through any of these
+seven self-identify directly in its own panic text, the same payoff
+.CW heap.c Ns 's
+conversion already delivered for
+.CW freelist-tail
+and
+.CW destroy-entry .
+Rebuilt clean and boot-tested (25 boots, 9 panics, 36%, within this
+round's established band; none of the newly-tagged sites fired this
+particular batch, consistent with alloc:D2B's own low frequency).
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
