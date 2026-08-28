@@ -389,8 +389,42 @@ destroy(void *v)
 
 	{ Bhdr *b; D2B(b, h); }		/* consistency check */
 
-	if(ADEC(&h->ref) > 0 || gchalt > 64) 	/* Protect 'C' thread stack */
-		return;
+	/*
+	 * A batch of alloc:D2B panics (pc64 GPF hunt, doc/inferno-
+	 * ports.ms) resolved every caller to destroy+649 -- the
+	 * poolfree(heapmem, h) call at the end of this function -- with
+	 * auditmemloc() confirming the block D2B choked on was already a
+	 * live free block (magic 0xbadc0c0a) at the exact address about
+	 * to be freed again.  The D2B two lines up already rules out h
+	 * itself being a bad pointer on entry to *this* call, so between
+	 * here and the poolfree() below, something else frees this same
+	 * h -- most likely t->free(h, 0), a handful of lines down, doing
+	 * more than free h's own contained sub-pointers.
+	 *
+	 * chan.c's decref() panics when a Ref underflows (old <= 0)
+	 * before it is ever used to compute a bad pointer; ADEC(&h->ref)
+	 * had no equivalent.  A result of -1 means h->ref was already
+	 * <= 0 when this decrement ran -- an extra destroy() on an
+	 * object already at the end of its life.  Catching that here
+	 * turns the eventual, hard-to-place alloc:D2B into an immediate,
+	 * exactly-located one.  n == 0 is the ordinary "just hit zero,
+	 * time to free" case and falls through unchanged.  pc64-only,
+	 * temporary.  See doc/inferno-ports.ms.
+	 */
+	{
+		int n;
+
+		n = ADEC(&h->ref);
+		if(n < 0){
+			extern void dumpstack(void);
+
+			print("destroy: h->ref underflow, h %#p n %d\n", h, n);
+			dumpstack();
+			abort();
+		}
+		if(n > 0 || gchalt > 64) 	/* Protect 'C' thread stack */
+			return;
+	}
 
 	if(heapmonitor != nil)
 		heapmonitor(1, h, 0);
