@@ -13354,6 +13354,105 @@ and future capture's own dump, for free.  No new information for a
 real cost on a shared hot path: not worth it.
 
 .NH 1
+devattach()'s guard fired for real, and what it caught
+.PP
+The
+.CW devattach()
+spec-length guard added alongside the
+.CW notefree()
+fix fired live in its own follow-up batch, at boot, on the very first
+attach this kernel ever makes:
+.CW rootattach() 's
+call into
+.CW devattach('/',\ spec) .
+Resolved caller pc
+.CW 0x21c440
+confirms
+.CW rootattach+128 ,
+exactly that call.
+.PP
+The capture itself is a genuine puzzle, not a clean confirmation of
+the 32-bit
+.CW long
+wrap alone.
+.CW rootattach()
+begins with
+.CW "if(*spec)\ error(Ebadspec);"
+\(em for this capture to have reached
+.CW devattach()
+at all, that check passed, meaning
+.CW *spec\ ==\ 0
+at that moment.  Yet
+.CW devattach() 's
+own
+.CW strlen(spec)
+\(em
+.CW libkern/strlen.c
+is a plain
+.CW "strchr(s,\ 0)\ -\ s" ,
+.CW strchr.c
+a byte-at-a-time scan with no word-at-a-time optimization to blame
+for an alignment bug \(em returned
+.CW \-116300362 ,
+consistent with a genuine scan of roughly two billion non-zero bytes
+before wrapping the 32-bit
+.CW long
+return type negative.  The panic's own re-read of
+.CW spec[0..3]
+immediately after, for the message, again shows all zero.  Two
+independent zero-reads bracketing a scan that must have crossed two
+billion non-zero bytes in between is not consistent with
+.CW spec
+pointing at a fixed, static buffer.
+.PP
+.CW spec
+here is not a dedicated string buffer: it traces back through
+.CW namec() 's
+.CW '#'
+case to
+.CW up\->genbuf+n ,
+a per-process scratch buffer reused across many unrelated code paths
+in this same process \(em not copied, just pointed into.  The
+working hypothesis: something rewrites
+.CW up\->genbuf
+while
+.CW rootattach() / devattach()
+are still holding a pointer into it, between the
+.CW '*spec'
+check and the
+.CW strlen()
+call \(em a multi-billion-iteration byte scan is real wall-clock time
+even at TCG speeds, plenty of room for a timer interrupt or a
+reentrant
+.CW namec()
+call elsewhere to land in between.  Not confirmed: what actually
+rewrites it, or whether interrupts are even enabled across this
+stretch.  The pointer value itself,
+.CW 0x6ee9a4a ,
+sits in the same address range this hunt's own
+.CW up
+process-struct addresses have occupied all session (
+.CW 0x6EEDB80 ,
+.CW 0x6EF2500 ,
+.CW 0x6ee9200 ) ,
+consistent with
+.CW genbuf
+living inside the
+.CW Proc
+struct rather than being a standalone allocation.
+.PP
+Whatever the exact mechanism, the guard did its job: this would
+previously have been either a silent hang (the escape-less
+.CW smalloc()
+retry loop, already fixed) or an undiagnosed massive-allocation
+panic naming no caller.  Instead it named the exact call site, the
+exact pointer, and the exact byte count on the first capture.  One
+occurrence in 37 boots; the
+.CW up\->genbuf
+reentrancy hypothesis is the next concrete thing to check, not yet
+chased.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
