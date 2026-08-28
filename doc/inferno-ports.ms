@@ -10042,7 +10042,48 @@ the watchpoint's own overhead slowed execution enough that the write
 in question simply had not happened yet by the time the timeout hit;
 or something else about the setup.  Getting this working is the most
 direct path to naming the actual writer, and is where this resumes.
-
+.PP
+One more thing settled before leaving this: whether the stable kind is
+actually consequential, checked the only way that means anything \-
+letting the boot run past it and seeing what happens.  It was made
+non-fatal for exactly one round to test this, and the result was
+decisive enough to revert immediately:
+.CW checkmarkptr()
+non-fatal on the stable kind let boots that would previously have
+stopped cleanly here run on instead, and most of them hit a real
+native panic later \- page fault, general protection violation,
+invalid opcode, the pool allocator's own
+.CW alloc:D2B
+consistency check, a nil
+.CW c
+in
+.CW cclose/cclone
+\- 7 of 10 in one batch, 12 of 15 in a follow-up with general
+protection violation alone accounting for nearly half.  That rules out
+"benign, resolves on its own" outright: whatever the stuck field held
+got used later as something it was not, and the boot paid for it, just
+less legibly than stopping right here would have.  Reverted to
+.CW abort()
+for the stable kind; the diagnostics that got this far (
+.CW D2H(vw) ,
+the tight reread, the same-call sanity print) all stayed.
+.PP
+The more important number in that same data: the follow-up batch's
+panic rate (12 of 15) held even though
+.CW checkmarkptr()
+itself never fired once (0 of 15).  Whatever is actually wrong reaches
+far more of this boot's execution than the one checker this whole
+segment has been narrowing \- general protection violation alone (5 of
+12 panics in one batch) outweighs every other cause combined, with
+page faults, the pool allocator's own corruption check, and a nil-
+channel panic making up the rest.  This segment's narrowing answered
+real, specific questions about one detectable shape of the underlying
+problem \- and that shape (the live, one-field-wrong Modlink) is
+itself real, not an artifact \- but it is evidently not the only shape,
+and probably not even the dominant path to a crash.  Whoever picks
+this up next should read the panic type distribution, not just the
+.CW checkmarkptr()
+rate, as the honest measure of where this boot actually stands.
 .NH 1
 Then
 .PP

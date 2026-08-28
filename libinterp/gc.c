@@ -198,33 +198,26 @@ checkmarkptr(WORD **q, Type *t, void *vw)
 		if(silent[n] != silent[0])
 			return;
 	/*
-	 * Not aborting on the stable kind either, for now: a live process
-	 * is only ever paused for GC, not returned, when rootset() walks
-	 * its frames via markheap() -- unlike freeptrs()/scanframe(),
-	 * which only ever run at OP(ret), after every path through the
-	 * function has had to leave every marked-pointer word it touches
-	 * as H or valid again (or freeptrs() would corrupt memory on
-	 * every ordinary return, which does not happen -- see "Freed, not
-	 * cleared").  That argument says nothing about a mid-execution
-	 * snapshot: if the compiler ever reuses one marked-pointer frame
-	 * slot for a plain int in one lexical scope and a real pointer in
-	 * another, both within the same function, a snapshot taken while
-	 * the int-holding scope is live would legitimately show a small
-	 * int in a marked slot, stably, for as long as that scope stays
-	 * current -- with no bug anywhere, as long as the slot is H or
-	 * valid again by the time that same frame reaches its own
-	 * OP(ret).  Letting the boot continue instead of stopping it is
-	 * the only way to tell that reading from a genuine, permanent
-	 * wrongness apart: if the process this frame belongs to goes on
-	 * to behave correctly (and scanframe()/freeptrs() never flag the
-	 * same frame at its own eventual return), that is real evidence
-	 * for the benign reading, not proof.  Print D2H(vw) purely as an
-	 * observation, not a gate: a real heap object's header shows a
-	 * plausible small color/ref; a frame address read this way should
-	 * not, and the two kinds of capture seen so far (a Tmodlink heap
-	 * object vs. very large np/size, likely a frame) can be told apart
-	 * by which this looks like.  pc64-only, temporary.  See
-	 * doc/inferno-ports.ms.
+	 * Was made non-fatal on this (stable) kind too for one round, to
+	 * test whether it might be a benign mid-execution snapshot (a
+	 * marked frame slot legitimately holding a non-pointer value
+	 * while its lexical scope is live -- see doc/inferno-ports.ms,
+	 * "A live, correctly-typed object, one field wrong" for the full
+	 * argument for why that reading was even plausible here, unlike
+	 * the retracted map-imprecision one).  The answer came back
+	 * negative and decisive: with this non-fatal, boots that would
+	 * previously have stopped cleanly here instead ran on and hit
+	 * REAL native panics later -- page fault, general protection
+	 * violation, invalid opcode, the pool allocator's own alloc:D2B
+	 * consistency check, cclose on a nil c -- at a high rate (7 of 10
+	 * in one batch).  That rules out "benign, resolves on its own"
+	 * for this kind outright: whatever ml->MP (or the equivalent
+	 * field on another capture) held instead of H got used later as
+	 * if it were valid, and the boot paid for it downstream, just
+	 * less legibly than stopping cleanly right here would have.
+	 * Reverted to abort(), with the diagnostics (D2H(vw), the tight
+	 * reread, the sanity print) all kept -- they're what got this
+	 * far.  pc64-only, temporary.  See doc/inferno-ports.ms.
 	 */
 	{
 		Heap *dh = D2H(vw);
@@ -232,7 +225,7 @@ checkmarkptr(WORD **q, Type *t, void *vw)
 			dh, dh->t, dh->ref, dh->color);
 	}
 	dumpstack();
-	return;
+	abort();
 }
 
 /* code simpler with a depth search compared to a width search*/
