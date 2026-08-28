@@ -441,6 +441,32 @@ destroy(void *v)
 		abort();
 	}
 
+	/*
+	 * CONCLUSION (bisection probe, now removed): destroy-entry's own
+	 * caller-pc field (c = getcallerpc(&v)) is not trustworthy. A
+	 * capped, unconditional sample of 32 distinct callers on an
+	 * ordinary, non-crashing boot came back mostly garbage -- values
+	 * like 0x6, 0x58, 0x30, 0x2, and several in the 0x7xxxxxx/
+	 * 0x9xxxxxx/0xaxxxxxx ranges that look like heap or stack
+	 * addresses, not code (every other resolved pc this whole hunt
+	 * has produced sits in roughly 0x200000-0x400000). Only a
+	 * minority of the 32 looked like plausible code addresses. This
+	 * explains the wakeup+156/iunlock+222 captures from the previous
+	 * round directly: not a real, non-obvious call path, just this
+	 * mechanism's own unreliability at this specific call site --
+	 * unlike the msg/X side of the same panic (confirmed correct via
+	 * the destroy-entry tag), the c/Y side was never independently
+	 * verified and does not hold up under one. Read as: destroy() is
+	 * called from far too many places, through too many different
+	 * compiled shapes (direct calls, calls through a Type's own
+	 * t->free function pointer, deep cascades), for one getcallerpc()
+	 * idiom to answer "who called destroy() this time" reliably.
+	 * doc/inferno-ports.ms, "destroy()'s own caller pc, an unverified
+	 * reading recorded on purpose" and this section's own follow-up
+	 * carry the full story. Do not trust c on a destroy-entry capture
+	 * without re-deriving it a different way. See doc/inferno-ports.ms.
+	 */
+
 	{ Bhdr *b; D2BPC(b, h, getcallerpc(&v), "alloc:D2B:destroy-entry"); }		/* consistency check */
 
 	/*
