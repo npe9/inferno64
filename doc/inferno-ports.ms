@@ -11475,6 +11475,86 @@ the msg/X side trustworthy in the first place, rather than reading
 .CW getcallerpc() Ns 's
 raw output.
 .NH 1
+Who freed it first, this time reliably: destroy() itself
+.PP
+The free-history ring already existed and its own mechanism was
+independently validated (the D2BPC tag work, the
+.CW poolfree=608
+bisection) -- unlike
+.CW destroy-entry Ns 's
+own caller-pc field, this ring's entries come from
+.CW getcallerpc(&p)
+called from directly inside
+.CW poolfree() ,
+the same call shape confirmed reliable earlier.  What it lacked was
+reach: at 32 entries, every real
+.CW alloc:D2B:destroy-entry
+capture so far had aged out of it before the panic that needed it --
+zero
+.CW "was freed before"
+lines across three real captures.  Bumped
+.CW NFREEHIST
+from 32 to 4096 (16 bytes an entry on this port, so 64KiB, trivial),
+and a follow-up batch got hits.
+.PP
+The answer, from a source this hunt can actually trust:
+.CW "0x79b9af8 was freed before, from pc=0x2614a3"
+resolves to
+.CW free+56 ,
+and several more --
+.CW "0x789f338" ,
+.CW "0x785a638" ,
+.CW "0x78a50b8" ,
+each on a different boot -- resolve to
+.CW destroy+613
+or
+.CW freelist+419 :
+.CW destroy() Ns 's
+own ordinary, correct
+.CW poolfree()
+call, or
+.CW freelist() Ns 's
+own tail-walk
+.CW poolfree() .
+The object that later trips
+.CW destroy-entry
+was freed the first time by a completely normal, successful
+.CW destroy()
+call -- not corruption manufacturing a fake pointer, a genuine second
+call to
+.CW destroy()
+on a value some other, independent reference still held.
+.PP
+That reframes the whole thread. Two unrelated things this hunt has
+now found -- the "in free blk" captures on
+.CW "left = tl left" Ns -style
+list-traversal loop control (previous sections) and this ring's own
+"freed by destroy()'s ordinary exit, destroyed again later" pattern
+-- both point the same direction: an object's own refcount is
+undercounted somewhere, so two independent owners each believe they
+hold the last reference. One frees it correctly. The other, later,
+either explicitly calls
+.CW destroy()
+again (caught at
+.CW destroy() Ns 's
+own entry) or overwrites a slot holding the same now-dangling value
+(caught by
+.CW OP(movp) Ns 's
+own
+.CW dv
+guard). Both are the same disease seen from two different vantage
+points, not two separate bugs.
+.CW cons() Ns 's
+own "balanced move" (libinterp/xec.c: transfers a slot's old value
+into a new list cell's
+.CW tail
+with neither an incref nor a destroy) is the standing suspect for
+where a reference gets duplicated without its count following --
+read correct in isolation in the previous section, and still the
+most concrete lead this hunt has for where the undercounting itself
+happens, now with a reliable way to confirm which object was
+involved on the next capture.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
