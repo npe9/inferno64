@@ -13579,6 +13579,81 @@ precisely bounded now; tracing exactly what backs the address range
 on this build is the next concrete step, not yet taken.
 
 .NH 1
+Found it: the scan walks the PC's own 16 MB\(en4 GB device hole
+.PP
+memory.c's own
+.CW meminit0()
+names the 4 GiB boundary directly, in a comment that predates this
+whole hunt:
+.IP
+.nf
+.ft CW
+/*
+ * Everything between 16MB and 4GB defaults
+ * to unbacked physical addresses usable for
+ * device mappings.
+ */
+memmapadd(16*MB, (u32)\-16*MB, MemUPA);
+.ft
+.fi
+.PP
+Working the arithmetic:
+.CW (u32)\-16*MB
+is
+.CW 0xFF000000 ,
+so this call marks
+.CW 0x01000000\ (16MB)
+through
+.CW "0x01000000\ +\ 0xFF000000\ =\ 0x100000000\ (4\ GiB)"
+as
+.CW MemUPA
+\(em "unbacked physical addresses usable for device mappings," this
+port's own name for the classic PC memory hole where PCI/device MMIO
+BARs live below the 4 GiB line, not a bug in this line itself: every
+x86 PC memory map looks like this.
+.PP
+That is exactly where the
+.CW devattach()
+scan lands.  The picture this completes: a scan starting inside real,
+mapped kernel RAM (
+.CW up\->genbuf
+at
+.CW 0x6ee9a48 ,
+comfortably inside the roughly 512 MiB this guest actually has) does
+not fault leaving RAM and entering the
+.CW MemUPA
+hole, meaning some of that hole is mapped present rather than
+absent \(em plausible on a QEMU q35/i440fx machine, where VGA
+framebuffer, PCI BARs and similar device windows commonly occupy
+large stretches of exactly this range, reading back real (non-zero)
+hardware content rather than faulting.  The scan crosses whatever of
+that is mapped, all the way to the top of the 32-bit address space,
+where the very last mapped word happens to read zero.
+.PP
+Not yet confirmed, and worth being precise about the gap: which
+specific mapping inside
+.CW 16MB\(en4GB
+this port has made present (VGA, a PCI BAR, something narrower), and
+whether a byte-scan wandering across it un-faulted is itself
+surprising or simply what this port's
+.CW vmap()
+setup has always done for this range.  What is now settled, not
+hypothesized: the destination is not corruption, not an MMU
+aliasing bug, and not anything in
+.CW libkern 's
+string functions \(em it is this kernel's own, correctly-documented,
+16 MB\(en4 GB device address hole, and
+.CW devattach() 's
+.CW spec
+argument should never have been pointed anywhere near it in the
+first place.  The open question moved from "why does this address
+exist" (answered) to "why is a namec() '#'-attach spec pointer being
+scanned into it at all" \(em which is still the
+.CW up\->genbuf
+question from the previous round, now with a concrete destination to
+explain rather than an unexplained one.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
