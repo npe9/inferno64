@@ -1949,6 +1949,27 @@ Again:
 	} while(pid == 0 || pidlookup(pid) != nil);
 
 	i = &pidhashtab[(pid<<PIDSHIFT) & pidhashmask];
+	/*
+	 * A confirmed-genuine "incref: bad r 0x0" resolving to
+	 * pidalloc+95 (doc/inferno-ports.ms, "The resolver itself had the
+	 * bug") traced here as the only candidate: pidinit() (which
+	 * allocates pidhashtab and sets pidhashmask) is the LAST
+	 * statement in procinit(), and pidalloc()/pidadd() should never
+	 * run before it returns under this port's own boot ordering -- if
+	 * that ordering assumption is ever violated, pidhashtab is nil
+	 * and this computed i can legitimately equal nil itself (index 0
+	 * of a nil array), silently, with no fault: struct Pid's
+	 * procindex field sits at a small enough offset that pidalloc()'s
+	 * own later "i->procindex = ..." write lands in this port's
+	 * identity-mapped low memory rather than faulting, letting
+	 * execution reach incref(i) with i still nil.  Catch it here,
+	 * directly, instead of downstream.  pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	if(pidhashtab == nil || i == nil)
+		panic("pidadd: pidhashtab %#p pidhashmask %#lux pid %ld i %#p "
+			"-- pidinit() has not run yet", pidhashtab, pidhashmask,
+			pid, i);
 	for(e = &i[1<<PIDSHIFT]; i < e; i++){
 		while((o = i->pid) <= 0){
 			if(cmpswap((s32*)&i->pid, o, pid)){
