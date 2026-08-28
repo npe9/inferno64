@@ -11365,6 +11365,60 @@ from other angles: a small, generic mechanism producing corruption
 that surfaces in whatever unrelated code happens to run into it next,
 rather than a bug local to any one module.
 .NH 1
+destroy()'s own caller-pc, an unverified reading recorded on purpose
+.PP
+Wired the free-history ring into the widened
+.CW dv
+checker too (
+.CW printfreehist() ,
+alloc.c, made non-static so
+.CW badptrslot()
+can call it alongside the
+.CW auditmemloc()
+it already calls) -- the same "who freed this address first" question
+this hunt already had good tooling for, just not connected to this
+specific check yet.
+.PP
+A follow-up batch produced no fresh
+.CW dv-freed
+hits to exercise it against, but landed three
+.CW alloc:D2B:destroy-entry
+captures -- the hardware-confirmed
+.CW destroy()
+double-free from earlier in this hunt. Their own caller-pc field (
+.CW getcallerpc(&v) ,
+computed inside
+.CW destroy() Ns 's
+entry check, the same mechanism the
+.CW destroy-entry
+tag confirmation already validated for the other half of that panic
+message) resolves to
+.CW wakeup+156
+and
+.CW iunlock+222 .
+Neither calls
+.CW destroy()
+anywhere in its own body on a direct grep.
+.PP
+Given this session's own retracted "most reproducible capture" thread
+-- built on a getcallerpc()-adjacent misreading that took real effort
+to catch -- this is recorded as an open, UNVERIFIED discrepancy, not a
+conclusion. Two ways it could resolve: a genuine, non-obvious call
+path (destroy() reached through a pointer, a callback, or an
+error()/waserror() unwind landing inside wakeup()/iunlock() rather
+than at their own lexical call sites) that a plain grep would miss; or
+a limitation of the getcallerpc() idiom this specific call site
+exposes that the destroy-entry tag confirmation did not test for,
+since that confirmation validated the msg/X side of the panic
+( Ns
+.CW _poolfault() Ns 's
+own caller ), not the c/Y side (
+.CW destroy() Ns 's
+own caller) independently. Whoever picks this up next should verify
+the Y side the same way the X side was verified -- by tagging or
+otherwise naming the call site directly -- before trusting it enough
+to build on.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
