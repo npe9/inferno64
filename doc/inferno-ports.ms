@@ -13693,6 +13693,64 @@ point is a distinct, still-open question, not chased further this
 round.
 
 .NH 1
+F000FFxx and the devattach() landing point are the same neighborhood
+.PP
+Re-reading
+.CW archacpi.c 's
+.CW maptable()
+by hand (its
+.CW RSDT
+branch uses
+.CW get32() ,
+its
+.CW XSDT
+branch
+.CW get64() \(em
+correctly matched to each table's own pointer width) found no width
+bug to blame for the
+.CW F000FFxx
+pattern, undercutting the "packed 16-bit far pointer" reading from
+the previous round.  A simpler reading fits better, and ties this
+lead to the devattach() one directly:
+.CW 0xF000FF53
+as a
+.I flat
+32-bit value is
+.CW 4026597203 ,
+about 3.75 GiB \(em squarely inside the same
+.CW 16MB\(en4GB
+.CW MemUPA
+hole
+.CW meminit0()
+names (see "Found it: the scan walks the PC's own 16MB\(en4GB device
+hole").  Every
+.CW F000FFxx
+variant this hunt has grepped shares the same top 24 bits, so all of
+them land in that same narrow neighborhood near the top of the
+device-address hole.
+.PP
+That reframes the lead: not a real-mode segment:offset pair leaking
+out of a BIOS32/ACPI scan, but a plain physical/device address \(em
+exactly the kind
+.CW bios32.c ,
+.CW archacpi.c
+and
+.CW archmp.c
+legitimately handle every boot, since PCI BARs, ACPI tables and BIOS32
+entry points all live in this address range by definition \(em ending
+up somewhere it should not be: a Dis heap object's
+.CW ->ref
+field, or a kernel
+.CW Chan / Path
+pointer, dereferenced later as if it were one.  Not a corruption bug
+in the classic sense so much as a type confusion: some driver init
+path that legitimately touches both device addresses and Dis-heap or
+kernel objects mixes up which value belongs in which field.  Neither
+this nor the previous round narrowed it to a specific call site;
+flagged as the same lead, sharpened, not yet chased to a specific
+line.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
