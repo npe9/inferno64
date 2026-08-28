@@ -13867,6 +13867,71 @@ single-step this exact call with the actual bad
 value, since reading has not found it.
 
 .NH 1
+Byte-level verification: both the callee and the call site check out
+.PP
+Went past the assembly listing entirely and decoded
+.CW strchr\-amd64.s 's
+compiled bytes directly out of the linked
+.CW ipc64
+binary, byte by byte against x86-64 opcode tables, for the
+.CW l2:
+"search for nul" path used here: the exact hex sequence
+.CW "48c7c1ffffffff\ fc\ f2ae\ 4889f8\ 4883e801\ c3"
+decodes to
+.CW "MOV\ RCX,\-1;\ CLD;\ REPNE\ SCASB;\ MOV\ RAX,RDI;\ SUB\ RAX,1;\ RET" \(em
+exactly the intended semantics, no encoding surprises.  This is a
+stronger form of the same claim the earlier (wrong-file) round made,
+now against the actual linked bytes rather than an assembler's own
+listing.
+.PP
+A first pass at
+.CW devattach() 's
+own call site, read from the assembly listing text, looked like it
+might skip the instruction that loads
+.CW BP
+with
+.CW spec 's
+value on the common (non-nil) path \(em which would have been a real
+finding, a genuine 6c code-generation bug in the REGARG/branch
+interaction, present in this function since before this hunt started
+(the
+.CW "if(spec\ ==\ nil)\ spec\ =\ \"\";"
+line predates every change this hunt made here).  Checked before
+writing it up, the same way the
+.CW strchr
+claim should have been checked the first time: decoded the actual
+linked bytes at
+.CW devattach+0x40
+directly.  They read
+.CW "CMP\ RDX,0;\ JNZ\ +5;\ MOV\ EDX,0x31D15F;\ MOV\ RBP,RDX;\ ..." \(em
+the short jump skips only the 5-byte fallback load, and both the
+jump-taken and fall-through paths converge on the same
+.CW "MOV\ RBP,RDX"
+correctly, with
+.CW RDX
+holding either the real
+.CW spec
+or the empty-string fallback depending on which path was taken.  The
+call site is correct; the hypothesis did not survive its own check,
+and is recorded here specifically so it does not get proposed again
+without this evidence attached.
+.PP
+Both ends of the one call this hunt has been staring at \(em the
+callee's scan loop and the caller's own setup for it \(em are now
+verified correct at the machine-code level, not just plausible on a
+reading.  That leaves the genbuf capture's core fact unexplained by
+anything static: correct code, correct input, wrong output.  The
+next candidate this rules out nothing about is environmental rather
+than a code defect \(em
+.CW REPNE\ SCASB
+is architecturally interruptible and resumable, which depends on the
+trap/interrupt path saving and restoring
+.CW RDI / RCX
+correctly across whatever fires during the several-billion-iteration
+window this scan opens; not checked yet.  Everything reachable by
+reading has now been read.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
