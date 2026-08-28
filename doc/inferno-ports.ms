@@ -13932,6 +13932,52 @@ window this scan opens; not checked yet.  Everything reachable by
 reading has now been read.
 
 .NH 1
+The interrupt save/restore path checks out too
+.PP
+Followed through on the "environmental, not a code defect" candidate
+the previous round left standing: does
+.CW pc64/l.s 's
+own interrupt entry/exit path correctly preserve
+.CW RDI / RCX
+(the two registers a
+.CW REPNE\ SCASB
+scan is actively using) across whatever timer or device interrupt
+fires during the several-billion-iteration window this scan opens?
+Laid the save side (
+.CW _strayintr / _strayintrx
+via
+.CW _intrcommon )
+against the restore side (
+.CW _intrestore )
+in push/pop order:
+.IP
+.nf
+.ft CW
+push: R15 R14 R13 R12 R11 R10 R9 R8 BP DI SI DX CX BX AX
+pop:  AX  BX  CX  DX  SI  DI  BP  R8 R9 R10 R11 R12 R13 R14 R15
+.ft
+.fi
+.PP
+A perfect mirror \(em each pop undoes the matching push, standard
+LIFO register save/restore, nothing swapped or dropped.  The common
+interrupt path is symmetric and correct.  Not exhaustively checked:
+rarer paths (NMI, a fault arriving with a different stack shape) that
+might diverge from this one, though nothing points at those
+specifically.
+.PP
+Every component this hunt can name in the chain from
+.CW devattach() 's
+.CW strlen(spec)
+down through
+.CW strchr\-amd64.s 's
+scan loop and back out through a possible interrupt has now been
+checked, several of them at the machine-code byte level rather than
+an assembler's own listing.  All of them check out.  Static reading
+of this codebase is genuinely exhausted for this lead; whatever
+happens between the scan starting and the wrong value coming back
+requires watching it happen, not reading more of it.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
