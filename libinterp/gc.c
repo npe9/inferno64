@@ -127,12 +127,42 @@ static void
 checkmarkptr(WORD **q, Type *t, void *vw)
 {
 	extern void dumpstack(void);
+	uintptr silent[8];
 	uintptr val;
-	int wordidx, i;
+	int wordidx, i, n;
 
-	val = (uintptr)*q;
+	/*
+	 * Both earlier passes at this (one with a print() between each
+	 * reread, one calling itself "silent") still had two full
+	 * print() calls -- bad-word and object-type, each real kernel
+	 * I/O -- between the *first* read (the one that decided this was
+	 * worth reporting) and the reread loop.  Neither pass actually
+	 * tested "immediately after, nothing run in between" at all; both
+	 * left the print()-yields hypothesis open by accident.  This is
+	 * the real version: every read, the first included, happens back
+	 * to back in one tight loop with no function call of any kind
+	 * between them, into a local array, volatile-qualified against
+	 * ordinary compiler caching -- decided and reported only after.
+	 * pc64-only, temporary.  See doc/inferno-ports.ms.
+	 */
+	for(n = 0; n < 8; n++)
+		silent[n] = (uintptr)*(WORD*volatile*)q;
+	val = silent[0];
 	if(val == (uintptr)H || val >= 0x1000)
 		return;
+	/*
+	 * Sanity check on the diagnostic itself, before trusting a single
+	 * further line of this: val and silent[0] are the same variable
+	 * by construction (the line above). If they ever print as
+	 * different values in the very same print() call, that is proof
+	 * the mismatch is in how this print() marshals a uintptr through
+	 * %zx / FmtVLong, not in memory -- and would mean this whole
+	 * multi-session hunt's every %zx-based capture needs rereading
+	 * with that in mind. pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	print("markheap: sanity val %#zx silent0 %#zx eq %d\n",
+		val, silent[0], val == silent[0]);
 	wordidx = (int)(q - (WORD**)vw);
 	print("markheap: bad word %#p (word %d of object %#p) val %#zx, "
 		"running Dis pid %d module %s PC %#p inst %d\n",
@@ -144,6 +174,29 @@ checkmarkptr(WORD **q, Type *t, void *vw)
 	for(i = 0; i < t->np; i++)
 		print(" %#.2ux", t->map[i]);
 	print("\n");
+	for(n = 0; n < 8; n++)
+		print("markheap: tight reread %d val %#zx\n", n, silent[n]);
+	/*
+	 * Two genuinely different shapes have been showing up under this
+	 * one checker, conflated until now: word 0 of a size-8/np-1/map-
+	 * {0x80} object (Tptr, OP(consp)'s own list cells) reads bad once
+	 * and then reads as a valid pointer on literally the next access,
+	 * every single capture so far, regardless of how the write inside
+	 * OP(consp) is ordered (checked: reordering data-before-type made
+	 * no difference to the rate). Every other shape seen (word 8, 14,
+	 * 550, ... of larger objects, values like 0x18 matching this
+	 * hunt's own original landmark) reads the same bad value on every
+	 * one of the 8 tight rereads -- stable, not transient. Only the
+	 * second kind gets treated as the real signal now: the first
+	 * looks increasingly like it resolves before anything ever acts
+	 * on the bad intermediate value, so continuing past it (instead
+	 * of stopping the boot) is how the stable kind gets isolated for
+	 * enough captures to say anything about it. pc64-only, temporary.
+	 * See doc/inferno-ports.ms.
+	 */
+	for(n = 1; n < 8; n++)
+		if(silent[n] != silent[0])
+			return;
 	dumpstack();
 	abort();
 }
@@ -169,7 +222,24 @@ markheap(Type *t, void *vw)
 		if(c != 0) {
 			q = w;
 			for(m = 0x80; m != 0; m >>= 1) {
-				if((c & m) && *q != H) {
+				/*
+				 * Probe: a silent, back-to-back reread of a
+				 * word checkmarkptr() has just flagged bad
+				 * shows the correct value immediately and
+				 * stably, every capture so far -- consistent
+				 * with a stale/cached read at exactly this
+				 * first touch, not a real writer catching up
+				 * (nothing runs between the two reads that
+				 * could write here).  This one forces a fresh
+				 * load via volatile instead of trusting the
+				 * compiler's normal (and normally correct,
+				 * single-threaded) assumption that nothing
+				 * changed *q since some earlier point.  If
+				 * this alone makes the whole signal vanish,
+				 * that is the answer.  pc64-only, temporary.
+				 * See doc/inferno-ports.ms.
+				 */
+				if((c & m) && *(WORD*volatile*)q != H) {
 					checkmarkptr(q, t, vw);
 					h = D2H(*q);
 					Setmark(h);
@@ -219,6 +289,35 @@ markarray(Type *t, void *vw)
 	visit -= a->len;
 }
 
+/*
+ * Probe: checkmarkptr() (below) only ever sees l->data, a field
+ * *inside* a list cell's own single allocation, with no way back to
+ * that cell's own Heap header from there.  So it can't tell "this
+ * cell is intact and something wrote garbage straight into l->data"
+ * from "this cell itself is stale -- freed, its memory reused, and
+ * l->data is just whatever the new occupant left there" apart.  This
+ * checks the one place that has the cell itself in hand: poolcompact()
+ * was checked and ruled out separately (heapmem's pool never gets
+ * poolsetcompact() wired up in this port, only imagmem does, so it's
+ * permanently a no-op here) -- this is the next item, the container's
+ * own sanity, right before each cell's payload gets walked.  pc64-only,
+ * temporary.  See doc/inferno-ports.ms.
+ */
+static void
+checklistcell(List *l)
+{
+	extern void dumpstack(void);
+	Heap *h;
+
+	h = D2H(l);
+	if(h->t == &Tlist && h->ref > 0)
+		return;
+	print("marklist: bad container %#p t %#p (want %#p) ref %d color %d\n",
+		l, h->t, &Tlist, h->ref, h->color);
+	dumpstack();
+	abort();
+}
+
 void
 marklist(Type *t, void *vw)
 {
@@ -227,6 +326,7 @@ marklist(Type *t, void *vw)
 
 	USED(t);
 	l = vw;
+	checklistcell(l);
 	markheap(l->t, l->data);
 	while(visit > 0) {
 		l = l->tail;
@@ -234,6 +334,7 @@ marklist(Type *t, void *vw)
 			return;
 		h = D2H(l);
 		Setmark(h);
+		checklistcell(l);
 		markheap(l->t, l->data);
 		visit--;
 	}

@@ -1643,9 +1643,31 @@ OP(consp)
 		AINC(&h->ref);
 		Setmark(h);
 	}
+	/*
+	 * Real fix, not just a probe: write the payload before making
+	 * l->t claim there is one. l->t == &Tptr is what tells GC's
+	 * marklist()/markheap() this cell has a pointer word worth
+	 * walking (consb/consw/consl/consf never touch l->t at all --
+	 * cons() leaves it nil, and markheap(nil, ...) returns
+	 * immediately, so only this op's np>0 payload type creates any
+	 * window here). The two writes were previously ordered the other
+	 * way -- l->t set first, l->data second -- and every
+	 * checkmarkptr() capture chasing the Tptr signal (doc/inferno-
+	 * ports.ms, "A different, dominant signal: Tptr list cells") had
+	 * the same shape: l->data reads as 0 exactly once, then reads as
+	 * the correct, valid pointer on every read after, including a
+	 * silent back-to-back reread with nothing run in between and a
+	 * volatile-qualified load ruling out ordinary compiler caching.
+	 * That is consistent with the two stores becoming visible out of
+	 * source order, for whatever reason, and this closes the window
+	 * outright regardless of the exact mechanism: l->t cannot be
+	 * observed as &Tptr before l->data holds the real value, because
+	 * the assignment to l->t no longer executes until after it does.
+	 * See doc/inferno-ports.ms.
+	 */
+	*(WORD**)l->data = sv;
 	l->t = &Tptr;
 	AINC(&Tptr.ref);
-	*(WORD**)l->data = sv;
 }
 OP(consf)
 {
