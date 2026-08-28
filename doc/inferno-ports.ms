@@ -12363,6 +12363,114 @@ own
 trampoline write).  One hit, mechanism genuinely unclear either way
 -- recorded as a new open lead rather than guessed at.
 .NH 1
+The resolver itself had the bug: half this kernel's symbols were invisible to it
+.PP
+.CW resolve_ipc64_syms.py
+only ever looked at symbol type
+.CW T
+(global/exported text).  This binary alone carries 2029 type-
+.CW t
+(local/static) entries next to 1975
+.CW T
+ones -- close to half this kernel's own functions were invisible to
+the tool this whole hunt has used to name every captured pc.  Any pc
+landing inside a
+.CW static
+function got silently misattributed to whichever
+.I global
+symbol happened to precede it in address order.
+.PP
+This exact shape came up at least twice this round already,
+documented both times as "possible misattribution, same as
+.CW mallocalign+299 "
+without being able to confirm it either way: an
+.CW "incref:\ bad\ r\ 0x0"
+resolving to
+.CW pidalloc+95 ,
+and two
+.CW "c\ nil"
+captures resolving to
+.CW unionread+772
+and
+.CW cunique+28 .
+Checked directly:
+.CW proc.c Ns 's
+own static
+.CW pidadd() ,
+called from
+.CW pidalloc()
+and sitting right before it in source, DOES have a symbol in this
+binary -- type
+.CW t ,
+completely invisible to the old version of the tool.  Fixed by
+including both
+.CW T
+and
+.CW t
+in the resolver's sorted symbol list.  Re-resolving the three pcs
+against the fixed version:
+.IP \(bu
+.CW pidalloc+95
+stays
+.CW pidalloc+95 --
+0x2780df sits well inside
+.CW pidalloc Ns 's
+own 0x278080-based range, past
+.CW pidadd Ns 's
+separate 0x277ea9 slot.  This specific capture was never a
+misattribution; it is a real, confirmed capture inside
+.CW pidalloc()
+itself.
+.IP \(bu
+.CW cclone() Ns 's
+caller (0x26439b) now resolves to
+.CW ccloseq+75 ,
+not
+.CW cunique+28 --
+a different function.
+.IP \(bu
+.CW cclose() Ns 's
+caller (0x27d3e9) now resolves to
+.CW rread+53 ,
+not
+.CW unionread+772 --
+also a different function.
+.PP
+Neither of those last two is a clean answer, though: read in full,
+.CW ccloseq()
+does not call
+.CW cclone()
+anywhere in its own body (it calls
+.CW decref()
+and
+.CW closechanq() ) ,
+and
+.CW rread()
+does not call
+.CW cclose()
+at offset 53 either (its own
+.CW cclose(c)
+call sits inside a
+.CW waserror()
+handler further down).  Both resolved functions are real, both have
+correct symbols now, and both are still wrong as an explanation for
+where the call in question actually happened.  That points past the
+symbol-table gap this section fixes and at
+.CW getcallerpc()
+itself: this hunt has already found, more than once, that its
+.CW "(((uintptr*)(x))[-1])"
+trick depends on
+.CW x
+sitting at an exact, compiler-chosen stack slot that does not always
+match what the macro assumes -- and unlike a genuinely bad symbol
+table, a wrong-but-plausible-looking stack read does not announce
+itself.  Every prior capture resolved through the old version of this
+tool should be treated as unverified until re-checked; the original
+.CW mallocalign+299
+case that first raised this suspicion could not be re-verified at all
+(addresses shift across rebuilds, and that build is gone), so it
+stays exactly as inconclusive as it was already documented to be.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
