@@ -343,3 +343,73 @@ plugins in the other three families.
    hand-written Limbo, stated plainly rather than discovered at plugin 130.
 
 Steps 1-5 are design, not yet built; step 0 is real and verified.
+
+## Does the same hoc library reach `appl/lib/pde.b`'s PDE solvers too?
+
+Raised directly: "the observation is that the hoc parser can be used to feed
+the pde solvers." Checked, not designed yet - this is a finding with real
+numbers, and a fork for the user to call, not a code change.
+
+**The seam already exists in the code, unbuilt-on.** `module/pde.m`/
+`appl/lib/pde.b` has its own layered spec-string language (`mesh ...`,
+`equation diffuse|wave|gray ...`, `solver ...`, `time step ...`, parsed by
+`newproblem()`), but only 3 hardcoded equation kinds, each a fixed Limbo
+function. `gray()` (Gray-Scott reaction-diffusion), specifically, already
+separates the two parts of its own inner loop in its own header comment
+(`appl/lib/pde.b:502-505`): "The reaction term is nonlinear and per-cell, so
+this loop stays in Limbo - but the five-point gather that dominates it does
+not have to. Both Laplacians are computed for the whole grid first and read
+back here." That per-cell reaction body (lines 511, 520-521) is exactly
+hoc-shaped - scalar arithmetic over named per-cell values (`av`, `bv`, `lav`,
+`lbv`, `h`, `da`, `db`, `feed`, `kill`) - while the Laplacian gather
+(`lapinto`/`lapintob`, backed by `math->lap5`/`lap7`) is whole-array and
+stays outside hoc's reach (hoc has no arrays - see step 0 above).
+
+**Measured, not estimated - hoc-per-cell vs. native, same exact workload.**
+Compiled Gray-Scott's own reaction formula as two hoc expressions
+(`av+h*(da*lav-av*bv*bv+feed*(1.0-av))` and its `b` counterpart), resolved
+each variable once via `symbol()`, then timed `eval()` in a loop matching
+`gray()`'s real inner-loop shape exactly - one `eval()` per field per cell
+per stability substep, no batching (the honest worst case):
+
+| grid | workload (cells x 4 substeps x 2 fields) | hoc-per-cell | native `gray()` |
+| --- | --- | --- | --- |
+| 128x128 | 131072 evals | 76 ms (1.72 Melem/s) -> ~13 fps-equivalent | 0.93 ms (140.9 Melem/s) -> ~1075 fps-equivalent |
+| 64x64 | 32768 evals | 19 ms (1.72 Melem/s) -> ~53 fps-equivalent | scales the same way (Melem/s is grid-size-invariant); ~4300 fps-equivalent by the same ratio |
+
+Native `gray()` is **~82x faster** than hoc-per-cell evaluation of the
+identical formula, at any grid size (the Melem/s figure doesn't change with
+grid - only the fps-equivalent does, since that's just workload/time). At
+128x128, hoc-driven per-cell evaluation cannot keep up with an interactive
+redraw loop. At 64x64 it lands around 53 fps-equivalent, which is a real,
+usable interactive rate - "smaller grid for custom equations" is a genuine
+answer, not just a hopeful one.
+
+**Two design questions this raises, not yet decided:**
+
+- **Which caller is this for?** `pde.m` has both an interactive `step()`
+  (called from a redraw loop, where the ~13 fps at 128x128 would be felt
+  directly) and a batch `run(p, until)` (where wall-clock time inside one
+  call doesn't matter the same way). A hoc-driven equation kind is
+  unconditionally viable for `run()` at any grid size, and viable for
+  `step()` only at smaller grids or lower substep counts.
+- **Does `pde.m` take a dependency on `hoc.m` at all?** A `Problem` able to
+  hold a hoc-driven equation needs to carry both the compiled `ref
+  Hoc->Expr` trees and the specific loaded `Hoc` module instance they're
+  bound to (a compiled tree's `Sym` handles are tied to the instance that
+  compiled them - confirmed in the step-0 probe). Today `pde.m` depends on
+  nothing but `mesh.m`/`krylov.m`, both pure numerics; adding `hoc.m` would
+  be the first time this module depends on a language/evaluator. That's an
+  architectural call about `pde.m`'s own shape, not a detail to settle
+  implicitly while extending the parser.
+- A genuinely general reaction-diffusion equation kind (not just a
+  Gray-Scott clone) would also want arbitrary named parameters bound as hoc
+  symbols (a `param NAME VALUE` spec line, say) rather than hard-coding
+  `feed`/`kill` by name - what makes this reach Turing patterns/
+  FitzHugh-Nagumo instead of only reproducing the one equation already
+  built. Naming this because it falls out of the same design, not
+  proposing the grammar itself yet.
+
+No change has been made to `module/pde.m`/`appl/lib/pde.b` - this section is
+the measurement the observation asked for, and the fork it surfaces, for the
+user to call before any grammar or `Problem` field gets added.
