@@ -420,7 +420,33 @@ poolalloc(Pool *p, uintptr asize)
 	q = nil;
 	while(t) {
 		if(t->size == size) {
+			Bhdr *tt = t;
 			t = t->fwd;
+			/*
+			 * A self-consistent "_allocb: lim < base" capture this
+			 * hunt caught (after fixing that diagnostic's own
+			 * double-msize()-eval bug) showed a genuinely allocated,
+			 * correctly-tagged block reporting size==BHDRSIZE on a
+			 * 161-byte request -- reproduced twice across 90 boots.
+			 * This exact-match branch matches on tt->size==size but
+			 * then hands out tt->fwd (the next block chained at this
+			 * tree bucket, per pooladd()'s own same-size chaining),
+			 * WITHOUT re-verifying that tt->fwd carries the same
+			 * size tt does.  Every other reader of this chain
+			 * (pooladd()'s own insertion, pooldel()'s promotion of
+			 * fwd into the tree slot) assumes that invariant holds
+			 * by construction and never checks it either.  Verify it
+			 * here, once, right where a violation would explain the
+			 * capture directly.  pc64-only, temporary.  See
+			 * doc/inferno-ports.ms.
+			 */
+			if(t->size != size)
+				panic("poolalloc: exact-match chain size "
+					"mismatch: tt %#p tt->size %zud "
+					"t(=tt->fwd) %#p t->size %zud "
+					"wanted %zud pc=%#p",
+					tt, tt->size, t, t->size, size,
+					getcallerpc(&p));
 			pooldel(p, t);
 			t->magic = MAGIC_A;
 			p->cursize += t->size;
