@@ -13751,6 +13751,122 @@ flagged as the same lead, sharpened, not yet chased to a specific
 line.
 
 .NH 1
+Correction: strchr's own assembly, not the C fallback, and genbuf proves it wrong
+.PP
+The genbuf-content dump added in the previous round caught its first
+capture, and it overturns the previous round's own conclusion.
+.CW genbuf[0..31]
+reads
+.CW "0x23\ 0x2f\ 0x0\ 0x0\ ...\ 0x0"
+\(em
+.CW '#' ,
+.CW '/' ,
+then thirty genuine zero bytes, exactly what
+.CW namec() 's
+.CW '#'
+case is supposed to write, with the terminator sitting right where
+.CW spec
+points.  For
+.CW strchr(spec,\ 0)
+to return anything other than
+.CW 0
+here is now provably impossible if the byte it read at
+.CW spec[0]
+really was
+.CW 0 \(em
+and this dump, read from the exact same live memory microseconds
+apart, says it was.
+.PP
+The previous round's "ruled out by direct
+.CW 6c\ \-S
+inspection" claim was wrong, not because the reasoning was bad, but
+because it inspected the wrong file.
+.CW libkern/mkfile-amd64
+lists
+.CW strchr\-amd64.$O
+in
+.CW TARGFILES ,
+and the base
+.CW libkern/mkfile
+never lists plain
+.CW strchr.$O
+at all \(em the hand-written amd64 assembly in
+.CW libkern/strchr\-amd64.s
+is what actually links into
+.CW ipc64 ,
+not
+.CW libkern/strchr.c .
+.CW strlen()
+(the plain C version, confirmed genuinely linked and genuinely
+correct) calls
+.I that
+.CW strchr() ,
+not the one this hunt disassembled.  Retracted plainly, per this
+hunt's own rule: the earlier claim was checked, not assumed, and it
+was still wrong \(em worth saying so rather than quietly fixing the
+citation.
+.PP
+Read
+.CW strchr\-amd64.s
+itself closely.  Its "search for nul" path (
+.CW l2 ,
+taken here since
+.CW c==0 ) :
+.IP
+.nf
+.ft CW
+l2:
+	MOVQ	$\-1, CX
+	CLD
+	REPN;	SCASB
+	MOVQ	DI, AX
+	SUBQ	$1, AX
+	RET
+.ft
+.fi
+.PP
+with
+.CW DI
+loaded from
+.CW RARG
+(
+.CW s )
+and
+.CW AL
+loaded from
+.CW c+8(FP)
+(
+.CW 0 )
+just above.  Traced the calling convention both sides:
+.CW strlen.s 's
+own call site (
+.CW "MOVQ\ BP,s+0(FP);\ MOVL\ $0,8(SP);\ CALL\ strchr")
+leaves
+.CW BP
+holding
+.CW s
+undisturbed through the call and places
+.CW c
+at exactly the stack slot this file expects \(em the two sides agree
+with each other.
+.CW REPN;\ SCASB
+with
+.CW CX=\-1
+is the standard unbounded-scan idiom and assembles without warning.
+No specific instruction stands out as wrong on a byte-by-byte read;
+static inspection has been exhausted without finding the line.  What
+is certain, from the genbuf dump directly, is that this function (or
+something in the exact path from
+.CW devattach() 's
+.CW strlen(spec)
+down into it) is not returning what its own memory says it should.
+This is now the single most concrete, most exhausted-by-reading lead
+this hunt has \(em next step is empirical, not more reading: trace or
+single-step this exact call with the actual bad
+.CW spec
+value, since reading has not found it.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
