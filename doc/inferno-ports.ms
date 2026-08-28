@@ -10898,6 +10898,73 @@ stack-position idiom that a disassembler -- unavailable for this
 port's Plan9 a.out/coff ipc64 image -- would settle directly instead
 of by further elimination.
 .NH 1
+destroy+703 is destroy()'s own entry check
+.PP
+Settled by naming, not by more offset arithmetic.
+.CW D2BPC
+took a
+.CW tag
+parameter and every one of its six call sites (four in alloc.c, two
+in heap.c) got a distinct string, so the next
+.CW alloc:D2B
+capture would say which one fired in its own panic message rather
+than requiring another round of
+.CW getcallerpc()
+bisection.
+.PP
+A fresh boot answered it directly:
+.CW "alloc:D2B:destroy-entry" .
+It is
+.CW destroy() Ns 's
+own consistency check --
+.CW "{ Bhdr *b; D2BPC(b, h, getcallerpc(&v), \(dqalloc:D2B:destroy-entry\(dq); }" ,
+right after
+.CW "h = D2H(v)" ,
+before
+.CW ADEC ,
+before
+.CW t->free() ,
+before either
+.CW poolmsize()
+or
+.CW poolfree()
+ever runs.
+.CW destroy()
+is being invoked a second time with a
+.CW v
+that already points at a freed block. An external double-destroy
+call -- some caller retaining a stale reference to an object already
+destroyed once -- not an internal recursion inside one destroy()
+call, and not a wrong-anchor artifact of any kind. Every earlier
+theory this hunt tried for
+.CW destroy+703
+(poolfree, poolmsize, freelist's tail check, position-within-a-
+function) is now retired as ruled out rather than merely unconfirmed
+-- this is what the address was naming all along.
+.PP
+This settles which check fires. It does not yet name who calls
+.CW destroy()
+the second time.
+.CW _poolfault() Ns 's
+own caller-pc field, computed correctly now that every reachable
+anchor is fixed, reads as a heap address on this capture rather than
+a code address -- every other resolved pc this whole hunt has
+produced has looked like kernel text (roughly
+.CW "0x200000--0x400000" ) ,
+never like this. Left open rather than explained away: it may be
+nothing more than a fact about how an indirect call through the
+.CW poolfault
+function pointer interacts with this idiom, or it may be a second,
+independent data point that the CALLER'S own stack frame is affected
+by the same corruption this hunt has chased all along, not only the
+freed object it is calling destroy() on. Whoever picks this up next
+should chase who calls
+.CW destroy()
+twice -- likely by instrumenting the call sites of
+.CW destroy()
+itself for a v that is already free, the same way this section's own
+check does at destroy()'s entry, but one level further out.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
