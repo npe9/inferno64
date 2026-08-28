@@ -267,6 +267,30 @@ freemodlink(Heap *h, int swept)
 		 */
 		trackpoint = "freemodlink:before-destroyMP";
 		checktracked();
+		/*
+		 * destroy()'s own alloc:D2B double-free (doc/inferno-
+		 * ports.ms, "An underflow guard that didn't fire") has one
+		 * untested, concrete hypothesis behind it: this hunt's
+		 * earlier, hardware-confirmed finding was that ml->MP goes
+		 * bad -- one field wrong on an otherwise live, correctly-
+		 * typed Modlink -- sometime after correct creation. If
+		 * "bad" ever means "corrupted to alias this same Modlink's
+		 * own containing Heap block" rather than a small garbage
+		 * value, destroy(ml->MP) here would recurse into destroy()
+		 * on the exact same h this outer call is already freeing --
+		 * a direct, self-referential double-destroy, not a
+		 * corrupted-pointer-into-something-else double-free. Caught
+		 * here, before the recursive call, rather than guessed at.
+		 * pc64-only, temporary. See doc/inferno-ports.ms.
+		 */
+		if(ml->MP == (uchar*)H2D(Modlink*, h)){
+			extern void dumpstack(void);
+
+			print("freemodlink: ml->MP %#p aliases its own h %#p (ml %#p)\n",
+				ml->MP, h, ml);
+			dumpstack();
+			abort();
+		}
 		destroy(ml->MP);
 		trackpoint = "freemodlink:after-destroyMP";
 		checktracked();
