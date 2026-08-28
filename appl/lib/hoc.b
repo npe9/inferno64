@@ -258,6 +258,15 @@ include "bufio.m";
 	Iobuf: import bufio;
 include "math.m";
 	math: Math;
+# eqn2hoc.m is included here, not in hoc.m: compileeqn() below is the
+# ONLY thing in this file that needs it, and it's an implementation
+# detail, not part of hoc's own public shape - a caller only ever sees
+# compileeqn(src): (ref Expr, string), never the Eqn2hoc module type
+# itself. Loaded lazily, on compileeqn()'s own first call, the same
+# "load what a function needs, when it's first asked for" style
+# run()/init() below already use for their own optional pieces.
+include "eqn2hoc.m";
+	eqn2hoc: Eqn2hoc;
 
 stdin, stdout, stderr: ref FD;
 
@@ -2099,6 +2108,27 @@ compile(src: string): ref Expr
 	if(hadeerror)
 		return nil;
 	return e;
+}
+
+# compileeqn: eqn(7) source in, a compiled Expr out - eqn2hoc(2)'s own
+# translate() runs first, then the result feeds compile() exactly as
+# if a caller had written hoc source directly. Neither step is exposed
+# separately: a caller with an equation written in eqn syntax has no
+# reason to know eqn2hoc(2) exists at all.
+compileeqn(src: string): (ref Expr, string)
+{
+	if(eqn2hoc == nil){
+		eqn2hoc = load Eqn2hoc Eqn2hoc->PATH;
+		if(eqn2hoc == nil)
+			return (nil, "cannot load eqn2hoc(2)");
+	}
+	(hocsrc, err) := eqn2hoc->translate(src);
+	if(err != nil)
+		return (nil, "eqn2hoc: "+src+": "+err);
+	e := compile(hocsrc);
+	if(e == nil)
+		return (nil, "hoc could not compile: "+hocsrc+" (from "+src+")");
+	return (e, nil);
 }
 
 eval(e: ref Expr): real

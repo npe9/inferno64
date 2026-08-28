@@ -1,7 +1,6 @@
 <../../../mkconfig
 
 TARG=\
-	aerobraking.dis\
 	alternativepredation.dis\
 	amusementchaos.dis\
 	attractingwires.dis\

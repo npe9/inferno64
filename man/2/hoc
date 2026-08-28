@@ -1,6 +1,6 @@
 .TH HOC 2
 .SH NAME
-hoc: compile, eval, evalarray, symbol, setvar, getvar, reset \- hoc expression language, as a library
+hoc: compile, compileeqn, eval, evalarray, symbol, setvar, getvar, reset \- hoc expression language, as a library
 .SH SYNOPSIS
 .EX
 include "hoc.m";
@@ -52,6 +52,30 @@ ed again after rebinding a variable's value through
 \(em it does not need to be recompiled per call.  This is what makes
 it usable inside a tight per-step loop: parse once per model load,
 rebind and evaluate many times.
+.PP
+.B Compileeqn
+is
+.B compile
+for a caller whose source is written in
+.IR eqn (7)
+notation (see
+.IR eqn2hoc (2))
+rather than hoc's own grammar directly \(em the eqn(7)\(->hoc(2)
+translation happens HERE, inside the library, so a caller with
+equations in eqn syntax (
+.IR danby-aerobraking (1),
+for one) never loads or even names
+.IR eqn2hoc (2)
+itself; it just hands
+.B compileeqn
+the eqn source, the same way it would hand
+.B compile
+hoc source directly. Returns
+.RI ( nil ", an error string)
+on either a translation error or a hoc compile error, since eqn source
+has a translation stage
+.B compile
+alone does not.
 .PP
 .B Symbol
 finds or creates a named variable and returns a live handle whose
@@ -143,7 +167,10 @@ output must express that itself, or accept unbounded output.
 .IR hoc (1),
 .IR hoctest (1),
 .IR pde (2),
-.IR pdehoctest (1)
+.IR pdehoctest (1),
+.IR eqn2hoc (2),
+.IR danby-aerobraking (1),
+.IR eqnorbitaltest (1)
 .SH BUGS
 .B Evalarray
 always returns a freshly allocated array, even when the whole

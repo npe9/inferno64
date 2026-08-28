@@ -1,22 +1,25 @@
 implement Command;
 
-# eqnorbitaltest(1) - fetches appl/danby/plugin/aerobraking.b's own
-# spec text via its real in-process run() seam (exactly as
-# appl/temple/eqnorbital.b itself does), then parses and drives it
-# with an INDEPENDENTLY WRITTEN copy of the same small grammar - not
-# by calling into the harness's own internals (not exposed outside its
-# own module type anyway - see doc/danby-tks-plan.md's own note on Dis
-# load typechecking). Two independent implementations of the same
-# grammar reaching the same known-correct physics is a stronger check
-# than one implementation calling itself twice.
+# eqnorbitaltest(1) - fetches appl/danby/aerobraking.b's own spec text
+# via its in-process run() seam (a test-only entry point, the same
+# justification hoc(2)'s own run() has - see aerobraking.b's own
+# comment on it; this app has no separate harness or plugin to call
+# into instead - it's the whole application, in one file), then parses
+# and drives it with an INDEPENDENTLY WRITTEN copy of the same small
+# grammar, checking against the SAME spec text the running app
+# actually uses rather than a copy that could silently drift from it.
+# Two independent implementations of the same grammar reaching the
+# same known-correct physics is a stronger check than one
+# implementation calling itself twice. Like aerobraking.b itself, this
+# file never loads or names eqn2hoc(2) - hoc->compileeqn() does the
+# eqn(7)->hoc(2) translation internally (see module/hoc.m's own
+# comment on it).
 
 include "sys.m";
 	sys: Sys;
 include "draw.m";
 include "string.m";
 	str: String;
-include "eqn2hoc.m";
-	eqn2hoc: Eqn2hoc;
 include "hoc.m";
 	hoc: Hoc;
 
@@ -34,9 +37,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	str = load String String->PATH;
-	eqn2hoc = load Eqn2hoc Eqn2hoc->PATH;
-	m := load Modelcmd "/dis/danby/plugin/aerobraking.dis";
-	if(sys == nil || str == nil || eqn2hoc == nil || m == nil){
+	m := load Modelcmd "/dis/danby/aerobraking.dis";
+	if(sys == nil || str == nil || m == nil){
 		sys->print("load failed\n");
 		raise "fail:load";
 	}
@@ -84,15 +86,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	for(eq := reverse(eqsrc); eq != nil; eq = tl eq){
 		(name, src) := hd eq;
-		(hocsrc, err) := eqn2hoc->translate(src);
+		(e, err) := hoc->compileeqn(src);
 		if(err != nil){
 			sys->print("FAIL: eq %s: %s\n", name, err);
-			nfail++;
-			continue;
-		}
-		e := hoc->compile(hocsrc);
-		if(e == nil){
-			sys->print("FAIL: eq %s: hoc could not compile %q\n", name, hocsrc);
 			nfail++;
 			continue;
 		}
@@ -122,15 +118,9 @@ checkderiv(derivsrc: list of (string, string), name: string, want: real)
 		(n, src) := hd d;
 		if(n != name)
 			continue;
-		(hocsrc, err) := eqn2hoc->translate(src);
+		(e, err) := hoc->compileeqn(src);
 		if(err != nil){
 			sys->print("FAIL: derivative %s: %s\n", name, err);
-			nfail++;
-			return;
-		}
-		e := hoc->compile(hocsrc);
-		if(e == nil){
-			sys->print("FAIL: derivative %s: hoc could not compile %q\n", name, hocsrc);
 			nfail++;
 			return;
 		}

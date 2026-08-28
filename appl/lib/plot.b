@@ -239,6 +239,33 @@ tablecmd(t: ref Table, name: string, a: array of string): string
 	}
 }
 
+# parsergba: every real caller in this tree (appl/danby, appl/temple,
+# aerobraking.b's own graph spec) writes a colour's own rgba value as
+# "16rXXXXXXXX" - the ordinary way that literal would be spelled in
+# Limbo SOURCE. But this string arrives here at RUNTIME, through the
+# "colour" command, and Limbo's runtime string->int conversion has NO
+# support for a "BASEr" radix prefix - only the compiler's own literal
+# lexer understands it. `int "16r4ec9b0ff"` silently parses just the
+# leading "16" and stops at the 'r', giving 16 (0x10 - a nearly
+# transparent black), not 0x4ec9b0ff - confirmed directly, not assumed
+# (a probe against the real runtime conversion). Every caller listed
+# above has therefore always been drawing near-invisible axes and
+# near-black lines instead of its own configured colours, found while
+# chasing aerobraking.b's diagnostics pane rendering as blank. Rather
+# than rewrite ~25 call sites' familiar "16rXXXXXXXX" spelling, accept
+# it here: strip a leading "16r" if present, then parse the rest as
+# base 16 (str->toint, which DOES parse bare hex digits correctly).
+parsergba(s: string): (int, string)
+{
+	hex := s;
+	if(len s > 3 && s[0:3] == "16r")
+		hex = s[3:];
+	(v, rest) := str->toint(hex, 16);
+	if(rest != nil)
+		return (0, "bad rgba value " + s);
+	return (v, nil);
+}
+
 Plotter.cmd(p: self ref Plotter, command: string): string
 {
 	# Like Tk, accept a small command script as well as one command.  Newlines
@@ -270,7 +297,10 @@ Plotter.cmd(p: self ref Plotter, command: string): string
 			return "usage: colour name rgba";
 		if(p.font == nil || p.font.display == nil)
 			return "colour: no display";
-		setcolour(p,a[1],p.font.display.color(int a[2]));
+		(rgba, err) := parsergba(a[2]);
+		if(err != nil)
+			return "colour: " + err;
+		setcolour(p,a[1],p.font.display.color(rgba));
 		return nil;
 	"table" =>
 		if(len a < 3)

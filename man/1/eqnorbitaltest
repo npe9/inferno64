@@ -7,33 +7,49 @@ eqnorbitaltest \- test a real command-module Danby model end to end
 .B Eqnorbitaltest
 fetches
 .IR danby-aerobraking (1)'s
-own spec text through its real in-process
+own script text through its real in-process
 .B run()
-seam - the same call
-.IR appl/temple/eqnorbital.b
-(the harness) makes, matching
+seam \(em a test-only entry point, the same justification
 .IR hoc (2)'s
-own already-established
+own
 .B run(argv):
 .RI ( string , int )
-convention - then parses and drives it with an INDEPENDENTLY WRITTEN
-copy of the same small grammar, not by reaching into the harness's own
-internals (not reachable from outside its own module type anyway -
-Dis's
-.B load
-type-checks against a compiled module's own declared interface, not
-whatever shape a caller asks for). Two independent implementations of
-the same grammar reaching the same known-correct physics is a
-stronger check than one implementation calling itself twice.
+has \(em then parses and drives it with an INDEPENDENTLY WRITTEN copy
+of the same small grammar, checking against the SAME text the running
+model actually executes rather than a copy that could silently drift
+from it. Two independent implementations of the same grammar reaching
+the same known-correct physics is a stronger check than one
+implementation calling itself twice.
+.PP
+.IR danby-aerobraking (1)'s
+own
+.B run()
+also actually executes its script (via the same
+.B cmd()
+dispatcher
+.B init()
+uses) before handing back the text, so a caller of
+.B run()
+learns whether the script is well-formed, not just what it says \(em
+.B eqnorbitaltest
+treats a false
+.I ok
+result as a failure in its own right.
 .PP
 Checks both components of the
 .RB \*(lq derivative
 vx\*(rq/\*(lqderivative vy\*(rq
-lines (central gravity plus atmospheric drag, the same numbers
-verified before this model became a command module) and both
+lines (central gravity plus atmospheric drag) and both
 .B observable
-values, all pulled from the model's own currently-printed spec text,
-not a copy pasted into this test.
+values, all pulled from the model's own currently-printed script text,
+not a copy pasted into this test. Like
+.IR danby-aerobraking (1)
+itself, this file never loads or names
+.IR eqn2hoc (2)
+\(em it compiles eqn(7) source via
+.IR hoc (2)'s
+own
+.BR compileeqn() .
 .SH SOURCE
 .B /appl/cmd/eqnorbitaltest.b
 .SH SEE ALSO
@@ -44,8 +60,8 @@ not a copy pasted into this test.
 .SH BUGS
 Only pulls out
 .BR param / derivative / eq
-lines - not a full reimplementation of every directive
-.IR appl/temple/eqnorbital.b 's
+lines \(em not a full reimplementation of every command
+.IR danby-aerobraking (1)'s
 own grammar has
 .RB ( bodylabels / mass / state / observable
 aren't needed for this specific check, though

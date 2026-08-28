@@ -15,6 +15,6 @@ diagnostics against time.
 .SH SEE ALSO
 .IR gravity (2),
 .IR plot (2),
-.IR eqnorbital (2)
-(a sibling harness for models that are plain command modules with
-their equations as data, not a plugin implementing this interface)
+.IR danby-aerobraking (1)
+(a sibling model that is a plain command module with its equations
+and interface as data, not a plugin implementing this interface)

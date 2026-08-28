@@ -146,6 +146,19 @@ Hoc: module
 	# call it once before compiling a new, unrelated set of equations
 	# so an earlier caller's variable names can't leak into a new one.
 	compile:	fn(src: string): ref Expr;
+
+	# compileeqn: like compile(), but src is eqn(7) syntax (see
+	# eqn2hoc(2)) rather than hoc's own expression grammar directly -
+	# the eqn(7)->hoc(2) translation step lives HERE, inside the
+	# library, so a caller whose equations are written in eqn never
+	# needs to load or even know about eqn2hoc(2) itself; it just asks
+	# hoc to compile eqn source, same as compile() for hoc source
+	# directly. Returns (nil, an error string) on either a translation
+	# error or a hoc compile error - the same "no silently wrong
+	# answer" discipline compile() alone doesn't need, since ordinary
+	# hoc source has no separate translation stage to fail at.
+	compileeqn:	fn(src: string): (ref Expr, string);
+
 	eval:		fn(e: ref Expr): real;
 	symbol:		fn(name: string): ref Sym;
 	setvar:		fn(name: string, v: real);
