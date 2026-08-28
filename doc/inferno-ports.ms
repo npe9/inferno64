@@ -10085,6 +10085,178 @@ this up next should read the panic type distribution, not just the
 .CW checkmarkptr()
 rate, as the honest measure of where this boot actually stands.
 .NH 1
+The scan was the noise; the register was the signal
+.PP
+Picked up the closing instruction from the previous round: read the
+panic type distribution across a batch, not any one checker's hit
+rate, as the honest measure of where this boot stands.  A 15-boot
+batch put six of fifteen into
+.CW "general protection violation" .
+Six boot logs, five distinct
+.CW dumpstack()
+call sites resolved by function name: two at
+.CW decref+14 ,
+one each at
+.CW lockloop+72 ,
+.CW strcmp+18 ,
+.CW _intrr+32
+and
+.CW strchr+46 .
+.PP
+Before trusting that list, checked what
+.CW dumpstack()
+actually is.
+.CW _dumpstack()
+(pc64/trap.c) walks every word from the current stack pointer up to
+.CW estack
+and prints any word that falls inside the kernel text range.  That is
+a conservative scan, the same shape of check this hunt already found
+and fixed once for the tracked-pointer table (freed, not cleared) --
+it mixes genuine return addresses with whatever code-address-shaped
+garbage is still sitting in stack slots a popped frame never
+overwrote.  A first pass had swept an entire boot log for every
+address of that shape, wherever it appeared, and gotten a call chain
+that made no sense --
+.CW rungc()
+calling
+.CW vmachine()
+calling
+.CW xec()
+calling
+.CW iload() ,
+five layers that do not call each other.  That capture was noise, not
+a call stack, and is retracted as evidence.
+.PP
+What a
+.CW dumpstack()
+capture does NOT get by scanning is
+.CW PC :
+the hardware fault-address register, printed straight from
+.CW Ureg
+by
+.CW dumpregs() ,
+no scan involved.  That is the one number in every capture that is
+certainly the actual faulting instruction.  Five different
+.CW PC
+values across six boots --
+.CW decref ,
+.CW lockloop ,
+.CW strcmp ,
+.CW strchr ,
+the interrupt trampoline itself -- is real evidence, and it says the
+same thing this hunt's earlier rounds kept saying: five unrelated
+consumers each handed a bad pointer is downstream of one corruption,
+not five separate bugs in five unrelated functions.
+.PP
+x86 does not set
+.CW CR2
+(the fault-address register) for a
+.CW #GP
+the way it does for a
+.CW #PF ,
+so the trap handler cannot name the bad pointer generically for any of
+these sites.  But at the one site that recurred --
+.CW decref+14 ,
+this function's own first read of
+.CW r->ref
+-- the bad pointer is the function's own argument, known and named by
+the call itself.  Added
+.CW badref() :
+a null/misaligned/near-zero check, cheap enough to run unconditionally
+on every
+.CW incref()
+and
+.CW decref()
+call, run before the dereference.  On the rare confirmed-bad case it
+calls
+.CW auditmemloc()
+(alloc.c), the pool-chain walker the tracked-pointer and
+.CW checkmarkptr()
+probes already use, to report whether the pointer lands in a live
+block, a freed one, or no pool at all -- then
+.CW panic()
+names the exact bad value and the exact caller via
+.CW getcallerpc() .
+A full pool audit runs unconditionally on every call would drown the
+boot in console output; gating it behind the cheap check keeps the
+common case free.
+.PP
+A 45-boot batch with this in place caught it five times, converting
+what would have been five more opaque GPFs into panics naming the
+exact pointer and the exact caller:
+.CW "decref: bad r 0xf000ff53 pc=pathclose+24"
+twice,
+.CW "decref: bad r 0xf000ff53 pc=putmhead+25" ,
+.CW "decref: bad r 0x0 pc=closeegrp+14"
+and
+.CW "incref: bad r 0x0 pc=walk+34" .
+.PP
+.CW 0xf000ff53
+is not a new value.  It is the exact 32-bit pattern this hunt's
+earlier, scan-based captures kept seeing repeated across both halves
+of
+.CW BP
+--
+.CW F000FF53F000FF53
+-- in every
+.CW decref+14
+GPF this round found.  This is the first confirmation, from a
+hardware register naming the exact call site rather than a scan
+guessing at one, that the value is real and not a scan artifact, and
+that it is not confined to one field.
+.CW pathclose(p)
+calling
+.CW decref(p)
+means a
+.CW Chan Ns 's
+.CW c->path
+field held it.
+.CW putmhead(m)
+calling
+.CW decref(m)
+means a
+.CW Chan Ns 's
+.CW c->umh
+field held it.  Both are pointer fields on
+.CW Chan ,
+set correctly at
+.CW newchan()
+(which unconditionally zeroes
+.CW c->path
+and
+.CW c->umh
+on every allocation, fresh or recycled from the free list) and again
+at
+.CW Aopen
+time -- a live, correctly-initialized object having one unrelated
+field later hold this same poison-looking value is the same shape as
+the previous round's
+.CW ml->MP
+finding, now on a second struct and a third field.
+.CW cunique()
+carries a pre-existing
+.CW //BUG
+comment on
+.CW c->umh ,
+written by an earlier author before this hunt started; this is the
+first evidence that comment was flagging something real and still
+open, not stale caution.
+.PP
+This does not find the writer.
+.CW path
+and
+.CW umh
+are not adjacent in
+.CW Chan
+(one is the second custom field, the other the last), which rules out
+a simple off-by-one-sized copy as the mechanism and leaves the same
+open question the previous round closed on: something is scribbling
+individual pointer-typed fields on otherwise-live, correctly-typed
+objects, well after correct construction, and no write-site audit run
+so far -- not the
+.CW ml->MP
+sites, not this one -- has caught it in the act.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
