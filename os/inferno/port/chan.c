@@ -56,11 +56,43 @@ isdotdot(char *p)
 	return p[0]=='.' && p[1]=='.' && p[2]=='\0';
 }
 
+/*
+ * pc64's general-protection-violation hunt (doc/inferno-ports.ms)
+ * resolved the faulting PC to decref+14 -- this function's own first
+ * read of r->ref -- in two independent boots out of a six-boot GPF
+ * batch: once with r holding what looked like a plausible heap
+ * address, once with r holding 4, a small integer no valid Ref* can
+ * ever equal.  x86 doesn't set CR2 (the fault-address register) for
+ * a #GP the way it does for a #PF, so the trap handler alone can't
+ * name the bad pointer -- catching it here, at the one known call
+ * site the crash resolves to, can.  badref() is the cheap half: a
+ * null/misaligned/near-zero check run unconditionally on every call,
+ * catching the small-integer shape without walking any pool.  The
+ * "plausible but wrong" shape (a real heap-range address pointing at
+ * a freed or never-live block) needs auditmemloc() (alloc.c) -- the
+ * same pool-chain walk the tracked-pointer and checkmarkptr() probes
+ * already use -- which is too expensive to run on every decref(), so
+ * it only runs once badref() or the pre-existing ref<=0 underflow
+ * check has already decided something is wrong.  See
+ * doc/inferno-ports.ms.
+ */
+static int
+badref(Ref *r)
+{
+	return r == nil || (uintptr)r < 0x1000 ||
+		((uintptr)r & (sizeof(uintptr)-1)) != 0;
+}
+
 int
 incref(Ref *r)
 {
 	s32 old, new;
+	extern void (*auditmemloc)(char*, void*);
 
+	if(badref(r)){
+		auditmemloc("incref", r);
+		panic("incref: bad r %#p pc=%#p", r, getcallerpc(&r));
+	}
 	do {
 		old = r->ref;
 		new = old+1;
@@ -72,11 +104,18 @@ int
 decref(Ref *r)
 {
 	long old, new;
+	extern void (*auditmemloc)(char*, void*);
 
+	if(badref(r)){
+		auditmemloc("decref", r);
+		panic("decref: bad r %#p pc=%#p", r, getcallerpc(&r));
+	}
 	do {
 		old = r->ref;
-		if(old <= 0)
-			panic("decref pc=%#p", getcallerpc(&r));
+		if(old <= 0){
+			auditmemloc("decref-underflow", r);
+			panic("decref pc=%#p old=%ld", getcallerpc(&r), old);
+		}
 		new = old-1;
 	} while(cmpswap(&r->ref, old, new) == 0);
 	return new;
