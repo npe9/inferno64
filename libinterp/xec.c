@@ -522,7 +522,25 @@ badptrslot(void *bad, void *addr, char *which)
 	 */
 	auditmemloc(which, addr);
 	dumpstack();
-	abort();
+	/*
+	 * libkern/abort.c's abort() is "while(*(int*)0);" -- meant to
+	 * fault on the null read, but on pc64 specifically it instead
+	 * spins forever: the widened dv check above (this same function,
+	 * the "-freed" shape) fired on 18 of 25 boots in one batch, and
+	 * every one hung at exactly this point rather than producing a
+	 * panic, caught only by comparing against a normal boot's output
+	 * -- the exact same methodology gap this hunt already found once
+	 * for dumpstack() and %lux. abort() is shared with
+	 * os/osprey/kernlib's own build (libkern.a), so it stays
+	 * untouched; panic() is this port's own, already-proven-reliable
+	 * halt, declared locally the same way dumpstack()/auditmemloc()
+	 * are above, since libinterp is not native-kernel-only. pc64-
+	 * only, temporary. See doc/inferno-ports.ms.
+	 */
+	{
+		extern void panic(char*, ...);
+		panic("movp: bad %s %#p", which, bad);
+	}
 }
 
 OP(movp)
@@ -539,8 +557,56 @@ OP(movp)
 		Setmark(h);
 	}
 	dv = P(d);
-	if(dv != H && (uintptr)dv < 0x1000)
-		badptrslot(dv, R.d, "dv");
+	if(dv != H){
+		if((uintptr)dv < 0x1000)
+			badptrslot(dv, R.d, "dv");
+		else {
+			/*
+			 * This guard only ever caught dv < 0x1000 -- the
+			 * near-null shape. destroy()'s own alloc:D2B:
+			 * destroy-entry captures (doc/inferno-ports.ms,
+			 * "destroy+703 is destroy()'s own entry check") are
+			 * a plausible-but-wrong heap pointer, the same blind
+			 * spot badref()/markheap()'s guards had, and at
+			 * least one confirmed capture landed here specifically
+			 * (module Bufio, no scanframe() anywhere near it --
+			 * matches the earlier comment above this function
+			 * predicting exactly this path). destroy()'s own
+			 * check catches it too, but by then R.d (the slot
+			 * address that HELD the bad dv) is gone -- destroy()
+			 * only ever gets a value, never an address. Read-only
+			 * mirror of D2B's own magic check, no poolfault
+			 * escalation, so a hit lands in badptrslot() with R.d
+			 * still in hand instead of destroy()'s address-less
+			 * panic. pc64-only, temporary. See doc/inferno-ports.ms.
+			 */
+			Bhdr *db;
+
+			db = (Bhdr*)((uchar*)dv - (BHDRSIZE - sizeof(Btail)));
+			if(db->magic != MAGIC_A && db->magic != MAGIC_I){
+				db = ((Balign*)((char*)dv - sizeof(Balign)))->hdr;
+				if(db->magic != MAGIC_A && db->magic != MAGIC_I){
+					/*
+					 * badptrslot()'s own auditmemloc() call
+					 * audits addr (the SLOT), not bad (dv itself)
+					 * -- two fixes tried (limbo -z on disinit.b,
+					 * zeroing Stkext's own mallocz slop) neither
+					 * moved this capture at all, so before trying
+					 * a third: is dv genuinely a freed POOL block
+					 * (live/free distinction, matching this hunt's
+					 * destroy() double-free captures) or, like the
+					 * Chan.path/umh poison-value captures, not in
+					 * any pool at all? Answered directly instead
+					 * of guessed at. pc64-only, temporary. See
+					 * doc/inferno-ports.ms.
+					 */
+					extern void (*auditmemloc)(char*, void*);
+					auditmemloc("dv-freed:dv-itself", dv);
+					badptrslot(dv, R.d, "dv-freed");
+				}
+			}
+		}
+	}
 	P(d) = sv;
 	destroy(dv);
 }

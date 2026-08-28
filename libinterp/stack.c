@@ -59,7 +59,25 @@ newstack(Prog *p)
 		changed to 40 bytes for amd64 */
 	if(l < t->size+sizeof(Stkext))
 		l = t->size+sizeof(Stkext);
-	ns = mallocz(l, 0);
+	/*
+	 * newstack()'s own memmove(p->R.FP, f, t->size) below only ever
+	 * covers the first t->size bytes of this l-byte extent -- the
+	 * rest (l can run well past t->size; this hunt's own destroy()/
+	 * movp comments already named this exact gap: "whatever a
+	 * Stkext's mallocz(l, 0) left unclaimed") was never written by
+	 * anything. Compiled Dis code that ever treats a slot back there
+	 * as a legitimate, H-initialized pointer field (the same
+	 * assumption initmem() enforces for a frame's own declared
+	 * locals) would read raw allocator leftovers -- on this port, a
+	 * pool block's freed-but-not-yet-reused contents, i.e. an
+	 * already-freed pointer, matching the destroy+703/movp
+	 * "dv-freed" captures this hunt traced to disinit.b:175 byte-
+	 * for-byte, boot after boot (doc/inferno-ports.ms). Zeroing the
+	 * whole extent, not just the part memmove copies into, closes
+	 * that gap the same way -z already closed the equivalent one
+	 * for array(). pc64-only, temporary. See doc/inferno-ports.ms.
+	 */
+	ns = mallocz(l, 1);
 	if(ns == nil)
 		error(exNomem);
 
@@ -97,7 +115,8 @@ extend(void)
 		changed to 40 bytes for amd64 */
 	if(l < t->size+sizeof(Stkext))
 		l = 2*t->size+sizeof(Stkext);
-	ns = mallocz(l, 0);
+	/* same unclaimed-slop fix as newstack() above -- see its comment. */
+	ns = mallocz(l, 1);
 	if(ns == nil)
 		error(exNomem);
 
