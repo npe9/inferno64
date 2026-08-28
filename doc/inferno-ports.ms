@@ -10781,6 +10781,123 @@ far), not a refutation. The hypothesis is neither confirmed nor
 ruled out; the check stays in place, cheap and specific, for the
 next capture to answer directly rather than by further reading.
 .NH 1
+Eliminating candidates for destroy+703, and a probe that hung the boot
+.PP
+Picked the
+.CW destroy+703
+thread back up with a direct test rather than more reading:
+.CW poolmsize()
+(alloc.c) got the same bounded, distinct-caller probe
+.CW notefree()
+already used for
+.CW poolfree() .
+A clean boot showed exactly three distinct callers --
+.CW msize() ,
+.CW hmsize() ,
+and
+.CW destroy() --
+with
+.CW destroy() Ns 's
+own call to
+.CW poolmsize()
+(via
+.CW "trackclear(h, poolmsize(heapmem, h))" )
+landing at a real, confirmed offset: 560. Neither 560 nor 608
+(.CW poolfree() Ns 's
+own confirmed call, previous section) is 703. Both hypotheses this
+hunt has tried for
+.CW destroy+703
+so far are now ruled out by direct capture, not inference.
+.PP
+A second experiment tested whether
+.CW getcallerpc()
+is even position-independent within one function: two calls,
+.CW getcallerpc(&p) ,
+made from two different textual positions inside
+.CW poolfree() -- once
+as the very first statement, once right before
+.CW notefree() Ns 's
+own call -- printed for the first several invocations of a real
+boot.  Every pair matched exactly, for every distinct real caller
+seen, not just
+.CW destroy() .
+Position within the enclosing function does not affect the result;
+only which function the call is textually inside of does.  This
+rules out a theory this round had been circling: that
+.CW destroy+608
+and
+.CW destroy+703
+could both be
+.CW poolfree() Ns 's
+own call site, read differently depending on where within
+.CW poolfree()
+the read happens.  They cannot be; distinct offsets mean distinct
+enclosing functions, or distinct call sites in the same one.
+.PP
+The probe itself had a real bug worth recording: its second print's
+guard condition never actually re-latched shut, so once its shared
+counter reached its cap the print fired on every subsequent
+.CW poolfree()
+call for the rest of the boot -- flooding the console and hanging
+two full batches (50 boots) at exactly the same output-line count
+before any of this hunt's usual panics had a chance to happen.
+Caught by comparing against a normal boot's line count, not assumed;
+fixed by removing the probe once it had answered its question rather
+than trying to re-gate it, since its purpose was already served.
+.PP
+Rereading
+.CW destroy()
+and
+.CW freelist()
+with poolfree/poolmsize eliminated surfaced two D2B uses this hunt's
+own earlier alloc.c fix had not reached, both in heap.c:
+.CW destroy() Ns 's
+own consistency check (
+.CW "D2B(b, h)" ,
+anchored on
+.CW h ,
+a local -- destroy(void *v)'s real first parameter is
+.CW v )
+and
+.CW freelist() Ns 's
+tail-loop check (
+.CW "D2B(b, th)" ,
+anchored on
+.CW th ,
+also a local --
+.CW freelist(Heap\ *h,\ int) Ns 's
+real first parameter is
+.CW h ).
+Fixed both with a local
+.CW D2BPC
+copy in heap.c, matching alloc.c's exactly (D2B itself stays shared
+with
+.CW os/osprey/kernlib/pool.c ,
+out of scope).
+.PP
+Rebuilt with all four now-known D2B sites reachable from
+.CW destroy()
+correctly anchored --
+.CW poolfree() ,
+.CW poolmsize() ,
+.CW freelist() Ns 's
+tail check, and
+.CW destroy() Ns 's
+own consistency check -- and a fresh batch still resolved
+.CW destroy+703
+to the identical relative offset. Every direct candidate this hunt
+has been able to name and fix is now eliminated, and the value has
+not moved once across any of these fixes or across several
+rebuilds. Left open, honestly: either a real fifth call site this
+reading still has not found, or a mechanism in how an indirect call
+through the
+.CW poolfault
+function pointer interacts with
+.CW getcallerpc() Ns 's
+stack-position idiom that a disassembler -- unavailable for this
+port's Plan9 a.out/coff ipc64 image -- would settle directly instead
+of by further elimination.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
