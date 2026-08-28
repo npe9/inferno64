@@ -101,6 +101,50 @@ is a syntax error before this module ever sees it \(em write
 .B "hoc 'x = 3'"
 instead.
 .PP
+A literal expression like
+.B x*x
+is safe unquoted only because it never changes: an unquoted word
+containing
+.BR * ,
+.BR ? ,
+or
+.B [
+is a filename pattern in
+.IR sh (1)
+(see its own man page), and one that matches nothing simply stands for
+itself \(em which is why
+.B "${hoc x*x}"
+happens to work.  The instant a live value from
+.B $var
+sits directly next to
+.BR * ,
+.BR ? ,
+or
+.B [
+with no separator, this stops being safe: writing the expression as
+.B $h*$d
+(no quoting, no
+.BR ^ )
+can silently misparse \(em observed to raise
+.B "sh: null list in concatenation"
+or, worse, to silently evaluate against
+.IR hoc (2)'s
+OWN stale variable of the same name instead of the substituted value,
+with no error at all.  Two idioms are safe: build the expression with
+.B ^
+and single-quoted literal pieces around each live value
+.RI ( "'x + h*'^" $d ),
+or bind
+.IR hoc (2)'s
+own persistent variables one at a time with a fully single-quoted,
+un-substituted right-hand side and let
+.I it
+do the arithmetic (see the loop example below) \(em never splice a
+raw
+.B $var
+straight up against
+.BR * / ? /[ .
+.PP
 A complete example:
 .EX
 	load hoc
@@ -108,6 +152,18 @@ A complete example:
 	echo xsquared: ${hoc x*x}
 	echo eqn form: ${hoc eqn x sup 2 + 1}
 	hoc reset
+
+	# binding hoc's own variables across a loop, the safe way -
+	# every right-hand side below is a single quoted literal, no
+	# live $var ever sits directly against * unquoted
+	load std
+	hoc 'x = 1.0'
+	hoc 'h = 0.25'
+	for(i in `{seq 1 4}) {
+		d := ${hoc -x}
+		hoc 'x = x + h*'^$d
+	}
+	echo x: ${hoc x}
 .EE
 .SH SOURCE
 .B /appl/cmd/sh/hoc.b
