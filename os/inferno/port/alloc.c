@@ -70,6 +70,45 @@ void (*auditmemloc)(char *, void *) = _auditmemloc;
 static void _poolfault(void *, char *, uintptr);
 void (*poolfault)(void *, char *, uintptr) = _poolfault;
 
+/*
+ * auditmemloc() answers "is this address live, free, or nowhere" but
+ * not "who freed it" -- the open half of the alloc:D2B double-free
+ * this hunt hardware-confirmed (heap.c's destroy() calling poolfree()
+ * on a block already MAGIC_F).  A small ring of the last NFREEHIST
+ * successful poolfree() calls, each with its caller's pc, answers
+ * that directly: on the next alloc:D2B, if the bad address is in this
+ * ring, the panic can name exactly who freed it the first time,
+ * turning "somewhere frees this twice" into a specific call site
+ * without having to catch the double-free in the act.  pc64-only,
+ * temporary.  See doc/inferno-ports.ms.
+ */
+enum { NFREEHIST = 32 };
+static struct { void *addr; uintptr pc; } freehist[NFREEHIST];
+static int freehistn;
+
+static void
+notefree(void *v, uintptr pc)
+{
+	int i;
+
+	i = freehistn % NFREEHIST;
+	freehist[i].addr = v;
+	freehist[i].pc = pc;
+	freehistn++;
+}
+
+static void
+printfreehist(void *v)
+{
+	int i, n;
+
+	n = freehistn < NFREEHIST ? freehistn : NFREEHIST;
+	for(i = 0; i < n; i++)
+		if(freehist[i].addr == v)
+			print("_poolfault: %#p was freed before, from pc=%#p\n",
+				v, freehist[i].pc);
+}
+
 int
 memusehigh(void)
 {
@@ -424,6 +463,8 @@ poolfree(Pool *p, void *v)
 	if((b->magic != MAGIC_A && b->magic != MAGIC_I) ||
 	   b->size <= 0 || (b->size & p->quanta))
 		poolfault(v, "poolfree:badhdr", getcallerpc(&p));
+
+	notefree(v, getcallerpc(&p));
 
 	ilock(&p->l);
 	p->nfree++;
@@ -975,6 +1016,7 @@ _poolfault(void *v, char *msg, uintptr c)
 	Prog *xp;
 
 	auditmemloc(msg, v);
+	printfreehist(v);
 	/*
 	 * Same trick as pc64/trap.c's dumpregs() enhancement: name the
 	 * Dis Prog and module current when the allocator itself catches
