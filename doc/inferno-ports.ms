@@ -12684,6 +12684,79 @@ directly from the same already-verified local, so structurally the
 least likely remaining candidate), narrowing this lead further
 without yet landing it.
 .NH 1
+Two more ->path sites, and mainmem is generously sized -- the OOM is not a config problem
+.PP
+Swept for the same shape this hunt has now found and fixed four times
+in
+.CW chan.c/pgrp.c :
+an
+.CW incref()
+on a
+.CW Path/Chan
+field that is documented-nil-able with no guard.  Found two more in
+.CW exportfs.c :
+.CW exmount() Ns 's
+own
+.CW "oname\ =\ c->path;\ incref(oname);" ,
+paralleling
+.CW walk() Ns 's
+already-fixed bug exactly, and its caller's own copy of the same
+pattern a few dozen lines later in the create-with-mount path.  Both
+guarded to match the established convention.
+.CW exportfs.c
+is part of this kernel's own link
+.CW ( exportfs.6
+appears in
+.CW ipc64 Ns 's
+link line) despite not showing up in a plain mkfile grep --
+.CW $PORT ,
+set elsewhere, pulls it in.  Built and boot-tested: 30 boots, 7
+panics (23%, in-band, no regression).  Neither guard has its own
+confirmed capture yet.
+.PP
+The same batch recurred
+.CW "disinit\ error:\ out\ of\ memory:\ main" --
+a second hit, confirming the previous section's
+.CW %r
+fix is already earning its keep by making this lead visible at all.
+Chased it one step further:
+.CW exNomem
+.CW ( "out\ of\ memory:\ main" )
+is raised from well over a dozen sites across
+.CW libinterp/load.c
+alone (the Dis module loader
+.CW disinit()
+calls to bring up
+.CW /osinit.dis ) ,
+every one of them a generic "a malloc-family call returned
+.CW nil "
+signal, so the specific failing allocation is not yet pinned down.
+What is pinned down: this is not a simple sizing problem.
+.CW mainmem Ns 's
+own boot-time prints
+.CW (poolsizeinit() Ns 's
+.CW "poolsizeinit\ conf.npage\ %zd" ,
+.CW poolsize() Ns 's
+.CW "poolsize\ max\ %zud" )
+show
+.CW conf.npage\ 128472
+and a resulting
+.CW maxsize
+of roughly 251MB -- fifty percent of this VM's 512MB, per
+.CW pc64.c Ns 's
+.CW main_pool_pcnt=50 ,
+correctly overriding the table's built-in 32MB placeholder.  A pool
+that generously sized running out during the FIRST major
+allocation-heavy step of boot points past configuration and at this
+session's own broader heap-corruption thread
+.CW (poolalloc() Ns 's
+still-open size=0 lead, the various refcount-undercount findings) --
+consistent with, though not yet proven to be caused by, one of those
+already-documented mechanisms quietly costing this pool usable
+space.  Not chased to a specific allocation site this round; a
+real trace would need per-call accounting across a full boot, a
+larger undertaking than this round's capture-driven fixes.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
