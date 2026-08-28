@@ -10499,6 +10499,73 @@ and verified to build and boot either way, but the poison-family
 reading built on the old capture should be treated as unconfirmed
 until it recurs with the corrected format.
 .NH 1
+Who freed it first, and a discrepancy left open
+.PP
+.CW auditmemloc()
+answers live, free, or nowhere; it has never answered who freed a
+block the first time, the open half of the double-free the previous
+section confirmed. Added a 32-entry ring recording
+( Ns
+.CW address ,
+.CW "caller pc" Ns
+)
+on every successful
+.CW poolfree() ,
+and had
+.CW _poolfault()
+search it before panicking.
+.PP
+A 25-boot batch caught it twice, both fully reproducible in shape. The
+failing (second) free's caller resolves to
+.CW destroy+703 ,
+matching the panic message's own
+.CW "(from 2bf813/...)"
+exactly -- this is
+.CW destroy() Ns 's
+one and only
+.CW "poolfree(heapmem, h)"
+call, confirmed against the source. The ring's recorded first,
+successful free of the same address resolves to
+.CW destroy+608 --
+a different offset, but still confirmed (against the symbol table:
+.CW destroy
+spans
+.CW 0x2bf554
+to
+.CW 0x2bf8a9 ,
+and no other function's symbol falls inside that range) to be
+somewhere else inside
+.CW destroy() Ns 's
+own compiled body, not some unrelated function.
+.CW destroy() Ns 's
+source has exactly one textual
+.CW poolfree()
+call, so two distinct offsets for what ought to be the same call site
+does not have an explanation yet. Recursion was considered and set
+aside: even a recursive
+.CW destroy(h)
+call would execute the identical compiled instruction at line 155
+every time, not two different addresses. Whether this is a real
+second call site this reading has missed, or a limit of how
+.CW getcallerpc()
+(the Plan9 a+0(FP) idiom, in l.s) behaves when invoked from two
+different points inside a large function, is open -- recorded as
+such rather than guessed at.
+.PP
+What the two captures do establish solidly, independent of that
+open question: the same address really was freed once successfully
+and freed again later, and both frees trace to code inside
+.CW destroy() Ns 's
+own body rather than to some entirely unrelated function elsewhere
+in the kernel. That narrows the search -- the double-free is a
+.CW destroy()
+problem, not a
+.CW freelist() /
+.CW freearray() /
+.CW t->free()
+problem reached from somewhere else -- without yet naming the exact
+second call site.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
