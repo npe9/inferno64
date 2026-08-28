@@ -71,6 +71,40 @@ static void _poolfault(void *, char *, uintptr);
 void (*poolfault)(void *, char *, uintptr) = _poolfault;
 
 /*
+ * A resolved "alloc:D2B ... (from X/Y)" this hunt captured put X
+ * inside destroy() at an offset that made no sense next to the one,
+ * real poolfree() call site a clean-boot capture separately confirmed
+ * (doc/inferno-ports.ms, "Who freed it first, and a discrepancy left
+ * open"). The cause: include/pool.h's D2B(b, dp) macro computes its
+ * own caller pc as getcallerpc(&dp) -- and every other getcallerpc()
+ * call in this tree (chan.c's decref()/incref()/cclose()/newpath(),
+ * this file's own setmalloctag() using &dsize inside mallocalign())
+ * anchors on the ENCLOSING FUNCTION'S OWN FIRST PARAMETER, because
+ * that is the stack slot the Plan9 a+0(FP) trick actually reads.
+ * D2B's dp is correct for poolimmutable(void*)/poolmutable(void*)/
+ * free(void*)/set-and-get-{malloc,realloc}tag(void*,...), whose first
+ * parameter IS the data pointer -- but poolfree(Pool*,void*),
+ * poolrealloc(Pool*,void*,...), poolmsize(Pool*,void*) all take the
+ * Pool* first, and mallocalign()'s dp is a local, not a parameter at
+ * all. In those four, D2B's own poolfault() names a plausible-looking
+ * but wrong pc whenever it fires.
+ *
+ * D2B itself is shared with os/osprey/kernlib/pool.c (a tree this
+ * hunt does not touch) and emu/, libinterp/, devforth.c besides --
+ * changing its signature is out of scope. D2BPC is the same check
+ * with an explicit, correctly-anchored pc instead, local to this
+ * file, used only at the four mismatched call sites. pc64-only,
+ * temporary alongside the rest of this hunt's probes. See
+ * doc/inferno-ports.ms.
+ */
+#define D2BPC(b, dp, pc)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
+				if(b->magic != MAGIC_A && b->magic != MAGIC_I){\
+					b = ((Balign*)((char*)(dp)-sizeof(Balign)))->hdr; \
+					if(b->magic != MAGIC_A && b->magic != MAGIC_I)\
+						poolfault(dp, "alloc:D2B", pc);\
+				}
+
+/*
  * auditmemloc() answers "is this address live, free, or nowhere" but
  * not "who freed it" -- the open half of the alloc:D2B double-free
  * this hunt hardware-confirmed (heap.c's destroy() calling poolfree()
@@ -90,6 +124,34 @@ static void
 notefree(void *v, uintptr pc)
 {
 	int i;
+	static uintptr seen[64];
+	static int nseen;
+
+	/*
+	 * Bisection probe: is destroy() really calling poolfree() from
+	 * more than one compiled address for what its source shows as
+	 * one line? Print each DISTINCT caller pc the first time it's
+	 * seen (capped, so a normal boot's thousands of frees don't
+	 * flood the console) -- if two different pc values both print
+	 * and both later resolve to destroy+N, that's independent
+	 * confirmation outside of any crash path. pc64-only, temporary,
+	 * remove with the rest of this ring. See doc/inferno-ports.ms.
+	 */
+	if(nseen < nelem(seen)){
+		int j, dup;
+
+		dup = 0;
+		for(j = 0; j < nseen; j++)
+			if(seen[j] == pc){
+				dup = 1;
+				break;
+			}
+		if(!dup){
+			seen[nseen++] = pc;
+			print("notefree: new caller pc=%#p (seen %d distinct)\n",
+				pc, nseen);
+		}
+	}
 
 	i = freehistn % NFREEHIST;
 	freehist[i].addr = v;
@@ -448,7 +510,7 @@ poolfree(Pool *p, void *v)
 	Bhdr *b, *c;
 	/* extern Bhdr *ptr; defined in libinterp/gc.c */
 
-	D2B(b, v);
+	D2BPC(b, v, getcallerpc(&p));
 
 	/*
 	 * Probe: D2B only checks the magic byte, not size/alignment, and
@@ -511,7 +573,7 @@ poolrealloc(Pool *p, void *v, uintptr size)
 	SET(osize);
 	if(v != nil){
 		ilock(&p->l);
-		D2B(b, v);
+		D2BPC(b, v, getcallerpc(&p));
 		osize = b->size - BHDRSIZE;
 		iunlock(&p->l);
 		if(osize >= size)
@@ -534,7 +596,7 @@ poolmsize(Pool *p, void *v)
 	if(v == nil)
 		return 0;
 	ilock(&p->l);
-	D2B(b, v);
+	D2BPC(b, v, getcallerpc(&p));
 	size = b->size - BHDRSIZE;
 	iunlock(&p->l);
 	return size;
@@ -800,7 +862,7 @@ mallocalign(uintptr dsize, u32 align, s32 offset, u32 span)
 	}else{
 		/* add the Balign header to point back to the header */
 		ba = (Balign*)(c-sizeof(Balign));
-		D2B(b,v);
+		D2BPC(b, v, getcallerpc(&dsize));
 		ba->hdr = b;
 		setmalloctag(v, getcallerpc(&dsize));
 		if(0)print("mallocalign dsize %zd align %d 0x%x offset %d span %d\n"
