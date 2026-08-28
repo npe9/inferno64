@@ -9742,6 +9742,195 @@ store opcode, or channel send/receive), only narrows where one would
 have to be.  That is where this resumes.
 
 .NH 1
+Two shapes, one checker
+.PP
+Picked back up at the three named leads:
+.CW poolcompact() 's
+move callback, interrupt-time GC reentrancy, and which code path drops
+a list cell's last reference.
+.CW poolcompact()
+is settled outright:
+.CW poolsetcompact()
+(alloc.c) is never called for
+.CW heapmem
+or
+.CW mainmem
+anywhere in this port \- only
+.CW libmemdraw/draw.c
+wires it, for
+.CW imagmem ,
+a wholly separate pool for draw/image memory \- so
+.CW poolcompact()
+is permanently a no-op for the two pools Dis heap objects actually live
+in.  A moved-object-not-fixed-up reading cannot be the mechanism here;
+nothing ever moves.
+.PP
+The container question resolved cleanly the other way.
+.CW checklistcell()
+(gc.c,
+.CW marklist() )
+validates the enclosing list cell's own Heap header \-
+.CW t\0==\0&Tlist ,
+.CW ref\0>\00
+\- right before each cell's payload gets walked, using
+.CW l
+itself, which
+.CW marklist()
+already has in hand as
+.CW vw .
+Two batches, 40 boots, zero hits: every container a
+.CW checkmarkptr()
+capture has ever fired against was live, correctly typed, and
+positively refcounted at the exact moment its payload got read.  That
+rules out "the whole cell was freed and its memory handed to something
+else" for the container itself \- whatever is wrong is confined to the
+one field, on an otherwise-intact object.
+.PP
+Read
+.CW OP(consp)
+once more with that in mind and found a real, if narrow, defect worth
+fixing regardless of whether it turns out to be the cause: it wrote
+.CW l->t\0=\0&Tptr
+.I before
+.CW *(WORD**)l->data\0=\0sv ,
+so for the width of two C statements the cell's own type claims a
+pointer payload that has not been written yet.  Consb/consw/consl/
+consf never set
+.CW l->t
+at all \- cons() leaves it nil, and
+.CW markheap(nil,\0...)
+returns immediately \- so this window exists only for
+.CW OP(consp) 's
+own Tptr cells.  Reordered to write the payload first.  Real,
+permanent hardening, kept regardless of outcome \- but it did not move
+the measured rate (still about 15 of 40 boots after), so this specific
+window was not what checkmarkptr() has been catching.
+.PP
+The checker's own reread mechanism turned out to have been testing the
+wrong thing, twice.  The first version put a
+.CW print()
+between each reread; the second, calling itself "silent," still had
+.I two
+full
+.CW print()
+calls \- the bad-word line and the object-type line, each real kernel
+console I/O \- between the very first read (the one that decided a hit
+was worth reporting) and what it called the reread loop.  Neither
+version had actually tested "immediately after, nothing run in
+between" at all.  The real version does: every read, first one
+included, happens back to back in one tight loop with no function call
+of any kind between them, into a local array, each read volatile-
+qualified against ordinary single-threaded compiler caching \- decided
+and reported only afterward.  A same-call sanity print
+( val
+and
+.CW silent[0]
+are the same variable by construction; printed together in one
+.CW print()
+call, they read equal every time) ruled out a
+.CW %zx / FmtVLong
+marshaling bug in the checker's own diagnostic before trusting
+anything built on
+.CW %zx
+further \- this tree already has one precedent for a silently-broken
+format verb
+(see the ember-language-status project notes: %g/%e/%f never
+registered with this same toolchain's fmt library at all), so it was
+worth ruling out explicitly rather than assuming.
+.PP
+That honest tight loop surfaced something the two earlier, leakier
+versions had been hiding: two genuinely different shapes, conflated
+under one checker.
+.IP \(bu 3
+Word 0 of a Tptr-typed list cell (size 8, np 1, map
+.CW {0x80} ,
+exactly
+.CW OP(consp) 's
+own payload shape) reads bad exactly once and then reads as a valid,
+stable pointer on literally the next access \- every capture, no
+exception, regardless of the
+.CW OP(consp)
+reorder above.  Whatever produces the transient zero, it is not this
+op's own construction order.
+.IP \(bu 3
+Every other shape \- larger objects, word offsets like 8, 14, 489, 550,
+values including
+.CW 0x18 ,
+this hunt's own original landmark value from four-plus sessions ago \-
+reads the same bad value on all 8 tight rereads.  Stable, not
+transient.
+.PP
+Only the second kind is treated as the real signal now; the first
+returns without aborting.  Isolating it this way took the checker's
+own rate from roughly half of all boots (the two shapes mixed
+together) down to about 2 of 25\-45 \- a workable signal instead of a
+noise floor.
+.PP
+0x18 is not a random-looking value.  It equals both
+.CW sizeof(Heap)
+and
+.CW offsetof(Frame,\0t)
+on this port, two facts this hunt has separately established already.
+The cleaner of the two matches: computing
+.CW H2D(t,\00)
+\- calling the "add sizeof(Heap) and cast" macro on a plain, already-
+nil C pointer, as opposed to the sentinel
+.CW H
+\- yields exactly
+.CW (t)0x18 ,
+mechanically, every time.  A capture landing on a
+.CW Tmodlink
+object (size \-1, np 1, map
+.CW {0x80} ,
+matching
+.CW Tmodlink 's
+own static initializer, not corruption \- see
+.I "A different, dominant signal: Tptr list cells" )
+with word 0 (exactly
+.CW ml->MP ,
+the type's one GC-tracked field) reading
+.CW 0x18
+is the single most direct piece of evidence for this reading so far.
+.PP
+Audited every
+.CW H2D()
+call site that writes into a Modlink's
+.CW MP
+field or a Module's
+.CW origmp
+field, since those are the two fields observed holding
+.CW 0x18 :
+.CW mklinkmod()
+sets
+.CW ml->MP\0=\0H
+directly, no H2D() involved;
+.CW linkmod()
+and
+.CW schedmod()
+(link.c, dis.c) both compute
+.CW H2D(uchar*,\0h)
+only after
+.CW h\0=\0nheap(t->size) ,
+which throws
+.CW exHeap
+rather than returning nil on failure;
+.CW parsemod() 's
+own
+.CW m->origmp\0=\0H2D(uchar*,\0h)
+(load.c, inside the same function this hunt already hardened for
+data-segment bounds \- see
+.I "libinterp/load.c: bounds-check parsemod()'s data-segment writes" )
+is guarded the same way, via
+.CW heapz() ,
+which also throws rather than returning nil.  Every site checked is
+properly guarded against a nil input to H2D() \- none is confirmed as
+the source, which either means the real site is one of the handful not
+yet checked (loader.c's dynamic-module path, not exercised by an
+ordinary boot, was set aside for exactly that reason), or the 0x18
+match is coincidence and the real mechanism is still open.  Not
+resolved: which.  That is where this resumes.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
