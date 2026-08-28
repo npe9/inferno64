@@ -333,6 +333,22 @@ newmount(Chan *to, int flag, char *spec)
 	Mount *m;
 
 	m = smalloc(sizeof(Mount));
+	/*
+	 * A confirmed "incref: bad r 0x0" resolving to newmount+40 (see
+	 * doc/inferno-ports.ms) traced here.  Unlike walk()'s ->path,
+	 * "to" is not a documented-nil-able field -- every known caller
+	 * (cmount()'s three call sites) already dereferences its own
+	 * Chan argument (old->qid.type/new->qid.type) before ever
+	 * reaching here, so a genuinely nil "to" should already have
+	 * been caught upstream by that dereference, not by this
+	 * function.  That it wasn't matches this hunt's own established
+	 * finding that a nil-pointer dereference doesn't reliably fault
+	 * on this port (see the pidadd()/procindex writeup) -- fail loud
+	 * and specific here instead of silently storing a nil "to" a
+	 * Mount can't sensibly hold.  pc64-only, temporary.
+	 */
+	if(to == nil)
+		panic("newmount: to nil, pc=%#p", getcallerpc(&to));
 	m->to = to;
 	incref(to);
 	m->mountid = incref(&mountid);

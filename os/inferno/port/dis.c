@@ -1216,8 +1216,22 @@ disinit(void *a)
 	Module *root;
 	char *initmod = a;
 
-	if(waserror())
-		panic("disinit error: %r");
+	if(waserror()){
+		/*
+		 * Every "disinit error:" capture this hunt has ever seen
+		 * printed no text after the colon -- %r does nothing in
+		 * kernel context on this port (libkern/print.c's own
+		 * errfmt() unconditionally returns -1; the comment there
+		 * says as much: it "works from limbo" via lib9's own
+		 * errfmt(), never here).  This swallowed the actual error
+		 * on every single capture.  Use the same kgerrstr()+%s
+		 * idiom the "loading %s: %s" panic two dozen lines below
+		 * already uses instead.  pc64-only, temporary.  See
+		 * doc/inferno-ports.ms.
+		 */
+		kgerrstr(up->genbuf, sizeof up->genbuf);
+		panic("disinit error: %s", up->genbuf);
+	}
 
 	print("Initial Dis: \"%s\"\n", initmod);
 
