@@ -141,34 +141,30 @@ static void
 notefree(void *v, uintptr pc)
 {
 	int i;
-	static uintptr seen[64];
-	static int nseen;
 
 	/*
-	 * Bisection probe: is destroy() really calling poolfree() from
-	 * more than one compiled address for what its source shows as
-	 * one line? Print each DISTINCT caller pc the first time it's
-	 * seen (capped, so a normal boot's thousands of frees don't
-	 * flood the console) -- if two different pc values both print
-	 * and both later resolve to destroy+N, that's independent
-	 * confirmation outside of any crash path. pc64-only, temporary,
-	 * remove with the rest of this ring. See doc/inferno-ports.ms.
+	 * Bisection probe REMOVED: this used to print each distinct
+	 * poolfree() caller pc the first time it was seen, to settle
+	 * whether destroy() called poolfree() from more than one
+	 * compiled address. It already answered that question during
+	 * the pc64 hunt (doc/inferno-ports.ms) and was marked pc64-only,
+	 * temporary, remove-with-the-rest-of-this-ring even then.
+	 *
+	 * It should have been removed before any other board was built.
+	 * On riscv64/virt it instead caused a real, 100%-reproducible
+	 * permanent boot hang: the fifth distinct caller pc, discovered
+	 * mid-print during PCI device enumeration, never completed --
+	 * five independent boots hung at the identical byte offset in
+	 * the console output, and disabling just this loop (leaving the
+	 * freehist ring and currun() call below untouched) was sufficient
+	 * to restore a clean boot to a shell prompt, matching the
+	 * committed ivirt binary's own behaviour. Root cause of why THIS
+	 * print, from THIS call site, hangs riscv64 and not pc64 was not
+	 * chased further -- the probe had already served its purpose and
+	 * the fix is to remove it, not to make it portable. See
+	 * doc/inferno-ports.ms, "The pc64-only bisection probe hangs
+	 * riscv64/virt, deterministically".
 	 */
-	if(nseen < nelem(seen)){
-		int j, dup;
-
-		dup = 0;
-		for(j = 0; j < nseen; j++)
-			if(seen[j] == pc){
-				dup = 1;
-				break;
-			}
-		if(!dup){
-			seen[nseen++] = pc;
-			print("notefree: new caller pc=%#p (seen %d distinct)\n",
-				pc, nseen);
-		}
-	}
 
 	/*
 	 * Same Dis pid/module trick _poolfault() already uses (below) --
@@ -731,38 +727,18 @@ poolmsize(Pool *p, void *v)
 {
 	Bhdr *b;
 	uintptr size;
-	static uintptr mspc[16];
-	static int mspcn;
 
 	/*
-	 * Bisection probe: does destroy()'s own call into poolmsize()
-	 * (via trackclear(h, poolmsize(heapmem, h))) really land at the
-	 * destroy+703 offset the alloc:D2B captures keep naming as the
-	 * failing call, distinct from destroy+608 (poolfree()'s own,
-	 * already confirmed)? poolmsize() is shared (msize() alone calls
-	 * it before destroy() ever runs), so a single first-caller probe
-	 * isn't enough -- print each DISTINCT caller pc the first time
-	 * it's seen, capped, same pattern as notefree()'s own probe.
-	 * pc64-only, temporary, remove with the rest of this hunt's
-	 * probes. See doc/inferno-ports.ms.
+	 * Bisection probe REMOVED: same pattern as notefree()'s own
+	 * (removed above), same "pc64-only, temporary" marking, same
+	 * already-answered question (doc/inferno-ports.ms). This one
+	 * did not reproduce the riscv64/virt hang under test, but it is
+	 * the identical shape of the probe that did, called from the
+	 * same allocator hot path, so it is removed for consistency
+	 * rather than kept on the strength of one clean boot. See
+	 * doc/inferno-ports.ms, "The pc64-only bisection probe hangs
+	 * riscv64/virt, deterministically".
 	 */
-	{
-		uintptr pc;
-		int j, dup;
-
-		pc = getcallerpc(&p);
-		dup = 0;
-		for(j = 0; j < mspcn; j++)
-			if(mspc[j] == pc){
-				dup = 1;
-				break;
-			}
-		if(!dup && mspcn < nelem(mspc)){
-			mspc[mspcn++] = pc;
-			print("poolmsize: new caller pc=%#p (seen %d distinct)\n",
-				pc, mspcn);
-		}
-	}
 
 	if(v == nil)
 		return 0;
