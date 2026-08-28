@@ -10670,6 +10670,79 @@ batch landed zero
 panics, consistent with the fix but not proof by itself given how low
 this specific panic's base rate already was.
 .NH 1
+A correction: the fix didn't change the number, and a better theory why
+.PP
+A further batch, with the
+.CW D2BPC
+fix built and running, landed a fresh
+.CW alloc:D2B
+capture --
+.CW "(from 2bf883/...)" ,
+still
+.CW destroy+703
+in this build's own numbering.  If the anchor mismatch were the whole
+explanation, fixing it should have changed this specific value to
+.CW destroy+608 ,
+the confirmed real
+.CW poolfree()
+call site.  It did not.  The previous section's claim to have
+resolved this is retracted as stated; recorded here rather than
+quietly amended, per this hunt's own standing rule about overclaims.
+.PP
+Rereading
+.CW destroy()
+with that failure in mind surfaces a second real call site the
+earlier reading passed over:
+.CW "trackclear(h, poolmsize(heapmem, h));"
+runs immediately before
+.CW "poolfree(heapmem, h);" ,
+and
+.CW poolmsize(Pool*, void*)
+runs its own
+.CW D2B
+check on the same
+.CW h .
+Both call sites were mismatched under the old
+.CW D2B
+(both take
+.CW Pool*
+first, not the data pointer) and both are now fixed under
+.CW D2BPC .
+If
+.CW h
+is already bad by the time destroy() reaches this line --
+consistent with something before it, most plausibly
+.CW t->free(h,\ 0) ,
+already having freed
+.CW h
+itself -- it is
+.CW poolmsize() Ns 's
+check that fires first, not
+.CW poolfree() Ns 's,
+since it runs first in the source. That would make
+.CW destroy+703
+a second, genuine call site rather than a wrong-anchor artifact of
+the first one, which fits the data (the value survived the anchor
+fix) better than the previous section's theory does.
+.PP
+What this doesn't settle: whether 703's address being numerically
+higher than 608's despite running earlier in the source is consistent
+with how this compiler lays out a nested call
+( Ns
+.CW "poolmsize()"
+feeding
+.CW trackclear() Ns 's
+own argument
+), or whether some other reordering is involved.  Answering that
+needs seeing the actual compiled instructions, which this port has no
+disassembler for (objdump cannot read this a.out/coff ipc64 image).
+Left for whoever has one, or for a print-based bisection narrower
+than this round had time for.  The
+.CW D2BPC
+fix itself stays -- it corrects a real anchor mismatch against this
+tree's own established convention regardless of how the 608/703
+question resolves.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
