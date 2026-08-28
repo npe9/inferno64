@@ -966,6 +966,9 @@ Print each simple command to stderr before executing it.
 .IR sh-fem (1),
 .IR sh-gpu (1),
 .IR sh-synth (1),
+.IR sh-hoc (1),
+.IR sh-dynsys (1),
+.IR sh-plot (1),
 .IR sh (2),
 .IR env (2)
 .SH BUGS

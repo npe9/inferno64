@@ -1,0 +1,135 @@
+.TH SH-HOC 1
+.SH NAME
+hoc \- shell script interface to hoc(2)'s expression language
+.SH SYNOPSIS
+.B load hoc
+
+.B hoc reset
+.br
+.B hoc
+.RB [ eqn ]
+.I expr...
+.br
+.B ${hoc
+.RB [ eqn ]
+.I expr...
+.B }
+.SH DESCRIPTION
+.I Hoc
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR hoc (2)'s
+own expression grammar and evaluator \(em nothing more, the same
+narrow scope
+.IR hoc (2)
+itself has
+.RI ( compile / compileeqn / eval / symbol / setvar / getvar / reset ).
+This module adds no vocabulary of its own beyond
+.BR reset :
+assignment is already part of hoc's own grammar
+.RI ( "x = 3" ),
+so there is no separate
+.BR set / get
+verb either.
+.B ${hoc x}
+reads a variable,
+.B hoc x = 3
+(or
+.BR "${hoc x = 3}" ,
+if the value is wanted too) writes one.
+.PP
+There is one shared symbol table for the whole shell session, not a
+handle table like
+.IR sh-pde (1)/ sh-mesh (1)/ sh-fem (1)
+have for their own independent problem/mesh handles: those hold
+heavyweight, separately steppable simulations a script may want
+several of at once, while
+.I hoc
+here is a desk calculator with one persistent set of variables, the
+same single-instance shape
+.IR hoc (1)
+itself already is. A script wanting a second, independent symbol table
+at once can
+.B mload
+a second namespace (see
+.IR sh-mload (1))
+and load a second copy of this module into it.
+.PP
+Every
+.I expr
+is joined back into one string from its words and handed to
+.IR hoc (2)'s
+own
+.BR compile ()
+\(em hoc's own grammar, not
+.IR eqn (7)
+\(em unless the first word is
+.BR eqn ,
+in which case the rest goes to
+.B compileeqn()
+instead
+.RI ( eqn (7)
+syntax, translated internally; see
+.IR hoc (2)
+and
+.IR eqn2hoc (2)).
+The result is then evaluated via
+.BR eval ().
+The builtin form
+.RB ( hoc\  expr ...,
+no
+.BR "${}" )
+evaluates for effect only \(em an assignment's usual reason to appear
+as a bare statement, its value discarded; the substitution form
+.RB ( "${hoc\  expr ...}" )
+yields the value.
+.B Hoc reset
+starts a fresh symbol table, forgetting every variable \(em the same
+.IR hoc (2)
+call
+.IR hoc (1)
+itself makes before a new, unrelated set of expressions.
+.PP
+An expression containing a shell-special token
+.RB ( = ,
+for one) must be quoted as a single word, the same as anywhere else in
+.IR sh (1);
+unquoted,
+.B hoc x = 3
+is a syntax error before this module ever sees it \(em write
+.B "hoc 'x = 3'"
+instead.
+.PP
+A complete example:
+.EX
+	load hoc
+	hoc 'x = 3'
+	echo xsquared: ${hoc x*x}
+	echo eqn form: ${hoc eqn x sup 2 + 1}
+	hoc reset
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/hoc.b
+.SH SEE ALSO
+.IR hoc (2),
+.IR hoc (1),
+.IR eqn2hoc (2),
+.IR sh (1),
+.IR sh-pde (1),
+.IR sh-dynsys (1),
+.IR sh-mload (1)
+.SH BUGS
+Two shell processes that each
+.B load hoc
+get two independent
+.IR hoc (2)
+instances (per
+.IR hoc (2)'s
+own two-instances-never-share-a-symbol-table rule) \(em only two
+.B load
+calls
+.I within
+one process, via
+.IR sh-mload (1),
+actually share the ambiguity that rule warns about.

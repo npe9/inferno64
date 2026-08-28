@@ -1,0 +1,190 @@
+.TH SH-DYNSYS 1
+.SH NAME
+dynsys \- shell script interface to dynsys(2)'s ODE-system language
+.SH SYNOPSIS
+.B load dynsys
+
+.B id := ${dynsys new}
+.br
+.B dynsys
+.I id
+.I verb args...
+.br
+.B ${dynsys
+.I id
+.B check}
+.br
+.B ${dynsys
+.I id
+.B initialstate}
+.br
+.B ${dynsys
+.I id
+.B rhs
+.I t v0 v1 ...
+.B }
+.br
+.B ${dynsys
+.I id
+.B observables
+.I v0 v1 ...
+.B }
+.br
+.B dynsys del
+.I id...
+.SH DESCRIPTION
+.I Dynsys
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR dynsys (2)'s
+own ODE-system language, the same relationship
+.IR sh-pde (1)
+already has to
+.IR pde (2):
+a handle table around the library's five entry points, adding no
+vocabulary of its own.
+.PP
+Unlike
+.IR sh-pde (1)
+(which accumulates spec TEXT lines and defers parsing to one later
+.BR commit ),
+.IR dynsys (2)'s
+own
+.B cmd()
+already executes each line immediately \(em see
+.IR dynsys (2)'s
+own description ("one line in, effect immediate ... never staged for a
+later pass"). So there is no
+.B commit
+verb here either: every word after the handle id is forwarded
+.I UNSEEN
+straight to
+.BR dynsys->cmd() ,
+the same discipline
+.IR danby-aerobraking (1)'s
+own
+.B cmd()
+holds to \(em this file does not recognize
+.BR param / maxtime / state / derivative / eq / observable
+itself; see
+.IR dynsys (2)
+for that vocabulary in full.
+.PP
+.B ${dynsys new}
+allocates a handle and its own fresh
+.IR dynsys (2)
+model (and, transitively, its own fresh
+.IR hoc (2)
+instance \(em see
+.IR dynsys (2)'s
+own BUGS).
+.B Dynsys
+.I id verb args...
+passes
+.IR verb " " args...
+as one already-tokenized line to
+.BR dynsys->cmd() ,
+raising an error if it comes back malformed or unclaimed.
+.PP
+.B ${dynsys
+.I id
+.BR check }
+calls
+.IR dynsys (2)'s
+own
+.BR check() ,
+yielding
+.B ""
+if the model is ready to run, or an error string naming what's
+missing (call once after every line of a script has run, the same
+place
+.IR dynsys (2)'s
+own man page puts it).
+.B ${dynsys
+.I id
+.BR initialstate }
+yields one word per state variable, in declaration order.
+.B ${dynsys
+.I id
+.B rhs
+.I t v0 v1
+.BR ... }
+binds
+.I t
+and the given state values and yields one word per derivative, in the
+same order \(em the number of
+.I v
+arguments must equal the model's own number of states.
+.B ${dynsys
+.I id
+.B observables
+.I v0 v1
+.BR ... }
+does the same binding and yields one word per
+.B observable
+line, in declaration order.
+.B Dynsys del
+frees one or more handles.
+.SH EXAMPLE
+A decaying quantity,
+.IR x ,
+with rate constant
+.IR k ,
+stepped by hand from the shell (a real integration loop would call
+.B rhs
+repeatedly through
+.IR numerics (2)'s
+own
+.BR euler ()/ rk4 (),
+the same way
+.IR danby-aerobraking (1)
+does in Limbo):
+.EX
+	load dynsys
+	id := ${dynsys new}
+	dynsys $id param k 1.0 0.0 10.0
+	dynsys $id maxtime 10.0
+	dynsys $id state x 1.0
+	dynsys $id derivative x '- k x'
+	dynsys $id observable x2 'x x'
+	echo check: ${dynsys $id check}
+	echo initial: ${dynsys $id initialstate}
+	echo derivative at t=0, x=1: ${dynsys $id rhs 0.0 1.0}
+	echo observables at x=2: ${dynsys $id observables 2.0}
+	dynsys del $id
+.EE
+Every expression above is
+.IR eqn (7)
+syntax (see
+.IR eqn2hoc (2)):
+multiplication is juxtaposition
+.RI ( "k x" ,
+not
+.IR "k*x" ),
+and a leading unary minus needs a space
+.RI ( "- k x" ,
+not
+.IR "-k*x" ,
+which
+.IR eqn2hoc (2)
+does not accept).
+.SH SOURCE
+.B /appl/cmd/sh/dynsys.b
+.SH SEE ALSO
+.IR dynsys (2),
+.IR hoc (2),
+.IR pde (2),
+.IR sh (1),
+.IR sh-pde (1),
+.IR sh-hoc (1),
+.IR sh-mesh (1),
+.IR sh-fem (1),
+.IR danby-aerobraking (1)
+.SH BUGS
+Every argument to
+.BR rhs / observables
+is a plain shell word, so passing the wrong count silently becomes a
+usage error naming the expected count \(em there is no way to bind
+values by name from the shell, only by the model's own declaration
+order.

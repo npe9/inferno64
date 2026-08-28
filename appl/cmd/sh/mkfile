@@ -22,6 +22,9 @@ TARG=sh.dis\
 	fem.dis\
 	gpu.dis\
 	synth.dis\
+	hoc.dis\
+	dynsys.dis\
+	plot.dis\
 
 INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/arg.dis\
@@ -43,17 +46,23 @@ INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/fem.dis\
 	$ROOT/dis/sh/gpu.dis\
 	$ROOT/dis/sh/synth.dis\
+	$ROOT/dis/sh/hoc.dis\
+	$ROOT/dis/sh/dynsys.dis\
+	$ROOT/dis/sh/plot.dis\
 
 SYSMODULES=\
 	bufio.m\
 	draw.m\
+	dynsys.m\
 	env.m\
 	fem.m\
 	filepat.m\
 	gpu.m\
+	hoc.m\
 	lock.m\
 	mesh.m\
 	pde.m\
+	plot.m\
 	sequencer.m\
 	sexprs.m\
 	sh.m\

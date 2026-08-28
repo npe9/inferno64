@@ -1,0 +1,190 @@
+.TH SH-PLOT 1
+.SH NAME
+plot \- shell script interface to plot(2)'s graph command language
+.SH SYNOPSIS
+.B load plot
+
+.B id := ${plot new
+.I WxH
+.RB [ title ]
+.B }
+.br
+.B plot
+.I id
+.B cmd
+.I graph-command...
+.br
+.B plot
+.I id
+.B draw
+.br
+.B ${plot
+.I id
+.B rows
+.I name
+.B }
+.br
+.B ${plot
+.I id
+.B value
+.I name row column
+.B }
+.br
+.B ${plot
+.I id
+.B invert
+.I view x y
+.B }
+.br
+.B plot del
+.I id...
+.SH DESCRIPTION
+.I Plot
+is a loadable module for
+.IR sh (1)
+giving shell scripts direct access to
+.IR plot (2)'s
+own graph command language
+.RB ( table / colour / view / content / split / axis / line / scale /
+.B clear
+and any table's own
+.BR append ,
+documented in full in
+.IR plot (2)).
+.IR Plot (2)
+itself is display-agnostic \(em
+.B Plotter.new()
+just takes an image and a font, and draws into whatever image it's
+handed \(em so the one thing this module adds beyond forwarding to
+.BR Plotter.cmd()/rows()/value()/invert()
+is a window to draw
+.I into:
+a handle here is a small
+.B Toplevel
+(opened the same way
+.IR danby-aerobraking (1)
+opens its own \(em a
+.B panel
+widget inside its own frame, packed to fill; an offscreen buffer image
+the same size, bound to it via
+.BR tk->putimage ())
+plus the
+.B Plotter
+itself, over that buffer. This is independent of
+.IR sh-tk (1)'s
+own window handles \(em that module's own window table is private to
+it, unreachable from here.
+.PP
+Every verb this module does
+.I not
+list above
+.RB ( table / colour / view / content / split / axis / line / scale /
+.BR clear ,
+and anything
+.IR plot (2)
+adds later, plus any table's own
+.B append
+verb) is
+.IR plot (2)'s
+own language, forwarded verbatim via
+.BR "plot\ id\ cmd\ ..." \c
+\&; this file never recognizes any of it, the same discipline
+.IR sh-dynsys (1)
+and
+.IR danby-aerobraking (1)
+itself already hold to.
+.PP
+.B ${plot new
+.I WxH
+.RB [ title ]
+.BR }
+opens the window (a bare top-level
+.B sh
+gets a fresh draw context of its own; an
+.B sh
+already hosted inside one \(em under
+.IR wm (1),
+say \(em reuses it, the same ambiguity
+.IR danby-aerobraking (1)'s
+own
+.B init()
+resolves the identical way) and yields a handle.
+.B Plot
+.I id
+.B cmd
+.I graph-command...
+joins the remaining words back into one line and hands it to the
+handle's own
+.BR Plotter.cmd() ,
+raising an error if
+.IR plot (2)
+itself rejects it.
+.B Plot
+.I id
+.B draw
+calls the handle's own
+.BR Plotter.draw() ,
+flushes the buffer, and marks the panel dirty so the window actually
+redraws \(em the same sequence
+.IR danby-aerobraking (1)'s
+own
+.B redraw()
+ends with.
+.PP
+.BR Rows ,
+.BR value ,
+and
+.B invert
+are
+.IR plot (2)'s
+own functions of the same name, unchanged.
+.B Plot del
+closes the window and frees the handle.
+.SH EXAMPLE
+.EX
+	load plot
+	id := ${plot new 400x300 History}
+	plot $id cmd 'table history t y'
+	plot $id cmd 'colour ink 16r4ec9b0ff'
+	plot $id cmd 'content margin 10 10 10 10'
+	plot $id cmd 'view v content'
+	plot $id cmd 'scale v x 0 10'
+	plot $id cmd 'scale v y 0 100'
+	plot $id cmd 'history append 0.0 0.0'
+	plot $id cmd 'history append 5.0 25.0'
+	plot $id cmd 'history append 10.0 100.0'
+	plot $id cmd 'axis v x time'
+	plot $id cmd 'axis v y value'
+	plot $id cmd 'line v history x t y y colour ink width 2'
+	plot $id draw
+	echo rows: ${plot $id rows history}
+	plot del $id
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/plot.b
+.SH SEE ALSO
+.IR plot (2),
+.IR tk (2),
+.IR sh (1),
+.IR sh-tk (1),
+.IR sh-dynsys (1),
+.IR sh-pde (1),
+.IR danby-aerobraking (1)
+.SH BUGS
+.B Plot
+.I id
+.B cmd
+.B table
+must not be reissued after any
+.B append
+\(em
+.IR plot (2)'s
+own
+.B bind()
+unconditionally replaces a table with a fresh, empty one, silently
+discarding every appended row (see
+.IR danby-aerobraking (1)'s
+own BUGS-adjacent header comment for the incident this was first found
+from). This module does nothing to protect a script from that; timing
+which commands run once versus every redraw is the caller's own
+business, the same as it is there.
