@@ -10256,6 +10256,38 @@ objects, well after correct construction, and no write-site audit run
 so far -- not the
 .CW ml->MP
 sites, not this one -- has caught it in the act.
+.PP
+One addendum, checked immediately after landing this:
+.CW auditmemloc()
+reported both confirmed catches as
+.CW "not in pools" ,
+not as a freed or immutable block.  That changes the likeliest shape of
+the mechanism.  A stray write that corrupts a live field by aiming it
+at the WRONG heap object would still land inside SOME pool's arena, and
+.CW auditmemloc()
+would say so.  Landing outside every pool argues against that and
+for the field holding raw leftover content -- register spill,
+uninitialized stack, or a source local that was never actually set on
+the path taken -- that was copied in whole rather than derived from a
+bad address computation.  Checked both non-nil
+.CW "c->umh = m"
+sites in
+.CW namec()
+(the
+.CW Abind
+case and the
+.CW Aopen
+Open:
+case) at the source level: both initialize
+.CW m
+to
+.CW nil
+immediately before
+.CW domount(&c, &m, ...)
+fills it, so neither looks like an uninitialized-local bug on its face
+-- the same clean read the
+.CW ml->MP
+write-site audit got before it, too.
 .NH 1
 Then
 .PP
