@@ -197,8 +197,42 @@ checkmarkptr(WORD **q, Type *t, void *vw)
 	for(n = 1; n < 8; n++)
 		if(silent[n] != silent[0])
 			return;
+	/*
+	 * Not aborting on the stable kind either, for now: a live process
+	 * is only ever paused for GC, not returned, when rootset() walks
+	 * its frames via markheap() -- unlike freeptrs()/scanframe(),
+	 * which only ever run at OP(ret), after every path through the
+	 * function has had to leave every marked-pointer word it touches
+	 * as H or valid again (or freeptrs() would corrupt memory on
+	 * every ordinary return, which does not happen -- see "Freed, not
+	 * cleared").  That argument says nothing about a mid-execution
+	 * snapshot: if the compiler ever reuses one marked-pointer frame
+	 * slot for a plain int in one lexical scope and a real pointer in
+	 * another, both within the same function, a snapshot taken while
+	 * the int-holding scope is live would legitimately show a small
+	 * int in a marked slot, stably, for as long as that scope stays
+	 * current -- with no bug anywhere, as long as the slot is H or
+	 * valid again by the time that same frame reaches its own
+	 * OP(ret).  Letting the boot continue instead of stopping it is
+	 * the only way to tell that reading from a genuine, permanent
+	 * wrongness apart: if the process this frame belongs to goes on
+	 * to behave correctly (and scanframe()/freeptrs() never flag the
+	 * same frame at its own eventual return), that is real evidence
+	 * for the benign reading, not proof.  Print D2H(vw) purely as an
+	 * observation, not a gate: a real heap object's header shows a
+	 * plausible small color/ref; a frame address read this way should
+	 * not, and the two kinds of capture seen so far (a Tmodlink heap
+	 * object vs. very large np/size, likely a frame) can be told apart
+	 * by which this looks like.  pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	{
+		Heap *dh = D2H(vw);
+		print("markheap: D2H(vw) %#p t %#p ref %d color %d\n",
+			dh, dh->t, dh->ref, dh->color);
+	}
 	dumpstack();
-	abort();
+	return;
 }
 
 /* code simpler with a depth search compared to a width search*/

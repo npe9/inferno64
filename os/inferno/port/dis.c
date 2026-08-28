@@ -862,6 +862,9 @@ schedmod(Module *m)
 		h->t = t;
 		t->ref++;
 		ml->MP = H2D(uchar*, h);
+		if(ml->MP != H && (uintptr)ml->MP < 0x1000)
+			print("schedmod: bad ml->MP %#p right after H2D, h %#p ml %#p\n",
+				ml->MP, h, ml);
 		newmp(ml->MP, m->origmp, t);
 	}
 
