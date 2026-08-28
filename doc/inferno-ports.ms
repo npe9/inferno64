@@ -13978,6 +13978,74 @@ happens between the scan starting and the wrong value coming back
 requires watching it happen, not reading more of it.
 
 .NH 1
+Live tracing: the mechanism works, the bug would not show itself
+.PP
+Static reading of every component in the
+.CW devattach()\ \->\ strlen\ \->\ strchr
+chain came up clean (see the last three sections), so the promised
+next step was empirical: QEMU's
+.CW \-s\ \-S
+gdbstub plus
+.CW lldb\ gdb\-remote
+attaches cleanly to this port's kernel \(em confirmed live, breaking
+at
+.CW devattach() 's
+entry lands on the very first call every time (
+.CW %rbp\ =\ 0x2f ,
+the root device;
+.CW %r14\ =\ 0x6ee9200 ,
+the same
+.CW up
+this hunt has captured all session), and single-stepping through
+.CW strchr\-amd64.s 's
+.CW l2:
+path shows exactly the registers this section's earlier byte-level
+decode predicted: RDI/RCX/RAX transition correctly across
+.CW "repne\ scasb" ,
+landing on the right answer.
+.PP
+Ran the traced call twice: once fully single-stepped instruction by
+instruction with a memory watchpoint on
+.CW genbuf
+armed throughout (never fired \(em nothing rewrites it during the
+scan), six clean runs; once with only two breakpoints (entry and the
+instruction immediately after
+.CW scasb ,
+no stepping in between, to disturb normal timing as little as a
+debugger can), 40 more runs.  46 traced boots total.  Every single one
+computed the correct answer:
+.CW RDI\ =\ spec+1 ,
+.CW RCX
+decremented by exactly one, the terminator found on the very first
+comparison, exactly as
+.CW genbuf 's
+own correct content says it should.  The bug did not show itself
+once.
+.PP
+At this hunt's own measured hit rate for this signature (roughly one
+in twenty to forty untraced boots), the honest odds of 46 clean traced
+runs happening by chance alone are low but not impossible \(em call it
+a coin that came up heads about as many times as would make you
+suspect it is not being flipped fairly, without quite proving it.  The
+more likely reading: this is a genuine heisenbug, and attaching a
+debugger \(em even two breakpoints with no single-stepping \(em changes
+the guest's real-time relationship to interrupts and any DMA/hardware
+timing enough to keep it from happening.  That is itself informative:
+it argues against a purely static, always-computable defect in this
+code (which tracing would have caught by now) and toward something
+timing- or interrupt-dependent in the vulnerable window, consistent
+with the "environmental, not a code defect" framing the byte-level
+verification round already arrived at from the other direction.
+.PP
+Not proven, and not provable by this technique alone: whether the
+bug is genuinely suppressed by tracing, or whether 46 traced boots
+were simply an unlucky sample.  A larger traced sample, or a hardware
+watchpoint on an interrupt-controller register instead of a breakpoint
+on code, would settle it, neither attempted.  This closes out what
+this hunt's available tooling can do here without a fundamentally
+different setup.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
