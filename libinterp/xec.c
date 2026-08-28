@@ -562,46 +562,41 @@ OP(movp)
 			badptrslot(dv, R.d, "dv");
 		else {
 			/*
-			 * This guard only ever caught dv < 0x1000 -- the
-			 * near-null shape. destroy()'s own alloc:D2B:
-			 * destroy-entry captures (doc/inferno-ports.ms,
-			 * "destroy+703 is destroy()'s own entry check") are
-			 * a plausible-but-wrong heap pointer, the same blind
-			 * spot badref()/markheap()'s guards had, and at
-			 * least one confirmed capture landed here specifically
-			 * (module Bufio, no scanframe() anywhere near it --
-			 * matches the earlier comment above this function
-			 * predicting exactly this path). destroy()'s own
-			 * check catches it too, but by then R.d (the slot
-			 * address that HELD the bad dv) is gone -- destroy()
-			 * only ever gets a value, never an address. Read-only
-			 * mirror of D2B's own magic check, no poolfault
-			 * escalation, so a hit lands in badptrslot() with R.d
-			 * still in hand instead of destroy()'s address-less
-			 * panic. pc64-only, temporary. See doc/inferno-ports.ms.
+			 * CORRECTION: the widened check that lived here (see
+			 * the pc64 GPF hunt writeup in doc/inferno-ports.ms,
+			 * around the most reproducible capture of the whole
+			 * hunt, and its two follow-ups) checked dv own bytes
+			 * directly against D2B own magic-byte layout. That is
+			 * wrong -- dv is a Dis-level object pointer (String
+			 * pointer, Array pointer, etc), always H2D()-adjusted,
+			 * i.e. sizeof(Heap) (0x18 on this port) PAST the pool
+			 * block own data start. destroy() own entry check gets
+			 * this right (h = D2H(v) before ever touching a Bhdr);
+			 * this one skipped that conversion and read D2B-shaped
+			 * bytes out of the middle of the object own live data
+			 * instead of its real header -- for getclock() string
+			 * result specifically, byte 0x18 into a String own
+			 * Sascii data reliably did not spell MAGIC_A/MAGIC_I,
+			 * so it fired on a live, correct destroy() call, every
+			 * boot, on a completely legitimate object. That whole
+			 * finding, the off-by-exactly-sizeof(Heap) reading, the
+			 * auditmemloc(dv) capture, and the two retracted -z and
+			 * Stkext fixes all built on this checker own bug, not
+			 * a kernel one -- retracted in full. Fixed by checking
+			 * D2H(dv) own Bhdr, matching destroy() own correct
+			 * pattern, instead of checking dv directly. pc64-only,
+			 * temporary. See doc/inferno-ports.ms.
 			 */
 			Bhdr *db;
+			Heap *dh;
 
-			db = (Bhdr*)((uchar*)dv - (BHDRSIZE - sizeof(Btail)));
+			dh = D2H(dv);
+			db = (Bhdr*)((uchar*)dh - (BHDRSIZE - sizeof(Btail)));
 			if(db->magic != MAGIC_A && db->magic != MAGIC_I){
-				db = ((Balign*)((char*)dv - sizeof(Balign)))->hdr;
+				db = ((Balign*)((char*)dh - sizeof(Balign)))->hdr;
 				if(db->magic != MAGIC_A && db->magic != MAGIC_I){
-					/*
-					 * badptrslot()'s own auditmemloc() call
-					 * audits addr (the SLOT), not bad (dv itself)
-					 * -- two fixes tried (limbo -z on disinit.b,
-					 * zeroing Stkext's own mallocz slop) neither
-					 * moved this capture at all, so before trying
-					 * a third: is dv genuinely a freed POOL block
-					 * (live/free distinction, matching this hunt's
-					 * destroy() double-free captures) or, like the
-					 * Chan.path/umh poison-value captures, not in
-					 * any pool at all? Answered directly instead
-					 * of guessed at. pc64-only, temporary. See
-					 * doc/inferno-ports.ms.
-					 */
 					extern void (*auditmemloc)(char*, void*);
-					auditmemloc("dv-freed:dv-itself", dv);
+					auditmemloc("dv-freed:D2H(dv)", dh);
 					badptrslot(dv, R.d, "dv-freed");
 				}
 			}
