@@ -539,7 +539,22 @@ poolalloc(Pool *p, uintptr asize)
 				return nil;
 			p->warn = 1;
 			if (p != mainmem || ns > 512)
-				print("arena too large: %s size %zd cursize %zud arenasize %zud maxsize %zud, alloc = %zd\n", p->name, osize, p->cursize, p->arenasize, p->maxsize, alloc);
+				/*
+				 * A live "arena too large: main size
+				 * 4294966320 ... cursize 417408 ..." capture
+				 * this hunt caught (see doc/inferno-ports.ms)
+				 * had mainmem barely used (417KB of a 251MB
+				 * pool) -- this is not exhaustion, it is one
+				 * absurdly-oversized single request (size is
+				 * within 976 of exactly 2^32, the classic
+				 * signature of a wrapped 32-bit unsigned
+				 * subtraction reaching this far as a
+				 * zero-extended 64-bit value). Added the
+				 * caller's own pc so the next capture names
+				 * who asked for it directly. pc64-only,
+				 * temporary.
+				 */
+				print("arena too large: %s size %zd cursize %zud arenasize %zud maxsize %zud, alloc = %zd pc=%#p\n", p->name, osize, p->cursize, p->arenasize, p->maxsize, alloc, getcallerpc(&p));
 			return nil;
 		}
 		alloc = ns+ldr+ldr;
@@ -841,6 +856,33 @@ smalloc(uintptr size)
 {
 	void *v;
 
+	/*
+	 * A live "arena too large: main size 4178666939 ... cursize
+	 * 94208 ..." capture this hunt caught (see doc/inferno-ports.ms)
+	 * resolved its caller pc to smalloc+32 -- this function itself,
+	 * asking poolalloc() for ~4GB against a 251MB pool.  size is
+	 * within a small, plausible byte count of 2^32 both times this
+	 * fired, the classic signature of a wrapped 32-bit unsigned
+	 * subtraction reaching here zero-extended into this 64-bit
+	 * parameter.  Two real problems, not one: whichever of
+	 * smalloc()'s many callers passed this size is still unidentified
+	 * (this print names smalloc's OWN caller, one level too shallow),
+	 * but smalloc()'s own "for(;;)" loop below has NO escape at all
+	 * -- a request that can never fit in the pool, however large,
+	 * makes this loop retry forever, since poolalloc() will keep
+	 * returning nil no matter how long anything else frees.  That is
+	 * a silent, permanent kernel hang, not a panic -- almost
+	 * certainly what several of this batch's own boots actually hit
+	 * (killed by this harness's own 70s timeout with no panic line at
+	 * all, rather than a clean crash).  A request this large can
+	 * never succeed regardless of what else runs, so fail loud
+	 * immediately instead of hanging, and name the real caller (not
+	 * smalloc's own frame) so the next capture identifies it
+	 * directly.  pc64-only, temporary.
+	 */
+	if(size > mainmem->maxsize)
+		panic("smalloc: size %zud > mainmem maxsize %zud, pc=%#p",
+			size, mainmem->maxsize, getcallerpc(&size));
 	for(;;) {
 		v = poolalloc(mainmem, size);
 		if(v != nil)
