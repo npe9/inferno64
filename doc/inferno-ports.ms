@@ -10743,6 +10743,44 @@ fix itself stays -- it corrects a real anchor mismatch against this
 tree's own established convention regardless of how the 608/703
 question resolves.
 .NH 1
+Does ml->MP ever alias its own Modlink?
+.PP
+One concrete, testable version of
+.CW destroy() Ns 's
+double-free, built from what this hunt already has in hand rather
+than a fresh guess. The earlier, hardware-confirmed finding (
+.CW D2H(vw)
+on a live capture) was that
+.CW ml->MP
+goes bad -- one field wrong on an otherwise live, correctly-typed
+Modlink -- sometime after correct creation. That round pinned down
+one specific bad value, 0x18, but never asked what "bad" could mean
+beyond it.
+.CW freemodlink() Ns 's
+.CW destroy(ml->MP)
+call gives one answer real enough to check directly: if
+.CW ml->MP
+is ever corrupted to alias this same Modlink's own containing
+.CW Heap
+block -- rather than a small garbage value or a pointer into
+something else entirely -- that call recurses straight back into
+.CW destroy()
+on the exact
+.CW h
+this outer call is already in the middle of freeing. A direct,
+self-referential double-destroy, not a stray pointer landing on some
+unrelated object.
+.PP
+Added the check right before the recursive call:
+.CW "ml->MP == (uchar*)H2D(Modlink*, h)" .
+A 25-boot batch with it in place reproduced zero
+.CW alloc:D2B
+panics at all this round -- sample-rate limited (this panic has
+never shown more than a handful per 20-25 boots in any batch so
+far), not a refutation. The hypothesis is neither confirmed nor
+ruled out; the check stays in place, cheap and specific, for the
+next capture to answer directly rather than by further reading.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
