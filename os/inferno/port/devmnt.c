@@ -449,7 +449,16 @@ print("mntwalk waserror() for mountrpc pid %ud %r\n", up->pid);
 		if(wq->clone != c){
 			wq->clone->type = c->type;
 			wq->clone->mchan = c->mchan;
-			incref(c->mchan);
+			/*
+			 * Same shape as chan.c's own ->path incref fixes
+			 * (doc/inferno-ports.ms): c->mchan is a documented-
+			 * nil-able field (chan.c sets it nil in two places;
+			 * this file's own mntrdwr() already guards it with
+			 * "if(c->mchan == nil)" elsewhere), and this incref()
+			 * had no guard. pc64-only, temporary.
+			 */
+			if(c->mchan != nil)
+				incref(c->mchan);
 		}
 		if(r->reply.nwqid > 0)
 			wq->clone->qid = r->reply.wqid[r->reply.nwqid-1];
