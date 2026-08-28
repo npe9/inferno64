@@ -12814,6 +12814,103 @@ recurred a third time (3/100 boots since the
 .CW %r
 fix -- a real, moderately frequent, still-open lead).
 .NH 1
+The real "out of memory: main" cause: a silent hang, not a leak
+.PP
+The recurring
+.CW "disinit\ error:\ out\ of\ memory:\ main"
+(three captures across recent batches) finally produced a live
+.CW "arena\ too\ large"
+capture with the caller pc an earlier addition this round put there:
+.CW smalloc+32 ,
+i.e.
+.CW smalloc()
+itself is asking
+.CW poolalloc()
+for the requested size directly.  Both live captures had size within
+a small, plausible byte count of
+.CW 2\u32\d
+.CW ( 4294966320 ,
+then
+.CW 4178666939 )
+against a 251MB pool -- not remotely a real memory need, and not a
+leak:
+.CW cursize
+was under 100KB both times, essentially the start of boot.
+.PP
+That immediately explains something else:
+.CW smalloc() Ns 's
+own retry loop
+.CW ( "for(;;)\ {\ v\ =\ poolalloc(...);\ if(v\ !=\ nil)\ break;\ tsleep(...);\ }" )
+has NO escape at all.  A request this large can never fit regardless
+of what else frees, so this loop retries forever -- a silent,
+permanent kernel hang, not a crash.  Batches across many earlier
+sessions have almost certainly hit exactly this and been killed by
+the harness's own boot timeout with no panic line at all,
+indistinguishable from any other hang until now.
+.PP
+Fixed with a direct sanity check: if the requested size exceeds
+.CW mainmem Ns 's
+own
+.CW maxsize ,
+panic immediately naming the real caller, instead of hanging.
+Confirmed live in the very next batch:
+.CW "smalloc:\ size\ 4178666939\ >\ mainmem\ maxsize\ 263110656,\ pc=..."
+resolving to
+.CW devattach+135 --
+.CW dev.c Ns 's
+.CW devattach()
+calls
+.CW "smalloc(4+strlen(spec)+1)" .
+.CW strlen()
+in this tree is declared to return
+.CW long ,
+and
+.CW long
+is 32 bits on this port (a known, previously-documented
+miscompilation risk here) -- a
+.CW strlen()
+result anywhere near
+.CW INT32_MAX
+would explain a wrapped value landing near
+.CW 2\u32\d
+when promoted into
+.CW smalloc() Ns 's
+64-bit
+.CW uintptr
+parameter.  Read
+.CW namec() Ns 's
+own
+.CW '#' -case
+.CW genbuf
+handling (the most likely source of
+.CW devattach() Ns 's
+.CW spec
+argument) end to end looking for an out-of-bounds
+.CW genbuf+n --
+it checks out as memory-safe by construction for every case traced
+by hand.
+.CW devattach()
+has dozens of other callers across nearly every device driver in
+this tree, any of which could be passing a corrupted
+.CW spec
+from elsewhere; the ultimate source of the bad
+.CW spec
+pointer is still open.
+.PP
+Built and boot-tested twice this round: 50 boots confirming the
+.CW "arena\ too\ large"
+print's new caller pc (32%, in-band), then another 50 boots
+confirming the
+.CW smalloc()
+guard itself fires cleanly instead of hanging (32%, in-band, no
+regression).  The same batch that caught the
+.CW smalloc
+panic also reproduced both the
+.CW checkb-0/qaddlist
+and
+.CW _allocb
+size=0 signatures again, unrelated to this fix.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
