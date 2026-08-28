@@ -10289,6 +10289,120 @@ fills it, so neither looks like an uninitialized-local bug on its face
 .CW ml->MP
 write-site audit got before it, too.
 .NH 1
+markheap() trusted its own type argument
+.PP
+The badref() catches (previous section) still left most GPFs
+unresolved, so the next batch went looking for the highest-volume
+single site rather than the next specific field. A 20-boot batch put
+eight boots into a GPF; PC resolved five of the eight to the exact
+same address:
+.CW markheap+26 .
+That is far more concentrated than anything else this hunt has
+resolved a fault to, and it named a function this hunt has spent
+several sessions instrumenting already --
+.CW checkmarkptr()
+and
+.CW checklistcell()
+both live in
+.CW markheap() Ns 's
+immediate neighborhood in gc.c.
+.PP
+.CW "markheap(Type *t, void *vw)"
+opens with
+.CW "if(t == nil || t->np == 0) return;" .
+That only guards
+.CW "t == nil" ;
+a non-null but wild
+.CW t
+sails past the short-circuit and faults on the very next read,
+.CW t->np ,
+which is offset 26 into the compiled function -- matching every one of
+the five captures exactly.
+.CW checkmarkptr()
+validates
+.CW *q ,
+the pointer VALUE a mark step is about to follow; it has never
+validated
+.CW t ,
+the TYPE DESCRIPTOR that tells
+.CW markheap()
+which words in that value are even pointers.
+.CW checklistcell()
+has the same gap one level up:
+it checks a list cell's own Heap header
+( Ns
+.CW "D2H(l)->t == &Tlist" Ns
+), which is a different field from
+.CW l->t ,
+the type of the list's ELEMENT, the value
+.CW marklist()
+then passes straight to
+.CW markheap()
+as
+.CW t
+with no check at all.
+.CW markheap() Ns 's
+own recursive dispatch,
+.CW "t1 = h->t; t1->mark(t1, ...)" ,
+reaches the same unguarded entry a second way.
+.PP
+Added the same cheap null/misaligned/near-zero precheck
+chan.c's
+.CW badref()
+uses (previous section), run on
+.CW t
+before either read, escalating to
+.CW auditmemloc()
+and
+.CW abort()
+on a confirmed-bad
+.CW t .
+This is the single choke point for all three paths into
+.CW markheap() ,
+so one check covers
+.CW marklist() ,
+.CW markarray()
+and the recursive
+.CW h->t
+dispatch at once.
+.PP
+A follow-up 20-boot batch caught zero cases at this new check (0/20)
+while raw
+.CW "general protection violation"
+dropped from the earlier batch's 8/20 to 3/20 (none of the three at
+.CW markheap+26
+this time), and
+.CW alloc:D2B
+pool-corruption panics rose from 1-2/20 in earlier batches to 4/20.
+Total panic count did not move (15/20 both batches). The reading:
+this check catches the obviously-bad shape of
+.CW t
+before
+.CW markheap()
+can compute a garbage
+.CW Heap*
+and
+.CW Setmark()
+writes to whatever
+.CW h->color
+resolves to -- exactly the write-with-no-fault-at-the-write-site
+mechanism this file's own long-standing comment on
+.CW checkmarkptr()
+already named as the suspected shape.  A plausible-but-wrong
+.CW t
+(the same blind spot
+.CW badref()
+has for
+.CW r )
+still gets through uncaught and, on this reading, corrupts the pool
+silently instead of crashing immediately, surfacing later as
+.CW alloc:D2B
+rather than a GPF at
+.CW markheap+26 .
+Consistent with the pattern, not proof of it -- the total panic rate
+says the underlying corruption is unmoved, only its point of first
+visible failure shifted.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
