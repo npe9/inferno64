@@ -463,6 +463,20 @@ poolalloc(Pool *p, uintptr asize)
 			t = t->right;
 	}
 	if(q != nil) {
+		/*
+		 * Same standing lead as the exact-match branch above (see
+		 * its own comment, doc/inferno-ports.ms): q is the smallest
+		 * BST node found with size >= the wanted size, by the tree
+		 * descent's own "if(size < t->size) q = t" invariant.  Two
+		 * captures reproduced *without* the exact-match branch's own
+		 * check firing, so that specific hypothesis is ruled out --
+		 * verify the invariant this branch instead relies on, right
+		 * before it's used, the same way.  pc64-only, temporary.
+		 */
+		if(q->size <= size)
+			panic("poolalloc: no-split/split q size invariant "
+				"broken: q %#p q->size %zud wanted %zud pc=%#p",
+				q, q->size, size, getcallerpc(&p));
 		pooldel(p, q);
 		q->magic = MAGIC_A;
 		frag = q->size - size;
