@@ -1,14 +1,22 @@
-# Danby model authoring: a declarative language, and what the "duplicates" actually are
+# Danby model authoring: a real equation language, and what the "duplicates" actually are
 
-**Status: design only, not yet built.** This documents a survey of `appl/danby/`
-done to answer two questions asked directly: come up with something like a
-Tk-style declarative language for authoring these models, since hand-writing a
-full Limbo plugin per model is "too fiddly" - and check whether commonly
-repeated modules (starting from `ballistics`) are hinting at a shared design
-pattern. Both are answered below with real code read directly from the tree,
-not estimated. One early hypothesis in this same investigation turned out
-wrong on inspection and is corrected in place (see "What the six 'duplicate'
-files actually are") rather than left standing.
+**Status: mixed.** The equation-language piece is DONE and verified (`hoc`
+promoted to a real shared library, `appl/lib/hoc.b`/`module/hoc.m` - see "The
+design changed" below); connecting it to an actual Danby harness is not yet
+built. This documents a survey of `appl/danby/` done to answer two questions
+asked directly: come up with something like a Tk-style declarative language
+for authoring these models, since hand-writing a full Limbo plugin per model
+is "too fiddly" - and check whether commonly repeated modules (starting from
+`ballistics`) are hinting at a shared design pattern. Both are answered below
+with real code read directly from the tree, not estimated. Two earlier
+hypotheses in this same investigation turned out wrong on inspection and are
+corrected in place rather than left standing: what the six "duplicate" files
+actually are (below), and the first design's own bespoke verb-based language
+for `rhs` equations - told directly it was wrong ("make the rhs a parsable
+language... right now you make a bunch of hard to understand arrays of
+coefficients... the user should be able to write the equation strings in the
+command language in both the limbo interface and the shell") - see "The
+design changed" for what replaced it.
 
 ## How the model families are actually shaped
 
@@ -165,163 +173,117 @@ Two real precedents already live in this codebase, unprompted by this survey:
 No generic form/parameter-widget builder exists anywhere in `appl/wm/` (59
 files searched, zero matches for anything resembling a field-spec table).
 
-## The design: a small model-description language, verb-based like `plot.cmd`
+## The design changed: rhs is a real parsable language, not verb syntax
 
-Given Finding 2 (Trajectory is almost pure data) and the "call one shared
-physics function" shape visible in `simplependulum.b` (`pendulum->
-acceleration`), `moontrip.b` (`gravity->derivatives`), and all 17 Trajectory
-plugins (`ballistics->acceleration`), **the language needs a `call` verb into
-an existing physics-library module for the families that already delegate to
-one.** (An embedded general-purpose evaluator - this tree's own `hoc`, from
-the Plan 9 real-C-translation backlog, is the obvious precedent if one were
-ever needed for something more than arithmetic - stays out of scope; see the
-correction below for what actually *is* needed alongside `call`.)
+Everything above this point in the doc's own history proposed a bespoke
+verb-based mini-language for `rhs`/`geometry`/`observable` formulas - `call
+ballistics acceleration state[2] state[3] param[2] ...`, arrays of positional
+slots. Told directly that this was wrong: it is exactly the "hard to
+understand arrays of coefficients" the request was trying to get away from,
+and equations should be real parsable strings, usable identically from Limbo
+and from a shell. **That design is superseded.** What replaced it, built and
+verified this session, not just sketched:
 
-A sketch, deliberately in `plot.cmd`'s own idiom (newline-separated verb
-lines):
+`p9/cmd/hoc.b` - this tree's own translation of Kernighan and Pike's `hoc6`
+desk-calculator language (1950 lines, a real recursive-descent parser and
+tree-walking evaluator, oracle-verified against plan9port's own binary,
+`hoctest.b`'s 31 cases) - already parses and evaluates exactly the equations
+a Danby model's `rhs` needs: named variables, `+ - * / ^`, comparisons,
+assignment, and the builtin math functions (`sin cos tan atan asin acos sinh
+cosh tanh log log10 exp sqrt int abs`) every physics formula surveyed here
+actually uses. It was a complete standalone command, not a library - no
+external caller could reach its parser or evaluator directly. Both are now
+exposed.
 
-```
-title "Ballistics: a plain projectile with drag"
-param speed   0.0 40.0 20.0
-param angle   0.0  1.57 0.79
-param drag    0.0  0.02 0.005
-param lift    0.0  0.01 0.0
-param spin    0.0 20.0  0.0
-param gravity 0.0 20.0  9.81
-initial 0.0 0.0 speed*cos(angle) speed*sin(angle)
-maxtime 10.0
-call ballistics acceleration state[2] state[3] param[2] param[3] param[4] param[5] 0.0 -> derivative[2] derivative[3]
-```
+**What moved and what was added.** The whole implementation relocated to
+`appl/lib/hoc.b` (`module/hoc.m` is its real interface, including the full
+`Sym`/`Expr`/`Stmt` AST - `compile()` returns a `ref Expr` a caller can hold,
+rebind, and re-evaluate, so a caller needs the real type shape, not an opaque
+handle) - a genuine Inferno library any real userspace program can
+`include`/`load` at `/dis/lib/hoc.dis`, not scoped to the `p9/` tree the way
+`hoc(1)` the command is (`doc/plan9-port.md`'s "kept out of the regular
+userspace" rule is about a *command* shadowing a real userspace tool in
+`$dis` - a library shadows nothing). `p9/cmd/hoc.b` is now a 30-line thin
+dispatcher over the same library, matching every other thin dispatcher in
+this tree (`appl/danby/basketball.b` calling `appl/temple/trajectory.b`) -
+`hoc(1)` still runs exactly as before from inside this tree's own bound
+namespace.
 
-with the *implementing* side unchanged: one small, real per-model `.b` file
-still has to exist (Limbo modules are `load`ed by path; there is no way
-around a real compiled unit per plugin), but it shrinks to a fixed handful of
-one-line trampolines plus this table, not 55 lines of repeated control flow.
-For the Trajectory family specifically, since every plugin already delegates
-its entire `rhs`/`evaluate`/`initialstate` body to the same repeated pattern,
-factoring that repeated logic into one shared library module (not just the
-data) gets every file down near the interface's own floor - one trampoline
-line per exported function (8 for `Trajectory`) plus includes plus the table,
-roughly 18-20 lines versus the current 55, without inventing any new syntax
-at all.
+Six functions added to the library, all reused directly rather than
+reimplemented: `compile(src): ref Expr` parses one hoc expression (which may
+itself be an assignment, `"dprey = birth*prey - predation*prey*predators"`)
+from a string, using `bufio->sopen()` - already there, already used for
+hoc's own `-e EXPR` flag, so no new lexer input mode was needed at all.
+`eval(e): real` evaluates it. `symbol(name): ref Sym` finds-or-creates a
+variable and returns a live handle whose `.val` field can be written
+directly - the zero-lookup form for a hot per-step loop. `setvar`/`getvar`
+are the occasional-use equivalents. `reset()` starts a fresh symbol table.
 
-## Example strings, across families, and a correction they surface
+**Verified, not assumed**, before any of the design below was written:
+`hoctest.b`'s 31 cases pass unchanged both before touching `hoc.b` and after
+the full move to `appl/lib` (a real regression control, run at each step,
+not just claimed). A standalone probe confirmed the property the whole
+design depends on - the *same* compiled `ref Expr` re-evaluates correctly
+after rebinding its variables via `symbol().val = ...`, which is what makes
+this usable inside a tight per-rk4-step integration loop rather than
+reparsing the equation every step - and that a bad `compile()` (a
+deliberately malformed string) reports its error and leaves the library
+fully usable for the next call, not wedged. A further check answered the
+question this doc's own Finding 2 raised: does `ballistics->acceleration`'s
+actual formula need a `call` mechanism into Limbo at all, or does hoc's own
+`sqrt` builtin already cover it? Compiled and evaluated directly:
+`speed = sqrt(vx*vx+vy*vy)` and `ax = -drag*speed*vx-lift*spin*vy` against
+bound `vx=3, vy=4, drag=0.005, lift=0, spin=0` produced exactly 5 and
+-0.075 - the real formula, unmodified, needs no library call at all. That
+retires the `call` verb entirely for every family whose physics is scalar
+arithmetic (Trajectory, most of Mechanism, all of Populationmodel and
+Twospecies) - there is no "language design" left to do for the formula part;
+it's already a real, working, general-purpose parsable language, not a
+sketch.
 
-Writing the strings out for real models across families - not just the one
-Trajectory example above - surfaces a real gap in the "lead with `call`"
-framing, corrected here rather than left standing.
+**The one real boundary, confirmed rather than assumed:** hoc has no arrays.
+`Sym.val` is a single `real`, and the `Expr` AST (`Num, Var, Assign, Bin, Un,
+Not, PreIncDec, PostIncDec, Call, Bltin, ReadE`) has no indexing node at all.
+That covers every family surveyed here except one: `moontrip.b`'s
+`gravity->derivatives(state, mass, 1.0, softening, derivative)` operates on a
+12-element state and a 3-element mass vector at once - not expressible as
+named-scalar hoc equations. All 12 `Orbital` plugins are array math of this
+shape. For those, "hand-written Limbo plugin, as now" is the honest answer,
+not a gap to paper over - stated here plainly rather than left to surface at
+plugin 130.
 
-`basketball.b`, same family as `ballistics.b` above, showing Finding 2's
-four-line diff as literal text - only `title`, the six `param` lines, and the
-`initial` y-offset change:
-
-```
-title "Shooting in basketball"
-param speed    0 16    8.5
-param angle    0 1.45  0.85
-param drag     0 0.02  0.001
-param lift     0 0.003 0.00015
-param backspin 0 100   20
-param gravity  0 20    9.81
-initial 0 2 speed*cos(angle) speed*sin(angle)
-maxtime 3
-call ballistics acceleration state[2] state[3] param[2] param[3] param[4] param[5] 0 -> derivative[2] derivative[3]
-rhs derivative[0] = state[2]
-rhs derivative[1] = state[3]
-```
-
-`simplependulum.b` (`Mechanism`), needing the extra `geometry`/`links`/
-`observable` verbs for the hand-drawn diagram - and showing `call` can target
-a single derivative slot, not just a whole tuple:
-
-```
-title "The simple pendulum"
-param length         0.1 4.0  1.0
-param initialangle  -3.0 3.0  0.7
-param initialspeed  -8.0 8.0  0.0
-param gravity         0.1 20.0 9.81
-param mass            0.1 5.0  1.0
-param reference        0.0 1.0  0.0
-initial initialangle initialspeed
-maxtime 20
-call pendulum acceleration state[0] state[1] length gravity 0 0 0 0 0 1 -> derivative[1]
-rhs derivative[0] = state[1]
-geometry 0 0 length*sin(state[0]) -length*cos(state[0]) -0.7 0 0.7 0
-links 0 1 2 3
-observable angle state[0]
-call pendulum energy state[0] state[1] length gravity -> observable[1]
-```
-
-`moontrip.b` (`Orbital`) - `call` here has to take whole arrays (`state`,
-`mass`, `derivative`), not scalar slots, since `gravity->derivatives`
-operates on the full body set at once, not one body's coordinates:
+**How a model would actually use this**, once a harness is built to call it
+(not done yet - see Recommended order): at load time, parse each of the
+model's equation strings once via `compile()`, resolve every state/parameter
+name once via `symbol()` and keep the `ref Sym` handles, and on each
+integration step write the current values via those handles' `.val` fields
+directly and `eval()` each pre-compiled tree - no re-parsing, no string
+work, in the hot loop at all. `epidemic.b`'s own `rhs`, for example, is
+these three real hoc lines, unmodified:
 
 ```
-title "A trip to the Moon"
-param moonmass      0.001 0.05  0.0123
-param launchradius  0.02  0.15  0.06
-param launchoffset -0.08  0.08  0.0
-param launchspeed   0.5   6.0   3.7
-param launchangle  -1.0   1.0   0.18
-param softening     0.0002 0.02 0.002
-bodies Earth Moon craft
-mass 1.0 moonmass 0.000001
-call gravity derivatives state mass 1.0 softening -> derivative
+infections = contact*susceptible*infectious
+recoveries = recovery*infectious
 ```
 
-**`epidemic.b` (`Populationmodel`) is where "lead with `call`" breaks down.**
-There is no shared physics library behind SIR - the whole `rhs` is inline
-arithmetic over named quantities, with no library call to delegate to at all:
+with `dsusceptible = -infections`, `dinfectious = infections - recoveries`,
+`drecovered = recoveries` alongside them - five real hoc assignment
+statements, parsed once, evaluated every step, exactly as they would be typed
+at a `hoc` prompt.
 
-```
-title "SIR epidemic"
-state susceptible 0.995
-state infectious  0.005
-state recovered   0.0
-param contact  0 5 2.2
-param recovery 0 2 0.55
-rhs infections   = contact*susceptible*infectious
-rhs recoveries   = recovery*infectious
-rhs dsusceptible = -infections
-rhs dinfectious  = infections - recoveries
-rhs drecovered   = recoveries
-conserved total = susceptible + infectious + recovered
-observable r0 = contact/recovery
-```
+## What still needs a small declarative table - and what doesn't
 
-and `ecology.b`/`competition.b` (`Twospecies`), same shape, plus the
-`phase`/`equilibrium` verbs proposed below for the view-cycling gap:
+Equations are now a solved problem (above). Two things remain genuinely
+outside hoc's job:
 
-```
-title "Predator and prey"
-state prey      0.55
-state predators 0.22
-param birth     0 3 1.5
-param predation 0 4 2.0
-param death     0 3 0.75
-rhs dprey      = birth*prey - predation*prey*predators
-rhs dpredators = prey*predators - death*predators
-phase prey predators
-equilibrium prey = death
-equilibrium predators = birth/predation
-```
+- **Parameter metadata** (name, min, max, default, title) is data, not a
+  formula - hoc has nothing to do with it, and it doesn't need a new
+  language either; see "What already exists" above (the three-parallel-array
+  precedent already in `mechanism.b`). A real `(name, min, max, default)`
+  record table, one per model, replaces that.
+- **View-cycling metadata** for the six-file gap (Finding 3) - below.
 
-**The correction**: all 40 `Populationmodel` plugins and all 10 `Twospecies`
-plugins have this shape - small named-quantity arithmetic with no shared
-library behind it, unlike Trajectory and most of Mechanism. That is not a
-reason to reach for `hoc` (this tree's own embedded-language precedent,
-mentioned above as the fallback) - the actual need is four operators
-(`+ - * /`) and parentheses over named state/parameter values, no functions,
-no control flow, no user-defined anything. Much smaller than an interpreter,
-closer to a four-function calculator than a language. So the language needs
-*both* verbs from the start, not `call` first and arithmetic only if later
-evidence demands it: `call` for the family that already delegates to a shared
-library (Trajectory, most of Mechanism), and a small arithmetic-expression
-`rhs`/`observable`/`conserved` form for the family that never had one
-(Populationmodel, Twospecies) - each verb earning its place from a real
-family already surveyed, not spread across two competing designs.
-
-## What "tks" would need to add to close the six-file gap
+## What closing the six-file gap (Finding 3) would need
 
 Since Finding 3 is the more valuable pattern (a missing universal feature, not
 duplicated code), the description language should carry the metadata a
@@ -341,36 +303,43 @@ squarely a `Populationmodel`/`Twospecies` gap, and the fix is additive (new
 optional interface members / verbs), not a breaking change to the 110
 plugins in the other three families.
 
-## Recommended order, not all committed to in one pass
+## Recommended order
 
-1. **Twospecies interface fix + generic harness.** Add `initial`/
+0. **DONE, not a proposal**: hoc exposed as a real library (`appl/lib/hoc.b`,
+   `module/hoc.m`) with `compile`/`eval`/`symbol`/`setvar`/`getvar`/`reset`,
+   `p9/cmd/hoc.b` reduced to a thin dispatcher over it, `hoctest.b`'s 31
+   cases unchanged before and after the move, a standalone probe confirming
+   compile-once/rebind/re-eval and clean recovery from a bad `compile()`, and
+   `ballistics->acceleration`'s real formula confirmed reproducible as plain
+   hoc arithmetic with no call mechanism needed. This retires the equation-
+   language design question entirely for every family except Orbital.
+1. **A harness-side hoc adapter**: given a list of equation strings and a
+   list of (name, initial-value) pairs, compile each equation once at model
+   load, resolve every referenced name via `symbol()` once, and provide a
+   `step()` that writes current values through those handles and `eval()`s
+   each tree - the piece connecting the now-built library to an actual
+   Danby model. Not built yet; the smallest real next step.
+2. **Migrate one family through it as proof** - Populationmodel is the best
+   first target (Finding 3's `epidemic.b` gives a real, already-understood
+   equation set to migrate first), *not* Trajectory - Trajectory's plugins
+   are already nearly free (Finding 2), so proving the hoc adapter matters
+   more where the current cost (hand-written arithmetic, no shared library)
+   is highest.
+3. **Twospecies interface fix + generic harness.** Add `initial`/
    `statelabels()` to `module/danby/twospecies.m` (mechanical, touches 10
    plugins), then promote `ecology.b`'s already-working argv-driven dynamic
    load path into a real `appl/temple/twospecies.b`, verified against both
    `ecology.dis` and `competition.dis`. Leaves `ecology.b`/`competition.b`
-   untouched (they have real bespoke content, per Finding 3) - this only
-   fills the missing fifth harness for *future* Twospecies plugins and as a
-   base to build the phase-portrait/conserved-quantity view modes into.
-2. **View-cycling in the shared harnesses**, driven by the metadata above -
-   the real fix for the pattern in Finding 3, done once, generically, instead
-   of per-model.
-3. **Trajectory-family library factor** (Finding 2) - smallest risk, smallest
-   win (~600 lines across the least-fiddly family), good first proof that the
-   "shared logic, not just shared data" idea works before trying it on
-   `Mechanism`.
-4. **The `tks` text format itself** (verbs above), plus a parser supporting
-   both `call` (Trajectory, most of Mechanism) and the small named-quantity
-   arithmetic form (all of Populationmodel, all of Twospecies - see "Example
-   strings" above for why both are needed from the start, not staged), and a
-   per-family generic plugin-loader - build against 2-3 real models per shape
-   (a `call`-only one from Trajectory, an arithmetic-only one from
-   Populationmodel) before touching the other ~140.
-5. **Only if a full pass over Mechanism's 70 plugins later shows real need**:
-   extend the small arithmetic form with loops or user-defined functions for
-   bodies that don't reduce to either a single library call or flat
-   arithmetic (`magneticpendulum3d`'s loop over four magnets is the clearest
-   such case found so far). This is the only point where `hoc`-style
-   generality would even be considered, and only against evidence.
+   untouched (they have real bespoke content, per Finding 3) - this fills the
+   missing fifth harness and gives the hoc adapter a second family to prove
+   itself against.
+4. **View-cycling in the shared harnesses**, driven by the phase/conserved
+   metadata above - the real fix for the pattern in Finding 3, done once,
+   generically, instead of per-model.
+5. **Mechanism and Trajectory migrate onto the same hoc adapter** once 2-4
+   have proven it, plus the small `(name, min, max, default)` parameter
+   table from "What still needs a small declarative table" above -
+   `Orbital`'s 12 array-math plugins are the one family that stays
+   hand-written Limbo, stated plainly rather than discovered at plugin 130.
 
-Nothing above has been built yet. This is the design and the evidence behind
-it; which step to start on is open.
+Steps 1-5 are design, not yet built; step 0 is real and verified.

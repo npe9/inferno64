@@ -59,6 +59,7 @@ TARG=\
 	fsproto.dis\
 	gpu.dis\
 	hash.dis\
+	hoc.dis\
 	html.dis\
 	imageremap.dis\
 	inflate.dis\

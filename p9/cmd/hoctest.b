@@ -45,7 +45,14 @@ Hoctest: module
 
 Hoc: module
 {
-	PATH:	con "/p9/dis/hoc.dis";
+	# The real implementation moved to appl/lib/hoc.b (module/hoc.m),
+	# a real userspace library now, not scoped to this p9/ tree - see
+	# hoc.b's own header comment. p9/cmd/hoc.b (still /p9/dis/hoc.dis)
+	# is now only a thin dispatcher matching Command's shape (init
+	# alone), not this fuller Hoc shape (init+run) - this test exercises
+	# the real library directly, at its own real path, same as any
+	# other appl/lib module would be tested.
+	PATH:	con "/dis/lib/hoc.dis";
 	init:	fn(ctxt: ref Context, argv: list of string);
 	run:	fn(argv: list of string): (string, int);
 };

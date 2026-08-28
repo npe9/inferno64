@@ -103,9 +103,22 @@ and the constants
 .BR PI ", " E ", " GAMMA ", " DEG ", " PHI .
 .SH SOURCE
 .B /p9/cmd/hoc.b
+is a thin dispatcher; the real translation
 (translated from plan9port's
 .BR src/cmd/hoc ;
-see its own header comment for the full derivation)
+see its own header comment for the full derivation) is
+.BR /appl/lib/hoc.b ,
+.BR /module/hoc.m
+- a real Inferno library, not scoped to this
+.B p9/
+tree, since callers wanting hoc's own expression grammar and evaluator
+directly (its
+.BR compile / eval / symbol / setvar / getvar / reset
+functions - a named-variable equation language, not this REPL) need to
+.B include
+it from ordinary userspace with no
+.B bind
+of this tree required. This command still runs exactly as before.
 .SH SEE ALSO
 .IR hoctest (1)
 .SH BUGS
