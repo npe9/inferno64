@@ -12511,6 +12511,70 @@ at several points in its own body.  Which specific call fired is not
 pinned down without disassembly this round; one hit, recorded as an
 open lead rather than chased further.
 .NH 1
+Instrumenting pidadd() for the confirmed-genuine pidalloc+95 lead
+.PP
+Followed up on the resolver-tool fix directly:
+.CW pidalloc+95 Ns 's
+.CW "incref:\ bad\ r\ 0x0"
+is now confirmed a real capture, not a resolver misattribution.  Read
+.CW pidadd()
+end to end -- every path either returns a real, array-derived
+.CW Pid*
+or loops back to retry, so it should never return
+.CW nil
+through normal control flow.  The one structural gap:  if
+.CW pidalloc()/pidadd()
+ever runs before
+.CW pidinit()
+-- the call that allocates
+.CW pidhashtab
+and sets
+.CW pidhashmask ,
+and the LAST statement in
+.CW procinit() --
+has completed,
+.CW pidhashtab
+is
+.CW nil
+and the computed index into it can legitimately equal
+.CW nil
+itself (index 0 of a nil array), silently, with no fault:
+.CW struct\ Pid Ns 's
+.CW procindex
+field sits at a small enough byte offset that
+.CW pidalloc() Ns 's
+own later
+.CW "i->procindex\ =\ ..."
+write would land in this port's identity-mapped low memory (the same
+region
+.CW squidboy.c Ns 's
+own
+.CW KADDR(0x467)
+trampoline write uses) rather than faulting, letting execution reach
+.CW incref(i)
+with
+.CW i
+still
+.CW nil .
+.PP
+Added a direct check right where
+.CW pidadd()
+computes
+.CW i ,
+panicking with
+.CW "pidhashtab/pidhashmask/pid/i"
+if this ever happens, to confirm or refute the ordering hypothesis on
+the next capture without another resolve-and-reason cycle -- the
+normal boot ordering
+.CW ( procinit()
+before any process creation) makes this look correct by inspection,
+so a definitive answer needs the capture, not more reading.  Built
+and boot-tested: 50 boots, 13 panics (26%, in-band, no regression).
+Neither the new check nor the original
+.CW pidalloc+95
+signature recurred this batch -- still only one confirmed hit total,
+consistent with its established low frequency.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
