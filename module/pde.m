@@ -1,3 +1,14 @@
+# This file includes "hoc.m" below (for Problem.hocmod/hocra/hocrb -
+# see "equation hoc" in the grammar comment further down), and hoc.m's
+# own init()/run() entries need Draw->Context declared already - so, by
+# the same rule tk.m/wmclient.m/meshview.m already state in their own
+# header comments, a caller must "include draw.m" itself BEFORE
+# including this file. Limbo has no include-guard, so this file cannot
+# just include draw.m itself either: doing so would redeclare Draw for
+# any caller (pdelab.b, say) that already included it earlier for its
+# own unrelated reasons.
+include "hoc.m";
+
 Pde: module
 {
 	PATH:	con "/dis/lib/pde.dis";
@@ -44,6 +55,7 @@ Pde: module
 	#   equation diffuse diffusivity D
 	#   equation wave speed S damping Dm
 	#   equation gray da Da db Db feed F kill K
+	#   equation hoc NAME [NAMEB]
 	#   solver explicit                            (default; stability-limited)
 	#   solver gmres|cg [tolerance T] [restart R] [maxiter N]  - see krylov(2)
 	#   time step DT                               (default for run(); optional)
@@ -55,6 +67,47 @@ Pde: module
 	# nonlinear, so unlike diffuse/wave it has no implicit solver here -
 	# only "solver explicit" is valid, still gray() underneath, with its
 	# own stability-limited substepping.
+	#
+	# "equation hoc" is diffuse/wave/gray's own reaction-diffusion shape
+	# with the update rule itself taken from the user, as hoc(2)
+	# expression strings, rather than one of the three fixed Limbo
+	# functions above - the point being that a user gets to WRITE the
+	# PDE (Turing patterns, FitzHugh-Nagumo, anything of this shape),
+	# not just supply numbers into an equation this module already
+	# hard-coded. There are no "coefficient" fields for it at all - da,
+	# feed, kill, or whatever else an expression needs are ordinary
+	# named hoc variables, declared with "param", not adt fields:
+	#
+	#   equation hoc NAME [NAMEB]      - 1 or 2 coupled fields, this
+	#                                    spec's own names for them
+	#   substeps N                     - explicit; unlike diffuse/wave/
+	#                                    gray there is no general
+	#                                    stability heuristic for an
+	#                                    arbitrary user rhs to auto-
+	#                                    derive one from
+	#   param NAME VALUE               - repeatable; binds a hoc
+	#                                    variable any rhs may reference
+	#   rhs NAME hoc-expression-text    - one per field name given on
+	#                                    the equation line; the REST OF
+	#                                    THE LINE after the name is
+	#                                    taken verbatim (spaces and
+	#                                    all) as hoc source, not word-
+	#                                    split like every other line
+	#                                    here
+	#
+	# Inside a "rhs" expression: NAME is that field's own current
+	# value, "lap_"+NAME is its 5-point Laplacian (computed the fast
+	# way, same lapinto()/lapintob() diffuse/wave/gray already use -
+	# only the per-cell update itself is hoc-driven), "h" is the
+	# current substep's own dt (dt/substeps), and any "param" is that
+	# name's value. Evaluated with hoc(2)'s evalarray() - the same
+	# parsed tree eval() would walk scalar-at-a-time, walked once per
+	# substep over the whole grid instead (see doc/danby-tks-plan.md).
+	# hoc has no clamp/min/max builtin, so a rhs wanting bounded values
+	# (as Gray-Scott's own [0,1] species fractions are) must express
+	# that itself or accept unbounded output - not silently clamped the
+	# way gray() itself clamps, since clamping to [0,1] is specific to
+	# what gray()'s own fields mean, not a general PDE property.
 	#
 	# Both "equation diffuse" and "equation wave" have genuinely symmetric
 	# positive definite implicit operators for clamp/periodic boundaries
@@ -85,6 +138,19 @@ Pde: module
 		tolerance:	real;
 		restart, maxiter: int;
 		defaultstep:	real;	# from "time step DT"; 0.0 if unset
+
+		# "equation hoc" only - see the grammar comment above. hocmod is
+		# THIS Problem's own loaded hoc(2) instance, never shared with
+		# another Problem: a compiled Expr's Var/Assign nodes hold ref
+		# Sym handles tied to the specific instance that compiled them
+		# (see hoc.m's own evalarray comment), so two hoc-driven
+		# Problems running at once must not share one symbol table.
+		hocmod:		Hoc;
+		hocname, hocnameb: string;	# field/fieldb's names, as given on
+						# the equation line; hocnameb == ""
+						# if only one field was declared
+		hocra, hocrb:	ref Hoc->Expr;	# compiled rhs; hocrb nil if unused
+		hocsubsteps:	int;
 	};
 
 	# Parses spec; returns a ready Problem, or (nil, an error describing

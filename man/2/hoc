@@ -1,0 +1,171 @@
+.TH HOC 2
+.SH NAME
+hoc: compile, eval, evalarray, symbol, setvar, getvar, reset \- hoc expression language, as a library
+.SH SYNOPSIS
+.EX
+include "hoc.m";
+hoc := load Hoc Hoc->PATH;
+
+e := hoc->compile("av+h*(da*lap_av-av*bv*bv+feed*(1.0-av))");
+if(e == nil)
+	... # parse error already reported to stderr
+
+s := hoc->symbol("av");
+s.val = 0.5;
+v := hoc->eval(e);
+.EE
+.SH DESCRIPTION
+.I Hoc
+is
+.IR hoc (1)'s
+own expression grammar and evaluator, exported as an ordinary Inferno
+library \(em a real, parsable equation language a caller can embed,
+rather than a file/stdin-driven REPL. It backs
+.B "equation hoc"
+in
+.IR pde (2)
+and the hoc-driven models under
+.IR appl/danby ,
+but has no dependency on either: any caller wanting named-variable
+expressions parsed once and evaluated many times can
+.B include
+it directly.
+.PP
+.B Compile
+parses one hoc expression or assignment
+(e.g.
+.RB \*(lq dprey " = " birth*prey-predation*prey*predators \*(rq)
+from a string and returns its tree, or
+.B nil
+on a parse error (already reported to stderr, in the same form
+.IR hoc (1)
+itself would use).  Every
+.B Var
+or
+.B Assign
+node inside the returned tree holds a
+.B "ref Sym"
+directly, so the SAME compiled tree can be
+.B eval
+ed again after rebinding a variable's value through
+.BR symbol ()
+\(em it does not need to be recompiled per call.  This is what makes
+it usable inside a tight per-step loop: parse once per model load,
+rebind and evaluate many times.
+.PP
+.B Symbol
+finds or creates a named variable and returns a live handle whose
+.B val
+can be read or written directly, with no further lookup \(em the
+zero-lookup form for a hot path.
+.B Setvar
+and
+.B getvar
+are the occasional-use equivalents, by name.
+.B Reset
+starts a fresh symbol table (the same constants and builtins
+.IR hoc (1)'s
+own
+.B init
+installs); call it once before compiling a new, unrelated set of
+expressions so an earlier caller's variable names cannot leak into a
+new one.
+.SS Array-context evaluation
+.B Evalarray
+walks the identical tree
+.B compile
+returned \(em the same
+.BR Var / Assign
+nodes, the same
+.B Sym
+handles \(em in a different context: once per CALL, over a whole array
+of
+.I n
+elements, instead of once per ELEMENT.  Any
+.B Sym
+referenced by the tree whose
+.B vals
+field
+.RB ( "array of real" ,
+zero elsewhere in this interface) is non-nil contributes its array
+elementwise, in lockstep across all such symbols; any
+.B Sym
+whose
+.B vals
+is
+.B nil
+contributes its scalar
+.B val
+instead, broadcast across every element.  A caller with a whole PDE
+field's worth of values per named variable binds each field's
+.B Sym.vals
+once per step, then calls
+.B evalarray
+once per field per substep \(em the dispatch cost of walking the tree
+is paid once per node, not once per node per cell, which is what makes
+this practical where calling
+.B eval
+in a per-cell loop is not (roughly two orders of magnitude slower at a
+realistic Gray-Scott-shaped 128x128/four-substep/two-field workload;
+see
+.IR doc/danby-tks-plan.md
+in the source tree for the measurement).
+.PP
+Real, stated limits, not oversights:
+.BR Assign / PreIncDec / PostIncDec / Call / ReadE
+nodes all have side effects or read from the input stream, neither of
+which means anything applied to a whole array at once \(em unsupported,
+reported once (not once per element) and a zero result.  Division and
+.B %
+by zero inside a binary node are silent IEEE
+.B Inf
+/
+.B NaN
+here, unlike
+.BR eval 's
+own reported error \(em a whole-grid walk expects to cross a zero
+divisor routinely (a boundary cell mid-transient, say), and one
+message per bad cell would be useless noise.  A built-in function
+call
+.RB ( sin ", " sqrt ", " log ", " ... )
+still goes through the same domain check
+.B eval
+uses, so a genuine domain error (the square root of a negative number,
+say) is still reported, once per bad element.
+.I Hoc
+has no clamp, min, or max built in at all \(em a caller wanting bounded
+output must express that itself, or accept unbounded output.
+.SH SOURCE
+.B /module/hoc.m
+.br
+.B /appl/lib/hoc.b
+.SH SEE ALSO
+.IR hoc (1),
+.IR hoctest (1),
+.IR pde (2),
+.IR pdehoctest (1)
+.SH BUGS
+.B Evalarray
+always returns a freshly allocated array, even when the whole
+expression is a single bare variable reference \(em otherwise that one
+case would hand back the CALLER's own bound array
+.RI ( Sym.vals )
+instead of a new result, aliasing it to whatever the caller does with
+the return value next.  Every other expression shape already allocates
+its own result on the way up the tree; this is the one path that would
+not have, so it is special-cased rather than left as a trap for a
+rhs that happens to be just a field's own name.
+.PP
+Two
+.B Hoc
+instances (two
+.B load
+calls) never share a symbol table, by design \(em a compiled tree's
+.B Sym
+handles are tied to the specific instance that compiled them.  A
+caller running two independent equations at once (two
+.IR pde (2)
+problems, say) must
+.B load
+a separate instance per equation; sharing one would let their variable
+names silently collide.

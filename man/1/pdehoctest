@@ -1,0 +1,123 @@
+.TH PDEHOCTEST 1
+.SH NAME
+pdehoctest \- test "equation hoc" against a fixed equation it can express
+.SH SYNOPSIS
+.B pdehoctest
+.SH DESCRIPTION
+.B Pdehoctest
+checks
+.IR pde (2)'s
+.B "equation hoc"
+\(em a caller writes the update rule itself, as
+.IR hoc (2)
+expression strings, instead of supplying numbers into one of the three
+equations this module has fixed Limbo code for.
+There is no independent oracle for an arbitrary user equation, so this
+test uses the one equation both paths can express: Gray-Scott
+reaction-diffusion, once as
+.B "equation gray"
+(the fixed function) and once as
+.B "equation hoc"
+with the identical formula written out as expression strings, run from
+the same seed for the same number of steps.
+Any real difference between the two would mean
+.B "equation hoc"
+is not doing what it claims.
+.PP
+The two problems agree on every cell exactly, not merely to a
+tolerance \(em both do the same arithmetic in the same order, so there
+is no rounding path for them to disagree along.
+.PP
+This is a comparison, and a comparison that always agrees has not been
+shown to compare anything.
+.B Gray-Scott's
+own reaction term clamps every substep, so a second run deliberately
+perturbs one hoc expression (feed by one percent) and confirms the
+result now differs from
+.B "equation gray"
+by something well above rounding \(em otherwise the exact-match check
+above would have no teeth.
+.PP
+The mesh line in both specs states an explicit
+.B domain
+matching the grid size
+.RI ( "domain NxN" "" for an " NxN " mesh).
+.IR Mesh (2)'s
+own default domain is the unit square, which makes
+.I dx
+a small fraction of a cell rather than 1 \(em di\%viding a
+discrete Laplacian by that small
+.IR dx \(mu dx
+inflates it by roughly the square of the grid size.
+That is not a bug in the stencil or in
+.BR evalarray() ;
+it found this test's own first spec, which left the domain unstated and
+so ran the identical reaction-diffusion formula at a diffusivity
+effectively thousands of times too strong for four substeps to remain
+stable at.
+.B "Equation gray's"
+own
+.RI [0,1]
+clamp absorbed the resulting blow-up every substep and still produced a
+plausible-looking field; the hoc side, with no clamp of its own (see
+.IR pde (2)
+\(em hoc has no clamp/min/max builtin), carried it forward unclamped
+into
+.BR Infinity ,
+then
+.BR NaN .
+Both sides were doing the same wrong arithmetic; only one side's
+symptom was visible.
+.SH SOURCE
+.B /appl/cmd/pdehoctest.b
+.SH SEE ALSO
+.IR hoc (1),
+.IR pde (2),
+.IR hoc (2),
+.IR pdetest (1)
+.SH BUGS
+Checks one equation (Gray-Scott) and one grid size.
+The general claim \(em that
+.I any
+hoc expression referencing a field's own name, its
+.BR lap_ NAME
+Laplacian, and declared
+.B param
+names works \(em rests on this one case plus
+.IR hoc (2)'s
+own much larger regression suite for the expression language itself,
+not on a second independent equation.
+.PP
+Only
+.BR step() 's
+explicit path is exercised.
+.B "Equation hoc"
+has no implicit solver (matching
+.BR gray ),
+so
+.I gmres
+/
+.I cg
+are never reached here.
+.PP
+This
+.I session's
+own
+.B nantest
+probe (not part of the tree) separately found that this Dis build's
+real
+.BR > / < ""
+do not follow IEEE 754 for
+.B NaN
+operands \(em
+.RI ( "NaN > 0.0" ,
+.RI "NaN < 0.0" ", and even" " 0.0 > NaN"
+all evaluated true) \(em which is why the runaway diffusivity above
+first showed up as a worst-difference of
+.B NaN
+comparing greater than every real
+.IR worst ,
+not as a comparison that silently passed.
+Not chased further here; a real, independent finding left for whoever
+next needs Dis-level real-comparison correctness against
+.BR NaN .

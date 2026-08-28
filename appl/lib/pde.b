@@ -9,6 +9,13 @@ include "math.m";
 include "string.m";
 	str: String;
 
+# pde.m itself requires "draw.m" already included first - see its own
+# header comment (hoc.m's init()/run() entries need Draw->Context, and
+# Limbo has no include-guard to let pde.m safely include it itself).
+# This file never uses Draw directly; this include exists purely to
+# satisfy that requirement.
+include "draw.m";
+
 include "pde.m";
 
 # mesh(2) is the "mesh ..." line's own little language, shared
@@ -23,6 +30,17 @@ include "mesh.m";
 include "krylov.m";
 	krylov: Krylov;
 	Solver: import krylov;
+
+# hoc(2)'s Hoc type is already visible here - pde.m itself now includes
+# hoc.m (Problem.hocmod/hocra/hocrb) - so there's no separate include for
+# it in this file, unlike mesh/krylov above. "equation hoc" lets a
+# caller write the PDE itself as hoc(2) expression strings instead of
+# one of the three fixed Limbo functions above; see pde.m's own grammar
+# comment. Deliberately no module-level loaded instance: every hoc-
+# driven Problem gets its OWN, loaded fresh in newproblem() below - a
+# compiled Expr's Sym handles are tied to whichever instance compiled
+# them, so two such Problems sharing one symbol table would silently
+# overwrite each other's variables.
 
 init()
 {
@@ -290,6 +308,24 @@ specwords(s: string): array of string
 	return a;
 }
 
+# joinwords: the inverse of specwords(), from some starting index -
+# used only for "rhs" lines. hoc(2)'s own grammar is whitespace-
+# insensitive between tokens (like any ordinary expression language),
+# so re-joining the already-tokenized words with single spaces gives
+# hoc an equivalent source string to whatever the user actually wrote,
+# without needing a separate non-word-splitting parse path just for
+# this one line kind.
+joinwords(a: array of string, from: int): string
+{
+	s := "";
+	for(i := from; i < len a; i++){
+		if(i > from)
+			s += " ";
+		s += a[i];
+	}
+	return s;
+}
+
 newproblem(spec: string): (ref Problem, string)
 {
 	init();
@@ -303,6 +339,14 @@ newproblem(spec: string): (ref Problem, string)
 	restart := 30;
 	maxiter := 200;
 	defaultstep := 0.0;
+
+	# "equation hoc" - see pde.m's own grammar comment. Collected across
+	# possibly-interleaved "equation hoc"/"substeps"/"param"/"rhs" lines,
+	# compiled once at the very end once the whole spec has been read.
+	hocname := ""; hocnameb := "";
+	hocsubsteps := 0;
+	hocparams: list of (string, real);
+	hocrhssrc := ""; hocrhsbsrc := "";
 
 	for(rest := spec; rest != nil;){
 		(line, tail) := str->splitl(rest, "\n");
@@ -351,6 +395,12 @@ newproblem(spec: string): (ref Problem, string)
 					}
 				if(da <= 0.0 || db <= 0.0)
 					return (nil, "equation gray: da and db must be given and positive");
+			"hoc" =>
+				if(len a < 3 || len a > 4)
+					return (nil, "equation hoc: usage: equation hoc NAME [NAMEB]");
+				hocname = a[2];
+				if(len a == 4)
+					hocnameb = a[3];
 			* =>
 				return (nil, "equation: unknown equation " + equation);
 			}
@@ -373,6 +423,26 @@ newproblem(spec: string): (ref Problem, string)
 			defaultstep = real a[2];
 			if(defaultstep <= 0.0)
 				return (nil, "time: step must be positive");
+		"substeps" =>
+			if(len a != 2)
+				return (nil, "substeps: usage: substeps N");
+			hocsubsteps = int a[1];
+			if(hocsubsteps <= 0)
+				return (nil, "substeps: must be positive");
+		"param" =>
+			if(len a != 3)
+				return (nil, "param: usage: param NAME VALUE");
+			hocparams = (a[1], real a[2]) :: hocparams;
+		"rhs" =>
+			if(len a < 3)
+				return (nil, "rhs: usage: rhs NAME hoc-expression...");
+			expr := joinwords(a, 2);
+			if(a[1] == hocname)
+				hocrhssrc = expr;
+			else if(a[1] == hocnameb && hocnameb != "")
+				hocrhsbsrc = expr;
+			else
+				return (nil, "rhs: " + a[1] + " does not match equation hoc's own field name(s)");
 		* =>
 			return (nil, "unknown problem-spec line: " + a[0]);
 		}
@@ -383,12 +453,42 @@ newproblem(spec: string): (ref Problem, string)
 		return (nil, "newproblem: spec has no equation line");
 	if(equation == "gray" && solvermethod != "explicit")
 		return (nil, "equation gray: only solver explicit is valid - the reaction term is nonlinear");
+	if(equation == "hoc" && solvermethod != "explicit")
+		return (nil, "equation hoc: only solver explicit is valid - the update rule is arbitrary, not necessarily linear");
 	f := new(grid.nx, grid.ny, grid.dx, grid.dy, grid.bc);
 	fb: ref Field;
-	if(equation == "gray")
+	if(equation == "gray" || (equation == "hoc" && hocnameb != ""))
 		fb = new(grid.nx, grid.ny, grid.dx, grid.dy, grid.bc);
+
+	hocmod: Hoc;
+	hocra, hocrb: ref Hoc->Expr;
+	if(equation == "hoc"){
+		if(hocsubsteps <= 0)
+			return (nil, "equation hoc: spec has no substeps line");
+		if(hocrhssrc == "")
+			return (nil, "equation hoc: spec has no \"rhs " + hocname + " ...\" line");
+		if(hocnameb != "" && hocrhsbsrc == "")
+			return (nil, "equation hoc: spec has no \"rhs " + hocnameb + " ...\" line");
+		hocmod = load Hoc Hoc->PATH;
+		if(hocmod == nil)
+			return (nil, "equation hoc: cannot load " + Hoc->PATH);
+		hocmod->reset();
+		for(pl := hocparams; pl != nil; pl = tl pl){
+			(pname, pval) := hd pl;
+			hocmod->setvar(pname, pval);
+		}
+		hocra = hocmod->compile(hocrhssrc);
+		if(hocra == nil)
+			return (nil, "equation hoc: could not parse rhs " + hocname + " " + hocrhssrc);
+		if(hocnameb != ""){
+			hocrb = hocmod->compile(hocrhsbsrc);
+			if(hocrb == nil)
+				return (nil, "equation hoc: could not parse rhs " + hocnameb + " " + hocrhsbsrc);
+		}
+	}
 	return (ref Problem(f, fb, equation, solvermethod, diffusivity, speed, damping,
-		da, db, feed, kill, tolerance, restart, maxiter, defaultstep), nil);
+		da, db, feed, kill, tolerance, restart, maxiter, defaultstep,
+		hocmod, hocname, hocnameb, hocra, hocrb, hocsubsteps), nil);
 }
 
 # Batch/unattended driver: repeatedly step() by p's own "time step DT"
@@ -432,8 +532,75 @@ step(p: ref Problem, dt: real): string
 	"gray" =>
 		gray(p.field, p.fieldb, p.da, p.db, p.feed, p.kill, dt);
 		return nil;
+	"hoc" =>
+		hocstep(p, dt);
+		return nil;
 	}
 	return "step: unknown equation " + p.equation;
+}
+
+# hocstep: gray()'s own shape (subdivide dt into p.hocsubsteps equal
+# substeps, gather each field's whole-grid Laplacian the fast way once
+# per substep, update every cell, swap) with the per-cell update itself
+# coming from the user's own compiled hoc(2) expression(s) instead of a
+# fixed formula - walked with evalarray() (once per substep, over the
+# whole grid) rather than eval() (once per cell), for the reason
+# doc/danby-tks-plan.md's own measurement gives. No stability heuristic
+# here unlike diffuse/wave/gray - p.hocsubsteps is exactly what
+# newproblem() parsed from the spec's own "substeps N" line, since
+# there is no general way to derive one for an arbitrary user rhs.
+hocstep(p: ref Problem, dt: real)
+{
+	h := dt/real(p.hocsubsteps);
+	hs := p.hocmod->symbol("h");
+	hs.val = h;
+	fs := p.hocmod->symbol(p.hocname);
+	ls := p.hocmod->symbol("lap_"+p.hocname);
+	fbs: ref Hoc->Sym; lbs: ref Hoc->Sym;
+	if(p.fieldb != nil){
+		fbs = p.hocmod->symbol(p.hocnameb);
+		lbs = p.hocmod->symbol("lap_"+p.hocnameb);
+	}
+	n := p.field.nx*p.field.ny;
+	for(s := 0; s < p.hocsubsteps; s++){
+		la := lapinto(p.field);
+		if(la == nil)
+			la = lapfallback(p.field);
+		lb: array of real;
+		fs.vals = p.field.u;
+		ls.vals = la;
+		if(p.fieldb != nil){
+			lb = lapintob(p.fieldb);
+			if(lb == nil)
+				lb = lapfallback(p.fieldb);
+			fbs.vals = p.fieldb.u;
+			lbs.vals = lb;
+		}
+		newa := p.hocmod->evalarray(p.hocra, n);
+		for(i := 0; i < n; i++)
+			p.field.work[i] = newa[i];
+		if(p.fieldb != nil){
+			newb := p.hocmod->evalarray(p.hocrb, n);
+			for(j := 0; j < n; j++)
+				p.fieldb.work[j] = newb[j];
+		}
+		swap(p.field);
+		if(p.fieldb != nil)
+			swap(p.fieldb);
+	}
+}
+
+# lapfallback: lapinto()/lapintob() are only nil when math(2) has no
+# lap5/lap7 builtin on this build - the same fallback diffuse()/wave()/
+# gray() already reach for via their own inline lap(f,x,y) loop, factored
+# out here so hocstep() doesn't need a fourth copy of it.
+lapfallback(f: ref Field): array of real
+{
+	r := array[f.nx*f.ny] of real;
+	for(y := 0; y < f.ny; y++)
+		for(x := 0; x < f.nx; x++)
+			r[y*f.nx+x] = lap(f, x, y);
+	return r;
 }
 
 diffuse(f: ref Field, d, dt: real)

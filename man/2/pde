@@ -88,6 +88,82 @@ it has no implicit solver here; only
 .B "solver explicit"
 is valid for it.
 .TP
+.BI "equation hoc " NAME " [" NAMEB ]
+The update rule itself comes from the caller, as
+.IR hoc (2)
+expression strings, rather than one of the three fixed equations above
+\(em a caller WRITES the PDE (Turing patterns, FitzHugh-Nagumo,
+anything of this reaction-diffusion shape) instead of supplying
+numbers into an equation this module already hard-coded.  There are no
+coefficient fields for it: every constant an expression needs is a
+named
+.B param
+line, not an
+.I adt
+field.
+.RS
+.TP
+.BI "substeps " N
+Required.  Unlike
+.BR diffuse / wave / gray ,
+there is no general stability heuristic to derive a substep count from
+for an arbitrary user rhs, so it is explicit.
+.TP
+.BI "param " NAME " " VALUE
+Repeatable.  Binds a hoc variable any
+.B rhs
+line may reference.
+.TP
+.BI "rhs " NAME " " hoc-expression
+One per field name given on the
+.B "equation hoc"
+line, after it in the spec.  The rest of the line is taken verbatim as
+hoc source \(em unlike every other line here, it is not word-split, so
+an expression may contain spaces freely.  Inside it,
+.I NAME
+is that field's own current value,
+.BI lap_ NAME
+is its five-point Laplacian (computed the same fast way
+.BR diffuse / wave / gray
+already do \(em only the per-cell update itself is hoc-driven),
+.B h
+is the current substep's own dt, and any
+.B param
+is that name's value.
+.RE
+.IP
+Evaluated with
+.IR hoc (2)'s
+.BR evalarray() ,
+the same parsed tree
+.B eval()
+would walk scalar-at-a-time, walked once per substep over the whole
+grid instead.
+.I Hoc
+has no clamp/min/max builtin, so a
+.B rhs
+wanting bounded values (as
+.BR gray 's
+own
+.RI [0,1]
+species fractions are) must express that itself, or accept unbounded
+output \(em it is not silently clamped to
+.RI [0,1]
+the way
+.B gray
+itself is, since that clamp is specific to what
+.BR gray 's
+own fields mean, not a general property of this equation kind.  Like
+.BR gray ,
+only
+.B "solver explicit"
+is valid \(em the update rule is arbitrary, not necessarily linear.
+Requires an
+.B "equation hoc"
+line before any of its own
+.BR substeps / param / rhs
+lines, since they refer to the field name(s) it declares.
+.TP
 .B "solver explicit"
 The default: the same stability-limited
 .B diffuse
@@ -181,8 +257,10 @@ holding a garbage state.
 .SH SEE ALSO
 .IR mesh (2),
 .IR krylov (2),
+.IR hoc (2),
 .IR verify (2),
 .IR uq (2),
 .IR ode (2),
 .IR pdelab (1),
-.IR sh-pde (1)
+.IR sh-pde (1),
+.IR pdehoctest (1)

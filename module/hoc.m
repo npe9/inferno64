@@ -7,8 +7,18 @@
 # rather than hoc(1)'s own file/stdin-driven init()/run(). See appl/lib/
 # hoc.b's own header comment on those functions for how they're meant to
 # be used (parse once per model load, rebind and eval() many times).
-
-include "draw.m";
+#
+# No "include draw.m" here, deliberately - this file's own Expr/Sym/
+# compile/eval/evalarray shape needs no Draw type at all, only init()'s
+# and run()'s command-entry signatures do. Forcing draw.m on every
+# includer broke every existing Draw-using caller that also
+# (transitively, via pde.m) ends up including this one - Limbo has no
+# include-guard, so two paths to the same .m file is a hard
+# redeclaration error, not a no-op. tk.m/wmclient.m/meshview.m already
+# follow the same rule (see meshview.m's own header comment): a caller
+# needing init()/run() (i.e. implementing this module, not just calling
+# compile()/eval()/evalarray()/symbol()) must include "draw.m" itself,
+# before this file.
 
 Hoc: module
 {
@@ -20,6 +30,12 @@ Hoc: module
 		kind:	int;
 		val:	real;		# for SKUNDEF/SKVAR
 		fdefn:	ref Fn;		# for SKFUNC/SKPROC
+		vals:	array of real;	# for evalarray(): nil means "use val,
+					# broadcast" - see evalarray's own
+					# comment below for how the SAME Sym
+					# and compiled Expr serve both a
+					# scalar caller (eval()) and an
+					# array-context caller at once.
 	};
 
 	Fn: adt
@@ -135,5 +151,22 @@ Hoc: module
 	setvar:		fn(name: string, v: real);
 	getvar:		fn(name: string): real;
 	reset:		fn();
+
+	# evalarray(): the SAME compiled Expr - the same tree compile()
+	# returned, with its Var/Assign nodes holding the same ref Sym
+	# handles eval() uses - walked in a different context: once per
+	# CALL rather than once per element. Any Sym referenced by e whose
+	# .vals is non-nil contributes its array elementwise (all such
+	# arrays must have length n); any Sym whose .vals is nil
+	# contributes its scalar .val, broadcast. This is what lets one
+	# parsed equation drive both a scalar per-model evaluator (Danby)
+	# and a whole-grid one (a PDE field) without reparsing or a second
+	# grammar - see appl/lib/hoc.b's header comment for the walker and
+	# its real, stated limits (Assign/PreIncDec/PostIncDec/Call/ReadE
+	# are not supported in array context; division by zero and domain
+	# errors produce IEEE Inf/NaN silently rather than hocerror's
+	# printed message, since a whole-grid walk expects to hit both at
+	# individual cells routinely).
+	evalarray:	fn(e: ref Expr, n: int): array of real;
 };
 

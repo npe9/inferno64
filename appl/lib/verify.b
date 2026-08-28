@@ -4,6 +4,9 @@ include "sys.m";
 	sys: Sys;
 include "math.m";
 	math: Math;
+# pde.m itself requires "draw.m" already included first - see its own
+# header comment. This file never uses Draw directly.
+include "draw.m";
 include "pde.m";
 	pde: Pde;
 	Field: import pde;

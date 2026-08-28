@@ -97,6 +97,7 @@ TARG=\
 	speakertest.dis\
 	speak.dis\
 	pdetest.dis\
+	pdehoctest.dis\
 	playmovie.dis\
 	quitall.dis\
 	refstress.dis\

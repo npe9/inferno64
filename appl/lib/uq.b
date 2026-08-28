@@ -8,6 +8,9 @@ include "string.m";
 	str: String;
 include "rand.m";
 	rand: Rand;
+# pde.m itself requires "draw.m" already included first - see its own
+# header comment. This file never uses Draw directly.
+include "draw.m";
 include "pde.m";
 	pde: Pde;
 	Problem: import pde;

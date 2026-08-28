@@ -247,6 +247,11 @@ include "hoc.m";
 include "sys.m";
 	sys: Sys;
 	FD: import Sys;
+# hoc.m deliberately does NOT include draw.m itself (see its own header
+# comment) - this file implements Hoc, including init()/run(), which DO
+# need Draw->Context, so it includes draw.m directly, same as tk.m/
+# wmclient.m's own implementations do for the same reason.
+include "draw.m";
 	Context: import Draw;
 include "bufio.m";
 	bufio: Bufio;
@@ -278,7 +283,7 @@ getsym(name: string): ref Sym
 {
 	s := findsym(name);
 	if(s == nil){
-		s = ref Sym(name, SKUNDEF, 0.0, nil);
+		s = ref Sym(name, SKUNDEF, 0.0, nil, nil);
 		symtab = s :: symtab;
 	}
 	return s;
@@ -286,12 +291,12 @@ getsym(name: string): ref Sym
 
 installconst(name: string, v: real)
 {
-	symtab = ref Sym(name, SKVAR, v, nil) :: symtab;
+	symtab = ref Sym(name, SKVAR, v, nil, nil) :: symtab;
 }
 
 installbltin(name: string)
 {
-	symtab = ref Sym(name, SKBLTIN, 0.0, nil) :: symtab;
+	symtab = ref Sym(name, SKBLTIN, 0.0, nil, nil) :: symtab;
 }
 
 # (resetstate() is defined once, near the driver at the end of this
@@ -1427,6 +1432,231 @@ evalexpr(e: ref Expr): real
 	}
 	hocerror("internal", "bad expr");
 	return 0.0;
+}
+
+# --- evalarray(): the same Expr AST, walked once per CALL instead of
+# once per ELEMENT ---
+#
+# This is a second evaluator over the identical tree compile() builds
+# and eval() walks - not a second parser, not a recompile. A caller
+# with a whole array's worth of values per named variable (a PDE
+# field, say) binds each such Sym's .vals once (see symbol() below),
+# then evalarray() walks the tree ONE time, doing a tight for-loop
+# over n elements at each Bin/Un/Not/Bltin node rather than dispatching
+# through the pick once per element - the dispatch cost is paid once
+# per AST node, not once per node per cell, which is what makes this
+# fast where calling eval() n times in a per-cell loop is not (measured
+# ~82x slower at the per-cell shape - see doc/danby-tks-plan.md). Any
+# Sym whose .vals is nil still contributes its scalar .val, broadcast -
+# so a mix of per-cell fields (av, bv, lav, lbv, ...) and uniform
+# parameters (da, feed, kill, h, ...) in the same expression works with
+# no special-casing at the call site.
+#
+# Real, stated limits: Assign/PreIncDec/PostIncDec/Call/ReadE all have
+# side effects or read from the token stream, neither of which means
+# anything applied to a whole array at once - unsupported, reported via
+# hocerror once (not per element) and a zero result. Division and `%`
+# by zero inside a Bin node are silent IEEE Inf/NaN here, NOT reported
+# via hocerror the way the scalar eval() path does - a whole-grid walk
+# expects to cross a zero divisor routinely (a boundary cell mid-
+# transient, say), and one message per bad cell would be useless
+# noise. Bltin (sqrt/log/asin/...) still goes through callbuiltin()'s
+# own errcheck() unchanged, so a genuine domain/range error (sqrt of a
+# negative number, say) DOES still report via hocerror, once per bad
+# element, same as eval() - that path was not changed or silenced.
+Vec: adt
+{
+	pick {
+	VArr =>
+		a:	array of real;
+	VSca =>
+		v:	real;
+	}
+};
+
+vbroadcast(v: ref Vec, n: int): array of real
+{
+	pick x := v {
+	VArr =>
+		# always a fresh copy: a bare `Var` expression (the whole rhs
+		# is just one field name, no operator at all) would otherwise
+		# hand back the CALLER's own bound array (x.sym.vals) instead
+		# of a new result - a caller writing that result back into the
+		# same field, or into a different field's .vals, would alias
+		# it to live input state it didn't ask to share. Every other
+		# path through vwalk/vbin already allocates its own array, so
+		# this is the one place the aliasing can otherwise leak out.
+		r := array[n] of real;
+		for(i := 0; i < n; i++)
+			r[i] = x.a[i];
+		return r;
+	VSca =>
+		r := array[n] of real;
+		val := x.v;
+		for(i := 0; i < n; i++)
+			r[i] = val;
+		return r;
+	}
+	return array[n] of { * => 0.0 };
+}
+
+vwalk(e: ref Expr, n: int): ref Vec
+{
+	pick x := e {
+	Num =>
+		return ref Vec.VSca(x.v);
+	Var =>
+		verifysym(x.sym);
+		if(x.sym.vals != nil)
+			return ref Vec.VArr(x.sym.vals);
+		return ref Vec.VSca(x.sym.val);
+	Bin =>
+		l := vwalk(x.l, n);
+		r := vwalk(x.r, n);
+		return vbin(x.op, l, r, n);
+	Un =>
+		v := vwalk(x.e, n);
+		pick y := v {
+		VSca => return ref Vec.VSca(-y.v);
+		VArr =>
+			r := array[n] of real;
+			for(i := 0; i < n; i++)
+				r[i] = -y.a[i];
+			return ref Vec.VArr(r);
+		}
+	Not =>
+		v := vwalk(x.e, n);
+		pick y := v {
+		VSca => return ref Vec.VSca(boolreal(!truthy(y.v)));
+		VArr =>
+			r := array[n] of real;
+			for(i := 0; i < n; i++)
+				r[i] = boolreal(!truthy(y.a[i]));
+			return ref Vec.VArr(r);
+		}
+	Bltin =>
+		v := vwalk(x.arg, n);
+		pick y := v {
+		VSca => return ref Vec.VSca(callbuiltin(x.name, y.v));
+		VArr =>
+			r := array[n] of real;
+			for(i := 0; i < n; i++)
+				r[i] = callbuiltin(x.name, y.a[i]);
+			return ref Vec.VArr(r);
+		}
+	* =>
+		hocerror("evalarray: assignment/increment/call/read not valid in array context", nil);
+		return ref Vec.VSca(0.0);
+	}
+	return ref Vec.VSca(0.0);
+}
+
+# vbin: dispatch on the operator ONCE, outside the per-element loop -
+# a case inside the loop would reintroduce the per-cell dispatch cost
+# this whole evaluator exists to avoid.
+vbin(op: int, l, r: ref Vec, n: int): ref Vec
+{
+	pick lx := l {
+	VSca =>
+		pick rx := r {
+		VSca =>
+			return ref Vec.VSca(vscalarbin(op, lx.v, rx.v));
+		VArr =>
+			res := array[n] of real;
+			lv := lx.v;
+			ra := rx.a;
+			case op {
+			TPLUS => for(i:=0; i<n; i++) res[i] = lv + ra[i];
+			TMINUS => for(i:=0; i<n; i++) res[i] = lv - ra[i];
+			TSTAR => for(i:=0; i<n; i++) res[i] = lv * ra[i];
+			TSLASH => for(i:=0; i<n; i++) res[i] = lv / ra[i];
+			TPCT => for(i:=0; i<n; i++) res[i] = math->fmod(lv, ra[i]);
+			TCARET => for(i:=0; i<n; i++) res[i] = hocpow(lv, ra[i]);
+			TGT => for(i:=0; i<n; i++) res[i] = boolreal(lv > ra[i]);
+			TGE => for(i:=0; i<n; i++) res[i] = boolreal(lv >= ra[i]);
+			TLT => for(i:=0; i<n; i++) res[i] = boolreal(lv < ra[i]);
+			TLE => for(i:=0; i<n; i++) res[i] = boolreal(lv <= ra[i]);
+			TEQ => for(i:=0; i<n; i++) res[i] = boolreal(lv == ra[i]);
+			TNE => for(i:=0; i<n; i++) res[i] = boolreal(lv != ra[i]);
+			TAND => for(i:=0; i<n; i++) res[i] = boolreal(truthy(lv) && truthy(ra[i]));
+			TOR => for(i:=0; i<n; i++) res[i] = boolreal(truthy(lv) || truthy(ra[i]));
+			}
+			return ref Vec.VArr(res);
+		}
+	VArr =>
+		la := lx.a;
+		pick rx := r {
+		VSca =>
+			res := array[n] of real;
+			rv := rx.v;
+			case op {
+			TPLUS => for(i:=0; i<n; i++) res[i] = la[i] + rv;
+			TMINUS => for(i:=0; i<n; i++) res[i] = la[i] - rv;
+			TSTAR => for(i:=0; i<n; i++) res[i] = la[i] * rv;
+			TSLASH => for(i:=0; i<n; i++) res[i] = la[i] / rv;
+			TPCT => for(i:=0; i<n; i++) res[i] = math->fmod(la[i], rv);
+			TCARET => for(i:=0; i<n; i++) res[i] = hocpow(la[i], rv);
+			TGT => for(i:=0; i<n; i++) res[i] = boolreal(la[i] > rv);
+			TGE => for(i:=0; i<n; i++) res[i] = boolreal(la[i] >= rv);
+			TLT => for(i:=0; i<n; i++) res[i] = boolreal(la[i] < rv);
+			TLE => for(i:=0; i<n; i++) res[i] = boolreal(la[i] <= rv);
+			TEQ => for(i:=0; i<n; i++) res[i] = boolreal(la[i] == rv);
+			TNE => for(i:=0; i<n; i++) res[i] = boolreal(la[i] != rv);
+			TAND => for(i:=0; i<n; i++) res[i] = boolreal(truthy(la[i]) && truthy(rv));
+			TOR => for(i:=0; i<n; i++) res[i] = boolreal(truthy(la[i]) || truthy(rv));
+			}
+			return ref Vec.VArr(res);
+		VArr =>
+			res := array[n] of real;
+			ra := rx.a;
+			case op {
+			TPLUS => for(i:=0; i<n; i++) res[i] = la[i] + ra[i];
+			TMINUS => for(i:=0; i<n; i++) res[i] = la[i] - ra[i];
+			TSTAR => for(i:=0; i<n; i++) res[i] = la[i] * ra[i];
+			TSLASH => for(i:=0; i<n; i++) res[i] = la[i] / ra[i];
+			TPCT => for(i:=0; i<n; i++) res[i] = math->fmod(la[i], ra[i]);
+			TCARET => for(i:=0; i<n; i++) res[i] = hocpow(la[i], ra[i]);
+			TGT => for(i:=0; i<n; i++) res[i] = boolreal(la[i] > ra[i]);
+			TGE => for(i:=0; i<n; i++) res[i] = boolreal(la[i] >= ra[i]);
+			TLT => for(i:=0; i<n; i++) res[i] = boolreal(la[i] < ra[i]);
+			TLE => for(i:=0; i<n; i++) res[i] = boolreal(la[i] <= ra[i]);
+			TEQ => for(i:=0; i<n; i++) res[i] = boolreal(la[i] == ra[i]);
+			TNE => for(i:=0; i<n; i++) res[i] = boolreal(la[i] != ra[i]);
+			TAND => for(i:=0; i<n; i++) res[i] = boolreal(truthy(la[i]) && truthy(ra[i]));
+			TOR => for(i:=0; i<n; i++) res[i] = boolreal(truthy(la[i]) || truthy(ra[i]));
+			}
+			return ref Vec.VArr(res);
+		}
+	}
+	return ref Vec.VSca(0.0);
+}
+
+# vscalarbin: both operands still scalar at this node (e.g. two
+# uniform parameters combined) - no array touched, no loop needed.
+vscalarbin(op: int, l, r: real): real
+{
+	case op {
+	TPLUS => return l + r;
+	TMINUS => return l - r;
+	TSTAR => return l * r;
+	TSLASH => return l / r;
+	TPCT => return math->fmod(l, r);
+	TCARET => return hocpow(l, r);
+	TGT => return boolreal(l > r);
+	TGE => return boolreal(l >= r);
+	TLT => return boolreal(l < r);
+	TLE => return boolreal(l <= r);
+	TEQ => return boolreal(l == r);
+	TNE => return boolreal(l != r);
+	TAND => return boolreal(truthy(l) && truthy(r));
+	TOR => return boolreal(truthy(l) || truthy(r));
+	}
+	return 0.0;
+}
+
+evalarray(e: ref Expr, n: int): array of real
+{
+	return vbroadcast(vwalk(e, n), n);
 }
 
 # callfn: bind formals by VALUE, in the CALLER's scope, before

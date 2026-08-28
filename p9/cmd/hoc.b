@@ -22,6 +22,10 @@ implement Command;
 
 include "sys.m";
 	sys: Sys;
+# hoc.m deliberately does NOT include draw.m itself (see its own header
+# comment) - this file's own Command.init() needs Draw->Context, so it
+# includes draw.m directly, same as tk.m/wmclient.m's own implementers do.
+include "draw.m";
 include "hoc.m";
 	hoc: Hoc;
 
