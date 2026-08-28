@@ -10566,6 +10566,110 @@ problem, not a
 problem reached from somewhere else -- without yet naming the exact
 second call site.
 .NH 1
+D2B's own caller pc was wrong in the four functions that need it most
+.PP
+Resolved the
+.CW destroy+608
+versus
+.CW destroy+703
+discrepancy the previous section left open, by bisection rather than
+more reading. A clean, non-crashing boot with every distinct
+.CW poolfree()
+caller pc printed the first time it was seen showed exactly one
+.CW destroy
+entry, always at the same relative offset --
+.CW destroy+608 --
+across the whole boot. That is
+.CW destroy() Ns 's
+one real, single
+.CW "poolfree(heapmem, h)"
+call, confirmed independent of any crash.
+.CW destroy+703
+never appeared as a successful free's caller in that same boot, only
+ever on the failing side of a D2B check.
+.PP
+The cause:
+.CW include/pool.h Ns 's
+.CW D2B(b, dp)
+macro computes its own caller pc as
+.CW getcallerpc(&dp) .
+Every OTHER
+.CW getcallerpc()
+call in this tree --
+.CW chan.c Ns 's
+.CW decref() ,
+.CW incref() ,
+.CW cclose() ,
+.CW newpath() ,
+this file's own
+.CW "setmalloctag(v, getcallerpc(&dsize))"
+sitting one line below a
+.CW D2B
+call inside
+.CW mallocalign()
+-- anchors on the ENCLOSING FUNCTION'S OWN FIRST PARAMETER, because
+that is the specific stack slot the Plan9
+.CW a+0(FP)
+idiom actually reads.
+.CW D2B Ns 's
+.CW dp
+is correct for
+.CW poolimmutable(void*) ,
+.CW poolmutable(void*) ,
+.CW free(void*)
+and the four
+.CW {set,get}{malloc,realloc}tag()
+functions, whose first parameter IS the data pointer. It is wrong for
+.CW "poolfree(Pool*, void*)" ,
+.CW "poolrealloc(Pool*, void*, ...)"
+and
+.CW "poolmsize(Pool*, void*)" ,
+which all take
+.CW Pool*
+first, and for
+.CW mallocalign() ,
+whose
+.CW dp
+is a local, not a parameter at all. In these four,
+.CW D2B Ns 's
+own
+.CW poolfault()
+was naming a plausible-looking but wrong pc every time it fired --
+.CW destroy+703
+was one such wrong value, an artifact of this bug on the failing
+(second) free, not a genuine second call site inside
+.CW destroy() .
+.PP
+.CW D2B
+is shared with
+.CW os/osprey/kernlib/pool.c ,
+.CW emu/ ,
+.CW libinterp/
+and
+.CW devforth.c --
+changing its signature is out of scope for this hunt. Added
+.CW "D2BPC(b, dp, pc)" ,
+the identical check taking an explicit
+.CW pc
+instead of computing one, local to
+.CW alloc.c ,
+used only at the four mismatched call sites, each now anchored on its
+own real first parameter (
+.CW &p
+for the three
+.CW Pool*
+functions,
+.CW &dsize
+for
+.CW mallocalign() Ns ,
+matching the working
+.CW setmalloctag()
+call already beside it). Rebuilt and boot-tested clean; a 25-boot
+batch landed zero
+.CW alloc:D2B
+panics, consistent with the fix but not proof by itself given how low
+this specific panic's base rate already was.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
