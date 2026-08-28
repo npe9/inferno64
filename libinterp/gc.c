@@ -238,6 +238,31 @@ markheap(Type *t, void *vw)
 	WORD **w, **q;
 	Type *t1;
 
+	/*
+	 * A 20-boot batch resolved 5/8 GPFs to markheap+26 -- this
+	 * function's own t->np read, the very first dereference of t,
+	 * right after the pre-existing "t == nil" half of the check
+	 * below (which a wild-but-nonnil t sails past).  Every legal
+	 * caller (marklist's l->t, markarray's a->t, the recursive
+	 * h->t dispatch below) reaches here with t either a valid
+	 * builtin Type's static address or a live heap Type*; neither
+	 * shape is ever near-zero or misaligned, so a t that is either
+	 * is already known-bad without needing to touch it further.
+	 * auditmemloc() (alloc.c) -- report live/free/not-in-pools --
+	 * on a confirmed-bad t, the same escalation chan.c's badref()
+	 * uses for a bad Ref*.  pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	if(t != nil && ((uintptr)t < 0x1000 || ((uintptr)t & (sizeof(uintptr)-1)) != 0)){
+		extern void dumpstack(void);
+		extern void (*auditmemloc)(char*, void*);
+
+		print("markheap: bad t %#p vw %#p\n", t, vw);
+		auditmemloc("markheap-t", t);
+		dumpstack();
+		abort();
+	}
+
 	if(t == nil || t->np == 0)
 		return;
 
