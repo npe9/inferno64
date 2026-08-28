@@ -14045,6 +14045,117 @@ on code, would settle it, neither attempted.  This closes out what
 this hunt's available tooling can do here without a fundamentally
 different setup.
 
+\
+.NH 1
+The pc64-only bisection probe hangs riscv64/virt, deterministically
+.PP
+The pc64 hunt closed with two open leads and an instruction to look at
+the ARM and RISC-V ports instead, on the chance that the same class of
+instability would show up somewhere more tractable.  It did, on the
+very first boot, and not as a heisenbug: it was 100% reproducible.
+.PP
+riscv64/virt's committed
+.CW ivirt
+binary predates the pc64 hunt's changes to
+.CW os/inferno/port/alloc.c ,
+so the first step was an ordinary rebuild from the current tree.  That
+rebuild hung.  Every single boot -- five in a row, then a sixth run
+left for 90 seconds well past where the first five had already given
+up -- stopped at the exact same byte of console output:
+.IP
+.nf
+pci 0.0.0: 1b36/0008 class 060000 irq 32
+poolmsize: new caller pc=0x8002de3a (seen 1 distinct)notefree: new caller pc=0x8002d986 (seen 4 distinct)
+notefree: new caller
+.fi
+.PP
+mid-print, discovering a fifth distinct
+.CW notefree()
+caller, during PCI device enumeration.  The committed binary, by
+contrast, sails through this exact point and all the way to a shell
+prompt every time -- it has no such print calls in it at all, because
+they were added to
+.CW alloc.c
+after that binary was last built.
+.PP
+Bisected by rebuilding with pieces of
+.CW notefree()
+stubbed out, not by walking git history (75 commits touch shared code
+between the two binaries' build dates, too many to bisect one at a
+time against a 20-40 second boot).  Stubbing the whole function body
+restored a clean boot.  Restoring the freehist ring and the
+.CW currun()
+call, but leaving out only the
+.CW seen[64]
+bisection loop -- the block that prints each distinct
+.CW poolfree()
+caller pc the first time it is seen -- also booted clean, three times
+in a row, each one reaching
+.CW GC-STRESS-OK
+and a shell prompt before hitting the same pre-existing
+.CW mountrpc
+Styx error the committed binary hits at the same place:
+.CW /dev/sdF0/data
+does not exist under this test setup, an unrelated and already-known
+gap, not a kernel fault.
+.PP
+That loop is the cause.  It already answered its own question during
+the pc64 hunt -- whether
+.CW destroy()
+called
+.CW poolfree()
+from more than one compiled address -- and its own comment already
+said
+.CW "pc64-only, temporary, remove with the rest of this ring."
+It should have been removed before any other board was built, per the
+cleanup this plan had already flagged as pending; the RISC-V pivot is
+what actually forced the issue.  Removed, along with
+.CW poolmsize()'s
+identical sibling probe, same shape, same call-path family, same
+removal note in its own comment -- it did not reproduce the hang under
+test, but it was kept only by the strength of one clean boot, not by
+anything distinguishing it from the probe that did hang, so it went
+too.
+.PP
+Not chased: why this specific print, from this specific call site,
+hangs riscv64 and not pc64.  Candidates not distinguished between:
+the
+.CW print()
+call itself misbehaving from whatever context that fifth caller runs
+in (interrupt-handler suspicion, unconfirmed), something particular
+about being invoked from a free during PCI enumeration specifically, or
+an interaction with riscv64/virt's own console or interrupt path that
+pc64's UART driver does not share.  The probe had already served its
+purpose; the fix is removal, not portability.
+.PP
+Verified rather than assumed: riscv64/virt rebuilt and booted 3/3
+clean after the fix (GC-STRESS-OK, shell, the same pre-existing
+mountrpc failure, nothing new).  pc64 rebuilt from the same changed
+file and boot-tested 5x to rule out a regression from removing
+allocator-path code: 2/5
+.CW "general protection violation"
+panics, the same signature this hunt has tracked all along, within the
+10-43% baseline range already established -- no new failure mode, no
+change in kind.  Both prebuilt binaries,
+.CW ivirt
+and
+.CW ipc64 ,
+committed alongside the source change so the tree's checked-in kernels
+reflect it.
+.PP
+This does not confirm or rule out the same underlying bug class the
+pc64 hunt spent most of its time on -- the removed probe was pure
+diagnostic overhead, present only during this hunt, never part of the
+kernel's real allocator logic, so its own failure says nothing about
+whether
+.CW strchr-amd64.s 's
+heisenbug or anything like it exists on riscv64.  What it does confirm
+is that shared
+.CW os/inferno/port/
+code is not automatically safe across architectures just because it
+compiles for all of them, and that this tree's own "pc64-only,
+temporary" comments were accurate warnings, not decoration.
+
 .NH 1
 Then
 .PP
