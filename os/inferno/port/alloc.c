@@ -134,7 +134,7 @@ void (*poolfault)(void *, char *, uintptr) = _poolfault;
  * doc/inferno-ports.ms.
  */
 enum { NFREEHIST = 4096 };
-static struct { void *addr; uintptr pc; } freehist[NFREEHIST];
+static struct { void *addr; uintptr pc; int pid; char *mname; } freehist[NFREEHIST];
 static int freehistn;
 
 static void
@@ -170,9 +170,26 @@ notefree(void *v, uintptr pc)
 		}
 	}
 
+	/*
+	 * Same Dis pid/module trick _poolfault() already uses (below) --
+	 * records which Dis process and module was current at the
+	 * moment of THIS free, so a later "was freed before" match can
+	 * compare it against whichever process/module is current at the
+	 * double-free, answering "same owner freeing its own stale
+	 * reference" vs "two different owners" directly (doc/inferno-
+	 * ports.ms, "Who freed it first, this time reliably"). pc64-
+	 * only, temporary.
+	 */
 	i = freehistn % NFREEHIST;
 	freehist[i].addr = v;
 	freehist[i].pc = pc;
+	{
+		Prog *xp;
+
+		xp = currun();
+		freehist[i].pid = xp != nil ? xp->pid : -1;
+		freehist[i].mname = (R.M != nil && R.M->m != nil) ? R.M->m->name : nil;
+	}
 	freehistn++;
 }
 
@@ -192,8 +209,9 @@ printfreehist(void *v)
 	n = freehistn < NFREEHIST ? freehistn : NFREEHIST;
 	for(i = 0; i < n; i++)
 		if(freehist[i].addr == v)
-			print("_poolfault: %#p was freed before, from pc=%#p\n",
-				v, freehist[i].pc);
+			print("_poolfault: %#p was freed before, from pc=%#p pid %d module %s\n",
+				v, freehist[i].pc, freehist[i].pid,
+				freehist[i].mname != nil ? freehist[i].mname : "?");
 }
 
 int
