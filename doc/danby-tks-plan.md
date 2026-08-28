@@ -247,10 +247,28 @@ Not, PreIncDec, PostIncDec, Call, Bltin, ReadE`) has no indexing node at all.
 That covers every family surveyed here except one: `moontrip.b`'s
 `gravity->derivatives(state, mass, 1.0, softening, derivative)` operates on a
 12-element state and a 3-element mass vector at once - not expressible as
-named-scalar hoc equations. All 12 `Orbital` plugins are array math of this
-shape. For those, "hand-written Limbo plugin, as now" is the honest answer,
-not a gap to paper over - stated here plainly rather than left to surface at
-plugin 130.
+named-scalar hoc equations.
+
+**CORRECTED, not assumed a second time:** this section originally claimed
+"all 12 `Orbital` plugins are array math of this shape" - wrong, found by
+reading one of them directly rather than trusting the family's usual
+shape. `aerobraking.b`'s own "planet" body (`state[0..3]`) never moves -
+every derivative touching it is a constant `0.0` - so its real dynamics
+are four independent named reals (craft `x,y,vx,vy`), central `1/r^3`
+gravity plus atmospheric drag, exactly the Trajectory shape, not real
+array math at all. Rewritten as literal eqn strings (`appl/cmd/
+aerobrakingtest.b`, commit `f35f21f3`) - see that commit for two further
+findings: Dis's own `load` type-checks against a compiled module's OWN
+`implement` type, not whatever shape a caller's own load declares
+(confirmed by a real probe, ruling out ever merging two module shapes
+into one `.dis`); and a genuinely dangerous Limbo semantics pitfall - a
+`self ref Model` dot-method call resolves through whichever module a
+caller's own `Model: import` names at compile time, not per the actual
+object's origin, so comparing two loaded `Orbital` instances' `.rhs` in
+one process via a shared import silently ran only ONE of them, on both
+sides, giving a false pass even on a deliberately broken version. The
+other 11 Orbital plugins have not been re-checked the same way; "all 12"
+should now read "not yet re-verified per-plugin," not "confirmed."
 
 **How a model would actually use this**, once a harness is built to call it
 (not done yet - see Recommended order): at load time, parse each of the
