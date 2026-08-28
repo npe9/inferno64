@@ -10967,6 +10967,16 @@ check does at destroy()'s entry, but one level further out.
 .NH 1
 The most reproducible capture of the whole hunt, and two retracted fixes
 .PP
+.B
+RETRACTED IN FULL.
+.R
+This section's central finding turned out to be a bug in the checker
+this section itself added, not in the kernel -- see "Retraction: the
+checker was checking the wrong address" near the end of this
+document for the correction. Left standing rather than deleted, per
+this document's own practice of appending corrections instead of
+rewriting history, but read the retraction before anything below.
+.PP
 Picked up the previous section's own closing suggestion directly: widen
 .CW OP(movp) Ns 's
 .CW dv
@@ -11162,6 +11172,112 @@ in isolation -- disdump against this exact disinit.dis would settle
 it directly but did not run cleanly against the hosted emu tried
 here ("illegal dis instruction"), left for whoever has a working
 disassembler path for it next.
+.NH 1
+Retraction: the checker was checking the wrong address
+.PP
+Everything in "The most reproducible capture of the whole hunt, and
+two retracted fixes" (above) -- the deterministic
+.CW 0x784aad0
+capture, the
+.CW limbo\ -z
+and Stkext-zeroing fixes tried against it, the
+.CW auditmemloc(dv)
+result read as
+.CW dv
+sitting exactly
+.CW sizeof(Heap)
+past a live block's own data start, and the "actively computed, not
+leftover memory" refinement built on top of that reading -- is
+retracted. The bug was in the checker, not the kernel.
+.PP
+.CW dv
+is a Dis-level object pointer: a
+.CW String*
+or
+.CW Array*
+or similar, always
+.CW H2D() Ns -adjusted,
+which on this port means exactly
+.CW sizeof(Heap)
+(0x18) past the pool block's own data start -- that is what
+.CW H2D()
+is for. Every legitimate Dis heap object pointer looks exactly like
+this when read against the pool's own
+.CW Bhdr
+layout directly.
+.CW destroy() Ns 's
+own entry consistency check gets this right:
+.CW "h = D2H(v)"
+runs first, converting back to the pool-level pointer, before
+touching a
+.CW Bhdr
+at all. The widened
+.CW dv
+guard added to
+.CW OP(movp)
+skipped that conversion -- it read
+.CW D2B Ns -shaped
+bytes directly out of
+.CW dv ,
+which lands 0x18 bytes into the object's own live data, not at its
+header. For
+.CW getclock() Ns 's
+string result specifically, that particular offset into a
+.CW String Ns 's
+own
+.CW Sascii
+data reliably did not spell
+.CW MAGIC_A
+or
+.CW MAGIC_I ,
+so the check fired on a live, entirely correct
+.CW destroy()
+call, every single boot -- which is exactly why it looked like the
+most reproducible capture of the whole hunt.  It was reproducible
+because it was checking the same wrong offset into the same
+correctly-computed pointer every time, not because a real bug kept
+recurring at the same address.
+.PP
+Fixed by checking
+.CW D2H(dv) Ns 's
+.CW Bhdr
+instead of
+.CW dv Ns 's
+directly, matching
+.CW destroy() Ns 's
+own correct pattern. A 25-boot batch after the fix: zero
+.CW "movp: bad dv-freed"
+captures, panic distribution back to the familiar baseline (page
+fault, general protection violation,
+.CW "decref: bad r 0xf000ff53" ,
+.CW alloc:D2B:destroy-entry ).
+The two tracing probes this thread added (
+.CW OP(cvtac)
+in string.c,
+.CW OP(slicea)
+here) are removed -- they had already answered their question, the
+answer just meant something different than it looked like at the
+time.
+.PP
+What survives this retraction, unaffected: every finding from
+before this thread started -- the hardware-confirmed
+.CW destroy()
+double-free (
+.CW auditmemloc()
+showing a target already
+.CW MAGIC_F ), the
+.CW destroy+703
+resolution to
+.CW destroy() Ns 's
+own entry check by tag rather than offset, the
+.CW Chan.path / Chan.umh
+poison-value corruption, and every D2B anchor fix -- none of those
+depended on this checker at all. What is lost: the specific,
+sharply-reproducible target this thread thought it had for
+.CW disinit.b:172-175 .
+There may still be a real bug near there; this thread's own evidence
+for one does not hold up, and the search for the actual double-free
+mechanism returns to where it stood before this thread began.
 .NH 1
 Then
 .PP
