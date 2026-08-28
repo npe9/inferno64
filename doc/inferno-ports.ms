@@ -10965,6 +10965,166 @@ twice -- likely by instrumenting the call sites of
 itself for a v that is already free, the same way this section's own
 check does at destroy()'s entry, but one level further out.
 .NH 1
+The most reproducible capture of the whole hunt, and two retracted fixes
+.PP
+Picked up the previous section's own closing suggestion directly: widen
+.CW OP(movp) Ns 's
+.CW dv
+guard, which had only ever caught
+.CW dv\ <\ 0x1000 ,
+to a cheap, read-only mirror of
+.CW D2B Ns 's
+own magic check -- the same blind-spot pattern
+.CW badref() /
+.CW markheap() Ns 's
+guards already closed elsewhere in this hunt.
+.PP
+A 25-boot batch caught it at a rate nothing else in this whole
+investigation has matched: 20 to 23 out of 25, every single one the
+IDENTICAL address,
+.CW 0x784aad0 ,
+module
+.CW Init
+instruction 307. Resolved through
+.CW disinit.sbl
+to
+.CW disinit.b:175
+inside
+.CW getclock() :
+.CW "now = big string b[0:n]" ,
+following
+.CW "b := array[64] of byte"
+and a short
+.CW sys->read() .
+This is, by a wide margin, the most reproducible single capture this
+multi-session hunt has produced.
+.PP
+Landing it cleanly took one prerequisite fix first.
+.CW badptrslot() Ns 's
+own ending calls
+.CW abort() ,
+which is
+.CW libkern/abort.c Ns 's
+.CW "while(*(int*)0);" --
+meant to fault on the null read, but on pc64 specifically it spins
+forever instead. Every hit of the newly-widened check hung two full
+25-boot batches at the identical output line rather than producing a
+panic, caught only by comparing against a normal boot's line count --
+the same methodology gap this hunt already found once for
+.CW dumpstack()
+and
+.CW %lux .
+.CW abort()
+itself is shared with
+.CW os/osprey/kernlib Ns 's
+own build, out of scope to change; fixed by having
+.CW badptrslot()
+call
+.CW panic()
+directly instead, declared locally the way
+.CW dumpstack() /
+.CW auditmemloc()
+already are in that function.
+.PP
+With a clean, countable capture in hand, two fixes were tried, each
+matching the closest known bug class in this tree, and NEITHER moved
+the crash at all.
+.PP
+First:
+.CW limbo\ -z .
+.CW array(N)
+of a pointer-free type comes back with undefined non-pointer contents
+-- newa's own documented contract (doc/dis.ms), not an allocator
+defect -- and
+.CW -z
+emits
+.CW newaz
+instead, zeroing it. This was already found, fixed and verified safe
+tree-wide on a sibling branch (session memory
+.CW inferno-rio-array-zeroinit-bug )
+but never ported to this one, and
+.CW "array[64] of byte"
+at
+.CW disinit.b:175
+matches its exact shape. Ported it (
+.CW mkfiles/mkdis
+and
+.CW os/inferno/init/mkfile
+specifically, since
+.CW disinit.b Ns 's
+own build bypasses the shared mkfile's flags entirely with a local
+copy), confirmed embedded (
+.CW pc64.root.s Ns 's
+two
+.CW INEWA\(->INEWAZ
+opcode bytes changed), rebuilt, boot-tested: crash rate unchanged,
+23/25.
+.PP
+Second: Dis stack extents.
+.CW newstack()
+and
+.CW extend()
+(libinterp/stack.c) both allocate via
+.CW "mallocz(l, 0)" --
+unzeroed -- and only ever
+.CW memmove
+the first
+.CW t->size
+bytes of an
+.CW l Ns -byte
+extent into it,
+.CW l
+frequently larger than
+.CW t->size .
+The gap was already named in a prior session's own comment on
+.CW destroy() :
+"whatever a Stkext's
+.CW mallocz(l,\ 0)
+left unclaimed." Changed both to
+.CW "mallocz(l, 1)" ,
+rebuilt, boot-tested: crash rate unchanged, 21/25.
+.PP
+Both fixes are real, independently-justified hardening and both stay
+-- but neither was this crash's mechanism, and the doc says so
+plainly rather than letting a plausible-sounding fix stand
+unquestioned. What actually settled it: adding
+.CW auditmemloc()
+on
+.CW dv
+itself, not just the slot that held it (
+.CW badptrslot() Ns 's
+own call already covers the slot).  The answer:
+.CW "784aad0 in heap: in block ... B2D 0x784aab8 ... searched address 0x784aad0" .
+.CW dv
+is not a freed block --
+.CW MAGIC_A ,
+still live -- and it is not even a block's own data pointer:
+it sits exactly
+.CW 0x18
+(24, this port's
+.CW sizeof(Heap) )
+bytes past
+.CW B2D() ,
+squarely inside a live block's own data. This is a WRONG value, not a
+STALE one: something computed
+.CW dv
+by adding one
+.CW Heap
+header's worth of bytes to a real, live data pointer. Both retracted
+fixes targeted "this slot holds uninitialized or already-freed
+leftovers" -- neither is what
+.CW auditmemloc()
+actually found. Whoever picks this up next has an exact, always-
+reproducible target: what in the compiled path for
+.CW "b[0:n]"
+or the
+.CW string
+/
+.CW big
+conversions that follow it could add
+.CW sizeof(Heap)
+to an otherwise-correct pointer.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
