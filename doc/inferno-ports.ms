@@ -11736,6 +11736,58 @@ batch already measured (roughly 25%, against the historical 60-80%),
 not a new data point proving any one of these five mattered for the
 pc64 crash specifically -- real, independent hardening regardless.
 .NH 1
+The same disease at a second, unrelated layer: Path's own refcount
+.PP
+Two more batches (60 boots) at the low panic rate the previous
+section measured (12/30, 13/30) surfaced a capture this hunt's own
+earlier instrumentation was already positioned to explain cleanly:
+.CW "panic: decref pc=0x263859 old=0" ,
+resolving to
+.CW pathclose+24 --
+.CW chan.c Ns 's
+own pre-existing refcount-underflow guard, enhanced earlier this hunt
+(the very first commit of this round) to call
+.CW auditmemloc()
+on the underflowing
+.CW Ref*
+before panicking.  Its answer:
+.CW "in block" --
+.CW MAGIC_A ,
+still live, not freed.
+.PP
+This is a different shape from every
+.CW destroy-entry
+capture this hunt has confirmed:  there, an OBJECT gets freed once
+correctly and then destroy()ed again, a double free.  Here, the
+.CW Path
+OBJECT ITSELF is still alive and well; only its
+.CW ref
+FIELD has been decremented one time too many, taking it to zero when
+some other, still-live reference should have kept it above zero.
+Same disease -- some reference to a shared, refcounted value exists
+without a matching increment having been made for it -- at a
+completely different layer of the system:
+.CW chan.c Ns 's
+own
+.CW "incref()/decref()" ,
+protecting
+.CW Path
+and
+.CW Chan
+structures in the native kernel, not
+.CW AINC / ADEC
+protecting Dis heap objects in the interpreter.  Two independent
+mechanisms, two independent sets of call sites, the same failure
+shape in both -- which argues against a bug narrow to one specific
+compiled Limbo idiom (this hunt's leading suspect, cons()'s own
+balanced move, lives entirely on the Dis-heap side and cannot explain
+a Path underflow) and for something broader: either two genuinely
+separate bugs that happen to look alike, or a single mechanism -- a
+missed increment somewhere a reference gets duplicated, at whichever
+layer that duplication happens to occur -- that neither this hunt's
+Dis-level nor native-kernel-level instrumentation has caught in the
+act yet at either layer.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
