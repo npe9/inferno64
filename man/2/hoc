@@ -1,6 +1,6 @@
 .TH HOC 2
 .SH NAME
-hoc: compile, compileeqn, eval, evalarray, symbol, setvar, getvar, reset, modelcmd \- hoc expression language, as a library
+hoc: compile, compileeqn, eval, evalarray, symbol, setvar, getvar, reset \- hoc expression language, as a library
 .SH SYNOPSIS
 .EX
 include "hoc.m";
@@ -159,120 +159,6 @@ say) is still reported, once per bad element.
 .I Hoc
 has no clamp, min, or max built in at all \(em a caller wanting bounded
 output must express that itself, or accept unbounded output.
-.SS "Model scripts"
-.B Param
-/
-.B maxtime
-/
-.B state
-/
-.B derivative
-/
-.B eq
-/
-.B observable
-all mean exactly one thing: bind a name to a compiled expression (or
-a plain number) in this instance's own symbol table \(em the same
-vocabulary
-.B compile
-/
-.B symbol
-already have, just organized into a small named-equation SYSTEM
-(parameters, state variables with their own derivatives, named
-intermediate quantities, and diagnostic observables) instead of one
-expression at a time.
-.B Modelcmd
-dispatches ONE already-tokenized line \(em the caller's own generic
-tokenizer has already split it into words (
-.IR string (2)'s
-own
-.BR fields () ,
-say) \(em splitting a string is not this library's concern,
-recognizing what the words MEAN is.  This is the same shape
-.IR tk (2)'s
-own
-.B tk->cmd()
-and
-.IR plot (2)'s
-own
-.B Plotter.cmd()
-already are: one line in, effect immediate (compiling its own
-.IR eqn (7)
-expression and growing the running tables right there, via
-.BR compileeqn ,
-never staged for a later pass), claimed-or-not-plus-error out.
-.B Modelcmd
-returns
-.RI ( 0 ", " nil )
-if the line's first word is none of the six above \(em NOT an error,
-just "not my vocabulary": the caller should try another parser (its
-own plain data, or another library's own command language \(em
-exactly how a shell dispatches its builtins vs an external command,
-never by rejecting anything a builtin doesn't recognize).  It returns
-.RI ( 1 ", " nil )
-if handled, or
-.RI ( 1 ", an error string)
-if the line WAS this vocabulary but malformed or failed to compile.  A
-.B derivative
-line's matching
-.B state
-line must already have run \(em the same "define before use" order an
-ordinary script already requires;
-.B modelcmd
-names this specifically if it hasn't.
-.PP
-.B Modelreset
-clears every model-script table built so far and starts a fresh
-symbol table (it calls
-.B reset
-internally) \(em call it once before running a new, unrelated script.
-.BR Modelparams ", " modelmaxtime ", " modelstatenames ", and " modelobslabels
-are read-back accessors for what the script has built;
-.B modelparams
-hands back the SAME live arrays a caller should write through directly
-to change a running value (a Tk scale widget's own callback, say), not
-a snapshot copy.
-.B Modelinitialstate
-evaluates every
-.B state
-line's own initial-value expression, after binding every param's
-current value.
-.B Modelrhs
-matches
-.IR numerics (2)'s
-own
-.B Rhs
-function type exactly, so a caller integrating this model can pass
-.B hoc->modelrhs
-directly to
-.BR numerics->rk4 ()
-et al.\& with no wrapper of its own; it binds params and the given
-state values, evaluates every
-.B eq
-line in declaration order, then every
-.B derivative
-line.
-.B Modelobservables
-does the same
-.B eq
-pass, then evaluates every
-.B observable
-line, returning one real per
-.B observable
-command.
-.B Modelcheck
-\(em call once after a whole script has run \(em reports whether
-every
-.B state
-command got its own matching
-.BR derivative ,
-.B nil
-if so; this can only be known once the whole script has run, so it is
-not part of
-.B modelcmd
-itself, the same reason a caller already does its own separate
-cross-checks (a title got set, param/body counts match, ...) after the
-script finishes rather than inside any one line's own effect.
 .SH SOURCE
 .B /module/hoc.m
 .br
@@ -309,7 +195,4 @@ caller running two independent equations at once (two
 problems, say) must
 .B load
 a separate instance per equation; sharing one would let their variable
-names silently collide. The same rule covers every model-script table
-in the section above \(em two instances never share a
-.BR param / state / eq / observable
-table either.
+names silently collide.

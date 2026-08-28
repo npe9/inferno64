@@ -31,12 +31,17 @@ that vocabulary, stopping at the first that claims it \(em it does
 recognize or act on any equation itself. Most of the vocabulary
 (.BR param /.BR maxtime /.BR state /.BR derivative /.BR eq /.BR observable )
 belongs to
-.IR hoc (2)'s
+.IR dynsys (2)'s
 own
-.B modelcmd()
+.B cmd()
 (see
-.IR hoc (2)
-for that language in full); this file's own small remainder is:
+.IR dynsys (2)
+for that language in full \(em it is
+.I not
+.IR hoc (2)'s:
+hoc is just an equation parser/evaluator, with no idea any of
+"state"/"derivative"/"eq"/"observable" exist); this file's own small
+remainder is:
 .TP
 .BI "title " TEXT
 Rest of the line, verbatim.
@@ -72,7 +77,7 @@ point right after it was recorded. Deciding WHEN each graph command
 should run is this app's own business (worked out once a
 .IR plot (2)
 instance exists, which
-.IR hoc (2)
+.IR dynsys (2)
 has no reason to know about); the command text itself is entirely
 .IR plot (2)'s
 language, untouched here.
@@ -83,15 +88,18 @@ or
 .BR Sym ,
 never compiles anything, and never loads or names
 .IR eqn2hoc (2)
-\(em it only ever reads the plain data
+or even
 .IR hoc (2)
+directly \(em it only ever reads the plain data
+.IR dynsys (2)
 hands back once a script has finished running (param labels/values/
-bounds, observable labels, state count, max time) to build its Tk
-sliders and drive its own integration loop.
+bounds, observable labels, max time) to build its Tk sliders and drive
+its own integration loop via
+.BR dynsys->initialstate ()/ rhs ()/ observables () .
 .SH SOURCE
 .B /appl/danby/aerobraking.b
 .SH SEE ALSO
-.IR hoc (2),
+.IR dynsys (2),
 .IR plot (2),
 .IR tk (2),
 .IR eqnorbitaltest (1)

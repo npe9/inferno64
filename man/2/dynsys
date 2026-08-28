@@ -1,0 +1,238 @@
+.TH DYNSYS 2
+.SH NAME
+dynsys: newmodel, cmd, check, initialstate, rhs, observables \- named ODE-system scripts, built on hoc(2)
+.SH SYNOPSIS
+.EX
+include "dynsys.m";
+dynsys := load Dynsys Dynsys->PATH;
+Model: import dynsys;
+
+m := dynsys->newmodel();
+(claimed, err) := dynsys->cmd(m, a);	# a: array of string, one already-tokenized line
+err = dynsys->check(m);
+state := dynsys->initialstate(m);
+dynsys->rhs(m, t, state, derivative);
+values := dynsys->observables(m, state);
+.EE
+.SH DESCRIPTION
+.I Dynsys
+is a little language for describing an entire ODE-system problem \(em
+parameters, named state variables with their own derivatives, named
+intermediate quantities, and diagnostic observables \(em together in
+one script, the same relationship
+.IR pde (2)'s
+own
+.B newproblem()
+already has to ITS spec (mesh/equation/solver/time).
+.IR hoc (2)
+itself is JUST an equation parser and evaluator
+.RB ( compile / compileeqn / eval / symbol / setvar / getvar / reset );
+it has no idea any of "state"/"derivative"/"eq"/"observable" exist.
+.I Dynsys
+is what turns hoc's plain expressions into a runnable dynamical
+system, the same way
+.IR pde (2)
+turns them into a runnable PDE.
+.IR ode (2)
+(a fixed mass-spring-damper engine \(em
+.BR Mass / Spring
+adts, no named equations at all) is a completely different thing and
+was not reusable for this.
+.PP
+.B Newmodel
+returns an empty
+.B Model
+with its own fresh
+.IR hoc (2)
+instance, ready for
+.BR cmd() .
+.B Cmd
+dispatches ONE already-tokenized line \(em the caller's own generic
+tokenizer has already split it into words; splitting a string is not
+this library's concern, recognizing what the words mean is. This is
+the same shape
+.IR tk (2)'s
+own
+.B tk->cmd()
+and
+.IR plot (2)'s
+own
+.B Plotter.cmd()
+already are: one line in, effect immediate (compiling its own
+.IR eqn (7)
+expression and growing the running tables right there, via
+.BR compileeqn ,
+never staged for a later pass), claimed-or-not-plus-error out.
+.PP
+This lets a caller embed
+.I dynsys
+vocabulary inside a LARGER script that also has its own lines (a
+window title, body labels, a diagnostic plot's own graph commands, say
+\(em see
+.IR danby-aerobraking (1))
+\(em it tries
+.B dynsys->cmd()
+first, falls back to its own parser for anything this returns "not
+mine" for.
+.B Cmd
+returns
+.RI ( 0 ", " nil )
+if the line's first word is none of the six directives below \(em NOT
+an error, just "not my vocabulary"; the caller should try another
+parser (its own plain data, or another library's own command
+language \(em exactly how a shell dispatches its builtins vs an
+external command, never by rejecting anything a builtin doesn't
+recognize).  It returns
+.RI ( 1 ", " nil )
+if handled, or
+.RI ( 1 ", an error string)
+if the line WAS this vocabulary but malformed or failed to compile.
+.SS "The vocabulary"
+.TP
+.BI "param " LABEL " " DEFAULT " " MIN " " MAX
+Repeatable; a named, adjustable quantity any expression may
+reference \(em also the LIVE current value: a caller changes it by
+writing
+.B m.parameter[i]
+directly (a Tk scale widget's own callback, say), not through
+.B cmd()
+again.
+.TP
+.BI "maxtime " NUM
+.TP
+.BI "state " NAME " " EXPR ...
+Repeatable; one named state variable (declaration order is its index
+in
+.BR initialstate ()'s
+and
+.BR rhs ()'s
+arrays) and
+.IR EXPR ,
+its initial value (may reference any param).
+.TP
+.BI "derivative " NAME " " EXPR ...
+Repeatable, one per
+.B state
+line, matched by
+.IR NAME
+\(em the matching
+.B state
+line must already have run, the same "define before use" order an
+ordinary script already requires;
+.B cmd
+names this specifically if it hasn't.
+.TP
+.BI "eq " NAME " " EXPR ...
+Repeatable; a named intermediate quantity, evaluated in declaration
+order before every
+.BR derivative ,
+so a later
+.B eq
+or any
+.B derivative
+may reference an earlier
+.B eq
+by name.
+.TP
+.BI "observable " LABEL " " EXPR ...
+Repeatable; same binding as
+.BR derivative / eq .
+.PP
+Every
+.I EXPR
+is
+.IR eqn (7)
+syntax, compiled ONCE when its command runs, via
+.IR hoc (2)'s
+own
+.BR compileeqn ()
+\(em this library never loads or names
+.IR eqn2hoc (2)
+itself either, the same reason
+.IR hoc (2)
+doesn't.
+.PP
+.B Check
+\(em call once after a whole script has run (every line handed to
+.BR cmd ())
+\(em reports whether
+.I m
+is ready to run: maxtime set, at least one state, and every state got
+its own matching derivative.
+.B Nil
+if so; not part of
+.B cmd
+itself, since this can only be known once the WHOLE script has run.
+.B Initialstate
+evaluates every
+.B state
+line's own initial-value expression, in declaration order, after
+binding every param's current value.
+.B Rhs
+binds params and the given state values, evaluates every
+.B eq
+line in declaration order, then every
+.B derivative
+line, writing into
+.IR derivative[] .
+It is structurally close to
+.IR numerics (2)'s
+own
+.B Rhs
+function type, minus the leading
+.IR m ;
+a caller integrating
+.I m
+wraps this in a one-line closure over
+.I m
+(Limbo has no partial application) to hand
+.B numerics->rk4()
+et al.\& a plain
+.B Rhs
+value.
+.B Observables
+does the same
+.B eq
+pass, then evaluates every
+.B observable
+line, returning one real per
+.B observable
+command.
+.SH SOURCE
+.B /module/dynsys.m
+.br
+.B /appl/lib/dynsys.b
+.SH SEE ALSO
+.IR hoc (2),
+.IR pde (2),
+.IR ode (2),
+.IR plot (2),
+.IR tk (2),
+.IR danby-aerobraking (1),
+.IR eqnorbitaltest (1)
+.SH BUGS
+Every field on
+.B Model
+besides
+.B parameter
+(deliberately live, for a running slider to write through) is set once
+by
+.B cmd()
+and meant to be read-only afterward \(em nothing enforces that; Limbo
+has no private adt fields, only the same convention
+.IR pde (2)'s
+own
+.B Problem
+already relies on.
+.PP
+Two
+.B Model
+instances never share a symbol table \(em each
+.B newmodel()
+loads its own fresh
+.IR hoc (2)
+instance, the same rule
+.IR hoc (2)'s
+own man page documents for two direct
+.B load
+calls.

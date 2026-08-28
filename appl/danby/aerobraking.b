@@ -14,15 +14,19 @@ implement Aerobraking;
 # line at a time. But this file does NOT parse the model's own
 # equation vocabulary itself - param/maxtime/state/derivative/eq/
 # observable all mean "bind a name to a compiled expression in a
-# symbol table", which is hoc(2)'s OWN vocabulary (see module/hoc.m's
-# comment on modelcmd()), not this app's data. cmd() below only ever
-# handles the handful of lines that ARE this app's own concern -
-# title/bodylabels/mass (plain data) and graph (plot(2)'s own
-# language, collected here only because timing which graph commands
-# run once vs. every redraw is this app's business, not hoc's or
-# plot's) - and routes every other line to hoc->modelcmd(), the same
-# way a shell dispatches its own builtins first and an external
-# command otherwise:
+# symbol table", which is dynsys(2)'s OWN vocabulary (see
+# module/dynsys.m), not this app's data, and NOT hoc(2)'s either: hoc
+# is just an equation parser/evaluator (compile/compileeqn/eval/
+# symbol/reset), nothing about named states, derivatives, or
+# observables - that ODE-system concept is a different layer, built
+# out of hoc expressions, the same way pde(2) is a different layer
+# built out of hoc expressions for PDEs. cmd() below only ever handles
+# the handful of lines that ARE this app's own concern - title/
+# bodylabels/mass (plain data) and graph (plot(2)'s own language,
+# collected here only because timing which graph commands run once vs.
+# every redraw is this app's business, not dynsys's or plot's) - and
+# routes every other line to dynsys->cmd(), the same way a shell
+# dispatches its own builtins first and an external command otherwise:
 #
 #   title TEXT                      - rest of the line, verbatim
 #   bodylabels WORD WORD ...
@@ -46,14 +50,15 @@ implement Aerobraking;
 #                                      not assumed)
 #
 # Everything else - param/maxtime/state/derivative/eq/observable - is
-# hoc(2)'s own command language; see module/hoc.m for that vocabulary.
-# This file never touches a ref Hoc->Expr, never compiles anything,
-# and never loads or names eqn2hoc(2) - hoc(2) does all of that
-# internally. The "planet" body's four state components (x0,y0,vx0,
-# vy0) never move - a real property of this specific model (found by
-# reading its original Limbo directly, not assumed from the Orbital
-# family's usual N-body shape - see doc/danby-tks-plan.md's own
-# correction), not something the command language requires.
+# dynsys(2)'s own command language; see module/dynsys.m for that
+# vocabulary. This file never touches a ref Hoc->Expr, never compiles
+# anything, and never loads or names eqn2hoc(2) - dynsys(2) (via
+# hoc(2)) does all of that internally. The "planet" body's four state
+# components (x0,y0,vx0,vy0) never move - a real property of this
+# specific model (found by reading its original Limbo directly, not
+# assumed from the Orbital family's usual N-body shape - see
+# doc/danby-tks-plan.md's own correction), not something the command
+# language requires.
 
 include "sys.m";
 	sys: Sys;
@@ -72,8 +77,8 @@ include "plot.m";
 	Plotter: import plot;
 include "string.m";
 	str: String;
-include "hoc.m";
-	hoc: Hoc;
+include "dynsys.m";
+	dynsys: Dynsys;
 
 Aerobraking: module
 {
@@ -147,14 +152,14 @@ bodycolour: array of ref Image;
 buffer: ref Image;
 
 # This app's OWN data - title/bodylabels/mass/graphcmds - plus the
-# param/observable tables, which are hoc(2)'s own live arrays (see
-# execspec() below: hoc->modelparams()/modelobslabels() hand back the
-# SAME arrays hoc->modelcmd() built and hoc->modelrhs()/
-# modelobservables() read from - not copies, so writing parameter[i]
-# from a Tk slider callback rebinds hoc's own running value directly).
+# param/observable tables, which are dynsys(2)'s own live fields (see
+# execspec() below: these are literally model.parameter/.minima/
+# .maxima/etc, the SAME arrays dynsys->cmd() built and dynsys->rhs()/
+# observables() read from - not copies, so writing parameter[i] from a
+# Tk slider callback rebinds the running model's value directly).
 # Nothing here is a ref Hoc->Expr/Sym - this file has no visibility
-# into how any equation is represented, only into the plain data hoc
-# hands back once a script has finished running.
+# into how any equation is represented, only into the plain data
+# dynsys hands back once a script has finished running.
 title: string;
 bodylabels: array of string;
 mass: array of real;
@@ -163,6 +168,7 @@ paramlabels: array of string;
 parameter, minima, maxima: array of real;
 observablelabels: array of string;
 maxtime: real;
+model: ref Dynsys->Model;
 
 state: array of real;
 work: ref Numerics->Workspace;
@@ -184,9 +190,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	str = load String String->PATH;
-	hoc = load Hoc Hoc->PATH;
+	dynsys = load Dynsys Dynsys->PATH;
 	if(sys == nil || draw == nil || tk == nil || tkclient == nil ||
-			numerics == nil || plot == nil || str == nil || hoc == nil)
+			numerics == nil || plot == nil || str == nil || dynsys == nil)
 		raise "fail:Aerobraking: missing support module";
 	err := execspec(SPEC);
 	if(err != nil)
@@ -307,9 +313,9 @@ run(argv: list of string): (string, int)
 		sys = load Sys Sys->PATH;
 	if(str == nil)
 		str = load String String->PATH;
-	if(hoc == nil)
-		hoc = load Hoc Hoc->PATH;
-	if(sys == nil || str == nil || hoc == nil)
+	if(dynsys == nil)
+		dynsys = load Dynsys Dynsys->PATH;
+	if(sys == nil || str == nil || dynsys == nil)
 		return (SPEC, 0);
 	err := execspec(SPEC);
 	return (SPEC, err == nil);
@@ -345,14 +351,14 @@ handleparam(word0: string, rest: list of string)
 # it tokenizes a line (the mechanical, generic act of splitting a
 # string into words, not "the command language") and PASSES those
 # words to whichever parser owns that vocabulary, stopping at the
-# first that claims it. hoc(2) tries first, since param/maxtime/state/
-# derivative/eq/observable are its own vocabulary (see module/hoc.m's
-# comment on modelcmd()) - this file has no case/keyword recognition
-# of that vocabulary anywhere, and never touches a ref Hoc->Expr/Sym.
-# appcmd() owns the small remainder (title/bodylabels/mass/graph) that
-# really is this app's own data, not equation semantics. Both parsers
-# take the SAME already-tokenized words array cmd() built once - no
-# line gets tokenized twice. ---
+# first that claims it. dynsys(2) tries first, since param/maxtime/
+# state/derivative/eq/observable are its own vocabulary (see
+# module/dynsys.m) - this file has no case/keyword recognition of that
+# vocabulary anywhere, and never touches a ref Hoc->Expr/Sym. appcmd()
+# owns the small remainder (title/bodylabels/mass/graph) that really is
+# this app's own data, not equation semantics. Both parsers take the
+# SAME already-tokenized words array cmd() built once - no line gets
+# tokenized twice. ---
 
 specwords(line: string): array of string
 {
@@ -369,7 +375,7 @@ cmd(line: string): string
 	a := specwords(line);
 	if(len a == 0)
 		return nil;
-	(claimed, err) := hoc->modelcmd(a);
+	(claimed, err) := dynsys->cmd(model, a);
 	if(claimed)
 		return err;
 	(claimed, err) = appcmd(a);
@@ -443,18 +449,20 @@ addreal(a: array of real, v: real): array of real
 }
 
 # execspec: the shell that runs the script, one line at a time, via
-# cmd() above. hoc(2)'s own model-script tables are reset once, before
-# the first line, exactly as a real shell starts with a fresh
-# environment; everything else this function does is check conditions
-# that can only be known once the WHOLE script has run (every state
-# got its matching derivative - hoc->modelcheck(), since only hoc(2)
-# has visibility into its own tables; every param/observable count
-# looks right - this app's own data, fetched from hoc's accessors once
-# the script is done) - it does not reach into any one line's own
-# effect.
+# cmd() above. A brand-new dynsys Model (its own fresh hoc(2) instance,
+# never shared - see module/dynsys.m) is allocated once, before the
+# first line, exactly as a real shell starts with a fresh environment;
+# everything else this function does is check conditions that can only
+# be known once the WHOLE script has run (every state got its matching
+# derivative - dynsys->check(), since only dynsys has visibility into
+# its own tables; every param/observable count looks right - this
+# app's own data, read directly from the model's own public fields
+# once the script is done, the same read-only-field convention
+# pde(2)'s own Problem already uses) - it does not reach into any one
+# line's own effect.
 execspec(spec: string): string
 {
-	hoc->modelreset();
+	model = dynsys->newmodel();
 	title = nil;
 	bodylabels = nil;
 	mass = nil;
@@ -474,18 +482,17 @@ execspec(spec: string): string
 		return "spec has no title command";
 	if(len mass != len bodylabels)
 		return "mass: must have exactly one value per bodylabels word";
-	maxtime = hoc->modelmaxtime();
-	if(maxtime <= 0.0)
-		return "spec has no maxtime command";
-	if(len hoc->modelstatenames() == 0)
-		return "spec has no state commands";
-	err := hoc->modelcheck();
+	err := dynsys->check(model);
 	if(err != nil)
 		return err;
-	(paramlabels, parameter, minima, maxima) = hoc->modelparams();
-	observablelabels = hoc->modelobslabels();
-	if(len observablelabels != 2)
+	if(len model.observablelabels != 2)
 		return "spec must have exactly two observable commands";
+	maxtime = model.maxtime;
+	paramlabels = model.paramlabels;
+	parameter = model.parameter;
+	minima = model.minima;
+	maxima = model.maxima;
+	observablelabels = model.observablelabels;
 	return nil;
 }
 
@@ -493,7 +500,7 @@ execspec(spec: string): string
 
 reset()
 {
-	state = hoc->modelinitialstate();
+	state = dynsys->initialstate(model);
 	if(len state != 4*len mass)
 		raise "fail:Aerobraking: state size";
 	work = numerics->workspace(len state);
@@ -508,9 +515,18 @@ reset()
 	record();
 }
 
+# rhs: numerics(2)'s own Rhs function type has no room for a model
+# argument, so this one-line closure over the global "model" is all
+# that's needed to hand numerics->rk4() a plain Rhs value - forwarding
+# only, not parsing anything.
+rhs(t: real, values, derivative: array of real)
+{
+	dynsys->rhs(model, t, values, derivative);
+}
+
 step()
 {
-	numerics->rk4(work,hoc->modelrhs,t,0.0025,state);
+	numerics->rk4(work,rhs,t,0.0025,state);
 	t += 0.0025;
 	if(t >= maxtime){
 		finished = 1;
@@ -531,7 +547,7 @@ record()
 	trailnext = (trailnext+1)%Ntrail;
 	if(trailcount < Ntrail)
 		trailcount++;
-	values := hoc->modelobservables(state);
+	values := dynsys->observables(model, state);
 	for(i = 0; i < 2; i++){
 		magnitude := values[i];
 		if(magnitude < 0.0)
@@ -578,7 +594,7 @@ redraw()
 	gerr(graph.cmd(sys->sprint("scale diagnostics x 0 %.8g",tmax)));
 	gerr(graph.cmd(sys->sprint("scale diagnostics y %.8g %.8g reverse",-ymax,ymax)));
 	graph.draw();
-	values := hoc->modelobservables(state);
+	values := dynsys->observables(model, state);
 	status := "running";
 	if(paused)
 		status = "paused";
