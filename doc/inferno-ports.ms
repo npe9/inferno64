@@ -12575,6 +12575,85 @@ Neither the new check nor the original
 signature recurred this batch -- still only one confirmed hit total,
 consistent with its established low frequency.
 .NH 1
+disinit's %r was always empty, and the real error it hid
+.PP
+.CW disinit() Ns 's
+own
+.CW waserror()
+handler has read
+.CW "panic(\"disinit\ error:\ %r\")"
+since before this hunt started, and every single
+.CW "disinit\ error:"
+capture across this whole session printed no text after the colon.
+Traced why:
+.CW libkern/print.c Ns 's
+own
+.CW errfmt()
+unconditionally returns
+.CW -1 --
+its own comment says as much: it "works from limbo" via lib9's own
+errfmt(), never here.
+.CW %r
+was silently swallowing the real error on every capture this whole
+hunt has ever seen.  Fixed using the same
+.CW kgerrstr()+%s
+idiom the
+.CW "loading\ %s:\ %s"
+panic two dozen lines below in the same function already uses.
+.PP
+Confirmed immediately: the very next batch this fix ran in caught
+.CW "disinit\ error:\ out\ of\ memory:\ main" --
+the first time this hunt has ever seen what
+.CW disinit() Ns 's
+own
+.CW waserror()
+handler is actually catching.  Ties into this session's broader
+heap-corruption thread
+.CW (poolalloc() Ns 's
+still-open size=0 lead, the various refcount-undercount findings) as
+a plausible downstream symptom worth keeping in view, though not
+chased to its own root cause this round.
+.PP
+Also added a direct nil check to
+.CW pgrp.c Ns 's
+.CW newmount() ,
+following up a confirmed
+.CW "incref:\ bad\ r\ 0x0"
+resolving to
+.CW newmount+40 .
+Unlike
+.CW walk() Ns 's
+.CW ->path ,
+.CW to
+is not a documented-nil-able field -- all three known callers
+.CW (chan.c Ns 's
+.CW cmount() ,
+at its three call sites) already dereference their own
+.CW Chan
+argument before ever reaching
+.CW newmount() ,
+so a genuinely nil
+.CW to
+here should already have been caught upstream.  That it wasn't
+matches this hunt's own established finding that a nil dereference
+does not reliably fault on this port (see
+.CW proc.c Ns 's
+.CW pidadd()/procindex
+writeup above) -- this converts a generic
+.CW badref()
+panic into one that names
+.CW newmount
+and its caller directly, for the next capture, rather than papering
+over an unexplained gap.
+.PP
+Built and boot-tested: 40 boots, 13 panics (32.5%, in-band, no
+regression); the
+.CW disinit
+fix's new message text confirmed live in this same batch.
+.CW newmount Ns 's
+guard did not fire this batch -- still one confirmed hit total,
+pre-fix.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
