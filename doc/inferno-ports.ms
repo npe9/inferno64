@@ -11419,6 +11419,62 @@ the Y side the same way the X side was verified -- by tagging or
 otherwise naming the call site directly -- before trusting it enough
 to build on.
 .NH 1
+Confirmed: destroy-entry's caller-pc field is not trustworthy
+.PP
+Answered the previous section's own question directly rather than
+leaving it open. A capped, unconditional sample of destroy()'s own
+caller-pc field (
+.CW "c = getcallerpc(&v)" ),
+32 distinct values from an ordinary, non-crashing boot: most are not
+plausible code addresses at all --
+.CW 0x6 ,
+.CW 0x58 ,
+.CW 0x30 ,
+.CW 0x2 ,
+and several in the
+.CW "0x7xxxxxx / 0x9xxxxxx / 0xaxxxxxx"
+ranges that look like heap or stack addresses, not code. Every other
+resolved pc this whole hunt has produced sits in roughly
+.CW 0x200000--0x400000 ;
+only a minority of these 32 do.
+.PP
+This explains the previous section's
+.CW wakeup+156
+and
+.CW iunlock+222
+captures directly: not a real, non-obvious call path, just this
+mechanism's own unreliability at this one call site.  Unlike the
+msg/X side of the
+.CW destroy-entry
+panic -- confirmed correct by the tag mechanism itself naming
+.CW destroy() Ns 's
+own consistency check -- the c/Y side was never independently
+verified, and does not survive being checked. Read as: destroy() is
+called from far too many places, through far too many different
+compiled shapes (direct calls, a
+.CW Type Ns 's
+own
+.CW t->free
+function pointer, deep cascades through
+.CW "freelist()/freearray()/freemodlink()" ),
+for one
+.CW getcallerpc()
+idiom to answer "who called destroy() this time" reliably across all
+of them.
+.PP
+Bottom line for
+.CW destroy() Ns 's
+own double-free (this hunt's central, still-hardware-confirmed
+finding): the
+.CW destroy-entry
+tag names WHICH check fires, solidly. Its own caller-pc field does
+not name WHO calls it a second time, and should not be trusted for
+that without re-deriving it a different way -- tagging or otherwise
+naming the specific call site directly, the same method that made
+the msg/X side trustworthy in the first place, rather than reading
+.CW getcallerpc() Ns 's
+raw output.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
