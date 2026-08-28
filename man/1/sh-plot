@@ -11,7 +11,6 @@ plot \- shell script interface to plot(2)'s graph command language
 .br
 .B plot
 .I id
-.B cmd
 .I graph-command...
 .br
 .B plot
@@ -50,7 +49,11 @@ own graph command language
 and any table's own
 .BR append ,
 documented in full in
-.IR plot (2)).
+.IR plot (2)),
+dispatched the same way
+.IR sh-tk (1)
+dispatches raw tk commands: a handle id directly followed by the
+command text, no keyword of its own in between.
 .IR Plot (2)
 itself is display-agnostic \(em
 .B Plotter.new()
@@ -75,24 +78,40 @@ itself, over that buffer. This is independent of
 own window handles \(em that module's own window table is private to
 it, unreachable from here.
 .PP
-Every verb this module does
-.I not
-list above
+Only
+.BR new / del
+(handle lifecycle) and
+.BR draw / rows / value / invert
+(this module's own additions \(em not part of
+.IR plot (2)'s
+string vocabulary at all) are special-cased first words, laid over a
+generic forward exactly the way
+.IR sh-tk (1)'s
+own
+.BR window / winctl / onscreen / namechan / del
+are laid over
+.IR its
+generic forward. Every other verb
 .RB ( table / colour / view / content / split / axis / line / scale /
 .BR clear ,
+a table's own
+.BR append ,
 and anything
 .IR plot (2)
-adds later, plus any table's own
-.B append
-verb) is
+adds later) is
 .IR plot (2)'s
-own language, forwarded verbatim via
-.BR "plot\ id\ cmd\ ..." \c
-\&; this file never recognizes any of it, the same discipline
+own language, forwarded verbatim; this file never recognizes any of
+it, the same discipline
 .IR sh-dynsys (1)
 and
 .IR danby-aerobraking (1)
-itself already hold to.
+itself already hold to. A forwarded command's own failure is reported
+as a soft
+.B $status
+(the same convention
+.IR sh-tk (1)
+uses for a bad raw tk command) rather than aborting the script; only a
+bad handle id or a missing argument raises.
 .PP
 .B ${plot new
 .I WxH
@@ -111,14 +130,10 @@ own
 resolves the identical way) and yields a handle.
 .B Plot
 .I id
-.B cmd
 .I graph-command...
 joins the remaining words back into one line and hands it to the
 handle's own
-.BR Plotter.cmd() ,
-raising an error if
-.IR plot (2)
-itself rejects it.
+.BR Plotter.cmd() .
 .B Plot
 .I id
 .B draw
@@ -139,23 +154,44 @@ are
 .IR plot (2)'s
 own functions of the same name, unchanged.
 .B Plot del
-closes the window and frees the handle.
+frees the handle \(em it does
+.I not
+close the window: unlike
+.IR danby-aerobraking (1)
+(which calls
+.B "sys->pctl(Sys->NEWPGRP, nil)"
+before opening its own toplevel, so
+.B "tkclient->wmctl(top, \(dqexit\(dq)"
+only kills
+.I its
+own group), this module's handle lives inside whatever process is
+running the calling
+.B sh
+script \(em the same
+.B exit
+call would kill that script outright.
+.B Del
+leaves the window orphaned on screen instead, the same trade-off
+.IR sh-tk (1)'s
+own
+.B "tk del"
+already makes for exactly this reason.
 .SH EXAMPLE
 .EX
 	load plot
 	id := ${plot new 400x300 History}
-	plot $id cmd 'table history t y'
-	plot $id cmd 'colour ink 16r4ec9b0ff'
-	plot $id cmd 'content margin 10 10 10 10'
-	plot $id cmd 'view v content'
-	plot $id cmd 'scale v x 0 10'
-	plot $id cmd 'scale v y 0 100'
-	plot $id cmd 'history append 0.0 0.0'
-	plot $id cmd 'history append 5.0 25.0'
-	plot $id cmd 'history append 10.0 100.0'
-	plot $id cmd 'axis v x time'
-	plot $id cmd 'axis v y value'
-	plot $id cmd 'line v history x t y y colour ink width 2'
+	plot $id table history t y
+	plot $id colour ink 16r4ec9b0ff
+	plot $id content margin 10 10 10 10
+	plot $id view v content
+	plot $id scale v x 0 10
+	plot $id scale v y 0 100
+	plot $id history append 0.0 0.0
+	plot $id history append 5.0 25.0
+	plot $id history append 10.0 100.0
+	plot $id axis v x time
+	plot $id axis v y value
+	plot $id line v history x t y y colour ink width 2
 	plot $id draw
 	echo rows: ${plot $id rows history}
 	plot del $id
@@ -173,7 +209,6 @@ closes the window and frees the handle.
 .SH BUGS
 .B Plot
 .I id
-.B cmd
 .B table
 must not be reissued after any
 .B append

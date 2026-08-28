@@ -30,12 +30,23 @@ include "plot.m";
 # is private to it, unreachable from here - Shellbuiltin exposes no
 # such thing across modules), not a small mirror of that file.
 #
-# Every verb this module does NOT list below (table/colour/view/
-# content/split/axis/line/scale/clear, and anything plot(2) adds
-# later) is plot(2)'s own graph command language, forwarded verbatim
-# via "draw $id cmd ..." - this file never recognizes any of it, the
-# same discipline dynsys(2)'s own sh module and danby-aerobraking(1)
-# itself already hold to.
+# The dispatch shape matches sh-tk(1) exactly, not a "cmd" sub-verb of
+# its own: "plot <id> <text...>" hands text straight to Plotter.cmd()
+# with no keyword in between, the same way "tk <id> <text...>" hands
+# text straight to tk->cmd() - only "new"/"del" (handle lifecycle) and
+# "draw"/"rows"/"value"/"invert" (this module's own additions, not
+# part of plot(2)'s string vocabulary at all) are special-cased first
+# words, laid over that generic forward exactly the way sh-tk(1)'s own
+# "window"/"winctl"/"onscreen"/"namechan"/"del" are laid over ITS
+# generic forward. Every verb this module does NOT special-case
+# (table/colour/view/content/split/axis/line/scale/clear, a table's
+# own append, and anything plot(2) adds later) is plot(2)'s own graph
+# command language, forwarded verbatim and unrecognized by this file -
+# the same discipline dynsys(2)'s own sh module and danby-aerobraking(1)
+# itself already hold to. A forwarded command's own failure is
+# reported as a soft $status (sh-tk(1)'s own convention for a bad raw
+# tk command) rather than aborting the script - only handle/usage
+# errors (a bad id, a missing argument) raise.
 Handle: adt {
 	id:	int;
 	top:	ref Tk->Toplevel;
@@ -83,9 +94,9 @@ getself(): Shellbuiltin
 
 # usage:
 #   id := ${plot new WxH [title]}
-#   plot $id cmd table history t altitude speed
-#   plot $id cmd content margin 10 10 10 10
-#   plot $id cmd view diagnostics content
+#   plot $id table history t altitude speed
+#   plot $id content margin 10 10 10 10
+#   plot $id view diagnostics content
 #   plot $id draw
 #   plot del $id
 runbuiltin(ctxt: ref Context, nil: Sh,
@@ -95,6 +106,10 @@ runbuiltin(ctxt: ref Context, nil: Sh,
 		ctxt.fail("usage", "usage: plot (new|del|<id> args...)");
 	argv = tl argv;
 	w := (hd argv).word;
+	if(w == "new"){
+		remark(ctxt, string newhandle(ctxt, tl argv));
+		return nil;
+	}
 	if(w == "del"){
 		for(argv = tl argv; argv != nil; argv = tl argv)
 			delhandle(int (hd argv).word);
@@ -105,24 +120,28 @@ runbuiltin(ctxt: ref Context, nil: Sh,
 	h := ehandle(ctxt, w);
 	rest := tl argv;
 	if(rest == nil)
-		ctxt.fail("usage", "usage: plot <id> (cmd|draw) args...");
-	case (hd rest).word {
-	"cmd" =>
-		a := tl rest;
-		if(a == nil)
-			ctxt.fail("usage", "usage: plot <id> cmd graph-command...");
-		err := h.graph.cmd(concat(a));
-		if(err != nil)
-			ctxt.fail("plot", "plot: " + err);
-	"draw" =>
+		ctxt.fail("usage", "usage: plot <id> (draw|graph-command...)");
+	if((hd rest).word == "draw"){
 		h.graph.draw();
 		h.buffer.flush(Draw->Flushnow);
 		tkcmd(ctxt, h.top, ".f.p dirty");
 		tkcmd(ctxt, h.top, "update");
-	* =>
-		ctxt.fail("usage", "plot: unknown command " + (hd rest).word);
+		return nil;
 	}
-	return nil;
+	# the generic case: whatever follows the handle id is plot(2)'s own
+	# graph command language, unrecognized by this file - forwarded
+	# straight to Plotter.cmd(), its own error (if any) reported as a
+	# soft $status, the same as sh-tk(1) does for a bad raw tk command.
+	err := h.graph.cmd(concat(rest));
+	if(err != nil)
+		remark(ctxt, err);
+	return err;
+}
+
+remark(ctxt: ref Context, s: string)
+{
+	if(ctxt.options() & ctxt.INTERACTIVE)
+		sys->print("%s\n", s);
 }
 
 # usage:
@@ -130,6 +149,7 @@ runbuiltin(ctxt: ref Context, nil: Sh,
 #   ${plot $id rows name}
 #   ${plot $id value name row column}
 #   ${plot $id invert view x y}
+#   ${plot $id graph-command...}
 runsbuiltin(ctxt: ref Context, nil: Sh,
 			argv: list of ref Listnode): list of ref Listnode
 {
@@ -146,7 +166,7 @@ runsbuiltin(ctxt: ref Context, nil: Sh,
 	h := ehandle(ctxt, w);
 	rest := tl argv;
 	if(rest == nil)
-		ctxt.fail("usage", "usage: plot <id> (rows|value|invert) args...");
+		ctxt.fail("usage", "usage: plot <id> (rows|value|invert|graph-command...)");
 	case (hd rest).word {
 	"rows" =>
 		a := tl rest;
@@ -172,7 +192,10 @@ runsbuiltin(ctxt: ref Context, nil: Sh,
 		return ref Listnode(nil, sys->sprint("%g", x)) ::
 			ref Listnode(nil, sys->sprint("%g", y)) :: nil;
 	}
-	return nil;
+	# same generic forward as the builtin form, matching sh-tk(1)'s own
+	# sbuiltin_tk default case - even in substitution form, a raw
+	# forwarded command just yields whatever plot(2) itself returned.
+	return ref Listnode(nil, h.graph.cmd(concat(rest))) :: nil;
 }
 
 # WxH, an optional title, then opens a real Toplevel exactly the way
@@ -269,9 +292,16 @@ gethandle(id: int): ref Handle
 
 delhandle(id: int)
 {
-	h := gethandle(id);
-	if(h != nil)
-		tkclient->wmctl(h.top, "exit");
+	# NOT tkclient->wmctl(h.top, "exit") - wmctl's own "exit" case calls
+	# exit directly (see appl/lib/tkclient.b), killing this whole
+	# process's group; danby-aerobraking(1) can use it safely only
+	# because it calls sys->pctl(Sys->NEWPGRP, nil) first, putting
+	# itself in a fresh group of its own. This module has no such
+	# group of its own to sacrifice - it's a handle inside whatever
+	# process is running the calling sh(1) script - so "del" just
+	# forgets the handle and leaves the window orphaned on screen, the
+	# same trade-off sh-tk(1)'s own "tk del" already makes for exactly
+	# this reason.
 	slot := hashslot(id);
 	nhl: list of ref Handle;
 	for(hl := handles[slot]; hl != nil; hl = tl hl)
