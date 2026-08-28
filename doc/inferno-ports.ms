@@ -14231,6 +14231,55 @@ check it against.  Characterized, reproducible, real; not root-caused.
 Left for the next pass at this board rather than chased to ground the
 way the pc64 heisenbug was -- this one, unlike that one, does not need
 tricks to reproduce: it fails the same way every time.
+\
+.NH 1
+mps2 boots clean, and the rest of the ARM boards are hardware-only here
+.PP
+Rounding out the pivot: mps2-an500, the Cortex-M7 QEMU model and the
+only one of this tree's ARM boards runnable without real hardware,
+per the mkfile's own comment
+.CW "(qemu-system-arm\ -M\ mps2-an500\ -nographic\ -kernel\ imps2)" .
+Rebuilt from the current tree -- carrying the riscv64/virt fix and
+every shared
+.CW alloc.c
+change from the pc64 hunt -- and boot-tested 5 times.  Every run is
+byte-identical:
+.CW ARMV7M-INIT-OK ,
+.CW osinit.dis
+loads,
+.CW devprog 's
+own
+.CW progpid()
+sanity check passes, Bufio loads, and the kernel reaches an
+interactive shell prompt and sits there idle.  No panic, no hang,
+nothing resembling either riscv64/virt finding above.
+.PP
+The other three boards this tree carries --
+.CW nucleof303
+(an STM32F303RE Nucleo),
+.CW teensy41
+(an i.MX RT1062) and
+.CW mangopi
+(actually riscv64, an Allwinner D1, despite living beside the ARM
+boards in the tree) -- have no QEMU machine model on this host.
+.CW "qemu-system-arm\ -M\ help"
+and
+.CW "qemu-system-riscv64\ -M\ help"
+were checked directly; none of the three names appears.  They target
+real hardware only and are genuinely untestable here, not skipped by
+choice -- this pivot's coverage of "the arm and riscv ports" is
+therefore mps2 and virt, the two boards this environment can actually
+run, plus a documented reason the other three are out of reach without
+different hardware.
+.PP
+Net result of the whole pivot: two real, reproducible, riscv64/virt-
+specific bugs found and one fixed (the removed bisection probes); the
+pc64 heisenbug itself did not reproduce anywhere else tested, on the
+one architecture (mps2) that ran completely clean.  That is itself an
+answer to the question that started this pivot -- not proof the
+heisenbug is pc64-only, since riscv64/virt was not stress-tested at
+pc64's scale (hundreds of boots) before its own two bugs interrupted
+that plan, but no evidence yet that it is not.
 .NH 1
 Then
 .PP
