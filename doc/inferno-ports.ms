@@ -11640,6 +11640,47 @@ one (previous sections): a caller-side slot went stale before the
 instruction this hunt captured, not at it. Confirmed by disassembly
 this time, not inferred.
 .NH 1
+Panic type distribution, read as the honest measure, at the end of this round
+.PP
+Following this document's own standing instruction: read the panic
+type distribution across a batch, not any one checker's rate, as the
+honest measure of where this boot stands. Four batches at the end of
+this round, all on the build carrying every fix and hardening change
+landed in it (105 boots total): 4/25, 8/25, 10/25, 10/30 -- 32
+panics in 105 boots, roughly 30%. Every earlier batch this whole
+multi-session hunt has recorded, going back to its very first
+sessions, has run 60-80%. This is the lowest sustained rate this hunt
+has ever measured.
+.PP
+Said plainly and cautiously: this is an observation, not a proof of
+causation. No single change in this round was verified in isolation
+against a controlled baseline the way the strongest findings above
+were (the retracted thread is a direct reminder why that discipline
+matters). What can be said is that this round landed a real number of
+independently-justified correctness fixes -- the D2BPC anchor fixes
+(six call sites, all shared with no other tree), the destroy()
+ref-underflow guard, the allocb.c pointer-format fix, limbo -z ported
+from a sibling branch, Stkext's own extents zeroed, badref() and
+markheap() Ns 's Type* guard from the round before it -- any one of
+which could plausibly be removing some fraction of what used to reach
+a panic, and the aggregate rate dropping this much this consistently,
+across four independent batches, is at least consistent with that
+rather than looking like ordinary batch-to-batch noise (which this
+hunt has also seen, and which typically moves single digits of
+percentage points, not from ~70% to ~30%).
+.PP
+What remains unsolved, plainly: the root mechanism -- an object's
+refcount undercounted somewhere, letting two independent owners each
+believe they hold the last reference -- is not fixed, only
+characterized more precisely than before (two hardware-confirmed
+use-after-frees, one exonerated return path, a reliable "who freed it
+first" data source). The boot is still not clean; a large fraction of
+runs still panic. Whoever picks this up next should treat this
+session's own real, checked findings as the foundation -- the
+retracted thread as the reminder of what unchecked confidence costs --
+and this closing batch's number as a baseline to measure the next
+fix against, not a victory to report.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
