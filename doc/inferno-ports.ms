@@ -11681,6 +11681,61 @@ retracted thread as the reminder of what unchecked confidence costs --
 and this closing batch's number as a baseline to measure the next
 fix against, not a victory to report.
 .NH 1
+Sweeping abort() for the rest of the silent-hang class
+.PP
+.CW badptrslot() Ns 's
+own fix (
+.CW libkern/abort.c Ns 's
+.CW "while(*(int*)0);"
+spins forever on pc64 instead of faulting) is not specific to that
+one checker; it applies to every
+.CW abort()
+call in libinterp. Swept the rest and converted five more, all
+pre-existing assertion-style checks -- not this hunt's own
+diagnostics -- that would otherwise fail as an unexplained hang, a
+category this hunt has repeatedly recorded across many batches
+without ever specifically attributing:
+.IP \(bu
+.CW load.c Ns 's
+.CW unload() :
+.CW m->ref
+underflow on the shared
+.CW Module
+cache --
+.CW lookmod() Ns 's
+own
+.CW AINC Ns -tracked
+refcount, a different one than the Dis heap object refcounts this
+hunt has been chasing, worth ruling in or out on its own terms.
+.IP \(bu
+.CW xec.c Ns 's
+.CW OP(mcall) :
+.CW f->t
+changing across a native
+.CW runt()
+call -- one of the hottest opcodes in the interpreter, every
+inter-module call goes through it.
+.IP \(bu
+.CW draw.c Ns 's
+.CW bufimage() :
+wrong lock owner.
+.IP \(bu
+.CW tk.c Ns 's
+panel image teardown:
+.CW i->ref\ !=\ 1 .
+.IP \(bu
+.CW validstk.c Ns 's
+.CW memchk() :
+.CW h->ref\ <=\ 0 --
+currently unreachable (no caller anywhere in this tree), fixed for
+completeness rather than because it is live.
+.LP
+Two 25-boot batches after: 5/25 and 7/25, none of the five new panics
+fired. Consistent with the low range the previous section's closing
+batch already measured (roughly 25%, against the historical 60-80%),
+not a new data point proving any one of these five mattered for the
+pc64 crash specifically -- real, independent hardening regardless.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
