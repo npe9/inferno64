@@ -11279,6 +11279,92 @@ There may still be a real bug near there; this thread's own evidence
 for one does not hold up, and the search for the actual double-free
 mechanism returns to where it stood before this thread began.
 .NH 1
+Two genuine captures with the corrected checker, and a generic pattern
+.PP
+With the checker itself fixed (previous section), a further two
+25-boot batches produced three
+.CW "movp: bad dv-freed"
+hits total, this time with
+.CW auditmemloc(D2H(dv))
+reporting what it is built to report correctly. Two of the three
+confirm a real, hardware-level use-after-free:
+.CW "in free blk" ,
+not
+.CW "in block" --
+.CW D2H(dv)
+genuinely lands inside a block the pool has already reclaimed.
+.PP
+The first, module
+.CW Arg ,
+inst 18, resolves (appl/lib/arg.sbl) to
+.CW arg.b:42 ,
+the
+.CW return
+statement of
+.CW argv() :
+.CW "ret := args; args = nil; return ret;" .
+The second, module
+.CW Sh ,
+inst 884, resolves (a fresh
+.CW -g
+build of appl/cmd/sh/sh.b, matching module name and instruction count
+exactly) to
+.CW sh.b:477 ,
+inside
+.CW listjoin() Ns :
+.CW "for (; left != nil; left = tl left) l = hd left :: l;" --
+specifically the loop control
+.CW "left = tl left" ,
+not the cons on the line above it.
+.PP
+Both are the same shape: a plain pointer assignment (
+.CW OP(movp) )
+overwriting a slot that held a reference into a list, at exactly the
+point that reference is supposed to be released.  Read
+.CW cons() Ns 's
+own source (libinterp/xec.c) to check whether the already-fixed
+.CW OP(consp)
+ordering bug (doc/inferno-ports.ms, "A different, dominant signal:
+Tptr list cells") has a sibling here:
+.CW cons()
+transfers the slot's old value into the new cell's own
+.CW tail
+directly (
+.CW "l->tail = lv; *lp = l;" )
+with no separate incref and no destroy -- a balanced move, not a
+copy, which is correct only if nothing else touches that reference
+count in between.  For
+.CW "left = tl left" ,
+the new value (
+.CW sv ,
+.CW left->tail )
+gets its own ref incremented before the old value (
+.CW dv ,
+the previous
+.CW left )
+is destroyed, and destroying a list head cascades into
+.CW freelist() Ns 's
+own tail-walk, which stops the instant a node's ref does not reach
+zero -- since
+.CW sv
+was already incremented, that walk should stop one node in without
+touching it. Every step of this, read in isolation, is correct.
+Whether it stays correct under every ordering the compiler or
+scheduler can produce is a harder question than reading it once
+answers, and pc64 gives no instruction-level trace to check further
+without a working disassembler for this port's Plan9 a.out/coff
+image.
+.PP
+What is worth carrying forward regardless of whether this exact
+mechanism is the cause: two independent, hardware-confirmed
+use-after-frees, in two unrelated modules, both landing on the same
+generic idiom (a list-cons loop's own control-variable update) that
+appears constantly throughout ordinary Limbo code -- not a narrow,
+rare code path. That fits the shape this whole hunt has kept finding
+from other angles: a small, generic mechanism producing corruption
+that surfaces in whatever unrelated code happens to run into it next,
+rather than a bug local to any one module.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
