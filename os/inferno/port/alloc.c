@@ -125,8 +125,15 @@ void (*poolfault)(void *, char *, uintptr) = _poolfault;
  * turning "somewhere frees this twice" into a specific call site
  * without having to catch the double-free in the act.  pc64-only,
  * temporary.  See doc/inferno-ports.ms.
+ *
+ * NFREEHIST was 32 -- every real alloc:D2B:destroy-entry capture so
+ * far aged out of it before the panic that would have used it (3/3
+ * captures, no "was freed before" line at all).  Bumped by two orders
+ * of magnitude; each entry is address+pc (16 bytes on this port), so
+ * 4096 entries is 64KiB, trivial next to this port's pool sizes.  See
+ * doc/inferno-ports.ms.
  */
-enum { NFREEHIST = 32 };
+enum { NFREEHIST = 4096 };
 static struct { void *addr; uintptr pc; } freehist[NFREEHIST];
 static int freehistn;
 
