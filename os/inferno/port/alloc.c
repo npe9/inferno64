@@ -412,6 +412,21 @@ poolalloc(Pool *p, uintptr asize)
 	size = asize;
 	osize = size;
 	size = (size + BHDRSIZE + p->quanta) & ~(p->quanta);
+	/*
+	 * Both branch-local invariants above (exact-match chain,
+	 * no-split/split q) held on the two size=0 reproductions checked
+	 * against them so far -- narrowing toward either the arena-extend
+	 * path below (which sets size directly rather than via a tree
+	 * lookup) or size itself being wrong before any branch runs.
+	 * Catch the second possibility here, once, before it can
+	 * propagate identically into every branch's own internally-
+	 * consistent-looking arithmetic.  pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	if(size <= osize || size < BHDRSIZE)
+		panic("poolalloc: size computed wrong: osize %zd size %zud "
+			"BHDRSIZE %zud quanta %#zux pc=%#p",
+			osize, size, (uintptr)BHDRSIZE, p->quanta, getcallerpc(&p));
 
 	ilock(&p->l);
 	p->nalloc++;
