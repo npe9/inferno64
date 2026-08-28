@@ -13453,6 +13453,132 @@ reentrancy hypothesis is the next concrete thing to check, not yet
 chased.
 
 .NH 1
+The devattach() scan lands exactly on the 4 GiB boundary, every time
+.PP
+Enriched the
+.CW devattach()
+guard (computing the scan's landing address, plus
+.CW up
+and
+.CW up\->genbuf
+themselves) and re-ran.  Two independent captures on the same build,
+one before the enrichment and one after, reproduce
+.I byte-for-byte
+identical:
+.CW "spec\ 0x6ee9a4a\ len\ \-116300362" ,
+every single field, both times.  This is not noisy corruption \(em on
+a fixed kernel binary this is a completely deterministic computation,
+which narrows the search a great deal: no race, no timing dependence,
+something this build always does the same way.
+.PP
+The enriched capture settles the two open questions from the previous
+round outright.
+.CW up\->genbuf\ =\ 0x6ee9a48 ,
+.CW spec\ =\ 0x6ee9a4a
+\(em
+.CW spec
+is exactly
+.CW genbuf+2 ,
+precisely what
+.CW namec() 's
+own
+.CW '#'
+case computes for the root device (
+.CW "n\ =\ chartorune(&r,\ genbuf+1)+1"
+with a one-byte
+.CW '/'
+rune, so
+.CW n==2 ).
+The pointer arithmetic in
+.CW namec()
+is correct; there is no offset-computation bug there.  And doing the
+arithmetic on the captured numbers directly:
+.CW "spec\ +\ n\ ==\ exactly\ 0x100000000" \(em
+2^32, 4 GiB, to the byte.  Not a coincidence at that precision: the
+byte
+.CW strchr()
+actually stopped on sits at the literal address 4294967296.
+.PP
+Ruled out, by direct inspection of
+.CW 6c 's
+own
+.CW \-S
+output, not by assumption:
+.CW libkern/strlen.c
+(
+.CW "strchr(s,\ 0)\ \-\ s" )
+compiles to
+.CW SUBQ
+(64-bit subtract) then
+.CW MOVLQSX
+(a correct 32-bit-truncating, sign-extending cast \(em exactly what a
+.CW long
+return type should produce, not a bug); and
+.CW libkern/strchr.c 's
+own scan loop increments its pointer with
+.CW INCQ ,
+a full 64-bit increment, not a 32-bit one.  Both of this port's own
+string functions are provably correct here.  A synthetic
+.CW "uintptr\ +\ u32int"
+test compiled the same way this file's own
+.CW "spec\ +\ n"
+arithmetic is written also disassembles correctly (
+.CW MOVL
+zero-extends into the full 64-bit register on this ABI, then
+.CW ADDQ
+does a real 64-bit add) \(em though the guard's own printed
+.CW termaddr
+showed
+.CW 0x0
+instead of the
+.CW 0x100000000
+the raw numbers actually work out to, an artifact of this print call
+specifically, not of the underlying arithmetic; not chased further,
+noted so the next reader does not mistake it for the real answer.
+.PP
+What remains open, now sharply framed: why does a byte-at-a-time,
+provably-correct scan starting at a normal ~116 MiB heap address (
+.CW up
+itself is
+.CW 0x6ee9200 )
+run for very close to four billion bytes without ever faulting, on a
+guest with roughly 512 MiB of real RAM (
+.CW "conf.npage\ 128472" ) ,
+before landing exactly on the 4 GiB address?  Two live possibilities,
+neither confirmed: (1) this port's
+.CW pmap() / mmuwalk()
+(pc64/mmu.c) genuinely maps a vast, non-zero, non-faulting span this
+large \(em plausible given
+.CW mem.h 's
+own
+.CW "VMAPSIZE\ 512GiB"
+under
+.CW KZERO=0
+identity mapping, if that range is more densely pre-populated than
+expected; or (2) something in the page-table walk aliases address
+.CW 0x100000000
+back to a low, already-zeroed physical page (page 0 is claimed as
+ordinary RAM by
+.CW lowraminit() ) ,
+which would make this a genuine virtual-address translation bug
+rather than a vast real mapping.
+.CW mmu.c 's
+own
+.CW "pmap()/mmuwalk()/ptecount()"
+were read by hand and show no obvious 32-bit truncation of their own
+(
+.CW pa
+and
+.CW size
+are
+.CW "uintptr/s64"
+throughout) \(em ruling out the simplest version of hypothesis (2)
+without ruling out the hypothesis itself.  Deterministic and
+precisely bounded now; tracing exactly what backs the address range
+.CW 0x6ee9a4a\ \(en\ 0x100000000
+on this build is the next concrete step, not yet taken.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

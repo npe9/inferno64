@@ -156,12 +156,42 @@ devattach(int tc, char *spec)
 	 * doc/inferno-ports.ms.
 	 */
 	n = strlen(spec);
-	if(n < 0 || n > 256)
-		panic("devattach: spec %#p len %ld out of range, "
+	if(n < 0 || n > 256){
+		/*
+		 * A live capture (doc/inferno-ports.ms, "devattach()'s
+		 * guard fired for real") showed n == -116300362 on
+		 * rootattach()'s very first call, with spec[0..3] reading
+		 * all zero both immediately before (namec()'s own
+		 * genbuf[n]='\0') and immediately after this strlen()
+		 * call -- yet strlen() (a plain byte-at-a-time strchr, no
+		 * word-scan alignment bug to blame, confirmed by hand from
+		 * 6c's own -S output: SUBQ then MOVLQSX, correct 64->32
+		 * truncating-cast codegen) must have genuinely scanned
+		 * ~4.18 billion bytes forward before finding a zero for
+		 * that 32-bit truncation to land there. That distance
+		 * recurred to within 5 of an entirely separate capture
+		 * from a much earlier round of this hunt (UPDATE 99's
+		 * original smalloc() discovery, also from this exact
+		 * strlen() call) -- too close to be coincidence, too far
+		 * to be explained by spec pointing at a normal, small
+		 * up->genbuf. Recovering the low 32 bits of n as UNSIGNED
+		 * approximates where strchr() actually stopped, since the
+		 * true pre-truncation distance was almost certainly
+		 * positive and under 2^32 both times. Print it, plus up
+		 * and up->genbuf's own addresses, so the next capture
+		 * settles whether spec is even inside genbuf's own struct
+		 * by then, rather than repeating this same narrow dump.
+		 * pc64-only, temporary. See doc/inferno-ports.ms.
+		 */
+		uintptr termaddr = (uintptr)spec + (u32int)n;
+		panic("devattach: spec %#p len %ld (~%#ux forward) term~%#p "
+			"up %#p up->genbuf %#p "
 			"first bytes %#ux %#ux %#ux %#ux, tc %C pc=%#p",
-			spec, n,
+			spec, n, (u32int)n, termaddr,
+			up, up != nil ? up->genbuf : nil,
 			(uchar)spec[0], (uchar)spec[1], (uchar)spec[2], (uchar)spec[3],
 			tc, getcallerpc(&tc));
+	}
 	buf = smalloc(4+n+1);
 	sprint(buf, "#%C%s", tc, spec);
 	c->path = newpath(buf);
