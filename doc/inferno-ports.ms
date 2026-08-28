@@ -11555,6 +11555,91 @@ most concrete lead this hunt has for where the undercounting itself
 happens, now with a reliable way to confirm which object was
 involved on the next capture.
 .NH 1
+A working disassembler, and argv()'s own return is exonerated
+.PP
+Every earlier attempt at
+.CW disdump
+against the tree's own pre-built
+.CW dis/disdump.dis
+failed --
+.CW "illegal dis instruction" --
+against both
+.CW disinit.dis
+and
+.CW sh.dis .
+The actual cause was staleness, not a fundamental blocker: a fresh
+.CW limbo\ -g
+build of
+.CW appl/cmd/disdump.b
+against the current tree's own compiler runs a trivial test module
+cleanly, and disassembles
+.CW appl/lib/arg.dis
+(also freshly built) in full without error. It still fails the same
+way against a full rebuild of
+.CW sh.dis
+specifically -- large enough (6111 instructions) that this looks like
+a limit inside
+.CW disdump.b
+itself rather than anything about
+.CW sh.dis Ns 's
+own bytecode, but that limit was not chased further; what mattered
+was getting a working disassembler for at least one of this hunt's
+two real captures.
+.PP
+Instruction 18 in
+.CW arg.dis
+-- the exact instruction the
+.CW Arg
+capture (two sections back) named -- disassembles to
+.CW "movp 64(fp), 0(32(fp))" .
+.CW 64(fp)
+is
+.CW argv() Ns 's
+own local
+.CW ret ;
+.CW 32(fp)
+holds the caller-provided destination pointer for the return value
+(Dis's own calling convention, an implicit parameter);
+.CW 0(32(fp))
+is a double-indirect write through it -- exactly
+.CW "*retdest = ret;" .
+.CW OP(movp) Ns 's
+own semantics (libinterp/xec.c) read the source first and
+.CW AINC
+its refcount before ever touching the destination, so
+.CW ret Ns 's
+value is correctly at two references -- the local slot and the
+caller's copy -- the instant this instruction finishes.
+.CW OP(ret) Ns 's
+subsequent
+.CW freeptrs()
+call, tearing down
+.CW argv() Ns 's
+own frame, destroying
+.CW ret Ns 's
+local slot afterward, is exactly correct: it drops one of the two
+references it itself created room for, leaving precisely one for the
+caller. Nothing here is unbalanced.
+.PP
+That exonerates
+.CW argv() Ns 's
+own compiled return -- and, by the same
+.CW OP(movp)
+mechanics, every ordinary
+.CW "return EXPR;"
+in this VM, not just this one. The bug this capture pointed at was
+never in how a function hands back its result; it is in whatever
+.CW *retdest
+pointed at before this instruction ran -- some caller, somewhere,
+whose own destination slot already held an already-freed reference
+before it ever called
+.CW argv() .
+That returns this specific capture to the same open question as the
+.CW Sh
+one (previous sections): a caller-side slot went stale before the
+instruction this hunt captured, not at it. Confirmed by disassembly
+this time, not inferred.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
