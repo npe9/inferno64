@@ -12654,6 +12654,36 @@ fix's new message text confirmed live in this same batch.
 guard did not fire this batch -- still one confirmed hit total,
 pre-fix.
 .NH 1
+Verifying size itself, closing a gap in the last two poolalloc checks
+.PP
+The exact-match and no-split/split invariant checks from the previous
+two sections both compare a returned block's size against the SAME
+.CW size
+local
+.CW poolalloc()
+computes once at the top -- neither could ever catch
+.CW size
+itself being computed wrong, since a bad
+.CW size
+would look internally consistent to every branch that trusts it.
+Added a direct check right after the computation:
+.CW size
+must exceed
+.CW osize
+(the caller's actual request) by at least
+.CW BHDRSIZE ,
+the minimum any correctly-rounded allocation could produce.
+.PP
+Built and boot-tested: 60 boots, 21 panics (35%, in-band, no
+regression).  Neither this check, the two from prior rounds, nor the
+size=0 signature itself fired this batch -- three independent
+invariants now cover every return path except the arena-extend one
+(which sets
+.CW size
+directly from the same already-verified local, so structurally the
+least likely remaining candidate), narrowing this lead further
+without yet landing it.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
