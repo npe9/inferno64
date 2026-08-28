@@ -774,8 +774,15 @@ exmount(Chan *c, Mhead **mp, int doname)
 		nc = cunique(nc);
 		poperror();
 		if(doname){
+			/*
+			 * Same shape as chan.c's own walk()/namec() ->path
+			 * incref fixes (doc/inferno-ports.ms): c->path is a
+			 * documented-nil-able field, and this incref() had no
+			 * guard either. pc64-only, temporary.
+			 */
 			oname = c->path;
-			incref(oname);
+			if(oname != nil)
+				incref(oname);
 			pathclose(nc->path);
 			nc->path = oname;
 		}
@@ -1011,8 +1018,10 @@ Excreate(Export *fs, Fcall *t, Fcall *r)
 		nexterror();
 	}
 	if(m != nil){
+		/* Same shape as exmount()'s own ->path incref fix above. */
 		oname = c.c->path;
-		incref(oname);
+		if(oname != nil)
+			incref(oname);
 		if(waserror()){
 			pathclose(oname);
 			nexterror();
