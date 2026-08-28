@@ -11124,6 +11124,44 @@ or the
 conversions that follow it could add
 .CW sizeof(Heap)
 to an otherwise-correct pointer.
+.PP
+One more thing the Stkext-zeroing fix (this section, above) settles
+on its own, independent of whether it fixed the crash: the address
+.CW dv
+holds is IDENTICAL across every capture, before and after that fix.
+If
+.CW dv
+were leftover, unzeroed extent memory, zeroing the whole extent could
+only have changed it -- to zero, at minimum, which
+.CW badptrslot() Ns 's
+own
+.CW dv\ <\ 0x1000
+half would have caught as a completely different, much more common
+panic shape. It did not change at all. That rules out "leftover
+memory" as the source outright, independent of the auditmemloc()
+capture: whatever computes
+.CW dv
+does so actively, deterministically, every boot, not by inheriting
+whatever a stack extent happened to contain. The search narrows to
+the compiled code for
+.CW disinit.b Ns :172-175
+itself --
+.CW OP(slicea)
+(the
+.CW b[0:n]
+array slice) and
+.CW OP(cvtac)
+(libinterp/string.c, the array-to-string conversion) are the two
+opcodes in that range with their own pointer arithmetic; neither
+showed an obvious
+.CW sizeof(Heap)
+mismatch on a direct read, so confirming which one (or a third,
+unread site) actually produces this value needs tracing the
+instructions between 303 and 307 rather than reading two candidates
+in isolation -- disdump against this exact disinit.dis would settle
+it directly but did not run cleanly against the hosted emu tried
+here ("illegal dis instruction"), left for whoever has a working
+disassembler path for it next.
 .NH 1
 Then
 .PP
