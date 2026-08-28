@@ -12757,6 +12757,63 @@ space.  Not chased to a specific allocation site this round; a
 real trace would need per-call accounting across a full boot, a
 larger undertaking than this round's capture-driven fixes.
 .NH 1
+The one unguarded ->mchan incref, and a swept clean bill for the rest
+.PP
+Continued the sweep for this session's now-familiar shape across
+every file this kernel actually links (checked
+.CW devbin.c ,
+.CW devbridge.c ,
+.CW devdraw.c ,
+.CW devenv.c ,
+.CW devmnt.c ,
+.CW devproc.c ,
+.CW devpointer.c ,
+.CW devsd.c ,
+.CW devshm.c ,
+and
+.CW inferno.c
+for every remaining
+.CW incref()
+call site).  Found one real gap:
+.CW chan.c
+sets
+.CW c->mchan
+nil in two places, and
+.CW devmnt.c
+itself already guards a read of it elsewhere
+.CW ( "if(c->mchan\ ==\ nil)"
+in
+.CW mntrdwr() ) ,
+confirming it is a documented-nil-able field exactly like
+.CW ->path --
+but the walk-completion path's own
+.CW "wq->clone->mchan\ =\ c->mchan;\ incref(c->mchan);"
+had no guard.  Fixed to match.  The other two
+.CW incref()
+sites in this file (both
+.CW incref(m->c) )
+are a different, always-valid
+.CW Chan
+(the mount connection's own channel, not a possibly-nil
+.CW c->mchan ) ,
+so left alone.  Every other
+.CW incref()
+site checked in this sweep --
+.CW devproc.c Ns 's
+.CW "incref(tc)/incref(f)" ,
+.CW inferno.c Ns 's
+.CW incref(c)
+in the NEWFD path -- was already correctly guarded by a preceding
+nil check.
+.PP
+Built and boot-tested: 30 boots, 8 panics (27%, in-band, no
+regression).  No capture of its own yet -- found by pattern-matching,
+same as several of this session's earlier fixes.
+.CW "disinit\ error:\ out\ of\ memory:\ main"
+recurred a third time (3/100 boots since the
+.CW %r
+fix -- a real, moderately frequent, still-open lead).
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
