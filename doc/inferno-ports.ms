@@ -12223,6 +12223,69 @@ frequency-driven discipline the rest of this hunt has followed, but
 worth returning to: unlike the earlier msize() double-eval artifact,
 this number can now be trusted.
 .NH 1
+The same guard, applied before its own capture, plus two new open leads
+.PP
+Looking for other reachable instances of the exact shape that produced
+.CW walk() Ns 's
+fix -- an unguarded
+.CW "path\ =\ c->path;\ incref(path);" --
+found a second, identical pattern in
+.CW namec()
+itself: the
+.CW "Aaccess/Aremove/Aopen"
+case's "save&update the name" step reads
+.CW "path\ =\ c->path"
+and
+.CW incref() Ns 's
+it with no guard either, right after a
+.CW walk()
+call that, per the fix already landed, can legitimately hand back a
+nil
+.CW c->path
+for the
+.CW e.nelems==0
+case.  Not yet caught by its own separate capture, but fixed on the
+same evidence and for the same reason rather than waiting for one --
+traced
+.CW domount() ,
+.CW pathclose() ,
+and the final
+.CW "pathclose(c->path);\ c->path\ =\ path;"
+and confirmed each already tolerates a nil path the same way
+.CW walk() Ns 's
+own downstream handling does.  Built and boot-tested: 30 boots, 10
+panics (33%, in-band, no regression).
+.PP
+The same batch surfaced two new, different "c nil" captures --
+.CW cclose()
+and
+.CW cclone()
+both panic explicitly (rather than silently ignoring) a nil
+.CW Chan* ,
+a pc64-only hardening from earlier in this hunt, and both fired once
+each: one resolving to
+.CW unionread+772 ,
+one to
+.CW cunique+28 .
+Neither is yet understood well enough to fix with confidence --
+.CW cunique() Ns 's
+own body dereferences
+.CW c->ref
+unconditionally two lines before its one
+.CW cclone(c)
+call, which would itself fault on a genuinely nil
+.CW c
+before ever reaching
+.CW cclone() ,
+so either the resolved pc is a case of the same kind of
+misattribution this hunt already worked through once for
+.CW mallocalign
+(the call physically sitting in a neighboring function with no
+symbol of its own) or there is a real, subtler bug here still to
+find.  One hit each in 30 boots -- noted as open leads per this
+round's frequency-driven discipline, not guessed at further this
+round.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
