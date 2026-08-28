@@ -22,8 +22,12 @@ memchk(void *p, Type *t)
 				if(v != H) {
 					h = D2H(v);
 					hmsize(h);
-					if(h->ref <= 0)
-						abort();
+					if(h->ref <= 0) {
+						extern void panic(char*, ...);
+
+						/* same abort()-hangs-on-pc64 fix as unload()/badptrslot(); unreachable right now (memchk() has no caller in this tree), fixed for completeness. pc64-only, temporary. See doc/inferno-ports.ms. */
+						panic("memchk: h->ref <= 0, h %#p", h);
+					}
 					if(h->t != nil)
 						memchk(v, h->t);
 				}

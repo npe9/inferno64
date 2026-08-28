@@ -2415,8 +2415,11 @@ bufimage(Display *d, int n)
 	}
 	if(d->bufp+n > d->buf+Displaybufsize){
 		if(d->local==0 && currun()!=libqlowner(d->qlock)) {
+			extern void panic(char*, ...);
+
 			print("bufimage: %zx %zx\n", (uintptr)libqlowner(d->qlock), (uintptr)currun());
-			abort();
+			/* same abort()-hangs-on-pc64 fix as unload()/badptrslot(). pc64-only, temporary. See doc/inferno-ports.ms. */
+			panic("bufimage: wrong lock owner");
 		}
 		if(doflush(d) < 0)
 			return 0;

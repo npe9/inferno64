@@ -1344,9 +1344,21 @@ OP(mcall)
 
 			l->runt(f);
 			if(f->t != savedt) {
+				extern void panic(char*, ...);
+
 				print("mcall: f->t changed across l->runt(f): was %p now %p module %s\n",
 					savedt, f->t, ml->m->name);
-				abort();
+				/*
+				 * Same abort()-hangs-on-pc64 fix as unload()
+				 * (libinterp/load.c) and badptrslot() -- OP
+				 * (mcall) is one of the hottest opcodes in the
+				 * interpreter (every inter-module call), so a
+				 * hit here is exactly the kind of thing that
+				 * could have been silently hanging boots this
+				 * whole hunt never specifically attributed.
+				 * pc64-only, temporary. See doc/inferno-ports.ms.
+				 */
+				panic("mcall: f->t changed across l->runt(f)");
 			}
 		}
 		ADEC(&h->ref);

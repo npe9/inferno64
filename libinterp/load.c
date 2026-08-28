@@ -874,8 +874,26 @@ unload(Module *m)
 	nr = ADEC(&m->ref);
 	if(nr > 0)
 		return;
-	if(nr == -1)
-		abort();
+	if(nr == -1) {
+		/*
+		 * Same abort()-hangs-on-pc64 issue this hunt already found
+		 * and fixed once for badptrslot() (libkern/abort.c's
+		 * "while(*(int*)0);" spins forever on this port instead of
+		 * faulting) -- this is a DIFFERENT refcount than the ones
+		 * this hunt has been chasing (the shared Module cache's own
+		 * m->ref, incremented by lookmod(), not a Dis heap object's
+		 * ref), and if it has ever underflowed during this hunt's
+		 * many boot batches, it would have shown up only as an
+		 * unexplained hang -- a boot that times out with no panic
+		 * at all, a category this hunt has repeatedly seen and
+		 * never specifically attributed. panic() instead, matching
+		 * badptrslot()'s own fix, so a hit here becomes visible and
+		 * countable instead of silent. pc64-only, temporary. See
+		 * doc/inferno-ports.ms.
+		 */
+		extern void panic(char*, ...);
+		panic("unload: m->ref underflow, m %#p", m);
+	}
 
 	last = &modules;
 	for(mm = modules; mm != nil; mm = mm->link) {

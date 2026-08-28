@@ -1061,8 +1061,12 @@ tkfreetop(Heap *h, int swept)
 	}
 
 	for(i = t->imgs; i; i = nexti) {
-		if(i->ref != 1)
-			abort();
+		if(i->ref != 1) {
+			extern void panic(char*, ...);
+
+			/* same abort()-hangs-on-pc64 fix as unload()/badptrslot(). pc64-only, temporary. See doc/inferno-ports.ms. */
+			panic("tk: i->ref != 1, i %#p ref %d", i, i->ref);
+		}
 		nexti = i->link;
 		tkimgput(i);
 	}
