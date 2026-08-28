@@ -12911,6 +12911,110 @@ and
 .CW _allocb
 size=0 signatures again, unrelated to this fix.
 .NH 1
+Two signatures gone quiet, and a recurrence that was not one
+.PP
+Before chasing the next lead, a status check the advisor suggested:
+re-grep every batch this hunt has produced for the two signatures still
+marked open at the end of the previous round, split by whether each
+capture predates or postdates the fix meant to address it.
+.PP
+The
+.CW checkb-0/qaddlist
+signature (
+.CW "b->base\ >\ b->lim" ,
+caught by
+.CW qio.c 's
+.CW qaddlist() )
+had been logged as recurring even after the
+.CW _allocb()
+msz fix, based on one fresh capture in
+.CW smalloc_batch/boot18.log .
+Laid every capture this hunt has ever logged side by side, sorted by
+timestamp against that fix's commit time, and the picture is not a
+recurrence at all.  Every capture before the fix shares one precise
+shape: both
+.CW base
+and
+.CW lim
+eight-byte aligned, both addresses in the live heap range (
+.CW 0x79xxxxx ,
+.CW 0xa2cxxx ,
+.CW 0xa4dxxx ),
+and
+.CW base\ -\ lim
+exactly
+.CW Hdrspc
+(64) bytes every single time \(em a precise, deterministic signature,
+not scattered corruption.  Not one of the 750-plus boots run across
+every batch since the fix landed reproduces that shape, and the fix's
+own
+.CW "_allocb:\ lim\ <\ base"
+check \(em which would catch this exact pattern one call earlier, at
+construction, before
+.CW qaddlist()
+ever sees the block \(em has not fired once either.  That thread is
+closed: the msz double-eval fix was the real fix, not a coincidence.
+.PP
+The
+.CW boot18.log
+capture that looked like a recurrence is a different bug wearing the
+same panic string.  Its numbers:
+.CW base\ 0x2d2a97 ,
+.CW lim\ 0x2d2998 .
+Neither is eight-byte aligned (
+.CW 0x2d2a97
+is odd), the delta is 255 bytes, not 64, and both addresses sit in
+kernel
+.I text
+range \(em the same
+.CW 0x26xxxx \(en 0x2fxxxx
+span this hunt's own resolved function symbols occupy, nowhere near
+the heap.  A real
+.CW Block
+allocated by
+.CW _allocb()
+cannot produce those numbers by construction.  The straightforward
+reading:
+.CW qaddlist()
+was handed a
+.CW Block\ *
+that was never a
+.CW Block
+at all \(em some caller's
+.CW b
+argument was already garbage before the call, and
+.CW checkb()
+faithfully reported nonsense fields read out of whatever memory that
+pointer actually named.  That is a different failure than the fixed
+one and, at one occurrence in 750-plus post-fix boots, a rare one.
+Left open rather than chased on a single sample; the discriminating
+test for the next capture is the same alignment/range check used
+here.
+.PP
+.CW poolalloc() 's
+own size=0 lead (four invariants: the exact-match chain's
+.CW t->fwd
+size, the no-split/split branch's
+.CW q->size ,
+.CW size
+itself right after it is computed, and the pre-existing
+.CW "arena\ too\ large"
+print with its caller pc) has not fired even once in every boot run
+since all four landed \(em over 100 boots across
+.CW poolalloc3_batch
+and the
+.CW final_batch4
+through
+.CW final_batch6
+consolidation runs.  Between that and the
+.CW _allocb()
+lim-check silence above, the honest read is that this lead is dormant
+across the whole allocator path this hunt instrumented, not merely
+unlucky not to be caught.  Left instrumented rather than removed, since
+dormant is not the same claim as fixed and nothing here explains why
+it stopped.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
