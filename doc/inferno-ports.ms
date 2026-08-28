@@ -10403,6 +10403,102 @@ Consistent with the pattern, not proof of it -- the total panic rate
 says the underlying corruption is unmoved, only its point of first
 visible failure shifted.
 .NH 1
+An underflow guard that didn't fire, and a print that couldn't be trusted
+.PP
+Two threads picked up from the alloc:D2B panics the markheap() batch
+also raised (previous section). Both resolved their caller to
+.CW destroy+649 ,
+the
+.CW poolfree(heapmem, h)
+call at the end of
+.CW destroy()
+(heap.c), and
+.CW auditmemloc()
+confirmed the block was already a live free block --
+magic
+.CW 0xbadc0c0a ,
+this port's
+.CW MAGIC_F
+-- at the exact address about to be freed a second time.  A genuine
+double-free, hardware-confirmed, not inferred.
+.PP
+.CW destroy()
+already has a consistency check
+( Ns
+.CW D2B(b, h) Ns
+) two lines above the free, and it was not the one firing -- ruling out
+.CW h
+itself being bad on entry to this specific call.  Something frees the
+same
+.CW h
+between that check and the
+.CW poolfree()
+call, most likely
+.CW t->free(h, 0) ,
+which runs in between and is supposed to free only
+.CW h Ns 's
+own contained sub-pointers, not
+.CW h
+itself.
+.CW chan.c Ns 's
+.CW decref()
+panics when a Ref underflows before the bad value can be used for
+anything; the equivalent guard on
+.CW ADEC(&h->ref)
+did not exist.  Added it: a result less than zero means
+.CW h->ref
+was already at or below zero when this particular decrement ran.  A
+follow-up 20-boot batch: the new check never fired (0/20), while
+.CW alloc:D2B
+panics continued.  This specific hypothesis --
+.CW destroy()
+re-entering on an already-zero ref -- is tested and not confirmed.
+The guard stays in as correctly-targeted hardening on the same
+established pattern; the actual double-free path through
+.CW t->free()
+or elsewhere is still open.
+.PP
+The same batch also raised
+.CW "checkb 3 qaddlist 1 f000ff53 f000fea5" --
+a
+.CW Block Ns 's
+.CW rp
+and
+.CW lim
+both printed in the same poison family the Chan-field captures found
+by an unrelated route.  Before trusting it: every diagnostic in
+.CW checkb() ,
+.CW checkbl()
+and
+.CW showblockheader()
+(allocb.c) formatted a
+.CW Block
+pointer field with
+.CW %lux
+or
+.CW %8.8luX --
+the verb for a
+.CW ulong ,
+32 bits on this compiler -- against arguments that are 64-bit
+.CW uchar*
+or
+.CW void*
+on this port.  That means the two values this specific panic printed
+were never confirmed to be what
+.CW rp
+and
+.CW lim
+actually held, only what a width-mismatched verb produced from them.
+Fixed every instance in all three functions to
+.CW %#p ,
+this hunt's own convention for a pointer value, rebuilt and
+boot-tested clean.  A follow-up batch did not reproduce the specific
+.CW checkb\ 3
+case, so the corrected reading isn't in hand yet -- the fix is real
+and verified to build and boot either way, but the poison-family
+reading built on the old capture should be treated as unconfirmed
+until it recurs with the corrected format.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
