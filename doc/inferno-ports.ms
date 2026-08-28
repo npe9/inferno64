@@ -13302,24 +13302,38 @@ RAM).  The likelier shape: a real-mode-style
 value, produced somewhere that legitimately reads BIOS memory, is
 ending up in a field that later gets read back as a heap pointer.
 .CW os/inferno/pc/bios32.c
-is the strongest candidate this hunt has found so far, unchased
-further: its
+was the first candidate found, its
 .CW BIOS32si
-struct carries a
+struct carrying a
 .CW "u16int\ ptr[3]"
-literally documented as "far pointer m16:32", and
-.CW bios32locate()
-calls
-.CW sigsearch("_32_", ...)
-to scan exactly the
-.CW 0xF0000\(en0xFFFFF
-region for a signature \(em the one file in this kernel whose whole
-job is producing 16-bit segment-shaped values out of that exact
-memory range.  Not confirmed: which specific field, or whether
-.CW bios32.c
-is the source or just a plausible shape-match.  Flagged as the
-clearest next lead this hunt has, ahead of chasing the refcount-
-corruption disease blind.
+literally documented as "far pointer m16:32" \(em but
+.CW memory.c 's
+.CW sigsearch()
+(the function that scans
+.CW 0xE0000\(en0xFFFFF
+for a signature) turns out to be shared by three other callers, not
+bios32 alone:
+.CW archacpi.c 's
+.CW rsdsearch()
+(the ACPI RSD PTR search, default-on and almost certainly the one
+that actually succeeds on a QEMU target, unlike legacy PCI BIOS32
+services) and
+.CW archmp.c 's
+own
+.CW "_MP_"
+search.
+.CW archacpi.c
+is now the likelier of the four: a successful
+.CW rsdsearch()
+feeds
+.CW maptables() ,
+which walks an RSDT/XSDT array of physical table addresses \(em
+exactly the kind of pointer-array parsing where one entry read in
+the wrong width or stored in the wrong field could produce this
+shape.  None of the four narrowed to a specific field without a
+fresh, directly-resolved capture; flagged as the clearest next lead
+this hunt has, ahead of chasing the refcount-corruption disease
+blind.
 .PP
 Considered and rejected: wrapping
 .CW AINC / ADEC
