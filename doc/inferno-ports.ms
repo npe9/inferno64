@@ -13654,6 +13654,45 @@ question from the previous round, now with a concrete destination to
 explain rather than an unexplained one.
 
 .NH 1
+The namec() default-case fix confirmed too, and why init0 has no dot yet
+.PP
+The
+.CW default:
+half of the
+.CW namec()
+pgrp-root fix (the
+.CW up\->pgrp\->dot
+case, alongside the
+.CW '/'
+case's
+.CW up\->pgrp\->slash )
+fired live in this round's regression batch, converting what would
+have been an unguarded
+.CW incref(nil)
+crash into a clean, attributed error:
+.CW "init0:\ namec:\ pgrp\ has\ no\ dot" ,
+caught by
+.CW init0() 's
+own
+.CW waserror()
+handler.  Both branches of that fix are now hardware-confirmed
+working as designed \(em the underlying boot-ordering condition
+(why init0's own
+.CW Pgrp
+has neither
+.CW dot
+nor
+.CW slash
+set at the point it first calls
+.CW namec() )
+still ends the boot, but now names itself instead of crashing three
+calls downstream in
+.CW walk() .
+Root-causing why init0's namespace is not yet populated at this
+point is a distinct, still-open question, not chased further this
+round.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

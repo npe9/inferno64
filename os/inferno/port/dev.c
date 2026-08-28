@@ -184,6 +184,28 @@ devattach(int tc, char *spec)
 		 * pc64-only, temporary. See doc/inferno-ports.ms.
 		 */
 		uintptr termaddr = (uintptr)spec + (u32int)n;
+		/*
+		 * The remaining open question (doc/inferno-ports.ms, "found
+		 * it -- the scan walks the PC's own 16MB-4GB device hole")
+		 * is not where the scan ends up but why it ever leaves
+		 * genbuf's own 128-byte buffer (portdat.h) at all: namec()'s
+		 * '#' case writes a correct, short, nul-terminated string
+		 * there and rootattach() itself already confirmed *spec==0
+		 * moments earlier. Dump the buffer's own first 32 bytes
+		 * (not just spec's first 4) so the next capture shows
+		 * directly whether genbuf still holds what namec() wrote,
+		 * or something else entirely -- settling whether this is a
+		 * genbuf-reentrancy bug or something this dump has not
+		 * ruled out yet. pc64-only, temporary.
+		 */
+		if(up != nil){
+			int i;
+			char *g = up->genbuf;
+			print("devattach: genbuf[0..31]:");
+			for(i = 0; i < 32; i++)
+				print(" %#ux", (uchar)g[i]);
+			print("\n");
+		}
 		panic("devattach: spec %#p len %ld (~%#ux forward) term~%#p "
 			"up %#p up->genbuf %#p "
 			"first bytes %#ux %#ux %#ux %#ux, tc %C pc=%#p",
