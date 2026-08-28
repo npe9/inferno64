@@ -72,6 +72,7 @@ TARG=\
 	emuinit.dis\
 	engridden.dis\
 	env.dis\
+	eqn2hoctest.dis\
 	export.dis\
 	fc.dis\
 	fcp.dis\

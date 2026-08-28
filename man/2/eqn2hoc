@@ -1,0 +1,249 @@
+.TH EQN2HOC 2
+.SH NAME
+eqn2hoc: translate \- translate eqn(7) math notation into hoc(2) expression source
+.SH SYNOPSIS
+.EX
+include "eqn2hoc.m";
+eqn2hoc := load Eqn2hoc Eqn2hoc->PATH;
+
+(hocsrc, err) := eqn2hoc->translate("x sup 2 + y sup 2");
+if(err != nil)
+	...
+e := hoc->compile(hocsrc);
+.EE
+.SH DESCRIPTION
+.I Eqn2hoc
+translates
+.IR eqn (7)
+math notation \(em the troff equation-formatter syntax
+.RB ( "x sup 2" ", " "a over b" ", " "sqrt x" ,
+Greek letter names, and so on) \(em into
+.IR hoc (2)
+expression source, ready for
+.BR hoc->compile() .
+.I Translate
+takes one plain expression string (the text that would sit between a
+real document's
+.B .EQ
+and
+.B .EN
+lines, or inside
+.BR $$ ... $$ )
+and returns
+.RI ( hocsrc ,
+.BR nil )
+on success, or
+.RI ( nil ,
+an error naming exactly which construct isn't supported and why).
+.PP
+Real
+.I eqn
+(Kernighan and Cherry's formatter; the real source, plan9port's
+.BR src/cmd/eqn ,
+~2500 lines across 26 files, was fetched and read in full to build
+this) has
+.B no
+computational semantics anywhere in it \(em every one of its "boxes" is
+troff drawing code: widths, baselines, font-switch escapes, for
+.I typesetting
+an expression on a page, never for evaluating one. Its own keyword
+table maps
+.RB ( sin ", " cos ", " log ,
+and so on) to a roman-font escape string, not a function call \(em real
+.I eqn
+never treats them as callable. So this is
+.B not
+a 1:1 translation of
+.IR eqn 's
+behavior \(em there is none to preserve \(em it is a new semantic
+mapping of
+.IR eqn 's
+real, familiar
+.I syntax
+(its grammar shape, its keyword vocabulary, both followed faithfully)
+onto
+.IR hoc 's
+scalar expression language, which
+.IR eqn 's
+own source never had.
+.SS "What maps, and why"
+.TP
+.B sup
+Hoc's
+.BR ^ ,
+real exponentiation.
+.I Eqn
+itself only ever draws a raised box \(em but
+.RI \*(lq x " sup 2" \*(rq
+unambiguously means x squared to every reader, so this is the one
+construct where the typeset appearance and a natural hoc meaning
+coincide exactly.
+.TP
+.B over
+Hoc's
+.BR / ,
+division, by the same reasoning.
+.TP
+.B sqrt
+Hoc's own
+.B sqrt()
+builtin.
+.TP
+.B "{ } and left/right"
+Grouping.
+.IR Eqn 's
+.B only
+real grouping construct is
+.BR "{ }" ;
+bare
+.RB "" "( )"
+typed with no
+.B left / right
+are ordinary
+.B text
+characters in real
+.IR eqn ,
+not delimiters (confirmed directly in
+.BR lex.c :
+.B getstr()
+does not stop scanning at
+.RB "" ( " or " )).
+.TP
+.BR "+ - = == != > < >= <= " "and bare juxtaposition"
+Ordinary hoc arithmetic, comparison, and multiplication.
+Real
+.IR eqn 's
+own grammar has
+.B none
+of this \(em
+.RI \*(lq eqn :
+box | eqn box\*(rq
+is just a sequence of boxes typeset side by side, with
+.B +
+itself being ordinary text, no different from any other word.
+Refusing every juxtaposition as unsupported would refuse nearly every
+real equation (an arithmetic operator, or "4ac"-style implicit
+multiplication, is exactly this), so this is a second new-semantics
+layer, on the same footing as
+.BR sup / over
+above.
+Precedence, loosest to tightest: compare, then
+.BR + / \- ,
+then
+.BR * / / /over /juxtaposition
+(left to right, equal precedence), then
+.BR sqrt /sub/sup/diacriticals.
+Every operator is wrapped in explicit hoc parens on the way out, so
+hoc's own precedence never has to agree with this parser's.
+.TP
+.BR sin ", " cos ", " tan ", " sinh ", " cosh ", " tanh ", " log ", " exp
+A real hoc function call, when the word is immediately followed by a
+.RB "" "{ ... }"
+or
+.B "left ( ... right )"
+group \(em the real
+.I eqn
+convention for a roman-set word next to a parenthesized box. The bare
+word alone is an ordinary hoc identifier otherwise, exactly as
+ambiguous as it already is in real
+.I eqn
+(nothing there distinguishes "x" the variable from "sin" the word
+either).
+.TP
+.B sub
+Folded into one hoc identifier: "x sub i" becomes the single name
+.BR x_i .
+Hoc has no array or index type (the same boundary
+.IR danby-tks-plan.md 's
+own
+.I Orbital
+family hits), so this is name-mangling, not real indexing \(em refused,
+with a clear error, unless both sides are already a simple bare name.
+.TP
+.BR hat ", " vec ", " dyad ", " dot ", " dotdot ", " bar ", " lowbar ", "
+.BR highbar ", " tilde ", " utilde ", " under
+Folded into an identifier the same way: "x hat" becomes
+.BR xhat .
+Same simple-name-only rule as
+.BR sub .
+.TP
+.BR size / font / roman / italic / bold / fat ", " fwd / up / back / down
+No-ops: parsed (to consume their own argument correctly) and
+discarded, keeping the box they wrap unchanged. Pure typesetting, no
+numeric meaning to preserve or drop.
+.SS "What is refused, and why"
+.TP
+.BR sum / prod / int / integral / union / inter
+No computational meaning even in real
+.I eqn
+\(em these are special
+.B characters
+drawn with sub/sup as visual limits, never evaluated. There is nothing
+here to translate, not merely nowhere to put the result.
+.TP
+.BR matrix / pile / lpile / cpile / rpile / col / lcol / ccol / rcol / above
+Need an array or matrix; hoc has none. The same boundary as
+.BR sub ,
+but too structural to name-mangle away.
+.TP
+.B mark/lineup
+Troff alignment constructs, no hoc meaning.
+.TP
+.B from/to
+Only meaningful attached to
+.BR sum / int / prod ,
+which have no hoc target either.
+.TP
+.BR define / tdefine / ndefine / ifdef / delim / gsize / gfont / include / copy / space
+.IR Eqn 's
+own macro/preprocessing layer. Out of scope: this library takes one
+plain expression string, not a full
+.BR .EQ / .EN
+document with its own macro system.
+.TP
+.B "quoted \(dq...\(dq text"
+A troff label, no hoc meaning.
+.SH SOURCE
+.B /module/eqn2hoc.m
+.br
+.B /appl/lib/eqn2hoc.b
+.SH SEE ALSO
+.IR hoc (2),
+.IR eqn2hoctest (1),
+.IR pde (2)
+.SH BUGS
+An
+.I eqn
+word that collides with one of hoc's own reserved words
+(if/while/for/func/proc/return/print/read) still reaches
+.BR hoc->compile() ,
+which refuses it on its own \(em not specially checked here.
+.IR Eqn 's
+own reserved-word table happens to include "if" and "for" as
+roman-typeset words, so this can occur with entirely ordinary-looking
+input.
+.PP
+Unary minus/plus require a space before the operand
+.RI ( \*(lq \- " b" \*(rq
+not
+.RI \*(lq \- b \*(rq )\c
+, because real
+.IR eqn 's
+own tokenizer (faithfully reproduced here) splits only on whitespace
+and a handful of special characters \(em
+.RI \*(lq \- b \*(rq
+with no space is one opaque token to real
+.I eqn
+too, not a minus sign followed by a name.
+.PP
+Comparison operators
+.RB ( == "" != "" < "" <= "" > "" >= )
+do not chain \(em
+.RI \*(lq a " < b < c" \*(rq
+is a syntax error (an unexpected trailing token), not
+.RI "(a<b)<c\ or\ a<b\ &&\ b<c."
+.PP
+No test exercises a real
+.BR .EQ / .EN
+document end to end (delimiters, multiple equations, macros) \(em only
+the inner expression syntax this library actually targets.

@@ -1,0 +1,72 @@
+.TH EQN2HOCTEST 1
+.SH NAME
+eqn2hoctest \- test eqn2hoc(2)'s translation by evaluating the result
+.SH SYNOPSIS
+.B eqn2hoctest
+.SH DESCRIPTION
+.B Eqn2hoctest
+translates real
+.IR eqn (7)
+expressions through
+.IR eqn2hoc (2),
+then
+.B evaluates
+each result through
+.IR hoc (2)
+and checks the actual number \(em not merely that a translation was
+produced.
+A translation that compiles but computes the wrong thing is worse than
+one that refuses outright; checking only that
+.B translate()
+returns
+.I nil
+error would not catch that.
+.PP
+Covers, with a real numeric check on each: exponentiation
+.RB ( sup ),
+division
+.RB ( over ),
+a full quadratic formula (nested
+.BR sqrt / over /unary-minus/+,
+checked against a real root of
+.IR x sup 2 " - 3x + 2" ),
+a known hoc builtin applied as a real function call
+.RB ( "sin { x }" ", " "sqrt { x }" ),
+.B left / right
+delimiters as plain grouping,
+.B sub
+folded into one identifier,
+a diacritical mark folded into one identifier, and
+.B sub
+immediately followed by
+.B sup
+on the same name.
+.PP
+Also covers five deliberate refusals with the specific error each
+should give:
+.BR sum / from / to
+(no computational meaning even in real
+.IR eqn ),
+.B matrix
+(no hoc array type),
+a quoted string (a troff label, not a value),
+.B over
+with nothing before it, and a
+.B sub
+whose subscript is not a simple name.
+.SH SOURCE
+.B /appl/cmd/eqn2hoctest.b
+.SH SEE ALSO
+.IR eqn2hoc (2),
+.IR hoc (2),
+.IR hoctest (1)
+.SH BUGS
+Checks the constructs
+.IR eqn2hoc (2)
+supports and the constructs it refuses, each with a real hand-computed
+expected value or a real matching error message \(em it does not fuzz
+the parser, and does not exercise every keyword
+.IR eqn2hoc (2)
+itself lists as unsupported (only a representative one from each of
+the reasons given there: no computational meaning, no array type, a
+troff-only construct, and a bare operator).

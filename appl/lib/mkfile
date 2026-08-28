@@ -47,6 +47,7 @@ TARG=\
 	disks.dis\
 	dividers.dis\
 	env.dis\
+	eqn2hoc.dis\
 	ether.dis\
 	exception.dis\
 	factotum.dis\
