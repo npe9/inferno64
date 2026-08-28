@@ -67,7 +67,20 @@ def load_symtab(path):
     return syms
 
 def resolve_all(syms):
-    Tsyms = sorted((v, n) for v, t, n in syms if t == "T")
+    # 'T' is a global (exported) text symbol; 't' is a local (static)
+    # one -- 6l emits both (this binary alone carries 2029 't' entries
+    # next to 1975 'T' ones), but this resolver only ever looked at
+    # 'T'.  That silently misattributed any pc landing inside a static
+    # function to whichever *global* symbol happened to precede it --
+    # this hunt hit that shape at least three times (mallocalign+299,
+    # cunique+28, pidalloc+95) before the tool itself, not the
+    # captures, turned out to be the actual gap: pidadd(), a real,
+    # named, present 't' symbol the whole time, was invisible to this
+    # function.  Every prior capture resolved through this function
+    # needs re-checking against the fixed version before trusting its
+    # "+offset (base ...)" as naming the real enclosing function.  See
+    # doc/inferno-ports.ms.
+    Tsyms = sorted((v, n) for v, t, n in syms if t in ("T", "t"))
     addrs = [v for v, n in Tsyms]
     names = [n for v, n in Tsyms]
     def resolve(addr):
