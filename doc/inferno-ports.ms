@@ -12286,6 +12286,83 @@ find.  One hit each in 30 boots -- noted as open leads per this
 round's frequency-driven discipline, not guessed at further this
 round.
 .NH 1
+Verifying the exact-match chain's own invariant, and a possible-misattribution lead
+.PP
+Aimed instrumentation at the still-open
+.CW poolalloc()
+size=0 lead from the previous section (a self-consistent
+.CW "_allocb:\ lim\ <\ base...\ msz\ 0"
+capture, reproduced twice across roughly 90 boots after
+.CW allocb.c Ns 's
+own double-evaluation bug was fixed):
+.CW poolalloc() Ns 's
+exact-match tree branch matches on
+.CW "tt->size\ ==\ size" ,
+then hands out
+.CW tt->fwd
+-- the next block chained at this size's tree bucket, per
+.CW pooladd() Ns 's
+own same-size chaining -- without ever re-verifying that
+.CW tt->fwd
+carries the same size
+.CW tt
+does.  Every other reader of this chain assumes that invariant holds
+by construction and never checks it either.  Added a check right
+there, panicking with both sizes and both pointers if it is ever
+violated -- this either confirms or rules out the leading hypothesis
+directly on the next capture, rather than requiring another
+resolve-and-reason cycle.
+.PP
+Built and boot-tested: 40 boots, 16 panics (40%, the upper end of but
+still within this round's established band, no regression).  The new
+check did not fire this batch, and neither did the size=0 signature
+itself -- consistent with its own established low frequency (roughly
+2 hits per 90-130 boots), not yet re-confirmed or refuted.
+.PP
+The same batch surfaced a new, single
+.CW "incref:\ bad\ r\ 0x0"
+resolving to
+.CW pidalloc+95 --
+but
+.CW proc.c Ns 's
+own
+.CW pidadd() ,
+called from
+.CW pidalloc() ,
+is
+.CW static
+and confirmed via the resolver's own symbol dump to carry NO
+.CW T
+symbol at all in this binary; it sits immediately before
+.CW pidalloc()
+in source order, so this offset may actually be inside
+.CW pidadd() Ns 's
+own compiled code, misattributed to the nearest preceding symbol the
+same way
+.CW mallocalign+299
+turned out to be, earlier in this hunt.  Neither of
+.CW pidadd() Ns 's
+own two
+.CW incref()
+calls should be able to fire on a nil pointer by a straightforward
+reading -- one is already nil-guarded, the other's operand is
+array-indexed and never nil by construction -- and
+.CW pidalloc() Ns 's
+own
+.CW incref(i)
+call is preceded by an unconditional dereference of the same
+.CW i
+.CW ( i->procindex\ =\ ... )
+that would need to survive first, plausible on this port only if
+that write lands in identity-mapped low memory rather than faulting
+-- which this kernel does map elsewhere for real-mode AP-bootstrap
+access
+.CW (squidboy.c Ns 's
+own
+.CW KADDR(0x467)
+trampoline write).  One hit, mechanism genuinely unclear either way
+-- recorded as a new open lead rather than guessed at.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
