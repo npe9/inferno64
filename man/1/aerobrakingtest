@@ -1,0 +1,91 @@
+.TH AEROBRAKINGTEST 1
+.SH NAME
+aerobrakingtest \- test aerobraking's eqn-driven rhs() against hand-computed values
+.SH SYNOPSIS
+.B aerobrakingtest
+.SH DESCRIPTION
+.B Aerobrakingtest
+checks
+.IR danby-aerobraking (1)'s
+own
+.BR rhs() " and " observables() ,
+now written as literal
+.IR eqn (7)
+strings rather than hand-coded Limbo arithmetic (see
+.IR eqn2hoc (2)),
+against values computed independently in Python before this file was
+written, for one representative in-atmosphere craft state.
+.PP
+Checks the central 1/r\(ha3 gravity term, the atmospheric drag term
+(density, then a shared drag factor, then two components - the same
+chain
+.IR danbyeqnall (1)
+already verified against
+.BR atmosphere->drag2() ),
+and that the "planet" body's own four state components stay fixed at
+zero (this model's
+.B Orbital
+state array carries a planet body that never moves, despite Orbital
+being the array/N-body family elsewhere - see
+.IR danby-aerobraking (1)'s
+own SOURCE section).
+.PP
+Deliberately does
+.B not
+compare against a second, separately loaded Orbital instance in the
+same process - see BUGS.
+.SH SOURCE
+.B /appl/cmd/aerobrakingtest.b
+.SH SEE ALSO
+.IR danby-aerobraking (1),
+.IR eqn2hoc (2),
+.IR orbital (2),
+.IR danbyeqnall (1)
+.SH BUGS
+An early version of this test loaded the eqn-driven
+.B aerobraking.dis
+.B and
+a byte-for-byte copy of the original hand-written Limbo implementation
+into the SAME process, to compare
+.B Model.rhs()
+directly - the same oracle-comparison pattern
+.IR danbyeqnall (1)
+uses successfully for Trajectory. It gave a silent FALSE PASS on a
+deliberately broken version: Limbo's
+.RI ( self " ref " Model )
+dot-method dispatch on an
+.I adt
+resolves through whichever module a caller's own
+.RB \*(lq "Model: import" "\*(rq"
+names at compile time, not dynamically per the object's actual
+.I origin
+\(em calling
+.B .rhs
+on a
+.B Model
+built by a
+.I second
+loaded instance silently ran the
+.I first
+instance's compiled function instead, operating on the second
+instance's own data. Confirmed directly: the same model, loaded and
+called in ISOLATION, gave the correct oracle value; loaded ALONGSIDE a
+second instance with one shared import, both sides silently returned
+the
+.I same
+(first instance's) value, including on a version with an injected
+sign-flip bug - a comparison that looked clean while comparing nothing
+at all. Ordinary module-function calls
+.RI ( m -> foo() ,
+not a
+.I self
+method) dispatch correctly per instance; only the
+.I adt
+self-method sugar is affected. This test avoids the pitfall by never
+loading two
+.B Orbital
+instances in the same process; a future test wanting a live
+Limbo-to-Limbo oracle comparison for a
+.I self
+method needs two separate process invocations, compared from outside
+(shell-level), not two loads in one process.

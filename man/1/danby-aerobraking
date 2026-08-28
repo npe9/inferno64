@@ -8,3 +8,17 @@ Central gravity produces the orbit while exponential atmosphere applies drag
 near planetary radius. Repeated periapsis passages lower speed and apoapsis.
 .SH SOURCE
 .B /appl/danby/plugin/aerobraking.b
+.PP
+Its
+.B rhs()
+is written as literal
+.IR eqn (7)
+strings (see
+.IR eqn2hoc (2)),
+not hand-coded Limbo arithmetic - both the central-gravity and
+atmospheric-drag terms, tied directly to the
+.IR orbital (2)
+interface with no separate
+.B Atmosphere
+module call. See
+.IR aerobrakingtest (1).
