@@ -16,9 +16,19 @@ clean nuke:V:
 #	for; mkconfig sets DISWORD and a 32 bit target's mkfile overrides
 #	it.  A board's mkfile passes it down when it builds its init.
 #
+#	-z: array[N] of a pointer-free type comes back with undefined
+#	non-pointer contents per newa's own documented contract (doc/
+#	dis.ms) -- -z emits newaz instead, zeroing it.  disinit.b:175's
+#	`b := array[64] of byte` followed by a short sys->read() left
+#	this port's pool arena's prior contents in the unread tail;
+#	pc64's GPF hunt traced a live, 20/25-boot, byte-for-byte
+#	identical "movp: bad dv-freed" crash to exactly that slice. See
+#	doc/inferno-ports.ms.
+#
 INCLD=\
 	-I$ROOT/module\
 	-W $DISWORD\
+	-z\
 
 %.dis:	%.b
 	limbo $INCLD -gw $stem.b

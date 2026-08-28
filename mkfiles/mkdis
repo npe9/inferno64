@@ -1,7 +1,25 @@
 BINTARG=${TARG:%=$DISBIN/%}
 MODDIR=$ROOT/module
 SYS_MODULE=${SYSMODULES:%=$MODDIR/%}
-LIMBOFLAGS=-I$MODDIR -W $DISWORD
+#
+#	-z: array[N] of a pointer-free type (real, int, byte) is
+#	documented (doc/dis.ms, "newa, newaz") to come back with
+#	undefined non-pointer contents -- newa's own contract, not an
+#	allocator defect.  -z emits newaz instead, which zeroes them.
+#	Already found, fixed and verified safe tree-wide on a sibling
+#	branch (session memory inferno-rio-array-zeroinit-bug: full appl
+#	rebuild, fem(2)/pde(2) results digit-for-digit identical, single-
+#	digit ms cost even at ~1GB) but never ported to this one -- this
+#	branch's own pc64 GPF hunt hit what looks like the same shape
+#	live: os/inferno/init/disinit.b:175's `b := array[64] of byte`
+#	followed by a short sys->read() leaves whatever this port's pool
+#	arena previously held in the unread tail, and a later slice/
+#	string/big conversion over that tail can hand destroy() an
+#	already-freed pointer (doc/inferno-ports.ms, "movp: bad dv-freed"
+#	-- 20/25 boots, identical address every time). See doc/inferno-
+#	ports.ms.
+#
+LIMBOFLAGS=-I$MODDIR -W $DISWORD -z
 
 #
 #	A module compiled for one Dis word size is not the module for the
