@@ -22,6 +22,28 @@ Type Treal = { 1, 0, 0, sizeof(REAL) };
 extern	Pool*	heapmem;
 extern	int	mutator;
 
+/*
+ * Same fix as alloc.c's D2BPC, same reason: D2B(b,dp)'s own
+ * getcallerpc(&dp) only names the real caller when dp is the
+ * enclosing function's own first parameter (see doc/inferno-ports.ms,
+ * "D2B's own caller pc was wrong in the four functions that need it
+ * most"). Both D2B uses in this file are mismatched: destroy()'s
+ * consistency check anchors on h (a local; destroy(void *v)'s real
+ * first parameter is v) and freelist()'s tail-loop check anchors on
+ * th (a local; freelist(Heap *h, int)'s real first parameter is h).
+ * D2B itself stays untouched (shared with os/osprey/kernlib/pool.c);
+ * D2BPC is local to this file, matching alloc.c's copy exactly except
+ * for the name, since C has no way to share a macro across
+ * translation units without a shared header this fix must not touch.
+ * pc64-only, temporary. See doc/inferno-ports.ms.
+ */
+#define D2BPC(b, dp, pc)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
+				if(b->magic != MAGIC_A && b->magic != MAGIC_I){\
+					b = ((Balign*)((char*)(dp)-sizeof(Balign)))->hdr; \
+					if(b->magic != MAGIC_A && b->magic != MAGIC_I)\
+						poolfault(dp, "alloc:D2B", pc);\
+				}
+
 void	(*heapmonitor)(int, void*, ulong);
 
 #define	BIT(bt, nb)	(bt & (1<<nb))
@@ -239,7 +261,7 @@ freelist(Heap *h, int swept)
 		 * keep panicking elsewhere, freelist() itself is cleared.
 		 * See doc/inferno-ports.ms.
 		 */
-		{ Bhdr *b; D2B(b, th); }
+		{ Bhdr *b; D2BPC(b, th, getcallerpc(&h)); }
 		/* same free-time clear as destroy()'s -- see its comment */
 		trackclear(th, poolmsize(heapmem, th));
 		poolfree(heapmem, th);
@@ -411,7 +433,7 @@ destroy(void *v)
 		abort();
 	}
 
-	{ Bhdr *b; D2B(b, h); }		/* consistency check */
+	{ Bhdr *b; D2BPC(b, h, getcallerpc(&v)); }		/* consistency check */
 
 	/*
 	 * A batch of alloc:D2B panics (pc64 GPF hunt, doc/inferno-

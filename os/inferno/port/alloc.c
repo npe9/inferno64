@@ -592,6 +592,38 @@ poolmsize(Pool *p, void *v)
 {
 	Bhdr *b;
 	uintptr size;
+	static uintptr mspc[16];
+	static int mspcn;
+
+	/*
+	 * Bisection probe: does destroy()'s own call into poolmsize()
+	 * (via trackclear(h, poolmsize(heapmem, h))) really land at the
+	 * destroy+703 offset the alloc:D2B captures keep naming as the
+	 * failing call, distinct from destroy+608 (poolfree()'s own,
+	 * already confirmed)? poolmsize() is shared (msize() alone calls
+	 * it before destroy() ever runs), so a single first-caller probe
+	 * isn't enough -- print each DISTINCT caller pc the first time
+	 * it's seen, capped, same pattern as notefree()'s own probe.
+	 * pc64-only, temporary, remove with the rest of this hunt's
+	 * probes. See doc/inferno-ports.ms.
+	 */
+	{
+		uintptr pc;
+		int j, dup;
+
+		pc = getcallerpc(&p);
+		dup = 0;
+		for(j = 0; j < mspcn; j++)
+			if(mspc[j] == pc){
+				dup = 1;
+				break;
+			}
+		if(!dup && mspcn < nelem(mspc)){
+			mspc[mspcn++] = pc;
+			print("poolmsize: new caller pc=%#p (seen %d distinct)\n",
+				pc, mspcn);
+		}
+	}
 
 	if(v == nil)
 		return 0;
