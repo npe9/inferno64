@@ -1,0 +1,73 @@
+.TH DANBYEQNTEST 1
+.SH NAME
+danbyeqntest \- test authoring Danby model equations in eqn(7), not hoc(2)
+.SH SYNOPSIS
+.B danbyeqntest
+.SH DESCRIPTION
+.B Danbyeqntest
+takes real physics formulas already living as Limbo in
+.IR appl/danby ,
+writes each one as an
+.IR eqn (7)
+string the way a textbook would set it, and checks that
+.IR eqn2hoc (2)
+plus
+.IR hoc (2)
+reproduce the SAME real Limbo function's own output \(em not a
+synthetic expression chosen to exercise
+.IR eqn2hoc (2)'s
+grammar (that is
+.IR eqn2hoctest (1)'s
+job), but the actual model physics this could replace.
+.PP
+One representative formula per Danby family, each checked against a
+real, hand-computed number:
+.TP
+.B Trajectory
+.IR appl/danby/ballistics.b 's
+own
+.BR acceleration() :
+speed
+.RI ( "sqrt vx sup 2 + vy sup 2" ),
+and both acceleration components (drag and lift, real
+.RI ( vx , vy , drag , lift ", " gravity )
+values).
+.TP
+.B Mechanism
+.IR appl/danby/pendulum.b 's
+gravity term,
+.RI \-( g / L )sin\ theta,
+at
+.IR theta " = 30 degrees - once with theta as a decimal, once written"
+.B "PI over 6"
+directly in the eqn source, resolving through hoc's own installed
+.B PI
+constant with no special-casing anywhere in
+.IR eqn2hoc (2).
+.TP
+.B Populationmodel
+.IR appl/danby/epidemic.b 's
+real SIR terms (infections, recoveries, and their difference) \(em the
+same formula
+.IR doc/danby-tks-plan.md
+already verified as hoc arithmetic, now authored as eqn instead.
+.TP
+.B Twospecies
+.IR appl/danby/ecology.b 's
+real Lotka-Volterra predator-prey terms, at that file's own real
+default parameters
+.RI ( "birth 1.5, predation 2.0, death 0.75" ).
+.SH SOURCE
+.B /appl/cmd/danbyeqntest.b
+.SH SEE ALSO
+.IR eqn2hoc (2),
+.IR eqn2hoctest (1),
+.IR hoc (2)
+.SH BUGS
+Checks one representative formula per family, not every plugin \(em the
+same scope decision
+.IR eqn2hoctest (1)
+makes for its own syntax coverage. Mechanism's pendulum check omits the
+real function's dry-friction/drive terms (a conditional on the sign of
+angular velocity, not a pure formula \(em out of scope for eqn the same
+way hoc itself has no conditional expression either).

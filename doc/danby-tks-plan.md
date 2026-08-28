@@ -271,6 +271,46 @@ with `dsusceptible = -infections`, `dinfectious = infections - recoveries`,
 statements, parsed once, evaluated every step, exactly as they would be typed
 at a `hoc` prompt.
 
+## Authoring these in eqn instead of hoc's own infix syntax
+
+Told directly: "do the various danby examples in eqn now rather than hoc."
+[[inferno-rio-eqn2hoc]] (`eqn2hoc(2)`, built separately) translates real
+`eqn(7)` math notation into hoc source - so a model's equations don't have
+to be typed in hoc's own C-like infix form at all; they can be written the
+way a textbook sets them, and reach the exact same compiled hoc `Expr` by
+one extra step (`eqn2hoc->translate()` before `hoc->compile()`).
+
+`appl/cmd/danbyeqntest.b` (new) checks this against one real formula per
+family - not a synthetic example, the actual Limbo function each would
+replace - each translated from eqn and evaluated, checked against the real
+function's own output:
+
+| family | real Limbo (`appl/danby/...`) | as eqn |
+| --- | --- | --- |
+| Trajectory | `ballistics.b`'s `speed := math->sqrt(vx*vx+vy*vy)` | `sqrt { vx sup 2 + vy sup 2 }` |
+| Trajectory | `ax := -drag*speed*vx-lift*spin*vy` | `- drag speed vx - lift spin vy` |
+| Mechanism | `pendulum.b`'s `-gravity/length*math->sin(angle)` | `- g over L sin { theta }` |
+| Populationmodel | `epidemic.b`'s `infections = contact*susceptible*infectious` | `contact susceptible infectious` |
+| Twospecies | `ecology.b`'s `d[0]=birth*q[0]-predation*q[0]*q[1]` | `birth prey - predation prey predators` |
+
+All ten checks (two per Trajectory/Populationmodel line, one per the
+others, plus the pendulum angle written both as a decimal and as `PI over
+6` - resolving through hoc's own installed `PI` constant with no special
+casing anywhere in `eqn2hoc`) match the real formulas exactly. Negative-
+control confirmed: temporarily breaking `eqn2hoc`'s unary-minus handling
+failed exactly the four checks that use it, with the wrong (positive)
+numbers, restored and reconfirmed.
+
+Bare juxtaposition (`drag speed vx`, `contact susceptible infectious`)
+is ordinary multiplication here, not an error - matches how these formulas
+already read as printed physics, and is exactly the same design point as
+this section's own opening correction: don't make the user write
+`call ballistics->acceleration(...)` or similar plumbing, accept the
+notation they'd already reach for. `pendulum.b`'s real dry-friction/drive
+terms (a conditional on the sign of angular velocity) are left out of the
+eqn version, same scope decision as everywhere else in this doc: not a
+pure formula, out of reach for a scalar expression language either way.
+
 ## What still needs a small declarative table - and what doesn't
 
 Equations are now a solved problem (above). Two things remain genuinely
