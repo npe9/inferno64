@@ -1,0 +1,128 @@
+.TH DANBYEQNALL 1
+.SH NAME
+danbyeqnall \- redo every Danby example surveyed so far as eqn(7), not just one per family
+.SH SYNOPSIS
+.B danbyeqnall
+.SH DESCRIPTION
+.B Danbyeqnall
+extends
+.IR danbyeqntest (1)
+(one representative formula per Danby family) to every model actually
+named and surveyed across the whole
+.I "danby-tks-plan"
+design thread: all 17
+.B Trajectory
+plugins, both
+.B Populationmodel
+examples, and both
+.B Twospecies
+examples.
+.PP
+Every
+.B Trajectory
+check compares the eqn-translated formula against the real plugin's own
+oracle function
+.RB ( ballistics->acceleration
+or
+.BR atmosphere->drag2 ),
+called directly with that plugin's own real
+.B parameter()
+values \(em not a hand-computed expected number, which would only prove
+arithmetic, not that this
+.I is
+the plugin's own physics.
+.TP
+.B "11 plugins, one shared call form"
+.RB ( ballistics ", " basketball ", " badminton ", " baseballpitch ", "
+.BR discus ", " flyball ", " golfdrive ", " javelin ", "
+.BR softballpitch ", " spinningball ")"
+all call
+.B ballistics->acceleration()
+with the same argument shape, different real constants only.
+.B Spinningball
+doesn't even load the
+.B Ballistics
+module \(em the same formula is written out inline in its own
+.BR rhs() ,
+checked against the same oracle since the two compute identically.
+.TP
+.B "tabletennis, knuckleball, skijump"
+Real per-plugin variations on the same formula, not just different
+constants:
+.B tabletennis
+negates lift (a topspin convention);
+.B knuckleball
+computes a time-dependent flutter force
+.RI ( "amplitude sin( omega t )" )
+as its own small eqn expression first, then feeds the result into the
+same
+.I ay
+formula as an ordinary bound value;
+.B skijump
+wind-shifts
+.I vx
+.RI ( "relativevx = vx + wind" )
+before the same acceleration call. Each is checked exactly as its own
+real plugin computes it, chaining compiled eqn expressions the way
+.IR doc/danby-tks-plan.md 's
+own hoc-adapter design calls for.
+.TP
+.B "icbmrange, skylab"
+The
+.B atmosphere->drag2
+formula (density, then a shared drag factor, then two components),
+each step its own eqn expression, checked against the real function.
+Assumes altitude
+.RI \(>= 0
+(density()'s own one piecewise clamp \(em out of scope, same reasoning
+as
+.IR danbyeqntest (1)'s
+pendulum friction term).
+.B Reentry
+and
+.B rocket2d
+also use
+.B atmosphere->drag2 ,
+but add their own piecewise terms (a speed>0 lift correction; a
+burn-time cutoff in
+.BR propulsion->thrustacceleration )
+\(em named here, not silently skipped, but not checked.
+.PP
+.B Populationmodel
+and
+.B Twospecies
+have no separate oracle module (their rhs is inline in the plugin
+itself), so those checks use hand-computed values, same as
+.IR danbyeqntest (1):
+.B vaccination
+(identical SIR dynamics to
+.B epidemic ,
+plus a real, unomitted
+.RI "d(vaccinated)=0"
+line) and
+.B competition
+(a genuinely different Lotka-Volterra variant \(em real competition,
+not predator-prey \(em at its own real default parameters).
+.SH SOURCE
+.B /appl/cmd/danbyeqnall.b
+.SH SEE ALSO
+.IR danbyeqntest (1),
+.IR eqn2hoc (2),
+.IR hoc (2)
+.SH BUGS
+Covers every model named across the design thread except Mechanism's
+.B simplependulum
+(already in
+.IR danbyeqntest (1),
+not repeated) and the Flight3d family
+.RB ( soccerkick ", " cricketbowl ", " cricketswing ", " badfootball ,
+all using
+.BR ballistics->acceleration3 ,
+3-D drag+Magnus) \(em out of scope here since Flight3d was never named
+in the design thread this redo follows.
+.PP
+Each Trajectory state is a single representative
+.RI ( vx , vy ,
+altitude) point, not a trajectory integrated over time \(em this
+checks that the per-step acceleration formula is right, not that a
+full simulation run matches.

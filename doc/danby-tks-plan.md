@@ -311,6 +311,61 @@ terms (a conditional on the sign of angular velocity) are left out of the
 eqn version, same scope decision as everywhere else in this doc: not a
 pure formula, out of reach for a scalar expression language either way.
 
+### Redone in full: every model named across this whole design thread
+
+Told directly: "redo all the danby examples using the eqn approach" -
+one representative per family (above) generalized to every model this
+doc has actually surveyed, in `appl/cmd/danbyeqnall.b`. Scoped first
+(Trajectory alone has 17 plugins, Mechanism 70, Populationmodel 40,
+Twospecies 10 - doing literally all ~132 non-Orbital plugins was offered
+and explicitly declined in favor of the named/surveyed set): all 17
+Trajectory plugins (cheap - one shared oracle function, real constants
+differ), both Populationmodel examples (epidemic, vaccination), both
+Twospecies examples (ecology, competition); Mechanism's `simplependulum`
+stays as already covered above, not repeated.
+
+Every Trajectory check compares against the plugin's own REAL oracle
+function (`ballistics->acceleration` or `atmosphere->drag2`), called
+directly with that plugin's own real `parameter()` values - stronger
+than a hand-computed number, since it proves the eqn formula IS that
+plugin's physics, not just correct arithmetic. Real per-plugin variation
+found and handled, not glossed over: `tabletennis` negates lift (a
+topspin convention); `knuckleball` has a genuine time-dependent flutter
+force (`amplitude sin(omega t)`), computed as its own small eqn
+expression and chained into the acceleration formula as an ordinary
+bound value; `skijump` wind-shifts `vx` before the same call;
+`spinningball` doesn't even load the `Ballistics` module (same formula,
+written inline) - checked against the same oracle since they compute
+identically. `icbmrange`/`skylab` cover the second real formula family
+(`atmosphere->drag2`'s density/drag chain); `reentry`/`rocket2d` use the
+same oracle but add their own piecewise terms (a speed>0 lift
+correction; a burn-time cutoff), named rather than silently skipped, not
+checked - the same "real complexity beyond a pure formula" scope
+decision as `pendulum.b`'s dry friction.
+
+All 35 checks (30 Trajectory - 15 plugins x 2 (ax,ay), oracle-compared -
+plus 3 vaccination and 2 competition, hand-computed) match exactly.
+Two real arithmetic mistakes were caught and fixed BEFORE the test ever
+ran, by hand-verifying the vaccination/competition expected values with
+a plain calculator once suspicion was warranted (no oracle exists for
+those two families) - both off by a missing factor, same class of
+mistake the quadratic-formula example above already caught once. A
+THIRD mistake was caught the same way immediately afterward: this
+paragraph's own first draft claimed "32 checks... 26 Trajectory" -
+plain miscounting, corrected by actually running `grep -c "^ok:"`
+against the real output rather than re-deriving the number by hand a
+second time.
+
+Negative-control confirmed again: temporarily breaking `eqn2hoc`'s
+`sup` (`^`) implementation failed 29 of the 30 Trajectory checks (every
+one whose formula touches `speed = sqrt(...)`, not just the ones with
+an explicit `^`) - the one survivor, `skylab`'s `ay`, has `vy=0` in its
+own real initial state, so `factor*vy` stays exactly 0 regardless of
+whether `factor` itself is right, a real example of a check that LOOKS
+like it passed but was never exercising the broken code path at that
+particular input. Restored and reconfirmed - `danbyeqntest`/
+`eqn2hoctest`/`hoctest`/`pdehoctest` all stayed green throughout.
+
 ## What still needs a small declarative table - and what doesn't
 
 Equations are now a solved problem (above). Two things remain genuinely

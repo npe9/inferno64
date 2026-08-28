@@ -55,6 +55,7 @@ TARG=\
 	cp.dis\
 	cpu.dis\
 	crypt.dis\
+	danbyeqnall.dis\
 	danbyeqntest.dis\
 	date.dis\
 	dbfs.dis\
