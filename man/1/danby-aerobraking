@@ -25,27 +25,18 @@ The script is not parsed into a structure and then acted on; it is
 .I executed
 one line at a time, like a shell script.
 .B Cmd
-is a command dispatcher, the same shape as
-.IR tk (2)'s
+tokenizes each line and passes the words to whichever parser owns
+that vocabulary, stopping at the first that claims it \(em it does
+.I not
+recognize or act on any equation itself. Most of the vocabulary
+(.BR param /.BR maxtime /.BR state /.BR derivative /.BR eq /.BR observable )
+belongs to
+.IR hoc (2)'s
 own
-.B tk->cmd()
-and
-.IR plot (2)'s
-own
-.BR Plotter.cmd() ,
-and each line takes effect immediately as it runs \(em compiling its
-own
-.IR eqn (7)
-expression right there, growing the running parameter/state/equation
-tables right there \(em rather than being staged into a list for a
-separate pass afterward. A
-.B derivative
-line's matching
-.B state
-line must therefore already have run, the same "define before use"
-order any ordinary script already requires.
-.SS "The script's own command language"
-One command per line:
+.B modelcmd()
+(see
+.IR hoc (2)
+for that language in full); this file's own small remainder is:
 .TP
 .BI "title " TEXT
 Rest of the line, verbatim.
@@ -56,49 +47,6 @@ Rest of the line, verbatim.
 One value per
 .B bodylabels
 word, same order.
-.TP
-.BI "param " LABEL " " DEFAULT " " MIN " " MAX
-Repeatable; also becomes a real Tk scale widget, live-adjustable while
-the model runs.
-.TP
-.BI "maxtime " NUM
-.TP
-.BI "state " NAME " " EXPR ...
-Repeatable; declares one named state variable. Its position among all
-.B state
-commands run so far is its index in the state/derivative arrays.
-.I EXPR
-is its initial value, an
-.IR eqn (7)
-expression that may reference any
-.BR param 's
-own name.
-.TP
-.BI "derivative " NAME " " EXPR ...
-Repeatable, one per
-.B state
-command, matched by
-.IR NAME .
-.I EXPR
-may reference any state's own name, any param, or any
-.BR eq .
-.TP
-.BI "eq " NAME " " EXPR ...
-Repeatable; a named intermediate quantity, evaluated in declaration
-order before every
-.BR derivative ,
-so a later
-.B eq
-or any
-.B derivative
-may reference an earlier
-.B eq
-by name.
-.TP
-.BI "observable " LABEL " " EXPR ...
-Repeatable; same binding as
-.BR derivative / eq .
-Exactly two required \(em the diagnostic plot always shows two.
 .TP
 .BI "graph " TEXT
 Repeatable, rest of the line verbatim, passed straight to
@@ -120,25 +68,29 @@ own
 .B bind()
 unconditionally replaces a table with a fresh, empty one, so
 reissuing it every redraw would silently erase every appended data
-point right after it was recorded.
+point right after it was recorded. Deciding WHEN each graph command
+should run is this app's own business (worked out once a
+.IR plot (2)
+instance exists, which
+.IR hoc (2)
+has no reason to know about); the command text itself is entirely
+.IR plot (2)'s
+language, untouched here.
 .PP
-Every
-.I EXPR
-is
-.IR eqn (7)
-syntax, compiled once, when its command runs, via
-.IR hoc (2)'s
-own
-.BR compileeqn() ,
-which does the eqn(7)\(->hoc(2) translation internally \(em this file
-never loads or names
+This file never touches a
+.B "ref Hoc->Expr"
+or
+.BR Sym ,
+never compiles anything, and never loads or names
 .IR eqn2hoc (2)
-itself. Every simulation step only rebinds symbols and evaluates the
-already-compiled trees.
+\(em it only ever reads the plain data
+.IR hoc (2)
+hands back once a script has finished running (param labels/values/
+bounds, observable labels, state count, max time) to build its Tk
+sliders and drive its own integration loop.
 .SH SOURCE
 .B /appl/danby/aerobraking.b
 .SH SEE ALSO
-.IR eqn2hoc (2),
 .IR hoc (2),
 .IR plot (2),
 .IR tk (2),

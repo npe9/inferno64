@@ -3,52 +3,30 @@ implement Aerobraking;
 # aerobraking - one file, nothing else: no plugin, no library, no
 # harness. The problem (central 1/r^3 gravity plus atmospheric drag -
 # the same formula danbyeqnall(1) already verified against the real
-# Atmosphere module) is specified in eqn(7) - this file never loads or
-# names eqn2hoc(2) itself, it just hands eqn source straight to
-# hoc->compileeqn(), which does the eqn(7)->hoc(2) translation
-# internally (see module/hoc.m's own comment on it); the diagnostic
-# plot is specified in plot(2)'s own graph command language; the
-# interface (parameter sliders, pause/reset) is real Tk, built
-# directly from the same "param" declarations the physics uses.
+# Atmosphere module) is specified in eqn(7); the diagnostic plot is
+# specified in plot(2)'s own graph command language; the interface
+# (parameter sliders, pause/reset) is real Tk, built directly from the
+# same "param" declarations the physics uses.
 #
-# SPEC below is not a document that gets parsed into a structure and
-# then acted on - it is a SCRIPT: cmd() is a real command dispatcher,
-# the same shape as tk->cmd()/Plotter.cmd() (one line in, an error
-# string or nil out), and execspec() just feeds SPEC to it one line at
-# a time, exactly as if it were a shell script being run - each line
-# takes effect immediately (compiling its own eqn(7) expression right
-# there, growing the running parameter/state/eq tables right there),
-# not staged into lists for a separate validation pass at the end.
-# There is no separate module interface, no separate parsing library,
-# and no separate harness loaded by path - this command IS the whole
-# thing, and its own command language is:
+# SPEC below is a SCRIPT, not a document parsed into a structure and
+# then acted on: cmd() is a command dispatcher, the same shape as
+# tk->cmd()/Plotter.cmd(), and execspec() just feeds SPEC to it one
+# line at a time. But this file does NOT parse the model's own
+# equation vocabulary itself - param/maxtime/state/derivative/eq/
+# observable all mean "bind a name to a compiled expression in a
+# symbol table", which is hoc(2)'s OWN vocabulary (see module/hoc.m's
+# comment on modelcmd()), not this app's data. cmd() below only ever
+# handles the handful of lines that ARE this app's own concern -
+# title/bodylabels/mass (plain data) and graph (plot(2)'s own
+# language, collected here only because timing which graph commands
+# run once vs. every redraw is this app's business, not hoc's or
+# plot's) - and routes every other line to hoc->modelcmd(), the same
+# way a shell dispatches its own builtins first and an external
+# command otherwise:
 #
 #   title TEXT                      - rest of the line, verbatim
 #   bodylabels WORD WORD ...
 #   mass NUM NUM ...                - one per body, same count/order as bodylabels
-#   param LABEL DEFAULT MIN MAX     - repeatable; also becomes a real
-#                                      Tk scale widget, live-adjustable
-#   maxtime NUM
-#   state NAME EXPR...              - repeatable; one named state
-#                                      variable (declaration order is
-#                                      its state[]/derivative[] index)
-#                                      and EXPR, its initial value (may
-#                                      reference any param)
-#   derivative NAME EXPR...         - repeatable, one per state line,
-#                                      matched by NAME - the matching
-#                                      "state NAME ..." line must come
-#                                      first, the same "define before
-#                                      use" order an ordinary script
-#                                      already requires
-#   eq NAME EXPR...                 - repeatable; a named intermediate
-#                                      quantity, evaluated in
-#                                      declaration order before every
-#                                      derivative, so a later eq or any
-#                                      derivative may reference an
-#                                      earlier eq by name
-#   observable LABEL EXPR...        - repeatable; same binding, exactly
-#                                      two required (the diagnostic
-#                                      plot always shows two)
 #   graph TEXT                      - repeatable, rest of the line
 #                                      verbatim, passed straight to
 #                                      plot(2)'s own Plotter.cmd() -
@@ -67,14 +45,15 @@ implement Aerobraking;
 #                                      chased to plot.b's own source,
 #                                      not assumed)
 #
-# Every EXPR is eqn(7) syntax, translated to hoc(2) source and compiled
-# ONCE, when its command runs; every step only rebinds symbols and
-# eval()s the already-compiled trees. The "planet" body's four state
-# components (x0,y0,vx0,vy0) never move - a real property of this
-# specific model (found by reading its original Limbo directly, not
-# assumed from the Orbital family's usual N-body shape - see
-# doc/danby-tks-plan.md's own correction), not something this command
-# language requires.
+# Everything else - param/maxtime/state/derivative/eq/observable - is
+# hoc(2)'s own command language; see module/hoc.m for that vocabulary.
+# This file never touches a ref Hoc->Expr, never compiles anything,
+# and never loads or names eqn2hoc(2) - hoc(2) does all of that
+# internally. The "planet" body's four state components (x0,y0,vx0,
+# vy0) never move - a real property of this specific model (found by
+# reading its original Limbo directly, not assumed from the Orbital
+# family's usual N-body shape - see doc/danby-tks-plan.md's own
+# correction), not something the command language requires.
 
 include "sys.m";
 	sys: Sys;
@@ -167,21 +146,23 @@ bg, fg: ref Image;
 bodycolour: array of ref Image;
 buffer: ref Image;
 
+# This app's OWN data - title/bodylabels/mass/graphcmds - plus the
+# param/observable tables, which are hoc(2)'s own live arrays (see
+# execspec() below: hoc->modelparams()/modelobslabels() hand back the
+# SAME arrays hoc->modelcmd() built and hoc->modelrhs()/
+# modelobservables() read from - not copies, so writing parameter[i]
+# from a Tk slider callback rebinds hoc's own running value directly).
+# Nothing here is a ref Hoc->Expr/Sym - this file has no visibility
+# into how any equation is represented, only into the plain data hoc
+# hands back once a script has finished running.
 title: string;
 bodylabels: array of string;
 mass: array of real;
+graphcmds: array of string;
 paramlabels: array of string;
 parameter, minima, maxima: array of real;
-maxtime: real;
-graphcmds: array of string;
-nstate: int;
-statenames: array of string;
-initexprs, derivexprs: array of ref Hoc->Expr;
-eqnames: array of string;
-eqexprs: array of ref Hoc->Expr;
 observablelabels: array of string;
-obsexprs: array of ref Hoc->Expr;
-statesyms, paramsyms, eqsyms: array of ref Hoc->Sym;
+maxtime: real;
 
 state: array of real;
 work: ref Numerics->Workspace;
@@ -203,8 +184,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	str = load String String->PATH;
+	hoc = load Hoc Hoc->PATH;
 	if(sys == nil || draw == nil || tk == nil || tkclient == nil ||
-			numerics == nil || plot == nil || str == nil)
+			numerics == nil || plot == nil || str == nil || hoc == nil)
 		raise "fail:Aerobraking: missing support module";
 	err := execspec(SPEC);
 	if(err != nil)
@@ -325,7 +307,9 @@ run(argv: list of string): (string, int)
 		sys = load Sys Sys->PATH;
 	if(str == nil)
 		str = load String String->PATH;
-	if(sys == nil || str == nil)
+	if(hoc == nil)
+		hoc = load Hoc Hoc->PATH;
+	if(sys == nil || str == nil || hoc == nil)
 		return (SPEC, 0);
 	err := execspec(SPEC);
 	return (SPEC, err == nil);
@@ -357,12 +341,18 @@ handleparam(word0: string, rest: list of string)
 	reset();
 }
 
-# --- the spec's own command language: cmd() is a real dispatcher, the
-# same shape as tk->cmd()/Plotter.cmd() elsewhere in this file, and
-# execspec() just runs SPEC through it one line at a time, like a shell
-# script - every command takes effect immediately, growing whatever
-# tables it owns right there, instead of staging everything into lists
-# for a second pass afterward. ---
+# --- running SPEC as a script: cmd() below does not parse anything -
+# it tokenizes a line (the mechanical, generic act of splitting a
+# string into words, not "the command language") and PASSES those
+# words to whichever parser owns that vocabulary, stopping at the
+# first that claims it. hoc(2) tries first, since param/maxtime/state/
+# derivative/eq/observable are its own vocabulary (see module/hoc.m's
+# comment on modelcmd()) - this file has no case/keyword recognition
+# of that vocabulary anywhere, and never touches a ref Hoc->Expr/Sym.
+# appcmd() owns the small remainder (title/bodylabels/mass/graph) that
+# really is this app's own data, not equation semantics. Both parsers
+# take the SAME already-tokenized words array cmd() built once - no
+# line gets tokenized twice. ---
 
 specwords(line: string): array of string
 {
@@ -374,11 +364,53 @@ specwords(line: string): array of string
 	return a;
 }
 
-# joinwords: eqn(7)'s own grammar is whitespace-insensitive between
-# tokens, so re-joining already-tokenized words with single spaces
-# gives eqn2hoc an equivalent source string to whatever was actually
-# written. Also used for "graph" lines, which aren't eqn(7) at all but
-# benefit from the same "rest of the line, verbatim" handling.
+cmd(line: string): string
+{
+	a := specwords(line);
+	if(len a == 0)
+		return nil;
+	(claimed, err) := hoc->modelcmd(a);
+	if(claimed)
+		return err;
+	(claimed, err) = appcmd(a);
+	if(claimed)
+		return err;
+	return "unknown command: "+a[0];
+}
+
+# appcmd: this app's OWN small vocabulary - a window title, body
+# labels, masses, and plot(2) graph commands (collected here, not
+# forwarded to plot(2) live, only because WHEN each one should run -
+# once at setup vs. every redraw - is this app's own business, worked
+# out in redraw() below; the graph command text itself is entirely
+# plot(2)'s language, untouched here). Same claimed/not-claimed shape
+# modelcmd() uses, so cmd() above never needs to know which parser
+# will end up handling a given line.
+appcmd(a: array of string): (int, string)
+{
+	case a[0] {
+	"title" =>
+		title = joinwords(a, 1);
+		return (1, nil);
+	"bodylabels" =>
+		for(i := 1; i < len a; i++)
+			bodylabels = addstr(bodylabels, a[i]);
+		return (1, nil);
+	"mass" =>
+		for(i := 1; i < len a; i++)
+			mass = addreal(mass, real a[i]);
+		return (1, nil);
+	"graph" =>
+		if(len a < 2)
+			return (1, "graph: usage: graph TEXT...");
+		graphcmds = addstr(graphcmds, joinwords(a, 1));
+		return (1, nil);
+	}
+	return (0, nil);
+}
+
+# joinwords: rejoins already-tokenized words with single spaces - used
+# for "title"'s and "graph"'s own "rest of the line, verbatim" rule.
 joinwords(a: array of string, from: int): string
 {
 	s := "";
@@ -390,144 +422,6 @@ joinwords(a: array of string, from: int): string
 	return s;
 }
 
-# cmd: run one spec line, right now. Every branch either sets state
-# that only ever has one legal value (title, maxtime) or grows one of
-# the running tables by exactly one element - there is no separate
-# "collect list, reverse into array" step: this IS the array, one
-# element longer each time its command runs.
-cmd(line: string): string
-{
-	a := specwords(line);
-	if(len a == 0)
-		return nil;
-	case a[0] {
-	"title" =>
-		title = joinwords(a, 1);
-	"bodylabels" =>
-		for(i := 1; i < len a; i++)
-			bodylabels = addstr(bodylabels, a[i]);
-	"mass" =>
-		for(i := 1; i < len a; i++)
-			mass = addreal(mass, real a[i]);
-	"param" =>
-		if(len a != 5)
-			return "param: usage: param LABEL DEFAULT MIN MAX";
-		paramlabels = addstr(paramlabels, a[1]);
-		parameter = addreal(parameter, real a[2]);
-		minima = addreal(minima, real a[3]);
-		maxima = addreal(maxima, real a[4]);
-		paramsyms = addsym(paramsyms, hoc->symbol(a[1]));
-	"maxtime" =>
-		if(len a != 2)
-			return "maxtime: usage: maxtime NUM";
-		maxtime = real a[1];
-	"state" =>
-		if(len a < 3)
-			return "state: usage: state NAME EXPR...";
-		(e, err) := compileone(joinwords(a, 2));
-		if(err != nil)
-			return "state "+a[1]+": "+err;
-		statenames = addstr(statenames, a[1]);
-		statesyms = addsym(statesyms, hoc->symbol(a[1]));
-		initexprs = addexpr(initexprs, e);
-		derivexprs = addexpr(derivexprs, nil); # filled in by "derivative"
-	"derivative" =>
-		if(len a < 3)
-			return "derivative: usage: derivative NAME EXPR...";
-		idx := indexof(statenames, a[1]);
-		if(idx < 0)
-			return "derivative "+a[1]+": no \"state "+a[1]+" ...\" command yet - state must come first";
-		(e, err) := compileone(joinwords(a, 2));
-		if(err != nil)
-			return "derivative "+a[1]+": "+err;
-		derivexprs[idx] = e;
-	"eq" =>
-		if(len a < 3)
-			return "eq: usage: eq NAME EXPR...";
-		(e, err) := compileone(joinwords(a, 2));
-		if(err != nil)
-			return "eq "+a[1]+": "+err;
-		eqnames = addstr(eqnames, a[1]);
-		eqsyms = addsym(eqsyms, hoc->symbol(a[1]));
-		eqexprs = addexpr(eqexprs, e);
-	"observable" =>
-		if(len a < 3)
-			return "observable: usage: observable LABEL EXPR...";
-		(e, err) := compileone(joinwords(a, 2));
-		if(err != nil)
-			return "observable "+a[1]+": "+err;
-		observablelabels = addstr(observablelabels, a[1]);
-		obsexprs = addexpr(obsexprs, e);
-	"graph" =>
-		if(len a < 2)
-			return "graph: usage: graph TEXT...";
-		graphcmds = addstr(graphcmds, joinwords(a, 1));
-	* =>
-		return "unknown command: "+a[0];
-	}
-	return nil;
-}
-
-# execspec: the shell that runs the script. hoc(2) is reset once,
-# before the first command, exactly as a real shell starts with a
-# fresh environment; everything else this function does is check
-# conditions that can only be known once the whole script has run
-# (every state line got its matching derivative, etc) - it does not
-# reach into any one command's own effect.
-execspec(spec: string): string
-{
-	hoc = load Hoc Hoc->PATH;
-	if(hoc == nil)
-		return "cannot load hoc(2)";
-	hoc->reset();
-	maxtime = 0.0;
-
-	for(rest := spec; rest != nil;){
-		(line, tail) := str->splitl(rest, "\n");
-		if(tail != nil)
-			tail = tail[1:];
-		rest = tail;
-		err := cmd(line);
-		if(err != nil)
-			return err;
-	}
-
-	if(title == nil)
-		return "spec has no title command";
-	if(len mass != len bodylabels)
-		return "mass: must have exactly one value per bodylabels word";
-	if(maxtime <= 0.0)
-		return "spec has no maxtime command";
-	nstate = len statenames;
-	if(nstate == 0)
-		return "spec has no state commands";
-	for(i := 0; i < nstate; i++)
-		if(derivexprs[i] == nil)
-			return "state "+statenames[i]+": no matching derivative command";
-	return nil;
-}
-
-# compileone: hoc(2) itself does the eqn(7)->hoc translation now (see
-# hoc->compileeqn()'s own comment in module/hoc.m) - this app never
-# loads or names eqn2hoc(2) at all, it just hands hoc the eqn source
-# straight from the spec.
-compileone(eqnsrc: string): (ref Hoc->Expr, string)
-{
-	return hoc->compileeqn(eqnsrc);
-}
-
-indexof(a: array of string, name: string): int
-{
-	for(i := 0; i < len a; i++)
-		if(a[i] == name)
-			return i;
-	return -1;
-}
-
-# addstr/addreal/addexpr/addsym: grow an array by exactly one element.
-# Limbo arrays are fixed-size, so this is the one place that pays for
-# "the running table is always exactly as long as the script has run
-# so far" - a copy per command, not per redraw or per step.
 addstr(a: array of string, s: string): array of string
 {
 	n := len a;
@@ -548,75 +442,58 @@ addreal(a: array of real, v: real): array of real
 	return r;
 }
 
-addexpr(a: array of ref Hoc->Expr, e: ref Hoc->Expr): array of ref Hoc->Expr
+# execspec: the shell that runs the script, one line at a time, via
+# cmd() above. hoc(2)'s own model-script tables are reset once, before
+# the first line, exactly as a real shell starts with a fresh
+# environment; everything else this function does is check conditions
+# that can only be known once the WHOLE script has run (every state
+# got its matching derivative - hoc->modelcheck(), since only hoc(2)
+# has visibility into its own tables; every param/observable count
+# looks right - this app's own data, fetched from hoc's accessors once
+# the script is done) - it does not reach into any one line's own
+# effect.
+execspec(spec: string): string
 {
-	n := len a;
-	r := array[n+1] of ref Hoc->Expr;
-	for(i := 0; i < n; i++)
-		r[i] = a[i];
-	r[n] = e;
-	return r;
-}
+	hoc->modelreset();
+	title = nil;
+	bodylabels = nil;
+	mass = nil;
+	graphcmds = nil;
 
-addsym(a: array of ref Hoc->Sym, s: ref Hoc->Sym): array of ref Hoc->Sym
-{
-	n := len a;
-	r := array[n+1] of ref Hoc->Sym;
-	for(i := 0; i < n; i++)
-		r[i] = a[i];
-	r[n] = s;
-	return r;
-}
+	for(rest := spec; rest != nil;){
+		(line, tail) := str->splitl(rest, "\n");
+		if(tail != nil)
+			tail = tail[1:];
+		rest = tail;
+		err := cmd(line);
+		if(err != nil)
+			return err;
+	}
 
-# --- driving the parsed spec: bind, eval, exactly hoc(2)'s own
-# "compile once, resolve symbols once" usage ---
-
-bindparams()
-{
-	for(i := 0; i < len paramsyms; i++)
-		paramsyms[i].val = parameter[i];
-}
-
-modelinitialstate(): array of real
-{
-	bindparams();
-	r := array[nstate] of real;
-	for(i := 0; i < nstate; i++)
-		r[i] = hoc->eval(initexprs[i]);
-	return r;
-}
-
-rhs(nil: real, values, derivative: array of real)
-{
-	bindparams();
-	i: int;
-	for(i = 0; i < nstate; i++)
-		statesyms[i].val = values[i];
-	for(i = 0; i < len eqexprs; i++)
-		eqsyms[i].val = hoc->eval(eqexprs[i]);
-	for(i = 0; i < nstate; i++)
-		derivative[i] = hoc->eval(derivexprs[i]);
-}
-
-modelobservables(values: array of real): array of real
-{
-	bindparams();
-	i: int;
-	for(i = 0; i < nstate; i++)
-		statesyms[i].val = values[i];
-	for(i = 0; i < len eqexprs; i++)
-		eqsyms[i].val = hoc->eval(eqexprs[i]);
-	r := array[len obsexprs] of real;
-	for(i = 0; i < len obsexprs; i++)
-		r[i] = hoc->eval(obsexprs[i]);
-	return r;
+	if(title == nil)
+		return "spec has no title command";
+	if(len mass != len bodylabels)
+		return "mass: must have exactly one value per bodylabels word";
+	maxtime = hoc->modelmaxtime();
+	if(maxtime <= 0.0)
+		return "spec has no maxtime command";
+	if(len hoc->modelstatenames() == 0)
+		return "spec has no state commands";
+	err := hoc->modelcheck();
+	if(err != nil)
+		return err;
+	(paramlabels, parameter, minima, maxima) = hoc->modelparams();
+	observablelabels = hoc->modelobslabels();
+	if(len observablelabels != 2)
+		return "spec must have exactly two observable commands";
+	return nil;
 }
 
 # --- integration and drawing ---
 
 reset()
 {
-	state = modelinitialstate();
+	state = hoc->modelinitialstate();
 	if(len state != 4*len mass)
 		raise "fail:Aerobraking: state size";
 	work = numerics->workspace(len state);
@@ -633,7 +510,7 @@ reset()
 
 step()
 {
-	numerics->rk4(work,rhs,t,0.0025,state);
+	numerics->rk4(work,hoc->modelrhs,t,0.0025,state);
 	t += 0.0025;
 	if(t >= maxtime){
 		finished = 1;
@@ -654,7 +531,7 @@ record()
 	trailnext = (trailnext+1)%Ntrail;
 	if(trailcount < Ntrail)
 		trailcount++;
-	values := modelobservables(state);
+	values := hoc->modelobservables(state);
 	for(i = 0; i < 2; i++){
 		magnitude := values[i];
 		if(magnitude < 0.0)
@@ -701,7 +578,7 @@ redraw()
 	gerr(graph.cmd(sys->sprint("scale diagnostics x 0 %.8g",tmax)));
 	gerr(graph.cmd(sys->sprint("scale diagnostics y %.8g %.8g reverse",-ymax,ymax)));
 	graph.draw();
-	values := modelobservables(state);
+	values := hoc->modelobservables(state);
 	status := "running";
 	if(paused)
 		status = "paused";
