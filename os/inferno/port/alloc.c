@@ -169,7 +169,15 @@ notefree(void *v, uintptr pc)
 	freehistn++;
 }
 
-static void
+/*
+ * Non-static so libinterp/xec.c's badptrslot() can also check the
+ * ring, not just _poolfault()'s own call site -- the two genuine
+ * "dv-freed" captures (doc/inferno-ports.ms, "Two genuine captures
+ * with the corrected checker") want to know who freed the block
+ * first, the same question this ring already answers for the native
+ * pool allocator's own double-frees. pc64-only, temporary.
+ */
+void
 printfreehist(void *v)
 {
 	int i, n;

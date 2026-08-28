@@ -596,7 +596,9 @@ OP(movp)
 				db = ((Balign*)((char*)dh - sizeof(Balign)))->hdr;
 				if(db->magic != MAGIC_A && db->magic != MAGIC_I){
 					extern void (*auditmemloc)(char*, void*);
+					extern void printfreehist(void*);
 					auditmemloc("dv-freed:D2H(dv)", dh);
+					printfreehist(dh);
 					badptrslot(dv, R.d, "dv-freed");
 				}
 			}
