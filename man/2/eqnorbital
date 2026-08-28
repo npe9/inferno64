@@ -1,0 +1,122 @@
+.TH EQNORBITAL 2
+.SH NAME
+eqnorbital \- orbital-model harness for command-module Danby models
+.SH SYNOPSIS
+.B /dis/temple/eqnorbital.dis
+.I model.dis
+[
+.I manual
+]
+.SH DESCRIPTION
+A sibling to
+.IR orbital (2)
+for models that are ordinary command modules (an
+.B init
+plus an in-process
+.B run(argv):
+.RI ( string , int )
+seam, matching
+.IR hoc (2)'s
+own already-established convention - see
+.IR danby-aerobraking (1))
+rather than plugins implementing
+.IR orbital (2)'s
+own bespoke
+.B Model
+.IR adt .
+.B Eqnorbital
+loads
+.I model.dis
+and calls its
+.BR run(nil) ,
+which returns the model's own spec as plain text - the model's whole
+physics, printed, not compiled Limbo arithmetic reachable only through
+a typed interface. There is no separate parsing module either:
+.I this
+file is the one place that actually drives a model, so it reads and
+evaluates the spec directly.
+.SS "The spec's own little language"
+One directive per line:
+.TP
+.BI "title " TEXT
+Rest of the line, verbatim.
+.TP
+.BI "bodylabels " "WORD ..."
+.TP
+.BI "mass " "NUM ..."
+One value per
+.BR bodylabels
+word, same order.
+.TP
+.BI "param " LABEL " " DEFAULT " " MIN " " MAX
+Repeatable.
+.TP
+.BI "maxtime " NUM
+.TP
+.BI "state " NAME " " EXPR ...
+Repeatable; declares one named state variable. Its position among all
+.B state
+lines is its index in the eventual state/derivative arrays.
+.I EXPR
+is its initial value, an
+.IR eqn (7)
+expression that may reference any
+.BR param 's
+own name.
+.TP
+.BI "derivative " NAME " " EXPR ...
+Repeatable, exactly one per
+.B state
+line, matched by
+.IR NAME
+(any order).
+.I EXPR
+may reference any state's own name, any param, or any
+.BR eq .
+.TP
+.BI "eq " NAME " " EXPR ...
+Repeatable; a named intermediate quantity, evaluated in declaration
+order before every
+.BR derivative ,
+so a later
+.B eq
+or any
+.B derivative
+may reference an earlier
+.B eq
+by name.
+.TP
+.BI "observable " LABEL " " EXPR ...
+Repeatable; same binding as
+.BR derivative / eq .
+Exactly two required - the shared client always plots two diagnostics
+against time, the same requirement
+.IR orbital (2)
+already has.
+.PP
+Every
+.I EXPR
+is
+.IR eqn (7)
+syntax (see
+.IR eqn2hoc (2)),
+translated to
+.IR hoc (2)
+source and compiled ONCE, when the model is loaded; every simulation
+step only rebinds symbols and evaluates the already-compiled trees.
+.SH SOURCE
+.B /appl/temple/eqnorbital.b
+.SH SEE ALSO
+.IR orbital (2)
+(the original interface and harness, unmodified - the other 11
+Orbital plugins still use it),
+.IR eqn2hoc (2),
+.IR hoc (2),
+.IR danby-aerobraking (1),
+.IR eqnorbitaltest (1)
+.SH BUGS
+No model using this harness has more than one moving body yet
+(aerobraking's own "planet" body is fixed at the origin) - the spec
+format allows any number of
+.B state
+lines, but nothing has exercised real N-body coupling through it.

@@ -9,16 +9,16 @@ near planetary radius. Repeated periapsis passages lower speed and apoapsis.
 .SH SOURCE
 .B /appl/danby/plugin/aerobraking.b
 .PP
-Its
-.B rhs()
-is written as literal
-.IR eqn (7)
-strings (see
-.IR eqn2hoc (2)),
-not hand-coded Limbo arithmetic - both the central-gravity and
-atmospheric-drag terms, tied directly to the
+A real command module, not a plugin implementing the bespoke
 .IR orbital (2)
-interface with no separate
-.B Atmosphere
-module call. See
-.IR aerobrakingtest (1).
+interface: it just prints its own spec (title, parameters, initial
+state, and both the central-gravity and atmospheric-drag terms as
+literal
+.IR eqn (7)
+strings - see
+.IR eqn2hoc (2))
+when run, exactly like any other command in this tree. Driven by
+.B /appl/temple/eqnorbital.b,
+a harness that reads and evaluates that spec directly - no separate
+module interface, and no separate parsing library either. See
+.IR eqnorbitaltest (1).

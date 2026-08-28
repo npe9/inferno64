@@ -55,7 +55,7 @@ TARG=\
 	cp.dis\
 	cpu.dis\
 	crypt.dis\
-	aerobrakingtest.dis\
+	eqnorbitaltest.dis\
 	danbyeqnall.dis\
 	danbyeqntest.dis\
 	date.dis\

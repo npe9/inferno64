@@ -29,6 +29,7 @@ TARG=\
 	flight3d.dis\
 	mechanism.dis\
 	orbital.dis\
+	eqnorbital.dis\
 	profile.dis\
 	methods.dis\
 	solverlab.dis\

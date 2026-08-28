@@ -1,0 +1,56 @@
+.TH EQNORBITALTEST 1
+.SH NAME
+eqnorbitaltest \- test a real command-module Danby model end to end
+.SH SYNOPSIS
+.B eqnorbitaltest
+.SH DESCRIPTION
+.B Eqnorbitaltest
+fetches
+.IR danby-aerobraking (1)'s
+own spec text through its real in-process
+.B run()
+seam - the same call
+.IR appl/temple/eqnorbital.b
+(the harness) makes, matching
+.IR hoc (2)'s
+own already-established
+.B run(argv):
+.RI ( string , int )
+convention - then parses and drives it with an INDEPENDENTLY WRITTEN
+copy of the same small grammar, not by reaching into the harness's own
+internals (not reachable from outside its own module type anyway -
+Dis's
+.B load
+type-checks against a compiled module's own declared interface, not
+whatever shape a caller asks for). Two independent implementations of
+the same grammar reaching the same known-correct physics is a
+stronger check than one implementation calling itself twice.
+.PP
+Checks both components of the
+.RB \*(lq derivative
+vx\*(rq/\*(lqderivative vy\*(rq
+lines (central gravity plus atmospheric drag, the same numbers
+verified before this model became a command module) and both
+.B observable
+values, all pulled from the model's own currently-printed spec text,
+not a copy pasted into this test.
+.SH SOURCE
+.B /appl/cmd/eqnorbitaltest.b
+.SH SEE ALSO
+.IR danby-aerobraking (1),
+.IR eqn2hoc (2),
+.IR hoc (2),
+.IR danbyeqnall (1)
+.SH BUGS
+Only pulls out
+.BR param / derivative / eq
+lines - not a full reimplementation of every directive
+.IR appl/temple/eqnorbital.b 's
+own grammar has
+.RB ( bodylabels / mass / state / observable
+aren't needed for this specific check, though
+.B observable
+values are cross-checked indirectly since this model's two
+observables are themselves bare
+.B eq
+names).
