@@ -36,18 +36,23 @@ implement Command;
 # if/for/while/a bare block gets away with ending in '}' instead), so
 # the convention claims syntax that was previously dead rather than
 # reinterpreting anything that used to work. classify() below tags such
-# a line Expr; exprblock() wraps it as
-#	{ __replv := string (EXPR); sys->print("%s\n", __replv); }
+# a line Expr; exprline() rewrites it in place, as one line, no
+# temporary and no block:
+#	sys->print("%s\n", string (EXPR));
 # using Limbo's own built-in cast of an arithmetic value (byte/int/big/
 # real) or string to string (doc/limbo/limbo.ms, "Casts to strings") -
 # confirmed live against the real compiler, including that the cast is
 # genuinely typechecked (a list, array, adt, ... fails to compile with
 # the language's own "cannot make a string from ..." diagnostic, not a
-# silently wrong answer). Each entry gets its own { } so __replv can be
-# declared fresh per line without colliding with any other auto-printed
-# line. A value that cast can't handle needs an explicit print() call
-# and a trailing ';', exactly as before this file's redesign - see
-# help() and man/1/limborepl's own BUGS for what is and isn't covered.
+# silently wrong answer) and that it is legal directly as a call
+# argument, so there is nothing for a temporary variable to buy - an
+# earlier version introduced one anyway (plus a { } to scope it),
+# purely out of habit from languages where a cast isn't already this
+# composable; source-level ahead-of-time compilation, which is what
+# this whole file already does, does not need it. A value that cast
+# can't handle needs an explicit print() call and a trailing ';',
+# exactly as before this file's redesign - see help() and man/1/
+# limborepl's own BUGS for what is and isn't covered.
 #
 include "sys.m";
 	sys: Sys;
@@ -294,15 +299,14 @@ classify(line: string): int
 }
 
 # Wrap a bare expression so it evaluates and prints its own value - see
-# this file's own header comment for why this particular cast and why
-# each entry gets its own { }.
-exprblock(line: string): list of string
+# this file's own header comment for why this particular cast. The
+# cast goes straight into the print() call as one line, no temporary
+# to hold it and no block to scope one in - confirmed against the real
+# compiler that string(EXPR) is legal directly as a call argument, so
+# there is nothing here for a temporary to buy.
+exprline(line: string): string
 {
-	return
-		"\t{" ::
-		"\t\t__replv := string (" + line + ");" ::
-		"\t\tsys->print(\"%s\\n\", __replv);" ::
-		"\t}" :: nil;
+	return "\tsys->print(\"%s\\n\", string (" + line + "));";
 }
 
 # The session's declarations, oldest first.
@@ -317,23 +321,19 @@ decls(): list of string
 
 # The session's statements and auto-print expressions, oldest first,
 # tab-indented (Limbo does not care about indentation, but it makes
-# .src readable). An Expr entry contributes exprblock()'s several
-# lines, not the bare line the user typed - that line by itself is not
+# .src readable). An Expr entry contributes exprline()'s rewritten
+# line, not the bare line the user typed - that line by itself is not
 # something Limbo accepts as a statement (see the header comment).
 stmts(): list of string
 {
-	oldest: list of ref Entry;
-	for(h := history; h != nil; h = tl h)
-		oldest = hd h :: oldest;
 	r: list of string;
-	for(o := oldest; o != nil; o = tl o){
-		e := hd o;
+	for(h := history; h != nil; h = tl h){
+		e := hd h;
 		case e.kind {
 		Stmt =>
-			r = append(r, "\t" + e.line);
+			r = "\t" + e.line :: r;
 		Expr =>
-			for(b := exprblock(e.line); b != nil; b = tl b)
-				r = append(r, hd b);
+			r = exprline(e.line) :: r;
 		}
 	}
 	return r;

@@ -112,10 +112,11 @@ used to work a different way: a line with neither a trailing
 (required of an ordinary statement) nor a trailing
 .B }
 (the one way a control construct or bare block gets away without one)
-was already a compile error before this. What runs behind it is
+was already a compile error before this. What runs behind it is one
+line, rewritten in place - no temporary variable, no block:
 .IP
 .EX
-{ __replv := string (EXPR); sys->print("%s\en", __replv); }
+sys->print("%s\en", string (EXPR));
 .EE
 .PP
 using Limbo's own built-in cast of an arithmetic value
@@ -124,12 +125,13 @@ or a
 .B string
 itself to
 .BR string ,
-each auto-printed line getting its own
+which is legal directly as a call argument - confirmed against the
+real compiler - so there is nothing for a temporary to buy. (An
+earlier version of this file introduced one anyway, plus a
 .B { }
-so
-.B __replv
-can be declared fresh every time without colliding with any other
-auto-printed line. A value of any other type -
+to scope it; this is source-level ahead-of-time compilation, the same
+as the rest of the session, and does not need it.) A value of any
+other type -
 .BR list ", " array ", " adt ,
 a channel, a function value - fails to compile with Limbo's own
 .B "cannot make a string from ..."
@@ -143,8 +145,8 @@ for those, exactly as before this was added.
 This inherits the one consequence of replaying the whole session on
 every new line (see DESCRIPTION above): an auto-printed value is not
 printed once and forgotten, it is printed again every time a later
-line triggers a fresh rebuild-and-rerun, since the block that prints it
-is still there in the accumulated program. A five-line session with
+line triggers a fresh rebuild-and-rerun, since the print line is still
+there in the accumulated program. A five-line session with
 three auto-printed expressions in it therefore prints far more than
 three lines by the end - each one reappearing, in order, on every
 later run. This is the same trade the rest of the session already
@@ -292,19 +294,28 @@ to appear as an expression, not only as a statement. Typing
 .B "x := 5"
 with the semicolon left off prints
 .B 5
-as if it had worked, but
+as if it had worked, and - because the value is printed by a rewritten
+line in place rather than inside a temporary's own block (see
+PRINTING) -
 .B x
-does not persist to the next line: the auto-print mechanism gives it
-its own
-.BR { } ,
-so the declaration is scoped to that block alone. Confirmed directly,
-not assumed: compiled and run standalone, this shape produces only a
-compiler warning
-.RB ( "local x not referenced" ),
-not an error - the trap is silent by construction, not a bug that
-happens to reproduce. Always end a real assignment with
-.B ;
-to keep it.
+.I does
+persist to the next line, exactly as if the semicolon had been there:
+confirmed directly, not assumed, by typing
+.B "x := 5"
+with no semicolon and then
+.B "x = 6;"
+and
+.B x
+on later lines, which reassigns and then prints
+.B 6
+rather than failing to find
+.BR x .
+Typing the same
+.B :=
+line twice, though, still fails exactly as any other redeclaration
+does (see REDECLARATION above) - the missing semicolon does not create
+a second, independently scoped
+.BR x .
 .PP
 A line that compiles and runs but raises an exception is kept in the
 session rather than discarded, as stated above - confirmed directly,
