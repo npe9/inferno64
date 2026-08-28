@@ -9931,6 +9931,119 @@ match is coincidence and the real mechanism is still open.  Not
 resolved: which.  That is where this resumes.
 
 .NH 1
+A live, correctly-typed object, one field wrong
+.PP
+Picked back up at the open question: is the stable kind a benign
+mid-execution snapshot (a marked frame slot legitimately holding a
+non-pointer value while its lexical scope is current, never visible to
+a return-time scan) or something genuinely wrong.
+.PP
+Made
+.CW checkmarkptr()
+non-fatal for the stable kind too, on a real distinction, not a repeat
+of the retracted map-imprecision argument.  That argument was refuted
+specifically for
+.I return-time
+scanning:
+.CW freeptrs() ,
+at every
+.CW OP(ret) ,
+calls
+.CW destroy()
+on every marked word unconditionally, so a marked word holding a small
+int at
+.I that
+moment would corrupt memory on every ordinary return, which does not
+happen.
+.CW rootset() 's
+.CW markheap()
+walk is a different code path with a different timing guarantee: it
+runs while a live process is merely
+.I paused
+for GC, never at
+.CW OP(ret) .
+Nothing about the return-time argument says a marked slot cannot
+transiently hold a non-pointer value while its process is simply not
+currently running, as long as it is H or valid again by the time that
+process reaches its own return.  Letting the boot continue instead of
+aborting on this shape too is the only way to tell that reading from
+real, permanent wrongness apart.
+.PP
+Added
+.CW D2H(vw)
+as a plain observation on every hit \- gated on nothing, purely
+informative: whatever heap header sits where
+.CW vw 's
+own would be, right or wrong.  It paid off immediately.  Two batches
+landed fresh captures of the exact same object,
+0x7855bd0 ,
+deterministic across separate, independent boot runs \- and
+.CW D2H(vw)
+reported
+.CW t\0==\0&Tmodlink ,
+.CW ref
+cycling 1\-2,
+.CW color
+cycling 0\-2 in the collector's normal three-color rotation: a live,
+correctly-typed, correctly-refcounted Modlink object, full stop.  Not
+a snapshot artifact \- stable across real, elapsed wall-clock time and
+multiple GC epochs, with
+.CW ml->MP
+(word 0, the type's one tracked field) stuck at
+.CW 0x18
+the entire time.  This is the sharpest capture this hunt has landed
+yet: a real, live object, everything about its own identity intact,
+exactly one field wrong.
+.PP
+Instrumented every
+H2D()-into-
+.CW ml->MP
+write site to validate its own result immediately after the
+assignment:
+.CW mklinkmod() 's
+.CW ml->MP\0=\0H
+and
+.CW linkmod() 's
+.CW ml->MP\0=\0H2D(uchar*,\0h)
+(link.c),
+.CW schedmod() 's
+matching line (dis.c).  Across two batches, 55 boots, including two
+fresh captures of this exact 0x18-stuck object, none of the three
+write-time checks ever fired.  The write is always correct at
+creation; the field goes bad sometime after.
+.CW loader.c 's
+.CW ml->MP\0=\0m->origmp
+(the fourth and last site, in the dynamic-module-loading path,
+essentially unexercised by an ordinary boot) is not yet instrumented.
+.PP
+With a real, permanent, wrong value at a known, deterministic address,
+the right tool changes: not another read-and-guess pass, but watching
+the address itself.  Attempted a QEMU gdbstub with an
+lldb
+hardware watchpoint on
+0x7855bd0
+directly \- the address stayed identical across two separate,
+independent boot runs against the same binary, which is about as good
+as reproducibility gets for this.  Set cleanly (
+.CW qemu-system-x86_64\0-s\0-S ,
+lldb's
+.CW gdb-remote
+plus
+.CW watchpoint\0set\0expression ),
+but
+.CW process\0continue
+ran for the full 170-second timeout \- well past this boot's normal
+60\-90 seconds to the point where the value has already gone bad in an
+unwatched run \- without the watchpoint ever stopping the guest.  Left
+open, not resolved: whether the gdbstub watchpoint tracks a physical
+address while this address, taken from a kernel print(), is virtual
+(whether pc64 runs identity-mapped was never actually checked); whether
+the watchpoint's own overhead slowed execution enough that the write
+in question simply had not happened yet by the time the timeout hit;
+or something else about the setup.  Getting this working is the most
+direct path to naming the actual writer, and is where this resumes.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
