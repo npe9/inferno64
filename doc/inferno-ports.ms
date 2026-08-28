@@ -13175,6 +13175,19 @@ measurement to date suggested, since almost every occasion it had to
 fire was previously pre-empted.  Recorded as fact, not spun as
 improvement \(em this hunt's own rule.
 .PP
+One confound on that comparison, caught on review: this validation
+batch ran with an unrelated Xcode build and a second, unrelated QEMU
+guest competing for the same host, and an earlier same-day batch
+directly showed a panic rate spike (92%) traceable to exactly that
+kind of contention rather than to any code change.  64% vs. the prior
+10\(en43% range is not a clean apples-to-apples comparison; host load
+was not controlled for.  The claim that
+.I is
+clean, because it was checked by resolving native trap PCs rather
+than eyeballing panic text: zero
+.CW notefree
+recurrences in 25 boots, every trap PC landing somewhere else.
+.PP
 The
 .CW namec()
 pgrp-root fix and the
@@ -13225,6 +13238,106 @@ error, not a kernel panic three calls downstream in
 This makes NINE real
 .CW incref(nil) -family
 bugs found and fixed this hunt, not eight.
+
+.NH 1
+A candidate for "general protection violation" itself: BIOS32 far pointers loose in the heap
+.PP
+Chasing whether an
+.CW AINC / ADEC
+guard was worth adding (it is not \(em see below) led to decoding a
+register instead: this port's own
+.CW ainc-amd64.s
+takes its argument in
+.CW RARG ,
+and
+.CW utils/6c/6.out.h
+defines
+.CW REGARG\ =\ D_BP \(em
+so every past
+.CW ainc / adec
+crash's bad pointer has been sitting, undecoded, in the
+.CW BP
+field of a dump this hunt already had.  Reading it out of a live
+capture (
+.CW notefree_v2_partial_batch/boot2.log ) :
+.CW "BP\ F000FF54F000FF3F" ,
+alongside
+.CW "SI\ F000FF54F000FF53"
+in the same dump \(em not a coincidence, and not the refcount-
+corruption disease this hunt had been calling it.
+.PP
+Grepping every batch this hunt has produced for the pattern
+.CW F000FF
+found it 702 times across 226 distinct boot logs, 90% of them
+carrying
+.CW "panic:\ general\ protection\ violation" \(em
+almost certainly THE actual explanation behind this port's
+longest-standing unexplained panic type, hiding in plain sight until
+the register decoded.
+.CW F000
+is not noise: it is the standard PC BIOS ROM code segment, and
+.CW F000:FFxx
+is squarely inside the classic BIOS entry-point region.  A resolved
+capture (chan.c's
+.CW pathclose+24 ,
+.CW "decref:\ bad\ r\ 0xf000ff53" )
+shows this value reaching a
+.CW Path*
+argument that was already nil-checked at the top of
+.CW pathclose() \(em
+the corruption happened upstream of that check, in whatever set the
+field
+.CW pathclose()
+was handed.
+.PP
+This port's own
+.CW lowraminit()
+(pc64/memory.c) already marks
+.CW 0xF0000\(en0xFFFFF
+.CW MemReserved
+before the general allocator ever sees it, which rules out the
+simplest hypothesis (heap memory literally overlapping BIOS shadow
+RAM).  The likelier shape: a real-mode-style
+.CW "segment:offset"
+value, produced somewhere that legitimately reads BIOS memory, is
+ending up in a field that later gets read back as a heap pointer.
+.CW os/inferno/pc/bios32.c
+is the strongest candidate this hunt has found so far, unchased
+further: its
+.CW BIOS32si
+struct carries a
+.CW "u16int\ ptr[3]"
+literally documented as "far pointer m16:32", and
+.CW bios32locate()
+calls
+.CW sigsearch("_32_", ...)
+to scan exactly the
+.CW 0xF0000\(en0xFFFFF
+region for a signature \(em the one file in this kernel whose whole
+job is producing 16-bit segment-shaped values out of that exact
+memory range.  Not confirmed: which specific field, or whether
+.CW bios32.c
+is the source or just a plausible shape-match.  Flagged as the
+clearest next lead this hunt has, ahead of chasing the refcount-
+corruption disease blind.
+.PP
+Considered and rejected: wrapping
+.CW AINC / ADEC
+themselves with a
+.CW badref() -style
+precheck, the same upgrade every other silent-crash site in this hunt
+has gotten.
+.CW AINC / ADEC
+sit on the hottest path in the whole interpreter \(em every Dis
+object refcount touch, in every board's kernel and the hosted
+.CW emu
+target, since
+.CW include/interp.h
+is shared far beyond pc64 \(em and, having just decoded
+.CW RARG\ =\ BP ,
+a wrapper would print exactly the value already sitting in every past
+and future capture's own dump, for free.  No new information for a
+real cost on a shared hot path: not worth it.
 
 .NH 1
 Then
