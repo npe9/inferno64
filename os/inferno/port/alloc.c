@@ -227,7 +227,7 @@ poolimmutable(void *v)
 {
 	Bhdr *b;
 
-	D2B(b, v);
+	D2BPC(b, v, getcallerpc(&v), "alloc:D2B:poolimmutable");
 	b->magic = MAGIC_I;
 }
 
@@ -236,7 +236,7 @@ poolmutable(void *v)
 {
 	Bhdr *b;
 
-	D2B(b, v);
+	D2BPC(b, v, getcallerpc(&v), "alloc:D2B:poolmutable");
 	b->magic = MAGIC_A;
 	/* ((Heap*)v)->color = mutator; */
 }
@@ -955,7 +955,7 @@ free(void *v)
 	Bhdr *b;
 
 	if(v != nil) {
-		D2B(b, v);
+		D2BPC(b, v, getcallerpc(&v), "alloc:D2B:free");
 		poolfree(mainmem, v);
 	}
 }
@@ -984,7 +984,7 @@ setmalloctag(void *v, uintptr pc)
 	Bhdr *b;
 
 	if(v != nil){
-		D2B(b, v);
+		D2BPC(b, v, getcallerpc(&v), "alloc:D2B:setmalloctag");
 		b->allocpc = pc;
 	}
 }
@@ -996,7 +996,7 @@ getmalloctag(void *v)
 
 	if(v == nil)
 		return ~0;
-	D2B(b, v);
+	D2BPC(b, v, getcallerpc(&v), "alloc:D2B:getmalloctag");
 	return b->allocpc;
 }
 
@@ -1006,7 +1006,7 @@ setrealloctag(void *v, uintptr pc)
 	Bhdr *b;
 
 	if(v != nil){
-		D2B(b, v);
+		D2BPC(b, v, getcallerpc(&v), "alloc:D2B:setrealloctag");
 		b->reallocpc = pc;
 	}
 }
@@ -1018,7 +1018,7 @@ getrealloctag(void *v)
 
 	if(v == nil)
 		return ~0;
-	D2B(b, v);
+	D2BPC(b, v, getcallerpc(&v), "alloc:D2B:getrealloctag");
 	return b->reallocpc;
 }
 
