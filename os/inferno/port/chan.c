@@ -1656,7 +1656,18 @@ namec(char *aname, int amode, int omode, ulong perm)
 	Open:
 		/* save&update the name; domount might change c */
 		path = c->path;
-		incref(path);
+		/*
+		 * Same shape as walk()'s own fix above: c->path is a
+		 * documented-nil-able field (walk() itself can legitimately
+		 * hand back a nil path, for the e.nelems==0/"open this Chan
+		 * itself" case fixed there), and this incref() had no guard
+		 * either.  Not yet caught live at this specific site, but
+		 * fixed on the same evidence and for the same reason rather
+		 * than waiting for its own separate capture.  pc64-only,
+		 * temporary.  See doc/inferno-ports.ms.
+		 */
+		if(path != nil)
+			incref(path);
 		if(waserror()){
 			pathclose(path);
 			nexterror();
