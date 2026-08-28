@@ -96,12 +96,22 @@ void (*poolfault)(void *, char *, uintptr) = _poolfault;
  * file, used only at the four mismatched call sites. pc64-only,
  * temporary alongside the rest of this hunt's probes. See
  * doc/inferno-ports.ms.
+ *
+ * Follow-up: fixing every reachable D2B/D2BPC site's anchor did not
+ * move destroy+703 at all (doc/inferno-ports.ms, "Eliminating
+ * candidates for destroy+703") -- every direct candidate this hunt
+ * could name (poolfree, poolmsize, freelist's tail check, destroy's
+ * own consistency check) was eliminated by bisection, yet the value
+ * never changed. Rather than guess at a fifth site, D2BPC now takes
+ * an explicit tag so each call site's own panic message names itself
+ * directly -- the next capture answers which site fired from the
+ * message text alone, no offset decoding needed.
  */
-#define D2BPC(b, dp, pc)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
+#define D2BPC(b, dp, pc, tag)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
 				if(b->magic != MAGIC_A && b->magic != MAGIC_I){\
 					b = ((Balign*)((char*)(dp)-sizeof(Balign)))->hdr; \
 					if(b->magic != MAGIC_A && b->magic != MAGIC_I)\
-						poolfault(dp, "alloc:D2B", pc);\
+						poolfault(dp, tag, pc);\
 				}
 
 /*
@@ -510,7 +520,7 @@ poolfree(Pool *p, void *v)
 	Bhdr *b, *c;
 	/* extern Bhdr *ptr; defined in libinterp/gc.c */
 
-	D2BPC(b, v, getcallerpc(&p));
+	D2BPC(b, v, getcallerpc(&p), "alloc:D2B:poolfree");
 
 	/*
 	 * Probe: D2B only checks the magic byte, not size/alignment, and
@@ -573,7 +583,7 @@ poolrealloc(Pool *p, void *v, uintptr size)
 	SET(osize);
 	if(v != nil){
 		ilock(&p->l);
-		D2BPC(b, v, getcallerpc(&p));
+		D2BPC(b, v, getcallerpc(&p), "alloc:D2B:poolrealloc");
 		osize = b->size - BHDRSIZE;
 		iunlock(&p->l);
 		if(osize >= size)
@@ -628,7 +638,7 @@ poolmsize(Pool *p, void *v)
 	if(v == nil)
 		return 0;
 	ilock(&p->l);
-	D2BPC(b, v, getcallerpc(&p));
+	D2BPC(b, v, getcallerpc(&p), "alloc:D2B:poolmsize");
 	size = b->size - BHDRSIZE;
 	iunlock(&p->l);
 	return size;
@@ -894,7 +904,7 @@ mallocalign(uintptr dsize, u32 align, s32 offset, u32 span)
 	}else{
 		/* add the Balign header to point back to the header */
 		ba = (Balign*)(c-sizeof(Balign));
-		D2BPC(b, v, getcallerpc(&dsize));
+		D2BPC(b, v, getcallerpc(&dsize), "alloc:D2B:mallocalign");
 		ba->hdr = b;
 		setmalloctag(v, getcallerpc(&dsize));
 		if(0)print("mallocalign dsize %zd align %d 0x%x offset %d span %d\n"

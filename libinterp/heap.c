@@ -36,12 +36,20 @@ extern	int	mutator;
  * for the name, since C has no way to share a macro across
  * translation units without a shared header this fix must not touch.
  * pc64-only, temporary. See doc/inferno-ports.ms.
+ *
+ * Follow-up: fixing every reachable D2B/D2BPC site's anchor did not
+ * move destroy+703 at all (doc/inferno-ports.ms, "Eliminating
+ * candidates for destroy+703") -- every direct candidate this hunt
+ * could name was eliminated by bisection, yet the value never
+ * changed. D2BPC now takes an explicit tag (matching alloc.c's own
+ * follow-up) so each call site's own panic message names itself
+ * directly instead of requiring offset decoding.
  */
-#define D2BPC(b, dp, pc)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
+#define D2BPC(b, dp, pc, tag)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
 				if(b->magic != MAGIC_A && b->magic != MAGIC_I){\
 					b = ((Balign*)((char*)(dp)-sizeof(Balign)))->hdr; \
 					if(b->magic != MAGIC_A && b->magic != MAGIC_I)\
-						poolfault(dp, "alloc:D2B", pc);\
+						poolfault(dp, tag, pc);\
 				}
 
 void	(*heapmonitor)(int, void*, ulong);
@@ -261,7 +269,7 @@ freelist(Heap *h, int swept)
 		 * keep panicking elsewhere, freelist() itself is cleared.
 		 * See doc/inferno-ports.ms.
 		 */
-		{ Bhdr *b; D2BPC(b, th, getcallerpc(&h)); }
+		{ Bhdr *b; D2BPC(b, th, getcallerpc(&h), "alloc:D2B:freelist-tail"); }
 		/* same free-time clear as destroy()'s -- see its comment */
 		trackclear(th, poolmsize(heapmem, th));
 		poolfree(heapmem, th);
@@ -433,7 +441,7 @@ destroy(void *v)
 		abort();
 	}
 
-	{ Bhdr *b; D2BPC(b, h, getcallerpc(&v)); }		/* consistency check */
+	{ Bhdr *b; D2BPC(b, h, getcallerpc(&v), "alloc:D2B:destroy-entry"); }		/* consistency check */
 
 	/*
 	 * A batch of alloc:D2B panics (pc64 GPF hunt, doc/inferno-
