@@ -13015,6 +13015,218 @@ dormant is not the same claim as fixed and nothing here explains why
 it stopped.
 
 .NH 1
+The dominant crash all along: a stale global register file
+.PP
+The advisor's suggestion to separate the two
+.CW checkb-0/qaddlist
+shapes led to a routine cross-check: grep every post-fix boot log for
+every distinct native trap PC, not just the ones this hunt had already
+named.  The result reframed the whole session.  Of 765 post-fix boot
+logs, 540 (71%) hit a
+.CW "TYPE\ 0D"
+general protection fault, and 390 of those (51% of every post-fix
+boot) share one exact native PC, resolving through the now-fixed
+resolver to
+.CW notefree+270
+or
+.CW notefree+283
+\(em 4416 hits total across both offsets.  Every other lead this hunt
+had tracked \(em the eight
+.CW incref(nil)
+bugs, the
+.CW smalloc()
+hang, the
+.CW checkb-0/qaddlist
+signature \(em fired at most in the tens of captures.  This one fires
+in half of every boot, and had gone unnamed the whole session because
+prior panic-rate accounting counted
+.CW panic:
+text captures, a narrower measure than raw native traps.
+.PP
+.CW notefree()
+(alloc.c) is a pure diagnostic: a small ring buffer recording each
+successful
+.CW poolfree() 's
+address, caller pc, and \(em to make a later double-free's "who freed
+this first" answerable \(em the Dis pid and module name current at the
+moment of the free.  Pid comes from
+.CW currun() ,
+guarded correctly.  Module name came from the
+.I "plain global"
+.CW R
+(libinterp/xec.c's single, process-wide interpreter register file, not
+any specific Prog's own saved
+.CW p->R ),
+guarded only by
+.CW "R.M\ !=\ nil" .
+Grepping xec.c shows
+.CW R.M
+is assigned in exactly three places and never once set back to
+.CW nil ,
+including when the Prog that owned it exits and frees its own module
+\(em so once any Dis process has ever run and exited, the global
+.CW R.M
+keeps pointing at that process's now-freed Modlink forever, and
+.CW notefree()
+runs on
+.I every
+successful
+.CW poolfree()
+across the whole kernel, Dis-related or not.
+.CW R.M\->m\->name
+follows that dangling pointer twice more; landing on a genuinely
+garbage 64-bit value rather than a merely-wrong-but-canonical one is
+enough to trip a general protection fault instead of a page fault,
+matching every capture: ERROR 0000, CR2 all zero.
+.PP
+.CW _poolfault()
+(the pool-corruption panic path, far rarer, so never itself caught
+crashing) had the identical pattern, added by an earlier round of this
+same hunt with a comment explicitly arguing the plain global
+.CW R
+was
+.I "live at exactly this point"
+as an improvement over
+.CW xp\->R \(em
+a claim this capture disproves outright.
+.PP
+A first fix gated the global
+.CW R.M
+read on
+.CW "xp\ !=\ nil"
+(a Prog genuinely at the head of the run queue), reasoning that a live
+.CW xp
+meant
+.CW R
+was current for it.  Built, boot-tested, and it kept crashing at the
+same site (now
+.CW notefree+292 ,
+the same instruction shifted a few bytes by the extra check): the
+capture's own
+.CW xp
+was pid 2, module Sh \(em proven by the successful
+.CW dumpregs()
+print of exactly that, right before the crash \(em yet the global
+.CW R.M
+was
+.I still
+dangling.  Being at the head of the run queue does not mean the global
+.CW R
+has been reloaded for that Prog.  That is a real, live-disproven first
+attempt, not a hypothetical: recorded here rather than quietly
+replaced, per this hunt's own rule of saying what was only
+demonstrated.
+.PP
+pc64/trap.c's
+.CW dumpregs()
+never had this bug in the first place, and the reason points at the
+actual fix: it reads
+.CW xp\->R.M
+\(em the specific Prog's own saved register file \(em not the shared
+global, gated on
+.CW "xp\ !=\ nil" .
+.CW xp\->R.M
+is valid for a live
+.CW xp
+regardless of whether the global
+.CW R
+has been swapped in for it this instant, which is exactly the
+guarantee the global lacks.  Both
+.CW notefree()
+and
+.CW _poolfault()
+now read
+.CW xp\->R.M
+the same way.  Rebuilt, and two fresh batches on the corrected binary
+\(em 25 boots total \(em reproduced zero
+.CW notefree
+crashes; every native
+.CW "TYPE\ 0D/0E/06"
+trap PC across both resolves to a different, already-tracked site
+(
+.CW ainc+5 ,
+the refcount-corruption disease's own atomic-increment primitive
+faulting on a bad pointer;
+.CW lockloop+72 ;
+.CW strchr+46 ;
+.CW iload+286 ;
+.CW dumpregs+67 ,
+a fault inside the trap handler's own register dump, presumably
+cascading from whatever corrupted the state that trapped in the first
+place), consistent with the dominant crash actually being gone rather
+than merely renamed.  Diagnostic-only code, no interpreter semantics
+touched.
+.PP
+The honest second half of that result: the raw panic rate across
+those 25 boots is 64% (16/25), not lower than this hunt's long-
+standing 10\(en43% range \(em higher.
+.CW notefree()
+was not making the kernel less stable than these other bugs; it was
+simply reaching its own crash
+.I first ,
+before most of them got the chance to fire at all.  Removing it does
+not reduce total instability by itself \(em it reallocates which bug
+each boot hits, and hands this hunt a now-visible, honest picture of
+everything
+.CW notefree()
+had been hiding: the refcount-corruption disease already named in
+this port's own persistent notes is far more frequent than any
+measurement to date suggested, since almost every occasion it had to
+fire was previously pre-empted.  Recorded as fact, not spun as
+improvement \(em this hunt's own rule.
+.PP
+The
+.CW namec()
+pgrp-root fix and the
+.CW devattach()
+spec-length guard did not fire in either validation batch (25 boots);
+both are preventive guards for conditions this hunt caught only once
+each before this round, so their own next confirmation is still
+outstanding, same as several of this hunt's earlier self-identifying
+checks.
+.PP
+Fixing the dominant crash surfaced a second, real bug the same
+grep-and-resolve pass across the fix's own validation batch caught
+directly: a live
+.CW "incref:\ bad\ r\ 0x0"
+resolving to
+.CW namec+209 ,
+at boot, right after
+.CW schedinit... .
+.CW namec() 's
+.CW '/'
+and
+.CW default
+cases (
+.CW "c\ =\ up\->pgrp\->slash"
+and
+.CW "c\ =\ up\->pgrp\->dot" )
+each
+.CW incref(c)
+with no nil check \(em unlike every other
+.CW c
+assignment in this function, all already guarded by this hunt's
+earlier
+.CW incref(nil)
+sweep, and unlike the shape
+.CW newforthproc() 's
+own earlier fix in this same hunt already established: a fresh
+.CW Pgrp
+whose namespace has not been populated yet.  These two were older than
+this hunt and had simply never been reached often enough to capture
+before
+.CW notefree()
+crashed first.  Fixed the same way as the
+.CW '#'
+case three lines above each: a nil root is a clean
+.CW namec()
+error, not a kernel panic three calls downstream in
+.CW walk() .
+This makes NINE real
+.CW incref(nil) -family
+bugs found and fixed this hunt, not eight.
+
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

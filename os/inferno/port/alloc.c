@@ -188,7 +188,33 @@ notefree(void *v, uintptr pc)
 
 		xp = currun();
 		freehist[i].pid = xp != nil ? xp->pid : -1;
-		freehist[i].mname = (R.M != nil && R.M->m != nil) ? R.M->m->name : nil;
+		/*
+		 * THE dominant crash this hunt found: reading the PLAIN
+		 * GLOBAL R here (libinterp/xec.c's single, process-wide
+		 * interpreter register file) instead of xp->R, currun()'s
+		 * own Prog's SAVED register file. A first fix gated the
+		 * global R.M read on "xp != nil" too, on the theory that a
+		 * live xp meant R was current for it -- rebuilt, reboot-
+		 * tested, and it kept crashing at the same site (now
+		 * notefree+292, same instruction shifted a few bytes): xp
+		 * was pid 2 module Sh (confirmed by the successful dumpregs()
+		 * print right before the crash, which already uses xp->R.M
+		 * correctly), yet the global R.M was STILL dangling -- xp
+		 * being at the head of the run queue does not mean the
+		 * global R has been (re)loaded for it. pc64/trap.c's
+		 * dumpregs() never had this bug because it never touches
+		 * the global R at all; it reads xp->R.M, the specific Prog's
+		 * own saved pointer, always valid for a live xp regardless
+		 * of whether R has been swapped in for it this instant. Use
+		 * the same source of truth here instead of trying to gate
+		 * the global. "notefree+270/+283" (the original global-R
+		 * bug, before the failed xp-gate attempt) accounted for 4416
+		 * of 765 post-fix boot logs' TYPE 0D captures -- the
+		 * dominant crash of the whole hunt. pc64-only, temporary.
+		 * See doc/inferno-ports.ms.
+		 */
+		freehist[i].mname = (xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+			? xp->R.M->m->name : nil;
 	}
 	freehistn++;
 }
@@ -1267,11 +1293,25 @@ _poolfault(void *v, char *msg, uintptr c)
 	 * libinterp/xec.c for the full story.  See doc/inferno-ports.ms.
 	 */
 	xp = currun();
-	if(R.M != nil && R.M->m != nil)
+	/*
+	 * Same fix as notefree()'s own identical pattern (see its
+	 * comment): read xp->R.M, currun()'s own Prog's saved register
+	 * file, not the plain global R -- a live xp does not mean the
+	 * global R has been (re)loaded for it, confirmed by a first fix
+	 * that only gated the global on "xp != nil" and kept crashing
+	 * anyway. pc64/trap.c's dumpregs() already reads xp->R.M this
+	 * way and was never exposed to the bug. This call site is far
+	 * rarer than notefree()'s (only real pool corruption reaches
+	 * it, vs. every free), so it was never itself caught crashing,
+	 * but the same stale global read was there -- fixed identically
+	 * rather than left as a known-parallel gap. See
+	 * doc/inferno-ports.ms.
+	 */
+	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
 		print("_poolfault: running Dis pid %d module %s PC %#p\n",
-			xp != nil ? xp->pid : -1, R.M->m->name, R.PC);
+			xp->pid, xp->R.M->m->name, xp->R.PC);
 	else
-		print("_poolfault: R.M nil or has no module\n");
+		print("_poolfault: no live Dis prog, xp %#p\n", xp);
 	panic("%s %p (from %p/%zux)", msg, v, getcallerpc(&v), c);
 }
 

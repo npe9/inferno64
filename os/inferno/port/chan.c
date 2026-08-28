@@ -1494,6 +1494,23 @@ namec(char *aname, int amode, int omode, ulong perm)
 	switch(name[0]){
 	case '/':
 		c = up->pgrp->slash;
+		/*
+		 * A live "incref: bad r 0x0" resolving to namec+209 (this
+		 * incref) surfaced once the notefree()/_poolfault() global-R
+		 * bug (this hunt's dominant crash, see doc/inferno-ports.ms)
+		 * stopped masking every other panic type -- boot-time, right
+		 * after "schedinit...", the shape newforthproc()'s own fix
+		 * already established for pgrp->dot/slash: a Pgrp whose
+		 * namespace has not been populated yet. Every other c-from-
+		 * pgrp assignment in this file is nil-checked at the point
+		 * it's used; this one and the default case just below it,
+		 * both older than this hunt, were not. Matches the '#' case
+		 * three lines up: a nil root is a clean namec() error, not a
+		 * kernel panic three calls downstream in walk(). pc64-only,
+		 * temporary.
+		 */
+		if(c == nil)
+			error("namec: pgrp has no root");
 		incref(c);
 		break;
 
@@ -1554,6 +1571,9 @@ namec(char *aname, int amode, int omode, ulong perm)
 
 	default:
 		c = up->pgrp->dot;
+		/* same nil-root fix as the '/' case just above; see its comment. */
+		if(c == nil)
+			error("namec: pgrp has no dot");
 		incref(c);
 		break;
 	}

@@ -127,13 +127,42 @@ devattach(int tc, char *spec)
 {
 	Chan *c;
 	char *buf;
+	long n;
 
 	c = newchan();
 	mkqid(&c->qid, 0, 0, QTDIR);
 	c->type = devno(tc, 0);
 	if(spec == nil)
 		spec = "";
-	buf = smalloc(4+strlen(spec)+1);
+	/*
+	 * The "smalloc: size ... > mainmem maxsize ..." hunt (see
+	 * doc/inferno-ports.ms) traced two live oversized-request
+	 * captures to smalloc+32, which resolved to this call:
+	 * smalloc(4+strlen(spec)+1). strlen() is declared to return
+	 * long in this tree (port/lib.h, include/kern.h) and long is
+	 * 32 bits on this port -- a request within a few bytes of
+	 * 2^32 is exactly what a wrapped strlen() would produce, so a
+	 * wrap here was suspected but not proven: dozens of other
+	 * devattach() callers exist across the driver tree, any one of
+	 * which could be handing this a spec that is not a proper
+	 * NUL-terminated string. Rather than trace every caller by
+	 * hand, catch it here: if spec runs further than any real
+	 * device spec plausibly would before strlen() finds its
+	 * terminator, panic naming the pointer itself and its first
+	 * bytes -- that alone should say whether spec is a genbuf
+	 * inside some Proc, a stack address, or outright garbage,
+	 * which narrows the caller list immediately instead of
+	 * auditing all of them. pc64-only, temporary. See
+	 * doc/inferno-ports.ms.
+	 */
+	n = strlen(spec);
+	if(n < 0 || n > 256)
+		panic("devattach: spec %#p len %ld out of range, "
+			"first bytes %#ux %#ux %#ux %#ux, tc %C pc=%#p",
+			spec, n,
+			(uchar)spec[0], (uchar)spec[1], (uchar)spec[2], (uchar)spec[3],
+			tc, getcallerpc(&tc));
+	buf = smalloc(4+n+1);
 	sprint(buf, "#%C%s", tc, spec);
 	c->path = newpath(buf);
 	free(buf);
