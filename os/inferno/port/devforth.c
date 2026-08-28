@@ -387,6 +387,33 @@ initializeforthproc(Proc *p, Params *params)
 	pg = newpgrp();
 	if(params->newns == 0)
 		pgrpcpy(pg, up->pgrp);
+	else{
+		/*
+		 * newpgrp() only sets ref/pgrpid/progmode -- dot and slash
+		 * are left nil (smalloc() zeroes) for the caller to fill in,
+		 * which pgrpcpy() does along with the mount table when
+		 * newns==0.  When newns!=0 (params.newns defaults to 1, so
+		 * this is the COMMON case, not an edge one) that whole call
+		 * was skipped, leaving this forth process's pgrp with a nil
+		 * dot AND slash -- every namec() call it ever makes
+		 * (opening "/x", opening "./x", anything) reads one of those
+		 * two fields directly and incref()s it with no nil check,
+		 * since namec() has no reason to expect its own process
+		 * group's root/cwd to be unset.  A reproducible "incref: bad
+		 * r 0x0" resolving to namec+1273 (an incref() call inside
+		 * namec() itself, not by way of walk()) traced here.  A
+		 * private namespace still needs A root to be a namespace at
+		 * all -- "new" means an independent, not-shared mount table
+		 * (which pgrpcpy() would also copy and this path correctly
+		 * skips), not an empty dot/slash.  Cloning just those two
+		 * fields, the same call pgrpcpy() itself makes, gives this
+		 * pgrp a valid starting point without pulling in the
+		 * parent's mount table.  pc64-only, temporary.  See
+		 * doc/inferno-ports.ms.
+		 */
+		pg->slash = cclone(up->pgrp->slash);
+		pg->dot = cclone(up->pgrp->dot);
+	}
 	if(pg == nil)
 		panic("newforthproc: nil process group\n");
 	pg->nodevs = params->nodevs;
