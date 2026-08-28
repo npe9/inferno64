@@ -1089,7 +1089,21 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 	c = *cp;
 	incref(c);
 	path = c->path;
-	incref(path);
+	/*
+	 * cclone() and every other ->path incref site in this file guard
+	 * with "if(path != nil)" first (c->path is a legitimately nil
+	 * field -- see line ~43's own check) -- this call was the one
+	 * exception, and badref()'s "incref: bad r 0x0" catching it twice
+	 * in one batch (both resolving to walk+34, both via namec() called
+	 * with e.nelems==0 per the captured stack) confirms it is really
+	 * reached, not just theoretically possible.  pc64-only note: the
+	 * rest of this function's own path handling already tolerates a
+	 * nil path when nnames==0, since the only nil-unsafe use
+	 * (addelem()) sits inside the nhave<nnames loop, never entered
+	 * when nnames==0.  See doc/inferno-ports.ms.
+	 */
+	if(path != nil)
+		incref(path);
 	mh = nil;
 	trackpoint = "walk:entry";
 	checktracked();
@@ -1512,6 +1526,30 @@ namec(char *aname, int amode, int omode, ulong perm)
 		if(t == -1)
 			error(Ebadsharp);
 		c = devtab[t]->attach(up->genbuf+n);
+		/*
+		 * Unlike the '/' and default cases just above, this branch
+		 * has no local incref(c) of its own -- a fresh attach()
+		 * chan already carries ref=1 -- and, until now, no nil
+		 * check either.  A reproducible "incref: bad r 0x0" capture
+		 * this hunt caught resolved cleanly to walk+34 (badref()
+		 * catching walk()'s own incref(c) at its very top) via
+		 * namec+680's call into walk(), with no candidate left
+		 * upstream except this one: attach() is the only assignment
+		 * to c on any path reaching that walk() call which was not
+		 * already incref()'d (and therefore already nil-checked by
+		 * badref()) right where it happens.  Some device's attach()
+		 * is returning nil on a path this hunt has not chased down
+		 * to its own root cause; erroring here immediately, the way
+		 * every other attach() failure in this switch already does,
+		 * turns that into a normal Chan-open error instead of a
+		 * kernel panic reaching all the way into walk().  pc64-only,
+		 * temporary.  See doc/inferno-ports.ms.
+		 */
+		if(c == nil){
+			print("namec: attach(%s) returned nil, devtab[%d]->name %s\n",
+				up->genbuf+n, t, devtab[t]->name);
+			error(Ebadsharp);
+		}
 		break;
 
 	default:

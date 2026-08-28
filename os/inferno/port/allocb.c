@@ -28,6 +28,7 @@ _allocb(s32 size)
 	Block *b;
 	uintptr addr;
 	int n;
+	ulong msz;
 
 	b = mallocz(sizeof(Block)+size+Hdrspc+(BY2V-1), 0);
 	if(b == nil)
@@ -41,7 +42,39 @@ _allocb(s32 size)
 	addr = (uintptr)b;
 	addr = ROUND(addr + sizeof(Block), BY2V);
 	b->base = (uchar*)addr;
-	b->lim = ((uchar*)b) + msize(b);
+	/*
+	 * msz is captured ONCE and reused below -- a first version of this
+	 * check called msize(b) a second time inside the panic's own
+	 * argument list and caught it returning a DIFFERENT (much larger)
+	 * value than the call that set b->lim moments earlier (216 vs.
+	 * whatever near-zero value made lim resolve to b itself) on the
+	 * SAME block, no other code running in between on this
+	 * single-vCPU harness.  That is msize()/poolmsize() disagreeing
+	 * with itself across two calls, not scattered corruption -- worth
+	 * chasing on its own (see doc/inferno-ports.ms) but it was making
+	 * this specific diagnostic self-contradictory, so it is fixed
+	 * here first: one call, one value, used everywhere below.
+	 */
+	msz = msize(b);
+	b->lim = ((uchar*)b) + msz;
+	/*
+	 * Every "checkb 0 qaddlist 1" capture this hunt has caught downstream
+	 * showed base > lim by EXACTLY Hdrspc (64) bytes, regardless of the
+	 * block's overall size or address -- a precise, deterministic
+	 * signature, not scattered corruption.  Catch it here, at
+	 * construction, instead of wherever a later caller first happens to
+	 * checkb() the already-malformed block: this is the only place that
+	 * can show size (the caller's request), msz (what the allocator
+	 * actually granted, per THIS call), and sizeof(Block) together,
+	 * which settles directly whether the allocator is under-granting or
+	 * the caller is passing a bad size.  pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	if(b->lim < b->base)
+		panic("_allocb: lim %#p < base %#p, size %d sizeof(Block) %d "
+			"msz %lud Hdrspc %d pc=%#p",
+			b->lim, b->base, size, (int)sizeof(Block), msz, Hdrspc,
+			getcallerpc(&size));
 	b->rp = b->base;
 	n = b->lim - b->base - size;
 	b->rp += n & ~(BY2V-1);
