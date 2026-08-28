@@ -14156,6 +14156,81 @@ code is not automatically safe across architectures just because it
 compiles for all of them, and that this tree's own "pc64-only,
 temporary" comments were accurate warnings, not decoration.
 
+\
+.NH 1
+A second, still-open finding: FAT mount hangs on riscv64/virt after the fix
+.PP
+With the boot hang fixed, the ARM/RISC-V pivot continued into
+.CW os/inferno/virt/smoke.sh ,
+the board's own existing functional harness (GC, blk, FAT, draw, ptr,
+kbd, tk, rng, cap, ssl, auth, dynld, net, DHCP, DNS/cs, TCP, UDP,
+Styx, sh, UART).  It found a second real, reproducible failure,
+unrelated to the first: the guest reaches
+.CW BLK-OK
+(a raw sector read off virtio-blk succeeds) and then never reaches
+.CW FS-OK ,
+the FAT-mount-via-dossrv stage, in two independent runs -- one capped
+at 200 seconds, one at 550 -- with byte-identical console output up to
+the point both stopped producing any further lines.  Not a slow test:
+a hang.
+.PP
+.CW os/inferno/init/virtinit.b 's
+.CW fsmount()
+spawns
+.CW /dis/dossrv.dis
+(present, shared, architecture-independent Dis bytecode -- confirmed
+in
+.CW dis/dossrv.dis ,
+not a missing-file problem) via a helper that blocks on a channel
+receive until the spawned process reports back, then opens and reads
+.CW /n/dos/marker.txt .
+Whichever of these two steps is stuck, none of
+.CW fsmount() 's
+own outcomes --
+.CW FS-OK ,
+.CW FS-FAIL\ dossrv ,
+.CW FS-FAIL\ open ,
+or
+.CW FS-FAIL\ content
+-- ever print, meaning it never reaches even its own error paths.
+.PP
+Attached QEMU's
+.CW -s\ -S
+gdbstub and interrupted the guest 16 seconds past
+.CW BLK-OK :
+the core was executing
+.CW wfi
+(RISC-V's wait-for-interrupt halt), immediately after a one-line
+.CW ret
+right past the instruction, confirmed by extracting and disassembling
+the raw bytes at that program-header-mapped file offset rather than
+trusting lldb's own weak riscv64 instruction decoding.  That rules out
+a spinning busy-loop: the scheduler has no runnable process at that
+moment, consistent with whatever is stuck being genuinely blocked
+(on a channel, a lock, or an I/O completion that never arrives) rather
+than looping.  A follow-up probe -- resume, wait past the hang point,
+send a carriage return at the console -- got some response back,
+weak evidence (it does not distinguish a live shell prompt from a
+raw UART character echo) that the native console/interrupt path
+itself is not universally deadlocked, only whatever
+.CW fsmount()
+is waiting on.
+.PP
+Not chased further: whether the block is inside
+.CW dossrv.b 's
+own Limbo logic (interpreted Dis bytecode, architecture-independent,
+making a Limbo-level bug equally likely to affect every board) or in
+a native virtio-blk access pattern specific to whatever reads
+.CW dossrv
+issues while parsing a FAT boot sector, FAT table and directory
+entries -- a very different read pattern from
+.CW blkcheck() 's
+single, simple, already-working full-sector read.  Also open: whether
+this reproduces on pc64, which has no equivalent smoke harness to
+check it against.  Characterized, reproducible, real; not root-caused.
+Left for the next pass at this board rather than chased to ground the
+way the pc64 heisenbug was -- this one, unlike that one, does not need
+tricks to reproduce: it fails the same way every time.
 .NH 1
 Then
 .PP
