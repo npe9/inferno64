@@ -14361,7 +14361,104 @@ answer to the question that started this pivot -- not proof the
 heisenbug is pc64-only, since riscv64/virt was not stress-tested at
 pc64's scale (hundreds of boots) before its own two bugs interrupted
 that plan, but no evidence yet that it is not.
+\
 .NH 1
+Narrowed further: Sys_pctl() reaches its own final acquire(), which never returns
+.PP
+Followed the advisor's own suggested test first, since the earlier
+write-up's leading candidate (
+.CW closefgrp() 's
+.CW cclose()
+of an inherited fd) was stated but not checked.  A probe printing on
+entry, before each
+.CW cclose() ,
+after each, and on return -- gated to fire only for the Dis Prog
+identity already established (
+.CW up->iprog->pid\ ==\ 3 ,
+not
+.CW up->pid ,
+which names whichever kernel Proc happens to be carrying the
+interpreter and is not stable across a single Dis process's own native
+calls) -- showed
+.CW closefgrp()
+completing cleanly every time: entered, both inherited fds (2 and 4)
+closed without incident, freed, returned.  Not the site.  Neither is
+.CW newfgrp() 's
+.CW smalloc() ,
+already ruled out the round before.
+.PP
+Moved the same probe to
+.CW Sys_pctl() 's
+own final
+.CW acquire()
+call -- the last native work the function does, right before setting
+its return value and returning to the interpreter.  It fires
+.B once :
+.CW "about to call final acquire()"
+prints, matching every other single-fire marker in this chain
+(
+.CW pctl\ entry ,
+.CW closefgrp\ entered ,
+.CW closefgrp\ returning ).
+.B "acquire() returned" never prints.
+Every native step before it -- release, NEWFD's fgrp swap, both
+inherited fd closes -- is now confirmed complete.  This one call is
+where forward progress stops.
+.PP
+One complication surfaced rather than resolved: instrumenting
+.CW acquire()
+itself (same
+.CW up->iprog->pid==3
+gate) shows many further ENTRY/EXIT cycles logged against prog 3
+.I after
+the "about to call final acquire()" marker, several of them going
+through the full queue-and-reschedule path with
+.CW sched()
+visibly returning each time -- activity that should not exist if this
+one call is simply parked waiting.
+.CW inferno.c
+turns out to bracket
+.I every
+blocking native call (
+.CW Sys_open ,
+.CW Sys_read ,
+.CW Sys_write ,
+.CW freeFD ,
+and more) in its own
+.CW release()/acquire()
+pair, so some of this may be entirely ordinary traffic from other
+native calls this same process makes while servicing Styx messages,
+correctly attributed by Prog identity to the same pid.  It was not
+sorted out which of these cycles are ordinary and which (if any) are
+the same stuck call reappearing, and it was not confirmed that
+.CW up->iprog
+is trustworthy as a cross-kernel-Proc identity in every context probed
+here rather than just the two (
+.CW dis.c ,
+.CW pgrp.c )
+where it was checked against known-good data.  Left open rather than
+resolved past this point, per the discipline this hunt has kept
+throughout: a print that could mean two things is not a finding until
+it means one.
+.PP
+Standing: the hang is native, not Limbo (hosted-emu comparison, prior
+round); not out-of-memory retry (smalloc instrumentation, prior
+round); not
+.CW closefgrp()
+or
+.CW newfgrp()
+(this round); is the last thing
+.CW Sys_pctl()
+does before returning, specifically its own closing
+.CW acquire()
+call, confirmed entered and never observed to exit (this round).  What
+that call is actually waiting on, and why the same mechanism that
+services this port's entire boot and mps2's clean 5/5 fails exactly
+here, remains open.  All instrumentation (four files across two
+languages this round) built, tested, and reverted; a clean rebuild
+reproduces the identical hang before this was written up.
+\
+.NH 1.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
