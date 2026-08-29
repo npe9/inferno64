@@ -14204,33 +14204,114 @@ the core was executing
 .CW ret
 right past the instruction, confirmed by extracting and disassembling
 the raw bytes at that program-header-mapped file offset rather than
-trusting lldb's own weak riscv64 instruction decoding.  That rules out
-a spinning busy-loop: the scheduler has no runnable process at that
-moment, consistent with whatever is stuck being genuinely blocked
-(on a channel, a lock, or an I/O completion that never arrives) rather
-than looping.  A follow-up probe -- resume, wait past the hang point,
-send a carriage return at the console -- got some response back,
-weak evidence (it does not distinguish a live shell prompt from a
-raw UART character echo) that the native console/interrupt path
-itself is not universally deadlocked, only whatever
-.CW fsmount()
-is waiting on.
+trusting lldb's own weak riscv64 instruction decoding.  Read at the
+time as ruling out a spinning busy-loop -- wrong, corrected below.
 .PP
-Not chased further: whether the block is inside
+.B "Correction."
+A single sampled
+.CW wfi
+is not evidence of anything: it only shows the CPU was idle at the
+instant of one interrupt, not that nothing runs between samples.  A
+cheap external check settled the Limbo-vs-native question the first
+write-up left open: hosted
+.CW emu
+on this host, given the exact same
+.CW dis/dossrv.dis
+(portable Dis bytecode, byte-identical to what the kernel embeds) and
+the same FAT12 image, mounts it and reads
+.CW marker.txt
+back without incident.  Same bytecode, same image, no hang -- the bug
+is not in
 .CW dossrv.b 's
-own Limbo logic (interpreted Dis bytecode, architecture-independent,
-making a Limbo-level bug equally likely to affect every board) or in
-a native virtio-blk access pattern specific to whatever reads
-.CW dossrv
-issues while parsing a FAT boot sector, FAT table and directory
-entries -- a very different read pattern from
-.CW blkcheck() 's
-single, simple, already-working full-sector read.  Also open: whether
-this reproduces on pc64, which has no equivalent smoke harness to
-check it against.  Characterized, reproducible, real; not root-caused.
-Left for the next pass at this board rather than chased to ground the
-way the pc64 heisenbug was -- this one, unlike that one, does not need
-tricks to reproduce: it fails the same way every time.
+Limbo logic, and every board that runs this bytecode is not equally
+at risk the way the first write-up guessed.
+.PP
+Bisecting inside
+.CW dossrv.b
+by adding
+.CW sys->print()
+markers (portable, so directly comparable against the same emu run)
+narrowed the hang to one call:
+.CW sys->pctl(Sys->NEWFD,\ rfd.fd::2::nil) ,
+made by the freshly
+.CW spawn ed
+server process right after it starts, before it ever reads a Styx
+message.  The matching native side,
+.CW Sys_pctl()
+in
+.CW os/inferno/port/inferno.c ,
+brackets its NEWFD work with
+.CW release()
+and
+.CW acquire() ,
+the same interpreter VM hand-off
+.CW os/inferno/port/dis.c
+uses to let a different Dis process run while one of them is doing
+native (non-interpreted) work.
+.PP
+Tracing
+.CW release() / acquire()
+themselves needed a fix first: printing
+.CW up->pid
+(the carrier kernel Proc, one of a small rotating pool of "vm" kprocs)
+produced a trace that looked like a totally different process was
+cycling, because several different kernel Procs carry the interpreter
+across its lifetime.  Printing
+.CW up->iprog->pid
+instead -- the actual Dis Prog identity, stable across which kernel
+Proc happens to be carrying it -- gives an unambiguous trace, and it
+settles the question the first write-up got wrong:
+.B "the stuck process is not idle, it is spinning."
+Dozens of
+.CW release() / acquire()
+cycles for the same Dis Prog pid fire back to back, each one a clean
+release, a full queueing-and-reschedule round trip, and a clean
+re-acquire -- CPU-bound activity, not a blocked wait.  The earlier
+.CW wfi
+sample caught a gap between two of these cycles, not a resting state.
+.PP
+One candidate was checked and ruled out directly rather than by
+inference:
+.CW newfgrp() 's
+own
+.CW smalloc()
+call -- the pc64 hunt's own documented failure mode, a
+.CW poolalloc()
+retry loop with no escape (see
+.CW smalloc() 's
+comment in
+.CW alloc.c )
+-- was instrumented to print on every retry.  It never printed once.
+Whatever spins, it is not memory exhaustion in the file-descriptor
+group allocation.
+.PP
+Not chased further: which specific step inside
+.CW Sys_pctl() 's
+NEWFD body -- most plausibly
+.CW closefgrp(ofg) 's
+.CW cclose()
+of an fd the freshly-spawned process inherited from its parent at
+.CW spawn
+time, since that is the one call in the sequence that can itself need
+a Styx round trip and its own
+.CW release()/acquire()
+pair -- is the actual site of the spin, and why closing that
+particular fd never completes on riscv64/virt while the rest of this
+port's own interpreter scheduling clearly works (everything up to
+this point in boot, and mps2's clean 5/5, both exercise
+.CW release()/acquire()
+constantly without incident).  Left for the next pass.  What changed
+from the first write-up: not root-caused, but the Limbo-vs-native
+question is now answered (native), the failure mode is now known (a
+spin, not a block), and one concrete mechanism (out-of-memory retry)
+is eliminated by direct evidence rather than left as an open
+possibility.
+.PP
+Also open: whether this reproduces on pc64, which has no equivalent
+smoke harness to check it against.  Left for the next pass at this
+board rather than chased to ground the way the pc64 heisenbug was --
+this one, unlike that one, does not need tricks to reproduce: it
+fails the same way every time.
 \
 .NH 1
 mps2 boots clean, and the rest of the ARM boards are hardware-only here
