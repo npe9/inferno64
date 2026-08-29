@@ -14677,6 +14677,102 @@ sample size, is clean.  That is the answer the pivot was for.  Whether the
 class exists anywhere outside pc64 remains open; what is no longer open is
 whether it was worth checking.
 .NH 1
+The cmount()/dossrv mismatch reproduces on pc64 too: shared code, not riscv64
+.PP
+One item from the previous section's own writeup was answerable without
+Codex's half of this tree: whether the
+.CW cmount() / dossrv
+non-convergence found on riscv64/virt was architecture-specific or shared
+.CW os/inferno/port
+behavior. pc64 already links a virtio-blk driver
+.CW ( sdvirtio.6 ,
+already in its device list for unrelated reasons), so the same check --
+same portable
+.CW appl/cmd/dossrv.b ,
+same
+.CW sys->mount()
+call, different silicon -- was one board away.
+.PP
+Built a minimal temporary init,
+.CW os/inferno/init/pc64fatinit.b ,
+copying virtinit.b's
+.CW blkcheck()
+and
+.CW fsmount()
+verbatim (same functions, unmodified) with everything else -- the wm/tk/
+network smoke suite that would be noise for this one question -- left out.
+pc64's own root file list did not carry
+.CW dossrv.dis
+(virt's does, for its own smoke.sh); added the one line to pull it in, the
+same way virt already does.  Built with
+.CW mk\ INIT=pc64fatinit\ install ,
+booted under
+.CW qemu-system-x86_64
+with a
+.CW virtio-blk-pci
+device (PCI, not virt's MMIO transport -- a genuinely different bus) attached
+to the same FAT image used on riscv64.
+.PP
+.B "Same hang."
+.CW BLK-OK
+prints -- virtio-blk enumerates and reads fine, same as riscv64.
+.CW dossrv.dis
+loads and spawns.  Neither
+.CW FS-OK
+nor any
+.CW FS-FAIL
+ever prints.  Given three minutes, not the twelve seconds the earlier riscv64
+checks used (pc64's TCG boot is independently known to be slow, and a false
+"hang" that was actually still working was a real risk worth ruling out
+directly rather than assuming) -- output stayed byte-identical to the
+60-second run, including the exact heap addresses in its last few
+.CW copypath
+lines.  Not slow.  Actually stuck, on a second, unrelated architecture, at
+the same place.
+.PP
+That relocates the bug's likely home a second time.  A riscv64/virt-specific
+explanation -- an MMIO virtio quirk, an SBI timer interaction, anything in
+.CW os/inferno/riscv
+or
+.CW os/inferno/virt
+-- cannot be the cause, because none of that code runs on pc64 at all.  What
+.I is
+shared between these two boards, and what pc64's own long history in this
+document has never previously touched, is
+.CW appl/cmd/dossrv.b
+itself and the generic Styx-mount machinery in
+.CW os/inferno/port
+that
+.CW cmount()
+and
+.CW Sys_mount()
+walk through.  That is now the leading suspect, in preference to anything
+architecture-specific, though it is still not root-caused: the previous
+section's own next step -- reading
+.CW cmount()
+and
+.CW dossrv() 's
+Styx exchange side by side -- is unchanged by this finding, just better
+aimed.
+.PP
+Reverted:
+.CW pc64fatinit.b ,
+the
+.CW dossrv.dis
+root-list line, and the regenerated
+.CW pc64.root.s / pc64.root.h
+it produced, all removed; the committed
+.CW ipc64
+restored via
+.CW "git checkout --"
+rather than rebuilt, to avoid any chance of drifting from whatever
+.CW INIT
+the rest of this document's pc64 findings were built against.  This was a
+diagnostic build, following the same discipline as every temporary probe
+above -- not a claim that pc64 should ship a FAT/dossrv smoke test, only
+that the question of whether it hangs the same way was worth one clean
+answer.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
