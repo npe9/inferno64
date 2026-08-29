@@ -14458,6 +14458,115 @@ here, remains open.  All instrumentation (four files across two
 languages this round) built, tested, and reverted; a clean rebuild
 reproduces the identical hang before this was written up.
 \
+.NH 1\
+.NH 1
+Correction: the previous round's conclusion does not survive a direct check
+.PP
+The previous round's own stop condition said not to build a fourth
+probe generation without a decisive discriminator.  Found one: a
+call-site tag, set by the caller immediately before each
+.CW acquire()
+call across every blocking native function in
+.CW inferno.c
+(34 sites tagged mechanically, by function name, plus
+.CW Sys_pctl 's
+own final call by hand), printed alongside the existing Prog-identity
+gate.  One build, one boot, and the ambiguity resolves --
+.B "against"
+the previous round's conclusion.
+.PP
+.CW Sys_pctl-final
+fires exactly once, immediately after
+.CW dossrv.b 's
+own pctl-entry marker, as expected.  It is
+.I not
+followed by silence.  It is followed by a long, ordinary-looking
+sequence of
+.I distinct
+tags --
+.CW Sys_fildes ,
+.CW Sys_readn
+(several),
+.CW Sys_write ,
+.CW Sys_open ,
+.CW Sys_fstat ,
+.CW Sys_seek ,
+.CW Sys_read ,
+.CW freeFD
+-- each a different native call, in an order consistent with
+.CW dossrv.b 's
+own source: fildes right after pctl, then read/write/open/seek/stat
+traffic matching real Styx message handling and FAT parsing, then
+GC-driven
+.CW freeFD
+finalizers as file descriptors get collected.
+.CW up
+and
+.CW up->iprog
+are identical, unchanging pointer values across every single one of
+these -- the same kernel Proc, the same Dis Prog, the whole time, so
+this is not cross-process misattribution.
+.B "Sys_pctl's own final acquire() returns, and execution continues well
+past it."
+The previous round's central claim -- that this one call is where
+forward progress stops -- does not survive this check and is retracted.
+.PP
+What replaces it is stranger, and not resolved.
+.CW dossrv.b
+still never prints
+.CW "PROBE\ pctl\ returned"
+or
+.CW "PROBE\ fildes\ returned" ,
+the two markers placed directly after the
+.CW pctl()
+and
+.CW fildes()
+calls respectively -- their literal text never appears, even though
+the
+.I native
+.CW Sys_fildes
+call immediately after
+.CW pctl()
+demonstrably executes (its own tag fires), and even though a third,
+identical-shaped call --
+.CW dossrv.b 's
+own first
+.CW sys->print() ,
+the pctl-entry marker -- unambiguously does both execute and print.
+Native calls that should be separated by two Limbo-level print
+statements are visibly happening; the print statements' own output is
+not.  Both explanations considered and neither confirmed: a genuine
+interpreter/compiler defect that skips specific statements while
+executing their neighbors (would be a serious, general finding, well
+past what this round's evidence supports), or a console output
+race under sustained native-call volume that swallows some
+.CW print()
+calls without dropping others (consistent with this whole hunt's
+recurring theme of print()/console fragility, but not demonstrated
+here either).  Not chased further -- per the same stop discipline that
+produced the correction above, a plausible mechanism is not a finding
+until it is checked, and this one has not been.
+.PP
+Standing, restated once more: the hang is native, not Limbo-level
+(hosted-emu comparison, still holds); not
+.CW smalloc()
+out-of-memory retry, not
+.CW closefgrp() ,
+not
+.CW newfgrp() ,
+and now not
+.CW Sys_pctl() 's
+own closing
+.CW acquire()
+either -- all four checked directly and eliminated, not guessed.  Real
+forward progress happens well past the point this hunt spent the last
+two rounds staring at.  Where it actually stops is open again, further
+into
+.CW dossrv() 's
+own Styx-serving loop than previously reached, alongside the new and
+separately unresolved puzzle of the missing print output.  Reverted;
+clean rebuild reproduces the identical hang before this was written up.
+\
 .NH 1.NH 1
 Then
 .PP
