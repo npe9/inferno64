@@ -14773,6 +14773,119 @@ above -- not a claim that pc64 should ship a FAT/dossrv smoke test, only
 that the question of whether it hangs the same way was worth one clean
 answer.
 .NH 1
+Reading, not probing: what os/inferno/port/devmnt.c and dossrv.b actually say
+.PP
+The next step named above -- reading
+.CW cmount()
+and
+.CW dossrv() 's
+Styx exchange side by side -- for once did not need a kernel boot to make
+progress on.  Both sides are ordinary, static C and Limbo source, and one
+clue was already sitting in an old log: a
+.CW "T104 R107"
+pair from the no-blk-device riscv64 run.
+.CW Tattach
+is 104,
+.CW Rattach
+is 105, and 107 is
+.CW Rerror --
+so that line is
+.CW mountrpc() 's
+own
+.CW Rerror
+case firing exactly as designed (dossrv correctly reporting "can't open
+/dev/sdF0/data" back up through
+.CW cmount() )
+, not a type mismatch; the word "mismatch" in that print is fixed boilerplate
+shared by all three of
+.CW mountrpc() 's
+diagnostic branches, not a diagnosis.  That log was from the no-device
+configuration, which errors cleanly and was never the actual hang.
+.PP
+Rebuilt the real FAT case (committed riscv64/virt, no changes) and grepped
+its boot log for every string
+.CW mountrpc()
+and
+.CW mountmux()
+can print -- the
+.CW Rerror ,
+.CW Rflush
+and default-mismatch branches in the former, the "unexpected reply" branch
+in the latter, which fires when a reply's tag matches no pending request.
+.B "None of them ever appear."
+Whatever is happening, it is not a malformed reply, not a wrong message
+type for what was sent, and not a reply tagged for a request nobody is
+waiting on -- every byte that
+.I does
+arrive is well-formed and correctly routed.  That itself rules things out:
+this is not a version-string or tag-numbering bug of the kind that would
+leave a trace in either function.
+.PP
+Reread
+.CW dossrv.b 's
+own mount setup once more with this in mind:
+.CW init2()
+creates the pipe,
+.B "spawns the server loop first,"
+then calls
+.CW sys->mount()
+-- the ordering that avoids the obvious chicken-and-egg deadlock (mounting
+before anything can answer). Its
+.CW rversion()
+handler builds a well-formed
+.CW Rmsg.Version
+and the main loop's
+.CW sys->write()
+back to the pipe checks its own return length; nothing here looks broken,
+and re-running the identical FAT image against
+.CW dis/dossrv.dis
+under hosted emu (this round, not trusting the earlier round's claim without
+re-checking it against the exact image in question) mounted and read
+.CW marker.txt
+correctly, confirming again that the Limbo side is not where this lives.
+.PP
+The previous round's own tag trace is the piece that narrows this further:
+the native calls it saw firing in sequence after
+.CW Sys_pctl-final --
+.CW Sys_fildes ,
+.CW Sys_readn ,
+.CW Sys_write ,
+.CW Sys_open ,
+.CW Sys_fstat ,
+.CW Sys_seek ,
+.CW Sys_read --
+match
+.CW dossrv.b 's
+own source order for
+.I servicing
+a request against its backing device, not for negotiating a connection.
+That places the point of no return later than version and attach: dossrv
+appears to reach real request handling -- walking, opening, and reading the
+backing FAT device on the server's own side -- before whatever silences it.
+Put together with the previous point, the picture this reading supports,
+stated as inference rather than as a finding: dossrv computes and
+.CW sys->write() s
+a well-formed reply that never shows up as a malformed or misrouted message
+on the native side because it may never show up
+.I at all --
+which would point at delivery through the pipe itself
+.CW ( os/inferno/port/devpipe.c ,
+via
+.CW qio.c 's
+queues) under native scheduling, rather than at anything in
+.CW devmnt.c
+or
+.CW dossrv.b 's
+own protocol logic, both of which now read clean.
+.PP
+Not verified by instrumentation this round -- this is as far as reading two
+files (three, counting devpipe.c only by name so far) goes before the next
+step has to be a boot again: does a specific write on one end of this pipe
+ever fail to appear as available bytes on the other end's queue, under
+native scheduling, for a spawned Prog talking to the Prog that spawned it.
+That is a sharper, code-grounded question than "where does cmount() hang",
+and it is where a next round should start, if there is one.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
