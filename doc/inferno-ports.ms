@@ -14566,8 +14566,80 @@ into
 own Styx-serving loop than previously reached, alongside the new and
 separately unresolved puzzle of the missing print output.  Reverted;
 clean rebuild reproduces the identical hang before this was written up.
-\
-.NH 1.NH 1
+.NH 1
+Not the interpreter after all: the mount itself never returns
+.PP
+The advisor reviewing this hunt read the previous round's own tag
+sequence with fresher eyes than the round that produced it: a server
+reading, opening, seeking and writing in that pattern is not stuck --
+it is
+.I working .
+The candidate worth checking was never on the served side of the
+mount, because nothing there was refusing to make progress.  It was on
+the
+.I mounting
+side, which this hunt had tagged along with everything else in
+.CW inferno.c
+but never actually looked at.
+.PP
+One check settles it.
+.CW Sys_mount()
+in
+.CW inferno.c
+is two lines: it calls
+.CW release() ,
+then
+.CW kmount() ,
+then only after
+.CW kmount()
+returns does it set its own tag and call
+.CW acquire() .
+Rebuilt with the same call-site-tag instrumentation as the previous
+two rounds, booted once against a fresh FAT image:
+.B "the Sys_mount tag never appears, not once, in the entire trace."
+Every one of the other 33 tagged sites fires, repeatedly, exactly as
+the previous round found.
+.CW Sys_mount 's
+own does not.
+.CW kmount()
+itself never returns.
+.PP
+That relocates the hang entirely.  It is not an
+.CW acquire()
+call waiting to be rescheduled, and it is not interpreter-level at
+all -- release() already ran, so the interpreter is free to do
+whatever else it wants (and does: this is exactly what the previous
+round's ordinary-looking dossrv traffic was doing) while
+.CW kmount()
+sits in native C, off in
+.CW cmount() 's
+own Styx exchange with the freshly spawned
+.CW dossrv
+server, and that exchange does not converge.  The dossrv side is
+provably alive and issuing real
+.CW Sys_readn / Sys_write
+pairs the whole time.  Two processes both making local progress and
+never jointly finishing describes a protocol-level non-termination --
+a mismatched attach, a retry that never satisfies its caller, or
+similar -- not a scheduling defect, and not the missing-print puzzle
+either; that puzzle is set aside, not resolved, having turned out to
+sit downstream of a question that mattered more.
+.PP
+Reverted (both
+.CW dis.c 's
+tag global and every tagged site in
+.CW inferno.c );
+clean rebuild reverified reproducing the identical hang, byte-for-byte
+against the previous round's log, before this was written up.  Not yet
+done: reading
+.CW cmount()
+and
+.CW dossrv() 's
+Styx exchange side by side to find where the two sides talk past each
+other.  This is where a fifth round would start, if there is one; this
+hunt is closing this thread here in favor of the item still untouched
+since the pivot began, below.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
