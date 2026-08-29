@@ -14640,6 +14640,43 @@ other.  This is where a fifth round would start, if there is one; this
 hunt is closing this thread here in favor of the item still untouched
 since the pivot began, below.
 .NH 1
+The item untouched since the pivot began: batch-boot volume on riscv64/virt
+.PP
+Every remaining boot of riscv64/virt hangs on the FAT mount, deterministically,
+whatever device is attached or missing -- so a batch of full boots-to-shell
+finds nothing new; every run stops at the identical place.  What is still
+worth measuring, and had not been measured yet, is the one stretch every run
+.I does
+reach: the reachable prefix through memory init, PCI and virtio device
+enumeration, and the GC stress pass ending in
+.CW GC-STRESS-OK .
+That is exactly the phase where the pc64 heisenbug's own signature -- a
+general protection violation, 10-43% of boots, see the pc64 sections above --
+has always fired.  Forty independent boots, no virtio-blk device attached (the
+cheaper of the two reachable-prefix configurations, and the fsmount() failure
+path it takes is itself identical every time), each given 12 seconds --
+comfortably past where every prior run reached this point.
+.PP
+Forty for forty:
+.B "zero panics, zero unexpected qemu terminations, and the entire non-timestamp
+output of every single run is byte-identical"
+-- not just the same milestones reached in the same order, but the same heap
+pointer values in the same Styx error message, run after run.  This
+architecture, over this window, shows none of pc64's variance at all.
+Combined with mps2's clean 5/5 (above), that is two independently
+implemented architectures -- RISC-V64 QEMU virt and ARMv7-M Cortex-M7 QEMU --
+run a combined 45 times through the boot phase where pc64 misfires close to
+half the time, without one failure of any kind.
+.PP
+This does not prove the pc64 heisenbug is pc64-specific -- forty boots of one
+prefix on one board is a narrower sample than the hundreds of full boots pc64
+itself received, and the prefix tested here is shorter than a full boot.  It
+is a real negative result on its own terms, though, not a shrug: this
+specific phase, on this specific alternate architecture, at this specific
+sample size, is clean.  That is the answer the pivot was for.  Whether the
+class exists anywhere outside pc64 remains open; what is no longer open is
+whether it was worth checking.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
