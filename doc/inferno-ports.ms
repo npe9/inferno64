@@ -15054,6 +15054,119 @@ genuinely rebuilt.  The temporary
 and its one root-list line were used a third time this round and
 reverted afterward, same as every round before it.
 .NH 1
+Found it: a Limbo raise does not cross a spawned Prog boundary natively
+.PP
+The previous section's own next step was three specific links:
+.CW dossrv.b 's
+.CW raise\ "fail:error" ,
+.CW startfs() 's
+own
+.CW exception\ e\ {\ "*"\ =>\ ... }
+catch, and
+.CW fsmount() 's
+.CW <-c
+receive.  Two cheap checks, not another boot-and-guess round, settled
+it.
+.PP
+First: is the last print before silence
+.CW ( "dossrv:\ mount\ /n/dos:\ " ,
+from
+.CW sys->fprint(sys->fildes(2),\ ...) )
+really the last thing that runs, or just the last thing that
+.I prints ?
+A marker placed right after it, using
+.CW sys->print() ,
+never appeared -- but that
+.I alone
+proves nothing, because this whole hunt has already seen
+.CW sys->print()
+specifically go missing once before (the retracted round's own
+puzzle).  Rebuilt the marker with
+.CW sys->fprint(sys->fildes(2),\ ...) ,
+the exact mechanism that had just printed successfully one line
+above it.
+.B "That marker printed."
+Execution genuinely reaches the
+.CW raise
+statement.
+.PP
+Second: does the raise/catch mechanism work at all, portably?  Ran the
+identical bytecode under hosted emu:
+.IP
+.nf
+emu -r $ROOT dis/sh.dis -c 'dossrv -f /nope.img -m /n/dos; echo AFTER'
+.fi
+.PP
+Both the pre-raise marker and the post-raise
+.CW echo
+printed cleanly.  The Limbo-level exception mechanism itself is not
+broken; hosted emu handles a
+.CW raise
+inside a Command's
+.CW init()
+without issue.
+.PP
+Put those two together on the native kernel: the marker
+.I immediately
+before
+.CW raise\ "fail:error"
+prints; nothing placed
+.I after
+it -- not the (intentionally unreachable) line right after the raise
+in
+.CW dossrv.b ,
+and not
+.CW startfs() 's
+own exception-catch print, one call frame up -- ever does.
+.B "The raise statement itself is where forward progress stops, on the
+native kernel specifically, crossing from a spawned Prog
+(startfs/dossrv, running inside its own Dis process) back to the
+exception handler in the Prog that spawned it."
+Checked on both architectures with the identical probe: riscv64/virt
+and pc64 show the exact same shape, marker printed, nothing after,
+silence -- this is shared code again, not either board's own doing.
+.PP
+This is a materially different, sharper claim than anything earlier in
+this document's FAT/dossrv thread.  Every prior round characterized
+this as "the mount hangs" or "the two sides don't converge" --
+language for a stuck RPC.  It is not that.  The RPC itself already
+finished (dossrv correctly detected and reported the failure, twice
+over -- once to the human-readable stderr message, once again to this
+round's own marker).  What fails is Limbo's own
+.CW raise
+unwinding out of a
+.I spawned
+Dis process and into a
+.CW exception
+block in its parent -- a Dis-VM/interpreter-level mechanism, in
+.CW libinterp ,
+not anything in
+.CW os/inferno/port/devmnt.c
+or
+.CW appl/cmd/dossrv.b ,
+both of which this hunt has now read end to end and found clean.
+Neither checked directly yet: whether a
+.CW raise
+crossing a spawned-Prog boundary fails for
+.I every
+exception, or only ones raised from deep inside a blocked-then-woken
+native call the way this one was; and whether the native kernel's own
+process-teardown path
+.CW ( startfs() 's
+.CW exit
+statement, never reached here either) is itself part of what is
+supposed to deliver the exception, rather than a separate step after
+it lands.
+.PP
+Reverted: both probes
+.CW ( appl/cmd/dossrv.b ,
+.CW os/inferno/init/virtinit.b ) ,
+the pc64 diagnostic init and its root-list line (used a fourth time,
+same discipline).
+.CW dis/dossrv.dis
+rebuilt clean from the reverted source.  Clean rebuild reverified
+reproducing the identical silent stop before this was written up.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
