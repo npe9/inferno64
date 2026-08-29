@@ -14886,6 +14886,174 @@ native scheduling, for a spawned Prog talking to the Prog that spawned it.
 That is a sharper, code-grounded question than "where does cmount() hang",
 and it is where a next round should start, if there is one.
 .NH 1
+kmount() was missing a real guard; fixing it moves the hang, not away
+.PP
+An advisor review pointed at
+.CW kmount()
+directly: it is a bare
+.CW "return bindmount(1, ...);" ,
+with no
+.CW waserror()
+of its own.
+.CW bindmount() 's
+own internal
+.CW waserror()
+blocks all end in
+.CW nexterror() ,
+which only adds cleanup on the way past and always re-raises -- none of
+them stop an error from propagating.  With nothing above them to catch
+it, any
+.CW error()
+raised under
+.CW mntattach()/mntversion()/mountrpc()
+unwinds straight past
+.CW Sys_mount() 's
+.CW acquire()
+in
+.CW port/inferno.c ,
+and this kproc's Dis-execution token is never reacquired -- exactly the
+already-fixed
+.CW #l0 /no-NIC
+bind hang's own mechanism, in
+.CW kbind() ,
+a few lines above
+.CW kmount()
+in the same file, comment and all.
+.PP
+Added the same guard.  The falsifiable prediction was that the
+no-blk-device riscv64 case, whose log already showed the real error
+(an
+.CW Rerror
+reply from dossrv reporting it can't open its backing file) and then
+total silence, would now print an
+.CW FS-FAIL
+and continue.
+.B "It did not."
+Direct instrumentation showed why: with a real
+.CW waserror()
+now in place,
+.CW kmount()
+never reached it at all --
+.I no
+print between
+.CW kmount() 's
+own entry and the point where everything already goes silent.
+.PP
+Four increasingly targeted synthetic tests, all in
+.CW sysfile.c ,
+none touching pipes or dossrv, ruled out the generic explanations one at
+a time: a same-function
+.CW error()
+was caught; a 3-frame-deep
+.CW error()
+was caught; the same 3 frames preceded by a real
+.CW tsleep()
+scheduler round-trip was caught; the same 3 frames wrapped in two
+synthetic nested
+.CW waserror() / nexterror()
+frames shaped exactly like
+.CW bindmount() 's
+own, still preceded by the sleep, was caught.
+.B "Depth, a scheduler transition, and chained nested unwinding are each,
+individually, fine on riscv64."
+None of them is the mechanism.
+.PP
+Then a check that mattered more than any of the four: booted riscv64/virt
+with a
+.I real
+FAT image attached instead of no device at all, with the same guard in
+place.
+.B "This time kmount() DID reach its own catch and return -1."
+The exact same function, the exact same call depth, the exact same
+nested-frame shape -- catches cleanly when the failure originates from
+further into a successful negotiation (attach, walk, further down
+dossrv's own request handling) than it does when the failure is an
+immediate
+.CW Rerror
+on the very first
+.CW Tattach .
+.B "The no-device case's unwind failure is not a general property of this
+call chain on riscv64 -- it is specific to failing at that exact, very
+early point,"
+which matches this pivot's own recurring theme (the
+.CW notefree()
+bisection-probe hang, also traced to a specific point during
+early-boot PCI/virtio enumeration) better than it matches a claim
+about the compiler or the unwind primitives in general.  Whatever it
+is, it is narrower and more specific than "riscv64 can't unwind
+multiple frames" -- that broader claim does not survive this check and
+is not made.
+.PP
+With the real FAT device, riscv64/virt now reaches the identical
+stopping point pc64 already reached in the previous section:
+.CW "dossrv: mount /n/dos: "
+prints, then nothing.  That line comes from
+.CW dossrv.b 's
+own
+.CW init2() ,
+after its internal
+.CW sys->mount()
+call fails and returns -- meaning
+.I "dossrv's own mount of itself"
+is what is failing, on both architectures, not something the parent
+process is waiting on indefinitely.  That relocates the still-open
+hang one more step downstream of everywhere this hunt has looked so
+far: past
+.CW kmount() ,
+into
+.CW dossrv.b 's
+own
+.CW raise\ "fail:error"
+after that print, through
+.CW startfs() 's
+.CW exception\ e\ {\ "*"\ =>\ c\ <-=\ "failed";\ exit;\ }
+handler, to
+.CW fsmount() 's
+.CW <-c
+receive.  Not chased further this round.
+.PP
+One side finding, not chased per the same discipline: the error text
+after
+.CW "dossrv: mount /n/dos: "
+is empty on both architectures --
+.CW %r
+resolves to nothing where a real message ought to be.  The same thing
+happens for
+.CW blkcheck() 's
+own
+.CW "BLK-FAIL open: %r"
+earlier in the same boot, so it is not new to this path; it looks like
+a standing gap in how a kernel error strung through
+.CW kmount() 's
+new catch (or any bare
+.CW if(waserror())\ return\ -1;
+pattern) reaches Limbo's
+.CW %r ,
+worth its own look some other time.
+.PP
+Kept and committed:
+.CW kmount() 's
+guard, a real, independent fix regardless of what it did or did not
+resolve here -- verified working end-to-end on pc64 and on riscv64's
+real-FAT-device path, matching
+.CW kbind() 's
+already-committed fix for the identical mechanism.
+.CW os/inferno/virt/ivirt
+rebuilt and committed with it (INIT=virtinit, unambiguous throughout
+this document).  pc64's own
+.CW ipc64
+is deliberately
+.I not
+rebuilt this round -- its production
+.CW INIT
+was never pinned down in this session, and guessing risks drifting the
+committed binary from whatever the rest of this document's pc64
+findings were built against; the fix reaches it the next time pc64 is
+genuinely rebuilt.  The temporary
+.CW pc64fatinit.b
+and its one root-list line were used a third time this round and
+reverted afterward, same as every round before it.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

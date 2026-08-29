@@ -867,7 +867,32 @@ kbind(char *new, char *old, int flags)
 int
 kmount(int fd, int afd, char *old, int flags, char *spec)
 {
-	return bindmount(1, fd, afd, nil, old, flags, spec);
+	int ret;
+
+	/*
+	 * Same gap as kbind(), above, and the same fix.  bindmount()'s own
+	 * waserror() blocks (both branches, ismount==1 included despite what
+	 * kbind()'s comment might suggest) only add cleanup on the way past
+	 * -- every one of them ends in nexterror(), so none of them stop an
+	 * error() raised underneath from propagating all the way up.  With
+	 * nothing here to catch it, a failure anywhere under mntattach()/
+	 * mntversion()/mountrpc() (a server that never replies, an Rerror
+	 * from a bad backing device, anything) unwinds straight past
+	 * Sys_mount()'s (port/inferno.c) acquire(), and this kproc's
+	 * Dis-execution token is never reacquired -- the whole VM goes
+	 * silent forever, same symptom as the #l0/no-NIC bind hang this
+	 * pattern was first found from.  Verified working on pc64 and on
+	 * riscv64/virt's real-FAT-device path (a real mount failure now
+	 * returns -1 cleanly instead of total silence); does NOT fully fix
+	 * either the riscv64/virt or pc64 FAT/dossrv hangs -- both still
+	 * stop one step further downstream, at dossrv.b's own error return.
+	 * See doc/inferno-ports.ms.
+	 */
+	if(waserror())
+		return -1;
+	ret = bindmount(1, fd, afd, nil, old, flags, spec);
+	poperror();
+	return ret;
 }
 
 int
