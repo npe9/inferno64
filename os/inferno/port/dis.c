@@ -852,7 +852,7 @@ schedmod(Module *m)
 	Type *t;
 	Prog *p;
 	Modlink *ml;
-	Frame f, *fp;
+	Frame *f, *fp;
 
 	ml = mklinkmod(m, 0);
 
@@ -872,10 +872,26 @@ schedmod(Module *m)
 	h = D2H(ml);
 	h->ref--;
 	p->R.PC = m->entry;
-	fp = &f;
+	/*
+	 * newstack() (libinterp/stack.c) does memmove(p->R.FP, f, f->t->size)
+	 * -- f->t is m->entryt here, the *complete* entry-frame type covering
+	 * every local the root module's init() declares, routinely far
+	 * bigger than sizeof(Frame).  This used to pass a bare on-stack
+	 * `Frame f`, only ever big enough for the Frame header, so the copy
+	 * read straight past it into whatever this C function's own stack
+	 * frame happened to hold next -- garbage into every local of the
+	 * very first Dis Prog run at boot, on every single native startup.
+	 * emu/port/dis.c's own schedmod() already carries this exact fix
+	 * (and the comment explaining it) from an earlier hunt; this native
+	 * copy never got the same fix.  Allocate the real entry-frame size
+	 * instead, same as emu.  See doc/inferno-ports.ms.
+	 */
+	f = mallocz(m->entryt->size, 1);
+	fp = f;
 	R.s = &fp;
-	f.t = m->entryt;
+	f->t = m->entryt;
 	newstack(p);
+	free(f);
 	initmem(m->entryt, p->R.FP);
 
 	return p;

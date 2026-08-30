@@ -15330,6 +15330,185 @@ correctly there
 .CW ( "raisetest:\ received\ caught" )
 immediately before this was written up.
 .NH 1
+A real bug in schedmod(), and four ruled-out candidates for the raise
+.PP
+The open question left at the end of the last section was whether the
+compiled exception-handler table
+.CW (m->m->htab)
+is even present for a natively-loaded Prog's module.  It is: readmod(),
+parsemod() and the
+.CW HASEXCEPT
+block that fills in
+.CW m->htab
+(libinterp/load.c) are shared code, compiled once and linked into both
+the native kernel and hosted emu.  Same source, same bytes in, same
+table out, on both.  That rules the loader out cleanly \(em there is no
+"native loader" to diff against emu's; it is the same loader.
+.PP
+Diffing
+.CW dis.c
+against emu's copy properly this time (an actual
+.CW diff ,
+not a read-and-remember) turned up a real, previously-missed bug, just
+not in the code path this hunt has been staring at.  schedmod() \(em
+used once per boot, to start the root module's own
+.CW init()
+\(em built its entry frame from a bare on-stack
+.CW "Frame f" :
+.IP
+.nf
+Frame f, *fp;
+\&...
+fp = &f;
+R.s = &fp;
+f.t = m->entryt;
+newstack(p);
+.fi
+.PP
+newstack() (libinterp/stack.c) does
+.CW "memmove(p->R.FP, f, f->t->size)" .
+.CW f->t
+here is
+.CW m->entryt ,
+the complete entry-frame type covering every local the root module's
+.CW init()
+declares \(em routinely far bigger than
+.CW sizeof(Frame) .
+A bare
+.CW "Frame f"
+on the C stack is only ever big enough for the four-pointer Frame
+header, so the copy read straight past it into whatever schedmod()'s
+own stack frame happened to hold next: garbage into every local of the
+very first Dis Prog run at boot, on every native startup.
+.PP
+This is not a new bug.  It is the same bug
+.CW emu/port/dis.c 's
+own schedmod() already carries a fix and a full explanation for, from
+an earlier round of this same hunt (see the entry-frame-corruption
+section above).  The native copy of this function never got the same
+fix; nobody had diffed the two schedmod()s against each other before.
+Fixed the same way emu was: allocate the real entry-frame size instead
+of a bare struct \(em
+.CW "f = mallocz(m->entryt->size, 1)" ,
+free it after newstack() copies out of it.  Verified: riscv64/virt
+rebuilds clean and boots identically to before (same log, same
+.CW BLK-FAIL
+at the same point, no regression) with the fix in.
+.PP
+It does
+.I not
+fix the raise/spawn hang.  Embedding a call to raisetest.dis directly
+into virtinit.b's
+.CW init() ,
+right after
+.CW "sh loaded" ,
+and rebuilding with the fix in place: same failure, byte for byte \(em
+.CW "raisetest:\ victim\ about\ to\ raise"
+prints, then silence, same as before the fix.  That is expected once
+the actual code path is traced: schedmod() only ever runs once, for
+the root module.  A Limbo
+.CW spawn
+goes through
+.CW OP(spawn)
+in libinterp/xec.c instead, which gets its frame from a preceding
+.CW OP(frame)
+(IFRAME) \(em allocated out of the Dis-level stack extent at the
+correct
+.CW t->size ,
+never a bare C struct.  That path was never at risk from this
+particular bug; it is shared code, already correctly sized, on both
+builds.  schedmod()'s bug is real and worth having fixed \(em it means
+every native boot until now silently ran virtinit.b's own
+.CW init()
+frame partially populated from C-stack leftovers \(em but it is a
+different bug from the one this hunt is actually chasing.
+.PP
+Three more candidate explanations for the raise hang, checked and
+ruled out this round, so they do not have to be re-checked:
+.IP \(bu
+.I "cflag default mismatch."
+emu defaults to
+.CW "cflag = 1"
+(JIT on); native's
+.CW cflag
+(os/inferno/port/dis.c) has no initializer, so it is 0 (interpreter)
+unless a module sets
+.CW MUSTCOMPILE .
+Every earlier hosted-emu run of raisetest.dis in this hunt used emu's
+default flags, so the two sides being compared were never actually
+proven to be running the same interpreted-vs-compiled path.  Reran
+raisetest.dis under
+.CW "emu -c0"
+(forces the interpreter, matching native's default) explicitly: same
+clean pass \(em
+.CW "init start" ,
+.CW "victim about to raise" ,
+.CW "spawned caught fail:test" ,
+.CW "received caught" .
+JIT-vs-interpreter is not the difference.
+.IP \(bu
+.I "setlabel()/gotolabel() on riscv64."
+virt's l.s implements Plan 9-style
+.CW waserror()
+via
+.CW setlabel()
+(save SP and LINK) /
+.CW gotolabel()
+(restore them and jump) rather than C's
+.CW setjmp/longjmp .
+This looked like a promising place for an architecture-specific bug,
+especially given the "same Prog, no spawn" shape produces a hard
+.CW "panic:\ exception"
+(os/inferno/virt/trap.c) rather than a hang \(em consistent with a
+bad jump landing somewhere that then traps.  But this exact mechanism
+is already proven correct elsewhere on this same kernel: this hunt's
+own
+.CW kmount()
+fix (see above) added a
+.CW waserror()
+around a real, deep failure inside
+.CW bindmount()/mntattach()/mountrpc()
+and it catches and unwinds correctly, verified live.  Whatever is
+wrong with the raise, it is not that
+.CW setlabel/gotolabel
+cannot ever work on this port.
+.IP \(bu
+.I "error()'s own setlabel(&up->errlab[NERR-1])."
+os/inferno/port/proc.c's
+.CW error()
+unconditionally overwrites the last errlab slot with a fresh label
+right before calling
+.CW nexterror() ,
+which looks, out of context, like it could clobber whatever
+.CW nexterror()
+is about to jump to if
+.CW up->nerrlab
+were ever at
+.CW NERR-1 .
+Checked against os/9front/port/proc.c: this is 9front's own real,
+unmodified idiom, byte for byte.  Not a local bug, and
+.CW up->nerrlab
+is nowhere near
+.CW NERR
+(64) in this scenario regardless.
+.PP
+So: the shared interpreter, the shared loader, and the two most
+suspicious native-only mechanisms (schedmod, setlabel/gotolabel) are
+now all either fixed, or checked and cleared.  What is left unchecked:
+whatever schedmod() got wrong for the boot-time root frame, OP(spawn)
+gets right \(em but nobody has yet watched the actual values
+.CW handler()
+reads (R.FP, R.PC, m->m->htab's contents, the walked
+.CW pc1/pc2
+range) at the exact moment of the native raise, on the spawned Prog,
+side by side with the same trace under
+.CW "emu -c0" .
+Every finding so far has been code-reading and diffing; this bug has
+now survived that approach four times.  A live trace of
+.CW handler() 's
+own loop, not another diff, is where the next round should start.  See
+appl/cmd/raisetest.b, kept in the tree for exactly this.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
