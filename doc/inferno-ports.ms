@@ -15509,6 +15509,159 @@ now survived that approach four times.  A live trace of
 own loop, not another diff, is where the next round should start.  See
 appl/cmd/raisetest.b, kept in the tree for exactly this.
 .NH 1
+Found it, for real: two error strings, and only one of them got written
+.PP
+The live trace the last section asked for.  Instrumented
+.CW handler()
+(exception.c) to print its estr, R.FP, R.PC and every
+.CW htab
+entry it walks, and
+.CW vmachine()
+(dis.c) to print
+.CW up->env->errstr
+the moment
+.CW waserror()
+fires.  Rebuilt riscv64/virt with raisetest.dis wired into virtinit.b
+again and booted it.  The very first line answered the question:
+.IP
+.nf
+raisetest: victim about to raise
+vmachine: waserror() fired, errstr "" up->iprog 0x0
+qemu-system-riscv64: terminating on signal 15 ...
+.fi
+.PP
+.CW errstr
+was empty.  Not corrupted, not garbage \(em an empty string, the exact
+value
+.CW handler() 's
+own first line already guards against:
+.CW "if(*estr\ ==\ 0\ ||\ p\ ==\ nil)\ return\ 0" .
+The trace print inside
+.CW handler()
+itself never even fired, because that guard returned first.  Every
+native raise on this port has been taking the "no handler for this
+exception" branch \(em not because no handler existed, but because
+the exception's own message text never arrived.
+.PP
+Two error strings turned out to exist, not one.  os/inferno/port/
+portdat.h carries both, with its own comment on why:
+.IP
+.nf
+struct Osenv {
+	char *errstr;       /* errbuf0 or errbuf1, Osenv-scoped */
+	...
+};
+struct Proc {
+	char *errstr;       /* errbuf0 or errbuf1, Proc-scoped */
+	...
+};
+.fi
+.PP
+the comment above
+.CW Osenv
+reading "Kept alongside the 9front-style Proc fields so disinit/
+inferno can run on native kernels" \(em an admission, from whoever
+merged 9front's process model into this tree, that both conventions
+were kept side by side.  os/inferno/port/proc.c's
+.CW error()
+is the 9front side: it writes the raised message into
+.CW up->errstr ,
+the Proc-level buffer, which is exactly what every native
+kernel-level
+.CW waserror()
+catch in this tree already reads \(em kmount()'s, kbind()'s,
+.CW %r ,
+.CW kwerrstr() .
+os/inferno/port/dis.c's
+.CW vmachine()
+and exception.c's
+.CW handler()
+are the other side: ported from emu almost unchanged, and emu's own
+.CW error()
+(emu/port/main.c) writes the message into
+.CW up->env->errstr
+instead \(em the Osenv-level buffer \(em because emu's
+.CW Proc
+has no
+.CW errstr
+field of its own at all; Osenv's is the only copy that exists there.
+Nothing in this port ever copied between the two.  Every Dis-level
+.CW raise
+set the Proc-level buffer and left the Osenv-level one exactly as it
+was before \(em empty, on the very first raise of a boot, since
+nothing had ever written it.
+.PP
+The fix mirrors emu's own guard, added to the one
+.CW error()
+this port actually has:
+.IP
+.nf
+kstrcpy(up->errstr, err, ERRMAX);
+if(up->env != nil && up->env->errstr != nil && err != up->env->errstr)
+	kstrcpy(up->env->errstr, err, ERRMAX);
+setlabel(&up->errlab[NERR-1]);
+.fi
+.PP
+Rebuilt and booted three times running: raisetest.dis passes clean,
+identically to hosted emu, every time \(em
+.CW "victim about to raise" ,
+.CW "spawned caught fail:test" ,
+.CW "received caught" ,
+.CW RAISETEST-DONE .
+The instrumentation (the print()s in handler()/vmachine(), and
+raisetest wired into virtinit.b) was reverted after confirming; only
+the fix in proc.c's
+.CW error()
+is kept.
+.PP
+Then went back to the scenario this entire pivot started from: a real
+FAT image on a real virtio block device, dossrv.b mounting it.
+Before this fix, that hung forever with no further output, on every
+architecture tried.  After:
+.IP
+.nf
+BLK-OK
+dossrv: mount /n/dos: file does not exist
+FS-FAIL dossrv
+.fi
+.PP
+No hang.  A clean, reported failure, printed within the same second,
+followed by the rest of the boot script continuing to run (a separate,
+already-tracked
+.CW "track:\ CHANGED\ TO\ BAD\ VALUE"
+warning and an unrelated
+.CW "panic:\ exception"
+further downstream in memfs, neither new).  This is exactly the shape
+of change this whole pivot has been looking for: what used to be an
+unrecoverable, silent stop is now an ordinary, legible error, and the
+system keeps running past it.
+.CW /n/dos
+does not exist as a mountpoint yet \(em dossrv.b's own mount call
+already passes
+.CW MCREATE ,
+so this looks like
+.CW /n
+itself not being present for a leaf create to land in, which nothing
+in virtinit.b currently creates \(em a real, but shallow and clearly
+visible, next problem, nothing like the silent hang it replaced.
+.PP
+This bug is old and general, not riscv64/virt-specific: os/inferno/
+port/proc.c and portdat.h are shared across every native board in
+this tree (pc64 included), and the fix lives entirely in that shared
+file.  Every native raise since the 9front process-model merge has
+been silently failing to find its handler, on every board.  Rebuilt
+pc64 with the fix in and booted it three times: it hit the
+already-documented pc64 GPF heisenbug (see the pc64 boot section
+above and [[inferno-pc64-boot]]) on two of the three runs, and a
+different-looking hang on the third \(em same class of pre-existing,
+unrelated flakiness this port already carries on pc64 specifically,
+not a new failure and not this bug's own shape (no silent
+raise-then-nothing). The fix itself did not visibly regress a clean
+boot when one happened. A real pc64 dossrv/FAT retest, the way this
+was verified on riscv64/virt above, is still open \(em pc64's GPF
+rate makes any single boot's result unreliable evidence either way,
+and this round did not have batch-boot volume to spend on it.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the

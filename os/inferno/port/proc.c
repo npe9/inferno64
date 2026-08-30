@@ -1574,6 +1574,30 @@ error(char *err)
 	if(err == nil)
 		panic("error: nil parameter");
 	kstrcpy(up->errstr, err, ERRMAX);
+	/*
+	 * up->errstr (just above) is the 9front-style Proc-level error
+	 * buffer, and it's what every native kernel-level waserror()
+	 * catch in this tree (kmount()'s, kbind()'s, %r/kwerrstr, ...)
+	 * actually reads. But os/inferno/port/dis.c's vmachine() and
+	 * exception.c's handler() -- both ported from emu near-verbatim
+	 * -- read up->env->errstr instead: a SEPARATE buffer, on the
+	 * Osenv struct (portdat.h), that this function never touched.
+	 * emu/port/main.c's own error() writes into up->env->errstr
+	 * directly, because emu's Proc has no errstr field of its own
+	 * at all -- Osenv.errstr is the only copy there. This port kept
+	 * both conventions side by side (portdat.h's own comment: "Kept
+	 * alongside the 9front-style Proc fields so disinit/inferno can
+	 * run on native kernels") but never bridged them, so every Dis
+	 * `raise` landed handler() a permanently EMPTY estr: handler()'s
+	 * own first line, `if(*estr == 0 || p == nil) return 0`, made it
+	 * look exactly like "no handler for this exception" on every
+	 * single native raise, regardless of whether one existed --
+	 * traced live: a print at handler()'s entry never even fired,
+	 * because the empty-string check returned first. Mirror emu's
+	 * write here so both buffers agree. See doc/inferno-ports.ms.
+	 */
+	if(up->env != nil && up->env->errstr != nil && err != up->env->errstr)
+		kstrcpy(up->env->errstr, err, ERRMAX);
 	setlabel(&up->errlab[NERR-1]);
 	if(emptystr(err) == 1){
 		DBG("error nil error err %s caller 0x%p up->pid %d\n", err, getcallerpc(&err), up->pid);
