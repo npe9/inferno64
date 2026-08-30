@@ -124,6 +124,7 @@ TARG=\
 	puttar.dis\
 	pwd.dis\
 	ramfile.dis\
+	raisetest.dis\
 	randpass.dis\
 	raw2iaf.dis\
 	rawdbfs.dis\

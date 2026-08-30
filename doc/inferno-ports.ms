@@ -15167,6 +15167,169 @@ same discipline).
 rebuilt clean from the reverted source.  Clean rebuild reverified
 reproducing the identical silent stop before this was written up.
 .NH 1
+Correction: not spawn-boundary-specific, and traced two files further
+.PP
+The previous section's central claim -- that a Limbo
+.CW raise
+fails specifically
+.I "crossing a spawned Prog boundary" --
+does not survive a control case and is narrowed.  The comparison that
+produced it changed two things at once: native vs. hosted,
+.I and
+.CW dossrv 's
+own invocation shape (spawned via
+.CW startfs() )
+vs. the emu run (invoked directly from
+.CW sh ,
+no
+.CW spawn
+at all).  Built a minimal, apples-to-apples reproducer,
+.CW appl/cmd/raisetest.b ,
+with the identical shape on both sides: a
+.CW victim()
+that does one native call then raises, a
+.CW spawned()
+that calls it inside its own immediately-surrounding handler and
+reports the result on a channel, an
+.CW init()
+that spawns and receives.  Under hosted emu this bytecode, unmodified,
+prints cleanly start to finish.  On riscv64/virt, native, it hangs
+identically to every FAT/dossrv round before it: the marker
+immediately before
+.CW raise
+prints, nothing after it ever does.
+.PP
+Then the control case that reframes it: the
+.I same
+raise and the
+.I same
+immediately-surrounding handler, with
+.CW spawn
+removed entirely -- raised and caught in the one Prog already running.
+.B "This does not hang; it panics."
+.CW "panic:\ exception"
+from
+.CW os/inferno/virt/trap.c ,
+a genuine unhandled CPU trap, every time, as soon as the raise
+executes.  A third variant (spawned, but with the native call removed
+from
+.CW victim() )
+hangs the same as the first -- so the native call beforehand is not
+what triggers it either.
+.B "No native raise/catch shape tried so far has worked, with or without
+spawn, with or without a preceding native call."
+The earlier framing was too narrow; the honest claim is that Limbo
+exception handling does not currently work reliably on this native
+kernel, in any shape checked, while working correctly under hosted
+emu throughout.
+.PP
+Read two more files looking for where the two builds diverge.
+.CW handler() ,
+in
+.CW os/inferno/port/exception.c ,
+searches the raising Prog's compiled handler table by walking
+.CW fp
+up through frames and matching
+.CW pc
+against each handler's
+.CW [pc1,pc2)
+range.  Against
+.CW emu/port/exception.c
+it differs in two places: a
+.CW uintptr
+vs.
+.CW intptr
+type for the local
+.CW pc/newpc ,
+and a plain
+.CW ++
+vs.
+.CW AINC()
+(atomic increment) on two refcounts.  Neither survives scrutiny as the
+cause.  The
+.CW pc
+type doesn't matter functionally: C's usual arithmetic conversions
+make a signed/unsigned comparison against the
+.I already
+.CW uintptr
+.CW h->pc1 / h->pc2
+fields (declared that way in the shared
+.CW include/interp.h ,
+same for both builds) behave identically either way.  The atomic
+increment doesn't apply here at all --
+.CW ainc()
+.I "is not defined anywhere in the native tree,"
+only in
+.CW emu/port/atomic.c ;
+using
+.CW AINC()
+natively would not even link.  That asymmetry reflects the two
+builds' different concurrency models (native Dis execution is
+serialized through the single interpreter VM token this document has
+studied all session; hosted emu genuinely needs atomics for its own
+OS-thread concurrency), not a bug in one of them.
+.PP
+Followed
+.CW handler()
+to its own caller:
+.CW os/inferno/port/dis.c 's
+.CW vmachine() ,
+the same file this whole hunt has read most closely, wraps its
+interpreter loop in
+.CW while(waserror()){\ ...\ handler(up->env->errstr)\ ...\ }
+-- a Limbo
+.CW raise
+becomes a native kernel
+.CW error() ,
+caught here, then handed to
+.CW handler()
+to find a Dis-level catch.
+.B "This function -- the exact conditional acquire() included -- is
+byte-identical to emu/port/dis.c 's own vmachine() ."
+So is
+.CW propex() ,
+the function
+.CW handler()
+calls when no handler is found.
+.CW progexit() ,
+one step further (killing the Prog outright when even
+.CW propex()
+can't recover), differs more --
+.CW emu 's
+version calls
+.CW cleanexit(0)
+when the last Dis Prog exits; native's has no equivalent -- but that
+is shutdown behavior for the no-handler-found path, not an obvious
+explanation for a handler that
+.I should
+have been found (my
+.CW raisetest.b
+handler is right there, one frame up) failing to be found at all.
+.PP
+Genuinely open: whether
+.CW handler()
+itself correctly finds the entry that should match -- its own logic
+reads clean, so if it is wrong the discrepancy is upstream, in
+whether the compiled handler table
+.CW ( m->m->htab )
+is correctly present for a native Prog's loaded module in the first
+place.  That is a loader/compiler question, not a
+.CW vmachine()
+one, and is where a next round would start.
+.PP
+Kept, not reverted:
+.CW appl/cmd/raisetest.b
+itself, added to
+.CW appl/cmd/mkfile
+and built through
+.CW mk\ install
+like every other command -- not a throwaway probe but a permanent,
+40-line, standing reproducer for a real open bug, verified against
+hosted emu one more time before committing.  Confirmed working
+correctly there
+.CW ( "raisetest:\ received\ caught" )
+immediately before this was written up.
+.NH 1
 Then
 .PP
 QEMU virt first, because it is the cleanest new instruction set and the
