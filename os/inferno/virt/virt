@@ -198,6 +198,7 @@ root
 	/dis/lib/ssl.dis
 	/dis/lib/string.dis
 	/dis/lib/styx.dis
+	/dis/lib/styxlib.dis
 	/dis/lib/styxconv/new2old.dis
 	/dis/lib/styxconv/ostyx.dis
 	/dis/lib/styxpersist.dis

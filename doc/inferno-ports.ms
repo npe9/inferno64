@@ -15617,7 +15617,8 @@ is kept.
 Then went back to the scenario this entire pivot started from: a real
 FAT image on a real virtio block device, dossrv.b mounting it.
 Before this fix, that hung forever with no further output, on every
-architecture tried.  After:
+architecture tried.  Right after the fix, still not clean, but no
+longer a hang:
 .IP
 .nf
 BLK-OK
@@ -15625,39 +15626,75 @@ dossrv: mount /n/dos: file does not exist
 FS-FAIL dossrv
 .fi
 .PP
-No hang.  A clean, reported failure, printed within the same second,
-followed by the rest of the boot script continuing to run (a separate,
-already-tracked
-.CW "track:\ CHANGED\ TO\ BAD\ VALUE"
-warning and an unrelated
-.CW "panic:\ exception"
-further downstream in memfs, neither new).  This is exactly the shape
-of change this whole pivot has been looking for: what used to be an
-unrecoverable, silent stop is now an ordinary, legible error, and the
-system keeps running past it.
-.CW /n/dos
-does not exist as a mountpoint yet \(em dossrv.b's own mount call
-already passes
+A clean, reported failure, printed within the same second, boot
+continuing right past it.  Chased that one further: dossrv.b's mount
+call already passes
 .CW MCREATE ,
-so this looks like
+but
+.CW sys->create("/n/dos", ...)
+tried directly returns
+.CW "permission\ denied" \c
+\&.
 .CW /n
-itself not being present for a leaf create to land in, which nothing
-in virtinit.b currently creates \(em a real, but shallow and clearly
-visible, next problem, nothing like the silent hang it replaced.
+(the "virt" root-file list) is devroot's static, compiled-in
+directory \(em its create entry point is the generic
+.CW devcreate()
+stub, which every such synthetic device in this tree uses and none of
+them implement.
+.CW /n
+was never going to support a runtime mkdir, on any board that boots
+from a devroot image, regardless of what flags a caller passes to
+mount().
 .PP
-This bug is old and general, not riscv64/virt-specific: os/inferno/
-port/proc.c and portdat.h are shared across every native board in
-this tree (pc64 included), and the fix lives entirely in that shared
-file.  Every native raise since the 9front process-model merge has
-been silently failing to find its handler, on every board.  Rebuilt
-pc64 with the fix in and booted it three times: it hit the
+Retargeted the FAT mountpoint from
+.CW /n/dos
+to
+.CW /tmp/dos
+\(em
+.CW /tmp
+is real, writable memfs, already proven able to create a fresh
+directory (tmpmount()'s own TMP-OK check, pre-dating this pivot) \(em
+and reordered virtinit.b's init() to run tmpmount() before fsmount()
+instead of after, so the writable filesystem exists before anything
+tries to create inside it.  That surfaced one more real, if unrelated,
+gap on the way: tmpmount()'s memfs.dis failed to load
+.CW /dis/lib/styxlib.dis
+\(em present in appl/lib and built, but never added to riscv64/virt's
+own root-file list (
+.CW /dis/lib/styx.dis
+is listed; the very similarly named
+.CW styxlib.dis
+never was \(em a plain oversight, not a bug in styxlib itself).  Added
+it.  With both fixed:
+.IP
+.nf
+BLK-OK
+TMP-OK
+FS-OK
+.fi
+.PP
+Clean, three boots running, on the exact scenario this entire pivot
+was chasing.  What started this pivot as an unrecoverable silent stop
+is now a clean pass, and the system runs straight through the rest of
+its boot script afterward \(em MATH-OK, RAND-OK, CAP-OK and on,
+stopped only by this run's own timeout, not a hang or a panic.
+Batched it properly afterward: 10/10 clean
+.CW FS-OK
+runs, same real FAT image and virtio device each time.
+.PP
+The raise fix is old and general, not riscv64/virt-specific:
+os/inferno/port/proc.c and portdat.h are shared across every native
+board in this tree (pc64 included), and the fix lives entirely in
+that shared file.  Every native raise since the 9front process-model
+merge has been silently failing to find its handler, on every board.
+Rebuilt pc64 with the fix in and booted it three times: it hit the
 already-documented pc64 GPF heisenbug (see the pc64 boot section
-above and [[inferno-pc64-boot]]) on two of the three runs, and a
-different-looking hang on the third \(em same class of pre-existing,
-unrelated flakiness this port already carries on pc64 specifically,
-not a new failure and not this bug's own shape (no silent
-raise-then-nothing). The fix itself did not visibly regress a clean
-boot when one happened. A real pc64 dossrv/FAT retest, the way this
+above) on two of the three runs, and a different-looking hang on the
+third \(em same class of pre-existing, unrelated flakiness this port
+already carries on pc64 specifically, not a new failure and not this
+bug's own shape (no silent raise-then-nothing). The fix itself did
+not visibly regress a clean boot when one happened. A real pc64
+dossrv/FAT retest, the way this
 was verified on riscv64/virt above, is still open \(em pc64's GPF
 rate makes any single boot's result unreliable evidence either way,
 and this round did not have batch-boot volume to spend on it.

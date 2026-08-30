@@ -108,8 +108,8 @@ extern unsigned char root73code[];
 extern int root73len;
 extern unsigned char root74code[];
 extern int root74len;
-extern unsigned char root76code[];
-extern int root76len;
+extern unsigned char root75code[];
+extern int root75len;
 extern unsigned char root77code[];
 extern int root77len;
 extern unsigned char root78code[];
@@ -120,8 +120,10 @@ extern unsigned char root80code[];
 extern int root80len;
 extern unsigned char root81code[];
 extern int root81len;
-int rootmaxq = 82;
-Dirtab roottab[82] = {
+extern unsigned char root82code[];
+extern int root82len;
+int rootmaxq = 83;
+Dirtab roottab[83] = {
 	"",	{0, 0, QTDIR},	 0,	0555,
 	"chan",	{1, 0, QTDIR},	 0,	0555,
 	"dev",	{2, 0, QTDIR},	 0,	0555,
@@ -186,26 +188,27 @@ Dirtab roottab[82] = {
 	"ssl.dis",	{61, 0, QTFILE},	 0,	0444,
 	"string.dis",	{62, 0, QTFILE},	 0,	0444,
 	"styx.dis",	{63, 0, QTFILE},	 0,	0444,
-	"styxconv",	{64, 0, QTDIR},	 0,	0555,
-	"styxpersist.dis",	{65, 0, QTFILE},	 0,	0444,
-	"styxservers.dis",	{66, 0, QTFILE},	 0,	0444,
-	"timers.dis",	{67, 0, QTFILE},	 0,	0444,
-	"workdir.dis",	{68, 0, QTFILE},	 0,	0444,
-	"std.dis",	{69, 0, QTFILE},	 0,	0444,
-	"fdisk.dis",	{70, 0, QTFILE},	 0,	0444,
-	"kfs.dis",	{71, 0, QTFILE},	 0,	0444,
-	"kfs64.dis",	{72, 0, QTFILE},	 0,	0444,
-	"kfscmd.dis",	{73, 0, QTFILE},	 0,	0444,
-	"prep.dis",	{74, 0, QTFILE},	 0,	0444,
-	"calc.tab.dis",	{75, 0, QTFILE},	 0,	0444,
-	"pedit.dis",	{76, 0, QTFILE},	 0,	0444,
-	"dhcp.dis",	{77, 0, QTFILE},	 0,	0444,
-	"ping.dis",	{78, 0, QTFILE},	 0,	0444,
-	"factotum.dis",	{79, 0, QTFILE},	 0,	0444,
-	"new2old.dis",	{80, 0, QTFILE},	 0,	0444,
-	"ostyx.dis",	{81, 0, QTFILE},	 0,	0444,
+	"styxlib.dis",	{64, 0, QTFILE},	 0,	0444,
+	"styxconv",	{65, 0, QTDIR},	 0,	0555,
+	"styxpersist.dis",	{66, 0, QTFILE},	 0,	0444,
+	"styxservers.dis",	{67, 0, QTFILE},	 0,	0444,
+	"timers.dis",	{68, 0, QTFILE},	 0,	0444,
+	"workdir.dis",	{69, 0, QTFILE},	 0,	0444,
+	"std.dis",	{70, 0, QTFILE},	 0,	0444,
+	"fdisk.dis",	{71, 0, QTFILE},	 0,	0444,
+	"kfs.dis",	{72, 0, QTFILE},	 0,	0444,
+	"kfs64.dis",	{73, 0, QTFILE},	 0,	0444,
+	"kfscmd.dis",	{74, 0, QTFILE},	 0,	0444,
+	"prep.dis",	{75, 0, QTFILE},	 0,	0444,
+	"calc.tab.dis",	{76, 0, QTFILE},	 0,	0444,
+	"pedit.dis",	{77, 0, QTFILE},	 0,	0444,
+	"dhcp.dis",	{78, 0, QTFILE},	 0,	0444,
+	"ping.dis",	{79, 0, QTFILE},	 0,	0444,
+	"factotum.dis",	{80, 0, QTFILE},	 0,	0444,
+	"new2old.dis",	{81, 0, QTFILE},	 0,	0444,
+	"ostyx.dis",	{82, 0, QTFILE},	 0,	0444,
 };
-Rootdata rootdata[82] = {
+Rootdata rootdata[83] = {
 	0,	 &roottab[1],	 13,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
@@ -220,7 +223,7 @@ Rootdata rootdata[82] = {
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
 	0,	 root16code,	 0,	 &root16len,
-	3,	 &roottab[44],	 25,	nil,
+	3,	 &roottab[44],	 26,	nil,
 	3,	 nil,	 0,	 nil,
 	3,	 nil,	 0,	 nil,
 	3,	 root17code,	 0,	 &root17len,
@@ -244,12 +247,12 @@ Rootdata rootdata[82] = {
 	3,	 root35code,	 0,	 &root35len,
 	3,	 root36code,	 0,	 &root36len,
 	3,	 root37code,	 0,	 &root37len,
-	3,	 &roottab[69],	 1,	nil,
+	3,	 &roottab[70],	 1,	nil,
 	3,	 root40code,	 0,	 &root40len,
 	3,	 root41code,	 0,	 &root41len,
-	3,	 &roottab[70],	 7,	nil,
-	3,	 &roottab[77],	 2,	nil,
-	3,	 &roottab[79],	 1,	nil,
+	3,	 &roottab[71],	 7,	nil,
+	3,	 &roottab[78],	 2,	nil,
+	3,	 &roottab[80],	 1,	nil,
 	14,	 root55code,	 0,	 &root55len,
 	14,	 root56code,	 0,	 &root56len,
 	14,	 root57code,	 0,	 &root57len,
@@ -270,11 +273,12 @@ Rootdata rootdata[82] = {
 	14,	 root72code,	 0,	 &root72len,
 	14,	 root73code,	 0,	 &root73len,
 	14,	 root74code,	 0,	 &root74len,
-	14,	 &roottab[80],	 2,	nil,
-	14,	 root78code,	 0,	 &root78len,
+	14,	 root75code,	 0,	 &root75len,
+	14,	 &roottab[81],	 2,	nil,
 	14,	 root79code,	 0,	 &root79len,
 	14,	 root80code,	 0,	 &root80len,
 	14,	 root81code,	 0,	 &root81len,
+	14,	 root82code,	 0,	 &root82len,
 	38,	 root39code,	 0,	 &root39len,
 	41,	 root43code,	 0,	 &root43len,
 	41,	 root44code,	 0,	 &root44len,
@@ -286,6 +290,6 @@ Rootdata rootdata[82] = {
 	42,	 root49code,	 0,	 &root49len,
 	42,	 root50code,	 0,	 &root50len,
 	43,	 root52code,	 0,	 &root52len,
-	64,	 root76code,	 0,	 &root76len,
-	64,	 root77code,	 0,	 &root77len,
+	65,	 root77code,	 0,	 &root77len,
+	65,	 root78code,	 0,	 &root78len,
 };

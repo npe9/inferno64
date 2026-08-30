@@ -186,7 +186,7 @@ cmdstress(nil: Sh)
 	killmod("calc");
 	sys->print("CMD-STRESS calc-ok\n");
 	# cp onto FAT (flat file).
-	runcmd("/dis/cp.dis", "cp" :: "/tmp/stress-log.txt" :: "/n/dos/stlog.txt" :: nil, 400);
+	runcmd("/dis/cp.dis", "cp" :: "/tmp/stress-log.txt" :: "/tmp/dos/stlog.txt" :: nil, 400);
 	# sed last: large stdout; kill after.
 	if(runcmd("/dis/sed.dis", "sed" :: "s/stress/STRESS/" :: "/tmp/stress-log.txt" :: nil, 400) < 0)
 		return;
@@ -1085,13 +1085,24 @@ fsmount()
 	n: int;
 	c := chan of string;
 
+	# devroot's static "/n" (see the "virt" root-file list) rejects any
+	# runtime create -- devcreate()'s generic stub, "permission denied",
+	# confirmed live.  "/tmp" is real, writable memfs (tmpmount(), which
+	# must run first) and the same sys->create(DMDIR) idiom that already
+	# works there for /tmp/virtdir works here too.  See doc/inferno-ports.ms.
+	fd = sys->create("/tmp/dos", Sys->OREAD, Sys->DMDIR|8r755);
+	if(fd == nil){
+		sys->print("FS-MKDIR-FAIL: %r\n");
+		return;
+	}
+	fd = nil;
 	spawn startfs(c, "/dis/dossrv.dis",
-		"dossrv" :: "-f" :: "/dev/sdF0/data" :: "-m" :: "/n/dos" :: nil);
+		"dossrv" :: "-f" :: "/dev/sdF0/data" :: "-m" :: "/tmp/dos" :: nil);
 	if(<-c != nil){
 		sys->print("FS-FAIL dossrv\n");
 		return;
 	}
-	fd = sys->open("/n/dos/marker.txt", Sys->OREAD);
+	fd = sys->open("/tmp/dos/marker.txt", Sys->OREAD);
 	if(fd == nil){
 		sys->print("FS-FAIL open: %r\n");
 		return;
@@ -1815,8 +1826,8 @@ init()
 
 	gcstress();
 	blkcheck();
-	fsmount();
 	tmpmount();
+	fsmount();
 	memorycheck();
 	drawcheck();
 	ptrcheck();
@@ -1852,7 +1863,7 @@ init()
 	spawn smoke(sh);
 	sys->sleep(5000);
 
-	# -n keeps the init namespace (/n/dos etc); -l loads /lib/sh/profile; -i interactive.
+	# -n keeps the init namespace (/tmp/dos etc); -l loads /lib/sh/profile; -i interactive.
 	sys->print("interactive sh\n");
 	sh->init(nil, "sh" :: "-n" :: "-l" :: "-i" :: nil);
 
