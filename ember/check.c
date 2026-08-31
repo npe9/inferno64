@@ -1969,22 +1969,42 @@ compositefields(Node *n)
 		}
 
 		/*
-		 * tagged (pick) adts and tuples still need a real recursive
-		 * store this compiler doesn't have (a pick's storage isn't
-		 * just "fields at fixed offsets" -- it needs its tag word
-		 * set too); refuse those cleanly.  a plain struct-typed
-		 * field is fine: if the value is itself a composite literal
-		 * (the only way to construct a struct *value*, since a bare
-		 * name can't denote one -- see echk's Ocomposite case),
-		 * recurse into compositefields() the same way this
-		 * function's own caller (Oref's echk case) does, so nested
-		 * fields get the same field-matching and offset-stashing
-		 * treatment; com.c's Oref case (storecomposite()) walks the
-		 * resulting nested e->decl chain to do the actual recursive
-		 * store.
+		 * a tagged (pick) adt field still needs a real recursive
+		 * store this compiler doesn't have (its storage isn't just
+		 * "fields at fixed offsets" -- it needs its tag word set
+		 * too); refuse that cleanly.  a plain struct-typed field is
+		 * fine: if the value is itself a composite literal (the
+		 * only way to construct a struct *value*, since a bare name
+		 * can't denote one -- see echk's Ocomposite case), recurse
+		 * into compositefields() the same way this function's own
+		 * caller (Oref's echk case) does, so nested fields get the
+		 * same field-matching and offset-stashing treatment; com.c's
+		 * Oref case (storecomposite()) walks the resulting nested
+		 * e->decl chain to do the actual recursive store.
+		 *
+		 * a tuple-typed field ("struct { r (int, string) }") needs
+		 * no such stub -- it turns out to already be structurally
+		 * supported, not a real gap, once traced through: tequal()'s
+		 * own Ttuple case (types.c) compares two tuple types by
+		 * position+type via idequal(..., usenames=0, ...), so the
+		 * declared field's type (fd->ty, built by stype()'s Ottuple
+		 * case) and a fresh literal's own inferred type (vt, built
+		 * by echk()'s pre-existing Otuple case -- "(1, "hello")" is
+		 * already real, general parenthesised-tuple-expression
+		 * syntax, parse.c's own '(' case) already compare correctly
+		 * through the ordinary assignable() call below, field names
+		 * ("t0"/"t1" vs "val"/"msg") never entering into it. Storage
+		 * likewise needs no new code: storecomposite()'s existing
+		 * non-Ocomposite branch already builds an Oind(Oadd(base,
+		 * $offset)) destination typed fd->ty and hands it to the
+		 * general ecom(), which already has an Otuple case (built for
+		 * "return a, b") that stores each component positionally --
+		 * it was never wired to anything but Oret before, simply
+		 * because nothing else ever produced a live Otuple node to
+		 * store, not because it only works there.
 		 */
-		if(fd != nil && (fd->ty->kind == Tadtpick || fd->ty->kind == Ttuple)){
-			nerror(e, "composite literal field %s: tagged/tuple fields not yet supported", fd->sym->name);
+		if(fd != nil && fd->ty->kind == Tadtpick){
+			nerror(e, "composite literal field %s: tagged fields not yet supported", fd->sym->name);
 			fd = nil;
 		}
 
@@ -3157,6 +3177,24 @@ echk(Node *n)
 					break;
 			}
 			n->ty = mktype(&n->src, Ttuple, nil, ids);
+			/*
+			 * sizetype() here, centrally, rather than leaving it to
+			 * each of this case's own callers to remember: found via
+			 * a real, general segfault, not the field-value case this
+			 * was first written for -- a plain "bt = (1, "one")"
+			 * reassigning an already-declared tuple-typed local hits
+			 * check.c's Oas fallback (echk(n->right) with no
+			 * sizetype() of its own), a *different* call site than
+			 * compositefields()'s per-field one (which does size it
+			 * explicitly, but only there). Oret's own case
+			 * (mkn(Oret,...) handling, above) already calls
+			 * sizetype() explicitly on exactly this same freshly-
+			 * built type too -- redundant with this now (sizetype()'s
+			 * own OKsized guard makes a second call a cheap no-op),
+			 * left as-is rather than removed, since it's still
+			 * correct and touching it isn't needed for this fix.
+			 */
+			sizetype(n->ty);
 			return n->ty;
 		}
 	case Ofunclit: {

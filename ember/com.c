@@ -2169,28 +2169,74 @@ ecom(Src *src, Node *nto, Node *n)
 	}
 	case Otuple: {
 		/*
-		 * "return a, b": check.c's Oret case wraps a multi-value
-		 * return into Otuple(Oseq-of-values, nil) when the function's
-		 * declared return type is itself a tuple, reusing echk's
-		 * pre-existing Otuple case (originally for parenthesised-
-		 * tuple expressions) to type each value and build the
+		 * originally built for "return a, b" only: check.c's Oret
+		 * case wraps a multi-value return into Otuple(Oseq-of-values,
+		 * nil) when the function's declared return type is itself a
+		 * tuple, reusing echk's pre-existing Otuple case (originally
+		 * for parenthesised-tuple expressions, "(1, "hello")" -- real
+		 * surface syntax since parse.c's own '(' case, just never
+		 * wired to a live store site until a tuple-typed *struct
+		 * field* needed one) to type each value and build the
 		 * Ttuple's field list (n->ty->ids, offsets included, from
-		 * sizetype()). Only reachable this way for now: Otuple isn't
-		 * itself surface syntax elsewhere yet (no tuple-typed locals,
-		 * no destructuring assignment), so nto is always exactly
-		 * retalloc()'s Oind(retnode) -- a Radr-addressable "wherever
-		 * the caller wants this written" -- and the store just needs
-		 * retnode itself (nto->left, Rreg) as a base to add each
-		 * field's offset onto, the same Oind(Oadd(base, $offset))
-		 * shape storecomposite() already builds, walked positionally
-		 * against n->ty->ids instead of by e->decl.
+		 * check.c's own explicit sizetype() call at each of this
+		 * case's two live call sites).
+		 *
+		 * nto is Radr-addressable but not necessarily *directly*
+		 * retalloc()'s Oind(retnode) any more: storecomposite()'s own
+		 * non-Ocomposite field-store branch now reaches here too
+		 * (a tuple-typed struct field given a literal value), where
+		 * nto is instead Oind(Oadd(dupn(outer-base), $fieldoffset)).
+		 * Either shape composes the same way once base = nto->left:
+		 * a plain Rreg (retnode's own base) needs no further
+		 * unwrapping; an Oadd chain (storecomposite()'s own base)
+		 * sumarks to Raadr, and sumark's own Oadd case already has a
+		 * row composing a further Oadd onto an Raadr left operand
+		 * (the "Raadr composes with Raadr" mechanism this file's own
+		 * Oref case comment already documents) -- so dupn(base) below
+		 * folds correctly into one flat address computation either
+		 * way, with no extra materialization needed regardless of
+		 * how deep the nesting is.
 		 */
 		Node *p, *e, *base;
 		Decl *fd;
 
 		base = nto;
-		if(base != nil && base->op == Oind)
-			base = base->left;
+		if(base != nil){
+			if(base->op == Oind)
+				base = base->left;
+			else{
+				/*
+				 * a genuinely new shape, found only by testing a
+				 * bare "t := (1, 2)" directly (not "return a, b",
+				 * and not yet routed through storecomposite()'s own
+				 * field-store branch either): nto here is a plain
+				 * value-typed destination -- an ordinary local's own
+				 * frame slot (Oname, Rreg/Rmreg) -- not yet wrapped
+				 * in any Oind at all, so there's no ->left to peel
+				 * off. Treating the bare name itself as a base to
+				 * add a field offset onto (the old, unconditional
+				 * "->left" peel silently skipped for this shape)
+				 * added the offset to the *value* stored at that
+				 * slot instead of to its *address* -- confirmed via
+				 * a plain "t := (1, 2); a, b := t" repro producing
+				 * garbage (an all-int tuple) or a real segfault (a
+				 * pointer-typed component), with nothing else new
+				 * involved. Needs the identical Oadr-wrapping
+				 * check.c's own Odot lowering already gives a
+				 * value-typed struct's non-ref base ("p.field" where
+				 * p isn't behind a ref) -- sumark's own Oadr case
+				 * composes an Rreg/Rmreg base into Raadr/Ramadr,
+				 * which the Oadd below already knows how to extend.
+				 */
+				Node *adr;
+
+				adr = mkunary(Oadr, dupn(base));
+				adr->src = base->src;
+				adr->ty = base->ty;
+				sumark(adr);
+				base = adr;
+			}
+		}
 		fd = n->ty->ids;
 		for(p = n->left; p != nil; p = p->right){
 			Node *off, *addr, *ind;
