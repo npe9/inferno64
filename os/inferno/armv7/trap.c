@@ -121,9 +121,24 @@ trap(Ureg *ur)
 		gicc[GiccEOIR] = iar;
 		return;
 	default:
+		/*
+		 * ureg0 is one shared static buffer (see l.s's vectrap
+		 * comment) -- fine while a trap runs to completion before
+		 * interrupts are re-admitted, but print()/panic() below can
+		 * go through a Lock whose iunlock() calls splx() and
+		 * re-enables IRQs.  A timer tick landing in that window
+		 * calls back into trap() with the same ur, overwriting
+		 * fields this fatal path hasn't printed yet -- caught by a
+		 * register dump where r0/r14 (printed first) were plausible
+		 * and r4/r5 (printed after some print() calls) were not.
+		 * splhi() before touching anything else keeps this path's
+		 * own read of ur trustworthy.
+		 */
+		splhi();
 		print("trap type %d psr %#8.8ux pc %#8.8ux\n",
 			ur->type, ur->psr, ur->pc);
 		print(" r0 %#8.8ux r14 %#8.8ux\n", ur->r0, ur->r14);
+		print(" r1 %#8.8ux r4 %#8.8ux r5 %#8.8ux\n", ur->r1, ur->r4, ur->r5);
 		if(up != nil)
 			print(" up %#p %s\n", up, up->text);
 		dumpstack();

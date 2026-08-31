@@ -52,6 +52,7 @@ os/inferno/
   sifiveu/    SiFive Unleashed
   spike/      the Spike simulator
   mangopi/    MangoPi MQ-Pro, an Allwinner D1
+  armv7/      QEMU -M virt, 32 bit ARMv7-A, cortex-a15
   armv7m/     shared Cortex-M code
   mps2/       ARM MPS2 AN500, a Cortex-M7 in QEMU
   teensy41/   Teensy 4.1, an NXP i.MX RT1062
@@ -198,6 +199,112 @@ load sh:
 PCI bus, loads its first Dis module and asks for a shell.  There is no
 shell because this tree does not build a Limbo userland; that is the
 next thing, and it is a different piece of work from a kernel port.
+.NH 1
+A second family: ARMv7-A
+.PP
+.CW os/inferno/armv7
+is not the
+.CW armvirt
+row in the machine table below \- that is AArch64, and needs a compiler
+backend (a 64 bit ARM object type) this tree does not have.  This is a
+smaller thing beside it: 32 bit ARMv7-A, cortex-a15, built on the
+.CW arm
+object type's existing
+.CW 5c/5a/5l
+toolchain, which until this board only ever had to compile the
+.CW armv7m
+family's Cortex-M work \- a different object type,
+.CW thumb ,
+with its own headers.  Nothing else in this tree had linked
+.CW port/auth.c ,
+.CW libinterp ,
+or a runtime 32 bit division against
+.CW arm
+before, so several gaps that had simply never been exercised turned up
+one at a time: missing
+.CW s8..s64/u8..u64/intptr/WORD/UWORD
+typedefs in
+.CW Inferno/arm/include/u.h ,
+a missing
+.CW isaconfig
+prototype, a missing
+.CW BUSUNKNOWN ,
+and \(em oddest of the lot \(em
+.CW utils/5l 's
+own
+.CW iar
+losing track of
+.CW libkern/div-arm.s 's
+.CW _div/_mod/_divu/_modu
+inside an archive, though the same object resolves cleanly linked in
+directly; it is linked in directly now, the way
+.CW tod.$O
+and
+.CW mul64fract.$O
+already are.
+.PP
+Three bugs were real and board-specific, each pinned down with
+.CW arm-none-eabi-objdump
+against the actual linked image rather than guessed at:
+.IP \(bu
+the trap path's register save never advanced past
+.CW UR_R0..UR_R3
+before its
+.CW stmia ,
+so the store landed on the fields it had just saved and
+.CW UR_R12
+was never written at all \- caught by a data abort that kept landing on
+the same compiled
+.CW "ldr r6,[r12,#-4016]" ,
+this ABI's register for SB-relative globals, coming back garbage.
+.IP \(bu
+.CW "MOVW $setSB(SB), R3"
+was the wrong symbol for this linker: ARM's
+.CW 5l
+defines it as
+.CW setR12 ,
+not the
+.CW setSB
+every other Plan 9 linker uses.
+.IP \(bu
+a link-time vector table of
+.CW B
+instructions did not survive into the linked image; built as runtime
+data instead \- eight identical
+.CW "ldr pc,[pc,#24]"
+trampolines addressing eight target words \- it does.
+.PP
+One more was a gap rather than a bug:
+.CW 5c 's
+floating point still targets the FPA coprocessor (cp1/cp2) by default,
+which cortex-a15 has never implemented \- every double in
+.CW libkern
+traps Undefined the first time it runs.
+.CW 5l
+carries a second, VFP encoding of the same pseudo-ops behind its own
+.CW -f
+flag; this board links with it, and enables cp10/cp11 in CPACR and
+.CW FPEXC.EN
+before anything tries to use them.
+.PP
+Under
+.CW "qemu-system-arm -M virt -cpu cortex-a15 -m 256 -nographic -kernel iarmv7" ,
+stated plainly: it boots \- memory pool init, process init, the version
+banner, loading and beginning to type-check
+.CW /osinit.dis ,
+into the Dis interpreter, running real VFP-lowered floating point and
+32 bit division without faulting.  It does not yet reach a shell:
+module loading currently ends in a data abort partway through
+.CW readmod() 's
+type-checking pass, at an object pointer that does not belong to the
+pool
+.CW poolinit()
+reported (the pool starts well after where the faulting pointer
+points).  Not yet root-caused.  There is no display \- draw, pointer,
+swcursor and the virtio input device are left out on purpose, the same
+as the console-only precedent
+.CW spike
+already set \- and the virtio ethernet driver is linked but untested.
 .NH 1
 Atomics, and instructions a compiler has no word for
 .PP
