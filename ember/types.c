@@ -707,8 +707,38 @@ tdescmap(Type *t, uchar *map, long offset)
 		map[offset / (8*IBY2WD)] |= 1 << (7 - bit);
 		return offset;
 	}
-	if(t->kind == Tadtpick)
-		t = t->tof;
+	if(t->kind == Tadtpick){
+		/*
+		 * a specific tag's own type has its fields split across two
+		 * chains -- t->ids (this tag's own extra fields) and
+		 * t->tof->ids (the outer adt's shared fields) -- both
+		 * offset from the very same base by sizetype() (types.c),
+		 * the identical reasoning check.c's compositefields() and
+		 * Odot field-access case both already use.  the previous
+		 * version of this code reassigned "t = t->tof" and fell
+		 * into the generic Tadt/Ttuple/Texception branch below,
+		 * walking *only* the shared chain -- silently OMITTING any
+		 * pointer-typed field the tag's own chain holds from the GC
+		 * map entirely (invisible whenever a tag's own fields
+		 * happen to be pointer-free, e.g. an all-int tag -- exactly
+		 * why this went unnoticed until a string-typed tag field was
+		 * first actually constructed and heap-scanned: real
+		 * segfault, "sys: segmentation violation", confirmed via a
+		 * live repro before this fix, not inferred).  walk both
+		 * chains against the same map/offset and report whichever
+		 * found the higher-offset pointer, matching descmap()'s own
+		 * "last" convention.
+		 */
+		long m1, m2;
+
+		if(t->rec != 0 || t->tof->rec != 0)
+			fatal("illegal cyclic type %T in tdescmap", t);
+		t->rec = t->tof->rec = 1;
+		m1 = descmap(t->ids, map, offset);
+		m2 = descmap(t->tof->ids, map, offset);
+		t->rec = t->tof->rec = 0;
+		return m1 > m2 ? m1 : m2;
+	}
 	if(t->kind == Ttuple || t->kind == Tadt || t->kind == Texception){
 		if(t->rec != 0)
 			fatal("illegal cyclic type %T in tdescmap", t);

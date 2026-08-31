@@ -1665,23 +1665,70 @@ stype(Node *n)
 		 */
 		return tinstantiate(n);
 	case Odot: {
-		/* module member type: mod.Type */
-		Decl *md, *id;
+		/* module member type: mod.Type, or a local pick adt's own tag: Adt.Tag */
+		Decl *md, *id, *tg;
+		Type *rt;
 
 		if(n->left->op != Oname){
 			nerror(n, "bad qualified type");
 			return terror;
 		}
+		rt = terror;
 		md = lookup(n->left->sym);
-		if(md == nil || md->ty == nil || md->ty->kind != Tmodule){
+		if(md != nil && md->store == Dtype && md->ty != nil
+		&& md->ty->kind == Tadt && md->ty->tags != nil){
+			/*
+			 * "Result.Ok" -- a tag name dotted onto its own pick
+			 * adt, the construction syntax a composite literal's
+			 * own type position needs ("Result.Ok{val: 5}";
+			 * istypeexpr()'s Odot case already accepts this shape
+			 * syntactically, parse.c never distinguished it from a
+			 * module-qualified name). matches limbo's own
+			 * namedot(t->tags, ...) lookup (limbo/typecheck.c) --
+			 * same tag-list shape, same by-symbol match.
+			 */
+			for(tg = md->ty->tags; tg != nil; tg = tg->next)
+				if(tg->sym == n->sym){
+					rt = tg->ty;
+					break;
+				}
+			if(rt == terror)
+				nerror(n, "%T has no tag %s", md->ty, n->sym->name);
+		}else if(md == nil || md->ty == nil || md->ty->kind != Tmodule){
 			nerror(n, "%s is not a module", n->left->sym->name);
-			return terror;
+		}else{
+			for(id = md->ty->ids; id != nil; id = id->next)
+				if(id->sym == n->sym && id->store == Dtype){
+					rt = id->ty;
+					break;
+				}
+			if(rt == terror)
+				nerror(n, "%s has no type %s", n->left->sym->name, n->sym->name);
 		}
-		for(id = md->ty->ids; id != nil; id = id->next)
-			if(id->sym == n->sym && id->store == Dtype)
-				return id->ty;
-		nerror(n, "%s has no type %s", n->left->sym->name, n->sym->name);
-		return terror;
+		/*
+		 * neither branch ever gives n->left/n->right (the "mod"/
+		 * "Result" and "Type"/"Ok" name labels) their own .decl --
+		 * both just do a raw lookup() by symbol, never stype()/echk()
+		 * on the child nodes themselves -- so left attached, this
+		 * Odot node would still be sitting in the tree, unresolved,
+		 * for com.c's sumark() to walk into later whenever a
+		 * composite literal's own type position reaches it (e.g.
+		 * Odas's "sumark(n->right)" over the whole Ocomposite,
+		 * including its unread .left) and fatal ("sumark: Oname
+		 * without decl") on either child. mirrors the same "type
+		 * expr consumed, ecom/sumark should never see it again"
+		 * discipline check.c's Oarray/Ochan cases already use
+		 * (n->right = nil once stype()'d) -- discovered here, not
+		 * there, only because this is the first time a *dotted* type
+		 * name ever reached a composite literal's own type position;
+		 * a bare name (stype()'s own Oname case) was already safe on
+		 * a different path -- it sets n->decl itself before sumark()
+		 * ever sees it, matching sumark()'s own Oname/Dtype case
+		 * ("a type name used as a value ... never loaded or stored").
+		 */
+		n->left = nil;
+		n->right = nil;
+		return rt;
 	}
 	default:
 		nerror(n, "unsupported type expression %O", n->op);
@@ -1834,23 +1881,38 @@ static Type*
 compositefields(Node *n)
 {
 	Type *t;
-	Decl *fid;
-	int keyed;
+	Decl *fid, *shared;
+	int keyed, switched;
 	Node *p;
 
 	t = stype(n->left);
-	if(t->kind != Tadt){
+	if(t->kind != Tadt && t->kind != Tadtpick){
 		nerror(n, "composite literal of non-struct type %T", t);
 		n->ty = terror;
 		return n->ty;
 	}
-	if(t->tags != nil){
-		nerror(n, "composite literal of tagged type %T not yet supported", t);
+	if(t->kind == Tadt && t->tags != nil){
+		nerror(n, "composite literal of tagged type %T not yet supported -- construct a specific tag instead, e.g. %T.Tag{...}", t, t);
 		n->ty = terror;
 		return n->ty;
 	}
+	/*
+	 * a Tadtpick type (a specific tag's own type, "Result.Ok" resolved
+	 * through stype()'s own Odot case) has its fields split across two
+	 * separate chains -- t->ids (this tag's own extra fields) and
+	 * t->tof->ids (the outer adt's shared fields, common to every
+	 * tag) -- since sizetype() (types.c) lays them out that way: the
+	 * shared fields at their own offsets, this tag's own fields
+	 * starting right after them, both counted from the same base a
+	 * value of this specific tag's type actually gets allocated at.
+	 * a plain (untagged) Tadt only ever has the one chain (t->ids,
+	 * shared == nil) -- the loop below degrades to exactly the
+	 * original single-chain behavior in that case.
+	 */
+	shared = t->kind == Tadtpick ? t->tof->ids : nil;
 	keyed = -1;
 	fid = t->ids;
+	switched = shared == nil;
 	for(p = n->right; p != nil; p = p->right){
 		Node *e;
 		Type *fty, *vt;
@@ -1869,11 +1931,19 @@ compositefields(Node *n)
 				if(fd->sym == e->left->sym)
 					break;
 			if(fd == nil)
+				for(fd = shared; fd != nil; fd = fd->next)
+					if(fd->sym == e->left->sym)
+						break;
+			if(fd == nil)
 				nerror(e, "%T has no field %s", t, e->left->sym->name);
 		}else{
 			if(keyed == 1)
 				nerror(e, "cannot mix keyed and positional elements in %T composite literal", t);
 			keyed = 0;
+			if(fid == nil && !switched){
+				fid = shared;
+				switched = 1;
+			}
 			fd = fid;
 			if(fd == nil)
 				nerror(e, "too many elements in %T composite literal", t);
@@ -1916,8 +1986,21 @@ compositefields(Node *n)
 		if(p->op != Oseq)
 			break;
 	}
-	if(keyed == 0 && fid != nil)
-		nerror(n, "too few elements in %T composite literal", t);
+	if(keyed == 0){
+		/*
+		 * a trailing catch-up switch: if the literal supplied
+		 * exactly len(t->ids) positional elements and never
+		 * triggered the mid-loop switch above, fid is nil but any
+		 * required shared fields (t->tof->ids) were never actually
+		 * checked -- without this, a literal that's fully positional
+		 * for a tag's own fields but silently omits every shared
+		 * field would wrongly pass as complete.
+		 */
+		if(fid == nil && !switched)
+			fid = shared;
+		if(fid != nil)
+			nerror(n, "too few elements in %T composite literal", t);
+	}
 	n->ty = t;
 	return n->ty;
 }
@@ -2153,10 +2236,29 @@ echk(Node *n)
 			isref = bt != nil && bt->kind == Tref;
 			if(isref)
 				t = bt->tof;
-			if(t != nil && t->kind == Tadt){
-				Decl *id;
+			if(t != nil && (t->kind == Tadt || t->kind == Tadtpick)){
+				Decl *id, *chains[2];
+				int ci;
 
-				for(id = t->ids; id != nil; id = id->next)
+				/*
+				 * a Tadtpick receiver (a specific tag's own type,
+				 * e.g. a local read back out of "ok := Result.Ok{
+				 * val: 5}") has its fields split across two chains
+				 * the same way compositefields() (above) does for
+				 * construction: t->ids (this tag's own extra
+				 * fields) and t->tof->ids (the outer adt's shared
+				 * fields) -- both already correctly offset from the
+				 * same base by sizetype() (types.c), so the address
+				 * arithmetic below needs no changes at all once the
+				 * matching field is found, only the search needs to
+				 * cover both chains. a plain Tadt has no second
+				 * chain (chains[1] stays nil), degrading to exactly
+				 * the original single-chain search.
+				 */
+				chains[0] = t->ids;
+				chains[1] = t->kind == Tadtpick ? t->tof->ids : nil;
+				for(ci = 0; ci < 2; ci++)
+				for(id = chains[ci]; id != nil; id = id->next)
 					if(id->sym == n->sym){
 						Node *off, *addr;
 						Type *fty;
@@ -2818,7 +2920,14 @@ echk(Node *n)
 			t = compositefields(n->left);
 		else
 			t = echk(n->left);
-		if(t->kind != Tadt){
+		/*
+		 * Tadtpick (a specific tag's own type, "ref Result.Ok{...}")
+		 * is a real, valid ref target too -- stype()'s own Otref
+		 * case (above) already anticipated this ("ref requires an
+		 * adt or function type" accepts Tadtpick alongside Tadt),
+		 * this check just hadn't caught up to it yet.
+		 */
+		if(t->kind != Tadt && t->kind != Tadtpick){
 			nerror(n, "ref of non-adt %T", t);
 			n->ty = terror;
 			return n->ty;
@@ -3694,14 +3803,29 @@ typedec(Node *n)
 	if(n->right->op == Otpick){
 		Decl *tags, *last, *tag;
 		Node *p, *tg;
+		int ntag;
 
+		/*
+		 * each tag's own runtime discriminant: declaration order,
+		 * 0-based, matching limbo's identical convention exactly
+		 * (limbo/types.c's pickdecled(): "d->tag = tag++") -- a
+		 * standard enum-style numbering, not a fresh decision. Decl's
+		 * own "tag" field (ember.h) already existed for this, just
+		 * never assigned anywhere in this loop until now. com.c's own
+		 * construction/match-dispatch codegen reads this field as the
+		 * literal word value written to/compared against the tag word
+		 * sizetype() (types.c) already reserves at offset 0 of every
+		 * tagged value's own storage.
+		 */
 		tags = last = nil;
+		ntag = 0;
 		for(p = n->right->left; p != nil; p = p->right){
 			tg = p;
 			if(p->op == Oseq)
 				tg = p->left;
 			tag = mkdecl(&tg->src, Dtag, nil);
 			tag->sym = tg->left->sym;
+			tag->tag = ntag++;
 			tag->ty = mktype(&tg->src, Tadtpick, nil, nil);
 			if(tg->right != nil){
 				/* reuse stype field walk via fake Otstruct */

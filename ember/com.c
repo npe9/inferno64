@@ -1124,6 +1124,43 @@ storecomposite(Src *src, Node *base, Node *composite)
 {
 	Node *p, *e;
 
+	/*
+	 * a Tadtpick composite (a specific tag's own type, "Result.Ok"
+	 * resolved through stype()'s Odot case) needs its discriminant
+	 * tag word written too, not just the fields the literal itself
+	 * lists -- sizetype() (types.c) always reserves that word at
+	 * offset 0 of every tagged value's own storage, and nothing else
+	 * in this function's own per-field loop below ever touches
+	 * offset 0 (composite->ty->decl->ids never includes a "tag"
+	 * field of its own -- the word is implicit, not user-visible
+	 * syntax), so it has to be written here explicitly, once,
+	 * before the loop. done at the top of this function rather than
+	 * at each of storecomposite()'s own several call sites so every
+	 * one of them gets this for free, including storecompositezero()
+	 * (below), which already calls straight into this function.
+	 * composite->ty->decl is the matching Dtag Decl (check.c's
+	 * Otpick-processing loop sets tag->ty->decl = tag), whose own
+	 * ->tag field is the declaration-order, 0-based discriminant
+	 * value (assigned there too, mirroring limbo/types.c's identical
+	 * "d->tag = tag++" convention) -- not a fresh choice made here.
+	 */
+	if(composite->ty->kind == Tadtpick){
+		Node *off, *addr, *ind, *tagval;
+
+		off = mkconst(&composite->src, 0);
+		off->ty = tint;
+		addr = mkn(Oadd, dupn(base), off);
+		addr->src = composite->src;
+		addr->ty = tint;
+		ind = mkn(Oind, addr, nil);
+		ind->src = composite->src;
+		ind->ty = tint;
+		sumark(ind);
+		tagval = mkconst(&composite->src, composite->ty->decl->tag);
+		tagval->ty = tint;
+		sumark(tagval);
+		ecom(src, ind, tagval);
+	}
 	for(p = composite->right; p != nil; p = p->right){
 		e = p;
 		if(p->op == Oseq)
@@ -1971,10 +2008,16 @@ ecom(Src *src, Node *nto, Node *n)
 		 * isn't already one of those (an indirect store target, or
 		 * none at all) gets a fresh register temp instead, moved
 		 * into the real nto only at the end.  Unlike limbo/ecom.c's
-		 * Oref (function refs, tagged-pick pickdupcom, an fnptr
-		 * indirection) this only ever sees a plain, non-tagged adt
-		 * -- check.c's compositefields()/Oref case already refused
-		 * anything else.
+		 * Oref (function refs, an fnptr indirection) this never sees
+		 * one of those. It DOES now see a tagged-pick composite
+		 * ("ref Result.Ok{...}"), same as a plain adt -- `at`
+		 * (left->ty) is already the specific tag's own Tadtpick
+		 * type by the time this runs (compositefields() resolves it
+		 * via stype()'s Odot-into-tag case), correctly sized to that
+		 * tag's own full size (shared + this tag's own fields), and
+		 * storecomposite() (below) writes the discriminant tag word
+		 * itself -- nothing in this Oref case needed to change to
+		 * support it, once compositefields()/storecomposite() did.
 		 *
 		 * INEWZ, not limbo's plain INEW: heap()/heapz() (heap.c)
 		 * differ only in memset-ing the new block, and limbo can
