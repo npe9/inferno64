@@ -185,7 +185,8 @@ void	gotolabel(Label *l){ USED(l); }
 long	seconds(void){ return 0; }
 
 /* an empty device table for now: the mount/9P device comes next */
-Dev *devtab[] = { nil };
+extern Dev rootdevtab;
+Dev *devtab[] = { &rootdevtab, nil };
 
 long	kerndate = 0;
 
