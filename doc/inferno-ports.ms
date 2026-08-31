@@ -293,15 +293,32 @@ stated plainly: it boots \- memory pool init, process init, the version
 banner, loading and beginning to type-check
 .CW /osinit.dis ,
 into the Dis interpreter, running real VFP-lowered floating point and
-32 bit division without faulting.  It does not yet reach a shell:
-module loading currently ends in a data abort partway through
-.CW readmod() 's
-type-checking pass, at an object pointer that does not belong to the
-pool
-.CW poolinit()
-reported (the pool starts well after where the faulting pointer
-points).  Not yet root-caused.  There is no display \- draw, pointer,
-swcursor and the virtio input device are left out on purpose, the same
+32 bit division without faulting.  It does not yet reach a shell: the
+crash is inside
+.CW gc.c 's
+.CW markheap() ,
+walking a Type's pointer map and reading a heap word tagged as a
+pointer that is not one \- the exact shape "Naming the Dis module a
+native trap can't name itself" (above) spent an entire session
+bracketing on pc64, complete with its own
+.CW "pc64-only, temporary"
+diagnostics still live in
+.CW gc.c
+and
+.CW heap.c .
+This is the first time that shape has been seen on a second
+architecture.  That is worth more than another bracketing pass here:
+it says the bug is not an amd64/pc64 artifact \- not a link-order
+issue, not a KenC codegen quirk for that one target \- but something
+genuinely wrong in the portable interpreter or its GC, reachable from
+more than one trap path and more than one instruction set.  Whether
+that is a real race, a missed write ordering barrier, or a stale
+read, the existing session already tried the cheap answers on pc64
+and none of them closed it; repeating that here would not be new
+information.  What is new here is the fact of the second
+architecture, and that is what got recorded.  There is no display \-
+draw, pointer, swcursor and the virtio input device are left out on
+purpose, the same
 as the console-only precedent
 .CW spike
 already set \- and the virtio ethernet driver is linked but untested.
