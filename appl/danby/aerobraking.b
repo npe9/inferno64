@@ -91,6 +91,16 @@ Aerobraking: module
 	# Not a second interface for anything else to load this by - this
 	# file is still the whole application, nothing depends on run().
 	run: fn(argv: list of string): (string, int);
+
+	# a second test seam, same reason: drives the model forward through
+	# viewgeometry() below - the SAME function draworbits() calls, not a
+	# copy - and checks the property orbitviewtest(1) exists to guard:
+	# the focus body's own projected point is exactly view centre on
+	# every step, and the scale genuinely changes across the run (so a
+	# future change that broke both the fix and this check by always
+	# returning nil would still be caught). nil on success, else an
+	# error string naming what failed and at which step.
+	viewtest: fn(): string;
 };
 
 SPEC: con
@@ -321,6 +331,88 @@ run(argv: list of string): (string, int)
 	return (SPEC, err == nil);
 }
 
+# viewtest: drives the model forward without ever opening a window
+# (resetstate()/stepstate() skip graph(2) entirely, on purpose - see
+# their own comments) and checks the property draworbits()'s rewrite
+# exists for, calling the SAME viewgeometry() draworbits() itself
+# calls, at three different view sizes:
+#
+#   - centre is exactly the given view rect's own geometric midpoint,
+#     not view.min or anything else "close enough" (checked against an
+#     independently computed midpoint, not a second copy of
+#     viewgeometry()'s own formula)
+#   - focus is the index of the largest mass (checked directly against
+#     the model's own "mass" - this file's global, not exported, but
+#     viewtest() lives in the same translation unit)
+#   - scale is strictly positive throughout, and different AT LEAST
+#     once across the run - a fixed scale would mean the "zoom" half
+#     of the fix silently stopped happening
+#
+# Returns nil if every check passed at every step of a full run (or
+# up to a generous cap) at all three view sizes, else an error string
+# naming what failed, at which step, and at which view size.
+viewtest(): string
+{
+	if(sys == nil)
+		sys = load Sys Sys->PATH;
+	if(draw == nil)
+		draw = load Draw Draw->PATH;
+	if(str == nil)
+		str = load String String->PATH;
+	if(dynsys == nil)
+		dynsys = load Dynsys Dynsys->PATH;
+	if(numerics == nil)
+		numerics = load Numerics Numerics->PATH;
+	if(sys == nil || draw == nil || str == nil || dynsys == nil || numerics == nil)
+		return "viewtest: missing support module";
+	err := execspec(SPEC);
+	if(err != nil)
+		return "viewtest: bad spec: "+err;
+
+	wantfocus := 0;
+	for(i := 1; i < len mass; i++)
+		if(mass[i] > mass[wantfocus])
+			wantfocus = i;
+
+	views := array[] of {Rect((0,0),(400,300)), Rect((0,0),(800,600)), Rect((50,20),(450,320))};
+	for(v := 0; v < len views; v++){
+		view := views[v];
+		wantcentre := Point((view.min.x+view.max.x)/2,(view.min.y+view.max.y)/2);
+		trail = array[Ntrail] of array of real;
+		resetstate();
+		recordstate();
+		firstscale := 0.0;
+		scalechanged := 0;
+		# maxtime is 30.0 at a 0.0025 step - a full run is ~12000 steps;
+		# 300 (checked first) covered only the first 2.5% of one, nowhere
+		# near enough for drag to visibly shrink the orbit, so scale
+		# never changed and the test failed for a reason that had
+		# nothing to do with draworbits() itself - a real instance of
+		# this same repo's own "verify with a negative control" lesson.
+		for(n := 0; n < 15000 && !finished; n++){
+			(focus, scale, centre) := viewgeometry(view);
+			if(focus != wantfocus)
+				return sys->sprint("viewtest: view %d step %d: focus %d, want %d (largest mass)",
+					v, n, focus, wantfocus);
+			if(centre.x != wantcentre.x || centre.y != wantcentre.y)
+				return sys->sprint("viewtest: view %d step %d: centre (%d,%d), want (%d,%d)",
+					v, n, centre.x, centre.y, wantcentre.x, wantcentre.y);
+			if(scale <= 0.0)
+				return sys->sprint("viewtest: view %d step %d: scale %g, want > 0",
+					v, n, scale);
+			if(n == 0)
+				firstscale = scale;
+			else if(scale != firstscale)
+				scalechanged = 1;
+			stepstate();
+		}
+		if(!scalechanged)
+			return sys->sprint("viewtest: view %d: scale never changed across the run "+
+				"- not exercising the zoom", v);
+	}
+	return nil;
+}
+
 gerr(e: string)
 {
 	if(e != nil)
@@ -498,7 +590,11 @@ execspec(spec: string): string
 
 # --- integration and drawing ---
 
-reset()
+# resetstate: the physics/trail part of reset(), with no graph(2)
+# dependency - split out so viewtest() below can drive a real run
+# without a live Plotter (which needs a real Draw->Image, which needs
+# a window). reset() itself is unchanged for every real caller.
+resetstate()
 {
 	state = dynsys->initialstate(model);
 	if(len state != 4*len mass)
@@ -511,6 +607,11 @@ reset()
 	trailnext = 0;
 	observationmaximum[0] = 1.0;
 	observationmaximum[1] = 1.0;
+}
+
+reset()
+{
+	resetstate();
 	graph.cmd("history clear");
 	record();
 }
@@ -535,7 +636,24 @@ step()
 	record();
 }
 
-record()
+# stepstate: step()'s own physics-advance, for viewtest() below - same
+# reason resetstate()/recordstate() exist. step() itself is unchanged.
+stepstate()
+{
+	numerics->rk4(work,rhs,t,0.0025,state);
+	t += 0.0025;
+	if(t >= maxtime){
+		finished = 1;
+		paused = 1;
+	}
+	recordstate();
+}
+
+# recordstate: the trail/observationmaximum bookkeeping part of
+# record(), with no graph(2) dependency - same reason resetstate()
+# exists (see reset()'s own comment). Returns the observables it just
+# computed so record() doesn't compute them twice.
+recordstate(): array of real
 {
 	positions := array[2*len mass] of real;
 	i: int;
@@ -555,6 +673,12 @@ record()
 		if(magnitude*1.15 > observationmaximum[i])
 			observationmaximum[i] = magnitude*1.15;
 	}
+	return values;
+}
+
+record()
+{
+	values := recordstate();
 	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",
 		t,values[0],values[1]));
 }
@@ -619,7 +743,12 @@ redraw()
 # zoomed. A single uniform scale (not separate x and y ranges) also
 # keeps a circular orbit looking circular instead of stretched to fill
 # whichever axis has more room.
-draworbits(im: ref Image, view: Rect)
+# viewgeometry: the pure part of draworbits() - which body to focus on,
+# and the single uniform scale/centre that follows from the CURRENT
+# trail - with no drawing in it, so viewtest() below can call the
+# exact same code a real redraw() does, not a copy that could silently
+# drift from it.
+viewgeometry(view: Rect): (int, real, Point)
 {
 	focus := 0;
 	for(i := 1; i < len mass; i++)
@@ -661,11 +790,17 @@ draworbits(im: ref Image, view: Rect)
 		half = view.dy();
 	scale := real(half)/(2.0*extent);
 	centre := Point((view.min.x+view.max.x)/2,(view.min.y+view.max.y)/2);
+	return (focus, scale, centre);
+}
 
-	for(i = 0; i < len mass; i++){
+draworbits(im: ref Image, view: Rect)
+{
+	(focus, scale, centre) := viewgeometry(view);
+
+	for(i := 0; i < len mass; i++){
 		haveprevious := 0;
 		previous := Point(0,0);
-		for(k = 0; k < trailcount; k++){
+		for(k := 0; k < trailcount; k++){
 			index := trailnext-trailcount+k;
 			if(index < 0)
 				index += Ntrail;

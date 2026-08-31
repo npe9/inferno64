@@ -1,0 +1,72 @@
+.TH ORBITVIEWTEST 1
+.SH NAME
+orbitviewtest \- test that draworbits() keeps the focus body pinned at view centre
+.SH SYNOPSIS
+.B orbitviewtest
+.SH DESCRIPTION
+.B Orbitviewtest
+calls
+.IR danby-aerobraking (1)'s
+own in-process
+.B viewtest()
+seam \(em a test-only entry point, the same justification
+.BR run() 's
+own comment gives for existing at all (see
+.IR eqnorbitaltest (1)).
+.B Viewtest
+drives the model forward through
+.BR viewgeometry() ,
+the exact function
+.B draworbits()
+itself calls to decide where the most massive body (\*(lqthe
+planet\*(rq) lands on screen and how far zoomed in the view is \(em
+not a second copy of that logic that could silently drift from the
+real one.
+.PP
+At three different view rectangle sizes, every step of a full run (or
+a generous cap, whichever comes first) is checked for:
+.TP
+.B focus
+the index of the body with the largest mass \(em checked against the
+model's own mass values directly, not assumed.
+.TP
+.B centre
+exactly the given view rectangle's own geometric midpoint \(em checked
+against an independently computed midpoint, not
+.BR viewgeometry() 's
+own formula recomputed a second time.
+.TP
+.B scale
+strictly positive throughout, and different at least once across the
+run. A
+.B scale
+that never changes would mean the zoom half of the fix silently
+stopped happening \(em found this exact way once already, while first
+writing this test: an initial 300-step run never showed the orbit
+decay enough for
+.B scale
+to move at all, which turned out to be nothing wrong with
+.BR viewgeometry() ,
+just too short a run for a 0.0025-step, 30.0-\c
+.B maxtime
+model (see BUGS).
+.PP
+Exits with
+.B PASS
+if every check held at every step and every view size, or
+.B FAIL
+naming what failed, at which step, and at which view size.
+.SH SOURCE
+.B /appl/cmd/orbitviewtest.b
+.SH SEE ALSO
+.IR danby-aerobraking (1),
+.IR eqnorbitaltest (1)
+.SH BUGS
+The step cap (15000, covering the model's own full 30.0/0.0025 run)
+is specific to this one model's own timing; a test built the same way
+against a different Orbital-family model driven through
+.IR appl/temple/orbital.b
+would need its own cap sized the same way \(em checked against that
+model's own
+.BR maxtime / step ,
+not assumed from this one.
