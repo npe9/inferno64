@@ -13,9 +13,24 @@
 #include <fcall.h>
 #include "srv9p.h"
 
-enum { Qroot = 0, Qhello = 1, Msize = 8192 };
+enum { Qroot = 0, Msize = 8192 };
 
-#define HELLO "hello from the 9P server, a container across the ring\n"
+/*
+ * The served tree: a root directory and a handful of files, each a name
+ * and a string literal (which lives in the text the flat loader maps).
+ * A file's qid path is its index+1 into this table; Qroot is 0.
+ */
+static char *filename[] = {
+	"hello",
+	"motd",
+	"readme",
+};
+static char *filedata[] = {
+	"hello from the 9P server, a container across the ring\n",
+	"the microkernel routes 9P; the file server is a container of its own\n",
+	"three files, listed by a program over a file descriptor\n",
+};
+enum { Nfile = 3 };
 
 static int
 findfid(Fidtab *ft, ulong fid)
@@ -52,15 +67,32 @@ setqid(Qid *q, int which)
 	q->type = which == Qroot ? QTDIR : QTFILE;
 }
 
+/* index of a name in the root directory, or -1 */
+static int
+lookup(char *name)
+{
+	int i;
+	for(i = 0; i < Nfile; i++)
+		if(strcmp(name, filename[i]) == 0)
+			return i+1;		/* qid path = index+1 */
+	return -1;
+}
+
 static void
 mkdir(Dir *d, int which)
 {
 	memset(d, 0, sizeof *d);
 	setqid(&d->qid, which);
-	d->name = which == Qroot ? "/" : "hello";
+	if(which == Qroot){
+		d->name = "/";
+		d->mode = DMDIR|0555;
+		d->length = 0;
+	} else {
+		d->name = filename[which-1];
+		d->mode = 0444;
+		d->length = (vlong)strlen(filedata[which-1]);
+	}
 	d->uid = d->gid = d->muid = "none";
-	d->mode = which == Qroot ? (DMDIR|0555) : 0444;
-	d->length = which == Qroot ? 0 : (vlong)(sizeof(HELLO)-1);
 	d->type = 'L';
 	d->dev = 0;
 }
@@ -71,7 +103,7 @@ srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
 	Fcall t, r;
 	Dir d;
 	uchar statbuf[256];
-	char *hello = HELLO;
+	uchar dirbuf[512];
 	int i, f, nf;
 	long cnt;
 
@@ -105,8 +137,9 @@ srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
 		r.nwqid = 0;
 		nf = ft->f[f].qid;
 		for(i = 0; i < t.nwname; i++){
-			if(nf == Qroot && strcmp(t.wname[i], "hello") == 0)
-				nf = Qhello;
+			int q;
+			if(nf == Qroot && (q = lookup(t.wname[i])) > 0)
+				nf = q;
 			else
 				break;
 			setqid(&r.wqid[i], nf);
@@ -133,21 +166,26 @@ srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
 		f = findfid(ft, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
 		cnt = t.count;
-		if(ft->f[f].qid == Qhello){
-			long len = sizeof(HELLO)-1;
+		if(ft->f[f].qid != Qroot){
+			char *content = filedata[ft->f[f].qid - 1];
+			long len = strlen(content);
 			long off = t.offset;
 			if(off >= len) off = len;
 			if(cnt > len - off) cnt = len - off;
-			r.data = hello + off;
+			r.data = content + off;
 			r.count = cnt;
 		} else {
-			if(t.offset != 0){
-				r.count = 0; r.data = (char*)statbuf;
-			} else {
-				mkdir(&d, Qhello);
-				r.count = convD2M(&d, statbuf, sizeof statbuf);
-				r.data = (char*)statbuf;
+			/* directory: marshal every entry, return the slice at offset */
+			long total = 0, off = t.offset;
+			int k;
+			for(k = 0; k < Nfile; k++){
+				mkdir(&d, k+1);
+				total += convD2M(&d, dirbuf + total, sizeof dirbuf - total);
 			}
+			if(off > total) off = total;
+			if(cnt > total - off) cnt = total - off;
+			r.data = (char*)(dirbuf + off);
+			r.count = cnt;
 		}
 		break;
 

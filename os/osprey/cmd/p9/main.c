@@ -126,6 +126,42 @@ p9main(void)
 		p9close(fd);
 	}
 
+	/*
+	 * ls over 9P: list the file server's own directory, by descriptor,
+	 * across the ring.  Attach a fresh channel to the server, open its
+	 * root directory (a Topen over the ring), and read it - the server
+	 * returns 9P stat entries for the files it holds, which we unpack the
+	 * way a program listing a directory does.
+	 */
+	{
+		Chan *ltc, *lrc;
+		int dfd;
+		long dn;
+		uchar *p, *e;
+		Dir dir;
+		char names[256];
+		int m;
+
+		ltc = namec("#L", Aopen, ORDWR, 0);
+		lrc = mntattach(ltc, nil, "", 0);
+		cclose(ltc);
+		lrc = devtab[lrc->type]->open(lrc, OREAD);	/* Topen the root */
+		dfd = newfd(lrc, OREAD);
+		print("p9: ls the 9P server's directory over the ring:\n");
+		while((dn = p9read(dfd, buf, sizeof buf)) > 0){
+			p = buf;
+			e = buf + dn;
+			while(p < e){
+				m = convM2D(p, (uint)(e - p), &dir, names);
+				if(m <= 0)
+					break;
+				print("p9:   %s (%lld bytes)\n", dir.name, (vlong)dir.length);
+				p += m;
+			}
+		}
+		p9close(dfd);
+	}
+
 	poperror();
 	exits(nil);
 }

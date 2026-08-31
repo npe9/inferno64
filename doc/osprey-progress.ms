@@ -2329,7 +2329,9 @@ by name and reads them by file descriptor, through the fd table
 .CW ( Fgrp )
 the file-descriptor layer keeps \- small integers, not held channels,
 naming both the local file and the one the 9P server holds across the
-ring.  The name space is built and walked in the task's own address
+ring, and lists the server's directory by descriptor - opening it,
+reading it, and unpacking a 9P stat entry per file - the way ls does.
+The name space is built and walked in the task's own address
 space, the kernel routing the 9P messages and serving print and exit.  What moved to the right side of the
 line is the name-space machinery, four sources \-
 .CW chan.c ,
@@ -2368,11 +2370,14 @@ picture: a library operating system on the microkernel, naming the files
 of a buddy that answers over message passing, the kernel only routing.
 A program reaches all of it by file descriptor now, through the fd table,
 the way a Plan 9 program does.  What is not yet real is breadth, not
-structure: the served tree is one file - the ring's data area is about
-nine kilobytes and today's messages are tens of bytes, so a larger tree
-would want the transport to page a big read rather than assume one fits -
-the file syscalls exported back as a 9P server the personality offers to
-others are not built, and the third of the three unreachable
+structure: the served tree is a handful of files, listed and read but
+not written; a union directory read that folds the mount into the
+enclosing name space (mountfix and the rest of the read path) is not
+ported, so ls names the server's own directory rather than the composed
+one; the ring's data area is about nine kilobytes and today's messages
+are tens of bytes, so a larger tree would want the transport to page a
+big read rather than assume one fits; the file syscalls exported back as
+a 9P server the personality offers to others are not built, and the third of the three unreachable
 things \- processes that share an address space migrating as a group \-
 is not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the

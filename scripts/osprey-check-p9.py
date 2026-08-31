@@ -71,6 +71,8 @@ def main():
                     'read from the 9P server over the mount: "hello from the 9P server, a container across the ring' in t))
     results.append(("and a program reaches the name space by file descriptor (open/read/close over an fd table), naming both a local file and the file the 9P server holds",
                     'from /greeting through the name space' in t and 'from /hello over the ring' in t))
+    results.append(("and it lists the server's directory by descriptor over 9P, unpacking a stat entry per file",
+                    'motd (69 bytes)' in t and 'readme (56 bytes)' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
