@@ -909,6 +909,122 @@ lists the counts of a container's semaphores on a line of their own.
 Giving one is the only operation an interrupt performs, so semaphores are
 held under a lock of their own rather than the one that serves the rest
 of the device, which a handler could not take.
+.SH GRAPHICS AND INPUT
+.PP
+The display and its input are exposed the way a driver in general is:
+the kernel hands a user program the hardware it needs by name, and
+does no drawing, no compositing and no PS/2 decoding of its own.
+.PP
+UEFI hands the kernel a linear frame buffer, and it is published at
+.I ospreyinit
+as the
+.B framebuffer
+physical segment, on every configuration \- the microkernel path and
+the full 9front personality both map the same segment the same way.
+A program that
+.B segattach s
+it and writes pixels is a complete driver;
+.I os/osprey/cmd/fb.c
+is the minimal one, and draws a gradient, a block and two bars with no
+kernel graphics stack anywhere in the path.
+.PP
+.I draw
+is the user-level draw service, built on
+.IR os/osprey/cmd/draw/devdraw.c ,
+a reuse of the kernel's own
+.IR os/osprey/port/devdraw.c ,
+whole, behind a small kernel-compat shim
+.RI ( kshim.c ,
+.IR kshim.h )
+and a
+.I lib9p
+front end that turns each 9P request into the device's own
+.B Chan
+entry points, with
+.I attachscreen
+handed the exposed
+.B framebuffer
+segment as the screen's backing store and
+.I softscreen
+zero, so compositing lands on the frame buffer directly.  Mounted at
+.BR /dev ,
+it makes
+.BR /dev/draw ,
+which a real
+.I libdraw
+client reads and writes exactly as it would any Plan 9 draw device.
+.I os/osprey/cmd/draw/devdraw.c
+speaks the current draw protocol; reconciling it needed the
+.B Warp
+matrix as a struct rather than an array and stopped there \- the
+affine-transform command has a newer wire form
+.I rio
+does not use, and it refuses rather than pretending to answer it.
+.PP
+The mouse and keyboard are each a page the kernel fills and a program
+that reads it, nothing more.
+.IR devosprey.c 's
+.I ospreymouseexpose
+and the keyboard's equivalent publish the PS/2 byte streams as the
+.B mousering
+and
+.B kbdring
+physical segments; the IRQ12 and IRQ1 handlers do nothing but copy a
+byte into the ring and arm the next interrupt.
+.I os/osprey/cmd/draw/mouse.c
+segattaches its page, decodes the three-byte packets into a position
+and a button mask, and serves
+.B /dev/mouse
+in the format
+.I libdraw
+reads;
+.I os/osprey/cmd/draw/kbd.c
+does the same for scancodes, tracks shift and control, translates
+through a keymap into runes, and serves
+.BR /dev/kbd .
+Neither driver executes
+.B in
+or
+.B out
+\- both only read a page the kernel already filled.  The cursor is
+drawn the same way anything else is: the draw server forks a process
+that reads
+.B mousering
+and composites an arrow onto the frame buffer, under a lock shared
+with the draw path so the two never collide on one frame.
+.PP
+With
+.BR /dev/draw ,
+.B /dev/mouse
+and
+.B /dev/kbd
+all served from user space,
+.I rio
+runs against them unmodified: it paints its desktop on the exposed
+frame buffer, a right-click pops its window menu, sweeping a new
+window spawns
+.I rc
+in it, and a line typed at the keyboard reaches the focused window and
+is answered by whatever runs there.  This is a full window system,
+running interactively, with no kernel graphics, no kernel mouse and no
+kernel keyboard \- three ordinary user programs above the microkernel
+answer for all of it, the exact split the driver-as-a-task shape above
+draws for any device.
+.PP
+What is not built this way: the second cut described under
+.B "A DRIVER SERVED BY A TASK"
+above, moving
+.IR cons ,
+.I uart
+and
+.I rtc
+themselves out of the kernel into tasks of this same shape, is not yet
+done for the console and the real-time clock \- only the uart has it.
+And this section describes the full 9front personality's path to the
+display; a container running under the minimal library OS
+.RI ( xup64 )
+does not arm the mouse or keyboard interrupts at the same time as the
+full personality, so the two are not run together.
 .SH EXAMPLE
 Order three containers by deadline and bill the one that runs:
 .IP
@@ -975,6 +1091,16 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/adapter/ospreyrt.c
 .br
 .B /os/osprey/devosprey.c
+.br
+.B /os/osprey/cmd/fb.c
+.br
+.B /os/osprey/cmd/fbdraw.c
+.br
+.B /os/osprey/cmd/draw
+.br
+.B /os/osprey/cmd/draw/mouse.c
+.br
+.B /os/osprey/cmd/draw/kbd.c
 .SH CHECKING
 .PP
 .B /scripts/osprey-check.py
