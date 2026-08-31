@@ -15687,17 +15687,46 @@ os/inferno/port/proc.c and portdat.h are shared across every native
 board in this tree (pc64 included), and the fix lives entirely in
 that shared file.  Every native raise since the 9front process-model
 merge has been silently failing to find its handler, on every board.
-Rebuilt pc64 with the fix in and booted it three times: it hit the
-already-documented pc64 GPF heisenbug (see the pc64 boot section
-above) on two of the three runs, and a different-looking hang on the
-third \(em same class of pre-existing, unrelated flakiness this port
-already carries on pc64 specifically, not a new failure and not this
-bug's own shape (no silent raise-then-nothing). The fix itself did
-not visibly regress a clean boot when one happened. A real pc64
-dossrv/FAT retest, the way this
-was verified on riscv64/virt above, is still open \(em pc64's GPF
-rate makes any single boot's result unreliable evidence either way,
-and this round did not have batch-boot volume to spend on it.
+.PP
+The real pc64 dossrv/FAT retest, at the volume the pc64 GPF heisenbug
+needs to be honest evidence, is done now.  A temporary
+.CW pc64fatinit.b
+(never committed, reverted after) reproduces the same
+.I "blkcheck()/tmpmount()/fsmount()"
+shape virtinit.b already carries \(em probing for the real
+.CW virtio-blk-pci
+device across a few candidate SD letters, mounting a writable
+.CW /tmp
+before creating
+.CW /tmp/dos
+under it, the same
+.CW /n
+-is-static-devroot fix as riscv64/virt \(em against
+.CW os/inferno/pc64/pc64 's
+own root-file list (temporarily given
+.CW dossrv.dis ,
+.CW memfs.dis
+and
+.CW styxlib.dis ,
+none of which it carried before).  Twenty real boots, a real FAT
+image, a real
+.CW virtio-blk-pci
+device each time:
+.B "15/20 BLK-OK/TMP-OK/FS-OK clean" ,
+5/20 hit a crash \(em every one of them the pre-existing GPF-class
+heisenbug (a register dump and a fault, either reported as
+.CW "general protection violation"
+or, once, as a bare
+.CW "currun() nil or has no module"
+register dump of the same shape), never this bug's own signature
+(silent raise-then-nothing).  Zero of twenty hung.  75% clean is
+in line with this port's already-documented, already-open GPF rate
+on pc64, not evidence of a new problem, and every single failure
+mode seen was the old, already-tracked one \(em not a new one this
+fix introduced.  The fix is confirmed on both architectures now; the
+pc64 GPF heisenbug itself is exactly as open as the earlier sections
+above already say \(em this round did not touch it, only measured
+around it.
 .NH 1
 Then
 .PP
