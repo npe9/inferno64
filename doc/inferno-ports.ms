@@ -243,7 +243,7 @@ and
 .CW mul64fract.$O
 already are.
 .PP
-Four bugs were real and board-specific, each pinned down with
+Five bugs were real and board-specific, each pinned down with
 .CW arm-none-eabi-objdump
 against the actual linked image, or QEMU's own gdbstub, rather than
 guessed at:
@@ -287,6 +287,61 @@ breakpoint at trap entry against the same field in the crash dump.
 Fixed the way R0-R3 already were:
 .CW trapscratch
 now takes R4 too, stashed before vectrap can touch it.
+.IP \(bu
+the root file list named
+.CW /dis
+itself as the source for every Limbo module, the tree built for an
+eight byte Dis word, when a 32 bit target needs
+.CW /dis32
+\- the same distinction
+.CW mps2 ,
+.CW nucleof303
+and
+.CW teensy41
+already draw.
+.CW armv7
+sets
+.CW DISWORD=4
+for its own kernel and for
+.CW /osinit.dis ,
+but the root file list still wrote bare
+.CW /dis/sh.dis
+style entries with no source column, which
+.CW mkroot
+resolves against
+.CW $ROOT
+literally \- the eight byte tree.  A module compiled for eight byte
+words carries Type descriptors sized and mapped for eight byte
+words; walked by a GC built for four, a pointer map bit meant to
+cover one eight byte field instead covers the low half of it, and
+.CW markheap()
+dereferenced the low 32 bits of a
+.CW real
+constant as if it were a heap pointer.  A poison-looking
+.CW 0x66666666
+that showed up identically at a gdbstub breakpoint and in the crash
+dump was never poison: it is the low word of the IEEE double 0.7,
+sitting where a module's constant pool put it, in a Type whose
+recorded
+.CW np
+only comes out right \- 66 map bytes covering the object's 4168 byte
+size \- if each byte is read as eight words, not four.  That is
+arithmetic, not a guess.  Pointing the root file list's
+.CW .dis
+entries at
+.CW /dis32
+the way the other 32 bit boards do fixed it: the same boot now loads
+and type-checks real module Types \- small, sane ones, like
+.CW "size 48 np 1"
+for
+.CW Bufio
+\- with no bogus giant Type anywhere in the log.  An earlier version
+of this section called this crash the same shape as the pc64
+.CW markheap()
+heisenbug below, on the strength of that poison value alone; that
+was wrong, this had nothing to do with pc64, and the two only looked
+alike because both happen to land inside
+.CW markheap() .
 .PP
 One more was a gap rather than a bug:
 .CW 5c 's
@@ -307,34 +362,19 @@ stated plainly: it boots \- memory pool init, process init, the version
 banner, loading and beginning to type-check
 .CW /osinit.dis ,
 into the Dis interpreter, running real VFP-lowered floating point and
-32 bit division without faulting.  It does not yet reach a shell: the
-crash is inside
-.CW gc.c 's
-.CW markheap() ,
-walking a Type's pointer map and reading a heap word tagged as a
-pointer that is not one \- confirmed genuine, not an artifact of the
-register-save bug above: the same
-.CW 0x66666666
-poison value showed up at a gdbstub breakpoint and, after the fix,
-in the kernel's own crash dump, agreeing exactly.  This is the exact
-shape "Naming the Dis module a native trap can't name itself" (above)
-spent an entire session bracketing on pc64, complete with its own
-.CW "pc64-only, temporary"
-diagnostics still live in
-.CW gc.c
-and
-.CW heap.c .
-This is the first time that shape has been seen on a second
-architecture.  That is worth more than another bracketing pass here:
-it says the bug is not an amd64/pc64 artifact \- not a link-order
-issue, not a KenC codegen quirk for that one target \- but something
-genuinely wrong in the portable interpreter or its GC, reachable from
-more than one trap path and more than one instruction set.  Whether
-that is a real race, a missed write ordering barrier, or a stale
-read, the existing session already tried the cheap answers on pc64
-and none of them closed it; repeating that here would not be new
-information.  What is new here is the fact of the second
-architecture, and that is what got recorded.  There is no display \-
+32 bit division without faulting, past the module loader and into
+module initialization proper \- it gets far enough to load
+.CW Bufio
+and start into
+.CW devprog .
+It does not yet reach a shell: the next crash is a genuine Undefined
+instruction trap, not the GC misread above, with
+.CW pc
+reading back as
+.CW 0x00000040
+\- too low to be a real code address, the shape of a jump through an
+uninitialized or zeroed function pointer rather than of bad data in
+the heap.  Not yet bracketed.  There is no display \-
 draw, pointer, swcursor and the virtio input device are left out on
 purpose, the same
 as the console-only precedent

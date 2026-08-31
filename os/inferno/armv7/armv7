@@ -106,6 +106,10 @@ code
 	int panicreset = 0;
 
 root
+# The Limbo userland, taken from /dis32: a Dis word is four bytes on
+# this board, and a module compiled for eight will not load.  See
+# mkfiles/mkdis and the note in mkconfig -- these are the ones
+# appl/cmd and appl/lib install under DISROOT=dis32 DISWORD=4.
 	/chan	/
 	/dev	/
 	/dis
@@ -124,34 +128,34 @@ root
 	/osinit.dis
 	/dis/init
 	/dis/shutdown
-	/dis/basename.dis
-	/dis/bind.dis
-	/dis/cat.dis
-	/dis/cd.dis
-	/dis/echo.dis
-	/dis/grep.dis
-	/dis/ls.dis
-	/dis/mntgen.dis
-	/dis/mount.dis
-	/dis/ns.dis
-	/dis/ps.dis
-	/dis/pwd.dis
-	/dis/read.dis
-	/dis/sh.dis
-	/dis/sh/std.dis
-	/dis/unmount.dis
-	/dis/lib/arg.dis
-	/dis/lib/bufio.dis
-	/dis/lib/daytime.dis
-	/dis/lib/env.dis
-	/dis/lib/filepat.dis
-	/dis/lib/names.dis
-	/dis/lib/nametree.dis
-	/dis/lib/readdir.dis
-	/dis/lib/regex.dis
-	/dis/lib/string.dis
-	/dis/lib/styx.dis
-	/dis/lib/styxconv/new2old.dis
-	/dis/lib/styxconv/ostyx.dis
-	/dis/lib/styxservers.dis
-	/dis/lib/workdir.dis
+	/dis/basename.dis	/dis32/basename.dis
+	/dis/bind.dis	/dis32/bind.dis
+	/dis/cat.dis	/dis32/cat.dis
+	/dis/cd.dis	/dis32/cd.dis
+	/dis/echo.dis	/dis32/echo.dis
+	/dis/grep.dis	/dis32/grep.dis
+	/dis/ls.dis	/dis32/ls.dis
+	/dis/mntgen.dis	/dis32/mntgen.dis
+	/dis/mount.dis	/dis32/mount.dis
+	/dis/ns.dis	/dis32/ns.dis
+	/dis/ps.dis	/dis32/ps.dis
+	/dis/pwd.dis	/dis32/pwd.dis
+	/dis/read.dis	/dis32/read.dis
+	/dis/sh.dis	/dis32/sh.dis
+	/dis/sh/std.dis	/dis32/sh/std.dis
+	/dis/unmount.dis	/dis32/unmount.dis
+	/dis/lib/arg.dis	/dis32/lib/arg.dis
+	/dis/lib/bufio.dis	/dis32/lib/bufio.dis
+	/dis/lib/daytime.dis	/dis32/lib/daytime.dis
+	/dis/lib/env.dis	/dis32/lib/env.dis
+	/dis/lib/filepat.dis	/dis32/lib/filepat.dis
+	/dis/lib/names.dis	/dis32/lib/names.dis
+	/dis/lib/nametree.dis	/dis32/lib/nametree.dis
+	/dis/lib/readdir.dis	/dis32/lib/readdir.dis
+	/dis/lib/regex.dis	/dis32/lib/regex.dis
+	/dis/lib/string.dis	/dis32/lib/string.dis
+	/dis/lib/styx.dis	/dis32/lib/styx.dis
+	/dis/lib/styxconv/new2old.dis	/dis32/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis	/dis32/lib/styxconv/ostyx.dis
+	/dis/lib/styxservers.dis	/dis32/lib/styxservers.dis
+	/dis/lib/workdir.dis	/dis32/lib/workdir.dis
