@@ -41,6 +41,7 @@ misc
 port
 	int cpuserver = 0;
 	int ospreyuser = 0;
+	int ospreyp9 = 0;
 	int ospreymicro = 1;
 
 	/*

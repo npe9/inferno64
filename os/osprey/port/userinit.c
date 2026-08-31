@@ -23,6 +23,7 @@
 extern int ospreymicro;
 extern void ospreymicroboot(void);
 extern int ospreyuser;
+extern int ospreyp9;
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
 
@@ -199,7 +200,10 @@ proc0(void*)
 		 */
 		ospreyuserprep();
 		ospreyframebuffer();
-		ospreyloadp9();		/* the Plan 9 personality library */
+		if(ospreyp9)
+			ospreyloadp9();		/* the Plan 9 personality library */
+		else
+			ospreyloadprog();	/* the minimal microkernel task */
 		up->kp = 0;
 		up->noswap = 0;
 		up->privatemem = 0;

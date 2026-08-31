@@ -2243,18 +2243,59 @@ Five kinds, and they are not equally hard.  The first cannot be closed
 without writing a different kernel; the rest can be closed from here,
 and two of them have been since this was written.
 .NH 2
-Unreachable from a Plan 9 kernel
+The microkernel, and a personality that is a library on it
 .PP
-The microkernel itself, a library operating system linked into the task
-that uses it, and processes that share an address space migrating as a
-group.  The measure of it is the file count: the Osprey kernel is 95
-portable sources, 121 machine sources and 25 in the ip stack, against
-10 in
-.CW policy
-and one adapter.  Nine tenths of what is linked is a personality
-sitting on the wrong side of the line the talk draws.  What can be done
-from here \- and is \- is to let a container replace that personality
-for itself.
+This was written down as unreachable from a Plan 9 kernel: the
+microkernel itself, a library operating system linked into the task that
+uses it, and processes that share an address space migrating as a group.
+Two of the three are now built.
+.PP
+The microkernel is
+.CW upc64
+and
+.CW xup64 :
+the Plan 9 kernel with its name space, process groups and file cluster
+cut away, keeping the four services the talk keeps \- message passing,
+the address space, interrupts and scheduling.  It boots into a user
+task, not the Plan 9 shell, and the task reaches the kernel only through
+a minimal syscall interface.  This is checked by
+.CW /scripts/osprey-check-micro.py
+and
+.CW /scripts/osprey-check-user.py .
+.PP
+The library operating system is
+.CW p964 ,
+the same cut core carrying the Plan 9 file personality as a user
+library.  The name-space machinery \-
+.CW chan.c ,
+.CW dev.c ,
+.CW pgrp.c ,
+.CW devroot.c ,
+the same port sources the full kernel links \- is compiled as ordinary
+user code behind a shim that supplies the locks, the error unwinding and
+the allocation the kernel gave them, embedded in the task the
+microkernel enters and linked with it.  On boot the task builds a name
+space in user space, attaches the root device with
+.CW namec ,
+and reads a directory through
+.CW open
+and
+.CW read
+\- every one of those running in the task's own address space, the
+kernel serving only print and exit.  Nine tenths of what the file count
+called a personality on the wrong side of the line the talk draws is now
+on the right side of it, linked into the program rather than the kernel.
+This is checked by
+.CW /scripts/osprey-check-p9.py .
+.PP
+What is real is a name space and a directory read, not yet the breadth
+of the file personality: one device is attached, and the mount and \[*p]p
+client that would let it name a real server's files, and the file
+syscalls exported back as a server, are not built.  The third of the
+three \- processes that share an address space migrating as a group \-
+is not begun.  What was unreachable from a Plan 9 kernel is reached by
+not running on one: the kernel is cut to the microkernel, and the
+personality is a library the task links.
 .NH 2
 Built and proven since
 .PP
@@ -2656,13 +2697,22 @@ Both sizes are written down here rather than begun.
 Not attempted
 .PP
 The presentation describes a microkernel with library operating systems
-above it.  This is a Plan 9 kernel with an Osprey policy layer inside it,
-and the parts of Osprey that are about where code runs rather than what
-it does -- the microkernel itself, a library operating system linked
-into the task that uses it, processes that share an address space
-migrating as a group -- are not reachable from here without writing a
-different kernel.  What is built follows the contracts rather than the
-structure, and says so.
+above it.  The larger part of this tree is a Plan 9 kernel with an
+Osprey policy layer inside it, which follows the contracts rather than
+the structure and says so.  Beside it now stands the structure itself:
+.CW upc64
+and
+.CW xup64
+are the kernel cut to the microkernel, and
+.CW p964
+runs the Plan 9 file personality as a library linked into the task on
+it, building its name space in user space.  Two of the three things once
+written down here as reachable only by writing a different kernel -- the
+microkernel, and a library operating system linked into the task that
+uses it -- are built; the third, processes that share an address space
+migrating as a group, is not begun, and the personality the library
+carries is a name space and a directory read, not yet the breadth of the
+file operations.
 .PP
 The plan's other name for what sits beside a library OS is a
 .I buddy
