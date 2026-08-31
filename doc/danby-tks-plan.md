@@ -1,6 +1,34 @@
 # Danby model authoring: a real equation language, and what the "duplicates" actually are
 
-**Status: mixed.** The equation-language piece is DONE and verified (`hoc`
+**Status update (this doc's own last edit was `79fa91fa`; since then, same
+day, later):** the harness-side adapter this doc's own "Recommended order"
+step 1 called for ("given a list of equation strings and a list of
+(name, initial-value) pairs... a `step()` that writes current values
+through those handles" - see below) is now built, as its own sibling
+library rather than folded into an existing Danby harness file:
+`module/dynsys.m`/`appl/lib/dynsys.b` (`param`/`maxtime`/`state`/
+`derivative`/`eq`/`observable`, `newmodel()`/`cmd()`/`check()`/
+`initialstate()`/`rhs()`/`observables()`), with `hoc(2)` narrowed back to
+being *just* the equation parser/evaluator this doc already describes below
+- dynsys owns the "resolve every name once, write current values through
+live handles, eval() the pre-compiled trees" adapter shape, hoc doesn't.
+Also now built: `pde(2)`'s own `equation hoc` line (see the correction at
+the end of "Does the same hoc library reach `appl/lib/pde.b`'s PDE solvers
+too?" below - that section's own measurement predates the fix and describes
+it as not yet decided; it's decided, and not the way that section's own
+naive-per-cell measurement would have implied). What is genuinely still
+not done: migrating any of the 156 *existing* plugins across the seven
+families surveyed below (Mechanism/Populationmodel/Trajectory/Orbital/
+Twospecies/Flight3d/Profile) onto either adapter - "Recommended order"
+steps 2-5 remain open exactly as written. The one real proof of the
+dynsys adapter so far is `appl/danby/aerobraking.b`, but that command sits
+outside this doc's own harness architecture entirely (no `appl/temple/`
+harness, no `module/danby/*.m` plugin interface - "one file, nothing else,"
+per its own header comment) rather than being a migrated family member, so
+it does not by itself retire steps 2-5's own migration questions.
+
+**Status: mixed** (as originally written). The equation-language piece is
+DONE and verified (`hoc`
 promoted to a real shared library, `appl/lib/hoc.b`/`module/hoc.m` - see "The
 design changed" below); connecting it to an actual Danby harness is not yet
 built. This documents a survey of `appl/danby/` done to answer two questions
@@ -431,7 +459,11 @@ plugins in the other three families.
    load, resolve every referenced name via `symbol()` once, and provide a
    `step()` that writes current values through those handles and `eval()`s
    each tree - the piece connecting the now-built library to an actual
-   Danby model. Not built yet; the smallest real next step.
+   Danby model. **DONE** - see the status update at the top of this doc:
+   `module/dynsys.m`/`appl/lib/dynsys.b`, plus its own `sh(1)` module
+   (`sh-dynsys(1)`) and a sibling `hoc(1)`/`plot(2)` shell exposure
+   (`sh-hoc(1)`/`sh-plot(1)`). Steps 2-5 below - migrating an actual
+   existing family onto it - are not.
 2. **Migrate one family through it as proof** - Populationmodel is the best
    first target (Finding 3's `epidemic.b` gives a real, already-understood
    equation set to migrate first), *not* Trajectory - Trajectory's plugins
@@ -526,3 +558,25 @@ answer, not just a hopeful one.
 No change has been made to `module/pde.m`/`appl/lib/pde.b` - this section is
 the measurement the observation asked for, and the fork it surfaces, for the
 user to call before any grammar or `Problem` field gets added.
+
+**UPDATE (same day, later - `fe1b9b03`): the fork was called, and the
+82x-slowdown this section measured is not what shipped.** `pde(2)` gained
+`equation hoc NAME [NAMEB]` - a `Problem` does take a dependency on
+`hoc(2)` after all (the second design question above, decided: yes) - but
+the per-cell `eval()` loop this section measured and warned off is *not*
+what drives it. It's built on `evalarray()`, added to `hoc(2)` specifically
+for this: the same compiled tree, walked once per whole-grid call instead
+of once per cell (any `Sym` with a bound `.vals` array contributes
+elementwise; a scalar `Sym` broadcasts), which is what actually made an
+interactive `step()` viable at realistic grid sizes - see `hoc(2)`'s own
+man page (its "Array-context evaluation" section) for the mechanism and
+the roughly two-orders-of-magnitude number that resulted (a different, and
+much better, number than this section's own 82x). Verified bit-exact against
+`gray()` on the same 128x128 grid via `pdehoctest(1)` (`0` max error, not
+"close"). The third design question above (arbitrary named parameters
+instead of hard-coded `feed`/`kill`) shipped too, checked directly against
+`man/2/pde` rather than assumed absent: `equation hoc` has its own
+repeatable `param NAME VALUE` line binding a hoc variable any `rhs` line
+may reference, plus `lap_NAME` for a field's own five-point Laplacian and
+`h` for the current substep's `dt` - the Turing-patterns/FitzHugh-Nagumo
+generality this section asked for is already there, not still open.
