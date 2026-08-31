@@ -248,6 +248,34 @@ p9main(void)
 		p9close(fd);
 	}
 
+	/*
+	 * bind and create - the last of the name-space operations rio needs.
+	 * Create a file in the environment device by name, bind that device
+	 * onto /mnt, and read the file back through the bound path: the create
+	 * makes a new file, the bind rearranges the name space, and the read
+	 * proves a name resolves across the binding.
+	 */
+	{
+		int fd;
+		long rn;
+		char *val = "reached through a bind\n";
+
+		fd = p9create("#e/bound", OWRITE, 0666);
+		p9write(fd, val, strlen(val));
+		p9close(fd);
+		print("p9: created #e/bound and wrote a value\n");
+
+		p9bind("#e", "/mnt", MREPL);
+		print("p9: bound the environment device onto /mnt\n");
+
+		fd = p9open("/mnt/bound", OREAD);
+		rn = p9read(fd, buf, sizeof buf - 1);
+		if(rn < 0) rn = 0;
+		buf[rn] = 0;
+		print("p9: read /mnt/bound across the binding: \"%.*s\"\n", (int)rn, (char*)buf);
+		p9close(fd);
+	}
+
 	poperror();
 	exits(nil);
 }

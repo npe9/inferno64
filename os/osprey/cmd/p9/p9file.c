@@ -274,3 +274,47 @@ p9stat(int fd, Dir *d, uchar *buf, int nbuf)
 		return -1;
 	return 0;
 }
+
+/* create a file by name and return a descriptor open on it */
+int
+p9create(char *name, int mode, ulong perm)
+{
+	Chan *c;
+	int fd;
+
+	openmode(mode & ~OEXCL);
+	c = namec(name, Acreate, mode, perm);
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+	fd = newfd(c, mode);
+	if(fd < 0)
+		error(Enofd);
+	poperror();
+	return fd;
+}
+
+/* bind the file or directory named by `name` onto `old` in the name space */
+int
+p9bind(char *name, char *old, int flag)
+{
+	Chan *c0, *c1;
+
+	c0 = namec(name, Abind, 0, 0);
+	if(waserror()){
+		cclose(c0);
+		nexterror();
+	}
+	c1 = namec(old, Amount, 0, 0);
+	if(waserror()){
+		cclose(c1);
+		nexterror();
+	}
+	cmount(c0, c1, flag, nil);
+	poperror();
+	cclose(c1);
+	poperror();
+	cclose(c0);
+	return 0;
+}

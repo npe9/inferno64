@@ -133,7 +133,10 @@ to a server container over the ring and an exportfs back the other way,
 and a file-descriptor interface \- open, read, write, close, seek, stat
 and directory-list \- lifted from sysfile.c as a library.
 .PP
-Still missing toward a real 9front personality that could run rio: exec;
+The name space with bind and mount that the rio list asks for is built:
+p964 binds a device onto a name and mounts a 9P server, creates files and
+walks names across both.  Still missing toward a real 9front personality
+that could run rio: exec;
 the file operations as microkernel syscalls over the ring rather than an
 in-process library (the exokernel shape keeps them a library, but a
 process boundary would need the ring); a real file-system service behind

@@ -2381,7 +2381,8 @@ picture: a library operating system on the microkernel, naming the files
 of a buddy that answers over message passing, the kernel only routing.
 A program reaches all of it by file descriptor now, through the fd table,
 the way a Plan 9 program does \- opening, reading, writing, seeking,
-stat-ing and listing, over local files and files a 9P server holds alike.  What is not yet real is breadth, not
+stat-ing, listing, creating and binding, over local files and files a 9P
+server holds alike.  What is not yet real is breadth, not
 structure: the served tree is a handful of files, one of them writable -
 listed, read and written, but small; a union directory read that folds the mount into the
 enclosing name space (mountfix and the rest of the read path) is not

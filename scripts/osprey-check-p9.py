@@ -80,6 +80,8 @@ def main():
                     'exportfs loopback' in t and m2 is not None and int(m2.group(1)) >= 10))
     results.append(("and it stats a file and seeks within it by descriptor - metadata and random access, not just sequential reads",
                     'stat /hello: name hello, length 54' in t and 'after seek to 6, read "from the 9P server' in t))
+    results.append(("and it creates a file by name and binds a device onto a name, reading the file back across the binding",
+                    'created #e/bound' in t and 'read /mnt/bound across the binding: "reached through a bind' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
