@@ -5,5 +5,6 @@ struct Proc {
 	char *user; int procctl; char genbuf[128];
 	char *errstr; char *syserrstr;
 	int nerrlab; jmp_buf errlab[NERR];
+	int nnote; int pid; char text[32]; Rendez sleep; int priority;
 };
 extern Proc *up;

@@ -18,9 +18,10 @@ extern void exits(char*);
 void
 p9main(void)
 {
-	Chan *c, *ec;
+	Chan *c, *ec, *tc, *mc;
 	uchar buf[2048];
 	long n;
+	int mnttype;
 
 	p9init();
 	if(waserror()){
@@ -65,6 +66,32 @@ p9main(void)
 	c = namec("/greeting", Aopen, OREAD, 0);
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
 	print("p9: resolved /greeting through the mount table and read \"%.*s\"\n", (int)n, (char*)buf);
+	cclose(c);
+
+	/*
+	 * A real 9P mount.  The name space now names files a server holds,
+	 * reached by 9P: open the transport (#L, an in-process conduit - the
+	 * marshalling and the mount client devmnt are the kernel's own, only
+	 * the transport is a function call rather than the microkernel ring),
+	 * attach the mount device to it (which runs Tversion and Tattach),
+	 * and mount the server's root.  Then open "/hello", which devmnt
+	 * walks and reads over 9P into the server; the resolved channel is
+	 * served by the mount device (#M), not the transport, which is what
+	 * proves 9P carried it.
+	 */
+	tc = namec("#L", Aopen, ORDWR, 0);
+	mc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	cmount(mc, up->slash, MAFTER, "");
+	cclose(mc);
+	print("p9: attached and mounted a 9P server over an in-process transport\n");
+
+	mnttype = devno('M', 0);
+	c = namec("/hello", Aopen, OREAD, 0);
+	print("p9: /hello resolved across #M, served by device type=%d (mnt=%d)\n",
+		c->type, mnttype);
+	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
+	print("p9: read from the 9P server over the mount: \"%.*s\"\n", (int)n, (char*)buf);
 	cclose(c);
 
 	poperror();

@@ -414,3 +414,14 @@ struct Cmdtab
 	char	*cmd;	/* command name */
 	int	narg;	/* expected #args; 0 ==> variadic */
 };
+
+/* Queue.state flags (portdat.h) - qio needs these */
+enum
+{
+	Qstarve		= (1<<0),
+	Qmsg		= (1<<1),
+	Qclosed		= (1<<2),
+	Qflow		= (1<<3),
+	Qcoalesce	= (1<<4),
+	Qkick		= (1<<5),
+};

@@ -13,14 +13,15 @@ LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \
-         os/osprey/port/devenv.c; do
+         os/osprey/port/devenv.c os/osprey/port/qio.c os/osprey/port/devmnt.c \
+         $P/dev9ploop.c; do
 	o=/tmp/p9_$(basename $f .c).6
 	6c $INC -o $o $f
 	OBJ="$OBJ $o"
 done
 # libc members the host linker can't read, supplied from lib9 source
 SUP=""
-for m in utfnlen convM2D convD2M vsnprint dofmt vfprint; do
+for m in utfnlen convM2D convD2M convS2M convM2S fcallfmt vsnprint dofmt vfprint; do
 	6c $LIBINC -o /tmp/p9_$m.6 lib9/$m.c
 	SUP="$SUP /tmp/p9_$m.6"
 done

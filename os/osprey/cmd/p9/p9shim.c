@@ -188,11 +188,12 @@ long	seconds(void){ return 0; }
 /* an empty device table for now: the mount/9P device comes next */
 extern Dev rootdevtab;
 extern Dev envdevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, nil };
+extern Dev mntdevtab;
+extern Dev looploopdevtab;
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, nil };
 
 long	kerndate = 0;
 
-void	muxclose(Mnt*){}		/* until the mount/9P device exists */
 
 int
 openmode(ulong o)
@@ -288,3 +289,42 @@ chandevreset(void)
 	for(i = 0; devtab[i] != nil; i++)
 		devtab[i]->reset();
 }
+
+/*
+ * The mount client (devmnt) and the queue it buffers replies in pull in
+ * a few more kernel primitives.  Single-threaded, the locks are no-ops
+ * and sleep only ever waits on a condition already made true by the
+ * synchronous transport; the cache is never enabled, so its entry points
+ * are stubs a cachedchan() guard keeps unreached.
+ */
+void	coherence(void){}
+void	eqlock(QLock*){}
+void	exhausted(char *why){ panic("exhausted: %s", why); }
+
+void
+sleep(Rendez*, int (*f)(void*), void *arg)
+{
+	while(!f(arg))
+		;			/* the event has already happened here */
+}
+
+void	cinit(void){}
+int	copen(Chan*){ return 0; }
+void	cclunk(Chan*){}
+int	cread(Chan*, uchar*, int, vlong){ return 0; }
+void	ctrunc(Chan*){}
+void	cupdate(Chan*, uchar*, int, vlong){}
+void	cwrite(Chan*, uchar*, int, vlong){}
+
+/*
+ * qio reaches for the interrupt-time block pool and the scheduler.  With
+ * one process and a synchronous transport there is no interrupt path and
+ * nothing to reschedule: interrupt allocation is ordinary allocation, the
+ * pooled path is declined so copyblock falls back to allocb, and islo/
+ * sched are the trivial answers.  validstat trusts the server we wrote.
+ */
+Block*	iallocb(int n){ return allocb(n); }
+Block*	iallocbp(Bpool*){ return nil; }
+int	islo(void){ return 1; }
+void	sched(void){}
+void	validstat(uchar*, int){}

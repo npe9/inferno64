@@ -2289,33 +2289,63 @@ writes a value into it, and opens
 .CW /greeting ,
 a name with no device prefix, which the union walk carries from the root
 across the mount table into the environment device and reads the value
-back.  Every one of those runs in the task's own address space, the
-kernel serving only print and exit.  What moved to the right side of the
+back.  Then it mounts a real 9P server: it attaches the mount device
+.CW ( #M ,
+.CW devmnt.c )
+to a transport, which runs
+.CW Tversion
+and
+.CW Tattach ,
+mounts the server's root, and opens
+.CW /hello ,
+which
+.CW devmnt
+walks and reads over 9P \-
+.CW Twalk ,
+.CW Topen ,
+.CW Tread
+\- into the server; the resolved channel is served by the mount device,
+not the transport, which is what proves 9P carried it.  The marshalling
+.CW ( convS2M ,
+.CW convM2S )
+and the mount client are the kernel's own; only the transport is short \-
+a function call in the same address space rather than the microkernel
+ring, which is the next step.  Every one of those runs in the task's own
+address space, the kernel serving only print and exit.  What moved to the right side of the
 line is the name-space machinery, four sources \-
 .CW chan.c ,
 .CW dev.c ,
 .CW pgrp.c ,
-.CW devroot.c
-and
-.CW devenv.c
-\- linked into the program rather than the kernel; the file operations
-themselves
+.CW devroot.c ,
+.CW devenv.c ,
+the mount client
+.CW devmnt.c
+and the queue
+.CW qio.c
+\- linked into the program rather than the kernel, with a short
+in-process 9P server and transport written beside them; the file
+operations themselves
 .CW ( sysfile.c ,
-the mount and \[*p]p client, the other devices) are still on the other
-side.  This is checked by
+the other devices) and the syscall layer are still on the other side.  This is checked by
 .CW /scripts/osprey-check-p9.py .
 .PP
-What is real is a name space with two devices, a mount, and a name
-resolved across the mount table \- attach, walk, open, read, create,
-write and the union walk all through
-.CW chan.c
-\- not yet the breadth of the file personality: the mount is of a device
-the library already holds, and the
-.CW #M
-mount and \[*p]p client that would let it name a real server's files, and
-the file syscalls exported back as a server, are not built.  The third of the
-three \- processes that share an address space migrating as a group \-
-is not begun.  What was unreachable from a Plan 9 kernel is reached by
+What is real is a name space that mounts and names files a server holds
+over real 9P: attach, walk, open, read, create, write, the union walk and
+now
+.CW cmount
+with
+.CW devmnt
+and
+.CW convS2M / convM2S
+\- the file personality naming a server's files, which the earlier draft
+of this section said was not built.  What is honestly not yet real is the
+transport: the 9P does not leave the address space, the server is a
+function call away rather than a container across the microkernel ring;
+carrying the same 9P over the ring to a server container is the next
+step, and it changes only the transport, not the mount client or the
+marshalling.  The file syscalls exported back as a server, and the third
+of the three unreachable things \- processes that share an address space
+migrating as a group \- are not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the
 personality is a library the task links.
 .NH 2

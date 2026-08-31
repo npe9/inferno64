@@ -18,7 +18,9 @@ witness; p964 is the same core carrying the personality.
 
 This builds 9p964, boots it, and checks the name space came up and a
 directory was read through it, a second device was mounted and a
-name resolved across the mount table into it, with no panic.
+name resolved across the mount table into it, a 9P server
+mounted over an in-process transport and its file read back across
+#M, with no panic.
 
 usage: scripts/osprey-check-p9.py [-k]
 """
@@ -61,6 +63,11 @@ def main():
                     'read 731 bytes of directory through the name space' in t))
     results.append(("and it mounts a second device and resolves a name with no device prefix across the mount table into it",
                     'resolved /greeting through the mount table and read \"hello osprey\"' in t))
+    m = re.search(r'served by device type=(\d+) \(mnt=(\d+)\)', t)
+    results.append(("and it mounts a 9P server over a transport and resolves a name across #M, served by the mount device not the transport",
+                    m is not None and m.group(1) == m.group(2)))
+    results.append(("and it reads the server's file back over 9P (Tversion/Tattach/Twalk/Topen/Tread through devmnt)",
+                    'read from the 9P server over the mount: "hello from the 9P server, across the mount table' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
