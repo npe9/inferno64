@@ -317,11 +317,11 @@ ospreyserver(char *arg0)
 		enum { Armoff = 0, Reqbuf = 256 };	/* arm at data[0]; a request lands at data[256] */
 		Arm *arm = (Arm*)(base + map->data + Armoff);
 		Msg *reqp = (Msg*)(base + map->data + Reqbuf);
-		Fidtab ft;			/* 9P fid state, on the stack - no data segment */
+		Srvstate st;			/* 9P server state, on the stack - no data segment */
 		long z;
 
-		for(z = 0; z < (long)sizeof ft; z++)
-			((uchar*)&ft)[z] = 0;
+		for(z = 0; z < (long)sizeof st; z++)
+			((uchar*)&st)[z] = 0;
 		USED(rq); USED(reqm);
 		for(iters = 0; iters < 150; iters++){	/* up to ~30s of waiting, then finish */
 			Msg req, rep;
@@ -392,7 +392,7 @@ ospreyserver(char *arg0)
 				uvlong toff = req.arg[2], tlen = req.arg[3], roff = req.arg[4];
 				long rn;
 
-				rn = srv9p(&ft, cdata + toff, (long)tlen, cdata + roff, 8192);
+				rn = srv9p(&st, cdata + toff, (long)tlen, cdata + roff, 8192);
 				rep.arg[0] = (uvlong)rn;
 			} else
 				rep.arg[0] = 2;				/* an op we do not answer */

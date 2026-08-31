@@ -162,6 +162,30 @@ p9main(void)
 		p9close(dfd);
 	}
 
+	/*
+	 * Read-write file I/O over 9P: the server holds one writable file,
+	 * "scratch".  Open it for writing across the ring, write a line, then
+	 * open it again and read it back - the bytes make a full round trip to
+	 * the file-server container and home, by descriptor.
+	 */
+	{
+		int wfd, rfd;
+		long wn, rn;
+		char *msg = "a program on the personality wrote this over 9P\n";
+
+		wfd = p9open("/scratch", OWRITE);
+		wn = p9write(wfd, msg, strlen(msg));
+		print("p9: wrote %ld bytes to /scratch over the ring\n", wn);
+		p9close(wfd);
+
+		rfd = p9open("/scratch", OREAD);
+		rn = p9read(rfd, buf, sizeof buf - 1);
+		if(rn < 0) rn = 0;
+		buf[rn] = 0;
+		print("p9: read /scratch back over the ring: \"%.*s\"\n", (int)rn, (char*)buf);
+		p9close(rfd);
+	}
+
 	poperror();
 	exits(nil);
 }

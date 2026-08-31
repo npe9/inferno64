@@ -73,6 +73,8 @@ def main():
                     'from /greeting through the name space' in t and 'from /hello over the ring' in t))
     results.append(("and it lists the server's directory by descriptor over 9P, unpacking a stat entry per file",
                     'motd (69 bytes)' in t and 'readme (56 bytes)' in t))
+    results.append(("and it writes a file the server holds and reads it back, a full read-write round trip over 9P by descriptor",
+                    'wrote 48 bytes to /scratch over the ring' in t and 'read /scratch back over the ring: "a program on the personality wrote this over 9P' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

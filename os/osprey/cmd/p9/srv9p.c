@@ -24,13 +24,15 @@ static char *filename[] = {
 	"hello",
 	"motd",
 	"readme",
+	"scratch",		/* the one writable file; its bytes live in Srvstate */
 };
 static char *filedata[] = {
 	"hello from the 9P server, a container across the ring\n",
 	"the microkernel routes 9P; the file server is a container of its own\n",
 	"three files, listed by a program over a file descriptor\n",
+	"",			/* scratch starts empty */
 };
-enum { Nfile = 3 };
+enum { Nfile = 4, Qscratch = 4 };	/* scratch is qid path Nfile (index 3 + 1) */
 
 static int
 findfid(Fidtab *ft, ulong fid)
@@ -89,8 +91,8 @@ mkdir(Dir *d, int which)
 		d->length = 0;
 	} else {
 		d->name = filename[which-1];
-		d->mode = 0444;
-		d->length = (vlong)strlen(filedata[which-1]);
+		d->mode = which == Qscratch ? 0666 : 0444;
+		d->length = which == Qscratch ? 0 : (vlong)strlen(filedata[which-1]);
 	}
 	d->uid = d->gid = d->muid = "none";
 	d->type = 'L';
@@ -98,7 +100,7 @@ mkdir(Dir *d, int which)
 }
 
 long
-srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
+srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 {
 	Fcall t, r;
 	Dir d;
@@ -116,6 +118,23 @@ srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
 	default:
 		r.type = Rerror; r.ename = "not supported"; break;
 
+	case Twrite:
+		f = findfid(&st->fids, t.fid);
+		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
+		if(st->fids.f[f].qid != Qscratch){ r.type = Rerror; r.ename = "read-only file"; break; }
+		{
+			long off = t.offset, k;
+			long c = t.count;
+			if(off < 0) off = 0;
+			if(off + c > Srv9pScratch) c = Srv9pScratch - off;
+			if(c < 0) c = 0;
+			for(k = 0; k < c; k++)
+				st->scratch[off+k] = t.data[k];
+			if(off + c > st->scratchlen) st->scratchlen = off + c;
+			r.count = c;
+		}
+		break;
+
 	case Tversion:
 		r.msize = t.msize < Msize ? t.msize : Msize;
 		r.version = "9P2000";
@@ -125,17 +144,17 @@ srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
 		r.type = Rerror; r.ename = "no authentication required"; break;
 
 	case Tattach:
-		f = getfid(ft, t.fid);
+		f = getfid(&st->fids, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "no fids"; break; }
-		ft->f[f].qid = Qroot;
+		st->fids.f[f].qid = Qroot;
 		setqid(&r.qid, Qroot);
 		break;
 
 	case Twalk:
-		f = findfid(ft, t.fid);
+		f = findfid(&st->fids, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
 		r.nwqid = 0;
-		nf = ft->f[f].qid;
+		nf = st->fids.f[f].qid;
 		for(i = 0; i < t.nwname; i++){
 			int q;
 			if(nf == Qroot && (q = lookup(t.wname[i])) > 0)
@@ -149,27 +168,28 @@ srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
 			r.type = Rerror; r.ename = "file does not exist"; break;
 		}
 		if(r.nwqid == t.nwname){
-			int g = getfid(ft, t.newfid);
+			int g = getfid(&st->fids, t.newfid);
 			if(g < 0){ r.type = Rerror; r.ename = "no fids"; break; }
-			ft->f[g].qid = nf;
+			st->fids.f[g].qid = nf;
 		}
 		break;
 
 	case Topen:
-		f = findfid(ft, t.fid);
+		f = findfid(&st->fids, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
-		setqid(&r.qid, ft->f[f].qid);
+		setqid(&r.qid, st->fids.f[f].qid);
 		r.iounit = 0;
 		break;
 
 	case Tread:
-		f = findfid(ft, t.fid);
+		f = findfid(&st->fids, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
 		cnt = t.count;
-		if(ft->f[f].qid != Qroot){
-			char *content = filedata[ft->f[f].qid - 1];
-			long len = strlen(content);
-			long off = t.offset;
+		if(st->fids.f[f].qid != Qroot){
+			int q = st->fids.f[f].qid;
+			char *content; long len, off = t.offset;
+			if(q == Qscratch){ content = st->scratch; len = st->scratchlen; }
+			else { content = filedata[q-1]; len = strlen(content); }
 			if(off >= len) off = len;
 			if(cnt > len - off) cnt = len - off;
 			r.data = content + off;
@@ -190,14 +210,14 @@ srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax)
 		break;
 
 	case Tclunk:
-		f = findfid(ft, t.fid);
-		if(f >= 0) ft->f[f].used = 0;
+		f = findfid(&st->fids, t.fid);
+		if(f >= 0) st->fids.f[f].used = 0;
 		break;
 
 	case Tstat:
-		f = findfid(ft, t.fid);
+		f = findfid(&st->fids, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
-		mkdir(&d, ft->f[f].qid);
+		mkdir(&d, st->fids.f[f].qid);
 		r.nstat = convD2M(&d, statbuf, sizeof statbuf);
 		r.stat = statbuf;
 		break;

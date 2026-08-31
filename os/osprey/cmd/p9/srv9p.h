@@ -11,4 +11,17 @@ struct Fid9p { ulong fid; int qid; int used; };
 typedef struct Fidtab Fidtab;
 struct Fidtab { Fid9p f[Srv9pNfid]; };
 
-long	srv9p(Fidtab *ft, uchar *msg, long n, uchar *rbuf, long rmax);
+/*
+ * All the server's mutable state, kept in the caller's frame because the
+ * container is flat-loaded: the fid table, and the one writable file's
+ * contents and length.
+ */
+enum { Srv9pScratch = 512 };
+typedef struct Srvstate Srvstate;
+struct Srvstate {
+	Fidtab	fids;
+	char	scratch[Srv9pScratch];
+	long	scratchlen;
+};
+
+long	srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax);
