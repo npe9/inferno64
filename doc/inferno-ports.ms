@@ -243,9 +243,10 @@ and
 .CW mul64fract.$O
 already are.
 .PP
-Three bugs were real and board-specific, each pinned down with
+Four bugs were real and board-specific, each pinned down with
 .CW arm-none-eabi-objdump
-against the actual linked image rather than guessed at:
+against the actual linked image, or QEMU's own gdbstub, rather than
+guessed at:
 .IP \(bu
 the trap path's register save never advanced past
 .CW UR_R0..UR_R3
@@ -273,6 +274,19 @@ instructions did not survive into the linked image; built as runtime
 data instead \- eight identical
 .CW "ldr pc,[pc,#24]"
 trampolines addressing eight target words \- it does.
+.IP \(bu
+the trap path's register save read
+.CW r4
+back wrong on every trap, not just the fatal ones: vectrap's own
+first instruction repurposes R4 as
+.CW ureg0 's
+base pointer before the interrupted R4 is saved anywhere, so a block
+store that tried to recover it afterward always captured that base
+pointer instead \- confirmed with QEMU's gdbstub, comparing a
+breakpoint at trap entry against the same field in the crash dump.
+Fixed the way R0-R3 already were:
+.CW trapscratch
+now takes R4 too, stashed before vectrap can touch it.
 .PP
 One more was a gap rather than a bug:
 .CW 5c 's
@@ -298,9 +312,13 @@ crash is inside
 .CW gc.c 's
 .CW markheap() ,
 walking a Type's pointer map and reading a heap word tagged as a
-pointer that is not one \- the exact shape "Naming the Dis module a
-native trap can't name itself" (above) spent an entire session
-bracketing on pc64, complete with its own
+pointer that is not one \- confirmed genuine, not an artifact of the
+register-save bug above: the same
+.CW 0x66666666
+poison value showed up at a gdbstub breakpoint and, after the fix,
+in the kernel's own crash dump, agreeing exactly.  This is the exact
+shape "Naming the Dis module a native trap can't name itself" (above)
+spent an entire session bracketing on pc64, complete with its own
 .CW "pc64-only, temporary"
 diagnostics still live in
 .CW gc.c

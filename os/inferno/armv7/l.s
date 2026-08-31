@@ -257,16 +257,32 @@ TEXT	vectorinit(SB), 1, $-4
  * trap()'s default case treats every one of them as fatal.
  */
 /*
- * Every vector stashes the real R0-R3 to a fixed static buffer
+ * Every vector stashes the real R0-R4 to a fixed static buffer
  * FIRST, through the banked R13 of whichever mode it is (never used
  * as an actual stack on this board, so free to repoint at anything;
  * this board never initializes SP_und/SP_abt/SP_irq/SP_fiq and
- * doesn't need to) -- only after that are R0-R3 free to reuse for
- * the adjusted pc, SPSR and type tag trapcommon needs.  An earlier
- * version reused R2 for the type tag before stashing it, which
- * silently discarded the interrupted code's real r2 on every trap;
- * caught by widening the register-preservation self-test past
- * r0/r1/r4-r12/r14 to all of r0-r12,r14 before trusting this path.
+ * doesn't need to) -- only after that are R0-R4 free to reuse for
+ * the adjusted pc, SPSR, type tag and ureg0 base pointer vectrap
+ * needs.  An earlier version reused R2 for the type tag before
+ * stashing it, which silently discarded the interrupted code's real
+ * r2 on every trap; caught by widening the register-preservation
+ * self-test past r0/r1/r4-r12/r14 to all of r0-r12,r14.
+ *
+ * R4 specifically needs stashing here rather than being picked up
+ * later by a plain register-block store, unlike R5-R11: vectrap's
+ * very first act is "MOVW $ureg0(SB), R4", repurposing R4 as its own
+ * base pointer before the interrupted context's true R4 is saved
+ * anywhere.  A version that stored R4 straight into UR_R4 via
+ * "stmia r4!,{r4-r11}" (later "stmia r3!,{r4-r11}" with r4 left as
+ * a live register in the source list either way) always captured
+ * &ureg0 itself, not the interrupted r4 -- confirmed with QEMU's
+ * gdbstub: breaking at a vector's first instruction showed the true
+ * r4, breaking after the save showed ureg0's own address (a fixed,
+ * link-time constant, matching a data abort landmark that looked
+ * uncannily like a plausible heap pointer purely by coincidence of
+ * where the linker placed the buffer).  The fix is the same shape
+ * R0-R3 already use: stash the true value before it can be
+ * clobbered.
  */
 TEXT	vecreset(SB), 1, $-4
 	MOVW	$trapscratch(SB), R13
@@ -274,6 +290,7 @@ TEXT	vecreset(SB), 1, $-4
 	MOVW	R1, 4(R13)
 	MOVW	R2, 8(R13)
 	MOVW	R3, 12(R13)
+	MOVW	R4, 16(R13)
 	MOVW	R14, R0
 	MOVW	$TReset, R2
 	B	vectrap(SB)
@@ -285,6 +302,7 @@ TEXT	vecundef(SB), 1, $-4
 	MOVW	R1, 4(R13)
 	MOVW	R2, 8(R13)
 	MOVW	R3, 12(R13)
+	MOVW	R4, 16(R13)
 	WORD	$0xe14f1000		/* mrs r1, spsr */
 	MOVW	R14, R0
 	MOVW	$TUndef, R2
@@ -297,6 +315,7 @@ TEXT	vecswi(SB), 1, $-4
 	MOVW	R1, 4(R13)
 	MOVW	R2, 8(R13)
 	MOVW	R3, 12(R13)
+	MOVW	R4, 16(R13)
 	WORD	$0xe14f1000
 	MOVW	R14, R0
 	MOVW	$TSvc, R2
@@ -309,6 +328,7 @@ TEXT	vecpabt(SB), 1, $-4
 	MOVW	R1, 4(R13)
 	MOVW	R2, 8(R13)
 	MOVW	R3, 12(R13)
+	MOVW	R4, 16(R13)
 	WORD	$0xe14f1000
 	MOVW	R14, R0
 	MOVW	$TPabt, R2
@@ -321,6 +341,7 @@ TEXT	vecdabt(SB), 1, $-4
 	MOVW	R1, 4(R13)
 	MOVW	R2, 8(R13)
 	MOVW	R3, 12(R13)
+	MOVW	R4, 16(R13)
 	WORD	$0xe14f1000
 	MOVW	R14, R0
 	MOVW	$TDabt, R2
@@ -333,6 +354,7 @@ TEXT	vecfiq(SB), 1, $-4
 	MOVW	R1, 4(R13)
 	MOVW	R2, 8(R13)
 	MOVW	R3, 12(R13)
+	MOVW	R4, 16(R13)
 	WORD	$0xe14f1000
 	MOVW	R14, R0
 	MOVW	$TFiq, R2
@@ -345,6 +367,7 @@ TEXT	vecirq(SB), 1, $-4
 	MOVW	R1, 4(R13)
 	MOVW	R2, 8(R13)
 	MOVW	R3, 12(R13)
+	MOVW	R4, 16(R13)
 	WORD	$0xe14f1000
 	MOVW	R14, R0
 	MOVW	$TIrq, R2
@@ -372,9 +395,26 @@ TEXT	vecirq(SB), 1, $-4
 TEXT	vectrap(SB), 1, $-4
 	WORD	$0xf1020013		/* cps #0x13 : svc */
 
-	/* now in SVC mode: R13=interrupted sp, R4-R12/R14 pristine,
-	 * R0=pc, R1=spsr, R2=type (all three survived the mode switch,
-	 * none of them banked). */
+	/*
+	 * now in SVC mode: R13=interrupted sp, R5-R12/R14 pristine, R0=pc,
+	 * R1=spsr, R2=type (all three survived the mode switch, none of
+	 * them banked).  R4 is NOT pristine here -- it is repurposed as
+	 * ureg0's own base pointer on the very next line, which is
+	 * exactly why the vecXXX entry points above stash the true R4 to
+	 * trapscratch before ever reaching vectrap.  A version that
+	 * skipped that and later tried to recover R4 via a plain register
+	 * block store ("stmia r4!,{r4-r11}", then "stmia r3!,{r4-r11}"
+	 * with r4 still in the source list either way) always captured
+	 * whatever R4 held AT THAT POINT -- ureg0's own address, a fixed
+	 * link-time constant -- not the interrupted context's true r4.
+	 * Confirmed with QEMU's gdbstub: breaking at a vecXXX entry's
+	 * very first instruction showed the true r4 (a poison pattern in
+	 * the one boot that caught this); breaking after the old save
+	 * sequence showed &ureg0 instead, byte-identical to the literal
+	 * pool constant this function's own first MOVW loads.  No
+	 * encoding subtlety, no QEMU quirk -- R4 was simply gone by the
+	 * time anything tried to save it.
+	 */
 	MOVW	$ureg0(SB), R4
 	MOVW	R13, UR_SP(R4)
 	MOVW	R14, UR_R14(R4)
@@ -392,22 +432,12 @@ TEXT	vectrap(SB), 1, $-4
 	MOVW	R3, UR_R2(R4)
 	MOVW	12(R1), R0
 	MOVW	R0, UR_R3(R4)
+	MOVW	16(R1), R0		/* true r4, stashed by the entry point */
+	MOVW	R0, UR_R4(R4)
 
-	ADD	$UR_R4, R4, R4		/* &ureg0.r4 -- R4 must point past UR_R0..UR_R3
-					 * before this stmia; without this add, the
-					 * store lands at ureg0+0 (UR_R0) and clobbers
-					 * the r0-r3 just saved from trapscratch,
-					 * while UR_R12 below never gets written at
-					 * all (stale/garbage on return) -- a real bug,
-					 * caught via ground-truth objdump of a data
-					 * abort that always landed on the same
-					 * "ldr r6,[r12,#-4016]" C-compiled load: the
-					 * compiler's own use of r12 survived the
-					 * round trip as whatever garbage sat in
-					 * ureg0's UR_R12 slot, not the true
-					 * interrupted r12. */
-	WORD	$0xe8a40ff0		/* stmia r4!, {r4-r11} -- UR_R4..UR_R11, r4 left at &Ureg.r12 */
-	WORD	$0xe8841000		/* stm r4, {r12} -- UR_R12 */
+	ADD	$UR_R5, R4, R3		/* &ureg0.r5 */
+	WORD	$0xe8a30fe0		/* stmia r3!, {r5-r11} -- UR_R5..UR_R11 */
+	WORD	$0xe8831000		/* stm r3, {r12} -- UR_R12 */
 
 	MOVW	$ureg0(SB), R0		/* &Ureg */
 	BL	trap(SB)
@@ -451,7 +481,7 @@ TEXT	vectrap(SB), 1, $-4
 	MOVW	$retbuf(SB), R1
 	WORD	$0xe8d1dfff		/* ldm r1, {r0-r12,r14,pc}^ */
 
-GLOBL	trapscratch(SB), $16
+GLOBL	trapscratch(SB), $20		/* true r0,r1,r2,r3,r4 -- see vectrap */
 GLOBL	ureg0(SB), $UR_SIZE
 GLOBL	retbuf(SB), $64
 GLOBL	fnnote(SB), $4

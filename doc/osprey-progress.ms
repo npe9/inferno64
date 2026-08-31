@@ -2282,10 +2282,17 @@ and reads a directory through
 and
 .CW read
 \- every one of those running in the task's own address space, the
-kernel serving only print and exit.  Nine tenths of what the file count
-called a personality on the wrong side of the line the talk draws is now
-on the right side of it, linked into the program rather than the kernel.
-This is checked by
+kernel serving only print and exit.  What moved to the right side of the
+line is the name-space machinery, four sources \-
+.CW chan.c ,
+.CW dev.c ,
+.CW pgrp.c ,
+.CW devroot.c
+\- linked into the program rather than the kernel; the file operations
+themselves
+.CW ( sysfile.c ,
+the mount and \[*p]p client, the other devices) are still on the other
+side.  This is checked by
 .CW /scripts/osprey-check-p9.py .
 .PP
 What is real is a name space and a directory read, not yet the breadth
