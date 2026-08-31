@@ -415,30 +415,46 @@ diagnostic below) moved this same call site's landing value across
 and two points near that address instead of holding still: a stale
 copy of that one boot-time value, read back as a function pointer,
 not a computation gone wrong.  Never seen with the second fault \-
-real, chaseable, static, just not yet chased to an instruction.
+real, chaseable, static, just not yet chased to an instruction.  Two
+guesses at the mechanism were read and ruled out, not left standing:
+a
+.CW mach0
+adjacency (64k away by
+.CW 5l\ -a 's
+own arithmetic, not next to
+.CW stack
+at all) and
+.CW newforthproc() ,
+the one caller in this tree that skips setting
+.CW p->sched
+after
+.CW newproc()
+\- but its file is not in this board's link line.  Likeliest
+remaining mechanism: some
+.CW gotolabel()
+reading a stale
+.CW Proc.sched
+Label, the same sp-then-pc shape \- which call, unconfirmed without
+live memory.
 .PP
 The second: a data abort, five of twenty boots, a
 .I different
-address every time, not reproducing at its full-speed address under
-gdbstub either.  This half is the shape already on record here, the
-pc64
+address every time, not reproducing under gdbstub either.  This is
+the shape already on record here, the pc64
 .CW markheap()
-heisenbug's fingerprint \- not claimed to be the same bug, as the
-previous version of this section wrongly guessed about the DISWORD
-crash above, only the same fingerprint, and this session already
-spent its cheap answers on that one.  The rest of the twenty boots
-were still mid-panic when their timeout fired, a console-print race,
-not a third fault.
+heisenbug's fingerprint \- not the same bug, as the previous version
+of this section wrongly guessed about the DISWORD crash above, only
+the same fingerprint, and this session already spent its cheap
+answers on that one.  The rest of the twenty boots were still
+mid-panic when their timeout fired, a console race, not a third
+fault.
 .PP
-KSTACK exhaustion was checked and ruled out.  Both fault classes put
+KSTACK exhaustion was checked and ruled out \- both faults put
 .CW sp
-within a few hundred bytes of a stack's top \- exactly where a
-shallow, freshly-entered call sits too.  Doubling
+near a stack's top, where a shallow call sits too, and doubling
 .CW KSTACK
-32k\(->64k, one line, fully reverted, moved neither the faulting
-addresses nor
-.CW sp 's
-distance from the new top, which a real overflow would have.
+32k\(->64k moved neither the faulting addresses nor that distance,
+which a real overflow would have.
 .CW sp
 stays in the trap printout regardless.  Not yet bracketed.
 There is no display \-
