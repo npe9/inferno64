@@ -367,14 +367,32 @@ module initialization proper \- it gets far enough to load
 .CW Bufio
 and start into
 .CW devprog .
-It does not yet reach a shell: the next crash is a genuine Undefined
-instruction trap, not the GC misread above, with
-.CW pc
-reading back as
-.CW 0x00000040
-\- too low to be a real code address, the shape of a jump through an
-uninitialized or zeroed function pointer rather than of bad data in
-the heap.  Not yet bracketed.  There is no display \-
+It does not yet reach a shell: the next crash lands at the same point
+every time \- right after
+.CW Bufio
+loads, going into
+.CW devprog
+\- but not as the same fault twice.  Ten full-speed boots gave a data
+abort at a plausible code address on one, an Undefined instruction
+trap at
+.CW pc\ 0x00000000
+on another, and two more that were still mid-panic when the run's
+timeout killed them.  Under QEMU's gdbstub, deliberately slower and
+more heavily instrumented, the same breakpoint on the Undefined
+vector caught yet other faulting addresses across separate boots,
+none matching the full-speed ones.  That is not the GC misread
+above, which was deterministic and arithmetic once the word size was
+right \- this is the other shape already on record in this document,
+the pc64
+.CW markheap()
+heisenbug's signature of a fault whose type and address move between
+runs and that debugger timing itself seems to suppress.  Whether it
+is the same underlying bug reached from a second architecture, as
+the previous version of this section wrongly guessed about the
+DISWORD crash above, is not yet known and is not claimed here \-
+only that it has the same fingerprint and the same session already
+spent its cheap answers on that fingerprint once.  Not yet bracketed.
+There is no display \-
 draw, pointer, swcursor and the virtio input device are left out on
 purpose, the same
 as the console-only precedent
