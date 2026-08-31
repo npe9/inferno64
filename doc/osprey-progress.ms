@@ -2277,17 +2277,27 @@ the allocation the kernel gave them, embedded in the task the
 microkernel enters and linked with it.  On boot the task builds a name
 space in user space, attaches the root device with
 .CW namec ,
-and reads a directory through
+reads a directory through
 .CW open
 and
-.CW read
-\- every one of those running in the task's own address space, the
+.CW read ,
+then mounts a second device \- the environment,
+.CW devenv.c
+\- with
+.CW cmount ,
+writes a value into it, and opens
+.CW /greeting ,
+a name with no device prefix, which the union walk carries from the root
+across the mount table into the environment device and reads the value
+back.  Every one of those runs in the task's own address space, the
 kernel serving only print and exit.  What moved to the right side of the
 line is the name-space machinery, four sources \-
 .CW chan.c ,
 .CW dev.c ,
 .CW pgrp.c ,
 .CW devroot.c
+and
+.CW devenv.c
 \- linked into the program rather than the kernel; the file operations
 themselves
 .CW ( sysfile.c ,
@@ -2295,10 +2305,15 @@ the mount and \[*p]p client, the other devices) are still on the other
 side.  This is checked by
 .CW /scripts/osprey-check-p9.py .
 .PP
-What is real is a name space and a directory read, not yet the breadth
-of the file personality: one device is attached, and the mount and \[*p]p
-client that would let it name a real server's files, and the file
-syscalls exported back as a server, are not built.  The third of the
+What is real is a name space with two devices, a mount, and a name
+resolved across the mount table \- attach, walk, open, read, create,
+write and the union walk all through
+.CW chan.c
+\- not yet the breadth of the file personality: the mount is of a device
+the library already holds, and the
+.CW #M
+mount and \[*p]p client that would let it name a real server's files, and
+the file syscalls exported back as a server, are not built.  The third of the
 three \- processes that share an address space migrating as a group \-
 is not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the

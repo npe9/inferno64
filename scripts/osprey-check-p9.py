@@ -17,7 +17,8 @@ minimal-syscall stub (osprey-check-user.py) as the microkernel-primitive
 witness; p964 is the same core carrying the personality.
 
 This builds 9p964, boots it, and checks the name space came up and a
-directory was read through it, with no panic.
+directory was read through it, a second device was mounted and a
+name resolved across the mount table into it, with no panic.
 
 usage: scripts/osprey-check-p9.py [-k]
 """
@@ -58,6 +59,8 @@ def main():
                     'name space up, root attached' in t))
     results.append(("and it reads a directory through the name space by namec/open/read, the kernel serving only print and exit",
                     'read 731 bytes of directory through the name space' in t))
+    results.append(("and it mounts a second device and resolves a name with no device prefix across the mount table into it",
+                    'resolved /greeting through the mount table and read \"hello osprey\"' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

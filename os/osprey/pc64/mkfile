@@ -206,6 +206,9 @@ virtio10pc.$O:	$PORTDIR/virtio10.h
 initcode.out:		init9.$O initcode.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq
 
+# userinit.c embeds the boot programs as .i images; rebuild it when they change.
+userinit.$O:	initcode.i userprog.i p9prog.i
+
 userprog.out:		init9.$O userprog.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq
 

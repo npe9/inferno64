@@ -75,6 +75,7 @@ char Echange[] = "Echange";
 void
 p9init(void)
 {
+	up->user = eve;
 	up->errstr = errbuf0;
 	up->syserrstr = errbuf1;
 	up->nerrlab = 0;
@@ -186,7 +187,8 @@ long	seconds(void){ return 0; }
 
 /* an empty device table for now: the mount/9P device comes next */
 extern Dev rootdevtab;
-Dev *devtab[] = { &rootdevtab, nil };
+extern Dev envdevtab;
+Dev *devtab[] = { &rootdevtab, &envdevtab, nil };
 
 long	kerndate = 0;
 
@@ -203,23 +205,50 @@ openmode(ulong o)
 	return o;
 }
 
-/* a plain bump allocator; real memory comes from the microkernel later */
-static char	arena[256*1024];
+/*
+ * A bump allocator that never reuses, so freshly handed-out memory is
+ * still the zero the BSS arena started as (newpgrp and the name space
+ * rely on that).  Each block carries a sixteen-byte header holding its
+ * usable size, so msize and realloc work; realloc always allocates
+ * fresh and copies, since the bump arena cannot grow a block in place.
+ */
+static char	arena[1024*1024];
 static ulong	arenap;
+enum { AHDR = 16 };
 void*
 malloc(ulong n)
 {
-	void *p;
+	char *p;
 	n = (n + 15) & ~15UL;
-	if(arenap + n > sizeof arena)
+	if(arenap + AHDR + n > sizeof arena)
 		return nil;
 	p = arena + arenap;
-	arenap += n;
-	return p;
+	arenap += AHDR + n;
+	*(ulong*)p = n;
+	return p + AHDR;
 }
 void*	mallocz(ulong n, int clr){ void *p = malloc(n); if(p && clr) memset(p, 0, n); return p; }
+ulong	msize(void *v){ return v == nil ? 0 : *(ulong*)((char*)v - AHDR); }
+void*
+realloc(void *v, ulong n)
+{
+	void *p;
+	ulong old;
+
+	if(n == 0)
+		return nil;			/* callers treat a size-0 realloc as free */
+	p = malloc(n);
+	if(p != nil && v != nil){
+		old = msize(v);
+		memmove(p, v, old < n ? old : n);
+	}
+	return p;
+}
 void	free(void*){}
 void	setmalloctag(void*, uintptr){}
+
+/* the name space's owner test; the personality runs as eve */
+int	iseve(void){ return strcmp(up->user, eve) == 0; }
 
 void*
 vmemchr(void *ss, int c, ulong n)
