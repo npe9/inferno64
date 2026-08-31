@@ -357,9 +357,13 @@ flag; this board links with it, and enables cp10/cp11 in CPACR and
 before anything tries to use them.
 .PP
 Under
-.CW "qemu-system-arm -M virt -cpu cortex-a15 -m 256 -nographic -kernel iarmv7" ,
-stated plainly: it boots \- memory pool init, process init, the version
-banner, loading and beginning to type-check
+.CW "qemu-system-arm -M virt -cpu cortex-a15 -m 256 -nographic -kernel iarmv7"
+(
+.CW os/inferno/armv7/qemu-boot.sh ,
+the same idea as
+.CW pc64 's
+own script above), stated plainly: it boots \- memory pool init,
+process init, the version banner, loading and beginning to type-check
 .CW /osinit.dis ,
 into the Dis interpreter, running real VFP-lowered floating point and
 32 bit division without faulting, past the module loader and into
