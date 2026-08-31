@@ -16,9 +16,30 @@ typedef long	jmp_buf[2];
 typedef unsigned int	mpdigit;	/* for /sys/include/mp.h */
 typedef unsigned char u8int;
 typedef unsigned short u16int;
+typedef unsigned int	u32int;
 typedef unsigned int	u32;
 typedef unsigned long long u64int;
+typedef signed char s8int;
+typedef signed short s16int;
+typedef signed int s32int;
+typedef signed long long s64int;
+/*
+ * plain-name aliases port/lib.h expects (strtoll/strtoull etc) --
+ * added alongside the pre-existing *int names above when os/inferno/armv7
+ * became the first arm/5c board to link port/auth.c; riscv64's u.h
+ * already carries the same set.
+ */
+typedef unsigned char	u8;
+typedef unsigned short	u16;
+typedef unsigned long long u64;
+typedef signed char s8;
+typedef signed short s16;
+typedef signed int s32;
+typedef signed long long s64;
 typedef unsigned long uintptr;
+typedef long intptr;			/* 32-bit target: intptr is signed long, not long long */
+typedef intptr WORD;			/* interp.h's Dis-word type; DISWORD=4 boards want this */
+typedef uintptr UWORD;
 
 /* FCR */
 #define	FPINEX	(1<<20)

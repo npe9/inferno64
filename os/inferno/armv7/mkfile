@@ -1,0 +1,111 @@
+<../../../mkconfig
+
+#Configurable parameters
+
+CONF=armv7
+CONFLIST=armv7
+
+SYSTARG=$OSTARG
+OBJTYPE=arm
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+IPDIR=../ip
+INITDIR=../init
+PORTDIR=../port
+
+#end configurable parameters
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+# ARMv7-A is a 32 bit core, so a Dis word is four bytes -- mkfile-Inferno-arm
+# doesn't set this (unlike mkfile-Inferno-thumb, which does), so it has to
+# happen here, the same way mps2/nucleof303/teensy41 pass it to their own
+# init build below.
+DISWORD=4
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+# QEMU -M virt (32 bit), verified against this host's own qemu-system-arm
+# via -machine dumpdtb; RAM starts at 0x40000000.
+KTZERO=0x40000000
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	div-arm.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$IP\
+	$DEVS\
+	$ETHERS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+
+CFLAGS=-wFV -I. -I../port -I../ip -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD -o $target -H7 -f -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	cp $target $INSTALLDIR/$target
+
+<../port/portmkfile
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+devether.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+netif.$O:	../port/netif.h
+ethervirtiommio.$O:	../port/netif.h ../port/etherif.h
+$IP devip.$O:	$IPDIR/ip.h
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+# _div/_mod/_divu/_modu resolve fine as a standalone object but not out
+# of $ROOT/Inferno/arm/lib/libkern.a -- iar's archive symbol index
+# looks to lose track of a member with save<>/rest<>/div<> local labels
+# ahead of the public symbols div-arm.s exports (foo.5-style single
+# global objects re-added to that archive resolve fine; div-arm.5
+# specifically does not, standalone or freshly re-added).  This is the
+# first arm/5c board to actually need runtime integer division linked
+# from libkern, so nothing else in this tree has hit it.  Sidestep by
+# linking it directly, ahead of libkern.a on the command line, the
+# same way tod.$O/mul64fract.$O/devuart.$O already pull specific
+# port/libkern-adjacent files in as plain objects instead of trusting
+# the archive.
+div-arm.$O:	$ROOT/libkern/div-arm.s
+	$AS $ROOT/libkern/div-arm.s
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+# qemu-system-arm -M virt -cpu cortex-a15 -m 256 -nographic -kernel iarmv7
