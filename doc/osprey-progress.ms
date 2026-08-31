@@ -2305,13 +2305,24 @@ walks and reads over 9P \-
 .CW Topen ,
 .CW Tread
 \- into the server; the resolved channel is served by the mount device,
-not the transport, which is what proves 9P carried it.  The marshalling
+not the transport, which is what proves 9P carried it.  The server is a
+container of its own, delegated to over the microkernel ring: the
+marshalling
 .CW ( convS2M ,
 .CW convM2S )
-and the mount client are the kernel's own; only the transport is short \-
-a function call in the same address space rather than the microkernel
-ring, which is the next step.  Every one of those runs in the task's own
-address space, the kernel serving only print and exit.  What moved to the right side of the
+and the mount client are the kernel's own, the transport
+.CW ( ring9p.c )
+maps the container's ring with
+.CW segattach
+and carries each 9P message across it, and the server
+.CW ( srv9p.c )
+is a second user program in the file-server container that answers.  The
+file's bytes are held only in that server binary, so reading them back
+through
+.CW /hello
+is proof they crossed the ring.  The name space is built and walked in
+the task's own address space, the kernel routing the 9P messages and
+serving print and exit.  What moved to the right side of the
 line is the name-space machinery, four sources \-
 .CW chan.c ,
 .CW dev.c ,
@@ -2322,9 +2333,13 @@ the mount client
 .CW devmnt.c
 and the queue
 .CW qio.c
-\- linked into the program rather than the kernel, with a short
-in-process 9P server and transport written beside them; the file
-operations themselves
+\- linked into the program rather than the kernel, with the ring
+transport
+.CW ( ring9p.c )
+and the 9P server
+.CW ( srv9p.c ,
+in the file-server container) written beside them; the file operations
+themselves
 .CW ( sysfile.c ,
 the other devices) and the syscall layer are still on the other side.  This is checked by
 .CW /scripts/osprey-check-p9.py .
@@ -2337,15 +2352,15 @@ with
 .CW devmnt
 and
 .CW convS2M / convM2S
-\- the file personality naming a server's files, which the earlier draft
-of this section said was not built.  What is honestly not yet real is the
-transport: the 9P does not leave the address space, the server is a
-function call away rather than a container across the microkernel ring;
-carrying the same 9P over the ring to a server container is the next
-step, and it changes only the transport, not the mount client or the
-marshalling.  The file syscalls exported back as a server, and the third
-of the three unreachable things \- processes that share an address space
-migrating as a group \- are not begun.  What was unreachable from a Plan 9 kernel is reached by
+\- the file personality naming a server's files, over 9P that crosses
+the microkernel ring to a container of its own.  This is the plan's
+picture: a library operating system on the microkernel, naming the files
+of a buddy that answers over message passing, the kernel only routing.
+What is not yet real is breadth, not structure: the served tree is one
+file, the file syscalls exported back as a 9P server the personality
+offers to others are not built, and the third of the three unreachable
+things \- processes that share an address space migrating as a group \-
+is not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the
 personality is a library the task links.
 .NH 2

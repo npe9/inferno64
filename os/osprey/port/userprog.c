@@ -19,11 +19,13 @@
  */
 #include <u.h>
 #include <libc.h>
+#include "srv9p.h"
 
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	ReqRead		= 0,
 	ReqOpen		= 2,
+	Req9P		= 4,
 	ReplyDone	= 1,
 };
 
@@ -315,7 +317,11 @@ ospreyserver(char *arg0)
 		enum { Armoff = 0, Reqbuf = 256 };	/* arm at data[0]; a request lands at data[256] */
 		Arm *arm = (Arm*)(base + map->data + Armoff);
 		Msg *reqp = (Msg*)(base + map->data + Reqbuf);
+		Fidtab ft;			/* 9P fid state, on the stack - no data segment */
+		long z;
 
+		for(z = 0; z < (long)sizeof ft; z++)
+			((uchar*)&ft)[z] = 0;
 		USED(rq); USED(reqm);
 		for(iters = 0; iters < 150; iters++){	/* up to ~30s of waiting, then finish */
 			Msg req, rep;
@@ -372,6 +378,22 @@ ospreyserver(char *arg0)
 						cdata[dest + i] = (uchar)content[i];
 				}
 				rep.arg[0] = (uvlong)nb;		/* byte count */
+			} else if(req.op == Req9P){
+				/*
+				 * A 9P exchange over the ring: the client left a
+				 * marshalled T-message in its data area; run the 9P
+				 * server on it in place and leave the R-message back in
+				 * the client's data area for the client to read.  No
+				 * buffers of our own - the server is flat-loaded, with
+				 * no data segment - so the messages stay in the mapped
+				 * slice.  The file's bytes are held here, in a server
+				 * container of its own, not in the client.
+				 */
+				uvlong toff = req.arg[2], tlen = req.arg[3], roff = req.arg[4];
+				long rn;
+
+				rn = srv9p(&ft, cdata + toff, (long)tlen, cdata + roff, 8192);
+				rep.arg[0] = (uvlong)rn;
 			} else
 				rep.arg[0] = 2;				/* an op we do not answer */
 

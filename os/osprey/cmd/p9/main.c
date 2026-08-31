@@ -70,22 +70,23 @@ p9main(void)
 	cclose(c);
 
 	/*
-	 * A real 9P mount.  The name space now names files a server holds,
-	 * reached by 9P: open the transport (#L, an in-process conduit - the
-	 * marshalling and the mount client devmnt are the kernel's own, only
-	 * the transport is a function call rather than the microkernel ring),
-	 * attach the mount device to it (which runs Tversion and Tattach),
-	 * and mount the server's root.  Then open "/hello", which devmnt
-	 * walks and reads over 9P into the server; the resolved channel is
-	 * served by the mount device (#M), not the transport, which is what
-	 * proves 9P carried it.
+	 * A real 9P mount, over the microkernel ring.  The name space names
+	 * files a server holds in a container of its own: open the transport
+	 * (#L, which carries 9P across the ring - the marshalling and the
+	 * mount client devmnt are the kernel's own, and the server is another
+	 * user program, srv9p, in the delegated file-server container),
+	 * attach the mount device to it (Tversion and Tattach travel the
+	 * ring), and mount the server's root.  Then open "/hello", which
+	 * devmnt walks and reads over 9P into the server; the channel is
+	 * served by the mount device (#M), not the transport, and the bytes -
+	 * held only in the server binary - come back across the ring.
 	 */
 	tc = namec("#L", Aopen, ORDWR, 0);
 	mc = mntattach(tc, nil, "", 0);
 	cclose(tc);
 	cmount(mc, up->slash, MAFTER, "");
 	cclose(mc);
-	print("p9: attached and mounted a 9P server over an in-process transport\n");
+	print("p9: attached and mounted a 9P server over the microkernel ring\n");
 
 	mnttype = devno('M', 0);
 	c = namec("/hello", Aopen, OREAD, 0);
@@ -94,28 +95,6 @@ p9main(void)
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
 	print("p9: read from the 9P server over the mount: \"%.*s\"\n", (int)n, (char*)buf);
 	cclose(c);
-
-	/*
-	 * Arc 2a: the same round trip, but over the microkernel ring to a
-	 * server container, not an in-process call.  Map this container's
-	 * ring and, for now with the stub server's own open/read protocol,
-	 * open a name the server holds and read it back - proving segattach,
-	 * the ring and the delegation are live from this binary before 9P
-	 * rides the same ring.
-	 */
-	if(ring9p_init() == 0){
-		long fd, rn;
-		fd = ring9p_open("greeting");
-		print("p9: ring open(\"greeting\") -> handle %ld\n", fd);
-		if(fd >= 0){
-			rn = ring9p_read(fd, (char*)buf, sizeof buf - 1);
-			if(rn < 0) rn = 0;
-			buf[rn] = 0;
-			print("p9: read over the ring from the server container: \"%.*s\"\n",
-				(int)rn, (char*)buf);
-		}
-	} else
-		print("p9: ring9p_init: no ring mapped\n");
 
 	poperror();
 	exits(nil);

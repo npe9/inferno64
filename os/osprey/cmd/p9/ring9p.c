@@ -19,6 +19,7 @@ enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	ReqRead		= 0,
 	ReqOpen		= 2,
+	Req9P		= 4,
 	ReplyDone	= 1,
 };
 
@@ -100,40 +101,33 @@ ringcall(uvlong op, uvlong a0, uvlong a1, uvlong a2, Msg *rep)
 	return (long)rep->arg[0];
 }
 
+
+
+/*
+ * One 9P exchange over the ring: leave the marshalled T-message in our
+ * data area, ask the server (Req9P) to run 9P on it and leave the
+ * R-message back, and copy that out.  The data area is small (about nine
+ * kilobytes), but 9P messages to this server are tens of bytes; T sits
+ * at one offset and R at another, clear of each other.
+ */
 long
-ring9p_open(char *name)
+ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 {
 	Ring *r = &ring;
 	Msg rep;
 	uchar *data;
-	long n, status;
+	long rn, k;
+	enum { T9off = 256, R9off = 1024 };
 
 	data = r->base + r->map->data;
-	for(n = 0; name[n] != 0; n++)
-		data[n] = name[n];
-	status = ringcall(ReqOpen, 0, (uvlong)n, 0, &rep);
-	if(status != ReplyDone)
-		return -1;
-	return (long)rep.arg[2];
-}
-
-long
-ring9p_read(long fd, char *buf, long max)
-{
-	Ring *r = &ring;
-	Msg rep;
-	uchar *data;
-	long n, k;
-	uvlong dest;
-
-	dest = 128;
-	n = ringcall(ReqRead, (uvlong)fd, dest, (uvlong)max, &rep);
-	if(n <= 0)
-		return n;
-	if(n > max)
-		n = max;
-	data = r->base + r->map->data;
-	for(k = 0; k < n; k++)
-		buf[k] = data[dest + k];
-	return n;
+	for(k = 0; k < tn; k++)
+		data[T9off + k] = tmsg[k];
+	rn = ringcall(Req9P, (uvlong)T9off, (uvlong)tn, (uvlong)R9off, &rep);
+	if(rn <= 0)
+		return rn;
+	if(rn > rmax)
+		rn = rmax;
+	for(k = 0; k < rn; k++)
+		rbuf[k] = data[R9off + k];
+	return rn;
 }

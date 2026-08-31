@@ -6,5 +6,4 @@
  * kernel headers - can call it without the two header worlds meeting.
  */
 int	ring9p_init(void);			/* map this container's ring; 0 ok, -1 no */
-long	ring9p_open(char *name);		/* ReqOpen a name; handle, or -1 */
-long	ring9p_read(long fd, char *buf, long max);	/* ReqRead; bytes, or -1 */
+long	ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax);	/* one 9P T/R exchange */
