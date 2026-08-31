@@ -429,13 +429,36 @@ the one caller in this tree that skips setting
 .CW p->sched
 after
 .CW newproc()
-\- but its file is not in this board's link line.  Likeliest
-remaining mechanism: some
+\- but its file is not in this board's link line.  A third guess,
 .CW gotolabel()
 reading a stale
 .CW Proc.sched
-Label, the same sp-then-pc shape \- which call, unconfirmed without
-live memory.
+Label, was worth the live memory the first two didn't need: gdbstub
+would not land on this exact fault unconditioned (it catches
+whichever Undefined trap fires first under its own timing, not
+necessarily this one), but a breakpoint conditioned on
+.CW r4
+matching this fault's own known value does, twice running.
+.CW r3
+is
+.CW &mach0
+both times,
+.CW r0
+is
+.CW m->readied
+\- a real, live Proc pointer, not garbage \- and neither
+.CW m->sched
+nor that Proc's own
+.CW sched
+read back corrupted: both hold plausible, in-range sp/pc pairs that
+don't match the fault address.  The stale-Label guess is retired
+too, then \- something else near
+.CW sched() 's
+.CW up==nil
+path touches
+.CW mach0
+right before this fires, real ground truth for whoever next has a
+debugger free to keep going from here.
 .PP
 The second: a data abort, five of twenty boots, a
 .I different
