@@ -2357,8 +2357,10 @@ the microkernel ring to a container of its own.  This is the plan's
 picture: a library operating system on the microkernel, naming the files
 of a buddy that answers over message passing, the kernel only routing.
 What is not yet real is breadth, not structure: the served tree is one
-file, the file syscalls exported back as a 9P server the personality
-offers to others are not built, and the third of the three unreachable
+file - the ring's data area is about nine kilobytes and today's messages
+are tens of bytes, so a larger tree would want the transport to page a
+big read rather than assume one fits - the file syscalls exported back as
+a 9P server the personality offers to others are not built, and the third of the three unreachable
 things \- processes that share an address space migrating as a group \-
 is not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the

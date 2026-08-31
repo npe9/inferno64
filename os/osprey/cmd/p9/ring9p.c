@@ -119,6 +119,8 @@ ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 	long rn, k;
 	enum { T9off = 256, R9off = 1024 };
 
+	if(tn < 0 || tn > R9off - T9off)	/* keep T clear of R in the small data area */
+		return -1;
 	data = r->base + r->map->data;
 	for(k = 0; k < tn; k++)
 		data[T9off + k] = tmsg[k];
