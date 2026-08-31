@@ -42,7 +42,8 @@ p9main(void)
 }
 
 void
-_main(void)
+startboot(char *argv0, char **argv)
 {
+	USED(argv0); USED(argv);
 	p9main();
 }

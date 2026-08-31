@@ -204,7 +204,7 @@ openmode(ulong o)
 }
 
 /* a plain bump allocator; real memory comes from the microkernel later */
-static char	arena[2*1024*1024];
+static char	arena[256*1024];
 static ulong	arenap;
 void*
 malloc(ulong n)

@@ -18,6 +18,7 @@
  */
 #include	"initcode.i"
 #include	"userprog.i"
+#include	"p9prog.i"
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -70,6 +71,69 @@ ospreyloadprog(void)
 		kunmap(k);
 		segpage(up->seg[TSEG], pg);
 	}
+}
+
+/*
+ * Load a real a.out program (the Plan 9 personality library, p9prog.i)
+ * into text, data and bss segments.  Unlike ospreyloadprog's flat load,
+ * this parses the exec header and lays out the segments the way the
+ * linker and sysproc's exec do, eager-mapping every page (xup64 has no
+ * demand paging).  The entry is init9's _main at UTZERO+0x28, which
+ * touser jumps to.
+ */
+static void
+ospreyfillseg(Segment *s, uvlong va, ulong npg, uchar *src, ulong srclen)
+{
+	KMap *k;
+	Page *pg;
+	ulong i, off, cnt;
+
+	for(i = 0; i < npg; i++){
+		off = i*BY2PG;
+		cnt = off < srclen ? srclen - off : 0;
+		if(cnt > BY2PG)
+			cnt = BY2PG;
+		pg = newpage(va + off, nil);
+		k = kmap(pg);
+		if(cnt)
+			memmove((uchar*)VA(k), src + off, cnt);
+		if(cnt < BY2PG)
+			memset((uchar*)VA(k) + cnt, 0, BY2PG - cnt);
+		kunmap(k);
+		segpage(s, pg);
+	}
+}
+
+void
+ospreyloadp9(void)
+{
+	struct Exec { long magic, text, data, bss, syms, entry, spsz, pcsz; } *h;
+	ulong magic, hdrsz, textsz, datasz, bsssz, tseg;
+	uvlong textend, adata, abss, ebss;
+
+	h = (struct Exec*)p9prog;
+	magic = beswal(h->magic);
+	textsz = beswal(h->text);
+	datasz = beswal(h->data);
+	bsssz = beswal(h->bss);
+	hdrsz = (magic & 0x8000) ? sizeof(struct Exec)+8 : sizeof(struct Exec);
+	tseg = hdrsz + textsz;
+	textend = UTZERO + tseg;
+	adata = (textend + BY2PG-1) & ~(uvlong)(BY2PG-1);
+	abss = (adata + datasz + BY2PG-1) & ~(uvlong)(BY2PG-1);
+	ebss = (adata + datasz + bsssz + BY2PG-1) & ~(uvlong)(BY2PG-1);
+
+	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
+
+	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, PGROUND(tseg)>>PGSHIFT);
+	up->seg[TSEG]->flushme = 1;
+	ospreyfillseg(up->seg[TSEG], UTZERO, PGROUND(tseg)>>PGSHIFT, p9prog, tseg);
+
+	up->seg[DSEG] = newseg(SG_DATA, adata, PGROUND(datasz)>>PGSHIFT);
+	ospreyfillseg(up->seg[DSEG], adata, PGROUND(datasz)>>PGSHIFT, p9prog+tseg, datasz);
+
+	up->seg[BSEG] = newseg(SG_BSS, abss, (ebss-abss)>>PGSHIFT);
+	ospreyfillseg(up->seg[BSEG], abss, (ebss-abss)>>PGSHIFT, nil, 0);
 }
 
 /*
@@ -135,7 +199,7 @@ proc0(void*)
 		 */
 		ospreyuserprep();
 		ospreyframebuffer();
-		ospreyloadprog();
+		ospreyloadp9();		/* the Plan 9 personality library */
 		up->kp = 0;
 		up->noswap = 0;
 		up->privatemem = 0;

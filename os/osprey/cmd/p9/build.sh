@@ -10,7 +10,7 @@ cd "$(dirname "$0")/../../../.."          # repo root
 P=os/osprey/cmd/p9
 INC="-I $P -I os/osprey/port -I os/osprey/pc64 -I Osprey/amd64/include -I Osprey/include -I include"
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
-OBJ=""
+OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c; do
 	o=/tmp/p9_$(basename $f .c).6
@@ -23,5 +23,5 @@ for m in utfnlen convM2D convD2M vsnprint dofmt vfprint; do
 	6c $LIBINC -o /tmp/p9_$m.6 lib9/$m.c
 	SUP="$SUP /tmp/p9_$m.6"
 done
-6l -l -o /tmp/p9lib $OBJ $SUP Osprey/amd64/lib/libc.a
+6l -l -R4096 -o /tmp/p9lib $OBJ $SUP Osprey/amd64/lib/libc.a
 echo "built /tmp/p9lib"
