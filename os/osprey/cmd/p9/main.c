@@ -276,6 +276,39 @@ p9main(void)
 		p9close(fd);
 	}
 
+	/*
+	 * A union directory read: list "/" itself, which by now is a union of
+	 * the root device, the environment mounted onto it, and the 9P server
+	 * mounted onto it.  One listing spans all three, the way a Plan 9
+	 * union does - the root's boot and bin, the environment's variables,
+	 * and the server's hello, motd, readme and scratch, together.
+	 */
+	{
+		int dfd, nent = 0;
+		long dn;
+		uchar *p, *e;
+		Dir dir;
+		char names[256];
+		int m;
+
+		dfd = p9open("/", OREAD);
+		print("p9: ls / (a union of the root device, the environment and the 9P mount):\n");
+		while((dn = p9read(dfd, buf, sizeof buf)) > 0){
+			p = buf;
+			e = buf + dn;
+			while(p < e){
+				m = convM2D(p, (uint)(e - p), &dir, names);
+				if(m <= 0)
+					break;
+				print("p9:   %s\n", dir.name);
+				nent++;
+				p += m;
+			}
+		}
+		print("p9: the union listing spanned %d entries across three mounted members\n", nent);
+		p9close(dfd);
+	}
+
 	poperror();
 	exits(nil);
 }

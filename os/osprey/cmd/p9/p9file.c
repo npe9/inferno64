@@ -174,24 +174,133 @@ p9close(int fd)
 	fdclose(fd, 0);
 }
 
+/*
+ * The union directory read, lifted from sysfile.c: when a channel is a
+ * union mount point (several things bound or mounted at one name), a
+ * directory read walks the members in turn and returns each one's
+ * entries, so a listing of "/" spans the root device, the environment
+ * and a 9P mount together.  The rock fixup - rewriting an entry that is
+ * itself a mount point - is stubbed here (mountfix returns the entries
+ * unchanged, mountrockread finds no rock), which is correct as long as
+ * the union's own entries are not themselves mount points.
+ */
+void
+unionrewind(Chan *c)
+{
+	eqlock(&c->umqlock);
+	c->uri = 0;
+	if(c->umc != nil){
+		cclose(c->umc);
+		c->umc = nil;
+	}
+	qunlock(&c->umqlock);
+}
+
+void
+mountrewind(Chan *c)
+{
+	c->nrock = 0;
+}
+
+int
+mountrockread(Chan *c, uchar*, long, long*)
+{
+	return c->nrock != 0 ? 0 : 0;	/* no rock is kept here */
+}
+
+long
+mountfix(Chan*, uchar*, long nn, long)
+{
+	return nn;			/* entries returned unchanged */
+}
+
+long
+unionread(Chan *c, void *va, long n)
+{
+	int i;
+	long nr;
+	Mhead *m;
+	Mount *mount;
+
+	eqlock(&c->umqlock);
+	m = c->umh;
+	rlock(&m->lock);
+	mount = m->mount;
+	for(i = 0; mount != nil && i < c->uri; i++)
+		mount = mount->next;
+
+	nr = 0;
+	while(mount != nil){
+		if(mount->to != nil && !waserror()){
+			if(c->umc == nil){
+				c->umc = cclone(mount->to);
+				c->umc = devtab[c->umc->type]->open(c->umc, OREAD);
+			}
+			nr = devtab[c->umc->type]->read(c->umc, va, n, c->umc->offset);
+			c->umc->offset += nr;
+			poperror();
+		}
+		if(nr > 0)
+			break;
+		c->uri++;
+		if(c->umc != nil){
+			cclose(c->umc);
+			c->umc = nil;
+		}
+		mount = mount->next;
+	}
+	runlock(&m->lock);
+	qunlock(&c->umqlock);
+	return nr;
+}
+
+/*
+ * Read by descriptor.  For a plain file, read at the channel's offset.
+ * For a directory, rewind at offset 0 and, if the channel is a union,
+ * read across its members; otherwise read the one device's directory.
+ */
 long
 p9read(int fd, void *buf, long n)
 {
 	Chan *c;
-	long nr;
+	long nn, nnn;
+	vlong off;
 
 	c = fdtochan(fd, OREAD, 1, 1);
 	if(waserror()){
 		cclose(c);
 		nexterror();
 	}
-	nr = devtab[c->type]->read(c, buf, n, c->offset);
+	off = c->offset;
+	if(off < 0)
+		error(Enegoff);
+	if(off == 0){
+		c->offset = 0;
+		c->devoffset = 0;
+		mountrewind(c);
+		unionrewind(c);
+	}
+	if(c->qid.type & QTDIR){
+		if(mountrockread(c, buf, n, &nn)){
+			/* rock filled the buffer */
+		} else if(c->umh != nil)
+			nn = unionread(c, buf, n);
+		else {
+			if(off != c->offset)
+				error(Edirseek);
+			nn = devtab[c->type]->read(c, buf, n, c->devoffset);
+		}
+		nnn = mountfix(c, buf, nn, n);
+	} else
+		nnn = nn = devtab[c->type]->read(c, buf, n, off);
+
 	lock(c);
-	c->offset += nr;
+	c->devoffset += nn;
+	c->offset += nnn;
 	unlock(c);
 	poperror();
 	cclose(c);
-	return nr;
+	return nnn;
 }
 
 long

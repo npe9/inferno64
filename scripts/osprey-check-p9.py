@@ -82,6 +82,9 @@ def main():
                     'stat /hello: name hello, length 54' in t and 'after seek to 6, read "from the 9P server' in t))
     results.append(("and it creates a file by name and binds a device onto a name, reading the file back across the binding",
                     'created #e/bound' in t and 'read /mnt/bound across the binding: "reached through a bind' in t))
+    m3 = re.search(r'the union listing spanned (\d+) entries', t)
+    results.append(("and a union directory read of \"/\" composes the root device, the environment and the 9P mount into one listing",
+                    'ls / (a union' in t and m3 is not None and int(m3.group(1)) >= 18))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

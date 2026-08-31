@@ -2384,10 +2384,11 @@ the way a Plan 9 program does \- opening, reading, writing, seeking,
 stat-ing, listing, creating and binding, over local files and files a 9P
 server holds alike.  What is not yet real is breadth, not
 structure: the served tree is a handful of files, one of them writable -
-listed, read and written, but small; a union directory read that folds the mount into the
-enclosing name space (mountfix and the rest of the read path) is not
-ported, so ls names the server's own directory rather than the composed
-one; the ring's data area is about nine kilobytes and today's messages
+listed, read and written, but small; the union directory read is ported
+in its plain form (the rock fixup, which rewrites an entry that is itself
+a mount point, is stubbed), so ls of "/" composes the root device, the
+environment and the 9P mount but would not reflect a mount made on one of
+their entries; the ring's data area is about nine kilobytes and today's messages
 are tens of bytes, so a larger tree would want the transport to page a
 big read rather than assume one fits; the file syscalls exported back as a 9P server the personality offers to
 others are built as an exportfs but shown only as a loopback \- the
