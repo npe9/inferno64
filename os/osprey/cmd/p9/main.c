@@ -225,6 +225,29 @@ p9main(void)
 		p9close(xfd);
 	}
 
+	/*
+	 * seek and stat by descriptor.  Stat "/hello" over the 9P mount for
+	 * its length, then seek past the first word and read the rest - random
+	 * access and metadata, the operations a program needs beyond a plain
+	 * sequential read.
+	 */
+	{
+		int fd;
+		long rn;
+		Dir d;
+		uchar sbuf[256];
+
+		fd = p9open("/hello", OREAD);
+		if(p9stat(fd, &d, sbuf, sizeof sbuf) == 0)
+			print("p9: stat /hello: name %s, length %lld\n", d.name, (vlong)d.length);
+		p9seek(fd, 6, 0);		/* past "hello " */
+		rn = p9read(fd, buf, sizeof buf - 1);
+		if(rn < 0) rn = 0;
+		buf[rn] = 0;
+		print("p9: after seek to 6, read \"%.*s\"\n", (int)rn, (char*)buf);
+		p9close(fd);
+	}
+
 	poperror();
 	exits(nil);
 }

@@ -2353,7 +2353,7 @@ and the queue
 .CW qio.c
 the file-descriptor layer
 .CW ( p9file.c ,
-the fd table and open/read/write/close lifted from
+the fd table and open/read/write/close/seek/stat lifted from
 .CW sysfile.c )
 and an exportfs
 .CW ( p9srv.c ,
@@ -2380,7 +2380,8 @@ the microkernel ring to a container of its own.  This is the plan's
 picture: a library operating system on the microkernel, naming the files
 of a buddy that answers over message passing, the kernel only routing.
 A program reaches all of it by file descriptor now, through the fd table,
-the way a Plan 9 program does.  What is not yet real is breadth, not
+the way a Plan 9 program does \- opening, reading, writing, seeking,
+stat-ing and listing, over local files and files a 9P server holds alike.  What is not yet real is breadth, not
 structure: the served tree is a handful of files, one of them writable -
 listed, read and written, but small; a union directory read that folds the mount into the
 enclosing name space (mountfix and the rest of the read path) is not

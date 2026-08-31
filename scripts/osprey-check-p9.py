@@ -78,6 +78,8 @@ def main():
     m2 = re.search(r'exportfs served (\d+) entries from the personality', t)
     results.append(("and the personality is itself a 9P server: it exports its own name space and reads its root back over 9P (a loopback mount)",
                     'exportfs loopback' in t and m2 is not None and int(m2.group(1)) >= 10))
+    results.append(("and it stats a file and seeks within it by descriptor - metadata and random access, not just sequential reads",
+                    'stat /hello: name hello, length 54' in t and 'after seek to 6, read "from the 9P server' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

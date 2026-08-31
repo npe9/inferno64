@@ -213,3 +213,64 @@ p9write(int fd, void *buf, long n)
 	cclose(c);
 	return nw;
 }
+
+/* seek: move the descriptor's offset (0 set, 1 current, 2 from end) */
+vlong
+p9seek(int fd, vlong off, int type)
+{
+	Chan *c;
+	uchar buf[128];
+	Dir d;
+	vlong ret;
+
+	c = fdtochan(fd, -1, 1, 1);
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+	if(c->qid.type & QTDIR)
+		error("cannot seek on a directory");
+	switch(type){
+	case 0:
+		ret = off;
+		break;
+	case 1:
+		lock(c);
+		ret = c->offset + off;
+		unlock(c);
+		break;
+	default:	/* from end: stat for the length */
+		devtab[c->type]->stat(c, buf, sizeof buf);
+		convM2D(buf, sizeof buf, &d, nil);
+		ret = d.length + off;
+		break;
+	}
+	lock(c);
+	c->offset = ret;
+	unlock(c);
+	poperror();
+	cclose(c);
+	return ret;
+}
+
+/* stat: fill *d with the file's metadata (its strings copied into buf) */
+int
+p9stat(int fd, Dir *d, uchar *buf, int nbuf)
+{
+	Chan *c;
+	uchar msg[256];
+	int n;
+
+	c = fdtochan(fd, -1, 0, 1);
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+	n = devtab[c->type]->stat(c, msg, sizeof msg);
+	poperror();
+	cclose(c);
+	USED(nbuf);
+	if(convM2D(msg, n, d, (char*)buf) == 0)	/* d's strings live in the caller's buf */
+		return -1;
+	return 0;
+}
