@@ -383,48 +383,58 @@ the identical address
 past the end of both
 .CW .text
 and
-.CW .data
-\- a jump into the heap.
+.CW .data .
 .CW sp ,
 .CW r0
 and
 .CW r4
-are just as deterministic, byte-identical every time.
+are just as deterministic, and
 .CW up
 reads nil: this runs on the boot-time SVC stack,
 .CW l.s 's
 own reset-time stack, not any Proc's
 .CW kstack .
-Never seen alongside the second fault in the same boot \- a real,
-chaseable, static bug, not yet chased to an instruction.
+Checked against
+.CW 5l\ -a 's
+literal pool rather than guessed: the address is
+.CW stack+KSTACK ,
+link-time
+.CW 0x400f8dd0 ,
+the boot stack's one-past-the-end \- the value
+.CW _main 's
+first instruction loads into R13 at reset.  A later boot with a few
+extra instructions ahead of it (the
+.CW sp
+diagnostic below) moved this same call site's landing value across
+.CW 0 ,
+.CW 0x40
+and two points near that address instead of holding still: a stale
+copy of that one boot-time value, read back as a function pointer,
+not a computation gone wrong.  Never seen with the second fault \-
+real, chaseable, static, just not yet chased to an instruction.
 .PP
 The second: a data abort, five of twenty boots, a
 .I different
-address every time, and under gdbstub \- slower, more instrumented \-
-neither fault reproduces at its full-speed address at all.  This
-half is the shape already on record here, the pc64
+address every time, not reproducing at its full-speed address under
+gdbstub either.  This half is the shape already on record here, the
+pc64
 .CW markheap()
-heisenbug's signature.  Whether it is the same bug reached from a
-second architecture, as the previous version of this section wrongly
-guessed about the DISWORD crash above, is not claimed \- only that
-it shares the fingerprint, and this session already spent its cheap
-answers on that fingerprint once.  The rest of the twenty boots were
-still mid-panic when their run's timeout fired, a separate
-console-print race, not a third fault.
+heisenbug's fingerprint \- not claimed to be the same bug, as the
+previous version of this section wrongly guessed about the DISWORD
+crash above, only the same fingerprint, and this session already
+spent its cheap answers on that one.  The rest of the twenty boots
+were still mid-panic when their timeout fired, a console-print race,
+not a third fault.
 .PP
-One theory was checked and ruled out: KSTACK exhaustion.  Both fault
-classes put
+KSTACK exhaustion was checked and ruled out.  Both fault classes put
 .CW sp
-within a few hundred bytes of a stack's top \- the interpreter
-Proc's own kstack for the data aborts, the SVC stack for the
-Undefined traps.  Looks like overflow until checked: a shallow,
-freshly-entered call sits at the top too, and doubling
+within a few hundred bytes of a stack's top \- exactly where a
+shallow, freshly-entered call sits too.  Doubling
 .CW KSTACK
 32k\(->64k, one line, fully reverted, moved neither the faulting
 addresses nor
 .CW sp 's
-distance from the new top.  A real overflow would have moved one or
-the other.
+distance from the new top, which a real overflow would have.
 .CW sp
 stays in the trap printout regardless.  Not yet bracketed.
 There is no display \-
