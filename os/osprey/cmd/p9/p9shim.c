@@ -301,12 +301,13 @@ void	coherence(void){}
 void	eqlock(QLock*){}
 void	exhausted(char *why){ panic("exhausted: %s", why); }
 
-void
-sleep(Rendez*, int (*f)(void*), void *arg)
-{
-	while(!f(arg))
-		;			/* the event has already happened here */
-}
+/*
+ * No kernel sleep: libc's sleep (the SLEEP syscall, which services the
+ * ring) is the single definition, so the ring transport can yield with
+ * it.  devmnt's and qio's own sleep calls are all on the mux-gate and
+ * read-ahead paths a single outstanding synchronous RPC never reaches
+ * (Arc 1 ran the whole 9P mount without ever entering one).
+ */
 
 void	cinit(void){}
 int	copen(Chan*){ return 0; }

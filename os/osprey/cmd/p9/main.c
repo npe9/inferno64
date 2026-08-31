@@ -3,6 +3,7 @@
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
+#include "ring9p.h"
 
 extern void p9init(void);
 extern void exits(char*);
@@ -93,6 +94,28 @@ p9main(void)
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
 	print("p9: read from the 9P server over the mount: \"%.*s\"\n", (int)n, (char*)buf);
 	cclose(c);
+
+	/*
+	 * Arc 2a: the same round trip, but over the microkernel ring to a
+	 * server container, not an in-process call.  Map this container's
+	 * ring and, for now with the stub server's own open/read protocol,
+	 * open a name the server holds and read it back - proving segattach,
+	 * the ring and the delegation are live from this binary before 9P
+	 * rides the same ring.
+	 */
+	if(ring9p_init() == 0){
+		long fd, rn;
+		fd = ring9p_open("greeting");
+		print("p9: ring open(\"greeting\") -> handle %ld\n", fd);
+		if(fd >= 0){
+			rn = ring9p_read(fd, (char*)buf, sizeof buf - 1);
+			if(rn < 0) rn = 0;
+			buf[rn] = 0;
+			print("p9: read over the ring from the server container: \"%.*s\"\n",
+				(int)rn, (char*)buf);
+		}
+	} else
+		print("p9: ring9p_init: no ring mapped\n");
 
 	poperror();
 	exits(nil);

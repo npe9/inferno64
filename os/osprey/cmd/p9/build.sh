@@ -25,6 +25,11 @@ for m in utfnlen convM2D convD2M convS2M convM2S fcallfmt vsnprint dofmt vfprint
 	6c $LIBINC -o /tmp/p9_$m.6 lib9/$m.c
 	SUP="$SUP /tmp/p9_$m.6"
 done
+# the ring transport is compiled against the user headers (its sleep is
+# libc's SLEEP syscall, not the name space's), then linked with the rest
+6c $LIBINC -o /tmp/p9_ring9p.6 $P/ring9p.c
+OBJ="$OBJ /tmp/p9_ring9p.6"
+
 6l -l -R4096 -o /tmp/p9lib $OBJ $SUP Osprey/amd64/lib/libc.a
 echo "built /tmp/p9lib"
 

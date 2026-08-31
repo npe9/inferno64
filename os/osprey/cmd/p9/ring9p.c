@@ -1,0 +1,139 @@
+/*
+ * The ring transport, compiled against the user headers: it reaches the
+ * microkernel only through libc's system calls (segattach to map the
+ * ring, and the SLEEP syscall - which services the ring - to yield until
+ * a reply lands).  It includes none of the kernel's headers, so its
+ * sleep is libc's one-argument sleep and not the name space's; the two
+ * header worlds meet only at the plain-typed ring9p.h interface, which
+ * dev9ploop.c (kernel headers) uses.
+ *
+ * The ring layout is the container ring the microkernel lays over this
+ * program's slice - the same one the stub client in userprog.c maps.
+ * For now the requests are the stub server's own ReqOpen/ReqRead, which
+ * proves the round trip from this binary before 9P rides the same ring.
+ */
+#include <u.h>
+#include <libc.h>
+
+enum {
+	Ospreymagic	= 0x4f53505259ULL,
+	ReqRead		= 0,
+	ReqOpen		= 2,
+	ReplyDone	= 1,
+};
+
+typedef struct Omap Omap;
+struct Omap {
+	uvlong	magic, id, size, msgsize;
+	uvlong	requestqueue, replyqueue, outputqueue;
+	uvlong	request, reply, output;
+	uvlong	data, datalen, sem, nsem, selected;
+	uvlong	pktbuf, npktbuf, pktbufsize;
+	uvlong	page, npage, maxpage, pagesize;
+	uvlong	txbuf, ntxbuf, txbufsize;
+};
+typedef struct Queue Queue;
+struct Queue { vlong message; uvlong size, put, get; };
+typedef struct Msg Msg;
+struct Msg { uvlong op, sequence, container, arg[5]; };
+
+typedef struct Ring Ring;
+struct Ring {
+	uchar	*base;
+	Omap	*map;
+	Queue	*rq, *pq;
+	Msg	*reqm, *repm;
+};
+
+static Ring ring;
+static int mapped;
+
+int
+ring9p_init(void)
+{
+	Ring *r = &ring;
+
+	if(mapped)
+		return 0;
+	r->base = (uchar*)segattach(0, "osprey0", 0, 0);
+	if(r->base == (uchar*)-1)
+		return -1;
+	r->map = (Omap*)r->base;
+	if(r->map->magic != Ospreymagic)
+		return -1;
+	r->rq = (Queue*)(r->base + r->map->requestqueue);
+	r->pq = (Queue*)(r->base + r->map->replyqueue);
+	r->reqm = (Msg*)((uchar*)r->rq + r->rq->message);
+	r->repm = (Msg*)((uchar*)r->pq + r->pq->message);
+	mapped = 1;
+	return 0;
+}
+
+static long
+ringcall(uvlong op, uvlong a0, uvlong a1, uvlong a2, Msg *rep)
+{
+	Ring *r = &ring;
+	Msg m;
+	uvlong seq;
+	int tries;
+
+	memset(&m, 0, sizeof m);
+	m.op = op;
+	m.container = r->map->id;
+	m.arg[2] = a0;
+	m.arg[3] = a1;
+	m.arg[4] = a2;
+	seq = r->rq->put + 1;
+	m.sequence = seq;
+	r->reqm[r->rq->put % r->rq->size] = m;
+	r->rq->put++;				/* submit: memory, no trap */
+
+	for(tries = 0; tries < 400 && r->pq->put == r->pq->get; tries++)
+		sleep(1);			/* service the ring and yield */
+
+	if(r->pq->put == r->pq->get)
+		return -1;
+	*rep = r->repm[r->pq->get % r->pq->size];
+	r->pq->get++;				/* collect: memory, no trap */
+	if(rep->sequence != seq)
+		return -1;
+	return (long)rep->arg[0];
+}
+
+long
+ring9p_open(char *name)
+{
+	Ring *r = &ring;
+	Msg rep;
+	uchar *data;
+	long n, status;
+
+	data = r->base + r->map->data;
+	for(n = 0; name[n] != 0; n++)
+		data[n] = name[n];
+	status = ringcall(ReqOpen, 0, (uvlong)n, 0, &rep);
+	if(status != ReplyDone)
+		return -1;
+	return (long)rep.arg[2];
+}
+
+long
+ring9p_read(long fd, char *buf, long max)
+{
+	Ring *r = &ring;
+	Msg rep;
+	uchar *data;
+	long n, k;
+	uvlong dest;
+
+	dest = 128;
+	n = ringcall(ReqRead, (uvlong)fd, dest, (uvlong)max, &rep);
+	if(n <= 0)
+		return n;
+	if(n > max)
+		n = max;
+	data = r->base + r->map->data;
+	for(k = 0; k < n; k++)
+		buf[k] = data[dest + k];
+	return n;
+}
