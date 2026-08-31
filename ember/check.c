@@ -1754,6 +1754,23 @@ assignable(Type *t, Type *s, Node *v)
 	}
 	if(t == tany)
 		return tattr[s->kind].isptr;
+	/*
+	 * "ref Result.Ok{...}" (Tref{Tadtpick}) -> "ref Result" (Tref{the
+	 * outer, unspecified-tag Tadt-with-tags}): the standard tagged-
+	 * union widening, and the realistic construction site for a
+	 * value a caller will later match on ("func f() ref Result {
+	 * return ref Result.Ok{...} }"). tequal() itself stays strict,
+	 * kind-for-kind structural equality (used far more broadly than
+	 * just this one relationship, not safe to loosen generally) --
+	 * this is deliberately a one-directional special case here, the
+	 * same way the tany/nil cases just above already special-case
+	 * something tequal() alone wouldn't accept.
+	 */
+	if(t->kind == Tref && s->kind == Tref
+	&& s->tof != nil && s->tof->kind == Tadtpick
+	&& t->tof != nil && t->tof->kind == Tadt && t->tof->tags != nil
+	&& s->tof->tof == t->tof)
+		return 1;
 	return tequal(t, s);
 }
 
@@ -3382,20 +3399,53 @@ matchlabels(Node *arms, Type *ctype, int nlab)
 static void
 matchcheck(Node *n)
 {
-	Type *t, *pt, *ct;
+	Type *t, *pt, *ct, *subj;
 	Node *p, *arm, *pat, *q, *wild;
 	Case *c;
-	int nlab, ok;
+	int nlab, ok, isref;
 
 	t = echk(n->left);
 	ok = 1;
-	if(t != tint && t != terror){
-		nerror(n, "match subject must be int, not %T", t);
+	/*
+	 * a tagged-adt subject ("match r { case Result.Ok(v): ...; case
+	 * Result.Err(e): ... }") is dispatched by reading its tag word --
+	 * a plain int, at offset 0 by sizetype()'s own layout -- and
+	 * reusing the *identical* int-label Tcase/casecom() machinery a
+	 * plain "match i { case 1: ...; case 2: ... }" already uses
+	 * (advisor-recommended over a separate compare-and-branch chain:
+	 * the tag word already IS an int, this table already exists).
+	 * check.c's own job here is just resolving the subject's real
+	 * type and validating/binding each Opat pattern; com.c's casecom()
+	 * (below) does the actual tag-word extraction and per-arm binder
+	 * copy at codegen time, off the ORIGINAL subject expression (kept
+	 * around via Case.tagof, not thrown away here).
+	 */
+	subj = t;
+	isref = t != nil && t->kind == Tref;
+	if(isref)
+		subj = t->tof;
+	/*
+	 * a bare (non-ref) Tadtpick subject -- an already-narrowed-to-one-
+	 * tag value, e.g. "r := mk(); match r {...}" where mk() returns a
+	 * plain (not ref) Result -- widens the same way "ref
+	 * Result.Ok{...}" already does for assignable() (see that
+	 * function's own comment): the specific tag's own outer adt is
+	 * what actually matters for validating each Opat pattern belongs
+	 * to the same pick type, same as the ref case just above.
+	 */
+	if(subj != nil && subj->kind == Tadtpick)
+		subj = subj->tof;
+	if(subj == nil || subj->kind != Tadt || subj->tags == nil)
+		subj = nil;
+	if(subj == nil && t != tint && t != terror){
+		nerror(n, "match subject must be int or a tagged adt, not %T", t);
 		ok = 0;
 	}
 	wild = nil;
 	nlab = 0;
 	for(p = n->right; p != nil; ){
+		int npat;
+
 		arm = p;
 		if(p->op == Oseq){
 			arm = p->left;
@@ -3407,10 +3457,105 @@ matchcheck(Node *n)
 				nerror(arm, "match has more than one default");
 			wild = arm;
 		}else{
-			for(pat = arm->left; (q = nextpat(&pat)) != nil; ){
+			npat = 0;
+			for(pat = arm->left; (q = nextpat(&pat)) != nil; npat++){
 				if(q->op == Opat){
-					nerror(q, "tag patterns not yet supported");
-					ok = 0;
+					Type *tagty;
+					Decl *fd, *bp;
+					Node *bn;
+
+					if(subj == nil){
+						nerror(q, "tag pattern needs a tagged-adt match subject");
+						ok = 0;
+						continue;
+					}
+					if(npat != 0 || pat != nil){
+						/*
+						 * "case Result.Ok(v), Result.Err(e):" or
+						 * "case Result.Ok(v), 3:" -- combining a tag
+						 * pattern with anything else in one arm would
+						 * need each combined pattern to bind the SAME
+						 * names to potentially differently-typed
+						 * fields; deliberately not attempted, refused
+						 * cleanly rather than picked one meaning
+						 * unsupervised. a tag pattern must be the
+						 * only pattern in its own arm.
+						 */
+						nerror(q, "a tag pattern must be the only pattern in its case");
+						ok = 0;
+						continue;
+					}
+					tagty = stype(q->left);
+					if(tagty->kind != Tadtpick || tagty->tof != subj){
+						nerror(q, "%T is not a tag of the match subject's type %T", tagty, subj);
+						ok = 0;
+						continue;
+					}
+					/*
+					 * stash the resolved tag type back on q->left's
+					 * own .ty -- stype() doesn't set this itself (it
+					 * returns the Type without mutating the node),
+					 * but com.c's casecom() needs it again later, at
+					 * codegen time, to find each binder's own field
+					 * offset -- q->left is otherwise unused after
+					 * this (matching the same "type expr consumed"
+					 * discipline the Odot-into-tag fix above uses).
+					 */
+					q->left->ty = tagty;
+					q->val = tagty->decl->tag;
+					nlab++;
+					/*
+					 * bind each "(v, e, ...)" name positionally
+					 * against the tag's own fields, into THIS arm's
+					 * own scope (pushscope() below, popscope() after
+					 * stchk() -- so a binder is visible only inside
+					 * its own arm's body, same as any other block-
+					 * scoped local). fd walks the tag's own ids only
+					 * -- not the (currently always-empty, see this
+					 * branch's own pick-adt plan) shared chain --
+					 * matching Result.Ok's own fields being what a
+					 * pattern binder is actually for.
+					 */
+					pushscope();
+					fd = tagty->ids;
+					for(bp = nil, bn = q->right; bn != nil && fd != nil; bn = bn->right){
+						Node *id;
+						Decl *d;
+
+						id = bn;
+						if(bn->op == Oseq)
+							id = bn->left;
+						if(id->op != Oname){
+							nerror(id, "bad pattern binder");
+							ok = 0;
+							break;
+						}
+						sizetype(fd->ty);
+						d = mkdecl(&id->src, Dlocal, fd->ty);
+						d->sym = id->sym;
+						install(d);
+						id->decl = d;
+						id->ty = fd->ty;
+						d->link = nil;
+						if(bp == nil){
+							if(curfn->locals == nil)
+								curfn->locals = d;
+							else{
+								Decl *e;
+
+								for(e = curfn->locals; e->link != nil; e = e->link)
+									;
+								e->link = d;
+							}
+						}else
+							bp->link = d;
+						bp = d;
+						fd = fd->next;
+						if(bn->op != Oseq)
+							break;
+					}
+					stchk(arm->right);
+					popscope();
 					continue;
 				}
 				pt = echk(q);
@@ -3424,13 +3569,16 @@ matchcheck(Node *n)
 					nlab++;
 			}
 		}
-		pushscope();
-		stchk(arm->right);
-		popscope();
+		if(arm->left == nil || arm->left->op != Opat){
+			pushscope();
+			stchk(arm->right);
+			popscope();
+		}
 	}
-	if(!ok || t != tint)
+	if(!ok || subj == nil && t != tint)
 		return;
 	c = matchlabels(n->right, tint, nlab);
+	c->tagof = subj;
 	ct = mktype(&n->src, Tcase, nil, nil);
 	ct->cse = c;
 	sizetype(ct);

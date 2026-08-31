@@ -2255,7 +2255,7 @@ casecom(Node *cn)
 	Decl *d;
 	Type *ctype;
 	Inst *j, *jmps, *wild, *k;
-	Node *n, *arm, *pat, *q, *left, tmp, nto;
+	Node *n, *arm, *pat, *q, *left, tmp, tagtmp, nto, *subjbase, *dispatch;
 	Label *labs;
 	Src *src;
 	char buf[32];
@@ -2280,10 +2280,51 @@ casecom(Node *cn)
 	if(left->addable >= Rcant)
 		left = eacom(left, &tmp, nil);
 
+	/*
+	 * a tagged-adt subject (c->tagof set, check.c's matchcheck()) is
+	 * dispatched on its own tag word, not the subject value itself --
+	 * read it into a fresh int temp the same Oind(Oadd(base,$0))
+	 * shape storecomposite()'s own tag-word WRITE already uses,
+	 * mirrored here for a read. "left" (the original, now-addressable
+	 * subject) stays around afterward, unfreed until the very end of
+	 * this function (not the usual early tfree() right after ICASE)
+	 * -- every arm below may still need it, to extract an Opat
+	 * pattern's own binder fields from the SAME base.
+	 */
+	subjbase = nil;
+	dispatch = left;
+	tagtmp.decl = nil;
+	if(c->tagof != nil){
+		Node *base, *off, *addr, *tagread;
+
+		base = left;
+		if(ctype->kind != Tref){
+			Node *adr;
+
+			adr = mkunary(Oadr, dupn(base));
+			adr->src = cn->src;
+			adr->ty = ctype;
+			base = adr;
+		}
+		subjbase = base;
+		off = mkconst(&cn->src, 0);
+		off->ty = tint;
+		addr = mkn(Oadd, dupn(base), off);
+		addr->src = cn->src;
+		addr->ty = tint;
+		tagread = mkn(Oind, addr, nil);
+		tagread->src = cn->src;
+		tagread->ty = tint;
+		sumark(tagread);
+		dispatch = ecom(&cn->src, talloc(&tagtmp, tint, nil), tagread);
+	}
+
 	labs = c->labs;
 	nlab = c->nlab;
-	genrawop(&left->src, ICASE, left, nil, &nto);
-	tfree(&tmp);
+	genrawop(&dispatch->src, ICASE, dispatch, nil, &nto);
+	if(subjbase == nil)
+		tfree(&tmp);
+	tfree(&tagtmp);
 
 	jmps = nil;
 	wild = nil;
@@ -2300,8 +2341,58 @@ casecom(Node *cn)
 			wild = j;
 		else{
 			for(pat = arm->left; (q = nextpat(&pat)) != nil; ){
-				if(q->op == Oconst)
+				if(q->op == Oconst || q->op == Opat)
 					labs[findlab(ctype, q, labs, nlab)].inst = j;
+				/*
+				 * one Opat per arm, enforced by matchcheck() -- bind
+				 * this arm's own pattern binders, if any, once, right
+				 * at its entry point, before its body runs. each
+				 * binder is an ordinary Dlocal (matchcheck() already
+				 * installed it and pointed every Oname reference
+				 * inside arm->right at it directly) -- this just
+				 * writes its actual value, copied positionally out
+				 * of the matched tag's own fields via the same
+				 * Oind(Oadd(base,$offset)) shape every other field
+				 * access in this file already uses.
+				 */
+				if(q->op == Opat && q->right != nil && subjbase != nil){
+					Type *tagty;
+					Decl *fd;
+					Node *bn;
+
+					tagty = q->left->ty;
+					fd = tagty->ids;
+					for(bn = q->right; bn != nil && fd != nil; bn = bn->right){
+						Node *id, *boff, *baddr, *bind;
+
+						id = bn;
+						if(bn->op == Oseq)
+							id = bn->left;
+						boff = mkconst(&id->src, fd->offset);
+						boff->ty = tint;
+						baddr = mkn(Oadd, dupn(subjbase), boff);
+						baddr->src = id->src;
+						baddr->ty = tint;
+						bind = mkn(Oind, baddr, nil);
+						bind->src = id->src;
+						bind->ty = fd->ty;
+						sumark(bind);
+						{
+							Node dst;
+
+							dst = znode;
+							dst.op = Oname;
+							dst.decl = id->decl;
+							dst.ty = id->decl->ty;
+							dst.src = id->src;
+							sumark(&dst);
+							ecom(&id->src, &dst, bind);
+						}
+						fd = fd->next;
+						if(bn->op != Oseq)
+							break;
+					}
+				}
 			}
 		}
 
@@ -2326,6 +2417,8 @@ casecom(Node *cn)
 		if(labs[i].inst == nil)
 			fatal("casecom: label %d unset", i);
 
+	if(subjbase != nil)
+		tfree(&tmp);
 	d->ty->cse = c;
 	sizetype(d->ty);
 	appglobal(d);

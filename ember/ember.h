@@ -164,6 +164,7 @@ struct Case
 	Label	*labs;
 	Node	*wild;			/* if nothing matches */
 	Inst	*iwild;
+	Type	*tagof;			/* non-nil: match on a tagged adt's tag word, not the subject itself; the outer Tadt-with-tags */
 };
 
 struct Label
