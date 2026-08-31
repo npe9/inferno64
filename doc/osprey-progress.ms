@@ -2320,9 +2320,17 @@ is a second user program in the file-server container that answers.  The
 file's bytes are held only in that server binary, so reading them back
 through
 .CW /hello
-is proof they crossed the ring.  The name space is built and walked in
-the task's own address space, the kernel routing the 9P messages and
-serving print and exit.  What moved to the right side of the
+is proof they crossed the ring.  Finally it reaches the name space the
+way a program does: it opens
+.CW /hello
+and
+.CW /greeting
+by name and reads them by file descriptor, through the fd table
+.CW ( Fgrp )
+the file-descriptor layer keeps \- small integers, not held channels,
+naming both the local file and the one the 9P server holds across the
+ring.  The name space is built and walked in the task's own address
+space, the kernel routing the 9P messages and serving print and exit.  What moved to the right side of the
 line is the name-space machinery, four sources \-
 .CW chan.c ,
 .CW dev.c ,
@@ -2333,15 +2341,17 @@ the mount client
 .CW devmnt.c
 and the queue
 .CW qio.c
+and the file-descriptor layer
+.CW ( p9file.c ,
+the fd table and open/read/write/close lifted from
+.CW sysfile.c )
 \- linked into the program rather than the kernel, with the ring
 transport
 .CW ( ring9p.c )
 and the 9P server
 .CW ( srv9p.c ,
-in the file-server container) written beside them; the file operations
-themselves
-.CW ( sysfile.c ,
-the other devices) and the syscall layer are still on the other side.  This is checked by
+in the file-server container) written beside them; the rest of the
+syscall layer and the other devices are still on the other side.  This is checked by
 .CW /scripts/osprey-check-p9.py .
 .PP
 What is real is a name space that mounts and names files a server holds
@@ -2356,11 +2366,13 @@ and
 the microkernel ring to a container of its own.  This is the plan's
 picture: a library operating system on the microkernel, naming the files
 of a buddy that answers over message passing, the kernel only routing.
-What is not yet real is breadth, not structure: the served tree is one
-file - the ring's data area is about nine kilobytes and today's messages
-are tens of bytes, so a larger tree would want the transport to page a
-big read rather than assume one fits - the file syscalls exported back as
-a 9P server the personality offers to others are not built, and the third of the three unreachable
+A program reaches all of it by file descriptor now, through the fd table,
+the way a Plan 9 program does.  What is not yet real is breadth, not
+structure: the served tree is one file - the ring's data area is about
+nine kilobytes and today's messages are tens of bytes, so a larger tree
+would want the transport to page a big read rather than assume one fits -
+the file syscalls exported back as a 9P server the personality offers to
+others are not built, and the third of the three unreachable
 things \- processes that share an address space migrating as a group \-
 is not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the

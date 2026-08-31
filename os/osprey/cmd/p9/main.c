@@ -4,6 +4,7 @@
 #include "dat.h"
 #include "fns.h"
 #include "ring9p.h"
+#include "p9file.h"
 
 extern void p9init(void);
 extern void exits(char*);
@@ -53,6 +54,8 @@ p9main(void)
 	 */
 	up->egrp = smalloc(sizeof(Egrp));
 	up->egrp->ref = 1;
+	up->fgrp = smalloc(sizeof(Fgrp));
+	up->fgrp->ref = 1;
 
 	c = namec("#e/greeting", Acreate, OWRITE, 0666);
 	devtab[c->type]->write(c, "hello osprey", 12, 0);
@@ -95,6 +98,33 @@ p9main(void)
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
 	print("p9: read from the 9P server over the mount: \"%.*s\"\n", (int)n, (char*)buf);
 	cclose(c);
+
+	/*
+	 * The file-descriptor layer: a program reaches the name space by
+	 * small integers, not by holding Chans.  Open "/hello" - the file the
+	 * 9P server holds across the ring - by name, read it by descriptor,
+	 * and close the descriptor, all through the fd table (Fgrp) the way a
+	 * Plan 9 program does.  The same fd layer names a local file too, so
+	 * open "/greeting" from the environment device by descriptor as well.
+	 */
+	{
+		int fd;
+		long fn;
+
+		fd = p9open("/hello", OREAD);
+		fn = p9read(fd, buf, sizeof buf - 1);
+		if(fn < 0) fn = 0;
+		buf[fn] = 0;
+		print("p9: fd %d read \"%.*s\" from /hello over the ring\n", fd, (int)fn, (char*)buf);
+		p9close(fd);
+
+		fd = p9open("/greeting", OREAD);
+		fn = p9read(fd, buf, sizeof buf - 1);
+		if(fn < 0) fn = 0;
+		buf[fn] = 0;
+		print("p9: fd %d read \"%.*s\" from /greeting through the name space\n", fd, (int)fn, (char*)buf);
+		p9close(fd);
+	}
 
 	poperror();
 	exits(nil);

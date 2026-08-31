@@ -20,7 +20,8 @@ This builds 9p964, boots it, and checks the name space came up and a
 directory was read through it, a second device was mounted and a
 name resolved across the mount table into it, a 9P server
 mounted over the microkernel ring - the server a container of its
-own - and its file read back across #M, with no panic.
+own - its file read back across #M, and both a local file and the
+server's file opened and read by file descriptor, with no panic.
 
 usage: scripts/osprey-check-p9.py [-k]
 """
@@ -68,6 +69,8 @@ def main():
                     m is not None and m.group(1) == m.group(2)))
     results.append(("and the file's bytes come back over 9P across the microkernel ring from a server container (Tversion/Tattach/Twalk/Topen/Tread through devmnt)",
                     'read from the 9P server over the mount: "hello from the 9P server, a container across the ring' in t))
+    results.append(("and a program reaches the name space by file descriptor (open/read/close over an fd table), naming both a local file and the file the 9P server holds",
+                    'from /greeting through the name space' in t and 'from /hello over the ring' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
