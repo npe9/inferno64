@@ -190,7 +190,8 @@ extern Dev rootdevtab;
 extern Dev envdevtab;
 extern Dev mntdevtab;
 extern Dev looploopdevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, nil };
+extern Dev expdevtab;
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, nil };
 
 long	kerndate = 0;
 

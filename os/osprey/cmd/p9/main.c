@@ -186,6 +186,45 @@ p9main(void)
 		p9close(rfd);
 	}
 
+	/*
+	 * The personality as a 9P server.  Where all of the above made it a
+	 * client of a server elsewhere, p9srv answers 9P about this name
+	 * space itself.  Mount the personality's own export (#X) and read its
+	 * root directory back over 9P - a loopback that proves the server
+	 * serves the real name space, the reciprocal of mounting a buddy's.
+	 */
+	{
+		Chan *xtc, *xrc;
+		int xfd;
+		long xn;
+		uchar *p, *e;
+		Dir dir;
+		char names[256];
+		int m;
+
+		xtc = namec("#X", Aopen, ORDWR, 0);
+		xrc = mntattach(xtc, nil, "", 0);
+		cclose(xtc);
+		xrc = devtab[xrc->type]->open(xrc, OREAD);
+		xfd = newfd(xrc, OREAD);
+		int nent = 0;
+		print("p9: mounted the personality's own name space over 9P (exportfs loopback); its root:\n");
+		while((xn = p9read(xfd, buf, sizeof buf)) > 0){
+			p = buf;
+			e = buf + xn;
+			while(p < e){
+				m = convM2D(p, (uint)(e - p), &dir, names);
+				if(m <= 0)
+					break;
+				print("p9:   %s\n", dir.name);
+				nent++;
+				p += m;
+			}
+		}
+		print("p9: exportfs served %d entries from the personality's own root over 9P\n", nent);
+		p9close(xfd);
+	}
+
 	poperror();
 	exits(nil);
 }

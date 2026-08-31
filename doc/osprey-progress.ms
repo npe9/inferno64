@@ -2332,9 +2332,15 @@ naming both the local file and the one the 9P server holds across the
 ring, and lists the server's directory by descriptor - opening it,
 reading it, and unpacking a 9P stat entry per file - the way ls does -
 and it writes the server's one writable file and reads it back, a full
-read-write round trip over the ring.  The name space is built and walked
-in the task's own address
-space, the kernel routing the 9P messages and serving print and exit.  What moved to the right side of the
+read-write round trip over the ring.  Finally it turns the relation
+around: an exportfs
+.CW ( p9srv.c )
+answers 9P about this name space itself, walking and opening and reading
+the channels its own fids stand for, and the personality mounts that
+export and reads its own root directory back over 9P \- a loopback that
+makes it a 9P server as well as a client.  The name space is built and
+walked in the task's own address space, the kernel routing the 9P
+messages and serving print and exit.  What moved to the right side of the
 line is the name-space machinery, four sources \-
 .CW chan.c ,
 .CW dev.c ,
@@ -2345,10 +2351,13 @@ the mount client
 .CW devmnt.c
 and the queue
 .CW qio.c
-and the file-descriptor layer
+the file-descriptor layer
 .CW ( p9file.c ,
 the fd table and open/read/write/close lifted from
 .CW sysfile.c )
+and an exportfs
+.CW ( p9srv.c ,
+the personality answering 9P about its own name space)
 \- linked into the program rather than the kernel, with the ring
 transport
 .CW ( ring9p.c )
@@ -2378,8 +2387,10 @@ enclosing name space (mountfix and the rest of the read path) is not
 ported, so ls names the server's own directory rather than the composed
 one; the ring's data area is about nine kilobytes and today's messages
 are tens of bytes, so a larger tree would want the transport to page a
-big read rather than assume one fits; the file syscalls exported back as
-a 9P server the personality offers to others are not built, and the third of the three unreachable
+big read rather than assume one fits; the file syscalls exported back as a 9P server the personality offers to
+others are built as an exportfs but shown only as a loopback \- the
+personality mounting its own export \- not yet reached by a client in a
+container of its own over the ring; and the third of the three unreachable
 things \- processes that share an address space migrating as a group \-
 is not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the
