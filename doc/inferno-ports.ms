@@ -372,18 +372,30 @@ every time \- right after
 .CW Bufio
 loads, going into
 .CW devprog
-\- but not as the same fault twice.  Ten full-speed boots gave a data
-abort at a plausible code address on one, an Undefined instruction
-trap at
-.CW pc\ 0x00000000
-on another, and two more that were still mid-panic when the run's
-timeout killed them.  Under QEMU's gdbstub, deliberately slower and
-more heavily instrumented, the same breakpoint on the Undefined
-vector caught yet other faulting addresses across separate boots,
-none matching the full-speed ones.  That is not the GC misread
-above, which was deterministic and arithmetic once the word size was
-right \- this is the other shape already on record in this document,
-the pc64
+\- but not as the same fault twice.  Twenty batched full-speed boots:
+six Undefined instruction traps, every one at the identical faulting
+address
+.CW 0x400f8db4 ,
+past the end of both
+.CW .text
+and
+.CW .data
+\- a jump into the heap, the shape of a stale or never-initialized
+function pointer, and the one part of this that looks like a fixed,
+chaseable bug rather than noise.  Five data aborts, each at a
+.I different
+address, no two alike.  The rest were still mid-panic \- one run's
+console output cut off before printing even the trap type line, a
+console-print race independent of either fault.  Under QEMU's
+gdbstub, deliberately slower and more heavily instrumented, the same
+breakpoint on the Undefined vector caught yet other faulting
+addresses across separate boots, not matching the full-speed
+.CW 0x400f8db4
+\- so whatever picks the Undefined trap's target is itself
+timing-sensitive, even though it lands on the same address unusually
+often at full speed.  That mix \- one recurring address plus several
+that never repeat, worse under a debugger \- is the other shape
+already on record in this document, the pc64
 .CW markheap()
 heisenbug's signature of a fault whose type and address move between
 runs and that debugger timing itself seems to suppress.  Whether it
