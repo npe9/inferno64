@@ -1996,6 +1996,112 @@ ecom(Src *src, Node *nto, Node *n)
 			patch(pp, nextinst());
 			return nto;
 		}
+	case Ochk: {
+		/*
+		 * "x?" -- check.c's Ochk case only accepts a subject typed
+		 * Tref{Tadt-with-tags} (matches matchcheck()'s own ref-
+		 * subject handling), so x's own runtime value already IS the
+		 * pointer to the tagged storage -- no Oadr wrapping needed,
+		 * unlike casecom()'s dual ref/bare-value subject handling.
+		 *
+		 * read the tag word the same Oind(Oadd(base,$0)) shape
+		 * storecomposite()'s own tag-word WRITE and casecom()'s own
+		 * tag-word READ both already use; if it's the first-declared
+		 * tag (ordinal 0 -- the user's own answered design fork,
+		 * "first tag succeeds", no limbo convention to port from,
+		 * since limbo has no ? operator at all), continue as an
+		 * expression with the payload field's value (n->decl, set by
+		 * check.c's Ochk case, is that field's Decl, or nil for a
+		 * zero-field success tag, matching n->ty == tnone); otherwise
+		 * synthesize an early "return x" of the whole subject,
+		 * unchanged -- the identical retalloc()+IRET shape scom()'s
+		 * own Oret case uses, just built here since ? lives in
+		 * expression position, not statement position.
+		 */
+		Node *subj, *tagread, *addr, *off, *tagval, tagtmp, tret2;
+		Inst *p, *pp;
+		Decl *fd;
+
+		tagtmp.decl = nil;
+		tret2.decl = nil;
+
+		subj = left;
+		sumark(subj);
+		/*
+		 * unlike fpcall()'s own Radr/Rmadr gap (a struct field read
+		 * through a ref, e.g. "o.res?" -- confirmed reachable and
+		 * exercised, tests/type/chktest.e's own field-subject case),
+		 * this needs no extra >= Rcant widening: every use of subj
+		 * below either wraps it in a further Oind (the tag read, the
+		 * payload read) or hands it to ecom() already carrying its
+		 * own Oind op (the early-return copy) -- both routes reach
+		 * ecom()'s own Oind case, which already calls fixdblind() on
+		 * whatever it's given (the o.in.v/f813f8c6 fix), regardless
+		 * of addable.  fpcall()'s gap was in a *different* code path
+		 * (callcom()'s own direct addrmode-table lookup, bypassing
+		 * ecom() entirely) that this one never takes.  Confirmed
+		 * empirically, not just reasoned: instrumented subj->addable
+		 * at runtime for a real "c.res?" call, saw Radr (8) exactly
+		 * as the fpcall() precedent would predict, and it still ran
+		 * and produced correct output, 8x stable.
+		 */
+		if(subj->addable >= Rcant)
+			subj = eacom(subj, &tl, nil);
+
+		off = mkconst(src, 0);
+		off->ty = tint;
+		addr = mkn(Oadd, dupn(subj), off);
+		addr->src = *src;
+		addr->ty = tint;
+		tagread = mkn(Oind, addr, nil);
+		tagread->src = *src;
+		tagread->ty = tint;
+		sumark(tagread);
+		tagval = ecom(src, talloc(&tagtmp, tint, nil), tagread);
+
+		/*
+		 * branch to the early-return block when the tag isn't 0
+		 * (failure): bcom(cond, 1, b) branches when cond is FALSE
+		 * (the "boolean as value" case just above establishes this
+		 * empirically -- the branch it takes skips the "set nto=1"
+		 * block, i.e. fires when the condition is false); passing
+		 * tagval directly (not pre-built as a relational node) hits
+		 * bcom()'s own default case, treating it as "tagval != 0" --
+		 * so bcom(tagval, 0, nil) is the one that branches when
+		 * tagval *is* truthy, i.e. tagval != 0, i.e. failure.
+		 */
+		p = bcom(tagval, 0, nil);
+		tfree(&tagtmp);
+
+		/* success: continue with the payload's own value, if any */
+		fd = n->decl;
+		if(fd != nil){
+			Node *boff, *baddr, *bind;
+
+			if(nto == nil)
+				nto = talloc(&tres, n->ty, nil);
+			boff = mkconst(src, fd->offset);
+			boff->ty = tint;
+			baddr = mkn(Oadd, dupn(subj), boff);
+			baddr->src = *src;
+			baddr->ty = tint;
+			bind = mkn(Oind, baddr, nil);
+			bind->src = *src;
+			bind->ty = fd->ty;
+			sumark(bind);
+			ecom(src, nto, bind);
+		}
+		pp = genrawop(src, IJMP, nil, nil, nil);
+
+		/* failure: return the whole subject, unchanged */
+		patch(p, nextinst());
+		ecom(src, retalloc(&tret2, n->left), dupn(subj));
+		genrawop(src, IRET, nil, nil, nil);
+
+		patch(pp, nextinst());
+		tfree(&tl);
+		return nto;
+	}
 	case Oref: {
 		/*
 		 * "ref T{...}" (left is Ocomposite) or a bare "ref T"

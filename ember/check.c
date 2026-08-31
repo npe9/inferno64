@@ -2912,19 +2912,79 @@ echk(Node *n)
 		}
 		n->ty = t;
 		return n->ty;
-	case Ochk:
-		t = echk(n->left);
-		/* Result[T,E]-style: for now require ref adt with tags; type is first tag payload later */
-		if(t->kind == Tref)
-			t = t->tof;
-		if(t == nil || t->kind != Tadt || t->tags == nil){
-			nerror(n, "? requires a pick adt (Result)");
+	case Ochk: {
+		/*
+		 * "x?" -- the second half of the user's own answered design
+		 * fork (the first, match dispatch, shipped in 84c3ac85):
+		 * the first tag in declaration order (Decl.tag == 0) is the
+		 * success case, unwrapped; any other tag makes ? return the
+		 * whole tagged value from the enclosing function, no new
+		 * marker syntax. No limbo convention exists to port -- limbo
+		 * has no ? operator at all (Inferno's own idiom is raising
+		 * an exception).
+		 *
+		 * subject must be Tref{Tadt-with-tags}: matches
+		 * matchcheck()'s own ref-subject handling, and is the only
+		 * shape a real tagged value can actually be constructed as
+		 * (the bare, unspecified-tag outer Tadt is never sized --
+		 * sizetype(), types.c -- so nothing can be allocated at it
+		 * directly; only a specific tag's own Tadtpick, or a ref to
+		 * the general adt, are real values). A bare already-narrowed
+		 * Tadtpick subject (matchcheck() accepts one; this
+		 * deliberately doesn't) is compile-time-known which tag it
+		 * is, so ? on it would be a degenerate, always-same-branch
+		 * case, not the realistic use -- refused with a clear error
+		 * below rather than specially handled.
+		 */
+		Type *rt, *subj;
+		Decl *tag, *fd;
+		int nfields;
+
+		rt = echk(n->left);
+		subj = rt;
+		if(subj != nil && subj->kind == Tref)
+			subj = subj->tof;
+		if(subj == nil || subj->kind != Tadt || subj->tags == nil
+		|| rt->kind != Tref){
+			nerror(n, "? requires a ref to a pick adt (e.g. ref Result), not %T", rt);
 			n->ty = terror;
 			return n->ty;
 		}
-		/* provisional: type of ? is the adt itself until elaboration */
-		n->ty = t;
+		/*
+		 * curret must be exactly this same general tagged-adt ref
+		 * type: a failing "?" returns the subject unchanged, so the
+		 * enclosing function's own declared return type has to
+		 * already be that type. No conversion is attempted --
+		 * unlike Rust's own "?" (a From conversion across differing
+		 * error types), no such mechanism exists in this language,
+		 * and inventing one is out of scope here.
+		 */
+		if(!assignable(curret, rt, n->left)){
+			nerror(n, "? used in a function returning %T, not %T", curret, rt);
+			n->ty = terror;
+			return n->ty;
+		}
+		/*
+		 * t->tags is built in declaration order (the Otpick-
+		 * processing loop above appends via last->next), so its
+		 * head is always the tag with Decl.tag == 0 -- confirmed by
+		 * construction, not searched for.
+		 */
+		tag = subj->tags;
+		nfields = 0;
+		for(fd = tag->ty->ids; fd != nil; fd = fd->next)
+			nfields++;
+		if(nfields > 1){
+			nerror(n, "? requires %T's success tag %s to have zero or one field, not %d",
+				subj, tag->sym->name, nfields);
+			n->ty = terror;
+			return n->ty;
+		}
+		fd = tag->ty->ids;	/* nil when nfields == 0 */
+		n->decl = fd;		/* stashed for com.c's Ochk case */
+		n->ty = fd == nil ? tnone : fd->ty;
 		return n->ty;
+	}
 	case Oref:
 		/*
 		 * "ref T{...}" is how a composite literal is actually
