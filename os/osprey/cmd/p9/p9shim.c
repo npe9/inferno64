@@ -202,3 +202,60 @@ openmode(ulong o)
 		return OREAD;
 	return o;
 }
+
+/* a plain bump allocator; real memory comes from the microkernel later */
+static char	arena[2*1024*1024];
+static ulong	arenap;
+void*
+malloc(ulong n)
+{
+	void *p;
+	n = (n + 15) & ~15UL;
+	if(arenap + n > sizeof arena)
+		return nil;
+	p = arena + arenap;
+	arenap += n;
+	return p;
+}
+void*	mallocz(ulong n, int clr){ void *p = malloc(n); if(p && clr) memset(p, 0, n); return p; }
+void	free(void*){}
+void	setmalloctag(void*, uintptr){}
+
+void*
+vmemchr(void *ss, int c, ulong n)
+{
+	uchar *s;
+
+	s = ss;
+	while(n != 0){ n--;
+		if(*s == c)
+			return s;
+		s++;
+	}
+	return nil;
+}
+
+/* two small kernel functions the name space needs, from proc.c/kerncore.c */
+void	todinit(void){}
+
+Pgrp*
+newpgrp(void)
+{
+	Pgrp *p;
+
+	p = malloc(sizeof(Pgrp));	/* arena malloc returns zeroed memory */
+	if(p == nil)
+		error(Enomem);
+	p->ref = 1;
+	return p;
+}
+
+void
+chandevreset(void)
+{
+	int i;
+
+	todinit();
+	for(i = 0; devtab[i] != nil; i++)
+		devtab[i]->reset();
+}
