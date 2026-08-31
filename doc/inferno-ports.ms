@@ -371,58 +371,62 @@ It does not yet reach a shell: the next crash lands at the same point
 every time \- right after
 .CW Bufio
 loads, going into
-.CW devprog
-\- but not as the same fault twice.  Twenty batched full-speed boots:
-six Undefined instruction traps, every one at the identical faulting
-address
+.CW devprog .
+Checked directly with
+.CW "grep -c 'trap type'"
+across every batched log, never more than one trap line per boot:
+two independent faults, not one fault wearing two faces.
+.PP
+The first: an Undefined instruction trap, six of twenty boots, at
+the identical address
 .CW 0x400f8db4 ,
 past the end of both
 .CW .text
 and
 .CW .data
-\- a jump into the heap, the shape of a stale or never-initialized
-function pointer, and the one part of this that looks like a fixed,
-chaseable bug rather than noise.  Five data aborts, each at a
+\- a jump into the heap.
+.CW sp ,
+.CW r0
+and
+.CW r4
+are just as deterministic, byte-identical every time.
+.CW up
+reads nil: this runs on the boot-time SVC stack,
+.CW l.s 's
+own reset-time stack, not any Proc's
+.CW kstack .
+Never seen alongside the second fault in the same boot \- a real,
+chaseable, static bug, not yet chased to an instruction.
+.PP
+The second: a data abort, five of twenty boots, a
 .I different
-address, no two alike.  The rest were still mid-panic \- one run's
-console output cut off before printing even the trap type line, a
-console-print race independent of either fault.  Under QEMU's
-gdbstub, deliberately slower and more heavily instrumented, the same
-breakpoint on the Undefined vector caught yet other faulting
-addresses across separate boots, not matching the full-speed
-.CW 0x400f8db4
-\- so whatever picks the Undefined trap's target is itself
-timing-sensitive, even though it lands on the same address unusually
-often at full speed.  That mix \- one recurring address plus several
-that never repeat, worse under a debugger \- is the other shape
-already on record in this document, the pc64
+address every time, and under gdbstub \- slower, more instrumented \-
+neither fault reproduces at its full-speed address at all.  This
+half is the shape already on record here, the pc64
 .CW markheap()
-heisenbug's signature of a fault whose type and address move between
-runs and that debugger timing itself seems to suppress.  Whether it
-is the same underlying bug reached from a second architecture, as
-the previous version of this section wrongly guessed about the
-DISWORD crash above, is not yet known and is not claimed here \-
-only that it has the same fingerprint and the same session already
-spent its cheap answers on that fingerprint once.
+heisenbug's signature.  Whether it is the same bug reached from a
+second architecture, as the previous version of this section wrongly
+guessed about the DISWORD crash above, is not claimed \- only that
+it shares the fingerprint, and this session already spent its cheap
+answers on that fingerprint once.  The rest of the twenty boots were
+still mid-panic when their run's timeout fired, a separate
+console-print race, not a third fault.
 .PP
 One theory was checked and ruled out: KSTACK exhaustion.  Both fault
 classes put
 .CW sp
-within a few hundred bytes of a stack's top \- the interpreter Proc's
-own 32k
-.CW kstack
-for the data aborts, the boot-time SVC stack (not a heap address)
-for the Undefined traps, once
-.CW sp
-was printed alongside them.  Looks like overflow until the
-arithmetic is checked: the top of a stack is where a shallow,
-freshly-entered call sits too, and doubling
+within a few hundred bytes of a stack's top \- the interpreter
+Proc's own kstack for the data aborts, the SVC stack for the
+Undefined traps.  Looks like overflow until checked: a shallow,
+freshly-entered call sits at the top too, and doubling
 .CW KSTACK
-to 64k \- one line, fully reverted \- left both the faulting
-addresses and their distance from the new top unchanged.  A real
-overflow would have moved one or the other.  Neither moved.
+32k\(->64k, one line, fully reverted, moved neither the faulting
+addresses nor
+.CW sp 's
+distance from the new top.  A real overflow would have moved one or
+the other.
 .CW sp
-stays in the standard trap printout regardless.  Not yet bracketed.
+stays in the trap printout regardless.  Not yet bracketed.
 There is no display \-
 draw, pointer, swcursor and the virtio input device are left out on
 purpose, the same
