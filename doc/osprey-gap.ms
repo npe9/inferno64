@@ -12,7 +12,7 @@ It says, component by component, what the paper asks for, what is built,
 and what is missing.  It is written to be honest about size: some gaps
 are a feature away and some are a userland away.
 .NH 1
-The three kernels this is measured across
+The four kernels this is measured across
 .IP \(bu 2
 .B pc64
 \- the full Osprey kernel: a 9front-derived Plan 9 kernel with the
@@ -30,9 +30,17 @@ Plan 9 kernel could not reach; it is reached now, from the other side.
 .IP \(bu 2
 .B xup64
 \- the microkernel running a user program whose OS personality is a
-user-space library, reaching a file server over the ring by an open/read
-protocol (6 checks).  This is the library-operating-system shape, in
-miniature.
+user-space library, reaching a file server over the ring by a minimal
+open/read protocol (10 checks).  This is the library-operating-system
+shape, in miniature.
+.IP \(bu 2
+.B p964
+\- the same microkernel running the Plan 9 file personality proper: the
+name-space machinery (chan, dev, pgrp, devroot) compiled as a user
+library, which builds a name space, mounts devices, is a 9P client of a
+server container over the ring and a 9P server of its own tree, and gives
+a program a file-descriptor interface (12 checks).  This is where the
+library operating system stops being in miniature.
 .NH 1
 Component by component
 .NH 2
@@ -95,9 +103,18 @@ outlives its connection and attributes carried as strings; the
 delegation path by which a container's opens and reads are answered by a
 server, not the kernel.
 .PP
-Missing: the library OS's own file protocol is a two-file held name
-space, not \[*p]p to a real file system; there is no user-level file
-system service (block-device or log-structured) behind it.
+Grown since: the library OS's own file access is no longer a held pair
+of files reached by an ad-hoc open/read.  On p964 it is the kernel's own
+name space (chan/dev/pgrp/devroot) as a user library, speaking real 9P
+\- Tversion, Tattach, Twalk, Topen, Tread, Twrite, Tclunk, Tstat, with
+convS2M/convM2S \- through devmnt to a file-server container across the
+ring, and answering 9P about its own tree through an exportfs.  It is
+9P2000, though, not the talk's \[*p]p: no immutable versions committed on
+close, no grouped transactions.
+.PP
+Missing: there is still no user-level file-system service (block-device
+or log-structured) behind the 9P \- the server holds a handful of files
+in memory, not a real file system.
 .NH 2
 Library OS and buddy OS \- PARTIAL
 .PP
@@ -108,10 +125,19 @@ and read, the kernel only routing them, which is the shape the paper
 draws; the buddy relationship on pc64, where what the policy layer cannot
 answer the Plan 9 kernel around it does.
 .PP
-Missing, and this is the largest gap: the library OS is minimal.  It has
-a couple of files, no name space (no bind or mount), no exec, and a
-syscall interface of four calls.  A real 9front personality \- the one
-that could run rio \- is a different order of thing, described in its own
+Closed since, and it was the largest gap: the library OS was minimal \-
+a couple of files, no name space, no mount, an ad-hoc four-call protocol.
+On p964 it now has a real Plan 9 name space (the kernel's own chan.c and
+devices as a user library), mount and union walk through cmount, real 9P
+to a server container over the ring and an exportfs back the other way,
+and a file-descriptor interface \- open, read, write, close, seek, stat
+and directory-list \- lifted from sysfile.c as a library.
+.PP
+Still missing toward a real 9front personality that could run rio: exec;
+the file operations as microkernel syscalls over the ring rather than an
+in-process library (the exokernel shape keeps them a library, but a
+process boundary would need the ring); a real file-system service behind
+the 9P; and the draw stack.  That personality is described in its own
 section below.
 .NH 2
 Checkpoint and migration \- PARTIAL
