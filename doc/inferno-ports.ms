@@ -457,8 +457,28 @@ too, then \- something else near
 .CW up==nil
 path touches
 .CW mach0
-right before this fires, real ground truth for whoever next has a
-debugger free to keep going from here.
+right before this fires.  Read further, a strong candidate:
+.CW runproc() 's
+cooperative fast path ends
+.CW "pt\ =\ proctrace;\ if(pt)\ pt(p,\ SRun,\ 0);" ,
+a real call through a real function pointer with
+.CW p
+as its first argument \- the compiled
+.CW "BL\ ,0(R6)"
+matches the fault's read shape exactly, and
+.CW proctrace
+should be nil on a board that never turns on
+.CW #p
+tracing, which is what the
+.CW "if(pt)"
+guard is there for.  Not confirmed live \- this round's gdbstub
+connections would not hold still long enough to read
+.CW R6
+at that exact instruction, a QEMU/host timing problem, not a script
+one \- so whether
+.CW proctrace
+really does read non-nil garbage there, or this is one more
+plausible-looking dead end, is the next thing to check.
 .PP
 The second: a data abort, five of twenty boots, a
 .I different
