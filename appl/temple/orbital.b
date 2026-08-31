@@ -256,46 +256,60 @@ redraw()
 	im.flush(Draw->Flushnow);
 }
 
+# draworbits keeps the most massive body (the "planet") pinned at the
+# centre of view and lets the SCALE do all the work as the orbit grows
+# or shrinks - not an independent x/y bounding box mapped straight onto
+# the view rect, which was the bug: that box's own centre drifts as
+# the trail's extent changes even though the planet's own position
+# hasn't moved, so the planet visibly wandered around the screen
+# instead of staying put while the view zoomed. A single uniform scale
+# (not separate x and y ranges) also keeps a circular orbit looking
+# circular instead of stretched to fill whichever axis has more room.
+# Same fix as danby-aerobraking(1)'s own draworbits(), which this file
+# is the likely origin of (or vice versa) - kept independent per file,
+# matching how this tree already treats aerobraking as deliberately
+# standalone rather than sharing code with this harness.
 draworbits(im: ref Image, view: Rect)
 {
-	xmin := state[0];
-	xmax := state[0];
-	ymin := state[1];
-	ymax := state[1];
+	focus := 0;
+	for(i := 1; i < len model.mass; i++)
+		if(model.mass[i] > model.mass[focus])
+			focus = i;
+
+	# extent: the largest distance any trail point sits from the
+	# FOCUS body's own position at that same instant - not from the
+	# focus body's current position, so a system whose "planet" isn't
+	# perfectly fixed (unlike aerobraking's own) still reads correctly.
+	extent := 0.1;
 	for(k := 0; k < trailcount; k++){
 		index := trailnext-trailcount+k;
 		if(index < 0)
 			index += Ntrail;
 		positions := trail[index];
-		for(i := 0; i < len model.mass; i++){
-			x := positions[2*i];
-			y := positions[2*i+1];
-			if(x < xmin)
-				xmin = x;
-			if(x > xmax)
-				xmax = x;
-			if(y < ymin)
-				ymin = y;
-			if(y > ymax)
-				ymax = y;
+		fx := positions[2*focus];
+		fy := positions[2*focus+1];
+		for(i = 0; i < len model.mass; i++){
+			dx := positions[2*i]-fx;
+			if(dx < 0.0)
+				dx = -dx;
+			if(dx > extent)
+				extent = dx;
+			dy := positions[2*i+1]-fy;
+			if(dy < 0.0)
+				dy = -dy;
+			if(dy > extent)
+				extent = dy;
 		}
 	}
-	if(xmax-xmin < 0.2){
-		xmin -= 0.1;
-		xmax += 0.1;
-	}
-	if(ymax-ymin < 0.2){
-		ymin -= 0.1;
-		ymax += 0.1;
-	}
-	pad := 0.12;
-	dx := xmax-xmin;
-	dy := ymax-ymin;
-	xmin -= pad*dx;
-	xmax += pad*dx;
-	ymin -= pad*dy;
-	ymax += pad*dy;
-	for(i := 0; i < len model.mass; i++){
+	extent *= 1.24; # same total padding the old x/y-range version used
+
+	half := view.dx();
+	if(view.dy() < half)
+		half = view.dy();
+	scale := real(half)/(2.0*extent);
+	centre := Point((view.min.x+view.max.x)/2,(view.min.y+view.max.y)/2);
+
+	for(i = 0; i < len model.mass; i++){
 		haveprevious := 0;
 		previous := Point(0,0);
 		for(k = 0; k < trailcount; k++){
@@ -303,14 +317,15 @@ draworbits(im: ref Image, view: Rect)
 			if(index < 0)
 				index += Ntrail;
 			positions := trail[index];
-			point := project(view,positions[2*i],positions[2*i+1],
-				xmin,xmax,ymin,ymax);
+			point := project(centre,scale,positions[2*i],positions[2*i+1],
+				positions[2*focus],positions[2*focus+1]);
 			if(haveprevious)
 				im.line(previous,point,0,0,1,bodycolour[i%len bodycolour],Point(0,0));
 			previous = point;
 			haveprevious = 1;
 		}
-		point := project(view,state[4*i],state[4*i+1],xmin,xmax,ymin,ymax);
+		point := project(centre,scale,state[4*i],state[4*i+1],
+			state[4*focus],state[4*focus+1]);
 		radius := 4;
 		if(model.mass[i] > 0.1)
 			radius = 7;
@@ -319,10 +334,13 @@ draworbits(im: ref Image, view: Rect)
 	}
 }
 
-project(view: Rect, x, y, xmin, xmax, ymin, ymax: real): Point
+# (x,y) relative to the focus body's own position (cx,cy) at the SAME
+# instant, scaled uniformly and offset from view centre - so (cx,cy)
+# itself always lands exactly on centre, every frame, regardless of
+# scale: the focus body never moves on screen, only the scale changes.
+project(centre: Point, scale: real, x, y, cx, cy: real): Point
 {
-	return (view.min.x+int((x-xmin)/(xmax-xmin)*real(view.dx())),
-		view.max.y-int((y-ymin)/(ymax-ymin)*real(view.dy())));
+	return centre.add((int((x-cx)*scale), -int((y-cy)*scale)));
 }
 
 drawparameter(im: ref Image, index: int, name: string,
