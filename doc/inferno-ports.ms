@@ -403,7 +403,26 @@ is the same underlying bug reached from a second architecture, as
 the previous version of this section wrongly guessed about the
 DISWORD crash above, is not yet known and is not claimed here \-
 only that it has the same fingerprint and the same session already
-spent its cheap answers on that fingerprint once.  Not yet bracketed.
+spent its cheap answers on that fingerprint once.
+.PP
+One theory was checked and ruled out: KSTACK exhaustion.  Both fault
+classes put
+.CW sp
+within a few hundred bytes of a stack's top \- the interpreter Proc's
+own 32k
+.CW kstack
+for the data aborts, the boot-time SVC stack (not a heap address)
+for the Undefined traps, once
+.CW sp
+was printed alongside them.  Looks like overflow until the
+arithmetic is checked: the top of a stack is where a shallow,
+freshly-entered call sits too, and doubling
+.CW KSTACK
+to 64k \- one line, fully reverted \- left both the faulting
+addresses and their distance from the new top unchanged.  A real
+overflow would have moved one or the other.  Neither moved.
+.CW sp
+stays in the standard trap printout regardless.  Not yet bracketed.
 There is no display \-
 draw, pointer, swcursor and the virtio input device are left out on
 purpose, the same

@@ -139,6 +139,18 @@ trap(Ureg *ur)
 			ur->type, ur->psr, ur->pc);
 		print(" r0 %#8.8ux r14 %#8.8ux\n", ur->r0, ur->r14);
 		print(" r1 %#8.8ux r4 %#8.8ux r5 %#8.8ux\n", ur->r1, ur->r4, ur->r5);
+		/*
+		 * sp and the current kstack bounds -- ruled out KSTACK
+		 * overflow as the cause of the post-Bufio fault (sp sits a
+		 * few hundred bytes below the top of a 32k, then a 64k,
+		 * stack either way; doubling KSTACK changed nothing), kept
+		 * because a fault whose pc lands past .text and .data wants
+		 * sp on the record regardless.  See doc/inferno-ports.ms.
+		 */
+		print(" sp %#8.8ux", ur->sp);
+		if(up != nil)
+			print(" kstack %#p..%#p", up->kstack, (uchar*)up->kstack+KSTACK);
+		print("\n");
 		if(up != nil)
 			print(" up %#p %s\n", up, up->text);
 		dumpstack();
