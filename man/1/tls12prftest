@@ -1,0 +1,50 @@
+.TH TLS12PRFTEST 1
+.SH NAME
+tls12prftest \- test tls12->prf()
+.SH SYNOPSIS
+.B tls12prftest
+.SH DESCRIPTION
+.B Tls12prftest
+checks
+.BR prf() ,
+TLS 1.2's own PRF construction (RFC 5246 \(sc5;
+.IR module/tls12.m ,
+.IR appl/lib/crypt/tls12.b ),
+against four vectors. RFC 5246 gives the algorithm itself but no
+worked examples, so these were generated from a from-scratch Python
+reimplementation of that exact construction (real
+.B hmac
+/
+.B hashlib
+calls, not fabricated output, not recalled from memory) \(em the same
+independent-oracle approach
+.IR hmacsha256test (1)
+used for the primitive this is built on.
+.PP
+Cases cover a short single-HMAC-block output, a 48-byte output (the
+length TLS's own \(lqmaster secret\(rq derivation uses, forcing two
+blocks), a 100-byte output (forcing four, so the block-boundary and
+final-block truncation logic is exercised), and the degenerate
+empty-secret case.
+.PP
+This is primitive 2 of the SSL modernization plan (see
+.IR doc/ssl-modernization-plan.md
+in the source tree), built directly on
+.BR hmac_sha256() ,
+primitive 1.
+.PP
+Exits with
+.B PASS
+if every vector matched, or
+.B FAIL
+naming which case, the expected bytes, and the bytes actually
+produced.
+.SH SOURCE
+.B /appl/cmd/tls12prftest.b
+.SH SEE ALSO
+.IR hmacsha256test (1)
+.SH BUGS
+Four vectors from one independent reimplementation, not cross-checked
+against a second, unrelated TLS library's own intermediate PRF output
+(no such published vectors were found for TLS 1.2's PRF specifically,
+unlike HMAC-SHA256 itself, which RFC 4231 already publishes).

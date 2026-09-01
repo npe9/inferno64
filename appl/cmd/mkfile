@@ -214,6 +214,7 @@ TARG=\
 	timestamp.dis\
 	tkcmd.dis\
 	tl.dis\
+	tls12prftest.dis\
 	touch.dis\
 	touchcal.dis\
 	tokenize.dis\
@@ -276,6 +277,7 @@ SYSMODULES=\
 	sys.m\
 	tk.m\
 	tkclient.m\
+	tls12.m\
 	url.m\
 	webget.m\
 	workdir.m\
