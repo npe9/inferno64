@@ -2273,7 +2273,7 @@ echk(Node *n)
 			isref = bt != nil && bt->kind == Tref;
 			if(isref)
 				t = bt->tof;
-			if(t != nil && (t->kind == Tadt || t->kind == Tadtpick)){
+			if(t != nil && (t->kind == Tadt || t->kind == Tadtpick || t->kind == Ttuple)){
 				Decl *id, *chains[2];
 				int ci;
 
@@ -2288,9 +2288,24 @@ echk(Node *n)
 				 * same base by sizetype() (types.c), so the address
 				 * arithmetic below needs no changes at all once the
 				 * matching field is found, only the search needs to
-				 * cover both chains. a plain Tadt has no second
-				 * chain (chains[1] stays nil), degrading to exactly
-				 * the original single-chain search.
+				 * cover both chains. a plain Tadt or Ttuple has no
+				 * second chain (chains[1] stays nil, since the ?:
+				 * below only fires for Tadtpick), degrading to
+				 * exactly the original single-chain search -- a
+				 * Ttuple's own fields ("t0", "t1", ... -- both
+				 * stype()'s Ottuple case, for a declared tuple-typed
+				 * field, and echk()'s Otuple case, for a literal's
+				 * own inferred type, auto-generate these; a tuple
+				 * TYPE has no named-component syntax anywhere in this
+				 * grammar at all, parse.c's own '(' type-parser only
+				 * ever reads a bare comma-separated type list, so
+				 * "t0"/"t1"/... are the only names that can ever
+				 * exist) live in that one chain (t->ids) the identical
+				 * way an ordinary struct's fields do, so this needs no
+				 * further change: "container.p.t0" (dot straight
+				 * onto a Ttuple value, as opposed to the destructuring
+				 * "x, s := container.p" that already worked) now
+				 * resolves through the same offset arithmetic below.
 				 */
 				chains[0] = t->ids;
 				chains[1] = t->kind == Tadtpick ? t->tof->ids : nil;
