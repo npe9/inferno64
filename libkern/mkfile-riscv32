@@ -1,0 +1,14 @@
+#
+#	riscv32-specific files
+#
+# Every other architecture here hand-writes memset/memmove/strchr in
+# native assembly; za has none yet, so these use the generic portable
+# C fallbacks (memset.c/memmove.c/strchr.c) instead of an riscv32
+# version of the assembly ones -- correct, just not the fastest
+# instruction sequence QEMU's cores could run.
+TARGFILES=\
+	vlop-riscv32.$O\
+	vlrt-riscv32.$O\
+	memset.$O\
+	memmove.$O\
+	strchr.$O\

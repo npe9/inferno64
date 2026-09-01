@@ -48,9 +48,14 @@
   plan and what is done; keep it current as each piece lands.
 - Inferno has a second standing goal, independent of Osprey: pc64 (amd64),
   riscv64, riscv32, arm64 and armv7 (arm32) all booting to a shell with no
-  obvious bugs.  riscv32 and arm64 are not yet targets in this tree at
-  all -- building them, not just fixing an existing one, is part of the
-  goal.  Do not stop, and do not ask whether to continue, until all five
+  obvious bugs.  riscv32 now has a board (os/inferno/virt32) and a real
+  compiler wired in, but its zc/za/zl toolchain has no floating-point
+  register support at all -- not slow, not unoptimized, genuinely
+  missing -- which blocks the final kernel link because libinterp's Dis
+  real-number opcode handlers need it.  arm64 still has no board, only a
+  compiler.  Building both the rest of the way, not just fixing an
+  existing one, is part of the goal.  Do not stop, and do not ask
+  whether to continue, until all five
   boot clean under QEMU with nothing left that looks like a real bug
   rather than a documented, understood gap.  `doc/inferno-ports.ms` is
   the record of what each architecture does and does not do yet, the

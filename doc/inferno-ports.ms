@@ -16138,3 +16138,226 @@ target under
 .CW os/inferno/
 for either \- is not done; this closed the compiler gap, which is
 what stood between "nothing" and a board to bring up.
+.PP
+riscv32 board bring-up went a long way past that.
+.CW os/inferno/virt32
+is a new board: same QEMU virt machine and memory map as
+.CW os/inferno/virt
+(riscv64), checked separately against this host's own
+.CW qemu-system-riscv32
+.CW -M\ virt\ -machine\ dumpdtb=...
+rather than assumed, plus
+.CW mkfiles/mkfile-Inferno-riscv32
+and
+.CW mkfiles/mkfile-os-riscv32
+(this host's
+.CW SYSTARG
+resolves to
+.CW os ,
+not
+.CW Inferno ,
+so the second file \- easy to miss, and missed once \- is the one
+that actually matters when cross-building from macOS).  A correction
+along the way: this document previously said
+.CW kc/kl
+was riscv64 under a recycled sparc letter.  Checked against
+.CW mkfiles/mkfile-Inferno-*
+'s own
+.CW O=
+lines instead of assumed, that was backwards \-
+.CW k
+is genuinely sparc here (no sparc board exists, it is orphaned), and
+riscv64's real, live kernel compiler is
+.CW jc/jl
+under thechar
+.CW j .
+.PP
+za has real, load-bearing gaps beyond the compiler-only pass above,
+each found by building, not guessed: no
+.CW MOV/CSR()
+operand form at all (only a bare-immediate
+.CW LSYS
+class, and
+.CW zl 's
+optab has zero entries for any
+.CW CSRRW/CSRRS/CSRRC
+shape) \- hand-encoded as raw
+.CW WORD
+values in
+.CW virt32/l.s ,
+the same technique that file's own
+.CW WFI
+already used; no automatic large-immediate or large-stack-offset
+splitting the way
+.CW ja
+does, so a
+.CW TRAPPAD
+of 2048 (riscv64's value) links with "illegal combination" on this
+board and had to shrink to 256, and a bit flag of exactly 2048
+(mie.MEIE) has to be built in a register rather than as a single
+.CW OR
+immediate; its own register convention
+.CW ( REGSB=26,\ REGSP=27,\ REGLINK=31 )
+is not
+.CW jc 's
+.CW "(REGSB=3, REGSP=2, REGLINK=1),"
+so
+.CW virt32/l.s
+is its own file, not a search-and-replace of
+.CW virt/l.s .
+One real kernel bug found in translation, not carried over: the
+riscv
+.CW mcause
+interrupt bit is the top bit of XLEN \- bit 63 on riscv64, bit 31
+here \- and
+.CW virt/trap.c 's
+.CW (vlong)cause<0
+test zero-extends a 32 bit
+.CW uintptr
+into a 64 bit signed value, so it can never see that bit set on this
+board; fixed to test bit 31 directly in
+.CW virt32/trap.c .
+.PP
+Past
+.CW l.s ,
+the whole kernel and every library it links \- libinterp, libkeyring,
+libsec, libmp, libkern \- compile clean with zc and archive with iar.
+Two architecture-support files neither za's port nor any board needed
+before now had to be written from nothing:
+.CW libkern/vlop-riscv32.s
+(the
+.CW _mulv
+64x64->64 multiply every other
+.CW vlop-*.s
+hand-writes in native instructions, here using RV32's
+.CW MUL/MULHU
+in place of MIPS's
+.CW MULU ,
+verified assembling clean) and
+.CW libkern/vlrt-riscv32.c
+(portable C, an unmodified copy of
+.CW vlrt-mips.c \-
+this file has no architecture dependency on any port that has one).
+.CW libinterp/comp-riscv32.c
+and
+.CW libinterp/das-riscv32.c
+are the same "no JIT yet, interpret everything" and "no disassembler
+yet" stubs
+.CW comp-riscv64.c
+and
+.CW das-riscv64.c
+already carry for jc.
+.PP
+The final kernel link does not succeed, and the reason is now exact,
+not vague:
+.CW za/zc
+has no floating-point register file at all.  Checked directly \-
+.CW utils/zc/z.out.h
+defines
+.CW NREG=32
+integer registers and not one
+.CW F
+register, and
+.CW utils/za/lex.c
+has no
+.CW F0..F31
+tokens \- and confirmed the hard way, by raising
+.CW zl 's
+error cap from 10 to 1000 (a permanent change;
+.CW utils/zl/list.c )
+and reading every failure rather than guessing at the shape of the
+problem from the first ten.  The complete list is eleven functions,
+every one of them a floating-point
+.ul
+conversion,
+never arithmetic: seven in
+.CW libinterp/xec.c
+(the Dis interpreter's
+.CW real
+opcode handlers \-
+.CW cvtrf/cvtfr/cvtfl/cvtfw/cvtfx/iexpf/canontod )
+and four in
+.CW libkern/vlrt-riscv32.c
+itself
+.CW ( _f2v/_v2d/_v2f ,
+plus
+.CW charstod 's
+call to
+.CW NaN() ,
+which was left unimplemented rather than added \- a
+.CW double
+-returning function hits the identical wall immediately, so writing
+.CW nan-riscv32.c
+would not have closed anything).  Limbo's
+.CW real
+type is a core language type, and
+.CW libinterp.a
+is linked into every board that uses this toolchain, so this is not
+a
+.CW virt32 -specific
+gap: no board built with za/zc can link until
+.CW zl
+can encode
+.CW MOVF/MOVD/MOVFD/MOVDF/MOVUD .
+Fixing it means adding an
+.CW F
+register class to
+.CW zc 's
+codegen and
+.CW zl 's
+encoder \- real compiler engineering, not a missing file \- and is
+appropriately scoped as its own piece of work, not attempted at the
+tail of this one.
+.PP
+One smaller, independent gap surfaced by the same
+.CW zl
+run and left open alongside it:
+.CW devcons.c 's
+.CW pprint()
+fails
+.CW "MOVW\ $fmt+0(FP),\ R6"
+with "illegal combination" \- a large-offset frame address
+.CW ( C_LACON )
+has no
+.CW MOVW\ ->\ C_REG
+optab entry, only the small-offset
+.CW ( C_SACON )
+form does
+.CW ( utils/zl/optab.c ,
+case 11, the
+.CW addi
+address form \- what is missing is that same computation's
+.CW lui+addi
+two-instruction version for when the offset does not fit).  Not
+attempted: fixing it alone would not reach a link, since the float
+gap blocks every board regardless.
+.PP
+Also true and worth carrying forward, not yet acted on because it
+does not matter until modules actually load, past the current
+blocker:
+.CW os/inferno/port/portmkfile 's
+.CW rc-lib%.a / sh-lib%.a
+rules \- shared by every board \- do not pass
+.CW DISWORD
+through to the recursive library build, so
+.CW libinterp
+built for this board with
+.CW -Iw4
+from the board's own
+.CW CFLAGS
+but
+.CW -Iw8
+in the recursive
+.CW mk
+invocation for
+.CW libinterp
+itself.  This is the same bug class as armv7's
+.CW /dis
+vs
+.CW /dis32
+root cause earlier in this document, not yet confirmed to bite the
+same way \- it did not block the build reached so far, since nothing
+has loaded a
+.CW .dis
+module yet \- and should be checked, not assumed fixed or assumed
+broken, once the float gap is closed and a module actually loads.

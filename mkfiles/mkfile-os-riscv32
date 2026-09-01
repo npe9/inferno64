@@ -1,0 +1,26 @@
+TARGMODEL=	Inferno
+TARGSHTYPE=	sh
+CPUS=		riscv32
+OBJDIR=		Inferno/riscv32		#force everything to point to inferno directory
+
+O=		z
+OS=		z
+
+AR=		iar
+ARFLAGS=	vu
+ARPREFIX=
+
+AS=		za
+ASFLAGS=
+
+CC=		zc
+CFLAGS=		-wFV -I$ROOT/Inferno/riscv32/include -I$ROOT/include
+ANSICPP= -p
+
+LD=		zl
+LDFLAGS=
+
+SYSLIBS=	#-lc
+
+YACC=		iyacc
+YFLAGS=		-d

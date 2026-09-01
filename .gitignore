@@ -364,3 +364,4 @@ os/pc64/words.s
 os/pc64/forth.h
 .aider*
 *.j
+*.z

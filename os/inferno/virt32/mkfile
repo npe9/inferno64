@@ -1,0 +1,101 @@
+<../../../mkconfig
+
+#Configurable parameters
+
+CONF=virt32
+CONFLIST=virt32
+
+SYSTARG=$OSTARG
+OBJTYPE=riscv32
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+IPDIR=../ip
+INITDIR=../init
+PORTDIR=../port
+
+#end configurable parameters
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+# RV32 is a 32 bit core, so a Dis word is four bytes -- same reasoning
+# as os/inferno/armv7/mkfile's own note, mkfile-Inferno-riscv32 doesn't
+# set this itself.
+DISWORD=4
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+# QEMU -M virt (riscv32); verified against this host's own
+# qemu-system-riscv32 via -machine dumpdtb -- same memory map as
+# os/inferno/virt's riscv64 board (RAM, UART, CLINT, PLIC all at the
+# same addresses regardless of XLEN).  See virt32/mem.h.
+KTZERO=0x80000000
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$IP\
+	$DEVS\
+	$ETHERS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+
+CFLAGS=-wFVT -I. -I../port -I../ip -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	# zl has no -H7 (that's 5l/jl's 32-bit-ELF case number); zl's own
+	# case 5 computes the identical 32-bit ELF header
+	# (rnd(52+3*32,16), same Ehdr32+3*Phdr32 formula 5l's case 7 uses)
+	# under a different case number -- utils/zl/obj.c has no case 7 at
+	# all, so -H5 is the equivalent flag here, not a different format.
+	$LD -o $target -H5 -f -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	cp $target $INSTALLDIR/$target
+
+<../port/portmkfile
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+devether.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+netif.$O:	../port/netif.h
+ethervirtiommio.$O:	../port/netif.h ../port/etherif.h
+$IP devip.$O:	$IPDIR/ip.h
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+# qemu-system-riscv32 -M virt -m 256 -nographic -bios none -kernel ivirt32
