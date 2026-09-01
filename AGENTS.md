@@ -46,6 +46,19 @@
   kernel, and say plainly in the man page and the commit what is real and
   what is only demonstrated.  `doc/osprey-progress.ms` holds the ordered
   plan and what is done; keep it current as each piece lands.
+- Inferno has a second standing goal, independent of Osprey: pc64 (amd64),
+  riscv64, riscv32, arm64 and armv7 (arm32) all booting to a shell with no
+  obvious bugs.  riscv32 and arm64 are not yet targets in this tree at
+  all -- building them, not just fixing an existing one, is part of the
+  goal.  Do not stop, and do not ask whether to continue, until all five
+  boot clean under QEMU with nothing left that looks like a real bug
+  rather than a documented, understood gap.  `doc/inferno-ports.ms` is
+  the record of what each architecture does and does not do yet, the
+  bugs found and fixed, and what is still open; keep it current as each
+  piece lands, the same discipline `doc/osprey-progress.ms` holds Osprey
+  to.  Decide, build it, test it against a booted kernel, and say plainly
+  in that document and in the commit what is real and what is only
+  demonstrated.
 - Write every path so it can be plumbed. A path in a document is absolute from
   the tree root (`os/osprey/port/devosprey.c`, `utils/cc/pgen.c`). A path in a
   source comment is either that, or relative to the file's own directory the
