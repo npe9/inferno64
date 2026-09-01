@@ -8,6 +8,10 @@
 
 extern void p9init(void);
 extern void exits(char*);
+void p9server(char *arg);
+void p9paircli(void);
+void p9server(char *arg);
+void p9setup(void);
 
 /*
  * Bring up a Plan 9 name space as user code and walk it: attach the root
@@ -17,6 +21,29 @@ extern void exits(char*);
  * of attach, walk, open, read, cmount and the union walk run through
  * chan.c and real devices, in a user process on the microkernel.
  */
+/*
+ * Bring up the name space every role shares: attach the root device, and
+ * give the process the environment and file-descriptor groups the devices
+ * and the fd layer need.
+ */
+void
+p9setup(void)
+{
+	p9init();
+	chandevreset();
+	up->pgrp = newpgrp();
+	up->egrp = smalloc(sizeof(Egrp));
+	up->egrp->ref = 1;
+	up->fgrp = smalloc(sizeof(Fgrp));
+	up->fgrp->ref = 1;
+	up->slash = namec("#/", Atodir, 0, 0);
+	pathclose(up->slash->path);
+	up->slash->path = newpath("/");
+	up->dot = cclone(up->slash);
+	chandevinit();
+	print("p9: name space up, root attached\n");
+}
+
 void
 p9main(void)
 {
@@ -25,19 +52,11 @@ p9main(void)
 	long n;
 	int mnttype;
 
-	p9init();
 	if(waserror()){
 		print("p9: error: %s\n", up->errstr);
 		exits("error");
 	}
-	chandevreset();
-	up->pgrp = newpgrp();
-	up->slash = namec("#/", Atodir, 0, 0);
-	pathclose(up->slash->path);
-	up->slash->path = newpath("/");
-	up->dot = cclone(up->slash);
-	chandevinit();
-	print("p9: name space up, root attached\n");
+	p9setup();
 
 	c = namec("/", Aopen, OREAD, 0);
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
@@ -52,11 +71,6 @@ p9main(void)
 	 * which the union walk must carry from the root into the environment
 	 * device - and read the value back.
 	 */
-	up->egrp = smalloc(sizeof(Egrp));
-	up->egrp->ref = 1;
-	up->fgrp = smalloc(sizeof(Fgrp));
-	up->fgrp->ref = 1;
-
 	c = namec("#e/greeting", Acreate, OWRITE, 0666);
 	devtab[c->type]->write(c, "hello osprey", 12, 0);
 	cclose(c);
@@ -410,9 +424,80 @@ p9main(void)
 	exits(nil);
 }
 
+/*
+ * The buddy's client: mount the peer personality's exported name space
+ * over the ring and read its root - two library operating systems, one
+ * naming the other's files by 9P, the kernel only routing.
+ */
+void
+p9paircli(void)
+{
+	Chan *tc, *rc;
+	uchar buf[2048];
+	int fd, nent, m;
+	long dn;
+	uchar *p, *e;
+	Dir dir;
+	char names[256];
+
+	if(waserror()){
+		print("p9: pair-client error: %s\n", up->errstr);
+		exits("error");
+	}
+	p9setup();
+	print("p9: pair-client: mounting the buddy personality over the ring\n");
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	rc = devtab[rc->type]->open(rc, OREAD);
+	fd = newfd(rc, OREAD);
+	nent = 0;
+	while((dn = p9read(fd, buf, sizeof buf)) > 0){
+		p = buf;
+		e = buf + dn;
+		while(p < e){
+			m = convM2D(p, (uint)(e - p), &dir, names);
+			if(m <= 0)
+				break;
+			nent++;
+			p += m;
+		}
+	}
+	print("p9: pair-client: read %d entries from the buddy's exported root over the ring\n", nent);
+	p9close(fd);
+	poperror();
+}
+
+extern void p9serveloop(char *arg);	/* p9pairsrv.c: the ring service loop */
+
+/*
+ * The buddy server: bring up this personality's name space, then answer
+ * 9P about it for whoever delegates to this container over the ring.
+ */
+void
+p9server(char *arg)
+{
+	if(waserror()){
+		print("p9: buddy-server error: %s\n", up->errstr);
+		exits("error");
+	}
+	p9setup();
+	print("p9: buddy server: name space up, answering 9P over the ring\n");
+	p9serveloop(arg);
+	poperror();
+}
+
 void
 startboot(char *argv0, char **argv)
 {
-	USED(argv0); USED(argv);
+	if(argv0 != nil && argv0[0] == 's'){
+		p9server(argv0);	/* the buddy: a 9P server of this name space over the ring */
+		exits(nil);
+	}
+	if(argv0 != nil && argv0[0] == 'c'){
+		p9paircli();		/* the buddy's client: mount it and read its files */
+		exits(nil);
+	}
+	USED(argv);
 	p9main();
 }

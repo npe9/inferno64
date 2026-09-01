@@ -271,3 +271,11 @@ Dev expdevtab = {
 	devremove,
 	devwstat,
 };
+
+/* plain-typed entry so the user-header ring loop (p9pairsrv.c) can drive
+ * the exportfs without the two header worlds meeting */
+long
+p9srv_serve(uchar *msg, long n, uchar *rbuf, long rmax)
+{
+	return p9srv(msg, n, rbuf, rmax);
+}
