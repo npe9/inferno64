@@ -2417,11 +2417,14 @@ crosses the ring.  The server
 .CW ( p9pairsrv.c )
 brings up its own name space, then answers 9P about it \- the exportfs
 over the ring rather than the loopback \- for the client, which mounts it
-and reads its exported root.  Two library operating systems, each its own
-container on the microkernel, name each other's files by message passing,
-the kernel only routing them.  This is the paper's own picture, no longer
-a buddy the Plan 9 kernel answers for nor a loopback within one task, but
-a second library OS across a real container boundary.  It is checked by
+and reads its exported root.  One library operating system names another's
+files by message passing, the kernel only routing them: the client's
+buddy is a second library OS in a container of its own, not the Plan 9
+kernel answering for it as on pc64, nor a loopback within one task.  The
+relationship is the delegation the plan calls a buddy \- the client
+delegates to the server what its own name space does not hold \- and it is
+one-directional here: the client mounts the server, not the reverse.  It
+is checked by
 .CW /scripts/osprey-check-p9pair.py .
 The one constraint it obeys is the reason it is two containers and not
 one: a container has a single server it delegates to, and its request
