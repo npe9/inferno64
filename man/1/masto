@@ -85,9 +85,7 @@ Read-only, one timeline, no abstraction shared with
 comment for why). No pagination (a fixed 30 statuses), no posting, no
 notifications, no boosts or favourites shown separately from the
 statuses that carry them. The HTML stripper is a linear tag scan, not
-a real parser: a literal
+a real parser, though it does track quoted attribute values so a
+literal
 .B >
-inside a quoted attribute value would end the tag early and leak the
-rest of the markup into the output \(em not seen in practice, since
-Mastodon's own renderer HTML-escapes such characters in attributes,
-but not structurally prevented here either.
+inside one does not end the tag early.

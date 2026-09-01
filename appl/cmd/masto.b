@@ -210,29 +210,50 @@ detag(s: string): string
 	out := "";
 	tag := "";
 	intag := 0;
+	inquote := 0;	# 0, or the quote character currently open
 	for(i := 0; i < len s; i++){
 		c := s[i];
+		if(intag){
+			if(inquote != 0){
+				# a '>' inside a quoted attribute value (e.g. a
+				# title="a > b") does not end the tag - without this,
+				# it would end the tag early and leak the rest of the
+				# markup into the output as plain text (this tree's
+				# own man page named the gap; closing it here rather
+				# than leaving it as a documented limitation).
+				if(c == inquote)
+					inquote = 0;
+				tag += sys->sprint("%c", c);
+				continue;
+			}
+			if(c == '"' || c == '\''){
+				inquote = c;
+				tag += sys->sprint("%c", c);
+				continue;
+			}
+			if(c == '>'){
+				intag = 0;
+				# <br> and </p> are the two tags Mastodon's own
+				# content actually uses to separate lines/paragraphs -
+				# stripping them with no replacement glued adjacent
+				# words together (found by tracing this by hand, not
+				# by a failing run: "line1<br>line2" detagged straight
+				# to "line1line2").
+				if(isbreak(tag))
+					out += "\n";
+				tag = "";
+				continue;
+			}
+			tag += sys->sprint("%c", c);
+			continue;
+		}
 		if(c == '<'){
 			intag = 1;
 			tag = "";
+			inquote = 0;
 			continue;
 		}
-		if(c == '>'){
-			intag = 0;
-			# <br> and </p> are the two tags Mastodon's own content
-			# actually uses to separate lines/paragraphs - stripping
-			# them with no replacement glued adjacent words together
-			# (found by tracing this by hand, not by a failing run:
-			# "line1<br>line2" detagged straight to "line1line2").
-			if(isbreak(tag))
-				out += "\n";
-			tag = "";
-			continue;
-		}
-		if(intag)
-			tag += sys->sprint("%c", c);
-		else
-			out += sys->sprint("%c", c);
+		out += sys->sprint("%c", c);
 	}
 	out = unentity(out);
 	return trim(out);
@@ -379,9 +400,25 @@ curl(args: list of string): (string, string)
 			errout += string rb[0:rn];
 		}
 	}
+	# curl's own exit status (see bsky.b's curl() for why this is
+	# checked first, not just errout: a curl-level failure can leave
+	# both out and errout empty, which would otherwise silently come
+	# back as success with an empty body).
 	if(wfd != nil){
 		sb := array[1024] of byte;
-		sys->read(wfd, sb, len sb);
+		wn := sys->read(wfd, sb, len sb);
+		if(wn > 0){
+			flds := str->unquoted(string sb[0:wn]);
+			if(len flds >= 5){
+				waitstatus := hd tl tl tl tl flds;
+				if(waitstatus != nil){
+					msg := "curl: "+waitstatus;
+					if(errout != nil)
+						msg += ": "+errout;
+					return (nil, msg);
+				}
+			}
+		}
 	}
 	if(out == nil && errout != nil)
 		return (nil, errout);
@@ -410,6 +447,17 @@ htmltest(): string
 		("a &lt;tag&gt; here", "a <tag> here"),
 		("a & b", "a & b"),
 		("trailing &amp", "trailing &amp"),
+		("&amp;&amp;", "&&"),
+		# unterminated real entity name is longer than entityat()'s own
+		# 9-char cap - traced by hand: the cap stops the scan before it
+		# ever reaches the real ";", so this falls through to literal
+		# passthrough rather than actually finding and rejecting the
+		# terminator; the OUTPUT is the same (unrecognized -> literal)
+		# either way, but worth pinning down since it's not obviously
+		# the intended path.
+		("&unknownentity;text", "&unknownentity;text"),
+		("a<br><br>b", "a\n\nb"),
+		("<a title=\"a > b\" href=\"http://x\">link</a> text", "link text"),
 	};
 	for(i := 0; i < len cases; i++){
 		(input, want) := cases[i];

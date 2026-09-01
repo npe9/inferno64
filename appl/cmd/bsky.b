@@ -330,9 +330,28 @@ curl(args: list of string, body: string): (string, string)
 			errout += string rb[0:rn];
 		}
 	}
+	# curl's own exit status (via #C's "wait" line: pid user sys real
+	# status - the 5th field is empty on a clean exit, matching
+	# appl/cmd/os.b's own use of this same device). Checked first: a
+	# curl-level failure (bad host, connection refused, ...) can leave
+	# BOTH out and errout empty, which without this would silently
+	# come back as success with an empty body, rather than the real
+	# failure it is.
 	if(wfd != nil){
 		sb := array[1024] of byte;
-		sys->read(wfd, sb, len sb);
+		wn := sys->read(wfd, sb, len sb);
+		if(wn > 0){
+			flds := str->unquoted(string sb[0:wn]);
+			if(len flds >= 5){
+				waitstatus := hd tl tl tl tl flds;
+				if(waitstatus != nil){
+					msg := "curl: "+waitstatus;
+					if(errout != nil)
+						msg += ": "+errout;
+					return (nil, msg);
+				}
+			}
+		}
 	}
 	if(out == nil && errout != nil)
 		return (nil, errout);
