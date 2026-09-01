@@ -2,13 +2,16 @@
 
 ## Status (most recent first)
 
-**In progress.** `module/keyring.m`/`libinterp/keyring.c`/`libsec/hmac.c`
-gained `hmac_sha256` (primitive 1 of the staging list below), verified
-against 4 real vectors (`hmacsha256test(1)`, RFC 4231 case 1 + 3 generated
-from the host's own `openssl(1)` as an independent oracle), negative-
-controlled. Nothing else landed yet. `bsky(1)`/`masto(1)` still drive host
-`curl(1)` through `#C` — see `CLAUDE.md`'s own rule, which this plan exists
-to satisfy.
+**In progress.** Primitive 1, `hmac_sha256` (`libsec/hmac.c` + `keyring.m`/
+`.c`), and primitive 2, the TLS 1.2 PRF (`module/tls12.m` +
+`appl/lib/crypt/tls12.b`), are both landed and verified — `hmacsha256test(1)`
+(4 vectors: RFC 4231 case 1 + 3 from the host's own `openssl(1)`) and
+`tls12prftest(1)` (4 vectors from an independent Python reimplementation of
+RFC 5246 §5, since the RFC gives no worked examples), both negative-
+controlled. Primitives 3–5 (AES-GCM, X25519, ChaCha20-Poly1305) and the
+handshake state machine itself are not started. `bsky(1)`/`masto(1)` still
+drive host `curl(1)` through `#C` — see `CLAUDE.md`'s own rule, which this
+plan exists to satisfy.
 
 ## Why this exists
 
@@ -26,6 +29,13 @@ This doc exists because the work is large enough to span multiple sessions
 way as `doc/hpc-plan.md`.
 
 ## What was measured, not assumed
+
+**Measured 2026-09-01 — a point-in-time fact, not a permanent one.** Servers
+change their negotiated TLS configuration over time (a provider disabling
+TLS 1.2 entirely, or dropping ECDHE-RSA suites in favor of ECDSA-only, are
+both things that happen to real services years apart). If picking this up
+much later than the date above, re-run the checks below before trusting the
+scope they produced — don't assume they still hold.
 
 Checked directly against the two real target servers (`curl -v`, and
 `openssl s_client`), before committing to a scope:
@@ -126,22 +136,41 @@ Two sub-problems, neither solved yet:
 authenticated, and no test may treat a successful handshake as proof of a
 secure connection — only proof of a working handshake.**
 
-## Staging (one primitive per commit, tested against published vectors, no
-network needed until the full handshake is assembled)
+## Staging
 
-1. `hmac_sha256` (native C + `keyring.m`) — RFC 4231 vectors.
-2. TLS 1.2 PRF (built on `hmac_sha256`) — RFC 5246 §5's own vectors /
-   cross-checked against a real TLS library's intermediate values if RFC
-   vectors are thin.
-3. AES-GCM — NIST GCM test vectors / RFC 5288.
-4. X25519 — RFC 7748 §6.1 vectors.
-5. ChaCha20-Poly1305 — RFC 8439 vectors.
-6. Only then: the handshake state machine itself, built on 1-5, tested
-   first against a byte-captured real handshake transcript before ever
-   dialing out.
-7. Certificate chain verification — the gap above. Decide the trust-root
+Revised once primitives 1-2 were done: the record-protection ciphers
+(AES-GCM, ChaCha20-Poly1305) only matter *after* the handshake completes —
+everything before ChangeCipherSpec is plaintext. So get a real, unencrypted
+ClientHello/ServerHello round trip working against a real server *before*
+either AEAD cipher, using only the PRF and X25519 — that's what flushes out
+extension encoding, the SNI requirement, cipher-suite negotiation, and
+record-layer framing, all of which are far more likely to be subtly wrong
+than a GCM/ChaCha20-Poly1305 implementation that can be tested offline
+against published vectors. A ServerHello naming the expected cipher suite
+back is a hard, unambiguous milestone that proves the whole front half
+before any bytes are actually decrypted.
+
+1. `hmac_sha256` (native C + `keyring.m`) — RFC 4231 vectors. **Done**
+   (`57bfce2f`).
+2. TLS 1.2 PRF (built on `hmac_sha256`) — a from-scratch reimplementation of
+   RFC 5246 §5 (no published worked vectors exist), cross-checked against
+   the host's own `openssl kdf TLS1-PRF` (a real, separate implementation)
+   before trusting it. **Done** (`c485fd05`).
+3. X25519 — RFC 7748 §6.1 vectors, offline, no network.
+4. Just enough of the handshake state machine (ported from `tlshand.c`) to
+   send a real ClientHello (with SNI) and parse a real ServerHello +
+   Certificate + ServerKeyExchange back from `bsky.social` — stopping before
+   any record is actually decrypted. Confirms the negotiated cipher suite
+   matches what was measured, live, before anything past this point is
+   built on top of an assumption.
+5. AES-GCM — NIST GCM test vectors / RFC 5288.
+6. ChaCha20-Poly1305 — RFC 8439 vectors (`libsec/chacha.c` already covers
+   raw ChaCha20; only Poly1305 + the AEAD wrapper are needed).
+7. The rest of the handshake state machine (Finished messages, session
+   resumption if wanted) plus real record encryption/decryption end to end.
+8. Certificate chain verification — the gap above. Decide the trust-root
    question explicitly before this ships as "done."
-8. Only then: migrate `bsky(1)`/`masto(1)` off `#C`, per the `CLAUDE.md`
+9. Only then: migrate `bsky(1)`/`masto(1)` off `#C`, per the `CLAUDE.md`
    rule this plan exists to satisfy.
 
 Each step gets its own `appl/cmd/*test.b` (or a native-C test wired the way

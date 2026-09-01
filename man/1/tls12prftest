@@ -11,15 +11,16 @@ TLS 1.2's own PRF construction (RFC 5246 \(sc5;
 .IR module/tls12.m ,
 .IR appl/lib/crypt/tls12.b ),
 against four vectors. RFC 5246 gives the algorithm itself but no
-worked examples, so these were generated from a from-scratch Python
-reimplementation of that exact construction (real
-.B hmac
-/
-.B hashlib
-calls, not fabricated output, not recalled from memory) \(em the same
-independent-oracle approach
-.IR hmacsha256test (1)
-used for the primitive this is built on.
+worked examples, so these were first generated from a from-scratch
+Python reimplementation of that exact construction, then \(em since a
+second reading of the same spec is not a genuinely independent check
+\(em cross-verified against a real, separate implementation: the
+host's own
+.B "openssl kdf TLS1-PRF"
+.RI ( "openssl kdf -help" ,
+provider
+.BR default ),
+which reproduced all four byte-for-byte.
 .PP
 Cases cover a short single-HMAC-block output, a 48-byte output (the
 length TLS's own \(lqmaster secret\(rq derivation uses, forcing two
@@ -44,7 +45,7 @@ produced.
 .SH SEE ALSO
 .IR hmacsha256test (1)
 .SH BUGS
-Four vectors from one independent reimplementation, not cross-checked
-against a second, unrelated TLS library's own intermediate PRF output
-(no such published vectors were found for TLS 1.2's PRF specifically,
-unlike HMAC-SHA256 itself, which RFC 4231 already publishes).
+Four vectors, cross-checked against one other real implementation
+(the host's OpenSSL), not against a published RFC vector set \(em no
+such set exists for TLS 1.2's PRF specifically, unlike HMAC-SHA256
+itself, which RFC 4231 already publishes.

@@ -7,14 +7,16 @@ implement Command;
 # hmacsha256test(1), primitive 1).
 #
 # RFC 5246 itself gives the algorithm, not worked test vectors, so
-# these 4 were generated from a from-scratch Python reimplementation
-# of that exact algorithm (real hmac/hashlib calls, not fabricated
-# output), the same "independent oracle" approach hmacsha256test(1)
-# used - not hand-computed, not recalled from memory. Covers: a short
-# single-block output, a 48-byte output (TLS's own "master secret"
-# length, forcing 2 HMAC blocks), a 100-byte output (forcing 4 blocks,
-# so the block-boundary/truncation logic is exercised), and the
-# empty-secret degenerate case.
+# these 4 were first generated from a from-scratch Python
+# reimplementation of that exact algorithm (real hmac/hashlib calls,
+# not fabricated output, not hand-computed or recalled from memory) -
+# then, since a second reading of the same spec isn't a genuinely
+# independent check, cross-verified against a real, separate TLS
+# implementation: the host's own `openssl kdf TLS1-PRF` reproduced all
+# four byte-for-byte. Covers: a short single-block output, a 48-byte
+# output (TLS's own "master secret" length, forcing 2 HMAC blocks), a
+# 100-byte output (forcing 4 blocks, so the block-boundary/truncation
+# logic is exercised), and the empty-secret degenerate case.
 
 include "sys.m";
 	sys: Sys;
