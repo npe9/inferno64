@@ -38,11 +38,18 @@ Status text arrives from Mastodon as a small fragment of HTML
 (typically wrapped in
 .BR <p> ,
 with
+.B <br>
+for line breaks and
 .B <a>
-and
+/
 .B <span>
-around mentions and hashtags); this strips tags and decodes the
-handful of entities Mastodon's own renderer emits
+around mentions and hashtags); this strips tags, treating
+.B <br>
+and
+.B </p>
+as line separators rather than dropping them outright (which would
+otherwise glue adjacent words together with no space between them),
+and decodes the handful of entities Mastodon's own renderer emits
 .RI ( &amp; ,
 .IR &lt; ,
 .IR &gt; ,
@@ -77,4 +84,10 @@ Read-only, one timeline, no abstraction shared with
 (each is deliberately self-contained \(em see masto.b's own header
 comment for why). No pagination (a fixed 30 statuses), no posting, no
 notifications, no boosts or favourites shown separately from the
-statuses that carry them.
+statuses that carry them. The HTML stripper is a linear tag scan, not
+a real parser: a literal
+.B >
+inside a quoted attribute value would end the tag early and leak the
+rest of the markup into the output \(em not seen in practice, since
+Mastodon's own renderer HTML-escapes such characters in attributes,
+but not structurally prevented here either.

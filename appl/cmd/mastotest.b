@@ -12,6 +12,7 @@ Modelcmd: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 	pubtest: fn(): string;
+	htmltest: fn(): string;	# same declared order as Masto in masto.b
 };
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
@@ -24,7 +25,12 @@ init(nil: ref Draw->Context, nil: list of string)
 		sys->print("load failed\n");
 		raise "fail:load";
 	}
-	err := m->pubtest();
+	err := m->htmltest();
+	if(err != nil){
+		sys->print("FAIL: %s\n", err);
+		raise "fail:tests";
+	}
+	err = m->pubtest();
 	if(err != nil){
 		sys->print("FAIL: %s\n", err);
 		raise "fail:tests";

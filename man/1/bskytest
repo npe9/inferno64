@@ -39,6 +39,20 @@ real TLS, and this tree's
 library reading the reply back \(em without a credentials file or
 any live account.
 .PP
+.B Postpubtest
+calls
+.BR login() ,
+the one caller of
+.BR curl() 's
+request-body path and of
+.BR jsonquote() ,
+with a deliberately bogus handle and password. It cannot reach a real
+account, but the real server can only answer with the specific
+.B AuthenticationRequired
+error shape if the JSON body this sent actually arrived intact \(em a
+body mangled by the write/close-to-EOF path would instead produce a
+different, distinguishable failure.
+.PP
 Exits with
 .B PASS
 or
@@ -50,10 +64,12 @@ naming what the decoded response actually held.
 .IR bsky (1)
 .SH BUGS
 Needs real outbound network access to
-.BR public.api.bsky.app ;
+.BR public.api.bsky.app
+and
+.BR bsky.social ;
 offline or firewalled hosts will see curl itself fail, not a bug in
-the code under test. Covers only the transport and decoding path, not
-.BR login() 's
-own request shape (which needs a real account to exercise) or
+the code under test. Covers the transport, both request shapes, and
+JSON decoding, but not
 .BR timeline() 's
-feed-array walk.
+own feed-array walk (which needs a real, authenticated timeline to
+exercise).

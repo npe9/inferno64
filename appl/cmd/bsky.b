@@ -32,27 +32,25 @@ include "json.m";
 Bsky: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
-	# a second test seam, same justification as danby-aerobraking(1)'s
-	# own run()/viewtest(): hits a real, public, no-auth Bluesky
-	# endpoint so bskytest(1) exercises the actual #C/curl/JSON path
-	# this command uses, without needing live credentials.
+	# test seams, same justification as danby-aerobraking(1)'s own
+	# run()/viewtest(): hit real Bluesky endpoints so bskytest(1)
+	# exercises the actual #C/curl/JSON path this command uses,
+	# without needing live credentials.
 	pubtest: fn(): string;
+	postpubtest: fn(): string;
 };
 
 stderr: ref Sys->FD;
 
 init(nil: ref Draw->Context, argv: list of string)
 {
-	sys = load Sys Sys->PATH;
-	str = load String String->PATH;
-	bufio = load Bufio Bufio->PATH;
-	json = load JSON JSON->PATH;
-	if(sys == nil)
-		raise "fail:load";
+	err := ensureloaded();
+	if(err != nil){
+		if(sys == nil)
+			raise "fail:load";
+		fail("bsky: "+err);
+	}
 	stderr = sys->fildes(2);
-	if(str == nil || bufio == nil || json == nil)
-		fail("bsky: cannot load support modules");
-	json->init(bufio);
 
 	argv = tl argv;
 	if(argv == nil || tl argv != nil)
@@ -74,6 +72,35 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	for(l := lines; l != nil; l = tl l)
 		sys->print("%s\n", hd l);
+}
+
+# loads each support module independently rather than gating the
+# whole block on one variable being nil (see masto.b's own comment on
+# this same helper - the real bug it fixes there: a caller that runs
+# one test seam before another can leave a later seam's own coarser
+# guard wrongly believing everything is already loaded).
+
+ensureloaded(): string
+{
+	if(sys == nil)
+		sys = load Sys Sys->PATH;
+	if(sys == nil)
+		return "cannot load Sys";
+	if(str == nil)
+		str = load String String->PATH;
+	if(str == nil)
+		return "cannot load String";
+	if(bufio == nil)
+		bufio = load Bufio Bufio->PATH;
+	if(bufio == nil)
+		return "cannot load Bufio";
+	if(json == nil){
+		json = load JSON JSON->PATH;
+		if(json == nil)
+			return "cannot load JSON";
+		json->init(bufio);
+	}
+	return nil;
 }
 
 fail(msg: string)
@@ -320,15 +347,9 @@ curl(args: list of string, body: string): (string, string)
 
 pubtest(): string
 {
-	if(sys == nil){
-		sys = load Sys Sys->PATH;
-		str = load String String->PATH;
-		bufio = load Bufio Bufio->PATH;
-		json = load JSON JSON->PATH;
-		if(sys == nil || str == nil || bufio == nil || json == nil)
-			return "pubtest: cannot load support modules";
-		json->init(bufio);
-	}
+	e := ensureloaded();
+	if(e != nil)
+		return "pubtest: "+e;
 	args := "-s" :: "-S" ::
 		"https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=bsky.app" :: nil;
 	(out, err) := curl(args, nil);
@@ -344,4 +365,35 @@ pubtest(): string
 	if(handle != "bsky.app")
 		return sys->sprint("pubtest: got handle %q, want \"bsky.app\": %s", handle, out);
 	return nil;
+}
+
+# login() is the only caller of curl()'s request-body (OWRITE /data)
+# branch, and of jsonquote() - neither is exercised by pubtest() above,
+# which only ever GETs. A deliberately bogus login can't reach a real
+# account, but bsky.social can only answer with the SPECIFIC
+# "AuthenticationRequired" shape (checked live against the real
+# server, not guessed: com.atproto.server.createSession replied
+# 'AuthenticationRequired: Invalid identifier or password' to a bogus
+# identifier/password pair) if the JSON body this sends actually
+# arrived intact - a body that got mangled or truncated by the write/
+# close-to-EOF path would instead fail to parse as the request Bluesky
+# expects (a different, distinguishable error shape, e.g. InvalidRequest
+# or a straight curl-level failure).
+
+postpubtest(): string
+{
+	e := ensureloaded();
+	if(e != nil)
+		return "postpubtest: "+e;
+	(nil, nil, lerr) := login("x.invalid-handle-for-testing", "wrong-password-x");
+	if(lerr == nil)
+		return "postpubtest: bogus login unexpectedly succeeded";
+	if(!prefix("AuthenticationRequired:", lerr))
+		return "postpubtest: want AuthenticationRequired error, got: "+lerr;
+	return nil;
+}
+
+prefix(p, s: string): int
+{
+	return len s >= len p && s[0:len p] == p;
 }

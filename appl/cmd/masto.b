@@ -33,24 +33,22 @@ include "json.m";
 Masto: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
-	# test seam, same justification as bsky.b's pubtest()
+	# test seams, same justification as bsky.b's pubtest()
 	pubtest: fn(): string;
+	htmltest: fn(): string;
 };
 
 stderr: ref Sys->FD;
 
 init(nil: ref Draw->Context, argv: list of string)
 {
-	sys = load Sys Sys->PATH;
-	str = load String String->PATH;
-	bufio = load Bufio Bufio->PATH;
-	json = load JSON JSON->PATH;
-	if(sys == nil)
-		raise "fail:load";
+	err := ensureloaded();
+	if(err != nil){
+		if(sys == nil)
+			raise "fail:load";
+		fail("masto: "+err);
+	}
 	stderr = sys->fildes(2);
-	if(str == nil || bufio == nil || json == nil)
-		fail("masto: cannot load support modules");
-	json->init(bufio);
 
 	argv = tl argv;
 	if(argv == nil || tl argv != nil)
@@ -68,6 +66,38 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	for(l := lines; l != nil; l = tl l)
 		sys->print("%s\n", hd l);
+}
+
+# loads each support module independently rather than gating the
+# whole block on one variable being nil - a real bug, found by
+# actually running the tests in an order that exposed it: htmltest()
+# only ever needed sys, so a caller that ran htmltest() before
+# pubtest() left pubtest()'s own old "if(sys == nil){ load
+# everything }" guard skipping str/bufio/json entirely, since sys
+# was already set - "module not loaded" calling through a still-nil
+# module reference, not a real load failure.
+
+ensureloaded(): string
+{
+	if(sys == nil)
+		sys = load Sys Sys->PATH;
+	if(sys == nil)
+		return "cannot load Sys";
+	if(str == nil)
+		str = load String String->PATH;
+	if(str == nil)
+		return "cannot load String";
+	if(bufio == nil)
+		bufio = load Bufio Bufio->PATH;
+	if(bufio == nil)
+		return "cannot load Bufio";
+	if(json == nil){
+		json = load JSON JSON->PATH;
+		if(json == nil)
+			return "cannot load JSON";
+		json->init(bufio);
+	}
+	return nil;
 }
 
 fail(msg: string)
@@ -178,22 +208,73 @@ timeline(inst, token: string): (list of string, string)
 detag(s: string): string
 {
 	out := "";
+	tag := "";
 	intag := 0;
 	for(i := 0; i < len s; i++){
 		c := s[i];
 		if(c == '<'){
 			intag = 1;
+			tag = "";
 			continue;
 		}
 		if(c == '>'){
 			intag = 0;
+			# <br> and </p> are the two tags Mastodon's own content
+			# actually uses to separate lines/paragraphs - stripping
+			# them with no replacement glued adjacent words together
+			# (found by tracing this by hand, not by a failing run:
+			# "line1<br>line2" detagged straight to "line1line2").
+			if(isbreak(tag))
+				out += "\n";
+			tag = "";
 			continue;
 		}
-		if(!intag)
+		if(intag)
+			tag += sys->sprint("%c", c);
+		else
 			out += sys->sprint("%c", c);
 	}
 	out = unentity(out);
+	return trim(out);
+}
+
+isbreak(tag: string): int
+{
+	t := lower(tag);
+	n := len t;
+	if(n > 0 && t[n-1] == '/')	# self-closing <br/>
+		n--;
+	sp := n;
+	for(i := 0; i < n; i++)
+		if(t[i] == ' ' || t[i] == '\t'){
+			sp = i;
+			break;
+		}
+	name := t[0:sp];
+	return name == "br" || name == "/p";
+}
+
+lower(s: string): string
+{
+	out := "";
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		if(c >= 'A' && c <= 'Z')
+			c = c-'A'+'a';
+		out += sys->sprint("%c", c);
+	}
 	return out;
+}
+
+trim(s: string): string
+{
+	n := len s;
+	while(n > 0 && s[n-1] == '\n')
+		n--;
+	i := 0;
+	while(i < n && s[i] == '\n')
+		i++;
+	return s[i:n];
 }
 
 unentity(s: string): string
@@ -307,6 +388,38 @@ curl(args: list of string): (string, string)
 	return (out, nil);
 }
 
+# --- test seam: detag()/unentity(), no network needed ---
+# a pure function, so a table of input HTML fragment -> expected
+# plain text is a real, deterministic regression test - this is the
+# one that caught the <br>/</p> gluing bug above (found by tracing
+# the code by hand, then confirmed here: "line1<br>line2" really did
+# come out "line1line2" before the isbreak() fix, and does not now).
+
+htmltest(): string
+{
+	e := ensureloaded();
+	if(e != nil)
+		return "htmltest: "+e;
+	cases := array[] of {
+		("<p>hello</p>", "hello"),
+		("<p>a &amp; b</p>", "a & b"),
+		("line1<br>line2", "line1\nline2"),
+		("line1<br/>line2", "line1\nline2"),
+		("<p>first</p><p>second</p>", "first\nsecond"),
+		("<a href=\"http://x\">link</a> text", "link text"),
+		("a &lt;tag&gt; here", "a <tag> here"),
+		("a & b", "a & b"),
+		("trailing &amp", "trailing &amp"),
+	};
+	for(i := 0; i < len cases; i++){
+		(input, want) := cases[i];
+		got := detag(input);
+		if(got != want)
+			return sys->sprint("htmltest: detag(%q) = %q, want %q", input, got, want);
+	}
+	return nil;
+}
+
 # --- test seam ---
 # api/v1/instance is Mastodon's own real public, unauthenticated
 # endpoint (a server description, not a session) - drives the exact
@@ -315,15 +428,9 @@ curl(args: list of string): (string, string)
 
 pubtest(): string
 {
-	if(sys == nil){
-		sys = load Sys Sys->PATH;
-		str = load String String->PATH;
-		bufio = load Bufio Bufio->PATH;
-		json = load JSON JSON->PATH;
-		if(sys == nil || str == nil || bufio == nil || json == nil)
-			return "pubtest: cannot load support modules";
-		json->init(bufio);
-	}
+	e := ensureloaded();
+	if(e != nil)
+		return "pubtest: "+e;
 	args := "-s" :: "-S" :: "https://mastodon.social/api/v1/instance" :: nil;
 	(out, err) := curl(args);
 	if(err != nil)
