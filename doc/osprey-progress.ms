@@ -2349,6 +2349,8 @@ line is the name-space machinery, four sources \-
 .CW devenv.c ,
 the pipe
 .CW devpipe.c ,
+the service registry
+.CW devsrv.c ,
 the mount client
 .CW devmnt.c
 and the queue
@@ -2385,7 +2387,12 @@ A program reaches all of it by file descriptor now, through the fd table,
 the way a Plan 9 program does \- opening, reading, writing, seeking,
 stat-ing, listing, creating and binding, over local files and files a 9P
 server holds alike, and the name space carries a pipe as well as files,
-two ends of a channel a program writes and reads.  What is not yet real is breadth, not
+two ends of a channel a program writes and reads.  A program can post a
+channel to
+.CW /srv
+by name and another find and mount it there, the way Plan 9 servers
+announce themselves - the personality posts its own exportfs and mounts
+it back by name.  What is not yet real is breadth, not
 structure: the served tree is a handful of files, one of them writable -
 listed, read and written, but small; the union directory read is ported
 in its plain form (the rock fixup, which rewrites an entry that is itself

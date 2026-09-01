@@ -87,6 +87,9 @@ def main():
                     'ls / (a union' in t and m3 is not None and int(m3.group(1)) >= 18))
     results.append(("and the name space carries a pipe - two ends of a channel a program talks through, written and read",
                     'wrote one end of a pipe, read the other: "sent through a pipe"' in t))
+    m4 = re.search(r'looked up /srv/export, mounted it, read (\d+) entries', t)
+    results.append(("and it publishes a service in /srv by name, then looks it up and mounts it (how Plan 9 name spaces compose services)",
+                    'posted the personality' in t and m4 is not None and int(m4.group(1)) >= 10))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

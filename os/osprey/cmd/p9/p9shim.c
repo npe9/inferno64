@@ -192,7 +192,8 @@ extern Dev mntdevtab;
 extern Dev looploopdevtab;
 extern Dev expdevtab;
 extern Dev pipedevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, nil };
+extern Dev srvdevtab;
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, nil };
 
 long	kerndate = 0;
 
@@ -332,3 +333,17 @@ int	islo(void){ return 1; }
 void	sched(void){}
 void	validstat(uchar*, int){}
 Conf	conf;
+
+int
+readstr(ulong off, char *buf, ulong n, char *str)
+{
+	ulong size;
+
+	size = strlen(str);
+	if(off >= size)
+		return 0;
+	if(off + n > size)
+		n = size - off;
+	memmove(buf, str + off, n);
+	return n;
+}

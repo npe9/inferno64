@@ -340,6 +340,50 @@ p9main(void)
 		cclose(r);
 	}
 
+	/*
+	 * Service publication: post a channel to /srv by name, the way a
+	 * Plan 9 server announces itself, then look it up and mount it.  Post
+	 * the personality's own exportfs (#X) to /srv/export, reopen it by
+	 * name, mount it, and read the served root - proving a service named
+	 * in /srv can be found and mounted, which is how name spaces compose.
+	 */
+	{
+		Chan *tc, *sc, *rc, *xr;
+		int tfd, xfd, nent;
+		long dn;
+		char fdstr[16];
+		uchar *p, *e;
+		Dir dir;
+		char names[256];
+		int m;
+
+		tc = namec("#X", Aopen, ORDWR, 0);
+		tfd = newfd(tc, ORDWR);
+		sc = namec("#s/export", Acreate, OWRITE, 0666);
+		snprint(fdstr, sizeof fdstr, "%d", tfd);
+		devtab[sc->type]->write(sc, fdstr, strlen(fdstr), 0);
+		cclose(sc);
+		print("p9: posted the personality's exportfs to /srv/export\n");
+
+		rc = namec("#s/export", Aopen, ORDWR, 0);
+		xr = mntattach(rc, nil, "", 0);
+		cclose(rc);
+		xr = devtab[xr->type]->open(xr, OREAD);
+		xfd = newfd(xr, OREAD);
+		nent = 0;
+		while((dn = p9read(xfd, buf, sizeof buf)) > 0){
+			p = buf; e = buf + dn;
+			while(p < e){
+				m = convM2D(p, (uint)(e - p), &dir, names);
+				if(m <= 0) break;
+				nent++;
+				p += m;
+			}
+		}
+		print("p9: looked up /srv/export, mounted it, read %d entries from the served root\n", nent);
+		p9close(xfd);
+	}
+
 	poperror();
 	exits(nil);
 }
