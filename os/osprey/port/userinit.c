@@ -24,6 +24,7 @@ extern int ospreymicro;
 extern void ospreymicroboot(void);
 extern int ospreyuser;
 extern int ospreyp9;
+extern int ospreyp9pair;
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
 
@@ -204,6 +205,15 @@ proc0(void*)
 			ospreyloadp9();		/* the Plan 9 personality library */
 		else
 			ospreyloadprog();	/* the minimal microkernel task */
+		if(ospreyp9pair){
+			/*
+			 * The paired personality: this task is the client, its
+			 * buddy the server it delegates to.  Enter as the pair
+			 * client, which mounts the buddy over the ring.
+			 */
+			ospreyenteruser("c");
+			panic("ospreyenteruser returned");
+		}
 		up->kp = 0;
 		up->noswap = 0;
 		up->privatemem = 0;

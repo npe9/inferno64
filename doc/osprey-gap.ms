@@ -123,7 +123,10 @@ user-space library, opening and reading files over the ring from a server
 that is itself a second user program - two user tasks exchanging the open
 and read, the kernel only routing them, which is the shape the paper
 draws; the buddy relationship on pc64, where what the policy layer cannot
-answer the Plan 9 kernel around it does.
+answer the Plan 9 kernel around it does; and, on p9pair, two Plan 9
+personalities as buddies proper - each its own container, one mounting
+the other's exported name space over the ring by 9P, the kernel only
+routing - which is the paper's picture with a real container boundary.
 .PP
 Closed since, and it was the largest gap: the library OS was minimal \-
 a couple of files, no name space, no mount, an ad-hoc four-call protocol.

@@ -2096,7 +2096,9 @@ ospreyframebuffer(void)
 }
 
 extern void ospreyloadprog(void);
+extern void ospreyloadp9(void);
 extern void ospreyenteruser(char*);
+extern int ospreyp9pair;
 
 static int ospreyuserclientslot = -1;
 
@@ -2129,6 +2131,33 @@ ospreyuserserver(void *a)
 	qunlock(&ospreylock);
 	snprint(arg, sizeof arg, "s %d %d", x, ospreyuserclientslot);
 	ospreyloadprog();
+	ospreyenteruser(arg);		/* never returns */
+}
+
+/*
+ * The buddy: a second Plan 9 personality, run as a server.  Same shape as
+ * ospreyuserserver, but it loads the personality library (ospreyloadp9,
+ * which lays out text, data and bss) rather than the flat stub, and its
+ * arg0 puts it in the server role.  It answers 9P about its own name
+ * space for the first personality, which delegates to it.
+ */
+static void
+ospreyp9server(void *a)
+{
+	Ospreyproc *sv = a;
+	char arg[24];
+	int x;
+
+	x = ospreyindex(sv);
+	qlock(&ospreylock);
+	if(x >= 0 && x < nelem(ospreyprocs)){
+		ospreyprocs[x] = up;
+		up->osprey = sv;
+		ospreysetpid(sv, up->pid);
+	}
+	qunlock(&ospreylock);
+	snprint(arg, sizeof arg, "s %d %d", x, ospreyuserclientslot);
+	ospreyloadp9();
 	ospreyenteruser(arg);		/* never returns */
 }
 
@@ -2181,7 +2210,10 @@ ospreyuserprep(void)
 			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
 			if(sv != nil){
 				ospreydelegate(p, sv);
-				kproc("osprey-fs", ospreyuserserver, sv);
+				if(ospreyp9pair)
+					kproc("p9-buddy", ospreyp9server, sv);
+				else
+					kproc("osprey-fs", ospreyuserserver, sv);
 			}
 		}
 		poperror();

@@ -2408,6 +2408,25 @@ things \- processes that share an address space migrating as a group \-
 is not begun.  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the
 personality is a library the task links.
+.PP
+And there are two of them now.  The
+.CW p9pair
+configuration runs the personality in two containers at once: one the
+client, one the server, the client delegating to the server so its 9P
+crosses the ring.  The server
+.CW ( p9pairsrv.c )
+brings up its own name space, then answers 9P about it \- the exportfs
+over the ring rather than the loopback \- for the client, which mounts it
+and reads its exported root.  Two library operating systems, each its own
+container on the microkernel, name each other's files by message passing,
+the kernel only routing them.  This is the paper's own picture, no longer
+a buddy the Plan 9 kernel answers for nor a loopback within one task, but
+a second library OS across a real container boundary.  It is checked by
+.CW /scripts/osprey-check-p9pair.py .
+The one constraint it obeys is the reason it is two containers and not
+one: a container has a single server it delegates to, and its request
+ring cannot carry both its own outgoing requests and a client's incoming
+ones, so the client is pure client and the server pure server.
 .NH 2
 Built and proven since
 .PP
