@@ -16076,10 +16076,33 @@ which had no compiler backend in this tree at all.  Both do now.
 .CW "utils/za, zc, zl"
 is Richard Miller's original Plan 9 RISC-V compiler (thechar
 .CW z ,
-genuinely 32 bit \- SZ_IND is 4, distinct from this tree's own
-.CW "kc/kl" ,
-9front's separate riscv64 backend under the recycled sparc letter
-.CW k ).
+genuinely 32 bit \- SZ_IND is 4).  This corrects a wrong claim this
+document made in an earlier revision, that
+.CW kc/kl
+(thechar
+.CW k )
+was riscv64 under a recycled sparc letter.  Checked properly this
+time, against
+.CW mkfiles/mkfile-Inferno-*
+rather than assumed:
+.CW k
+is genuinely sparc in this tree
+.CW ( kc/gc.h
+says so, SZ_IND 4, no sparc board exists), and the live riscv64
+backend
+.CW os/inferno/virt
+actually builds with is thechar
+.CW j \-
+.CW jc/jl ,
+SZ_IND 8, wired by
+.CW mkfile-Inferno-riscv64 's
+own
+.CW O=j .
+.CW jc/gc.h 's
+header comment still says "zc/riscv, RISC-V 32-bit", a stale relic
+from the Richard Miller lineage it was cloned from before being
+widened to LP64; the comment is wrong, the SZ_IND and the board
+wiring are not.
 .CW "utils/7a, 7c, 7l"
 is kencc's real AArch64 backend, the one 9front itself runs on actual
 arm64 hardware.  Both ported from a local kencc-cross checkout, the
