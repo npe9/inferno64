@@ -384,6 +384,28 @@ p9main(void)
 		p9close(xfd);
 	}
 
+	/*
+	 * dup: a second descriptor onto the same open channel, sharing its
+	 * offset - what a shell uses to redirect.  Open "/hello", read the
+	 * first word through one descriptor, dup it, and read the rest
+	 * through the duplicate, which continues where the first left off.
+	 */
+	{
+		int fd, fd2;
+		long a, b;
+
+		fd = p9open("/hello", OREAD);
+		a = p9read(fd, buf, 5);			/* "hello" */
+		buf[a < 0 ? 0 : a] = 0;
+		fd2 = p9dup(fd);
+		b = p9read(fd2, buf, sizeof buf - 1);	/* the rest, via the dup */
+		buf[b < 0 ? 0 : b] = 0;
+		print("p9: dup - first read %ld bytes on fd %d, the rest on its dup fd %d: \"%.*s\"\n",
+			a, fd, fd2, (int)b, (char*)buf);
+		p9close(fd);
+		p9close(fd2);
+	}
+
 	poperror();
 	exits(nil);
 }

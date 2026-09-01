@@ -90,6 +90,8 @@ def main():
     m4 = re.search(r'looked up /srv/export, mounted it, read (\d+) entries', t)
     results.append(("and it publishes a service in /srv by name, then looks it up and mounts it (how Plan 9 name spaces compose services)",
                     'posted the personality' in t and m4 is not None and int(m4.group(1)) >= 10))
+    results.append(("and it duplicates a descriptor, the two sharing one channel and offset (what a shell redirects with)",
+                    'the rest on its dup fd 2: " from the 9P server' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

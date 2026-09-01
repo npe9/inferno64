@@ -2357,7 +2357,7 @@ and the queue
 .CW qio.c
 the file-descriptor layer
 .CW ( p9file.c ,
-the fd table and open/read/write/close/seek/stat lifted from
+the fd table and open/read/write/close/seek/stat/dup lifted from
 .CW sysfile.c )
 and an exportfs
 .CW ( p9srv.c ,
@@ -2385,8 +2385,8 @@ picture: a library operating system on the microkernel, naming the files
 of a buddy that answers over message passing, the kernel only routing.
 A program reaches all of it by file descriptor now, through the fd table,
 the way a Plan 9 program does \- opening, reading, writing, seeking,
-stat-ing, listing, creating and binding, over local files and files a 9P
-server holds alike, and the name space carries a pipe as well as files,
+stat-ing, listing, creating, binding and duplicating a descriptor, over
+local files and files a 9P server holds alike, and the name space carries a pipe as well as files,
 two ends of a channel a program writes and reads.  A program can post a
 channel to
 .CW /srv

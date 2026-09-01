@@ -427,3 +427,22 @@ p9bind(char *name, char *old, int flag)
 	cclose(c0);
 	return 0;
 }
+
+/* duplicate a descriptor: a new fd on the same channel (shared offset) */
+int
+p9dup(int oldfd)
+{
+	Chan *c;
+	int fd;
+
+	c = fdtochan(oldfd, -1, 0, 1);	/* iref: the new fd holds this reference */
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+	fd = newfd(c, c->mode);
+	if(fd < 0)
+		error(Enofd);
+	poperror();
+	return fd;
+}
