@@ -27,6 +27,32 @@ Poly1305 (record protection only matters after the handshake completes).
 `bsky(1)`/`masto(1)` still drive host `curl(1)` through `#C` — see
 `CLAUDE.md`'s own rule, which this plan exists to satisfy.
 
+**Prerequisite checked before writing any TLS code, 2026-09-02**: whether
+this emu instance can dial a real TCP connection at all —
+`module/dial.m` had been read this session, never run. `dialtest(1)`
+found a real, separate gap: dialing by hostname
+(`dial->dial("tcp!bsky.social!80", nil)`) fails with `invalid IP address`
+(from `emu/port/devip.c`, not a Limbo bug) — `/net/cs`, the connection
+server, is not resolving names in this emu instance. Dialing the same
+host by a literal IP (looked up once outside emu) works cleanly: a real
+TCP connect, a real HTTP/1.0 request written, a real response read back.
+**The transport itself is proven; DNS/cs resolution is a separate,
+still-open gap**, tracked here, not solved. The handshake work below can
+proceed by dialing literal IPs (SNI still needs the real hostname string,
+which is available regardless of whether the name resolves); fixing `cs`
+is its own task if `bsky(1)`/`masto(1)` are to keep taking hostnames from
+users.
+
+Also captured, same session: a real byte-level TLS 1.2 handshake against
+`bsky.social` (`openssl s_client -tls1_2 -msg -state`), saved at
+`doc/fixtures/bsky-tls12-handshake.txt` — the full ClientHello through
+both sides' Finished messages, in hex, annotated. This is the diff
+reference for the ported ClientHello encoder (build ours, confirm it
+matches modulo random/session-id/extension-ordering) and the fixture for
+the ServerHello/Certificate/ServerKeyExchange parser — parseable offline,
+no network needed, the same shape as `feedtest`'s captured-response
+approach.
+
 ## Why this exists
 
 The user asked for two things in one request: (1) a standing rule that
@@ -171,12 +197,28 @@ before any bytes are actually decrypted.
    the host's own `openssl kdf TLS1-PRF` (a real, separate implementation)
    before trusting it. **Done** (`c485fd05`).
 3. X25519 — RFC 7748 §6.1 vectors, offline, no network.
-4. Just enough of the handshake state machine (ported from `tlshand.c`) to
-   send a real ClientHello (with SNI) and parse a real ServerHello +
-   Certificate + ServerKeyExchange back from `bsky.social` — stopping before
-   any record is actually decrypted. Confirms the negotiated cipher suite
-   matches what was measured, live, before anything past this point is
-   built on top of an assumption.
+4. Just enough of the handshake state machine to send a real ClientHello
+   (with SNI) and parse a real ServerHello + Certificate + ServerKeyExchange
+   back from `bsky.social` — stopping before any record is actually
+   decrypted. Confirms the negotiated cipher suite matches what was
+   measured, live, before anything past this point is built on top of an
+   assumption. **Hand-roll the wire encoding/decoding for this step rather
+   than porting `tlshand.c`'s generic `msgSend`/`msgRecv` framework** — that
+   framework is 9front's own reusable abstraction across all handshake
+   message types plus the record layer, and porting it whole is a much
+   bigger unit of work than this milestone needs; name whatever gets
+   written here as a disposable probe (`dialtest(1)`-style — see its BUGS
+   section for the pattern) that gets deleted or absorbed once the *real*
+   client is ported from `tlshand.c` properly, so it doesn't quietly
+   accrete into a bespoke, unreviewed TLS implementation instead. Diff the
+   constructed ClientHello against `doc/fixtures/bsky-tls12-handshake.txt`
+   byte-for-byte before ever sending it over the wire — differences confined
+   to the random/session-id fields and extension ordering are fine;
+   differences in extension TLV lengths mean a real encoding bug, findable
+   offline instead of by guessing from a live failure. Dial by literal IP
+   (`dialtest(1)` found `/net/cs` doesn't resolve names in this emu
+   instance — a separate, still-open gap, tracked above, not blocking this
+   step since SNI only needs the hostname string, not working DNS).
 5. AES-GCM — NIST GCM test vectors / RFC 5288.
 6. ChaCha20-Poly1305 — RFC 8439 vectors (`libsec/chacha.c` already covers
    raw ChaCha20; only Poly1305 + the AEAD wrapper are needed).

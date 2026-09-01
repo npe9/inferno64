@@ -1,0 +1,51 @@
+.TH DIALTEST 1
+.SH NAME
+dialtest \- probe: can this emu instance dial a real TCP connection at all
+.SH SYNOPSIS
+.B dialtest
+.SH DESCRIPTION
+.B Dialtest
+is a disposable probe, not a real command. It exists to answer one
+question before any TLS handshake code gets built on top of an
+assumption: does
+.IR dial (2)
+actually work in this emu instance, end to end, against a real host?
+See
+.I doc/ssl-modernization-plan.md
+in the source tree.
+.PP
+It tries, in order:
+.IP 1.
+.B dial->dial("tcp!bsky.social!80", nil)
+\(em by hostname, which requires
+.B /net/cs
+(the connection server) to resolve the name.
+.IP 2.
+.B dial->dial("tcp!<literal IP>!80", nil)
+\(em by a literal IP address looked up once outside emu, which
+succeeds even when name resolution does not, isolating DNS/cs from
+the TCP path itself.
+.PP
+For whichever dial succeeds, it writes a plaintext
+.B GET / HTTP/1.0
+request and reads back whatever the server sends, to prove data
+actually flows both ways \(em independent of anything TLS-shaped.
+.SH SOURCE
+.B /appl/cmd/dialtest.b
+.SH SEE ALSO
+.IR dial (2)
+.SH BUGS
+This is scaffolding for one measurement, not the first draft of a
+real command: it hardcodes one host and one looked-up-by-hand IP, has
+no argument handling, and should be deleted or absorbed once the real
+TLS client (a port of 9front's tlshand.c, not a hand-rolled protocol)
+lands and needs its own connection-establishment code.
+.PP
+Confirmed once, live, 2026-09-02: dial by hostname fails here with
+"invalid IP address" (emu/port/devip.c) \(em
+.B /net/cs
+is not resolving names in this emu instance. Dial by literal IP
+works: a real TCP connect, a real HTTP/1.0 request written, and a
+real response read back. This is a genuine, separate gap (DNS/cs),
+not a dial or TCP bug, and is not fixed by this probe or by anything
+in the SSL modernization work \(em tracked, not solved, here.
