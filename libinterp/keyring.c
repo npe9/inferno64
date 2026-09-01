@@ -1407,6 +1407,48 @@ Keyring_hmac_sha256(void *fp)
 	*f->ret = keyring_hmac_x(f->data, f->n, f->key, f->digest, SHA256dlen, f->state, hmac_sha256);
 }
 
+/* X25519 (RFC 7748) - see doc/ssl-modernization-plan.md. All three
+ * arrays are fixed 32 bytes, checked here since curve25519()/
+ * curve25519_dh_*() index them directly with no bounds check of
+ * their own. */
+
+void
+Keyring_curve25519(void *fp)
+{
+	F_Keyring_curve25519 *f;
+
+	f = fp;
+	if(f->mypublic == H || f->mypublic->len < 32
+	|| f->secret == H || f->secret->len < 32
+	|| f->basepoint == H || f->basepoint->len < 32)
+		error(exInval);
+	curve25519(f->mypublic->data, f->secret->data, f->basepoint->data);
+}
+
+void
+Keyring_curve25519_dh_new(void *fp)
+{
+	F_Keyring_curve25519_dh_new *f;
+
+	f = fp;
+	if(f->x == H || f->x->len < 32 || f->y == H || f->y->len < 32)
+		error(exInval);
+	curve25519_dh_new(f->x->data, f->y->data);
+}
+
+void
+Keyring_curve25519_dh_finish(void *fp)
+{
+	F_Keyring_curve25519_dh_finish *f;
+
+	f = fp;
+	if(f->x == H || f->x->len < 32
+	|| f->y == H || f->y->len < 32
+	|| f->z == H || f->z->len < 32)
+		error(exInval);
+	*f->ret = curve25519_dh_finish(f->x->data, f->y->data, f->z->data);
+}
+
 void
 Keyring_dhparams(void *fp)
 {

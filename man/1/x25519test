@@ -1,0 +1,69 @@
+.TH X25519TEST 1
+.SH NAME
+x25519test \- test keyring->curve25519() and the X25519 key-agreement API
+.SH SYNOPSIS
+.B x25519test
+.SH DESCRIPTION
+.B X25519test
+checks
+.BR curve25519() ,
+.BR curve25519_dh_new() ,
+and
+.B curve25519_dh_finish()
+.RI ( module/keyring.m ,
+.IR libinterp/keyring.c ,
+.IR libsec/curve25519.c ,
+.IR libsec/curve25519_dh.c ,
+ported from 9front's own curve25519-donna derived implementation \(em
+see
+.IR doc/ssl-modernization-plan.md
+in the source tree) \(em primitive 3 of the SSL modernization plan,
+needed for TLS 1.2's ECDHE-RSA key exchange.
+.PP
+Four cases check
+.B curve25519()
+(the raw scalar-multiplication primitive) against vectors generated
+from Python's own
+.B cryptography
+library \(em a real, independent X25519 implementation, not the code
+under test, and not hand-computed or recalled from memory: an earlier
+attempt to reconstruct RFC 7748's own published vectors from memory
+turned out corrupted (an odd number of hex digits), caught before it
+was ever used, which is why this test's vectors come from running a
+real library instead.
+.B Curve25519()
+itself does not clamp its scalar argument \(em RFC 7748's own
+.B X25519()
+function does clamping internally, so the scalars used here are
+pre-clamped by hand to match what
+.B curve25519_dh_new()
+would have done. Checks: a scalar times the standard base point twice
+(two different scalars/public keys), and the shared secret computed
+from both directions agreeing.
+.PP
+A fifth case checks
+.B curve25519_dh_new()
+/
+.B curve25519_dh_finish()
+\(em the real key-generation API, which uses real randomness and so
+can't be checked against a fixed vector \(em as a property instead:
+two independently generated key pairs must derive the same non-zero
+shared secret from both directions.
+.PP
+Exits with
+.B PASS
+if every case held, or
+.B FAIL
+naming which one and what was expected versus computed.
+.SH SOURCE
+.B /appl/cmd/x25519test.b
+.SH SEE ALSO
+.IR hmacsha256test (1),
+.IR tls12prftest (1)
+.SH BUGS
+Does not exercise the historically tricky low-order-point inputs
+directly (RFC 7748 \(sc6.1's own note that certain inputs map to an
+all-zero shared secret) other than incidentally: a deliberately
+corrupted public key during this test's own development happened to
+land on the zero point, reproducing that exact behavior, but no case
+here targets it on purpose.

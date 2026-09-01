@@ -2,16 +2,30 @@
 
 ## Status (most recent first)
 
-**In progress.** Primitive 1, `hmac_sha256` (`libsec/hmac.c` + `keyring.m`/
-`.c`), and primitive 2, the TLS 1.2 PRF (`module/tls12.m` +
-`appl/lib/crypt/tls12.b`), are both landed and verified — `hmacsha256test(1)`
-(4 vectors: RFC 4231 case 1 + 3 from the host's own `openssl(1)`) and
-`tls12prftest(1)` (4 vectors from an independent Python reimplementation of
-RFC 5246 §5, since the RFC gives no worked examples), both negative-
-controlled. Primitives 3–5 (AES-GCM, X25519, ChaCha20-Poly1305) and the
-handshake state machine itself are not started. `bsky(1)`/`masto(1)` still
-drive host `curl(1)` through `#C` — see `CLAUDE.md`'s own rule, which this
-plan exists to satisfy.
+**In progress.** Primitives 1–3 are landed and verified:
+
+- `hmac_sha256` (`libsec/hmac.c` + `keyring.m`/`.c`) — `hmacsha256test(1)`,
+  4 vectors (RFC 4231 case 1 + 3 from the host's own `openssl(1)`).
+- TLS 1.2 PRF (`module/tls12.m` + `appl/lib/crypt/tls12.b`) —
+  `tls12prftest(1)`, 4 vectors from a from-scratch reimplementation of
+  RFC 5246 §5, cross-checked against the host's own `openssl kdf TLS1-PRF`
+  (a second, genuinely independent implementation — the RFC has no
+  published vectors of its own).
+- X25519 (`libsec/curve25519.c`+`curve25519_dh.c`+`tsmemcmp.c`, ported from
+  9front's curve25519-donna derived implementation; `keyring.m`/`.c`) —
+  `x25519test(1)`, 5 cases against vectors from Python's own `cryptography`
+  library (a real, independent X25519 implementation) plus a property check
+  of the real key-generation API. Caught its own near-miss: a from-memory
+  attempt at RFC 7748's own published vectors turned out corrupted (odd
+  hex-digit count), so the vectors here come from running a real library
+  instead of recalling a spec.
+
+All three negative-controlled. Next up per the revised staging order below:
+just enough of the handshake state machine to get a real ClientHello/
+ServerHello round trip against `bsky.social`, *before* AES-GCM/ChaCha20-
+Poly1305 (record protection only matters after the handshake completes).
+`bsky(1)`/`masto(1)` still drive host `curl(1)` through `#C` — see
+`CLAUDE.md`'s own rule, which this plan exists to satisfy.
 
 ## Why this exists
 
@@ -103,7 +117,7 @@ implementation) directly:
 | RSA, DSA, ElGamal, finite-field DH | yes | `libsec/rsa*.c`, `dsa*.c`, `eg*.c` |
 | X.509 cert parsing | yes | `module/x509.m`, `module/asn1.m` (already used by `ssl3.b`) |
 | **AES-GCM** | no | port `aes_gcm.c` |
-| **X25519 (curve25519)** | no | port `curve25519.c`/`curve25519_dh.c` |
+| **X25519 (curve25519)** | **done** | `libsec/curve25519.c`+`curve25519_dh.c`+`tsmemcmp.c`, `keyring.m`/`.c`, verified via `x25519test(1)` |
 | **ChaCha20** | **already present, untracked** | `libsec/chacha.c`+`chachablock.c` and `include/libsec.h`'s `Chachastate`/`setupChachastate`/`chacha_encrypt` exist on disk (dated Aug 20, predates this plan - not this session's work, and not staged/committed here per `CLAUDE.md`'s "stage with explicit pathspecs" - someone else's in-flight work, same situation as `os/`). Only **Poly1305** (the MAC half) and the AEAD wrapper (9front's `ccpoly.c`) are still missing. |
 | **TLS 1.2 PRF** | no | small, falls out once HMAC-SHA256 exists (RFC 5246 §5) |
 | **TLS 1.2 handshake state machine** | no | port `tlshand.c`, adapted to this tree's `Sys->FD`/`module/ssl3.m`-style Limbo interface rather than 9front's native `#a`/`/mnt/tls` convention |

@@ -259,6 +259,18 @@ void	rc4skip(RC4state*, int);
 void	rc4back(RC4state*, int);
 
 /*/////////////////////////////////////////////////////// */
+/* curve25519 (RFC 7748) - see doc/ssl-modernization-plan.md */
+/*/////////////////////////////////////////////////////// */
+void	curve25519(uchar mypublic[32], uchar secret[32], uchar basepoint[32]);
+void	curve25519_dh_new(uchar x[32], uchar y[32]);
+int	curve25519_dh_finish(uchar x[32], uchar y[32], uchar z[32]);
+
+/*/////////////////////////////////////////////////////// */
+/* timing-safe memcmp - see doc/ssl-modernization-plan.md */
+/*/////////////////////////////////////////////////////// */
+int	tsmemcmp(void*, void*, ulong);
+
+/*/////////////////////////////////////////////////////// */
 /* rsa */
 /*/////////////////////////////////////////////////////// */
 typedef struct RSApub RSApub;

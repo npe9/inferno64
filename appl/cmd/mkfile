@@ -242,6 +242,7 @@ TARG=\
 	wmexport.dis\
 	wmimport.dis\
 	wordfreq.dis\
+	x25519test.dis\
 	xargs.dis\
 	xd.dis\
 	yacc.dis\

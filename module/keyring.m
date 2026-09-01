@@ -242,6 +242,15 @@ Keyring: module
 	# create an alpha and p for diffie helman exchanges
 	dhparams: fn(nbits: int): (ref IPint, ref IPint);
 
+	# X25519 (RFC 7748) - see doc/ssl-modernization-plan.md. All three
+	# take/return raw 32-byte little-endian arrays, matching the C
+	# curve25519 API this wraps directly (no IPint bignum involved -
+	# curve25519 arithmetic is fixed-width, not the arbitrary-precision
+	# kind IPint is for).
+	curve25519: fn(mypublic: array of byte, secret: array of byte, basepoint: array of byte);
+	curve25519_dh_new: fn(x: array of byte, y: array of byte);
+	curve25519_dh_finish: fn(x: array of byte, y: array of byte, z: array of byte): int;
+
 	# comm link authentication is symmetric
 	auth: fn(fd: ref Sys->FD, info: ref Authinfo, setid: int): (string, array of byte);
 
