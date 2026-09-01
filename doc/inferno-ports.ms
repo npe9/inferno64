@@ -16072,25 +16072,46 @@ interface handed up to Limbo.
 The standing target across every board this document tracks is five
 architectures clean under QEMU: pc64, riscv64, armv7 \- all three
 building today, none of them bug-free yet \- and riscv32 and arm64,
-which are not boards to bring up but compiler backends to write
-first.
-.CW utils/kc
-and
-.CW kl
-(riscv, thechar
-.CW k )
-have no 32 bit mode to select; growing one is real work inside an
-existing backend.
-.CW utils/5c
-and
-.CW 5l
-(arm, thechar
-.CW 5 )
-target ARMv7 specifically \- AArch64 has no backend here at all,
-Plan 9's own convention would call it
-.CW 7c
-and
-.CW 7l ,
-and neither exists in this tree.  Checked directly, not assumed, so
-the next session that picks either up starts from the real shape of
-the work rather than re-deriving it.
+which had no compiler backend in this tree at all.  Both do now.
+.CW "utils/za, zc, zl"
+is Richard Miller's original Plan 9 RISC-V compiler (thechar
+.CW z ,
+genuinely 32 bit \- SZ_IND is 4, distinct from this tree's own
+.CW "kc/kl" ,
+9front's separate riscv64 backend under the recycled sparc letter
+.CW k ).
+.CW "utils/7a, 7c, 7l"
+is kencc's real AArch64 backend, the one 9front itself runs on actual
+arm64 hardware.  Both ported from a local kencc-cross checkout, the
+same lineage this tree's existing 5c/kc/tc already trace to, adjusted
+for this tree's own path conventions and one shared-frontend
+signature mismatch
+.CW "( swcmp() )" ,
+plus for
+.CW 7l
+four files this tree's
+.CW ld/
+doesn't share the way kencc-cross's does (copied local, not merged
+into the shared directory every other loader here depends on) and a
+real allocator conflict between
+.CW 7l 's
+own private
+.CW sub.c
+hunk/nhunk and this tree's extended
+.CW Posix.c \(em
+kencc-cross's own, simpler
+.CW Posix.c
+resolved it.  Verified past "it compiles" for both: each compiled a
+real C function, assembled a hand-written entry stub, linked with no
+errors, and the emitted machine code checked byte-for-byte against
+known encodings
+.CW ( addi/add/jalr
+for RV32,
+.CW 0xd65f03c0
+\- the exact AArch64
+.CW RET
+opcode \- for arm64).  Board bring-up \- an actual Inferno kernel
+target under
+.CW os/inferno/
+for either \- is not done; this closed the compiler gap, which is
+what stood between "nothing" and a board to bring up.
