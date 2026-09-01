@@ -16068,3 +16068,29 @@ and
 .CW sync ,
 with a CPU, a GPU or an NPU behind it, rather than a Vulkan or a Metal
 interface handed up to Limbo.
+.PP
+The standing target across every board this document tracks is five
+architectures clean under QEMU: pc64, riscv64, armv7 \- all three
+building today, none of them bug-free yet \- and riscv32 and arm64,
+which are not boards to bring up but compiler backends to write
+first.
+.CW utils/kc
+and
+.CW kl
+(riscv, thechar
+.CW k )
+have no 32 bit mode to select; growing one is real work inside an
+existing backend.
+.CW utils/5c
+and
+.CW 5l
+(arm, thechar
+.CW 5 )
+target ARMv7 specifically \- AArch64 has no backend here at all,
+Plan 9's own convention would call it
+.CW 7c
+and
+.CW 7l ,
+and neither exists in this tree.  Checked directly, not assumed, so
+the next session that picks either up starts from the real shape of
+the work rather than re-deriving it.
