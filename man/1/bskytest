@@ -1,0 +1,59 @@
+.TH BSKYTEST 1
+.SH NAME
+bskytest \- test the #C/curl/JSON path bsky(1) depends on
+.SH SYNOPSIS
+.B bskytest
+.SH DESCRIPTION
+.B Bskytest
+calls
+.IR bsky (1)'s
+own in-process
+.B pubtest()
+seam \(em a test-only entry point, the same justification
+.BR run() 's
+own comment gives for existing at all (see
+.IR eqnorbitaltest (1)
+and
+.IR orbitviewtest (1)
+for the same pattern applied elsewhere in this tree).
+.B Pubtest
+fetches
+.BR app.bsky.actor.getProfile ,
+a real, public, unauthenticated Bluesky endpoint, through the exact
+.B curl()
+and JSON-decoding path
+.BR bsky (1)'s
+own
+.B login()
+and
+.B timeline()
+use, and checks that the decoded handle is exactly
+.BR bsky.app .
+Because the endpoint needs no session, this exercises the whole
+transport \(em
+.BR #C ,
+the host's
+.IR curl (1),
+real TLS, and this tree's
+.B json
+library reading the reply back \(em without a credentials file or
+any live account.
+.PP
+Exits with
+.B PASS
+or
+.B FAIL
+naming what the decoded response actually held.
+.SH SOURCE
+.B /appl/cmd/bskytest.b
+.SH SEE ALSO
+.IR bsky (1)
+.SH BUGS
+Needs real outbound network access to
+.BR public.api.bsky.app ;
+offline or firewalled hosts will see curl itself fail, not a bug in
+the code under test. Covers only the transport and decoding path, not
+.BR login() 's
+own request shape (which needs a real account to exercise) or
+.BR timeline() 's
+feed-array walk.

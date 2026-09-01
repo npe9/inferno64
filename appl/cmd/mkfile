@@ -37,6 +37,8 @@ TARG=\
 	basename.dis\
 	bind.dis\
 	bit2gif.dis\
+	bsky.dis\
+	bskytest.dis\
 	bytes.dis\
 	clicktest.dis\
 	cal.dis\
@@ -253,6 +255,7 @@ SYSMODULES=\
 	filter.m\
 	fslib.m\
 	ir.m\
+	json.m\
 	keyring.m\
 	man.m\
 	newns.m\

@@ -1,0 +1,63 @@
+.TH BSKY 1
+.SH NAME
+bsky \- Bluesky client: log in, print the home timeline
+.SH SYNOPSIS
+.B bsky
+.I credfile
+.SH DESCRIPTION
+.B Bsky
+logs in to Bluesky (the AT Protocol network at
+.BR bsky.social )
+using the handle and app password read from
+.IR credfile ,
+then prints the caller's home timeline, one line per post, oldest
+last:
+.EX
+\&@alice.bsky.social: what a nice day
+\&@bob.example.com: shipped a thing
+.EE
+.PP
+.I Credfile
+holds exactly two lines: the account handle, then an app password
+\(em never the real account password. An app password is generated
+from Bluesky's own Settings > App Passwords page, and can be revoked
+independently of the main login. Keep this file readable only by its
+owner; nothing here enforces that.
+.PP
+.B Bsky
+never places the password on a command line (where a
+.IR ps (1)
+listing could see it) or in any diagnostic output.
+.SH TRANSPORT
+This tree's own
+.B ssl3
+.RI ( module/ssl3.m )
+is an SSLv3-era implementation \(em RC4/DES/3DES/IDEA bulk ciphers,
+static RSA/DH key exchange, no AES, no GCM or ChaCha20, no SNI \(em
+and cannot complete the TLS 1.2+ handshake every real HTTPS host,
+.B bsky.social
+included, now requires.
+.B Bsky
+instead drives the host's own
+.IR curl (1)
+through
+.B #C
+(see
+.IR cmd (3)),
+so it only runs hosted, under an
+.I emu
+that has
+.B #C
+available; it does not work under a native kernel with no host to
+delegate to.
+.SH SOURCE
+.B /appl/cmd/bsky.b
+.SH SEE ALSO
+.IR bskytest (1),
+.IR cmd (3)
+.SH BUGS
+Read-only, one network, one timeline, no abstraction shared with any
+other client \(em the first vertical slice, not the whole thing. No
+pagination (a fixed 30 posts), no posting, no notifications, no
+Mastodon support yet, and no reuse of any existing HTTP-client code in
+this tree (see TRANSPORT: none of it can reach a real TLS 1.2+ host).
