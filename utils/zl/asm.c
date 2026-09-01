@@ -608,9 +608,20 @@ datblk(long s, long n, int str)
 #define OPU (0x3 | OLUI<<2)
 #define OPX	(0x3 | o->op<<2)
 #define OPF (OPX | o->func3<<12)
-#define OPO	(0x3 | OOP<<2 | o->func3<<12)
+/*
+ * OP_R used to hardcode OOP (the integer OP major opcode) into its
+ * own private OPO, rather than using the optab row's own o->op the
+ * way OP_S/OP_I/OP_FI already did via OPF/OPX -- harmless for every
+ * existing integer row, since they all set op=OOP explicitly anyway
+ * (checked directly against every case-0 optab.c row), but it meant
+ * OP_R could never encode an OOP_FP (float arithmetic) instruction.
+ * Switched to OPF, matching utils/jl/asm.c's own OP_R -- same value
+ * for every row that already existed, and now usable for float too.
+ */
 #define OP_R(rs1,rs2,rd)\
-	(OPO | rd<<7 | R(rs1)<<15 | R(rs2)<<20 | o->param<<25)
+	(OPF | rd<<7 | R(rs1)<<15 | R(rs2)<<20 | o->param<<25)
+#define OP_RF(rs1,rs2,rd,rm)\
+	(OPX | rm<<12 | rd<<7 | R(rs1)<<15 | R(rs2)<<20 | o->param<<25)
 #define OP_ADD(rs1,rs2,rd)\
 	(0x3 | OOP<<2 | rd<<7 | R(rs1)<<15 | R(rs2)<<20)
 #define OP_I(rs1,rd,imm)\
@@ -750,14 +761,30 @@ asmout(Prog *p, Optab *o, int aflag)
 		o2 = OP_I(REGTMP, p->to.reg, v);
 		break;
 
-	case 14:		/* add $lcon,d => lui I1,T; addi $L0,T,T; add T,d,d */
+	case 14:		/* op $lcon,[r,]d => lui I1,T; addi $L0,T,T; op r,T,d */
+		/*
+		 * AADD,C_LCON,C_REG (this case's only user before now)
+		 * wants d += lcon, so r ends up p->to.reg -- the running
+		 * accumulator, not a base register.  AMOVW,C_LACON,C_REG
+		 * (a large-offset frame address, "$fmt+0(FP)": pprint()
+		 * needed this and had no row at all, "illegal combination
+		 * MOVW 11 0 1") wants d = base+offset instead, and base
+		 * has to come from classreg(&p->from) the way case
+		 * 11/15/16 already get it for the small-offset and
+		 * memory-operand forms of the same address kinds -- ported
+		 * from utils/jl/asm.c's own more general case 14, which
+		 * branches on p->as the same way.
+		 */
+		r = p->to.reg;
+		if(p->as == AMOVW)
+			r = classreg(&p->from);
 		v = regoff(&p->from);
 		if(v & 0x800)
 			v += 0x1000;
 		o1 = OP_U(REGTMP, v);
 		v &= 0xFFF;
 		o2 = OP_I(REGTMP, REGTMP, v);
-		o3 = OP_ADD(p->to.reg, REGTMP, p->to.reg);
+		o3 = OP_ADD(r, REGTMP, p->to.reg);
 		break;
 
 	case 15:		/* mov r,L(s) => lui L1,T; add s,T,T; sb r,L0(T) */
@@ -780,6 +807,13 @@ asmout(Prog *p, Optab *o, int aflag)
 		v &= 0xFFF;
 		o2 = OP_ADD(r, REGTMP, REGTMP);
 		o3 = OP_I(REGTMP, p->to.reg, v);
+		break;
+
+	case 17:	/* fcvt S,D -- RISC-V FCVT.*, ported from utils/jl/asm.c */
+		v = 7;	/* dynamic rounding mode */
+		if(o->a3 == C_REG)	/* convert to int? */
+			v = 1;	/* round towards zero */
+		o1 = OP_RF(p->from.reg, o->func3, p->to.reg, v);
 		break;
 
 	case 24:		/* breakpoint */

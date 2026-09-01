@@ -15,15 +15,15 @@
 %left	'<' '>'
 %left	'+' '-'
 %left	'*' '/' '%'
-%token	<lval>	LADD LMUL LBEQ LBR LBRET LCALL
-%token	<lval>	LMOVB LMOVBU LMOVW LLUI LSYS LSWAP LAMO
-%token	<lval>	LCONST LSP LSB LFP LPC LREG LR LCTL
+%token	<lval>	LADD LMUL LBEQ LBR LBRET LCALL LFLT2 LFLT3
+%token	<lval>	LMOVB LMOVBU LMOVW LMOVF LLUI LSYS LSWAP LAMO
+%token	<lval>	LCONST LSP LSB LFP LPC LREG LFREG LR FR LCTL
 %token	<lval>	LDATA LTEXT LWORD
 %token	<sval>	LSCONST
 %token	<dval>	LFCONST
 %token	<sym>	LNAME LLAB LVAR
-%type	<lval>	con expr pointer offset sreg oprrr
-%type	<gen>	rreg /*ctlreg*/
+%type	<lval>	con expr pointer offset sreg freg oprrr
+%type	<gen>	rreg dreg drreg /*ctlreg*/
 %type	<gen>	addr name oreg rel imm ximm fimm
 %%
 prog:
@@ -76,6 +76,15 @@ inst:
 		outcode($1, &$2, $4, &$6);
 	}
 
+|	LFLT2 drreg ',' drreg
+	{
+		outcode($1, &$2, NREG, &$4);
+	}
+|	LFLT3 drreg ',' freg ',' drreg
+	{
+		outcode($1, &$2, $4, &$6);
+	}
+
 |	LBEQ rreg ',' sreg ',' rel
 	{
 		outcode($1, &$2, $4, &$6);
@@ -124,6 +133,19 @@ inst:
 		outcode($1, &$2, NREG, &$4);
 	}
 |	LMOVB rreg ',' addr
+	{
+		outcode($1, &$2, NREG, &$4);
+	}
+
+|	LMOVF addr ',' dreg
+	{
+		outcode($1, &$2, NREG, &$4);
+	}
+|	LMOVF dreg ',' addr
+	{
+		outcode($1, &$2, NREG, &$4);
+	}
+|	LMOVF dreg ',' dreg
 	{
 		outcode($1, &$2, NREG, &$4);
 	}
@@ -311,9 +333,30 @@ rreg:
 		$$.reg = $1;
 	}
 
+dreg:
+	freg
+	{
+		$$ = nullgen;
+		$$.type = D_FREG;
+		$$.reg = $1;
+	}
+
+drreg:
+	dreg
+|	rreg
+
 sreg:
 	LREG
 |	LR '(' expr ')'
+	{
+		if($3 < 0 || $3 >= NREG)
+			yyerror("register value out of range");
+		$$ = $3;
+	}
+
+freg:
+	LFREG
+|	FR '(' expr ')'
 	{
 		if($3 < 0 || $3 >= NREG)
 			yyerror("register value out of range");

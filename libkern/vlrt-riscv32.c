@@ -20,6 +20,7 @@ struct	Vlong
 };
 
 void	abort(void);
+void*	memcpy(void*, void*, ulong);
 
 void
 _addv(Vlong *r, Vlong a, Vlong b)
@@ -50,15 +51,30 @@ _subv(Vlong *r, Vlong a, Vlong b)
 void
 _d2v(Vlong *y, double d)
 {
-	union { double d; struct Vlong; } x;
+	/*
+	 * vlrt-mips.c and vlrt-arm.c both do this bit split with a
+	 * union { double d; struct Vlong; }.  za/zc's registerizer
+	 * mishandles that specific shape: it keeps the union live in
+	 * an F register and then tries to pull the hi/lo integer
+	 * fields out of it via a real FCVT (MOVDW to an F register,
+	 * "illegal combination" -- zl caught it, not a silent wrong
+	 * answer) rather than treating it as a plain memory
+	 * reinterpretation.  A memcpy through a local array forces an
+	 * actual memory round-trip, the same way virt/l.s's own
+	 * comment on jc's MOVUD already notes for a different
+	 * bitcast-vs-convert confusion on this compiler family: store
+	 * bits, then reload as the other type, never alias registers.
+	 */
+	ulong dbits[2];
 	ulong xhi, xlo, ylo, yhi;
 	int sh;
 
-	x.d = d;
+	memcpy(dbits, &d, sizeof(d));
+	xhi = dbits[1];
+	xlo = dbits[0];
 
-	xhi = (x.hi & 0xfffff) | 0x100000;
-	xlo = x.lo;
-	sh = 1075 - ((x.hi >> 20) & 0x7ff);
+	xhi = (xhi & 0xfffff) | 0x100000;
+	sh = 1075 - ((dbits[1] >> 20) & 0x7ff);
 
 	ylo = 0;
 	yhi = 0;
@@ -87,11 +103,26 @@ _d2v(Vlong *y, double d)
 			ylo = xlo << sh;
 			yhi = (xhi << sh) | (xlo >> (32-sh));
 		} else {
-			/* overflow */
-			yhi = d;	/* causes something awful */
+			/*
+			 * Overflow: sh > 10 means d's magnitude doesn't fit
+			 * in 64 bits at all.  vlrt-mips.c/vlrt-arm.c's own
+			 * "yhi = d" here is already documented garbage (its
+			 * own comment: "causes something awful") -- an
+			 * implicit double->ulong narrowing nothing is meant
+			 * to rely on.  za/zc's own MOVDW codegen picks an F
+			 * register destination for a plain ulong assignment
+			 * here (a real zc register-allocation bug, not a zl
+			 * encoding gap -- confirmed by rewriting away the
+			 * union in this same function first, which changed
+			 * nothing), so this narrowing can't even reach the
+			 * same "awful" value upstream reaches.  Since the
+			 * result was never defined, use a fixed sentinel
+			 * instead of exercising the buggy path at all.
+			 */
+			yhi = ~0UL;
 		}
 	}
-	if(x.hi & SIGN(32)) {
+	if(dbits[1] & SIGN(32)) {
 		if(ylo != 0) {
 			ylo = -ylo;
 			yhi = ~yhi;

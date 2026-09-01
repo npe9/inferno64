@@ -113,6 +113,20 @@ TEXT	getcallerpc(SB), 1, $-4
 	MOVW	0(FP), RARG
 	RET
 
+/*
+ * virt/l.s's own _tas works unmodified for jc because jc's RARG is R8
+ * -- the same register LRW(12,8) already leaves the pre-swap old
+ * value in, so the return value lands in RARG as a side effect of
+ * the register numbers chosen, not by design.  za's RARG is R1, so
+ * copying the LRW/SCW calls verbatim silently returned R1's own
+ * untouched value (the lock pointer itself, from the MOVW RARG,R12
+ * two lines up) instead of the old lock word -- always nonzero, so
+ * ilock() read every _tas() as "already held" even on a free lock
+ * and spun forever on the very first (uncontended) call.  Found live
+ * via QEMU/lldb: xinit()'s first ilock(&xlists) never returned.
+ * Explicit copy into RARG at the end, rather than relying on the
+ * macro's own destination register to coincide with it.
+ */
 TEXT	_tas(SB), 1, $-4
 	MOVW	RARG, R12
 	MOVW	$1, R10
@@ -121,6 +135,7 @@ tas1:
 	LRW(12, 8)
 	SCW(10, 12, 14)
 	BNE	R14, tas1
+	MOVW	R8, RARG
 	RET
 
 TEXT	setlabel(SB), 1, $-4

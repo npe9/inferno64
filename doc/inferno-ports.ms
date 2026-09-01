@@ -16361,3 +16361,242 @@ has loaded a
 .CW .dis
 module yet \- and should be checked, not assumed fixed or assumed
 broken, once the float gap is closed and a module actually loads.
+.PP
+The float gap above is now closed, and
+.CW virt32
+boots a long way past it.
+.CW za
+had no
+.CW F0..F31
+register tokens at all, and every one of
+.CW zl 's
+fourteen optab rows that looked like float support routed through
+.CW asm.c 's
+case 24, the breakpoint encoder \- dead placeholder scaffolding that
+would have emitted the same wrong bytes regardless of operand shape,
+not a real
+.CW OOP_FP/OLOAD_FP/OSTORE_FP
+encoding.  Ported the real thing from
+.CW utils/jc
+and
+.CW utils/ja \-
+riscv64's own, proven, working F/D implementation on the identical
+shared
+.CW cc/
+frontend \- rather than the RISC-V spec directly: register tokens and
+grammar
+.CW "(LFREG/dreg/drreg/LFLT2/LFLT3)"
+into
+.CW za ;
+real optab rows plus a new
+.CW "case 17 (fcvt)"
+into
+.CW zl .
+.CW OP_R ,
+the macro those rows encode through, had hard-coded the integer
+.CW OOP
+major opcode into every R-type instruction it built \- harmless for
+every existing integer row, since they all set
+.CW op=OOP
+themselves anyway, but it meant no
+.CW OOP_FP
+instruction could ever be encoded through it regardless of what the
+optab row itself asked for; fixed to use the row's own
+.CW op
+field, matching
+.CW jl 's
+own
+.CW OP_R
+exactly.
+Checked byte-for-byte against the real RISC-V F/D encoding the same
+way this document has checked every hand-encoded instruction so far
+.CW ( FLD/FSD/FADD.D/FEQ.D/FCVT.D.W/FCVT.W.D ,
+all exact).
+.PP
+Fixing the encoder surfaced a real
+.CW zc
+codegen bug, not an encoder gap: converting
+.CW double
+to an integer type used to
+.CW regalloc()
+a scratch register typed by the
+.CW double
+source instead of the integer destination, so the scratch landed in
+an F register that the very next instruction
+.CW ( MOVW )
+needed as a plain integer \- "illegal combination" every time,
+whether the F register mistake ever reached
+.CW zl
+or not.
+.CW utils/jc/txt.c 's
+own version of this exact case never allocates a scratch at all; it
+sets the opcode and falls through to
+.CW gmove() 's
+trailing
+.CW gins(a,\ f,\ t) ,
+trusting the compiler's own already-correct destination allocation.
+Matched that shape in
+.CW zc
+instead of patching the broken
+.CW regalloc()
+call \- simpler, and proven on the sibling architecture.  This one
+compiler fix cleared every remaining
+.CW libinterp/xec.c
+float-conversion failure at once
+.CW "(cvtrf/cvtfr/cvtfl/cvtfw/cvtfx/iexpf/canontod)" ,
+not just the specific function it was first found in.
+.PP
+.CW libkern/vlrt-riscv32.c 's
+own
+.CW _d2v
+hit the identical registerizer bug through a different C shape: a
+.CW "union\ {\ double\ d;\ struct\ Vlong;\ }"
+bit-split, the same idiom
+.CW vlrt-mips.c
+and
+.CW vlrt-arm.c
+both use safely on compilers with working float registers.  Rewrote
+it to split the bits through an explicit
+.CW memcpy
+into a
+.CW ulong[2]
+instead of a union, forcing a real memory round-trip rather than
+letting the registerizer alias a double and an integer pair in the
+same register \- the same "store bits, then reload as the other
+type" discipline
+.CW virt/l.s 's
+own comment on
+.CW jc 's
+.CW MOVUD
+already states for a different bitcast-vs-convert confusion on this
+compiler family.  One line inside it, the deliberately-degenerate
+overflow branch
+.CW "(yhi = d)" ,
+already commented upstream as producing garbage no caller was ever
+meant to rely on, hit the same registerizer bug in a form the
+.CW zc
+fix above didn't reach \- a bare narrowing assignment, not a
+conversion feeding straight into a typed destination \- replaced with
+a fixed sentinel instead of exercising a path whose result was never
+defined in the first place.
+.PP
+The final link succeeds.
+.CW os/inferno/virt32/ivirt32
+is a real 1.5
+.CW MB
+32-bit RISC-V ELF.  Under
+.CW qemu-system-riscv32\ -M\ virt\ -cpu\ rv32
+it boots: the
+.CW "Inferno/riscv32\ virt"
+banner, the memory allocator
+.CW "(127 holes free, 266940416 bytes free)" ,
+.CW procinit ,
+the
+.CW "Inferno\ Fourth\ Edition"
+version banner, and the
+.CW SNPRINT-ABI-OK
+vararg self-test all print for real over the emulated UART.  Getting
+that far needed one more real bug found by live QEMU/lldb debugging,
+not static reading: the board hung forever on its first-ever
+.CW ilock() ,
+an uncontended lock that should have been free.
+.CW _tas()
+in
+.CW virt32/l.s
+was copied from
+.CW virt/l.s
+unchanged \- correct C source, wrong assumption \- because
+.CW virt/l.s 's
+own version happens to leave the pre-swap old lock value in
+.CW R8 ,
+which is
+.ul
+also
+.CW jc 's
+.CW RARG
+.CW ( REGARG=8
+for
+.CW jc ) ,
+so the return value lands in the right register purely by
+coincidence of which number
+.CW LRW(12,8)
+was written with.
+.CW za 's
+.CW RARG
+is
+.CW R1 ,
+not
+.CW R8 ,
+so the copied code silently returned whatever
+.CW R1
+already held \- the lock pointer itself, from two lines earlier,
+never zero \- meaning
+.CW ilock()
+read every
+.CW _tas()
+call as "already held," even the first, ever, on a lock nobody had
+touched.  Found by breaking at the spin loop, reading the lock word
+.CW ( genuinely
+.CW held=1 ,
+not corrupt memory), walking the saved return address on the stack
+to identify the caller as
+.CW xhole() 's
+.CW ilock(&xlists) ,
+and setting a breakpoint at
+.CW ilock 's
+entry to confirm it never got past its first call.  Fixed with one
+explicit
+.CW MOVW\ R8,\ RARG
+before
+.CW RET
+rather than trusting the macro's own destination register to
+coincide with whatever
+.CW RARG
+happens to be on a given architecture.
+.PP
+What's left, and it is exact, not vague: 64-bit unsigned division is
+wrong.
+.CW libkern/vlrt-riscv32.c 's
+.CW dodiv() \-
+copied unmodified from
+.CW vlrt-mips.c ,
+the shift-and-subtract long-division loop every 32-bit kencc port
+without a native 64-bit divide instruction relies on \- returns wrong
+answers for realistic inputs, confirmed with hand-computed
+expected-vs-actual values printed from inside the running kernel, not
+guessed:
+.CW (4294967296+100)/4
+returned
+.CW 0
+.CW "(wanted 1073741849)" ,
+and the board's own real
+.CW poolsizeinit()
+computation,
+.CW 5338808320/100 ,
+returned
+.CW 0
+too \- which is why every
+.CW poolsize
+line at boot reads
+.CW "max\ 0" .
+The multiply feeding it is confirmed correct first \-
+.CW 266940416*20
+truncated to 32 bits printed exactly
+.CW 1043841024 ,
+matching hand computation \- this is specifically a division bug, not
+a multiply bug reappearing.  Not yet root-caused to a specific
+instruction the way every other bug in this section was; the
+candidates are the same class as everything above \- a
+.CW zc
+codegen or registerizer defect in a shift/carry-heavy loop with heavy
+register pressure \- but confirming which needs the same
+disassemble-and-hand-verify pass the float encodings and
+.CW _tas()
+got, not yet done.  Until it's fixed,
+.CW virt32
+reaches
+.CW userinit:\ no\ procs
+and panics \- the proc pool never gets sized correctly because the
+pool-size arithmetic that depends on this division is wrong \- one
+specific, reproducible bug away from a shell, not an open-ended list
+of them.

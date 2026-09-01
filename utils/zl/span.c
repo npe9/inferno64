@@ -148,10 +148,12 @@ classreg(Adr *a)
 		switch(a->class - 1) {
 		case C_SEXT:
 		case C_SECON:
+		case C_LECON:
 			return REGSB;
 		case C_SAUTO:
 		case C_LAUTO:
 		case C_SACON:
+		case C_LACON:
 			return REGSP;
 		}
 	}

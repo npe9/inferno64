@@ -199,6 +199,40 @@ struct
 	"R30",		LREG,	30,
 	"R31",		LREG,	31,
 
+	"F",		FR,	0,
+	"F0",		LFREG,	0,
+	"F1",		LFREG,	1,
+	"F2",		LFREG,	2,
+	"F3",		LFREG,	3,
+	"F4",		LFREG,	4,
+	"F5",		LFREG,	5,
+	"F6",		LFREG,	6,
+	"F7",		LFREG,	7,
+	"F8",		LFREG,	8,
+	"F9",		LFREG,	9,
+	"F10",		LFREG,	10,
+	"F11",		LFREG,	11,
+	"F12",		LFREG,	12,
+	"F13",		LFREG,	13,
+	"F14",		LFREG,	14,
+	"F15",		LFREG,	15,
+	"F16",		LFREG,	16,
+	"F17",		LFREG,	17,
+	"F18",		LFREG,	18,
+	"F19",		LFREG,	19,
+	"F20",		LFREG,	20,
+	"F21",		LFREG,	21,
+	"F22",		LFREG,	22,
+	"F23",		LFREG,	23,
+	"F24",		LFREG,	24,
+	"F25",		LFREG,	25,
+	"F26",		LFREG,	26,
+	"F27",		LFREG,	27,
+	"F28",		LFREG,	28,
+	"F29",		LFREG,	29,
+	"F30",		LFREG,	30,
+	"F31",		LFREG,	31,
+
 	"CTL",		LCTL,	0,
 
 	"ADD",		LADD,	AADD,
@@ -254,8 +288,9 @@ struct
 
 	"MOVB",		LMOVB,	AMOVB,
 	"MOVH",		LMOVB,	AMOVH,
-	"MOVF",		LMOVB,	AMOVF,
-	"MOVD",		LMOVB,	AMOVD,
+
+	"MOVF",		LMOVF,	AMOVF,
+	"MOVD",		LMOVF,	AMOVD,
 
 	"MOVBU",	LMOVBU,	AMOVBU,
 	"MOVHU",	LMOVBU,	AMOVHU,
@@ -263,6 +298,29 @@ struct
 
 	"MOVW",		LMOVW,	AMOVW,
 	"MOVL",		LMOVW,	AMOVL,
+
+	"MOVFD",	LFLT2,	AMOVFD,
+	"MOVDF",	LFLT2,	AMOVDF,
+	"MOVWF",	LFLT2,	AMOVWF,
+	"MOVUF",	LFLT2,	AMOVUF,
+	"MOVFW",	LFLT2,	AMOVFW,
+	"MOVWD",	LFLT2,	AMOVWD,
+	"MOVUD",	LFLT2,	AMOVUD,
+	"MOVDW",	LFLT2,	AMOVDW,
+	"ADDF",		LFLT3,	AADDF,
+	"ADDD",		LFLT3,	AADDD,
+	"SUBF",		LFLT3,	ASUBF,
+	"SUBD",		LFLT3,	ASUBD,
+	"MULF",		LFLT3,	AMULF,
+	"MULD",		LFLT3,	AMULD,
+	"DIVF",		LFLT3,	ADIVF,
+	"DIVD",		LFLT3,	ADIVD,
+	"CMPLTF",	LFLT3,	ACMPLTF,
+	"CMPLTD",	LFLT3,	ACMPLTD,
+	"CMPEQF",	LFLT3,	ACMPEQF,
+	"CMPEQD",	LFLT3,	ACMPEQD,
+	"CMPLEF",	LFLT3,	ACMPLEF,
+	"CMPLED",	LFLT3,	ACMPLED,
 
 	"LUI",		LLUI,	ALUI,
 
@@ -378,6 +436,7 @@ zaddr(Gen *a, int s)
 
 	case D_NONE:
 	case D_REG:
+	case D_FREG:
 	case D_CTLREG:
 		break;
 

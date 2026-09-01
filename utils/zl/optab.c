@@ -49,24 +49,32 @@ Optab	optab[] =
  /* sh		*/	AMOVH,		C_REG,		C_SOREG,	6,	4,	OSTORE,	1,	0,
  /* sw		*/	AMOVW,		C_REG,		C_SOREG,	6,	4,	OSTORE,	2,	0,
  /* sw		*/	AMOVW,		C_ZCON,		C_SOREG,	6,	4,	OSTORE,	2,	0,
+ /* fsw		*/	AMOVF,		C_FREG,		C_SOREG,	6,	4,	OSTORE_FP,	2,	0,
+ /* fsd		*/	AMOVD,		C_FREG,		C_SOREG,	6,	4,	OSTORE_FP,	3,	0,
 
  /* sb		*/	AMOVB,		C_REG,		C_LEXT,		12,	8,	OSTORE,	0,	0,
  /* sb		*/	AMOVBU,		C_REG,		C_LEXT,		12,	8,	OSTORE,	0,	0,
  /* sh		*/	AMOVH,		C_REG,		C_LEXT,		12,	8,	OSTORE,	1,	0,
  /* sw		*/	AMOVW,		C_REG,		C_LEXT,		12,	8,	OSTORE,	2,	0,
  /* sw		*/	AMOVW,		C_ZCON,		C_LEXT,		12,	8,	OSTORE,	2,	0,
-			
+ /* fsw		*/	AMOVF,		C_FREG,		C_LEXT,		12,	8,	OSTORE_FP,	2,	0,
+ /* fsd		*/	AMOVD,		C_FREG,		C_LEXT,		12,	8,	OSTORE_FP,	3,	0,
+
  /* sb		*/	AMOVB,		C_REG,		C_LAUTO,		15,	12,	OSTORE,	0,	0,
  /* sb		*/	AMOVBU,		C_REG,		C_LAUTO,		15,	12,	OSTORE,	0,	0,
  /* sh		*/	AMOVH,		C_REG,		C_LAUTO,		15,	12,	OSTORE,	1,	0,
  /* sw		*/	AMOVW,		C_REG,		C_LAUTO,		15,	12,	OSTORE,	2,	0,
  /* sw		*/	AMOVW,		C_ZCON,		C_LAUTO,		15,	12,	OSTORE,	2,	0,
+ /* fsw		*/	AMOVF,		C_FREG,		C_LAUTO,		15,	12,	OSTORE_FP,	2,	0,
+ /* fsd		*/	AMOVD,		C_FREG,		C_LAUTO,		15,	12,	OSTORE_FP,	3,	0,
 
  /* lb		*/	AMOVB,		C_SOREG,	C_REG,		7,	4,	OLOAD,	0,	0,
  /* lh		*/	AMOVH,		C_SOREG,	C_REG,		7,	4,	OLOAD,	1,	0,
  /* lw		*/	AMOVW,		C_SOREG,	C_REG,		7,	4,	OLOAD,	2,	0,
  /* lbu		*/	AMOVBU,		C_SOREG,	C_REG,		7,	4,	OLOAD,	4,	0,
  /* lhu		*/	AMOVHU,		C_SOREG,	C_REG,		7,	4,	OLOAD,	5,	0,
+ /* flw		*/	AMOVF,		C_SOREG,	C_FREG,		7,	4,	OLOAD_FP,	2,	0,
+ /* fld		*/	AMOVD,		C_SOREG,	C_FREG,		7,	4,	OLOAD_FP,	3,	0,
 
  /* lui		*/	AMOVW,		C_UCON,		C_REG,		8,	4,	OLUI,	0,	0,
 
@@ -75,12 +83,16 @@ Optab	optab[] =
  /* lw		*/	AMOVW,		C_LEXT,		C_REG,		13,	8,	OLOAD,	2,	0,
  /* lbu		*/	AMOVBU,		C_LEXT,		C_REG,		13,	8,	OLOAD,	4,	0,
  /* lhu		*/	AMOVHU,		C_LEXT,		C_REG,		13,	8,	OLOAD,	5,	0,
+ /* flw		*/	AMOVF,		C_LEXT,		C_FREG,		13,	8,	OLOAD_FP,	2,	0,
+ /* fld		*/	AMOVD,		C_LEXT,		C_FREG,		13,	8,	OLOAD_FP,	3,	0,
 
  /* lb		*/	AMOVB,		C_LAUTO,		C_REG,		16,	12,	OLOAD,	0,	0,
  /* lh		*/	AMOVH,		C_LAUTO,		C_REG,		16,	12,	OLOAD,	1,	0,
  /* lw		*/	AMOVW,		C_LAUTO,		C_REG,		16,	12,	OLOAD,	2,	0,
  /* lbu		*/	AMOVBU,		C_LAUTO,		C_REG,		16,	12,	OLOAD,	4,	0,
  /* lhu		*/	AMOVHU,		C_LAUTO,		C_REG,		16,	12,	OLOAD,	5,	0,
+ /* flw		*/	AMOVF,		C_LAUTO,		C_FREG,		16,	12,	OLOAD_FP,	2,	0,
+ /* fld		*/	AMOVD,		C_LAUTO,		C_FREG,		16,	12,	OLOAD_FP,	3,	0,
 
  /* add		*/	AMOVW,		C_REG,		C_REG,		0,	4,	OOP,		0,	0,
  /* addi	*/	AMOVW,		C_SCON,		C_REG,		11,	4,	OOP_IMM,	0,	0,
@@ -88,26 +100,50 @@ Optab	optab[] =
  /* addi	*/	AMOVW,		C_SACON,	C_REG,		11,	4,	OOP_IMM,	0,	0,
  /* lui,addi*/	AMOVW,		C_LCON,		C_REG,		9,	8,	OOP_IMM,	0,	0,
  /* ",addi  */	AADD,		C_LCON,		C_REG,		14,	12,	OOP_IMM,	0,	0,
+ /* lui,addi,add -- large frame address, e.g. $fmt+0(FP) */
+ /* ",",add	*/	AMOVW,		C_LACON,	C_REG,		14,	12,	OOP_IMM,	0,	0,
 
  /* andi	*/	AMOVBU,		C_REG,		C_REG,		10,	4,	OOP_IMM,	7,	0xFF,
  /* srli,srli	*/	AMOVHU,		C_REG,		C_REG,		10,	8,	OOP_IMM,	5,	16,
  /* srli,srai	*/	AMOVB,		C_REG,		C_REG,		10,	8,	OOP_IMM,	5,	24+(0x20<<5),
  /* srli,srai	*/	AMOVH,		C_REG,		C_REG,		10, 	8,	OOP_IMM,	5,	16+(0x20<<5),
 
- /* int->float	*/	AMOVWD,		C_REG,		C_FREG,		24,	4,	Ocustom_2,	0,	1,
- /* float->int  */	AMOVDW,		C_FREG,		C_FREG,		24,	4,	Ocustom_2,	0,	1,
- /* float load	*/	AMOVD,		C_SOREG,	C_FREG,		24,	4,	Ocustom_2,	0,	1,
- /* float store */	AMOVD,		C_FREG,		C_SOREG,	24,	4,	Ocustom_2,	0,	1,
- /* float store */	AMOVD,		C_FREG,		C_LEXT,	24,	4,	Ocustom_2,	0,	1,
- /* float move  */	AMOVD,		C_FREG,		C_FREG,	24,	4,	Ocustom_2,	0,	1,
- /* bug?        */	AMOVW,		C_FREG,		C_REG,	24,	4,	Ocustom_2,	0,	1,
-					ACMPEQD,	C_FREG,		C_REG,		24,	4,	Ocustom_2,	0,	1,
-					ACMPLED,	C_FREG,		C_REG,		24,	4,	Ocustom_2,	0,	1,
-					ACMPLTD,	C_FREG,		C_REG,		24,	4,	Ocustom_2,	0,	1,
-					AADDD,	C_FREG,		C_FREG,		24,	4,	Ocustom_2,	0,	1,
-					ASUBD,	C_FREG,		C_FREG,		24,	4,	Ocustom_2,	0,	1,
-					AMULD,	C_FREG,		C_FREG,		24,	4,	Ocustom_2,	0,	1,
-					ADIVD,	C_FREG,		C_FREG,		24,	4,	Ocustom_2,	0,	1,
+/*
+ * Real RISC-V F/D extension encodings, ported from utils/jl/optab.c
+ * (dropping its extra ctype column -- pure size-optimization plumbing
+ * this loader has none of; see utils/zl/asm.c's OP_R/OP_RF comments).
+ * The 14 rows this replaces (case 24, all "Ocustom_2") were dead
+ * placeholder scaffolding: case 24 in asm.c is the breakpoint
+ * encoder, unrelated to floating point, so every one of them
+ * would have emitted the same wrong bytes for any operand shape.
+ */
+ /* fadd.s	*/	AADDF,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x00,
+ /* fsub.s	*/	ASUBF,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x04,
+ /* fmul.s	*/	AMULF,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x08,
+ /* fdiv.s	*/	ADIVF,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x0c,
+ /* fadd.d	*/	AADDD,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x01,
+ /* fsub.d	*/	ASUBD,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x05,
+ /* fmul.d	*/	AMULD,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x09,
+ /* fdiv.d	*/	ADIVD,		C_FREG,		C_FREG,		0,	4,	OOP_FP,		0x7,	0x0d,
+
+ /* feq.s	*/	ACMPEQF,	C_FREG,		C_REG,		0,	4,	OOP_FP,		0x2,	0x50,
+ /* fle.s	*/	ACMPLEF,	C_FREG,		C_REG,		0,	4,	OOP_FP,		0x0,	0x50,
+ /* flt.s	*/	ACMPLTF,	C_FREG,		C_REG,		0,	4,	OOP_FP,		0x1,	0x50,
+ /* feq.d	*/	ACMPEQD,	C_FREG,		C_REG,		0,	4,	OOP_FP,		0x2,	0x51,
+ /* fle.d	*/	ACMPLED,	C_FREG,		C_REG,		0,	4,	OOP_FP,		0x0,	0x51,
+ /* flt.d	*/	ACMPLTD,	C_FREG,		C_REG,		0,	4,	OOP_FP,		0x1,	0x51,
+
+ /* fsgnj.s (float move) */	AMOVF,	C_FREG,	C_FREG,		0,	4,	OOP_FP,		0x0,	0x10,
+ /* fsgnj.d (dbl move)   */	AMOVD,	C_FREG,	C_FREG,		0,	4,	OOP_FP,		0x0,	0x11,
+
+ /* fcvt.d.s	*/	AMOVFD,		C_FREG,		C_FREG,		17,	4,	OOP_FP,		0x0,	0x21,
+ /* fcvt.s.d	*/	AMOVDF,		C_FREG,		C_FREG,		17,	4,	OOP_FP,		0x1,	0x20,
+ /* fcvt.w.s	*/	AMOVFW,		C_FREG,		C_REG,		17,	4,	OOP_FP,		0x0,	0x60,
+ /* fcvt.w.d	*/	AMOVDW,		C_FREG,		C_REG,		17,	4,	OOP_FP,		0x0,	0x61,
+ /* fcvt.s.w	*/	AMOVWF,		C_REG,		C_FREG,		17,	4,	OOP_FP,		0x0,	0x68,
+ /* fcvt.s.wu	*/	AMOVUF,		C_REG,		C_FREG,		17,	4,	OOP_FP,		0x1,	0x68,
+ /* fcvt.d.w	*/	AMOVWD,		C_REG,		C_FREG,		17,	4,	OOP_FP,		0x0,	0x69,
+ /* fcvt.d.wu	*/	AMOVUD,		C_REG,		C_FREG,		17,	4,	OOP_FP,		0x1,	0x69,
 
  /* -		*/	AWORD,		C_NONE,		C_LCON,		25, 	4, 	0,		0,	0,
  /* -		*/	ATEXT,		C_LEXT,		C_LCON,		26,	0,	0,		0,	0,

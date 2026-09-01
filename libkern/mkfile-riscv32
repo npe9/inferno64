@@ -9,6 +9,7 @@
 TARGFILES=\
 	vlop-riscv32.$O\
 	vlrt-riscv32.$O\
+	nan-riscv32.$O\
 	memset.$O\
 	memmove.$O\
 	strchr.$O\

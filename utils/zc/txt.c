@@ -720,15 +720,29 @@ gmove(Node *f, Node *t)
 		case TUSHORT:
 		case TCHAR:
 		case TUCHAR:
-			/* TODO: what about fproundflg? */
-			regalloc(&nod, f, Z);
-			gins(AMOVDW, f, &nod);
+			/*
+			 * This used to regalloc(&nod, f, Z) -- passing the
+			 * FLOAT source type f, not the integer destination
+			 * type t -- for a scratch register meant to hold an
+			 * AMOVDW result.  RISC-V's FCVT.W.D/WU.D always
+			 * write an integer register; regalloc(f) picked an F
+			 * register instead, so zl rejected the emitted
+			 * "MOVDW freg,freg" as an illegal combination (it
+			 * has no encoding, because none exists on real
+			 * hardware).  utils/jc/txt.c's own riscv64 version of
+			 * this exact case never allocates a scratch register
+			 * at all -- it just sets the opcode and falls
+			 * through to gmove()'s own trailing gins(a, f, t),
+			 * letting the compiler's normal, already-correct
+			 * destination-register allocation do the work.
+			 * Matched that here instead of fixing the regalloc
+			 * call, since jc's shape is simpler and proven
+			 * (riscv64 boots today).
+			 */
+			a = AMOVDW;
 			if(ft == TFLOAT)
-				p->as = AMOVFW;
-			gins(AMOVW, &nod, t);
-			regfree(&nod);
-			gins(AMOVW, t, t);
-			return;
+				a = AMOVFW;
+			break;
 		}
 		break;
 
