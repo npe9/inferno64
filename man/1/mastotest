@@ -53,6 +53,26 @@ detagged straight to
 now fixed by treating those two tags as line separators (see
 .IR masto (1)).
 .PP
+.B Feedtest
+calls
+.BR masto (1)'s
+own
+.BR decode() ,
+the status-array walk
+.BR timeline() 's
+curl call hands off to, directly with a hand-built JSON array in the
+real
+.B api/v1/timelines/home
+response shape \(em four statuses covering a normal one (with HTML
+content and an
+.B <br>
+line break), one with no
+.BR account ,
+and one with no
+.B content
+\(em and checks the decoded lines against the expected text, in the
+API's own order. This is a pure function, so it needs no network.
+.PP
 Exits with
 .B PASS
 or
@@ -64,16 +84,13 @@ naming what the decoded response actually held.
 .IR masto (1),
 .IR bskytest (1)
 .SH BUGS
-Needs real outbound network access to
-.BR mastodon.social
-for
-.BR pubtest ;
+.B Pubtest
+needs real outbound network access to
+.BR mastodon.social ;
 offline or firewalled hosts will see curl itself fail there, not a
 bug in the code under test.
 .B Htmltest
-needs no network but covers only
-.BR detag() 's
-own table of cases, not
-.BR timeline() 's
-status-array walk (which needs a real authenticated timeline to
-exercise).
+and
+.B feedtest
+need no network but cover only the fixture cases built into them, not
+every shape the real API can return.

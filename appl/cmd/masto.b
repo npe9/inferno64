@@ -36,6 +36,7 @@ Masto: module
 	# test seams, same justification as bsky.b's pubtest()
 	pubtest: fn(): string;
 	htmltest: fn(): string;
+	feedtest: fn(): string;
 };
 
 stderr: ref Sys->FD;
@@ -158,6 +159,16 @@ timeline(inst, token: string): (list of string, string)
 	(out, err) := curl(args);
 	if(err != nil)
 		return (nil, err);
+	return decode(out);
+}
+
+# split out of timeline() so the actual status-array walk - the code
+# path every real invocation of this command runs, and which none of
+# the test seams above ever touched - can be driven from a plain JSON
+# string, the same shape curl() itself returns, without a live account.
+
+decode(out: string): (list of string, string)
+{
 	(v, jerr) := json->readjson(bufio->sopen(out));
 	if(jerr != nil || v == nil)
 		return (nil, "bad response: "+out);
@@ -423,6 +434,68 @@ curl(args: list of string): (string, string)
 	if(out == nil && errout != nil)
 		return (nil, errout);
 	return (out, nil);
+}
+
+# --- test seam: decode(), no network needed ---
+# the status-array walk in decode() is the code path every real
+# invocation of masto(1) runs, and none of the seams above ever
+# exercised it (they only ever checked instance metadata, never a
+# timeline shape). A four-status JSON array, built by hand in the
+# real shape api/v1/timelines/home returns (checked against Mastodon's
+# own documented response shape, and against the real content-HTML
+# shape seen live in pubtest()'s own api/v1/instance response),
+# exercises: the account/content fields present and absent (the "?"
+# and "" fallbacks), <br> handling composed with detag() the same way
+# the real caller composes it, entity decoding, and the double-reverse
+# that's meant to preserve the API's own newest-first order.
+
+feedtest(): string
+{
+	e := ensureloaded();
+	if(e != nil)
+		return "feedtest: "+e;
+	body := "[" +
+		"{\"account\":{\"acct\":\"alice@example.social\"}," +
+		 "\"content\":\"<p>hello &amp; welcome</p>\"}," +
+		"{\"account\":{\"acct\":\"bob@example.social\"}," +
+		 "\"content\":\"<p>line one<br>line two</p>\"}," +
+		"{\"content\":\"<p>no account field</p>\"}," +
+		"{\"account\":{\"acct\":\"carol@example.social\"}}" +
+		"]";
+	(lines, err) := decode(body);
+	if(err != nil)
+		return "feedtest: "+err;
+	want := array[] of {
+		"@alice@example.social: hello & welcome",
+		"@bob@example.social: line one / line two",
+		"@?: no account field",
+		"@carol@example.social: ",
+	};
+	got: array of string;
+	n := len lines;
+	got = array[n] of string;
+	i := 0;
+	for(l := lines; l != nil; l = tl l){
+		got[i] = hd l;
+		i++;
+	}
+	if(n != len want)
+		return sys->sprint("feedtest: got %d lines, want %d: %s", n, len want, out2str(got));
+	for(i = 0; i < n; i++)
+		if(got[i] != want[i])
+			return sys->sprint("feedtest: line %d = %q, want %q", i, got[i], want[i]);
+	return nil;
+}
+
+out2str(a: array of string): string
+{
+	s := "";
+	for(i := 0; i < len a; i++){
+		if(i != 0)
+			s += " | ";
+		s += a[i];
+	}
+	return s;
 }
 
 # --- test seam: detag()/unentity(), no network needed ---

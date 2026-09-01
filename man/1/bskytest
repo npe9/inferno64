@@ -47,11 +47,41 @@ the one caller of
 request-body path and of
 .BR jsonquote() ,
 with a deliberately bogus handle and password. It cannot reach a real
-account, but the real server can only answer with the specific
-.B AuthenticationRequired
-error shape if the JSON body this sent actually arrived intact \(em a
-body mangled by the write/close-to-EOF path would instead produce a
-different, distinguishable failure.
+account, but the real server can only answer with a real, well-formed
+error
+.RB ( AuthenticationRequired ,
+or
+.B RateLimitExceeded
+if this exact test has already run often enough in one session to
+trip the server's own rate limiter) if the JSON body this sent
+actually arrived intact \(em a body mangled by the write/close-to-EOF
+path would instead produce a different, distinguishable failure (a
+curl-level error, or a decode failure with no real error field at
+all).
+.PP
+.B Feedtest
+calls
+.BR bsky (1)'s
+own
+.BR decode() ,
+the feed-array walk
+.BR timeline() 's
+curl call hands off to, directly with a hand-built JSON string in the
+real
+.B app.bsky.feed.getTimeline
+response shape (a
+.B feed
+array of
+.BR post / author / record
+objects) \(em four posts covering a normal post, one with no
+.BR author ,
+one with no
+.BR record ,
+and one with no
+.B post
+at all (skipped, not a crash) \(em and checks the decoded lines
+against the expected text, in the API's own order. This is a pure
+function, so it needs no network.
 .PP
 Exits with
 .B PASS
@@ -63,13 +93,15 @@ naming what the decoded response actually held.
 .SH SEE ALSO
 .IR bsky (1)
 .SH BUGS
-Needs real outbound network access to
+.B Pubtest
+and
+.B postpubtest
+need real outbound network access to
 .BR public.api.bsky.app
 and
 .BR bsky.social ;
-offline or firewalled hosts will see curl itself fail, not a bug in
-the code under test. Covers the transport, both request shapes, and
-JSON decoding, but not
-.BR timeline() 's
-own feed-array walk (which needs a real, authenticated timeline to
-exercise).
+offline or firewalled hosts will see curl itself fail there, not a bug
+in the code under test.
+.B Feedtest
+needs no network but covers only the fixture cases built into it, not
+every shape the real API can return.

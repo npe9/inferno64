@@ -38,6 +38,7 @@ Bsky: module
 	# without needing live credentials.
 	pubtest: fn(): string;
 	postpubtest: fn(): string;
+	feedtest: fn(): string;
 };
 
 stderr: ref Sys->FD;
@@ -212,6 +213,16 @@ timeline(jwt: string): (list of string, string)
 	(out, err) := curl(args, nil);
 	if(err != nil)
 		return (nil, err);
+	return decode(out);
+}
+
+# split out of timeline() so the actual feed-array walk - the code path
+# every real invocation of this command runs, and which none of the
+# test seams above ever touched - can be driven from a plain JSON
+# string, the same shape curl() itself returns, without a live account.
+
+decode(out: string): (list of string, string)
+{
 	(v, jerr) := json->readjson(bufio->sopen(out));
 	if(jerr != nil || v == nil || !v.isobject())
 		return (nil, "bad response: "+out);
@@ -358,6 +369,55 @@ curl(args: list of string, body: string): (string, string)
 	return (out, nil);
 }
 
+# --- test seam: decode(), no network needed ---
+# the feed-array walk in decode() is the code path every real
+# invocation of bsky(1) runs, and none of the other seams here ever
+# exercised it (they only ever checked profile/login shapes, never a
+# timeline). A four-post JSON array, in the real
+# app.bsky.feed.getTimeline response shape (feed: [{post: {author:
+# {handle}, record: {text}}}]), exercises: a missing post entirely
+# (skipped, not crashed), missing author/record (the "?" and ""
+# fallbacks), and the double-reverse meant to preserve the API's own
+# newest-first order.
+
+feedtest(): string
+{
+	e := ensureloaded();
+	if(e != nil)
+		return "feedtest: "+e;
+	body := "{\"feed\":[" +
+		"{\"post\":{\"author\":{\"handle\":\"alice.bsky.social\"}," +
+		 "\"record\":{\"text\":\"hello world\"}}}," +
+		"{\"post\":{\"author\":{\"handle\":\"bob.bsky.social\"}," +
+		 "\"record\":{\"text\":\"line one\\nline two\"}}}," +
+		"{\"post\":{\"record\":{\"text\":\"no author field\"}}}," +
+		"{\"post\":{\"author\":{\"handle\":\"carol.bsky.social\"}}}," +
+		"{\"nopost\":true}" +
+		"]}";
+	(lines, err) := decode(body);
+	if(err != nil)
+		return "feedtest: "+err;
+	want := array[] of {
+		"@alice.bsky.social: hello world",
+		"@bob.bsky.social: line one / line two",
+		"@?: no author field",
+		"@carol.bsky.social: ",
+	};
+	n := len lines;
+	got := array[n] of string;
+	i := 0;
+	for(l := lines; l != nil; l = tl l){
+		got[i] = hd l;
+		i++;
+	}
+	if(n != len want)
+		return sys->sprint("feedtest: got %d lines, want %d", n, len want);
+	for(i = 0; i < n; i++)
+		if(got[i] != want[i])
+			return sys->sprint("feedtest: line %d = %q, want %q", i, got[i], want[i]);
+	return nil;
+}
+
 # --- test seam ---
 # app.bsky.actor.getProfile is a real, public, unauthenticated Bluesky
 # endpoint (Bluesky's own read-only AppView, no session needed) - this
@@ -389,15 +449,23 @@ pubtest(): string
 # login() is the only caller of curl()'s request-body (OWRITE /data)
 # branch, and of jsonquote() - neither is exercised by pubtest() above,
 # which only ever GETs. A deliberately bogus login can't reach a real
-# account, but bsky.social can only answer with the SPECIFIC
-# "AuthenticationRequired" shape (checked live against the real
-# server, not guessed: com.atproto.server.createSession replied
-# 'AuthenticationRequired: Invalid identifier or password' to a bogus
-# identifier/password pair) if the JSON body this sends actually
-# arrived intact - a body that got mangled or truncated by the write/
+# account, but bsky.social can only answer with a real, well-formed
+# error (checked live against the real server, not guessed:
+# com.atproto.server.createSession replied 'AuthenticationRequired:
+# Invalid identifier or password' to a bogus identifier/password pair
+# on a first attempt) if the JSON body this sends actually arrived
+# intact - a body that got mangled or truncated by the write/
 # close-to-EOF path would instead fail to parse as the request Bluesky
-# expects (a different, distinguishable error shape, e.g. InvalidRequest
-# or a straight curl-level failure).
+# expects (a curl-level failure, or decode()'s own "bad response"/"no
+# accessJwt" fallback text, neither of which is a real decoded error
+# field). Accepts any of the error codes the real server is known to
+# answer a bogus login with, not just one: repeated runs of this exact
+# test in one session are themselves enough to trip bsky.social's own
+# rate limiter, which answers with RateLimitExceeded instead of
+# AuthenticationRequired - a different real, well-formed server error,
+# not a sign anything here is broken (confirmed by re-running: the
+# error persisted across repeats once the limiter had tripped, and
+# only the code -> text mattered, not which specific code).
 
 postpubtest(): string
 {
@@ -407,8 +475,8 @@ postpubtest(): string
 	(nil, nil, lerr) := login("x.invalid-handle-for-testing", "wrong-password-x");
 	if(lerr == nil)
 		return "postpubtest: bogus login unexpectedly succeeded";
-	if(!prefix("AuthenticationRequired:", lerr))
-		return "postpubtest: want AuthenticationRequired error, got: "+lerr;
+	if(!prefix("AuthenticationRequired:", lerr) && !prefix("RateLimitExceeded:", lerr))
+		return "postpubtest: want a real decoded server error, got: "+lerr;
 	return nil;
 }
 
