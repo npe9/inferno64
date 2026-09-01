@@ -125,6 +125,7 @@ TARG=\
 	gunzip.dis\
 	gzip.dis\
 	hd.dis\
+	hmacsha256test.dis\
 	inputtest.dis\
 	idea.dis\
 	import.dis\

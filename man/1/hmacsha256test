@@ -1,0 +1,43 @@
+.TH HMACSHA256TEST 1
+.SH NAME
+hmacsha256test \- test keyring->hmac_sha256()
+.SH SYNOPSIS
+.B hmacsha256test
+.SH DESCRIPTION
+.B Hmacsha256test
+checks
+.IR keyring (2)'s
+.B hmac_sha256()
+.RI ( module/keyring.m ,
+.IR libinterp/keyring.c ,
+.IR libsec/hmac.c )
+against four real HMAC-SHA256 test vectors: RFC 4231's own published
+test case 1, and three more generated directly from the host's own
+.IR openssl (1)
+.RB ( "dgst -sha256 -hmac" ),
+an independent real implementation, rather than hand-computed or
+taken from memory. One vector is the degenerate empty-key/empty-data
+case.
+.PP
+This is the first primitive of the SSL/TLS modernization plan (see
+.IR doc/ssl-modernization-plan.md
+in the source tree): TLS 1.2's own PRF is HMAC-SHA256 based (RFC 5246
+\(sc5), unlike the SSLv3/TLS1.0 PRF
+.IR module/ssl3.m
+already implements, which mixes MD5 and SHA1 directly rather than
+using HMAC at all.
+.PP
+Exits with
+.B PASS
+if every vector matched, or
+.B FAIL
+naming which case, the expected digest, and the digest actually
+computed.
+.SH SOURCE
+.B /appl/cmd/hmacsha256test.b
+.SH SEE ALSO
+.IR keyring (2)
+.SH BUGS
+Four vectors, not an exhaustive test suite; RFC 4231's remaining test
+cases (including the ones exercising key lengths past the HMAC block
+size) are not included.

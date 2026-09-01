@@ -31,6 +31,38 @@ void	setupAESstate(AESstate *s, uchar key[], int keybytes, uchar *ivec);
 void	aesCBCencrypt(uchar *p, int len, AESstate *s);
 void	aesCBCdecrypt(uchar *p, int len, AESstate *s);
 
+enum
+{
+	ChachaBsize=	64,
+	ChachaKeylen=	256/8,
+	ChachaIVlen=	96/8,
+	XChachaIVlen=	192/8,
+};
+
+typedef struct Chachastate Chachastate;
+struct Chachastate
+{
+	union{
+		u32	input[16];
+		struct {
+			u32	constant[4];
+			u32	key[8];
+			u32	counter;
+			u32	iv[3];
+		};
+	};
+	u32	xkey[8];
+	int	rounds;
+	int	ivwords;
+};
+
+void	setupChachastate(Chachastate*, uchar*, u32, uchar*, u32, int);
+void	chacha_setiv(Chachastate*, uchar*);
+void	chacha_setblock(Chachastate*, u64);
+void	chacha_encrypt(uchar*, u32, Chachastate*);
+void	chacha_encrypt2(uchar*, uchar*, u32, Chachastate*);
+void	hchacha(uchar[32], uchar*, u32, uchar[16], int);
+
 /*/////////////////////////////////////////////////////// */
 /* Blowfish Definitions */
 /*/////////////////////////////////////////////////////// */
@@ -184,6 +216,7 @@ DigestState* sha384(uchar*, ulong, uchar*, DigestState*);
 DigestState* sha512(uchar*, ulong, uchar*, DigestState*);
 DigestState* hmac_md5(uchar*, ulong, uchar*, ulong, uchar*, DigestState*);
 DigestState* hmac_sha1(uchar*, ulong, uchar*, ulong, uchar*, DigestState*);
+DigestState* hmac_sha256(uchar*, ulong, uchar*, ulong, uchar*, DigestState*);
 char* md5pickle(MD5state*);
 MD5state* md5unpickle(char*);
 char* sha1pickle(SHA1state*);

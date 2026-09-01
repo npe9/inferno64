@@ -194,6 +194,10 @@ Keyring: module
 		ref DigestState;
 	hmac_md5: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
 		ref DigestState;
+	# needed for the TLS 1.2 PRF (RFC 5246 5) - unlike SSLv3/TLS1.0's
+	# dual MD5+SHA1 PRF, TLS 1.2 is HMAC-SHA256-based (see doc/ssl-modernization-plan.md)
+	hmac_sha256: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
+		ref DigestState;
 
 	SHA1dlen:	con 20;
 	SHA224dlen:	con 28;

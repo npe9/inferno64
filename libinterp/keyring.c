@@ -1395,6 +1395,19 @@ Keyring_hmac_md5(void *fp)
 }
 
 void
+Keyring_hmac_sha256(void *fp)
+{
+	F_Keyring_hmac_sha256 *f;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+	*f->ret = keyring_hmac_x(f->data, f->n, f->key, f->digest, SHA256dlen, f->state, hmac_sha256);
+}
+
+void
 Keyring_dhparams(void *fp)
 {
 	F_Keyring_dhparams *f;
