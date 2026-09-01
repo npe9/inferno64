@@ -1,0 +1,55 @@
+.TH MASTOTEST 1
+.SH NAME
+mastotest \- test the #C/curl/JSON path masto(1) depends on
+.SH SYNOPSIS
+.B mastotest
+.SH DESCRIPTION
+.B Mastotest
+calls
+.IR masto (1)'s
+own in-process
+.B pubtest()
+seam, the same pattern
+.IR bskytest (1)
+uses against Bluesky (see that command's own man page for the
+justification, which applies here unchanged).
+.B Pubtest
+fetches
+.BR api/v1/instance ,
+a real, public, unauthenticated endpoint every Mastodon server
+exposes (a server description, not a session), through the exact
+.B curl()
+and JSON-decoding path
+.BR masto (1)'s
+own
+.B timeline()
+uses, and checks that the decoded
+.B title
+field is present. Because the endpoint needs no access token, this
+exercises the whole transport \(em
+.BR #C ,
+the host's
+.IR curl (1),
+real TLS, and this tree's
+.B json
+library reading the reply back \(em without a credentials file.
+.PP
+Exits with
+.B PASS
+or
+.B FAIL
+naming what the decoded response actually held.
+.SH SOURCE
+.B /appl/cmd/mastotest.b
+.SH SEE ALSO
+.IR masto (1),
+.IR bskytest (1)
+.SH BUGS
+Needs real outbound network access to
+.BR mastodon.social ;
+offline or firewalled hosts will see curl itself fail, not a bug in
+the code under test. Covers only the transport and decoding path, not
+.BR timeline() 's
+own status-array walk or its HTML-stripping (both need a real
+authenticated timeline to exercise, which a public instance
+description doesn't exercise).

@@ -1,0 +1,80 @@
+.TH MASTO 1
+.SH NAME
+masto \- Mastodon client: print the home timeline
+.SH SYNOPSIS
+.B masto
+.I credfile
+.SH DESCRIPTION
+.B Masto
+fetches the caller's home timeline from a Mastodon instance using the
+instance hostname and personal access token read from
+.IR credfile ,
+then prints it, one line per status, oldest last:
+.EX
+\&@alice@mastodon.social: what a nice day
+\&@bob@example.social: shipped a thing
+.EE
+.PP
+.I Credfile
+holds exactly two lines: the instance hostname with no scheme
+(\c
+.B mastodon.social
+, not
+.BR https://mastodon.social ),
+then a personal access token \(em from that instance's own Settings >
+Development > New Application page, with
+.B read
+scope. This skips Mastodon's OAuth2 authorization-code exchange
+entirely: a personal access token is a real, first-class credential
+Mastodon itself issues for exactly this case, not a workaround. Keep
+this file readable only by its owner; nothing here enforces that.
+.PP
+.B Masto
+never places the token on a command line (where a
+.IR ps (1)
+listing could see it) or in any diagnostic output.
+.PP
+Status text arrives from Mastodon as a small fragment of HTML
+(typically wrapped in
+.BR <p> ,
+with
+.B <a>
+and
+.B <span>
+around mentions and hashtags); this strips tags and decodes the
+handful of entities Mastodon's own renderer emits
+.RI ( &amp; ,
+.IR &lt; ,
+.IR &gt; ,
+.IR &quot; ,
+.IR &apos; / &#39; )
+rather than pull in a real HTML parser for a few paragraphs of text.
+.SH TRANSPORT
+Same as
+.IR bsky (1):
+this tree's own
+.B ssl3
+cannot reach a real TLS 1.2+ host, so
+.B masto
+drives the host's own
+.IR curl (1)
+through
+.B #C
+(see
+.IR cmd (3)).
+Hosted mode only \(em see
+.IR bsky (1)
+for the full reasoning, not repeated here.
+.SH SOURCE
+.B /appl/cmd/masto.b
+.SH SEE ALSO
+.IR mastotest (1),
+.IR bsky (1),
+.IR cmd (3)
+.SH BUGS
+Read-only, one timeline, no abstraction shared with
+.IR bsky (1)
+(each is deliberately self-contained \(em see masto.b's own header
+comment for why). No pagination (a fixed 30 statuses), no posting, no
+notifications, no boosts or favourites shown separately from the
+statuses that carry them.

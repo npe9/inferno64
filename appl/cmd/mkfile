@@ -144,6 +144,8 @@ TARG=\
 	man2html.dis\
 	man2speak.dis\
 	man2txt.dis\
+	masto.dis\
+	mastotest.dis\
 	mc.dis\
 	md5sum.dis\
 	mdb.dis\
