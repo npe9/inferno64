@@ -100,6 +100,19 @@ BUGS what the test does *not* cover.
 blocks. Inside `.EX`, write `\en` not a raw newline escape, and never start a line with `'` or `.`.
 The section `INDEX` files are hand-curated; do not blindly regenerate them.
 
+**Network clients use this tree's own TLS, never `#C` as a transport.** `bsky(1)`/`masto(1)`
+originally shelled out to the host's `curl(1)` through `#C` (man/3/cmd) because `module/ssl3.m` only
+speaks SSLv3 and cannot reach a modern HTTPS host. That was a stopgap, not the design, and it must not
+be repeated: no network client in this tree may drive a host command as its transport. `#C` itself
+stays legitimate for what it was already used for elsewhere — running a real host binary as a test
+oracle (`p9/cmd/prtest.b`), or genuinely operating on the host (`appl/cmd/os.b`) — the rule is
+specifically about TLS/HTTP transport for a *network client*, not `#C` in general. If the SSL library
+still can't reach a real host by the time you get here, fixing that is the actual task, not a reason
+to route around it again. As of this rule landing, `bsky(1)`/`masto(1)` themselves are *still* on the
+`#C`/curl stopgap — the SSL modernization (see `doc/` for the in-progress plan, if one exists by the
+time you read this) hasn't shipped yet. Don't read the rule, read the code, and conclude the rule is
+stale; migrating those two commands off `#C` is exactly the outstanding work this rule is naming.
+
 **A Plan 9 userspace workalike is Limbo, in `p9/`, not C in `utils/`.** `utils/` builds
 host-native binaries with the kencc toolchain — real work, but not "running in Inferno
 proper," since it never touches Dis or `emu`. Anything meant as a native-to-Inferno
