@@ -563,6 +563,66 @@ fixdblind(Node *n)
 }
 
 /*
+ * n is an Oind node -- check.c's Odot-built Oind(Oadd(Oadr(base),
+ * $offset)) for "base.field" where base is a value-typed (non-ref)
+ * receiver -- whose own Oadr child wraps an Ocall, e.g. "mkpoint().x".
+ * A plain local (Oname) base needs no help at all here: its whole
+ * Oind(Oadd(Oadr(...),offset)) chain collapses to one static
+ * addressing mode via sumark's own Oadr/Oadd/Oind tables (case Oadr's
+ * own comment, ecom.c -- above -- "address of a local's own frame
+ * slot isn't a value to compute, only a marker for sumark's tables to
+ * route through"), so no runtime "address" is ever materialized for
+ * that shape.  A call result is different in kind, not degree: it has
+ * no frame slot of its own to take the address of until something
+ * actually runs the call and stores the result somewhere -- distinct
+ * from fixdblind()'s own problem just above (an already-Radr/Rmadr
+ * base, i.e. a real pointer *value* sitting in memory that just needs
+ * materializing into a temp) and from Oindx's own indxaddr() (a
+ * genuine runtime address computation via a real Dis instruction,
+ * since an array element's location depends on a bounds check).
+ * Neither of those mechanisms applies: there is no pointer value to
+ * read, and no instruction to compute "the address of a frame slot"
+ * as a portable value (Dis's own addressing model has no such
+ * primitive -- confirmed by there being no candidate instruction to
+ * reach for, not assumed).
+ *
+ * mechanism instead: materialize the call's own *value* (not an
+ * address) into a fresh, ordinary Dlocal temp, typed exactly as the
+ * call's own return type -- via the same Ocall codegen (callcom(),
+ * through ecom()'s own Ocall case) any other "x := f()" already uses
+ * -- then substitute a plain Oname naming that temp for the Oadr's
+ * own Ocall base, in place, and re-sumark() the whole chain.  From
+ * there it's structurally identical to "p.field" on an ordinary
+ * local: the temp is a real Dlocal with a real frame slot, so its own
+ * Oadr composes purely statically, needing no further runtime
+ * "address" computation of its own.
+ *
+ * a no-op (returns nil) for any other shape, matching fixdblind()'s
+ * own calling convention exactly -- callable unconditionally right
+ * alongside it. The temp is heap-allocated (mkn()), not a stack-local
+ * Node, for the identical reason fixdblind()'s own tres is: the
+ * rewritten tree keeps referencing it after this function returns.
+ * Caller tfree()s the result (nil-safe).
+ */
+static Node*
+fixcallbase(Node *n)
+{
+	Node *base, *tres;
+
+	if(n == nil || n->op != Oind || n->left == nil || n->left->op != Oadd)
+		return nil;
+	base = n->left->left;
+	if(base == nil || base->op != Oadr
+	|| base->left == nil || base->left->op != Ocall)
+		return nil;
+	tres = mkn(Oname, nil, nil);
+	ecom(&base->left->src, talloc(tres, base->left->ty, nil), base->left);
+	base->left = tres;
+	sumark(n);
+	return tres;
+}
+
+/*
  * xs[i] (Oindx): unlike a struct field's constant offset (resolved
  * entirely through sumark's static Radr/Rmadr addressing chain), an
  * array index is a genuine runtime value needing a real, bounds-
@@ -1724,27 +1784,39 @@ ecom(Src *src, Node *nto, Node *n)
 		 * value-typed base.field lowering) -- ecom() had no case for
 		 * Oadr at all, because "address of a local's own frame slot"
 		 * isn't a value to compute, only a marker for sumark's
-		 * tables to route through.  that's since gained exactly one
-		 * case (an Oindx base -- see ecom()'s own Oadr case), for the
-		 * structurally identical situation where the base isn't a
-		 * frame slot but a computed array-element address; every
-		 * *other* Oadr shape (a plain local, a deref chain) still has
-		 * no case and still must never reach here.  left->addable >=
-		 * Rcant but outside that set (Rpc/Rmpc/Rldt) still gets the
-		 * original treatment.
+		 * tables to route through.  that's since gained two cases
+		 * (an Oindx base -- see ecom()'s own Oadr case; and an Ocall
+		 * base -- fixcallbase(), above), for situations where the
+		 * base genuinely isn't a frame slot at all yet (a computed
+		 * array-element address; an unmaterialized call result);
+		 * every *other* Oadr shape (a plain local, a deref chain)
+		 * still has no case and still must never reach here.
+		 * fixcallbase() runs first, before the left->addable check
+		 * below, since it can rewrite left->left (an Oadr(Ocall)
+		 * base) into a plain, statically-addressable Oname and
+		 * re-sumark() the whole chain -- if it does, left->addable
+		 * (left is the same Oadd node object, just re-classified)
+		 * already reflects the rewritten, now-addressable shape by
+		 * the time that check runs, so eacom()'s own general
+		 * arithmetic path (which has no case for Oadr at all) is
+		 * never reached for this shape.  left->addable >= Rcant but
+		 * outside that set (Rpc/Rmpc/Rldt) still gets the original
+		 * treatment.
 		 */
-		if(left->addable >= Rcant
-		&& left->addable != Rareg && left->addable != Ramreg
-		&& left->addable != Raadr && left->addable != Ramadr)
-			left = eacom(left, &tl, nil);
 		{
-			Node *fd;
+			Node *fcb, *fd;
 
+			fcb = fixcallbase(n);
+			if(left->addable >= Rcant
+			&& left->addable != Rareg && left->addable != Ramreg
+			&& left->addable != Raadr && left->addable != Ramadr)
+				left = eacom(left, &tl, nil);
 			fd = fixdblind(n);
 			if(nto != nil)
 				genmove(src, Mas, n->ty, n, nto);
 			tfree(&tl);
 			tfree(fd);
+			tfree(fcb);
 			return nto;
 		}
 	case Olen:
