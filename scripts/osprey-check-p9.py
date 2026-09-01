@@ -85,6 +85,8 @@ def main():
     m3 = re.search(r'the union listing spanned (\d+) entries', t)
     results.append(("and a union directory read of \"/\" composes the root device, the environment and the 9P mount into one listing",
                     'ls / (a union' in t and m3 is not None and int(m3.group(1)) >= 18))
+    results.append(("and the name space carries a pipe - two ends of a channel a program talks through, written and read",
+                    'wrote one end of a pipe, read the other: "sent through a pipe"' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

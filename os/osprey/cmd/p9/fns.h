@@ -10,3 +10,4 @@ extern _Noreturn void longjmp(jmp_buf, int);
 #define waserror()	(up->nerrlab++, setjmp(up->errlab[up->nerrlab-1]))
 #undef poperror
 #define poperror()	(up->nerrlab--)
+extern uint qiomaxatomic;

@@ -309,6 +309,37 @@ p9main(void)
 		p9close(dfd);
 	}
 
+	/*
+	 * A pipe: the name space carries not only files but a channel two
+	 * ends of a program talk through.  Attach a pipe, walk to its two
+	 * ends, write one and read the other - the bytes cross through the
+	 * queue the pipe device holds, in the personality's own memory.
+	 */
+	{
+		Chan *pd, *w, *r;
+		char *nm[1];
+		long n;
+
+		pd = namec("#|", Atodir, 0, 0);
+		w = cclone(pd);
+		nm[0] = "data";
+		walk(&w, nm, 1, 1, nil);
+		w = devtab[w->type]->open(w, OWRITE);
+		r = cclone(pd);
+		nm[0] = "data1";
+		walk(&r, nm, 1, 1, nil);
+		r = devtab[r->type]->open(r, OREAD);
+		cclose(pd);
+
+		devtab[w->type]->write(w, "sent through a pipe", 19, 0);
+		n = devtab[r->type]->read(r, buf, sizeof buf - 1, 0);
+		if(n < 0) n = 0;
+		buf[n] = 0;
+		print("p9: wrote one end of a pipe, read the other: \"%.*s\"\n", (int)n, (char*)buf);
+		cclose(w);
+		cclose(r);
+	}
+
 	poperror();
 	exits(nil);
 }

@@ -191,7 +191,8 @@ extern Dev envdevtab;
 extern Dev mntdevtab;
 extern Dev looploopdevtab;
 extern Dev expdevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, nil };
+extern Dev pipedevtab;
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, nil };
 
 long	kerndate = 0;
 
@@ -330,3 +331,4 @@ Block*	iallocbp(Bpool*){ return nil; }
 int	islo(void){ return 1; }
 void	sched(void){}
 void	validstat(uchar*, int){}
+Conf	conf;
