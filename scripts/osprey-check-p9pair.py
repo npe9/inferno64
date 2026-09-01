@@ -5,9 +5,11 @@ p9pair is the microkernel running two containers, each the Plan 9 file
 personality as a user-space library.  One is the client, the other the
 server; the client delegates to the server, so its 9P requests forward
 over the ring, and the server answers them from its own name space by an
-exportfs.  Two library operating systems then name each other's files by
-message passing, the kernel only routing - the paper's picture, with a
-real container boundary rather than a loopback.
+exportfs.  This is the paper's library-OS mechanism ("library operating
+systems on top of the Osprey kernel") with two of them, one delegating
+file operations to the other - one-directional, and NOT the paper's
+buddyOS, which is legacy-binary system-trap emulation, a different and
+unbuilt mechanism.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -35,15 +37,15 @@ def main():
     try: t = plain(open(log, errors='replace').read())
     except OSError: t = ''
 
-    m = re.search(r"pair-client: read (\d+) entries from the buddy's exported root", t)
+    m = re.search(r"pair-client: read (\d+) entries from the server personality's exported root", t)
     results = [
-        ("the microkernel runs a client personality that mounts a buddy over the ring",
-         'pair-client: mounting the buddy personality over the ring' in t),
+        ("the microkernel runs a client personality that mounts a second personality over the ring",
+         'pair-client: mounting the server personality over the ring' in t),
         ("and a second personality, a container of its own, answers 9P about its name space",
-         'buddy server: name space up, answering 9P over the ring' in t and 'p9 buddy: serving this name space over the ring' in t),
-        ("and the client reads the buddy's exported root over 9P, the kernel only routing",
+         'server personality: name space up, answering 9P over the ring' in t and 'p9 server: serving this name space over the ring' in t),
+        ("and the client reads the server personality's exported root over 9P, the kernel only routing",
          m is not None and int(m.group(1)) >= 10),
-        ("and it exits cleanly, two library operating systems as buddies, no panic",
+        ("and it exits cleanly, two library operating systems on the microkernel, one serving the other, no panic",
          'the program exited' in t and 'panic' not in t),
     ]
     bad = 0

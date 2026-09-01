@@ -2419,12 +2419,21 @@ brings up its own name space, then answers 9P about it \- the exportfs
 over the ring rather than the loopback \- for the client, which mounts it
 and reads its exported root.  One library operating system names another's
 files by message passing, the kernel only routing them: the client's
-buddy is a second library OS in a container of its own, not the Plan 9
-kernel answering for it as on pc64, nor a loopback within one task.  The
-relationship is the delegation the plan calls a buddy \- the client
-delegates to the server what its own name space does not hold \- and it is
-one-directional here: the client mounts the server, not the reverse.  It
-is checked by
+server is a second library OS in a container of its own, not the Plan 9
+kernel answering for it as on pc64, nor a loopback within one task.  This
+is the paper's structure \- a microkernel with library operating systems
+on top \- with two of them, one delegating file operations it does not
+answer itself to the other, one-directional (the client mounts the
+server, not the reverse).  It is not the paper's
+.I buddyOS ,
+which is a different mechanism: the paper's buddy operating system is the
+peer process that runs an unmodified legacy binary and handles all its
+system traps \- system calls and page faults \- emulating a legacy OS with
+.CW /dev
+and
+.CW /proc .
+That is legacy emulation, and it is unbuilt; p9pair is the library-OS
+mechanism the paper lists beside it.  It is checked by
 .CW /scripts/osprey-check-p9pair.py .
 The one constraint it obeys is the reason it is two containers and not
 one: a container has a single server it delegates to, and its request

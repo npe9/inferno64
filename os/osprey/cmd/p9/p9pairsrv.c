@@ -1,10 +1,10 @@
 /*
- * The buddy server's ring loop, compiled against the user headers.  It
+ * The server personality's ring loop, compiled against the user headers.  It
  * maps this container's ring and its client's slice with segattach, waits
  * on its request ring with select the way a driver task does, and answers
  * each 9P request by handing the marshalled message to p9srv_serve - the
  * exportfs over this personality's own name space - and routing the reply
- * home.  Two library operating systems then name each other's files over
+ * home.  One library operating system then names the other's files over
  * the ring, the kernel only carrying the messages.
  *
  * The 9P server itself (p9srv.c) is compiled against the kernel headers,
@@ -120,19 +120,19 @@ p9serveloop(char *arg)
 	for(client = 0; *arg >= '0' && *arg <= '9'; arg++) client = client*10 + (*arg - '0');
 
 	base = mapslice(own);
-	if(base == (uchar*)-1){ puts("p9 buddy: could not map its own ring\n"); return; }
+	if(base == (uchar*)-1){ puts("p9 server: could not map its own ring\n"); return; }
 	map = (Omap*)base;
-	if(map->magic != Ospreymagic){ puts("p9 buddy: its slice carries no ring map\n"); return; }
+	if(map->magic != Ospreymagic){ puts("p9 server: its slice carries no ring map\n"); return; }
 	cbase = mapslice(client);
-	if(cbase == (uchar*)-1){ puts("p9 buddy: could not map the client's slice\n"); return; }
+	if(cbase == (uchar*)-1){ puts("p9 server: could not map the client's slice\n"); return; }
 	cmap = (Omap*)cbase;
 	pq = (Queue*)(base + map->replyqueue);
 
-	puts("p9 buddy: serving this name space over the ring\n");
+	puts("p9 server: serving this name space over the ring\n");
 	for(iters = 0; iters < 400; iters++)
 		serve1(pq, (Msg*)((uchar*)pq + pq->message),
 			(Msg*)(base + map->data + Reqbuf),
 			(Arm*)(base + map->data + Armoff),
 			cbase + cmap->data);
-	puts("p9 buddy: done\n");
+	puts("p9 server: done\n");
 }

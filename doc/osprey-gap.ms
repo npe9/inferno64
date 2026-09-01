@@ -124,11 +124,17 @@ that is itself a second user program - two user tasks exchanging the open
 and read, the kernel only routing them, which is the shape the paper
 draws; the buddy relationship on pc64, where what the policy layer cannot
 answer the Plan 9 kernel around it does; and, on p9pair, a Plan 9
-personality whose buddy is a second Plan 9 personality - each its own
+personality served by a second Plan 9 personality - each its own
 container, the client delegating to the server and mounting its exported
-name space over the ring by 9P, the kernel only routing - the delegation
-the plan calls a buddy, across a real container boundary (one-directional:
-the client mounts the server, not the reverse).
+name space over the ring by 9P, the kernel only routing - which is the
+paper's "library operating systems on top of the Osprey kernel" with two
+of them.  This is NOT the paper's buddyOS: in the paper the buddy
+operating system is the peer process that runs an unmodified legacy binary
+and handles all its system traps (system calls and page faults),
+emulating a legacy OS with /dev and /proc - legacy emulation, a mechanism
+distinct from library OSes and unbuilt here.  p9pair is the library-OS
+mechanism, one-directional (the client mounts the server, not the
+reverse).
 .PP
 Closed since, and it was the largest gap: the library OS was minimal \-
 a couple of files, no name space, no mount, an ad-hoc four-call protocol.

@@ -445,7 +445,7 @@ p9paircli(void)
 		exits("error");
 	}
 	p9setup();
-	print("p9: pair-client: mounting the buddy personality over the ring\n");
+	print("p9: pair-client: mounting the server personality over the ring\n");
 	tc = namec("#L", Aopen, ORDWR, 0);
 	rc = mntattach(tc, nil, "", 0);
 	cclose(tc);
@@ -463,7 +463,7 @@ p9paircli(void)
 			p += m;
 		}
 	}
-	print("p9: pair-client: read %d entries from the buddy's exported root over the ring\n", nent);
+	print("p9: pair-client: read %d entries from the server personality's exported root over the ring\n", nent);
 	p9close(fd);
 	poperror();
 }
@@ -482,7 +482,7 @@ p9server(char *arg)
 		exits("error");
 	}
 	p9setup();
-	print("p9: buddy server: name space up, answering 9P over the ring\n");
+	print("p9: server personality: name space up, answering 9P over the ring\n");
 	p9serveloop(arg);
 	poperror();
 }
