@@ -17951,3 +17951,44 @@ riscv64, and after them the SoC drivers named in the previous section.
 Items 1 to 4 are each testable on this host today.  Items 5 to 7 are
 each one shared subsystem swapped for 9front's; the drivers that wait
 on them already compile against 9front's version.
+.NH 2
+Item 1, done: e1000 and RTL8139
+.PP
+.CW os/inferno/pc/etherigbe.c
+and
+.CW ether8139.c
+were Inferno's own, from before this tree's port layer took 9front's
+shape, so linking them needed the same small moves the 9front drivers
+did in the other direction:
+.CW etheriq()
+lost its third argument, the
+.CW Ether.interrupt
+hook became the driver's own
+.CW intrenable() ,
+and the includes now name
+.CW ../port .
+.CW etherigbe
+also refused any controller whose PCI cache-line-size register was
+zero, which is what firmware and QEMU leave it; 9front's version
+programs 0x10 and carries on, and so does this one.  Verified on
+.CW q35
+one NIC per boot (a second DHCP on the same stack fails with "address
+in use", so the test init takes a lease on the first interface that
+answers):
+.CW e1000
+attaches as
+.CW i82543
+and gets a lease,
+.CW rtl8139
+attaches and gets a lease, the modern-only virtio NIC gets a lease 4
+of 4.  Observed on the way and not chased: the pre-existing
+.I legacy
+virtio NIC driver on
+.CW q35
+got a lease 1 boot in 3 (one "no response", one init broken with
+"file does not exist"), and 2 of 2 on the default PC machine, where
+every earlier boot of this board has run.  On
+.CW q35
+the MP code also prints "can't find bus type 12" for every PCI
+Express interrupt assignment, so interrupt routing there is suspect
+before the driver is.

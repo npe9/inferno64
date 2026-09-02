@@ -81,6 +81,8 @@ link
 ##	pppmedium ppp compress
 	netdevmedium
 	ether8169	pci ethermii
+	etherigbe	pci ethermii
+	ether8139	pci
 	ether82563	pci
 	etherx550	pci
 #	ethersink

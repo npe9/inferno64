@@ -41,7 +41,9 @@ init()
 	sys->bind("#c", "/dev", Sys->MAFTER);
 	sys->bind("#S", "/dev", Sys->MAFTER);
 	sys->bind("#u", "/dev", Sys->MAFTER);
+	sys->bind("#l0", "/net", Sys->MAFTER);
 	sys->bind("#l1", "/net", Sys->MAFTER);
+	sys->bind("#l2", "/net", Sys->MAFTER);
 	sys->print("DEVTEST: start\n");
 
 	# storage: every sd unit's ctl file
@@ -81,28 +83,41 @@ init()
 	# ethernet: the virtio 1.0 interface's statistics
 	sys->print("DEVTEST: /net/ether1/ifstats:\n%s", readfile("/net/ether1/ifstats"));
 
-	# network: DHCP over the virtio 1.0 interface, ether1
+	# network: DHCP over every Ethernet interface in turn, so each
+	# driver's transmit and receive paths are exercised, not just the
+	# first one's
 	sys->bind("#I", "/net", Sys->MAFTER);
 	dhcpclient = load Dhcpclient Dhcpclient->PATH;
 	if(dhcpclient == nil)
 		sys->print("DEVTEST: DHCP-FAIL load: %r\n");
 	else {
 		dhcpclient->init();
-		cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
-		if(cfd == nil || sys->fprint(cfd, "bind ether /net/ether1") < 0)
-			sys->print("DEVTEST: DHCP-FAIL ipifc: %r\n");
-		else {
+		for(i := 0; i < 3; i++){
+			ether := sys->sprint("/net/ether%d", i);
+			if(sys->open(ether + "/addr", Sys->OREAD) == nil)
+				continue;
+			cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
+			if(cfd == nil || sys->fprint(cfd, "bind ether %s", ether) < 0){
+				sys->print("DEVTEST: %s DHCP-FAIL ipifc: %r\n", ether);
+				continue;
+			}
 			cfg := Bootconf.new();
 			lease: ref Lease;
 			err: string;
-			(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, "/net/ether1/addr", cfg, nil);
+			(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, ether + "/addr", cfg, nil);
 			if(err != nil || cfg == nil || cfg.ip == nil)
-				sys->print("DEVTEST: DHCP-FAIL %s\n", err);
+				sys->print("DEVTEST: %s DHCP-FAIL %s\n", ether, err);
 			else {
 				if(lease != nil)
 					lease.release();
-				sys->print("DEVTEST: DHCP-OK over ether1 ip=%s gw=%s\n", cfg.ip, cfg.ipgw);
+				sys->print("DEVTEST: %s DHCP-OK ip=%s gw=%s\n", ether, cfg.ip, cfg.ipgw);
+				# one lease per boot: a second dhcp on the same
+				# stack fails with "address in use", so a boot
+				# tests the first interface that answers; boot
+				# once per NIC to test each driver
+				break;
 			}
+			cfd = nil;
 		}
 	}
 

@@ -9,10 +9,11 @@
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
+#include "../port/pci.h"
 #include "../port/error.h"
 #include "../port/netif.h"
 
-#include "etherif.h"
+#include "../port/etherif.h"
 
 enum {					/* registers */
 	Idr0		= 0x0000,	/* MAC address */
@@ -512,7 +513,7 @@ rtl8139receive(Ether* edev)
 				bp->wp += length;
 			}
 			bp->wp -= 4;
-			etheriq(edev, bp, 1);
+			etheriq(edev, bp);
 		}
 
 		capr = ROUNDUP(capr, 4);
@@ -741,10 +742,9 @@ rtl8139pnp(Ether* edev)
 
 	edev->attach = rtl8139attach;
 	edev->transmit = rtl8139transmit;
-	edev->interrupt = rtl8139interrupt;
+	intrenable(edev->irq, rtl8139interrupt, edev, edev->tbdf, edev->name);	/* no Ether.interrupt hook here */
 	edev->ifstat = rtl8139ifstat;
 
-	edev->arg = edev;
 	edev->promiscuous = rtl8139promiscuous;
 	edev->multicast = rtl8139multicast;
 //	edev->shutdown = rtl8139shutdown;

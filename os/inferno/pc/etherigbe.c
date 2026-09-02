@@ -22,11 +22,12 @@
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
+#include "../port/pci.h"
 #include "../port/error.h"
 #include "../port/netif.h"
 
-#include "etherif.h"
-#include "ethermii.h"
+#include "../port/etherif.h"
+#include "../port/ethermii.h"
 
 enum {
 	i82542		= (0x1000<<16)|0x8086,
@@ -1146,7 +1147,7 @@ igberproc(void* arg)
 					bp->checksum = rd->checksum;
 					bp->flag |= Bpktck;
 				}
-				etheriq(edev, bp, 1);
+				etheriq(edev, bp);
 			}
 			else if(ctlr->rb[rdh] != nil){
 				freeb(ctlr->rb[rdh]);
@@ -1905,8 +1906,15 @@ igbepci(void)
 				break;
 			case 0x00:
 			case 0xFF:
-				print("igbe: unusable CLS\n");
-				continue;
+				/*
+				 * Firmware (and QEMU) leave the cache line size
+				 * unset; 9front's driver programs 0x10 and goes
+				 * on, and so does this one now.
+				 */
+				print("igbe: CLS %#ux, setting to 0x10\n", cls);
+				cls = 0x10;
+				pcicfgw8(p, PciCLS, cls);
+				break;
 			case 0x08:
 			case 0x10:
 				break;
@@ -1968,11 +1976,10 @@ igbepnp(Ether* edev)
 	 */
 	edev->attach = igbeattach;
 	edev->transmit = igbetransmit;
-	edev->interrupt = igbeinterrupt;
+	intrenable(edev->irq, igbeinterrupt, edev, edev->tbdf, edev->name);	/* no Ether.interrupt hook here */
 	edev->ifstat = igbeifstat;
 	edev->ctl = igbectl;
 
-	edev->arg = edev;
 	edev->promiscuous = igbepromiscuous;
 	edev->shutdown = igbeshutdown;
 	edev->multicast = igbemulticast;
