@@ -107,6 +107,13 @@ Keyring: module
 		# all the state is hidden
 	};
 
+	# ChaCha20 state (also backs ChaCha20-Poly1305 AEAD)
+	Chachastate: adt
+	{
+		x:	int;		# dummy for C compiler for runt.h
+		# all the state is hidden
+	};
+
 	# expanded DES key + state for chaining
 	DESstate: adt
 	{
@@ -237,6 +244,21 @@ Keyring: module
 	aesgcm_setiv: fn(state: ref AESGCMstate, iv: array of byte);
 	aesgcm_encrypt: fn(state: ref AESGCMstate, buf: array of byte, n: int, aad: array of byte, tag: array of byte);
 	aesgcm_decrypt: fn(state: ref AESGCMstate, buf: array of byte, n: int, aad: array of byte, tag: array of byte): int;
+
+	# ChaCha20-Poly1305 AEAD (RFC 8439) - primitive 6 of the SSL
+	# modernization plan (doc/ssl-modernization-plan.md), needed for
+	# TLS 1.2's TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 record protection.
+	# key is 32 bytes; iv is 8 bytes (the original, "classic" 64-bit
+	# nonce construction) or 12 bytes (RFC 8439's own 96-bit nonce,
+	# what TLS 1.2 actually negotiates) - both share this one entry
+	# point, matching 9front's own ccpoly.c/Chachastate.ivwords
+	# convention. buf is encrypted/decrypted in place; tag is always
+	# 16 bytes, caller-supplied both ways, same convention as the
+	# AES-GCM entries just above.
+	ccpolysetup: fn(key: array of byte, iv: array of byte): ref Chachastate;
+	ccpoly_setiv: fn(state: ref Chachastate, iv: array of byte);
+	ccpoly_encrypt: fn(state: ref Chachastate, buf: array of byte, n: int, aad: array of byte, tag: array of byte);
+	ccpoly_decrypt: fn(state: ref Chachastate, buf: array of byte, n: int, aad: array of byte, tag: array of byte): int;
 
 	DESbsize: con 8;
 

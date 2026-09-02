@@ -89,6 +89,38 @@ void	chacha_encrypt(uchar*, u32, Chachastate*);
 void	chacha_encrypt2(uchar*, uchar*, u32, Chachastate*);
 void	hchacha(uchar[32], uchar*, u32, uchar[16], int);
 
+/*
+ * Poly1305 (RFC 8439) - see doc/ssl-modernization-plan.md. A private
+ * state struct, not the shared DigestState (whose state[5] is too
+ * small for poly1305's 14 words of key+accumulator, and which other
+ * code - the sha1pickle.c/md5pickle.c on-disk pickling - already
+ * depends on the exact size of) - see libsec/poly1305.c's own header
+ * comment for the full reasoning.
+ */
+typedef struct Poly1305state Poly1305state;
+struct Poly1305state
+{
+	u32int	r[5];		/* clamped one-time "r" key, 26-bit limbs */
+	u32int	pad[4];		/* one-time "s" pad, added at the end */
+	u32int	h[5];		/* running accumulator */
+	uchar	buf[16];
+	int	blen;
+	int	seeded;
+	int	malloced;
+};
+
+Poly1305state*	poly1305(uchar *m, ulong len, uchar *key, ulong klen, uchar *digest, Poly1305state *s);
+
+/*
+ * ChaCha20-Poly1305 AEAD (RFC 8439) - the record-protection cipher
+ * mastodon.social measured to (TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305).
+ * cs->ivwords distinguishes the original (64-bit nonce, 2 ivwords)
+ * construction from RFC 8439's (96-bit nonce, 3 ivwords) - both share
+ * this one entry point, matching 9front's own ccpoly.c.
+ */
+void	ccpoly_encrypt(uchar *dat, ulong ndat, uchar *aad, ulong naad, uchar tag[16], Chachastate *cs);
+int	ccpoly_decrypt(uchar *dat, ulong ndat, uchar *aad, ulong naad, uchar tag[16], Chachastate *cs);
+
 /*/////////////////////////////////////////////////////// */
 /* Blowfish Definitions */
 /*/////////////////////////////////////////////////////// */

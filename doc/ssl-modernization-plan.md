@@ -2,9 +2,10 @@
 
 ## Status (most recent first)
 
-**In progress.** Primitive 5 (AES-GCM) is landed. Step 4 (real
-ClientHello/ServerHello round trip) is done — see below. Primitives 1–3
-are landed and verified:
+**In progress.** Primitive 6 (ChaCha20-Poly1305) is landed, completing
+both record-protection AEADs this plan's measured scope needs. Primitive
+5 (AES-GCM) is landed. Step 4 (real ClientHello/ServerHello round trip)
+is done — see below. Primitives 1–3 are landed and verified:
 
 - `hmac_sha256` (`libsec/hmac.c` + `keyring.m`/`.c`) — `hmacsha256test(1)`,
   4 vectors (RFC 4231 case 1 + 3 from the host's own `openssl(1)`).
@@ -110,6 +111,35 @@ it doesn't see `interp.h`'s macro from `libsec.h`'s point of view) — a
 reminder that this tree's clang-based inline diagnostics are not a
 substitute for the real `mk`-driven build when editing headers that get
 included alongside `interp.h`.
+
+**Primitive 6 (ChaCha20-Poly1305) done, 2026-09-02**: `libsec/poly1305.c`
++ `libsec/ccpoly.c`, ported from 9front's `poly1305.c`/`ccpoly.c`. Raw
+ChaCha20 (`libsec/chacha.c`/`chachablock.c`) predates this plan and is
+untouched — only Poly1305 and the AEAD wrapper were new. Exposed via
+`keyring.m`'s `ccpolysetup`/`ccpoly_setiv`/`ccpoly_encrypt`/
+`ccpoly_decrypt`, same convention as AES-GCM. One deliberate departure
+from the source: Poly1305 gets its own small `Poly1305state` rather than
+reusing the shared `DigestState` (`state[5]` is too small for Poly1305's
+14 words, and `sha1pickle.c`/`md5pickle.c` already depend on
+`DigestState`'s exact size — growing it was judged a bigger, riskier
+change than this primitive needed). `ccpolytest(1)`: 5/5, including RFC
+8439 §2.8.2's own published worked example (not just a from-scratch
+reimplementation of the spec) plus three vectors cross-checked between
+Python's `cryptography` and `pycryptodome`. Negative control: corrupting
+Poly1305's `r[0]` clamp mask broke the RFC vector's tag with the real
+wrong bytes shown (the other three cases, using fresh random keys, only
+had ~50% odds of the single corrupted bit mattering for their particular
+key material and happened not to show it — the RFC vector's failure
+alone is sufficient real evidence; not a flaw in the test, just a
+narrower mutation than ideal). Restored, reconfirmed 5/5.
+
+This closes out both record-protection AEADs (`TLS_ECDHE_RSA_WITH_
+AES_128_GCM_SHA256` and `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305`) the
+measured scope needs — primitives 1-3, 5, and 6 are done; only the
+handshake state machine itself (step 4's ClientHello/ServerHello slice
+is done, the rest — Finished messages, real record encryption/
+decryption end to end — remains) and certificate chain verification are
+outstanding before `bsky(1)`/`masto(1)` can migrate off `#C`.
 
 ## Why this exists
 

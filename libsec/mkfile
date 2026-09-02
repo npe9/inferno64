@@ -4,6 +4,7 @@ LIB=libsec.a
 
 CFILES = des.c desmodes.c desECB.c desCBC.c des3ECB.c des3CBC.c\
 	aes.c aes_gcm.c blowfish.c \
+	poly1305.c ccpoly.c \
 	idea.c \
 	hmac.c md5.c md5block.c md4.c sha1.c sha1block.c\
 	sha2.c sha256block.c sha512block.c\

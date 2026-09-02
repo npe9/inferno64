@@ -1,0 +1,90 @@
+.TH CCPOLYTEST 1
+.SH NAME
+ccpolytest \- test keyring->ccpolysetup() and the ChaCha20-Poly1305 API
+.SH SYNOPSIS
+.B ccpolytest
+.SH DESCRIPTION
+.B Ccpolytest
+checks
+.BR ccpolysetup() ,
+.BR ccpoly_setiv() ,
+.BR ccpoly_encrypt() ,
+and
+.B ccpoly_decrypt()
+.RI ( module/keyring.m ,
+.IR libinterp/keyring.c ,
+.IR libsec/ccpoly.c ,
+.IR libsec/poly1305.c ,
+ported from 9front's own
+.B libsec/port/ccpoly.c
+and
+.B poly1305.c
+\(em see
+.I doc/ssl-modernization-plan.md
+in the source tree) \(em primitive 6 of the SSL modernization plan,
+needed for TLS 1.2's
+.B TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+record protection, the suite
+.B mastodon.social
+was measured to negotiate. Raw ChaCha20 itself
+.RI ( libsec/chacha.c )
+predates this plan and is untouched by it; only the Poly1305 MAC and
+the AEAD wrapper combining the two were added.
+.PP
+.B Poly1305state
+is a small state struct private to
+.B poly1305.c
+and
+.BR ccpoly.c ,
+not the shared
+.B DigestState
+every hash/HMAC in this tree already uses \(em its
+.B state[5]
+is too small for Poly1305's 14 words of key and accumulator, and
+other code
+.RI ( sha1pickle.c , " md5pickle.c" )
+already depends on
+.BR DigestState 's
+exact size, so growing it was judged a bigger and riskier change than
+this primitive calls for.
+.PP
+Four cases check
+.B ccpoly_encrypt()
+and
+.B ccpoly_decrypt()
+together: RFC 8439 \(sc2.8.2's own published worked example (key, IV,
+AAD, plaintext, and expected ciphertext/tag, taken directly from the
+standard, not just a from-scratch reimplementation of its text);
+empty plaintext and AAD; a 37-byte plaintext (a partial final block,
+exercising Poly1305's own padding path) with no AAD; and a 20-byte
+plaintext (partial final block) with AAD. The latter three vectors
+were generated from Python's
+.B cryptography
+library, then cross-checked against
+.B pycryptodome
+\(em a second, independent implementation \(em agreeing byte for byte
+before being trusted, the same discipline as
+.IR aesgcmtest (1).
+.PP
+A fifth case flips one byte of a genuine tag and confirms
+.B ccpoly_decrypt()
+rejects it (via
+.IR tsmemcmp (3))
+instead of silently returning corrupted-looking success.
+.PP
+Exits with
+.B PASS
+if every case held, or
+.B FAIL
+naming which one and what was expected versus computed.
+.SH SOURCE
+.B /appl/cmd/ccpolytest.b
+.SH SEE ALSO
+.IR aesgcmtest (1),
+.IR x25519test (1),
+.IR tlshellotest (1)
+.SH BUGS
+Does not exercise the 64-bit (non-RFC-8439) nonce construction
+.RI ( Chachastate.ivwords
+== 2, the original ChaCha20-Poly1305 draft's shape) \(em all four
+cases use the 96-bit nonce TLS 1.2 actually negotiates.
