@@ -3,6 +3,9 @@
  * functions (possibly) linked in, complete, from libc.
  */
 #define nelem(x)	(sizeof(x)/sizeof((x)[0]))
+extern	int	dec16(uchar*, int, char*, int);	/* libkern/u16.c, for ../port/wifi.c */
+extern	int	enc16(char*, int, uchar*, int);
+extern	int	tsmemcmp(void*, void*, ulong);	/* libkern/tsmemcmp.c, constant time */
 #define offsetof(s, m)	(u32)(&(((s*)0)->m))
 #define assert(x)	if(x){}else _assert("x")
 

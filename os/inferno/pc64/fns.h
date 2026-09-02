@@ -225,3 +225,6 @@ int	kbdinready(void);
 #define	dcflush(a, b)
 #define	clockcheck();
 #define 	dumplongs(x, y, z)
+
+/* x86 DMA is cache coherent; 9front's port drivers call this */
+#define	dmaflush(clean, addr, len)

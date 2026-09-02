@@ -253,3 +253,32 @@ iallocsummary(void)
 {
 	print("ialloc %ud/%ud\n", ialloc.bytes, conf.ialloc);
 }
+
+/*
+ * 9front's Bpool interface (see Bpool in ../port/portdat.h): a driver
+ * asks for Blocks of one size and alignment.  9front keeps a free
+ * list; this allocates afresh with iallocb() and over-allocates by
+ * the alignment so rp can be aligned.  growbp() has nothing to grow.
+ */
+Block*
+iallocbp(Bpool *p)
+{
+	Block *b;
+	ulong a;
+
+	a = p->align;
+	if(a < sizeof(uintptr))
+		a = sizeof(uintptr);	/* iallocb() already gives the board's own block alignment */
+	b = iallocb(p->size + a);
+	if(b == nil)
+		return nil;
+	b->rp = (uchar*)(((uintptr)b->rp + a - 1) & ~((uintptr)a - 1));
+	b->wp = b->rp;
+	return b;
+}
+
+void
+growbp(Bpool *p, int n)
+{
+	USED(p, n);
+}

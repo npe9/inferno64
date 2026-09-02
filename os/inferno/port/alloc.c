@@ -1453,3 +1453,23 @@ poolinit(void)
 	debugkey('m', "memory pools", poolsummary, 0);
 }
 */
+/*
+ * 9front's secalloc()/secfree(): memory for keys, cleared before it
+ * goes back to the pool.  9front flags the block so that free() also
+ * clears it; here the clearing is only in secfree(), which is what
+ * the callers copied from 9front (../port/wifi.c) use.
+ */
+void*
+secalloc(ulong n)
+{
+	return smalloc(n);
+}
+
+void
+secfree(void *p)
+{
+	if(p == nil)
+		return;
+	memset(p, 0, msize(p));
+	free(p);
+}

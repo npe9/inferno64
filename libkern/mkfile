@@ -56,8 +56,9 @@ COMMONFILES=\
 	strtoul.$O\
 	strtoull.$O\
 	tokenize.$O\
-	toupper.$O\
 	u16.$O\
+	tsmemcmp.$O\
+	toupper.$O\
 	u32.$O\
 	u64.$O\
 	utfecpy.$O\

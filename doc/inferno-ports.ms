@@ -17586,3 +17586,368 @@ drivers assume 9front's
 and interrupt interfaces, which Inferno's port layer shares in name and
 differs from in detail, and each one has to be brought up against a
 booted kernel the way every driver in this document was.
+.NH 1
+Taking the drivers 9front already has, and what is left after that
+.PP
+The list at the end of the previous section was written from the
+outside: what a machine has, what no board here drives.  This section
+is the inside view.  The tree's own
+.CW os/9front
+flavour carries most of those drivers, and the rule that one flavour
+may not reach into another leaves copying, which is cheap, and
+adapting, which was measured before it was assumed.
+.PP
+Measured first, by compiling each candidate against
+.CW os/inferno/pc64 's
+own headers (with absolute
+.CW -I
+paths \- the relative ones silently resolve
+.CW u.h
+from nowhere when the source lives outside the board directory, which
+cost one false start).  The kernel interfaces the drivers see are
+near-identical:
+.CW sd.h
+differs by 63 lines,
+.CW etherif.h
+by 20,
+.CW pci.h
+by 11;
+.CW intrenable ,
+.CW sleep ,
+.CW wakeup ,
+.CW pcimatch ,
+.CW pcimsienable ,
+.CW sdadddevs
+and
+.CW addethercard
+have the same prototypes on both sides.  What differs, all of it now
+bridged in
+.CW os/inferno/port
+once rather than per driver:
+.IP \(bu
+.CW SDifc
+still carries an unused
+.CW xxlegacy
+slot after
+.CW pnp ,
+and its
+.CW rctl
+returns a count into a buffer where 9front's returns a position up to
+an end pointer.  Each copied SD driver's interface table gets a
+.CW nil
+in the slot and, where it has one, a three-line
+.CW rctl
+adapter.
+.IP \(bu
+.CW Ether.ifstat
+has the same shape difference.
+.CW ether9ifstat()
+in
+.CW os/inferno/port/devether.c
+adapts a 9front-style one; each copied driver keeps its own and adds a
+two-line wrapper.
+.CW ethersetspeed()
+and
+.CW ethersetlink()
+are new there too, without 9front's queue resizing.
+.IP \(bu
+.CW Bpool ,
+9front's per-driver free list of aligned Blocks.  Here it is only the
+size and alignment
+.CW ( portdat.h )
+and
+.CW iallocbp()
+in
+.CW allocb.c
+allocates afresh each time; nothing is recycled, which is slower and
+correct.
+.IP \(bu
+.CW kproc()
+takes a flags argument here; seventeen calls gained a
+.CW 0 .
+.CW Dev.open ,
+.CW read
+and
+.CW write
+take and return
+.CW int
+here where 9front says
+.CW long ;
+.CW devusb.c 's
+three prototypes changed.
+.CW RWLock
+is spelt
+.CW RWlock ;
+a typedef.
+.CW dmaflush()
+is an empty macro in
+.CW os/inferno/pc64/fns.h ,
+as it is in 9front's own pc64.
+.CW secalloc()/secfree()
+(zero before free) are in
+.CW alloc.c ;
+.CW dec16()
+and a constant-time
+.CW tsmemcmp()
+went into
+.CW libkern ,
+which every target links; libsec's static
+.CW rijndaelEncrypt
+is exported under 9front's name
+.CW aes_encrypt
+for wifi's CCMP.
+.IP \(bu
+The one thing that does not bridge: 9front's newer MII layer
+.CW ( addmiibus ,
+.CW MiiPhy ,
+clause-45 access).
+.CW ethermii.c
+differs by 274 lines and the tree's own
+.CW ether8169
+and
+.CW ether82563
+use the old one, so
+.CW etheri225
+(Intel 2.5 GbE) is not taken until that layer is replaced whole.
+.PP
+Also gone:
+.CW os/inferno/pc/devusb.c ,
+.CW usbuhci.c
+and
+.CW usb.h ,
+Inferno's own USB 1.1 stack, which no board linked and whose
+.CW /dev/usbh
+interface
+.CW appl/cmd/usb/usbd.b
+was written against.  The 9front stack replaces it in the kernel and
+orphans that Limbo program; see the plan.
+.PP
+And a build-directory ghost:
+.CW os/inferno/pc64
+had linked for weeks against a
+.CW stubs.6
+whose source was never committed, and the first header change made
+.CW mk
+want to rebuild it.  The six symbols it provided
+.CW ( vesabootscreenconf ,
+.CW cursorenable ,
+.CW cursordisable ,
+.CW notkilled ,
+.CW rdb ,
+.CW rdbstarted )
+are now in a real
+.CW os/inferno/pc64/stubs.c
+with a comment each saying why the board has no implementation.
+.PP
+Taken, linked into
+.CW pc64 ,
+and tested under QEMU 10.1 on both the default PC and
+.CW q35 ,
+through a console-only init
+.CW ( os/inferno/init/pc64devinit.b ,
+configuration
+.CW os/inferno/pc64/pc64dev )
+that binds
+.CW #S ,
+.CW #u
+and
+.CW #l1
+and reads their control files:
+.TS
+box tab(;);
+lb lb lb
+l l l.
+driver;QEMU device;verified
+_
+sdnvme;-device nvme;sdN0: inquiry, serial, 65536 sectors, sector 0 read back
+sdvirtio10 + virtio10pc;virtio-blk-pci,disable-legacy=on;sdF0: 65536 sectors, sector 0 read back
+ethervirtio10;virtio-net-pci,disable-legacy=on;#l1 attached, VERSION_1 negotiated, DHCP lease obtained
+devusb + usbxhci + usbxhcipci;qemu-xhci + usb-kbd + usb-tablet;controller found, /dev/usb/ctl lists two root hubs, 4 ports, USB 2 and 3
+ether82563 (already there);e1000e, igb;#l0 i82574, #l1 i82576 attach
+etherbcm, etheryuk, ether82598;none in QEMU;compile and link only
+etheriwl + wifi;none in QEMU;compile and link only
+.TE
+.PP
+"Sector 0 read back" means the host wrote a sentence into the image
+before boot and the init printed that sentence from
+.CW /dev/sdN0/data
+and
+.CW /dev/sdF0/data .
+The usb result is the kernel half only: the root hubs enumerate, the
+keyboard and tablet behind them do not, because enumeration is
+.CW usbd 's
+job and there is none.
+.NH 2
+QEMU machines against what the boards drive
+.PP
+Read from
+.CW "-device help"
+on QEMU 10.1.3 per machine, against what each board links and what was
+verified above.  "kernel only" means the driver is up and the device is
+visible but nothing above the kernel uses it yet.
+.PP
+.TS
+box tab(;);
+lb lb lb
+l l l.
+machine and device;board;state
+_
+x86-64 q35, pc: ich9-ahci;pc64;works (sdE)
+nvme;pc64;works, new
+virtio-blk-pci legacy and modern;pc64;works, modern new
+virtio-net-pci legacy and modern;pc64;works, modern new
+e1000e, igb;pc64;work through ether82563
+e1000, rtl8139;pc64;drivers exist in os/inferno/pc, not linked
+virtio-scsi-pci, ide-hd (pc), sdhci-pci, usb-storage, virtio-9p;pc64;none
+qemu-xhci, nec-usb-xhci;pc64;kernel only, new
+ich9-usb-ehci, uhci;pc64;none (9front has both, compile clean, not taken)
+usb-kbd, usb-mouse, usb-tablet;pc64;need a usbd and HID class in Limbo
+i8042 keyboard;pc64;works, PS/2 mouse commented out
+virtio-keyboard-pci, tablet-pci, vmmouse;pc64;none
+VGA text, boot-loader framebuffer;pc64;work, no modesetting, no virtio-gpu
+intel-hda, AC97, virtio-sound;pc64;none (9front audiohda needs its audio interface)
+virtio-rng-pci;pc64;none (mmio version exists on virt)
+MSI, ECAM;pc64;MSI in one driver, no ECAM
+-smp N;pc64;never run
+x86-64 microvm;none;no board: virtio-mmio only, no PCI, discovery by ACPI or command line
+riscv64 virt: virtio-mmio blk, net, input, rng, ramfb;virt;work, legacy only (force-legacy=true)
+virtio-pci via ECAM at 0x30000000;virt;works, legacy (ethervirtiopci, pcivirt)
+nvme, qemu-xhci on that PCIe;virt;not linked, the drivers are portable now
+riscv64 sifive_u;sifiveu;shell over UART, Cadence GEM Ethernet and SPI SD not driven
+riscv64 spike;spike;shell over UART, nothing else to drive
+aarch64 virt: virtio-mmio;virtarm64;ethernet linked, board not at a shell
+PCIe ECAM, GICv3, PSCI, SMP;virtarm64;none
+aarch64 sbsa-ref, raspi4b;none;no board
+arm virt (Cortex-A15);armv7;as arm64, one generation back
+.TE
+.NH 2
+The plan
+.PP
+In the order the pieces unlock each other, each one tested against a
+booted kernel before the next:
+.IP 1.
+Link
+.CW etherigbe
+and
+.CW ether8139
+into
+.CW pc64
+and test with
+.CW e1000
+and
+.CW rtl8139 .
+An afternoon; it only needs their
+.CW ifstat
+wrappers.
+.IP 2.
+A
+.CW usbd
+in Limbo against 9front's
+.CW /dev/usb
+interface: enumerate root hub ports through
+.CW ep0
+control transfers, configure devices, run a hub driver, and a HID
+driver that feeds
+.CW devkbd
+and
+.CW devpointer .
+That is what makes a keyboard and mouse work on any machine made after
+PS/2, and QEMU's
+.CW usb-kbd
+and
+.CW usb-tablet
+test it.  9front's
+.CW nusb/usbd ,
+.CW nusb/kb
+and
+.CW nusb/disk
+are the reference; the old
+.CW appl/cmd/usb/usbd.b
+shows the Limbo shape.  Mass storage follows as a second class driver.
+.IP 3.
+Virtio 1.0 on the mmio boards: take
+.CW os/9front/port/virtio10mem.c
+into
+.CW virt
+and
+.CW virtarm64 ,
+drop
+.CW force-legacy=true
+from
+.CW smoke.sh .
+Then PCI on
+.CW virtarm64
+the way
+.CW pcivirt
+does it on riscv64 (ECAM, a static bus walk), and link
+.CW sdnvme
+and
+.CW usbxhcipci
+on both virt boards, which QEMU can test on each.
+.IP 4.
+ECAM from ACPI's MCFG on pc64, and MSI in
+.CW sdnvme ,
+.CW usbxhci
+and the virtio drivers where 9front's versions use it.  Without ECAM,
+capabilities past byte 256 are invisible and a machine without an MP
+table routes interrupts only as well as the ACPI
+.CW _PRT
+walk does.
+.IP 5.
+Replace
+.CW os/inferno/port/devsd.c
+and
+.CW sd.h
+with 9front's (594 lines of difference, one direction of descent) and
+drop the
+.CW xxlegacy
+and
+.CW rctl
+shims above.  That brings the
+.CW SDio
+layer, and with it
+.CW sdmmc
+and
+.CW pmmc
+(SD cards on PCI SDHCI, QEMU's
+.CW sdhci-pci )
+and
+.CW sdide .
+.IP 6.
+Replace
+.CW ethermii.c
+with 9front's and re-port
+.CW ether8169
+and
+.CW ether82563
+to it; then
+.CW etheri225
+comes across unchanged.  RTL8125 has no driver in any flavour and is
+new work.
+.IP 7.
+Audio: 9front's
+.CW devaudio.c
+and
+.CW audioif.h
+in place of Inferno's
+.CW devaudio ,
+then
+.CW audiohda ;
+QEMU's
+.CW intel-hda
+tests it.  The Limbo side reads
+.CW /dev/audio
+either way.
+.IP 8.
+.CW -smp
+on pc64, since
+.CW squidboy
+and the MP code have never run.
+.IP 9.
+The real-hardware gaps no QEMU device stands in for: device-tree
+parsing and PSCI and GICv3 for arm64, supervisor mode with SBI for
+riscv64, and after them the SoC drivers named in the previous section.
+.PP
+Items 1 to 4 are each testable on this host today.  Items 5 to 7 are
+each one shared subsystem swapped for 9front's; the drivers that wait
+on them already compile against 9front's version.

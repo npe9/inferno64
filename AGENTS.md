@@ -99,7 +99,20 @@
   same section lists the drivers a modern machine needs that no board
   has (xHCI USB, NVMe, PCIe ECAM and MSI, virtio 1.0, current NICs and
   Wi-Fi, device-tree parsing, PSCI, GICv3, S-mode with SBI) and where
-  source for each already sits in the sibling flavours.  Decide, build
+  source for each already sits in the sibling flavours.  Since then the
+  9front drivers that bridge with small shims were taken into
+  os/inferno (the section "Taking the drivers 9front already has"):
+  sdnvme, sdvirtio10, ethervirtio10, devusb+usbxhci, etherbcm,
+  etheryuk, ether82598, etheriwl+wifi, all linked into pc64, the
+  first four verified live under QEMU q35 (NVMe and virtio 1.0 disks
+  read back a host-written sector, DHCP over the virtio 1.0 NIC, xHCI
+  root hubs listed in /dev/usb/ctl) through os/inferno/init/pc64devinit.b
+  and the pc64dev configuration.  The same section carries the QEMU
+  machine-by-device delta and the ordered plan; the next pieces are a
+  Limbo usbd against /dev/usb, virtio 1.0 on the mmio boards, ECAM and
+  MSI on pc64, then swapping devsd, ethermii and devaudio for 9front's
+  so the drivers that wait on them (sdmmc, etheri225, audiohda) come
+  across unchanged.  Decide, build
   it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.

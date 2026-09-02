@@ -29,6 +29,7 @@ struct AESstate
 
 void	setupAESstate(AESstate *s, uchar key[], int keybytes, uchar *ivec);
 void	aesCBCencrypt(uchar *p, int len, AESstate *s);
+void	aes_encrypt(u32int rk[], int Nr, uchar pt[16], uchar ct[16]);
 void	aesCBCdecrypt(uchar *p, int len, AESstate *s);
 
 enum

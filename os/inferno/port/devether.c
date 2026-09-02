@@ -680,3 +680,55 @@ err:
 	print("netconsole: invalid string %#q\n", getconf("console"));
 	print("netconsole: usage: srcip[!srcport][/srcdev],dstip[!dstport][/dstmac]\n");
 }
+
+/*
+ * Link-state helpers the newer 9front drivers call (from 9front's
+ * ../port/devether.c).  9front also resizes the queues to the new
+ * speed here; this kernel's queue limits are fixed at attach time.
+ */
+void
+ethersetspeed(Ether *ether, int mbps)
+{
+	ether->mbps = mbps;
+}
+
+void
+ethersetlink(Ether *ether, int link)
+{
+	link = !!link;
+	if(!!ether->link == link)
+		return;
+	ether->link = link;
+	if(link)
+		print("#l%d: %s: link up: %dMbps\n",
+			ether->ctlrno, ether->type, ether->mbps);
+	else
+		print("#l%d: %s: link down\n",
+			ether->ctlrno, ether->type);
+}
+
+/*
+ * 9front's Ether.ifstat fills a buffer [p, e) and returns the new
+ * position; this kernel's takes (buf, n, offset) and returns a count.
+ * Drivers copied from 9front keep their own ifstat and hand it to
+ * this through a two-line wrapper.
+ */
+long
+ether9ifstat(Ether *edev, void *a, long n, ulong offset, char* (*f)(void*, char*, char*))
+{
+	enum { Ifstatbuf = 4096 };	/* 9front's READSTR; this kernel's is 1000 */
+	char *s;
+
+	s = malloc(Ifstatbuf);
+	if(s == nil)
+		error(Enomem);
+	if(waserror()){
+		free(s);
+		nexterror();
+	}
+	f(edev, s, s+Ifstatbuf);
+	n = readstr(offset, a, n, s);
+	poperror();
+	free(s);
+	return n;
+}

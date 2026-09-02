@@ -1541,3 +1541,14 @@ static void rijndaelDecryptRound(const u32 rk[/*4*(Nr + 1)*/], int Nr, u8 block[
 }
 
 #endif /* INTERMEDIATE_VALUE_KAT */
+
+/*
+ * 9front's name for the raw block primitive, over the expanded key in
+ * AESstate.ekey; os/inferno/port/wifi.c (copied from 9front) builds
+ * its CCMP on it.
+ */
+void
+aes_encrypt(u32int rk[], int Nr, uchar pt[16], uchar ct[16])
+{
+	rijndaelEncrypt(rk, Nr, pt, ct);
+}

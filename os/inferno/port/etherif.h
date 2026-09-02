@@ -33,10 +33,14 @@ struct Ether {
 
 	uchar	ea[Eaddrlen];
 	Macent	mactab[127];		/* for bridge */
+	int	bypass;			/* 9front: interface is in bypass mode; never set here */
 };
 
 extern void etheriq(Ether*, Block*);
 extern void addethercard(char*, int(*)(Ether*));
+extern void ethersetspeed(Ether*, int);
+extern void ethersetlink(Ether*, int);
+extern long ether9ifstat(Ether*, void*, long, ulong, char* (*)(void*, char*, char*));
 extern ulong ethercrc(uchar*, int);
 extern int parseether(uchar*, char*);
 

@@ -41,6 +41,8 @@ typedef struct Rept	Rept;
 typedef struct Rootdata	Rootdata;
 typedef struct Rgrp	Rgrp;
 typedef struct RWlock	RWlock;
+typedef struct RWlock	RWLock;	/* 9front spelling, for drivers copied from there */
+typedef struct Bpool	Bpool;
 typedef struct Schedq	Schedq;
 typedef struct Signerkey Signerkey;
 typedef struct Skeyset	Skeyset;
@@ -183,6 +185,19 @@ struct Block
 };
 #define BLEN(s)	((s)->wp - (s)->rp)
 #define BALLOC(s) ((s)->lim - (s)->base)
+
+/*
+ * A 9front driver's block pool: there it is a per-driver free list
+ * of fixed-size, aligned Blocks that freeb() hands back to the pool.
+ * Here it is only the size and alignment; iallocbp() allocates a
+ * fresh aligned Block each time and freeb() frees it.  Same
+ * interface, no recycling.  See ../port/allocb.c.
+ */
+struct Bpool
+{
+	ulong	size;			/* block size */
+	ulong	align;			/* block alignment */
+};
 
 struct Chan
 {

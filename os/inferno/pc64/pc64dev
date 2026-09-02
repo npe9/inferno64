@@ -1,0 +1,315 @@
+# pc64 - amd64 pc terminal with local disk
+# initialize devbin after devpipe as it uses conf.pipeqsize set by pipeinit
+dev
+	root
+	cons
+	arch
+	env
+	forth
+	mnt
+	pipe
+	bin
+	proc
+	prog
+	rtc
+	srv
+	ssl
+	dup
+	cap
+	ready
+	shm
+	usb
+
+	ether		netif
+	bridge		netif log
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
+
+	draw	screen vga vgax cga
+#	mouse		mouse
+	pointer
+	kbd
+	vga	pci
+
+#	ata
+	audio		dma
+	uart
+	sd
+#	floppy	dma
+	tinyfs
+#	dbg	x86break
+
+ip
+	tcp
+	udp
+#	rudp
+	ipifc
+	icmp
+	icmp6
+#	gre
+	ipmux
+#	esp
+#	il
+
+# the order of the libraries here matters. If there is a library
+# with an undefined symbol at the end, the linker throws out an
+# undefined symbol error
+lib
+	aml
+	fis
+	interp
+	keyring
+	memlayer
+	memdraw
+	draw
+	tk
+	sec
+	mp
+	math
+	kern
+# not libip: that is the hosted helper library, and its readipifc.c
+# opens and reads /net/ipifc.  A native kernel has its own ip stack --
+# the ip section above, with os/inferno/ip/ipaux.c -- and upstream
+# Inferno's native configurations link no ip library at all.  This is
+# what os/inferno/virt does.
+
+link
+##	ether82557	pci
+#	ether83815	pci
+#	etherelnk3	pci
+#	ps2mouse
+	ethermedium
+##	pppmedium ppp compress
+	netdevmedium
+	ether8169	pci ethermii
+	ether82563	pci
+	etherx550	pci
+#	ethersink
+	ethervirtio	pci
+	ethervirtio10	pci
+	etherbcm	pci
+	etheryuk	pci
+	ether82598	pci
+	etheriwl	pci wifi
+	usbxhcipci	usbxhci
+
+misc
+	pci		pcipc
+	archgeneric	devkbd i8259 i8253
+	archacpi	mp apic squidboy ec hpet
+	archmp		mp apic squidboy
+	mtrr
+# devvga wants a table of display devices and one of cursors, and
+# mkdevc builds both from the misc names that begin vga.  The screen
+# itself is the boot loader's framebuffer -- bootscreeninit in screen.c
+# -- which wants nothing done to it, so the one display device is
+# vgasoft's, which has no hooks at all, and the cursor is the one drawn
+# into the framebuffer.  The drivers in ../pc are against the 386
+# board's screen.h and do not compile against this one.
+	vgasoft	+cur
+
+	bios32
+	cga
+	uarti8250
+
+	sdiahci	pci sdscsi led
+	sdvirtio	pci sdscsi
+	sdvirtio10	pci sdscsi virtio10pc
+	sdnvme	pci
+
+	vgasoft		=cur swcursor
+#	vga3dfx		+cur
+#	vgaark2000pv	+cur
+#	vgabt485	=cur
+#	vgaclgd542x	+cur
+#	vgaclgd546x	+cur
+#	vgact65545	+cur
+#	vgacyber938x	+cur
+#	vgaet4000	+cur
+#	vgageode	+cur
+#	vgahiqvideo	+cur
+#	vgai81x		+cur
+#	vgaigfx		+cur
+#	vgamach64xx	+cur
+#	vgamga2164w	+cur
+#	vgamga4xx	+cur
+#	vganeomagic	+cur
+#	vganvidia	+cur
+#	vgaradeon	+cur
+#	vgargb524	=cur
+#	vgas3		+cur vgasavage
+#	vgat2r4		+cur
+#	vgatvp3020	=cur
+#	vgatvp3026	=cur
+# vgavesa calls the VESA BIOS in real mode through a 386 Ureg, which
+# is why os/inferno/pc/vgavesa.c includes /386/include/ureg.h by
+# absolute path.  A 64 bit kernel cannot make that call without a
+# thunk this one does not have; 9front's pc64 takes the mode from
+# the loader's *bootscreen instead.  vgasoft above is what this
+# kernel draws with.
+#	vgavesa
+#	vgavmware	+cur
+
+mod
+	sys
+	keyring
+	crypt
+# draw, tk and math are left out: this configuration's modinit()
+# (mkdevc-generated from this section) crashes 6l -- span() writes
+# through a nil Prog.from.sym in its final textp walk, span.c:104 --
+# when math (mathmodinit) is in the list, on this host/toolchain.
+# sys+keyring+crypt links and boots clean; nothing between here and
+# a shell needs Math, Draw or Tk, so they wait for that linker bug.
+#	draw
+#	tk
+#	math
+
+init
+	pc64devinit
+	#shell
+	#wminit
+
+code
+	int main_pool_pcnt = 50;
+	int heap_pool_pcnt = 20;
+	int image_pool_pcnt = 20;
+	int cflag=0;
+	int swcursor=0;
+	int consoleprint=1;
+
+port
+	alarm
+	alloc
+	allocb
+	auth
+	bo
+	chan
+	dev
+	dial
+	dis
+	discall
+	edf
+	exception
+	exportfs
+	inferno
+	iomap
+	irq
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+	random
+# rdb is 9front's kernel debugger and wants printq, klogq, serialoq
+# and consuart out of that flavour's devcons.c; os/inferno/port's
+# has none of them.  The RISC-V boards leave it out for the same
+# reason -- see os/inferno/virt/virt.
+#	rdb
+#	rebootcmd
+	swcursor
+	sysfile
+	taslock
+	xalloc
+
+root
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/forth
+	/n	/
+	/net	/
+	/net.alt	/
+	/nvfs	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/dis/lib
+	/dis/svc
+	/dis/wm
+	/osinit.dis
+	/init.f
+	/forth/cat.f
+	/forth/helpers.f
+	/forth/ns.f
+# for custom initialization and shutdown
+	/dis/init
+	/dis/shutdown
+# basic commands
+	/dis/basename.dis
+	/dis/bind.dis
+	/dis/cat.dis
+	/dis/cd.dis
+	/dis/diskparts
+	/dis/echo.dis
+	/dis/ftest.dis
+	/dis/grep.dis
+	/dis/ls.dis
+	/dis/mntgen.dis
+	/dis/mount.dis
+	/dis/ns.dis
+	/dis/ps.dis
+	/dis/pwd.dis
+	/dis/read.dis
+	/dis/sh.dis
+	/dis/sh.dis
+	/dis/sh/std.dis
+	/dis/unmount.dis
+## support disk, cd and ethernet root and install to disk
+	/dis/9660srv.dis
+# for installing to disk
+	/dis/disk/fdisk.dis
+	/dis/disk/kfs.dis
+	/dis/disk/kfs64.dis
+	/dis/disk/kfscmd.dis
+	/dis/disk/prep.dis
+# for network connectivity
+	/dis/ip/dhcp.dis
+	/dis/ip/ping.dis
+	/dis/auth/factotum.dis
+# libraries for the above commands
+	/dis/disk/calc.tab.dis
+	/dis/disk/pedit.dis
+	/dis/lib/arg.dis
+	/dis/lib/auth.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
+	/dis/lib/disks.dis
+	/dis/lib/env.dis
+	/dis/lib/factotum.dis
+	/dis/lib/filepat.dis
+	/dis/lib/ip.dis
+	/dis/lib/names.dis
+	/dis/lib/nametree.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/readdir.dis
+	/dis/lib/regex.dis
+	/dis/lib/ssl.dis
+	/dis/lib/string.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxpersist.dis
+	/dis/lib/styxservers.dis
+	/dis/lib/timers.dis
+	/dis/lib/workdir.dis
+# would need these to authenticate with the root server
+#	/keydb  /
+#	/keydb/mutual   /usr/inferno/keyring/mutual
+#	/keydb/spree /usr/inferno/keyring/spree
+# for factotum
+#	/mnt
+
+# obsolete?
+#bootdir
+#	/$objtype/bin/paqfs
+#	/$objtype/bin/auth/factotum
+#	bootfs.paq
+#	boot
