@@ -2316,12 +2316,16 @@ ospreymicroboot(void)
 		 * all is the proof the server answered: the kernel's own
 		 * personality could not, it would have panicked in namec.
 		 *
-		 * This is not p9srv and not "the 9front personality".  p9srv
-		 * is that - an ordinary user program answering with ordinary
-		 * system calls - and this kernel cannot host it, because
-		 * loading and running a program is sysproc.c, which the cut
-		 * removed.  What runs here is the delegation path itself,
-		 * with the boot standing in for the server a program would be.
+		 * This is not p9srv and not "the 9front personality"; the boot
+		 * stands in for the server a program would be.  When this was
+		 * written the note here said a real program server could not
+		 * run on this kernel, since loading a program is sysproc.c and
+		 * the cut removed it.  That is no longer true: ospreyloadp9
+		 * loads and enters the personality library without sysproc.c,
+		 * and the p964 and p9pair configurations run it as ordinary
+		 * user programs - one of them a second personality answering
+		 * 9P for the first over this same delegation path.  What runs
+		 * here is still just the path itself, in the microkernel boot.
 		 */
 		{
 			Ospreyproc *sv;
