@@ -309,7 +309,7 @@ dumpregs(Ureg* ureg)
 	 * name is already a printable string.
 	 */
 	xp = currun();
-	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+	if(xp != nil && xp->R.M != nil && xp->R.M != H && xp->R.M->m != nil)
 		iprint("  running Dis pid %d module %s PC %#p\n",
 			xp->pid, xp->R.M->m->name, xp->R.PC);
 	else

@@ -17252,3 +17252,337 @@ checking
 .CW MACHP()
 on this board once the deadlock itself is fixed, but not demonstrated
 to be load-bearing for anything yet.
+.NH 1
+Taking stock: every board booted again, and what a modern machine still needs
+.PP
+This section re-checks the record against live boots rather than
+re-reading it, on 2 September 2026, with the binaries the tree held that
+morning, and then answers a question the record had never put in one
+place: what drivers a machine built in the last ten years needs that no
+board here has.
+.PP
+.TS
+box tab(;);
+lb lb lb
+l l l.
+board;booted today;state
+_
+riscv32 virt32;1 of 1 to a shell;a piped-in echo came back, todfix spam still there
+riscv64 spike, sifiveu;scripted shell markers print;SPIKE-SH-OK, SIFIVEU-SH-OK
+riscv64 virt;4 of 4 panicked after DHCP-OK;deterministic, root-caused and fixed below
+pc64;0 of 15 clean;heap corruption, every boot, old and rebuilt binary alike
+armv7;0 of 10 past module loading;the same two faults the record describes
+arm64 virtarm64;0 of 1 past module loading;the documented kmesg.lk deadlock, unchanged
+.TE
+.PP
+The riscv64 result was the surprise: the record says 40 of 40 clean, and
+.CW os/inferno/virt/smoke.sh
+now fails every time.  Two separate things were wrong, one in the
+harness and one in the kernel.  The harness one: the smoke script
+expects
+.CW FS-OK
+before
+.CW TMP-OK ,
+but
+.CW os/inferno/init/virtinit.b
+has printed them the other way round since
+.CW tmpmount()
+was moved ahead of
+.CW fsmount()
+(the FAT hang fix earlier in this document), so
+.CW expect
+consumed past
+.CW TMP-OK
+while waiting for
+.CW FS-OK
+and then timed out waiting for a marker already gone by.  The two
+blocks are swapped now.
+.PP
+The kernel one is real, and it is deterministic.  Four boots in a row
+printed
+.CW "panic: exception"
+immediately after
+.CW DHCP-OK ,
+during the 1.5 s sleep before the ping stage, with none of
+.CW os/inferno/virt/trap.c 's
+own register dump ahead of it.  QEMU's
+.CW "-d int"
+trace gives what the dump did not:
+.CW "cause 5"
+(load access fault) at
+.CW "epc 0x8002cd94" ,
+.CW "tval 7" .
+That address resolves, bounded on both sides, to
+.CW notefree+136
+in
+.CW os/inferno/port/alloc.c ,
+and the instruction there is
+.CW "ld a0,8(a0)"
+right after
+.CW "ld a0,48(a5)" :
+the read of
+.CW xp->R.M->m
+in the freehist diagnostic.  A trap value of 7 means the pointer being
+dereferenced was
+.CW -1 :
+the current Prog's
+.CW R.M
+held
+.CW H ,
+Dis's nil sentinel
+.CW "((void*)-1)" ,
+which the guard
+.CW "xp->R.M != nil"
+does not catch.  This is the same freehist instrumentation whose
+global-R read was pc64's dominant crash, and whose bisection probe
+already hung riscv64 once; its own comments say it is pc64-only and
+temporary.  pc64 never trips here because a read from address 7 does
+not fault on that board's page tables; riscv64 runs in machine mode with
+no translation and address 7 is not RAM.  Fixed by adding
+.CW "xp->R.M != H"
+to the guard at all three sites that read
+.CW xp->R.M->m
+this way \- both in
+.CW os/inferno/port/alloc.c
+and
+.CW dumpregs()
+in
+.CW os/inferno/pc64/trap.c .
+Not chased: why a Prog that
+.CW currun()
+returns has
+.CW R.M
+equal to
+.CW H
+at all at that moment (no assignment of
+.CW H
+to
+.CW R.M
+exists in
+.CW libinterp
+or
+.CW os/inferno/port ;
+every
+.CW f->mr
+initialiser is C nil), and, separately, why the trap handler's ten
+.CW print()
+calls produced nothing on the wire while
+.CW panic() 's
+.CW iprint()
+did.  Both are open and recorded here rather than guessed at.
+.PP
+With the guard in, the rebuilt
+.CW ivirt
+runs the corrected smoke script past
+.CW DHCP-OK
+and on through every remaining stage to
+.CW "interactive sh"
+and a prompt \- the standing goal for this board, and the state the
+record described.  The script still exits 1, for reasons that are the
+harness's and the board config's, not the kernel's, and are left open
+here: its stages for Tk, the window manager, SSL, factotum and dynamic
+loading all report "file does not exist" (no
+.CW tk.dis
+is in
+.CW os/inferno/virt 's
+root list, and the SSL and auth stages bind under the static
+.CW /n
+that the FAT fix retargeted away from), the ping stage times out, and
+the script's own list of required markers at its end still names every
+one of those.  The document had never recorded a full pass of that
+script; the 40 of 40 it recorded were boots to a shell, which is what
+this is.
+.PP
+pc64 is worse than the record's 15 of 20.  Under this session's harness
+(150 s of TCG, the same
+.CW qemu-boot.sh )
+the committed binary crashed 4 of 4 serial boots and 6 of 6 parallel
+ones, and the first thing found was that it had been linked on 31
+August against an
+.CW Inferno/amd64/lib/libinterp.a
+from 28 August, before the shared
+.CW libinterp/load.c
+fix of 1 September that arm64 and riscv64 were rebuilt with.  Rebuilt
+that library for amd64 and relinked:
+four serial boots, four crashes.  Fifteen boots today, fifteen crashes,
+before and after the relink.
+The signatures are the familiar heap-corruption family \-
+.CW "panic: page fault"
+in module
+.CW Sh
+at
+.CW destroy+627 ,
+.CW _poolfault
+in module
+.CW String ,
+.CW "_allocb: lim < base" ,
+general protection faults, a
+.CW "cclose"
+refcount panic, and once
+.CW "init0: namec: pgrp has no dot" .
+Nothing new was learned about it here; the point of this section is to
+record that the clean rate the document last measured does not hold
+under a 150 s timeout, whatever it was under a shorter one.
+.PP
+armv7 and arm64 are exactly as recorded.  armv7 across ten boots: one
+undefined-instruction trap with
+.CW "pc 0x00000000"
+and
+.CW "sp 0x400f8dcc"
+(the stale boot-stack value has moved again with the binary, as the
+record said it would), six data aborts at five different PCs, three
+still mid-panic when the timeout fired.  arm64 stops after the first
+.CW copypath
+lines of the
+.CW /osinit.dis
+load, the pool-corruption deadlock.
+.PP
+What is left on the five-board goal, in the order it is worth doing:
+pc64's heap corruption (every boot now, so it is at least easy to
+catch); arm64's pool corruption in
+.CW poolfree() ,
+which needs a watchpoint across a wide window; armv7's two faults;
+riscv64's
+.CW R.M\ ==\ H
+origin and its silent trap dump; riscv32's
+.CW todfix
+spam.  pc64 has also never once been run with more than one CPU, so
+.CW squidboy
+and the MP code are linked but unexercised.
+.NH 2
+Drivers a modern machine needs
+.PP
+What pc64 links today, read from its config rather than from the
+directory listing: PCI configuration through the legacy
+.CW 0xCF8/0xCFC
+ports only; ACPI with the AML interpreter,
+.CW HPET ,
+the APIC and x2APIC code, and MP tables; an i8042 keyboard with the
+PS/2 mouse commented out; an 8250 UART; AHCI SATA
+.CW ( sdiahci ) ;
+legacy (pre-1.0) virtio net and block; Realtek 8169, Intel 82563-family
+(which does include the I219) and Intel X550 Ethernet; and a framebuffer
+inherited from the boot loader through
+.CW vgasoft .
+MSI is enabled by exactly one driver,
+.CW etherx550 .
+There is no USB of any kind in the link: the only USB code under
+.CW os/inferno
+is
+.CW pc/usbuhci.c ,
+USB 1.1, and nothing links it.
+.PP
+Missing, in the order a real machine will refuse to boot without them:
+.IP 1.
+USB 3 host controller (xHCI) plus the
+.CW devusb
+core and the HID, hub and mass-storage classes.  Without it there is no
+keyboard or mouse on any machine made since PS/2 left the board, and no
+boot from a USB stick.  Source at hand:
+.CW os/osprey/pc64/usbxhci.c ,
+.CW usbxhcipci.c ,
+.CW devusb.c ,
+and the same files in
+.CW os/9front/port .
+.IP 2.
+NVMe
+.CW ( sdnvme ) .
+Most machines of the last eight years have no SATA at all.
+.CW os/osprey/pc64/sdnvme.c
+and
+.CW os/9front/port/sdnvme.c .
+.IP 3.
+PCI Express: ECAM configuration space from ACPI's MCFG table (no
+.CW MCFG
+or
+.CW ecam
+string exists anywhere under
+.CW os/inferno/pc
+or
+.CW port/pci.c ),
+extended capabilities, and MSI/MSI-X in every driver rather than one.
+Legacy port I/O still works on current firmware, but only for the first
+256 bytes of each function, and legacy INTx routing needs the ACPI
+.CW _PRT
+walk to be right on boards that no longer ship an MP table.
+.IP 4.
+Virtio 1.0.  The pc64 drivers have no
+.CW VERSION_1
+path at all; QEMU's transitional devices hide that, modern-only devices
+(cloud hosts, virtio-mmio on arm64) do not.
+.CW os/osprey/pc64/ethervirtio10.c
+and
+.CW sdvirtio10.c
+are the 1.0 versions.  virtio-input, virtio-gpu, virtio-rng and
+virtio-scsi are not present on pc64 either;
+.CW os/inferno/virt
+has the mmio input and rng ones.
+.IP 5.
+Ethernet made after about 2018: Intel I225/I226 2.5 GbE
+.CW ( os/9front/pc/etheri225.c ) ,
+Realtek RTL8125 2.5 GbE (no source in any flavour here; the 8169 driver
+does not carry its IDs), Broadcom NetXtreme
+.CW ( etherbcm ) ,
+Marvell Yukon
+.CW ( etheryuk ) ,
+Intel 82598/82599 10 GbE
+.CW ( ether82598 ) ,
+and USB Ethernet, which depends on item 1.
+.IP 6.
+Wi-Fi: Intel
+.CW ( os/osprey/pc64/etheriwl.c
+with
+.CW os/9front/port/wifi.c ) ,
+Ralink
+.CW rt2860 ,
+Intel
+.CW wpi ,
+Broadcom.  Every laptop.
+.IP 7.
+HD audio
+.CW ( os/9front/pc/audiohda.c ) ,
+SD/MMC
+.CW ( os/9front/port/sdmmc.c ) ,
+and multiprocessor bring-up, which is linked and never run.
+.PP
+The RISC-V boards have a different first problem.  They run in machine
+mode with
+.CW "-bios none" :
+.CW mtvec ,
+.CW mstatus
+and the CLINT's
+.CW mtimecmp
+directly, no SBI.  A VisionFive 2 or an Icicle boots OpenSBI and hands
+the kernel supervisor mode, so before any driver matters the board
+needs an S-mode entry
+.CW ( stvec ,
+.CW sstatus ,
+SBI calls for the timer, console and IPIs, the PLIC's supervisor
+contexts) and a device-tree reader \- no board under
+.CW os/inferno
+parses a DTB; every address is a constant checked against QEMU's
+.CW dumpdtb .
+After that: PCIe (the VisionFive 2 carries its NVMe on it), the
+DesignWare GMAC Ethernet, a DesignWare SDHCI, and a Cadence xHCI.
+.PP
+arm64 shares the device-tree gap and adds three more before drivers:
+PSCI (secondary CPUs, reboot, power-off), GICv3 (the board has GICv2
+only; sbsa-ref and nearly every real SoC are GICv3), and PCIe ECAM with
+virtio-pci, since QEMU's arm64 virt puts its disks and NICs on PCI, not
+mmio, unless told otherwise.  A Raspberry Pi 4 then needs the VL805
+xHCI, GENET Ethernet, the BCM2711 eMMC2 SDHCI and the firmware
+framebuffer through the mailbox; a Pi 5 the RP1's xHCI and Cadence MACB
+instead.  Servers need ACPI, of which arm64 has none, and a UEFI entry
+\- the
+.CW os/inferno/boot/efi
+loader is x86 only.  armv7 is the same list one generation back.
+.PP
+None of the Osprey or 9front files above may be reached across to; the
+tree's rule is that a flavour copies what it needs into its own
+directory.  The copies are cheap.  Adapting them is not: the 9front
+drivers assume 9front's
+.CW Block ,
+.CW qio
+and interrupt interfaces, which Inferno's port layer shares in name and
+differs from in detail, and each one has to be brought up against a
+booted kernel the way every driver in this document was.

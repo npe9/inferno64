@@ -88,7 +88,19 @@
   the record of what each architecture does and does not do yet, the
   bugs found and fixed, and what is still open; keep it current as each
   piece lands, the same discipline `doc/osprey-progress.ms` holds Osprey
-  to.  Decide, build it, test it against a booted kernel, and say plainly
+  to.  Re-checked live on 2 September 2026 (the "Taking stock" section
+  there): riscv64/virt had regressed to a deterministic panic right
+  after DHCP -- the pc64-only freehist diagnostic in
+  `os/inferno/port/alloc.c` dereferencing a Prog whose `R.M` held the
+  Dis nil `H`, a read pc64's page tables let through and riscv64's
+  machine mode does not -- guarded, and it reaches an interactive shell
+  again; pc64 crashed 15 of 15 boots under a 150 s timeout, old and
+  rebuilt binary alike; armv7, arm64 and riscv32 are as recorded.  The
+  same section lists the drivers a modern machine needs that no board
+  has (xHCI USB, NVMe, PCIe ECAM and MSI, virtio 1.0, current NICs and
+  Wi-Fi, device-tree parsing, PSCI, GICv3, S-mode with SBI) and where
+  source for each already sits in the sibling flavours.  Decide, build
+  it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.
 - Write every path so it can be plumbed. A path in a document is absolute from

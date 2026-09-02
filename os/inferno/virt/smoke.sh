@@ -250,12 +250,12 @@ expect {
   timeout { fail "FAIL timeout waiting BLK-OK" }
 }
 expect {
-  -exact "FS-OK" {}
-  timeout { fail "FAIL timeout waiting FS-OK" }
-}
-expect {
   -exact "TMP-OK" {}
   timeout { fail "FAIL timeout waiting TMP-OK" }
+}
+expect {
+  -exact "FS-OK" {}
+  timeout { fail "FAIL timeout waiting FS-OK" }
 }
 expect {
   -exact "MEMORY-OK" {}

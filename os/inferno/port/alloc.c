@@ -209,7 +209,7 @@ notefree(void *v, uintptr pc)
 		 * dominant crash of the whole hunt. pc64-only, temporary.
 		 * See doc/inferno-ports.ms.
 		 */
-		freehist[i].mname = (xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+		freehist[i].mname = (xp != nil && xp->R.M != nil && xp->R.M != H && xp->R.M->m != nil)
 			? xp->R.M->m->name : nil;
 	}
 	freehistn++;
@@ -1283,7 +1283,7 @@ _poolfault(void *v, char *msg, uintptr c)
 	 * rather than left as a known-parallel gap. See
 	 * doc/inferno-ports.ms.
 	 */
-	if(xp != nil && xp->R.M != nil && xp->R.M->m != nil)
+	if(xp != nil && xp->R.M != nil && xp->R.M != H && xp->R.M->m != nil)
 		print("_poolfault: running Dis pid %d module %s PC %#p\n",
 			xp->pid, xp->R.M->m->name, xp->R.PC);
 	else
