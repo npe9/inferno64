@@ -126,7 +126,7 @@ TARG=\
 	gzip.dis\
 	hd.dis\
 	dialtest.dis\
-	tlshellotest.dis\
+	tls12test.dis\
 	aesgcmtest.dis\
 	ccpolytest.dis\
 	hmacsha256test.dis\

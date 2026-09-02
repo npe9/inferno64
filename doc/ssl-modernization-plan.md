@@ -2,7 +2,53 @@
 
 ## Status (most recent first)
 
-**In progress.** Primitive 6 (ChaCha20-Poly1305) is landed, completing
+**Step 7 done, 2026-09-02 — the full handshake and record layer work
+end to end against both real target hosts.** `tls12(2)`
+(`module/tls12.m` + `appl/lib/crypt/tls12.b`, which until now held only
+the PRF) is now a real TLS 1.2 client: `client(fd, hostname, suites)`
+runs ClientHello through both Finished messages (ECDHE over X25519,
+transcript hash, master secret, key expansion, ChangeCipherSpec,
+verify-data both directions) and returns a `Session` with
+`read`/`write`/`close` doing real AEAD record protection. The
+handshake/derivation flow is ported from 9front's `tlshand.c` and the
+record construction (tlsPackAAD's 13-byte AAD, GCM's salt+explicit
+nonce with the random-XOR-sequence explicit part, ChaCha's IV-XOR-
+sequence nonce, the RFC 6.3 key-block split) from `devtls.c` — 9front
+keeps that half in its kernel; here both halves are Limbo. The step-4
+probe `tlshellotest(1)` was deleted and its ClientHello encoding
+absorbed, exactly as its own man page promised.
+
+`tls12test(1)`, all live, passing 3/3 consecutive runs on 2026-09-02:
+AES-128-GCM leg against `bsky.social` (real HTTPS GET, decrypted
+`HTTP/1.` response back); ChaCha20-Poly1305 leg against
+`mastodon.social` (which had to be offered ChaCha *only* — it prefers
+GCM given both, re-measured live same day); plus two in-test negative
+controls (corrupting `rseq` makes the next read fail record
+authentication; corrupting `wseq` makes the server kill the
+connection instead of answering). Two more negative controls were run
+by hand against the library and restored: one flipped bit in the
+client Finished verify data → every server refuses (mastodon with
+fatal alert 51, `decrypt_error` — the exact RFC-assigned alert); one
+flipped bit in the expected server Finished → the client itself
+rejects with a verify-data mismatch. So both directions of Finished
+verification are demonstrably load-bearing, not decorative.
+
+Gotcha for future sessions: the *installed* `emu-g` binary predated
+the new keyring builtins (link typecheck error naming
+`$Keyring->aesgcm_decrypt()` at module load) — `mk CONF=emu-g install`
+in `emu/MacOSX` first. Also, any `.b` file including `tls12.m` must
+include `keyring.m` before it now (the `Session` adt embeds keyring
+state refs); `tls12prftest.b` needed that one-line fix.
+
+**What remains before `bsky(1)`/`masto(1)` can migrate off `#C`
+(steps 8–9): certificate chain verification** — still completely
+open, still the gap that makes every session encrypted but
+UNAUTHENTICATED (both `tls12(2)` and `tls12test(1)` say so in
+BUGS) — including the trust-root decision, plus the migration
+itself. The `/net/cs` name-resolution gap also still stands (clients
+dial literal IPs).
+
+**Earlier status.** Primitive 6 (ChaCha20-Poly1305) landed, completing
 both record-protection AEADs this plan's measured scope needs. Primitive
 5 (AES-GCM) is landed. Step 4 (real ClientHello/ServerHello round trip)
 is done — see below. Primitives 1–3 are landed and verified:

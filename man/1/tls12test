@@ -1,0 +1,94 @@
+.TH TLS12TEST 1
+.SH NAME
+tls12test \- live end-to-end test of the TLS 1.2 client
+.SH SYNOPSIS
+.B tls12test
+.SH DESCRIPTION
+.B Tls12test
+exercises
+.IR tls12 (2)'s
+full client path \(em ClientHello through both Finished messages,
+then real encrypted application data \(em against the two live hosts
+.I doc/ssl-modernization-plan.md
+measured its scope from, one per AEAD suite:
+.IP 1.
+.BR bsky.social :
+both suites offered; the server picks
+.B TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+(16rC02F), exercising the AES-GCM record path.
+.IP 2.
+.BR mastodon.social :
+only
+.B TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+(16rCCA8) offered. Mastodon prefers GCM when both are on the table
+(checked live, 2026-09-02), so narrowing the offer is what makes this
+leg reach the ChaCha20-Poly1305 code at all.
+.PP
+Each leg sends a real HTTP/1.1 GET over the established session and
+requires a decrypted response beginning
+.B HTTP/1.
+back.
+.PP
+Two in-test negative controls then attack the record layer of fresh
+sessions, confirming the authentication is real rather than
+decorative:
+.IP 3.
+the receive sequence number is corrupted before reading; the next
+read must fail with a record-authentication error, since the AEAD's
+additional data covers the sequence number. A read that still
+succeeds means the tag check is not actually tied to the AAD, and the
+test fails.
+.IP 4.
+the send sequence number is corrupted before writing; the server must
+refuse the request (an alert or a dead connection). A normal HTTP
+response back means the server-side MAC check saw nothing wrong with
+a desynchronized record, and the test fails.
+.PP
+Two further negative controls were run by hand against the library
+when this test was built, per the repository's evidence discipline,
+and are worth repeating after any change to the handshake: corrupting
+one bit of the client Finished verify data made every server refuse
+the handshake (mastodon with a fatal
+.B decrypt_error
+alert, description 51 \(em the exact alert RFC 5246 assigns to a bad
+verify_data), and corrupting the expected server Finished value made
+the client itself reject every handshake with a verify-data mismatch.
+.PP
+Both hosts are dialled by literal IP, compiled into the source \(em
+.IR dialtest (1)
+found
+.I /net/cs
+does not resolve names in this emu instance (a separate, tracked
+gap); SNI needs only the hostname string.
+.SH SOURCE
+.B /appl/cmd/tls12test.b
+.SH SEE ALSO
+.IR tls12 (2),
+.IR tls12prftest (1),
+.IR aesgcmtest (1),
+.IR ccpolytest (1),
+.IR x25519test (1),
+.IR dialtest (1),
+.I doc/ssl-modernization-plan.md
+in the source tree.
+.SH BUGS
+A pass proves a working, encrypted handshake and record layer against
+today's server configuration \(em
+.B not
+an authenticated connection: certificate-chain verification does not
+exist yet (see
+.IR tls12 (2)'s
+own BUGS). The test needs the real network, real third-party servers,
+and their continued willingness to negotiate the measured suites;
+none of that is under this tree's control, so a failure here can mean
+the world changed rather than the code. The hand-run Finished
+corruptions above are not automated, because they require corrupting
+the library itself.
+.SH HISTORY
+.B Tls12test
+supersedes
+.BR tlshellotest (1),
+the disposable step-4 probe that stopped after ServerHelloDone; the
+probe's hand-rolled ClientHello encoding was absorbed into
+.IR tls12 (2)
+and the probe deleted, exactly as its own manual promised.

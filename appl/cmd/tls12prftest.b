@@ -21,6 +21,7 @@ implement Command;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+include "keyring.m";
 include "tls12.m";
 	tls12: TLS12;
 
