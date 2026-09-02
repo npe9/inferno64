@@ -426,14 +426,16 @@ syscall(Ureg* ureg)
 	if(up->oslinux){
 		/*
 		 * A Linux legacy process: the system-call number is in ax and
-		 * the arguments in di, si, dx, r10, r8 (the System V order),
+		 * the arguments in di, si, dx, r10, r8, r9 (the System V order),
 		 * not in bp and on the stack.  Normalise them into up->s so
-		 * dosyscall reads them the same way for either ABI.
+		 * dosyscall reads them the same way for either ABI.  The values
+		 * are real because syscallentry (l.s) stores every register into
+		 * the Ureg, not just the three the Plan 9 ABI needs.
 		 */
 		uvlong *a = (uvlong*)up->s.args;
 		scallnr = ureg->ax;
 		a[0] = ureg->di; a[1] = ureg->si; a[2] = ureg->dx;
-		a[3] = ureg->r10; a[4] = ureg->r8;
+		a[3] = ureg->r10; a[4] = ureg->r8; a[5] = ureg->r9;
 		if(dosyscall(scallnr, &up->s, &ureg->ax))
 			((void**)&ureg)[-1] = (void*)noteret;
 	} else {

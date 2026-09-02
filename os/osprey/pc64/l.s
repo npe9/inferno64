@@ -970,16 +970,27 @@ TEXT touserat(SB), 1, $-4
 	BYTE $0x48; SYSRET			/* SYSRETQ */
 
 /*
+ * SYSCALL entry.  On arrival CX holds the user ip and R11 the user
+ * flags, put there by the hardware, and no register is free: a Linux
+ * binary's system-call number is in AX and its arguments in DI, SI, DX,
+ * R10, R8 and R9, and the Linux ABI has every register but CX and R11
+ * preserved across the call.  So the stack switch goes through memory
+ * the GS base names (Gsblock in dat.h): the user sp is parked at GS:8,
+ * SP itself is the scratch register that loads m from GS:0 and then
+ * m->proc, the kernel stack top, and once on the kernel stack every
+ * register is stored into the Ureg.  syscall() then reads either
+ * ABI's arguments from the Ureg, and forkret returns every register
+ * the way an interrupt return would.  The Plan 9 ABI - number in BP,
+ * arguments on the user stack - needs none of this and loses nothing.
  */
 TEXT syscallentry(SB), 1, $-4
 	SWAPGS
-	BYTE $0x65; MOVQ 0, AX			/* m-> (MOVQ GS:0x0, AX) */
-	MOVQ	16(AX), BX
-	MOVQ	SP, R13
-	MOVQ	BX, SP
+	BYTE $0x65; MOVQ SP, 8			/* Gsblock.usersp = user sp (MOVQ SP, GS:0x8) */
+	BYTE $0x65; MOVQ 0, SP			/* m-> (MOVQ GS:0x0, SP) */
+	MOVQ	16(SP), SP			/* m->proc: the kernel stack top */
 
 	PUSHQ	$UDSEL				/* old stack segment */
-	PUSHQ	R13				/* old sp */
+	SUBQ	$8, SP				/* old sp: filled from Gsblock.usersp below */
 	PUSHQ	R11				/* old flags */
 	PUSHQ	$UESEL				/* old code segment */
 	PUSHQ	CX				/* old ip */
@@ -988,25 +999,54 @@ TEXT syscallentry(SB), 1, $-4
 
 	SUBQ	$(8 + 23*8-7*8), SP		/* arg + sizeof(Ureg)-pushed */
 
-	MOVQ	RMACH, (15*8)(SP)		/* old r15 */
+	MOVQ	AX, (1*8)(SP)			/* the Linux system call number */
+	MOVQ	BX, (2*8)(SP)
+	MOVQ	CX, (3*8)(SP)
+	MOVQ	DX, (4*8)(SP)
+	MOVQ	SI, (5*8)(SP)
+	MOVQ	DI, (6*8)(SP)
+	MOVQ	RARG, (7*8)(SP)			/* the Plan 9 system call number */
+	MOVQ	R8, (8*8)(SP)
+	MOVQ	R9, (9*8)(SP)
+	MOVQ	R10, (10*8)(SP)
+	MOVQ	R11, (11*8)(SP)
+	MOVQ	R12, (12*8)(SP)
+	MOVQ	R13, (13*8)(SP)
 	MOVQ	RUSER, (14*8)(SP)		/* old r14 */
+	MOVQ	RMACH, (15*8)(SP)		/* old r15 */
 
-	MOVQ	RARG, (7*8)(SP)			/* system call number */
+	BYTE $0x65; MOVQ 8, AX			/* the parked user sp (MOVQ GS:0x8, AX) */
+	MOVQ	AX, (22*8)(SP)			/* old sp */
 
-	MOVQ	AX, RMACH			/* m */
-	MOVQ	BX, RUSER			/* up */
+	BYTE $0x65; MOVQ 0, RMACH		/* m-> (MOVQ GS:0x0, R15) */
+	MOVQ	16(RMACH), RUSER		/* up */
 
 	LEAQ	8(SP), RARG			/* Ureg* arg */
 
 	CALL	syscall(SB)
 
+/*
+ * Return from a system call, and where a forked child first runs.  AX
+ * is the result; the rest is whatever the Ureg holds, which for a
+ * process that entered through syscallentry is every register it had.
+ * CX and R11 are the ip and flags SYSRET consumes.
+ */
 TEXT forkret(SB), 1, $-4
 	SWAPGS
 
 	MOVQ	8(SP), AX			/* return value */
-
-	MOVQ	(15*8)(SP), RMACH		/* r15 */
+	MOVQ	(2*8)(SP), BX
+	MOVQ	(4*8)(SP), DX
+	MOVQ	(5*8)(SP), SI
+	MOVQ	(6*8)(SP), DI
+	MOVQ	(7*8)(SP), BP
+	MOVQ	(8*8)(SP), R8
+	MOVQ	(9*8)(SP), R9
+	MOVQ	(10*8)(SP), R10
+	MOVQ	(12*8)(SP), R12
+	MOVQ	(13*8)(SP), R13
 	MOVQ	(14*8)(SP), RUSER		/* r14 */
+	MOVQ	(15*8)(SP), RMACH		/* r15 */
 
 	MOVQ	(19*8)(SP), CX			/* ip */
 	MOVQ	(21*8)(SP), R11			/* flags */

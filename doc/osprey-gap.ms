@@ -142,7 +142,12 @@ not implement - open, read, close - to a peer that emulates it against
 its own name space and hands the answer back, the legacy binary none the
 wiser.  That is the per-process trap interposition the paper describes,
 system calls for now, not yet page faults (the legacy image is eager-
-mapped so it does not fault), and not yet the Linux ABI.  p9pair is the library-OS
+mapped so it does not fault).  The Linux ABI is served too: the p9linux
+configuration runs an unmodified static Linux x86-64 binary (an ELF,
+raw syscalls, no libc), the SYSCALL entry stores every register so the
+Linux convention can be read and its callee-saved registers returned,
+and the same buddy answers its open, read and close.  Only the file
+calls the demonstration makes are mapped.  p9pair is the library-OS
 mechanism, one-directional (the client mounts the server, not the
 reverse).
 .PP

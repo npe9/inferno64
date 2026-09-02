@@ -3,6 +3,7 @@ typedef struct Confmem	Confmem;
 typedef struct FPssestate	FPssestate;
 typedef struct FPavxstate	FPavxstate;
 typedef struct FPalloc	FPalloc;
+typedef struct Gsblock	Gsblock;
 typedef struct FPsave	FPsave;
 typedef struct PFPU	PFPU;
 typedef struct ISAConf	ISAConf;
@@ -25,7 +26,7 @@ typedef struct Vctl	Vctl;
 #pragma incomplete Pcidev
 #pragma incomplete Ureg
 
-#define MAXSYSARG	5	/* for mount(fd, afd, mpt, flag, arg) */
+#define MAXSYSARG	6	/* mount(fd, afd, mpt, flag, arg) takes five; the Linux ABI passes six in registers */
 
 /*
  *  parameters for sysproc.c
@@ -338,6 +339,21 @@ extern PCArch	*arch;			/* PC architecture */
 Mach* machp[MAXMACH];
 	
 #define	MACHP(n)	(machp[n])
+
+/*
+ * What the kernel-mode GS base points at, one block per processor.
+ * The assembly in l.s reads GS:0 as m->.  The SYSCALL entry arrives
+ * with no register free - a Linux binary has its call number in AX and
+ * its arguments in six more, all of which the Linux ABI has preserved
+ * across the call - so it parks the user stack pointer in the word at
+ * GS:8 until it has switched to the kernel stack and can push it.  The
+ * offsets are known to l.s (syscallentry).
+ */
+struct Gsblock {
+	Mach*	m;		/* GS:0 */
+	uintptr	usersp;		/* GS:8: the user sp across the SYSCALL stack switch */
+};
+extern Gsblock gsblock[MAXMACH];
 
 extern register Mach* m;			/* R15 */
 extern register Proc* up;			/* R14 */

@@ -233,6 +233,16 @@ The exchange is with whoever answers.  A person comparing two
 fingerprints is the only thing that says it was the machine that was
 meant, and there is nothing a machine could compare instead without
 something already shared to compare it against.
+.PP
+.B "2.  The buddy's other half: page faults, and the rest of an ABI."
+The paper's buddy interposes on a legacy binary's system calls and its
+page faults; p9buddy and p9linux interpose the first and eager-map the
+image so the second never happens, and a user fault on the microkernel
+still panics in donotify rather than reaching anyone.  Demand-mapping
+the legacy image and carrying its faults to the buddy is the next piece,
+and after it the Linux calls a real program makes beyond open, read,
+close and lseek \- brk and mmap first, since a libc needs them before it
+needs anything else.
 .NH 1
 A personality outside the kernel
 .PP
@@ -2471,9 +2481,68 @@ legacy process's.  On boot the legacy program opens the root, reads it,
 and closes it, every file trap answered by the peer and none by the
 kernel.  This is the paper's per-process interposition \- vx32 and Fluke,
 not a shared server \- with system calls interposed but not yet page
-faults (the image is eager-mapped so it does not fault), and Plan 9
-before Linux.  It is checked by
+faults (the image is eager-mapped so it does not fault).  It is checked by
 .CW /scripts/osprey-check-p9buddy.py .
+.PP
+The same buddy now serves the Linux ABI, which is the author's "plan9 to
+start then linux".  The
+.CW p9linux
+configuration runs an unmodified, statically linked Linux x86-64 binary
+.CW ( os/osprey/cmd/p9/linuxlegacy.c ,
+built by clang for Linux with raw system calls and no libc, embedded
+whole as an ELF).  The kernel's ELF loader
+.CW ( ospreyloadelf
+in
+.CW os/osprey/port/userinit.c )
+maps each program header at its own address and
+.CW touserat
+(l.s) enters at
+.CW e_entry
+with a System V stack.  The binary's calls arrive in the Linux
+convention \- number in ax, arguments in di, si, dx, r10, r8, r9, cx
+and r11 clobbered, every other register preserved \- and that last
+clause was the piece that stood in the way: the Plan 9 SYSCALL entry
+.CW ( syscallentry
+in
+.CW os/osprey/pc64/l.s )
+clobbered ax to load m, saved only bp, r14 and r15, and returned
+nothing else, so the number the kernel read was m's address and a
+Linux binary's callee-saved registers came back as whatever the kernel
+had left in them.  The entry now arrives with no register free and
+switches stacks through memory instead: the user sp is parked in a
+word of a per-processor block the GS base names
+.CW ( Gsblock
+in
+.CW os/osprey/pc64/dat.h ,
+m at offset 0 as the assembly has always read it, the parked sp at 8),
+sp itself is the scratch register that loads m and then m->proc, and
+once on the kernel stack every register is stored into the Ureg;
+.CW forkret
+restores every one.  The Plan 9 ABI needs none of it and loses
+nothing, and every other configuration is checked unchanged below.
+.CW syscall()
+in
+.CW os/osprey/pc64/trap.c
+reads the Linux convention out of the Ureg for a process marked
+.CW oslinux ;
+.CW dosyscall
+answers Linux write to the console and exit itself, and
+.CW ospreybuddyforward
+maps open, read, close and lseek to their Plan 9 numbers and forwards
+them to the buddy exactly as for the Plan 9 binary.  On boot the Linux
+program opens the root, reads 470 bytes of it, closes it, checks that
+rbx survived every trap, and exits through Linux exit(2).  One bug was
+the program's own, and a real Linux would have killed it the same way:
+a C-language
+.CW _start
+assumes a function's frame (sp 8 mod 16, as a call leaves it) where the
+kernel enters with sp 16-aligned, and clang's first aligned SSE store
+faulted; the program has the assembly entry a nolibc program is meant
+to have.  What is interposed is system calls, and only the file calls
+the demonstration makes are mapped; page faults are not interposed (the
+image is eager-mapped), and a user fault still panics the microkernel
+(donotify) rather than reaching a buddy.  It is checked by
+.CW /scripts/osprey-check-p9linux.py .
 .NH 2
 Built and proven since
 .PP
@@ -2894,9 +2963,15 @@ file operations.
 .PP
 The plan's other name for what sits beside a library OS is a
 .I buddy
-operating system, and that much this does have: what a container asks
-for and the policy layer cannot answer is answered by the Plan 9 kernel
-around it, or by a user-level server the container has named.  It is a
-buddy in the sense of answering for the parts a task has not brought
-with it; it is not one in the sense the plan means, since the task did
-not bring any of them.
+operating system, and that is built in both the senses the plan uses.
+On pc64, what a container asks for and the policy layer cannot answer
+is answered by the Plan 9 kernel around it, or by a user-level server
+the container has named: a buddy in the sense of answering for the
+parts a task has not brought with it.  On the microkernel,
+.CW p9buddy
+and
+.CW p9linux
+are the per-process buddy the paper means: an unmodified legacy binary,
+Plan 9 or Linux, whose own system traps a peer personality answers.
+What that buddy does not yet do is take the binary's page faults, and
+what it maps is the handful of file calls the demonstration makes.

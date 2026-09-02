@@ -23,6 +23,8 @@ Segdesc gdt[NGDT] =
 [UESEG]		EXECSEGM(3),		/* user code */
 };
 
+Gsblock gsblock[MAXMACH];	/* the per-processor block the GS base names; see dat.h */
+
 static struct {
 	Lock;
 	MMU	*free;
@@ -119,7 +121,8 @@ mmuinit(void)
 	ltr(TSSSEL);
 
 	wrmsr(FSbase, 0ull);
-	wrmsr(GSbase, (uvlong)&machp[m->machno]);
+	gsblock[m->machno].m = m;
+	wrmsr(GSbase, (uvlong)&gsblock[m->machno]);
 	wrmsr(KernelGSbase, 0ull);
 
 	/* enable syscall extension */

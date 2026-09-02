@@ -1,10 +1,21 @@
-# WORK IN PROGRESS: the Linux buddyOS is incomplete.  The ELF loader,
-# entry (touserat), Linux syscall-number mapping and topology are built
-# and this config boots, but an unmodified Linux binary's syscalls do
-# not yet work: the shared Plan 9 fast syscall path (syscallentry in
-# l.s) clobbers AX and does not save the Linux argument registers or
-# preserve the callee-saved ones the Linux ABI requires.  Making that
-# path Linux-compatible is the remaining, isolated piece.
+# p9linux - the buddy operating system for the Linux ABI: the microkernel
+# running an unmodified, statically linked Linux x86-64 binary (an ELF,
+# raw syscalls, no libc) in one container, with a Plan 9 personality in a
+# second container as its buddy.  The binary's system calls arrive in the
+# Linux convention (number in ax, arguments in di/si/dx/r10/r8/r9, cx and
+# r11 clobbered, everything else preserved); syscallentry (l.s) stores
+# every register into the Ureg, syscall() (trap.c) reads that convention
+# when the process is marked oslinux, dosyscall below answers write to
+# the console and exit itself, and ospreybuddyforward maps open, read,
+# close, lseek to their Plan 9 equivalents and forwards them over the
+# ring to the buddy.  Checked by scripts/osprey-check-p9linux.py: the
+# binary opens the root, reads it, closes it, sees a callee-saved
+# register intact across every trap, and exits.  System calls are
+# interposed; page faults are not (the image is eager-mapped), and only
+# the file calls the demonstration makes are mapped.
+#
+# The rest of the configuration is xup64's, described below.
+#
 # xup64 - the Osprey microkernel running a user program: the exokernel
 # path a library-OS program runs on.  Same cut core as upc64, but it
 # enters user mode instead of running a kernel task.
