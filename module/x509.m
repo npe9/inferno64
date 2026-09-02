@@ -76,6 +76,19 @@ X509: module {
 	verify_certchain: fn(cs: list of array of byte): (int, string);
 	verify_certpath: fn(cp: list of (ref Signed, ref Certificate)): (int, string);
 
+	# Verify a TLS-style certificate chain (DER, leaf FIRST, exactly as
+	# received on the wire) against a set of trusted root certificates
+	# (DER), and check that the leaf's subjectAltName names host
+	# (dNSName entries only, single-label wildcards allowed, no CN
+	# fallback). Checks, per link: issuer/subject chaining, validity
+	# dates, the CA bit of intermediates, and the actual signature
+	# (RSA only; sha1/sha256/sha384/sha512WithRSAEncryption). The
+	# chain may terminate at any link whose issuer is a trusted root -
+	# the root itself need not be in the chain. Returns (1, "") or
+	# (0, diagnostic).
+	verify_chain_host: fn(chain: list of array of byte, host: string,
+			roots: list of array of byte): (int, string);
+
 	## TBS (Public Key) Certificate
 
 	Certificate: adt {
@@ -216,8 +229,9 @@ X509: module {
 			serial_number	: ref Keyring->IPint;
 		SubjectKeyIdentifier =>
 			id		: array of byte; # OCTET STRING
-		BasicConstraints =>	
-			depth		: int; # certificate path constraints
+		BasicConstraints =>
+			isca		: int; # cA boolean (DEFAULT FALSE)
+			depth		: int; # path length constraint, -1 if absent
 		KeyUsage =>
 			usage		: int;
 		PrivateKeyUsage =>

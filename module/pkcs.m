@@ -43,7 +43,14 @@ PKCS: module {
 	id_pkcs_challengePassword,
 	id_pkcs_unstructuredAddress,
 	id_pkcs_extCertAttrs,
-	id_algorithm_shaWithDSS		: con iota;
+	id_algorithm_shaWithDSS,
+	# SHA-family RSA signature algorithms (RFC 8017) - added for X.509
+	# chain verification (doc/ssl-modernization-plan.md); every modern
+	# certificate is sha256WithRSAEncryption or better
+	id_pkcs_sha1WithRSAEncryption,
+	id_pkcs_sha256WithRSAEncryption,
+	id_pkcs_sha384WithRSAEncryption,
+	id_pkcs_sha512WithRSAEncryption	: con iota;
 
 	# PKCS1
 
@@ -62,7 +69,11 @@ PKCS: module {
 	};
 
 	MD2_WithRSAEncryption		: con 0;
-	MD5_WithRSAEncryption		: con 1;	
+	MD5_WithRSAEncryption		: con 1;
+	SHA1_WithRSAEncryption		: con 2;
+	SHA256_WithRSAEncryption	: con 3;
+	SHA384_WithRSAEncryption	: con 4;
+	SHA512_WithRSAEncryption	: con 5;
 
 	rsa_encrypt: fn(data: array of byte, key: ref RSAKey, blocktype: int): (string, array of byte); 
 	rsa_decrypt: fn(data: array of byte, key: ref RSAKey, public: int): (string, array of byte); 

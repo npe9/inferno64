@@ -27,7 +27,20 @@ leg reach the ChaCha20-Poly1305 code at all.
 Each leg sends a real HTTP/1.1 GET over the established session and
 requires a decrypted response beginning
 .B HTTP/1.
-back.
+back. Since
+.IR tls12 (2)
+verifies the server certificate chain and the ServerKeyExchange
+signature inside every handshake, both legs exercise the verifier
+against the real chains too.
+.PP
+Four further checks attack the verifier directly, handing
+.IR x509 (2)'s
+.B verify_chain_host
+the chain the bsky session actually produced: the chain must
+.I refuse
+to verify for a wrong hostname, against a root set not containing its
+anchor, and when truncated to the leaf alone \(em and must still
+verify cleanly undoctored, or those three refusals prove nothing.
 .PP
 Two in-test negative controls then attack the record layer of fresh
 sessions, confirming the authentication is real rather than
@@ -44,15 +57,22 @@ refuse the request (an alert or a dead connection). A normal HTTP
 response back means the server-side MAC check saw nothing wrong with
 a desynchronized record, and the test fails.
 .PP
-Two further negative controls were run by hand against the library
-when this test was built, per the repository's evidence discipline,
-and are worth repeating after any change to the handshake: corrupting
-one bit of the client Finished verify data made every server refuse
-the handshake (mastodon with a fatal
+Four more negative controls were run by hand against the library when
+this test was built, per the repository's evidence discipline, and
+are worth repeating after any change to the corresponding code:
+corrupting one bit of the client Finished verify data made every
+server refuse the handshake (mastodon with a fatal
 .B decrypt_error
 alert, description 51 \(em the exact alert RFC 5246 assigns to a bad
-verify_data), and corrupting the expected server Finished value made
-the client itself reject every handshake with a verify-data mismatch.
+verify_data); corrupting the expected server Finished value made the
+client itself reject every handshake with a verify-data mismatch;
+corrupting one bit of the data the ServerKeyExchange signature covers
+made every handshake fail its signature check; and corrupting one
+byte of
+.IR pkcs (2)'s
+SHA-256 DigestInfo prefix made every handshake fail chain
+verification \(em so the RSA arithmetic itself, not just the
+structure checks around it, is load-bearing.
 .PP
 Both hosts are dialled by literal IP, compiled into the source \(em
 .IR dialtest (1)
@@ -72,18 +92,16 @@ gap); SNI needs only the hostname string.
 .I doc/ssl-modernization-plan.md
 in the source tree.
 .SH BUGS
-A pass proves a working, encrypted handshake and record layer against
-today's server configuration \(em
-.B not
-an authenticated connection: certificate-chain verification does not
-exist yet (see
+A pass proves a working, encrypted, chain-verified session against
+today's server configuration; it does not prove revocation checking,
+which does not exist (see
 .IR tls12 (2)'s
-own BUGS). The test needs the real network, real third-party servers,
-and their continued willingness to negotiate the measured suites;
-none of that is under this tree's control, so a failure here can mean
-the world changed rather than the code. The hand-run Finished
-corruptions above are not automated, because they require corrupting
-the library itself.
+BUGS). The test needs the real network, real third-party servers,
+their continued willingness to negotiate the measured suites, and a
+trust bundle that still anchors their chains; none of that is under
+this tree's control, so a failure here can mean the world changed
+rather than the code. The hand-run corruptions above are not
+automated, because they require corrupting the library itself.
 .SH HISTORY
 .B Tls12test
 supersedes

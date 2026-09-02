@@ -25,10 +25,23 @@ implement Command;
 #      connection; a normal HTTP response back means record
 #      authentication is not actually protecting writes)
 #
-# What a PASS does NOT establish (doc/ssl-modernization-plan.md's open
-# gap): the server's certificate chain is not verified and the
-# ServerKeyExchange signature is not checked, so a passing handshake
-# proves a working, encrypted session - NOT an authenticated one.
+# Since step 8 landed, client() also verifies the server certificate
+# chain against the tree's own trust roots (lib/tls/ca-bundle.pem) and
+# checks the ServerKeyExchange signature, so tests 1-4 exercise those
+# on every handshake. Further negative controls attack the verifier
+# directly through x509->verify_chain_host with the chain a real
+# session produced:
+#
+#   5. the right chain must NOT verify for a different hostname
+#   6. the right chain must NOT verify against roots that do not
+#      contain its anchor (the leaf itself posing as the only root)
+#   7. the leaf alone (chain truncated mid-path) must NOT verify
+#   8. the same chain/hostname/roots that just failed those three ways
+#      must still verify cleanly when nothing is doctored
+#
+# What a PASS does NOT establish: revocation (no CRL/OCSP anywhere),
+# and nothing here defends against a compromised trust root - see
+# tls12(2)'s BUGS.
 
 include "sys.m";
 	sys: Sys;
@@ -37,6 +50,9 @@ include "dial.m";
 	dial: Dial;
 include "keyring.m";
 include "security.m";
+include "asn1.m";
+include "pkcs.m";
+include "x509.m";
 include "tls12.m";
 	tls12: TLS12;
 	Session: import tls12;
@@ -80,8 +96,9 @@ init(nil: ref Draw->Context, nil: list of string)
 		if(resp == nil)
 			fail(sys->sprint("bsky GET over the session failed: %s", s.err));
 		else
-			sys->print("bsky.social: cipher %04x, %d certs (unverified), %d byte response: PASS\n",
+			sys->print("bsky.social: cipher %04x, %d certs (chain verified), %d byte response: PASS\n",
 				s.cipher, len s.certs, len resp);
+		chaintests(s.certs);
 	}
 
 	# 2: ChaCha20-Poly1305 path against mastodon.social
@@ -139,7 +156,53 @@ init(nil: ref Draw->Context, nil: list of string)
 		sys->fprint(stderr, "tls12test: %d FAILURE(S)\n", failures);
 		raise "fail:test";
 	}
-	sys->print("all tests passed (handshake + record layer only - certificate chain NOT verified)\n");
+	sys->print("all tests passed (handshake, record layer, chain + ServerKeyExchange verification; no revocation checking)\n");
+}
+
+# negative controls against the verifier itself, using the chain a
+# real, just-verified session produced (see the comment block up top)
+chaintests(certs: list of array of byte)
+{
+	x509 := load X509 X509->PATH;
+	if(x509 == nil || x509->init() != nil){
+		fail("cannot load x509(2) for chain controls");
+		return;
+	}
+	(roots, rerr) := tls12->loadroots(nil);
+	if(rerr != nil){
+		fail("loadroots: "+rerr);
+		return;
+	}
+
+	# 5: same chain, wrong hostname
+	(ok, nil) := x509->verify_chain_host(certs, "example.com", roots);
+	if(ok)
+		fail("bsky's chain VERIFIED for example.com - hostname check not wired in");
+	else
+		sys->print("wrong hostname: refused: PASS\n");
+
+	# 6: same chain, roots that cannot anchor it (the leaf itself
+	# posing as the only trust root)
+	(ok, nil) = x509->verify_chain_host(certs, "bsky.social", hd certs :: nil);
+	if(ok)
+		fail("bsky's chain VERIFIED against a root set that does not contain its anchor");
+	else
+		sys->print("foreign trust roots: refused: PASS\n");
+
+	# 7: truncated chain (leaf alone), real roots
+	(ok, nil) = x509->verify_chain_host(hd certs :: nil, "bsky.social", roots);
+	if(ok)
+		fail("bsky's leaf alone VERIFIED - chain walking not actually required");
+	else
+		sys->print("truncated chain: refused: PASS\n");
+
+	# 8: nothing doctored - must still pass, or 5-7 prove nothing
+	err: string;
+	(ok, err) = x509->verify_chain_host(certs, "bsky.social", roots);
+	if(!ok)
+		fail(sys->sprint("undoctored chain failed to verify: %s", err));
+	else
+		sys->print("undoctored chain: verified: PASS\n");
 }
 
 connect(ip, hostname: string, suites: list of int): (ref TLS12->Session, string)

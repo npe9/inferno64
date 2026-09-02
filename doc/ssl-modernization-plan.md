@@ -2,6 +2,57 @@
 
 ## Status (most recent first)
 
+**Step 8 done, 2026-09-02 — certificate chain verification, live on
+every handshake.** `tls12->client()` now authenticates the server
+before deriving any secret: `x509(2)`'s new `verify_chain_host()`
+(leaf-first wire chain → trusted out-of-chain root; issuer/subject
+chaining, validity dates, intermediates' CA bit, subjectAltName
+dNSName matching with single-label wildcards and no CN fallback, and
+every RSA signature actually verified), plus a check of the
+ServerKeyExchange signature against the leaf's key over both hello
+randoms. **The trust-root decision**: a frozen copy of Mozilla's CA
+bundle ships in the tree at `lib/tls/ca-bundle.pem` (121 roots, the
+"like a real OS distribution" option; refresh from
+https://curl.se/ca/cacert.pem — a stale bundle fails safe, missing
+new roots rather than trusting anything extra). Supporting work:
+`pkcs(2)` gained sha1/256/384/512WithRSAEncryption ids and a strict
+EMSA-PKCS1-v1_5 verify that reconstructs and compares the ENTIRE
+padded block (the old scan-for-separator path invites low-exponent
+forgeries); `tls12(2)` gained `loadroots()`/`CAPATH`.
+
+**Three latent, never-worked x509.b bugs found by the first real
+chain** (all SSLv3-era code that had never met a modern certificate):
+(1) `parse_gname` treated GeneralName's dNSName/rfc822Name/URI as
+EXPLICITLY tagged and tried to DER-decode the string bytes — no real
+subjectAltName ever parsed; (2) `decode_basicConstraints` demanded
+both optional fields (real leaves omit both, real roots omit pathlen)
+and didn't surface the CA boolean at all — `ExtClass.BasicConstraints`
+now carries `isca`; (3) DER's BOOLEAN TRUE is 16rFF but every
+criticality check compared `!= 1`, so any critical extension (i.e.
+every real basicConstraints) failed `ExtClass.decode`. Each was found
+as a live handshake failure, fixed, and re-run — the accidental
+negative controls proving `client()` really aborts when verification
+fails.
+
+`tls12test(1)` grew four verifier controls using the chain a real
+session produced: wrong hostname refused; root set without the
+anchor refused; truncated chain refused; undoctored chain still
+verifies (8 checks total, 3/3 consecutive clean runs). Hand-run and
+restored: one flipped bit in the ServerKeyExchange signed data made
+every handshake fail the signature check; one corrupted byte in
+pkcs.b's SHA-256 DigestInfo prefix made every handshake fail chain
+verification — the RSA arithmetic itself is load-bearing, not just
+the structure checks. All five sibling crypto tests
+(tls12prftest/hmacsha256test/x25519test/aesgcmtest/ccpolytest) still
+pass. Both hosts' chains re-measured this session: all
+sha256WithRSAEncryption, RSA-2048/4096 — the supported-algorithm set
+matches reality.
+
+**Still open**: no revocation (CRL/OCSP), no name constraints —
+documented in tls12(2) BUGS as accepted scope, not silent gaps. The
+`/net/cs` hostname-resolution gap still stands. **Remaining: step 9 —
+migrate `bsky(1)`/`masto(1)` off `#C`**, now unblocked.
+
 **Step 7 done, 2026-09-02 — the full handshake and record layer work
 end to end against both real target hosts.** `tls12(2)`
 (`module/tls12.m` + `appl/lib/crypt/tls12.b`, which until now held only

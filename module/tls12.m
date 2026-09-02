@@ -5,10 +5,12 @@
 # the two cipher suites that plan measured as sufficient for its real
 # targets. Include sys.m and keyring.m before this file.
 #
-# WARNING: client() READS the server's certificate chain but does NOT
-# verify it (doc/ssl-modernization-plan.md's own open gap). A Session
-# is encrypted but NOT authenticated - do not present it as a secure
-# connection until chain verification lands.
+# client() verifies the server's certificate chain against the trust
+# roots at CAPATH and checks the ServerKeyExchange signature against
+# the leaf certificate's key, so an established Session is both
+# encrypted and authenticated to the named hostname. What it does NOT
+# do: revocation checking (no CRL/OCSP), name constraints, or policy
+# processing.
 #
 
 TLS12: module
@@ -28,6 +30,18 @@ TLS12: module
 	CS_ECDHE_RSA_AES128_GCM_SHA256: con 16rC02F;
 	CS_ECDHE_RSA_CHACHA20_POLY1305: con 16rCCA8;
 
+	# the trust roots client() verifies server chains against: a
+	# frozen copy of Mozilla's root CA bundle, shipped in the tree
+	# (the "frozen bundle, like a real OS distribution" option from
+	# doc/ssl-modernization-plan.md's trust-root discussion; update
+	# it from https://curl.se/ca/cacert.pem when it goes stale)
+	CAPATH: con "/lib/tls/ca-bundle.pem";
+
+	# parse a PEM certificate bundle into DER certs (path nil = CAPATH).
+	# client() calls this itself and caches the result; it is exported
+	# so tests can hand doctored root sets to x509->verify_chain_host.
+	loadroots: fn(path: string): (list of array of byte, string);
+
 	# An established TLS 1.2 session. Fields are exposed the way every
 	# Limbo adt's are; treat everything except cipher/certs and the
 	# three methods as internal record-layer state.
@@ -35,7 +49,7 @@ TLS12: module
 	{
 		fd: ref Sys->FD;
 		cipher: int;			# negotiated suite, one of the two above
-		certs: list of array of byte;	# server chain, DER, in wire order - NOT VERIFIED
+		certs: list of array of byte;	# server chain, DER, in wire order (verified)
 		err: string;			# sticky record-layer error, nil while healthy
 
 		# record layer internals: per-direction sequence numbers,
@@ -62,7 +76,9 @@ TLS12: module
 	# Finished messages, ECDHE key exchange over X25519 only. suites
 	# lists the cipher suites to offer, in preference order (nil =
 	# both CS_* above). Returns (session, nil) or (nil, diagnostic).
-	# Repeat: the certificate chain is parsed, surfaced in
-	# Session.certs, and NOT verified.
+	# The server's certificate chain is verified against CAPATH's
+	# trust roots and must name hostname (x509->verify_chain_host),
+	# and the ServerKeyExchange signature is checked against the
+	# leaf's key - a failure of either aborts the handshake.
 	client: fn(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, string);
 };

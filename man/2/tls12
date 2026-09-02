@@ -9,11 +9,13 @@ include "tls12.m";
 tls12 := load TLS12 TLS12->PATH;
 Session: import tls12;
 
-init:   fn(): string;
-prf:    fn(secret: array of byte, label: string,
-           seed: array of byte, n: int): array of byte;
-client: fn(fd: ref Sys->FD, hostname: string,
-           suites: list of int): (ref Session, string);
+init:      fn(): string;
+prf:       fn(secret: array of byte, label: string,
+              seed: array of byte, n: int): array of byte;
+client:    fn(fd: ref Sys->FD, hostname: string,
+              suites: list of int): (ref Session, string);
+loadroots: fn(path: string): (list of array of byte, string);
+CAPATH:    con "/lib/tls/ca-bundle.pem";
 
 Session: adt {
     cipher: int;
@@ -72,13 +74,40 @@ of the suites above. It returns
 on success or
 .BI (nil,\ \fIdiagnostic\fP) .
 .PP
+The server is authenticated before any secret is derived: its
+certificate chain must verify against the trust roots at
+.B CAPATH
+and name
+.I hostname
+(via
+.IR x509 (2)'s
+.BR verify_chain_host ,
+which checks issuer/subject chaining, validity dates, intermediates'
+CA bit, subjectAltName dNSNames, and every RSA signature), and the
+ServerKeyExchange parameters must carry a valid signature by the leaf
+certificate's key over both hello randoms \(em tying this key
+exchange to this connection and this server. Either failing aborts
+the handshake.
+.B CAPATH
+is a frozen copy of Mozilla's root-CA bundle shipped in the tree;
+refresh it from
+.B https://curl.se/ca/cacert.pem
+when it ages.
+.B Loadroots
+parses such a PEM bundle into the DER certificate list
+.B verify_chain_host
+takes (nil path means
+.BR CAPATH );
+.B client
+calls it once and caches the result.
+.PP
 An established
 .B Session
 carries the negotiated
 .B cipher
-and the server's certificate chain in
+and the server's (verified) certificate chain in
 .B certs
-(DER, leaf first, exactly as received \(em see the warning below).
+(DER, leaf first, exactly as received).
 .B Write
 encrypts and sends
 .I n
@@ -129,17 +158,14 @@ and any other protocol code needing the TLS 1.2 KDF.
 .I doc/ssl-modernization-plan.md
 in the source tree.
 .SH BUGS
-The server's certificate chain is parsed and surfaced but
-.B not verified,
-and the ServerKeyExchange signature is
-.B not checked.
-A
-.B Session
-is therefore encrypted but
-.B not authenticated
-\(em an active man-in-the-middle can impersonate any server. No code
-may present a session as a secure connection, and no man page may
-imply it, until the chain-verification work in
-.I doc/ssl-modernization-plan.md
-lands. That, and the trust-root question it drags in, is the plan's
-one remaining open gap.
+There is no revocation checking of any kind \(em no CRLs, no OCSP \(em
+so a compromised-and-revoked certificate verifies here until it
+expires. Name constraints and certificate policies are not processed.
+Trust is only as fresh as the frozen bundle at
+.BR CAPATH ;
+nothing updates it automatically, and a stale bundle eventually means
+spurious verification failures (missing new roots) rather than
+anything unsafe. Only RSA certificate keys and
+sha1/sha256/sha384/sha512WithRSAEncryption signatures are supported
+\(em ECDSA chains fail cleanly. The system clock is trusted for
+validity periods.

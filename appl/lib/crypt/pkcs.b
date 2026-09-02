@@ -53,7 +53,12 @@ objIdTab = array [] of {
 	id_pkcs_challengePassword =>	Oid(array [] of {1,2,840,113549,1,9,7}),
 	id_pkcs_unstructuredAddress =>	Oid(array [] of {1,2,840,113549,1,9,8}),
 	id_pkcs_extCertAttrs =>		Oid(array [] of {1,2,840,113549,1,9,9}),
-	id_algorithm_shaWithDSS =>	Oid(array [] of {1,3,14,3,2,13})
+	id_algorithm_shaWithDSS =>	Oid(array [] of {1,3,14,3,2,13}),
+
+	id_pkcs_sha1WithRSAEncryption =>	Oid(array [] of {1,2,840,113549,1,1,5}),
+	id_pkcs_sha256WithRSAEncryption =>	Oid(array [] of {1,2,840,113549,1,1,11}),
+	id_pkcs_sha384WithRSAEncryption =>	Oid(array [] of {1,2,840,113549,1,1,12}),
+	id_pkcs_sha512WithRSAEncryption =>	Oid(array [] of {1,2,840,113549,1,1,13})
 };
 
 # [public]
@@ -176,14 +181,108 @@ rsa_sign(data: array of byte, sk: ref RSAKey, algid: int): (string, array of byt
 
 rsa_verify(data, signature: array of byte, pk: ref RSAKey, algid: int): int
 {
-	# digesting and add proper padding to it
+	case algid {
+	SHA1_WithRSAEncryption or
+	SHA256_WithRSAEncryption or
+	SHA384_WithRSAEncryption or
+	SHA512_WithRSAEncryption =>
+		# EMSA-PKCS1-v1_5 (RFC 8017 9.2), checked strictly: build
+		# the entire expected encoded message (00 01 FF.. 00 ||
+		# DigestInfo) and compare every byte of the RSA result
+		# against it, rather than scanning for a separator the way
+		# rsa_decrypt does - lenient parsing here is what enables
+		# classic low-exponent forgery attacks
+		em := emsa_pkcs1v15(data, algid, pk.modlen);
+		if(em == nil)
+			return 0;
+		return byte_cmp(em, rsacomp(signature, pk));
+	}
+
+	# digesting and add proper padding to it (MD2/MD5, the original
+	# SSLv3-era path, kept as-was)
 	ph := padhash(data, algid);
-    
+
 	(err, orig) := rsa_decrypt(signature, pk, 0); # blocktype ?
 	if(err != "" || !byte_cmp(orig, ph))
 		return 0;
 
 	return 1;
+}
+
+# [private]
+# DigestInfo DER prefixes from RFC 8017 9.2's notes: everything before
+# the digest bytes, for each hash
+
+di_sha1 := array [] of {
+	byte 16r30, byte 16r21, byte 16r30, byte 16r09, byte 16r06,
+	byte 16r05, byte 16r2b, byte 16r0e, byte 16r03, byte 16r02,
+	byte 16r1a, byte 16r05, byte 16r00, byte 16r04, byte 16r14
+};
+di_sha256 := array [] of {
+	byte 16r30, byte 16r31, byte 16r30, byte 16r0d, byte 16r06,
+	byte 16r09, byte 16r60, byte 16r86, byte 16r48, byte 16r01,
+	byte 16r65, byte 16r03, byte 16r04, byte 16r02, byte 16r01,
+	byte 16r05, byte 16r00, byte 16r04, byte 16r20
+};
+di_sha384 := array [] of {
+	byte 16r30, byte 16r41, byte 16r30, byte 16r0d, byte 16r06,
+	byte 16r09, byte 16r60, byte 16r86, byte 16r48, byte 16r01,
+	byte 16r65, byte 16r03, byte 16r04, byte 16r02, byte 16r02,
+	byte 16r05, byte 16r00, byte 16r04, byte 16r30
+};
+di_sha512 := array [] of {
+	byte 16r30, byte 16r51, byte 16r30, byte 16r0d, byte 16r06,
+	byte 16r09, byte 16r60, byte 16r86, byte 16r48, byte 16r01,
+	byte 16r65, byte 16r03, byte 16r04, byte 16r02, byte 16r03,
+	byte 16r05, byte 16r00, byte 16r04, byte 16r40
+};
+
+# [private]
+# the full EMSA-PKCS1-v1_5 encoded message for data under algid, k
+# bytes long; nil if the modulus is too small for the DigestInfo
+
+emsa_pkcs1v15(data: array of byte, algid, k: int): array of byte
+{
+	prefix: array of byte;
+	dlen: int;
+	case algid {
+	SHA1_WithRSAEncryption =>
+		prefix = di_sha1;
+		dlen = Keyring->SHA1dlen;
+	SHA256_WithRSAEncryption =>
+		prefix = di_sha256;
+		dlen = Keyring->SHA256dlen;
+	SHA384_WithRSAEncryption =>
+		prefix = di_sha384;
+		dlen = Keyring->SHA384dlen;
+	SHA512_WithRSAEncryption =>
+		prefix = di_sha512;
+		dlen = Keyring->SHA512dlen;
+	* =>
+		return nil;
+	}
+	tlen := len prefix + dlen;
+	if(k < tlen + 11)
+		return nil;
+	em := array[k] of byte;
+	em[0] = byte 0;
+	em[1] = byte 1;
+	for(i := 2; i < k-tlen-1; i++)
+		em[i] = byte 16rFF;
+	em[k-tlen-1] = byte 0;
+	em[k-tlen:] = prefix;
+	digest := em[k-dlen:];
+	case algid {
+	SHA1_WithRSAEncryption =>
+		keyring->sha1(data, len data, digest, nil);
+	SHA256_WithRSAEncryption =>
+		keyring->sha256(data, len data, digest, nil);
+	SHA384_WithRSAEncryption =>
+		keyring->sha384(data, len data, digest, nil);
+	SHA512_WithRSAEncryption =>
+		keyring->sha512(data, len data, digest, nil);
+	}
+	return em;
 }
 
 # [private]

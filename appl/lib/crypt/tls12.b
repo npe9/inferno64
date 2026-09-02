@@ -38,6 +38,17 @@ include "keyring.m";
 	DigestState: import kr;
 include "security.m";
 	random: Random;
+include "bufio.m";
+	bufio: Bufio;
+	Iobuf: import bufio;
+include "encoding.m";
+	base64: Encoding;
+include "asn1.m";
+include "pkcs.m";
+	pkcs: PKCS;
+include "x509.m";
+	x509: X509;
+	Signed, Certificate, SubjectPKInfo, PublicKey: import x509;
 include "tls12.m";
 
 # record content types
@@ -84,7 +95,59 @@ init(): string
 	random = load Random Random->PATH;
 	if(random == nil)
 		return "tls12: load random module failed";
+	bufio = load Bufio Bufio->PATH;
+	if(bufio == nil)
+		return "tls12: load bufio module failed";
+	base64 = load Encoding Encoding->BASE64PATH;
+	if(base64 == nil)
+		return "tls12: load base64 module failed";
+	pkcs = load PKCS PKCS->PATH;
+	if(pkcs == nil)
+		return "tls12: load pkcs module failed";
+	if((err := pkcs->init()) != nil)
+		return "tls12: "+err;
+	x509 = load X509 X509->PATH;
+	if(x509 == nil)
+		return "tls12: load x509 module failed";
+	if((err = x509->init()) != nil)
+		return "tls12: "+err;
 	return nil;
+}
+
+# cached parse of the CAPATH bundle (loaded once per process)
+cachedroots: list of array of byte;
+
+loadroots(path: string): (list of array of byte, string)
+{
+	if(path == nil)
+		path = CAPATH;
+	ib := bufio->open(path, Bufio->OREAD);
+	if(ib == nil)
+		return (nil, sys->sprint("tls: %s: %r", path));
+	roots: list of array of byte;
+	inpem := 0;
+	b64 := "";
+	while((line := ib.gets('\n')) != nil){
+		# strip the newline (and a CR, should one appear)
+		while(len line > 0 && (line[len line-1] == '\n' || line[len line-1] == '\r'))
+			line = line[0:len line-1];
+		if(line == "-----BEGIN CERTIFICATE-----"){
+			inpem = 1;
+			b64 = "";
+		}else if(line == "-----END CERTIFICATE-----"){
+			if(inpem){
+				der := base64->dec(b64);
+				if(der == nil || len der == 0)
+					return (nil, sys->sprint("tls: %s: bad base64 in bundle", path));
+				roots = der :: roots;
+			}
+			inpem = 0;
+		}else if(inpem)
+			b64 += line;
+	}
+	if(roots == nil)
+		return (nil, sys->sprint("tls: %s: no certificates found", path));
+	return (roots, nil);
 }
 
 prf(secret: array of byte, label: string, seed: array of byte, n: int): array of byte
@@ -183,7 +246,9 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 		return (nil, err);
 	if(mtype != HT_SERVER_KEY_EXCHANGE)
 		return (nil, sys->sprint("tls: expected ServerKeyExchange, got handshake type %d", mtype));
-	(serverpub, err) = serverkeyexchange(body);
+	skxparams, skxsig: array of byte;
+	skxhash: int;
+	(serverpub, skxparams, skxhash, skxsig, err) = serverkeyexchange(body);
 	if(err != nil)
 		return (nil, err);
 
@@ -192,6 +257,24 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 		return (nil, err);
 	if(mtype != HT_SERVER_HELLO_DONE || len body != 0)
 		return (nil, sys->sprint("tls: expected ServerHelloDone, got handshake type %d (%d bytes)", mtype, len body));
+
+	# authenticate the server before deriving any secret: the chain
+	# must verify to a trusted root and name the host, and the ECDHE
+	# parameters must carry a valid signature by the leaf's own key
+	# (that signature also covers both randoms, tying this key
+	# exchange to this connection)
+	if(cachedroots == nil){
+		rerr: string;
+		(cachedroots, rerr) = loadroots(nil);
+		if(rerr != nil)
+			return (nil, rerr);
+	}
+	(vok, verr) := x509->verify_chain_host(s.certs, hostname, cachedroots);
+	if(!vok)
+		return (nil, "tls: certificate verification: "+verr);
+	skerr := checkskx(s.certs, crandom, srandom, skxparams, skxhash, skxsig);
+	if(skerr != nil)
+		return (nil, skerr);
 
 	# ClientKeyExchange: fresh X25519 keypair, public key on the wire
 	# (tlshand.c:2585 - curve25519_dh_new straight into the message)
@@ -618,26 +701,81 @@ certificate(b: array of byte): (list of array of byte, string)
 	return (rev, nil);
 }
 
-serverkeyexchange(b: array of byte): (array of byte, string)
+# returns (server public key, the raw ECDHE params bytes the signature
+# covers, the TLS HashAlgorithm id, the signature bytes, error)
+serverkeyexchange(b: array of byte): (array of byte, array of byte, int, array of byte, string)
 {
 	if(len b < 1+2+1)
-		return (nil, "tls: ServerKeyExchange too short");
+		return (nil, nil, 0, nil, "tls: ServerKeyExchange too short");
 	(curvetype, i) := get8(b, 0);
 	if(curvetype != 3)
-		return (nil, sys->sprint("tls: curve_type %d, expected 3 (named_curve)", curvetype));
+		return (nil, nil, 0, nil, sys->sprint("tls: curve_type %d, expected 3 (named_curve)", curvetype));
 	(curve, i2) := get16(b, i);
 	i = i2;
 	if(curve != CURVE_X25519)
-		return (nil, sys->sprint("tls: named curve %04x, expected X25519 (%04x)", curve, CURVE_X25519));
+		return (nil, nil, 0, nil, sys->sprint("tls: named curve %04x, expected X25519 (%04x)", curve, CURVE_X25519));
 	(publen, i3) := get8(b, i);
 	i = i3;
 	if(publen != 32 || i+publen > len b)
-		return (nil, sys->sprint("tls: X25519 public key length %d, expected 32", publen));
+		return (nil, nil, 0, nil, sys->sprint("tls: X25519 public key length %d, expected 32", publen));
 	pub := array[32] of byte;
 	pub[0:] = b[i:i+32];
-	# the signature over the params follows - NOT checked (needs the
-	# certificate work; see the module's authentication warning)
-	return (pub, nil);
+	i += publen;
+	params := b[0:i];
+
+	# SignatureAndHashAlgorithm (2 bytes) + opaque signature<0..2^16-1>
+	if(i+2+2 > len b)
+		return (nil, nil, 0, nil, "tls: ServerKeyExchange truncated before signature");
+	(hashalg, i4) := get8(b, i);
+	i = i4;
+	(sigtype, i5) := get8(b, i);
+	i = i5;
+	if(sigtype != 1)
+		return (nil, nil, 0, nil, sys->sprint("tls: ServerKeyExchange signature type %d, expected 1 (RSA)", sigtype));
+	(siglen, i6) := get16(b, i);
+	i = i6;
+	if(i+siglen != len b)
+		return (nil, nil, 0, nil, "tls: ServerKeyExchange signature length mismatch");
+	sig := b[i:i+siglen];
+	return (pub, params, hashalg, sig, nil);
+}
+
+# verify the ServerKeyExchange signature: digitally-signed struct over
+# client_random + server_random + params (RFC 5246 7.4.3), with the
+# leaf certificate's RSA key
+checkskx(certs: list of array of byte, crandom, srandom, params: array of byte,
+		hashalg: int, sig: array of byte): string
+{
+	halg := -1;
+	case hashalg {
+	2 =>	halg = PKCS->SHA1_WithRSAEncryption;
+	4 =>	halg = PKCS->SHA256_WithRSAEncryption;
+	5 =>	halg = PKCS->SHA384_WithRSAEncryption;
+	6 =>	halg = PKCS->SHA512_WithRSAEncryption;
+	* =>	return sys->sprint("tls: unsupported ServerKeyExchange hash algorithm %d", hashalg);
+	}
+	(serr, signed) := Signed.decode(hd certs);
+	if(serr != "")
+		return "tls: leaf certificate: "+serr;
+	(cerr, leaf) := Certificate.decode(signed.tobe_signed);
+	if(cerr != "")
+		return "tls: leaf certificate: "+cerr;
+	(kerr, nil, pk) := leaf.subject_pkinfo.getPublicKey();
+	if(kerr != "")
+		return "tls: leaf certificate key: "+kerr;
+	data := array[len crandom + len srandom + len params] of byte;
+	data[0:] = crandom;
+	data[len crandom:] = srandom;
+	data[len crandom + len srandom:] = params;
+	pick k := pk {
+	RSA =>
+		if(pkcs->rsa_verify(data, sig, k.pk, halg))
+			return nil;
+		return "tls: ServerKeyExchange signature verification failed";
+	* =>
+		;
+	}
+	return "tls: leaf certificate key is not RSA";
 }
 
 alertstr(b: array of byte): string
