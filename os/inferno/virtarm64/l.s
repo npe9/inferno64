@@ -139,14 +139,32 @@ TEXT	getcallerpc(SB), 1, $-4
  * landed in the vector table's Sync slot with VBAR still 0 -- i.e.
  * a fault that predated trapinit() entirely, well before any of
  * this board's own new C code had run.
+ *
+ * A second, independent bug lived here too: 7a's "STXR Ws,Xt,[Xn]"
+ * grammar puts the STATUS register in the bare reg-number slot ($2)
+ * and the VALUE being stored in "from" ($4) -- see a.y's LSTXR
+ * production.  "STXRW R2,R1,(R3)" therefore encoded Ws=R2 (clobbering
+ * the $1 we'd just built), Xt=R1 (the OLD value we'd just loaded from
+ * *l), Xn=R3 -- i.e. it stored the lock's own prior contents back
+ * over itself and threw the intended "1" away entirely.  tas() always
+ * returned the correct "was it free" answer (R1, untouched by the
+ * store), so every caller believed it had acquired the lock while
+ * l->key never actually changed.  Found live: iunlock()'s own
+ * self-check ("l->key == 0: not locked") fired on the FIRST ilock/
+ * iunlock pair ever taken (kmesg.lk, from print()'s own kmesgputs()),
+ * and the diagnostic print() it triggered recursed back through
+ * kmesgputs()/ilock()/iunlock() to print the same complaint again,
+ * looping until a garbage %p argument's utflen() call finally faulted.
+ * Fixed by giving the status result its own scratch register (R4) and
+ * storing the real new value (R2, "1") instead of the stale R1.
  */
 TEXT	_tas(SB), 1, $-4
 	MOV	R0, R3
 tas1:
 	LDXRW	(R3), R1
 	MOV	$1, R2
-	STXRW	R2, R1, (R3)
-	CBNZW	R2, tas1
+	STXRW	R4, R2, (R3)
+	CBNZW	R4, tas1
 	DSB	$15
 	MOV	R1, R0
 	RET	R30

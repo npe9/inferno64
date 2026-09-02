@@ -112,43 +112,23 @@ main(void)
 	serialputs("Inferno/arm64 virt\n", -1);
 
 	uartconsole();
-	serialputs("DBG-uartconsole-ok\n", -1);
 	archconsole();
-	serialputs("DBG-archconsole-ok\n", -1);
-
-	serialputs("DBG-before-print-test\n", -1);
-	print("hi\n");
-	serialputs("DBG-print-test-ok\n", -1);
 
 	xinit();
-	serialputs("DBG-xinit-ok\n", -1);
 	poolinit();
-	serialputs("DBG-poolinit-ok\n", -1);
 	poolsizeinit();
-	serialputs("DBG-poolsizeinit-ok\n", -1);
 	trapinit();
-	serialputs("DBG-trapinit-ok\n", -1);
 	mmuinit();
-	serialputs("DBG-mmuinit-ok\n", -1);
 	clockinit();
-	serialputs("DBG-clockinit-ok\n", -1);
 	quotefmtinstall();
-	serialputs("DBG-quotefmtinstall-ok\n", -1);
 	printinit();
-	serialputs("DBG-printinit-ok\n", -1);
 
 	procinit();
-	serialputs("DBG-procinit-ok\n", -1);
 	links();
-	serialputs("DBG-links-ok\n", -1);
 	screeninit();
-	serialputs("DBG-screeninit-ok\n", -1);
 	pciarchinit();
-	serialputs("DBG-pciarchinit-ok\n", -1);
 	chandevreset();
-	serialputs("DBG-chandevreset-ok\n", -1);
 	uartconsolesetup();
-	serialputs("DBG-uartconsolesetup-ok\n", -1);
 
 	eve = strdup("inferno");
 	kbdinit();
