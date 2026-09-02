@@ -16851,3 +16851,349 @@ open item from everything fixed in this section, inherited from
 .CW virt/clock.c 's
 own already-documented CLINT/mtimecmp fragility rather than anything
 new to riscv32.
+.NH 1
+arm64 board bring-up
+.PP
+.CW os/inferno/virtarm64
+is a new board built on the real
+.CW 7a/7c/7l
+AArch64 backend this document already recorded as compiler-only: same
+QEMU virt machine as
+.CW virt
+(riscv64) and
+.CW virt32
+(riscv32), single EL1 kernel, GICv2, the generic timer.  OBJTYPE is
+.CW aarch64 ,
+not
+.CW arm64 \-
+.CW arm64
+was already claimed tree-wide by the hosted macOS
+.CW emu-cocoa
+build's real Dis JIT
+.CW ( libinterp/comp-arm64.c ,
+Apple Silicon, a completely different target that happens to share a
+CPU-family name); giving the new board the same OBJTYPE silently
+linked the JIT file's
+.CW sys/mman.h
+include into a bare-metal build.
+.CW libinterp/comp-aarch64.c
+is this board's own no-JIT stub, kept a separate file from
+.CW comp-arm64.c
+specifically so the two never collide again.
+.PP
+Three real toolchain bugs, found by using
+.CW 7a/7c/7l
+for the first time on a real board rather than a bare test function,
+fixed tree-wide rather than worked around locally.
+.CW utils/libmach/obj.c 's
+.CW Objxxx
+dispatch table had an empty slot for
+.CW ObjArm64
+\- no
+.CW .7
+object reader had ever been written \-
+so
+.CW iar
+silently corrupted the symbol table of any archive holding a
+.CW .7
+object, and
+.CW 7l
+reported every real symbol in it
+.CW ( strcmp ,
+.CW memmove ,
+.CW quotefmtinstall ,
+...) as undefined with nothing pointing at
+.CW iar
+as the actual cause.  New
+.CW utils/libmach/7obj.c
+.CW (_is7/_read7),
+modelled on riscv64's
+.CW jobj.c
+but corrected for two confirmed wire-format differences: a 2-byte
+opcode where
+.CW jc 's
+is 1 byte, and a
+.CW TEXT/GLOBL
+record's
+.CW reg
+byte carrying two flag bits
+.CW (NOSCHED,
+a
+.CW from3
+operand follows) that have to be honored to stay byte-synchronized
+with the rest of the stream.
+.CW utils/7a/a.y 's
+.CW STXR
+grammar production had its operands backwards: the middle operand is
+the value being stored and belongs in
+.CW from ,
+not in the bare reg-number slot, which is where the status result
+goes
+.CW ( asmout.c 's
+case 59 encodes
+.CW Rs
+from
+.CW p->reg ,
+.CW Rt
+from
+.CW p->from ) \-
+caught live as
+.CW _tas()
+spinning forever on a genuinely uncontended lock, disassembling back
+to exactly the swapped encoding.
+.CW utils/7l/optab.c
+had long-displacement load/store rows for
+.CW MOVB/MOVH/MOVW/MOV
+in both directions but none for
+.CW MOVBU ,
+breaking every board's own TCP/IP stack
+.CW ( inittcpctl ,
+.CW ipifcadd ,
+...) with "illegal combination MOVBU LEXT NONE REG"; added the
+missing rows, and only those \-
+.CW MOVHU/MOVWU
+already alias onto
+.CW MOVH/MOVW 's
+ranges via
+.CW span.c 's
+.CW buildop() ,
+so rows for those two would have been a second, silently-wrong
+registration.
+.PP
+Bring-up itself went through three real, live-debugged bugs in
+sequence, each hiding the next one until it was fixed.  All three
+found the same way: QEMU's
+.CW -s\ -S
+gdbstub plus
+.CW lldb ,
+.CW 7l\ -a
+against the exact object list used for the final link for real
+addresses in a stripped binary, and reading actual register and
+memory state rather than reasoning about the assembly alone \-
+static reading of this port's own hand-written
+.CW STXR
+sequence looked plausible three separate times before live state
+proved each reading wrong.
+.PP
+First,
+.CW _main 's
+own stack pointer.
+.CW MOV\ $stack+KSTACK(SB),\ RSP
+as a single pseudo-op mis-encodes:
+.CW 7l 's
+large-constant expansion can choose a real AArch64 LDR-literal load
+whose destination-register field 31 always decodes as
+.CW XZR
+(discard), never
+.CW SP ,
+in that specific encoding, so the board's very first instruction
+silently discarded its own stack pointer.  Fixed by routing through a
+scratch GPR
+.CW ( MOV\ $stack+KSTACK(SB),\ R2
+then
+.CW MOV\ R2,\ RSP ) .
+.PP
+Second,
+.CW _tas() .
+.CW Lock.key
+is a 4-byte
+.CW ulong
+immediately followed by
+.CW Lock.sr ,
+so the W-suffixed
+.CW LDXRW/STXRW
+forms are required, not the default 64-bit ones \- that width fix
+landed first, and was real, but did not fix the actual bug.  The
+.CW STXR
+operand-order swap described above meant
+.CW _tas()
+was storing the
+.ul
+old
+value it had just loaded back over itself, throwing away the new
+value it meant to write; the return value
+.CW ( R1 ,
+never touched by the store) was always the correct "was it free"
+answer, so every caller believed it had acquired the lock while
+.CW l->key
+never actually changed.  This produced a strange, indirect symptom
+rather than an obvious one:
+.CW iunlock() 's
+own self-check
+.CW "(\*(lql->key == 0: not locked\*(rq)"
+fired on the first
+.CW ilock/iunlock
+pair the board ever took
+.CW ( kmesg.lk ,
+from
+.CW print() 's
+own
+.CW kmesgputs() ) ,
+and the diagnostic
+.CW print()
+that check triggers itself calls
+.CW kmesgputs() ,
+which takes and releases the same lock \- so the complaint recursed,
+each nested
+.CW iunlock()
+seeing the same "unlocked" lock and printing the same complaint
+again, feeding
+.CW dofmt()
+a runaway sequence of
+.CW %p
+arguments read off an empty
+.CW va_list
+until one of them was bad enough that
+.CW utflen()
+faulted dereferencing it.  Every earlier appearance of this crash was
+a data abort at PC
+.CW 0x200 ,
+the Sync-at-current-EL-SPx vector slot, since
+.CW VBAR_EL1
+was still its architectural reset value of 0 \- i.e. the fault
+predated
+.CW trapinit()
+entirely, and looked at first like a boot-order problem rather than a
+locking one.  Confirmed live by walking the real
+.CW print()\->vseprint()\->dofmt()
+call chain instruction by instruction: it returns cleanly, and the
+.ul
+second,
+recursive
+.CW print()
+invocation's own return address lands inside
+.CW iunlock() 's
+"not locked" print call.  Fixed by giving the exclusive-store status
+result its own register instead of reusing the one holding the new
+value.
+.PP
+Third, a bug in shared interpreter code, not this board's own
+assembly at all.
+.CW libinterp/load.c 's
+.CW parsemod() ,
+handling a module's exception-handler table, guarded
+.CW "h->t = m->type[descid]"
+on
+.CW "n != -1" \-
+but
+.CW n
+is the
+.ul
+previous
+iteration's exception-label count, set a few lines
+.ul
+below
+this check from the next
+.CW operand()
+read, not this handler's type descriptor; on the loop's first
+iteration
+.CW n
+is whatever garbage happened to be live on the stack.  The condition
+has to test
+.CW descid
+itself
+.CW ( \-1
+means "no type", a catch-all handler \-
+.CW xec.c
+checks
+.CW "f->t == nil"
+at use time for exactly this case), and bounded against
+.CW m->ntype
+too, the same class of off-by-one already fixed a few lines up in
+this same function
+.CW "(load.c:351)."
+Found live on arm64 because the very first module the kernel ever
+loads,
+.CW /osinit.dis ,
+faulted here on real hardware state \- aarch64's leftover stack
+garbage for
+.CW n
+at that point happened to differ from
+.CW -1
+where pc64/riscv64/riscv32's happened not to.  A pre-existing bug in
+code every port shares, never triggered by any of their stack
+layouts before now.  Verified riscv64 still boots clean through its
+self-test script after this change, no regression on a port that
+already reaches a shell.
+.PP
+With all three fixed, the board boots past every stage of
+.CW main()
+\- pool init, trap init, MMU init, clock init, proc init, screen
+init, PCI arch init, chan dev reset, UART console setup \- prints the
+normal
+.CW "Inferno Fourth Edition"
+banner, and starts loading
+.CW /osinit.dis
+and its dependent modules.  This is real, live-verified progress, not
+assumed: every stage above printed its own distinct marker over the
+emulated PL011 before this section's instrumentation was removed from
+.CW main.c
+once
+.CW print()
+itself was confirmed working.
+.PP
+Genuinely open, not yet fixed: past loading a couple of modules, the
+board deadlocks rather than crashes.  Live-diagnosed to
+.ul
+where ,
+not yet to
+.ul
+why .
+The spinning context is
+.CW ilock() 's
+own glare loop, uniprocessor, waiting on
+.CW kmesg.lk
+a second time while a
+.CW kmesgputs()
+call still holds it \- reading the lock's
+.CW pc
+field back to the exact call site confirms it. The mechanism: this
+board's
+.CW trap.c
+default fault handler calls
+.CW splhi()
+then
+.CW print()
+before
+.CW panic() ing,
+and a genuine
+.ul
+synchronous
+fault \- not maskable by
+.CW DAIF.I
+the way an IRQ is \- arriving while
+.CW kmesgputs()
+already holds
+.CW kmesg.lk
+means the fault handler's own diagnostic
+.CW print()
+needs the same lock to report what happened, and can't get it.  That
+underlying fault was caught directly, once, by breakpointing
+.CW trap()
+and filtering for
+.CW ur\->type\ ==\ TSync
+rather than the far more frequent
+.CW TIrq :
+a data abort inside
+.CW poolfree() ,
+dereferencing a pointer computed from a block's recorded size
+.CW "(ur->cause 0x96000000,"
+.CW "ur->tval an implausible, clearly-corrupt address),"
+consistent with heap metadata corruption rather than a bad argument
+\- something wrote past the end of a pool block, or corrupted its
+size field directly, before this free ever ran.  Not yet chased to
+.ul
+who
+corrupted it or
+.ul
+when;
+that needs a watchpoint on the corrupted block across a wide time
+window, not another single live sample.  Also open, lower priority:
+.CW ilock() 's
+acquire path sets
+.CW l->m\ =\ MACHP(m->machno) ,
+and a live read of a held lock showed this field as nil \- worth
+checking
+.CW MACHP()
+on this board once the deadlock itself is fixed, but not demonstrated
+to be load-bearing for anything yet.

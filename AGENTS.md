@@ -63,8 +63,25 @@
   virt board already uses, silently linking in a word-size-mismatched
   .dis built for the wrong DISWORD.  Full history, each bug found live
   and verified, is in doc/inferno-ports.ms; do not re-derive it, read it.
-  arm64 still has no board, only a compiler.  Building it the rest of
-  the way, not just fixing an existing one, is part of the goal.  Do not
+  arm64 (os/inferno/virtarm64) now has a real board, not just a
+  compiler, and boots past every stage of main() -- pool init, trap
+  init, MMU init, clock init, proc init, screen init, PCI arch init,
+  chan dev reset, UART console setup -- into loading /osinit.dis and
+  its dependent modules.  Three real toolchain bugs (an empty ObjArm64
+  reader in utils/libmach, a swapped STXR operand order in utils/7a,
+  missing MOVBU long-displacement rows in utils/7l/optab.c) and three
+  real bring-up bugs (a MOV-into-RSP mis-encoding in _main, _tas()
+  storing the old lock value back instead of the new one, and a shared
+  libinterp/load.c bug indexing m->type[] with garbage) are found and
+  fixed, each verified live under QEMU/lldb, not assumed from reading
+  the assembly.  Not yet at a shell: past loading a couple of modules
+  the board deadlocks on kmesg.lk, root-caused to a genuine data abort
+  inside poolfree() (heap metadata corruption) whose report can't print
+  because the fault handler needs the same lock the interrupted code
+  already held -- the deadlock's mechanism is understood, the abort
+  that triggers it is not yet root-caused to who corrupted the pool
+  block.  Full history, each bug found live and verified, is in
+  doc/inferno-ports.ms; do not re-derive it, read it.  Do not
   stop, and do not ask whether to continue, until all five
   boot clean under QEMU with nothing left that looks like a real bug
   rather than a documented, understood gap.  `doc/inferno-ports.ms` is
