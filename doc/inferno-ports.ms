@@ -471,14 +471,35 @@ should be nil on a board that never turns on
 .CW #p
 tracing, which is what the
 .CW "if(pt)"
-guard is there for.  Not confirmed live \- this round's gdbstub
-connections would not hold still long enough to read
+guard is there for.  Checked live since, gdbstub holding still this time (the earlier
+disconnects look to have been transient host load, not a standing
+limitation of this technique \- the same live QEMU/lldb approach went
+on to find and fix five real, separate bugs bringing up riscv32 in
+this same document): broke at
+.CW runproc() 's
+own
+.CW "cmp\ r6,\ #0"
+right after the load, several fresh boots, and
 .CW R6
-at that exact instruction, a QEMU/host timing problem, not a script
-one \- so whether
+read
+.CW 0
+every time \- genuinely nil, the guard correctly skipping the call,
+not the fault this candidate predicted.  One of four
 .CW proctrace
-really does read non-nil garbage there, or this is one more
-plausible-looking dead end, is the next thing to check.
+call sites in
+.CW proc.c
+checked this way so far
+.CW ( ready() 's
+own, a different function entirely, also read nil); the other two
+.CW ( sleep() ,
+.CW pexit() )
+not yet checked.  This does not clear
+.CW runproc()
+as a candidate outright \- the fault is intermittent, and a handful of
+clean reads does not rule out a rarer bad one \- but it is weaker
+evidence for it than before, not stronger, and the next step if this
+is picked back up is checking whether the SAME breakpoint ever reads
+non-nil across many more boots, not assuming it will.
 .PP
 The second: a data abort, five of twenty boots, a
 .I different
