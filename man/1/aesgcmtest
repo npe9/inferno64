@@ -1,0 +1,86 @@
+.TH AESGCMTEST 1
+.SH NAME
+aesgcmtest \- test keyring->aesgcmsetup() and the AES-GCM API
+.SH SYNOPSIS
+.B aesgcmtest
+.SH DESCRIPTION
+.B Aesgcmtest
+checks
+.BR aesgcmsetup() ,
+.BR aesgcm_setiv() ,
+.BR aesgcm_encrypt() ,
+and
+.B aesgcm_decrypt()
+.RI ( module/keyring.m ,
+.IR libinterp/keyring.c ,
+.IR libsec/aes_gcm.c ,
+ported from 9front's own
+.B libsec/port/aes_gcm.c
+\(em see
+.I doc/ssl-modernization-plan.md
+in the source tree) \(em primitive 5 of the SSL modernization plan,
+needed for TLS 1.2's
+.B TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+record protection.
+.PP
+The port drops the source's precomputed GHASH multiplication table
+(16*256*4 words, 64KB, per connection) in favour of that same
+source's own table-free
+.B gfmul()
+path \(em already present in the code being ported, normally disabled
+behind an
+.BR if(0) ,
+made live here instead. Correctness is identical; only per-block
+speed differs, which does not matter for a client handling a handful
+of TLS records.
+.PP
+Five cases check
+.B aesgcm_encrypt()
+and
+.B aesgcm_decrypt()
+together, round-tripping plaintext through both and checking the
+ciphertext and tag against known-good vectors: empty plaintext and
+AAD; one full 16-byte block with AAD (reusing the classic NIST/
+McGrew-Viega GCM test vector's key, IV, AAD and plaintext, truncated
+to one block); a 37-byte plaintext (a partial final block) with no
+AAD; a 20-byte plaintext (partial final block) with AAD; and a
+64-bit \(em i.e. non-96-bit \(em IV, which exercises
+.BR aesgcm_setiv() 's
+GHASH-based path rather than its fast fixed-counter path for a
+96-bit IV. Vectors were generated from Python's own
+.B cryptography
+library, then cross-checked against
+.B pycryptodome
+\(em a second, independent implementation (its own C code, not a
+wrapper around the same backend) \(em agreeing byte for byte before
+being trusted.
+.PP
+A sixth case flips one byte of a genuine tag and confirms
+.B aesgcm_decrypt()
+rejects it (via
+.IR tsmemcmp (3) ,
+already verified constant-time elsewhere in this tree) rather than
+silently returning corrupted-looking success.
+.PP
+Exits with
+.B PASS
+if every case held, or
+.B FAIL
+naming which one and what was expected versus computed.
+.SH SOURCE
+.B /appl/cmd/aesgcmtest.b
+.SH SEE ALSO
+.IR x25519test (1),
+.IR tls12prftest (1),
+.IR tlshellotest (1)
+.SH BUGS
+Does not exercise multi-connection key/IV reuse patterns (a real TLS
+1.2 record layer keeps one
+.B AESGCMstate
+per connection direction across many records, varying only the
+explicit per-record nonce via
+.BR aesgcm_setiv() )
+beyond the one case that calls
+.B aesgcmsetup()
+twice with the same key/IV to prove decrypt doesn't depend on hidden
+state left over from a prior encrypt call.

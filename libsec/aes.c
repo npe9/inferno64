@@ -47,6 +47,16 @@ static int rijndaelKeySetup(u32 erk[/*4*(Nr + 1)*/], u32 drk[/*4*(Nr + 1)*/], co
 static void	rijndaelEncrypt(const u32int rk[], int Nr, const uchar pt[16], uchar ct[16]);
 static void	rijndaelDecrypt(const u32int rk[], int Nr, const uchar ct[16], uchar pt[16]);
 
+/* single-block AES encrypt, exposed (unlike rijndaelEncrypt, which
+ * stays file-static) so libsec/aes_gcm.c's CTR mode can call it -
+ * named to match 9front's own libsec.h so that port needed no
+ * renaming of its own call sites */
+void
+aes_encrypt(u32int rk[], int Nr, uchar pt[16], uchar ct[16])
+{
+	rijndaelEncrypt(rk, Nr, pt, ct);
+}
+
 void
 setupAESstate(AESstate *s, uchar key[], int keybytes, uchar *ivec)
 {

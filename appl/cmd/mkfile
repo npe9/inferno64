@@ -127,6 +127,7 @@ TARG=\
 	hd.dis\
 	dialtest.dis\
 	tlshellotest.dis\
+	aesgcmtest.dis\
 	hmacsha256test.dis\
 	inputtest.dis\
 	idea.dis\

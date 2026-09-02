@@ -18,6 +18,7 @@
 
 static Type*	TDigestState;
 static Type*	TAESstate;
+static Type*	TAESGCMstate;
 static Type*	TDESstate;
 static Type*	TIDEAstate;
 static Type*	TBFstate;
@@ -45,6 +46,7 @@ enum {
 
 static uchar DigestStatemap[] = Keyring_DigestState_map;
 static uchar AESstatemap[] = Keyring_AESstate_map;
+static uchar AESGCMstatemap[] = Keyring_AESGCMstate_map;
 static uchar DESstatemap[] = Keyring_DESstate_map;
 static uchar IDEAstatemap[] = Keyring_IDEAstate_map;
 static uchar BFstatemap[] = Keyring_BFstate_map;
@@ -2155,6 +2157,8 @@ keyringmodinit(void)
 		sizeof(DigestStatemap));
 	TAESstate = dtype(freeheap, sizeof(XAESstate), AESstatemap,
 		sizeof(AESstatemap));
+	TAESGCMstate = dtype(freeheap, sizeof(XAESGCMstate), AESGCMstatemap,
+		sizeof(AESGCMstatemap));
 	TDESstate = dtype(freeheap, sizeof(XDESstate), DESstatemap,
 		sizeof(DESstatemap));
 	TIDEAstate = dtype(freeheap, sizeof(XIDEAstate), IDEAstatemap,
@@ -2606,6 +2610,115 @@ Keyring_aescbc(void *fp)
 		aesCBCencrypt(p, f->n, &is->state);
 	else
 		aesCBCdecrypt(p, f->n, &is->state);
+}
+
+void
+Keyring_aesgcmsetup(void *fp)
+{
+	F_Keyring_aesgcmsetup *f;
+	Heap *h;
+	XAESGCMstate *is;
+	uchar *ivec;
+	int ivlen;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->key == H ||
+	   f->key->len != 16 && f->key->len != 24 && f->key->len != 32)
+		error(exBadKey);
+	if(f->ivec != H){
+		ivec = f->ivec->data;
+		ivlen = f->ivec->len;
+	}else{
+		ivec = nil;
+		ivlen = 0;
+	}
+
+	h = heap(TAESGCMstate);
+	is = H2D(XAESGCMstate*, h);
+
+	setupAESGCMstate(&is->state, f->key->data, f->key->len, ivec, ivlen);
+
+	*f->ret = (Keyring_AESGCMstate*)is;
+}
+
+void
+Keyring_aesgcm_setiv(void *fp)
+{
+	F_Keyring_aesgcm_setiv *f;
+	XAESGCMstate *is;
+
+	f = fp;
+
+	if(f->iv == H || f->iv->len <= 0)
+		error(exBadIvec);
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+	aesgcm_setiv(&is->state, f->iv->data, f->iv->len);
+}
+
+void
+Keyring_aesgcm_encrypt(void *fp)
+{
+	F_Keyring_aesgcm_encrypt *f;
+	XAESGCMstate *is;
+	uchar *aad;
+	int naad;
+
+	f = fp;
+
+	if(f->buf == H)
+		return;
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	if(f->tag == H || f->tag->len != 16)
+		error(exInval);
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+
+	if(f->aad != H){
+		aad = f->aad->data;
+		naad = f->aad->len;
+	}else{
+		aad = nil;
+		naad = 0;
+	}
+
+	aesgcm_encrypt(f->buf->data, f->n, aad, naad, f->tag->data, &is->state);
+}
+
+void
+Keyring_aesgcm_decrypt(void *fp)
+{
+	F_Keyring_aesgcm_decrypt *f;
+	XAESGCMstate *is;
+	uchar *aad;
+	int naad;
+
+	f = fp;
+
+	if(f->buf == H)
+		error(exInval);
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	if(f->tag == H || f->tag->len != 16)
+		error(exInval);
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+
+	if(f->aad != H){
+		aad = f->aad->data;
+		naad = f->aad->len;
+	}else{
+		aad = nil;
+		naad = 0;
+	}
+
+	*f->ret = aesgcm_decrypt(f->buf->data, f->n, aad, naad, f->tag->data, &is->state);
 }
 
 void

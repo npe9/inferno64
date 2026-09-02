@@ -100,6 +100,13 @@ Keyring: module
 		# all the state is hidden
 	};
 
+	# AES-GCM state: the above plus the GHASH subkey
+	AESGCMstate: adt
+	{
+		x:	int;		# dummy for C compiler for runt.h
+		# all the state is hidden
+	};
+
 	# expanded DES key + state for chaining
 	DESstate: adt
 	{
@@ -215,6 +222,21 @@ Keyring: module
 
 	aessetup: fn(key: array of byte, ivec: array of byte): ref AESstate;
 	aescbc: fn(state: ref AESstate, buf: array of byte, n: int, direction: int);
+
+	# AES-GCM (NIST SP 800-38D) - primitive 5 of the SSL modernization
+	# plan (see doc/ssl-modernization-plan.md), ported from 9front's
+	# libsec/port/aes_gcm.c with the GHASH precomputed-table path
+	# (16*256*4 words per state) dropped in favour of the same source's
+	# own table-free gfmul() path (its "if(0)" branch, made live here) -
+	# correctness-identical, just without a 64KB-per-state table this
+	# tree's Dis heap has no need to carry for a handful of TLS records.
+	# tag is always 16 bytes, caller-supplied both ways (filled on
+	# encrypt, compared on decrypt) - buf is encrypted/decrypted in
+	# place, matching aescbc's own convention above.
+	aesgcmsetup: fn(key: array of byte, ivec: array of byte): ref AESGCMstate;
+	aesgcm_setiv: fn(state: ref AESGCMstate, iv: array of byte);
+	aesgcm_encrypt: fn(state: ref AESGCMstate, buf: array of byte, n: int, aad: array of byte, tag: array of byte);
+	aesgcm_decrypt: fn(state: ref AESGCMstate, buf: array of byte, n: int, aad: array of byte, tag: array of byte): int;
 
 	DESbsize: con 8;
 

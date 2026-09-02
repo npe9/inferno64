@@ -31,6 +31,32 @@ void	setupAESstate(AESstate *s, uchar key[], int keybytes, uchar *ivec);
 void	aesCBCencrypt(uchar *p, int len, AESstate *s);
 void	aesCBCdecrypt(uchar *p, int len, AESstate *s);
 
+/* single-block AES encrypt, exposed for AES-GCM's CTR mode below -
+ * thin wrapper over aes.c's own (file-static) rijndaelEncrypt(),
+ * named to match 9front's libsec.h so aes_gcm.c ports unmodified */
+void	aes_encrypt(u32int rk[], int Nr, uchar pt[16], uchar ct[16]);
+
+/*
+ * AES-GCM (NIST SP 800-38D) - see doc/ssl-modernization-plan.md.
+ * Ported from 9front's libsec/port/aes_gcm.c, minus its precomputed
+ * GHASH table (16*256*4 words = 64KB per state) - libsec/aes_gcm.c
+ * uses that same source's own table-free gfmul() path instead,
+ * correctness-identical, just without a 64KB table this tree has no
+ * bulk-throughput need for yet (a handful of TLS records, not a
+ * high-volume server).
+ */
+typedef struct AESGCMstate AESGCMstate;
+struct AESGCMstate
+{
+	AESstate	aes;
+	u32int	ghashH[4];		/* GHASH subkey */
+};
+
+void	setupAESGCMstate(AESGCMstate *s, uchar *key, int keylen, uchar *iv, int ivlen);
+void	aesgcm_setiv(AESGCMstate *s, uchar *iv, int ivlen);
+void	aesgcm_encrypt(uchar *dat, u32int ndat, uchar *aad, u32int naad, uchar tag[16], AESGCMstate *s);
+int	aesgcm_decrypt(uchar *dat, u32int ndat, uchar *aad, u32int naad, uchar tag[16], AESGCMstate *s);
+
 enum
 {
 	ChachaBsize=	64,

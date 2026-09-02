@@ -2,8 +2,9 @@
 
 ## Status (most recent first)
 
-**In progress.** Step 4 (real ClientHello/ServerHello round trip) is done
-— see below. Primitives 1–3 are landed and verified:
+**In progress.** Primitive 5 (AES-GCM) is landed. Step 4 (real
+ClientHello/ServerHello round trip) is done — see below. Primitives 1–3
+are landed and verified:
 
 - `hmac_sha256` (`libsec/hmac.c` + `keyring.m`/`.c`) — `hmacsha256test(1)`,
   4 vectors (RFC 4231 case 1 + 3 from the host's own `openssl(1)`).
@@ -74,6 +75,41 @@ handshake actually work" question** — the milestone this staging step
 existed to answer. No key derivation, `ClientKeyExchange`, `Finished`, or
 record decryption was attempted, per the step's own explicit stopping
 point.
+
+**Primitive 5 (AES-GCM) done, 2026-09-02**: `libsec/aes_gcm.c`, ported
+from 9front's `libsec/port/aes_gcm.c`, exposed via `module/keyring.m`'s
+new `aesgcmsetup`/`aesgcm_setiv`/`aesgcm_encrypt`/`aesgcm_decrypt` (same
+opaque-ADT-plus-native-struct convention as the existing `AESstate`/
+`aescbc`). One deliberate departure from the source, not a rewrite: the
+16×256×4-word (64KB) precomputed GHASH table is dropped in favour of that
+same source's own table-free `gfmul()` path — already present in the
+code being ported, normally disabled behind `if(0)`, made live here
+instead. Correctness-identical, slower per block, no need for the table
+given this client's actual load (a handful of TLS records, not a busy
+server). `aesgcmtest(1)`: 6/6 real cases, vectors cross-checked between
+two independent implementations (Python's `cryptography` and
+`pycryptodome`, agreeing byte-for-byte before being trusted) covering
+empty AAD, non-empty AAD, a partial-final-block plaintext both with and
+without AAD, a non-96-bit IV (the GHASH-based `aesgcm_setiv` path, not
+just the fast 96-bit path), and tag-corruption rejection. Two negative
+controls confirmed: corrupting the GHASH reduction constant breaks 4/6
+cases with real-vs-wrong bytes shown; disabling the `tsmemcmp` check
+inside `aesgcm_decrypt` makes exactly the tag-rejection case fail (5/6),
+leaving the genuinely-valid-tag cases unaffected as expected. Both
+restored and reconfirmed 6/6.
+
+Real gotcha hit: `include/libsec.h`'s new `AESGCMstate` struct originally
+named its GHASH-subkey field `H`, which collided with `libinterp/
+interp.h`'s own `#define H ((void*)(-1))` (the interpreter's nil-heap
+pointer sentinel, used pervasively as `f->ptr == H` in glue code) once
+`libsec.h` got included into `keyring.c` — a real, if narrow, single-
+letter naming collision between an unrelated native library header and
+an interpreter-internal macro. Renamed to `ghashH`; not caught until the
+actual `cc` build (clang's isolated per-file lint never flagged it, since
+it doesn't see `interp.h`'s macro from `libsec.h`'s point of view) — a
+reminder that this tree's clang-based inline diagnostics are not a
+substitute for the real `mk`-driven build when editing headers that get
+included alongside `interp.h`.
 
 ## Why this exists
 

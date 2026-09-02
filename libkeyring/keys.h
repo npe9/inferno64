@@ -5,6 +5,7 @@ typedef struct PK PK;
 typedef struct Certificate Certificate;
 typedef struct XDigestState XDigestState;
 typedef struct XAESstate XAESstate;
+typedef struct XAESGCMstate XAESGCMstate;
 typedef struct XDESstate XDESstate;
 typedef struct XIDEAstate XIDEAstate;
 typedef struct XRC4state XRC4state;
@@ -41,6 +42,13 @@ struct XAESstate
 {
 	Keyring_AESstate	x;
 	AESstate	state;
+};
+
+/* AES-GCM state */
+struct XAESGCMstate
+{
+	Keyring_AESGCMstate	x;
+	AESGCMstate	state;
 };
 
 /* DES state */
