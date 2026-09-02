@@ -726,7 +726,28 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			h->pc1 = operand(isp);
 			h->pc2 = operand(isp);
 			descid = operand(isp);
-			if(n != -1)
+			/*
+			 * Was "if(n != -1)" -- n is the PREVIOUS
+			 * iteration's exception-label count (set below,
+			 * after this check), not this handler's type
+			 * descriptor; on the first iteration it's
+			 * whatever garbage happened to be on the stack.
+			 * The condition guarding m->type[descid] has to
+			 * test descid itself (-1 means "no type", a
+			 * catch-all handler -- see xec.c's "f->t == nil"
+			 * checks at use time), or a handler with no type
+			 * reads m->type[-1], one Type* before the array
+			 * malloc() returned.  Found live on arm64: the
+			 * very first module ever loaded (/osinit.dis)
+			 * faulted here with a data abort, since aarch64's
+			 * leftover stack garbage for n happened to differ
+			 * from -1 where other ports' happened not to.
+			 * Bounded against m->ntype too, same as the id
+			 * check above (load.c:351) -- a corrupt or
+			 * out-of-range descid must not index off the end
+			 * of m->type[] either.
+			 */
+			if(descid >= 0 && descid < m->ntype)
 				h->t = m->type[descid];
 			n = operand(isp); /* no of labels */
 			h->ne = n>>16;
