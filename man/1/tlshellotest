@@ -1,0 +1,81 @@
+.TH TLSHELLOTEST 1
+.SH NAME
+tlshellotest \- probe: real TLS 1.2 ClientHello/ServerHello round trip
+.SH SYNOPSIS
+.B tlshellotest
+.SH DESCRIPTION
+.B Tlshellotest
+is a disposable probe, not a real TLS client. It is staged step 4 of
+.IR doc/ssl-modernization-plan.md :
+just enough of a TLS 1.2 handshake to confirm a hand-built ClientHello
+this tree can produce is accepted by a real server, and that server
+answers with the cipher suite and key-exchange curve this tree's plan
+already measured. It stops there \(em no key derivation, no
+.BR ClientKeyExchange ,
+no
+.BR Finished ,
+no record decryption.
+.PP
+It hand-rolls the wire encoding directly rather than porting 9front's
+.B tlshand.c
+.RI ( msgSend / msgRecv
+is a generic message-marshalling and record-layer abstraction shared
+by every handshake message type and by real record encryption \(em
+porting it whole is a much bigger unit of work than this milestone
+needs). The extension set, order, and cipher/curve/signature-algorithm
+ID values come from two real sources: 9front's own
+.B tlsClientExtensions()
+/
+.B makeciphers()
+in
+.IR libsec/port/tlshand.c ,
+and a live
+.B "openssl s_client -tls1_2 -msg -state"
+capture against bsky.social saved at
+.IR doc/fixtures/bsky-tls12-handshake.txt ,
+parsed byte-for-byte before being trusted.
+.PP
+Two checks, in order:
+.IP 1.
+.B Offline:
+build a ClientHello, then parse the bytes back out with the same
+field layout, and confirm every field round-trips \(em version, empty
+session id, the exact cipher list, and the exact extension set/order/
+content (SNI, supported_groups, ec_point_formats,
+signature_algorithms). No network involved.
+.IP 2.
+.B Live:
+dial a real bsky.social IP by literal address
+.RI ( dialtest (1)
+found
+.B /net/cs
+doesn't resolve names in this emu instance \(em a separate, tracked
+gap; SNI only needs the hostname string, not working DNS), send the
+ClientHello, and parse the real
+.BR ServerHello ,
+.BR Certificate ,
+.BR ServerKeyExchange ,
+and
+.B ServerHelloDone
+that come back. Confirms the negotiated cipher suite is one of the
+two this tree's plan measured
+.RI ( TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+or
+.IR TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 )
+and the negotiated curve is X25519.
+.SH SOURCE
+.B /appl/cmd/tlshellotest.b
+.SH SEE ALSO
+.IR dialtest (1),
+.IR x25519test (1)
+.SH BUGS
+This is scaffolding for one measurement, not the first draft of a
+real client: it hardcodes one host, one looked-up-by-hand IP, and a
+narrower cipher/extension set than a real browser sends, has no
+argument handling, does not verify the server's certificate chain
+(reading the chain here is not verifying it \(em see the plan doc's
+own gap section), and does not check the ServerKeyExchange signature
+at all. It should be deleted or absorbed once the real client (a
+proper port of
+.BR tlshand.c )
+lands and needs its own connection-establishment code.

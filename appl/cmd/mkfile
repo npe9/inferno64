@@ -126,6 +126,7 @@ TARG=\
 	gzip.dis\
 	hd.dis\
 	dialtest.dis\
+	tlshellotest.dis\
 	hmacsha256test.dis\
 	inputtest.dis\
 	idea.dis\

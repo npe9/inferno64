@@ -2,7 +2,8 @@
 
 ## Status (most recent first)
 
-**In progress.** Primitives 1–3 are landed and verified:
+**In progress.** Step 4 (real ClientHello/ServerHello round trip) is done
+— see below. Primitives 1–3 are landed and verified:
 
 - `hmac_sha256` (`libsec/hmac.c` + `keyring.m`/`.c`) — `hmacsha256test(1)`,
   4 vectors (RFC 4231 case 1 + 3 from the host's own `openssl(1)`).
@@ -52,6 +53,27 @@ matches modulo random/session-id/extension-ordering) and the fixture for
 the ServerHello/Certificate/ServerKeyExchange parser — parseable offline,
 no network needed, the same shape as `feedtest`'s captured-response
 approach.
+
+**Step 4 done, 2026-09-02**: `tlshellotest(1)` (disposable probe, per the
+revised staging above) hand-rolled a minimal TLS 1.2 ClientHello — SNI,
+X25519-only `supported_groups`, `ec_point_formats`, `signature_algorithms`,
+offering exactly the two cipher suites this plan measured — built from
+9front's own `tlsClientExtensions()`/`makeciphers()` field layout, cross-
+checked byte-by-byte against `doc/fixtures/bsky-tls12-handshake.txt`
+before ever sending it. **Worked on the first live attempt** against a
+real `bsky.social` IP: the server answered with `ServerHello` naming
+cipher `0xc02f` (`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, exactly the
+suite this plan measured), a 3-certificate `Certificate` message (read,
+**not verified** — chain verification is still the open gap below), and
+`ServerKeyExchange` naming curve X25519 with a 32-byte public key,
+followed by `ServerHelloDone`. Both the offline round-trip self-check and
+the live cipher/curve confirmation were negative-controlled (corrupt the
+encoder/comparison, confirm FAIL with the real values shown, restore,
+reconfirm PASS). **This closes the "does the front half of a real
+handshake actually work" question** — the milestone this staging step
+existed to answer. No key derivation, `ClientKeyExchange`, `Finished`, or
+record decryption was attempted, per the step's own explicit stopping
+point.
 
 ## Why this exists
 
