@@ -128,11 +128,14 @@ personality served by a second Plan 9 personality - each its own
 container, the client delegating to the server and mounting its exported
 name space over the ring by 9P, the kernel only routing - which is the
 paper's "library operating systems on top of the Osprey kernel" with two
-of them.  This is NOT the paper's buddyOS: in the paper the buddy
-operating system is the peer process that runs an unmodified legacy binary
-and handles all its system traps (system calls and page faults),
-emulating a legacy OS with /dev and /proc - legacy emulation, a mechanism
-distinct from library OSes and unbuilt here.  p9pair is the library-OS
+of them.  This is NOT the paper's buddyOS, and not only a different mechanism but a
+different shape: the paper's buddy is a per-process peer, one bound to one
+unmodified legacy binary, interposing on that binary's own system calls
+and page faults and emulating a legacy OS for it (/dev, /proc) - the
+recursive user-level-VM interposition of vx32 and the Fluke nested
+process (the paper grounds it in Wine), not a shared personality server.
+p9pair is a shared file server two library OSes talk through, the
+opposite shape; the buddyOS is unbuilt.  p9pair is the library-OS
 mechanism, one-directional (the client mounts the server, not the
 reverse).
 .PP

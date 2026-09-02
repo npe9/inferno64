@@ -2426,14 +2426,22 @@ on top \- with two of them, one delegating file operations it does not
 answer itself to the other, one-directional (the client mounts the
 server, not the reverse).  It is not the paper's
 .I buddyOS ,
-which is a different mechanism: the paper's buddy operating system is the
-peer process that runs an unmodified legacy binary and handles all its
-system traps \- system calls and page faults \- emulating a legacy OS with
+which is a different mechanism and a different shape.  The paper's buddy
+operating system is a
+.I per-process
+peer: one legacy binary is associated with one buddy process that
+interposes on that binary's own system traps \- its system calls and its
+page faults \- and emulates a legacy OS for it, giving it
 .CW /dev
 and
 .CW /proc .
-That is legacy emulation, and it is unbuilt; p9pair is the library-OS
-mechanism the paper lists beside it.  It is checked by
+That is the recursive, user-level-virtual-machine interposition of vx32
+and the Fluke nested process, not a single personality server that many
+clients call; the paper grounds it in Wine, a per-application emulator of
+an unmodified binary.  p9pair is the opposite shape \- a shared file
+server two library OSes talk through \- and so is nothing like a buddyOS;
+the per-process trap-interposing buddy is unbuilt.  What p9pair is, is the
+library-OS mechanism the paper lists beside legacy emulation.  It is checked by
 .CW /scripts/osprey-check-p9pair.py .
 The one constraint it obeys is the reason it is two containers and not
 one: a container has a single server it delegates to, and its request
