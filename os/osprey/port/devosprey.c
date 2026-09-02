@@ -2100,6 +2100,7 @@ extern void ospreyloadp9(void);
 extern void ospreyenteruser(char*);
 extern int ospreyp9pair;
 extern int ospreyp9buddy;
+extern int ospreyp9linux;
 
 static int ospreyuserclientslot = -1;
 
@@ -2191,6 +2192,19 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	p = up->osprey;
 	if(p == nil || ospreyserverof(p) == nil)
 		return -1;			/* no buddy to forward to */
+
+	if(up->oslinux){
+		/* Linux system-call numbers to their Plan 9 equivalents; the
+		 * argument positions (descriptor, buffer, count) already line up. */
+		switch(scallnr){
+		case 0:  scallnr = Bread;  break;	/* read */
+		case 2:  scallnr = Bopen;  break;	/* open */
+		case 3:  scallnr = Bclose; break;	/* close */
+		case 8:  scallnr = Bseek;  break;	/* lseek */
+		case 1:  scallnr = Bwrite; break;	/* write */
+		default: return -1;
+		}
+	}
 
 	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
 	if(ab == nil)
@@ -2304,7 +2318,7 @@ ospreyuserprep(void)
 			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
 			if(sv != nil){
 				ospreydelegate(p, sv);
-				if(ospreyp9pair || ospreyp9buddy)
+				if(ospreyp9pair || ospreyp9buddy || ospreyp9linux)
 					kproc("p9-buddy", ospreyp9server, sv);
 				else
 					kproc("osprey-fs", ospreyuserserver, sv);

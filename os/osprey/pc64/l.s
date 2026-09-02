@@ -953,6 +953,23 @@ TEXT touser(SB), 1, $-4
 	BYTE $0x48; SYSRET			/* SYSRETQ */
 
 /*
+ * As touser, but the instruction pointer is the loaded program's own
+ * entry (an ELF binary enters at e_entry, not the a.out convention),
+ * taken from the global ospreyuserentry the loader set.
+ */
+TEXT touserat(SB), 1, $-4
+	SWAPGS
+
+	MOVL	$0, RMACH
+	MOVL	$0, RUSER
+
+	MOVQ	ospreyuserentry(SB), CX		/* ip = the program's entry */
+	MOVL	$0x200, R11			/* flags */
+	MOVQ	RARG, SP			/* sp */
+
+	BYTE $0x48; SYSRET			/* SYSRETQ */
+
+/*
  */
 TEXT syscallentry(SB), 1, $-4
 	SWAPGS

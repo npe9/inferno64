@@ -20,6 +20,7 @@
 #include	"userprog.i"
 #include	"p9prog.i"
 #include	"legacyprog.i"
+#include	"linuxprog.i"
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -27,7 +28,11 @@ extern int ospreyuser;
 extern int ospreyp9;
 extern int ospreyp9pair;
 extern int ospreyp9buddy;
+extern int ospreyp9linux;
+extern void ospreyloadlinux(void);
+extern void ospreyenteruserat(void);
 extern void ospreyloadlegacy(void);
+extern void touserat(char*);
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
 
@@ -154,6 +159,115 @@ ospreyloadlegacy(void)
 }
 
 /*
+ * The entry of the last program the ELF loader mapped; touserat (l.s)
+ * reads it, since an ELF binary enters at e_entry, not the a.out
+ * convention's fixed offset.
+ */
+uintptr	ospreyuserentry;
+
+/*
+ * Load a static x86-64 ELF - an unmodified Linux binary.  Its fields are
+ * little-endian native here, so they are read straight.  Each PT_LOAD
+ * segment is mapped at its own virtual address, filled from the file and
+ * zeroed beyond, and a stack is given below USTKTOP; the entry is
+ * e_entry, kept for touserat.
+ */
+void
+ospreyloadelf(uchar *elf)
+{
+	struct Ehdr {
+		uchar	ident[16];
+		ushort	type, machine;
+		ulong	version;
+		uvlong	entry, phoff, shoff;
+		ulong	flags;
+		ushort	ehsize, phentsize, phnum, shentsize, shnum, shstrndx;
+	} *e;
+	struct Phdr {
+		ulong	type, flags;
+		uvlong	offset, vaddr, paddr, filesz, memsz, align;
+	} *ph;
+	KMap *k;
+	Page *pg;
+	uvlong segva, segend, va, pgstart, pgend, filestart, fileend;
+	ulong i, seg, npg, p, off, cnt;
+
+	e = (struct Ehdr*)elf;
+	ospreyuserentry = e->entry;
+
+	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
+
+	seg = TSEG;
+	for(i = 0; i < e->phnum; i++){
+		ph = (struct Phdr*)(elf + e->phoff + i*e->phentsize);
+		if(ph->type != 1)		/* PT_LOAD */
+			continue;
+		segva = ph->vaddr & ~(uvlong)(BY2PG-1);
+		segend = (ph->vaddr + ph->memsz + BY2PG-1) & ~(uvlong)(BY2PG-1);
+		npg = (segend - segva) / BY2PG;
+		if(seg >= NSEG)
+			break;			/* out of segment slots */
+		up->seg[seg] = newseg((ph->flags & 1) ? SG_TEXT : SG_DATA, segva, npg);
+		if(ph->flags & 1)
+			up->seg[seg]->flushme = 1;
+		for(p = 0; p < npg; p++){
+			pgstart = segva + p*BY2PG;
+			pgend = pgstart + BY2PG;
+			pg = newpage(pgstart, nil);
+			k = kmap(pg);
+			memset((uchar*)VA(k), 0, BY2PG);
+			/* the file-backed span of this program header, clipped to this page */
+			filestart = ph->vaddr;
+			fileend = ph->vaddr + ph->filesz;
+			va = pgstart < filestart ? filestart : pgstart;
+			if(va < (pgend < fileend ? pgend : fileend)){
+				off = (ulong)(va - pgstart);
+				cnt = (ulong)((pgend < fileend ? pgend : fileend) - va);
+				memmove((uchar*)VA(k) + off, elf + ph->offset + (va - ph->vaddr), cnt);
+			}
+			kunmap(k);
+			segpage(up->seg[seg], pg);
+		}
+		seg++;
+	}
+}
+
+void
+ospreyloadlinux(void)
+{
+	ospreyloadelf(linuxprog);	/* an unmodified Linux binary the buddy serves */
+}
+
+/*
+ * Enter a loaded ELF binary at its own entry (touserat), with a minimal
+ * System V stack: argc zero and null argv, envp and auxv terminators, so
+ * a program that peeks at them finds them empty.  The Linux system-call
+ * convention (number in ax, arguments in registers) is read in syscall().
+ */
+void
+ospreyenteruserat(void)
+{
+	uvlong *sp;
+
+	up->kp = 0;
+	up->noswap = 0;
+	up->privatemem = 0;
+	procpriority(up, PriNormal, 0);
+	procsetup(up);
+	flushmmu();
+
+	sp = (uvlong*)(USTKTOP - 64);
+	sp[0] = 0;		/* argc */
+	sp[1] = 0;		/* argv terminator */
+	sp[2] = 0;		/* envp terminator */
+	sp[3] = 0;		/* auxv AT_NULL */
+
+	splhi();
+	fpukexit(nil);
+	touserat((char*)sp);
+}
+
+/*
  * Become a user task: finish turning up into a user process and enter
  * user mode at the program's entry, with a stack carrying one argument.
  * This is the tail of init0 without the Plan 9 setup - no chandevinit,
@@ -216,6 +330,17 @@ proc0(void*)
 		 */
 		ospreyuserprep();
 		ospreyframebuffer();
+		if(ospreyp9linux){
+			/*
+			 * An unmodified Linux binary the buddy serves: mark this
+			 * process Linux (its syscalls use the Linux ABI), load the
+			 * ELF and enter at its own entry.
+			 */
+			up->oslinux = 1;
+			ospreyloadlinux();
+			ospreyenteruserat();
+			panic("ospreyenteruserat returned");
+		}
 		if(ospreyp9buddy)
 			ospreyloadlegacy();	/* an unmodified Plan 9 binary the buddy serves */
 		else if(ospreyp9)

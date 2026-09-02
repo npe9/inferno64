@@ -423,9 +423,24 @@ syscall(Ureg* ureg)
 	if(!kenter(ureg))
 		panic("syscall: cs 0x%4.4lluX", ureg->cs);
 	fpukenter(ureg);
-	scallnr = ureg->bp;	/* RARG */
-	if(dosyscall(scallnr, (Sargs*)(ureg->sp+BY2WD), &ureg->ax))
-		((void**)&ureg)[-1] = (void*)noteret;	/* loads RARG */
+	if(up->oslinux){
+		/*
+		 * A Linux legacy process: the system-call number is in ax and
+		 * the arguments in di, si, dx, r10, r8 (the System V order),
+		 * not in bp and on the stack.  Normalise them into up->s so
+		 * dosyscall reads them the same way for either ABI.
+		 */
+		uvlong *a = (uvlong*)up->s.args;
+		scallnr = ureg->ax;
+		a[0] = ureg->di; a[1] = ureg->si; a[2] = ureg->dx;
+		a[3] = ureg->r10; a[4] = ureg->r8;
+		if(dosyscall(scallnr, &up->s, &ureg->ax))
+			((void**)&ureg)[-1] = (void*)noteret;
+	} else {
+		scallnr = ureg->bp;	/* RARG */
+		if(dosyscall(scallnr, (Sargs*)(ureg->sp+BY2WD), &ureg->ax))
+			((void**)&ureg)[-1] = (void*)noteret;	/* loads RARG */
+	}
 	if((up->procctl || up->nnote) && donotify(ureg))
 		((void**)&ureg)[-1] = (void*)noteret;	/* loads RARG */
 	/* if we delayed sched because we held a lock, sched now */

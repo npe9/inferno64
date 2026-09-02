@@ -2,7 +2,7 @@ MKSHELL=rc
 <../../../mkconfig
 
 CONF=pc64
-CONFLIST=pc64 upc64 xup64 p964 p9pair p9buddy
+CONFLIST=pc64 upc64 xup64 p964 p9pair p9buddy p9linux
 
 SYSTARG=Osprey
 OBJTYPE=amd64
@@ -77,7 +77,7 @@ PORTOBJALL=\
 	kerncore.$O\
 	ospreyrt.$O\
 
-PORTOBJ=`{if [ "$CONF" = upc64 -o "$CONF" = xup64 -o "$CONF" = p964 -o "$CONF" = p9pair -o "$CONF" = p9buddy ]; then \
+PORTOBJ=`{if [ "$CONF" = upc64 -o "$CONF" = xup64 -o "$CONF" = p964 -o "$CONF" = p9pair -o "$CONF" = p9buddy -o "$CONF" = p9linux ]; then \
 	for o in $PORTOBJALL; do echo $o; done | grep -vxF -e pgrp.$O -e sysfile.$O -e sysproc.$O -e syscallfmt.$O -e chan.$O -e cache.$O -e auth.$O -e rdb.$O; \
 	else echo $PORTOBJALL; fi}
 
@@ -207,7 +207,7 @@ initcode.out:		init9.$O initcode.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq
 
 # userinit.c embeds the boot programs as .i images; rebuild it when they change.
-userinit.$O:	initcode.i userprog.i p9prog.i legacyprog.i
+userinit.$O:	initcode.i userprog.i p9prog.i legacyprog.i linuxprog.i
 
 # userprog.i (the file-server container) and p9prog.i (the Plan 9
 # personality) are built by the scripts in cmd/p9: they compile against
@@ -231,6 +231,9 @@ p9prog.i:	init9.$O $ROOT/os/osprey/cmd/p9/build.sh \
 legacyprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildlegacy.sh \
 		$ROOT/os/osprey/cmd/p9/legacyp9.c
 	sh $ROOT/os/osprey/cmd/p9/buildlegacy.sh
+
+linuxprog.i:	$ROOT/os/osprey/cmd/p9/buildlinux.sh $ROOT/os/osprey/cmd/p9/linuxlegacy.c
+	sh $ROOT/os/osprey/cmd/p9/buildlinux.sh
 
 userprog.out:		init9.$O userprog.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq

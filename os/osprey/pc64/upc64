@@ -44,6 +44,7 @@ port
 	int ospreyp9 = 0;
 	int ospreyp9pair = 0;
 	int ospreyp9buddy = 0;
+	int ospreyp9linux = 0;
 	int ospreymicro = 1;
 
 	/*

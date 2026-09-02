@@ -768,6 +768,7 @@ struct Proc
 	void	*kparg;
 
 	Sargs	s;		/* syscall arguments */
+	int	oslinux;	/* a Linux legacy process: Linux syscall ABI */
 	int	scallnr;	/* sys call number */
 	int	nerrlab;
 	Label	errlab[NERR];
