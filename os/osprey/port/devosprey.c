@@ -2099,6 +2099,7 @@ extern void ospreyloadprog(void);
 extern void ospreyloadp9(void);
 extern void ospreyenteruser(char*);
 extern int ospreyp9pair;
+extern int ospreyp9buddy;
 
 static int ospreyuserclientslot = -1;
 
@@ -2161,6 +2162,99 @@ ospreyp9server(void *a)
 	ospreyenteruser(arg);		/* never returns */
 }
 
+/*
+ * The buddy operating system's kernel side: forward one unimplemented
+ * Plan 9 system call from a legacy container to the peer that serves it.
+ * Running as the legacy process, this copies the call's pointer arguments
+ * (a name, a read buffer) through the legacy container's own data area,
+ * submits the call on its ring so the delegation carries it to the buddy,
+ * services and waits for the buddy's kproc to answer, and hands the result
+ * back.  arg[0] of the reply is the value the call yields (the descriptor
+ * or the byte count), the same slot the ring's own status word occupies.
+ */
+enum {
+	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
+	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
+	Bargoff = 64, Bnameoff = 256, Bdataoff = 1024,
+	Reqsyscall = 6,
+};
+
+long
+ospreybuddyforward(ulong scallnr, uintptr *a)
+{
+	Ospreyproc *p;
+	uvlong *ab, sarg[Ospreynarg], rop, rarg[Ospreynarg];
+	uchar *nd, *dd;
+	long status;
+	int i, tries;
+
+	p = up->osprey;
+	if(p == nil || ospreyserverof(p) == nil)
+		return -1;			/* no buddy to forward to */
+
+	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+	if(ab == nil)
+		return -1;
+	ab[0] = scallnr;
+
+	switch(scallnr){
+	case Bopen:				/* open(name, mode) */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		ab[1] = 0; ab[2] = a[1]; ab[3] = 0;
+		break;
+	case Bclose:
+		ab[1] = a[0]; ab[2] = 0; ab[3] = 0;
+		break;
+	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off) */
+		ab[1] = a[0];
+		ab[2] = a[2];
+		ab[3] = scallnr == Bpread ? a[3] : (uvlong)-1;
+		break;
+	case Bwrite: case Bpwrite:		/* the data must already be at Bdataoff */
+		dd = ospreydata(p, Bdataoff, a[2]);
+		if(dd != nil)
+			for(i = 0; i < (long)a[2]; i++)
+				dd[i] = ((uchar*)a[1])[i];
+		ab[1] = a[0]; ab[2] = a[2];
+		ab[3] = scallnr == Bpwrite ? a[3] : (uvlong)-1;
+		break;
+	case Bseek: case Boseek:
+		ab[1] = a[0]; ab[2] = a[1]; ab[3] = a[2];
+		break;
+	default:
+		return -1;			/* a trap the buddy does not emulate */
+	}
+
+	memset(sarg, 0, sizeof sarg);
+	if(ospreysubmit(p, Reqsyscall, sarg) < 0)
+		return -1;
+	status = -1;
+	for(tries = 0; tries < 400; tries++){
+		ospreyservicecaller();
+		if(ospreycollect(p, &rop, &status, rarg) == 0)
+			break;
+		tsleep(&up->sleep, return0, nil, 2);
+	}
+	if(tries >= 400)
+		return -1;
+
+	if((scallnr == Bread || scallnr == Bpread) && status > 0){
+		dd = ospreydata(p, Bdataoff, status);
+		if(dd != nil)
+			for(i = 0; i < status; i++)
+				((uchar*)a[1])[i] = dd[i];
+	}
+	return status;
+}
+
 int
 ospreyuserprep(void)
 {
@@ -2210,7 +2304,7 @@ ospreyuserprep(void)
 			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
 			if(sv != nil){
 				ospreydelegate(p, sv);
-				if(ospreyp9pair)
+				if(ospreyp9pair || ospreyp9buddy)
 					kproc("p9-buddy", ospreyp9server, sv);
 				else
 					kproc("osprey-fs", ospreyuserserver, sv);

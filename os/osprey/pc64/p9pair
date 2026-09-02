@@ -46,6 +46,7 @@ port
 	int ospreyuser = 1;
 	int ospreyp9 = 1;
 	int ospreyp9pair = 1;
+	int ospreyp9buddy = 0;
 
 	extern void ospreyservicecaller(void);
 	extern int ospreyselectcaller(uvlong, int);

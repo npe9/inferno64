@@ -26,6 +26,8 @@ extern void ospreymicroboot(void);
 extern int ospreyuser;
 extern int ospreyp9;
 extern int ospreyp9pair;
+extern int ospreyp9buddy;
+extern void ospreyloadlegacy(void);
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
 
@@ -214,7 +216,9 @@ proc0(void*)
 		 */
 		ospreyuserprep();
 		ospreyframebuffer();
-		if(ospreyp9)
+		if(ospreyp9buddy)
+			ospreyloadlegacy();	/* an unmodified Plan 9 binary the buddy serves */
+		else if(ospreyp9)
 			ospreyloadp9();		/* the Plan 9 personality library */
 		else
 			ospreyloadprog();	/* the minimal microkernel task */
