@@ -2447,6 +2447,33 @@ The one constraint it obeys is the reason it is two containers and not
 one: a container has a single server it delegates to, and its request
 ring cannot carry both its own outgoing requests and a client's incoming
 ones, so the client is pure client and the server pure server.
+.PP
+And the buddy operating system the paper names \- the other kind, that
+runs an unmodified legacy binary and answers its traps \- is built too,
+for the Plan 9 system-call ABI.  The
+.CW p9buddy
+configuration runs an ordinary Plan 9 program
+.CW ( legacyp9.c )
+in one container: it opens and reads a file with the plain library,
+trapping in the Plan 9 ABI, and knows nothing of the microkernel or a
+peer.  Those calls are not implemented in the kernel; in
+.CW dosyscall 's
+otherwise-unimplemented path
+.CW ( ospreybuddyforward )
+the kernel, running as the legacy process, copies the call's pointer
+arguments through the container's own data area, forwards the call over
+the ring to a peer personality, waits for it to answer, and copies any
+read bytes back.  The peer
+.CW ( p9buddy.c
+against the name space and the descriptor layer) emulates open, read,
+close and the rest and holds the descriptor table that stands for the
+legacy process's.  On boot the legacy program opens the root, reads it,
+and closes it, every file trap answered by the peer and none by the
+kernel.  This is the paper's per-process interposition \- vx32 and Fluke,
+not a shared server \- with system calls interposed but not yet page
+faults (the image is eager-mapped so it does not fault), and Plan 9
+before Linux.  It is checked by
+.CW /scripts/osprey-check-p9buddy.py .
 .NH 2
 Built and proven since
 .PP

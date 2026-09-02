@@ -134,8 +134,15 @@ unmodified legacy binary, interposing on that binary's own system calls
 and page faults and emulating a legacy OS for it (/dev, /proc) - the
 recursive user-level-VM interposition of vx32 and the Fluke nested
 process (the paper grounds it in Wine), not a shared personality server.
-p9pair is a shared file server two library OSes talk through, the
-opposite shape; the buddyOS is unbuilt.  p9pair is the library-OS
+p9pair is a shared file server two library OSes talk through, a
+different shape.  The buddyOS itself is now built, for the Plan 9 ABI:
+the p9buddy configuration runs an unmodified Plan 9 binary in one
+container, and the microkernel forwards each Plan 9 system call it does
+not implement - open, read, close - to a peer that emulates it against
+its own name space and hands the answer back, the legacy binary none the
+wiser.  That is the per-process trap interposition the paper describes,
+system calls for now, not yet page faults (the legacy image is eager-
+mapped so it does not fault), and not yet the Linux ABI.  p9pair is the library-OS
 mechanism, one-directional (the client mounts the server, not the
 reverse).
 .PP
