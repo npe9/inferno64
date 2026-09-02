@@ -174,6 +174,17 @@ nil buffer (leaving `tag` unwritten) while their `_decrypt` counterparts
 correctly error — now both error, so a caller can't walk away treating
 an unwritten tag as authentic.
 
+**Invariant the setiv coverage established, worth remembering when the
+record layer is built**: the second encryption in each new setiv case
+matches its expected vector exactly — not approximately, byte-identical
+to what a fresh `*setup(key, iv2)` would have produced. Since neither
+`aesgcm_encrypt` nor `ccpoly_encrypt` ever mutates the state's stored IV
+(both copy it into a local counter/nonce and encrypt from that), this
+empirically confirms state-reuse-plus-`setiv` is equivalent to a fresh
+setup — exactly the invariant a real record layer depends on: one
+`AESGCMstate`/`Chachastate` per connection direction, `setiv` called
+once per record, for as many records as the connection lives.
+
 ## Why this exists
 
 The user asked for two things in one request: (1) a standing rule that
