@@ -153,6 +153,78 @@ init(nil: ref Draw->Context, nil: list of string)
 			npass++;
 	}
 
+	# ccpoly_setiv() coverage: the entry point a real TLS record layer
+	# calls once per record on ONE long-lived state (one ccpolysetup()
+	# per connection direction) - never exercised before this check,
+	# every other case above calls ccpolysetup() fresh per encrypt.
+	# Skipping it on a real connection would reuse a record's
+	# keystream, the same catastrophic nonce-reuse failure as GCM's.
+	{
+		key := fromhex("1d23121939e244e18e83905a304738df3cab2eb920b0d974b928acd1506c4ea0");
+		iv1 := fromhex("76b8cf0ace2202a503d58071");
+		iv2 := fromhex("bce6cee48f8b95abf64910a2");
+		aad1 := fromhex("b7bba6eb58");
+		aad2 := fromhex("88b1fdb8374d1c");
+		pt1 := fromhex("51469c5f8c8a57470f44233eabe4485b");
+		pt2 := fromhex("d8e4535109ff507029a6ba4614fef7b959cbeaaa");
+		wantct1 := fromhex("7ba53ee5afd01639e2a4c95291bf47a8");
+		wanttag1 := fromhex("10695f515cfd16699ba4d28dbab2ff17");
+		wantct2 := fromhex("1e572b73f0416f1aecd8bc62a607d5be67399734");
+		wanttag2 := fromhex("3c2d0df4132147bc26fafc0a87c2a9e8");
+		# what pt2 would encrypt to on iv1's keystream still - proves
+		# ccpoly_setiv() actually changed something
+		wrongct2 := fromhex("f207f1eb2aa5110ec446502a2ea5f84a127a1a29");
+
+		st := kr->ccpolysetup(key, iv1);
+		buf1 := array[len pt1] of byte;
+		buf1[0:] = pt1;
+		tag1 := array[16] of byte;
+		kr->ccpoly_encrypt(st, buf1, len buf1, aad1, tag1);
+
+		kr->ccpoly_setiv(st, iv2);
+		buf2 := array[len pt2] of byte;
+		buf2[0:] = pt2;
+		tag2 := array[16] of byte;
+		kr->ccpoly_encrypt(st, buf2, len buf2, aad2, tag2);
+
+		if(!eq(buf1, wantct1) || !eq(tag1, wanttag1)){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-coverage: first (pre-setiv) encryption didn't match\n");
+		}else if(!eq(buf2, wantct2) || !eq(tag2, wanttag2)){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-coverage: second (post-setiv) encryption\n  want: %s\n  got:  %s\n",
+				tohex(wantct2), tohex(buf2));
+		}else if(eq(buf2, wrongct2)){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-coverage: second encryption matches the iv1 keystream - ccpoly_setiv() had no effect (nonce reuse)\n");
+		}else
+			npass++;
+	}
+
+	# ccpoly_setiv() must reject an iv whose length doesn't match how
+	# the state was actually set up (chacha_setiv() reads exactly
+	# state.ivwords*4 bytes, fixed at ccpolysetup() time - a real bug,
+	# found before this test existed: an 8-byte iv against a 12-byte-
+	# ivwords state read 4 bytes past the end of a Limbo array).
+	{
+		key := fromhex("1d23121939e244e18e83905a304738df3cab2eb920b0d974b928acd1506c4ea0");
+		iv1 := fromhex("76b8cf0ace2202a503d58071");	# 12 bytes -> ivwords=3
+		st := kr->ccpolysetup(key, iv1);
+		crashed := 0;
+		{
+			badiv := array[8] of byte;	# wrong length for this state
+			kr->ccpoly_setiv(st, badiv);
+		} exception {
+			* =>
+				crashed = 1;
+		}
+		if(!crashed){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-mismatch: ccpoly_setiv accepted an iv length that doesn't match the state\n");
+		}else
+			npass++;
+	}
+
 	sys->print("%d/%d passed\n", npass, npass+nfail);
 	if(nfail > 0)
 		raise "fail:tests";

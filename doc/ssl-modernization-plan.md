@@ -141,6 +141,39 @@ is done, the rest — Finished messages, real record encryption/
 decryption end to end — remains) and certificate chain verification are
 outstanding before `bsky(1)`/`masto(1)` can migrate off `#C`.
 
+**Post-commit review caught a real, shipped bug in `ccpoly_setiv`**:
+`Keyring_ccpoly_setiv` validated the IV's length against a fixed `8 ||
+12`, not against what the state was actually set up with. `chacha_setiv`
+reads exactly `state.ivwords*4` bytes (fixed at `ccpolysetup()` time from
+the *setup* IV's own length) — set up with a 12-byte IV, then call
+`ccpoly_setiv` with an 8-byte array, and `chacha_setiv` reads 4 bytes
+past the end of that Limbo array. Memory-unsafe, reachable, and shipped
+in the primitive-6 commit. Fixed to check `f->iv->len !=
+is->state.ivwords*4` instead. **Not re-executed as a live "before" test**
+— unlike every other negative control in this plan, reproducing the
+buggy path means actually executing an out-of-bounds read, not just
+computing a wrong-but-safe answer, so this one was confirmed by reading
+`chacha_setiv`'s source directly (`load(&s->input[16-ivwords], iv,
+ivwords)`, `ivwords` words = `ivwords*4` bytes) rather than by running it
+before the fix. The fix itself is confirmed live: a mismatched-length IV
+now cleanly raises an exception, caught in `ccpolytest(1)`'s new
+setiv-mismatch case.
+
+Same review also found **zero test coverage of `aesgcm_setiv`/
+`ccpoly_setiv`** — every case in both `aesgcmtest(1)`/`ccpolytest(1)`
+called `*setup()` fresh per encrypt, never `*_setiv()` on a live state,
+which is exactly the pattern a real TLS record layer needs (one state
+per connection direction, `setiv` per record — skip it and you get GCM's
+classic nonce-reuse failure). Added a same-key/different-IV case to
+each: encrypt on IV1, `setiv` to IV2, encrypt again on the *same* state,
+confirm the second ciphertext matches IV2's vector and explicitly does
+NOT match what IV1's keystream would have produced. `aesgcmtest(1)` is
+now 8/8, `ccpolytest(1)` 7/7. Also fixed a small asymmetry the same
+review flagged: `aesgcm_encrypt`/`ccpoly_encrypt` returned silently on a
+nil buffer (leaving `tag` unwritten) while their `_decrypt` counterparts
+correctly error — now both error, so a caller can't walk away treating
+an unwritten tag as authentic.
+
 ## Why this exists
 
 The user asked for two things in one request: (1) a standing rule that

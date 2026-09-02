@@ -165,6 +165,82 @@ init(nil: ref Draw->Context, nil: list of string)
 			npass++;
 	}
 
+	# aesgcm_setiv() coverage: this is the entry point a real TLS
+	# record layer calls once per record on ONE long-lived state (one
+	# aesgcmsetup() per connection direction) - encrypting a second
+	# buffer on the same state without an intervening setiv() reuses
+	# the first record's keystream, the classic catastrophic GCM
+	# nonce-reuse failure. Never exercised before this check: every
+	# other case above calls aesgcmsetup() fresh per encrypt.
+	{
+		key := fromhex("b66112d614c154baadab807d550a92d8");
+		iv1 := fromhex("957fb525d95650b40aaacbf0");
+		iv2 := fromhex("8cc483cbc8e412f82e828a13");
+		aad1 := fromhex("ad5979e700");
+		aad2 := fromhex("b27e791d8179c6");
+		pt1 := fromhex("3323ac928f2d1aff7a78aea44b398c50");
+		pt2 := fromhex("6176a0a6ec417773485393daafe5242b1045465e");
+		wantct1 := fromhex("949d0e90bd939d290bd8ccb509b33ad0");
+		wanttag1 := fromhex("109f7057b6812719f8131e8d5a3bb3a3");
+		wantct2 := fromhex("e12c8591073cc1b7879223a3c79f69a00e31abee");
+		wanttag2 := fromhex("be5610820992456c936929c702fe2110");
+		# what pt2 would encrypt to WITHOUT re-keying via setiv (i.e.
+		# on iv1's keystream still) - proves setiv() actually changed
+		# something, not just that SOME ciphertext came out
+		wrongct2 := fromhex("c6c802a4defff0a539f3f1cbed6f92aba6f819a7");
+
+		st := kr->aesgcmsetup(key, iv1);
+		buf1 := array[len pt1] of byte;
+		buf1[0:] = pt1;
+		tag1 := array[16] of byte;
+		kr->aesgcm_encrypt(st, buf1, len buf1, aad1, tag1);
+
+		kr->aesgcm_setiv(st, iv2);
+		buf2 := array[len pt2] of byte;
+		buf2[0:] = pt2;
+		tag2 := array[16] of byte;
+		kr->aesgcm_encrypt(st, buf2, len buf2, aad2, tag2);
+
+		if(!eq(buf1, wantct1) || !eq(tag1, wanttag1)){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-coverage: first (pre-setiv) encryption didn't match\n");
+		}else if(!eq(buf2, wantct2) || !eq(tag2, wanttag2)){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-coverage: second (post-setiv) encryption\n  want: %s\n  got:  %s\n",
+				tohex(wantct2), tohex(buf2));
+		}else if(eq(buf2, wrongct2)){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-coverage: second encryption matches the iv1 keystream - setiv() had no effect (nonce reuse)\n");
+		}else
+			npass++;
+	}
+
+	# aesgcm_setiv() must reject a length that doesn't match how the
+	# state was actually set up - chacha_setiv()'s Poly1305 counterpart
+	# was found to read past the end of a too-short Limbo array when
+	# this check was missing; AES-GCM's own setiv() takes any length
+	# (it hashes non-96-bit IVs instead of assuming a fixed size), so
+	# there is no equivalent fixed-size read to overrun here, but the
+	# call must still not silently accept nonsense.
+	{
+		key := fromhex("b66112d614c154baadab807d550a92d8");
+		iv1 := fromhex("957fb525d95650b40aaacbf0");
+		st := kr->aesgcmsetup(key, iv1);
+		crashed := 0;
+		{
+			empty := array[0] of byte;
+			kr->aesgcm_setiv(st, empty);
+		} exception {
+			* =>
+				crashed = 1;
+		}
+		if(!crashed){
+			nfail++;
+			sys->fprint(stderr, "FAIL setiv-empty: aesgcm_setiv accepted a zero-length iv\n");
+		}else
+			npass++;
+	}
+
 	sys->print("%d/%d passed\n", npass, npass+nfail);
 	if(nfail > 0)
 		raise "fail:tests";

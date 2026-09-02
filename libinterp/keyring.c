@@ -2675,8 +2675,13 @@ Keyring_aesgcm_encrypt(void *fp)
 
 	f = fp;
 
+	/* unlike aescbc's silent return on a nil buf (which has no output
+	 * parameter to leave undefined), this one has a tag - a caller
+	 * passing nil buf must not walk away thinking a nil/stale tag is
+	 * authentic, so this errors like the wrong-length-tag case below,
+	 * matching aesgcm_decrypt's own convention for the same input. */
 	if(f->buf == H)
-		return;
+		error(exInval);
 	if(f->n < 0 || f->n > f->buf->len)
 		error(exBounds);
 	if(f->tag == H || f->tag->len != 16)
@@ -2759,10 +2764,18 @@ Keyring_ccpoly_setiv(void *fp)
 
 	f = fp;
 
-	if(f->iv == H || (f->iv->len != 8 && f->iv->len != 12))
+	if(f->iv == H)
 		error(exBadIvec);
 
 	is = checktype(f->state, TChachastate, exBadState, 0);
+
+	/* chacha_setiv() reads exactly is->state.ivwords*4 bytes, fixed
+	 * at ccpolysetup() time from the SETUP iv's own length - not a
+	 * fixed 8-or-12 (a mismatched length here reads past the end of
+	 * a shorter Limbo array). */
+	if(f->iv->len != is->state.ivwords*4)
+		error(exBadIvec);
+
 	chacha_setiv(&is->state, f->iv->data);
 }
 
@@ -2776,8 +2789,9 @@ Keyring_ccpoly_encrypt(void *fp)
 
 	f = fp;
 
+	/* see the matching comment in Keyring_aesgcm_encrypt() above */
 	if(f->buf == H)
-		return;
+		error(exInval);
 	if(f->n < 0 || f->n > f->buf->len)
 		error(exBounds);
 	if(f->tag == H || f->tag->len != 16)

@@ -72,6 +72,27 @@ rejects it (via
 .IR tsmemcmp (3))
 instead of silently returning corrupted-looking success.
 .PP
+A sixth case exercises
+.B ccpoly_setiv()
+directly \(em the entry point a real TLS record layer calls once per
+record on one long-lived state \(em encrypting twice on the same
+state with a
+.B ccpoly_setiv()
+call in between, and confirming the second ciphertext matches what a
+fresh IV should produce rather than the first record's keystream
+(skipping this call on a real connection is the same catastrophic
+nonce-reuse failure GCM has). A seventh confirms
+.B ccpoly_setiv()
+rejects an IV whose length doesn't match how the state was actually
+set up \(em found as a real bug during this primitive's review:
+.B chacha_setiv()
+reads exactly
+.B state.ivwords*4
+bytes fixed at
+.B ccpolysetup()
+time, so an 8-byte IV against a 12-byte-ivwords state read 4 bytes
+past the end of a Limbo array before this check existed.
+.PP
 Exits with
 .B PASS
 if every case held, or

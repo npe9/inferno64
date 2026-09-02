@@ -62,6 +62,19 @@ rejects it (via
 already verified constant-time elsewhere in this tree) rather than
 silently returning corrupted-looking success.
 .PP
+A seventh case exercises
+.B aesgcm_setiv()
+directly \(em the entry point a real TLS record layer calls once per
+record on one long-lived state \(em encrypting twice on the same
+state with a
+.B aesgcm_setiv()
+call in between, and confirming the second ciphertext matches what a
+fresh IV should produce rather than the first record's keystream
+(skipping this call on a real connection is the classic catastrophic
+GCM nonce-reuse failure). An eighth confirms
+.B aesgcm_setiv()
+rejects a zero-length IV.
+.PP
 Exits with
 .B PASS
 if every case held, or
