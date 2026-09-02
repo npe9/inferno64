@@ -48,39 +48,24 @@
   plan and what is done; keep it current as each piece lands.
 - Inferno has a second standing goal, independent of Osprey: pc64 (amd64),
   riscv64, riscv32, arm64 and armv7 (arm32) all booting to a shell with no
-  obvious bugs.  riscv32 (os/inferno/virt32) now boots for real under
-  qemu-system-riscv32 -- console banner, memory allocator, version banner,
-  a vararg ABI self-test all printing over the emulated UART -- after
-  adding real F/D floating-point support to za/zc/zl (it had none) and
-  fixing three real bugs that support work surfaced: a zc register-
-  allocation defect converting double to int, a zl encoder gap for
-  large-offset frame addresses, and a _tas() porting bug (wrong return
-  register) that hung the very first spinlock acquisition forever, and a
-  real zc compiler bug found by live QEMU/lldb tracing, not guessed:
-  a compile-time constant in vlong arithmetic (a bare literal, not a
-  variable) got built with its high and low 32-bit halves swapped
-  (utils/zc/cgen.c and swt.c), so any vlong division or addition by a
-  literal used the wrong operand entirely -- that, not dodiv() itself,
-  was why every poolsize() at boot read "max 0" and userinit() panicked
-  with no procs.  Fixed; virt32 now sizes its proc pool correctly and
-  gets as far as loading /osinit.dis, where it faulted twice more, both
-  found and fixed: mstatus.FS resets to Off on RISC-V, so any F/D
-  instruction traps as illegal until something sets it non-zero --
-  virt/l.s (jc's riscv64 entry) does this, virt32/l.s correctly didn't
-  need to when it was first written (za/zc had no float then) and simply
-  never got it added back when that support landed; and a real null
-  pointer dereference in libinterp/heap.c's checktracked() itself (nil
-  trackPC, portable debug code, not riscv32-specific), now guarded.  Past
-  both, that same debug instrumentation is reporting something real: a
-  freshly-parsed module's pointer-tagged words going from the pool's -1
-  poison pattern to plain small integers, and the board then faults a
-  third time inside newmp() dereferencing one of those words as a
-  pointer before it's actually been set -- Dis module-loading/GC
-  territory now, not compiler codegen, and where the next session's work
-  starts.  arm64 still has no board, only a compiler.  Building both the
-  rest of the way, not
-  just fixing an existing one, is part of the goal.  Do not stop, and do
-  not ask whether to continue, until all five
+  obvious bugs.  riscv32 (os/inferno/virt32) now reaches a real,
+  interactive shell under qemu-system-riscv32 -- verified live, not just
+  a printed prompt: a piped-in command produced the command's actual
+  output back over the emulated UART.  Getting there needed real F/D
+  floating-point support added to za/zc/zl (it had none at all) and a
+  string of real bugs that surfaced once that support existed and boot
+  got further each time: a zc register-allocation defect, a zl encoder
+  gap, a _tas() porting bug, a zc compiler bug building vlong literal
+  constants with their words swapped, mstatus.FS never being enabled,
+  a null-pointer robustness gap in shared debug instrumentation, and
+  finally the real blocker -- os/inferno/init/ is shared across every
+  board, and virt32's board config named the same INIT program riscv64's
+  virt board already uses, silently linking in a word-size-mismatched
+  .dis built for the wrong DISWORD.  Full history, each bug found live
+  and verified, is in doc/inferno-ports.ms; do not re-derive it, read it.
+  arm64 still has no board, only a compiler.  Building it the rest of
+  the way, not just fixing an existing one, is part of the goal.  Do not
+  stop, and do not ask whether to continue, until all five
   boot clean under QEMU with nothing left that looks like a real bug
   rather than a documented, understood gap.  `doc/inferno-ports.ms` is
   the record of what each architecture does and does not do yet, the

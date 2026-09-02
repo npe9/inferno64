@@ -75,7 +75,7 @@ mod
 	crypt
 
 init
-	virtinit
+	virt32init
 
 code
 	int main_pool_pcnt = 20;

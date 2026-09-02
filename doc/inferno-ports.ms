@@ -16753,7 +16753,80 @@ off a pointer value it just copied out of that same object.  Reading
 this together: something in that object's pointer map is treating a
 word that is not yet a valid pointer as if it already were one, and
 .CW newmp()
-dereferences it before it has been set.  Not yet root-caused to a
-specific instruction the way the compiler bugs above were \- this is
-Dis module-loading/GC territory, not compiler codegen, and is where
-the next session's work starts.
+dereferences it before it has been set.
+.PP
+It was not a
+.CW zc
+bug at all, and not corruption \- it was the wrong file.
+.CW mkroot
+resolves the board config's
+.CW /osinit.dis
+root-list entry to
+.CW os/inferno/init/$INIT.dis ,
+and virt32's own board config said
+.CW INIT=virtinit ,
+the exact name riscv64's
+.CW virt
+board already uses for the same purpose.
+.CW os/inferno/init/
+is shared across every board;
+.CW virtinit.b/.dis
+already existed on disk, built for
+.CW virt
+.CW "(DISWORD=8)" ,
+and
+.CW mk 's
+dependency check only compares timestamps against
+.CW virtinit.b \-
+it has no way to know a same-named
+.CW .dis
+needs rebuilding for a different word size.  virt32 silently linked
+in that word-size-mismatched module: its own Type descriptors decoded
+with
+.CW tsz/tnp
+scaled for 8-byte words
+.CW "(size 4168,"
+.CW "np 66"
+matches 66 map-bytes over 8-byte words almost exactly, not 4-byte
+ones), which is exactly the false-pointer pattern
+.CW newmp()
+crashed on.
+.CW virtinit.b 's
+own module list
+.CW "(draw/tk/tkclient/wmsrv)"
+would not have worked on this board's device list either way, so a
+genuinely separate init program, not a rebuild of the shared one, is
+the real fix \- both the word-size collision and the missing-module
+problem at once.  New
+.CW os/inferno/init/virt32init.b ,
+copied from
+.CW armv7minit.b
+.CW "(the same DISWORD=4"
+board class, same minimal serial-console-only shape, no
+draw/tk/wmsrv), wired in via virt32's own board config.
+.PP
+With that fixed,
+.CW virt32
+reaches a real, interactive shell.  Not just a printed prompt: piped
+a command in over the emulated UART after boot and got the command's
+actual output back \-
+.CW "echo HELLO-FROM-RISCV32-SHELL"
+printed
+.CW HELLO-FROM-RISCV32-SHELL
+and returned to the
+.CW ;
+prompt, verified live, not assumed from the prompt alone.  This is
+the standing goal AGENTS.md set for this architecture.  Genuinely
+open, not yet chased: the board also spams a
+.CW todfix
+diagnostic
+.CW "(os/inferno/port/tod.c,"
+portable, pre-existing) continuously once the clock is running, with
+implausible multi-year values \- noisy, not fatal, boot and the shell
+both work despite it, and it is a
+.ul
+different
+open item from everything fixed in this section, inherited from
+.CW virt/clock.c 's
+own already-documented CLINT/mtimecmp fragility rather than anything
+new to riscv32.
