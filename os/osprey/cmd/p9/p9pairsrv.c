@@ -18,6 +18,7 @@
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	Req9P		= 4,
+	Reqsyscall	= 6,
 	OSget		= 2,
 	Armoff		= 0,
 	Reqbuf		= 256,
@@ -41,6 +42,7 @@ typedef struct Arm Arm;
 struct Arm { uvlong op, obj, buf; };
 
 extern long p9srv_serve(uchar *msg, long n, uchar *rbuf, long rmax);
+extern long p9buddy_serve(uchar *cdata);
 
 static void
 puts(char *s)
@@ -98,6 +100,9 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata)
 		tlen = req.arg[3];
 		roff = req.arg[4];
 		rn = p9srv_serve(cdata + toff, (long)tlen, cdata + roff, 8192);
+		rep.arg[0] = (uvlong)rn;
+	} else if(req.op == Reqsyscall){
+		rn = p9buddy_serve(cdata);	/* a forwarded legacy Plan 9 system call */
 		rep.arg[0] = (uvlong)rn;
 	} else
 		rep.arg[0] = 2;

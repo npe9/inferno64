@@ -207,7 +207,7 @@ initcode.out:		init9.$O initcode.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq
 
 # userinit.c embeds the boot programs as .i images; rebuild it when they change.
-userinit.$O:	initcode.i userprog.i p9prog.i
+userinit.$O:	initcode.i userprog.i p9prog.i legacyprog.i
 
 # userprog.i (the file-server container) and p9prog.i (the Plan 9
 # personality) are built by the scripts in cmd/p9: they compile against
@@ -224,9 +224,13 @@ userprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildserver.sh \
 p9prog.i:	init9.$O $ROOT/os/osprey/cmd/p9/build.sh \
 		$ROOT/os/osprey/cmd/p9/main.c $ROOT/os/osprey/cmd/p9/p9shim.c \
 		$ROOT/os/osprey/cmd/p9/dev9ploop.c $ROOT/os/osprey/cmd/p9/ring9p.c $ROOT/os/osprey/cmd/p9/p9pairsrv.c \
-		$ROOT/os/osprey/cmd/p9/p9file.c $ROOT/os/osprey/cmd/p9/p9srv.c \
+		$ROOT/os/osprey/cmd/p9/p9file.c $ROOT/os/osprey/cmd/p9/p9srv.c $ROOT/os/osprey/cmd/p9/p9buddy.c \
 		$ROOT/os/osprey/port/devpipe.c $ROOT/os/osprey/port/devsrv.c $ROOT/os/osprey/cmd/p9/nsdat.h $ROOT/os/osprey/cmd/p9/dat.h
 	sh $ROOT/os/osprey/cmd/p9/build.sh
+
+legacyprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildlegacy.sh \
+		$ROOT/os/osprey/cmd/p9/legacyp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildlegacy.sh
 
 userprog.out:		init9.$O userprog.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq

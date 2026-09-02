@@ -19,6 +19,7 @@
 #include	"initcode.i"
 #include	"userprog.i"
 #include	"p9prog.i"
+#include	"legacyprog.i"
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -107,13 +108,13 @@ ospreyfillseg(Segment *s, uvlong va, ulong npg, uchar *src, ulong srclen)
 }
 
 void
-ospreyloadp9(void)
+ospreyloadaout(uchar *prog)
 {
 	struct Exec { long magic, text, data, bss, syms, entry, spsz, pcsz; } *h;
 	ulong magic, hdrsz, textsz, datasz, bsssz, tseg;
 	uvlong textend, adata, abss, ebss;
 
-	h = (struct Exec*)p9prog;
+	h = (struct Exec*)prog;
 	magic = beswal(h->magic);
 	textsz = beswal(h->text);
 	datasz = beswal(h->data);
@@ -129,13 +130,25 @@ ospreyloadp9(void)
 
 	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, PGROUND(tseg)>>PGSHIFT);
 	up->seg[TSEG]->flushme = 1;
-	ospreyfillseg(up->seg[TSEG], UTZERO, PGROUND(tseg)>>PGSHIFT, p9prog, tseg);
+	ospreyfillseg(up->seg[TSEG], UTZERO, PGROUND(tseg)>>PGSHIFT, prog, tseg);
 
 	up->seg[DSEG] = newseg(SG_DATA, adata, PGROUND(datasz)>>PGSHIFT);
-	ospreyfillseg(up->seg[DSEG], adata, PGROUND(datasz)>>PGSHIFT, p9prog+tseg, datasz);
+	ospreyfillseg(up->seg[DSEG], adata, PGROUND(datasz)>>PGSHIFT, prog+tseg, datasz);
 
 	up->seg[BSEG] = newseg(SG_BSS, abss, (ebss-abss)>>PGSHIFT);
 	ospreyfillseg(up->seg[BSEG], abss, (ebss-abss)>>PGSHIFT, nil, 0);
+}
+
+void
+ospreyloadp9(void)
+{
+	ospreyloadaout(p9prog);		/* the Plan 9 personality library */
+}
+
+void
+ospreyloadlegacy(void)
+{
+	ospreyloadaout(legacyprog);	/* an unmodified Plan 9 binary the buddy serves */
 }
 
 /*
