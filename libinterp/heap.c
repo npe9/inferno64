@@ -794,12 +794,26 @@ checktracked(void)
 		print("track: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx "
 			"regpid %d checkpoint %s\n",
 			track[i].addr, track[i].val, v, track[i].regpid, trackpoint);
-		print("track: instruction that just ran: PC %#p op %#.2ux "
-			"add %#.2ux module %s pid %d inst %d\n",
-			trackPC, trackPC->op, trackPC->add,
-			trackM != nil && trackM->m != nil ? trackM->m->name : "?",
-			currun() != nil ? currun()->pid : -1,
-			trackM != nil && trackM->m != nil ? (int)(trackPC - trackM->m->prog) : -1);
+		/*
+		 * trackPC can genuinely be nil here: checktracked() can
+		 * fire from a checkpoint before the interpreter has ever
+		 * run an instruction (readmod's after-parsemod checkpoint
+		 * does, on riscv32 -- found live, a null-pointer load
+		 * fault reading trackPC->op with trackPC nil, tval 0).
+		 * trackPC->op/->add were unconditionally dereferenced with
+		 * no guard, unlike every other maybe-nil field this same
+		 * print already null-checks (trackM, trackM->m).
+		 */
+		if(trackPC != nil)
+			print("track: instruction that just ran: PC %#p op %#.2ux "
+				"add %#.2ux module %s pid %d inst %d\n",
+				trackPC, trackPC->op, trackPC->add,
+				trackM != nil && trackM->m != nil ? trackM->m->name : "?",
+				currun() != nil ? currun()->pid : -1,
+				trackM != nil && trackM->m != nil ? (int)(trackPC - trackM->m->prog) : -1);
+		else
+			print("track: instruction that just ran: PC nil (before any "
+				"interpreter execution)\n");
 		t = track[i].t;
 		if(t != nil){
 			wordidx = (int)((uintptr*)track[i].addr - (uintptr*)track[i].obj);

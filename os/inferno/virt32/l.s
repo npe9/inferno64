@@ -54,6 +54,7 @@
 #define	MIEBIT	8		/* mstatus.MIE */
 #define	MTIE	128		/* mie.MTIE — machine timer */
 #define	MEIE	2048		/* mie.MEIE — machine external (PLIC) */
+#define	FSBITS	(3<<13)		/* mstatus.FS = Dirty — enable FPU */
 #define	MRET	WORD $(0x30200073)
 
 /*
@@ -102,6 +103,24 @@
 TEXT	_main(SB), 1, $-4
 	MOVW	$setSB(SB), R26
 	MOVW	$stack+(64*1024)(SB), SP
+	/*
+	 * mstatus.FS resets to 0 (Off): any F/D instruction traps as
+	 * illegal, cause 2, until this is set -- not needed when this
+	 * file was first written (za/zc had no float support then),
+	 * forgotten when that support was added later.  Found live:
+	 * epc pointed at an FLD, tval decoded byte-for-byte to
+	 * "FLD f0,436(x28)" -- a real, legal instruction, illegal
+	 * only because FS was off.  za has no CSR-with-register-
+	 * operand form (see the CSRR/CSRW macros above), same
+	 * WORD-immediate-shift workaround MEIE already needed since
+	 * FSBITS is also past the +-2047 signed 12 bit immediate an
+	 * OR can encode directly.
+	 */
+	CSRR(MSTATUS, 10)
+	MOVW	$3, R11
+	SLL	$13, R11
+	OR	R11, R10
+	CSRW(MSTATUS, 10)
 	JAL	LINK, main(SB)
 dead:
 	JMP	dead

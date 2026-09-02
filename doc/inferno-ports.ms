@@ -16664,17 +16664,96 @@ all still print, then
 .CW userinit()
 succeeds where it used to panic, and the board goes on to print
 .CW "Initial Dis: \(dq/osinit.dis\(dq"
-\- it starts loading the actual init program.  It faults there: an
-illegal-instruction exception
-.CW "(cause 0x2)"
-partway through loading
-.CW /osinit.dis ,
-with a
-.CW copypath
-line just before it in the log suggesting the fault is somewhere in
-path/channel setup during module load rather than in the loader's
-own bytecode-reading code.  Not yet chased past that point \- the
-next concrete step, and a genuinely different class of bug from
-everything in this section so far (nothing here has touched Dis
-module loading, channel operations, or the namespace code before
-now).
+\- it starts loading the actual init program.  It faulted there
+twice, two genuinely different bugs stacked back to back, both found
+and fixed.
+.PP
+First: an illegal-instruction exception
+.CW "(cause 0x2)" ,
+.CW tval
+decoding byte-for-byte to a real, legal instruction \-
+.CW "FLD f0,436(x28)" ,
+a double-precision float load.  RISC-V's
+.CW mstatus.FS
+resets to
+.CW Off ;
+any F/D instruction traps as illegal until something sets it non-zero.
+.CW virt/l.s
+.CW "(jc's"
+riscv64 entry) does this; it was correctly left out of
+.CW virt32/l.s
+when that file was first written, since za/zc had no float support
+yet, and simply forgotten when that support was added later in this
+same session.  Restored in
+.CW _main ,
+same
+.CW "MEIE-style"
+register-built immediate
+.CW FSBITS
+needs
+.CW "(3<<13,"
+past the
+.CW +-2047
+range an
+.CW OR
+can encode directly).
+.PP
+Past that,
+.CW /osinit.dis
+loading reaches
+.CW libinterp/heap.c 's
+.CW checktracked() \-
+pre-existing, portable heap-corruption-tracking instrumentation, not
+riscv32-specific \- which itself crashed: a genuine null-pointer read,
+.CW trackPC->op
+with
+.CW trackPC
+nil, in a diagnostic print two lines below one that already
+null-checks
+.CW trackM
+and
+.CW trackM->m
+the same way but never checked
+.CW trackPC
+itself.
+.CW trackPC
+is legitimately nil at the checkpoint that fired here
+.CW "(readmod:after-parsemod)" ,
+before the interpreter has executed a single instruction, so there
+is no "last instruction" to report) \- a real, if narrow, robustness
+gap in shared, portable debug code, not anything specific to this
+port.  Fixed with a nil guard, printing a plain
+.CW "\(dqbefore any interpreter execution\(dq"
+line instead of dereferencing.
+.PP
+With both fixed, the
+.CW track
+instrumentation itself now runs cleanly and is reporting something
+real: dozens of
+.CW "\(dqCHANGED TO BAD VALUE\(dq"
+lines, all on the same freshly-parsed object
+.CW "(4168 bytes,"
+.CW "np 66,"
+a pointer-heavy type map), each word going from the pool's
+.CW -1
+poison pattern to some other value during
+.CW readmod .
+The board then faults again, a load access fault
+.CW "(cause 0x5)"
+at a
+.CW 0xcccccccc-pattern
+address inside
+.CW newmp() \-
+the deep-copy-with-refcounting routine module linking uses, in the
+branch that computes
+.CW D2H(wp)
+and reads
+.CW h->t
+off a pointer value it just copied out of that same object.  Reading
+this together: something in that object's pointer map is treating a
+word that is not yet a valid pointer as if it already were one, and
+.CW newmp()
+dereferences it before it has been set.  Not yet root-caused to a
+specific instruction the way the compiler bugs above were \- this is
+Dis module-loading/GC territory, not compiler codegen, and is where
+the next session's work starts.
