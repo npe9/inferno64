@@ -106,7 +106,7 @@ enum
 	ObjAmd64,		/* .6 */
 	ObjSpim,		/* .0 */
 	ObjPower64,		/* .9 */
-	ObjArm64,		/* .4? */
+	ObjArm64,		/* .7 -- bare-metal virtarm64's 7c/7l, not the hosted macOS emu JIT (which never serializes to a .$O object at all) */
 	ObjRiscv64,		/* .j */
 	Maxobjtype,
 

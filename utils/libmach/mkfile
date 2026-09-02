@@ -24,6 +24,7 @@ OFILES=\
 	9obj.$O\
 	j.$O\
 	jobj.$O\
+	7obj.$O\
 	kobj.$O\
 	qobj.$O\
 	vobj.$O\

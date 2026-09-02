@@ -379,9 +379,22 @@ inst:
 /*
  * STXR
  */
-|	LSTXR reg ',' gen ',' sreg
+|	LSTXR reg ',' reg ',' oreg
 	{
-		outcode($1, &$2, $6, &$4);
+		/*
+		 * "STXR Ws, Xt, [Xn]": Ws is p->reg (asmout.c case 59
+		 * encodes Rs from p->reg, Rt from p->from, Rn from
+		 * p->to) -- the middle operand ($4, Xt) is the value
+		 * being stored and belongs in "from", not "reg"; $2
+		 * (Ws, the status result) is the one that belongs in
+		 * the bare reg-number slot.  Swapped from a first draft
+		 * that put them the other way around and silently
+		 * encoded "stxr Ws,Xt,[Xn]" as "stxr Xt,Ws,[Xn]" --
+		 * caught live (QEMU/lldb) as _tas() spinning forever on
+		 * a genuinely uncontended lock, disassembling back to
+		 * exactly that swap.
+		 */
+		outcode($1, &$4, $2.reg, &$6);
 	}
 /*
  * END

@@ -1,0 +1,16 @@
+#
+#	aarch64-specific files
+#
+#	No hand-written atomics needed here the way riscv64's
+#	ainc-riscv64.$O is: os/inferno/virtarm64/archvirtarm64.c defines
+#	ainc()/adec() directly in C (spl-masked, MAXMACH==1), the same
+#	shape armv7's own archv7.c already uses -- copied from there
+#	verbatim.  Everything else is the portable, correct-and-slow C,
+#	same choice riscv64/virt's own mkfile-riscv64 makes.
+#
+TARGFILES=\
+	frexp-386.$O\
+	memmove.$O\
+	memset.$O\
+	nan-386.$O\
+	strchr.$O\

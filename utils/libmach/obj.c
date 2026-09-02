@@ -29,6 +29,7 @@ int	_is5(char*),
 	_isq(char*),
 	_isv(char*),
 	_isj(char*),
+	_is7(char*),
 	_read5(Biobuf*, Prog*),
 	_read6(Biobuf*, Prog*),
 	_read8(Biobuf*, Prog*),
@@ -36,7 +37,8 @@ int	_is5(char*),
 	_readk(Biobuf*, Prog*),
 	_readq(Biobuf*, Prog*),
 	_readv(Biobuf*, Prog*),
-	_readj(Biobuf*, Prog*);
+	_readj(Biobuf*, Prog*),
+	_read7(Biobuf*, Prog*);
 
 typedef struct Obj	Obj;
 typedef struct Symtab	Symtab;
@@ -66,7 +68,7 @@ static Obj	obj[] =
 	/*[ObjAmd64]*/	"amd64 .6",	_is6, _read6,
 	/*[ObjSpim]*/	{0, 0,},
 	/*[ObjPower64]*/	"power64 .9",	_is9, _read9,
-	/*[ObjArm64]*/	{0, 0,},
+	/*[ObjArm64]*/	"aarch64 .7",	_is7, _read7,
 	/*[ObjRiscv64]*/	"riscv64 .j",	_isj, _readj,
 	/*[Maxobjtype]*/	0, 0
 };
