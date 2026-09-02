@@ -16557,46 +16557,124 @@ happens to be on a given architecture.
 What's left, and it is exact, not vague: 64-bit unsigned division is
 wrong.
 .CW libkern/vlrt-riscv32.c 's
-.CW dodiv() \-
-copied unmodified from
+.CW dodiv()
+was the first suspect \- copied unmodified from
 .CW vlrt-mips.c ,
 the shift-and-subtract long-division loop every 32-bit kencc port
-without a native 64-bit divide instruction relies on \- returns wrong
-answers for realistic inputs, confirmed with hand-computed
-expected-vs-actual values printed from inside the running kernel, not
-guessed:
+without a native 64-bit divide instruction relies on \- and it looked
+guilty: hand-computed expected-vs-actual values printed from inside
+the running kernel showed
 .CW (4294967296+100)/4
-returned
+returning
 .CW 0
 .CW "(wanted 1073741849)" ,
 and the board's own real
 .CW poolsizeinit()
 computation,
 .CW 5338808320/100 ,
-returned
+returning
 .CW 0
-too \- which is why every
-.CW poolsize
-line at boot reads
-.CW "max\ 0" .
-The multiply feeding it is confirmed correct first \-
-.CW 266940416*20
-truncated to 32 bits printed exactly
-.CW 1043841024 ,
-matching hand computation \- this is specifically a division bug, not
-a multiply bug reappearing.  Not yet root-caused to a specific
-instruction the way every other bug in this section was; the
-candidates are the same class as everything above \- a
+too.
+.CW dodiv()
+was innocent.  Live QEMU/lldb tracing of the actual argument bytes
+.CW _divvu()
+read \- not just the printed result \- found the real bug one level
+up: a compile-time
+.ul
+constant
+in vlong-typed arithmetic (a bare
+.CW 100
+or
+.CW 0x0BADC0DE
+in source, not a variable) gets built by
 .CW zc
-codegen or registerizer defect in a shift/carry-heavy loop with heavy
-register pressure \- but confirming which needs the same
-disassemble-and-hand-verify pass the float encodings and
-.CW _tas()
-got, not yet done.  Until it's fixed,
+as two raw 32-bit stores, and that code
+.CW "(utils/zc/cgen.c's"
+OCONST case, and
+.CW gextern()
+in
+.CW swt.c
+for initialized globals) stored the
+.ul
+low
+word first and the
+.ul
+high
+word second \- correct only if every consumer treats an 8-byte vlong
+slot as low-word-first.
+.CW libkern/vlrt-riscv32.c 's
+own
+.CW Vlong
+struct
+.CW "(hi first, lo second \- the same order vlrt-mips.c and vlrt-arm.c"
+use) is hi-word-first, and every
+.ul
+real
+function that builds one
+.CW "(_ul2v, _si2v, _addv, ..."
+) writes and reads it that way consistently \- checked directly, not
+assumed.  Only the literal fast path disagreed: a bare
+.CW 100
+landed in the struct's
+.CW hi
+slot with
+.CW lo
+left
+.CW 0 ,
+so
+.CW _divvu()
+was correctly dividing by
+.CW 100<<32 ,
+not
+.CW 100
+\- explaining both the exact
+.CW 0
+results above and, independently, why the
+.CW 0x0BADC0DE
+test case had already gone wrong three calls earlier, before
+.CW dodiv()
+ever ran: variable-sourced vlongs
+.CW "(_ul2v, _si2v)"
+were fine throughout; every place a bare compile-time constant
+appeared in vlong arithmetic was not.  Fixed by swapping which half
+.CW cgen.c
+and
+.CW swt.c
+store first, matching every other vlong producer in this compiler.
+Verified two ways at once, live: the same
+.CW (4294967296+100)/4
+test now prints
+.CW 0x42eb7037
+exactly
+.CW "(1122726711, the correct answer)" ,
+and
+.CW poolsizeinit()
+now reports
+.CW "poolsize max 53388083"
+\- also exactly the hand-computed value.
+.PP
+With the real bug fixed,
 .CW virt32
-reaches
-.CW userinit:\ no\ procs
-and panics \- the proc pool never gets sized correctly because the
-pool-size arithmetic that depends on this division is wrong \- one
-specific, reproducible bug away from a shell, not an open-ended list
-of them.
+goes a long way further:
+.CW poolalloc() ,
+.CW procinit ,
+the version banner, and
+.CW SNPRINT-ABI-OK
+all still print, then
+.CW userinit()
+succeeds where it used to panic, and the board goes on to print
+.CW "Initial Dis: \(dq/osinit.dis\(dq"
+\- it starts loading the actual init program.  It faults there: an
+illegal-instruction exception
+.CW "(cause 0x2)"
+partway through loading
+.CW /osinit.dis ,
+with a
+.CW copypath
+line just before it in the log suggesting the fault is somewhere in
+path/channel setup during module load rather than in the loader's
+own bytecode-reading code.  Not yet chased past that point \- the
+next concrete step, and a genuinely different class of bug from
+everything in this section so far (nothing here has touched Dis
+module loading, channel operations, or the namespace code before
+now).

@@ -913,9 +913,32 @@ sugen(Node *n, Node *nn, long w)
 			reglcgen(&nod1, nn, Z);
 			nn->type = t;
 
-			gopcode(OAS, nod32const(n->vconst), Z, &nod1);
-			nod1.xoffset += SZ_LONG;
+			/*
+			 * This materializes a compile-time vlong CONSTANT
+			 * (e.g. a bare literal in vlong-typed arithmetic)
+			 * into memory as two 32-bit stores.  It used to
+			 * store the low half at offset 0 and the high half
+			 * at offset+SZ_LONG -- correct only if every
+			 * consumer treats an 8-byte vlong slot as low-word-
+			 * first.  libkern/vlrt-riscv32.c's own Vlong struct
+			 * (hi first, lo second -- the same order vlrt-
+			 * mips.c and vlrt-arm.c use) is hi-word-first, and
+			 * every REAL function that builds one (_ul2v,
+			 * _si2v, _addv, ...) writes/reads it that way
+			 * consistently.  Only this literal fast path
+			 * disagreed -- confirmed live via QEMU/lldb: a
+			 * plain "+ 0x0BADC0DE" in vlong arithmetic landed
+			 * 0x0BADC0DE in the struct's hi slot and 0 in lo,
+			 * and the boot-time "100" divisor in
+			 * poolsizeinit()'s nb*pcnt/100 the same way --
+			 * dividing by 100<<32 instead of 100, which is
+			 * exactly why every poolsize() at boot read "max
+			 * 0".  Swapped to store high first, matching every
+			 * other vlong producer in this compiler.
+			 */
 			gopcode(OAS, nod32const(n->vconst>>32), Z, &nod1);
+			nod1.xoffset += SZ_LONG;
+			gopcode(OAS, nod32const(n->vconst), Z, &nod1);
 
 			regfree(&nod1);
 			break;

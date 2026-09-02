@@ -55,12 +55,18 @@
   fixing three real bugs that support work surfaced: a zc register-
   allocation defect converting double to int, a zl encoder gap for
   large-offset frame addresses, and a _tas() porting bug (wrong return
-  register) that hung the very first spinlock acquisition forever. What's
-  left is exact, not vague: libkern/vlrt-riscv32.c's 64-bit unsigned
-  divide returns wrong answers for realistic inputs (confirmed with
-  hand-computed values printed from the running kernel), which is why
-  the proc pool never sizes correctly and userinit() panics.  arm64 still
-  has no board, only a compiler.  Building both the rest of the way, not
+  register) that hung the very first spinlock acquisition forever, and a
+  real zc compiler bug found by live QEMU/lldb tracing, not guessed:
+  a compile-time constant in vlong arithmetic (a bare literal, not a
+  variable) got built with its high and low 32-bit halves swapped
+  (utils/zc/cgen.c and swt.c), so any vlong division or addition by a
+  literal used the wrong operand entirely -- that, not dodiv() itself,
+  was why every poolsize() at boot read "max 0" and userinit() panicked
+  with no procs.  Fixed; virt32 now sizes its proc pool correctly and
+  gets as far as loading /osinit.dis, faulting there with an
+  illegal-instruction exception during module load -- the next thing to
+  chase.  arm64 still has no board, only a compiler.  Building both the
+  rest of the way, not
   just fixing an existing one, is part of the goal.  Do not stop, and do
   not ask whether to continue, until all five
   boot clean under QEMU with nothing left that looks like a real bug
