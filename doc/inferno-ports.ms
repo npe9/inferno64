@@ -17188,7 +17188,62 @@ corrupted it or
 .ul
 when;
 that needs a watchpoint on the corrupted block across a wide time
-window, not another single live sample.  Also open, lower priority:
+window, not another single live sample.
+.PP
+One more thing learned about this same open bug before stopping to
+write it up rather than continuing to sample: it cascades.
+Breakpointing
+.CW trap()
+itself and filtering every hit for
+.CW ur\->type\ ==\ TSync
+(discarding the far more frequent
+.CW TIrq )
+across one continuous boot caught not one Sync fault but a chain of
+them, each landing on a
+.ul
+fresh
+frame further down the same kstack \- consistent with
+.CW l.s 's
+vectrap comment that a nested trap gets its own frame rather than
+clobbering the one being handled.  The second fault in the chain was
+a
+.ul
+write ,
+not a read
+.CW "(ESR.WnR\ set),"
+through a wild pointer inside
+.CW addelem() ,
+one of
+.CW alloc.c 's
+own free-list functions; the third was inside
+.CW fmtfmt<> ,
+dofmt() 's
+verb-dispatch helper \- i.e. the
+.I second
+attempt to report the
+.I first
+fault, from inside
+.CW trap() 's
+own
+.CW print() ,
+also faulted, formatting some argument of its own.  Read together
+with the already-open
+.CW poolfree()
+finding, this reads as one corrupted heap poisoning every subsequent
+pool operation differently depending which function touches it next,
+not three unrelated bugs.  Consistent with, but not yet shown to be
+the same issue as, the extensive already-documented pool-corruption
+history earlier in this document
+.CW "(_poolfault(),"
+the
+.CW notefree()
+dangling-
+.CW R.M
+fix, ...) \- that history is about a
+.I diagnostic
+path crashing while trying to report corruption it did not cause;
+this is corruption itself, arm64-specific so far, not yet shown to
+share a root cause with any of it.  Also open, lower priority:
 .CW ilock() 's
 acquire path sets
 .CW l->m\ =\ MACHP(m->machno) ,
