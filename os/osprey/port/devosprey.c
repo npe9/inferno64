@@ -2176,18 +2176,53 @@ ospreyp9server(void *a)
 enum {
 	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
+	/*
+	 * Not system calls: what the kernel asks the buddy on a legacy
+	 * process's behalf beyond its traps.  exec has the buddy lay a
+	 * binary out from its own file system - the entry and the loadable
+	 * segments come back in the data area - and page has it supply one
+	 * page of that image, which is how a page fault is answered by the
+	 * buddy and not the kernel.  Numbered above any Plan 9 system call.
+	 */
+	Bexec = 100, Bpage = 101,
 	Bargoff = 64, Bnameoff = 256, Bdataoff = 1024,
 	Reqsyscall = 6,
 };
+
+/*
+ * Put one request to the buddy and wait for its answer: submit on the
+ * legacy container's ring so the delegation carries it to the buddy,
+ * service and sleep until the buddy's task has replied, and hand back
+ * the reply's value.  tries bounds the wait, in 2 ms sleeps.
+ */
+static long
+ospreybuddycall(Ospreyproc *p, int tries)
+{
+	uvlong sarg[Ospreynarg], rop, rarg[Ospreynarg];
+	long status;
+	int i;
+
+	memset(sarg, 0, sizeof sarg);
+	if(ospreysubmit(p, Reqsyscall, sarg) < 0)
+		return -1;
+	status = -1;
+	for(i = 0; i < tries; i++){
+		ospreyservicecaller();
+		if(ospreycollect(p, &rop, &status, rarg) == 0)
+			return status;
+		tsleep(&up->sleep, return0, nil, 2);
+	}
+	return -1;
+}
 
 long
 ospreybuddyforward(ulong scallnr, uintptr *a)
 {
 	Ospreyproc *p;
-	uvlong *ab, sarg[Ospreynarg], rop, rarg[Ospreynarg];
+	uvlong *ab;
 	uchar *nd, *dd;
 	long status;
-	int i, tries;
+	int i;
 
 	p = up->osprey;
 	if(p == nil || ospreyserverof(p) == nil)
@@ -2247,17 +2282,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		return -1;			/* a trap the buddy does not emulate */
 	}
 
-	memset(sarg, 0, sizeof sarg);
-	if(ospreysubmit(p, Reqsyscall, sarg) < 0)
-		return -1;
-	status = -1;
-	for(tries = 0; tries < 400; tries++){
-		ospreyservicecaller();
-		if(ospreycollect(p, &rop, &status, rarg) == 0)
-			break;
-		tsleep(&up->sleep, return0, nil, 2);
-	}
-	if(tries >= 400)
+	status = ospreybuddycall(p, 400);
+	if(status < 0)
 		return -1;
 
 	if((scallnr == Bread || scallnr == Bpread) && status > 0){
@@ -2267,6 +2293,132 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				((uchar*)a[1])[i] = dd[i];
 	}
 	return status;
+}
+
+
+/*
+ * The buddy as the legacy process's loader.  The kernel carries no copy
+ * of the Linux binary: it is a file in the buddy's file system, and exec
+ * asks the buddy to lay it out.  The buddy reads the ELF headers and
+ * answers with the entry and each loadable segment's address, size and
+ * flags, from which the kernel makes empty segments; what fills them is
+ * the buddy too, a page at a time, as the process faults on them
+ * (ospreybuddyfault below).  Returns the number of segments, or -1.
+ */
+int
+ospreybuddyexec(char *name, uvlong *entry, Ospreybuddyseg *segs, int max)
+{
+	Ospreyproc *p;
+	uvlong *ab, *d;
+	uchar *nd;
+	long n;
+	int i;
+
+	p = up->osprey;
+	if(p == nil || ospreyserverof(p) == nil)
+		return -1;
+	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+	nd = ospreydata(p, Bnameoff, 256);
+	if(ab == nil || nd == nil)
+		return -1;
+	for(i = 0; i < 255 && name[i] != 0; i++)
+		nd[i] = name[i];
+	nd[i] = 0;
+	ab[0] = Bexec; ab[1] = 0; ab[2] = 0; ab[3] = 0;
+	/* at boot the buddy may still be bringing its name space up */
+	n = ospreybuddycall(p, 5000);
+	if(n <= 0 || n > max)
+		return -1;
+	d = (uvlong*)ospreydata(p, Bdataoff, (2 + 3*n)*sizeof(uvlong));
+	if(d == nil)
+		return -1;
+	*entry = d[0];
+	for(i = 0; i < n; i++){
+		segs[i].va = d[2+3*i];
+		segs[i].memsz = d[3+3*i];
+		segs[i].flags = d[4+3*i];
+	}
+	return n;
+}
+
+/*
+ * One page of the legacy image, from the buddy: it fills the data area
+ * with the page at va - the file's bytes where the image has them, zero
+ * where it has none - and the kernel copies it into the frame.  The data
+ * area is sized for this in ospreyinit.
+ */
+static int
+ospreybuddypage(uintptr va, uchar *dst)
+{
+	Ospreyproc *p;
+	uvlong *ab;
+	uchar *dd;
+
+	p = up->osprey;
+	if(p == nil || ospreyserverof(p) == nil)
+		return -1;
+	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+	if(ab == nil)
+		return -1;
+	ab[0] = Bpage; ab[1] = va; ab[2] = BY2PG; ab[3] = 0;
+	if(ospreybuddycall(p, 400) < 0)
+		return -1;
+	dd = ospreydata(p, Bdataoff, BY2PG);
+	if(dd == nil)
+		return -1;
+	memmove(dst, dd, BY2PG);
+	return 0;
+}
+
+/*
+ * A page fault in a legacy process, taken to the buddy.  exec made the
+ * process's text and data segments empty; the first touch of each page
+ * lands here, and the page's contents are the buddy's to supply, from
+ * the file the image is in its file system.  Returns 0 with the page
+ * mapped; 1 when the fault is not the buddy's - the stack, or a page
+ * already present, which fault() handles as for any process; and -1
+ * when the buddy has no such page, which is the legacy process's own bad
+ * address.  This is the other half of the paper's buddy: its page faults
+ * interposed as well as its system calls.
+ */
+int
+ospreybuddyfault(uintptr addr, uintptr pc, int read)
+{
+	Segment *s;
+	Pte *etp;
+	Page *pg;
+	KMap *k;
+	uintptr va, soff;
+	int type, present;
+
+	va = addr & ~(uintptr)(BY2PG-1);
+	s = seg(up, addr, 1);
+	if(s == nil)
+		return 1;
+	type = s->type & SG_TYPE;
+	if(type != SG_TEXT && type != SG_DATA){
+		qunlock(s);
+		return 1;
+	}
+	soff = va - s->base;
+	etp = s->map[soff/PTEMAPMEM];
+	present = etp != nil && etp->pages[(soff&(PTEMAPMEM-1))/BY2PG] != nil;
+	qunlock(s);
+	if(present)
+		return 1;
+	pg = newpage(va, nil);
+	if(pg == nil)
+		return -1;
+	k = kmap(pg);
+	if(ospreybuddypage(va, (uchar*)VA(k)) < 0){
+		kunmap(k);
+		putpage(pg);
+		return -1;
+	}
+	kunmap(k);
+	print("osprey buddy: page %#p of the legacy image supplied by the buddy\n", va);
+	segpage(s, pg);
+	return fault(addr, pc, read) < 0 ? -1 : 0;
 }
 
 int
@@ -2515,6 +2667,13 @@ ospreyinit(void)
 	 * reason its declaration gives.  A value below what the tree was
 	 * built with is refused by the adapter rather than obeyed.
 	 */
+	/*
+	 * The Linux buddy carries a page of the legacy image through the
+	 * data area on every fault, and the built-in data area is smaller
+	 * than a page plus the offset the data starts at.
+	 */
+	if(ospreyp9linux)
+		ospreysetsize("data", 2*BY2PG, 0);
 	for(i = 0; i < nelem(ospreysizeconf); i++){
 		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
 			continue;

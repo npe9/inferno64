@@ -146,8 +146,12 @@ mapped so it does not fault).  The Linux ABI is served too: the p9linux
 configuration runs an unmodified static Linux x86-64 binary (an ELF,
 raw syscalls, no libc), the SYSCALL entry stores every register so the
 Linux convention can be read and its callee-saved registers returned,
-and the same buddy answers its open, read and close.  Only the file
-calls the demonstration makes are mapped.  p9pair is the library-OS
+and the same buddy answers its open, read and close.  Its page faults
+are interposed too: the binary is a file in the buddy's file system,
+the buddy lays it out for the kernel and supplies each page as it is
+first touched, so the kernel carries no copy of it.  Only the file
+calls the demonstration makes are mapped, and the Plan 9 legacy binary
+is still eager-mapped by the kernel.  p9pair is the library-OS
 mechanism, one-directional (the client mounts the server, not the
 reverse).
 .PP

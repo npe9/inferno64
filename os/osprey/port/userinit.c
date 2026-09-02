@@ -20,7 +20,6 @@
 #include	"userprog.i"
 #include	"p9prog.i"
 #include	"legacyprog.i"
-#include	"linuxprog.i"
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -29,7 +28,7 @@ extern int ospreyp9;
 extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
-extern void ospreyloadlinux(void);
+extern void ospreyexeclinux(char*);
 extern void ospreyenteruserat(void);
 extern void ospreyloadlegacy(void);
 extern void touserat(char*);
@@ -159,83 +158,52 @@ ospreyloadlegacy(void)
 }
 
 /*
- * The entry of the last program the ELF loader mapped; touserat (l.s)
+ * The entry of the legacy program the buddy laid out; touserat (l.s)
  * reads it, since an ELF binary enters at e_entry, not the a.out
  * convention's fixed offset.
  */
 uintptr	ospreyuserentry;
 
 /*
- * Load a static x86-64 ELF - an unmodified Linux binary.  Its fields are
- * little-endian native here, so they are read straight.  Each PT_LOAD
- * segment is mapped at its own virtual address, filled from the file and
- * zeroed beyond, and a stack is given below USTKTOP; the entry is
- * e_entry, kept for touserat.
+ * Exec a legacy Linux binary through the buddy.  The kernel holds no copy
+ * of it: it is a file in the buddy's file system, the buddy reads its ELF
+ * headers and answers with the entry and the loadable segments, and the
+ * kernel makes each segment empty - text or data by the segment's execute
+ * flag - with a stack below USTKTOP.  Every page of text and data is then
+ * a fault the buddy answers (ospreybuddyfault in devosprey.c): the
+ * paper's buddy interposes on page faults as well as system calls, and
+ * this is where the second half begins.
  */
 void
-ospreyloadelf(uchar *elf)
+ospreyexeclinux(char *name)
 {
-	struct Ehdr {
-		uchar	ident[16];
-		ushort	type, machine;
-		ulong	version;
-		uvlong	entry, phoff, shoff;
-		ulong	flags;
-		ushort	ehsize, phentsize, phnum, shentsize, shnum, shstrndx;
-	} *e;
-	struct Phdr {
-		ulong	type, flags;
-		uvlong	offset, vaddr, paddr, filesz, memsz, align;
-	} *ph;
-	KMap *k;
-	Page *pg;
-	uvlong segva, segend, va, pgstart, pgend, filestart, fileend;
-	ulong i, seg, npg, p, off, cnt;
+	Ospreybuddyseg segs[8];
+	uvlong entry, segva, segend, top;
+	int n, i, seg, npg;
 
-	e = (struct Ehdr*)elf;
-	ospreyuserentry = e->entry;
-
+	n = ospreybuddyexec(name, &entry, segs, nelem(segs));
+	if(n < 0)
+		panic("osprey buddy: the buddy did not lay out %s", name);
+	ospreyuserentry = entry;
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
-
 	seg = TSEG;
-	for(i = 0; i < e->phnum; i++){
-		ph = (struct Phdr*)(elf + e->phoff + i*e->phentsize);
-		if(ph->type != 1)		/* PT_LOAD */
+	top = 0;
+	for(i = 0; i < n && seg < NSEG; i++){
+		segva = segs[i].va & ~(uvlong)(BY2PG-1);
+		segend = (segs[i].va + segs[i].memsz + BY2PG-1) & ~(uvlong)(BY2PG-1);
+		if(segva < top)
+			segva = top;	/* two headers in one page: the first owns it */
+		if(segva >= segend)
 			continue;
-		segva = ph->vaddr & ~(uvlong)(BY2PG-1);
-		segend = (ph->vaddr + ph->memsz + BY2PG-1) & ~(uvlong)(BY2PG-1);
 		npg = (segend - segva) / BY2PG;
-		if(seg >= NSEG)
-			break;			/* out of segment slots */
-		up->seg[seg] = newseg((ph->flags & 1) ? SG_TEXT : SG_DATA, segva, npg);
-		if(ph->flags & 1)
+		up->seg[seg] = newseg((segs[i].flags & 1) ? SG_TEXT : SG_DATA, segva, npg);
+		if(segs[i].flags & 1)
 			up->seg[seg]->flushme = 1;
-		for(p = 0; p < npg; p++){
-			pgstart = segva + p*BY2PG;
-			pgend = pgstart + BY2PG;
-			pg = newpage(pgstart, nil);
-			k = kmap(pg);
-			memset((uchar*)VA(k), 0, BY2PG);
-			/* the file-backed span of this program header, clipped to this page */
-			filestart = ph->vaddr;
-			fileend = ph->vaddr + ph->filesz;
-			va = pgstart < filestart ? filestart : pgstart;
-			if(va < (pgend < fileend ? pgend : fileend)){
-				off = (ulong)(va - pgstart);
-				cnt = (ulong)((pgend < fileend ? pgend : fileend) - va);
-				memmove((uchar*)VA(k) + off, elf + ph->offset + (va - ph->vaddr), cnt);
-			}
-			kunmap(k);
-			segpage(up->seg[seg], pg);
-		}
+		top = segend;
 		seg++;
 	}
-}
-
-void
-ospreyloadlinux(void)
-{
-	ospreyloadelf(linuxprog);	/* an unmodified Linux binary the buddy serves */
+	print("osprey buddy: %s laid out by the buddy: entry %#p, %d segments, no page mapped yet\n",
+		name, (uintptr)entry, n);
 }
 
 /*
@@ -333,11 +301,12 @@ proc0(void*)
 		if(ospreyp9linux){
 			/*
 			 * An unmodified Linux binary the buddy serves: mark this
-			 * process Linux (its syscalls use the Linux ABI), load the
-			 * ELF and enter at its own entry.
+			 * process Linux (its syscalls use the Linux ABI), have the
+			 * buddy lay the ELF out from its own file system, and enter
+			 * at its entry; its pages come from the buddy as it faults.
 			 */
 			up->oslinux = 1;
-			ospreyloadlinux();
+			ospreyexeclinux("/boot/linux");
 			ospreyenteruserat();
 			panic("ospreyenteruserat returned");
 		}

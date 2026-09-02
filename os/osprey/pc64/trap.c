@@ -400,6 +400,29 @@ faultamd64(Ureg* ureg, void*)
 		}
 	}
 
+	if(up != nil && up->oslinux && addr < USTKTOP){
+		/*
+		 * A legacy process's page faults are the buddy's to answer:
+		 * the image's pages come from the buddy's file system.  That
+		 * holds whether the process touched the page itself or the
+		 * kernel did on its behalf, reading a system call's argument
+		 * out of it.  The stack, and a page already present, are the
+		 * kernel's as for any process; a page the buddy has not got is
+		 * the process's own bad address.
+		 */
+		int r = ospreybuddyfault(addr, ureg->pc, read);
+		if(r == 0){
+			if(!user)
+				poperror();
+			return;
+		}
+		if(r < 0){
+			if(!user)
+				error("legacy image: no page at that address");
+			faultnote("fault", read? "read": "write", addr);
+			return;
+		}
+	}
 	if(fault(addr, ureg->pc, read) < 0){
 		if(!user){
 			dumpregs(ureg);

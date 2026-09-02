@@ -469,6 +469,7 @@ p9paircli(void)
 }
 
 extern void p9serveloop(char *arg);	/* p9pairsrv.c: the ring service loop */
+extern void p9linuxfile(void);		/* p9linuxfile.c: the legacy binary as /boot/linux */
 
 /*
  * The buddy server: bring up this personality's name space, then answer
@@ -481,6 +482,7 @@ p9server(char *arg)
 		print("p9: buddy-server error: %s\n", up->errstr);
 		exits("error");
 	}
+	p9linuxfile();		/* the legacy Linux binary, a file in this file system */
 	p9setup();
 	print("p9: server personality: name space up, answering 9P over the ring\n");
 	p9serveloop(arg);

@@ -234,15 +234,17 @@ fingerprints is the only thing that says it was the machine that was
 meant, and there is nothing a machine could compare instead without
 something already shared to compare it against.
 .PP
-.B "2.  The buddy's other half: page faults, and the rest of an ABI."
+.B "2.  The rest of an ABI."
 The paper's buddy interposes on a legacy binary's system calls and its
-page faults; p9buddy and p9linux interpose the first and eager-map the
-image so the second never happens, and a user fault on the microkernel
-still panics in donotify rather than reaching anyone.  Demand-mapping
-the legacy image and carrying its faults to the buddy is the next piece,
-and after it the Linux calls a real program makes beyond open, read,
-close and lseek \- brk and mmap first, since a libc needs them before it
-needs anything else.
+page faults, and for the Linux binary p9linux now does both: the buddy
+is its loader and its pager.  What is left on that path is the Linux
+calls a real program makes beyond open, read, close and lseek \- brk
+and mmap first, since a libc needs them before it needs anything else
+\- and a way for a fault the buddy declines to reach the process as a
+signal rather than the microkernel's donotify panic.  The Plan 9
+legacy binary (p9buddy) is still eager-mapped by the kernel; giving it
+the same exec-and-page path is the same code with an a.out reader in
+the buddy.
 .NH 1
 A personality outside the kernel
 .PP
@@ -2538,10 +2540,64 @@ a C-language
 assumes a function's frame (sp 8 mod 16, as a call leaves it) where the
 kernel enters with sp 16-aligned, and clang's first aligned SSE store
 faulted; the program has the assembly entry a nolibc program is meant
-to have.  What is interposed is system calls, and only the file calls
-the demonstration makes are mapped; page faults are not interposed (the
-image is eager-mapped), and a user fault still panics the microkernel
-(donotify) rather than reaching a buddy.  It is checked by
+to have.
+.PP
+Its page faults are the buddy's too, which is the other half of what
+the paper's buddy interposes on.  The kernel no longer carries the
+Linux binary at all: it is a file in the buddy's own file system,
+.CW /boot/linux ,
+embedded in the personality the way a kernel embeds its boot files
+.CW ( os/osprey/cmd/p9/p9linuxfile.c ).
+At boot the kernel, running as the legacy process, asks the buddy to
+exec it
+.CW ( ospreybuddyexec
+in
+.CW os/osprey/port/devosprey.c ):
+the buddy opens the file in its own name space, reads the ELF and
+program headers, keeps the loadable ones, and answers with the entry
+and each segment's address, size and flags, from which the kernel makes
+segments with no page in them
+.CW ( ospreyexeclinux
+in
+.CW os/osprey/port/userinit.c ).
+The first touch of every page is then a fault, and
+.CW faultamd64
+in
+.CW os/osprey/pc64/trap.c
+takes a legacy process's fault to
+.CW ospreybuddyfault
+before the kernel's own demand loader sees it: the kernel allocates the
+frame, asks the buddy for the page, and the buddy fills the data area
+with the file's bytes where the image has them and zero where it has
+none
+.CW ( p9buddy.c 's
+.CW PAGE );
+the kernel copies it in, hangs it on the segment, and maps it.  That
+holds whether the process touched the page or the kernel did on its
+behalf, reading a system call's argument out of it, which is how the
+first fault actually arrives: the program's first act is a write whose
+string sits in a page nobody has supplied yet, and it is the kernel's
+.CW validaddr
+that faults.  A fault on the stack, or on a page already present, is
+the kernel's as for any process; a fault on a page the buddy has not
+got is the process's own bad address.  On boot the buddy lays the
+binary out (entry
+.CW 0x401000 ,
+four loadable segments), supplies its text, its read-only data and its
+bss one fault each, and then serves the file calls as before.  The data
+area a container's requests carry their bytes in was smaller than a
+page plus the offset the data starts at, so
+.CW ospreyinit
+sizes it to two pages for this configuration, through the same
+.CW ospreysetsize
+that
+.CW plan9.ini
+reaches.  What is still not interposed: the Plan 9 legacy binary
+.CW ( p9buddy )
+is eager-mapped by the kernel as before, and a fault the buddy declines
+still ends in the microkernel's donotify panic rather than a signal the
+process could take.  Only the file calls the demonstration makes are
+mapped.  It is checked by
 .CW /scripts/osprey-check-p9linux.py .
 .NH 2
 Built and proven since
@@ -2973,5 +3029,8 @@ and
 .CW p9linux
 are the per-process buddy the paper means: an unmodified legacy binary,
 Plan 9 or Linux, whose own system traps a peer personality answers.
-What that buddy does not yet do is take the binary's page faults, and
-what it maps is the handful of file calls the demonstration makes.
+For the Linux binary the buddy is loader and pager as well: the binary
+is a file in the buddy's file system and every page of it arrives by a
+fault the buddy answers.  What that buddy does not yet do is take the
+Plan 9 binary's page faults the same way, and what it maps is the
+handful of file calls the demonstration makes.

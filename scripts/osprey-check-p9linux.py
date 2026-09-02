@@ -3,16 +3,20 @@
 
 p9linux runs an unmodified, statically linked Linux x86-64 program in one
 container and a Plan 9 personality in a second.  The program (built by
-clang for Linux, raw syscalls, no libc) opens and reads a file in the
+clang for Linux, raw syscalls, no libc) is a file in the buddy's own file
+system, /boot/linux; the kernel carries no copy.  The buddy lays it out
+(exec: it reads the ELF headers and answers with the entry and segments,
+which the kernel makes empty) and supplies each page as the process first
+touches it, whether the process touched it or the kernel did reading a
+syscall argument out of it.  The program opens and reads a file in the
 Linux system-call ABI - number in rax, arguments in rdi/rsi/rdx, rcx and
-r11 clobbered, every other register preserved.  The microkernel's SYSCALL
+r11 clobbered, every other register preserved; the microkernel's SYSCALL
 entry stores every register into the Ureg, syscall() reads the Linux
 convention from it, and each file call is forwarded over the ring to the
-peer - the buddy operating system - which emulates it against its own
-name space and answers.  The program cannot tell a peer served it, and
-checks that a callee-saved register survived every trap.  This is the
-paper's buddyOS for the Linux ABI: per-process trap interposition of
-system calls (not yet page faults, since the image is eager-mapped).
+buddy, which emulates it against its own name space.  The program cannot
+tell a peer served it, and checks that a callee-saved register survived
+every trap.  This is the paper's buddyOS for the Linux ABI: per-process
+interposition of both system calls and page faults.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -41,11 +45,18 @@ def main():
     except OSError: t = ''
 
     m = re.search(r'linux: read\(fd, buf, \d+\) returned (\d+) bytes, served by the buddy', t)
+    pages = re.findall(r'osprey buddy: page 0x[0-9a-f]+ of the legacy image supplied by the buddy', t)
     results = [
+        ("the buddy lays the Linux binary out from its own file system (exec), the kernel carrying no copy",
+         'buddy: exec /boot/linux: entry 0x401000' in t
+         and 'laid out by the buddy: entry 0x401000' in t and 'no page mapped yet' in t),
+        ("its page faults are taken to the buddy, which supplies each page from the file (text, rodata, bss)",
+         len(pages) >= 3 and 'page 0x401000 of the legacy image supplied from its file' in t
+         and 'kernel fault' not in t),
         ("an unmodified Linux binary runs on the microkernel and a buddy personality serves it",
          'linux: an unmodified Linux binary' in t and 'p9 server: serving this name space over the ring' in t),
         ("its open() traps in the Linux ABI (number in rax, args in registers) and the buddy answers with a descriptor",
-         'linux: open("/") returned fd 0' in t),
+         re.search(r'linux: open\("/"\) returned fd \d+', t) is not None),
         ("its read() is forwarded and the buddy returns the file's bytes, copied back to the Linux buffer",
          m is not None and int(m.group(1)) > 0),
         ("close() returns 0 and a callee-saved register (rbx) survives every syscall, as the Linux ABI requires",

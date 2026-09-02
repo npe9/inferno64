@@ -31,6 +31,7 @@ typedef struct PhysUart	PhysUart;
 typedef struct Pgrp	Pgrp;
 typedef struct Physseg	Physseg;
 typedef struct Proc	Proc;
+typedef struct Ospreybuddyseg	Ospreybuddyseg;
 typedef struct Pte	Pte;
 typedef struct PMach	PMach;
 typedef struct QLock	QLock;
@@ -431,6 +432,18 @@ struct Sema
 	int	waiting;
 	Sema	*next;
 	Sema	*prev;
+};
+
+/*
+ * One loadable segment of a legacy image, as the buddy lays it out for
+ * the kernel (ospreybuddyexec in devosprey.c): where it goes, how much
+ * of the address space it takes, and its ELF flags (1 is execute).
+ */
+struct Ospreybuddyseg
+{
+	uvlong	va;
+	uvlong	memsz;
+	uvlong	flags;
 };
 
 struct Segment

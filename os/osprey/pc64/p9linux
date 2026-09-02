@@ -1,18 +1,25 @@
 # p9linux - the buddy operating system for the Linux ABI: the microkernel
 # running an unmodified, statically linked Linux x86-64 binary (an ELF,
 # raw syscalls, no libc) in one container, with a Plan 9 personality in a
-# second container as its buddy.  The binary's system calls arrive in the
-# Linux convention (number in ax, arguments in di/si/dx/r10/r8/r9, cx and
-# r11 clobbered, everything else preserved); syscallentry (l.s) stores
-# every register into the Ureg, syscall() (trap.c) reads that convention
-# when the process is marked oslinux, dosyscall below answers write to
-# the console and exit itself, and ospreybuddyforward maps open, read,
+# second container as its buddy.  The kernel carries no copy of the
+# binary: it is a file in the buddy's file system, /boot/linux; the
+# buddy lays it out for the kernel on an exec request and supplies each
+# page as the process first touches it (ospreybuddyexec, ospreybuddyfault
+# in port/devosprey.c; EXEC and PAGE in cmd/p9/p9buddy.c), so both its
+# system calls and its page faults are interposed, as the paper's buddy
+# does.  The binary's system calls arrive in the Linux convention (number
+# in ax, arguments in di/si/dx/r10/r8/r9, cx and r11 clobbered,
+# everything else preserved); syscallentry (l.s) stores every register
+# into the Ureg, syscall() (trap.c) reads that convention when the
+# process is marked oslinux, dosyscall below answers write to the
+# console and exit itself, and ospreybuddyforward maps open, read,
 # close, lseek to their Plan 9 equivalents and forwards them over the
 # ring to the buddy.  Checked by scripts/osprey-check-p9linux.py: the
+# buddy lays the binary out and pages in its text, rodata and bss, the
 # binary opens the root, reads it, closes it, sees a callee-saved
-# register intact across every trap, and exits.  System calls are
-# interposed; page faults are not (the image is eager-mapped), and only
-# the file calls the demonstration makes are mapped.
+# register intact across every trap, and exits.  Only the file calls
+# the demonstration makes are mapped; a fault the buddy declines still
+# ends in donotify's panic rather than a signal.
 #
 # The rest of the configuration is xup64's, described below.
 #

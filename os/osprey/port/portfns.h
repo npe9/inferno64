@@ -3,6 +3,8 @@ void		accounttime(void);
 Timer*		addclock0link(void (*)(void), int);
 Physseg*	addphysseg(Physseg*);
 void		addbootfile(char*, uchar*, ulong);
+int		ospreybuddyexec(char*, uvlong*, Ospreybuddyseg*, int);
+int		ospreybuddyfault(uintptr, uintptr, int);
 void		addwatchdog(Watchdog*);
 Block*		adjustblock(Block*, int);
 void		alarmkproc(void*);
