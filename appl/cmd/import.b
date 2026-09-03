@@ -121,10 +121,18 @@ init(nil: ref Draw->Context, args: list of string)
 			fail("import", sys->sprint("can't write key to remote: %r"));
 		if(sys->readn(c.dfd, key[12:], 4) != 4)
 			fail("import", sys->sprint("can't read remote key: %r"));
-		digest := array[Keyring->SHA1dlen] of byte;
-		kr->sha1(key, len key, digest, nil);
 		err: string;
-		(c.dfd, err) = pushssl(c.dfd, base64->dec(S(digest[0:10])), base64->dec(S(digest[10:20])), cryptalg);
+		if(cryptalg == "chacha20_poly1305"){
+			# modern AEAD: 32-byte per-direction keys from the FULL
+			# auth secret and both nonces (not the legacy 80-bit sha1
+			# halves). Wire-incompatible with the old ssl(3) peer.
+			(c2s, s2c) := deriveaead(kr, ai.secret, key[0:4], key[12:16]);
+			(c.dfd, err) = pushssl(c.dfd, s2c, c2s, cryptalg);
+		} else {
+			digest := array[Keyring->SHA1dlen] of byte;
+			kr->sha1(key, len key, digest, nil);
+			(c.dfd, err) = pushssl(c.dfd, base64->dec(S(digest[0:10])), base64->dec(S(digest[10:20])), cryptalg);
+		}
 		if(err != nil)
 			fail("import", sys->sprint("can't push security layer: %s", err));
 	}else
@@ -143,6 +151,33 @@ S(a: array of byte): string
 	for(i:=0; i<len a; i++)
 		s += sys->sprint("%.2ux", int a[i]);
 	return s;
+}
+
+# derive the two 32-byte chacha20-poly1305 keys (client->server,
+# server->client) from the p9any shared secret and the two exchanged
+# nonces. importrand is the import (client) side's nonce, exportrand the
+# export (server) side's; both ends form the same transcript.
+deriveaead(kr: Keyring, secret, importrand, exportrand: array of byte): (array of byte, array of byte)
+{
+	return (aeadkey(kr, "C2S", secret, importrand, exportrand),
+		aeadkey(kr, "S2C", secret, importrand, exportrand));
+}
+
+aeadkey(kr: Keyring, label: string, secret, ir, er: array of byte): array of byte
+{
+	buf := array of byte label;
+	buf = cat(cat(cat(buf, secret), ir), er);
+	d := array[Keyring->SHA256dlen] of byte;
+	kr->sha256(buf, len buf, d, nil);
+	return d;
+}
+
+cat(a, b: array of byte): array of byte
+{
+	r := array[len a + len b] of byte;
+	r[0:] = a;
+	r[len a:] = b;
+	return r;
 }
 
 pushssl(fd: ref Sys->FD, secretin, secretout: array of byte, alg: string): (ref Sys->FD, string)

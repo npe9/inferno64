@@ -1,0 +1,54 @@
+.TH SSLTEST 1
+.SH NAME
+ssltest \- test an ssl(3) cipher end to end
+.SH SYNOPSIS
+.B ssltest
+[
+.I alg
+]
+.SH DESCRIPTION
+.B Ssltest
+drives a cipher of the
+.IR ssl (3)
+device (\c
+.BR "#D" )
+the way
+.IR crypt (1)
+does \(em an ssl conversation over a pipe, used as a filter \(em to
+check that it seals and opens correctly. It defaults to
+.BR chacha20_poly1305 ,
+the AEAD (RFC 8439) record protection this tree added for encrypted
+.IR import (4)/9export (1);
+another
+.I alg
+(e.g.\&
+.BR "rc4_256 sha1" )
+can be given.
+.PP
+It seals a message under a 32-byte key and checks that:
+.IP \(bu
+the ciphertext differs from the plaintext (encryption happened);
+.IP \(bu
+opening it with the same key recovers the original plaintext;
+.IP \(bu
+a ciphertext with one bit flipped is
+.I rejected,
+not opened \(em the authentication tag catches it;
+.IP \(bu
+a wrong key does not recover the plaintext.
+.PP
+The last two are automated negative controls: for an AEAD, silently
+decrypting tampered or wrong-key input to garbage-or-plaintext is the
+failure that would look like success.
+.SH SOURCE
+.B /appl/cmd/ssltest.b
+.SH SEE ALSO
+.IR ssl (3),
+.IR crypt (1),
+.IR import (4)
+.SH BUGS
+Tests one cipher over a local pipe; it does not exercise a real
+.IR import (4)
+mount between two hosts. Harmless
+.B fdtochan
+diagnostics from the kernel appear as each pipe reaches end of file.

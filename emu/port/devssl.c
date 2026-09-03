@@ -28,6 +28,7 @@ enum
 	Sencrypting=	2,
 	Sdigesting=	4,
 	Sdigenc=	Sencrypting|Sdigesting,
+	Saead=		8,	/* AEAD: one op both encrypts and authenticates */
 
 	/* encryption algorithms */
 	Noencryption=	0,
@@ -35,7 +36,8 @@ enum
 	DESECB=		2,
 	RC4=		3,
 	IDEACBC=	4,
-	IDEAECB=		5
+	IDEAECB=		5,
+	CHACHA20POLY1305= 6	/* AEAD (RFC 8439), via libsec ccpoly */
 };
 
 typedef struct Dstate Dstate;
@@ -108,6 +110,8 @@ static Block*	encryptb(Dstate*, Block*, int);
 static Block*	decryptb(Dstate*, Block*);
 static Block*	digestb(Dstate*, Block*, int);
 static void	checkdigestb(Dstate*, Block*);
+static Block*	aeadseal(Dstate*, Block*, int);
+static void	aeadopen(Dstate*, Block*);
 static Chan*	buftochan(char*);
 static void	sslhangup(Dstate*);
 static void dsclone(Chan *c);
@@ -549,6 +553,14 @@ sslbread(Chan *c, long n, ulong offset)
 			s.s->processed->rp += s.s->diglen;
 			len -= s.s->diglen;
 			break;
+		case Saead:
+			s.s->processed = pullupblock(s.s->processed, len);
+			if(s.s->processed == 0)
+				error("ssl aead message too short");
+			aeadopen(s.s, s.s->processed);
+			s.s->processed->rp += s.s->diglen;	/* skip the tag */
+			len -= s.s->diglen;
+			break;
 		}
 		s.s->in.mid++;
 		qunlock(&s.s->in.ctlq);
@@ -714,6 +726,9 @@ sslbwrite(Chan *c, Block *b, ulong offset)
 			nb = digestb(s.s, nb, offset);
 			nb = encryptb(s.s, nb, offset);
 			break;
+		case Saead:
+			nb = aeadseal(s.s, nb, offset);
+			break;
 		}
 
 		s.s->out.mid++;
@@ -849,6 +864,73 @@ initRC4key_128(OneWay *w)
 	setupRC4state(w->state, w->secret, slen);
 }
 
+/*
+ *  chacha20-poly1305 AEAD record protection (RFC 8439), via libsec's
+ *  ccpoly_encrypt/ccpoly_decrypt. Unlike the DES/RC4 + MAC path this
+ *  is authenticated encryption: one operation both encrypts and tags,
+ *  so it uses the Saead state and its own seal/open below rather than
+ *  the separate digest+encrypt steps. The per-direction Chachastate
+ *  holds the 32-byte key; the per-record nonce is the message id, so a
+ *  key is never reused with a nonce.
+ */
+static void
+initccpolykey(OneWay *w)
+{
+	static uchar zeroiv[12];
+
+	free(w->state);
+	w->state = malloc(sizeof(Chachastate));
+	if(w->state == nil)
+		error(Enomem);
+	if(w->slen < ChachaKeylen)
+		error("secret too short for chacha20-poly1305");
+	setupChachastate(w->state, w->secret, ChachaKeylen, zeroiv, sizeof(zeroiv), 20);
+}
+
+static void
+aeadnonce(uchar nonce[12], ulong mid)
+{
+	memset(nonce, 0, 12);
+	nonce[8]  = mid >> 24;
+	nonce[9]  = mid >> 16;
+	nonce[10] = mid >> 8;
+	nonce[11] = mid;
+}
+
+/* b holds [count(offset)][tag(16)][plaintext]; encrypt in place and
+ * fill in the tag. */
+static Block*
+aeadseal(Dstate *s, Block *b, int offset)
+{
+	uchar nonce[12];
+	Chachastate *cs = s->out.state;
+	uchar *p = b->rp + offset;
+	int m = BLEN(b) - offset - 16;
+
+	aeadnonce(nonce, s->out.mid);
+	chacha_setiv(cs, nonce);
+	ccpoly_encrypt(p + 16, m, nil, 0, p, cs);
+	return b;
+}
+
+/* b holds [tag(16)][ciphertext], contiguous; verify and decrypt in
+ * place, leaving [tag(16)][plaintext]. Errors (hangs up) on a bad tag. */
+static void
+aeadopen(Dstate *s, Block *b)
+{
+	uchar nonce[12];
+	Chachastate *cs = s->in.state;
+	uchar *p = b->rp;
+	int m = BLEN(b) - 16;
+
+	if(m < 0)
+		error("ssl: short aead message");
+	aeadnonce(nonce, s->in.mid);
+	chacha_setiv(cs, nonce);
+	if(ccpoly_decrypt(p + 16, m, nil, 0, p, cs) < 0)
+		error("ssl: aead authentication failed");
+}
+
 typedef struct Hashalg Hashalg;
 struct Hashalg
 {
@@ -906,6 +988,7 @@ Encalg encrypttab[] =
 	{ "rc4_40", 1, RC4, initRC4key_40, },
 	{ "ideacbc", 8, IDEACBC, initIDEAkey, },
 	{ "ideaecb", 8, IDEAECB, initIDEAkey, },
+	{ "chacha20_poly1305", 1, CHACHA20POLY1305, initccpolykey, },
 	{ 0 }
 };
 
@@ -921,7 +1004,13 @@ parseencryptalg(char *p, Dstate *s)
 			(*ea->keyinit)(&s->in);
 			(*ea->keyinit)(&s->out);
 			s->state &= ~Sclear;
-			s->state |= Sencrypting;
+			if(ea->alg == CHACHA20POLY1305){
+				/* AEAD: the 16-byte tag replaces the MAC and
+				 * authentication is part of the cipher */
+				s->diglen = 16;
+				s->state |= Saead;
+			} else
+				s->state |= Sencrypting;
 			return 0;
 		}
 	}

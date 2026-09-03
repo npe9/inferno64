@@ -113,6 +113,20 @@ Encrypt the stream using IDEA and CBC
 .B alg ideaecb
 Encrypt the stream using IDEA and ECB
 .TP
+.B alg chacha20_poly1305
+Protect each message with the ChaCha20-Poly1305 AEAD (RFC 8439): the
+32-byte key written to
+.B secretout
+both encrypts the message and computes a 16-byte authentication tag,
+with a per-message nonce taken from the message id, so one operation
+both encrypts and authenticates. Unlike the stream ciphers above this
+needs no separate digest, and a message whose tag does not verify is
+rejected rather than delivered. This is the modern record protection
+for encrypted
+.IR import (4)/9export (1);
+see
+.IR ssltest (1).
+.TP
 .BI alg " digest" / crypt
 Combine the use of the given
 .I digest

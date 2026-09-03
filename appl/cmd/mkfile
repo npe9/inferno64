@@ -138,6 +138,7 @@ TARG=\
 	ccpolytest.dis\
 	chachatest.dis\
 	ed25519test.dis\
+	ssltest.dis\
 	cryptovec.dis\
 	sshtest.dis\
 	hmacsha256test.dis\

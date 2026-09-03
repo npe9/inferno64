@@ -118,18 +118,32 @@ init(nil: ref Draw->Context, args: list of string)
 			nomod(Encoding->BASE64PATH);
 		key := array[16] of byte;	# myrand[4] secret[8] hisrand[4]
 		key[0:] = random->randombuf(Random->ReallyRandom, 4);
-		ns := len secret;
-		if(ns > 8)
-			ns = 8;
-		key[12:] = secret[0:ns];
-		if(sys->write(fd, key[12:], 4) != 4)
-			fail("import", sys->sprint("can't write key to remote: %r"));
-		if(sys->readn(fd, key, 4) != 4)
-			fail("import", sys->sprint("can't read remote key: %r"));
-		digest := array[Keyring->SHA1dlen] of byte;
-		kr->sha1(key, len key, digest, nil);
 		err: string;
-		(fd, err) = pushssl(fd, base64->dec(S(digest[10:20])), base64->dec(S(digest[0:10])), cryptalg);
+		if(cryptalg == "chacha20_poly1305"){
+			# modern AEAD: the import (client) writes its nonce first,
+			# so read then write; derive 32-byte per-direction keys
+			# from the FULL auth secret and both nonces. Wire-
+			# incompatible with the legacy ssl(3) peer.
+			if(sys->readn(fd, key[12:], 4) != 4)
+				fail("import", sys->sprint("can't read remote key: %r"));
+			if(sys->write(fd, key, 4) != 4)
+				fail("import", sys->sprint("can't write key to remote: %r"));
+			# importrand=key[12:16] (client's), exportrand=key[0:4] (ours)
+			(c2s, s2c) := deriveaead(kr, secret, key[12:16], key[0:4]);
+			(fd, err) = pushssl(fd, c2s, s2c, cryptalg);	# server: in=c2s, out=s2c
+		} else {
+			ns := len secret;
+			if(ns > 8)
+				ns = 8;
+			key[12:] = secret[0:ns];
+			if(sys->write(fd, key[12:], 4) != 4)
+				fail("import", sys->sprint("can't write key to remote: %r"));
+			if(sys->readn(fd, key, 4) != 4)
+				fail("import", sys->sprint("can't read remote key: %r"));
+			digest := array[Keyring->SHA1dlen] of byte;
+			kr->sha1(key, len key, digest, nil);
+			(fd, err) = pushssl(fd, base64->dec(S(digest[10:20])), base64->dec(S(digest[0:10])), cryptalg);
+		}
 		if(err != nil)
 			fail("import", sys->sprint("can't push security layer: %s", err));
 	}
@@ -143,6 +157,29 @@ S(a: array of byte): string
 	for(i:=0; i<len a; i++)
 		s += sys->sprint("%.2ux", int a[i]);
 	return s;
+}
+
+deriveaead(kr: Keyring, secret, importrand, exportrand: array of byte): (array of byte, array of byte)
+{
+	return (aeadkey(kr, "C2S", secret, importrand, exportrand),
+		aeadkey(kr, "S2C", secret, importrand, exportrand));
+}
+
+aeadkey(kr: Keyring, label: string, secret, ir, er: array of byte): array of byte
+{
+	buf := array of byte label;
+	buf = cat(cat(cat(buf, secret), ir), er);
+	d := array[Keyring->SHA256dlen] of byte;
+	kr->sha256(buf, len buf, d, nil);
+	return d;
+}
+
+cat(a, b: array of byte): array of byte
+{
+	r := array[len a + len b] of byte;
+	r[0:] = a;
+	r[len a:] = b;
+	return r;
 }
 
 pushssl(fd: ref Sys->FD, secretin, secretout: array of byte, alg: string): (ref Sys->FD, string)
