@@ -165,7 +165,8 @@ the translation is worse every time, and tr shows it twelve times.
 
 `++p.last` as a value. tr's `return ++p.last` is two statements.
 
-Range labels in `case`. Rare; a comma list did the job.
+Range labels in `case`. Rare; a comma list did the job. (Since
+closed: `case '0'...'9':` exists now.)
 
 Tuple declaration in a `for` header, `for((i, j, k) := (0, m, 0);
 ...)`. Ember declares the three before the loop; Go would too.
@@ -173,8 +174,11 @@ Tuple declaration in a `for` header, `for((i, j, k) := (0, m, 0);
 Static methods on a type (`Pcb.new`). A function does the job.
 
 `con byte iota`. wc's sixteen action codes are bytes in Limbo so its
-tables can be arrays of byte; Ember has `const` but no `iota`, so
+tables can be arrays of byte; Ember had `const` but no `iota`, so
 they are sixteen numbered int constants and the tables are `[256]int`.
+(Since closed: `const ( AC2 = iota; ... )` blocks exist now, as do
+pick fields shared by every tag and tag groups, which would let sed's
+`Sedcom` stay one pick.)
 
 `array[3] of {...}` at file scope: Ember's `var ldr = [3]string{"",
 "\t", "\t\t"}` works, so this is not a gap, only a note that the
