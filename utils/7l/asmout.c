@@ -328,6 +328,8 @@ asmout(Prog *p, Optab *o)
 		break;
 
 	case 20:	/* movT R,O(R) -> strT */
+		if(p->from.type == D_REG && p->from.reg == REGSP)
+			diag("store of RSP would encode XZR: move SP through a register first\n%P", p);
 		v = regoff(&p->to);
 		r = p->to.reg;
 		if(r == NREG)
@@ -444,6 +446,8 @@ asmout(Prog *p, Optab *o)
 		break;
 
 	case 30:	/* movT R,L(R) -> strT */
+		if(p->from.type == D_REG && p->from.reg == REGSP)
+			diag("store of RSP would encode XZR: move SP through a register first\n%P", p);
 		s = movesize(o->as);
 		if(s < 0)
 			diag("unexpected long move, op %A tab %A\n%P", p->as, o->as, p);
