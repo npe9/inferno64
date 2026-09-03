@@ -379,7 +379,10 @@ all: `module/lists.ei` (`lists.mapl`, `lists.filter`, `lists.foldl`,
 hash, eq)`, then `m.put`, `m.find`, `m.del`, `m.keys`) whose
 key hashing and equality are closures the importer supplies, with
 `maps.strhash`, `maps.streq`, `maps.inthash` and `maps.inteq`
-provided inline (`tests/type/usemaps.e`).
+provided inline (`tests/type/usemaps.e`); `module/strings.ei` is a
+set of inline string utilities (`strings.split`, `join`, `trim`,
+`fields`, `index`, `hasprefix`, `tolower`, `atoi`, ...)
+(`tests/type/usestrings.e`).
 When the module's own interface is found, its functions and methods
 are checked the same way: one the module does not define, or defines
 with a different signature, is a compile error (generic functions
