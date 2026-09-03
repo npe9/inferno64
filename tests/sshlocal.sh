@@ -108,5 +108,17 @@ else
 	echo "SSHLOCAL: ssh(1) command run FAILED: [$cout]"; rc=1
 fi
 
+echo 'SSHLOCAL: === ssh(1) interactive shell: piped script ==='
+# No command -> ssh(1) requests a shell and pumps stdin<->channel (the
+# Plan 9 telnet/vt model). $TERM is unset in emu, so no pty is asked
+# for and the remote runs a non-interactive shell reading our script.
+# It must run both commands and then exit on our EOF.
+sout=$(printf 'echo line-one\necho line-two\nexit\n' | ./MacOSX/arm64/bin/emu-g -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" 2>/dev/null) || true
+if echo "$sout" | grep -q "line-one" && echo "$sout" | grep -q "line-two"; then
+	echo 'SSHLOCAL: ssh(1) interactive shell: PASS'
+else
+	echo "SSHLOCAL: ssh(1) interactive shell FAILED: [$sout]"; rc=1
+fi
+
 if [ "$rc" -eq 0 ]; then echo 'SSHLOCAL: ALL PASS'; else echo 'SSHLOCAL: FAILURE'; cat "$tmp/sshd.log"; fi
 exit $rc

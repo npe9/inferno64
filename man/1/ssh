@@ -21,7 +21,9 @@ ssh \- run a command on a remote host over SSH-2
 .I user@
 ]\c
 .I host
+[
 .I command ...
+]
 .SH DESCRIPTION
 .B Ssh
 runs
@@ -39,8 +41,27 @@ and the
 cipher. It authenticates by public key, opens a session channel, execs
 the command, streams its standard output and standard error to the
 corresponding local file descriptors, and exits with the remote exit
-status. It is non-interactive \(em there is always a command; an
-interactive shell (which needs a pseudo-terminal) is not provided.
+status.
+.PP
+With no
+.IR command ,
+.B ssh
+starts an interactive shell instead: it requests a pseudo-terminal
+when
+.B $TERM
+is set (Plan 9's heuristic), sets the local console to raw mode (\c
+.IR cons (3)'s
+.BR /dev/consctl ),
+and shuttles bytes between the console and the remote shell. It does no
+terminal emulation of its own \(em run it inside
+.IR vt (1),
+which interprets the escape sequences and draws, exactly as
+.IR telnet (1)
+does. Window size is taken from
+.B $LINES
+and
+.B $COLS
+(default 24\(mu80).
 .PP
 .I Host
 may be an IPv4 literal or a name;
@@ -109,7 +130,9 @@ ssh: re-run with -t sha256=A1b2... to accept it, or -n to accept unverified
 .SH BUGS
 Public-key authentication only, from a file (no
 .IR factotum (4)
-key storage yet), and RSA host keys only. No interactive shell, no
-port forwarding, no
+key storage yet), and RSA host keys only. No port forwarding, no
 .IR scp .
-The whole of the command's output is buffered before being written.
+For a
+.I command
+the whole output is buffered before being written; the interactive
+shell streams but does not relay a window-size change mid-session.

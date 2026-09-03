@@ -8,6 +8,8 @@ implement Command;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+include "string.m";
+	str: String;
 include "arg.m";
 include "keyring.m";
 include "security.m";
@@ -33,6 +35,7 @@ usage()
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
+	str = load String String->PATH;
 	stderr = sys->fildes(2);
 
 	keyfile := "";
@@ -57,11 +60,9 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	dest := hd argv;
 	argv = tl argv;
-	if(argv == nil){
-		sys->fprint(stderr, "ssh: interactive shell is not supported; give a command to run\n");
-		raise "fail:nocmd";
-	}
-	cmd := join(argv);
+	cmd := "";
+	if(argv != nil)
+		cmd = join(argv);
 
 	user := "";
 	(hasat, ul) := splitat(dest);
@@ -112,17 +113,81 @@ init(nil: ref Draw->Context, argv: list of string)
 	if((lerr := ssh->login(c1, user, key, "")) != nil)
 		fatal("login: " + lerr);
 
-	(res, rerr) := ssh->run(c1, cmd);
-	if(rerr != nil)
-		fatal("run: " + rerr);
-	if(len res.stdout > 0)
-		sys->write(sys->fildes(1), res.stdout, len res.stdout);
-	if(len res.stderr > 0)
-		sys->write(stderr, res.stderr, len res.stderr);
-	c1.close();
+	if(cmd != ""){
+		(res, rerr) := ssh->run(c1, cmd);
+		if(rerr != nil)
+			fatal("run: " + rerr);
+		if(len res.stdout > 0)
+			sys->write(sys->fildes(1), res.stdout, len res.stdout);
+		if(len res.stderr > 0)
+			sys->write(stderr, res.stderr, len res.stderr);
+		c1.close();
+		if(res.status != 0)
+			raise sys->sprint("fail:exit %d", res.status);
+		exit;
+	}
 
-	if(res.status != 0)
-		raise sys->sprint("fail:exit %d", res.status);
+	# no command: an interactive shell. Following the Plan 9 model
+	# (telnet(1)/vt(1)), we do no terminal emulation ourselves - we set
+	# the local console to raw mode and shuttle bytes; vt(1) is what
+	# interprets escapes and draws. Whether to ask the remote for a
+	# pseudo-terminal follows Plan 9's heuristic: a pty iff $TERM is set.
+	term := getenv("TERM");
+	usepty := term != "";
+	cols := envint("COLS", 80);
+	rows := envint("LINES", 24);
+	if(usepty)
+		raw(1);
+	(status, serr) := ssh->shell(c1, usepty, term, cols, rows,
+		sys->fildes(0), sys->fildes(1), stderr);
+	if(usepty)
+		raw(0);
+	c1.close();
+	if(serr != nil)
+		fatal(serr);
+	if(status != 0)
+		raise sys->sprint("fail:exit %d", status);
+}
+
+# set or clear the local console's raw mode via /dev/consctl
+ccfd: ref Sys->FD;
+raw(on: int)
+{
+	if(ccfd == nil)
+		ccfd = sys->open("/dev/consctl", Sys->OWRITE);
+	if(ccfd == nil)
+		return;			# no console (e.g. piped): nothing to do
+	if(on)
+		sys->fprint(ccfd, "rawon");
+	else
+		sys->fprint(ccfd, "rawoff");
+}
+
+# read an environment variable from /env (nil/"" if absent)
+getenv(name: string): string
+{
+	fd := sys->open("/env/" + name, Sys->OREAD);
+	if(fd == nil)
+		return "";
+	buf := array[256] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0)
+		return "";
+	# env strings may carry a trailing NUL
+	if(buf[n-1] == byte 0)
+		n--;
+	return string buf[0:n];
+}
+
+envint(name: string, def: int): int
+{
+	s := getenv(name);
+	if(s == "")
+		return def;
+	(v, nil) := str->toint(s, 10);
+	if(v <= 0)
+		return def;
+	return v;
 }
 
 # resolve dest to an IPv4 literal, via DoH unless it already is one

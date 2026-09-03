@@ -12,6 +12,7 @@ SYSMODULES=\
 	pkcs.m\
 	security.m\
 	ssh.m\
+	string.m\
 	sys.m\
 
 DISBIN=$ROOT/dis/ssh

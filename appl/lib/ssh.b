@@ -986,3 +986,171 @@ concat(a, b: array of byte): array of byte
 	r[len a:] = b;
 	return r;
 }
+
+# ---- interactive session (Plan 9 style: just move bytes) -----------
+
+# open a session channel on c and return the server's channel number,
+# or (-1, err).
+opensession(c: ref Conn): (int, string)
+{
+	op := nbuf();
+	pbyte(op, Ssh->MSG_CHANNEL_OPEN);
+	pstrs(op, "session");
+	pu32(op, 0);
+	pu32(op, Localwin);
+	pu32(op, Localpkt);
+	if((err := c.writepkt(bytes(op))) != nil)
+		return (-1, err);
+	for(;;){
+		(pkt, e) := c.readpkt();
+		if(e != nil)
+			return (-1, e);
+		if(len pkt == 0)
+			continue;
+		case int pkt[0] {
+		Ssh->MSG_CHANNEL_OPEN_CONFIRMATION =>
+			return (getu32(pkt, 5), nil);
+		Ssh->MSG_CHANNEL_OPEN_FAILURE =>
+			return (-1, "ssh: channel open failed");
+		Ssh->MSG_DISCONNECT =>
+			return (-1, "ssh: disconnected opening channel");
+		* =>
+			;
+		}
+	}
+}
+
+shell(c: ref Conn, usepty: int, term: string, cols, rows: int,
+	in, out, err: ref Sys->FD): (int, string)
+{
+	(schan, serr) := opensession(c);
+	if(serr != nil)
+		return (0, serr);
+
+	if(usepty){
+		# pty-req: term, cols, rows, xpix=0, ypix=0, empty modes
+		pr := nbuf();
+		pbyte(pr, Ssh->MSG_CHANNEL_REQUEST);
+		pu32(pr, schan);
+		pstrs(pr, "pty-req");
+		pbyte(pr, 0);			# want-reply
+		pstrs(pr, term);
+		pu32(pr, cols);
+		pu32(pr, rows);
+		pu32(pr, 0);
+		pu32(pr, 0);
+		pstrs(pr, "");			# empty terminal modes
+		if((e := c.writepkt(bytes(pr))) != nil)
+			return (0, e);
+	}
+
+	# start the shell
+	sr := nbuf();
+	pbyte(sr, Ssh->MSG_CHANNEL_REQUEST);
+	pu32(sr, schan);
+	pstrs(sr, "shell");
+	pbyte(sr, 0);
+	if((e := c.writepkt(bytes(sr))) != nil)
+		return (0, e);
+
+	# one write-lock (the two directions of the transport are
+	# independent, but both pumps call writepkt, which advances the
+	# send sequence and cipher state), a status/done channel, and the
+	# user pump's pid so we can unblock it from a stdin read once the
+	# remote closes.
+	wlock := chan[1] of int;
+	wlock <-= 1;
+	statusch := chan[1] of int;
+	upidch := chan of int;
+
+	spawn frompeer(c, schan, wlock, out, err, statusch);
+	spawn touser(c, schan, wlock, in, upidch);
+	upid := <-upidch;
+
+	status := <-statusch;		# blocks until the remote channel closes
+	kill(upid);			# unblock the stdin reader
+	return (status, nil);
+}
+
+# copy local input to the channel; on EOF send CHANNEL_EOF and stop
+# (without tearing the session down - the remote may still be writing).
+touser(c: ref Conn, schan: int, wlock: chan of int, in: ref Sys->FD, upidch: chan of int)
+{
+	upidch <-= sys->pctl(0, nil);
+	buf := array[8192] of byte;
+	for(;;){
+		n := sys->read(in, buf, len buf);
+		if(n <= 0)
+			break;
+		<-wlock;
+		d := nbuf();
+		pbyte(d, Ssh->MSG_CHANNEL_DATA);
+		pu32(d, schan);
+		pstr(d, buf[0:n]);
+		c.writepkt(bytes(d));
+		wlock <-= 1;
+	}
+	<-wlock;
+	eofm := nbuf();
+	pbyte(eofm, Ssh->MSG_CHANNEL_EOF);
+	pu32(eofm, schan);
+	c.writepkt(bytes(eofm));
+	wlock <-= 1;
+}
+
+# copy channel output to out/err until the channel closes; report the
+# remote exit status.
+frompeer(c: ref Conn, schan: int, wlock: chan of int, out, err: ref Sys->FD, statusch: chan of int)
+{
+	status := 0;
+	for(;;){
+		(pkt, e) := c.readpkt();
+		if(e != nil)
+			break;
+		if(len pkt == 0)
+			continue;
+		done := 0;
+		case int pkt[0] {
+		Ssh->MSG_CHANNEL_DATA =>
+			(d, nil) := getstr(pkt, 5);
+			if(d != nil)
+				sys->write(out, d, len d);
+		Ssh->MSG_CHANNEL_EXTENDED_DATA =>
+			code := getu32(pkt, 5);
+			(d, nil) := getstr(pkt, 9);
+			if(code == 1 && d != nil)
+				sys->write(err, d, len d);
+		Ssh->MSG_CHANNEL_REQUEST =>
+			(rt, o) := getstr(pkt, 5);
+			if(o >= 0 && o < len pkt){
+				wr := int pkt[o];
+				if(string rt == "exit-status")
+					status = getu32(pkt, o+1);
+				if(wr != 0){
+					<-wlock;
+					rp := nbuf();
+					pbyte(rp, Ssh->MSG_CHANNEL_SUCCESS);
+					pu32(rp, schan);
+					c.writepkt(bytes(rp));
+					wlock <-= 1;
+				}
+			}
+		Ssh->MSG_CHANNEL_CLOSE =>
+			done = 1;
+		Ssh->MSG_DISCONNECT =>
+			done = 1;
+		* =>
+			;
+		}
+		if(done)
+			break;
+	}
+	statusch <-= status;
+}
+
+kill(pid: int)
+{
+	fd := sys->open("/prog/" + string pid + "/ctl", Sys->OWRITE);
+	if(fd != nil)
+		sys->write(fd, array of byte "kill", 4);
+}

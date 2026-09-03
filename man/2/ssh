@@ -18,6 +18,8 @@ rsakey_pem: fn(pem: string): (ref Authkey, string);
 login:      fn(c: ref Conn, user: string, key: ref Authkey,
                 password: string): string;
 run:        fn(c: ref Conn, cmd: string): (ref Result, string);
+shell:      fn(c: ref Conn, usepty: int, term: string, cols, rows: int,
+                in, out, err: ref Sys->FD): (int, string);
 
 Conn: adt {
         fd:        ref Sys->FD;
@@ -172,6 +174,34 @@ and
 hold the two data streams and whose
 .B status
 is the remote exit status.
+.PP
+.B Shell
+opens an interactive session: it optionally requests a pseudo-terminal
+(when
+.I usepty
+is set, with terminal type
+.I term
+and window size
+.IR cols x rows ),
+starts the remote shell, and then shuttles bytes \(em following the
+Plan 9 model (\c
+.IR telnet (1)),
+where the client does no terminal emulation of its own and
+.IR vt (1)
+is what interprets escape sequences and draws. Two processes run: one
+copies
+.I in
+to the channel, the other copies channel output to
+.I out
+and standard-error data to
+.IR err .
+It returns the remote exit status when the channel closes. Local raw
+mode (\c
+.IR cons (3)'s
+.BR /dev/consctl )
+is the caller's responsibility \(em
+.IR ssh (1)
+sets it.
 .SH SOURCE
 .B /appl/lib/ssh.b
 .SH SEE ALSO
@@ -188,14 +218,13 @@ or
 cannot be reached, by design.
 .PP
 .B Run
-is one-shot and non-interactive: it advertises a large receive window
-and never sends channel data, so it suits commands whose output is
-bounded, not an interactive shell (which needs a pty and the two-way
-data pump, driven over
-.B writepkt
-/
-.BR readpkt ,
-and is not packaged here). Key re-exchange during a long session is
-not implemented. Only file-based RSA keys are handled;
+is one-shot: it advertises a large receive window and never sends
+channel data, so it suits commands whose output is bounded.
+.B Shell
+handles the interactive case, but relies on
+.IR vt (1)
+for terminal emulation and does not itself relay window-size changes
+mid-session. Key re-exchange during a long session is not implemented.
+Only file-based RSA keys are handled;
 .IR factotum (4)
 integration is separate.

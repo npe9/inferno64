@@ -122,4 +122,16 @@ Ssh: module
 	# channel, execs cmd, and collects its output to end of channel.
 	# Returns the Result or (nil, err).
 	run:	fn(c: ref Conn, cmd: string): (ref Result, string);
+
+	# open an interactive session: request a pseudo-terminal (when
+	# usepty is set, with the given term type and window size), start
+	# the remote shell, and shuttle bytes between the local fds and the
+	# SSH channel - the Plan 9 model, where the terminal emulation is
+	# vt(1)'s job and this only moves bytes (cf. telnet(1)). Two
+	# processes run: one copies `in` to the channel, one copies channel
+	# output to `out` and `err`. Returns the remote exit status when the
+	# channel closes. The caller sets the local terminal's raw mode
+	# (/dev/consctl) around this, as ssh(1) does.
+	shell:	fn(c: ref Conn, usepty: int, term: string, cols, rows: int,
+			in, out, err: ref Sys->FD): (int, string);
 };
