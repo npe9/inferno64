@@ -82,6 +82,7 @@ link
 	netdevmedium
 	ether8169	pci ethermii
 	etherigbe	pci ethermii
+	etheri225	pci ethermii
 	ether8139	pci
 	ether82563	pci
 	etherx550	pci

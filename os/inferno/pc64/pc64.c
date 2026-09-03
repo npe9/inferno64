@@ -76,6 +76,7 @@ extern void ethermediumlink(void);
 extern void netdevmediumlink(void);
 extern void ether8169link(void);
 extern void etherigbelink(void);
+extern void etheri225link(void);
 extern void ether8139link(void);
 extern void ether82563link(void);
 extern void etherx550link(void);
@@ -91,6 +92,7 @@ void links(void){
 	netdevmediumlink();
 	ether8169link();
 	etherigbelink();
+	etheri225link();
 	ether8139link();
 	ether82563link();
 	etherx550link();

@@ -18,6 +18,7 @@
 #include "../port/netif.h"
 #include "../port/etherif.h"
 #include "../port/ethermii.h"
+static long rtl8169ifstatinf(Ether*, void*, long, ulong);
 
 enum {					/* registers */
 	Idr0		= 0x00,		/* MAC address */
@@ -61,7 +62,8 @@ enum {					/* registers */
 };
 
 enum {					/* Dtccr */
-	Cmd		= 0x00000008,	/* Command */
+	Reset		= 0x00000001,	/* Reset */
+	Dump		= 0x00000008,	/* Dump */
 };
 
 enum {					/* Cr */
@@ -120,11 +122,13 @@ enum {					/* Tcr */
 	Macv28		= 0x2c000000,	/* RTL8111/8168B */
 	Macv29		= 0x40800000,	/* RTL8101/8102E */
 	Macv30		= 0x24000000,	/* RTL8101E? (untested) */
+	Macv38		= 0x44000000,	/* RTL8402 */
 	Macv39		= 0x44800000,	/* RTL8106E */
 	Macv40		= 0x4c000000,	/* RTL8168G */
 	Macv42		= 0x50800000,	/* RTL8168GU */
 	Macv44		= 0x5c800000,	/* RTL8411B */
-	Macv45		= 0x54000000,	/* RTL8111HN */
+	Macv45		= 0x54000000,	/* RTL8111HN/8168H */
+	Macv51		= 0x50000000,	/* RTL8168EP */
 
 	Ifg0		= 0x01000000,	/* Interframe Gap 0 */
 	Ifg1		= 0x02000000,	/* Interframe Gap 1 */
@@ -260,6 +264,7 @@ struct Dtcc {
 enum {						/* Variants */
 	Rtl8100e	= (0x8136<<16)|0x10EC,	/* RTL810[01]E: pci -e */
 	Rtl8169c	= (0x0116<<16)|0x16EC,	/* RTL8169C+ (USR997902) */
+	Rtl8111b	= (0x8161<<16)|0x10EC,	/* RTL8111/8168/8411: pci-e */
 	Rtl8169sc	= (0x8167<<16)|0x10EC,	/* RTL8169SC */
 	Rtl8168b	= (0x8168<<16)|0x10EC,	/* RTL8168B: pci-e */
 	Rtl8169		= (0x8169<<16)|0x10EC,	/* RTL8169 */
@@ -302,6 +307,8 @@ typedef struct Ctlr {
 	int	rdh;			/* head - producer index (NIC) */
 	int	rdt;			/* tail - consumer index (host) */
 	int	nrq;
+
+	Bpool	pool;
 
 	int	tcr;			/* transmit configuration register */
 	int	rcr;			/* receive configuration register */
@@ -396,6 +403,8 @@ rtl8169mii(Ether *edev)
 	ctlr->mii->mir = rtl8169miimir;
 	ctlr->mii->miw = rtl8169miimiw;
 	ctlr->mii->ctlr = ctlr;
+	ctlr->mii->name = edev->name;
+	addmiibus(ctlr->mii);
 
 	/*
 	 * PHY wakeup
@@ -420,20 +429,18 @@ rtl8169mii(Ether *edev)
 		csr8w(ctlr, Ldps, 1);				/* magic */
 		rtl8169miimiw(ctlr->mii, 1, 0x0B, 0x0000);	/* magic */
 	}
-	
-	if(mii(ctlr->mii, (1<<1)) == 0 || (phy = ctlr->mii->curphy) == nil){
+
+	if(mii(ctlr->mii, (1<<1)) == 0 || (phy = ctlr->mii->curphy) == nil)
 		error("no phy");
-		return;
-	}
 
 	print("#l%d: rtl8169: oui %#ux phyno %d, macv = %#8.8ux phyv = %#4.4ux\n",
 		edev->ctlrno, phy->oui, phy->phyno, ctlr->macv, ctlr->phyv);
 
-	miireset(ctlr->mii);
+	miireset(phy);
 
 	microdelay(100);
 
-	miiane(ctlr->mii, ~0, ~0, ~0);
+	miiane(phy, ~0, ~0, ~0);
 }
 
 static void
@@ -516,33 +523,31 @@ rtl8169multicast(void* ether, uchar *eaddr, int add)
 	iunlock(ctlr);
 }
 
-static long
-rtl8169ifstat(Ether* edev, void* a, long n, ulong offset)
+static char*
+rtl8169ifstat(void *arg, char *p, char *e)
 {
-	char *p;
+	Ether *edev = arg;
+	u64int pa;
 	Ctlr *ctlr;
 	Dtcc *dtcc;
-	int i, l, r, timeo;
-
-	p = smalloc(READSTR);
+	int i, r, timeo;
 
 	ctlr = edev->ctlr;
 	qlock(&ctlr->slock);
-
 	if(waserror()){
 		qunlock(&ctlr->slock);
-		free(p);
 		nexterror();
 	}
 
-	csr32w(ctlr, Dtccr+4, 0);
-	csr32w(ctlr, Dtccr, PCIWADDR(ctlr->dtcc)|Cmd);
+	pa = PCIWADDR(ctlr->dtcc)|Dump;
+	csr32w(ctlr, Dtccr+4, pa >> 32);
+	csr32w(ctlr, Dtccr, pa);
 	for(timeo = 0; timeo < 1000; timeo++){
-		if(!(csr32r(ctlr, Dtccr) & Cmd))
+		if(!(csr32r(ctlr, Dtccr) & (Reset|Dump)))
 			break;
 		delay(1);
 	}
-	if(csr32r(ctlr, Dtccr) & Cmd)
+	if(csr32r(ctlr, Dtccr) & (Reset|Dump))
 		error(Eio);
 	dtcc = ctlr->dtcc;
 
@@ -552,61 +557,57 @@ rtl8169ifstat(Ether* edev, void* a, long n, ulong offset)
 	edev->buffs = dtcc->misspkt;
 	edev->overflows = ctlr->txdu+ctlr->rdu;
 
-	if(n == 0){
+	if(p >= e){
 		qunlock(&ctlr->slock);
 		poperror();
-		free(p);
-		return 0;
+		return p;
 	}
 
-	l = snprint(p, READSTR, "TxOk: %llud\n", dtcc->txok);
-	l += snprint(p+l, READSTR-l, "RxOk: %llud\n", dtcc->rxok);
-	l += snprint(p+l, READSTR-l, "TxEr: %llud\n", dtcc->txer);
-	l += snprint(p+l, READSTR-l, "RxEr: %ud\n", dtcc->rxer);
-	l += snprint(p+l, READSTR-l, "MissPkt: %ud\n", dtcc->misspkt);
-	l += snprint(p+l, READSTR-l, "FAE: %ud\n", dtcc->fae);
-	l += snprint(p+l, READSTR-l, "Tx1Col: %ud\n", dtcc->tx1col);
-	l += snprint(p+l, READSTR-l, "TxMCol: %ud\n", dtcc->txmcol);
-	l += snprint(p+l, READSTR-l, "RxOkPh: %llud\n", dtcc->rxokph);
-	l += snprint(p+l, READSTR-l, "RxOkBrd: %llud\n", dtcc->rxokbrd);
-	l += snprint(p+l, READSTR-l, "RxOkMu: %ud\n", dtcc->rxokmu);
-	l += snprint(p+l, READSTR-l, "TxAbt: %ud\n", dtcc->txabt);
-	l += snprint(p+l, READSTR-l, "TxUndrn: %ud\n", dtcc->txundrn);
+	p = seprint(p, e, "TxOk: %llud\n", dtcc->txok);
+	p = seprint(p, e, "RxOk: %llud\n", dtcc->rxok);
+	p = seprint(p, e, "TxEr: %llud\n", dtcc->txer);
+	p = seprint(p, e, "RxEr: %ud\n", dtcc->rxer);
+	p = seprint(p, e, "MissPkt: %ud\n", dtcc->misspkt);
+	p = seprint(p, e, "FAE: %ud\n", dtcc->fae);
+	p = seprint(p, e, "Tx1Col: %ud\n", dtcc->tx1col);
+	p = seprint(p, e, "TxMCol: %ud\n", dtcc->txmcol);
+	p = seprint(p, e, "RxOkPh: %llud\n", dtcc->rxokph);
+	p = seprint(p, e, "RxOkBrd: %llud\n", dtcc->rxokbrd);
+	p = seprint(p, e, "RxOkMu: %ud\n", dtcc->rxokmu);
+	p = seprint(p, e, "TxAbt: %ud\n", dtcc->txabt);
+	p = seprint(p, e, "TxUndrn: %ud\n", dtcc->txundrn);
 
-	l += snprint(p+l, READSTR-l, "serr: %ud\n", ctlr->serr);
-	l += snprint(p+l, READSTR-l, "fovw: %ud\n", ctlr->fovw);
+	p = seprint(p, e, "serr: %ud\n", ctlr->serr);
+	p = seprint(p, e, "fovw: %ud\n", ctlr->fovw);
 
-	l += snprint(p+l, READSTR-l, "txdu: %ud\n", ctlr->txdu);
-	l += snprint(p+l, READSTR-l, "tcpf: %ud\n", ctlr->tcpf);
-	l += snprint(p+l, READSTR-l, "udpf: %ud\n", ctlr->udpf);
-	l += snprint(p+l, READSTR-l, "ipf: %ud\n", ctlr->ipf);
-	l += snprint(p+l, READSTR-l, "fovf: %ud\n", ctlr->fovf);
-	l += snprint(p+l, READSTR-l, "rer: %ud\n", ctlr->rer);
-	l += snprint(p+l, READSTR-l, "rdu: %ud\n", ctlr->rdu);
-	l += snprint(p+l, READSTR-l, "punlc: %ud\n", ctlr->punlc);
+	p = seprint(p, e, "txdu: %ud\n", ctlr->txdu);
+	p = seprint(p, e, "tcpf: %ud\n", ctlr->tcpf);
+	p = seprint(p, e, "udpf: %ud\n", ctlr->udpf);
+	p = seprint(p, e, "ipf: %ud\n", ctlr->ipf);
+	p = seprint(p, e, "fovf: %ud\n", ctlr->fovf);
+	p = seprint(p, e, "rer: %ud\n", ctlr->rer);
+	p = seprint(p, e, "rdu: %ud\n", ctlr->rdu);
+	p = seprint(p, e, "punlc: %ud\n", ctlr->punlc);
 
-	l += snprint(p+l, READSTR-l, "tcr: %#8.8ux\n", ctlr->tcr);
-	l += snprint(p+l, READSTR-l, "rcr: %#8.8ux\n", ctlr->rcr);
-	l += snprint(p+l, READSTR-l, "multicast: %ud\n", ctlr->mcast);
+	p = seprint(p, e, "tcr: %#8.8ux\n", ctlr->tcr);
+	p = seprint(p, e, "rcr: %#8.8ux\n", ctlr->rcr);
+	p = seprint(p, e, "multicast: %ud\n", ctlr->mcast);
 
 	if(ctlr->mii != nil && ctlr->mii->curphy != nil){
-		l += snprint(p+l, READSTR-l, "phy:   ");
+		p = seprint(p, e, "phy:   ");
 		for(i = 0; i < NMiiPhyr; i++){
 			if(i && ((i & 0x07) == 0))
-				l += snprint(p+l, READSTR-l, "\n       ");
-			r = miimir(ctlr->mii, i);
-			l += snprint(p+l, READSTR-l, " %4.4ux", r);
+				p = seprint(p, e, "\n       ");
+			r = miimir(ctlr->mii->curphy, i);
+			p = seprint(p, e, " %4.4ux", r);
 		}
-		snprint(p+l, READSTR-l, "\n");
+		p = seprint(p, e, "\n");
 	}
-
-	n = readstr(offset, a, n, p);
 
 	qunlock(&ctlr->slock);
 	poperror();
-	free(p);
 
-	return n;
+	return p;
 }
 
 static void
@@ -652,11 +653,9 @@ rtl8169replenish(Ctlr* ctlr)
 
 	x = ctlr->rdt;
 	while(NEXT(x, ctlr->nrd) != ctlr->rdh){
-		bp = iallocb(Mps);
-		if(bp == nil){
-			iprint("rtl8169: no available buffers\n");
+		bp = iallocbp(&ctlr->pool);
+		if(bp == nil)
 			break;
-		}
 		ctlr->rb[x] = bp;
 		ctlr->nrq++;
 		pa = PCIWADDR(bp->rp);
@@ -673,7 +672,7 @@ rtl8169replenish(Ctlr* ctlr)
 static void
 rtl8169init(Ether* edev)
 {
-	int i;
+	int i, timeo;
 	u32int r;
 	Block *bp;
 	Ctlr *ctlr;
@@ -704,7 +703,10 @@ rtl8169init(Ether* edev)
 			ctlr->rb[i] = nil;
 			freeb(bp);
 		}
-
+	if(ctlr->pool.size == 0){
+		ctlr->pool.size = Mps;
+		growbp(&ctlr->pool, ctlr->nrd*4);
+	}
 	rtl8169replenish(ctlr);
 
 	cplusc = csr16r(ctlr, Cplusc);
@@ -712,7 +714,10 @@ rtl8169init(Ether* edev)
 	cplusc |= Txenb|Mulrw;
 	switch(ctlr->macv){
 	case Macv40:
+	case Macv42:
 	case Macv44:
+	case Macv45:
+	case Macv51:
 		cplusc |= Macstatdis;
 		break;
 	default:
@@ -729,13 +734,40 @@ rtl8169init(Ether* edev)
 	csr32w(ctlr, Rdsar+4, pa>>32);
 	csr32w(ctlr, Rdsar, pa);
 
-	csr8w(ctlr, Cr, Te|Re);
+	pa = PCIWADDR(ctlr->dtcc)|Reset;
+	csr32w(ctlr, Dtccr+4, pa >> 32);
+	csr32w(ctlr, Dtccr, pa);
+	for(timeo = 0; timeo < 1000; timeo++){
+		if(!(csr32r(ctlr, Dtccr) & (Reset|Dump)))
+			break;
+		delay(1);
+	}
+	if(csr32r(ctlr, Dtccr) & (Reset|Dump)){
+		iunlock(ctlr);
+		error("reset failed");
+	}
+
+	/* pre-RTL8168G controllers need TX/RX before configuration */
+	switch(ctlr->macv){
+	case Macv40:
+	case Macv42:
+	case Macv44:
+	case Macv45:
+	case Macv51:
+		/* RXDV gating */
+		i = csr32r(ctlr, 0x00F0);
+		csr32w(ctlr, 0x00F0, i&~0x00080000);
+		break;
+	default:
+		csr8w(ctlr, Cr, Te|Re);
+	}
 
 	csr32w(ctlr, Tcr, Ifg1|Ifg0|Mtxdmaunlimited);
 	ctlr->tcr = csr32r(ctlr, Tcr);
 	switch(ctlr->macv){
 	case Macv42:
 	case Macv45:
+	case Macv51:
 		ctlr->rcr = Rxfth256|Mrxdmaunlimited|Ab|Am|Apm;
 		break;
 	default:
@@ -762,6 +794,16 @@ rtl8169init(Ether* edev)
 
 	csr32w(ctlr, Mpc, 0);
 
+	switch(ctlr->macv){
+	case Macv40:
+	case Macv42:
+	case Macv44:
+	case Macv45:
+	case Macv51:
+		csr8w(ctlr, Cr, Te|Re);
+	default:
+		break;
+	}
 	iunlock(ctlr);
 }
 
@@ -852,29 +894,26 @@ static void
 rtl8169link(Ether* edev)
 {
 	uint r;
-	int limit;
 	Ctlr *ctlr;
 
 	ctlr = edev->ctlr;
 
-	r = csr8r(ctlr, Phystatus);
 	/*
 	 * Maybe the link changed - do we care very much?
 	 * Could stall transmits if no link, maybe?
 	 */
-	edev->link = (r & Linksts) != 0;
-
-	limit = 256*1024;
-	if(r & Speed10){
-		edev->mbps = 10;
-		limit = 65*1024;
-	} else if(r & Speed100)
-		edev->mbps = 100;
-	else if(r & Speed1000)
-		edev->mbps = 1000;
-
-	if(edev->oq != nil)
-		qsetlimit(edev->oq, limit);
+	r = csr8r(ctlr, Phystatus);
+	if(r & Linksts){
+		if(r & Speed10)
+			ethersetspeed(edev, 10);
+		else if(r & Speed100)
+			ethersetspeed(edev, 100);
+		else if(r & Speed1000)
+			ethersetspeed(edev, 1000);
+		ethersetlink(edev, 1);
+	} else {
+		ethersetlink(edev, 0);
+	}
 }
 
 static void
@@ -1089,11 +1128,13 @@ vetmacv(Ctlr *ctlr, uint *macv)
 	case Macv28:
 	case Macv29:
 	case Macv30:
+	case Macv38:
 	case Macv39:
 	case Macv40:
 	case Macv42:
 	case Macv44:
 	case Macv45:
+	case Macv51:
 		break;
 	}
 	return 0;
@@ -1118,6 +1159,7 @@ rtl8169pci(void)
 			continue;
 		case Rtl8100e:			/* RTL810[01]E ? */
 		case Rtl8168b:			/* RTL8168B */
+		case Rtl8111b:			/* RTL8111/8168/8411 */
 			pcie = 1;
 			break;
 		case Rtl8169c:			/* RTL8169C */
@@ -1224,7 +1266,7 @@ rtl8169pnp(Ether* edev)
 
 	edev->attach = rtl8169attach;
 	edev->transmit = rtl8169transmit;
-	edev->ifstat = rtl8169ifstat;
+	edev->ifstat = rtl8169ifstatinf;
 	edev->shutdown = rtl8169shutdown;
 
 	edev->arg = edev;
@@ -1240,4 +1282,14 @@ void
 ether8169link(void)
 {
 	addethercard("rtl8169", rtl8169pnp);
+}
+
+/*
+ * 9front-shaped ifstat above, adapted to this kernel's Ether.ifstat
+ * through ether9ifstat() in ../port/devether.c.
+ */
+static long
+rtl8169ifstatinf(Ether *edev, void *a, long n, ulong offset)
+{
+	return ether9ifstat(edev, a, n, offset, rtl8169ifstat);
 }

@@ -297,12 +297,35 @@ as the testbed is the measure of this.
 .PP
 .B "6.  Address-space groups, and a checkpoint that carries everything."
 Slide 15: processes that share an address space migrate as a group.
-A container carries one process, so there is no group; lifting that,
-then checkpointing the group, its packets, its pages and its kernel
-channels (none of which a checkpoint carries), and carrying a checkpoint
-that does not fit one ethernet frame, are the pieces.  The microkernel
-makes this reachable now; it was recorded as unreachable when the only
-kernel was Plan 9's.
+The blocker here is two things, not one, and it is worth stating them
+apart.  For the group as a scheduling unit, the scheduler is already
+ready: it bills whichever process runs to that process's container
+through the
+.CW osprey
+back-pointer every process carries, and enqueues each task under the
+container's one reservation, so several processes sharing a container's
+address space already run under one budget the moment there are several.
+What is missing is that nothing makes a second one: there is no
+user-level
+.CW rfork
+on the microkernel
+.CW ( sysproc.c
+is cut), so a group is one the kernel makes \- a second
+.CW kproc
+bound to a container and handed its slice \- not a program forking.  And
+a container has one select rendezvous and one arm area, so at most one
+of a group may select; the double sleep that the uart task hit is what
+two selecting members would be.
+.PP
+For migration, the blocker is different again: migration here is
+checkpoint-and-restart, not resume \- the container comes back having to
+open what it had open again, no register or stack state crosses \- so
+there is no running group to carry across a wire, only the container's
+state, which already crosses.  Resuming a running process, not just its
+container's state, is the piece that would make slide 15's
+.I migration
+real, and it is not begun.  What the group-scheduling half needs is
+below; the resume half stays open.
 .PP
 .B "7.  The stack in user space, beyond a demonstration."
 netsrv answers ARP for one address and echo.  The talk was "working on a

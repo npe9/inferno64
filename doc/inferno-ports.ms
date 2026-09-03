@@ -18391,3 +18391,87 @@ and goes back to its loop.  This surfaced only after the
 .CW rwrite()
 fix above: before it, a process whose write failed died on the spot
 instead of living on to be killed at group exit.
+.NH 2
+The arm64 constant bug, located and fixed
+.PP
+The narrowing was in neither
+.CW gmove()
+nor the peephole.  Dumping the instruction stream before and after
+each pass of
+.CW regopt()
+showed the constant leaving code generation as a proper
+.CW MOV
+and then being hoisted into a register variable by the allocator,
+which types every constant it keeps in a register as
+.CW TLONG
+.CW ( mkvar()
+in
+.CW utils/7c/reg.c )
+and so loads it with the
+.CW MOVW
+that
+.CW addmove()
+emits for a long.  A constant that does not fit a signed 32-bit word
+is now typed
+.CW TVLONG
+there, and the probe's linked code reads
+.CW "MOVZ X0, #0x20, LSL #32"
+for
+.CW 0x2000000000
+and a 64-bit literal-pool load for
+.CW 0xffffffff ,
+where before it read a 32-bit
+.CW MOVZ
+with an illegal shift and a sign-extending load.  With
+.CW utils/7c/swt.c 's
+D_DCONST test from the previous section, that closes arm64's wide
+constants; every arm64 library and the kernel were rebuilt with the
+corrected compiler.  Both fixes are absent from the kencc-cross
+original, which is byte-identical to the tree's 7c before them.
+.NH 2
+Item 6, done: 9front's MII layer, and with it I225
+.PP
+.CW os/inferno/port/ethermii.c
+and
+.CW .h
+are 9front's now (the
+.CW MiiPhy -based
+calls,
+.CW addmiibus() ,
+clause-45 access), and so are the drivers written to them:
+.CW os/inferno/pc/ether8169.c ,
+.CW ether82563.c ,
+.CW etherigbe.c
+and the new
+.CW etheri225.c ,
+each with the same two shims as before (the fourth
+.CW kproc()
+argument, the
+.CW ifstat
+wrapper).  Inferno's own versions of the first three are gone.
+Verified one NIC per boot on
+.CW q35 :
+.CW e1000
+through the new
+.CW etherigbe
+(2 of 2 leases),
+.CW e1000e
+through the new
+.CW ether82563
+(PHY found, "link up: 1000Mbps", lease).  Not verified:
+.CW igb ,
+QEMU's 82576, attaches and finds its PHY but the driver's link proc
+reads the 82576's link register and never sees link, and DHCP gets no
+answer; whether that is the driver or QEMU's PHY model, and whether
+frames would flow with the link flag ignored, is not chased.  (The
+previous driver had only ever been seen to attach to igb, never to
+get a lease.)
+.CW ether8169
+and
+.CW etheri225
+have no QEMU device and are compile-and-link only.
+.PP
+arm64, rebuilt from nothing with the corrected
+.CW 7c ,
+still stops where it did, at the first module load: the wide
+constants were not what held it.

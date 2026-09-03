@@ -566,7 +566,17 @@ mkvar(Adr *a, int docon)
 	if(s == S) {
 		if(t != D_CONST || !docon || a->reg != NREG)
 			goto none;
+		/*
+		 * A constant kept in a register is typed here, and the
+		 * type picks the width of the move addmove() loads it
+		 * with: TLONG is a MOVW, which keeps 32 bits.  A constant
+		 * that does not fit them is a vlong, or every wide
+		 * constant this optimiser hoists arrives truncated
+		 * (doc/inferno-ports.ms).
+		 */
 		et = TLONG;
+		if((vlong)(int)o != o)
+			et = TVLONG;
 	}
 	if(t == D_CONST) {
 		if(s == S && sval(o))
