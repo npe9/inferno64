@@ -298,12 +298,22 @@ existing decoders and Charon, and is a contained task. Audio is
 raw-PCM/IAF only (no MP3/AAC/Opus/FLAC decode); video is MPEG-1 only.
 Modern audio/video codecs are large and lower priority.
 
-### C4. SSH — MEDIUM (interop)
-Only key-format converters exist (`rsa2ssh`, `ssh2rsa`); there is no
-SSH client or server. The Inferno-native remote model is styx-over-TLS,
-so this is interop-with-the-outside-world, not a core gap — but an SSH
-*client* would materially help talking to non-Inferno hosts. Large;
-schedule only if outside-world remote access is a goal.
+### C4. SSH — DONE (client)
+An SSH-2 *client* now exists, in Limbo, on this tree's own crypto:
+`ssh(2)` (`appl/lib/ssh.b`) and the `ssh(1)` command
+(`appl/cmd/ssh/`). Ported from 9front's `ssh.c`, it speaks the modern
+OpenSSH default stack — curve25519-sha256 key exchange, `ssh-rsa` host
+keys verified `rsa-sha2-256`, and the `chacha20-poly1305@openssh.com`
+cipher (on three raw ChaCha20/Poly1305 keyring builtins added for it,
+`chachatest(1)`). It does the full transport (`connect`), publickey
+authentication from a PEM RSA key (`login`), and one-shot remote command
+execution (`run`). Verified end to end against a real OpenSSH `sshd`
+(`tests/sshlocal.sh`): host-key thumbprint pinned to `ssh-keygen`'s own
+fingerprint, `Accepted publickey` in the server log, command
+output/exit matched, and an unauthorised-key negative control rejected.
+Still open (noted in `ssh(2)` BUGS): interactive shell (needs a pty +
+two-way pump), `factotum(4)` key storage, non-RSA host keys, port
+forwarding, and an SSH *server*.
 
 ### C5. Printing / document output — LOW-MEDIUM
 No print path at all: no `lp`, no spooler, and no PostScript/PDF
