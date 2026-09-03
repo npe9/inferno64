@@ -432,3 +432,6 @@ os/inferno/virts/virts.c
 
 # generated config C for the riscv32 S-mode board
 os/inferno/virt32s/virt32s.c
+
+# generated config C for the shakti board
+os/inferno/shakti/shakti.c
