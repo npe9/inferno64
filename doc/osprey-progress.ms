@@ -893,11 +893,36 @@ store but a zeroing overrun - a
 or a block copy past its bound - that wiped the return frame and left the
 return address as the low
 .CW -1 .
-The search is therefore a fixed-size buffer in the tcp/ip steady-state
-path that a second
+Bisecting the protocol list narrows it a great deal further.  With a
+second
 .CW Fs
-fills past its end with a zeroing write; a hardware watchpoint through the
-qemu gdbstub on that buffer's end is the way to catch it.
+and only tcp and the interface layer, the boot is clean; the crash needs
+.CW icmp
+present, and with it
+.CW udp
+and one of
+.CW il / rudp .
+Any of those alone with
+.CW icmp
+is clean;
+.CW icmp
+with all of them crashes.  That pattern - a fixed culprit that only turns
+fatal once enough other protocols share the heap - is the layout
+sensitivity again, and it places the write in the one path those protocols
+share through
+.CW icmp :
+an ICMP error is received, and
+.CW icmpiput
+calls the embedded protocol's
+.CW advise
+\- tcp's, udp's - which runs the address-translation code
+.CW ( transbackward ,
+.CW icmpproxyadvice )
+that rewrites the quoted packet in place.  Each of those functions reads
+bounded, so the overrun is small and its landing depends on the heap, but
+the path is now a dozen functions, not the whole stack.  A gdbstub
+watchpoint set once an ICMP error is in flight is the way to catch the
+store.
 .PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
