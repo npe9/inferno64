@@ -3784,6 +3784,7 @@ echk1(Node *n)
 			n->ty = terror;
 			return n->ty;
 		}
+		sizetype(t);	/* "[]byte(s)": stype() leaves an array type unsized */
 		if(!castable(tt, t)){
 			nerror(n, "cannot convert %T to %T", tt, t);
 			n->ty = terror;

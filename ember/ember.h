@@ -764,6 +764,7 @@ void	lexskip(void);
 Sym	*enter(char*, int);
 char	*lextokname(int);
 void	lexdump(char*);
+Extern	int	asttypes;
 Line	curline(void);
 Fline	fline(int);
 int	lineconv(Fmt*);

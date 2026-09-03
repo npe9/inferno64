@@ -2,6 +2,7 @@ module Astdump
 
 import sys "sys"
 import draw "draw"
+import types "types"
 import parse "parse"
 
 // print a parsed module as ember -A does: indented s-expressions,
@@ -34,25 +35,25 @@ func indent(n int) string {
 	return s
 }
 
-func astprint(n ref parse.Node, ind int) {
+func astprint(n ref types.Node, ind int) {
 	if n == nil {
 		return
 	}
-	if n.op == parse.Oseq {
+	if n.op == types.Oseq {
 		astprint(n.left, ind)
 		astprint(n.right, ind)
 		return
 	}
-	s := indent(ind) + "(" + parse.opname(n.op)
+	s := indent(ind) + "(" + types.opname(n.op)
 	match n.op {
-	case parse.Oname, parse.Odot:
+	case types.Oname, types.Odot:
 		if n.sym != nil {
 			s += " " + n.sym
 		}
-	case parse.Oconst:
-		if (n.flags & parse.NSTR) != 0 {
+	case types.Oconst:
+		if (n.flags & types.NSTR) != 0 {
 			s += " " + strprint(n.sym)
-		} else if (n.flags & parse.NREAL) != 0 {
+		} else if (n.flags & types.NREAL) != 0 {
 			s += sys.sprint(" %g", n.rval)
 		} else {
 			s += sys.sprint(" %bd", n.val)

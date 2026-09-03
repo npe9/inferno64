@@ -20,13 +20,14 @@
 static	int	toterrors;
 static	int	dumpast;
 static	int	tokdump;
+static	int	dumpchecked;
 static	int	checkonly;
 static	char	*outarg;
 
 static void
 usage(void)
 {
-	fprint(2, "usage: ember [-A] [-T] [-c] [-D name] [-f] [-I path] [-o outfile] file.e\n");
+	fprint(2, "usage: ember [-A] [-C] [-T] [-c] [-D name] [-f] [-I path] [-o outfile] file.e\n");
 	exits("usage");
 }
 
@@ -73,6 +74,16 @@ translate(char *in)
 		toterrors += errors;
 		return;
 	}
+	if(dumpchecked){
+		/* -C: the tree after checking, every node with its type --
+		 * the oracle for the self-hosted checker */
+		Binit(&bo, 1, OWRITE);
+		asttypes = 1;
+		astprint(&bo, tree, 0);
+		asttypes = 0;
+		Bterm(&bo);
+		return;
+	}
 	if(checkonly){
 		toterrors += errors;
 		return;
@@ -111,6 +122,9 @@ main(int argc, char *argv[])
 		break;
 	case 'T':
 		tokdump = 1;
+		break;
+	case 'C':
+		dumpchecked = 1;
 		break;
 	case 'c':
 		checkonly = 1;

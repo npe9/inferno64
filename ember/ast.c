@@ -327,6 +327,8 @@ strprint(Biobuf *b, char *s)
  * print the tree as indented s-expressions, one node per line,
  * for tests and for -A dumps.  Oseq chains print flattened.
  */
+int	asttypes;	/* -C: print each node's type */
+
 void
 astprint(Biobuf *b, Node *n, int ind)
 {
@@ -357,6 +359,12 @@ astprint(Biobuf *b, Node *n, int ind)
 		else
 			Bprint(b, " %lld", n->val);
 		break;
+	}
+	if(asttypes){
+		if(n->ty != nil)
+			Bprint(b, " :%T", n->ty);
+		if(n->op == Oname && n->decl != nil)
+			Bprint(b, " @%s", storename[n->decl->store]);
 	}
 	if(n->left == nil && n->right == nil && n->aux == nil){
 		Bprint(b, ")\n");

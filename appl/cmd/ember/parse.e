@@ -2,6 +2,7 @@ module Parse
 
 import sys "sys"
 import lex "lex"
+import types "types"
 
 // a port of ember/parse.c, function for function, over the
 // self-hosted lexer with the same two-token lookahead.  a Node keeps
@@ -114,18 +115,6 @@ const Ochan = 98
 const Oarray = 99
 const Oend = 100
 
-type Node struct {
-	op int
-	left ref Node
-	right ref Node
-	aux ref Node
-	sym string
-	val big
-	rval real
-	flags int
-	line int
-	pos int
-}
 
 var opnames = [101]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "end"}
 
@@ -187,43 +176,27 @@ func lexskip() {
 	fill()
 }
 
-// node constructors, ast.c's
-func mkn(op int, left ref Node, right ref Node) ref Node {
-	return ref Node{op: op, left: left, right: right, aux: nil, sym: nil, val: big(0), rval: 0.0, flags: 0, line: 0, pos: 0}
-}
 
-func mkbin(op int, left ref Node, right ref Node) ref Node {
-	n := mkn(op, left, right)
-	n.line = left.line
-	n.pos = left.pos
-	return n
-}
 
-func mkunary(op int, left ref Node) ref Node {
-	n := mkn(op, left, nil)
-	n.line = left.line
-	n.pos = left.pos
-	return n
-}
 
-func mkname(t ref lex.Tok, s string) ref Node {
-	n := mkn(Oname, nil, nil)
+func mkname(t ref lex.Tok, s string) ref types.Node {
+	n := types.mkn(Oname, nil, nil)
 	n.line = t.line
 	n.pos = t.pos
 	n.sym = s
 	return n
 }
 
-func mkconst(t ref lex.Tok, v big) ref Node {
-	n := mkn(Oconst, nil, nil)
+func mkconst(t ref lex.Tok, v big) ref types.Node {
+	n := types.mkn(Oconst, nil, nil)
 	n.line = t.line
 	n.pos = t.pos
 	n.val = v
 	return n
 }
 
-func mkrconst(t ref lex.Tok, r real) ref Node {
-	n := mkn(Oconst, nil, nil)
+func mkrconst(t ref lex.Tok, r real) ref types.Node {
+	n := types.mkn(Oconst, nil, nil)
 	n.line = t.line
 	n.pos = t.pos
 	n.rval = r
@@ -231,8 +204,8 @@ func mkrconst(t ref lex.Tok, r real) ref Node {
 	return n
 }
 
-func mksconst(t ref lex.Tok, s string) ref Node {
-	n := mkn(Oconst, nil, nil)
+func mksconst(t ref lex.Tok, s string) ref types.Node {
+	n := types.mkn(Oconst, nil, nil)
 	n.line = t.line
 	n.pos = t.pos
 	n.sym = s
@@ -240,40 +213,11 @@ func mksconst(t ref lex.Tok, s string) ref Node {
 	return n
 }
 
-func mknil(t ref lex.Tok) ref Node {
+func mknil(t ref lex.Tok) ref types.Node {
 	return mkname(t, "nil")
 }
 
-func mkseq(left ref Node, right ref Node) ref Node {
-	if left == nil {
-		return right
-	}
-	if right == nil {
-		return left
-	}
-	return mkbin(Oseq, left, right)
-}
 
-// turn a left-leaning Oseq chain built by repeated mkseq() into the
-// right-leaning list every consumer walks
-func rotater(n ref Node) ref Node {
-	if n == nil {
-		return n
-	}
-	if n.op != Oseq {
-		return n
-	}
-	for {
-		left := n.left
-		if left.op != Oseq {
-			break
-		}
-		n.left = left.right
-		left.right = n
-		n = left
-	}
-	return n
-}
 
 func synerr(msg string) {
 	error(tk().line, sys.sprint("near ` %s ` : %s", lex.tokname(cur()), msg))
@@ -326,7 +270,7 @@ func psync() {
 	}
 }
 
-func pname(ctx string) ref Node {
+func pname(ctx string) ref types.Node {
 	t := tk()
 	if t.t != lex.Eid {
 		error(t.line, sys.sprint("expected identifier in %s, near ` %s `", ctx, lex.tokname(t.t)))
@@ -339,117 +283,117 @@ func pname(ctx string) ref Node {
 	return n
 }
 
-func pnamelist(ctx string) ref Node {
+func pnamelist(ctx string) ref types.Node {
 	n := pname(ctx)
 	for paccept(',') != 0 {
-		n = mkseq(n, pname(ctx))
+		n = types.mkseq(n, pname(ctx))
 	}
 	return n
 }
 
 // a possibly qualified, possibly instantiated type name
-func ptypename() ref Node {
+func ptypename() ref types.Node {
 	n := pname("type name")
 	for paccept('.') != 0 {
 		d := pname("qualified type name")
-		n = mkbin(Odot, n, d)
+		n = types.mkbin(Odot, n, d)
 		n.sym = d.sym
 	}
 	if cur() == '[' {
 		lexskip()
 		args := ptype()
 		for paccept(',') != 0 {
-			args = mkseq(args, ptype())
+			args = types.mkseq(args, ptype())
 		}
 		pexpect(']', "type arguments")
-		n = mkbin(Otinst, n, rotater(args))
+		n = types.mkbin(Otinst, n, types.rotater(args))
 	}
 	return n
 }
 
-func pfield() ref Node {
+func pfield() ref types.Node {
 	ids := pnamelist("field declaration")
 	t := ptype()
-	return mkbin(Ofield, rotater(ids), t)
+	return types.mkbin(Ofield, types.rotater(ids), t)
 }
 
-func pfields(ctx string) ref Node {
-	var n ref Node
+func pfields(ctx string) ref types.Node {
+	var n ref types.Node
 	for cur() != '}' && cur() != lex.Beof {
 		if paccept(';') != 0 {
 			continue
 		}
-		n = mkseq(n, pfield())
+		n = types.mkseq(n, pfield())
 		if cur() != '}' {
 			pexpect(';', ctx)
 		}
 	}
-	return rotater(n)
+	return types.rotater(n)
 }
 
-func ptag() ref Node {
+func ptag() ref types.Node {
 	name := pname("pick member")
-	var fields ref Node
+	var fields ref types.Node
 	if cur() == '(' {
 		lexskip()
 		for cur() != ')' && cur() != lex.Beof {
 			f := pfield()
-			fields = mkseq(fields, f)
+			fields = types.mkseq(fields, f)
 			if paccept(',') == 0 {
 				break
 			}
 		}
 		pexpect(')', "pick member fields")
 	}
-	return mkn(Otag, name, rotater(fields))
+	return types.mkn(Otag, name, types.rotater(fields))
 }
 
-func psignature(named int) ref Node {
-	var params ref Node
+func psignature(named int) ref types.Node {
+	var params ref types.Node
 	src := pexpect('(', "function signature")
 	for cur() != ')' && cur() != lex.Beof {
 		if paccept(lex.Edots) != 0 {
-			p := mkn(Ofield, nil, nil)
+			p := types.mkn(Ofield, nil, nil)
 			p.line = src.line
 			p.pos = src.pos
 			p.flags |= NVARARG
-			params = mkseq(params, p)
+			params = types.mkseq(params, p)
 			break
 		}
-		var p ref Node
+		var p ref types.Node
 		if named != 0 {
 			ids := pnamelist("parameter")
 			if paccept(lex.Edots) != 0 {
 				t := ptype()
-				p = mkbin(Ofield, rotater(ids), t)
+				p = types.mkbin(Ofield, types.rotater(ids), t)
 				p.flags |= NVARARG
 			} else {
 				t := ptype()
-				p = mkbin(Ofield, rotater(ids), t)
+				p = types.mkbin(Ofield, types.rotater(ids), t)
 			}
 		} else {
 			t := ptype()
-			p = mkn(Ofield, nil, t)
+			p = types.mkn(Ofield, nil, t)
 			p.line = t.line
 			p.pos = t.pos
 		}
-		params = mkseq(params, p)
+		params = types.mkseq(params, p)
 		if paccept(',') == 0 {
 			break
 		}
 	}
 	pexpect(')', "function signature")
-	var results ref Node
+	var results ref types.Node
 	match cur() {
 	case '(':
 		rt := tk()
 		lexskip()
 		results = ptype()
 		for paccept(',') != 0 {
-			results = mkseq(results, ptype())
+			results = types.mkseq(results, ptype())
 		}
 		pexpect(')', "function results")
-		results = mkn(Ottuple, rotater(results), nil)
+		results = types.mkn(Ottuple, types.rotater(results), nil)
 		results.line = rt.line
 		results.pos = rt.pos
 	case '{', ';', ',', ')', lex.Beof:
@@ -457,38 +401,38 @@ func psignature(named int) ref Node {
 	default:
 		results = ptype()
 	}
-	return mkn(Otfunc, rotater(params), results)
+	return types.mkn(Otfunc, types.rotater(params), results)
 }
 
-func ptype() ref Node {
+func ptype() ref types.Node {
 	src := tk()
 	match cur() {
 	case '[':
 		lexskip()
 		pexpect(']', "array type")
 		t := ptype()
-		n := mkn(Otarray, nil, t)
+		n := types.mkn(Otarray, nil, t)
 		n.line = src.line
 		n.pos = src.pos
 		return n
 	case lex.Kchan:
 		lexskip()
 		t := ptype()
-		n := mkn(Otchan, nil, t)
+		n := types.mkn(Otchan, nil, t)
 		n.line = src.line
 		n.pos = src.pos
 		return n
 	case lex.Klist:
 		lexskip()
 		t := ptype()
-		n := mkn(Otlist, nil, t)
+		n := types.mkn(Otlist, nil, t)
 		n.line = src.line
 		n.pos = src.pos
 		return n
 	case lex.Kref:
 		lexskip()
 		t := ptype()
-		n := mkn(Otref, nil, t)
+		n := types.mkn(Otref, nil, t)
 		n.line = src.line
 		n.pos = src.pos
 		return n
@@ -501,7 +445,7 @@ func ptype() ref Node {
 	case lex.Kstruct:
 		lexskip()
 		pexpect('{', "struct type")
-		n := mkn(Otstruct, pfields("struct field"), nil)
+		n := types.mkn(Otstruct, pfields("struct field"), nil)
 		n.line = src.line
 		n.pos = src.pos
 		pexpect('}', "struct type")
@@ -509,17 +453,17 @@ func ptype() ref Node {
 	case lex.Kpick:
 		lexskip()
 		pexpect('{', "pick type")
-		var tags ref Node
+		var tags ref types.Node
 		for cur() != '}' && cur() != lex.Beof {
 			if paccept(';') != 0 {
 				continue
 			}
-			tags = mkseq(tags, ptag())
+			tags = types.mkseq(tags, ptag())
 			if cur() != '}' {
 				pexpect(';', "pick member")
 			}
 		}
-		n := mkn(Otpick, rotater(tags), nil)
+		n := types.mkn(Otpick, types.rotater(tags), nil)
 		n.line = src.line
 		n.pos = src.pos
 		pexpect('}', "pick type")
@@ -528,9 +472,9 @@ func ptype() ref Node {
 		lexskip()
 		n := ptype()
 		for paccept(',') != 0 {
-			n = mkseq(n, ptype())
+			n = types.mkseq(n, ptype())
 		}
-		n = mkn(Ottuple, rotater(n), nil)
+		n = types.mkn(Ottuple, types.rotater(n), nil)
 		n.line = src.line
 		n.pos = src.pos
 		pexpect(')', "tuple type")
@@ -545,7 +489,7 @@ func ptype() ref Node {
 
 // could the expression parsed so far be a type name, making a
 // following "{" a composite literal?
-func istypeexpr(n ref Node) int {
+func istypeexpr(n ref types.Node) int {
 	match n.op {
 	case Oname:
 		return 1
@@ -560,19 +504,19 @@ func istypeexpr(n ref Node) int {
 	return 0
 }
 
-func pcomposite(ty ref Node) ref Node {
+func pcomposite(ty ref types.Node) ref types.Node {
 	oblit := noblit
 	noblit = 0
 	pexpect('{', "composite literal")
-	var elems ref Node
+	var elems ref types.Node
 	for cur() != '}' && cur() != lex.Beof {
-		var key ref Node
+		var key ref types.Node
 		if cur() == lex.Eid && nxt() == ':' {
 			key = pname("element key")
 			lexskip()
 		}
-		e := mkn(Oelem, key, pexpr())
-		elems = mkseq(elems, e)
+		e := types.mkn(Oelem, key, pexpr())
+		elems = types.mkseq(elems, e)
 		if paccept(',') == 0 && cur() != ';' {
 			break
 		}
@@ -580,13 +524,13 @@ func pcomposite(ty ref Node) ref Node {
 	}
 	pexpect('}', "composite literal")
 	noblit = oblit
-	n := mkn(Ocomposite, ty, rotater(elems))
+	n := types.mkn(Ocomposite, ty, types.rotater(elems))
 	n.line = ty.line
 	n.pos = ty.pos
 	return n
 }
 
-func poperand() ref Node {
+func poperand() ref types.Node {
 	t := tk()
 	match t.t {
 	case lex.Econst:
@@ -615,11 +559,11 @@ func poperand() ref Node {
 		noblit = 0
 		n := pexpr()
 		if paccept(',') != 0 {
-			n = mkseq(n, pexpr())
+			n = types.mkseq(n, pexpr())
 			for paccept(',') != 0 {
-				n = mkseq(n, pexpr())
+				n = types.mkseq(n, pexpr())
 			}
-			n = mkn(Otuple, rotater(n), nil)
+			n = types.mkn(Otuple, types.rotater(n), nil)
 		}
 		noblit = oblit
 		n.line = t.line
@@ -633,7 +577,7 @@ func poperand() ref Node {
 		noblit = 0
 		body := pblock()
 		noblit = oblit
-		n := mkn(Ofunclit, nil, sig)
+		n := types.mkn(Ofunclit, nil, sig)
 		n.aux = body
 		n.line = t.line
 		n.pos = t.pos
@@ -641,20 +585,20 @@ func poperand() ref Node {
 	case lex.Kload:
 		lexskip()
 		tn := ptypename()
-		n := mkn(Oload, tn, punary())
+		n := types.mkn(Oload, tn, punary())
 		n.line = t.line
 		n.pos = t.pos
 		return n
 	case lex.Kchan:
 		lexskip()
-		var sz ref Node
+		var sz ref types.Node
 		if cur() == '[' {
 			lexskip()
 			sz = pexpr()
 			pexpect(']', "channel size")
 		}
 		te := ptype()
-		n := mkn(Ochan, sz, te)
+		n := types.mkn(Ochan, sz, te)
 		n.line = t.line
 		n.pos = t.pos
 		return n
@@ -667,7 +611,7 @@ func poperand() ref Node {
 			pexpect('(', "conversion")
 			e := pexpr()
 			pexpect(')', "conversion")
-			n := mkn(Ocast, e, mkn(Otarray, nil, te))
+			n := types.mkn(Ocast, e, types.mkn(Otarray, nil, te))
 			n.right.line = te.line
 			n.right.pos = te.pos
 			n.line = t.line
@@ -677,17 +621,17 @@ func poperand() ref Node {
 		sz := pexpr()
 		pexpect(']', "array size")
 		te := ptype()
-		n := mkn(Oarray, sz, te)
+		n := types.mkn(Oarray, sz, te)
 		n.line = t.line
 		n.pos = t.pos
 		if cur() == '{' {
 			oblit := noblit
 			noblit = 0
 			pexpect('{', "array composite literal")
-			var elems ref Node
+			var elems ref types.Node
 			for cur() != '}' && cur() != lex.Beof {
-				e := mkn(Oelem, nil, pexpr())
-				elems = mkseq(elems, e)
+				e := types.mkn(Oelem, nil, pexpr())
+				elems = types.mkseq(elems, e)
 				if paccept(',') == 0 && cur() != ';' {
 					break
 				}
@@ -695,7 +639,7 @@ func poperand() ref Node {
 			}
 			pexpect('}', "array composite literal")
 			noblit = oblit
-			n.aux = rotater(elems)
+			n.aux = types.rotater(elems)
 		}
 		return n
 	}
@@ -704,30 +648,30 @@ func poperand() ref Node {
 	return mkconst(t, big(0))
 }
 
-func pprimary() ref Node {
+func pprimary() ref types.Node {
 	n := poperand()
 	for {
 		match cur() {
 		case '.':
 			lexskip()
 			e := pname("selector")
-			n = mkbin(Odot, n, e)
+			n = types.mkbin(Odot, n, e)
 			n.sym = e.sym
 			continue
 		case '(':
 			lexskip()
 			oblit := noblit
 			noblit = 0
-			var args ref Node
+			var args ref types.Node
 			for cur() != ')' && cur() != lex.Beof {
-				args = mkseq(args, pexpr())
+				args = types.mkseq(args, pexpr())
 				if paccept(',') == 0 {
 					break
 				}
 			}
 			noblit = oblit
 			pexpect(')', "call")
-			e := mkn(Ocall, n, rotater(args))
+			e := types.mkn(Ocall, n, types.rotater(args))
 			e.line = n.line
 			e.pos = n.pos
 			n = e
@@ -736,36 +680,36 @@ func pprimary() ref Node {
 			lexskip()
 			oblit := noblit
 			noblit = 0
-			var lo ref Node
+			var lo ref types.Node
 			if cur() != ':' {
 				lo = pexpr()
 			}
 			if paccept(':') != 0 {
-				var hi ref Node
+				var hi ref types.Node
 				if cur() != ']' {
 					hi = pexpr()
 				}
 				noblit = oblit
 				pexpect(']', "slice")
-				e := mkn(Oslice, n, mkn(Oseq, lo, hi))
+				e := types.mkn(Oslice, n, types.mkn(Oseq, lo, hi))
 				e.line = n.line
 				e.pos = n.pos
 				n = e
 				continue
 			}
 			for paccept(',') != 0 {
-				lo = mkseq(lo, pexpr())
+				lo = types.mkseq(lo, pexpr())
 			}
 			noblit = oblit
 			pexpect(']', "index")
-			e := mkn(Oindex, n, rotater(lo))
+			e := types.mkn(Oindex, n, types.rotater(lo))
 			e.line = n.line
 			e.pos = n.pos
 			n = e
 			continue
 		case '?':
 			lexskip()
-			n = mkunary(Ochk, n)
+			n = types.mkunary(Ochk, n)
 			continue
 		case '{':
 			if noblit != 0 || istypeexpr(n) == 0 {
@@ -779,7 +723,7 @@ func pprimary() ref Node {
 	return n
 }
 
-func punary() ref Node {
+func punary() ref types.Node {
 	src := tk()
 	op := 0
 	match cur() {
@@ -794,13 +738,13 @@ func punary() ref Node {
 		return punary()
 	case lex.Ecomm:
 		lexskip()
-		n := mkunary(Orcv, punary())
+		n := types.mkunary(Orcv, punary())
 		n.line = src.line
 		n.pos = src.pos
 		return n
 	case lex.Kref:
 		lexskip()
-		n := mkunary(Oref, punary())
+		n := types.mkunary(Oref, punary())
 		n.line = src.line
 		n.pos = src.pos
 		return n
@@ -808,7 +752,7 @@ func punary() ref Node {
 		return pprimary()
 	}
 	lexskip()
-	n := mkunary(op, punary())
+	n := types.mkunary(op, punary())
 	n.line = src.line
 	n.pos = src.pos
 	return n
@@ -859,7 +803,7 @@ func binprec(t int) (int, int) {
 	return 0, 0
 }
 
-func pbinary(prec int) ref Node {
+func pbinary(prec int) ref types.Node {
 	n := punary()
 	for {
 		p, op := binprec(cur())
@@ -872,63 +816,63 @@ func pbinary(prec int) ref Node {
 			next = p
 		}
 		r := pbinary(next)
-		n = mkbin(op, n, r)
+		n = types.mkbin(op, n, r)
 	}
 	return n
 }
 
-func pexpr() ref Node {
+func pexpr() ref types.Node {
 	return pbinary(1)
 }
 
-func pexprlist() ref Node {
+func pexprlist() ref types.Node {
 	n := pexpr()
 	for paccept(',') != 0 {
-		n = mkseq(n, pexpr())
+		n = types.mkseq(n, pexpr())
 	}
-	return rotater(n)
+	return types.rotater(n)
 }
 
-func pvardecl() ref Node {
+func pvardecl() ref types.Node {
 	src := pexpect(lex.Kvar, "var declaration")
-	ids := rotater(pnamelist("var declaration"))
-	var t ref Node
+	ids := types.rotater(pnamelist("var declaration"))
+	var t ref types.Node
 	if cur() != '=' && cur() != ';' {
 		t = ptype()
 	}
-	var init ref Node
+	var init ref types.Node
 	if paccept('=') != 0 {
 		init = pexprlist()
 	}
 	if t == nil && init == nil {
 		synerr("var declaration needs a type or initializer")
 	}
-	n := mkn(Ovardecl, ids, t)
+	n := types.mkn(Ovardecl, ids, t)
 	n.aux = init
 	n.line = src.line
 	n.pos = src.pos
 	return n
 }
 
-func pcondecl() ref Node {
+func pcondecl() ref types.Node {
 	src := pexpect(lex.Kconst, "const declaration")
 	name := pname("const declaration")
 	pexpect('=', "const declaration")
-	n := mkn(Ocondecl, name, pexpr())
+	n := types.mkn(Ocondecl, name, pexpr())
 	n.line = src.line
 	n.pos = src.pos
 	return n
 }
 
-func ptypedecl() ref Node {
+func ptypedecl() ref types.Node {
 	src := pexpect(lex.Ktype, "type declaration")
 	name := pname("type declaration")
-	var polys ref Node
+	var polys ref types.Node
 	if paccept('[') != 0 {
-		polys = rotater(pnamelist("type parameters"))
+		polys = types.rotater(pnamelist("type parameters"))
 		pexpect(']', "type parameters")
 	}
-	n := mkn(Otypedecl, name, ptype())
+	n := types.mkn(Otypedecl, name, ptype())
 	n.aux = polys
 	n.line = src.line
 	n.pos = src.pos
@@ -937,16 +881,16 @@ func ptypedecl() ref Node {
 
 // a simple statement: an expression, or an assignment, declaration,
 // send, increment built on one
-func psimple() ref Node {
+func psimple() ref types.Node {
 	lhs := pexprlist()
 	op := 0
 	match cur() {
 	case lex.Edeclas:
 		lexskip()
-		return mkbin(Odas, lhs, pexprlist())
+		return types.mkbin(Odas, lhs, pexprlist())
 	case '=':
 		lexskip()
-		return mkbin(Oas, lhs, pexprlist())
+		return types.mkbin(Oas, lhs, pexprlist())
 	case lex.Eaddeq:
 		op = Oaddas
 	case lex.Esubeq:
@@ -969,26 +913,26 @@ func psimple() ref Node {
 		op = Orshas
 	case lex.Einc:
 		lexskip()
-		return mkunary(Oinc, lhs)
+		return types.mkunary(Oinc, lhs)
 	case lex.Edec:
 		lexskip()
-		return mkunary(Odec, lhs)
+		return types.mkunary(Odec, lhs)
 	case lex.Ecomm:
 		lexskip()
-		return mkbin(Osnd, lhs, pexpr())
+		return types.mkbin(Osnd, lhs, pexpr())
 	default:
-		return mkunary(Oexpr, lhs)
+		return types.mkunary(Oexpr, lhs)
 	}
 	lexskip()
-	return mkbin(op, lhs, pexpr())
+	return types.mkbin(op, lhs, pexpr())
 }
 
-func pif() ref Node {
+func pif() ref types.Node {
 	src := pexpect(lex.Kif, "if statement")
 	oblit := noblit
 	noblit = 1
-	var init ref Node
-	var cond ref Node
+	var init ref types.Node
+	var cond ref types.Node
 	n := psimple()
 	if paccept(';') != 0 {
 		init = n
@@ -1002,7 +946,7 @@ func pif() ref Node {
 	}
 	noblit = oblit
 	then := pblock()
-	var els ref Node
+	var els ref types.Node
 	if paccept(lex.Kelse) != 0 {
 		if cur() == lex.Kif {
 			els = pif()
@@ -1010,25 +954,25 @@ func pif() ref Node {
 			els = pblock()
 		}
 	}
-	n = mkn(Oif, cond, then)
+	n = types.mkn(Oif, cond, then)
 	n.aux = els
 	n.line = src.line
 	n.pos = src.pos
 	if init != nil {
-		n = mkn(Oscope, mkseq(init, n), nil)
+		n = types.mkn(Oscope, types.mkseq(init, n), nil)
 		n.line = src.line
 		n.pos = src.pos
 	}
 	return n
 }
 
-func pfor() ref Node {
+func pfor() ref types.Node {
 	src := pexpect(lex.Kfor, "for statement")
 	oblit := noblit
 	noblit = 1
-	var init ref Node
-	var cond ref Node
-	var post ref Node
+	var init ref types.Node
+	var cond ref types.Node
+	var post ref types.Node
 	if cur() != '{' {
 		three := 0
 		if cur() == ';' {
@@ -1062,16 +1006,16 @@ func pfor() ref Node {
 	}
 	noblit = oblit
 	body := pblock()
-	n := mkn(Ofor, cond, body)
+	n := types.mkn(Ofor, cond, body)
 	if init != nil || post != nil {
-		n.aux = mkn(Oforctl, init, post)
+		n.aux = types.mkn(Oforctl, init, post)
 	}
 	n.line = src.line
 	n.pos = src.pos
 	return n
 }
 
-func ppattern() ref Node {
+func ppattern() ref types.Node {
 	t := tk()
 	match t.t {
 	case lex.Econst:
@@ -1098,14 +1042,14 @@ func ppattern() ref Node {
 		return mknil(t)
 	case lex.Eid:
 		n := ptypename()
-		var ids ref Node
+		var ids ref types.Node
 		if paccept('(') != 0 {
 			if cur() != ')' {
-				ids = rotater(pnamelist("pattern binders"))
+				ids = types.rotater(pnamelist("pattern binders"))
 			}
 			pexpect(')', "pattern")
 		}
-		n = mkn(Opat, n, ids)
+		n = types.mkn(Opat, n, ids)
 		n.line = t.line
 		n.pos = t.pos
 		return n
@@ -1115,14 +1059,14 @@ func ppattern() ref Node {
 	return mkconst(t, big(0))
 }
 
-func pcases(ctx string, isalt int) ref Node {
-	var cases ref Node
+func pcases(ctx string, isalt int) ref types.Node {
+	var cases ref types.Node
 	for cur() != '}' && cur() != lex.Beof {
 		if paccept(';') != 0 {
 			continue
 		}
 		csrc := tk()
-		var pats ref Node
+		var pats ref types.Node
 		if paccept(lex.Kdefault) != 0 {
 			pats = nil
 		} else {
@@ -1132,28 +1076,28 @@ func pcases(ctx string, isalt int) ref Node {
 			} else {
 				pats = ppattern()
 				for paccept(',') != 0 {
-					pats = mkseq(pats, ppattern())
+					pats = types.mkseq(pats, ppattern())
 				}
-				pats = rotater(pats)
+				pats = types.rotater(pats)
 			}
 		}
 		pexpect(':', ctx)
-		var stmts ref Node
+		var stmts ref types.Node
 		for cur() != lex.Kcase && cur() != lex.Kdefault && cur() != '}' && cur() != lex.Beof {
 			if paccept(';') != 0 {
 				continue
 			}
-			stmts = mkseq(stmts, pstmt())
+			stmts = types.mkseq(stmts, pstmt())
 		}
-		c := mkn(Ocase, pats, rotater(stmts))
+		c := types.mkn(Ocase, pats, types.rotater(stmts))
 		c.line = csrc.line
 		c.pos = csrc.pos
-		cases = mkseq(cases, c)
+		cases = types.mkseq(cases, c)
 	}
-	return rotater(cases)
+	return types.rotater(cases)
 }
 
-func pmatch() ref Node {
+func pmatch() ref types.Node {
 	src := pexpect(lex.Kmatch, "match statement")
 	oblit := noblit
 	noblit = 1
@@ -1161,33 +1105,33 @@ func pmatch() ref Node {
 	noblit = oblit
 	pexpect('{', "match statement")
 	cases := pcases("match case", 0)
-	n := mkn(Omatch, subj, cases)
+	n := types.mkn(Omatch, subj, cases)
 	n.line = src.line
 	n.pos = src.pos
 	pexpect('}', "match statement")
 	return n
 }
 
-func palt() ref Node {
+func palt() ref types.Node {
 	src := pexpect(lex.Kalt, "alt statement")
 	pexpect('{', "alt statement")
 	cases := pcases("alt case", 1)
-	n := mkn(Oalt, nil, cases)
+	n := types.mkn(Oalt, nil, cases)
 	n.line = src.line
 	n.pos = src.pos
 	pexpect('}', "alt statement")
 	return n
 }
 
-func pstmt() ref Node {
+func pstmt() ref types.Node {
 	t := tk()
-	var n ref Node
+	var n ref types.Node
 	match t.t {
 	case ';':
 		lexskip()
 		return nil
 	case '{':
-		n = mkn(Oscope, pblock(), nil)
+		n = types.mkn(Oscope, pblock(), nil)
 		n.line = t.line
 		n.pos = t.pos
 		return n
@@ -1207,7 +1151,7 @@ func pstmt() ref Node {
 		return palt()
 	case lex.Kbreak:
 		lexskip()
-		n = mkn(Obreak, nil, nil)
+		n = types.mkn(Obreak, nil, nil)
 		n.line = t.line
 		n.pos = t.pos
 		if cur() == lex.Eid {
@@ -1215,7 +1159,7 @@ func pstmt() ref Node {
 		}
 	case lex.Kcontinue:
 		lexskip()
-		n = mkn(Ocont, nil, nil)
+		n = types.mkn(Ocont, nil, nil)
 		n.line = t.line
 		n.pos = t.pos
 		if cur() == lex.Eid {
@@ -1223,7 +1167,7 @@ func pstmt() ref Node {
 		}
 	case lex.Kreturn:
 		lexskip()
-		n = mkn(Oret, nil, nil)
+		n = types.mkn(Oret, nil, nil)
 		n.line = t.line
 		n.pos = t.pos
 		if cur() != ';' && cur() != '}' {
@@ -1235,14 +1179,14 @@ func pstmt() ref Node {
 		if e.op != Ocall {
 			error(e.line, "spawn requires a function call")
 		}
-		n = mkunary(Ospawn, e)
+		n = types.mkunary(Ospawn, e)
 		n.line = t.line
 		n.pos = t.pos
 	case lex.Eid:
 		if nxt() == ':' {
 			n = pname("label")
 			lexskip()
-			n = mkn(Olabel, n, pstmt())
+			n = types.mkn(Olabel, n, pstmt())
 			n.line = t.line
 			n.pos = t.pos
 			return n
@@ -1257,51 +1201,51 @@ func pstmt() ref Node {
 	return n
 }
 
-func pblock() ref Node {
+func pblock() ref types.Node {
 	src := pexpect('{', "block")
-	var n ref Node
+	var n ref types.Node
 	for cur() != '}' && cur() != lex.Beof {
-		n = mkseq(n, pstmt())
+		n = types.mkseq(n, pstmt())
 	}
-	b := mkn(Oscope, rotater(n), nil)
+	b := types.mkn(Oscope, types.rotater(n), nil)
 	b.line = src.line
 	b.pos = src.pos
 	pexpect('}', "block")
 	return b
 }
 
-func pfndecl() ref Node {
+func pfndecl() ref types.Node {
 	src := pexpect(lex.Kfunc, "function declaration")
-	var recv ref Node
+	var recv ref types.Node
 	if paccept('(') != 0 {
-		recv = mkn(Ofield, pname("receiver"), ptype())
+		recv = types.mkn(Ofield, pname("receiver"), ptype())
 		pexpect(')', "receiver")
 	}
 	name := pname("function declaration")
 	if recv != nil {
-		name = mkbin(Omethod, recv, name)
+		name = types.mkbin(Omethod, recv, name)
 	}
-	var polys ref Node
+	var polys ref types.Node
 	if paccept('[') != 0 {
-		polys = rotater(pnamelist("type parameters"))
+		polys = types.rotater(pnamelist("type parameters"))
 		pexpect(']', "type parameters")
 	}
 	sig := psignature(1)
 	sig.aux = polys
-	var body ref Node
+	var body ref types.Node
 	if cur() == '{' {
 		body = pblock()
 	}
-	n := mkn(Ofndecl, name, sig)
+	n := types.mkn(Ofndecl, name, sig)
 	n.aux = body
 	n.line = src.line
 	n.pos = src.pos
 	return n
 }
 
-func pimport() ref Node {
+func pimport() ref types.Node {
 	src := pexpect(lex.Kimport, "import declaration")
-	var name ref Node
+	var name ref types.Node
 	if cur() == lex.Eid {
 		name = pname("import declaration")
 	}
@@ -1313,13 +1257,13 @@ func pimport() ref Node {
 	}
 	path := mksconst(t, t.sym)
 	lexskip()
-	n := mkn(Oimport, name, path)
+	n := types.mkn(Oimport, name, path)
 	n.line = src.line
 	n.pos = src.pos
 	return n
 }
 
-func parse(file string) ref Node {
+func parse(file string) ref types.Node {
 	infile = file
 	nerrors = 0
 	nlook = 0
@@ -1333,25 +1277,25 @@ func parse(file string) ref Node {
 	src := pexpect(lex.Kmodule, "module clause")
 	name := pname("module clause")
 	pexpect(';', "module clause")
-	prog := mkn(Omodule, name, nil)
+	prog := types.mkn(Omodule, name, nil)
 	prog.line = src.line
 	prog.pos = src.pos
-	var n ref Node
+	var n ref types.Node
 	for cur() != lex.Beof {
 		match cur() {
 		case ';':
 			lexskip()
 			continue
 		case lex.Kimport:
-			n = mkseq(n, pimport())
+			n = types.mkseq(n, pimport())
 		case lex.Ktype:
-			n = mkseq(n, ptypedecl())
+			n = types.mkseq(n, ptypedecl())
 		case lex.Kvar:
-			n = mkseq(n, pvardecl())
+			n = types.mkseq(n, pvardecl())
 		case lex.Kconst:
-			n = mkseq(n, pcondecl())
+			n = types.mkseq(n, pcondecl())
 		case lex.Kfunc:
-			n = mkseq(n, pfndecl())
+			n = types.mkseq(n, pfndecl())
 		default:
 			synerr("expected a declaration")
 			psync()
@@ -1361,7 +1305,7 @@ func parse(file string) ref Node {
 			pexpect(';', "declaration")
 		}
 	}
-	prog.right = rotater(n)
+	prog.right = types.rotater(n)
 	nerrors += lx.errors
 	return prog
 }

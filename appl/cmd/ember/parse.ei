@@ -5,6 +5,8 @@ module Parse
 // (nil if it could not be opened); parse.c's -A dump and astdump.dis
 // print such trees identically (ember/tests/astcmp.sh).
 
+import types "types"
+
 const PATH = "/dis/ember/parse.dis"
 
 const NREAL = 1
@@ -113,19 +115,7 @@ const Ochan = 98
 const Oarray = 99
 const Oend = 100
 
-type Node struct {
-	op int
-	left ref Node
-	right ref Node
-	aux ref Node
-	sym string
-	val big
-	rval real
-	flags int
-	line int
-	pos int
-}
 
-func parse(file string) ref Node
+func parse(file string) ref types.Node
 func errors() int
 func opname(op int) string

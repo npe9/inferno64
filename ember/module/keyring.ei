@@ -1,0 +1,14 @@
+module Keyring
+
+// the part of Inferno's $Keyring builtin (module/keyring.m) the
+// self-hosted compiler uses: MD5 digests for module signatures.
+
+const PATH = "$Keyring"
+
+const MD5dlen = 16
+
+type DigestState struct {
+	x int
+}
+
+func md5(buf []byte, n int, digest []byte, state ref DigestState) ref DigestState
