@@ -22,6 +22,8 @@ dev
 	uart
 	env
 	ether		netif
+	usb
+	sd
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 	ssl
 	cap
@@ -45,6 +47,8 @@ lib
 
 link
 	ethervirtiommio
+	ethervirtio10	pci
+	usbxhcipci	usbxhci
 	ethermedium
 	loopbackmedium
 
@@ -78,6 +82,9 @@ port
 
 misc
 	uartvirtarm64
+	pci	pciecam
+	sdvirtio10	pci sdscsi virtio10mem
+	sdnvme	pci
 	screennone
 	randomvirtarm64
 

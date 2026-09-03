@@ -13,7 +13,8 @@ archreset(void)
 void
 pciarchinit(void)
 {
-	/* no PCI on this board */
+	extern void pciinit(void);
+	pciinit();
 }
 
 void

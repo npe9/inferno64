@@ -82,6 +82,9 @@ tod.$O:	../port/tod.c
 	$CC $CFLAGS ../port/tod.c
 
 mul64fract.$O:	../port/mul64fract.c
+
+pciecam.$O:	../port/pciecam.c
+	$CC $CFLAGS ../port/pciecam.c
 	$CC $CFLAGS ../port/mul64fract.c
 
 devuart.$O:	../port/devuart.c

@@ -37,6 +37,7 @@
 #define	PLIC		((uintptr)0xc << 24)	/* 0x0c000000 SiFive PLIC */
 
 /* pci-host-ecam-generic (QEMU virt) — empty until -device … */
+#define	PCIINTXBASE	32	/* PLIC 32..35 */
 #define	PCIECAM		((uintptr)0x30000000)
 #define	PCIECAMSZ	((uintptr)0x10000000)	/* 256 MiB config */
 #define	PCIMMIO		((uintptr)0x40000000)

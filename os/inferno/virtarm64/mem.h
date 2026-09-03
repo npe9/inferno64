@@ -48,3 +48,14 @@
 /* Mach struct above typical kernel image */
 #define	MACHADDR	(PHYSDRAM+0x100000)
 #define	USTKTOP		(PHYSDRAM+DRAMSIZE)
+
+/* PCIe (pci-host-ecam-generic) from QEMU -M virt's device tree:
+ * ECAM at 0x4010000000, 32-bit MMIO window at 0x10000000, I/O at
+ * 0x3eff0000, INTx pins on GIC SPIs 3..6 (irq 35..38). */
+#define	PCIECAM		((uintptr)0x4010000000ULL)	/* >32 bits: needs the ULL or kencc truncates */
+#define	PCIECAMSZ	((uintptr)0x10000000)
+#define	PCIMMIO		((uintptr)0x10000000)
+#define	PCIMMIOSZ	((uintptr)0x2eff0000)
+#define	PCIPIO		((uintptr)0x3eff0000)
+#define	PCIPIOSZ	((uintptr)0x10000)
+#define	PCIINTXBASE	35

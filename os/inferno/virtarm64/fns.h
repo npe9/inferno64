@@ -61,3 +61,18 @@ long	archkprofmicrosecondspertick(void);
 void	archkprofenable(int);
 int	isaconfig(char*, int, void*);
 void	cycles(uvlong*);		/* also in io.h; proc.c includes fns.h, not io.h */
+
+/*
+ * PCI on the MMU-off board: physical == virtual, RAM is below 4 GiB
+ * so a DMA address is its own physical address, and with no data cache
+ * (SCTLR.M=0 makes RAM device memory) there is nothing to flush.  ECAM
+ * config space is accessed directly by ../port/pciecam.c, not vmap'd.
+ */
+#define	vmap(pa, size)		((void*)(uintptr)(pa))
+#define	vunmap(va, size)
+#define	PCIWADDR(va)		PADDR(va)
+#define	dmaflush(clean, addr, len)
+extern int	(*pcicfgrw8)(int, int, int, int);
+extern int	(*pcicfgrw16)(int, int, int, int);
+extern int	(*pcicfgrw32)(int, int, int, int);
+

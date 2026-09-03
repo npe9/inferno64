@@ -36,6 +36,19 @@ init()
 	sys->bind("#I", "/net", Sys->MAFTER);	# ip
 	sys->print("** Inferno/arm64 virt **\n");
 	sys->print("VIRTARM64-OK\n");
+	sys->bind("#S", "/dev", Sys->MAFTER);	# storage (nvme/virtio)
+	for(l := "/dev/sdN0/data" :: "/dev/sdF0/data" :: nil; l != nil; l = tl l){
+		dfd := sys->open(hd l, Sys->OREAD);
+		if(dfd == nil)
+			continue;
+		sec := array[512] of byte;
+		n := sys->read(dfd, sec, len sec);
+		if(n == 512)
+			sys->print("ARM64-DISK-OK %s read %d bytes, sig %.2ux%.2ux\n",
+				hd l, n, int sec[510], int sec[511]);
+		else
+			sys->print("ARM64-DISK-FAIL %s: %r\n", hd l);
+	}
 	shell := load Shell "/dis/sh.dis";
 	if(shell == nil){
 		sys->print("VIRTARM64-FAIL: load sh: %r\n");

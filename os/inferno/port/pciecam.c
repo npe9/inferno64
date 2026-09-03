@@ -20,10 +20,19 @@
 
 static Pcidev *pciroot;
 
+/*
+ * The ECAM base is 64-bit on arm64 (0x4010000000).  Kept in a
+ * DATA-initialised variable, not used as an inline constant: 7l
+ * materialises a wide constant inside an expression with only its low
+ * 32 bits, but an 8-byte DATA holds the whole value (doc/inferno-
+ * ports.ms).  Harmless on riscv, where the base fits in 32 bits.
+ */
+static uvlong Ecambase = PCIECAM;
+
 static uintptr
 ecamaddr(int tbdf, int rno)
 {
-	return (uintptr)PCIECAM
+	return (uintptr)Ecambase
 		| ((uintptr)BUSBNO(tbdf) << 20)
 		| ((uintptr)BUSDNO(tbdf) << 15)
 		| ((uintptr)BUSFNO(tbdf) << 12)
@@ -71,9 +80,10 @@ int (*pcicfgrw16)(int, int, int, int) = pcicfgrw16ecam;
 int (*pcicfgrw32)(int, int, int, int) = pcicfgrw32ecam;
 
 /*
- * QEMU's virt machine routes the four INTx pins of slot s to PLIC
- * interrupts 32..35, rotated by slot: pin A of slot 0 is 32, pin A
- * of slot 1 is 33, and so on (the interrupt-map in its device tree).
+ * QEMU's virt machines route the four INTx pins of slot s to a small
+ * run of interrupts, rotated by slot (the interrupt-map in the device
+ * tree).  The base differs per board - PLIC 32 on riscv, GIC SPI 35 on
+ * arm64 - so it is PCIINTXBASE in the board's mem.h.
  */
 static int
 pciintx(Pcidev *p)
@@ -83,7 +93,7 @@ pciintx(Pcidev *p)
 	pin = pcicfgr8(p, PciINTP);	/* 1 = INTA .. 4 = INTD, 0 = none */
 	if(pin == 0)
 		return -1;
-	return 32 + ((BUSDNO(p->tbdf) + pin - 1) & 3);
+	return PCIINTXBASE + ((BUSDNO(p->tbdf) + pin - 1) & 3);
 }
 
 /* called from archvirt.c's pciarchinit() */
@@ -98,7 +108,7 @@ pciinit(void)
 	pcimaxdno = 31;
 	pciscan(0, &pciroot, nil);
 	if(pciroot == nil){
-		print("pci ecam %#p: no devices\n", (uintptr)PCIECAM);
+		print("pci ecam %#llux: no devices\n", (uvlong)Ecambase);
 		return;
 	}
 	/* firmware has assigned nothing; place every BAR ourselves */
