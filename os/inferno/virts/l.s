@@ -205,6 +205,20 @@ TEXT	rdtime(SB), 1, $-4
 	RET
 
 /*
+ * SBI SRST (system reset), EID 0x53525354 FID 0.  a0 = reset type
+ * (0 shutdown, 1 cold reboot), a1 = reason.  OpenSBI 2.0 backs this
+ * with QEMU's syscon-poweroff/reboot, so exit() actually stops the
+ * machine instead of spinning in WFI.  Does not return.
+ */
+TEXT	sbisystemreset(SB), 1, $-4
+	MOV	RARG, R10		/* a0 = reset type */
+	MOV	$0, R11			/* a1 = reason 0 */
+	MOV	$0, R16			/* a6 = FID 0 (system_reset) */
+	MOV	$0x53525354, R17	/* a7 = "SRST" */
+	ECALL
+	RET
+
+/*
  * S-mode trap entry (direct stvec).  Layout on interrupted stack:
  *	[SP, SP+TRAPPAD)	scratch for KenC frames
  *	[SP+TRAPPAD, +UREG)	Ureg

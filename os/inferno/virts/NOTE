@@ -42,4 +42,8 @@ Add a disk to reach the device tests and shell:
 
 Init: os/inferno/init/virtinit.b rooted as /osinit.dis, same as virt.
 Verified: boots clean through the full init battery (SNPRINT-ABI-OK
-through ROOT-CMDS-OK) to the shell prompt, zero faults, 4/4.
+through ROOT-CMDS-OK) to the shell prompt, zero faults, 4/4. The SBI SRST
+extension gives a clean poweroff: exit() calls archreboot(), which
+issues sbi_system_reset (verified - the machine stops in 0.05s from
+S-mode, QEMU exits 0), where the machine-mode virt board only spins in
+WFI.

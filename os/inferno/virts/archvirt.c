@@ -39,11 +39,14 @@ archconsole(void)
 	/* uartconsole already set consuart / serwrite */
 }
 
+extern void	sbisystemreset(int);
+
 void
 archreboot(void)
 {
+	sbisystemreset(0);	/* SBI SRST shutdown; clean QEMU exit */
 	for(;;)
-		idle();
+		idle();		/* SRST does not return; spin if it somehow does */
 }
 
 void
