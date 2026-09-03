@@ -278,6 +278,9 @@ struct Prog
 		int	op;
 		void*	fp;
 		void*	mp;
+		void*	d;	/* decoded destination operand, R.d */
+		void*	s;
+		void*	m;
 	} wmtrace[256];
 	int	wmtracei;
 	int	wmtracen;

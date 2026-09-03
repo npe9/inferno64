@@ -38,8 +38,8 @@ wmtracedump(Prog *p)
 		n = (p->wmtracei - 1 - i + 2*wn) % wn;
 		m = p->wmtrace[n].mp;
 		path = (m != nil && m->m != nil && m->m->path != nil)? m->m->path: "?";
-		print("  [%d] pc=%d op=%d fp=%p mod=%p path=%s\n",
-			-i, p->wmtrace[n].pc, p->wmtrace[n].op, p->wmtrace[n].fp, m, path);
+		print("  [%d] pc=%d op=%d fp=%p d=%p s=%p m=%p mod=%p path=%s\n",
+			-i, p->wmtrace[n].pc, p->wmtrace[n].op, p->wmtrace[n].fp, p->wmtrace[n].d, p->wmtrace[n].s, p->wmtrace[n].m, m, path);
 	}
 }
 
@@ -257,7 +257,9 @@ OP(indx)
 	i = W(d);
 	DBG("indx a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indx a %p a->len %zd i %zd\n", a, a->len, i);
+	print("indx a %p a->len %zd i %zd (index slot %p)\n", a, a->len, i, R.d);
+		if(currun() != nil)
+			wmtracedump(currun());
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*a->t->size);
@@ -2400,6 +2402,9 @@ xec(Prog *p)
 			p->wmtracen++;
 		}
 		dec[R.PC->add]();
+		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].d = R.d;
+		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].s = R.s;
+		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].m = R.m;
 		op = R.PC->op;
 		R.PC++;
 		/*

@@ -171,7 +171,16 @@ tas1:
 
 TEXT	setlabel(SB), 1, $-4
 	MOV	R0, R2
-	MOV	RSP, 0(R2)
+	/*
+	 * Not "MOV RSP, 0(R2)": in an AArch64 store, register 31 is
+	 * XZR, so that assembles to STR XZR,[X2] and every Label got
+	 * sp == 0.  The first nexterror() then resumed its waserror()
+	 * frame on a zero stack pointer, which is what stopped this
+	 * board at its first module load (doc/inferno-ports.ms).
+	 * Only ADD/SUB read SP in register 31, so go through R1.
+	 */
+	MOV	RSP, R1
+	MOV	R1, 0(R2)
 	MOV	R30, 8(R2)
 	MOV	$0, R0
 	RET	R30
@@ -321,10 +330,17 @@ TEXT	vectorinit(SB), 1, $-4
  * vectorbuild()) branches into once its own tiny in-table stub has
  * reserved the frame, stashed the one register (R9) it needed as a
  * type-tag carrier, and written the tag into R9.  On entry here: SP
- * already points at a UR_SIZE-byte frame with R0-R8,R10-R30 already
- * saved by the stub (see vectorbuild()'s generated code), R9 holds
- * the type tag (not yet written to UR_TYPE), and R9's true
- * interrupted value already sits safely at UR_R9(SP).
+ * already points at a UR_SIZE-byte frame, R9 holds the type tag (not
+ * yet written to UR_TYPE), and R9's true interrupted value already
+ * sits safely at UR_R9(SP).  Every other register is saved HERE,
+ * first thing: the four-instruction stub vectorbuild() generates
+ * saves only R9, and until 3 September 2026 nothing saved the rest
+ * while the exit path below restored all thirty-one from the frame,
+ * so every interrupt returned to its interrupted code with whatever
+ * happened to lie in the frame slots in R0-R8 and R10-R30.  That was
+ * the "pool corruption" at the first module load: an IRQ inside
+ * libinterp's brpatch() came back with a garbage R30 and RET went to
+ * a heap address (doc/inferno-ports.ms).
  *
  * This mirrors riscv64/virt's trapvec far more closely than it
  * mirrors armv7's vectrap: AArch64's SP-relative STR/MOV needs no
@@ -335,6 +351,39 @@ TEXT	vectorinit(SB), 1, $-4
  */
 TEXT	vectrap(SB), 1, $-4
 	MOV	R9, UR_TYPE(RSP)	/* the tag; R9 is now free to reuse */
+
+	/* the interrupted registers, before anything can touch them */
+	MOV	R0, UR_R0(RSP)
+	MOV	R1, UR_R1(RSP)
+	MOV	R2, UR_R2(RSP)
+	MOV	R3, UR_R3(RSP)
+	MOV	R4, UR_R4(RSP)
+	MOV	R5, UR_R5(RSP)
+	MOV	R6, UR_R6(RSP)
+	MOV	R7, UR_R7(RSP)
+	MOV	R8, UR_R8(RSP)
+	MOV	R10, UR_R10(RSP)
+	MOV	R11, UR_R11(RSP)
+	MOV	R12, UR_R12(RSP)
+	MOV	R13, UR_R13(RSP)
+	MOV	R14, UR_R14(RSP)
+	MOV	R15, UR_R15(RSP)
+	MOV	R16, UR_R16(RSP)
+	MOV	R17, UR_R17(RSP)
+	MOV	R18, UR_R18(RSP)
+	MOV	R19, UR_R19(RSP)
+	MOV	R20, UR_R20(RSP)
+	MOV	R21, UR_R21(RSP)
+	MOV	R22, UR_R22(RSP)
+	MOV	R23, UR_R23(RSP)
+	MOV	R24, UR_R24(RSP)
+	MOV	R25, UR_R25(RSP)
+	MOV	R26, UR_R26(RSP)
+	MOV	R27, UR_R27(RSP)
+	MOV	R28, UR_R28(RSP)
+	MOV	R29, UR_R29(RSP)
+	MOV	R30, UR_R30(RSP)
+
 
 	MOV	RSP, R9
 	ADD	$UR_SIZE, R9		/* interrupted sp == current sp + frame */

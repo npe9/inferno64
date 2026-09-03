@@ -204,15 +204,20 @@ trap(Ureg *ur)
 		 * mid-panic is still not something to invite.
 		 */
 		splhi();
-		print("trap type %d esr %#p pc %#p\n",
+		/*
+		 * iprint(), not print(): print() takes kmesg.lk, and a fault
+		 * inside code holding it (poolfree() under the print lock, seen
+		 * here) made this report deadlock instead of appearing.
+		 */
+		iprint("trap type %d esr %#p pc %#p\n",
 			(int)ur->type, ur->cause, ur->pc);
-		print(" r0 %#p r30 %#p\n", ur->r0, ur->r30);
-		print(" sp %#p tval %#p", ur->sp, ur->tval);
+		iprint(" r0 %#p r30 %#p\n", ur->r0, ur->r30);
+		iprint(" sp %#p tval %#p", ur->sp, ur->tval);
 		if(up != nil)
-			print(" kstack %#p..%#p", up->kstack, (uchar*)up->kstack+KSTACK);
-		print("\n");
+			iprint(" kstack %#p..%#p", up->kstack, (uchar*)up->kstack+KSTACK);
+		iprint("\n");
 		if(up != nil)
-			print(" up %#p %s\n", up, up->text);
+			iprint(" up %#p %s\n", up, up->text);
 		dumpstack();
 		panic("trap");
 	}
@@ -245,7 +250,7 @@ dumpstack(void)
 	uintptr l, v, estack;
 	int n;
 
-	print("dumpstack\n");
+	iprint("dumpstack\n");
 	l = (uintptr)&l;
 	if(up != nil
 	&& l >= (uintptr)up->kstack
@@ -257,7 +262,7 @@ dumpstack(void)
 	for(; l < estack; l += sizeof(uintptr)){
 		v = *(uintptr*)l;
 		if(v > (uintptr)KTZERO && v < (uintptr)etext){
-			print("%.8lux\n", (ulong)v);
+			iprint("%.8lux\n", (ulong)v);
 			if(++n >= 32)
 				break;
 		}
