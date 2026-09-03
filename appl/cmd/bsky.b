@@ -4,37 +4,37 @@ implement Bsky;
 # with a handle + app password, print the home timeline. One network,
 # no abstraction, no GUI yet - see man page BUGS.
 #
-# This tree's own module/ssl3.m is SSLv3-era: RC4/DES/3DES/IDEA bulk
-# ciphers, static RSA/DH key exchange, no AES, no GCM/ChaCha, no SNI
-# (checked directly - its own cipher-suite list and emu/port/devssl.c's,
-# neither names anything past that) - it cannot complete a TLS 1.2+
-# handshake, which is what bsky.social (and every other real HTTPS host
-# now) requires. Rather than build a fake TLS stack, or claim this can
-# reach the network when it can't, this drives the HOST's own curl(1)
-# (real TLS 1.3, SNI, everything) through #C (see man/3/cmd) - the
-# "virtualize the capability, not the host structure" shape, and the
-# same host-command-execution device p9/cmd/prtest.b's runhost() uses
-# as a test oracle. This is therefore hosted-mode only: it does not
-# work standalone under a native kernel with no #C.
+# Transport is https(2) - this tree's OWN TLS 1.2 stack (tls12(2),
+# which verifies the server's certificate chain), not a host command.
+# This command originally drove the host's curl(1) through #C because
+# module/ssl3.m was SSLv3-era and could not reach a modern HTTPS host;
+# that stopgap is gone, per CLAUDE.md's rule that no network client
+# uses #C as a transport (the SSL modernization it demanded is done -
+# doc/ssl-modernization-plan.md). Name resolution still leans on the
+# hosted emu's $Srv resolver when no connection server is mounted, so
+# hosted mode remains the tested configuration.
 
 include "sys.m";
 	sys: Sys;
 include "draw.m";
-include "string.m";
-	str: String;
 include "bufio.m";
 	bufio: Bufio;
 	Iobuf: import bufio;
 include "json.m";
 	json: JSON;
 	JValue: import json;
+include "keyring.m";
+include "security.m";
+include "tls12.m";
+include "https.m";
+	https: Https;
 
 Bsky: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 	# test seams, same justification as danby-aerobraking(1)'s own
 	# run()/viewtest(): hit real Bluesky endpoints so bskytest(1)
-	# exercises the actual #C/curl/JSON path this command uses,
+	# exercises the actual https(2)/JSON path this command uses,
 	# without needing live credentials.
 	pubtest: fn(): string;
 	postpubtest: fn(): string;
@@ -87,10 +87,13 @@ ensureloaded(): string
 		sys = load Sys Sys->PATH;
 	if(sys == nil)
 		return "cannot load Sys";
-	if(str == nil)
-		str = load String String->PATH;
-	if(str == nil)
-		return "cannot load String";
+	if(https == nil){
+		https = load Https Https->PATH;
+		if(https == nil)
+			return "cannot load Https";
+		if((err := https->init()) != nil)
+			return err;
+	}
 	if(bufio == nil)
 		bufio = load Bufio Bufio->PATH;
 	if(bufio == nil)
@@ -185,12 +188,9 @@ login(handle, password: string): (string, string, string)
 {
 	body := sys->sprint("{\"identifier\":%s,\"password\":%s}",
 		jsonquote(handle), jsonquote(password));
-	args := "-s" :: "-S" ::
-		"-X" :: "POST" ::
-		"-H" :: "Content-Type: application/json" ::
-		"--data-binary" :: "@-" ::
-		"https://bsky.social/xrpc/com.atproto.server.createSession" :: nil;
-	(out, err) := curl(args, body);
+	(out, err) := fetch("POST",
+		"https://bsky.social/xrpc/com.atproto.server.createSession",
+		("Content-Type", "application/json") :: nil, body);
 	if(err != nil)
 		return (nil, nil, err);
 	(v, jerr) := json->readjson(bufio->sopen(out));
@@ -207,10 +207,9 @@ login(handle, password: string): (string, string, string)
 
 timeline(jwt: string): (list of string, string)
 {
-	args := "-s" :: "-S" ::
-		"-H" :: "Authorization: Bearer "+jwt ::
-		"https://bsky.social/xrpc/app.bsky.feed.getTimeline?limit=30" :: nil;
-	(out, err) := curl(args, nil);
+	(out, err) := fetch("GET",
+		"https://bsky.social/xrpc/app.bsky.feed.getTimeline?limit=30",
+		("Authorization", "Bearer "+jwt) :: nil, nil);
 	if(err != nil)
 		return (nil, err);
 	return decode(out);
@@ -219,7 +218,7 @@ timeline(jwt: string): (list of string, string)
 # split out of timeline() so the actual feed-array walk - the code path
 # every real invocation of this command runs, and which none of the
 # test seams above ever touched - can be driven from a plain JSON
-# string, the same shape curl() itself returns, without a live account.
+# string, the same shape fetch() itself returns, without a live account.
 
 decode(out: string): (list of string, string)
 {
@@ -276,97 +275,23 @@ oneline(s: string): string
 	return out;
 }
 
-# --- host curl, via #C (see man/3/cmd) ---
-# adapted from p9/cmd/prtest.b's own runhost() (itself adapted from
-# appl/cmd/os.b's working use of this device): wait must be opened
-# before "exec" is written to ctl, and /data is opened once for
-# writing (the request body, if any) and once for reading (the
-# response), not the same fd both ways. Body and response here are
-# both small (a short JSON object, or none, in; one HTTP response
-# out) so a plain blocking write-then-read is safe - no need for
-# os.b's concurrent copy() procs, which exist there for a large or
-# open-ended interactive pass-through this never does.
+# --- transport: https(2), this tree's own TLS ---
+# transport-level failures (dial, TLS, certificate verification, HTTP
+# framing) come back as err; an HTTP error STATUS does not - Bluesky
+# answers errors with a JSON body carrying error/message fields, and
+# every caller here decodes that body, so the status would be
+# redundant (and curl -s without -f, which this replaced, behaved the
+# same way).
 
-curl(args: list of string, body: string): (string, string)
+fetch(method, url: string, hdrs: list of (string, string), body: string): (string, string)
 {
-	(ok, nil) := sys->stat("/cmd/clone");
-	if(ok == -1)
-		if(sys->bind("#C", "/", Sys->MBEFORE) < 0)
-			return (nil, sys->sprint("bind #C /: %r"));
-
-	cfd := sys->open("/cmd/clone", Sys->ORDWR);
-	if(cfd == nil)
-		return (nil, sys->sprint("cannot open /cmd/clone: %r"));
-	buf := array[32] of byte;
-	n := sys->read(cfd, buf, len buf);
-	if(n <= 0)
-		return (nil, "cannot read /cmd/clone");
-	dir := "/cmd/"+string buf[0:n];
-
-	wfd := sys->open(dir+"/wait", Sys->OREAD);
-
-	cmd := "curl" :: args;
-	if(sys->fprint(cfd, "exec %s", str->quoted(cmd)) < 0)
-		return (nil, sys->sprint("cannot exec curl: %r"));
-
-	if(body != nil){
-		tocmd := sys->open(dir+"/data", Sys->OWRITE);
-		if(tocmd == nil)
-			return (nil, sys->sprint("cannot open %s/data for writing: %r", dir));
-		bb := array of byte body;
-		if(sys->write(tocmd, bb, len bb) != len bb)
-			return (nil, sys->sprint("short write to curl stdin: %r"));
-		tocmd = nil;	# close: signals EOF on curl's stdin
-	}
-
-	fromcmd := sys->open(dir+"/data", Sys->OREAD);
-	if(fromcmd == nil)
-		return (nil, sys->sprint("cannot open %s/data for reading: %r", dir));
-	errcmd := sys->open(dir+"/stderr", Sys->OREAD);
-
-	out := "";
-	rb := array[8192] of byte;
-	for(;;){
-		rn := sys->read(fromcmd, rb, len rb);
-		if(rn <= 0)
-			break;
-		out += string rb[0:rn];
-	}
-	errout := "";
-	if(errcmd != nil){
-		for(;;){
-			rn := sys->read(errcmd, rb, len rb);
-			if(rn <= 0)
-				break;
-			errout += string rb[0:rn];
-		}
-	}
-	# curl's own exit status (via #C's "wait" line: pid user sys real
-	# status - the 5th field is empty on a clean exit, matching
-	# appl/cmd/os.b's own use of this same device). Checked first: a
-	# curl-level failure (bad host, connection refused, ...) can leave
-	# BOTH out and errout empty, which without this would silently
-	# come back as success with an empty body, rather than the real
-	# failure it is.
-	if(wfd != nil){
-		sb := array[1024] of byte;
-		wn := sys->read(wfd, sb, len sb);
-		if(wn > 0){
-			flds := str->unquoted(string sb[0:wn]);
-			if(len flds >= 5){
-				waitstatus := hd tl tl tl tl flds;
-				if(waitstatus != nil){
-					msg := "curl: "+waitstatus;
-					if(errout != nil)
-						msg += ": "+errout;
-					return (nil, msg);
-				}
-			}
-		}
-	}
-	if(out == nil && errout != nil)
-		return (nil, errout);
-	return (out, nil);
+	b: array of byte;
+	if(body != nil)
+		b = array of byte body;
+	(nil, nil, rbody, err) := https->request(method, url, hdrs, b);
+	if(err != nil)
+		return (nil, err);
+	return (string rbody, nil);
 }
 
 # --- test seam: decode(), no network needed ---
@@ -421,7 +346,7 @@ feedtest(): string
 # --- test seam ---
 # app.bsky.actor.getProfile is a real, public, unauthenticated Bluesky
 # endpoint (Bluesky's own read-only AppView, no session needed) - this
-# drives the exact same curl()/json path login()/timeline() use, end
+# drives the exact same fetch()/json path login()/timeline() use, end
 # to end, over the real network, without needing a credentials file.
 
 pubtest(): string
@@ -429,11 +354,11 @@ pubtest(): string
 	e := ensureloaded();
 	if(e != nil)
 		return "pubtest: "+e;
-	args := "-s" :: "-S" ::
-		"https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=bsky.app" :: nil;
-	(out, err) := curl(args, nil);
+	(out, err) := fetch("GET",
+		"https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=bsky.app",
+		nil, nil);
 	if(err != nil)
-		return "pubtest: curl: "+err;
+		return "pubtest: "+err;
 	(v, jerr) := json->readjson(bufio->sopen(out));
 	if(jerr != nil || v == nil || !v.isobject())
 		return "pubtest: bad response: "+out;
@@ -446,7 +371,7 @@ pubtest(): string
 	return nil;
 }
 
-# login() is the only caller of curl()'s request-body (OWRITE /data)
+# login() is the only caller of fetch()'s POST-with-request-body
 # branch, and of jsonquote() - neither is exercised by pubtest() above,
 # which only ever GETs. A deliberately bogus login can't reach a real
 # account, but bsky.social can only answer with a real, well-formed
@@ -454,11 +379,10 @@ pubtest(): string
 # com.atproto.server.createSession replied 'AuthenticationRequired:
 # Invalid identifier or password' to a bogus identifier/password pair
 # on a first attempt) if the JSON body this sends actually arrived
-# intact - a body that got mangled or truncated by the write/
-# close-to-EOF path would instead fail to parse as the request Bluesky
-# expects (a curl-level failure, or decode()'s own "bad response"/"no
-# accessJwt" fallback text, neither of which is a real decoded error
-# field). Accepts any of the error codes the real server is known to
+# intact - a body that got mangled or truncated in transit would
+# instead fail to parse as the request Bluesky expects (a transport
+# failure, or decode()'s own "bad response"/"no accessJwt" fallback
+# text, neither of which is a real decoded error field). Accepts any of the error codes the real server is known to
 # answer a bogus login with, not just one: repeated runs of this exact
 # test in one session are themselves enough to trip bsky.social's own
 # rate limiter, which answers with RateLimitExceeded instead of

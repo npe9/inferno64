@@ -29,35 +29,34 @@ never places the password on a command line (where a
 .IR ps (1)
 listing could see it) or in any diagnostic output.
 .SH TRANSPORT
-This tree's own
-.B ssl3
-.RI ( module/ssl3.m )
-is an SSLv3-era implementation \(em RC4/DES/3DES/IDEA bulk ciphers,
-static RSA/DH key exchange, no AES, no GCM or ChaCha20, no SNI \(em
-and cannot complete the TLS 1.2+ handshake every real HTTPS host,
-.B bsky.social
-included, now requires.
 .B Bsky
-instead drives the host's own
+speaks HTTPS through
+.IR https (2),
+this tree's own HTTP-over-TLS-1.2 client
+.RI ( tls12 (2),
+which verifies the server's certificate chain against the tree's
+trust roots). It originally drove the host's
 .IR curl (1)
 through
 .B #C
-(see
-.IR cmd (3)),
-so it only runs hosted, under an
-.I emu
-that has
-.B #C
-available; it does not work under a native kernel with no host to
-delegate to.
+because
+.B ssl3
+.RI ( module/ssl3.m )
+is SSLv3-era and cannot reach a modern HTTPS host; that stopgap is
+gone. Name resolution falls back to the hosted
+.IR emu 's
+built-in resolver when no connection server serves
+.IR /net/cs ,
+so hosted mode remains the tested configuration.
 .SH SOURCE
 .B /appl/cmd/bsky.b
 .SH SEE ALSO
 .IR bskytest (1),
-.IR cmd (3)
+.IR https (2),
+.IR tls12 (2)
 .SH BUGS
 Read-only, one network, one timeline, no abstraction shared with any
 other client \(em the first vertical slice, not the whole thing. No
 pagination (a fixed 30 posts), no posting, no notifications, no
-Mastodon support yet, and no reuse of any existing HTTP-client code in
-this tree (see TRANSPORT: none of it can reach a real TLS 1.2+ host).
+Mastodon support (see
+.IR masto (1)).

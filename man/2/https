@@ -1,0 +1,97 @@
+.TH HTTPS 2
+.SH NAME
+https: request \- HTTP/1.1 client over this tree's own TLS
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "tls12.m";
+include "https.m";
+https := load Https Https->PATH;
+
+init:    fn(): string;
+request: fn(method, url: string,
+            hdrs: list of (string, string),
+            body: array of byte):
+            (int, list of (string, string), array of byte, string);
+.EE
+.SH DESCRIPTION
+.B Https
+performs one HTTP/1.1 request over TLS 1.2 using
+.IR tls12 (2),
+which verifies the server's certificate chain against the tree's own
+trust roots and refuses the connection otherwise. It exists so
+network clients need no host command as a transport;
+.IR bsky (1)
+and
+.IR masto (1)
+are its first users.
+.PP
+.B Init
+must be called once and returns nil on success.
+.B Request
+takes a
+.I method
+("GET", "POST", ...), an
+.I url
+of the form
+.BR https://\fIhost\fP[:\fIport\fP]/\fIpath\fP?\fIquery\fP ,
+extra request headers as
+.RI ( name ,\  value )
+pairs, and an optional request body
+(a
+.B Content-Length
+header is added automatically when it is non-nil). It returns
+.BI ( status ,\  headers ,\  body ,\  err ) .
+.I Err
+is nil whenever a complete HTTP response came back:
+an HTTP error status (4xx/5xx) is a
+.I result
+whose body is returned like any other \(em APIs put their
+diagnostics there \(em not an error. Response header names arrive
+lower-cased, in arrival order.
+.PP
+The response body is read strictly by the response's own framing:
+.B Content-Length
+when given, the
+.B chunked
+transfer-coding when declared, and read-to-close otherwise. Each
+request uses its own TLS session
+.RB ( "Connection: close" );
+nothing is reused. Redirects are not followed \(em the status and
+.B location
+header come back to the caller instead.
+.PP
+The host is resolved by dialling the name, which works when a
+connection server (such as
+.IR ndb/cs (8))
+serves
+.IR /net/cs ;
+failing that it falls back to the hosted
+.IR emu 's
+built-in
+.B $Srv
+resolver, so hostname URLs work in hosted mode with no connection
+server running. Under a native kernel with neither, only a working
+.I /net/cs
+will do.
+.SH SOURCE
+.B /appl/lib/https.b
+.br
+.B /module/https.m
+.SH SEE ALSO
+.IR httpstest (1),
+.IR tls12 (2),
+.IR dial (2),
+.IR bsky (1),
+.IR masto (1)
+.SH BUGS
+One request per connection; no keep-alive, no pipelining, no
+compression, no redirects, no proxies, and
+.B https
+only \(em there is deliberately no cleartext
+.B http
+mode. Everything
+.IR tls12 (2)'s
+BUGS section says (no revocation checking above all) applies to
+every request made through this.

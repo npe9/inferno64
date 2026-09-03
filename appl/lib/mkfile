@@ -67,6 +67,7 @@ TARG=\
 	inflate.dis\
 	iobuf.dis\
 	ip.dis\
+	https.dis\
 	ipattr.dis\
 	ipval.dis\
 	ir.dis\

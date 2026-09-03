@@ -127,6 +127,7 @@ TARG=\
 	hd.dis\
 	dialtest.dis\
 	tls12test.dis\
+	httpstest.dis\
 	aesgcmtest.dis\
 	ccpolytest.dis\
 	hmacsha256test.dis\

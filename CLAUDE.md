@@ -108,10 +108,11 @@ stays legitimate for what it was already used for elsewhere — running a real h
 oracle (`p9/cmd/prtest.b`), or genuinely operating on the host (`appl/cmd/os.b`) — the rule is
 specifically about TLS/HTTP transport for a *network client*, not `#C` in general. If the SSL library
 still can't reach a real host by the time you get here, fixing that is the actual task, not a reason
-to route around it again. As of this rule landing, `bsky(1)`/`masto(1)` themselves are *still* on the
-`#C`/curl stopgap — the SSL modernization (see `doc/` for the in-progress plan, if one exists by the
-time you read this) hasn't shipped yet. Don't read the rule, read the code, and conclude the rule is
-stale; migrating those two commands off `#C` is exactly the outstanding work this rule is naming.
+to route around it again. The SSL modernization this rule demanded has shipped
+(`doc/ssl-modernization-plan.md`): `tls12(2)` is a real, certificate-verifying TLS 1.2 client,
+`https(2)` is the HTTP layer over it, and `bsky(1)`/`masto(1)` were migrated off the `#C`/curl
+stopgap onto it — so the rule now simply describes how things are, and any future network client
+starts from `https(2)`/`tls12(2)`, never from `#C`.
 
 **A Plan 9 userspace workalike is Limbo, in `p9/`, not C in `utils/`.** `utils/` builds
 host-native binaries with the kencc toolchain — real work, but not "running in Inferno

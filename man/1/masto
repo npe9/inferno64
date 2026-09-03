@@ -59,25 +59,23 @@ rather than pull in a real HTML parser for a few paragraphs of text.
 .SH TRANSPORT
 Same as
 .IR bsky (1):
-this tree's own
-.B ssl3
-cannot reach a real TLS 1.2+ host, so
-.B masto
-drives the host's own
-.IR curl (1)
-through
+HTTPS through
+.IR https (2),
+this tree's own certificate-verifying TLS 1.2 client \(em the
+original host-\c
+.IR curl (1)\c
+-through-\c
 .B #C
-(see
-.IR cmd (3)).
-Hosted mode only \(em see
-.IR bsky (1)
-for the full reasoning, not repeated here.
+stopgap is gone. See
+.IR bsky (1)'s
+TRANSPORT section, not repeated here.
 .SH SOURCE
 .B /appl/cmd/masto.b
 .SH SEE ALSO
 .IR mastotest (1),
 .IR bsky (1),
-.IR cmd (3)
+.IR https (2),
+.IR tls12 (2)
 .SH BUGS
 Read-only, one timeline, no abstraction shared with
 .IR bsky (1)

@@ -1,0 +1,73 @@
+.TH HTTPSTEST 1
+.SH NAME
+httpstest \- live test of the HTTPS client
+.SH SYNOPSIS
+.B httpstest
+.SH DESCRIPTION
+.B Httpstest
+exercises
+.IR https (2)
+against the real network:
+.IP 1.
+a GET of a public Bluesky API endpoint,
+.B by hostname
+\(em exercising the
+.B $Srv
+resolver fallback (no
+.I /net/cs
+runs in this emu instance, the gap
+.IR dialtest (1)
+recorded) and a
+.B Content-Length
+response;
+.IP 2.
+a GET of
+.BR mastodon.social 's
+instance endpoint \(em a larger response, whichever framing the
+server picks (the framing actually seen is printed, so a PASS says
+which code paths really ran);
+.IP 3.
+a request for a nonexistent endpoint, which must come back as an HTTP
+error
+.I status
+with a body and a nil error \(em APIs put their diagnostics in
+error-status bodies, so treating 4xx as failure would break every
+caller;
+.IP 4.
+a nonexistent hostname, which must fail with a resolution error;
+.IP 5.
+offline, via the module's own test seam: the chunked transfer-coding
+decoder must decode a multi-chunk body exactly (with a chunk
+extension and a trailer, and with multi-digit sizes \(em an early
+negative control corrupted the size arithmetic and all-single-digit
+chunks sailed through, so both a two-decimal-digit and a hex-letter
+size are pinned), must reject a truncated body, and must reject a
+garbage size line. The live hosts all answer with
+.B Content-Length
+today, so this path is unreachable over the network;
+.IP 6.
+a literal-IP
+.B https
+URL, which must fail
+.I "certificate verification"
+end to end \(em the URL's host is the verification hostname and no
+public certificate names a bare IP address. This drives the full
+wrong-certificate path through
+.IR https (2)
+itself, not just through
+.IR x509 (2)
+the way
+.IR tls12test (1)'s
+controls do.
+.SH SOURCE
+.B /appl/cmd/httpstest.b
+.SH SEE ALSO
+.IR https (2),
+.IR tls12test (1),
+.IR bskytest (1),
+.IR mastotest (1)
+.SH BUGS
+Needs the real network and real third-party servers; a failure can
+mean the world changed rather than the code. The read-to-close
+framing path has no live leg (every host tested sends
+.BR Content-Length ).

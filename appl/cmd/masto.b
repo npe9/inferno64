@@ -1,12 +1,13 @@
 implement Masto;
 
 # masto(1) - Mastodon client, second vertical slice (see bsky(1) for
-# the first, and its own header comment for why this drives host
-# curl(1) through #C rather than this tree's own SSLv3-era module/
-# ssl3.m: the same reasoning applies here unchanged, so it isn't
-# repeated in full - see bsky.b).
+# the first). Transport is https(2) - this tree's own TLS 1.2 stack
+# (tls12(2), which verifies the server's certificate chain), not a
+# host command; the original #C/curl stopgap is gone, per CLAUDE.md's
+# rule that no network client uses #C as a transport (see bsky.b's
+# header and doc/ssl-modernization-plan.md).
 #
-# Deliberately self-contained, not sharing curl()/jstring()/jsonquote()
+# Deliberately self-contained, not sharing fetch()/jstring() plumbing
 # with bsky.b: matches this tree's own standalone-command convention
 # (appl/danby/aerobraking.b is standalone for the same reason - "one
 # file, nothing else"), and a shared plumbing library is a decision to
@@ -21,14 +22,17 @@ implement Masto;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
-include "string.m";
-	str: String;
 include "bufio.m";
 	bufio: Bufio;
 	Iobuf: import bufio;
 include "json.m";
 	json: JSON;
 	JValue: import json;
+include "keyring.m";
+include "security.m";
+include "tls12.m";
+include "https.m";
+	https: Https;
 
 Masto: module
 {
@@ -84,10 +88,13 @@ ensureloaded(): string
 		sys = load Sys Sys->PATH;
 	if(sys == nil)
 		return "cannot load Sys";
-	if(str == nil)
-		str = load String String->PATH;
-	if(str == nil)
-		return "cannot load String";
+	if(https == nil){
+		https = load Https Https->PATH;
+		if(https == nil)
+			return "cannot load Https";
+		if((err := https->init()) != nil)
+			return err;
+	}
 	if(bufio == nil)
 		bufio = load Bufio Bufio->PATH;
 	if(bufio == nil)
@@ -153,10 +160,9 @@ jstring(v: ref JValue): string
 
 timeline(inst, token: string): (list of string, string)
 {
-	args := "-s" :: "-S" ::
-		"-H" :: "Authorization: Bearer "+token ::
-		"https://"+inst+"/api/v1/timelines/home?limit=30" :: nil;
-	(out, err) := curl(args);
+	(out, err) := fetch("GET",
+		"https://"+inst+"/api/v1/timelines/home?limit=30",
+		("Authorization", "Bearer "+token) :: nil);
 	if(err != nil)
 		return (nil, err);
 	return decode(out);
@@ -165,7 +171,7 @@ timeline(inst, token: string): (list of string, string)
 # split out of timeline() so the actual status-array walk - the code
 # path every real invocation of this command runs, and which none of
 # the test seams above ever touched - can be driven from a plain JSON
-# string, the same shape curl() itself returns, without a live account.
+# string, the same shape fetch() itself returns, without a live account.
 
 decode(out: string): (list of string, string)
 {
@@ -361,79 +367,20 @@ oneline(s: string): string
 	return out;
 }
 
-# --- host curl, via #C (see man/3/cmd) ---
-# GET-only here (no request body needed by anything masto(1) itself
-# calls), so this is simpler than bsky.b's own curl() - see that
-# file's comment for the write-then-read /data protocol this is
-# adapted from, which this doesn't need.
+# --- transport: https(2), this tree's own TLS ---
+# GET-only here (nothing masto(1) calls needs a request body).
+# Transport-level failures (dial, TLS, certificate verification,
+# HTTP framing) come back as err; an HTTP error STATUS does not -
+# Mastodon answers errors with a JSON body, and the callers decode
+# that body (curl -s without -f, which this replaced, behaved the
+# same way).
 
-curl(args: list of string): (string, string)
+fetch(method, url: string, hdrs: list of (string, string)): (string, string)
 {
-	(ok, nil) := sys->stat("/cmd/clone");
-	if(ok == -1)
-		if(sys->bind("#C", "/", Sys->MBEFORE) < 0)
-			return (nil, sys->sprint("bind #C /: %r"));
-
-	cfd := sys->open("/cmd/clone", Sys->ORDWR);
-	if(cfd == nil)
-		return (nil, sys->sprint("cannot open /cmd/clone: %r"));
-	buf := array[32] of byte;
-	n := sys->read(cfd, buf, len buf);
-	if(n <= 0)
-		return (nil, "cannot read /cmd/clone");
-	dir := "/cmd/"+string buf[0:n];
-
-	wfd := sys->open(dir+"/wait", Sys->OREAD);
-
-	cmd := "curl" :: args;
-	if(sys->fprint(cfd, "exec %s", str->quoted(cmd)) < 0)
-		return (nil, sys->sprint("cannot exec curl: %r"));
-
-	fromcmd := sys->open(dir+"/data", Sys->OREAD);
-	if(fromcmd == nil)
-		return (nil, sys->sprint("cannot open %s/data for reading: %r", dir));
-	errcmd := sys->open(dir+"/stderr", Sys->OREAD);
-
-	out := "";
-	rb := array[8192] of byte;
-	for(;;){
-		rn := sys->read(fromcmd, rb, len rb);
-		if(rn <= 0)
-			break;
-		out += string rb[0:rn];
-	}
-	errout := "";
-	if(errcmd != nil){
-		for(;;){
-			rn := sys->read(errcmd, rb, len rb);
-			if(rn <= 0)
-				break;
-			errout += string rb[0:rn];
-		}
-	}
-	# curl's own exit status (see bsky.b's curl() for why this is
-	# checked first, not just errout: a curl-level failure can leave
-	# both out and errout empty, which would otherwise silently come
-	# back as success with an empty body).
-	if(wfd != nil){
-		sb := array[1024] of byte;
-		wn := sys->read(wfd, sb, len sb);
-		if(wn > 0){
-			flds := str->unquoted(string sb[0:wn]);
-			if(len flds >= 5){
-				waitstatus := hd tl tl tl tl flds;
-				if(waitstatus != nil){
-					msg := "curl: "+waitstatus;
-					if(errout != nil)
-						msg += ": "+errout;
-					return (nil, msg);
-				}
-			}
-		}
-	}
-	if(out == nil && errout != nil)
-		return (nil, errout);
-	return (out, nil);
+	(nil, nil, rbody, err) := https->request(method, url, hdrs, nil);
+	if(err != nil)
+		return (nil, err);
+	return (string rbody, nil);
 }
 
 # --- test seam: decode(), no network needed ---
@@ -544,7 +491,7 @@ htmltest(): string
 # --- test seam ---
 # api/v1/instance is Mastodon's own real public, unauthenticated
 # endpoint (a server description, not a session) - drives the exact
-# same curl()/json path timeline() uses, over the real network,
+# same fetch()/json path timeline() uses, over the real network,
 # without needing an access token.
 
 pubtest(): string
@@ -552,10 +499,9 @@ pubtest(): string
 	e := ensureloaded();
 	if(e != nil)
 		return "pubtest: "+e;
-	args := "-s" :: "-S" :: "https://mastodon.social/api/v1/instance" :: nil;
-	(out, err) := curl(args);
+	(out, err) := fetch("GET", "https://mastodon.social/api/v1/instance", nil);
 	if(err != nil)
-		return "pubtest: curl: "+err;
+		return "pubtest: "+err;
 	(v, jerr) := json->readjson(bufio->sopen(out));
 	if(jerr != nil || v == nil || !v.isobject())
 		return "pubtest: bad response: "+out;

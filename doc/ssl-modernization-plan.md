@@ -2,6 +2,46 @@
 
 ## Status (most recent first)
 
+**Step 9 done, 2026-09-02 — THE PLAN'S ACCEPTANCE CRITERION IS MET.**
+`bsky(1)` and `masto(1)` now speak HTTPS through this tree's own
+stack and the `#C`/curl stopgap is deleted from both. The layer in
+between is new: `https(2)` (`module/https.m` +
+`appl/lib/https.b`), one HTTP/1.1 request per TLS session over
+`tls12(2)`, reading the response strictly by its own framing
+(Content-Length / chunked / read-to-close), treating HTTP error
+statuses as results (APIs put diagnostics in 4xx bodies — this is
+what lets the clients' existing JSON error decoding keep working
+unchanged), no redirects. Name resolution: dial by name first (real
+when `ndb/cs` serves `/net/cs`), falling back to hosted emu's
+built-in `$Srv` resolver (`Srv->iph2a`, the existing mechanism —
+found, not built) — so hostname URLs work in this emu instance
+despite the still-open `/net/cs` gap, and `#C` is nowhere involved.
+`CLAUDE.md`'s rule paragraph updated from "still in violation" to
+describing the shipped state.
+
+Evidence: `httpstest(1)` (9 checks, live + offline): both public
+endpoints by hostname; HTTP-error-as-result; resolution failure;
+chunked decoding via a test seam (live hosts all send Content-Length
+now) including truncation and garbage-size rejection; and an
+end-to-end wrong-certificate refusal (a literal-IP https URL — no
+public cert names a bare IP). The chunked positive case was
+negative-controlled the hard way: corrupting the decoder's size
+arithmetic (*16→*15) initially PASSED because every test chunk had a
+single-digit size and "1A" routes its second digit through the
+hex-letter arm — the test was strengthened (a "10"=16-byte chunk)
+until the corruption visibly failed, then the corruption removed.
+`bskytest(1)` and `mastotest(1)` PASS unchanged over the new
+transport (including bsky's real-POST bogus-login leg, which gets a
+real decoded `AuthenticationRequired` from bsky.social through our
+TLS). Migration control: hiding `lib/tls/ca-bundle.pem` makes both
+client test suites fail with the trust-root error, restore makes
+them pass — the clients demonstrably ride the verifying stack.
+
+Left open, tracked, deliberate: `/net/cs` still unserved (the `$Srv`
+fallback covers hosted mode; running `ndb/cs` is the native-mode
+answer); no revocation checking (tls12(2) BUGS); `ssl3.m`/`ssl3.b`
+left as-is (nothing migrated off it here — it predates this plan).
+
 **Step 8 done, 2026-09-02 — certificate chain verification, live on
 every handshake.** `tls12->client()` now authenticates the server
 before deriving any secret: `x509(2)`'s new `verify_chain_host()`
