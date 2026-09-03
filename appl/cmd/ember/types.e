@@ -512,6 +512,35 @@ func mktype(line int, pos int, kind int, tof ref Type, ids ref Decl) ref Type {
 	return ref Type{kind: kind, tof: tof, ids: ids, line: line, pos: pos, varargs: 0, hasenv: 0, ok: 0, linkall: 0, rec: 0, align: 0, sig: 0, size: 0, decl: nil, tags: nil, meths: nil, cse: nil, teq: nil, eq: nil, tparams: nil, tbody: nil, tinsts: nil, methtmpl: nil, gtemplate: nil, ginst: nil}
 }
 
+// dst takes src's every field (C's *dst = *src)
+func copytype(dst ref Type, src ref Type) {
+	dst.kind = src.kind
+	dst.varargs = src.varargs
+	dst.hasenv = src.hasenv
+	dst.ok = src.ok
+	dst.linkall = src.linkall
+	dst.rec = src.rec
+	dst.align = src.align
+	dst.sig = src.sig
+	dst.size = src.size
+	dst.decl = src.decl
+	dst.tof = src.tof
+	dst.ids = src.ids
+	dst.tags = src.tags
+	dst.meths = src.meths
+	dst.cse = src.cse
+	dst.teq = src.teq
+	dst.eq = src.eq
+	dst.tparams = src.tparams
+	dst.tbody = src.tbody
+	dst.tinsts = src.tinsts
+	dst.methtmpl = src.methtmpl
+	dst.gtemplate = src.gtemplate
+	dst.ginst = src.ginst
+	dst.line = src.line
+	dst.pos = src.pos
+}
+
 func mktalt(c ref Case) ref Type {
 	t := mktype(0, 0, Talt, nil, nil)
 	t.cse = c

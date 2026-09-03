@@ -342,6 +342,7 @@ func setdescriptorlist(d ref Desc)
 func typeinit()
 func mktype(line int, pos int, kind int, tof ref Type, ids ref Decl) ref Type
 func mktalt(c ref Case) ref Type
+func copytype(dst ref Type, src ref Type)
 func mkdecl(line int, pos int, store int, t ref Type) ref Decl
 func dupdecl(old ref Decl) ref Decl
 func appdecls(d ref Decl, dd ref Decl) ref Decl

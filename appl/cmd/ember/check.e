@@ -324,10 +324,20 @@ func tinstantiate(n ref types.Node) ref types.Type {
 			return ti.ty
 		}
 	}
-	for i = 0; i < tinstdepth; i++ {
-		if tinstack[i] == td {
-			nerror(n, sys.sprint("%s: recursive generic instantiation not yet supported", td.sym))
-			return terror
+	// a struct instance is a placeholder, cached before its body is
+	// walked, so a self-referencing field finds it (check.c)
+	var inst ref types.Type
+	var ti ref types.Ginst
+	if tt.tbody != nil && tt.tbody.op == types.Otstruct {
+		inst = types.mktype(n.line, n.pos, types.Tadt, nil, nil)
+		ti = ref types.Ginst{nargs: nargs, args: argv, ty: inst, decl: nil, next: tt.tinsts}
+		tt.tinsts = ti
+	} else {
+		for i = 0; i < tinstdepth; i++ {
+			if tinstack[i] == td {
+				nerror(n, sys.sprint("%s: recursive generic instantiation not yet supported", td.sym))
+				return terror
+			}
 		}
 	}
 	if tinstdepth >= MaxTinstDepth {
@@ -348,16 +358,26 @@ func tinstantiate(n ref types.Node) ref types.Type {
 			break
 		}
 	}
-	inst := stype(tt.tbody)
+	body := stype(tt.tbody)
 	popscope()
 	tinstdepth--
+	if inst != nil {
+		if body == terror {
+			return terror
+		}
+		types.copytype(inst, body)
+	} else {
+		inst = body
+	}
 	id := types.mkdecl(n.line, n.pos, types.Dtype, inst)
 	id.sym = instname(td.sym, argv, nargs)
 	inst.decl = id
 	types.sizetype(inst)
 	types.teqclass(inst)
-	ti := ref types.Ginst{nargs: nargs, args: argv, ty: inst, decl: nil, next: tt.tinsts}
-	tt.tinsts = ti
+	if ti == nil {
+		ti = ref types.Ginst{nargs: nargs, args: argv, ty: inst, decl: nil, next: tt.tinsts}
+		tt.tinsts = ti
+	}
 	inst.gtemplate = tt
 	inst.ginst = ti
 	return inst
@@ -374,12 +394,6 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 		}
 		if m != 0 {
 			return fi.decl
-		}
-	}
-	for i := 0; i < tinstdepth; i++ {
-		if tinstack[i] == td {
-			error(line, sys.sprint("%s: recursive generic instantiation not yet supported", td.sym))
-			return nil
 		}
 	}
 	if tinstdepth >= MaxTinstDepth {
@@ -418,14 +432,15 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 	fnd.offset = types.idoffsets(ft.ids, types.MaxTemp, types.IBY2WD)
 	fnd.dot = impdecl
 	addfn(fnd)
+	// cached before its body is checked, for a recursive call (check.c)
+	fi := ref types.Ginst{nargs: nargs, args: argv, ty: nil, decl: fnd, next: td.finsts}
+	td.finsts = fi
 	savedcurfn := curfn
 	savedcurret := curret
 	fnchk(fnd)
 	curfn = savedcurfn
 	curret = savedcurret
 	fnd.checked = 1
-	fi := ref types.Ginst{nargs: nargs, args: argv, ty: nil, decl: fnd, next: td.finsts}
-	td.finsts = fi
 	popscope()
 	tinstdepth--
 	return fnd

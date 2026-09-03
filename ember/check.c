@@ -166,7 +166,7 @@ static Type*
 tinstantiate(Node *n)
 {
 	Decl *td, *pd;
-	Type *tt, *inst, **argv;
+	Type *tt, *inst, *body, **argv;
 	Ginst *ti;
 	Node *p, *a, *pn;
 	int i, nargs, nparams, match;
@@ -227,6 +227,24 @@ tinstantiate(Node *n)
 			return ti->ty;
 	}
 
+	/*
+	 * a struct instance exists before its body is walked: a
+	 * placeholder Tadt, cached and named now, so a field that names
+	 * the type being instantiated ("next ref Node[T]", a generic
+	 * list) resolves to the very instance under construction, as a
+	 * non-generic recursive struct does through its Dtype.  the
+	 * walked body is copied into the placeholder afterwards.
+	 */
+	inst = nil;
+	if(tt->tbody != nil && tt->tbody->op == Otstruct){
+		inst = mktype(&n->src, Tadt, nil, nil);
+		ti = allocmem(sizeof *ti);
+		ti->nargs = nargs;
+		ti->args = argv;
+		ti->ty = inst;
+		ti->next = tt->tinsts;
+		tt->tinsts = ti;
+	}else
 	for(i = 0; i < tinstdepth; i++)
 		if(tinstack[i] == td){
 			nerror(n, "%s: recursive generic instantiation not yet supported", td->sym->name);
@@ -261,9 +279,15 @@ tinstantiate(Node *n)
 		if(p->op != Oseq)
 			break;
 	}
-	inst = stype(tt->tbody);
+	body = stype(tt->tbody);
 	popscope();
 	tinstdepth--;
+	if(inst != nil){
+		if(body == terror)
+			return terror;
+		*inst = *body;
+	}else
+		inst = body;
 
 	{
 		Decl *id;
@@ -282,12 +306,14 @@ tinstantiate(Node *n)
 	sizetype(inst);
 	teqclass(inst);
 
-	ti = allocmem(sizeof *ti);
-	ti->nargs = nargs;
-	ti->args = argv;
-	ti->ty = inst;
-	ti->next = tt->tinsts;
-	tt->tinsts = ti;
+	if(ti == nil){
+		ti = allocmem(sizeof *ti);
+		ti->nargs = nargs;
+		ti->args = argv;
+		ti->ty = inst;
+		ti->next = tt->tinsts;
+		tt->tinsts = ti;
+	}
 
 	/*
 	 * reverse link, for a generic-receiver method lookup on this
@@ -350,11 +376,6 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 			return fi->decl;
 	}
 
-	for(i = 0; i < tinstdepth; i++)
-		if(tinstack[i] == td){
-			error(src->start, "%s: recursive generic instantiation not yet supported", td->sym->name);
-			return nil;
-		}
 	if(tinstdepth >= MaxTinstDepth){
 		error(src->start, "generic functions nested too deeply");
 		return nil;
@@ -441,19 +462,25 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 		}
 		fns[nfns++] = fnd;
 
-		savedcurfn = curfn;
-		savedcurret = curret;
-		fnchk(fnd);
-		curfn = savedcurfn;
-		curret = savedcurret;
-		fnd->checked = 1;
-
+		/*
+		 * cached before its body is checked: a recursive call in
+		 * the body (a generic list's length()) instantiates the
+		 * same function with the same arguments and must find this
+		 * one, whose type is already complete.
+		 */
 		fi = allocmem(sizeof *fi);
 		fi->nargs = nargs;
 		fi->args = argv;
 		fi->decl = fnd;
 		fi->next = td->finsts;
 		td->finsts = fi;
+
+		savedcurfn = curfn;
+		savedcurret = curret;
+		fnchk(fnd);
+		curfn = savedcurfn;
+		curret = savedcurret;
+		fnd->checked = 1;
 
 		popscope();
 		tinstdepth--;

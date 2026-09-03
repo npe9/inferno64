@@ -216,7 +216,9 @@ Generic functions and types take type parameters in brackets: `func
 first[T](xs []T) T`, `type Pair[T] struct { a T; b T }`. Type
 arguments are inferred at call sites from the argument types,
 including for higher-order functions such as `mapa[T, U](xs []T, f
-func(T) U) []U`.
+func(T) U) []U`. A generic struct may refer to itself (`type Node[T]
+struct { val T; next ref Node[T] }`) and a generic function or
+method may call itself (`tests/type/genlist.e`).
 
 Methods are declared with a receiver: `func (p ref Point) norm() int`
 or `func (p Point) sum() int`. A value receiver gets a copy. Methods
