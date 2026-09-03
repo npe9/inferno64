@@ -634,16 +634,45 @@ state machine runs and emits a SYN \- the connection reads back
 tcp.c's own status line.  This is the decisive point: the user-space
 process is running the actual Plan 9
 .CW devip / tcp.c / udp.c ,
-not a hand-written responder.  The handshake does not yet reach
-.CW Established :
-completing it needs the looped SYN delivered back into the stack by the
-loopback read kproc, which needs the connector task to yield.  A
+not a hand-written responder.  And the handshake now completes: the
+connection reads back
+.CW "Established ... swin 1048560>>4 ... qscale 4" \-
+the real tcp.c three-way handshake, window scaling and all, done over
+loopback in a user-space process.
+.PP
+Completing it needed the looped SYN delivered back into the stack.  The
+stock
+.CW loopbackmedium.c
+queues each packet and injects it from a separate
+.CW loopbackread
+kproc; the personality is single-threaded and the shim's
+.CW kproc
+is a no-op, so that reader never runs.  A
 .CW tsleep
-from the personality's server task panics
+to yield to it instead panics
 .CW donotify \-
 the cooperative sleep/wakeup path for user tasks doing kernel-style
-blocking is not wired.  That, then the osprey-interface medium and a
-two-machine wire test, are what remains of item 7a.
+blocking is not wired, and the shim is built on the opposite premise
+(sleep only ever waits on a condition already made true by a synchronous
+transport).  So the loopback was put on that same footing: a
+personality-local synchronous medium,
+.CW os/osprey/ip/syncloopbackmedium.c ,
+whose
+.CW bwrite
+injects the packet straight back into the stack in the caller's context.
+The SYN is delivered at once, the SYN-ACK at once in turn, and by the
+time the connecting side reaches its sleep the connection is already
+.CW Established .
+.CW ip.c ,
+.CW tcp.c
+and
+.CW ipifc.c
+are untouched; only the medium, the wire abstraction, is made
+zero-latency.  Every other configuration (pc64 and the rest) keeps the
+real kproc-driven
+.CW loopbackmedium.c ,
+and all build unchanged.  The osprey-interface medium and a two-machine
+wire test are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

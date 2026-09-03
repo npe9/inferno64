@@ -33,18 +33,18 @@ void (*ipprotoinit[])(Fs*) = {
 	nil,
 };
 
-extern void loopbackmediumlink(void);
+extern void syncloopbackmediumlink(void);
 extern int p9open(char*, int);
 extern long p9read(int, void*, long);
 extern long p9write(int, void*, long);
 extern void p9close(int);
 
 /*
- * NOT YET WIRED: adding ipdevtab to the personality devtab and calling
- * this faults (a user fault the microkernel turns into a donotify panic)
- * somewhere in the real stack running under the shim - the stack links
- * cleanly but its runtime under the personality's kernel-facility stubs
- * needs debugging.  Kept here as the bring-up skeleton for that work.
+ * Bring the real Plan 9 IP stack up in this personality and prove it
+ * runs.  ipdevtab is in the personality devtab and this is called from
+ * the server once its name space is up.  The stack is the actual
+ * devip/ip.c/tcp.c/udp.c/ipifc.c, running in a user-space process on the
+ * microkernel, not a hand-written responder.
  *
  * Bring the stack up in this personality: register the loopback medium,
  * mount the ip device (#I) at /net, bind loopback to an interface and
@@ -64,7 +64,7 @@ p9ipup(void)
 		print("p9 ip: bring-up failed: %s\n", up->errstr);
 		return;
 	}
-	loopbackmediumlink();
+	syncloopbackmediumlink();
 	ic = namec("#I", Atodir, 0, 0);
 	nc = namec("/net", Atodir, 0, 0);
 	cmount(ic, nc, MAFTER, "");
@@ -146,7 +146,10 @@ p9ipup(void)
 				;
 			*e = 0;
 			print("p9 ip: connection status from the real tcp.c: %s\n", line2);
-			print("p9 ip: (loopback handshake stops at Syn_sent: the real tcp.c ran and sent a SYN; completing to Established needs the personality's kproc sleep/wakeup, which still panics donotify)\n");
+			if(strncmp(line2, "Established", 11) == 0)
+				print("p9 ip: the real Plan 9 tcp.c completed a 3-way handshake over loopback in user space\n");
+			else
+				print("p9 ip: handshake did not reach Established\n");
 		}
 		p9close(dfd); p9close(afd);
 	}
