@@ -5,6 +5,9 @@
 # generations must be byte-identical (they are also identical to the
 # C compiler's output, by tests/discmp.sh).
 
+# the emulator reads its console from stdin: under mk that is the
+# rest of the recipe, which it would echo into the captured output
+exec </dev/null
 cd "$(dirname "$0")/.."
 ROOT=$(cd .. && pwd)
 EMU=$(ls "$ROOT"/*/*/bin/emu-g 2>/dev/null | head -1)

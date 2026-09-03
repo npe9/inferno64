@@ -9,6 +9,9 @@
 # via mk) and the ember-compiled library tests/type/libpoint.e
 # (installed as tmp/libpoint.dis, which loadlib.e loads).
 
+# the emulator reads its console from stdin: under mk that is the
+# rest of the recipe, which it would echo into the captured output
+exec </dev/null
 cd "$(dirname "$0")/.."
 ROOT=$(cd .. && pwd)
 EMBER=./o.out
