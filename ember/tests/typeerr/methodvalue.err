@@ -1,0 +1,1 @@
+tests/typeerr/methodvalue.e:19: a method is not a value: call it, or wrap it in a closure

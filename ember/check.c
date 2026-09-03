@@ -3591,6 +3591,13 @@ daschk(Node *n)
 		nerror(n, ":= of nil needs a type");
 		t = terror;
 	}
+	if(t->kind == Tfn){
+		/* only a method reached through a receiver has a bare Tfn
+		 * type here (a function value is Tref{Tfn}): "g := p.get"
+		 * would leave g uncallable ("not enough arguments") */
+		nerror(n, "a method is not a value: call it, or wrap it in a closure");
+		t = terror;
+	}
 	sizetype(t);
 	d = mkdecl(&lhs->src, Dlocal, t);
 	d->sym = lhs->sym;
