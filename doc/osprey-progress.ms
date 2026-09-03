@@ -821,8 +821,24 @@ complete a handshake between them -
 .CW "Established ... swin 65535>>4 rwin 1048560>>4" ,
 the two windows different because these are two independent stacks, not
 one loopback.  Stack B then accepts the flow through its listen file as a
-new conversation, so both ends agree the connection is up.  Four of four
-boots carry it alongside the loopback proofs.
+new conversation, so both ends agree the connection is up.
+.PP
+That two-stack form (two
+.CW Fs )
+is what proved the two endpoints, but it is not what the boot runs
+now.  Two whole stacks in one address space trip the shared-state
+corruption below over time - in steady state, tens of ticks in, a proc
+faults and the note path panics
+.CW donotify \-
+so the boot ran on a demonstration that carried a known crash.  Until that
+corruption is pinned, the boot's osprey-medium demonstration is the stable
+single-stack self-loop (connect to the interface's own address, one
+.CW Fs ),
+which reaches
+.CW Established
+with the interface counters moved and idles clean, five boots of five; the
+two-stack handshake stays proved here in the record, run by hand, not at
+every boot.
 .PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
