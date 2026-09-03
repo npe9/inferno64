@@ -721,24 +721,27 @@ and
 are all the stock sources, untouched.  Every other configuration builds
 unchanged.
 .PP
-UDP receive over loopback still stops short: the announcing side's
-blocking read deadlocks, which the scheduler catches and reports rather
-than corrupting.  The instrumenting done so far is not yet conclusive and
-the two readings do not fully agree: the deadlock dump caught every proc
-asleep with three packets unprocessed on the loopback queue (pointing at a
-lost wakeup to
-.CW loopbackread ),
-while a trace of
-.CW loopbackread
-showed it draining the queue and sleeping, and a print at
+UDP works too, over the same real loopback and scheduler.  An announced
+udp conversation in the default (no-headers) mode does not receive on
+itself: when a datagram arrives,
 .CW udpiput
-never fired at all (pointing instead at the datagram never being sent to
-the loopback queue, or never demuxed to udp).  What is certain is that the
-datagram never reaches the announcing conversation and its reader blocks
-forever; the exact break in the write-to-loopback-to-demux path is not yet
-found.  TCP over the same loopback is unaffected and stable.  That, the
-osprey-interface medium and a two-machine wire test are what remain of
-item 7a.
+spawns a new conversation per peer with
+.CW Fsnewcall
+and queues it on the announcing conversation's listen file, exactly as
+tcp does.  So the receiver announces, accepts through
+.CW listen ,
+and reads the datagram from the accepted conversation - and it comes back
+whole,
+.CW "a udp datagram through the real plan 9 udp.c" ,
+44 bytes carried by the real
+.CW udp.c
+over loopback, the blocking listen and read both served by the
+cooperative scheduler.  (An earlier reading of this as a scheduler
+deadlock was a mistake in the test, which read the announce conversation's
+own data directly and so waited for a datagram that had gone to a spawned
+conversation; the scheduler was never at fault.)  Both transports run
+5-of-5 across repeated boots.  The osprey-interface medium and a
+two-machine wire test are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

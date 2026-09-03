@@ -184,5 +184,47 @@ p9ipup(void)
 		p9close(rfd); p9close(wfd); p9close(lfd);
 		p9close(dfd); p9close(afd);
 	}
+	/*
+	 * The same over UDP.  An announced udp conversation in the default
+	 * (no-headers) mode spawns a new conversation per peer via Fsnewcall
+	 * and queues it on its listen file, exactly as tcp does; so the
+	 * receiver announces, accepts through listen, and reads the datagram
+	 * from the accepted conversation - the cooperative scheduler carries
+	 * the blocking listen and read.
+	 */
+	{
+		static char dg[] = "a udp datagram through the real plan 9 udp.c";
+		int ua, ub, uwr, ulis, urd, uan, ubn, unew;
+		char cbuf[64], path[64], rx[128];
+
+		ua = p9open("/net/udp/clone", ORDWR);
+		n = p9read(ua, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; uan=atoi(cbuf);
+		p9write(ua, "announce 7778", 13);
+
+		ub = p9open("/net/udp/clone", ORDWR);
+		n = p9read(ub, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; ubn=atoi(cbuf);
+		p9write(ub, "connect 127.0.0.1!7778", 22);
+		print("p9 ip: udp announce %d, connect %d - sending a datagram over loopback\n", uan, ubn);
+
+		snprint(path, sizeof path, "/net/udp/%d/data", ubn);
+		uwr = p9open(path, ORDWR);
+		p9write(uwr, dg, sizeof dg - 1);
+
+		snprint(path, sizeof path, "/net/udp/%d/listen", uan);
+		ulis = p9open(path, ORDWR);
+		n = p9read(ulis, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; unew=atoi(cbuf);
+		print("p9 ip: udp accepted the datagram's flow as conversation %d\n", unew);
+
+		snprint(path, sizeof path, "/net/udp/%d/data", unew);
+		urd = p9open(path, ORDWR);
+		n = p9read(urd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+		print("p9 ip: udp read %ld bytes: \"%s\"\n", n, rx);
+		if(n == (long)(sizeof dg - 1) && memcmp(rx, dg, n) == 0)
+			print("p9 ip: UDP datagram round-trip verified - udp.c carried the payload over loopback\n");
+		else
+			print("p9 ip: udp round-trip mismatch\n");
+
+		p9close(urd); p9close(ulis); p9close(uwr); p9close(ub); p9close(ua);
+	}
 	poperror();
 }
