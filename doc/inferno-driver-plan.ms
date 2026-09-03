@@ -502,7 +502,7 @@ machines expose only a short list of devices still unsupported.  Two of
 them are worth doing and verifiable on QEMU; the rest are either no
 gain on these machines, blocked by the boot path, or need silicon.
 .NH 2
-To do
+Done (both verified against the host clock / a QEMU exit)
 .IP 1.
 Hardware RTC to real wall-clock time.  Both virt machines carry a
 real-time clock the kernel never reads - riscv's
@@ -512,18 +512,22 @@ arm64's
 .CW arm,pl031
 at 0x9010000 (a 32-bit seconds register).  Today wall-clock time comes
 from the tick counter, so timestamps are relative, not calendar time.
-Read the RTC at boot and seed
-.CW todset ;
-verify by comparing the seeded time against the host clock.
+Done: each board reads its RTC at boot and seeds
+.CW todset ,
+verified against the host clock - the seeded epoch matches to the
+second on all four riscv boards (the goldfish RTC is reachable even
+from supervisor mode; OpenSBI does not PMP-hide it the way it hides the
+CLINT) and on arm64's PL031.
 .IP 2.
 Machine-mode syscon poweroff.  The supervisor-mode boards get a clean
 poweroff through the SBI SRST call; the machine-mode riscv boards
 (virt, virt32) still spin in WFI on exit.  QEMU's
 .CW sifive,test0
 finisher at 0x100000 powers the machine off on a write of 0x5555 (and
-reboots on 0x7777).  Wire
+reboots on 0x7777).  Done: the machine-mode boards'
 .CW archreboot
-to it; verify QEMU exits.
+writes 0x5555 to it and QEMU exits 0 in under a second, matching the
+supervisor boards' SBI SRST poweroff.
 .NH 2
 Out of reach here
 .IP \(bu
