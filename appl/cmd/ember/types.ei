@@ -156,7 +156,8 @@ const Tid = 28
 const Tiface = 29
 const Texcept = 30
 const Tinst = 31
-const Tend = 32
+const Tbool = 32
+const Tend = 33
 
 const Dtype = 0
 const Dfn = 1

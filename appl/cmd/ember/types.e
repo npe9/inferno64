@@ -154,7 +154,8 @@ const Tid = 28
 const Tiface = 29
 const Texcept = 30
 const Tinst = 31
-const Tend = 32
+const Tbool = 32
+const Tend = 33
 
 const Dtype = 0
 const Dfn = 1
@@ -182,6 +183,7 @@ const OKmask = 255
 const TReq = 1
 
 // Dis conversion opcodes (include/isa.h), for castop()
+const IMOVW = 45
 const ICVTBW = 47
 const ICVTWB = 48
 const ICVTFW = 49
@@ -362,16 +364,16 @@ type Case struct {
 
 var opnames = [102]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "end"}
 
-var kindnames = [33]string{"no type", "adt", "adt", "array", "big", "byte", "chan", "real", "fn", "int", "list", "module", "ref", "string", "tuple", "exception", "fixed point", "polymorphic", "array initializers", "alt channels", "polymorphic type", "->", "case int labels", "case big labels", "case string labels", ".", "type error", "goto labels", "id", "module interface", "exception handler table", "instantiated type", "end"}
+var kindnames = [34]string{"no type", "adt", "adt", "array", "big", "byte", "chan", "real", "fn", "int", "list", "module", "ref", "string", "tuple", "exception", "fixed point", "polymorphic", "array initializers", "alt channels", "polymorphic type", "->", "case int labels", "case big labels", "case string labels", ".", "type error", "goto labels", "id", "module interface", "exception handler table", "instantiated type", "bool", "end"}
 
 // tattr: isptr, refable, conable, big, vis -- one array per column
-var attrptr = [33]int{0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-var attrbig = [33]int{0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 0}
+var attrptr = [34]int{0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+var attrbig = [34]int{0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0}
 
 var storenames = [13]string{"type", "function", "global", "argument", "local", "con", "field", "pick tag", "import", "unbound", "undefined", "undefined", "end"}
 var storespaces = [13]int{0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0}
 
-var sigkinds = [33]int{'n', 'a', 'p', 'A', 'B', 'b', 'C', 'r', 'f', 'i', 'L', 'm', 'R', 's', 't', 'e', 'x', 'P', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+var sigkinds = [34]int{'n', 'a', 'p', 'A', 'B', 'b', 'C', 'r', 'f', 'i', 'L', 'm', 'R', 's', 't', 'e', 'x', 'P', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'i', 0}
 
 const SIGSELF = 'S'
 const SIGVARARGS = '*'
@@ -381,6 +383,7 @@ const SIGREC = '@'
 var tbig ref Type
 var tbyte ref Type
 var tint ref Type
+var tbool ref Type
 var treal ref Type
 var tstring ref Type
 var tany ref Type
@@ -455,6 +458,8 @@ func basic(kind int) ref Type {
 		return tbyte
 	case Tint:
 		return tint
+	case Tbool:
+		return tbool
 	case Treal:
 		return treal
 	case Tstring:
@@ -497,6 +502,7 @@ func typeinit() {
 	tbig = mkbasic(Tbig, IBY2LG, IBY2LG)
 	tbyte = mkbasic(Tbyte, 1, 1)
 	tint = mkbasic(Tint, IBY2WD, IBY2WD)
+	tbool = mkbasic(Tbool, IBY2WD, IBY2WD)
 	treal = mkbasic(Treal, IBY2LG, IBY2LG)
 	tstring = mkbasic(Tstring, IBY2WD, IBY2WD)
 	tany = mkbasic(Tany, IBY2WD, IBY2WD)
@@ -713,7 +719,7 @@ func sizetype(t ref Type) {
 	}
 	t.ok |= OKsized
 	match t.kind {
-	case Terror, Tnone, Tbyte, Tint, Tbig, Tstring, Tany, Treal:
+	case Terror, Tnone, Tbyte, Tint, Tbool, Tbig, Tstring, Tany, Treal:
 		sys.fprint(sys.fildes(2), "fatal: %s should have a size\n", tprint(t))
 	case Tref, Tchan, Tarray, Tlist:
 		sizetype(t.tof)
@@ -983,6 +989,10 @@ func modclass() ref Teq {
 
 func castop(from ref Type, to ref Type) int {
 	match from.kind {
+	case Tbool:
+		if to.kind == Tint {
+			return IMOVW	// the same word
+		}
 	case Tint:
 		match to.kind {
 		case Tbyte:
@@ -1246,7 +1256,7 @@ func rtequal(t1 ref Type, t2 ref Type) int {
 	t1.rec |= TReq
 	t2.rec |= TReq
 	match t1.kind {
-	case Tnone, Tbig, Tbyte, Treal, Tint, Tstring:
+	case Tnone, Tbig, Tbyte, Treal, Tint, Tbool, Tstring:
 		return 1
 	case Tref, Tlist, Tarray, Tchan:
 		if t1.kind != Tref && assumeteq(t1, t2) != 0 {
@@ -1520,7 +1530,7 @@ func rtsign(t ref Type, sig string) string {
 	sig += sys.sprint("%c", kind)
 	t.rec = 1
 	match t.kind {
-	case Tnone, Tbig, Tbyte, Treal, Tint, Tstring, Tpoly:
+	case Tnone, Tbig, Tbyte, Treal, Tint, Tbool, Tstring, Tpoly:
 		return sig
 	case Tref, Tlist, Tarray, Tchan:
 		return rtsign(t.tof, sig)

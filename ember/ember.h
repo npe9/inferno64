@@ -377,6 +377,7 @@ enum
 	Tiface,				/* module interface */
 	Texcept,			/* exception handler tables */
 	Tinst,				/* instantiated adt */
+	Tbool,				/* true/false: an int word at run time, a distinct type at compile time */
 
 	Tend
 };
@@ -752,6 +753,7 @@ Extern	Type	*tbyte;
 Extern	Type	*terror;
 Extern	Type	*tfnptr;		/* module ptr + function index, ember's representation of a function *value* (as opposed to a call target); Ttuple{any t0, int t1}, matching limbo/types.c's tfnptr exactly (com.c's ecom() Oname/Oref case and callcom()'s indirect-call case both key off this specific shape) */
 Extern	Type	*tint;
+Extern	Type	*tbool;
 Extern	Type	*tnone;
 Extern	Type	*treal;
 Extern	Type	*tstring;

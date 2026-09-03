@@ -194,6 +194,11 @@ optabinit(void)
 
 	opind[Tbyte] = 1;
 	opind[Tint] = 2;
+	opind[Tbool] = 2;	/* an int word */
+	movetab[Mas][Tbool] = IMOVW;
+	movetab[Mcons][Tbool] = ICONSW;
+	movetab[Mhd][Tbool] = IHEADW;
+	chantab[Tbool] = INEWCW;
 	opind[Tbig] = 3;
 	opind[Treal] = 4;
 	opind[Tstring] = 5;

@@ -304,7 +304,7 @@ func sumark(n ref types.Node) ref types.Node {
 		match n.ty.kind {
 		case types.Tbyte:
 			n.addable = Rconst
-		case types.Tint:
+		case types.Tint, types.Tbool:
 			v := n.val
 			if (v < big(0) && ((v >> 29) & big(7)) != big(7)) || (v > big(0) && (v >> 29) != big(0)) {
 				globaliconst(n)
@@ -718,9 +718,9 @@ func bcom(n ref types.Node, iftrue int, b ref types.Inst) ref types.Inst {
 	case types.Ogt, types.Ogeq, types.Oneq, types.Oeq, types.Olt, types.Oleq:
 		break
 	default:
-		if n.ty != nil && n.ty.kind == types.Tint {
+		if n.ty != nil && (n.ty.kind == types.Tint || n.ty.kind == types.Tbool) {
 			right = mkconst(n.line, n.pos, big(0))
-			right.ty = tint()
+			right.ty = n.ty
 			right.addable = Rconst
 			left = n
 			op = types.Oneq
@@ -2042,7 +2042,7 @@ func indsstore(line int, pos int, n ref types.Node) {
 // store the zero value of type t into dst
 func zerocom(line int, pos int, dst ref types.Node, t ref types.Type) {
 	match t.kind {
-	case types.Tint, types.Tbyte, types.Tbig:
+	case types.Tint, types.Tbool, types.Tbyte, types.Tbig:
 		z := mkconst(line, pos, big(0))
 		z.ty = t
 		sumark(z)

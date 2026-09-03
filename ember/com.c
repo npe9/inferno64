@@ -320,6 +320,7 @@ sumark(Node *n)
 			n->addable = Rconst;
 			break;
 		case Tint:
+		case Tbool:
 			v = n->val;
 			if(v < 0 && ((v >> 29) & 0x7) != 7
 			|| v > 0 && (v >> 29) != 0)
@@ -1214,9 +1215,9 @@ bcom(Node *n, int iftrue, Inst *b)
 	case Oleq:
 		break;
 	default:
-		if(n->ty != nil && n->ty->kind == Tint){
+		if(n->ty != nil && (n->ty->kind == Tint || n->ty->kind == Tbool)){
 			right = mkconst(&n->src, 0);
-			right->ty = tint;
+			right->ty = n->ty;
 			right->addable = Rconst;
 			left = n;
 			op = Oneq;
@@ -3244,6 +3245,7 @@ zerocom(Src *src, Node *dst, Type *t)
 
 	switch(t->kind){
 	case Tint:
+	case Tbool:
 	case Tbyte:
 	case Tbig:
 		z = mkconst(src, 0);

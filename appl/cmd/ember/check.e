@@ -43,6 +43,7 @@ var infile = ""
 var nerrors = 0
 
 var tint ref types.Type
+var tbool ref types.Type
 var tbig ref types.Type
 var tbyte ref types.Type
 var treal ref types.Type
@@ -210,6 +211,15 @@ func addfn(d ref types.Decl) {
 	}
 	fns[nfns] = d
 	nfns++
+}
+
+// a builtin constant: true, false (check.c)
+func declconst(name string, v big, t ref types.Type) {
+	d := types.mkdecl(0, 0, types.Dconst, t)
+	d.sym = name
+	d.init = mkconst(0, 0, v)
+	d.init.ty = t
+	install(d)
 }
 
 func declbuiltin(name string, t ref types.Type) {
@@ -1228,6 +1238,9 @@ func assignable(t ref types.Type, s ref types.Type, v ref types.Node) int {
 	if t == tany {
 		return types.isptr(s.kind)
 	}
+	if t == tint && s == tbool {
+		return 1	// a bool is an int word: 0 or 1
+	}
 	if t.kind == types.Tref && s.kind == types.Tref && s.tof != nil && s.tof.kind == types.Tadtpick && t.tof != nil && t.tof.kind == types.Tadt && t.tof.tags != nil && s.tof.tof == t.tof {
 		return 1
 	}
@@ -1719,16 +1732,22 @@ func echk1(n ref types.Node) ref types.Type {
 		} else if t != terror && isnum(t) == 0 && t.kind != types.Tstring && n.op != types.Oeq && n.op != types.Oneq {
 			nerror(n, sys.sprint("ordering is not defined on %s", tp(t)))
 		}
-		n.ty = tint
+		n.ty = tbool
 		return n.ty
 	case types.Oandand, types.Ooror:
-		echk(n.left)
-		echk(n.right)
-		n.ty = tint
+		t := echk(n.left)
+		tr := echk(n.right)
+		if iscond(t) == 0 || iscond(tr) == 0 {
+			nerror(n, sys.sprint("%s needs bool operands, not %s and %s", types.opname(n.op), tp(t), tp(tr)))
+		}
+		n.ty = tbool
 		return n.ty
 	case types.Onot:
-		echk(n.left)
-		n.ty = tint
+		t := echk(n.left)
+		if iscond(t) == 0 {
+			nerror(n, sys.sprint("! needs a bool operand, not %s", tp(t)))
+		}
+		n.ty = tbool
 		return n.ty
 	case types.Oneg:
 		t := echk(n.left)
@@ -3141,11 +3160,18 @@ func chklval(n ref types.Node, what string) int {
 	return 0
 }
 
-// an if or for condition: an int (check.c)
+// a condition: a bool, or an int flag for code that predates bool (check.c)
+func iscond(t ref types.Type) int {
+	if t == terror || t.kind == types.Tbool || t.kind == types.Tint {
+		return 1
+	}
+	return 0
+}
+
 func condchk(n ref types.Node) {
 	t := echk(n)
-	if t != terror && t.kind != types.Tint {
-		nerror(n, sys.sprint("condition is %s, not int", tp(t)))
+	if iscond(t) == 0 {
+		nerror(n, sys.sprint("condition is %s, not bool", tp(t)))
 	}
 }
 
@@ -3734,6 +3760,7 @@ func check(tree ref types.Node, file string) int {
 	}
 	types.typeinit()
 	tint = types.basic(types.Tint)
+	tbool = types.basic(types.Tbool)
 	tbig = types.basic(types.Tbig)
 	tbyte = types.basic(types.Tbyte)
 	treal = types.basic(types.Treal)
@@ -3756,6 +3783,9 @@ func check(tree ref types.Node, file string) int {
 	modname = tree.left.sym
 	pushscope()
 	declbuiltin("int", tint)
+	declbuiltin("bool", tbool)
+	declconst("true", big(1), tbool)
+	declconst("false", big(0), tbool)
 	declbuiltin("big", tbig)
 	declbuiltin("byte", tbyte)
 	declbuiltin("real", treal)

@@ -52,6 +52,8 @@ static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
 static	Decl	*inferfn1(Node*);
 static	Decl	*modtemplate(Node*);
+static	int	iscond(Type*);
+static	void	declconst(char*, long, Type*);
 static	Decl	*modmember(Type*, Sym*);
 static	int	ismodvar(Decl*);
 static	Decl	*modalias(Decl*);
@@ -162,6 +164,19 @@ declbuiltin(char *name, Type *t)
 	install(d);
 	if(t->decl == nil)
 		t->decl = d;
+}
+
+/* a builtin constant: true, false */
+static void
+declconst(char *name, long v, Type *t)
+{
+	Decl *d;
+
+	d = mkdecl(&nosrc, Dconst, t);
+	d->sym = enter(name, 0);
+	d->init = mkconst(&nosrc, v);
+	d->init->ty = t;
+	install(d);
 }
 
 /*
@@ -1974,6 +1989,8 @@ assignable(Type *t, Type *s, Node *v)
 	}
 	if(t == tany)
 		return tattr[s->kind].isptr;
+	if(t == tint && s == tbool)
+		return 1;	/* a bool is an int word: 0 or 1 */
 	/*
 	 * "ref Result.Ok{...}" (Tref{Tadtpick}) -> "ref Result" (Tref{the
 	 * outer, unspecified-tag Tadt-with-tags}): the standard tagged-
@@ -3861,16 +3878,20 @@ echk1(Node *n)
 		}else if(t != terror && t->kind != Tint && t->kind != Tbig && t->kind != Tbyte
 		&& t->kind != Treal && t->kind != Tstring && n->op != Oeq && n->op != Oneq)
 			nerror(n, "ordering is not defined on %T", t);
-		n->ty = tint;
+		n->ty = tbool;
 		return n->ty;
 	case Oandand: case Ooror:
-		echk(n->left);
-		echk(n->right);
-		n->ty = tint;
+		t = echk(n->left);
+		tr = echk(n->right);
+		if(!iscond(t) || !iscond(tr))
+			nerror(n, "%s needs bool operands, not %T and %T", opname[n->op], t, tr);
+		n->ty = tbool;
 		return n->ty;
 	case Onot:
-		echk(n->left);
-		n->ty = tint;
+		t = echk(n->left);
+		if(!iscond(t))
+			nerror(n, "! needs a bool operand, not %T", t);
+		n->ty = tbool;
 		return n->ty;
 	case Oneg:
 		t = echk(n->left);
@@ -5146,15 +5167,25 @@ chklval(Node *n, char *what)
 	return 0;
 }
 
-/* an if or for condition: an int (a comparison, a logical expression, a flag) */
+/*
+ * a condition: a bool (a comparison, a logical expression, true/
+ * false) or, for the code that predates bool, an int flag; anything
+ * else -- a string, a ref -- is refused
+ */
+static int
+iscond(Type *t)
+{
+	return t == terror || t->kind == Tbool || t->kind == Tint;
+}
+
 static void
 condchk(Node *n)
 {
 	Type *t;
 
 	t = echk(n);
-	if(t != terror && t->kind != Tint)
-		nerror(n, "condition is %T, not int", t);
+	if(!iscond(t))
+		nerror(n, "condition is %T, not bool", t);
 }
 
 static void
@@ -6014,6 +6045,9 @@ check(Node *tree)
 
 	pushscope();	/* builtins */
 	declbuiltin("int", tint);
+	declbuiltin("bool", tbool);
+	declconst("true", 1, tbool);
+	declconst("false", 0, tbool);
 	declbuiltin("big", tbig);
 	declbuiltin("byte", tbyte);
 	declbuiltin("real", treal);

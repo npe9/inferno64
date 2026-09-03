@@ -105,6 +105,14 @@ number of arguments (`sys.print`) cannot be used as a value. A
 module's type name (for example `Rand` after `import rand "rand"`) is
 a type whose values are loaded modules.
 
+`bool` is the type of `true`, `false`, comparisons and the logical
+operators; `if` and `for` conditions and the operands of `&&`, `||`
+and `!` want one (an `int` flag is still accepted there, for code
+that predates the type). A `bool` converts to `int` implicitly, as 0
+or 1, so `return n > 2` from a function declared to return `int`
+still works and `%d` prints it; nothing converts to `bool` but a
+comparison (`n != 0`), and `bool` takes part in no arithmetic.
+
 Conversions are written like calls: `int(3.7)` (rounds to nearest),
 `real(i)`, `big(x)`, `byte(n)` (wraps), `string(42)`, `int("17")`
 (strtol semantics, `int("abc")` is 0), `[]byte(s)` (UTF-8 bytes) and
@@ -210,9 +218,8 @@ expression list. A function with a result must return or `raise` on
 every path: the last statement must be a `return`, a `raise`, an
 `if` with an `else` both of which do, a `match` or `alt` with a
 `default` all of whose arms do, or a `for` without a condition that
-no `break` leaves. An `if` or `for` condition must be an `int`
-(a comparison, a logical expression, a flag); a string or ref is not
-a condition. `:=` may not redeclare a name already declared in the
+no `break` leaves. An `if` or `for` condition must be a `bool` or
+an `int` flag; a string or ref is not a condition. `:=` may not redeclare a name already declared in the
 same scope (a parameter counts as declared in the body's outermost
 block), though an inner scope may shadow it. `raise expr` (a string) raises that error, the way a Limbo `raise`
 does; a command uses `raise "fail:reason"` to exit unsuccessfully.

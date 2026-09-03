@@ -48,6 +48,7 @@ char *kindname[Tend] =
 	/* Tiface */	"module interface",
 	/* Texcept */	"exception handler table",
 	/* Tinst */	"instantiated type",
+	[Tbool] = "bool",
 };
 
 Tattr tattr[Tend] =
@@ -86,6 +87,7 @@ Tattr tattr[Tend] =
 	/* Tiface */	{ 0,	0,	0,	1,	0, },
 	/* Texcept */	{ 0,	0,	0,	1,	0, },
 	/* Tinst */	{ 0,	1,	1,	1,	1, },
+	[Tbool] = { 0,	0,	1,	0,	1, },
 };
 
 char *storename[Dend] =
@@ -147,9 +149,13 @@ typeinit(void)
 	tbyte->ok = OKmask;
 
 	tint = mktype(&nosrc, Tint, nil, nil);
+	tbool = mktype(&nosrc, Tbool, nil, nil);
 	tint->size = IBY2WD;
 	tint->align = IBY2WD;
 	tint->ok = OKmask;
+	tbool->size = IBY2WD;
+	tbool->align = IBY2WD;
+	tbool->ok = OKmask;
 
 	treal = mktype(&nosrc, Treal, nil, nil);
 	treal->size = IBY2LG;
@@ -430,6 +436,7 @@ sizetype(Type *t)
 	case Tnone:
 	case Tbyte:
 	case Tint:
+	case Tbool:
 	case Tbig:
 	case Tstring:
 	case Tany:
@@ -797,6 +804,10 @@ int
 castop(Type *from, Type *to)
 {
 	switch(from->kind){
+	case Tbool:
+		if(to->kind == Tint)
+			return IMOVW;	/* the same word */
+		break;
 	case Tint:
 		switch(to->kind){
 		case Tbyte:	return ICVTWB;
@@ -1083,6 +1094,7 @@ rtequal(Type *t1, Type *t2)
 	case Tbyte:
 	case Treal:
 	case Tint:
+	case Tbool:
 	case Tstring:
 		fatal("bogus value type %T vs %T in rtequal", t1, t2);
 		return 1;
@@ -1414,6 +1426,7 @@ static int sigkind[Tend] =
 	/* Texception */	'e',
 	/* Tfix */	'x',
 	/* Tpoly */	'P',
+	[Tbool] = 'i',
 };
 
 static int
@@ -1462,6 +1475,7 @@ rtsign(Type *t, uchar *sig, int lensig, int spos)
 	case Tbyte:
 	case Treal:
 	case Tint:
+	case Tbool:
 	case Tstring:
 	case Tpoly:
 		return spos;

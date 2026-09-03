@@ -532,7 +532,7 @@ func opind(kind int) int {
 	match kind {
 	case types.Tbyte:
 		return 1
-	case types.Tint:
+	case types.Tint, types.Tbool:
 		return 2
 	case types.Tbig:
 		return 3
@@ -640,17 +640,17 @@ func genbra(line int, pos int, op int, s ref types.Node, m ref types.Node) ref t
 
 // optab.c's chantab and movetab
 func chanop(kind int) int {
-	return [types.Tend]int{0, INEWCM, 0, INEWCP, INEWCL, INEWCB, INEWCP, INEWCF, 0, INEWCW, INEWCP, INEWCP, INEWCP, INEWCP, INEWCM, INEWCM, INEWCW, INEWCP, 0, 0, INEWCP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}[kind]
+	return [types.Tend]int{0, INEWCM, 0, INEWCP, INEWCL, INEWCB, INEWCP, INEWCF, 0, INEWCW, INEWCP, INEWCP, INEWCP, INEWCP, INEWCM, INEWCM, INEWCW, INEWCP, 0, 0, INEWCP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, INEWCW}[kind]
 }
 
 func moveop(how int, kind int) int {
 	match how {
 	case Mas:
-		return [types.Tend]int{0, IMOVM, IMOVM, IMOVP, IMOVL, IMOVB, IMOVP, IMOVF, 0, IMOVW, IMOVP, IMOVP, IMOVP, IMOVP, IMOVM, IMOVM, IMOVW, IMOVP, 0, 0, IMOVP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}[kind]
+		return [types.Tend]int{0, IMOVM, IMOVM, IMOVP, IMOVL, IMOVB, IMOVP, IMOVF, 0, IMOVW, IMOVP, IMOVP, IMOVP, IMOVP, IMOVM, IMOVM, IMOVW, IMOVP, 0, 0, IMOVP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, IMOVW}[kind]
 	case Mcons:
-		return [types.Tend]int{0, ICONSM, 0, ICONSP, ICONSL, ICONSB, ICONSP, ICONSF, 0, ICONSW, ICONSP, ICONSP, ICONSP, ICONSP, ICONSM, ICONSM, ICONSW, ICONSP, 0, 0, ICONSP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}[kind]
+		return [types.Tend]int{0, ICONSM, 0, ICONSP, ICONSL, ICONSB, ICONSP, ICONSF, 0, ICONSW, ICONSP, ICONSP, ICONSP, ICONSP, ICONSM, ICONSM, ICONSW, ICONSP, 0, 0, ICONSP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ICONSW}[kind]
 	case Mhd:
-		return [types.Tend]int{0, IHEADM, 0, IHEADP, IHEADL, IHEADB, IHEADP, IHEADF, 0, IHEADW, IHEADP, IHEADP, IHEADP, IHEADP, IHEADM, IHEADM, IHEADW, IHEADP, 0, 0, IHEADP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}[kind]
+		return [types.Tend]int{0, IHEADM, 0, IHEADP, IHEADL, IHEADB, IHEADP, IHEADF, 0, IHEADW, IHEADP, IHEADP, IHEADP, IHEADP, IHEADM, IHEADM, IHEADW, IHEADP, 0, 0, IHEADP, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, IHEADW}[kind]
 	case Mtl:
 		if kind == types.Tlist {
 			return ITAIL
