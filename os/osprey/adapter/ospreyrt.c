@@ -73,6 +73,8 @@ struct Ospreyproc {
 	Snap	snap;
 	uvlong	sequence;	/* request numbering, kept out of Task */
 	int	pid;		/* the process billed to this container, or 0 */
+	int	gpid[3];	/* others sharing its address space and reservation: a group */
+	int	ngpid;
 	uvlong	version;	/* writes to its attributes */
 	uvlong	slice;		/* byte offset of this container in the arena */
 	uvlong	npage;		/* pages held; the map's copy is only published */
@@ -975,6 +977,15 @@ ospreyat(int i)
 	if(i < 0 || i >= Nproc || procs[i].used == 0)
 		return nil;
 	return &procs[i];
+}
+
+/* record another process as sharing this container's address space and reservation */
+void
+ospreygroupjoin(Ospreyproc *p, int pid)
+{
+	if(p == nil || p->used == 0 || p->ngpid >= (int)(sizeof p->gpid/sizeof p->gpid[0]))
+		return;
+	p->gpid[p->ngpid++] = pid;
 }
 
 uvlong
@@ -2751,12 +2762,14 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 		if(procs[i].used == 0)
 			continue;
 		q = &procs[i].process;
+		{
+		int gj;
 		p = seprint(p, e, "proc %llud core %lud %s"
 			" budget %llud used %llud period %llud deadline %llud"
 			" besteffort %llud periods %llud %s"
 			" mem %lud of %lud net %lud of %lud"
 			" requests %llud replies %llud output %llud"
-			" slice %llud data %llud pid %d\n",
+			" slice %llud data %llud pid %d",
 			q->id, q->core, statename(q->state),
 			q->container.budget, q->container.used,
 			q->container.period, q->task.deadline,
@@ -2768,6 +2781,10 @@ ospreystatus(char *buf, long nbuf, uvlong now, uvlong hz)
 			queuecount(q->output),
 			procs[i].slice, ospreydataoffset(&procs[i]),
 			procs[i].pid);
+		for(gj = 0; gj < procs[i].ngpid; gj++)
+			p = seprint(p, e, gj == 0 ? " group %d" : " %d", procs[i].gpid[gj]);
+		p = seprint(p, e, "\n");
+		}
 		/* the semaphores, and the container's private names */
 		{
 			uvlong *l;

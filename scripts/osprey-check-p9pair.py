@@ -99,6 +99,11 @@ def main():
         ("the second serial port is handed to the server's uart task at boot, and a line the personality put on its output queue leaves the machine on it",
          re.search(r'osprey uart: eia1 handed to container \d+, served by its task', t) is not None
          and 'osprey uart task on the microkernel: served by a task, out of the second serial port' in c2),
+        ("a container runs a group of processes that share its address space, and the second reads what the first wrote to the shared slice",
+         'osprey group: container 7 made' in t
+         and re.search(r"osprey group: container 7 runs two processes sharing its address space under one reservation; process two read 'A' that process one wrote to the shared slice", t) is not None),
+        ("the group runs under one container's one reservation, both processes named on its status line, both billed",
+         re.search(r'osprey status: proc 7 core \d+ \w+ budget \d+ used [1-9]\d* .* pid \d+ group \d+', t) is not None),
         ("the storage task sets its own reservation and takes the clock, both by request",
          'osprey: container 3 reserves 2000 us of every 10000 us, by request' in t
          and 'osprey: container 3 takes the clock tick on semaphore 2, by request' in t),

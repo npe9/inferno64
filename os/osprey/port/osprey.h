@@ -47,6 +47,7 @@ Ospreyproc*	ospreylookup(uvlong id);
 Ospreyproc*	ospreynext(Ospreyproc*);
 Ospreyproc*	ospreyat(int);
 uvlong		ospreyid(Ospreyproc*);
+void		ospreygroupjoin(Ospreyproc*, int);
 
 int		ospreyattach(Ospreyproc*, ulong core, uvlong now);
 int		ospreydetach(Ospreyproc*);

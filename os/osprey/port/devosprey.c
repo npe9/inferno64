@@ -2722,6 +2722,102 @@ ospreyconsolestart(void)
 }
 
 /*
+ * Address-space groups (the survey's item 6, its scheduling half).  A
+ * container holds not one process but a group of them that share its
+ * address space - its arena slice - and run under its one reservation.
+ * The scheduler already bills whichever of them runs to the container,
+ * through the osprey back-pointer each carries, and the group is a group
+ * because they share the slice: what one writes there another reads.
+ * The kernel makes the group here, since there is no rfork on the
+ * microkernel; the members are kernel processes bound to the container,
+ * and only one of a container's processes may work its ring or select
+ * (there is one arm area), so a group's extra members do neither - they
+ * share the address space and the budget, which is what slide 15 groups.
+ *
+ * Migration of a running group is not this: migration here is
+ * checkpoint-and-restart, and a checkpoint carries the container's
+ * state, not a running process's registers, so there is a group to
+ * schedule but not yet a running group to resume on another machine.
+ */
+enum {
+	Groupid		= 7,
+	Groupmark	= 2048,		/* two bytes in the shared slice, one per member */
+	Groupspin	= 40,
+};
+static Ospreyproc *ospreygroupc;
+
+static void
+ospreygroupwork(int member)
+{
+	uchar *m;
+	int i;
+	uvlong j;
+
+	/* accrue some of the container's reservation, so status shows the group billed */
+	for(i = 0; i < Groupspin; i++){
+		for(j = 0; j < 2000000; j++)
+			;
+		tsleep(&up->sleep, return0, nil, 1);
+	}
+	if((m = ospreydata(ospreygroupc, Groupmark, 2)) != nil)
+		m[member] = member == 0 ? 'A' : 'B';
+}
+
+static void
+ospreygroupproc(void *a)
+{
+	int member = (int)(uintptr)a;
+	uchar *m;
+	int tries;
+
+	/* bind to the shared container: the billing follows this back-pointer */
+	up->osprey = ospreygroupc;
+	qlock(&ospreylock);
+	if(member == 0){
+		int x = ospreyindex(ospreygroupc);
+		if(x >= 0 && x < nelem(ospreyprocs)){
+			ospreyprocs[x] = up;		/* the group's first is its nominal process */
+			ospreysetpid(ospreygroupc, up->pid);
+		}
+	} else
+		ospreygroupjoin(ospreygroupc, up->pid);	/* the rest are named beside it */
+	qunlock(&ospreylock);
+
+	ospreygroupwork(member);
+
+	if(member == 1){
+		/* read what the first wrote: the two share one address space */
+		if((m = ospreydata(ospreygroupc, Groupmark, 2)) != nil){
+			for(tries = 0; tries < 200 && m[0] != 'A'; tries++)
+				tsleep(&up->sleep, return0, nil, 2);
+			print("osprey group: container %llud runs two processes sharing its address space under one reservation; process two read '%c' that process one wrote to the shared slice\n",
+				ospreyid(ospreygroupc), m[0] == 'A' ? m[0] : '?');
+		}
+	}
+	/* idle, so both are alive when the boot program's status is printed */
+	for(;;)
+		tsleep(&up->sleep, return0, nil, 1000);
+}
+
+/*
+ * Make the group: a container of its own, a reservation, and two kernel
+ * processes bound to it that share its slice.
+ */
+static void
+ospreygroupdemo(void)
+{
+	Ospreyproc *c;
+
+	c = ospreycreate(Groupid, 40000000ULL, 800000000ULL, 200000000ULL);
+	if(c == nil)
+		return;
+	ospreygroupc = c;
+	kproc("osprey-group-a", ospreygroupproc, (void*)0);
+	kproc("osprey-group-b", ospreygroupproc, (void*)(uintptr)1);
+	print("osprey group: container %llud made, two processes to share its address space and its one reservation\n", ospreyid(c));
+}
+
+/*
  * Starting a program: the exec request.  A container asks for a program
  * by a name in its server's name space; the kernel makes a container of
  * its own for it, delegates that container to the same server, and gives
@@ -3010,6 +3106,9 @@ ospreyuserprep(void)
 				 */
 				/* the console, a task from here: every print below goes through it */
 				ospreyconsolestart();
+				/* a group of processes sharing one container's address space */
+				if(ospreyp9pair)
+					ospreygroupdemo();
 				if(ospreyp9){
 					Ospreyproc *ut;
 

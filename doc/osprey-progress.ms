@@ -324,8 +324,47 @@ there is no running group to carry across a wire, only the container's
 state, which already crosses.  Resuming a running process, not just its
 container's state, is the piece that would make slide 15's
 .I migration
-real, and it is not begun.  What the group-scheduling half needs is
-below; the resume half stays open.
+real, and it is not begun.
+.PP
+The group-scheduling half is built.  A container
+.CW ( Groupid ,
+made in the p9pair boot) holds not one process but two, both kernel
+processes bound to it, both sharing its arena slice, both running under
+its one reservation
+.CW ( ospreygroupdemo
+in
+.CW os/osprey/port/devosprey.c ).
+The scheduler needed nothing new for it: it bills whichever of them runs
+to the container through the
+.CW osprey
+back-pointer, so the two accrue against one budget, which the status
+line shows \- one container, its
+.CW used
+climbing, and both processes' pids on it, the second after
+.CW group .
+They are a group because they share the address space: the first writes
+a byte into the slice and the second reads it, which the boot prints.
+Only one process of a container may work its ring or select \- there is
+one arm area, and two selecting members are the double sleep the uart
+task hit \- so the group's members share the address space and the
+budget and leave the ring to the one that has it.  A member pid list was
+added to the container's status line
+.CW ( ospreygroupjoin
+in the adapter); it is not put in the checkpoint, so nothing there is
+signed differently.  What stays open, as above, is resume: the group
+is scheduled as one, but a checkpoint carries the container's state, not
+the group's running registers, so there is not yet a running group to
+carry to another machine.
+.PP
+.B "6a.  Resume, and a checkpoint that carries everything."
+The group above is scheduled as one; what is not built is carrying a
+.I running
+group across a wire.  Migration here is checkpoint-and-restart, and a
+checkpoint carries the container's rings, data area, semaphores, names
+and grants, not a process's registers or stack, nor its packets, its
+pages or its kernel channels, nor a checkpoint larger than one ethernet
+frame.  Resuming a process rather than restarting it is the piece, and
+it is the deepest one left.
 .PP
 .B "7.  The stack in user space, beyond a demonstration."
 netsrv answers ARP for one address and echo.  The talk was "working on a
