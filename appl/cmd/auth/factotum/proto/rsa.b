@@ -3,11 +3,17 @@ implement Authproto;
 # SSH RSA authentication.
 #
 # Client protocol:
-#	read public key
+#	read public key ("n ek", two hex bigints separated by a space)
 #		if you don't like it, read another, repeat
 #	write challenge
 #	read response
 # all numbers are hexadecimal biginits parsable with strtomp.
+#
+# The public-key read returns BOTH the modulus n and the exponent ek
+# (matching 9front's own factotum rsa.c, which writes "%B %B", n, ek):
+# an SSH client needs the exponent to form the ssh-rsa public-key blob
+# it presents to the server, and cannot assume a fixed value (this
+# tree's auth/rsagen picks a small e, not 65537).
 #
 
 include "sys.m";
@@ -57,7 +63,7 @@ interaction(attrs: list of ref Attr, io: ref IO): string
 	for(; keys != nil; keys = tl keys){
 		(sk, err) = keytorsa(hd keys);
 		if(sk != nil){
-			r := array of byte sk.pk.n.iptostr(16);
+			r := array of byte (sk.pk.n.iptostr(16) + " " + sk.pk.ek.iptostr(16));
 			while(!io.reply2read(r, len r))
 				waitread(io);
 			data := io.rdwr();

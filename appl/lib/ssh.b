@@ -18,6 +18,8 @@ include "asn1.m";
 include "pkcs.m";
 	pkcs: PKCS;
 	RSAKey: import pkcs;
+include "factotum.m";
+	factotum: Factotum;
 include "ssh.m";
 
 # algorithm name strings we offer (exactly one of each, as ssh.c does)
@@ -686,32 +688,103 @@ rsakey_pem(pem: string): (ref Authkey, string)
 	return (k, nil);
 }
 
-# RSASSA-PKCS1-v1_5 signature over data with SHA-256, raw modlen-width
-# signature bytes (no algorithm wrapper).
-rsasign(k: ref Authkey, data: array of byte): array of byte
+rsakey_factotum(keyspec: string): (ref Authkey, string)
+{
+	if(factotum == nil){
+		factotum = load Factotum Factotum->PATH;
+		if(factotum == nil)
+			return (nil, sys->sprint("ssh: load factotum: %r"));
+		factotum->init();
+	}
+	fd := factotum->open();
+	if(fd == nil)
+		return (nil, sys->sprint("ssh: open factotum: %r"));
+
+	spec := "proto=rsa role=client";
+	if(keyspec != "")
+		spec += " " + keyspec;
+	(o, nil) := factotum->rpc(fd, "start", array of byte spec);
+	if(o != "ok")
+		return (nil, "ssh: factotum start: " + o + " (no rsa key held?)");
+
+	# the public-key read returns "n ek" (two hex bigints); see this
+	# tree's factotum rsa proto (appl/cmd/auth/factotum/proto/rsa.b).
+	(o2, data) := factotum->rpc(fd, "read", nil);
+	if(o2 != "ok")
+		return (nil, "ssh: factotum read public key: " + o2);
+	(nf, flds) := sys->tokenize(string data, " ");
+	if(nf < 2)
+		return (nil, "ssh: factotum returned malformed public key");
+	n := IPint.strtoip(hd flds, 16);
+	ek := IPint.strtoip(hd tl flds, 16);
+	if(n == nil || ek == nil)
+		return (nil, "ssh: factotum returned unparseable public key");
+
+	k := ref Authkey;
+	k.n = n;
+	k.d = nil;
+	k.modlen = len n.iptobebytes();
+	k.blob = sshrsablob(ek, n);
+	k.facfd = fd;
+	return (k, nil);
+}
+
+# the EMSA-PKCS1-v1_5 encoded message for SHA-256(data), modlen bytes:
+# 00 01 FF..FF 00 || DigestInfo(sha256) || sha256(data). This is what
+# gets raised to the private exponent, whether locally or by factotum.
+emsablock(data: array of byte, modlen: int): array of byte
 {
 	dg := array[kr->SHA256dlen] of byte;
 	kr->sha256(data, len data, dg, nil);
 	tlen := len di_sha256 + len dg;
-	kk := k.modlen;
-	em := array[kk] of byte;
+	em := array[modlen] of byte;
 	em[0] = byte 0;
 	em[1] = byte 1;
-	for(i := 2; i < kk-tlen-1; i++)
+	for(i := 2; i < modlen-tlen-1; i++)
 		em[i] = byte 16rff;
-	em[kk-tlen-1] = byte 0;
-	em[kk-tlen:] = di_sha256;
-	em[kk-len dg:] = dg;
+	em[modlen-tlen-1] = byte 0;
+	em[modlen-tlen:] = di_sha256;
+	em[modlen-len dg:] = dg;
+	return em;
+}
 
-	s := IPint.bebytestoip(em).expmod(k.d, k.n);
-	sb := s.iptobebytes();
-	if(len sb < kk){		# left-pad to the modulus width
-		a := array[kk] of {* => byte 0};
-		a[kk-len sb:] = sb;
-		sb = a;
-	} else if(len sb > kk)
-		sb = sb[len sb - kk:];
+# left-pad (or trim) a big-endian magnitude to exactly n bytes
+padto(sb: array of byte, n: int): array of byte
+{
+	if(len sb < n){
+		a := array[n] of {* => byte 0};
+		a[n-len sb:] = sb;
+		return a;
+	}
+	if(len sb > n)
+		return sb[len sb - n:];
 	return sb;
+}
+
+# sign data for publickey auth, dispatching on the key's origin: a
+# file key raises the block to d locally; a factotum key hands the
+# block back to the agent, which raises it - the private key never
+# leaves factotum.
+sign(k: ref Authkey, data: array of byte): (array of byte, string)
+{
+	em := emsablock(data, k.modlen);
+	if(k.facfd != nil){
+		# factotum challenge is the block as a hex bigint; the reply is
+		# the signature bigint, also hex.
+		chal := array of byte IPint.bebytestoip(em).iptostr(16);
+		(o, nil) := factotum->rpc(k.facfd, "write", chal);
+		if(o != "ok")
+			return (nil, "ssh: factotum sign write: " + o);
+		(o2, sig) := factotum->rpc(k.facfd, "read", nil);
+		if(o2 != "ok")
+			return (nil, "ssh: factotum sign read: " + o2);
+		si := IPint.strtoip(string sig, 16);
+		if(si == nil)
+			return (nil, "ssh: factotum returned unparseable signature");
+		return (padto(si.iptobebytes(), k.modlen), nil);
+	}
+	s := IPint.bebytestoip(em).expmod(k.d, k.n);
+	return (padto(s.iptobebytes(), k.modlen), nil);
 }
 
 # ---- authentication -----------------------------------------------
@@ -812,7 +885,9 @@ authpublickey(c: ref Conn, user: string, k: ref Authkey): (int, string)
 	sd := nbuf();
 	pstr(sd, c.sid);
 	praw(sd, corebytes);
-	rawsig := rsasign(k, bytes(sd));
+	(rawsig, sgerr) := sign(k, bytes(sd));
+	if(sgerr != nil)
+		return (0, sgerr);
 
 	# signature blob = string("rsa-sha2-256") || string(rawsig)
 	sb := nbuf();

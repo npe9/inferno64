@@ -12,9 +12,10 @@ include "pkcs.m";
 include "ssh.m";
 ssh := load Ssh Ssh->PATH;
 
-init:       fn();
-connect:    fn(addr, host, wantthumb: string): (ref Conn, string);
-rsakey_pem: fn(pem: string): (ref Authkey, string);
+init:           fn();
+connect:        fn(addr, host, wantthumb: string): (ref Conn, string);
+rsakey_pem:     fn(pem: string): (ref Authkey, string);
+rsakey_factotum: fn(keyspec: string): (ref Authkey, string);
 login:      fn(c: ref Conn, user: string, key: ref Authkey,
                 password: string): string;
 run:        fn(c: ref Conn, cmd: string): (ref Result, string);
@@ -142,6 +143,28 @@ line's base64 body) and the private
 .RB ( n , d )
 used to sign.
 .PP
+.B Rsakey_factotum
+instead returns an
+.B Authkey
+backed by
+.IR factotum (4):
+it opens the agent's rpc, starts
+.B "proto=rsa role=client"
+(with any extra
+.IR keyspec ,
+e.g.\&
+.BR service=ssh ),
+and reads the offered key's modulus and exponent to form the blob. The
+private key is never read; signing hands the padded block back to
+factotum, which raises it to the private exponent \(em the Plan 9
+model. This tree's factotum rsa proto returns both
+.I n
+and the exponent
+.I ek
+(matching 9front), which the client needs because
+.B auth/rsagen
+does not use a fixed exponent.
+.PP
 .B Login
 authenticates to a connected server as
 .IR user .
@@ -225,6 +248,6 @@ handles the interactive case, but relies on
 .IR vt (1)
 for terminal emulation and does not itself relay window-size changes
 mid-session. Key re-exchange during a long session is not implemented.
-Only file-based RSA keys are handled;
-.IR factotum (4)
-integration is separate.
+Only RSA keys are handled, whether from a file or from
+.IR factotum (4);
+elliptic-curve host and client keys are not.

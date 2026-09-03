@@ -36,6 +36,8 @@ init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	str = load String String->PATH;
+	if(str == nil)
+		fatal(sys->sprint("load string: %r"));
 	stderr = sys->fildes(2);
 
 	keyfile := "";
@@ -78,17 +80,21 @@ init(nil: ref Draw->Context, argv: list of string)
 		fatal(sys->sprint("load ssh: %r"));
 	ssh->init();
 
-	# a key is required (publickey auth only, for now)
-	if(keyfile == ""){
-		sys->fprint(stderr, "ssh: no key given; use -i keyfile (PEM RSA private key)\n");
-		raise "fail:nokey";
-	}
-	pem := readfile(keyfile);
-	if(pem == nil)
-		fatal("cannot read key file " + keyfile);
-	(key, kerr) := ssh->rsakey_pem(pem);
+	# publickey auth. By default the private key stays in factotum(4)
+	# and signing goes through it (the Plan 9 model); -i names a PEM RSA
+	# key file instead, which the client then reads and signs with
+	# directly.
+	key: ref Authkey;
+	kerr: string;
+	if(keyfile != ""){
+		pem := readfile(keyfile);
+		if(pem == nil)
+			fatal("cannot read key file " + keyfile);
+		(key, kerr) = ssh->rsakey_pem(pem);
+	} else
+		(key, kerr) = ssh->rsakey_factotum("service=ssh");
 	if(kerr != nil)
-		fatal("parse key: " + kerr);
+		fatal(kerr);
 
 	ip := resolve(dest);
 	addr := "tcp!" + ip + "!" + port;

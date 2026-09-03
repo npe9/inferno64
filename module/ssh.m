@@ -81,12 +81,16 @@ Ssh: module
 
 	# a client key for publickey authentication: the ssh-rsa public
 	# key blob to present (identical to an authorized_keys line's
-	# base64 body) and the RSA private parts used to sign.
+	# base64 body) and the means to sign. A key from a file carries the
+	# private exponent d; a key held by factotum(4) carries an open rpc
+	# fd instead and never exposes the secret (the Plan 9 model - the
+	# private key stays inside the agent).
 	Authkey: adt {
 		blob:	array of byte;
 		n:	ref Keyring->IPint;
-		d:	ref Keyring->IPint;
+		d:	ref Keyring->IPint;	# nil for a factotum key
 		modlen:	int;
+		facfd:	ref Sys->FD;		# non-nil for a factotum key
 	};
 
 	# result of running a remote command
@@ -111,6 +115,13 @@ Ssh: module
 	# writes) into an Authkey usable for publickey auth. Returns
 	# (nil, err) on a malformed key.
 	rsakey_pem:	fn(pem: string): (ref Authkey, string);
+
+	# obtain a publickey Authkey backed by factotum(4): open its rpc,
+	# start proto=rsa role=client (with any extra keyspec, e.g.
+	# "service=ssh"), and read the offered key's modulus and exponent.
+	# Signing goes back to factotum, so the private key is never seen.
+	# Returns (nil, err) if factotum has no matching rsa key.
+	rsakey_factotum:	fn(keyspec: string): (ref Authkey, string);
 
 	# authenticate to an already-connected server as user. Sends the
 	# ssh-userauth service request, then tries publickey (if key is

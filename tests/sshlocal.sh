@@ -47,6 +47,18 @@ chmod 600 "$tmp/authorized_keys" "$tmp/id_rsa" "$tmp/id_bad" "$tmp/hostkey"
 cp "$tmp/id_rsa" "$intree/id_rsa"
 cp "$tmp/id_bad" "$intree/id_bad"
 
+# factotum key: generated inside emu with auth/rsagen (the Plan 9 key
+# format factotum loads), its ssh public key produced by auth/rsa2ssh.
+# Tag it service=ssh so ssh(1)'s factotum keyspec matches it, and add
+# its public key to authorized_keys so the same server accepts it.
+cat > "$intree/gen.sh" <<'GEN'
+auth/rsagen -b 2048 > /.sshtesttmp/keyline
+auth/rsa2ssh /.sshtesttmp/keyline > /.sshtesttmp/facpub
+GEN
+"$root/MacOSX/arm64/bin/emu-g" -r. sh /.sshtesttmp/gen.sh >/dev/null 2>&1
+sed -i.bak 's/^key proto=rsa/key proto=rsa service=ssh/' "$intree/keyline" && rm -f "$intree/keyline.bak"
+cat "$intree/facpub" >> "$tmp/authorized_keys"
+
 # host thumbprint oracle: ssh-keygen prints "<bits> SHA256:xxx comment"
 raw=$(ssh-keygen -l -E sha256 -f "$tmp/hostkey.pub" | awk '{print $2}')
 wantthumb="sha256=${raw#SHA256:}"
@@ -118,6 +130,26 @@ if echo "$sout" | grep -q "line-one" && echo "$sout" | grep -q "line-two"; then
 	echo 'SSHLOCAL: ssh(1) interactive shell: PASS'
 else
 	echo "SSHLOCAL: ssh(1) interactive shell FAILED: [$sout]"; rc=1
+fi
+
+echo 'SSHLOCAL: === factotum(4) auth: the private key never leaves the agent ==='
+# The Plan 9 model: no -i, so ssh(1) uses factotum. Start factotum
+# inside emu, load the rsagen key, and let it sign. The thumbprint must
+# be single-quoted for Inferno sh (a bare sha256=... reads as an
+# assignment). sshd must log "Accepted publickey" for this key.
+cat > "$intree/facssh.sh" <<FAC
+auth/factotum
+cp /.sshtesttmp/keyline /mnt/factotum/ctl
+ssh -p $port -t '$wantthumb' $user@127.0.0.1 printf fac-ok
+quitall
+FAC
+# factotum is a daemon, so quitall(1) ends the emu session once ssh has
+# returned; a timeout backstops it in case that ever fails to fire.
+fout=$(timeout 60 ./MacOSX/arm64/bin/emu-g -r. sh /.sshtesttmp/facssh.sh 2>/dev/null) || true
+if echo "$fout" | grep -q "fac-ok"; then
+	echo 'SSHLOCAL: factotum publickey auth: PASS'
+else
+	echo "SSHLOCAL: factotum publickey auth FAILED: [$fout]"; rc=1
 fi
 
 if [ "$rc" -eq 0 ]; then echo 'SSHLOCAL: ALL PASS'; else echo 'SSHLOCAL: FAILURE'; cat "$tmp/sshd.log"; fi

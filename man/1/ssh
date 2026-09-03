@@ -38,10 +38,12 @@ host key verified
 .BR rsa-sha2-256 ,
 and the
 .B chacha20-poly1305@openssh.com
-cipher. It authenticates by public key, opens a session channel, execs
-the command, streams its standard output and standard error to the
-corresponding local file descriptors, and exits with the remote exit
-status.
+cipher. It authenticates by public key \(em by default through
+.IR factotum (4),
+so the private key never leaves the agent (the Plan 9 model) \(em opens
+a session channel, execs the command, streams its standard output and
+standard error to the corresponding local file descriptors, and exits
+with the remote exit status.
 .PP
 With no
 .IR command ,
@@ -81,9 +83,20 @@ prefix, else the contents of
 Authenticate with the PEM PKCS#1 RSA private key in
 .I keyfile
 (as written by
-.BR "ssh-keygen -m PEM" ).
-A key is required; password authentication is not offered by the
-command.
+.BR "ssh-keygen -m PEM" )
+instead of through
+.IR factotum (4).
+The client reads and signs with this key directly. Without
+.BR -i ,
+the key is taken from factotum (a
+.B proto=rsa
+key, matched with
+.BR service=ssh ),
+which signs on the client's behalf; load one with
+.B auth/rsagen
+and authorise it on the server with
+.IR rsa2ssh (1).
+Password authentication is not offered by the command.
 .TP
 .BI -p " port"
 Connect to
@@ -128,9 +141,11 @@ ssh: re-run with -t sha256=A1b2... to accept it, or -n to accept unverified
 .IR sshtest (1),
 .IR doh (2)
 .SH BUGS
-Public-key authentication only, from a file (no
+Public-key authentication only (from
 .IR factotum (4)
-key storage yet), and RSA host keys only. No port forwarding, no
+or an
+.B -i
+file), and RSA keys only. No port forwarding, no
 .IR scp .
 For a
 .I command
