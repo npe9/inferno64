@@ -392,9 +392,22 @@ over
 .CW udp!10.9.0.1!7
 and the stack echoes the datagram, which it prints; checked by
 .CW /scripts/osprey-check-net.py .
-What is left is TCP, which is a state machine rather than a datagram
-answered in place, and the routing and gateways a firewall does beyond
-dropping.
+TCP is answered too, which is a state machine rather than a datagram:
+one connection at a time to the echo port, the three-way handshake
+answered, data acknowledged and sent back, the close answered, with
+real sequence and acknowledgement numbers and a checksum over the
+pseudo-header, so 9front's own TCP on the other end talks to it
+.CW ( answertcp
+in
+.CW os/osprey/cmd/netsrv.c ).
+The net check dials it with
+.CW con
+over
+.CW tcp!10.9.0.1!7 ,
+and the line the peer sends comes back to the peer over the connection.
+There is no retransmit and the window is a fixed one, so it is a
+minimal TCP, not a whole one; what is left of item 7 is that reach and
+the routing and gateways a firewall does beyond dropping.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

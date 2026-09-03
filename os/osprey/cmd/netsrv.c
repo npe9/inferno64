@@ -142,6 +142,21 @@ hnputs(uchar *p, ushort v)
 	p[1] = (uchar)v;
 }
 
+static ulong
+nhgetl(uchar *p)
+{
+	return (ulong)p[0]<<24 | (ulong)p[1]<<16 | (ulong)p[2]<<8 | p[3];
+}
+
+static void
+hnputl(uchar *p, ulong v)
+{
+	p[0] = (uchar)(v>>24);
+	p[1] = (uchar)(v>>16);
+	p[2] = (uchar)(v>>8);
+	p[3] = (uchar)v;
+}
+
 /* the ones complement sum an ip header and an icmp body want */
 static ushort
 csum(uchar *a, int n)
@@ -360,6 +375,153 @@ answerudp(uchar *f, long n)
 	}
 }
 
+/*
+ * A minimal TCP echo, item 7's transport past a datagram: one connection
+ * at a time to the stack's echo port, the three-way handshake answered,
+ * data acknowledged and sent back, the close answered.  There is no
+ * retransmit and no window past a fixed one - a real TCP is a larger
+ * machine - but the handshake, the sequence and acknowledgement numbers
+ * and the checksum over the pseudo-header are the real ones, so a real
+ * TCP on the other end (9front's) talks to it.
+ */
+enum {
+	TCPfin = 1, TCPsyn = 2, TCPrst = 4, TCPpsh = 8, TCPack = 16,
+};
+static int tcpup;			/* a connection is in progress */
+static uchar tcppeerip[4];
+static ushort tcppeerport;
+static ulong tcprcvnxt;			/* the next of theirs we expect */
+static ulong tcpsndnxt;			/* the next of ours to send */
+
+/* the ones-complement sum tcp wants: the pseudo-header, then the segment */
+static ushort
+tcpcsum(uchar *srcip, uchar *dstip, uchar *seg, int seglen)
+{
+	ulong s;
+	int i;
+
+	s = 0;
+	s += (ulong)srcip[0]<<8 | srcip[1];
+	s += (ulong)srcip[2]<<8 | srcip[3];
+	s += (ulong)dstip[0]<<8 | dstip[1];
+	s += (ulong)dstip[2]<<8 | dstip[3];
+	s += 6;				/* protocol */
+	s += seglen;
+	for(i = 0; i+1 < seglen; i += 2)
+		s += (ulong)seg[i]<<8 | seg[i+1];
+	if(i < seglen)
+		s += (ulong)seg[i]<<8;
+	while(s>>16)
+		s = (s & 0xffff) + (s>>16);
+	return (ushort)(~s & 0xffff);
+}
+
+/* build and send one tcp segment: flags, our seq/ack, and dlen bytes of payload from data */
+static int
+tcpsend(uchar *toea, uchar *toip, ushort toport, int flags, ulong seq, ulong ack, uchar *data, int dlen)
+{
+	uchar *t, *tip, *tcp;
+	int bi, seglen;
+
+	seglen = 20 + dlen;
+	if((uvlong)(Ehdrlen + 20 + seglen) > o.map->txbufsize)
+		return 0;
+	if((bi = freebuf()) < 0)
+		return 0;
+	t = o.base + o.map->txbuf + (uvlong)bi*o.map->txbufsize;
+	memmove(t, toea, Eaddrlen);
+	memset(t+Eaddrlen, 0, Eaddrlen);
+	hnputs(t+12, 0x0800);
+	tip = t + Ehdrlen;
+	memset(tip, 0, 20);
+	tip[0] = 0x45;
+	hnputs(tip+2, (ushort)(20 + seglen));
+	tip[8] = 64;
+	tip[9] = 6;				/* tcp */
+	memmove(tip+12, myip, 4);
+	memmove(tip+16, toip, 4);
+	hnputs(tip+10, csum(tip, 20));
+	tcp = tip + 20;
+	memset(tcp, 0, 20);
+	hnputs(tcp+0, 7);			/* our port */
+	hnputs(tcp+2, toport);
+	hnputl(tcp+4, seq);
+	hnputl(tcp+8, ack);
+	tcp[12] = 5<<4;				/* data offset: 5 words, no options */
+	tcp[13] = (uchar)flags;
+	hnputs(tcp+14, 4096);			/* a fixed window */
+	if(dlen > 0)
+		memmove(tcp+20, data, dlen);
+	hnputs(tcp+16, tcpcsum(myip, toip, tcp, seglen));
+	return sendbuf(bi, Ehdrlen + 20 + seglen) == 0;
+}
+
+static int
+answertcp(uchar *f, long n)
+{
+	uchar *ip, *tcp;
+	long hl, iplen, thl, dlen;
+	ulong seq;
+	ushort sport;
+	int flags;
+
+	if(n < Ehdrlen + 20)
+		return 0;
+	ip = f + Ehdrlen;
+	if((ip[0]>>4) != 4)
+		return 0;
+	hl = (ip[0] & 0xf) * 4;
+	if(hl < 20 || n < Ehdrlen + hl + 20)
+		return 0;
+	if(ip[9] != 6)					/* tcp */
+		return 0;
+	if(memcmp(ip+16, myip, 4) != 0)			/* not for us */
+		return 0;
+	iplen = nhgets(ip+2);
+	if(iplen < hl + 20 || Ehdrlen + iplen > n)
+		return 0;
+	tcp = ip + hl;
+	if(nhgets(tcp+2) != 7)				/* our echo port */
+		return 0;
+	thl = (tcp[12]>>4) * 4;
+	if(thl < 20 || hl + thl > iplen)
+		return 0;
+	sport = nhgets(tcp+0);
+	seq = nhgetl(tcp+4);
+	flags = tcp[13];
+	dlen = iplen - hl - thl;
+
+	if(flags & TCPsyn){
+		/* open: remember the peer, ack its SYN, offer ours */
+		memmove(tcppeerip, ip+12, 4);
+		tcppeerport = sport;
+		tcprcvnxt = seq + 1;			/* SYN takes one sequence */
+		tcpsndnxt = 1000;			/* our initial sequence */
+		tcpup = 1;
+		tcpsend(f+Eaddrlen, tcppeerip, sport, TCPsyn|TCPack, tcpsndnxt, tcprcvnxt, nil, 0);
+		tcpsndnxt += 1;				/* our SYN takes one */
+		return 1;
+	}
+	if(!tcpup || sport != tcppeerport || memcmp(ip+12, tcppeerip, 4) != 0)
+		return 0;				/* not this connection */
+	if(dlen > 0){
+		/* data: acknowledge it and echo it back in one segment */
+		tcprcvnxt = seq + dlen;
+		tcpsend(f+Eaddrlen, tcppeerip, sport, TCPpsh|TCPack, tcpsndnxt, tcprcvnxt, tcp+thl, (int)dlen);
+		tcpsndnxt += dlen;
+		return 1;
+	}
+	if(flags & TCPfin){
+		/* close: acknowledge their FIN and send ours */
+		tcprcvnxt = seq + 1;
+		tcpsend(f+Eaddrlen, tcppeerip, sport, TCPfin|TCPack, tcpsndnxt, tcprcvnxt, nil, 0);
+		tcpsndnxt += 1;
+		tcpup = 0;
+		return 1;
+	}
+	return 0;				/* a bare ack: nothing to send */
+}
+
 static uchar blockip[4];		/* an echo source to drop, or zero for none */
 static int blocking;
 static long dropped;
@@ -376,7 +538,7 @@ srvmain(int argc, char **argv)
 {
 	Message rep;
 	uvlong slicesize, off;
-	long n, got, arps, pings, udps;
+	long n, got, arps, pings, udps, tcps;
 	int rxsem, txsem, i;
 
 	if(argc < 6)
@@ -414,7 +576,7 @@ srvmain(int argc, char **argv)
 	}
 	o9flush();
 
-	got = arps = pings = udps = 0;
+	got = arps = pings = udps = tcps = 0;
 	for(;;){
 		/*
 		 * The talk's driver task waits on three things.  Two of them
@@ -465,6 +627,11 @@ srvmain(int argc, char **argv)
 			if(answerudp(o.base + off, n)){
 				udps++;
 				o9outs("netsrv udp: echoed a datagram, "); o9outd(udps);
+				o9outs(" so far\n"); o9flush();
+			}
+			if(answertcp(o.base + off, n)){
+				tcps++;
+				o9outs("netsrv tcp: a segment answered, "); o9outd(tcps);
 				o9outs(" so far\n"); o9flush();
 			}
 			break;
