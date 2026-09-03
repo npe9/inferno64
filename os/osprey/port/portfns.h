@@ -192,6 +192,8 @@ void*		(*ospreyetherlookup)(char*);
 int		(*ospreysegok)(char*);
 Uart*		uartlookup(char*);
 Uart*		uartenable(Uart*);
+extern int	(*consoletask)(char*, int);
+void		ospreyconsolewrite(char*, int);
 void*		etherlookup(char*);
 void		ksetenv(char*, char*, int);
 void		kstrcpy(char*, char*, int);

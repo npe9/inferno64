@@ -2222,7 +2222,7 @@ extern long (*ospreyexec)(Ospreyproc*, uvlong);
 extern int (*ospreywait)(Ospreyproc*, uvlong, long*, uvlong*);
 extern int ospreyreplylater(Ospreyproc*, uvlong, uvlong, long, uvlong);
 static long ospreyexeckern(Ospreyproc*, uvlong);
-static void ospreyuartbind(Ospreyproc*, char*, int);
+static void ospreyuartbind(Ospreyproc*, char*, int, int);
 static int ospreyreservekern(Ospreyproc*, uvlong, uvlong);
 static int ospreytickkern(Ospreyproc*, int);
 static int ospreyblkexpose(Ospreyproc*, int);
@@ -2635,6 +2635,93 @@ ospreybuddyfault(uintptr addr, uintptr pc, int read)
 }
 
 /*
+ * The console as a task, the second cut's second piece.  A container
+ * of its own holds the console uart, and its uart task is the console
+ * driver; every print, the kernel's and the tasks', is staged in that
+ * container's data area and put on its output queue, in order, and the
+ * task sends it.  The kernel writes the port itself only where the task
+ * cannot serve: a panic, before the task exists, or with the queue full.
+ * The staging ring has one slot more than the queue holds, and the task
+ * takes one piece of work at a time, so a slot is never rewritten while
+ * its bytes are still going out.
+ */
+enum {
+	Consid		= 6,
+	Consoff		= 1024,
+	Consslot	= 256,
+	Nconsslot	= 17,		/* Nqueue and one in flight */
+};
+static Ospreyproc *ospreyconsproc;
+static Lock ospreyconslock;
+static int ospreyconsnext;
+static uvlong ospreyconsbytes, ospreyconsdirect;
+
+static int
+ospreyconsput(char *s, int n)
+{
+	Ospreyproc *p;
+	uchar *d;
+	int m, slot, x;
+
+	if((p = ospreyconsproc) == nil || n <= 0)
+		return -1;
+	ilock(&ospreyconslock);
+	while(n > 0){
+		m = n < Consslot ? n : Consslot;
+		if(!ospreyoutputroom(p)){
+			iunlock(&ospreyconslock);
+			ospreyconsdirect += n;
+			return -1;	/* the caller writes the port itself */
+		}
+		slot = ospreyconsnext++ % Nconsslot;
+		if((d = ospreydata(p, Consoff + slot*Consslot, Consslot)) == nil){
+			iunlock(&ospreyconslock);
+			return -1;
+		}
+		memmove(d, s, m);
+		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0){
+			iunlock(&ospreyconslock);
+			ospreyconsdirect += n;
+			return -1;
+		}
+		ospreyconsbytes += m;
+		s += m;
+		n -= m;
+	}
+	iunlock(&ospreyconslock);
+	if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
+		wakeup(&ospreyselrend[x]);
+	return 0;
+}
+
+/* a task's write to the console: through the console task, or the port when there is none */
+void
+ospreyconsolewrite(char *s, int n)
+{
+	if(consoletask == nil || (*consoletask)(s, n) < 0)
+		kdebugputs(s, n);
+}
+
+static void
+ospreyconsolestart(void)
+{
+	Ospreyproc *c;
+
+	c = ospreycreate(Consid, 40000000ULL, 800000000ULL, 200000000ULL);
+	if(c == nil)
+		return;
+	if(waserror()){
+		print("osprey console: no console task: %s\n", up->errstr);
+		return;
+	}
+	ospreyuartbind(c, "eia0", 1, 1);
+	poperror();
+	ospreyconsproc = c;
+	consoletask = ospreyconsput;
+	print("osprey console: eia0 handed to container %llud; from here the console is its task\n", ospreyid(c));
+}
+
+/*
  * Starting a program: the exec request.  A container asks for a program
  * by a name in its server's name space; the kernel makes a container of
  * its own for it, delegates that container to the same server, and gives
@@ -2792,6 +2879,9 @@ ospreydumptasks(void)
 			print("osprey status: %.*s", (int)(e - s), s);
 	}
 	free(buf);
+	if(ospreyconsproc != nil)
+		print("osprey console: %llud bytes of this went out through the console task, %llud straight to the port\n",
+			ospreyconsbytes, ospreyconsdirect);
 }
 
 static int
@@ -2918,6 +3008,8 @@ ospreyuserprep(void)
 				 * the server: the personality that will be the file
 				 * system is the one that drives the disk.
 				 */
+				/* the console, a task from here: every print below goes through it */
+				ospreyconsolestart();
 				if(ospreyp9){
 					Ospreyproc *ut;
 
@@ -2935,10 +3027,27 @@ ospreyuserprep(void)
 					 */
 					ut = ospreycreate(5, 40000000ULL, 800000000ULL, 200000000ULL);
 					if(ut != nil && !waserror()){
-						ospreyuartbind(ut, "eia1", 1);
-						ospreydelegate(ut, sv);
-						print("osprey uart: eia1 handed to container %llud, served by its task; its slice granted to container %llud\n",
-							ospreyid(ut), ospreyid(sv));
+						uchar *d;
+						char *line = "osprey uart task on the microkernel: served by a task, out of the second serial port\n";
+						int i;
+						enum { Uartoff = 3072 };
+
+						ospreyuartbind(ut, "eia1", 1, 0);
+						print("osprey uart: eia1 handed to container %llud, served by its task\n", ospreyid(ut));
+						/*
+						 * One line for the task to send, put on its
+						 * output queue from here: a place in its own
+						 * data area and how much of it, the way the
+						 * output control message gives a task work.
+						 * No container maps its slice for this.
+						 */
+						d = ospreydata(ut, Uartoff, strlen(line));
+						if(d != nil){
+							for(i = 0; line[i] != 0; i++)
+								d[i] = line[i];
+							ospreyoutput(ut, Uartoff, i);
+							ospreywakeup();
+						}
 						poperror();
 					}
 				}
@@ -5038,7 +5147,7 @@ ospreyctluart(Cmdbuf *cb)
 	i = atoi(cb->f[3]);
 	if(i < 0 || (ulong)i >= ospreynsem())
 		error(Ebadarg);
-	ospreyuartbind(p, cb->f[2], i);
+	ospreyuartbind(p, cb->f[2], i, 0);
 }
 
 /*
@@ -5050,7 +5159,7 @@ ospreyctluart(Cmdbuf *cb)
  * bytes never reached the line.
  */
 static void
-ospreyuartbind(Ospreyproc *p, char *name, int sem)
+ospreyuartbind(Ospreyproc *p, char *name, int sem, int takeconsole)
 {
 	Uart *ut;
 	int x;
@@ -5059,8 +5168,17 @@ ospreyuartbind(Ospreyproc *p, char *name, int sem)
 		error(Ebadarg);
 	if((ut = uartlookup(name)) == nil)
 		error(Enonexist);
-	if(ut->console || ut->special)
+	if(ut->special || (ut->console && !takeconsole))
 		error(Eperm);
+	if(ut->console){
+		/*
+		 * The console leaves the kernel: from here its prints go
+		 * through the task (consoletask, set by the caller), and
+		 * the polled putchar is what is left for a panic.
+		 */
+		serialoq = nil;
+		ut->console = 0;
+	}
 	/*
 	 * All four, not two: without send the task would have
 	 * nothing to write with and would drop what it was given

@@ -128,6 +128,7 @@ extern int	(*ospreyreserve)(Ospreyproc*, uvlong, uvlong);
 extern int	(*ospreytickreq)(Ospreyproc*, int);
 int		ospreysetreservation(Ospreyproc*, uvlong, uvlong, uvlong);
 int		ospreyisserver(Ospreyproc*);
+int		ospreyoutputroom(Ospreyproc*);
 int		ospreycall(Ospreyproc*, uvlong, uvlong*, long*);
 int		ospreyreplylater(Ospreyproc*, uvlong, uvlong, long, uvlong);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);

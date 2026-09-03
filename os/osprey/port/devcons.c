@@ -11,6 +11,7 @@ void	(*consdebug)(void) = nil;
 void	(*screenputs)(char*, int) = nil;
 
 Queue*	serialoq;		/* serial console output */
+int	(*consoletask)(char*, int);	/* the console served by a task, when there is one */
 Queue*	kprintoq;		/* console output, for /dev/kprint */
 ulong	kprintinuse;		/* test and set whether /dev/kprint is open */
 int	iprintscreenputs = 1;
@@ -119,6 +120,15 @@ putstrn0(char *str, int n, int usewrite)
 	 *  how many different output devices do we need?
 	 */
 	kmesgputs(str, n);
+
+	/*
+	 * The console as a task: when one is running (devosprey.c sets
+	 * consoletask), everything goes through it, in order, and the
+	 * kernel writes the port itself only when the task cannot -
+	 * a panic, or the task's queue full.
+	 */
+	if(consoletask != nil && !panicking && (*consoletask)(str, n) == 0)
+		return;
 
 	/*
 	 *  if someone is reading /dev/kprint,

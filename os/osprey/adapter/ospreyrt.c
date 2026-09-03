@@ -2158,6 +2158,16 @@ ospreyoutput(Ospreyproc *p, uvlong off, uvlong len)
 	return queueput(p->process.output, &m);
 }
 
+/* room on the output queue for one more piece of work */
+int
+ospreyoutputroom(Ospreyproc *p)
+{
+	mapfix(p);
+	if(p == nil || p->used == 0)
+		return 0;
+	return !queuefull(p->process.output);
+}
+
 int
 ospreyoutputready(Ospreyproc *p)
 {

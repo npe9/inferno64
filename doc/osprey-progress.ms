@@ -3138,10 +3138,41 @@ slice and put work on its output queue \- a place in that slice and how
 much of it, no trap \- which is how a driver task is given work.  The
 server personality does that with one line as it comes up, and the
 line leaves the machine on the second serial port, where the pair
-check's reader on the host finds it.  What remains of item 5 is the
-console and the clock: the kernel's own prints still go through its
-console device, and its clock interrupt still does the accounting
-itself before giving the tick to whoever asked.
+check's reader on the host finds it.  .PP
+The console follows: on the microkernel every print, the kernel's own
+and the tasks', now goes through a console task, which is the second
+cut's harder half because a kernel with no way to say anything is a
+kernel that cannot report a fault.  A container of its own
+.CW ( Consid ,
+made at boot) holds the console uart, its uart task the console driver;
+.CW putstrn0
+in
+.CW os/osprey/port/devcons.c
+hands each line to
+.CW consoletask ,
+which stages it in that container's data area and puts it on the
+container's output queue, in order, one slot per piece with a slot more
+than the queue holds so nothing in flight is overwritten.  The kernel
+writes the port itself only where the task cannot serve: a panic (the
+.CW panicking
+flag routes around the task), before the task exists, or with the queue
+full, and then through the bare polled
+.CW kdebugputc
+seL4 keeps for exactly this.  A boot shows every line of its own output
+arriving through the task and none going straight to the port, and at
+the end says how many bytes went each way.  The console uart is given
+up by the kernel to make this
+.CW ( ospreyuartbind
+with its take-console argument clears
+.CW serialoq
+and the uart's console flag), which is the kernel handing out the one
+device losing it would be fatal, on purpose, because the task and the
+panic path are both proven first.  What remains of item 5 is the clock,
+whose interrupt still does the container accounting itself before giving
+the tick to whoever asked, and the register primitives the tasks call,
+which stay in the kernel by design \- the driver policy is what moved
+out, not the thin register access, which is the shape this kernel chose
+over mapping registers into a task that then cannot migrate.
 .NH 2
 Built and proven since
 .PP

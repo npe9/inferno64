@@ -87,10 +87,13 @@ shown in the microkernel.  The shape the talk gives a driver \- a task on
 its message queue, its interrupt's semaphore, and its output queue \- is
 present.
 .PP
-Missing: cons and rtc still leave their register access in the kernel,
-and the kernel's own prints go through its console device; the uart is
-served by a task on the microkernel now, in a container of its own.
-The kernel has not been emptied of drivers.
+Built since: the console is a task too on the microkernel \- every print
+goes through a console container's uart task, the kernel writing the port
+itself only for a panic or before the task exists (doc/osprey-progress.ms,
+item 5).  Missing: the clock's accounting still runs in the kernel's own
+interrupt, and rtc's register access is still the kernel's; the thin
+register primitives stay in the kernel by design.  The kernel is nearly
+but not entirely emptied of driver policy.
 .NH 2
 Scheduling \- PARTIAL
 .PP
