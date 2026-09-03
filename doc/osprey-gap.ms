@@ -148,7 +148,9 @@ not implement - open, read, close - to a peer that emulates it against
 its own name space and hands the answer back, the legacy binary none the
 wiser.  That is the per-process trap interposition the paper describes,
 system calls and, since exec, page faults too (the binary is a file in
-the buddy's file system, laid out and paged by it).  The Linux ABI is served too: the p9linux
+the buddy's file system, laid out and paged by it), and for the Linux
+binary file mappings, its own descriptor table with the console at 0, 1
+and 2, and SIGSEGV delivered to a handler or killing it.  The Linux ABI is served too: the p9linux
 configuration runs an unmodified static Linux x86-64 binary (an ELF,
 raw syscalls, no libc), the SYSCALL entry stores every register so the
 Linux convention can be read and its callee-saved registers returned,

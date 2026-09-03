@@ -165,7 +165,11 @@ static Chan*
 pointeropen(Chan* c, u32 omode)
 {
 	c = devopen(c, omode, pointertab, nelem(pointertab), devgen);
-	if((u64)c->qid.path == Qpointer){
+	/*
+	 * One reader at a time; a write-only open only injects events
+	 * (usbd's mouse driver does this) and may coexist with it.
+	 */
+	if((u64)c->qid.path == Qpointer && c->mode != OWRITE){
 		if(waserror()){
 			c->flag &= ~COPEN;
 			nexterror();
@@ -190,6 +194,8 @@ pointerclose(Chan* c)
 		return;
 	switch((ulong)c->qid.path){
 	case Qpointer:
+		if(c->mode == OWRITE)
+			break;	/* an injecting writer never counted */
 		qlock(&mouse.q);
 		if(decref(&mouse.ref) == 0){
 			cursordisable();

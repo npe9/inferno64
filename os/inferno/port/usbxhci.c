@@ -1622,6 +1622,8 @@ epread(Ep *ep, void *va, long n)
 	qunlock(io);
 	poperror();
 
+	if(ep->debug > 1)
+		print("xhci epread %s: cc %ud residual %ud of %ld\n", ep->name, w->er[2]>>24, w->er[2] & 0xFFFFFF, n);
 	n -= (w->er[2] & 0xFFFFFF);
 	if(n < 0)
 		n = 0;

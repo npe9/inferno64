@@ -210,3 +210,4 @@ root
 	/dis/lib/styxservers.dis
 	/dis/lib/timers.dis
 	/dis/lib/workdir.dis
+	/dis/usb/usbd.dis

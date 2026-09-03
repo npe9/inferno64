@@ -1141,6 +1141,8 @@ kremove(char *path)
 {
 	Chan *c;
 
+	if(waserror())
+		return -1;	/* as emu's kremove() */
 	c = namec(path, Aremove, 0, 0);
 	/*
 	 * Removing mount points is disallowed to avoid surprises
@@ -1163,6 +1165,7 @@ kremove(char *path)
 	c->type = 0;
 	poperror();
 	cclose(c);
+	poperror();	/* the outer catch */
 	return 0;
 }
 
@@ -1175,6 +1178,8 @@ kseek(int fd, s64 o, int type)
 	int n;
 	s64 off;
 
+	if(waserror())
+		return -1;	/* as emu's kseek(): a device error is a -1 to Limbo */
 	c = fdtochan(up->fgrp, fd, -1, 1, 1);
 	if(waserror()){
 		cclose(c);
@@ -1236,6 +1241,7 @@ kseek(int fd, s64 o, int type)
 	c->dri = 0;
 	cclose(c);
 	poperror();
+	poperror();	/* the outer catch */
 	return off;
 }
 
@@ -1313,6 +1319,14 @@ rwrite(int fd, void *buf, s32 len, s64 *offp)
 	s32 m, n;
 	s64 off;
 
+	/*
+	 * A device's error() must come back to the Limbo caller as -1
+	 * with the error string, the way rread() and emu's rwrite()
+	 * do it; without this catch it unwound through Sys_write() and
+	 * broke the Dis process ("[$Sys] Broken: ...").
+	 */
+	if(waserror())
+		return -1;
 	n = 0;
 	c = fdtochan(up->fgrp, fd, OWRITE, 1, 1);
 	if(waserror()) {
@@ -1350,6 +1364,7 @@ rwrite(int fd, void *buf, s32 len, s64 *offp)
 
 	poperror();
 	cclose(c);
+	poperror();	/* the outer catch */
 	return m;
 }
 

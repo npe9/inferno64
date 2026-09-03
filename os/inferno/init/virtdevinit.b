@@ -4,12 +4,15 @@ implement Init;
 # virtdevinit: pc64devinit.b for the riscv64 virt board - a
 # console-only init that reports what the PCI drivers shared with
 # pc64 (NVMe, virtio 1.0, xHCI) found on this board's ECAM PCIe,
-# then idles.  Built with INIT=virtdevinit; the shipped init is
-# virtinit.  See doc/inferno-ports.ms.
+# runs usbd and reports the input events it delivers, then idles.
+# Built with INIT=virtdevinit; the shipped init is virtinit.  See
+# doc/inferno-ports.ms.
 #
 
 include "sys.m";
 	sys: Sys;
+include "draw.m";
+include "sh.m";
 include "dhcpclient.m";
 	dhcpclient: Dhcpclient;
 	Bootconf, Lease: import dhcpclient;
@@ -122,7 +125,56 @@ init()
 		}
 	}
 
+	# usb: start usbd and let it enumerate what hangs off the root hubs;
+	# then report every key and pointer event the drivers deliver, so
+	# a QEMU monitor can inject some and this log shows them arriving
+	sys->bind("#c", "/dev", Sys->MAFTER);
+	sys->bind("#m", "/dev", Sys->MAFTER);
+	usbd := load Command "/dis/usb/usbd.dis";
+	if(usbd == nil)
+		sys->print("DEVTEST: usbd: %r\n");
+	else {
+		spawn usbd->init(nil, "usbd" :: "-d" :: nil);
+		sys->sleep(6000);
+		sys->print("DEVTEST: reading /dev/usb/ctl after usbd\n");
+		sys->print("DEVTEST: /dev/usb/ctl after usbd:\n%s", readfile("/dev/usb/ctl"));
+		spawn keyreport();
+		spawn ptrreport();
+	}
+
 	sys->print("DEVTEST: done\n");
 	for(;;)
 		sys->sleep(10000);
+}
+
+keyreport()
+{
+	fd := sys->open("/dev/keyboard", Sys->OREAD);
+	if(fd == nil){
+		sys->print("DEVTEST: /dev/keyboard: %r\n");
+		return;
+	}
+	buf := array[64] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			return;
+		sys->print("DEVTEST: key %q\n", string buf[0:n]);
+	}
+}
+
+ptrreport()
+{
+	fd := sys->open("/dev/pointer", Sys->OREAD);
+	if(fd == nil){
+		sys->print("DEVTEST: /dev/pointer: %r\n");
+		return;
+	}
+	buf := array[64] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			return;
+		sys->print("DEVTEST: pointer %s\n", string buf[0:n]);
+	}
 }

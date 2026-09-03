@@ -241,13 +241,14 @@ is this request carried to another machine, which is item 6's wire
 work.
 .PP
 .B "2.  The rest of a legacy ABI."
-A file mapping (the page path with an offset); the descriptor calls a
-program makes on stdin and stdout beyond write; a fault the buddy
-declines delivered as a signal rather than the microkernel's donotify
-panic; and, for a Plan 9 program, the calls
+Built, above, for the Linux binary: file mappings, stdin and stdout
+through the buddy's own descriptor table, SIGSEGV to a handler or a
+kill.  What remains is on the Plan 9 side: the calls
 .CW p9srv
 makes that the buddy does not answer \- pipe, rfork, mount, bind and the
-rest of what a personality needs to host a real Plan 9 program.
+rest of what a personality needs to host a real Plan 9 program \- and a
+declined fault reaching a Plan 9 program as a note rather than the
+microkernel's donotify panic.
 .PP
 .B "3.  Storage: a block device served by a task, then a file system."
 The plan's user-level services section says file-system policy means two
@@ -2699,10 +2700,51 @@ sizes it to two pages for this configuration, through the same
 .CW ospreysetsize
 that
 .CW plan9.ini
-reaches.  What is still not interposed: a fault the buddy declines
-still ends in the microkernel's donotify panic rather than a signal the
-process could take.  Only the file calls the demonstration makes are
-mapped.
+reaches.
+.PP
+The rest of what item 2 of the survey asked for is built on the same
+machinery.  A file mapping \-
+.CW mmap
+with a descriptor \- is a data segment whose pages the buddy reads from
+the file at the offset
+.CW ( MAPPAGE ,
+the image's page path with an offset; the kernel keeps the mapping in
+the Proc and
+.CW ospreybuddyfault
+asks for the file's page instead of the image's), private, so a page
+is the process's own copy; the program maps the first page of
+.CW /boot/linux
+and reads its own ELF magic out of it.  The process's descriptors are
+its own numbers now, kept by the buddy apart from its own: 0, 1 and 2
+are the console, which the personality has no file for, so a read
+there is end of file and a write goes out the way the personality's own
+prints do, and
+.CW open
+hands back the process's number, not the buddy's.  And a fault the
+buddy declines is SIGSEGV.
+.CW rt_sigaction
+registers the handler and the restorer a libc always supplies (the
+kernel puts no trampoline on the stack, so a registration without one
+is refused);
+.CW ospreylinuxsignal
+in
+.CW os/osprey/pc64/trap.c
+saves the trap frame, puts a siginfo with the address at its Linux
+offset and a ucontext (present, zero: a handler that reads registers
+out of it sees zeros) on the stack below the red zone, pushes the
+restorer as the handler's return address, and points the frame at the
+handler with the System V arguments;
+.CW rt_sigreturn
+puts the saved frame back, so the faulting instruction is retried.
+The program's handler maps the page the fault named
+.CW ( MAP_FIXED
+is honoured for it) and returns, and the store that faulted goes
+through.  A process with no handler, or one that faults in its handler,
+is killed with status 139, the 128 plus the signal Linux gives, and its
+parent's wait sees that.  A Plan 9 program's declined fault still ends
+in the microkernel's donotify panic: a note would need the notify
+machinery the microkernel cut.  Only the file calls the demonstration
+makes are mapped.
 .PP
 Memory is the kernel's to give, and the Linux calls that ask for it are
 answered there rather than forwarded: they are the microkernel's

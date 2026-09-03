@@ -133,7 +133,14 @@
   test in utils/7c/swt.c (fixed), plus an OPEN arm64 one: 7c's
   optimiser narrows a 64-bit constant move to MOVW (correct with -N),
   not yet located.  intrenable()/intrdisable() now take (irq, handler,
-  arg, tbdf, name) on every board.  Decide, build
+  arg, tbdf, name) on every board.  Item 2 is done: appl/cmd/usb/usbd.b
+  (Limbo, after 9front's nusb) enumerates hubs and boot-protocol HID
+  devices over the kernel stack; a USB keyboard and mouse deliver keys
+  and pointer events verified on riscv64 under QEMU.  That fixed three
+  general kernel bugs: rwrite()/kseek()/kremove() leaked device errors
+  as fatal Limbo exceptions, devusb's "new" turns an unknown type name
+  into a control endpoint, and /dev/pointer refused a writer beside its
+  reader.  Decide, build
   it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.

@@ -18208,3 +18208,114 @@ before building with a different
 and check with
 .CW strings
 on the kernel, which is how this was caught.
+.NH 2
+Item 2, done on riscv64: a usbd in Limbo, and a USB keyboard and mouse that work
+.PP
+.CW appl/cmd/usb/usbd.b
+replaces Inferno's old usbd for the old
+.CW /dev/usbh
+stack, which the previous section retired.  It is the user half of
+the 9front-shaped kernel stack, after 9front's
+.CW nusb/usbd
+and
+.CW nusb/kb ,
+in about 550 lines: every entry under
+.CW /dev/usb
+but
+.CW ctl
+is a root hub; each hub's ports are polled twice a second through
+class control transfers on the hub's
+.CW ep0
+data file (an 8-byte setup packet written, the reply read back); a
+port that gains a device is reset, the kernel is asked for a device
+on it with
+.CW "newdev speed port"
+and names the new
+.CW epN.0
+on the next read of the hub's ctl; the device gets
+.CW SET_ADDRESS ,
+the kernel's
+.CW address ,
+its ep0 packet size from the first 8 bytes of the device descriptor,
+then the full descriptor and configuration 1.  A hub (class 9) is
+read for its port count and powered; a boot-protocol HID interface
+(class 3, subclass 1) is put in boot protocol, its interrupt endpoint
+is created with
+.CW "new N 3 r" ,
+and a reader is spawned: keyboard reports become UTF-8 written to
+.CW /dev/keyboard
+(US layout, shift and control), mouse reports become
+.CW "m x y b"
+written to
+.CW /dev/pointer .
+Report-descriptor parsing, and so tablets and anything not boot
+protocol, mass storage and every other class are not done.
+.PP
+Three kernel bugs stood in the way, each found by the program not
+working and each general, not USB's:
+.IP \(bu
+.CW os/inferno/port/sysfile.c 's
+.CW rwrite()
+had no outer
+.CW waserror() ,
+unlike
+.CW rread()
+and unlike emu's
+.CW rwrite() ,
+so a device's
+.CW error()
+on a write unwound through
+.CW Sys_write()
+and killed the Dis process with "[$Sys] Broken: device or object
+already in use".  Every write error on this kernel did that.  It now
+returns \-1 with the error string;
+.CW kseek()
+and
+.CW kremove()
+had the same gap and the same fix.
+.IP \(bu
+.CW devusb 's
+.CW new
+command parses the endpoint type as one of its own names
+("control", "iso", "interrupt", "bulk") or the USB standard number,
+and anything else \- "intr", say \- silently becomes a control
+endpoint, whose reads return 0 bytes forever.  9front's usbd sends
+the number; so does this one now.  The zero-byte reads were chased
+with QEMU's
+.CW "-trace usb_xhci_*" ,
+which showed the endpoint enabled and kicked but never transferring,
+before the kernel's own ctl listing said "control".
+.IP \(bu
+.CW os/inferno/port/devpointer.c
+allowed one open of
+.CW /dev/pointer
+in any mode, so usbd's writer and the window system's reader could
+not coexist.  A write-only open no longer counts toward the single
+reader.
+.PP
+Verified on riscv64 virt (QEMU 10.1,
+.CW qemu-xhci
+with
+.CW usb-kbd
+and
+.CW usb-mouse ,
+events injected through the QEMU monitor's
+.CW sendkey ,
+.CW mouse_move
+and
+.CW mouse_button ,
+read back by
+.CW virtdevinit.b
+from
+.CW /dev/keyboard
+and
+.CW /dev/pointer ):
+"h", "i", shift-a as "A" and Enter arrive as keys; a move of (10,5), a
+press and release of button 1, and a move of (\-3,2) arrive as
+pointer events at (10,5) with button 1 then 0, then (7,7).  On pc64
+the same run gets as far as the keyboard being enumerated and put in
+boot protocol before the board's heap corruption ends the boot; that
+is pc64's open bug, not this program's.  The old Limbo USB class
+library under
+.CW appl/lib/usb
+still targets the retired interface and is dead code.
