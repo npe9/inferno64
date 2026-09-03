@@ -1,2 +1,5 @@
-./tests/typeerr/badvars.ei:5: interface declares variable missing, which module Badvars does not define
-./tests/typeerr/badvars.ei:4: variable name is string in the interface but int in module Badvars
+./tests/typeerr/badvars.ei:9: interface declares variable missing, which module Badvars does not define
+./tests/typeerr/badvars.ei:8: variable name is string in the interface but int in module Badvars
+./tests/typeerr/badvars.ei:13: function g is fn(int): string in the interface but fn(string): string in module Badvars
+./tests/typeerr/badvars.ei:14: interface declares function h, which module Badvars does not define
+./tests/typeerr/badvars.ei:15: interface declares method Point.m, which module Badvars does not define

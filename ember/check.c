@@ -5613,4 +5613,46 @@ check(Node *tree)
 	 * complete too: see modrefable() (types.c).
 	 */
 	modrefable(impdecl->ty);
+	/*
+	 * and its functions and methods: a stale interface fails here,
+	 * not at load time.  generic functions are not compared (an
+	 * interface names the template, the module instantiates it).
+	 */
+	if(own != nil){
+		modrefable(own->ty);
+	for(id = own->ty->ids; id != nil; id = id->next){
+		if(id->store != Dfn || id->tparams != nil)
+			continue;
+		if(id->dot != nil && id->dot != own){	/* a method: dot is its struct's Dtype */
+			Decl *td;
+
+			td = lookup(id->dot->sym);
+			if(td == nil || td->store != Dtype || td->ty == nil || td->ty->kind != Tadt){
+				error(id->src.start, "interface declares method %s.%s, but module %s has no struct %s",
+					id->dot->sym->name, id->sym->name, impdecl->sym->name, id->dot->sym->name);
+				continue;
+			}
+			for(d = td->ty->meths; d != nil && d->sym != id->sym; d = d->link)
+				;
+			if(d == nil){
+				error(id->src.start, "interface declares method %s.%s, which module %s does not define",
+					id->dot->sym->name, id->sym->name, impdecl->sym->name);
+				continue;
+			}
+			if(d->tparams == nil && sign(d) != sign(id))
+				error(id->src.start, "method %s.%s is %T in the interface but %T in module %s",
+					id->dot->sym->name, id->sym->name, id->ty, d->ty, impdecl->sym->name);
+			continue;
+		}
+		d = lookup(id->sym);
+		if(d == nil || d->store != Dfn || d->dot != impdecl){
+			error(id->src.start, "interface declares function %s, which module %s does not define",
+				id->sym->name, impdecl->sym->name);
+			continue;
+		}
+		if(d->tparams == nil && sign(d) != sign(id))
+			error(id->src.start, "function %s is %T in the interface but %T in module %s",
+				id->sym->name, id->ty, d->ty, impdecl->sym->name);
+	}
+	}
 }

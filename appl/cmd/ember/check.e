@@ -3350,5 +3350,41 @@ func check(tree ref types.Node, file string) int {
 		impdecl.ty.tof.linkall = 1
 	}
 	types.modrefable(impdecl.ty)
+	if own != nil {
+		types.modrefable(own.ty)
+		// and its functions and methods (check.c)
+		for id := own.ty.ids; id != nil; id = id.next {
+			if id.store != types.Dfn || id.tparams != nil {
+				continue
+			}
+			if id.dot != nil && id.dot != own {
+				td := lookup(id.dot.sym)
+				if td == nil || td.store != types.Dtype || td.ty == nil || td.ty.kind != types.Tadt {
+					errorat(iface.ownfacepath(), id.line, sys.sprint("interface declares method %s.%s, but module %s has no struct %s", id.dot.sym, id.sym, impdecl.sym, id.dot.sym))
+					continue
+				}
+				d := td.ty.meths
+				for d != nil && d.sym != id.sym {
+					d = d.link
+				}
+				if d == nil {
+					errorat(iface.ownfacepath(), id.line, sys.sprint("interface declares method %s.%s, which module %s does not define", id.dot.sym, id.sym, impdecl.sym))
+					continue
+				}
+				if d.tparams == nil && types.sign(d) != types.sign(id) {
+					errorat(iface.ownfacepath(), id.line, sys.sprint("method %s.%s is %s in the interface but %s in module %s", id.dot.sym, id.sym, tp(id.ty), tp(d.ty), impdecl.sym))
+				}
+				continue
+			}
+			d := lookup(id.sym)
+			if d == nil || d.store != types.Dfn || d.dot != impdecl {
+				errorat(iface.ownfacepath(), id.line, sys.sprint("interface declares function %s, which module %s does not define", id.sym, impdecl.sym))
+				continue
+			}
+			if d.tparams == nil && types.sign(d) != types.sign(id) {
+				errorat(iface.ownfacepath(), id.line, sys.sprint("function %s is %s in the interface but %s in module %s", id.sym, tp(id.ty), tp(d.ty), impdecl.sym))
+			}
+		}
+	}
 	return nerrors
 }

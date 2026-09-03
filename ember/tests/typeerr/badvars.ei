@@ -1,7 +1,15 @@
 module Badvars
 
+type Point struct {
+	x int
+}
+
 var count int
 var name string
 var missing int
 
 func f() int
+
+func g(x int) string
+func h() int
+func (p ref Point) m() int
