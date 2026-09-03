@@ -476,7 +476,20 @@ eacom(Node *n, Node *reg, Node *t)
 {
 	if(n->addable < Rcant)
 		return n;
-	ecom(&n->src, talloc(reg, n->ty, t), n);
+	/*
+	 * an Oadr's VALUE is an address -- an int, never a counted
+	 * reference -- whatever type check.c's Odot lowering left on
+	 * the node (the base struct's own type, which sumark's tables
+	 * need).  a temp of that struct type would put a bare address
+	 * in a slot the frame descriptor marks as a pointer whenever
+	 * the struct's first field is one, and frame teardown would
+	 * then free an interior array address: "x := ps[1].n" with
+	 * "ps []P" and "P.s string" corrupted the heap at every
+	 * function exit ("alloc:D2B ... in heap: in block") -- and only
+	 * for pointer-bearing element types, which is what made it
+	 * look like a refcount bug in the element read.
+	 */
+	ecom(&n->src, talloc(reg, n->op == Oadr ? tint : n->ty, t), n);
 	reg->src = n->src;
 	return reg;
 }
@@ -1932,11 +1945,22 @@ ecom(Src *src, Node *nto, Node *n)
 			Node *fcb, *fd;
 
 			fcb = fixcallbase(n);
+			/*
+			 * fixdblind() BEFORE the general eacom() fallback:
+			 * when the base needs materializing (a chained ref,
+			 * or an Oadr(Oindx) element address), fixdblind()
+			 * does exactly that, into a tint temp, and re-
+			 * sumark()s the chain to Raadr -- run after eacom()
+			 * (the original order) the whole address was first
+			 * computed a second time, dead, through eacom()'s
+			 * arithmetic path, whose Oadr temp was typed as the
+			 * struct (see eacom()).
+			 */
+			fd = fixdblind(n);
 			if(left->addable >= Rcant
 			&& left->addable != Rareg && left->addable != Ramreg
 			&& left->addable != Raadr && left->addable != Ramadr)
 				left = eacom(left, &tl, nil);
-			fd = fixdblind(n);
 			if(nto != nil)
 				genmove(src, Mas, n->ty, n, nto);
 			tfree(&tl);

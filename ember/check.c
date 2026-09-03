@@ -4526,12 +4526,27 @@ static void
 typedec(Node *n)
 {
 	Decl *d;
-	Type *t;
+	Type *t, *ph;
 
-	d = mkdecl(&n->src, Dtype, nil);
-	d->sym = n->left->sym;
-	d->dot = impdecl;
-	install(d);
+	/*
+	 * check() pre-installs every non-generic struct/pick type name
+	 * with a placeholder Tadt (n->decl) before any declaration is
+	 * processed, so a field can name a type declared later in the
+	 * file or the type itself ("type P struct { next ref P }" --
+	 * stype() crashed on the nil type of a name mid-declaration).
+	 * the body built below is folded INTO that placeholder, which
+	 * every earlier "ref P" already points at.
+	 */
+	d = n->decl;
+	ph = nil;
+	if(d != nil)
+		ph = d->ty;
+	else{
+		d = mkdecl(&n->src, Dtype, nil);
+		d->sym = n->left->sym;
+		d->dot = impdecl;
+		install(d);
+	}
 
 	if(n->aux != nil){
 		/*
@@ -4558,6 +4573,22 @@ typedec(Node *n)
 	}
 
 	t = stype(n->right);
+	if(ph != nil && t != ph && t->kind == Tadt){
+		ph->ids = t->ids;
+		ph->ok |= t->ok & OKverify;
+		ph->src = t->src;
+		/*
+		 * an earlier declaration may already have sized and
+		 * classed the placeholder through a "ref B" field
+		 * (sizetype() follows a ref's target), when it had no
+		 * fields yet: size 0, whose descriptor then can't hold the
+		 * real fields' pointers ("wrote off end of type map").
+		 * re-size and re-class the completed type below.
+		 */
+		ph->ok &= ~(OKsized | OKclass);
+		ph->size = 0;
+		t = ph;
+	}
 	if(n->right->op == Otpick){
 		Decl *tags, *last, *tag;
 		Node *p, *tg;
@@ -4888,6 +4919,29 @@ check(Node *tree)
 	/*
 	 * first pass: declare everything at module scope
 	 */
+	/*
+	 * pre-pass: publish every non-generic struct/pick type name with
+	 * a placeholder type, so declarations may refer to types
+	 * declared later in the file, and to themselves (typedec()
+	 * folds each body into its placeholder).
+	 */
+	for(n = tree->right; n != nil; n = n->right){
+		decl = n;
+		if(n->op == Oseq)
+			decl = n->left;
+		if(decl->op == Otypedecl && decl->aux == nil && decl->right != nil
+		&& (decl->right->op == Otstruct || decl->right->op == Otpick)){
+			d = mkdecl(&decl->src, Dtype, mktype(&decl->src, Tadt, nil, nil));
+			d->sym = decl->left->sym;
+			d->dot = impdecl;
+			d->ty->decl = d;
+			install(d);
+			decl->decl = d;
+		}
+		if(n->op != Oseq)
+			break;
+	}
+
 	for(n = tree->right; n != nil; n = n->right){
 		decl = n;
 		if(n->op == Oseq)

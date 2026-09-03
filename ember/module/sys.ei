@@ -1,26 +1,135 @@
 module Sys
 
-// Ember interface for Inferno $Sys.
-// Signatures must match module/sys.m; unused members are stripped
-// from the LDT by narrowmods.
+// Ember interface for Inferno's $Sys builtin (module/sys.m), complete.
+// Every adt's field list is signed into the link entry of each
+// function that mentions it, so Qid/Dir/Connection/FileIO replicate
+// sys.m's fields exactly, in order.  Unused members are stripped from
+// the link table by narrowmods.
 
 const PATH = "$Sys"
+
+const Maxint = 2147483647
+
+type Qid struct {
+	path big
+	vers int
+	qtype int
+}
+
+const QTDIR = 128
+const QTAPPEND = 64
+const QTEXCL = 32
+const QTAUTH = 8
+const QTTMP = 4
+const QTFILE = 0
+
+type Dir struct {
+	name string
+	uid string
+	gid string
+	muid string
+	qid Qid
+	mode int
+	atime int
+	mtime int
+	length big
+	dtype int
+	dev int
+}
 
 type FD struct {
 	fd int
 }
 
+type Connection struct {
+	dfd ref FD
+	cfd ref FD
+	dir string
+}
+
+type FileIO struct {
+	read chan (big, int, int, chan ([]byte, string))
+	write chan (big, []byte, int, chan (int, string))
+}
+
+const ATOMICIO = 8192
+const SEEKSTART = 0
+const SEEKRELA = 1
+const SEEKEND = 2
+const NAMEMAX = 256
+const ERRMAX = 128
+const WAITLEN = 192
+const OREAD = 0
+const OWRITE = 1
+const ORDWR = 2
+const OTRUNC = 16
+const ORCLOSE = 64
+const OEXCL = 4096
+const DMDIR = -2147483648
+const DMAPPEND = 1073741824
+const DMEXCL = 536870912
+const DMAUTH = 134217728
+const DMTMP = 67108864
+const MREPL = 0
+const MBEFORE = 1
+const MAFTER = 2
+const MCREATE = 4
+const MCACHE = 16
+const NEWFD = 1
+const FORKFD = 2
+const NEWNS = 4
+const FORKNS = 8
+const NEWPGRP = 16
+const NODEVS = 32
+const NEWENV = 64
+const FORKENV = 128
+const EXPWAIT = 0
+const EXPASYNC = 1
+const UTFmax = 4
+const UTFerror = 65533
+const Runemax = 1114111
+const Runemask = 2097151
+
+func announce(addr string) (int, Connection)
+func aprint(s string, ...) []byte
 func bind(s string, on string, flags int) int
+func byte2char(buf []byte, n int) (int, int, int)
+func char2byte(c int, buf []byte, n int) int
+func chdir(path string) int
 func create(s string, mode int, perm int) ref FD
+func dial(addr string, local string) (int, Connection)
+func dirread(fd ref FD) (int, []Dir)
+func dup(old int, new int) int
+func export(c ref FD, dir string, flag int) int
+func fauth(fd ref FD, aname string) ref FD
+func fd2path(fd ref FD) string
 func fildes(fd int) ref FD
+func file2chan(dir string, file string) ref FileIO
 func fprint(fd ref FD, s string, ...) int
+func fstat(fd ref FD) (int, Dir)
+func fversion(fd ref FD, msize int, version string) (int, string)
+func fwstat(fd ref FD, d Dir) int
+func iounit(fd ref FD) int
+func listen(c Connection) (int, Connection)
+func millisec() int
 func mount(fd ref FD, afd ref FD, on string, flags int, spec string) int
 func open(s string, mode int) ref FD
+func pctl(flags int, movefd list int) int
+func pipe(fds []ref FD) int
 func print(s string, ...) int
+func pread(fd ref FD, buf []byte, n int, off big) int
+func pwrite(fd ref FD, buf []byte, n int, off big) int
 func read(fd ref FD, buf []byte, n int) int
+func readn(fd ref FD, buf []byte, n int) int
 func remove(s string) int
 func seek(fd ref FD, off big, start int) big
 func sleep(period int) int
 func sprint(s string, ...) string
+func stat(s string) (int, Dir)
+func stream(src ref FD, dst ref FD, bufsiz int) int
+func tokenize(s string, delim string) (int, list string)
 func unmount(s1 string, s2 string) int
+func utfbytes(buf []byte, n int) int
+func werrstr(s string) int
 func write(fd ref FD, buf []byte, n int) int
+func wstat(s string, d Dir) int
