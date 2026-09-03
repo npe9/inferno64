@@ -11,7 +11,11 @@ TARG=\
 	types.dis\
 	lexdump.dis\
 	parse.dis\
+	fold.dis\
+	iface.dis\
+	check.dis\
 	astdump.dis\
+	chkdump.dis\
 
 all:V:	$TARG
 
@@ -21,6 +25,10 @@ all:V:	$TARG
 lexdump.dis:	lex.ei
 parse.dis:	lex.ei types.ei
 types.dis:	lex.ei
+fold.dis:	types.ei
+iface.dis:	types.ei parse.ei fold.ei
+check.dis:	types.ei fold.ei iface.ei
+chkdump.dis:	types.ei parse.ei iface.ei check.ei
 astdump.dis:	lex.ei parse.ei types.ei
 
 install:V:	all

@@ -306,17 +306,12 @@ type Case struct {
 	tagof ref Type
 }
 
-var tbig ref Type
-var tbyte ref Type
-var tint ref Type
-var treal ref Type
-var tstring ref Type
-var tany ref Type
-var tnone ref Type
-var terror ref Type
-var tunknown ref Type
-var tfnptr ref Type
-var descriptors ref Desc
+// the basic types, after typeinit(); reached through calls since a
+// client cannot yet read another module's variables
+func basic(kind int) ref Type
+func tunknownt() ref Type
+func tfnptrt() ref Type
+func descriptorlist() ref Desc
 
 func typeinit()
 func mktype(line int, pos int, kind int, tof ref Type, ids ref Decl) ref Type

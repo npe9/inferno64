@@ -409,6 +409,40 @@ func isbig(k int) int {
 	return attrbig[k]
 }
 
+func basic(kind int) ref Type {
+	match kind {
+	case Tbig:
+		return tbig
+	case Tbyte:
+		return tbyte
+	case Tint:
+		return tint
+	case Treal:
+		return treal
+	case Tstring:
+		return tstring
+	case Tany:
+		return tany
+	case Tnone:
+		return tnone
+	case Terror:
+		return terror
+	}
+	return nil
+}
+
+func tunknownt() ref Type {
+	return tunknown
+}
+
+func tfnptrt() ref Type {
+	return tfnptr
+}
+
+func descriptorlist() ref Desc {
+	return descriptors
+}
+
 func mkbasic(kind int, size int, al int) ref Type {
 	t := mktype(0, 0, kind, nil, nil)
 	t.size = size

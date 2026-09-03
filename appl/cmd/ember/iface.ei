@@ -1,0 +1,14 @@
+module Iface
+
+// the interface reader, a port of ember/iface.c: readiface() finds an
+// .ei file on the include path, parses it with the self-hosted parser
+// and binds its declarations into a module type, caching by path.
+
+const PATH = "/dis/ember/iface.dis"
+
+import types "types"
+
+func addincpath(dir string)
+func usetypes(t Types)
+func readiface(path string) ref types.Decl
+func ifaceerrors() int

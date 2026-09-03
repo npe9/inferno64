@@ -1,0 +1,15 @@
+module Fold
+
+// constant folding on literal nodes (ember/check.c's confoldbin(),
+// confoldcast(), foldconstexpr()), shared by the interface reader and
+// the checker.
+
+const PATH = "/dis/ember/fold.dis"
+
+import types "types"
+
+func setconst(n ref types.Node, t ref types.Type)
+func usetypes(t Types)
+func confoldbin(n ref types.Node) int
+func confoldcast(n ref types.Node)
+func foldconstexpr(n ref types.Node) int

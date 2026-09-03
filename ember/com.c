@@ -2198,7 +2198,7 @@ ecom(Src *src, Node *nto, Node *n)
 			z = mkconst(src, -1);
 			z->ty = n->ty;
 			sumark(z);
-			genop(src, Oxor, z, left, nto);
+			genop(src, Oxor, left, z, nto);	/* z in the middle: an indirect left (p.val) can only be the source */
 		}
 		tfree(&tl);
 		return nto;

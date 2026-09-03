@@ -306,6 +306,13 @@ and methods used from the client (`libpoint.Shape.Circle{...}`).
 
 ## Things to know
 
+Every module that imports another gets its own instance of it, with
+its own copy of the imported module's variables (Limbo's model). A
+module whose state must be shared, such as the compiler's types
+module, is handed down explicitly: assign the caller's module value
+to the import alias (`types = t` inside a `usetypes(t Types)`
+function) and forward it to further importers.
+
 A process left blocked on an unbuffered channel keeps the emulator
 alive after `init` returns; drain or buffer such channels in tests.
 `sys.file2chan` needs a directory served by the srv device: bind
@@ -320,14 +327,16 @@ the token. The compiler stops after twenty errors.
 
 `appl/cmd/ember/` holds the compiler being written in Ember itself,
 built with the C bootstrap by `mk install` there (into `dis/ember`).
-So far it is the lexer (`lex.e`, interface `lex.ei`) and the parser
-(`parse.e`, interface `parse.ei`, producing the same tree as
-`ember/parse.c`), with dump drivers `lexdump.e` and `astdump.e`.
-`ember -T file.e` prints the C lexer's token stream and `ember -A
-file.e` the C parser's tree in the same formats, and
-`tests/lexcmp.sh` and `tests/astcmp.sh` (both part of `mk test`)
-check that the Ember and C versions agree on every source file in
-the tree, diagnostics included.
+So far it is the lexer (`lex.e`), the parser (`parse.e`), the shared
+data structures and types code (`types.e`), constant folding
+(`fold.e`), the interface reader (`iface.e`) and the type checker
+(`check.e`), each with an interface, plus dump drivers `lexdump.e`,
+`astdump.e` and `chkdump.e`. `ember -T`, `-A` and `-C` print the C
+compiler's token stream, syntax tree and checked tree (every node
+with its type) in the same formats, and `tests/lexcmp.sh`,
+`astcmp.sh` and `chkcmp.sh` (all part of `mk test`) check that the
+Ember and C versions agree on every source file in the tree,
+diagnostics included. Code generation and the `.dis` writer remain.
 
 ## Tests
 

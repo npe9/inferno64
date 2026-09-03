@@ -38,3 +38,5 @@ test:V:	$O.out
 	./tests/run.sh
 	./tests/runtime.sh
 	./tests/lexcmp.sh
+	./tests/astcmp.sh
+	./tests/chkcmp.sh

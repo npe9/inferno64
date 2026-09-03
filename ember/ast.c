@@ -354,9 +354,17 @@ astprint(Biobuf *b, Node *n, int ind)
 		if(n->flags & NSTR){
 			Bputc(b, ' ');
 			strprint(b, n->sym->name);
-		}else if(n->flags & NREAL)
-			Bprint(b, " %g", n->rval);
-		else
+		}else if(n->flags & NREAL){
+			if(asttypes){
+				/* -C: the exact bits, so the self-hosted checker's
+				 * dump (a different %g) can be compared */
+				union { double d; uvlong u; } u;
+
+				u.d = n->rval;
+				Bprint(b, " %016llux", u.u);
+			}else
+				Bprint(b, " %g", n->rval);
+		}else
 			Bprint(b, " %lld", n->val);
 		break;
 	}
