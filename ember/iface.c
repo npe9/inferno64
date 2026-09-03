@@ -513,6 +513,12 @@ bindiface(Decl *mod, Node *tree)
 			}
 			break;
 		case Ofndecl:
+			if(decl->right != nil && decl->right->aux != nil){
+				/* a generic is instantiated from its body, which an interface has not */
+				error(decl->src.start, "generic function %s cannot be declared in an interface",
+					decl->left->op == Omethod ? decl->left->right->sym->name : decl->left->sym->name);
+				break;
+			}
 			rawfn = 1;
 			if(decl->aux != nil){
 				error(decl->src.start, "function body not allowed in interface");

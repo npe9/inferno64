@@ -1,0 +1,4 @@
+module Genface
+
+func mapa[T, U](xs []T, f func(T) U) []U
+func plain(x int) int

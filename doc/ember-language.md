@@ -352,8 +352,10 @@ function's. Variables the interface omits stay private. Interfaces
 for Limbo modules should not declare variables. `tests/type/libvars.e`
 and `modvars.e` show the pattern.
 
-When the module's own interface is found, its functions and methods
-are checked the same way: one the module does not define, or defines
+An interface cannot declare a generic function or type: generics are
+instantiated from their bodies at compile time, so they belong to
+the module that uses them. When the module's own interface is found,
+its functions and methods are checked the same way: one the module does not define, or defines
 with a different signature, is a compile error (generic functions
 are not compared), so a stale interface is caught before load time.
 

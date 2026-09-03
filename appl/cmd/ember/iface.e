@@ -480,6 +480,15 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				error(decl.line, "function body not allowed in interface")
 				break
 			}
+			if decl.right != nil && decl.right.aux != nil {
+				// a generic is instantiated from its body (iface.c)
+				name := decl.left.sym
+				if decl.left.op == types.Omethod {
+					name = decl.left.right.sym
+				}
+				error(decl.line, sys.sprint("generic function %s cannot be declared in an interface", name))
+				break
+			}
 			rawfn = 1
 			t := itype(decl.right, mod)
 			rawfn = 0

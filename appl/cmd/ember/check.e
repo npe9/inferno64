@@ -3525,7 +3525,9 @@ func check(tree ref types.Node, file string) int {
 	// the module's own interface is its module declaration: the
 	// variables it declares are checked against the implementation
 	// and exported as the .mp record (check.c)
+	ifaceerrs := iface.ifaceerrors()
 	own := iface.readownface(impdecl.sym, infile)
+	nerrors += iface.ifaceerrors() - ifaceerrs	// its parse and binding errors are ours
 	if own != nil {
 		for id := own.ty.ids; id != nil; id = id.next {
 			if id.store != types.Dglobal {
