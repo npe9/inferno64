@@ -2292,7 +2292,16 @@ func declocal(id ref types.Node, t ref types.Type) ref types.Decl {
 // a local of that name already in the innermost scope (check.c)
 func redeclared(name string) int {
 	d := lookup(name)
-	if d != nil && d.scope == scope && (d.store == types.Dlocal || d.store == types.Darg) {
+	if d == nil {
+		return 0
+	}
+	if d.store == types.Darg {	// parameters sit one scope above the body's block
+		if d.scope == scope - 1 {
+			return 1
+		}
+		return 0
+	}
+	if d.store == types.Dlocal && d.scope == scope {
 		return 1
 	}
 	return 0

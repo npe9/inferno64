@@ -4059,7 +4059,11 @@ redeclared(Sym *sym)
 	Decl *d;
 
 	d = lookup(sym);
-	return d != nil && d->scope == scope && (d->store == Dlocal || d->store == Darg);
+	if(d == nil)
+		return 0;
+	if(d->store == Darg)	/* parameters sit one scope above the body's block */
+		return d->scope == scope - 1;
+	return d->store == Dlocal && d->scope == scope;
 }
 
 static void
