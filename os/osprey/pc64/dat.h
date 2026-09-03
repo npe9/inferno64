@@ -178,7 +178,9 @@ typedef struct {
 	u32int	_28_[2];
 	u32int	ist[14];
 	u16int	_92_[5];
-	u16int	iomap;
+	u16int	iomap;			/* offset from the TSS base to iobm below */
+	uchar	iobm[128];		/* I/O-permission bitmap, ports 0..0x3ff: bit 0 allows, 1 denies */
+	uchar	iobmterm;		/* the required trailing all-ones byte */
 } Tss;
 
 struct Mach

@@ -31,3 +31,15 @@ TEXT gotolabel(SB), 1, $-4
 	MOVQ	AX, 0(SP)
 	MOVL	$1, AX				/* return 1 */
 	RET
+
+/*
+ * A user-mode port read, to prove the TSS I/O-permission bitmap: at CPL3
+ * this INB faults unless the kernel has cleared the port's bit in the
+ * bitmap.  Same shape as the kernel's own inb - the port in RARG, the
+ * byte back in AX.
+ */
+TEXT	ospreyinb(SB), 1, $-4
+	MOVL	RARG, DX
+	XORL	AX, AX
+	INB
+	RET

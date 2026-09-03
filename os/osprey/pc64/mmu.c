@@ -91,7 +91,22 @@ mmuinit(void)
 	m->tss = mallocz(sizeof(Tss), 1);
 	if(m->tss == nil)
 		panic("mmuinit: no memory for Tss");
-	m->tss->iomap = 0xDFFF;
+	/*
+	 * The I/O-permission bitmap.  0xDFFF (a base past the TSS limit) is
+	 * the "no bitmap, deny every port at CPL3" state; instead point iomap
+	 * at a real bitmap and delegate a couple of ports.  A cleared bit lets
+	 * a user process run in/out on that port directly, with no trap: 0x60
+	 * and 0x64 are the i8042 data and status/command ports, so a
+	 * user-space keyboard/mouse driver can own the controller itself.
+	 * Every other port stays denied.  (Per-CPU for now, so the grant is to
+	 * any user process on this machine; a per-process bitmap swapped at
+	 * schedule time is the finer, capability form.)
+	 */
+	m->tss->iomap = (u16int)((uchar*)m->tss->iobm - (uchar*)m->tss);
+	memset(m->tss->iobm, 0xff, sizeof m->tss->iobm);
+	m->tss->iobmterm = 0xff;
+	m->tss->iobm[0x60/8] &= ~(1 << (0x60 & 7));	/* i8042 data */
+	m->tss->iobm[0x64/8] &= ~(1 << (0x64 & 7));	/* i8042 status/command */
 	for(i=0; i<14; i+=2){
 		x = (uintptr)m + MACHSIZE;
 		m->tss->ist[i] = x;

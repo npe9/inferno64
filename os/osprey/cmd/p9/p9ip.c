@@ -133,6 +133,17 @@ p9ipup(void)
 	int fd;
 	long n;
 
+	{
+		extern int ospreyinb(int);
+		int st;
+		/* A user-mode INB on the i8042 status port.  At CPL3 this traps
+		 * unless the kernel delegated 0x64 through the TSS I/O-permission
+		 * bitmap - so a printed status byte, not a fault, is the proof
+		 * that port I/O is delegated to user space, no syscall in the
+		 * data path. */
+		st = ospreyinb(0x64);
+		print("p9 io: user-mode inb(0x64) i8042 status = %#ux - port I/O delegated to user space, no trap\n", st & 0xff);
+	}
 	if(waserror()){
 		print("p9 ip: bring-up failed: %s\n", up->errstr);
 		return;
