@@ -841,13 +841,25 @@ the payload-bearing segment into the far stack - a data segment drives
 deeper tcp processing (queueing the bytes, answering with an ack) than a
 bare control segment.  The first guess was the server proc's own stack,
 too shallow for that depth; but moving the pump into a kproc with a full
-stack does not fix it, so it is not simply depth.  The fault is a wild
-program counter -
+stack does not fix it, so it is not simply depth.  The fault is a wild program counter -
 .CW "pc=0xffffffff" ,
-a corrupted return - which is a memory or stack overwrite somewhere in
-the cross-stack data path, not yet pinned (and the async console tends to
-drop the fault line, which is part of why).  That, and the device-carried
-two-container form, are what remain of item 7a.
+a corrupted return, sometimes landing in the print code - a memory or
+stack overwrite.  It was isolated to the two stacks: the same osprey
+medium with one stack (a self-loop, no
+.CW #I1 )
+does not corrupt - it fails only to deliver the bytes, cleanly, no
+fault - so it is state the two stacks
+share that a data segment overwrites, present only when two whole stacks
+(two
+.CW Fs )
+run in the one address space.  Per-stack
+.CW netlog
+and the obvious
+.CW tcp.c / ip.c
+file-scope statics are ruled out; the culprit is subtler and wants a
+reliable fault capture the async console fights.  That hunt, the
+single-stack delivery gap, and the device-carried two-container form are what remain of
+item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
