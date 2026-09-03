@@ -3163,19 +3163,21 @@ echk(Node *n)
 		return n->ty;
 	case Ocomposite:
 		/*
-		 * a bare (non-ref) composite literal typechecks its fields
-		 * via compositefields() -- so a typo'd field name or wrong
-		 * count is still reported -- but is otherwise refused: it
-		 * would need com.c to store into a value-typed local/global
-		 * in place, the same address-of-arbitrary-lvalue capability
-		 * Odot's field-access case above is missing.  "ref T{...}"
-		 * (Oref's case) is the supported path; it never reaches
-		 * here since it calls compositefields() directly.
+		 * a bare (non-ref) composite literal in general value
+		 * position -- a call argument, "Point{x: 1, y: 2}.x", a
+		 * list cons head, anything that isn't the RHS of :=/=/var/
+		 * return (each of which stores it straight into its own
+		 * destination without ever coming through here).  it was
+		 * refused as "not yet supported" until the first test to
+		 * pass a struct literal straight to a cross-module call
+		 * (tests/type/loadlib.e) tripped over it.  compositefields()
+		 * checks and types it; com.c's ecom() Ocomposite case
+		 * materializes the value (into the destination when that's
+		 * a plain slot, else via a temp), the same two store paths
+		 * ":=" already uses.
 		 */
 		t = compositefields(n);
-		if(t != terror)
-			nerror(n, "composite literal %T{...} used as a value not yet supported (write ref %T{...} to allocate)", t, t);
-		n->ty = terror;
+		n->ty = t;
 		return n->ty;
 	case Otuple:
 		{

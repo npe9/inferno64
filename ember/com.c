@@ -614,9 +614,18 @@ fixcallbase(Node *n)
 	if(n == nil || n->op != Oind || n->left == nil || n->left->op != Oadd)
 		return nil;
 	base = n->left->left;
-	if(base == nil || base->op != Oadr
-	|| base->left == nil || base->left->op != Ocall)
+	if(base == nil || base->op != Oadr || base->left == nil)
 		return nil;
+	switch(base->left->op){
+	case Ocall:		/* mkpoint().x */
+	case Ocomposite:	/* Point{x: 1, y: 2}.x */
+	case Ohd:		/* hd(l).x */
+	case Orcv:		/* (<-c).x */
+	case Ochk:		/* f()?.x */
+		break;
+	default:
+		return nil;
+	}
 	tres = mkn(Oname, nil, nil);
 	ecom(&base->left->src, talloc(tres, base->left->ty, nil), base->left);
 	base->left = tres;
@@ -1653,6 +1662,31 @@ ecom(Src *src, Node *nto, Node *n)
 	case Ospawn:
 		callcom(src, Ospawn, left, nto);
 		return nto;
+	case Ocomposite: {
+		/*
+		 * a struct literal as a plain value (check.c's Ocomposite
+		 * case): an exhaustive literal into a plain slot -- a temp
+		 * or a local/global -- stores field by field through the
+		 * slot's own address, exactly scom's Odas case; anything
+		 * else (a partial literal, which needs zero-filled storage
+		 * behind the fields it leaves unset, or a destination
+		 * that's an indirection -- a call's own argument slot is an
+		 * Oind(Oadd(frame, off))) goes through storecompositezero()'s
+		 * zeroed temp and a final whole-value move.
+		 */
+		if(nto == nil)
+			nto = talloc(&tres, n->ty, nil);
+		if(compositexhaustive(n) && (nto->addable == Rreg || nto->addable == Rmreg)){
+			Node *adr;
+
+			adr = mkn(Oadr, dupn(nto), nil);
+			adr->src = *src;
+			adr->ty = n->ty;
+			storecomposite(src, adr, n);
+		}else
+			storecompositezero(src, nto, n);
+		return nto;
+	}
 	case Oload: {
 		/*
 		 * "load Rand path": ILOAD path, iface, dst -- the same
