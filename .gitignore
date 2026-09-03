@@ -422,3 +422,6 @@ os/osprey/cmd/o9cat
 os/osprey/cmd/p9srv
 os/osprey/cmd/pip
 os/osprey/cmd/ring
+# Osprey boot loader output and boot filesystems (generated)
+os/osprey/boot/efi/bootx64.out
+os/osprey/boot/*.bootfs.paq
