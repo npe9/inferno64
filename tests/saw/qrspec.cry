@@ -1,0 +1,13 @@
+// Reference spec for the qr() kernel in tests/saw (a ChaCha20-style
+// quarter-round mix over 32-bit words). SAW proves the Dis-compiled
+// implementation, translated to LLVM by dis2ll.py, equal to THIS.
+module qrspec where
+
+qr : [32] -> [32] -> [32] -> [32] -> [32]
+qr a0 b0 c0 d0 = a ^ b ^ c ^ d
+  where
+    a  = a0 + b0
+    d1 = d0 ^ a
+    d  = (d1 << 16) || ((d1 >> 16) && 0x0000ffff)
+    c  = c0 + d
+    b  = b0 ^ c
