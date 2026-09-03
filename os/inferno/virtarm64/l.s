@@ -170,6 +170,62 @@ TEXT	psci(SB), 1, $-4
 	WORD	$0xd4000002
 	RET	R30
 
+/*
+ * GICv3 CPU-interface accessors.  On a GICv3 the per-CPU interface is
+ * a set of ICC_*_EL1 system registers, not the MMIO GICC page a GICv2
+ * has, so acknowledge/EOI/priority-mask/group-enable are MSR/MRS here.
+ * 7a does not know the ICC_* mnemonics, so each is the raw MSR/MRS
+ * word (op0=3,op1=0,CRn=12/4,CRm,op2, Rt=0 == R0), verified against
+ * the host assembler; the single arg / return value lives in R0/x0
+ * where 7c's calling convention already puts it.  SRE and group-enable
+ * writes need an ISB (0xd5033fdf) before the next fetch sees them.
+ */
+TEXT	seticcsre(SB), 1, $-4
+	WORD	$0xd518cca0		/* MSR x0, ICC_SRE_EL1 */
+	WORD	$0xd5033fdf		/* ISB */
+	RET	R30
+
+TEXT	geticcsre(SB), 1, $-4
+	WORD	$0xd538cca0		/* MRS ICC_SRE_EL1, x0 */
+	RET	R30
+
+TEXT	seticcpmr(SB), 1, $-4
+	WORD	$0xd5184600		/* MSR x0, ICC_PMR_EL1 */
+	RET	R30
+
+TEXT	seticcbpr1(SB), 1, $-4
+	WORD	$0xd518cc60		/* MSR x0, ICC_BPR1_EL1 */
+	RET	R30
+
+TEXT	seticcgrpen1(SB), 1, $-4
+	WORD	$0xd518cce0		/* MSR x0, ICC_IGRPEN1_EL1 */
+	WORD	$0xd5033fdf		/* ISB */
+	RET	R30
+
+TEXT	seticcctlr(SB), 1, $-4
+	WORD	$0xd518cc80		/* MSR x0, ICC_CTLR_EL1 */
+	RET	R30
+
+TEXT	geticciar(SB), 1, $-4
+	WORD	$0xd538cc00		/* MRS ICC_IAR1_EL1, x0 */
+	RET	R30
+
+/*
+ * ID_AA64PFR0_EL1.GIC (bits 27:24): 0 == no GICv3 system-register cpu
+ * interface (a GICv2 board), non-zero == the ICC_* interface is
+ * present.  A CPU ID register, so reading it never aborts - unlike the
+ * GICv2 distributor's PIDR2, which QEMU's model does not implement and
+ * faults on.  This is how gicinit tells v2 from v3 without touching an
+ * address that might not answer.
+ */
+TEXT	getpfr0(SB), 1, $-4
+	WORD	$0xd5380400		/* MRS ID_AA64PFR0_EL1, x0 */
+	RET	R30
+
+TEXT	seticceoir(SB), 1, $-4
+	WORD	$0xd518cc20		/* MSR x0, ICC_EOIR1_EL1 */
+	RET	R30
+
 TEXT	_tas(SB), 1, $-4
 	MOV	R0, R3
 tas1:

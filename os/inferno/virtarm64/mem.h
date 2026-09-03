@@ -36,9 +36,20 @@
 /* pl011@9000000, same as armv7's own board (same QEMU virt machine) */
 #define	UART0		((uintptr)0x09000000)
 
-/* intc@8000000: "arm,cortex-a15-gic" == GICv2, dist then cpu interface */
+/*
+ * intc@8000000: with -M virt (default) this is "arm,cortex-a15-gic"
+ * == GICv2 (distributor then MMIO cpu interface); with
+ * -M virt,gic-version=3 it is "arm,gic-v3" and GICC is unused (the
+ * cpu interface is the ICC_* system registers) while a redistributor
+ * region appears at GICR.  The distributor sits at 0x08000000 either
+ * way, so trap.c reads GICD_PIDR2's architecture-revision field there
+ * to tell the two apart at boot.  GICR base/size are the GICv3 DTB's
+ * second reg entry (redistributor-regions=1, 0xf60000 == 123 * 128K,
+ * one 128K RD_base+SGI_base pair per possible cpu).
+ */
 #define	GICD		((uintptr)0x08000000)
 #define	GICC		((uintptr)0x08010000)
+#define	GICR		((uintptr)0x080a0000)
 
 /* virtio_mmio@a000000 .. a003e00, 32 slots step 0x200, SPI 16..47 */
 #define	VIRTIO0		((uintptr)0x0a000000)

@@ -288,7 +288,7 @@ Per-SoC drivers for the real parts.
 Items 1 through 4 are each testable on this host today against a QEMU
 device, the same discipline the last round held to.
 .NH 1
-Done so far (items 1, 2, 3)
+Done so far
 .PP
 Item 1, USB mass storage:
 .CW appl/cmd/usb/usbd.b
@@ -339,4 +339,58 @@ a
 .CW DATA -initialised
 .CW uvlong
 holds the whole value and is the portable way to name a high address.
-Next: item 4 (MSI), then the real-hardware entry.
+.PP
+Item 5, device tree:
+.CW os/inferno/port/fdt.c
+is a portable flattened-device-tree reader.  QEMU hands the kernel a
+DTB (a1 on riscv, x0 on arm64) whose nodes carry each device's real
+address, so a board can find its UART, virtio and PCI windows and its
+interrupt controller instead of naming them as constants.  The board's
+boot code in
+.CW l.s
+captures the pointer;
+.CW fdtreg
+finds a node by compatible string and reads its reg base and size.
+Verified: riscv64 finds its 8250 UART in the DTB.  arm64 under QEMU's
+.CW -kernel
+gets x0 == 0 (no DTB pointer), so the capture is inert but correct
+there.
+.PP
+arm64 PSCI:
+.CW psci()
+in
+.CW l.s
+is HVC #0 (the raw word, since 7a has no HVC mnemonic) with the SMCCC
+arguments already in R0-R3;
+.CW archreboot
+calls SYSTEM_RESET and
+.CW archshutdown
+calls SYSTEM_OFF.  Verified: QEMU exits 0 in a fifth of a second on a
+reset call.
+.PP
+arm64 GICv3 (arm64 item 2):
+.CW trap.c
+reads
+.CW ID_AA64PFR0_EL1.GIC
+at boot to tell a GICv3 from the default GICv2 - a CPU ID read, so it
+never aborts, where the GICv2 distributor's PIDR2 (the obvious probe)
+is unimplemented in QEMU and faults.  On a v3 the per-CPU interface is
+the
+.CW ICC_*_EL1
+system registers, hand-encoded as raw MSR/MRS words in
+.CW l.s
+(verified against the host assembler); SGI/PPI enable state lives in
+the per-CPU redistributor's SGI frame, not the distributor; and SPIs
+are routed to a CPU through
+.CW GICD_IROUTER
+once affinity routing is on.  gicinit wakes the redistributor, places
+everything in group 1, and enables the interface.  Verified on
+.CW "-M virt,gic-version=3" :
+the board reaches its shell (so the timer PPI fires through the
+redistributor) and an NVMe read completes (so PCI SPI 37 is delivered
+through IROUTER); GICv2 still boots clean, unchanged.
+.PP
+Remaining: MSI (item 4), the rest of item 5 (riscv supervisor mode,
+SBI, wiring boards to the discovered DTB addresses), item 6 (USB
+ethernet, HID report descriptors, virtio-gpu 3-D), and item 7 (per-SoC
+drivers).

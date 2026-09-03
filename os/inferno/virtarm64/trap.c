@@ -136,28 +136,98 @@ vectorbuild(void)
 	vectorinit(v);
 }
 
+/*
+ * The distributor at GICD is present on both a GICv2 and a GICv3; the
+ * two differ in the per-cpu interface (MMIO GICC vs the ICC_* system
+ * registers) and in where SGI/PPI enable state lives (GICD on v2, the
+ * per-cpu redistributor SGI frame on v3).  gicv3 is set once at boot
+ * from ID_AA64PFR0_EL1.GIC (the cpu's own "is the ICC_* system-register
+ * interface present" bit - a CPU ID read, so it never aborts, unlike
+ * the GICv2 distributor's PIDR2 which QEMU does not implement and
+ * faults on), and the three GIC entry points below branch on it; every
+ * other board runs -M virt's default GICv2 and never touches v3.
+ */
+static int gicv3;
+
+extern void	seticcsre(ulong);
+extern void	seticcpmr(ulong);
+extern void	seticcbpr1(ulong);
+extern void	seticcgrpen1(ulong);
+extern ulong	geticciar(void);
+extern ulong	getpfr0(void);
+extern void	seticceoir(ulong);
+
 static void
 gicenable(int irq)
 {
-	u32 *gicd;
+	u32 *gicd, *sgi;
 
 	if(irq <= 0 || irq >= GicIRQMax)
 		return;
 	gicd = (u32*)GICD;
-	*((uchar*)GICD + 0x400 + irq) = 0xa0;		/* GICD_IPRIORITYR[irq] */
+	if(!gicv3){
+		*((uchar*)GICD + 0x400 + irq) = 0xa0;	/* GICD_IPRIORITYR[irq] */
+		gicd[GicdISENABLER + irq/32] = 1 << (irq%32);
+		return;
+	}
+	if(irq < GicSpiBase){
+		/* SGI/PPI: this cpu's redistributor SGI frame, not GICD */
+		sgi = (u32*)(GICR + GicrSGIoff);
+		*((uchar*)sgi + 0x400 + irq) = 0xa0;	/* GICR_IPRIORITYR */
+		sgi[GicrISENABLER0] = 1 << (irq%32);
+		return;
+	}
+	/* SPI: priority, affinity-route to cpu 0 (affinity 0), enable */
+	*((uchar*)GICD + 0x400 + irq) = 0xa0;
+	*(uvlong*)((uchar*)GICD + GicdIROUTER + 8*irq) = 0;
 	gicd[GicdISENABLER + irq/32] = 1 << (irq%32);
 }
 
 void
 gicinit(void)
 {
-	u32 *gicd, *gicc;
+	u32 *gicd, *gicc, *rd, *sgi;
+	int i;
 
 	gicd = (u32*)GICD;
-	gicc = (u32*)GICC;
-	gicd[GicdCTLR] = 1;
-	gicc[GiccPMR] = 0xff;
-	gicc[GiccCTLR] = 1;
+	gicv3 = ((getpfr0() >> 24) & 0xf) != 0;
+	if(!gicv3){
+		gicc = (u32*)GICC;
+		gicd[GicdCTLR] = 1;
+		gicc[GiccPMR] = 0xff;
+		gicc[GiccCTLR] = 1;
+		gicenable(GicPPITimer);
+		return;
+	}
+
+	/*
+	 * GICv3 bring-up.  Order matters: enable system-register access
+	 * to the cpu interface first, then wake this cpu's redistributor
+	 * and wait for it, then turn on affinity routing at the
+	 * distributor before enabling group 1 (with ARE set, an SPI's
+	 * target comes from GICD_IROUTER, ignored until ARE is on), then
+	 * unmask priority and enable group-1 delivery at the cpu
+	 * interface.  Everything is placed in group 1 so it arrives as an
+	 * IRQ (group 0 would be an FIQ this kernel never enables).
+	 */
+	seticcsre(1);				/* ICC_SRE_EL1.SRE = 1 */
+
+	rd = (u32*)GICR;
+	rd[GicrWAKER] &= ~2;			/* clear ProcessorSleep */
+	while(rd[GicrWAKER] & 4)			/* wait ChildrenAsleep == 0 */
+		;
+	sgi = (u32*)(GICR + GicrSGIoff);
+	sgi[GicrIGROUPR0] = ~0;			/* all SGI/PPI in group 1 */
+
+	for(i = GicSpiBase/32; i < GicIRQMax/32 + 1; i++)
+		gicd[GicdIGROUPR + i] = ~0;	/* all SPIs in group 1 */
+	gicd[GicdCTLR] = GicdCTLR_ARE;
+	gicd[GicdCTLR] = GicdCTLR_ARE | GicdCTLR_EN1;
+
+	seticcpmr(0xff);			/* unmask all priorities */
+	seticcbpr1(0);				/* no sub-priority preemption */
+	seticcgrpen1(1);			/* enable group 1 at cpu interface */
+
 	gicenable(GicPPITimer);
 }
 
@@ -178,17 +248,30 @@ trap(Ureg *ur)
 
 	switch(ur->type){
 	case TIrq:
-		gicc = (u32*)GICC;
-		iar = gicc[GiccIAR];
-		irq = iar & 0x3ff;
-		if(irq == GicPPITimer){
-			clockintr(ur);
-			gicc[GiccEOIR] = iar;
-			return;
+		/*
+		 * Acknowledge (IAR), dispatch, then end-of-interrupt
+		 * (EOIR).  On v3 both are ICC_* system-register accesses
+		 * and the INTID is 24 bits wide; on v2 they are the MMIO
+		 * GICC page and the INTID is 10 bits.  A spurious read
+		 * returns INTID 1020..1023 either way - dispatch guards it
+		 * via the irqhandler bound check, and 1023 gets no EOI.
+		 */
+		if(gicv3){
+			iar = geticciar();
+			irq = iar & 0xffffff;
+		}else{
+			gicc = (u32*)GICC;
+			iar = gicc[GiccIAR];
+			irq = iar & 0x3ff;
 		}
-		if(irq < GicIRQMax && (f = irqhandler[irq]) != nil)
+		if(irq == GicPPITimer)
+			clockintr(ur);
+		else if(irq < GicIRQMax && (f = irqhandler[irq]) != nil)
 			f(ur, irqarg[irq]);
-		gicc[GiccEOIR] = iar;
+		if(gicv3)
+			seticceoir(iar);
+		else
+			gicc[GiccEOIR] = iar;
 		return;
 	default:
 		/*

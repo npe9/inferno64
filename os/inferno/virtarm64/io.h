@@ -66,6 +66,27 @@ enum {
 	GiccIAR		= 0x00c/4,
 	GiccEOIR	= 0x010/4,
 
+	/* GICv2 distributor extras used only by the v3 path's SPI setup */
+	GicdIGROUPR	= 0x080/4,	/* +irq/32; 1 == group 1 */
+	GicdPIDR2	= 0xffe8/4,	/* [7:4] == architecture revision */
+
+	/*
+	 * GICv3 redistributor.  Each cpu owns a 128K pair: an RD_base
+	 * frame (WAKER lives here) immediately followed by an SGI_base
+	 * frame at +0x10000 that holds this cpu's SGI/PPI enable,
+	 * priority and group registers - the v2 GicdISENABLER/IGROUPR
+	 * for interrupts 0..31 move here on a v3.
+	 */
+	GicrWAKER	= 0x0014/4,	/* RD_base: bit1 sleep, bit2 childrenasleep */
+	GicrSGIoff	= 0x10000,	/* SGI_base = RD_base + this */
+	GicrIGROUPR0	= 0x0080/4,	/* SGI_base-relative */
+	GicrISENABLER0	= 0x0100/4,	/* SGI_base-relative */
+	GicrIPRIORITYR	= 0x0400/4,	/* SGI_base-relative, byte array */
+
+	GicdIROUTER	= 0x6000,	/* byte offset; +8*irq, 64-bit affinity */
+	GicdCTLR_ARE	= 1<<4,		/* affinity routing enable */
+	GicdCTLR_EN1	= 1<<1,		/* enable group 1 (with ARE set) */
+
 	GicIRQMax	= 96,		/* 32 virtio slots start at 48; plenty of room */
 	GicSpiBase	= 32,
 	GicPPITimer	= 30,		/* non-secure physical timer, from the DTB */
