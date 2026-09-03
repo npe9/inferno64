@@ -825,8 +825,12 @@ new conversation, so both ends agree the connection is up.
 .PP
 That two-stack form (two
 .CW Fs )
-is what proved the two endpoints, but it is not what the boot runs
-now.  Two whole stacks in one address space trip the shared-state
+is what proved the two endpoints, and with the arena bug fixed it is what
+the boot runs again: two independent stacks handshake and accept over the
+osprey wire, four boots of four.  (Only the byte stream after the handshake
+is still short - stack A's write does not yet reach stack B's accepted
+conversation - a delivery matter, no longer the crash it was.)  What
+follows was the reasoning while it was still forced back to a single stack.  Two whole stacks in one address space trip the shared-state
 corruption below over time - in steady state, tens of ticks in, a proc
 faults and the note path panics
 .CW donotify \-
