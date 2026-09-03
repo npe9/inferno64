@@ -287,3 +287,56 @@ Per-SoC drivers for the real parts.
 .PP
 Items 1 through 4 are each testable on this host today against a QEMU
 device, the same discipline the last round held to.
+.NH 1
+Done so far (items 1, 2, 3)
+.PP
+Item 1, USB mass storage:
+.CW appl/cmd/usb/usbd.b
+detects a class-8 Bulk-Only interface, speaks the 31-byte command
+wrapper / data / 13-byte status wrapper carrying SCSI (inquiry, read
+capacity, READ(10)/WRITE(10)), and exports each unit as
+.CW /chan/usbdiskN
+through
+.CW file2chan .
+Verified on riscv64 against QEMU's
+.CW usb-storage :
+dossrv mounts the FAT and the init reads a planted marker.  A USB stick
+is readable and mountable.
+.PP
+Item 2, the display:
+.CW os/inferno/port/virtiogpu.c
+brings up a virtio-gpu PCI device, makes the board's framebuffer a
+scanout resource, and pushes each dirty rectangle with
+.CW TRANSFER_TO_HOST_2D
+and
+.CW RESOURCE_FLUSH .
+.CW screenvirt.c
+drives it lazily when there is no ramfb.  Verified by QEMU screendump:
+a three-band red/green/blue fill appears exactly, with only the mouse
+cursor stray.  The one bug was the command descriptor carrying the
+WRITE flag; it is device-read.
+.PP
+Item 3, arm64 PCI:
+.CW pciecam.c
+moved to
+.CW ../port ,
+portable now with a board
+.CW PCIINTXBASE
+and a DATA-held 64-bit ECAM base.  virtarm64 links it and the shared
+PCI drivers.  Verified: PCI enumerates, virtio-net and xHCI attach, and
+NVMe reads a real sector over DMA with the MMU off.  arm64 went from
+one mmio NIC to the whole PCI driver set.
+.PP
+One toolchain finding along the way, recorded in
+.CW doc/inferno-ports.ms :
+.CW 7l
+materialises a 64-bit constant used inline in an expression with only
+its low 32 bits, so
+.CW 0x4010000000
+became
+.CW 0x10000000 ;
+a
+.CW DATA -initialised
+.CW uvlong
+holds the whole value and is the portable way to name a high address.
+Next: item 4 (MSI), then the real-hardware entry.
