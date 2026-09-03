@@ -259,12 +259,13 @@ only.
     func open(name string, mode int) ref Iobuf
 
 An interface may import other interfaces and name their types as
-`alias.Type`; it may declare constants (which fold, including
-negative literals), struct and pick types, functions and methods.
+`alias.Type`; it may declare constants (expressions of literals and
+of the interface's earlier constants fold: `const Degree = Pi /
+180.0`), struct and pick types, functions and methods.
 
 Interfaces describe both Ember-compiled and Limbo-compiled modules:
-`module/sys.ei`, `rand.ei`, `hash.ei`, `string.ei` and `bufio.ei`
-describe the real Inferno libraries, and programs using them run
+`module/sys.ei`, `math.ei`, `rand.ei`, `hash.ei`, `string.ei` and
+`bufio.ei` describe the real Inferno libraries, and programs using them run
 against the Limbo-compiled `.dis` files. The link signatures Ember
 computes match Limbo's, so a mismatch between an interface and the
 module it describes is refused at load time (`link typecheck
@@ -291,6 +292,10 @@ and methods used from the client (`libpoint.Shape.Circle{...}`).
 
 A process left blocked on an unbuffered channel keeps the emulator
 alive after `init` returns; drain or buffer such channels in tests.
+`sys.file2chan` needs a directory served by the srv device: bind
+`#s` somewhere first (`tests/type/fileserver.e`). A tuple literal
+with `nil` components (`rc <- (nil, nil)`, `return nil, err`) takes
+the tuple type expected where it is used.
 `pick`, `alt`, `match`, `load`, `spawn`, `chan`, `list`, `ref` and
 `interface` are keywords. `bufio`'s `gett` returns the terminator with
 the token. The compiler stops after twenty errors.

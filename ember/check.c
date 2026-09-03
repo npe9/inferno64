@@ -2110,6 +2110,9 @@ compositefields(Node *n)
  * expression checking; annotates n->ty and returns it
  */
 static Type *echk1(Node*);
+static void setconst(Node*, Type*);
+static void confoldbin(Node*);
+static void confoldcast(Node*);
 
 /*
  * constant folding: a binary operator (echk1's arithmetic case, once
@@ -2128,6 +2131,45 @@ setconst(Node *n, Type *t)
 	n->left = n->right = n->aux = nil;
 	n->decl = nil;
 	n->ty = t;
+}
+
+/*
+ * a tuple literal whose components include nil ("(nil, nil)", "nil,
+ * err") has tany components, and a whole-tuple assignable() test
+ * against the wanted tuple type is structural and refuses it.  when e
+ * is a literal tuple and want a tuple type of the same arity, retype
+ * every tany component that the corresponding wanted field accepts,
+ * BEFORE the literal's type is sized, so codegen sees exactly the
+ * wanted tuple.  used by return, send, assignment and arguments.
+ * (assignable() itself retypes the node, so the tany test comes first.)
+ */
+static void
+retypetuple(Node *e, Type *want)
+{
+	Decl *fd, *td;
+	Node *p, *c;
+
+	if(e == nil || e->op != Otuple || e->ty == nil || e->ty->kind != Ttuple
+	|| want == nil || want->kind != Ttuple)
+		return;
+	fd = want->ids;
+	td = e->ty->ids;
+	for(p = e->left; p != nil && fd != nil && td != nil; p = p->right){
+		c = p;
+		if(p->op == Oseq)
+			c = p->left;
+		if(c->ty == tany && assignable(fd->ty, c->ty, c)){
+			c->ty = fd->ty;
+			td->ty = fd->ty;
+		}
+		fd = fd->next;
+		td = td->next;
+		if(p->op != Oseq)
+			break;
+	}
+	e->ty->ok &= ~OKsized;
+	e->ty->size = 0;
+	sizetype(e->ty);
 }
 
 static void
@@ -2202,6 +2244,87 @@ confoldbin(Node *n)
 		free(buf);
 		return;
 	}
+}
+
+/*
+ * fold a constant expression tree of literals for an interface file
+ * (iface.c), where nothing is in scope: names of the interface's own
+ * earlier constants have already been replaced by copies of their
+ * literals by the caller.  types each literal, folds unary minus and
+ * the binary operators (both sides of one kind), and a conversion
+ * written as a call to a builtin type name ("big(1)").  returns 1 if
+ * n ended up an Oconst.
+ */
+int
+foldconstexpr(Node *n)
+{
+	Type *t, *tr;
+
+	if(n == nil)
+		return 0;
+	switch(n->op){
+	case Oconst:
+		if(n->ty == nil){
+			if(n->flags & NSTR)
+				n->ty = tstring;
+			else if(n->flags & NREAL)
+				n->ty = treal;
+			else if(n->val > 0x7fffffffLL || n->val < -0x80000000LL)
+				n->ty = tbig;
+			else
+				n->ty = tint;
+		}
+		return 1;
+	case Oneg:
+		if(!foldconstexpr(n->left) || (n->left->flags & NSTR))
+			return 0;
+		n->flags = n->left->flags;
+		if(n->flags & NREAL)
+			n->rval = -n->left->rval;
+		else
+			n->val = -n->left->val;
+		t = n->left->ty;
+		setconst(n, t);
+		return 1;
+	case Oadd: case Osub: case Omul: case Odiv: case Omod:
+	case Oand: case Oor: case Oxor: case Olsh: case Orsh:
+		if(!foldconstexpr(n->left) || !foldconstexpr(n->right))
+			return 0;
+		t = n->left->ty;
+		tr = n->right->ty;
+		if((n->op == Olsh || n->op == Orsh) && tr == tint && (t == tbig || t == tbyte))
+			tr = t;
+		if(t != tr)
+			return 0;
+		n->ty = t;
+		confoldbin(n);
+		return n->op == Oconst;
+	case Ocall:
+		/* big(1), real(2), int(3.5): a conversion of a literal */
+		if(n->left->op != Oname || n->right == nil || n->right->op == Oseq)
+			return 0;
+		if(strcmp(n->left->sym->name, "int") == 0)
+			t = tint;
+		else if(strcmp(n->left->sym->name, "big") == 0)
+			t = tbig;
+		else if(strcmp(n->left->sym->name, "real") == 0)
+			t = treal;
+		else if(strcmp(n->left->sym->name, "byte") == 0)
+			t = tbyte;
+		else if(strcmp(n->left->sym->name, "string") == 0)
+			t = tstring;
+		else
+			return 0;
+		if(!foldconstexpr(n->right))
+			return 0;
+		n->op = Ocast;
+		n->left = n->right;
+		n->right = nil;
+		n->ty = t;
+		confoldcast(n);
+		return n->op == Oconst;
+	}
+	return 0;
 }
 
 static void
@@ -3050,6 +3173,7 @@ echk1(Node *n)
 			t = e == recvdone ? e->ty : echk(e);
 			i++;
 			if(arg != nil){
+				retypetuple(e, arg->ty);
 				if(!assignable(arg->ty, t, e))
 					nerror(e, "argument %d: cannot use %T as %T", i, t, arg->ty);
 				arg = arg->next;
@@ -3529,6 +3653,7 @@ echk1(Node *n)
 			n->ty = terror;
 			return n->ty;
 		}
+		retypetuple(n->right, t->tof);
 		if(!assignable(t->tof, tr, n->right))
 			nerror(n, "cannot send %T on %T", tr, t);
 		n->ty = tnone;
@@ -4543,6 +4668,8 @@ stchk(Node *n)
 				}
 				t = echk(n->right);
 				echk(n->left);
+				if(n->left->ty != nil)
+					retypetuple(n->right, n->left->ty);
 				if(chklval(n->left, "assign to") && !assignable(n->left->ty, t, n->right))
 					nerror(n, "cannot assign %T to %T", t, n->left->ty);
 				return;
@@ -4741,41 +4868,7 @@ stchk(Node *n)
 			 * int followed by a string corrupted the string
 			 * pointer's own bytes outright.
 			 */
-			if(t->kind == Ttuple && curret != nil && curret->kind == Ttuple
-			&& n->left->op == Otuple){
-				/*
-				 * "return nil, err": the literal tuple's own
-				 * inferred type has a tany component where the
-				 * function's declared result has a ref; the
-				 * whole-tuple assignable() test below is
-				 * structural and would refuse it.  check and
-				 * retype component-wise instead, BEFORE the
-				 * tuple type is sized: the component's field and
-				 * the nil node both take the declared type, so
-				 * codegen (com.c's Otuple/Oret path) sees exactly
-				 * the declared tuple, pointer map included.
-				 */
-				Decl *fd, *td;
-				Node *e, *p;
-
-				fd = curret->ids;
-				td = t->ids;
-				for(p = n->left->left; p != nil && fd != nil && td != nil; p = p->right){
-					e = p;
-					if(p->op == Oseq)
-						e = p->left;
-					/* assignable() itself retypes a tany node to
-					 * the target, so test for tany first */
-					if(e->ty == tany && assignable(fd->ty, e->ty, e)){
-						e->ty = fd->ty;
-						td->ty = fd->ty;
-					}
-					fd = fd->next;
-					td = td->next;
-					if(p->op != Oseq)
-						break;
-				}
-			}
+			retypetuple(n->left, curret);
 			if(t->kind == Ttuple)
 				sizetype(t);
 			if(curret == tnone)

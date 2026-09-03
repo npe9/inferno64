@@ -276,6 +276,33 @@ installmember(Decl *mod, Decl *d)
 	}
 }
 
+/*
+ * replace, in a constant's initializer, every name of one of mod's
+ * own already-declared constants by a copy of that constant's literal
+ */
+static void
+iconstnames(Node *n, Decl *mod)
+{
+	Decl *id;
+
+	if(n == nil)
+		return;
+	if(n->op == Oname){
+		for(id = mod->ty->ids; id != nil; id = id->next)
+			if(id->store == Dconst && id->sym == n->sym && id->init != nil && id->init->op == Oconst){
+				Src src;
+
+				src = n->src;
+				*n = *id->init;
+				n->src = src;
+				return;
+			}
+		return;
+	}
+	iconstnames(n->left, mod);
+	iconstnames(n->right, mod);
+}
+
 static Decl*
 findtype(Decl *mod, Sym *s)
 {
@@ -414,24 +441,15 @@ bindiface(Decl *mod, Node *tree)
 			d = mkdecl(&decl->src, Dconst, nil);
 			d->sym = decl->left->sym;
 			/*
-			 * "const EOF = -1": the parser leaves a negated
-			 * literal as Oneg(Oconst); the main module's own
-			 * constants get folded by echk()'s Oneg case, but an
-			 * interface's initializers are never echk()'d, so
-			 * fold the one shape a signature-level constant
-			 * ever needs here.
+			 * an interface's initializers are never echk()'d
+			 * (nothing is in scope), so: replace names of this
+			 * interface's earlier constants by their literals,
+			 * then fold literals through check.c's
+			 * foldconstexpr() -- "const Degree = Pi / 180.0",
+			 * "const NaN = 0.0 / 0.0", "const EOF = -1".
 			 */
-			if(decl->right->op == Oneg && decl->right->left != nil
-			&& decl->right->left->op == Oconst && !(decl->right->left->flags & NSTR)){
-				Node *c;
-
-				c = decl->right->left;
-				if(c->flags & NREAL)
-					c->rval = -c->rval;
-				else
-					c->val = -c->val;
-				decl->right = c;
-			}
+			iconstnames(decl->right, mod);
+			foldconstexpr(decl->right);
 			d->init = decl->right;
 			if(decl->right->op == Oconst){
 				if(decl->right->flags & NSTR)

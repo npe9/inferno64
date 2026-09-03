@@ -1,0 +1,89 @@
+module Math
+
+// Ember interface for Inferno's $Math builtin (module/math.m):
+// scalar functions and constants; the array (BLAS-like) and
+// import/export routines are included where their signatures are
+// plain.
+
+const PATH = "$Math"
+
+const Infinity = 1e400
+const NaN = 0.0 / 0.0
+const MachEps = 2.2204460492503131e-16
+const Pi = 3.14159265358979323846
+const Degree = Pi / 180.0
+const INVAL = 1
+const ZDIV = 2
+const OVFL = 4
+const UNFL = 8
+const INEX = 16
+const RND_NR = 0
+const RND_NINF = 256
+const RND_PINF = 512
+const RND_Z = 768
+const RND_MASK = 768
+
+func acos(x real) real
+func acosh(x real) real
+func asin(x real) real
+func asinh(x real) real
+func atan(x real) real
+func atan2(y real, x real) real
+func atanh(x real) real
+func cbrt(x real) real
+func ceil(x real) real
+func copysign(x real, s real) real
+func cos(x real) real
+func cosh(x real) real
+func dot(x []real, y []real) real
+func erf(x real) real
+func erfc(x real) real
+func exp(x real) real
+func expm1(x real) real
+func fabs(x real) real
+func fdim(x real, y real) real
+func fmin(x real, y real) real
+func fmax(x real, y real) real
+func finite(x real) int
+func floor(x real) real
+func fmod(x real, y real) real
+func gemm(transa int, transb int, m int, n int, k int, alpha real, a []real, lda int, b []real, ldb int, beta real, c []real, ldc int)
+func getFPcontrol() int
+func getFPstatus() int
+func FPcontrol(r int, mask int) int
+func FPstatus(r int, mask int) int
+func hypot(x real, y real) real
+func iamax(x []real) int
+func ilogb(x real) int
+func isnan(x real) int
+func j0(x real) real
+func j1(x real) real
+func jn(n int, x real) real
+func lgamma(x real) (int, real)
+func log(x real) real
+func log10(x real) real
+func log1p(x real) real
+func modf(x real) (int, real)
+func nextafter(x real, y real) real
+func norm1(x []real) real
+func norm2(x []real) real
+func pow(x real, y real) real
+func pow10(p int) real
+func remainder(x real, p real) real
+func rint(x real) real
+func scalbn(x real, n int) real
+func sin(x real) real
+func sinh(x real) real
+func sort(x []real, pi []int)
+func sqrt(x real) real
+func tan(x real) real
+func tanh(x real) real
+func y0(x real) real
+func y1(x real) real
+func yn(n int, x real) real
+func import_int(b []byte, x []int)
+func import_real32(b []byte, x []real)
+func import_real(b []byte, x []real)
+func export_int(b []byte, x []int)
+func export_real32(b []byte, x []real)
+func export_real(b []byte, x []real)

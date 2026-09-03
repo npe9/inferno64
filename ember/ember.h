@@ -819,6 +819,7 @@ void	modrefable(Type*);
 int	castop(Type*, Type*);
 Type*	castvia(Type*, Type*);
 int	castable(Type*, Type*);
+int	foldconstexpr(Node*);
 int	tequal(Type*, Type*);
 u32	sign(Decl*);
 Type	*mkiface(Decl*);
