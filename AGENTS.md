@@ -140,7 +140,14 @@
   general kernel bugs: rwrite()/kseek()/kremove() leaked device errors
   as fatal Limbo exceptions, devusb's "new" turns an unknown type name
   into a control endpoint, and /dev/pointer refused a writer beside its
-  reader.  Decide, build
+  reader.  Item 4: pc64 reaches PCIe configuration space through the
+  ACPI MCFG window (ECAM) when there is one, ports otherwise; the
+  taken drivers use INTx, so MSI stays untransferred.  The riscv64
+  smoke test then exposed a dis.c bug: swiprog()'s note to a kproc
+  whose released Prog had already left raised Eintr in vmachine's
+  idle sleep with no current Prog and faulted in propex(); vmachine
+  now ignores that stray interrupt.  riscv64 reaches its interactive
+  shell 2 of 2 after it.  Decide, build
   it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.

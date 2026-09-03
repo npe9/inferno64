@@ -33,6 +33,68 @@ int (*pcicfgrw8)(int, int, int, int) = pcicfgrw8raw;
 int (*pcicfgrw16)(int, int, int, int) = pcicfgrw16raw;
 int (*pcicfgrw32)(int, int, int, int) = pcicfgrw32raw;
 
+/*
+ * PCI Express configuration space (ECAM): a memory window the
+ * firmware's MCFG table describes, one 4 KiB page per function,
+ * 4096 bytes of configuration space each where the 0xCF8/0xCFC
+ * ports reach only the first 256.  archacpi.c sets pciecam when it
+ * has read the table; pcicfginit() prefers the window when there is
+ * one and falls back to the ports otherwise.
+ */
+uvlong (*pciecam)(int*, int*);
+static uchar *ecam;
+static int ecambus0, ecambus1;
+
+static uchar*
+ecamaddr(int tbdf, int rno)
+{
+	int bno;
+
+	bno = BUSBNO(tbdf);
+	if(bno < ecambus0 || bno > ecambus1 || rno < 0 || rno >= 4096)
+		return nil;
+	return ecam + (((uintptr)(bno - ecambus0)<<20) | (BUSDNO(tbdf)<<15) | (BUSFNO(tbdf)<<12) | rno);
+}
+
+static int
+pcicfgrw8ecam(int tbdf, int rno, int data, int read)
+{
+	volatile uchar *p;
+
+	if((p = (volatile uchar*)ecamaddr(tbdf, rno)) == nil)
+		return read ? 0xFF : 0;
+	if(read)
+		return *p;
+	*p = data;
+	return 0;
+}
+
+static int
+pcicfgrw16ecam(int tbdf, int rno, int data, int read)
+{
+	volatile ushort *p;
+
+	if((p = (volatile ushort*)ecamaddr(tbdf, rno & ~1)) == nil)
+		return read ? 0xFFFF : 0;
+	if(read)
+		return *p;
+	*p = data;
+	return 0;
+}
+
+static int
+pcicfgrw32ecam(int tbdf, int rno, int data, int read)
+{
+	volatile ulong *p;
+
+	if((p = (volatile ulong*)ecamaddr(tbdf, rno & ~3)) == nil)
+		return read ? -1 : 0;
+	if(read)
+		return *p;
+	*p = data;
+	return 0;
+}
+
 static int
 pcicfgrw8raw(int tbdf, int rno, int data, int read)
 {
@@ -633,7 +695,24 @@ pcicfginit(void)
 	 * a device behind these addresses so if Mode1 accesses fail try
 	 * for Mode2 (Mode2 is deprecated).
 	 */
-	if(!pcibios){
+	if(!pcibios && pciecam != nil){
+		uvlong pa;
+
+		pa = (*pciecam)(&ecambus0, &ecambus1);
+		if(pa != 0 && ecambus1 >= ecambus0){
+			ecam = vmap(pa + ((uvlong)ecambus0<<20), (ecambus1 - ecambus0 + 1)<<20);
+			if(ecam != nil){
+				pcicfgrw8 = pcicfgrw8ecam;
+				pcicfgrw16 = pcicfgrw16ecam;
+				pcicfgrw32 = pcicfgrw32ecam;
+				pcicfgmode = 4;
+				pcimaxdno = 31;
+				pcimaxbno = ecambus1;
+				print("pci: ecam %#llux buses %d-%d\n", pa, ecambus0, ecambus1);
+			}
+		}
+	}
+	if(!pcibios && pcicfgmode < 0){
 		/*
 		 * Bits [30:24] of PciADDR must be 0,
 		 * according to the spec.

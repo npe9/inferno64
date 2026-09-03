@@ -256,11 +256,13 @@ device classes \- eMMC and SD as a block device, and raw NOR or NAND
 flash \- and its storage section says which to build first: the block
 path, then a log-structured service for raw flash whose reclamation is
 an ordinary scheduled task with a reservation the service sets at start
-through the request ABI.  None of it is built: no block device is exposed
-to a user task the way the uart and the igbe are, the only file server
-behind the 9P holds a handful of files in memory, and no task sets its
-own reservation.  Under QEMU the block device is virtio or AHCI, exposed
-through the adapter like the interfaces already are.
+through the request ABI.  The block device is built, above: a virtio
+block device exposed to the server personality and driven from user
+space, reading and writing real sectors.  What is left: a file system
+on it that the personality serves \- the only file server behind the
+9P still holds a handful of files in memory \- then the log-structured
+service for the raw-flash tier with its reclamation task, and a task
+setting its own reservation through the request ABI.
 .PP
 .B "4.  \[*p]p for files, and \[*p]p devices."
 \[*p]p is spoken about containers \- their attributes, tickets,
@@ -2887,6 +2889,52 @@ is such a program; and it is a request on one machine, not the talk's
 remote invocation, which is this request carried over the wire.  Checked
 by
 .CW /scripts/osprey-check-p9pair.py .
+.PP
+The first of the storage pieces the survey's item 3 asks for is built
+on p9pair too: a block device driven by a task above the kernel.  The
+kernel's part is what a kernel must do and no more
+.CW ( ospreyblkexpose
+in
+.CW os/osprey/port/devosprey.c ):
+it finds a virtio 1.0 block device with the legacy interface off, so
+every register is memory; publishes the BAR the registers live in as
+the physical segment
+.CW virtioblk ,
+uncached; reads the four virtio-pci capabilities \- PCI configuration
+space, which a container is not given \- and writes their offsets, the
+notify multiplier, the physical address of the container's own slice
+and the number of a semaphore into a descriptor at
+.CW Ospreyblkoff
+in the server personality's data area
+.CW ( Ospreyblk
+in
+.CW os/osprey/port/ospreyabi.h );
+and turns the device's interrupt into that semaphore, the handler
+reading the interrupt status to drop the line and giving the semaphore,
+the way the keyboard's does.  Everything else is a program
+.CW ( os/osprey/cmd/p9/blkvirtio.c ,
+compiled against the user headers, in the server personality): the
+reset and feature dance, a queue of eight kept in the container's own
+data area at
+.CW Ospreyblkring
+and handed to the device by physical address, a request as three
+chained descriptors \- header, sector, status \- the notify, and a
+select on the semaphore for each completion, which is exactly the wait
+the talk's uart task does on its interrupt.  When the server comes up
+with a device exposed it reads sector 0 and prints the text the host
+put there, writes a stamp to sector 1 and reads it back, three
+requests and three completions taken through the semaphore; and the
+check reads sector 1 of the image on the host afterwards and finds the
+stamp, so a write from a program above the microkernel reached the
+disk.  The harness attaches the image with
+.CW --blk
+(a virtio-blk-pci device with
+.CW disable-legacy=on ),
+and that run is made without QEMU's snapshot, or the write would be
+thrown away.  This is the eMMC/SD tier of the plan's storage section
+as far as the block device: what the adapter exposes upward is block
+read and write.  What is not built: the file system on it, which is
+the next piece, and the raw-flash tier.
 .NH 2
 Built and proven since
 .PP

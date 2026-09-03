@@ -190,6 +190,38 @@ maptables(void)
 }
 
 static Tbl*
+findtable(char sig[4]);
+
+/*
+ * The MCFG table names the PCI Express configuration window (ECAM):
+ * a 44-byte header, then 16-byte entries of base address, segment,
+ * first bus, last bus.  ../pc/pcipc.c asks for it through pciecam
+ * when it chooses how to reach configuration space.  Only segment 0
+ * is used.
+ */
+extern uvlong (*pciecam)(int*, int*);
+
+static uvlong
+acpimcfg(int *bus0, int *bus1)
+{
+	Tbl *t;
+	uchar *p, *e;
+
+	if((t = findtable("MCFG")) == nil)
+		return 0;
+	p = t->data + 8;		/* reserved 8 bytes after the header */
+	e = t->data + tbldlen(t);
+	for(; p+16 <= e; p += 16){
+		if(get16(p+8) != 0)
+			continue;	/* not segment 0 */
+		*bus0 = p[10];
+		*bus1 = p[11];
+		return get64(p);
+	}
+	return 0;
+}
+
+static Tbl*
 findtable(char sig[4])
 {
 	Tbl *t;
@@ -839,6 +871,7 @@ identify(void)
 		return 1;
 	}
 	maptables();
+	pciecam = acpimcfg;
 	addarchfile("acpitbls", 0444, readtbls, nil);
 	addarchfile("acpimem", 0600, readmem, writemem);
 	if(v == 0 || findtable("APIC") == nil){

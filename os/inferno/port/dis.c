@@ -1147,12 +1147,27 @@ vmachine(void*)
 		DBG("vmachine waserror() loop up->env->errstr %s\n",  up->env->errstr);
 		if(up->type != Interp)
 			panic("vmachine: non-interp kproc");
+		/*
+		 * swiprog() posts a note to the kproc a killed Prog was last
+		 * running on, to break it out of a blocking system call.  If
+		 * that Prog has since left this kproc and the note lands on
+		 * the idle sleep below instead, the Eintr it raises has no
+		 * Prog to be delivered to: propex(nil) faulted at +0xb4 here
+		 * on riscv64 under smoke.sh, right after a shell script
+		 * finished.  It is nobody's exception; go back to the loop.
+		 */
+		if(up->iprog == nil && currun() == nil && strcmp(up->env->errstr, Eintr) == 0){
+			up->env = &up->defenv;
+			continue;
+		}
 		if(up->iprog != nil){
 			DBG("vmachine waserror() before acquire up->env->errstr %s\n",  up->env->errstr);
 			acquire();
 		}
 		DBG("vmachine waserror() after acquire up->env->errstr %s\n",  up->env->errstr);
 		if(handler(up->env->errstr) == 0) {
+			if(currun() == nil)
+				panic("vmachine: error \"%s\" with no current prog", up->env->errstr);
 			propex(currun(), up->env->errstr);
 			DBG("vmachine waserror() after propex up->env->errstr %s\n",  up->env->errstr);
 			progexit();

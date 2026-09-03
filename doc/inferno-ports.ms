@@ -18319,3 +18319,75 @@ is pc64's open bug, not this program's.  The old Limbo USB class
 library under
 .CW appl/lib/usb
 still targets the retired interface and is dead code.
+.NH 2
+Item 4, half done: ECAM on pc64; MSI left where 9front left it
+.PP
+.CW os/inferno/pc/archacpi.c
+now reads the MCFG table (segment 0: base, first and last bus) and
+hands it to
+.CW os/inferno/pc/pcipc.c
+through
+.CW pciecam ;
+.CW pcicfginit()
+maps the window with
+.CW vmap()
+and installs ECAM configuration accessors before it would have probed
+the
+.CW 0xCF8/0xCFC
+ports, which remain the fallback and are what a machine without an
+MCFG still gets.  Reads outside the window's buses return all ones,
+as an absent device would.  Verified: on QEMU's
+.CW q35
+the kernel prints "pci: ecam 0xb0000000 buses 0-255" and every device
+enumerates through it \- the xHCI controller, the modern-only virtio
+NIC, and the NVMe unit, which reads back its host-written sector; on
+the default PC machine, which has no MCFG, the port path runs as
+before.  The other half, MSI: none of the drivers taken from 9front
+.CW ( sdnvme ,
+.CW usbxhci ,
+.CW virtio10 )
+asks for MSI in 9front's own versions either \- they use INTx and
+that is what
+.CW pcimsienable()
+still only serves
+.CW etherx550
+for.  Nothing to transfer; a driver that wants MSI is new work on
+both sides.
+.PP
+Also in this round, from the riscv64 smoke run after the syscall fix:
+one boot took a load fault at
+.CW propex+8
+from
+.CW vmachine() 's
+error path with no current Prog \-
+.CW currun()
+was nil, so the error that reached
+.CW vmachine()
+came from somewhere no Dis process was running a system call.  The
+path now panics with the error string instead of dereferencing nil,
+so the next occurrence names its cause.
+.PP
+With that guard in, the next two smoke runs both panicked at the same
+place with the same string: "vmachine: error \(dqinterrupted\(dq with
+no current prog", right after
+.CW ROOT-CMDS-OK ,
+i.e. as the test's shell script exits.  The mechanism, read from
+.CW os/inferno/port/dis.c :
+.CW swiprog()
+breaks a killed Prog out of a blocking system call by posting a note
+to the kproc whose
+.CW iprog
+it is.  If that Prog has since finished its call and left the kproc,
+the note lands wherever the kproc sleeps next \- the interpreter
+loop's own idle wait \- and the
+.CW Eintr
+it raises there belongs to no Prog.
+.CW vmachine() 's
+error loop now recognises that case (no
+.CW iprog ,
+no current Prog,
+.CW Eintr )
+and goes back to its loop.  This surfaced only after the
+.CW rwrite()
+fix above: before it, a process whose write failed died on the spot
+instead of living on to be killed at group exit.
