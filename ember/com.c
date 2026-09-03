@@ -24,6 +24,7 @@ enum { MaxLab = 32 };
 
 static	Inst	*breaks[MaxLab];
 static	Inst	*conts[MaxLab];
+static	int	isloop[MaxLab];		/* a for (1) or a match/alt (0) at this depth: continue targets loops only */
 static	Sym	*labels[MaxLab];	/* label naming the loop/match at this depth, or nil */
 static	int	labdep;
 
@@ -2608,18 +2609,32 @@ ecom(Src *src, Node *nto, Node *n)
 static int
 labeldepth(Node *n)
 {
-	int i;
+	int i, iscont;
 
+	/*
+	 * break leaves the innermost loop OR match/alt; continue goes to
+	 * the innermost LOOP, skipping a match/alt it sits in ("continue"
+	 * inside a case arm inside a for, as in go).  a match's slot has
+	 * no continue target, and taking it left an unpatched jump that
+	 * crashed gen.c's foldbranch() -- found compiling the self-hosted
+	 * lexer's own token switch.
+	 */
+	iscont = n->op == Ocont;
 	if(n->left == nil){
-		if(labdep <= 0){
-			error(n->src.start, "break/continue outside loop");
-			return -1;
-		}
-		return labdep - 1;
+		for(i = labdep - 1; i >= 0; i--)
+			if(!iscont || isloop[i])
+				return i;
+		error(n->src.start, "%s outside loop", iscont ? "continue" : "break");
+		return -1;
 	}
 	for(i = labdep - 1; i >= 0; i--)
-		if(labels[i] == n->left->sym)
+		if(labels[i] == n->left->sym){
+			if(iscont && !isloop[i]){
+				error(n->src.start, "continue label %s is not a loop", n->left->sym->name);
+				return -1;
+			}
 			return i;
+		}
 	error(n->src.start, "label %s not found", n->left->sym->name);
 	return -1;
 }
@@ -3538,6 +3553,7 @@ scom(Node *n)
 				fatal("label stack overflow");
 			breaks[labdep] = nil;
 			conts[labdep] = nil;
+			isloop[labdep] = 1;
 			labdep++;
 			scom(n->right);
 			labdep--;
@@ -3598,6 +3614,7 @@ scom(Node *n)
 				fatal("label stack overflow");
 			breaks[labdep] = nil;
 			conts[labdep] = nil;
+			isloop[labdep] = 0;
 			labdep++;
 			casecom(n);
 			labdep--;
@@ -3614,6 +3631,7 @@ scom(Node *n)
 				fatal("label stack overflow");
 			breaks[labdep] = nil;
 			conts[labdep] = nil;
+			isloop[labdep] = 0;
 			labdep++;
 			altcom(n);
 			labdep--;
@@ -3714,12 +3732,34 @@ autoload(Decl *v)
 	genrawop(src, ILOAD, pn, &ifn, &modn);
 }
 
+static Decl *loadedflag;	/* the module's once-only initialization flag, see fncom() */
+
+/*
+ * does this module have anything to do on first entry: an import to
+ * autoload, or a global with a non-constant initializer?
+ */
+static int
+needmodinit(void)
+{
+	Dlist *dl;
+	Decl *d;
+
+	for(dl = imports; dl != nil; dl = dl->next)
+		if(dl->d->refs > 0)
+			return 1;
+	for(d = moduledecls; d != nil; d = d->link)
+		if(d->runinit)
+			return 1;
+	return 0;
+}
+
 static void
 fncom(Decl *decl)
 {
 	Node *body;
+	Node flagn, zero, one;
 	Decl *loc, *last, *d;
-	Inst *in;
+	Inst *in, *guard;
 	Src src;
 	Dlist *dl;
 
@@ -3731,15 +3771,50 @@ fncom(Decl *decl)
 	body = decl->init->aux;
 	src = body->src;
 
-	pushblock();
-	if(decl == entrydecl){
+	/*
+	 * module initialization -- loading every referenced import from
+	 * its PATH and running the non-constant global initializers --
+	 * used to sit only in init()'s prologue, so a library module
+	 * without init (the self-hosted lexer, appl/cmd/ember/lex.e)
+	 * faulted "mframe: module not loaded" on its first call into
+	 * sys.  now every function begins with a once-only guard on a
+	 * hidden ".loaded" global: the first function of the module to
+	 * run, whichever it is, performs the initialization.  the flag
+	 * is set before the loads so a load that re-enters the module
+	 * can't recurse.
+	 */
+	guard = nil;
+	if(needmodinit()){
+		if(loadedflag == nil){
+			loadedflag = mkdecl(&src, Dglobal, tint);
+			loadedflag->sym = enter(".loaded", 0);
+			loadedflag->dot = impdecl;
+			appglobal(loadedflag);
+		}
+		flagn = znode;
+		flagn.op = Oname;
+		flagn.decl = loadedflag;
+		flagn.ty = tint;
+		flagn.addable = Rmreg;
+		flagn.src = src;
+		zero = znode;
+		zero.op = Oconst;
+		zero.ty = tint;
+		zero.addable = Rconst;
+		zero.val = 0;
+		zero.src = src;
+		one = zero;
+		one.val = 1;
+		pushblock();
+		guard = genbra(&src, Oneq, &flagn, &zero);
+		genmove(&src, Mas, tint, &one, &flagn);
 		for(dl = imports; dl != nil; dl = dl->next)
 			if(dl->d->refs > 0)
 				autoload(dl->d);
+		popblock();
 	}
-	popblock();
 
-	if(decl == entrydecl){
+	if(guard != nil){
 		/*
 		 * a module-level "var x = expr" whose expr isn't a compile-
 		 * time constant (vardec(), check.c, sets runinit for those
@@ -3773,6 +3848,7 @@ fncom(Decl *decl)
 			}
 			popblock();
 		}
+		patch(guard, nextinst());
 	}
 
 	scom(body);
@@ -3868,6 +3944,8 @@ modcom(void)
 	Dlist *dl;
 	long ninst, ndesc, nlink, offset, ldtoff;
 	int i, hints;
+
+	loadedflag = nil;
 
 	if(impdecl == nil || errors)
 		return;

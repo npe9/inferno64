@@ -64,7 +64,9 @@ string)`. Top-level declarations are `const`, `var`, `type` and
 declared later in the file.
 
 Every top-level function and method is exported. There is no
-visibility keyword.
+visibility keyword. A module's imports are loaded and its global
+initializers run once, on the first entry into any of its functions,
+so a library module without `init` needs no setup call.
 
 ## Types
 
@@ -161,8 +163,10 @@ naming an enclosing loop or match.
         ...
     }
 
-String labels must be distinct; int labels may not overlap. There is
-no fall-through. Matching a pick binds its fields:
+Labels may be literals or named constants (`case Eid:`, `case
+lex.Eid:`). String labels must be distinct; int labels may not
+overlap. There is no fall-through, and `continue` inside an arm
+continues the enclosing loop. Matching a pick binds its fields:
 
     match e {
     case Expr.Num(v):
@@ -310,6 +314,15 @@ the tuple type expected where it is used.
 `pick`, `alt`, `match`, `load`, `spawn`, `chan`, `list`, `ref` and
 `interface` are keywords. `bufio`'s `gett` returns the terminator with
 the token. The compiler stops after twenty errors.
+
+## The self-hosted compiler
+
+`appl/cmd/ember/` holds the compiler being written in Ember itself,
+built with the C bootstrap by `mk install` there (into `dis/ember`).
+So far it is the lexer, `lex.e` with its interface `lex.ei`, and a
+dump driver `lexdump.e`. `ember -T file.e` prints the C lexer's
+token stream in the same format, and `tests/lexcmp.sh` (part of `mk
+test`) checks that the two agree on every source file in the tree.
 
 ## Tests
 

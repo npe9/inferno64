@@ -763,6 +763,7 @@ Tok	*lexlook(int);
 void	lexskip(void);
 Sym	*enter(char*, int);
 char	*lextokname(int);
+void	lexdump(char*);
 Line	curline(void);
 Fline	fline(int);
 int	lineconv(Fmt*);

@@ -1,0 +1,27 @@
+<../../../mkconfig
+
+# the self-hosted ember compiler, in ember: built with the C
+# bootstrap compiler ($EMBER), installed under $ROOT/dis/ember.
+
+EMBER=$ROOT/$OBJDIR/bin/ember
+IFLAGS=-I$ROOT/ember/module -I.
+
+TARG=\
+	lex.dis\
+	lexdump.dis\
+
+all:V:	$TARG
+
+%.dis:	%.e
+	$EMBER $IFLAGS -o $target $stem.e || (rm -f $target; exit 1)
+
+lexdump.dis:	lex.ei
+
+install:V:	all
+	mkdir -p $ROOT/dis/ember
+	cp $TARG $ROOT/dis/ember/
+
+clean:V:
+	rm -f $TARG
+
+nuke:V:	clean

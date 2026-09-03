@@ -488,6 +488,7 @@ lexnum(Tok *tok, int c)
 	}
 	if(isreal){
 		tok->rval = strtod(buf, nil);
+		tok->sym = enter(buf, Eid);	/* the literal's text, for -T */
 		return Erconst;
 	}
 	v = 0;
@@ -904,6 +905,69 @@ lexskip(void)
 	look[0] = look[1];
 	nlook--;
 	lexfill();
+}
+
+/*
+ * -T: print every token of a file, one per line, as
+ * "line:pos name [value]" -- the oracle the self-hosted lexer
+ * (appl/cmd/ember/lex.e) is compared against, token for token.
+ * strings print with control characters and backslashes as \xHH so
+ * the dump is one line per token whatever the string holds.
+ */
+static void
+dumpstr(char *s, int n)
+{
+	char *buf, *p;
+	int i, c;
+
+	buf = allocmem(4*n + 1);
+	p = buf;
+	for(i = 0; i < n; i++){
+		c = s[i] & 0xff;
+		if(c == '\\' || c < 32 || c == 127)
+			p += sprint(p, "\\x%02x", c);
+		else
+			*p++ = c;	/* raw bytes: %c would re-encode a UTF-8 byte as a rune */
+	}
+	*p = 0;
+	print("%s", buf);
+	free(buf);
+}
+
+void
+lexdump(char *file)
+{
+	Tok *t;
+
+	if(lexstart(file) < 0){
+		fprint(2, "ember: can't open %s: %r\n", file);
+		errors++;
+		return;
+	}
+	for(;;){
+		t = lexlook(0);
+		print("%d:%d %s", t->src.start.line, t->src.start.pos, lextokname(t->t));
+		switch(t->t){
+		case Eid:
+			print(" %s", t->sym->name);
+			break;
+		case Esconst:
+			print(" ");
+			dumpstr(t->sym->name, t->sym->len);
+			break;
+		case Econst:
+			print(" %lld", (vlong)t->ival);
+			break;
+		case Erconst:
+			print(" %s", t->sym->name);	/* the text: no %g on this host */
+			break;
+		}
+		print("\n");
+		if(t->t == Beof)
+			break;
+		lexskip();
+	}
+	lexend();
 }
 
 char*

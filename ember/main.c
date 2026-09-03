@@ -19,13 +19,14 @@
 
 static	int	toterrors;
 static	int	dumpast;
+static	int	tokdump;
 static	int	checkonly;
 static	char	*outarg;
 
 static void
 usage(void)
 {
-	fprint(2, "usage: ember [-A] [-c] [-D name] [-f] [-I path] [-o outfile] file.e\n");
+	fprint(2, "usage: ember [-A] [-T] [-c] [-D name] [-f] [-I path] [-o outfile] file.e\n");
 	exits("usage");
 }
 
@@ -108,6 +109,9 @@ main(int argc, char *argv[])
 	case 'A':
 		dumpast = 1;
 		break;
+	case 'T':
+		tokdump = 1;
+		break;
 	case 'c':
 		checkonly = 1;
 		break;
@@ -152,6 +156,10 @@ main(int argc, char *argv[])
 		exits("usage");
 	}
 	for(i = 0; i < argc; i++){
+		if(tokdump){
+			lexdump(argv[i]);
+			continue;
+		}
 		if(argc > 1)
 			print("%s:\n", argv[i]);
 		translate(argv[i]);

@@ -4223,6 +4223,34 @@ altcheck(Node *n)
 	n->ty = mktalt(c);
 }
 
+/*
+ * does a binder-less match pattern name a pick tag ("Expr.Num",
+ * "lib.Shape.Rect") rather than a constant ("Eandand", "lex.Eid")?
+ * a tag's qualifier is a type (or a module then a type); a constant's
+ * is nothing or a module alias.
+ */
+static int
+istagname(Node *n)
+{
+	Decl *d;
+
+	if(n == nil)
+		return 0;
+	if(n->op == Oname){
+		d = lookup(n->sym);
+		return d != nil && d->store == Dtype;
+	}
+	if(n->op == Odot){
+		if(n->left->op == Odot)
+			return 1;	/* mod.Adt.Tag */
+		if(n->left->op != Oname)
+			return 0;
+		d = lookup(n->left->sym);
+		return d != nil && d->store == Dtype;
+	}
+	return 0;
+}
+
 static void
 matchcheck(Node *n)
 {
@@ -4286,6 +4314,33 @@ matchcheck(Node *n)
 		}else{
 			npat = 0;
 			for(pat = arm->left; (q = nextpat(&pat)) != nil; npat++){
+				if(q->op == Opat && q->right == nil && !istagname(q->left)){
+					/*
+					 * "case Eandand:" / "case lex.Eid:": a name
+					 * (or module member) that is a constant, not a
+					 * tag -- the parser can't tell the two apart.
+					 * echk() folds a constant name into its literal
+					 * (confold()); the pattern becomes that label.
+					 */
+					echk(q->left);
+					if(q->left->op == Oconst){
+						Node *lab;
+
+						lab = q->left;
+						q->op = Oconst;
+						q->flags = lab->flags;
+						q->val = lab->val;
+						q->rval = lab->rval;
+						q->sym = lab->sym;
+						q->ty = lab->ty;
+						q->left = q->right = nil;
+						q->decl = nil;
+					}else{
+						nerror(q, "case label is not a constant or a tag");
+						ok = 0;
+						continue;
+					}
+				}
 				if(q->op == Opat){
 					Type *tagty;
 					Decl *fd, *bp;
