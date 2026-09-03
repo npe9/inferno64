@@ -228,7 +228,11 @@ func(T) U) []U`. A generic struct may refer to itself (`type Node[T]
 struct { val T; next ref Node[T] }`) and a generic function or
 method may call itself (`tests/type/genlist.e`). A type argument
 may be any type, in a declaration or in an expression
-(`Box[func(int) int]{val: f}`, `Box[[]int]{...}`, `Box[ref P]{...}`).
+(`Box[func(int) int]{val: f}`, `Box[[]int]{...}`, `Box[ref P]{...}`);
+every mention of an instantiation names the same instance, however
+the argument is spelled. Inference from a tag value (`ok(ref
+Option[int].Some{v: 5})`) binds the parameter to the pick, `ref
+Option[int]`.
 
 Methods are declared with a receiver: `func (p ref Point) norm() int`
 or `func (p Point) sum() int`. A value receiver gets a copy. Methods

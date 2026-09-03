@@ -166,6 +166,40 @@ declbuiltin(char *name, Type *t)
  * compare equal (tequal isn't even taught about this; identity is
  * what mktdesc/genaddr/etc. all key off of already).
  */
+/*
+ * the same type argument?  identity for named and basic types (each
+ * a single object), structure for the composite types a mention
+ * builds afresh -- "ref Option[int]" written twice is two Tref
+ * objects, and comparing by identity gave every mention of
+ * Result[ref Option[int]] its own, incompatible instance.
+ */
+static int
+sametype(Type *a, Type *b)
+{
+	Decl *da, *db;
+
+	if(a == b)
+		return 1;
+	if(a == nil || b == nil || a->kind != b->kind)
+		return 0;
+	switch(a->kind){
+	case Tref:
+	case Tarray:
+	case Tlist:
+	case Tchan:
+		return sametype(a->tof, b->tof);
+	case Ttuple:
+	case Tfn:
+		if(!sametype(a->tof, b->tof) || a->varargs != b->varargs)
+			return 0;
+		for(da = a->ids, db = b->ids; da != nil && db != nil; da = da->next, db = db->next)
+			if(!sametype(da->ty, db->ty))
+				return 0;
+		return da == nil && db == nil;
+	}
+	return 0;
+}
+
 /* the name of an instantiation: Node[int], Pair[int, string] */
 static Sym*
 instsym(Decl *td, Type **argv, int nargs)
@@ -239,7 +273,7 @@ tinstantiate(Node *n)
 	for(ti = tt->tinsts; ti != nil; ti = ti->next){
 		match = 1;
 		for(i = 0; i < nargs; i++)
-			if(ti->args[i] != argv[i]){
+			if(!sametype(ti->args[i], argv[i])){
 				match = 0;
 				break;
 			}
@@ -389,7 +423,7 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 	for(fi = td->finsts; fi != nil; fi = fi->next){
 		match = 1;
 		for(i = 0; i < nargs; i++)
-			if(fi->args[i] != argv[i]){
+			if(!sametype(fi->args[i], argv[i])){
 				match = 0;
 				break;
 			}
@@ -1185,8 +1219,21 @@ unifytparam(Node *pt, Type *at, Decl *tparams, Type **argv)
 			if(tp->op == Oseq)
 				tpn = tp->left;
 			if(tpn->sym == pt->sym){
-				if(argv[j] == nil)
+				if(argv[j] == nil){
+					/*
+					 * a tag value binds the parameter to its
+					 * pick, the type it is assignable to:
+					 * ok(ref Option[int].Some{...}) makes
+					 * Result[ref Option[int]]
+					 */
+					if(at->kind == Tadtpick && at->tof != nil)
+						at = at->tof;
+					else if(at->kind == Tref && at->tof != nil && at->tof->kind == Tadtpick && at->tof->tof != nil){
+						at = mktype(&pt->src, Tref, at->tof->tof, nil);
+						sizetype(at);
+					}
 					argv[j] = at;
+				}
 				return;
 			}
 			j++;
@@ -1226,6 +1273,8 @@ unifytparam(Node *pt, Type *at, Decl *tparams, Type **argv)
 		 */
 		if(pt->left == nil || pt->left->op != Oname)
 			return;
+		if(at->kind == Tadtpick && at->tof != nil)
+			at = at->tof;	/* a tag value stands for its pick */
 		if(at->kind != Tadt || at->gtemplate == nil || at->ginst == nil)
 			return;
 		itd = lookup(pt->left->sym);

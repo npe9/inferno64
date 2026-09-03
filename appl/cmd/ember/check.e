@@ -267,6 +267,39 @@ func seqitem(p ref types.Node) ref types.Node {
 	return p
 }
 
+// the same type argument? identity for named and basic types,
+// structure for the composites a mention builds afresh (check.c)
+func sametype(a ref types.Type, b ref types.Type) int {
+	if a == b {
+		return 1
+	}
+	if a == nil || b == nil || a.kind != b.kind {
+		return 0
+	}
+	match a.kind {
+	case types.Tref, types.Tarray, types.Tlist, types.Tchan:
+		return sametype(a.tof, b.tof)
+	case types.Ttuple, types.Tfn:
+		if sametype(a.tof, b.tof) == 0 || a.varargs != b.varargs {
+			return 0
+		}
+		da := a.ids
+		db := b.ids
+		for da != nil && db != nil {
+			if sametype(da.ty, db.ty) == 0 {
+				return 0
+			}
+			da = da.next
+			db = db.next
+		}
+		if da == nil && db == nil {
+			return 1
+		}
+		return 0
+	}
+	return 0
+}
+
 func instname(base string, argv []ref types.Type, nargs int) string {
 	s := base + "["
 	for i := 0; i < nargs; i++ {
@@ -318,7 +351,7 @@ func tinstantiate(n ref types.Node) ref types.Type {
 	for ti := tt.tinsts; ti != nil; ti = ti.next {
 		m := 1
 		for i = 0; i < nargs; i++ {
-			if ti.args[i] != argv[i] {
+			if sametype(ti.args[i], argv[i]) == 0 {
 				m = 0
 				break
 			}
@@ -402,7 +435,7 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 	for fi := td.finsts; fi != nil; fi = fi.next {
 		m := 1
 		for i := 0; i < nargs; i++ {
-			if fi.args[i] != argv[i] {
+			if sametype(fi.args[i], argv[i]) == 0 {
 				m = 0
 				break
 			}
@@ -718,6 +751,13 @@ func unifytparam(pt ref types.Node, at ref types.Type, tparams ref types.Node, a
 			t := seqitem(tpn)
 			if t.sym == pt.sym {
 				if argv[j] == nil {
+					// a tag value binds the parameter to its pick (check.c)
+					if at.kind == types.Tadtpick && at.tof != nil {
+						at = at.tof
+					} else if at.kind == types.Tref && at.tof != nil && at.tof.kind == types.Tadtpick && at.tof.tof != nil {
+						at = types.mktype(pt.line, pt.pos, types.Tref, at.tof.tof, nil)
+						types.sizetype(at)
+					}
 					argv[j] = at
 				}
 				return
@@ -751,6 +791,9 @@ func unifytparam(pt ref types.Node, at ref types.Type, tparams ref types.Node, a
 	case types.Otinst:
 		if pt.left == nil || pt.left.op != types.Oname {
 			return
+		}
+		if at.kind == types.Tadtpick && at.tof != nil {
+			at = at.tof	// a tag value stands for its pick
 		}
 		if at.kind != types.Tadt || at.gtemplate == nil || at.ginst == nil {
 			return

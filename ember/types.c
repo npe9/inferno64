@@ -1694,6 +1694,14 @@ tprint(char *p, char *e, Type *t)
 	case Tchan:
 		p = secpy(p, e, "chan of ");
 		return tprint(p, e, t->tof);
+	case Tadtpick:
+		/* a tag's own type: Adt.Tag */
+		if(t->decl != nil && t->decl->sym != nil && t->decl->dot != nil && t->decl->dot->sym != nil){
+			p = secpy(p, e, t->decl->dot->sym->name);
+			p = secpy(p, e, ".");
+			return secpy(p, e, t->decl->sym->name);
+		}
+		return secpy(p, e, kindname[t->kind]);
 	case Tadt:
 	case Tmodule:
 	case Tpoly:

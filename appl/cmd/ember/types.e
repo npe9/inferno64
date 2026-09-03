@@ -1659,6 +1659,12 @@ func tprint(t ref Type) string {
 		return "list of " + tprint(t.tof)
 	case Tchan:
 		return "chan of " + tprint(t.tof)
+	case Tadtpick:
+		// a tag's own type: Adt.Tag
+		if t.decl != nil && t.decl.sym != nil && t.decl.dot != nil && t.decl.dot.sym != nil {
+			return t.decl.dot.sym + "." + t.decl.sym
+		}
+		return kindname(t.kind)
 	case Tadt, Tmodule, Tpoly:
 		if t.decl != nil && t.decl.sym != nil {
 			return t.decl.sym
