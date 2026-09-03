@@ -2648,6 +2648,68 @@ casecom(Node *cn)
 	appglobal(d);
 }
 
+/*
+ * "s[i] = v", "s[i] op= v", "s[i]++": a store through a string index.
+ * unlike Oindx (a runtime element address from IINDX, then an ordinary
+ * store through it), a string has no element addresses at all: IINSC
+ * (libinterp/string.c's OP(insc)) takes the rune, the index, and the
+ * string VARIABLE as its dst operand, and writes the variable back --
+ * copy-on-write if the string is shared, appending if i == len s.  so
+ * the string operand must be the variable's own storage (check.c's
+ * islvalue() guarantees that, its Oinds case), materialized here via
+ * the same fixdblind() every other write site uses for a chained-ref
+ * base.  a direct port of limbo/ecom.c's indsascom(), minus its
+ * temps-driven operand reordering (same simplification ecom()'s own
+ * Oinds read case already makes).  n is the whole statement node.
+ */
+static void
+indsstore(Src *src, Node *n)
+{
+	Node *left, *right, *v, *u, *fd;
+	Node tr, tv, tu, one;
+
+	tr.decl = tv.decl = tu.decl = nil;
+	left = n->left->left;
+	right = n->left->right;
+	fd = fixdblind(left);
+	if(left->addable >= Rcant)
+		fatal("indsstore: string not addressable");
+	if(right->addable >= Rcant)
+		right = ecom(&right->src, talloc(&tr, right->ty, nil), right);
+	switch(n->op){
+	case Oas:
+		v = n->right;
+		if(v->addable >= Rcant)
+			v = ecom(&v->src, talloc(&tv, v->ty, nil), v);
+		break;
+	case Oinc:
+	case Odec:
+		u = talloc(&tu, tint, nil);
+		genop(src, Oinds, left, right, u);
+		one = *mkconst(src, 1);
+		one.ty = tint;
+		sumark(&one);
+		genop(src, n->op == Oinc ? Oadd : Osub, &one, nil, u);
+		v = u;
+		break;
+	default:
+		/* Oaddas ... Orshas: u = s[i]; u op= v; s[i] = u */
+		v = n->right;
+		if(v->addable >= Rcant)
+			v = ecom(&v->src, talloc(&tv, v->ty, nil), v);
+		u = talloc(&tu, tint, nil);
+		genop(src, Oinds, left, right, u);
+		genop(src, n->op, v, nil, u);
+		v = u;
+		break;
+	}
+	genrawop(src, IINSC, v, right, left);
+	tfree(&tr);
+	tfree(&tv);
+	tfree(&tu);
+	tfree(fd);
+}
+
 static void
 scom(Node *n)
 {
@@ -2780,6 +2842,11 @@ scom(Node *n)
 				popblock();
 				return;
 			}
+			if(n->left->op == Oinds){
+				indsstore(&n->src, n);
+				popblock();
+				return;
+			}
 			{
 				/*
 				 * "o.in.v = expr": n->left can be a chained-ref
@@ -2871,6 +2938,11 @@ scom(Node *n)
 				popblock();
 				return;
 			}
+			if(n->left->op == Oinds){
+				indsstore(&n->src, n);
+				popblock();
+				return;
+			}
 			{
 				/* "o.in.v += expr": see the Oas case's own comment
 				 * on fixdblind() -- the identical write-side gap. */
@@ -2912,6 +2984,11 @@ scom(Node *n)
 				sumark(&one);
 				genop(&n->src, n->op == Oinc ? Oadd : Osub, &one, nil, &ia.ind);
 				indxaddrfree(&ia);
+				popblock();
+				return;
+			}
+			if(n->left->op == Oinds){
+				indsstore(&n->src, n);
 				popblock();
 				return;
 			}

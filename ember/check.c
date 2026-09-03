@@ -3698,6 +3698,164 @@ matchcheck(Node *n)
 	n->ty = ct;
 }
 
+/*
+ * lvalue validity: is n -- already echk()'d, so already rewritten
+ * into its post-check shape -- something a store can actually land
+ * in?  nothing checked this before (0f8b9f9f's closing note): "5 = 3"
+ * compiled and ran silently, and other shapes ("f() = 3", "-x = 3",
+ * "xs[0:1] = xs") only failed as compiler fatals in com.c/gen.c,
+ * i.e. the same missing check landing on a codegen path that happened
+ * not to tolerate the nonsense.  one audit over every LHS shape, not
+ * per-shape patches.  what counts:
+ *
+ *   Oname   a variable -- Dlocal/Darg/Dglobal (a captured variable is
+ *           already an Oind chain by now, never a bare Oname).  a
+ *           Dfn (own or import-wrapped) is a value, not storage; a
+ *           Dtype is a type; a module alias is Dglobal but of Tmodule
+ *           kind; a Dconst never survives echk() as an Oname (confold()
+ *           turns it into an Oconst).
+ *   Omdot   a module's own global (Dglobal only -- Dtype is the other
+ *           store echk()'s Odot case lets through here).
+ *   Oindx   an array element: arrays are heap objects, so the base
+ *           may be any array-valued expression, a call included.
+ *   Oinds   a string index: the store writes the string *variable*
+ *           back (IINSC's dst operand, copy-on-write in the VM), so
+ *           the string itself must be an lvalue -- limbo's typecheck.c
+ *           draws the identical line (no writes into a string
+ *           constant).
+ *   Oind    a field or tuple component, Oind(Oadd(base', $off)) from
+ *           echk()'s Odot case: through a ref base (base' is the
+ *           pointer value itself) any expression will do, the write
+ *           goes through the pointer; through a value base (base' is
+ *           Oadr(base)) the base's own storage is what gets written,
+ *           so it must itself be an lvalue -- "mkpoint().x = 5" would
+ *           otherwise write into the temp fixcallbase() materializes
+ *           and vanish.
+ *
+ * everything else -- constants, nil, calls, arithmetic, casts,
+ * slices, len/hd/tl, tuples, composite literals -- is an rvalue.
+ */
+static char*
+lvaldesc(Node *n)
+{
+	Decl *d;
+
+	switch(n->op){
+	case Oname:
+		d = n->decl;
+		if(d == nil)
+			break;
+		if(d == nildecl)
+			return "nil";
+		if(d->ty != nil && d->ty->kind == Tmodule)
+			return "a module";
+		switch(d->store){
+		case Dfn:
+			return "a function";
+		case Dtype:
+			return "a type";
+		case Dtag:
+			return "a pick tag";
+		}
+		break;
+	case Omdot:
+		if(n->right->decl != nil && n->right->decl->store == Dtype)
+			return "a type";
+		break;
+	case Oconst:
+		return "a constant";
+	case Onil:
+		return "nil";
+	case Ocall:
+		return "a function call";
+	case Oslice:
+		return "a slice";
+	case Otuple:
+		return "a tuple";
+	case Ocomposite:
+	case Oref:
+		return "a composite literal";
+	case Olen: case Ohd: case Otl: case Ocons: case Ocast:
+	case Oneg: case Onot: case Oinv:
+	case Oadd: case Osub: case Omul: case Odiv: case Omod:
+	case Oand: case Oor: case Oxor: case Olsh: case Orsh:
+	case Oandand: case Ooror:
+	case Oeq: case Oneq: case Olt: case Ogt: case Oleq: case Ogeq:
+	case Orcv: case Ochk:
+		return "an expression";
+	}
+	return nil;
+}
+
+static int
+islvalue(Node *n)
+{
+	Node *b;
+	Decl *d;
+
+	switch(n->op){
+	case Oname:
+		d = n->decl;
+		if(d == nil || d == nildecl)
+			return 0;
+		if(d->ty != nil && d->ty->kind == Tmodule)
+			return 0;
+		return d->store == Dlocal || d->store == Darg || d->store == Dglobal;
+	case Omdot:
+		return n->right->decl != nil && n->right->decl->store == Dglobal;
+	case Oindx:
+		return 1;
+	case Oinds:
+		return islvalue(n->left);
+	case Oind:
+		for(b = n->left; b->op == Oadd; b = b->left)
+			;
+		if(b->op == Oadr)
+			return islvalue(b->left);
+		return 1;
+	}
+	return 0;
+}
+
+/*
+ * report and return 0 if n isn't a valid store target; what names the
+ * operation for the message ("assign to", "increment", ...).
+ */
+static int
+chklval(Node *n, char *what)
+{
+	Node *b;
+	char *desc;
+
+	if(n->ty == terror)
+		return 0;
+	if(islvalue(n))
+		return 1;
+	desc = lvaldesc(n);
+	if(desc == nil && n->op == Oind){
+		/* a field of something that isn't itself storage */
+		for(b = n->left; b->op == Oadd; b = b->left)
+			;
+		if(b->op == Oadr)
+			desc = lvaldesc(b->left);
+		if(desc != nil){
+			nerror(n, "cannot %s a field of %s", what, desc);
+			return 0;
+		}
+	}
+	if(desc == nil && n->op == Oinds){
+		desc = lvaldesc(n->left);
+		if(desc != nil){
+			nerror(n, "cannot %s an element of %s", what, desc);
+			return 0;
+		}
+	}
+	if(desc == nil)
+		desc = "this expression";
+	nerror(n, "cannot %s %s", what, desc);
+	return 0;
+}
+
 static void
 stchk(Node *n)
 {
@@ -3751,7 +3909,7 @@ stchk(Node *n)
 						if(p->op == Oseq)
 							id = p->left;
 						lt = echk(id);
-						if(lt != terror && !assignable(lt, fd->ty, nil))
+						if(chklval(id, "assign to") && !assignable(lt, fd->ty, nil))
 							nerror(n, "cannot assign %T to %T", fd->ty, lt);
 						fd = fd->next;
 						if(p->op != Oseq)
@@ -3780,25 +3938,26 @@ stchk(Node *n)
 					 */
 					t = compositefields(n->right);
 					echk(n->left);
-					if(n->left->ty != terror && t != terror && !assignable(n->left->ty, t, n->right))
+					if(chklval(n->left, "assign to") && t != terror && !assignable(n->left->ty, t, n->right))
 						nerror(n, "cannot assign %T to %T", t, n->left->ty);
 					return;
 				}
 				t = echk(n->right);
 				echk(n->left);
-				if(n->left->ty != terror && !assignable(n->left->ty, t, n->right))
+				if(chklval(n->left, "assign to") && !assignable(n->left->ty, t, n->right))
 					nerror(n, "cannot assign %T to %T", t, n->left->ty);
 				return;
 			case Oaddas: case Osubas: case Omulas: case Odivas: case Omodas:
 			case Oandas: case Ooras: case Oxoras: case Olshas: case Orshas:
 				echk(n->left);
 				echk(n->right);
-				if(n->left->ty != terror && n->right->ty != terror
+				if(chklval(n->left, "assign to") && n->right->ty != terror
 				&& !tequal(n->left->ty, n->right->ty))
 					nerror(n, "type mismatch in %s", opname[n->op]);
 				return;
 			case Oinc: case Odec:
 				echk(n->left);
+				chklval(n->left, n->op == Oinc ? "increment" : "decrement");
 				return;
 			case Oexpr:
 				t = echk(n->left);

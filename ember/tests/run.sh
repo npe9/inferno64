@@ -3,6 +3,7 @@
 #
 # tests/ok/*.e     must parse; optional NAME.ast golden for -A
 # tests/type/*.e   must parse and typecheck (and run modcom stub)
+# tests/typeerr/*.e must parse but fail to typecheck; optional NAME.err golden
 # tests/err/*.e    must fail to parse
 
 cd "$(dirname "$0")/.."
@@ -48,6 +49,34 @@ if [ -d tests/type ]; then
 			echo "FAIL $f: expected clean compile to .dis"
 			sed 's/^/	/' tests/.errs
 			fail=$((fail+1))
+		fi
+		rm -f "$dis"
+	done
+fi
+
+# tests/typeerr/*.e must parse but fail to typecheck, with real
+# diagnostics (never a compiler fatal); optional NAME.err golden holds
+# the exact expected stderr.
+if [ -d tests/typeerr ]; then
+	for f in tests/typeerr/*.e; do
+		[ -f "$f" ] || continue
+		dis="tests/.$(basename "$f" .e).dis"
+		if $EMBER $IFLAGS -o "$dis" "$f" >/dev/null 2>tests/.errs; then
+			echo "FAIL $f: expected type errors, got none"
+			fail=$((fail+1))
+		elif grep -q '^fatal' tests/.errs; then
+			echo "FAIL $f: compiler fatal instead of a diagnostic"
+			sed 's/^/	/' tests/.errs
+			fail=$((fail+1))
+		else
+			golden="${f%.e}.err"
+			if [ -f "$golden" ] && ! $CMP -s tests/.errs "$golden"; then
+				echo "FAIL $f: diagnostics differ from $golden"
+				diff "$golden" tests/.errs | sed 's/^/	/'
+				fail=$((fail+1))
+			else
+				pass=$((pass+1))
+			fi
 		fi
 		rm -f "$dis"
 	done

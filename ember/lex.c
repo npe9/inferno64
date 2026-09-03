@@ -193,12 +193,27 @@ lexstart(char *in)
 	if(bin == nil)
 		return -1;
 	ineof = 0;
-	nfiles = 0;
 	lastfile = 0;
 	nlook = 0;
 	lasttok = 0;
-	addfile(mkfile(strdup(in), 1, 0));
-	lineno = 1;
+	/*
+	 * line numbers are absolute across every file this run ever
+	 * lexes, limbo-style: a Line stored in a Node only carries the
+	 * bare number, and fline() maps it back to (file, line-in-file)
+	 * through files[]'s abs/off table.  the first file starts at 1;
+	 * every later one -- an imported .ei parsed by iface.c's
+	 * loadiface() long after the main file has been read in full --
+	 * picks up where the count left off, with off chosen so its own
+	 * first line prints as 1.  resetting nfiles to 0 here instead
+	 * (the original) threw the main file's entry away the moment
+	 * the first import was parsed, so every check.c diagnostic
+	 * against the main file printed as "sys.ei:N".
+	 */
+	if(nfiles == 0){
+		lineno = 1;
+		addfile(mkfile(strdup(in), 1, 0));
+	}else
+		addfile(mkfile(strdup(in), lineno, 1-lineno));
 	linepos = Linestart;
 	return 0;
 }

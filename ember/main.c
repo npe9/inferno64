@@ -104,10 +104,6 @@ main(int argc, char *argv[])
 	lexinit();
 	typeinit();
 
-#ifdef INCPATH
-	addincpath(INCPATH);
-#endif
-
 	ARGBEGIN{
 	case 'A':
 		dumpast = 1;
@@ -138,6 +134,16 @@ main(int argc, char *argv[])
 		usage();
 		break;
 	}ARGEND
+
+#ifdef INCPATH
+	/*
+	 * the built-in default goes LAST so every -I directory can
+	 * shadow it, cc-style; added first (the original) it won every
+	 * lookup, and a -I pointing at a modified sys.ei was silently
+	 * ignored.
+	 */
+	addincpath(INCPATH);
+#endif
 
 	if(argc == 0)
 		usage();
