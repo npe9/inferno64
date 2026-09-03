@@ -385,11 +385,46 @@ bindiface(Decl *mod, Node *tree)
 				error(decl->src.start, "function body not allowed in interface");
 				break;
 			}
-			if(decl->left->op == Omethod){
-				error(decl->src.start, "methods in interfaces not yet supported");
-				break;
-			}
 			t = itype(decl->right, mod);
+			if(decl->left->op == Omethod){
+				/*
+				 * "func (h ref HashTable) find(key string) ref
+				 * HashVal": a method of an adt this interface
+				 * declares.  built exactly the way check.c's
+				 * fndecl() builds an implementing module's own
+				 * methods: the receiver is an implicit first
+				 * parameter (rtsign() signs it SIGSELF, matching
+				 * limbo's "self"), the Dfn's dot is the adt's own
+				 * Dtype (disw.c names its link entry "Type.method"
+				 * off that, on both the import and export sides),
+				 * and it's chained on the adt's meths so recv.m(...)
+				 * resolves through echk()'s ordinary bound-method
+				 * lookup -- Ocall then dispatches it through the
+				 * import alias (its Omdot rewrite) since the Dfn's
+				 * dot->dot is this module, not impdecl.  it's still
+				 * a module member (installmember) so mkiface()
+				 * gives it a link-table slot; modmember() skips
+				 * methods so "alias.find" can't reach it directly.
+				 */
+				Node *recv;
+				Type *rt, *bt;
+				Decl *rd;
+
+				recv = decl->left->left;
+				rt = itype(recv->right, mod);
+				bt = rt;
+				if(bt->kind == Tref)
+					bt = bt->tof;
+				if(bt->kind != Tadt || bt->decl == nil){
+					error(decl->src.start, "receiver type must be a struct or ref struct declared in this interface");
+					break;
+				}
+				rd = mkdecl(&recv->left->src, Darg, rt);
+				rd->sym = recv->left->sym;
+				rd->implicit = 1;
+				rd->next = t->ids;
+				t->ids = rd;
+			}
 			t->ok |= OKverify;
 			sizetype(t);
 			{
@@ -400,9 +435,22 @@ bindiface(Decl *mod, Node *tree)
 				sizetype(t->tof);
 			}
 			d = mkdecl(&decl->src, Dfn, t);
-			d->sym = decl->left->sym;
 			d->offset = idoffsets(t->ids, MaxTemp, IBY2WD);
-			installmember(mod, d);
+			if(decl->left->op == Omethod){
+				Type *bt;
+
+				bt = t->ids->ty;
+				if(bt->kind == Tref)
+					bt = bt->tof;
+				d->sym = decl->left->right->sym;
+				installmember(mod, d);
+				d->dot = bt->decl;
+				d->link = bt->meths;
+				bt->meths = d;
+			}else{
+				d->sym = decl->left->sym;
+				installmember(mod, d);
+			}
 			break;
 		case Oimport:
 			error(decl->src.start, "import in interface not yet supported");

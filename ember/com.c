@@ -609,26 +609,51 @@ fixdblind(Node *n)
 static Node*
 fixcallbase(Node *n)
 {
-	Node *base, *tres;
+	Node *base, *inner, *tres;
 
 	if(n == nil || n->op != Oind || n->left == nil || n->left->op != Oadd)
 		return nil;
 	base = n->left->left;
-	if(base == nil || base->op != Oadr || base->left == nil)
+	if(base == nil)
 		return nil;
-	switch(base->left->op){
-	case Ocall:		/* mkpoint().x */
-	case Ocomposite:	/* Point{x: 1, y: 2}.x */
+	/*
+	 * two shapes: a VALUE base is Oadr-wrapped by check.c's Odot
+	 * case (Oind(Oadd(Oadr(mkpoint()), off))); a REF base is the
+	 * pointer value itself, bare under the Oadd
+	 * (Oind(Oadd(mkref(), off))).  the bare shape used to fall
+	 * through to ecom's general Oadd arithmetic, which materialized
+	 * the call's ref result into an int-typed temp -- a live pointer
+	 * outside the frame's pointer map, whose reference was never
+	 * released: "y := mkref().y" corrupted the heap ("alloc:D2B ...
+	 * in block") on the very next allocation.  both shapes now put
+	 * the rvalue in a temp of its OWN type first.
+	 */
+	inner = base->op == Oadr ? base->left : base;
+	if(inner == nil)
+		return nil;
+	switch(inner->op){
+	case Ocall:		/* mkpoint().x, mkref().x */
 	case Ohd:		/* hd(l).x */
 	case Orcv:		/* (<-c).x */
 	case Ochk:		/* f()?.x */
+		break;
+	case Ocomposite:	/* Point{x: 1, y: 2}.x: a value, always Oadr-wrapped */
+		if(base->op != Oadr)
+			return nil;
+		break;
+	case Oref:		/* ref Point{...}.x: a pointer, never wrapped */
+		if(base->op == Oadr)
+			return nil;
 		break;
 	default:
 		return nil;
 	}
 	tres = mkn(Oname, nil, nil);
-	ecom(&base->left->src, talloc(tres, base->left->ty, nil), base->left);
-	base->left = tres;
+	ecom(&inner->src, talloc(tres, inner->ty, nil), inner);
+	if(base->op == Oadr)
+		base->left = tres;
+	else
+		n->left->left = tres;
 	sumark(n);
 	return tres;
 }

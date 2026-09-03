@@ -1842,9 +1842,37 @@ modmember(Type *mt, Sym *s)
 {
 	Decl *id;
 
-	for(id = mt->ids; id != nil; id = id->next)
+	for(id = mt->ids; id != nil; id = id->next){
+		/* an adt's method (iface.c chains it on the adt's meths;
+		 * its dot is the adt's Dtype, not the module) is reached
+		 * only through a receiver, never as "alias.method" */
+		if(id->store == Dfn && id->dot != nil && id->dot->ty != nil && id->dot->ty->kind == Tadt)
+			continue;
 		if(id->sym == s)
 			return id;
+	}
+	return nil;
+}
+
+/*
+ * the import alias (a Tmodule-typed Dglobal) through which an
+ * imported adt's method is called: meth's dot is the adt's Dtype,
+ * whose own dot is the interface module m; nil for a method of this
+ * module's own types (dot->dot is impdecl, or nil).
+ */
+static Decl*
+methodmodule(Decl *meth)
+{
+	Decl *td;
+	Dlist *dl;
+
+	td = meth->dot;
+	if(td == nil || td->store != Dtype || td->ty == nil || td->ty->kind != Tadt
+	|| td->dot == nil || td->dot == impdecl)
+		return nil;
+	for(dl = imports; dl != nil; dl = dl->next)
+		if(dl->d->importid == td->dot)
+			return dl->d;
 	return nil;
 }
 
@@ -2441,12 +2469,13 @@ echk(Node *n)
 		}
 		return n->ty;
 	case Ocall: {
-		Node *a;
+		Node *a, *recvdone;
 		Decl *arg;
 		Type *ft;
 		int i, isvalcall;
 
 		isvalcall = 0;
+		recvdone = nil;
 
 		/* callee: allow name, mod.fn, or builtins */
 		if(n->left->op == Oname && strcmp(n->left->sym->name, "len") == 0){
@@ -2677,17 +2706,54 @@ echk(Node *n)
 		 * (fndecl prepended it).
 		 */
 		if(n->left->op == Odot && n->left->decl != nil && n->left->decl->store == Dfn){
-			Decl *meth;
+			Decl *meth, *alias;
 			Node *recvexpr, *callee;
 
 			meth = n->left->decl;
 			recvexpr = n->left->left;
+			/*
+			 * the receiver was already echk()'d (by the Odot
+			 * above, to find the method); the argument loop below
+			 * must not check it again -- a receiver that is itself
+			 * a method call ("p.get().val()") has by now been
+			 * desugared to a bare Oname naming the method, which
+			 * a second echk() can't resolve ("get is not
+			 * declared", since methods aren't in ordinary scope).
+			 */
+			recvdone = recvexpr;
 			n->right = mkseq(recvexpr, n->right);
 			callee = mkn(Oname, nil, nil);
 			callee->src = n->left->src;
 			callee->sym = meth->sym;
 			callee->decl = meth;
 			callee->ty = meth->ty;
+			alias = methodmodule(meth);
+			if(alias != nil){
+				/*
+				 * a method of an imported adt (iface.c): not a
+				 * local Dfn to call by pc but a link-table entry
+				 * of the module the type came from, dispatched
+				 * through that module's import alias -- the same
+				 * Omdot(alias, fn) shape a direct "alias.fn(...)"
+				 * call takes (above), which com.c's callcom()
+				 * already handles unchanged.  limbo does the same:
+				 * a Bufio->Iobuf method call goes through the
+				 * bufio module variable.  the alias is referenced,
+				 * so it's autoloaded at init.
+				 */
+				Node *modn;
+
+				alias->refs++;
+				meth->refs++;
+				modn = mkn(Oname, nil, nil);
+				modn->src = n->left->src;
+				modn->sym = alias->sym;
+				modn->decl = alias;
+				modn->ty = alias->ty;
+				callee = mkbin(Omdot, modn, callee);
+				callee->src = n->left->src;
+				callee->ty = meth->ty;
+			}
 			n->left = callee;
 		}
 
@@ -2707,7 +2773,7 @@ echk(Node *n)
 			e = a;
 			if(a->op == Oseq)
 				e = a->left;
-			t = echk(e);
+			t = e == recvdone ? e->ty : echk(e);
 			i++;
 			if(arg != nil){
 				if(!assignable(arg->ty, t, e))
