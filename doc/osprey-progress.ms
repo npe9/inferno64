@@ -884,12 +884,20 @@ store overrunning a stack buffer onto a return address a few frames up -
 which is why the low-end kproc canary does not catch it (the smash is mid
 stack), and why it takes a second
 .CW Fs
-of churn to reach.  So the search is a
-.CW long
-array or a
-.CW long
-written past its bound in the tcp/ip timer path, and a hardware
-watchpoint through the qemu gdbstub is the way to catch the store.
+of churn to reach.  Dumping the faulting stack sharpens it further: in the sixty-four words
+above the stack pointer there is not one address that lands in the
+personality's text - the frame is zeroed.  So it is not a single stray
+.CW -1
+store but a zeroing overrun - a
+.CW memset
+or a block copy past its bound - that wiped the return frame and left the
+return address as the low
+.CW -1 .
+The search is therefore a fixed-size buffer in the tcp/ip steady-state
+path that a second
+.CW Fs
+fills past its end with a zeroing write; a hardware watchpoint through the
+qemu gdbstub on that buffer's end is the way to catch it.
 .PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
