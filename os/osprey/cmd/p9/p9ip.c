@@ -69,7 +69,7 @@ ticktest(void *)
 static void
 ostcp(void *)
 {
-	int afd, dfd, sfd, anum, cnum;
+	int afd, dfd, dfd2, sfd, anum, cnum, lnum;
 	long n;
 	char cbuf[64], line[256], path[64], *e;
 
@@ -97,10 +97,14 @@ ostcp(void *)
 	else
 		print("p9 ip: osprey wire: handshake did not reach Established - %s\n", line);
 
-	sfd = p9open("/net/ipifc/1/status", OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
-	if(n<0)n=0; line[n]=0;
-	for(e=line; *e && *e!='\n'; e++) ; *e=0;
-	print("p9 ip: osprey wire: stack A's interface after the handshake: %s\n", line);
+	/* stack B accepts the flow the SYN created, via its listen file */
+	tsleep(&up->sleep, return0, nil, 100);	/* let the final ACK reach stack B */
+	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+	dfd2 = p9open(path, ORDWR);
+	n = p9read(dfd2, cbuf, sizeof cbuf - 1); p9close(dfd2);
+	if(n<0)n=0; cbuf[n]=0;
+	lnum = atoi(cbuf);
+	print("p9 ip: osprey wire: stack B accepted the flow as conversation %d - two stacks joined over the osprey medium\n", lnum);
 
 	USED(anum);
 	p9close(dfd); p9close(afd);

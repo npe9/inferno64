@@ -820,7 +820,9 @@ stack's interface, the pump carries it to the second, and the two stacks'
 complete a handshake between them -
 .CW "Established ... swin 65535>>4 rwin 1048560>>4" ,
 the two windows different because these are two independent stacks, not
-one loopback.  Four of four boots carry it alongside the loopback proofs.
+one loopback.  Stack B then accepts the flow through its listen file as a
+new conversation, so both ends agree the connection is up.  Four of four
+boots carry it alongside the loopback proofs.
 .PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
@@ -832,9 +834,12 @@ would put the frame on an osprey ring to the peer container and the pump
 would drain the ring the peer wrote, learned from a new
 .CW oselect
 arm - the osprey device carrying the frames it already carries requests
-on.  A data stream across the two stacks (the handshake is proved; the
-bytes after it are not yet) and that device-carried two-container form are
-what remain of item 7a.
+on.  A data stream across the two stacks is the next bit: the handshake and the
+accept are proved, but writing bytes on one stack and reading them on the
+other faults - the segment that carries a payload (the handshake segments
+do not) corrupts something while the loop pumps it into the far stack, a
+wild-PC fault, not yet chased.  That, and the device-carried two-container
+form, are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
