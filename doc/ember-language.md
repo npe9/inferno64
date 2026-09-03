@@ -108,8 +108,10 @@ a type whose values are loaded modules.
 Conversions are written like calls: `int(3.7)` (rounds to nearest),
 `real(i)`, `big(x)`, `byte(n)` (wraps), `string(42)`, `int("17")`
 (strtol semantics, `int("abc")` is 0), `[]byte(s)` (UTF-8 bytes) and
-`string(b)` for a byte array. Conversions between scalar literals
-fold at compile time.
+`string(b)` for a byte array. `string(c)` of an int is its decimal
+form even when c holds a rune; a rune becomes a string through
+`sys.sprint("%c", c)` or by appending it, `s[len(s)] = c`.
+Conversions between scalar literals fold at compile time.
 
 ## Declarations and assignment
 
@@ -214,7 +216,9 @@ a condition. `:=` may not redeclare a name already declared in the
 same scope (a parameter counts as declared in the body's outermost
 block), though an inner scope may shadow it. `raise expr` (a string) ends the process with that
 error, the way a Limbo `raise` does; there is no catch, and a command
-uses `raise "fail:reason"` to exit unsuccessfully.
+uses `raise "fail:reason"` to exit unsuccessfully. Integer division
+or modulus by zero ends the process with "zero divide", and indexing
+past an array or string with "array bounds error", as in Limbo.
 
 ## Functions, closures, generics, methods
 
