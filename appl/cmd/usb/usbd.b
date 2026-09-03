@@ -305,9 +305,13 @@ attachdev(pp: ref Port)
 	(r, cd) = usbin(d, Rd2h|Rstd|Rdev, Rgetdesc, Dconf<<8, 0, total);
 	if(r < 9)
 		return;
-	# walk the interface and endpoint descriptors
-	iface := -1;
-	proto := 0;
+	# walk the interface and endpoint descriptors, tracking the kind
+	# of the current interface and collecting its endpoints
+	iface := -1;		# HID boot interface number, else -1
+	proto := 0;		# 1 keyboard, 2 mouse
+	ums := 0;		# in a Bulk-Only mass-storage interface
+	bin := -1;		# its bulk in endpoint number
+	bout := -1;		# its bulk out endpoint number
 	i := 0;
 	while(i + 1 < r){
 		l := int cd[i];
@@ -316,26 +320,42 @@ attachdev(pp: ref Port)
 			break;
 		case t {
 		Diface =>
+			iface = -1;
+			ums = 0;
 			if(i + 8 <= r && int cd[i+5] == 3 && int cd[i+6] == 1){
 				iface = int cd[i+2];
-				proto = int cd[i+7];	# 1 keyboard, 2 mouse
-			} else
-				iface = -1;
+				proto = int cd[i+7];
+			} else if(i + 8 <= r && int cd[i+5] == 8 && int cd[i+7] == 16r50){
+				# class 8 mass storage, protocol 0x50 Bulk-Only
+				ums = 1;
+			}
 		Dep =>
-			if(iface >= 0 && i + 7 <= r){
+			if(i + 7 > r)
+				;
+			else {
 				addr := int cd[i+2];
 				attr := int cd[i+3];
 				maxpkt := int cd[i+4] | int cd[i+5]<<8;
 				ival := int cd[i+6];
-				if((addr & 16r80) != 0 && (attr & 3) == 3){
+				if(iface >= 0 && (addr & 16r80) != 0 && (attr & 3) == 3){
 					hidstart(d, iface, proto, addr & 16r0f, maxpkt, ival);
 					return;
+				}
+				if(ums && (attr & 3) == 2){
+					if(addr & 16r80)
+						bin = addr & 16r0f;
+					else
+						bout = addr & 16r0f;
 				}
 			}
 		}
 		i += l;
 	}
-	sys->print("usbd: %s: no boot-protocol HID interface, left configured\n", d.name);
+	if(bin >= 0 && bout >= 0){
+		diskstart(d, bin, bout);
+		return;
+	}
+	sys->print("usbd: %s: no boot-protocol HID or mass-storage interface, left configured\n", d.name);
 }
 
 #
@@ -487,6 +507,122 @@ sext(v: int): int
 	if(v & 16r80)
 		return v - 256;
 	return v;
+}
+
+#
+# USB mass storage, Bulk-Only Transport (class 8, protocol 0x50),
+# after 9front's nusb/disk.  Two bulk endpoints carry a 31-byte
+# command wrapper, the data, and a 13-byte status wrapper; the command
+# is a SCSI CDB.  This drives inquiry, read capacity and read(10), and
+# for now reads block 0 and reports the geometry and the FAT boot
+# signature, the same check virtio-blk gets.  The mountable file
+# server is the next step.
+#
+Bstate: adt {
+	inep:	ref Dev;	# bulk in
+	outep:	ref Dev;	# bulk out
+	tag:	int;
+	nblocks:	int;
+	bsize:	int;
+};
+
+diskstart(d: ref Dev, bin, bout: int)
+{
+	b := ref Bstate(nil, nil, 0, 0, 512);
+	if(devctl(d, sys->sprint("new %d 2 r", bin)) < 0 ||
+	   devctl(d, sys->sprint("new %d 2 w", bout)) < 0){
+		sys->fprint(sys->fildes(2), "usbd: %s: mass-storage endpoints: %r\n", d.name);
+		return;
+	}
+	b.inep = opendev(sys->sprint("ep%d.%d", d.id, bin));
+	b.outep = opendev(sys->sprint("ep%d.%d", d.id, bout));
+	if(b.inep == nil || b.outep == nil)
+		return;
+	b.inep.dfd = sys->open("/dev/usb/" + b.inep.name + "/data", Sys->OREAD);
+	b.outep.dfd = sys->open("/dev/usb/" + b.outep.name + "/data", Sys->OWRITE);
+	if(b.inep.dfd == nil || b.outep.dfd == nil){
+		sys->fprint(sys->fildes(2), "usbd: %s: mass-storage data files: %r\n", d.name);
+		return;
+	}
+
+	# a device may report "not ready" until spun up; poll briefly
+	for(i := 0; i < 10; i++){
+		if(scsi(b, array[] of {byte 0, byte 0, byte 0, byte 0, byte 0, byte 0}, nil, 0) >= 0)
+			break;
+		sys->sleep(100);
+	}
+
+	inq := array[36] of byte;
+	if(scsi(b, array[] of {byte 16r12, byte 0, byte 0, byte 0, byte 36, byte 0}, inq, 36) < 0){
+		sys->fprint(sys->fildes(2), "usbd: %s: inquiry: %r\n", d.name);
+		return;
+	}
+	vendor := string inq[8:36];
+
+	cap := array[8] of byte;
+	if(scsi(b, array[] of {byte 16r25, byte 0, byte 0, byte 0, byte 0, byte 0, byte 0, byte 0, byte 0, byte 0}, cap, 8) < 0){
+		sys->fprint(sys->fildes(2), "usbd: %s: read capacity: %r\n", d.name);
+		return;
+	}
+	lastlba := (int cap[0]<<24) | (int cap[1]<<16) | (int cap[2]<<8) | int cap[3];
+	b.bsize = (int cap[4]<<24) | (int cap[5]<<16) | (int cap[6]<<8) | int cap[7];
+	b.nblocks = lastlba + 1;
+	sys->print("usbd: %s: disk \"%s\" %d blocks x %d bytes\n", d.name, vendor, b.nblocks, b.bsize);
+
+	sec := array[b.bsize] of byte;
+	if(readblock(b, 0, sec) < 0){
+		sys->fprint(sys->fildes(2), "usbd: %s: read block 0: %r\n", d.name);
+		return;
+	}
+	if(b.bsize >= 512 && int sec[510] == 16r55 && int sec[511] == 16raa)
+		sys->print("usbd: %s: DISK-BLK-OK (FAT/MBR signature)\n", d.name);
+	else
+		sys->print("usbd: %s: block 0 read, no boot signature\n", d.name);
+}
+
+# READ(10) of one block into buf
+readblock(b: ref Bstate, lba: int, buf: array of byte): int
+{
+	cdb := array[10] of { * => byte 0 };
+	cdb[0] = byte 16r28;
+	cdb[2] = byte (lba>>24);
+	cdb[3] = byte (lba>>16);
+	cdb[4] = byte (lba>>8);
+	cdb[5] = byte lba;
+	cdb[7] = byte 0;
+	cdb[8] = byte 1;		# one block
+	return scsi(b, cdb, buf, b.bsize);
+}
+
+# one SCSI command over Bulk-Only Transport; data in if datalen>0 and
+# dir-in, returns bytes transferred or -1
+scsi(b: ref Bstate, cdb: array of byte, data: array of byte, datalen: int): int
+{
+	cbw := array[31] of { * => byte 0 };
+	cbw[0] = byte 'U'; cbw[1] = byte 'S'; cbw[2] = byte 'B'; cbw[3] = byte 'C';
+	b.tag++;
+	cbw[4] = byte b.tag; cbw[5] = byte (b.tag>>8);
+	cbw[6] = byte (b.tag>>16); cbw[7] = byte (b.tag>>24);
+	cbw[8] = byte datalen; cbw[9] = byte (datalen>>8);
+	cbw[10] = byte (datalen>>16); cbw[11] = byte (datalen>>24);
+	cbw[12] = byte 16r80;		# data in (we only read for now)
+	cbw[13] = byte 0;		# lun 0
+	cbw[14] = byte len cdb;
+	cbw[15:] = cdb;
+	if(sys->write(b.outep.dfd, cbw, 31) != 31)
+		return -1;
+	if(datalen > 0 && data != nil){
+		n := sys->read(b.inep.dfd, data, datalen);
+		if(n < 0)
+			return -1;
+	}
+	csw := array[13] of byte;
+	n := sys->read(b.inep.dfd, csw, 13);
+	if(n != 13 || int csw[0] != 'U' || int csw[1] != 'S' || int csw[2] != 'B' || int csw[3] != 'S')
+		return -1;
+	if(int csw[12] != 0)		# status: 0 = ok
+		return -1;
+	return datalen;
 }
 
 #
