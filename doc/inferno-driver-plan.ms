@@ -552,7 +552,16 @@ second, and
 .CW os/inferno/riscv/spisifive.c
 (was a register-poke stub) now does full-duplex FIFO transfers and
 reads each flash's JEDEC id - the NOR flash answers 0x9d 0x70 0x19
-(ISSI IS25WP256), proving the bus reaches its slave.  I2C is a
+(ISSI IS25WP256), proving the bus reaches its slave.  Reading an SD
+card over the MMC-SPI controller is a separate matter: the SD-over-SPI
+handshake (CMD0/CMD8/ACMD41/CMD58 then a CMD17 block read) was written
+and exercised, but no slave answered on that controller - the very same
+transfer code reads the NOR flash correctly, so the transport is sound;
+QEMU's
+.CW "-drive if=sd"
+does not appear to attach the card to the sifive_u SPI bridge.  Wiring
+an SD to that bridge under QEMU is the unresolved follow-on; the flash
+read already shows the driver works against a real slave.  I2C is a
 different story: no QEMU machine this tree currently boots models an
 I2C controller at all (sifive_u and spike have none), so delivering I2C
 needs a raspi-class board bring-up - a real SoC with BCM2835 SPI, I2C
