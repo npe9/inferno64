@@ -160,6 +160,16 @@ TEXT	getcallerpc(SB), 1, $-4
  * Fixed by giving the status result its own scratch register (R4) and
  * storing the real new value (R2, "1") instead of the stale R1.
  */
+/*
+ * psci(fn, a1, a2, a3): a PSCI call through HVC, QEMU virt's conduit.
+ * The four args are already in R0-R3 (x0-x3) where SMCCC wants them;
+ * HVC #0 uses them and returns the result in x0.  HVC is not a 7a
+ * mnemonic, so it is the raw encoding 0xd4000002.
+ */
+TEXT	psci(SB), 1, $-4
+	WORD	$0xd4000002
+	RET	R30
+
 TEXT	_tas(SB), 1, $-4
 	MOV	R0, R3
 tas1:

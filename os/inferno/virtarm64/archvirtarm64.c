@@ -33,8 +33,17 @@ archconsole(void)
 void
 archreboot(void)
 {
+	/* PSCI SYSTEM_RESET (0x84000009); QEMU restarts the machine */
+	psci(0x84000009ULL, 0, 0, 0);
 	for(;;)
 		idle();
+}
+
+void
+archshutdown(void)
+{
+	/* PSCI SYSTEM_OFF (0x84000008); QEMU powers the machine off */
+	psci(0x84000008ULL, 0, 0, 0);
 }
 
 void
