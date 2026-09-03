@@ -192,9 +192,7 @@ port
 	uintptr xexits(va_list list)
 	{
 		USED(list);
-		print("osprey user: the program exited; the microkernel idles\n");
-		for(;;)
-			tsleep(&up->sleep, return0, nil, 1000);
+		ospreyexits(0);	/* the boot program idles; one exec started ends */
 		return 0;
 	}
 	/*
@@ -273,7 +271,7 @@ port
 			up->s = *args;
 			if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
-			else if(ospreyp9buddy)
+			else if(ospreybuddyhas())	/* a container with a server: its buddy answers */
 				*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
 			else {
 				print("osprey user: unimplemented syscall %uld\n", scallnr);

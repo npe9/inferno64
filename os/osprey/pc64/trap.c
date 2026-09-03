@@ -400,10 +400,11 @@ faultamd64(Ureg* ureg, void*)
 		}
 	}
 
-	if(up != nil && up->oslinux && addr < USTKTOP){
+	if(up != nil && up->buddyimage && addr < USTKTOP){
 		/*
-		 * A legacy process's page faults are the buddy's to answer:
-		 * the image's pages come from the buddy's file system.  That
+		 * A legacy process's page faults are the buddy's to answer,
+		 * whichever ABI it speaks: the image's pages come from the
+		 * buddy's file system.  That
 		 * holds whether the process touched the page itself or the
 		 * kernel did on its behalf, reading a system call's argument
 		 * out of it.  The stack, and a page already present, are the

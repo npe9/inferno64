@@ -54,6 +54,10 @@ def main():
          'buddy: exec /boot/linux for container' in t and 'linux: read(fd, buf, 512) returned 470 bytes' in t
          and 'linux: brk grew the heap by 65536 bytes, zero-filled' in t
          and re.search(r'osprey exec: container \d+ \(/boot/linux\) exited with status 0', t) is not None),
+        ("exec starts a Plan 9 binary the same way, the buddy laying its a.out out, and it runs to exit",
+         'buddy: exec /boot/legacy for container' in t and 'a Plan 9 a.out, text' in t
+         and 'legacy: closed the fd; the buddy answered every trap' in t
+         and re.search(r'osprey exec: container \d+ \(/boot/legacy\) exited with status 0', t) is not None),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'user fault' not in t),

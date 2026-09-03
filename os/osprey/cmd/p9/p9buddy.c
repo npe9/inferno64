@@ -17,8 +17,9 @@
  * for the legacy process's), not a shared server.  For the Linux binary
  * it interposes page faults too: the binary is a file in this
  * personality's file system, this buddy lays it out for the kernel (EXEC)
- * and supplies each page as the process first touches it (PAGE).  The
- * Plan 9 legacy binary is still eager-mapped by the kernel.
+ * and supplies each page as the process first touches it (PAGE), and
+ * the same for a Plan 9 a.out, laid out as three pieces of the shape an
+ * ELF's program headers take.
  *
  * The kernel has copied any pointer argument (a name, a data buffer) into
  * the legacy container's data area, which this peer reaches as cdata; the
@@ -93,6 +94,18 @@ imgof(uvlong container, int make)
 }
 
 static uvlong
+be(uchar *p, int n)
+{
+	uvlong v;
+	int i;
+
+	v = 0;
+	for(i = 0; i < n; i++)
+		v = (v<<8) | p[i];
+	return v;
+}
+
+static uvlong
 le(uchar *p, int n)
 {
 	uvlong v;
@@ -148,13 +161,50 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 	if(readat(img->fd, 0, hdr, sizeof hdr) < 0)
 		return -1;
 	if(hdr[0] != 0x7f || hdr[1] != 'E'){
-		/* a Plan 9 a.out (big-endian magic) is not laid out this way yet */
+		/*
+		 * A Plan 9 a.out: eight big-endian words - magic, text, data,
+		 * bss, syms, entry, spsz, pcsz - and a 64-bit entry after them
+		 * when the magic has HDR_MAGIC set, which amd64's does.  It
+		 * is laid out the way the kernel's own loader lays one out:
+		 * the text, header and all, at UTZERO (mem.h); the data on the next
+		 * page after it; the bss on the page after that.  Presented
+		 * to the kernel as three loadable pieces, the same shape an
+		 * ELF's program headers take, so the kernel needs no second
+		 * loader and pages both kinds the same way.
+		 */
+		uvlong magic, textsz, datasz, bsssz, hdrsz, tseg, adata, abss, ebss;
+		enum { Utzero = 0x200000 };	/* UTZERO in the kernel's mem.h: the first user text address */
+
+		magic = be(hdr, 4);
+		if((magic & 0xffff) != 0x8a97){	/* amd64's magic */
+			print("buddy: exec %s: neither an ELF nor an amd64 a.out\n", name);
+			return -1;
+		}
+		textsz = be(hdr+4, 4);
+		datasz = be(hdr+8, 4);
+		bsssz = be(hdr+12, 4);
+		hdrsz = (magic & 0x8000) ? 40 : 32;
+		tseg = hdrsz + textsz;
+		adata = (Utzero + tseg + Pagesz-1) & ~(uvlong)(Pagesz-1);
+		abss = (adata + datasz + Pagesz-1) & ~(uvlong)(Pagesz-1);
+		ebss = (adata + datasz + bsssz + Pagesz-1) & ~(uvlong)(Pagesz-1);
 		img->kind = 1;
+		img->entry = Utzero + hdrsz;
+		img->nph = 3;
+		img->ph[0].flags = 5; img->ph[0].off = 0;    img->ph[0].va = Utzero; img->ph[0].filesz = tseg;   img->ph[0].memsz = tseg;
+		img->ph[1].flags = 6; img->ph[1].off = tseg; img->ph[1].va = adata;  img->ph[1].filesz = datasz; img->ph[1].memsz = datasz;
+		img->ph[2].flags = 6; img->ph[2].off = 0;    img->ph[2].va = abss;   img->ph[2].filesz = 0;      img->ph[2].memsz = ebss - abss;
 		d = (uvlong*)out;
-		d[0] = 0;
-		d[1] = 1;
-		print("buddy: exec %s: not an ELF, refused\n", name);
-		return -1;
+		d[0] = img->entry;
+		d[1] = img->kind;
+		for(i = 0; i < img->nph; i++){
+			d[2+3*i] = img->ph[i].va;
+			d[3+3*i] = img->ph[i].memsz;
+			d[4+3*i] = img->ph[i].flags;
+		}
+		print("buddy: exec %s for container %llud: a Plan 9 a.out, text %llud data %llud bss %llud\n",
+			name, container, textsz, datasz, bsssz);
+		return img->nph;
 	}
 	img->kind = 0;
 	img->entry = le(hdr+24, 8);

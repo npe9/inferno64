@@ -89,10 +89,7 @@ mapslice(int slot)
  * the identity in its map.  What the kernel has not delegated it refuses
  * to map, so the scan sees only what is this server's to see.
  */
-static struct {
-	uvlong	id;
-	uchar	*base;
-} slices[Nslot];
+static uchar *slices[Nslot];	/* the slices mapped so far, by slot */
 
 static uchar*
 sliceof(uvlong id)
@@ -101,11 +98,17 @@ sliceof(uvlong id)
 	uchar *b;
 	Omap *m;
 
+	/*
+	 * The identity is read from the map every time, not remembered:
+	 * a slot is reused by the next container the kernel makes when
+	 * the last one has gone, and the map is where its current owner
+	 * is written.
+	 */
 	for(i = 0; i < Nslot; i++)
-		if(slices[i].base != nil && slices[i].id == id)
-			return slices[i].base + ((Omap*)slices[i].base)->data;
+		if(slices[i] != nil && ((Omap*)slices[i])->id == id)
+			return slices[i] + ((Omap*)slices[i])->data;
 	for(i = 0; i < Nslot; i++){
-		if(slices[i].base != nil)
+		if(slices[i] != nil)
 			continue;
 		b = mapslice(i);
 		if(b == (uchar*)-1)
@@ -113,8 +116,7 @@ sliceof(uvlong id)
 		m = (Omap*)b;
 		if(m->magic != Ospreymagic)
 			continue;
-		slices[i].base = b;
-		slices[i].id = m->id;
+		slices[i] = b;
 		if(m->id == id)
 			return b + m->data;
 	}
@@ -142,7 +144,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		/* another container this server answers for: a program exec started */
 		cdata = sliceof(req.container);
 		if(cdata == nil){
-			rep.arg[0] = 2;
+			rep.arg[0] = (uvlong)-1;	/* not a count a layout could have */
 			repm[pq->put % pq->size] = rep;
 			pq->put++;
 			return;

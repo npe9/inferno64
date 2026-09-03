@@ -19,7 +19,6 @@
 #include	"initcode.i"
 #include	"userprog.i"
 #include	"p9prog.i"
-#include	"legacyprog.i"
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -28,7 +27,6 @@ extern int ospreyp9;
 extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
-extern void ospreyloadlegacy(void);
 extern void touserat(char*);
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
@@ -149,12 +147,6 @@ ospreyloadp9(void)
 	ospreyloadaout(p9prog);		/* the Plan 9 personality library */
 }
 
-void
-ospreyloadlegacy(void)
-{
-	ospreyloadaout(legacyprog);	/* an unmodified Plan 9 binary the buddy serves */
-}
-
 /*
  * The entry of the legacy program the buddy laid out; touserat (l.s)
  * reads it, since an ELF binary enters at e_entry, not the a.out
@@ -180,8 +172,9 @@ enum {
  * data is then a fault the buddy answers (ospreybuddyfault in
  * devosprey.c): the paper's buddy interposes on page faults as well as
  * system calls.  An ELF is a Linux process and marks itself so; a Plan
- * 9 a.out is not laid out this way yet and is refused.  Returns -1 when
- * the buddy did not lay it out.
+ * 9 a.out is laid out by the buddy as three pieces the same way and is
+ * entered the Plan 9 way by the caller.  Returns the kind - 0 an ELF,
+ * 1 an a.out - or -1 when the buddy did not lay it out.
  */
 int
 ospreyexecbuddy(char *name)
@@ -193,11 +186,8 @@ ospreyexecbuddy(char *name)
 	n = ospreybuddyexec(name, &entry, segs, nelem(segs), &kind);
 	if(n < 0)
 		return -1;
-	if(kind != 0){
-		print("osprey buddy: %s is not an ELF; only a Linux binary is laid out by the buddy yet\n", name);
-		return -1;
-	}
-	up->oslinux = 1;
+	up->oslinux = kind == 0;	/* an ELF is a Linux process; an a.out a Plan 9 one */
+	up->buddyimage = 1;		/* either way its pages are the buddy's */
 	ospreyuserentry = entry;
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
 	seg = TSEG;
@@ -231,8 +221,9 @@ ospreyexecbuddy(char *name)
 	up->linuxmmapnext = Linuxmmapbase;
 	print("osprey buddy: %s laid out by the buddy: entry %#llux, %d segments, no page mapped yet\n",
 		name, entry, n);
-	return 0;
+	return kind;
 }
+
 
 /*
  * The Linux address-space calls, answered by the kernel: they ask for
@@ -466,9 +457,18 @@ proc0(void*)
 			ospreyenteruserat();
 			panic("ospreyenteruserat returned");
 		}
-		if(ospreyp9buddy)
-			ospreyloadlegacy();	/* an unmodified Plan 9 binary the buddy serves */
-		else if(ospreyp9)
+		if(ospreyp9buddy){
+			/*
+			 * An unmodified Plan 9 binary the buddy serves, laid out
+			 * and paged by the buddy from its own file system like
+			 * the Linux one, and entered the Plan 9 way.
+			 */
+			if(ospreyexecbuddy("/boot/legacy") != 1)
+				panic("osprey buddy: the buddy did not lay out /boot/legacy");
+			ospreyenteruser("/boot/legacy");
+			panic("ospreyenteruser returned");
+		}
+		if(ospreyp9)
 			ospreyloadp9();		/* the Plan 9 personality library */
 		else
 			ospreyloadprog();	/* the minimal microkernel task */

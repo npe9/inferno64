@@ -9,7 +9,8 @@ the ring to the peer - the buddy operating system - which emulates it
 against its own name space and descriptor table and answers.  The legacy
 program cannot tell a peer served it.  This is the paper's buddyOS: per-
 process trap interposition, Plan 9 ABI, system calls (not yet page
-faults, since the legacy image is eager-mapped).
+faults too, since exec: the binary is /boot/legacy in the buddy's file
+system, laid out and paged by it).
 """
 import os, re, subprocess, sys, tempfile
 
@@ -41,8 +42,11 @@ def main():
     results = [
         ("an unmodified Plan 9 binary runs on the microkernel and a buddy personality serves it",
          'unmodified Plan 9 program' in t and 'p9 server: serving this name space over the ring' in t),
+        ("the buddy lays the a.out out from its own file system and pages it in; the kernel carries no copy",
+         'buddy: exec /boot/legacy for container' in t and 'a Plan 9 a.out, text' in t
+         and 'laid out by the buddy' in t and 'page 0x200000 of the legacy image supplied from its file' in t),
         ("its open() traps in the Plan 9 ABI and the buddy answers with a descriptor",
-         'open("/") returned fd 0' in t),
+         re.search(r'legacy: open\("/"\) returned fd \d+', t) is not None),
         ("its read() is forwarded and the buddy returns the file's bytes, copied back to the legacy buffer",
          m is not None and int(m.group(1)) > 0),
         ("every file trap was served by the peer, and it exits cleanly, no unimplemented syscall, no panic",

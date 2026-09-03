@@ -144,6 +144,7 @@ port
 	 * the console through the bare 8250 path; exit does not tear the
 	 * boot process down (that would panic) but idles the machine.
 	 */
+	extern long ospreybuddyforward(ulong, uintptr*);
 	typedef uintptr Xsyscall(va_list);
 
 	uintptr xpwrite(va_list list)
@@ -274,6 +275,8 @@ port
 				ospreylinuxsyscall(scallnr, retp);	/* a program exec started: port/userinit.c */
 			else if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
+			else if(ospreybuddyhas())	/* a Plan 9 program exec started: its server answers */
+				*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
 			else {
 				print("osprey user: unimplemented syscall %uld\n", scallnr);
 				*retp = (uintptr)-1;

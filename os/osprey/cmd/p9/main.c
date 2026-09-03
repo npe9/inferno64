@@ -477,9 +477,14 @@ p9paircli(void)
 		extern long ring_wait(long*);
 		long id, st;
 
-		id = ring_exec("/boot/linux");
-		print("p9: pair-client: exec /boot/linux started container %ld\n", id);
-		if(id >= 0){
+		char *progs[] = { "/boot/linux", "/boot/legacy" };
+		int i;
+
+		for(i = 0; i < 2; i++){
+			id = ring_exec(progs[i]);
+			print("p9: pair-client: exec %s started container %ld\n", progs[i], id);
+			if(id < 0)
+				continue;
 			if(ring_wait(&st) == 0)
 				print("p9: pair-client: wait: container %ld exited with status %ld\n", id, st);
 			else

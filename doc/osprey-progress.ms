@@ -231,9 +231,8 @@ Built, above: the
 request starts a named program from the caller's server's file system
 in a container of its own, and
 .B wait
-is answered with its status.  What remains of the item: the buddy lays
-out only an ELF, so the Plan 9 legacy binary still goes through the
-kernel's eager loader; the real
+is answered with its status, for an ELF and for a Plan 9 a.out alike.
+What remains of the item: the real
 .CW p9srv
 is not hosted on the microkernel, because it needs more of a Plan 9 ABI
 than the buddy answers (item 2 is where that grows); and the talk's
@@ -245,8 +244,10 @@ work.
 A file mapping (the page path with an offset); the descriptor calls a
 program makes on stdin and stdout beyond write; a fault the buddy
 declines delivered as a signal rather than the microkernel's donotify
-panic; and p9buddy's Plan 9 binary loaded and paged by the buddy through
-an a.out reader, as p9linux's is through an ELF one.
+panic; and, for a Plan 9 program, the calls
+.CW p9srv
+makes that the buddy does not answer \- pipe, rfork, mount, bind and the
+rest of what a personality needs to host a real Plan 9 program.
 .PP
 .B "3.  Storage: a block device served by a task, then a file system."
 The plan's user-level services section says file-system policy means two
@@ -2585,8 +2586,11 @@ close and the rest and holds the descriptor table that stands for the
 legacy process's.  On boot the legacy program opens the root, reads it,
 and closes it, every file trap answered by the peer and none by the
 kernel.  This is the paper's per-process interposition \- vx32 and Fluke,
-not a shared server \- with system calls interposed but not yet page
-faults (the image is eager-mapped so it does not fault).  It is checked by
+not a shared server \- with system calls interposed, and, since the
+paragraph on exec below, page faults too: the Plan 9 binary is
+.CW /boot/legacy
+in the buddy's file system, laid out by it as an a.out and paged in
+seven faults.  It is checked by
 .CW /scripts/osprey-check-p9buddy.py .
 .PP
 The same buddy now serves the Linux ABI, which is the author's "plan9 to
@@ -2695,9 +2699,7 @@ sizes it to two pages for this configuration, through the same
 .CW ospreysetsize
 that
 .CW plan9.ini
-reaches.  What is still not interposed: the Plan 9 legacy binary
-.CW ( p9buddy )
-is eager-mapped by the kernel as before, and a fault the buddy declines
+reaches.  What is still not interposed: a fault the buddy declines
 still ends in the microkernel's donotify panic rather than a signal the
 process could take.  Only the file calls the demonstration makes are
 mapped.
@@ -2807,10 +2809,37 @@ reports container 100 starting it for container 1, served by container
 3; the server lays it out and pages it in; the program's file calls,
 brk and mmap are answered; it exits with status 0 and the client's wait
 returns that status.  Three containers, the third started by a request
-rather than by the boot.  What exec does not do yet: lay out a Plan 9
-a.out (the buddy refuses it, so p9buddy's legacy binary is still loaded
-eagerly by the kernel), or run a program whose ABI needs more of the
-buddy than the file calls, brk and mmap \- the real
+rather than by the boot.
+.PP
+The buddy lays out a Plan 9 a.out as well, so the kernel carries neither
+legacy binary now: the eight big-endian words of the header say where
+the text, data and bss go (the same places the kernel's own loader put
+them: text with its header at UTZERO, data on the next page, bss after
+it), and the buddy presents those as three loadable pieces of the same
+shape an ELF's program headers take, so the kernel has one loader and
+one pager for both kinds and only the entry differs \- an ELF is
+entered at
+.CW e_entry
+the Linux way, an a.out at
+.CW UTZERO+0x28
+the Plan 9 way with argv0 on the stack.  p9buddy's own boot execs
+.CW /boot/legacy
+this way (seven pages, one fault each, then open, read, close and exit
+through the buddy), and p9pair execs both binaries in turn and waits
+for each.  Two things this found: the fault hook in
+.CW faultamd64
+was gated on the process being Linux, so an a.out's first instruction
+fetch went to the kernel's own demand loader and died in
+.CW pio
+on a nil image (a process now carries
+.CW buddyimage ,
+set for either kind); and the server's cache of which slot held which
+container went stale the moment a slot was reused, so the second exec
+was answered with the server's "no such slice" code, which the kernel
+read as a two-segment layout \- identities are read from the map every
+time now, and that refusal is -1, a count no layout can have.  What
+exec does not do yet: run a program whose ABI needs more of the buddy
+than the file calls, brk and mmap \- the real
 .CW p9srv
 is such a program; and it is a request on one machine, not the talk's
 remote invocation, which is this request carried over the wire.  Checked

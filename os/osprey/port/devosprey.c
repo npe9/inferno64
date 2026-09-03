@@ -2226,6 +2226,17 @@ ospreybuddycall(Ospreyproc *p, int tries)
 	return -1;
 }
 
+/*
+ * Whether this process has a buddy: a container with a server, which is
+ * what answers the system calls the kernel does not.  Configurations
+ * forward through ospreybuddyforward when this says so.
+ */
+int
+ospreybuddyhas(void)
+{
+	return up->osprey != nil && ospreyserverof(up->osprey) != nil;
+}
+
 long
 ospreybuddyforward(ulong scallnr, uintptr *a)
 {
@@ -2478,11 +2489,14 @@ ospreyexecproc(void *a)
 		ospreysetpid(c, up->pid);
 	}
 	qunlock(&ospreylock);
-	if(ospreyexecbuddy(e->name) < 0){
-		print("osprey exec: %s: the server did not lay it out\n", e->name);
-		ospreyexits(-1);
+	switch(ospreyexecbuddy(e->name)){
+	case 0:
+		ospreyenteruserat();	/* an ELF: at its entry, the Linux way */
+	case 1:
+		ospreyenteruser(e->name);	/* an a.out: the Plan 9 way, argv0 the name */
 	}
-	ospreyenteruserat();		/* never returns */
+	print("osprey exec: %s: the server did not lay it out\n", e->name);
+	ospreyexits(-1);
 }
 
 static long

@@ -147,8 +147,8 @@ container, and the microkernel forwards each Plan 9 system call it does
 not implement - open, read, close - to a peer that emulates it against
 its own name space and hands the answer back, the legacy binary none the
 wiser.  That is the per-process trap interposition the paper describes,
-system calls for now, not yet page faults (the legacy image is eager-
-mapped so it does not fault).  The Linux ABI is served too: the p9linux
+system calls and, since exec, page faults too (the binary is a file in
+the buddy's file system, laid out and paged by it).  The Linux ABI is served too: the p9linux
 configuration runs an unmodified static Linux x86-64 binary (an ELF,
 raw syscalls, no libc), the SYSCALL entry stores every register so the
 Linux convention can be read and its callee-saved registers returned,
@@ -157,8 +157,7 @@ are interposed too: the binary is a file in the buddy's file system,
 the buddy lays it out for the kernel and supplies each page as it is
 first touched, so the kernel carries no copy of it; brk, anonymous
 mmap and munmap are answered by the kernel's address-space service.
-Only the file calls the demonstration makes are mapped, and the Plan 9
-legacy binary is still eager-mapped by the kernel.  p9pair is the library-OS
+Only the file calls the demonstration makes are mapped.  p9pair is the library-OS
 mechanism, one-directional (the client mounts the server, not the
 reverse).
 .PP
@@ -213,9 +212,9 @@ request with a program's name and the kernel starts it in a container of
 its own, laid out, paged and answered for by the container's server; and
 .B wait
 returns its exit status (doc/osprey-progress.ms, the p9pair paragraph
-under "The gaps").  What it starts is a Linux binary the buddy answers
-for; a Plan 9 a.out is refused, so the personality still cannot start
-rc or rio this way.
+under "The gaps").  What it starts is a Linux ELF or a Plan 9 a.out the
+buddy answers for; rc or rio would need the buddy to answer far more of
+the Plan 9 ABI than the file calls it maps.
 .PP
 What the tree has, and does not have, sharpens this:
 .IP \(bu 2

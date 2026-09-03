@@ -1337,9 +1337,9 @@ are the grants somebody with the key wrote.
 .IR cons (3)
 .SH BUGS
 .B exec
-lays out an ELF and nothing else: a Plan 9 a.out named to it is refused
-by the server, so the only programs it can start are Linux binaries the
-buddy answers for, and those can make only the calls the buddy maps.
+starts an ELF or a Plan 9 a.out, and what it starts can make only the
+calls its buddy maps: open, read, close and seek, and for a Linux
+binary write to the console, exit, brk, anonymous mmap and munmap.
 .B wait
 waits for any child, not a named one, and a container may have eight
 outstanding.
