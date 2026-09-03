@@ -1,93 +1,85 @@
 module Wordfreq
 
 import sys "sys"
+import draw "draw"
 import bufio "bufio"
-import str "string"
-import hash "hash"
+import maps "maps"
+import lists "lists"
 
-// word frequencies of a file: bufio for lines, the string library for
-// splitting and lowercasing, the hash library's table (ref HashVal
-// counters updated in place), then the entries copied into a
-// dynamically sized array of structs and insertion-sorted by count
-// then word -- element reads, element-to-element copies and swaps on
-// an array whose element type holds a string.  the output matches
-// the host pipeline in tests/type/wordfreq.out's generating comment.
+// the header-only libraries together: read a file line by line,
+// count words in a generic map, sort the entries with the generic
+// sort, print the top few
 
-type Entry struct {
+type Count struct {
 	word string
-	count int
+	n int
 }
 
-func before(a Entry, b Entry) int {
-	if a.count != b.count {
-		return a.count > b.count
+func strhash(s string) int {
+	h := 0
+	for i := 0; i < len(s); i++ {
+		h = h * 31 + s[i]
 	}
-	return a.word < b.word
+	return h
 }
 
-func sort(es []Entry) {
-	for i := 1; i < len(es); i++ {
-		e := es[i]
-		j := i - 1
-		for j >= 0 && before(e, es[j]) {
-			es[j+1] = es[j]
-			j--
+func streq(a string, b string) int {
+	return a == b
+}
+
+func isword(c int) int {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func words(line string) list string {
+	var out list string
+	start := -1
+	for i := 0; i <= len(line); i++ {
+		if i < len(line) && isword(line[i]) != 0 {
+			if start < 0 {
+				start = i
+			}
+		} else if start >= 0 {
+			out = line[start:i] :: out
+			start = -1
 		}
-		es[j+1] = e
 	}
+	return lists.reverse(out)
 }
 
-func count(name string) ([]Entry, string) {
-	f := bufio.open(name, bufio.OREAD)
+func init(ctxt ref draw.Context, argv list string) {
+	f := bufio.open("/ember/tests/type/calc.e", bufio.OREAD)
 	if f == nil {
-		return nil, sys.sprint("cannot open %s", name)
+		sys.print("open failed\n")
+		return
 	}
-	h := hash.new(64)
-	n := 0
+	m := maps.newmap[string, int](16, strhash, streq)
+	lines := 0
 	for {
 		line := f.gets('\n')
 		if line == nil {
 			break
 		}
-		for l := str.fields(line); l != nil; l = tl(l) {
-			w := str.tolower(hd(l))
-			v := h.find(w)
-			if v == nil {
-				h.insert(w, hash.HashVal{i: 1, r: 0.0, s: w})
-				n++
+		lines++
+		for l := words(line); l != nil; l = tl(l) {
+			e := m.find(hd(l))
+			if e == nil {
+				m.put(hd(l), 1)
 			} else {
-				v.i++
+				e.val++
 			}
 		}
 	}
 	f.close()
-	es := [n]Entry
-	i := 0
-	for l := h.all(); l != nil; l = tl(l) {
-		es[i] = Entry{word: hd(l).key, count: hd(l).val.i}
-		i++
+	counts := lists.mapl(m.keys(), func(w string) Count { return Count{word: w, n: m.find(w).val} })
+	sorted := lists.sorta(lists.toarray(counts), func(a Count, b Count) int {
+		if a.n != b.n {
+			return a.n > b.n
+		}
+		return a.word < b.word
+	})
+	sys.print("%d lines, %d distinct words\n", lines, m.size())
+	for i := 0; i < 5 && i < len(sorted); i++ {
+		sys.print("%s %d\n", sorted[i].word, sorted[i].n)
 	}
-	sort(es)
-	return es, nil
-}
-
-func init() {
-	es, err := count("/ember/tests/type/wc.e")
-	if err != nil {
-		sys.print("%s\n", err)
-		return
-	}
-	sys.print("distinct=%d\n", len(es))
-	for k := 0; k < 8 && k < len(es); k++ {
-		sys.print("%d %s\n", es[k].count, es[k].word)
-	}
-	total := 0
-	for k := 0; k < len(es); k++ {
-		total += es[k].count
-	}
-	sys.print("total=%d\n", total)
-
-	poison := 66666
-	poison = 0
-	sys.print("poison=%d\n", poison)
 }

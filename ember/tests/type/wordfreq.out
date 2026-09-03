@@ -1,11 +1,6 @@
-distinct=118
-9 {
-9 }
-7 :=
-5 //
-5 a
-5 the
-4 if
-4 nil
-total=192
-poison=0
+152 lines, 105 distinct words
+p 48
+return 25
+ref 21
+err 19
+Expr 17
