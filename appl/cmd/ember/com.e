@@ -875,10 +875,12 @@ func destructure(line int, pos int, lhs ref types.Node, rhs ref types.Node) {
 			isindx = 1
 		}
 		var fixid ref types.Node
+		var fixcb ref types.Node
 		var ia ref Indxaddr
 		if isindx != 0 {
 			ia = indxaddr(id.line, id.pos, id)
 		} else {
+			fixcb = fixcallbase(id)
 			fixid = fixdblind(id)
 		}
 		adr := types.mkn(types.Oadr, types.dupn(tuptemp), nil)
@@ -903,6 +905,7 @@ func destructure(line int, pos int, lhs ref types.Node, rhs ref types.Node) {
 		} else {
 			ecom(id.line, id.pos, id, ind)
 			gen.tfree(fixid)
+			gen.tfree(fixcb)
 		}
 		fd = fd.next
 		if p.op != types.Oseq {
@@ -1989,6 +1992,7 @@ func indsstore(line int, pos int, n ref types.Node) {
 	tu := newnode()
 	left := n.left.left
 	right := n.left.right
+	fcb := fixcallbase(left)
 	fd := fixdblind(left)
 	if left.addable >= Rcant {
 		fatal("indsstore: string not addressable")
@@ -2030,6 +2034,7 @@ func indsstore(line int, pos int, n ref types.Node) {
 	gen.tfree(tv)
 	gen.tfree(tu)
 	gen.tfree(fd)
+	gen.tfree(fcb)
 }
 
 // store the zero value of type t into dst
@@ -2108,6 +2113,7 @@ func assignop(n ref types.Node) {
 		gen.popblock()
 		return
 	}
+	fcb := fixcallbase(n.left)
 	fd := fixdblind(n.left)
 	e := n.left
 	if e.addable >= Rcant {
@@ -2121,6 +2127,7 @@ func assignop(n ref types.Node) {
 	gen.genop(n.line, n.pos, n.op, r, nil, e)
 	gen.tfree(tr)
 	gen.tfree(fd)
+	gen.tfree(fcb)
 	gen.popblock()
 }
 
@@ -2146,12 +2153,14 @@ func incdec(n ref types.Node) {
 		gen.popblock()
 		return
 	}
+	fcb := fixcallbase(n.left)
 	fd := fixdblind(n.left)
 	one := mkconst(n.line, n.pos, big(1))
 	one.ty = tint()
 	sumark(one)
 	gen.genop(n.line, n.pos, aop, one, nil, n.left)
 	gen.tfree(fd)
+	gen.tfree(fcb)
 	gen.popblock()
 }
 
@@ -2187,6 +2196,7 @@ func ascom(n ref types.Node) {
 		gen.popblock()
 		return
 	}
+	fcb := fixcallbase(n.left)
 	fd := fixdblind(n.left)
 	if n.right.op == types.Ocomposite {
 		storecompositezero(n.line, n.pos, n.left, n.right)
@@ -2194,6 +2204,7 @@ func ascom(n ref types.Node) {
 		ecom(n.line, n.pos, n.left, n.right)
 	}
 	gen.tfree(fd)
+	gen.tfree(fcb)
 	gen.popblock()
 }
 

@@ -1485,7 +1485,7 @@ destructure(Src *src, Node *lhs, Node *rhs)
 
 	fd = rhs->ty->ids;
 	for(p = lhs; p != nil; p = p->right){
-		Node *fixid;
+		Node *fixid, *fixcb;
 		Indxaddr ia;
 		int isindx;
 
@@ -1501,6 +1501,7 @@ destructure(Src *src, Node *lhs, Node *rhs)
 			/* "o.in.v, x = f()": id can be a chained-ref lvalue,
 			 * same write-side gap fixdblind()'s own comment
 			 * describes. */
+			fixcb = fixcallbase(id);
 			fixid = fixdblind(id);
 		adr = mkn(Oadr, dupn(&tuptemp), nil);
 		adr->src = id->src;
@@ -1521,6 +1522,7 @@ destructure(Src *src, Node *lhs, Node *rhs)
 		}else{
 			ecom(&id->src, id, ind);
 			tfree(fixid);
+			tfree(fixcb);
 		}
 		fd = fd->next;
 		if(p->op != Oseq)
@@ -3178,12 +3180,13 @@ casecom(Node *cn)
 static void
 indsstore(Src *src, Node *n)
 {
-	Node *left, *right, *v, *u, *fd;
+	Node *left, *right, *v, *u, *fd, *fcb;
 	Node tr, tv, tu, one;
 
 	tr.decl = tv.decl = tu.decl = nil;
 	left = n->left->left;
 	right = n->left->right;
+	fcb = fixcallbase(left);
 	fd = fixdblind(left);
 	if(left->addable >= Rcant)
 		fatal("indsstore: string not addressable");
@@ -3223,6 +3226,7 @@ indsstore(Src *src, Node *n)
 	tfree(&tv);
 	tfree(&tu);
 	tfree(fd);
+	tfree(fcb);
 }
 
 /*
@@ -3463,8 +3467,9 @@ scom(Node *n)
 				 * a destination, so this site needs the identical
 				 * fixup applied directly.
 				 */
-				Node *fd;
+				Node *fd, *fcb;
 
+				fcb = fixcallbase(n->left);
 				fd = fixdblind(n->left);
 				if(n->right->op == Ocomposite){
 					if(0 && compositexhaustive(n->right)){
@@ -3494,6 +3499,7 @@ scom(Node *n)
 				}else
 					ecom(&n->src, n->left, n->right);
 				tfree(fd);
+				tfree(fcb);
 			}
 			popblock();
 			return;
@@ -3578,8 +3584,9 @@ scom(Node *n)
 			{
 				/* "o.in.v += expr": see the Oas case's own comment
 				 * on fixdblind() -- the identical write-side gap. */
-				Node *fd;
+				Node *fd, *fcb;
 
+				fcb = fixcallbase(n->left);
 				fd = fixdblind(n->left);
 				e = n->left;
 				if(e->addable >= Rcant)
@@ -3597,6 +3604,7 @@ scom(Node *n)
 					tfree(&tr);
 				}
 				tfree(fd);
+				tfree(fcb);
 			}
 			popblock();
 			return;
@@ -3627,14 +3635,16 @@ scom(Node *n)
 			{
 				/* "o.in.v++": see the Oas case's own comment on
 				 * fixdblind() -- the identical write-side gap. */
-				Node *fd;
+				Node *fd, *fcb;
 
+				fcb = fixcallbase(n->left);
 				fd = fixdblind(n->left);
 				one = *mkconst(&n->src, 1);
 				one.ty = tint;
 				sumark(&one);
 				genop(&n->src, n->op == Oinc ? Oadd : Osub, &one, nil, n->left);
 				tfree(fd);
+				tfree(fcb);
 			}
 			popblock();
 			return;
