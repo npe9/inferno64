@@ -31,7 +31,7 @@ dev
 	vga	pci
 
 #	ata
-	audio		dma
+	audio
 	uart
 	sd
 #	floppy	dma
@@ -94,6 +94,8 @@ link
 	ether82598	pci
 	etheriwl	pci wifi
 	usbxhcipci	usbxhci
+	pmmc	pci
+	audiohda	pci
 
 misc
 	pci		pcipc
@@ -118,6 +120,7 @@ misc
 	sdvirtio	pci sdscsi
 	sdvirtio10	pci sdscsi virtio10pc
 	sdnvme	pci
+	sdmmc
 
 	vgasoft		=cur swcursor
 #	vga3dfx		+cur

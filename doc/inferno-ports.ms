@@ -18475,3 +18475,129 @@ arm64, rebuilt from nothing with the corrected
 .CW 7c ,
 still stops where it did, at the first module load: the wide
 constants were not what held it.
+.NH 2
+Item 5, done: 9front's SD subsystem, and SD cards on both boards
+.PP
+.CW os/inferno/port/devsd.c ,
+.CW sd.h
+and
+.CW sdscsi.c
+are 9front's now, with two adjustments: the qid macros widen through
+.CW u64
+for this kernel's 64-bit qid paths, and the device-table functions
+carry its
+.CW int -shaped
+signatures.  The
+.CW xxlegacy
+slot and the count-returning
+.CW rctl
+are gone, so
+.CW sdnvme.c
+and
+.CW sdvirtio10.c
+are 9front's verbatim again, and
+.CW os/inferno/pc/sdiahci.c
+and
+.CW sdvirtio.c
+are 9front's too; the board's own
+.CW os/inferno/virt/sdvirtiommio.c
+lost the slot from its table.  That brings the
+.CW SDio
+interface for MMC hosts, and with it
+.CW os/inferno/port/sdmmc.c
+(the card) and
+.CW pmmc.c
+(the PCI SDHCI host, moved from
+.CW pc
+to
+.CW port
+because it is memory-mapped and the riscv64 board wants it too).  Two
+things bit on the way and are worth a line each: this kernel's
+.CW include/pool.h
+makes
+.CW csize
+a macro, which turned a local variable in
+.CW sdmmc.c
+into a syntax error (renamed); and an MMC host registers itself from
+its
+.CW link()
+routine, so it goes in the config's
+.CW link
+section, not as a dependency in
+.CW sd ,
+where nothing ever calls it and the card driver sees no host.
+Verified with QEMU's
+.CW sdhci-pci
+and
+.CW sd-card
+on both
+.CW q35
+and riscv64 virt: the card appears as
+.CW sdM0
+and reads back the sector the host wrote; NVMe and the virtio disks
+still read theirs, on both boards, through the swapped
+.CW devsd .
+.CW sdata ,
+.CW sd53c8xx
+and
+.CW sdmylex
+under
+.CW os/inferno/pc
+still carry the old interface and are linked by no board.
+.NH 2
+Item 7, done: 9front's audio layer and HD audio
+.PP
+.CW os/inferno/port/devaudio.c
+and
+.CW audioif.h
+are 9front's (the
+.CW addaudiocard()
+registry,
+.CW /dev/audio ,
+.CW audioctl ,
+.CW audiostat
+and
+.CW volume
+per card) with the device-table signature adjustments, and
+.CW os/inferno/pc/audiohda.c
+is 9front's HD audio driver, whose only change is the
+.CW int -shaped
+read and write for its
+.CW hdacmd
+arch file.  Inferno's own
+.CW devaudio.c ,
+which wanted an
+.CW audio_pc
+back end no board had, is gone; the pc64 config's
+.CW audio
+device no longer names
+.CW dma .
+Verified on
+.CW q35
+with QEMU's
+.CW intel-hda
+and
+.CW hda-duplex :
+"#A0: hda mem febd4000 irq 11", "codec #0, vendor 1af40022",
+.CW audiostat
+and
+.CW volume
+read back (speed 44100, master 100 100), and a second of silence,
+176400 bytes, is accepted by
+.CW /dev/audio .
+What is not verified is anything above the kernel:
+.CW appl/lib/tone.b
+and the players write Inferno's own
+.CW audioctl
+syntax, and 9front's file takes a different one, so the Limbo side
+needs a look before sound comes out of a program.
+.PP
+One build gotcha from this round, on top of the tracked-root-list
+one: the
+.CW pc64dev
+test configuration is a copy of
+.CW pc64
+with a different init and has to be regenerated after any edit to
+.CW pc64 ,
+or its kernel silently lacks the newest driver, which is how the HD
+audio controller was "not found" for one run.

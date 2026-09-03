@@ -781,29 +781,17 @@ nvmepnp(void)
 	return h;
 }
 
-/*
- * This kernel's SDifc.rctl is int (*)(SDunit*, char*, int) and
- * returns the count written; 9front's takes an end pointer and
- * returns the new position.  Adapt rather than change every driver.
- */
-static int
-nvmerctlinf(SDunit *u, char *p, int l)
-{
-	return nvmerctl(u, p, p+l) - p;
-}
-
 SDifc sdnvmeifc = {
 	"nvme",				/* name */
 
 	nvmepnp,			/* pnp */
-	nil,				/* xxlegacy: this kernel's SDifc still has the slot */
 	nvmeenable,			/* enable */
 	nvmedisable,			/* disable */
 
 	nvmeverify,			/* verify */
 	nvmeonline,			/* online */
 	nvmerio,			/* rio */
-	nvmerctlinf,			/* rctl */
+	nvmerctl,			/* rctl */
 	nil,				/* wctl */
 
 	nvmebio,			/* bio */

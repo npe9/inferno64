@@ -5,6 +5,7 @@ typedef struct SDev SDev;
 typedef struct SDfile SDfile;
 typedef struct SDifc SDifc;
 typedef struct SDio SDio;
+typedef struct SDiocmd SDiocmd;
 typedef struct SDpart SDpart;
 typedef struct SDperm SDperm;
 typedef struct SDreq SDreq;
@@ -72,7 +73,7 @@ struct SDev {
 	int	enabled;
 	int	nunit;			/* Number of units */
 	QLock	unitlock;		/* `Loading' of units */
-	int*	unitflg;		/* Unit flags */
+	char*	unitflg;		/* Unit flags */
 	SDunit**unit;
 };
 
@@ -80,14 +81,13 @@ struct SDifc {
 	char*	name;
 
 	SDev*	(*pnp)(void);
-	SDev*	(*xxlegacy)(int, int);		/* unused.  remove me */
 	int	(*enable)(SDev*);
 	int	(*disable)(SDev*);
 
 	int	(*verify)(SDunit*);
 	int	(*online)(SDunit*);
 	int	(*rio)(SDreq*);
-	int	(*rctl)(SDunit*, char*, int);
+	char*	(*rctl)(SDunit*, char*, char*);
 	int	(*wctl)(SDunit*, Cmdbuf*);
 
 	long	(*bio)(SDunit*, int, int, void*, long, uvlong);
@@ -149,22 +149,62 @@ enum {
 #define sdmalloc(n)	mallocalign(n, BY2PG, 0, 0)
 #define sdfree(p)	free(p)
 
+
 /*
  * mmc/sd/sdio host controller interface
  */
 
-struct SDio {
+struct SDiocmd {
+	uchar	index;
+	uchar	resp;	/* 0 = none, 1 = R1, 2 = R2, 3 = R3 ... */
+	uchar	busy;
+	uchar	data;	/* 1 = read, 2 = write, 3 = multi read, 4 = multi write */
+
 	char	*name;
-	int	(*init)(void);
-	void	(*enable)(void);
-	int	(*inquiry)(char*, int);
-	int	(*cmd)(u32int, u32int, u32int*);
-	void	(*iosetup)(int, void*, int, int);
-	void	(*io)(int, uchar*, int);
-	char	highspeed;
 };
 
-extern SDio sdio;
+/* Commands */
+extern SDiocmd GO_IDLE_STATE;
+extern SDiocmd SEND_OP_COND;
+extern SDiocmd ALL_SEND_CID;
+extern SDiocmd SET_RELATIVE_ADDR;
+extern SDiocmd SEND_RELATIVE_ADDR;
+extern SDiocmd SWITCH;
+extern SDiocmd SWITCH_FUNC;
+extern SDiocmd SELECT_CARD;
+extern SDiocmd SEND_EXT_CSD;
+extern SDiocmd SD_SEND_IF_COND;
+extern SDiocmd SEND_CSD;
+extern SDiocmd STOP_TRANSMISSION;
+extern SDiocmd SEND_STATUS;
+extern SDiocmd SET_BLOCKLEN;
+extern SDiocmd READ_SINGLE_BLOCK;
+extern SDiocmd READ_MULTIPLE_BLOCK;
+extern SDiocmd WRITE_SINGLE_BLOCK;
+extern SDiocmd WRITE_MULTIPLE_BLOCK;
+
+/* prefix for following app-specific commands */
+extern SDiocmd APP_CMD;
+extern SDiocmd SD_SET_BUS_WIDTH;
+extern SDiocmd SD_SEND_OP_COND;
+
+struct SDio {
+	char	*name;
+	int	(*init)(SDio*);
+	void	(*enable)(SDio*);
+	int	(*inquiry)(SDio*, char*, int);
+	int	(*cmd)(SDio*, SDiocmd*, u32int, u32int*);
+	void	(*iosetup)(SDio*, int, void*, int, int);
+	void	(*io)(SDio*, int, uchar*, int);
+	void	(*bus)(SDio*, int, int);
+	void	(*led)(SDio*, int);
+	int	(*cardintr)(SDio*, int);
+	char	nomultiwrite;	/* quirk for usdhc */
+	void	*aux;
+};
+
+extern void addmmcio(SDio *io);
+extern SDio* annexsdio(char*);
 
 /* devsd.c */
 extern void sdadddevs(SDev*);
@@ -172,6 +212,7 @@ extern int sdsetsense(SDreq*, int, int, int, int);
 extern int sdfakescsi(SDreq*);
 extern int sdfakescsirw(SDreq*, uvlong*, int*, int*);
 extern int sdaddfile(SDunit*, char*, int, char*, SDrw*, SDrw*);
+extern void* sdannexctlr(char*, SDifc*);
 
 /* sdscsi.c */
 extern int scsiverify(SDunit*);

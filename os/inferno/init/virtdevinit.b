@@ -67,7 +67,7 @@ init()
 
 	# storage: the first sector of the NVMe and virtio 1.0 disks,
 	# which the host wrote a recognisable line into before boot
-	for(l := "/dev/sdN0/data" :: "/dev/sdF0/data" :: nil; l != nil; l = tl l){
+	for(l := "/dev/sdN0/data" :: "/dev/sdF0/data" :: "/dev/sdM0/data" :: nil; l != nil; l = tl l){
 		dfd := sys->open(hd l, Sys->OREAD);
 		if(dfd == nil){
 			sys->print("DEVTEST: %s: cannot open: %r\n", hd l);

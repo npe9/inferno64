@@ -87,6 +87,8 @@ extern void etheryuklink(void);
 extern void ether82598link(void);
 extern void etheriwllink(void);
 extern void usbxhcipcilink(void);
+extern void pmmclink(void);
+extern void audiohdalink(void);
 void links(void){
 	ethermediumlink();
 	netdevmediumlink();
@@ -103,6 +105,8 @@ void links(void){
 	ether82598link();
 	etheriwllink();
 	usbxhcipcilink();
+	pmmclink();
+	audiohdalink();
 }
 
 extern void sysmodinit(void);
@@ -129,11 +133,13 @@ extern SDifc sdiahciifc;
 extern SDifc sdvirtioifc;
 extern SDifc sdvirtio10ifc;
 extern SDifc sdnvmeifc;
+extern SDifc sdmmcifc;
 SDifc* sdifc[] = {
 	&sdiahciifc,
 	&sdvirtioifc,
 	&sdvirtio10ifc,
 	&sdnvmeifc,
+	&sdmmcifc,
 	nil,
 };
 

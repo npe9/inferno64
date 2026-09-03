@@ -65,7 +65,7 @@ init()
 
 	# storage: the first sector of the NVMe and virtio 1.0 disks,
 	# which the host wrote a recognisable line into before boot
-	for(l := "/dev/sdN0/data" :: "/dev/sdF0/data" :: nil; l != nil; l = tl l){
+	for(l := "/dev/sdN0/data" :: "/dev/sdF0/data" :: "/dev/sdM0/data" :: nil; l != nil; l = tl l){
 		dfd := sys->open(hd l, Sys->OREAD);
 		if(dfd == nil){
 			sys->print("DEVTEST: %s: cannot open: %r\n", hd l);
@@ -77,6 +77,23 @@ init()
 		while(e < n && sec[e] != byte 0 && sec[e] != byte '\n')
 			e++;
 		sys->print("DEVTEST: %s sector 0 (%d bytes): %s\n", hd l, n, string sec[0:e]);
+	}
+
+	# audio: the codec's status, then a second of silence written to it
+	sys->bind("#A", "/dev", Sys->MAFTER);
+	sys->print("DEVTEST: /dev/audiostat:\n%s", readfile("/dev/audiostat"));
+	sys->print("DEVTEST: /dev/volume:\n%s", readfile("/dev/volume"));
+	afd := sys->open("/dev/audio", Sys->OWRITE);
+	if(afd == nil)
+		sys->print("DEVTEST: /dev/audio: cannot open: %r\n");
+	else {
+		silence := array[44100*4] of { * => byte 0 };
+		nw := sys->write(afd, silence, len silence);
+		if(nw < 0)
+			sys->print("DEVTEST: /dev/audio write: %r\n");
+		else
+			sys->print("DEVTEST: /dev/audio: wrote %d bytes of silence\n", nw);
+		afd = nil;
 	}
 
 	# usb: the controller and root hub list

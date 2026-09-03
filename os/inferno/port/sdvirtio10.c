@@ -721,7 +721,6 @@ SDifc sdvirtio10ifc = {
 	"virtio10",			/* name */
 
 	viopnp,				/* pnp */
-	nil,				/* xxlegacy: this kernel's SDifc still has the slot */
 	vioenable,			/* enable */
 	viodisable,			/* disable */
 

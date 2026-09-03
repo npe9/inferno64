@@ -53,6 +53,7 @@ Dev* devtab[26]={
 extern void ethervirtiommiolink(void);
 extern void ethervirtio10link(void);
 extern void usbxhcipcilink(void);
+extern void pmmclink(void);
 extern void ethermediumlink(void);
 extern void loopbackmediumlink(void);
 extern void inputvirtiommiolink(void);
@@ -61,6 +62,7 @@ void links(void){
 	ethervirtiommiolink();
 	ethervirtio10link();
 	usbxhcipcilink();
+	pmmclink();
 	ethermediumlink();
 	loopbackmediumlink();
 	inputvirtiommiolink();
@@ -86,10 +88,12 @@ void modinit(void){
 extern SDifc sdvirtiommioifc;
 extern SDifc sdvirtio10ifc;
 extern SDifc sdnvmeifc;
+extern SDifc sdmmcifc;
 SDifc* sdifc[] = {
 	&sdvirtiommioifc,
 	&sdvirtio10ifc,
 	&sdnvmeifc,
+	&sdmmcifc,
 	nil,
 };
 

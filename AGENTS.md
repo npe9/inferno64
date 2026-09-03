@@ -147,7 +147,13 @@
   whose released Prog had already left raised Eintr in vmachine's
   idle sleep with no current Prog and faulted in propex(); vmachine
   now ignores that stray interrupt.  riscv64 reaches its interactive
-  shell 2 of 2 after it.  Decide, build
+  shell 2 of 2 after it.  The arm64 half of the wide-constant bug is
+  fixed too (utils/7c/reg.c typed hoisted constants as long); the
+  board rebuilt from scratch still stops at its first module load.
+  Items 5 and 6 done: 9front's devsd/sd.h/sdscsi, sdiahci, sdvirtio,
+  sdmmc and pmmc (SD cards verified on q35 and riscv64), and 9front's
+  ethermii with ether8169/82563/igbe/i225 (e1000 and e1000e get
+  leases; igb never sees link, open).  Decide, build
   it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.

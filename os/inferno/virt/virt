@@ -54,6 +54,7 @@ link
 	ethervirtiommio
 	ethervirtio10	pci
 	usbxhcipci	usbxhci
+	pmmc	pci
 	ethermedium
 	loopbackmedium
 	inputvirtiommio
@@ -104,6 +105,7 @@ misc
 	sdvirtiommio	sdscsi
 	sdvirtio10	pci sdscsi virtio10mem
 	sdnvme	pci
+	sdmmc
 	pci	pciecam
 	uartvirt
 

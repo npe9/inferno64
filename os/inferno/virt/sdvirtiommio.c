@@ -570,7 +570,6 @@ viopnp(void)
 SDifc sdvirtiommioifc = {
 	"virtiommio",
 	viopnp,
-	nil,
 	vioenable,
 	viodisable,
 	vioverify,

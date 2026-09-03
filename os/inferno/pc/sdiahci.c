@@ -23,6 +23,7 @@
 #define	ledprint(...)	if(dled)	print(__VA_ARGS__); else USED(dled)
 #define Tname(c)	tname[(c)->type]
 #define	Ticks		MACHP(0)->ticks
+/* MS2TK: this kernel's ../port/portfns.h already defines it */
 
 enum {
 	NCtlr	= 4,
@@ -169,7 +170,6 @@ struct Ctlr {
 };
 
 static	Ctlr	iactlr[NCtlr];
-static	SDev	sdevs[NCtlr];
 static	int	niactlr;
 
 static	Drive	*iadrive[NDrive];
@@ -995,7 +995,7 @@ newdrive(Drive *d)
 	s = "";
 	if(m->feat & Dllba)
 		s = "L";
-	idprint("%s: %sLBA %,llud sectors\n", dnam(d), s, d->sectors);
+	idprint("%s: %sLBA %,lld sectors\n", dnam(d), s, d->sectors);
 	idprint("  %s %s %s %s\n", d->model, d->firmware, d->serial,
 		d->drivechange? "[newdrive]": "");
 	return 0;
@@ -1294,7 +1294,7 @@ ledstate(Ledport *p, uint seq)
 		i = led2[8*p->led + seq%8];
 	if(i != p->ledbits){
 		p->ledbits = i;
-		ledprint("ledstate %,.011ud %ud\n", p->ledbits, seq);
+		ledprint("ledstate %,.011ub %ud\n", p->ledbits, seq);
 		return 1;
 	}
 	return 0;
@@ -1565,9 +1565,9 @@ iaenable(SDev *s)
 	iunlock(c);
 
 	if(once == 0)
-		kproc("iasata", satakproc, nil, 0);
+		kproc("iasata", satakproc, 0, 0);
 	if(++once == niactlr)
-		kproc("ialed", ledkproc, nil, 0);
+		kproc("ialed", ledkproc, 0, 0);
 
 	return 1;
 }
@@ -2179,9 +2179,13 @@ iapnp(void)
 			break;
 		}
 		c = iactlr + niactlr;
-		s = sdevs + niactlr;
-		memset(c, 0, sizeof *c);
+		s = malloc(sizeof(SDev));
+		if(s == nil){
+			print("iapnp: %s: can't allocate SDev\n", tname[type]);
+			break;
+		}
 		memset(s, 0, sizeof *s);
+		memset(c, 0, sizeof *c);
 		c->mmio = vmap(io, p->mem[Abar].size);
 		if(c->mmio == nil){
 			print("%s: can't map %llux\n", Tname(c), io);
@@ -2281,21 +2285,19 @@ capfmt(char *p, char *e, Htab *t, int n, ulong cap)
 	return p;
 }
 
-static int
-iarctl(SDunit *u, char *p, int l)
+static char*
+iarctl(SDunit *u, char *p, char *e)
 {
-	char buf[32], *e, *op;
+	char buf[32];
 	Aport *o;
 	Ctlr *c;
 	Drive *d;
 
 	if((c = u->dev->ctlr) == nil)
-		return 0;
+		return p;
 	d = c->drive[u->subno];
 	o = d->port;
 
-	e = p+l;
-	op = p;
 	if(d->state == Dready){
 		p = seprint(p, e, "model\t%s\n", d->model);
 		p = seprint(p, e, "serial\t%s\n", d->serial);
@@ -2319,7 +2321,7 @@ iarctl(SDunit *u, char *p, int l)
 	p = seprint(p, e, "alignment %d %d\n", 
 		d->secsize<<d->portm.physshift, d->portm.physalign);
 	p = seprint(p, e, "missirq\t%ud\n", c->missirq);
-	return p - op;
+	return p;
 }
 
 static void
@@ -2485,7 +2487,6 @@ iawtopctl(SDev *, Cmdbuf *cmd)
 	char **f;
 
 	f = cmd->f;
-	v = 0;
 
 	if(strcmp(f[0], "debug") == 0)
 		v = &debug;
@@ -2518,7 +2519,6 @@ SDifc sdiahciifc = {
 	"ahci",
 
 	iapnp,
-	nil,		/* legacy */
 	iaenable,
 	iadisable,
 
