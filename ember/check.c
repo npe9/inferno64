@@ -3216,7 +3216,7 @@ echk1(Node *n)
 			Decl *tmpl;
 
 			tmpl = modtemplate(n->left->left);
-			lookup(n->left->left->left->sym)->refs++;
+			/* no alias reference: the code is ours, the module need not load */
 			n->left->left->op = Oname;
 			n->left->left->sym = tmpl->sym;
 			n->left->left->decl = tmpl;
@@ -3228,7 +3228,6 @@ echk1(Node *n)
 			Decl *tmpl;
 
 			tmpl = modtemplate(n->left);
-			lookup(n->left->left->sym)->refs++;
 			n->left->op = Oname;
 			n->left->sym = tmpl->sym;
 			n->left->decl = tmpl;

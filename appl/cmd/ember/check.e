@@ -2178,7 +2178,7 @@ func chkcall(n ref types.Node) ref types.Type {
 	if (n.left.op == types.Otinst || n.left.op == types.Oindex) && n.left.left.op == types.Odot && modtemplate(n.left.left) != nil {
 		// alias.f[T](args): a template from the interface (check.c)
 		tmpl := modtemplate(n.left.left)
-		lookup(n.left.left.left.sym).refs++
+		// no alias reference: the code is ours, the module need not load
 		n.left.left.op = types.Oname
 		n.left.left.sym = tmpl.sym
 		n.left.left.decl = tmpl
@@ -2188,7 +2188,6 @@ func chkcall(n ref types.Node) ref types.Type {
 	if n.left.op == types.Odot && modtemplate(n.left) != nil {
 		// alias.f(args): the same, with the type arguments inferred
 		tmpl := modtemplate(n.left)
-		lookup(n.left.left.sym).refs++
 		n.left.op = types.Oname
 		n.left.sym = tmpl.sym
 		n.left.decl = tmpl

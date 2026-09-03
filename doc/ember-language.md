@@ -362,6 +362,10 @@ to the plain ones go through the alias); anything it uses from
 another module, such as `sys`, must be imported by the user too.
 Generic methods and generic types cannot be declared in an
 interface. `tests/type/libgen.ei` and `usegen.e` show the pattern.
+A template call does not reference the module, so an interface made
+only of templates is a header-only library needing no `.dis` at
+all: `module/lists.ei` (`lists.mapl`, `lists.filter`, `lists.foldl`,
+`lists.sorta`, ...) is one, used by `tests/type/uselists.e`.
 When the module's own interface is found, its functions and methods
 are checked the same way: one the module does not define, or defines
 with a different signature, is a compile error (generic functions
