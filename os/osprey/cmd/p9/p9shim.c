@@ -232,7 +232,18 @@ openmode(ulong o)
  * usable size, so msize and realloc work; realloc always allocates
  * fresh and copies, since the bump arena cannot grow a block in place.
  */
-static char	arena[1024*1024];
+/*
+ * The personality's allocator: a bump arena that never reuses, so freshly
+ * handed-out memory is still the zero the BSS arena started as (newpgrp and
+ * the name space rely on that).  Because nothing is freed, the arena is a
+ * high-water mark: it must hold every allocation the run ever makes at once.
+ * Two independent IP stacks (two devip Fs) plus their per-packet Blocks
+ * overran the old 1MB and corrupted memory when malloc then returned nil to
+ * callers that did not check; 16MB gives comfortable headroom.  A reclaiming
+ * allocator (or at least a Block free list, since allocb re-zeroes) is the
+ * real fix for long-running or heavy workloads.
+ */
+static char	arena[16*1024*1024];
 static ulong	arenap;
 enum { AHDR = 16 };
 void*
@@ -240,8 +251,11 @@ malloc(ulong n)
 {
 	char *p;
 	n = (n + 15) & ~15UL;
-	if(arenap + AHDR + n > sizeof arena)
+	if(arenap + AHDR + n > sizeof arena){
+		static int warned;
+		if(!warned){ warned = 1; print("p9: malloc arena exhausted (%lud of %lud used) - enlarge arena[] in p9shim.c\n", arenap, (ulong)sizeof arena); }
 		return nil;
+	}
 	p = arena + arenap;
 	arenap += AHDR + n;
 	*(ulong*)p = n;
