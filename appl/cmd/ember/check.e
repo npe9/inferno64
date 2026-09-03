@@ -423,9 +423,9 @@ func tinstantiate(n ref types.Node) ref types.Type {
 	}
 	// a template from an interface: its module's names for the body
 	frommod := 0
-	if td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+	if tmplmodule(td) != nil {
 		frommod = 1
-		pushmodscope(td.dot)
+		pushmodscope(tmplmodule(td))
 	}
 	body := stype(tt.tbody)
 	if inst != nil && body != terror {
@@ -437,7 +437,7 @@ func tinstantiate(n ref types.Node) ref types.Type {
 		}
 	}
 	if frommod != 0 {
-		popmodscope(td.dot)
+		popmodscope(tmplmodule(td))
 	}
 	if inst != nil && body == terror {
 		popscope()
@@ -497,15 +497,15 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 	tn := dupntree(td.init)
 	// a template from an interface: its module's names for the signature
 	sigmod := 0
-	if td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+	if tmplmodule(td) != nil {
 		sigmod = 1
-		pushmodscope(td.dot)
+		pushmodscope(tmplmodule(td))
 	}
 	rawfn = 1
 	ft := stype(tn.right)
 	rawfn = 0
 	if sigmod != 0 {
-		popmodscope(td.dot)
+		popmodscope(tmplmodule(td))
 	}
 	if recvarg != nil {
 		recvarg.next = ft.ids
@@ -529,13 +529,13 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 	savedcurfn := curfn
 	savedcurret := curret
 	frommod := 0
-	if td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+	if tmplmodule(td) != nil {
 		frommod = 1
-		pushmodscope(td.dot)
+		pushmodscope(tmplmodule(td))
 	}
 	fnchk(fnd)
 	if frommod != 0 {
-		popmodscope(td.dot)
+		popmodscope(tmplmodule(td))
 	}
 	curfn = savedcurfn
 	curret = savedcurret
@@ -920,13 +920,13 @@ func inferfn(n ref types.Node) ref types.Decl {
 		}
 	}
 	frommod := 0
-	if td != nil && td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+	if td != nil && tmplmodule(td) != nil {
 		frommod = 1
-		pushmodscope(td.dot)
+		pushmodscope(tmplmodule(td))
 	}
 	r := inferfn1(n)
 	if frommod != 0 {
-		popmodscope(td.dot)
+		popmodscope(tmplmodule(td))
 	}
 	return r
 }
@@ -1330,6 +1330,19 @@ func modtemplate(dot ref types.Node) ref types.Decl {
 		return nil
 	}
 	return id
+}
+
+// the interface module a template came from, or nil for a local
+// one (a method template's dot is its type template) (check.c)
+func tmplmodule(td ref types.Decl) ref types.Decl {
+	m := td.dot
+	if m != nil && m.store == types.Dtype && m.ty != nil && m.ty.kind != types.Tmodule {
+		m = m.dot
+	}
+	if m == nil || m == impdecl || m.ty == nil || m.ty.kind != types.Tmodule {
+		return nil
+	}
+	return m
 }
 
 // the import alias for a module's own declaration

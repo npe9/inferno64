@@ -7,7 +7,7 @@ import lists "lists"
 
 // the header-only generic hash map module/maps.ei: a self-referencing
 // generic struct (Entry) and a struct of closures (Map), instantiated
-// here for string and int keys; no maps.dis is loaded
+// here for string and int keys with its methods; no maps.dis is loaded
 
 func strhash(s string) int {
 	h := 0
@@ -33,19 +33,19 @@ func init(ctxt ref draw.Context, argv list string) {
 	m := maps.newmap[string, int](4, strhash, streq)
 	words := [7]string{"apple", "pear", "fig", "plum", "kiwi", "lime", "date"}
 	for i := 0; i < len(words); i++ {
-		maps.put(m, words[i], len(words[i]))
+		m.put(words[i], len(words[i]))
 	}
-	maps.put(m, "fig", 30)
-	sys.print("%d %d %d\n", maps.size(m), maps.find(m, "fig").val, maps.find(m, "nope") == nil)
-	sys.print("%d %d\n", maps.del(m, "pear"), maps.del(m, "pear"))
-	ks := lists.sorta(lists.toarray(maps.keys(m)), func(a string, b string) int { return a < b })
+	m.put("fig", 30)
+	sys.print("%d %d %d\n", m.size(), m.find("fig").val, m.find("nope") == nil)
+	sys.print("%d %d\n", m.del("pear"), m.del("pear"))
+	ks := lists.sorta(lists.toarray(m.keys()), func(a string, b string) int { return a < b })
 	for i := 0; i < len(ks); i++ {
 		sys.print("%s ", ks[i])
 	}
 	sys.print("\n")
 	c := maps.newmap[int, string](1, inthash, inteq)
 	for i := 0; i < 50; i++ {
-		maps.put(c, i * 7, sys.sprint("v%d", i))
+		c.put(i * 7, sys.sprint("v%d", i))
 	}
-	sys.print("%d %s %s %d\n", maps.size(c), maps.find(c, 0).val, maps.find(c, 49 * 7).val, len(c.buckets))
+	sys.print("%d %s %s %d\n", c.size(), c.find(0).val, c.find(49 * 7).val, len(c.buckets))
 }

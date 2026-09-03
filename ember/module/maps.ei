@@ -4,6 +4,7 @@ module Maps
 // template instantiated into the importing module, so there is no
 // maps.dis.  the key's hash and equality are closures given to
 // newmap; the importer supplies them (see tests/type/usemaps.e).
+// the methods are templates on the type, instantiated with it.
 
 const PATH = "/dis/lib/maps.dis"
 
@@ -27,7 +28,7 @@ func newmap[K, V](nbuckets int, hash func(K) int, eq func(K, K) int) ref Map[K, 
 	return ref Map[K, V]{buckets: [nbuckets]ref Entry[K, V], n: 0, hash: hash, eq: eq}
 }
 
-func bucket[K, V](m ref Map[K, V], k K) int {
+func (m ref Map[K, V]) bucket(k K) int {
 	h := m.hash(k) % len(m.buckets)
 	if h < 0 {
 		h = -h
@@ -35,8 +36,8 @@ func bucket[K, V](m ref Map[K, V], k K) int {
 	return h
 }
 
-func find[K, V](m ref Map[K, V], k K) ref Entry[K, V] {
-	for e := m.buckets[bucket(m, k)]; e != nil; e = e.next {
+func (m ref Map[K, V]) find(k K) ref Entry[K, V] {
+	for e := m.buckets[m.bucket(k)]; e != nil; e = e.next {
 		if m.eq(e.key, k) != 0 {
 			return e
 		}
@@ -44,33 +45,33 @@ func find[K, V](m ref Map[K, V], k K) ref Entry[K, V] {
 	return nil
 }
 
-func put[K, V](m ref Map[K, V], k K, v V) {
-	e := find(m, k)
+func (m ref Map[K, V]) put(k K, v V) {
+	e := m.find(k)
 	if e != nil {
 		e.val = v
 		return
 	}
-	b := bucket(m, k)
+	b := m.bucket(k)
 	m.buckets[b] = ref Entry[K, V]{key: k, val: v, next: m.buckets[b]}
 	m.n++
 	if m.n > 2 * len(m.buckets) {
-		grow(m)
+		m.grow()
 	}
 }
 
-func grow[K, V](m ref Map[K, V]) {
+func (m ref Map[K, V]) grow() {
 	old := m.buckets
 	m.buckets = [2 * len(old)]ref Entry[K, V]
 	for i := 0; i < len(old); i++ {
 		for e := old[i]; e != nil; e = e.next {
-			b := bucket(m, e.key)
+			b := m.bucket(e.key)
 			m.buckets[b] = ref Entry[K, V]{key: e.key, val: e.val, next: m.buckets[b]}
 		}
 	}
 }
 
-func del[K, V](m ref Map[K, V], k K) int {
-	b := bucket(m, k)
+func (m ref Map[K, V]) del(k K) int {
+	b := m.bucket(k)
 	var prev ref Entry[K, V]
 	for e := m.buckets[b]; e != nil; e = e.next {
 		if m.eq(e.key, k) != 0 {
@@ -87,11 +88,11 @@ func del[K, V](m ref Map[K, V], k K) int {
 	return 0
 }
 
-func size[K, V](m ref Map[K, V]) int {
+func (m ref Map[K, V]) size() int {
 	return m.n
 }
 
-func keys[K, V](m ref Map[K, V]) list K {
+func (m ref Map[K, V]) keys() list K {
 	var l list K
 	for i := len(m.buckets) - 1; i >= 0; i-- {
 		for e := m.buckets[i]; e != nil; e = e.next {

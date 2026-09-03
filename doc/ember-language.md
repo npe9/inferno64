@@ -362,15 +362,17 @@ to the plain ones go through the alias); anything it uses from
 another module, such as `sys`, must be imported by the user too.
 A generic struct or pick declared in an interface is a template the
 same way: `gen.Pair[int, string]{a: 1, b: "one"}`, `var r
-gen.Pair[string, int]`, `case gen.Opt[int].Some(v):`. Generic methods
-cannot be declared in an interface. `tests/type/libgen.ei` and
-`usegen.e` show the pattern.
+gen.Pair[string, int]`, `case gen.Opt[int].Some(v):`, and so is a
+method of such a type (`func (m ref Map[K, V]) put(k K, v V) {...}`),
+instantiated with the type: `m.put(k, v)`. A method with type
+parameters of its own cannot be declared anywhere. `tests/type/libgen.ei`
+and `usegen.e` show the pattern.
 A template call does not reference the module, so an interface made
 only of templates is a header-only library needing no `.dis` at
 all: `module/lists.ei` (`lists.mapl`, `lists.filter`, `lists.foldl`,
 `lists.sorta`, ...) is one, used by `tests/type/uselists.e`, and
 `module/maps.ei` is a generic hash map (`maps.newmap[string, int](n,
-hash, eq)`, `maps.put`, `maps.find`, `maps.del`, `maps.keys`) whose
+hash, eq)`, then `m.put`, `m.find`, `m.del`, `m.keys`) whose
 key hashing and equality are closures the importer supplies
 (`tests/type/usemaps.e`).
 When the module's own interface is found, its functions and methods

@@ -381,6 +381,11 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 			td.sym = decl.left.sym
 			td.ty = types.mktype(decl.line, decl.pos, types.Tadt, nil, nil)
 			td.ty.decl = td
+			if decl.aux != nil {
+				// a generic type: a template from here on
+				td.ty.tparams = decl.aux
+				td.ty.tbody = decl.right
+			}
 			installmember(mod, td)
 		}
 		if n.op != types.Oseq {
@@ -487,6 +492,36 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				}
 			}
 		case types.Ofndecl:
+			if decl.left.op == types.Omethod && (decl.right == nil || decl.right.aux == nil) {
+				rty := decl.left.left.right
+				if rty.op == types.Otref {
+					rty = rty.right
+				}
+				if rty.op == types.Otinst || rty.op == types.Oindex {
+					// a generic type's method with its body: a template
+					// on the type template (iface.c)
+					if decl.aux == nil {
+						error(decl.line, sys.sprint("method %s of a generic type in an interface needs its body: it is instantiated in each importer", decl.left.right.sym))
+						break
+					}
+					var btd ref types.Decl
+					if rty.left.op == types.Oname {
+						btd = findtype(mod, rty.left.sym)
+					}
+					if btd == nil || btd.ty == nil || btd.ty.tparams == nil {
+						error(decl.line, sys.sprint("receiver of %s is not a generic type of this interface", decl.left.right.sym))
+						break
+					}
+					d := types.mkdecl(decl.line, decl.pos, types.Dfn, nil)
+					d.sym = decl.left.right.sym
+					d.init = decl
+					d.tparams = rty.right
+					d.dot = btd
+					d.link = btd.ty.methtmpl
+					btd.ty.methtmpl = d
+					break
+				}
+			}
 			if decl.right != nil && decl.right.aux != nil {
 				// a generic function with its body: a template every
 				// importer instantiates for itself (iface.c)

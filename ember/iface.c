@@ -394,6 +394,11 @@ bindiface(Decl *mod, Node *tree)
 			td->sym = decl->left->sym;
 			td->ty = mktype(&decl->src, Tadt, nil, nil);
 			td->ty->decl = td;
+			if(decl->aux != nil){
+				/* a generic type: known as a template from here on (a method may precede it) */
+				td->ty->tparams = decl->aux;
+				td->ty->tbody = decl->right;
+			}
 			installmember(mod, td);
 		}
 		if(n->op != Oseq)
@@ -529,6 +534,44 @@ bindiface(Decl *mod, Node *tree)
 			}
 			break;
 		case Ofndecl:
+			if(decl->left->op == Omethod && (decl->right == nil || decl->right->aux == nil)){
+				Node *rty;
+
+				rty = decl->left->left->right;
+				if(rty->op == Otref)
+					rty = rty->right;
+				if(rty->op == Otinst || rty->op == Oindex){
+					/*
+					 * a generic type's method, with its body: a
+					 * template hung on the type template (methtmpl),
+					 * instantiated with the type in each importer
+					 * (check.c's tinstantiatemeth())
+					 */
+					Decl *btd;
+
+					if(decl->aux == nil){
+						error(decl->src.start, "method %s of a generic type in an interface needs its body: it is instantiated in each importer",
+							decl->left->right->sym->name);
+						break;
+					}
+					btd = nil;
+					if(rty->left->op == Oname)
+						btd = findtype(mod, rty->left->sym);
+					if(btd == nil || btd->ty == nil || btd->ty->tparams == nil){
+						error(decl->src.start, "receiver of %s is not a generic type of this interface",
+							decl->left->right->sym->name);
+						break;
+					}
+					d = mkdecl(&decl->src, Dfn, nil);
+					d->sym = decl->left->right->sym;
+					d->init = decl;
+					d->tparams = rty->right;
+					d->dot = btd;
+					d->link = btd->ty->methtmpl;
+					btd->ty->methtmpl = d;
+					break;
+				}
+			}
 			if(decl->right != nil && decl->right->aux != nil){
 				/*
 				 * a generic function, with its body: a template

@@ -55,6 +55,7 @@ static	Decl	*modtemplate(Node*);
 static	Decl	*modmember(Type*, Sym*);
 static	int	ismodvar(Decl*);
 static	Decl	*modalias(Decl*);
+static	Decl	*tmplmodule(Decl*);
 static	void	pushmodscope(Decl*);
 static	void	popmodscope(Decl*);
 static	void	unifytparam(Node*, Type*, Decl*, Type**);
@@ -369,9 +370,9 @@ tinstantiate(Node *n)
 		int frommod;
 
 		/* a template from an interface: its module's names for the body */
-		frommod = td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule;
+		frommod = tmplmodule(td) != nil;
 		if(frommod)
-			pushmodscope(td->dot);
+			pushmodscope(tmplmodule(td));
 		body = stype(tt->tbody);
 		if(inst != nil && body != terror){
 			*inst = *body;
@@ -381,7 +382,7 @@ tinstantiate(Node *n)
 				picktags(tt->tbody, inst, id);
 		}
 		if(frommod)
-			popmodscope(td->dot);
+			popmodscope(tmplmodule(td));
 	}
 	if(inst != nil && body == terror){
 		popscope();
@@ -514,13 +515,13 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 		 */
 		tn = dupntree(td->init);
 		/* a template from an interface: its module's names for the signature */
-		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
-			pushmodscope(td->dot);
+		if(tmplmodule(td) != nil)
+			pushmodscope(tmplmodule(td));
 		rawfn = 1;
 		ft = stype(tn->right);
 		rawfn = 0;
-		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
-			popmodscope(td->dot);
+		if(tmplmodule(td) != nil)
+			popmodscope(tmplmodule(td));
 		if(recvarg != nil){
 			/*
 			 * a generic method's receiver, prepended to the checked
@@ -577,11 +578,11 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 
 		savedcurfn = curfn;
 		savedcurret = curret;
-		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
-			pushmodscope(td->dot);
+		if(tmplmodule(td) != nil)
+			pushmodscope(tmplmodule(td));
 		fnchk(fnd);
-		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
-			popmodscope(td->dot);
+		if(tmplmodule(td) != nil)
+			popmodscope(tmplmodule(td));
 		curfn = savedcurfn;
 		curret = savedcurret;
 		fnd->checked = 1;
@@ -1446,12 +1447,12 @@ inferfn(Node *n)
 		if(td == nil)
 			td = lookup(n->left->sym);
 	}
-	frommod = td != nil && td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule;
+	frommod = td != nil && tmplmodule(td) != nil;
 	if(frommod)
-		pushmodscope(td->dot);
+		pushmodscope(tmplmodule(td));
 	r = inferfn1(n);
 	if(frommod)
-		popmodscope(td->dot);
+		popmodscope(tmplmodule(td));
 	return r;
 }
 
@@ -2151,6 +2152,24 @@ modtemplate(Node *dot)
 	if(id == nil || id->store != Dfn || id->tparams == nil)
 		return nil;
 	return id;
+}
+
+/*
+ * the interface module a template came from, or nil for a local one:
+ * a function template's dot is the module, a generic type's method
+ * template's dot is the type template, whose dot is the module
+ */
+static Decl*
+tmplmodule(Decl *td)
+{
+	Decl *m;
+
+	m = td->dot;
+	if(m != nil && m->store == Dtype && m->ty != nil && m->ty->kind != Tmodule)
+		m = m->dot;
+	if(m == nil || m == impdecl || m->ty == nil || m->ty->kind != Tmodule)
+		return nil;
+	return m;
 }
 
 /* the import alias for a module's own declaration */
