@@ -30,15 +30,36 @@ def main():
                    env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9pair')),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9pair-', suffix='.log')
+    # a raw disk image for the user-level block driver: sector 0 says who wrote it,
+    # sector 1 is what the driver writes; no -snapshot, so the write must reach it
+    img = tempfile.mktemp(prefix='osprey-p9pair-blk-', suffix='.img')
+    d = bytearray(64 * 512)
+    stamp = b'osprey block device test image, sector 0 written by the host'
+    d[:len(stamp)] = stamp
+    open(img, 'wb').write(d)
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
-                    '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
+                    '-l', log, '--blk', img,
                     '-t', '150', '-u', 'the microkernel idles'],
                    env=env, capture_output=True, text=True)
+    try: sector1 = open(img, 'rb').read()[512:1024]
+    except OSError: sector1 = b''
+    try: os.unlink(img)
+    except OSError: pass
     try: t = plain(open(log, errors='replace').read())
     except OSError: t = ''
 
     m = re.search(r"pair-client: read (\d+) entries from the server personality's exported root", t)
     results = [
+        ("the kernel exposes the virtio block device's registers and interrupt to the server personality, and nothing more",
+         'osprey blk: exposed virtio block device' in t and 'as "virtioblk"' in t),
+        ("a driver above the kernel brings the device up and reads sector 0, the host's text",
+         '64 sectors, queue at pa' in t
+         and 'blk: read sector 0: status 0, text "osprey block device test image, sector 0 written by the host"' in t),
+        ("it writes sector 1 and reads it back, each completion taken by select on the interrupt's semaphore",
+         'blk: write sector 1: status 0' in t and 'blk: read sector 1 back: status 0, text "osprey wrote sector 1 from user space"' in t
+         and re.search(r'blk: 3 requests, [1-9]\d* completions taken by select', t) is not None),
+        ("and the write reached the disk: the host reads the stamp back from the image after the run",
+         sector1.startswith(b'osprey wrote sector 1 from user space')),
         ("the microkernel runs a client personality that mounts a second personality over the ring",
          'pair-client: mounting the server personality over the ring' in t),
         ("and a second personality, a container of its own, answers 9P about its name space",

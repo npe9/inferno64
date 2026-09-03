@@ -89,3 +89,35 @@ enum {
 };
 
 #endif
+
+/*
+ * A block device exposed to a container: the exokernel way, as the
+ * frame buffer and the input rings are.  The kernel finds a virtio 1.0
+ * block device, publishes the BAR its registers live in as the physical
+ * segment "virtioblk", and writes this descriptor at Ospreyblkoff in the
+ * container's data area: where in that BAR the common configuration,
+ * the notify region, the interrupt status and the device configuration
+ * are (the four virtio-pci capabilities), the notify multiplier, the
+ * physical address of the container's own slice (so a driver can give
+ * the device the address of a ring or a buffer it keeps there), and the
+ * semaphore the device's interrupt gives.  A driver above the kernel
+ * does the rest: reset, features, a queue at Ospreyblkring in its data
+ * area, requests, and a select on the semaphore for each completion.
+ */
+enum {
+	Ospreyblkmagic	= 0x4f53424c4bULL,	/* "OSBLK" */
+	Ospreyblkoff	= 3584,			/* the descriptor, in the data area */
+	Ospreyblkring	= 4096,			/* where a driver keeps its queue and buffers */
+};
+typedef struct Ospreyblk Ospreyblk;
+struct Ospreyblk {
+	uvlong	magic;
+	uvlong	slicepa;	/* physical address of this container's slice */
+	uvlong	barsize;	/* the "virtioblk" segment's size */
+	uvlong	cfg;		/* offsets in it: common configuration */
+	uvlong	notify;		/* the notify region */
+	uvlong	notifymult;	/* its per-queue multiplier */
+	uvlong	isr;		/* interrupt status */
+	uvlong	devcfg;		/* device configuration: capacity first */
+	uvlong	sem;		/* the semaphore the interrupt gives */
+};

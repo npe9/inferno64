@@ -46,6 +46,7 @@ struct Arm { uvlong op, obj, buf; };
 extern long p9srv_serve(uchar *msg, long n, uchar *rbuf, long rmax);
 extern long p9buddy_serve(uchar *cdata, uvlong container);
 extern void p9buddy_gone(uvlong container);
+extern void p9blk(uchar *base);		/* blkvirtio.c: the user-level block driver */
 
 static void
 puts(char *s)
@@ -91,36 +92,32 @@ mapslice(int slot)
  */
 static uchar *slices[Nslot];	/* the slices mapped so far, by slot */
 
+/*
+ * The slice of the container a request came from: the kernel says which
+ * slot it is in the request's first word, since a forwarded request from
+ * a container the kernel exec'd carries no other way to find it.  The
+ * slot is mapped once and kept; the identity in its map is checked every
+ * time, since a slot is reused by the next container the kernel makes
+ * when the last one has gone.
+ */
 static uchar*
-sliceof(uvlong id)
+sliceof(int slot, uvlong id)
 {
-	int i;
 	uchar *b;
 	Omap *m;
 
-	/*
-	 * The identity is read from the map every time, not remembered:
-	 * a slot is reused by the next container the kernel makes when
-	 * the last one has gone, and the map is where its current owner
-	 * is written.
-	 */
-	for(i = 0; i < Nslot; i++)
-		if(slices[i] != nil && ((Omap*)slices[i])->id == id)
-			return slices[i] + ((Omap*)slices[i])->data;
-	for(i = 0; i < Nslot; i++){
-		if(slices[i] != nil)
-			continue;
-		b = mapslice(i);
+	if(slot < 0 || slot >= Nslot)
+		return nil;
+	if(slices[slot] == nil){
+		b = mapslice(slot);
 		if(b == (uchar*)-1)
-			continue;
-		m = (Omap*)b;
-		if(m->magic != Ospreymagic)
-			continue;
-		slices[i] = b;
-		if(m->id == id)
-			return b + m->data;
+			return nil;
+		slices[slot] = b;
 	}
-	return nil;
+	m = (Omap*)slices[slot];
+	if(m->magic != Ospreymagic || m->id != id)
+		return nil;
+	return slices[slot] + m->data;
 }
 
 static void
@@ -142,7 +139,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	rep.sequence = req.sequence;
 	if(req.container != cid){
 		/* another container this server answers for: a program exec started */
-		cdata = sliceof(req.container);
+		cdata = sliceof((int)req.arg[2], req.container);
 		if(cdata == nil){
 			rep.arg[0] = (uvlong)-1;	/* not a count a layout could have */
 			repm[pq->put % pq->size] = rep;
@@ -189,8 +186,13 @@ p9serveloop(char *arg)
 	cbase = mapslice(client);
 	if(cbase == (uchar*)-1){ puts("p9 server: could not map the client's slice\n"); return; }
 	cmap = (Omap*)cbase;
+	if(own >= 0 && own < Nslot)
+		slices[own] = base;		/* already mapped: a segment slot is not spent twice */
+	if(client >= 0 && client < Nslot)
+		slices[client] = cbase;
 	pq = (Queue*)(base + map->replyqueue);
 
+	p9blk(base);		/* the disk, if the kernel exposed one: a driver above the kernel */
 	puts("p9 server: serving this name space over the ring\n");
 	for(iters = 0; iters < 400; iters++)
 		serve1(pq, (Msg*)((uchar*)pq + pq->message),

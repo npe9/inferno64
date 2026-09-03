@@ -2095,6 +2095,115 @@ ospreyframebuffer(void)
 	return 0;
 }
 
+/*
+ * A block device to a user task, the exokernel way.  The kernel's part
+ * is what a kernel must do and no more: find the device, turn its
+ * registers into a segment a container may map, tell the container
+ * where things are in it (Ospreyblk in ospreyabi.h), and turn its
+ * interrupt into a semaphore.  The driver - reset, features, the queue,
+ * the requests - is a program above the kernel, in the container: the
+ * paper's driver as a task, selecting on the device's semaphore.  The
+ * device is a virtio 1.0 block device with the legacy interface off,
+ * so every register is memory the container can be given; the four
+ * virtio-pci capabilities are read here because they are PCI
+ * configuration space, which a container is not given.
+ */
+#include "../port/pci.h"
+
+static Physseg ospreyblkseg;
+static Ospreyproc *ospreyblkproc;
+static int ospreyblksem;
+static uchar *ospreyblkisr;		/* the interrupt status byte, mapped for the handler */
+
+static int
+ospreyviocapmatch(Pcidev *p, int cap, int off, int typ)
+{
+	int bar;
+
+	if(cap != 9 || pcicfgr8(p, off+3) != typ)
+		return 1;
+	bar = pcicfgr8(p, off+4);
+	if(bar >= nelem(p->mem) || p->mem[bar].size == 0)
+		return 1;
+	return 0;
+}
+
+static void
+ospreyblkintr(Ureg*, void*)
+{
+	int sx;
+
+	/* reading the status deasserts the line; the completion itself is the task's to see */
+	if(ospreyblkisr == nil || (*ospreyblkisr & 1) == 0)
+		return;
+	if(ospreyblkproc != nil){
+		ospreysemgive(ospreyblkproc, ospreyblksem);
+		if((sx = ospreyindex(ospreyblkproc)) >= 0 && sx < nelem(ospreyselrend))
+			wakeup(&ospreyselrend[sx]);
+	}
+}
+
+static int
+ospreyblkexpose(Ospreyproc *p, int sem)
+{
+	Pcidev *pci;
+	Ospreyblk *b;
+	int cap, bar, i, typ;
+	uvlong pa, off[5], mult;
+
+	if(ospreyblkproc != nil)
+		return -1;			/* one device, one task */
+	pci = pcimatch(nil, 0x1AF4, 0x1042);	/* virtio 1.0 block, legacy interface off */
+	if(pci == nil)
+		return -1;
+	bar = -1;
+	mult = 0;
+	for(typ = 1; typ <= 4; typ++){
+		if((cap = pcienumcaps(pci, ospreyviocapmatch, typ)) < 0)
+			return -1;
+		i = pcicfgr8(pci, cap+4);
+		if(bar < 0)
+			bar = i;
+		else if(i != bar)
+			return -1;		/* all four in one BAR, or the segment would be two */
+		off[typ] = pcicfgr32(pci, cap+8);
+		if(typ == 2)
+			mult = pcicfgr32(pci, cap+16);
+	}
+	if(pci->mem[bar].bar & 1)
+		return -1;			/* ports: not memory a container can be given */
+	pa = pci->mem[bar].bar & ~0xFULL;
+	if((b = (Ospreyblk*)ospreydata(p, Ospreyblkoff, sizeof(Ospreyblk))) == nil)
+		return -1;
+	memset(&ospreyblkseg, 0, sizeof ospreyblkseg);
+	ospreyblkseg.attr = SG_PHYSICAL | SG_DEVICE;
+	ospreyblkseg.name = "virtioblk";
+	ospreyblkseg.pa = pa;
+	ospreyblkseg.size = pci->mem[bar].size;
+	if(addphysseg(&ospreyblkseg) == nil)
+		return -1;
+	ospreyblkisr = vmap(pa + off[3], BY2PG);
+	if(ospreyblkisr == nil)
+		return -1;
+	b->magic = Ospreyblkmagic;
+	b->slicepa = PADDR(ospreybase) + (uvlong)ospreyindex(p) * ospreyslicesize();
+	b->barsize = pci->mem[bar].size;
+	b->cfg = off[1];
+	b->notify = off[2];
+	b->notifymult = mult;
+	b->isr = off[3];
+	b->devcfg = off[4];
+	b->sem = sem;
+	ospreyblkproc = p;
+	ospreyblksem = sem;
+	pcienable(pci);
+	intrenable(pci->intl, ospreyblkintr, nil, pci->tbdf, "osprey-blk");
+	print("osprey blk: exposed virtio block device %d.%d.%d, BAR %d at %#llux size %lud as \"virtioblk\", interrupt %d as semaphore %d of container %llud\n",
+		BUSBNO(pci->tbdf), BUSDNO(pci->tbdf), BUSFNO(pci->tbdf), bar, pa, (ulong)pci->mem[bar].size,
+		pci->intl, sem, ospreyid(p));
+	return 0;
+}
+
 extern void ospreyloadprog(void);
 extern void ospreyloadp9(void);
 extern void ospreyenteruser(char*);
@@ -2106,6 +2215,7 @@ extern long (*ospreyexec)(Ospreyproc*, uvlong);
 extern int (*ospreywait)(Ospreyproc*, uvlong, long*, uvlong*);
 extern int ospreyreplylater(Ospreyproc*, uvlong, uvlong, long, uvlong);
 static long ospreyexeckern(Ospreyproc*, uvlong);
+static int ospreyblkexpose(Ospreyproc*, int);
 static int ospreywaitkern(Ospreyproc*, uvlong, long*, uvlong*);
 static void ospreyputproc(Ospreyproc*);
 static void ospreyputserver(Ospreyproc*);
@@ -2214,6 +2324,7 @@ ospreybuddycall(Ospreyproc *p, int tries)
 	int i;
 
 	memset(sarg, 0, sizeof sarg);
+	sarg[0] = ospreyindex(p);	/* which slot this container's slice is: the server maps that one */
 	if(ospreysubmit(p, Reqsyscall, sarg) < 0)
 		return -1;
 	status = -1;
@@ -2691,6 +2802,13 @@ ospreyuserprep(void)
 			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
 			if(sv != nil){
 				ospreydelegate(p, sv);
+				/*
+				 * The block device, if the machine has one, goes to
+				 * the server: the personality that will be the file
+				 * system is the one that drives the disk.
+				 */
+				if(ospreyp9)
+					ospreyblkexpose(sv, 1);
 				if(ospreyp9pair || ospreyp9buddy || ospreyp9linux)
 					kproc("p9-buddy", ospreyp9server, sv);
 				else

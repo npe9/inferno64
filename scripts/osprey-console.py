@@ -38,6 +38,8 @@ def main():
 		     'these may share one image')
 	ap.add_argument('-n', '--net', default=None,
 		help='attach a nic, e.g. e1000')
+	ap.add_argument('--blk', default=None,
+		help='attach this raw image as a virtio 1.0 block device (legacy off)')
 	ap.add_argument('--netdev', default='user,id=n0',
 		help='how the nic is attached, e.g. socket,id=n0,listen=:1234')
 	ap.add_argument('-2', '--serial2', default=None,
@@ -93,6 +95,9 @@ def main():
 		qemu += ['-serial', a.serial2]
 	if a.net:
 		qemu += ['-netdev', a.netdev, '-device', a.net + ',netdev=n0']
+	if a.blk:
+		qemu += ['-drive', 'file=%s,format=raw,if=none,id=blk0' % a.blk,
+			'-device', 'virtio-blk-pci,drive=blk0,disable-legacy=on,disable-modern=off']
 	if a.snapshot:
 		qemu += ['-snapshot']
 	if a.disk:

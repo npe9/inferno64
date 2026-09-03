@@ -761,6 +761,21 @@ private names, pages, arms to a
 .BR /os/osprey/adapter/ospreyrt.c .
 .SH A DRIVER SERVED BY A TASK
 .PP
+On the microkernel configurations a block device is given to the server
+personality the same way, with less of the kernel in it: a virtio 1.0
+block device's register BAR is published as the physical segment
+.BR virtioblk ,
+the offsets of its four register regions and the physical address of the
+container's slice are written into the container's data area
+.RB ( Ospreyblk
+in
+.BR ospreyabi.h ),
+and its interrupt gives a semaphore.  The driver \- reset, features, the
+queue, the requests \- is a program in the container
+.RB ( os/osprey/cmd/p9/blkvirtio.c ),
+which selects on the semaphore for each completion.  One device, one
+container; the device must keep all four regions in one memory BAR.
+.PP
 .B uart
 hands a uart to a container.  From then on its interrupt handler does
 nothing but silence the source and give the container's
