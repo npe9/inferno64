@@ -31,6 +31,7 @@ OBJ=\
 	trap.$O\
 	tod.$O\
 	mul64fract.$O\
+	virtiogpu.$O\
 	stubs.$O\
 	$CONF.root.$O\
 	$IP\
@@ -75,6 +76,9 @@ tod.$O:	../port/tod.c
 	$CC $CFLAGS ../port/tod.c
 
 mul64fract.$O:	../port/mul64fract.c
+
+virtiogpu.$O:	../port/virtiogpu.c
+	$CC $CFLAGS ../port/virtiogpu.c
 	$CC $CFLAGS ../port/mul64fract.c
 
 devuart.$O:	../port/devuart.c

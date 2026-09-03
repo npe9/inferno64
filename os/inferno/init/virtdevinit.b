@@ -12,6 +12,8 @@ implement Init;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+	draw: Draw;
+	Display, Image, Screen, Rect, Point: import draw;
 include "sh.m";
 include "dhcpclient.m";
 	dhcpclient: Dhcpclient;
@@ -142,9 +144,39 @@ init()
 		spawn ptrreport();
 	}
 
+	gputest();
+
 	sys->print("DEVTEST: done\n");
 	for(;;)
 		sys->sleep(10000);
+}
+
+gputest()
+{
+	# fill the screen so flushmemscreen drives virtio-gpu; a screendump
+	# then shows the colour.  Three bands so the picture is unambiguous.
+	draw = load Draw Draw->PATH;
+	if(draw == nil){
+		sys->print("DEVTEST: GPU no draw module\n");
+		return;
+	}
+	sys->bind("#i", "/dev", Sys->MAFTER);
+	display := Display.allocate("/dev");
+	if(display == nil){
+		sys->print("DEVTEST: GPU Display.allocate: %r\n");
+		return;
+	}
+	scr := display.image;
+	red := display.color(Draw->Red);
+	grn := display.color(Draw->Green);
+	blu := display.color(Draw->Blue);
+	r := scr.r;
+	third := (r.max.y - r.min.y) / 3;
+	scr.draw(Rect((r.min.x, r.min.y), (r.max.x, r.min.y+third)), red, nil, (0,0));
+	scr.draw(Rect((r.min.x, r.min.y+third), (r.max.x, r.min.y+2*third)), grn, nil, (0,0));
+	scr.draw(Rect((r.min.x, r.min.y+2*third), (r.max.x, r.max.y)), blu, nil, (0,0));
+	scr.flush(Draw->Flushnow);
+	sys->print("DEVTEST: GPU-DRAW-OK\n");
 }
 
 usbdiskcheck()

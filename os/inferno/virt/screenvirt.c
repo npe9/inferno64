@@ -56,6 +56,18 @@ static Memdata	scrdata;
 Memimage	*gscreen;
 static uchar	*fb;		/* ramfb + gscreen (same buffer) */
 static int	ramfbok;
+
+/*
+ * Optional virtio-gpu (../port/virtiogpu.c): when there is no ramfb,
+ * the same fb becomes a virtio-gpu scanout resource and each flush is
+ * pushed to the host.  Brought up lazily on the first flush, since PCI
+ * is enumerated after screeninit().
+ */
+extern int virtiogpuinit(void);
+extern int virtiogpuscanout(int, int, uchar*);
+extern void virtiogpuflush(int, int, int, int);
+static int gpuactive;
+static int gputried;
 static int	cursenable;
 static int	cursprocok;
 static Rendez	cursrendez;
@@ -450,6 +462,30 @@ flushmemscreen(Rectangle r)
 	}
 	cycles(&t1);
 	tcycles_flush += t1 - t0;
+
+	/*
+	 * No ramfb: drive virtio-gpu.  Unlike ramfb, which the host
+	 * scans out continuously, virtio-gpu needs an explicit transfer
+	 * and flush per update.  Flush the dirty rect and, when the
+	 * cursor is up, its footprint too.
+	 */
+	if(!ramfbok){
+		if(!gputried){
+			gputried = 1;
+			if(virtiogpuinit() && virtiogpuscanout(ScrX, ScrY, fb) == 0)
+				gpuactive = 1;
+		}
+		if(gpuactive){
+			virtiogpuflush(r.min.x, r.min.y, Dx(r), Dy(r));
+			if(cursenable){
+				cr = cursrect(mousexy());
+				virtiogpuflush(cr.min.x, cr.min.y, Dx(cr), Dy(cr));
+				if(!eqrect(curslast, ZR))
+					virtiogpuflush(curslast.min.x, curslast.min.y, Dx(curslast), Dy(curslast));
+			}
+		}
+	}
+
 	/* Long Tk update holds the Dis VM; keep soft timers alive. */
 	clockcheck();
 }
