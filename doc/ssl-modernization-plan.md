@@ -2,6 +2,29 @@
 
 ## Status (most recent first)
 
+**ECDSA works against the real providers, 2026-09-03 (follow-up to
+the P-256 landing below).** "Reach all the providers" flushed out two
+more real bugs the first ECDSA commit could not have caught, because
+dns.google's chain is RSA-signed with an EC leaf — the ECDSA
+*certificate-signature* path only runs on genuinely ECDSA-signed
+chains (Cloudflare, Quad9). (1) **A tree-wide ASN.1 decoder bug**:
+`uint7_decode`'s `if(n == i) err = ESHORT` wrongly rejected any OID
+whose final sub-identifier ends exactly at the buffer end — which is
+every bare-OID ECDSA `AlgorithmIdentifier` (RSA's has a trailing
+NULL, so its OID is never last). Fixed to error only when a
+continuation byte was still expected. (2) **P-384**: real chains put
+a P-256 leaf under a P-384 intermediate, so chain verification needs
+P-384 even when the handshake is all P-256; `p256(2)` generalized to
+both curves (selected by key size), and the certificate signature's
+BIT-STRING unused-bits octet is now stripped before the DER parse
+(RSA tolerated it as a leading zero). A wrong P-384 `p`/`a` constant
+(one extra F) was caught by a P-384 known-answer vector before it
+could matter. Result, measured live: `dns` resolves through Google
+and Cloudflare; Quad9's TLS + ECDSA verification also succeed (it
+answers at the HTTP layer, just 505 — a DoH-endpoint quirk, not TLS).
+p256test(1) now carries P-256 and P-384 vectors; all RSA-path tests
+still pass.
+
 **ECDSA/P-256 DONE, 2026-09-03 — the TLS layer now reaches ECDSA
 hosts, and live DNS resolution works.** The gap named below is
 closed. New `p256(2)` (`appl/lib/crypt/p256.b`) implements NIST P-256

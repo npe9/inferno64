@@ -34,6 +34,14 @@ HASH:  con "534fb9257450edbcff864463c86ea4795aa08f93bf231d07a33c3f6f01efa410";
 SIG_R: con "8279c8be84af2c907522e9c557e7b2154482e1f95e672877a325a3089c2bc510";
 SIG_S: con "3c8429965aee011c4a32d1fb08d0bb701bae7bfdcf5988902c4456efcde60ef3";
 
+# P-384 ECDSA verify vector (an intermediate CA's curve; ecdsa_verify
+# selects the curve by the 97-byte key size)
+P384_X: con "5c86a47f40f6edcd68ca1e3d112522dc8ac91ce4c10b743ad3e8e2538f30be488d50037a01b940ddc6df8d7465ae1626";
+P384_Y: con "789e5cd6244c79a83bb7d3a3e7138eb9d1f216aafd215b9debc8950d86cc401a11ebc929d03e3aae321f375608aa3143";
+P384_HASH: con "fcec0b3ec7d23967ade261fe800a551fe780f8e21279c5da2bd8282a868cc918d5d121e0303be8c88e980ac890d5e6e1";
+P384_R: con "da89f7bbd70a327c3fd3fa22f5bd723988e548818d5bf8ac51c828a172a9357daf8d4f979be123f4eeecd7a744ac89e1";
+P384_S: con "89e6d5567336a9694b11f6eae8120f6f120fb8c3425f072998649cda367472664c7baea4d0be83491b08ce76a7941708";
+
 # ECDH vector: our scalar DA, peer public (PBX,PBY), expected shared x
 ECDH_DA:     con "7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ec468d8f6a7a5f3e1";
 ECDH_PBX:    con "dad1476cc79fb6c0814f00337ee2c3191a18b718a0ec349ce13a30cb9793273d";
@@ -77,6 +85,20 @@ init(nil: ref Draw->Context, nil: list of string)
 		fail("signature verified against the wrong hash (must not)");
 	else
 		sys->print("ECDSA wrong hash: rejected: PASS\n");
+
+	# 3b. a valid P-384 signature verifies (curve chosen by key size),
+	# and a corrupted one does not
+	pub384 := uncompressed384(P384_X, P384_Y);
+	if(p256->ecdsa_verify(unhex(P384_HASH), unhex(P384_R), unhex(P384_S), pub384) != 1)
+		fail("valid P-384 ECDSA signature did not verify");
+	else
+		sys->print("ECDSA P-384 valid signature: PASS\n");
+	bad384 := unhex(P384_S);
+	bad384[47] ^= byte 16r01;
+	if(p256->ecdsa_verify(unhex(P384_HASH), unhex(P384_R), bad384, pub384) != 0)
+		fail("corrupted P-384 signature verified (must not)");
+	else
+		sys->print("ECDSA P-384 corrupted signature: rejected: PASS\n");
 
 	# 4. ECDH against the library's shared secret
 	shared := p256->ecdh_shared(unhex(ECDH_DA), uncompressed(ECDH_PBX, ECDH_PBY));
@@ -127,6 +149,15 @@ uncompressed(xh, yh: string): array of byte
 	out[0] = byte 16r04;
 	out[1:] = unhex(xh);
 	out[33:] = unhex(yh);
+	return out;
+}
+
+uncompressed384(xh, yh: string): array of byte
+{
+	out := array[97] of byte;
+	out[0] = byte 16r04;
+	out[1:] = unhex(xh);
+	out[49:] = unhex(yh);
 	return out;
 }
 

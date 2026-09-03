@@ -829,8 +829,8 @@ checkskx(certs: list of array of byte, crandom, srandom, params: array of byte,
 		* =>	return sys->sprint("tls: unsupported ECDSA hash algorithm %d", hashalg);
 		}
 		pub := leaf.subject_pkinfo.subject_pk;
-		if(len pub != 65 || int pub[0] != 16r04)
-			return "tls: leaf EC key is not an uncompressed P-256 point";
+		if((len pub != 65 && len pub != 97) || int pub[0] != 16r04)
+			return "tls: leaf EC key is not an uncompressed P-256/P-384 point";
 		(r, s, perr) := parseecdsasig(sig);
 		if(perr != nil)
 			return "tls: ServerKeyExchange "+perr;

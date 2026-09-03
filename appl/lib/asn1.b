@@ -358,7 +358,13 @@ uint7_decode(a: array of byte, i, n: int) : (int, int, int)
 		more = v & 16r80;
 		num |= (v & 16r7F);
 	}
-	if(n == i)
+	# ESHORT only if we ran out of data while a continuation byte was
+	# still expected (more != 0). A value that ends with a high-bit-
+	# clear byte exactly at the buffer end (i == n) is complete - the
+	# old `if(n == i)` wrongly rejected it, which broke decoding any
+	# OID that is the last element of its buffer, e.g. the bare-OID
+	# AlgorithmIdentifier of every ECDSA signature.
+	if(more != 0)
 		err = ESHORT;
 	return (err, i, num);
 }

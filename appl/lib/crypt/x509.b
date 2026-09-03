@@ -1803,8 +1803,10 @@ ecdsa_checksig(signed: ref Signed, issuer: ref Certificate, ecalgid: int): strin
 	if(asn1->oid_lookup(issuer.subject_pkinfo.alg_id.oid, objIdTab) != id_ecPublicKey)
 		return "ECDSA signature but issuer key is not an EC key";
 	pub := issuer.subject_pkinfo.subject_pk;	# raw uncompressed point
-	if(len pub != 65 || int pub[0] != 16r04)
-		return "unsupported EC public key format (not an uncompressed P-256 point)";
+	# P-256 (65) or P-384 (97) - intermediates are commonly P-384 even
+	# over a P-256 leaf; p256->ecdsa_verify picks the curve by size
+	if((len pub != 65 && len pub != 97) || int pub[0] != 16r04)
+		return "unsupported EC public key format (not an uncompressed P-256/P-384 point)";
 
 	# hash tobe_signed with the algorithm the signature names
 	hash: array of byte;
@@ -1820,7 +1822,15 @@ ecdsa_checksig(signed: ref Signed, issuer: ref Certificate, ecalgid: int): strin
 		keyring->sha512(signed.tobe_signed, len signed.tobe_signed, hash, nil);
 	}
 
-	(r, s, perr) := parseecdsasig(signed.signature);
+	# the certificate signature is a BIT STRING: its content is a
+	# leading "unused bits" octet (0 for a byte-aligned signature)
+	# followed by the DER ECDSA-Sig-Value. Strip that octet before
+	# parsing (the RSA path tolerates it as a leading zero in the
+	# signature magnitude; the DER parser does not).
+	sig := signed.signature;
+	if(len sig > 0 && int sig[0] == 0)
+		sig = sig[1:];
+	(r, s, perr) := parseecdsasig(sig);
 	if(perr != nil)
 		return perr;
 	if(p256->ecdsa_verify(hash, r, s, pub))

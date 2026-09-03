@@ -15,8 +15,8 @@ oncurve:      fn(pub: array of byte): int;
 .EE
 .SH DESCRIPTION
 .B P256
-implements the NIST P-256 (secp256r1 / prime256v1) elliptic curve:
-ECDSA signature verification and ECDH key agreement. It is pure
+implements NIST elliptic-curve operations: ECDSA signature
+verification (P-256 and P-384) and ECDH key agreement (P-256). It is pure
 .IR keyring (2)
 IPint arithmetic \(em no native code \(em and exists so
 .IR tls12 (2)

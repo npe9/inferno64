@@ -1,12 +1,17 @@
 #
-# NIST P-256 (secp256r1 / prime256v1) elliptic-curve operations:
-# ECDSA signature verification and ECDH key agreement, for the TLS
-# stack's ECDHE-ECDSA path (tls12(2)). Pure IPint arithmetic - no
-# native code. Include keyring.m before this.
+# NIST elliptic-curve operations for the TLS stack's ECDHE-ECDSA path
+# (tls12(2)): ECDSA signature verification and ECDH key agreement.
+# Pure IPint arithmetic - no native code. Include keyring.m before
+# this.
 #
-# Points on the wire are the TLS/SEC1 uncompressed encoding:
-# 0x04 || X(32) || Y(32), 65 bytes. All scalar/coordinate byte arrays
-# are big-endian, 32 bytes.
+# ECDH is P-256 only (the key-exchange curve this client offers).
+# ecdsa_verify handles BOTH P-256 and P-384, chosen by the public
+# key's size - real certificate chains routinely put a P-256 leaf
+# under a P-384 intermediate, so chain verification needs both.
+#
+# Points are the TLS/SEC1 uncompressed encoding 0x04 || X || Y (65
+# bytes for P-256, 97 for P-384); scalars and coordinates are
+# big-endian.
 #
 
 P256: module
@@ -15,10 +20,11 @@ P256: module
 
 	init: fn(): string;
 
-	# Verify an ECDSA-with-SHA-256 signature. hash is the 32-byte
-	# message digest; r and s are the signature integers (big-endian,
-	# any length up to 32 bytes); pub is the signer's public key as a
-	# 65-byte uncompressed point. Returns 1 if valid, 0 otherwise
+	# Verify an ECDSA signature. hash is the message digest (its size
+	# selects the SHA variant implicitly - the caller hashes); r and s
+	# are the signature integers (big-endian); pub is the signer's
+	# public key as an uncompressed point, whose size (65 or 97)
+	# selects P-256 or P-384. Returns 1 if valid, 0 otherwise
 	# (including a malformed or off-curve public key).
 	ecdsa_verify: fn(hash, r, s, pub: array of byte): int;
 
