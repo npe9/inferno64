@@ -825,12 +825,18 @@ new conversation, so both ends agree the connection is up.
 .PP
 That two-stack form (two
 .CW Fs )
-is what proved the two endpoints, and with the arena bug fixed it is what
-the boot runs again: two independent stacks handshake and accept over the
-osprey wire, four boots of four.  (Only the byte stream after the handshake
-is still short - stack A's write does not yet reach stack B's accepted
-conversation - a delivery matter, no longer the crash it was.)  What
-follows was the reasoning while it was still forced back to a single stack.  Two whole stacks in one address space trip the shared-state
+is what proved the two endpoints, and with the arena bug fixed it runs
+end to end: two independent stacks handshake and accept over the osprey
+wire, and a byte stream crosses between them - stack A writes a line on its
+connection and stack B reads it back off the accepted conversation, the
+94-byte data segment leaving A's interface and the pump injecting it into
+B.  Two small fixes past the handshake got the data across: the listen fd
+is the accepted connection's ctl, so it is kept open to hold the
+conversation up (closing it left B in Finwait1, dropping the data while A
+retransmitted), and the reader polls while the pump carries the segment.
+This is the second-machine wire test, run between two stacks in one address
+space, handshake and data both.  What follows was the reasoning from while
+the arena bug still forced it back to a single stack.  Two whole stacks in one address space trip the shared-state
 corruption below over time - in steady state, tens of ticks in, a proc
 faults and the note path panics
 .CW donotify \-
