@@ -268,3 +268,63 @@ fdtreg(char *compat, uvlong *base, uvlong *size)
 		*size = f.size;
 	return 1;
 }
+
+/*
+ * Like matchcompat, but never stops the walk (returns 0 always) and
+ * keeps the lowest base seen, so fdtregmin can visit every matching
+ * node.  Used where one compatible names several instances - QEMU's
+ * eight virtio-mmio slots - and the caller wants the base of the first
+ * to scan upward from, which the DTB may list last.
+ */
+static uintptr
+matchcompatmin(char *name, uchar *props, int acells, int scells, void *a)
+{
+	Findc *f = a;
+	uchar *cv, *rv;
+	u32int clen, rlen;
+	char *c, *ce;
+	uvlong b;
+
+	USED(name);
+	cv = fdtprop(props, "compatible", &clen);
+	if(cv == nil)
+		return 0;
+	c = (char*)cv;
+	ce = c + clen;
+	for(; c < ce; c += strlen(c)+1){
+		if(strcmp(c, f->compat) != 0)
+			continue;
+		rv = fdtprop(props, "reg", &rlen);
+		if(rv == nil || rlen < (u32int)(acells+scells)*4)
+			return 0;
+		b = fdtbecells(rv, acells);
+		if(!f->found || b < f->base){
+			f->base = b;
+			f->size = fdtbecells(rv + acells*4, scells);
+			f->found = 1;
+		}
+		return 0;	/* keep walking to see the other instances */
+	}
+	return 0;
+}
+
+/*
+ * The lowest reg base among all nodes whose compatible list contains
+ * compat.  Returns 1 and fills *base/*size from that node, else 0.
+ */
+int
+fdtregmin(char *compat, uvlong *base, uvlong *size)
+{
+	Findc f;
+
+	memset(&f, 0, sizeof f);
+	f.compat = compat;
+	fdtwalk(matchcompatmin, &f);
+	if(!f.found)
+		return 0;
+	if(base != nil)
+		*base = f.base;
+	if(size != nil)
+		*size = f.size;
+	return 1;
+}

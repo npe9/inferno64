@@ -132,11 +132,14 @@ main(void)
 		extern void *dtbptr;
 		extern void fdtinit(void*);
 		extern int fdtreg(char*, uvlong*, uvlong*);
-		extern uintptr plicbase;
+		extern uintptr plicbase, virtiobase;
+		extern int fdtregmin(char*, uvlong*, uvlong*);
 		uvlong base, size;
 		fdtinit(dtbptr);
 		if(fdtreg("riscv,plic0", &base, &size) && base != 0)
 			plicbase = (uintptr)base;
+		if(fdtregmin("virtio,mmio", &base, &size) && base != 0)
+			virtiobase = (uintptr)base;	/* lowest slot; drivers scan up */
 	}
 
 	xinit();
@@ -164,9 +167,11 @@ main(void)
 		else
 			print("fdt: no device tree\n");
 		{
-			extern uintptr plicbase;
+			extern uintptr plicbase, virtiobase;
 			print("fdt: plic base %#p (mem.h PLIC %#p)\n",
 				plicbase, (uintptr)PLIC);
+			print("fdt: virtio base %#p (mem.h VIRTIO0 %#p)\n",
+				virtiobase, (uintptr)VIRTIO0);
 		}
 	}
 	/* PCI BARs/caps before chandevreset so virtio-pci ether can probe */

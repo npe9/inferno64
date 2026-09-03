@@ -12,6 +12,8 @@
 #include "ureg.h"
 #include "../port/error.h"
 
+extern uintptr virtiobase;	/* trap.c: first virtio-mmio slot, DTB-seeded */
+
 typedef struct Vring Vring;
 typedef struct Vdesc Vdesc;
 typedef struct Vused Vused;
@@ -587,7 +589,7 @@ mmioprobe1(int slot)
 	uintptr base;
 	u32int magic, vers, id, feat1, n;
 
-	base = VIRTIO0 + (uintptr)slot*VIRTIO_SIZE;
+	base = virtiobase + (uintptr)slot*VIRTIO_SIZE;
 	magic = *(volatile u32int*)(base+Magic);
 	if(magic != VirtMagic)
 		return nil;

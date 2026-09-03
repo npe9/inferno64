@@ -11,6 +11,8 @@
 #include "../port/error.h"
 #include "../port/sd.h"
 
+extern uintptr virtiobase;	/* trap.c: first virtio-mmio slot, DTB-seeded */
+
 typedef struct Vring Vring;
 typedef struct Vdesc Vdesc;
 typedef struct Vused Vused;
@@ -226,7 +228,7 @@ viopnpdevs(void)
 
 	h = t = nil;
 	for(slot = 0; slot < VIRTIO_NDEV; slot++){
-		base = VIRTIO0 + (uintptr)slot*VIRTIO_SIZE;
+		base = virtiobase + (uintptr)slot*VIRTIO_SIZE;
 		magic = *(volatile u32*)(base+Magic);
 		if(magic != VirtMagic)
 			continue;

@@ -297,7 +297,21 @@ came from the device tree - so the same kernel would find the PLIC on
 silicon whose map differs.  A DTB miss leaves the constant in place, so
 the wiring can never hang a working board.  The same one-variable
 pattern extends to the rv32 boards, to arm64 (once it is handed a DTB),
-and to the UART and virtio windows.
+and to the UART window.  The virtio-mmio base is now wired the same way
+on both riscv64 boards: a runtime
+.CW virtiobase
+seeded from the lowest
+.CW virtio,mmio
+node in the DTB (a new
+.CW fdtregmin
+in
+.CW fdt.c ,
+since QEMU lists the eight slots highest-first and the drivers scan
+upward from the lowest), constant fallback otherwise.  Proven by the
+same falsify test: with
+.CW VIRTIO0
+set wrong, the board still finds and reads its virtio-mmio disk,
+because the base came from the device tree.
 .PP
 Both riscv boards, and arm64, then need a device-tree reader: every
 address is a compile-time constant today, checked against QEMU's

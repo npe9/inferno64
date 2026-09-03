@@ -22,6 +22,14 @@ enum {
  * working board.
  */
 uintptr	plicbase = PLIC;
+
+/*
+ * The base of the first virtio-mmio slot; the drivers scan VIRTIO_NDEV
+ * slots upward from here.  Seeded from the DTB in main() (the lowest
+ * virtio,mmio node), constant default otherwise - same rule as
+ * plicbase: a DTB miss cannot hang a working board.
+ */
+uintptr	virtiobase = VIRTIO0;
 static void	(*irqhandler[96])(Ureg*, void*);
 static void	*irqarg[96];
 
