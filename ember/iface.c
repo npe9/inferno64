@@ -414,6 +414,22 @@ bindiface(Decl *mod, Node *tree)
 			 * aliases stay valid.
 			 */
 			t = td->ty;
+			if(decl->aux != nil){
+				/*
+				 * a generic type: a template, as check.c's typedec()
+				 * keeps one -- instantiated by each importer
+				 * (tinstantiate(), with this module's other names in
+				 * scope for its fields)
+				 */
+				if(decl->right->op != Otstruct && decl->right->op != Otpick){
+					error(decl->src.start, "generic type %s: only struct and pick bodies are supported", decl->left->sym->name);
+					break;
+				}
+				t->kind = Tadt;
+				t->tparams = decl->aux;
+				t->tbody = decl->right;
+				break;
+			}
 			if(decl->right->op == Otstruct){
 				t->kind = Tadt;
 				t->ids = ifields(decl->right->left, mod, Dfield);

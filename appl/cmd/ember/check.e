@@ -314,11 +314,34 @@ func instname(base string, argv []ref types.Type, nargs int) string {
 // ---- generics
 
 func tinstantiate(n ref types.Node) ref types.Type {
-	if n.left.op != types.Oname {
+	var td ref types.Decl
+	if n.left.op == types.Odot && n.left.left.op == types.Oname {
+		// alias.T[args]: a generic type from the interface (check.c)
+		alias := lookup(n.left.left.sym)
+		if alias != nil && alias.ty != nil && alias.ty.kind == types.Tmodule && ismodvar(alias) != 0 {
+			td = modmember(alias.ty, n.left.sym)
+		}
+		if td == nil || td.store != types.Dtype || td.ty == nil || td.ty.tparams == nil {
+			nerror(n, sys.sprint("%s.%s is not a generic type", n.left.left.sym, n.left.sym))
+			return terror
+		}
+		// the names stay in the tree (a composite's type): their decls
+		n.left.left.decl = alias
+		n.left.left.ty = alias.ty
+		n.left.decl = td
+		if n.left.right != nil && n.left.right.op == types.Oname {
+			n.left.right.decl = td
+		}
+	} else if n.left.op != types.Oname {
 		nerror(n, "bad generic type reference")
 		return terror
 	}
-	td := lookup(n.left.sym)
+	if td == nil {
+		td = n.left.decl
+	}
+	if td == nil {
+		td = lookup(n.left.sym)
+	}
 	if td == nil || td.store != types.Dtype {
 		nerror(n, sys.sprint("%s is not a type", n.left.sym))
 		return terror
@@ -398,19 +421,28 @@ func tinstantiate(n ref types.Node) ref types.Type {
 			break
 		}
 	}
+	// a template from an interface: its module's names for the body
+	frommod := 0
+	if td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+		frommod = 1
+		pushmodscope(td.dot)
+	}
 	body := stype(tt.tbody)
-	if inst != nil {
-		if body == terror {
-			popscope()
-			tinstdepth--
-			return terror
-		}
+	if inst != nil && body != terror {
 		types.copytype(inst, body)
 		inst.decl = id
 		// a generic pick's tags, with the type parameters in scope
 		if tt.tbody.op == types.Otpick {
 			picktags(tt.tbody, inst, id)
 		}
+	}
+	if frommod != 0 {
+		popmodscope(td.dot)
+	}
+	if inst != nil && body == terror {
+		popscope()
+		tinstdepth--
+		return terror
 	}
 	popscope()
 	tinstdepth--
@@ -463,9 +495,18 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 		}
 	}
 	tn := dupntree(td.init)
+	// a template from an interface: its module's names for the signature
+	sigmod := 0
+	if td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+		sigmod = 1
+		pushmodscope(td.dot)
+	}
 	rawfn = 1
 	ft := stype(tn.right)
 	rawfn = 0
+	if sigmod != 0 {
+		popmodscope(td.dot)
+	}
 	if recvarg != nil {
 		recvarg.next = ft.ids
 		ft.ids = recvarg
@@ -868,7 +909,29 @@ func unifytparam(pt ref types.Node, at ref types.Type, tparams ref types.Node, a
 	}
 }
 
+// inference for a template from an interface needs its module's
+// names in scope: around inferfn1 (check.c)
 func inferfn(n ref types.Node) ref types.Decl {
+	var td ref types.Decl
+	if n.left.op == types.Oname {
+		td = n.left.decl
+		if td == nil {
+			td = lookup(n.left.sym)
+		}
+	}
+	frommod := 0
+	if td != nil && td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+		frommod = 1
+		pushmodscope(td.dot)
+	}
+	r := inferfn1(n)
+	if frommod != 0 {
+		popmodscope(td.dot)
+	}
+	return r
+}
+
+func inferfn1(n ref types.Node) ref types.Decl {
 	if n.left.op != types.Oname {
 		return nil
 	}
@@ -2757,6 +2820,14 @@ func istagname(n ref types.Node) int {
 			return 0
 		}
 		d := lookup(n.left.sym)
+		if d != nil && d.ty != nil && d.ty.kind == types.Tmodule && ismodvar(d) != 0 {
+			// alias.Type: a module's type, generic or not
+			d = modmember(d.ty, n.sym)
+			if d != nil && d.store == types.Dtype {
+				return 1
+			}
+			return 0
+		}
 		return d != nil && d.store == types.Dtype
 	}
 	return 0

@@ -360,8 +360,11 @@ the importing module (no link entry is involved). A template body
 sees its own module's types, constants and functions by name (calls
 to the plain ones go through the alias); anything it uses from
 another module, such as `sys`, must be imported by the user too.
-Generic methods and generic types cannot be declared in an
-interface. `tests/type/libgen.ei` and `usegen.e` show the pattern.
+A generic struct or pick declared in an interface is a template the
+same way: `gen.Pair[int, string]{a: 1, b: "one"}`, `var r
+gen.Pair[string, int]`, `case gen.Opt[int].Some(v):`. Generic methods
+cannot be declared in an interface. `tests/type/libgen.ei` and
+`usegen.e` show the pattern.
 A template call does not reference the module, so an interface made
 only of templates is a header-only library needing no `.dis` at
 all: `module/lists.ei` (`lists.mapl`, `lists.filter`, `lists.foldl`,

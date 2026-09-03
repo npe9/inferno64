@@ -50,7 +50,10 @@ static	Decl	*synthfunclit(Node*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
+static	Decl	*inferfn1(Node*);
 static	Decl	*modtemplate(Node*);
+static	Decl	*modmember(Type*, Sym*);
+static	int	ismodvar(Decl*);
 static	Decl	*modalias(Decl*);
 static	void	pushmodscope(Decl*);
 static	void	popmodscope(Decl*);
@@ -229,11 +232,32 @@ tinstantiate(Node *n)
 	Node *p, *a, *pn;
 	int i, nargs, nparams, match;
 
-	if(n->left->op != Oname){
+	td = nil;
+	if(n->left->op == Odot && n->left->left->op == Oname){
+		/* alias.T[args]: a generic type from the interface, instantiated here */
+		Decl *alias;
+
+		alias = lookup(n->left->left->sym);
+		if(alias != nil && alias->ty != nil && alias->ty->kind == Tmodule && ismodvar(alias))
+			td = modmember(alias->ty, n->left->sym);
+		if(td == nil || td->store != Dtype || td->ty == nil || td->ty->tparams == nil){
+			nerror(n, "%s.%s is not a generic type", n->left->left->sym->name, n->left->sym->name);
+			return terror;
+		}
+		/* the names stay in the tree (a composite's type): give them their decls */
+		n->left->left->decl = alias;
+		n->left->left->ty = alias->ty;
+		n->left->decl = td;
+		if(n->left->right != nil && n->left->right->op == Oname)
+			n->left->right->decl = td;
+	}else if(n->left->op != Oname){
 		nerror(n, "bad generic type reference");
 		return terror;
 	}
-	td = lookup(n->left->sym);
+	if(td == nil)
+		td = n->left->decl;
+	if(td == nil)
+		td = lookup(n->left->sym);
 	if(td == nil || td->store != Dtype){
 		nerror(n, "%s is not a type", n->left->sym->name);
 		return terror;
@@ -341,18 +365,28 @@ tinstantiate(Node *n)
 		if(p->op != Oseq)
 			break;
 	}
-	body = stype(tt->tbody);
-	if(inst != nil){
-		if(body == terror){
-			popscope();
-			tinstdepth--;
-			return terror;
+	{
+		int frommod;
+
+		/* a template from an interface: its module's names for the body */
+		frommod = td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule;
+		if(frommod)
+			pushmodscope(td->dot);
+		body = stype(tt->tbody);
+		if(inst != nil && body != terror){
+			*inst = *body;
+			inst->decl = id;
+			/* a generic pick's tags, with the type parameters in scope */
+			if(tt->tbody->op == Otpick)
+				picktags(tt->tbody, inst, id);
 		}
-		*inst = *body;
-		inst->decl = id;
-		/* a generic pick's tags, with the type parameters in scope */
-		if(tt->tbody->op == Otpick)
-			picktags(tt->tbody, inst, id);
+		if(frommod)
+			popmodscope(td->dot);
+	}
+	if(inst != nil && body == terror){
+		popscope();
+		tinstdepth--;
+		return terror;
 	}
 	popscope();
 	tinstdepth--;
@@ -479,9 +513,14 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 		 * instantiation's typecheck left behind.
 		 */
 		tn = dupntree(td->init);
+		/* a template from an interface: its module's names for the signature */
+		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
+			pushmodscope(td->dot);
 		rawfn = 1;
 		ft = stype(tn->right);
 		rawfn = 0;
+		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
+			popmodscope(td->dot);
 		if(recvarg != nil){
 			/*
 			 * a generic method's receiver, prepended to the checked
@@ -1390,8 +1429,34 @@ unifytparam(Node *pt, Type *at, Decl *tparams, Type **argv)
  * name a generic function template at all, so callers can fall
  * through to the ordinary, non-generic call path.
  */
+/*
+ * inference for a template from an interface needs its module's
+ * names in scope (a parameter typed with the module's own generic
+ * type): around inferfn1(), the real work
+ */
 static Decl*
 inferfn(Node *n)
+{
+	Decl *td, *r;
+	int frommod;
+
+	td = nil;
+	if(n->left->op == Oname){
+		td = n->left->decl;
+		if(td == nil)
+			td = lookup(n->left->sym);
+	}
+	frommod = td != nil && td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule;
+	if(frommod)
+		pushmodscope(td->dot);
+	r = inferfn1(n);
+	if(frommod)
+		popmodscope(td->dot);
+	return r;
+}
+
+static Decl*
+inferfn1(Node *n)
 {
 	Decl *td;
 	Type **argv;
@@ -4623,6 +4688,11 @@ istagname(Node *n)
 		if(n->left->op != Oname)
 			return 0;
 		d = lookup(n->left->sym);
+		if(d != nil && d->ty != nil && d->ty->kind == Tmodule && ismodvar(d)){
+			/* alias.Type: a module's type, generic or not */
+			d = modmember(d->ty, n->sym);
+			return d != nil && d->store == Dtype;
+		}
 		return d != nil && d->store == Dtype;
 	}
 	return 0;

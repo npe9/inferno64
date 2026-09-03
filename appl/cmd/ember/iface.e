@@ -401,6 +401,17 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				break
 			}
 			t := td.ty
+			if decl.aux != nil {
+				// a generic type: a template instantiated by each importer (iface.c)
+				if decl.right.op != types.Otstruct && decl.right.op != types.Otpick {
+					error(decl.line, sys.sprint("generic type %s: only struct and pick bodies are supported", decl.left.sym))
+					break
+				}
+				t.kind = types.Tadt
+				t.tparams = decl.aux
+				t.tbody = decl.right
+				break
+			}
 			if decl.right.op == types.Otstruct {
 				t.kind = types.Tadt
 				t.ids = ifields(decl.right.left, mod, types.Dfield)

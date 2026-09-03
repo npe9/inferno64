@@ -51,3 +51,25 @@ func describe[T](xs []T, name string) string {
 func tag() string {
 	return "!"
 }
+
+type Pair[A, B] struct {
+	a A
+	b B
+}
+
+type Opt[T] pick {
+	Some(v T)
+	None()
+}
+
+func swap[A, B](p Pair[A, B]) Pair[B, A] {
+	return Pair[B, A]{a: p.b, b: p.a}
+}
+
+func some[T](v T) ref Opt[T] {
+	return ref Opt[T].Some{v: v}
+}
+
+func none[T]() ref Opt[T] {
+	return ref Opt[T].None{}
+}
