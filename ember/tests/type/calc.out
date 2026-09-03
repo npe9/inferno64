@@ -1,0 +1,9 @@
+1 + 2 * 3 = 7
+(1 + 2) * 3 = 9
+10 / 3 * 3 + 10 % 3 = 10
+-(4 - 6) * -2 = -4
+2 * (3 + (4 - 1)) - 100 / 7 = -2
+7 / (3 - 3) = error: division by zero
+12 + = error: unexpected character at 4
+((15)) = 15
+poison=0

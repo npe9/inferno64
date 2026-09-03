@@ -3516,9 +3516,12 @@ daschk(Node *n)
 		Decl *fd;
 		int nlhs, nrhs;
 
+		/* "a, b := 1, 2": see the Oas case's note on expression lists */
+		if(n->right->op == Oseq)
+			n->right = mkn(Otuple, n->right, nil);
 		t = echk(n->right);
 		if(t->kind != Ttuple){
-			nerror(n, "multiple assignment needs a multi-valued call on the right, not %T", t);
+			nerror(n, "multiple assignment needs a multi-valued call or an expression list on the right, not %T", t);
 			return;
 		}
 		nlhs = 0;
@@ -4223,9 +4226,16 @@ stchk(Node *n)
 					Type *rt, *lt;
 					int nlhs, nrhs;
 
+					/* "a, b = b, a": an expression list is a tuple
+					 * value, built whole before any store (com.c's
+					 * destructure() evaluates it into a temp), so
+					 * the swap idiom is safe -- same wrapping Oret
+					 * does for "return a, b" */
+					if(n->right->op == Oseq)
+						n->right = mkn(Otuple, n->right, nil);
 					rt = echk(n->right);
 					if(rt->kind != Ttuple){
-						nerror(n, "multiple assignment needs a multi-valued call on the right, not %T", rt);
+						nerror(n, "multiple assignment needs a multi-valued call or an expression list on the right, not %T", rt);
 						return;
 					}
 					nlhs = 0;

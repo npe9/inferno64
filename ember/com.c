@@ -2015,8 +2015,17 @@ ecom(Src *src, Node *nto, Node *n)
 		 */
 		if(left->addable >= Rcant)
 			left = eacom(left, &tl, nil);
-		if(right->addable >= Rcant)
-			right = eacom(right, &tr, nil);
+		/*
+		 * the index is IINDC's MIDDLE operand, and Dis has no
+		 * double-indirect mode for a middle operand: Radr/Rmadr
+		 * (a field through a ref, "p.src[p.pos]") must be
+		 * materialized too -- the same "< Ralways" rule the
+		 * arithmetic case above applies to its own middle operand,
+		 * not just the ">= Rcant" one; genop() refuses otherwise
+		 * ("illegal addressing mode in register").
+		 */
+		if(right->addable >= Ralways)
+			right = ecom(&right->src, talloc(&tr, right->ty, nil), right);
 		if(nto == nil)
 			fatal("ecom: inds without destination");
 		genop(src, Oinds, left, right, nto);
@@ -3055,7 +3064,9 @@ indsstore(Src *src, Node *n)
 	fd = fixdblind(left);
 	if(left->addable >= Rcant)
 		fatal("indsstore: string not addressable");
-	if(right->addable >= Rcant)
+	/* the index is a middle operand (IINDC and IINSC): see the
+	 * Oinds read case -- no double indirection allowed there */
+	if(right->addable >= Ralways)
 		right = ecom(&right->src, talloc(&tr, right->ty, nil), right);
 	switch(n->op){
 	case Oas:
@@ -3199,6 +3210,34 @@ scom(Node *n)
 			}
 			sumark(n->right);
 			sumark(n->left);
+			/*
+			 * "e = ref Bin{l: e, ...}", "p.next = ref Node{next:
+			 * p.next}", "p = Point{x: p.y, y: p.x}": a literal
+			 * assigned to a variable it reads.  built straight
+			 * into the destination, the allocation (or the first
+			 * field store) overwrites the variable before the
+			 * later fields read it -- the parser in
+			 * tests/type/calc.e built a tree whose left child was
+			 * the node itself, and its evaluator recursed until
+			 * the arena was gone.  a ref literal is built in a
+			 * temp and moved; a value literal always goes through
+			 * storecompositezero()'s temp here (only a fresh ":="
+			 * or var destination may take the direct path).
+			 */
+			if(n->right->op == Oref && n->right->left != nil
+			&& n->right->left->op == Ocomposite){
+				Node tref;
+				Node *saved;
+
+				ecom(&n->src, talloc(&tref, n->right->ty, nil), n->right);
+				saved = n->right;
+				n->right = &tref;
+				scom(n);
+				n->right = saved;
+				tfree(&tref);
+				popblock();
+				return;
+			}
 			if(n->left->op == Oindx){
 				/*
 				 * "xs[i] = expr": Oindx never gets real
@@ -3243,8 +3282,15 @@ scom(Node *n)
 
 				fd = fixdblind(n->left);
 				if(n->right->op == Ocomposite){
-					if(compositexhaustive(n->right)){
+					if(0 && compositexhaustive(n->right)){
 						/*
+						 * DISABLED for "=" (kept for reference):
+						 * the direct store is only safe when the
+						 * literal can't read the destination,
+						 * i.e. for a fresh ":=" local (Odas above),
+						 * never for an existing variable -- see the
+						 * aliasing note at the top of this case.
+						 *
 						 * same reasoning as Odas's own exhaustive
 						 * branch above: nothing is left unset, so
 						 * nothing of n->left's *prior* value can leak
