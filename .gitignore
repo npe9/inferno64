@@ -365,3 +365,28 @@ os/pc64/forth.h
 .aider*
 *.j
 *.z
+
+# --- Build artifacts created by mkfiles (added 2026-09) ---
+# riscv64 (jc/jl) and riscv32 (zc/zl) object files: the existing
+# *.[8qkv5967o] glob does not include j or z.
+*.j
+*.z
+# Cortex-M .t intermediates (mps2/teensy41/nucleof303 word-4 objects)
+*.t
+# generated root filesystems and the C/asm mkroot emits for them
+*.root.s
+*.root.h
+*.root.j
+# per-board disword stamp and generated includes
+.disword-*
+*.hex
+# Dis bytecode and symbol files anywhere, not just under /appl
+*.dis
+*.sbl
+# kernel binaries: os/inferno/<board>/i<board>, os/*/pc64/9pc64 etc.
+os/inferno/*/i[a-z]*[0-9a-z]
+!os/inferno/*/i*.[ch]
+!os/inferno/*/i*.s
+os/*/pc64/9pc64
+os/*/pc64/9upc64
+os/*/pc64/ipc64
