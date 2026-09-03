@@ -1,0 +1,1 @@
+tests/typeerr/badmatchstr.e:13: duplicate case label "a"

@@ -2586,9 +2586,24 @@ findlab(Type *ty, Node *v, Label *labs, int nlab)
 {
 	int l, r, m;
 
-	USED(ty);
 	if(nlab <= 1)
 		return 0;
+	if(ty == tstring){
+		/* string labels: exact matches only, sorted by text */
+		l = 0;
+		r = nlab - 1;
+		while(l <= r){
+			m = (r + l) / 2;
+			if(strcmp(labs[m].start->sym->name, v->sym->name) == 0)
+				return m;
+			if(strcmp(labs[m].start->sym->name, v->sym->name) < 0)
+				l = m + 1;
+			else
+				r = m - 1;
+		}
+		fatal("findlab: string label not found");
+		return 0;
+	}
 	l = 1;
 	r = nlab - 1;
 	while(l <= r){
@@ -2680,7 +2695,7 @@ casecom(Node *cn)
 
 	labs = c->labs;
 	nlab = c->nlab;
-	genrawop(&dispatch->src, ICASE, dispatch, nil, &nto);
+	genrawop(&dispatch->src, cn->ty->kind == Tcasec ? ICASEC : ICASE, dispatch, nil, &nto);
 	if(subjbase == nil)
 		tfree(&tmp);
 	tfree(&tagtmp);

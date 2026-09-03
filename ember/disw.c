@@ -257,6 +257,33 @@ disdatum(long offset, Node *n)
 		disint(offset, c->iwild ? c->iwild->pc : -1);
 		break;
 	}
+	case Tcasec: {
+		/*
+		 * string labels: (lo, hi-or-nil, pc) per entry, the
+		 * strings written straight into module data as DEFS
+		 * data (limbo/dis.c's identical case); every label is a
+		 * single string so hi is always left nil (H).
+		 */
+		Case *c;
+		Label *lab;
+		int i;
+
+		c = n->ty->cse;
+		disint(offset, c->nlab);
+		offset += IBY2WD;
+		for(i = 0; i < c->nlab; i++){
+			lab = &c->labs[i];
+			disstring(offset, lab->start->sym);
+			offset += IBY2WD;
+			if(lab->stop != lab->start)
+				disstring(offset, lab->stop->sym);
+			offset += IBY2WD;
+			disint(offset, lab->inst->pc);
+			offset += IBY2WD;
+		}
+		disint(offset, c->iwild ? c->iwild->pc : -1);
+		break;
+	}
 	case Tiface:
 		disint(offset, n->val);
 		offset += IBY2WD;

@@ -3594,7 +3594,14 @@ nextpat(Node **pp)
 static int
 casecmp(Type *ty, Node *a, Node *b)
 {
-	USED(ty);
+	/*
+	 * string labels compare by their text (the Oconst's own sym;
+	 * no global decl exists yet at check time): byte order of
+	 * UTF-8 is code-point order, which is what the VM's casec
+	 * (libinterp/xec.c, stringcmp() on runes) binary-searches by.
+	 */
+	if(ty == tstring)
+		return strcmp(a->sym->name, b->sym->name);
 	if(a->val < b->val)
 		return -1;
 	if(a->val > b->val)
@@ -3668,9 +3675,13 @@ matchlabels(Node *arms, Type *ctype, int nlab)
 		if(casecmp(ctype, labs[i].start, stop) > 0)
 			nerror(labs[i].start, "unmatchable case label");
 		for(e = i + 1; e < nlab; e++){
-			if(casecmp(ctype, labs[e].start, stop) <= 0)
-				nerror(labs[e].start, "case label %lld overlaps %lld",
-					(vlong)labs[e].start->val, (vlong)stop->val);
+			if(casecmp(ctype, labs[e].start, stop) <= 0){
+				if(ctype == tstring)
+					nerror(labs[e].start, "duplicate case label \"%s\"", labs[e].start->sym->name);
+				else
+					nerror(labs[e].start, "case label %lld overlaps %lld",
+						(vlong)labs[e].start->val, (vlong)stop->val);
+			}
 			if(ctype != tint
 			|| labs[e].start->val != stop->val+1
 			|| labs[e].node != labs[i].node)
@@ -3734,8 +3745,8 @@ matchcheck(Node *n)
 		subj = subj->tof;
 	if(subj == nil || subj->kind != Tadt || subj->tags == nil)
 		subj = nil;
-	if(subj == nil && t != tint && t != terror){
-		nerror(n, "match subject must be int or a tagged adt, not %T", t);
+	if(subj == nil && t != tint && t != tstring && t != terror){
+		nerror(n, "match subject must be int, string or a tagged adt, not %T", t);
 		ok = 0;
 	}
 	wild = nil;
@@ -3856,8 +3867,8 @@ matchcheck(Node *n)
 					continue;
 				}
 				pt = echk(q);
-				if(pt != tint && pt != terror){
-					nerror(q, "case label must be int, not %T", pt);
+				if(pt != terror && pt != (t == tstring ? tstring : tint)){
+					nerror(q, "case label must be %s, not %T", t == tstring ? "string" : "int", pt);
 					ok = 0;
 				}else if(q->op != Oconst){
 					nerror(q, "case label is not constant");
@@ -3872,11 +3883,17 @@ matchcheck(Node *n)
 			popscope();
 		}
 	}
-	if(!ok || subj == nil && t != tint)
+	if(!ok || subj == nil && t != tint && t != tstring)
 		return;
-	c = matchlabels(n->right, tint, nlab);
+	/*
+	 * string subject: the labels sort and search by text
+	 * (casecmp()), the table is a Tcasec (disw.c writes the label
+	 * strings straight into module data, types.c's descriptor map
+	 * marks them as pointers) and casecom() dispatches with ICASEC.
+	 */
+	c = matchlabels(n->right, t == tstring ? tstring : tint, nlab);
 	c->tagof = subj;
-	ct = mktype(&n->src, Tcase, nil, nil);
+	ct = mktype(&n->src, t == tstring ? Tcasec : Tcase, nil, nil);
 	ct->cse = c;
 	sizetype(ct);
 	n->ty = ct;
