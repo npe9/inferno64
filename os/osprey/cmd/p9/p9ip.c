@@ -78,32 +78,35 @@ ostcp(void *)
 		print("p9 ip: osprey-medium tcp failed: %s\n", up->errstr);
 		pexit("ostcp", 0);
 	}
-	/* announce a port on this stack, then connect to the osprey interface's
-	 * own address, so the SYN egresses the osprey medium and the loop's
-	 * pump carries it back in - the real tcp.c handshake over the medium */
-	afd = p9open("/net/tcp/clone", ORDWR);
+	/* two independent stacks over the osprey wire: stack B (#I1, 10.0.0.2)
+	 * announces; stack A (/net, 10.0.0.1) connects to it, the SYN crosses
+	 * the medium and the two stacks' tcp.c handshakes; then a byte stream
+	 * crosses between them */
+	afd = p9open("#I1/tcp/clone", ORDWR);
 	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
 	p9write(afd, "announce 8888", 13);
 	dfd = p9open("/net/tcp/clone", ORDWR);
 	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
-	print("p9 ip: osprey medium: connecting to 10.0.0.1!8888 over the osprey interface\n");
-	p9write(dfd, "connect 10.0.0.1!8888", 21);
+	print("p9 ip: osprey wire: stack A (10.0.0.1) connecting to stack B (10.0.0.2)!8888\n");
+	p9write(dfd, "connect 10.0.0.2!8888", 21);
 
 	snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
 	sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
 	if(n<0)n=0; line[n]=0;
 	for(e=line; *e && *e!='\n'; e++) ; *e=0;
 	if(strncmp(line, "Established", 11) == 0)
-		print("p9 ip: osprey medium: the real tcp.c handshook over the osprey interface - %s\n", line);
+		print("p9 ip: osprey wire: the two stacks' tcp.c completed a handshake over the medium - %s\n", line);
 	else
-		print("p9 ip: osprey medium: handshake did not reach Established - %s\n", line);
+		print("p9 ip: osprey wire: handshake did not reach Established - %s\n", line);
 
-	sfd = p9open("/net/ipifc/1/status", OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
-	if(n<0)n=0; line[n]=0;
-	for(e=line; *e && *e!='\n'; e++) ; *e=0;
-	print("p9 ip: osprey interface counters after the handshake: %s\n", line);
+	tsleep(&up->sleep, return0, nil, 100);		/* let the final ACK reach stack B */
+	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+	dfd2 = p9open(path, ORDWR);
+	n = p9read(dfd2, cbuf, sizeof cbuf - 1); p9close(dfd2);
+	if(n<0)n=0; cbuf[n]=0; lnum = atoi(cbuf);
+	print("p9 ip: osprey wire: stack B accepted the flow as conversation %d - two independent stacks joined over the osprey medium\n", lnum);
 
-	USED(anum); USED(dfd2); USED(lnum);
+	USED(anum);
 	p9close(dfd); p9close(afd);
 	poperror();
 	pexit("ostcp done", 0);
@@ -183,8 +186,13 @@ p9ipup(void)
 	 * interfaces into one wire, so this is two whole stacks joined by the
 	 * medium, not a loopback within one.
 	 */
-	/* (#I1 second Fs bind skipped: isolating the two-Fs instability) */
-	kproc("ostcp", ostcp, nil);	/* osprey-medium tcp.c handshake, single-stack self-loop */
+	fd = p9open("#I1/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9write(fd, "bind osprey", 11);
+	p9write(fd, "add 10.0.0.2 255.255.255.0", 26);
+	print("p9 ip: second stack #I1 with an osprey interface at 10.0.0.2\n");
+	p9close(fd);
+	kproc("ostcp", ostcp, nil);	/* two-stack tcp.c handshake + byte stream over the osprey wire */
 	poperror();
 
 	if(waserror()){
