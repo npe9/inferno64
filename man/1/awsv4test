@@ -1,0 +1,45 @@
+.TH AWSV4TEST 1
+.SH NAME
+awsv4test \- test AWS Signature Version 4 signing
+.SH SYNOPSIS
+.B awsv4test
+.SH DESCRIPTION
+.B Awsv4test
+checks
+.IR awsv4 (2)'s
+signing against authoritative vectors, offline \(em no network, no
+AWS account. It first checks the building blocks (the empty-body
+SHA-256, a known SHA-256, and vector 1's canonical-request hash), so
+a failure points at which stage broke rather than only at the final
+signature.
+.PP
+Vector 1 is AWS's own
+.B aws-sig-v4-test-suite
+.B get-vanilla
+case \(em the canonical published example, whose expected signature
+.RB ( 5fa00fa3\c
+.BR ...\c
+.BR 763fbf31 )
+is both documented by AWS and reproduced independently by
+.BR botocore ;
+the test was written against that agreement, not a single source.
+Vector 2 adds an out-of-order query string (exercising the
+canonical-query sort and percent-encoding) and a non-empty payload,
+with the expected signature computed from the same spec by a separate
+implementation.
+.SH SOURCE
+.B /appl/cmd/awsv4test.b
+.SH SEE ALSO
+.IR awsv4 (2),
+.IR s3 (1),
+.IR s3test (1)
+.SH BUGS
+The negative controls \(em flipping one byte of the secret, of
+.IR amzdate ,
+or of the signing-key derivation, each of which must change the
+signature \(em are run by editing the source, not automated, since
+they require corrupting the library. Coverage is the two vectors
+above plus the building-block hashes; presigned-URL and
+streaming-payload signing are unimplemented and untested (see
+.IR awsv4 (2)'s
+own BUGS).

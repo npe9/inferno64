@@ -1,0 +1,123 @@
+.TH S3 1
+.SH NAME
+s3 \- minimal Amazon S3 client
+.SH SYNOPSIS
+.B s3
+.RB [ -r
+.IR region ]
+.RB [ -e
+.IR endpoint ]
+.I credfile
+.B ls
+.I bucket
+.RI [ prefix ]
+.br
+.B s3
+.RB [ -r
+.IR region ]
+.RB [ -e
+.IR endpoint ]
+.I credfile
+.B get
+.I bucket key
+.br
+.B s3
+.RB [ -r
+.IR region ]
+.RB [ -e
+.IR endpoint ]
+.I credfile
+.B put
+.I bucket key
+.B <
+.I file
+.SH DESCRIPTION
+.B S3
+is a small Amazon S3 client written entirely in Limbo: it signs
+requests with AWS Signature Version 4
+.RI ( awsv4 (2))
+and sends them over this tree's own TLS
+.RI ( https (2)),
+with no host tooling involved \(em the point being that AWS
+interactions need none once the SSL work
+.RI ( doc/ssl-modernization-plan.md )
+shipped.
+.PP
+.B Ls
+lists the objects in
+.IR bucket
+(optionally restricted to those under
+.IR prefix ),
+one key per line, via ListObjectsV2.
+.B Get
+fetches
+.I key
+from
+.I bucket
+and writes it to standard output.
+.B Put
+uploads standard input as
+.I key
+in
+.IR bucket .
+.PP
+.B -r
+sets the region (default
+.BR us-east-1 );
+.B -e
+overrides the endpoint host (default the regional
+.BR s3. \fIregion\fB .amazonaws.com ),
+for an S3-compatible service. Requests use path-style addressing
+(the bucket is in the URL path, not the hostname), so bucket names
+containing dots \(em which break virtual-host TLS \(em still work.
+.PP
+.I Credfile
+is one of the forms
+.IR bsky (1)
+and
+.IR masto (1)
+also accept: a file path (two lines: the access key id, then the
+secret access key); the literal
+.BR - ,
+which asks
+.IR factotum (4)
+for a
+.B "proto=pass service=aws"
+key
+.RB ( user= accesskeyid,
+.BI !password= secret);
+or a keyspec fragment (containing
+.BR = )
+that narrows that query. So S3 credentials can live in
+.IR factotum (4)
+and
+.IR secstore (1)
+alongside the social-client keys.
+.SH SOURCE
+.B /appl/cmd/s3.b
+.SH SEE ALSO
+.IR s3test (1),
+.IR awsv4 (2),
+.IR https (2),
+.IR factotum (4)
+.SH BUGS
+Deliberately minimal: single-object
+.BR ls / get / put ,
+no multipart upload, no delete, no copy, no bucket operations, no
+ACLs, no versioning, no presigned URLs. The whole object body is held
+in memory, so this is unsuited to very large objects. XML responses
+are scanned for the tags of interest
+.RB ( <Key> ,
+.BR <Code> ,
+.BR <Message> )
+rather than parsed \(em enough for S3's flat, well-formed
+ListObjectsV2 and Error documents, not general XML. The
+.B put
+and
+.B get
+paths were exercised only against AWS's own signed error responses
+(a bogus key draws
+.BR InvalidAccessKeyId ),
+since driving real object writes from a test would need real
+credentials and a real bucket; see
+.IR s3test (1).

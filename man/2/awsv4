@@ -1,0 +1,125 @@
+.TH AWSV4 2
+.SH NAME
+awsv4: sign, signature, Creds, Request \- AWS Signature Version 4
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "awsv4.m";
+awsv4 := load AWSV4 AWSV4->PATH;
+Creds, Request: import awsv4;
+
+init:       fn(): string;
+sign:       fn(c: ref Creds, req: ref Request, amzdate: string): list of (string, string);
+signature:  fn(c: ref Creds, req: ref Request, amzdate: string): (string, string);
+amzdatenow: fn(): string;
+sha256hex:  fn(b: array of byte): string;
+
+Creds: adt {
+    access: string;  secret: string;  token: string;
+    region: string;  service: string;
+};
+Request: adt {
+    method: string;  host: string;  path: string;  query: string;
+    headers: list of (string, string);
+    payload: array of byte;
+};
+.EE
+.SH DESCRIPTION
+.B Awsv4
+computes AWS Signature Version 4 request signatures \(em the scheme
+every current AWS API authenticates with. It is pure computation with
+no network of its own; paired with
+.IR https (2)
+it makes signed AWS calls entirely within this tree, needing no host
+tooling. It is built on the HMAC-SHA256 and SHA-256 primitives
+.IR keyring (2)
+already provides.
+.PP
+.B Init
+must be called once. A
+.B Creds
+holds the access key id, secret access key, an optional STS session
+.B token
+(nil if none), and the target
+.B region
+and
+.B service
+(e.g.
+.BR us-east-1 ,
+.BR s3 ).
+A
+.B Request
+describes the call: HTTP
+.BR method ,
+bare
+.B host
+(no scheme),
+.B path
+(already percent-encoded where required;
+.B /
+if empty), raw
+.B query
+string (\c
+.BR "a=1&b=2" ,
+already encoded, any order \(em
+.B sign
+canonicalizes and sorts it), extra
+.B headers
+to include in the signature, and the request
+.B payload
+(nil for an empty body).
+.PP
+.B Sign
+returns the full list of
+.RI ( name ,\  value )
+headers to send: X-Amz-Date, X-Amz-Content-Sha256 (for
+.B s3
+only \(em it is that service's own required header), optionally
+X-Amz-Security-Token, the caller's own headers, and the Authorization
+header carrying the signature. It deliberately does
+.I not
+return a Host header:
+.B host
+is part of the signature, but
+.IR https (2)
+supplies its own Host from the URL (an identical value), and sending
+two makes AWS reject the request. Hand the returned list straight to
+.IR https (2)'s
+.BR request .
+.PP
+.I Amzdate
+is an ISO8601 basic UTC timestamp,
+.BR 20150830T123600Z .
+Passing it explicitly keeps signing deterministic and testable;
+.B amzdatenow
+builds one from the clock for live use.
+.B Signature
+returns just the hex signature and the string-to-sign, for checking
+against published vectors.
+.B Sha256hex
+is the lowercase-hex SHA-256 used for the payload and canonical-request
+hashes.
+.SH SOURCE
+.B /appl/lib/awsv4.b
+.br
+.B /module/awsv4.m
+.SH SEE ALSO
+.IR awsv4test (1),
+.IR s3 (1),
+.IR https (2),
+.IR keyring (2)
+.SH BUGS
+Only the SigV4 header-authorization scheme is implemented \(em not
+query-string (presigned-URL) signing, not the streaming
+.B STREAMING-AWS4-HMAC-SHA256-PAYLOAD
+chunked body encoding, and not SigV4A (multi-region). The whole
+payload is hashed in memory, so it is unsuited to very large bodies.
+Canonical-header handling emits each header once and does not merge
+duplicate header names (no AWS API this targets sends them). Verified
+against AWS's own aws-sig-v4-test-suite
+.B get-vanilla
+vector and cross-checked against
+.B botocore
+(both agree byte for byte); see
+.IR awsv4test (1).

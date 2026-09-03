@@ -128,6 +128,9 @@ TARG=\
 	dialtest.dis\
 	tls12test.dis\
 	httpstest.dis\
+	awsv4test.dis\
+	s3.dis\
+	s3test.dis\
 	aesgcmtest.dis\
 	ccpolytest.dis\
 	hmacsha256test.dis\

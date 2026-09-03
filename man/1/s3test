@@ -1,0 +1,51 @@
+.TH S3TEST 1
+.SH NAME
+s3test \- test the S3 client's decode and network paths
+.SH SYNOPSIS
+.B s3test
+.SH DESCRIPTION
+.B S3test
+drives
+.IR s3 (1)'s
+own in-process test seams. SigV4 signing itself is pinned against
+published vectors by
+.IR awsv4test (1);
+this covers the client around it.
+.TP
+.B listparsetest
+(offline) the ListObjectsV2 key extraction and the Error-document
+Code/Message pull, over hand-built bodies in S3's real shape.
+.TP
+.B badauthtest
+(live) a real SigV4-signed request with bogus credentials to real
+S3, which must come back as AWS's own signed error
+.RB ( InvalidAccessKeyId
+or
+.BR SignatureDoesNotMatch ).
+That single exchange proves the whole path end to end \(em the
+request was signed, reached S3 over this tree's own TLS, was parsed
+by AWS, and its credential checked \(em without any real account, the
+same way
+.IR bsky (1)/\c
+.IR masto (1)'s
+bogus-auth seams do.
+.SH SOURCE
+.B /appl/cmd/s3test.b
+.SH SEE ALSO
+.IR s3 (1),
+.IR awsv4test (1),
+.IR awsv4 (2),
+.IR https (2)
+.SH BUGS
+The live leg needs the real network and reaches
+.BR s3. us-east-1\c
+.BR .amazonaws.com ;
+a failure can mean the world changed rather than the code. Nothing
+here writes or reads a real object (that would need real
+credentials), so the success path of
+.B get\c
+/\c
+.B put
+past authentication is not exercised \(em see
+.IR s3 (1)'s
+own BUGS.
