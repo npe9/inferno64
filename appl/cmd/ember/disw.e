@@ -149,6 +149,29 @@ func dispath(name string) {
 	putc(0)
 }
 
+// the exception handler table, see disw.c's disexc()
+func disexc(es ref types.Except) {
+	n := 0
+	for e := es; e != nil; e = e.next {
+		if e.p1.reach != 0 || e.p2.reach != 0 {
+			n++
+		}
+	}
+	discon(n)
+	for e := es; e != nil; e = e.next {
+		if e.p1.reach == 0 && e.p2.reach == 0 {
+			continue
+		}
+		discon(e.d.offset)
+		discon(e.pc1)
+		discon(e.pc2)
+		discon(-1)
+		discon(0)
+		discon(e.c.iwild.pc)
+	}
+	discon(0)
+}
+
 func disentry(e ref types.Decl) {
 	if e == nil {
 		discon(-1)

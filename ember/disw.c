@@ -126,6 +126,37 @@ dispath(void)
 	Bwrite(bout, name, strlen(name)+1);
 }
 
+/*
+ * the exception handler table (HASEXCEPT): per try statement the
+ * binder's frame offset, the protected pc range, no descriptor of
+ * locals to zero (-1), no patterns (0 labels, 0 exceptions), and the
+ * handler's pc as the catch-all entry.  limbo's disexc() less the
+ * pattern labels.
+ */
+void
+disexc(Except *es)
+{
+	Except *e;
+	int n;
+
+	n = 0;
+	for(e = es; e != nil; e = e->next)
+		if(e->p1->reach || e->p2->reach)
+			n++;
+	discon(n);
+	for(e = es; e != nil; e = e->next){
+		if(!e->p1->reach && !e->p2->reach)
+			continue;
+		discon(e->d->offset);
+		discon(getpc(e->p1));
+		discon(getpc(e->p2));
+		discon(-1);
+		discon(0);
+		discon(e->c->iwild->pc);
+	}
+	discon(0);
+}
+
 void
 disentry(Decl *e)
 {

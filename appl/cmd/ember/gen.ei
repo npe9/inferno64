@@ -263,6 +263,7 @@ func genbra(line int, pos int, op int, s ref types.Node, m ref types.Node) ref t
 func genchan(line int, pos int, sz ref types.Node, mt ref types.Type, d ref types.Node) ref types.Inst
 func genmove(line int, pos int, how int, mt ref types.Type, s ref types.Node, d ref types.Node) ref types.Inst
 func patch(b ref types.Inst, dst ref types.Inst)
+func getpc(i ref types.Inst) int
 func reach(in ref types.Inst)
 func foldbranch(in ref types.Inst)
 func genaddr(n ref types.Node) types.Addr

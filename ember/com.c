@@ -27,6 +27,7 @@ static	Inst	*conts[MaxLab];
 static	int	isloop[MaxLab];		/* a for (1) or a match/alt (0) at this depth: continue targets loops only */
 static	Sym	*labels[MaxLab];	/* label naming the loop/match at this depth, or nil */
 static	int	labdep;
+static	Except	*excs;		/* the module's try handlers, in reverse order until modcom() */
 
 static	int	oprelinvert[Oend];
 static	int	opcommute[Oend];
@@ -3804,6 +3805,48 @@ scom(Node *n)
 			patch(breaks[labdep], nextinst());
 			popblock();
 			return;
+		case Otry: {
+			/*
+			 * try { body } catch e { handler }, limbo's exception
+			 * statement without patterns: IEXC0 and IEXC are
+			 * markers only (gen.c's foldbranch() reaches the
+			 * handler through them and turns them into no-ops);
+			 * the protected range and the handler entry go into
+			 * the module's exception table (disexc(), disw.c),
+			 * which the VM searches when a raise unwinds through
+			 * this frame, filling the binder's slot with the string.
+			 */
+			Except *ex;
+			Case *c;
+			Inst *pp, *p1, *p2, *p3, *p;
+			Type *ct;
+
+			pushblock();
+			pp = genrawop(&n->right->src, IEXC0, nil, nil, nil);
+			p1 = nextinst();
+			scom(n->left);
+			p2 = nextinst();
+			p3 = genrawop(&n->right->src, IJMP, nil, nil, nil);
+			p = genrawop(&n->right->src, IEXC, nil, nil, nil);
+			c = allocmem(sizeof *c);
+			memset(c, 0, sizeof *c);
+			c->iwild = nextinst();
+			ct = mktype(&n->src, Tcase, nil, nil);
+			ct->cse = c;
+			p->d.decl = mkdecl(&n->src, Dtype, ct);
+			scom(n->right);
+			patch(p3, nextinst());
+			ex = allocmem(sizeof *ex);
+			ex->p1 = p1;
+			ex->p2 = p2;
+			ex->c = c;
+			ex->d = n->aux->decl;
+			ex->next = excs;
+			excs = ex;
+			patch(pp, p);
+			popblock();
+			return;
+		}
 		case Ospawn:
 		case Osnd:
 			pushblock();
@@ -4112,6 +4155,7 @@ modcom(void)
 	int i, hints;
 
 	loadedflag = nil;
+	excs = nil;
 
 	if(impdecl == nil || errors)
 		return;
@@ -4233,6 +4277,19 @@ modcom(void)
 	 */
 	maxstack *= 10;
 
+	/* handlers were pushed as met: the table lists them in order */
+	{
+		Except *e, *r, *next;
+
+		r = nil;
+		for(e = excs; e != nil; e = next){
+			next = e->next;
+			e->next = r;
+			r = e;
+		}
+		excs = r;
+	}
+
 	hints = 0;
 	if(mustcompile)
 		hints |= MUSTCOMPILE;
@@ -4240,6 +4297,8 @@ modcom(void)
 		hints |= DONTCOMPILE;
 	if(ldts != nil)
 		hints |= HASLDT;
+	if(excs != nil)
+		hints |= HASEXCEPT;
 
 	discon(XMAGIC);
 	discon(hints);
@@ -4255,6 +4314,8 @@ modcom(void)
 	dismod(impdecl);
 	if(ldts != nil)
 		disldt(ldtoff, ldts);
+	if(excs != nil)
+		disexc(excs);
 	dispath();
 
 	firstinst = nil;

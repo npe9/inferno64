@@ -12,6 +12,7 @@ import disw "disw"
 
 const XMAGIC = 819248
 const HASLDT = 64
+const HASEXCEPT = 32
 const MaxLab = 32
 
 const Rreg = gen.Rreg
@@ -43,6 +44,7 @@ var conts = [MaxLab]ref types.Inst
 var isloop = [MaxLab]int
 var labels = [MaxLab]string
 var labdep = 0
+var excs ref types.Except	// the module's try handlers, in reverse order until modcom()
 var oprelinvert = [types.Oend]int
 var opcommute = [types.Oend]int
 var loadedflag ref types.Decl
@@ -2431,6 +2433,26 @@ func scom(n ref types.Node) {
 			gen.patch(breaks[labdep], gen.nextinst())
 			gen.popblock()
 			return
+		case types.Otry:
+			// try/catch: markers and an exception table entry (com.c)
+			gen.pushblock()
+			pp := gen.genrawop(n.right.line, n.right.pos, gen.IEXC0, nil, nil, nil)
+			p1 := gen.nextinst()
+			scom(n.left)
+			p2 := gen.nextinst()
+			p3 := gen.genrawop(n.right.line, n.right.pos, gen.IJMP, nil, nil, nil)
+			p := gen.genrawop(n.right.line, n.right.pos, gen.IEXC, nil, nil, nil)
+			c := ref types.Case{nlab: 0, nsnd: 0, offset: 0, labs: nil, wild: nil, iwild: nil, tagof: nil}
+			c.iwild = gen.nextinst()
+			ct := types.mktype(n.line, n.pos, types.Tcase, nil, nil)
+			ct.cse = c
+			p.d.decl = types.mkdecl(n.line, n.pos, types.Dtype, ct)
+			scom(n.right)
+			gen.patch(p3, gen.nextinst())
+			excs = ref types.Except{p1: p1, p2: p2, c: c, d: n.aux.decl, next: excs}
+			gen.patch(pp, p)
+			gen.popblock()
+			return
 		default:
 			gen.pushblock()
 			sumark(n)
@@ -2689,6 +2711,7 @@ func modcom(file string, out string) int {
 	infile = file
 	nerrors = 0
 	loadedflag = nil
+	excs = nil
 	impdecl = check.moduledecl()
 	nildecl = check.nildeclare()
 	if impdecl == nil {
@@ -2799,9 +2822,22 @@ func modcom(file string, out string) int {
 
 	maxstack := gen.maxstack() * 10
 
+	// handlers were pushed as met: the table lists them in order
+	var rev ref types.Except
+	for e := excs; e != nil; {
+		next := e.next
+		e.next = rev
+		rev = e
+		e = next
+	}
+	excs = rev
+
 	hints := 0
 	if ldts != nil {
 		hints |= HASLDT
+	}
+	if excs != nil {
+		hints |= HASEXCEPT
 	}
 
 	if disw.open(out) == 0 {
@@ -2823,6 +2859,17 @@ func modcom(file string, out string) int {
 	disw.dismod(impdecl)
 	if ldts != nil {
 		disw.disldt(ldtoff, ldts)
+	}
+	if excs != nil {
+		// the writer's generator instance has no instruction list:
+		// resolve the ranges' pcs here
+		for e := excs; e != nil; e = e.next {
+			if e.p1.reach != 0 || e.p2.reach != 0 {
+				e.pc1 = gen.getpc(e.p1)
+				e.pc2 = gen.getpc(e.p2)
+			}
+		}
+		disw.disexc(excs)
 	}
 	disw.dispath(file)
 	disw.close()

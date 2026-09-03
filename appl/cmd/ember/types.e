@@ -119,7 +119,8 @@ const Oused = 96
 const Onothing = 97
 const Ochan = 98
 const Oarray = 99
-const Oend = 100
+const Otry = 100
+const Oend = 101
 
 const Tnone = 0
 const Tadt = 1
@@ -308,6 +309,16 @@ type Inst struct {
 	block int
 }
 
+type Except struct {
+	p1 ref Inst
+	p2 ref Inst
+	pc1 int	// the range's pcs, resolved by com.e (getpc needs the generator's own instance)
+	pc2 int
+	c ref Case
+	d ref Decl
+	next ref Except
+}
+
 type Desc struct {
 	id int
 	used int
@@ -349,7 +360,7 @@ type Case struct {
 	tagof ref Type
 }
 
-var opnames = [101]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "end"}
+var opnames = [102]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "end"}
 
 var kindnames = [33]string{"no type", "adt", "adt", "array", "big", "byte", "chan", "real", "fn", "int", "list", "module", "ref", "string", "tuple", "exception", "fixed point", "polymorphic", "array initializers", "alt channels", "polymorphic type", "->", "case int labels", "case big labels", "case string labels", ".", "type error", "goto labels", "id", "module interface", "exception handler table", "instantiated type", "end"}
 

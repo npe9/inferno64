@@ -5308,6 +5308,45 @@ stchk(Node *n)
 		case Oalt:
 			altcheck(n);
 			return;
+		case Otry: {
+			/*
+			 * try { body } catch e { handler }: e is a string local
+			 * of the handler's scope, filled by the VM with the
+			 * raised string; a nameless catch still needs the slot
+			 */
+			Decl *ed;
+			Node *en;
+
+			pushscope();
+			stchk(n->left);
+			popscope();
+			pushscope();
+			en = n->aux;
+			if(en == nil){
+				en = mkn(Oname, nil, nil);
+				en->src = n->src;
+				en->sym = enter(".exc", 0);
+				n->aux = en;
+			}
+			ed = mkdecl(&en->src, Dlocal, tstring);
+			ed->sym = en->sym;
+			install(ed);
+			en->decl = ed;
+			en->ty = tstring;
+			ed->link = nil;
+			if(curfn->locals == nil)
+				curfn->locals = ed;
+			else{
+				Decl *e;
+
+				for(e = curfn->locals; e->link != nil; e = e->link)
+					;
+				e->link = ed;
+			}
+			stchk(n->right);
+			popscope();
+			return;
+		}
 		case Ofor:
 			pushscope();
 			if(n->aux != nil)
@@ -5533,6 +5572,8 @@ terminates(Node *n)
 		return n->left == nil && !hasbreak(n->right, 0);
 	case Olabel:
 		return terminates(n->right);
+	case Otry:
+		return terminates(n->left) && terminates(n->right);
 	}
 	return 0;
 }

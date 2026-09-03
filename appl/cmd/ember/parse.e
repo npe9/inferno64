@@ -113,10 +113,11 @@ const Oused = 96
 const Onothing = 97
 const Ochan = 98
 const Oarray = 99
-const Oend = 100
+const Otry = 100
+const Oend = 101
 
 
-var opnames = [101]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "end"}
+var opnames = [102]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "end"}
 
 var lx ref lex.Lexer
 var look0 ref lex.Tok
@@ -1198,6 +1199,16 @@ func pstmt() ref types.Node {
 		n = types.mkunary(Oraise, pexpr())
 		n.line = t.line
 		n.pos = t.pos
+	case lex.Ktry:
+		lexskip()
+		n = types.mkn(Otry, pblock(), nil)
+		n.line = t.line
+		n.pos = t.pos
+		pexpect(lex.Kcatch, "try statement")
+		if cur() == lex.Eid {
+			n.aux = pname("catch binder")
+		}
+		n.right = pblock()
 	case lex.Kspawn:
 		lexskip()
 		e := pprimary()

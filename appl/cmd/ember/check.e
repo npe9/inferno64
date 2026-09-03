@@ -3172,6 +3172,38 @@ func stchk(n ref types.Node) {
 		case types.Oalt:
 			altcheck(n)
 			return
+		case types.Otry:
+			// e is a string local of the handler's scope (check.c)
+			pushscope()
+			stchk(n.left)
+			popscope()
+			pushscope()
+			en := n.aux
+			if en == nil {
+				en = types.mkn(types.Oname, nil, nil)
+				en.line = n.line
+				en.pos = n.pos
+				en.sym = ".exc"
+				n.aux = en
+			}
+			ed := types.mkdecl(en.line, en.pos, types.Dlocal, tstring)
+			ed.sym = en.sym
+			install(ed)
+			en.decl = ed
+			en.ty = tstring
+			ed.link = nil
+			if curfn.locals == nil {
+				curfn.locals = ed
+			} else {
+				e := curfn.locals
+				for e.link != nil {
+					e = e.link
+				}
+				e.link = ed
+			}
+			stchk(n.right)
+			popscope()
+			return
 		case types.Ofor:
 			pushscope()
 			if n.aux != nil {
@@ -3431,6 +3463,11 @@ func terminates(n ref types.Node) int {
 		return 0
 	case types.Olabel:
 		return terminates(n.right)
+	case types.Otry:
+		if terminates(n.left) != 0 && terminates(n.right) != 0 {
+			return 1
+		}
+		return 0
 	}
 	return 0
 }

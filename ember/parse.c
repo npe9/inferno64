@@ -1275,6 +1275,17 @@ pstmt(void)
 		n = mkunary(Oraise, pexpr());
 		n->src.start = src.start;
 		break;
+	case Ktry:
+		/* try { body } catch [e] { handler } */
+		lexskip();
+		n = mkn(Otry, pblock(), nil);
+		n->src.start = src.start;
+		pexpect(Kcatch, "try statement");
+		if(cur() == Eid)
+			n->aux = pname("catch binder");
+		n->right = pblock();
+		n->src.stop = n->right->src.stop;
+		break;
 	case Kspawn:
 		lexskip();
 		e = pprimary();

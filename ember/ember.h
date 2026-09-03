@@ -30,6 +30,7 @@
 
 typedef	struct Addr	Addr;
 typedef	struct Case	Case;
+typedef	struct Except	Except;
 typedef	struct Decl	Decl;
 typedef	struct Desc	Desc;
 typedef	struct Dlist	Dlist;
@@ -165,6 +166,20 @@ struct Case
 	Node	*wild;			/* if nothing matches */
 	Inst	*iwild;
 	Type	*tagof;			/* non-nil: match on a tagged adt's tag word, not the subject itself; the outer Tadt-with-tags */
+};
+
+/*
+ * a try statement's handler: the protected pc range [p1, p2), the
+ * frame slot d the VM fills with the raised string, and the Case
+ * whose iwild is the handler's entry (a catch-all: no patterns)
+ */
+struct Except
+{
+	Inst	*p1;
+	Inst	*p2;
+	Case	*c;
+	Decl	*d;
+	Except	*next;
 };
 
 struct Label
@@ -578,6 +593,8 @@ enum
 	Ktype,
 	Kvar,
 	Kraise,
+	Ktry,
+	Kcatch,
 
 	Eend
 };
@@ -680,6 +697,7 @@ enum
 	Ochan,				/* chan T alloc: left size or nil, right type expr (cleared after check) */
 	Oarray,				/* array[size] T alloc, always zero-filled: left size, right type expr (cleared after check) -- deliberately NOT limbo's fuller "array[] of {v,...}" value-list form, which stays check.c's own separate, still-open compositefields()/Oindx-representation gap */
 
+	Otry,				/* try { body } catch e { handler }: left body, right handler, aux the binder (Oname, a string local) */
 	Oend
 };
 
@@ -866,6 +884,7 @@ void	disdata(int, long);
 void	dismod(Decl*);
 void	dispath(void);
 void	disentry(Decl*);
+void	disexc(Except*);
 void	disdesc(Desc*);
 void	disvar(long, Decl*);
 void	disldt(long, Decl*);

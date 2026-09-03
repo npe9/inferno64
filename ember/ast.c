@@ -111,6 +111,7 @@ char *opname[] =
 	/* Onothing */	"nothing",
 	/* Ochan */	"chan",
 	/* Oarray */	"array",
+	/* Otry */	"try",
 	/* Oend */	"end",
 };
 

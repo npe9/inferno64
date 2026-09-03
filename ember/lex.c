@@ -71,6 +71,8 @@ static	Keywd	keywords[] =
 	"nil",		Knil,
 	"pick",		Kpick,
 	"raise",	Kraise,
+	"try",		Ktry,
+	"catch",	Kcatch,
 	"ref",		Kref,
 	"return",	Kreturn,
 	"spawn",	Kspawn,

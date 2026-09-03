@@ -214,11 +214,26 @@ no `break` leaves. An `if` or `for` condition must be an `int`
 (a comparison, a logical expression, a flag); a string or ref is not
 a condition. `:=` may not redeclare a name already declared in the
 same scope (a parameter counts as declared in the body's outermost
-block), though an inner scope may shadow it. `raise expr` (a string) ends the process with that
-error, the way a Limbo `raise` does; there is no catch, and a command
-uses `raise "fail:reason"` to exit unsuccessfully. Integer division
-or modulus by zero ends the process with "zero divide", and indexing
-past an array or string with "array bounds error", as in Limbo.
+block), though an inner scope may shadow it. `raise expr` (a string) raises that error, the way a Limbo `raise`
+does; a command uses `raise "fail:reason"` to exit unsuccessfully.
+Integer division or modulus by zero raises "zero divide", indexing
+past an array or string "array bounds error", and using a nil ref
+"dereference of nil", as in Limbo. An uncaught error ends the
+process.
+
+    try {
+        n := parse(s)
+        ...
+    } catch e {
+        sys.print("bad input: %s\n", e)
+    }
+
+`try` runs its block; a raise in it, or in any function it calls,
+unwinds to the handler with the error string in `e` (a local of the
+handler, string typed; `catch {` without a name is allowed). The
+VM's own errors are caught the same way. A raise inside a handler
+goes to the next enclosing `try`, which may be in a caller. A `try`
+whose block and handler both return terminates.
 
 ## Functions, closures, generics, methods
 

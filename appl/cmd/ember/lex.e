@@ -67,6 +67,8 @@ const Ktype = 306
 const Kvar = 307
 const Kalt = 308
 const Kraise = 309
+const Ktry = 310
+const Kcatch = 311
 
 const Mlower = 1
 const Mupper = 2
@@ -251,6 +253,10 @@ func keyword(id string) int {
 		return Kpick
 	case "raise":
 		return Kraise
+	case "try":
+		return Ktry
+	case "catch":
+		return Kcatch
 	case "ref":
 		return Kref
 	case "return":
@@ -843,6 +849,10 @@ func tokname(t int) string {
 		return "return"
 	case Kraise:
 		return "raise"
+	case Ktry:
+		return "try"
+	case Kcatch:
+		return "catch"
 	case Kspawn:
 		return "spawn"
 	case Kstruct:
