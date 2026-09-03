@@ -800,15 +800,41 @@ buffers, since
 .CW error
 writes there and the server proc's are a single static pair.
 .PP
-This first form is a single task: the medium loops a frame back to the
-same stack through the pump.  The two-endpoint form is the same shape with
-the queue replaced by an osprey ring -
+The first form looped a frame back to the same stack.  The two-endpoint
+form is now in, and it needed no second machine and no change to the
+osprey device: devip keeps an independent
+.CW Fs
+per attach spec
+.CW ( ipfs[dev] ),
+so a second whole stack lives in the same personality, reached as
+.CW #I1 .
+An osprey interface is bound on each - 10.0.0.1 on the first, 10.0.0.2 on
+the second - and binding the second pairs the two into one wire, so a
+frame
 .CW bwrite
-puts the frame on the ring to the peer, and the pump drains frames the
-peer put on the ring to us, which the loop learns of from a new
+sends out one arrives on the other's inbound queue, drained into that
+stack by the loop's pump.  A kproc then announces a port on the second
+stack and connects to 10.0.0.2 from the first: the SYN leaves the first
+stack's interface, the pump carries it to the second, and the two stacks'
+.CW tcp.c
+complete a handshake between them -
+.CW "Established ... swin 65535>>4 rwin 1048560>>4" ,
+the two windows different because these are two independent stacks, not
+one loopback.  Four of four boots carry it alongside the loopback proofs.
+.PP
+This is the wire test the talk's second machine stands for, run between
+two stacks in one address space over the osprey medium.  What a real
+second machine would change is only the medium's two ends: instead of two
+.CW Fs
+in one personality sharing a pair of queues,
+.CW bwrite
+would put the frame on an osprey ring to the peer container and the pump
+would drain the ring the peer wrote, learned from a new
 .CW oselect
-arm.  That, a second personality running the stack, and the wire test
-between them are what remain of item 7a.
+arm - the osprey device carrying the frames it already carries requests
+on.  A data stream across the two stacks (the handshake is proved; the
+bytes after it are not yet) and that device-carried two-container form are
+what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

@@ -35,13 +35,21 @@ typedef struct Osrock Osrock;
 struct Osrock
 {
 	Fs	*f;		/* the stack to inject into */
-	Queue	*q;		/* frames waiting to be injected */
+	Queue	*q;		/* frames arrived for this interface, to inject */
 	Ipifc	*ifc;
+	Osrock	*peer;		/* the interface at the other end of the wire */
 	Osrock	*next;		/* all bound osprey interfaces, for the pump */
 };
 
 static Osrock *allos;		/* every bound osprey interface */
 
+/*
+ * Bind an interface to the osprey medium.  The first is a wire looped to
+ * itself; when a second binds, the two are paired into one wire, so a
+ * frame one writes arrives at the other.  With two independent stacks
+ * (two Fs, devip's ipfs[dev]) each holding one end, this is a real
+ * two-endpoint link, not a loopback.
+ */
 static void
 ospreybind(Ipifc *ifc, int, char**)
 {
@@ -51,6 +59,11 @@ ospreybind(Ipifc *ifc, int, char**)
 	er->f = ifc->conv->p->f;
 	er->q = qopen(1024*1024, Qmsg, nil, nil);
 	er->ifc = ifc;
+	er->peer = er;			/* default: a wire looped to itself */
+	if(allos != nil && allos->next == nil){	/* exactly one so far: pair with it */
+		er->peer = allos;
+		allos->peer = er;
+	}
 	er->next = allos;
 	allos = er;
 	ifc->arg = er;
@@ -79,7 +92,7 @@ ospreybwrite(Ipifc *ifc, Block *bp, int, uchar*, Routehint*)
 	Osrock *er;
 
 	er = ifc->arg;
-	if(qpass(er->q, bp) < 0)
+	if(qpass(er->peer->q, bp) < 0)	/* out this end -> in at the other */
 		ifc->outerr++;
 	ifc->out++;
 }
