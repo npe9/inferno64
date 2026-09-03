@@ -493,3 +493,52 @@ Remaining: MSI (item 4), the rest of item 5 (riscv supervisor mode,
 SBI, wiring boards to the discovered DTB addresses), item 6 (USB
 ethernet, HID report descriptors, virtio-gpu 3-D), and item 7 (per-SoC
 drivers).
+.NH 1
+Remaining QEMU-tractable work, and what is out of reach
+.PP
+With the interrupt controllers, the timer, PCI and the virtio devices,
+the framebuffer and the device-tree wiring all done, the QEMU virt
+machines expose only a short list of devices still unsupported.  Two of
+them are worth doing and verifiable on QEMU; the rest are either no
+gain on these machines, blocked by the boot path, or need silicon.
+.NH 2
+To do
+.IP 1.
+Hardware RTC to real wall-clock time.  Both virt machines carry a
+real-time clock the kernel never reads - riscv's
+.CW google,goldfish-rtc
+at 0x101000 (a 64-bit nanosecond counter, TIME_LOW then TIME_HIGH) and
+arm64's
+.CW arm,pl031
+at 0x9010000 (a 32-bit seconds register).  Today wall-clock time comes
+from the tick counter, so timestamps are relative, not calendar time.
+Read the RTC at boot and seed
+.CW todset ;
+verify by comparing the seeded time against the host clock.
+.IP 2.
+Machine-mode syscon poweroff.  The supervisor-mode boards get a clean
+poweroff through the SBI SRST call; the machine-mode riscv boards
+(virt, virt32) still spin in WFI on exit.  QEMU's
+.CW sifive,test0
+finisher at 0x100000 powers the machine off on a write of 0x5555 (and
+reboots on 0x7777).  Wire
+.CW archreboot
+to it; verify QEMU exits.
+.NH 2
+Out of reach here
+.IP \(bu
+MSI/MSI-X: PCI runs on legacy INTx, which QEMU delivers correctly, so
+MSI buys nothing on these machines.  Left for real hardware that needs
+more vectors.
+.IP \(bu
+The arm64 PL061 GPIO drives only a poweroff key under QEMU - cosmetic.
+.IP \(bu
+arm64 device-tree discovery is blocked: QEMU's
+.CW -kernel
+path enters the arm64 ELF with x0 == 0, handing it no DTB pointer, so
+the reader that works on riscv has nothing to read.
+.IP \(bu
+SPI, I2C, and the rest arrive only with a real SoC board (Raspberry Pi,
+VisionFive 2, and the others in the machine table) - they are not on
+the generic virt platform at all.  That is the per-board silicon work,
+which needs the hardware or a SoC-specific QEMU machine.

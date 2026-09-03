@@ -146,6 +146,12 @@ main(void)
 	trapinit();
 	mmuinit();
 	clockinit();
+	{	/* seed wall-clock from the hardware RTC (calendar time) */
+		extern vlong rtctime(void);
+		vlong t = rtctime();
+		if(t > 0)
+			todset(t, 0, 0);
+	}
 	quotefmtinstall();	/* Limbo sys->sprint %q / C snprint %q */
 	printinit();
 

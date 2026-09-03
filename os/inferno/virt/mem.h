@@ -34,6 +34,7 @@
 #define	VIRTIO_SIZE	0x1000
 #define	VIRTIO_NDEV	8
 #define	CLINT		((uintptr)0x02000000)
+#define	RTC0		((uintptr)0x101000)	/* google,goldfish-rtc */
 #define	PLIC		((uintptr)0xc << 24)	/* 0x0c000000 SiFive PLIC */
 
 /* pci-host-ecam-generic (QEMU virt) — empty until -device … */

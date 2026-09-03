@@ -35,6 +35,7 @@
 
 /* pl011@9000000, same as armv7's own board (same QEMU virt machine) */
 #define	UART0		((uintptr)0x09000000)
+#define	RTC0		((uintptr)0x09010000)	/* arm,pl031 */
 
 /*
  * intc@8000000: with -M virt (default) this is "arm,cortex-a15-gic"

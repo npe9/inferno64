@@ -10,6 +10,23 @@ archreset(void)
 {
 }
 
+/*
+ * The goldfish RTC is a 64-bit nanosecond-since-epoch counter: reading
+ * TIME_LOW latches TIME_HIGH, so read low then high.  main() seeds the
+ * time-of-day clock with this so wall time is calendar-correct, not
+ * just relative to boot.  Returns ns since the epoch, or -1 if the read
+ * looks bogus (a board without the RTC leaves tod on the tick counter).
+ */
+vlong
+rtctime(void)
+{
+	u32int lo, hi;
+
+	lo = *(volatile u32int*)(uintptr)(RTC0 + 0x00);
+	hi = *(volatile u32int*)(uintptr)(RTC0 + 0x04);
+	return (vlong)(((uvlong)hi << 32) | lo);
+}
+
 void
 pciarchinit(void)
 {

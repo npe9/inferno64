@@ -10,6 +10,21 @@ archreset(void)
 {
 }
 
+/*
+ * The PL031 RTC's data register (offset 0) is a 32-bit count of seconds
+ * since the epoch.  main() seeds the time-of-day clock from it, scaled
+ * to nanoseconds, so wall time is calendar-correct rather than relative
+ * to boot.
+ */
+vlong
+rtctime(void)
+{
+	u32int sec;
+
+	sec = *(volatile u32int*)(uintptr)(RTC0 + 0x00);	/* PL031 DR */
+	return (vlong)sec * 1000000000LL;
+}
+
 void
 pciarchinit(void)
 {
