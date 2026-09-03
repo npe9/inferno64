@@ -6,6 +6,8 @@ module Libpoint
 // across the module boundary, so both compilations must agree on the
 // layout and on the link signature of every function.
 
+import rand "rand"
+
 const PATH = "/tmp/libpoint.dis"
 
 type Point struct {
@@ -18,3 +20,7 @@ func scale(p ref Point, k int)
 func norm1(p Point) int
 func origin() Point
 func name() string
+
+// a module-typed parameter: the client must sign Rand complete (the
+// import-side modrefable(), types.c narrowmods()), not narrowed
+func roll(r Rand, n int) int

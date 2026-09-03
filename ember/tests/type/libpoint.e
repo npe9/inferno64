@@ -1,5 +1,7 @@
 module Libpoint
 
+import rand "rand"
+
 // the library half of tests/type/loadlib.e; no init(), never run
 // directly.  see tests/type/libpoint.ei.
 
@@ -35,4 +37,9 @@ func origin() Point {
 
 func name() string {
 	return "libpoint"
+}
+
+func roll(r Rand, n int) int {
+	r.init(3)
+	return r.rand(n)
 }

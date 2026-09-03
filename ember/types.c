@@ -938,6 +938,25 @@ narrowmods(void)
 		}
 	}
 
+	/*
+	 * a module type reachable from a REFERENCED imported member's
+	 * signature (a parameter "r Rand" of an imported function) must
+	 * stay complete too, since rtsign() refuses a narrowed one --
+	 * the import-side twin of check()'s modrefable() over this
+	 * module's own exports; must run before anything is narrowed.
+	 */
+	for(eq = modclass(); eq != nil; eq = eq->eq){
+		for(id = eq->ty->ids; id != nil; id = id->next){
+			if(id->refs > 0 && (id->store == Dfn || id->store == Dglobal))
+				modrefable(id->ty);
+			if(id->store == Dtype && id->ty != nil && id->ty->kind == Tadt){
+				for(m = id->ty->ids; m != nil; m = m->next)
+					if(m->store == Dfn && m->refs > 0)
+						modrefable(m->ty);
+			}
+		}
+	}
+
 	for(eq = modclass(); eq != nil; eq = eq->eq){
 		t = eq->ty->tof;
 		if(t == nil)

@@ -2,6 +2,7 @@ module Loadlib
 
 import sys "sys"
 import libpoint "libpoint"
+import rand "rand"
 
 // an Ember module loading another Ember module: libpoint.e is
 // compiled separately (its interface is tests/type/libpoint.ei) and
@@ -31,6 +32,10 @@ func init() {
 
 	// a struct returned across the boundary, field read off the call
 	sys.print("origin=%d,%d\n", lib.origin().x, lib.origin().y)
+
+	// a module value passed across the boundary as a parameter
+	rr := load Rand "/dis/lib/rand.dis"
+	sys.print("roll<10=%d\n", lib.roll(rr, 10) < 10)
 
 	poison := 66666
 	poison = 0
