@@ -7,7 +7,7 @@ import maps "maps"
 import lists "lists"
 
 // the header-only libraries together: read a file line by line,
-// count words in a generic map, sort the entries with the generic
+// count words in a generic mp, sort the entries with the generic
 // sort, print the top few
 
 type Count struct {

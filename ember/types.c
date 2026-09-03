@@ -1485,7 +1485,7 @@ rtsign(Type *t, uchar *sig, int lensig, int spos)
 	case Tchan:
 		return rtsign(t->tof, sig, lensig, spos);
 	case Tfn:
-		if(t->varargs != 0)
+		if(t->varargs == 1)
 			sig[spos++] = SIGVARARGS;
 		/*
 		 * hasenv: this Tfn is check.c's envfn() shape (a function

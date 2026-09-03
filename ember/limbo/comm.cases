@@ -1,0 +1,14 @@
+/ember/limbo/data/a.txt /ember/limbo/data/b.txt
+-1 /ember/limbo/data/a.txt /ember/limbo/data/b.txt
+-2 /ember/limbo/data/a.txt /ember/limbo/data/b.txt
+-3 /ember/limbo/data/a.txt /ember/limbo/data/b.txt
+-12 /ember/limbo/data/a.txt /ember/limbo/data/b.txt
+-13 /ember/limbo/data/a.txt /ember/limbo/data/b.txt
+-23 /ember/limbo/data/a.txt /ember/limbo/data/b.txt
+/ember/limbo/data/b.txt /ember/limbo/data/a.txt
+/ember/limbo/data/a.txt /ember/limbo/data/a.txt
+- /ember/limbo/data/a.txt
+/ember/limbo/data/a.txt -
+/ember/limbo/data/a.txt /nonexistent
+/ember/limbo/data/a.txt
+-4 /ember/limbo/data/a.txt /ember/limbo/data/b.txt

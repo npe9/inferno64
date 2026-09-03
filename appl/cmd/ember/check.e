@@ -583,6 +583,13 @@ func synthfvwrap(line int, pos int, fn ref types.Decl) ref types.Decl {
 	for arg := wt.ids.next; arg != nil; arg = arg.next {
 		args = types.mkseq(args, mkname(line, pos, arg.sym))
 	}
+	if fn.ty.varargs == 2 && args != nil {	// pass the packed array through
+		last := args
+		if args.op == types.Oseq {
+			last = args.right
+		}
+		last.flags |= types.NVARARG
+	}
 	call = types.mkn(types.Ocall, call, types.rotater(args))
 	isvoid := 0
 	if fn.ty.tof == tnone {
@@ -602,7 +609,7 @@ func synthfvwrap(line int, pos int, fn ref types.Decl) ref types.Decl {
 }
 
 func synthimportwrap(line int, pos int, alias ref types.Decl, id ref types.Decl) ref types.Decl {
-	if id.ty.varargs != 0 {
+	if id.ty.varargs == 1 {
 		error(line, sys.sprint("%s.%s takes a variable number of arguments and cannot be used as a value", alias.sym, id.sym))
 		return nil
 	}
@@ -621,6 +628,13 @@ func synthimportwrap(line int, pos int, alias ref types.Decl, id ref types.Decl)
 	var args ref types.Node
 	for arg := wt.ids.next; arg != nil; arg = arg.next {
 		args = types.mkseq(args, mkname(line, pos, arg.sym))
+	}
+	if id.ty.varargs == 2 && args != nil {	// pass the packed array through
+		last := args
+		if args.op == types.Oseq {
+			last = args.right
+		}
+		last.flags |= types.NVARARG
 	}
 	call := types.mkn(types.Ocall, dot, types.rotater(args))
 	isvoid := 0
@@ -713,7 +727,7 @@ func synthfunclit(n ref types.Node) ref types.Decl {
 		var flast ref types.Decl
 		i := 0
 		for cl := ld.captures; cl != nil; cl = tl(cl) {
-			fd := types.mkdecl(n.line, n.pos, types.Dfield, hd(cl).ty)
+			fd := types.mkdecl(n.line, n.pos, types.Dfield, hd(cl).boxty)	// the box, shared with the owner
 			fd.sym = sys.sprint(".cap%d", i)
 			i++
 			if fids == nil {
@@ -734,6 +748,7 @@ func synthfunclit(n ref types.Node) ref types.Decl {
 		}
 		for i = 0; i < ld.ncapuses; i++ {
 			un := ld.capuses[i]
+			orig := un.decl
 			pos := 0
 			for cl2 := ld.captures; cl2 != nil; cl2 = tl(cl2) {
 				if hd(cl2) == un.decl {
@@ -762,6 +777,7 @@ func synthfunclit(n ref types.Node) ref types.Decl {
 			un.right = nil
 			un.decl = fd
 			un.ty = fd.ty
+			unboxuse(un, orig)
 		}
 	}
 	return ld
@@ -1003,6 +1019,8 @@ func stype(n ref types.Node) ref types.Type {
 		return tnone
 	}
 	match n.op {
+	case types.Otypeval:
+		return n.ty
 	case types.Otarray:
 		return types.mktype(n.line, n.pos, types.Tarray, stype(n.right), nil)
 	case types.Otchan:
@@ -1026,6 +1044,9 @@ func stype(n ref types.Node) ref types.Type {
 		return types.mktype(n.line, n.pos, types.Tref, t, nil)
 	case types.Otstruct:
 		t := types.mktype(n.line, n.pos, types.Tadt, nil, nil)
+		if (n.flags & types.NIFACE) != 0 {
+			t.isiface = 1	// parse.e's pinterface
+		}
 		var ids ref types.Decl
 		var last ref types.Decl
 		for p := n.left; p != nil; p = p.right {
@@ -1096,10 +1117,13 @@ func stype(n ref types.Node) ref types.Type {
 				}
 				continue
 			}
-			if (f.flags & types.NVARARG) != 0 {
-				ft.varargs = 1
-			}
 			t := stype(f.right)
+			if (f.flags & types.NVARARG) != 0 {
+				// "xs ...T": an array of T inside, packed at each call
+				t = types.mktype(f.line, f.pos, types.Tarray, t, nil)
+				types.sizetype(t)
+				ft.varargs = 2
+			}
 			if t.kind == types.Tfn {
 				t = types.mktype(f.line, f.pos, types.Tref, types.envfn(f.line, f.pos, t), nil)
 			}
@@ -1161,7 +1185,11 @@ func stype(n ref types.Node) ref types.Type {
 		n.decl = d
 		return d.ty
 	case types.Otinst, types.Oindex:
-		return tinstantiate(n)
+		t := tinstantiate(n)
+		if (n.flags & types.NMAPT) != 0 && t != nil && t.kind == types.Tadt {
+			t.ismap = 1	// map[K]V (parse.e's pmaptype)
+		}
+		return t
 	case types.Odot:
 		rt := terror
 		if n.left.op == types.Odot || n.left.op == types.Oindex || n.left.op == types.Otinst {
@@ -1243,6 +1271,30 @@ func assignable(t ref types.Type, s ref types.Type, v ref types.Node) int {
 	}
 	if t.kind == types.Tref && s.kind == types.Tref && s.tof != nil && s.tof.kind == types.Tadtpick && t.tof != nil && t.tof.kind == types.Tadt && t.tof.tags != nil && s.tof.tof == t.tof {
 		return 1
+	}
+	// an interface takes any ref to a struct or pick with its methods:
+	// the value becomes a call of the interface's .Name$from (check.c)
+	if v != nil && isifacetype(t) && types.tequal(t, s) == 0 && s.kind == types.Tref && s.tof != nil && (s.tof.kind == types.Tadt || s.tof.kind == types.Tadtpick) && s.tof.isiface == 0 {
+		if !implements(s, t, v) {
+			return 0
+		}
+		ifaceconv(v, t)
+		return 1
+	}
+	// tuples are assignable element by element (check.c)
+	if t.kind == types.Ttuple && s.kind == types.Ttuple {
+		a := t.ids
+		b := s.ids
+		for ; a != nil && b != nil; a = a.next {
+			if assignable(a.ty, b.ty, nil) == 0 {
+				return 0
+			}
+			b = b.next
+		}
+		if a == nil && b == nil {
+			return 1
+		}
+		return 0
 	}
 	return types.tequal(t, s)
 }
@@ -1604,6 +1656,10 @@ func echk1(n ref types.Node) ref types.Type {
 		if n.decl != nil && n.decl.store == types.Dfn && n.decl.tparams == nil && n.decl.init != nil && n.decl.init.op == types.Ofndecl {
 			d = n.decl
 		}
+		// a local the checker itself pointed at (defer, boxing)
+		if n.decl != nil && (n.decl.store == types.Dlocal || n.decl.store == types.Darg) {
+			d = n.decl
+		}
 		if d == nil {
 			d = lookup(n.sym)
 		}
@@ -1633,6 +1689,7 @@ func echk1(n ref types.Node) ref types.Type {
 				n.ty = terror
 				return n.ty
 			}
+			boxvar(d, anc)
 			for cl := curclosure; cl.enclosing != anc; cl = cl.enclosing {
 				addcapture(cl.enclosing, d, nil)
 			}
@@ -1782,8 +1839,81 @@ func echk1(n ref types.Node) ref types.Type {
 		}
 		n.ty = t
 		return n.ty
+	case types.Ocond:
+		// c ? a : b: a and b of one type, either way round
+		condchk(n.left)
+		ta := echk(n.right)
+		tb := echk(n.aux)
+		if ta == terror || tb == terror {
+			n.ty = terror
+			return n.ty
+		}
+		if assignable(ta, tb, n.aux) != 0 {
+			n.ty = ta
+		} else if assignable(tb, ta, n.right) != 0 {
+			n.ty = tb
+		} else {
+			nerror(n, sys.sprint("conditional arms differ: %s and %s", tp(ta), tp(tb)))
+			n.ty = terror
+		}
+		return n.ty
+	case types.Omaplit:
+		// map[K]V{k: v, ...}: nested .builtin.mput calls around
+		// .builtin.newmap[K, V](hash, eq), chosen by K (check.c)
+		stype(n.left)	// instantiate and mark the map type (NMAPT)
+		inst := n.left.right
+		kn := inst.right.left
+		vn := inst.right.right
+		kt := stype(kn)
+		hs := ""
+		es := ""
+		match kt.kind {
+		case types.Tint:
+			hs = "inthash"
+			es = "inteq"
+		case types.Tstring:
+			hs = "strhash"
+			es = "streq"
+		case types.Tbig:
+			hs = "bighash"
+			es = "bigeq"
+		case types.Tbyte:
+			hs = "bytehash"
+			es = "byteeq"
+		default:
+			if kt != terror {
+				nerror(n, sys.sprint("a map key must be an int, big, byte or string, not %s", tp(kt)))
+			}
+			n.ty = terror
+			return n.ty
+		}
+		call := types.mkn(types.Ocall, types.mkbin(types.Otinst, builtinref(n.line, n.pos, "newmap"), types.rotater(types.mkseq(types.dupn(kn), types.dupn(vn)))),
+			types.rotater(types.mkseq(builtinref(n.line, n.pos, hs), builtinref(n.line, n.pos, es))))
+		call.line = n.line
+		call.pos = n.pos
+		for p := n.right; p != nil; p = p.right {
+			elem := seqitem(p)
+			call = types.mkn(types.Ocall, builtinref(n.line, n.pos, "mput"), types.rotater(types.mkseq(types.mkseq(call, elem.left), elem.right)))
+			call.line = n.line
+			call.pos = n.pos
+			if p.op != types.Oseq {
+				break
+			}
+		}
+		n.op = call.op
+		n.left = call.left
+		n.right = call.right
+		n.aux = nil
+		return echk(n)
 	case types.Oindex:
 		t := echk(n.left)
+		if ismaptype(t) {
+			p := mapindexcall(n, "get")
+			n.op = p.op
+			n.left = p.left
+			n.right = p.right
+			return echk(n)
+		}
 		echk(n.right)
 		if t.kind == types.Tarray {
 			n.op = types.Oindx
@@ -2251,6 +2381,12 @@ func chkcall(n ref types.Node) ref types.Type {
 		}
 		e := seqitem(a)
 		t := echk(e)
+		if ismaptype(t) {
+			p := mkmethcall(n.line, n.pos, e, "size", nil)
+			n.left = p.left
+			n.right = nil
+			return echk(n)
+		}
 		if t.kind != types.Tarray && t.kind != types.Tstring && t.kind != types.Tlist {
 			nerror(n, sys.sprint("len of %s", tp(t)))
 			n.ty = terror
@@ -2260,6 +2396,78 @@ func chkcall(n ref types.Node) ref types.Type {
 		n.left = e
 		n.right = nil
 		n.ty = tint
+		return n.ty
+	}
+	if n.left.op == types.Oname && n.left.sym == "delete" && lookup(n.left.sym) == nil {
+		// delete(m, k): m.del(k), unless the program has its own delete
+		a := n.right
+		if a == nil || a.op != types.Oseq || a.right == nil || a.right.op == types.Oseq || !ismapindex(types.mkbin(types.Oindex, a.left, a.right)) {
+			nerror(n, "delete needs a map and a key")
+			n.ty = terror
+			return n.ty
+		}
+		p := mkmethcall(n.line, n.pos, a.left, "del", a.right)
+		n.left = p.left
+		n.right = p.right
+		return echk(n)
+	}
+	if n.left.op == types.Oname && n.left.sym == "append" && lookup(n.left.sym) == nil {
+		// append(a, x) and append(a, xs...): .builtin.append and
+		// .builtin.appendall, templates instantiated by the arguments
+		a := n.right
+		if a == nil || a.op != types.Oseq || a.right == nil || a.right.op == types.Oseq {
+			nerror(n, "append needs an array and a value")
+			n.ty = terror
+			return n.ty
+		}
+		if (a.right.flags & types.NVARARG) != 0 {
+			a.right.flags &= ~types.NVARARG
+			n.left = builtinref(n.line, n.pos, "appendall")
+		} else {
+			n.left = builtinref(n.line, n.pos, "append")
+		}
+	}
+	if n.left.op == types.Oname && n.left.sym == "expect" && lookup(n.left.sym) == nil {
+		n.left = builtinref(n.line, n.pos, "expect")	// a test's assertion, builtin.ei's
+	}
+	if n.left.op == types.Oname && n.left.sym == "exit" {
+		// exit(): limbo's exit statement, Dis IEXIT; terminates
+		if n.right != nil {
+			nerror(n, "exit takes no arguments")
+			n.ty = terror
+			return n.ty
+		}
+		n.op = types.Oexit
+		n.left = nil
+		n.ty = tnone
+		return n.ty
+	}
+	if n.left.op == types.Oname && n.left.sym == "copy" {
+		// copy(dst, src): go's array copy as a statement, on Dis's
+		// slicela (limbo's "dst[0:] = src"); no value
+		a := n.right
+		if a == nil || a.op != types.Oseq || a.right == nil || a.right.op == types.Oseq {
+			nerror(n, "copy needs two arguments")
+			n.ty = terror
+			return n.ty
+		}
+		d := a.left
+		e := a.right
+		td := echk(d)
+		t := echk(e)
+		if td == terror || t == terror {
+			n.ty = terror
+			return n.ty
+		}
+		if td.kind != types.Tarray || t.kind != types.Tarray || sametype(td, t) == 0 {
+			nerror(n, sys.sprint("copy of %s into %s", tp(t), tp(td)))
+			n.ty = terror
+			return n.ty
+		}
+		n.op = types.Ocopy
+		n.left = d
+		n.right = e
+		n.ty = tnone
 		return n.ty
 	}
 	if n.left.op == types.Oname && (n.left.sym == "hd" || n.left.sym == "tl") {
@@ -2325,7 +2533,7 @@ func chkcall(n ref types.Node) ref types.Type {
 			ld = lookup(n.left.sym)
 		}
 	}
-	if n.left.op == types.Otinst || n.left.op == types.Oindex {
+	if !isidxcall(n.left) && (n.left.op == types.Otinst || n.left.op == types.Oindex) {
 		fnd := tinstantiatefn(n.left)
 		if fnd == nil {
 			n.ty = terror
@@ -2398,7 +2606,7 @@ func chkcall(n ref types.Node) ref types.Type {
 		ft = fnd.ty
 	} else {
 		match n.left.op {
-		case types.Oname, types.Odot, types.Omdot, types.Ocall, types.Ofunclit:
+		case types.Oname, types.Odot, types.Omdot, types.Ocall, types.Ofunclit, types.Oindex:
 			break
 		default:
 			nerror(n, "cannot call this expression")
@@ -2455,6 +2663,10 @@ func chkcall(n ref types.Node) ref types.Type {
 	if isvalcall != 0 && arg != nil {
 		arg = arg.next
 	}
+	if ft.varargs == 2 && (n.flags & types.NPACKED) == 0 {
+		packvarargs(n, arg)
+		n.flags |= types.NPACKED
+	}
 	i := 0
 	for a := n.right; a != nil; a = a.right {
 		e := seqitem(a)
@@ -2498,7 +2710,7 @@ func chkcall(n ref types.Node) ref types.Type {
 	if arg != nil {
 		nerror(n, "not enough arguments")
 	}
-	if ft.varargs != 0 {
+	if ft.varargs == 1 {
 		nft := types.mktype(n.line, n.pos, types.Tfn, ft.tof, nil)
 		nft.varargs = 1
 		var nids ref types.Decl
@@ -2589,9 +2801,215 @@ func redeclared(name string) int {
 	return 0
 }
 
+// "_", go's blank identifier: a fresh hidden local the program
+// cannot name, so the value is evaluated and dropped (check.c)
+var nblank = 0
+
+// map[K]V: builtin's Map[K, V] instantiated and marked; every
+// operation on one is rewritten into a method call (check.c)
+func ismaptype(t ref types.Type) bool {
+	return t != nil && t.kind == types.Tref && t.tof != nil && t.tof.kind == types.Tadt && t.tof.ismap != 0
+}
+
+// .builtin.name
+func builtinref(line int, pos int, name string) ref types.Node {
+	n := types.mkbin(types.Odot, mkname(line, pos, ".builtin"), mkname(line, pos, name))
+	n.sym = n.right.sym
+	n.line = line
+	n.pos = pos
+	return n
+}
+
+// recv.meth(args), unchecked
+func mkmethcall(line int, pos int, recv ref types.Node, meth string, args ref types.Node) ref types.Node {
+	dot := types.mkbin(types.Odot, recv, mkname(line, pos, meth))
+	dot.sym = dot.right.sym
+	dot.line = line
+	dot.pos = pos
+	call := types.mkn(types.Ocall, dot, args)
+	call.line = line
+	call.pos = pos
+	return call
+}
+
+// the map indexing node n (Oindex) as recv.meth(key)
+func mapindexcall(n ref types.Node, meth string) ref types.Node {
+	return mkmethcall(n.line, n.pos, n.left, meth, n.right)
+}
+
+// is n "m[k]" on a map?  echk's the map expression if so
+func ismapindex(n ref types.Node) bool {
+	return n != nil && n.op == types.Oindex && ismaptype(echk(n.left))
+}
+
+// a call of a typed variadic function: the arguments past the fixed
+// ones become one array literal, or "xs..." passes an array (check.c)
+func packvarargs(n ref types.Node, arg ref types.Decl) {
+	nfixed := -1
+	var at ref types.Type
+	for pd := arg; pd != nil; pd = pd.next {
+		nfixed++
+		at = pd.ty
+	}
+	if at == nil || at.kind != types.Tarray {
+		return
+	}
+	nargs := 0
+	var last ref types.Node
+	for a := n.right; a != nil; a = a.right {
+		last = seqitem(a)
+		nargs++
+		if a.op != types.Oseq {
+			break
+		}
+	}
+	if last != nil && (last.flags & types.NVARARG) != 0 {
+		if nargs != nfixed + 1 {
+			nerror(last, "xs... must be the last argument, after the fixed ones")
+		}
+		last.flags &= ~types.NVARARG
+		return
+	}
+	var fixed ref types.Node
+	var elems ref types.Node
+	k := 0
+	got := 0
+	for a := n.right; a != nil; a = a.right {
+		e := seqitem(a)
+		if got < nfixed {
+			fixed = types.mkseq(fixed, e)
+			got++
+		} else {
+			elems = types.mkseq(elems, types.mkn(types.Oelem, nil, e))
+			k++
+		}
+		if a.op != types.Oseq {
+			break
+		}
+	}
+	tv := types.mkn(types.Otypeval, nil, nil)
+	tv.ty = at.tof
+	tv.line = n.line
+	tv.pos = n.pos
+	arr := types.mkn(types.Oarray, mkconst(n.line, n.pos, big(k)), tv)
+	arr.aux = types.rotater(elems)
+	arr.line = n.line
+	arr.pos = n.pos
+	n.right = types.rotater(types.mkseq(fixed, arr))
+}
+
+func isifacetype(t ref types.Type) bool {
+	return t != nil && t.kind == types.Tref && t.tof != nil && t.tof.kind == types.Tadt && t.tof.isiface != 0
+}
+
+// does s have every method the interface t lists, with the same
+// parameters and results?  (check.c)
+func implements(s ref types.Type, t ref types.Type, v ref types.Node) bool {
+	adt := s.tof
+	if adt.kind == types.Tadtpick {
+		adt = adt.tof
+	}
+	for f := t.tof.ids; f != nil; f = f.next {
+		m := adt.meths
+		for m != nil && m.sym != f.sym {
+			m = m.link
+		}
+		if m == nil {
+			nerror(v, sys.sprint("%s does not implement %s: no method %s", tp(s), tp(t), f.sym))
+			return false
+		}
+		ft := f.ty.tof
+		fp := ft.ids.next
+		mp := m.ty.ids.next
+		for fp != nil && mp != nil {
+			if types.tequal(fp.ty, mp.ty) == 0 {
+				break
+			}
+			fp = fp.next
+			mp = mp.next
+		}
+		if fp != nil || mp != nil || types.tequal(ft.tof, m.ty.tof) == 0 {
+			nerror(v, sys.sprint("%s does not implement %s: method %s has the wrong signature", tp(s), tp(t), f.sym))
+			return false
+		}
+	}
+	return true
+}
+
+// v becomes .Name$from(v), through the alias when the interface is imported
+func ifaceconv(v ref types.Node, t ref types.Type) {
+	// the struct is .W$s (parse.e's pinterface): the converter is .W$from
+	sn := t.tof.decl.sym
+	fname := sn[0:len(sn) - 2] + "$from"
+	m := t.tof.decl.dot
+	var callee ref types.Node
+	if m != nil && m != impdecl && m.ty != nil && m.ty.kind == types.Tmodule {
+		var alias ref types.Decl
+		for l := imports; l != nil; l = tl(l) {
+			if hd(l).importid == m {
+				alias = hd(l)
+				break
+			}
+		}
+		if alias == nil {
+			fatal(sys.sprint("ifaceconv: no alias for %s", m.sym))
+		}
+		callee = types.mkbin(types.Odot, mkname(v.line, v.pos, alias.sym), mkname(v.line, v.pos, fname))
+		callee.sym = callee.right.sym
+	} else {
+		callee = mkname(v.line, v.pos, fname)
+	}
+	callee.line = v.line
+	callee.pos = v.pos
+	a := types.dupn(v)
+	a.flags |= types.NCHECKED	// v was checked: its type nodes are consumed, do not check the copy again
+	if a.ty != nil && a.ty.kind == types.Tref && a.ty.tof != nil && a.ty.tof.kind == types.Tadtpick {
+		// a tag value stands for its pick: the methods are the pick's
+		a.ty = types.mktype(v.line, v.pos, types.Tref, a.ty.tof.tof, nil)
+		types.sizetype(a.ty)
+	}
+	c := types.mkn(types.Ocall, callee, a)
+	c.line = v.line
+	c.pos = v.pos
+	v.op = c.op
+	v.left = c.left
+	v.right = c.right
+	v.aux = nil
+	v.sym = nil
+	v.decl = nil
+	v.ty = nil
+	v.flags = 0
+	v.val = big(0)
+	echk(v)
+}
+
+// fs[i](x): an index into an array of function values, not a generic
+// instantiation f[T](x); the two parse alike (check.c)
+func isidxcall(c ref types.Node) bool {
+	if c.op != types.Oindex || c.left.op != types.Oname {
+		return false
+	}
+	d := lookup(c.left.sym)
+	return d != nil && !(d.store == types.Dfn && d.tparams != nil)
+}
+
+func blanksym() string {
+	s := sys.sprint(".blank%d", nblank)
+	nblank++
+	return s
+}
+
+func isblank(n ref types.Node) bool {
+	return n != nil && n.op == types.Oname && n.sym == "_"
+}
+
 func daschk(n ref types.Node) {
 	lhs := n.left
 	if lhs.op == types.Oseq {
+		// "v, ok := m[k]": m.lookup(k)
+		if ismapindex(n.right) {
+			n.right = mapindexcall(n.right, "lookup")
+		}
 		if n.right.op == types.Oseq {
 			n.right = types.mkn(types.Otuple, n.right, nil)
 		}
@@ -2616,6 +3034,9 @@ func daschk(n ref types.Node) {
 				nerror(n, "unsupported := form")
 				return
 			}
+			if isblank(id) {
+				id.sym = blanksym()
+			}
 			if redeclared(id.sym) != 0 {
 				nerror(id, sys.sprint("%s is already declared in this scope", id.sym))
 			}
@@ -2631,6 +3052,9 @@ func daschk(n ref types.Node) {
 	if lhs.op != types.Oname {
 		nerror(n, "unsupported := form")
 		return
+	}
+	if isblank(lhs) {
+		lhs.sym = blanksym()
 	}
 	var t ref types.Type
 	if n.right.op == types.Ocomposite {
@@ -2730,7 +3154,11 @@ func matchlabels(arms ref types.Node, ctype ref types.Type, nlab int) ref types.
 		}
 		for pat := arm.left; pat != nil; {
 			q := seqitem(pat)
-			labs[i] = ref types.Label{node: arm, isptr: 0, start: q, stop: q, inst: nil}
+			if q.op == types.Orange {
+				labs[i] = ref types.Label{node: arm, isptr: 0, start: q.left, stop: q.right, inst: nil}
+			} else {
+				labs[i] = ref types.Label{node: arm, isptr: 0, start: q, stop: q, inst: nil}
+			}
 			i++
 			if pat.op != types.Oseq {
 				break
@@ -2947,6 +3375,19 @@ func matchcheck(n ref types.Node) {
 				} else {
 					pat = nil
 				}
+				if q.op == types.Orange {
+					// lo...hi: both int constants
+					echk(q.left)
+					echk(q.right)
+					if q.left.op != types.Oconst || q.right.op != types.Oconst || q.left.ty != tint || q.right.ty != tint {
+						nerror(q, "a case range needs two int constants")
+						ok = 0
+						continue
+					}
+					q.ty = tint
+					nlab++
+					continue
+				}
 				if q.op == types.Opat && q.right == nil && istagname(q.left) == 0 {
 					echk(q.left)
 					if q.left.op == types.Oconst {
@@ -3091,7 +3532,7 @@ func lvaldesc(n ref types.Node) string {
 		return "a tuple"
 	case types.Ocomposite, types.Oref:
 		return "a composite literal"
-	case types.Olen, types.Ohd, types.Otl, types.Ocons, types.Ocast, types.Oneg, types.Onot, types.Oinv, types.Oadd, types.Osub, types.Omul, types.Odiv, types.Omod, types.Oand, types.Oor, types.Oxor, types.Olsh, types.Orsh, types.Oandand, types.Ooror, types.Oeq, types.Oneq, types.Olt, types.Ogt, types.Oleq, types.Ogeq, types.Orcv, types.Ochk:
+	case types.Olen, types.Ohd, types.Otl, types.Ocons, types.Ocast, types.Ocopy, types.Oexit, types.Ocond, types.Oneg, types.Onot, types.Oinv, types.Oadd, types.Osub, types.Omul, types.Odiv, types.Omod, types.Oand, types.Oor, types.Oxor, types.Olsh, types.Orsh, types.Oandand, types.Ooror, types.Oeq, types.Oneq, types.Olt, types.Ogt, types.Oleq, types.Ogeq, types.Orcv, types.Ochk:
 		return "an expression"
 	}
 	return nil
@@ -3130,7 +3571,7 @@ func chklval(n ref types.Node, what string) int {
 	}
 	// a captured variable is a copy: assigning to it is refused (check.c)
 	if n.op == types.Oname && n.decl != nil && curclosure != nil && (n.decl.store == types.Darg || n.decl.store == types.Dlocal) && declownedby(n.decl, curclosure) == 0 {
-		nerror(n, sys.sprint("cannot %s %s inside a closure: it is captured by value; share it through a ref", what, n.sym))
+		// captured variables are boxed (boxvar) and shared: writes are fine
 		return 0
 	}
 	if islvalue(n) != 0 {
@@ -3181,6 +3622,12 @@ func rangefor(n ref types.Node) int {
 			return 0
 		}
 	}
+	if isblank(first) {
+		first.sym = blanksym()
+	}
+	if isblank(second) {
+		second.sym = blanksym()
+	}
 	e := das.right.left
 	line := das.line
 	pos := das.pos
@@ -3220,8 +3667,26 @@ func rangefor(n ref types.Node) int {
 		cond = types.mkbin(types.Olt, types.dupn(first), types.dupn(tmp))
 		post = types.mkunary(types.Oinc, types.dupn(first))
 	default:
-		nerror(n, sys.sprint("cannot range over %s", tp(t)))
-		return 0
+		if ismaptype(t) {
+			// for k, v := range m: over a snapshot .rangeN =
+			// m.entries(), indexed by a hidden .rangeNi (check.c)
+			idx := mkname(line, pos, sys.sprint(".range%di", nrange - 1))
+			init = types.mkseq(types.mkn(types.Odas, tmp, mkmethcall(line, pos, e, "entries", nil)), types.mkn(types.Odas, idx, mkconst(line, pos, big(0))))
+			cond = types.mkbin(types.Olt, types.dupn(idx), types.mkn(types.Ocall, mkname(line, pos, "len"), types.dupn(tmp)))
+			post = types.mkunary(types.Oinc, types.dupn(idx))
+			ent := types.mkbin(types.Oindex, types.dupn(tmp), types.dupn(idx))
+			prefix = types.mkn(types.Odas, first, types.mkbin(types.Odot, ent, mkname(line, pos, "key")))
+			prefix.right.sym = prefix.right.right.sym
+			if second != nil {
+				ent = types.mkbin(types.Oindex, types.dupn(tmp), types.dupn(idx))
+				p := types.mkn(types.Odas, second, types.mkbin(types.Odot, ent, mkname(line, pos, "val")))
+				p.right.sym = p.right.right.sym
+				prefix = types.mkseq(prefix, p)
+			}
+		} else {
+			nerror(n, sys.sprint("cannot range over %s", tp(t)))
+			return 0
+		}
 	}
 	init.line = line
 	init.pos = pos
@@ -3409,9 +3874,30 @@ func stchk(n ref types.Node) {
 			daschk(n)
 			return
 		case types.Oas:
+			if ismapindex(n.left) {
+				// m[k] = v: m.put(k, v)
+				call := mkmethcall(n.line, n.pos, n.left.left, "put", types.rotater(types.mkseq(n.left.right, n.right)))
+				n.op = types.Oexpr
+				n.left = call
+				n.right = nil
+				echk(call)
+				return
+			}
 			aschk(n)
 			return
 		case types.Oaddas, types.Osubas, types.Omulas, types.Odivas, types.Omodas, types.Oandas, types.Ooras, types.Oxoras, types.Olshas, types.Orshas:
+			if ismapindex(n.left) {
+				// m[k] op= v: m.put(k, m.get(k) op v); k is evaluated twice
+				val := types.mkbin(types.Oadd + (n.op - types.Oaddas), mapindexcall(types.dupn(n.left), "get"), n.right)
+				val.line = n.line
+				val.pos = n.pos
+				call := mkmethcall(n.line, n.pos, n.left.left, "put", types.rotater(types.mkseq(n.left.right, val)))
+				n.op = types.Oexpr
+				n.left = call
+				n.right = nil
+				echk(call)
+				return
+			}
 			echk(n.left)
 			echk(n.right)
 			if chklval(n.left, "assign to") != 0 && n.right.ty != terror && types.tequal(n.left.ty, n.right.ty) == 0 {
@@ -3425,6 +3911,23 @@ func stchk(n ref types.Node) {
 			}
 			return
 		case types.Oinc, types.Odec:
+			if ismapindex(n.left) {
+				// m[k]++: m.put(k, m.get(k) + 1)
+				one := mkconst(n.line, n.pos, big(1))
+				op := types.Osub
+				if n.op == types.Oinc {
+					op = types.Oadd
+				}
+				val := types.mkbin(op, mapindexcall(types.dupn(n.left), "get"), one)
+				val.line = n.line
+				val.pos = n.pos
+				call := mkmethcall(n.line, n.pos, n.left.left, "put", types.rotater(types.mkseq(n.left.right, val)))
+				n.op = types.Oexpr
+				n.left = call
+				n.right = nil
+				echk(call)
+				return
+			}
 			echk(n.left)
 			if n.op == types.Oinc {
 				chklval(n.left, "increment")
@@ -3441,6 +3944,41 @@ func stchk(n ref types.Node) {
 				nerror(n, "spawned function must not return a value")
 			}
 			return
+		case types.Odefer:
+			// the argument temps run now; the func() literal is
+			// stored in a hidden local the returns call (check.c)
+			if n.aux != nil {
+				stchk(n.aux)
+			}
+			t := echk(n.left)
+			if t == terror {
+				return
+			}
+			if deferlist == nil {
+				lt := types.mktype(n.line, n.pos, types.Tlist, t, nil)
+				types.sizetype(lt)
+				dn := mkname(n.line, n.pos, ".defers")
+				declocal(dn, lt)
+				deferlist = dn.decl
+			}
+			nm := mkdeclname(n.line, n.pos, deferlist)
+			as := types.mkn(types.Oas, nm, types.mkbin(types.Ocons, n.left, mkdeclname(n.line, n.pos, deferlist)))
+			as.line = n.line
+			as.pos = n.pos
+			if n.aux != nil {
+				n.op = types.Oseq
+				n.left = n.aux
+				n.right = as
+				n.aux = nil
+				stchk(as)
+			} else {
+				n.op = types.Oas
+				n.left = nm
+				n.right = as.right
+				n.aux = nil
+				stchk(n)
+			}
+			return
 		case types.Oraise:
 			echk(n.left)
 			if n.left.ty != tstring && n.left.ty != terror {
@@ -3452,6 +3990,26 @@ func stchk(n ref types.Node) {
 			return
 		case types.Onothing:
 			return
+		case types.Ocondecl:
+			// a local constant, the same as a module one (check())
+			var t ref types.Type
+			if n.aux != nil {
+				pushscope()
+				declconst("iota", n.aux.val, tint)
+				t = echk(n.right)
+				popscope()
+			} else {
+				t = echk(n.right)
+			}
+			if n.right.op != types.Oconst {
+				nerror(n, "constant expression required")
+				return
+			}
+			cd := types.mkdecl(n.line, n.pos, types.Dconst, t)
+			cd.sym = n.left.sym
+			cd.init = n.right
+			install(cd)
+			return
 		}
 		nerror(n, sys.sprint("unsupported statement %s", types.opname(n.op)))
 		return
@@ -3460,6 +4018,9 @@ func stchk(n ref types.Node) {
 
 func aschk(n ref types.Node) {
 	if n.left.op == types.Oseq {
+		if ismapindex(n.right) {
+			n.right = mapindexcall(n.right, "lookup")
+		}
 		if n.right.op == types.Oseq {
 			n.right = types.mkn(types.Otuple, n.right, nil)
 		}
@@ -3480,6 +4041,10 @@ func aschk(n ref types.Node) {
 		fd := rt.ids
 		for p := n.left; p != nil; p = p.right {
 			id := seqitem(p)
+			if isblank(id) {
+				id.sym = blanksym()
+				declocal(id, fd.ty)
+			}
 			lt := echk(id)
 			if chklval(id, "assign to") != 0 && assignable(lt, fd.ty, nil) == 0 {
 				nerror(n, sys.sprint("cannot assign %s to %s", tp(fd.ty), tp(lt)))
@@ -3491,6 +4056,10 @@ func aschk(n ref types.Node) {
 		}
 		n.ty = rt
 		return
+	}
+	if isblank(n.left) {
+		n.left.sym = blanksym()
+		declocal(n.left, echk(n.right))
 	}
 	if n.left.op == types.Oname && n.right.op == types.Ocomposite {
 		t := compositefields(n.right)
@@ -3551,6 +4120,11 @@ func terminates(n ref types.Node) int {
 		return terminates(n.left)
 	case types.Oret, types.Oraise:
 		return 1
+	case types.Oexpr:
+		if n.left != nil && n.left.op == types.Oexit {
+			return 1
+		}
+		return 0
 	case types.Oif:
 		if n.aux != nil && terminates(n.right) != 0 && terminates(n.aux) != 0 {
 			return 1
@@ -3589,10 +4163,275 @@ func terminates(n ref types.Node) int {
 	return 0
 }
 
+// defer: a hidden local list (.defers) of the function's deferred
+// closures; fnchk runs it, last first, at every return (check.c)
+var deferlist ref types.Decl
+var nret = 0
+var ndc = 0
+
+func mkdeclname(line int, pos int, d ref types.Decl) ref types.Node {
+	n := mkname(line, pos, d.sym)
+	n.decl = d
+	return n
+}
+
+// .l := .defers; for .l != nil { .f := hd(.l); .f(); .l = tl(.l) }
+func defercalls(line int, pos int) ref types.Node {
+	ls := sys.sprint(".dl%d", ndc)
+	fs := sys.sprint(".df%d", ndc)
+	ndc++
+	das := types.mkbin(types.Odas, mkname(line, pos, ls), mkdeclname(line, pos, deferlist))
+	cond := types.mkbin(types.Oneq, mkname(line, pos, ls), mkname(line, pos, "nil"))
+	f := types.mkbin(types.Odas, mkname(line, pos, fs), types.mkn(types.Ocall, mkname(line, pos, "hd"), mkname(line, pos, ls)))
+	body := types.mkseq(f, types.mkunary(types.Oexpr, types.mkn(types.Ocall, mkname(line, pos, fs), nil)))
+	l := types.mkbin(types.Oas, mkname(line, pos, ls), types.mkn(types.Ocall, mkname(line, pos, "tl"), mkname(line, pos, ls)))
+	body = types.mkseq(body, l)
+	body = types.mkn(types.Oscope, types.rotater(body), nil)
+	body.line = line
+	body.pos = pos
+	loop := types.mkn(types.Ofor, cond, body)
+	loop.line = line
+	loop.pos = pos
+	return types.rotater(types.mkseq(das, loop))
+}
+
+// replace every return in the body (not in closures, already lifted
+// and left as Oname) with the defers then the return, value saved first
+func deferrets(n ref types.Node) ref types.Node {
+	if n == nil {
+		return nil
+	}
+	match n.op {
+	case types.Oret:
+		var r ref types.Node
+		var ret ref types.Node
+		if n.left != nil {
+			val := mkname(n.line, n.pos, sys.sprint(".ret%d", nret))
+			nret++
+			ret = types.mkn(types.Oret, mkname(n.line, n.pos, val.sym), nil)
+			ret.line = n.line
+			ret.pos = n.pos
+			r = types.mkseq(types.mkbin(types.Odas, val, n.left), defercalls(n.line, n.pos))
+			r = types.mkseq(r, ret)
+		} else {
+			ret = types.mkn(types.Oret, nil, nil)
+			ret.line = n.line
+			ret.pos = n.pos
+			r = types.mkseq(defercalls(n.line, n.pos), ret)
+		}
+		r = types.mkn(types.Oscope, types.rotater(r), nil)
+		r.line = n.line
+		r.pos = n.pos
+		stchk(r)
+		return r
+	case types.Oscope, types.Oseq, types.Oif, types.Ofor, types.Omatch, types.Oalt, types.Ocase, types.Otry, types.Olabel:
+		n.left = deferrets(n.left)
+		n.right = deferrets(n.right)
+		n.aux = deferrets(n.aux)
+		return n
+	}
+	return n
+}
+
+// capture by reference: a variable any closure captures lives in a
+// box (.box{v T}) from its declaration on; the owner keeps it in a
+// hidden local (boxdecl), every closure's env holds the same pointer
+// (check.c)
+var nbox = 0
+
+func boxvar(d ref types.Decl, owner ref types.Decl) {
+	if d.boxdecl != nil {
+		return
+	}
+	fd := types.mkdecl(d.line, d.pos, types.Dfield, d.ty)
+	fd.sym = "v"
+	bt := types.mktype(d.line, d.pos, types.Tadt, nil, fd)
+	bt.ok |= types.OKverify
+	tdecl := types.mkdecl(d.line, d.pos, types.Dtype, bt)
+	tdecl.sym = sys.sprint(".box%d$%s", nbox, d.sym)
+	bt.decl = tdecl
+	types.sizetype(bt)
+	types.sizetype(fd.ty)
+	// bound for good under its hidden name, outside every scope
+	tdecl.old = lookup(tdecl.sym)
+	setbind(tdecl.sym, tdecl)
+	d.boxtdecl = tdecl
+	d.boxty = types.mktype(d.line, d.pos, types.Tref, bt, nil)
+	types.sizetype(d.boxty)
+	bd := types.mkdecl(d.line, d.pos, types.Dlocal, d.boxty)
+	bd.sym = sys.sprint(".b%d$%s", nbox, d.sym)
+	nbox++
+	bd.link = nil
+	if owner.locals == nil {
+		owner.locals = bd
+	} else {
+		e := owner.locals
+		for e.link != nil {
+			e = e.link
+		}
+		e.link = bd
+	}
+	d.boxdecl = bd
+}
+
+// rewrite n, already reading d's box, into the variable inside it
+func unboxuse(n ref types.Node, d ref types.Decl) {
+	box := types.dupn(n)
+	off := mkconst(n.line, n.pos, big(0))
+	off.ty = tint
+	addr := types.mkn(types.Oadd, box, off)
+	addr.line = n.line
+	addr.pos = n.pos
+	addr.ty = tint
+	n.op = types.Oind
+	n.left = addr
+	n.right = nil
+	n.aux = nil
+	n.decl = d.boxty.tof.ids
+	n.ty = d.ty
+}
+
+// boxdecl = ref .box{v: d}, as an unchecked statement
+func boxinit(line int, pos int, d ref types.Decl) ref types.Node {
+	elem := types.mkbin(types.Oelem, mkname(line, pos, "v"), mkdeclname(line, pos, d))
+	comp := types.mkn(types.Ocomposite, mkname(line, pos, d.boxtdecl.sym), elem)
+	comp.line = line
+	comp.pos = pos
+	comp = types.mkunary(types.Oref, comp)
+	comp.line = line
+	comp.pos = pos
+	return types.mkbin(types.Oas, mkdeclname(line, pos, d.boxdecl), comp)
+}
+
+// a boxed variable of the function being checked; a closure's
+// references to an enclosing function's are captures (check.c)
+func isboxed(n ref types.Node) bool {
+	return n != nil && n.op == types.Oname && n.decl != nil && n.decl.boxdecl != nil && (n.decl.store == types.Dlocal || n.decl.store == types.Darg) && declownedby(n.decl, curfn) != 0
+}
+
+// the box allocations for the boxed names in a declaring list
+func boxinits(names ref types.Node) ref types.Node {
+	var inits ref types.Node
+	for p := names; p != nil; p = p.right {
+		id := seqitem(p)
+		if isboxed(id) {
+			inits = types.mkseq(inits, boxinit(id.line, id.pos, id.decl))
+		}
+		if p.op != types.Oseq {
+			break
+		}
+	}
+	return types.rotater(inits)
+}
+
+func boxwalk(n ref types.Node) ref types.Node {
+	if n == nil {
+		return nil
+	}
+	match n.op {
+	case types.Oname:
+		if isboxed(n) {
+			box := mkdeclname(n.line, n.pos, n.decl.boxdecl)
+			box.ty = n.decl.boxty
+			off := mkconst(n.line, n.pos, big(0))
+			off.ty = tint
+			addr := types.mkn(types.Oadd, box, off)
+			addr.line = n.line
+			addr.pos = n.pos
+			addr.ty = tint
+			bd := n.decl
+			n.op = types.Oind
+			n.left = addr
+			n.right = nil
+			n.decl = bd.boxty.tof.ids
+		}
+		return n
+	case types.Odas:
+		n.right = boxwalk(n.right)
+		inits := boxinits(n.left)
+		if inits != nil {
+			stchk(inits)
+			return types.mkseq(n, inits)
+		}
+		return n
+	case types.Ovardecl:
+		n.aux = boxwalk(n.aux)
+		inits := boxinits(n.left)
+		if inits != nil {
+			stchk(inits)
+			return types.mkseq(n, inits)
+		}
+		return n
+	case types.Ocase:
+		// pattern binders declare; their boxes open the arm
+		var inits ref types.Node
+		for p := n.left; p != nil; p = p.right {
+			q := seqitem(p)
+			if q.op == types.Opat {
+				inits = types.mkseq(inits, boxinits(q.right))
+			}
+			if p.op != types.Oseq {
+				break
+			}
+		}
+		n.right = boxwalk(n.right)
+		if inits != nil {
+			inits = types.rotater(inits)
+			stchk(inits)
+			n.right = types.mkseq(inits, n.right)
+		}
+		return n
+	case types.Otry:
+		n.left = boxwalk(n.left)
+		n.right = boxwalk(n.right)
+		if isboxed(n.aux) {
+			inits := boxinit(n.aux.line, n.aux.pos, n.aux.decl)
+			stchk(inits)
+			n.right = types.mkseq(inits, n.right)
+		}
+		return n
+	}
+	n.left = boxwalk(n.left)
+	n.right = boxwalk(n.right)
+	n.aux = boxwalk(n.aux)
+	return n
+}
+
+func boxpass(d ref types.Decl) {
+	any := false
+	for p := d.ty.ids; p != nil; p = p.next {
+		if p.boxdecl != nil {
+			any = true
+		}
+	}
+	for p := d.locals; p != nil; p = p.link {
+		if p.boxdecl != nil {
+			any = true
+		}
+	}
+	if !any {
+		return
+	}
+	d.init.aux = boxwalk(d.init.aux)
+	var inits ref types.Node
+	for p := d.ty.ids; p != nil; p = p.next {
+		if p.boxdecl != nil {
+			inits = types.mkseq(inits, boxinit(d.init.line, d.init.pos, p))
+		}
+	}
+	if inits != nil {
+		inits = types.rotater(inits)
+		stchk(inits)
+		d.init.aux = types.mkseq(inits, d.init.aux)
+	}
+}
+
 func fnchk(d ref types.Decl) {
 	curfn = d
 	curret = d.ty.tof
 	body := d.init.aux
+	saveddefers := deferlist
+	deferlist = nil
 	pushscope()
 	for arg := d.ty.ids; arg != nil; arg = arg.next {
 		if arg.sym != nil {
@@ -3602,6 +4441,20 @@ func fnchk(d ref types.Decl) {
 		}
 	}
 	stchk(body)
+	if deferlist != nil {
+		// defer: every return runs the deferred calls first, and
+		// so does falling off the end
+		d.init.aux = deferrets(d.init.aux)
+		body = d.init.aux
+		if terminates(body) == 0 {
+			calls := defercalls(body.line, body.pos)
+			stchk(calls)
+			d.init.aux = types.mkseq(body, calls)
+			body = d.init.aux
+		}
+	}
+	boxpass(d)
+	body = d.init.aux
 	// a function with a result must return on every path (check.c)
 	if d.ty.tof != nil && d.ty.tof != tnone && d.ty.tof != terror && terminates(body) == 0 {
 		error(d.init.line, sys.sprint("function %s does not return a value on every path", d.sym))
@@ -3614,6 +4467,7 @@ func fnchk(d ref types.Decl) {
 	}
 	popscope()
 	curfn = nil
+	deferlist = saveddefers
 }
 
 // a pick's tags from its Otpick body, in the current scope: shared by
@@ -3622,6 +4476,14 @@ func picktags(body ref types.Node, t ref types.Type, d ref types.Decl) {
 	var tags ref types.Decl
 	var last ref types.Decl
 	ntag := 0
+	if body.right != nil {
+		// fields every tag carries: the pick adt's own ids, laid out first
+		fake := types.mkn(types.Otstruct, body.right, nil)
+		fake.line = body.line
+		fake.pos = body.pos
+		ft := stype(fake)
+		t.ids = ft.ids
+	}
 	for p := body.left; p != nil; p = p.right {
 		tg := seqitem(p)
 		tag := types.mkdecl(tg.line, tg.pos, types.Dtag, nil)
@@ -3679,6 +4541,7 @@ func typedec(n ref types.Node) {
 	t := stype(n.right)
 	if ph != nil && t != ph && t.kind == types.Tadt {
 		ph.ids = t.ids
+		ph.isiface = t.isiface
 		ph.ok |= t.ok & types.OKverify
 		ph.line = t.line
 		ph.pos = t.pos
@@ -3879,6 +4742,16 @@ func check(tree ref types.Node, file string) int {
 	nildecl = types.mkdecl(0, 0, types.Dglobal, tany)
 	nildecl.sym = "nil"
 	install(nildecl)
+	// the implicit import behind append and map[K]V: module/
+	// builtin.ei as the alias .builtin, which no source can name
+	bm := iface.readiface("builtin")
+	if bm != nil {
+		bv := types.mkdecl(0, 0, types.Dglobal, bm.ty)
+		bv.sym = ".builtin"
+		bv.importid = bm
+		install(bv)
+		imports = bv :: imports
+	}
 	pushscope()
 	impdecl = types.mkdecl(tree.line, tree.pos, types.Dtype, nil)
 	impdecl.sym = modname
@@ -3906,7 +4779,16 @@ func check(tree ref types.Node, file string) int {
 		case types.Ofndecl:
 			fndecl(decl)
 		case types.Ocondecl:
-			t := echk(decl.right)
+			var t ref types.Type
+			if decl.aux != nil {
+				// a const block item: iota is its index while folding
+				pushscope()
+				declconst("iota", decl.aux.val, tint)
+				t = echk(decl.right)
+				popscope()
+			} else {
+				t = echk(decl.right)
+			}
 			if decl.right.op != types.Oconst {
 				nerror(decl, "constant expression required")
 			} else {

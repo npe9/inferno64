@@ -1,0 +1,105 @@
+module Sedgen
+
+// derived by ember -i; generic and inline declarations are not
+// derived, an interface must carry their bodies
+
+import sys "sys"
+import draw "draw"
+import arg "arg"
+import bufio "bufio"
+import str "string"
+import regex "regex"
+
+type Addr pick {
+	None()
+	Dollar()
+	Line(line int)
+	Regex(re ref regex.Arena)
+}
+
+type Cmd pick {
+	S(gfl bool, pfl int, re ref regex.Arena, b ref bufio.Iobuf, rhs string)
+	D()
+	CD()
+	P()
+	Q()
+	EQ()
+	G()
+	CG()
+	H()
+	CH()
+	N()
+	CN()
+	X()
+	CP()
+	L()
+	A(text string)
+	C(text string)
+	I(text string)
+	R(filename string)
+	W(b ref bufio.Iobuf)
+	Y(mp list (int, int))
+	B(lab string)
+	T(lab string)
+	Lab(lab string)
+}
+
+type Sedcom struct {
+	ad1 ref Addr
+	ad2 ref Addr
+	negfl bool
+	active int
+	cmd ref Cmd
+}
+
+func (c ref Sedcom) command()
+func (c ref Sedcom) executable() bool
+
+func mk(ad1 ref Addr, ad2 ref Addr, negfl bool, cmd ref Cmd) ref Sedcom
+func isnone(a ref Addr) bool
+var dflag bool
+var nflag bool
+var gflag bool
+var sflag bool
+var delflag int
+var dolflag int
+var fhead int
+var files list string
+var fout ref bufio.Iobuf
+var infile ref bufio.Iobuf
+var jflag bool
+var lastregex ref regex.Arena
+var linebuf string
+var filename string
+var lnum int
+var peekc int
+var holdsp string
+var patsp string
+var cmds list ref Sedcom
+var appendlist list ref Sedcom
+var bufioflush list ref bufio.Iobuf
+var depth int
+const maxdepth = 20
+var cmdend []string
+var cmdcnt []int
+func compile(b ref bufio.Iobuf, l list ref Sedcom) list ref Sedcom
+func findlabel(lab string) bool
+func mklab(depth int) string
+func trans(ch int) string
+func getline(b ref bufio.Iobuf) (int, string)
+func address(s string) (string, ref Addr)
+func recomp(s string) (ref regex.Arena, string)
+func compsub(s string) (string, string)
+func branchlab(c ref Sedcom) (bool, string)
+func findlab(l list ref Sedcom, lab string) list ref Sedcom
+func execute(l list ref Sedcom)
+func arout()
+func rematch(re ref regex.Arena, s string) bool
+func substitute(gfl bool, cre ref regex.Arena, rhs string, s string) (bool, string)
+func gline() (string, int)
+func opendatafile() int
+func dbg(s string)
+func usage()
+func fatal(s string)
+func exits(e string)
+func stderr() ref sys.FD

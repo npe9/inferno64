@@ -5,7 +5,7 @@ import draw "draw"
 import maps "maps"
 import lists "lists"
 
-// the header-only generic hash map module/maps.ei: a self-referencing
+// the header-only generic hash mp module/maps.ei: a self-referencing
 // generic struct (Entry) and a struct of closures (Map), instantiated
 // here for string and int keys with its methods; no maps.dis is loaded
 

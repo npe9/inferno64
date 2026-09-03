@@ -1,0 +1,9 @@
+< limbo/data/para.txt
+-l 30 < limbo/data/para.txt
+-j < limbo/data/para.txt
+-i 4 -l 40 /ember/limbo/data/para.txt
+-w 25 /ember/limbo/data/para.txt /ember/limbo/data/text.txt
+-l 3 -i 5 /ember/limbo/data/para.txt
+/nonexistent /ember/limbo/data/text.txt
+-x
+-l

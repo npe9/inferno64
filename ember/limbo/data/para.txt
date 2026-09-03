@@ -1,0 +1,13 @@
+The quick brown fox jumps over the lazy dog. This sentence is here to be long enough that it must be folded by fmt at seventy columns, which it will be.
+A second line of the same paragraph! Followed by Mr. Smith, who is a title.
+
+    An indented paragraph with four spaces of indent that also goes on for
+    quite a while so that it too has to be
+    refolded.
+	A tab-indented line.
+	Another tab-indented line, with words.
+
+short
+lines
+to
+join

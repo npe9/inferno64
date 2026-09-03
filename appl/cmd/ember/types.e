@@ -18,6 +18,9 @@ const NSTR = 2
 const NVARARG = 4
 const NCHECKED = 8
 const NSPREAD = 16
+const NMAPT = 32
+const NPACKED = 64
+const NIFACE = 128
 
 const Onone = 0
 const Omodule = 1
@@ -121,7 +124,13 @@ const Ochan = 98
 const Oarray = 99
 const Otry = 100
 const Orange = 101
-const Oend = 102
+const Ocopy = 102
+const Oexit = 103
+const Odefer = 104
+const Omaplit = 105
+const Otypeval = 106
+const Ocond = 107
+const Oend = 108
 
 const Tnone = 0
 const Tadt = 1
@@ -233,6 +242,8 @@ type Type struct {
 	tof ref Type
 	ids ref Decl
 	tags ref Decl
+	ismap int
+	isiface int
 	meths ref Decl
 	cse ref Case
 	teq ref Type
@@ -283,6 +294,9 @@ type Decl struct {
 	capuses []ref Node
 	ncapuses int
 	capty ref Type
+	boxdecl ref Decl
+	boxty ref Type
+	boxtdecl ref Decl
 	line int
 	pos int
 }
@@ -325,7 +339,7 @@ type Except struct {
 type Desc struct {
 	id int
 	used int
-	map []byte
+	tmap []byte
 	size int
 	nmap int
 	next ref Desc
@@ -363,7 +377,7 @@ type Case struct {
 	tagof ref Type
 }
 
-var opnames = [103]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "range", "end"}
+var opnames = [109]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "range", "copy", "exit", "defer", "maplit", "typeval", "cond", "end"}
 
 var kindnames = [34]string{"no type", "adt", "adt", "array", "big", "byte", "chan", "real", "fn", "int", "list", "module", "ref", "string", "tuple", "exception", "fixed point", "polymorphic", "array initializers", "alt channels", "polymorphic type", "->", "case int labels", "case big labels", "case string labels", ".", "type error", "goto labels", "id", "module interface", "exception handler table", "instantiated type", "bool", "end"}
 
@@ -600,7 +614,7 @@ func mkdecl(line int, pos int, store int, t ref Type) ref Decl {
 }
 
 func dupdecl(old ref Decl) ref Decl {
-	d := ref Decl{sym: old.sym, store: old.store, nid: old.nid, das: old.das, dot: old.dot, ty: old.ty, refs: old.refs, offset: old.offset, tag: old.tag, scope: old.scope, next: nil, old: old.old, importid: old.importid, init: old.init, runinit: old.runinit, tref: old.tref, cycle: old.cycle, cyc: old.cyc, implicit: old.implicit, iface: old.iface, locals: old.locals, link: old.link, pc: old.pc, desc: old.desc, valty: old.valty, wrapdecl: old.wrapdecl, tparams: old.tparams, finsts: old.finsts, checked: old.checked, enclosing: old.enclosing, captures: old.captures, capuses: old.capuses, ncapuses: old.ncapuses, capty: old.capty, line: old.line, pos: old.pos}
+	d := ref Decl{sym: old.sym, store: old.store, nid: old.nid, das: old.das, dot: old.dot, ty: old.ty, refs: old.refs, offset: old.offset, tag: old.tag, scope: old.scope, next: nil, old: old.old, importid: old.importid, init: old.init, runinit: old.runinit, tref: old.tref, cycle: old.cycle, cyc: old.cyc, implicit: old.implicit, iface: old.iface, locals: old.locals, link: old.link, pc: old.pc, desc: old.desc, valty: old.valty, wrapdecl: old.wrapdecl, tparams: old.tparams, finsts: old.finsts, checked: old.checked, enclosing: old.enclosing, captures: old.captures, capuses: old.capuses, ncapuses: old.ncapuses, capty: old.capty, boxdecl: old.boxdecl, boxty: old.boxty, boxtdecl: old.boxtdecl, line: old.line, pos: old.pos}
 	return d
 }
 
@@ -824,7 +838,7 @@ func mkdesc(size int, d ref Decl) ref Desc {
 		n = 0
 	}
 	if n > l {
-		sys.fprint(sys.fildes(2), "fatal: wrote off end of decl map: %d %d\n", n, l)
+		sys.fprint(sys.fildes(2), "fatal: wrote off end of decl tmap: %d %d\n", n, l)
 	}
 	return enterdesc(pmap, size, n)
 }
@@ -846,7 +860,7 @@ func mktdesc(t ref Type) ref Desc {
 		n = 0
 	}
 	if n > l {
-		sys.fprint(sys.fildes(2), "fatal: wrote off end of type map for %s: %d %d\n", tprint(t), n, l)
+		sys.fprint(sys.fildes(2), "fatal: wrote off end of type tmap for %s: %d %d\n", tprint(t), n, l)
 	}
 	d := enterdesc(pmap, t.size, n)
 	t.decl.desc = d
@@ -865,7 +879,7 @@ func mapcmp(a []byte, b []byte, n int) int {
 	return 0
 }
 
-func enterdesc(map []byte, size int, nmap int) ref Desc {
+func enterdesc(tmap []byte, size int, nmap int) ref Desc {
 	var last ref Desc
 	d := descriptors
 	for ; d != nil; d = d.next {
@@ -873,7 +887,7 @@ func enterdesc(map []byte, size int, nmap int) ref Desc {
 			break
 		}
 		if d.size == size && d.nmap == nmap {
-			c := mapcmp(d.map, map, nmap)
+			c := mapcmp(d.tmap, tmap, nmap)
 			if c == 0 {
 				return d
 			}
@@ -883,7 +897,7 @@ func enterdesc(map []byte, size int, nmap int) ref Desc {
 		}
 		last = d
 	}
-	d = ref Desc{id: -1, used: 0, map: map, size: size, nmap: nmap, next: nil}
+	d = ref Desc{id: -1, used: 0, tmap: tmap, size: size, nmap: nmap, next: nil}
 	if last == nil {
 		d.next = descriptors
 		descriptors = d
@@ -899,7 +913,7 @@ func usedesc(d ref Desc) ref Desc {
 	return d
 }
 
-func descmap(decls ref Decl, map []byte, start int) int {
+func descmap(decls ref Decl, tmap []byte, start int) int {
 	last := -1
 	for d := decls; d != nil; d = d.next {
 		if (d.store == Dtype && d.ty.kind == Tmodule) || d.store == Dfn || d.store == Dconst {
@@ -908,7 +922,7 @@ func descmap(decls ref Decl, map []byte, start int) int {
 		if d.store == Dlocal && d.link != nil {
 			continue
 		}
-		m := tdescmap(d.ty, map, d.offset + start)
+		m := tdescmap(d.ty, tmap, d.offset + start)
 		if m >= 0 {
 			last = m
 		}
@@ -916,12 +930,12 @@ func descmap(decls ref Decl, map []byte, start int) int {
 	return last
 }
 
-func setbit(map []byte, offset int) {
+func setbit(tmap []byte, offset int) {
 	bit := offset / IBY2WD % 8
-	map[offset / (8 * IBY2WD)] |= byte(1 << (7 - bit))
+	tmap[offset / (8 * IBY2WD)] |= byte(1 << (7 - bit))
 }
 
-func tdescmap(t ref Type, map []byte, offset int) int {
+func tdescmap(t ref Type, tmap []byte, offset int) int {
 	if t == nil {
 		return -1
 	}
@@ -932,7 +946,7 @@ func tdescmap(t ref Type, map []byte, offset int) int {
 		offset += IBY2WD * 2
 		for i := 0; i < e; i++ {
 			if labs[i].isptr != 0 {
-				setbit(map, offset)
+				setbit(tmap, offset)
 				m = offset
 			}
 			offset += 2 * IBY2WD
@@ -943,16 +957,16 @@ func tdescmap(t ref Type, map []byte, offset int) int {
 		e := t.cse.nlab
 		offset += IBY2WD
 		for i := 0; i < e; i++ {
-			setbit(map, offset)
+			setbit(tmap, offset)
 			offset += IBY2WD
-			setbit(map, offset)
+			setbit(tmap, offset)
 			m = offset
 			offset += 2 * IBY2WD
 		}
 		return m
 	}
 	if isptr(t.kind) != 0 {
-		setbit(map, offset)
+		setbit(tmap, offset)
 		return offset
 	}
 	if t.kind == Tadtpick {
@@ -962,8 +976,8 @@ func tdescmap(t ref Type, map []byte, offset int) int {
 		}
 		t.rec = 1
 		t.tof.rec = 1
-		m1 := descmap(t.ids, map, offset)
-		m2 := descmap(t.tof.ids, map, offset)
+		m1 := descmap(t.ids, tmap, offset)
+		m2 := descmap(t.tof.ids, tmap, offset)
 		t.rec = 0
 		t.tof.rec = 0
 		if m1 > m2 {
@@ -977,7 +991,7 @@ func tdescmap(t ref Type, map []byte, offset int) int {
 			return -1
 		}
 		t.rec = 1
-		offset = descmap(t.ids, map, offset)
+		offset = descmap(t.ids, tmap, offset)
 		t.rec = 0
 		return offset
 	}
@@ -1536,7 +1550,7 @@ func rtsign(t ref Type, sig string) string {
 	case Tref, Tlist, Tarray, Tchan:
 		return rtsign(t.tof, sig)
 	case Tfn:
-		if t.varargs != 0 {
+		if t.varargs == 1 {
 			sig += sys.sprint("%c", SIGVARARGS)
 		}
 		ids := t.ids
@@ -1772,5 +1786,8 @@ func rotater(n ref Node) ref Node {
 
 // a copy is a new node: checked state doesn't carry over
 func dupn(old ref Node) ref Node {
+	if old == nil {
+		return nil
+	}
 	return ref Node{op: old.op, left: old.left, right: old.right, aux: old.aux, sym: old.sym, val: old.val, rval: old.rval, flags: old.flags & ~NCHECKED, line: old.line, pos: old.pos, ty: old.ty, decl: old.decl, addable: old.addable, temps: old.temps}
 }

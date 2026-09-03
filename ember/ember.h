@@ -318,6 +318,9 @@ struct Decl
 	int	ncapuses;
 	int	lencapuses;
 	Type	*capty;
+	Decl	*boxdecl;		/* a captured variable: the hidden local holding its box (ref .box{v T}); the owner and every closure share it */
+	Type	*boxty;			/* ref to the box adt */
+	Decl	*boxtdecl;		/* the box adt's Dtype, bound under a hidden name so boxinit() can write a literal of it */
 };
 
 struct Desc
@@ -420,6 +423,8 @@ struct Type
 	Type	*tof;
 	Decl	*ids;
 	Decl	*tags;			/* tagged fields in an adt */
+	uchar	ismap;			/* the adt is builtin's Map[K, V] instantiated by a map[K]V type */
+	uchar	isiface;		/* the adt is an interface: a struct of method closures, filled by its .Name$from template */
 	Decl	*meths;			/* adt methods, chained via Decl.link */
 	Case	*cse;			/* case or goto labels */
 	Type	*teq;			/* temporary equiv class for equiv checking */
@@ -567,6 +572,8 @@ enum
 	Ersheq,				/* >>= */
 	Edots,				/* ... */
 	Econs,				/* :: */
+	Eqdot,				/* ?. */
+	Eqq,				/* ?? */
 
 	Kbreak,				/* keywords */
 	Kcase,
@@ -597,6 +604,8 @@ enum
 	Ktry,
 	Kcatch,
 	Krange,
+	Kdefer,
+	Kmap,
 
 	Eend
 };
@@ -701,6 +710,12 @@ enum
 
 	Otry,				/* try { body } catch e { handler }: left body, right handler, aux the binder (Oname, a string local) */
 	Orange,				/* range e, the right side of a for header's :=: left the operand; the checker rewrites the for (rangefor()) */
+	Ocopy,				/* copy(dst, src) builtin: left dst array, right src array; Dis slicela, no value (resolve) */
+	Oexit,				/* exit() builtin: ends the process, Dis IEXIT (resolve) */
+	Odefer,				/* defer: left func literal, aux argument temps (Odas seq); the checker rewrites returns */
+	Omaplit,			/* map[K]V{k: v, ...}: left the type, right Oelem seq; the checker makes calls of it */
+	Otypeval,			/* a type expression already resolved: ty (the checker builds typed nodes with it) */
+	Ocond,				/* c ? a : b: left c, right a, aux b */
 	Oend
 };
 
@@ -725,6 +740,9 @@ struct Node
 #define	NREAL	1			/* Oconst holds rval */
 #define	NSTR	2			/* Oconst holds sym as string */
 #define	NVARARG	4			/* Ofield declared with ... */
+#define	NIFACE		128			/* Otstruct: an interface type (parse.c's pinterface); stype marks the adt (Type.isiface) */
+#define	NPACKED		64			/* Ocall: packvarargs() has run (a value call is checked twice) */
+#define	NMAPT		32			/* Otinst: a map[K]V type, the checker marks the instance (Type.ismap) */
 #define	NSPREAD		16			/* a multi-valued call as a call's only argument: its fields are the arguments (echk's Ocall case; callcom(), com.c) */
 #define	NCHECKED	8			/* echk() has run on this node: its ty is final and it may have been rewritten in place (see echk's wrapper, check.c) */
 #define	PARENS	8
@@ -771,6 +789,10 @@ extern	int	nfiles;
 extern	char	*opname[];
 extern	uchar	chantab[Tend];
 extern	uchar	disoptab[Oend+1][7];
+extern	void	ifacegen(Node*, Biobuf*);
+extern	Dlist	*imports;
+extern	Decl	*impdecl;
+extern	void	strprint(Biobuf*, char*);
 extern	char	*instname[];
 extern	char	*kindname[Tend];
 extern	uchar	movetab[Mend][Tend];

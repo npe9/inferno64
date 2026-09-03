@@ -113,6 +113,12 @@ char *opname[] =
 	/* Oarray */	"array",
 	/* Otry */	"try",
 	/* Orange */	"range",
+	/* Ocopy */	"copy",
+	/* Oexit */	"exit",
+	/* Odefer */	"defer",
+	/* Omaplit */	"maplit",
+	/* Otypeval */	"typeval",
+	/* Ocond */	"cond",
 	/* Oend */	"end",
 };
 
@@ -230,6 +236,8 @@ dupn(Node *old)
 {
 	Node *n;
 
+	if(old == nil)
+		return nil;
 	n = allocmem(sizeof *n);
 	*n = *old;
 	/* a copy is a new node: checked state doesn't carry over */
@@ -299,7 +307,7 @@ rotater(Node *n)
 	return n;
 }
 
-static void
+void
 strprint(Biobuf *b, char *s)
 {
 	int c;

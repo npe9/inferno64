@@ -2,22 +2,21 @@ module Closurecaptures
 
 import sys "sys"
 
-// shared state for a closure: a captured variable is a copy, so a
-// closure that must change something the outer code sees holds a ref
+// shared state for a closure: captured variables are shared by
+// reference now, but a ref cell still works the same way
 type Cell struct {
 	v int
 }
 
 // phase 3 of the closure-lowering plan (doc/ember-repository-study.md):
-// by-value captures.  a closure literal that reads or writes a Darg/
-// Dlocal from its immediately enclosing function (or closure) now
-// compiles instead of erroring -- check.c's synthfunclit() lifts the
-// captured set into a synthesized adt (one Dfield per capture), copies
-// each captured variable's *current* value into a fresh instance of it
-// at the closure's own construction site, and stores that instance's
-// pointer as the tfnptr's env (t2) -- nil only when nothing is
-// captured.  by value, deliberately: a mutation on either side after
-// the closure is created is invisible to the other.
+// a closure literal that reads or writes a Darg/Dlocal from an
+// enclosing function (or closure) compiles -- check.c's synthfunclit()
+// lifts the captured set into a synthesized adt (one Dfield per
+// capture) whose instance is the tfnptr's env (t2), nil only when
+// nothing is captured.  the fields hold each captured variable's
+// box (check.c's boxvar()), shared with the enclosing function: a
+// mutation on either side after the closure is created is visible to
+// the other -- capture by reference, since the modern-language plan.
 
 func apply(f func(int) int, x int) int {
 	return f(x)
@@ -34,8 +33,8 @@ func mk(n int) func(int) int {
 }
 
 func init() {
-	// by-value: mutating n after the closure is created must not
-	// change what the closure sees.
+	// by reference: mutating n after the closure is created changes
+	// what the closure sees.
 	n := 10
 	f := func(x int) int {
 		return x + n
@@ -43,9 +42,8 @@ func init() {
 	n = 999
 	sys.print("a=%d\n", f(1))
 
-	// a captured variable is a copy and may not be assigned inside
-	// the closure (a compile error): state the closure changes lives
-	// behind a ref, shared with the enclosing function
+	// state behind a ref, the idiom from before capture by reference,
+	// still works
 	m := ref Cell{v: 5}
 	g := func(delta int) int {
 		m.v = m.v + delta

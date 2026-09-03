@@ -12,6 +12,9 @@ import types "types"
 const NREAL = 1
 const NSTR = 2
 const NVARARG = 4
+const NMAPT = 32
+const NPACKED = 64
+const NIFACE = 128
 
 const Onone = 0
 const Omodule = 1
@@ -115,10 +118,16 @@ const Ochan = 98
 const Oarray = 99
 const Otry = 100
 const Orange = 101
-const Oend = 102
+const Ocopy = 102
+const Oexit = 103
+const Odefer = 104
+const Omaplit = 105
+const Otypeval = 106
+const Ocond = 107
+const Oend = 108
 
 
-var opnames = [103]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "range", "end"}
+var opnames = [109]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "range", "copy", "exit", "defer", "maplit", "typeval", "cond", "end"}
 
 var lx ref lex.Lexer
 var look0 ref lex.Tok
@@ -294,6 +303,51 @@ func pnamelist(ctx string) ref types.Node {
 }
 
 // a possibly qualified, possibly instantiated type name
+// "map[K]V" is "ref .builtin.Map[K, V]", the hidden implicit import
+// of builtin.ei; the checker marks the instance (NMAPT) (parse.c)
+func pmaptype() ref types.Node {
+	src := pexpect(lex.Kmap, "map type")
+	pexpect('[', "map type")
+	k := ptype()
+	pexpect(']', "map type")
+	v := ptype()
+	n := types.mkbin(Odot, mkname(src, ".builtin"), mkname(src, "Map"))
+	n.sym = n.right.sym
+	n.line = src.line
+	n.pos = src.pos
+	inst := types.mkbin(Otinst, n, types.rotater(types.mkseq(k, v)))
+	inst.flags |= NMAPT
+	inst.line = src.line
+	inst.pos = src.pos
+	n = types.mkn(Otref, nil, inst)
+	n.line = src.line
+	n.pos = src.pos
+	return n
+}
+
+// "map[K]V{k: v, ...}": Omaplit, left the type, right the Oelem list
+func pmaplit() ref types.Node {
+	src := tk()
+	ty := pmaptype()
+	pexpect('{', "map literal")
+	var elems ref types.Node
+	for cur() != '}' && cur() != lex.Beof {
+		k := pexpr()
+		pexpect(':', "map literal")
+		e := types.mkn(Oelem, k, pexpr())
+		elems = types.mkseq(elems, e)
+		if paccept(',') == 0 && cur() != ';' {
+			break
+		}
+		paccept(';')
+	}
+	pexpect('}', "map literal")
+	e := types.mkn(Omaplit, ty, types.rotater(elems))
+	e.line = src.line
+	e.pos = src.pos
+	return e
+}
+
 func ptypename() ref types.Node {
 	n := pname("type name")
 	for paccept('.') != 0 {
@@ -339,21 +393,55 @@ func pfields(ctx string) ref types.Node {
 	return types.rotater(n)
 }
 
-func ptag() ref types.Node {
+// the pick members: "Tag", "Tag(fields)", "Tag, Tag2(fields)" (a
+// group sharing one field list) or "name type", a field every tag
+// carries; returns (tags, fields) with the new members appended (parse.c)
+func ptag(tags ref types.Node, fields ref types.Node) (ref types.Node, ref types.Node) {
 	name := pname("pick member")
-	var fields ref types.Node
+	if cur() != '(' && cur() != ',' && cur() != ';' && cur() != '}' {
+		// a common field: name type, or name, name type
+		names := name
+		for paccept(',') != 0 {
+			names = types.mkseq(names, pname("pick field"))
+		}
+		f := types.mkbin(Ofield, types.rotater(names), ptype())
+		return tags, types.mkseq(fields, f)
+	}
+	names := name
+	for paccept(',') != 0 {
+		names = types.mkseq(names, pname("pick member"))
+	}
+	names = types.rotater(names)
+	var fl ref types.Node
 	if cur() == '(' {
 		lexskip()
 		for cur() != ')' && cur() != lex.Beof {
 			f := pfield()
-			fields = types.mkseq(fields, f)
+			fl = types.mkseq(fl, f)
 			if paccept(',') == 0 {
 				break
 			}
 		}
 		pexpect(')', "pick member fields")
 	}
-	return types.mkn(Otag, name, types.rotater(fields))
+	fl = types.rotater(fl)
+	for p := names; p != nil; p = p.right {
+		id := p
+		if p.op == Oseq {
+			id = p.left
+		}
+		var tf ref types.Node
+		if p == names {
+			tf = fl
+		} else {
+			tf = deepdup(fl)
+		}
+		tags = types.mkseq(tags, types.mkn(Otag, id, tf))
+		if p.op != Oseq {
+			break
+		}
+	}
+	return tags, fields
 }
 
 func psignature(named int) ref types.Node {
@@ -458,6 +546,8 @@ func ptype() ref types.Node {
 		n.line = src.line
 		n.pos = src.pos
 		return n
+	case lex.Kmap:
+		return pmaptype()
 	case lex.Kfunc:
 		lexskip()
 		n := psignature(0)
@@ -476,16 +566,17 @@ func ptype() ref types.Node {
 		lexskip()
 		pexpect('{', "pick type")
 		var tags ref types.Node
+		var fields ref types.Node
 		for cur() != '}' && cur() != lex.Beof {
 			if paccept(';') != 0 {
 				continue
 			}
-			tags = types.mkseq(tags, ptag())
+			tags, fields = ptag(tags, fields)
 			if cur() != '}' {
 				pexpect(';', "pick member")
 			}
 		}
-		n := types.mkn(Otpick, types.rotater(tags), nil)
+		n := types.mkn(Otpick, types.rotater(tags), types.rotater(fields))
 		n.line = src.line
 		n.pos = src.pos
 		pexpect('}', "pick type")
@@ -599,6 +690,12 @@ func poperand() ref types.Node {
 		n.pos = t.pos
 		pexpect(')', "parenthesised expression")
 		return n
+	case lex.Kmap:
+		oblit := noblit
+		noblit = 0
+		n := pmaplit()
+		noblit = oblit
+		return n
 	case lex.Kfunc:
 		lexskip()
 		sig := psignature(1)
@@ -678,6 +775,7 @@ func poperand() ref types.Node {
 }
 
 func pprimary() ref types.Node {
+	var guard ref types.Node
 	n := poperand()
 	for {
 		match cur() {
@@ -693,7 +791,11 @@ func pprimary() ref types.Node {
 			noblit = 0
 			var args ref types.Node
 			for cur() != ')' && cur() != lex.Beof {
-				args = types.mkseq(args, pexpr())
+				a := pexpr()
+				if paccept(lex.Edots) != 0 {
+					a.flags |= NVARARG	// append(a, xs...)
+				}
+				args = types.mkseq(args, a)
 				if paccept(',') == 0 {
 					break
 				}
@@ -737,8 +839,22 @@ func pprimary() ref types.Node {
 			n = e
 			continue
 		case '?':
+			if startsexpr(nxt()) {
+				break	// c ? a : b, pexpr's
+			}
 			lexskip()
 			n = types.mkunary(Ochk, n)
+			continue
+		case lex.Eqdot:
+			// a?.f, a?.m(x): nil when a is, else the rest of the
+			// postfix chain; a is evaluated twice (parse.c)
+			lexskip()
+			if guard == nil {
+				guard = deepdup(n)
+			}
+			e := pname("field")
+			n = types.mkbin(Odot, n, e)
+			n.sym = e.sym
 			continue
 		case '{':
 			if noblit != 0 || istypeexpr(n) == 0 {
@@ -748,6 +864,22 @@ func pprimary() ref types.Node {
 			continue
 		}
 		break
+	}
+	if guard != nil {
+		nn := mkname(tk(), "nil")
+		nn.line = guard.line
+		nn.pos = guard.pos
+		e := types.mkbin(Oneq, guard, nn)
+		e.line = guard.line
+		e.pos = guard.pos
+		nn2 := mkname(tk(), "nil")
+		nn2.line = n.line
+		nn2.pos = n.pos
+		e = types.mkn(Ocond, e, n)
+		e.aux = nn2
+		e.line = n.line
+		e.pos = n.pos
+		n = e
 	}
 	return n
 }
@@ -851,7 +983,44 @@ func pbinary(prec int) ref types.Node {
 }
 
 func pexpr() ref types.Node {
-	return pbinary(1)
+	n := pbinary(1)
+	for cur() == lex.Eqq {
+		// a ?? b: a when it is not nil, else b; a is evaluated twice
+		lexskip()
+		b := pbinary(1)
+		a := types.mkbin(Oneq, deepdup(n), mkname(tk(), "nil"))
+		a.line = n.line
+		a.pos = n.pos
+		a.right.line = n.line
+		a.right.pos = n.pos
+		a = types.mkn(Ocond, a, n)
+		a.aux = b
+		a.line = n.line
+		a.pos = n.pos
+		n = a
+	}
+	if cur() == '?' && startsexpr(nxt()) {
+		// c ? a : b, at the lowest precedence, right-associative
+		lexskip()
+		a := pexpr()
+		pexpect(':', "conditional expression")
+		b := pexpr()
+		c := types.mkn(Ocond, n, a)
+		c.aux = b
+		c.line = n.line
+		c.pos = n.pos
+		return c
+	}
+	return n
+}
+
+// can this token begin an expression?  "x? y : z" against "x?" alone
+func startsexpr(t int) bool {
+	match t {
+	case lex.Eid, lex.Econst, lex.Erconst, lex.Esconst, '(', '[', '-', '!', '~', lex.Knil, lex.Kfunc, lex.Kref, lex.Kmap, lex.Kload:
+		return true
+	}
+	return false
 }
 
 func pexprlist() ref types.Node {
@@ -883,17 +1052,60 @@ func pvardecl() ref types.Node {
 	return n
 }
 
-func pcondecl() ref types.Node {
-	src := pexpect(lex.Kconst, "const declaration")
-	name := pname("const declaration")
-	pexpect('=', "const declaration")
-	n := types.mkn(Ocondecl, name, pexpr())
-	n.line = src.line
-	n.pos = src.pos
+// a copy of a whole expression tree: the checker folds in place
+func deepdup(n ref types.Node) ref types.Node {
+	if n == nil {
+		return nil
+	}
+	n = types.dupn(n)
+	n.left = deepdup(n.left)
+	n.right = deepdup(n.right)
+	n.aux = deepdup(n.aux)
 	return n
 }
 
-func ptypedecl() ref types.Node {
+// "const X = e", or a block "const ( A = iota; B; C = 7 )": iota is
+// the item's index (aux), an item without "= e" repeats the previous
+// expression; the items are appended to decls one by one (parse.c)
+func pcondecl(decls ref types.Node) ref types.Node {
+	src := pexpect(lex.Kconst, "const declaration")
+	if paccept('(') == 0 {
+		name := pname("const declaration")
+		pexpect('=', "const declaration")
+		n := types.mkn(Ocondecl, name, pexpr())
+		n.line = src.line
+		n.pos = src.pos
+		return types.mkseq(decls, n)
+	}
+	var prev ref types.Node
+	i := 0
+	for cur() != ')' && cur() != lex.Beof {
+		if paccept(';') != 0 {
+			continue
+		}
+		name := pname("const declaration")
+		if paccept('=') != 0 {
+			prev = pexpr()
+		} else if prev == nil {
+			synerr("the first constant of a block needs an expression")
+		}
+		n := types.mkn(Ocondecl, name, deepdup(prev))
+		n.aux = mkconst(tk(), big(i))
+		n.aux.line = name.line
+		n.aux.pos = name.pos
+		i++
+		n.line = name.line
+		n.pos = name.pos
+		decls = types.mkseq(decls, n)
+		if cur() != ')' {
+			pexpect(';', "const block")
+		}
+	}
+	pexpect(')', "const block")
+	return decls
+}
+
+func ptypedecl(decls ref types.Node) ref types.Node {
 	src := pexpect(lex.Ktype, "type declaration")
 	name := pname("type declaration")
 	var polys ref types.Node
@@ -901,11 +1113,94 @@ func ptypedecl() ref types.Node {
 		polys = types.rotater(pnamelist("type parameters"))
 		pexpect(']', "type parameters")
 	}
+	if cur() == lex.Kinterface {
+		return pinterface(decls, name, src)
+	}
 	n := types.mkn(Otypedecl, name, ptype())
 	n.aux = polys
 	n.line = src.line
 	n.pos = src.pos
+	return types.mkseq(decls, n)
+}
+
+func at(n ref types.Node, src ref lex.Tok) ref types.Node {
+	n.line = src.line
+	n.pos = src.pos
 	return n
+}
+
+// "type W interface { m(params) results; ... }" is a struct of method
+// closures (NIFACE) and a generic converter .W$from[.T](.x .T) ref W
+// whose body calls each method on .x (parse.c)
+func pinterface(decls ref types.Node, name ref types.Node, src ref lex.Tok) ref types.Node {
+	pexpect(lex.Kinterface, "interface type")
+	pexpect('{', "interface type")
+	var fields ref types.Node
+	var elems ref types.Node
+	for cur() != '}' && cur() != lex.Beof {
+		if paccept(';') != 0 {
+			continue
+		}
+		mname := pname("interface method")
+		sig := at(psignature(1), src)
+		f := at(types.mkbin(Ofield, mkname(src, mname.sym), sig), src)
+		fields = types.mkseq(fields, f)
+		// m: func(params) results { return .x.m(params) }
+		var args ref types.Node
+		for p := sig.left; p != nil; p = p.right {
+			q := p
+			if p.op == Oseq {
+				q = p.left
+			}
+			for id := q.left; id != nil; id = id.right {
+				nm := id
+				if id.op == Oseq {
+					nm = id.left
+				}
+				args = types.mkseq(args, mkname(src, nm.sym))
+				if id.op != Oseq {
+					break
+				}
+			}
+			if p.op != Oseq {
+				break
+			}
+		}
+		call := at(types.mkbin(Odot, mkname(src, ".x"), mkname(src, mname.sym)), src)
+		call.sym = mname.sym
+		call = at(types.mkn(Ocall, call, types.rotater(args)), src)
+		var stmt ref types.Node
+		if sig.right != nil {
+			stmt = types.mkn(Oret, call, nil)
+		} else {
+			stmt = types.mkunary(Oexpr, call)
+		}
+		at(stmt, src)
+		fl := at(types.mkn(Ofunclit, nil, deepdup(sig)), src)
+		fl.aux = at(types.mkn(Oscope, stmt, nil), src)
+		elems = types.mkseq(elems, at(types.mkn(Oelem, mkname(src, mname.sym), fl), src))
+		if cur() != '}' {
+			pexpect(';', "interface method")
+		}
+	}
+	pexpect('}', "interface type")
+	// type .W$s struct { ... }; type W ref .W$s: the interface name is the reference
+	sname := sys.sprint(".%s$s", name.sym)
+	st := at(types.mkn(Otstruct, types.rotater(fields), nil), src)
+	st.flags |= NIFACE
+	td := at(types.mkn(Otypedecl, mkname(src, sname), st), src)
+	decls = types.mkseq(decls, td)
+	td = at(types.mkn(Otypedecl, name, at(types.mkn(Otref, nil, mkname(src, sname)), src)), src)
+	decls = types.mkseq(decls, td)
+
+	fname := sys.sprint(".%s$from", name.sym)
+	sig2 := at(types.mkn(Otfunc, at(types.mkbin(Ofield, mkname(src, ".x"), mkname(src, ".T")), src), mkname(src, name.sym)), src)
+	sig2.aux = mkname(src, ".T")
+	comp := at(types.mkn(Ocomposite, mkname(src, sname), types.rotater(elems)), src)
+	stmt := at(types.mkn(Oret, at(types.mkunary(Oref, comp), src), nil), src)
+	fd := at(types.mkn(Ofndecl, mkname(src, fname), sig2), src)
+	fd.aux = at(types.mkn(Oscope, stmt, nil), src)
+	return types.mkseq(decls, fd)
 }
 
 // a simple statement: an expression, or an assignment, declaration,
@@ -1054,13 +1349,39 @@ func pfor() ref types.Node {
 	return n
 }
 
+// "case 'a'...'z':": a range of int labels, an Orange with both
+// bounds (the checker's matchlabels reads left and right)
+func prange(lo ref types.Node) ref types.Node {
+	neg := paccept('-')
+	t := tk()
+	if t.t != lex.Econst {
+		synerr("expected an integer constant after ...")
+		psync()
+		return lo
+	}
+	v := t.ival
+	if neg != 0 {
+		v = -v
+	}
+	hi := mkconst(t, v)
+	lexskip()
+	n := types.mkbin(Orange, lo, hi)
+	n.line = lo.line
+	n.pos = lo.pos
+	return n
+}
+
 func ppattern() ref types.Node {
 	t := tk()
 	match t.t {
 	case lex.Econst:
 		v := t.ival
 		lexskip()
-		return mkconst(t, v)
+		n := mkconst(t, v)
+		if paccept(lex.Edots) != 0 {
+			return prange(n)
+		}
+		return n
 	case '-':
 		lexskip()
 		t2 := tk()
@@ -1071,7 +1392,11 @@ func ppattern() ref types.Node {
 		}
 		v := t2.ival
 		lexskip()
-		return mkconst(t, -v)
+		n := mkconst(t, -v)
+		if paccept(lex.Edots) != 0 {
+			return prange(n)
+		}
+		return n
 	case lex.Esconst:
 		s := t.sym
 		lexskip()
@@ -1136,18 +1461,99 @@ func pcases(ctx string, isalt int) ref types.Node {
 	return types.rotater(cases)
 }
 
+// "defer f(a, b)": arguments into hidden temps now, the call in a
+// func() literal a hidden local will hold (parse.c)
+var ndefer = 0
+
+func pdefer() ref types.Node {
+	src := pexpect(lex.Kdefer, "defer statement")
+	e := pprimary()
+	if e.op != Ocall {
+		error(e.line, "defer needs a function call")
+		e = types.mkn(Ocall, e, nil)
+	}
+	var temps ref types.Node
+	k := 0
+	var prev ref types.Node
+	p := e.right
+	for p != nil {
+		var a ref types.Node
+		if p.op == Oseq {
+			a = p.left
+		} else {
+			a = p
+		}
+		tmp := types.mkn(Oname, nil, nil)
+		tmp.line = a.line
+		tmp.pos = a.pos
+		tmp.sym = sys.sprint(".d%da%d", ndefer, k)
+		k++
+		temps = types.mkseq(temps, types.mkbin(Odas, tmp, a))
+		use := types.mkn(Oname, nil, nil)
+		use.line = tmp.line
+		use.pos = tmp.pos
+		use.sym = tmp.sym
+		if p.op == Oseq {
+			p.left = use
+			prev = p
+			p = p.right
+		} else {
+			if prev == nil {
+				e.right = use
+			} else {
+				prev.right = use
+			}
+			p = nil
+		}
+	}
+	body := types.mkn(Oscope, types.mkunary(Oexpr, e), nil)
+	body.line = e.line
+	body.pos = e.pos
+	sig := types.mkn(Otfunc, nil, nil)
+	sig.line = src.line
+	sig.pos = src.pos
+	fl := types.mkn(Ofunclit, nil, sig)
+	fl.aux = body
+	fl.line = e.line
+	fl.pos = e.pos
+	n := types.mkn(Odefer, fl, nil)
+	n.aux = types.rotater(temps)
+	n.line = src.line
+	n.pos = src.pos
+	ndefer++
+	return n
+}
+
 func pmatch() ref types.Node {
 	src := pexpect(lex.Kmatch, "match statement")
 	oblit := noblit
 	noblit = 1
-	subj := pexpr()
+	// "match x := f(); x {": an initializer, as pif() takes
+	var init ref types.Node
+	n := psimple()
+	if paccept(';') != 0 {
+		init = n
+		n = psimple()
+	}
+	var subj ref types.Node
+	if n.op == Oexpr {
+		subj = n.left
+	} else {
+		error(n.line, "match subject must be an expression")
+		subj = mkconst(src, big(0))
+	}
 	noblit = oblit
 	pexpect('{', "match statement")
 	cases := pcases("match case", 0)
-	n := types.mkn(Omatch, subj, cases)
+	n = types.mkn(Omatch, subj, cases)
 	n.line = src.line
 	n.pos = src.pos
 	pexpect('}', "match statement")
+	if init != nil {
+		n = types.mkn(Oscope, types.mkseq(init, n), nil)
+		n.line = src.line
+		n.pos = src.pos
+	}
 	return n
 }
 
@@ -1177,9 +1583,9 @@ func pstmt() ref types.Node {
 	case lex.Kvar:
 		n = pvardecl()
 	case lex.Kconst:
-		n = pcondecl()
+		n = types.rotater(pcondecl(nil))
 	case lex.Ktype:
-		n = ptypedecl()
+		n = types.rotater(ptypedecl(nil))
 	case lex.Kif:
 		return pif()
 	case lex.Kfor:
@@ -1227,6 +1633,8 @@ func pstmt() ref types.Node {
 			n.aux = pname("catch binder")
 		}
 		n.right = pblock()
+	case lex.Kdefer:
+		n = pdefer()
 	case lex.Kspawn:
 		lexskip()
 		e := pprimary()
@@ -1343,11 +1751,11 @@ func parse(file string) ref types.Node {
 		case lex.Kimport:
 			n = types.mkseq(n, pimport())
 		case lex.Ktype:
-			n = types.mkseq(n, ptypedecl())
+			n = ptypedecl(n)
 		case lex.Kvar:
 			n = types.mkseq(n, pvardecl())
 		case lex.Kconst:
-			n = types.mkseq(n, pcondecl())
+			n = pcondecl(n)
 		case lex.Kfunc:
 			n = types.mkseq(n, pfndecl())
 		default:

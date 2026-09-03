@@ -1,0 +1,17 @@
+module Shapelib
+
+// an interface declared in an interface file: the struct of closures,
+// the reference name and the converter template all travel with it,
+// and an inline function may take the interface
+
+type Shape interface {
+	area() int
+}
+
+func total(shapes []Shape) int {
+	t := 0
+	for _, s := range shapes {
+		t += s.area()
+	}
+	return t
+}

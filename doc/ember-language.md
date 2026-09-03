@@ -74,20 +74,55 @@ The scalar types are `int` (32 bits at runtime), `big` (64 bits),
 `byte`, `real` (64-bit floating point) and `string`. An integer
 literal that does not fit in 32 bits is a `big`; so is `-2147483648`,
 since the literal itself is out of range (write `-2147483647 - 1` for
-the int). Character literals such as `'a'` and `'\n'` are ints.
+the int). `0x1f`, `0o17`, `0b101` and, as in Go, a leading zero
+(`0666`) give hexadecimal, octal and binary literals. Character
+literals such as `'a'` and `'\n'` are ints.
 
 `[]T` is an array. `[n]T` allocates a zero-filled array of `n`
 elements, where `n` may be a runtime value; `[3]int{1, 2, 3}` is a
 literal, `[3]int{}` is zero-filled. Arrays are shared by reference,
 indexed with `a[i]`, sliced with `a[lo:hi]`, `a[lo:]` and `a[:hi]`,
-and measured with `len(a)`. A two-dimensional array is an array of
-arrays: `[3][]int`, then `grid[i] = [4]int`.
+and measured with `len(a)`. `copy(dst, src)` copies the elements of
+one array into another (either may be a slice, and they may overlap);
+it is a statement with no value, and `src` must fit in `dst` or the
+VM raises an array bounds error. This is Limbo's `dst[0:] = src`. A
+two-dimensional array is an array of arrays: `[3][]int`, then
+`grid[i] = [4]int`.
+
+`append(a, x)` returns a fresh array one element longer, and
+`append(a, xs...)` one longer by all of `xs`; Dis arrays have no
+spare capacity, so every append copies, and a long array is better
+built as a list and converted, or allocated at its final size.
+
+`map[K]V` is a hash map with keys of type `int`, `big`, `byte` or
+`string`: `m := map[string]int{"a": 1}`, `m[k] = v`, `m[k] += 1`,
+`m[k]` (the zero value when absent), `v, ok := m[k]`, `delete(m, k)`,
+`len(m)`, and `for k, v := range m` (in no particular order, over a
+snapshot). A map is a reference; the zero value of a map variable is
+`nil`, so declare with a literal. `map` is a keyword. Under the
+covers a map is `Map[K, V]` from `module/builtin.ei`, an implicit
+header-only import every module has as the unnameable alias
+`.builtin`; the checker rewrites each operation into a method call,
+so a map costs what that struct costs.
 
 `list T` is a list: `1 :: 2 :: nil`, with `hd(l)`, `tl(l)` and
 `len(l)`. `chan T` is a channel; `chan[n] T` allocates a buffered
 channel value, `c <- v` sends, `<-c` receives.
 
-`(T1, T2)` is a tuple. Multi-valued functions return tuples;
+`a?.f` is `a.f` when `a` is not nil and nil otherwise, and guards the
+whole postfix chain after it (`a?.next?.name`, `a?.last()?.name`);
+`a ?? b` is `a` unless it is nil. Both are sugar for a conditional
+expression, so the result must be a type that can be nil (a ref,
+string, array or list), and `a` is evaluated twice.
+
+`c ? a : b` is the conditional expression, at the lowest precedence
+and right-associative; the arms must have one type (a `nil` arm
+takes the other's). It is distinct from the `?` that propagates an
+error tag: `x?` alone, `x? a : b` a choice.
+
+`(T1, T2)` is a tuple, assignable element by element (so a tuple
+holding a `ref Addr.Line` may be returned as `(string, ref Addr)`).
+Multi-valued functions return tuples;
 destructure with `a, b := f()` or read the components as `t.t0`,
 `t.t1`, which are the only component names.
 
@@ -128,13 +163,20 @@ Conversions between scalar literals fold at compile time.
 without initializer is zero each time the declaration executes (a
 `var` inside a loop starts fresh every iteration). `const N = 4 * 2 + 1` declares a
 constant; constant expressions of one type fold, and may refer to
-earlier constants and size arrays (`[N]int`).
+earlier constants and size arrays (`[N]int`). A block `const ( Red =
+iota; Green; Blue )` declares several: `iota` is the item's index
+from zero, and an item with no expression repeats the previous one
+(`KB = 1 << (10 * (iota + 1)); MB; GB`). `const` works inside a
+function too.
 
 A multi-valued call may be the last argument of another call, its
 results filling the remaining parameters one each: `show(divmod(17,
 5))`, `acc.add(three())`. `a, b := f()` and `a, b = f()` destructure a
 tuple result; `a, b =
 b, a` assigns an expression list, evaluated whole before any store.
+`_` in any of these, or as a `range` binder, discards that value: `_,
+r := divmod(a, b)`, `for _, v := range xs`. Each `_` is a fresh
+hidden local, so it may be repeated and is never readable.
 The compound assignments `+= -= *= /= %= &= |= ^= <<= >>=` and `++`,
 `--` exist. A store target must be storage: a variable, a module
 global, an array element, a string element (`s[i] = 'x'`, which copies
@@ -187,8 +229,8 @@ naming an enclosing loop or match.
     }
 
 Labels may be literals or named constants (`case Eid:`, `case
-lex.Eid:`). String labels must be distinct; int labels may not
-overlap. There is no fall-through, and `continue` inside an arm
+lex.Eid:`), or int ranges, `case 'a'...'z', 'A'...'Z':`. String
+labels must be distinct; int labels may not overlap. There is no fall-through, and `continue` inside an arm
 continues the enclosing loop. Matching a pick binds its fields:
 
     match e {
@@ -227,6 +269,16 @@ an `int` flag; a string or ref is not a condition. `:=` may not redeclare a name
 same scope (a parameter counts as declared in the body's outermost
 block), though an inner scope may shadow it. `raise expr` (a string) raises that error, the way a Limbo `raise`
 does; a command uses `raise "fail:reason"` to exit unsuccessfully.
+`exit()` ends the process at once from anywhere, Limbo's `exit`; a
+function may end with it in place of a `return`.
+
+`defer f(a, b)` records a call to run when the enclosing function
+returns, by `return` or by reaching its end; deferred calls run last
+first. The arguments are evaluated at the `defer`; the callee
+expression (`c.close`, say) when the call runs. A `defer` in a loop
+records one call per iteration. `raise`, `exit()` and VM faults do
+not run deferred calls. `match` takes an initializer like `if`:
+`match x := f(); x { ... }`.
 Integer division or modulus by zero raises "zero divide", indexing
 past an array or string "array bounds error", and using a nil ref
 "dereference of nil", as in Limbo. An uncaught error ends the
@@ -249,18 +301,25 @@ whose block and handler both return terminates.
 ## Functions, closures, generics, methods
 
 Functions may return several values: `func count(name string) (ref
-Stats, string)`. A trailing `...` parameter makes a function
-variadic; `sys.print` is one. Function values are first class: `f :=
+Stats, string)`. A trailing `xs ...T` parameter makes a function
+variadic: inside, `xs` is a `[]T` holding the extra arguments, a
+call packs them (`join(", ", "a", "b")`, or none), and `join(sep,
+parts...)` passes an array through. A bare trailing `...` is Limbo's
+untyped form, which `sys.print` uses. Function values are first class: `f :=
 inc`, `apply(f, x)`, and closures `func(x int) int { return base + x
 }`, which may be called at once, returned, or spawned.
 
-Closures capture by value: a closure holds a copy of each enclosing
-variable it uses, taken when the closure is created. Assigning to a
-captured variable inside the closure is a compile error ("cannot
-assign to n inside a closure: it is captured by value"), since it
-could only change the copy; state a closure must change lives behind
-a ref, `c := ref Cell{v: 0}` and `c.v++`, shared with the enclosing
-function and every closure that captures it.
+Closures capture by reference: a variable that any closure uses is
+shared between the enclosing function and every closure that
+captures it, so `n++` inside a closure changes the `n` outside, and
+an assignment outside is seen by the closure after it was created.
+(The compiler moves such a variable into a heap cell at its
+declaration; a variable no closure captures stays in the frame.) A
+variable declared inside a loop body is fresh each iteration, so
+closures made in the loop each keep their own; the variable of a
+three-part `for` header is one variable for the whole loop, as in Go
+before 1.22. Calling an element of an array of functions, `fs[i](x)`,
+works as expected.
 
 Generic functions and types take type parameters in brackets: `func
 first[T](xs []T) T`, `type Pair[T] struct { a T; b T }`. Type
@@ -309,7 +368,21 @@ A pick is a tagged union:
     e := ref Expr.Bin{op: '+', l: a, r: b}
 
 Tags are constructed as `Type.Tag{...}` (value) or `ref Type.Tag{...}`
-and taken apart with `match`. The `?` postfix propagates an error tag
+and taken apart with `match`. Fields declared before the tags belong
+to every tag, laid out first, and are reachable through the pick
+reference without matching (`c.line` on a `ref Cmd`); several tags may
+share one field list, `Branch, Label(lab string)`, and field-less
+tags may be grouped, `Delete, Quit()`:
+
+    type Cmd pick {
+        line int
+        Print()
+        Delete, Quit()
+        Subst(from string, to string)
+        Branch, Label(lab string)
+    }
+
+Binders in a pattern name the tag's own fields only. The `?` postfix propagates an error tag
 out of the enclosing function. A pick may be generic (`type Result[T]
 pick { Ok(v T); Err(msg string) }`): its tags are named through the
 instantiation, `ref Result[int].Ok{v: 3}` and `case
@@ -318,6 +391,44 @@ each tag does, so the pick type exists only behind a `ref`: a
 variable, field, parameter or element of type `Expr` (rather than
 `ref Expr`) is an error, as in Limbo. A specific tag's value type
 (`Expr.Num`) has a size and may be used by value.
+
+## Interface types
+
+    type Shape interface {
+        area() int
+        name() string
+    }
+
+A value of an interface type holds any `ref` to a struct or pick
+whose methods include the interface's, with the same signatures; the
+check is structural and happens where the value is assigned, passed,
+returned or put in a literal. Calls go through it (`s.area()`), `nil`
+is its zero value, and a pick's tags convert as the pick. Under the
+covers the interface is a struct of method closures and a hidden
+generic converter the parser writes (`.Shape$from[T]`), so a
+conversion allocates once and a call through the interface is a
+call of a field. There is no type assertion back to the concrete
+type. An interface declared in a `.ei` file works across modules.
+
+## Unit tests
+
+A file of `func test_xxx()` functions, each checking with
+`expect(cond, "what")`, is a unit test: `ember -t file.e` adds an
+`init` that runs every `test_` function in order, reports each
+failure as `FAIL test_xxx: expect: what` and carries on, then prints
+`PASS n tests` or ends with `raise "fail:tests"`. `expect` is a
+builtin unless the program declares its own. `tests/unit/*_test.e`
+with their `.out` files are run by `tests/unittest.sh`.
+
+## Deriving an interface file
+
+`ember -i file.e` prints the module's interface file: its imports,
+constants, types (an interface type as declared, a pick with its
+tags, a struct with its methods' signatures), variables and function
+signatures, in source order. Generic and inline declarations are
+left out with a comment, since an interface must carry their bodies;
+write those by hand. `tests/gen/` holds sources with their expected
+output, checked by `tests/ifacegen.sh`.
 
 ## Interfaces and separate compilation
 
@@ -482,4 +593,16 @@ fatal. `tests/err/*.e` must fail to parse. `tests/run.sh` and
 four C-versus-Ember comparisons (`lexcmp.sh`, `astcmp.sh`,
 `chkcmp.sh`, `discmp.sh`) and `bootstrap.sh`, which has the
 self-hosted compiler compile itself and that compiler compile the
-sources again, requiring identical bytes.
+sources again, requiring identical bytes; then `ifacegen.sh` (the
+`-i` goldens) and `unittest.sh` (the `-t` unit tests). Last, `limbocmp.sh` runs
+the Limbo commands translated into Ember in `limbo/` (`cat`, `freq`,
+`cmp`, `uniq`, `comm`, `sort`, `echo`, `seq`, `wc`, `tr`, `fmt`,
+`grep`, `tsort`, `strings`, `xargs`, `md5sum`, `uuencode`,
+`uudecode`, `sed`) against their originals in `appl/cmd/`, both compiled
+with their own compiler, on every argument line in the matching
+`.cases` file (`args < file` feeds a file to standard input); every
+run must print the same thing. The script builds the Limbo libraries
+the programs load (`dis/` is not in git) with `limbo` from the same
+`bin` directory as `emu-g`. The translations are also in the four
+comparison scripts' file lists. `doc/ember-vs-limbo.md` is what the
+translations showed.

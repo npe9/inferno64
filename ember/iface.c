@@ -155,6 +155,8 @@ itype(Node *n, Decl *mod)
 	case Otstruct:
 		t = mktype(&n->src, Tadt, nil, ifields(n->left, mod, Dfield));
 		t->ok |= OKverify;
+		if(n->flags & NIFACE)
+			t->isiface = 1;	/* an interface type (parse.c's pinterface) */
 		return t;
 	case Otpick:
 		/* tags filled by typedec */
@@ -439,6 +441,8 @@ bindiface(Decl *mod, Node *tree)
 				t->kind = Tadt;
 				t->ids = ifields(decl->right->left, mod, Dfield);
 				t->ok |= OKverify;
+				if(decl->right->flags & NIFACE)
+					t->isiface = 1;	/* an interface type (parse.c's pinterface) */
 			}else if(decl->right->op == Otpick){
 				Decl *tags, *last, *tag;
 				Node *p, *tg;

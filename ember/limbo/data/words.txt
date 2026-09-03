@@ -1,0 +1,6 @@
+pear
+kiwi
+apple
+zucchini
+fig
+kiwi

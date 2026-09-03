@@ -70,6 +70,10 @@ const Kraise = 309
 const Ktry = 310
 const Kcatch = 311
 const Krange = 312
+const Kdefer = 313
+const Kmap = 314
+const Eqdot = 315
+const Eqq = 316
 
 const Mlower = 1
 const Mupper = 2
@@ -260,6 +264,10 @@ func keyword(id string) int {
 		return Kcatch
 	case "range":
 		return Krange
+	case "defer":
+		return Kdefer
+	case "map":
+		return Kmap
 	case "ref":
 		return Kref
 	case "return":
@@ -326,6 +334,10 @@ func (lx ref Lexer) lexnum(tok ref Tok, c int) int {
 			c = lx.getc()
 		} else {
 			lx.ungetc()
+			// 0666: octal, as in go and limbo's own 8r666
+			if lx.at < len(lx.src) && lx.src[lx.at] >= '0' && lx.src[lx.at] <= '9' {
+				base = 8
+			}
 			c = '0'
 		}
 	}
@@ -340,6 +352,9 @@ func (lx ref Lexer) lexnum(tok ref Tok, c int) int {
 			continue
 		}
 		if base == 10 && isreal == 0 && c == '.' {
+			if lx.at < len(lx.src) && lx.src[lx.at] == '.' {
+				break	// "1...5", a case range: the number ends before the dots
+			}
 			isreal = 1
 			buf += "."
 			c = lx.getc()
@@ -568,8 +583,18 @@ func (lx ref Lexer) lex(tok ref Tok) int {
 				lx.ungetc()
 			}
 			return Econst
-		case '(', ')', '[', ']', '{', '}', ',', ';', '~', '?':
+		case '(', ')', '[', ']', '{', '}', ',', ';', '~':
 			return c
+		case '?':
+			c = lx.getc()
+			if c == '.' {
+				return Eqdot
+			}
+			if c == '?' {
+				return Eqq
+			}
+			lx.ungetc()
+			return '?'
 		case ':':
 			c = lx.getc()
 			if c == '=' {
@@ -798,6 +823,10 @@ func tokname(t int) string {
 		return "..."
 	case Econs:
 		return "::"
+	case Eqdot:
+		return "?."
+	case Eqq:
+		return "??"
 	case Eid:
 		return "identifier"
 	case Econst:
@@ -858,6 +887,10 @@ func tokname(t int) string {
 		return "catch"
 	case Krange:
 		return "range"
+	case Kdefer:
+		return "defer"
+	case Kmap:
+		return "map"
 	case Kspawn:
 		return "spawn"
 	case Kstruct:

@@ -181,6 +181,9 @@ func itype(n ref types.Node, mod ref types.Decl) ref types.Type {
 	case types.Otstruct:
 		t := types.mktype(n.line, n.pos, types.Tadt, nil, ifields(n.left, mod, types.Dfield))
 		t.ok |= types.OKverify
+		if (n.flags & types.NIFACE) != 0 {
+			t.isiface = 1	// an interface type (parse.e's pinterface)
+		}
 		return t
 	case types.Otpick:
 		t := types.mktype(n.line, n.pos, types.Tadt, nil, nil)
@@ -421,6 +424,9 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				t.kind = types.Tadt
 				t.ids = ifields(decl.right.left, mod, types.Dfield)
 				t.ok |= types.OKverify
+				if (decl.right.flags & types.NIFACE) != 0 {
+					t.isiface = 1
+				}
 			} else if decl.right.op == types.Otpick {
 				t.kind = types.Tadt
 				t.ok |= types.OKverify

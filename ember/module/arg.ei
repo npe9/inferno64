@@ -1,0 +1,17 @@
+module Arg
+
+// interface for the Limbo command-line option parser appl/lib/arg.b
+// (module/arg.m): init with the argument list, then opt() returns
+// each option letter (0 at the end), arg() and earg() an option's
+// value, and argv() the remaining arguments
+
+const PATH = "/dis/lib/arg.dis"
+
+func init(argv list string)
+func setusage(usage string)
+func usage()
+func opt() int
+func arg() string
+func earg() string
+func progname() string
+func argv() list string

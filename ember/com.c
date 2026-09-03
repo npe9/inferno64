@@ -452,6 +452,7 @@ sumark(Node *n)
 		}
 		break;
 	case Olen:
+	case Ocopy:
 	case Ocons:
 	case Ohd:
 	case Otl:
@@ -494,6 +495,12 @@ sumark(Node *n)
 		 * in this group does.
 		 */
 		n->temps++;
+		break;
+	case Ocond:
+		/* the else arm is n->aux, outside the generic recursion */
+		sumark(n->aux);
+		if(n->aux->temps >= n->temps)
+			n->temps = n->aux->temps + 1;
 		break;
 	case Oarray:
 		/*
@@ -1685,9 +1692,10 @@ ecom(Src *src, Node *nto, Node *n)
 					faddr->ty = tint;
 
 					if(declownedby(cl->d, d->enclosing)){
-						val = mkname(src, cl->d->sym);
-						val->decl = cl->d;
-						val->ty = cl->d->ty;
+						/* the variable's box (check.c's boxvar()), not the variable */
+						val = mkname(src, cl->d->boxdecl->sym);
+						val->decl = cl->d->boxdecl;
+						val->ty = cl->d->boxty;
 						sumark(val);
 					}else{
 						/*
@@ -2226,6 +2234,51 @@ ecom(Src *src, Node *nto, Node *n)
 		genmove(src, Mas, nto->ty, &tto, nto);
 		tfree(&tl);
 		tfree(&tto);
+		return nto;
+	}
+	case Ocopy: {
+		Node *zero;
+
+		/*
+		 * "copy(dst, src)": slicela src, 0, dst -- the VM's own
+		 * bounds check covers len src > len dst. A statement, so
+		 * nto is nil and nothing is returned. the 0 must be marked
+		 * Rconst to be encoded as an immediate: unmarked, it went
+		 * out as 0(fp), the frame's return link, and the copy
+		 * faulted with a bounds error in any function but init.
+		 */
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nil);
+		if(right->addable >= Rcant)
+			right = eacom(right, &tr, nil);
+		zero = mkconst(src, 0);
+		zero->ty = tint;
+		zero->addable = Rconst;
+		genrawop(src, ISLICELA, right, zero, left);
+		tfree(&tl);
+		tfree(&tr);
+		return nil;
+	}
+	case Oexit:
+		genrawop(src, IEXIT, nil, nil, nil);
+		return nil;
+	case Ocond: {
+		/* c ? a : b: branch on c, each arm into the same destination */
+		Inst *p, *pp;
+		Node *r;
+
+		if(nto == nil)
+			nto = talloc(&tres, n->ty, nil);
+		p = bcom(n->left, 1, nil);
+		r = ecom(&n->right->src, nto, n->right);
+		if(r != nto)
+			genmove(&n->right->src, Mas, n->ty, r, nto);
+		pp = genrawop(src, IJMP, nil, nil, nil);
+		patch(p, nextinst());
+		r = ecom(&n->aux->src, nto, n->aux);
+		if(r != nto)
+			genmove(&n->aux->src, Mas, n->ty, r, nto);
+		patch(pp, nextinst());
 		return nto;
 	}
 	case Ohd:
@@ -3082,7 +3135,9 @@ casecom(Node *cn)
 			wild = j;
 		else{
 			for(pat = arm->left; (q = nextpat(&pat)) != nil; ){
-				if(q->op == Oconst || q->op == Opat)
+				if(q->op == Orange)	/* lo...hi: the label holding lo */
+					labs[findlab(ctype, q->left, labs, nlab)].inst = j;
+				else if(q->op == Oconst || q->op == Opat)
 					labs[findlab(ctype, q, labs, nlab)].inst = j;
 				/*
 				 * one Opat per arm, enforced by matchcheck() -- bind
@@ -3855,6 +3910,8 @@ scom(Node *n)
 			sumark(n);
 			ecom(&n->src, nil, n);
 			popblock();
+			return;
+		case Ocondecl:	/* a local constant: folded by the checker, nothing to run */
 			return;
 		default:
 			pushblock();

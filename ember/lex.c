@@ -35,6 +35,7 @@ struct	Keywd
 
 	File	**files;
 	int	nfiles;
+static int dotpending;	/* lexnum() consumed the first dot of a "..." after a number */
 static	int	lenfiles;
 static	int	lastfile;
 
@@ -74,6 +75,8 @@ static	Keywd	keywords[] =
 	"try",		Ktry,
 	"catch",	Kcatch,
 	"range",	Krange,
+	"defer",	Kdefer,
+	"map",		Kmap,
 	"ref",		Kref,
 	"return",	Kreturn,
 	"spawn",	Kspawn,
@@ -109,6 +112,8 @@ static	Keywd	tokwords[] =
 	">>=",	Ersheq,
 	"...",	Edots,
 	"::",	Econs,
+	"?.",	Eqdot,
+	"??",	Eqq,
 	"identifier",	Eid,
 	"integer constant",	Econst,
 	"real constant",	Erconst,
@@ -448,6 +453,11 @@ lexnum(Tok *tok, int c)
 			c = Getc();
 		}else{
 			unGetc();
+			/* 0666: octal, as in go and limbo's own 8r666 */
+			c = Getc();
+			if(c >= '0' && c <= '9')
+				base = 8;
+			unGetc();
 			c = '0';
 		}
 	}
@@ -462,6 +472,14 @@ lexnum(Tok *tok, int c)
 			continue;
 		}
 		if(base == 10 && !isreal && c == '.'){
+			/* "1...5", a case range: the number ends before the dots */
+			c = Getc();
+			if(c == '.'){
+				dotpending = 1;
+				break;
+			}
+			unGetc();
+			c = '.';
 			isreal = 1;
 			if(i < StrSize-1)
 				buf[i++] = c;
@@ -715,8 +733,15 @@ loop:
 	case ',':
 	case ';':
 	case '~':
-	case '?':
 		return c;
+	case '?':
+		c = Getc();
+		if(c == '.')
+			return Eqdot;
+		if(c == '?')
+			return Eqq;
+		unGetc();
+		return '?';
 
 	case ':':
 		c = Getc();
@@ -729,6 +754,16 @@ loop:
 
 	case '.':
 		c = Getc();
+		if(dotpending){
+			/* the number before consumed one of the dots (lexnum): the token began there */
+			dotpending = 0;
+			tok->src.start.pos--;
+			if(c == '.')
+				return Edots;
+			unGetc();
+			error(curline(), "unknown token '..'");
+			return '.';
+		}
 		if(c != Beof && (cmap(c) & Mdigit)){
 			unGetc();
 			return lexnum(tok, '.');

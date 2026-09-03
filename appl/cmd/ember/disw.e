@@ -187,7 +187,7 @@ func disdesc(d ref types.Desc) {
 		discon(d.id)
 		discon(d.size)
 		discon(d.nmap)
-		putbytes(d.map, d.nmap)
+		putbytes(d.tmap, d.nmap)
 	}
 }
 
@@ -236,7 +236,7 @@ func disdatum(offset int, n ref types.Node) {
 	match n.ty.kind {
 	case types.Tbyte:
 		disbyte(offset, int(n.val))
-	case types.Tint:
+	case types.Tint, types.Tbool:
 		disint(offset, int(n.val))
 	case types.Tbig:
 		disbig(offset, n.val)

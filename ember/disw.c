@@ -246,6 +246,7 @@ disdatum(long offset, Node *n)
 		disbyte(offset, n->val);
 		break;
 	case Tint:
+	case Tbool:
 		disint(offset, n->val);
 		break;
 	case Tbig:

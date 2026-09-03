@@ -8,6 +8,7 @@ OFILES=	ast.$O\
 	disw.$O\
 	gen.$O\
 	iface.$O\
+	ifacegen.$O\
 	lex.$O\
 	main.$O\
 	optab.$O\
@@ -42,3 +43,6 @@ test:V:	$O.out
 	./tests/chkcmp.sh
 	./tests/discmp.sh
 	./tests/bootstrap.sh
+	./tests/ifacegen.sh
+	./tests/unittest.sh
+	./tests/limbocmp.sh

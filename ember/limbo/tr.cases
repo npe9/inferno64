@@ -1,0 +1,14 @@
+a-z A-Z < limbo/data/text.txt
+-d aeiou < limbo/data/text.txt
+-s ' ' < limbo/data/text.txt
+-ds ' ' 'l' < limbo/data/text.txt
+-c a-z X < limbo/data/text.txt
+-cs a-z _ < limbo/data/text.txt
+'\x41-\x5a' '\141-\172' < limbo/data/text.txt
+abc xyz < limbo/data/utf.txt
+z-a b < limbo/data/text.txt
+aa xy < limbo/data/text.txt
+a < limbo/data/text.txt
+-d
+-x a b
+a-z A-Z

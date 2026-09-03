@@ -19,7 +19,7 @@ type Result pick {
 }
 
 // a pointer-typed success payload (string, not int) -- the tdescmap()
-// pointer-map bug (a42b2046) hid behind an all-int tag; the ? payload
+// pointer-mp bug (a42b2046) hid behind an all-int tag; the ? payload
 // read is a new, separate read site from that fix's own field-access
 // and match-dispatch ones, so it gets its own dedicated check here
 // rather than assuming the earlier fix covers every read site.

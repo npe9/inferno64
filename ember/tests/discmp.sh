@@ -19,7 +19,7 @@ fi
 mkdir -p "$ROOT/tmp"
 pass=0
 fail=0
-for f in tests/type/*.e ../appl/cmd/ember/*.e; do
+for f in tests/type/*.e limbo/*.e ../appl/cmd/ember/*.e; do
 	rel=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
 	rel=${rel#$ROOT}
 	rm -f tests/.c.dis "$ROOT/tmp/discmp.dis"

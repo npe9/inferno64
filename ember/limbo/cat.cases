@@ -1,0 +1,3 @@
+/ember/tests/type/hello.e
+/ember/tests/type/hello.e /ember/tests/type/raise.e
+/nonexistent/file

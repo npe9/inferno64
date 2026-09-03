@@ -8,7 +8,7 @@ import sys "sys"
 //    Oind(Oadd(mkref(), off)) -- the pointer bare under the Oadd, not
 //    Oadr-wrapped like calldot.e's value case) went through ecom's
 //    general Oadd arithmetic, which put the call's ref result in an
-//    int-typed temp: a live pointer outside the frame's pointer map,
+//    int-typed temp: a live pointer outside the frame's pointer mp,
 //    never released -- the heap was corrupt by the next allocation
 //    ("alloc:D2B ... in block").  fixcallbase() (com.c) now handles
 //    the bare shape too, materializing the rvalue in a temp of its

@@ -16,7 +16,7 @@ if [ -z "$EMU" ] || [ ! -f "$ROOT/dis/ember/astdump.dis" ]; then
 fi
 pass=0
 fail=0
-for f in tests/*/*.e ../appl/cmd/ember/*.e; do
+for f in tests/*/*.e limbo/*.e ../appl/cmd/ember/*.e; do
 	rel=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
 	rel=${rel#$ROOT}
 	# tokens and diagnostics compared separately: the two runtimes

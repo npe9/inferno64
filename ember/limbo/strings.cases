@@ -1,0 +1,5 @@
+< limbo/data/para.txt
+/dis/lib/arg.dis
+/dis/lib/arg.dis /dis/lib/bufio.dis
+/ember/limbo/data/utf.txt /nonexistent
+/ember/limbo/data/text.txt

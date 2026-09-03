@@ -19,7 +19,7 @@ import sys "sys"
 // here.
 //
 // a real, pre-existing, previously-unreachable bug was found and
-// fixed getting this far: types.c's tdescmap() (the GC pointer-map
+// fixed getting this far: types.c's tdescmap() (the GC pointer-mp
 // builder) had a Tadtpick case that reassigned "t = t->tof" and
 // walked *only* the outer adt's shared fields, silently never
 // examining a tag's own fields at all -- invisible until a tag with

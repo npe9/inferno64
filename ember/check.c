@@ -45,6 +45,22 @@ static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
 static	Decl	*synthfvwrap(Src*, Decl*);
+static	void	boxvar(Decl*, Decl*);
+static	int	isifacetype(Type*);
+static	int	implements(Type*, Type*, Node*);
+static	void	ifaceconv(Node*, Type*);
+static	void	condchk(Node*);
+static	void	packvarargs(Node*, Decl*);
+static	int	nargsfixed(Node*);
+static	int	ismaptype(Type*);
+static	Node*	builtinref(Src*, char*);
+static	Node*	mkmethcall(Src*, Node*, char*, Node*);
+static	Node*	mapindexcall(Node*, char*);
+static	int	ismapindex(Node*);
+static	int	isidxcall(Node*);
+static	void	unboxuse(Node*, Decl*);
+static	void	boxpass(Decl*);
+static	Node*	mkdeclname(Src*, Decl*);
 static	Decl	*synthimportwrap(Src*, Decl*, Decl*);
 static	Decl	*synthfunclit(Node*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
@@ -722,6 +738,8 @@ synthfvwrap(Src *src, Decl *fn)
 	args = nil;
 	for(arg = wt->ids->next; arg != nil; arg = arg->next)
 		args = mkseq(args, mkname(src, arg->sym));
+	if(fn->ty->varargs == 2 && args != nil)	/* pass the packed array through */
+		(args->op == Oseq ? args->right : args)->flags |= NVARARG;
 	call = mkn(Ocall, call, rotater(args));
 
 	if(fn->ty->tof == tnone){
@@ -827,7 +845,7 @@ synthimportwrap(Src *src, Decl *alias, Decl *id)
 	Sym *wsym;
 	char buf[StrSize];
 
-	if(id->ty->varargs){
+	if(id->ty->varargs == 1){
 		/* a wrapper has one frame shape; a varargs call has one per site */
 		error(src->start, "%s.%s takes a variable number of arguments and cannot be used as a value",
 			alias->sym->name, id->sym->name);
@@ -859,6 +877,8 @@ synthimportwrap(Src *src, Decl *alias, Decl *id)
 	args = nil;
 	for(arg = wt->ids->next; arg != nil; arg = arg->next)
 		args = mkseq(args, mkname(src, arg->sym));
+	if(id->ty->varargs == 2 && args != nil)	/* pass the packed array through */
+		(args->op == Oseq ? args->right : args)->flags |= NVARARG;
 	call = mkn(Ocall, dot, rotater(args));
 
 	if(id->ty->tof == tnone){
@@ -1078,7 +1098,7 @@ synthfunclit(Node *n)
 		fids = flast = nil;
 		i = 0;
 		for(cl = ld->captures; cl != nil; cl = cl->next){
-			fd = mkdecl(&n->src, Dfield, cl->d->ty);
+			fd = mkdecl(&n->src, Dfield, cl->d->boxty);	/* the box, shared with the owner */
 			seprint(fbuf, fbuf+sizeof(fbuf), ".cap%d", i++);
 			fd->sym = enter(fbuf, 0);
 			if(fids == nil)
@@ -1145,15 +1165,245 @@ synthfunclit(Node *n)
 			addr->src = un->src;
 			addr->ty = tint;
 
+			/*
+			 * the env field holds the variable's box (capture by
+			 * reference, boxvar() below): read the box from the
+			 * env, then the variable out of the box -- the same
+			 * shape twice
+			 */
 			un->op = Oind;
 			un->left = addr;
 			un->right = nil;
 			un->decl = fd;
 			un->ty = fd->ty;
+			unboxuse(un, cl2->d);
 		}
 	}
 
 	return ld;
+}
+
+/*
+ * capture by reference: a variable any closure captures lives in a
+ * box, a one-field adt (.box{v T}) on the heap, from its declaration
+ * on; the owner keeps the box in a hidden local (boxdecl) and every
+ * closure's env holds the same pointer, so both see each other's
+ * writes.  boxvar() makes the types and the local when the capture
+ * is first seen (echk's Oname case); the owner's body is rewritten
+ * once it is fully checked (boxpass(), from fnchk()): each use of
+ * the variable becomes box.v (unboxuse()), and its declaration is
+ * followed by the box's allocation (boxinit()).
+ */
+static void
+boxvar(Decl *d, Decl *owner)
+{
+	Decl *fd, *tdecl, *bd, *e;
+	Type *bt;
+	char buf[StrSize];
+	static int nbox;
+
+	if(d->boxdecl != nil)
+		return;
+	fd = mkdecl(&d->src, Dfield, d->ty);
+	fd->sym = enter("v", 0);
+	bt = mktype(&d->src, Tadt, nil, fd);
+	bt->ok |= OKverify;
+	tdecl = mkdecl(&d->src, Dtype, bt);
+	seprint(buf, buf+sizeof(buf), ".box%d$%s", nbox, d->sym->name);
+	tdecl->sym = enter(buf, 0);
+	bt->decl = tdecl;
+	sizetype(bt);
+	sizetype(fd->ty);
+	/* bound for good under its hidden name, outside every scope */
+	tdecl->old = tdecl->sym->decl;
+	tdecl->sym->decl = tdecl;
+	d->boxtdecl = tdecl;
+	d->boxty = mktype(&d->src, Tref, bt, nil);
+	sizetype(d->boxty);
+	bd = mkdecl(&d->src, Dlocal, d->boxty);
+	seprint(buf, buf+sizeof(buf), ".b%d$%s", nbox++, d->sym->name);
+	bd->sym = enter(buf, 0);
+	bd->link = nil;
+	if(owner->locals == nil)
+		owner->locals = bd;
+	else{
+		for(e = owner->locals; e->link != nil; e = e->link)
+			;
+		e->link = bd;
+	}
+	d->boxdecl = bd;
+}
+
+/*
+ * rewrite n, a node already reading the box of d (a ref), in place
+ * into the variable inside it: Oind(Oadd(box, $0)), echk's own Odot
+ * shape
+ */
+static void
+unboxuse(Node *n, Decl *d)
+{
+	Node *box, *off, *addr;
+
+	box = mkn(n->op, n->left, n->right);
+	*box = *n;
+	off = mkconst(&n->src, 0);
+	off->ty = tint;
+	addr = mkn(Oadd, box, off);
+	addr->src = n->src;
+	addr->ty = tint;
+	n->op = Oind;
+	n->left = addr;
+	n->right = nil;
+	n->aux = nil;
+	n->decl = d->boxty->tof->ids;
+	n->ty = d->ty;
+}
+
+/* boxdecl = ref .box{v: d}, as an unchecked statement */
+static Node*
+boxinit(Src *src, Decl *d)
+{
+	Node *elem, *comp;
+
+	elem = mkbin(Oelem, mkname(src, enter("v", 0)), mkdeclname(src, d));
+	comp = mkn(Ocomposite, mkname(src, d->boxtdecl->sym), elem);
+	comp->src = *src;
+	comp = mkunary(Oref, comp);
+	comp->src = *src;
+	return mkbin(Oas, mkdeclname(src, d->boxdecl), comp);
+}
+
+/*
+ * a boxed variable of the function being checked: a closure body's
+ * references to an enclosing function's boxed variable are captures,
+ * rewritten by synthfunclit()'s capuses fixup instead
+ */
+static int
+isboxed(Node *n)
+{
+	return n != nil && n->op == Oname && n->decl != nil && n->decl->boxdecl != nil
+		&& (n->decl->store == Dlocal || n->decl->store == Darg) && declownedby(n->decl, curfn);
+}
+
+/* the box allocations for the boxed names in a declaring list */
+static Node*
+boxinits(Node *names)
+{
+	Node *p, *id, *inits;
+
+	inits = nil;
+	for(p = names; p != nil; p = p->right){
+		id = p;
+		if(p->op == Oseq)
+			id = p->left;
+		if(isboxed(id))
+			inits = mkseq(inits, boxinit(&id->src, id->decl));
+		if(p->op != Oseq)
+			break;
+	}
+	return rotater(inits);
+}
+
+static void
+boxwalk(Node **np)
+{
+	Node *n, *inits, *box, *off, *addr;
+
+	n = *np;
+	if(n == nil)
+		return;
+	switch(n->op){
+	case Oname:
+		if(isboxed(n)){
+			box = mkdeclname(&n->src, n->decl->boxdecl);
+			box->ty = n->decl->boxty;
+			off = mkconst(&n->src, 0);
+			off->ty = tint;
+			addr = mkn(Oadd, box, off);
+			addr->src = n->src;
+			addr->ty = tint;
+			n->op = Oind;
+			n->left = addr;
+			n->right = nil;
+			n->decl = n->decl->boxty->tof->ids;
+		}
+		return;
+	case Odas:
+		boxwalk(&n->right);
+		inits = boxinits(n->left);
+		if(inits != nil){
+			stchk(inits);
+			*np = mkseq(n, inits);
+		}
+		return;
+	case Ovardecl:
+		boxwalk(&n->aux);
+		inits = boxinits(n->left);
+		if(inits != nil){
+			stchk(inits);
+			*np = mkseq(n, inits);
+		}
+		return;
+	case Ocase:
+		/* pattern binders declare; their boxes open the arm */
+		inits = nil;
+		for(box = n->left; box != nil; box = box->right){
+			off = box;
+			if(box->op == Oseq)
+				off = box->left;
+			if(off->op == Opat)
+				inits = mkseq(inits, boxinits(off->right));
+			if(box->op != Oseq)
+				break;
+		}
+		boxwalk(&n->right);
+		if(inits != nil){
+			inits = rotater(inits);
+			stchk(inits);
+			n->right = mkseq(inits, n->right);
+		}
+		return;
+	case Otry:
+		boxwalk(&n->left);
+		boxwalk(&n->right);
+		if(isboxed(n->aux)){
+			inits = boxinit(&n->aux->src, n->aux->decl);
+			stchk(inits);
+			n->right = mkseq(inits, n->right);
+		}
+		return;
+	}
+	boxwalk(&n->left);
+	boxwalk(&n->right);
+	boxwalk(&n->aux);
+}
+
+static void
+boxpass(Decl *d)
+{
+	Decl *p;
+	Node *inits;
+	int any;
+
+	any = 0;
+	for(p = d->ty->ids; p != nil; p = p->next)
+		if(p->boxdecl != nil)
+			any = 1;
+	for(p = d->locals; p != nil; p = p->link)
+		if(p->boxdecl != nil)
+			any = 1;
+	if(!any)
+		return;
+	boxwalk(&d->init->aux);
+	inits = nil;
+	for(p = d->ty->ids; p != nil; p = p->next)
+		if(p->boxdecl != nil)
+			inits = mkseq(inits, boxinit(&d->init->src, p));
+	if(inits != nil){
+		inits = rotater(inits);
+		stchk(inits);
+		d->init->aux = mkseq(inits, d->init->aux);
+	}
 }
 
 /*
@@ -1589,6 +1839,8 @@ stype(Node *n)
 	if(n == nil)
 		return tnone;
 	switch(n->op){
+	case Otypeval:
+		return n->ty;
 	case Otarray:
 		return mktype(&n->src, Tarray, stype(n->right), nil);
 	case Otchan:
@@ -1616,6 +1868,8 @@ stype(Node *n)
 		return mktype(&n->src, Tref, t, nil);
 	case Otstruct:
 		t = mktype(&n->src, Tadt, nil, nil);
+		if(n->flags & NIFACE)
+			t->isiface = 1;	/* parse.c's pinterface */
 		{
 			Decl *ids, *last, *d;
 			Node *f, *names, *id;
@@ -1709,9 +1963,13 @@ stype(Node *n)
 					break;
 				continue;
 			}
-			if(f->flags & NVARARG)
-				ft->varargs = 1;
 			t = stype(f->right);
+			if(f->flags & NVARARG){
+				/* "xs ...T": an array of T inside, packed at each call */
+				t = mktype(&f->src, Tarray, t, nil);
+				sizetype(t);
+				ft->varargs = 2;
+			}
 			if(t->kind == Tfn){
 				/*
 				 * a function type used as a *value*'s type (a
@@ -1875,12 +2133,17 @@ stype(Node *n)
 		 * to the type checker -- so both land here, and both have
 		 * the same left/right shape (name, Oseq-of-args).
 		 */
-		return tinstantiate(n);
+		t = tinstantiate(n);
+		if((n->flags & NMAPT) && t != nil && t->kind == Tadt)
+			t->ismap = 1;	/* map[K]V (parse.c's pmaptype) */
+		return t;
 	case Odot: {
 		/* module member type: mod.Type, or a local pick adt's own tag: Adt.Tag */
 		Decl *md, *id, *tg;
 		Type *rt;
 
+		if(n->left == nil)
+			fatal("stype: Odot %s resolved twice (its operands were consumed)", n->sym ? n->sym->name : "?");
 		if(n->left->op == Odot || n->left->op == Oindex || n->left->op == Otinst){
 			/* mod.Adt.Tag, or a generic pick's tag Result[int].Ok */
 			/* mod.Adt.Tag: resolve mod.Adt first, then its tag */
@@ -2009,6 +2272,31 @@ assignable(Type *t, Type *s, Node *v)
 	&& t->tof != nil && t->tof->kind == Tadt && t->tof->tags != nil
 	&& s->tof->tof == t->tof)
 		return 1;
+	/*
+	 * an interface takes any ref to a struct or pick with its methods
+	 * (implements()): the value is converted in place into a call of
+	 * the interface's .Name$from converter (ifaceconv())
+	 */
+	if(v != nil && isifacetype(t) && !tequal(t, s)
+	&& s->kind == Tref && s->tof != nil && (s->tof->kind == Tadt || s->tof->kind == Tadtpick) && !s->tof->isiface){
+		if(!implements(s, t, v))
+			return 0;
+		ifaceconv(v, t);
+		return 1;
+	}
+	/*
+	 * tuples are assignable element by element, so "(s, ref
+	 * Addr.Dollar{})" may be returned as "(string, ref Addr)": the
+	 * widened elements are all pointers, so the layout is the same.
+	 */
+	if(t->kind == Ttuple && s->kind == Ttuple){
+		Decl *a, *b;
+
+		for(a = t->ids, b = s->ids; a != nil && b != nil; a = a->next, b = b->next)
+			if(!assignable(a->ty, b->ty, nil))
+				return 0;
+		return a == nil && b == nil;
+	}
 	return tequal(t, s);
 }
 
@@ -2824,6 +3112,9 @@ echk1(Node *n)
 		d = nil;
 		if(n->decl != nil && n->decl->store == Dfn && n->decl->tparams == nil && n->decl->init != nil && n->decl->init->op == Ofndecl)
 			d = n->decl;
+		/* a local the checker itself pointed at (defer, boxing): the parser never sets decl */
+		if(n->decl != nil && (n->decl->store == Dlocal || n->decl->store == Darg))
+			d = n->decl;
 		if(d == nil)
 			d = lookup(n->sym);
 		if(d == nil){
@@ -2902,6 +3193,7 @@ echk1(Node *n)
 				n->ty = terror;
 				return n->ty;
 			}
+			boxvar(d, anc);
 			for(cl = curclosure; cl->enclosing != anc; cl = cl->enclosing)
 				addcapture(cl->enclosing, d, nil);
 			addcapture(curclosure, d, n);
@@ -3295,6 +3587,12 @@ echk1(Node *n)
 			else
 				e = a;
 			t = echk(e);
+			if(ismaptype(t)){
+				p = mkmethcall(&n->src, e, "size", nil);
+				n->left = p->left;
+				n->right = nil;
+				return echk(n);
+			}
 			if(t->kind != Tarray && t->kind != Tstring && t->kind != Tlist){
 				nerror(n, "len of %T", t);
 				n->ty = terror;
@@ -3304,6 +3602,89 @@ echk1(Node *n)
 			n->left = e;
 			n->right = nil;
 			n->ty = tint;
+			return n->ty;
+		}
+		if(n->left->op == Oname && strcmp(n->left->sym->name, "delete") == 0 && lookup(n->left->sym) == nil){
+			/* delete(m, k): m.del(k) -- unless the program has its own delete */
+			Node *a;
+
+			a = n->right;
+			if(a == nil || a->op != Oseq || a->right == nil || a->right->op == Oseq || !ismapindex(mkbin(Oindex, a->left, a->right))){
+				nerror(n, "delete needs a map and a key");
+				n->ty = terror;
+				return n->ty;
+			}
+			p = mkmethcall(&n->src, a->left, "del", a->right);
+			n->left = p->left;
+			n->right = p->right;
+			return echk(n);
+		}
+		if(n->left->op == Oname && strcmp(n->left->sym->name, "append") == 0 && lookup(n->left->sym) == nil){
+			/*
+			 * append(a, x) and append(a, xs...): .builtin.append and
+			 * .builtin.appendall, templates instantiated by the
+			 * argument types like any alias.f(args) call below
+			 */
+			Node *a;
+
+			a = n->right;
+			if(a == nil || a->op != Oseq || a->right == nil || a->right->op == Oseq){
+				nerror(n, "append needs an array and a value");
+				n->ty = terror;
+				return n->ty;
+			}
+			if(a->right->flags & NVARARG){
+				a->right->flags &= ~NVARARG;
+				n->left = builtinref(&n->src, "appendall");
+			}else
+				n->left = builtinref(&n->src, "append");
+		}
+		if(n->left->op == Oname && strcmp(n->left->sym->name, "expect") == 0 && lookup(n->left->sym) == nil)
+			n->left = builtinref(&n->src, "expect");	/* a test's assertion, builtin.ei's */
+		if(n->left->op == Oname && strcmp(n->left->sym->name, "exit") == 0){
+			/* "exit()": limbo's exit statement, Dis IEXIT; terminates */
+			if(n->right != nil){
+				nerror(n, "exit takes no arguments");
+				n->ty = terror;
+				return n->ty;
+			}
+			n->op = Oexit;
+			n->left = nil;
+			n->ty = tnone;
+			return n->ty;
+		}
+		if(n->left->op == Oname && strcmp(n->left->sym->name, "copy") == 0){
+			/*
+			 * "copy(dst, src)": go's array copy as a statement, on
+			 * Dis's slicela (limbo's "dst[0:] = src"). No value;
+			 * src must fit in dst or the VM raises a bounds error.
+			 */
+			Node *a, *d, *e;
+			Type *td;
+
+			a = n->right;
+			if(a == nil || a->op != Oseq || a->right == nil || a->right->op == Oseq){
+				nerror(n, "copy needs two arguments");
+				n->ty = terror;
+				return n->ty;
+			}
+			d = a->left;
+			e = a->right;
+			td = echk(d);
+			t = echk(e);
+			if(td == terror || t == terror){
+				n->ty = terror;
+				return n->ty;
+			}
+			if(td->kind != Tarray || t->kind != Tarray || !sametype(td, t)){
+				nerror(n, "copy of %T into %T", t, td);
+				n->ty = terror;
+				return n->ty;
+			}
+			n->op = Ocopy;
+			n->left = d;
+			n->right = e;
+			n->ty = tnone;
 			return n->ty;
 		}
 		if(n->left->op == Oname && (strcmp(n->left->sym->name, "hd") == 0
@@ -3366,7 +3747,7 @@ echk1(Node *n)
 			n->left->left = nil;
 			n->left->right = nil;
 		}
-		if(n->left->op == Otinst || n->left->op == Oindex){
+		if(!isidxcall(n->left) && (n->left->op == Otinst || n->left->op == Oindex)){
 			/*
 			 * "swap[int, string](1, "one")": the callee parsed as a
 			 * type-instantiation-shaped expression (ptypename()
@@ -3532,6 +3913,7 @@ echk1(Node *n)
 			case Omdot:
 			case Ocall:
 			case Ofunclit:	/* func(...){...}(args): called (or spawned) at once */
+			case Oindex:	/* fs[i](args): an array of function values (isidxcall) */
 				break;
 			default:
 				nerror(n, "cannot call this expression");
@@ -3637,6 +4019,10 @@ echk1(Node *n)
 		arg = ft->ids;
 		if(isvalcall && arg != nil)
 			arg = arg->next;
+		if(ft->varargs == 2 && !(n->flags & NPACKED)){
+			packvarargs(n, arg);
+			n->flags |= NPACKED;
+		}
 		i = 0;
 		for(a = n->right; a != nil; a = a->right){
 			Node *e;
@@ -3689,7 +4075,7 @@ echk1(Node *n)
 		 * include the actual arguments, as limbo's mkvarargs
 		 * does; the frame layout comes from this type
 		 */
-		if(ft->varargs){
+		if(ft->varargs == 1){
 			Type *nft;
 			Decl *nids, *nlast, *na;
 			char buf[32];
@@ -3927,8 +4313,92 @@ echk1(Node *n)
 		}
 		n->ty = t;
 		return n->ty;
+	case Ocond: {
+		/* c ? a : b: a and b of one type, either way round */
+		Type *ta, *tb;
+
+		condchk(n->left);
+		ta = echk(n->right);
+		tb = echk(n->aux);
+		if(ta == terror || tb == terror){
+			n->ty = terror;
+			return n->ty;
+		}
+		if(assignable(ta, tb, n->aux))
+			n->ty = ta;
+		else if(assignable(tb, ta, n->right))
+			n->ty = tb;
+		else{
+			nerror(n, "conditional arms differ: %T and %T", ta, tb);
+			n->ty = terror;
+		}
+		return n->ty;
+	}
+	case Omaplit: {
+		/*
+		 * map[K]V{k: v, ...}: .builtin.mput(... .builtin.mput(
+		 * .builtin.newmap[K, V](hash, eq), k1, v1) ..., kn, vn),
+		 * the hash and equality inline functions chosen by K
+		 */
+		Node *inst, *kn, *vn, *call, *elem;
+		Type *kt;
+		char *hs, *es;
+
+		stype(n->left);	/* instantiate and mark the map type (NMAPT) */
+		inst = n->left->right;
+		kn = inst->right->left;
+		vn = inst->right->right;
+		kt = stype(kn);
+		switch(kt->kind){
+		case Tint:
+			hs = "inthash";
+			es = "inteq";
+			break;
+		case Tstring:
+			hs = "strhash";
+			es = "streq";
+			break;
+		case Tbig:
+			hs = "bighash";
+			es = "bigeq";
+			break;
+		case Tbyte:
+			hs = "bytehash";
+			es = "byteeq";
+			break;
+		default:
+			if(kt != terror)
+				nerror(n, "a map key must be an int, big, byte or string, not %T", kt);
+			n->ty = terror;
+			return n->ty;
+		}
+		call = mkn(Ocall, mkbin(Otinst, builtinref(&n->src, "newmap"), rotater(mkseq(dupn(kn), dupn(vn)))),
+			rotater(mkseq(builtinref(&n->src, hs), builtinref(&n->src, es))));
+		call->src = n->src;
+		for(p = n->right; p != nil; p = p->right){
+			elem = p;
+			if(p->op == Oseq)
+				elem = p->left;
+			call = mkn(Ocall, builtinref(&n->src, "mput"), rotater(mkseq(mkseq(call, elem->left), elem->right)));
+			call->src = n->src;
+			if(p->op != Oseq)
+				break;
+		}
+		n->op = call->op;
+		n->left = call->left;
+		n->right = call->right;
+		n->aux = nil;
+		return echk(n);
+	}
 	case Oindex:
 		t = echk(n->left);
+		if(ismaptype(t)){
+			p = mapindexcall(n, "get");
+			n->op = p->op;
+			n->left = p->left;
+			n->right = p->right;
+			return echk(n);
+		}
 		echk(n->right);
 		if(t->kind == Tarray){
 			n->op = Oindx;
@@ -4383,6 +4853,373 @@ redeclared(Sym *sym)
 	return d->store == Dlocal && d->scope == scope;
 }
 
+/*
+ * "_", go's blank identifier: a fresh hidden local the program
+ * cannot name, so the value is evaluated and dropped. Renaming the
+ * Oname is enough for every declaring form (daschk, rangefor);
+ * declblank() also makes the local for an assignment target.
+ */
+/*
+ * map[K]V: the type is builtin's Map[K, V] instantiated (parse.c's
+ * pmaptype, stype's Otinst case marking it), and every operation on
+ * one is rewritten here into a method call: m[k] is m.get(k), "v, ok
+ * := m[k]" is m.lookup(k), "m[k] = v" is m.put(k, v), delete(m, k) is
+ * m.del(k), len(m) is m.size(), and range walks m.entries().
+ */
+static int
+ismaptype(Type *t)
+{
+	return t != nil && t->kind == Tref && t->tof != nil && t->tof->kind == Tadt && t->tof->ismap;
+}
+
+/* .builtin.name */
+static Node*
+builtinref(Src *src, char *name)
+{
+	Node *n;
+
+	n = mkbin(Odot, mkname(src, enter(".builtin", 0)), mkname(src, enter(name, 0)));
+	n->sym = n->right->sym;
+	n->src = *src;
+	return n;
+}
+
+/* recv.meth(args), unchecked */
+static Node*
+mkmethcall(Src *src, Node *recv, char *meth, Node *args)
+{
+	Node *dot, *call;
+
+	dot = mkbin(Odot, recv, mkname(src, enter(meth, 0)));
+	dot->sym = dot->right->sym;
+	dot->src = *src;
+	call = mkn(Ocall, dot, args);
+	call->src = *src;
+	return call;
+}
+
+/* the map indexing node n (Oindex, left the map, right the key) as recv.meth(key) */
+static Node*
+mapindexcall(Node *n, char *meth)
+{
+	return mkmethcall(&n->src, n->left, meth, n->right);
+}
+
+/* is n "m[k]" on a map?  echk's the map expression if so */
+static int
+ismapindex(Node *n)
+{
+	return n != nil && n->op == Oindex && ismaptype(echk(n->left));
+}
+
+/*
+ * a call of a typed variadic function, "func f(sep string, xs ...T)":
+ * the arguments past the fixed ones become one array literal (an
+ * Oarray whose element type is given by an Otypeval), or "xs..."
+ * passes an array through; arg is the first parameter the caller
+ * writes (the env parameter of a value call already skipped)
+ */
+static void
+packvarargs(Node *n, Decl *arg)
+{
+	Node *a, *e, *fixed, *elems, *arr, *tv, *last;
+	Decl *pd;
+	Type *at;
+	int nfixed, nargs, k;
+
+	nfixed = -1;
+	at = nil;
+	for(pd = arg; pd != nil; pd = pd->next){
+		nfixed++;
+		at = pd->ty;
+	}
+	if(at == nil || at->kind != Tarray)
+		return;
+	nargs = 0;
+	last = nil;
+	for(a = n->right; a != nil; a = a->right){
+		last = a->op == Oseq ? a->left : a;
+		nargs++;
+		if(a->op != Oseq)
+			break;
+	}
+	if(last != nil && (last->flags & NVARARG)){
+		if(nargs != nfixed + 1)
+			nerror(last, "xs... must be the last argument, after the fixed ones");
+		last->flags &= ~NVARARG;
+		return;
+	}
+	fixed = nil;
+	elems = nil;
+	k = 0;
+	for(a = n->right; a != nil; a = a->right){
+		e = a->op == Oseq ? a->left : a;
+		if(elems == nil && nargsfixed(fixed) < nfixed)
+			fixed = mkseq(fixed, e);
+		else{
+			elems = mkseq(elems, mkn(Oelem, nil, e));
+			k++;
+		}
+		if(a->op != Oseq)
+			break;
+	}
+	tv = mkn(Otypeval, nil, nil);
+	tv->ty = at->tof;
+	tv->src = n->src;
+	arr = mkn(Oarray, mkconst(&n->src, k), tv);
+	arr->aux = rotater(elems);
+	arr->src = n->src;
+	n->right = rotater(mkseq(fixed, arr));
+}
+
+/* how many nodes a left-nested mkseq chain holds */
+static int
+nargsfixed(Node *seq)
+{
+	int k;
+
+	for(k = 0; seq != nil; seq = seq->left){
+		k++;
+		if(seq->op != Oseq)
+			break;
+	}
+	return k;
+}
+
+static int
+isifacetype(Type *t)
+{
+	return t != nil && t->kind == Tref && t->tof != nil && t->tof->kind == Tadt && t->tof->isiface;
+}
+
+/*
+ * does s (a ref to a struct or pick) have every method the interface
+ * t lists, with the same parameters and results?  the closure field
+ * types carry an env parameter first, the methods their receiver.
+ */
+static int
+implements(Type *s, Type *t, Node *v)
+{
+	Type *adt, *ft;
+	Decl *f, *m, *fp, *mp;
+
+	adt = s->tof;
+	if(adt->kind == Tadtpick)
+		adt = adt->tof;
+	for(f = t->tof->ids; f != nil; f = f->next){
+		for(m = adt->meths; m != nil; m = m->link)
+			if(m->sym == f->sym)
+				break;
+		if(m == nil){
+			nerror(v, "%T does not implement %T: no method %s", s, t, f->sym->name);
+			return 0;
+		}
+		ft = f->ty->tof;
+		fp = ft->ids->next;
+		mp = m->ty->ids->next;
+		for(; fp != nil && mp != nil; fp = fp->next, mp = mp->next)
+			if(!tequal(fp->ty, mp->ty))
+				break;
+		if(fp != nil || mp != nil || !tequal(ft->tof, m->ty->tof)){
+			nerror(v, "%T does not implement %T: method %s has the wrong signature", s, t, f->sym->name);
+			return 0;
+		}
+	}
+	return 1;
+}
+
+/* v becomes .Name$from(v), through the alias when the interface is imported */
+static void
+ifaceconv(Node *v, Type *t)
+{
+	Node *callee, *c, *a;
+	Decl *m;
+	Dlist *dl;
+	char buf[StrSize];
+
+	/* the struct is .W$s (parse.c's pinterface): the converter is .W$from */
+	seprint(buf, buf+sizeof(buf), "%s", t->tof->decl->sym->name);
+	buf[strlen(buf) - 2] = 0;
+	strcat(buf, "$from");
+	m = t->tof->decl->dot;
+	if(m != nil && m != impdecl && m->ty != nil && m->ty->kind == Tmodule){
+		for(dl = imports; dl != nil; dl = dl->next)
+			if(dl->d->importid == m)
+				break;
+		if(dl == nil)
+			fatal("ifaceconv: no alias for %s", m->sym->name);
+		callee = mkbin(Odot, mkname(&v->src, dl->d->sym), mkname(&v->src, enter(buf, 0)));
+		callee->sym = callee->right->sym;
+	}else
+		callee = mkname(&v->src, enter(buf, 0));
+	callee->src = v->src;
+	a = dupn(v);
+	a->flags |= NCHECKED;	/* v was checked: its type nodes are consumed, do not check the copy again */
+	if(a->ty != nil && a->ty->kind == Tref && a->ty->tof != nil && a->ty->tof->kind == Tadtpick){
+		/* a tag value stands for its pick: the methods are the pick's */
+		a->ty = mktype(&v->src, Tref, a->ty->tof->tof, nil);
+		sizetype(a->ty);
+	}
+	c = mkn(Ocall, callee, a);
+	c->src = v->src;
+	*v = *c;
+	echk(v);
+}
+
+/*
+ * "fs[i](x)": an index into an array of function values, not a
+ * generic instantiation "f[T](x)" -- the two parse alike
+ */
+static int
+isidxcall(Node *c)
+{
+	Decl *d;
+
+	if(c->op != Oindex || c->left->op != Oname)
+		return 0;
+	d = lookup(c->left->sym);
+	return d != nil && !(d->store == Dfn && d->tparams != nil);
+}
+
+static Sym*
+blanksym(void)
+{
+	char buf[32];
+	static int nblank;
+
+	seprint(buf, buf+sizeof(buf), ".blank%d", nblank++);
+	return enter(buf, 0);
+}
+
+static int
+isblank(Node *n)
+{
+	return n != nil && n->op == Oname && strcmp(n->sym->name, "_") == 0;
+}
+
+static void
+declhidden(Node *id, Type *t)
+{
+	Decl *d;
+
+	sizetype(t);
+	d = mkdecl(&id->src, Dlocal, t);
+	d->sym = id->sym;
+	install(d);
+	id->decl = d;
+	id->ty = t;
+	d->link = nil;
+	if(curfn->locals == nil)
+		curfn->locals = d;
+	else{
+		Decl *e;
+
+		for(e = curfn->locals; e->link != nil; e = e->link)
+			;
+		e->link = d;
+	}
+}
+
+static void
+declblank(Node *id, Type *t)
+{
+	id->sym = blanksym();
+	declhidden(id, t);
+}
+
+/*
+ * defer: a hidden local list (.defers) of the function's deferred
+ * closures, each defer consing onto it; fnchk() runs the list, so
+ * last first, at every return
+ */
+static Decl *deferlist;
+
+static Node*
+mkdeclname(Src *src, Decl *d)
+{
+	Node *n;
+
+	n = mkname(src, d->sym);
+	n->decl = d;
+	return n;
+}
+
+/* .l := .defers; for .l != nil { .f := hd(.l); .f(); .l = tl(.l) } */
+static Node*
+defercalls(Src *src)
+{
+	Node *das, *cond, *body, *loop, *l, *f;
+	Sym *ls, *fs;
+	char buf[32];
+	static int ndc;
+
+	seprint(buf, buf+sizeof(buf), ".dl%d", ndc);
+	ls = enter(buf, 0);
+	seprint(buf, buf+sizeof(buf), ".df%d", ndc++);
+	fs = enter(buf, 0);
+	das = mkbin(Odas, mkname(src, ls), mkdeclname(src, deferlist));
+	cond = mkbin(Oneq, mkname(src, ls), mkname(src, enter("nil", 0)));
+	f = mkbin(Odas, mkname(src, fs), mkn(Ocall, mkname(src, enter("hd", 0)), mkname(src, ls)));
+	body = mkseq(f, mkunary(Oexpr, mkn(Ocall, mkname(src, fs), nil)));
+	l = mkbin(Oas, mkname(src, ls), mkn(Ocall, mkname(src, enter("tl", 0)), mkname(src, ls)));
+	body = mkseq(body, l);
+	body = mkn(Oscope, rotater(body), nil);
+	body->src = *src;
+	loop = mkn(Ofor, cond, body);
+	loop->src = *src;
+	return rotater(mkseq(das, loop));
+}
+
+/*
+ * replace every return in the body (not in closures: their literals
+ * are already lifted and left as Oname) with the defers followed by
+ * the return, the value saved first so the defers cannot change it
+ */
+static void
+deferrets(Node **np)
+{
+	Node *n, *r, *ret, *val;
+	char buf[32];
+	static int nret;
+
+	n = *np;
+	if(n == nil)
+		return;
+	switch(n->op){
+	case Oret:
+		if(n->left != nil){
+			seprint(buf, buf+sizeof(buf), ".ret%d", nret++);
+			val = mkname(&n->src, enter(buf, 0));
+			ret = mkn(Oret, mkname(&n->src, val->sym), nil);
+			ret->src = n->src;
+			r = mkseq(mkbin(Odas, val, n->left), defercalls(&n->src));
+			r = mkseq(r, ret);
+		}else{
+			ret = mkn(Oret, nil, nil);
+			ret->src = n->src;
+			r = mkseq(defercalls(&n->src), ret);
+		}
+		r = mkn(Oscope, rotater(r), nil);
+		r->src = n->src;
+		*np = r;
+		stchk(r);
+		return;
+	case Oscope:
+	case Oseq:
+	case Oif:
+	case Ofor:
+	case Omatch:
+	case Oalt:
+	case Ocase:
+	case Otry:
+	case Olabel:
+		deferrets(&n->left);
+		deferrets(&n->right);
+		deferrets(&n->aux);
+		return;
+	}
+}
+
 static void
 daschk(Node *n)
 {
@@ -4407,6 +5244,9 @@ daschk(Node *n)
 		Decl *fd;
 		int nlhs, nrhs;
 
+		/* "v, ok := m[k]": m.lookup(k) */
+		if(ismapindex(n->right))
+			n->right = mapindexcall(n->right, "lookup");
 		/* "a, b := 1, 2": see the Oas case's note on expression lists */
 		if(n->right->op == Oseq)
 			n->right = mkn(Otuple, n->right, nil);
@@ -4437,6 +5277,8 @@ daschk(Node *n)
 				nerror(n, "unsupported := form");
 				return;
 			}
+			if(isblank(id))
+				id->sym = blanksym();
 			sizetype(fd->ty);
 			if(redeclared(id->sym))
 				nerror(id, "%s is already declared in this scope", id->sym->name);
@@ -4467,6 +5309,8 @@ daschk(Node *n)
 		nerror(n, "unsupported := form");
 		return;
 	}
+	if(isblank(lhs))
+		lhs->sym = blanksym();
 	/*
 	 * "p := Point{x: 1, y: 2}": same reasoning as Ovardecl's case
 	 * above -- go through compositefields() directly so a value
@@ -4603,8 +5447,8 @@ matchlabels(Node *arms, Type *ctype, int nlab)
 			continue;
 		}
 		for(pat = arm->left; (q = nextpat(&pat)) != nil; ){
-			labs[i].start = q;
-			labs[i].stop = q;
+			labs[i].start = q->op == Orange ? q->left : q;
+			labs[i].stop = q->op == Orange ? q->right : q;
 			labs[i].node = arm;
 			i++;
 		}
@@ -4847,6 +5691,19 @@ matchcheck(Node *n)
 		}else{
 			npat = 0;
 			for(pat = arm->left; (q = nextpat(&pat)) != nil; npat++){
+				if(q->op == Orange){
+					/* lo...hi: both int constants */
+					echk(q->left);
+					echk(q->right);
+					if(q->left->op != Oconst || q->right->op != Oconst || q->left->ty != tint || q->right->ty != tint){
+						nerror(q, "a case range needs two int constants");
+						ok = 0;
+						continue;
+					}
+					q->ty = tint;
+					nlab++;
+					continue;
+				}
 				if(q->op == Opat && q->right == nil && !istagname(q->left)){
 					/*
 					 * "case Eandand:" / "case lex.Eid:": a name
@@ -5082,7 +5939,7 @@ lvaldesc(Node *n)
 	case Ocomposite:
 	case Oref:
 		return "a composite literal";
-	case Olen: case Ohd: case Otl: case Ocons: case Ocast:
+	case Olen: case Ohd: case Otl: case Ocons: case Ocast: case Ocopy: case Oexit: case Ocond:
 	case Oneg: case Onot: case Oinv:
 	case Oadd: case Osub: case Omul: case Odiv: case Omod:
 	case Oand: case Oor: case Oxor: case Olsh: case Orsh:
@@ -5140,11 +5997,6 @@ chklval(Node *n, char *what)
 	 * closure changes only the copy -- silently, which no reader
 	 * expects.  refuse it; shared state goes through a ref.
 	 */
-	if(n->op == Oname && n->decl != nil && curclosure != nil
-	&& (n->decl->store == Darg || n->decl->store == Dlocal) && !declownedby(n->decl, curclosure)){
-		nerror(n, "cannot %s %s inside a closure: it is captured by value; share it through a ref", what, n->sym->name);
-		return 0;
-	}
 	if(islvalue(n))
 		return 1;
 	desc = lvaldesc(n);
@@ -5183,7 +6035,7 @@ chklval(Node *n, char *what)
 static int
 rangefor(Node *n)
 {
-	Node *das, *names, *first, *second, *e, *tmp, *init, *cond, *post, *prefix;
+	Node *das, *names, *first, *second, *e, *tmp, *init, *cond, *post, *prefix, *p;
 	Type *t;
 	Src *src;
 	char buf[32];
@@ -5201,6 +6053,10 @@ rangefor(Node *n)
 			return 0;
 		}
 	}
+	if(isblank(first))
+		first->sym = blanksym();
+	if(isblank(second))
+		second->sym = blanksym();
 	e = das->right->left;
 	src = &das->src;
 	t = echk(e);
@@ -5242,6 +6098,29 @@ rangefor(Node *n)
 		prefix = nil;
 		break;
 	default:
+		if(ismaptype(t)){
+			/*
+			 * for k, v := range m: over a snapshot of the entries,
+			 * .rangeN = m.entries(), indexed by a hidden .rangeNi
+			 */
+			Node *idx, *ent;
+
+			seprint(buf, buf+sizeof(buf), ".range%di", nrange - 1);
+			idx = mkname(src, enter(buf, 0));
+			init = mkseq(mkn(Odas, tmp, mkmethcall(src, e, "entries", nil)), mkn(Odas, idx, mkconst(src, 0)));
+			cond = mkbin(Olt, dupn(idx), mkn(Ocall, mkname(src, enter("len", 0)), dupn(tmp)));
+			post = mkunary(Oinc, dupn(idx));
+			ent = mkbin(Oindex, dupn(tmp), dupn(idx));
+			prefix = mkn(Odas, first, mkbin(Odot, ent, mkname(src, enter("key", 0))));
+			prefix->right->sym = prefix->right->right->sym;
+			if(second != nil){
+				ent = mkbin(Oindex, dupn(tmp), dupn(idx));
+				p = mkn(Odas, second, mkbin(Odot, ent, mkname(src, enter("val", 0))));
+				p->right->sym = p->right->right->sym;
+				prefix = mkseq(prefix, p);
+			}
+			break;
+		}
 		nerror(n, "cannot range over %T", t);
 		return 0;
 	}
@@ -5294,6 +6173,17 @@ stchk(Node *n)
 				daschk(n);
 				return;
 			case Oas:
+				if(ismapindex(n->left)){
+					/* m[k] = v: m.put(k, v) */
+					Node *call;
+
+					call = mkmethcall(&n->src, n->left->left, "put", rotater(mkseq(n->left->right, n->right)));
+					n->op = Oexpr;
+					n->left = call;
+					n->right = nil;
+					echk(call);
+					return;
+				}
 				if(n->left->op == Oseq){
 					/*
 					 * "a, b = f()": same destructuring as daschk's
@@ -5314,6 +6204,8 @@ stchk(Node *n)
 					 * destructure() evaluates it into a temp), so
 					 * the swap idiom is safe -- same wrapping Oret
 					 * does for "return a, b" */
+					if(ismapindex(n->right))
+						n->right = mapindexcall(n->right, "lookup");
 					if(n->right->op == Oseq)
 						n->right = mkn(Otuple, n->right, nil);
 					rt = echk(n->right);
@@ -5339,6 +6231,8 @@ stchk(Node *n)
 						id = p;
 						if(p->op == Oseq)
 							id = p->left;
+						if(isblank(id))
+							declblank(id, fd->ty);
 						lt = echk(id);
 						if(chklval(id, "assign to") && !assignable(lt, fd->ty, nil))
 							nerror(n, "cannot assign %T to %T", fd->ty, lt);
@@ -5349,6 +6243,8 @@ stchk(Node *n)
 					n->ty = rt;
 					return;
 				}
+				if(isblank(n->left))
+					declblank(n->left, echk(n->right));
 				if(n->left->op == Oname && n->right->op == Ocomposite){
 					/*
 					 * "p = Point{x: 1, y: 2}" where p already exists:
@@ -5382,6 +6278,19 @@ stchk(Node *n)
 				return;
 			case Oaddas: case Osubas: case Omulas: case Odivas: case Omodas:
 			case Oandas: case Ooras: case Oxoras: case Olshas: case Orshas:
+				if(ismapindex(n->left)){
+					/* m[k] op= v: m.put(k, m.get(k) op v); k is evaluated twice */
+					Node *call, *val;
+
+					val = mkbin(Oadd + (n->op - Oaddas), mapindexcall(dupn(n->left), "get"), n->right);
+					val->src = n->src;
+					call = mkmethcall(&n->src, n->left->left, "put", rotater(mkseq(n->left->right, val)));
+					n->op = Oexpr;
+					n->left = call;
+					n->right = nil;
+					echk(call);
+					return;
+				}
 				echk(n->left);
 				echk(n->right);
 				if(chklval(n->left, "assign to") && n->right->ty != terror
@@ -5391,6 +6300,20 @@ stchk(Node *n)
 					nerror(n, "type mismatch in %s", opname[n->op]);
 				return;
 			case Oinc: case Odec:
+				if(ismapindex(n->left)){
+					/* m[k]++: m.put(k, m.get(k) + 1) */
+					Node *call, *val, *one;
+
+					one = mkconst(&n->src, 1);
+					val = mkbin(n->op == Oinc ? Oadd : Osub, mapindexcall(dupn(n->left), "get"), one);
+					val->src = n->src;
+					call = mkmethcall(&n->src, n->left->left, "put", rotater(mkseq(n->left->right, val)));
+					n->op = Oexpr;
+					n->left = call;
+					n->right = nil;
+					echk(call);
+					return;
+				}
 				echk(n->left);
 				chklval(n->left, n->op == Oinc ? "increment" : "decrement");
 				return;
@@ -5403,6 +6326,45 @@ stchk(Node *n)
 				if(n->left->op == Ocall && n->left->ty != tnone && n->left->ty != terror)
 					nerror(n, "spawned function must not return a value");
 				return;
+			case Odefer: {
+				/*
+				 * the argument temps run now; the func() literal
+				 * is consed onto the hidden list the returns will
+				 * walk (defercalls, above)
+				 */
+				Node *nm, *as;
+				Type *lt;
+
+				if(n->aux != nil)
+					stchk(n->aux);
+				t = echk(n->left);
+				if(t == terror)
+					return;
+				if(deferlist == nil){
+					lt = mktype(&n->src, Tlist, t, nil);
+					sizetype(lt);
+					nm = mkname(&n->src, enter(".defers", 0));
+					declhidden(nm, lt);
+					deferlist = nm->decl;
+				}
+				nm = mkdeclname(&n->src, deferlist);
+				as = mkn(Oas, nm, mkbin(Ocons, n->left, mkdeclname(&n->src, deferlist)));
+				as->src = n->src;
+				if(n->aux != nil){
+					n->op = Oseq;
+					n->left = n->aux;
+					n->right = as;
+					n->aux = nil;
+					stchk(as);
+				}else{
+					n->op = Oas;
+					n->left = nm;
+					n->right = as->right;
+					n->aux = nil;
+					stchk(n);
+				}
+				return;
+			}
 			case Oraise:
 				echk(n->left);
 				if(n->left->ty != tstring && n->left->ty != terror)
@@ -5413,6 +6375,27 @@ stchk(Node *n)
 				return;
 			case Onothing:
 				return;
+			case Ocondecl: {
+				/* a local constant, the same as a module one (check()) */
+				Decl *cd;
+
+				if(n->aux != nil){
+					pushscope();
+					declconst("iota", n->aux->val, tint);
+					t = echk(n->right);
+					popscope();
+				}else
+					t = echk(n->right);
+				if(n->right->op != Oconst){
+					nerror(n, "constant expression required");
+					return;
+				}
+				cd = mkdecl(&n->src, Dconst, t);
+				cd->sym = n->left->sym;
+				cd->init = n->right;
+				install(cd);
+				return;
+			}
 			default:
 				nerror(n, "unsupported statement %O", n->op);
 				return;
@@ -5682,6 +6665,8 @@ terminates(Node *n)
 	case Oret:
 	case Oraise:
 		return 1;
+	case Oexpr:
+		return n->left != nil && n->left->op == Oexit;
 	case Oif:
 		return n->aux != nil && terminates(n->right) && terminates(n->aux);
 	case Omatch:
@@ -5717,12 +6702,15 @@ terminates(Node *n)
 static void
 fnchk(Decl *d)
 {
-	Node *body;
+	Node *body, *calls;
 	Decl *arg;
+	Decl *saveddefers;
 
 	curfn = d;
 	curret = d->ty->tof;
 	body = d->init->aux;
+	saveddefers = deferlist;
+	deferlist = nil;
 
 	pushscope();
 	/* bind args without appending to the scope chain (repushids) */
@@ -5734,6 +6722,22 @@ fnchk(Decl *d)
 		}
 	}
 	stchk(body);
+	if(deferlist != nil){
+		/*
+		 * defer: every return runs the deferred calls first
+		 * (deferrets), and so does falling off the end
+		 */
+		deferrets(&d->init->aux);
+		body = d->init->aux;
+		if(!terminates(body)){
+			calls = defercalls(&body->src);
+			stchk(calls);
+			d->init->aux = mkseq(body, calls);
+			body = d->init->aux;
+		}
+	}
+	boxpass(d);
+	body = d->init->aux;
 	/*
 	 * a function with a result must return on every path: falling
 	 * off the end returned whatever the result slot held -- zero,
@@ -5749,6 +6753,7 @@ fnchk(Decl *d)
 	}
 	popscope();
 	curfn = nil;
+	deferlist = saveddefers;
 }
 
 /*
@@ -5767,6 +6772,18 @@ picktags(Node *body, Type *t, Decl *d)
 	Node *p, *tg;
 	int ntag;
 
+	if(body->right != nil){
+		/* fields every tag carries: the pick adt's own ids, laid out first */
+		Node fake;
+		Type *ft;
+
+		fake = *body;
+		fake.op = Otstruct;
+		fake.left = body->right;
+		fake.right = nil;
+		ft = stype(&fake);
+		t->ids = ft->ids;
+	}
 
 	/*
 	 * each tag's own runtime discriminant: declaration order,
@@ -5868,6 +6885,7 @@ typedec(Node *n)
 	t = stype(n->right);
 	if(ph != nil && t != ph && t->kind == Tadt){
 		ph->ids = t->ids;
+		ph->isiface = t->isiface;
 		ph->ok |= t->ok & OKverify;
 		ph->src = t->src;
 		/*
@@ -6164,6 +7182,26 @@ check(Node *tree)
 	nildecl->sym = enter("nil", 0);
 	install(nildecl);
 
+	/*
+	 * the implicit import behind append and map[K]V: module/
+	 * builtin.ei as the alias .builtin, which no source can name;
+	 * all templates, so nothing is loaded at run time
+	 */
+	d = readiface("builtin", &nosrc);
+	if(d != nil){
+		Decl *v;
+		Dlist *dl;
+
+		v = mkdecl(&nosrc, Dglobal, d->ty);
+		v->sym = enter(".builtin", 0);
+		v->importid = d;
+		install(v);
+		dl = allocmem(sizeof *dl);
+		dl->d = v;
+		dl->next = imports;
+		imports = dl;
+	}
+
 	pushscope();	/* module scope */
 
 	impdecl = mkdecl(&tree->src, Dtype, nil);
@@ -6211,7 +7249,14 @@ check(Node *tree)
 		case Ocondecl: {
 			Type *t;
 
-			t = echk(decl->right);
+			if(decl->aux != nil){
+				/* a const block item: iota is its index while folding */
+				pushscope();
+				declconst("iota", decl->aux->val, tint);
+				t = echk(decl->right);
+				popscope();
+			}else
+				t = echk(decl->right);
 			if(decl->right->op != Oconst){
 				nerror(decl, "constant expression required");
 				break;

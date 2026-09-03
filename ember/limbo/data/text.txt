@@ -1,0 +1,4 @@
+hello, world
+HELLO again
+	tabs  and   spaces
+mixed CASE 123 text

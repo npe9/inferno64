@@ -366,8 +366,14 @@ func sumark(n ref types.Node) ref types.Node {
 				n.addable = Ramadr
 			}
 		}
-	case types.Olen, types.Ocons, types.Ohd, types.Otl, types.Oindx, types.Oslice, types.Oinds, types.Oload, types.Ocast:
+	case types.Olen, types.Ocopy, types.Ocons, types.Ohd, types.Otl, types.Oindx, types.Oslice, types.Oinds, types.Oload, types.Ocast:
 		n.temps++
+	case types.Ocond:
+		// the else arm is n.aux, outside the generic recursion
+		sumark(n.aux)
+		if n.aux.temps >= n.temps {
+			n.temps = n.aux.temps + 1
+		}
 	case types.Oarray:
 		sumark(n.aux)
 	}
@@ -982,9 +988,10 @@ func fnvalue(line int, pos int, nto ref types.Node, n ref types.Node, tres ref t
 
 			var val ref types.Node
 			if check.declownedby(cd, d.enclosing) != 0 {
-				val = mkname(line, pos, cd.sym)
-				val.decl = cd
-				val.ty = cd.ty
+				// the variable's box (check.e's boxvar), not the variable
+				val = mkname(line, pos, cd.boxdecl.sym)
+				val.decl = cd.boxdecl
+				val.ty = cd.boxty
 				sumark(val)
 			} else {
 				efd := d.enclosing.capty.ids
@@ -1358,6 +1365,43 @@ func ecom(line int, pos int, nto ref types.Node, n ref types.Node) ref types.Nod
 		gen.genmove(line, pos, gen.Mas, nto.ty, tto, nto)
 		gen.tfree(tl)
 		gen.tfree(tto)
+		return nto
+	case types.Ocopy:
+		// copy(dst, src): slicela src, 0, dst; a statement, nto is nil.
+		// the 0 must be an Rconst immediate, not an unmarked 0(fp)
+		if left.addable >= Rcant {
+			left = eacom(left, tl, nil)
+		}
+		if right.addable >= Rcant {
+			right = eacom(right, tr, nil)
+		}
+		zero := mkconst(line, pos, big(0))
+		zero.ty = tint()
+		zero.addable = Rconst
+		gen.genrawop(line, pos, gen.ISLICELA, right, zero, left)
+		gen.tfree(tl)
+		gen.tfree(tr)
+		return nil
+	case types.Oexit:
+		gen.genrawop(line, pos, gen.IEXIT, nil, nil, nil)
+		return nil
+	case types.Ocond:
+		// c ? a : b: branch on c, each arm into the same destination
+		if nto == nil {
+			nto = gen.talloc(tres, n.ty, nil)
+		}
+		p := bcom(n.left, 1, nil)
+		r := ecom(n.right.line, n.right.pos, nto, n.right)
+		if r != nto {
+			gen.genmove(n.right.line, n.right.pos, gen.Mas, n.ty, r, nto)
+		}
+		pp := gen.genrawop(line, pos, gen.IJMP, nil, nil, nil)
+		gen.patch(p, gen.nextinst())
+		r = ecom(n.aux.line, n.aux.pos, nto, n.aux)
+		if r != nto {
+			gen.genmove(n.aux.line, n.aux.pos, gen.Mas, n.ty, r, nto)
+		}
+		gen.patch(pp, gen.nextinst())
 		return nto
 	case types.Ohd:
 		if nto == nil {
@@ -1916,7 +1960,9 @@ func casecom(cn ref types.Node) {
 			for pat != nil {
 				q, rest := nextpat(pat)
 				pat = rest
-				if q.op == types.Oconst || q.op == types.Opat {
+				if q.op == types.Orange {	// lo...hi: the label holding lo
+					labs[findlab(ctype, q.left, labs, nlab)].inst = j
+				} else if q.op == types.Oconst || q.op == types.Opat {
 					labs[findlab(ctype, q, labs, nlab)].inst = j
 				}
 				if q.op == types.Opat && q.right != nil && subjbase != nil {
@@ -2452,6 +2498,8 @@ func scom(n ref types.Node) {
 			excs = ref types.Except{p1: p1, p2: p2, c: c, d: n.aux.decl, next: excs}
 			gen.patch(pp, p)
 			gen.popblock()
+			return
+		case types.Ocondecl:	// a local constant: folded by the checker, nothing to run
 			return
 		default:
 			gen.pushblock()

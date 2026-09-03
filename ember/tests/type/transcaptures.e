@@ -87,13 +87,9 @@ func mkescaped() func() int {
 	return outer4()
 }
 
-// mutation timing: each level copies by value at the moment *its own*
-// tfnptr is constructed, not at the moment it's called or returned.
-// mid's own env gets x's value when "mid := func()..." runs (x==1,
-// before either later assignment) -- the two later writes to x, one
-// before mid() is called and one after, are both invisible to inner,
-// same as closurecaptures.e's own depth-1 mutation-invisibility cases,
-// just pinned here for the depth-2, copy-at-each-hop chain specifically.
+// mutation timing under capture by reference: every level shares x's
+// box, so the two later writes to x, one before mid() is called and
+// one after, are both seen by inner (e=3), two hops away.
 func outer5() func() int {
 	x := 1
 	mid := func() func() int {

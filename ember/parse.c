@@ -34,6 +34,12 @@ static	Node	*pexprlist(void);
 static	Node	*pstmt(void);
 static	Node	*palt(void);
 static	Node	*ptype(void);
+static	Node	*pmaptype(void);
+static	Node	*pinterface(Node*, Node*, Src*);
+static	Node	*deepdup(Node*);
+static	int	startsexpr(int);
+static	Node	*prange(Node*);
+static	Node	*pmaplit(void);
 static	Node	*punary(void);
 
 static Tok*
@@ -224,26 +230,49 @@ pfields(char *ctx)
 }
 
 /*
- * one pick member: Tag or Tag(fields)
+ * the pick members: "Tag", "Tag(fields)", "Tag, Tag2(fields)" (a
+ * group sharing one field list) or "name type", a field every tag
+ * carries.  tags are appended to *tags, fields to *fields.
  */
-static Node*
-ptag(void)
+static void
+ptag(Node **tags, Node **fields)
 {
-	Node *name, *fields, *f;
+	Node *name, *names, *fl, *f, *p, *id;
 
 	name = pname("pick member");
-	fields = nil;
+	if(cur() != '(' && cur() != ',' && cur() != ';' && cur() != '}'){
+		/* a common field: name type, or name, name type */
+		names = name;
+		while(paccept(','))
+			names = mkseq(names, pname("pick field"));
+		f = mkbin(Ofield, rotater(names), ptype());
+		*fields = mkseq(*fields, f);
+		return;
+	}
+	names = name;
+	while(paccept(','))
+		names = mkseq(names, pname("pick member"));
+	names = rotater(names);
+	fl = nil;
 	if(cur() == '('){
 		lexskip();
 		while(cur() != ')' && cur() != Beof){
 			f = pfield();
-			fields = mkseq(fields, f);
+			fl = mkseq(fl, f);
 			if(!paccept(','))
 				break;
 		}
 		pexpect(')', "pick member fields");
 	}
-	return mkn(Otag, name, rotater(fields));
+	fl = rotater(fl);
+	for(p = names; p != nil; p = p->right){
+		id = p;
+		if(p->op == Oseq)
+			id = p->left;
+		*tags = mkseq(*tags, mkn(Otag, id, p == names ? fl : dupn(fl)));
+		if(p->op != Oseq)
+			break;
+	}
 }
 
 /*
@@ -316,6 +345,65 @@ psignature(int named)
 }
 
 /*
+ * "map[K]V" is "ref .builtin.Map[K, V]": the hidden implicit import
+ * of ember/module/builtin.ei (check.c), whose instantiation the
+ * checker marks as a map (NMAPT) so indexing, assignment, delete,
+ * len and range know it.
+ */
+static Node*
+pmaptype(void)
+{
+	Node *k, *v, *n, *inst;
+	Src src;
+
+	src = pexpect(Kmap, "map type");
+	pexpect('[', "map type");
+	k = ptype();
+	pexpect(']', "map type");
+	v = ptype();
+	n = mkbin(Odot, mkname(&src, enter(".builtin", 0)), mkname(&src, enter("Map", 0)));
+	n->sym = n->right->sym;
+	n->src = src;
+	inst = mkbin(Otinst, n, rotater(mkseq(k, v)));
+	inst->flags |= NMAPT;
+	inst->src.start = src.start;
+	inst->src.stop = v->src.stop;
+	n = mkn(Otref, nil, inst);
+	n->src.start = src.start;
+	n->src.stop = v->src.stop;
+	return n;
+}
+
+/*
+ * "map[K]V{k: v, ...}": Omaplit, left the type, right the Oelem
+ * (key expr, value expr) list; the checker turns it into calls
+ */
+static Node*
+pmaplit(void)
+{
+	Node *ty, *elems, *e, *k;
+	Src src;
+
+	src = tk()->src;
+	ty = pmaptype();
+	pexpect('{', "map literal");
+	elems = nil;
+	while(cur() != '}' && cur() != Beof){
+		k = pexpr();
+		pexpect(':', "map literal");
+		e = mkn(Oelem, k, pexpr());
+		elems = mkseq(elems, e);
+		if(!paccept(',') && cur() != ';')
+			break;
+		paccept(';');
+	}
+	src.stop = pexpect('}', "map literal").stop;
+	e = mkn(Omaplit, ty, rotater(elems));
+	e->src = src;
+	return e;
+}
+
+/*
  * an index expression or a type argument ("Box[func(int) int]{...}",
  * "Box[[]int]{}"): the resolver tells an index from an instantiation
  * (Oindex), but a type that no expression can start -- a function,
@@ -378,6 +466,8 @@ ptype(void)
 		n->src.start = src.start;
 		n->src.stop = t->src.stop;
 		return n;
+	case Kmap:
+		return pmaptype();
 	case Kfunc:
 		lexskip();
 		n = psignature(0);
@@ -390,21 +480,25 @@ ptype(void)
 		n->src.start = src.start;
 		n->src.stop = pexpect('}', "struct type").stop;
 		return n;
-	case Kpick:
+	case Kpick: {
+		Node *fields;
+
 		lexskip();
 		pexpect('{', "pick type");
 		n = nil;
+		fields = nil;
 		while(cur() != '}' && cur() != Beof){
 			if(paccept(';'))
 				continue;
-			n = mkseq(n, ptag());
+			ptag(&n, &fields);
 			if(cur() != '}')
 				pexpect(';', "pick member");
 		}
-		n = mkn(Otpick, rotater(n), nil);
+		n = mkn(Otpick, rotater(n), rotater(fields));
 		n->src.start = src.start;
 		n->src.stop = pexpect('}', "pick type").stop;
 		return n;
+	}
 	case '(':
 		lexskip();
 		n = ptype();
@@ -532,6 +626,12 @@ poperand(void)
 		noblit = oblit;
 		n->src.start = src.start;
 		n->src.stop = pexpect(')', "parenthesised expression").stop;
+		return n;
+	case Kmap:
+		oblit = noblit;
+		noblit = 0;
+		n = pmaplit();
+		noblit = oblit;
 		return n;
 	case Kfunc:
 		lexskip();
@@ -663,6 +763,7 @@ static Node*
 pprimary(void)
 {
 	Node *n, *e, *lo, *hi, *args;
+	Node *guard = nil;
 	Src src;
 	int oblit;
 
@@ -682,7 +783,10 @@ pprimary(void)
 			noblit = 0;
 			args = nil;
 			while(cur() != ')' && cur() != Beof){
-				args = mkseq(args, pexpr());
+				e = pexpr();
+				if(paccept(Edots))
+					e->flags |= NVARARG;	/* append(a, xs...) */
+				args = mkseq(args, e);
 				if(!paccept(','))
 					break;
 			}
@@ -723,10 +827,25 @@ pprimary(void)
 			n = e;
 			continue;
 		case '?':
+			if(startsexpr(nxt()))
+				break;	/* c ? a : b, pexpr()'s */
 			lexskip();
 			e = mkunary(Ochk, n);
 			e->src.stop = src.stop;
 			n = e;
+			continue;
+		case Eqdot:
+			/*
+			 * a?.f, a?.m(x): nil when a is, else the rest of the
+			 * postfix chain -- the guard wraps the whole chain at
+			 * the end; a is evaluated twice
+			 */
+			lexskip();
+			if(guard == nil)
+				guard = deepdup(n);
+			e = pname("field");
+			n = mkbin(Odot, n, e);
+			n->sym = e->sym;
 			continue;
 		case '{':
 			if(noblit || !istypeexpr(n))
@@ -735,6 +854,14 @@ pprimary(void)
 			continue;
 		}
 		break;
+	}
+	if(guard != nil){
+		e = mkbin(Oneq, guard, mkname(&guard->src, enter("nil", 0)));
+		e->src = guard->src;
+		e = mkn(Ocond, e, n);
+		e->aux = mkname(&n->src, enter("nil", 0));
+		e->src = n->src;
+		n = e;
 	}
 	return n;
 }
@@ -839,7 +966,46 @@ pbinary(int prec)
 static Node*
 pexpr(void)
 {
-	return pbinary(1);
+	Node *n, *a, *b;
+
+	n = pbinary(1);
+	while(cur() == Eqq){
+		/* a ?? b: a when it is not nil, else b; a is evaluated twice */
+		lexskip();
+		b = pbinary(1);
+		a = mkbin(Oneq, deepdup(n), mkname(&n->src, enter("nil", 0)));
+		a->src = n->src;
+		a = mkn(Ocond, a, n);
+		a->aux = b;
+		a->src.start = n->src.start;
+		a->src.stop = b->src.stop;
+		n = a;
+	}
+	if(cur() == '?' && startsexpr(nxt())){
+		/* c ? a : b, at the lowest precedence, right-associative */
+		lexskip();
+		a = pexpr();
+		pexpect(':', "conditional expression");
+		b = pexpr();
+		n = mkn(Ocond, n, a);
+		n->aux = b;
+		n->src.start = n->left->src.start;
+		n->src.stop = b->src.stop;
+	}
+	return n;
+}
+
+/* can this token begin an expression?  "x? y : z" against "x?" alone */
+static int
+startsexpr(int t)
+{
+	switch(t){
+	case Eid: case Econst: case Erconst: case Esconst:
+	case '(': case '[': case '-': case '!': case '~':
+	case Knil: case Kfunc: case Kref: case Kmap: case Kload:
+		return 1;
+	}
+	return 0;
 }
 
 static Node*
@@ -880,25 +1046,67 @@ pvardecl(void)
 	return n;
 }
 
+/* a copy of a whole expression tree: the checker folds in place */
 static Node*
-pcondecl(void)
+deepdup(Node *n)
 {
-	Node *name, *n;
+	if(n == nil)
+		return nil;
+	n = dupn(n);
+	n->left = deepdup(n->left);
+	n->right = deepdup(n->right);
+	n->aux = deepdup(n->aux);
+	return n;
+}
+
+/*
+ * "const X = e", or a block "const ( A = iota; B; C = 7 )": in a
+ * block, iota is the item's index (the checker declares it while
+ * folding the expression, from aux) and an item without "= e"
+ * repeats the previous expression.  the items are appended to decls
+ * one by one so the caller's declaration list stays flat.
+ */
+static Node*
+pcondecl(Node *decls)
+{
+	Node *name, *n, *prev;
 	Src src;
+	int i;
 
 	src = pexpect(Kconst, "const declaration");
-	name = pname("const declaration");
-	pexpect('=', "const declaration");
-	n = mkn(Ocondecl, name, pexpr());
-	n->src.start = src.start;
-	return n;
+	if(!paccept('(')){
+		name = pname("const declaration");
+		pexpect('=', "const declaration");
+		n = mkn(Ocondecl, name, pexpr());
+		n->src.start = src.start;
+		return mkseq(decls, n);
+	}
+	prev = nil;
+	i = 0;
+	while(cur() != ')' && cur() != Beof){
+		if(paccept(';'))
+			continue;
+		name = pname("const declaration");
+		if(paccept('='))
+			prev = pexpr();
+		else if(prev == nil)
+			synerr("the first constant of a block needs an expression");
+		n = mkn(Ocondecl, name, deepdup(prev));
+		n->aux = mkconst(&name->src, i++);
+		n->src.start = name->src.start;
+		decls = mkseq(decls, n);
+		if(cur() != ')')
+			pexpect(';', "const block");
+	}
+	pexpect(')', "const block");
+	return decls;
 }
 
 /*
  * "type" id [ "[" ids "]" ] TypeExpr
  */
 static Node*
-ptypedecl(void)
+ptypedecl(Node *decls)
 {
 	Node *name, *polys, *n;
 	Src src;
@@ -910,10 +1118,115 @@ ptypedecl(void)
 		polys = rotater(pnamelist("type parameters"));
 		pexpect(']', "type parameters");
 	}
+	if(cur() == Kinterface)
+		return pinterface(decls, name, &src);
 	n = mkn(Otypedecl, name, ptype());
 	n->aux = polys;
 	n->src.start = src.start;
-	return n;
+	return mkseq(decls, n);
+}
+
+/*
+ * "type W interface { m(params) results; ... }" is two declarations:
+ *
+ *	type W struct { m func(params) results; ... }
+ *	func .W$from[.T](.x .T) ref W {
+ *		return ref W{m: func(params) results { return .x.m(params) }, ...}
+ *	}
+ *
+ * a struct of method closures (NIFACE, so the checker knows it), and
+ * a generic converter the checker calls wherever a value of another
+ * type is assigned to the interface (check.c's assignable()): its
+ * body type-checks against the concrete type at each instantiation,
+ * which is the structural check.  the closures hold the receiver, so
+ * a call through the interface is a call of a field.
+ */
+static Node*
+pinterface(Node *decls, Node *name, Src *src)
+{
+	Node *fields, *elems, *mname, *sig, *fl, *call, *args, *p, *f, *q, *id, *stmt, *st, *td, *fd, *sig2, *comp, *tn;
+	char buf[StrSize];
+
+	pexpect(Kinterface, "interface type");
+	pexpect('{', "interface type");
+	fields = nil;
+	elems = nil;
+	while(cur() != '}' && cur() != Beof){
+		if(paccept(';'))
+			continue;
+		mname = pname("interface method");
+		sig = psignature(1);
+		sig->src = *src;
+		f = mkbin(Ofield, mkname(src, mname->sym), sig);
+		f->src = *src;
+		fields = mkseq(fields, f);
+		/* m: func(params) results { return .x.m(params) } */
+		args = nil;
+		for(p = sig->left; p != nil; p = p->right){
+			q = p;
+			if(p->op == Oseq)
+				q = p->left;
+			for(id = q->left; id != nil; id = id->right){
+				args = mkseq(args, mkname(src, (id->op == Oseq ? id->left : id)->sym));
+				if(id->op != Oseq)
+					break;
+			}
+			if(p->op != Oseq)
+				break;
+		}
+		call = mkbin(Odot, mkname(src, enter(".x", 0)), mkname(src, mname->sym));
+		call->sym = mname->sym;
+		call->src = *src;
+		call = mkn(Ocall, call, rotater(args));
+		call->src = *src;
+		if(sig->right != nil)
+			stmt = mkn(Oret, call, nil);
+		else
+			stmt = mkunary(Oexpr, call);
+		stmt->src = *src;
+		fl = mkn(Ofunclit, nil, deepdup(sig));
+		fl->aux = mkn(Oscope, stmt, nil);
+		fl->aux->src = *src;
+		fl->src = *src;
+		p = mkn(Oelem, mkname(src, mname->sym), fl);
+		p->src = *src;
+		elems = mkseq(elems, p);
+		if(cur() != '}')
+			pexpect(';', "interface method");
+	}
+	pexpect('}', "interface type");
+	/* type .W$s struct { ... }; type W ref .W$s: the interface name is the reference */
+	seprint(buf, buf+sizeof(buf), ".%s$s", name->sym->name);
+	st = mkn(Otstruct, rotater(fields), nil);
+	st->flags |= NIFACE;
+	st->src = *src;
+	td = mkn(Otypedecl, mkname(src, enter(buf, 0)), st);
+	td->src = *src;
+	decls = mkseq(decls, td);
+	td = mkn(Otypedecl, name, mkn(Otref, nil, mkname(src, enter(buf, 0))));
+	td->right->src = *src;
+	td->src = *src;
+	decls = mkseq(decls, td);
+
+	seprint(buf, buf+sizeof(buf), ".%s$from", name->sym->name);
+	tn = mkname(src, enter(".T", 0));
+	sig2 = mkn(Otfunc, mkbin(Ofield, mkname(src, enter(".x", 0)), tn), mkname(src, name->sym));
+	sig2->left->src = *src;
+	sig2->right->src = *src;
+	sig2->aux = mkname(src, enter(".T", 0));
+	sig2->src = *src;
+	seprint(buf, buf+sizeof(buf), ".%s$s", name->sym->name);
+	comp = mkn(Ocomposite, mkname(src, enter(buf, 0)), rotater(elems));
+	seprint(buf, buf+sizeof(buf), ".%s$from", name->sym->name);
+	comp->src = *src;
+	stmt = mkn(Oret, mkunary(Oref, comp), nil);
+	stmt->left->src = *src;
+	stmt->src = *src;
+	fd = mkn(Ofndecl, mkname(src, enter(buf, 0)), sig2);
+	fd->aux = mkn(Oscope, stmt, nil);
+	fd->aux->src = *src;
+	fd->src = *src;
+	return mkseq(decls, fd);
 }
 
 /*
@@ -1094,7 +1407,10 @@ ppattern(void)
 
 		v = t->ival;
 		lexskip();
-		return mkconst(&src, v);
+		n = mkconst(&src, v);
+		if(paccept(Edots))
+			return prange(n);
+		return n;
 	}
 	case '-': {
 		Long v;
@@ -1108,7 +1424,10 @@ ppattern(void)
 		}
 		v = t->ival;
 		lexskip();
-		return mkconst(&src, -v);
+		n = mkconst(&src, -v);
+		if(paccept(Edots))
+			return prange(n);
+		return n;
 	}
 	case Esconst: {
 		Sym *s;
@@ -1188,14 +1507,26 @@ palt(void)
 static Node*
 pmatch(void)
 {
-	Node *subj, *cases, *pats, *stmts, *c, *n;
+	Node *subj, *cases, *pats, *stmts, *c, *n, *init;
 	Src src, csrc;
 	int oblit;
 
 	src = pexpect(Kmatch, "match statement");
 	oblit = noblit;
 	noblit = 1;
-	subj = pexpr();
+	/* "match x := f(); x {": an initializer, as pif() takes */
+	init = nil;
+	n = psimple();
+	if(paccept(';')){
+		init = n;
+		n = psimple();
+	}
+	if(n->op == Oexpr)
+		subj = n->left;
+	else{
+		error(n->src.start, "match subject must be an expression");
+		subj = mkconst(&n->src, 0);
+	}
 	noblit = oblit;
 	pexpect('{', "match statement");
 	cases = nil;
@@ -1227,6 +1558,89 @@ pmatch(void)
 	n = mkn(Omatch, subj, rotater(cases));
 	n->src.start = src.start;
 	n->src.stop = pexpect('}', "match statement").stop;
+	if(init != nil){
+		n = mkn(Oscope, mkseq(init, n), nil);
+		n->src.start = src.start;
+	}
+	return n;
+}
+
+/*
+ * "case 'a'...'z':": a range of int labels, an Orange with both
+ * bounds (the checker's matchlabels reads left and right)
+ */
+static Node*
+prange(Node *lo)
+{
+	Node *hi, *n;
+	Tok *t;
+	int neg;
+
+	neg = paccept('-');
+	t = tk();
+	if(t->t != Econst){
+		synerr("expected an integer constant after ...");
+		psync();
+		return lo;
+	}
+	hi = mkconst(&t->src, neg ? -t->ival : t->ival);
+	lexskip();
+	n = mkbin(Orange, lo, hi);
+	n->src.start = lo->src.start;
+	n->src.stop = hi->src.stop;
+	return n;
+}
+
+/*
+ * "defer f(a, b)": the arguments are evaluated now into hidden
+ * temps (.dNaK), and the call itself is wrapped in a func() literal
+ * that a hidden local (.dN, declared by the checker) will hold; the
+ * checker runs the function's defers, last first, at every return.
+ * the callee expression is evaluated when the deferred call runs.
+ */
+static int ndefer;
+
+static Node*
+pdefer(void)
+{
+	Node *e, *temps, *tmp, *body, *sig, *fl, *n, *p, **pp;
+	Src src;
+	char buf[32];
+	int k;
+
+	src = pexpect(Kdefer, "defer statement");
+	e = pprimary();
+	if(e->op != Ocall){
+		error(e->src.start, "defer needs a function call");
+		e = mkn(Ocall, e, nil);
+	}
+	temps = nil;
+	k = 0;
+	for(pp = &e->right; *pp != nil; ){
+		p = *pp;
+		if(p->op == Oseq)
+			pp = &p->left;
+		seprint(buf, buf+sizeof(buf), ".d%da%d", ndefer, k++);
+		tmp = mkname(&(*pp)->src, enter(buf, 0));
+		temps = mkseq(temps, mkbin(Odas, tmp, *pp));
+		*pp = mkname(&tmp->src, tmp->sym);
+		if(p->op == Oseq)
+			pp = &p->right;
+		else
+			break;
+	}
+	body = mkn(Oscope, mkunary(Oexpr, e), nil);
+	body->src = e->src;
+	sig = mkn(Otfunc, nil, nil);
+	sig->src = src;
+	fl = mkn(Ofunclit, nil, sig);
+	fl->aux = body;
+	fl->src = e->src;
+	n = mkn(Odefer, fl, nil);
+	n->aux = rotater(temps);
+	n->src.start = src.start;
+	n->src.stop = e->src.stop;
+	ndefer++;
 	return n;
 }
 
@@ -1251,10 +1665,10 @@ pstmt(void)
 		n = pvardecl();
 		break;
 	case Kconst:
-		n = pcondecl();
+		n = rotater(pcondecl(nil));
 		break;
 	case Ktype:
-		n = ptypedecl();
+		n = rotater(ptypedecl(nil));
 		break;
 	case Kif:
 		return pif();
@@ -1294,6 +1708,9 @@ pstmt(void)
 		lexskip();
 		n = mkunary(Oraise, pexpr());
 		n->src.start = src.start;
+		break;
+	case Kdefer:
+		n = pdefer();
 		break;
 	case Ktry:
 		/* try { body } catch [e] { handler } */
@@ -1446,13 +1863,13 @@ parse(char *in)
 			n = mkseq(n, pimport());
 			break;
 		case Ktype:
-			n = mkseq(n, ptypedecl());
+			n = ptypedecl(n);
 			break;
 		case Kvar:
 			n = mkseq(n, pvardecl());
 			break;
 		case Kconst:
-			n = mkseq(n, pcondecl());
+			n = pcondecl(n);
 			break;
 		case Kfunc:
 			n = mkseq(n, pfndecl());

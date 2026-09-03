@@ -67,6 +67,10 @@ const Kraise = 309
 const Ktry = 310
 const Kcatch = 311
 const Krange = 312
+const Kdefer = 313
+const Kmap = 314
+const Eqdot = 315
+const Eqq = 316
 
 type Tok struct {
 	t int

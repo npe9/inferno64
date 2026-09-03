@@ -19,6 +19,8 @@
 
 static	int	toterrors;
 static	int	dumpast;
+static	int	geniface;	/* -i: print the module's interface file */
+static	int	testmain;	/* -t: add an init that runs every test_ function */
 static	int	tokdump;
 static	int	dumpchecked;
 static	int	checkonly;
@@ -27,8 +29,94 @@ static	char	*outarg;
 static void
 usage(void)
 {
-	fprint(2, "usage: ember [-A] [-C] [-T] [-c] [-D name] [-f] [-I path] [-o outfile] file.e\n");
+	fprint(2, "usage: ember [-A] [-C] [-T] [-c] [-i] [-t] [-D name] [-f] [-I path] [-o outfile] file.e\n");
 	exits("usage");
+}
+
+/*
+ * "ember -t": append
+ *
+ *	import .sys "sys"
+ *	func init() {
+ *		.failed := 0
+ *		try { test_a() } catch .e { .sys.print("FAIL test_a: %s\n", .e); .failed++ }
+ *		...
+ *		if .failed == 0 { .sys.print("PASS %d tests\n", n) } else { raise "fail:tests" }
+ *	}
+ *
+ * for every top-level "func test_xxx()" in the source, in order
+ */
+static Node*
+tname(Src *src, char *s)
+{
+	return mkname(src, enter(s, 0));
+}
+
+static Node*
+tsprint(Src *src, Node *args)
+{
+	Node *dot, *call;
+
+	dot = mkbin(Odot, tname(src, ".sys"), tname(src, "print"));
+	dot->sym = dot->right->sym;
+	dot->src = *src;
+	call = mkn(Ocall, dot, args);
+	call->src = *src;
+	return mkunary(Oexpr, call);
+}
+
+static void
+addtestmain(Node *tree)
+{
+	Node *p, *d, *stmts, *call, *try, *msg, *imp, *imp2, *fn, *sig, *body, *cond, *last, *ctx, *params;
+	Src *src;
+	int n;
+
+	src = &tree->src;
+	stmts = nil;
+	n = 0;
+	for(p = tree->right; p != nil; p = p->right){
+		d = p->op == Oseq ? p->left : p;
+		if(d->op == Ofndecl && d->left->op == Oname && strncmp(d->left->sym->name, "test_", 5) == 0 && d->aux != nil){
+			call = mkunary(Oexpr, mkn(Ocall, tname(src, d->left->sym->name), nil));
+			call->src = d->src;
+			try = mkn(Otry, mkn(Oscope, call, nil), nil);
+			try->aux = tname(src, ".e");
+			msg = mksconst(src, enter("FAIL ", 0));
+			msg = mkbin(Oadd, msg, mksconst(src, d->left->sym));
+			msg = mkbin(Oadd, msg, mksconst(src, enter(": %s\n", 0)));
+			try->right = mkn(Oscope, mkseq(tsprint(src, rotater(mkseq(msg, tname(src, ".e")))), mkunary(Oinc, tname(src, ".failed"))), nil);
+			try->src = d->src;
+			stmts = mkseq(stmts, try);
+			n++;
+		}
+		if(p->op != Oseq)
+			break;
+	}
+	if(n == 0){
+		fprint(2, "ember: -t: no test_ functions in %s\n", infile);
+		return;
+	}
+	stmts = mkseq(mkbin(Odas, tname(src, ".failed"), mkconst(src, 0)), stmts);
+	cond = mkbin(Oeq, tname(src, ".failed"), mkconst(src, 0));
+	last = mkn(Oif, cond, mkn(Oscope, tsprint(src, rotater(mkseq(mksconst(src, enter("PASS %d tests\n", 0)), mkconst(src, n)))), nil));
+	last->aux = mkn(Oscope, mkunary(Oraise, mksconst(src, enter("fail:tests", 0))), nil);
+	stmts = mkseq(stmts, last);
+	body = mkn(Oscope, rotater(stmts), nil);
+	/* init(.ctxt ref .draw.Context, .args list string): the command signature emuinit links against */
+	ctx = mkbin(Odot, tname(src, ".draw"), tname(src, "Context"));
+	ctx->sym = ctx->right->sym;
+	ctx = mkn(Otref, nil, ctx);
+	params = mkseq(mkbin(Ofield, tname(src, ".ctxt"), ctx), mkbin(Ofield, tname(src, ".args"), mkn(Otlist, nil, tname(src, "string"))));
+	sig = mkn(Otfunc, rotater(params), nil);
+	fn = mkn(Ofndecl, tname(src, "init"), sig);
+	fn->aux = body;
+	fn->src = *src;
+	imp = mkn(Oimport, tname(src, ".sys"), tname(src, "sys"));
+	imp->src = *src;
+	imp2 = mkn(Oimport, tname(src, ".draw"), tname(src, "draw"));
+	imp2->src = *src;
+	tree->right = rotater(mkseq(mkseq(mkseq(imp2, imp), tree->right), fn));
 }
 
 static char*
@@ -62,6 +150,8 @@ translate(char *in)
 		toterrors += errors;
 		return;
 	}
+	if(testmain)
+		addtestmain(tree);
 	if(dumpast){
 		Binit(&bo, 1, OWRITE);
 		astprint(&bo, tree, 0);
@@ -72,6 +162,12 @@ translate(char *in)
 	check(tree);
 	if(errors){
 		toterrors += errors;
+		return;
+	}
+	if(geniface){
+		Binit(&bo, 1, OWRITE);
+		ifacegen(tree, &bo);
+		Bterm(&bo);
 		return;
 	}
 	if(dumpchecked){
@@ -117,6 +213,12 @@ main(int argc, char *argv[])
 	typeinit();
 
 	ARGBEGIN{
+	case 'i':
+		geniface = 1;
+		break;
+	case 't':
+		testmain = 1;
+		break;
 	case 'A':
 		dumpast = 1;
 		break;

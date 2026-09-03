@@ -1,0 +1,8 @@
+module Command
+
+// Ember interface for Inferno's Command module type (module/sh.m):
+// what "load Command path" gives a program that runs another
+
+import draw "draw"
+
+func init(ctxt ref draw.Context, argv list string)

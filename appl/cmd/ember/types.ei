@@ -20,6 +20,9 @@ const NSTR = 2
 const NVARARG = 4
 const NCHECKED = 8
 const NSPREAD = 16
+const NMAPT = 32
+const NPACKED = 64
+const NIFACE = 128
 
 const Onone = 0
 const Omodule = 1
@@ -123,7 +126,13 @@ const Ochan = 98
 const Oarray = 99
 const Otry = 100
 const Orange = 101
-const Oend = 102
+const Ocopy = 102
+const Oexit = 103
+const Odefer = 104
+const Omaplit = 105
+const Otypeval = 106
+const Ocond = 107
+const Oend = 108
 
 const Tnone = 0
 const Tadt = 1
@@ -216,6 +225,8 @@ type Type struct {
 	tof ref Type
 	ids ref Decl
 	tags ref Decl
+	ismap int
+	isiface int
 	meths ref Decl
 	cse ref Case
 	teq ref Type
@@ -266,6 +277,9 @@ type Decl struct {
 	capuses []ref Node
 	ncapuses int
 	capty ref Type
+	boxdecl ref Decl
+	boxty ref Type
+	boxtdecl ref Decl
 	line int
 	pos int
 }
@@ -309,7 +323,7 @@ type Except struct {
 type Desc struct {
 	id int
 	used int
-	map []byte
+	tmap []byte
 	size int
 	nmap int
 	next ref Desc
@@ -373,10 +387,10 @@ func sizeids(id ref Decl, off int) (int, int)
 func mkdesc(size int, d ref Decl) ref Desc
 func mktdesc(t ref Type) ref Desc
 func gendesc(d ref Decl, size int, decls ref Decl) ref Desc
-func enterdesc(map []byte, size int, nmap int) ref Desc
+func enterdesc(tmap []byte, size int, nmap int) ref Desc
 func usedesc(d ref Desc) ref Desc
-func descmap(decls ref Decl, map []byte, start int) int
-func tdescmap(t ref Type, map []byte, offset int) int
+func descmap(decls ref Decl, tmap []byte, start int) int
+func tdescmap(t ref Type, tmap []byte, offset int) int
 func modclass() ref Teq
 func castop(from ref Type, to ref Type) int
 func castvia(from ref Type, to ref Type) ref Type
