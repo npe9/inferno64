@@ -33,6 +33,9 @@ include "daytime.m";
 	daytime: Daytime;
 include "keyring.m";
 include "security.m";
+include "factotum.m";
+include "secstore.m";
+include "dial.m";
 include "tls12.m";
 include "https.m";
 	https: Https;
@@ -55,6 +58,17 @@ Bsky: module
 	resolvetest: fn(): string;
 	livethreadtest: fn(): string;
 	authposttest: fn(): string;
+
+	factotumtest: fn(): string;
+	secstoretest: fn(): string;
+
+	# reuse surface for wm/fedi(1) (and anything else): fetch and
+	# decode, returning lines instead of printing them. The public
+	# pair needs no credentials (the read-only AppView);
+	# hometimeline logs in with credfile per call, like the command.
+	publicfeed: fn(actor: string, limit: int): (list of string, string);
+	publicprofile: fn(actor: string): (list of string, string);
+	hometimeline: fn(credfile: string, limit: int): (list of string, string);
 };
 
 stderr: ref Sys->FD;
@@ -95,7 +109,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(USAGE);
 	}
 
-	(handle, password, cerr) := readcreds(credfile);
+	(handle, password, cerr) := getcreds(credfile);
 	if(cerr != nil)
 		fail("bsky: "+cerr);
 
@@ -330,11 +344,36 @@ fail(msg: string)
 }
 
 # --- credentials ---
-# two lines: handle, then an app password (from Bluesky's own
-# Settings > App Passwords - never the real account password, and
-# never a literal in source). Never echoed - not even into the argv a
-# "ps" could see, which is exactly why this reads a file rather than
-# taking the password on the command line.
+# the credentials argument is one of:
+#   a file path - two lines: handle, then an app password (from
+#     Bluesky's own Settings > App Passwords - never the real
+#     account password);
+#   "-" - ask factotum(2,4) for a proto=pass service=bsky key
+#     (user=HANDLE !password=APPPASSWORD), the Inferno-native shape:
+#     keys live in the running factotum, typically loaded there from
+#     the user's secstore file at login, and never touch a plaintext
+#     file or this command's argv;
+#   a keyspec fragment (anything containing '=') - appended to the
+#     factotum query, so "user=alice.bsky.social" picks one of
+#     several bsky keys.
+# Never echoed either way - not even into the argv a "ps" could see.
+
+getcreds(spec: string): (string, string, string)
+{
+	if(spec != "-" && !contains(spec, "="))
+		return readcreds(spec);
+	fact := load Factotum Factotum->PATH;
+	if(fact == nil)
+		return (nil, nil, sys->sprint("cannot load %s: %r", Factotum->PATH));
+	fact->init();
+	keyspec := "proto=pass service=bsky";
+	if(spec != "-")
+		keyspec += " "+spec;
+	(u, p) := fact->getuserpasswd(keyspec);
+	if(u == nil || p == nil)
+		return (nil, nil, sys->sprint("factotum has no key matching %q: %r (is auth/factotum running? add one with: echo 'key %s user=HANDLE !password=APPPASSWORD' > /mnt/factotum/ctl)", keyspec, keyspec));
+	return (u, p, nil);
+}
 
 readcreds(path: string): (string, string, string)
 {
@@ -1147,6 +1186,185 @@ authposttest(): string
 	# transport failure or an undecodable body
 	if(prefix("https:", err) || prefix("tls:", err) || prefix("bad response", err))
 		return "authposttest: want a decoded server error, got: "+err;
+	return nil;
+}
+
+# --- reuse surface (module/decl comment) ---
+
+publicfeed(actor: string, limit: int): (list of string, string)
+{
+	e := ensureloaded();
+	if(e != nil)
+		return (nil, e);
+	if(limit < 1 || limit > 100)
+		limit = 30;
+	(out, err) := fetch("GET",
+		sys->sprint("%s/xrpc/app.bsky.feed.getAuthorFeed?actor=%s&limit=%d",
+			PUBLICAPI, urlquote(actor), limit), nil, nil);
+	if(err != nil)
+		return (nil, err);
+	(lines, nil, derr) := decode(out, 0);
+	return (lines, derr);
+}
+
+publicprofile(actor: string): (list of string, string)
+{
+	e := ensureloaded();
+	if(e != nil)
+		return (nil, e);
+	(out, err) := fetch("GET",
+		sys->sprint("%s/xrpc/app.bsky.actor.getProfile?actor=%s",
+			PUBLICAPI, urlquote(actor)), nil, nil);
+	if(err != nil)
+		return (nil, err);
+	return profiledecode(out);
+}
+
+hometimeline(credfile: string, limit: int): (list of string, string)
+{
+	e := ensureloaded();
+	if(e != nil)
+		return (nil, e);
+	if(limit < 1 || limit > 100)
+		limit = 30;
+	(handle, password, cerr) := getcreds(credfile);
+	if(cerr != nil)
+		return (nil, cerr);
+	(jwt, nil, lerr) := login(handle, password);
+	password = nil;
+	if(lerr != nil)
+		return (nil, "login: "+lerr);
+	(out, err) := authget(jwt,
+		sys->sprint("%s/xrpc/app.bsky.feed.getTimeline?limit=%d", PDS, limit));
+	if(err != nil)
+		return (nil, err);
+	(lines, nil, derr) := decode(out, 0);
+	return (lines, derr);
+}
+
+# --- test seam: getcreds() through a REAL factotum, no network ---
+# starts this tree's own auth/factotum (unless one is already
+# mounted), feeds it a key through /mnt/factotum/ctl exactly the way
+# a user (or a secstore-fed login) would, and requires getcreds() to
+# come back with it - both via the bare "-" spec and via a narrowing
+# keyspec fragment - and to FAIL for a keyspec no key matches.
+
+Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+
+# Start this tree's own auth/factotum if one is not already serving.
+# Its file2chan server procs outlive this call (that is what a daemon
+# is), so a test process that starts one cannot cleanly let emu exit
+# on its own - bskytest(1) ends the whole session with quitall(1)
+# after the verdict, the same way wmtest(1) does for the windows it
+# spawns.
+startfactotum(): string
+{
+	if(sys->open("/mnt/factotum/ctl", Sys->ORDWR) != nil)
+		return nil;	# one is already serving
+	c := load Command "/dis/auth/factotum.dis";
+	if(c == nil)
+		return sys->sprint("cannot load /dis/auth/factotum.dis: %r");
+	c->init(nil, "factotum" :: nil);
+	if(sys->open("/mnt/factotum/ctl", Sys->ORDWR) == nil)
+		return sys->sprint("factotum started but /mnt/factotum/ctl not there: %r");
+	return nil;
+}
+
+ctlwrite(line: string): string
+{
+	fd := sys->open("/mnt/factotum/ctl", Sys->ORDWR);
+	if(fd == nil)
+		return sys->sprint("open /mnt/factotum/ctl: %r");
+	b := array of byte line;
+	if(sys->write(fd, b, len b) != len b)
+		return sys->sprint("write /mnt/factotum/ctl: %r");
+	return nil;
+}
+
+factotumtest(): string
+{
+	e := ensureloaded();
+	if(e != nil)
+		return "factotumtest: "+e;
+	if((e = startfactotum()) != nil)
+		return "factotumtest: "+e;
+	if((e = ctlwrite("key proto=pass service=bsky user=factotum.test.handle !password=factotum-test-pw")) != nil)
+		return "factotumtest: "+e;
+
+	(u, p, gerr) := getcreds("-");
+	if(gerr != nil)
+		return "factotumtest: getcreds -: "+gerr;
+	if(u != "factotum.test.handle" || p != "factotum-test-pw")
+		return sys->sprint("factotumtest: got %q/%q, want the test key", u, p);
+
+	(u, p, gerr) = getcreds("user=factotum.test.handle");
+	if(gerr != nil)
+		return "factotumtest: narrowed keyspec: "+gerr;
+	if(u != "factotum.test.handle")
+		return sys->sprint("factotumtest: narrowed keyspec got %q", u);
+
+	(nil, nil, gerr) = getcreds("user=nobody.matches.this");
+	if(gerr == nil)
+		return "factotumtest: a keyspec matching no key SUCCEEDED";
+
+	if((e = ctlwrite("delkey proto=pass service=bsky")) != nil)
+		return "factotumtest: cleanup: "+e;
+	(nil, nil, gerr) = getcreds("-");
+	if(gerr == nil)
+		return "factotumtest: key still matched after delkey";
+	return nil;
+}
+
+# --- test seam: the secstore -> factotum -> getcreds() pipeline ---
+# the way Inferno actually stores these keys durably: the user's
+# secstore file is an AES-encrypted list of factotum ctl lines,
+# fetched and fed to factotum at login. There is no secstore server
+# here to dial, but the FILE crypto is local - so this round-trips a
+# real factotum line through secstore(2)'s own mkfilekey/encrypt/
+# decrypt/lines, feeds the decrypted lines to the running factotum,
+# and requires getcreds() to produce the key. A wrong passphrase
+# must fail to decrypt (secstore's own integrity check), which is
+# this seam's negative control.
+
+secstoretest(): string
+{
+	e := ensureloaded();
+	if(e != nil)
+		return "secstoretest: "+e;
+	ss := load Secstore Secstore->PATH;
+	if(ss == nil)
+		return sys->sprint("secstoretest: cannot load %s: %r", Secstore->PATH);
+	ss->init();
+	if((e = startfactotum()) != nil)
+		return "secstoretest: "+e;
+
+	blob := array of byte "key proto=pass service=bsky user=secstore.test.handle !password=from-secstore\n";
+	filekey := ss->mkfilekey("correct horse battery");
+	enc := ss->encrypt(blob, filekey);
+	if(enc == nil)
+		return "secstoretest: encrypt failed";
+
+	# wrong passphrase must NOT decrypt (negative control)
+	wrongkey := ss->mkfilekey("wrong passphrase");
+	encopy := array[len enc] of byte;
+	encopy[0:] = enc;
+	if(ss->decrypt(encopy, wrongkey) != nil)
+		return "secstoretest: decrypted with the WRONG passphrase";
+
+	dec := ss->decrypt(enc, filekey);
+	if(dec == nil)
+		return sys->sprint("secstoretest: decrypt failed: %r");
+	for(ll := ss->lines(dec); ll != nil; ll = tl ll)
+		if((e = ctlwrite(string hd ll)) != nil)
+			return "secstoretest: feeding factotum: "+e;
+
+	(u, p, gerr) := getcreds("user=secstore.test.handle");
+	if(gerr != nil)
+		return "secstoretest: getcreds: "+gerr;
+	if(u != "secstore.test.handle" || p != "from-secstore")
+		return sys->sprint("secstoretest: got %q/%q, want the secstore-fed key", u, p);
+	if((e = ctlwrite("delkey proto=pass service=bsky")) != nil)
+		return "secstoretest: cleanup: "+e;
 	return nil;
 }
 

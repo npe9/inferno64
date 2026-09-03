@@ -32,6 +32,7 @@ include "json.m";
 	JValue: import json;
 include "keyring.m";
 include "security.m";
+include "factotum.m";
 include "tls12.m";
 include "https.m";
 	https: Https;
@@ -53,6 +54,16 @@ Masto: module
 	lookuptest: fn(): string;
 	livecontexttest: fn(): string;
 	authposttest: fn(): string;
+	factotumtest: fn(): string;
+
+	# reuse surface for wm/fedi(1): fetch and decode, returning
+	# lines instead of printing them. The public pair needs no
+	# credentials (mastodon.social serves account lookups and
+	# statuses unauthenticated; the home timeline does need the
+	# token, read from credfile per call like the command).
+	publicstatuses: fn(inst, acct: string, limit: int): (list of string, string);
+	publicprofile: fn(inst, acct: string): (list of string, string);
+	hometimeline: fn(credfile: string, limit: int): (list of string, string);
 };
 
 stderr: ref Sys->FD;
@@ -89,7 +100,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(USAGE);
 	}
 
-	(inst, token, cerr) := readcreds(credfile);
+	(inst, token, cerr) := getcreds(credfile);
 	if(cerr != nil)
 		fail("masto: "+cerr);
 
@@ -322,9 +333,54 @@ fail(msg: string)
 }
 
 # --- credentials ---
-# two lines: instance hostname (no scheme - "mastodon.social", not
-# "https://mastodon.social"), then a personal access token. Never a
-# literal in source, never on a command line, never logged.
+# the credentials argument is one of:
+#   a file path - two lines: instance hostname (no scheme -
+#     "mastodon.social", not "https://mastodon.social"), then a
+#     personal access token;
+#   "-" - ask factotum(2,4) for a proto=pass service=masto key
+#     (user=INSTANCE or user=ACCT@INSTANCE, !password=TOKEN - the
+#     instance is whatever follows the last @, or the whole user
+#     attribute when there is none), the Inferno-native shape: keys
+#     live in the running factotum, typically loaded from the user's
+#     secstore file at login (see bsky(1)'s secstoretest for the
+#     pipeline, exercised end to end there);
+#   a keyspec fragment (anything containing '=') - appended to the
+#     factotum query to pick between several masto keys.
+# Never on a command line, never logged, either way.
+
+getcreds(spec: string): (string, string, string)
+{
+	if(spec != "-" && !contains(spec, "="))
+		return readcreds(spec);
+	fact := load Factotum Factotum->PATH;
+	if(fact == nil)
+		return (nil, nil, sys->sprint("cannot load %s: %r", Factotum->PATH));
+	fact->init();
+	keyspec := "proto=pass service=masto";
+	if(spec != "-")
+		keyspec += " "+spec;
+	(u, p) := fact->getuserpasswd(keyspec);
+	if(u == nil || p == nil)
+		return (nil, nil, sys->sprint("factotum has no key matching %q: %r (is auth/factotum running? add one with: echo 'key %s user=INSTANCE !password=TOKEN' > /mnt/factotum/ctl)", keyspec, keyspec));
+	inst := u;
+	for(i := len u - 1; i >= 0; i--)
+		if(u[i] == '@'){
+			inst = u[i+1:];
+			break;
+		}
+	if(inst == "")
+		return (nil, nil, "factotum key's user attribute names no instance");
+	return (inst, p, nil);
+}
+
+contains(s, sub: string): int
+{
+	n := len sub;
+	for(i := 0; i+n <= len s; i++)
+		if(s[i:i+n] == sub)
+			return 1;
+	return 0;
+}
 
 readcreds(path: string): (string, string, string)
 {
@@ -429,8 +485,13 @@ authget(token, url: string): (string, string)
 
 lookup(inst, token, acct: string): (string, string, string)
 {
-	(out, err) := authget(token,
-		sys->sprint("https://%s/api/v1/accounts/lookup?acct=%s", inst, acct));
+	# lookup is a public endpoint; only send the token when there is
+	# one (publicstatuses() calls this with none)
+	hdrs: list of (string, string);
+	if(token != "")
+		hdrs = ("Authorization", "Bearer "+token) :: nil;
+	(out, err) := fetch("GET",
+		sys->sprint("https://%s/api/v1/accounts/lookup?acct=%s", inst, acct), hdrs, nil);
 	if(err != nil)
 		return (nil, nil, err);
 	(v, jerr) := json->readjson(bufio->sopen(out));
@@ -1143,6 +1204,131 @@ authposttest(): string
 		return "authposttest: bogus-token post unexpectedly succeeded";
 	if(len derr < 13 || derr[0:13] != "server error:")
 		return "authposttest: want a decoded server error, got: "+derr;
+	return nil;
+}
+
+# --- reuse surface (module/decl comment) ---
+
+publicstatuses(inst, acct: string, limit: int): (list of string, string)
+{
+	e := ensureloaded();
+	if(e != nil)
+		return (nil, e);
+	if(limit < 1 || limit > 40)
+		limit = 30;
+	(id, nil, lerr) := lookup(inst, "", acct);
+	if(lerr != nil)
+		return (nil, lerr);
+	(out, err) := fetch("GET",
+		sys->sprint("https://%s/api/v1/accounts/%s/statuses?limit=%d", inst, id, limit),
+		nil, nil);
+	if(err != nil)
+		return (nil, err);
+	(lines, nil, derr) := decode(out, 0);
+	return (lines, derr);
+}
+
+publicprofile(inst, acct: string): (list of string, string)
+{
+	e := ensureloaded();
+	if(e != nil)
+		return (nil, e);
+	(out, err) := fetch("GET",
+		sys->sprint("https://%s/api/v1/accounts/lookup?acct=%s", inst, acct),
+		nil, nil);
+	if(err != nil)
+		return (nil, err);
+	return profiledecode(out);
+}
+
+hometimeline(credfile: string, limit: int): (list of string, string)
+{
+	e := ensureloaded();
+	if(e != nil)
+		return (nil, e);
+	if(limit < 1 || limit > 40)
+		limit = 30;
+	(inst, token, cerr) := getcreds(credfile);
+	if(cerr != nil)
+		return (nil, cerr);
+	(out, err) := authget(token,
+		sys->sprint("https://%s/api/v1/timelines/home?limit=%d", inst, limit));
+	if(err != nil)
+		return (nil, err);
+	(lines, nil, derr) := decode(out, 0);
+	return (lines, derr);
+}
+
+# --- test seam: getcreds() through a REAL factotum, no network ---
+# the same shape as bsky.b's factotumtest (which also exercises the
+# secstore file pipeline; not repeated here): start this tree's own
+# auth/factotum unless one is mounted, feed it a masto key through
+# the ctl file, and require getcreds() to hand back the instance and
+# token - including the ACCT@INSTANCE split - and to fail when no
+# key matches.
+
+Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+
+# Start this tree's own auth/factotum if none is serving (see
+# bsky.b's fuller comment): its file2chan servers outlive this call,
+# so mastotest(1) ends the whole session with quitall(1) after the
+# verdict rather than trying to make emu exit on its own.
+startfactotum(): string
+{
+	if(sys->open("/mnt/factotum/ctl", Sys->ORDWR) != nil)
+		return nil;	# one is already serving
+	c := load Command "/dis/auth/factotum.dis";
+	if(c == nil)
+		return sys->sprint("cannot load /dis/auth/factotum.dis: %r");
+	c->init(nil, "factotum" :: nil);
+	if(sys->open("/mnt/factotum/ctl", Sys->ORDWR) == nil)
+		return sys->sprint("factotum started but /mnt/factotum/ctl not there: %r");
+	return nil;
+}
+
+ctlwrite(line: string): string
+{
+	fd := sys->open("/mnt/factotum/ctl", Sys->ORDWR);
+	if(fd == nil)
+		return sys->sprint("open /mnt/factotum/ctl: %r");
+	b := array of byte line;
+	if(sys->write(fd, b, len b) != len b)
+		return sys->sprint("write /mnt/factotum/ctl: %r");
+	return nil;
+}
+
+factotumtest(): string
+{
+	e := ensureloaded();
+	if(e != nil)
+		return "factotumtest: "+e;
+	if((e = startfactotum()) != nil)
+		return "factotumtest: "+e;
+
+	# plain instance in user=
+	if((e = ctlwrite("key proto=pass service=masto user=test.instance.example !password=masto-test-token")) != nil)
+		return "factotumtest: "+e;
+	(inst, tok, gerr) := getcreds("-");
+	if(gerr != nil)
+		return "factotumtest: getcreds -: "+gerr;
+	if(inst != "test.instance.example" || tok != "masto-test-token")
+		return sys->sprint("factotumtest: got %q/%q, want the test key", inst, tok);
+
+	# acct@instance in user= - the instance is what follows the @
+	if((e = ctlwrite("key proto=pass service=masto user=alice@other.example !password=other-token")) != nil)
+		return "factotumtest: "+e;
+	(inst, tok, gerr) = getcreds("user=alice@other.example");
+	if(gerr != nil)
+		return "factotumtest: acct@instance: "+gerr;
+	if(inst != "other.example" || tok != "other-token")
+		return sys->sprint("factotumtest: acct@instance got %q/%q", inst, tok);
+
+	(nil, nil, gerr) = getcreds("user=nobody@nowhere.example");
+	if(gerr == nil)
+		return "factotumtest: a keyspec matching no key SUCCEEDED";
+
+	if((e = ctlwrite("delkey proto=pass service=masto")) != nil)
+		return "factotumtest: cleanup: "+e;
 	return nil;
 }
 

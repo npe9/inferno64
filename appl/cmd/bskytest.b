@@ -25,7 +25,11 @@ Modelcmd: module
 	resolvetest: fn(): string;
 	livethreadtest: fn(): string;
 	authposttest: fn(): string;
+	factotumtest: fn(): string;
+	secstoretest: fn(): string;
 };
+
+Quitter: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -45,6 +49,8 @@ init(nil: ref Draw->Context, nil: list of string)
 	failed += report("threadtest", m->threadtest());
 	failed += report("profiletest", m->profiletest());
 	failed += report("buildtest", m->buildtest());
+	failed += report("factotumtest", m->factotumtest());
+	failed += report("secstoretest", m->secstoretest());
 
 	# live
 	failed += report("pubtest", m->pubtest());
@@ -53,11 +59,25 @@ init(nil: ref Draw->Context, nil: list of string)
 	failed += report("postpubtest", m->postpubtest());
 	failed += report("authposttest", m->authposttest());
 
-	if(failed){
-		sys->print("bskytest: %d FAILURE(S)\n", failed);
+	if(failed)
+		sys->print("bskytest: %d FAILURE(S)\nFAIL\n", failed);
+	else
+		sys->print("PASS\n");
+
+	# factotumtest/secstoretest start a real auth/factotum, whose
+	# file2chan server procs would otherwise keep emu alive forever
+	# after the verdict. quitall(1) is the tree's own way to end a
+	# session that spawned daemons (wmtest(1) uses it the same way):
+	# it sweeps /prog and kills everything, so emu exits. It never
+	# returns (it kills this proc too), so the verdict is printed
+	# above first - a reader has it before the tear-down. emu cannot
+	# carry a Dis exit status out anyway (runtests(1) documents this),
+	# so PASS/FAIL on stdout is the result, not the exit code.
+	q := load Quitter "/dis/quitall.dis";
+	if(q != nil)
+		q->init(nil, "quitall" :: nil);
+	if(failed)
 		raise "fail:tests";
-	}
-	sys->print("PASS\n");
 }
 
 report(name, err: string): int

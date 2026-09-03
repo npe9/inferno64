@@ -121,7 +121,10 @@ ancestors first, the subject marked with
 descendants indented beneath.
 .PP
 .I Credfile
-holds exactly two lines: the instance hostname with no scheme
+is one of three things:
+.TP
+a file path
+holding exactly two lines: the instance hostname with no scheme
 (\c
 .B mastodon.social
 , not
@@ -138,7 +141,37 @@ exchange entirely: a personal access token is a real, first-class
 credential Mastodon itself issues for exactly this case, not a
 workaround. Keep this file readable only by its owner; nothing here
 enforces that.
-.B Masto
+.TP
+.B -
+ask
+.IR factotum (4)
+for a
+.B "proto=pass service=masto"
+key
+.RB ( user= instance
+or
+.BR user= acct@instance,
+.BI !password= token
+\(em the instance is whatever follows the last
+.BR @ ,
+or the whole
+.B user
+value when there is none), loaded there from the user's
+.IR secstore (1)
+file at login rather than from a plaintext file. Add one with, e.g.,
+.EX
+echo 'key proto=pass service=masto user=INSTANCE !password=TOKEN' >/mnt/factotum/ctl
+.EE
+.TP
+a keyspec fragment
+(anything containing
+.BR = )
+appended to the factotum query to pick among several
+.B masto
+keys.
+.PP
+Either way
+.B masto
 never places the token on a command line (where a
 .IR ps (1)
 listing could see it) or in any diagnostic output.
@@ -184,7 +217,9 @@ TRANSPORT section, not repeated here.
 .IR mastotest (1),
 .IR bsky (1),
 .IR https (2),
-.IR tls12 (2)
+.IR tls12 (2),
+.IR factotum (4),
+.IR secstore (1)
 .SH BUGS
 One timeline (home); no public/local/hashtag timelines, no search,
 no media, no polls, no unfav/unboost/unfollow, no muting or

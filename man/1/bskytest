@@ -32,7 +32,32 @@ the profile fields and counts;
 .TP
 .B buildtest
 the createRecord bodies \(em post, reply (with root/parent refs),
-like, follow \(em pinned byte for byte, plus URL percent-encoding.
+like, follow \(em pinned byte for byte, plus URL percent-encoding;
+.TP
+.B factotumtest
+credential retrieval through a real
+.IR factotum (4):
+starts this tree's own
+.B auth/factotum
+(unless one is already mounted), feeds it a
+.B proto=pass service=bsky
+key through
+.BR /mnt/factotum/ctl ,
+and requires
+.B getcreds
+to return it (both by the bare
+.B -
+spec and a narrowing keyspec) and to fail when no key matches;
+.TP
+.B secstoretest
+the durable path: a factotum ctl line round-tripped through
+.IR secstore (2)'s
+own AES file crypto
+.RB ( mkfilekey / encrypt / decrypt / lines ),
+fed to the running factotum, then fetched back through
+.BR getcreds ;
+a wrong passphrase must fail to decrypt (secstore's own integrity
+check \(em the seam's negative control).
 .PP
 The live seams then hit real endpoints:
 .TP
@@ -74,3 +99,23 @@ Nothing here (deliberately) publishes a post, so the server's final
 acceptance of a well-formed createRecord is not exercised \(em see
 .IR bsky (1)'s
 own BUGS.
+.PP
+Because
+.B factotumtest
+and
+.B secstoretest
+start a real
+.B auth/factotum
+daemon, whose server processes would otherwise keep
+.IR emu (1)
+alive past the verdict, the test ends the whole session with
+.IR quitall (1)
+once it has printed
+.B PASS
+or
+.BR FAIL .
+As with
+.IR runtests (1),
+that line on standard output is the result \(em
+.I emu
+carries no Dis exit status out to its caller.

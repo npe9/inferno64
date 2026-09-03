@@ -17,6 +17,7 @@ TARG=\
 	calendar.dis\
 	clock.dis\
 	coffee.dis\
+	fedi.dis\
 	collide.dis\
 	colors.dis\
 	cprof.dis\

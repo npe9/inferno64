@@ -132,12 +132,44 @@ prints the thread around the post named by
 ancestors first, replies indented beneath their parents.
 .PP
 .I Credfile
-holds exactly two lines: the account handle, then an app password
+is one of three things:
+.TP
+a file path
+holding exactly two lines: the account handle, then an app password
 \(em never the real account password. An app password is generated
 from Bluesky's own Settings > App Passwords page, and can be revoked
 independently of the main login. Keep this file readable only by its
 owner; nothing here enforces that.
-.B Bsky
+.TP
+.B -
+ask
+.IR factotum (4)
+for a
+.B "proto=pass service=bsky"
+key
+.RB ( user= handle,
+.BI !password= apppassword),
+the Inferno-native way: the key lives in the running
+.IR factotum ,
+typically loaded there from the user's
+.IR secstore (1)
+file at login, and never touches a plaintext file or this command's
+argument list. Add one with, e.g.,
+.EX
+echo 'key proto=pass service=bsky user=HANDLE !password=APPPW' >/mnt/factotum/ctl
+.EE
+.TP
+a keyspec fragment
+(anything containing
+.BR = )
+appended to the factotum query, so
+.B user=alice.bsky.social
+selects among several
+.B bsky
+keys.
+.PP
+Either way
+.B bsky
 never places the password on a command line (where a
 .IR ps (1)
 listing could see it) or in any diagnostic output.
@@ -167,7 +199,9 @@ so hosted mode remains the tested configuration.
 .IR bskytest (1),
 .IR masto (1),
 .IR https (2),
-.IR tls12 (2)
+.IR tls12 (2),
+.IR factotum (4),
+.IR secstore (1)
 .SH BUGS
 One network; no feeds other than the home timeline, no search, no
 media (posting or viewing), no quote posts, no unlike/unrepost/

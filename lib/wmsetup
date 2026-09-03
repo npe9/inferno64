@@ -95,6 +95,7 @@ menu System			'Task manager'		{wmapp /Apps/!TaskManager}
 menu System			'Memory monitor'	{wmapp /Apps/!Memory}
 menu System			'Chars'	{wmapp /Apps/!Chars}
 menu System			'About'			{wmapp /Apps/!About}
+menu Misc			'Fediverse'		{wmapp /Apps/!Fedi}
 menu Misc			'Coffee'			{wmapp /Apps/!Coffee}
 menu Misc			'Draw3d'			{wmapp /Apps/!Draw3d}
 menu Misc			'Colours'			{wmapp /Apps/!Colours}

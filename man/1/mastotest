@@ -42,7 +42,25 @@ profile fields, note stripping, counts;
 a hand-built thread: ancestor, marked subject, indented descendant;
 .TP
 .B buildtest
-the status-posting request bodies, pinned byte for byte.
+the status-posting request bodies, pinned byte for byte;
+.TP
+.B factotumtest
+credential retrieval through a real
+.IR factotum (4):
+a
+.B proto=pass service=masto
+key fed through the ctl file and fetched back by
+.BR getcreds ,
+including the
+.B acct@instance
+split (the instance is what follows the last
+.BR @ )
+and a no-match failure. The
+.IR secstore (2)
+file pipeline is exercised end to end by
+.IR bskytest (1)'s
+.B secstoretest
+and not repeated here.
 .PP
 The live seams then hit real
 .B mastodon.social
@@ -80,3 +98,18 @@ world changed rather than the code. Nothing here (deliberately)
 posts, favourites, boosts or follows for real \(em see
 .IR masto (1)'s
 own BUGS.
+.PP
+Because
+.B factotumtest
+starts a real
+.B auth/factotum
+daemon, the test ends the session with
+.IR quitall (1)
+after printing
+.B PASS
+or
+.BR FAIL ;
+that stdout line is the result, not
+.IR emu (1)'s
+exit status (as in
+.IR runtests (1)).

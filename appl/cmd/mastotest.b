@@ -25,7 +25,10 @@ Modelcmd: module
 	lookuptest: fn(): string;
 	livecontexttest: fn(): string;
 	authposttest: fn(): string;
+	factotumtest: fn(): string;
 };
+
+Quitter: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -46,6 +49,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	failed += report("profiletest", m->profiletest());
 	failed += report("contexttest", m->contexttest());
 	failed += report("buildtest", m->buildtest());
+	failed += report("factotumtest", m->factotumtest());
 
 	# live
 	failed += report("pubtest", m->pubtest());
@@ -53,11 +57,22 @@ init(nil: ref Draw->Context, nil: list of string)
 	failed += report("livecontexttest", m->livecontexttest());
 	failed += report("authposttest", m->authposttest());
 
-	if(failed){
-		sys->print("mastotest: %d FAILURE(S)\n", failed);
+	if(failed)
+		sys->print("mastotest: %d FAILURE(S)\nFAIL\n", failed);
+	else
+		sys->print("PASS\n");
+
+	# factotumtest starts a real auth/factotum whose file2chan server
+	# procs would otherwise keep emu alive forever after the verdict.
+	# quitall(1) ends the session (wmtest(1) uses it the same way);
+	# it never returns, so the verdict is printed first. emu carries
+	# no Dis exit status out (runtests(1) documents this), so the
+	# PASS/FAIL line on stdout is the result.
+	q := load Quitter "/dis/quitall.dis";
+	if(q != nil)
+		q->init(nil, "quitall" :: nil);
+	if(failed)
 		raise "fail:tests";
-	}
-	sys->print("PASS\n");
 }
 
 report(name, err: string): int
