@@ -665,3 +665,17 @@ not going to reach a shell this round, and a board that hangs at
 procinit is not one to leave in the tree.  The I2C (BSC at 0x3f804000),
 SPI (0x3f204000) and GPIO (0x3f200000) that motivated the board come
 after it boots.
+.PP
+A second pass got further: the EL1 landing was confirmed live (PSTATE
+EL1h), the BCM interrupt controller was written into trap.c (the timer
+routed through the per-core controller, the source read back there), and
+the config was trimmed the way shakti's was.  It then hit two blockers
+that make raspi3b a focused job of its own, not a tail-end one: the PL011
+console garbles even writing the data register directly, which is
+raspi3b-specific (the same driver and QEMU PL011 model are clean on the
+virt board) and points at the mini-UART being the real console or the
+UART GPIO pins needing their alternate function; and the kernel hangs at
+a fixed PC after the banner, before the scheduler, which needs a
+symbol-bearing relink to chase.  The reusable pieces - the EL3 drop and
+the BCM-controller code - are recorded; the board directory was removed
+again rather than leave a kernel that hangs.
