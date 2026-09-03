@@ -100,7 +100,10 @@ apart, tested.
 Missing: the reservation is not yet a parameter a storage or driver task
 sets at start; the storage-tradespace plan (a compaction task with a
 per-board reservation) is unbuilt \- there is no log-structured flash
-service and no block-device file-system service.
+service and no block-device file-system service.  Built since: a block
+device driven from user space and a log-structured file store on it in
+the server personality, persistent across boots (doc/osprey-progress.ms);
+the reclamation task with its own reservation is still the gap.
 .NH 2
 Files over \[*p]p \- PARTIAL
 .PP
@@ -118,9 +121,11 @@ ring, and answering 9P about its own tree through an exportfs.  It is
 9P2000, though, not the talk's \[*p]p: no immutable versions committed on
 close, no grouped transactions.
 .PP
-Missing: there is still no user-level file-system service (block-device
-or log-structured) behind the 9P \- the server holds a handful of files
-in memory, not a real file system.
+Built since: a log-structured file store on a block device the kernel
+exposed, mounted into the server personality and served to the client
+over 9P, versions committed on close, persistent across boots.  Missing:
+create and remove over 9P, reclamation of the log, and the raw-flash
+tier.
 .NH 2
 Library OS and buddy OS \- PARTIAL
 .PP

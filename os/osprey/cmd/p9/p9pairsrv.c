@@ -47,6 +47,7 @@ extern long p9srv_serve(uchar *msg, long n, uchar *rbuf, long rmax);
 extern long p9buddy_serve(uchar *cdata, uvlong container);
 extern void p9buddy_gone(uvlong container);
 extern void p9blk(uchar *base);		/* blkvirtio.c: the user-level block driver */
+extern void p9lfsmount(void);		/* main.c: the log-structured store, mounted at /n */
 
 static void
 puts(char *s)
@@ -193,6 +194,7 @@ p9serveloop(char *arg)
 	pq = (Queue*)(base + map->replyqueue);
 
 	p9blk(base);		/* the disk, if the kernel exposed one: a driver above the kernel */
+	p9lfsmount();		/* and the file system on it, mounted at /n for the client */
 	puts("p9 server: serving this name space over the ring\n");
 	for(iters = 0; iters < 400; iters++)
 		serve1(pq, (Msg*)((uchar*)pq + pq->message),

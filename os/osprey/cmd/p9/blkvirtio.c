@@ -13,9 +13,10 @@
  *
  * What it does when the server personality comes up, if there is a
  * device: reads sector 0 and prints what the host put there, writes a
- * stamp to sector 1 and reads it back.  The check on the host side reads
- * sector 1 of the image afterwards and finds the stamp: a write from a
- * program above the microkernel reached the disk.
+ * stamp to the last sector - out of the way of the log the file system
+ * keeps from sector 1 - and reads it back.  The check on the host side
+ * reads that sector of the image afterwards and finds the stamp: a write
+ * from a program above the microkernel reached the disk.
  */
 #include <u.h>
 #include <libc.h>
@@ -217,15 +218,46 @@ p9blk(uchar *base)
 	say(line);
 
 	memset(data + Obuf, 0, Sector);
-	seprint((char*)(data + Obuf), (char*)(data + Obuf + Sector), "osprey wrote sector 1 from user space");
-	r = blkio(Tout, 1);
-	seprint(line, e, "blk: write sector 1: status %d\n", r);
+	seprint((char*)(data + Obuf), (char*)(data + Obuf + Sector), "osprey wrote the last sector from user space");
+	r = blkio(Tout, cap - 1);
+	seprint(line, e, "blk: write sector %llud: status %d\n", cap - 1, r);
 	say(line);
 
 	memset(data + Obuf, 0, Sector);
-	r = blkio(Tin, 1);
-	seprint(line, e, "blk: read sector 1 back: status %d, text \"%s\"\n", r, (char*)(data + Obuf));
+	r = blkio(Tin, cap - 1);
+	seprint(line, e, "blk: read sector %llud back: status %d, text \"%s\"\n", cap - 1, r, (char*)(data + Obuf));
 	say(line);
 	seprint(line, e, "blk: 3 requests, %d completions taken by select on the interrupt semaphore\n", selects);
 	say(line);
+}
+
+/*
+ * The face the file system sees, compiled against the kernel headers on
+ * its side and the user headers on this: one sector in or out, and the
+ * device's size.  A request is three descriptors and a select, as above.
+ */
+int
+blkready(void)
+{
+	return bar != nil;
+}
+
+uvlong
+blkcapacity(void)
+{
+	return bar == nil ? 0 : r64(blk->devcfg);
+}
+
+int
+blkxfer(int wr, uvlong lba, void *buf)
+{
+	if(bar == nil)
+		return -1;
+	if(wr)
+		memmove(data + Obuf, buf, Sector);
+	if(blkio(wr ? Tout : Tin, lba) != 0)
+		return -1;
+	if(!wr)
+		memmove(buf, data + Obuf, Sector);
+	return 0;
 }

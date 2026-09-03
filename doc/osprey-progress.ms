@@ -256,13 +256,14 @@ device classes \- eMMC and SD as a block device, and raw NOR or NAND
 flash \- and its storage section says which to build first: the block
 path, then a log-structured service for raw flash whose reclamation is
 an ordinary scheduled task with a reservation the service sets at start
-through the request ABI.  The block device is built, above: a virtio
-block device exposed to the server personality and driven from user
-space, reading and writing real sectors.  What is left: a file system
-on it that the personality serves \- the only file server behind the
-9P still holds a handful of files in memory \- then the log-structured
-service for the raw-flash tier with its reclamation task, and a task
-setting its own reservation through the request ABI.
+through the request ABI.  The block device and a log-structured file
+store on it are built, above: the store is the plan's own design for
+the raw-flash tier, running on the block tier for now.  What is left:
+reclamation as a scheduled task with a reservation it sets through the
+request ABI \- the piece the plan says makes the log bounded rather
+than unbounded \- create and remove over 9P, and the raw-flash tier
+itself, which is the same store on a device whose erase and bad blocks
+are the store's problem.
 .PP
 .B "4.  \[*p]p for files, and \[*p]p devices."
 \[*p]p is spoken about containers \- their attributes, tickets,
@@ -2933,8 +2934,46 @@ disk.  The harness attaches the image with
 and that run is made without QEMU's snapshot, or the write would be
 thrown away.  This is the eMMC/SD tier of the plan's storage section
 as far as the block device: what the adapter exposes upward is block
-read and write.  What is not built: the file system on it, which is
-the next piece, and the raw-flash tier.
+read and write.
+.PP
+The file system on it is built, and it is the shape the plan's storage
+section says storage on this system should have: a log
+.CW ( os/osprey/cmd/p9/devlfs.c ,
+the device
+.CW #l
+in the server personality's name space, reaching the driver through
+three plain-typed calls).  A file's version is one record \- a header
+sector naming the file, its version and its length, then its data in
+the sectors after it \- appended at the head of the log and never
+changed: a version is immutable once written, and it is written when
+the file is closed, which is what slide 19 says of every file and what
+the plan says \[*p]p wants of storage.  Mounting is a scan of the log
+from sector 1 to the first sector that is not a record, taking each
+file's latest version as it goes; nothing is written in place, so a
+power loss leaves a log one record shorter, never a torn file.  The
+server personality mounts it at
+.CW /n
+with
+.CW MCREATE ,
+and on a fresh disk creates
+.CW hello
+as version 1; the client personality walks to it through the mounted
+root over 9P across the ring, reads it, writes it, and the clunk
+commits version 2 to the disk over there; and a second boot on the same
+image finds two records and the file at version 2 with the client's
+text.  Two things had to move for it: the 9P exporter walked with
+mounts turned off, so nothing a personality mounted was part of what it
+exported, and now follows them, which is what an exportfs does; and the
+block driver's own demonstration wrote sector 1, the log's first
+record, so it writes the last sector instead.  What is not built: the
+exporter answers no create or remove over 9P, so a client can rewrite a
+file the server made but not make one; a version is at most 8 KB and
+there are thirty-two files; a removed file is not a tombstone yet; and
+reclamation \- copying live versions forward and reusing the space
+behind them, which the plan makes a scheduled task with a reservation
+of its own \- so until it exists the log only grows.  Checked, with a
+second boot, by
+.CW /scripts/osprey-check-p9pair.py .
 .NH 2
 Built and proven since
 .PP

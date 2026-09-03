@@ -775,6 +775,15 @@ queue, the requests \- is a program in the container
 .RB ( os/osprey/cmd/p9/blkvirtio.c ),
 which selects on the semaphore for each completion.  One device, one
 container; the device must keep all four regions in one memory BAR.
+On it the personality keeps a log-structured file store
+.RB ( os/osprey/cmd/p9/devlfs.c ,
+the device
+.BR #l ),
+mounted at
+.B /n
+of its name space and so served to its client over 9P: a file's version
+is a record appended to the log and committed when the file is closed,
+and the log is scanned at mount.  Nothing reclaims the log yet.
 .PP
 .B uart
 hands a uart to a container.  From then on its interrupt handler does

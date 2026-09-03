@@ -432,7 +432,7 @@ p9main(void)
 void
 p9paircli(void)
 {
-	Chan *tc, *rc;
+	Chan *tc, *rc, *root;
 	uchar buf[2048];
 	int fd, nent, m;
 	long dn;
@@ -449,6 +449,7 @@ p9paircli(void)
 	tc = namec("#L", Aopen, ORDWR, 0);
 	rc = mntattach(tc, nil, "", 0);
 	cclose(tc);
+	root = cclone(rc);		/* an unopened root to walk from, below */
 	rc = devtab[rc->type]->open(rc, OREAD);
 	fd = newfd(rc, OREAD);
 	nent = 0;
@@ -464,6 +465,54 @@ p9paircli(void)
 		}
 	}
 	print("p9: pair-client: read %d entries from the server personality's exported root over the ring\n", nent);
+	/*
+	 * The file system on the disk, over 9P: the server personality
+	 * mounted its log-structured store at /n, so /n/hello is a file on
+	 * the block device, read here across the ring; then written, which
+	 * commits a new version to the disk when the fid is clunked, and
+	 * read again.
+	 */
+	if(!waserror()){
+		char text[256];
+		char *names[2];
+		Chan *hc;
+		long ln;
+
+		/*
+		 * Walked from the mounted root itself, not by path: this
+		 * personality's own root device has an empty /n of its own
+		 * that a path would find first.
+		 */
+		names[0] = "n";
+		names[1] = "hello";
+		hc = cclone(root);
+		if(walk(&hc, names, 2, 1, nil) < 0)
+			error("no /n/hello at the server");
+		hc = devtab[hc->type]->open(hc, OREAD);
+		ln = devtab[hc->type]->read(hc, text, sizeof text - 1, 0);
+		if(ln < 0) ln = 0;
+		text[ln] = 0;
+		cclose(hc);
+		print("p9: pair-client: read /n/hello from the disk over 9P: \"%s\"\n", text);
+
+		hc = cclone(root);
+		walk(&hc, names, 2, 1, nil);
+		hc = devtab[hc->type]->open(hc, OWRITE|OTRUNC);
+		devtab[hc->type]->write(hc, "written by the client over 9P, a new version on the disk", 56, 0);
+		cclose(hc);		/* the clunk commits it, over there, to the disk */
+
+		hc = cclone(root);
+		walk(&hc, names, 2, 1, nil);
+		hc = devtab[hc->type]->open(hc, OREAD);
+		ln = devtab[hc->type]->read(hc, text, sizeof text - 1, 0);
+		if(ln < 0) ln = 0;
+		text[ln] = 0;
+		cclose(hc);
+		print("p9: pair-client: wrote /n/hello over 9P and read it back: \"%s\"\n", text);
+		poperror();
+	} else
+		print("p9: pair-client: /n/hello: %s\n", up->errstr);
+	cclose(root);
 	p9close(fd);
 	/*
 	 * Start a program: the Linux binary that lives in the server
@@ -501,6 +550,62 @@ extern void p9linuxfile(void);		/* p9linuxfile.c: the legacy binary as /boot/lin
  * The buddy server: bring up this personality's name space, then answer
  * 9P about it for whoever delegates to this container over the ring.
  */
+/*
+ * The file system on the disk: mount the log-structured store (#l, on
+ * the block device the kernel exposed and blkvirtio.c drives) at /n of
+ * this personality's name space, where the client reaches it over 9P,
+ * and make sure it holds a file.  On a fresh disk that file is created
+ * here as version 1; on a disk that has been through this before it is
+ * found, with whatever version was last committed to it.  Called from
+ * the serve loop once the device is up; without a device there is
+ * nothing to mount and nothing is said.
+ */
+void
+p9lfsmount(void)
+{
+	extern int blkready(void);
+	Chan *lc, *nc;
+	char buf[256];
+	int fd;
+	long n;
+
+	if(!blkready())
+		return;
+	if(waserror()){
+		print("lfs: mount failed: %s\n", up->errstr);
+		return;
+	}
+	lc = namec("#l", Atodir, 0, 0);
+	nc = namec("/n", Atodir, 0, 0);
+	cmount(lc, nc, MREPL|MCREATE, "");
+	cclose(lc);
+	cclose(nc);
+	poperror();
+	print("lfs: mounted at /n of the server personality's name space\n");
+	fd = -1;
+	if(!waserror()){		/* a fresh disk has no such file: open raises, and it is made below */
+		fd = p9open("/n/hello", OREAD);
+		n = p9read(fd, buf, sizeof buf - 1);
+		if(n < 0)
+			n = 0;
+		buf[n] = 0;
+		print("lfs: found /n/hello on the disk: \"%s\"\n", buf);
+		p9close(fd);
+		poperror();
+	}
+	if(fd < 0){
+		if(waserror()){
+			print("lfs: create /n/hello: %s\n", up->errstr);
+			return;
+		}
+		fd = p9create("/n/hello", OWRITE, 0666);
+		p9write(fd, "hello from the log-structured store, version 1", 46);
+		p9close(fd);
+		poperror();
+		print("lfs: created /n/hello, version 1\n");
+	}
+}
+
 void
 p9server(char *arg)
 {

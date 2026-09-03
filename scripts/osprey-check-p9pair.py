@@ -33,7 +33,8 @@ def main():
     # a raw disk image for the user-level block driver: sector 0 says who wrote it,
     # sector 1 is what the driver writes; no -snapshot, so the write must reach it
     img = tempfile.mktemp(prefix='osprey-p9pair-blk-', suffix='.img')
-    d = bytearray(64 * 512)
+    nsect = 2048
+    d = bytearray(nsect * 512)
     stamp = b'osprey block device test image, sector 0 written by the host'
     d[:len(stamp)] = stamp
     open(img, 'wb').write(d)
@@ -41,25 +42,43 @@ def main():
                     '-l', log, '--blk', img,
                     '-t', '150', '-u', 'the microkernel idles'],
                    env=env, capture_output=True, text=True)
-    try: sector1 = open(img, 'rb').read()[512:1024]
-    except OSError: sector1 = b''
-    try: os.unlink(img)
-    except OSError: pass
+    try: lastsector = open(img, 'rb').read()[(nsect-1)*512:]
+    except OSError: lastsector = b''
     try: t = plain(open(log, errors='replace').read())
     except OSError: t = ''
+    # a second boot on the same image: what the first committed to the log is found again
+    log2 = tempfile.mktemp(prefix='osprey-p9pair-boot2-', suffix='.log')
+    subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
+                    '-l', log2, '--blk', img,
+                    '-t', '150', '-u', 'the microkernel idles'],
+                   env=env, capture_output=True, text=True)
+    try: t2 = plain(open(log2, errors='replace').read())
+    except OSError: t2 = ''
+    try: os.unlink(img)
+    except OSError: pass
 
     m = re.search(r"pair-client: read (\d+) entries from the server personality's exported root", t)
     results = [
         ("the kernel exposes the virtio block device's registers and interrupt to the server personality, and nothing more",
          'osprey blk: exposed virtio block device' in t and 'as "virtioblk"' in t),
         ("a driver above the kernel brings the device up and reads sector 0, the host's text",
-         '64 sectors, queue at pa' in t
+         '2048 sectors, queue at pa' in t
          and 'blk: read sector 0: status 0, text "osprey block device test image, sector 0 written by the host"' in t),
         ("it writes sector 1 and reads it back, each completion taken by select on the interrupt's semaphore",
-         'blk: write sector 1: status 0' in t and 'blk: read sector 1 back: status 0, text "osprey wrote sector 1 from user space"' in t
+         'blk: write sector 2047: status 0' in t and 'blk: read sector 2047 back: status 0, text "osprey wrote the last sector from user space"' in t
          and re.search(r'blk: 3 requests, [1-9]\d* completions taken by select', t) is not None),
         ("and the write reached the disk: the host reads the stamp back from the image after the run",
-         sector1.startswith(b'osprey wrote sector 1 from user space')),
+         lastsector.startswith(b'osprey wrote the last sector from user space')),
+        ("a log-structured file store on that disk is mounted into the server personality's name space, and creates a file: version 1 on the log",
+         'lfs: mounted the log: 0 records' in t and 'lfs: mounted at /n' in t
+         and 'lfs: committed hello version 1, 46 bytes, at sector 1' in t),
+        ("the client reads the file across the ring over 9P, writes it, and the clunk commits version 2 to the disk",
+         'p9: pair-client: read /n/hello from the disk over 9P: "hello from the log-structured store, version 1"' in t
+         and 'lfs: committed hello version 2, 56 bytes' in t
+         and 'p9: pair-client: wrote /n/hello over 9P and read it back: "written by the client over 9P, a new version on the disk"' in t),
+        ("a second boot on the same image finds the log with both records and the file at version 2: the store is persistent",
+         'lfs: mounted the log: 2 records' in t2 and 'lfs: hello version 2, 56 bytes' in t2
+         and 'lfs: found /n/hello on the disk: "written by the client over 9P, a new version on the disk"' in t2),
         ("the microkernel runs a client personality that mounts a second personality over the ring",
          'pair-client: mounting the server personality over the ring' in t),
         ("and a second personality, a container of its own, answers 9P about its name space",
@@ -87,10 +106,11 @@ def main():
     for what, ok in results:
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))
         if not ok: bad += 1
-    if keep or bad: print('log %s' % log)
+    if keep or bad: print('log %s\nlog %s' % (log, log2))
     else:
-        try: os.unlink(log)
-        except OSError: pass
+        for l in (log, log2):
+            try: os.unlink(l)
+            except OSError: pass
     return 1 if bad else 0
 
 sys.exit(main())

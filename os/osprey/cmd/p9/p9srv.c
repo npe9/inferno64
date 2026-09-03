@@ -101,7 +101,8 @@ p9srv(uchar *msg, long n, uchar *rbuf, long rmax)
 		for(i = 0; i < t.nwname; i++){
 			if(waserror())
 				break;			/* walk raised: stop here */
-			if(walk(&c, &t.wname[i], 1, 1, nil) < 0){
+			/* mounts are followed: what this personality mounted is part of what it exports */
+			if(walk(&c, &t.wname[i], 1, 0, nil) < 0){
 				poperror();
 				break;
 			}
@@ -145,6 +146,17 @@ p9srv(uchar *msg, long n, uchar *rbuf, long rmax)
 			r.count = devtab[c->type]->read(c, data, cnt, t.offset);
 			r.data = (char*)data;
 		}
+		break;
+
+	case Twrite:
+		sf = sfind(t.fid);
+		if(sf == nil){ r.type = Rerror; r.ename = "unknown fid"; break; }
+		c = sf->c;
+		if(waserror()){
+			r.type = Rerror; r.ename = up->errstr; break;
+		}
+		r.count = devtab[c->type]->write(c, t.data, t.count, t.offset);
+		poperror();
 		break;
 
 	case Tclunk:

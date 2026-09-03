@@ -14,7 +14,7 @@ OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \
          os/osprey/port/devenv.c os/osprey/port/qio.c os/osprey/port/devmnt.c os/osprey/port/devpipe.c os/osprey/port/devsrv.c \
-         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c; do
+         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c; do
 	o=/tmp/p9_$(basename $f .c).6
 	6c $INC -o $o $f
 	OBJ="$OBJ $o"
