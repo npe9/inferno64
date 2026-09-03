@@ -362,4 +362,8 @@ instruction.
 run and compared. `tests/typeerr/*.e` must fail to typecheck with the
 diagnostics in the matching `.err` file, never with a compiler
 fatal. `tests/err/*.e` must fail to parse. `tests/run.sh` and
-`tests/runtime.sh` are the runners; `mk test` runs both.
+`tests/runtime.sh` are the runners; `mk test` runs both, then the
+four C-versus-Ember comparisons (`lexcmp.sh`, `astcmp.sh`,
+`chkcmp.sh`, `discmp.sh`) and `bootstrap.sh`, which has the
+self-hosted compiler compile itself and that compiler compile the
+sources again, requiring identical bytes.
