@@ -56,8 +56,15 @@ archconsole(void)
 void
 archreboot(void)
 {
+	/*
+	 * QEMU's sifive,test0 finisher powers the machine off on a write
+	 * of 0x5555 (0x7777 would reboot), the machine-mode counterpart of
+	 * the supervisor boards' SBI SRST call.  So exit() actually stops
+	 * the machine instead of spinning here.
+	 */
+	*(volatile u32int*)(uintptr)SYSCON = 0x5555;
 	for(;;)
-		idle();
+		idle();		/* not reached if the finisher works */
 }
 
 void

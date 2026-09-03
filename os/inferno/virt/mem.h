@@ -35,6 +35,7 @@
 #define	VIRTIO_NDEV	8
 #define	CLINT		((uintptr)0x02000000)
 #define	RTC0		((uintptr)0x101000)	/* google,goldfish-rtc */
+#define	SYSCON		((uintptr)0x100000)	/* sifive,test0 finisher */
 #define	PLIC		((uintptr)0xc << 24)	/* 0x0c000000 SiFive PLIC */
 
 /* pci-host-ecam-generic (QEMU virt) — empty until -device … */
