@@ -1700,7 +1700,13 @@ ecom(Src *src, Node *nto, Node *n)
 			callcom(src, Ocall, n, nto);
 		return nto;
 	case Ospawn:
-		callcom(src, Ospawn, left, nto);
+		/* left is the Ocall; a call through a value (a closure
+		 * literal, a function-typed variable) spawns via fpcall()
+		 * exactly as Ocall above dispatches it */
+		if(left->left->op == Oind)
+			fpcall(src, Ospawn, left, nto);
+		else
+			callcom(src, Ospawn, left, nto);
 		return nto;
 	case Ocomposite: {
 		/*

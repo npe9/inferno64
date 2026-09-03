@@ -230,6 +230,8 @@ dupn(Node *old)
 
 	n = allocmem(sizeof *n);
 	*n = *old;
+	/* a copy is a new node: checked state doesn't carry over */
+	n->flags &= ~NCHECKED;
 	return n;
 }
 

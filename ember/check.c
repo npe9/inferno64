@@ -2086,8 +2086,40 @@ compositefields(Node *n)
 /*
  * expression checking; annotates n->ty and returns it
  */
+static Type *echk1(Node*);
+
+/*
+ * echk() is NOT naturally idempotent: it rewrites nodes in place
+ * (Odot -> Oind/Omdot/Oname, Oindex -> Oindx/Oinds, a call to a type
+ * name -> Ocast, a bound method call's receiver prepended to its
+ * arguments, a load's type name consumed, ...) and several callers
+ * check the same node twice -- inferfn() checks every argument to
+ * unify type parameters and Ocall's own loop then checks them again;
+ * a bound-method receiver was checked through the dot and again as an
+ * argument.  each such pair was a bug waiting for the first rewritten
+ * shape to reach it ("unsupported expression indx", "get is not
+ * declared", "cannot use string as no type").  so check once: a node
+ * that has been through echk1() keeps its ty and is never re-entered.
+ * dupn() clears the mark on copies.
+ */
 static Type*
 echk(Node *n)
+{
+	Type *t;
+
+	if(n == nil)
+		return tnone;
+	if(n->flags & NCHECKED)
+		return n->ty;
+	t = echk1(n);
+	if(n->ty == nil)
+		n->ty = t;
+	n->flags |= NCHECKED;
+	return t;
+}
+
+static Type*
+echk1(Node *n)
 {
 	Type *t, *tr;
 	Decl *d;
@@ -2687,6 +2719,7 @@ echk(Node *n)
 			case Odot:
 			case Omdot:
 			case Ocall:
+			case Ofunclit:	/* func(...){...}(args): called (or spawned) at once */
 				break;
 			default:
 				nerror(n, "cannot call this expression");
