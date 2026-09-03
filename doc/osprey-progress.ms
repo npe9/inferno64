@@ -721,28 +721,24 @@ and
 are all the stock sources, untouched.  Every other configuration builds
 unchanged.
 .PP
-UDP receive over loopback still stops short, and the scheduler's own
-deadlock dump pins it down.  When the announcing side's blocking read
-deadlocks, every proc is asleep - the reader on the udp conversation's
-queue, and
+UDP receive over loopback still stops short: the announcing side's
+blocking read deadlocks, which the scheduler catches and reports rather
+than corrupting.  The instrumenting done so far is not yet conclusive and
+the two readings do not fully agree: the deadlock dump caught every proc
+asleep with three packets unprocessed on the loopback queue (pointing at a
+lost wakeup to
+.CW loopbackread ),
+while a trace of
 .CW loopbackread
-parked on the loopback queue with the sent datagram still sitting in it,
-unprocessed.  So the
-.CW qpass
-the udp write does into the loopback queue never wakes
-.CW loopbackread ,
-even though the reader's
-.CW qwait
-sets
-.CW Qstarve
-before it sleeps.  TCP does not hit this because its connect blocks
-right after sending, handing
-.CW loopbackread
-the processor at once; the datagram path sends and only later reads, and
-the wakeup in between is lost.  The next step is to instrument
-.CW Qstarve
-on the loopback queue across the write.  That, the osprey-interface
-medium and a two-machine wire test are what remain of item 7a.
+showed it draining the queue and sleeping, and a print at
+.CW udpiput
+never fired at all (pointing instead at the datagram never being sent to
+the loopback queue, or never demuxed to udp).  What is certain is that the
+datagram never reaches the announcing conversation and its reader blocks
+forever; the exact break in the write-to-loopback-to-demux path is not yet
+found.  TCP over the same loopback is unaffected and stable.  That, the
+osprey-interface medium and a two-machine wire test are what remain of
+item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
