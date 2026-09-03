@@ -638,7 +638,11 @@ not a hand-written responder.  And the handshake now completes: the
 connection reads back
 .CW "Established ... swin 1048560>>4 ... qscale 4" \-
 the real tcp.c three-way handshake, window scaling and all, done over
-loopback in a user-space process.
+loopback in a user-space process.  Then a data round-trip: the accepted
+side reads back the 42 bytes the connecting side wrote,
+.CW "hello from osprey over the real plan 9 tcp" \-
+the real tcp.c segmenting, delivering and reassembling a payload through
+qio, not just exchanging control segments.
 .PP
 Completing it needed the looped SYN delivered back into the stack.  The
 stock
