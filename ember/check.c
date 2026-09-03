@@ -2931,6 +2931,11 @@ echk1(Node *n)
 			n->ty = terror;
 			return n->ty;
 		}
+		/* a shift count is always an int, whatever is shifted
+		 * (big(1) << 40, b << 2 for a byte), as in limbo */
+		if((n->op == Olsh || n->op == Orsh) && tr == tint
+		&& (t->kind == Tbig || t->kind == Tbyte))
+			tr = t;
 		if(!tequal(t, tr)){
 			nerror(n, "type mismatch: %T %s %T", t, opname[n->op], tr);
 			n->ty = terror;
@@ -4285,7 +4290,9 @@ stchk(Node *n)
 				echk(n->left);
 				echk(n->right);
 				if(chklval(n->left, "assign to") && n->right->ty != terror
-				&& !tequal(n->left->ty, n->right->ty))
+				&& !tequal(n->left->ty, n->right->ty)
+				&& !((n->op == Olshas || n->op == Orshas) && n->right->ty == tint
+				&& (n->left->ty->kind == Tbig || n->left->ty->kind == Tbyte)))
 					nerror(n, "type mismatch in %s", opname[n->op]);
 				return;
 			case Oinc: case Odec:
