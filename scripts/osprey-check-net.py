@@ -56,6 +56,20 @@ def pair(port, a, b, amac='52:54:00:00:c3:01', bmac='52:54:00:00:c3:02'):
         out.append(t)
     return out, logs
 
+# the same stack, but netsrv is told to drop echo from the peer.
+def stackblock():
+    t = list(STACK)
+    for i, c in enumerate(t):
+        if c.startswith('/tmp/netsrv '):
+            t[i] = c.replace('10.9.0.1 &', '10.9.0.1 10.9.0.2 &')
+    return t
+
+FILTERASK = [
+ "sleep 14; ip/ipconfig ether /net/ether0 10.9.0.2 255.255.255.0",
+ "sleep 16; echo '#### ping'; ip/ping -n 4 -w 1000 10.9.0.1",
+ "echo '#### end'",
+]
+
 # the machine whose stack is a program.  A long line loses a character to
 # the console, so each of these is short.
 STACK = [
@@ -182,6 +196,16 @@ def main():
                     "network caps (%s of a quarter megabyte charged)"
                     % (m.group(1) if m else 'no line'),
                     m is not None and int(m.group(1)) < 8192))
+
+    iso()
+    (stack3, ask3), logs3 = pair(17899, stackblock(), FILTERASK)
+    logs = logs + logs3
+    results.append(("netsrv given a rule drops echo from the blocked source and says so",
+                    'netsrv filter: echo from 10.9.0.2 is dropped' in stack3
+                    and re.search(r'netsrv filter: dropped an echo, [1-9]\d* so far', stack3) is not None))
+    back3 = len(re.findall(r'^\d+: rtt', between(ask3, 'ping', 'end'), re.M))
+    results.append(("and the peer it blocks gets no echo back (%d back)" % back3,
+                    back3 == 0))
 
     bad = 0
     for what, ok in results:

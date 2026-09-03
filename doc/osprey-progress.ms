@@ -367,10 +367,21 @@ frame.  Resuming a process rather than restarting it is the piece, and
 it is the deepest one left.
 .PP
 .B "7.  The stack in user space, beyond a demonstration."
-netsrv answers ARP for one address and echo.  The talk was "working on a
-packet filter" and names routing, gateways and firewalls as what the
-system is for; the plan moves protocol stacks into user space.  A
-filter, then UDP and TCP, on the zero-copy path that exists.
+netsrv answers ARP for one address and echo, and now, when it is given a
+rule, drops echo from a blocked source and counts it \- the talk's
+packet filter, run in user space over the frames the card put in the
+container's own slice
+.CW ( blocked
+in
+.CW os/osprey/cmd/netsrv.c ).
+The net check shows it: netsrv told to block the peer's address drops
+the peer's pings, which get nothing back, while the runs with no rule
+answer all eight; checked by
+.CW /scripts/osprey-check-net.py .
+The talk names routing, gateways and firewalls as what the system is
+for, and a drop-by-rule filter is the firewall's own primitive.  What is
+left is the reach of the stack: UDP and TCP, on the same zero-copy path,
+so that what runs above it is a service and not a demonstration.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

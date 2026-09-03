@@ -12,7 +12,10 @@
  * on its own request ring, on the semaphore a received packet gives,
  * and on the semaphore a transmit buffer gives when the card has
  * finished with it.  What it does with a frame is answer ARP for one
- * address and answer ICMP echo, which is the whole of it: enough to be
+ * address, answer ICMP echo, and, when it is given a rule, drop echo
+ * from a blocked source and count it - the talk's packet filter, run in
+ * user space over the frames the card put in the container's own slice.
+ * The rest is enough to be
  * pinged, and nothing more.
  *
  * usage: netsrv segment size rxsem txsem a.b.c.d
@@ -290,6 +293,17 @@ answerping(uchar *f, long n)
 	return sendbuf(bi, Ehdrlen + 20 + iclen) == 0;
 }
 
+static uchar blockip[4];		/* an echo source to drop, or zero for none */
+static int blocking;
+static long dropped;
+
+/* the filter: whether this frame is to be dropped rather than answered */
+static int
+blocked(uchar *ip)
+{
+	return blocking && memcmp(ip+12, blockip, 4) == 0;
+}
+
 static void
 srvmain(int argc, char **argv)
 {
@@ -305,6 +319,8 @@ srvmain(int argc, char **argv)
 	txsem = (int)o9num(argv[4]);
 	if(parseip4(argv[5], myip) < 0)
 		o9die("that is not an address");
+	if(argc > 6 && parseip4(argv[6], blockip) == 0)
+		blocking = 1;
 	if(o9attach(&o, argv[1], slicesize) < 0)
 		o9die(o.err);
 	if(findea() < 0)
@@ -324,6 +340,11 @@ srvmain(int argc, char **argv)
 			o9outs(".");
 	}
 	o9outs("\n");
+	if(blocking){
+		o9outs("netsrv filter: echo from ");
+		for(i = 0; i < 4; i++){ o9outd(blockip[i]); if(i < 3) o9outs("."); }
+		o9outs(" is dropped\n");
+	}
 	o9flush();
 
 	got = arps = pings = 0;
@@ -366,6 +387,13 @@ srvmain(int argc, char **argv)
 			arps += answerarp(o.base + off, n);
 			break;
 		case 0x0800:
+			if(n >= Ehdrlen + 20 && o.base[off+Ehdrlen+9] == 1
+			&& blocked(o.base + off + Ehdrlen)){
+				dropped++;	/* the filter: an echo from the blocked source */
+				o9outs("netsrv filter: dropped an echo, "); o9outd(dropped);
+				o9outs(" so far\n"); o9flush();
+				break;
+			}
 			pings += answerping(o.base + off, n);
 			break;
 		}
