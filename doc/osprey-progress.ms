@@ -868,8 +868,28 @@ or a protocol that a second
 .CW Fs
 overwrites in steady state - the Plan 9 stack was written for one
 .CW Fs
-per kernel.  Catching the write to 0xffffffff wants a hardware watchpoint
-through the qemu gdbstub, which is the next step.
+per kernel.  The value itself is a clue.
+.CW 0xffffffff
+is
+.CW 0x00000000ffffffff \-
+exactly what a 32-bit write of
+.CW -1
+leaves when it clobbers the low half of a 64-bit return address whose
+high half was already zero, which every code address here is.  On this
+toolchain
+.CW long
+is 32 bits, so that is a
+.CW long -sized
+store overrunning a stack buffer onto a return address a few frames up -
+which is why the low-end kproc canary does not catch it (the smash is mid
+stack), and why it takes a second
+.CW Fs
+of churn to reach.  So the search is a
+.CW long
+array or a
+.CW long
+written past its bound in the tcp/ip timer path, and a hardware
+watchpoint through the qemu gdbstub is the way to catch the store.
 .PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
