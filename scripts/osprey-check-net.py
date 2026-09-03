@@ -100,6 +100,7 @@ def asker(flood):
      CD,
      "sleep 14; ip/ipconfig ether /net/ether0 10.9.0.2 255.255.255.0",
      "sleep 16; echo '#### ping'; ip/ping -n 8 10.9.0.1",
+     "echo '#### udp'; {echo osprey-udp-echo; sleep 3} | con udp!10.9.0.1!7 & sleep 4",
      "echo '#### arp'; cat /net/arp",
      # the driver queued its own receive buffers before the interface was
      # given away, and uses them up before it takes one of the
@@ -153,6 +154,8 @@ def main():
     results.append(("eight echo requests answered, so the frames it built "
                     "reached the other machine (%d back)" % got, got >= 6))
 
+    results.append(("a udp datagram to that stack's echo port answered by the same program",
+                    'netsrv udp: echoed a datagram' in stack))
     results.append(("what the program itself counted",
                     re.search(r'netsrv \d+ frames, \d+ arp, [1-9]\d* echo',
                               stack) is not None))

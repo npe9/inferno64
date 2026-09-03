@@ -379,9 +379,22 @@ the peer's pings, which get nothing back, while the runs with no rule
 answer all eight; checked by
 .CW /scripts/osprey-check-net.py .
 The talk names routing, gateways and firewalls as what the system is
-for, and a drop-by-rule filter is the firewall's own primitive.  What is
-left is the reach of the stack: UDP and TCP, on the same zero-copy path,
-so that what runs above it is a service and not a demonstration.
+for, and a drop-by-rule filter is the firewall's own primitive.  The
+reach of the stack has grown one transport past ICMP: a UDP datagram to
+the stack's echo port is answered with its payload, from it back to the
+sender, built and sent on the same zero-copy path
+.CW ( answerudp
+in
+.CW os/osprey/cmd/netsrv.c ).
+The net check dials it from the peer with
+.CW con
+over
+.CW udp!10.9.0.1!7
+and the stack echoes the datagram, which it prints; checked by
+.CW /scripts/osprey-check-net.py .
+What is left is TCP, which is a state machine rather than a datagram
+answered in place, and the routing and gateways a firewall does beyond
+dropping.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

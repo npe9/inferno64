@@ -293,6 +293,73 @@ answerping(uchar *f, long n)
 	return sendbuf(bi, Ehdrlen + 20 + iclen) == 0;
 }
 
+/*
+ * UDP echo: a datagram to our port 7 is answered with its own payload,
+ * from us back to whoever sent it, addresses and ports swapped.  This is
+ * the next reach of the user-space stack past ICMP - a real transport
+ * datagram built and sent on the same zero-copy path - the start of the
+ * "UDP and TCP" the plan names.
+ */
+static int
+answerudp(uchar *f, long n)
+{
+	uchar *ip, *ud, *t, *tip, *tud;
+	long hl, iplen, udlen, dlen;
+
+	if(n < Ehdrlen + 20)
+		return 0;
+	ip = f + Ehdrlen;
+	if((ip[0]>>4) != 4)
+		return 0;
+	hl = (ip[0] & 0xf) * 4;
+	if(hl < 20 || n < Ehdrlen + hl + 8)
+		return 0;
+	if(ip[9] != 17)					/* udp */
+		return 0;
+	if(memcmp(ip+16, myip, 4) != 0)			/* not for us */
+		return 0;
+	iplen = nhgets(ip+2);
+	if(iplen < hl + 8 || Ehdrlen + iplen > n)
+		return 0;
+	ud = ip + hl;
+	if(nhgets(ud+2) != 7)				/* our echo port */
+		return 0;
+	udlen = nhgets(ud+4);				/* udp length: header + data */
+	if(udlen < 8 || hl + udlen > iplen)
+		return 0;
+	dlen = udlen - 8;
+	if((uvlong)(Ehdrlen + 20 + udlen) > o.map->txbufsize)
+		return 0;
+	{
+		int bi = freebuf();
+		if(bi < 0){
+			o9outs("netsrv: no free transmit buffer for udp\n");
+			o9flush();
+			return 0;
+		}
+		t = o.base + o.map->txbuf + (uvlong)bi*o.map->txbufsize;
+		memmove(t, f+Eaddrlen, Eaddrlen);	/* back where it came from */
+		memset(t+Eaddrlen, 0, Eaddrlen);
+		hnputs(t+12, 0x0800);
+		tip = t + Ehdrlen;
+		memset(tip, 0, 20);
+		tip[0] = 0x45;
+		hnputs(tip+2, (ushort)(20 + udlen));
+		tip[8] = 64;				/* ttl */
+		tip[9] = 17;				/* udp */
+		memmove(tip+12, myip, 4);
+		memmove(tip+16, ip+12, 4);		/* to the sender */
+		hnputs(tip+10, csum(tip, 20));
+		tud = tip + 20;
+		hnputs(tud+0, 7);			/* from our port */
+		hnputs(tud+2, nhgets(ud+0));		/* to the sender's port */
+		hnputs(tud+4, (ushort)udlen);
+		hnputs(tud+6, 0);			/* checksum optional in ipv4 udp */
+		memmove(tud+8, ud+8, dlen);		/* the payload, back */
+		return sendbuf(bi, Ehdrlen + 20 + udlen) == 0;
+	}
+}
+
 static uchar blockip[4];		/* an echo source to drop, or zero for none */
 static int blocking;
 static long dropped;
@@ -309,7 +376,7 @@ srvmain(int argc, char **argv)
 {
 	Message rep;
 	uvlong slicesize, off;
-	long n, got, arps, pings;
+	long n, got, arps, pings, udps;
 	int rxsem, txsem, i;
 
 	if(argc < 6)
@@ -347,7 +414,7 @@ srvmain(int argc, char **argv)
 	}
 	o9flush();
 
-	got = arps = pings = 0;
+	got = arps = pings = udps = 0;
 	for(;;){
 		/*
 		 * The talk's driver task waits on three things.  Two of them
@@ -395,6 +462,11 @@ srvmain(int argc, char **argv)
 				break;
 			}
 			pings += answerping(o.base + off, n);
+			if(answerudp(o.base + off, n)){
+				udps++;
+				o9outs("netsrv udp: echoed a datagram, "); o9outd(udps);
+				o9outs(" so far\n"); o9flush();
+			}
 			break;
 		}
 		/*
