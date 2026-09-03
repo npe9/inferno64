@@ -33,7 +33,7 @@ void (*ipprotoinit[])(Fs*) = {
 	nil,
 };
 
-extern void syncloopbackmediumlink(void);
+extern void loopbackmediumlink(void);
 extern int p9open(char*, int);
 extern long p9read(int, void*, long);
 extern long p9write(int, void*, long);
@@ -64,7 +64,7 @@ p9ipup(void)
 		print("p9 ip: bring-up failed: %s\n", up->errstr);
 		return;
 	}
-	syncloopbackmediumlink();
+	loopbackmediumlink();
 	ic = namec("#I", Atodir, 0, 0);
 	nc = namec("/net", Atodir, 0, 0);
 	cmount(ic, nc, MAFTER, "");

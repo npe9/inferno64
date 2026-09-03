@@ -9,3 +9,25 @@ TEXT	ospreyxcall(SB), 1, $0
 	MOVQ	$60, RARG
 	SYSCALL
 	RET
+
+/*
+ * Cooperative context switch for the personality's kprocs, the classic
+ * Plan 9 pair: setlabel saves SP and the return PC and returns 0;
+ * gotolabel restores them and returns 1, so a gotolabel to a saved label
+ * resumes as if the setlabel there had just returned 1.  Only SP and PC
+ * need saving - the callee-saved registers live in the stack frames each
+ * side returns back through.
+ */
+TEXT setlabel(SB), 1, $-4
+	MOVQ	SP, 0(RARG)			/* store SP */
+	MOVQ	0(SP), BX			/* store return PC */
+	MOVQ	BX, 8(RARG)
+	MOVL	$0, AX				/* return 0 */
+	RET
+
+TEXT gotolabel(SB), 1, $-4
+	MOVQ	0(RARG), SP			/* restore SP */
+	MOVQ	8(RARG), AX			/* put return PC on the stack */
+	MOVQ	AX, 0(SP)
+	MOVL	$1, AX				/* return 1 */
+	RET

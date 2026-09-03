@@ -644,82 +644,88 @@ side reads back the 42 bytes the connecting side wrote,
 the real tcp.c segmenting, delivering and reassembling a payload through
 qio, not just exchanging control segments.
 .PP
-Completing it needed the looped SYN delivered back into the stack.  The
-stock
+Completing it needed the looped SYN delivered back into the stack, and
+that needed the one thing the shim never had: a scheduler.  The stock
 .CW loopbackmedium.c
 queues each packet and injects it from a separate
 .CW loopbackread
-kproc; the personality is single-threaded and the shim's
+kproc, so with
 .CW kproc
-is a no-op, so that reader never runs.  A
-.CW tsleep
-to yield to it instead panics
-.CW donotify \-
-the cooperative sleep/wakeup path for user tasks doing kernel-style
-blocking is not wired, and the shim is built on the opposite premise
-(sleep only ever waits on a condition already made true by a synchronous
-transport).  So the loopback was put on that same footing: a
-personality-local synchronous medium,
-.CW os/osprey/ip/syncloopbackmedium.c ,
-whose
-.CW bwrite
-injects the packet straight back into the stack in the caller's context.
-The SYN is delivered at once, the SYN-ACK at once in turn, and by the
-time the connecting side reaches its sleep the connection is already
-.CW Established .
-.CW ip.c ,
-.CW tcp.c
-and
-.CW ipifc.c
-are untouched; only the medium, the wire abstraction, is made
-zero-latency.  Every other configuration (pc64 and the rest) keeps the
-real kproc-driven
-.CW loopbackmedium.c ,
-and all build unchanged.
-.PP
-The synchronous loopback carries TCP because every wait tcp.c makes
-during the handshake and the data transfer lands on a condition the
-immediate injection has already made true.  A client path that instead
-blocks on a receive the loopback has not yet satisfied - UDP receive, as
-tried - still reaches for the cooperative sleep the shim does not provide
-and panics
-.CW donotify .
-So the general answer is the same cooperative scheduler named above, not
-a per-protocol patch; TCP is proved, UDP receive waits on it.
-.PP
-Building that scheduler is a bounded piece with one sharp obstacle worth
-recording.  The switch itself is easy \- the classic Plan 9
+a no-op that reader never ran.  The personality now has the classic
+Plan 9 cooperative scheduler,
+.CW os/osprey/cmd/p9/p9sched.c
+with the
 .CW setlabel / gotolabel
-(save SP and PC, return 0 then 1) over a
+switch in
+.CW xcall.s :
+each kproc is a
 .CW Proc
-per kproc, each with its own stack, a run queue, and
-.CW sleep / wakeup / ready
-that
-.CW gotolabel
-between them.  The obstacle is the link: the personality links the host
+with its own stack and a saved
+.CW Label ,
+.CW sched
+puts a running caller back on the run queue and resumes the next,
+.CW sleep
+blocks on a
+.CW Rendez
+until
+.CW wakeup
+readies it, and both re-check the condition.  No preemption is needed \-
+the personality yields only where the real kernel does, at
+.CW sleep .
+.PP
+The one sharp obstacle was the link.  The personality links the host
 .CW libc.a ,
 whose
 .CW sleep(int)
-already owns the symbol
+owns the symbol
 .CW sleep ,
 so the kernel
 .CW "sleep(Rendez*, int(*)(void*), void*)"
 that
 .CW qio.c 's
-blocking reader calls cannot be defined without a collision \- the same
-wall that stopped overriding
+blocking reader calls could not be defined without a collision \- the
+same wall that stopped overriding
 .CW fastticks .
-The qio path links today only because its
-.CW sleep
-resolves to libc's and is never reached on the synchronous path.  The
-fix is a kernel-side rename (a
-.CW "#define sleep ksleep"
-reaching the port sources but not the ring transport's user-header
-compile) so the real reader can block and the loopback read kproc can
-wake it.  That done, the stock
+The fix is a per-file rename: the kernel-side sources are compiled
+.CW -Dsleep=ksleep
+(the ring transport, on the host headers, is not), so the stack calls
+.CW ksleep
+while the transport keeps libc's
+.CW sleep .
+.PP
+With that in place the stock kproc-driven
 .CW loopbackmedium.c
-works unchanged and UDP receive with it.  The osprey-interface medium
-and a two-machine wire test are what remain of item 7a.
+runs unchanged: the connecting side blocks in
+.CW sleep
+on
+.CW c->cr ,
+.CW sched
+switches to
+.CW loopbackread ,
+which
+.CW qbread s
+the looped SYN and injects it, the handshake runs to
+.CW Established
+and
+.CW wakeup
+resumes the connector - the same
+.CW "Established ... qscale 4"
+and the same 42-byte data round-trip as before, now over the real
+asynchronous medium, and stable across repeated boots.  The interim
+synchronous loopback is removed;
+.CW ip.c ,
+.CW tcp.c ,
+.CW ipifc.c
+and
+.CW loopbackmedium.c
+are all the stock sources, untouched.  Every other configuration builds
+unchanged.
+.PP
+UDP receive over loopback still stops short: its blocking read deadlocks
+(the scheduler catches it and panics rather than corrupting), a delivery
+or lost-wakeup subtlety in the datagram path that TCP's stream path does
+not hit.  That, the osprey-interface medium and a two-machine wire test
+are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

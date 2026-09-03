@@ -195,13 +195,8 @@ panic(char *fmt, ...)
 	exits("panic");
 }
 
-/* process and sync primitives: stubs until wired to the microkernel */
-void	pexit(char *s, int f){ USED(s); USED(f); exits(nil); }
-void	kproc(char *n, void (*f)(void*), void *a){ USED(n); USED(f); USED(a); }
-void	tsleep(Rendez *r, int (*f)(void*), void *a, ulong ms){ USED(r); USED(f); USED(a); USED(ms); }
-Proc*	wakeup(Rendez *r){ USED(r); return nil; }
-int	setlabel(Label *l){ USED(l); return 0; }
-void	gotolabel(Label *l){ USED(l); }
+/* pexit, kproc, tsleep, wakeup, sleep(ksleep), sched, ready live in
+ * p9sched.c now; setlabel/gotolabel in xcall.s. */
 long	seconds(void){ return 0; }
 
 /* an empty device table for now: the mount/9P device comes next */
@@ -308,7 +303,9 @@ void
 chandevreset(void)
 {
 	int i;
+	extern void schedinit(void);
 
+	schedinit();		/* make the server proc 0 before any reset starts a kproc */
 	todinit();
 	for(i = 0; devtab[i] != nil; i++)
 		devtab[i]->reset();
@@ -351,7 +348,7 @@ void	cwrite(Chan*, uchar*, int, vlong){}
 Block*	iallocb(int n){ return allocb(n); }
 Block*	iallocbp(Bpool*){ return nil; }
 int	islo(void){ return 1; }
-void	sched(void){}
+/* sched() lives in p9sched.c */
 void	validstat(uchar*, int){}
 Conf	conf;
 
