@@ -721,11 +721,28 @@ and
 are all the stock sources, untouched.  Every other configuration builds
 unchanged.
 .PP
-UDP receive over loopback still stops short: its blocking read deadlocks
-(the scheduler catches it and panics rather than corrupting), a delivery
-or lost-wakeup subtlety in the datagram path that TCP's stream path does
-not hit.  That, the osprey-interface medium and a two-machine wire test
-are what remain of item 7a.
+UDP receive over loopback still stops short, and the scheduler's own
+deadlock dump pins it down.  When the announcing side's blocking read
+deadlocks, every proc is asleep - the reader on the udp conversation's
+queue, and
+.CW loopbackread
+parked on the loopback queue with the sent datagram still sitting in it,
+unprocessed.  So the
+.CW qpass
+the udp write does into the loopback queue never wakes
+.CW loopbackread ,
+even though the reader's
+.CW qwait
+sets
+.CW Qstarve
+before it sleeps.  TCP does not hit this because its connect blocks
+right after sending, handing
+.CW loopbackread
+the processor at once; the datagram path sends and only later reads, and
+the wakeup in between is lost.  The next step is to instrument
+.CW Qstarve
+on the loopback queue across the write.  That, the osprey-interface
+medium and a two-machine wire test are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
