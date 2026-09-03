@@ -15,8 +15,9 @@ entry stores every register into the Ureg, syscall() reads the Linux
 convention from it, and each file call is forwarded over the ring to the
 buddy, which emulates it against its own name space.  The program cannot
 tell a peer served it, and checks that a callee-saved register survived
-every trap.  This is the paper's buddyOS for the Linux ABI: per-process
-interposition of both system calls and page faults.
+every trap.  brk, anonymous mmap and munmap are answered by the kernel's
+own address-space service.  This is the paper's buddyOS for the Linux
+ABI: per-process interposition of both system calls and page faults.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -59,6 +60,11 @@ def main():
          re.search(r'linux: open\("/"\) returned fd \d+', t) is not None),
         ("its read() is forwarded and the buddy returns the file's bytes, copied back to the Linux buffer",
          m is not None and int(m.group(1)) > 0),
+        ("brk grows a heap the kernel zero-fills on demand, and it holds what the program writes",
+         'linux: brk grew the heap by 65536 bytes, zero-filled and holding what was written' in t),
+        ("anonymous mmap gives a mapping the program writes at both ends, and munmap takes it back",
+         re.search(r'linux: mmap gave an anonymous mapping at 0x[0-9a-f]+, written at both ends, munmap returned 0', t) is not None
+         and 'WRONG' not in t),
         ("close() returns 0 and a callee-saved register (rbx) survives every syscall, as the Linux ABI requires",
          'linux: close returned 0' in t and 'rbx preserved across every syscall' in t
          and 'CLOBBERED' not in t),

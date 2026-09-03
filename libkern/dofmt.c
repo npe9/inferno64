@@ -334,7 +334,17 @@ _ifmt(Fmt *f)
 	vu = 0;
 	u = 0;
 	if(f->r == 'p'){
-		u = (ulong)va_arg(f->args, void*);
+		/*
+		 * A pointer is as wide as the machine's, not as wide as a
+		 * ulong: on a 64-bit target ulong is 32 bits (the Plan 9
+		 * idiom), and taking the pointer through it printed only the
+		 * low half of every kernel address.
+		 */
+		if(sizeof(void*) > sizeof(ulong)){
+			isv = 1;
+			vu = (uvlong)(uintptr)va_arg(f->args, void*);
+		}else
+			u = (ulong)(uintptr)va_arg(f->args, void*);
 		f->r = 'x';
 		fl |= FmtUnsigned;
 	}else if(fl & FmtVLong){

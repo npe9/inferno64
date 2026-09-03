@@ -13,6 +13,18 @@ sys3(long n, long a, long b, long c)
 }
 
 static long
+sys6(long n, long a, long b, long c, long d, long e, long f)
+{
+	long r;
+	register long r10 __asm__("r10") = d;
+	register long r8 __asm__("r8") = e;
+	register long r9 __asm__("r9") = f;
+	__asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b), "d"(c),
+		"r"(r10), "r"(r8), "r"(r9) : "rcx", "r11", "memory");
+	return r;
+}
+
+static long
 slen(const char *s)
 {
 	long n = 0;
@@ -24,6 +36,31 @@ static void
 say(const char *s)
 {
 	sys3(1, 2, (long)s, slen(s));		/* write(2, s) */
+}
+
+/* append a string, no libc */
+static char*
+cat(char *p, const char *s)
+{
+	while(*s)
+		*p++ = *s++;
+	*p = 0;
+	return p;
+}
+
+/* append a hex number */
+static char*
+hex(char *p, unsigned long v)
+{
+	static const char hx[] = "0123456789abcdef";
+	int sh, started = 0;
+	*p++ = '0'; *p++ = 'x';
+	for(sh = 60; sh >= 0; sh -= 4){
+		int d = (v >> sh) & 15;
+		if(d || started || sh == 0){ *p++ = hx[d]; started = 1; }
+	}
+	*p = 0;
+	return p;
 }
 
 /* append a decimal, no libc */
@@ -63,14 +100,59 @@ lmain(void)
 	say(line);
 
 	n = sys3(0, fd, (long)buf, sizeof buf);	/* read(fd, buf, 512) */
-	p = line; p = (char*)__builtin_memcpy(p, "linux: read(fd, buf, 512) returned ", 35) + 35;
-	p = num(p, n); p = (char*)__builtin_memcpy(p, " bytes, served by the buddy\n", 28) + 28; *p = 0;
+	p = cat(line, "linux: read(fd, buf, 512) returned ");
+	p = num(p, n); p = cat(p, " bytes, served by the buddy\n"); *p = 0;
 	say(line);
 
 	r = sys3(3, fd, 0, 0);			/* close(fd) */
-	p = line; p = (char*)__builtin_memcpy(p, "linux: close returned ", 22) + 22;
+	p = cat(line, "linux: close returned ");
 	p = num(p, r); *p++ = '\n'; *p = 0;
 	say(line);
+
+	{
+		/* the heap: brk, then memory that must be zero and must hold a write */
+		long b0, b1, i, sum;
+		volatile char *h;
+		b0 = sys3(12, 0, 0, 0);			/* brk(0) */
+		b1 = sys3(12, b0 + 65536, 0, 0);	/* brk(b0 + 64K) */
+		p = cat(line, "linux: brk grew the heap by ");
+		p = num(p, b1 - b0);
+		p = cat(p, " bytes");
+		if(b1 == b0 + 65536){
+			h = (volatile char*)b0;
+			sum = 0;
+			for(i = 0; i < 65536; i += 4096)
+				sum += h[i];			/* fresh pages read as zero */
+			for(i = 0; i < 65536; i += 4096)
+				h[i] = (char)(i >> 12) + 1;
+			for(i = 0; i < 65536; i += 4096)
+				sum += h[i] != (char)((i >> 12) + 1);
+			p = cat(p, sum == 0 ? ", zero-filled and holding what was written" : ", WRONG contents");
+		}
+		p = cat(p, "\n");
+		say(line);
+	}
+	{
+		/* an anonymous mapping: mmap(0, 2 pages, rw, private|anon, -1, 0), use it, munmap it */
+		long m, u;
+		volatile char *q;
+		m = sys6(9, 0, 8192, 3, 0x22, -1, 0);
+		p = cat(line, "linux: mmap gave an anonymous mapping at ");
+		if(m > 0){
+			q = (volatile char*)m;
+			q[0] = 7; q[8191] = 9;
+			p = hex(p, m);
+			p = cat(p, (q[0] == 7 && q[8191] == 9) ? "" : " WRONG");
+			u = sys3(11, m, 8192, 0);	/* after the last touch: it is gone */
+			p = cat(p, ", written at both ends, munmap returned ");
+			p = num(p, u);
+		} else {
+			p = cat(p, "error ");
+			p = num(p, m);
+		}
+		p = cat(p, "\n");
+		say(line);
+	}
 
 	__asm__ volatile("" : "+r"(keep));
 	if(keep == 0x5a5a1234)

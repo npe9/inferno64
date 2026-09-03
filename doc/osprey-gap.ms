@@ -149,9 +149,10 @@ Linux convention can be read and its callee-saved registers returned,
 and the same buddy answers its open, read and close.  Its page faults
 are interposed too: the binary is a file in the buddy's file system,
 the buddy lays it out for the kernel and supplies each page as it is
-first touched, so the kernel carries no copy of it.  Only the file
-calls the demonstration makes are mapped, and the Plan 9 legacy binary
-is still eager-mapped by the kernel.  p9pair is the library-OS
+first touched, so the kernel carries no copy of it; brk, anonymous
+mmap and munmap are answered by the kernel's address-space service.
+Only the file calls the demonstration makes are mapped, and the Plan 9
+legacy binary is still eager-mapped by the kernel.  p9pair is the library-OS
 mechanism, one-directional (the client mounts the server, not the
 reverse).
 .PP

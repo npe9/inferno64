@@ -237,14 +237,15 @@ something already shared to compare it against.
 .B "2.  The rest of an ABI."
 The paper's buddy interposes on a legacy binary's system calls and its
 page faults, and for the Linux binary p9linux now does both: the buddy
-is its loader and its pager.  What is left on that path is the Linux
-calls a real program makes beyond open, read, close and lseek \- brk
-and mmap first, since a libc needs them before it needs anything else
-\- and a way for a fault the buddy declines to reach the process as a
-signal rather than the microkernel's donotify panic.  The Plan 9
-legacy binary (p9buddy) is still eager-mapped by the kernel; giving it
-the same exec-and-page path is the same code with an a.out reader in
-the buddy.
+is its loader and its pager, and the kernel answers brk, anonymous
+mmap and munmap from its own address-space service.  What is left on
+that path is what a libc asks for next \- a file mapping (which is the
+page path with an offset), the descriptor calls a program makes on
+stdin and stdout beyond write, and a way for a fault the buddy
+declines to reach the process as a signal rather than the
+microkernel's donotify panic.  The Plan 9 legacy binary (p9buddy) is
+still eager-mapped by the kernel; giving it the same exec-and-page
+path is the same code with an a.out reader in the buddy.
 .NH 1
 A personality outside the kernel
 .PP
@@ -2597,7 +2598,46 @@ reaches.  What is still not interposed: the Plan 9 legacy binary
 is eager-mapped by the kernel as before, and a fault the buddy declines
 still ends in the microkernel's donotify panic rather than a signal the
 process could take.  Only the file calls the demonstration makes are
-mapped.  It is checked by
+mapped.
+.PP
+Memory is the kernel's to give, and the Linux calls that ask for it are
+answered there rather than forwarded: they are the microkernel's
+address-space service, not a file the buddy holds.
+.CW brk
+moves the top of a heap segment exec placed a page above the image
+(the kernel's own
+.CW ibrk ,
+demand-zero, so a fresh page reads as zero); anonymous private
+.CW mmap
+makes a demand-zero segment at the next free address from 1 TB up,
+and
+.CW munmap
+detaches the segment mmap made at exactly that address
+.CW ( ospreylinuxbrk ,
+.CW ospreylinuxmmap ,
+.CW ospreylinuxmunmap
+in
+.CW os/osprey/port/userinit.c ,
+reached from
+.CW dosyscall
+in the
+.CW p9linux
+configuration).  A file mapping is refused, and errors are the negative
+errno Linux uses.  The program grows its break by 64 KB, checks the
+pages read as zero and hold what it writes, maps two pages, writes both
+ends and unmaps them.  Two things on the way were not kernel bugs and
+are worth writing down.  A 40-bit constant in an enum is an int in this
+compiler and came out zero, so the mmap base is a define; and this
+kernel's
+.CW %p
+prints the low thirty-two bits of a pointer, because the shared
+.CW libkern/dofmt.c
+takes the pointer as a
+.CW ulong
+- the idiom AGENTS.md describes - which made a mapping at 1 TB look
+like one at zero until the prints were changed to
+.CW %llux .
+It is checked by
 .CW /scripts/osprey-check-p9linux.py .
 .NH 2
 Built and proven since

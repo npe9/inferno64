@@ -419,6 +419,8 @@ faultamd64(Ureg* ureg, void*)
 		if(r < 0){
 			if(!user)
 				error("legacy image: no page at that address");
+			print("user fault: %s addr=%#llux pc=%#llux, no page for it in the buddy's image\n",
+				read? "read": "write", (uvlong)addr, (uvlong)ureg->pc);
 			faultnote("fault", read? "read": "write", addr);
 			return;
 		}
@@ -428,6 +430,7 @@ faultamd64(Ureg* ureg, void*)
 			dumpregs(ureg);
 			panic("kernel fault: %s addr=%#p", read? "read": "write", addr);
 		}
+		print("user fault: %s addr=%#llux pc=%#llux\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc);
 		faultnote("fault", read? "read": "write", addr);
 	}
 

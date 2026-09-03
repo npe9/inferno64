@@ -164,6 +164,17 @@ ospreyloadlegacy(void)
  */
 uintptr	ospreyuserentry;
 
+/* 1 TB: above any static image, below the stack.  Not an enum: those are int here. */
+#define Linuxmmapbase	0x10000000000ull
+enum {
+	Lenomem		= 12,
+	Leinval		= 22,
+	Mapanon		= 0x20,
+};
+static int ospreylinuxheap = -1;
+static uintptr ospreylinuxbreak;
+static uintptr ospreylinuxmmapnext;
+
 /*
  * Exec a legacy Linux binary through the buddy.  The kernel holds no copy
  * of it: it is a file in the buddy's file system, the buddy reads its ELF
@@ -202,8 +213,98 @@ ospreyexeclinux(char *name)
 		top = segend;
 		seg++;
 	}
-	print("osprey buddy: %s laid out by the buddy: entry %#p, %d segments, no page mapped yet\n",
-		name, (uintptr)entry, n);
+	/*
+	 * The heap brk grows, a page above the image, in a slot of its
+	 * own; the kernel zero-fills it on demand (SG_BSS), which is the
+	 * address-space service and not the buddy's file.
+	 */
+	if(seg < NSEG){
+		up->seg[seg] = newseg(SG_BSS, top, 1);
+		ospreylinuxheap = seg;
+		ospreylinuxbreak = top;
+		seg++;
+	}
+	ospreylinuxmmapnext = Linuxmmapbase;
+	print("osprey buddy: %s laid out by the buddy: entry %#llux, %d segments, no page mapped yet\n",
+		name, entry, n);
+}
+
+/*
+ * The Linux address-space calls, answered by the kernel: they ask for
+ * memory, which is the microkernel's own service, not a file the buddy
+ * holds.  brk moves the heap segment's top (Linux returns the new break
+ * on success and the old one on failure); mmap of anonymous private
+ * memory makes a demand-zero segment at the next free address above
+ * Linuxmmapbase (a hint is honoured only as a hint, and a file mapping
+ * is refused); munmap detaches the segment mmap made at exactly that
+ * address.  Errors are the negative errno Linux uses.
+ */
+
+uintptr
+ospreylinuxbrk(uintptr addr)
+{
+	if(ospreylinuxheap < 0)
+		return (uintptr)-Lenomem;
+	if(addr == 0)
+		return ospreylinuxbreak;
+	if(waserror())
+		return ospreylinuxbreak;	/* unchanged: the old break */
+	ibrk(addr, ospreylinuxheap);
+	poperror();
+	ospreylinuxbreak = addr;
+	return addr;
+}
+
+uintptr
+ospreylinuxmmap(uintptr addr, uintptr len, int prot, int flags, int fd, vlong off)
+{
+	uintptr va;
+	int sno;
+
+	USED(prot, off);
+	if(len == 0 || (flags & Mapanon) == 0 || fd != -1)
+		return (uintptr)-Leinval;
+	len = PGROUND(len);
+	va = addr != 0 && (addr & (BY2PG-1)) == 0 && isoverlap(addr, len) == nil && addr + len < USTKTOP-USTKSIZE ?
+		addr : ospreylinuxmmapnext;
+	while(isoverlap(va, len) != nil)
+		va += len;
+	if(va + len >= USTKTOP-USTKSIZE)
+		return (uintptr)-Lenomem;
+	for(sno = 0; sno < NSEG; sno++)
+		if(up->seg[sno] == nil && sno != ESEG)
+			break;
+	if(sno == NSEG)
+		return (uintptr)-Lenomem;
+	if(waserror())
+		return (uintptr)-Lenomem;
+	up->seg[sno] = newseg(SG_BSS, va, len/BY2PG);
+	poperror();
+	if(va == ospreylinuxmmapnext)
+		ospreylinuxmmapnext = va + len;
+	print("osprey user: mmap %lud bytes anonymous at %#llux\n", (ulong)len, (uvlong)va);
+	return va;
+}
+
+uintptr
+ospreylinuxmunmap(uintptr addr, uintptr len)
+{
+	Segment *s;
+	int sno;
+
+	for(sno = 0; sno < NSEG; sno++){
+		s = up->seg[sno];
+		if(s != nil && s->base == addr && s->top == addr + PGROUND(len) && sno != ospreylinuxheap && sno != SSEG)
+			break;
+	}
+	if(sno == NSEG)
+		return (uintptr)-Leinval;	/* only whole mappings mmap made */
+	qlock(&up->seglock);
+	up->seg[sno] = nil;
+	qunlock(&up->seglock);
+	putseg(s);
+	flushmmu();
+	return 0;
 }
 
 /*

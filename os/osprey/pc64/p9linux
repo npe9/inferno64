@@ -12,7 +12,8 @@
 # everything else preserved); syscallentry (l.s) stores every register
 # into the Ureg, syscall() (trap.c) reads that convention when the
 # process is marked oslinux, dosyscall below answers write to the
-# console and exit itself, and ospreybuddyforward maps open, read,
+# console and exit itself and brk, anonymous mmap and munmap from the
+# kernel's own address-space service, and ospreybuddyforward maps open, read,
 # close, lseek to their Plan 9 equivalents and forwards them over the
 # ring to the buddy.  Checked by scripts/osprey-check-p9linux.py: the
 # buddy lays the binary out and pages in its text, rodata and bss, the
@@ -170,6 +171,9 @@ port
 	 * boot process down (that would panic) but idles the machine.
 	 */
 	extern long ospreybuddyforward(ulong, uintptr*);
+	extern uintptr ospreylinuxbrk(uintptr);
+	extern uintptr ospreylinuxmmap(uintptr, uintptr, int, int, int, vlong);
+	extern uintptr ospreylinuxmunmap(uintptr, uintptr);
 	typedef uintptr Xsyscall(va_list);
 
 	uintptr xpwrite(va_list list)
@@ -314,6 +318,12 @@ port
 				} else if(scallnr == 60 || scallnr == 231){
 					xexits((va_list)up->s.args);	/* exit / exit_group */
 					*retp = 0;
+				} else if(scallnr == 12){		/* brk */
+					*retp = ospreylinuxbrk((uintptr)la[0]);
+				} else if(scallnr == 9){		/* mmap */
+					*retp = ospreylinuxmmap((uintptr)la[0], (uintptr)la[1], (int)la[2], (int)la[3], (int)la[4], (vlong)la[5]);
+				} else if(scallnr == 11){		/* munmap */
+					*retp = ospreylinuxmunmap((uintptr)la[0], (uintptr)la[1]);
 				} else
 					*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
 			}

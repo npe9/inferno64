@@ -2416,7 +2416,7 @@ ospreybuddyfault(uintptr addr, uintptr pc, int read)
 		return -1;
 	}
 	kunmap(k);
-	print("osprey buddy: page %#p of the legacy image supplied by the buddy\n", va);
+	print("osprey buddy: page %#llux of the legacy image supplied by the buddy\n", (uvlong)va);
 	segpage(s, pg);
 	return fault(addr, pc, read) < 0 ? -1 : 0;
 }
