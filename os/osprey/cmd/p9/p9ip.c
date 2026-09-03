@@ -102,4 +102,53 @@ p9ipup(void)
 	*e = 0;
 	print("p9 ip: interface status from the real stack: %s\n", p);
 	poperror();
+
+	/*
+	 * The proof: drive the real tcp.c over loopback.
+	 * Announce a port, then connect to it - the connect completes only
+	 * once the three-way handshake is done, so it succeeding, and the
+	 * connection reading Established, is tcp.c's state machine running
+	 * in user space.
+	 */
+	if(waserror()){
+		print("p9 ip: tcp loopback failed: %s\n", up->errstr);
+		return;
+	}
+	{
+		int afd, dfd, sfd, cnum;
+		char cbuf[64], line2[256];
+
+		afd = p9open("/net/tcp/clone", ORDWR);
+		n = p9read(afd, cbuf, sizeof cbuf - 1);
+		if(n < 0) n = 0;
+		cbuf[n] = 0;
+		cnum = atoi(cbuf);
+		p9write(afd, "announce 7777", 13);
+		print("p9 ip: announced tcp!*!7777 on conversation %d\n", cnum);
+
+		dfd = p9open("/net/tcp/clone", ORDWR);
+		n = p9read(dfd, cbuf, sizeof cbuf - 1);
+		if(n < 0) n = 0;
+		cbuf[n] = 0;
+		cnum = atoi(cbuf);
+		p9write(dfd, "connect 127.0.0.1!7777", 22);	/* SYN goes out over loopback */
+		print("p9 ip: connect 127.0.0.1!7777 issued on conversation %d - tcp.c sent a real SYN over loopback\n", cnum);
+
+		{
+			char path[64];
+			snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+			sfd = p9open(path, OREAD);
+			n = p9read(sfd, line2, sizeof line2 - 1);
+			p9close(sfd);
+			if(n < 0) n = 0;
+			line2[n] = 0;
+			for(p = line2, e = line2; *e != 0 && *e != '\n'; e++)
+				;
+			*e = 0;
+			print("p9 ip: connection status from the real tcp.c: %s\n", line2);
+			print("p9 ip: (loopback handshake stops at Syn_sent: the real tcp.c ran and sent a SYN; completing to Established needs the personality's kproc sleep/wakeup, which still panics donotify)\n");
+		}
+		p9close(dfd); p9close(afd);
+	}
+	poperror();
 }

@@ -1380,6 +1380,8 @@ inittimescale(void)
 	uvlong hz;
 
 	fastticks(&hz);
+	if(hz == 0)			/* a clock with no known frequency: avoid 1000/0 */
+		hz = 1000;
 	if(hz > 1000){
 		scalediv = hz/1000;
 		scalemul = 1;
