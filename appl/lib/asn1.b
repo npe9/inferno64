@@ -294,7 +294,7 @@ value_decode(a: array of byte, i, n, length, kind, constr: int) : (int, int, ref
 			else
 				val = ref Value.Set(vl);
 		}
-	NumericString or PrintableString or TeletexString
+	UTF8String or NumericString or PrintableString or TeletexString
 	or VideotexString or IA5String or UTCTime
 	or GeneralizedTime or GraphicString or VisibleString
 	or GeneralString or UniversalString or BMPString =>
@@ -639,7 +639,7 @@ val_enc(b: array of byte, e: ref Elem, i, lenonly: int) : (string, int, int)
 					return (err, i, 0);
 			}
 	}
-	NumericString or PrintableString or TeletexString
+	UTF8String or NumericString or PrintableString or TeletexString
 	or VideotexString or IA5String or UTCTime
 	or GeneralizedTime or GraphicString or VisibleString
 	or GeneralString or UniversalString or BMPString =>
@@ -838,7 +838,7 @@ Elem.is_string(e: self ref Elem) : (int, string)
 {
 	if(e.tag.class == Universal) {
 		case e.tag.num {
-		NumericString or PrintableString or TeletexString
+		UTF8String or NumericString or PrintableString or TeletexString
 		or VideotexString or IA5String or GraphicString
 		or VisibleString or GeneralString or UniversalString
 		or BMPString =>
@@ -920,6 +920,7 @@ Tag.tostring(t: self Tag) : string
 		EMBEDDED_PDV => ans = "EMBEDDED PDV";
 		SEQUENCE => ans = "SEQUENCE";
 		SET => ans = "SET";
+		UTF8String => ans = "UTF8String";
 		NumericString => ans = "NumericString";
 		PrintableString => ans = "PrintableString";
 		TeletexString => ans = "TeletexString";

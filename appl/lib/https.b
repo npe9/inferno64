@@ -51,11 +51,30 @@ init(): string
 request(method, url: string, hdrs: list of (string, string), body: array of byte):
 	(int, list of (string, string), array of byte, string)
 {
+	return requestto(method, url, "", hdrs, body);
+}
+
+requestto(method, url, dialaddr: string, hdrs: list of (string, string), body: array of byte):
+	(int, list of (string, string), array of byte, string)
+{
 	(host, port, pathq, uerr) := parseurl(url);
 	if(uerr != nil)
 		return (0, nil, nil, uerr);
 
-	(fd, derr) := connect(host, port);
+	fd: ref Sys->FD;
+	derr: string;
+	if(dialaddr != ""){
+		# dial the pinned address, but keep host for SNI/cert/Host
+		a := dialaddr;
+		if(!hasport(a))
+			a += "!"+port;
+		c := dial->dial("tcp!"+a, nil);
+		if(c == nil)
+			derr = sys->sprint("https: dial %s: %r", dialaddr);
+		else
+			fd = c.dfd;
+	}else
+		(fd, derr) = connect(host, port);
 	if(derr != nil)
 		return (0, nil, nil, derr);
 
@@ -108,6 +127,15 @@ request(method, url: string, hdrs: list of (string, string), body: array of byte
 }
 
 # ---- connection ----
+
+# does a dial address already carry a "!port" suffix?
+hasport(a: string): int
+{
+	for(i := 0; i < len a; i++)
+		if(a[i] == '!')
+			return 1;
+	return 0;
+}
 
 connect(host, port: string): (ref Sys->FD, string)
 {

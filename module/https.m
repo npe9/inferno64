@@ -31,6 +31,17 @@ Https: module
 	request: fn(method, url: string, hdrs: list of (string, string), body: array of byte):
 		(int, list of (string, string), array of byte, string);
 
+	# As request(), but the TCP connection goes to dialaddr (a literal
+	# "ip" or "ip!port") instead of resolving the url's host. The url's
+	# host is still used for the Host header, SNI, and certificate
+	# verification, so the cert must name that host. This is how a
+	# pinned endpoint is reached without prior name resolution - most
+	# importantly, it is how doh(2) bootstraps DNS itself (dial a
+	# resolver's known IP, verify its real hostname's certificate).
+	# dialaddr "" behaves exactly like request().
+	requestto: fn(method, url, dialaddr: string, hdrs: list of (string, string),
+		body: array of byte): (int, list of (string, string), array of byte, string);
+
 	# test seam (httpstest(1), same convention as bsky(1)'s own
 	# seams): decode a complete chunked transfer-coding body from a
 	# byte buffer, no network involved - the live hosts this tree

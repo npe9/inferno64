@@ -1,0 +1,41 @@
+.TH DOHTEST 1
+.SH NAME
+dohtest \- test the DNS-over-HTTPS wire format
+.SH SYNOPSIS
+.B dohtest
+.SH DESCRIPTION
+.B Dohtest
+checks
+.IR doh (2)'s
+DNS wire-format encoding and decoding offline \(em no network. The
+encode vector is a real Google DoH query captured on the wire
+(example.com A, id 0), so
+.IR doh (2)'s
+.B encode
+must reproduce it byte for byte. The decode vectors are hand-built
+responses in RFC 1035 wire format including the message-compression
+pointers real answers use \(em two A records, and an NXDOMAIN (rcode
+3) so the error path is covered.
+.PP
+There is no live-resolution leg: every current public DoH resolver
+serves an ECDSA certificate that
+.IR tls12 (2)
+cannot yet verify, so a live resolve fails at the TLS handshake. The
+wire format \(em the part where bugs actually hide \(em is fully
+exercised here; the live path lights up unchanged once ECDSA support
+lands. See
+.IR doh (2)'s
+BUGS.
+.SH SOURCE
+.B /appl/cmd/dohtest.b
+.SH SEE ALSO
+.IR doh (2),
+.IR dns (1)
+.SH BUGS
+The negative control \(em corrupting the name-skip in the decoder,
+which must break the vectors \(em is run by editing the source, not
+automated. Coverage is the wire format only; the transport and
+certificate paths are covered by
+.IR httpstest (1)
+and
+.IR tls12test (1).

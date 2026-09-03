@@ -68,6 +68,7 @@ TARG=\
 	iobuf.dis\
 	ip.dis\
 	awsv4.dis\
+	doh.dis\
 	https.dis\
 	ipattr.dis\
 	ipval.dis\

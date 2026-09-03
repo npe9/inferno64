@@ -2,6 +2,39 @@
 
 ## Status (most recent first)
 
+**Follow-on, 2026-09-03 — the ECDSA/P-256 gap, found by building on
+top of the finished stack.** Two clients were built past step 9 to
+exercise the transport against more of the real world: `awsv4(2)`/
+`s3(1)` (AWS SigV4, works — S3 takes the X25519+ECDHE-RSA scope) and
+`doh(2)`/`dns(1)` (DNS-over-HTTPS, to close the `/net/cs` name gap).
+DoH's wire format is complete and offline-verified (`dohtest(1)`), and
+`https(2)` gained `requestto()` (dial a pinned IP, verify the real
+hostname's cert) precisely so DNS can bootstrap. But **live DoH is
+blocked at the TLS layer**: every current public DoH resolver
+(dns.google, Cloudflare, Quad9) presents an **ECDSA (secp256r1)**
+certificate, and several want **P-256 ECDHE**; `tls12(2)` verifies
+**RSA chains over X25519 only**. Measured directly: dns.google returns
+its real `dns.google` cert only to a client offering ECDHE-ECDSA over
+P-256; an RSA client gets a fallback `*.google.com` cert that does not
+name it (correctly rejected). So the next real transport step is
+**ECDSA signature verification + P-256** (EC point arithmetic over
+secp256r1 — 9front's `libsec/port/ecc.c` is the port source, matching
+this tree's translate-real-C practice), which would light up DoH live,
+Cloudflare-fronted hosts, AWS STS, and the growing ECDSA-only slice of
+the web, all unchanged above it. Sizable and security-critical (a
+verify bug is a silent MITM), so flagged rather than rushed.
+
+**Real general x509 bug fixed en route (2026-09-03):** ASN.1
+**UTF8String (tag 12)** — the *default* DirectoryString type in modern
+certificates (RFC 5280) — was entirely absent from `module/asn1.m`/
+`appl/lib/asn1.b`, so any certificate whose subject/issuer used it was
+unparseable (`can't parse subject`). It went unnoticed because the
+first real chains tested (Amazon, Let's Encrypt/ISRG) happen to use
+PrintableString; Google's chain uses UTF8String and surfaced it.
+Added to the decoder, `is_string`, and `tostring`; all existing
+cert-verifying tests (tls12test/httpstest/s3test) still pass. This is
+independent of DoH and fixes cert parsing tree-wide.
+
 **Step 9 done, 2026-09-02 — THE PLAN'S ACCEPTANCE CRITERION IS MET.**
 `bsky(1)` and `masto(1)` now speak HTTPS through this tree's own
 stack and the `#C`/curl stopgap is deleted from both. The layer in

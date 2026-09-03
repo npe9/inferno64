@@ -131,6 +131,8 @@ TARG=\
 	awsv4test.dis\
 	s3.dis\
 	s3test.dis\
+	dns.dis\
+	dohtest.dis\
 	aesgcmtest.dis\
 	ccpolytest.dis\
 	hmacsha256test.dis\

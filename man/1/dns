@@ -1,0 +1,55 @@
+.TH DNS 1
+.SH NAME
+dns \- resolve hostnames over DNS-over-HTTPS
+.SH SYNOPSIS
+.B dns
+.RB [ -6 ]
+.RB [ -s
+.IR resolver-ip ]
+.RB [ -u
+.IR resolver-url ]
+.IR name ...
+.SH DESCRIPTION
+.B Dns
+resolves each
+.I name
+over DNS-over-HTTPS
+.RI ( doh (2)),
+printing a line
+.RI \(lq name\ address \(rq
+per address. Because it resolves over this tree's own TLS through a
+resolver reached by literal IP, it needs no
+.I /net/cs
+and no host resolver \(em it is the first command in the tree that
+can turn a name into an address by itself.
+.PP
+.B -6
+asks for AAAA (IPv6) records instead of A.
+.B -s
+and
+.B -u
+point at a different DoH provider (its dial IP and its
+.B /dns-query
+URL); by default it uses Google Public DNS
+.RB ( dns.google
+at
+.BR 8.8.8.8 ).
+.SH SOURCE
+.B /appl/cmd/dns.b
+.SH SEE ALSO
+.IR doh (2),
+.IR dohtest (1),
+.IR dial (2)
+.SH BUGS
+Live resolution is currently blocked at the TLS layer, not in this
+command: every public DoH resolver serves an ECDSA certificate, and
+.IR tls12 (2)
+verifies RSA chains only, so the handshake fails before any query is
+sent. The command and its
+.IR doh (2)
+backend are complete and the wire format is verified offline
+.RI ( dohtest (1)); resolution
+will work unchanged once ECDSA support lands in the TLS stack. See
+.IR doh (2)'s
+BUGS and
+.I doc/ssl-modernization-plan.md .
