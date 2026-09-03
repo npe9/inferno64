@@ -164,9 +164,11 @@ with `expect(cond, msg)` (an inline function in `builtin.ei`) and
 `ember -t`, which appends an `init` that runs each test under
 `try`/`catch`, reports failures by name, and prints `PASS n tests`;
 `tests/unittest.sh` runs `tests/unit/*_test.e`. Both are in the C
-compiler only (driver options, not language). Not done: `emberfmt`,
-because the lexer drops comments and a formatter that loses them is
-worse than none -- it needs comment-carrying tokens first; packages
+compiler only (driver options, not language). `ember -F` is the formatter: the
+lexer keeps comments (with positions) when asked, the parser keeps
+sugar unexpanded in a raw mode, and `fmt.c` prints the tree with the
+comments interleaved by line; `tests/fmt.sh` round-trips every test
+and translation (same code, idempotent). Packages
 as directories are not planned (one file, one module,
 Inferno-style); a language server and a REPL are last.
 
@@ -183,4 +185,4 @@ Inferno-style); a language server and a REPL are last.
 | 7 | interfaces                    | done   |
 | 8 | ?. and ??                     | done   |
 | 9 | integer types (not planned)   |   --   |
-| 10| emberfmt, .ei derivation, tests| all but fmt |
+| 10| emberfmt, .ei derivation, tests| done   |

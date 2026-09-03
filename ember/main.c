@@ -21,6 +21,7 @@ static	int	toterrors;
 static	int	dumpast;
 static	int	geniface;	/* -i: print the module's interface file */
 static	int	testmain;	/* -t: add an init that runs every test_ function */
+static	int	fmtsrc;		/* -F: print the source formatted */
 static	int	tokdump;
 static	int	dumpchecked;
 static	int	checkonly;
@@ -29,7 +30,7 @@ static	char	*outarg;
 static void
 usage(void)
 {
-	fprint(2, "usage: ember [-A] [-C] [-T] [-c] [-i] [-t] [-D name] [-f] [-I path] [-o outfile] file.e\n");
+	fprint(2, "usage: ember [-A] [-C] [-T] [-F] [-c] [-i] [-t] [-D name] [-f] [-I path] [-o outfile] file.e\n");
 	exits("usage");
 }
 
@@ -145,8 +146,21 @@ translate(char *in)
 
 	infile = in;
 	errors = 0;
+	if(fmtsrc){
+		rawparse = 1;
+		keepcomments = 1;
+	}
 	tree = parse(in);
 	if(tree == nil){
+		toterrors += errors;
+		return;
+	}
+	if(fmtsrc){
+		if(errors == 0){
+			Binit(&bo, 1, OWRITE);
+			fmtsource(&bo, tree);
+			Bterm(&bo);
+		}
 		toterrors += errors;
 		return;
 	}
@@ -218,6 +232,9 @@ main(int argc, char *argv[])
 		break;
 	case 't':
 		testmain = 1;
+		break;
+	case 'F':
+		fmtsrc = 1;
 		break;
 	case 'A':
 		dumpast = 1;

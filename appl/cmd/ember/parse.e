@@ -1091,8 +1091,8 @@ func pcondecl(decls ref types.Node) ref types.Node {
 		}
 		n := types.mkn(Ocondecl, name, deepdup(prev))
 		n.aux = mkconst(tk(), big(i))
-		n.aux.line = name.line
-		n.aux.pos = name.pos
+		n.aux.line = src.line	// at the "const (" keyword: the formatter's block start
+		n.aux.pos = src.pos
 		i++
 		n.line = name.line
 		n.pos = name.pos

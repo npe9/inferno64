@@ -617,8 +617,36 @@ struct Tok
 	Sym	*sym;			/* Eid, Esconst */
 	Long	ival;			/* Econst */
 	Real	rval;			/* Erconst */
+	int	form;			/* Econst: how it was written (Fchar, Fhex, ...), for the formatter */
 };
 typedef	struct Tok	Tok;
+
+/* Tok.form and Node.temps of an Oconst under -F: the literal's written form */
+enum
+{
+	Fdec = 0,
+	Fchar,
+	Fhex,
+	Foct,
+	Fbin,
+	Foct0,				/* 0666 */
+};
+
+/* comments the lexer saw, for the formatter (-F) */
+struct Comment
+{
+	char	*text;			/* the text between the comment delimiters */
+	int	line;
+	int	pos;
+	int	block;			/* a block (slash-star) comment */
+	int	nl;			/* text is followed by a blank line in the source */
+};
+typedef	struct Comment	Comment;
+extern	Comment	*comments;
+extern	int	ncomments;
+extern	int	keepcomments;		/* the lexer records comments */
+extern	int	rawparse;		/* the parser keeps sugar unexpanded, for the formatter */
+extern	void	fmtsource(Biobuf*, Node*);
 
 /*
  * ops for nodes.

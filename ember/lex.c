@@ -440,23 +440,29 @@ lexnum(Tok *tok, int c)
 	i = 0;
 	base = 10;
 	isreal = 0;
+	tok->form = Fdec;
 	if(c == '0'){
 		c = Getc();
 		if(c == 'x' || c == 'X'){
 			base = 16;
+			tok->form = Fhex;
 			c = Getc();
 		}else if(c == 'o' || c == 'O'){
 			base = 8;
+			tok->form = Foct;
 			c = Getc();
 		}else if(c == 'b' || c == 'B'){
 			base = 2;
+			tok->form = Fbin;
 			c = Getc();
 		}else{
 			unGetc();
 			/* 0666: octal, as in go and limbo's own 8r666 */
 			c = Getc();
-			if(c >= '0' && c <= '9')
+			if(c >= '0' && c <= '9'){
 				base = 8;
+				tok->form = Foct0;
+			}
 			unGetc();
 			c = '0';
 		}
@@ -637,19 +643,61 @@ endsstmt(int t)
 	return 0;
 }
 
+Comment *comments;
+int ncomments;
+int keepcomments;
+static int lencomments;
+
+static void
+addcomment(char *text, int n, int line, int pos, int block)
+{
+	Comment *cm;
+
+	if(ncomments >= lencomments){
+		lencomments += 64;
+		comments = reallocmem(comments, lencomments * sizeof *comments);
+	}
+	cm = &comments[ncomments++];
+	cm->text = allocmem(n + 1);
+	memmove(cm->text, text, n);
+	cm->text[n] = 0;
+	cm->line = line;
+	cm->pos = pos;
+	cm->block = block;
+	cm->nl = 0;
+}
+
 static int
 lexcom(void)
 {
-	int c;
+	int c, line, pos, n;
+	static char *buf;
+	static int len;
 
+	line = lineno;
+	pos = linepos - 1;
 	c = Getc();
 	if(c == '/'){
-		while((c = Getc()) != '\n')
+		n = 0;
+		while((c = Getc()) != '\n'){
 			if(c == Beof)
-				return Beof;
+				break;
+			if(keepcomments){
+				if(n >= len){
+					len += 256;
+					buf = reallocmem(buf, len);
+				}
+				buf[n++] = c;
+			}
+		}
+		if(keepcomments)
+			addcomment(buf, n, line, pos, 0);
+		if(c == Beof)
+			return Beof;
 		return '\n';
 	}
 	if(c == '*'){
+		n = 0;
 		for(;;){
 			c = Getc();
 			if(c == Beof){
@@ -663,10 +711,21 @@ lexcom(void)
 			if(c == '*'){
 				c = Getc();
 				if(c == '/')
-					return 0;
+					break;
 				unGetc();
+				c = '*';
+			}
+			if(keepcomments){
+				if(n >= len){
+					len += 256;
+					buf = reallocmem(buf, len);
+				}
+				buf[n++] = c;
 			}
 		}
+		if(keepcomments)
+			addcomment(buf, n, line, pos, 1);
+		return 0;
 	}
 	unGetc();
 	return -2;			/* plain / */
@@ -722,6 +781,7 @@ loop:
 			error(curline(), "missing closing '");
 			unGetc();
 		}
+		tok->form = Fchar;
 		return Econst;
 
 	case '(':

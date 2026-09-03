@@ -420,6 +420,17 @@ failure as `FAIL test_xxx: expect: what` and carries on, then prints
 builtin unless the program declares its own. `tests/unit/*_test.e`
 with their `.out` files are run by `tests/unittest.sh`.
 
+## Formatting
+
+`ember -F file.e` prints the file formatted: tabs for indentation,
+one statement per line, canonical spacing around operators, and the
+comments and blank lines of the original kept where they were. It
+works from the parse tree alone, so it needs no interfaces to be
+present, and every construct prints back as written, including
+`defer`, `?.`, `??`, `match` initializers and const blocks.
+`tests/fmt.sh` formats every test and translation and checks that
+the result compiles to the same code and formats to itself.
+
 ## Deriving an interface file
 
 `ember -i file.e` prints the module's interface file: its imports,

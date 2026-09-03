@@ -27,6 +27,7 @@
  */
 
 static	int	noblit;		/* composite literals disallowed (control clause) */
+int	rawparse;		/* -F: keep sugar unexpanded for the formatter */
 
 static	Node	*pblock(void);
 static	Node	*pexpr(void);
@@ -588,6 +589,7 @@ poperand(void)
 	switch(t->t){
 	case Econst:
 		n = mkconst(&src, t->ival);
+		n->temps = t->form;	/* the written form, for -F */
 		lexskip();
 		return n;
 	case Erconst:
@@ -841,11 +843,13 @@ pprimary(void)
 			 * the end; a is evaluated twice
 			 */
 			lexskip();
-			if(guard == nil)
+			if(guard == nil && !rawparse)
 				guard = deepdup(n);
 			e = pname("field");
 			n = mkbin(Odot, n, e);
 			n->sym = e->sym;
+			if(rawparse)
+				n->val = 1;	/* a?.f, unexpanded */
 			continue;
 		case '{':
 			if(noblit || !istypeexpr(n))
@@ -973,6 +977,15 @@ pexpr(void)
 		/* a ?? b: a when it is not nil, else b; a is evaluated twice */
 		lexskip();
 		b = pbinary(1);
+		if(rawparse){
+			a = mkn(Ocond, n, nil);
+			a->val = 1;	/* a ?? b, unexpanded */
+			a->aux = b;
+			a->src.start = n->src.start;
+			a->src.stop = b->src.stop;
+			n = a;
+			continue;
+		}
 		a = mkbin(Oneq, deepdup(n), mkname(&n->src, enter("nil", 0)));
 		a->src = n->src;
 		a = mkn(Ocond, a, n);
@@ -1087,12 +1100,16 @@ pcondecl(Node *decls)
 		if(paccept(';'))
 			continue;
 		name = pname("const declaration");
-		if(paccept('='))
+		if(paccept('=')){
 			prev = pexpr();
-		else if(prev == nil)
-			synerr("the first constant of a block needs an expression");
-		n = mkn(Ocondecl, name, deepdup(prev));
-		n->aux = mkconst(&name->src, i++);
+			n = mkn(Ocondecl, name, deepdup(prev));
+		}else{
+			if(prev == nil)
+				synerr("the first constant of a block needs an expression");
+			n = mkn(Ocondecl, name, deepdup(prev));
+			n->val = 1;	/* repeats the previous expression (-F prints the name alone) */
+		}
+		n->aux = mkconst(&src, i++);	/* at the "const (" keyword: the formatter's block start */
 		n->src.start = name->src.start;
 		decls = mkseq(decls, n);
 		if(cur() != ')')
@@ -1195,6 +1212,14 @@ pinterface(Node *decls, Node *name, Src *src)
 			pexpect(';', "interface method");
 	}
 	pexpect('}', "interface type");
+	if(rawparse){
+		st = mkn(Otstruct, rotater(fields), nil);
+		st->flags |= NIFACE;
+		st->src = *src;
+		td = mkn(Otypedecl, name, st);
+		td->src = *src;
+		return mkseq(decls, td);
+	}
 	/* type .W$s struct { ... }; type W ref .W$s: the interface name is the reference */
 	seprint(buf, buf+sizeof(buf), ".%s$s", name->sym->name);
 	st = mkn(Otstruct, rotater(fields), nil);
@@ -1317,6 +1342,10 @@ pif(void)
 	n->aux = els;
 	n->src.start = src.start;
 	if(init != nil){
+		if(rawparse){
+			n->left = mkn(Oseq, init, cond);
+			return n;
+		}
 		n = mkn(Oscope, mkseq(init, n), nil);
 		n->src.start = src.start;
 	}
@@ -1559,6 +1588,10 @@ pmatch(void)
 	n->src.start = src.start;
 	n->src.stop = pexpect('}', "match statement").stop;
 	if(init != nil){
+		if(rawparse){
+			n->aux = init;
+			return n;
+		}
 		n = mkn(Oscope, mkseq(init, n), nil);
 		n->src.start = src.start;
 	}
@@ -1613,6 +1646,12 @@ pdefer(void)
 	if(e->op != Ocall){
 		error(e->src.start, "defer needs a function call");
 		e = mkn(Ocall, e, nil);
+	}
+	if(rawparse){
+		n = mkn(Odefer, e, nil);
+		n->src.start = src.start;
+		n->src.stop = e->src.stop;
+		return n;
 	}
 	temps = nil;
 	k = 0;
