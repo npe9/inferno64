@@ -38,6 +38,7 @@ OBJ=\
 	mmu.$O\
 	trap.$O\
 	tod.$O\
+	fdt.$O\
 	mul64fract.$O\
 	stubs.$O\
 	$CONF.root.$O\
@@ -94,6 +95,9 @@ devuart.$O:	../port/devuart.c
 
 tod.$O:	../port/tod.c
 	$CC $CFLAGS ../port/tod.c
+
+fdt.$O:	../port/fdt.c
+	$CC $CFLAGS ../port/fdt.c
 
 mul64fract.$O:	../port/mul64fract.c
 	$CC $CFLAGS ../port/mul64fract.c

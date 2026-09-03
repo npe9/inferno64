@@ -102,6 +102,7 @@
  */
 TEXT	_main(SB), 1, $-4
 	MOVW	$setSB(SB), R26
+	MOVW	R11, dtbptr(SB)		/* a1 = DTB pointer at boot, before R11 is reused */
 	MOVW	$stack+(64*1024)(SB), SP
 	/*
 	 * mstatus.FS resets to 0 (Off): any F/D instruction traps as
@@ -125,6 +126,7 @@ TEXT	_main(SB), 1, $-4
 dead:
 	JMP	dead
 
+GLOBL	dtbptr(SB), $4
 GLOBL	stack(SB), $(64*1024)
 GLOBL	mach0(SB), $(4*1024)
 

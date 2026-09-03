@@ -121,6 +121,25 @@ main(void)
 	uartconsole();
 	archconsole();
 
+	/*
+	 * Parse the device tree (QEMU hands it in a1, captured as dtbptr)
+	 * before trapinit(), so plicinit() uses the PLIC base the DTB
+	 * reports.  A lookup miss leaves plicbase at its constant default.
+	 */
+	{
+		extern void *dtbptr;
+		extern void fdtinit(void*);
+		extern int fdtreg(char*, uvlong*, uvlong*);
+		extern uintptr plicbase;
+		uvlong base, size;
+		fdtinit(dtbptr);
+		if(fdtreg("riscv,plic0", &base, &size) && base != 0)
+			plicbase = (uintptr)base;
+		print("fdt: plic base %#p (mem.h PLIC %#p)\n", plicbase, (uintptr)PLIC);
+		if(fdtreg("ns16550a", &base, &size))
+			print("fdt: uart @ %#llux (mem.h UART0 %#p)\n", base, (uintptr)UART0);
+	}
+
 	xinit();
 	poolinit();
 	poolsizeinit();

@@ -313,6 +313,22 @@ same falsify test: with
 set wrong, the board still finds and reads its virtio-mmio disk,
 because the base came from the device tree.
 .PP
+The two rv32 boards, virt32 and virt32s, had no device-tree support at
+all; both now capture the DTB pointer at boot (QEMU/OpenSBI hands it in
+a1), build the shared
+.CW fdt.c ,
+and seed
+.CW plicbase
+from it the same way.  These boards are console-only, so there is no
+disk to lose, but the falsify test still proves the path directly: with
+the
+.CW PLIC
+constant set wrong, the board prints
+.CW "plic base 0xc000000 (mem.h PLIC 0xd000000)"
+- plicbase took the DTB value, not the wrong constant - and boots to
+VIRT32-INIT-OK.  All four riscv boards now find their interrupt
+controller through the device tree.
+.PP
 Both riscv boards, and arm64, then need a device-tree reader: every
 address is a compile-time constant today, checked against QEMU's
 .CW dumpdtb ,
