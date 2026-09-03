@@ -1,0 +1,71 @@
+.TH ED25519 2
+.SH NAME
+ed25519: verify \- Ed25519 signature verification
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "ed25519.m";
+ed25519 := load Ed25519 Ed25519->PATH;
+
+init:   fn(): string;
+verify: fn(pub, msg, sig: array of byte): int;
+.EE
+.SH DESCRIPTION
+.B Ed25519
+verifies Ed25519 signatures (RFC 8032), in pure Limbo on
+.IR keyring (2)'s
+.BR IPint .
+Neither this tree nor 9front's
+.B libsec
+implements Ed25519, so this is a from-scratch port of the twisted
+Edwards curve edwards25519, in the same style as
+.IR p256 (2):
+field arithmetic modulo 2\u255\d\-19, points in extended homogeneous
+coordinates, and point decompression by a square root modulo the
+field prime. Only verification is provided \(em there is no signing.
+.PP
+.B Init
+loads
+.IR keyring (2)
+and precomputes the curve constants; it returns
+.B nil
+on success or an error string.
+.PP
+.B Verify
+checks a 64-byte PureEdDSA signature
+.I sig
+(the encoded point R followed by the scalar S) over
+.I msg
+under the 32-byte public key
+.IR pub .
+It returns 1 if the signature is valid and 0 otherwise, including for
+malformed inputs (wrong lengths, a public key or R that is not a valid
+curve point, or an S that is not reduced modulo the group order). The
+message is taken as-is (PureEdDSA), so a caller that signs a hash
+passes that hash as
+.IR msg .
+.SH SOURCE
+.B /appl/lib/crypt/ed25519.b
+.SH SEE ALSO
+.IR ed25519test (1),
+.IR p256 (2),
+.IR ssh (2),
+.IR keyring (2)
+.SH BUGS
+Verification only. The implementation is straightforward bigint
+arithmetic on
+.BR IPint ,
+not constant-time, which is acceptable for public-key verification
+(the inputs are public) but would not be for signing. The verification
+equation is the common
+.B "[S]B = R + [k]A" ,
+which accepts the standard signatures OpenSSH and
+.IR ssh-keygen (1)
+produce; it does not apply the RFC 8032 cofactored check.
+.SH HISTORY
+Added to let
+.IR ssh (2)
+accept
+.B ssh-ed25519
+host keys.

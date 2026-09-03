@@ -34,10 +34,13 @@ tmp=$(mktemp -d)
 intree="$root/.sshtesttmp"
 sshdpid=
 esshdpid=
+edpid=
 eport=$((port+1))
+edport=$((port+2))
 cleanup() {
 	test -n "$sshdpid" && kill "$sshdpid" 2>/dev/null || true
 	test -n "$esshdpid" && kill "$esshdpid" 2>/dev/null || true
+	test -n "$edpid" && kill "$edpid" 2>/dev/null || true
 	rm -rf "$tmp" "$intree"
 }
 trap cleanup EXIT
@@ -70,6 +73,12 @@ ssh-keygen -q -t ecdsa -b 256 -f "$tmp/hostkey_ecdsa" -N "" -C ecdsahost
 chmod 600 "$tmp/hostkey_ecdsa"
 eraw=$(ssh-keygen -l -E sha256 -f "$tmp/hostkey_ecdsa.pub" | awk '{print $2}')
 ewantthumb="sha256=${eraw#SHA256:}"
+
+# an ed25519-only host key for the ssh-ed25519 host-key test
+ssh-keygen -q -t ed25519 -f "$tmp/hostkey_ed" -N "" -C edhost
+chmod 600 "$tmp/hostkey_ed"
+edraw=$(ssh-keygen -l -E sha256 -f "$tmp/hostkey_ed.pub" | awk '{print $2}')
+edwantthumb="sha256=${edraw#SHA256:}"
 
 # host thumbprint oracle: ssh-keygen prints "<bits> SHA256:xxx comment"
 raw=$(ssh-keygen -l -E sha256 -f "$tmp/hostkey.pub" | awk '{print $2}')
@@ -112,9 +121,22 @@ echo "SSHLOCAL: sshd up (pid $sshdpid) on port $port"
 	-o "PubkeyAcceptedAlgorithms=+ssh-rsa,rsa-sha2-256" \
 	>"$tmp/sshd_ecdsa.log" 2>&1 &
 esshdpid=$!
+
+# third sshd with ONLY an ed25519 host key, for ssh-ed25519 verification
+"$SSHD" -D -e \
+	-p "$edport" \
+	-h "$tmp/hostkey_ed" \
+	-o "AuthorizedKeysFile=$tmp/authorized_keys" \
+	-o StrictModes=no -o UsePAM=no -o PasswordAuthentication=no \
+	-o KbdInteractiveAuthentication=no -o PidFile=none \
+	-o HostKeyAlgorithms=ssh-ed25519 \
+	-o "PubkeyAcceptedAlgorithms=+ssh-rsa,rsa-sha2-256" \
+	>"$tmp/sshd_ed.log" 2>&1 &
+edpid=$!
+
 i=0
 while [ "$i" -lt 40 ]; do
-	if command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 "$eport" 2>/dev/null; then break; fi
+	if command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 "$edport" 2>/dev/null; then break; fi
 	i=$((i+1)); sleep 0.25
 done
 
@@ -134,6 +156,10 @@ echo 'SSHLOCAL: === ECDSA host key: verify ecdsa-sha2-nistp256 ==='
 # with the thumbprint pinned to ssh-keygen's oracle for the ecdsa key
 eout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$eport" "$user" "/.sshtesttmp/id_rsa" "$ewantthumb" "printf hi" "hi" 2>&1) || true
 echo "$eout" | grep -q "$marker" && echo 'SSHLOCAL: ecdsa host-key verification: PASS' || { echo "SSHLOCAL: ecdsa host-key verification FAILED: [$eout]"; rc=1; }
+
+echo 'SSHLOCAL: === ed25519 host key: verify ssh-ed25519 ==='
+edout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$edport" "$user" "/.sshtesttmp/id_rsa" "$edwantthumb" "printf hi" "hi" 2>&1) || true
+echo "$edout" | grep -q "$marker" && echo 'SSHLOCAL: ed25519 host-key verification: PASS' || { echo "SSHLOCAL: ed25519 host-key verification FAILED: [$edout]"; rc=1; }
 
 echo 'SSHLOCAL: === negative control: unauthorised key must be REJECTED ==='
 nout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$port" "$user" "/.sshtesttmp/id_bad" "$wantthumb" "printf hello" "hello" 2>&1) || true

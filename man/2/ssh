@@ -55,14 +55,17 @@ default settled on, the same deliberately small surface
 .I ssh.c
 carries: the
 .B curve25519-sha256
-key exchange, a host key that is either
+key exchange, a host key that is
 .B ssh-rsa
 (exchange-hash signature
-.BR rsa-sha2-256 )
-or
+.BR rsa-sha2-256 ),
 .B ecdsa-sha2-nistp256
 (verified with
 .IR p256 (2)),
+or
+.B ssh-ed25519
+(verified with
+.IR ed25519 (2)),
 and the
 .B chacha20-poly1305@openssh.com
 authenticated packet cipher. There is no GSSAPI and no compression.
@@ -236,6 +239,7 @@ sets it.
 .IR tls12 (2),
 .IR pkcs (2),
 .IR p256 (2),
+.IR ed25519 (2),
 .IR keyring (2)
 .SH BUGS
 Only one algorithm of each kind is offered; a server without
@@ -252,7 +256,7 @@ handles the interactive case, but relies on
 .IR vt (1)
 for terminal emulation and does not itself relay window-size changes
 mid-session. Key re-exchange during a long session is not implemented.
-Host keys may be RSA or ECDSA (P-256), but client authentication is RSA
-only, whether from a file or from
+Host keys may be RSA, ECDSA P-256, or ed25519, but client
+authentication is RSA only, whether from a file or from
 .IR factotum (4);
-ed25519 keys, and ECDSA client keys, are not handled.
+ed25519 and ECDSA client keys are not handled.

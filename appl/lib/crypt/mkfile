@@ -2,6 +2,7 @@
 
 TARG=\
 	p256.dis\
+	ed25519.dis\
 	pkcs.dis\
 	ssl3.dis\
 	sslsession.dis\
@@ -15,6 +16,7 @@ SYSMODULES= \
 	daytime.m\
 	keyring.m\
 	p256.m\
+	ed25519.m\
 	pkcs.m\
 	security.m\
 	ssl3.m\

@@ -1,9 +1,9 @@
 # ssh(2) - an SSH-2 transport + connection client, in Limbo, ported
 # from 9front's /sys/src/cmd/ssh.c. curve25519-sha256 key exchange, a
-# host key that is either ssh-rsa (signed rsa-sha2-256) or
-# ecdsa-sha2-nistp256 (verified with p256(2)), and the
-# chacha20-poly1305@openssh.com authenticated cipher (keyring's raw
-# ChaCha20 + one-shot Poly1305, see chachatest(1)). One cipher, one
+# host key that is ssh-rsa (signed rsa-sha2-256), ecdsa-sha2-nistp256
+# (verified with p256(2)), or ssh-ed25519 (verified with ed25519(2)),
+# and the chacha20-poly1305@openssh.com authenticated cipher (keyring's
+# raw ChaCha20 + one-shot Poly1305, see chachatest(1)). One cipher, one
 # KEX, no GSSAPI, no compression - a deliberately small surface. Client
 # authentication is RSA only (from a file or factotum(4)).
 #

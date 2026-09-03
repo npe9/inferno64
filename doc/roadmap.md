@@ -311,17 +311,19 @@ execution (`run`), an interactive shell (`shell`, the Plan 9
 telnet(1)/vt(1) model — the client does no terminal emulation, it sets
 raw mode and shuttles bytes), and `factotum(4)` authentication (the
 private key never leaves the agent; `-i` file keys are the fallback).
-Host keys may be RSA or ECDSA P-256 (`ecdsa-sha2-nistp256`, verified
-with the existing `p256(2)`), so hosts that have dropped their RSA host
-key are reachable. Verified end to end against a real OpenSSH `sshd`
-(`tests/sshlocal.sh`): host-key thumbprint pinned to `ssh-keygen`'s own
-fingerprint (for both an RSA-host and an ECDSA-only host), `Accepted
-publickey` in the server log for both file and factotum keys, command
-output/exit matched, the interactive shell round-tripped, and both an
-unauthorised-key and a corrupted-ECDSA-signature negative control
-rejected. Still open (noted in `ssh(2)` BUGS): mid-session window-size
-relay, ed25519 keys and ECDSA client keys, port forwarding, and an SSH
-*server*.
+Host keys may be RSA, ECDSA P-256 (`ecdsa-sha2-nistp256`, verified with
+the existing `p256(2)`), or ed25519 (`ssh-ed25519`, verified with a
+new from-scratch `ed25519(2)` — neither this tree nor 9front's libsec
+had Ed25519, so it is a pure-Limbo twisted-Edwards implementation on
+IPint, in the style of `p256(2)`, passing RFC 8032's own vectors in
+`ed25519test(1)`). All three modern host-key types are reachable.
+Verified end to end against real OpenSSH `sshd`s (`tests/sshlocal.sh`):
+an RSA host, an ECDSA-only host and an ed25519-only host each connect
+with the thumbprint pinned to `ssh-keygen`'s fingerprint, plus
+`Accepted publickey`, command output/exit, interactive shell, factotum
+auth, and unauthorised-key / corrupted-signature negative controls.
+Still open (noted in `ssh(2)` BUGS): mid-session window-size relay,
+ed25519 and ECDSA *client* keys, port forwarding, and an SSH *server*.
 
 ### C5. Printing / document output — LOW-MEDIUM
 No print path at all: no `lp`, no spooler, and no PostScript/PDF

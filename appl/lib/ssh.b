@@ -20,13 +20,15 @@ include "pkcs.m";
 	RSAKey: import pkcs;
 include "p256.m";
 	p256: P256;
+include "ed25519.m";
+	ed25519: Ed25519;
 include "factotum.m";
 	factotum: Factotum;
 include "ssh.m";
 
 # algorithm name strings we offer (exactly one of each, as ssh.c does)
 KEXALGS:	con "curve25519-sha256,curve25519-sha256@libssh.org";
-HOSTALGS:	con "rsa-sha2-256,ecdsa-sha2-nistp256";
+HOSTALGS:	con "rsa-sha2-256,ecdsa-sha2-nistp256,ssh-ed25519";
 CIPHERALGS:	con "chacha20-poly1305@openssh.com";
 ZIPALGS:	con "none";
 
@@ -50,6 +52,9 @@ init()
 	p256 = load P256 P256->PATH;
 	if(p256 != nil)
 		p256->init();
+	ed25519 = load Ed25519 Ed25519->PATH;
+	if(ed25519 != nil)
+		ed25519->init();
 }
 
 # ---- SSH binary packing helpers -----------------------------------
@@ -442,9 +447,33 @@ verifyhostkey(ks, sig, h: array of byte): string
 		return verifyrsa(ks, sig, h);
 	"ecdsa-sha2-nistp256" =>
 		return verifyecdsa(ks, sig, h);
+	"ssh-ed25519" =>
+		return verifyed25519(ks, sig, h);
 	* =>
 		return "ssh: unsupported host key type " + string name;
 	}
+}
+
+verifyed25519(ks, sig, h: array of byte): string
+{
+	if(ed25519 == nil)
+		return "ssh: ed25519 module not loaded";
+	# host key blob: string "ssh-ed25519" || string pub(32)
+	(nil, o) := getstr(ks, 0);
+	(pub, o2) := getstr(ks, o);
+	if(o2 < 0 || len pub != 32)
+		return "ssh: bad ed25519 host key";
+	# signature blob: string "ssh-ed25519" || string sig(64)
+	(sname, so) := getstr(sig, 0);
+	if(so < 0 || string sname != "ssh-ed25519")
+		return "ssh: signature is not ssh-ed25519";
+	(sigbytes, so2) := getstr(sig, so);
+	if(so2 < 0 || len sigbytes != 64)
+		return "ssh: bad ed25519 signature";
+	# Ed25519 signs the exchange hash H directly (PureEdDSA)
+	if(ed25519->verify(pub, h, sigbytes) == 0)
+		return "ssh: ed25519 host key signature verification failed";
+	return nil;
 }
 
 verifyrsa(ks, sig, h: array of byte): string

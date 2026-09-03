@@ -145,8 +145,8 @@ Public-key authentication only (from
 .IR factotum (4)
 or an
 .B -i
-file), with an RSA client key. The host key may be RSA or ECDSA
-(P-256); ed25519 is not handled. No port forwarding, no
+file), with an RSA client key. The host key may be RSA, ECDSA (P-256),
+or ed25519. No port forwarding, no
 .IR scp .
 For a
 .I command

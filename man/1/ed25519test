@@ -1,0 +1,31 @@
+.TH ED25519TEST 1
+.SH NAME
+ed25519test \- test Ed25519 signature verification
+.SH SYNOPSIS
+.B ed25519test
+.SH DESCRIPTION
+.B Ed25519test
+checks
+.IR ed25519 (2)
+against RFC 8032's own published test vectors (\c
+.BR "section 7.1" ),
+the standard's actual key/message/signature values, offline:
+.IP \(bu
+each vector's genuine signature must verify;
+.IP \(bu
+the same signature with one bit flipped must
+.I not
+verify; nor must the signature against a one-bit-changed message, nor
+under a one-bit-changed public key \(em automated negative controls (a
+wrong verification is a safe computation, so unlike most controls in
+this tree it can be automated).
+.SH SOURCE
+.B /appl/cmd/ed25519test.b
+.SH SEE ALSO
+.IR ed25519 (2),
+.IR p256test (1)
+.SH BUGS
+Coverage is verification over the two fixed vectors plus the bit-flip
+controls;
+.IR ed25519 (2)
+does not sign, so there is nothing to round-trip.
