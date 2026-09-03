@@ -1,19 +1,124 @@
 .TH MASTO 1
 .SH NAME
-masto \- Mastodon client: print the home timeline
+masto \- Mastodon client
 .SH SYNOPSIS
 .B masto
 .I credfile
+.RB [ timeline
+.RB [ -n
+.IR nnn ]
+.RB [ -max
+.IR id ]
+.RB [ -v ]]
+.br
+.B masto
+.I credfile
+.B post
+.IR text\ ...
+.br
+.B masto
+.I credfile
+.B reply
+.I id
+.IR text\ ...
+.br
+.B masto
+.I credfile
+.B fav
+.I id
+.br
+.B masto
+.I credfile
+.B boost
+.I id
+.br
+.B masto
+.I credfile
+.B follow
+.I acct
+.br
+.B masto
+.I credfile
+.B notifications
+.RB [ -n
+.IR nnn ]
+.br
+.B masto
+.I credfile
+.B profile
+.RI [ acct ]
+.br
+.B masto
+.I credfile
+.B thread
+.I id
 .SH DESCRIPTION
 .B Masto
-fetches the caller's home timeline from a Mastodon instance using the
-instance hostname and personal access token read from
+is a Mastodon client. Every invocation reads the instance hostname
+and personal access token from
 .IR credfile ,
-then prints it, one line per status, oldest last:
+then runs one command against that instance;
+.B timeline
+is the default.
+.PP
+.B Timeline
+prints the home timeline, one line per status, oldest last; a boost
+names both accounts:
 .EX
 \&@alice@mastodon.social: what a nice day
-\&@bob@example.social: shipped a thing
+\&@dan@example.social boosted @erin@example.social: the original
 .EE
+.B -n
+sets how many statuses (1\-40, default 30);
+.B -v
+follows each status with an indented line carrying its
+.I id
+\(em the value
+.BR reply ,
+.B fav
+and
+.B boost
+take. When statuses were printed, the last line names the
+.B -max
+.I id
+that continues below this page.
+.PP
+.B Post
+publishes
+.I text
+(the remaining arguments, joined with spaces) as a new status and
+prints its id and URL.
+.B Reply
+posts under the status named by
+.IR id .
+.B Fav
+and
+.B boost
+favourite and reblog it.
+.B Follow
+looks
+.I acct
+up on the instance and follows the account.
+.PP
+.B Notifications
+lists recent notifications, one per line: the type
+.RB ( favourite ,
+.BR reblog ,
+.BR follow ,
+.BR mention ,\ ...),
+who, and the status text when one is attached.
+.B Profile
+prints an account's profile \(em the caller's own (via
+.BR verify_credentials )
+when
+.I acct
+is omitted: account, id, display name, note, and counts.
+.B Thread
+prints the conversation around the status named by
+.IR id :
+ancestors first, the subject marked with
+.RB \(lq "> " \(rq,
+descendants indented beneath.
 .PP
 .I Credfile
 holds exactly two lines: the instance hostname with no scheme
@@ -22,13 +127,17 @@ holds exactly two lines: the instance hostname with no scheme
 , not
 .BR https://mastodon.social ),
 then a personal access token \(em from that instance's own Settings >
-Development > New Application page, with
+Development > New Application page.
 .B read
-scope. This skips Mastodon's OAuth2 authorization-code exchange
-entirely: a personal access token is a real, first-class credential
-Mastodon itself issues for exactly this case, not a workaround. Keep
-this file readable only by its owner; nothing here enforces that.
-.PP
+scope suffices for the reading commands;
+.B write
+and
+.B follow
+cover the rest. This skips Mastodon's OAuth2 authorization-code
+exchange entirely: a personal access token is a real, first-class
+credential Mastodon itself issues for exactly this case, not a
+workaround. Keep this file readable only by its owner; nothing here
+enforces that.
 .B Masto
 never places the token on a command line (where a
 .IR ps (1)
@@ -77,13 +186,17 @@ TRANSPORT section, not repeated here.
 .IR https (2),
 .IR tls12 (2)
 .SH BUGS
-Read-only, one timeline, no abstraction shared with
+One timeline (home); no public/local/hashtag timelines, no search,
+no media, no polls, no unfav/unboost/unfollow, no muting or
+blocking, no GUI, and no abstraction shared with
 .IR bsky (1)
 (each is deliberately self-contained \(em see masto.b's own header
-comment for why). No pagination (a fixed 30 statuses), no posting, no
-notifications, no boosts or favourites shown separately from the
-statuses that carry them. The HTML stripper is a linear tag scan, not
-a real parser, though it does track quoted attribute values so a
-literal
+comment for why). The HTML stripper is a linear tag scan, not a real
+parser, though it does track quoted attribute values so a literal
 .B >
-inside one does not end the tag early.
+inside one no longer leaks markup. The write commands were verified
+against the real server only up to authentication (a bogus token
+draws the server's own decoded error); actually posting from a test
+run would be spam, so the final acceptance path relies on
+.B buildtest()
+pinning the request bodies Mastodon documents.

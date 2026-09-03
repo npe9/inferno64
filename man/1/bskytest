@@ -1,107 +1,76 @@
 .TH BSKYTEST 1
 .SH NAME
-bskytest \- test the #C/curl/JSON path bsky(1) depends on
+bskytest \- test bsky(1)'s decoders and network paths
 .SH SYNOPSIS
 .B bskytest
 .SH DESCRIPTION
 .B Bskytest
 calls
 .IR bsky (1)'s
-own in-process
-.B pubtest()
-seam \(em a test-only entry point, the same justification
-.BR run() 's
-own comment gives for existing at all (see
-.IR eqnorbitaltest (1)
-and
-.IR orbitviewtest (1)
-for the same pattern applied elsewhere in this tree).
-.B Pubtest
-fetches
-.BR app.bsky.actor.getProfile ,
-a real, public, unauthenticated Bluesky endpoint, through the exact
-.B curl()
-and JSON-decoding path
-.BR bsky (1)'s
-own
-.B login()
-and
-.B timeline()
-use, and checks that the decoded handle is exactly
-.BR bsky.app .
-Because the endpoint needs no session, this exercises the whole
-transport \(em
-.BR #C ,
-the host's
-.IR curl (1),
-real TLS, and this tree's
-.B json
-library reading the reply back \(em without a credentials file or
-any live account.
+own in-process test seams, needing no credentials file and no
+network mocking. Offline seams run first, decoding hand-built JSON
+fixtures in each endpoint's real response shape, so a network outage
+fails late with the live legs named instead of masking decoder
+regressions:
+.TP
+.B feedtest
+the timeline walk: missing post/author/record fallbacks, the
+newest-first ordering, the
+.B -v
+uri/cid lines, and cursor extraction;
+.TP
+.B notiftest
+the notifications walk (the one endpoint with no possible
+unauthenticated live leg);
+.TP
+.B threadtest
+a hand-built nested thread: two ancestors, nested replies, and an
+unavailable node;
+.TP
+.B profiletest
+the profile fields and counts;
+.TP
+.B buildtest
+the createRecord bodies \(em post, reply (with root/parent refs),
+like, follow \(em pinned byte for byte, plus URL percent-encoding.
 .PP
-.B Postpubtest
-calls
-.BR login() ,
-the one caller of
-.BR curl() 's
-request-body path and of
-.BR jsonquote() ,
-with a deliberately bogus handle and password. It cannot reach a real
-account, but the real server can only answer with a real, well-formed
-error
-.RB ( AuthenticationRequired ,
-or
-.B RateLimitExceeded
-if this exact test has already run often enough in one session to
-trip the server's own rate limiter) if the JSON body this sent
-actually arrived intact \(em a body mangled by the write/close-to-EOF
-path would instead produce a different, distinguishable failure (a
-curl-level error, or a decode failure with no real error field at
-all).
-.PP
-.B Feedtest
-calls
-.BR bsky (1)'s
-own
-.BR decode() ,
-the feed-array walk
-.BR timeline() 's
-curl call hands off to, directly with a hand-built JSON string in the
-real
-.B app.bsky.feed.getTimeline
-response shape (a
-.B feed
-array of
-.BR post / author / record
-objects) \(em four posts covering a normal post, one with no
-.BR author ,
-one with no
-.BR record ,
-and one with no
-.B post
-at all (skipped, not a crash) \(em and checks the decoded lines
-against the expected text, in the API's own order. This is a pure
-function, so it needs no network.
-.PP
-Exits with
-.B PASS
-or
-.B FAIL
-naming what the decoded response actually held.
+The live seams then hit real endpoints:
+.TP
+.B pubtest
+a public profile fetch by hostname;
+.TP
+.B resolvetest
+handle-to-DID resolution, the same path
+.B follow
+uses;
+.TP
+.B livethreadtest
+a real thread (bsky.app's newest post) through the same
+.B threaddecode
+the offline seam pinned;
+.TP
+.B postpubtest
+a deliberately bogus login, which must draw the server's own decoded
+.B AuthenticationRequired
+(or, when repeated runs have tripped the limiter,
+.BR RateLimitExceeded )
+\(em proof the POSTed JSON body arrived intact;
+.TP
+.B authposttest
+a createRecord with a bogus token, which must draw a decoded server
+error through the full authenticated-POST path without ever writing
+anything to a real account.
 .SH SOURCE
 .B /appl/cmd/bskytest.b
 .SH SEE ALSO
-.IR bsky (1)
+.IR bsky (1),
+.IR mastotest (1),
+.IR httpstest (1),
+.IR https (2)
 .SH BUGS
-.B Pubtest
-and
-.B postpubtest
-need real outbound network access to
-.BR public.api.bsky.app
-and
-.BR bsky.social ;
-offline or firewalled hosts will see curl itself fail there, not a bug
-in the code under test.
-.B Feedtest
-needs no network but covers only the fixture cases built into it, not
-every shape the real API can return.
+The live legs need the real network and real third-party servers; a
+failure there can mean the world changed rather than the code.
+Nothing here (deliberately) publishes a post, so the server's final
+acceptance of a well-formed createRecord is not exercised \(em see
+.IR bsky (1)'s
+own BUGS.

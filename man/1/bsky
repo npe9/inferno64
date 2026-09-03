@@ -1,21 +1,135 @@
 .TH BSKY 1
 .SH NAME
-bsky \- Bluesky client: log in, print the home timeline
+bsky \- Bluesky client
 .SH SYNOPSIS
 .B bsky
 .I credfile
+.RB [ timeline
+.RB [ -n
+.IR nnn ]
+.RB [ -c
+.IR cursor ]
+.RB [ -v ]]
+.br
+.B bsky
+.I credfile
+.B post
+.IR text\ ...
+.br
+.B bsky
+.I credfile
+.B reply
+.I uri cid
+.IR text\ ...
+.br
+.B bsky
+.I credfile
+.B like
+.I uri cid
+.br
+.B bsky
+.I credfile
+.B repost
+.I uri cid
+.br
+.B bsky
+.I credfile
+.B follow
+.I handle-or-did
+.br
+.B bsky
+.I credfile
+.B notifications
+.RB [ -n
+.IR nnn ]
+.br
+.B bsky
+.I credfile
+.B profile
+.RI [ actor ]
+.br
+.B bsky
+.I credfile
+.B thread
+.I uri
 .SH DESCRIPTION
 .B Bsky
-logs in to Bluesky (the AT Protocol network at
-.BR bsky.social )
-using the handle and app password read from
+is a Bluesky (AT Protocol) client. Every invocation logs in to
+.B bsky.social
+with the handle and app password read from
 .IR credfile ,
-then prints the caller's home timeline, one line per post, oldest
-last:
+then runs one command;
+.B timeline
+is the default.
+.PP
+.B Timeline
+prints the home timeline, one line per post, oldest last:
 .EX
 \&@alice.bsky.social: what a nice day
 \&@bob.example.com: shipped a thing
 .EE
+.B -n
+sets how many posts (1\-100, default 30);
+.B -v
+follows each post with an indented line carrying its
+.I uri
+and
+.I cid
+\(em the two values
+.BR reply ,
+.B like
+and
+.B repost
+take. When more posts remain, the last line names the
+.B -c
+.I cursor
+that continues where this page stopped.
+.PP
+.B Post
+publishes
+.I text
+(the remaining arguments, joined with spaces) as a new post and
+prints its
+.B at://
+URI.
+.B Reply
+posts under the post named by
+.I uri
+and
+.IR cid ,
+first fetching that post to find the thread's root, so replies deep
+in a thread attach correctly.
+.B Like
+and
+.B repost
+act on the post so named.
+.B Follow
+takes a handle (resolved to a DID via the server) or a literal
+.BI did: ...
+identifier. Every one of these writes is a single
+.B com.atproto.repo.createRecord
+call \(em AT Protocol represents posts, likes, reposts and follows
+all as records in the caller's own repository.
+.PP
+.B Notifications
+lists recent notifications, one per line: the reason
+.RB ( like ,
+.BR repost ,
+.BR follow ,
+.BR mention ,
+.BR reply ,
+.BR quote ),
+who, and the text when the notification carries a post.
+.B Profile
+prints
+.IR actor 's
+profile (the caller's own when
+.I actor
+is omitted): handle, DID, display name, description, and counts.
+.B Thread
+prints the thread around the post named by
+.IR uri ,
+ancestors first, replies indented beneath their parents.
 .PP
 .I Credfile
 holds exactly two lines: the account handle, then an app password
@@ -23,7 +137,6 @@ holds exactly two lines: the account handle, then an app password
 from Bluesky's own Settings > App Passwords page, and can be revoked
 independently of the main login. Keep this file readable only by its
 owner; nothing here enforces that.
-.PP
 .B Bsky
 never places the password on a command line (where a
 .IR ps (1)
@@ -52,11 +165,21 @@ so hosted mode remains the tested configuration.
 .B /appl/cmd/bsky.b
 .SH SEE ALSO
 .IR bskytest (1),
+.IR masto (1),
 .IR https (2),
 .IR tls12 (2)
 .SH BUGS
-Read-only, one network, one timeline, no abstraction shared with any
-other client \(em the first vertical slice, not the whole thing. No
-pagination (a fixed 30 posts), no posting, no notifications, no
-Mastodon support (see
-.IR masto (1)).
+One network; no feeds other than the home timeline, no search, no
+media (posting or viewing), no quote posts, no unlike/unrepost/
+unfollow (deleting a record is a different call this does not make),
+no muting or blocking, and no GUI. Each invocation is a fresh login
+\(em there is no session caching, so very frequent invocations can
+meet
+.BR bsky.social 's
+rate limits. The write commands were verified against the real
+server only up to authentication (a bogus token draws the server's
+own decoded error); actually publishing posts from a test run to a
+real account would be spam, so the final createRecord acceptance
+path relies on the pinned record shapes in
+.B buildtest()
+matching the lexicon.

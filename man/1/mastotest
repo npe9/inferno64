@@ -1,96 +1,82 @@
 .TH MASTOTEST 1
 .SH NAME
-mastotest \- test the #C/curl/JSON path masto(1) depends on
+mastotest \- test masto(1)'s decoders and network paths
 .SH SYNOPSIS
 .B mastotest
 .SH DESCRIPTION
 .B Mastotest
 calls
 .IR masto (1)'s
-own in-process
-.B pubtest()
-seam, the same pattern
+own in-process test seams, the same pattern
 .IR bskytest (1)
-uses against Bluesky (see that command's own man page for the
-justification, which applies here unchanged).
-.B Pubtest
-fetches
-.BR api/v1/instance ,
-a real, public, unauthenticated endpoint every Mastodon server
-exposes (a server description, not a session), through the exact
-.B curl()
-and JSON-decoding path
-.BR masto (1)'s
-own
-.B timeline()
-uses, and checks that the decoded
-.B title
-field is present. Because the endpoint needs no access token, this
-exercises the whole transport \(em
-.BR #C ,
-the host's
-.IR curl (1),
-real TLS, and this tree's
-.B json
-library reading the reply back \(em without a credentials file.
-.PP
-.B Htmltest
-checks
-.BR masto (1)'s
-own
-.B detag()
-against a table of HTML fragment / expected plain text pairs \(em a
-pure function, so this needs no network. It is what caught a real
-bug while this was being built: stripping
-.B <br>
-and
+uses against Bluesky: no credentials file, no network mocking.
+Offline seams run first, over hand-built fixtures in each endpoint's
+real response shape:
+.TP
+.B htmltest
+the HTML stripper and entity decoder, table-driven (the seam that
+originally caught the
+.BR <br> /\c
 .B </p>
-with no replacement glued adjacent words together
-(\c
-.B "line1<br>line2"
-detagged straight to
-.BR line1line2 ),
-now fixed by treating those two tags as line separators (see
-.IR masto (1)).
+word-gluing bug and the quoted-\c
+.B >
+markup leak);
+.TP
+.B feedtest
+the timeline walk: account/content fallbacks, entity decoding
+composed with the stripper, a boost naming both accounts, ordering,
+the
+.B -v
+id lines, and
+.B -max
+paging-id extraction;
+.TP
+.B notiftest
+the notifications walk (auth-only endpoint, so offline is the only
+leg);
+.TP
+.B profiletest
+profile fields, note stripping, counts;
+.TP
+.B contexttest
+a hand-built thread: ancestor, marked subject, indented descendant;
+.TP
+.B buildtest
+the status-posting request bodies, pinned byte for byte.
 .PP
-.B Feedtest
-calls
-.BR masto (1)'s
-own
-.BR decode() ,
-the status-array walk
-.BR timeline() 's
-curl call hands off to, directly with a hand-built JSON array in the
-real
-.B api/v1/timelines/home
-response shape \(em four statuses covering a normal one (with HTML
-content and an
-.B <br>
-line break), one with no
-.BR account ,
-and one with no
-.B content
-\(em and checks the decoded lines against the expected text, in the
-API's own order. This is a pure function, so it needs no network.
-.PP
-Exits with
-.B PASS
-or
-.B FAIL
-naming what the decoded response actually held.
+The live seams then hit real
+.B mastodon.social
+endpoints:
+.TP
+.B pubtest
+the public instance description;
+.TP
+.B lookuptest
+account lookup \(em the same path
+.B follow
+uses \(em decoded by the same
+.B profiledecode
+the offline seam pinned;
+.TP
+.B livecontexttest
+a real conversation (the Mastodon project account's newest status
+and its context) through
+.BR contextdecode ;
+.TP
+.B authposttest
+a status POST with a bogus token, which must draw the server's own
+decoded error through the full authenticated-POST path without
+posting anything anywhere.
 .SH SOURCE
 .B /appl/cmd/mastotest.b
 .SH SEE ALSO
 .IR masto (1),
-.IR bskytest (1)
+.IR bskytest (1),
+.IR httpstest (1),
+.IR https (2)
 .SH BUGS
-.B Pubtest
-needs real outbound network access to
-.BR mastodon.social ;
-offline or firewalled hosts will see curl itself fail there, not a
-bug in the code under test.
-.B Htmltest
-and
-.B feedtest
-need no network but cover only the fixture cases built into them, not
-every shape the real API can return.
+The live legs need the real network; a failure there can mean the
+world changed rather than the code. Nothing here (deliberately)
+posts, favourites, boosts or follows for real \(em see
+.IR masto (1)'s
+own BUGS.
