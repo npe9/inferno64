@@ -435,3 +435,6 @@ os/inferno/virt32s/virt32s.c
 
 # generated config C for the shakti board
 os/inferno/shakti/shakti.c
+
+# generated config C for the raspi3b board
+os/inferno/raspi3b/raspi3b.c

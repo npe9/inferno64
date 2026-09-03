@@ -1,0 +1,135 @@
+# virtarm64 - QEMU -M virt, 64-bit AArch64 (cortex-a72)
+#
+# The 64-bit analogue of os/inferno/armv7: one privilege level (EL1),
+# MMU off, the same QEMU virt machine (confirmed address-for-address
+# identical to armv7's board via -machine dumpdtb regardless of
+# -cpu cortex-a15 vs cortex-a72 -- see mem.h).  Genuinely 64-bit: a
+# real 7c/7l LP64 compiler, not a 32-bit core the way armv7 is, and
+# DISWORD is the tree default (8), the same word size riscv64/virt's
+# own Dis modules already use -- so this board's root file list
+# reuses /dis (not /dis32) and INIT=virtinit (riscv64's own init
+# program) directly, unlike virt32/armv7 which each needed a fresh
+# init module for their own 4-byte Dis word.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+	ssl
+	cap
+	kprof
+
+
+lib
+	interp
+	keyring
+	sec
+	mp
+	math
+	kern
+
+port
+	alarm
+	alloc
+	allocb
+	bo
+	chan
+	dev
+	dial
+	dis
+	discall
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+	sysfile
+	taslock
+	xalloc
+
+	archvirtarm64
+
+misc
+	uartvirtarm64
+	screennone
+	randomvirtarm64
+
+mod
+	sys
+	keyring
+	crypt
+
+init
+	raspi3binit
+
+code
+	int main_pool_pcnt = 20;
+	int heap_pool_pcnt = 20;
+	int image_pool_pcnt = 20;
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/n	/
+	/net	/
+	/net.alt	/
+	/nvfs	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/dis/lib
+	/dis/svc
+	/dis/wm
+	/osinit.dis
+	/dis/init
+	/dis/shutdown
+	/dis/basename.dis
+	/dis/bind.dis
+	/dis/cat.dis
+	/dis/cd.dis
+	/dis/echo.dis
+	/dis/grep.dis
+	/dis/ls.dis
+	/dis/mntgen.dis
+	/dis/mount.dis
+	/dis/ns.dis
+	/dis/ps.dis
+	/dis/pwd.dis
+	/dis/read.dis
+	/dis/sh.dis
+	/dis/sh/std.dis
+	/dis/unmount.dis
+	/dis/lib/arg.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/env.dis
+	/dis/lib/filepat.dis
+	/dis/lib/names.dis
+	/dis/lib/nametree.dis
+	/dis/lib/readdir.dis
+	/dis/lib/regex.dis
+	/dis/lib/string.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxservers.dis
+	/dis/lib/workdir.dis
