@@ -1,0 +1,48 @@
+.TH CRYPTOVEC 1
+.SH NAME
+cryptovec \- apply a keyring primitive to hex inputs, for differential testing
+.SH SYNOPSIS
+.B cryptovec
+.I primitive inputfile
+.SH DESCRIPTION
+.B Cryptovec
+reads hex-encoded inputs, one per line, from
+.IR inputfile ,
+applies the named
+.IR keyring (2)
+.I primitive
+to each, and writes the hex-encoded result, one per line, to standard
+output. It computes nothing itself beyond hex framing \(em the
+cryptography is keyring's. It exists so a host-side harness can feed the
+same inputs to this tree's crypto and to a formal Cryptol specification
+and diff the outputs; see
+.B /tests/cryptolverify.sh
+and
+.IR cryptol (1)
+(the Galois specification language).
+.PP
+Input is read from a file, not standard input, because host-piped
+standard input is intercepted by
+.IR emu 's
+console. The line format depends on the primitive:
+.TP
+.B sha256 \fR| \fBsha512
+a hex message; the output is the digest.
+.TP
+.B chacha20
+a 32-byte key, a 12-byte nonce, a 4-byte little-endian block counter,
+then the plaintext, all concatenated in hex; the output is the
+ChaCha20 (RFC 8439) keystream XORed with the plaintext.
+.TP
+.B poly1305
+a 32-byte one-time key then the message; the output is the 16-byte tag.
+.SH SOURCE
+.B /appl/cmd/cryptovec.b
+.SH SEE ALSO
+.IR keyring (2),
+.IR chachatest (1),
+.B /tests/cryptolverify.sh
+.SH BUGS
+A test aid, not a general tool: the input encodings are fixed to what
+the differential harness needs, and only the primitives that harness
+checks are implemented.

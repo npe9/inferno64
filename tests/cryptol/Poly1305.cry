@@ -1,0 +1,26 @@
+/*
+ * Poly1305 one-time authenticator (RFC 8439 section 2.5) as a Cryptol
+ * specification, for differential checking against this tree's keyring
+ * poly1305 (tests/cryptolverify.sh). Written from the RFC, independent
+ * of the Limbo/C implementation it checks.
+ */
+module Poly1305 where
+
+// little-endian bytes -> Integer
+leInt : {n} (fin n) => [n][8] -> Integer
+leInt bs = toInteger (join (reverse bs))
+
+poly1305 : {m} (fin m, m >= 1) => [32][8] -> [m][8] -> [16][8]
+poly1305 key msg = reverse (split (fromInteger ((acc + s) % (2^^128)) : [128]))
+  where
+    P = 2^^130 - 5 : Integer
+    r = toInteger ((join (reverse (take`{16} key))) && 0x0ffffffc0ffffffc0ffffffc0fffffff)
+    s = leInt (drop`{16} key)
+    padded = msg # (zero : [16 * ((m + 15) / 16) - m][8])
+    blocks = split padded : [(m + 15) / 16][16][8]
+    lastlen = if `m % 16 == (0 : Integer) then 16 else `m % 16
+    nb = (`m + 15) / 16 : Integer
+    ns = [ leInt b + 2^^(8 * (if (i : Integer) == nb - 1 then lastlen else 16))
+         | b <- blocks
+         | i <- [0 ...] ]
+    acc = foldl (\a n -> ((a + n) * r) % P) (0 : Integer) ns
