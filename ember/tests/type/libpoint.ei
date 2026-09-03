@@ -1,0 +1,20 @@
+module Libpoint
+
+// interface for tests/type/libpoint.e, an Ember-compiled library
+// loaded by tests/type/loadlib.e: a struct type declared here is
+// constructed on the caller's side ("libpoint.Point{...}") and passed
+// across the module boundary, so both compilations must agree on the
+// layout and on the link signature of every function.
+
+const PATH = "/tmp/libpoint.dis"
+
+type Point struct {
+	x int
+	y int
+}
+
+func add(a Point, b Point) Point
+func scale(p ref Point, k int)
+func norm1(p Point) int
+func origin() Point
+func name() string

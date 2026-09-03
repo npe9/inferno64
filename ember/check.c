@@ -1849,6 +1849,18 @@ modmember(Type *mt, Sym *s)
 }
 
 /*
+ * a variable holding a module: the import alias itself (a Dglobal),
+ * or -- since "m := load Rand path" yields an ordinary value of the
+ * module type -- any local or parameter of that type.  the module's
+ * TYPE name (Sys, Rand: a Dtype) is what this excludes.
+ */
+static int
+ismodvar(Decl *d)
+{
+	return d->store == Dglobal || d->store == Dlocal || d->store == Darg;
+}
+
+/*
  * is dot a literal "alias.fn" naming a directly-callable imported
  * function -- an Odot whose left names an already-imported module
  * (a Tmodule-typed Dglobal) and whose member resolves to a Dfn?
@@ -1867,7 +1879,7 @@ modcallee(Node *dot)
 	if(dot->op != Odot || dot->left->op != Oname)
 		return nil;
 	alias = lookup(dot->left->sym);
-	if(alias == nil || alias->ty == nil || alias->ty->kind != Tmodule || alias->store != Dglobal)
+	if(alias == nil || alias->ty == nil || alias->ty->kind != Tmodule || !ismodvar(alias))
 		return nil;
 	id = modmember(alias->ty, dot->sym);
 	if(id == nil || id->store != Dfn)
@@ -2192,7 +2204,7 @@ echk(Node *n)
 		/* module member, adt field, or tuple field */
 		if(n->left->op == Oname){
 			d = lookup(n->left->sym);
-			if(d != nil && d->ty != nil && d->ty->kind == Tmodule && d->store == Dglobal){
+			if(d != nil && d->ty != nil && d->ty->kind == Tmodule && ismodvar(d)){
 				Decl *id;
 
 				id = modmember(d->ty, n->sym);
@@ -3255,10 +3267,63 @@ echk(Node *n)
 		sizetype(n->ty);	/* see synthfvwrap()'s valty comment: an unsized Tref here silently misled idoffsets() */
 		return n->ty;
 	}
-	case Oload:
-		nerror(n, "load not yet typechecked");
-		n->ty = terror;
+	case Oload: {
+		/*
+		 * "load Rand path" (or "load rand path", the import alias):
+		 * the module type is whichever of the two importchk()
+		 * installed -- m itself (a Dtype of Tmodule kind) or the
+		 * alias variable v (a Dglobal carrying importid = m).  the
+		 * result is a value of that Tmodule type, nil if the load
+		 * fails, exactly limbo's own load; com.c's ecom() Oload
+		 * case emits the same ILOAD autoload() already emits for
+		 * an import's own startup load, with the path coming from
+		 * this expression instead of the interface's PATH const.
+		 * n->left is consumed here (stashed on n->decl as the
+		 * alias/type decl, then cleared) so sumark() never sees a
+		 * type name in value position.  deliberately does NOT bump
+		 * the alias's refs: an import used only through explicit
+		 * loads is never autoloaded at init, so a module whose
+		 * PATH may be absent can still be probed for nil.
+		 */
+		Decl *v;
+
+		if(n->left->op != Oname){
+			nerror(n, "load needs a module name");
+			n->ty = terror;
+			return n->ty;
+		}
+		v = lookup(n->left->sym);
+		if(v == nil || v->ty == nil || v->ty->kind != Tmodule
+		|| (v->store != Dtype && v->importid == nil)){
+			nerror(n, "%s is not an imported module", n->left->sym->name);
+			n->ty = terror;
+			return n->ty;
+		}
+		if(v->store == Dtype){
+			/* the type name: find the alias that imported it */
+			Dlist *dl;
+
+			for(dl = imports; dl != nil; dl = dl->next)
+				if(dl->d->importid == v)
+					break;
+			if(dl == nil){
+				nerror(n, "%s is not an imported module", n->left->sym->name);
+				n->ty = terror;
+				return n->ty;
+			}
+			v = dl->d;
+		}
+		t = echk(n->right);
+		if(t != terror && t != tstring){
+			nerror(n, "load path must be a string, not %T", t);
+			n->ty = terror;
+			return n->ty;
+		}
+		n->decl = v;
+		n->left = nil;
+		n->ty = v->ty;
 		return n->ty;
+	}
 	default:
 		nerror(n, "unsupported expression %O", n->op);
 		n->ty = terror;
@@ -3711,9 +3776,10 @@ matchcheck(Node *n)
  *   Oname   a variable -- Dlocal/Darg/Dglobal (a captured variable is
  *           already an Oind chain by now, never a bare Oname).  a
  *           Dfn (own or import-wrapped) is a value, not storage; a
- *           Dtype is a type; a module alias is Dglobal but of Tmodule
- *           kind; a Dconst never survives echk() as an Oname (confold()
- *           turns it into an Oconst).
+ *           Dtype is a type (a module's own type name included); a
+ *           Dconst never survives echk() as an Oname (confold() turns
+ *           it into an Oconst).  an import alias is an ordinary
+ *           Dglobal and may be reassigned ("rand = load Rand path").
  *   Omdot   a module's own global (Dglobal only -- Dtype is the other
  *           store echk()'s Odot case lets through here).
  *   Oindx   an array element: arrays are heap objects, so the base
@@ -3747,8 +3813,6 @@ lvaldesc(Node *n)
 			break;
 		if(d == nildecl)
 			return "nil";
-		if(d->ty != nil && d->ty->kind == Tmodule)
-			return "a module";
 		switch(d->store){
 		case Dfn:
 			return "a function";
@@ -3797,8 +3861,6 @@ islvalue(Node *n)
 	case Oname:
 		d = n->decl;
 		if(d == nil || d == nildecl)
-			return 0;
-		if(d->ty != nil && d->ty->kind == Tmodule)
 			return 0;
 		return d->store == Dlocal || d->store == Darg || d->store == Dglobal;
 	case Omdot:
@@ -4659,4 +4721,9 @@ check(Node *tree)
 	/* export every top-level function from this module */
 	if(impdecl->ty->tof != nil)
 		impdecl->ty->tof->linkall = 1;
+	/*
+	 * and keep every module type reachable from those exports
+	 * complete too: see modrefable() (types.c).
+	 */
+	modrefable(impdecl->ty);
 }

@@ -5,7 +5,7 @@ tests/typeerr/lvalue.e:38: cannot assign to a function call
 tests/typeerr/lvalue.e:39: cannot assign to a function
 tests/typeerr/lvalue.e:40: cannot assign to a function
 tests/typeerr/lvalue.e:41: cannot assign to a function
-tests/typeerr/lvalue.e:42: cannot assign to a module
+tests/typeerr/lvalue.e:42: cannot assign to a type
 tests/typeerr/lvalue.e:43: cannot assign to a type
 tests/typeerr/lvalue.e:44: cannot assign to an expression
 tests/typeerr/lvalue.e:45: cannot assign to an expression

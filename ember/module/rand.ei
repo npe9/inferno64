@@ -1,0 +1,11 @@
+module Rand
+
+// Ember interface for /dis/lib/rand.dis (module/rand.m), a real
+// Limbo-compiled library: loading it checks Ember's link signatures
+// against limbo's own for a non-builtin module.
+
+const PATH = "/dis/lib/rand.dis"
+
+func init(seed int)
+func rand(modulus int) int
+func bigrand(modulus big) big

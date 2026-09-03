@@ -39,7 +39,7 @@ func init() {
 	f = nil
 	mkpoint = mkpoint
 	sys.print = nil
-	sys = nil
+	Sys = nil
 	Point = p
 	p.x + 1 = 5
 	-p.x = 3

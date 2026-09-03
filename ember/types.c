@@ -768,6 +768,69 @@ modclass(void)
  * refs are counted on the module's own decls during check; copy
  * them onto the iface clones first (as limbo's checkrefs does).
  */
+/*
+ * is a module type reachable from t -- through an exported function's
+ * parameter or result, a field, a tuple component, a ref/array/list/
+ * chan element?  if so that module's interface must stay complete
+ * (linkall), since rtsign() hashes every member into the signature
+ * and refuses ("signing a narrowed module") to sign one narrowmods()
+ * has stripped.  ported from limbo/types.c's modrefable(); check.c's
+ * check() runs it over the module's own export interface once the
+ * final fns[] is chained, before narrowmods() ever runs.  the first
+ * function ever to take a module value as a parameter ("roll(r Rand,
+ * n int)") hit the fatal.
+ */
+void
+modrefable(Type *t)
+{
+	Decl *id, *m, *tg;
+
+	if(t == nil || (t->ok & OKmodref) == OKmodref)
+		return;
+	t->ok |= OKmodref;
+	switch(t->kind){
+	case Tchan:
+	case Tref:
+	case Tarray:
+	case Tlist:
+		modrefable(t->tof);
+		break;
+	case Tmodule:
+		if(t->tof != nil)
+			t->tof->linkall = 1;
+		if(t->decl != nil)
+			t->decl->refs++;
+		for(id = t->ids; id != nil; id = id->next){
+			switch(id->store){
+			case Dglobal:
+			case Dfn:
+				modrefable(id->ty);
+				break;
+			case Dtype:
+				if(id->ty == nil || id->ty->kind != Tadt)
+					break;
+				for(m = id->ty->ids; m != nil; m = m->next)
+					if(m->store == Dfn)
+						modrefable(m->ty);
+				break;
+			}
+		}
+		break;
+	case Tfn:
+	case Tadt:
+	case Tadtpick:
+	case Ttuple:
+		for(id = t->ids; id != nil; id = id->next)
+			if(id->store != Dfn)
+				modrefable(id->ty);
+		for(tg = t->tags; tg != nil; tg = tg->next)
+			modrefable(tg->ty);
+		if(t->kind == Tfn)
+			modrefable(t->tof);
+		break;
+	}
+}
+
 void
 narrowmods(void)
 {

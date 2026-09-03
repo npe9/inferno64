@@ -812,6 +812,7 @@ long	tdescmap(Type*, uchar*, long);
 void	teqclass(Type*);
 Teq	*modclass(void);
 void	narrowmods(void);
+void	modrefable(Type*);
 int	tequal(Type*, Type*);
 u32	sign(Decl*);
 Type	*mkiface(Decl*);

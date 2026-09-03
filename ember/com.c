@@ -44,6 +44,7 @@ struct Indxaddr
 
 static Node	*sumark(Node*);
 static Node	*ecom(Src*, Node*, Node*);
+static Decl	*modiface(Decl*);
 static Node	*eacom(Node*, Node*, Node*);
 static void	storecomposite(Src*, Node*, Node*);
 static void	storecompositezero(Src*, Node*, Node*);
@@ -403,6 +404,7 @@ sumark(Node *n)
 	case Oindx:
 	case Oslice:
 	case Oinds:
+	case Oload:
 		/*
 		 * same shape as Olen just above (single- or dual-operand,
 		 * result never directly addressable -- falls through to the
@@ -1651,6 +1653,33 @@ ecom(Src *src, Node *nto, Node *n)
 	case Ospawn:
 		callcom(src, Ospawn, left, nto);
 		return nto;
+	case Oload: {
+		/*
+		 * "load Rand path": ILOAD path, iface, dst -- the same
+		 * instruction autoload() emits at init for an import,
+		 * with the path from this expression.  n->decl is the
+		 * import alias (check.c's Oload case); n->left is nil.
+		 */
+		Decl *iface;
+		Node ifn;
+
+		if(nto == nil)
+			nto = talloc(&tres, n->ty, nil);
+		if(right->addable >= Rcant)
+			right = eacom(right, &tr, nil);
+		iface = modiface(n->decl);
+		if(iface == nil)
+			return nto;
+		ifn = znode;
+		ifn.op = Oname;
+		ifn.decl = iface;
+		ifn.ty = iface->ty;
+		ifn.addable = Rldt;
+		ifn.src = *src;
+		genrawop(src, ILOAD, right, &ifn, nto);
+		tfree(&tr);
+		return nto;
+	}
 	case Ochan:
 		if(nto == nil)
 			nto = talloc(&tres, n->ty, nil);
@@ -2054,17 +2083,28 @@ ecom(Src *src, Node *nto, Node *n)
 	case Ogeq:
 	case Oandand:
 	case Ooror:
-		/* boolean as value: if b then 1 else 0 */
+		/*
+		 * boolean as value: if b then 1 else 0.  the two constants
+		 * need an explicit tint: mkconst() leaves ty nil and
+		 * sumark()'s Oconst case switches on it -- every "x := a ==
+		 * b" (as opposed to "if a == b") segfaulted the compiler
+		 * until the first test used a comparison as a value.
+		 */
 		{
 			Inst *p, *pp;
+			Node *one, *zero;
 
 			if(nto == nil)
 				nto = talloc(&tres, tint, nil);
+			one = mkconst(src, 1);
+			one->ty = tint;
+			zero = mkconst(src, 0);
+			zero->ty = tint;
 			p = bcom(n, 1, nil);
-			genmove(src, Mas, tint, sumark(mkconst(src, 1)), nto);
+			genmove(src, Mas, tint, sumark(one), nto);
 			pp = genrawop(src, IJMP, nil, nil, nil);
 			patch(p, nextinst());
-			genmove(src, Mas, tint, sumark(mkconst(src, 0)), nto);
+			genmove(src, Mas, tint, sumark(zero), nto);
 			patch(pp, nextinst());
 			return nto;
 		}
@@ -3160,28 +3200,24 @@ scom(Node *n)
 	}
 }
 
-static void
-autoload(Decl *v)
+/*
+ * the interface global (ILOAD's middle operand, Rldt) for the module
+ * an import alias v names, added to globals on first use: shared by
+ * autoload() (an import's startup load from its PATH const) and
+ * ecom()'s Oload case (an explicit "load Rand path").
+ */
+static Decl*
+modiface(Decl *v)
 {
-	Decl *m, *id, *iface, *e;
-	Node modn, ifn, *pn;
-	Src *src;
+	Decl *m, *iface, *e;
 	int found;
 
 	m = v->importid;
 	if(m == nil || m->ty == nil)
-		return;
-	for(id = m->ty->ids; id != nil; id = id->next)
-		if(id->store == Dconst && id->sym != nil
-		&& strcmp(id->sym->name, "PATH") == 0)
-			break;
-	if(id == nil || id->init == nil){
-		error(v->src.start, "imported module %s has no PATH", m->sym->name);
-		return;
-	}
+		return nil;
 	if(m->ty->tof == nil || m->ty->tof->decl == nil){
 		error(v->src.start, "imported module %s has no interface", m->sym->name);
-		return;
+		return nil;
 	}
 	iface = m->ty->tof->decl;
 	iface->refs++;
@@ -3194,6 +3230,30 @@ autoload(Decl *v)
 	if(!found)
 		appglobal(iface);
 	sizetype(iface->ty);
+	return iface;
+}
+
+static void
+autoload(Decl *v)
+{
+	Decl *m, *id, *iface;
+	Node modn, ifn, *pn;
+	Src *src;
+
+	m = v->importid;
+	if(m == nil || m->ty == nil)
+		return;
+	for(id = m->ty->ids; id != nil; id = id->next)
+		if(id->store == Dconst && id->sym != nil
+		&& strcmp(id->sym->name, "PATH") == 0)
+			break;
+	if(id == nil || id->init == nil){
+		error(v->src.start, "imported module %s has no PATH", m->sym->name);
+		return;
+	}
+	iface = modiface(v);
+	if(iface == nil)
+		return;
 
 	src = &v->src;
 	pn = mksconst(src, id->init->sym);
