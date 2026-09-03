@@ -1338,8 +1338,12 @@ are the grants somebody with the key wrote.
 .SH BUGS
 .B exec
 starts an ELF or a Plan 9 a.out, and what it starts can make only the
-calls its buddy maps: open, read, close and seek, and for a Linux
-binary write to the console, exit, brk, anonymous mmap and munmap.
+calls its buddy maps: open, read, write, close and seek on the buddy's
+descriptor table, with 0, 1 and 2 the console; and for a Linux binary
+exit, brk, mmap (anonymous, or private of a file), munmap,
+rt_sigaction for SIGSEGV with a restorer, rt_sigprocmask, which keeps no
+mask, and rt_sigreturn.  A Plan 9 program's declined fault is still a
+note the microkernel cannot post.
 .B wait
 waits for any child, not a named one, and a container may have eight
 outstanding.

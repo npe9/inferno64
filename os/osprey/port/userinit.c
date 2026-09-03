@@ -160,6 +160,11 @@ enum {
 	Lenomem		= 12,
 	Leinval		= 22,
 	Mapanon		= 0x20,
+	Mapfixed	= 0x10,
+	Lebadf		= 9,
+	Sigsegv		= 11,
+	SAsiginfo	= 4,
+	SArestorer	= 0x04000000,
 };
 
 /*
@@ -257,12 +262,36 @@ ospreylinuxmmap(uintptr addr, uintptr len, int prot, int flags, int fd, vlong of
 	uintptr va;
 	int sno;
 
-	USED(prot, off);
-	if(len == 0 || (flags & Mapanon) == 0 || fd != -1)
+	int m;
+
+	USED(prot);
+	if(len == 0)
 		return (uintptr)-Leinval;
+	if(flags & Mapanon){
+		if(fd != -1)
+			return (uintptr)-Leinval;
+	} else {
+		/*
+		 * A file mapping: its pages come from the buddy, read from
+		 * the file at the offset, which is the image's page path
+		 * with an offset.  Private: a page is the process's own copy.
+		 */
+		if(fd < 0 || (off & (BY2PG-1)) != 0)
+			return (uintptr)-Leinval;
+		for(m = 0; m < nelem(up->linuxmap); m++)
+			if(up->linuxmap[m].len == 0)
+				break;
+		if(m == nelem(up->linuxmap))
+			return (uintptr)-Lenomem;
+	}
 	len = PGROUND(len);
-	va = addr != 0 && (addr & (BY2PG-1)) == 0 && isoverlap(addr, len) == nil && addr + len < USTKTOP-USTKSIZE ?
-		addr : up->linuxmmapnext;
+	if(flags & Mapfixed){
+		if(addr == 0 || (addr & (BY2PG-1)) != 0 || isoverlap(addr, len) != nil)
+			return (uintptr)-Leinval;	/* over something: not replaced here */
+		va = addr;
+	} else
+		va = addr != 0 && (addr & (BY2PG-1)) == 0 && isoverlap(addr, len) == nil && addr + len < USTKTOP-USTKSIZE ?
+			addr : up->linuxmmapnext;
 	while(isoverlap(va, len) != nil)
 		va += len;
 	if(va + len >= USTKTOP-USTKSIZE)
@@ -274,11 +303,18 @@ ospreylinuxmmap(uintptr addr, uintptr len, int prot, int flags, int fd, vlong of
 		return (uintptr)-Lenomem;
 	if(waserror())
 		return (uintptr)-Lenomem;
-	up->seg[sno] = newseg(SG_BSS, va, len/BY2PG);
+	/* a file mapping is a data segment the buddy pages; anonymous memory the kernel zero-fills */
+	up->seg[sno] = newseg((flags & Mapanon) ? SG_BSS : SG_DATA, va, len/BY2PG);
 	poperror();
+	if((flags & Mapanon) == 0){
+		up->linuxmap[m].va = va;
+		up->linuxmap[m].len = len;
+		up->linuxmap[m].fd = fd;
+		up->linuxmap[m].off = off;
+	}
 	if(va == up->linuxmmapnext)
 		up->linuxmmapnext = va + len;
-	print("osprey user: mmap %lud bytes anonymous at %#llux\n", (ulong)len, (uvlong)va);
+	print("osprey user: mmap %lud bytes %s at %#llux\n", (ulong)len, (flags & Mapanon) ? "anonymous" : "of a file", (uvlong)va);
 	return va;
 }
 
@@ -327,6 +363,38 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 	case 11:			/* munmap */
 		*retp = ospreylinuxmunmap((uintptr)la[0], (uintptr)la[1]);
 		return 0;
+	case 13:			/* rt_sigaction(sig, act, oldact, sigsetsize) */
+		/*
+		 * Only SIGSEGV is delivered, since the only signal this
+		 * kernel has to deliver is a fault the buddy declined; the
+		 * rest are accepted and forgotten.  The kernel's own struct:
+		 * handler, flags, restorer, mask.  The restorer is required -
+		 * there is no trampoline of the kernel's on the stack - and a
+		 * libc always supplies one.
+		 */
+		if(la[0] == Sigsegv && la[1] != 0){
+			uvlong *act = (uvlong*)la[1];
+
+			if(!waserror()){
+				validaddr((uintptr)act, 4*sizeof(uvlong), 0);
+				if((act[1] & SArestorer) == 0 || act[2] == 0){
+					poperror();
+					*retp = (uintptr)-Leinval;
+					return 0;
+				}
+				up->linuxsighandler = (uintptr)act[0];
+				up->linuxsigrestorer = (uintptr)act[2];
+				poperror();
+			}
+		}
+		*retp = 0;
+		return 0;
+	case 14:			/* rt_sigprocmask: no mask is kept */
+		*retp = 0;
+		return 0;
+	case 15:			/* rt_sigreturn: back to the frame the signal interrupted */
+		ospreylinuxsigreturn();
+		return 0;		/* ax is whatever the frame had */
 	}
 	*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
 	return 0;
@@ -350,6 +418,9 @@ ospreylinuxmunmap(uintptr addr, uintptr len)
 	qunlock(&up->seglock);
 	putseg(s);
 	flushmmu();
+	for(sno = 0; sno < nelem(up->linuxmap); sno++)
+		if(up->linuxmap[sno].va == addr)
+			up->linuxmap[sno].len = 0;
 	return 0;
 }
 

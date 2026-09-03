@@ -49,8 +49,8 @@ def main():
     pages = re.findall(r'osprey buddy: page 0x[0-9a-f]+ of the legacy image supplied by the buddy', t)
     results = [
         ("the buddy lays the Linux binary out from its own file system (exec), the kernel carrying no copy",
-         re.search(r'buddy: exec /boot/linux for container \d+: entry 0x401000', t) is not None
-         and 'laid out by the buddy: entry 0x401000' in t and 'no page mapped yet' in t),
+         re.search(r'buddy: exec /boot/linux for container \d+: entry 0x4010[0-9a-f]{2}', t) is not None
+         and re.search(r'laid out by the buddy: entry 0x4010[0-9a-f]{2}', t) is not None and 'no page mapped yet' in t),
         ("its page faults are taken to the buddy, which supplies each page from the file (text, rodata, bss)",
          len(pages) >= 3 and 'page 0x401000 of the legacy image supplied from its file' in t
          and 'kernel fault' not in t),
@@ -65,6 +65,15 @@ def main():
         ("anonymous mmap gives a mapping the program writes at both ends, and munmap takes it back",
          re.search(r'linux: mmap gave an anonymous mapping at 0x[0-9a-f]+, written at both ends, munmap returned 0', t) is not None
          and 'WRONG' not in t),
+        ("stdin and stdout are the buddy's console: read(0) is end of file and write(1) reaches the console",
+         'linux: read(0) on stdin returned 0 (end of file' in t),
+        ("a file mapping's pages come from the buddy, read from the file: the first page of /boot/linux is its ELF header",
+         re.search(r'linux: file mapping of /boot/linux at 0x[0-9a-f]+, first bytes are its ELF magic', t) is not None
+         and 'of a mapped file supplied by the buddy' in t),
+        ("a fault the buddy declines is SIGSEGV: delivered to the handler, which maps the page, and the store then goes through",
+         'osprey linux: SIGSEGV at 0x20000000000 delivered to the handler' in t
+         and 'linux: SIGSEGV 11 at 0x20000000000 delivered; the handler mapped the page' in t
+         and 'linux: the faulting store went through after the handler returned: 42, one SIGSEGV' in t),
         ("close() returns 0 and a callee-saved register (rbx) survives every syscall, as the Linux ABI requires",
          'linux: close returned 0' in t and 'rbx preserved across every syscall' in t
          and 'CLOBBERED' not in t),

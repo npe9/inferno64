@@ -76,6 +76,34 @@ num(char *p, long v)
 }
 
 /*
+ * The SIGSEGV handler and its restorer, as a libc supplies them: the
+ * handler maps the page the fault named, so the retried store goes
+ * through; the restorer is what the handler returns into, and it asks
+ * the kernel to put the interrupted frame back (rt_sigreturn, 15).
+ */
+static volatile int segvs;
+
+static void
+onsegv(int sig, void *info, void *uc)
+{
+	unsigned long addr = *(unsigned long*)((char*)info + 16);	/* si_addr */
+	char l[96], *q;
+
+	(void)uc;
+	segvs++;
+	sys6(9, addr & ~4095UL, 4096, 3, 0x32, -1, 0);	/* mmap(page, rw, PRIVATE|ANON|FIXED) */
+	q = cat(l, "linux: SIGSEGV ");
+	q = num(q, sig);
+	q = cat(q, " at ");
+	q = hex(q, addr);
+	q = cat(q, " delivered; the handler mapped the page\n");
+	sys3(1, 2, (long)l, slen(l));
+}
+
+__asm__(".globl restore_rt\nrestore_rt:\n\tmovl $15,%eax\n\tsyscall\n\thlt\n");
+extern void restore_rt(void);
+
+/*
  * The process entry, as a real Linux nolibc program writes it: the
  * kernel enters _start with rsp 16-byte aligned and argc at rsp, which
  * is not a C function's frame (a C function expects rsp == 8 mod 16, as
@@ -151,6 +179,51 @@ lmain(void)
 			p = num(p, m);
 		}
 		p = cat(p, "\n");
+		say(line);
+	}
+
+	{
+		/* stdin is the buddy's console: end of file; stdout goes to the console */
+		long n0;
+		n0 = sys3(0, 0, (long)buf, 16);
+		p = cat(line, "linux: read(0) on stdin returned ");
+		p = num(p, n0);
+		p = cat(p, " (end of file at the buddy's console)\n");
+		sys3(1, 1, (long)line, slen(line));		/* write(1): stdout */
+	}
+	{
+		/* a file mapping: the buddy reads the pages from the file */
+		long ffd, m;
+		volatile unsigned char *q;
+		ffd = sys3(2, (long)"/boot/linux", 0, 0);
+		m = sys6(9, 0, 4096, 1, 2, ffd, 0);		/* mmap(0, 4K, PROT_READ, MAP_PRIVATE, fd, 0) */
+		p = cat(line, "linux: file mapping of /boot/linux at ");
+		if(m > 0){
+			q = (volatile unsigned char*)m;
+			p = hex(p, m);
+			p = cat(p, (q[0] == 0x7f && q[1] == 'E' && q[2] == 'L' && q[3] == 'F') ? ", first bytes are its ELF magic" : ", WRONG bytes");
+			sys3(11, m, 4096, 0);
+		} else {
+			p = cat(p, "error ");
+			p = num(p, m);
+		}
+		p = cat(p, "\n");
+		say(line);
+		sys3(3, ffd, 0, 0);
+	}
+	{
+		/* a fault the buddy declines: SIGSEGV to a handler that mends it, then the store goes through */
+		struct { void (*handler)(int, void*, void*); unsigned long flags; void (*restorer)(void); unsigned long mask; } sa;
+		volatile int *bad = (volatile int*)0x20000000000L;
+		sa.handler = onsegv;
+		sa.flags = 0x04000000 | 4;			/* SA_RESTORER | SA_SIGINFO */
+		sa.restorer = restore_rt;
+		sa.mask = 0;
+		sys6(13, 11, (long)&sa, 0, 8, 0, 0);		/* rt_sigaction(SIGSEGV, &sa, 0, 8) */
+		*bad = 42;					/* faults: the handler maps the page */
+		p = cat(line, "linux: the faulting store went through after the handler returned: ");
+		p = num(p, *bad);
+		p = cat(p, segvs == 1 ? ", one SIGSEGV\n" : ", WRONG count\n");
 		say(line);
 	}
 

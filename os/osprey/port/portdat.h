@@ -786,6 +786,16 @@ struct Proc
 	int	linuxheap;	/* the segment slot brk grows, or -1 */
 	uintptr	linuxbrk;	/* the break as the process last set it */
 	uintptr	linuxmmapnext;	/* where the next anonymous mmap goes */
+	struct {		/* its file mappings: pages the buddy reads from the file */
+		uintptr	va;
+		uintptr	len;
+		int	fd;
+		vlong	off;
+	} linuxmap[4];
+	uintptr	linuxsighandler;	/* SIGSEGV's handler, 0 for none */
+	uintptr	linuxsigrestorer;	/* what the handler returns to: it calls rt_sigreturn */
+	int	linuxinsig;		/* in the handler: a fault there kills */
+	uchar	linuxsigsave[256];	/* the trap frame at delivery, put back by rt_sigreturn */
 	int	scallnr;	/* sys call number */
 	int	nerrlab;
 	Label	errlab[NERR];

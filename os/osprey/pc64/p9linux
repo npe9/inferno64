@@ -18,9 +18,9 @@
 # ring to the buddy.  Checked by scripts/osprey-check-p9linux.py: the
 # buddy lays the binary out and pages in its text, rodata and bss, the
 # binary opens the root, reads it, closes it, sees a callee-saved
-# register intact across every trap, and exits.  Only the file calls
-# the demonstration makes are mapped; a fault the buddy declines still
-# ends in donotify's panic rather than a signal.
+# register intact across every trap, maps a file the buddy pages, takes
+# a SIGSEGV in a handler that mends it, and exits.  Only the file calls
+# the demonstration makes are mapped.
 #
 # The rest of the configuration is xup64's, described below.
 #

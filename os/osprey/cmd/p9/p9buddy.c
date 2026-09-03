@@ -45,6 +45,9 @@ enum {
 	 */
 	EXEC	= 100,
 	PAGE	= 101,
+	MAPPAGE	= 102,		/* a page of a file the process mapped */
+	Nfd	= 16,		/* descriptors a legacy process may hold */
+	Fdcons	= -2,		/* 0, 1 and 2: the console, which this personality has no file for */
 	Maxph	= 8,		/* loadable program headers kept */
 	Pagesz	= 4096,
 
@@ -61,6 +64,7 @@ enum {
 typedef struct Img Img;
 struct Img {
 	uvlong	container;	/* whose image this is; 0 when free */
+	int	fds[Nfd];	/* the process's descriptors: this personality's fd each stands for */
 	int	fd;
 	int	kind;		/* 0 an ELF, 1 a Plan 9 a.out */
 	uvlong	entry;
@@ -85,9 +89,13 @@ imgof(uvlong container, int make)
 		return nil;
 	for(i = 0; i < Nimg; i++)
 		if(imgs[i].container == 0){
+			int j;
+
 			memset(&imgs[i], 0, sizeof imgs[i]);
 			imgs[i].container = container;
 			imgs[i].fd = -1;
+			for(j = 0; j < Nfd; j++)
+				imgs[i].fds[j] = j < 3 ? Fdcons : -1;
 			return &imgs[i];
 		}
 	return nil;
@@ -275,11 +283,63 @@ p9buddy_gone(uvlong container)
 {
 	Img *img;
 
+	int i;
+
 	if((img = imgof(container, 0)) == nil)
 		return;
 	if(img->fd >= 0)
 		p9close(img->fd);
+	for(i = 3; i < Nfd; i++)
+		if(img->fds[i] >= 0)
+			p9close(img->fds[i]);
 	memset(img, 0, sizeof *img);
+}
+
+/*
+ * The process's descriptors are its own numbers, kept apart from this
+ * personality's: 0, 1 and 2 are the console, which this personality has
+ * no file for, so a read there is end of file and a write goes out the
+ * way this personality's own prints do; the rest stand for files opened
+ * here on the process's behalf.
+ */
+static int
+fdof(Img *img, uvlong fd)
+{
+	if(img == nil || fd >= Nfd)
+		return -1;
+	return img->fds[fd];
+}
+
+static long
+fdnew(Img *img, int bfd)
+{
+	int i;
+
+	for(i = 3; i < Nfd; i++)
+		if(img->fds[i] == -1){
+			img->fds[i] = bfd;
+			return i;
+		}
+	p9close(bfd);
+	return -1;
+}
+
+/* the file's bytes at off, up to n, zero past its end; -1 for a bad descriptor */
+static long
+readupto(int bfd, vlong off, uchar *buf, long n)
+{
+	long got, r;
+
+	memset(buf, 0, n);
+	if(bfd < 0)
+		return -1;
+	p9seek(bfd, off, 0);
+	for(got = 0; got < n; got += r){
+		r = p9read(bfd, buf+got, n-got);
+		if(r <= 0)
+			break;
+	}
+	return got;
 }
 
 /*
@@ -292,9 +352,17 @@ p9buddy_gone(uvlong container)
 long
 p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a2, uchar *cdata)
 {
+	Img *img;
 	long r;
+	int bfd;
 
+	img = imgof(container, 1);
 	switch(scallnr){
+	case MAPPAGE:
+		/* the page of the process's file a0 at offset a1, to cdata[Dataoff] */
+		r = readupto(fdof(img, a0), (vlong)a1, cdata + Dataoff, (long)a2) < 0 ? -1 : 0;
+		break;
+
 	case EXEC:
 		/* lay out the binary named at cdata[Nameoff]; layout to cdata[Dataoff] */
 		r = p9buddy_exec(container, (char*)(cdata + Nameoff), cdata + Dataoff);
@@ -306,41 +374,54 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		break;
 
 	case OPEN:
-		/* open(name, mode): name at cdata[Nameoff], mode a1 */
-		r = p9open((char*)(cdata + Nameoff), (int)a1);
+		/* open(name, mode): name at cdata[Nameoff], mode a1; the process's own number back */
+		r = fdnew(img, p9open((char*)(cdata + Nameoff), (int)a1));
 		break;
 
 	case CLOSE:
-		p9close((int)a0);
-		r = 0;
+		bfd = fdof(img, a0);
+		if(bfd >= 0)
+			p9close(bfd);
+		if(bfd != -1)
+			img->fds[a0] = a0 < 3 ? Fdcons : -1;
+		r = bfd == -1 ? -1 : 0;
 		break;
 
 	case _READ:
-		/* read(fd, buf, n): fd a0, n a1; data to cdata[Dataoff] */
-		r = p9read((int)a0, cdata + Dataoff, (long)a1);
-		break;
-
 	case PREAD:
-		/* pread(fd, buf, n, off): fd a0, n a1, off a2 */
-		if((vlong)a2 >= 0)
-			p9seek((int)a0, (vlong)a2, 0);
-		r = p9read((int)a0, cdata + Dataoff, (long)a1);
+		/* read(fd, buf, n) / pread(fd, buf, n, off): data to cdata[Dataoff] */
+		bfd = fdof(img, a0);
+		if(bfd == Fdcons)
+			r = 0;			/* end of file on the console */
+		else if(bfd < 0)
+			r = -1;
+		else {
+			if(scallnr == PREAD && (vlong)a2 >= 0)
+				p9seek(bfd, (vlong)a2, 0);
+			r = p9read(bfd, cdata + Dataoff, (long)a1);
+		}
 		break;
 
 	case _WRITE:
-		/* write(fd, buf, n): data already at cdata[Dataoff] */
-		r = p9write((int)a0, cdata + Dataoff, (long)a1);
-		break;
-
 	case PWRITE:
-		if((vlong)a2 >= 0)
-			p9seek((int)a0, (vlong)a2, 0);
-		r = p9write((int)a0, cdata + Dataoff, (long)a1);
+		/* write(fd, buf, n): data already at cdata[Dataoff] */
+		bfd = fdof(img, a0);
+		if(bfd == Fdcons){
+			print("%.*s", (int)a1, (char*)(cdata + Dataoff));
+			r = (long)a1;
+		} else if(bfd < 0)
+			r = -1;
+		else {
+			if(scallnr == PWRITE && (vlong)a2 >= 0)
+				p9seek(bfd, (vlong)a2, 0);
+			r = p9write(bfd, cdata + Dataoff, (long)a1);
+		}
 		break;
 
 	case SEEK:
 	case OSEEK:
-		r = (long)p9seek((int)a0, (vlong)a1, (int)a2);
+		bfd = fdof(img, a0);
+		r = bfd < 0 ? -1 : (long)p9seek(bfd, (vlong)a1, (int)a2);
 		break;
 
 	default:

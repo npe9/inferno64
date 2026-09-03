@@ -422,6 +422,17 @@ faultamd64(Ureg* ureg, void*)
 				error("legacy image: no page at that address");
 			print("user fault: %s addr=%#llux pc=%#llux, no page for it in the buddy's image\n",
 				read? "read": "write", (uvlong)addr, (uvlong)ureg->pc);
+			if(up->oslinux){
+				/*
+				 * A Linux process gets SIGSEGV: to its handler if
+				 * it has one, and otherwise it is killed with the
+				 * status Linux gives, 128 plus the signal.
+				 */
+				if(ospreylinuxsignal(ureg, addr) == 0)
+					return;
+				print("osprey linux: killed by SIGSEGV\n");
+				ospreyexits(128 + 11);
+			}
 			faultnote("fault", read? "read": "write", addr);
 			return;
 		}
@@ -432,11 +443,87 @@ faultamd64(Ureg* ureg, void*)
 			panic("kernel fault: %s addr=%#p", read? "read": "write", addr);
 		}
 		print("user fault: %s addr=%#llux pc=%#llux\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc);
+		if(up->oslinux){
+			/* no segment at all, or the kernel's own could not fill it: SIGSEGV, as above */
+			if(ospreylinuxsignal(ureg, addr) == 0)
+				return;
+			print("osprey linux: killed by SIGSEGV\n");
+			ospreyexits(128 + 11);
+		}
 		faultnote("fault", read? "read": "write", addr);
 	}
 
 	if(!user)
 		poperror();
+}
+
+/*
+ * Deliver SIGSEGV to a Linux process's handler, the way Linux does it:
+ * the interrupted frame is saved, a siginfo (signal number, and the
+ * address at its Linux offset) and a ucontext (present, zero) are put on
+ * the user stack below the red zone, the restorer the process registered
+ * is pushed as the handler's return address, and the trap frame is
+ * pointed at the handler with the System V arguments.  The handler
+ * returns into the restorer, which calls rt_sigreturn, and that puts the
+ * saved frame back, so the faulting instruction is retried - which is
+ * why a handler that mends the fault (mapping the page) makes the
+ * program go on.  The ucontext is not the register image Linux gives; a
+ * handler that reads registers out of it sees zeros.  Returns -1 when
+ * there is no handler or the process is already in it, which is when a
+ * fault kills.
+ */
+enum {
+	Sigsegv = 11,
+	Siginfosz = 128,
+	Ucontextsz = 1024,
+	Redzone = 128,
+};
+
+int
+ospreylinuxsignal(Ureg *ureg, uintptr addr)
+{
+	uintptr top, si, uc, sp;
+
+	if(up->linuxsighandler == 0 || up->linuxinsig)
+		return -1;
+	memmove(up->linuxsigsave, ureg, sizeof(Ureg));
+	top = ureg->sp - Redzone;
+	si = (top - Siginfosz) & ~(uintptr)15;
+	uc = (si - Ucontextsz) & ~(uintptr)15;
+	sp = uc - 8;			/* the return slot: sp is 8 mod 16 at entry, as a call leaves it */
+	if(waserror()){
+		print("osprey linux: no room on the stack for a signal frame\n");
+		return -1;
+	}
+	validaddr(sp, top - sp, 1);
+	memset((void*)uc, 0, Ucontextsz);
+	memset((void*)si, 0, Siginfosz);
+	*(int*)si = Sigsegv;			/* si_signo */
+	*(uintptr*)(si + 16) = addr;		/* si_addr */
+	*(uintptr*)sp = up->linuxsigrestorer;
+	poperror();
+	ureg->pc = up->linuxsighandler;
+	ureg->sp = sp;
+	ureg->di = Sigsegv;
+	ureg->si = si;
+	ureg->dx = uc;
+	ureg->ax = 0;
+	up->linuxinsig = 1;
+	print("osprey linux: SIGSEGV at %#llux delivered to the handler at %#llux\n",
+		(uvlong)addr, (uvlong)up->linuxsighandler);
+	return 0;
+}
+
+void
+ospreylinuxsigreturn(void)
+{
+	Ureg *ureg;
+
+	ureg = up->dbgreg;
+	if(!up->linuxinsig || ureg == nil)
+		return;
+	memmove(ureg, up->linuxsigsave, sizeof(Ureg));
+	up->linuxinsig = 0;
 }
 
 /*

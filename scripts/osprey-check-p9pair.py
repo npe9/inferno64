@@ -60,7 +60,7 @@ def main():
          and re.search(r'osprey exec: container \d+ \(/boot/legacy\) exited with status 0', t) is not None),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
-         and 'panic' not in t and 'user fault' not in t),
+         and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose
     ]
     bad = 0
     for what, ok in results:

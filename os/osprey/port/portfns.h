@@ -11,6 +11,8 @@ void		ospreyenteruser(char*);
 void		ospreyenteruserat(void);
 void		ospreyexits(long);
 int		ospreylinuxsyscall(ulong, uintptr*);
+int		ospreylinuxsignal(Ureg*, uintptr);
+void		ospreylinuxsigreturn(void);
 void		addwatchdog(Watchdog*);
 Block*		adjustblock(Block*, int);
 void		alarmkproc(void*);

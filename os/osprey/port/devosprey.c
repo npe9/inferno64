@@ -2195,7 +2195,7 @@ enum {
 	 * page of that image, which is how a page fault is answered by the
 	 * buddy and not the kernel.  Numbered above any Plan 9 system call.
 	 */
-	Bexec = 100, Bpage = 101,
+	Bexec = 100, Bpage = 101, Bmappage = 102,
 	Bargoff = 64, Bnameoff = 256, Bdataoff = 1024,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
@@ -2394,6 +2394,34 @@ ospreybuddypage(uintptr va, uchar *dst)
 }
 
 /*
+ * One page of a file the process mapped, from the buddy: the file's
+ * bytes at the offset, zero past its end.  The descriptor is the
+ * process's own, which the buddy's table stands for.
+ */
+static int
+ospreybuddymappage(int fd, vlong off, uchar *dst)
+{
+	Ospreyproc *p;
+	uvlong *ab;
+	uchar *dd;
+
+	p = up->osprey;
+	if(p == nil || ospreyserverof(p) == nil)
+		return -1;
+	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+	if(ab == nil)
+		return -1;
+	ab[0] = Bmappage; ab[1] = fd; ab[2] = off; ab[3] = BY2PG;
+	if(ospreybuddycall(p, 400) < 0)
+		return -1;
+	dd = ospreydata(p, Bdataoff, BY2PG);
+	if(dd == nil)
+		return -1;
+	memmove(dst, dd, BY2PG);
+	return 0;
+}
+
+/*
  * A page fault in a legacy process, taken to the buddy.  exec made the
  * process's text and data segments empty; the first touch of each page
  * lands here, and the page's contents are the buddy's to supply, from
@@ -2412,7 +2440,7 @@ ospreybuddyfault(uintptr addr, uintptr pc, int read)
 	Page *pg;
 	KMap *k;
 	uintptr va, soff;
-	int type, present;
+	int type, present, m, r;
 
 	va = addr & ~(uintptr)(BY2PG-1);
 	s = seg(up, addr, 1);
@@ -2433,13 +2461,21 @@ ospreybuddyfault(uintptr addr, uintptr pc, int read)
 	if(pg == nil)
 		return -1;
 	k = kmap(pg);
-	if(ospreybuddypage(va, (uchar*)VA(k)) < 0){
+	for(m = 0; m < nelem(up->linuxmap); m++)
+		if(up->linuxmap[m].len != 0 && va >= up->linuxmap[m].va && va < up->linuxmap[m].va + up->linuxmap[m].len)
+			break;
+	if(m < nelem(up->linuxmap))
+		r = ospreybuddymappage(up->linuxmap[m].fd, up->linuxmap[m].off + (va - up->linuxmap[m].va), (uchar*)VA(k));
+	else
+		r = ospreybuddypage(va, (uchar*)VA(k));
+	if(r < 0){
 		kunmap(k);
 		putpage(pg);
 		return -1;
 	}
 	kunmap(k);
-	print("osprey buddy: page %#llux of the legacy image supplied by the buddy\n", (uvlong)va);
+	print("osprey buddy: page %#llux %s supplied by the buddy\n", (uvlong)va,
+		m < nelem(up->linuxmap) ? "of a mapped file" : "of the legacy image");
 	segpage(s, pg);
 	return fault(addr, pc, read) < 0 ? -1 : 0;
 }
