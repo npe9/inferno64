@@ -2,6 +2,38 @@
 
 ## Status (most recent first)
 
+**ECDSA/P-256 DONE, 2026-09-03 — the TLS layer now reaches ECDSA
+hosts, and live DNS resolution works.** The gap named below is
+closed. New `p256(2)` (`appl/lib/crypt/p256.b`) implements NIST P-256
+in pure Limbo on `keyring`'s IPint — ECDSA verify and ECDH — verified
+by `p256test(1)` against Python `cryptography` vectors (valid sig
+verifies; corrupted sig and wrong hash rejected; ECDH known-answer
+matches; off-curve points rejected; fresh-keypair round trip agrees).
+Wired in two places: `x509(2)` verifies `ecdsa-with-SHA256/384/512`
+certificate signatures (added id-ecPublicKey / secp256r1 / the ecdsa
+sig-alg OIDs, and an `ecdsa_checksig` that pulls the EC point from the
+issuer's SubjectPublicKeyInfo and the (r,s) from the DER signature);
+`tls12(2)` now offers all four ECDHE-{RSA,ECDSA}-{AES128-GCM,ChaCha20}
+suites and both X25519 + secp256r1 groups, does P-256 ECDHE when the
+server names secp256r1, and verifies the ECDSA ServerKeyExchange
+signature. Measured: dns.google, cloudflare-dns.com and dns.quad9.net
+all complete TLS 1.2 + ECDHE-ECDSA-AES128-GCM over P-256 — and
+`doh(2)`/`dns(1)` now resolve real names live (`dns github.com` →
+140.82.113.3; `one.one.one.one` → 1.1.1.1). All the RSA-path tests
+(tls12test/httpstest/s3test/bskytest/mastotest) still pass unchanged.
+End-to-end negative control: corrupting a P-256 curve constant breaks
+both p256test and the live DoH handshake (ServerKeyExchange verify
+fails), then restored. **Also found+fixed a real IPint gotcha**: this
+keyring's `and`/`shr` builtins emit debug noise / misbehave, so P-256
+reads scalar bits from `iptobebytes()` rather than through IPint's bit
+operators.
+
+Still not done (smaller, tracked): DoH is not yet wired into
+`/net/cs`, so a program must call `dns(1)`/`doh(2)` explicitly rather
+than dialling a name; no TLS 1.3; no revocation checking. P-256 is
+affine (not constant-time) — fine for verifying public signatures and
+ephemeral ECDH, the only uses here.
+
 **Follow-on, 2026-09-03 — the ECDSA/P-256 gap, found by building on
 top of the finished stack.** Two clients were built past step 9 to
 exercise the transport against more of the real world: `awsv4(2)`/

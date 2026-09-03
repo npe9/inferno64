@@ -34,6 +34,12 @@ leaned on the hosted
 .I emu 's
 own resolver.
 .PP
+Live resolution works: the resolver is reached over
+.IR tls12 (2),
+whose ECDHE-ECDSA/P-256 support (\c
+.IR p256 (2))
+handles the ECDSA certificates every public DoH provider serves.
+.PP
 .B Init
 must be called once.
 .B Resolve
@@ -87,26 +93,16 @@ non-zero RCODE \(em e.g. name-does-not-exist \(em as an error).
 .IR https (2),
 .IR tls12 (2)
 .SH BUGS
-.B Live resolution does not work yet, and the reason is not in this
-.BR module .
-Every current public DoH resolver
-.RB ( dns.google ,
-Cloudflare, Quad9, and the rest) presents an ECDSA (secp256r1)
-certificate, and several require P-256 ECDHE key exchange;
-.IR tls12 (2)
-verifies RSA certificate chains over X25519 only, so the TLS
-handshake to a real resolver fails before any DNS is exchanged. The
-wire format here is complete and verified offline
-.RI ( dohtest (1)),
-and live resolution will work unchanged once ECDSA/P-256 support lands
-in the TLS stack \(em that is the gating work, tracked with the rest
-of the TLS modernization in
-.I doc/ssl-modernization-plan.md .
-.PP
 Only A and AAAA records are handled; there is no caching, no fallback
 across multiple resolvers, and no integration into
 .IR dial (2)'s
 own name resolution (a caller must invoke
 .B doh
-explicitly). The message id is always 0, as RFC 8484 recommends for
-DoH.
+explicitly \(em wiring DoH into
+.I /net/cs
+so every dial resolves by name is the obvious next step, not yet
+done). The message id is always 0, as RFC 8484 recommends for DoH.
+Reaching an ECDSA resolver depends on
+.IR tls12 (2)'s
+ECDHE-ECDSA/P-256 support; a resolver on a curve or key type that
+client does not implement would fail at the handshake.

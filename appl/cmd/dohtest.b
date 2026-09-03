@@ -1,20 +1,16 @@
 implement Command;
 
-# dohtest(1) - test doh(2)'s DNS-over-HTTPS wire format, offline.
+# dohtest(1) - test doh(2)'s DNS-over-HTTPS resolver: wire format
+# offline, then a live resolve over the real network.
 #
 # The encode vector is a real Google DoH query captured on the wire
 # (example.com A, id 0). The decode vectors are hand-built responses in
 # RFC 1035 wire format, including the message-compression pointers real
 # responses use, plus an NXDOMAIN (rcode 3) so the error path is
-# covered.
-#
-# There is deliberately no live-resolution leg yet: every current
-# public DoH resolver serves an ECDSA (secp256r1) certificate to a
-# TLS 1.2 client, and this tree's tls12(2) verifies RSA chains only,
-# so a live resolve fails at certificate verification. The wire format
-# here - the bug-prone part - is fully exercised offline; the live
-# path lights up unchanged once ECDSA support lands in the TLS stack.
-# See doh(2) BUGS.
+# covered. The live leg resolves a real name (over TLS to an ECDSA
+# resolver - now that tls12(2) does ECDHE-ECDSA/P-256) and requires a
+# plausible dotted-quad back, then resolves a guaranteed-nonexistent
+# name and requires the name-does-not-exist error.
 
 include "sys.m";
 	sys: Sys;
@@ -78,11 +74,43 @@ init(nil: ref Draw->Context, nil: list of string)
 	else
 		sys->print("decode NXDOMAIN: refused (%s): PASS\n", nxerr);
 
+	# live: resolve a real name over real DoH (ECDSA resolver)
+	(live, lerr) := doh->resolve(nil, "one.one.one.one");
+	if(lerr != nil)
+		fail("live resolve one.one.one.one: "+lerr);
+	else if(!plausible(live))
+		fail("live resolve: implausible answers: "+joins(live));
+	else
+		sys->print("live resolve one.one.one.one -> %s: PASS\n", joins(live));
+
+	# live: a guaranteed-nonexistent name must return the error, live
+	(nil, nlerr) := doh->resolve(nil, "no-such-host.invalid");
+	if(nlerr == nil)
+		fail("live resolve of .invalid unexpectedly succeeded");
+	else
+		sys->print("live resolve .invalid: refused (%s): PASS\n", nlerr);
+
 	if(failures){
 		sys->fprint(stderr, "dohtest: %d FAILURE(S)\n", failures);
 		raise "fail:test";
 	}
 	sys->print("all tests passed\n");
+}
+
+plausible(addrs: list of string): int
+{
+	if(addrs == nil)
+		return 0;
+	for(; addrs != nil; addrs = tl addrs){
+		dots := 0;
+		s := hd addrs;
+		for(i := 0; i < len s; i++)
+			if(s[i] == '.')
+				dots++;
+		if(dots != 3)
+			return 0;
+	}
+	return 1;
 }
 
 hex(a: array of byte): string

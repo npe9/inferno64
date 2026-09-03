@@ -1,0 +1,43 @@
+.TH P256TEST 1
+.SH NAME
+p256test \- test NIST P-256 ECDSA and ECDH
+.SH SYNOPSIS
+.B p256test
+.SH DESCRIPTION
+.B P256test
+checks
+.IR p256 (2)
+against vectors from an independent library (Python's
+.BR cryptography ),
+offline:
+.IP \(bu
+a real ECDSA signature over a known message with a known key must
+verify;
+.IP \(bu
+the same signature with one bit flipped must
+.I not
+verify, and the same against a one-bit-changed hash must
+.I not
+verify \(em an automated negative control (unlike most in this tree,
+it can be automated, since a wrong signature is a safe computation,
+not a memory hazard);
+.IP \(bu
+an ECDH shared secret with a known private scalar and known peer
+point must equal the library's, and two freshly generated keypairs
+must agree after exchange;
+.IP \(bu
+a point not on the curve must be rejected, both by
+.B oncurve
+and as an ECDH peer.
+.SH SOURCE
+.B /appl/cmd/p256test.b
+.SH SEE ALSO
+.IR p256 (2),
+.IR tls12 (2)
+.SH BUGS
+Coverage is verify/agreement over the fixed vectors above plus a
+round trip; there is no signing to test (\c
+.IR p256 (2)
+does not sign). A further hand control \(em corrupting a curve
+constant, which must break every operation \(em is run by editing the
+source.

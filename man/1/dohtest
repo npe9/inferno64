@@ -17,15 +17,12 @@ responses in RFC 1035 wire format including the message-compression
 pointers real answers use \(em two A records, and an NXDOMAIN (rcode
 3) so the error path is covered.
 .PP
-There is no live-resolution leg: every current public DoH resolver
-serves an ECDSA certificate that
+A live leg then resolves a real name over real DoH \(em over TLS to
+an ECDSA resolver, which
 .IR tls12 (2)
-cannot yet verify, so a live resolve fails at the TLS handshake. The
-wire format \(em the part where bugs actually hide \(em is fully
-exercised here; the live path lights up unchanged once ECDSA support
-lands. See
-.IR doh (2)'s
-BUGS.
+now reaches via ECDHE-ECDSA/P-256 \(em requiring a plausible
+dotted-quad back, and resolves a guaranteed-nonexistent name
+requiring the name-does-not-exist error.
 .SH SOURCE
 .B /appl/cmd/dohtest.b
 .SH SEE ALSO
@@ -34,8 +31,7 @@ BUGS.
 .SH BUGS
 The negative control \(em corrupting the name-skip in the decoder,
 which must break the vectors \(em is run by editing the source, not
-automated. Coverage is the wire format only; the transport and
-certificate paths are covered by
-.IR httpstest (1)
-and
-.IR tls12test (1).
+automated. The live leg needs the network and an ECDSA-reachable
+resolver; the underlying ECDSA/P-256 arithmetic is exercised
+separately by
+.IR p256test (1).

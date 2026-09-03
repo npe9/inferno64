@@ -33,18 +33,23 @@ is a TLS 1.2 client, built because
 module speaks only SSLv3 and cannot complete a handshake with any
 modern HTTPS host. Its scope is exactly what
 .I doc/ssl-modernization-plan.md
-measured as sufficient for that plan's real targets: TLS 1.2 only,
-ECDHE-RSA key exchange over X25519 only, and the two AEAD cipher
-suites
+measured as sufficient for its real targets, since extended to reach
+the ECDSA hosts that make up much of the modern web: TLS 1.2, key
+exchange over X25519 or NIST P-256 (secp256r1), server authentication
+by RSA or ECDSA (P-256) certificate, and AES-128-GCM or
+ChaCha20-Poly1305 AEAD record protection \(em the four cipher suites
 .B TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-.RB ( CS_ECDHE_RSA_AES128_GCM_SHA256 ,
-16rC02F) and
+(16rC02F),
 .B TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
-.RB ( CS_ECDHE_RSA_CHACHA20_POLY1305 ,
-16rCCA8). There is no TLS 1.3, no other curve, no CBC suite, no
-session resumption, no renegotiation and no client certificate
-support; requests for any of those fail cleanly rather than
-negotiating something outside the measured scope.
+(16rCCA8),
+.B TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+(16rC02B) and
+.B TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+(16rCCA9). The ECDSA/P-256 arithmetic is
+.IR p256 (2).
+There is still no TLS 1.3, no CBC suite, no session resumption, no
+renegotiation and no client certificate support; requests for any of
+those fail cleanly rather than negotiating something outside scope.
 .PP
 The handshake flow, secret derivation and AEAD record construction
 are ported from 9front
@@ -165,7 +170,7 @@ Trust is only as fresh as the frozen bundle at
 .BR CAPATH ;
 nothing updates it automatically, and a stale bundle eventually means
 spurious verification failures (missing new roots) rather than
-anything unsafe. Only RSA certificate keys and
-sha1/sha256/sha384/sha512WithRSAEncryption signatures are supported
-\(em ECDSA chains fail cleanly. The system clock is trusted for
-validity periods.
+anything unsafe. Certificate keys may be RSA
+(sha1/256/384/512WithRSAEncryption) or ECDSA on P-256
+(ecdsa-with-SHA256/384/512); other curves and key types fail cleanly.
+The system clock is trusted for validity periods.

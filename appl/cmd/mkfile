@@ -129,6 +129,7 @@ TARG=\
 	tls12test.dis\
 	httpstest.dis\
 	awsv4test.dis\
+	p256test.dis\
 	s3.dis\
 	s3test.dis\
 	dns.dis\

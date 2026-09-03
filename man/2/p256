@@ -1,0 +1,80 @@
+.TH P256 2
+.SH NAME
+p256: ecdsa_verify, ecdh_new, ecdh_shared, oncurve \- NIST P-256 curve operations
+.SH SYNOPSIS
+.EX
+include "keyring.m";
+include "p256.m";
+p256 := load P256 P256->PATH;
+
+init:         fn(): string;
+ecdsa_verify: fn(hash, r, s, pub: array of byte): int;
+ecdh_new:     fn(): (array of byte, array of byte);
+ecdh_shared:  fn(priv, peerpub: array of byte): array of byte;
+oncurve:      fn(pub: array of byte): int;
+.EE
+.SH DESCRIPTION
+.B P256
+implements the NIST P-256 (secp256r1 / prime256v1) elliptic curve:
+ECDSA signature verification and ECDH key agreement. It is pure
+.IR keyring (2)
+IPint arithmetic \(em no native code \(em and exists so
+.IR tls12 (2)
+can complete ECDHE-ECDSA handshakes and verify ECDSA certificate
+chains, which is what the modern web (and every public DoH resolver)
+requires.
+.PP
+.B Init
+must be called once. Points crossing this interface use the SEC1
+uncompressed encoding
+.RB ( 0x04
+followed by the 32-byte
+.I X
+and 32-byte
+.IR Y ,
+65 bytes); scalars and coordinates are 32-byte big-endian.
+.PP
+.B Ecdsa_verify
+checks an ECDSA-with-SHA-256 signature:
+.I hash
+is the 32-byte digest,
+.I r
+and
+.I s
+the signature integers, and
+.I pub
+the signer's 65-byte public point. It returns 1 only if the signature
+is valid and the public key is a well-formed on-curve point.
+.B Ecdh_new
+generates an ephemeral keypair, returning the 32-byte private scalar
+and the 65-byte public point.
+.B Ecdh_shared
+computes the shared secret from our private scalar and the peer's
+public point \(em the 32-byte big-endian
+.I x
+coordinate of their product \(em after validating that the peer point
+is on the curve (rejecting it with nil otherwise, which ECDHE
+security requires).
+.B Oncurve
+reports whether a 65-byte point lies on the curve.
+.SH SOURCE
+.B /appl/lib/crypt/p256.b
+.br
+.B /module/p256.m
+.SH SEE ALSO
+.IR p256test (1),
+.IR tls12 (2),
+.IR keyring (2)
+.SH BUGS
+Only P-256 is implemented \(em not P-384/521 or other curves \(em and
+only verification and key agreement, not signing (a TLS client never
+signs with the server's curve). ECDSA
+.I hashing
+is the caller's job; only the SHA-256-sized reduction is applied to
+.I hash
+inside
+.BR ecdsa_verify .
+The arithmetic is affine with a modular inverse per point operation:
+correct and clear, but not constant-time \(em fine for verifying
+public signatures and for ephemeral ECDH, not intended for
+long-lived-secret operations where timing side channels matter.

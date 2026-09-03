@@ -55,7 +55,14 @@ X509: module {
  	id_mr_certificatePairMatch,
  	id_mr_certificateListExactMatch,
  	id_mr_certificateListMatch,
- 	id_mr_algorithmidentifierMatch	: con iota;
+ 	id_mr_algorithmidentifierMatch,
+	# ANSI X9.62 / SEC: elliptic-curve keys and ECDSA signatures,
+	# needed to verify the ECDSA certificate chains modern hosts serve
+	id_ecPublicKey,			# 1.2.840.10045.2.1
+	id_prime256v1,			# 1.2.840.10045.3.1.7 (secp256r1)
+	id_ecdsaWithSHA256,		# 1.2.840.10045.4.3.2
+	id_ecdsaWithSHA384,		# 1.2.840.10045.4.3.3
+	id_ecdsaWithSHA512	: con iota;
 
 	## Signed (as Public Key, CRL, Attribute Certificates and CertificationRequest)
 

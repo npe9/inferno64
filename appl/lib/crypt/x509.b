@@ -31,6 +31,9 @@ include "daytime.m";
 include "pkcs.m";
 	pkcs				: PKCS;
 
+include "p256.m";
+	p256				: P256;
+
 include "x509.m";
 
 X509_DEBUG 				: con 0;
@@ -97,6 +100,11 @@ objIdTab = array [] of {
 # 	id_mr_certificateListMatch =>	Oid(array [] of {2,5,?,39}),
 # 	id_mr_algorithmidentifierMatch =>
 #					Oid(array [] of {2,5,?,40})
+	id_ecPublicKey =>	Oid(array [] of {1,2,840,10045,2,1}),
+	id_prime256v1 =>	Oid(array [] of {1,2,840,10045,3,1,7}),
+	id_ecdsaWithSHA256 =>	Oid(array [] of {1,2,840,10045,4,3,2}),
+	id_ecdsaWithSHA384 =>	Oid(array [] of {1,2,840,10045,4,3,3}),
+	id_ecdsaWithSHA512 =>	Oid(array [] of {1,2,840,10045,4,3,4})
 };
 
 # [public]
@@ -130,6 +138,12 @@ init(): string
 		return sys->sprint("load %s: %r", PKCS->PATH);
 	if((e := pkcs->init()) != nil)
 		return sys->sprint("pkcs: %s", e);
+
+	# ECDSA certificate verification (modern chains); optional - if
+	# p256 is unavailable, only RSA chains verify
+	p256 = load P256 P256->PATH;
+	if(p256 != nil && p256->init() != nil)
+		p256 = nil;
 
 	return nil;
 }
@@ -1742,6 +1756,13 @@ verify_chain_host(chain: list of array of byte, host: string,
 
 checksig(signed: ref Signed, issuer: ref Certificate): string
 {
+	# ECDSA signature algorithms live in x509's own objIdTab
+	ecalgid := asn1->oid_lookup(signed.alg.oid, objIdTab);
+	case ecalgid {
+	id_ecdsaWithSHA256 or id_ecdsaWithSHA384 or id_ecdsaWithSHA512 =>
+		return ecdsa_checksig(signed, issuer, ecalgid);
+	}
+
 	algid := asn1->oid_lookup(signed.alg.oid, pkcs->objIdTab);
 	halg := -1;
 	case algid {
@@ -1768,6 +1789,60 @@ checksig(signed: ref Signed, issuer: ref Certificate): string
 		;
 	}
 	return "unsupported issuer public key type";
+}
+
+# [private]
+# verify an ECDSA-with-SHA* certificate signature: the issuer's key
+# must be an id-ecPublicKey point (P-256 here), the signature a DER
+# SEQUENCE { r INTEGER, s INTEGER }, over the SHA-hash of tobe_signed.
+ecdsa_checksig(signed: ref Signed, issuer: ref Certificate, ecalgid: int): string
+{
+	if(p256 == nil)
+		return "ECDSA certificate, but p256(2) is not available";
+	# issuer's public key must be an EC point
+	if(asn1->oid_lookup(issuer.subject_pkinfo.alg_id.oid, objIdTab) != id_ecPublicKey)
+		return "ECDSA signature but issuer key is not an EC key";
+	pub := issuer.subject_pkinfo.subject_pk;	# raw uncompressed point
+	if(len pub != 65 || int pub[0] != 16r04)
+		return "unsupported EC public key format (not an uncompressed P-256 point)";
+
+	# hash tobe_signed with the algorithm the signature names
+	hash: array of byte;
+	case ecalgid {
+	id_ecdsaWithSHA256 =>
+		hash = array[Keyring->SHA256dlen] of byte;
+		keyring->sha256(signed.tobe_signed, len signed.tobe_signed, hash, nil);
+	id_ecdsaWithSHA384 =>
+		hash = array[Keyring->SHA384dlen] of byte;
+		keyring->sha384(signed.tobe_signed, len signed.tobe_signed, hash, nil);
+	id_ecdsaWithSHA512 =>
+		hash = array[Keyring->SHA512dlen] of byte;
+		keyring->sha512(signed.tobe_signed, len signed.tobe_signed, hash, nil);
+	}
+
+	(r, s, perr) := parseecdsasig(signed.signature);
+	if(perr != nil)
+		return perr;
+	if(p256->ecdsa_verify(hash, r, s, pub))
+		return nil;
+	return "certificate signature verification failed";
+}
+
+# [private]
+# ECDSA-Sig-Value ::= SEQUENCE { r INTEGER, s INTEGER }, big-endian
+parseecdsasig(sig: array of byte): (array of byte, array of byte, string)
+{
+	(err, e) := asn1->decode(sig);
+	if(err != "")
+		return (nil, nil, "ECDSA signature: "+err);
+	(ok, el) := e.is_seq();
+	if(!ok || len el != 2)
+		return (nil, nil, "ECDSA signature: not a two-element sequence");
+	(okr, r) := (hd el).is_bigint();
+	(oks, s) := (hd tl el).is_bigint();
+	if(!okr || !oks)
+		return (nil, nil, "ECDSA signature: r/s not integers");
+	return (r, s, nil);
 }
 
 # [private]

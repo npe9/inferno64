@@ -44,11 +44,15 @@ include "bufio.m";
 include "encoding.m";
 	base64: Encoding;
 include "asn1.m";
+	asn1: ASN1;
+	Elem: import asn1;
 include "pkcs.m";
 	pkcs: PKCS;
 include "x509.m";
 	x509: X509;
 	Signed, Certificate, SubjectPKInfo, PublicKey: import x509;
+include "p256.m";
+	p256: P256;
 include "tls12.m";
 
 # record content types
@@ -77,6 +81,18 @@ EXT_EC_POINT_FORMATS: con 16r000b;
 EXT_SIG_ALGS: con 16r000d;
 
 CURVE_X25519: con 16r001d;
+CURVE_SECP256R1: con 16r0017;	# NIST P-256, for ECDHE-ECDSA servers
+
+# ECDHE-ECDSA cipher suites - same AEAD record protection as the
+# ECDHE-RSA pair, but the server authenticates with an ECDSA
+# certificate (which is what every modern DoH resolver, Cloudflare,
+# and a growing part of the web serve)
+CS_ECDHE_ECDSA_AES128_GCM_SHA256: con 16rC02B;
+CS_ECDHE_ECDSA_CHACHA20_POLY1305: con 16rCCA9;
+
+# ServerKeyExchange signature types (RFC 5246 7.4.1.4.1)
+SIG_RSA: con 1;
+SIG_ECDSA: con 3;
 
 RANDOMLEN: con 32;
 MASTERLEN: con 48;		# tlshand.c MasterSecretSize
@@ -111,6 +127,15 @@ init(): string
 		return "tls12: load x509 module failed";
 	if((err = x509->init()) != nil)
 		return "tls12: "+err;
+	p256 = load P256 P256->PATH;
+	if(p256 == nil)
+		return "tls12: load p256 module failed";
+	if((err = p256->init()) != nil)
+		return "tls12: "+err;
+	asn1 = load ASN1 ASN1->PATH;
+	if(asn1 == nil)
+		return "tls12: load asn1 module failed";
+	asn1->init();
 	return nil;
 }
 
@@ -199,7 +224,10 @@ Hs: adt
 client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, string)
 {
 	if(suites == nil)
-		suites = CS_ECDHE_RSA_AES128_GCM_SHA256 :: CS_ECDHE_RSA_CHACHA20_POLY1305 :: nil;
+		suites = CS_ECDHE_ECDSA_AES128_GCM_SHA256 ::
+			CS_ECDHE_RSA_AES128_GCM_SHA256 ::
+			CS_ECDHE_ECDSA_CHACHA20_POLY1305 ::
+			CS_ECDHE_RSA_CHACHA20_POLY1305 :: nil;
 
 	s := ref Session(fd, 0, nil, nil,
 		big 0, big 0,		# wseq, rseq
@@ -247,8 +275,8 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 	if(mtype != HT_SERVER_KEY_EXCHANGE)
 		return (nil, sys->sprint("tls: expected ServerKeyExchange, got handshake type %d", mtype));
 	skxparams, skxsig: array of byte;
-	skxhash: int;
-	(serverpub, skxparams, skxhash, skxsig, err) = serverkeyexchange(body);
+	skxhash, skxsigtype, kxcurve: int;
+	(serverpub, kxcurve, skxparams, skxhash, skxsigtype, skxsig, err) = serverkeyexchange(body);
 	if(err != nil)
 		return (nil, err);
 
@@ -272,29 +300,43 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 	(vok, verr) := x509->verify_chain_host(s.certs, hostname, cachedroots);
 	if(!vok)
 		return (nil, "tls: certificate verification: "+verr);
-	skerr := checkskx(s.certs, crandom, srandom, skxparams, skxhash, skxsig);
+	skerr := checkskx(s.certs, crandom, srandom, skxparams, skxhash, skxsigtype, skxsig);
 	if(skerr != nil)
 		return (nil, skerr);
 
-	# ClientKeyExchange: fresh X25519 keypair, public key on the wire
-	# (tlshand.c:2585 - curve25519_dh_new straight into the message)
-	x := array[32] of byte;
-	y := array[32] of byte;
-	kr->curve25519_dh_new(x, y);
-	ckxbody := array[1+32] of byte;
-	ckxbody[0] = byte 32;
-	ckxbody[1:] = y;
+	# ClientKeyExchange + premaster secret, on the curve the server
+	# named. z is the shared secret feeding the master secret.
+	z: array of byte;
+	ckxpub: array of byte;
+	if(kxcurve == CURVE_SECP256R1){
+		# P-256 ECDHE: our ephemeral point on the wire, shared = our
+		# private * server point, x-coordinate (32 bytes)
+		(priv, pub) := p256->ecdh_new();
+		if(priv == nil)
+			return (nil, "tls: P-256 key generation failed");
+		ckxpub = pub;			# 65-byte uncompressed point
+		z = p256->ecdh_shared(priv, serverpub);
+		wipe(priv);
+		if(z == nil)
+			return (nil, "tls: bad server P-256 public key");
+	}else{
+		# X25519 (tlshand.c:2585 - curve25519_dh_new into the message)
+		x := array[32] of byte;
+		y := array[32] of byte;
+		kr->curve25519_dh_new(x, y);
+		ckxpub = y;			# 32-byte public value
+		z = array[32] of byte;
+		if(kr->curve25519_dh_finish(x, serverpub, z) == 0)
+			return (nil, "tls: bad server X25519 public key (zero shared secret)");
+	}
+	ckxbody := array[1+len ckxpub] of byte;
+	ckxbody[0] = byte len ckxpub;
+	ckxbody[1:] = ckxpub;
 	ckx := hsheader(HT_CLIENT_KEY_EXCHANGE, ckxbody);
 	hashmsg(hs, ckx);
 	err = sendrecord(s, CT_HANDSHAKE, VER_TLS12, ckx);
 	if(err != nil)
 		return (nil, err);
-
-	# premaster = X25519(our secret, server public); dh_finish also
-	# wipes x and serverpub, and rejects an all-zero shared secret
-	z := array[32] of byte;
-	if(kr->curve25519_dh_finish(x, serverpub, z) == 0)
-		return (nil, "tls: bad server X25519 public key (zero shared secret)");
 
 	# master secret (tlshand.c setMasterSecret: seed = crandom+srandom)
 	seed := array[2*RANDOMLEN] of byte;
@@ -363,8 +405,11 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 # ChangeCipherSpec hasn't arrived yet when this runs.
 armkeys(s: ref Session, master, seed: array of byte): string
 {
+	# the record layer depends only on the AEAD, not on whether the
+	# server authenticated with RSA or ECDSA, so the ECDHE-ECDSA
+	# suites share the ECDHE-RSA key schedules
 	case s.cipher {
-	CS_ECDHE_RSA_AES128_GCM_SHA256 =>
+	CS_ECDHE_RSA_AES128_GCM_SHA256 or CS_ECDHE_ECDSA_AES128_GCM_SHA256 =>
 		# 2*(16+4) - devtls encrypttab "aes_128_gcm_aead"
 		kb := prf(master, "key expansion", seed, 40);
 		# fixed IV part: 4-byte salt from the key block plus 8
@@ -379,7 +424,7 @@ armkeys(s: ref Session, master, seed: array of byte): string
 		s.wgcm = kr->aesgcmsetup(kb[0:16], nil);
 		s.rgcm = kr->aesgcmsetup(kb[16:32], nil);
 		wipe(kb);
-	CS_ECDHE_RSA_CHACHA20_POLY1305 =>
+	CS_ECDHE_RSA_CHACHA20_POLY1305 or CS_ECDHE_ECDSA_CHACHA20_POLY1305 =>
 		# 2*(32+12) - devtls encrypttab "ccpoly96_aead"
 		kb := prf(master, "key expansion", seed, 88);
 		s.wiv = kb[64:76];
@@ -582,12 +627,15 @@ clienthello(hostname: string, crandom: array of byte, suites: list of int): arra
 	i = put16(sni, i, n);
 	i = putbytes(sni, i, hb);
 
-	groups := array[2+2+2+2] of byte;
+	# offer X25519 first, then secp256r1 (for ECDHE-ECDSA servers that
+	# do not do X25519 - dns.google, Cloudflare, Quad9 all want P-256)
+	groups := array[2+2+2+2+2] of byte;
 	i = 0;
 	i = put16(groups, i, EXT_SUPPORTED_GROUPS);
-	i = put16(groups, i, 2+2);
-	i = put16(groups, i, 2);		# list length: one curve
+	i = put16(groups, i, 2+4);
+	i = put16(groups, i, 4);		# list length: two curves
 	i = put16(groups, i, CURVE_X25519);
+	i = put16(groups, i, CURVE_SECP256R1);
 
 	pointfmt := array[2+2+1+1] of byte;
 	i = 0;
@@ -703,49 +751,95 @@ certificate(b: array of byte): (list of array of byte, string)
 
 # returns (server public key, the raw ECDHE params bytes the signature
 # covers, the TLS HashAlgorithm id, the signature bytes, error)
-serverkeyexchange(b: array of byte): (array of byte, array of byte, int, array of byte, string)
+# returns (server public point, negotiated curve, signed params bytes,
+# hash-alg id, signature type, signature, error)
+serverkeyexchange(b: array of byte): (array of byte, int, array of byte, int, int, array of byte, string)
 {
 	if(len b < 1+2+1)
-		return (nil, nil, 0, nil, "tls: ServerKeyExchange too short");
+		return (nil, 0, nil, 0, 0, nil, "tls: ServerKeyExchange too short");
 	(curvetype, i) := get8(b, 0);
 	if(curvetype != 3)
-		return (nil, nil, 0, nil, sys->sprint("tls: curve_type %d, expected 3 (named_curve)", curvetype));
+		return (nil, 0, nil, 0, 0, nil, sys->sprint("tls: curve_type %d, expected 3 (named_curve)", curvetype));
 	(curve, i2) := get16(b, i);
 	i = i2;
-	if(curve != CURVE_X25519)
-		return (nil, nil, 0, nil, sys->sprint("tls: named curve %04x, expected X25519 (%04x)", curve, CURVE_X25519));
+	if(curve != CURVE_X25519 && curve != CURVE_SECP256R1)
+		return (nil, 0, nil, 0, 0, nil, sys->sprint("tls: named curve %04x, expected X25519 or secp256r1", curve));
 	(publen, i3) := get8(b, i);
 	i = i3;
-	if(publen != 32 || i+publen > len b)
-		return (nil, nil, 0, nil, sys->sprint("tls: X25519 public key length %d, expected 32", publen));
-	pub := array[32] of byte;
-	pub[0:] = b[i:i+32];
+	# X25519 public keys are 32 bytes; secp256r1 uncompressed points
+	# are 65 (0x04||X||Y)
+	explen := 32;
+	if(curve == CURVE_SECP256R1)
+		explen = 65;
+	if(publen != explen || i+publen > len b)
+		return (nil, 0, nil, 0, 0, nil, sys->sprint("tls: server public key length %d, expected %d for curve %04x", publen, explen, curve));
+	pub := array[publen] of byte;
+	pub[0:] = b[i:i+publen];
 	i += publen;
 	params := b[0:i];
 
 	# SignatureAndHashAlgorithm (2 bytes) + opaque signature<0..2^16-1>
 	if(i+2+2 > len b)
-		return (nil, nil, 0, nil, "tls: ServerKeyExchange truncated before signature");
+		return (nil, 0, nil, 0, 0, nil, "tls: ServerKeyExchange truncated before signature");
 	(hashalg, i4) := get8(b, i);
 	i = i4;
 	(sigtype, i5) := get8(b, i);
 	i = i5;
-	if(sigtype != 1)
-		return (nil, nil, 0, nil, sys->sprint("tls: ServerKeyExchange signature type %d, expected 1 (RSA)", sigtype));
+	if(sigtype != SIG_RSA && sigtype != SIG_ECDSA)
+		return (nil, 0, nil, 0, 0, nil, sys->sprint("tls: ServerKeyExchange signature type %d, expected RSA or ECDSA", sigtype));
 	(siglen, i6) := get16(b, i);
 	i = i6;
 	if(i+siglen != len b)
-		return (nil, nil, 0, nil, "tls: ServerKeyExchange signature length mismatch");
+		return (nil, 0, nil, 0, 0, nil, "tls: ServerKeyExchange signature length mismatch");
 	sig := b[i:i+siglen];
-	return (pub, params, hashalg, sig, nil);
+	return (pub, curve, params, hashalg, sigtype, sig, nil);
 }
 
 # verify the ServerKeyExchange signature: digitally-signed struct over
 # client_random + server_random + params (RFC 5246 7.4.3), with the
-# leaf certificate's RSA key
+# leaf certificate's key - RSA or ECDSA, per the negotiated suite. The
+# signature also covers both randoms, tying this key exchange to this
+# connection.
 checkskx(certs: list of array of byte, crandom, srandom, params: array of byte,
-		hashalg: int, sig: array of byte): string
+		hashalg, sigtype: int, sig: array of byte): string
 {
+	data := array[len crandom + len srandom + len params] of byte;
+	data[0:] = crandom;
+	data[len crandom:] = srandom;
+	data[len crandom + len srandom:] = params;
+
+	(serr, signed) := Signed.decode(hd certs);
+	if(serr != "")
+		return "tls: leaf certificate: "+serr;
+	(cerr, leaf) := Certificate.decode(signed.tobe_signed);
+	if(cerr != "")
+		return "tls: leaf certificate: "+cerr;
+
+	if(sigtype == SIG_ECDSA){
+		# hash the signed data, then ECDSA-verify against the leaf's
+		# EC point (the same P-256 primitive x509 uses for chains)
+		hash: array of byte;
+		case hashalg {
+		4 =>	hash = array[Keyring->SHA256dlen] of byte;
+			kr->sha256(data, len data, hash, nil);
+		5 =>	hash = array[Keyring->SHA384dlen] of byte;
+			kr->sha384(data, len data, hash, nil);
+		6 =>	hash = array[Keyring->SHA512dlen] of byte;
+			kr->sha512(data, len data, hash, nil);
+		* =>	return sys->sprint("tls: unsupported ECDSA hash algorithm %d", hashalg);
+		}
+		pub := leaf.subject_pkinfo.subject_pk;
+		if(len pub != 65 || int pub[0] != 16r04)
+			return "tls: leaf EC key is not an uncompressed P-256 point";
+		(r, s, perr) := parseecdsasig(sig);
+		if(perr != nil)
+			return "tls: ServerKeyExchange "+perr;
+		if(p256->ecdsa_verify(hash, r, s, pub))
+			return nil;
+		return "tls: ServerKeyExchange signature verification failed";
+	}
+
+	# RSA
 	halg := -1;
 	case hashalg {
 	2 =>	halg = PKCS->SHA1_WithRSAEncryption;
@@ -754,19 +848,9 @@ checkskx(certs: list of array of byte, crandom, srandom, params: array of byte,
 	6 =>	halg = PKCS->SHA512_WithRSAEncryption;
 	* =>	return sys->sprint("tls: unsupported ServerKeyExchange hash algorithm %d", hashalg);
 	}
-	(serr, signed) := Signed.decode(hd certs);
-	if(serr != "")
-		return "tls: leaf certificate: "+serr;
-	(cerr, leaf) := Certificate.decode(signed.tobe_signed);
-	if(cerr != "")
-		return "tls: leaf certificate: "+cerr;
 	(kerr, nil, pk) := leaf.subject_pkinfo.getPublicKey();
 	if(kerr != "")
 		return "tls: leaf certificate key: "+kerr;
-	data := array[len crandom + len srandom + len params] of byte;
-	data[0:] = crandom;
-	data[len crandom:] = srandom;
-	data[len crandom + len srandom:] = params;
 	pick k := pk {
 	RSA =>
 		if(pkcs->rsa_verify(data, sig, k.pk, halg))
@@ -776,6 +860,22 @@ checkskx(certs: list of array of byte, crandom, srandom, params: array of byte,
 		;
 	}
 	return "tls: leaf certificate key is not RSA";
+}
+
+# ECDSA-Sig-Value ::= SEQUENCE { r INTEGER, s INTEGER }
+parseecdsasig(sig: array of byte): (array of byte, array of byte, string)
+{
+	(err, e) := asn1->decode(sig);
+	if(err != "")
+		return (nil, nil, "signature: "+err);
+	(ok, el) := e.is_seq();
+	if(!ok || len el != 2)
+		return (nil, nil, "signature: not a two-element sequence");
+	(okr, r) := (hd el).is_bigint();
+	(oks, s) := (hd tl el).is_bigint();
+	if(!okr || !oks)
+		return (nil, nil, "signature: r/s not integers");
+	return (r, s, nil);
 }
 
 alertstr(b: array of byte): string
