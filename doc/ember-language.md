@@ -368,7 +368,11 @@ cannot be declared in an interface. `tests/type/libgen.ei` and
 A template call does not reference the module, so an interface made
 only of templates is a header-only library needing no `.dis` at
 all: `module/lists.ei` (`lists.mapl`, `lists.filter`, `lists.foldl`,
-`lists.sorta`, ...) is one, used by `tests/type/uselists.e`.
+`lists.sorta`, ...) is one, used by `tests/type/uselists.e`, and
+`module/maps.ei` is a generic hash map (`maps.newmap[string, int](n,
+hash, eq)`, `maps.put`, `maps.find`, `maps.del`, `maps.keys`) whose
+key hashing and equality are closures the importer supplies
+(`tests/type/usemaps.e`).
 When the module's own interface is found, its functions and methods
 are checked the same way: one the module does not define, or defines
 with a different signature, is a compile error (generic functions

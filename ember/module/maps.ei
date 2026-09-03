@@ -1,0 +1,102 @@
+module Maps
+
+// a generic hash map, header-only: every declaration here is a
+// template instantiated into the importing module, so there is no
+// maps.dis.  the key's hash and equality are closures given to
+// newmap; the importer supplies them (see tests/type/usemaps.e).
+
+const PATH = "/dis/lib/maps.dis"
+
+type Entry[K, V] struct {
+	key K
+	val V
+	next ref Entry[K, V]
+}
+
+type Map[K, V] struct {
+	buckets []ref Entry[K, V]
+	n int
+	hash func(K) int
+	eq func(K, K) int
+}
+
+func newmap[K, V](nbuckets int, hash func(K) int, eq func(K, K) int) ref Map[K, V] {
+	if nbuckets < 1 {
+		nbuckets = 1
+	}
+	return ref Map[K, V]{buckets: [nbuckets]ref Entry[K, V], n: 0, hash: hash, eq: eq}
+}
+
+func bucket[K, V](m ref Map[K, V], k K) int {
+	h := m.hash(k) % len(m.buckets)
+	if h < 0 {
+		h = -h
+	}
+	return h
+}
+
+func find[K, V](m ref Map[K, V], k K) ref Entry[K, V] {
+	for e := m.buckets[bucket(m, k)]; e != nil; e = e.next {
+		if m.eq(e.key, k) != 0 {
+			return e
+		}
+	}
+	return nil
+}
+
+func put[K, V](m ref Map[K, V], k K, v V) {
+	e := find(m, k)
+	if e != nil {
+		e.val = v
+		return
+	}
+	b := bucket(m, k)
+	m.buckets[b] = ref Entry[K, V]{key: k, val: v, next: m.buckets[b]}
+	m.n++
+	if m.n > 2 * len(m.buckets) {
+		grow(m)
+	}
+}
+
+func grow[K, V](m ref Map[K, V]) {
+	old := m.buckets
+	m.buckets = [2 * len(old)]ref Entry[K, V]
+	for i := 0; i < len(old); i++ {
+		for e := old[i]; e != nil; e = e.next {
+			b := bucket(m, e.key)
+			m.buckets[b] = ref Entry[K, V]{key: e.key, val: e.val, next: m.buckets[b]}
+		}
+	}
+}
+
+func del[K, V](m ref Map[K, V], k K) int {
+	b := bucket(m, k)
+	var prev ref Entry[K, V]
+	for e := m.buckets[b]; e != nil; e = e.next {
+		if m.eq(e.key, k) != 0 {
+			if prev == nil {
+				m.buckets[b] = e.next
+			} else {
+				prev.next = e.next
+			}
+			m.n--
+			return 1
+		}
+		prev = e
+	}
+	return 0
+}
+
+func size[K, V](m ref Map[K, V]) int {
+	return m.n
+}
+
+func keys[K, V](m ref Map[K, V]) list K {
+	var l list K
+	for i := len(m.buckets) - 1; i >= 0; i-- {
+		for e := m.buckets[i]; e != nil; e = e.next {
+			l = e.key :: l
+		}
+	}
+	return l
+}
