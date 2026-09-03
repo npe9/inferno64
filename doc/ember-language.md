@@ -254,7 +254,11 @@ A pick is a tagged union:
 
 Tags are constructed as `Type.Tag{...}` (value) or `ref Type.Tag{...}`
 and taken apart with `match`. The `?` postfix propagates an error tag
-out of the enclosing function.
+out of the enclosing function. A pick has no size of its own, only
+each tag does, so the pick type exists only behind a `ref`: a
+variable, field, parameter or element of type `Expr` (rather than
+`ref Expr`) is an error, as in Limbo. A specific tag's value type
+(`Expr.Num`) has a size and may be used by value.
 
 ## Interfaces and separate compilation
 

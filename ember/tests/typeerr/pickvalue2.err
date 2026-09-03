@@ -1,0 +1,3 @@
+tests/typeerr/pickvalue2.e:12: pick Shape has no size of its own: use ref Shape
+tests/typeerr/pickvalue2.e:13: pick Shape has no size of its own: use ref Shape
+tests/typeerr/pickvalue2.e:14: pick Shape has no size of its own: use ref Shape

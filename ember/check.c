@@ -131,6 +131,8 @@ install(Decl *d)
 	installids(d);
 }
 
+static int inref;	/* stype() is resolving the operand of a ref */
+
 static Decl*
 lookup(Sym *s)
 {
@@ -1446,7 +1448,9 @@ stype(Node *n)
 	case Otlist:
 		return mktype(&n->src, Tlist, stype(n->right), nil);
 	case Otref:
+		inref++;
 		t = stype(n->right);
+		inref--;
 		if(t->kind != Tadt && t->kind != Tfn && t->kind != Tadtpick
 		&& t->kind != Terror && t->kind != Tpoly){
 			nerror(n, "ref requires an adt or function type");
@@ -1675,6 +1679,15 @@ stype(Node *n)
 		}
 		if(d->ty != nil && d->ty->tparams != nil){
 			nerror(n, "%s needs type arguments, e.g. %s[...]", n->sym->name, n->sym->name);
+			return terror;
+		}
+		/*
+		 * a pick has no size of its own -- only each tag does
+		 * (sizetype, types.c), as in limbo -- so it exists only
+		 * behind a ref: by value it silently got zero-width storage.
+		 */
+		if(inref == 0 && d->ty != nil && d->ty->kind == Tadt && d->ty->tags != nil){
+			nerror(n, "pick %s has no size of its own: use ref %s", n->sym->name, n->sym->name);
 			return terror;
 		}
 		n->decl = d;

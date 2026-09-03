@@ -106,6 +106,8 @@ func hashname(s string) int {
 	return h % HashSize
 }
 
+var inref = 0	// stype() is resolving the operand of a ref
+
 func lookup(name string) ref types.Decl {
 	for b := binds[hashname(name)]; b != nil; b = b.next {
 		if b.name == name {
@@ -879,7 +881,9 @@ func stype(n ref types.Node) ref types.Type {
 	case types.Otlist:
 		return types.mktype(n.line, n.pos, types.Tlist, stype(n.right), nil)
 	case types.Otref:
+		inref++
 		t := stype(n.right)
+		inref--
 		if t.kind != types.Tadt && t.kind != types.Tfn && t.kind != types.Tadtpick && t.kind != types.Terror && t.kind != types.Tpoly {
 			nerror(n, "ref requires an adt or function type")
 			return terror
@@ -1005,6 +1009,11 @@ func stype(n ref types.Node) ref types.Type {
 		}
 		if d.ty != nil && d.ty.tparams != nil {
 			nerror(n, sys.sprint("%s needs type arguments, e.g. %s[...]", n.sym, n.sym))
+			return terror
+		}
+		// a pick exists only behind a ref (check.c)
+		if inref == 0 && d.ty != nil && d.ty.kind == types.Tadt && d.ty.tags != nil {
+			nerror(n, sys.sprint("pick %s has no size of its own: use ref %s", n.sym, n.sym))
 			return terror
 		}
 		n.decl = d
