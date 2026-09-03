@@ -4318,6 +4318,41 @@ stchk(Node *n)
 			 * int followed by a string corrupted the string
 			 * pointer's own bytes outright.
 			 */
+			if(t->kind == Ttuple && curret != nil && curret->kind == Ttuple
+			&& n->left->op == Otuple){
+				/*
+				 * "return nil, err": the literal tuple's own
+				 * inferred type has a tany component where the
+				 * function's declared result has a ref; the
+				 * whole-tuple assignable() test below is
+				 * structural and would refuse it.  check and
+				 * retype component-wise instead, BEFORE the
+				 * tuple type is sized: the component's field and
+				 * the nil node both take the declared type, so
+				 * codegen (com.c's Otuple/Oret path) sees exactly
+				 * the declared tuple, pointer map included.
+				 */
+				Decl *fd, *td;
+				Node *e, *p;
+
+				fd = curret->ids;
+				td = t->ids;
+				for(p = n->left->left; p != nil && fd != nil && td != nil; p = p->right){
+					e = p;
+					if(p->op == Oseq)
+						e = p->left;
+					/* assignable() itself retypes a tany node to
+					 * the target, so test for tany first */
+					if(e->ty == tany && assignable(fd->ty, e->ty, e)){
+						e->ty = fd->ty;
+						td->ty = fd->ty;
+					}
+					fd = fd->next;
+					td = td->next;
+					if(p->op != Oseq)
+						break;
+				}
+			}
 			if(t->kind == Ttuple)
 				sizetype(t);
 			if(curret == tnone)
