@@ -409,6 +409,86 @@ There is no retransmit and the window is a fixed one, so it is a
 minimal TCP, not a whole one; what is left of item 7 is that reach and
 the routing and gateways a firewall does beyond dropping.
 .PP
+.B "7a.  The real Plan 9 stack in user space, not a hand-written responder."
+netsrv answers ARP, ICMP, UDP and a minimal TCP by parsing and building
+frames itself; it talks to 9front's real TCP on the other end, but its
+own side is a demonstration, not a stack, and the plan says so of it.
+The architecture wants the actual Plan 9 IP stack \- \f(CWdevip\fP and
+the \f(CW/net\fP tree with \f(CWtcp.c\fP's state machine \- run as a
+user-space service over the exposed interface, the way the p9
+personality already runs the kernel's upper half as a library.  That is
+the honest form of item 7 and is filed apart here because it is a port,
+not a responder.
+.PP
+It is feasible, and measured to be: compiled against the p9 personality's
+shim, twenty-three of the twenty-five files in
+.CW os/osprey/ip
+\- including
+.CW tcp.c ,
+.CW udp.c ,
+.CW ip.c ,
+.CW ipifc.c ,
+.CW arp.c ,
+.CW icmp.c
+and the media \- compile with only a small shim added: a complete
+.CW Mach
+carrying a
+.CW ticks
+field with
+.CW MACHP
+and
+.CW HZ
+(the stack's
+.CW NOW
+is
+.CW TK2MS(MACHP(0)->ticks) ),
+.CW MIN ,
+.CW NUMSIZE
+and
+.CW READSTR ,
+and externs for
+.CW cpuserver
+and a
+.CW conf
+with
+.CW npage
+(devip's
+.CW scalednconv
+alone wants them).
+.CW netif.c
+additionally wants
+.CW coherence .
+The two that do not compile are
+.CW esp.c ,
+which is IPsec and wants libsec crypto constants and can be dropped, and
+.CW devip.c ,
+which is only the two
+.CW conf
+symbols above.  The staged plan from here: (1) put those shim additions
+in the personality and a kproc that advances
+.CW ticks
+as a coarse millisecond clock; (2) link the stack into the personality's
+.CW p9lib
+and resolve the runtime symbols the link names (the Fs allocation,
+.CW ipmux ,
+netif); (3) write an osprey medium modelled on
+.CW netdevmedium.c
+or
+.CW pktmedium.c
+whose reader kproc takes a frame from the exposed interface with
+.CW ReqRecv
+and injects it, and whose output copies a frame into a transmit buffer
+and sends it with
+.CW ReqSend ,
+bridging the two header worlds the way
+.CW p9srv_serve
+does; (4) bring the stack up (ipinit, add the medium, bind an ipifc,
+configure an address) and export
+.CW /net ;
+(5) a wire check where 9front's own TCP connects to
+.CW /net/tcp
+on the stack and its state machine, not a hand-written echo, answers.
+.PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
 .I "dynamic replicated data"
