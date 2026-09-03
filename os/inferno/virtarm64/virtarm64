@@ -28,6 +28,8 @@ dev
 	ssl
 	cap
 	kprof
+	draw
+	pointer
 
 ip
 	tcp
@@ -39,11 +41,17 @@ ip
 lib
 	interp
 	keyring
+	memlayer
+	memdraw
+	draw
 	sec
 	mp
+	math
 	kern
-# No display yet, same as armv7's own first boot (see its board
-# config's own note) -- serial console only.
+# Framebuffer display via QEMU ramfb (screenarm.c): the draw device,
+# memdraw/memlayer/draw, the software cursor and the pointer, over a
+# 640x480 ramfb the host scans out.  Needs -device ramfb on the QEMU
+# command line.
 
 link
 	ethervirtiommio
@@ -77,6 +85,7 @@ port
 	sysfile
 	taslock
 	xalloc
+	swcursor
 
 	archvirtarm64
 
@@ -85,13 +94,14 @@ misc
 	pci	pciecam
 	sdvirtio10	pci sdscsi virtio10mem
 	sdnvme	pci
-	screennone
+	screenarm
 	randomvirtarm64
 
 mod
 	sys
 	keyring
 	crypt
+	draw
 
 init
 	virtinit
