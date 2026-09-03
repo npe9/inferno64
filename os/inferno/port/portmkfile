@@ -64,7 +64,7 @@ rc-lib%.a nt-lib%.a:VQ:
 
 sh-lib%.a:VQ:
 		echo "(cd $ROOT/lib$stem ; mk SHELLTYPE=$SHELLTYPE SYSTARG=$SYSTARG OBJTYPE=$OBJTYPE install)"
-		(cd $ROOT/lib$stem; mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE install)
+		(cd $ROOT/lib$stem; mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE 'DISWORD='$DISWORD install)
 
 %-rc %-nt:V:
 		for(i in $CONFLIST)
@@ -112,11 +112,11 @@ errstr.h:	$PORTDIR/error.h
 		sed 's/extern //;s,;.*/\* , = ",;s, \*/,";,' < $PORTDIR/error.h > errstr.h
 
 $INITDIR/%.dis:	$INITDIR/%.b
-		cd ../init; mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE $stem.dis
+		cd ../init; mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE 'DISWORD='$DISWORD $stem.dis
 
 $ROOT/libinterp/w$DISWORD/runt.h:
 		cd $ROOT/libinterp
-		mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE w$DISWORD/runt.h
+		mk 'SHELLTYPE='$SHELLTYPE 'SYSTARG='$SYSTARG 'OBJTYPE='$OBJTYPE 'DISWORD='$DISWORD w$DISWORD/runt.h
 
 # for culling dependencies; one per Dis word size, see libinterp/mkfile
 RUNT=$ROOT/libinterp/w$DISWORD/runt.h
