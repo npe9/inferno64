@@ -10,6 +10,33 @@ type Point struct {
 	y int
 }
 
+type Shape pick {
+	Circle(c Point, r int)
+	Rect(min Point, max Point)
+}
+
+func (p ref Point) norm1r() int {
+	return norm1(Point{x: p.x, y: p.y})
+}
+
+func (p Point) sum() int {
+	return p.x + p.y
+}
+
+func area(s ref Shape) int {
+	match s {
+	case Shape.Circle(c, r):
+		return 3 * r * r
+	case Shape.Rect(a, b):
+		return (b.x - a.x) * (b.y - a.y)
+	}
+	return -1
+}
+
+func unit() ref Shape {
+	return ref Shape.Rect{min: Point{x: 0, y: 0}, max: Point{x: 1, y: 1}}
+}
+
 func add(a Point, b Point) Point {
 	return Point{x: a.x + b.x, y: a.y + b.y}
 }

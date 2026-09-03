@@ -1670,6 +1670,29 @@ stype(Node *n)
 		Decl *md, *id, *tg;
 		Type *rt;
 
+		if(n->left->op == Odot){
+			/* mod.Adt.Tag: resolve mod.Adt first, then its tag */
+			Type *at;
+
+			rt = terror;
+			at = stype(n->left);
+			if(at != terror){
+				if(at->kind != Tadt || at->tags == nil)
+					nerror(n, "%T is not a pick type", at);
+				else{
+					for(tg = at->tags; tg != nil; tg = tg->next)
+						if(tg->sym == n->sym){
+							rt = tg->ty;
+							break;
+						}
+					if(rt == terror)
+						nerror(n, "%T has no tag %s", at, n->sym->name);
+				}
+			}
+			n->left = nil;
+			n->right = nil;
+			return rt;
+		}
 		if(n->left->op != Oname){
 			nerror(n, "bad qualified type");
 			return terror;

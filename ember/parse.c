@@ -167,7 +167,10 @@ ptypename(void)
 	Src src;
 
 	n = pname("type name");
-	if(paccept('.')){
+	/* mod.Type, Adt.Tag, and mod.Adt.Tag (a pick tag of an
+	 * imported type) -- left-nested Odots, each carrying its own
+	 * rightmost name in sym */
+	while(paccept('.')){
 		d = pname("qualified type name");
 		n = mkbin(Odot, n, d);
 		n->sym = d->sym;
@@ -403,7 +406,7 @@ istypeexpr(Node *n)
 	case Oname:
 		return 1;
 	case Odot:
-		return n->left != nil && n->left->op == Oname;
+		return n->left != nil && istypeexpr(n->left);
 	case Oindex:
 	case Otinst:
 		return istypeexpr(n->left);

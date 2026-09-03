@@ -370,16 +370,23 @@ bindiface(Decl *mod, Node *tree)
 			}else if(decl->right->op == Otpick){
 				Decl *tags, *last, *tag;
 				Node *p, *tg;
+				int ntag;
 
 				t->kind = Tadt;
 				t->ok |= OKverify;
 				tags = last = nil;
+				ntag = 0;
 				for(p = decl->right->left; p != nil; p = p->right){
 					tg = p;
 					if(p->op == Oseq)
 						tg = p->left;
 					tag = mkdecl(&tg->src, Dtag, nil);
 					tag->sym = tg->left->sym;
+					/* the discriminant, in declaration order --
+					 * the same numbering check.c's typedec() gives
+					 * the implementing module's own tags; unset,
+					 * every tag was 0 on the client side */
+					tag->tag = ntag++;
 					tag->ty = mktype(&tg->src, Tadtpick, nil,
 						ifields(tg->right, mod, Dfield));
 					tag->ty->tof = t;

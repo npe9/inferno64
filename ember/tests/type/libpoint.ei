@@ -15,6 +15,20 @@ type Point struct {
 	y int
 }
 
+type Shape pick {
+	Circle(c Point, r int)
+	Rect(min Point, max Point)
+}
+
+// methods on an exported type, and a pick: constructed and matched
+// on the client side as libpoint.Shape.Tag{...} / case
+// libpoint.Shape.Tag(...); the interface numbers tags in declaration
+// order, as the implementation does
+func (p ref Point) norm1r() int
+func (p Point) sum() int
+func area(s ref Shape) int
+func unit() ref Shape
+
 func add(a Point, b Point) Point
 func scale(p ref Point, k int)
 func norm1(p Point) int

@@ -2,5 +2,8 @@ name=libpoint
 c=11,22
 rp=6,-8 norm=14
 origin=0,0
+norm1r=14 sum=3
+areas=12 6 1
+rect 1,1-4,3
 roll<10=1
 poison=0
