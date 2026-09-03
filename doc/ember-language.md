@@ -196,7 +196,9 @@ expressions (an array element, a call).
 
 `spawn f(args)`, `spawn obj.method(args)` and `spawn func(k int) {
 ... }(i)` start a new process. `return` returns one value or an
-expression list.
+expression list. `raise expr` (a string) ends the process with that
+error, the way a Limbo `raise` does; there is no catch, and a command
+uses `raise "fail:reason"` to exit unsuccessfully.
 
 ## Functions, closures, generics, methods
 

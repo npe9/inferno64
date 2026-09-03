@@ -2841,6 +2841,12 @@ func stchk(n ref types.Node) {
 				nerror(n, "spawned function must not return a value")
 			}
 			return
+		case types.Oraise:
+			echk(n.left)
+			if n.left.ty != tstring && n.left.ty != terror {
+				nerror(n, "raise requires a string, not " + tp(n.left.ty))
+			}
+			return
 		case types.Osnd:
 			echk(n)
 			return

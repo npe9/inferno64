@@ -1240,6 +1240,12 @@ pstmt(void)
 		if(cur() != ';' && cur() != '}')
 			n->left = pexprlist();
 		break;
+	case Kraise:
+		/* raise expr: the string becomes the process's error */
+		lexskip();
+		n = mkunary(Oraise, pexpr());
+		n->src.start = src.start;
+		break;
 	case Kspawn:
 		lexskip();
 		e = pprimary();

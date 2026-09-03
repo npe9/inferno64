@@ -4752,6 +4752,11 @@ stchk(Node *n)
 				if(n->left->op == Ocall && n->left->ty != tnone && n->left->ty != terror)
 					nerror(n, "spawned function must not return a value");
 				return;
+			case Oraise:
+				echk(n->left);
+				if(n->left->ty != tstring && n->left->ty != terror)
+					nerror(n, "raise requires a string, not %T", n->left->ty);
+				return;
 			case Osnd:
 				echk(n);
 				return;

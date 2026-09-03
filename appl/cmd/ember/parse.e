@@ -1173,6 +1173,11 @@ func pstmt() ref types.Node {
 		if cur() != ';' && cur() != '}' {
 			n.left = pexprlist()
 		}
+	case lex.Kraise:
+		lexskip()
+		n = types.mkunary(Oraise, pexpr())
+		n.line = t.line
+		n.pos = t.pos
 	case lex.Kspawn:
 		lexskip()
 		e := pprimary()

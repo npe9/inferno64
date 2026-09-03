@@ -41,3 +41,4 @@ test:V:	$O.out
 	./tests/astcmp.sh
 	./tests/chkcmp.sh
 	./tests/discmp.sh
+	./tests/bootstrap.sh

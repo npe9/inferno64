@@ -52,7 +52,7 @@ func init(ctxt ref draw.Context, argv list string) {
 	check.addincpath("/ember/module")
 	if files == nil {
 		sys.fprint(sys.fildes(2), "usage: emberc [-I dir] [-o out.dis] file.e\n")
-		return
+		raise "fail:usage"
 	}
 	var r list string
 	for ; files != nil; files = tl(files) {
@@ -82,6 +82,6 @@ func init(ctxt ref draw.Context, argv list string) {
 		}
 	}
 	if failed != 0 {
-		sys.fprint(sys.fildes(2), "emberc: %d file(s) failed\n", failed)
+		raise "fail:errors"
 	}
 }

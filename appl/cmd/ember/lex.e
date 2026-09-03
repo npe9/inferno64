@@ -66,6 +66,7 @@ const Kstruct = 305
 const Ktype = 306
 const Kvar = 307
 const Kalt = 308
+const Kraise = 309
 
 const Mlower = 1
 const Mupper = 2
@@ -248,6 +249,8 @@ func keyword(id string) int {
 		return Knil
 	case "pick":
 		return Kpick
+	case "raise":
+		return Kraise
 	case "ref":
 		return Kref
 	case "return":
@@ -838,6 +841,8 @@ func tokname(t int) string {
 		return "ref"
 	case Kreturn:
 		return "return"
+	case Kraise:
+		return "raise"
 	case Kspawn:
 		return "spawn"
 	case Kstruct:

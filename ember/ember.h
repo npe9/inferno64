@@ -576,6 +576,7 @@ enum
 	Kstruct,
 	Ktype,
 	Kvar,
+	Kraise,
 
 	Eend
 };

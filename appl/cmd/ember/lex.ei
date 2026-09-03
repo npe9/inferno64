@@ -63,6 +63,7 @@ const Kstruct = 305
 const Ktype = 306
 const Kvar = 307
 const Kalt = 308
+const Kraise = 309
 
 type Tok struct {
 	t int

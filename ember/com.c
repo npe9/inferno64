@@ -1954,6 +1954,14 @@ ecom(Src *src, Node *nto, Node *n)
 		tfree(&tl);
 		tfree(&tr);
 		return nto;
+	case Oraise:
+		/* IRAISE s: the string becomes the process's error, unwinding
+		 * to the nearest handler or ending the process (limbo's Oraise) */
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nil);
+		genrawop(src, IRAISE, left, nil, nil);
+		tfree(&tl);
+		return nto;
 	case Orcv:
 		if(nto == nil)
 			nto = talloc(&tres, n->ty, nil);

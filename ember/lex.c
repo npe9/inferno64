@@ -70,6 +70,7 @@ static	Keywd	keywords[] =
 	"module",	Kmodule,
 	"nil",		Knil,
 	"pick",		Kpick,
+	"raise",	Kraise,
 	"ref",		Kref,
 	"return",	Kreturn,
 	"spawn",	Kspawn,

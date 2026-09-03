@@ -1191,6 +1191,13 @@ func ecom(line int, pos int, nto ref types.Node, n ref types.Node) ref types.Nod
 		gen.tfree(tl)
 		gen.tfree(tr)
 		return nto
+	case types.Oraise:
+		if left.addable >= Rcant {
+			left = eacom(left, tl, nil)
+		}
+		gen.genrawop(line, pos, gen.IRAISE, left, nil, nil)
+		gen.tfree(tl)
+		return nto
 	case types.Orcv:
 		if nto == nil {
 			nto = gen.talloc(tres, n.ty, nil)
