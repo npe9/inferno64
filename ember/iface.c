@@ -514,16 +514,35 @@ bindiface(Decl *mod, Node *tree)
 			break;
 		case Ofndecl:
 			if(decl->right != nil && decl->right->aux != nil){
-				/* a generic is instantiated from its body, which an interface has not */
-				error(decl->src.start, "generic function %s cannot be declared in an interface",
-					decl->left->op == Omethod ? decl->left->right->sym->name : decl->left->sym->name);
+				/*
+				 * a generic function, with its body: a template
+				 * every importer instantiates for itself (check.c's
+				 * Ocall case, alias.f(...)), the way a c++ header
+				 * carries one.  it gets no link entry (mkiface()
+				 * skips templates): the code is the importer's.
+				 */
+				if(decl->left->op == Omethod){
+					error(decl->src.start, "generic method %s cannot be declared in an interface",
+						decl->left->right->sym->name);
+					break;
+				}
+				if(decl->aux == nil){
+					error(decl->src.start, "generic function %s in an interface needs its body: it is instantiated in each importer",
+						decl->left->sym->name);
+					break;
+				}
+				d = mkdecl(&decl->src, Dfn, nil);
+				d->sym = decl->left->sym;
+				d->init = decl;
+				d->tparams = decl->right->aux;
+				installmember(mod, d);
 				break;
 			}
-			rawfn = 1;
 			if(decl->aux != nil){
 				error(decl->src.start, "function body not allowed in interface");
 				break;
 			}
+			rawfn = 1;
 			t = itype(decl->right, mod);
 			rawfn = 0;
 			if(decl->left->op == Omethod){

@@ -487,7 +487,15 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 	td.finsts = fi
 	savedcurfn := curfn
 	savedcurret := curret
+	frommod := 0
+	if td.dot != nil && td.dot != impdecl && td.dot.ty != nil && td.dot.ty.kind == types.Tmodule {
+		frommod = 1
+		pushmodscope(td.dot)
+	}
 	fnchk(fnd)
+	if frommod != 0 {
+		popmodscope(td.dot)
+	}
 	curfn = savedcurfn
 	curret = savedcurret
 	fnd.checked = 1
@@ -712,7 +720,10 @@ func tinstantiatefn(n ref types.Node) ref types.Decl {
 		nerror(n, "bad generic function reference")
 		return nil
 	}
-	td := lookup(n.left.sym)
+	td := n.left.decl	// a template from an interface, already resolved
+	if td == nil {
+		td = lookup(n.left.sym)
+	}
 	if td == nil || td.store != types.Dfn || td.tparams == nil {
 		nerror(n, sys.sprint("%s is not a generic function", n.left.sym))
 		return nil
@@ -861,7 +872,10 @@ func inferfn(n ref types.Node) ref types.Decl {
 	if n.left.op != types.Oname {
 		return nil
 	}
-	td := lookup(n.left.sym)
+	td := n.left.decl	// a template from an interface, already resolved
+	if td == nil {
+		td = lookup(n.left.sym)
+	}
 	if td == nil || td.store != types.Dfn || td.tparams == nil {
 		return nil
 	}
@@ -1233,10 +1247,98 @@ func modcallee(dot ref types.Node) ref types.Decl {
 		return nil
 	}
 	id := modmember(alias.ty, dot.sym)
-	if id == nil || id.store != types.Dfn {
+	if id == nil || id.store != types.Dfn || id.tparams != nil {
 		return nil
 	}
 	return id
+}
+
+// alias.f where f is a generic template from the interface (check.c)
+func modtemplate(dot ref types.Node) ref types.Decl {
+	if dot.op != types.Odot || dot.left.op != types.Oname {
+		return nil
+	}
+	alias := lookup(dot.left.sym)
+	if alias == nil || alias.ty == nil || alias.ty.kind != types.Tmodule || ismodvar(alias) == 0 {
+		return nil
+	}
+	id := modmember(alias.ty, dot.sym)
+	if id == nil || id.store != types.Dfn || id.tparams == nil {
+		return nil
+	}
+	return id
+}
+
+// the import alias for a module's own declaration
+func modalias(mod ref types.Decl) ref types.Decl {
+	for l := imports; l != nil; l = tl(l) {
+		if hd(l).importid == mod {
+			return hd(l)
+		}
+	}
+	return nil
+}
+
+// a template module's types, constants and functions, by name, while
+// one of its templates is instantiated here (check.c)
+const MaxTmplMods = 16
+
+var tmplmods = [MaxTmplMods]ref types.Decl	// modules whose scope is pushed, with a nesting count
+var tmplcnt = [MaxTmplMods]int
+var ntmplmods = 0
+
+func pushmodscope(mod ref types.Decl) {
+	for i := 0; i < ntmplmods; i++ {
+		if tmplmods[i] == mod {
+			tmplcnt[i]++
+			return
+		}
+	}
+	if ntmplmods >= MaxTmplMods {
+		fatal("template modules nested too deeply")
+	}
+	tmplmods[ntmplmods] = mod
+	tmplcnt[ntmplmods] = 1
+	ntmplmods++
+	for id := mod.ty.ids; id != nil; id = id.next {
+		if id.sym == nil || id.store == types.Dglobal || id.store == types.Dimport {
+			continue
+		}
+		if id.store == types.Dfn && id.dot != mod {
+			continue
+		}
+		id.old = lookup(id.sym)
+		setbind(id.sym, id)
+	}
+}
+
+func popmodscope(mod ref types.Decl) {
+	i := 0
+	for i < ntmplmods && tmplmods[i] != mod {
+		i++
+	}
+	if i == ntmplmods {
+		fatal("popmodscope: module not pushed")
+	}
+	tmplcnt[i]--
+	if tmplcnt[i] > 0 {
+		return
+	}
+	ntmplmods--
+	tmplmods[i] = tmplmods[ntmplmods]
+	tmplcnt[i] = tmplcnt[ntmplmods]
+	for id := mod.ty.ids; id != nil; id = id.next {
+		if id.sym == nil || id.store == types.Dglobal || id.store == types.Dimport {
+			continue
+		}
+		if id.store == types.Dfn && id.dot != mod {
+			continue
+		}
+		if lookup(id.sym) == id {
+			setbind(id.sym, id.old)
+			id.old = nil
+		}
+	}
 }
 
 func compositefields(n ref types.Node) ref types.Type {
@@ -2073,9 +2175,32 @@ func chkcall(n ref types.Node) ref types.Type {
 		n.right = nil
 		return n.ty
 	}
+	if (n.left.op == types.Otinst || n.left.op == types.Oindex) && n.left.left.op == types.Odot && modtemplate(n.left.left) != nil {
+		// alias.f[T](args): a template from the interface (check.c)
+		tmpl := modtemplate(n.left.left)
+		lookup(n.left.left.left.sym).refs++
+		n.left.left.op = types.Oname
+		n.left.left.sym = tmpl.sym
+		n.left.left.decl = tmpl
+		n.left.left.left = nil
+		n.left.left.right = nil
+	}
+	if n.left.op == types.Odot && modtemplate(n.left) != nil {
+		// alias.f(args): the same, with the type arguments inferred
+		tmpl := modtemplate(n.left)
+		lookup(n.left.left.sym).refs++
+		n.left.op = types.Oname
+		n.left.sym = tmpl.sym
+		n.left.decl = tmpl
+		n.left.left = nil
+		n.left.right = nil
+	}
 	var ld ref types.Decl
 	if n.left.op == types.Oname {
-		ld = lookup(n.left.sym)
+		ld = n.left.decl
+		if ld == nil {
+			ld = lookup(n.left.sym)
+		}
 	}
 	if n.left.op == types.Otinst || n.left.op == types.Oindex {
 		fnd := tinstantiatefn(n.left)
@@ -2095,8 +2220,34 @@ func chkcall(n ref types.Node) ref types.Type {
 		ft = fnd.ty
 	} else if n.left.op == types.Oname && ld != nil && ld.store == types.Dfn {
 		ld.refs++
-		n.left.decl = ld
-		n.left.ty = ld.ty
+		var alias ref types.Decl
+		if ld.dot != nil && ld.dot != impdecl && ld.dot.ty != nil && ld.dot.ty.kind == types.Tmodule {
+			alias = modalias(ld.dot)
+		}
+		if alias != nil {
+			// a template body calling its own module's function by
+			// name: through the alias (check.c)
+			alias.refs++
+			modn := types.mkn(types.Oname, nil, nil)
+			modn.line = n.left.line
+			modn.pos = n.left.pos
+			modn.sym = alias.sym
+			modn.decl = alias
+			modn.ty = alias.ty
+			callee := types.mkn(types.Oname, nil, nil)
+			callee.line = n.left.line
+			callee.pos = n.left.pos
+			callee.sym = ld.sym
+			callee.decl = ld
+			callee.ty = ld.ty
+			n.left = types.mkbin(types.Omdot, modn, callee)
+			n.left.line = callee.line
+			n.left.pos = callee.pos
+			n.left.ty = ld.ty
+		} else {
+			n.left.decl = ld
+			n.left.ty = ld.ty
+		}
 		ft = ld.ty
 	} else if n.left.op == types.Odot && modcallee(n.left) != nil {
 		alias := lookup(n.left.left.sym)

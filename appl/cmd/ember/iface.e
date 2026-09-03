@@ -476,17 +476,26 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				}
 			}
 		case types.Ofndecl:
-			if decl.aux != nil {
-				error(decl.line, "function body not allowed in interface")
+			if decl.right != nil && decl.right.aux != nil {
+				// a generic function with its body: a template every
+				// importer instantiates for itself (iface.c)
+				if decl.left.op == types.Omethod {
+					error(decl.line, sys.sprint("generic method %s cannot be declared in an interface", decl.left.right.sym))
+					break
+				}
+				if decl.aux == nil {
+					error(decl.line, sys.sprint("generic function %s in an interface needs its body: it is instantiated in each importer", decl.left.sym))
+					break
+				}
+				d := types.mkdecl(decl.line, decl.pos, types.Dfn, nil)
+				d.sym = decl.left.sym
+				d.init = decl
+				d.tparams = decl.right.aux
+				installmember(mod, d)
 				break
 			}
-			if decl.right != nil && decl.right.aux != nil {
-				// a generic is instantiated from its body (iface.c)
-				name := decl.left.sym
-				if decl.left.op == types.Omethod {
-					name = decl.left.right.sym
-				}
-				error(decl.line, sys.sprint("generic function %s cannot be declared in an interface", name))
+			if decl.aux != nil {
+				error(decl.line, "function body not allowed in interface")
 				break
 			}
 			rawfn = 1

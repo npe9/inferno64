@@ -352,10 +352,18 @@ function's. Variables the interface omits stay private. Interfaces
 for Limbo modules should not declare variables. `tests/type/libvars.e`
 and `modvars.e` show the pattern.
 
-An interface cannot declare a generic function or type: generics are
-instantiated from their bodies at compile time, so they belong to
-the module that uses them. When the module's own interface is found,
-its functions and methods are checked the same way: one the module does not define, or defines
+A generic function is instantiated from its body at compile time,
+so an interface that declares one carries the body, as a C++ header
+does, and every importer instantiates it for itself: `gen.mapa(xs,
+f)` or `gen.reduce[int, int](xs, 0, f)` compiles the instance into
+the importing module (no link entry is involved). A template body
+sees its own module's types, constants and functions by name (calls
+to the plain ones go through the alias); anything it uses from
+another module, such as `sys`, must be imported by the user too.
+Generic methods and generic types cannot be declared in an
+interface. `tests/type/libgen.ei` and `usegen.e` show the pattern.
+When the module's own interface is found, its functions and methods
+are checked the same way: one the module does not define, or defines
 with a different signature, is a compile error (generic functions
 are not compared), so a stale interface is caught before load time.
 

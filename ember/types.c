@@ -1258,6 +1258,8 @@ mkiface(Decl *m)
 			glast->iface = id;
 			break;
 		case Dfn:
+			if(id->tparams != nil)
+				break;	/* a template from an interface: no code to link */
 			id->iface = last = last->next = dupdecl(id);
 			last->iface = id;
 			break;

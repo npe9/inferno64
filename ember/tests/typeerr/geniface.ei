@@ -1,0 +1,9 @@
+module Geniface
+
+type Box struct {
+	v int
+}
+
+func (b ref Box) get[T](x T) T
+func ident[T](x T) T
+func plain(x int) int

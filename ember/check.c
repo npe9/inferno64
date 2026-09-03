@@ -50,6 +50,10 @@ static	Decl	*synthfunclit(Node*);
 static	Decl	*tinstantiatefncore(Src*, Decl*, Type**, int, Decl*);
 static	Decl	*tinstantiatefn(Node*);
 static	Decl	*inferfn(Node*);
+static	Decl	*modtemplate(Node*);
+static	Decl	*modalias(Decl*);
+static	void	pushmodscope(Decl*);
+static	void	popmodscope(Decl*);
 static	void	unifytparam(Node*, Type*, Decl*, Type**);
 static	Decl	*tinstantiatemeth(Decl*, Type*);
 static	Case	*matchlabels(Node*, Type*, int);
@@ -534,7 +538,11 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 
 		savedcurfn = curfn;
 		savedcurret = curret;
+		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
+			pushmodscope(td->dot);
 		fnchk(fnd);
+		if(td->dot != nil && td->dot != impdecl && td->dot->ty != nil && td->dot->ty->kind == Tmodule)
+			popmodscope(td->dot);
 		curfn = savedcurfn;
 		curret = savedcurret;
 		fnd->checked = 1;
@@ -1109,7 +1117,9 @@ tinstantiatefn(Node *n)
 		nerror(n, "bad generic function reference");
 		return nil;
 	}
-	td = lookup(n->left->sym);
+	td = n->left->decl;	/* a template from an interface, already resolved */
+	if(td == nil)
+		td = lookup(n->left->sym);
 	if(td == nil || td->store != Dfn || td->tparams == nil){
 		nerror(n, "%s is not a generic function", n->left->sym->name);
 		return nil;
@@ -1390,7 +1400,9 @@ inferfn(Node *n)
 
 	if(n->left->op != Oname)
 		return nil;
-	td = lookup(n->left->sym);
+	td = n->left->decl;	/* a template from an interface, already resolved */
+	if(td == nil)
+		td = lookup(n->left->sym);
 	if(td == nil || td->store != Dfn || td->tparams == nil)
 		return nil;
 	n->left->decl = td;
@@ -2051,9 +2063,107 @@ modcallee(Node *dot)
 	if(alias == nil || alias->ty == nil || alias->ty->kind != Tmodule || !ismodvar(alias))
 		return nil;
 	id = modmember(alias->ty, dot->sym);
-	if(id == nil || id->store != Dfn)
+	if(id == nil || id->store != Dfn || id->tparams != nil)
 		return nil;
 	return id;
+}
+
+/*
+ * alias.f where f is a generic template from the interface (iface.c):
+ * instantiated here, in this module, like a local generic
+ */
+static Decl*
+modtemplate(Node *dot)
+{
+	Decl *alias, *id;
+
+	if(dot->op != Odot || dot->left->op != Oname)
+		return nil;
+	alias = lookup(dot->left->sym);
+	if(alias == nil || alias->ty == nil || alias->ty->kind != Tmodule || !ismodvar(alias))
+		return nil;
+	id = modmember(alias->ty, dot->sym);
+	if(id == nil || id->store != Dfn || id->tparams == nil)
+		return nil;
+	return id;
+}
+
+/* the import alias for a module's own declaration */
+static Decl*
+modalias(Decl *mod)
+{
+	Dlist *dl;
+
+	for(dl = imports; dl != nil; dl = dl->next)
+		if(dl->d->importid == mod)
+			return dl->d;
+	return nil;
+}
+
+/*
+ * while a template from module mod is instantiated here, its body
+ * sees mod's types, constants and functions by their own names
+ * (calls to the functions are routed through the alias, echk's
+ * Ocall case); mod's variables stay out -- they would need the
+ * alias too.  bound like fnchk() binds parameters, restored in
+ * reverse.
+ */
+enum { MaxTmplMods = 16 };
+static	Decl	*tmplmods[MaxTmplMods];	/* modules whose scope is pushed, with a nesting count: a template instantiating another of its module's */
+static	int	tmplcnt[MaxTmplMods];
+static	int	ntmplmods;
+
+static void
+pushmodscope(Decl *mod)
+{
+	Decl *id;
+	int i;
+
+	for(i = 0; i < ntmplmods; i++)
+		if(tmplmods[i] == mod){
+			tmplcnt[i]++;
+			return;
+		}
+	if(ntmplmods >= MaxTmplMods)
+		fatal("template modules nested too deeply");
+	tmplmods[ntmplmods] = mod;
+	tmplcnt[ntmplmods] = 1;
+	ntmplmods++;
+	for(id = mod->ty->ids; id != nil; id = id->next){
+		if(id->sym == nil || id->store == Dglobal || id->store == Dimport)
+			continue;
+		if(id->store == Dfn && id->dot != mod)
+			continue;	/* a method */
+		id->old = id->sym->decl;
+		id->sym->decl = id;
+	}
+}
+
+static void
+popmodscope(Decl *mod)
+{
+	Decl *id;
+	int i;
+
+	for(i = 0; i < ntmplmods && tmplmods[i] != mod; i++)
+		;
+	if(i == ntmplmods)
+		fatal("popmodscope: module not pushed");
+	if(--tmplcnt[i] > 0)
+		return;
+	ntmplmods--;
+	tmplmods[i] = tmplmods[ntmplmods];
+	tmplcnt[i] = tmplcnt[ntmplmods];
+	for(id = mod->ty->ids; id != nil; id = id->next){
+		if(id->sym == nil || id->store == Dglobal || id->store == Dimport)
+			continue;
+		if(id->store == Dfn && id->dot != mod)
+			continue;
+		if(id->sym->decl == id){
+			id->sym->decl = id->old;
+			id->old = nil;
+		}
+	}
 }
 
 /*
@@ -3100,6 +3210,31 @@ echk1(Node *n)
 			n->ty = ishd ? t->tof : t;
 			return n->ty;
 		}
+		if((n->left->op == Otinst || n->left->op == Oindex) && n->left->left->op == Odot
+		&& modtemplate(n->left->left) != nil){
+			/* alias.f[T](args): a template from the interface, resolved to its decl */
+			Decl *tmpl;
+
+			tmpl = modtemplate(n->left->left);
+			lookup(n->left->left->left->sym)->refs++;
+			n->left->left->op = Oname;
+			n->left->left->sym = tmpl->sym;
+			n->left->left->decl = tmpl;
+			n->left->left->left = nil;
+			n->left->left->right = nil;
+		}
+		if(n->left->op == Odot && modtemplate(n->left) != nil){
+			/* alias.f(args): the same, with the type arguments inferred */
+			Decl *tmpl;
+
+			tmpl = modtemplate(n->left);
+			lookup(n->left->left->sym)->refs++;
+			n->left->op = Oname;
+			n->left->sym = tmpl->sym;
+			n->left->decl = tmpl;
+			n->left->left = nil;
+			n->left->right = nil;
+		}
 		if(n->left->op == Otinst || n->left->op == Oindex){
 			/*
 			 * "swap[int, string](1, "one")": the callee parsed as a
@@ -3131,8 +3266,9 @@ echk1(Node *n)
 			n->left->decl = fnd;
 			n->left->ty = fnd->ty;
 			ft = fnd->ty;
-		}else if(n->left->op == Oname && lookup(n->left->sym) != nil
-		&& lookup(n->left->sym)->store == Dfn && lookup(n->left->sym)->tparams != nil){
+		}else if(n->left->op == Oname && (n->left->decl != nil ? n->left->decl : lookup(n->left->sym)) != nil
+		&& (n->left->decl != nil ? n->left->decl : lookup(n->left->sym))->store == Dfn
+		&& (n->left->decl != nil ? n->left->decl : lookup(n->left->sym))->tparams != nil){
 			/*
 			 * "swap(1, "one")": no explicit "[...]", but the callee
 			 * names a generic function template -- try inferring
@@ -3178,8 +3314,39 @@ echk1(Node *n)
 
 			fnd = lookup(n->left->sym);
 			fnd->refs++;
-			n->left->decl = fnd;
-			n->left->ty = fnd->ty;
+			{
+				Decl *alias;
+
+				alias = nil;
+				if(fnd->dot != nil && fnd->dot != impdecl && fnd->dot->ty != nil && fnd->dot->ty->kind == Tmodule)
+					alias = modalias(fnd->dot);
+				if(alias != nil){
+					/*
+					 * a template body (pushmodscope()) calling its
+					 * own module's function by name: through the
+					 * alias, as alias.f(...) would be
+					 */
+					Node *modn, *callee;
+
+					alias->refs++;
+					modn = mkn(Oname, nil, nil);
+					modn->src = n->left->src;
+					modn->sym = alias->sym;
+					modn->decl = alias;
+					modn->ty = alias->ty;
+					callee = mkn(Oname, nil, nil);
+					callee->src = n->left->src;
+					callee->sym = fnd->sym;
+					callee->decl = fnd;
+					callee->ty = fnd->ty;
+					n->left = mkbin(Omdot, modn, callee);
+					n->left->src = callee->src;
+					n->left->ty = fnd->ty;
+				}else{
+					n->left->decl = fnd;
+					n->left->ty = fnd->ty;
+				}
+			}
 			ft = fnd->ty;
 		}else if(n->left->op == Odot && modcallee(n->left) != nil){
 			/*

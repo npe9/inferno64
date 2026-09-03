@@ -1385,6 +1385,9 @@ func mkiface(m ref Decl) ref Type {
 			id.iface = globals
 			glast.iface = id
 		case Dfn:
+			if id.tparams != nil {
+				break	// a template from an interface: no code to link
+			}
 			last.next = dupdecl(id)
 			last = last.next
 			id.iface = last
