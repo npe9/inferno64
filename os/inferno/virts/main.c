@@ -121,6 +121,23 @@ main(void)
 	uartconsole();
 	archconsole();
 
+	/*
+	 * Read the device tree before trapinit(), so plicinit() uses the
+	 * PLIC base the DTB reports rather than the compiled-in constant.
+	 * fdtinit() only parses memory; a lookup miss leaves plicbase at
+	 * its default, so this cannot hang a board with no/unexpected DTB.
+	 */
+	{
+		extern void *dtbptr;
+		extern void fdtinit(void*);
+		extern int fdtreg(char*, uvlong*, uvlong*);
+		extern uintptr plicbase;
+		uvlong base, size;
+		fdtinit(dtbptr);
+		if(fdtreg("riscv,plic0", &base, &size) && base != 0)
+			plicbase = (uintptr)base;
+	}
+
 	xinit();
 	poolinit();
 	poolsizeinit();
@@ -145,6 +162,11 @@ main(void)
 			print("fdt: virtio-mmio @ %#llux (VIRTIO0 %#p)\n", base, (uintptr)VIRTIO0);
 		else
 			print("fdt: no device tree\n");
+		{
+			extern uintptr plicbase;
+			print("fdt: plic base %#p (mem.h PLIC %#p)\n",
+				plicbase, (uintptr)PLIC);
+		}
 	}
 	/* PCI BARs/caps before chandevreset so virtio-pci ether can probe */
 	pciarchinit();

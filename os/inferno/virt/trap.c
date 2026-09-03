@@ -12,6 +12,16 @@ enum {
 };
 
 /* QEMU virt PLIC: UART=10, virtio-mmio=1..8, PCI INTx from 32 */
+
+/*
+ * The PLIC's base address.  It defaults to the compiled-in constant
+ * (correct for QEMU virt) but main() overrides it from the device tree
+ * before trapinit() runs, so the same kernel finds the PLIC on silicon
+ * whose map differs.  If the DTB lookup fails, the constant stands and
+ * the board behaves exactly as before - the wiring can never hang a
+ * working board.
+ */
+uintptr	plicbase = PLIC;
 static void	(*irqhandler[96])(Ureg*, void*);
 static void	*irqarg[96];
 
@@ -20,7 +30,7 @@ extern char	etext[];
 static u32*
 plicctx(void)
 {
-	return (u32*)(PLIC + PlicContext);	/* hart0 M-mode = context 0 */
+	return (u32*)(plicbase + PlicContext);	/* hart0 M-mode = context 0 */
 }
 
 static void
@@ -30,8 +40,8 @@ plicenable(int irq)
 
 	if(irq <= 0)
 		return;
-	*(u32*)(PLIC + PlicPriority + 4*irq) = 1;
-	en = (u32*)(PLIC + PlicEnable);
+	*(u32*)(plicbase + PlicPriority + 4*irq) = 1;
+	en = (u32*)(plicbase + PlicEnable);
 	en[irq/32] |= 1 << (irq%32);
 }
 

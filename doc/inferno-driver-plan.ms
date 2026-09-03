@@ -281,7 +281,23 @@ low / a1 high through two ulong globals rather than a uvlong in one
 register, and the 64-bit tick is the time/timeh CSR pair read with the
 standard hi/lo/hi retry loop done in C.  Both S-mode boards also gained
 a clean SBI SRST poweroff on exit(), verified.  Wiring the boards to the
-device-tree addresses is what remains.
+device-tree addresses is now demonstrated on both riscv64 boards: the
+PLIC base is a runtime
+.CW plicbase ,
+defaulting to the compiled-in constant but overridden from the DTB in
+.CW main()
+before
+.CW trapinit()
+seeds the interrupt controller.  It is proven end to end, not just read
+back: with the
+.CW PLIC
+constant deliberately set wrong, both boards still boot and their
+PLIC-interrupt-driven virtio-mmio disk still works, because the base
+came from the device tree - so the same kernel would find the PLIC on
+silicon whose map differs.  A DTB miss leaves the constant in place, so
+the wiring can never hang a working board.  The same one-variable
+pattern extends to the rv32 boards, to arm64 (once it is handed a DTB),
+and to the UART and virtio windows.
 .PP
 Both riscv boards, and arm64, then need a device-tree reader: every
 address is a compile-time constant today, checked against QEMU's
