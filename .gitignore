@@ -377,6 +377,7 @@ os/pc64/forth.h
 *.root.s
 *.root.h
 *.root.j
+*.root.c
 # per-board disword stamp and generated includes
 .disword-*
 *.hex
@@ -425,3 +426,6 @@ os/osprey/cmd/ring
 # Osprey boot loader output and boot filesystems (generated)
 os/osprey/boot/efi/bootx64.out
 os/osprey/boot/*.bootfs.paq
+
+# generated config C for the riscv64 S-mode board
+os/inferno/virts/virts.c

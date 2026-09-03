@@ -1,0 +1,215 @@
+# virt - QEMU -M virt riscv64 terminal
+#
+# Reconstructed from the generated virt.c that pr/riscv-native-boards
+# carried without the configuration it was generated from.  The devices,
+# links, modules, storage interface and protocols below are the ones
+# that file names.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+	sd
+	ether		netif
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
+	draw
+	pointer
+	ssl
+	cap
+	kprof
+	usb
+
+ip
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
+
+# the order matters: a library with an undefined symbol at the end
+# makes the loader complain
+lib
+	interp
+	keyring
+	memlayer
+	memdraw
+	draw
+	sec
+	mp
+	math
+	kern
+# not libip: that is the hosted helper library, and its
+# readipifc.c opens and reads /net/ipifc.  A native kernel has
+# its own ip stack -- the ip section above, with os/inferno/ip/
+# ipaux.c -- and upstream Inferno's native configs link no ip
+# library at all.
+
+link
+	ethervirtiommio
+	ethervirtio10	pci
+	usbxhcipci	usbxhci
+	pmmc	pci
+	ethermedium
+	loopbackmedium
+	inputvirtiommio
+	rngvirtiommio
+
+# the portable kernel this board takes, and its own code beside it.
+# archvirt and the rest are objects and nothing more; naming them under
+# misc would have mkdevc build a PCArch table for them, which is the
+# PC's abstraction and not this board's.
+port
+	alarm
+	alloc
+	allocb
+	bo
+# the board has its own auth.c, named in the mkfile
+	chan
+	dev
+	dial
+	dis
+	discall
+# edf wants a microsecond clock this board does not export yet
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+# randomvirt is this board's entropy; the portable random.c wants a
+# libsec newer than the one this tree shares
+# rdb wants the kernel debugger's console queue, which this board
+# does not configure
+	swcursor
+	sysfile
+	taslock
+	xalloc
+
+	archvirt
+	randomvirt
+	screenvirt
+
+misc
+	sdvirtiommio	sdscsi
+	sdvirtio10	pci sdscsi virtio10mem
+	sdnvme	pci
+	sdmmc
+	pci	pciecam
+	uartvirt
+
+mod
+	sys
+	keyring
+	crypt
+	math
+	ipints
+	draw
+
+init
+	virtinit
+
+code
+	int main_pool_pcnt = 20;
+	int heap_pool_pcnt = 20;
+	int image_pool_pcnt = 20;	/* was 60; large contig poolalloc hangs under TCG */
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+# The Limbo userland, the same set os/inferno/pc64/pc64 carries.  A bare
+# name whose $ROOT counterpart is a directory makes an empty directory in
+# the embedded root; a name that is a file embeds its bytes.  Dis is
+# bytecode and has no architecture, so these are the files appl/cmd and
+# appl/lib install for every target, not riscv64 ones.
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/n	/
+	/net	/
+	/net.alt	/
+	/nvfs	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/dis/lib
+	/dis/svc
+	/dis/wm
+	/osinit.dis
+	/dis/init
+	/dis/shutdown
+	/dis/basename.dis
+	/dis/bind.dis
+	/dis/cat.dis
+	/dis/cd.dis
+	/dis/diskparts
+	/dis/echo.dis
+	/dis/fptest.dis
+	/dis/ftest.dis
+	/dis/grep.dis
+	/dis/ls.dis
+	/dis/mntgen.dis
+	/dis/mount.dis
+	/dis/memfs.dis
+	/dis/dossrv.dis
+	/dis/ns.dis
+	/dis/ps.dis
+	/dis/pwd.dis
+	/dis/read.dis
+	/dis/sh.dis
+	/dis/sh.dis
+	/dis/sh/std.dis
+	/dis/unmount.dis
+	/dis/9660srv.dis
+	/dis/disk/fdisk.dis
+	/dis/disk/kfs.dis
+	/dis/disk/kfs64.dis
+	/dis/disk/kfscmd.dis
+	/dis/disk/prep.dis
+	/dis/ip/dhcp.dis
+	/dis/ip/ping.dis
+	/dis/auth/factotum.dis
+	/dis/disk/calc.tab.dis
+	/dis/disk/pedit.dis
+	/dis/lib/arg.dis
+	/dis/lib/auth.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
+	/dis/lib/disks.dis
+	/dis/lib/env.dis
+	/dis/lib/factotum.dis
+	/dis/lib/filepat.dis
+	/dis/lib/ip.dis
+	/dis/lib/names.dis
+	/dis/lib/nametree.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/readdir.dis
+	/dis/lib/regex.dis
+	/dis/lib/ssl.dis
+	/dis/lib/string.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxlib.dis
+	/dis/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxpersist.dis
+	/dis/lib/styxservers.dis
+	/dis/lib/timers.dis
+	/dis/lib/workdir.dis
+	/dis/usb/usbd.dis

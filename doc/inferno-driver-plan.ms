@@ -244,6 +244,35 @@ place of the direct CLINT access, and the PLIC's supervisor contexts.
 The riscv32
 .CW todfix
 clock spam is a symptom of the machine-mode timer this would replace.
+.PP
+Done for riscv64:
+.CW os/inferno/virts
+is the S-mode sibling of
+.CW virt ,
+entered by OpenSBI (QEMU's default
+.CW -bios )
+in supervisor mode at 0x80200000 the way real hardware boots, rather
+than
+.CW "-bios none"
+in machine mode.  It is a file copy, not an
+.CW #ifdef :
+.CW l.s
+uses the S-mode CSRs and SRET with the shifted interrupt-enable bit
+positions; the timer is the SBI legacy set_timer ecall and the tick is
+the
+.CW time
+CSR, because OpenSBI PMP-protects the CLINT from S-mode (confirmed in
+its own boot print); and
+.CW trap.c
+reads the supervisor interrupt causes and drives PLIC context 1.
+Verified: boots clean through the full init battery, SNPRINT-ABI-OK
+through ROOT-CMDS-OK, to the shell prompt with zero faults, four of
+four, with a virtio-blk disk exercising the PLIC external-interrupt
+path.  The machine-mode
+.CW virt
+board is untouched and still boots.  riscv32 S-mode and wiring the
+boards to the device-tree addresses remain.
+.PP
 Both riscv boards, and arm64, then need a device-tree reader: every
 address is a compile-time constant today, checked against QEMU's
 .CW dumpdtb ,

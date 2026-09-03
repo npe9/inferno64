@@ -1,0 +1,45 @@
+Inferno/riscv64 native kernel, SUPERVISOR MODE under OpenSBI (QEMU -M virt)
+
+This is the S-mode sibling of os/inferno/virt.  The virt board is
+entered by QEMU with -bios none in machine mode at 0x80000000 and
+drives the CLINT and M-mode CSRs directly.  This board is entered by
+OpenSBI (QEMU's default -bios) in supervisor mode at 0x80200000, the
+way real RISC-V hardware boots: firmware in M-mode, the kernel in
+S-mode.  Everything portable is shared; only the mode-specific pieces
+differ - and they are copies here, not #ifdefs, per the tree's rule.
+
+What differs from virt:
+  - l.s uses the S-mode CSRs (sstatus/sie/stvec/sepc/scause/stval) and
+    returns from a trap with SRET, not MRET.  The interrupt-enable bit
+    positions differ: sstatus.SIE is bit 1, sie.STIE bit 5, sie.SEIE
+    bit 9.
+  - The timer is armed through the SBI legacy set_timer ecall
+    (sbisettimer in l.s), not a CLINT mtimecmp write - OpenSBI
+    PMP-protects the CLINT from S-mode (see its Region02 print, S/U:
+    none).  The monotonic tick is the time CSR (rdtime in l.s), for the
+    same reason.  clock.c and stubs.c call these where virt touched
+    ClintMtime/ClintMtimecmp.
+  - trap.c reads the supervisor interrupt causes (timer 5, external 9)
+    and drives PLIC context 1 (hart0 S-mode), where virt uses context 0
+    (hart0 M-mode).
+  - The link address is 0x80200000, above OpenSBI's own 0x80000000.
+
+Build (from macOS host with KenC tools on PATH):
+
+	export PATH=$ROOT/MacOSX/arm64/bin:$PATH ROOT=$ROOT
+	cd os/inferno/virts
+	rm -f ivirts		# force relink after lib changes
+	mk ivirts
+
+Boot (OpenSBI is the default -bios, so no -bios flag):
+
+	qemu-system-riscv64 -M virt -m 512 -nographic -kernel ivirts
+
+Add a disk to reach the device tests and shell:
+
+	-drive file=blk.img,if=none,format=raw,id=blk0 \
+	-device virtio-blk-device,drive=blk0
+
+Init: os/inferno/init/virtinit.b rooted as /osinit.dis, same as virt.
+Verified: boots clean through the full init battery (SNPRINT-ABI-OK
+through ROOT-CMDS-OK) to the shell prompt, zero faults, 4/4.
