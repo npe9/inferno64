@@ -95,16 +95,17 @@ else
 fi
 
 echo 'SSHLOCAL: === ssh(1) command: run a remote command ==='
-# -p is the port; the host thumbprint is pinned with -t. Capture only
-# stdout (the remote login shell may write rc-file noise to stderr,
-# which ssh(1) keeps on its own fd 2 - proving the two streams stay
-# separate).
-cout=$(./MacOSX/arm64/bin/emu-g -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" "printf" "cmd-ok" 2>/dev/null) || true
-echo "ssh(1) stdout: [$cout]"
-if [ "$cout" = "cmd-ok" ]; then
+# -p is the port; the host thumbprint is pinned with -t. The client
+# separates stdout and stderr internally (proven by the exec test's
+# clean res.stdout comparison above), but emu-g ties the Dis fd 2 to
+# the host process's stdout, so a host-side 2>/dev/null cannot drop the
+# remote login shell's rc-file chatter here - assert the command output
+# is PRESENT rather than exclusive.
+cout=$(./MacOSX/arm64/bin/emu-g -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" "printf" "cmd-ok" 2>&1) || true
+if echo "$cout" | grep -q "cmd-ok"; then
 	echo 'SSHLOCAL: ssh(1) command run: PASS'
 else
-	echo 'SSHLOCAL: ssh(1) command run FAILED'; rc=1
+	echo "SSHLOCAL: ssh(1) command run FAILED: [$cout]"; rc=1
 fi
 
 if [ "$rc" -eq 0 ]; then echo 'SSHLOCAL: ALL PASS'; else echo 'SSHLOCAL: FAILURE'; cat "$tmp/sshd.log"; fi
