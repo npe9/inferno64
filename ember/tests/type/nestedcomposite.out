@@ -1,0 +1,4 @@
+p=3,4
+q: min=1,2 max=5,9
+r: min=1,2 max=5,9 dx=4
+s: min=7,0 max=0,0

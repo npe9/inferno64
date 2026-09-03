@@ -1,0 +1,7 @@
+ok.val=5
+err.msg=bad
+r.val=42
+z.val=0
+a.val=100 b.val=200
+poison=0
+ok.val=5 err.msg=bad

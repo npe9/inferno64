@@ -1,0 +1,13 @@
+int(3.7)=4 int(-3.7)=-4 int(2.5)=3
+real(3)=3 big(5)=5 int(big)=7
+real(big)=9 big(2.9)=3
+byte(65)=65 int(byte)=66 byte(300)=44
+string(42)=42 int("17")=17 int("abc")=0
+string(1.5)=1.5 real("2.25")=2.25
+string(big)=99 big("123456789012")=123456789012
+string(byte)=9 byte("7")=7 byte(3.9)=4 real(byte)=4
+len=6 b0=104 b1=195
+back=héllo part=h
+mut=Héllo
+same=40 sum=42
+poison=0

@@ -1,0 +1,26 @@
+addone ok v=100
+addone2 err e=oops
+chain ok v=100
+chain2 err e=oops
+plusten ok v=109
+plusten2 err e=oops
+loop ok 100
+loop err oops
+loop ok 100
+sum2 ok 198
+sum2a err oops
+sum2b err oops
+ifchk ok 198
+ifchk2 err oops
+ifchk3 ok -1
+loopchk ok 99
+loopchk2 err oops
+shout ok hello!
+shout2 err 7
+stepstatus continued
+stepstatus done
+stepstatus2 failed bad
+fieldchk ok 100
+fieldchk2 err oops
+poison=0
+final ok 100

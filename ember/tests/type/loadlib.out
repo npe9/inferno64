@@ -1,0 +1,5 @@
+name=libpoint
+c=11,22
+rp=6,-8 norm=14
+origin=0,0
+poison=0

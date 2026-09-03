@@ -1,0 +1,10 @@
+sum=15
+xs0=1 xs2=3 xs4=5
+after write xs0=100 sum=114
+after bump xs0=101 xs1=12 xs2=6
+xs[i]=4
+zero-fill zs0=0 zs1=0 zs2=0
+bs0=10,20 bs1=30,40
+poison=0
+xs3=9
+argv len=0

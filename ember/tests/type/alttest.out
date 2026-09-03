@@ -1,0 +1,13 @@
+got=3 sum=6 msg=hi
+nothing ready
+sent
+full now
+recv=42
+x=1
+discarded
+sent 42 to consumer
+consumer got 42
+from element: 1
+from call: 1
+total=15
+poison=0

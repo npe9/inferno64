@@ -1,0 +1,10 @@
+stat=0 name=hello.e length=137 isdir=0
+dir isdir=1 qtype=128
+bad=-1
+entries>20=1 found=1
+read=1 first=module Hello
+fstat=0 same=1 path=/ember/tests/type/hello.e
+tokens=3 first=a
+pipe=through the pipe
+slept=1
+poison=0

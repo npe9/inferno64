@@ -30,3 +30,4 @@ CFLAGS='-DINCPATH="'$ROOT/ember/module'"' $CFLAGS
 
 test:V:	$O.out
 	./tests/run.sh
+	./tests/runtime.sh

@@ -1,0 +1,13 @@
+c.id=1 a=2 s=two
+c1.id=10 a1=100 s1=one c2.id=20 a2=200 s2=two
+c3.id=30 a3=300 s3=three
+c4.id=9 a4=9 s4=nine
+c5.id=40 a5=40 s5=forty
+rc.id=50 ar=60 sr=sixty
+bt: ab=70 sb=seventy
+poison=0
+z.id=7 az=70 sz=seven
+reassign: ar1=1 sr1=one
+loop x=0 y=iter
+loop x=1 y=iter
+loop x=2 y=iter

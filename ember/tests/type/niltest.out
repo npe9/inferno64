@@ -1,0 +1,4 @@
+p is nil
+p is non-nil after assignment, p.x=1 p.y=2
+poison=0
+q is nil (poison check passed)

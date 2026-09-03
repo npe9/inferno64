@@ -1,0 +1,6 @@
+direct: 10,20 30,40
+after write: 99,20
+after inc: 99,21
+after compound: 104,21
+poison=0
+bs1: 777,20 bs0-unaffected: 104,21

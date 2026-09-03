@@ -5,6 +5,7 @@
 # tests/type/*.e   must parse and typecheck (and run modcom stub)
 # tests/typeerr/*.e must parse but fail to typecheck; optional NAME.err golden
 # tests/err/*.e    must fail to parse
+# tests/type/*.out  runtime golden output, checked by tests/runtime.sh under emu-g
 
 cd "$(dirname "$0")/.."
 EMBER=./o.out

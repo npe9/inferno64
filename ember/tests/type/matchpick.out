@@ -1,0 +1,8 @@
+ok v=99
+err e=oops
+value ok v=55
+loop ok 99
+loop err oops
+loop err oops
+poison=0
+final ok 99
