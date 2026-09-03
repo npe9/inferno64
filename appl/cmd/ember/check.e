@@ -2983,6 +2983,99 @@ func ifaceconv(v ref types.Node, t ref types.Type) {
 	echk(v)
 }
 
+// match guards: a guarded arm becomes "if guard { body } else { match
+// again over the arms after it }", those arms also being the outer
+// match's default; the subject is bound once (check.c)
+var nguard = 0
+
+func guardarms(subj ref types.Node, arms ref types.Node) ref types.Node {
+	var out ref types.Node
+	for p := arms; p != nil; p = p.right {
+		arm := seqitem(p)
+		if arm.aux == nil {
+			out = types.mkseq(out, arm)
+			if p.op != types.Oseq {
+				break
+			}
+			continue
+		}
+		var rest ref types.Node
+		if p.op == types.Oseq {
+			rest = p.right
+		}
+		var nested ref types.Node
+		if rest != nil {
+			nested = types.mkn(types.Omatch, types.dupn(subj), guardarms(subj, rest))
+			nested.line = arm.line
+			nested.pos = arm.pos
+		}
+		body := types.mkn(types.Oscope, arm.right, nil)
+		body.line = arm.line
+		body.pos = arm.pos
+		ifn := types.mkn(types.Oif, arm.aux, body)
+		ifn.line = arm.line
+		ifn.pos = arm.pos
+		if nested != nil {
+			ifn.aux = types.mkn(types.Oscope, nested, nil)
+			ifn.aux.line = arm.line
+			ifn.aux.pos = arm.pos
+		}
+		arm.right = ifn
+		arm.aux = nil
+		out = types.mkseq(out, arm)
+		if nested != nil {
+			def := types.mkn(types.Ocase, nil, deepdup(nested))
+			def.line = arm.line
+			def.pos = arm.pos
+			out = types.mkseq(out, def)
+		}
+		break
+	}
+	return types.rotater(out)
+}
+
+func lowerguards(n ref types.Node) bool {
+	p := n.right
+	for p != nil {
+		arm := seqitem(p)
+		if arm.aux != nil {
+			break
+		}
+		if p.op != types.Oseq {
+			return false
+		}
+		p = p.right
+	}
+	if p == nil {
+		return false
+	}
+	name := mkname(n.line, n.pos, sys.sprint(".g%d", nguard))
+	nguard++
+	das := types.mkbin(types.Odas, name, n.left)
+	das.line = n.line
+	das.pos = n.pos
+	m := types.mkn(types.Omatch, mkname(n.line, n.pos, name.sym), guardarms(name, n.right))
+	m.line = n.line
+	m.pos = n.pos
+	n.op = types.Oscope
+	n.left = types.mkseq(das, m)
+	n.right = nil
+	n.aux = nil
+	return true
+}
+
+// a copy of a whole tree (parse.e has its own for the parser)
+func deepdup(n ref types.Node) ref types.Node {
+	if n == nil {
+		return nil
+	}
+	n = types.dupn(n)
+	n.left = deepdup(n.left)
+	n.right = deepdup(n.right)
+	n.aux = deepdup(n.aux)
+	return n
+}
+
 // fs[i](x): an index into an array of function values, not a generic
 // instantiation f[T](x); the two parse alike (check.c)
 func isidxcall(c ref types.Node) bool {
@@ -3746,6 +3839,10 @@ func stchk(n ref types.Node) {
 			}
 			return
 		case types.Omatch:
+			if lowerguards(n) {
+				stchk(n)
+				return
+			}
 			matchcheck(n)
 			return
 		case types.Oalt:

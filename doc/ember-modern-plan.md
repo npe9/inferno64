@@ -111,11 +111,17 @@ is checked twice, so the call node remembers it was packed. `c ? a :
 b` is an `Ocond` parsed at the lowest precedence (the postfix `?`
 that propagates an error yields when an expression follows), checked
 like an `if` whose arms must agree, and compiled by branching into
-one destination. Not done: a string `Builder`, because Dis strings
-keep slack after `s[len(s)] = c` and appending in place is already
-the idiom; and match guards, because the case table dispatches once
-and a failed guard would need a second chain of tests per arm --
-left for a later round. Tests: `tests/type/variadic.e`, `cond.e`.
+one destination. Match guards came in a later round: the
+checker rewrites a match with guards before checking it, binding the
+subject to a hidden local and turning a guarded arm into `if guard {
+body } else { match .g { the arms after it } }`, with that nested
+match copied as the outer match's default, so the case table still
+dispatches once and a refused value reaches the later arms either
+way; the arms after a guard are duplicated, so many guards on one
+subject cost code size. Not done: a string `Builder`, because Dis
+strings keep slack after `s[len(s)] = c` and appending in place is
+already the idiom. Tests: `tests/type/variadic.e`, `cond.e`,
+`guard.e`.
 
 ## 7. Interfaces
 
@@ -181,7 +187,7 @@ Inferno-style); a language server and a REPL are last.
 | 3 | capture by reference          | done   |
 | 4 | append, maps                  | done   |
 | 5 | iota, pick common fields      | done   |
-| 6 | variadics, builder, ?:, guards| mostly |
+| 6 | variadics, builder, ?:, guards| done (no builder) |
 | 7 | interfaces                    | done   |
 | 8 | ?. and ??                     | done   |
 | 9 | integer types (not planned)   |   --   |

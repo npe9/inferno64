@@ -230,7 +230,12 @@ naming an enclosing loop or match.
 
 Labels may be literals or named constants (`case Eid:`, `case
 lex.Eid:`), or int ranges, `case 'a'...'z', 'A'...'Z':`. String
-labels must be distinct; int labels may not overlap. There is no fall-through, and `continue` inside an arm
+labels must be distinct; int labels may not overlap. An arm may
+carry a guard, `case Expr.Num(v) if v < 0:`; when the guard fails
+the arms after it are tried in order, the default last, and the
+subject is evaluated once. (A guarded arm compiles to an `if` whose
+else matches again over the following arms, which are also the
+match's default, so many guards on one subject cost code size.) There is no fall-through, and `continue` inside an arm
 continues the enclosing loop. Matching a pick binds its fields:
 
     match e {

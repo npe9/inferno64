@@ -46,6 +46,7 @@ static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
 static	Decl	*synthfvwrap(Src*, Decl*);
 static	void	boxvar(Decl*, Decl*);
+static	int	lowerguards(Node*);
 static	int	isifacetype(Type*);
 static	int	implements(Type*, Type*, Node*);
 static	void	ifaceconv(Node*, Type*);
@@ -5067,6 +5068,85 @@ ifaceconv(Node *v, Type *t)
 }
 
 /*
+ * match guards, "case Num(v) if v > 0:".  the case table dispatches
+ * on the value once, so a guarded arm becomes "if guard { body }
+ * else { match again over the arms after it }", and the arms after
+ * it also form the outer match's default, so a value the guard
+ * refuses reaches them either way.  the subject is bound to a hidden
+ * local first so it is evaluated once.
+ */
+static int nguard;
+
+static Node*
+guardarms(Node *subj, Node *arms)
+{
+	Node *out, *p, *arm, *rest, *nested, *ifn, *def, *body;
+
+	out = nil;
+	for(p = arms; p != nil; p = p->right){
+		arm = p->op == Oseq ? p->left : p;
+		if(arm->aux == nil){
+			out = mkseq(out, arm);
+			if(p->op != Oseq)
+				break;
+			continue;
+		}
+		rest = p->op == Oseq ? p->right : nil;
+		nested = nil;
+		if(rest != nil){
+			nested = mkn(Omatch, dupn(subj), guardarms(subj, rest));
+			nested->src = arm->src;
+		}
+		body = mkn(Oscope, arm->right, nil);
+		body->src = arm->src;
+		ifn = mkn(Oif, arm->aux, body);
+		ifn->src = arm->src;
+		if(nested != nil){
+			ifn->aux = mkn(Oscope, nested, nil);
+			ifn->aux->src = arm->src;
+		}
+		arm->right = ifn;
+		arm->aux = nil;
+		out = mkseq(out, arm);
+		if(nested != nil){
+			def = mkn(Ocase, nil, deepdup(nested));
+			def->src = arm->src;
+			out = mkseq(out, def);
+		}
+		break;
+	}
+	return rotater(out);
+}
+
+static int
+lowerguards(Node *n)
+{
+	Node *p, *arm, *name, *das, *m;
+	char buf[32];
+
+	for(p = n->right; p != nil; p = p->right){
+		arm = p->op == Oseq ? p->left : p;
+		if(arm->aux != nil)
+			break;
+		if(p->op != Oseq)
+			return 0;
+	}
+	if(p == nil)
+		return 0;
+	seprint(buf, buf+sizeof(buf), ".g%d", nguard++);
+	name = mkname(&n->src, enter(buf, 0));
+	das = mkbin(Odas, name, n->left);
+	das->src = n->src;
+	m = mkn(Omatch, mkname(&n->src, name->sym), guardarms(name, n->right));
+	m->src = n->src;
+	n->op = Oscope;
+	n->left = mkseq(das, m);
+	n->right = nil;
+	n->aux = nil;
+	return 1;
+}
+
+/*
  * "fs[i](x)": an index into an array of function values, not a
  * generic instantiation "f[T](x)" -- the two parse alike
  */
@@ -6420,6 +6500,10 @@ stchk(Node *n)
 			}
 			return;
 		case Omatch:
+			if(lowerguards(n)){
+				stchk(n);
+				return;
+			}
 			matchcheck(n);
 			return;
 		case Oalt:

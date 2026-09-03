@@ -705,6 +705,10 @@ cases(Node *n, int isalt)
 						break;
 					Bprint(fb, ", ");
 				}
+				if(c->aux != nil){
+					Bprint(fb, " if ");
+					expr(c->aux, 0);
+				}
 			}
 			Bprint(fb, ":");
 		}

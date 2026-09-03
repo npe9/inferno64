@@ -1431,6 +1431,7 @@ func pcases(ctx string, isalt int) ref types.Node {
 		}
 		csrc := tk()
 		var pats ref types.Node
+		var guard ref types.Node
 		if paccept(lex.Kdefault) != 0 {
 			pats = nil
 		} else {
@@ -1443,6 +1444,9 @@ func pcases(ctx string, isalt int) ref types.Node {
 					pats = types.mkseq(pats, ppattern())
 				}
 				pats = types.rotater(pats)
+				if paccept(lex.Kif) != 0 {
+					guard = pexpr()	// case pat if cond:
+				}
 			}
 		}
 		pexpect(':', ctx)
@@ -1454,6 +1458,7 @@ func pcases(ctx string, isalt int) ref types.Node {
 			stmts = types.mkseq(stmts, pstmt())
 		}
 		c := types.mkn(Ocase, pats, types.rotater(stmts))
+		c.aux = guard
 		c.line = csrc.line
 		c.pos = csrc.pos
 		cases = types.mkseq(cases, c)

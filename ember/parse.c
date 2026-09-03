@@ -37,7 +37,7 @@ static	Node	*palt(void);
 static	Node	*ptype(void);
 static	Node	*pmaptype(void);
 static	Node	*pinterface(Node*, Node*, Src*);
-static	Node	*deepdup(Node*);
+Node	*deepdup(Node*);
 static	int	startsexpr(int);
 static	Node	*prange(Node*);
 static	Node	*pmaplit(void);
@@ -1060,7 +1060,7 @@ pvardecl(void)
 }
 
 /* a copy of a whole expression tree: the checker folds in place */
-static Node*
+Node*
 deepdup(Node *n)
 {
 	if(n == nil)
@@ -1536,7 +1536,7 @@ palt(void)
 static Node*
 pmatch(void)
 {
-	Node *subj, *cases, *pats, *stmts, *c, *n, *init;
+	Node *subj, *cases, *pats, *stmts, *c, *n, *init, *guard;
 	Src src, csrc;
 	int oblit;
 
@@ -1564,6 +1564,7 @@ pmatch(void)
 			continue;
 		csrc = tk()->src;
 		pats = nil;
+		guard = nil;
 		if(paccept(Kdefault))
 			;
 		else{
@@ -1572,6 +1573,8 @@ pmatch(void)
 			while(paccept(','))
 				pats = mkseq(pats, ppattern());
 			pats = rotater(pats);
+			if(paccept(Kif))
+				guard = pexpr();	/* case pat if cond: */
 		}
 		pexpect(':', "match case");
 		stmts = nil;
@@ -1581,6 +1584,7 @@ pmatch(void)
 			stmts = mkseq(stmts, pstmt());
 		}
 		c = mkn(Ocase, pats, rotater(stmts));
+		c->aux = guard;
 		c->src.start = csrc.start;
 		cases = mkseq(cases, c);
 	}

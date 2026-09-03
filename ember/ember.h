@@ -647,6 +647,7 @@ extern	int	ncomments;
 extern	int	keepcomments;		/* the lexer records comments */
 extern	int	rawparse;		/* the parser keeps sugar unexpanded, for the formatter */
 extern	void	fmtsource(Biobuf*, Node*);
+extern	Node*	deepdup(Node*);
 
 /*
  * ops for nodes.
