@@ -217,6 +217,10 @@ kproc(char *name, void (*f)(void*), void *arg)
 	p->kparg = arg;
 	p->pid = ++p9pidalloc;
 	strncpy(p->text, name, sizeof p->text - 1);
+	/* its own error buffers: error()/kstrcpy write here, and a kproc that
+	 * does namec/fd work must not share the server proc's single buffers */
+	p->errstr = mallocz(ERRMAX, 1);
+	p->syserrstr = mallocz(ERRMAX, 1);
 	/* inherit the server's name space so #I and /net resolve */
 	p->pgrp = up->pgrp; p->egrp = up->egrp; p->fgrp = up->fgrp;
 	p->dot = up->dot; p->slash = up->slash; p->user = up->user;

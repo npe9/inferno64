@@ -34,6 +34,7 @@ void (*ipprotoinit[])(Fs*) = {
 };
 
 extern void loopbackmediumlink(void);
+extern void ospreymediumlink(void);
 extern int p9open(char*, int);
 extern long p9read(int, void*, long);
 extern long p9write(int, void*, long);
@@ -54,6 +55,55 @@ ticktest(void *)
 		tsleep(&up->sleep, return0, nil, 100);
 		print("p9 sched: timed kproc woke after ~100ms, tick %d\n", i + 1);
 	}
+}
+
+/*
+ * The osprey-medium proof, run as a kproc so it lives during the server
+ * loop where the medium's inbound is pumped.  It announces a port, then
+ * connects to 10.0.0.1 - the osprey interface's own address, so the route
+ * sends the SYN out that interface, through ospreybwrite, back in through
+ * the loop's ospreymediumpump, and into the stack.  If the handshake
+ * reaches Established and the osprey interface's own packet counters have
+ * moved, the loop-driven medium carried a real tcp.c conversation.
+ */
+static void
+ostcp(void *)
+{
+	int afd, dfd, sfd, anum, cnum;
+	long n;
+	char cbuf[64], line[256], path[64], *e;
+
+	tsleep(&up->sleep, return0, nil, 200);	/* let the server loop start ticking */
+	if(waserror()){
+		print("p9 ip: osprey-medium tcp failed: %s\n", up->errstr);
+		pexit("ostcp", 0);
+	}
+	afd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 8888", 13);
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	print("p9 ip: osprey medium: connecting to 10.0.0.1!8888 over the osprey interface\n");
+	p9write(dfd, "connect 10.0.0.1!8888", 21);	/* egresses the osprey medium */
+
+	snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+	if(n<0)n=0; line[n]=0;
+	for(e=line; *e && *e!='\n'; e++) ; *e=0;
+	if(strncmp(line, "Established", 11) == 0)
+		print("p9 ip: osprey medium: the real tcp.c handshook over the osprey interface - %s\n", line);
+	else
+		print("p9 ip: osprey medium: handshake did not reach Established - %s\n", line);
+
+	sfd = p9open("/net/ipifc/1/status", OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+	if(n<0)n=0; line[n]=0;
+	for(e=line; *e && *e!='\n'; e++) ; *e=0;
+	print("p9 ip: osprey interface counters after the handshake: %s\n", line);
+
+	USED(anum);
+	p9close(dfd); p9close(afd);
+	poperror();
+	pexit("ostcp done", 0);
 }
 
 /*
@@ -82,6 +132,7 @@ p9ipup(void)
 		return;
 	}
 	loopbackmediumlink();
+	ospreymediumlink();
 	ic = namec("#I", Atodir, 0, 0);
 	nc = namec("/net", Atodir, 0, 0);
 	cmount(ic, nc, MAFTER, "");
@@ -103,6 +154,16 @@ p9ipup(void)
 	p9write(fd, "add 127.0.0.1 255.0.0.0", 23);
 	print("p9 ip: bound the loopback medium and gave it 127.0.0.1\n");
 	p9close(fd);
+	/* a second interface on the osprey medium, its inbound pumped by the server loop */
+	fd = p9open("/net/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1);
+	if(n < 0) n = 0;
+	buf[n] = 0;
+	p9write(fd, "bind osprey", 11);
+	p9write(fd, "add 10.0.0.1 255.255.255.0", 26);
+	print("p9 ip: bound the osprey medium (interface %s) and gave it 10.0.0.1\n", buf);
+	p9close(fd);
+	kproc("ostcp", ostcp, nil);	/* proves a tcp.c handshake over the loop-pumped osprey medium */
 	poperror();
 
 	if(waserror()){

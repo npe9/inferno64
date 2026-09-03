@@ -768,12 +768,47 @@ because the loop's proc is requeued while it yields, an all-asleep moment
 is no longer the deadlock panic it was on loopback but an ordinary idle -
 the loop returns to its
 .CW oselect
-and waits there for the next tick, request, or (when a real medium is
-wired) packet.  That last step - a medium whose inbound is an
+and waits there for the next tick, request, or packet.
+.PP
+The osprey-interface medium is now in, in its first form.
+.CW os/osprey/ip/ospreymedium.c
+is a medium whose inbound is not a kproc blocking in the kernel - a kproc
+can only block in the cooperative scheduler - but
+.CW ospreymediumpump ,
+which the server loop calls each tick and which injects, in the loop's own
+context, whatever frames have arrived.  A second interface is bound on it
+at 10.0.0.1, and a kproc
+.CW ( ostcp ,
+which lives through the server loop where the pump runs) announces a port
+and connects to 10.0.0.1: the route sends the SYN out the osprey
+interface through
+.CW ospreybwrite ,
+the loop's pump carries it back in, and the real
+.CW tcp.c
+handshake completes -
+.CW "Established ... qscale 4" ,
+with the osprey interface's own counters moved to
+.CW "pktin 5 pktout 5" ,
+so the segments really did leave and re-enter through the medium, not
+through loopback.  Four of four boots carry loopback TCP, loopback UDP and
+this osprey-medium handshake together.  Making a kproc able to do this
+needed one fix: a kproc that runs
+.CW namec
+and the fd layer must have its own
+.CW errstr / syserrstr
+buffers, since
+.CW error
+writes there and the server proc's are a single static pair.
+.PP
+This first form is a single task: the medium loops a frame back to the
+same stack through the pump.  The two-endpoint form is the same shape with
+the queue replaced by an osprey ring -
+.CW bwrite
+puts the frame on the ring to the peer, and the pump drains frames the
+peer put on the ring to us, which the loop learns of from a new
 .CW oselect
-arm the loop injects, rather than a kproc blocking in the kernel - is the
-osprey-interface medium, which with a two-machine wire test is what
-remains of item 7a.
+arm.  That, a second personality running the stack, and the wire test
+between them are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

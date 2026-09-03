@@ -20,7 +20,7 @@ for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/ip/netlog.c os/osprey/ip/ipmux.c os/osprey/ip/arp.c os/osprey/ip/icmp.c \
          os/osprey/ip/icmp6.c os/osprey/ip/igmp.c os/osprey/ip/ipv6.c os/osprey/ip/tcp.c \
          os/osprey/ip/udp.c os/osprey/ip/rudp.c os/osprey/ip/il.c os/osprey/ip/gre.c \
-         os/osprey/ip/devip.c os/osprey/ip/inferno.c os/osprey/ip/loopbackmedium.c os/osprey/ip/netdevmedium.c \
+         os/osprey/ip/devip.c os/osprey/ip/inferno.c os/osprey/ip/loopbackmedium.c os/osprey/ip/ospreymedium.c os/osprey/ip/netdevmedium.c \
          os/osprey/ip/nullmedium.c os/osprey/ip/pktmedium.c os/osprey/ip/chandial.c; do
 	o=/tmp/p9_$(basename $f .c).6
 	6c $INC -o $o $f

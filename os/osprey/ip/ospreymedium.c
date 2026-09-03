@@ -1,0 +1,132 @@
+#include "u.h"
+#include "../port/lib.h"
+#include "mem.h"
+#include "dat.h"
+#include "fns.h"
+#include "../port/error.h"
+
+#include "ip.h"
+
+/*
+ * The osprey-interface medium.
+ *
+ * Unlike loopbackmedium, whose read kproc blocks in qbread on an internal
+ * queue, and unlike netdevmedium, whose read kproc blocks in a kernel
+ * device read, this medium's inbound is driven by the server loop, not by
+ * a blocking kproc.  A kproc in the personality can only block in the
+ * cooperative scheduler; only the server loop's oselect can wait on an
+ * external event - a clock tick, a request, or (the point of this medium)
+ * a frame arriving over an osprey ring.  So bwrite hands a frame off and
+ * ospreymediumpump(), called from the server loop, injects whatever has
+ * arrived into the stack in the loop's own context.
+ *
+ * This first form is a single task: bwrite enqueues onto the interface's
+ * own inbound queue and the pump drains it, so a packet the stack sends
+ * comes back to the stack through the loop - proving the loop-driven
+ * inbound path end to end with the real stack.  The two-endpoint form
+ * keeps the same shape: bwrite puts the frame on the ring to the peer,
+ * and the pump drains frames the peer put on the ring to us, which the
+ * loop learns about from a new oselect arm.
+ */
+
+enum { Maxtu = 64*1024 };
+
+typedef struct Osrock Osrock;
+struct Osrock
+{
+	Fs	*f;		/* the stack to inject into */
+	Queue	*q;		/* frames waiting to be injected */
+	Ipifc	*ifc;
+	Osrock	*next;		/* all bound osprey interfaces, for the pump */
+};
+
+static Osrock *allos;		/* every bound osprey interface */
+
+static void
+ospreybind(Ipifc *ifc, int, char**)
+{
+	Osrock *er;
+
+	er = smalloc(sizeof(*er));
+	er->f = ifc->conv->p->f;
+	er->q = qopen(1024*1024, Qmsg, nil, nil);
+	er->ifc = ifc;
+	er->next = allos;
+	allos = er;
+	ifc->arg = er;
+}
+
+static void
+ospreyunbind(Ipifc *ifc)
+{
+	Osrock **pp, *er;
+
+	er = ifc->arg;
+	for(pp = &allos; *pp != nil; pp = &(*pp)->next)
+		if(*pp == er){
+			*pp = er->next;
+			break;
+		}
+	if(er->q != nil)
+		qfree(er->q);
+	free(er);
+	ifc->arg = nil;
+}
+
+static void
+ospreybwrite(Ipifc *ifc, Block *bp, int, uchar*, Routehint*)
+{
+	Osrock *er;
+
+	er = ifc->arg;
+	if(qpass(er->q, bp) < 0)
+		ifc->outerr++;
+	ifc->out++;
+}
+
+/*
+ * Drain every osprey interface's inbound frames into the stack.  Called
+ * from the server loop, so it runs in the loop's context, never blocks,
+ * and returns when the queues are empty.
+ */
+void
+ospreymediumpump(void)
+{
+	Osrock *er;
+	Block *bp;
+
+	for(er = allos; er != nil; er = er->next){
+		while((bp = qget(er->q)) != nil){
+			rlock(er->ifc);
+			if(waserror()){
+				runlock(er->ifc);
+				continue;
+			}
+			er->ifc->in++;
+			if(er->ifc->lifc == nil)
+				freeb(bp);
+			else
+				ipiput4(er->f, er->ifc, bp);
+			runlock(er->ifc);
+			poperror();
+		}
+	}
+}
+
+Medium ospreymedium =
+{
+.hsize=		0,
+.mintu=		0,
+.maxtu=		Maxtu,
+.maclen=	0,
+.name=		"osprey",
+.bind=		ospreybind,
+.unbind=	ospreyunbind,
+.bwrite=	ospreybwrite,
+};
+
+void
+ospreymediumlink(void)
+{
+	addipmedium(&ospreymedium);
+}

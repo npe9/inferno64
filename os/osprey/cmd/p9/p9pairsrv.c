@@ -134,6 +134,7 @@ extern long pipfs_serve(uchar *msg, long n, uchar *rbuf, long rmax);	/* pipfsrv.
 extern void pipfs_tick(void);
 extern void sched_tick(void);		/* p9sched.c: advance the cooperative clock */
 extern void runkprocs(void);		/* p9sched.c: run ready kprocs, then return */
+extern void ospreymediumpump(void);	/* ospreymedium.c: inject frames arrived over the ring */
 static int reclaims, ticks;
 
 /*
@@ -186,6 +187,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		pipfs_tick();		/* leases are measured in these */
 		if(lfsreclaim())
 			reclaims++;
+		ospreymediumpump();	/* inject any frames that arrived over the osprey medium */
 		runkprocs();		/* let timer and medium kprocs run on this tick */
 		return 0;
 	}
