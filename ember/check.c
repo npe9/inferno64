@@ -3270,8 +3270,33 @@ echk1(Node *n)
 			i++;
 			if(arg != nil){
 				retypetuple(e, arg->ty);
-				if(!assignable(arg->ty, t, e))
+				if(!assignable(arg->ty, t, e)){
+					if(t->kind == Ttuple && e->op == Ocall && a->op != Oseq && !ft->varargs){
+						/*
+						 * f(g()) with g multi-valued and the last
+						 * argument (a method's receiver comes first):
+						 * g's results are the remaining arguments,
+						 * one per parameter (go's rule).  callcom()
+						 * (com.c) evaluates the call into a tuple
+						 * temporary and passes its fields.
+						 */
+						Decl *fd;
+
+						for(fd = t->ids; fd != nil; fd = fd->next){
+							if(arg == nil){
+								nerror(e, "too many arguments");
+								break;
+							}
+							if(!assignable(arg->ty, fd->ty, nil))
+								nerror(e, "argument %d: cannot use %T as %T", i, fd->ty, arg->ty);
+							i++;
+							arg = arg->next;
+						}
+						e->flags |= NSPREAD;
+						break;
+					}
 					nerror(e, "argument %d: cannot use %T as %T", i, t, arg->ty);
+				}
 				arg = arg->next;
 			}else if(!ft->varargs)
 				nerror(e, "too many arguments");

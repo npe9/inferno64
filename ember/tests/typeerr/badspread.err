@@ -1,0 +1,3 @@
+tests/typeerr/badspread.e:20: argument 2: cannot use string as int
+tests/typeerr/badspread.e:20: too many arguments
+tests/typeerr/badspread.e:20: not enough arguments

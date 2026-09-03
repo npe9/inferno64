@@ -17,6 +17,7 @@ const NREAL = 1
 const NSTR = 2
 const NVARARG = 4
 const NCHECKED = 8
+const NSPREAD = 16
 
 const Onone = 0
 const Omodule = 1

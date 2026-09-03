@@ -703,6 +703,7 @@ struct Node
 #define	NREAL	1			/* Oconst holds rval */
 #define	NSTR	2			/* Oconst holds sym as string */
 #define	NVARARG	4			/* Ofield declared with ... */
+#define	NSPREAD		16			/* a multi-valued call as a call's only argument: its fields are the arguments (echk's Ocall case; callcom(), com.c) */
 #define	NCHECKED	8			/* echk() has run on this node: its ty is final and it may have been rewritten in place (see echk's wrapper, check.c) */
 #define	PARENS	8
 #define	TEMP	16

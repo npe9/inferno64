@@ -582,6 +582,40 @@ func callcom(line int, pos int, op int, n ref types.Node, ret ref types.Node) {
 		if d == nil {
 			fatal("callcom: too many args")
 		}
+		if (e.flags & types.NSPREAD) != 0 {
+			// f(g()): the call into a tuple temporary, then each
+			// field to its parameter's slot (com.c)
+			tup := newnode()
+			gen.talloc(tup, e.ty, nil)
+			ecom(e.line, e.pos, tup, e)
+			for fd := e.ty.ids; fd != nil; fd = fd.next {
+				if d == nil {
+					fatal("callcom: too many spread args")
+				}
+				adr := types.mkn(types.Oadr, types.dupn(tup), nil)
+				adr.line = e.line
+				adr.pos = e.pos
+				adr.ty = e.ty
+				foff := mkconst(e.line, e.pos, big(fd.offset))
+				foff.ty = tint()
+				faddr := types.mkn(types.Oadd, adr, foff)
+				faddr.line = e.line
+				faddr.pos = e.pos
+				faddr.ty = tint()
+				find := types.mkn(types.Oind, faddr, nil)
+				find.line = e.line
+				find.pos = e.pos
+				find.ty = fd.ty
+				sumark(find)
+				off = d.offset
+				toff.val = big(off)
+				pass.ty = d.ty
+				ecom(e.line, e.pos, pass, find)
+				d = d.next
+			}
+			gen.tfree(tup)
+			break
+		}
 		off = d.offset
 		toff.val = big(off)
 		pass.ty = d.ty

@@ -2130,6 +2130,23 @@ func chkcall(n ref types.Node) ref types.Type {
 		if arg != nil {
 			retypetuple(e, arg.ty)
 			if assignable(arg.ty, t, e) == 0 {
+				if t.kind == types.Ttuple && e.op == types.Ocall && a.op != types.Oseq && ft.varargs == 0 {
+					// f(g()) with g multi-valued: its results are the
+					// arguments, one per parameter (check.c)
+					for fd := t.ids; fd != nil; fd = fd.next {
+						if arg == nil {
+							nerror(e, "too many arguments")
+							break
+						}
+						if assignable(arg.ty, fd.ty, nil) == 0 {
+							nerror(e, sys.sprint("argument %d: cannot use %s as %s", i, tp(fd.ty), tp(arg.ty)))
+						}
+						i++
+						arg = arg.next
+					}
+					e.flags |= types.NSPREAD
+					break
+				}
 				nerror(e, sys.sprint("argument %d: cannot use %s as %s", i, tp(t), tp(arg.ty)))
 			}
 			arg = arg.next

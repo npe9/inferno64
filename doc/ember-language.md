@@ -120,7 +120,10 @@ without initializer is zero each time the declaration executes (a
 constant; constant expressions of one type fold, and may refer to
 earlier constants and size arrays (`[N]int`).
 
-`a, b := f()` and `a, b = f()` destructure a tuple result; `a, b =
+A multi-valued call may be the last argument of another call, its
+results filling the remaining parameters one each: `show(divmod(17,
+5))`, `acc.add(three())`. `a, b := f()` and `a, b = f()` destructure a
+tuple result; `a, b =
 b, a` assigns an expression list, evaluated whole before any store.
 The compound assignments `+= -= *= /= %= &= |= ^= <<= >>=` and `++`,
 `--` exist. A store target must be storage: a variable, a module

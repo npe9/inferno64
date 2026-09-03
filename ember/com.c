@@ -1005,6 +1005,42 @@ callcom(Src *src, int op, Node *n, Node *ret)
 			e = a->left;
 		if(d == nil)
 			fatal("callcom: too many args");
+		if(e->flags & NSPREAD){
+			/*
+			 * f(g()): the multi-valued call's results are the
+			 * arguments -- the call into a tuple temporary, then
+			 * each field to its parameter's slot, the field read
+			 * destructure()'s way (Oadr of the value temporary)
+			 */
+			Node tup, *adr, *foff, *faddr, *find;
+			Decl *fd;
+
+			talloc(&tup, e->ty, nil);
+			ecom(&e->src, &tup, e);
+			for(fd = e->ty->ids; fd != nil; fd = fd->next){
+				if(d == nil)
+					fatal("callcom: too many spread args");
+				adr = mkn(Oadr, dupn(&tup), nil);
+				adr->src = e->src;
+				adr->ty = e->ty;
+				foff = mkconst(&e->src, fd->offset);
+				foff->ty = tint;
+				faddr = mkn(Oadd, adr, foff);
+				faddr->src = e->src;
+				faddr->ty = tint;
+				find = mkn(Oind, faddr, nil);
+				find->src = e->src;
+				find->ty = fd->ty;
+				sumark(find);
+				off = d->offset;
+				toff.val = off;
+				pass.ty = d->ty;
+				ecom(&e->src, &pass, find);
+				d = d->next;
+			}
+			tfree(&tup);
+			break;
+		}
 		off = d->offset;
 		toff.val = off;
 		pass.ty = d->ty;
