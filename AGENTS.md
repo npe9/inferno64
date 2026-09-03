@@ -153,7 +153,11 @@
   Items 5 and 6 done: 9front's devsd/sd.h/sdscsi, sdiahci, sdvirtio,
   sdmmc and pmmc (SD cards verified on q35 and riscv64), and 9front's
   ethermii with ether8169/82563/igbe/i225 (e1000 and e1000e get
-  leases; igb never sees link, open).  Decide, build
+  leases; igb never sees link, open).  Item 7 done: 9front devaudio and
+  audiohda, verified with QEMU intel-hda.  Item 8: -smp 2 brings cpu1
+  up and then hits pc64's heap fault; blocked on that bug.  Item 9
+  (device trees, PSCI, GICv3, S-mode/SBI, SoC drivers) is untouched.
+  Decide, build
   it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.

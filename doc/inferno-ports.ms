@@ -18601,3 +18601,31 @@ with a different init and has to be regenerated after any edit to
 .CW pc64 ,
 or its kernel silently lacks the newest driver, which is how the HD
 audio controller was "not found" for one run.
+.NH 2
+Item 8, as far as it goes: two CPUs come up
+.PP
+.CW "qemu-boot.sh -smp 2"
+had never been run.  It works as far as the board itself does:
+.CW squidboy
+starts the second processor, both print their identification lines
+("cpu0: 1000MHz AuthenticAMD", "cpu1: ..."), the boot goes on through
+.CW /osinit.dis
+and the first binds, and then a general protection fault in Dis with
+.CW up
+nil on cpu0 ends it, inside the window in which the single-CPU boot
+also dies.  Whether that fault is the known heap corruption or an SMP
+bug of its own cannot be told apart until the former is fixed; the
+multiprocessor code is at least reached and the second CPU is alive.
+.PP
+Where this leaves the plan: items 1 to 7 are done and verified under
+QEMU as each section above says; item 8 waits on pc64's heap
+corruption; item 9, the real-hardware gaps (device trees, PSCI and
+GICv3 on arm64, supervisor mode with SBI on riscv64, the SoC drivers
+behind them), is untouched.  Open bugs, in the order they block
+things: pc64's heap corruption on every boot; arm64's pool corruption
+at the first module load; armv7's two faults; the igb NIC seeing no
+link; riscv32's
+.CW todfix
+spam; and the Limbo audio library's
+.CW audioctl
+syntax against 9front's file.
