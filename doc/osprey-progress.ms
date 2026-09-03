@@ -834,12 +834,19 @@ would put the frame on an osprey ring to the peer container and the pump
 would drain the ring the peer wrote, learned from a new
 .CW oselect
 arm - the osprey device carrying the frames it already carries requests
-on.  A data stream across the two stacks is the next bit: the handshake and the
-accept are proved, but writing bytes on one stack and reading them on the
-other faults - the segment that carries a payload (the handshake segments
-do not) corrupts something while the loop pumps it into the far stack, a
-wild-PC fault, not yet chased.  That, and the device-carried two-container
-form, are what remain of item 7a.
+on.  A data stream across the two stacks is the next bit, and probing it found
+a real limit.  The handshake and the accept are proved, but writing bytes
+on one stack and reading them on the other faults where the handshake did
+not.  The difference is the payload: a data-carrying segment drives deeper
+tcp processing (queueing the bytes, generating an ack) than a bare control
+segment, and the pump runs that inline in the server loop, on the server
+proc's stack.  Pumping the same segment from a kproc's larger stack
+instead gets past that fault - so it is stack depth in the loop's own
+context - which says the pump belongs in a dedicated kproc, not inline in
+.CW serve1 ,
+before the medium carries a stream.  (A second fault then waits at the far
+read; the stack fix is the first step, not the whole of it.)  That work,
+and the device-carried two-container form, are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
