@@ -51,6 +51,7 @@
  */
 TEXT	_main(SB), 1, $-8
 	MOV	$setSB(SB), R3
+	MOV	R11, dtbptr(SB)		/* a1 holds the DTB physical address at boot */
 	MOV	$stack+(64*1024)(SB), SP
 	MOV	CSR(MSTATUS), R10
 	OR	$FSBITS, R10
@@ -71,6 +72,7 @@ TEXT	_main(SB), 1, $-8
 dead:
 	JMP	dead
 
+GLOBL	dtbptr(SB), $8
 GLOBL	fbits(SB), $8
 GLOBL	stack(SB), $(64*1024)
 GLOBL	mach0(SB), $(4*1024)

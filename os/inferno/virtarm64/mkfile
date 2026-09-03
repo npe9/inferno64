@@ -33,6 +33,7 @@ OBJ=\
 	trap.$O\
 	tod.$O\
 	mul64fract.$O\
+	fdt.$O\
 	stubs.$O\
 	$CONF.root.$O\
 	$IP\
@@ -82,6 +83,9 @@ tod.$O:	../port/tod.c
 	$CC $CFLAGS ../port/tod.c
 
 mul64fract.$O:	../port/mul64fract.c
+
+fdt.$O:	../port/fdt.c
+	$CC $CFLAGS ../port/fdt.c
 
 pciecam.$O:	../port/pciecam.c
 	$CC $CFLAGS ../port/pciecam.c

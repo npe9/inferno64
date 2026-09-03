@@ -126,6 +126,14 @@ main(void)
 	procinit();
 	links();
 	screeninit();
+	{
+		/* QEMU passes no DTB in x0 to a bare ELF via -kernel, so this
+		 * is inert here; correct if a future Image-header kernel gets
+		 * x0.  The reader (../port/fdt.c) is exercised on riscv. */
+		extern void *dtbptr;
+		extern void fdtinit(void*);
+		fdtinit(dtbptr);
+	}
 	pciarchinit();
 	chandevreset();
 	uartconsolesetup();

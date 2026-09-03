@@ -114,10 +114,12 @@ TEXT	_main(SB), 1, $-4
 	 * branch-folding pass.
 	 */
 	MOV	$setSB(SB), R28
+	MOV	R0, dtbptr(SB)		/* x0 holds the DTB physical address at boot */
 	BL	main(SB)
 dead:
 	B	dead
 
+GLOBL	dtbptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
 

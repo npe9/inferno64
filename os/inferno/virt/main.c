@@ -133,6 +133,19 @@ main(void)
 	procinit();
 	links();
 	screeninit();
+	{
+		extern void *dtbptr;
+		extern void fdtinit(void*);
+		extern int fdtreg(char*, uvlong*, uvlong*);
+		uvlong base, size;
+		fdtinit(dtbptr);
+		if(fdtreg("ns16550a", &base, &size))
+			print("fdt: uart @ %#llux size %#llux (mem.h UART0 %#p)\n", base, size, (uintptr)UART0);
+		else if(fdtreg("virtio,mmio", &base, &size))
+			print("fdt: virtio-mmio @ %#llux (VIRTIO0 %#p)\n", base, (uintptr)VIRTIO0);
+		else
+			print("fdt: no device tree\n");
+	}
 	/* PCI BARs/caps before chandevreset so virtio-pci ether can probe */
 	pciarchinit();
 	chandevreset();
