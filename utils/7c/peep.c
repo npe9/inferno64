@@ -55,7 +55,15 @@ loop1:
 				t++;
 			}
 		}
-		if(p->as == AMOV || p->as == AMOVW || p->as == AFMOVS || p->as == AFMOVD)
+		/*
+		 * Not AMOVW/AMOVWU here: register to register they are
+		 * SXTW/UXTW, a conversion, not a copy.  Propagating or
+		 * eliding one loses the extension, and a 32-bit result
+		 * (ADDW, a W0 return value) carries a ZERO upper half on
+		 * AArch64, so an int -1 became 0xffffffff downstream
+		 * (doc/inferno-ports.ms).
+		 */
+		if(p->as == AMOV || p->as == AFMOVS || p->as == AFMOVD)
 		if(regtyp(&p->to)) {
 			if(p->from.type == D_CONST)
 				constprop(&p->from, &p->to, r->s1);
@@ -142,6 +150,13 @@ loop1:
 		if(p1->from.type != D_REG || p1->from.reg != p->to.reg)
 			continue;
 		if(p1->to.type != D_REG || p1->to.reg != p->to.reg)
+			continue;
+		/*
+		 * The second MOVx R,R is redundant only when the first
+		 * already extended the register: a load does, a 32-bit
+		 * immediate or register move may not.
+		 */
+		if(p->from.type != D_OREG)
 			continue;
 		excise(r1);
 	}

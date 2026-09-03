@@ -738,7 +738,15 @@ asmout(Prog *p, Optab *o)
 		if(mask != nil){
 			o1 |= ((mask->r&(s-1))<<16) | (((mask->s-1)&(s-1))<<10);
 			if(s == 64){
-				if(mask->e == 64 && ((uvlong)p->from.offset>>32) != 0)
+				/*
+				 * N says the pattern is one 64-bit element.  It
+				 * depends on the element size alone: a run of 32
+				 * ones in a 64-bit register (0xffffffff) has e ==
+				 * 64 and zero upper bits, and without N it became
+				 * the reserved "32-bit element of all ones", an
+				 * undefined instruction (doc/inferno-ports.ms).
+				 */
+				if(mask->e == 64)
 					o1 |= 1<<22;
 			}else{
 				u = (uvlong)p->from.offset >> 32;

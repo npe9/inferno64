@@ -155,9 +155,13 @@
   ethermii with ether8169/82563/igbe/i225 (e1000 and e1000e get
   leases; igb never sees link, open).  Item 7 done: 9front devaudio and
   audiohda, verified with QEMU intel-hda.  Item 8: -smp 2 brings cpu1
-  up and then hits pc64's heap fault; blocked on that bug.  Item 9
-  (device trees, PSCI, GICv3, S-mode/SBI, SoC drivers) is untouched.
-  Decide, build
+  up and then hits pc64's heap fault; blocked on that bug.  arm64 now
+  reaches an interactive shell: three kernel/asm bugs (unsaved trap
+  registers, setlabel storing XZR for SP, the 7c peephole deleting a
+  32-bit sign-extension MOVW as a self-copy) and a 7l logical-immediate
+  N-bit bug, each verified live; virtarm64init.b is its console init.
+  Item 9 (device trees, PSCI, GICv3, S-mode/SBI, SoC drivers) is
+  untouched.  Decide, build
   it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.

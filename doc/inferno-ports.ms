@@ -18629,3 +18629,145 @@ link; riscv32's
 spam; and the Limbo audio library's
 .CW audioctl
 syntax against 9front's file.
+.NH 1
+arm64: it was never pool corruption
+.PP
+Three bugs, found in one sitting once the right instruments were
+pointed at the board, and none of them in the pool.  The instruments
+first, because they are what made the difference: QEMU's own
+.CW "-d int"
+trace names every exception with its syndrome, fault address and
+return address, and it showed the "deadlock" to be a chain of 3
+million exceptions re-taken at the vector; the QEMU monitor's
+.CW "info registers"
+through a Unix socket samples the stalled CPU without a debugger; and
+.CW lldb
+on QEMU's gdbstub with a breakpoint on the synchronous vector slot
+gives the full register file at the first fault.  Reading the linked
+kernel's symbols needed a third parser: 7l writes 4-byte symbol
+values where 6l and jl write 8.
+.PP
+The first bug: the trap path saved one register.  The four-instruction
+stub
+.CW vectorbuild()
+builds in the vector table reserves the frame and stores R9; the
+shared tail
+.CW vectrap
+in
+.CW os/inferno/virtarm64/l.s
+carried a comment saying the stub had saved R0-R8 and R10-R30, and
+saved none of them itself, while its exit restored all thirty-one
+from the frame.  Every interrupt returned to the interrupted code with
+whatever the frame slots held.  The
+.CW "-d int"
+trace showed the shape directly: an IRQ inside
+.CW brpatch()
+returned, and the next instruction executed was at a heap address \-
+a
+.CW RET
+through a garbage R30.  The saves are there now.
+.PP
+The second, deterministic once the first was gone and found with
+.CW lldb
+by logging every
+.CW gotolabel() :
+the Label it jumped through held
+.CW "sp 0" ,
+.CW "pc devwalk+80" ,
+which is a
+.CW waserror()
+frame, and
+.CW setlabel()
+had stored zero for the stack pointer because "MOV RSP, 0(R2)"
+assembles to
+.CW "STR XZR, [X2]"
+\- register 31 in a store is the zero register, not SP.  The first
+.CW nexterror()
+resumed a frame on a zero stack pointer.
+.CW setlabel()
+goes through R1 now.  With those two the board boots the interpreter,
+loads the shell, and runs every stage of the riscv64 init that does
+not need a device it lacks: GC stress, memory, task and keyboard
+tests, math, random, capabilities, the Dis stress test.
+.PP
+The third, from the shell's first array index of 4294967296 and a
+ring of the last 256 Dis instructions extended to record each one's
+operand addresses: the index slot was last written by an
+.CW addw
+whose source was a module-data word, and that word had been stored
+from the loader's
+.CW operand() ,
+a function returning a 32-bit
+.CW int .
+On AArch64 a 32-bit operation, and a 32-bit result in W0, leave the
+register's upper half ZERO;
+.CW 7c
+widened an
+.CW int
+to a 64-bit type with a plain register move, and its peephole then
+removed the
+.CW MOVW
+.CW Rn,Rn
+that would have been the sign extension as a copy to itself.  riscv64
+never saw this because its 32-bit operations sign-extend by
+architecture.  Fixed in
+.CW utils/7c/txt.c
+(the widening cases of the move table are
+.CW MOVW
+or
+.CW MOVWU ,
+which link as
+.CW SXTW
+and
+.CW UXTW )
+and
+.CW utils/7c/peep.c
+(32-bit register moves are conversions, not copies, and a duplicate
+is dropped only after a load).  A probe linked to
+.CW "MOVN W0, #0"
+in the callee and
+.CW "SXTW X0, W0"
+in the caller confirms it.  This one, like the two constant bugs, is
+in the kencc-cross 7c as well.
+.PP
+That widening turned out to be the wrong fix; only the peephole half
+was needed.  A first cut also changed the move table, so that widening
+an int emitted an SXTW and a uint a UXTW; the board went backward, an
+external abort in
+.CW rootopen()
+before the shell.  A bisection \- each half alone, every arm64 library
+rebuilt each time \- put it on the move-table change: this tree keeps
+64-bit addresses in
+.CW ulong ,
+32 bits to this compiler, and the UXTW truncated them.  That change is
+reverted.  What the interpreter needed was already emitted \- the MOVW
+Rn,Rn sign-extension
+.CW cgen()
+puts after a 32-bit value \- and the only bug was the peephole
+deleting it as a copy to itself.  With just that, and the linker fix
+below, the board runs the shell (HELLO-FROM-SH, VIRT-OK,
+ROOT-APPS-OK) and, with a console-only init
+.CW ( os/inferno/init/virtarm64init.b ) ,
+reaches an interactive prompt: a command piped in over the emulated
+PL011 came back, the standing goal for this board.
+.PP
+The peephole-only build first stopped at an undefined instruction in
+.CW mul64fract() :
+"AND $0xffffffff, R10, R12", a logical immediate
+.CW 7l
+encoded without the N bit, the reserved 32-bit-element-of-all-ones
+form.  The encoder set N only when the upper 32 bits were nonzero; N
+depends on the element size alone.  Fixed in
+.CW utils/7l/asmout.c ,
+and
+.CW 7l
+now also refuses a store of RSP, which is what turned
+.CW setlabel()
+into a store of zero.  Past ROOT-APPS-OK the board prints the same
+non-fatal
+.CW track:
+heap-checkpoint lines riscv64 does, from the shared
+.CW checktracked()
+instrumentation \- the same op (a movp writing nil over a live slot in
+module Sh) on both boards, an open item shared with riscv64, not
+arm64's own.
