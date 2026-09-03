@@ -18806,3 +18806,101 @@ syntax against 9front's file.  Item 9 of the plan \- device trees,
 PSCI and GICv3 for arm64, supervisor mode with SBI for riscv64, and
 the SoC drivers behind them \- is the real-hardware work none of the
 QEMU boards force, and is untouched.
+.NH 1
+armv7 reclassified: intermittent, not deterministic; proctrace refuted
+.PP
+A live check with the advisor's ten-minute framing turned out to
+settle two things at once, and both correct the record above.
+.PP
+First, the strong remaining armv7 candidate \(em that
+.CW runproc 's
+.CW "pt = proctrace; if(pt) pt(p, SRun, 0)"
+compiles to a call through the global
+.CW proctrace
+and that pointer is non-nil at boot \(em is refuted, on two independent
+grounds.
+.CW main()
+in
+.CW os/inferno/armv7/main.c
+zeroes BSS from
+.CW edata
+to
+.CW end
+as its very first act, before
+.CW machinit ,
+so
+.CW proctrace
+(a plain BSS global in
+.CW devproc.c ,
+assigned only when
+.CW /proc/n/trace
+is opened) is nil long before
+.CW runproc
+runs and the
+.CW if(pt)
+guard skips the call.  And the fault is not deterministic, which is
+what a fixed non-nil pointer would produce.
+.PP
+Three fresh boots gave three different outcomes:
+.IP \(bu
+type 1 (undefined instruction) at pc
+.CW 0x400f8e78
+with sp
+.CW 0x400f8e24
+\(em pc is inside the same stack page as sp, about 0x54 above it, so
+the CPU is executing on the stack: a branch-to-stack signature, a
+corrupted return or function pointer, not a call through a named
+global;
+.IP \(bu
+type 4 (data abort) at pc
+.CW 0x40067260
+on a valid kstack
+.CW 0x4349da68..0x434a5a68
+\(em the varying data abort, a different fault entirely;
+.IP \(bu
+one run that reached
+.CW ARMV7M-INIT-OK
+and ran past
+.CW "progpid count 10"
+with no fault at all.
+.PP
+So armv7 is intermittent, not "two deterministic faults at the first
+module load" as earlier entries have it; it boots sometimes, and the
+batch run's
+.CW "EXIT 0"
+was real.  This is the same varying-data-abort fingerprint as the pc64
+heisenbug already closed after 46 non-reproducing traces \(em an
+intermittent memory-corruption bug shared across two architectures, not
+a ten-minute item.
+.PP
+The blocker for further static work: the linked
+.CW iarmv7
+is stripped ELF, so no fault address resolves to a symbol without a
+relink that emits a symbol table or a
+.CW "5l -a"
+listing.  The next attempt on armv7 should start by fixing that
+toolchain step, not by guessing at addresses.
+.PP
+Second, three arm64 driver pieces landed clean this round and are
+verified: a portable device-tree reader
+.CW ( os/inferno/port/fdt.c ,
+riscv64 finds its UART in QEMU's DTB; arm64 under
+.CW -kernel
+gets no DTB pointer, inert but correct), PSCI reboot and power-off over
+HVC on arm64 (QEMU exits 0 on a reset call), and GICv3 on arm64,
+runtime-detected from
+.CW ID_AA64PFR0_EL1.GIC
+alongside the default GICv2.  The GICv3 path was verified on
+.CW "-M virt,gic-version=3" :
+the board reaches its shell (timer PPI through the redistributor's SGI
+frame) and an NVMe read completes (PCI SPI 37 through
+.CW GICD_IROUTER
+affinity routing), while GICv2 still boots clean five of five.  One
+non-blocking loose end noted in passing: the arm64 disk test prints
+.CW "sig 0000"
+where the image has
+.CW "55 aa"
+at offset 0; the read succeeds and the interrupt is delivered so the
+GICv3 conclusion is unaffected, and it is identical on v2, so it
+predates this work \(em the init reads a block other than 0, or the
+print is wrong.
