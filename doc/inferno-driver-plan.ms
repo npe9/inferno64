@@ -593,3 +593,29 @@ over it.  A full DISCOVER/OFFER/REQUEST/ACK needs the NIC to transmit,
 receive and take interrupts, so DHCP-OK proves the driver works, not
 just that it probed - on QEMU's user network it takes 10.0.2.15.  The
 board boots and reaches its shell whether or not a network is present.
+.NH 1
+A new board: shakti_c
+.PP
+The first board brought up from scratch this round, and a check that a
+new board on this tree costs about what it should.  QEMU's
+.CW shakti_c
+(Shakti C-class SoC) is riscv64 with the same CLINT, SiFive PLIC and RAM
+base as the virt board, so its M-mode boot, trap path and timer are
+reused unchanged; the only genuinely new driver is the console, a
+.CW shakti-uart
+(32-bit TX/RX/STATUS at 0x11300, not a 16550), in
+.CW os/inferno/shakti/uartshakti.c .
+The payload loads as
+.CW -bios ,
+not
+.CW -kernel :
+the ROM reset vector jumps to the RAM base where the kernel links.  Two
+quirks, both found from the faulting address: shakti_c has no RTC (the
+clock stays tick-based), and QEMU maps its PLIC in only a 0x20000-byte
+aperture so the SiFive context region at PLIC+0x200000 is off the end -
+plicinit() leaves the PLIC alone, the CLINT timer drives the scheduler
+and the console is polled, which reaches a shell.  Verified: boots to
+SHAKTI-OK and a working shell, zero faults, three of three.  It models
+no I2C, SPI or storage, so it adds no peripheral - its value is the
+bring-up itself, and the confirmation that the copy-adapt-boot loop on
+this tree is one UART plus a config trim.
