@@ -504,6 +504,12 @@ poperand(void)
 		n = mksconst(&src, t->sym);
 		lexskip();
 		return n;
+	case Krange:
+		/* "range e": only as the right side of a for header's := */
+		lexskip();
+		n = mkunary(Orange, pexpr());
+		n->src.start = src.start;
+		return n;
 	case Knil:
 		n = mknil(&src);
 		lexskip();
@@ -1026,6 +1032,20 @@ pfor(void)
 			goto condpost;
 		}
 		e = psimple();
+		if(e->op == Odas && e->right != nil && e->right->op == Orange){
+			/*
+			 * for i[, v] := range e { body }: kept as the Odas in
+			 * aux; the checker rewrites it into an ordinary loop
+			 * once e's type is known (rangefor(), check.c)
+			 */
+			noblit = oblit;
+			body = pblock();
+			n = mkn(Ofor, nil, body);
+			n->aux = e;
+			n->src.start = src.start;
+			n->src.stop = body->src.stop;
+			return n;
+		}
 		if(paccept(';')){
 			init = e;
 		condpost:

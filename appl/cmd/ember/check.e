@@ -2024,6 +2024,10 @@ func echk1(n ref types.Node) ref types.Type {
 		n.left = nil
 		n.ty = v.ty
 		return n.ty
+	case types.Orange:
+		nerror(n, "range is only the right side of a for header's :=")
+		n.ty = terror
+		return n.ty
 	}
 	nerror(n, sys.sprint("unsupported expression %s", types.opname(n.op)))
 	n.ty = terror
@@ -3160,6 +3164,85 @@ func chklval(n ref types.Node, what string) int {
 	return 0
 }
 
+var nrange = 0
+
+// for i[, v] := range e, rewritten into an ordinary for once e's
+// type is known (check.c's rangefor())
+func rangefor(n ref types.Node) int {
+	das := n.aux
+	names := das.left
+	first := names
+	var second ref types.Node
+	if names.op == types.Oseq {
+		first = names.left
+		second = names.right
+		if second.op == types.Oseq {
+			nerror(n, "range wants one or two names")
+			return 0
+		}
+	}
+	e := das.right.left
+	line := das.line
+	pos := das.pos
+	t := echk(e)
+	if t == terror {
+		return 0
+	}
+	tmp := mkname(line, pos, sys.sprint(".range%d", nrange))
+	nrange++
+	var init ref types.Node
+	var cond ref types.Node
+	var post ref types.Node
+	var prefix ref types.Node
+	match t.kind {
+	case types.Tarray, types.Tstring:
+		init = types.mkseq(types.mkn(types.Odas, tmp, e), types.mkn(types.Odas, first, mkconst(line, pos, big(0))))
+		cond = types.mkbin(types.Olt, types.dupn(first), types.mkn(types.Ocall, mkname(line, pos, "len"), types.dupn(tmp)))
+		post = types.mkunary(types.Oinc, types.dupn(first))
+		if second != nil {
+			prefix = types.mkn(types.Odas, second, types.mkbin(types.Oindex, types.dupn(tmp), types.dupn(first)))
+		}
+	case types.Tlist:
+		if second != nil {
+			nerror(n, "range over a list gives one name, the element")
+			return 0
+		}
+		init = types.mkn(types.Odas, tmp, e)
+		cond = types.mkbin(types.Oneq, types.dupn(tmp), mkname(line, pos, "nil"))
+		post = types.mkn(types.Oas, types.dupn(tmp), types.mkn(types.Ocall, mkname(line, pos, "tl"), types.dupn(tmp)))
+		prefix = types.mkn(types.Odas, first, types.mkn(types.Ocall, mkname(line, pos, "hd"), types.dupn(tmp)))
+	case types.Tint:
+		if second != nil {
+			nerror(n, "range over an int gives one name, the count")
+			return 0
+		}
+		init = types.mkseq(types.mkn(types.Odas, tmp, e), types.mkn(types.Odas, first, mkconst(line, pos, big(0))))
+		cond = types.mkbin(types.Olt, types.dupn(first), types.dupn(tmp))
+		post = types.mkunary(types.Oinc, types.dupn(first))
+	default:
+		nerror(n, sys.sprint("cannot range over %s", tp(t)))
+		return 0
+	}
+	init.line = line
+	init.pos = pos
+	cond.line = line
+	cond.pos = pos
+	post.line = line
+	post.pos = pos
+	n.left = cond
+	n.aux = types.mkn(types.Oforctl, init, post)
+	n.aux.line = line
+	n.aux.pos = pos
+	if prefix != nil {
+		prefix.line = line
+		prefix.pos = pos
+		n.right = types.mkn(types.Oscope, types.mkseq(prefix, n.right), nil)
+		n.right.line = line
+		n.right.pos = pos
+	}
+	return 1
+}
+
 // a condition: a bool, or an int flag for code that predates bool (check.c)
 func iscond(t ref types.Type) int {
 	if t == terror || t.kind == types.Tbool || t.kind == types.Tint {
@@ -3236,6 +3319,9 @@ func stchk(n ref types.Node) {
 			popscope()
 			return
 		case types.Ofor:
+			if n.aux != nil && n.aux.op == types.Odas && rangefor(n) == 0 {
+				return
+			}
 			pushscope()
 			if n.aux != nil {
 				stchk(n.aux.left)

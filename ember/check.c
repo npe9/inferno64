@@ -53,6 +53,7 @@ static	Decl	*inferfn(Node*);
 static	Decl	*inferfn1(Node*);
 static	Decl	*modtemplate(Node*);
 static	int	iscond(Type*);
+static	int	rangefor(Node*);
 static	void	declconst(char*, long, Type*);
 static	Decl	*modmember(Type*, Sym*);
 static	int	ismodvar(Decl*);
@@ -4354,6 +4355,10 @@ echk1(Node *n)
 		n->ty = v->ty;
 		return n->ty;
 	}
+	case Orange:
+		nerror(n, "range is only the right side of a for header's :=");
+		n->ty = terror;
+		return n->ty;
 	default:
 		nerror(n, "unsupported expression %O", n->op);
 		n->ty = terror;
@@ -5168,6 +5173,93 @@ chklval(Node *n, char *what)
 }
 
 /*
+ * for i[, v] := range e { body }, e's type deciding the loop: an
+ * array or string gives the index and, with a second name, the
+ * element; a list gives the element; an int counts from 0.  e is
+ * evaluated once, into a hidden local.  rewritten here into the
+ * ordinary for (init; cond; post) shape, so nothing downstream
+ * knows about range.
+ */
+static int
+rangefor(Node *n)
+{
+	Node *das, *names, *first, *second, *e, *tmp, *init, *cond, *post, *prefix;
+	Type *t;
+	Src *src;
+	char buf[32];
+	static int nrange;
+
+	das = n->aux;
+	names = das->left;
+	first = names;
+	second = nil;
+	if(names->op == Oseq){
+		first = names->left;
+		second = names->right;
+		if(second->op == Oseq){
+			nerror(n, "range wants one or two names");
+			return 0;
+		}
+	}
+	e = das->right->left;
+	src = &das->src;
+	t = echk(e);
+	if(t == terror)
+		return 0;
+	seprint(buf, buf+sizeof(buf), ".range%d", nrange++);
+	tmp = mkname(src, enter(buf, 0));
+	switch(t->kind){
+	case Tarray:
+	case Tstring:
+		/* .r := e; i := 0; i < len(.r); i++ { [v := .r[i]] } */
+		init = mkseq(mkn(Odas, tmp, e), mkn(Odas, first, mkconst(src, 0)));
+		cond = mkbin(Olt, dupn(first), mkn(Ocall, mkname(src, enter("len", 0)), dupn(tmp)));
+		post = mkunary(Oinc, dupn(first));
+		prefix = nil;
+		if(second != nil)
+			prefix = mkn(Odas, second, mkbin(Oindex, dupn(tmp), dupn(first)));
+		break;
+	case Tlist:
+		/* .r := e; .r != nil; .r = tl(.r) { v := hd(.r) } */
+		if(second != nil){
+			nerror(n, "range over a list gives one name, the element");
+			return 0;
+		}
+		init = mkn(Odas, tmp, e);
+		cond = mkbin(Oneq, dupn(tmp), mkname(src, enter("nil", 0)));
+		post = mkn(Oas, dupn(tmp), mkn(Ocall, mkname(src, enter("tl", 0)), dupn(tmp)));
+		prefix = mkn(Odas, first, mkn(Ocall, mkname(src, enter("hd", 0)), dupn(tmp)));
+		break;
+	case Tint:
+		/* .r := e; i := 0; i < .r; i++ */
+		if(second != nil){
+			nerror(n, "range over an int gives one name, the count");
+			return 0;
+		}
+		init = mkseq(mkn(Odas, tmp, e), mkn(Odas, first, mkconst(src, 0)));
+		cond = mkbin(Olt, dupn(first), dupn(tmp));
+		post = mkunary(Oinc, dupn(first));
+		prefix = nil;
+		break;
+	default:
+		nerror(n, "cannot range over %T", t);
+		return 0;
+	}
+	init->src = *src;
+	cond->src = *src;
+	post->src = *src;
+	n->left = cond;
+	n->aux = mkn(Oforctl, init, post);
+	n->aux->src = *src;
+	if(prefix != nil){
+		prefix->src = *src;
+		n->right = mkn(Oscope, mkseq(prefix, n->right), nil);
+		n->right->src = *src;
+	}
+	return 1;
+}
+
+/*
  * a condition: a bool (a comparison, a logical expression, true/
  * false) or, for the code that predates bool, an int flag; anything
  * else -- a string, a ref -- is refused
@@ -5390,6 +5482,8 @@ stchk(Node *n)
 			return;
 		}
 		case Ofor:
+			if(n->aux != nil && n->aux->op == Odas && !rangefor(n))
+				return;
 			pushscope();
 			if(n->aux != nil)
 				stchk(n->aux->left);

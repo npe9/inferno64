@@ -114,10 +114,11 @@ const Onothing = 97
 const Ochan = 98
 const Oarray = 99
 const Otry = 100
-const Oend = 101
+const Orange = 101
+const Oend = 102
 
 
-var opnames = [102]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "end"}
+var opnames = [103]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "range", "end"}
 
 var lx ref lex.Lexer
 var look0 ref lex.Tok
@@ -566,6 +567,13 @@ func poperand() ref types.Node {
 		n := mksconst(t, t.sym)
 		lexskip()
 		return n
+	case lex.Krange:
+		// "range e": only as the right side of a for header's :=
+		lexskip()
+		n := types.mkunary(Orange, pexpr())
+		n.line = t.line
+		n.pos = t.pos
+		return n
 	case lex.Knil:
 		n := mknil(t)
 		lexskip()
@@ -1001,6 +1009,16 @@ func pfor() ref types.Node {
 			three = 1
 		} else {
 			e := psimple()
+			if e.op == Odas && e.right != nil && e.right.op == Orange {
+				// for i[, v] := range e: rewritten by the checker (parse.c)
+				noblit = oblit
+				body := pblock()
+				n := types.mkn(Ofor, nil, body)
+				n.aux = e
+				n.line = src.line
+				n.pos = src.pos
+				return n
+			}
 			if paccept(';') != 0 {
 				init = e
 				three = 1

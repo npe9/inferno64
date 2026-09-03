@@ -112,6 +112,7 @@ char *opname[] =
 	/* Ochan */	"chan",
 	/* Oarray */	"array",
 	/* Otry */	"try",
+	/* Orange */	"range",
 	/* Oend */	"end",
 };
 

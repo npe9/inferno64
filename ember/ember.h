@@ -596,6 +596,7 @@ enum
 	Kraise,
 	Ktry,
 	Kcatch,
+	Krange,
 
 	Eend
 };
@@ -699,6 +700,7 @@ enum
 	Oarray,				/* array[size] T alloc, always zero-filled: left size, right type expr (cleared after check) -- deliberately NOT limbo's fuller "array[] of {v,...}" value-list form, which stays check.c's own separate, still-open compositefields()/Oindx-representation gap */
 
 	Otry,				/* try { body } catch e { handler }: left body, right handler, aux the binder (Oname, a string local) */
+	Orange,				/* range e, the right side of a for header's :=: left the operand; the checker rewrites the for (rangefor()) */
 	Oend
 };
 

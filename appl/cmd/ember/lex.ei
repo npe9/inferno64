@@ -66,6 +66,7 @@ const Kalt = 308
 const Kraise = 309
 const Ktry = 310
 const Kcatch = 311
+const Krange = 312
 
 type Tok struct {
 	t int

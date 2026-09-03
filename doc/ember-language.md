@@ -168,7 +168,11 @@ builtins. `s[i]` indexes a string by rune.
 statement: `if x := f(); x > 2 { ... }`. `for` has three forms: `for
 { }`, `for cond { }`, and `for init; cond; post { }`, where init and
 post may be expression-list assignments (`for i, j := 0, 10; i < j;
-i, j = i+1, j-1`). `break` and `continue` take an optional label
+i, j = i+1, j-1`). `for i, v := range xs { ... }` walks an array or
+string with the index and the element (one name gives the index
+alone), `for v := range l` a list's elements, and `for i := range n`
+counts from 0 to n-1; the operand is evaluated once. `break` and
+`continue` take an optional label
 naming an enclosing loop or match.
 
 `match` dispatches on an int, a string, or a pick value:
