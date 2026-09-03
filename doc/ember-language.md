@@ -23,9 +23,20 @@ root so `/dis/lib` and `/ember/tests` resolve inside it:
     emu-g -r . -c0 -d '#U*/absolute/host/path/prog.dis'
 
 The `#U*` prefix loads a host path without copying it into the tree.
-`mk test` in `ember/` runs the compile suite and then the runtime
-suite (`tests/runtime.sh`), which compares each program's output with
-its golden file.
+`-d` runs the module's `init` with no arguments. To run a program as
+an Inferno command with arguments, build the emulator's startup
+module and its dependency once (`mk emuinit.dis` in `appl/cmd`, `mk
+arg.dis` in `appl/lib`, installed as `dis/emuinit.dis` and
+`dis/lib/arg.dis`), put the program inside the tree, and give its
+tree path and arguments:
+
+    emu-g -r . /tmp/args.dis one two three
+
+The program's `init(ctxt ref draw.Context, argv list string)` links
+as a Limbo `Command`; `argv` holds the program path and its
+arguments. `mk test` in `ember/` runs the compile suite and then the
+runtime suite (`tests/runtime.sh`), which compares each program's
+output with its golden file.
 
 ## Modules and program shape
 
