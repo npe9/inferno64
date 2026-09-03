@@ -2687,6 +2687,19 @@ func modcom(file string, out string) int {
 		return nerrors
 	}
 
+	// zerocom() references nildecl during fncom, after the globals
+	// list was built: give it a slot now if it has none (com.c)
+	if nildecl.refs > 0 {
+		e := globals
+		for e != nil && e != nildecl {
+			e = e.next
+		}
+		if e == nil {
+			nildecl.next = nil
+			appglobal(nildecl)
+		}
+	}
+
 	types.narrowmods()
 
 	for l := check.importlist(); l != nil; l = tl(l) {

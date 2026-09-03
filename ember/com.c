@@ -4113,6 +4113,22 @@ modcom(void)
 	if(errors)
 		return;
 
+	/*
+	 * zerocom() (an uninitialized variable's store of nil) counts a
+	 * reference to nildecl during fncom(), after the globals list
+	 * above was built: without a slot of its own its offset stayed
+	 * 0, aliasing the first global -- the sys import, so "var xs
+	 * []int" held the module reference and len(xs) read -1.
+	 */
+	if(nildecl->refs > 0){
+		for(d = globals; d != nil && d != nildecl; d = d->next)
+			;
+		if(d == nil){
+			nildecl->next = nil;
+			appglobal(nildecl);
+		}
+	}
+
 	narrowmods();
 
 	for(dl = imports; dl != nil; dl = dl->next)
