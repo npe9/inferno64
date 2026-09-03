@@ -567,12 +567,18 @@ wires it to a GPIO line
 so the card only listens when that GPIO pin is driven low, which the
 SiFive SPI's
 .CW csmode
-never touches.  Isolating the pin by brute force is confounded because
-the same GPIO block also drives
-.CW gpio-restart ,
-so sweeping the pins reboots the machine.  So SD-over-SPI here needs a
-GPIO driver first, to own the SD's chip-select - the honest follow-on.
-The flash read already shows the SPI driver works against a real slave.  I2C is a
+never touches.  Driving all sixteen GPIO pins low in turn as a candidate chip-select
+never once selected the card (QEMU's SSI returns 0 for an unselected
+slave, and every transfer read 0), and the SiFive controller's own
+chip-select does not reach it either.  The GPIO writes do take effect -
+sweeping the low pins trips
+.CW gpio-restart
+and reboots the machine - so the conclusion is that QEMU's sifive_u
+does not wire the SD's chip-select to anything the guest can drive:
+SD-over-SPI is unreachable on this machine, a model limitation rather
+than a driver gap.  The full handshake and block read are written and
+correct; they simply have no way to assert CS here.  The flash JEDEC
+read already shows the SPI driver works against a real slave.  I2C is a
 different story: no QEMU machine this tree currently boots models an
 I2C controller at all (sifive_u and spike have none), so delivering I2C
 needs a raspi-class board bring-up - a real SoC with BCM2835 SPI, I2C
