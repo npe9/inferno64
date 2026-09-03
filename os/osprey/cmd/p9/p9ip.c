@@ -101,13 +101,34 @@ ostcp(void *)
 
 	tsleep(&up->sleep, return0, nil, 100);		/* let the final ACK reach stack B */
 	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
-	dfd2 = p9open(path, ORDWR);
-	n = p9read(dfd2, cbuf, sizeof cbuf - 1); p9close(dfd2);
+	dfd2 = p9open(path, ORDWR);			/* the listen fd IS the accepted conv's ctl - keep it open to hold it */
+	n = p9read(dfd2, cbuf, sizeof cbuf - 1);
 	if(n<0)n=0; cbuf[n]=0; lnum = atoi(cbuf);
-	print("p9 ip: osprey wire: stack B accepted the flow as conversation %d - two independent stacks joined over the osprey medium\n", lnum);
+	print("p9 ip: osprey wire: stack B accepted the flow as conversation %d\n", lnum);
+
+	/* a byte stream across the two stacks: stack A writes, stack B reads */
+	{
+		int wfd, rfd, tries; char rx[128];
+		static char wire[] = "a byte stream across two stacks over the osprey medium";
+		snprint(path, sizeof path, "#I1/tcp/%d/data", lnum);
+		rfd = p9open(path, ORDWR);
+		snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+		wfd = p9open(path, ORDWR);
+		p9write(wfd, wire, sizeof wire - 1);
+		for(tries = 0, n = 0; tries < 20 && n <= 0; tries++){
+			tsleep(&up->sleep, return0, nil, 50);	/* let the pump carry the segment */
+			n = p9read(rfd, rx, sizeof rx - 1);
+		}
+		if(n<0)n=0; rx[n]=0;
+		if(n == (long)(sizeof wire - 1) && memcmp(rx, wire, n) == 0)
+			print("p9 ip: osprey wire: stack B read the %ld bytes stack A sent: \"%s\" - byte stream across two independent stacks verified\n", n, rx);
+		else
+			print("p9 ip: osprey wire: data stream short (%ld bytes)\n", n);
+		p9close(rfd); p9close(wfd);
+	}
 
 	USED(anum);
-	p9close(dfd); p9close(afd);
+	p9close(dfd2); p9close(dfd); p9close(afd);
 	poperror();
 	pexit("ostcp done", 0);
 }
