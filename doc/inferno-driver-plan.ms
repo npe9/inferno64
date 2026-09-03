@@ -329,6 +329,20 @@ constant set wrong, the board prints
 VIRT32-INIT-OK.  All four riscv boards now find their interrupt
 controller through the device tree.
 .PP
+arm64 has a framebuffer now, where it was serial-console-only.
+.CW os/inferno/virtarm64/screenarm.c
+is a QEMU ramfb backend adapted from the riscv
+.CW screenvirt.c ,
+pointed at the arm64 virt machine's fw_cfg at 0x9020000 and ramfb-only
+(no virtio-gpu fallback, since arm64 reaches its devices over PCI).  The
+board's config gains the draw and pointer devices, the
+memlayer/memdraw/draw libraries and the software cursor.  Verified with
+.CW "-device ramfb" :
+the virtinit battery passes DRAW-OK, DRAW-RECT-OK, PTR-OK and KBD-OK,
+and a screendump of three RGB bands painted into the framebuffer returns
+them exactly, so kernel-drawn pixels reach the host scanout.  Without
+the device the board still boots, display optional.
+.PP
 Both riscv boards, and arm64, then need a device-tree reader: every
 address is a compile-time constant today, checked against QEMU's
 .CW dumpdtb ,
