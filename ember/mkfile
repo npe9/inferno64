@@ -40,3 +40,4 @@ test:V:	$O.out
 	./tests/lexcmp.sh
 	./tests/astcmp.sh
 	./tests/chkcmp.sh
+	./tests/discmp.sh

@@ -1,0 +1,23 @@
+module Disw
+
+// the .dis writer, a port of ember/disw.c: the header, instructions,
+// type descriptors, data, the export table, import tables and the
+// source path, into a file opened with open().
+
+const PATH = "/dis/ember/disw.dis"
+
+import types "types"
+
+func usetypes(t Types)
+func open(path string) int
+func close()
+func discon(val int)
+func disword(w int)
+func disdata(kind int, n int)
+func dismod(m ref types.Decl)
+func dispath(name string)
+func disentry(e ref types.Decl)
+func disdesc(d ref types.Desc)
+func disvar(size int, d ref types.Decl)
+func disldt(size int, ds ref types.Decl)
+func disinst(in ref types.Inst)

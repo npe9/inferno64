@@ -2275,7 +2275,7 @@ func matchlabels(arms ref types.Node, ctype ref types.Type, nlab int) ref types.
 		}
 		for pat := arm.left; pat != nil; {
 			q := seqitem(pat)
-			labs[i] = ref types.Label{node: arm, isptr: 0, start: q, stop: q, pc: 0}
+			labs[i] = ref types.Label{node: arm, isptr: 0, start: q, stop: q, inst: nil}
 			i++
 			if pat.op != types.Oseq {
 				break
@@ -2317,7 +2317,7 @@ func matchlabels(arms ref types.Node, ctype ref types.Type, nlab int) ref types.
 			nlab -= e - (i + 1)
 		}
 	}
-	return ref types.Case{nlab: nlab, nsnd: 0, offset: 0, labs: labs, wild: wild, iwild: 0, tagof: nil}
+	return ref types.Case{nlab: nlab, nsnd: 0, offset: 0, labs: labs, wild: wild, iwild: nil, tagof: nil}
 }
 
 func altcheck(n ref types.Node) {
@@ -2407,7 +2407,7 @@ func altcheck(n ref types.Node) {
 	if ok == 0 {
 		return
 	}
-	c := ref types.Case{nlab: nsnd + nrcv, nsnd: nsnd, offset: 0, labs: nil, wild: wild, iwild: 0, tagof: nil}
+	c := ref types.Case{nlab: nsnd + nrcv, nsnd: nsnd, offset: 0, labs: nil, wild: wild, iwild: nil, tagof: nil}
 	c.labs = [c.nlab + 1]ref types.Label
 	for i := 0; i <= c.nlab; i++ {
 		c.labs[i] = ref types.Label{}

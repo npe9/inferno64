@@ -1,0 +1,15 @@
+module Com
+
+// module compilation, a port of ember/com.c: checked trees to Dis
+// instructions to a .dis file.  the driver hands down its own types
+// and check instances (module instancing: every importer of a module
+// gets a private copy of its globals) before calling modcom().
+
+const PATH = "/dis/ember/com.dis"
+
+import types "types"
+import check "check"
+
+func usetypes(t Types)
+func usecheck(c Check)
+func modcom(infile string, out string) int

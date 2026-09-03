@@ -16,6 +16,10 @@ TARG=\
 	check.dis\
 	astdump.dis\
 	chkdump.dis\
+	gen.dis\
+	disw.dis\
+	com.dis\
+	emberc.dis\
 
 all:V:	$TARG
 
@@ -30,6 +34,10 @@ iface.dis:	types.ei parse.ei fold.ei
 check.dis:	types.ei fold.ei iface.ei
 chkdump.dis:	types.ei parse.ei iface.ei check.ei
 astdump.dis:	lex.ei parse.ei types.ei
+gen.dis:	types.ei
+disw.dis:	types.ei gen.ei
+com.dis:	types.ei check.ei gen.ei disw.ei
+emberc.dis:	types.ei parse.ei check.ei com.ei
 
 install:V:	all
 	mkdir -p $ROOT/dis/ember

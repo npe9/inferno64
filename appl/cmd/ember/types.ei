@@ -12,7 +12,7 @@ const PATH = "/dis/ember/types.dis"
 
 const IBY2WD = 8
 const IBY2LG = 8
-const MaxTemp = 16
+const MaxTemp = 64
 const MaxAlign = 8
 
 const NREAL = 1
@@ -249,7 +249,7 @@ type Decl struct {
 	iface ref Decl
 	locals ref Decl
 	link ref Decl
-	pc int
+	pc ref Inst
 	desc ref Desc
 	valty ref Type
 	wrapdecl ref Decl
@@ -263,6 +263,31 @@ type Decl struct {
 	capty ref Type
 	line int
 	pos int
+}
+
+// an operand address and a Dis instruction (gen.e builds them, disw.e
+// encodes them); here so a Decl can point at its first instruction
+type Addr struct {
+	reg int
+	offset int
+	decl ref Decl
+}
+
+type Inst struct {
+	line int
+	pos int
+	op int
+	pc int
+	reach int
+	sm int
+	mm int
+	dm int
+	s Addr
+	m Addr
+	d Addr
+	branch ref Inst
+	next ref Inst
+	block int
 }
 
 type Desc struct {
@@ -293,7 +318,7 @@ type Label struct {
 	isptr int
 	start ref Node
 	stop ref Node
-	pc int
+	inst ref Inst
 }
 
 type Case struct {
@@ -302,7 +327,7 @@ type Case struct {
 	offset int
 	labs []ref Label
 	wild ref Node
-	iwild int
+	iwild ref Inst
 	tagof ref Type
 }
 
@@ -312,6 +337,7 @@ func basic(kind int) ref Type
 func tunknownt() ref Type
 func tfnptrt() ref Type
 func descriptorlist() ref Desc
+func setdescriptorlist(d ref Desc)
 
 func typeinit()
 func mktype(line int, pos int, kind int, tof ref Type, ids ref Decl) ref Type

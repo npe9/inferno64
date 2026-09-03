@@ -10,7 +10,7 @@ import keyring "keyring"
 
 const IBY2WD = 8
 const IBY2LG = 8
-const MaxTemp = 16
+const MaxTemp = 64
 const MaxAlign = 8
 
 const NREAL = 1
@@ -180,22 +180,22 @@ const OKmask = 255
 const TReq = 1
 
 // Dis conversion opcodes (include/isa.h), for castop()
-const ICVTBW = 53
-const ICVTWB = 54
-const ICVTFW = 55
-const ICVTWF = 56
-const ICVTCA = 57
-const ICVTAC = 58
-const ICVTWC = 59
-const ICVTCW = 60
-const ICVTFC = 61
-const ICVTCF = 62
-const ICVTLF = 141
-const ICVTFL = 142
-const ICVTLW = 143
-const ICVTWL = 144
-const ICVTLC = 145
-const ICVTCL = 146
+const ICVTBW = 47
+const ICVTWB = 48
+const ICVTFW = 49
+const ICVTWF = 50
+const ICVTCA = 51
+const ICVTAC = 52
+const ICVTWC = 53
+const ICVTCW = 54
+const ICVTFC = 55
+const ICVTCF = 56
+const ICVTLF = 135
+const ICVTFL = 136
+const ICVTLW = 137
+const ICVTWL = 138
+const ICVTLC = 139
+const ICVTCL = 140
 
 type Node struct {
 	op int
@@ -265,7 +265,7 @@ type Decl struct {
 	iface ref Decl
 	locals ref Decl
 	link ref Decl
-	pc int
+	pc ref Inst
 	desc ref Desc
 	valty ref Type
 	wrapdecl ref Decl
@@ -279,6 +279,31 @@ type Decl struct {
 	capty ref Type
 	line int
 	pos int
+}
+
+// an operand address and a Dis instruction (gen.e builds them, disw.e
+// encodes them); here so a Decl can point at its first instruction
+type Addr struct {
+	reg int
+	offset int
+	decl ref Decl
+}
+
+type Inst struct {
+	line int
+	pos int
+	op int
+	pc int
+	reach int
+	sm int
+	mm int
+	dm int
+	s Addr
+	m Addr
+	d Addr
+	branch ref Inst
+	next ref Inst
+	block int
 }
 
 type Desc struct {
@@ -309,7 +334,7 @@ type Label struct {
 	isptr int
 	start ref Node
 	stop ref Node
-	pc int
+	inst ref Inst
 }
 
 type Case struct {
@@ -318,7 +343,7 @@ type Case struct {
 	offset int
 	labs []ref Label
 	wild ref Node
-	iwild int
+	iwild ref Inst
 	tagof ref Type
 }
 
@@ -441,6 +466,10 @@ func tfnptrt() ref Type {
 
 func descriptorlist() ref Desc {
 	return descriptors
+}
+
+func setdescriptorlist(d ref Desc) {
+	descriptors = d
 }
 
 func mkbasic(kind int, size int, al int) ref Type {
@@ -664,7 +693,7 @@ func sizetype(t ref Type) {
 		t.align = IBY2LG
 	case Tgoto:
 		t.size = t.cse.nlab * IBY2WD + IBY2WD
-		if t.cse.iwild != 0 {
+		if t.cse.iwild != nil {
 			t.size += IBY2WD
 		}
 		t.align = IBY2WD

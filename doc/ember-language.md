@@ -325,18 +325,34 @@ the token. The compiler stops after twenty errors.
 
 ## The self-hosted compiler
 
-`appl/cmd/ember/` holds the compiler being written in Ember itself,
-built with the C bootstrap by `mk install` there (into `dis/ember`).
-So far it is the lexer (`lex.e`), the parser (`parse.e`), the shared
+`appl/cmd/ember/` holds the compiler written in Ember itself, built
+with the C bootstrap by `mk install` there (into `dis/ember`). It is
+complete: the lexer (`lex.e`), the parser (`parse.e`), the shared
 data structures and types code (`types.e`), constant folding
-(`fold.e`), the interface reader (`iface.e`) and the type checker
-(`check.e`), each with an interface, plus dump drivers `lexdump.e`,
-`astdump.e` and `chkdump.e`. `ember -T`, `-A` and `-C` print the C
-compiler's token stream, syntax tree and checked tree (every node
-with its type) in the same formats, and `tests/lexcmp.sh`,
-`astcmp.sh` and `chkcmp.sh` (all part of `mk test`) check that the
-Ember and C versions agree on every source file in the tree,
-diagnostics included. Code generation and the `.dis` writer remain.
+(`fold.e`), the interface reader (`iface.e`), the type checker
+(`check.e`), the code generator (`com.e`, lowering; `gen.e`,
+instruction assembly and the opcode tables; `disw.e`, the `.dis`
+writer) and the driver `emberc.e`, each with an interface, plus dump
+drivers `lexdump.e`, `astdump.e` and `chkdump.e`.
+
+    emu-g -r $ROOT -c0 /dis/ember/emberc.dis [-I dir] [-o out.dis] file.e
+
+compiles a file inside the emulator exactly as `ember` does on the
+host. `ember -T`, `-A` and `-C` print the C compiler's token stream,
+syntax tree and checked tree (every node with its type) in the same
+formats as the dump drivers, and `tests/lexcmp.sh`, `astcmp.sh` and
+`chkcmp.sh` check that the Ember and C versions agree on every source
+file in the tree, diagnostics included; `tests/discmp.sh` checks that
+`emberc.dis` writes a byte-identical `.dis` file for every one of them
+(only the trailing source path differs, and is stripped). All four are
+part of `mk test`.
+
+Because every importer gets its own instance of an imported module,
+the driver hands its `types` and `check` instances down (`usetypes`,
+`usecheck`) so that the whole pipeline shares one set of basic types,
+descriptors and declarations. The instruction and operand structures
+live in `types.e` because a function declaration points at its first
+instruction.
 
 ## Tests
 
