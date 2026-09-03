@@ -134,10 +134,10 @@ init()
 	if(usbd == nil)
 		sys->print("DEVTEST: usbd: %r\n");
 	else {
-		spawn usbd->init(nil, "usbd" :: "-d" :: nil);
+		spawn usbd->init(nil, "usbd" :: nil);
 		sys->sleep(6000);
-		sys->print("DEVTEST: reading /dev/usb/ctl after usbd\n");
 		sys->print("DEVTEST: /dev/usb/ctl after usbd:\n%s", readfile("/dev/usb/ctl"));
+		usbdiskcheck();
 		spawn keyreport();
 		spawn ptrreport();
 	}
@@ -145,6 +145,46 @@ init()
 	sys->print("DEVTEST: done\n");
 	for(;;)
 		sys->sleep(10000);
+}
+
+usbdiskcheck()
+{
+	# usbd exports a mounted USB stick as /chan/usbdiskN; mount its
+	# FAT with dossrv and read the marker the host planted.
+	if(sys->open("/chan/usbdisk0", Sys->OREAD) == nil){
+		sys->print("DEVTEST: no /chan/usbdisk0 (no usb-storage attached)\n");
+		return;
+	}
+	# /tmp is devroot's static read-only dir; mount a memfs there so
+	# dossrv has a writable mount point (same as virtinit's tmpmount).
+	memfs := load Command "/dis/memfs.dis";
+	if(memfs != nil)
+		memfs->init(nil, "memfs" :: "-m" :: "4194304" :: "/tmp" :: nil);
+	sys->create("/tmp/usb", Sys->OREAD, Sys->DMDIR|8r755);
+	spawn startfs2("/dis/dossrv.dis",
+		"dossrv" :: "-f" :: "/chan/usbdisk0" :: "-m" :: "/tmp/usb" :: nil);
+	sys->sleep(1500);
+	fd := sys->open("/tmp/usb/marker.txt", Sys->OREAD);
+	if(fd == nil){
+		sys->print("DEVTEST: USB-FS-FAIL open: %r\n");
+		return;
+	}
+	buf := array[64] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n >= 9 && string buf[0:9] == "USB-FS-OK")
+		sys->print("DEVTEST: USB-FS-OK (FAT on USB mass storage)\n");
+	else
+		sys->print("DEVTEST: USB-FS-FAIL content %d\n", n);
+}
+
+startfs2(path: string, args: list of string)
+{
+	cmd := load Command path;
+	if(cmd == nil){
+		sys->print("DEVTEST: USB-FS-FAIL load %s: %r\n", path);
+		return;
+	}
+	cmd->init(nil, args);
 }
 
 keyreport()

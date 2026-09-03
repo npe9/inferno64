@@ -578,7 +578,22 @@ diskstart(d: ref Dev, bin, bout: int)
 		sys->print("usbd: %s: DISK-BLK-OK (FAT/MBR signature)\n", d.name);
 	else
 		sys->print("usbd: %s: block 0 read, no boot signature\n", d.name);
+
+	# export as a flat file dossrv can mount.  #s (srv) must be bound
+	# somewhere; bind it at /chan (idempotent) and serve there.
+	sys->bind("#s", "/chan", Sys->MBEFORE|Sys->MCREATE);
+	name := "usbdisk" + string ndisk;
+	ndisk++;
+	fio := sys->file2chan("/chan", name);
+	if(fio == nil){
+		sys->fprint(sys->fildes(2), "usbd: %s: file2chan: %r\n", d.name);
+		return;
+	}
+	sys->print("usbd: %s: /chan/%s (%d blocks)\n", d.name, name, b.nblocks);
+	spawn diskserve(b, fio);
 }
+
+ndisk := 0;
 
 # READ(10) of one block into buf
 readblock(b: ref Bstate, lba: int, buf: array of byte): int
@@ -594,9 +609,14 @@ readblock(b: ref Bstate, lba: int, buf: array of byte): int
 	return scsi(b, cdb, buf, b.bsize);
 }
 
-# one SCSI command over Bulk-Only Transport; data in if datalen>0 and
-# dir-in, returns bytes transferred or -1
+# one SCSI command over Bulk-Only Transport.  iswrite drives the data
+# phase direction; returns bytes transferred or -1.
 scsi(b: ref Bstate, cdb: array of byte, data: array of byte, datalen: int): int
+{
+	return scsidir(b, cdb, data, datalen, 0);
+}
+
+scsidir(b: ref Bstate, cdb: array of byte, data: array of byte, datalen, iswrite: int): int
 {
 	cbw := array[31] of { * => byte 0 };
 	cbw[0] = byte 'U'; cbw[1] = byte 'S'; cbw[2] = byte 'B'; cbw[3] = byte 'C';
@@ -605,16 +625,24 @@ scsi(b: ref Bstate, cdb: array of byte, data: array of byte, datalen: int): int
 	cbw[6] = byte (b.tag>>16); cbw[7] = byte (b.tag>>24);
 	cbw[8] = byte datalen; cbw[9] = byte (datalen>>8);
 	cbw[10] = byte (datalen>>16); cbw[11] = byte (datalen>>24);
-	cbw[12] = byte 16r80;		# data in (we only read for now)
+	if(iswrite)
+		cbw[12] = byte 0;	# data out
+	else
+		cbw[12] = byte 16r80;	# data in
 	cbw[13] = byte 0;		# lun 0
 	cbw[14] = byte len cdb;
 	cbw[15:] = cdb;
 	if(sys->write(b.outep.dfd, cbw, 31) != 31)
 		return -1;
 	if(datalen > 0 && data != nil){
-		n := sys->read(b.inep.dfd, data, datalen);
-		if(n < 0)
-			return -1;
+		if(iswrite){
+			if(sys->write(b.outep.dfd, data, datalen) != datalen)
+				return -1;
+		}else{
+			n := sys->read(b.inep.dfd, data, datalen);
+			if(n < 0)
+				return -1;
+		}
 	}
 	csw := array[13] of byte;
 	n := sys->read(b.inep.dfd, csw, 13);
@@ -623,6 +651,105 @@ scsi(b: ref Bstate, cdb: array of byte, data: array of byte, datalen: int): int
 	if(int csw[12] != 0)		# status: 0 = ok
 		return -1;
 	return datalen;
+}
+
+# READ(10)/WRITE(10) of nb blocks at lba
+rwblocks(b: ref Bstate, lba, nb: int, buf: array of byte, iswrite: int): int
+{
+	cdb := array[10] of { * => byte 0 };
+	if(iswrite)
+		cdb[0] = byte 16r2a;
+	else
+		cdb[0] = byte 16r28;
+	cdb[2] = byte (lba>>24);
+	cdb[3] = byte (lba>>16);
+	cdb[4] = byte (lba>>8);
+	cdb[5] = byte lba;
+	cdb[7] = byte (nb>>8);
+	cdb[8] = byte nb;
+	return scsidir(b, cdb, buf, nb*b.bsize, iswrite);
+}
+
+MAXIO: con 64*1024;		# cap one transfer; loop for more
+
+# Serve the disk as a flat file for dossrv: a read/write at a byte
+# offset becomes whole-block SCSI, with a read-modify-write on the
+# unaligned edges.  file2chan gives one request at a time, so the SCSI
+# commands are naturally serialised.
+diskserve(b: ref Bstate, fio: ref Sys->FileIO)
+{
+	for(;;) alt {
+	(off, count, nil, rc) := <-fio.read =>
+		if(rc == nil)
+			continue;
+		(data, err) := diskread(b, off, count);
+		rc <-= (data, err);
+	(off, data, nil, wc) := <-fio.write =>
+		if(wc == nil)
+			continue;
+		(n, err) := diskwrite(b, off, data);
+		wc <-= (n, err);
+	}
+}
+
+diskread(b: ref Bstate, off: big, count: int): (array of byte, string)
+{
+	tot := big b.nblocks * big b.bsize;
+	if(off >= tot)
+		return (array[0] of byte, nil);
+	if(off + big count > tot)
+		count = int (tot - off);
+	out := array[count] of byte;
+	done := 0;
+	while(done < count){
+		o := off + big done;
+		lba := int (o / big b.bsize);
+		skip := int (o % big b.bsize);
+		want := count - done;
+		if(want > MAXIO)
+			want = MAXIO;
+		nb := (skip + want + b.bsize - 1) / b.bsize;
+		blk := array[nb*b.bsize] of byte;
+		if(rwblocks(b, lba, nb, blk, 0) < 0)
+			return (nil, "usb disk read error");
+		n := nb*b.bsize - skip;
+		if(n > want)
+			n = want;
+		out[done:] = blk[skip:skip+n];
+		done += n;
+	}
+	return (out, nil);
+}
+
+diskwrite(b: ref Bstate, off: big, data: array of byte): (int, string)
+{
+	count := len data;
+	tot := big b.nblocks * big b.bsize;
+	if(off + big count > tot)
+		return (0, "write past end of disk");
+	done := 0;
+	while(done < count){
+		o := off + big done;
+		lba := int (o / big b.bsize);
+		skip := int (o % big b.bsize);
+		want := count - done;
+		if(want > MAXIO)
+			want = MAXIO;
+		nb := (skip + want + b.bsize - 1) / b.bsize;
+		blk := array[nb*b.bsize] of byte;
+		# read-modify-write when the edges are not block aligned
+		if(skip != 0 || (skip + want) % b.bsize != 0)
+			if(rwblocks(b, lba, nb, blk, 0) < 0)
+				return (done, "usb disk rmw read error");
+		n := nb*b.bsize - skip;
+		if(n > want)
+			n = want;
+		blk[skip:] = data[done:done+n];
+		if(rwblocks(b, lba, nb, blk, 1) < 0)
+			return (done, "usb disk write error");
+		done += n;
+	}
+	return (done, nil);
 }
 
 #
