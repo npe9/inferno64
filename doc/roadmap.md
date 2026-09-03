@@ -307,13 +307,17 @@ keys verified `rsa-sha2-256`, and the `chacha20-poly1305@openssh.com`
 cipher (on three raw ChaCha20/Poly1305 keyring builtins added for it,
 `chachatest(1)`). It does the full transport (`connect`), publickey
 authentication from a PEM RSA key (`login`), and one-shot remote command
-execution (`run`). Verified end to end against a real OpenSSH `sshd`
-(`tests/sshlocal.sh`): host-key thumbprint pinned to `ssh-keygen`'s own
-fingerprint, `Accepted publickey` in the server log, command
-output/exit matched, and an unauthorised-key negative control rejected.
-Still open (noted in `ssh(2)` BUGS): interactive shell (needs a pty +
-two-way pump), `factotum(4)` key storage, non-RSA host keys, port
-forwarding, and an SSH *server*.
+execution (`run`), an interactive shell (`shell`, the Plan 9
+telnet(1)/vt(1) model — the client does no terminal emulation, it sets
+raw mode and shuttles bytes), and `factotum(4)` authentication (the
+private key never leaves the agent; `-i` file keys are the fallback).
+Verified end to end against a real OpenSSH `sshd` (`tests/sshlocal.sh`):
+host-key thumbprint pinned to `ssh-keygen`'s own fingerprint,
+`Accepted publickey` in the server log for both file and factotum keys,
+command output/exit matched, the interactive shell round-tripped, and
+an unauthorised-key negative control rejected. Still open (noted in
+`ssh(2)` BUGS): mid-session window-size relay, non-RSA (ed25519) keys,
+port forwarding, and an SSH *server*.
 
 ### C5. Printing / document output — LOW-MEDIUM
 No print path at all: no `lp`, no spooler, and no PostScript/PDF
