@@ -876,6 +876,7 @@ void	optabinit(void);
 void	addincpath(char*);
 Decl	*readiface(char*, Src*);
 Decl	*readownface(char*, char*);
+Type	*envfn(Src*, Type*);
 
 /* check.c */
 void	check(Node*);

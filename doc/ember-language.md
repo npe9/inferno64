@@ -96,9 +96,14 @@ destructure with `a, b := f()` or read the components as `t.t0`,
 Field access through a ref needs no explicit dereference; there is no
 `*p` syntax. To copy a ref's value, build a literal from its fields.
 
-`func(int) int` is a function value type. A module's type name (for
-example `Rand` after `import rand "rand"`) is a type whose values are
-loaded modules.
+`func(int) int` is a function value type, wherever it is written: a
+variable, struct field, list or array element, channel or type
+argument of that type holds a closure or a function value, `nil`
+included, and is called like a function. Diagnostics print such a
+type as `func(int): int`. A library function that takes a variable
+number of arguments (`sys.print`) cannot be used as a value. A
+module's type name (for example `Rand` after `import rand "rand"`) is
+a type whose values are loaded modules.
 
 Conversions are written like calls: `int(3.7)` (rounds to nearest),
 `real(i)`, `big(x)`, `byte(n)` (wraps), `string(42)`, `int("17")`

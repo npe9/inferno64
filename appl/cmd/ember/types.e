@@ -541,6 +541,31 @@ func copytype(dst ref Type, src ref Type) {
 	dst.pos = src.pos
 }
 
+// the closure-value shape of a function type: an env parameter
+// prepended (check.c's envfn(), shared with iface.e)
+func envfn(line int, pos int, pub ref Type) ref Type {
+	ids := mkdecl(line, pos, Darg, basic(Tany))
+	ids.sym = ".env"
+	last := ids
+	for p := pub.ids; p != nil; p = p.next {
+		np := dupdecl(p)
+		np.next = nil
+		last.next = np
+		last = np
+	}
+	ft := mktype(line, pos, Tfn, pub.tof, ids)
+	ft.varargs = pub.varargs
+	ft.hasenv = 1
+	ft.ok |= OKverify
+	sizetype(ft)
+	for p := ft.ids; p != nil; p = p.next {
+		sizetype(p.ty)
+	}
+	sizetype(ft.tof)
+	idoffsets(ft.ids, MaxTemp, IBY2WD)
+	return ft
+}
+
 func mktalt(c ref Case) ref Type {
 	t := mktype(0, 0, Talt, nil, nil)
 	t.cse = c
@@ -1607,6 +1632,25 @@ func tprint(t ref Type) string {
 	}
 	match t.kind {
 	case Tref:
+		if t.tof != nil && t.tof.kind == Tfn && t.tof.hasenv != 0 {
+			// a closure value: its public shape
+			s := "func("
+			var id ref Decl
+			if t.tof.ids != nil {
+				id = t.tof.ids.next
+			}
+			for ; id != nil; id = id.next {
+				s += tprint(id.ty)
+				if id.next != nil {
+					s += ", "
+				}
+			}
+			s += ")"
+			if t.tof.tof != nil && t.tof.tof.kind != Tnone {
+				s += ": " + tprint(t.tof.tof)
+			}
+			return s
+		}
 		return "ref " + tprint(t.tof)
 	case Tarray:
 		return "array of " + tprint(t.tof)

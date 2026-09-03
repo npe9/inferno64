@@ -1206,6 +1206,36 @@ cleareqrec(Type *t)
 }
 
 /*
+ * the closure-value shape of a function type: an env parameter
+ * prepended (check.c's envfn(), shared with iface.c)
+ */
+Type*
+envfn(Src *src, Type *pub)
+{
+	Decl *ids, *last, *p, *np;
+	Type *ft;
+
+	ids = last = mkdecl(src, Darg, tany);
+	ids->sym = enter(".env", 0);
+	for(p = pub->ids; p != nil; p = p->next){
+		np = dupdecl(p);
+		np->next = nil;
+		last->next = np;
+		last = np;
+	}
+	ft = mktype(src, Tfn, pub->tof, ids);
+	ft->varargs = pub->varargs;
+	ft->hasenv = 1;
+	ft->ok |= OKverify;
+	sizetype(ft);
+	for(p = ft->ids; p != nil; p = p->next)
+		sizetype(p->ty);
+	sizetype(ft->tof);
+	idoffsets(ft->ids, MaxTemp, IBY2WD);
+	return ft;
+}
+
+/*
  * module interface construction: collect the external linkage
  * decls (functions, and one flattened adt for the globals) into
  * a name-sorted list, exactly as limbo's mkiface does
@@ -1638,6 +1668,21 @@ tprint(char *p, char *e, Type *t)
 		return secpy(p, e, "nil");
 	switch(t->kind){
 	case Tref:
+		if(t->tof != nil && t->tof->kind == Tfn && t->tof->hasenv){
+			/* a closure value: its public shape */
+			p = secpy(p, e, "func(");
+			for(id = t->tof->ids != nil ? t->tof->ids->next : nil; id != nil; id = id->next){
+				p = tprint(p, e, id->ty);
+				if(id->next != nil)
+					p = secpy(p, e, ", ");
+			}
+			p = secpy(p, e, ")");
+			if(t->tof->tof != nil && t->tof->tof->kind != Tnone){
+				p = secpy(p, e, ": ");
+				p = tprint(p, e, t->tof->tof);
+			}
+			return p;
+		}
 		p = secpy(p, e, "ref ");
 		return tprint(p, e, t->tof);
 	case Tarray:

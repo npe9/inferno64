@@ -107,6 +107,7 @@ func hashname(s string) int {
 }
 
 var inref = 0	// stype() is resolving the operand of a ref
+var rawfn = 0	// the next Otfunc stype() sees is a declaration's own signature
 
 func lookup(name string) ref types.Decl {
 	for b := binds[hashname(name)]; b != nil; b = b.next {
@@ -417,7 +418,9 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 		}
 	}
 	tn := dupntree(td.init)
+	rawfn = 1
 	ft := stype(tn.right)
+	rawfn = 0
 	if recvarg != nil {
 		recvarg.next = ft.ids
 		ft.ids = recvarg
@@ -449,29 +452,6 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 }
 
 // the env-prepended calling convention every function value uses
-func envfn(line int, pos int, pub ref types.Type) ref types.Type {
-	ids := types.mkdecl(line, pos, types.Darg, tany)
-	ids.sym = ".env"
-	last := ids
-	for p := pub.ids; p != nil; p = p.next {
-		np := types.dupdecl(p)
-		np.next = nil
-		last.next = np
-		last = np
-	}
-	ft := types.mktype(line, pos, types.Tfn, pub.tof, ids)
-	ft.varargs = pub.varargs
-	ft.hasenv = 1
-	ft.ok |= types.OKverify
-	types.sizetype(ft)
-	for p := ft.ids; p != nil; p = p.next {
-		types.sizetype(p.ty)
-	}
-	types.sizetype(ft.tof)
-	types.idoffsets(ft.ids, types.MaxTemp, types.IBY2WD)
-	return ft
-}
-
 func wrapbody(line int, pos int, call ref types.Node, isvoid int) ref types.Node {
 	if isvoid != 0 {
 		stmts := types.mkseq(nil, types.mkn(types.Oexpr, call, nil))
@@ -486,7 +466,7 @@ func synthfvwrap(line int, pos int, fn ref types.Decl) ref types.Decl {
 	if fn.wrapdecl != nil {
 		return fn.wrapdecl
 	}
-	wt := envfn(line, pos, fn.ty)
+	wt := types.envfn(line, pos, fn.ty)
 	fn.valty = types.mktype(line, pos, types.Tref, wt, nil)
 	types.sizetype(fn.valty)
 	wd := types.mkdecl(line, pos, types.Dfn, wt)
@@ -517,12 +497,16 @@ func synthfvwrap(line int, pos int, fn ref types.Decl) ref types.Decl {
 }
 
 func synthimportwrap(line int, pos int, alias ref types.Decl, id ref types.Decl) ref types.Decl {
+	if id.ty.varargs != 0 {
+		error(line, sys.sprint("%s.%s takes a variable number of arguments and cannot be used as a value", alias.sym, id.sym))
+		return nil
+	}
 	wsym := alias.sym + "." + id.sym + "$fv"
 	wd := lookup(wsym)
 	if wd != nil {
 		return wd
 	}
-	wt := envfn(line, pos, id.ty)
+	wt := types.envfn(line, pos, id.ty)
 	wd = types.mkdecl(line, pos, types.Dfn, wt)
 	wd.sym = wsym
 	wd.dot = impdecl
@@ -594,8 +578,10 @@ func addcapture(closure ref types.Decl, orig ref types.Decl, n ref types.Node) {
 }
 
 func synthfunclit(n ref types.Node) ref types.Decl {
+	rawfn = 1
 	pubt := stype(n.right)
-	wt := envfn(n.line, n.pos, pubt)
+	rawfn = 0
+	wt := types.envfn(n.line, n.pos, pubt)
 	ld := types.mkdecl(n.line, n.pos, types.Dfn, wt)
 	ld.sym = sys.sprint("$closure%d", nclosures)
 	nclosures++
@@ -941,6 +927,10 @@ func stype(n ref types.Node) ref types.Type {
 		}
 		return types.mktype(n.line, n.pos, types.Ttuple, nil, idl)
 	case types.Otfunc:
+		// a function type is a closure value everywhere but in a
+		// declaration's own signature (check.c)
+		raw := rawfn
+		rawfn = 0
 		var args ref types.Decl
 		var last ref types.Decl
 		ft := types.mktype(n.line, n.pos, types.Tfn, tnone, nil)
@@ -962,7 +952,7 @@ func stype(n ref types.Node) ref types.Type {
 			}
 			t := stype(f.right)
 			if t.kind == types.Tfn {
-				t = types.mktype(f.line, f.pos, types.Tref, envfn(f.line, f.pos, t), nil)
+				t = types.mktype(f.line, f.pos, types.Tref, types.envfn(f.line, f.pos, t), nil)
 			}
 			if f.left == nil {
 				d := types.mkdecl(f.line, f.pos, types.Darg, t)
@@ -997,10 +987,13 @@ func stype(n ref types.Node) ref types.Type {
 		if n.right != nil {
 			ft.tof = stype(n.right)
 			if ft.tof.kind == types.Tfn {
-				ft.tof = types.mktype(n.line, n.pos, types.Tref, envfn(n.line, n.pos, ft.tof), nil)
+				ft.tof = types.mktype(n.line, n.pos, types.Tref, types.envfn(n.line, n.pos, ft.tof), nil)
 			}
 		}
-		return ft
+		if raw != 0 {
+			return ft
+		}
+		return types.mktype(n.line, n.pos, types.Tref, types.envfn(n.line, n.pos, ft), nil)
 	case types.Oname:
 		d := lookup(n.sym)
 		if d == nil || d.store != types.Dtype {
@@ -3185,7 +3178,9 @@ func fndecl(n ref types.Node) {
 			return
 		}
 	}
+	rawfn = 1
 	t := stype(n.right)
+	rawfn = 0
 	if recv != nil {
 		rt := stype(recv.right)
 		bt = rt

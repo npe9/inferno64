@@ -129,6 +129,8 @@ ifields(Node *n, Decl *mod, int store)
 	return ids;
 }
 
+static int rawfn;	/* the next Otfunc is a function declaration's own signature */
+
 static Type*
 itype(Node *n, Decl *mod)
 {
@@ -137,6 +139,7 @@ itype(Node *n, Decl *mod)
 	Node *p, *ids;
 	char buf[32];
 	int i;
+	int raw;
 
 	if(n == nil)
 		return tnone;
@@ -183,6 +186,8 @@ itype(Node *n, Decl *mod)
 		return mktype(&n->src, Ttuple, nil, idl);
 	}
 	case Otfunc:
+		raw = rawfn;
+		rawfn = 0;
 		args = last = nil;
 		ft = mktype(&n->src, Tfn, tnone, nil);
 		for(p = n->left; p != nil; p = p->right){
@@ -222,7 +227,10 @@ itype(Node *n, Decl *mod)
 		ft->ids = args;
 		if(n->right != nil)
 			ft->tof = itype(n->right, mod);
-		return ft;
+		if(raw)
+			return ft;
+		/* a value type: the closure shape, as check.c's stype() */
+		return mktype(&n->src, Tref, envfn(&n->src, ft), nil);
 	case Oname:
 		/* search module members, then builtins */
 		if(mod != nil && mod->ty != nil){
@@ -489,11 +497,13 @@ bindiface(Decl *mod, Node *tree)
 			}
 			break;
 		case Ofndecl:
+			rawfn = 1;
 			if(decl->aux != nil){
 				error(decl->src.start, "function body not allowed in interface");
 				break;
 			}
 			t = itype(decl->right, mod);
+			rawfn = 0;
 			if(decl->left->op == Omethod){
 				/*
 				 * "func (h ref HashTable) find(key string) ref

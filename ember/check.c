@@ -44,7 +44,6 @@ static	Type	*echk(Node*);
 static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
 static	Type	*tinstantiate(Node*);
-static	Type	*envfn(Src*, Type*);
 static	Decl	*synthfvwrap(Src*, Decl*);
 static	Decl	*synthimportwrap(Src*, Decl*, Decl*);
 static	Decl	*synthfunclit(Node*);
@@ -132,6 +131,7 @@ install(Decl *d)
 }
 
 static int inref;	/* stype() is resolving the operand of a ref */
+static int rawfn;	/* the next Otfunc stype() sees is a declaration's own signature, not a value type */
 
 static Decl*
 lookup(Sym *s)
@@ -422,7 +422,9 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 		 * instantiation's typecheck left behind.
 		 */
 		tn = dupntree(td->init);
+		rawfn = 1;
 		ft = stype(tn->right);
+		rawfn = 0;
 		if(recvarg != nil){
 			/*
 			 * a generic method's receiver, prepended to the checked
@@ -504,31 +506,6 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
  * (fpcall()) never needs to know which kind of value it's calling
  * through.
  */
-static Type*
-envfn(Src *src, Type *pub)
-{
-	Decl *ids, *last, *p, *np;
-	Type *ft;
-
-	ids = last = mkdecl(src, Darg, tany);
-	ids->sym = enter(".env", 0);
-	for(p = pub->ids; p != nil; p = p->next){
-		np = dupdecl(p);
-		np->next = nil;
-		last->next = np;
-		last = np;
-	}
-	ft = mktype(src, Tfn, pub->tof, ids);
-	ft->varargs = pub->varargs;
-	ft->hasenv = 1;
-	ft->ok |= OKverify;
-	sizetype(ft);
-	for(p = ft->ids; p != nil; p = p->next)
-		sizetype(p->ty);
-	sizetype(ft->tof);
-	idoffsets(ft->ids, MaxTemp, IBY2WD);
-	return ft;
-}
 
 /*
  * synthesize (once, cached as fn->wrapdecl) the "function value
@@ -732,6 +709,12 @@ synthimportwrap(Src *src, Decl *alias, Decl *id)
 	Sym *wsym;
 	char buf[StrSize];
 
+	if(id->ty->varargs){
+		/* a wrapper has one frame shape; a varargs call has one per site */
+		error(src->start, "%s.%s takes a variable number of arguments and cannot be used as a value",
+			alias->sym->name, id->sym->name);
+		return nil;
+	}
 	seprint(buf, buf+sizeof(buf), "%s.%s$fv", alias->sym->name, id->sym->name);
 	wsym = enter(buf, 0);
 	wd = lookup(wsym);
@@ -924,7 +907,9 @@ synthfunclit(Node *n)
 	Type *pubt, *wt;
 	char buf[StrSize];
 
+	rawfn = 1;
 	pubt = stype(n->right);
+	rawfn = 0;
 
 	wt = envfn(&n->src, pubt);
 
@@ -1523,7 +1508,19 @@ stype(Node *n)
 	case Otfunc: {
 		Decl *args, *last;
 		Type *ft;
+		int raw;
 
+		/*
+		 * a function type is a closure value everywhere but in a
+		 * declaration's own signature (fndecl(), synthfunclit(),
+		 * tinstantiatefncore() set rawfn): a variable, field,
+		 * element or type argument of type func(int) int holds
+		 * ref envfn(...), what a closure literal or a function
+		 * value is -- the same wrap parameters and results already
+		 * got below, which left "var g func() int" unassignable.
+		 */
+		raw = rawfn;
+		rawfn = 0;
 		args = last = nil;
 		ft = mktype(&n->src, Tfn, tnone, nil);
 		for(p = n->left; p != nil; p = p->right){
@@ -1669,7 +1666,9 @@ stype(Node *n)
 				ft->tof = mktype(&n->src, Tref, envfn(&n->src, ft->tof), nil);
 			}
 		}
-		return ft;
+		if(raw)
+			return ft;
+		return mktype(&n->src, Tref, envfn(&n->src, ft), nil);
 	}
 	case Oname:
 		d = lookup(n->sym);
@@ -5369,7 +5368,9 @@ fndecl(Node *n)
 			return;
 		}
 	}
+	rawfn = 1;
 	t = stype(n->right);
+	rawfn = 0;
 	if(recv != nil){
 		/*
 		 * a method's receiver is just its first argument,

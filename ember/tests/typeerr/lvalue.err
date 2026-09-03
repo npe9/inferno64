@@ -4,7 +4,7 @@ tests/typeerr/lvalue.e:37: cannot assign to nil
 tests/typeerr/lvalue.e:38: cannot assign to a function call
 tests/typeerr/lvalue.e:39: cannot assign to a function
 tests/typeerr/lvalue.e:40: cannot assign to a function
-tests/typeerr/lvalue.e:41: cannot assign to a function
+tests/typeerr/lvalue.e:41: sys.print takes a variable number of arguments and cannot be used as a value
 tests/typeerr/lvalue.e:42: cannot assign to a type
 tests/typeerr/lvalue.e:43: cannot assign to a type
 tests/typeerr/lvalue.e:44: cannot assign to an expression

@@ -22,6 +22,7 @@ type Icache struct {
 
 var ifaces list ref Icache
 var incdirs list string
+var rawfn = 0	// the next Otfunc is a function declaration's own signature
 var nerrors = 0
 
 func ifaceerrors() int {
@@ -209,6 +210,8 @@ func itype(n ref types.Node, mod ref types.Decl) ref types.Type {
 		}
 		return types.mktype(n.line, n.pos, types.Ttuple, nil, idl)
 	case types.Otfunc:
+		raw := rawfn
+		rawfn = 0
 		var args ref types.Decl
 		var last ref types.Decl
 		ft := types.mktype(n.line, n.pos, types.Tfn, types.basic(types.Tnone), nil)
@@ -253,7 +256,11 @@ func itype(n ref types.Node, mod ref types.Decl) ref types.Type {
 		if n.right != nil {
 			ft.tof = itype(n.right, mod)
 		}
-		return ft
+		if raw != 0 {
+			return ft
+		}
+		// a value type: the closure shape, as check.e's stype()
+		return types.mktype(n.line, n.pos, types.Tref, types.envfn(n.line, n.pos, ft), nil)
 	case types.Oname:
 		if mod != nil && mod.ty != nil {
 			for id := mod.ty.ids; id != nil; id = id.next {
@@ -461,7 +468,9 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				error(decl.line, "function body not allowed in interface")
 				break
 			}
+			rawfn = 1
 			t := itype(decl.right, mod)
+			rawfn = 0
 			if decl.left.op == types.Omethod {
 				recv := decl.left.left
 				rt := itype(recv.right, mod)
