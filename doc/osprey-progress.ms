@@ -920,9 +920,27 @@ calls the embedded protocol's
 .CW icmpproxyadvice )
 that rewrites the quoted packet in place.  Each of those functions reads
 bounded, so the overrun is small and its landing depends on the heap, but
-the path is now a dozen functions, not the whole stack.  A gdbstub
-watchpoint set once an ICMP error is in flight is the way to catch the
-store.
+the path is now a dozen functions, not the whole stack.
+.PP
+Resolved.  The write was never in those functions at all: the personality's
+.CW malloc
+is a bump arena that never reuses (fresh memory stays the zero the BSS
+started as, which
+.CW newpgrp
+relies on), so with nothing freed the arena must hold every allocation the
+whole run ever makes.  One stack fits in the old 1MB; two, with a Block per
+packet they exchange and never free, do not.  The arena filled - "malloc
+arena exhausted, 1048352 of 1048576 used" - malloc returned nil, and the
+stack's use of that nil smashed the return address to
+.CW 0xffffffff .
+Every earlier clue fits: two Fs doubled the allocations, the icmp+udp+il/rudp
+combination was just enough more to cross 1MB, the steady-state timing was
+the arena filling as Blocks piled up, and the layout sensitivity was which
+allocation crossed the line.  The fix is a 16MB arena (two Fs use just over
+1MB) and a one-time "arena exhausted" print so the failure is legible; a
+reclaiming allocator, or a Block free list, is the proper fix for heavy or
+long-running use.  Two Fs no longer corrupts, so the two-stack byte stream
+is unblocked - what remains there is only the pump timing, not a crash.
 .PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
