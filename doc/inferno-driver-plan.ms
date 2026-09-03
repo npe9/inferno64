@@ -578,3 +578,12 @@ I2C controller at all (sifive_u and spike have none), so delivering I2C
 needs a raspi-class board bring-up - a real SoC with BCM2835 SPI, I2C
 and GPIO - which is its own project, board first and peripherals after.
 The generic virt platform has neither bus.
+.PP
+The sifive_u board's Cadence GEM ethernet is verified end to end: its
+driver
+.CW ( os/inferno/riscv/ethersifivegem.c )
+was already complete, and the board's init now runs a DHCP exchange
+over it.  A full DISCOVER/OFFER/REQUEST/ACK needs the NIC to transmit,
+receive and take interrupts, so DHCP-OK proves the driver works, not
+just that it probed - on QEMU's user network it takes 10.0.2.15.  The
+board boots and reaches its shell whether or not a network is present.
