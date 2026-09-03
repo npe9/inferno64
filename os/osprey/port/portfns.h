@@ -191,6 +191,7 @@ void*		(*ospreyetherlookup)(char*);
 /* whether this process may attach a segment of that name */
 int		(*ospreysegok)(char*);
 Uart*		uartlookup(char*);
+Uart*		uartenable(Uart*);
 void*		etherlookup(char*);
 void		ksetenv(char*, char*, int);
 void		kstrcpy(char*, char*, int);

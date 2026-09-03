@@ -38,10 +38,21 @@ def main():
     stamp = b'osprey block device test image, sector 0 written by the host'
     d[:len(stamp)] = stamp
     open(img, 'wb').write(d)
+    # the second serial port: the server's uart task writes it, a reader on the host watches it
+    com2 = tempfile.mktemp(prefix='osprey-p9pair-com2-', suffix='.sock')
+    com2log = tempfile.mktemp(prefix='osprey-p9pair-com2-', suffix='.out')
+    reader = subprocess.Popen([sys.executable, 'scripts/osprey-com2read.py', com2, '300'],
+                              stdout=open(com2log, 'w'), stderr=subprocess.DEVNULL)
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
-                    '-l', log, '--blk', img,
+                    '-l', log, '--blk', img, '-2', 'unix:%s,server,nowait' % com2,
                     '-t', '150', '-u', 'the microkernel idles'],
                    env=env, capture_output=True, text=True)
+    try: reader.terminate()
+    except OSError: pass
+    try: c2 = plain(open(com2log, errors='replace').read())
+    except OSError: c2 = ''
+    try: os.unlink(com2log)
+    except OSError: pass
     try: lastsector = open(img, 'rb').read()[(nsect-1)*512:]
     except OSError: lastsector = b''
     try: t = plain(open(log, errors='replace').read())
@@ -85,6 +96,9 @@ def main():
          and 'lfs: committed hello version 3, 52 bytes' in t),
         ("a second group resumes the session by number and reads the committed version",
          re.search(r'p9: pair-client: pi-p resumed session [0-9a-f]+, read data \(version 3\): "written over pi-p in one group; the close commits it"', t) is not None),
+        ("the second serial port is handed to the server's uart task at boot, and a line the personality put on its output queue leaves the machine on it",
+         re.search(r'osprey uart: eia1 handed to container \d+, served by its task', t) is not None
+         and 'osprey uart task on the microkernel: served by a task, out of the second serial port' in c2),
         ("the storage task sets its own reservation and takes the clock, both by request",
          'osprey: container 3 reserves 2000 us of every 10000 us, by request' in t
          and 'osprey: container 3 takes the clock tick on semaphore 2, by request' in t),

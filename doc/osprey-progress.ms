@@ -285,10 +285,15 @@ was the talk's own status line.
 .PP
 .B "5.  The second cut: console and clock as tasks."
 The microkernel still keeps cons, uart and rtc register access; the
-talk's kernel keeps interrupt handling and nothing of the device.  Cut B
-(the section "Cut B begins") moved the uart part way and stopped at the
-emulator; cons and rtc are not begun.  Retiring pc64 as the testbed is
-the measure of this.
+talk's kernel keeps interrupt handling and nothing of the device.  The
+uart is done, above: a uart task in a container of its own on the
+microkernel, given work by another container over its output queue,
+its bytes leaving on the wire.  cons and rtc are not begun: the kernel's
+prints go through its own console device and the console uart is
+refused to a task, since losing it would take the machine; moving them
+means the kernel printing only through the bare polled putchar it keeps
+for panics and everything else through a console task.  Retiring pc64
+as the testbed is the measure of this.
 .PP
 .B "6.  Address-space groups, and a checkpoint that carries everything."
 Slide 15: processes that share an address space migrate as a group.
@@ -3107,6 +3112,36 @@ and the bytes leave the machine on the second serial line, where the
 harness reads them.  Only what a uart here has is offered: the talk's
 uart listed twenty attributes, of which this one has the speed and the
 data.
+.PP
+Item 5 begins where Cut B's record says it picks up: the uart task on
+the microkernel, which drove the second serial port to send-complete
+and got no byte out of it.  Two causes, both found by building rather
+than guessing.  The port had never been enabled the device's way: the
+control message's hand-over called the uart's task-enable, which
+programs the FIFO, the interrupt enable and the modem lines, but never
+the line format or the speed, which the device layer's
+.CW uartenable
+sets when a port is first opened and which the direct bind skipped; on
+pc64 the port had been through that, on the microkernel nothing had
+opened it.  The hand-over
+.CW ( ospreyuartbind
+in
+.CW os/osprey/port/devosprey.c ,
+factored out of the control message so a boot can call it) enables the
+uart the device's way first.  And a container has one select and one
+arm area: the uart task and the server personality both selected
+through the server's, which the kernel reported as a double sleep and
+which took the client down with a corrupted return.  The uart now has
+a container of its own, made at boot, whose task is the driver, and
+that container is delegated to the server, so the server may map its
+slice and put work on its output queue \- a place in that slice and how
+much of it, no trap \- which is how a driver task is given work.  The
+server personality does that with one line as it comes up, and the
+line leaves the machine on the second serial port, where the pair
+check's reader on the host finds it.  What remains of item 5 is the
+console and the clock: the kernel's own prints still go through its
+console device, and its clock interrupt still does the accounting
+itself before giving the tick to whoever asked.
 .NH 2
 Built and proven since
 .PP

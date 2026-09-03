@@ -87,17 +87,20 @@ shown in the microkernel.  The shape the talk gives a driver \- a task on
 its message queue, its interrupt's semaphore, and its output queue \- is
 present.
 .PP
-Missing: cons, uart and rtc still leave their register access in the
-kernel rather than in a userspace driver task; the microkernel keeps six
-devices where seL4 keeps none.  The driver-as-a-task exists but the
-kernel has not been emptied of drivers.
+Missing: cons and rtc still leave their register access in the kernel,
+and the kernel's own prints go through its console device; the uart is
+served by a task on the microkernel now, in a container of its own.
+The kernel has not been emptied of drivers.
 .NH 2
 Scheduling \- PARTIAL
 .PP
 Built: an EDF scheduler with reservations and best-effort time accounted
 apart, tested.
 .PP
-Built since: the reservation is a parameter the storage task sets at
+Built since: the uart task runs on the microkernel too, in a container
+of its own, given work over its output queue by the server personality,
+its bytes leaving on the second serial port (doc/osprey-progress.ms,
+item 5).  Built since: the reservation is a parameter the storage task sets at
 start by request (ReqReserve), the clock reaches it by request (ReqTick),
 and the log-structured store's reclamation runs on that tick under that
 reservation, on a block device driven from user space

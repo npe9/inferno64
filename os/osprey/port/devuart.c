@@ -61,7 +61,7 @@ uartlookup(char *name)
 	return nil;
 }
 
-static Uart*
+Uart*
 uartenable(Uart *p)
 {
 	Uart **l;

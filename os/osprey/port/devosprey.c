@@ -2222,6 +2222,7 @@ extern long (*ospreyexec)(Ospreyproc*, uvlong);
 extern int (*ospreywait)(Ospreyproc*, uvlong, long*, uvlong*);
 extern int ospreyreplylater(Ospreyproc*, uvlong, uvlong, long, uvlong);
 static long ospreyexeckern(Ospreyproc*, uvlong);
+static void ospreyuartbind(Ospreyproc*, char*, int);
 static int ospreyreservekern(Ospreyproc*, uvlong, uvlong);
 static int ospreytickkern(Ospreyproc*, int);
 static int ospreyblkexpose(Ospreyproc*, int);
@@ -2917,8 +2918,30 @@ ospreyuserprep(void)
 				 * the server: the personality that will be the file
 				 * system is the one that drives the disk.
 				 */
-				if(ospreyp9)
+				if(ospreyp9){
+					Ospreyproc *ut;
+
 					ospreyblkexpose(sv, 1);
+					/*
+					 * And the second serial port, served by a task
+					 * in a container of its own - Cut B's uart,
+					 * which the first attempt could not get bytes
+					 * out of.  Its own container, since a container
+					 * has one select and one arm area, and the
+					 * server's are the server program's; delegated
+					 * to the server, so the server may map its slice
+					 * and put work on its output queue, which is
+					 * how a driver task is given work.
+					 */
+					ut = ospreycreate(5, 40000000ULL, 800000000ULL, 200000000ULL);
+					if(ut != nil && !waserror()){
+						ospreyuartbind(ut, "eia1", 1);
+						ospreydelegate(ut, sv);
+						print("osprey uart: eia1 handed to container %llud, served by its task; its slice granted to container %llud\n",
+							ospreyid(ut), ospreyid(sv));
+						poperror();
+					}
+				}
 				if(ospreyp9pair || ospreyp9buddy || ospreyp9linux)
 					kproc("p9-buddy", ospreyp9server, sv);
 				else
@@ -5015,7 +5038,26 @@ ospreyctluart(Cmdbuf *cb)
 	i = atoi(cb->f[3]);
 	if(i < 0 || (ulong)i >= ospreynsem())
 		error(Ebadarg);
-	if((ut = uartlookup(cb->f[2])) == nil)
+	ospreyuartbind(p, cb->f[2], i);
+}
+
+/*
+ * The hand-over itself, for the control message above and for a boot
+ * that gives a task a uart before there is a name space to say so in.
+ * The uart is enabled the device's way first - line format, speed, the
+ * queues - since a port nobody has opened has none of that set, which
+ * is what left the microkernel's first uart task driving a port whose
+ * bytes never reached the line.
+ */
+static void
+ospreyuartbind(Ospreyproc *p, char *name, int sem)
+{
+	Uart *ut;
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyuart))
+		error(Ebadarg);
+	if((ut = uartlookup(name)) == nil)
 		error(Enonexist);
 	if(ut->console || ut->special)
 		error(Eperm);
@@ -5027,10 +5069,12 @@ ospreyctluart(Cmdbuf *cb)
 	if(ut->phys->interrupt == nil || ut->phys->intrmask == nil
 	|| ut->phys->send == nil || ut->phys->taskenable == nil)
 		error(Ebadarg);
+	if(uartenable(ut) == nil)
+		error(Enomem);
 	if(ospreyuart[x] != nil && ospreyuart[x] != ut)
 		ospreyputuart(p);	/* and the last uart */
 	ospreyuart[x] = ut;
-	ospreyuartsem[x] = i;
+	ospreyuartsem[x] = sem;
 	if(ut->phys->taskenable != nil)
 		(*ut->phys->taskenable)(ut, 1);
 	if(ospreyuarting[x] == 0){

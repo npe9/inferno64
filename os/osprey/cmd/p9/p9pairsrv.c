@@ -257,6 +257,50 @@ p9serveloop(char *arg)
 	p9blk(base);		/* the disk, if the kernel exposed one: a driver above the kernel */
 	p9lfsmount();		/* and the file system on it, mounted at /n for the client */
 	/*
+	 * The second serial port, if the kernel handed it to this
+	 * container's uart task: put a line on the output queue - a place
+	 * in this data area and how much of it, no trap - and the task
+	 * sends it out of the machine.
+	 */
+	{
+		Queue *oq;
+		Msg *om, w;
+		Omap *um;
+		uchar *ubase, *d;
+		char *line = "osprey uart task on the microkernel: served by a task, out of the second serial port\n";
+		int i, slot;
+		enum { Uartoff = 3072, Uartid = 5 };
+
+		/* the uart's container: the one slice this server may map whose map says 5 */
+		ubase = nil;
+		for(slot = 0; slot < Nslot && ubase == nil; slot++){
+			if(slot == own || slot == client)
+				continue;
+			d = mapslice(slot);
+			if(d == (uchar*)-1)
+				continue;
+			um = (Omap*)d;
+			if(um->magic == Ospreymagic && um->id == Uartid)
+				ubase = d;
+		}
+		if(ubase != nil){
+			um = (Omap*)ubase;
+			d = ubase + um->data + Uartoff;
+			for(i = 0; line[i] != 0; i++)
+				d[i] = line[i];
+			oq = (Queue*)(ubase + um->outputqueue);
+			om = (Msg*)((uchar*)oq + oq->message);
+			memset(&w, 0, sizeof w);
+			w.op = 1;		/* ReqWrite: work for the output queue */
+			w.container = um->id;
+			w.arg[2] = Uartoff;
+			w.arg[3] = i;
+			om[oq->put % oq->size] = w;
+			oq->put++;
+			puts("p9 server: a line put on the uart task's output queue, no trap\n");
+		}
+	}
+	/*
 	 * This task says what it needs: a reservation for its own work -
 	 * the storage service's reclamation, paid for out of it - and the
 	 * clock tick to do that work on.  Both are requests on its own
