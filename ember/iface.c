@@ -91,6 +91,7 @@ openiface(char *path, char *opened, int openlen)
  * names against the interface module under construction.
  */
 static Type *itype(Node*, Decl*);
+static Decl *findtype(Decl*, Sym*);
 
 static Decl*
 ifields(Node *n, Decl *mod, int store)
@@ -234,8 +235,24 @@ itype(Node *n, Decl *mod)
 		error(n->src.start, "unknown type %s", n->sym->name);
 		return terror;
 	case Odot:
-		/* OtherMod.Type — only same-file module names for now */
-		error(n->src.start, "qualified types in interfaces not yet supported");
+		/* alias.Type: a type from an interface this one imports */
+		if(mod != nil && mod->ty != nil && n->left != nil && n->left->op == Oname){
+			for(id = mod->ty->ids; id != nil; id = id->next)
+				if(id->store == Dimport && id->sym == n->left->sym)
+					break;
+			if(id == nil){
+				error(n->src.start, "%s is not an imported interface", n->left->sym->name);
+				return terror;
+			}
+			d = findtype(id->importid, n->right != nil ? n->right->sym : n->sym);
+			if(d == nil){
+				error(n->src.start, "%s has no type %s", n->left->sym->name,
+					n->right != nil ? n->right->sym->name : n->sym->name);
+				return terror;
+			}
+			return d->ty;
+		}
+		error(n->src.start, "bad qualified type");
 		return terror;
 	default:
 		error(n->src.start, "unsupported interface type %O", n->op);
@@ -282,6 +299,45 @@ bindiface(Decl *mod, Node *tree)
 		decl = n;
 		if(n->op == Oseq)
 			decl = n->left;
+		if(decl->op == Oimport){
+			/*
+			 * "import sys "sys"" inside an interface: another
+			 * interface's types are referenced as alias.Type
+			 * (itype's Odot case) -- bufio's Iobuf carries a
+			 * "ref sys.FD" field, and nearly every real library
+			 * refers to Sys's types somewhere.  read it through
+			 * the same readiface() the main module uses (and its
+			 * cache, so an interface reached both ways yields the
+			 * same Type objects, structurally and by identity),
+			 * and record the alias as a Dimport member: never
+			 * exported (mkiface() ignores the store), never
+			 * reachable as alias.sys from a client (echk's Odot
+			 * refuses it).  the module's own type name is
+			 * published too, as a Dtype member of Tmodule kind,
+			 * so a module type can appear in a signature
+			 * (bufio's setfill(f BufioFill)).
+			 */
+			Decl *m, *a;
+			Sym *alias;
+
+			m = readiface(decl->right->sym->name, &decl->src);
+			if(m == nil){
+				error(decl->src.start, "cannot import %s", decl->right->sym->name);
+				if(n->op != Oseq)
+					break;
+				continue;
+			}
+			alias = decl->left != nil ? decl->left->sym : m->sym;
+			a = mkdecl(&decl->src, Dimport, m->ty);
+			a->sym = alias;
+			a->importid = m;
+			installmember(mod, a);
+			if(findtype(mod, m->sym) == nil){
+				a = mkdecl(&decl->src, Dtype, m->ty);
+				a->sym = m->sym;
+				installmember(mod, a);
+			}
+		}
 		if(decl->op == Otypedecl && findtype(mod, decl->left->sym) == nil){
 			td = mkdecl(&decl->src, Dtype, nil);
 			td->sym = decl->left->sym;
@@ -350,6 +406,25 @@ bindiface(Decl *mod, Node *tree)
 		case Ocondecl:
 			d = mkdecl(&decl->src, Dconst, nil);
 			d->sym = decl->left->sym;
+			/*
+			 * "const EOF = -1": the parser leaves a negated
+			 * literal as Oneg(Oconst); the main module's own
+			 * constants get folded by echk()'s Oneg case, but an
+			 * interface's initializers are never echk()'d, so
+			 * fold the one shape a signature-level constant
+			 * ever needs here.
+			 */
+			if(decl->right->op == Oneg && decl->right->left != nil
+			&& decl->right->left->op == Oconst && !(decl->right->left->flags & NSTR)){
+				Node *c;
+
+				c = decl->right->left;
+				if(c->flags & NREAL)
+					c->rval = -c->rval;
+				else
+					c->val = -c->val;
+				decl->right = c;
+			}
 			d->init = decl->right;
 			if(decl->right->op == Oconst){
 				if(decl->right->flags & NSTR)
@@ -358,6 +433,14 @@ bindiface(Decl *mod, Node *tree)
 					d->ty = treal;
 				else
 					d->ty = tint;
+				/*
+				 * confold() (check.c) copies the initializer's
+				 * own ty onto every use; nothing else ever types
+				 * this node, so a client's "bufio.OWRITE" read
+				 * back as a nil-typed constant ("cannot use nil
+				 * as int") until this was set.
+				 */
+				decl->right->ty = d->ty;
 			}else
 				d->ty = tunknown;
 			installmember(mod, d);
@@ -453,7 +536,7 @@ bindiface(Decl *mod, Node *tree)
 			}
 			break;
 		case Oimport:
-			error(decl->src.start, "import in interface not yet supported");
+			/* handled in pass 1 above */
 			break;
 		default:
 			error(decl->src.start, "unsupported interface declaration %O", decl->op);
