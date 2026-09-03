@@ -11,6 +11,25 @@
 #include "fns.h"
 #include "../port/error.h"
 
+static Mach ospreymach0;
+Mach *machp[1] = { &ospreymach0 };
+Conf conf;
+int cpuserver = 0;
+void* xalloc(ulong n){ return mallocz(n, 1); }
+void* xspanalloc(ulong n, int align, ulong span){ USED(align); USED(span); return mallocz(n, 1); }
+
+int readnum(ulong off, char *buf, ulong n, ulong val, int size){
+	char tmp[64];
+	snprint(tmp, sizeof tmp, "%*lud", size-1, val);
+	tmp[size-1] = ' ';
+	if(off >= (ulong)size) return 0;
+	if(off+n > (ulong)size) n = size-off;
+	memmove(buf, tmp+off, n);
+	return n;
+}
+int emptystr(char *s){ return s == nil || s[0] == '\0'; }
+int return0(void *a){ USED(a); return 0; }
+
 static Proc	theproc;
 static char	errbuf0[ERRMAX], errbuf1[ERRMAX];
 Proc	*up = &theproc;

@@ -124,7 +124,18 @@ typedef struct Lock Lock;
 struct Lock { ulong key; ulong sr; uintptr pc; Proc *p; Mach *m; ushort isilock; long lockcycles; };
 typedef struct Label Label;
 struct Label { uintptr sp; uintptr pc; };
-#pragma incomplete Mach
+struct Mach { int machno; ulong ticks; Proc *proc; };
+extern Mach *machp[1];
+#define MACHP(n) (machp[0])
+#ifndef HZ
+#define HZ 1000
+#endif
+#ifndef MIN
+#define MIN(a,b) ((a)<=(b)?(a):(b))
+#endif
+enum { NUMSIZE = 12, READSTR = 4096 };
+extern int cpuserver;
+void coherence(void);
 #pragma incomplete Image
 #pragma incomplete Segment
 #pragma incomplete Note

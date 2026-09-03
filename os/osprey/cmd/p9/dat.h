@@ -9,6 +9,6 @@ struct Proc {
 };
 typedef struct Ospreybuddyseg	Ospreybuddyseg;	/* the kernel-side layout record portfns.h names; unused here */
 typedef struct Conf Conf;
-struct Conf { ulong pipeqsize; };
+struct Conf { ulong pipeqsize; ulong npage; };
 extern Conf conf;
 extern Proc *up;

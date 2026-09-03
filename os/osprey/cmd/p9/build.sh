@@ -8,16 +8,29 @@
 set -e
 cd "$(dirname "$0")/../../../.."          # repo root
 P=os/osprey/cmd/p9
-INC="-I $P -I os/osprey/port -I os/osprey/pc64 -I Osprey/amd64/include -I Osprey/include -I include"
+INC="-I $P -I os/osprey/port -I os/osprey/pc64 -I os/osprey/ip -I Osprey/amd64/include -I Osprey/include -I include"
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \
          os/osprey/port/devenv.c os/osprey/port/qio.c os/osprey/port/devmnt.c os/osprey/port/devpipe.c os/osprey/port/devsrv.c \
-         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c; do
+         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c \
+         os/osprey/port/netif.c os/osprey/port/parse.c \
+         os/osprey/ip/ip.c os/osprey/ip/ipaux.c os/osprey/ip/iproute.c os/osprey/ip/ipifc.c \
+         os/osprey/ip/netlog.c os/osprey/ip/ipmux.c os/osprey/ip/arp.c os/osprey/ip/icmp.c \
+         os/osprey/ip/icmp6.c os/osprey/ip/igmp.c os/osprey/ip/ipv6.c os/osprey/ip/tcp.c \
+         os/osprey/ip/udp.c os/osprey/ip/rudp.c os/osprey/ip/il.c os/osprey/ip/gre.c \
+         os/osprey/ip/devip.c os/osprey/ip/inferno.c os/osprey/ip/loopbackmedium.c os/osprey/ip/netdevmedium.c \
+         os/osprey/ip/nullmedium.c os/osprey/ip/pktmedium.c os/osprey/ip/chandial.c; do
 	o=/tmp/p9_$(basename $f .c).6
 	6c $INC -o $o $f
 	OBJ="$OBJ $o"
+done
+# ip address helpers from kernlib (distinct object names: kernlib/ipaux.c
+# would collide with ip/ipaux.c on basename)
+for f in parseip ptclbsum ipaux classmask eipfmt; do
+	6c $LIBINC -o /tmp/p9_k_$f.6 os/osprey/kernlib/$f.c
+	OBJ="$OBJ /tmp/p9_k_$f.6"
 done
 # libc members the host linker can't read, supplied from lib9 source
 SUP=""

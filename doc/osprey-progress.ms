@@ -542,6 +542,71 @@ be handled by the real
 which proves the stack runs before the osprey medium of stage (3) is
 written.
 .PP
+Stage (2) is done: the real stack compiles and links into the personality.
+.CW os/osprey/ip
+\- ip.c, tcp.c, udp.c, ipifc.c, arp.c, icmp.c, devip.c, the media \- and
+.CW os/osprey/port/netif.c
+are built by
+.CW os/osprey/cmd/p9/build.sh
+against the shim, with the ip address helpers from
+.CW os/osprey/kernlib
+.CW ( parseip.c ,
+.CW ptclbsum.c ,
+.CW ipaux.c ,
+.CW classmask.c ,
+.CW eipfmt.c ,
+compiled with the portable
+.CW ip.h ,
+not the kernel one) and
+.CW os/osprey/ip/inferno.c 's
+glue.  The shim gained a complete
+.CW Mach
+with
+.CW ticks ,
+.CW HZ ,
+.CW MIN ,
+.CW NUMSIZE / READSTR ,
+.CW npage
+on
+.CW Conf ,
+and host-backed
+.CW xalloc ,
+.CW readnum ,
+.CW emptystr ,
+.CW return0 ;
+.CW os/osprey/cmd/p9/p9ip.c
+carries
+.CW ipprotoinit
+(tcp, udp, il, ipifc, icmp, gre, ...).  The stack links dead \- not in
+the personality's
+.CW devtab ,
+not called \- so every personality configuration builds and checks
+unchanged (p9pair 24, p964 17, p9buddy 5, p9linux 12).
+.PP
+Stage (4), bring-up, is begun and does not yet run.
+.CW p9ip.c 's
+.CW p9ipup
+registers the loopback medium, mounts
+.CW #I
+at
+.CW /net ,
+binds loopback and gives it 127.0.0.1, and reads the interface status
+back; but wiring it \- adding
+.CW ipdevtab
+to the personality
+.CW devtab
+and calling
+.CW p9ipup
+\- faults, a user fault the microkernel turns into a
+.CW donotify
+panic, somewhere in the real stack running under the shim's
+kernel-facility stubs, before its first line prints.  The stack links
+cleanly; what needs debugging is its runtime under the personality \-
+the Fs allocation, the qlock/sleep and kproc semantics the shim
+provides, and the ip timers.  That debugging, then the loopback TCP
+round-trip and the osprey medium, are what remains.  The bring-up code
+is kept, marked not-yet-wired, as the starting point.
+.PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
 .I "dynamic replicated data"
