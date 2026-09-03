@@ -40,6 +40,17 @@ a wrong key does not recover the plaintext.
 The last two are automated negative controls: for an AEAD, silently
 decrypting tampered or wrong-key input to garbage-or-plaintext is the
 failure that would look like success.
+.PP
+For
+.B chacha20_poly1305
+it additionally checks the per-direction key derivation
+.IR import (4)/9export (1)
+use: it derives the client-to-server and server-to-client keys the same
+way (SHA-256 over the direction label, the shared secret and both
+nonces), confirms each direction round-trips under its own key, and
+confirms the opposite direction's key does
+.I not
+open it \(em so an endpoint cannot read the traffic it itself sent.
 .SH SOURCE
 .B /appl/cmd/ssltest.b
 .SH SEE ALSO
