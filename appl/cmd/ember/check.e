@@ -866,6 +866,12 @@ func stype(n ref types.Node) ref types.Type {
 		return types.mktype(n.line, n.pos, types.Tchan, stype(n.right), nil)
 	case types.Otlist:
 		return types.mktype(n.line, n.pos, types.Tlist, stype(n.right), nil)
+	case types.Oref:
+		// "ref P" parsed as an expression: the type form (check.c)
+		n.op = types.Otref
+		n.right = n.left
+		n.left = nil
+		return stype(n)
 	case types.Otref:
 		inref++
 		t := stype(n.right)

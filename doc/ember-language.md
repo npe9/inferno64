@@ -223,7 +223,9 @@ arguments are inferred at call sites from the argument types,
 including for higher-order functions such as `mapa[T, U](xs []T, f
 func(T) U) []U`. A generic struct may refer to itself (`type Node[T]
 struct { val T; next ref Node[T] }`) and a generic function or
-method may call itself (`tests/type/genlist.e`).
+method may call itself (`tests/type/genlist.e`). A type argument
+may be any type, in a declaration or in an expression
+(`Box[func(int) int]{val: f}`, `Box[[]int]{...}`, `Box[ref P]{...}`).
 
 Methods are declared with a receiver: `func (p ref Point) norm() int`
 or `func (p Point) sum() int`. A value receiver gets a copy. Methods

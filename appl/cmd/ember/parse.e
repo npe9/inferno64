@@ -404,6 +404,20 @@ func psignature(named int) ref types.Node {
 	return types.mkn(Otfunc, types.rotater(params), results)
 }
 
+// an index expression or a type argument: a type no expression can
+// start is parsed as one (parse.c)
+func ptypearg() ref types.Node {
+	match cur() {
+	case lex.Kfunc, lex.Klist, lex.Kchan:
+		return ptype()
+	case '[':
+		if nxt() == ']' {
+			return ptype()
+		}
+	}
+	return pexpr()
+}
+
 func ptype() ref types.Node {
 	src := tk()
 	match cur() {
@@ -682,7 +696,7 @@ func pprimary() ref types.Node {
 			noblit = 0
 			var lo ref types.Node
 			if cur() != ':' {
-				lo = pexpr()
+				lo = ptypearg()
 			}
 			if paccept(':') != 0 {
 				var hi ref types.Node
@@ -698,7 +712,7 @@ func pprimary() ref types.Node {
 				continue
 			}
 			for paccept(',') != 0 {
-				lo = types.mkseq(lo, pexpr())
+				lo = types.mkseq(lo, ptypearg())
 			}
 			noblit = oblit
 			pexpect(']', "index")

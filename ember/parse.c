@@ -310,6 +310,29 @@ psignature(int named)
 }
 
 /*
+ * an index expression or a type argument ("Box[func(int) int]{...}",
+ * "Box[[]int]{}"): the resolver tells an index from an instantiation
+ * (Oindex), but a type that no expression can start -- a function,
+ * list or chan type, an unsized array type -- has to be parsed as a
+ * type here.
+ */
+static Node*
+ptypearg(void)
+{
+	switch(cur()){
+	case Kfunc:
+	case Klist:
+	case Kchan:
+		return ptype();
+	case '[':
+		if(nxt() == ']')
+			return ptype();
+		break;
+	}
+	return pexpr();
+}
+
+/*
  * TypeExpr
  */
 static Node*
@@ -664,7 +687,7 @@ pprimary(void)
 			noblit = 0;
 			lo = nil;
 			if(cur() != ':')
-				lo = pexpr();
+				lo = ptypearg();
 			if(paccept(':')){
 				hi = nil;
 				if(cur() != ']')
@@ -679,7 +702,7 @@ pprimary(void)
 			}
 			/* index or type instantiation; resolver decides */
 			while(paccept(','))
-				lo = mkseq(lo, pexpr());
+				lo = mkseq(lo, ptypearg());
 			noblit = oblit;
 			src.stop = pexpect(']', "index").stop;
 			e = mkn(Oindex, n, rotater(lo));

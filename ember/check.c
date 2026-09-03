@@ -1432,6 +1432,15 @@ stype(Node *n)
 		return mktype(&n->src, Tchan, stype(n->right), nil);
 	case Otlist:
 		return mktype(&n->src, Tlist, stype(n->right), nil);
+	case Oref:
+		/*
+		 * "ref P" parsed as an expression (a type argument in
+		 * expression position, Box[ref P]{...}): the type form
+		 */
+		n->op = Otref;
+		n->right = n->left;
+		n->left = nil;
+		return stype(n);
 	case Otref:
 		inref++;
 		t = stype(n->right);
