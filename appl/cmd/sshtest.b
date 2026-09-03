@@ -46,10 +46,24 @@ init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	stderr = sys->fildes(2);
+	ssh = load Ssh Ssh->PATH;
+	if(ssh == nil)
+		fail(sys->sprint("load ssh: %r"));
+	ssh->init();
+
+	argv = tl argv;
+
+	# exec mode: a hermetic auth + exec test against a local sshd.
+	#   sshtest exec <addr> <user> <keyfile> <wantthumb> <cmd> <expectout>
+	# connects, pins the host thumbprint, authenticates by publickey,
+	# runs cmd, and asserts exit status 0 and stdout == expectout.
+	if(argv != nil && hd argv == "exec"){
+		execmode(tl argv);
+		return;
+	}
 
 	host := "github.com";
 	want := GITHUB_RSA_THUMB;
-	argv = tl argv;
 	if(argv != nil){
 		host = hd argv;
 		want = "";		# a caller-supplied host has no baked oracle
@@ -60,10 +74,6 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("load doh: %r"));
 	if((e := doh->init()) != nil)
 		fail("doh init: " + e);
-	ssh = load Ssh Ssh->PATH;
-	if(ssh == nil)
-		fail(sys->sprint("load ssh: %r"));
-	ssh->init();
 
 	# resolve the host's A record through our own DoH resolver
 	(ips, derr) := doh->resolve(nil, host);
@@ -125,6 +135,66 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	sys->print("all tests passed\n");
+}
+
+Authkey, Result: import ssh;
+
+execmode(argv: list of string)
+{
+	if(len argv != 6)
+		fail("usage: sshtest exec addr user keyfile wantthumb cmd expectout");
+	addr := hd argv; argv = tl argv;
+	user := hd argv; argv = tl argv;
+	keyfile := hd argv; argv = tl argv;
+	wantthumb := hd argv; argv = tl argv;
+	cmd := hd argv; argv = tl argv;
+	expectout := hd argv;
+
+	pem := readfile(keyfile);
+	if(pem == nil)
+		fail("cannot read key file " + keyfile);
+	(key, kerr) := ssh->rsakey_pem(pem);
+	if(kerr != nil)
+		fail("parse key: " + kerr);
+
+	# connect with the host thumbprint pinned to ssh-keygen's oracle
+	(c, cerr) := ssh->connect(addr, "localhost", wantthumb);
+	if(cerr != nil)
+		fail(cerr);
+	sys->print("connect + host-key thumbprint (pinned to ssh-keygen): PASS\n");
+
+	if((lerr := ssh->login(c, user, key, "")) != nil)
+		fail("login: " + lerr);
+	sys->print("publickey authentication: PASS\n");
+
+	(res, rerr) := ssh->run(c, cmd);
+	if(rerr != nil)
+		fail("run: " + rerr);
+	got := string res.stdout;
+	if(res.status != 0)
+		fail(sys->sprint("exec exit status %d (want 0)", res.status));
+	if(got != expectout)
+		fail(sys->sprint("exec output %q (want %q)", got, expectout));
+	sys->print("exec %q -> output+exit match oracle: PASS\n", cmd);
+	c.close();
+
+	sys->print("all tests passed\n");
+}
+
+readfile(f: string): string
+{
+	fd := sys->open(f, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	s := "";
+	buf := array[8192] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		s += string buf[0:n];
+	}
+	return s;
 }
 
 # SERVICE_REQUEST payload: byte(5) || string(name)

@@ -6,6 +6,9 @@ sshtest \- test the ssh(2) transport against a real sshd
 [
 .I host
 ]
+.br
+.B sshtest exec
+.I addr user keyfile wantthumb cmd expectout
 .SH DESCRIPTION
 .B Sshtest
 exercises the
@@ -62,14 +65,50 @@ With a
 argument the oracle checks are skipped (only that host has a baked-in
 fingerprint), but the key exchange, signature verification and
 encrypted round trip still run.
+.PP
+The
+.B exec
+form drives the full client \(em transport, publickey
+authentication and command execution \(em against a server at
+.I addr
+(a dial string), authenticating as
+.I user
+with the PEM RSA key in
+.IR keyfile ,
+pinning the host thumbprint to
+.I wantthumb
+(fail-closed), running
+.I cmd
+and asserting its exit status is zero and its standard output equals
+.IR expectout .
+It is meant to be run against a hermetic local
+.IR sshd :
+.I /tests/sshlocal.sh
+sets one up with a generated host key and one authorised key, runs
+.B "sshtest exec"
+against it (with the thumbprint oracle
+from
+.IR ssh-keygen ),
+and adds a negative control \(em a second run with an
+.I unauthorised
+key that must be rejected.
 .SH SOURCE
 .B /appl/cmd/sshtest.b
+.br
+.B /tests/sshlocal.sh
 .SH SEE ALSO
 .IR ssh (2),
 .IR chachatest (1),
 .IR doh (2)
 .SH BUGS
-Requires a working network path to the server on port 22. The
-thumbprint oracle is checked only for the default
-.BR github.com ;
-for another host the run proves the cryptography but not the identity.
+The default form requires a working network path to the server on port
+22, and the thumbprint oracle is checked only for the default
+.BR github.com .
+The
+.B exec
+form requires a host
+.I sshd
+and
+.IR ssh-keygen ;
+.I /tests/sshlocal.sh
+skips (exit 2) when they are absent.

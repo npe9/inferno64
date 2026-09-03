@@ -1,6 +1,6 @@
 .TH SSH 2
 .SH NAME
-ssh: connect, Conn, writepkt, readpkt \- SSH-2 transport client
+ssh: connect, login, run, Conn, writepkt, readpkt \- SSH-2 client
 .SH SYNOPSIS
 .EX
 include "sys.m";
@@ -12,8 +12,12 @@ include "pkcs.m";
 include "ssh.m";
 ssh := load Ssh Ssh->PATH;
 
-init:    fn();
-connect: fn(addr, host, wantthumb: string): (ref Conn, string);
+init:       fn();
+connect:    fn(addr, host, wantthumb: string): (ref Conn, string);
+rsakey_pem: fn(pem: string): (ref Authkey, string);
+login:      fn(c: ref Conn, user: string, key: ref Authkey,
+                password: string): string;
+run:        fn(c: ref Conn, cmd: string): (ref Result, string);
 
 Conn: adt {
         fd:        ref Sys->FD;
@@ -28,6 +32,8 @@ Conn: adt {
         writepkt: fn(c: self ref Conn, payload: array of byte): string;
         close:    fn(c: self ref Conn);
 };
+Authkey: adt { blob: array of byte; n, d: ref IPint; modlen: int; };
+Result:  adt { stdout, stderr: array of byte; status: int; };
 
 MSG_KEXINIT, MSG_NEWKEYS, MSG_SERVICE_REQUEST,
 MSG_SERVICE_ACCEPT, MSG_USERAUTH_REQUEST, ...: con ...;
@@ -120,6 +126,52 @@ ciphers switch on together at
 .PP
 .B Close
 drops the connection.
+.SS Authentication and commands
+.B Rsakey_pem
+parses a PEM PKCS#1 RSA private key \(em the format
+.B "ssh-keygen -m PEM"
+writes \(em into an
+.B Authkey:
+the
+.B ssh-rsa
+public-key blob to present (byte-identical to an
+.B authorized_keys
+line's base64 body) and the private
+.RB ( n , d )
+used to sign.
+.PP
+.B Login
+authenticates to a connected server as
+.IR user .
+It sends the
+.B ssh-userauth
+service request, then tries publickey (when
+.I key
+is non-nil) and password (when
+.I password
+is non-empty), in that order, returning
+.B nil
+once the server accepts. The publickey exchange sends the unsigned
+probe first, and on
+.B PK_OK
+signs the session id and request with RSASSA-PKCS1-v1_5 over SHA-256
+(computed directly \(em
+.IR pkcs (2)'s
+.B rsa_sign
+predates rsa-sha2-256 and is not used).
+.PP
+.B Run
+opens a session channel, execs
+.IR cmd ,
+and reads to the end of the channel, returning a
+.B Result
+whose
+.B stdout
+and
+.B stderr
+hold the two data streams and whose
+.B status
+is the remote exit status.
 .SH SOURCE
 .B /appl/lib/ssh.b
 .SH SEE ALSO
@@ -129,15 +181,21 @@ drops the connection.
 .IR pkcs (2),
 .IR keyring (2)
 .SH BUGS
-This is the transport layer only. User authentication (publickey,
-password) and channels (session, exec, pty) are driven by the caller
-over
-.B writepkt
-/
-.B readpkt
-and are not yet packaged here. Only one algorithm of each kind is
-offered; a server without
+Only one algorithm of each kind is offered; a server without
 .B curve25519-sha256
 or
 .B chacha20-poly1305@openssh.com
 cannot be reached, by design.
+.PP
+.B Run
+is one-shot and non-interactive: it advertises a large receive window
+and never sends channel data, so it suits commands whose output is
+bounded, not an interactive shell (which needs a pty and the two-way
+data pump, driven over
+.B writepkt
+/
+.BR readpkt ,
+and is not packaged here). Key re-exchange during a long session is
+not implemented. Only file-based RSA keys are handled;
+.IR factotum (4)
+integration is separate.

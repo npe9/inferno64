@@ -7,12 +7,13 @@
 # GSSAPI, no compression - the same deliberately small surface ssh.c
 # carries.
 #
-# Stage 1 (this file): version exchange, KEXINIT, the curve25519 key
-# exchange, RSA host-key signature verification over the exchange
-# hash, NEWKEYS, the SSH key-derivation function, and the encrypted
-# binary packet protocol (writepkt/readpkt). connect() returns with an
-# established, verified, encrypted transport; the caller then drives
-# userauth and channels over writepkt/readpkt.
+# connect() runs the version and key exchange and returns an
+# established, verified, encrypted transport. login() then authenticates
+# by publickey (RSA, signed rsa-sha2-256) and/or password, and run()
+# opens a session channel and execs one command, collecting its output.
+# writepkt/readpkt remain exposed for callers that need to drive the
+# connection message by message (e.g. an interactive shell with a pty,
+# which this module does not yet package).
 
 Ssh: module
 {
@@ -78,6 +79,23 @@ Ssh: module
 		close:		fn(c: self ref Conn);
 	};
 
+	# a client key for publickey authentication: the ssh-rsa public
+	# key blob to present (identical to an authorized_keys line's
+	# base64 body) and the RSA private parts used to sign.
+	Authkey: adt {
+		blob:	array of byte;
+		n:	ref Keyring->IPint;
+		d:	ref Keyring->IPint;
+		modlen:	int;
+	};
+
+	# result of running a remote command
+	Result: adt {
+		stdout:	array of byte;
+		stderr:	array of byte;
+		status:	int;		# exit status (0 = success)
+	};
+
 	init:	fn();
 
 	# dial addr (a real dial string, e.g. "tcp!10.0.0.1!22"), run the
@@ -88,4 +106,20 @@ Ssh: module
 	# (fail-closed; no silent trust-on-first-use here). Returns the
 	# established encrypted Conn or ("", err).
 	connect:	fn(addr, host, wantthumb: string): (ref Conn, string);
+
+	# parse a PEM PKCS#1 RSA private key (the format ssh-keygen -m PEM
+	# writes) into an Authkey usable for publickey auth. Returns
+	# (nil, err) on a malformed key.
+	rsakey_pem:	fn(pem: string): (ref Authkey, string);
+
+	# authenticate to an already-connected server as user. Sends the
+	# ssh-userauth service request, then tries publickey (if key is
+	# non-nil) and password (if password is non-empty), in that order.
+	# Returns "" once the server accepts, or an error.
+	login:	fn(c: ref Conn, user: string, key: ref Authkey, password: string): string;
+
+	# run one command on an authenticated connection: opens a session
+	# channel, execs cmd, and collects its output to end of channel.
+	# Returns the Result or (nil, err).
+	run:	fn(c: ref Conn, cmd: string): (ref Result, string);
 };

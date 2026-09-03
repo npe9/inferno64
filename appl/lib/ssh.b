@@ -596,3 +596,393 @@ connect(addr, host, wantthumb: string): (ref Conn, string)
 
 	return (c, nil);
 }
+
+# ---- publickey material -------------------------------------------
+
+# EMSA-PKCS1-v1_5 DigestInfo prefix for SHA-256 (RFC 8017 9.2 notes),
+# same 19 bytes pkcs(2) uses.
+di_sha256 := array[] of {
+	byte 16r30, byte 16r31, byte 16r30, byte 16r0d, byte 16r06,
+	byte 16r09, byte 16r60, byte 16r86, byte 16r48, byte 16r01,
+	byte 16r65, byte 16r03, byte 16r04, byte 16r02, byte 16r01,
+	byte 16r05, byte 16r00, byte 16r04, byte 16r20
+};
+
+# DER: read the length field of a TLV at offset o (o points at the
+# length octet, just past the tag); return (length, value-offset).
+derlen(a: array of byte, o: int): (int, int)
+{
+	if(o >= len a)
+		return (-1, -1);
+	b := int a[o++];
+	if(b < 16r80)
+		return (b, o);
+	nb := b & 16r7f;
+	if(nb == 0 || nb > 3 || o+nb > len a)
+		return (-1, -1);
+	l := 0;
+	for(i := 0; i < nb; i++)
+		l = (l << 8) | int a[o++];
+	return (l, o);
+}
+
+# DER: read one INTEGER at offset o (o points at the tag); return
+# (value as IPint, next-offset) or (nil, -1).
+derint(a: array of byte, o: int): (ref IPint, int)
+{
+	if(o >= len a || a[o] != byte 16r02)
+		return (nil, -1);
+	(l, vo) := derlen(a, o+1);
+	if(l < 0 || vo+l > len a)
+		return (nil, -1);
+	return (IPint.bebytestoip(a[vo:vo+l]), vo+l);
+}
+
+# build the ssh-rsa public key blob: string("ssh-rsa") || mpint(e) ||
+# mpint(n) - byte-identical to an authorized_keys line's base64 body.
+sshrsablob(e, n: ref IPint): array of byte
+{
+	b := nbuf();
+	pstrs(b, "ssh-rsa");
+	pstr(b, sshmpint(e));
+	pstr(b, sshmpint(n));
+	return bytes(b);
+}
+
+rsakey_pem(pem: string): (ref Authkey, string)
+{
+	# strip the PEM armour and base64-decode the body
+	body := "";
+	for(lines := sys->tokenize(pem, "\n").t1; lines != nil; lines = tl lines){
+		ln := hd lines;
+		if(len ln >= 5 && ln[0:5] == "-----")
+			continue;
+		body += ln;
+	}
+	der := base64->dec(body);
+	if(der == nil || len der < 16)
+		return (nil, "ssh: cannot base64-decode PEM body");
+
+	# RSAPrivateKey ::= SEQUENCE { version, n, e, d, p, q, ... }
+	if(der[0] != byte 16r30)
+		return (nil, "ssh: not a PKCS#1 RSAPrivateKey (no SEQUENCE)");
+	(slen, so) := derlen(der, 1);
+	if(slen < 0)
+		return (nil, "ssh: bad RSAPrivateKey length");
+
+	o := so;
+	(nil, o) = derint(der, o);		# version
+	(n, o2) := derint(der, o);
+	(e, o3) := derint(der, o2);
+	(d, o4) := derint(der, o3);
+	if(o4 < 0)
+		return (nil, "ssh: bad RSAPrivateKey integers");
+
+	k := ref Authkey;
+	k.n = n;
+	k.d = d;
+	k.modlen = len n.iptobebytes();
+	k.blob = sshrsablob(e, n);
+	return (k, nil);
+}
+
+# RSASSA-PKCS1-v1_5 signature over data with SHA-256, raw modlen-width
+# signature bytes (no algorithm wrapper).
+rsasign(k: ref Authkey, data: array of byte): array of byte
+{
+	dg := array[kr->SHA256dlen] of byte;
+	kr->sha256(data, len data, dg, nil);
+	tlen := len di_sha256 + len dg;
+	kk := k.modlen;
+	em := array[kk] of byte;
+	em[0] = byte 0;
+	em[1] = byte 1;
+	for(i := 2; i < kk-tlen-1; i++)
+		em[i] = byte 16rff;
+	em[kk-tlen-1] = byte 0;
+	em[kk-tlen:] = di_sha256;
+	em[kk-len dg:] = dg;
+
+	s := IPint.bebytestoip(em).expmod(k.d, k.n);
+	sb := s.iptobebytes();
+	if(len sb < kk){		# left-pad to the modulus width
+		a := array[kk] of {* => byte 0};
+		a[kk-len sb:] = sb;
+		sb = a;
+	} else if(len sb > kk)
+		sb = sb[len sb - kk:];
+	return sb;
+}
+
+# ---- authentication -----------------------------------------------
+
+SERVICE: con "ssh-connection";
+
+# read packets until an authentication verdict (skipping chatter);
+# returns (msgtype, payload, err).
+waitauth(c: ref Conn): (int, array of byte, string)
+{
+	for(;;){
+		(pkt, err) := c.readpkt();
+		if(err != nil)
+			return (-1, nil, err);
+		if(len pkt == 0)
+			continue;
+		t := int pkt[0];
+		case t {
+		Ssh->MSG_USERAUTH_SUCCESS or
+		Ssh->MSG_USERAUTH_FAILURE or
+		Ssh->MSG_USERAUTH_PK_OK =>
+			return (t, pkt, nil);
+		Ssh->MSG_USERAUTH_BANNER or
+		Ssh->MSG_IGNORE or
+		Ssh->MSG_DEBUG or
+		Ssh->MSG_GLOBAL_REQUEST =>
+			;			# skip
+		Ssh->MSG_DISCONNECT =>
+			return (-1, nil, "ssh: server disconnected during auth");
+		* =>
+			;
+		}
+	}
+}
+
+# send the ssh-userauth service request and wait for its acceptance
+servicerequest(c: ref Conn): string
+{
+	b := nbuf();
+	pbyte(b, Ssh->MSG_SERVICE_REQUEST);
+	pstrs(b, "ssh-userauth");
+	if((err := c.writepkt(bytes(b))) != nil)
+		return err;
+	for(;;){
+		(pkt, e) := c.readpkt();
+		if(e != nil)
+			return e;
+		if(len pkt == 0)
+			continue;
+		t := int pkt[0];
+		if(t == Ssh->MSG_SERVICE_ACCEPT)
+			return nil;
+		if(t == Ssh->MSG_DISCONNECT)
+			return "ssh: disconnected awaiting service accept";
+		# otherwise skip transport chatter
+	}
+}
+
+authpublickey(c: ref Conn, user: string, k: ref Authkey): (int, string)
+{
+	err: string;
+	# the request core, shared by the probe, the signed data and the
+	# final request: everything from the message type through the
+	# public-key blob (with the signature-present flag).
+	core := nbuf();
+	pbyte(core, Ssh->MSG_USERAUTH_REQUEST);
+	pstrs(core, user);
+	pstrs(core, SERVICE);
+	pstrs(core, "publickey");
+	pbyte(core, 1);			# has-signature = true (in signed data)
+	pstrs(core, "rsa-sha2-256");
+	pstr(core, k.blob);
+	corebytes := bytes(core);
+
+	# probe: same core but with the has-signature flag = 0 and no
+	# signature. corebytes[.] index of the flag byte is fixed by the
+	# layout above; rebuild rather than patch, for clarity.
+	probe := nbuf();
+	pbyte(probe, Ssh->MSG_USERAUTH_REQUEST);
+	pstrs(probe, user);
+	pstrs(probe, SERVICE);
+	pstrs(probe, "publickey");
+	pbyte(probe, 0);
+	pstrs(probe, "rsa-sha2-256");
+	pstr(probe, k.blob);
+	if((err = c.writepkt(bytes(probe))) != nil)
+		return (0, err);
+	(t, nil, e1) := waitauth(c);
+	if(e1 != nil)
+		return (0, e1);
+	if(t == Ssh->MSG_USERAUTH_SUCCESS)
+		return (1, nil);
+	if(t == Ssh->MSG_USERAUTH_FAILURE)
+		return (0, nil);		# key not accepted; caller may try next method
+	# else MSG_USERAUTH_PK_OK: proceed to sign
+
+	# signed data = string(session-id) || corebytes
+	sd := nbuf();
+	pstr(sd, c.sid);
+	praw(sd, corebytes);
+	rawsig := rsasign(k, bytes(sd));
+
+	# signature blob = string("rsa-sha2-256") || string(rawsig)
+	sb := nbuf();
+	pstrs(sb, "rsa-sha2-256");
+	pstr(sb, rawsig);
+
+	# final request = corebytes || string(signature blob)
+	fin := nbuf();
+	praw(fin, corebytes);
+	pstr(fin, bytes(sb));
+	if((err = c.writepkt(bytes(fin))) != nil)
+		return (0, err);
+	(t2, nil, e2) := waitauth(c);
+	if(e2 != nil)
+		return (0, e2);
+	if(t2 == Ssh->MSG_USERAUTH_SUCCESS)
+		return (1, nil);
+	return (0, nil);
+}
+
+authpassword(c: ref Conn, user, password: string): (int, string)
+{
+	b := nbuf();
+	pbyte(b, Ssh->MSG_USERAUTH_REQUEST);
+	pstrs(b, user);
+	pstrs(b, SERVICE);
+	pstrs(b, "password");
+	pbyte(b, 0);			# not a password change
+	pstrs(b, password);
+	if((err := c.writepkt(bytes(b))) != nil)
+		return (0, err);
+	(t, nil, e) := waitauth(c);
+	if(e != nil)
+		return (0, e);
+	if(t == Ssh->MSG_USERAUTH_SUCCESS)
+		return (1, nil);
+	return (0, nil);
+}
+
+login(c: ref Conn, user: string, key: ref Authkey, password: string): string
+{
+	if((err := servicerequest(c)) != nil)
+		return err;
+	if(key != nil){
+		(ok, e) := authpublickey(c, user, key);
+		if(e != nil)
+			return e;
+		if(ok)
+			return nil;
+	}
+	if(password != ""){
+		(ok, e) := authpassword(c, user, password);
+		if(e != nil)
+			return e;
+		if(ok)
+			return nil;
+	}
+	return "ssh: authentication failed";
+}
+
+# ---- channels: run one command ------------------------------------
+
+Localwin:	con 1<<24;	# advertised receive window (16 MiB)
+Localpkt:	con 1<<15;
+
+run(c: ref Conn, cmd: string): (ref Result, string)
+{
+	err: string;
+	# open a session channel (our local channel number is 0)
+	op := nbuf();
+	pbyte(op, Ssh->MSG_CHANNEL_OPEN);
+	pstrs(op, "session");
+	pu32(op, 0);			# sender (our) channel
+	pu32(op, Localwin);		# initial window
+	pu32(op, Localpkt);		# max packet
+	if((err = c.writepkt(bytes(op))) != nil)
+		return (nil, err);
+
+	schan := 0;
+	opened := 0;
+	while(!opened){
+		(pkt, e) := c.readpkt();
+		if(e != nil)
+			return (nil, e);
+		if(len pkt == 0)
+			continue;
+		case int pkt[0] {
+		Ssh->MSG_CHANNEL_OPEN_CONFIRMATION =>
+			# _ (msg) u(our chan) u(their chan) u(win) u(pkt)
+			schan = getu32(pkt, 5);
+			opened = 1;
+		Ssh->MSG_CHANNEL_OPEN_FAILURE =>
+			return (nil, "ssh: channel open failed");
+		Ssh->MSG_DISCONNECT =>
+			return (nil, "ssh: disconnected opening channel");
+		* =>
+			;			# skip chatter
+		}
+	}
+
+	# exec the command on that channel (no reply wanted)
+	rq := nbuf();
+	pbyte(rq, Ssh->MSG_CHANNEL_REQUEST);
+	pu32(rq, schan);
+	pstrs(rq, "exec");
+	pbyte(rq, 0);
+	pstrs(rq, cmd);
+	if((err = c.writepkt(bytes(rq))) != nil)
+		return (nil, err);
+
+	res := ref Result(array[0] of byte, array[0] of byte, 0);
+	done := 0;
+	while(!done){
+		(pkt, e) := c.readpkt();
+		if(e != nil){
+			# a clean server close can surface as EOF; keep what we have
+			break;
+		}
+		if(len pkt == 0)
+			continue;
+		case int pkt[0] {
+		Ssh->MSG_CHANNEL_DATA =>
+			(d, nil) := getstr(pkt, 5);
+			if(d != nil)
+				res.stdout = concat(res.stdout, d);
+		Ssh->MSG_CHANNEL_EXTENDED_DATA =>
+			code := getu32(pkt, 5);
+			(d, nil) := getstr(pkt, 9);
+			if(code == 1 && d != nil)
+				res.stderr = concat(res.stderr, d);
+		Ssh->MSG_CHANNEL_REQUEST =>
+			(rt, o) := getstr(pkt, 5);
+			if(o >= 0 && o < len pkt){
+				wr := int pkt[o];		# want-reply byte
+				if(string rt == "exit-status")
+					res.status = getu32(pkt, o+1);
+				if(wr != 0){
+					# reply, addressing the server's channel
+					rp := nbuf();
+					pbyte(rp, Ssh->MSG_CHANNEL_SUCCESS);
+					pu32(rp, schan);
+					c.writepkt(bytes(rp));
+				}
+			}
+		Ssh->MSG_CHANNEL_EOF =>
+			;
+		Ssh->MSG_CHANNEL_CLOSE =>
+			done = 1;
+		Ssh->MSG_CHANNEL_WINDOW_ADJUST =>
+			;
+		Ssh->MSG_DISCONNECT =>
+			done = 1;
+		* =>
+			;			# skip
+		}
+	}
+
+	# be polite: send our own close (ignore errors, we're done)
+	cl := nbuf();
+	pbyte(cl, Ssh->MSG_CHANNEL_CLOSE);
+	pu32(cl, schan);
+	c.writepkt(bytes(cl));
+
+	return (res, nil);
+}
+
+concat(a, b: array of byte): array of byte
+{
+	r := array[len a + len b] of byte;
+	r[0:] = a;
+	r[len a:] = b;
+	return r;
+}
