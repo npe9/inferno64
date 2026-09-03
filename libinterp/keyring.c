@@ -2841,6 +2841,65 @@ Keyring_ccpoly_decrypt(void *fp)
 }
 
 void
+Keyring_chacha_setblock(void *fp)
+{
+	F_Keyring_chacha_setblock *f;
+	XChachastate *is;
+
+	f = fp;
+	is = checktype(f->state, TChachastate, exBadState, 0);
+	chacha_setblock(&is->state, (u64int)f->block);
+}
+
+void
+Keyring_chacha_encrypt(void *fp)
+{
+	F_Keyring_chacha_encrypt *f;
+	XChachastate *is;
+
+	f = fp;
+	if(f->buf == H)
+		error(exInval);
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	is = checktype(f->state, TChachastate, exBadState, 0);
+	chacha_encrypt(f->buf->data, f->n, &is->state);
+}
+
+void
+Keyring_poly1305(void *fp)
+{
+	F_Keyring_poly1305 *f;
+	Array *a;
+	uchar *msg;
+	int nmsg;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->key == H || f->key->len != 32)
+		error(exBadKey);
+	if(f->msg != H){
+		msg = f->msg->data;
+		nmsg = f->msg->len;
+		if(f->n < 0 || f->n > nmsg)
+			error(exBounds);
+		nmsg = f->n;
+	}else{
+		if(f->n != 0)
+			error(exInval);
+		msg = nil;
+		nmsg = 0;
+	}
+	a = mem2array(nil, 16);
+	*f->ret = (Array*)a;
+	poly1305(msg, nmsg, f->key->data, f->key->len, a->data, nil);
+}
+
+void
 Keyring_blowfishsetup(void *fp)
 {
 	F_Keyring_blowfishsetup *f;

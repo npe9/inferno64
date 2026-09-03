@@ -136,6 +136,7 @@ TARG=\
 	dohtest.dis\
 	aesgcmtest.dis\
 	ccpolytest.dis\
+	chachatest.dis\
 	hmacsha256test.dis\
 	inputtest.dis\
 	idea.dis\

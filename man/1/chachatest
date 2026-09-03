@@ -1,0 +1,46 @@
+.TH CHACHATEST 1
+.SH NAME
+chachatest \- test keyring's raw ChaCha20 stream and one-shot Poly1305
+.SH SYNOPSIS
+.B chachatest
+.SH DESCRIPTION
+.B Chachatest
+checks the three keyring primitives the
+.B chacha20-poly1305@openssh.com
+construction of
+.IR ssh (1)
+needs beyond the RFC 8439 AEAD wrapper that
+.IR ccpolytest (1)
+already covers:
+.B chacha_setblock
+(seek the ChaCha20 block counter),
+.B chacha_encrypt
+(raw stream, no Poly1305 tag), and
+.B poly1305
+(a one-shot tag under a caller-supplied one-time key). The vectors
+are RFC 8439's own published examples \(em the ChaCha20 encryption
+example of \(sc2.4.2 and the Poly1305 example of \(sc2.5.2 \(em not a
+reimplementation:
+.IP \(bu
+Poly1305 over the standard's 34-byte message under its key must
+equal the standard's tag;
+.IP \(bu
+ChaCha20 of the standard's plaintext, with the block counter set to
+1 as the example specifies, must equal the standard's ciphertext;
+.IP \(bu
+the same encryption with the block counter left at 0 must
+.I not
+match \(em an automated negative control proving
+.B chacha_setblock
+is actually consulted (a wrong keystream is a safe computation, so
+this one can be automated, unlike a memory-hazard control).
+.SH SOURCE
+.B /appl/cmd/chachatest.b
+.SH SEE ALSO
+.IR ccpolytest (1),
+.IR keyring (2)
+.SH BUGS
+Coverage is the two fixed RFC vectors plus the block-counter control.
+Poly1305 is exercised one-shot only; the streaming state that
+.IR ccpolytest (1)
+covers is not re-tested here.

@@ -260,6 +260,18 @@ Keyring: module
 	ccpoly_encrypt: fn(state: ref Chachastate, buf: array of byte, n: int, aad: array of byte, tag: array of byte);
 	ccpoly_decrypt: fn(state: ref Chachastate, buf: array of byte, n: int, aad: array of byte, tag: array of byte): int;
 
+	# raw ChaCha20 block-counter set and stream encryption, plus a
+	# one-shot Poly1305 - the pieces the chacha20-poly1305@openssh.com
+	# construction (ssh(1)) needs beyond the RFC 8439 AEAD wrapper
+	# above. The Chachastate is created with ccpolysetup() (32-byte
+	# key, 8-byte iv) and its nonce set with ccpoly_setiv(); these then
+	# set the 64-bit block counter and encrypt in place. chacha_encrypt
+	# is the raw stream cipher (no tag); poly1305 authenticates a
+	# message under a one-time 32-byte key, returning a 16-byte tag.
+	chacha_setblock: fn(state: ref Chachastate, block: int);
+	chacha_encrypt: fn(state: ref Chachastate, buf: array of byte, n: int);
+	poly1305: fn(msg: array of byte, n: int, key: array of byte): array of byte;
+
 	DESbsize: con 8;
 
 	dessetup: fn(key: array of byte, ivec: array of byte): ref DESstate;
