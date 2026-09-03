@@ -18771,3 +18771,38 @@ heap-checkpoint lines riscv64 does, from the shared
 instrumentation \- the same op (a movp writing nil over a live slot in
 module Sh) on both boards, an open item shared with riscv64, not
 arm64's own.
+.NH 1
+Where the five boards stand now
+.PP
+Three of the five boot to an interactive shell, confirmed the same way
+each time \- a command piped in over the emulated UART comes back:
+riscv64 virt, riscv32 virt32, and now arm64 virtarm64.  riscv64's
+sibling simulators
+.CW spike
+and
+.CW sifiveu
+reach their shell markers too.  The two that do not: pc64, whose heap
+corruption ends most boots in the window after
+.CW /osinit.dis
+loads; and armv7, with its two faults at the first module load.  Both
+predate this document's driver and toolchain work and neither moved
+this round.
+.PP
+Open, in the order they block things: pc64's heap corruption (every
+boot, so easy to catch, hard to pin); armv7's undefined-instruction
+and data-abort pair; the shared
+.CW checktracked()
+heap-checkpoint that riscv64 and arm64 both print past
+.CW ROOT-APPS-OK
+(a
+.CW movp
+writing nil over a live slot in
+.CW Sh ,
+non-fatal, the same op on both); the igb NIC seeing no link; riscv32's
+.CW todfix
+clock spam; and the Limbo audio library's
+.CW audioctl
+syntax against 9front's file.  Item 9 of the plan \- device trees,
+PSCI and GICv3 for arm64, supervisor mode with SBI for riscv64, and
+the SoC drivers behind them \- is the real-hardware work none of the
+QEMU boards force, and is untouched.
