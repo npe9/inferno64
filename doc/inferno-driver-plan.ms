@@ -557,11 +557,22 @@ card over the MMC-SPI controller is a separate matter: the SD-over-SPI
 handshake (CMD0/CMD8/ACMD41/CMD58 then a CMD17 block read) was written
 and exercised, but no slave answered on that controller - the very same
 transfer code reads the NOR flash correctly, so the transport is sound;
-QEMU's
-.CW "-drive if=sd"
-does not appear to attach the card to the sifive_u SPI bridge.  Wiring
-an SD to that bridge under QEMU is the unresolved follow-on; the flash
-read already shows the driver works against a real slave.  I2C is a
+the card is attached (QEMU's qtree shows an
+.CW ssi-sd
+with a
+.CW sd-card-spi
+behind it) but its chip-select is not the SPI controller's own: QEMU
+wires it to a GPIO line
+.CW ( ssi-gpio-cs ) ,
+so the card only listens when that GPIO pin is driven low, which the
+SiFive SPI's
+.CW csmode
+never touches.  Isolating the pin by brute force is confounded because
+the same GPIO block also drives
+.CW gpio-restart ,
+so sweeping the pins reboots the machine.  So SD-over-SPI here needs a
+GPIO driver first, to own the SD's chip-select - the honest follow-on.
+The flash read already shows the SPI driver works against a real slave.  I2C is a
 different story: no QEMU machine this tree currently boots models an
 I2C controller at all (sifive_u and spike have none), so delivering I2C
 needs a raspi-class board bring-up - a real SoC with BCM2835 SPI, I2C
