@@ -566,7 +566,8 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			h->pc1 = operand(isp);
 			h->pc2 = operand(isp);
 			descid = operand(isp);
-			if(n != -1)
+			h->t = nil;
+			if(descid != -1)	/* was "n != -1", a stale count: -1 read m->type[-1] */
 				h->t = m->type[descid];
 			n = operand(isp); /* no of labels */
 			h->ne = n>>16;
