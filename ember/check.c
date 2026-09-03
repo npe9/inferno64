@@ -3209,6 +3209,19 @@ echk1(Node *n)
 			 * mistake here would be loud, not a background fault --
 			 * still correct to get right rather than lean on that).
 			 */
+			/*
+			 * "ref Val.Num{...} :: nil" starts a list of ref Val, not
+			 * of ref Val.Num: a tag's type is assignable to its pick
+			 * type, and a list pinned to one tag could never take
+			 * the others ("type mismatch in ref adt :: list of ref
+			 * adt" on the second tag in tests/type/jsonlike.e).
+			 */
+			if(et->kind == Tref && et->tof != nil && et->tof->kind == Tadtpick
+			&& et->tof->tof != nil){
+				et = mktype(&n->src, Tref, et->tof->tof, nil);
+				sizetype(et);
+			}else if(et->kind == Tadtpick && et->tof != nil)
+				et = et->tof;
 			n->ty = mktype(&n->src, Tlist, et, nil);
 			sizetype(n->ty);
 			return n->ty;

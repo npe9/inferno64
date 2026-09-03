@@ -1075,7 +1075,9 @@ ppattern(void)
 		n = ptypename();
 		ids = nil;
 		if(paccept('(')){
-			ids = rotater(pnamelist("pattern binders"));
+			/* "case Val.Null():" -- a field-less tag has no binders */
+			if(cur() != ')')
+				ids = rotater(pnamelist("pattern binders"));
 			pexpect(')', "pattern");
 		}
 		n = mkn(Opat, n, ids);
