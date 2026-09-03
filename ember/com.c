@@ -405,6 +405,7 @@ sumark(Node *n)
 	case Oslice:
 	case Oinds:
 	case Oload:
+	case Ocast:
 		/*
 		 * same shape as Olen just above (single- or dual-operand,
 		 * result never directly addressable -- falls through to the
@@ -1710,6 +1711,41 @@ ecom(Src *src, Node *nto, Node *n)
 			storecomposite(src, adr, n);
 		}else
 			storecompositezero(src, nto, n);
+		return nto;
+	}
+	case Ocast: {
+		/*
+		 * "T(x)": one Dis conversion instruction (types.c's
+		 * castop()), two through an int temp for the byte pairs
+		 * (castvia()), a plain move for a same-type conversion.
+		 */
+		Type *ft, *via;
+		Node tmid, *mid;
+		int op;
+
+		if(nto == nil)
+			nto = talloc(&tres, n->ty, nil);
+		if(left->addable >= Rcant)
+			left = eacom(left, &tl, nto);
+		ft = left->ty;
+		if(tequal(ft, n->ty))
+			genmove(src, Mas, n->ty, left, nto);
+		else{
+			tmid.decl = nil;
+			mid = left;
+			via = castvia(ft, n->ty);
+			if(via != nil){
+				mid = talloc(&tmid, via, nil);
+				genrawop(src, castop(ft, via), left, nil, mid);
+				ft = via;
+			}
+			op = castop(ft, n->ty);
+			if(op == 0)
+				fatal("ecom: no conversion from %T to %T", ft, n->ty);
+			genrawop(src, op, mid, nil, nto);
+			tfree(&tmid);
+		}
+		tfree(&tl);
 		return nto;
 	}
 	case Oload: {

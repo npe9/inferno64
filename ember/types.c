@@ -780,6 +780,88 @@ modclass(void)
  * function ever to take a module value as a parameter ("roll(r Rand,
  * n int)") hit the fatal.
  */
+/*
+ * type conversions, "T(expr)" (check.c's Ocast): the Dis conversion
+ * instruction from one kind to another, limbo/ecom.c's casttab minus
+ * fixed-point; 0 where no conversion exists.  castvia() names the
+ * intermediate type for the pairs Dis has no single instruction for
+ * (byte<->string/real/big all go through int, limbo's precasttab).
+ * string<->array of byte are the only non-scalar pairs.
+ */
+int
+castop(Type *from, Type *to)
+{
+	switch(from->kind){
+	case Tint:
+		switch(to->kind){
+		case Tbyte:	return ICVTWB;
+		case Treal:	return ICVTWF;
+		case Tstring:	return ICVTWC;
+		case Tbig:	return ICVTWL;
+		}
+		break;
+	case Tbyte:
+		if(to->kind == Tint)
+			return ICVTBW;
+		break;
+	case Treal:
+		switch(to->kind){
+		case Tint:	return ICVTFW;
+		case Tbig:	return ICVTFL;
+		case Tstring:	return ICVTFC;
+		}
+		break;
+	case Tbig:
+		switch(to->kind){
+		case Tint:	return ICVTLW;
+		case Treal:	return ICVTLF;
+		case Tstring:	return ICVTLC;
+		}
+		break;
+	case Tstring:
+		switch(to->kind){
+		case Tint:	return ICVTCW;
+		case Tbig:	return ICVTCL;
+		case Treal:	return ICVTCF;
+		case Tarray:	return to->tof == tbyte ? ICVTCA : 0;
+		}
+		break;
+	case Tarray:
+		if(to->kind == Tstring && from->tof == tbyte)
+			return ICVTAC;
+		break;
+	}
+	return 0;
+}
+
+Type*
+castvia(Type *from, Type *to)
+{
+	if(from->kind == Tbyte && (to->kind == Tstring || to->kind == Treal || to->kind == Tbig))
+		return tint;
+	if(to->kind == Tbyte && (from->kind == Tstring || from->kind == Treal || from->kind == Tbig))
+		return tint;
+	return nil;
+}
+
+/*
+ * can a value of type from be converted to type to?
+ */
+int
+castable(Type *from, Type *to)
+{
+	Type *via;
+
+	if(from == nil || to == nil)
+		return 0;
+	if(tequal(from, to))
+		return 1;
+	if(castop(from, to) != 0)
+		return 1;
+	via = castvia(from, to);
+	return via != nil && castop(from, via) != 0 && castop(via, to) != 0;
+}
+
 void
 modrefable(Type *t)
 {

@@ -2477,6 +2477,31 @@ echk(Node *n)
 		isvalcall = 0;
 		recvdone = nil;
 
+		/*
+		 * "int(x)", "string(b)", "real(i)": a call whose callee is
+		 * a type name is a conversion, go-style -- rewrite it to
+		 * Ocast (left the operand, right the type node) and check
+		 * it there.  the builtin type names are ordinary Dtype
+		 * symbols (declbuiltin()), so the parser can't tell this
+		 * from a call and doesn't try to.
+		 */
+		if(n->left->op == Oname){
+			Decl *td;
+
+			td = lookup(n->left->sym);
+			if(td != nil && td->store == Dtype){
+				if(n->right == nil || n->right->op == Oseq){
+					nerror(n, "conversion to %s needs exactly one argument", n->left->sym->name);
+					n->ty = terror;
+					return n->ty;
+				}
+				n->op = Ocast;
+				a = n->left;
+				n->left = n->right;
+				n->right = a;
+				return echk(n);
+			}
+		}
 		/* callee: allow name, mod.fn, or builtins */
 		if(n->left->op == Oname && strcmp(n->left->sym->name, "len") == 0){
 			Node *a, *e;
@@ -3333,6 +3358,32 @@ echk(Node *n)
 		n->aux = nil;
 		n->ty = mktype(&n->src, Tref, ld->ty, nil);
 		sizetype(n->ty);	/* see synthfvwrap()'s valty comment: an unsized Tref here silently misled idoffsets() */
+		return n->ty;
+	}
+	case Ocast: {
+		/*
+		 * left the operand, right the target type node (consumed
+		 * here: cleared so sumark never sees a type in value
+		 * position, the Oarray/Ochan discipline).  the conversions
+		 * are limbo's (types.c's castop()/castvia()): the scalar
+		 * kinds among themselves, string<->array of byte, and a
+		 * same-type conversion as a plain copy.
+		 */
+		Type *tt;
+
+		t = stype(n->right);
+		n->right = nil;
+		tt = echk(n->left);
+		if(t == terror || tt == terror){
+			n->ty = terror;
+			return n->ty;
+		}
+		if(!castable(tt, t)){
+			nerror(n, "cannot convert %T to %T", tt, t);
+			n->ty = terror;
+			return n->ty;
+		}
+		n->ty = t;
 		return n->ty;
 	}
 	case Oload: {

@@ -562,6 +562,26 @@ poperand(void)
 		 * this shape anyway -- simplest to keep it self-contained.
 		 */
 		lexskip();
+		if(cur() == ']'){
+			/*
+			 * "[]byte(expr)": a conversion to an array type
+			 * (only array of byte, from a string, ever converts
+			 * -- check.c's Ocast case decides), the one
+			 * conversion whose target isn't a plain type name
+			 * and so can't take the "T(expr)" call shape
+			 * check.c's Ocall case rewrites.
+			 */
+			lexskip();
+			te = ptype();
+			pexpect('(', "conversion");
+			e = pexpr();
+			pexpect(')', "conversion");
+			n = mkn(Ocast, e, mkn(Otarray, nil, te));
+			n->right->src = te->src;
+			n->src.start = src.start;
+			n->src.stop = e->src.stop;
+			return n;
+		}
 		sz = pexpr();
 		pexpect(']', "array size");
 		te = ptype();
