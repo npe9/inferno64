@@ -166,7 +166,7 @@ port
 			len = sizeof kb;
 		validaddr((uintptr)buf, len, 0);
 		memmove(kb, buf, len);
-		kdebugputs(kb, len);
+		ospreyconsolewrite(kb, len);	/* the console task, or the port */
 		return len;
 	}
 	uintptr xsleep(va_list list)
