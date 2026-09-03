@@ -740,8 +740,40 @@ cooperative scheduler.  (An earlier reading of this as a scheduler
 deadlock was a mistake in the test, which read the announce conversation's
 own data directly and so waited for a datagram that had gone to a spawned
 conversation; the scheduler was never at fault.)  Both transports run
-5-of-5 across repeated boots.  The osprey-interface medium and a
-two-machine wire test are what remain of item 7a.
+5-of-5 across repeated boots.
+.PP
+Two things loopback hid, that the next medium needs, are now in.  First,
+.CW tsleep
+had no clock: the protocol timer kprocs
+.CW ( arp 's
+.CW rxmitproc ,
+.CW tcp 's
+.CW tcpack )
+parked for good, harmless only because loopback delivery is instant and
+lossless - a wire needs them for retransmission and address resolution.
+The osprey clock tick, which the server loop already takes off the
+device's semaphore every 10ms, now drives
+.CW sched_tick ,
+which readies any proc whose
+.CW tsleep
+deadline has passed;
+.CW tsleep
+is timed against it.  A proof kproc that sleeps 100ms and prints wakes
+five times on schedule, and the timer kprocs cycle instead of pinning at
+.CW state=3 .
+Second, the server loop calls
+.CW runkprocs
+on each tick, which runs every ready kproc and hands the processor back;
+because the loop's proc is requeued while it yields, an all-asleep moment
+is no longer the deadlock panic it was on loopback but an ordinary idle -
+the loop returns to its
+.CW oselect
+and waits there for the next tick, request, or (when a real medium is
+wired) packet.  That last step - a medium whose inbound is an
+.CW oselect
+arm the loop injects, rather than a kproc blocking in the kernel - is the
+osprey-interface medium, which with a two-machine wire test is what
+remains of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to

@@ -132,6 +132,8 @@ sliceof(int slot, uvlong id)
 extern int lfsreclaim(void);
 extern long pipfs_serve(uchar *msg, long n, uchar *rbuf, long rmax);	/* pipfsrv.c */
 extern void pipfs_tick(void);
+extern void sched_tick(void);		/* p9sched.c: advance the cooperative clock */
+extern void runkprocs(void);		/* p9sched.c: run ready kprocs, then return */
 static int reclaims, ticks;
 
 /*
@@ -180,9 +182,11 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	n = oselect(Armoff, 2);
 	if(n == 0){
 		ticks++;
+		sched_tick();		/* advance the cooperative scheduler's clock */
 		pipfs_tick();		/* leases are measured in these */
 		if(lfsreclaim())
 			reclaims++;
+		runkprocs();		/* let timer and medium kprocs run on this tick */
 		return 0;
 	}
 	if(n != 1)

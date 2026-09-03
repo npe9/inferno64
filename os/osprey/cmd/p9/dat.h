@@ -12,6 +12,7 @@ struct Proc {
 	int state;			/* Dead/Ready/Running/Wakeme */
 	Proc *rnext;			/* run-queue link */
 	Rendez *rendez;			/* the Rendez this proc is asleep on */
+	ulong twhen;			/* tsleep deadline in ticks, 0 if untimed */
 	void (*kpfun)(void*);		/* kproc entry */
 	void *kparg;
 	void *kstack;			/* base of this proc's stack */

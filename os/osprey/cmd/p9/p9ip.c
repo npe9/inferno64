@@ -40,6 +40,23 @@ extern long p9write(int, void*, long);
 extern void p9close(int);
 
 /*
+ * A tiny proof that timed sleep works off the osprey clock: a kproc that
+ * sleeps 100ms and prints, five times.  It parks in tsleep during p9ipup
+ * (no ticks yet) and wakes once the server loop starts delivering ticks,
+ * showing the deadline path and the tick-driven scheduler run.
+ */
+static void
+ticktest(void *)
+{
+	int i;
+
+	for(i = 0; i < 5; i++){
+		tsleep(&up->sleep, return0, nil, 100);
+		print("p9 sched: timed kproc woke after ~100ms, tick %d\n", i + 1);
+	}
+}
+
+/*
  * Bring the real Plan 9 IP stack up in this personality and prove it
  * runs.  ipdevtab is in the personality devtab and this is called from
  * the server once its name space is up.  The stack is the actual
@@ -71,6 +88,7 @@ p9ipup(void)
 	cclose(ic);
 	cclose(nc);
 	print("p9 ip: the Plan 9 IP stack mounted at /net (devip, tcp, udp, ipifc)\n");
+	kproc("ticktest", ticktest, nil);	/* proof the tick-driven timed sleep works */
 	poperror();
 
 	if(waserror()){

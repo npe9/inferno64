@@ -31,6 +31,9 @@ enum { KSTK = 32*1024 };	/* per-kproc stack */
 static Proc *runq;		/* ready queue head */
 static Proc *runqt;		/* ready queue tail */
 static int   p9pidalloc = 1;
+static ulong p9ticks;		/* 10ms clock ticks since boot, advanced by sched_tick */
+static Proc *allproc[64];	/* every proc, for timed wakeups and the deadlock dump */
+static int   nallproc;
 
 static void
 enqueue(Proc *p)
@@ -80,8 +83,13 @@ sched(void)
 	if(me->state == Running)
 		enqueue(me);
 	p = dequeue();
-	if(p == nil)
-		panic("p9sched: no runnable proc (deadlock)");
+	if(p == nil){
+		int i;
+		for(i = 0; i < nallproc; i++)
+			print("p9sched: proc %d %s state=%d twhen=%lud\n",
+				allproc[i]->pid, allproc[i]->text, allproc[i]->state, allproc[i]->twhen);
+		panic("p9sched: no runnable proc (deadlock), tick %lud", p9ticks);
+	}
 	if(setlabel(&me->sched))
 		return;			/* resumed later */
 	up = p;
@@ -118,17 +126,70 @@ wakeup(Rendez *r)
 }
 
 /*
- * Timed sleep.  There is no timer interrupt in the personality, so the
- * timeout never fires: a tsleep either returns at once (condition already
- * true) or parks until a wakeup on the same Rendez.  The protocol timer
- * kprocs tsleep on their own Rendez with a return0 condition and so park
- * here for good, which is harmless - loopback needs no retransmit timer.
+ * Timed sleep.  The osprey clock tick (serviced by the server loop, which
+ * calls sched_tick every 10ms) is the time base.  A tsleep returns when
+ * its condition comes true, when a wakeup arrives on its Rendez, or when
+ * its deadline passes - whichever first.  The protocol timer kprocs
+ * (arp's rxmitproc, tcp's tcpack) tsleep on their own Rendez with a
+ * return0 condition, so the deadline is what drives them, and they now
+ * cycle instead of parking for good - which a real wire needs for
+ * retransmission and address resolution.
  */
 void
 tsleep(Rendez *r, int (*f)(void*), void *arg, ulong ms)
 {
-	USED(ms);
-	ksleep(r, f, arg);
+	ulong wait;
+
+	if(f(arg))
+		return;
+	wait = (ms + 9) / 10;		/* ms -> ticks, at least one */
+	if(wait == 0)
+		wait = 1;
+	up->twhen = p9ticks + wait;
+	r->p = up;
+	up->rendez = r;
+	up->state = Wakeme;
+	while(!f(arg) && (long)(p9ticks - up->twhen) < 0)
+		sched();
+	up->rendez = nil;
+	up->twhen = 0;
+	up->state = Running;
+}
+
+/*
+ * A clock tick: advance the clock and ready any proc whose tsleep
+ * deadline has passed.  Called from the server loop each time the osprey
+ * device delivers a tick on its semaphore.
+ */
+void
+sched_tick(void)
+{
+	int i;
+	Proc *p;
+
+	p9ticks++;
+	for(i = 0; i < nallproc; i++){
+		p = allproc[i];
+		if(p->state == Wakeme && p->twhen != 0 && (long)(p9ticks - p->twhen) >= 0){
+			if(p->rendez != nil){
+				p->rendez->p = nil;
+				p->rendez = nil;
+			}
+			enqueue(p);	/* deadline passed: it re-checks and returns */
+		}
+	}
+}
+
+/*
+ * Run every kproc that is ready, then return to the caller (the server
+ * loop).  The caller is Running, so sched() requeues it; it is handed back
+ * the processor once the ready kprocs have each run until they sleep.
+ */
+void
+runkprocs(void)
+{
+	while(runq != nil)
+		sched();
 }
 
 static void
@@ -150,6 +211,8 @@ kproc(char *name, void (*f)(void*), void *arg)
 	p->kstack = malloc(KSTK);
 	if(p->kstack == nil)
 		panic("kproc: no stack");
+	if(nallproc < nelem(allproc))
+		allproc[nallproc++] = p;
 	p->kpfun = f;
 	p->kparg = arg;
 	p->pid = ++p9pidalloc;
@@ -195,6 +258,8 @@ schedinit(void)
 	if(done)
 		return;
 	done = 1;
+	if(nallproc < nelem(allproc))
+		allproc[nallproc++] = up;
 	up->state = Running;
 	up->pid = 1;
 	strncpy(up->text, "p9server", sizeof up->text - 1);
