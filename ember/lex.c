@@ -114,6 +114,7 @@ static	Keywd	tokwords[] =
 };
 
 static	int	lex(Tok*);
+int	_efgfmt(Fmt*);
 
 void
 lexinit(void)
@@ -152,6 +153,9 @@ lexinit(void)
 
 	fmtinstall('L', lineconv);
 	fmtinstall('O', opconv);
+	fmtinstall('e', _efgfmt);
+	fmtinstall('f', _efgfmt);
+	fmtinstall('g', _efgfmt);
 }
 
 static int
@@ -974,7 +978,15 @@ char*
 lextokname(int t)
 {
 	Keywd *k;
-	static char buf[32];
+	static char bufs[4][32];
+	static int nbuf;
+	char *buf;
+
+	/* rotate: a message naming two tokens ("expected ) in call, near
+	 * ` } `") formats both before printing, and one static buffer
+	 * made both print the second -- found by the self-hosted parser's
+	 * differential test */
+	buf = bufs[nbuf++ & 3];
 
 	for(k = keywords; k->name != nil; k++)
 		if(t == k->token)

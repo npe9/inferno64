@@ -110,7 +110,8 @@ fold at compile time.
 
 `x := e` declares a local from the expression's type. `var x T` and
 `var x = e` also declare, at top level or in a function; a `var`
-without initializer is zero. `const N = 4 * 2 + 1` declares a
+without initializer is zero each time the declaration executes (a
+`var` inside a loop starts fresh every iteration). `const N = 4 * 2 + 1` declares a
 constant; constant expressions of one type fold, and may refer to
 earlier constants and size arrays (`[N]int`).
 
@@ -319,10 +320,14 @@ the token. The compiler stops after twenty errors.
 
 `appl/cmd/ember/` holds the compiler being written in Ember itself,
 built with the C bootstrap by `mk install` there (into `dis/ember`).
-So far it is the lexer, `lex.e` with its interface `lex.ei`, and a
-dump driver `lexdump.e`. `ember -T file.e` prints the C lexer's
-token stream in the same format, and `tests/lexcmp.sh` (part of `mk
-test`) checks that the two agree on every source file in the tree.
+So far it is the lexer (`lex.e`, interface `lex.ei`) and the parser
+(`parse.e`, interface `parse.ei`, producing the same tree as
+`ember/parse.c`), with dump drivers `lexdump.e` and `astdump.e`.
+`ember -T file.e` prints the C lexer's token stream and `ember -A
+file.e` the C parser's tree in the same formats, and
+`tests/lexcmp.sh` and `tests/astcmp.sh` (both part of `mk test`)
+check that the Ember and C versions agree on every source file in
+the tree, diagnostics included.
 
 ## Tests
 

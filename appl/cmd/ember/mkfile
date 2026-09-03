@@ -9,6 +9,8 @@ IFLAGS=-I$ROOT/ember/module -I.
 TARG=\
 	lex.dis\
 	lexdump.dis\
+	parse.dis\
+	astdump.dis\
 
 all:V:	$TARG
 
@@ -16,6 +18,8 @@ all:V:	$TARG
 	$EMBER $IFLAGS -o $target $stem.e || (rm -f $target; exit 1)
 
 lexdump.dis:	lex.ei
+parse.dis:	lex.ei
+astdump.dis:	lex.ei parse.ei
 
 install:V:	all
 	mkdir -p $ROOT/dis/ember

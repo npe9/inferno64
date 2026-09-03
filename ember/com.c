@@ -3151,6 +3151,68 @@ indsstore(Src *src, Node *n)
 	tfree(fd);
 }
 
+/*
+ * store the zero value of type t into dst (an addressable node):
+ * numbers from a typed zero literal, pointer kinds from the nil
+ * global (a typed move, releasing whatever was there), struct and
+ * tuple values field by field through dst's address.
+ */
+static void
+zerocom(Src *src, Node *dst, Type *t)
+{
+	Node *z, *adr, *off, *addr, *ind;
+	Decl *id;
+
+	switch(t->kind){
+	case Tint:
+	case Tbyte:
+	case Tbig:
+		z = mkconst(src, 0);
+		z->ty = t;
+		sumark(z);
+		genmove(src, Mas, t, z, dst);
+		return;
+	case Treal:
+		z = mkrconst(src, 0.0);
+		z->ty = treal;
+		sumark(z);
+		genmove(src, Mas, t, z, dst);
+		return;
+	case Tadt:
+	case Tadtpick:
+	case Ttuple:
+		for(id = t->ids; id != nil; id = id->next){
+			if(id->store != Dfield)
+				continue;
+			adr = mkn(Oadr, dupn(dst), nil);
+			adr->src = *src;
+			adr->ty = t;
+			off = mkconst(src, id->offset);
+			off->ty = tint;
+			addr = mkn(Oadd, adr, off);
+			addr->src = *src;
+			addr->ty = tint;
+			ind = mkn(Oind, addr, nil);
+			ind->src = *src;
+			ind->ty = id->ty;
+			sumark(ind);
+			zerocom(src, ind, id->ty);
+		}
+		return;
+	default:
+		if(!tattr[t->kind].isptr)
+			return;
+		z = mkn(Oname, nil, nil);
+		z->src = *src;
+		z->decl = nildecl;
+		z->ty = t;
+		nildecl->refs++;
+		sumark(z);
+		genmove(src, Mas, t, z, dst);
+		return;
+	}
+}
+
 static void
 scom(Node *n)
 {
@@ -3364,10 +3426,30 @@ scom(Node *n)
 		case Ovardecl: {
 			Node *names, *id;
 
-			/* no initializer: the frame slot already reads as
-			 * the zero value (IFRAME clears the new frame). */
-			if(n->aux == nil)
+			if(n->aux == nil){
+				/*
+				 * no initializer: the variable must still read
+				 * as zero EVERY time the declaration executes,
+				 * not just the first -- IFRAME clears the frame
+				 * once at entry, and "var stmts ref Node" inside
+				 * a loop kept the previous iteration's value (the
+				 * self-hosted parser's per-case statement lists
+				 * accumulated across cases).  the store also
+				 * releases the previous value's reference.
+				 */
+				for(names = n->left; names != nil; names = names->right){
+					id = names;
+					if(names->op == Oseq)
+						id = names->left;
+					pushblock();
+					sumark(id);
+					zerocom(&id->src, id, id->ty);
+					popblock();
+					if(names->op != Oseq)
+						break;
+				}
 				return;
+			}
 			for(names = n->left; names != nil; names = names->right){
 				id = names;
 				if(names->op == Oseq)

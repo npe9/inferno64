@@ -12,7 +12,7 @@
 cd "$(dirname "$0")/.."
 ROOT=$(cd .. && pwd)
 EMBER=./o.out
-IFLAGS="-I ./module -I ./tests/type"
+IFLAGS="-I ./module -I ./tests/type -I ../appl/cmd/ember"
 EMU=$(ls "$ROOT"/*/*/bin/emu-g 2>/dev/null | head -1)
 if [ -z "$EMU" ]; then
 	echo "runtime.sh: no emu-g built (mk install in emu/), skipping" >&2
@@ -29,6 +29,8 @@ for lib in rand hash string bufio; do
 			|| echo "runtime.sh: cannot build $lib.dis" >&2
 	fi
 done
+# the self-hosted compiler's modules (a test imports the lexer)
+(cd "$ROOT/appl/cmd/ember" && mk install >/dev/null 2>&1) || echo "runtime.sh: cannot build appl/cmd/ember" >&2
 mkdir -p "$ROOT/tmp"
 $EMBER $IFLAGS -o "$ROOT/tmp/libpoint.dis" tests/type/libpoint.e || echo "runtime.sh: cannot build libpoint.dis" >&2
 

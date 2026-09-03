@@ -221,7 +221,12 @@ disdatum(long offset, Node *n)
 		disbig(offset, n->val);
 		break;
 	case Tstring:
-		disstring(offset, n->decl->sym);
+		/* a string literal's own sym holds its text; the pooled
+		 * global (n->decl, from sumark's globalsconst()) exists
+		 * only for literals reached through code, not for a
+		 * module variable's initializer ("var name = \"x\"" crashed
+		 * here, found by the self-hosted parser's own globals) */
+		disstring(offset, n->decl != nil ? n->decl->sym : n->sym);
 		break;
 	case Treal:
 		disreal(offset, n->rval);

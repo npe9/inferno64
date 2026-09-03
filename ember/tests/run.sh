@@ -9,7 +9,7 @@
 
 cd "$(dirname "$0")/.."
 EMBER=./o.out
-IFLAGS="-I ./module -I ./tests/type"
+IFLAGS="-I ./module -I ./tests/type -I ../appl/cmd/ember"
 CMP=/usr/bin/cmp
 fail=0
 pass=0

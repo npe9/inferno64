@@ -13,6 +13,7 @@ OFILES=	ast.$O\
 	optab.$O\
 	parse.$O\
 	types.$O\
+	fltfmt.$O\
 
 HFILES=	ember.h\
 	$ROOT/include/isa.h\
@@ -27,6 +28,11 @@ BIN=$ROOT/$OBJDIR/bin
 <$ROOT/mkfiles/mkone-$SHELLTYPE
 
 CFLAGS='-DINCPATH="'$ROOT/ember/module'"' $CFLAGS
+
+# lib9's float formatter (%e %f %g), which lib9's own build leaves out;
+# lexinit() installs it so diagnostics and -A can print reals
+fltfmt.$O:	$ROOT/lib9/fltfmt.c
+	$CC $CFLAGS -I$ROOT/lib9 -c -o fltfmt.$O $ROOT/lib9/fltfmt.c
 
 test:V:	$O.out
 	./tests/run.sh

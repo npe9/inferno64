@@ -5105,6 +5105,11 @@ vardec(Node *n)
 	t = nil;
 	if(n->right != nil)
 		t = stype(n->right);
+		/* size it: a declared global type (ref lex.Tok) was left
+		 * unsized -- zero width, overlapping the next global, whose
+		 * int stores then hit a pointer-marked slot (the self-hosted
+		 * parser's look-ahead globals).  locals were already sized. */
+		sizetype(t);
 	if(n->aux != nil){
 		Type *it;
 
