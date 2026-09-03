@@ -257,6 +257,22 @@ disdatum(long offset, Node *n)
 		disint(offset, c->iwild ? c->iwild->pc : -1);
 		break;
 	}
+	case Tgoto: {
+		/* alt's arm table: count, one pc per arm, then the default's */
+		Case *c;
+		int i;
+
+		c = n->ty->cse;
+		disint(offset, n->ty->size/IBY2WD-1);
+		offset += IBY2WD;
+		for(i = 0; i < c->nlab; i++){
+			disint(offset, c->labs[i].inst->pc);
+			offset += IBY2WD;
+		}
+		if(c->iwild != nil)
+			disint(offset, c->iwild->pc);
+		break;
+	}
 	case Tcasec: {
 		/*
 		 * string labels: (lo, hi-or-nil, pc) per entry, the

@@ -32,6 +32,7 @@ static	Node	*pblock(void);
 static	Node	*pexpr(void);
 static	Node	*pexprlist(void);
 static	Node	*pstmt(void);
+static	Node	*palt(void);
 static	Node	*ptype(void);
 static	Node	*punary(void);
 
@@ -1087,6 +1088,49 @@ ppattern(void)
 /*
  * "match" expr "{" { "case" patterns ":" stmts | "default" ":" stmts } "}"
  */
+/*
+ * alt { case v := <-c: ... case c <- e: ... case <-c: ... default: ... }
+ * -- limbo's alt in match's clothing.  each guard is one simple
+ * statement (psimple(): a ":=" or "=" receive, a bare receive, or a
+ * send); check.c's altcheck() insists on exactly those shapes.
+ */
+static Node*
+palt(void)
+{
+	Node *cases, *guard, *stmts, *c, *n;
+	Src src, csrc;
+
+	src = pexpect(Kalt, "alt statement");
+	pexpect('{', "alt statement");
+	cases = nil;
+	while(cur() != '}' && cur() != Beof){
+		if(paccept(';'))
+			continue;
+		csrc = tk()->src;
+		guard = nil;
+		if(paccept(Kdefault))
+			;
+		else{
+			pexpect(Kcase, "alt case");
+			guard = psimple();
+		}
+		pexpect(':', "alt case");
+		stmts = nil;
+		while(cur() != Kcase && cur() != Kdefault && cur() != '}' && cur() != Beof){
+			if(paccept(';'))
+				continue;
+			stmts = mkseq(stmts, pstmt());
+		}
+		c = mkn(Ocase, guard, rotater(stmts));
+		c->src.start = csrc.start;
+		cases = mkseq(cases, c);
+	}
+	n = mkn(Oalt, nil, rotater(cases));
+	n->src.start = src.start;
+	n->src.stop = pexpect('}', "alt statement").stop;
+	return n;
+}
+
 static Node*
 pmatch(void)
 {
@@ -1164,6 +1208,8 @@ pstmt(void)
 		return pfor();
 	case Kmatch:
 		return pmatch();
+	case Kalt:
+		return palt();
 	case Kbreak:
 		lexskip();
 		n = mkn(Obreak, nil, nil);

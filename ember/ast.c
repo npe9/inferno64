@@ -36,6 +36,7 @@ char *opname[] =
 	/* Ofor */	"for",
 	/* Oforctl */	"forctl",
 	/* Omatch */	"match",
+	/* Oalt */	"alt",
 	/* Ocase */	"case",
 	/* Opat */	"pat",
 	/* Obreak */	"break",

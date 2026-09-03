@@ -39,6 +39,7 @@ static	int	tinstdepth;
 static	void	fnchk(Decl*);
 static	void	stchk(Node*);
 static	void	matchcheck(Node*);
+static	void	altcheck(Node*);
 static	Type	*echk(Node*);
 static	Type	*stype(Node*);
 static	Type	*compositefields(Node*);
@@ -3704,6 +3705,107 @@ matchlabels(Node *arms, Type *ctype, int nlab)
 	return c;
 }
 
+/*
+ * alt: every arm's guard is a send ("c <- e"), a bare receive
+ * ("<-c"), or a receive into a fresh (":=") or existing ("=")
+ * variable; at most one default (which makes it non-blocking).  each
+ * arm's aux is set to its communication node (the Osnd or Orcv) for
+ * com.c's altcom(), which builds the Dis alt table from it; the
+ * guard's own statement shape (Odas/Oas) only says where a received
+ * value lands.  n->ty becomes the Talt whose Case counts the arms,
+ * sends first (the table's own layout, and the VM's arm numbering).
+ */
+static void
+altcheck(Node *n)
+{
+	Node *p, *arm, *g, *comm, *wild;
+	Case *c;
+	int nsnd, nrcv, ok;
+
+	ok = 1;
+	nsnd = nrcv = 0;
+	wild = nil;
+	for(p = n->right; p != nil; ){
+		arm = p;
+		if(p->op == Oseq){
+			arm = p->left;
+			p = p->right;
+		}else
+			p = nil;
+		g = arm->left;
+		arm->aux = nil;
+		if(g == nil){
+			if(wild != nil)
+				nerror(arm, "alt has more than one default");
+			wild = arm;
+			pushscope();
+			stchk(arm->right);
+			popscope();
+			continue;
+		}
+		pushscope();
+		comm = nil;
+		switch(g->op){
+		case Osnd:
+			echk(g);
+			if(g->ty != terror){
+				comm = g;
+				nsnd++;
+			}else
+				ok = 0;
+			break;
+		case Oexpr:
+			if(g->left->op != Orcv)
+				goto bad;
+			echk(g->left);
+			if(g->left->ty != terror){
+				comm = g->left;
+				nrcv++;
+			}else
+				ok = 0;
+			break;
+		case Odas:
+			if(g->left->op != Oname || g->right->op != Orcv)
+				goto bad;
+			daschk(g);
+			if(g->ty != terror && g->right->ty != terror && g->left->decl != nil){
+				comm = g->right;
+				nrcv++;
+			}else
+				ok = 0;
+			break;
+		case Oas:
+			if(g->left->op == Oseq || g->right->op != Orcv)
+				goto bad;
+			stchk(g);
+			if(g->left->ty != terror && g->right->ty != terror){
+				comm = g->right;
+				nrcv++;
+			}else
+				ok = 0;
+			break;
+		default:
+		bad:
+			nerror(g, "alt case must be a send, a receive, or a receive into a variable");
+			ok = 0;
+			break;
+		}
+		arm->aux = comm;
+		stchk(arm->right);
+		popscope();
+	}
+	if(!ok)
+		return;
+	c = allocmem(sizeof *c);
+	memset(c, 0, sizeof *c);
+	c->nlab = nsnd + nrcv;
+	c->nsnd = nsnd;
+	c->wild = wild;
+	c->labs = allocmem((c->nlab + 1) * sizeof(Label));
+	memset(c->labs, 0, (c->nlab + 1) * sizeof(Label));
+	n->ty = mktalt(c);
+}
+
 static void
 matchcheck(Node *n)
 {
@@ -4196,6 +4298,9 @@ stchk(Node *n)
 			return;
 		case Omatch:
 			matchcheck(n);
+			return;
+		case Oalt:
+			altcheck(n);
 			return;
 		case Ofor:
 			pushscope();

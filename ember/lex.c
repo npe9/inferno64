@@ -51,6 +51,7 @@ static	int	nlook;
 
 static	Keywd	keywords[] =
 {
+	"alt",		Kalt,
 	"break",	Kbreak,
 	"case",		Kcase,
 	"chan",		Kchan,

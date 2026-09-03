@@ -566,6 +566,7 @@ enum
 	Klist,
 	Kload,
 	Kmatch,
+	Kalt,
 	Kmodule,
 	Knil,
 	Kpick,
@@ -624,6 +625,7 @@ enum
 	Ofor,				/* left cond or nil, right body, aux Oforctl or nil */
 	Oforctl,			/* left init, right post */
 	Omatch,				/* left subject, right Oseq of Ocase */
+	Oalt,				/* alt statement: right Oseq of Ocase (left guard: Odas/Oas/Oexpr(Orcv)/Osnd, or nil for default; aux the comm node after check), ty Talt */
 	Ocase,				/* left pattern or nil (default), right stmts */
 	Opat,				/* left tag name, right binders Oseq or nil */
 	Obreak,				/* left label or nil */

@@ -54,6 +54,7 @@ static void	scom(Node*);
 static void	callcom(Src*, int, Node*, Node*);
 static void	fpcall(Src*, int, Node*, Node*);
 static void	casecom(Node*);
+static void	altcom(Node*);
 static Inst	*bcom(Node*, int, Inst*);
 static void	fncom(Decl*);
 static void	autoload(Decl*);
@@ -2620,6 +2621,206 @@ findlab(Type *ty, Node *v, Label *labs, int nlab)
 }
 
 /*
+ * alt: a port of limbo/com.c's altcom() to the AST altcheck() leaves.
+ * the Dis alt table (libinterp's Alt: nsend, nrecv, then one (channel,
+ * data pointer) pair per arm, sends first) is built in a frame temp of
+ * the statement's own Talt type; each channel is stored with a real
+ * reference into a slot the Talt's descriptor (types.c) marks (see
+ * the note at the store for why never a borrowed word); each data
+ * pointer is an ILEA of where the value lives -- the send operand (or
+ * a temp holding it), the receiving variable, or a scratch temp for a
+ * bare receive.  IALT (INBALT with a default) picks an arm: the VM
+ * does the communication itself and leaves the arm's number in
+ * `which`, so no guard code runs afterwards -- an IGOTO through a
+ * Tgoto table of arm entry points (the same shape casecom's ICASE
+ * table takes, minus ranges) jumps straight to the body.
+ */
+static void
+altcom(Node *nalt)
+{
+	Case *c;
+	Decl *d;
+	Type *talt;
+	Node *n, *arm, *g, *comm, *chan, *target, *v, *nsndc, *nrcvc;
+	Node tab, which, slot, off, adr, add, nto, *tmps;
+	Inst *me, *j, *jmps, *wild;
+	Label *labs, *lab;
+	char buf[32];
+	int i, is, ir, nlab, nsnd, altop;
+
+	talt = nalt->ty;
+	c = talt->cse;
+	nlab = c->nlab;
+	nsnd = c->nsnd;
+	labs = c->labs;
+	tmps = allocmem((nlab + 1) * sizeof *tmps);
+	for(i = 0; i <= nlab; i++)
+		tmps[i].decl = nil;
+
+	talloc(&which, tint, nil);
+	talloc(&tab, talt, nil);
+
+	/* slot: the table word at offset off.val, Oind(Oadd(Oadr(tab), off)) */
+	off = znode;
+	off.op = Oconst;
+	off.ty = tint;
+	off.addable = Rconst;
+	adr = znode;
+	adr.op = Oadr;
+	adr.left = &tab;
+	adr.ty = tint;
+	add = znode;
+	add.op = Oadd;
+	add.left = &adr;
+	add.right = &off;
+	add.ty = tint;
+	slot = znode;
+	slot.op = Oind;
+	slot.left = &add;
+	slot.ty = tint;
+	slot.src = nalt->src;
+	sumark(&slot);
+
+	is = 2*IBY2WD;
+	ir = is + nsnd*2*IBY2WD;
+	i = 0;
+	for(n = nalt->right; n != nil; ){
+		arm = n;
+		if(n->op == Oseq){
+			arm = n->left;
+			n = n->right;
+		}else
+			n = nil;
+		comm = arm->aux;
+		if(comm == nil)
+			continue;
+		g = arm->left;
+		if(comm->op == Osnd){
+			off.val = is;
+			is += 2*IBY2WD;
+		}else{
+			off.val = ir;
+			ir += 2*IBY2WD;
+		}
+		lab = &labs[(off.val - 2*IBY2WD) / (2*IBY2WD)];
+
+		/*
+		 * the channel: always stored with a real reference into a
+		 * descriptor-marked slot.  limbo copies an already-
+		 * addressable channel as a borrowed bare word (an unmarked
+		 * slot) and only marks slots holding computed channels --
+		 * but a later alt in the same function can reuse the same
+		 * table temp (talloc() hands out any free temp of an equal
+		 * type, and every Talt is equal to every other), and the
+		 * frame descriptor is the union of every temp's marks: a
+		 * borrowed pointer then sat in a slot a previous alt had
+		 * marked, and frame teardown released a reference nobody
+		 * owned ("dereference of nil" at function exit, only when
+		 * an alt with a computed channel preceded any other alt).
+		 * uniform marking makes the table's own contents match its
+		 * descriptor whichever alt filled it last.
+		 */
+		chan = comm->left;
+		sumark(chan);
+		slot.ty = chan->ty;
+		ecom(&chan->src, &slot, chan);
+		slot.ty = tint;
+		lab->isptr = 1;
+		off.val += IBY2WD;
+
+		/* the data pointer */
+		if(comm->op == Osnd){
+			v = comm->right;
+			sumark(v);
+			if(v->addable < Rcant)
+				target = v;
+			else
+				target = ecom(&v->src, talloc(&tmps[i], v->ty, nil), v);
+		}else{
+			switch(g->op){
+			case Odas:
+			case Oas:
+				target = g->left;
+				sumark(target);
+				if(target->addable >= Rcant)
+					fatal("altcom: receive target not addressable");
+				break;
+			default:
+				target = talloc(&tmps[i], comm->ty, nil);
+				break;
+			}
+		}
+		genrawop(&comm->src, ILEA, target, nil, &slot);
+		i++;
+	}
+
+	/* header: nsend, nrecv */
+	nsndc = mkconst(&nalt->src, nsnd);
+	nsndc->ty = tint;
+	nrcvc = mkconst(&nalt->src, nlab - nsnd);
+	nrcvc->ty = tint;
+	off.val = 0;
+	genmove(&nalt->src, Mas, tint, sumark(nsndc), &slot);
+	off.val = IBY2WD;
+	genmove(&nalt->src, Mas, tint, sumark(nrcvc), &slot);
+
+	altop = c->wild != nil ? INBALT : IALT;
+	genrawop(&nalt->src, altop, &tab, nil, &which);
+
+	/* the goto table: one entry per arm, sends first, then default */
+	seprint(buf, buf+sizeof(buf), ".g%d", nlabel++);
+	d = mkdecl(&nalt->src, Dglobal, mktype(&nalt->src, Tgoto, nil, nil));
+	d->sym = enter(buf, 0);
+	d->ty->cse = c;
+	nto = znode;
+	nto.op = Oname;
+	nto.addable = Rmreg;
+	nto.ty = d->ty;
+	nto.decl = d;
+	nto.src = nalt->src;
+	d->init = dupn(&nto);
+	me = genrawop(&nalt->src, IGOTO, &which, nil, &nto);
+	me->d.reg = IBY2WD;	/* skip the count word */
+	tfree(&tab);
+	tfree(&which);
+
+	jmps = nil;
+	wild = nil;
+	is = 0;
+	ir = nsnd;
+	i = 0;
+	for(n = nalt->right; n != nil; ){
+		arm = n;
+		if(n->op == Oseq){
+			arm = n->left;
+			n = n->right;
+		}else
+			n = nil;
+		j = nextinst();
+		comm = arm->aux;
+		if(comm == nil)
+			wild = j;
+		else{
+			if(comm->op == Osnd)
+				labs[is++].inst = j;
+			else
+				labs[ir++].inst = j;
+			tfree(&tmps[i]);
+			i++;
+		}
+		scom(arm->right);
+		j = genrawop(&lastinst->src, IJMP, nil, nil, nil);
+		j->branch = jmps;
+		jmps = j;
+	}
+	patch(jmps, nextinst());
+	c->iwild = wild;
+	sizetype(d->ty);
+	appglobal(d);
+	free(tmps);
+}
+
+/*
  * lower int match to ICASE + per-arm bodies (limbo casecom, ember AST).
  */
 static void
@@ -3289,6 +3490,22 @@ scom(Node *n)
 			conts[labdep] = nil;
 			labdep++;
 			casecom(n);
+			labdep--;
+			patch(breaks[labdep], nextinst());
+			popblock();
+			return;
+		case Oalt:
+			if(n->ty == nil || n->ty->cse == nil){
+				error(n->src.start, "alt not typed");
+				return;
+			}
+			pushblock();
+			if(labdep >= MaxLab)
+				fatal("label stack overflow");
+			breaks[labdep] = nil;
+			conts[labdep] = nil;
+			labdep++;
+			altcom(n);
 			labdep--;
 			patch(breaks[labdep], nextinst());
 			popblock();

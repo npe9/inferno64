@@ -244,8 +244,13 @@ mktalt(Case *c)
 
 	t = mktype(&nosrc, Talt, nil, nil);
 	t->cse = c;
-	t->ok = OKmask;
+	/* size BEFORE marking it fully checked: sizetype() returns at
+	 * once on a type whose OKsized bit is already set, and OKmask
+	 * sets every bit -- the original order left the table unsized
+	 * ("talloc: unsized type alt channels") on the first alt ever
+	 * compiled. */
 	sizetype(t);
+	t->ok = OKmask;
 	return t;
 }
 
