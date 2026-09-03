@@ -223,6 +223,7 @@ struct Decl
 	char	cycle;			/* can create a cycle */
 	char	cyc;			/* so labelled in source */
 	char	implicit;		/* implicit first argument in an adt? */
+	char	inl;			/* a plain function with its body in an interface: instantiated by each importer like a template with no type arguments */
 
 	Decl	*iface;			/* used external declarations in a module */
 

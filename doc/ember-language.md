@@ -364,17 +364,22 @@ A generic struct or pick declared in an interface is a template the
 same way: `gen.Pair[int, string]{a: 1, b: "one"}`, `var r
 gen.Pair[string, int]`, `case gen.Opt[int].Some(v):`, and so is a
 method of such a type (`func (m ref Map[K, V]) put(k K, v V) {...}`),
-instantiated with the type: `m.put(k, v)`. A method with type
-parameters of its own cannot be declared anywhere. `tests/type/libgen.ei`
-and `usegen.e` show the pattern.
+instantiated with the type: `m.put(k, v)`. A plain function with
+its body in an interface is inline the same way: each importer gets
+its own copy, called or taken as a value (`maps.strhash`), and no
+link entry exists for it. A method with type parameters of its own
+cannot be declared anywhere, and only a generic type's method may
+carry a body in an interface. `tests/type/libgen.ei` and `usegen.e`
+show the pattern.
 A template call does not reference the module, so an interface made
 only of templates is a header-only library needing no `.dis` at
 all: `module/lists.ei` (`lists.mapl`, `lists.filter`, `lists.foldl`,
 `lists.sorta`, ...) is one, used by `tests/type/uselists.e`, and
 `module/maps.ei` is a generic hash map (`maps.newmap[string, int](n,
 hash, eq)`, then `m.put`, `m.find`, `m.del`, `m.keys`) whose
-key hashing and equality are closures the importer supplies
-(`tests/type/usemaps.e`).
+key hashing and equality are closures the importer supplies, with
+`maps.strhash`, `maps.streq`, `maps.inthash` and `maps.inteq`
+provided inline (`tests/type/usemaps.e`).
 When the module's own interface is found, its functions and methods
 are checked the same way: one the module does not define, or defines
 with a different signature, is a compile error (generic functions

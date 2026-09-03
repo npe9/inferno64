@@ -702,6 +702,7 @@ synthfvwrap(Src *src, Decl *fn)
 
 	/* fn(arg1, arg2, ...) -- every wrapper param but env, in order */
 	call = mkname(src, fn->sym);
+	call->decl = fn;	/* by decl, not name: an instance's name is not declared */
 	args = nil;
 	for(arg = wt->ids->next; arg != nil; arg = arg->next)
 		args = mkseq(args, mkname(src, arg->sym));
@@ -2129,7 +2130,7 @@ modcallee(Node *dot)
 	if(alias == nil || alias->ty == nil || alias->ty->kind != Tmodule || !ismodvar(alias))
 		return nil;
 	id = modmember(alias->ty, dot->sym);
-	if(id == nil || id->store != Dfn || id->tparams != nil)
+	if(id == nil || id->store != Dfn || id->tparams != nil || id->inl)
 		return nil;
 	return id;
 }
@@ -2149,7 +2150,7 @@ modtemplate(Node *dot)
 	if(alias == nil || alias->ty == nil || alias->ty->kind != Tmodule || !ismodvar(alias))
 		return nil;
 	id = modmember(alias->ty, dot->sym);
-	if(id == nil || id->store != Dfn || id->tparams == nil)
+	if(id == nil || id->store != Dfn || (id->tparams == nil && !id->inl))
 		return nil;
 	return id;
 }
@@ -2797,7 +2798,16 @@ echk1(Node *n)
 		n->ty = tany;
 		return n->ty;
 	case Oname:
-		d = lookup(n->sym);
+		/*
+		 * a name already resolved to a function instance (an inline
+		 * function from an interface, echk's Odot case) keeps it: the
+		 * instance's own name is not declared
+		 */
+		d = nil;
+		if(n->decl != nil && n->decl->store == Dfn && n->decl->tparams == nil && n->decl->init != nil && n->decl->init->op == Ofndecl)
+			d = n->decl;
+		if(d == nil)
+			d = lookup(n->sym);
 		if(d == nil){
 			nerror(n, "%s is not declared", n->sym->name);
 			n->ty = terror;
@@ -2953,6 +2963,26 @@ echk1(Node *n)
 					 */
 					Decl *wd;
 
+					if(id->inl){
+						/*
+						 * an inline function from the interface as a
+						 * value: this module's own instance, then a
+						 * local function value (the Oname/Dfn case)
+						 */
+						Decl *fnd;
+
+						fnd = tinstantiatefncore(&n->src, id, nil, 0, nil);
+						if(fnd == nil || synthfvwrap(&n->src, fnd) == nil){
+							n->ty = terror;
+							return n->ty;
+						}
+						n->op = Oname;
+						n->left = n->right = nil;
+						n->decl = fnd;
+						n->sym = fnd->sym;
+						n->ty = fnd->valty;
+						return n->ty;
+					}
 					wd = synthimportwrap(&n->src, d, id);
 					if(wd == nil){
 						n->ty = terror;
@@ -3373,7 +3403,8 @@ echk1(Node *n)
 			n->left->decl = fnd;
 			n->left->ty = fnd->ty;
 			ft = fnd->ty;
-		}else if(n->left->op == Oname && lookup(n->left->sym) != nil && lookup(n->left->sym)->store == Dfn){
+		}else if(n->left->op == Oname && (n->left->decl != nil ? n->left->decl : lookup(n->left->sym)) != nil
+		&& (n->left->decl != nil ? n->left->decl : lookup(n->left->sym))->store == Dfn){
 			/*
 			 * a literal "f(...)": resolved directly, *without*
 			 * going through echk()'s own Oname case -- that case
@@ -3395,7 +3426,17 @@ echk1(Node *n)
 			 */
 			Decl *fnd;
 
-			fnd = lookup(n->left->sym);
+			fnd = n->left->decl;
+			if(fnd == nil)
+				fnd = lookup(n->left->sym);
+			if(fnd->inl){
+				/* an inline function from an interface: this module's own copy */
+				fnd = tinstantiatefncore(&n->src, fnd, nil, 0, nil);
+				if(fnd == nil){
+					n->ty = terror;
+					return n->ty;
+				}
+			}
 			fnd->refs++;
 			{
 				Decl *alias;
@@ -6146,7 +6187,7 @@ check(Node *tree)
 	if(own != nil){
 		modrefable(own->ty);
 	for(id = own->ty->ids; id != nil; id = id->next){
-		if(id->store != Dfn || id->tparams != nil)
+		if(id->store != Dfn || id->tparams != nil || id->inl)
 			continue;
 		if(id->dot != nil && id->dot != own){	/* a method: dot is its struct's Dtype */
 			Decl *td;

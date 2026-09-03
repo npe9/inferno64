@@ -247,6 +247,7 @@ type Decl struct {
 	cycle int
 	cyc int
 	implicit int
+	inl int
 	iface ref Decl
 	locals ref Decl
 	link ref Decl

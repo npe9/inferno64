@@ -1,0 +1,1 @@
+./tests/typeerr/inlmeth.ei:7: method get: a body in an interface is only for a generic type's method

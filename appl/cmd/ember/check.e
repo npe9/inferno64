@@ -568,6 +568,7 @@ func synthfvwrap(line int, pos int, fn ref types.Decl) ref types.Decl {
 	wd.dot = impdecl
 	wd.offset = types.idoffsets(wt.ids, types.MaxTemp, types.IBY2WD)
 	call := mkname(line, pos, fn.sym)
+	call.decl = fn	// by decl, not name: an instance's name is not declared
 	var args ref types.Node
 	for arg := wt.ids.next; arg != nil; arg = arg.next {
 		args = types.mkseq(args, mkname(line, pos, arg.sym))
@@ -1310,7 +1311,7 @@ func modcallee(dot ref types.Node) ref types.Decl {
 		return nil
 	}
 	id := modmember(alias.ty, dot.sym)
-	if id == nil || id.store != types.Dfn || id.tparams != nil {
+	if id == nil || id.store != types.Dfn || id.tparams != nil || id.inl != 0 {
 		return nil
 	}
 	return id
@@ -1326,7 +1327,7 @@ func modtemplate(dot ref types.Node) ref types.Decl {
 		return nil
 	}
 	id := modmember(alias.ty, dot.sym)
-	if id == nil || id.store != types.Dfn || id.tparams == nil {
+	if id == nil || id.store != types.Dfn || (id.tparams == nil && id.inl == 0) {
 		return nil
 	}
 	return id
@@ -1585,7 +1586,14 @@ func echk1(n ref types.Node) ref types.Type {
 		n.ty = tany
 		return n.ty
 	case types.Oname:
-		d := lookup(n.sym)
+		// a name already resolved to a function instance keeps it (check.c)
+		var d ref types.Decl
+		if n.decl != nil && n.decl.store == types.Dfn && n.decl.tparams == nil && n.decl.init != nil && n.decl.init.op == types.Ofndecl {
+			d = n.decl
+		}
+		if d == nil {
+			d = lookup(n.sym)
+		}
 		if d == nil {
 			nerror(n, sys.sprint("%s is not declared", n.sym))
 			n.ty = terror
@@ -2022,6 +2030,23 @@ func chkdot(n ref types.Node) ref types.Type {
 				n.ty = terror
 				return n.ty
 			case types.Dfn:
+				if id.inl != 0 {
+					// an inline function from the interface as a value:
+					// this module's own instance, then a local function
+					// value (check.c)
+					fnd := tinstantiatefncore(n.line, n.pos, id, nil, 0, nil)
+					if fnd == nil || synthfvwrap(n.line, n.pos, fnd) == nil {
+						n.ty = terror
+						return n.ty
+					}
+					n.op = types.Oname
+					n.left = nil
+					n.right = nil
+					n.decl = fnd
+					n.sym = fnd.sym
+					n.ty = fnd.valty
+					return n.ty
+				}
 				wd := synthimportwrap(n.line, n.pos, d, id)
 				if wd == nil {
 					n.ty = terror
@@ -2294,6 +2319,14 @@ func chkcall(n ref types.Node) ref types.Type {
 		n.left = mkidname(fnd.line, fnd.pos, fnd)
 		ft = fnd.ty
 	} else if n.left.op == types.Oname && ld != nil && ld.store == types.Dfn {
+		if ld.inl != 0 {
+			// an inline function from an interface: this module's own copy
+			ld = tinstantiatefncore(n.line, n.pos, ld, nil, 0, nil)
+			if ld == nil {
+				n.ty = terror
+				return n.ty
+			}
+		}
 		ld.refs++
 		var alias ref types.Decl
 		if ld.dot != nil && ld.dot != impdecl && ld.dot.ty != nil && ld.dot.ty.kind == types.Tmodule {
@@ -3805,7 +3838,7 @@ func check(tree ref types.Node, file string) int {
 		types.modrefable(own.ty)
 		// and its functions and methods (check.c)
 		for id := own.ty.ids; id != nil; id = id.next {
-			if id.store != types.Dfn || id.tparams != nil {
+			if id.store != types.Dfn || id.tparams != nil || id.inl != 0 {
 				continue
 			}
 			if id.dot != nil && id.dot != own {

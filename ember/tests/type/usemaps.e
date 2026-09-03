@@ -9,28 +9,8 @@ import lists "lists"
 // generic struct (Entry) and a struct of closures (Map), instantiated
 // here for string and int keys with its methods; no maps.dis is loaded
 
-func strhash(s string) int {
-	h := 0
-	for i := 0; i < len(s); i++ {
-		h = h * 31 + s[i]
-	}
-	return h
-}
-
-func streq(a string, b string) int {
-	return a == b
-}
-
-func inthash(x int) int {
-	return x * 40503
-}
-
-func inteq(a int, b int) int {
-	return a == b
-}
-
 func init(ctxt ref draw.Context, argv list string) {
-	m := maps.newmap[string, int](4, strhash, streq)
+	m := maps.newmap[string, int](4, maps.strhash, maps.streq)
 	words := [7]string{"apple", "pear", "fig", "plum", "kiwi", "lime", "date"}
 	for i := 0; i < len(words); i++ {
 		m.put(words[i], len(words[i]))
@@ -43,7 +23,7 @@ func init(ctxt ref draw.Context, argv list string) {
 		sys.print("%s ", ks[i])
 	}
 	sys.print("\n")
-	c := maps.newmap[int, string](1, inthash, inteq)
+	c := maps.newmap[int, string](1, maps.inthash, maps.inteq)
 	for i := 0; i < 50; i++ {
 		c.put(i * 7, sys.sprint("v%d", i))
 	}

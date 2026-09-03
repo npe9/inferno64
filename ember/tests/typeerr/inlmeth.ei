@@ -1,0 +1,13 @@
+module Inlmeth
+
+type Box struct {
+	v int
+}
+
+func (b ref Box) get() int {
+	return b.v
+}
+
+func helper(x int) int {
+	return x + 1
+}

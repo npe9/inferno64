@@ -263,6 +263,7 @@ type Decl struct {
 	cycle int
 	cyc int
 	implicit int
+	inl int
 	iface ref Decl
 	locals ref Decl
 	link ref Decl
@@ -1385,7 +1386,7 @@ func mkiface(m ref Decl) ref Type {
 			id.iface = globals
 			glast.iface = id
 		case Dfn:
-			if id.tparams != nil {
+			if id.tparams != nil || id.inl != 0 {
 				break	// a template from an interface: no code to link
 			}
 			last.next = dupdecl(id)

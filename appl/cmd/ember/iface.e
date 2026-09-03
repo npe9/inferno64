@@ -541,7 +541,17 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				break
 			}
 			if decl.aux != nil {
-				error(decl.line, "function body not allowed in interface")
+				// a plain function with its body: inline, instantiated
+				// by each importer (iface.c)
+				if decl.left.op == types.Omethod {
+					error(decl.line, sys.sprint("method %s: a body in an interface is only for a generic type's method", decl.left.right.sym))
+					break
+				}
+				d := types.mkdecl(decl.line, decl.pos, types.Dfn, nil)
+				d.sym = decl.left.sym
+				d.init = decl
+				d.inl = 1
+				installmember(mod, d)
 				break
 			}
 			rawfn = 1

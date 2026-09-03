@@ -15,18 +15,6 @@ type Count struct {
 	n int
 }
 
-func strhash(s string) int {
-	h := 0
-	for i := 0; i < len(s); i++ {
-		h = h * 31 + s[i]
-	}
-	return h
-}
-
-func streq(a string, b string) int {
-	return a == b
-}
-
 func isword(c int) int {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
@@ -53,7 +41,7 @@ func init(ctxt ref draw.Context, argv list string) {
 		sys.print("open failed\n")
 		return
 	}
-	m := maps.newmap[string, int](16, strhash, streq)
+	m := maps.newmap[string, int](16, maps.strhash, maps.streq)
 	lines := 0
 	for {
 		line := f.gets('\n')

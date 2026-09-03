@@ -598,7 +598,20 @@ bindiface(Decl *mod, Node *tree)
 				break;
 			}
 			if(decl->aux != nil){
-				error(decl->src.start, "function body not allowed in interface");
+				/*
+				 * a plain function with its body: inline, instantiated
+				 * by each importer like a template with no type
+				 * arguments (a header-only library's helpers)
+				 */
+				if(decl->left->op == Omethod){
+					error(decl->src.start, "method %s: a body in an interface is only for a generic type's method", decl->left->right->sym->name);
+					break;
+				}
+				d = mkdecl(&decl->src, Dfn, nil);
+				d->sym = decl->left->sym;
+				d->init = decl;
+				d->inl = 1;
+				installmember(mod, d);
 				break;
 			}
 			rawfn = 1;
