@@ -3231,6 +3231,18 @@ echk1(Node *n)
 		tr = echk(n->right);
 		if(t != terror && tr != terror && !assignable(t, tr, n->right) && !assignable(tr, t, n->left))
 			nerror(n, "type mismatch: %T %s %T", t, opname[n->op], tr);
+		else if(t != terror && (t->kind == Tadt || t->kind == Ttuple || t->kind == Tadtpick)){
+			/*
+			 * no Dis instruction compares a value struct or tuple:
+			 * "p == q" compiled to a one-word compare (beqw of the
+			 * first field) and reported structs differing in any
+			 * later field as equal.  limbo refuses this too;
+			 * compare the fields, or compare refs (identity).
+			 */
+			nerror(n, "cannot compare %T values: compare the fields, or compare refs", t);
+		}else if(t != terror && t->kind != Tint && t->kind != Tbig && t->kind != Tbyte
+		&& t->kind != Treal && t->kind != Tstring && n->op != Oeq && n->op != Oneq)
+			nerror(n, "ordering is not defined on %T", t);
 		n->ty = tint;
 		return n->ty;
 	case Oandand: case Ooror:

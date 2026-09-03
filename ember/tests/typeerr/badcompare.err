@@ -1,0 +1,3 @@
+tests/typeerr/badcompare.e:23: cannot compare P values: compare the fields, or compare refs
+tests/typeerr/badcompare.e:23: cannot compare (int, int) values: compare the fields, or compare refs
+tests/typeerr/badcompare.e:24: ordering is not defined on ref P
