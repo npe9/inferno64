@@ -489,6 +489,59 @@ configure an address) and export
 .CW /net/tcp
 on the stack and its state machine, not a hand-written echo, answers.
 .PP
+The link gap for stage (2) is now enumerated, measured by adding the
+stack to
+.CW os/osprey/cmd/p9/build.sh
+and reading what
+.CW 6l
+could not resolve.  The compile needs, beyond the shim above,
+.CW npage
+added to the shim
+.CW dat.h 's
+.CW Conf
+(devip's
+.CW scalednconv )
+and a
+.CW coherence
+prototype; then the link wants a set of kernel-infrastructure functions
+the shim does not yet carry \-
+.CW xalloc
+(add
+.CW os/osprey/port/xalloc.c ),
+.CW parsecmd ,
+.CW cmderror ,
+.CW lookupcmd
+(add
+.CW os/osprey/port/parse.c ),
+.CW readnum ,
+.CW emptystr ,
+.CW return0 ,
+.CW commonuser ,
+.CW commonerror ,
+.CW ptclbsum ,
+.CW IPv4allsys
+\- and a few ip helpers
+.CW ( v4parseip ,
+.CW isv4 ,
+.CW v4tov6 ,
+.CW v6tov4 ,
+.CW defmask ,
+.CW maskip ,
+.CW parseip ,
+.CW parseipmask )
+that live in ip files or the plan9 ipaux the personality has not linked.
+Most are one file or one small stub each; the shape is an
+infrastructure-assembly pass, not a rewrite, and it is what stage (2)
+is.  A single-machine first milestone that needs no exposed-interface
+medium: bring the stack up on
+.CW loopbackmedium.c
+and have 9front-free, in-personality TCP over
+.CW 127.0.0.1
+be handled by the real
+.CW tcp.c ,
+which proves the stack runs before the osprey medium of stage (3) is
+written.
+.PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
 .I "dynamic replicated data"
