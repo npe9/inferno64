@@ -21,6 +21,16 @@
 - After reporting a milestone, partial success, boot failure, or diagnostic
   address, immediately continue debugging and fixing it; never ask whether to
   continue after such an event.
+- Never ask for input.  This is a standing instruction from the user
+  (2 September 2026) and it applies to every kind of question: not
+  whether to continue, not which of two approaches to take, not whether
+  a scope change is wanted, not for confirmation before a build, a boot,
+  a commit or a rewrite of a document.  Decide, do it, verify it against
+  a booted kernel, record it, and go on to the next item in
+  `doc/osprey-progress.ms` (for Osprey) or `doc/inferno-ports.ms` (for
+  the Inferno ports).  A question written at the end of a reply is the
+  same as stopping, and stopping is what this rule forbids.  The one
+  exception is a genuinely destructive action outside the tree.
 
 - Kernels are self-contained.  Each flavor owns a directory under `os/` --
   `os/inferno`, `os/9front`, `os/osprey` -- and nothing else lives beside
