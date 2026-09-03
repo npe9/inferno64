@@ -22,8 +22,8 @@ for f in tests/*/*.e ../appl/cmd/ember/*.e; do
 	# tokens and diagnostics compared separately: the two runtimes
 	# interleave the streams differently (the emulator's fd 2 lands
 	# on the console with the tokens)
-	./o.out -T "$f" 2>&1 | sed 's,^[^ :]*\.e:,FILE:,' > tests/.call
-	timeout 30 "$EMU" -r "$ROOT" -c0 /dis/ember/lexdump.dis "$rel" 2>&1 | sed 's,^[^ :]*\.e:,FILE:,' > tests/.eall
+	./o.out -T "$f" 2>&1 | sed 's,^[^ :]*\.ei*:,FILE:,' > tests/.call
+	timeout 30 "$EMU" -r "$ROOT" -c0 /dis/ember/lexdump.dis "$rel" 2>&1 | sed 's,^[^ :]*\.ei*:,FILE:,' > tests/.eall
 	{ grep -v '^FILE:' tests/.call; grep '^FILE:' tests/.call | sort; } > tests/.ctok
 	{ grep -v '^FILE:' tests/.eall; grep '^FILE:' tests/.eall | sort; } > tests/.etok
 	if cmp -s tests/.ctok tests/.etok; then

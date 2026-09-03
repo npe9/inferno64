@@ -131,6 +131,18 @@ func error(line int, msg string) {
 	sys.fprint(sys.fildes(2), "%s:%d: %s\n", infile, line, msg)
 }
 
+func fatal(msg string) {
+	sys.fprint(sys.fildes(2), "fatal ember compiler error: %s\n", msg)
+	var l list int
+	hd(l)
+}
+
+// a diagnostic about a line of another file (the module's own interface)
+func errorat(file string, line int, msg string) {
+	nerrors++
+	sys.fprint(sys.fildes(2), "%s:%d: %s\n", file, line, msg)
+}
+
 func nerror(n ref types.Node, msg string) {
 	error(n.line, msg)
 }
@@ -1765,7 +1777,48 @@ func chkdot(n ref types.Node) ref types.Type {
 				n.sym = wd.sym
 				n.ty = wd.valty
 				return n.ty
-			case types.Dglobal, types.Dtype:
+			case types.Dglobal:
+				// alias.var -> Oind(Oadd(Oind(alias), $off)): the
+				// module link's first word is the data pointer and
+				// the variable sits at its .mp record offset
+				d.refs++
+				id.refs++
+				if d.ty.tof == nil {
+					types.sizetype(d.ty)
+				}
+				mp := id.iface
+				if mp == nil || mp.ty == nil {
+					nerror(n, sys.sprint("%s.%s: the interface exports no module data", n.left.sym, n.sym))
+					n.ty = terror
+					return n.ty
+				}
+				types.sizetype(mp.ty)
+				c := mp.ty.ids
+				for c != nil && c.iface != id {
+					c = c.next
+				}
+				if c == nil {
+					fatal(sys.sprint("%s.%s missing from the .mp record", n.left.sym, n.sym))
+				}
+				n.left.decl = d
+				n.left.ty = d.ty
+				inner := types.mkunary(types.Oind, n.left)
+				inner.line = n.line
+				inner.pos = n.pos
+				inner.ty = tint
+				off := mkconst(n.line, n.pos, big(c.offset))
+				off.ty = tint
+				addr := types.mkn(types.Oadd, inner, off)
+				addr.line = n.line
+				addr.pos = n.pos
+				addr.ty = tint
+				n.op = types.Oind
+				n.left = addr
+				n.right = nil
+				n.decl = nil
+				n.ty = id.ty
+				return n.ty
+			case types.Dtype:
 				d.refs++
 				id.refs++
 				n.op = types.Omdot
@@ -3254,8 +3307,45 @@ func check(tree ref types.Node, file string) int {
 		}
 		last = fns[i]
 	}
+	// the module's own interface is its module declaration: the
+	// variables it declares are checked against the implementation
+	// and exported as the .mp record (check.c)
+	own := iface.readownface(impdecl.sym, infile)
+	if own != nil {
+		for id := own.ty.ids; id != nil; id = id.next {
+			if id.store != types.Dglobal {
+				continue
+			}
+			d := lookup(id.sym)
+			if d == nil || d.store != types.Dglobal || d.dot != impdecl || d.importid != nil {
+				errorat(iface.ownfacepath(), id.line, sys.sprint("interface declares variable %s, which module %s does not define", id.sym, impdecl.sym))
+				continue
+			}
+			d.next = nil
+			if last == nil {
+				impdecl.ty.ids = d
+			} else {
+				last.next = d
+			}
+			last = d
+		}
+	}
 	types.sizetype(impdecl.ty)
 	types.teqclass(impdecl.ty)
+	if own != nil {
+		for id := own.ty.ids; id != nil; id = id.next {
+			if id.store != types.Dglobal {
+				continue
+			}
+			d := lookup(id.sym)
+			if d == nil || d.store != types.Dglobal || d.dot != impdecl || d.importid != nil {
+				continue
+			}
+			if types.sign(d) != types.sign(id) {
+				errorat(iface.ownfacepath(), id.line, sys.sprint("variable %s is %s in the interface but %s in module %s", id.sym, tp(id.ty), tp(d.ty), impdecl.sym))
+			}
+		}
+	}
 	if impdecl.ty.tof != nil {
 		impdecl.ty.tof.linkall = 1
 	}

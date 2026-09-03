@@ -306,6 +306,21 @@ An Ember library is just a module without `init` compiled to a
 `tests/type/libpoint.e` and `libpoint.ei` this way, including a pick
 and methods used from the client (`libpoint.Shape.Circle{...}`).
 
+An interface may also declare variables (`var count int`), and a
+client reads and writes them through the alias: `lib.count++`,
+`lib.origin.y = 5`. This works when the interface is the module's
+own declaration, as a Limbo implementation includes its `.m`: when
+the compiler finds `<module>.ei` (the module name in lower case)
+beside the source file or on the include path, every variable that
+file declares must exist in the module with the same type, or the
+compile fails, and exactly those variables are exported, laid out
+first in the module's data in the interface's name-sorted order, so
+an importer addresses them through the module link. The link
+signature of that record is checked at load time like any
+function's. Variables the interface omits stay private. Interfaces
+for Limbo modules should not declare variables. `tests/type/libvars.e`
+and `modvars.e` show the pattern.
+
 ## Things to know
 
 Every module that imports another gets its own instance of it, with

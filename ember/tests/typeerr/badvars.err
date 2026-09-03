@@ -1,0 +1,2 @@
+./tests/typeerr/badvars.ei:5: interface declares variable missing, which module Badvars does not define
+./tests/typeerr/badvars.ei:4: variable name is string in the interface but int in module Badvars

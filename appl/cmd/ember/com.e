@@ -1519,6 +1519,15 @@ func ecom(line int, pos int, nto ref types.Node, n ref types.Node) ref types.Nod
 			indxaddrfree(ia)
 			return nto
 		}
+		if left.op == types.Oind {
+			// the address of a value reached through a computed
+			// address is that address itself (com.c)
+			if nto == nil {
+				fatal("ecom: adr(ind) without destination")
+			}
+			ecom(line, pos, nto, left.left)
+			return nto
+		}
 		fatal("ecom: unsupported adr base " + types.opname(left.op))
 	default:
 		fatal("ecom: unsupported " + types.opname(n.op))
@@ -2686,6 +2695,42 @@ func modcom(file string, out string) int {
 		}
 	}
 	nlink := modfix(impdecl)
+
+	// the exported variables first, in the .mp record's order, so
+	// idoffsets() gives them the record's offsets (com.c)
+	if impdecl.ty.tof != nil && impdecl.ty.tof.ids != nil && impdecl.ty.tof.ids.store == types.Dglobal {
+		mp := impdecl.ty.tof.ids
+		types.sizetype(mp.ty)
+		var ex ref types.Decl
+		var exlast ref types.Decl
+		for c := mp.ty.ids; c != nil; c = c.next {
+			var prev ref types.Decl
+			e := globals
+			for e != nil && e != c.iface {
+				prev = e
+				e = e.next
+			}
+			if e == nil {
+				fatal(sys.sprint("exported variable %s is not a global", c.sym))
+			}
+			if prev == nil {
+				globals = e.next
+			} else {
+				prev.next = e.next
+			}
+			e.next = nil
+			if ex == nil {
+				ex = e
+			} else {
+				exlast.next = e
+			}
+			exlast = e
+		}
+		if ex != nil {
+			exlast.next = globals
+			globals = ex
+		}
+	}
 
 	g, ldts := gen.resolveldts(globals)
 	globals = g

@@ -1,0 +1,19 @@
+module Libvars
+
+// interface for tests/type/libvars.e, loaded by tests/type/modvars.e:
+// the variables declared here are the module's exported data, in
+// the layout both compilations derive from this file
+
+const PATH = "/tmp/libvars.dis"
+
+type Point struct {
+	x int
+	y int
+}
+
+var count int
+var name string
+var origin Point
+
+func bump() int
+func describe() string

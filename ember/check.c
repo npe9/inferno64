@@ -2654,7 +2654,55 @@ echk1(Node *n)
 					n->ty = wd->valty;
 					return n->ty;
 				}
-				case Dglobal:
+				case Dglobal: {
+					/*
+					 * an imported module's variable: the alias
+					 * holds the module link, whose first word is
+					 * the module's data pointer, and the variable
+					 * sits at its offset in the interface's
+					 * name-sorted .mp record (mkiface(), which the
+					 * exporter lays its data out by, modcom()):
+					 * alias.var -> Oind(Oadd(Oind(alias), $off)),
+					 * limbo/ecom.c's rewrite() of an Omdot global.
+					 * from here on it is an ordinary indirect
+					 * access -- an lvalue too.
+					 */
+					Decl *mp, *c;
+					Node *inner, *off, *addr;
+
+					d->refs++;
+					id->refs++;
+					if(d->ty->tof == nil)
+						sizetype(d->ty);
+					mp = id->iface;
+					if(mp == nil || mp->ty == nil){
+						nerror(n, "%s.%s: the interface exports no module data",
+							n->left->sym->name, n->sym->name);
+						n->ty = terror;
+						return n->ty;
+					}
+					sizetype(mp->ty);
+					for(c = mp->ty->ids; c != nil && c->iface != id; c = c->next)
+						;
+					if(c == nil)
+						fatal("%s.%s missing from the .mp record", n->left->sym->name, n->sym->name);
+					n->left->decl = d;
+					n->left->ty = d->ty;
+					inner = mkunary(Oind, n->left);
+					inner->src = n->src;
+					inner->ty = tint;
+					off = mkconst(&n->src, c->offset);
+					off->ty = tint;
+					addr = mkn(Oadd, inner, off);
+					addr->src = n->src;
+					addr->ty = tint;
+					n->op = Oind;
+					n->left = addr;
+					n->right = nil;
+					n->decl = nil;
+					n->ty = id->ty;
+					return n->ty;
+				}
 				case Dtype:
 					d->refs++;
 					id->refs++;
@@ -5340,6 +5388,7 @@ check(Node *tree)
 	Node *n, *decl;
 	Decl *d;
 	int i;
+	Decl *own, *id, *last;
 
 	if(tree == nil || tree->op != Omodule)
 		return;
@@ -5506,8 +5555,56 @@ check(Node *tree)
 			last = fns[i];
 		}
 	}
+	/*
+	 * the module's own interface (readownface: <module>.ei beside the
+	 * source or on the include path) is its module declaration, as
+	 * limbo's included .m is: every variable it declares must exist
+	 * here with the same type, and exactly those variables are
+	 * exported -- mkiface() flattens them into the .mp record whose
+	 * name-sorted layout modcom() then gives the data segment, so an
+	 * importer's "alias.var" (echk's Odot case) addresses the same
+	 * word the VM's .mp signature check guards.
+	 */
+	own = readownface(impdecl->sym->name, infile);
+	last = nil;
+	for(d = impdecl->ty->ids; d != nil; d = d->next)
+		last = d;
+	if(own != nil)
+	for(id = own->ty->ids; id != nil; id = id->next){
+		if(id->store != Dglobal)
+			continue;
+		d = lookup(id->sym);
+		if(d == nil || d->store != Dglobal || d->dot != impdecl || d->importid != nil){
+			error(id->src.start, "interface declares variable %s, which module %s does not define",
+				id->sym->name, impdecl->sym->name);
+			continue;
+		}
+		d->next = nil;
+		if(last == nil)
+			impdecl->ty->ids = d;
+		else
+			last->next = d;
+		last = d;
+	}
 	sizetype(impdecl->ty);
 	teqclass(impdecl->ty);
+	/*
+	 * the interface's types are separate objects from the module's
+	 * own (a struct declared in both), so an exported variable's type
+	 * is compared the way the VM will compare it: by link signature,
+	 * which needs the equivalence classes just built
+	 */
+	if(own != nil)
+	for(id = own->ty->ids; id != nil; id = id->next){
+		if(id->store != Dglobal)
+			continue;
+		d = lookup(id->sym);
+		if(d == nil || d->store != Dglobal || d->dot != impdecl || d->importid != nil)
+			continue;
+		if(sign(d) != sign(id))
+			error(id->src.start, "variable %s is %T in the interface but %T in module %s",
+				id->sym->name, id->ty, d->ty, impdecl->sym->name);
+	}
 	/* export every top-level function from this module */
 	if(impdecl->ty->tof != nil)
 		impdecl->ty->tof->linkall = 1;

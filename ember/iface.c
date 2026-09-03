@@ -586,6 +586,48 @@ bindiface(Decl *mod, Node *tree)
 	teqclass(mod->ty);
 }
 
+/*
+ * the module's own interface -- limbo's "include m.m": <module>.ei
+ * (the module name lowercased) beside the source file, else on the
+ * include path.  nil, silently, when there is none: then nothing
+ * beyond the functions is exported.  the checker verifies the
+ * variables it declares against the implementation and exports
+ * exactly those, laid out as the interface's .mp record, so an
+ * importer can address them.
+ */
+Decl*
+readownface(char *modname, char *srcfile)
+{
+	char name[256], path[1024], *p;
+	Biobuf *b;
+	int i, n;
+
+	n = 0;
+	for(p = modname; *p != '\0' && n < sizeof(name)-4; p++)
+		name[n++] = *p >= 'A' && *p <= 'Z' ? *p - 'A' + 'a' : *p;
+	strcpy(name+n, ".ei");
+
+	p = strrchr(srcfile, '/');
+	if(p != nil)
+		seprint(path, path+sizeof(path), "%s%.*s/%s", srcfile[0] == '/' ? "" : "./", (int)(p - srcfile), srcfile, name);
+	else
+		seprint(path, path+sizeof(path), "./%s", name);
+	b = Bopen(path, OREAD);
+	if(b != nil){
+		Bterm(b);
+		return readiface(path, nil);
+	}
+	for(i = 0; i < nincdir; i++){
+		seprint(path, path+sizeof(path), "%s%s/%s", incdir[i][0] == '/' || incdir[i][0] == '.' ? "" : "./", incdir[i], name);
+		b = Bopen(path, OREAD);
+		if(b != nil){
+			Bterm(b);
+			return readiface(path, nil);
+		}
+	}
+	return nil;
+}
+
 Decl*
 readiface(char *path, Src *src)
 {

@@ -2612,6 +2612,20 @@ ecom(Src *src, Node *nto, Node *n)
 			indxaddrfree(&ia);
 			return nto;
 		}
+		if(left->op == Oind){
+			/*
+			 * the address of a value reached through a computed
+			 * address -- a field of an imported module's struct
+			 * variable, alias.origin.y, whose base check.c built
+			 * as Oind(Oadd(Oind(alias), $off)) -- is that address
+			 * itself: evaluate the Oind's operand, an ordinary
+			 * tint expression.
+			 */
+			if(nto == nil)
+				fatal("ecom: adr(ind) without destination");
+			ecom(src, nto, left->left);
+			return nto;
+		}
 		fatal("ecom: unsupported adr base %O", left->op);
 		break;
 	default:
@@ -4105,6 +4119,43 @@ modcom(void)
 		if(dl->d->importid != nil)
 			modfix(dl->d->importid);
 	nlink = modfix(impdecl);
+
+	/*
+	 * the exported variables (check(): those the module's own
+	 * interface declares) come first in the data segment, in the
+	 * order of the interface's .mp record -- idoffsets() below then
+	 * gives them the record's own offsets, which is what an importer
+	 * computes for alias.var (echk's Odot case, check.c).
+	 */
+	if(impdecl->ty->tof != nil && impdecl->ty->tof->ids != nil
+	&& impdecl->ty->tof->ids->store == Dglobal){
+		Decl *mp, *c, *e, *prev, *ex, *exlast;
+
+		mp = impdecl->ty->tof->ids;
+		sizetype(mp->ty);
+		ex = exlast = nil;
+		for(c = mp->ty->ids; c != nil; c = c->next){
+			prev = nil;
+			for(e = globals; e != nil && e != c->iface; e = e->next)
+				prev = e;
+			if(e == nil)
+				fatal("exported variable %s is not a global", c->sym->name);
+			if(prev == nil)
+				globals = e->next;
+			else
+				prev->next = e->next;
+			e->next = nil;
+			if(ex == nil)
+				ex = e;
+			else
+				exlast->next = e;
+			exlast = e;
+		}
+		if(ex != nil){
+			exlast->next = globals;
+			globals = ex;
+		}
+	}
 
 	ldts = nil;
 	g = resolveldts(globals, &ldts);

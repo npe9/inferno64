@@ -22,8 +22,8 @@ for f in tests/*/*.e ../appl/cmd/ember/*.e; do
 	# tokens and diagnostics compared separately: the two runtimes
 	# interleave the streams differently (the emulator's fd 2 lands
 	# on the console with the tokens)
-	./o.out -C -I ./module -I ./tests/type -I ../appl/cmd/ember "$f" 2>&1 | sed 's,^[^ :]*\.e:,FILE:,' > tests/.call
-	timeout 30 "$EMU" -r "$ROOT" -c0 /dis/ember/chkdump.dis -I /ember/tests/type -I /appl/cmd/ember "$rel" 2>&1 | sed 's,^[^ :]*\.e:,FILE:,' > tests/.eall
+	./o.out -C -I ./module -I ./tests/type -I ../appl/cmd/ember "$f" 2>&1 | sed 's,^[^ :]*\.ei*:,FILE:,' > tests/.call
+	timeout 30 "$EMU" -r "$ROOT" -c0 /dis/ember/chkdump.dis -I /ember/tests/type -I /appl/cmd/ember "$rel" 2>&1 | sed 's,^[^ :]*\.ei*:,FILE:,' > tests/.eall
 	# the two float formatters differ only in a leading zero (".5"
 	# from lib9, "0.5" from the VM): normalize
 	{ grep -v '^FILE:' tests/.call; grep '^FILE:' tests/.call | sort; } | sed -E 's/\(const (-?)\./(const \10./' > tests/.ctok

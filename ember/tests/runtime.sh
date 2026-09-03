@@ -36,6 +36,7 @@ done
 (cd "$ROOT/appl/cmd/ember" && mk install >/dev/null 2>&1) || echo "runtime.sh: cannot build appl/cmd/ember" >&2
 mkdir -p "$ROOT/tmp"
 $EMBER $IFLAGS -o "$ROOT/tmp/libpoint.dis" tests/type/libpoint.e || echo "runtime.sh: cannot build libpoint.dis" >&2
+$EMBER $IFLAGS -o "$ROOT/tmp/libvars.dis" tests/type/libvars.e || echo "runtime.sh: cannot build libvars.dis" >&2
 
 for golden in tests/type/*.out; do
 	[ -f "$golden" ] || continue

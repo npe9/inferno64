@@ -524,6 +524,58 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 	types.teqclass(mod.ty)
 }
 
+// the module's own interface, <module>.ei beside the source file or
+// on the include path, or nil silently: see iface.c's readownface()
+var ownpath string
+
+func ownfacepath() string {
+	return ownpath
+}
+
+func readownface(modname string, srcfile string) ref types.Decl {
+	b := []byte(modname)
+	for i := 0; i < len(b); i++ {
+		if b[i] >= byte('A') && b[i] <= byte('Z') {
+			b[i] = byte(int(b[i]) - int('A') + int('a'))
+		}
+	}
+	name := string(b) + ".ei"
+	sb := []byte(srcfile)
+	slash := -1
+	for i := 0; i < len(sb); i++ {
+		if sb[i] == byte('/') {
+			slash = i
+		}
+	}
+	var path string
+	if slash >= 0 {
+		dir := string(sb[0:slash])
+		if sb[0] == byte('/') {
+			path = dir + "/" + name
+		} else {
+			path = "./" + dir + "/" + name
+		}
+	} else {
+		path = "./" + name
+	}
+	if exists(path) != 0 {
+		ownpath = path
+		return readiface(path)
+	}
+	for l := incdirs; l != nil; l = tl(l) {
+		d := hd(l)
+		p := d + "/" + name
+		if len(d) > 0 && d[0] != '/' && d[0] != '.' {
+			p = "./" + p
+		}
+		if exists(p) != 0 {
+			ownpath = p
+			return readiface(p)
+		}
+	}
+	return nil
+}
+
 func readiface(path string) ref types.Decl {
 	for l := ifaces; l != nil; l = tl(l) {
 		if hd(l).path == path {

@@ -1,0 +1,7 @@
+module Badvars
+
+var count int
+var name string
+var missing int
+
+func f() int

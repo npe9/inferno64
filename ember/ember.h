@@ -875,6 +875,7 @@ void	optabinit(void);
 /* iface.c — ember .ei interfaces (not limbo .m) */
 void	addincpath(char*);
 Decl	*readiface(char*, Src*);
+Decl	*readownface(char*, char*);
 
 /* check.c */
 void	check(Node*);
