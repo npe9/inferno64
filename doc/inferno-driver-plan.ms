@@ -679,3 +679,17 @@ a fixed PC after the banner, before the scheduler, which needs a
 symbol-bearing relink to chase.  The reusable pieces - the EL3 drop and
 the BCM-controller code - are recorded; the board directory was removed
 again rather than leave a kernel that hangs.
+.PP
+Round 4 finished raspi3b - it boots arm64 Inferno to a clean shell,
+zero faults, three of three.  The two blockers had ONE root cause,
+found by investigation rather than guessed: QEMU's raspi3b is a
+quad-core Pi and starts all four cores at 0x80000, and this MAXMACH-1
+kernel had all four running the boot and writing the console - that was
+both the "garbled console" (four cores interleaving) and the "crash
+after memory init" (four cores conflicting).  Parking the three
+secondaries at the top of l.s (MPIDR affinity, WFE spin) fixed both at
+once.  With that, the EL3 drop, the delay-paced PL011, and a generic
+timer recognised by its own CNTP_CTL.ISTATUS (QEMU maps no local IRQ
+controller - 0x40000000 is RAM) all fell into place.  The board is the
+one that reaches the Pi's I2C, SPI and GPIO, which QEMU raspi3b models
+and which are the next work.
