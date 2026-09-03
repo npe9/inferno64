@@ -117,8 +117,12 @@ name space (chan/dev/pgrp/devroot) as a user library, speaking real 9P
 \- Tversion, Tattach, Twalk, Topen, Tread, Twrite, Tclunk, Tstat, with
 convS2M/convM2S \- through devmnt to a file-server container across the
 ring, and answering 9P about its own tree through an exportfs.  It is
-9P2000, though, not the talk's \[*p]p: no immutable versions committed on
-close, no grouped transactions.
+9P2000, and since then the talk's \[*p]p as well: the server personality
+speaks pip(5) about its files (cmd/p9/pipfsrv.c) \- sessions, a grouped
+open-read-write-close in one round trip, named attributes, a version
+made by a write that nobody else sees until the close commits it \-
+over the ring, checked on p9pair.  What is missing of \[*p]p there is a
+wire of its own; the kernel's \[*p]p about containers has one.
 .PP
 Built since: a log-structured file store on a block device the kernel
 exposed, mounted into the server personality and served to the client

@@ -18,6 +18,7 @@
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	Req9P		= 14,	/* above every request in policy/syscall.h */
+	ReqPip		= 18,	/* a pi-p group, carried the same way */
 	Reqsyscall	= 15,
 	ReqGone		= 12,
 	ReqReserve	= 14+2,	/* above 9P's 14 and syscall's 15: 16 is the list's ReqReserve, 17 ReqTick */
@@ -129,6 +130,8 @@ sliceof(int slot, uvlong id)
 }
 
 extern int lfsreclaim(void);
+extern long pipfs_serve(uchar *msg, long n, uchar *rbuf, long rmax);	/* pipfsrv.c */
+extern void pipfs_tick(void);
 static int reclaims, ticks;
 
 /*
@@ -177,6 +180,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	n = oselect(Armoff, 2);
 	if(n == 0){
 		ticks++;
+		pipfs_tick();		/* leases are measured in these */
 		if(lfsreclaim())
 			reclaims++;
 		return 0;
@@ -203,6 +207,12 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		tlen = req.arg[3];
 		roff = req.arg[4];
 		rn = p9srv_serve(cdata + toff, (long)tlen, cdata + roff, 8192);
+		rep.arg[0] = (uvlong)rn;
+	} else if(req.op == ReqPip){
+		toff = req.arg[2];
+		tlen = req.arg[3];
+		roff = req.arg[4];
+		rn = pipfs_serve(cdata + toff, (long)tlen, cdata + roff, 4096);
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == Reqsyscall){
 		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */

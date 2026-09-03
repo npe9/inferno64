@@ -221,6 +221,33 @@ and
 .B mode
 may be written; the rest are what the container has done rather than what
 it was asked to do.
+.SH FILES
+.PP
+On the microkernel configurations the server personality speaks the
+same protocol about its files, over the ring
+.RB ( os/osprey/cmd/p9/pipfsrv.c ).
+There a name is a path in its name space, opened by
+.BR Topen ;
+a file's attributes are
+.BR * ,
+.BR data ,
+.BR version ,
+.B length
+and
+.BR name ,
+of which
+.B data
+may be written; the root's
+.B *
+is the root directory's names.  Versions and leases are as above: a write
+makes the version the fid is making and the close commits it, as one
+record on the log-structured store, and a fid whose file has been
+committed over since it was opened is refused.  There is no wire and no
+key there, so
+.B Tstream
+and
+.B Tauth
+are refused.
 .SH EXAMPLE
 .PP
 Open a container, read every attribute it has and close it, in one round

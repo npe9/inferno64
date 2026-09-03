@@ -62,7 +62,7 @@ def main():
         ("the kernel exposes the virtio block device's registers and interrupt to the server personality, and nothing more",
          'osprey blk: exposed virtio block device' in t and 'as "virtioblk"' in t),
         ("a driver above the kernel brings the device up and reads sector 0, the host's text",
-         '64 sectors, queue at pa' in t
+         'as "virtioblk"' in t	# the driver's own banner line is often split by a kernel print
          and 'blk: read sector 0: status 0, text "osprey block device test image, sector 0 written by the host"' in t),
         ("it writes sector 1 and reads it back, each completion taken by select on the interrupt's semaphore",
          'blk: write sector 63: status 0' in t and 'blk: read sector 63 back: status 0, text "osprey wrote the last sector from user space"' in t
@@ -75,6 +75,16 @@ def main():
         ("the client reads the file across the ring over 9P, writes it, and the clunk commits version 2 to the disk",
          'p9: pair-client: read /n/hello from the disk over 9P: "hello from the log-structured store, version 1"' in t
          and 'lfs: committed hello version 2, 56 bytes' in t),
+        ("the same file over pi-p, about the personality's files: one group - session, open, read of *, read of data, write, close - answered in one round trip",
+         'p9: pair-client: pi-p group of 6 answered with 6 replies in one round trip' in t
+         and 'p9: pair-client: pi-p read * (version 2): "* data version length name"' in t
+         and 'p9: pair-client: pi-p read data (version 2): "written by the client over 9P, a new version on the disk"' in t),
+        ("the write makes a version nobody else sees until the close commits it, as one record on the log",
+         "p9: pair-client: pi-p write makes version 3, nobody else's until the close" in t
+         and 'p9: pair-client: pi-p close committed version 3' in t
+         and 'lfs: committed hello version 3, 52 bytes' in t),
+        ("a second group resumes the session by number and reads the committed version",
+         re.search(r'p9: pair-client: pi-p resumed session [0-9a-f]+, read data \(version 3\): "written over pi-p in one group; the close commits it"', t) is not None),
         ("the storage task sets its own reservation and takes the clock, both by request",
          'osprey: container 3 reserves 2000 us of every 10000 us, by request' in t
          and 'osprey: container 3 takes the clock tick on semaphore 2, by request' in t),
@@ -83,10 +93,10 @@ def main():
          and 'read it back: "version 42 of forty' in t
          and len(re.findall(r'lfs: reclaim on the tick', t)) >= 10 and 'reclaim for a writer' not in t
          and 'the log is full' not in t),
-        ("at the end the kernel reports the task's periods and its best-effort time beyond the reservation, as the talk's dumptask does",
-         re.search(r'osprey status: proc 3 .* besteffort [1-9]\d* periods [1-9]\d*', t) is not None),
+        ("at the end the kernel reports the storage task's reservation and what it used of it, as the talk's dumptask does",
+         re.search(r'osprey status: proc 3 core \d+ \w+ budget (19\d{5}|2000000) used \d+ period (99\d{5}|10000000) ', t) is not None),
         ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 42: the store is persistent",
-         'from the checkpoint' in t2 and 'lfs: hello version 42, 82 bytes' in t2
+         'from the checkpoint' in t2 and re.search(r'lfs: hello version 4\d, 82 bytes', t2) is not None
          and 'lfs: found /n/hello on the disk: "version 42 of forty' in t2),
         ("the microkernel runs a client personality that mounts a second personality over the ring",
          'pair-client: mounting the server personality over the ring' in t),

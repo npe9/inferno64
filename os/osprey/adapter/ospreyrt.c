@@ -1904,8 +1904,7 @@ int	(*ospreytickreq)(Ospreyproc*, int sem);
 
 /*
  * Set a container's reservation: what it is owed every period, and by
- * when.  The accounting so far stands; the new figures apply from the
- * next refill.
+ * when.  The current period's use is forgotten; the totals stand.
  */
 int
 ospreysetreservation(Ospreyproc *p, uvlong budget, uvlong period, uvlong deadline)
@@ -1919,6 +1918,14 @@ ospreysetreservation(Ospreyproc *p, uvlong budget, uvlong period, uvlong deadlin
 	c->budget = budget;
 	c->period = period;
 	c->deadline = deadline;
+	/*
+	 * The period accounting starts afresh: what was used of the old
+	 * reservation is not owed against the new one, and the epoch is
+	 * in units of the old period.  The best-effort total and the
+	 * periods seen so far stand.
+	 */
+	c->used = 0;
+	c->epoch = 0;
 	unlockall();
 	return 0;
 }

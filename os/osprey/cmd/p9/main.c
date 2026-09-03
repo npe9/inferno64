@@ -501,6 +501,85 @@ p9paircli(void)
 		devtab[hc->type]->write(hc, "written by the client over 9P, a new version on the disk", 56, 0);
 		cclose(hc);		/* the clunk commits it, over there, to the disk */
 		/*
+		 * The same file over pi-p, which is what the talk says a file
+		 * is reached through: one group - a session, an open, a read
+		 * of the attribute list, a read of the data, a write, a close
+		 * that commits - in one round trip over the ring, answered by
+		 * the server personality's pi-p (pipfsrv.c) about its files;
+		 * then a second group that resumes the session and reads what
+		 * the first committed.
+		 */
+		{
+			extern long ringpip_xfer(uchar*, long, uchar*, long);
+			extern long pip_tsession(uchar*, int, uvlong);
+			extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+			extern long pip_tread(uchar*, int, ulong, long, char*);
+			extern long pip_twrite(uchar*, int, ulong, char*, char*, long);
+			extern long pip_tclose(uchar*, int, ulong);
+			extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
+			extern uvlong pip_num(uchar*, int);
+			uchar tg[512], rg[2048], *body;
+			long tn, rn, off, blen;
+			int type, tag, nrep;
+			uvlong sid, vers;
+			char show[160];
+
+			tn = 0;
+			tn += pip_tsession(tg+tn, 1, 0);
+			tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
+			tn += pip_tread(tg+tn, 3, 1, 64, "*");
+			tn += pip_tread(tg+tn, 4, 1, 256, "data");
+			tn += pip_twrite(tg+tn, 5, 1, "data", "written over pi-p in one group; the close commits it", 52);
+			tn += pip_tclose(tg+tn, 6, 1);
+			rn = ringpip_xfer(tg, tn, rg, sizeof rg);
+			sid = 0;
+			vers = 0;
+			nrep = 0;
+			for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); nrep++){
+				switch(type){
+				case 101:	/* Rsession */
+					sid = pip_num(body, 8);
+					break;
+				case 103:	/* Ropen: qid version lease */
+					print("p9: pair-client: pi-p open /n/hello: version %llud, lease %llud ms\n", pip_num(body+8, 8), pip_num(body+16, 8));
+					break;
+				case 105:	/* Rread: version data */
+					snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+					print("p9: pair-client: pi-p read %s (version %llud): \"%s\"\n", tag == 3 ? "*" : "data", pip_num(body, 8), show);
+					break;
+				case 107:	/* Rwrite */
+					print("p9: pair-client: pi-p write makes version %llud, nobody else's until the close\n", pip_num(body, 8));
+					break;
+				case 109:	/* Rclose */
+					vers = pip_num(body, 8);
+					print("p9: pair-client: pi-p close committed version %llud\n", vers);
+					break;
+				case 112:	/* Rerror */
+					snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+					print("p9: pair-client: pi-p error on tag %d: %s\n", tag, show);
+					break;
+				}
+			}
+			print("p9: pair-client: pi-p group of 6 answered with %d replies in one round trip, session %llux\n", nrep, sid);
+			/* come back to the session and read what was committed */
+			tn = 0;
+			tn += pip_tsession(tg+tn, 7, sid);
+			tn += pip_topen(tg+tn, 8, 0, 2, 0, "/n/hello");
+			tn += pip_tread(tg+tn, 9, 2, 256, "data");
+			tn += pip_tread(tg+tn, 10, 2, 32, "version");
+			tn += pip_tclose(tg+tn, 11, 2);
+			rn = ringpip_xfer(tg, tn, rg, sizeof rg);
+			for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+				if(type == 105 && tag == 9){
+					snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+					print("p9: pair-client: pi-p resumed session %llux, read data (version %llud): \"%s\"\n", sid, pip_num(body, 8), show);
+				} else if(type == 112){
+					snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+					print("p9: pair-client: pi-p error on tag %d: %s\n", tag, show);
+				}
+			}
+		}
+		/*
 		 * And forty more versions, each a record of two sectors: more
 		 * than a small log holds, so the store must reclaim as it goes.
 		 */

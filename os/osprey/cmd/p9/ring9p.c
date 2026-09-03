@@ -20,6 +20,7 @@ enum {
 	ReqRead		= 0,
 	ReqOpen		= 2,
 	Req9P		= 14,	/* above every request in policy/syscall.h */
+	ReqPip		= 18,	/* a pi-p group to the server personality, the same way */
 	ReqWait		= 4,
 	ReqExec		= 13,
 	Execnameoff	= 3072,	/* where exec's name goes in the data area, clear of 9P */
@@ -121,8 +122,8 @@ ringcalln(uvlong op, uvlong a0, uvlong a1, uvlong a2, Msg *rep, int tries)
  * kilobytes), but 9P messages to this server are tens of bytes; T sits
  * at one offset and R at another, clear of each other.
  */
-long
-ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
+static long
+ringxfer(uvlong op, uchar *tmsg, long tn, uchar *rbuf, long rmax)
 {
 	Ring *r = &ring;
 	Msg rep;
@@ -135,7 +136,7 @@ ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 	data = r->base + r->map->data;
 	for(k = 0; k < tn; k++)
 		data[T9off + k] = tmsg[k];
-	rn = ringcall(Req9P, (uvlong)T9off, (uvlong)tn, (uvlong)R9off, &rep);
+	rn = ringcall(op, (uvlong)T9off, (uvlong)tn, (uvlong)R9off, &rep);
 	if(rn <= 0)
 		return rn;
 	if(rn > rmax)
@@ -143,6 +144,21 @@ ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 	for(k = 0; k < rn; k++)
 		rbuf[k] = data[R9off + k];
 	return rn;
+}
+
+long
+ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
+{
+	return ringxfer(Req9P, tmsg, tn, rbuf, rmax);
+}
+
+/* a pi-p group, the same way: the group at T, its replies at R */
+long
+ringpip_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
+{
+	if(rmax > 4096)
+		rmax = 4096;		/* R sits at 1024 in a data area of two pages */
+	return ringxfer(ReqPip, tmsg, tn, rbuf, rmax);
 }
 
 /*

@@ -266,11 +266,12 @@ problem \- a board this tree has no Osprey target for yet (item 9).
 .PP
 .B "4.  \[*p]p for files, and \[*p]p devices."
 \[*p]p is spoken about containers \- their attributes, tickets,
-checkpoints \- and on a wire.  The file personalities speak 9P2000, so
-no file in them has an immutable version committed on close, a lease, or
-a grouped open-read-close, which is what slide 19 says every file has.
-And the talk's uart (slide 20) is reached as a \[*p]p file with string
-attributes \-
+checkpoints \- and on a wire, and now, above, about the server
+personality's files: immutable versions committed on close, leases, and
+a grouped open-read-write-close in one round trip, over the ring.  What
+remains of the first half is the personality's \[*p]p on a wire.  The
+second half: the talk's uart (slide 20) is reached as a \[*p]p file with
+string attributes \-
 .CW *
 listing them,
 .CW b
@@ -3013,8 +3014,54 @@ holds, and every reclaim step \- 28 in the first boot, 41 in the second
 checkpoint, finds the wrapped log with the file at version 42, and goes
 on.  When the boot program exits the kernel prints every container's
 line of status, which is the talk's dumptask: the storage task's
-periods, what it used of its reservation, and its best-effort time
-beyond it.  Checked, with a second boot, by
+reservation, what it used of it, its best-effort time beyond it and
+the periods it was seen in.  Seen is the word: a container is charged
+when its process is the one running at a clock tick, so a task that
+runs in short bursts between selects is charged in samples, and the
+figures are what the samples caught.  Setting a reservation starts the
+period's accounting afresh, since what was used of the old one is not
+owed against the new.
+.PP
+And the file is reached over \[*p]p, which is the first half of the
+survey's item 4.  The kernel speaks \[*p]p about containers; the server
+personality now speaks it about its files
+.CW ( os/osprey/cmd/p9/pipfsrv.c ,
+the grammar of
+.I pip (5)
+served over the name space the way
+.CW p9srv.c
+serves 9P over it, carried on the ring as a second op beside 9P's).  A
+fid names a file opened in that name space; its attributes are
+.CW * ,
+.CW data ,
+.CW version ,
+.CW length
+and
+.CW name ;
+a write to
+.CW data
+makes the version the fid is making, which a read through that fid
+sees and a read through any other does not, and the close commits it
+as a whole by writing the file anew \- on the store, one new record \-
+refusing a fid whose file has been committed over since it was opened.
+Leases are counted in the server task's clock ticks.  The root fid's
+.CW *
+is the root directory's names.  The client sends one group \- a
+session, an open of
+.CW /n/hello ,
+a read of
+.CW * ,
+a read of
+.CW data ,
+a write, a close \- and gets six replies in one round trip: the open at
+version 2, the write making version 3 that is nobody else's until the
+close, the close committing version 3 (the store's record of it right
+after); then a second group resumes the session by its number and reads
+version 3's data.  Streams and tickets are answered as what they are
+here: no wire to stream on, no key to check a ticket against.  What is
+not built: the personality's \[*p]p on a wire of its own (the kernel's
+is), and the second half of item 4, the uart task as a \[*p]p thing
+with the talk's attributes.  Checked, with a second boot, by
 .CW /scripts/osprey-check-p9pair.py .
 .NH 2
 Built and proven since
