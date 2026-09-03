@@ -3,4 +3,4 @@ noop x=8
 noop x=9
 p x=1 n=100
 p x=2 n=100
-total=0
+total=3

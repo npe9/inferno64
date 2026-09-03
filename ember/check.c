@@ -5108,6 +5108,17 @@ chklval(Node *n, char *what)
 
 	if(n->ty == terror)
 		return 0;
+	/*
+	 * a closure captures an enclosing function's variable by value
+	 * (a copy in its environment), so assigning to it inside the
+	 * closure changes only the copy -- silently, which no reader
+	 * expects.  refuse it; shared state goes through a ref.
+	 */
+	if(n->op == Oname && n->decl != nil && curclosure != nil
+	&& (n->decl->store == Darg || n->decl->store == Dlocal) && !declownedby(n->decl, curclosure)){
+		nerror(n, "cannot %s %s inside a closure: it is captured by value; share it through a ref", what, n->sym->name);
+		return 0;
+	}
 	if(islvalue(n))
 		return 1;
 	desc = lvaldesc(n);

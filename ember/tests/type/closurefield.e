@@ -3,6 +3,12 @@ module Closurefield
 import sys "sys"
 import draw "draw"
 
+// shared state for a closure: a captured variable is a copy, so a
+// closure that must change something the outer code sees holds a ref
+type Cell struct {
+	v int
+}
+
 // a function type written for a variable, a struct field, a list
 // element or a type argument is the same closure value a parameter's
 // is, so closures and function values can be stored anywhere
@@ -21,8 +27,8 @@ func adder(k int) func(int) int {
 }
 
 func counter() Counter {
-	n := 0
-	return Counter{next: func() int { n++; return n }, step: adder(10)}
+	n := ref Cell{v: 0}
+	return Counter{next: func() int { n.v++; return n.v }, step: adder(10)}
 }
 
 func twice(x int) int {

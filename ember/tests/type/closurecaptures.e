@@ -2,6 +2,12 @@ module Closurecaptures
 
 import sys "sys"
 
+// shared state for a closure: a captured variable is a copy, so a
+// closure that must change something the outer code sees holds a ref
+type Cell struct {
+	v int
+}
+
 // phase 3 of the closure-lowering plan (doc/ember-repository-study.md):
 // by-value captures.  a closure literal that reads or writes a Darg/
 // Dlocal from its immediately enclosing function (or closure) now
@@ -37,17 +43,17 @@ func init() {
 	n = 999
 	sys.print("a=%d\n", f(1))
 
-	// write to a captured variable, from inside the closure -- the
-	// closure's own copy changes and persists across calls; the
-	// enclosing local is untouched.
-	m := 5
+	// a captured variable is a copy and may not be assigned inside
+	// the closure (a compile error): state the closure changes lives
+	// behind a ref, shared with the enclosing function
+	m := ref Cell{v: 5}
 	g := func(delta int) int {
-		m = m + delta
-		return m
+		m.v = m.v + delta
+		return m.v
 	}
 	sys.print("b=%d\n", g(3))
 	sys.print("c=%d\n", g(3))
-	sys.print("d=%d\n", m)
+	sys.print("d=%d\n", m.v)
 
 	// multiple captures in one closure
 	a := 1

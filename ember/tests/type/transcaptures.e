@@ -2,6 +2,12 @@ module Transcaptures
 
 import sys "sys"
 
+// shared state for a closure: a captured variable is a copy, so a
+// closure that must change something the outer code sees holds a ref
+type Cell struct {
+	v int
+}
+
 // closurecaptures.e covers by-value captures one level deep (a closure
 // reaching directly into its own immediate enclosing function's frame).
 // this file covers *transitive* captures: a closure reaching into a
@@ -102,21 +108,19 @@ func outer5() func() int {
 // a write *inside* the intermediate closure's own body, to the same
 // variable the innermost closure also reads: mid's "x = 99" writes into
 // mid's own env copy of x (mid captures x directly, one level deep,
-// same as any other depth-1 capture) -- outer's own x is untouched
-// (still 1, printed directly here rather than returned, since multi-
-// return of function-typed values hits a separate, pre-existing gap
-// unrelated to captures) since mid's write never reaches back through
-// the copy, but inner -- constructed *after* that write, reading
-// through mid's own env per the transitive-capture mechanism -- sees
-// 99, not 1.
+// same as any other depth-1 capture).  x is a ref cell, since a
+// captured variable itself may not be assigned inside a closure:
+// mid's write is seen by outer (f=99) and by inner, constructed
+// after it, reading through mid's own env per the transitive-capture
+// mechanism.
 func outer6() func() int {
-	x := 1
+	x := ref Cell{v: 1}
 	mid := func() func() int {
-		x = 99
-		return func() int { return x }
+		x.v = 99
+		return func() int { return x.v }
 	}
 	inner := mid()
-	sys.print("f=%d\n", x)
+	sys.print("f=%d\n", x.v)
 	return inner
 }
 

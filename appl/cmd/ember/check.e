@@ -3105,6 +3105,11 @@ func chklval(n ref types.Node, what string) int {
 	if n.ty == terror {
 		return 0
 	}
+	// a captured variable is a copy: assigning to it is refused (check.c)
+	if n.op == types.Oname && n.decl != nil && curclosure != nil && (n.decl.store == types.Darg || n.decl.store == types.Dlocal) && declownedby(n.decl, curclosure) == 0 {
+		nerror(n, sys.sprint("cannot %s %s inside a closure: it is captured by value; share it through a ref", what, n.sym))
+		return 0
+	}
 	if islvalue(n) != 0 {
 		return 1
 	}

@@ -243,9 +243,13 @@ variadic; `sys.print` is one. Function values are first class: `f :=
 inc`, `apply(f, x)`, and closures `func(x int) int { return base + x
 }`, which may be called at once, returned, or spawned.
 
-Closures capture by value. `count++` inside a closure changes the
-closure's copy, not the outer variable; to share state, capture a
-ref and mutate through it.
+Closures capture by value: a closure holds a copy of each enclosing
+variable it uses, taken when the closure is created. Assigning to a
+captured variable inside the closure is a compile error ("cannot
+assign to n inside a closure: it is captured by value"), since it
+could only change the copy; state a closure must change lives behind
+a ref, `c := ref Cell{v: 0}` and `c.v++`, shared with the enclosing
+function and every closure that captures it.
 
 Generic functions and types take type parameters in brackets: `func
 first[T](xs []T) T`, `type Pair[T] struct { a T; b T }`. Type

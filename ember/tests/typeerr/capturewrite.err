@@ -1,0 +1,3 @@
+tests/typeerr/capturewrite.e:10: cannot increment n inside a closure: it is captured by value; share it through a ref
+tests/typeerr/capturewrite.e:11: cannot assign to total inside a closure: it is captured by value; share it through a ref
+tests/typeerr/capturewrite.e:19: cannot assign to k inside a closure: it is captured by value; share it through a ref
