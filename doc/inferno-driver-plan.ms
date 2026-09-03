@@ -619,3 +619,49 @@ SHAKTI-OK and a working shell, zero faults, three of three.  It models
 no I2C, SPI or storage, so it adds no peripheral - its value is the
 bring-up itself, and the confirmation that the copy-adapt-boot loop on
 this tree is one UART plus a config trim.
+.NH 1
+raspi3b: started, EL3 entry and console solved, interrupt controller next
+.PP
+The Raspberry Pi 3B is the board that would answer the I2C and GPIO
+question, but it stacks three unknowns the virt machines do not: no
+device tree, no GIC, and a different entry exception level.  This round
+solved the two that block a console and left the third documented, then
+removed the work-in-progress board directory rather than leave a board
+that hangs in the tree.
+.PP
+What was pinned, all reusable when the board is finished:
+.IP \(bu
+Entry state, read from the monitor before the kernel runs (the
+technique that pinned the armv7 fault): QEMU's raspi3b enters at
+.CW EL3
+(PSTATE EL3h), PC 0x80000 - the Pi firmware's load address, so
+KTZERO is 0x80000 - and x0 is 0 (no DTB, as the machine has no FDT).
+.IP \(bu
+The EL3 to EL1 drop, verified working (the kernel ran to procinit at
+EL1).  In one ERET: set HCR_EL2.RW so EL1 comes up AArch64 even though
+EL2 is skipped, SCR_EL3 to 0x431 (RW, NS, the RES1 bits), SPSR_EL3 to
+0x3c5 (EL1h, DAIF masked), ELR_EL3 to the EL1 entry.  7a does not name
+the EL3/EL2 registers, so they are raw MSR words with source x0,
+verified against the host assembler: HCR_EL2 0xd51c1100, SCR_EL3
+0xd51e1100, SPSR_EL3 0xd51e4000, ELR_EL3 0xd51e4020, and MRS CurrentEL
+0xd5384240.
+.IP \(bu
+The console is the PL011 at 0x3f201000 (the BCM2837 peripheral base is
+0x3f000000), and it is serial0 under
+.CW -nographic .
+The virt board's PL011 driver drives it and output appears, though it
+garbles - the Pi's PL011 needs its own enable/FIFO setup the virt one
+skips, a refinement for when the board is resumed.
+.PP
+What remains, and why the directory was not kept: raspi3b has no GIC,
+so the generic-timer interrupt that drives the scheduler never arrives
+- the kernel reaches procinit and then waits forever.  Finishing the
+board needs the BCM2835 ARM interrupt controller at 0x3f00b200 and the
+per-core BCM2836 local controller at 0x40000000 that routes the generic
+timer, in place of trap.c's GIC; then the config trimmed of virtio, PCI
+and the GIC the way shakti's was; then a board init.  The BCM interrupt
+controller is simpler than a GIC, so this is bounded work - it just was
+not going to reach a shell this round, and a board that hangs at
+procinit is not one to leave in the tree.  The I2C (BSC at 0x3f804000),
+SPI (0x3f204000) and GPIO (0x3f200000) that motivated the board come
+after it boots.
