@@ -1,0 +1,115 @@
+.TH SSH 1
+.SH NAME
+ssh \- run a command on a remote host over SSH-2
+.SH SYNOPSIS
+.B ssh
+[
+.B -i
+.I keyfile
+]
+[
+.B -p
+.I port
+]
+[
+.B -t
+.I sha256=thumb
+|
+.B -n
+]
+[
+.I user@
+]\c
+.I host
+.I command ...
+.SH DESCRIPTION
+.B Ssh
+runs
+.I command
+on
+.I host
+over SSH-2, using this tree's own client (\c
+.IR ssh (2)):
+curve25519 key exchange, an
+.B ssh-rsa
+host key verified
+.BR rsa-sha2-256 ,
+and the
+.B chacha20-poly1305@openssh.com
+cipher. It authenticates by public key, opens a session channel, execs
+the command, streams its standard output and standard error to the
+corresponding local file descriptors, and exits with the remote exit
+status. It is non-interactive \(em there is always a command; an
+interactive shell (which needs a pseudo-terminal) is not provided.
+.PP
+.I Host
+may be an IPv4 literal or a name;
+a name is resolved through this tree's DNS-over-HTTPS resolver (\c
+.IR doh (2)),
+since dial-by-name is not wired up under hosted
+.IR emu .
+The login name is
+.I user
+from a
+.I user@host
+prefix, else the contents of
+.BR /dev/user .
+.SS Options
+.TP
+.BI -i " keyfile"
+Authenticate with the PEM PKCS#1 RSA private key in
+.I keyfile
+(as written by
+.BR "ssh-keygen -m PEM" ).
+A key is required; password authentication is not offered by the
+command.
+.TP
+.BI -p " port"
+Connect to
+.I port
+instead of 22.
+.TP
+.BI -t " sha256=thumb"
+Require the server's host-key thumbprint to equal
+.I thumb
+(the
+.B sha256=
+form printed on a first connection, matching OpenSSH's
+.B SHA256:
+fingerprint). The connection is refused on any mismatch.
+.TP
+.B -n
+Accept an unverified host key (trust on first use), printing a warning.
+Without either
+.B -t
+or
+.BR -n ,
+.B ssh
+connects, prints the server's thumbprint, and refuses \(em so the user
+can re-run with
+.BR -t .
+The host-key signature over the key exchange is always verified
+regardless; these options control only whether the key's
+.I identity
+is trusted.
+.SH EXAMPLES
+Learn a host's key, then run a command:
+.EX
+% ssh -i $home/keyring/id_rsa me@server uname -a
+ssh: host key for server is sha256=A1b2...
+ssh: re-run with -t sha256=A1b2... to accept it, or -n to accept unverified
+% ssh -i $home/keyring/id_rsa -t sha256=A1b2... me@server uname -a
+.EE
+.SH SOURCE
+.B /appl/cmd/ssh/ssh.b
+.SH SEE ALSO
+.IR ssh (2),
+.IR sshtest (1),
+.IR doh (2)
+.SH BUGS
+Public-key authentication only, from a file (no
+.IR factotum (4)
+key storage yet), and RSA host keys only. No interactive shell, no
+port forwarding, no
+.IR scp .
+The whole of the command's output is buffered before being written.

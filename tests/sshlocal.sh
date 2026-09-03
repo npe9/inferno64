@@ -94,5 +94,18 @@ else
 	echo 'SSHLOCAL: unauthorised key rejected, as expected: PASS'
 fi
 
+echo 'SSHLOCAL: === ssh(1) command: run a remote command ==='
+# -p is the port; the host thumbprint is pinned with -t. Capture only
+# stdout (the remote login shell may write rc-file noise to stderr,
+# which ssh(1) keeps on its own fd 2 - proving the two streams stay
+# separate).
+cout=$(./MacOSX/arm64/bin/emu-g -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" "printf" "cmd-ok" 2>/dev/null) || true
+echo "ssh(1) stdout: [$cout]"
+if [ "$cout" = "cmd-ok" ]; then
+	echo 'SSHLOCAL: ssh(1) command run: PASS'
+else
+	echo 'SSHLOCAL: ssh(1) command run FAILED'; rc=1
+fi
+
 if [ "$rc" -eq 0 ]; then echo 'SSHLOCAL: ALL PASS'; else echo 'SSHLOCAL: FAILURE'; cat "$tmp/sshd.log"; fi
 exit $rc

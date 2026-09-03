@@ -1,0 +1,37 @@
+<../../../mkconfig
+
+TARG=ssh.dis\
+
+SYSMODULES=\
+	arg.m\
+	asn1.m\
+	doh.m\
+	draw.m\
+	encoding.m\
+	keyring.m\
+	pkcs.m\
+	security.m\
+	ssh.m\
+	sys.m\
+
+DISBIN=$ROOT/dis/ssh
+
+<$ROOT/mkfiles/mkdis
+
+all:V:		$TARG
+
+install:V:	$ROOT/dis/ssh.dis
+
+nuke:V: clean
+	rm -f $ROOT/dis/ssh.dis $DISBIN/ssh.dis
+
+clean:V:
+	rm -f *.dis *.sbl
+
+uninstall:V:
+	rm -f $ROOT/dis/ssh.dis $DISBIN/ssh.dis
+
+$ROOT/dis/ssh.dis:	ssh.dis
+	rm -f $ROOT/dis/ssh.dis && cp ssh.dis $ROOT/dis/ssh.dis
+
+%.dis: ${SYSMODULES:%=$MODDIR/%}
