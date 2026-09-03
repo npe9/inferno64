@@ -20,7 +20,14 @@ enum {
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	Reqsyscall	= 15,
 	ReqGone		= 12,
+	ReqReserve	= 14+2,	/* above 9P's 14 and syscall's 15: 16 is the list's ReqReserve, 17 ReqTick */
+	ReqTick		= 17,
 	Nslot		= 16,
+	OSdown		= 4,
+	Ticksem		= 2,		/* the block device has 1 */
+	Tickarm		= 24,		/* the second arm, after the ring's at Armoff */
+	Reservebudget	= 2000,		/* 2 ms of every 10: the storage task's own reservation */
+	Reserveperiod	= 10000,
 	OSget		= 2,
 	Armoff		= 0,
 	Reqbuf		= 256,
@@ -121,18 +128,61 @@ sliceof(int slot, uvlong id)
 	return slices[slot] + m->data;
 }
 
-static void
+extern int lfsreclaim(void);
+static int reclaims, ticks;
+
+/*
+ * A request of this container's own: the reservation it needs, and the
+ * clock.  A server's rings run the other way - its request ring carries
+ * its clients' requests, its reply ring its answers - so its own asks
+ * are a system call (number 60, xcall.s here and ospreyxcall in the
+ * kernel), answered at once.
+ */
+extern long ospreyxcall(int op, uvlong *args, long n);
+
+static long
+srvcall(uchar *base, Omap *map, uvlong op, uvlong a0, uvlong a1)
+{
+	uvlong args[5];
+
+	USED(base, map);
+	args[0] = a0;
+	args[1] = a1;
+	args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall((int)op, args, 2) != 1)	/* 1: ReplyDone */
+		return -1;
+	return 0;
+}
+
+/* returns 1 when a request was served, 0 when the tick was, -1 for neither */
+static int
 serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 {
 	Msg req, rep;
 	long i, rn;
 	uvlong toff, tlen, roff;
+	int n;
 
-	arm->op = OSget;
-	arm->obj = 0;
-	arm->buf = Reqbuf;
-	if(oselect(Armoff, 1) != 0)
-		return;
+	/*
+	 * The clock first: select answers the first ready arm, and under a
+	 * stream of requests the ring is always ready, so the tick - at most
+	 * one every 10 ms - would never be taken if it came second.
+	 */
+	arm[0].op = OSdown;		/* the clock: reclamation's turn */
+	arm[0].obj = Ticksem;
+	arm[0].buf = 0;
+	arm[1].op = OSget;		/* a request on the ring */
+	arm[1].obj = 0;
+	arm[1].buf = Reqbuf;
+	n = oselect(Armoff, 2);
+	if(n == 0){
+		ticks++;
+		if(lfsreclaim())
+			reclaims++;
+		return 0;
+	}
+	if(n != 1)
+		return -1;
 	req = *reqp;
 	for(i = 0; i < (long)sizeof rep; i++)
 		((uchar*)&rep)[i] = 0;
@@ -145,7 +195,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 			rep.arg[0] = (uvlong)-1;	/* not a count a layout could have */
 			repm[pq->put % pq->size] = rep;
 			pq->put++;
-			return;
+			return 1;
 		}
 	}
 	if(req.op == Req9P){
@@ -159,11 +209,12 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == ReqGone){
 		p9buddy_gone(req.container);	/* let go of the image held for it */
-		return;				/* nobody is left to reply to */
+		return 1;			/* nobody is left to reply to */
 	} else
 		rep.arg[0] = 2;
 	repm[pq->put % pq->size] = rep;
 	pq->put++;
+	return 1;
 }
 
 /* arg is "s <ownslot> <clientslot>"; called after the name space is up */
@@ -195,11 +246,28 @@ p9serveloop(char *arg)
 
 	p9blk(base);		/* the disk, if the kernel exposed one: a driver above the kernel */
 	p9lfsmount();		/* and the file system on it, mounted at /n for the client */
+	/*
+	 * This task says what it needs: a reservation for its own work -
+	 * the storage service's reclamation, paid for out of it - and the
+	 * clock tick to do that work on.  Both are requests on its own
+	 * ring, answered by the kernel.
+	 */
+	if(srvcall(base, map, ReqReserve, Reservebudget, Reserveperiod) < 0)
+		puts("p9 server: the reservation was refused\n");
+	if(srvcall(base, map, ReqTick, Ticksem, 0) < 0)
+		puts("p9 server: the tick was refused\n");
 	puts("p9 server: serving this name space over the ring\n");
-	for(iters = 0; iters < 400; iters++)
-		serve1(pq, (Msg*)((uchar*)pq + pq->message),
+	for(iters = 0; iters < 400; ){
+		int r = serve1(pq, (Msg*)((uchar*)pq + pq->message),
 			(Msg*)(base + map->data + Reqbuf),
 			(Arm*)(base + map->data + Armoff),
 			cbase + cmap->data, cmap->id);
-	puts("p9 server: done\n");
+		if(r != 0)
+			iters++;	/* ticks do not count toward the end of a headless run */
+	}
+	{
+		char line[96];
+		seprint(line, line + sizeof line, "p9 server: done; %d ticks, reclamation ran %d times on them\n", ticks, reclaims);
+		puts(line);
+	}
 }

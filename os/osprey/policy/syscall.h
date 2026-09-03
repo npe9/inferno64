@@ -39,6 +39,19 @@ enum {
 	 * when a container this one started exits, with its status.
 	 */
 	ReqExec,
+	/*
+	 * A task's own reservation and its clock.  reserve: arg[2] and
+	 * arg[3] are the budget and the period the task needs, in
+	 * microseconds; the deadline is the period.  This is how a service
+	 * that knows what it needs - a storage task that must reclaim its
+	 * log at some rate - sets it, rather than having it compiled in or
+	 * set by whoever created the container.  tick: arg[2] is a
+	 * semaphore of the caller's which the clock interrupt gives on
+	 * every tick of its core, or -1 to stop; a periodic task waits on
+	 * it with select, the interrupt-to-task path.
+	 */
+	ReqReserve = 16,	/* 14 and 15 are the personalities' own on the ring: 9P and a forwarded system call */
+	ReqTick,
 };
 
 enum {

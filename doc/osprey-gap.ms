@@ -97,13 +97,12 @@ Scheduling \- PARTIAL
 Built: an EDF scheduler with reservations and best-effort time accounted
 apart, tested.
 .PP
-Missing: the reservation is not yet a parameter a storage or driver task
-sets at start; the storage-tradespace plan (a compaction task with a
-per-board reservation) is unbuilt \- there is no log-structured flash
-service and no block-device file-system service.  Built since: a block
-device driven from user space and a log-structured file store on it in
-the server personality, persistent across boots (doc/osprey-progress.ms);
-the reclamation task with its own reservation is still the gap.
+Built since: the reservation is a parameter the storage task sets at
+start by request (ReqReserve), the clock reaches it by request (ReqTick),
+and the log-structured store's reclamation runs on that tick under that
+reservation, on a block device driven from user space
+(doc/osprey-progress.ms).  Missing: the raw-flash tier, which needs a
+board this tree has no Osprey target for.
 .NH 2
 Files over \[*p]p \- PARTIAL
 .PP
@@ -123,9 +122,9 @@ close, no grouped transactions.
 .PP
 Built since: a log-structured file store on a block device the kernel
 exposed, mounted into the server personality and served to the client
-over 9P, versions committed on close, persistent across boots.  Missing:
-create and remove over 9P, reclamation of the log, and the raw-flash
-tier.
+over 9P, versions committed on close, persistent across boots, the log
+reclaimed on the clock tick.  Missing: create and remove over 9P, and
+the raw-flash tier.
 .NH 2
 Library OS and buddy OS \- PARTIAL
 .PP

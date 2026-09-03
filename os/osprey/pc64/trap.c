@@ -442,7 +442,14 @@ faultamd64(Ureg* ureg, void*)
 			dumpregs(ureg);
 			panic("kernel fault: %s addr=%#p", read? "read": "write", addr);
 		}
-		print("user fault: %s addr=%#llux pc=%#llux\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc);
+		print("user fault: %s addr=%#llux pc=%#llux sp=%#llux, pid %lud %s\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc, (uvlong)ureg->sp, up->pid, up->text);
+		if(!waserror()){
+			uvlong *w = (uvlong*)ureg->sp;
+			validaddr(ureg->sp, 8*sizeof(uvlong), 0);
+			print("user fault: stack %#llux %#llux %#llux %#llux %#llux %#llux %#llux %#llux\n",
+				w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+			poperror();
+		}
 		if(up->oslinux){
 			/* no segment at all, or the kernel's own could not fill it: SIGSEGV, as above */
 			if(ospreylinuxsignal(ureg, addr) == 0)

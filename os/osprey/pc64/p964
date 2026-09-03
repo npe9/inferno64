@@ -144,6 +144,7 @@ port
 	 * the console through the bare 8250 path; exit does not tear the
 	 * boot process down (that would panic) but idles the machine.
 	 */
+	extern uintptr ospreyxcall(va_list);
 	typedef uintptr Xsyscall(va_list);
 
 	uintptr xpwrite(va_list list)
@@ -258,6 +259,7 @@ port
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
+		[60]	ospreyxcall,	/* above the Plan 9 table, which a legacy binary uses whole: a request of the task's own, answered now */
 	};
 	int nsyscall = nelem(systab);
 

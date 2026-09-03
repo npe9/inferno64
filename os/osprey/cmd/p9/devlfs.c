@@ -23,9 +23,23 @@
  * the space behind them - which the plan makes a scheduled task with a
  * reservation of its own; until it exists the log only grows.
  *
- * The device is #l.  Sector 0 is left for a checkpoint of the scan and
- * is not used; the log begins at sector 1.  The block driver
- * (blkvirtio.c) is reached through three plain-typed functions.
+ * Reclamation makes the log a ring: the oldest record is either the
+ * latest version of its file, in which case it is copied to the head
+ * of the log and the copy is the file's, or it is dead, and either way
+ * the start of the log moves past it, so the space comes round to be
+ * written again.  One record per step; a step is taken on the clock
+ * tick the server task waits on (p9pairsrv.c) when the log is more
+ * than half full, and by a writer that finds no room, so that the
+ * task's reservation is what normally pays for it and a full log only
+ * ever costs the writer.  Sector 0 holds a checkpoint - where the log
+ * starts and ends, and the last record number - rewritten in place
+ * after every commit and every step; it is the one sector written in
+ * place, and a disk without one is scanned from sector 1 as before.
+ * The last sector is not the log's: the block driver's own check writes
+ * it.
+ *
+ * The device is #l.  The block driver (blkvirtio.c) is reached through
+ * three plain-typed functions.
  */
 enum {
 	Lmagic	= 0x4f534c4653ULL,	/* "OSLFS" */
@@ -67,11 +81,86 @@ extern int blkready(void);
 extern uvlong blkcapacity(void);
 extern int blkxfer(int, uvlong, void*);
 
+typedef struct Lcp Lcp;
+struct Lcp {				/* the checkpoint, sector 0 */
+	uvlong	magic;
+	uvlong	start;
+	uvlong	head;
+	uvlong	seq;
+};
+enum { Lcpmagic = 0x4f534c465343ULL };	/* "OSLFSC" */
+
 static Lfile files[Nlfs];
+static uvlong start;			/* the oldest record */
 static uvlong head;			/* the next free sector */
+static uvlong limit;			/* one past the last sector the log may use */
 static uvlong seq;
 static int scanned;
+static ulong nreclaimed;
 static uchar sector[Lsector];
+static uchar movebuf[Lmaxdata];
+
+static uvlong
+lfssectors(ulong len)
+{
+	return 1 + (len + Lsector-1)/Lsector;
+}
+
+/* sectors free between the head and the start, keeping one so full and empty differ */
+static uvlong
+lfsfree(void)
+{
+	if(head >= start)
+		return (limit - head) + (start - Lfirst) - 1;
+	return start - head - 1;
+}
+
+/*
+ * Where a record of n sectors would go, or 0 when there is no room.
+ * The free count is the gate, so the head never comes round onto the
+ * start - which would read as an empty log and be a full one.
+ */
+static uvlong
+lfsroom(uvlong n)
+{
+	if(lfsfree() < n)
+		return 0;
+	if(head >= start){
+		if(head + n <= limit)
+			return head;
+		if(Lfirst + n < start)
+			return Lfirst;		/* wrap: the tail of the log is skipped */
+		return 0;
+	}
+	return head;
+}
+
+static void
+lfscheckpoint(void)
+{
+	Lcp *cp;
+
+	memset(sector, 0, Lsector);
+	cp = (Lcp*)sector;
+	cp->magic = Lcpmagic;
+	cp->start = start;
+	cp->head = head;
+	cp->seq = seq;
+	blkxfer(1, 0, sector);
+}
+
+/* the record at pos, if there is one; -1 for a sector that is not a record */
+static int
+lfsheader(uvlong pos, Lrec *r)
+{
+	if(pos < Lfirst || pos >= limit || blkxfer(0, pos, sector) < 0)
+		return -1;
+	memmove(r, sector, sizeof *r);
+	if(r->magic != Lmagic || r->len > Lmaxdata || pos + lfssectors(r->len) > limit)
+		return -1;
+	r->name[Lnamelen-1] = 0;
+	return 0;
+}
 
 static Lfile*
 lfslookup(char *name)
@@ -102,41 +191,72 @@ lfsnew(char *name)
 	return nil;
 }
 
-/* mount: read the log from its first sector to its end, latest version of each file */
+/*
+ * Mount: the checkpoint says where the log starts and ends, and the
+ * records between are read in order, so the latest version of each file
+ * is the last seen; a sector that is not a record before the head means
+ * the writer wrapped there.  Without a checkpoint the log is read from
+ * sector 1 to the first sector that is not a record, as a disk written
+ * before there were checkpoints must be.
+ */
 static void
 lfsscan(void)
 {
-	Lrec *r;
+	Lrec r;
 	Lfile *f;
-	uvlong cap;
-	int n;
+	Lcp cp;
+	uvlong pos;
+	int n, checkpointed;
 
-	cap = blkcapacity();
-	head = Lfirst;
-	seq = 0;
-	n = 0;
-	for(;;){
-		if(head >= cap || blkxfer(0, head, sector) < 0)
-			break;
-		r = (Lrec*)sector;
-		if(r->magic != Lmagic || r->len > Lmaxdata)
-			break;
-		r->name[Lnamelen-1] = 0;
-		f = lfslookup(r->name);
-		if(f == nil)
-			f = lfsnew(r->name);
-		f->lba = head;
-		f->len = r->len;
-		f->vers = r->vers;
-		seq = r->seq;
-		n++;
-		head += 1 + (r->len + Lsector-1)/Lsector;
+	limit = blkcapacity() - 1;
+	memset(&cp, 0, sizeof cp);
+	if(blkxfer(0, 0, sector) == 0)
+		memmove(&cp, sector, sizeof cp);
+	checkpointed = cp.magic == Lcpmagic && cp.start >= Lfirst && cp.start < limit && cp.head >= Lfirst && cp.head < limit;
+	if(checkpointed){
+		start = cp.start;
+		head = cp.head;
+		seq = cp.seq;
+	} else {
+		start = Lfirst;
+		head = Lfirst;
+		seq = 0;
 	}
+	n = 0;
+	pos = start;
+	for(;;){
+		if(checkpointed && pos == head)
+			break;
+		if(lfsheader(pos, &r) < 0){
+			if(checkpointed && pos != Lfirst){
+				pos = Lfirst;	/* the writer wrapped here */
+				continue;
+			}
+			break;
+		}
+		f = lfslookup(r.name);
+		if(f == nil)
+			f = lfsnew(r.name);
+		f->lba = pos;
+		f->len = r.len;
+		f->vers = r.vers;
+		if(r.seq > seq)
+			seq = r.seq;
+		n++;
+		pos += lfssectors(r.len);
+		if(pos >= limit)
+			pos = Lfirst;
+	}
+	if(!checkpointed)
+		head = pos;
 	scanned = 1;
-	print("lfs: mounted the log: %d records in sectors %d-%llud of %llud\n", n, Lfirst, head-1, cap);
+	print("lfs: mounted the log: %d records, start %llud head %llud of %llud, %llud sectors free, %s\n",
+		n, start, head, limit, lfsfree(), checkpointed ? "from the checkpoint" : "no checkpoint, scanned from sector 1");
 	for(f = files; f < &files[Nlfs]; f++)
 		if(f->used)
 			print("lfs: %s version %lud, %lud bytes, at sector %llud\n", f->name, f->vers, f->len, f->lba);
+	if(!checkpointed)
+		lfscheckpoint();
 }
 
 static void
@@ -154,22 +274,30 @@ lfsload(Lfile *f, uchar *buf)
 	}
 }
 
-/* a new version: the header sector, then the data, appended at the head of the log */
+static int lfsreclaimstep(int force);
+
+/*
+ * A record at the head of the log: the header sector, then the data.
+ * vers is the version it carries: the file's next for a commit, its
+ * current for a copy reclamation moves forward.  A writer that finds no
+ * room reclaims until there is some, or the log is full of live data.
+ */
 static void
-lfsappend(Lfile *f, uchar *buf, ulong len)
+lfsput(Lfile *f, uchar *buf, ulong len, ulong vers)
 {
 	Lrec *r;
-	uvlong lba;
+	uvlong lba, n;
 	ulong off, cnt;
 
-	lba = head;
-	if(lba + 1 + (len + Lsector-1)/Lsector > blkcapacity())
-		error("the log is full");
+	n = lfssectors(len);
+	while((lba = lfsroom(n)) == 0)
+		if(!lfsreclaimstep(1))
+			error("the log is full");
 	memset(sector, 0, Lsector);
 	r = (Lrec*)sector;
 	r->magic = Lmagic;
 	r->seq = ++seq;
-	r->vers = f->vers + 1;
+	r->vers = vers;
 	r->len = len;
 	strcpy(r->name, f->name);
 	if(blkxfer(1, lba, sector) < 0)
@@ -183,9 +311,81 @@ lfsappend(Lfile *f, uchar *buf, ulong len)
 	}
 	f->lba = lba;
 	f->len = len;
-	f->vers++;
-	head = lba + 1 + (len + Lsector-1)/Lsector;
-	print("lfs: committed %s version %lud, %lud bytes, at sector %llud\n", f->name, f->vers, f->len, f->lba);
+	f->vers = vers;
+	head = lba + n;
+	if(head >= limit)
+		head = Lfirst;
+	lfscheckpoint();
+}
+
+static void
+lfsappend(Lfile *f, uchar *buf, ulong len)
+{
+	lfsput(f, buf, len, f->vers + 1);
+	print("lfs: committed %s version %lud, %lud bytes, at sector %llud, %llud sectors free\n",
+		f->name, f->vers, f->len, f->lba, lfsfree());
+}
+
+/*
+ * One step of reclamation: the oldest record is copied forward if it is
+ * the latest version of its file and dropped if it is not, and the start
+ * of the log moves past it.  Taken on the tick when the log is more than
+ * half full, and by a writer that finds no room (force).  Returns 1 when
+ * a record was reclaimed.
+ */
+static int
+lfsreclaimstep(int force)
+{
+	Lrec r;
+	Lfile *f;
+	uvlong n;
+
+	if(!scanned || start == head)
+		return 0;
+	if(!force && lfsfree() > (limit - Lfirst)/2)
+		return 0;
+	if(lfsheader(start, &r) < 0){
+		if(start != Lfirst){		/* the writer wrapped: the tail is not records */
+			start = Lfirst;
+			lfscheckpoint();
+			return lfsreclaimstep(force);
+		}
+		return 0;
+	}
+	n = lfssectors(r.len);
+	f = lfslookup(r.name);
+	if(f != nil && f->lba == start){
+		/* live: it moves forward, the same version, before the start passes it */
+		if(lfsroom(n) == 0 || lfsroom(n) == start)
+			return 0;		/* nowhere to put it: the log is full of live data */
+		memset(movebuf, 0, sizeof movebuf);
+		lfsload(f, movebuf);
+		start += n;
+		if(start >= limit)
+			start = Lfirst;
+		lfsput(f, movebuf, r.len, r.vers);
+		nreclaimed++;
+		print("lfs: reclaim %s: moved %s version %llud forward to sector %llud, start now %llud, %llud sectors free\n",
+			force ? "for a writer" : "on the tick", r.name, r.vers, f->lba, start, lfsfree());
+		return 1;
+	}
+	start += n;
+	if(start >= limit)
+		start = Lfirst;
+	lfscheckpoint();
+	nreclaimed++;
+	print("lfs: reclaim %s: dropped %s version %llud, dead, start now %llud, %llud sectors free\n",
+		force ? "for a writer" : "on the tick", r.name, r.vers, start, lfsfree());
+	return 1;
+}
+
+/* the serve loop's call, on the clock tick: one step when the log is more than half full */
+int
+lfsreclaim(void)
+{
+	if(!scanned)
+		return 0;
+	return lfsreclaimstep(0);
 }
 
 static int

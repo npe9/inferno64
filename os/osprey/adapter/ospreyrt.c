@@ -233,6 +233,8 @@ static struct {
 	{"yield",	ReqYield},
 	{"poll",	ReqPoll},
 	{"exec",	ReqExec},
+	{"reserve",	ReqReserve},
+	{"tick",	ReqTick},
 };
 
 static char *attrnames[] = {
@@ -1572,6 +1574,24 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 			return 0;
 		}
 
+	case ReqReserve:
+		if(ospreyreserve == nil
+		|| ospreyreserve((Ospreyproc*)p, req->message.arg[2], req->message.arg[3]) < 0){
+			rep->status = ReplyError;
+			return 0;
+		}
+		rep->status = ReplyDone;
+		return 0;
+
+	case ReqTick:
+		if(ospreytickreq == nil
+		|| ospreytickreq((Ospreyproc*)p, (int)(long)req->message.arg[2]) < 0){
+			rep->status = ReplyError;
+			return 0;
+		}
+		rep->status = ReplyDone;
+		return 0;
+
 	case ReqWait:
 		/*
 		 * Answered now if a child has already exited, later when one
@@ -1673,6 +1693,52 @@ forward(Ospreyproc *p, Request *req)
 		return Fwdfull;
 	if(queueput(s->process.requests, &m) < 0)
 		return Fwdfull;
+	return 0;
+}
+
+/* whether this container answers for others: its rings run inbound then */
+int
+ospreyisserver(Ospreyproc *p)
+{
+	return p != nil && p->used && p->serving > 0;
+}
+
+/*
+ * A request of a container's own, answered at once and not through its
+ * rings: a server's request ring carries its clients' requests and its
+ * reply ring its answers to them, so a server that needs something of
+ * the kernel - its reservation, the clock - asks this way.  Only what
+ * the dispatcher answers itself; a request it would forward or hold is
+ * refused.  The reply's value comes back in arg[0].
+ */
+int
+ospreycall(Ospreyproc *p, uvlong op, uvlong *arg, long *status)
+{
+	Request req;
+	Reply rep;
+	int i, n;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	memset(&req, 0, sizeof req);
+	memset(&rep, 0, sizeof rep);
+	req.message.op = op;
+	req.message.container = p->process.id;
+	req.sequence = ++p->sequence;
+	for(i = 0; i < Ospreynarg; i++)
+		req.message.arg[2+i] = arg[i];
+	switch(op){
+	case ReqYield: case ReqPoll: case ReqAlloc: case ReqBind:
+	case ReqExec: case ReqReserve: case ReqTick:
+		break;
+	default:
+		return -1;
+	}
+	n = dispatch(&p->process, &req, &rep, nil);
+	if(n != 0)
+		return -1;
+	*status = rep.status;
+	arg[0] = rep.message.arg[2];
 	return 0;
 }
 
@@ -1828,6 +1894,34 @@ void	(*ospreynamed)(Ospreyproc*, int op);
  */
 long	(*ospreyexec)(Ospreyproc*, uvlong nameoff);
 int	(*ospreywait)(Ospreyproc*, uvlong seq, long *status, uvlong *value);
+/*
+ * And a task's reservation and its clock: the device converts the
+ * microseconds a task speaks in to the counter this layer keeps time
+ * in, and owns the clock interrupt that gives a semaphore.
+ */
+int	(*ospreyreserve)(Ospreyproc*, uvlong usbudget, uvlong usperiod);
+int	(*ospreytickreq)(Ospreyproc*, int sem);
+
+/*
+ * Set a container's reservation: what it is owed every period, and by
+ * when.  The accounting so far stands; the new figures apply from the
+ * next refill.
+ */
+int
+ospreysetreservation(Ospreyproc *p, uvlong budget, uvlong period, uvlong deadline)
+{
+	Container *c;
+
+	if(p == nil || p->used == 0 || period == 0)
+		return -1;
+	lockall();
+	c = &p->process.container;
+	c->budget = budget;
+	c->period = period;
+	c->deadline = deadline;
+	unlockall();
+	return 0;
+}
 
 /*
  * A reply the kernel owes for a request it held on to - a wait, answered

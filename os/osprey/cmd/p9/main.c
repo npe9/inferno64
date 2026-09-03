@@ -500,6 +500,24 @@ p9paircli(void)
 		hc = devtab[hc->type]->open(hc, OWRITE|OTRUNC);
 		devtab[hc->type]->write(hc, "written by the client over 9P, a new version on the disk", 56, 0);
 		cclose(hc);		/* the clunk commits it, over there, to the disk */
+		/*
+		 * And forty more versions, each a record of two sectors: more
+		 * than a small log holds, so the store must reclaim as it goes.
+		 */
+		{
+			int v;
+			char vt[128];
+
+			for(v = 0; v < 40; v++){
+				hc = cclone(root);
+				walk(&hc, names, 2, 1, nil);
+				hc = devtab[hc->type]->open(hc, OWRITE|OTRUNC);
+				ln = snprint(vt, sizeof vt, "version %d of forty written by the client to fill the log and make reclamation run", v+3);
+				devtab[hc->type]->write(hc, vt, ln, 0);
+				cclose(hc);
+			}
+			print("p9: pair-client: wrote forty more versions of /n/hello over 9P\n");
+		}
 
 		hc = cclone(root);
 		walk(&hc, names, 2, 1, nil);

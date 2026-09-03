@@ -33,7 +33,7 @@ def main():
     # a raw disk image for the user-level block driver: sector 0 says who wrote it,
     # sector 1 is what the driver writes; no -snapshot, so the write must reach it
     img = tempfile.mktemp(prefix='osprey-p9pair-blk-', suffix='.img')
-    nsect = 2048
+    nsect = 64		# small on purpose: the client's forty versions overrun it, so reclamation must run
     d = bytearray(nsect * 512)
     stamp = b'osprey block device test image, sector 0 written by the host'
     d[:len(stamp)] = stamp
@@ -62,10 +62,10 @@ def main():
         ("the kernel exposes the virtio block device's registers and interrupt to the server personality, and nothing more",
          'osprey blk: exposed virtio block device' in t and 'as "virtioblk"' in t),
         ("a driver above the kernel brings the device up and reads sector 0, the host's text",
-         '2048 sectors, queue at pa' in t
+         '64 sectors, queue at pa' in t
          and 'blk: read sector 0: status 0, text "osprey block device test image, sector 0 written by the host"' in t),
         ("it writes sector 1 and reads it back, each completion taken by select on the interrupt's semaphore",
-         'blk: write sector 2047: status 0' in t and 'blk: read sector 2047 back: status 0, text "osprey wrote the last sector from user space"' in t
+         'blk: write sector 63: status 0' in t and 'blk: read sector 63 back: status 0, text "osprey wrote the last sector from user space"' in t
          and re.search(r'blk: 3 requests, [1-9]\d* completions taken by select', t) is not None),
         ("and the write reached the disk: the host reads the stamp back from the image after the run",
          lastsector.startswith(b'osprey wrote the last sector from user space')),
@@ -74,11 +74,20 @@ def main():
          and 'lfs: committed hello version 1, 46 bytes, at sector 1' in t),
         ("the client reads the file across the ring over 9P, writes it, and the clunk commits version 2 to the disk",
          'p9: pair-client: read /n/hello from the disk over 9P: "hello from the log-structured store, version 1"' in t
-         and 'lfs: committed hello version 2, 56 bytes' in t
-         and 'p9: pair-client: wrote /n/hello over 9P and read it back: "written by the client over 9P, a new version on the disk"' in t),
-        ("a second boot on the same image finds the log with both records and the file at version 2: the store is persistent",
-         'lfs: mounted the log: 2 records' in t2 and 'lfs: hello version 2, 56 bytes' in t2
-         and 'lfs: found /n/hello on the disk: "written by the client over 9P, a new version on the disk"' in t2),
+         and 'lfs: committed hello version 2, 56 bytes' in t),
+        ("the storage task sets its own reservation and takes the clock, both by request",
+         'osprey: container 3 reserves 2000 us of every 10000 us, by request' in t
+         and 'osprey: container 3 takes the clock tick on semaphore 2, by request' in t),
+        ("forty more versions overrun the 61-sector log, and every reclaim step ran on the tick under that reservation, none on a writer",
+         'p9: pair-client: wrote forty more versions of /n/hello over 9P' in t
+         and 'read it back: "version 42 of forty' in t
+         and len(re.findall(r'lfs: reclaim on the tick', t)) >= 10 and 'reclaim for a writer' not in t
+         and 'the log is full' not in t),
+        ("at the end the kernel reports the task's periods and its best-effort time beyond the reservation, as the talk's dumptask does",
+         re.search(r'osprey status: proc 3 .* besteffort [1-9]\d* periods [1-9]\d*', t) is not None),
+        ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 42: the store is persistent",
+         'from the checkpoint' in t2 and 'lfs: hello version 42, 82 bytes' in t2
+         and 'lfs: found /n/hello on the disk: "version 42 of forty' in t2),
         ("the microkernel runs a client personality that mounts a second personality over the ring",
          'pair-client: mounting the server personality over the ring' in t),
         ("and a second personality, a container of its own, answers 9P about its name space",
@@ -96,6 +105,7 @@ def main():
          and re.search(r'osprey exec: container \d+ \(/boot/linux\) exited with status 0', t) is not None),
         ("exec starts a Plan 9 binary the same way, the buddy laying its a.out out, and it runs to exit",
          'buddy: exec /boot/legacy for container' in t and 'a Plan 9 a.out, text' in t
+         and 'legacy: read(fd, buf, 512) returned 470 bytes' in t
          and 'legacy: closed the fd; the buddy answered every trap' in t
          and re.search(r'osprey exec: container \d+ \(/boot/legacy\) exited with status 0', t) is not None),
         ("wait is answered by somebody: the client's wait returns the child's exit status",

@@ -523,8 +523,20 @@ container's identity.
 .B wait
 is answered when a container this one started exits, with its exit
 status; if one has already exited it is answered at once, and a
-container that has started nothing is refused.  The remaining
-operations are refused.
+container that has started nothing is refused.
+.B reserve
+sets the container's own reservation: a budget and a period in
+microseconds, the deadline being the period; the accounting so far
+stands.
+.B tick
+has the clock interrupt give one of the container's semaphores on every
+tick of its core, or stops it with -1.  A container that answers for
+others cannot make a request on its rings, which carry its clients'
+requests one way and its answers the other; on the microkernel it makes
+these two with system call 60, above the Plan 9 table \- the request
+number, a pointer to the arguments, their count \- and the reply's
+status comes back as the result, its value in the first argument.  The
+remaining operations are refused.
 .SH THE SHARED SPAN
 .PP
 Each container's slice is a segment of its own, named
@@ -783,7 +795,9 @@ mounted at
 .B /n
 of its name space and so served to its client over 9P: a file's version
 is a record appended to the log and committed when the file is closed,
-and the log is scanned at mount.  Nothing reclaims the log yet.
+the log is a ring with a checkpoint in sector 0, and the personality
+reclaims it one record per clock tick under a reservation it set with
+.BR reserve .
 .PP
 .B uart
 hands a uart to a container.  From then on its interrupt handler does

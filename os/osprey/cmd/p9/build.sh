@@ -33,6 +33,8 @@ OBJ="$OBJ /tmp/p9_ring9p.6"
 OBJ="$OBJ /tmp/p9_p9pairsrv.6"
 6c $LIBINC -o /tmp/p9_blkvirtio.6 $P/blkvirtio.c
 OBJ="$OBJ /tmp/p9_blkvirtio.6"
+6a -o /tmp/p9_xcall.6 $P/xcall.s
+OBJ="$OBJ /tmp/p9_xcall.6"
 
 6l -l -R4096 -o /tmp/p9lib $OBJ $SUP Osprey/amd64/lib/libc.a
 echo "built /tmp/p9lib"

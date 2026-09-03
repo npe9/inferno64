@@ -256,14 +256,13 @@ device classes \- eMMC and SD as a block device, and raw NOR or NAND
 flash \- and its storage section says which to build first: the block
 path, then a log-structured service for raw flash whose reclamation is
 an ordinary scheduled task with a reservation the service sets at start
-through the request ABI.  The block device and a log-structured file
-store on it are built, above: the store is the plan's own design for
-the raw-flash tier, running on the block tier for now.  What is left:
-reclamation as a scheduled task with a reservation it sets through the
-request ABI \- the piece the plan says makes the log bounded rather
-than unbounded \- create and remove over 9P, and the raw-flash tier
-itself, which is the same store on a device whose erase and bad blocks
-are the store's problem.
+through the request ABI.  All of that is built, above: the block device
+driven from user space, the log-structured store on it, and its
+reclamation as a task on the clock tick under a reservation the task
+set by request, the log bounded rather than unbounded.  What is left:
+create and remove over 9P, and the raw-flash tier itself, which is the
+same store on a device whose erase and bad blocks are the store's
+problem \- a board this tree has no Osprey target for yet (item 9).
 .PP
 .B "4.  \[*p]p for files, and \[*p]p devices."
 \[*p]p is spoken about containers \- their attributes, tickets,
@@ -2968,11 +2967,54 @@ block driver's own demonstration wrote sector 1, the log's first
 record, so it writes the last sector instead.  What is not built: the
 exporter answers no create or remove over 9P, so a client can rewrite a
 file the server made but not make one; a version is at most 8 KB and
-there are thirty-two files; a removed file is not a tombstone yet; and
-reclamation \- copying live versions forward and reusing the space
-behind them, which the plan makes a scheduled task with a reservation
-of its own \- so until it exists the log only grows.  Checked, with a
-second boot, by
+there are thirty-two files, and a removed file is not a tombstone yet.
+.PP
+Reclamation is built, and it is what the plan's storage section asks
+of it: a scheduled task with a reservation of its own.  The log is a
+ring now: the oldest record is copied to the head if it is the latest
+version of its file and dropped if it is not, and the start moves past
+it, so the space comes round to be written again; sector 0 holds a
+checkpoint \- start, head, record number \- rewritten in place after
+every commit and every step, the one sector written in place, and a
+disk without one is scanned from sector 1 as before.  A step is taken
+on the clock tick when the log is more than half full, and by a writer
+that finds no room, so that normally the storage task's reservation
+pays for it and only a full log costs the writer.  The task says what it
+needs: two requests were added to the list
+.CW ( ReqReserve ,
+.CW ReqTick
+in
+.CW os/osprey/policy/syscall.h ),
+the first setting the caller's budget and period in microseconds, which
+the device converts to the counter the scheduler keeps time in, the
+second giving the caller's semaphore on every clock tick, the
+interrupt-to-task path.  The server personality asks for 2 ms of every
+10 ms and the tick on its second semaphore, and its select waits on the
+tick before the ring, since under a stream of requests the ring is
+always ready and a tick that came second would never be taken.  This
+found a structural fact about the rings that the earlier work had not
+needed: a server's request ring carries its clients' requests and its
+reply ring its answers to them, so a server has no ring of its own to
+ask the kernel on, and the kernel's service path used to take the next
+message on a server's request ring \- a client's 9P \- as the server's
+own, which sent the client's request through the kernel's personality
+and crashed the client.  The service path leaves a server's ring to the
+server's program now
+.CW ( ospreyisserver ),
+and a task's own asks are a system call
+.CW ( ospreyxcall ,
+number 60, above the Plan 9 table: the first try reused PREAD, and an
+unmodified Plan 9 binary's read is pread, so the buddy's legacy program
+lost its read until the number moved),
+put to the dispatcher directly and answered at once.  On a 64-sector
+image the client writes forty-one versions, more than the 61-sector log
+holds, and every reclaim step \- 28 in the first boot, 41 in the second
+\- ran on the tick, none on a writer; the second boot reads the
+checkpoint, finds the wrapped log with the file at version 42, and goes
+on.  When the boot program exits the kernel prints every container's
+line of status, which is the talk's dumptask: the storage task's
+periods, what it used of its reservation, and its best-effort time
+beyond it.  Checked, with a second boot, by
 .CW /scripts/osprey-check-p9pair.py .
 .NH 2
 Built and proven since

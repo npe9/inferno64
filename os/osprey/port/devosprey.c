@@ -1652,7 +1652,13 @@ ospreyservicecaller(void)
 		if(ospreyprocs[i] == up){
 			if((p = ospreyat(i)) != nil){
 				before = ospreyrequestready(p);
-				r = ospreyservicep(p, fastticks(nil));
+				/*
+				 * A container that answers for others has its
+				 * request ring full of their requests, which are
+				 * its program's to take, not the kernel's; its own
+				 * asks go through ospreyxcall.
+				 */
+				r = ospreyisserver(p) ? 0 : ospreyservicep(p, fastticks(nil));
 				/*
 				 * If this container answers for others, send what
 				 * it has answered home.  ospreyroute is a no-op for
@@ -2215,6 +2221,8 @@ extern long (*ospreyexec)(Ospreyproc*, uvlong);
 extern int (*ospreywait)(Ospreyproc*, uvlong, long*, uvlong*);
 extern int ospreyreplylater(Ospreyproc*, uvlong, uvlong, long, uvlong);
 static long ospreyexeckern(Ospreyproc*, uvlong);
+static int ospreyreservekern(Ospreyproc*, uvlong, uvlong);
+static int ospreytickkern(Ospreyproc*, int);
 static int ospreyblkexpose(Ospreyproc*, int);
 static int ospreywaitkern(Ospreyproc*, uvlong, long*, uvlong*);
 static void ospreyputproc(Ospreyproc*);
@@ -2335,6 +2343,39 @@ ospreybuddycall(Ospreyproc *p, int tries)
 		tsleep(&up->sleep, return0, nil, 2);
 	}
 	return -1;
+}
+
+/*
+ * A task's own request, made as a system call: number 60, above the
+ * Plan 9 table, which an unmodified Plan 9 binary uses whole (its read
+ * is pread).  It carries (op, args, nargs); the request is put to the
+ * dispatcher directly and
+ * its reply value comes back in args[0]; the return is the reply's
+ * status.  This is how a server, whose rings run the other way, sets
+ * its reservation and takes the clock.
+ */
+uintptr
+ospreyxcall(va_list list)
+{
+	uvlong op, *ubuf, arg[Ospreynarg];
+	long n, status;
+	int i;
+
+	op = va_arg(list, int);
+	ubuf = va_arg(list, uvlong*);
+	n = va_arg(list, long);
+	if(n < 0 || n > Ospreynarg)
+		return (uintptr)-1;
+	validaddr((uintptr)ubuf, Ospreynarg*sizeof(uvlong), 1);
+	memset(arg, 0, sizeof arg);
+	for(i = 0; i < n; i++)
+		arg[i] = ubuf[i];
+	if(up->osprey == nil || ospreycall(up->osprey, op, arg, &status) < 0){
+		print("osprey: xcall op %llud from container %llud refused\n", op, up->osprey == nil ? 0ULL : ospreyid(up->osprey));
+		return (uintptr)-1;
+	}
+	ubuf[0] = arg[0];
+	return (uintptr)status;
 }
 
 /*
@@ -2684,6 +2725,73 @@ ospreyexeckern(Ospreyproc *parent, uvlong nameoff)
 	return (long)ospreyid(c);
 }
 
+/*
+ * A task sets its own reservation, in microseconds; the scheduler keeps
+ * time in the cycle counter, so the conversion is here, where hz is
+ * known.  The deadline is the period.
+ */
+static int
+ospreyreservekern(Ospreyproc *p, uvlong usbudget, uvlong usperiod)
+{
+	uvlong budget, period;
+
+	if(usperiod == 0 || usbudget > usperiod)
+		return -1;
+	ospreynow();				/* sets ospreyhz */
+	budget = usbudget * ospreyhz / 1000000;
+	period = usperiod * ospreyhz / 1000000;
+	if(ospreysetreservation(p, budget, period, period) < 0)
+		return -1;
+	print("osprey: container %llud reserves %llud us of every %llud us, by request (%llud of %llud at %llud hz)\n",
+		ospreyid(p), usbudget, usperiod, budget, period, ospreyhz);
+	return 0;
+}
+
+/* a task asks for the clock: its semaphore given on every tick, or off */
+static int
+ospreytickkern(Ospreyproc *p, int sem)
+{
+	int x;
+
+	if((x = ospreyindex(p)) < 0 || x >= nelem(ospreyticksem))
+		return -1;
+	if(sem < 0)
+		ospreyticksem[x] = -1;
+	else {
+		if((ulong)sem >= ospreynsem())
+			return -1;
+		ospreyticksem[x] = sem;
+	}
+	print("osprey: container %llud takes the clock tick on semaphore %d, by request\n", ospreyid(p), sem);
+	return 0;
+}
+
+/*
+ * What the talk's dumptask prints at the end of a run: every
+ * container's reservation, what it used of it, and the best-effort time
+ * beyond it.  Printed when the boot program exits, a line at a time.
+ */
+static void
+ospreydumptasks(void)
+{
+	char *buf, *s, *e;
+
+	buf = smalloc(Statuslen);
+	qlock(&ospreylock);
+	ospreystatus(buf, Statuslen, ospreynow(), ospreyhz);
+	qunlock(&ospreylock);
+	for(s = buf; *s != 0; s = e){
+		e = strchr(s, '\n');
+		if(e == nil)
+			e = s + strlen(s);
+		else
+			e++;
+		if(strncmp(s, "proc ", 5) == 0 || strncmp(s, "core ", 5) == 0)
+			print("osprey status: %.*s", (int)(e - s), s);
+	}
+	free(buf);
+}
+
 static int
 ospreywaitkern(Ospreyproc *parent, uvlong seq, long *status, uvlong *value)
 {
@@ -2727,6 +2835,7 @@ ospreyexits(long status)
 		if(e->used && e->child == p)
 			break;
 	if(p == nil || e == &ospreychildren[nelem(ospreychildren)]){
+		ospreydumptasks();
 		print("osprey user: the program exited; the microkernel idles\n");
 		for(;;)
 			tsleep(&up->sleep, return0, nil, 1000);
@@ -3049,6 +3158,8 @@ ospreyinit(void)
 	ospreynamed = ospreytellandwake;
 	ospreyexec = ospreyexeckern;
 	ospreywait = ospreywaitkern;
+	ospreyreserve = ospreyreservekern;
+	ospreytickreq = ospreytickkern;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 	/*
