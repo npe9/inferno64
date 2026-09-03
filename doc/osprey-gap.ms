@@ -317,11 +317,14 @@ outside, keys echo their scancodes and the cursor moves to where it is
 aimed and marks a click there.  That is the exokernel model for the
 display and its input, working and screenshotted.
 .PP
-Not built: a user-level draw service (the (CW/dev/drawP role) that
-multiplexes the display among clients using libmemdraw, which is what rio
-and its clients would talk to; and the 9front personality as a library
-with a name space and exec, under which rio would run.  And rio itself is
-an import this tree does not contain.  The distance to a real rio is
-therefore a draw service that shares the display among clients here, and a
-userland import from 9front there; the frame buffer and the input path
-below such a service are built.
+Built since: the user-level draw service (os/osprey/cmd/draw, devdraw.c
+behind a lib9p shim serving /dev/draw on the frame buffer, with mouse.c
+and kbd.c serving /dev/mouse and /dev/kbd from the exposed interrupt
+rings), and rio from the 9front disk running unmodified on it, on pc64
+(doc/osprey-progress.ms, "Toward rio").
+.PP
+Not built: the 9front personality as a library with a name space and
+exec, under which rio would run on the microkernel rather than on the
+Plan 9 kernel; that is item 1 of "Next, in order" in
+doc/osprey-progress.ms.  rio itself is still an import from the disk,
+not a build of this tree.
