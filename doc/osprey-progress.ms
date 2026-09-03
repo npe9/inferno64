@@ -685,9 +685,41 @@ tried - still reaches for the cooperative sleep the shim does not provide
 and panics
 .CW donotify .
 So the general answer is the same cooperative scheduler named above, not
-a per-protocol patch; TCP is proved, UDP receive waits on it.  The
-osprey-interface medium and a two-machine wire test are what remain of
-item 7a.
+a per-protocol patch; TCP is proved, UDP receive waits on it.
+.PP
+Building that scheduler is a bounded piece with one sharp obstacle worth
+recording.  The switch itself is easy \- the classic Plan 9
+.CW setlabel / gotolabel
+(save SP and PC, return 0 then 1) over a
+.CW Proc
+per kproc, each with its own stack, a run queue, and
+.CW sleep / wakeup / ready
+that
+.CW gotolabel
+between them.  The obstacle is the link: the personality links the host
+.CW libc.a ,
+whose
+.CW sleep(int)
+already owns the symbol
+.CW sleep ,
+so the kernel
+.CW "sleep(Rendez*, int(*)(void*), void*)"
+that
+.CW qio.c 's
+blocking reader calls cannot be defined without a collision \- the same
+wall that stopped overriding
+.CW fastticks .
+The qio path links today only because its
+.CW sleep
+resolves to libc's and is never reached on the synchronous path.  The
+fix is a kernel-side rename (a
+.CW "#define sleep ksleep"
+reaching the port sources but not the ring transport's user-header
+compile) so the real reader can block and the loopback read kproc can
+wake it.  That done, the stock
+.CW loopbackmedium.c
+works unchanged and UDP receive with it.  The osprey-interface medium
+and a two-machine wire test are what remain of item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
