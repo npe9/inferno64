@@ -25,8 +25,8 @@ char*	getconf(char*);
 void	idle(void);
 void	idlehands(void);
 void	init0entry(void);
-void	intrdisable(int, int, void (*)(Ureg*, void*), void*, char*);
-void	intrenable(int, int, void (*)(Ureg*, void*), void*, char*);
+void	intrdisable(int, void (*)(Ureg*, void*), void*, int, char*);
+void	intrenable(int, void (*)(Ureg*, void*), void*, int, char*);	/* (irq, handler, arg, tbdf, name): the portable order */
 int	islo(void);
 void	kbdinit(void);
 void	screeninit(void);
@@ -62,3 +62,20 @@ void	cycles(uvlong*);
 uvlong	rdcycle(void);
 long	archkprofmicrosecondspertick(void);
 void	archkprofenable(int);
+
+/*
+ * For the PCI drivers shared with pc64 (../port/sdnvme.c, usbxhci.c,
+ * virtio10mem.c): this kernel runs in machine mode with no address
+ * translation, so a device's physical address is its virtual one,
+ * DMA addresses are physical addresses, and QEMU's virt machine
+ * keeps DMA coherent, so there is no cache to flush.
+ */
+#define	vmap(pa, size)		((void*)(uintptr)(pa))
+#define	vunmap(va, size)
+#define	PCIWADDR(va)		PADDR(va)
+#define	dmaflush(clean, addr, len)
+
+/* ../riscv/pciecam.c, for ../port/pci.c */
+int	(*pcicfgrw8)(int, int, int, int);
+int	(*pcicfgrw16)(int, int, int, int);
+int	(*pcicfgrw32)(int, int, int, int);

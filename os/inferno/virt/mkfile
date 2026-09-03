@@ -86,7 +86,7 @@ ethervirtiommio.$O:	../port/netif.h ../port/etherif.h
 ethervirtiopci.$O:	../port/netif.h ../port/etherif.h
 $IP devip.$O:	$IPDIR/ip.h
 
-pcivirt.$O:	../riscv/pcivirt.c
-	$CC $CFLAGS ../riscv/pcivirt.c
+pciecam.$O:	../riscv/pciecam.c
+	$CC $CFLAGS ../riscv/pciecam.c
 
 # qemu-system-riscv64 -M virt -nographic -bios none -kernel ivirt

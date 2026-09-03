@@ -219,7 +219,7 @@ trap(Ureg *ur)
 }
 
 void
-intrenable(int v, int tbdf, void (*f)(Ureg*, void*), void *a, char *name)
+intrenable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, name);
 	if(v <= 0 || v >= GicIRQMax)
@@ -230,7 +230,7 @@ intrenable(int v, int tbdf, void (*f)(Ureg*, void*), void *a, char *name)
 }
 
 void
-intrdisable(int v, int tbdf, void (*f)(Ureg*, void*), void *a, char *name)
+intrdisable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, f, a, name);
 	if(v > 0 && v < GicIRQMax){

@@ -679,7 +679,7 @@ inputvirtiommiolink(void)
 		if(c == nil)
 			continue;
 		inputctlr[ninput++] = c;
-		intrenable(c->irq, 0, inputinterrupt, c, "virtinput");
+		intrenable(c->irq, inputinterrupt, c, 0, "virtinput");
 	}
 }
 

@@ -253,7 +253,7 @@ uartconsolesetup(void)
 	if(consuart == nil)
 		return;
 	consuart->putc = consolerx;
-	intrenable(Uart0IRQ, 0, uartintr, consuart, "uart0");
+	intrenable(Uart0IRQ, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;
 	csr8w(c, UartIER, UartIER_RDA);
 }

@@ -498,7 +498,14 @@ zaddr(char *bp, Adr *a, int s)
 	Ieee e;
 
 	if(a->type == D_CONST){
-		l = a->offset;
+		/*
+		 * D_CONST carries 4 bytes; anything wider goes as
+		 * D_DCONST.  The test narrows through int, not long:
+		 * long is 64 bits on the host, so the old (vlong)l !=
+		 * a->offset never fired and every constant past 32 bits
+		 * was silently truncated (doc/inferno-ports.ms).
+		 */
+		l = (int)a->offset;
 		if((vlong)l != a->offset)
 			a->type = D_DCONST;
 	}

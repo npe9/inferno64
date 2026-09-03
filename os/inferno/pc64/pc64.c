@@ -9,7 +9,7 @@
 
 #include "pc64.root.h"
 
-ulong ndevs = 36;
+ulong ndevs = 37;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev archdevtab;
@@ -27,6 +27,7 @@ extern Dev dupdevtab;
 extern Dev capdevtab;
 extern Dev readydevtab;
 extern Dev shmdevtab;
+extern Dev usbdevtab;
 extern Dev etherdevtab;
 extern Dev bridgedevtab;
 extern Dev ipdevtab;
@@ -38,7 +39,7 @@ extern Dev audiodevtab;
 extern Dev uartdevtab;
 extern Dev sddevtab;
 extern Dev tinyfsdevtab;
-Dev* devtab[36]={
+Dev* devtab[37]={
 	&rootdevtab,
 	&consdevtab,
 	&archdevtab,
@@ -56,6 +57,7 @@ Dev* devtab[36]={
 	&capdevtab,
 	&readydevtab,
 	&shmdevtab,
+	&usbdevtab,
 	&etherdevtab,
 	&bridgedevtab,
 	&ipdevtab,
@@ -73,16 +75,32 @@ Dev* devtab[36]={
 extern void ethermediumlink(void);
 extern void netdevmediumlink(void);
 extern void ether8169link(void);
+extern void etherigbelink(void);
+extern void ether8139link(void);
 extern void ether82563link(void);
 extern void etherx550link(void);
 extern void ethervirtiolink(void);
+extern void ethervirtio10link(void);
+extern void etherbcmlink(void);
+extern void etheryuklink(void);
+extern void ether82598link(void);
+extern void etheriwllink(void);
+extern void usbxhcipcilink(void);
 void links(void){
 	ethermediumlink();
 	netdevmediumlink();
 	ether8169link();
+	etherigbelink();
+	ether8139link();
 	ether82563link();
 	etherx550link();
 	ethervirtiolink();
+	ethervirtio10link();
+	etherbcmlink();
+	etheryuklink();
+	ether82598link();
+	etheriwllink();
+	usbxhcipcilink();
 }
 
 extern void sysmodinit(void);
@@ -107,9 +125,13 @@ PCArch* knownarch[] = {
 #include "../port/sd.h"
 extern SDifc sdiahciifc;
 extern SDifc sdvirtioifc;
+extern SDifc sdvirtio10ifc;
+extern SDifc sdnvmeifc;
 SDifc* sdifc[] = {
 	&sdiahciifc,
 	&sdvirtioifc,
+	&sdvirtio10ifc,
+	&sdnvmeifc,
 	nil,
 };
 

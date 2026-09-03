@@ -656,7 +656,7 @@ reset(Ether* edev)
 	edev->shutdown = shutdown;
 	edev->ifstat = ifstat;
 
-	intrenable(edev->irq, edev->tbdf, interrupt, edev, edev->name);
+	intrenable(edev->irq, interrupt, edev, edev->tbdf, edev->name);
 
 	return 0;
 }

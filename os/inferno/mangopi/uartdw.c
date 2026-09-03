@@ -282,6 +282,6 @@ uartconsolesetup(void)
 		return;
 	consuart->putc = consolerx;
 	c = consuart->regs;
-	intrenable(c->irq, 0, uartintr, consuart, "uart0");
+	intrenable(c->irq, uartintr, consuart, 0, "uart0");
 	csrw(c, UartIER, UartIER_RDA);
 }

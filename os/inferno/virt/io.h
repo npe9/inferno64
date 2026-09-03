@@ -48,26 +48,4 @@ enum {
 /* PCI bus type for #l / tbdf; ECAM host is present (may be empty). */
 #define BUSUNKNOWN	(-1)
 
-typedef struct PciBar PciBar;
-typedef struct PciDev PciDev;
-struct PciBar {
-	uintptr	addr;
-	usize	size;
-};
-struct PciDev {
-	int	bus;
-	int	dev;
-	int	fn;
-	u16	vid;
-	u16	did;
-	u32	class;
-	int	irq;
-	PciBar	bar[6];
-	uchar	*common;
-	uchar	*notify;
-	uchar	*isr;
-	uchar	*device;
-	u32	notify_off_mul;
-};
-
-PciDev*	pcimatch(PciDev*, int, int);
+/* PCI: ../port/pci.h, with ../riscv/pciecam.c as the board's back end */

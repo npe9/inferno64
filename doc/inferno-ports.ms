@@ -17992,3 +17992,219 @@ every earlier boot of this board has run.  On
 the MP code also prints "can't find bus type 12" for every PCI
 Express interrupt assignment, so interrupt routing there is suspect
 before the driver is.
+.NH 2
+Item 3, done: the portable PCI layer on riscv64, and two compilers that lost the top half of every wide constant
+.PP
+The plan said "virtio 1.0 on the mmio boards from
+.CW virtio10mem.c" ;
+that was wrong twice.
+.CW os/inferno/virt/ethervirtiommio.c
+already negotiates
+.CW VERSION_1
+on a modern mmio device, and 9front's
+.CW virtio10mem.c
+is not an mmio transport at all but the PCI memory-BAR accessor every
+non-x86 architecture uses (9front has no virtio-mmio).  So the real
+item was PCI on the riscv64 board, and that is what landed.
+.PP
+.CW os/inferno/riscv/pcivirt.c
+was a private mini-PCI: its own
+.CW PciDev ,
+its own
+.CW pcimatch() ,
+config access by
+.CW (bus,dev,fn) ,
+and one driver written to it,
+.CW ethervirtiopci.c
+(legacy virtio only).  Both are gone.  In their place
+.CW os/inferno/riscv/pciecam.c
+is the back end
+.CW ../port/pci.c
+asks a board for \- the same portable bus walk, BAR assignment and
+.CW Pcidev
+list pc64 uses \- reading and writing configuration space through the
+ECAM window at
+.CW 0x30000000
+and mapping each INTx pin to PLIC 32..35 the way QEMU's virt machine
+rotates them by slot.  Memory BARs are placed by
+.CW pcibusmap()
+from
+.CW PCIMMIO ;
+.CW vmap()
+is the identity (machine mode, no translation),
+.CW PCIWADDR()
+is
+.CW PADDR() ,
+.CW dmaflush()
+is empty.  With that, every PCI driver in the tree is one config line
+away on this board, and the four verified on pc64 were linked:
+.CW sdnvme ,
+.CW sdvirtio10
+with
+.CW virtio10mem ,
+.CW ethervirtio10 ,
+.CW usbxhcipci .
+.PP
+One tree-wide change came first.  Every board except the two x86 ones
+declared
+.CW intrenable()
+as (irq, tbdf, handler, arg, name), the portable prototype and the
+9front drivers say (irq, handler, arg, tbdf, name).  All eight
+definitions, ten prototypes and nineteen callers (and
+.CW intrdisable() 's
+eight, ten and one) now use the portable order; the change is
+mechanical and every board rebuilds.
+.PP
+Then the board booted with the PCI devices and NVMe refused its
+controller: "doesnt support NVM command set: 41".  0x41 has bit 0
+set, which is the very bit
+.CW "(cap & (1ULL<<37))"
+tests, so the constant was wrong, and QEMU's
+.CW "-d int"
+had nothing to say because nothing faulted.  A six-line probe
+compiled with
+.CW jc
+and read back with objdump settled it: every constant that does not
+fit a signed 32-bit word came out as zero
+.CW ( 0x2000000000 ,
+.CW 0x100000000 )
+or minus one
+.CW ( 0xffffffff ).
+Three separate instances of the tree's standing "long is 32 bits" bug,
+each on the path a wide constant takes from
+.CW jc
+to
+.CW jl :
+.IP \(bu
+.CW utils/jc/txt.c
+decides whether a constant fits the object format's 4-byte
+.CW D_CONST
+by casting it to
+.CW long
+and comparing; on this host that is a 64-bit cast, so it always fits
+and the 8-byte
+.CW D_VCONST
+form was never produced.  It now narrows through
+.CW int ,
+and only for 8-byte-typed constants, since a 32-bit-typed one wants
+the sign-extending
+.CW MOVW
+its destination gets.
+.IP \(bu
+.CW utils/jc/swt.c
+writes a
+.CW D_VCONST
+as two words read through
+.CW "(long*)a->sval"
+and
+.CW "+1" :
+on a 64-bit host the first read is the whole value and the second is
+whatever lies past it.  It now splits the value arithmetically.
+.IP \(bu
+.CW utils/jl/obj.c
+reads the two words back through the same two
+.CW (long*)
+stores, each 8 bytes wide, the second past the end of the allocation
+and the first missing its high word \- so the literal-pool word the
+kernel loaded was zero.  It now assembles one
+.CW vlong .
+.PP
+Each step was checked in the linked machine code, not the listing:
+after the first fix the pool load was there and the pool word was
+still zero; after all three the pool holds
+.CW 0x2000000000 ,
+.CW 0x100000000
+and
+.CW 0xffffffff
+and the kernel, rebuilt with every riscv64 library, brings the NVMe
+controller up.  (A fourth change, teaching
+.CW jl
+a six-instruction sequence for constants its shift-form cannot reach,
+was written and reverted:
+.CW jl
+already spills any such constant to a literal pool addressed off the
+static base, which
+.CW l.s
+sets up before the first C instruction.)
+.PP
+Verified on riscv64 virt, the same test init as pc64
+.CW ( os/inferno/init/virtdevinit.b ) :
+.TS
+box tab(;);
+lb lb lb
+l l l.
+driver;QEMU device on the virt PCIe;verified
+_
+sdnvme;-device nvme;sdN0 inquiry, serial NVMERV64, sector 0 read back
+sdvirtio10 + virtio10mem;virtio-blk-pci,disable-legacy=on;sdF0, sector 0 read back
+ethervirtio10;virtio-net-pci,disable-legacy=on;#l0 attached, DHCP lease
+devusb + usbxhci;qemu-xhci;/dev/usb/ctl lists the root hub, 8 ports
+.TE
+.PP
+The same probe run through
+.CW 7c
+and
+.CW 7l
+shows arm64 has the same disease in a different place.
+.CW utils/7c/swt.c
+had the identical
+.CW long
+test in front of its 8-byte
+.CW D_DCONST ,
+fixed the same way.  But with that fixed the linked code for
+"return 0x2000000000" is a
+.I 32-bit
+.CW MOVZ
+with a shift of 32, which is not a valid instruction, and for
+0xffffffff a sign-extending
+.CW LDRSW
+from the pool: the compiler is emitting
+.CW MOVW ,
+not
+.CW MOV ,
+for the constant.  With
+.CW -N
+(no optimiser) it emits the correct
+.CW MOV .
+The narrowing is therefore in
+.CW 7c 's
+optimiser passes
+.CW ( peep.c ,
+.CW reg.c ),
+not in
+.CW gmove() 's
+tables, which say
+.CW AMOV
+for every vlong-to-vlong case, and not in the peephole's opcode
+rewrites, which never set
+.CW AMOVW .
+Not located further; recorded here as the next thing to chase on
+arm64, since it stands in front of every wide constant that board's
+kernel has, and
+.CW 7c
+is byte-identical to the kencc-cross original, so the bug is
+upstream's too.
+.PP
+One build gotcha found on the way, worth a line because it cost an
+hour: a board's
+.CW $CONF.root.s
+and
+.CW .h
+are generated
+.I and
+tracked in git, and their rule depends on
+.CW $INITDIR/$INIT.dis
+by timestamp.  Switching
+.CW INIT
+back to an older init program leaves them "up to date" with the newer
+one's contents, and the kernel silently ships the wrong init.
+Remove
+.CW virt.root.s ,
+.CW virt.root.h
+and
+.CW virt.root.j
+before building with a different
+.CW INIT ,
+and check with
+.CW strings
+on the kernel, which is how this was caught.

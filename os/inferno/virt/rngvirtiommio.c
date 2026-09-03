@@ -368,5 +368,5 @@ rngvirtiommiolink(void)
 		return;
 	rngctlr = c;
 	hwrandbuf = rngfill;
-	intrenable(c->irq, 0, rnginterrupt, c, "virtrng");
+	intrenable(c->irq, rnginterrupt, c, 0, "virtrng");
 }

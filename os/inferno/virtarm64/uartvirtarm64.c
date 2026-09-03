@@ -248,7 +248,7 @@ uartconsolesetup(void)
 		return;
 	consuart->putc = consolerx;
 	/* pl011@9000000's SPI is 1 -> GIC IRQ 33 */
-	intrenable(33, 0, uartintr, consuart, "uart0");
+	intrenable(33, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;
 	csr32w(c, UartIMSC, UartIMSCRX);
 }

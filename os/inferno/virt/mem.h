@@ -41,6 +41,8 @@
 #define	PCIECAMSZ	((uintptr)0x10000000)	/* 256 MiB config */
 #define	PCIMMIO		((uintptr)0x40000000)
 #define	PCIMMIOSZ	((uintptr)0x40000000)
+#define	PCIPIO		((uintptr)0x03000000)	/* I/O-space window; no driver here uses it */
+#define	PCIPIOSZ	((uintptr)0x00010000)
 
 /* Mach struct above typical kernel image */
 #define	MACHADDR	(PHYSDRAM+0x100000)

@@ -23,6 +23,7 @@ dev
 	ssl
 	cap
 	kprof
+	usb
 
 ip
 	tcp
@@ -51,7 +52,8 @@ lib
 
 link
 	ethervirtiommio
-	ethervirtiopci	pcivirt
+	ethervirtio10	pci
+	usbxhcipci	usbxhci
 	ethermedium
 	loopbackmedium
 	inputvirtiommio
@@ -100,6 +102,9 @@ port
 
 misc
 	sdvirtiommio	sdscsi
+	sdvirtio10	pci sdscsi virtio10mem
+	sdnvme	pci
+	pci	pciecam
 	uartvirt
 
 mod

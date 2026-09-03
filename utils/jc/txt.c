@@ -532,8 +532,18 @@ naddr(Node *n, Adr *a)
 			a->type = D_FCONST;
 			a->dval = n->fconst;
 		} else {
-			v = (long)n->vconst;
-			if(thechar == 'j' && (vlong)v != n->vconst) {
+			/*
+			 * A constant the object format's 4-byte D_CONST
+			 * cannot hold goes out as an 8-byte D_VCONST.  The
+			 * test has to narrow through a 32-bit type: this
+			 * used to cast through long, which is 64 bits on the
+			 * host, so it never fired and every 64-bit constant
+			 * was silently truncated (doc/inferno-ports.ms).
+			 * A 32-bit typed constant always fits, and wants the
+			 * sign-extending MOVW its 32-bit destination gets.
+			 */
+			v = (int)n->vconst;
+			if(thechar == 'j' && ewidth[n->type->etype] == 8 && (vlong)v != n->vconst) {
 				a->type = D_VCONST;
 				*(vlong*)a->sval = n->vconst;
 			} else {

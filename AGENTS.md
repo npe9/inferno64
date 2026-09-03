@@ -112,7 +112,18 @@
   Limbo usbd against /dev/usb, virtio 1.0 on the mmio boards, ECAM and
   MSI on pc64, then swapping devsd, ethermii and devaudio for 9front's
   so the drivers that wait on them (sdmmc, etheri225, audiohda) come
-  across unchanged.  Decide, build
+  across unchanged.  Items 1 and 3 are done: pc64 links etherigbe and
+  ether8139 (e1000 and RTL8139 get DHCP leases), and riscv64/virt now
+  runs the portable ../port/pci.c over its ECAM through
+  os/inferno/riscv/pciecam.c with NVMe, virtio 1.0 disk and NIC, and
+  xHCI verified on its PCIe.  That found three "long is 32 bits" bugs
+  on the wide-constant path from jc to jl (every 64-bit constant was
+  silently truncated on riscv64; fixed in utils/jc/txt.c, jc/swt.c,
+  jl/obj.c, every riscv64 library and kernel rebuilt) and the same
+  test in utils/7c/swt.c (fixed), plus an OPEN arm64 one: 7c's
+  optimiser narrows a 64-bit constant move to MOVW (correct with -N),
+  not yet located.  intrenable()/intrdisable() now take (irq, handler,
+  arg, tbdf, name) on every board.  Decide, build
   it, test it against a booted kernel, and say plainly
   in that document and in the commit what is real and what is only
   demonstrated.

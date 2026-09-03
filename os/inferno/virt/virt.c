@@ -9,7 +9,7 @@
 
 #include "virt.root.h"
 
-ulong ndevs = 25;
+ulong ndevs = 26;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -27,7 +27,8 @@ extern Dev pointerdevtab;
 extern Dev ssldevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
-Dev* devtab[25]={
+extern Dev usbdevtab;
+Dev* devtab[26]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -45,18 +46,21 @@ Dev* devtab[25]={
 	&ssldevtab,
 	&capdevtab,
 	&kprofdevtab,
+	&usbdevtab,
 	nil,
 };
 
 extern void ethervirtiommiolink(void);
-extern void ethervirtiopcilink(void);
+extern void ethervirtio10link(void);
+extern void usbxhcipcilink(void);
 extern void ethermediumlink(void);
 extern void loopbackmediumlink(void);
 extern void inputvirtiommiolink(void);
 extern void rngvirtiommiolink(void);
 void links(void){
 	ethervirtiommiolink();
-	ethervirtiopcilink();
+	ethervirtio10link();
+	usbxhcipcilink();
 	ethermediumlink();
 	loopbackmediumlink();
 	inputvirtiommiolink();
@@ -80,8 +84,12 @@ void modinit(void){
 
 #include "../port/sd.h"
 extern SDifc sdvirtiommioifc;
+extern SDifc sdvirtio10ifc;
+extern SDifc sdnvmeifc;
 SDifc* sdifc[] = {
 	&sdvirtiommioifc,
+	&sdvirtio10ifc,
+	&sdnvmeifc,
 	nil,
 };
 

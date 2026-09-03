@@ -498,13 +498,19 @@ zaddr(char *bp, Adr *a, int s)
 		break;
 
 	case D_VCONST:
-		l = *(long*)a->sval;
+		/*
+		 * Low word then high word of the vlong in a->sval,
+		 * split arithmetically: indexing it as two longs read
+		 * the whole value as the low word and memory past it
+		 * as the high one on this 64-bit host.
+		 */
+		l = (long)(*(vlong*)a->sval & 0xFFFFFFFF);
 		bp[0] = l;
 		bp[1] = l>>8;
 		bp[2] = l>>16;
 		bp[3] = l>>24;
 		bp += 4;
-		l = *((long*)a->sval + 1);
+		l = (long)(*(vlong*)a->sval >> 32);
 		bp[0] = l;
 		bp[1] = l>>8;
 		bp[2] = l>>16;

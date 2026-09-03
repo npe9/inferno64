@@ -1,0 +1,128 @@
+implement Init;
+
+#
+# virtdevinit: pc64devinit.b for the riscv64 virt board - a
+# console-only init that reports what the PCI drivers shared with
+# pc64 (NVMe, virtio 1.0, xHCI) found on this board's ECAM PCIe,
+# then idles.  Built with INIT=virtdevinit; the shipped init is
+# virtinit.  See doc/inferno-ports.ms.
+#
+
+include "sys.m";
+	sys: Sys;
+include "dhcpclient.m";
+	dhcpclient: Dhcpclient;
+	Bootconf, Lease: import dhcpclient;
+
+Init: module
+{
+	init:	fn();
+};
+
+readfile(path: string): string
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return "cannot open: " + sys->sprint("%r");
+	buf := array[4096] of byte;
+	s := "";
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		s += string buf[0:n];
+	}
+	return s;
+}
+
+init()
+{
+	sys = load Sys Sys->PATH;
+
+	sys->bind("#c", "/dev", Sys->MAFTER);
+	sys->bind("#S", "/dev", Sys->MAFTER);
+	sys->bind("#u", "/dev", Sys->MAFTER);
+	sys->bind("#l0", "/net", Sys->MAFTER);
+	sys->bind("#l1", "/net", Sys->MAFTER);
+	sys->bind("#l2", "/net", Sys->MAFTER);
+	sys->print("DEVTEST: start\n");
+
+	# storage: every sd unit's ctl file
+	fd := sys->open("/dev", Sys->OREAD);
+	if(fd != nil){
+		for(;;){
+			(n, d) := sys->dirread(fd);
+			if(n <= 0)
+				break;
+			for(i := 0; i < n; i++){
+				nm := d[i].name;
+				if(len nm >= 3 && nm[0:2] == "sd" && d[i].mode & Sys->DMDIR)
+					sys->print("DEVTEST: /dev/%s/ctl:\n%s", nm, readfile("/dev/" + nm + "/ctl"));
+			}
+		}
+	}
+
+	# storage: the first sector of the NVMe and virtio 1.0 disks,
+	# which the host wrote a recognisable line into before boot
+	for(l := "/dev/sdN0/data" :: "/dev/sdF0/data" :: nil; l != nil; l = tl l){
+		dfd := sys->open(hd l, Sys->OREAD);
+		if(dfd == nil){
+			sys->print("DEVTEST: %s: cannot open: %r\n", hd l);
+			continue;
+		}
+		sec := array[512] of byte;
+		n := sys->read(dfd, sec, len sec);
+		e := 0;
+		while(e < n && sec[e] != byte 0 && sec[e] != byte '\n')
+			e++;
+		sys->print("DEVTEST: %s sector 0 (%d bytes): %s\n", hd l, n, string sec[0:e]);
+	}
+
+	# usb: the controller and root hub list
+	sys->print("DEVTEST: /dev/usb/ctl:\n%s", readfile("/dev/usb/ctl"));
+
+	# ethernet: the virtio 1.0 interface's statistics
+	sys->print("DEVTEST: /net/ether1/ifstats:\n%s", readfile("/net/ether1/ifstats"));
+
+	# network: DHCP over every Ethernet interface in turn, so each
+	# driver's transmit and receive paths are exercised, not just the
+	# first one's
+	sys->bind("#I", "/net", Sys->MAFTER);
+	dhcpclient = load Dhcpclient Dhcpclient->PATH;
+	if(dhcpclient == nil)
+		sys->print("DEVTEST: DHCP-FAIL load: %r\n");
+	else {
+		dhcpclient->init();
+		for(i := 0; i < 3; i++){
+			ether := sys->sprint("/net/ether%d", i);
+			if(sys->open(ether + "/addr", Sys->OREAD) == nil)
+				continue;
+			cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
+			if(cfd == nil || sys->fprint(cfd, "bind ether %s", ether) < 0){
+				sys->print("DEVTEST: %s DHCP-FAIL ipifc: %r\n", ether);
+				continue;
+			}
+			cfg := Bootconf.new();
+			lease: ref Lease;
+			err: string;
+			(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, ether + "/addr", cfg, nil);
+			if(err != nil || cfg == nil || cfg.ip == nil)
+				sys->print("DEVTEST: %s DHCP-FAIL %s\n", ether, err);
+			else {
+				if(lease != nil)
+					lease.release();
+				sys->print("DEVTEST: %s DHCP-OK ip=%s gw=%s\n", ether, cfg.ip, cfg.ipgw);
+				# one lease per boot: a second dhcp on the same
+				# stack fails with "address in use", so a boot
+				# tests the first interface that answers; boot
+				# once per NIC to test each driver
+				break;
+			}
+			cfd = nil;
+		}
+	}
+
+	sys->print("DEVTEST: done\n");
+	for(;;)
+		sys->sleep(10000);
+}

@@ -429,10 +429,16 @@ zaddr(uchar *p, Adr *a, Sym *h[])
 		a->vval = (vlong*)hunk;
 		nhunk -= 8;
 		hunk += 8;
-		*(long*)a->vval = p[4] | (p[5]<<8) |
-			(p[6]<<16) | (p[7]<<24);
-		*((long*)a->vval + 1) = p[8] | (p[9]<<8) |
-			(p[10]<<16) | (p[11]<<24);
+		/*
+		 * Two 32-bit words in the file.  Assemble them into the
+		 * vlong directly: going through (long*) halves writes
+		 * 8 bytes each on a 64-bit host, the second past the end
+		 * and the first with the high word missing.
+		 */
+		*a->vval = (vlong)(uvlong)((u32int)p[4] | ((u32int)p[5]<<8) |
+			((u32int)p[6]<<16) | ((u32int)p[7]<<24)) |
+			((vlong)(uvlong)((u32int)p[8] | ((u32int)p[9]<<8) |
+			((u32int)p[10]<<16) | ((u32int)p[11]<<24)) << 32);
 		c += 8;
 		break;
 

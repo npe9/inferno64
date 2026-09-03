@@ -523,7 +523,7 @@ vioenable(SDev *sd)
 
 	vd = sd->ctlr;
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrenable(vd->irq, 0, viointerrupt, vd, name);
+	intrenable(vd->irq, viointerrupt, vd, 0, name);
 	csr32w(vd, Status, csr32r(vd, Status) | DriverOk);
 	return 1;
 }
@@ -536,7 +536,7 @@ viodisable(SDev *sd)
 
 	vd = sd->ctlr;
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrdisable(vd->irq, 0, viointerrupt, vd, name);
+	intrdisable(vd->irq, viointerrupt, vd, 0, name);
 	return 1;
 }
 

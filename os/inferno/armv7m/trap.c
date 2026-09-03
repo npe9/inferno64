@@ -40,7 +40,7 @@ static char *excname[16] = {
 };
 
 void
-intrenable(int v, int tbdf, void (*f)(Ureg*, void*), void *a, char *name)
+intrenable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	ulong *iser, *ipr;
 
@@ -62,7 +62,7 @@ intrenable(int v, int tbdf, void (*f)(Ureg*, void*), void *a, char *name)
 }
 
 void
-intrdisable(int v, int tbdf, void (*f)(Ureg*, void*), void *a, char *name)
+intrdisable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	ulong *icer;
 
@@ -147,7 +147,7 @@ trap(Ureg *ur)
 		}
 		print("unhandled interrupt ");
 		print("%lud\n", (ulong)irq);
-		intrdisable(irq, 0, nil, nil, nil);
+		intrdisable(irq, nil, nil, 0, nil);
 		return;
 	}
 	switch((int)type){

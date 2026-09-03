@@ -384,7 +384,7 @@ reset(Ether *edev)
 	edev->shutdown = shutdown;
 	edev->ifstat = ifstat;
 
-	intrenable(edev->irq, edev->tbdf, interrupt, edev, edev->name);
+	intrenable(edev->irq, interrupt, edev, edev->tbdf, edev->name);
 	print("ethersifivegem: %#p irq %d ea %E\n", GEM0, Gem0IRQ, edev->ea);
 	return 0;
 }
