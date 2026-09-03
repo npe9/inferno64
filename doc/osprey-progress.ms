@@ -218,34 +218,135 @@ against the kernel this file describes.
 .NH 1
 Next, in order
 .PP
-Most of what the plan and the presentation describe that a kernel of
-this shape can do is done.  Both halves of the plan's user-level
-services sentence are now built and checked: the file-system half in
-.CW os/osprey/cmd/p9srv.c
-and the protocol stack in
-.CW os/osprey/cmd/netsrv.c ,
-which is pinged from another machine over buffers nothing copies.  What
-is left is a different kernel, and the things below, which neither
-source spells out.
+Surveyed again on 2 September 2026 against both sources \- the talk
+slide by slide, and the plan section by section \- and against the
+tree, not the earlier record of it.  What the sources describe that is
+built and checked is in the sections below.  What follows is everything
+either source describes, or the built parts imply, that is not built,
+in the order it should be done, each with the reason it is a gap.
 .PP
-.B "1.  Knowing who agreed the key."
+.B "1.  Starting a program in a container: exec."
+The microkernel runs the programs its boot loads, and nothing else can
+start one.  This is the gap behind four others: hosting the real
+.CW p9srv
+on the microkernel, the
+.B wait
+request that nobody answers, the talk's
+.I "remote invocation"
+(slide 11), and the Plan 9 legacy binary taking the exec-and-page path
+the Linux one has.  A container that can be told to run a named file
+from a personality's file system \- the buddy's
+.CW EXEC
+generalised to a request any container may make of its server \- is the
+piece.
+.PP
+.B "2.  The rest of a legacy ABI."
+A file mapping (the page path with an offset); the descriptor calls a
+program makes on stdin and stdout beyond write; a fault the buddy
+declines delivered as a signal rather than the microkernel's donotify
+panic; and p9buddy's Plan 9 binary loaded and paged by the buddy through
+an a.out reader, as p9linux's is through an ELF one.
+.PP
+.B "3.  Storage: a block device served by a task, then a file system."
+The plan's user-level services section says file-system policy means two
+device classes \- eMMC and SD as a block device, and raw NOR or NAND
+flash \- and its storage section says which to build first: the block
+path, then a log-structured service for raw flash whose reclamation is
+an ordinary scheduled task with a reservation the service sets at start
+through the request ABI.  None of it is built: no block device is exposed
+to a user task the way the uart and the igbe are, the only file server
+behind the 9P holds a handful of files in memory, and no task sets its
+own reservation.  Under QEMU the block device is virtio or AHCI, exposed
+through the adapter like the interfaces already are.
+.PP
+.B "4.  \[*p]p for files, and \[*p]p devices."
+\[*p]p is spoken about containers \- their attributes, tickets,
+checkpoints \- and on a wire.  The file personalities speak 9P2000, so
+no file in them has an immutable version committed on close, a lease, or
+a grouped open-read-close, which is what slide 19 says every file has.
+And the talk's uart (slide 20) is reached as a \[*p]p file with string
+attributes \-
+.CW *
+listing them,
+.CW b
+the baud rate,
+.CW d
+the data \- answered by the driver task; here the driver task takes
+open, close and an output queue.  Serving the personality's files and
+the uart task over \[*p]p is the piece; "\[*p]p devices in the kernel"
+was the talk's own status line.
+.PP
+.B "5.  The second cut: console and clock as tasks."
+The microkernel still keeps cons, uart and rtc register access; the
+talk's kernel keeps interrupt handling and nothing of the device.  Cut B
+(the section "Cut B begins") moved the uart part way and stopped at the
+emulator; cons and rtc are not begun.  Retiring pc64 as the testbed is
+the measure of this.
+.PP
+.B "6.  Address-space groups, and a checkpoint that carries everything."
+Slide 15: processes that share an address space migrate as a group.
+A container carries one process, so there is no group; lifting that,
+then checkpointing the group, its packets, its pages and its kernel
+channels (none of which a checkpoint carries), and carrying a checkpoint
+that does not fit one ethernet frame, are the pieces.  The microkernel
+makes this reachable now; it was recorded as unreachable when the only
+kernel was Plan 9's.
+.PP
+.B "7.  The stack in user space, beyond a demonstration."
+netsrv answers ARP for one address and echo.  The talk was "working on a
+packet filter" and names routing, gateways and firewalls as what the
+system is for; the plan moves protocol stacks into user space.  A
+filter, then UDP and TCP, on the zero-copy path that exists.
+.PP
+.B "8.  What the talk's goals name and nothing here does."
+Authenticated, controlled access to
+.I "dynamic replicated data"
+(slide 11) and a
+.I "caching filesystem"
+(slide 23): nothing in the tree replicates or caches anything, and both
+sit on item 3.  These are the talk's ends, not its mechanisms, and they
+come after the file system exists.
+.PP
+.B "9.  A second machine."
+The talk boots the same code as
+.CW kpc64
+and
+.CW kpc32 ,
+and claims the system for hard real-time embedded work.  Osprey builds
+for amd64 only.  The 386 libraries build and its machine layer is in the
+tree; what a 386 kernel lacks is a 386 userland for its boot file system
+(section "One instance where the plan asks for a choice").  A non-x86
+board is written from nothing.  The plan's "adapter selected by OBJTYPE"
+has one adapter to select.
+.PP
+.B "10.  The number: 270 nanoseconds."
+The talk measures a send, a receive and a context switch at 270 ns
+between tasks of the shape slide 25 dumps \- an 8 KB task with
+.CW msgsend
+and
+.CW msgrecv .
+Here a round trip is 46\-59 \(mcs under QEMU, and the section "Latency"
+says why: a message wakes a Plan 9 kernel process.  The microkernel's
+tasks are still Procs.  A task of the talk's shape on the microkernel,
+and the number measured on hardware, is the piece; it is structural, and
+it is last because everything above it is correct without it.
+.PP
+.B "11.  Knowing who agreed the key."
 The exchange is with whoever answers.  A person comparing two
 fingerprints is the only thing that says it was the machine that was
 meant, and there is nothing a machine could compare instead without
 something already shared to compare it against.
 .PP
-.B "2.  The rest of an ABI."
-The paper's buddy interposes on a legacy binary's system calls and its
-page faults, and for the Linux binary p9linux now does both: the buddy
-is its loader and its pager, and the kernel answers brk, anonymous
-mmap and munmap from its own address-space service.  What is left on
-that path is what a libc asks for next \- a file mapping (which is the
-page path with an offset), the descriptor calls a program makes on
-stdin and stdout beyond write, and a way for a fault the buddy
-declines to reach the process as a signal rather than the
-microkernel's donotify panic.  The Plan 9 legacy binary (p9buddy) is
-still eager-mapped by the kernel; giving it the same exec-and-page
-path is the same code with an a.out reader in the buddy.
+.B "12.  What is a demonstration's size."
+Sixteen containers, eight cores, thirty-two packets, eight names, four
+grants, eight pages, sixteen arms, one producer and one consumer per
+ring, one process per container; ownership on
+.B poke ,
+.B detach
+and the server named by
+.B delegate
+unchecked behind a mode that keeps other users out.  The shape is right
+and the numbers are compiled in.
 .NH 1
 A personality outside the kernel
 .PP

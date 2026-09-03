@@ -66,12 +66,18 @@ Built: segments as the address-space service; a container's slice mapped
 into a user program with segattach; the server reaching a client's slice
 by the same right, which delegation grants.
 .PP
-Missing: the paper's
+Built since: the paper's
 .I "segments shared at different addresses"
-and, above all,
+\- one slice attached twice, at two addresses, and the ring worked
+through the second (doc/osprey-progress.ms, "The same slice at two
+addresses").
+.PP
+Missing:
 .I "processes that share an address space migrating as a group."
-The plan itself names group migration as a thing a Plan 9 kernel cannot
-reach.  It is unbuilt and, in this kernel's shape, unreachable.
+The plan once named group migration as a thing a Plan 9 kernel cannot
+reach.  With the microkernel built that is no longer the reason: what
+stands in the way now is that a container carries one process, so there
+is no group to migrate.  It is unbuilt, and it is reachable.
 .NH 2
 Interrupts and the driver-as-a-task \- PARTIAL
 .PP
@@ -179,8 +185,13 @@ Checkpoint and migration \- PARTIAL
 Built: serializable container state, checkpoint and restore, tested on
 pc64.
 .PP
-Missing: migration between hosts is untested here, and group migration is
-unreachable (see address spaces).
+Missing: group migration (see address spaces).  Migration between hosts
+is built and checked since this was written \- a container's checkpoint
+in an ethernet frame of its own type, restarted on a second machine and
+destroyed at the first only after the second has said so
+(scripts/osprey-check-wire.py) \- with the limits doc/osprey-progress.ms
+records: one process, one frame, packets, pages and kernel channels not
+carried.
 .NH 1
 The gap to running rio
 .PP
