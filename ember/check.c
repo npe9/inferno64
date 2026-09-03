@@ -2112,6 +2112,194 @@ compositefields(Node *n)
 static Type *echk1(Node*);
 
 /*
+ * constant folding: a binary operator (echk1's arithmetic case, once
+ * both operands are typed alike) or a conversion applied to literals
+ * becomes a literal, so "const N = 4 * 2 + 1", "const S = "ab" +
+ * "cd"", "const B = big(1) << 33" are constants (check() insists a
+ * const's initializer is an Oconst) and array sizes may be
+ * expressions.  the folded node keeps the operator's own type; a
+ * string result gets a fresh interned Sym.  division by a zero
+ * literal is reported here rather than folded.
+ */
+static void
+setconst(Node *n, Type *t)
+{
+	n->op = Oconst;
+	n->left = n->right = n->aux = nil;
+	n->decl = nil;
+	n->ty = t;
+}
+
+static void
+confoldbin(Node *n)
+{
+	Node *l, *r;
+	Long a, b, v;
+	Real x, y, z;
+	char *buf;
+	int op;
+
+	l = n->left;
+	r = n->right;
+	op = n->op;
+	switch(n->ty->kind){
+	case Tint:
+	case Tbig:
+	case Tbyte:
+		a = l->val;
+		b = r->val;
+		switch(op){
+		case Oadd:	v = a + b; break;
+		case Osub:	v = a - b; break;
+		case Omul:	v = a * b; break;
+		case Odiv:
+		case Omod:
+			if(b == 0){
+				nerror(n, "division by zero in constant expression");
+				return;
+			}
+			v = op == Odiv ? a / b : a % b;
+			break;
+		case Oand:	v = a & b; break;
+		case Oor:	v = a | b; break;
+		case Oxor:	v = a ^ b; break;
+		case Olsh:	v = a << b; break;
+		case Orsh:	v = a >> b; break;
+		default:	return;
+		}
+		if(n->ty->kind == Tint)
+			v = (int)v;
+		else if(n->ty->kind == Tbyte)
+			v &= 0xff;
+		setconst(n, n->ty);
+		n->flags = 0;
+		n->val = v;
+		return;
+	case Treal:
+		x = l->rval;
+		y = r->rval;
+		switch(op){
+		case Oadd:	z = x + y; break;
+		case Osub:	z = x - y; break;
+		case Omul:	z = x * y; break;
+		case Odiv:	z = x / y; break;
+		default:	return;
+		}
+		setconst(n, treal);
+		n->flags = NREAL;
+		n->rval = z;
+		return;
+	case Tstring:
+		if(op != Oadd || l->sym == nil || r->sym == nil)
+			return;
+		buf = allocmem(l->sym->len + r->sym->len + 1);
+		memmove(buf, l->sym->name, l->sym->len);
+		memmove(buf + l->sym->len, r->sym->name, r->sym->len);
+		buf[l->sym->len + r->sym->len] = 0;
+		setconst(n, tstring);
+		n->flags = NSTR;
+		n->sym = enter(buf, 0);
+		free(buf);
+		return;
+	}
+}
+
+static void
+confoldcast(Node *n)
+{
+	Node *l;
+	Type *to, *from;
+	char buf[64];
+
+	l = n->left;
+	to = n->ty;
+	from = l->ty;
+	if(from == nil || from->kind == Tarray || to->kind == Tarray)
+		return;
+	if(from->kind == Tstring){
+		/* the VM's cvtcw/cvtcl/cvtcf: strtol/strtod semantics, so
+		 * int("12abc") is 12 and int("abc") is 0 */
+		if(l->sym == nil)
+			return;
+		switch(to->kind){
+		case Tint:
+		case Tbig:
+		case Tbyte: {
+			Long v;
+
+			v = strtoll(l->sym->name, nil, 10);
+			setconst(n, to);
+			n->flags = 0;
+			n->val = to->kind == Tint ? (int)v : to->kind == Tbyte ? (v & 0xff) : v;
+			return;
+		}
+		case Treal: {
+			Real r;
+
+			r = strtod(l->sym->name, nil);
+			setconst(n, treal);
+			n->flags = NREAL;
+			n->rval = r;
+			return;
+		}
+		}
+		return;
+	}
+	switch(to->kind){
+	case Tint:
+	case Tbig:
+	case Tbyte:
+		if(from->kind == Treal){
+			Real r;
+
+			r = l->rval;
+			/* round to nearest, as the Dis conversion does */
+			setconst(n, to);
+			n->flags = 0;
+			n->val = (Long)(r < 0 ? r - 0.5 : r + 0.5);
+		}else{
+			Long v;
+
+			v = l->val;
+			setconst(n, to);
+			n->flags = 0;
+			n->val = v;
+		}
+		if(to->kind == Tint)
+			n->val = (int)n->val;
+		else if(to->kind == Tbyte)
+			n->val &= 0xff;
+		return;
+	case Treal:
+		if(from->kind == Treal){
+			Real r;
+
+			r = l->rval;
+			setconst(n, treal);
+			n->flags = NREAL;
+			n->rval = r;
+		}else{
+			Long v;
+
+			v = l->val;
+			setconst(n, treal);
+			n->flags = NREAL;
+			n->rval = (Real)v;
+		}
+		return;
+	case Tstring:
+		if(from->kind == Treal)
+			return;	/* runtime formatting rules; leave it */
+		seprint(buf, buf+sizeof(buf), "%lld", (vlong)l->val);
+		setconst(n, tstring);
+		n->flags = NSTR;
+		n->sym = enter(buf, 0);
+		return;
+	}
+}
+
+
+/*
  * echk() is NOT naturally idempotent: it rewrites nodes in place
  * (Odot -> Oind/Omdot/Oname, Oindex -> Oindx/Oinds, a call to a type
  * name -> Ocast, a bound method call's receiver prepended to its
@@ -2156,6 +2344,10 @@ echk1(Node *n)
 			n->ty = tstring;
 		else if(n->flags & NREAL)
 			n->ty = treal;
+		else if(n->ty == tbig)
+			;	/* folded from big operands */
+		else if(n->val > 0x7fffffffLL || n->val < -0x80000000LL)
+			n->ty = tbig;	/* int is 32 bits: a wider literal is a big, as in limbo */
 		else
 			n->ty = tint;
 		return n->ty;
@@ -2990,6 +3182,8 @@ echk1(Node *n)
 			return n->ty;
 		}
 		n->ty = t;
+		if(n->left->op == Oconst && n->right->op == Oconst)
+			confoldbin(n);
 		return n->ty;
 	case Ocons: {
 		Type *et;
@@ -3446,6 +3640,8 @@ echk1(Node *n)
 			return n->ty;
 		}
 		n->ty = t;
+		if(n->left->op == Oconst)
+			confoldcast(n);
 		return n->ty;
 	}
 	case Oload: {

@@ -190,6 +190,31 @@ globalrconst(Node *n)
 }
 
 static Decl*
+globalbconst(Node *n)
+{
+	Decl *d;
+	char buf[32];
+	Sym *s;
+
+	seprint(buf, buf+sizeof(buf), ".b.%lld", (vlong)n->val);
+	s = enter(buf, 0);
+	d = s->decl;
+	if(d == nil || d->store != Dglobal){
+		d = mkdecl(&n->src, Dglobal, tbig);
+		d->sym = s;
+		s->decl = d;
+		d->init = dupn(n);
+		d->init->ty = tbig;
+		d->init->decl = d;
+		appglobal(d);
+	}
+	d->refs++;
+	n->decl = d;
+	n->addable = Rmreg;
+	return d;
+}
+
+static Decl*
 globaliconst(Node *n)
 {
 	Decl *d;
@@ -273,6 +298,9 @@ sumark(Node *n)
 		break;
 	case Oconst:
 		switch(n->ty->kind){
+		case Tbyte:	/* a folded byte(...) constant: an immediate */
+			n->addable = Rconst;
+			break;
 		case Tint:
 			v = n->val;
 			if(v < 0 && ((v >> 29) & 0x7) != 7
@@ -283,6 +311,12 @@ sumark(Node *n)
 			break;
 		case Tstring:
 			globalsconst(n);
+			n->addable = Rmreg;
+			break;
+		case Tbig:
+			/* a literal wider than int, or a folded big expression:
+			 * pooled in module data like a real (no immediate form) */
+			globalbconst(n);
 			n->addable = Rmreg;
 			break;
 		case Treal:
