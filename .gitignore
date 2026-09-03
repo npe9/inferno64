@@ -429,3 +429,6 @@ os/osprey/boot/*.bootfs.paq
 
 # generated config C for the riscv64 S-mode board
 os/inferno/virts/virts.c
+
+# generated config C for the riscv32 S-mode board
+os/inferno/virt32s/virt32s.c

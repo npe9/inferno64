@@ -1,0 +1,151 @@
+#include "u.h"
+#include "../port/lib.h"
+#include "mem.h"
+#include "dat.h"
+#include "fns.h"
+#include "io.h"
+
+void
+archreset(void)
+{
+}
+
+void
+pciarchinit(void)
+{
+	/* no PCI in this board's first-boot config -- see the virt32
+	 * config file's own note on what's trimmed and why. */
+}
+
+/*
+ * KenC loads 32-bit immediates with MOVW (sign-extending).  Values with
+ * bit31 set (e.g. 0x80000000) must come from static data so the high
+ * word is zero, then loaded with a 64-bit MOV.  DRAMSIZE (256MiB) is fine
+ * as an immediate; keep physdram in static storage.
+ */
+static uintptr physdram = (uintptr)8 << 28;
+
+void
+archconfinit(void)
+{
+	conf.topofmem = physdram + DRAMSIZE;
+	conf.cpuspeed = 10000000;
+}
+
+void
+archconsole(void)
+{
+	/* uartconsole already set consuart / serwrite */
+}
+
+extern void	sbisystemreset(int);
+
+void
+archreboot(void)
+{
+	sbisystemreset(0);	/* SBI SRST shutdown; clean QEMU exit */
+	for(;;)
+		idle();		/* SRST does not return; spin if it somehow does */
+}
+
+void
+kbdinit(void)
+{
+}
+
+void
+idlehands(void)
+{
+	/* Timer (CLINT) + UART (PLIC) wake WFI; sync ticks after wake. */
+	idle();
+	clockpoll();
+}
+
+void
+delay(int ms)
+{
+	uvlong end;
+
+	if(ms <= 0)
+		return;
+	end = fastticks(nil) + (uvlong)ms * (m->cpuhz / 1000);
+	while(fastticks(nil) < end)
+		clockpoll();
+}
+
+void
+microdelay(int us)
+{
+	int i, n;
+
+	n = (m->delayloop * us) / 1000;
+	if(n <= 0)
+		n = 1;
+	for(i = 0; i < n; i++)
+		;
+	if(us >= 100)
+		clockpoll();
+}
+
+int
+cmpswap(s32 *addr, s32 old, s32 new)
+{
+	int s, r;
+
+	s = splhi();
+	if(*addr == old){
+		*addr = new;
+		r = 1;
+	}else
+		r = 0;
+	splx(s);
+	return r;
+}
+
+void
+cycles(uvlong *u)
+{
+	*u = rdcycle();
+}
+
+long
+archkprofmicrosecondspertick(void)
+{
+	return 1000000 / HZ;
+}
+
+void
+archkprofenable(int on)
+{
+	USED(on);
+}
+
+/*
+ * interp.h's AINC/ADEC (libinterp's Dis reference-counting primitives),
+ * copied from os/inferno/armv7/archv7.c's own copy of this same gap:
+ * spl-masked, same uniprocessor assumption cmpswap above already makes
+ * (MAXMACH is 1 on this board).  virt/archvirt.c (riscv64/jc) doesn't
+ * need this -- jc must provide it some other way this simpler zc port
+ * doesn't have.
+ */
+int
+ainc(int *addr)
+{
+	int s, r;
+
+	s = splhi();
+	r = ++*addr;
+	splx(s);
+	return r;
+}
+
+int
+adec(int *addr)
+{
+	int s, r;
+
+	s = splhi();
+	r = --*addr;
+	splx(s);
+	return r;
+}

@@ -270,8 +270,18 @@ through ROOT-CMDS-OK, to the shell prompt with zero faults, four of
 four, with a virtio-blk disk exercising the PLIC external-interrupt
 path.  The machine-mode
 .CW virt
-board is untouched and still boots.  riscv32 S-mode and wiring the
-boards to the device-tree addresses remain.
+board is untouched and still boots.
+.PP
+riscv32 has the same S-mode sibling now:
+.CW os/inferno/virt32s ,
+built and booted under rv32 OpenSBI to VIRT32-INIT-OK and the shell,
+zero faults, four of four.  The rv32-specific care the advisor flagged
+held up: the 64-bit deadline is passed to the SBI set_timer ecall as a0
+low / a1 high through two ulong globals rather than a uvlong in one
+register, and the 64-bit tick is the time/timeh CSR pair read with the
+standard hi/lo/hi retry loop done in C.  Both S-mode boards also gained
+a clean SBI SRST poweroff on exit(), verified.  Wiring the boards to the
+device-tree addresses is what remains.
 .PP
 Both riscv boards, and arm64, then need a device-tree reader: every
 address is a compile-time constant today, checked against QEMU's
