@@ -62,19 +62,23 @@ nothing is reused. Redirects are not followed \(em the status and
 .B location
 header come back to the caller instead.
 .PP
-The host is resolved by dialling the name, which works when a
-connection server (such as
-.IR ndb/cs (8))
-serves
-.IR /net/cs ;
-failing that it falls back to the hosted
+A hostname in the URL is resolved by
+.IR doh (2)
+\(em DNS over HTTPS, over this same TLS \(em so the whole client
+resolves names by itself, needing no
+.I /net/cs
+and no host resolver. Resolutions are cached for the life of the
+process. A literal IP in the URL is dialled directly (no lookup). If
+DoH resolution fails, it falls back to dialling the name through a
+connection server (\c
+.IR ndb/cs (8),
+if one serves
+.IR /net/cs )
+and then the hosted
 .IR emu 's
 built-in
 .B $Srv
-resolver, so hostname URLs work in hosted mode with no connection
-server running. Under a native kernel with neither, only a working
-.I /net/cs
-will do.
+resolver.
 .SH SOURCE
 .B /appl/lib/https.b
 .br

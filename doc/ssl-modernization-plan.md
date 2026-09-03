@@ -51,9 +51,21 @@ keyring's `and`/`shr` builtins emit debug noise / misbehave, so P-256
 reads scalar bits from `iptobebytes()` rather than through IPint's bit
 operators.
 
-Still not done (smaller, tracked): DoH is not yet wired into
-`/net/cs`, so a program must call `dns(1)`/`doh(2)` explicitly rather
-than dialling a name; no TLS 1.3; no revocation checking. P-256 is
+**Name resolution wired in, 2026-09-03**: `https(2)`'s `connect()` now
+resolves every hostname it dials through `doh(2)` (cached per process,
+literal IPs dialled directly, `$Srv`/cs kept as fallback) — so the
+whole HTTPS client and everything on it (`bsky`/`masto`/`s3`) resolves
+names by itself, no `/net/cs`, no host resolver. No recursion: DoH's
+own resolver request uses `requestto()` with the resolver's literal
+IP, which dials directly and never re-enters `connect()`.
+Negative-controlled: disabling the cs+`$Srv` fallbacks entirely,
+bsky/mastodon still resolved and returned 200, proving DoH is the
+actual resolver. bskytest/mastotest/s3test/httpstest all pass through
+it.
+
+Genuinely still not done (smaller, tracked): serving `/net/cs` from
+`doh` so a bare `dial(2)` by name (a program not using `https(2)`)
+resolves too; no TLS 1.3; no revocation checking. P-256/P-384 are
 affine (not constant-time) — fine for verifying public signatures and
 ephemeral ECDH, the only uses here.
 

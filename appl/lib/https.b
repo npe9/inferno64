@@ -22,6 +22,7 @@ include "security.m";
 include "tls12.m";
 	tls12: TLS12;
 	Session: import tls12;
+include "doh.m";
 include "https.m";
 
 init(): string
@@ -137,26 +138,98 @@ hasport(a: string): int
 	return 0;
 }
 
+# DoH resolver, loaded lazily the first time a name needs resolving.
+# It is NOT loaded in init() to avoid a load-time cycle (doh(2) loads
+# https(2)); and doh(2)'s own resolver request goes through
+# requestto() with the resolver's literal IP, which dials directly and
+# never re-enters connect(), so there is no recursion.
+doh: DOH;
+dohtried: int;
+# a tiny per-process resolution cache (host -> addresses), so repeated
+# requests to the same host cost one DoH lookup, not one per request
+rcache: list of (string, list of string);
+
 connect(host, port: string): (ref Sys->FD, string)
 {
-	# by name first - real when a connection server (ndb/cs) is
-	# mounted on /net
+	# a literal IPv4 address needs no resolution
+	if(isipv4(host))
+		return dialone(host, port);
+
+	# a cached resolution
+	for(cl := rcache; cl != nil; cl = tl cl){
+		(h, as) := hd cl;
+		if(h == host)
+			return dialany(as, port, host);
+	}
+
+	# resolve the name ourselves, over our own TLS (doh(2)) - this is
+	# what lets the whole stack resolve hostnames with no /net/cs and
+	# no host resolver
+	if(!dohtried){
+		dohtried = 1;
+		doh = load DOH DOH->PATH;
+		if(doh != nil && doh->init() != nil)
+			doh = nil;
+	}
+	if(doh != nil){
+		(addrs, rerr) := doh->resolve(nil, host);
+		if(addrs != nil){
+			rcache = (host, addrs) :: rcache;
+			return dialany(addrs, port, host);
+		}
+		# rerr non-nil (e.g. NXDOMAIN or a transient DoH failure):
+		# fall through to the legacy resolvers below
+		rerr = rerr;
+	}
+
+	# fallbacks: a mounted connection server (ndb/cs), then the hosted
+	# emu's own $Srv resolver
+
 	c := dial->dial("tcp!"+host+"!"+port, nil);
 	if(c != nil)
 		return (c.dfd, nil);
-
-	# hosted fallback: the emu's own $Srv resolver
-	if(srv == nil)
-		return (nil, sys->sprint("https: dial %s: %r (and no $Srv resolver)", host));
-	addrs := srv->iph2a(host);
-	if(addrs == nil)
-		return (nil, sys->sprint("https: cannot resolve %s", host));
-	for(; addrs != nil; addrs = tl addrs){
-		c = dial->dial("tcp!"+hd addrs+"!"+port, nil);
-		if(c != nil)
-			return (c.dfd, nil);
+	if(srv != nil){
+		addrs := srv->iph2a(host);
+		for(; addrs != nil; addrs = tl addrs){
+			c = dial->dial("tcp!"+hd addrs+"!"+port, nil);
+			if(c != nil)
+				return (c.dfd, nil);
+		}
 	}
-	return (nil, sys->sprint("https: dial %s: %r", host));
+	return (nil, sys->sprint("https: cannot resolve %s", host));
+}
+
+dialone(addr, port: string): (ref Sys->FD, string)
+{
+	c := dial->dial("tcp!"+addr+"!"+port, nil);
+	if(c == nil)
+		return (nil, sys->sprint("https: dial %s: %r", addr));
+	return (c.dfd, nil);
+}
+
+# try each resolved address, returning the first that connects
+dialany(addrs: list of string, port, host: string): (ref Sys->FD, string)
+{
+	for(al := addrs; al != nil; al = tl al){
+		(fd, nil) := dialone(hd al, port);
+		if(fd != nil)
+			return (fd, nil);
+	}
+	return (nil, sys->sprint("https: %s resolved but no address connected", host));
+}
+
+# a dotted-decimal IPv4 literal (so it needs no name resolution)
+isipv4(s: string): int
+{
+	dots := 0;
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		if(c == '.')
+			dots++;
+		else if(c < '0' || c > '9')
+			return 0;
+	}
+	return dots == 3;
 }
 
 parseurl(url: string): (string, string, string, string)

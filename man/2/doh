@@ -93,15 +93,26 @@ non-zero RCODE \(em e.g. name-does-not-exist \(em as an error).
 .IR https (2),
 .IR tls12 (2)
 .SH BUGS
-Only A and AAAA records are handled; there is no caching, no fallback
-across multiple resolvers, and no integration into
-.IR dial (2)'s
-own name resolution (a caller must invoke
-.B doh
-explicitly \(em wiring DoH into
+Only A and AAAA records are handled, and there is no fallback across
+multiple resolvers.
+.IR https (2)
+already resolves every hostname it dials through
+.BR doh ,
+so the whole HTTPS client (and everything built on it \(em
+.IR bsky (1),
+.IR masto (1),
+.IR s3 (1))
+resolves names by itself. What is
+.I not
+yet done is serving
 .I /net/cs
-so every dial resolves by name is the obvious next step, not yet
-done). The message id is always 0, as RFC 8484 recommends for DoH.
+from
+.BR doh ,
+which would make a bare
+.IR dial (2)
+by name resolve too, for programs that do not go through
+.IR https (2).
+The message id is always 0, as RFC 8484 recommends for DoH.
 Reaching an ECDSA resolver depends on
 .IR tls12 (2)'s
 ECDHE-ECDSA/P-256 support; a resolver on a curve or key type that

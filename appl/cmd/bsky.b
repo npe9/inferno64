@@ -10,9 +10,9 @@ implement Bsky;
 # module/ssl3.m was SSLv3-era and could not reach a modern HTTPS host;
 # that stopgap is gone, per CLAUDE.md's rule that no network client
 # uses #C as a transport (the SSL modernization it demanded is done -
-# doc/ssl-modernization-plan.md). Name resolution still leans on the
-# hosted emu's $Srv resolver when no connection server is mounted, so
-# hosted mode remains the tested configuration.
+# doc/ssl-modernization-plan.md). Hostnames are resolved by https(2)
+# over DNS-over-HTTPS (doh(2)) - the tree's own encrypted resolver -
+# so this needs no /net/cs and no host resolver.
 #
 # Every write (post/reply/like/repost/follow) is one createRecord
 # call: AT Protocol represents all of them as records in the user's
