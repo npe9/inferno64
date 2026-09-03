@@ -1282,7 +1282,7 @@ func compositefields(n ref types.Node) ref types.Type {
 				}
 			}
 			if fd == nil {
-				nerror(e, sys.sprint("%s has no field %s", tp(t), e.left.sym))
+				nerror(e.left, sys.sprint("%s has no field %s", tp(t), e.left.sym))
 			}
 		} else {
 			if keyed == 1 {
@@ -2289,6 +2289,15 @@ func declocal(id ref types.Node, t ref types.Type) ref types.Decl {
 	return d
 }
 
+// a local of that name already in the innermost scope (check.c)
+func redeclared(name string) int {
+	d := lookup(name)
+	if d != nil && d.scope == scope && (d.store == types.Dlocal || d.store == types.Darg) {
+		return 1
+	}
+	return 0
+}
+
 func daschk(n ref types.Node) {
 	lhs := n.left
 	if lhs.op == types.Oseq {
@@ -2315,6 +2324,9 @@ func daschk(n ref types.Node) {
 			if id.op != types.Oname {
 				nerror(n, "unsupported := form")
 				return
+			}
+			if redeclared(id.sym) != 0 {
+				nerror(id, sys.sprint("%s is already declared in this scope", id.sym))
 			}
 			declocal(id, fd.ty)
 			fd = fd.next
@@ -2346,6 +2358,9 @@ func daschk(n ref types.Node) {
 	if t.kind == types.Tfn {
 		nerror(n, "a method is not a value: call it, or wrap it in a closure")
 		t = terror
+	}
+	if redeclared(lhs.sym) != 0 {
+		nerror(lhs, sys.sprint("%s is already declared in this scope", lhs.sym))
 	}
 	declocal(lhs, t)
 	n.ty = t
@@ -2845,6 +2860,14 @@ func chklval(n ref types.Node, what string) int {
 	return 0
 }
 
+// an if or for condition: an int (check.c)
+func condchk(n ref types.Node) {
+	t := echk(n)
+	if t != terror && t.kind != types.Tint {
+		nerror(n, sys.sprint("condition is %s, not int", tp(t)))
+	}
+}
+
 func stchk(n ref types.Node) {
 	for ; n != nil; n = n.right {
 		match n.op {
@@ -2857,7 +2880,7 @@ func stchk(n ref types.Node) {
 			popscope()
 			return
 		case types.Oif:
-			echk(n.left)
+			condchk(n.left)
 			pushscope()
 			stchk(n.right)
 			popscope()
@@ -2879,7 +2902,7 @@ func stchk(n ref types.Node) {
 				stchk(n.aux.left)
 			}
 			if n.left != nil {
-				echk(n.left)
+				condchk(n.left)
 			}
 			pushscope()
 			stchk(n.right)
@@ -3064,6 +3087,78 @@ func aschk(n ref types.Node) {
 
 // ---- declarations
 
+// does a break inside n leave the loop n is the body of? (check.c)
+func hasbreak(n ref types.Node, nested int) int {
+	if n == nil {
+		return 0
+	}
+	match n.op {
+	case types.Obreak:
+		if n.left != nil || nested == 0 {
+			return 1
+		}
+		return 0
+	case types.Ofor, types.Omatch, types.Oalt:
+		if hasbreak(n.left, 1) != 0 || hasbreak(n.right, 1) != 0 || hasbreak(n.aux, 1) != 0 {
+			return 1
+		}
+		return 0
+	}
+	if hasbreak(n.left, nested) != 0 || hasbreak(n.right, nested) != 0 || hasbreak(n.aux, nested) != 0 {
+		return 1
+	}
+	return 0
+}
+
+// does the statement list n always end in a return or raise? (check.c)
+func terminates(n ref types.Node) int {
+	if n == nil {
+		return 0
+	}
+	for n.op == types.Oseq {
+		if n.right == nil {
+			return terminates(n.left)
+		}
+		n = n.right
+	}
+	match n.op {
+	case types.Oscope:
+		return terminates(n.left)
+	case types.Oret, types.Oraise:
+		return 1
+	case types.Oif:
+		if n.aux != nil && terminates(n.right) != 0 && terminates(n.aux) != 0 {
+			return 1
+		}
+		return 0
+	case types.Omatch, types.Oalt:
+		wild := 0
+		for m := n.right; m != nil; m = m.right {
+			arm := seqitem(m)
+			if arm.op == types.Ocase {
+				if arm.left == nil {
+					wild = 1
+				}
+				if terminates(arm.right) == 0 {
+					return 0
+				}
+			}
+			if m.op != types.Oseq {
+				break
+			}
+		}
+		return wild
+	case types.Ofor:
+		if n.left == nil && hasbreak(n.right, 0) == 0 {
+			return 1
+		}
+		return 0
+	case types.Olabel:
+		return terminates(n.right)
+	}
+	return 0
+}
+
 func fnchk(d ref types.Decl) {
 	curfn = d
 	curret = d.ty.tof
@@ -3077,6 +3172,10 @@ func fnchk(d ref types.Decl) {
 		}
 	}
 	stchk(body)
+	// a function with a result must return on every path (check.c)
+	if d.ty.tof != nil && d.ty.tof != tnone && d.ty.tof != terror && terminates(body) == 0 {
+		error(d.init.line, sys.sprint("function %s does not return a value on every path", d.sym))
+	}
 	for arg := d.ty.ids; arg != nil; arg = arg.next {
 		if arg.sym != nil && lookup(arg.sym) == arg {
 			setbind(arg.sym, arg.old)

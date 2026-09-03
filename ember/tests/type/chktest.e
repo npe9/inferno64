@@ -323,8 +323,8 @@ func init() {
 	}
 
 	// a struct field that's itself ref-typed, both directions.
-	c := ref C{res: mk(0)}
-	q := fieldchk(c)
+	c3 := ref C{res: mk(0)}
+	q := fieldchk(c3)
 	match q {
 	case Result.Ok(v):
 		sys.print("fieldchk ok %d\n", v)

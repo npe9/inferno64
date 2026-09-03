@@ -1,0 +1,3 @@
+tests/typeerr/noreturn.e:5: function a does not return a value on every path
+tests/typeerr/noreturn.e:11: function b does not return a value on every path
+tests/typeerr/noreturn.e:20: function c does not return a value on every path

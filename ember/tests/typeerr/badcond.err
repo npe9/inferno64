@@ -1,0 +1,3 @@
+tests/typeerr/badcond.e:10: condition is string, not int
+tests/typeerr/badcond.e:13: condition is ref P, not int
+tests/typeerr/badcond.e:16: condition is byte, not int

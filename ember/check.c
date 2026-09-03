@@ -2133,7 +2133,7 @@ compositefields(Node *n)
 					if(fd->sym == e->left->sym)
 						break;
 			if(fd == nil)
-				nerror(e, "%T has no field %s", t, e->left->sym->name);
+				nerror(e->left, "%T has no field %s", t, e->left->sym->name);
 		}else{
 			if(keyed == 1)
 				nerror(e, "cannot mix keyed and positional elements in %T composite literal", t);
@@ -4052,6 +4052,16 @@ echk1(Node *n)
 /*
  * declare locals for :=
  */
+/* a local of that name already in the innermost scope (n := ... twice) */
+static int
+redeclared(Sym *sym)
+{
+	Decl *d;
+
+	d = lookup(sym);
+	return d != nil && d->scope == scope && (d->store == Dlocal || d->store == Darg);
+}
+
 static void
 daschk(Node *n)
 {
@@ -4107,6 +4117,8 @@ daschk(Node *n)
 				return;
 			}
 			sizetype(fd->ty);
+			if(redeclared(id->sym))
+				nerror(id, "%s is already declared in this scope", id->sym->name);
 			d = mkdecl(&id->src, Dlocal, fd->ty);
 			d->sym = id->sym;
 			install(d);
@@ -4159,6 +4171,8 @@ daschk(Node *n)
 		t = terror;
 	}
 	sizetype(t);
+	if(redeclared(lhs->sym))
+		nerror(lhs, "%s is already declared in this scope", lhs->sym->name);
 	d = mkdecl(&lhs->src, Dlocal, t);
 	d->sym = lhs->sym;
 	install(d);
@@ -4821,6 +4835,17 @@ chklval(Node *n, char *what)
 	return 0;
 }
 
+/* an if or for condition: an int (a comparison, a logical expression, a flag) */
+static void
+condchk(Node *n)
+{
+	Type *t;
+
+	t = echk(n);
+	if(t != terror && t->kind != Tint)
+		nerror(n, "condition is %T, not int", t);
+}
+
 static void
 stchk(Node *n)
 {
@@ -4967,7 +4992,7 @@ stchk(Node *n)
 			popscope();
 			return;
 		case Oif:
-			echk(n->left);
+			condchk(n->left);
 			pushscope();
 			stchk(n->right);
 			popscope();
@@ -4988,7 +5013,7 @@ stchk(Node *n)
 			if(n->aux != nil)
 				stchk(n->aux->left);
 			if(n->left != nil)
-				echk(n->left);
+				condchk(n->left);
 			pushscope();
 			stchk(n->right);
 			popscope();
@@ -5136,6 +5161,82 @@ stchk(Node *n)
 /*
  * check one function body
  */
+/*
+ * does a break inside n leave the loop n is the body of?  an
+ * unlabeled break inside a nested loop, match or alt leaves that
+ * one instead; a labeled break is assumed to reach out.
+ */
+static int
+hasbreak(Node *n, int nested)
+{
+	if(n == nil)
+		return 0;
+	switch(n->op){
+	case Obreak:
+		return n->left != nil || !nested;
+	case Ofor:
+	case Omatch:
+	case Oalt:
+		return hasbreak(n->left, 1) || hasbreak(n->right, 1) || hasbreak(n->aux, 1);
+	}
+	return hasbreak(n->left, nested) || hasbreak(n->right, nested) || hasbreak(n->aux, nested);
+}
+
+/*
+ * does the statement (list) n always end in a return or raise?  go's
+ * terminating statements: return, raise, an if with an else both
+ * terminating, a match or alt with a default and every arm
+ * terminating, a for without a condition that no break leaves, and a
+ * block whose last statement terminates.
+ */
+static int
+terminates(Node *n)
+{
+	Node *arm;
+
+	if(n == nil)
+		return 0;
+	while(n->op == Oseq){
+		if(n->right == nil)
+			return terminates(n->left);
+		n = n->right;
+	}
+	switch(n->op){
+	case Oscope:
+		return terminates(n->left);
+	case Oret:
+	case Oraise:
+		return 1;
+	case Oif:
+		return n->aux != nil && terminates(n->right) && terminates(n->aux);
+	case Omatch:
+	case Oalt: {
+		int wild;
+
+		wild = 0;
+		for(n = n->right; n != nil; n = n->right){
+			arm = n;
+			if(n->op == Oseq)
+				arm = n->left;
+			if(arm->op == Ocase){
+				if(arm->left == nil)
+					wild = 1;
+				if(!terminates(arm->right))
+					return 0;
+			}
+			if(n->op != Oseq)
+				break;
+		}
+		return wild;
+	}
+	case Ofor:
+		return n->left == nil && !hasbreak(n->right, 0);
+	case Olabel:
+		return terminates(n->right);
+	}
+	return 0;
+}
+
 static void
 fnchk(Decl *d)
 {
@@ -5156,6 +5257,13 @@ fnchk(Decl *d)
 		}
 	}
 	stchk(body);
+	/*
+	 * a function with a result must return on every path: falling
+	 * off the end returned whatever the result slot held -- zero,
+	 * which for a ref is not even nil
+	 */
+	if(d->ty->tof != nil && d->ty->tof != tnone && d->ty->tof != terror && !terminates(body))
+		error(d->init->src.start, "function %s does not return a value on every path", d->sym->name);
 	for(arg = d->ty->ids; arg != nil; arg = arg->next){
 		if(arg->sym != nil && arg->sym->decl == arg){
 			arg->sym->decl = arg->old;

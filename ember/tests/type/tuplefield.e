@@ -144,7 +144,7 @@ func init() {
 	// caller -- this one, compositefields()'s, Oas's, any future one
 	// -- gets it for free, rather than chasing each call site that
 	// happens to construct a live Otuple value individually.
-	bt := (0, "zero")
+	bt = (0, "zero")
 	bt = (1, "one")
 	ar1, sr1 := bt
 	sys.print("reassign: ar1=%d sr1=%s\n", ar1, sr1)

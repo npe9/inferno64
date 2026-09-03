@@ -1,0 +1,2 @@
+tests/typeerr/redeclare.e:7: n is already declared in this scope
+tests/typeerr/redeclare.e:14: x is already declared in this scope

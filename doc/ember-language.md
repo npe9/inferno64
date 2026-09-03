@@ -204,7 +204,14 @@ expressions (an array element, a call).
 
 `spawn f(args)`, `spawn obj.method(args)` and `spawn func(k int) {
 ... }(i)` start a new process. `return` returns one value or an
-expression list. `raise expr` (a string) ends the process with that
+expression list. A function with a result must return or `raise` on
+every path: the last statement must be a `return`, a `raise`, an
+`if` with an `else` both of which do, a `match` or `alt` with a
+`default` all of whose arms do, or a `for` without a condition that
+no `break` leaves. An `if` or `for` condition must be an `int`
+(a comparison, a logical expression, a flag); a string or ref is not
+a condition. `:=` may not redeclare a name already declared in the
+same scope, though an inner scope may shadow it. `raise expr` (a string) ends the process with that
 error, the way a Limbo `raise` does; there is no catch, and a command
 uses `raise "fail:reason"` to exit unsuccessfully.
 
