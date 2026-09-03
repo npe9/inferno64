@@ -675,8 +675,19 @@ are untouched; only the medium, the wire abstraction, is made
 zero-latency.  Every other configuration (pc64 and the rest) keeps the
 real kproc-driven
 .CW loopbackmedium.c ,
-and all build unchanged.  The osprey-interface medium and a two-machine
-wire test are what remain of item 7a.
+and all build unchanged.
+.PP
+The synchronous loopback carries TCP because every wait tcp.c makes
+during the handshake and the data transfer lands on a condition the
+immediate injection has already made true.  A client path that instead
+blocks on a receive the loopback has not yet satisfied - UDP receive, as
+tried - still reaches for the cooperative sleep the shim does not provide
+and panics
+.CW donotify .
+So the general answer is the same cooperative scheduler named above, not
+a per-protocol patch; TCP is proved, UDP receive waits on it.  The
+osprey-interface medium and a two-machine wire test are what remain of
+item 7a.
 .PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
