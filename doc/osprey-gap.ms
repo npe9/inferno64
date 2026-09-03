@@ -207,6 +207,16 @@ way to start programs \- exec.  In the library-OS environment as it
 stands, none of these is present: xup64's personality library has no name
 space, no exec, no graphics, and a four-call kernel interface.
 .PP
+Built since: exec.  A container submits the
+.B exec
+request with a program's name and the kernel starts it in a container of
+its own, laid out, paged and answered for by the container's server; and
+.B wait
+returns its exit status (doc/osprey-progress.ms, the p9pair paragraph
+under "The gaps").  What it starts is a Linux binary the buddy answers
+for; a Plan 9 a.out is refused, so the personality still cannot start
+rc or rio this way.
+.PP
 What the tree has, and does not have, sharpens this:
 .IP \(bu 2
 The draw device (\f(CWos/osprey/port/devdraw.c\fP), a mouse device, and

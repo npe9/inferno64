@@ -57,14 +57,40 @@ enum {
  * this personality's descriptor table for as long as the process runs,
  * its entry, and its loadable program headers.
  */
-static struct {
+typedef struct Img Img;
+struct Img {
+	uvlong	container;	/* whose image this is; 0 when free */
 	int	fd;
+	int	kind;		/* 0 an ELF, 1 a Plan 9 a.out */
 	uvlong	entry;
 	int	nph;
 	struct {
 		uvlong	off, va, filesz, memsz, flags;
 	} ph[Maxph];
-} img = { -1 };
+};
+enum { Nimg = 8 };
+static Img imgs[Nimg];
+
+/* the image of a container, making one when told to */
+static Img*
+imgof(uvlong container, int make)
+{
+	int i;
+
+	for(i = 0; i < Nimg; i++)
+		if(imgs[i].container == container)
+			return &imgs[i];
+	if(!make)
+		return nil;
+	for(i = 0; i < Nimg; i++)
+		if(imgs[i].container == 0){
+			memset(&imgs[i], 0, sizeof imgs[i]);
+			imgs[i].container = container;
+			imgs[i].fd = -1;
+			return &imgs[i];
+		}
+	return nil;
+}
 
 static uvlong
 le(uchar *p, int n)
@@ -100,51 +126,65 @@ readat(int fd, vlong off, uchar *buf, long n)
  * segment's address, memory size and flags.  Returns the count, or -1.
  */
 static long
-p9buddy_exec(char *name, uchar *out)
+p9buddy_exec(uvlong container, char *name, uchar *out)
 {
+	Img *img;
 	uchar hdr[64], ph[56];
 	uvlong phoff, *d;
 	int phentsize, phnum, i;
 
-	if(img.fd >= 0){
-		p9close(img.fd);
-		img.fd = -1;
+	if((img = imgof(container, 1)) == nil)
+		return -1;
+	if(img->fd >= 0){
+		p9close(img->fd);
+		img->fd = -1;
 	}
 	if(waserror()){
 		print("buddy: exec %s: %s\n", name, up->errstr);
 		return -1;
 	}
-	img.fd = p9open(name, 0);
+	img->fd = p9open(name, 0);
 	poperror();
-	if(readat(img.fd, 0, hdr, sizeof hdr) < 0 || hdr[0] != 0x7f || hdr[1] != 'E')
+	if(readat(img->fd, 0, hdr, sizeof hdr) < 0)
 		return -1;
-	img.entry = le(hdr+24, 8);
+	if(hdr[0] != 0x7f || hdr[1] != 'E'){
+		/* a Plan 9 a.out (big-endian magic) is not laid out this way yet */
+		img->kind = 1;
+		d = (uvlong*)out;
+		d[0] = 0;
+		d[1] = 1;
+		print("buddy: exec %s: not an ELF, refused\n", name);
+		return -1;
+	}
+	img->kind = 0;
+	img->entry = le(hdr+24, 8);
 	phoff = le(hdr+32, 8);
 	phentsize = le(hdr+54, 2);
 	phnum = le(hdr+56, 2);
-	img.nph = 0;
-	for(i = 0; i < phnum && img.nph < Maxph; i++){
-		if(readat(img.fd, phoff + (uvlong)i*phentsize, ph, sizeof ph) < 0)
+	img->nph = 0;
+	for(i = 0; i < phnum && img->nph < Maxph; i++){
+		if(readat(img->fd, phoff + (uvlong)i*phentsize, ph, sizeof ph) < 0)
 			return -1;
 		if(le(ph, 4) != 1)		/* PT_LOAD */
 			continue;
-		img.ph[img.nph].flags = le(ph+4, 4);
-		img.ph[img.nph].off = le(ph+8, 8);
-		img.ph[img.nph].va = le(ph+16, 8);
-		img.ph[img.nph].filesz = le(ph+32, 8);
-		img.ph[img.nph].memsz = le(ph+40, 8);
-		img.nph++;
+		img->ph[img->nph].flags = le(ph+4, 4);
+		img->ph[img->nph].off = le(ph+8, 8);
+		img->ph[img->nph].va = le(ph+16, 8);
+		img->ph[img->nph].filesz = le(ph+32, 8);
+		img->ph[img->nph].memsz = le(ph+40, 8);
+		img->nph++;
 	}
 	d = (uvlong*)out;
-	d[0] = img.entry;
-	d[1] = img.nph;
-	for(i = 0; i < img.nph; i++){
-		d[2+3*i] = img.ph[i].va;
-		d[3+3*i] = img.ph[i].memsz;
-		d[4+3*i] = img.ph[i].flags;
+	d[0] = img->entry;
+	d[1] = img->kind;
+	for(i = 0; i < img->nph; i++){
+		d[2+3*i] = img->ph[i].va;
+		d[3+3*i] = img->ph[i].memsz;
+		d[4+3*i] = img->ph[i].flags;
 	}
-	print("buddy: exec %s: entry %#llux, %d loadable segments\n", name, img.entry, img.nph);
-	return img.nph;
+	print("buddy: exec %s for container %llud: entry %#llux, %d loadable segments\n",
+		name, container, img->entry, img->nph);
+	return img->nph;
 }
 
 /*
@@ -154,28 +194,42 @@ p9buddy_exec(char *name, uchar *out)
  * which case the address is the legacy process's own bad one.
  */
 static long
-p9buddy_page(uvlong va, uchar *out)
+p9buddy_page(uvlong container, uvlong va, uchar *out)
 {
+	Img *img;
 	uvlong lo, hi, fend;
 	int i, found;
 
 	memset(out, 0, Pagesz);
-	if(img.fd < 0)
+	if((img = imgof(container, 0)) == nil || img->fd < 0)
 		return -1;
 	found = 0;
-	for(i = 0; i < img.nph; i++){
-		if(va + Pagesz <= img.ph[i].va || va >= img.ph[i].va + img.ph[i].memsz)
+	for(i = 0; i < img->nph; i++){
+		if(va + Pagesz <= img->ph[i].va || va >= img->ph[i].va + img->ph[i].memsz)
 			continue;
 		found = 1;
-		lo = va > img.ph[i].va ? va : img.ph[i].va;
-		fend = img.ph[i].va + img.ph[i].filesz;
+		lo = va > img->ph[i].va ? va : img->ph[i].va;
+		fend = img->ph[i].va + img->ph[i].filesz;
 		hi = va + Pagesz < fend ? va + Pagesz : fend;
-		if(lo < hi && readat(img.fd, img.ph[i].off + (lo - img.ph[i].va), out + (lo - va), hi - lo) < 0)
+		if(lo < hi && readat(img->fd, img->ph[i].off + (lo - img->ph[i].va), out + (lo - va), hi - lo) < 0)
 			return -1;
 	}
 	if(found)
 		print("buddy: page %#llux of the legacy image supplied from its file\n", va);
 	return found ? 0 : -1;
+}
+
+/* a container has gone: let go of the image held for it */
+void
+p9buddy_gone(uvlong container)
+{
+	Img *img;
+
+	if((img = imgof(container, 0)) == nil)
+		return;
+	if(img->fd >= 0)
+		p9close(img->fd);
+	memset(img, 0, sizeof *img);
 }
 
 /*
@@ -186,19 +240,19 @@ p9buddy_page(uvlong va, uchar *out)
  * process's result register.
  */
 long
-p9buddy_syscall(uvlong scallnr, uvlong a0, uvlong a1, uvlong a2, uchar *cdata)
+p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a2, uchar *cdata)
 {
 	long r;
 
 	switch(scallnr){
 	case EXEC:
 		/* lay out the binary named at cdata[Nameoff]; layout to cdata[Dataoff] */
-		r = p9buddy_exec((char*)(cdata + Nameoff), cdata + Dataoff);
+		r = p9buddy_exec(container, (char*)(cdata + Nameoff), cdata + Dataoff);
 		break;
 
 	case PAGE:
 		/* the image's page at a0, to cdata[Dataoff] */
-		r = p9buddy_page(a0, cdata + Dataoff);
+		r = p9buddy_page(container, a0, cdata + Dataoff);
 		break;
 
 	case OPEN:
@@ -252,10 +306,10 @@ p9buddy_syscall(uvlong scallnr, uvlong a0, uvlong a1, uvlong a2, uchar *cdata)
  * cdata[Argoff]: number, then the three scalars.
  */
 long
-p9buddy_serve(uchar *cdata)
+p9buddy_serve(uchar *cdata, uvlong container)
 {
 	uvlong *ab;
 
 	ab = (uvlong*)(cdata + Argoff);
-	return p9buddy_syscall(ab[0], ab[1], ab[2], ab[3], cdata);
+	return p9buddy_syscall(container, ab[0], ab[1], ab[2], ab[3], cdata);
 }

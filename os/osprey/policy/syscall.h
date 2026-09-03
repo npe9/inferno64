@@ -29,6 +29,16 @@ enum {
 	 * same.  Nothing answers it; there is nobody left to answer to.
 	 */
 	ReqGone,
+	/*
+	 * Start a program in a container of its own.  arg[2] is the offset,
+	 * in the caller's data area, of the program's name in the caller's
+	 * server's name space.  Answered by the kernel: it makes the
+	 * container, delegates it to the caller's server, and that server
+	 * lays the program out and pages it in as a buddy does; the reply's
+	 * arg[2] is the new container's identity.  wait, above, is answered
+	 * when a container this one started exits, with its status.
+	 */
+	ReqExec,
 };
 
 enum {

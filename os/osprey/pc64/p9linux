@@ -171,9 +171,6 @@ port
 	 * boot process down (that would panic) but idles the machine.
 	 */
 	extern long ospreybuddyforward(ulong, uintptr*);
-	extern uintptr ospreylinuxbrk(uintptr);
-	extern uintptr ospreylinuxmmap(uintptr, uintptr, int, int, int, vlong);
-	extern uintptr ospreylinuxmunmap(uintptr, uintptr);
 	typedef uintptr Xsyscall(va_list);
 
 	uintptr xpwrite(va_list list)
@@ -221,9 +218,7 @@ port
 	uintptr xexits(va_list list)
 	{
 		USED(list);
-		print("osprey user: the program exited; the microkernel idles\n");
-		for(;;)
-			tsleep(&up->sleep, return0, nil, 1000);
+		ospreyexits(0);	/* the boot program idles; one exec started ends */
 		return 0;
 	}
 	/*
@@ -302,31 +297,8 @@ port
 				validaddr((uintptr)args, sizeof(Sargs), 0);
 				up->s = *args;
 			}
-			if(up->oslinux){
-				uvlong *la = (uvlong*)up->s.args;
-				if(scallnr == 1 && (la[0] == 1 || la[0] == 2)){
-					/* Linux write(1|2, buf, n): straight to the console */
-					char *b = (char*)la[1];
-					long ln = (long)la[2], i;
-					if(!waserror()){
-						validaddr((uintptr)b, ln, 0);
-						for(i = 0; i < ln; i++)
-							kdebugputc(b[i]);
-						poperror();
-					}
-					*retp = (uintptr)ln;
-				} else if(scallnr == 60 || scallnr == 231){
-					xexits((va_list)up->s.args);	/* exit / exit_group */
-					*retp = 0;
-				} else if(scallnr == 12){		/* brk */
-					*retp = ospreylinuxbrk((uintptr)la[0]);
-				} else if(scallnr == 9){		/* mmap */
-					*retp = ospreylinuxmmap((uintptr)la[0], (uintptr)la[1], (int)la[2], (int)la[3], (int)la[4], (vlong)la[5]);
-				} else if(scallnr == 11){		/* munmap */
-					*retp = ospreylinuxmunmap((uintptr)la[0], (uintptr)la[1]);
-				} else
-					*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
-			}
+			if(up->oslinux)
+				ospreylinuxsyscall(scallnr, retp);	/* port/userinit.c */
 			else if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
 			else if(ospreyp9buddy)

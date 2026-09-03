@@ -49,7 +49,7 @@ def main():
     pages = re.findall(r'osprey buddy: page 0x[0-9a-f]+ of the legacy image supplied by the buddy', t)
     results = [
         ("the buddy lays the Linux binary out from its own file system (exec), the kernel carrying no copy",
-         'buddy: exec /boot/linux: entry 0x401000' in t
+         re.search(r'buddy: exec /boot/linux for container \d+: entry 0x401000', t) is not None
          and 'laid out by the buddy: entry 0x401000' in t and 'no page mapped yet' in t),
         ("its page faults are taken to the buddy, which supplies each page from the file (text, rodata, bss)",
          len(pages) >= 3 and 'page 0x401000 of the legacy image supplied from its file' in t

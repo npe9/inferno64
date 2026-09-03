@@ -511,7 +511,20 @@ with where it is in the container's slice and how long it is.  The card
 wrote it there; nothing copies it.  The buffer belongs to the container
 until it asks for the next packet, which is when the one before goes back
 to the interface.  The container's network accounting is credited for the
-packet as it is taken.  The remaining operations are refused.
+packet as it is taken.
+.PP
+.B exec
+starts a program in a container of its own.  It takes the offset of a
+null-terminated name in the container's data area; the name is resolved
+by the container's server, which lays the program out and supplies its
+pages as it runs and answers its system calls, so a container with no
+server has nothing to run it and is refused.  The reply is the new
+container's identity.
+.B wait
+is answered when a container this one started exits, with its exit
+status; if one has already exited it is answered at once, and a
+container that has started nothing is refused.  The remaining
+operations are refused.
 .SH THE SHARED SPAN
 .PP
 Each container's slice is a segment of its own, named
@@ -1323,16 +1336,13 @@ are the grants somebody with the key wrote.
 .SH SEE ALSO
 .IR cons (3)
 .SH BUGS
+.B exec
+lays out an ELF and nothing else: a Plan 9 a.out named to it is refused
+by the server, so the only programs it can start are Linux binaries the
+buddy answers for, and those can make only the calls the buddy maps.
 .B wait
-is answered by nobody: not by the policy layer, not by the kernel, and
-not by
-.IR p9srv .
-It is the one request in the list with no meaning here, since nothing in
-the list starts a process for a container to wait for.
-Process requests belong to the user-level services the Osprey plan
-describes, and a container with a server named by
-.B delegate
-has them answered there if that server implements them.
+waits for any child, not a named one, and a container may have eight
+outstanding.
 .B bind
 is answered by the policy layer itself, in
 .IR dispatch (),

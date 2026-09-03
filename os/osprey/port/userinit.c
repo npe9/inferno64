@@ -28,8 +28,6 @@ extern int ospreyp9;
 extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
-extern void ospreyexeclinux(char*);
-extern void ospreyenteruserat(void);
 extern void ospreyloadlegacy(void);
 extern void touserat(char*);
 extern int ospreyuserprep(void);
@@ -171,30 +169,35 @@ enum {
 	Leinval		= 22,
 	Mapanon		= 0x20,
 };
-static int ospreylinuxheap = -1;
-static uintptr ospreylinuxbreak;
-static uintptr ospreylinuxmmapnext;
 
 /*
- * Exec a legacy Linux binary through the buddy.  The kernel holds no copy
- * of it: it is a file in the buddy's file system, the buddy reads its ELF
- * headers and answers with the entry and the loadable segments, and the
- * kernel makes each segment empty - text or data by the segment's execute
- * flag - with a stack below USTKTOP.  Every page of text and data is then
- * a fault the buddy answers (ospreybuddyfault in devosprey.c): the
- * paper's buddy interposes on page faults as well as system calls, and
- * this is where the second half begins.
+ * Exec a legacy binary through the buddy.  The kernel holds no copy of
+ * it: it is a file in the buddy's file system, the buddy reads its
+ * headers and answers with the entry, the loadable segments and what
+ * kind of binary it is, and the kernel makes each segment empty - text
+ * or data by the segment's execute flag - with a stack below USTKTOP
+ * and a heap for brk a page above the image.  Every page of text and
+ * data is then a fault the buddy answers (ospreybuddyfault in
+ * devosprey.c): the paper's buddy interposes on page faults as well as
+ * system calls.  An ELF is a Linux process and marks itself so; a Plan
+ * 9 a.out is not laid out this way yet and is refused.  Returns -1 when
+ * the buddy did not lay it out.
  */
-void
-ospreyexeclinux(char *name)
+int
+ospreyexecbuddy(char *name)
 {
 	Ospreybuddyseg segs[8];
 	uvlong entry, segva, segend, top;
-	int n, i, seg, npg;
+	int n, i, seg, npg, kind;
 
-	n = ospreybuddyexec(name, &entry, segs, nelem(segs));
+	n = ospreybuddyexec(name, &entry, segs, nelem(segs), &kind);
 	if(n < 0)
-		panic("osprey buddy: the buddy did not lay out %s", name);
+		return -1;
+	if(kind != 0){
+		print("osprey buddy: %s is not an ELF; only a Linux binary is laid out by the buddy yet\n", name);
+		return -1;
+	}
+	up->oslinux = 1;
 	ospreyuserentry = entry;
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
 	seg = TSEG;
@@ -218,15 +221,17 @@ ospreyexeclinux(char *name)
 	 * own; the kernel zero-fills it on demand (SG_BSS), which is the
 	 * address-space service and not the buddy's file.
 	 */
+	up->linuxheap = -1;
 	if(seg < NSEG){
 		up->seg[seg] = newseg(SG_BSS, top, 1);
-		ospreylinuxheap = seg;
-		ospreylinuxbreak = top;
+		up->linuxheap = seg;
+		up->linuxbrk = top;
 		seg++;
 	}
-	ospreylinuxmmapnext = Linuxmmapbase;
+	up->linuxmmapnext = Linuxmmapbase;
 	print("osprey buddy: %s laid out by the buddy: entry %#llux, %d segments, no page mapped yet\n",
 		name, entry, n);
+	return 0;
 }
 
 /*
@@ -243,15 +248,15 @@ ospreyexeclinux(char *name)
 uintptr
 ospreylinuxbrk(uintptr addr)
 {
-	if(ospreylinuxheap < 0)
+	if(up->linuxheap < 0)
 		return (uintptr)-Lenomem;
 	if(addr == 0)
-		return ospreylinuxbreak;
+		return up->linuxbrk;
 	if(waserror())
-		return ospreylinuxbreak;	/* unchanged: the old break */
-	ibrk(addr, ospreylinuxheap);
+		return up->linuxbrk;		/* unchanged: the old break */
+	ibrk(addr, up->linuxheap);
 	poperror();
-	ospreylinuxbreak = addr;
+	up->linuxbrk = addr;
 	return addr;
 }
 
@@ -266,7 +271,7 @@ ospreylinuxmmap(uintptr addr, uintptr len, int prot, int flags, int fd, vlong of
 		return (uintptr)-Leinval;
 	len = PGROUND(len);
 	va = addr != 0 && (addr & (BY2PG-1)) == 0 && isoverlap(addr, len) == nil && addr + len < USTKTOP-USTKSIZE ?
-		addr : ospreylinuxmmapnext;
+		addr : up->linuxmmapnext;
 	while(isoverlap(va, len) != nil)
 		va += len;
 	if(va + len >= USTKTOP-USTKSIZE)
@@ -280,10 +285,60 @@ ospreylinuxmmap(uintptr addr, uintptr len, int prot, int flags, int fd, vlong of
 		return (uintptr)-Lenomem;
 	up->seg[sno] = newseg(SG_BSS, va, len/BY2PG);
 	poperror();
-	if(va == ospreylinuxmmapnext)
-		ospreylinuxmmapnext = va + len;
+	if(va == up->linuxmmapnext)
+		up->linuxmmapnext = va + len;
 	print("osprey user: mmap %lud bytes anonymous at %#llux\n", (ulong)len, (uvlong)va);
 	return va;
+}
+
+/*
+ * A Linux process's system call, whatever configuration it runs in: the
+ * number in up->s.args is la[0..5] as syscall() (trap.c) laid them out.
+ * write to the console and exit are answered here, so are the
+ * address-space calls above, and everything else goes to the buddy
+ * through ospreybuddyforward, which maps the file calls it knows and
+ * refuses the rest.  The result goes to the process's ax.
+ */
+extern long ospreybuddyforward(ulong, uintptr*);
+uintptr ospreylinuxmunmap(uintptr, uintptr);
+
+int
+ospreylinuxsyscall(ulong scallnr, uintptr *retp)
+{
+	uvlong *la = (uvlong*)up->s.args;
+
+	switch(scallnr){
+	case 1:				/* write */
+		if(la[0] == 1 || la[0] == 2){
+			char *b = (char*)la[1];
+			long ln = (long)la[2], i;
+
+			if(!waserror()){
+				validaddr((uintptr)b, ln, 0);
+				for(i = 0; i < ln; i++)
+					kdebugputc(b[i]);
+				poperror();
+			}
+			*retp = (uintptr)ln;
+			return 0;
+		}
+		break;
+	case 60: case 231:		/* exit, exit_group */
+		ospreyexits((long)la[0]);
+		*retp = 0;
+		return 0;
+	case 12:			/* brk */
+		*retp = ospreylinuxbrk((uintptr)la[0]);
+		return 0;
+	case 9:				/* mmap */
+		*retp = ospreylinuxmmap((uintptr)la[0], (uintptr)la[1], (int)la[2], (int)la[3], (int)la[4], (vlong)la[5]);
+		return 0;
+	case 11:			/* munmap */
+		*retp = ospreylinuxmunmap((uintptr)la[0], (uintptr)la[1]);
+		return 0;
+	}
+	*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+	return 0;
 }
 
 uintptr
@@ -294,7 +349,7 @@ ospreylinuxmunmap(uintptr addr, uintptr len)
 
 	for(sno = 0; sno < NSEG; sno++){
 		s = up->seg[sno];
-		if(s != nil && s->base == addr && s->top == addr + PGROUND(len) && sno != ospreylinuxheap && sno != SSEG)
+		if(s != nil && s->base == addr && s->top == addr + PGROUND(len) && sno != up->linuxheap && sno != SSEG)
 			break;
 	}
 	if(sno == NSEG)
@@ -406,8 +461,8 @@ proc0(void*)
 			 * buddy lay the ELF out from its own file system, and enter
 			 * at its entry; its pages come from the buddy as it faults.
 			 */
-			up->oslinux = 1;
-			ospreyexeclinux("/boot/linux");
+			if(ospreyexecbuddy("/boot/linux") < 0)
+				panic("osprey buddy: the buddy did not lay out /boot/linux");
 			ospreyenteruserat();
 			panic("ospreyenteruserat returned");
 		}

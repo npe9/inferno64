@@ -232,6 +232,7 @@ static struct {
 	{"alloc",	ReqAlloc},
 	{"yield",	ReqYield},
 	{"poll",	ReqPoll},
+	{"exec",	ReqExec},
 };
 
 static char *attrnames[] = {
@@ -1551,6 +1552,48 @@ dispatch(Process *p, Request *req, Reply *rep, void *arg)
 			rep->status = ReplyDone;
 			return 0;
 		}
+
+	case ReqExec:
+		/*
+		 * A program in a container of its own, laid out and paged by
+		 * the caller's server.  The kernel makes the container; the
+		 * device, which knows what a process is, does the rest.
+		 */
+		{
+			long id;
+
+			if(ospreyexec == nil
+			|| (id = ospreyexec((Ospreyproc*)p, req->message.arg[2])) < 0){
+				rep->status = ReplyError;
+				return 0;
+			}
+			rep->message.arg[2] = id;
+			rep->status = ReplyDone;
+			return 0;
+		}
+
+	case ReqWait:
+		/*
+		 * Answered now if a child has already exited, later when one
+		 * does (1: the device replies through ospreyreplylater), or
+		 * refused when there is nobody to wait for.
+		 */
+		{
+			long st;
+			uvlong v;
+			int r;
+
+			if(ospreywait == nil
+			|| (r = ospreywait((Ospreyproc*)p, req->sequence, &st, &v)) < 0){
+				rep->status = ReplyError;
+				return 0;
+			}
+			if(r > 0)
+				return 1;	/* replied when the child exits */
+			rep->message.arg[2] = v;
+			rep->status = st;
+			return 0;
+		}
 	}
 
 	/*
@@ -1773,6 +1816,39 @@ int	(*ospreyetherea)(Ospreyproc*, uchar*);
  * see for itself because bind is answered here and never forwarded.
  */
 void	(*ospreynamed)(Ospreyproc*, int op);
+
+/*
+ * Starting a program and waiting for it are the kernel's: a program is
+ * a process, which this layer has no notion of.  exec is given the
+ * caller and the offset of the name in its data area and answers the
+ * new container's identity or -1; wait is given the caller and the
+ * request's sequence and answers 0 with a status and value to reply
+ * now, 1 to reply later through ospreyreplylater when a child exits,
+ * or -1 when there is no child to wait for.
+ */
+long	(*ospreyexec)(Ospreyproc*, uvlong nameoff);
+int	(*ospreywait)(Ospreyproc*, uvlong seq, long *status, uvlong *value);
+
+/*
+ * A reply the kernel owes for a request it held on to - a wait, answered
+ * when the child exits.  The sequence is the request's own, so the caller
+ * matches it as it would any reply.
+ */
+int
+ospreyreplylater(Ospreyproc *p, uvlong seq, uvlong op, long status, uvlong value)
+{
+	Reply r;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	memset(&r, 0, sizeof r);
+	r.message.op = op;
+	r.message.container = p->process.id;
+	r.message.arg[2] = value;
+	r.sequence = seq;
+	r.status = status;
+	return processreply(&p->process, &r);
+}
 
 /*
  * The device says which of a container's transmit buffers are free; this

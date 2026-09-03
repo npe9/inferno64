@@ -19,7 +19,10 @@ enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	ReqRead		= 0,
 	ReqOpen		= 2,
-	Req9P		= 4,
+	Req9P		= 14,	/* above every request in policy/syscall.h */
+	ReqWait		= 4,
+	ReqExec		= 13,
+	Execnameoff	= 3072,	/* where exec's name goes in the data area, clear of 9P */
 	ReplyDone	= 1,
 };
 
@@ -70,13 +73,21 @@ ring9p_init(void)
 	return 0;
 }
 
+static long ringcalln(uvlong, uvlong, uvlong, uvlong, Msg*, int);
+
 static long
 ringcall(uvlong op, uvlong a0, uvlong a1, uvlong a2, Msg *rep)
+{
+	return ringcalln(op, a0, a1, a2, rep, 400);
+}
+
+/* as ringcall, waiting up to tries services for the reply */
+static long
+ringcalln(uvlong op, uvlong a0, uvlong a1, uvlong a2, Msg *rep, int tries)
 {
 	Ring *r = &ring;
 	Msg m;
 	uvlong seq;
-	int tries;
 
 	memset(&m, 0, sizeof m);
 	m.op = op;
@@ -89,7 +100,7 @@ ringcall(uvlong op, uvlong a0, uvlong a1, uvlong a2, Msg *rep)
 	r->reqm[r->rq->put % r->rq->size] = m;
 	r->rq->put++;				/* submit: memory, no trap */
 
-	for(tries = 0; tries < 400 && r->pq->put == r->pq->get; tries++)
+	for(; tries > 0 && r->pq->put == r->pq->get; tries--)
 		sleep(1);			/* service the ring and yield */
 
 	if(r->pq->put == r->pq->get)
@@ -132,4 +143,43 @@ ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 	for(k = 0; k < rn; k++)
 		rbuf[k] = data[R9off + k];
 	return rn;
+}
+
+/*
+ * Start a program in a container of its own: the name goes in our data
+ * area and the kernel is asked to exec it, which it does through our
+ * server, the one that answers everything else we ask.  Returns the new
+ * container's identity, or -1.
+ */
+long
+ring_exec(char *name)
+{
+	Ring *r = &ring;
+	Msg rep;
+	uchar *d;
+	long i;
+
+	d = r->base + r->map->data + Execnameoff;
+	for(i = 0; i < 120 && name[i] != 0; i++)
+		d[i] = name[i];
+	d[i] = 0;
+	if(ringcall(ReqExec, Execnameoff, 0, 0, &rep) < 0 || rep.arg[0] != 1)
+		return -1;
+	return (long)rep.arg[2];
+}
+
+/*
+ * Wait for a program this container started to exit; its status comes
+ * back in *status.  The kernel answers when the child exits, which may
+ * be a while, so this waits longer than a file request does.
+ */
+long
+ring_wait(long *status)
+{
+	Msg rep;
+
+	if(ringcalln(ReqWait, 0, 0, 0, &rep, 5000) < 0 || rep.arg[0] != 1)
+		return -1;
+	*status = (long)rep.arg[2];
+	return 0;
 }

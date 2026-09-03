@@ -191,9 +191,7 @@ port
 	uintptr xexits(va_list list)
 	{
 		USED(list);
-		print("osprey user: the program exited; the microkernel idles\n");
-		for(;;)
-			tsleep(&up->sleep, return0, nil, 1000);
+		ospreyexits(0);	/* the boot program idles; one exec started ends */
 		return 0;
 	}
 	/*
@@ -268,9 +266,13 @@ port
 		up->insyscall = 1;
 		s = spllo();
 		if(!waserror()){
-			validaddr((uintptr)args, sizeof(Sargs), 0);
-			up->s = *args;
-			if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
+			if(!up->oslinux){
+				validaddr((uintptr)args, sizeof(Sargs), 0);
+				up->s = *args;
+			}
+			if(up->oslinux)
+				ospreylinuxsyscall(scallnr, retp);	/* a program exec started: port/userinit.c */
+			else if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
 			else {
 				print("osprey user: unimplemented syscall %uld\n", scallnr);

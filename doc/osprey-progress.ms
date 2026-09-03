@@ -226,19 +226,20 @@ either source describes, or the built parts imply, that is not built,
 in the order it should be done, each with the reason it is a gap.
 .PP
 .B "1.  Starting a program in a container: exec."
-The microkernel runs the programs its boot loads, and nothing else can
-start one.  This is the gap behind four others: hosting the real
-.CW p9srv
-on the microkernel, the
+Built, above: the
+.B exec
+request starts a named program from the caller's server's file system
+in a container of its own, and
 .B wait
-request that nobody answers, the talk's
+is answered with its status.  What remains of the item: the buddy lays
+out only an ELF, so the Plan 9 legacy binary still goes through the
+kernel's eager loader; the real
+.CW p9srv
+is not hosted on the microkernel, because it needs more of a Plan 9 ABI
+than the buddy answers (item 2 is where that grows); and the talk's
 .I "remote invocation"
-(slide 11), and the Plan 9 legacy binary taking the exec-and-page path
-the Linux one has.  A container that can be told to run a named file
-from a personality's file system \- the buddy's
-.CW EXEC
-generalised to a request any container may make of its server \- is the
-piece.
+is this request carried to another machine, which is item 6's wire
+work.
 .PP
 .B "2.  The rest of a legacy ABI."
 A file mapping (the page path with an offset); the descriptor calls a
@@ -2740,6 +2741,81 @@ like one at zero until the prints were changed to
 .CW %llux .
 It is checked by
 .CW /scripts/osprey-check-p9linux.py .
+.PP
+A program can now be started at run time, which is the first item of
+the survey's list and the one the rest stood on.  A container puts a
+name in its data area and submits
+.B exec
+(the request
+.CW ReqExec
+in
+.CW os/osprey/policy/syscall.h ,
+appended after
+.CW gone ).
+The adapter's dispatcher hands it to the kernel
+.CW ( ospreyexeckern
+in
+.CW os/osprey/port/devosprey.c ),
+which makes a container of its own for the program, delegates it to the
+caller's server, and gives it a kernel process that binds to it, asks
+that server to lay the named file out
+.CW ( ospreyexecbuddy
+in
+.CW os/osprey/port/userinit.c ,
+the Linux buddy's exec made general), and enters user mode at its entry;
+the program's pages and system calls are the server's from then on,
+exactly as p9linux's are.  The reply is the new container's identity.
+.B wait ,
+which the man page said nobody answered, is answered by the kernel:
+now, with the status, if a child of the caller has exited, and when it
+exits otherwise \- the dispatcher returns as if a server were answering
+and the kernel puts the reply on the caller's ring itself
+.CW ( ospreyreplylater
+in
+.CW os/osprey/adapter/ospreyrt.c )
+from the child's exit.  A program exec started ends when it exits
+.CW ( ospreyexits ):
+its parent told, its container taken apart the way the exit control
+message takes one apart, its server told
+.B gone
+so it lets go of the image it held.  The boot program's exit idles the
+machine as before.  The Linux system-call path
+.CW ( ospreylinuxsyscall )
+moved out of the p9linux configuration into the port, since any
+personality configuration can now be asked to run one, and brk's heap
+and mmap's cursor moved from statics into the Proc, since there can be
+more than one.  The server side had two consequences.  A server answers
+for the container it was started with and for every container the
+kernel exec'd and delegated to it, so
+.CW p9pairsrv.c
+maps the slice of whichever container a request names, finding it by
+reading the identity in each slice it is allowed to map; and the buddy
+keeps an image per container, not one.  The request numbers the
+personalities used on the ring for 9P and forwarded system calls were
+4 and 6, which are
+.B wait
+and
+.B recv
+in the list, and had passed only because nothing answered those; they
+are 14 and 15 now, above every request the list names.
+.PP
+p9pair shows it: after the client personality has read the server's
+exported root over the ring, it execs
+.CW /boot/linux ,
+the server's own copy of the Linux binary, and waits.  The kernel
+reports container 100 starting it for container 1, served by container
+3; the server lays it out and pages it in; the program's file calls,
+brk and mmap are answered; it exits with status 0 and the client's wait
+returns that status.  Three containers, the third started by a request
+rather than by the boot.  What exec does not do yet: lay out a Plan 9
+a.out (the buddy refuses it, so p9buddy's legacy binary is still loaded
+eagerly by the kernel), or run a program whose ABI needs more of the
+buddy than the file calls, brk and mmap \- the real
+.CW p9srv
+is such a program; and it is a request on one machine, not the talk's
+remote invocation, which is this request carried over the wire.  Checked
+by
+.CW /scripts/osprey-check-p9pair.py .
 .NH 2
 Built and proven since
 .PP

@@ -25,7 +25,7 @@ enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	ReqRead		= 0,
 	ReqOpen		= 2,
-	Req9P		= 4,
+	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReplyDone	= 1,
 };
 

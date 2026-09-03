@@ -17,8 +17,10 @@
 
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
-	Req9P		= 4,
-	Reqsyscall	= 6,
+	Req9P		= 14,	/* above every request in policy/syscall.h */
+	Reqsyscall	= 15,
+	ReqGone		= 12,
+	Nslot		= 16,
 	OSget		= 2,
 	Armoff		= 0,
 	Reqbuf		= 256,
@@ -42,7 +44,8 @@ typedef struct Arm Arm;
 struct Arm { uvlong op, obj, buf; };
 
 extern long p9srv_serve(uchar *msg, long n, uchar *rbuf, long rmax);
-extern long p9buddy_serve(uchar *cdata);
+extern long p9buddy_serve(uchar *cdata, uvlong container);
+extern void p9buddy_gone(uvlong container);
 
 static void
 puts(char *s)
@@ -78,8 +81,48 @@ mapslice(int slot)
 }
 
 /* answer one request: select for it, run the 9P server, route the reply */
+/*
+ * The slices of the containers this server answers for.  The one it was
+ * started with is known by slot; a program the kernel exec'd for that
+ * client is a container of its own, delegated to this server, and its
+ * slice is found by mapping each slot this server is allowed and reading
+ * the identity in its map.  What the kernel has not delegated it refuses
+ * to map, so the scan sees only what is this server's to see.
+ */
+static struct {
+	uvlong	id;
+	uchar	*base;
+} slices[Nslot];
+
+static uchar*
+sliceof(uvlong id)
+{
+	int i;
+	uchar *b;
+	Omap *m;
+
+	for(i = 0; i < Nslot; i++)
+		if(slices[i].base != nil && slices[i].id == id)
+			return slices[i].base + ((Omap*)slices[i].base)->data;
+	for(i = 0; i < Nslot; i++){
+		if(slices[i].base != nil)
+			continue;
+		b = mapslice(i);
+		if(b == (uchar*)-1)
+			continue;
+		m = (Omap*)b;
+		if(m->magic != Ospreymagic)
+			continue;
+		slices[i].base = b;
+		slices[i].id = m->id;
+		if(m->id == id)
+			return b + m->data;
+	}
+	return nil;
+}
+
 static void
-serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata)
+serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 {
 	Msg req, rep;
 	long i, rn;
@@ -95,6 +138,16 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata)
 		((uchar*)&rep)[i] = 0;
 	rep.container = req.container;
 	rep.sequence = req.sequence;
+	if(req.container != cid){
+		/* another container this server answers for: a program exec started */
+		cdata = sliceof(req.container);
+		if(cdata == nil){
+			rep.arg[0] = 2;
+			repm[pq->put % pq->size] = rep;
+			pq->put++;
+			return;
+		}
+	}
 	if(req.op == Req9P){
 		toff = req.arg[2];
 		tlen = req.arg[3];
@@ -102,8 +155,11 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata)
 		rn = p9srv_serve(cdata + toff, (long)tlen, cdata + roff, 8192);
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == Reqsyscall){
-		rn = p9buddy_serve(cdata);	/* a forwarded legacy Plan 9 system call */
+		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */
 		rep.arg[0] = (uvlong)rn;
+	} else if(req.op == ReqGone){
+		p9buddy_gone(req.container);	/* let go of the image held for it */
+		return;				/* nobody is left to reply to */
 	} else
 		rep.arg[0] = 2;
 	repm[pq->put % pq->size] = rep;
@@ -138,6 +194,6 @@ p9serveloop(char *arg)
 		serve1(pq, (Msg*)((uchar*)pq + pq->message),
 			(Msg*)(base + map->data + Reqbuf),
 			(Arm*)(base + map->data + Armoff),
-			cbase + cmap->data);
+			cbase + cmap->data, cmap->id);
 	puts("p9 server: done\n");
 }

@@ -2101,6 +2101,17 @@ extern void ospreyenteruser(char*);
 extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
+extern int ospreyp9;
+extern long (*ospreyexec)(Ospreyproc*, uvlong);
+extern int (*ospreywait)(Ospreyproc*, uvlong, long*, uvlong*);
+extern int ospreyreplylater(Ospreyproc*, uvlong, uvlong, long, uvlong);
+static long ospreyexeckern(Ospreyproc*, uvlong);
+static int ospreywaitkern(Ospreyproc*, uvlong, long*, uvlong*);
+static void ospreyputproc(Ospreyproc*);
+static void ospreyputserver(Ospreyproc*);
+static void ospreyputether(Ospreyproc*);
+static void ospreyputuart(Ospreyproc*);
+static void ospreyclosefds(Ospreyproc*);
 
 static int ospreyuserclientslot = -1;
 
@@ -2186,7 +2197,7 @@ enum {
 	 */
 	Bexec = 100, Bpage = 101,
 	Bargoff = 64, Bnameoff = 256, Bdataoff = 1024,
-	Reqsyscall = 6,
+	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
 
 /*
@@ -2306,7 +2317,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
  * (ospreybuddyfault below).  Returns the number of segments, or -1.
  */
 int
-ospreybuddyexec(char *name, uvlong *entry, Ospreybuddyseg *segs, int max)
+ospreybuddyexec(char *name, uvlong *entry, Ospreybuddyseg *segs, int max, int *kind)
 {
 	Ospreyproc *p;
 	uvlong *ab, *d;
@@ -2333,6 +2344,7 @@ ospreybuddyexec(char *name, uvlong *entry, Ospreybuddyseg *segs, int max)
 	if(d == nil)
 		return -1;
 	*entry = d[0];
+	*kind = (int)d[1];		/* 0: an ELF, a Linux process; 1: a Plan 9 a.out */
 	for(i = 0; i < n; i++){
 		segs[i].va = d[2+3*i];
 		segs[i].memsz = d[3+3*i];
@@ -2419,6 +2431,165 @@ ospreybuddyfault(uintptr addr, uintptr pc, int read)
 	print("osprey buddy: page %#llux of the legacy image supplied by the buddy\n", (uvlong)va);
 	segpage(s, pg);
 	return fault(addr, pc, read) < 0 ? -1 : 0;
+}
+
+/*
+ * Starting a program: the exec request.  A container asks for a program
+ * by a name in its server's name space; the kernel makes a container of
+ * its own for it, delegates that container to the same server, and gives
+ * it a process that has the server lay the program out (ospreybuddyexec)
+ * and page it in as it runs (ospreybuddyfault).  The program's own system
+ * calls are the server's to answer as any legacy process's are.  What
+ * the kernel keeps is who started whom, so that wait can be answered:
+ * now if the child has exited, when it exits otherwise.  This is the
+ * piece the plan calls exec, and it is what wait, the paper's remote
+ * invocation, and a personality hosting a program all stand on.
+ */
+typedef struct Ospreychild Ospreychild;
+struct Ospreychild {
+	int	used;
+	Ospreyproc *child;
+	Ospreyproc *parent;
+	char	name[128];
+	int	done;		/* exited; status is valid */
+	long	status;
+	int	waiting;	/* the parent has asked and is owed a reply */
+	uvlong	waitseq;	/* the sequence of that wait request */
+};
+static Ospreychild ospreychildren[8];
+enum {
+	Xreqwait = 4,		/* ReqWait and ReplyDone in policy/syscall.h, which the */
+	Xreplydone = 1,		/* device does not include; the adapter checks the same values */
+};
+static uvlong ospreynextid = 100;	/* container identities for programs exec starts */
+
+static void
+ospreyexecproc(void *a)
+{
+	Ospreychild *e = a;
+	Ospreyproc *c = e->child;
+	int x;
+
+	x = ospreyindex(c);
+	qlock(&ospreylock);
+	if(x >= 0 && x < nelem(ospreyprocs)){
+		ospreyprocs[x] = up;
+		up->osprey = c;
+		ospreysetpid(c, up->pid);
+	}
+	qunlock(&ospreylock);
+	if(ospreyexecbuddy(e->name) < 0){
+		print("osprey exec: %s: the server did not lay it out\n", e->name);
+		ospreyexits(-1);
+	}
+	ospreyenteruserat();		/* never returns */
+}
+
+static long
+ospreyexeckern(Ospreyproc *parent, uvlong nameoff)
+{
+	Ospreychild *e;
+	Ospreyproc *sv, *c;
+	uchar *nd;
+	int i;
+
+	if(parent == nil || (sv = ospreyserverof(parent)) == nil)
+		return -1;		/* nobody to lay the program out */
+	if((nd = ospreydata(parent, nameoff, 1)) == nil)
+		return -1;
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(!e->used)
+			break;
+	if(e == &ospreychildren[nelem(ospreychildren)])
+		return -1;
+	memset(e, 0, sizeof *e);
+	for(i = 0; i < (int)sizeof e->name - 1; i++){
+		if(ospreydata(parent, nameoff + i, 1) == nil || nd[i] == 0)
+			break;
+		e->name[i] = nd[i];
+	}
+	e->name[i] = 0;
+	/* ospreylock is held: dispatch runs under it, as ospreyuserprep did */
+	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+	if(c == nil)
+		return -1;
+	ospreydelegate(c, sv);
+	e->used = 1;
+	e->child = c;
+	e->parent = parent;
+	print("osprey exec: container %llud starts %s for container %llud, served by container %llud\n",
+		ospreyid(c), e->name, ospreyid(parent), ospreyid(sv));
+	kproc("osprey-exec", ospreyexecproc, e);
+	return (long)ospreyid(c);
+}
+
+static int
+ospreywaitkern(Ospreyproc *parent, uvlong seq, long *status, uvlong *value)
+{
+	Ospreychild *e, *live;
+
+	live = nil;
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
+		if(!e->used || e->parent != parent)
+			continue;
+		if(e->done){
+			*status = Xreplydone;
+			*value = (uvlong)e->status;
+			e->used = 0;
+			return 0;
+		}
+		live = e;
+	}
+	if(live == nil)
+		return -1;		/* nothing to wait for */
+	live->waiting = 1;
+	live->waitseq = seq;
+	return 1;
+}
+
+/*
+ * A user program's exit.  The boot program's exit idles the machine, as
+ * it always has: tearing the boot process down would panic.  A program
+ * exec started is a process like any other: its parent is told, if it is
+ * waiting, or the status is kept until it asks; the container is taken
+ * apart the way the exit control message takes one apart; and the
+ * process ends.
+ */
+void
+ospreyexits(long status)
+{
+	Ospreychild *e;
+	Ospreyproc *p;
+
+	p = up->osprey;
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && e->child == p)
+			break;
+	if(p == nil || e == &ospreychildren[nelem(ospreychildren)]){
+		print("osprey user: the program exited; the microkernel idles\n");
+		for(;;)
+			tsleep(&up->sleep, return0, nil, 1000);
+	}
+	print("osprey exec: container %llud (%s) exited with status %ld\n",
+		ospreyid(p), e->name, status);
+	qlock(&ospreylock);
+	if(e->waiting){
+		ospreyreplylater(e->parent, e->waitseq, Xreqwait, Xreplydone, (uvlong)status);
+		e->used = 0;
+	} else {
+		e->done = 1;
+		e->status = status;
+	}
+	ospreytellandwake(p, OpGone);
+	ospreyclosefds(p);
+	ospreyputproc(p);
+	ospreyputserver(p);
+	ospreyputether(p);
+	ospreyputuart(p);
+	ospreyexit(p);
+	qunlock(&ospreylock);
+	ospreywakeup();
+	pexit("exited", 0);
 }
 
 int
@@ -2668,11 +2839,12 @@ ospreyinit(void)
 	 * built with is refused by the adapter rather than obeyed.
 	 */
 	/*
-	 * The Linux buddy carries a page of the legacy image through the
-	 * data area on every fault, and the built-in data area is smaller
-	 * than a page plus the offset the data starts at.
+	 * A buddy carries a page of a legacy image through the data area
+	 * on every fault, and the built-in data area is smaller than a
+	 * page plus the offset the data starts at.  Every personality
+	 * configuration can be asked to exec one, so all of them get it.
 	 */
-	if(ospreyp9linux)
+	if(ospreyp9)
 		ospreysetsize("data", 2*BY2PG, 0);
 	for(i = 0; i < nelem(ospreysizeconf); i++){
 		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
@@ -2707,6 +2879,8 @@ ospreyinit(void)
 	ospreypktcopied = ospreycountcopied;
 	ospreyetherea = ospreycardea;
 	ospreynamed = ospreytellandwake;
+	ospreyexec = ospreyexeckern;
+	ospreywait = ospreywaitkern;
 	ospreyreset();		/* so no tick can find it uninitialised */
 	ospreytimer = ospreyclock;
 	/*

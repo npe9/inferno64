@@ -47,6 +47,16 @@ def main():
          m is not None and int(m.group(1)) >= 10),
         ("and it exits cleanly, two library operating systems on the microkernel, one serving the other, no panic",
          'the program exited' in t and 'panic' not in t),
+        ("a request exec starts a program - the Linux binary in the server's file system - in a container of its own, delegated to the same server",
+         re.search(r'osprey exec: container (\d+) starts /boot/linux for container 1, served by container 3', t) is not None
+         and re.search(r'p9: pair-client: exec /boot/linux started container \d+', t) is not None),
+        ("the server lays it out and pages it in, and it runs to exit: its file calls, brk and mmap answered",
+         'buddy: exec /boot/linux for container' in t and 'linux: read(fd, buf, 512) returned 470 bytes' in t
+         and 'linux: brk grew the heap by 65536 bytes, zero-filled' in t
+         and re.search(r'osprey exec: container \d+ \(/boot/linux\) exited with status 0', t) is not None),
+        ("wait is answered by somebody: the client's wait returns the child's exit status",
+         re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
+         and 'panic' not in t and 'user fault' not in t),
     ]
     bad = 0
     for what, ok in results:

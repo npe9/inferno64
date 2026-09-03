@@ -465,6 +465,27 @@ p9paircli(void)
 	}
 	print("p9: pair-client: read %d entries from the server personality's exported root over the ring\n", nent);
 	p9close(fd);
+	/*
+	 * Start a program: the Linux binary that lives in the server
+	 * personality's file system, in a container of its own that the
+	 * server lays out, pages and answers for, and wait for it to exit.
+	 * A container that is not the boot's, started at run time by a
+	 * request, and a wait that is answered by somebody.
+	 */
+	{
+		extern long ring_exec(char*);
+		extern long ring_wait(long*);
+		long id, st;
+
+		id = ring_exec("/boot/linux");
+		print("p9: pair-client: exec /boot/linux started container %ld\n", id);
+		if(id >= 0){
+			if(ring_wait(&st) == 0)
+				print("p9: pair-client: wait: container %ld exited with status %ld\n", id, st);
+			else
+				print("p9: pair-client: wait: no answer\n");
+		}
+	}
 	poperror();
 }
 

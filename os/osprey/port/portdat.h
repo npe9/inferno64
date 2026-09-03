@@ -782,6 +782,9 @@ struct Proc
 
 	Sargs	s;		/* syscall arguments */
 	int	oslinux;	/* a Linux legacy process: Linux syscall ABI */
+	int	linuxheap;	/* the segment slot brk grows, or -1 */
+	uintptr	linuxbrk;	/* the break as the process last set it */
+	uintptr	linuxmmapnext;	/* where the next anonymous mmap goes */
 	int	scallnr;	/* sys call number */
 	int	nerrlab;
 	Label	errlab[NERR];
