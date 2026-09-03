@@ -231,21 +231,33 @@ func itype(n ref types.Node, mod ref types.Decl) ref types.Type {
 				ft.varargs = 1
 			}
 			t := itype(f.right, mod)
-			for ids := f.left; ids != nil; ids = ids.right {
-				nid := ids
-				if ids.op == types.Oseq {
-					nid = ids.left
-				}
-				d := types.mkdecl(nid.line, nid.pos, types.Darg, t)
-				d.sym = nid.sym
+			if f.left == nil {
+				// an unnamed parameter of a function type (iface.c)
+				d := types.mkdecl(f.line, f.pos, types.Darg, t)
+				d.sym = nil
 				if args == nil {
 					args = d
 				} else {
 					last.next = d
 				}
 				last = d
-				if ids.op != types.Oseq {
-					break
+			} else {
+				for ids := f.left; ids != nil; ids = ids.right {
+					nid := ids
+					if ids.op == types.Oseq {
+						nid = ids.left
+					}
+					d := types.mkdecl(nid.line, nid.pos, types.Darg, t)
+					d.sym = nid.sym
+					if args == nil {
+						args = d
+					} else {
+						last.next = d
+					}
+					last = d
+					if ids.op != types.Oseq {
+						break
+					}
 				}
 			}
 			if p.op != types.Oseq {

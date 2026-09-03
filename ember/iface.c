@@ -205,6 +205,22 @@ itype(Node *n, Decl *mod)
 			if(f->flags & NVARARG)
 				ft->varargs = 1;
 			t = itype(f->right, mod);
+			if(f->left == nil){
+				/*
+				 * an unnamed parameter, a function type's
+				 * "func(int) int": it was skipped, so every
+				 * function-typed variable, field or parameter
+				 * in an interface lost its parameters -- caught
+				 * by the module's own interface check
+				 */
+				d = mkdecl(&f->src, Darg, t);
+				d->sym = nil;
+				if(args == nil)
+					args = d;
+				else
+					last->next = d;
+				last = d;
+			}else
 			for(ids = f->left; ids != nil; ids = ids->right){
 				Node *nid;
 

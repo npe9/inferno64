@@ -1,0 +1,10 @@
+module Libhook
+
+const PATH = "/tmp/libhook.dis"
+
+var hook func(int) int
+var count int
+
+func each(xs []int, f func(int))
+func apply(x int) int
+func maker(k int) func(int) int

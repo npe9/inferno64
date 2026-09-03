@@ -37,6 +37,7 @@ done
 mkdir -p "$ROOT/tmp"
 $EMBER $IFLAGS -o "$ROOT/tmp/libpoint.dis" tests/type/libpoint.e || echo "runtime.sh: cannot build libpoint.dis" >&2
 $EMBER $IFLAGS -o "$ROOT/tmp/libvars.dis" tests/type/libvars.e || echo "runtime.sh: cannot build libvars.dis" >&2
+$EMBER $IFLAGS -o "$ROOT/tmp/libhook.dis" tests/type/libhook.e || echo "runtime.sh: cannot build libhook.dis" >&2
 
 for golden in tests/type/*.out; do
 	[ -f "$golden" ] || continue
