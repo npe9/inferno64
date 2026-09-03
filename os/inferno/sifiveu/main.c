@@ -129,6 +129,10 @@ main(void)
 	clockinit();
 	quotefmtinstall();	/* Limbo sys->sprint %q / C snprint %q */
 	printinit();
+	{	/* SPI probe: needs the console up to report the JEDEC ids */
+		extern void spiinit(void);
+		spiinit();
+	}
 
 	procinit();
 	links();

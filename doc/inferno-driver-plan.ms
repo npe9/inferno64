@@ -542,7 +542,19 @@ arm64 device-tree discovery is blocked: QEMU's
 path enters the arm64 ELF with x0 == 0, handing it no DTB pointer, so
 the reader that works on riscv has nothing to read.
 .IP \(bu
-SPI, I2C, and the rest arrive only with a real SoC board (Raspberry Pi,
-VisionFive 2, and the others in the machine table) - they are not on
-the generic virt platform at all.  That is the per-board silicon work,
-which needs the hardware or a SoC-specific QEMU machine.
+SPI is now real on the one SoC board the tree boots with a modelled
+bus: QEMU's
+.CW sifive_u
+has two
+.CW sifive,spi0
+controllers, a NOR flash on the first and an SD card on the MMC-SPI
+second, and
+.CW os/inferno/riscv/spisifive.c
+(was a register-poke stub) now does full-duplex FIFO transfers and
+reads each flash's JEDEC id - the NOR flash answers 0x9d 0x70 0x19
+(ISSI IS25WP256), proving the bus reaches its slave.  I2C is a
+different story: no QEMU machine this tree currently boots models an
+I2C controller at all (sifive_u and spike have none), so delivering I2C
+needs a raspi-class board bring-up - a real SoC with BCM2835 SPI, I2C
+and GPIO - which is its own project, board first and peripherals after.
+The generic virt platform has neither bus.

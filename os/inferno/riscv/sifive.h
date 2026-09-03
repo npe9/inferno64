@@ -43,6 +43,8 @@ enum {
 enum {
 	SspiSckdiv	= 0x00,
 	SspiSckmode	= 0x04,
+	SspiCsid	= 0x10,		/* which chip-select line */
+	SspiCsdef	= 0x14,		/* chip-select inactive level */
 	SspiCsmode	= 0x18,
 	SspiDelay0	= 0x28,
 	SspiDelay1	= 0x2C,
@@ -59,6 +61,10 @@ enum {
 	SspiTxFull	= 1<<31,
 	SspiRxEmpty	= 1<<31,
 	SspiFmtDirTx	= 1<<3,
+
+	SspiCsAuto	= 0,		/* CS asserted only around each frame */
+	SspiCsHold	= 2,		/* CS held asserted across frames */
+	SspiCsOff	= 3,		/* CS never driven by the controller */
 };
 
 /* HTIF (spike) — board may override */

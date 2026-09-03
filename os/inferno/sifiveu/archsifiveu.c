@@ -9,10 +9,8 @@ void
 archreset(void)
 {
 	extern void pwminit(void);
-	extern void spiinit(void);
 
 	pwminit();
-	spiinit();
 }
 
 static uintptr physdram = (uintptr)8 << 28;
