@@ -142,6 +142,7 @@ TARG=\
 	smtp.dis\
 	sort.dis\
 	sparse.dis\
+	ssh.dis\
 	ssl.dis\
 	string.dis\
 	strinttab.dis\

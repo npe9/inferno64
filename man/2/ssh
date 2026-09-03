@@ -1,0 +1,143 @@
+.TH SSH 2
+.SH NAME
+ssh: connect, Conn, writepkt, readpkt \- SSH-2 transport client
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "security.m";
+include "encoding.m";
+include "asn1.m";
+include "pkcs.m";
+include "ssh.m";
+ssh := load Ssh Ssh->PATH;
+
+init:    fn();
+connect: fn(addr, host, wantthumb: string): (ref Conn, string);
+
+Conn: adt {
+        fd:        ref Sys->FD;
+        vc:        string;
+        vs:        string;
+        encrypted: int;
+        sid:       array of byte;
+        hostkey:   array of byte;
+        thumb:     string;
+
+        readpkt:  fn(c: self ref Conn): (array of byte, string);
+        writepkt: fn(c: self ref Conn, payload: array of byte): string;
+        close:    fn(c: self ref Conn);
+};
+
+MSG_KEXINIT, MSG_NEWKEYS, MSG_SERVICE_REQUEST,
+MSG_SERVICE_ACCEPT, MSG_USERAUTH_REQUEST, ...: con ...;
+.EE
+.SH DESCRIPTION
+.B Ssh
+is an SSH-2 transport-and-connection client written in Limbo, ported
+from 9front's
+.I /sys/src/cmd/ssh.c
+and built on this tree's own cryptography \(em no host
+.IR ssh (1),
+no
+.B #C
+transport. It speaks exactly one of everything the modern OpenSSH
+default settled on, the same deliberately small surface
+.I ssh.c
+carries: the
+.B curve25519-sha256
+key exchange, an
+.B ssh-rsa
+host key whose exchange-hash signature is
+.BR rsa-sha2-256 ,
+and the
+.B chacha20-poly1305@openssh.com
+authenticated packet cipher. There is no agent, no GSSAPI, and no
+compression.
+.PP
+.B Init
+must be called once before anything else; it loads the
+supporting modules
+.RI ( keyring (2),
+.IR pkcs (2)
+for the RSA host-key verification, the
+.B Random
+and
+.B Encoding
+modules, and the raw ChaCha20 / one-shot Poly1305 keyring primitives
+\(em see
+.IR chachatest (1)).
+.PP
+.B Connect
+dials
+.I addr
+(a real dial string such as
+.BR tcp!140.82.113.3!22 ,
+since dial-by-name is not wired up under hosted
+.IR emu ),
+runs the SSH version exchange and key exchange against
+.IR host ,
+and verifies the server's
+.B rsa-sha2-256
+signature over the exchange hash. It returns only if that signature
+checks out, so a returned
+.B Conn
+has a cryptographically authenticated transcript. On success the
+connection is encrypted and the session keys are installed; the caller
+then drives userauth and channels over
+.B writepkt
+and
+.BR readpkt .
+.PP
+.I Host
+is used in the exchange hash and in messages.
+.I Wantthumb ,
+if non-empty, must equal the server's computed
+.B "sha256=<base64>"
+host-key thumbprint or the connection is refused: this is a
+fail-closed check, with no silent trust-on-first-use. The thumbprint
+is the OpenSSH
+.B SHA256:
+fingerprint form (\c
+.IR ssh-keyscan "(1) then " ssh-keygen (1)
+on a Unix host yield the same value), and is also left in
+.B Conn.thumb
+for a caller that wants to implement its own known-hosts policy.
+.PP
+.B Writepkt
+frames, pads, encrypts and sends one packet whose
+.I payload
+begins with the SSH message-type byte.
+.B Readpkt
+reads one packet, verifies its Poly1305 tag
+.I before
+decrypting the body, and returns the decrypted payload (message-type
+byte first) or an error at end of file or on a bad tag. Both honour
+.B Conn.encrypted:
+the version exchange and key exchange run in the clear, and the
+ciphers switch on together at
+.BR MSG_NEWKEYS .
+.PP
+.B Close
+drops the connection.
+.SH SOURCE
+.B /appl/lib/ssh.b
+.SH SEE ALSO
+.IR sshtest (1),
+.IR chachatest (1),
+.IR tls12 (2),
+.IR pkcs (2),
+.IR keyring (2)
+.SH BUGS
+This is the transport layer only. User authentication (publickey,
+password) and channels (session, exec, pty) are driven by the caller
+over
+.B writepkt
+/
+.B readpkt
+and are not yet packaged here. Only one algorithm of each kind is
+offered; a server without
+.B curve25519-sha256
+or
+.B chacha20-poly1305@openssh.com
+cannot be reached, by design.

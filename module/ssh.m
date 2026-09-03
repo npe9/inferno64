@@ -1,0 +1,91 @@
+# ssh(2) - an SSH-2 transport + connection client, in Limbo, ported
+# from 9front's /sys/src/cmd/ssh.c. Speaks exactly one of everything
+# the modern default stack settled on: curve25519-sha256 key exchange,
+# ssh-rsa host keys signed rsa-sha2-256, and the
+# chacha20-poly1305@openssh.com authenticated cipher (keyring's raw
+# ChaCha20 + one-shot Poly1305, see chachatest(1)). No agent, no
+# GSSAPI, no compression - the same deliberately small surface ssh.c
+# carries.
+#
+# Stage 1 (this file): version exchange, KEXINIT, the curve25519 key
+# exchange, RSA host-key signature verification over the exchange
+# hash, NEWKEYS, the SSH key-derivation function, and the encrypted
+# binary packet protocol (writepkt/readpkt). connect() returns with an
+# established, verified, encrypted transport; the caller then drives
+# userauth and channels over writepkt/readpkt.
+
+Ssh: module
+{
+	PATH:	con "/dis/lib/ssh.dis";
+
+	# SSH-2 message numbers (RFC 4253/4252/4254), as in ssh.c
+	MSG_DISCONNECT:		con 1;
+	MSG_IGNORE:		con 2;
+	MSG_UNIMPLEMENTED:	con 3;
+	MSG_DEBUG:		con 4;
+	MSG_SERVICE_REQUEST:	con 5;
+	MSG_SERVICE_ACCEPT:	con 6;
+	MSG_KEXINIT:		con 20;
+	MSG_NEWKEYS:		con 21;
+	MSG_ECDH_INIT:		con 30;
+	MSG_ECDH_REPLY:		con 31;
+	MSG_USERAUTH_REQUEST:	con 50;
+	MSG_USERAUTH_FAILURE:	con 51;
+	MSG_USERAUTH_SUCCESS:	con 52;
+	MSG_USERAUTH_BANNER:	con 53;
+	MSG_USERAUTH_PK_OK:	con 60;
+	MSG_GLOBAL_REQUEST:	con 80;
+	MSG_REQUEST_SUCCESS:	con 81;
+	MSG_REQUEST_FAILURE:	con 82;
+	MSG_CHANNEL_OPEN:		con 90;
+	MSG_CHANNEL_OPEN_CONFIRMATION:	con 91;
+	MSG_CHANNEL_OPEN_FAILURE:	con 92;
+	MSG_CHANNEL_WINDOW_ADJUST:	con 93;
+	MSG_CHANNEL_DATA:		con 94;
+	MSG_CHANNEL_EXTENDED_DATA:	con 95;
+	MSG_CHANNEL_EOF:		con 96;
+	MSG_CHANNEL_CLOSE:	con 97;
+	MSG_CHANNEL_REQUEST:	con 98;
+	MSG_CHANNEL_SUCCESS:	con 99;
+	MSG_CHANNEL_FAILURE:	con 100;
+
+	# one direction of the encrypted transport: a sequence number and
+	# the two ChaCha20 states of chacha20-poly1305@openssh.com (cs1
+	# keys the 4-byte length, cs2 keys the payload and the Poly1305
+	# one-time key), created from the KDF output at NEWKEYS time.
+	Dir: adt {
+		seq:	int;
+		cs1:	ref Keyring->Chachastate;
+		cs2:	ref Keyring->Chachastate;
+	};
+
+	Conn: adt {
+		fd:		ref Sys->FD;
+		vc:		string;			# our version string, no CRLF
+		vs:		string;			# server version string, no CRLF
+		snd:		ref Dir;
+		rcv:		ref Dir;
+		encrypted:	int;			# 0 until NEWKEYS installs the ciphers
+		sid:		array of byte;		# session id (first exchange hash)
+		hostkey:	array of byte;		# server host-key blob (K_S)
+		thumb:		string;			# "sha256=<base64>" of the host key
+
+		# read one decrypted packet payload (msg-type byte first);
+		# returns (nil, err) at EOF or on a bad tag
+		readpkt:	fn(c: self ref Conn): (array of byte, string);
+		# encrypt and send one packet payload (msg-type byte first)
+		writepkt:	fn(c: self ref Conn, payload: array of byte): string;
+		close:		fn(c: self ref Conn);
+	};
+
+	init:	fn();
+
+	# dial addr (a real dial string, e.g. "tcp!10.0.0.1!22"), run the
+	# version exchange and key exchange against host (used for the
+	# exchange hash and messages), and verify the host key. If
+	# wantthumb is non-empty it must equal the server's computed
+	# "sha256=<base64>" thumbprint or the connection is refused
+	# (fail-closed; no silent trust-on-first-use here). Returns the
+	# established encrypted Conn or ("", err).
+	connect:	fn(addr, host, wantthumb: string): (ref Conn, string);
+};
