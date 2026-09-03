@@ -107,20 +107,36 @@ appglobal(Decl *d)
 	return d;
 }
 
+/*
+ * the pooled global holding a string literal's text, keyed by a
+ * hidden ".s.<text>" symbol like globaliconst()'s ".i.<value>".  it
+ * used to be keyed by the text's own symbol -- the same symbol an
+ * identifier of that name has -- so a literal whose text was the
+ * name of a module-level string variable found that variable's
+ * Decl (Dglobal, tstring: the test passed) and read the variable
+ * instead of the literal: "hello" printed whatever the global
+ * hello held.  found while porting this file to ember.
+ */
 static Decl*
 globalsconst(Node *n)
 {
 	Decl *d;
-	Sym *s;
+	Sym *s, *key;
+	char *buf;
 
 	s = n->sym;
 	if(s == nil)
 		fatal("globalsconst: no sym");
-	d = s->decl;
+	buf = allocmem(strlen(s->name) + 4);
+	strcpy(buf, ".s.");
+	strcat(buf, s->name);
+	key = enter(buf, 0);
+	free(buf);
+	d = key->decl;
 	if(d == nil || d->store != Dglobal || d->ty != tstring){
 		d = mkdecl(&n->src, Dglobal, tstring);
 		d->sym = s;
-		s->decl = d;
+		key->decl = d;
 		d->init = n;
 		appglobal(d);
 	}
