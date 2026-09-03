@@ -169,7 +169,7 @@ virtarm64_putc(Uart *uart, int c)
 	/* QEMU raspi3b PL011 FR flags are unreliable; pace with a short
 	 * fixed delay (the garbling was the other cores, now parked). */
 	csr32w(ctlr, UartDR, c);
-	for(i = 0; i < 300000; i++)
+	for(i = 0; i < 30000; i++)
 		;
 }
 
