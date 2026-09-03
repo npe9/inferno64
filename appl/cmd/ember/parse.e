@@ -307,6 +307,12 @@ func ptypename() ref types.Node {
 		}
 		pexpect(']', "type arguments")
 		n = types.mkbin(Otinst, n, types.rotater(args))
+		// a generic pick's tag: Result[int].Ok
+		for paccept('.') != 0 {
+			d := pname("qualified type name")
+			n = types.mkbin(Odot, n, d)
+			n.sym = d.sym
+		}
 	}
 	return n
 }

@@ -331,10 +331,14 @@ func tinstantiate(n ref types.Node) ref types.Type {
 	// walked, so a self-referencing field finds it (check.c)
 	var inst ref types.Type
 	var ti ref types.Ginst
-	if tt.tbody != nil && tt.tbody.op == types.Otstruct {
+	var id ref types.Decl
+	if tt.tbody != nil && (tt.tbody.op == types.Otstruct || tt.tbody.op == types.Otpick) {
 		inst = types.mktype(n.line, n.pos, types.Tadt, nil, nil)
 		ti = ref types.Ginst{nargs: nargs, args: argv, ty: inst, decl: nil, next: tt.tinsts}
 		tt.tinsts = ti
+		id = types.mkdecl(n.line, n.pos, types.Dtype, inst)
+		id.sym = instname(td.sym, argv, nargs)
+		inst.decl = id
 	} else {
 		for i = 0; i < tinstdepth; i++ {
 			if tinstack[i] == td {
@@ -362,19 +366,27 @@ func tinstantiate(n ref types.Node) ref types.Type {
 		}
 	}
 	body := stype(tt.tbody)
-	popscope()
-	tinstdepth--
 	if inst != nil {
 		if body == terror {
+			popscope()
+			tinstdepth--
 			return terror
 		}
 		types.copytype(inst, body)
-	} else {
-		inst = body
+		inst.decl = id
+		// a generic pick's tags, with the type parameters in scope
+		if tt.tbody.op == types.Otpick {
+			picktags(tt.tbody, inst, id)
+		}
 	}
-	id := types.mkdecl(n.line, n.pos, types.Dtype, inst)
-	id.sym = instname(td.sym, argv, nargs)
-	inst.decl = id
+	popscope()
+	tinstdepth--
+	if inst == nil {
+		inst = body
+		id = types.mkdecl(n.line, n.pos, types.Dtype, inst)
+		id.sym = instname(td.sym, argv, nargs)
+		inst.decl = id
+	}
 	types.sizetype(inst)
 	types.teqclass(inst)
 	if ti == nil {
@@ -1021,7 +1033,8 @@ func stype(n ref types.Node) ref types.Type {
 		return tinstantiate(n)
 	case types.Odot:
 		rt := terror
-		if n.left.op == types.Odot {
+		if n.left.op == types.Odot || n.left.op == types.Oindex || n.left.op == types.Otinst {
+			// mod.Adt.Tag, or a generic pick's tag Result[int].Ok
 			at := stype(n.left)
 			if at != terror {
 				if at.kind != types.Tadt || at.tags == nil {
@@ -2520,6 +2533,9 @@ func istagname(n ref types.Node) int {
 		if n.left.op == types.Odot {
 			return 1
 		}
+		if n.left.op == types.Oindex || n.left.op == types.Otinst {
+			return istagname(n.left.left)
+		}
 		if n.left.op != types.Oname {
 			return 0
 		}
@@ -3028,6 +3044,42 @@ func fnchk(d ref types.Decl) {
 	curfn = nil
 }
 
+// a pick's tags from its Otpick body, in the current scope: shared by
+// typedec and tinstantiate (check.c's picktags)
+func picktags(body ref types.Node, t ref types.Type, d ref types.Decl) {
+	var tags ref types.Decl
+	var last ref types.Decl
+	ntag := 0
+	for p := body.left; p != nil; p = p.right {
+		tg := seqitem(p)
+		tag := types.mkdecl(tg.line, tg.pos, types.Dtag, nil)
+		tag.sym = tg.left.sym
+		tag.tag = ntag
+		ntag++
+		tag.ty = types.mktype(tg.line, tg.pos, types.Tadtpick, nil, nil)
+		if tg.right != nil {
+			fake := types.mkn(types.Otstruct, tg.right, nil)
+			fake.line = body.line
+			fake.pos = body.pos
+			ft := stype(fake)
+			tag.ty.ids = ft.ids
+		}
+		tag.ty.tof = t
+		tag.ty.decl = tag
+		tag.dot = d
+		if tags == nil {
+			tags = tag
+		} else {
+			last.next = tag
+		}
+		last = tag
+		if p.op != types.Oseq {
+			break
+		}
+	}
+	t.tags = tags
+}
+
 func typedec(n ref types.Node) {
 	d := n.decl
 	var ph ref types.Type
@@ -3040,8 +3092,8 @@ func typedec(n ref types.Node) {
 		install(d)
 	}
 	if n.aux != nil {
-		if n.right.op != types.Otstruct {
-			nerror(n, sys.sprint("generic type %s: only struct bodies are supported (not tagged/pick types)", d.sym))
+		if n.right.op != types.Otstruct && n.right.op != types.Otpick {
+			nerror(n, sys.sprint("generic type %s: only struct and pick bodies are supported", d.sym))
 			d.ty = terror
 			return
 		}
@@ -3063,37 +3115,7 @@ func typedec(n ref types.Node) {
 		t = ph
 	}
 	if n.right.op == types.Otpick {
-		var tags ref types.Decl
-		var last ref types.Decl
-		ntag := 0
-		for p := n.right.left; p != nil; p = p.right {
-			tg := seqitem(p)
-			tag := types.mkdecl(tg.line, tg.pos, types.Dtag, nil)
-			tag.sym = tg.left.sym
-			tag.tag = ntag
-			ntag++
-			tag.ty = types.mktype(tg.line, tg.pos, types.Tadtpick, nil, nil)
-			if tg.right != nil {
-				fake := types.mkn(types.Otstruct, tg.right, nil)
-				fake.line = n.right.line
-				fake.pos = n.right.pos
-				ft := stype(fake)
-				tag.ty.ids = ft.ids
-			}
-			tag.ty.tof = t
-			tag.ty.decl = tag
-			tag.dot = d
-			if tags == nil {
-				tags = tag
-			} else {
-				last.next = tag
-			}
-			last = tag
-			if p.op != types.Oseq {
-				break
-			}
-		}
-		t.tags = tags
+		picktags(n.right, t, d)
 	}
 	d.ty = t
 	t.decl = d

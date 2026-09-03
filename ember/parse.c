@@ -183,6 +183,12 @@ ptypename(void)
 			args = mkseq(args, ptype());
 		src.stop = pexpect(']', "type arguments").stop;
 		n = mkbin(Otinst, n, rotater(args));
+		/* a generic pick's tag: Result[int].Ok */
+		while(paccept('.')){
+			d = pname("qualified type name");
+			n = mkbin(Odot, n, d);
+			n->sym = d->sym;
+		}
 	}
 	return n;
 }

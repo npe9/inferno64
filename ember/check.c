@@ -133,6 +133,8 @@ install(Decl *d)
 static int inref;	/* stype() is resolving the operand of a ref */
 static int rawfn;	/* the next Otfunc stype() sees is a declaration's own signature, not a value type */
 
+static void	picktags(Node*, Type*, Decl*);
+
 static Decl*
 lookup(Sym *s)
 {
@@ -164,10 +166,26 @@ declbuiltin(char *name, Type *t)
  * compare equal (tequal isn't even taught about this; identity is
  * what mktdesc/genaddr/etc. all key off of already).
  */
+/* the name of an instantiation: Node[int], Pair[int, string] */
+static Sym*
+instsym(Decl *td, Type **argv, int nargs)
+{
+	char buf[256], *bp, *be;
+	int i;
+
+	bp = buf;
+	be = buf + sizeof buf;
+	bp = seprint(bp, be, "%s[", td->sym->name);
+	for(i = 0; i < nargs; i++)
+		bp = seprint(bp, be, "%s%T", i ? ", " : "", argv[i]);
+	seprint(bp, be, "]");
+	return enter(buf, 0);
+}
+
 static Type*
 tinstantiate(Node *n)
 {
-	Decl *td, *pd;
+	Decl *td, *pd, *id;
 	Type *tt, *inst, *body, **argv;
 	Ginst *ti;
 	Node *p, *a, *pn;
@@ -238,7 +256,8 @@ tinstantiate(Node *n)
 	 * walked body is copied into the placeholder afterwards.
 	 */
 	inst = nil;
-	if(tt->tbody != nil && tt->tbody->op == Otstruct){
+	id = nil;
+	if(tt->tbody != nil && (tt->tbody->op == Otstruct || tt->tbody->op == Otpick)){
 		inst = mktype(&n->src, Tadt, nil, nil);
 		ti = allocmem(sizeof *ti);
 		ti->nargs = nargs;
@@ -246,6 +265,9 @@ tinstantiate(Node *n)
 		ti->ty = inst;
 		ti->next = tt->tinsts;
 		tt->tinsts = ti;
+		id = mkdecl(&n->src, Dtype, inst);
+		id->sym = instsym(td, argv, nargs);
+		inst->decl = id;
 	}else
 	for(i = 0; i < tinstdepth; i++)
 		if(tinstack[i] == td){
@@ -282,27 +304,24 @@ tinstantiate(Node *n)
 			break;
 	}
 	body = stype(tt->tbody);
+	if(inst != nil){
+		if(body == terror){
+			popscope();
+			tinstdepth--;
+			return terror;
+		}
+		*inst = *body;
+		inst->decl = id;
+		/* a generic pick's tags, with the type parameters in scope */
+		if(tt->tbody->op == Otpick)
+			picktags(tt->tbody, inst, id);
+	}
 	popscope();
 	tinstdepth--;
-	if(inst != nil){
-		if(body == terror)
-			return terror;
-		*inst = *body;
-	}else
+	if(inst == nil){
 		inst = body;
-
-	{
-		Decl *id;
-		char buf[256], *bp, *be;
-
 		id = mkdecl(&n->src, Dtype, inst);
-		bp = buf;
-		be = buf + sizeof buf;
-		bp = seprint(bp, be, "%s[", td->sym->name);
-		for(i = 0; i < nargs; i++)
-			bp = seprint(bp, be, "%s%T", i ? ", " : "", argv[i]);
-		seprint(bp, be, "]");
-		id->sym = enter(buf, 0);
+		id->sym = instsym(td, argv, nargs);
 		inst->decl = id;
 	}
 	sizetype(inst);
@@ -1718,7 +1737,8 @@ stype(Node *n)
 		Decl *md, *id, *tg;
 		Type *rt;
 
-		if(n->left->op == Odot){
+		if(n->left->op == Odot || n->left->op == Oindex || n->left->op == Otinst){
+			/* mod.Adt.Tag, or a generic pick's tag Result[int].Ok */
 			/* mod.Adt.Tag: resolve mod.Adt first, then its tag */
 			Type *at;
 
@@ -4365,6 +4385,8 @@ istagname(Node *n)
 	if(n->op == Odot){
 		if(n->left->op == Odot)
 			return 1;	/* mod.Adt.Tag */
+		if(n->left->op == Oindex || n->left->op == Otinst)
+			return istagname(n->left->left);	/* Result[int].Ok */
 		if(n->left->op != Oname)
 			return 0;
 		d = lookup(n->left->sym);
@@ -5098,6 +5120,67 @@ fnchk(Decl *d)
 /*
  * add a function to the module
  */
+/*
+ * a pick's tags, from its Otpick body: one Dtag per tag, its fields a
+ * struct walked in the current scope (so a generic pick's fields see
+ * the type parameters when tinstantiate() calls this), numbered in
+ * declaration order.  shared by typedec() and tinstantiate().
+ */
+static void
+picktags(Node *body, Type *t, Decl *d)
+{
+	Decl *tags, *last, *tag;
+	Node *p, *tg;
+	int ntag;
+
+
+	/*
+	 * each tag's own runtime discriminant: declaration order,
+	 * 0-based, matching limbo's identical convention exactly
+	 * (limbo/types.c's pickdecled(): "d->tag = tag++") -- a
+	 * standard enum-style numbering, not a fresh decision. Decl's
+	 * own "tag" field (ember.h) already existed for this, just
+	 * never assigned anywhere in this loop until now. com.c's own
+	 * construction/match-dispatch codegen reads this field as the
+	 * literal word value written to/compared against the tag word
+	 * sizetype() (types.c) already reserves at offset 0 of every
+	 * tagged value's own storage.
+	 */
+	tags = last = nil;
+	ntag = 0;
+	for(p = body->left; p != nil; p = p->right){
+		tg = p;
+		if(p->op == Oseq)
+			tg = p->left;
+		tag = mkdecl(&tg->src, Dtag, nil);
+		tag->sym = tg->left->sym;
+		tag->tag = ntag++;
+		tag->ty = mktype(&tg->src, Tadtpick, nil, nil);
+		if(tg->right != nil){
+			/* reuse stype field walk via fake Otstruct */
+			Node fake;
+			Type *ft;
+
+			fake = *body;
+			fake.op = Otstruct;
+			fake.left = tg->right;
+			ft = stype(&fake);
+			tag->ty->ids = ft->ids;
+		}
+		tag->ty->tof = t;
+		tag->ty->decl = tag;
+		tag->dot = d;
+		if(tags == nil)
+			tags = tag;
+		else
+			last->next = tag;
+		last = tag;
+		if(p->op != Oseq)
+			break;
+	}
+	t->tags = tags;
+}
+
 static void
 typedec(Node *n)
 {
@@ -5135,8 +5218,8 @@ typedec(Node *n)
 		 * distinct argument list.  see the Type.tparams/tbody
 		 * comment in ember.h.
 		 */
-		if(n->right->op != Otstruct){
-			nerror(n, "generic type %s: only struct bodies are supported (not tagged/pick types)", d->sym->name);
+		if(n->right->op != Otstruct && n->right->op != Otpick){
+			nerror(n, "generic type %s: only struct and pick bodies are supported", d->sym->name);
 			d->ty = terror;
 			return;
 		}
@@ -5165,57 +5248,8 @@ typedec(Node *n)
 		ph->size = 0;
 		t = ph;
 	}
-	if(n->right->op == Otpick){
-		Decl *tags, *last, *tag;
-		Node *p, *tg;
-		int ntag;
-
-		/*
-		 * each tag's own runtime discriminant: declaration order,
-		 * 0-based, matching limbo's identical convention exactly
-		 * (limbo/types.c's pickdecled(): "d->tag = tag++") -- a
-		 * standard enum-style numbering, not a fresh decision. Decl's
-		 * own "tag" field (ember.h) already existed for this, just
-		 * never assigned anywhere in this loop until now. com.c's own
-		 * construction/match-dispatch codegen reads this field as the
-		 * literal word value written to/compared against the tag word
-		 * sizetype() (types.c) already reserves at offset 0 of every
-		 * tagged value's own storage.
-		 */
-		tags = last = nil;
-		ntag = 0;
-		for(p = n->right->left; p != nil; p = p->right){
-			tg = p;
-			if(p->op == Oseq)
-				tg = p->left;
-			tag = mkdecl(&tg->src, Dtag, nil);
-			tag->sym = tg->left->sym;
-			tag->tag = ntag++;
-			tag->ty = mktype(&tg->src, Tadtpick, nil, nil);
-			if(tg->right != nil){
-				/* reuse stype field walk via fake Otstruct */
-				Node fake;
-				Type *ft;
-
-				fake = *n->right;
-				fake.op = Otstruct;
-				fake.left = tg->right;
-				ft = stype(&fake);
-				tag->ty->ids = ft->ids;
-			}
-			tag->ty->tof = t;
-			tag->ty->decl = tag;
-			tag->dot = d;
-			if(tags == nil)
-				tags = tag;
-			else
-				last->next = tag;
-			last = tag;
-			if(p->op != Oseq)
-				break;
-		}
-		t->tags = tags;
-	}
+	if(n->right->op == Otpick)
+		picktags(n->right, t, d);
 	d->ty = t;
 	t->decl = d;
 	sizetype(t);
