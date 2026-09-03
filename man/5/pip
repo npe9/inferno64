@@ -221,6 +221,27 @@ and
 .B mode
 may be written; the rest are what the container has done rather than what
 it was asked to do.
+.SH DEVICES
+.PP
+A uart a container has been given with
+.B uart
+is a thing too, walked to by the uart's own name
+.RB ( /eia1 ),
+opened by whoever the container holding it is for.  Its attributes are
+.BR * ,
+.BR b ,
+the line speed,
+.BR d ,
+the data, and
+.BR name .
+Reading
+.B d
+gives what the uart has received, as much as is there, without waiting;
+writing it puts the bytes on the container's output queue, so the driver
+task sends them; writing
+.B b
+is the control message the task answers by setting the speed.  A uart
+has no versions: its version is 0 and closing the fid commits nothing.
 .SH FILES
 .PP
 On the microkernel configurations the server personality speaks the

@@ -117,6 +117,7 @@ struct Pipfid {
 	int	used;
 	ulong	fid;
 	uvlong	id;		/* the container it names, or 0 for the root */
+	int	uart;		/* or a uart a container holds: its slot plus one */
 	int	open;
 	uvlong	lease;		/* good until this many milliseconds */
 
@@ -3796,6 +3797,38 @@ pipwalk(char *name, long n)
 }
 
 /*
+ * The other kind of thing a name can walk to: a uart a container has
+ * been given, by the uart's own name.  The talk's slide 20 opens
+ * /dev/uart/eia0 over pi-p and reads and writes its attributes, answered
+ * by the driver task; here the name is the uart's, and the thing is
+ * there while a container holds it.  Returns the container's slot, or
+ * -1.
+ */
+enum { Pipuartoff = 2048 };	/* where a write to d is staged in the container's data area */
+
+static int
+pipwalkuart(char *name, long n)
+{
+	char buf[32];
+	Uart *u;
+	int i;
+
+	while(n > 0 && *name == '/')
+		name++, n--;
+	if(n <= 0 || n >= sizeof buf)
+		return -1;
+	memmove(buf, name, n);
+	buf[n] = 0;
+	u = uartlookup(buf);		/* by the device's name, eia1, as the uart control message names it */
+	if(u == nil)
+		return -1;
+	for(i = 0; i < nelem(ospreyuart); i++)
+		if(ospreyuart[i] == u && ospreyat(i) != nil)
+			return i;
+	return -1;
+}
+
+/*
  * One T message.  Returns the bytes it consumed, or -1 if the group is
  * malformed and nothing more of it can be trusted.
  */
@@ -3879,6 +3912,27 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			return -1;
 		USED(fid);
 		id = pipwalk((char*)m+k, alen);
+		if(id == ~0ULL && (i = pipwalkuart((char*)m+k, alen)) >= 0){
+			/* a uart, opened by whoever the container holding it is for */
+			if(!ospreymay(ospreyat(i), pipwho(ps))){
+				piperror(ps, tag, "not yours");
+				break;
+			}
+			if((nf = pipnewfid(ps, nfid)) == nil){
+				piperror(ps, tag, "fid in use or no free fids");
+				break;
+			}
+			nf->id = 0;
+			nf->uart = i + 1;
+			nf->open = 1;
+			nf->base = 0;
+			if((r = pipreply(ps, PipRopen, tag, 24)) != nil){
+				pipput(r, 8, 0x10000 + i);
+				pipput(r+8, 8, 0);
+				pipput(r+16, 8, nf->lease - pipnow());
+			}
+			break;
+		}
 		if(id == ~0ULL){
 			piperror(ps, tag, "bad name");
 			break;
@@ -3934,6 +3988,42 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		}
 		if(!pipstill(ps, f)){
 			piperror(ps, tag, "not yours");
+			break;
+		}
+		if(f->uart){
+			/*
+			 * The uart's attributes: the talk's *, b and d.  b is
+			 * the line speed; d is what the uart has received, as
+			 * much as is there, without waiting.
+			 */
+			Uart *u;
+			int slot = f->uart - 1;
+
+			if(slot < 0 || slot >= nelem(ospreyuart) || (u = ospreyuart[slot]) == nil){
+				piperror(ps, tag, "the uart has been given back");
+				break;
+			}
+			if(strcmp(attr, "*") == 0)
+				k = snprint(val, sizeof val, "* b d name");
+			else if(strcmp(attr, "b") == 0)
+				k = snprint(val, sizeof val, "%d", u->baud);
+			else if(strcmp(attr, "name") == 0)
+				k = snprint(val, sizeof val, "%s", u->name);
+			else if(strcmp(attr, "d") == 0){
+				k = u->iq != nil ? qconsume(u->iq, val, sizeof val - 1) : 0;
+				if(k < 0)
+					k = 0;
+			} else {
+				piperror(ps, tag, "no such attribute");
+				break;
+			}
+			if(cnt >= 0 && k > cnt)
+				k = cnt;
+			if((r = pipreply(ps, PipRread, tag, 8+2+k)) != nil){
+				pipput(r, 8, 0);
+				pipput(r+8, 2, k);
+				memmove(r+10, val, k);
+			}
 			break;
 		}
 		if(f->id == 0){
@@ -4007,7 +4097,56 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 			return -1;
 		memmove(val, m+k, vlen);
 		val[vlen] = 0;
-		if((f = pipfid(ps, fid)) == nil || f->open == 0 || f->id == 0){
+		if((f = pipfid(ps, fid)) != nil && f->open && f->uart){
+			/*
+			 * Set attr d: the bytes go out through the driver task,
+			 * as work on the container's output queue - staged in
+			 * the container's data area, the queue told where -
+			 * exactly as the output control message does.  Set attr
+			 * b: the speed, as a control message the task answers.
+			 * Neither is a version: a uart is not a file.
+			 */
+			Ospreyproc *q;
+			uchar *d;
+			uvlong sarg[Ospreynarg];
+			int slot = f->uart - 1;
+
+			if(slot < 0 || slot >= nelem(ospreyuart) || ospreyuart[slot] == nil || (q = ospreyat(slot)) == nil){
+				piperror(ps, tag, "the uart has been given back");
+				break;
+			}
+			if(!pipstill(ps, f)){
+				piperror(ps, tag, "not yours");
+				break;
+			}
+			if(strcmp(attr, "d") == 0){
+				if((d = ospreydata(q, Pipuartoff, vlen)) == nil){
+					piperror(ps, tag, "no room in the container's data area");
+					break;
+				}
+				memmove(d, val, vlen);
+				if(ospreyoutput(q, Pipuartoff, vlen) < 0){
+					piperror(ps, tag, "the output queue is full");
+					break;
+				}
+				ospreywakeup();
+			} else if(strcmp(attr, "b") == 0){
+				memset(sarg, 0, sizeof sarg);
+				sarg[0] = strtoul(val, nil, 0);
+				if(ospreysubmit(q, 2 /* ReqOpen, which the task answers as its speed */, sarg) < 0){
+					piperror(ps, tag, "the request ring is full");
+					break;
+				}
+				ospreywakeup();
+			} else {
+				piperror(ps, tag, "attribute is not writable");
+				break;
+			}
+			if((r = pipreply(ps, PipRwrite, tag, 8)) != nil)
+				pipput(r, 8, 0);
+			break;
+		}
+		if(f == nil || f->open == 0 || f->id == 0){
 			piperror(ps, tag, "fid not open");
 			break;
 		}
@@ -4038,6 +4177,12 @@ pipmsg(Pipsession **psp, uchar *m, long n)
 		fid = pipget(m+Pipheader, 4);
 		if((f = pipfid(ps, fid)) == nil){
 			piperror(ps, tag, "no such fid");
+			break;
+		}
+		if(f->uart){
+			f->used = 0;		/* nothing to commit: a uart has no versions */
+			if((r = pipreply(ps, PipRclose, tag, 8)) != nil)
+				pipput(r, 8, 0);
 			break;
 		}
 		if(f->dirty && !pipstill(ps, f)){

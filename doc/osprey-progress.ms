@@ -265,13 +265,14 @@ same store on a device whose erase and bad blocks are the store's
 problem \- a board this tree has no Osprey target for yet (item 9).
 .PP
 .B "4.  \[*p]p for files, and \[*p]p devices."
-\[*p]p is spoken about containers \- their attributes, tickets,
-checkpoints \- and on a wire, and now, above, about the server
-personality's files: immutable versions committed on close, leases, and
-a grouped open-read-write-close in one round trip, over the ring.  What
-remains of the first half is the personality's \[*p]p on a wire.  The
-second half: the talk's uart (slide 20) is reached as a \[*p]p file with
-string attributes \-
+Built, above, both halves: \[*p]p about the server personality's files
+\- immutable versions committed on close, leases, a grouped
+open-read-write-close in one round trip, over the ring \- and the uart a
+container holds as a \[*p]p thing with the talk's attributes, its data
+attribute answered by the driver task.  What remains is the
+personality's \[*p]p on a wire of its own, and the attributes a uart
+here does not have.  For the record, the talk's uart (slide 20) is
+reached as a \[*p]p file with string attributes \-
 .CW *
 listing them,
 .CW b
@@ -3060,9 +3061,52 @@ after); then a second group resumes the session by its number and reads
 version 3's data.  Streams and tickets are answered as what they are
 here: no wire to stream on, no key to check a ticket against.  What is
 not built: the personality's \[*p]p on a wire of its own (the kernel's
-is), and the second half of item 4, the uart task as a \[*p]p thing
-with the talk's attributes.  Checked, with a second boot, by
+is).  Checked, with a second boot, by
 .CW /scripts/osprey-check-p9pair.py .
+.PP
+The second half of item 4 is the talk's slide 20 itself: the uart as a
+\[*p]p thing, its attributes read and written by name and answered by
+the driver task.  On pc64 a uart a container has been given is a thing
+the kernel's \[*p]p walks to by the uart's own name
+.CW ( pipwalkuart
+in
+.CW os/osprey/port/devosprey.c ,
+beside the numbered containers).  Its attributes are
+.CW * ,
+which lists them,
+.CW b ,
+the line speed,
+.CW d ,
+the data, and
+.CW name .
+A read of
+.CW d
+is what the uart has received, as much as is there, without waiting.
+A write to
+.CW d
+is staged in the container's data area and put on the container's
+output queue, exactly as the
+.CW output
+control message puts work there, so it goes out through the driver
+task's third arm and the transmitter, and a write to
+.CW b
+is the control message the task answers by setting the speed.  A uart
+is not a file: its version is 0 and its close commits nothing.  The
+check on pc64 opens
+.CW /eia1
+over
+.CW #O/pip ,
+reads
+.CW * ,
+.CW b
+and
+.CW name ,
+writes
+.CW d ,
+and the bytes leave the machine on the second serial line, where the
+harness reads them.  Only what a uart here has is offered: the talk's
+uart listed twenty attributes, of which this one has the speed and the
+data.
 .NH 2
 Built and proven since
 .PP

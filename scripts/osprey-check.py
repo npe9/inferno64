@@ -368,6 +368,13 @@ CHECKS = [
    "echo output 5 256 17 >/n/osprey/ctl; sleep 2",
    "echo submit 5 close 0 >/n/osprey/ctl; sleep 2; cat /n/osprey/reply"],
   "5 close done"),
+ ("the uart as a pi-p thing, the talk's slide 20: opened by its name, its attributes read by name",
+  ["echo uart 5 eia1 3 >/n/osprey/ctl",
+   "x=`{/tmp/pip open 4 /eia1 read 4 '*' read 4 b read 4 name}; echo $x"],
+  "'* b d name'"),
+ ("and its data written as an attribute, out through the driver task's output queue",
+  ["/tmp/pip open 6 /eia1 write 6 d 'pip to the uart' close 6; sleep 2"],
+  "!error"),
  ("sixteen hundred requests from eight processes at once, none lost",
   ["for(c in 11 12 13 14 15 16 17 18) echo create $c 40000000 800000000 200000000 >/n/osprey/ctl",
    "echo attach 11 0 >/n/osprey/ctl; echo attach 12 1 >/n/osprey/ctl",
@@ -571,6 +578,11 @@ def main():
     ok = 'osprey uart task' in com2
     print('%-4s %s' % ('ok' if ok else 'FAIL',
                        'and the bytes it was given, out of the device'))
+    if not ok:
+        bad += 1
+    ok = 'pip to the uart' in com2
+    print('%-4s %s' % ('ok' if ok else 'FAIL',
+                       'and the bytes written to its d attribute over pi-p, out of the device too'))
     if not ok:
         bad += 1
 
