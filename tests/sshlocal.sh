@@ -33,7 +33,13 @@ tmp=$(mktemp -d)
 # be visible inside emu; stage it in a temp subdir (never committed).
 intree="$root/.sshtesttmp"
 sshdpid=
-cleanup() { test -n "$sshdpid" && kill "$sshdpid" 2>/dev/null || true; rm -rf "$tmp" "$intree"; }
+esshdpid=
+eport=$((port+1))
+cleanup() {
+	test -n "$sshdpid" && kill "$sshdpid" 2>/dev/null || true
+	test -n "$esshdpid" && kill "$esshdpid" 2>/dev/null || true
+	rm -rf "$tmp" "$intree"
+}
 trap cleanup EXIT
 rm -rf "$intree"; mkdir -p "$intree"
 
@@ -58,6 +64,12 @@ GEN
 "$root/MacOSX/arm64/bin/emu-g" -r. sh /.sshtesttmp/gen.sh >/dev/null 2>&1
 sed -i.bak 's/^key proto=rsa/key proto=rsa service=ssh/' "$intree/keyline" && rm -f "$intree/keyline.bak"
 cat "$intree/facpub" >> "$tmp/authorized_keys"
+
+# an ECDSA-only host key for the ecdsa-sha2-nistp256 host-key test
+ssh-keygen -q -t ecdsa -b 256 -f "$tmp/hostkey_ecdsa" -N "" -C ecdsahost
+chmod 600 "$tmp/hostkey_ecdsa"
+eraw=$(ssh-keygen -l -E sha256 -f "$tmp/hostkey_ecdsa.pub" | awk '{print $2}')
+ewantthumb="sha256=${eraw#SHA256:}"
 
 # host thumbprint oracle: ssh-keygen prints "<bits> SHA256:xxx comment"
 raw=$(ssh-keygen -l -E sha256 -f "$tmp/hostkey.pub" | awk '{print $2}')
@@ -87,6 +99,25 @@ while [ "$i" -lt 40 ]; do
 done
 echo "SSHLOCAL: sshd up (pid $sshdpid) on port $port"
 
+# second sshd with ONLY an ECDSA host key, to exercise
+# ecdsa-sha2-nistp256 host-key verification (the client offers
+# rsa-sha2-256,ecdsa-sha2-nistp256 and must fall to ecdsa here)
+"$SSHD" -D -e \
+	-p "$eport" \
+	-h "$tmp/hostkey_ecdsa" \
+	-o "AuthorizedKeysFile=$tmp/authorized_keys" \
+	-o StrictModes=no -o UsePAM=no -o PasswordAuthentication=no \
+	-o KbdInteractiveAuthentication=no -o PidFile=none \
+	-o HostKeyAlgorithms=ecdsa-sha2-nistp256 \
+	-o "PubkeyAcceptedAlgorithms=+ssh-rsa,rsa-sha2-256" \
+	>"$tmp/sshd_ecdsa.log" 2>&1 &
+esshdpid=$!
+i=0
+while [ "$i" -lt 40 ]; do
+	if command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 "$eport" 2>/dev/null; then break; fi
+	i=$((i+1)); sleep 0.25
+done
+
 user=$(id -un)
 cd "$root"
 rc=0
@@ -96,6 +127,13 @@ echo 'SSHLOCAL: === positive: authorised key ==='
 pout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$port" "$user" "/.sshtesttmp/id_rsa" "$wantthumb" "printf hello" "hello" 2>&1) || true
 echo "$pout"
 echo "$pout" | grep -q "$marker" || { echo 'SSHLOCAL: POSITIVE TEST FAILED'; rc=1; }
+
+echo 'SSHLOCAL: === ECDSA host key: verify ecdsa-sha2-nistp256 ==='
+# the ecdsa-only server forces the client onto ecdsa host-key
+# verification; connect() succeeds only if that signature checks out,
+# with the thumbprint pinned to ssh-keygen's oracle for the ecdsa key
+eout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$eport" "$user" "/.sshtesttmp/id_rsa" "$ewantthumb" "printf hi" "hi" 2>&1) || true
+echo "$eout" | grep -q "$marker" && echo 'SSHLOCAL: ecdsa host-key verification: PASS' || { echo "SSHLOCAL: ecdsa host-key verification FAILED: [$eout]"; rc=1; }
 
 echo 'SSHLOCAL: === negative control: unauthorised key must be REJECTED ==='
 nout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$port" "$user" "/.sshtesttmp/id_bad" "$wantthumb" "printf hello" "hello" 2>&1) || true

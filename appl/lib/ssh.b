@@ -18,13 +18,15 @@ include "asn1.m";
 include "pkcs.m";
 	pkcs: PKCS;
 	RSAKey: import pkcs;
+include "p256.m";
+	p256: P256;
 include "factotum.m";
 	factotum: Factotum;
 include "ssh.m";
 
 # algorithm name strings we offer (exactly one of each, as ssh.c does)
 KEXALGS:	con "curve25519-sha256,curve25519-sha256@libssh.org";
-HOSTALGS:	con "rsa-sha2-256";
+HOSTALGS:	con "rsa-sha2-256,ecdsa-sha2-nistp256";
 CIPHERALGS:	con "chacha20-poly1305@openssh.com";
 ZIPALGS:	con "none";
 
@@ -45,6 +47,9 @@ init()
 	pkcs = load PKCS PKCS->PATH;
 	if(pkcs != nil)
 		pkcs->init();
+	p256 = load P256 P256->PATH;
+	if(p256 != nil)
+		p256->init();
 }
 
 # ---- SSH binary packing helpers -----------------------------------
@@ -423,15 +428,29 @@ kexinit(): array of byte
 	return bytes(b);
 }
 
-# verify the server's rsa-sha2-256 signature sig over the 32-byte
-# exchange hash h, using the ssh-rsa host key blob ks. Returns "" on
-# success.
+# verify the server's signature sig over the 32-byte exchange hash h,
+# using the host key blob ks. Dispatches on the key type (the blob's
+# first SSH string): ssh-rsa (rsa-sha2-256) and ecdsa-sha2-nistp256 are
+# supported - both are offered in HOSTALGS, so the server signs with
+# whichever it negotiated, and we verify by the actual K_S type here.
+# Returns "" on success.
 verifyhostkey(ks, sig, h: array of byte): string
 {
+	(name, nil) := getstr(ks, 0);
+	case string name {
+	"ssh-rsa" =>
+		return verifyrsa(ks, sig, h);
+	"ecdsa-sha2-nistp256" =>
+		return verifyecdsa(ks, sig, h);
+	* =>
+		return "ssh: unsupported host key type " + string name;
+	}
+}
+
+verifyrsa(ks, sig, h: array of byte): string
+{
 	# host key blob: string "ssh-rsa" || mpint e || mpint n
-	(name, o) := getstr(ks, 0);
-	if(o < 0 || string name != "ssh-rsa")
-		return "ssh: host key is not ssh-rsa";
+	(nil, o) := getstr(ks, 0);
 	(eb, o2) := getstr(ks, o);
 	if(o2 < 0)
 		return "ssh: bad host key (e)";
@@ -453,6 +472,45 @@ verifyhostkey(ks, sig, h: array of byte): string
 	pk := ref RSAKey(n, modlen, e);
 	if(pkcs->rsa_verify(h, sigbytes, pk, PKCS->SHA256_WithRSAEncryption) == 0)
 		return "ssh: host key signature verification failed";
+	return nil;
+}
+
+verifyecdsa(ks, sig, h: array of byte): string
+{
+	if(p256 == nil)
+		return "ssh: p256 module not loaded";
+	# host key blob: string "ecdsa-sha2-nistp256" || string "nistp256"
+	# || string Q, where Q is the uncompressed point 0x04||x||y.
+	(nil, o) := getstr(ks, 0);
+	(curve, o2) := getstr(ks, o);
+	if(o2 < 0 || string curve != "nistp256")
+		return "ssh: unexpected ecdsa curve";
+	(q, o3) := getstr(ks, o2);
+	if(o3 < 0 || len q != 65 || q[0] != byte 16r04)
+		return "ssh: bad ecdsa host key point";
+
+	# signature blob: string "ecdsa-sha2-nistp256" || string(inner),
+	# where inner = mpint r || mpint s.
+	(sname, so) := getstr(sig, 0);
+	if(so < 0 || string sname != "ecdsa-sha2-nistp256")
+		return "ssh: signature is not ecdsa-sha2-nistp256";
+	(inner, so2) := getstr(sig, so);
+	if(so2 < 0)
+		return "ssh: bad ecdsa signature";
+	(r, io) := getstr(inner, 0);
+	if(io < 0)
+		return "ssh: bad ecdsa signature (r)";
+	(s, io2) := getstr(inner, io);
+	if(io2 < 0)
+		return "ssh: bad ecdsa signature (s)";
+
+	# ecdsa-sha2-nistp256 signs SHA-256(H); p256 takes the digest and
+	# the r,s magnitudes (leading zeros are harmless, bebytestoip drops
+	# them) and the 65-byte point.
+	dg := array[kr->SHA256dlen] of byte;
+	kr->sha256(h, len h, dg, nil);
+	if(p256->ecdsa_verify(dg, r, s, q) == 0)
+		return "ssh: ecdsa host key signature verification failed";
 	return nil;
 }
 
