@@ -442,7 +442,7 @@ faultamd64(Ureg* ureg, void*)
 			dumpregs(ureg);
 			panic("kernel fault: %s addr=%#p", read? "read": "write", addr);
 		}
-		print("user fault: %s addr=%#llux pc=%#llux sp=%#llux, pid %lud %s\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc, (uvlong)ureg->sp, up->pid, up->text);
+		iprint("user fault: %s addr=%#llux pc=%#llux sp=%#llux, pid %lud %s\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc, (uvlong)ureg->sp, up->pid, up->text);
 		if(!waserror()){
 			uvlong *w = (uvlong*)ureg->sp;
 			validaddr(ureg->sp, 8*sizeof(uvlong), 0);

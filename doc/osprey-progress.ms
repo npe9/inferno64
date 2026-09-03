@@ -840,6 +840,37 @@ with the interface counters moved and idles clean, five boots of five; the
 two-stack handshake stays proved here in the record, run by hand, not at
 every boot.
 .PP
+The corruption itself is now sharply narrowed, though not yet caught.  A
+first help was making the trap handler's user-fault line synchronous
+.CW ( iprint ,
+not the async console that had been dropping it), so the fault reads the
+same every boot:
+.CW "pc=0xffffffff addr=0xffffffff" ,
+a jump to a bad address - a call through a corrupted function pointer, or
+a smashed return.  It is the two
+.CW Fs
+themselves, not the medium: a second stack bound with plain loopback
+crashes the same way as one bound with the osprey medium, so the osprey
+work is not the cause.  It is not the scheduler's own
+.CW Proc
+labels (a guard on
+.CW sched.pc
+before every
+.CW gotolabel
+never fires) nor a kproc overrunning its stack (a canary at each kproc
+stack's low end is never touched), and it is not the multicast timer (the
+one global function pointer in the interface layer,
+.CW multicastreportfn ,
+is guarded, and dropping igmp entirely does not change it).  What is left
+is shared file-scope state in
+.CW devip
+or a protocol that a second
+.CW Fs
+overwrites in steady state - the Plan 9 stack was written for one
+.CW Fs
+per kernel.  Catching the write to 0xffffffff wants a hardware watchpoint
+through the qemu gdbstub, which is the next step.
+.PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
 second machine would change is only the medium's two ends: instead of two
