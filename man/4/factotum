@@ -13,6 +13,9 @@ factotum, feedkey \- authentication agent
 ] [
 .B -m
 .I mtpt
+] [
+.B -S
+.RI [ user @] server
 ]
 .B ...
 .IB attribute ?
@@ -30,6 +33,32 @@ Stored as a list of
 .IB attribute = value
 pairs, a key typically contains a user, an authentication domain, a protocol, and
 some secret data.
+.PP
+.PP
+With
+.B -S
+.RI [ user @] server
+.I factotum
+seeds its keys from
+.IR secstore (1)
+at startup, the Plan 9 way: it prompts once for the secstore password,
+connects to
+.IR server
+as
+.I user
+(default the current user), fetches the file named
+.B factotum
+\(em a list of
+.B key
+.IB attribute = value
+.B ...
+lines \(em decrypts it, and loads those keys.
+So one secstore password unlocks a whole key set.
+Any failure (no server, wrong password, no such file) is non-fatal:
+.I factotum
+simply starts with no keys, and more can be added through
+.B ctl
+as usual.
 .PP
 .I Factotum
 serves

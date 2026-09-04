@@ -20,6 +20,10 @@ include "authio.m";
 include "arg.m";
 
 include "readdir.m";
+include "dial.m";
+	dial: Dial;
+include "secstore.m";
+	secstore: Secstore;
 
 Factotum: module
 {
@@ -41,6 +45,9 @@ debug := Debug;
 files: Files;
 authio: Authio;
 
+# keys fetched from secstore at startup (-S), seeded into allkeys.
+initialkeys: list of ref Key;
+
 keymanc: chan of (list of ref Attr, int, chan of (list of ref Key, string));
 
 init(nil: ref Draw->Context, args: list of string)
@@ -51,15 +58,17 @@ init(nil: ref Draw->Context, args: list of string)
 
 	svcname := "#sfactotum";
 	mntpt := "/mnt/factotum";
+	secstorespec := "";
 	arg := load Arg Arg->PATH;
 	if(arg != nil){
 		arg->init(args);
-		arg->setusage("auth/factotum [-d] [-m /mnt/factotum] [-s factotum]");
+		arg->setusage("auth/factotum [-d] [-m /mnt/factotum] [-s factotum] [-S [user@]server]");
 		while((o := arg->opt()) != 0)
 			case o {
 			'd' =>	debug++;
 			'm' =>	mntpt = arg->earg();
 			's' =>		svcname = "#s"+arg->earg();
+			'S' =>	secstorespec = arg->earg();
 			* =>	arg->usage();
 			}
 		args = arg->argv();
@@ -67,6 +76,13 @@ init(nil: ref Draw->Context, args: list of string)
 			arg->usage();
 		arg = nil;
 	}
+
+	# Seed keys from secstore, the Plan 9 way: fetch the "factotum" file
+	# (a list of "key ..." lines) with one secstore password and load its
+	# keys. Done before serving so they are present immediately. Failure
+	# is non-fatal - factotum simply starts with no keys.
+	if(secstorespec != "")
+		initialkeys = loadsecstore(secstorespec);
 	sys->unmount(nil, mntpt);
 	if(sys->bind(svcname, mntpt, Sys->MREPL) < 0)
 		err(sys->sprint("can't bind %s on %s: %r", svcname, mntpt));
@@ -98,6 +114,139 @@ err(s: string)
 	raise "fail:error";
 }
 
+# fetch the "factotum" key file from secstore and parse its "key ..."
+# lines into keys. spec is [user@]server. Non-fatal on any error.
+loadsecstore(spec: string): list of ref Key
+{
+	usr := user();
+	addr := spec;
+	for(i := 0; i < len spec; i++)
+		if(spec[i] == '@'){
+			usr = spec[0:i];
+			addr = spec[i+1:];
+			break;
+		}
+	if(addr == ""){
+		sswarn("empty secstore server");
+		return nil;
+	}
+	secstore = load Secstore Secstore->PATH;
+	if(secstore == nil){
+		sswarn(sys->sprint("load secstore: %r"));
+		return nil;
+	}
+	secstore->init();
+	dial = load Dial Dial->PATH;
+	if(dial == nil){
+		sswarn(sys->sprint("load dial: %r"));
+		return nil;
+	}
+	pass := readpassword(sys->sprint("secstore password for %s: ", usr));
+	if(pass == "")
+		return nil;
+	seckey := secstore->mkseckey(pass);
+	filekey := secstore->mkfilekey(pass);
+	conn := secstore->dial(dial->netmkaddr(addr, "net", "secstore"));
+	if(conn == nil){
+		sswarn(sys->sprint("connect: %r"));
+		return nil;
+	}
+	(srv, diag) := secstore->auth(conn, usr, seckey);
+	secstore->erasekey(seckey);
+	if(srv == nil){
+		sswarn("authentication failed: " + diag);
+		secstore->bye(conn);
+		return nil;
+	}
+	if(diag == "need pin"){
+		pin := readpassword("secstore PIN+SecurID: ");
+		if(secstore->sendpin(conn, pin) < 0){
+			sswarn(sys->sprint("pin rejected: %r"));
+			secstore->bye(conn);
+			return nil;
+		}
+	}
+	file := secstore->getfile(conn, "factotum", 0);
+	if(file == nil){
+		sswarn(sys->sprint("no 'factotum' file in secstore: %r"));
+		secstore->bye(conn);
+		return nil;
+	}
+	file = secstore->decrypt(file, filekey);
+	secstore->erasekey(filekey);
+	if(file == nil){
+		sswarn("cannot decrypt the factotum file (wrong password?)");
+		secstore->bye(conn);
+		return nil;
+	}
+	keys := parsekeyfile(file);
+	secstore->erasekey(file);
+	secstore->bye(conn);
+	return keys;
+}
+
+# parse "key ..." lines (the Plan 9 factotum-file format) into keys.
+parsekeyfile(file: array of byte): list of ref Key
+{
+	rkeys: list of ref Key;
+	for(lines := secstore->lines(file); lines != nil; lines = tl lines){
+		l := string hd lines;
+		if(l == "" || l[0] == '#')
+			continue;
+		i := 0;
+		while(i < len l && l[i] != ' ')
+			i++;
+		verb := l[0:i];
+		if(i < len l)
+			i++;
+		rest := l[i:];
+		if(verb != "key")
+			continue;
+		k := Key.mk(parseline(rest));
+		if(k != nil && lookattrval(k.attrs, "proto") != nil)
+			rkeys = k :: rkeys;
+	}
+	keys: list of ref Key;
+	for(; rkeys != nil; rkeys = tl rkeys)
+		keys = hd rkeys :: keys;
+	return keys;
+}
+
+# read a line from the console without echoing it.
+readpassword(prompt: string): string
+{
+	sys->fprint(sys->fildes(2), "%s", prompt);
+	ctl := sys->open("/dev/consctl", Sys->OWRITE);
+	if(ctl != nil)
+		sys->fprint(ctl, "rawon");
+	cons := sys->open("/dev/cons", Sys->OREAD);
+	if(cons == nil)
+		cons = sys->fildes(0);
+	pw := "";
+	buf := array[1] of byte;
+	while(sys->read(cons, buf, 1) == 1){
+		c := int buf[0];
+		if(c == '\n' || c == '\r')
+			break;
+		if(c == 8 || c == 16r7f){
+			if(len pw > 0)
+				pw = pw[0:len pw - 1];
+			continue;
+		}
+		pw[len pw] = c;
+	}
+	if(ctl != nil)
+		sys->fprint(ctl, "rawoff");
+	ctl = nil;
+	sys->fprint(sys->fildes(2), "\n");
+	return pw;
+}
+
+sswarn(s: string)
+{
+	sys->fprint(sys->fildes(2), "factotum: secstore: %s\n", s);
+}
+
 rlist: list of ref Fid;
 
 factotumsrv()
@@ -106,6 +255,11 @@ factotumsrv()
 	if(debug == 0)
 		privacy();
 	allkeys := array[0] of ref Key;
+	for(il := initialkeys; il != nil; il = tl il)
+		allkeys = addkey(allkeys, hd il);
+	if(initialkeys != nil)
+		sys->fprint(sys->fildes(2), "factotum: loaded %d key(s) from secstore\n", len allkeys);
+	initialkeys = nil;
 	pidc := chan of int;
 	donec := chan of ref Fid;
 #	keyc := chan of (list of ref Attr, chan of (ref Key, string));
