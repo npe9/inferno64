@@ -392,16 +392,28 @@ the uart task over \[*p]p is the piece; "\[*p]p devices in the kernel"
 was the talk's own status line.
 .PP
 .B "5.  The second cut: console and clock as tasks."
-The microkernel still keeps cons, uart and rtc register access; the
-talk's kernel keeps interrupt handling and nothing of the device.  The
-uart is done, above: a uart task in a container of its own on the
-microkernel, given work by another container over its output queue,
-its bytes leaving on the wire.  cons and rtc are not begun: the kernel's
-prints go through its own console device and the console uart is
-refused to a task, since losing it would take the machine; moving them
-means the kernel printing only through the bare polled putchar it keeps
-for panics and everything else through a console task.  Retiring pc64
-as the testbed is the measure of this.
+The talk's kernel keeps interrupt handling and nothing of the device.
+The uart is done, above: a uart task in a container of its own on the
+microkernel, given work by another container over its output queue, its
+bytes leaving on the wire.  The console is done too: every kernel
+.CW print
+goes through the console task now \-
+.CW putstrn0
+offers the line to
+.CW consoletask
+first and writes the port itself only when the task cannot, a panic or a
+full queue \- so a container holds the console and the kernel's own output
+is that container's to carry.  And the clock: the CMOS real-time clock is
+read in user space now, the exokernel way, the personality's own
+.CW outb / inb
+on ports 0x70 and 0x71 under a port grant, reading the date and time with
+no kernel rtc device in the data path (it reads the six registers twice
+and takes them when the seconds match, the update-in-progress guard
+without the long spin that would be a CPL3 window for the standing pc64
+interrupt fault).  What is left is that the kernel still reads the clock
+once itself at boot, before any task exists, to set the time of day \- the
+bootstrap a task cannot do \- and retiring pc64 as the testbed, the
+measure the plan sets.
 .PP
 .B "6.  Address-space groups, and a checkpoint that carries everything."
 Slide 15: processes that share an address space migrate as a group.

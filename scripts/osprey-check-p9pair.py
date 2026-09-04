@@ -70,6 +70,8 @@ def main():
 
     m = re.search(r"pair-client: read (\d+) entries from the server personality's exported root", t)
     results = [
+        ("the real-time clock is read in user space, by the personality's own outb/inb on the CMOS ports, no kernel rtc device in the data path",
+         re.search(r'p9 rtc: read the CMOS clock in user space by its own outb/inb \(ports 0x70/0x71\): \d{4}-\d\d-\d\d \d\d:\d\d:\d\d', t) is not None),
         ("the kernel exposes the virtio block device's registers and interrupt to the server personality, and nothing more",
          'osprey blk: exposed virtio block device' in t and 'as "virtioblk"' in t),
         ("a driver above the kernel brings the device up and reads sector 0, the host's text",

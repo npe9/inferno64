@@ -183,6 +183,40 @@ p9ipup(void)
 		st = ospreyinb(0x64);
 		print("p9 io: user-mode inb(0x64) i8042 status = %#ux - port I/O delegated to this process, no trap\n", st & 0xff);
 	}
+
+	{
+		/*
+		 * The real-time clock read in user space, the exokernel way the
+		 * console and uart are tasks: the CMOS clock is at ports 0x70
+		 * (index) and 0x71 (data), granted to this process, and read with
+		 * its own outb/inb - no kernel rtc device in the data path.  The
+		 * bytes are BCD.  Reading is a handful of port ops, a short CPL3
+		 * burst; the update-in-progress spin the kernel's driver does
+		 * would be a long one, so instead the six registers are read
+		 * twice and taken when the seconds match, which is the same
+		 * guard against catching the clock mid-update without the spin.
+		 */
+		extern int ospreyinb(int);
+		extern void ospreyoutb(int, int);
+		extern long ospreyxcall(int op, uvlong *args, long n);
+		uvlong grant[2];
+		static int reg[6] = { 0x00, 0x02, 0x04, 0x07, 0x08, 0x09 };	/* sec min hour mday mon year */
+		int a[6], b[6], i, tries;
+
+		grant[0] = 0x70; grant[1] = 0x71;
+		ospreyxcall(20, grant, 2);		/* ReqIoport: the CMOS index/data ports */
+		for(tries = 0; tries < 16; tries++){
+			for(i = 0; i < 6; i++){ ospreyoutb(0x70, reg[i]); a[i] = ospreyinb(0x71) & 0xff; }
+			for(i = 0; i < 6; i++){ ospreyoutb(0x70, reg[i]); b[i] = ospreyinb(0x71) & 0xff; }
+			if(a[0] == b[0])		/* seconds stable: not read mid-update */
+				break;
+		}
+		for(i = 0; i < 6; i++)
+			a[i] = (a[i] & 0xf) + 10*(a[i] >> 4);	/* BCD to decimal */
+		print("p9 rtc: read the CMOS clock in user space by its own outb/inb (ports 0x70/0x71): "
+			"%d-%02d-%02d %02d:%02d:%02d - no kernel rtc device\n",
+			2000 + a[5], a[4], a[3], a[2], a[1], a[0]);
+	}
 	if(waserror()){
 		print("p9 ip: bring-up failed: %s\n", up->errstr);
 		return;
