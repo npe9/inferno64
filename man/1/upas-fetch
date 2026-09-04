@@ -23,6 +23,9 @@ upas/fetch \- fetch mail from an IMAP server over TLS
 .I n
 ] [
 .B -b
+] [
+.B -o
+.I mbox
 ]
 .SH DESCRIPTION
 .I Upas/fetch
@@ -64,6 +67,23 @@ and
 headers are printed;
 .B -b
 prints whole messages.
+.B -o
+.I mbox
+instead writes the fetched messages (whole) to
+.I mbox
+in Unix mbox format, which
+.IR upasfs (4)
+can then serve as a file system \(em so a Gmail inbox becomes browsable
+with
+.IR ls (1)
+and
+.IR cat (1):
+.EX
+
+	upas/fetch -u me@gmail.com -P pass -a 142.251.163.108 -o inbox.mbox
+	upas/fs inbox.mbox
+
+.EE
 .PP
 A hosted
 .I emu

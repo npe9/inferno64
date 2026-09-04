@@ -40,6 +40,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	passfile := "";
 	nwant := 5;
 	full := 0;
+	mboxout := "";
 
 	argv = tl argv;
 	while(argv != nil && len hd argv > 0 && (hd argv)[0] == '-'){
@@ -53,8 +54,15 @@ init(nil: ref Draw->Context, argv: list of string)
 		"-P" =>	passfile = arg(argv); argv = tl argv;
 		"-n" =>	nwant = int arg(argv); argv = tl argv;
 		"-b" =>	full = 1;
+		"-o" =>	mboxout = arg(argv); argv = tl argv; full = 1;	# save as mbox for upas/fs
 		* =>	usage();
 		}
+	}
+	mfd: ref Sys->FD;
+	if(mboxout != ""){
+		mfd = sys->create(mboxout, Sys->OWRITE, 8r644);
+		if(mfd == nil)
+			fail(sys->sprint("create %s: %r", mboxout));
 	}
 
 	(c, ce) := imap4->connect(server, port, dialip);
@@ -90,8 +98,13 @@ init(nil: ref Draw->Context, argv: list of string)
 			(data, fe) := c.fetch(m, item);
 			if(fe != nil)
 				fail(fe);
-			sys->print("===== message %d =====\n%s\n", m, string data);
+			if(mfd != nil)
+				writembox(mfd, m, data);
+			else
+				sys->print("===== message %d =====\n%s\n", m, string data);
 		}
+		if(mfd != nil)
+			sys->print("wrote %d message(s) to %s\n", cnt - start + 1, mboxout);
 	}
 	c.logout();
 }
@@ -101,6 +114,17 @@ arg(a: list of string): string
 	if(a == nil)
 		usage();
 	return hd a;
+}
+
+# append one message to an mbox: a "From " envelope line, the raw message,
+# then a blank line so upas/fs(4) can split it back out.
+writembox(fd: ref Sys->FD, m: int, data: array of byte)
+{
+	env := array of byte sys->sprint("From upas@localhost message %d\n", m);
+	sys->write(fd, env, len env);
+	sys->write(fd, data, len data);
+	nl := array of byte "\n";
+	sys->write(fd, nl, len nl);
 }
 
 readpass(passfile: string): string
@@ -122,7 +146,7 @@ readpass(passfile: string): string
 
 usage()
 {
-	sys->fprint(stderr, "usage: upas/fetch [-s server] [-a dialip] [-p port] [-u user] [-P passfile] [-n n] [-b]\n");
+	sys->fprint(stderr, "usage: upas/fetch [-s server] [-a dialip] [-p port] [-u user] [-P passfile] [-n n] [-b] [-o mbox]\n");
 	raise "fail:usage";
 }
 
