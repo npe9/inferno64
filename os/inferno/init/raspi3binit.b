@@ -38,6 +38,25 @@ sdcheck()
 			tag = "(SD-WRITE-MISMATCH)";
 	sys->print("SD block3 wrote %02x%02x readback %02x%02x %s\n",
 		int wbuf[0], int wbuf[1], int rbuf[0], int rbuf[1], tag);
+
+	# multi-block: write 4 blocks (2KB) in ONE pwrite, read back in ONE
+	# pread, per-block tagged.  This is what kfs exercises (nb>1).
+	mb := array[4*512] of byte;
+	for(k := 0; k < 4; k++){
+		mb[k*512] = byte 16rE0; mb[k*512+1] = byte k;
+	}
+	if(sys->pwrite(fd, mb, len mb, big (8*512)) != len mb){
+		sys->print("SD-MB write: %r\n"); return;
+	}
+	mbr := array[4*512] of byte;
+	if(sys->pread(fd, mbr, len mbr, big (8*512)) != len mbr){
+		sys->print("SD-MB read: %r\n"); return;
+	}
+	mbtag := "(SD-MULTIBLOCK-OK)";
+	for(k = 0; k < 4; k++)
+		if(int mbr[k*512] != 16rE0 || int mbr[k*512+1] != k)
+			mbtag = "(SD-MB-MISALIGN)";
+	sys->print("SD 4-block RW %s\n", mbtag);
 	sys->print("SD-OK\n");
 }
 
