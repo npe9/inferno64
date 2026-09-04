@@ -230,17 +230,26 @@ static int
 sdspionline(SDunit *u)
 {
 	Ctlr *c = u->dev->ctlr;
+	int first;
 
-	if(c->inited)
-		return u->sectors? 1: 0;
-	if(sdcardinit(c) == 0){
-		c->inited = 1;			/* do not re-probe a bad/absent card */
-		return 0;
+	first = 0;
+	if(!c->inited){
+		c->inited = 1;			/* probe once; a bad card stays sectors 0 */
+		sdcardinit(c);
+		first = 1;
 	}
-	c->inited = 1;
+	if(c->sectors == 0)
+		return 0;			/* no media */
+	/*
+	 * Always repopulate from the cached geometry: sdinitpart() zeroes
+	 * unit->sectors before each call, so a re-init must restore them or
+	 * the data partition vanishes ("file does not exist").  Report media
+	 * change only on the first init - returning 2 every call would churn
+	 * the partition version under an open channel.
+	 */
 	u->secsize = Secsize;
 	u->sectors = c->sectors;
-	return 2;				/* online, media changed */
+	return first? 2: 1;
 }
 
 static long
