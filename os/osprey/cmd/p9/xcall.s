@@ -43,3 +43,14 @@ TEXT	ospreyinb(SB), 1, $-4
 	XORL	AX, AX
 	INB
 	RET
+
+/*
+ * A user-mode port write, the write half of the i8042 driver: at CPL3
+ * this OUTB faults unless the kernel has granted the port.  Same shape as
+ * the kernel's own outb - port in RARG, byte the second argument.
+ */
+TEXT	ospreyoutb(SB), 1, $-4
+	MOVL	RARG, DX
+	MOVL	byte+8(FP), AX
+	OUTB
+	RET

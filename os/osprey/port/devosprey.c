@@ -1822,6 +1822,29 @@ ospreykbdintr(Ureg*, void*)
 	}
 }
 
+/*
+ * The exokernel form: the kernel does not read the scancode at all.  It
+ * routes IRQ1 to the container as a bare notification - give the
+ * semaphore, wake the driver's select - and leaves the byte in the i8042
+ * output buffer for the user-space driver to read with its own inb, using
+ * the per-process port grant.  IRQ1 is edge-triggered (i8259elcr does not
+ * mark it level), so signalling without draining does not storm: the next
+ * edge comes only once the driver has drained the byte and the controller
+ * loads the next.  Registered by the ReqKbdnotify xcall; no ring, no
+ * kernel device read - the whole i8042 driver lives above the kernel.
+ */
+static void
+ospreykbdnotify(Ureg*, void*)
+{
+	int sx;
+
+	if(ospreykbdproc != nil){
+		ospreysemgive(ospreykbdproc, ospreykbdsem);
+		if((sx = ospreyindex(ospreykbdproc)) >= 0 && sx < nelem(ospreyselrend))
+			wakeup(&ospreyselrend[sx]);
+	}
+}
+
 void
 ospreykbdenable(Ospreyproc *p, int sem)
 {
@@ -2358,6 +2381,7 @@ ospreybuddycall(Ospreyproc *p, int tries)
  */
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
+#define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2375,6 +2399,55 @@ ospreyxcall(va_list list)
 		arg[i] = ubuf[i];
 	if(op == ReqIoport){		/* delegate I/O ports arg[0]..arg[1] to the calling process */
 		iogrant(up, (int)arg[0], (int)arg[1]);
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqKbdnotify){		/* route IRQ1 to this container as a bare notification */
+		int c, i;
+
+		ospreykbdproc = up->osprey;	/* whose semaphore the interrupt gives */
+		ospreykbdsem = (int)arg[0];
+		ospreykbdring = nil;		/* notification-only: the driver reads 0x60 itself */
+		/*
+		 * The one-time controller setup is done here, in the kernel, not
+		 * in the driver's CPL3 kproc: the i8042 command-byte handshake
+		 * spins on the status port, and a spin that long at CPL3 in a
+		 * personality kproc is a window for a clock or device interrupt
+		 * to land while that kproc is the running context, which this
+		 * microkernel's interrupt path corrupts (the standing pc64
+		 * heisenbug - a user driver taking a legacy IRQ from CPL3
+		 * reproduces it reliably).  It runs in kernel context instead,
+		 * so an interrupt landing during it is handled normally.
+		 *
+		 * A config that exposes the framebuffer also armed the kernel's
+		 * own ospreykbdintr on IRQ1 (it drains 0x60 into a ring).  Take
+		 * it off the line first: intrdisable masks IRQ1 (irqdisable),
+		 * so the command-byte read below cannot raise an unhandled
+		 * interrupt, and no splhi is needed - the handshake does not
+		 * block the block device or the clock while it spins.  The
+		 * spins are bounded so a wedged controller cannot hang the
+		 * kernel.  intrenable last re-arms IRQ1, buffer already drained,
+		 * onto the notification handler alone.  The scancodes themselves
+		 * - the data path - the driver still reads with its own inb.
+		 */
+		intrdisable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
+		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
+			inb(Kbddata);			/* drain stale bytes */
+		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
+			;				/* input buffer clear */
+		outb(Kbdstat, 0x20);			/* read command byte */
+		for(i = 0; i < 100000 && !(inb(Kbdstat) & Kbdready); i++)
+			;
+		c = inb(Kbddata);
+		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
+			;
+		outb(Kbdstat, 0x60);			/* write command byte */
+		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
+			;
+		outb(Kbddata, c | 0x01);		/* enable the keyboard interrupt */
+		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
+			inb(Kbddata);			/* drain the echo, if any */
+		intrenable(Kbdirq, ospreykbdnotify, nil, -1, "osprey-kbd-notify");
 		ubuf[0] = 0;
 		return 0;
 	}

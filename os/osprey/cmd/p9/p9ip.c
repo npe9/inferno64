@@ -35,6 +35,7 @@ void (*ipprotoinit[])(Fs*) = {
 
 extern void loopbackmediumlink(void);
 extern void ospreymediumlink(void);
+extern void p9kbdstart(void);		/* p9kbd.c: the user-space i8042 keyboard driver */
 extern int p9open(char*, int);
 extern long p9read(int, void*, long);
 extern long p9write(int, void*, long);
@@ -231,6 +232,7 @@ p9ipup(void)
 	print("p9 ip: second stack #I1 with an osprey interface at 10.0.0.2\n");
 	p9close(fd);
 	kproc("ostcp", ostcp, nil);	/* two-stack tcp.c handshake + byte stream over the osprey wire */
+	p9kbdstart();			/* the i8042 keyboard driver, in user space above the kernel */
 	poperror();
 
 	if(waserror()){

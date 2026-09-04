@@ -998,6 +998,67 @@ reliable fault capture the async console fights.  That hunt, the
 single-stack delivery gap, and the device-carried two-container form are what remain of
 item 7a.
 .PP
+.B "7b.  A legacy port device driven from user space."
+The osprey device gained two primitives that let a personality own a
+legacy port device outright, the exokernel way the talk names for the
+frame buffer extended to port I/O and interrupts.
+.B ReqIoport
+delegates a range of I/O ports to the calling process by clearing their
+bits in that process's own x86 TSS I/O-permission bitmap, which
+.CW mmuswitch
+loads on the way in; a
+.CW inb
+or
+.CW outb
+to a granted port then runs at CPL3 with no trap and no system call in
+the data path \- proven first by a personality reading the i8042 status
+port and printing the byte, a status not a fault.
+.B ReqKbdnotify
+routes the keyboard's IRQ1 to the container as a bare notification: the
+kernel's handler gives a semaphore and wakes the driver's
+.CW select ,
+and does
+.I not
+read the scancode.  On that, the p9 personality carries a real i8042
+keyboard driver
+.CW ( p9kbd.c )
+in user space above the microkernel: it takes the grant, registers the
+notification, and thereafter, woken through the container semaphore's own
+.CW oselect
+arm, reads each scancode off port 0x60 with its own
+.CW inb .
+No scancode passes through the kernel.  Injecting
+.CW a ,
+.CW b ,
+.CW c
+over QMP produces
+.CW 0x1e ,
+.CW 0x30 ,
+.CW 0x2e
+and their releases, each read in user space and printed by the driver;
+the p9pair check still passes twenty-four for twenty-four across boots.
+.PP
+One seam is honest to name.  The one-time controller enable \- the i8042
+command-byte handshake that turns the keyboard interrupt on and drains
+the buffer \- is done in the kernel inside
+.CW ReqKbdnotify ,
+not in the driver's CPL3 kproc.  That handshake spins on the status
+port, and a spin that long at CPL3 in a cooperative kproc is a window for
+a clock or device interrupt to land while the kproc is the running
+context, which this microkernel's interrupt path corrupts: it is the
+standing pc64 heisenbug
+.CW ( "pc=0xffffffff" ,
+a corrupted return), and a user driver taking a legacy IRQ from CPL3
+reproduces it reliably where before it was intermittent.  Run in kernel
+context an interrupt landing during the handshake is handled normally,
+so the setup is done there and the scancode reads \- the data path \- stay
+in user space.  The kernel also takes its own
+.CW ospreykbdintr
+off IRQ1 first, so the notification handler is the only one on the line
+and the byte stays in the buffer for the driver.  The reliable
+reproduction of the heisenbug is itself worth having; chasing it is not
+this item's work.
+.PP
 .B "8.  What the talk's goals name and nothing here does."
 Authenticated, controlled access to
 .I "dynamic replicated data"

@@ -32,6 +32,7 @@ enum {
 	OSget		= 2,
 	Armoff		= 0,
 	Reqbuf		= 256,
+	Kbdsem		= 3,		/* the block device has 1, the clock 2 */
 };
 
 typedef struct Omap Omap;
@@ -135,6 +136,7 @@ extern void pipfs_tick(void);
 extern void sched_tick(void);		/* p9sched.c: advance the cooperative clock */
 extern void runkprocs(void);		/* p9sched.c: run ready kprocs, then return */
 extern void ospreymediumpump(void);	/* ospreymedium.c: inject frames arrived over the ring */
+extern void p9kbdnotify(void);		/* p9kbd.c: hand an IRQ1 notification to the driver kproc */
 static int reclaims, ticks;
 
 /*
@@ -180,7 +182,10 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	arm[1].op = OSget;		/* a request on the ring */
 	arm[1].obj = 0;
 	arm[1].buf = Reqbuf;
-	n = oselect(Armoff, 2);
+	arm[2].op = OSdown;		/* the keyboard IRQ1 notification */
+	arm[2].obj = Kbdsem;
+	arm[2].buf = 0;
+	n = oselect(Armoff, 3);
 	if(n == 0){
 		ticks++;
 		sched_tick();		/* advance the cooperative scheduler's clock */
@@ -189,6 +194,11 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 			reclaims++;
 		ospreymediumpump();	/* inject any frames that arrived over the osprey medium */
 		runkprocs();		/* let timer and medium kprocs run on this tick */
+		return 0;
+	}
+	if(n == 2){			/* the keyboard interrupt fired */
+		p9kbdnotify();		/* ready the driver kproc; it does the inb */
+		runkprocs();
 		return 0;
 	}
 	if(n != 1)
