@@ -477,17 +477,24 @@ through the
 back-pointer every process carries, and enqueues each task under the
 container's one reservation, so several processes sharing a container's
 address space already run under one budget the moment there are several.
-What is missing is that nothing makes a second one: there is no
-user-level
-.CW rfork
-on the microkernel
-.CW ( sysproc.c
-is cut), so a group is one the kernel makes \- a second
+Making a second one is now built two ways: the kernel makes a group (a
+second
 .CW kproc
-bound to a container and handed its slice \- not a program forking.  And
-a container has one select rendezvous and one arm area, so at most one
-of a group may select; the double sleep that the uart task hit is what
-two selecting members would be.
+bound to a container and handed its slice), and \- since
+.CW ospreyforkkern
+gave the microkernel a user-level
+.CW rfork
+even though
+.CW sysproc.c
+is cut \- a program forks one itself, with
+.CW "rfork(RFPROC|RFMEM)"
+sharing the address space (a thread) or
+.CW "rfork(RFPROC)"
+copying it, the child a full copy down to its open files (item 2's fork
+paragraph has the detail).  What is still true is that a container has one
+select rendezvous and one arm area, so at most one of a group may select;
+the double sleep that the uart task hit is what two selecting members
+would be.
 .PP
 For migration, the blocker is different again: migration here is
 checkpoint-and-restart, not resume \- the container comes back having to
