@@ -22,6 +22,7 @@ DIRS=\
 	spki\
 	ssh\
 	usb\
+	v23\
 	zip\
 
 TARG=\

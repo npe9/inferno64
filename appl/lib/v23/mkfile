@@ -1,0 +1,19 @@
+<../../../mkconfig
+
+TARG=\
+	security.dis\
+	rpc.dis\
+
+MODULES=\
+
+SYSMODULES=\
+	sys.m\
+	keyring.m\
+	daytime.m\
+	dial.m\
+	msgio.m\
+	v23.m\
+
+DISBIN=$ROOT/dis/lib/v23
+
+<$ROOT/mkfiles/mkdis

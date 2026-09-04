@@ -1,0 +1,23 @@
+<../../../mkconfig
+
+TARG=\
+	principal.dis\
+	fortune.dis\
+	fortuned.dis\
+	selftest.dis\
+
+MODULES=\
+
+SYSMODULES=\
+	sys.m\
+	draw.m\
+	arg.m\
+	keyring.m\
+	daytime.m\
+	dial.m\
+	msgio.m\
+	v23.m\
+
+DISBIN=$ROOT/dis/v23
+
+<$ROOT/mkfiles/mkdis

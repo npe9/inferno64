@@ -11,6 +11,7 @@ DIRS=\
 	strokes\
 	styxconv\
 	usb\
+	v23\
 	w3c\
 
 TARG=\

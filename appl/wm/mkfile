@@ -64,6 +64,7 @@ TARG=\
 	tetris.dis\
 	toolbar.dis\
 	unibrowse.dis\
+	v23fortune.dis\
 	view.dis\
 	vt.dis\
 	wish.dis\
@@ -100,6 +101,7 @@ SYSMODULES=\
 	tk.m\
 	tkclient.m\
 	url.m\
+	v23.m\
 	webget.m\
 	wmclient.m\
 	wmsrv.m\
