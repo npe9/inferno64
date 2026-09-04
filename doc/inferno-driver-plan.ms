@@ -842,18 +842,34 @@ and CMD24 for writes.  Verified read, write and multi-block through
 .CW /dev/sdM0/data ,
 negative-controlled, persisting to the backing image.
 .PP
-kfs on top was attempted and backed out.  It hangs during reaming, but
-not in the SD driver: direct multi-block
+kfs on top was attempted and backed out, and chasing why turned up a
+real raspi3b defect and a deeper one behind it.  kfs hangs during
+reaming, but not in the SD driver: direct multi-block
 .CW bio
-from the init process works, while the failure appears only through the
-spawned kfs process and its pipe mount, the reaming crawling at a few
-.CW bio
-calls a second - a scheduling stall between calls, not MMIO.  raspi3b
-has no real interrupt controller and drives the scheduler by polling the
-generic timer's
-.CW CNTP_CTL.ISTATUS ,
-so the multi-process pipe-mount ping-pong is the suspect: a board-level
-scheduler question, separate from storage, and the clearest next lead.
+from the init process works, while the stall appears only through the
+spawned kfs process and its pipe mount.  The root cause is that raspi3b
+had no periodic scheduler tick at all.  The generic-timer interrupt is a
+PPI, and with no GIC it reaches the core only through the BCM2836
+per-core interrupt controller - which QEMU does model at 0x40000000 (an
+earlier note that address was RAM was wrong; the control block shadows
+the RAM there).  Nothing routed it, so the timer never fired; the kernel
+only saw it opportunistically when
+.CW trap()
+ran for some other reason.  Writing the Core0 timer-control register
+(0x40000040) bit 1 (CNTPNSIRQ) routes the non-secure physical timer to
+core 0's IRQ, and ticks then run at HZ - confirmed at 100/s, and kfs
+reaming completes past its old stall to
+.CW "initializing minimal user table" .
+.PP
+But enabling the tick exposes what the cooperative schedule was hiding:
+with preemption live, the SD multi-block test fails intermittently
+.CW "file does not exist"
+(a namespace error, ~1 in 3), and kfs then desyncs its Styx conversation
+over the pipe.  So the arm64 trap/context-switch path (and/or the mount
+and devsd locking) is not preemption-safe - a latent defect the missing
+tick had masked.  The one-line timer routing is therefore left out for
+now to keep the board stable; it is the front of a preemption-safety
+thread, not a finished fix.
 .NH 1
 Immediate next steps (cold-start)
 .PP
@@ -862,12 +878,14 @@ versions with a display, sifive_u with SPI, GEM ethernet and an SD-over-
 SPI stack complete to a kfs filesystem, shakti (riscv64), and the
 Raspberry Pi 3B (arm64) with I2C/SPI/GPIO and now a native-SD block
 device (/dev/sdM0/data, read/write/multi-block) - every board booting to
-a shell.  The prioritized next work: (1) the raspi3b kfs hang - a
-multi-process pipe mount stalls where a single-process bio does not;
-chase the scheduler/timer path (the generic-timer polling), since it
-gates a filesystem on the Pi and likely any multi-server namespace
-there.  (2) persistence across reboot on sifive_u - the kfs is reamed
-every boot; a mount that reams only a blank device would show a file
-surviving a restart.  (3) more boards if wanted - the loop is proven,
-and the one rule that matters for any multi-core board is to park the
+a shell.  The prioritized next work: (1) raspi3b preemption safety - add
+the BCM2836 timer routing (0x40000040 bit1) back, then make the arm64
+trap/context-switch save-and-restore and the devsd/mount paths safe
+under the 100Hz tick the routing turns on; that is what a kfs (or any
+real multitasking) on the Pi is waiting on, and the intermittent
+"file does not exist" is the reproducer.  (2) persistence across reboot
+on sifive_u - the kfs is reamed every boot; a mount that reams only a
+blank device would show a file surviving a restart.  (3) more boards if
+wanted - the loop is proven, and the one rule that matters for any
+multi-core board is to park the
 secondary cores first.
