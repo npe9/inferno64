@@ -120,7 +120,70 @@ that, replayed as mounts + binds, reconstructs an exact namespace — the
 Nix content-addressing property achieved naturally. A user's active set
 becomes a small profile replayed at login, like `/lib/namespace`.
 
-## 7. Why not just port Upspin/Vanadium
+## 7. Publishing and organizing (the write side)
+
+Sections 1–6 are the read side. This is how content gets *posted* and how
+it is *organized* — the write side of the same Upspin/Vanadium split.
+
+### Posting
+
+**You publish into your own name-rooted subtree, not to a central repo.**
+The steps: build (`mk`), pack the tree into a tar with a `proto`
+manifest, take its sha256 — that hash *is* the content address — sign the
+manifest+hash with your principal key via `factotum` (the key never
+leaves the agent), and present your publisher blessing (e.g.
+`inferno.org:net:ssh`) from the v23 principal store. Then publish is two
+writes: the tar bytes to the content-addressed store (idempotent — the
+store names them by hash, so republishing identical bytes is a no-op and
+duplicates collapse), and a signed directory entry (name → manifest,
+hash, signature, blessing) created in your own DirServer subtree — a
+plain Styx create+write authorized by a blessing pattern. Bump a small
+mutable `latest` pointer; optionally register/advertise for discovery.
+
+**No gatekeeper.** There is no "submit to the central repository" step.
+You post under your identity, into your subtree; consumers see it only
+because they (or a curator they trust) mounted your subtree into a
+taxonomy. Trust is the consumer's choice, via blessings — Upspin
+decentralisation carried onto publishing.
+
+### Organizing: three levels + a per-user view
+
+1. **Storage (physical) — deliberately unorganized.** Content-addressed
+   blobs in `venti`: a flat hash→bytes map, dedup'd by hash. Organization
+   is a naming concern, not a storage one — the point of the dir/store
+   split.
+2. **Per-owner directory (Upspin).** Each publisher organizes their own
+   subtree however they like.
+3. **Curated taxonomy (Vanadium mount table).** The browsable
+   `/pkg/<category>/<name>/<version>` view is a mount table binding owner
+   subtrees onto taxonomy paths. The taxonomy is itself a signed,
+   published, mountable object — the "official index" is just a
+   mount-table file people choose to mount, and competing indexes can
+   coexist.
+4. **Per-user composed view.** Namespaces are per-process, so each user
+   assembles `/pkg` by composition: mount the official taxonomy, overlay
+   an org-private index, `bind -a` a local dir of in-development builds
+   that shadow published ones — precedence by bind order, the
+   `/p9/dis`→`/dis` pattern already in the tree. Organization is a
+   composable stack of mounts, not one global hierarchy.
+
+### Versioning
+
+Versions are immutable, hash-named entries (`.../ssh/1.2`, `.../ssh/1.3`
+never change). The only mutable things are small signed pointers
+(`latest`, `stable`, channel tags) pointing at a version's hash, and they
+live under each owner's subtree — no global lock. A lockfile pinning
+exact hashes gives a reproducible namespace (§6).
+
+### One metadata, two views
+
+The manifest's category/keywords/provides/depends drive *both* the
+taxonomy that organizes packages *and* the query index that searches them
+(the DirServer + `registry(4)` layer). Organization and search are two
+views over one metadata set — so posting a package with good metadata
+makes it both well-placed and findable in one act.
+
+## 8. Why not just port Upspin/Vanadium
 
 Both assume a global key-server / agreed root of trust that someone runs;
 decentralised-but-usable trust is the genuinely hard part, and both
@@ -130,7 +193,7 @@ namespace-as-discovery, blessings-with-caveats, advertise/scan
 (Vanadium); built over Inferno's secured Styx, factotum, ed25519, sha256
 — all in hand.
 
-## 8. Staging
+## 9. Staging
 
 1. **One repo, install-by-mount.** A directory+store service serving a
    Styx `/pkg` namespace with ed25519-signed manifests and sha256
