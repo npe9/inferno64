@@ -80,15 +80,4 @@ Then, from a client, seed factotum from it:
 .IR secstore (2),
 .IR factotum (4)
 .SH BUGS
-The encrypted channel uses the
-.IR ssl (3)
-device, which in the hosted
-.I emu
-does not currently operate over a network socket (it fails with
-.BR "fdtochan failed" ,
-affecting the
-.IR secstore (1)
-client too); so end-to-end use needs native Inferno or a fixed
-.IR ssl (3).
-The PAK exchange itself is complete and interoperates with the client's.
 No third-party-caveat, STA/SecurID, or account-removal support.

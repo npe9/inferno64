@@ -133,7 +133,7 @@ handle(dfd: ref Sys->FD)
 	}
 	if(secstore->pakserver(conn, user, hexm, hexH, servername) != nil)
 		return;			# pakserver told the client already
-	sys->fprint(conn.dfd, "OK\n");	# now over the encrypted channel
+	sys->fprint(conn.dfd, "OK");	# now over the encrypted channel; client wants exactly "OK"
 	servefiles(conn, user);
 }
 

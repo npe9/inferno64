@@ -556,7 +556,14 @@ pakserver(conn: ref Dial->Connection, C, hexm, hexH, S: string): string
 	if(sys->fprint(dfd, "mu=%s\nk=%s\nS=%s\n", hexmu, ks, S) < 0)
 		return "write mu";
 	s := readstr(dfd);
-	kc := ex("k'=", s);
+	# the client sends "k'=<base64>\n"; ex() keeps the trailing newline,
+	# so take just the first line (the client's own PAK reader tokenizes
+	# on \n for the same reason).
+	(nil, kflds) := sys->tokenize(s, "\n");
+	kline := "";
+	if(kflds != nil)
+		kline = hd kflds;
+	kc := ex("k'=", kline);
 	expect := base64->enc(shorthash("client", C, S, hexm, hexmu, hexsigma, hexHi));
 	if(kc == nil || kc != expect){
 		writerr(dfd, "verifier didn't match");

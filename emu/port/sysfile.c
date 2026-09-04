@@ -615,19 +615,24 @@ rread(int fd, void *va, long n, vlong *offp)
 	 * puts a line on the console every time, which is noise rather than
 	 * diagnosis. devssl.c already singles out this same string for the
 	 * same reason. Everything else still prints.
+	 *
+	 * This outer handler is the single print site: it covers fdtochan
+	 * failing here as well as a read error propagated up from the inner
+	 * handler below (a network peer closing the connection is the usual
+	 * one), so the message names neither stage - the earlier text blamed
+	 * "fdtochan failed" even when fdtochan had succeeded and the read was
+	 * what failed, which was actively misleading.
 	 */
 	if(waserror()){
 		if(strcmp(up->env->errstr, Eintr) != 0)
-			print("rread fd %d va 0x%p n %d offp %lld fdtochan failed: %r\n", fd, va, n, offp);
+			print("rread fd %d va 0x%p n %d offp %lld failed: %r\n", fd, va, n, offp);
 		return -1;
 	}
 
 	c.c = fdtochan(up->env->fgrp, fd, OREAD, 1, 1);
 	if(waserror()){
-		if(strcmp(up->env->errstr, Eintr) != 0)
-			print("rread fd %d va 0x%p n %d offp %lld fdtochan failed: %r\n", fd, va, n, offp);
 		cclose(c.c);
-		nexterror();
+		nexterror();		/* outer handler prints once */
 	}
 
 	if(n < 0)
