@@ -13,12 +13,14 @@ first for how the board got here.
 The bug
 .PP
 With the generic-timer tick enabled, a heavy stream of block I/O through
-the SDHOST driver fails intermittently: a write (or, less often, a read)
-returns
+the SDHOST driver fails intermittently.  What the caller sees is a
+.CW pwrite
+that returns 0 with a stale
 .CW "file does not exist"
-at a varying block.  It is not a benign short count - the transfer's
-control flow is diverted to an error path.  Light use never reaches it;
-a kfs ream (thousands of blocks) always does, which is why a filesystem
+errstr, but the underlying event (established below) is narrower: a timer
+IRQ taken during one block's data transfer leaves that write unfinished,
+and the next block's command then fails.  Light use never reaches it; a
+kfs ream (thousands of blocks) always does, which is why a filesystem
 will not come up.
 .NH 1
 The reproducer
@@ -75,6 +77,50 @@ mount/Styx theories (the
 mount-walk message that looked like a desync prints on sifive_u too, just
 before its
 .CW SD-FS-OK ).
+.IP \(bu
+.I "A short write, not a lost file (E2 is done)."
+The
+.CW "file does not exist"
+is a red herring: the
+.CW pwrite
+returns 0, not -1, so it is a short count and the message is a stale
+.CW errstr
+from an earlier benign walk.  Traced at
+.CW sdbio ,
+the failing write arrives with a sane qid, version and sector count, so
+nothing in the Chan or partition is corrupted.  What is set is the
+driver's own
+.CW Failflag :
+the SDHOST
+.I write
+transfer leaves the card with data-count non-zero (the block is not fully
+clocked out), so the card stays in receiving-data state and the
+.I next
+block's CMD24 fails at send-command time.  The fault is one interrupted
+transfer poisoning the following command.
+.IP \(bu
+.I "Masks under any observation."
+A guest
+.CW print
+in the loop, a single extra register read after the write, and QEMU's own
+.CW bcm2835_sdhost
+trace events each make the two-thousand-block stress pass.  So it is not
+observable by adding instrumentation; it needs a tool that does not
+perturb guest timing at all, or a fix that does not depend on seeing the
+failing moment.
+.IP \(bu
+.I "splhi helps but is not a clean fix."
+.CW splhi()
+does mask the timer (it sets
+.CW DAIF.I ,
+and the routed timer is an IRQ, not an FIQ), and wrapping the per-block
+transfer in it passes the stress two or three times in three - but not
+reliably, which is odd, since a masked IRQ should make the transfer
+atomic.  Either a rarer non-IRQ path remains or the corruption is a TCG
+artifact partly independent of the guest mask.  The full-
+.CW bio
+.CW splhi
+deadlocks the file server, as noted below.
 .IP \(bu
 .I "Not a clock callee."
 A no-op
@@ -138,19 +184,16 @@ the bug is raspi3b-specific and the suspects narrow to what differs: the
 BCM2836 timer routing itself, the EL3-to-EL1 boot drop leaving some
 system-register or stack-alignment state the fault path assumes, or the
 SDHOST driver's exact register cadence.
-.IP "E2."
-.I "Find where the error is raised."
-Under the failing run, mark each of devsd's
-.CW error(Enonexist)
-sites (and the generic
-.CW syswrite / walk
-path) uniquely, or print the caller PC and
-.CW up->errstr
-at the moment the
+.IP "E2 (done)."
+.I "Where the error is raised."
+Already answered: it is not raised at all in the sense first assumed.
+The
 .CW pwrite
-returns the error.  Knowing which site fires says whether the corruption
-lands in the Chan/qid resolution, the partition bounds, or an errstr that
-is stale from an earlier benign walk - three different bugs.
+returns a short count of 0 and the errstr is stale; the driver's
+.CW Failflag
+on the next block's CMD24 is the real signal, and one interrupted
+transfer leaving data-count non-zero is the cause.  This is why the
+remaining experiments target the transfer, not the namespace.
 .IP "E3."
 .I "Single-step the fault."
 Boot under the QEMU gdbstub
@@ -195,6 +238,26 @@ save/restore or the mere act of taking the exception, and E3's
 watchpoint is then aimed squarely at the entry/exit.
 .NH 1
 Likely fixes, by outcome
+.PP
+The most promising practical fix does not need the mechanism at all,
+because E2 turned the bug into something the driver can check for and
+undo.  A poisoned write leaves the card's data-count non-zero, which the
+SDHOST
+.CW SDEDM
+register exposes as an FSM state other than data-mode.  So
+.CW bio()
+can, after each block, read
+.CW SDEDM
+and - if the transfer did not finish - reset the controller and re-issue
+the block, a bounded number of times.  This is protocol-level recovery,
+independent of why the interrupt corrupted the transfer, and it does not
+disable interrupts, so it cannot reintroduce the file-server deadlock.
+The one caution is that the extra
+.CW SDEDM
+read is itself enough to perturb the timing and hide the failure in the
+stress, so the retry must be written to act on the FSM state it reads,
+not to rely on the read having "fixed" anything; verify it against a card
+image, not just against the stress passing.
 .PP
 If E4 wins, the fix is the V-register save in
 .CW vectrap
