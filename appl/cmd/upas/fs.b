@@ -20,6 +20,11 @@ include "styxservers.m";
 include "mime.m";
 	mime: Mime;
 	Part: import mime;
+include "keyring.m";
+include "tls12.m";
+include "imap4.m";
+	imap4: Imap4;
+	Client: import imap4;
 
 Upasfs: module
 {
@@ -64,27 +69,46 @@ init(nil: ref Draw->Context, argv: list of string)
 	mime->init();
 
 	mountpt := "/mail/fs/mbox";
+	imapmode := 0;
+	imapserver := "imap.gmail.com";
+	dialip := "";
+	port := 993;
+	user := "";
+	passfile := "";
+	nwant := 25;
 	argv = tl argv;
 	while(argv != nil && len hd argv > 0 && (hd argv)[0] == '-'){
 		opt := hd argv;
 		argv = tl argv;
 		case opt {
-		"-m" =>	if(argv == nil) usage(); mountpt = hd argv; argv = tl argv;
+		"-m" =>	mountpt = optarg(argv); argv = tl argv;
+		"-i" =>	imapmode = 1;
+		"-s" =>	imapserver = optarg(argv); argv = tl argv;
+		"-a" =>	dialip = optarg(argv); argv = tl argv;
+		"-p" =>	port = int optarg(argv); argv = tl argv;
+		"-u" =>	user = optarg(argv); argv = tl argv;
+		"-P" =>	passfile = optarg(argv); argv = tl argv;
+		"-n" =>	nwant = int optarg(argv); argv = tl argv;
 		* =>	usage();
 		}
 	}
-	if(argv == nil)
-		usage();
-	mbox := hd argv;
 
 	files = array[16] of ref File;
 	root = files[0] = mkdir("/");
 	pathgen = 1;
 
-	data := readfile(mbox);
-	if(data == nil)
-		error(sys->sprint("cannot read %s", mbox));
-	buildtree(data);
+	if(imapmode){
+		if(user == "")
+			error("-i needs -u user (and -P passfile)");
+		buildmessages(fetchimap(imapserver, dialip, port, user, readpass(passfile), nwant));
+	}else{
+		if(argv == nil)
+			usage();
+		data := readfile(hd argv);
+		if(data == nil)
+			error(sys->sprint("cannot read %s", hd argv));
+		buildtree(data);
+	}
 
 	fds := array[2] of ref Sys->FD;
 	if(sys->pipe(fds) < 0)
@@ -99,7 +123,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	ensuredir(mountpt);
 	if(sys->mount(fds[1], nil, mountpt, Sys->MREPL, nil) < 0)
 		error(sys->sprint("mount %s: %r", mountpt));
-	sys->print("upas/fs: serving %s at %s\n", mbox, mountpt);
+	sys->print("upas/fs: serving at %s\n", mountpt);
 }
 
 server(tchan: chan of ref Tmsg, srv: ref Styxserver, pidc: chan of int, navops: chan of ref Navop)
@@ -143,7 +167,45 @@ Serve:
 
 buildtree(data: array of byte)
 {
-	msgs := splitmbox(data);
+	buildmessages(splitmbox(data));
+}
+
+# fetch the most recent n messages from an IMAP server (imap4(2), over
+# TLS) and return them as (envelope, raw) pairs for buildmessages.
+fetchimap(server, dialip: string, port: int, user, pass: string, n: int): list of (string, string)
+{
+	imap4 = load Imap4 Imap4->PATH;
+	if(imap4 == nil)
+		error("load imap4");
+	if((e := imap4->init()) != nil)
+		error("imap4 init: " + e);
+	(c, ce) := imap4->connect(server, port, dialip);
+	if(ce != nil)
+		error("connect: " + ce);
+	if((le := c.login(user, pass)) != nil)
+		error("login: " + le);
+	(cnt, se) := c.select("INBOX");
+	if(se != nil)
+		error("select: " + se);
+	start := cnt - n + 1;
+	if(start < 1)
+		start = 1;
+	rmsgs: list of (string, string);
+	for(m := start; m <= cnt; m++){
+		(data, fe) := c.fetch(m, "BODY.PEEK[]");
+		if(fe != nil)
+			error("fetch: " + fe);
+		rmsgs = (sys->sprint("From imap message %d", m), string data) :: rmsgs;
+	}
+	c.logout();
+	msgs: list of (string, string);
+	for(; rmsgs != nil; rmsgs = tl rmsgs)
+		msgs = hd rmsgs :: msgs;
+	return msgs;
+}
+
+buildmessages(msgs: list of (string, string))
+{
 	i := 0;
 	for(; msgs != nil; msgs = tl msgs){
 		i++;
@@ -482,9 +544,34 @@ ensuredir(path: string)
 	}
 }
 
+optarg(a: list of string): string
+{
+	if(a == nil)
+		usage();
+	return hd a;
+}
+
+readpass(passfile: string): string
+{
+	if(passfile == "")
+		error("-i needs -P passfile");
+	fd := sys->open(passfile, Sys->OREAD);
+	if(fd == nil)
+		error(sys->sprint("open %s: %r", passfile));
+	buf := array[256] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0)
+		error("empty passfile");
+	s := string buf[0:n];
+	while(len s > 0 && (s[len s - 1] == '\n' || s[len s - 1] == '\r'))
+		s = s[0:len s - 1];
+	return s;
+}
+
 usage()
 {
 	sys->fprint(sys->fildes(2), "usage: upas/fs [-m mountpt] mboxfile\n");
+	sys->fprint(sys->fildes(2), "       upas/fs -i -u user -P passfile [-s server] [-a dialip] [-n n] [-m mountpt]\n");
 	raise "fail:usage";
 }
 

@@ -18,6 +18,7 @@ SYSMODULES=\
 	styxservers.m\
 	mime.m\
 	encoding.m\
+	imap4.m\
 
 DISBIN=$ROOT/dis/upas
 

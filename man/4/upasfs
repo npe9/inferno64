@@ -8,16 +8,60 @@ upas/fs \- present a mailbox as a file system
 .I mountpt
 ]
 .I mbox
+.br
+.B upas/fs -i
+.B -u
+.I user
+.B -P
+.I passfile
+[
+.B -s
+.I server
+] [
+.B -a
+.I dialip
+] [
+.B -n
+.I n
+] [
+.B -m
+.I mountpt
+]
 .SH DESCRIPTION
 .I Upas/fs
-reads the Unix mbox file
-.I mbox
-and serves it as a file system, the Plan 9
+serves a mailbox as a file system, the Plan 9
 .I upas
 way, mounted at
 .I mountpt
 (default
 .BR /mail/fs/mbox ).
+Without
+.B -i
+it reads the Unix mbox file
+.IR mbox .
+With
+.B -i
+it instead fetches the most recent
+.I n
+messages (default 25) of the
+.B INBOX
+from an IMAP server over TLS (\c
+.IR imap4 (2);
+default Gmail), logging in as
+.I user
+with the app password in
+.IR passfile ,
+and serves those \(em so a live Gmail inbox is browsable with
+.IR ls (1)
+and
+.IR cat (1).
+As in
+.IR upas-fetch (1),
+.B -a
+gives an already-resolved address to dial while the certificate is
+verified for the
+.B -s
+name.
 Each message becomes a numbered directory
 .RB ( 1 ,
 .BR 2 ,
@@ -84,10 +128,6 @@ in the invoking name space.
 .IR upas-fetch (1),
 .IR imap4 (2)
 .SH BUGS
-Only a local Unix mbox is read; feeding the same presentation from
-.IR imap4 (2)
-(so a Gmail inbox is browsable this way) is not yet wired in \(em fetch to
-an mbox with
-.IR upas-fetch (1)
-first.
-The mailbox is read once at start; it is not reread as it changes.
+The mailbox is read (or fetched) once at start; it is not reread or
+refreshed as it changes.
+IMAP mode fetches whole messages up front rather than lazily.
