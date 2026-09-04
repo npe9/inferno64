@@ -342,3 +342,22 @@ equivalence-classed while its cases are still being built (sizing it
 then fixed every case's field offsets against fields that were not
 all there yet, which is what made a client read a member at the wrong
 offset), and the interface reader knows `bool`.
+
+## 19. What was tried for the interface-recursion limit
+
+Two attempts, both recorded so the next session does not repeat them.
+
+Making `sametype()` compare adts structurally (so that the interface's
+copy of a type and the module's copy share one instantiation, and the
+map inside a pick signs the same on both sides) does not help: at the
+moment the map is instantiated the module's own pick is still being
+built, so `tequal` rightly says the two are not the same type yet.
+Sharing the instantiation would need the instantiation deferred until
+the pick is complete, or the interface's type unified with the
+module's rather than built separately -- either is a redesign of how
+an interface is read.
+
+Changing the signature algorithm is not open: it is Limbo's, and
+every `.dis` in the tree carries signatures computed with it.
+
+So the limit stands, with a diagnostic that explains it.
