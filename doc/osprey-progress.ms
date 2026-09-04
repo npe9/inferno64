@@ -268,10 +268,18 @@ Next, in order
 .PP
 Surveyed again on 2 September 2026 against both sources \- the talk
 slide by slide, and the plan section by section \- and against the
-tree, not the earlier record of it.  What the sources describe that is
-built and checked is in the sections below.  What follows is everything
-either source describes, or the built parts imply, that is not built,
-in the order it should be done, each with the reason it is a gap.
+tree, not the earlier record of it, and worked through on 4 September
+2026: each item below carries what was built against it that day and
+checked on a booted kernel.  What the sources describe that is built
+and checked is in the sections below.  What follows is everything
+either source describes, or the built parts imply, in the order it
+was done, each item ending with what of it, if anything, remains.
+Read on 4 September, what remains across all of them is: the raw-flash
+tier of item 3 and the second machine of item 9, both of which want a
+board this tree has no Osprey target for; a group carried over the
+wire as a group (item 6a's members could each be carried the way one
+is, but are not); the talk's number, item 10, which is structural; and
+the demonstration scale of item 12.
 .PP
 .B "1.  Starting a program in a container: exec."
 Built, above: the
@@ -5170,9 +5178,13 @@ it, building its name space in user space.  Two of the three things once
 written down here as reachable only by writing a different kernel -- the
 microkernel, and a library operating system linked into the task that
 uses it -- are built; the third, processes that share an address space
-migrating as a group, is not begun, and the personality the library
-carries is a name space and a directory read, not yet the breadth of the
-file operations.
+migrating as a group, is built on one machine (the group is stopped and
+carried into containers of its own sharing the moved memory) and one
+process at a time across a wire (its pages carried to another kernel
+and resumed there); and the personality the library carries has grown
+from a name space and a directory read to the file operations, the real
+IP stack, a driver for the disk and one for the network, both above the
+kernel, and \[*p]p about its files on the ring and on a wire.
 .PP
 The plan's other name for what sits beside a library OS is a
 .I buddy
