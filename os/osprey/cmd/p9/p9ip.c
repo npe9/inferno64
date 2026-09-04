@@ -120,9 +120,21 @@ ostcp(void *)
 			n = p9read(rfd, rx, sizeof rx - 1);
 		}
 		if(n<0)n=0; rx[n]=0;
-		if(n == (long)(sizeof wire - 1) && memcmp(rx, wire, n) == 0)
+		if(n == (long)(sizeof wire - 1) && memcmp(rx, wire, n) == 0){
+			static char back[] = "and a reply back from stack B to stack A";
 			print("p9 ip: osprey wire: stack B read the %ld bytes stack A sent: \"%s\" - byte stream across two independent stacks verified\n", n, rx);
-		else
+			/* the other way: stack B writes, stack A reads - full duplex */
+			p9write(rfd, back, sizeof back - 1);
+			for(tries = 0, n = 0; tries < 20 && n <= 0; tries++){
+				tsleep(&up->sleep, return0, nil, 50);
+				n = p9read(wfd, rx, sizeof rx - 1);
+			}
+			if(n<0)n=0; rx[n]=0;
+			if(n == (long)(sizeof back - 1) && memcmp(rx, back, n) == 0)
+				print("p9 ip: osprey wire: stack A read the %ld bytes stack B sent back: \"%s\" - full-duplex byte stream across two stacks verified\n", n, rx);
+			else
+				print("p9 ip: osprey wire: reply stream short (%ld bytes)\n", n);
+		} else
 			print("p9 ip: osprey wire: data stream short (%ld bytes)\n", n);
 		p9close(rfd); p9close(wfd);
 	}
