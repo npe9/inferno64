@@ -123,6 +123,10 @@ def main():
          'server personality: name space up, answering 9P over the ring' in t and 'p9 server: serving this name space over the ring' in t),
         ("and the client reads the server personality's exported root over 9P, the kernel only routing",
          m is not None and int(m.group(1)) >= 10),
+        ("and create and remove over 9P: the client creates a file on the server, writes it, reads it back, and remove is refused by the immutable store - all on the ring",
+         'p9: pair-client: created /n/clientmade over 9P' in t
+         and 'p9: pair-client: read /n/clientmade back over 9P: "made by the client over 9P"' in t
+         and re.search(r'pair-client: (removed|remove) /n/clientmade over 9P', t) is not None),
         ("and it exits cleanly, two library operating systems on the microkernel, one serving the other, no panic",
          'the program exited' in t and 'panic' not in t),
         ("a request exec starts a program - the Linux binary in the server's file system - in a container of its own, delegated to the same server",

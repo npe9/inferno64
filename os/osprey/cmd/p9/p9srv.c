@@ -5,6 +5,8 @@
 #include	"fns.h"
 #include	"../port/error.h"
 
+extern int p9remove(char *name);	/* p9file.c: remove by path, following mounts */
+
 /*
  * The personality as a 9P server: an exportfs over its own name space.
  * Where devmnt made the personality a 9P client of a server elsewhere,
@@ -165,6 +167,48 @@ p9srv(uchar *msg, long n, uchar *rbuf, long rmax)
 			if(sf->c != nil)
 				cclose(sf->c);
 			sf->used = 0;
+		}
+		break;
+
+	case Tcreate:
+		/*
+		 * Create a file named t.name in the directory the fid holds.  The
+		 * fid may be a mount point (the log store is mounted at /n), and a
+		 * fid-relative create would land on the read-only device beneath
+		 * it; so create by the fid's own path, through namec, which
+		 * follows the mount the way the server's own creates do.  The fid
+		 * then refers to the new file, opened.
+		 */
+		sf = sfind(t.fid);
+		if(sf == nil){ r.type = Rerror; r.ename = "unknown fid"; break; }
+		if(waserror()){ r.type = Rerror; r.ename = up->errstr; break; }
+		{
+			char pbuf[512];
+			snprint(pbuf, sizeof pbuf, "%s/%s", sf->c->path->s, t.name);
+			c = namec(pbuf, Acreate, t.mode, t.perm);
+		}
+		cclose(sf->c);
+		sf->c = c;
+		r.qid = c->qid;
+		r.iounit = 0;
+		poperror();
+		break;
+
+	case Tremove:
+		/* remove the file the fid holds, by its path (mounts followed); the
+		 * fid is consumed either way */
+		sf = sfind(t.fid);
+		if(sf == nil){ r.type = Rerror; r.ename = "unknown fid"; break; }
+		{
+			char pbuf[512];
+
+			snprint(pbuf, sizeof pbuf, "%s", sf->c->path->s);
+			cclose(sf->c);
+			sf->c = nil;
+			sf->used = 0;
+			if(waserror()){ r.type = Rerror; r.ename = up->errstr; break; }
+			p9remove(pbuf);
+			poperror();
 		}
 		break;
 	}

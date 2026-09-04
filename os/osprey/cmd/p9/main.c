@@ -606,7 +606,52 @@ p9paircli(void)
 		text[ln] = 0;
 		cclose(hc);
 		print("p9: pair-client: wrote /n/hello over 9P and read it back: \"%s\"\n", text);
-		poperror();
+
+			/*
+			 * Create a new file on the server over 9P, write it, read it
+			 * back, and remove it - create and remove that p9srv.c now
+			 * answers, in the server's own name space, the round trip
+			 * carried on the ring.
+			 */
+			names[0] = "n";
+			if(!waserror()){
+				hc = cclone(root);
+				if(walk(&hc, names, 1, 1, nil) < 0)
+					error("no /n at the server");
+				hc = devtab[hc->type]->create(hc, "clientmade", ORDWR, 0666);
+				devtab[hc->type]->write(hc, "made by the client over 9P", 26, 0);
+				cclose(hc);			/* the clunk commits it on the disk */
+				poperror();
+				print("p9: pair-client: created /n/clientmade over 9P\n");
+			} else
+				print("p9: pair-client: create /n/clientmade over 9P: %s\n", up->errstr);
+
+			names[0] = "n"; names[1] = "clientmade";
+			if(!waserror()){
+				hc = cclone(root);
+				if(walk(&hc, names, 2, 1, nil) < 0)
+					error("no /n/clientmade");
+				hc = devtab[hc->type]->open(hc, OREAD);
+				ln = devtab[hc->type]->read(hc, text, sizeof text - 1, 0);
+				if(ln < 0) ln = 0;
+				text[ln] = 0;
+				cclose(hc);
+				poperror();
+				print("p9: pair-client: read /n/clientmade back over 9P: \"%s\"\n", text);
+			} else
+				print("p9: pair-client: read /n/clientmade over 9P: %s\n", up->errstr);
+
+			names[0] = "n"; names[1] = "clientmade";
+			hc = cclone(root);
+			if(walk(&hc, names, 2, 1, nil) < 0)
+				cclose(hc);
+			else if(!waserror()){
+				devtab[hc->type]->remove(hc);	/* Tremove; consumes the fid */
+				poperror();
+				print("p9: pair-client: removed /n/clientmade over 9P\n");
+			} else
+				print("p9: pair-client: remove /n/clientmade over 9P refused: %s\n", up->errstr);
+			poperror();
 	} else
 		print("p9: pair-client: /n/hello: %s\n", up->errstr);
 	cclose(root);

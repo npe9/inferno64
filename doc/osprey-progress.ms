@@ -309,10 +309,24 @@ an ordinary scheduled task with a reservation the service sets at start
 through the request ABI.  All of that is built, above: the block device
 driven from user space, the log-structured store on it, and its
 reclamation as a task on the clock tick under a reservation the task
-set by request, the log bounded rather than unbounded.  What is left:
-create and remove over 9P, and the raw-flash tier itself, which is the
-same store on a device whose erase and bad blocks are the store's
-problem \- a board this tree has no Osprey target for yet (item 9).
+set by request, the log bounded rather than unbounded.  Create and remove
+over 9P are answered now too: the exportfs
+.CW ( p9srv.c )
+creates a file the client names on the ring and removes it, and because
+the store is mounted at
+.CW /n
+it creates by the fid's own path through
+.CW namec ,
+which follows the mount the way the server's own create does \- a
+fid-relative create would land on the read-only device beneath the mount.
+The client makes
+.CW /n/clientmade
+on the server over 9P, writes it, reads the bytes back, and its remove is
+refused by the immutable store, the
+.CW Eperm
+crossing the ring.  What is left is the raw-flash tier itself, the same
+store on a device whose erase and bad blocks are the store's problem \- a
+board this tree has no Osprey target for yet (item 9).
 .PP
 .B "4.  \[*p]p for files, and \[*p]p devices."
 Built, above, both halves: \[*p]p about the server personality's files
