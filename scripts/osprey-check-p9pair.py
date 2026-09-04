@@ -164,6 +164,9 @@ def main():
          re.search(r'legacy: I am the forked child; rfork\(RFPROC\) returned 0 to me, and I read the inherited fd: "\S', t) is not None
          and 'legacy: rfork(RFPROC) failed' not in t
          and 'could not read the inherited fd' not in t),
+        ("and it inherits the parent's name space: the child opens /hello, a name only in the private name space the parent rforked and bound - so the fork carried the name space, not just the descriptors",
+         'legacy: the forked child opened /hello, a name only in the parent\'s rforked name space - the fork carried the name space' in t
+         and 'the name space did not cross' not in t),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

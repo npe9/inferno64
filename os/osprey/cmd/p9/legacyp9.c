@@ -181,12 +181,25 @@ startboot(char *argv0, char **argv)
 		int pid = rfork(RFPROC);
 		if(pid == 0){
 			char cbuf[128];
+			int hfd;
 			long cn = ffd >= 0 ? read(ffd, cbuf, sizeof cbuf - 1) : -1;
 			if(cn > 0){
 				cbuf[cn] = 0;
 				print("legacy: I am the forked child; rfork(RFPROC) returned 0 to me, and I read the inherited fd: \"%s\"\n", cbuf);
 			} else
 				print("legacy: I am the forked child, but could not read the inherited fd\n");
+			/*
+			 * And the name space: /hello is the parent's own bind (of /n
+			 * into /), which exists only in the private name space the
+			 * parent rforked.  Opening it proves the fork carried that name
+			 * space too, not just the descriptors.
+			 */
+			hfd = open("/hello", OREAD);
+			if(hfd >= 0){
+				print("legacy: the forked child opened /hello, a name only in the parent's rforked name space - the fork carried the name space\n");
+				close(hfd);
+			} else
+				print("legacy: the forked child could not see /hello - the name space did not cross\n");
 			exits("forked child");
 		} else if(pid < 0)
 			print("legacy: rfork(RFPROC) failed\n");

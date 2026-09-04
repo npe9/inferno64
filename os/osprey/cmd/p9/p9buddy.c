@@ -449,6 +449,16 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			else
 				cimg->fds[k] = img->fds[k];
 		}
+		/*
+		 * The name space too: a fork without RFNAMEG shares the parent's,
+		 * so if the parent rforked a private one, the child holds the same
+		 * Pgrp (incref'd, so each container closes its own reference on
+		 * exit); otherwise both use the buddy's shared name space.
+		 */
+		if(img->pgrp != nil){
+			cimg->pgrp = img->pgrp;
+			incref(img->pgrp);
+		}
 		r = 0;
 		break;
 	}
@@ -540,10 +550,12 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 
 	case RFORK:
 		/*
-		 * rfork(flags): only the name-space flags are answered - the
+		 * rfork(flags): only the name-space flags are answered here - the
 		 * container gets its own name space, forked from the buddy's
-		 * (RFNAMEG) or empty (RFCNAMEG).  RFPROC (a new process) is not
-		 * answered; there is no user-level fork on the microkernel yet.
+		 * (RFNAMEG) or empty (RFCNAMEG).  RFPROC (a new process) never
+		 * reaches this case: the kernel intercepts it in ospreyforkkern
+		 * and forks the container itself, then asks the buddy (FORKFDS) to
+		 * clone the descriptor table and the name space into the child.
 		 */
 		r = 0;
 		if((a0 & (RFNAMEG|RFCNAMEG)) != 0 && img->pgrp == nil){

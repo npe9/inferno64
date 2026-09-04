@@ -379,10 +379,20 @@ dup'ing each real descriptor with
 .CW p9dup
 so each side holds its own and closes its own on exit, and copying the
 console sentinels as they are.
-The test proves it: the parent opens a file, forks, and the child reads
-that file back through the inherited descriptor.
+The same request shares the parent's name space: a fork without RFNAMEG
+inherits it, so if the parent rforked a private one the child holds the
+same
+.CW Pgrp
+(incref'd, each container closing its own reference), and otherwise both
+use the buddy's shared name space.
+The test proves both: the parent opens a file and, in the private name
+space it rforked and bound, forks; the child reads the file back through
+the inherited descriptor and opens
+.CW /hello ,
+a name that exists only through the parent's bind.
 So item 6 is whole \- both fork forms, and the child a full copy of the
-parent down to its open files.
+parent: its address space, its control flow, its open files and its name
+space.
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an
