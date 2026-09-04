@@ -267,8 +267,8 @@ readn(int fd, uchar *buf, long n)
 	return got;
 }
 
-static void
-putrec(int fd, uchar *rec, long n)
+void
+pipwire_put(int fd, uchar *rec, long n)
 {
 	uchar len[4];
 
@@ -278,8 +278,8 @@ putrec(int fd, uchar *rec, long n)
 		p9write(fd, rec, n);
 }
 
-static long
-getrec(int fd, uchar *rec, long max)
+long
+pipwire_get(int fd, uchar *rec, long max)
 {
 	uchar len[4];
 	long n;
@@ -307,7 +307,7 @@ pipstreamer(void *)
 			continue;
 		n = pipfs_stream(out, sizeof out);
 		if(n > 0)
-			putrec(pipwirefd, out, n);
+			pipwire_put(pipwirefd, out, n);
 	}
 }
 
@@ -338,10 +338,10 @@ pipwire(void *)
 		dfd = p9open(path, ORDWR);
 		print("p9 ip: pi-p wire: connection %d from the client container, conversation %d\n", conns, lnum);
 		pipwirefd = dfd;
-		while((n = getrec(dfd, tg, sizeof tg)) >= 0){
+		while((n = pipwire_get(dfd, tg, sizeof tg)) >= 0){
 			rn = pipfs_servewire(tg, n, rg, sizeof rg);
 			print("p9 ip: pi-p wire: a %ld-byte group came over the wire on connection %d, answered with %ld bytes of replies\n", n, conns, rn);
-			putrec(dfd, rg, rn);
+			pipwire_put(dfd, rg, rn);
 		}
 		pipwirefd = -1;
 		print("p9 ip: pi-p wire: connection %d closed; the sessions it carried live on\n", conns);
@@ -373,8 +373,8 @@ static int clientnetdone;
  * Tstream on that fid, and the attribute arrives three times at the
  * asked rate with nothing sent to make it happen.
  */
-static int
-pipconnect(int *dfdp)
+int
+pipwire_connect(int *dfdp)
 {
 	char cbuf[64], path[64];
 	long n;
@@ -406,14 +406,14 @@ pipclient(void)
 	char show[160];
 
 	/* connection 1: a session, a fid on /n/hello, its data and version */
-	wfd = pipconnect(&dfd);
+	wfd = pipwire_connect(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
 	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
 	tn += pip_tread(tg+tn, 3, 1, 256, "data");
 	tn += pip_tread(tg+tn, 4, 1, 32, "version");
-	putrec(wfd, tg, tn);
-	rn = getrec(wfd, rg, sizeof rg);
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
 	sid = 0; v = 0; nrep = 0;
 	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); nrep++){
 		if(type == 101)
@@ -432,12 +432,12 @@ pipclient(void)
 	tsleep(&up->sleep, return0, nil, 200);
 
 	/* connection 2: the same session by number, the same fid, still open */
-	wfd = pipconnect(&dfd);
+	wfd = pipwire_connect(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 5, sid);
 	tn += pip_tread(tg+tn, 6, 1, 256, "data");
-	putrec(wfd, tg, tn);
-	rn = getrec(wfd, rg, sizeof rg);
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
 	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
 		if(type == 105 && tag == 6){
 			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
@@ -453,8 +453,8 @@ pipclient(void)
 	tn = 0;
 	tn += pip_tsession(tg+tn, 9, sid);
 	tn += pip_tstream(tg+tn, 7, 1, 100, 3, "version");
-	putrec(wfd, tg, tn);
-	rn = getrec(wfd, rg, sizeof rg);
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
 	nrep = 0;
 	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
 		if(type == 114){		/* Rstream */
@@ -467,7 +467,7 @@ pipclient(void)
 	}
 	t0 = kfastticks(nil);
 	for(i = 0; nrep && i < 3; i++){
-		rn = getrec(wfd, rg, sizeof rg);
+		rn = pipwire_get(wfd, rg, sizeof rg);
 		if(rn <= 0)
 			break;
 		t = kfastticks(nil);
@@ -484,8 +484,8 @@ pipclient(void)
 	tn = 0;
 	tn += pip_tsession(tg+tn, 10, sid);
 	tn += pip_tclose(tg+tn, 8, 1);
-	putrec(wfd, tg, tn);
-	getrec(wfd, rg, sizeof rg);
+	pipwire_put(wfd, tg, tn);
+	pipwire_get(wfd, rg, sizeof rg);
 	tsleep(&up->sleep, return0, nil, 200);
 	p9close(wfd); p9close(dfd);
 }
@@ -520,15 +520,15 @@ replica(void)
 	int type, tag, dfd, wfd, fid, wrote, refetched, unchanged, want;
 	uvlong sid, vers, v;
 
-	wfd = pipconnect(&dfd);
+	wfd = pipwire_connect(&dfd);
 	fid = 1;
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
 	tn += pip_topen(tg+tn, 2, 0, fid, 0, "/n/hello");
 	tn += pip_tread(tg+tn, 3, fid, sizeof data - 1, "data");
 	tn += pip_tread(tg+tn, 4, fid, 32, "latest");
-	putrec(wfd, tg, tn);
-	rn = getrec(wfd, rg, sizeof rg);
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
 	sid = 0; vers = 0; dlen = 0;
 	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
 		if(type == 101)
@@ -548,12 +548,12 @@ replica(void)
 	tn = 0;
 	tn += pip_tsession(tg+tn, 5, sid);
 	tn += pip_tstream(tg+tn, 7, fid, 100, 0, "latest");	/* every 100 ms, no end */
-	putrec(wfd, tg, tn);
-	getrec(wfd, rg, sizeof rg);				/* Rsession, Rstream */
+	pipwire_put(wfd, tg, tn);
+	pipwire_get(wfd, rg, sizeof rg);				/* Rsession, Rstream */
 
 	served = frames = 0; wrote = refetched = unchanged = 0; want = 0;
 	while(frames < 40 && !(refetched && unchanged >= 2 && !want)){
-		rn = getrec(wfd, rg, sizeof rg);
+		rn = pipwire_get(wfd, rg, sizeof rg);
 		if(rn <= 0)
 			break;
 		for(off = 0; pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
@@ -573,7 +573,7 @@ replica(void)
 					tn += pip_topen(tg+tn, 9, 0, fid+1, 0, "/n/hello");
 					tn += pip_tread(tg+tn, 10, fid+1, sizeof data - 1, "data");
 					tn += pip_tclose(tg+tn, 11, fid);
-					putrec(wfd, tg, tn);
+					pipwire_put(wfd, tg, tn);
 					want = 10;
 					unchanged = 0;
 				}
@@ -592,7 +592,7 @@ replica(void)
 				tn = 0;
 				tn += pip_tsession(tg+tn, 12, sid);
 				tn += pip_tstream(tg+tn, 7, fid, 100, 0, "latest");
-				putrec(wfd, tg, tn);
+				pipwire_put(wfd, tg, tn);
 			} else if(type == 112){
 				snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
 				print("p9 ip: replica: error on tag %d: %s\n", tag, show);
@@ -628,10 +628,72 @@ replica(void)
 	tn += pip_tsession(tg+tn, 13, sid);
 	tn += pip_tstream(tg+tn, 14, fid, 0, 0, "latest");	/* period 0: the stream stops */
 	tn += pip_tclose(tg+tn, 15, fid);
-	putrec(wfd, tg, tn);
-	getrec(wfd, rg, sizeof rg);
+	pipwire_put(wfd, tg, tn);
+	pipwire_get(wfd, rg, sizeof rg);
 	tsleep(&up->sleep, return0, nil, 200);
 	p9close(wfd); p9close(dfd);
+}
+
+/* a new version of the server's /n/hello by another path: 9P over the ring, this container's mount */
+static void
+write9p(char *text)
+{
+	Chan *tc, *rc, *hc;
+	char *names[2];
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n"; names[1] = "hello";
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 2, 1, nil) < 0)
+		error("no /n/hello over 9P");
+	hc = devtab[hc->type]->open(hc, OWRITE|OTRUNC);
+	devtab[hc->type]->write(hc, text, strlen(text), 0);
+	cclose(hc);			/* the clunk commits the new version */
+}
+
+/*
+ * The caching file system (devcache.c) through the name space: #K bound
+ * over /n, so /n/hello here is the server's file, held in this
+ * container and kept current by the wire.  Two opens - a miss and a
+ * hit; a listing; a new version written by another path; and an open
+ * after the stream has said so, which refetches.
+ */
+static void
+cachetest(void)
+{
+	extern void cachestats(int*, int*, int*, long*);
+	extern int p9bind(char*, char*, int);
+	char buf[256];
+	uchar dbuf[1024];
+	int fd, hits, misses, refetches, i;
+	long n, nf;
+	Dir d;
+	char names[128];
+
+	p9bind("#K", "/n", MREPL);
+	for(i = 0; i < 2; i++){
+		fd = p9open("/n/hello", OREAD);
+		n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+		p9close(fd);
+		print("p9 ip: cache: read /n/hello through this container's name space (%s): \"%s\"\n", i == 0 ? "a miss, fetched" : "a hit, from the copy", buf);
+	}
+	fd = p9open("/n", OREAD);
+	n = p9read(fd, dbuf, sizeof dbuf);
+	p9close(fd);
+	if(n > 0 && convM2D(dbuf, (uint)n, &d, names) > 0)
+		print("p9 ip: cache: ls /n lists %s, version %lud, %lld bytes - the cache is a directory in the name space\n", d.name, d.qid.vers, (vlong)d.length);
+	write9p("a version written after the cache held the file");
+	print("p9 ip: cache: another path, 9P over the ring, wrote a new version\n");
+	tsleep(&up->sleep, return0, nil, 250);		/* two periods of the stream */
+	fd = p9open("/n/hello", OREAD);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9close(fd);
+	print("p9 ip: cache: read /n/hello again after the stream said the version changed: \"%s\"\n", buf);
+	cachestats(&hits, &misses, &refetches, &nf);
+	print("p9 ip: cache: done - %d miss, %d hit, %d refetch, %ld stream frames taken off the wire\n", misses, hits, refetches, nf);
 }
 
 static void
@@ -706,6 +768,7 @@ ostcpclient(void *)
 	}
 	pipclient();
 	replica();
+	cachetest();
 	poperror();
 	clientnetdone = 1;
 	pexit("ostcpclient done", 0);

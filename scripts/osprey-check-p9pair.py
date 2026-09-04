@@ -120,9 +120,9 @@ def main():
          and 'the log is full' not in t),
         ("at the end the kernel reports the storage task's reservation and what it used of it, as the talk's dumptask does",
          re.search(r'osprey status: proc 3 core \d+ \w+ budget (19\d{5}|2000000) used \d+ period (99\d{5}|10000000) ', t) is not None),
-        ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 44 - the forty versions and the one the replica test wrote after them: the store is persistent",
-         'from the checkpoint' in t2 and re.search(r'lfs: hello version 44, 37 bytes', t2) is not None
-         and 'lfs: found /n/hello on the disk: "a new version the replica must notice"' in t2),
+        ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 45 - the forty versions, the replica test's and the cache test's after them: the store is persistent",
+         'from the checkpoint' in t2 and re.search(r'lfs: hello version 45, 47 bytes', t2) is not None
+         and 'lfs: found /n/hello on the disk: "a version written after the cache held the file"' in t2),
         ("the microkernel runs a client personality that mounts a second personality over the ring",
          'pair-client: mounting the server personality over the ring' in t),
         ("and a second personality, a container of its own, answers 9P about its name space",
@@ -223,6 +223,15 @@ def main():
          'p9 ip: replica: another path, 9P over the ring, wrote a new version while the replica watched' in t
          and re.search(r'p9 ip: replica: the stream says version (\d+) now, not (\d+): refetched over the wire, "a new version the replica must notice" - the replica is current again', t) is not None
          and re.search(r'p9 ip: replica: done - \d+ stream frames, \d+ reads answered from the replica, 1 refetch', t) is not None),
+        ("a caching file system: #K bound over /n in the client container's own name space, so an open of /n/hello is answered from a copy of the server's file - fetched over the wire on the first open, from the copy on the second with nothing asked of the server - and ls /n lists it",
+         re.search(r'p9 ip: cache: read /n/hello through this container\'s name space \(a miss, fetched\): "a new version the replica must notice"', t) is not None
+         and re.search(r'p9 ip: cache: read /n/hello through this container\'s name space \(a hit, from the copy\): "a new version the replica must notice"', t) is not None
+         and re.search(r'cache: /n/hello: answered from the copy, version \d+, nothing asked of the server', t) is not None
+         and re.search(r'p9 ip: cache: ls /n lists hello, version \d+, \d+ bytes', t) is not None),
+        ("and it stays current by the wire: another path writes a new version, the stream of the committed version says so, and the next open refetches and reads the new text",
+         re.search(r'cache: /n/hello: the stream said version (\d+), the copy is (\d+): refetched over the wire - version \1 now', t) is not None
+         and 'p9 ip: cache: read /n/hello again after the stream said the version changed: "a version written after the cache held the file"' in t
+         and re.search(r'p9 ip: cache: done - 1 miss, 1 hit, 1 refetch, [1-9]\d* stream frames taken off the wire', t) is not None),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

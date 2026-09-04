@@ -203,7 +203,11 @@ a wire.
 A replica of a file in another container follows a stream of the file's
 committed version over the \[*p]p wire, answers reads from its copy while
 the version stands, and refetches within a period when another path
-writes the file.
+writes the file.  And the caching file system: a device in the client
+personality, bound over
+.CW /n ,
+answers an open of a name from a copy of the server's file, fetched
+over the wire on the first open and kept current by the same stream.
 .PP
 .B "What it costs."
 The presentation measures a send, a receive and a context switch
@@ -1445,9 +1449,10 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-fifty-one criteria, five of them this and the gateway below, three
+fifty-three criteria, five of them this and the gateway below, three
 the \[*p]p wire of item 4, one the time of day of item 5, two the
-resume of item 6a, two the replica of item 8.  What is
+resume of item 6a, four the replica and the caching file system of
+item 8.  What is
 honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a
@@ -1608,10 +1613,38 @@ text, and the summary \- six frames, five reads from the copy, one
 refetch.  Two criteria in
 .CW /scripts/osprey-check-p9pair.py .
 What that is not: the access is not authenticated \- the personality's
-\[*p]p has no key, only the kernel's has \- and the replica is one file
-in one program's memory, not a file system.  The caching file system
-would be this replica generalised and put behind a name space, so that
-an open of a name is answered from the copy; it is not built.
+\[*p]p has no key, only the kernel's has.
+.PP
+The caching file system is that replica generalised and put behind a
+name space:
+.CW os/osprey/cmd/p9/devcache.c ,
+a device
+.CW ( #K )
+in the client personality, bound over its own
+.CW /n .
+An entry per name: the first open of
+.CW /n/hello
+fetches the server's file over the \[*p]p wire \- one group: session,
+open, data, latest \- and sets a stream of its committed version on the
+fid, which a reader kproc takes off the wire and notes against the
+entry; the next open finds the entry current and answers from the copy
+with nothing asked of the server; an open after the stream has said
+another version refetches (a new fid, the old closed, the stream moved),
+and reads are of the copy.  The directory lists what is cached.  The
+boot reads
+.CW /n/hello
+through the client's name space twice \- a miss, then a hit \- lists
+.CW /n ,
+has 9P over the ring write a new version, waits two periods of the
+stream, and reads again: the open refetches and the read is the new
+text; one miss, one hit, one refetch.  Two criteria in
+.CW /scripts/osprey-check-p9pair.py .
+Its limits are the replica's: copies in one program's memory, reads
+only \- a write goes by another path and the stream is how the cache
+learns of it \- and no key.  So the two ends slide 11 and slide 23 name
+are both reached, in the form the built mechanisms give them, and what
+they lack is the authentication the kernel's \[*p]p has and the
+personality's does not.
 .PP
 .B "9.  A second machine."
 The talk boots the same code as
