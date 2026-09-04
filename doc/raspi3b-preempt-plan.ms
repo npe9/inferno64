@@ -60,6 +60,125 @@ Boot
 .CW "qemu-system-aarch64 -M raspi3b -m 1G -nographic -sd <img> -kernel iraspi3b" .
 The write loop fails at a varying block; the open loop passes.
 .NH 1
+The plan: isolate, test, fix
+.PP
+The exploratory experiments below (E1-E8) are the record of how the bug
+was cornered; they are kept as evidence, but the mechanism is now known
+well enough that the work from here is a short, ordered line, not a fan of
+guesses.  The bug is a register corruption in the SDHOST FIFO loop when a
+timer IRQ is taken mid-block: a store's base register (or the loop's data
+pointer) comes back wrong across the exception, so the store either drops
+its data (MMU off) or lands on a stray address (MMU on).  The one probe
+that survives is the MMU-on Data Abort, because it needs no guest-side
+instrumentation - and every guest-side probe masks the fault.
+.NH 2
+Step 1: isolate - name the corrupted register
+.PP
+Turn the diagnostics on together and let the wild store fault at its own
+instruction, with the machine state still intact to read.
+.IP 1. 4
+In
+.CW mmu.c
+set
+.CW Mmuon
+to 1, and add the timer routing (step 1 of the reproducer).  Rebuild.
+.IP 2.
+Narrow the identity map so a stray store is caught rather than absorbed.
+As it stands the map covers all of 0-1GB, so a wild store into RAM just
+writes RAM and only faults later, on an innocent access, once the page
+table itself is hit - which is why the current abort spins in prefetch
+faults (the page table it needs is already gone).  Instead map only what
+the kernel touches - the used RAM, the peripheral window, the BCM2836
+block - and leave the rest of the address space unmapped, and map the two
+page-table pages themselves
+.I read-only .
+Now a store to a corrupted address faults
+.I "at the store" ,
+translation- or permission-faulting before it damages anything, and the
+page table and stack survive for the handler to use.
+.IP 3.
+In
+.CW trap() 's
+.CW default
+(non-IRQ) arm, before the
+.CW panic ,
+.CW iprint
+the whole saved frame - every
+.CW ur->rN ,
+plus
+.CW ur->pc
+.CW ( ELR),
+.CW ur->tval
+.CW ( FAR)
+and
+.CW ur->cause
+.CW ( ESR)
+- and also
+.CW iprint
+the faulting instruction word,
+.CW "*(u32*)ur->pc" .
+The console UART is Device-mapped and reachable even with most of RAM
+unmapped, so this prints where the old dump could not.
+.IP 4.
+Run the write stress.  On the abort, decode the store at
+.CW ELR :
+its base register field names the corrupted register, and
+.CW FAR
+is the value it held.  Compare against what the loop intended (the SDHOST
+base, or the block pointer).  One clean catch is the whole answer.
+.NH 2
+Step 2: test - locate the corruption's source
+.PP
+With the register named, decide where it goes wrong, and prove it.
+.IP \(bu 4
+If it is a callee-saved register (R19-R28) that
+.CW vectrap
+is meant to preserve, the save/restore is suspect despite matching
+virtarm64's text byte for byte - so look for what the tight loop does
+that no other code on any board does with that register, and confirm by
+rewriting the loop to avoid it (does the fault move or vanish?).
+.IP \(bu
+If it is caller-saved, it is the compiler's allocation for the loop and
+the exception's handling of it - narrow by simplifying the loop until the
+fault changes.
+.IP \(bu
+Either way, check whether the fault only fires when the interrupted
+.CW ELR
+(logged for the IRQ just before the abort, under
+.CW "-d int" )
+sits inside the FIFO loop - that ties the corruption to the loop, not to
+devsd or the syscall path.
+.IP \(bu
+The decisive fork: is it the guest or QEMU?  If the named register is one
+.CW vectrap
+demonstrably round-trips correctly (add a self-check on the exception
+path that is off the hot loop), the drop is in QEMU's TCG taking the IRQ
+mid-block - reproduce it on a newer QEMU and, if it persists, reduce it to
+a minimal test case and file it, because then no guest change is the real
+fix.
+.NH 2
+Step 3: fix, then verify
+.PP
+The fix follows the source.  A
+.CW vectrap
+bug is a local correction to the save/restore.  A compiler/allocation
+interaction is dodged by making the loop store through a base the
+corruption cannot reach - recomputed from an immediate each iteration, or
+pinned to a register the exception path provably preserves.  A QEMU drop
+is worked around the same guest-side way until the emulator is fixed, and
+the SDEDM detect-and-retry already in the plan is the fallback that ships a
+correct board even if the cause stays in QEMU.
+.PP
+Declare it fixed only when, with the MMU and the tick both on, the
+two-thousand-block write/read verifying stress passes five of five with
+every byte correct, and a kfs reams, mounts and round-trips a file on
+.CW /dev/sdM0/data .
+Then turn to the second, separate fault the retry uncovered - the
+mount-phase hang - and first ask whether it is the same corruption on the
+read path (extend the fix and re-test) or a distinct scheduling stall in
+the pipe mount (a different hunt).  Only after both are green do the timer
+routing, the MMU, and the kfs mount land as defaults.
+.NH 1
 What is established
 .PP
 Each of these survived a falsification test; do not re-open them without
