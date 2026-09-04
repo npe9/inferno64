@@ -42,6 +42,12 @@ then put those in the plan and continue.
   a `NAME.orig` file names the original for a second translation.
   It builds the Limbo libraries it needs into `dis/`, which is not
   in git.
+- The mkfiles track no header dependencies. An object built before a
+  header changed stays stale, and `mk` will not notice: a stale
+  `libmath/gfltconv.o` made `sys.print("%.2f", x)` drop digits for
+  weeks. When output is wrong in a way the source cannot explain,
+  remove the library archive and its objects and rebuild, then
+  relink `emu` (`mk install CONF=emu-g` in `emu/MacOSX`).
 - Do not edit a running shell script in place; replace it atomically.
   Do not rebuild `o.out` while a long test run is using it, and do
   not edit `ember/module/*.ei` or `ember/limbo/*.e` either: work in

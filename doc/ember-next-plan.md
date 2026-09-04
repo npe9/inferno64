@@ -250,6 +250,17 @@ at the wrong offset. The mkfiles do not track header dependencies, so
 `mk` never rebuilt it. `libsec` and `libbio` have objects older than
 that header too.
 
-The fix is to rebuild those libraries and relink `emu`, then check
-that nothing in the suite depended on the wrong output. Worth doing
-on its own commit, since it changes the emulator every test runs on.
+Fixed by rebuilding `libmath`, `libbio` and `libsec` from scratch —
+`mk` alone will not do it, since the archive is newer than the
+sources; the archive has to be removed first — and relinking `emu`.
+`sys.print("%8.2f", 1.25)` now prints `    1.25`, `%.3f` prints
+`1.250` and `%.0f` prints `1`, from Limbo and from Ember alike. The
+libraries and the emulator are build output, not in git, so the fix
+is in the tree's state rather than in a commit; what is committed is
+this note and the rule in `AGENTS.md`.
+
+The general hazard remains: the mkfiles list no header dependencies,
+so any object built before a header changes stays stale until its own
+source is touched. When a program's output is wrong in a way its
+source cannot explain, rebuild the library it comes from before
+believing the code.
