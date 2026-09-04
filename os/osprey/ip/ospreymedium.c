@@ -86,10 +86,31 @@ ospreyunbind(Ipifc *ifc)
 	ifc->arg = nil;
 }
 
+static int ospreyanswered;	/* logged once: the stack answered a frame from the ring */
+
 static void
 ospreybwrite(Ipifc *ifc, Block *bp, int, uchar*, Routehint*)
 {
 	Osrock *er;
+	uchar *ip;
+	int ihl;
+
+	/*
+	 * If the stack is sending an ICMP echo reply, it answered a packet it
+	 * received - and the only echo request in this boot is the one the
+	 * client container put on the ring, so this is the proof the stack at
+	 * this end accepted a real IP packet that crossed the ring, not just
+	 * that the bytes arrived.  A raw-IP medium, so the frame is the IP
+	 * packet itself.
+	 */
+	if(!ospreyanswered && BLEN(bp) >= 21){
+		ip = bp->rp;
+		ihl = (ip[0] & 0x0f) * 4;
+		if((ip[0] >> 4) == 4 && ip[9] == 1 && BLEN(bp) >= ihl + 1 && ip[ihl] == 0){
+			ospreyanswered = 1;
+			print("osprey medium: the stack answered with an ICMP echo reply - it accepted a real IP packet that crossed the ring from the peer container\n");
+		}
+	}
 
 	er = ifc->arg;
 	if(qpass(er->peer->q, bp) < 0)	/* out this end -> in at the other */
@@ -145,7 +166,7 @@ ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer)
 	er = allos;			/* this container's osprey interface */
 	if(er == nil || n <= 0)
 		return -1;
-	print("osprey medium: a %ld-byte frame arrived over the ring from container %llud and was handed to the stack at this end - the device-carried medium (a frame the stack does not parse it drops)\n",
+	print("osprey medium: a %ld-byte frame arrived over the ring from container %llud and was handed to the stack at this end - the device-carried medium\n",
 		n, fromcontainer);
 	bp = allocb(n);
 	if(bp == nil)

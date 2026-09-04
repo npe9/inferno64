@@ -691,15 +691,48 @@ p9paircli(void)
 	 */
 	{
 		extern long ring9p_frame(uchar*, long);
-		uchar frame[64];
-		int i;
+		uchar frame[28];
 		long fn;
+		ulong sum;
+		int i;
 
+		/*
+		 * A real IPv4 packet, not filler: an ICMP echo request from
+		 * 10.0.0.1 to 10.0.0.2, the address the server injects a ring
+		 * frame into.  The osprey medium is a raw-IP medium (no MAC), so
+		 * this is a whole frame.  The server's stack, if it accepts it,
+		 * answers with an echo reply to 10.0.0.1 - which its other stack
+		 * owns, so the reply terminates there and does not loop.
+		 */
 		for(i = 0; i < (int)sizeof frame; i++)
-			frame[i] = 0xff;	/* a frame the peer will see arrive and count */
+			frame[i] = 0;
+		frame[0] = 0x45;			/* IPv4, header 20 bytes */
+		frame[3] = sizeof frame;		/* total length */
+		frame[8] = 64;				/* ttl */
+		frame[9] = 1;				/* protocol ICMP */
+		frame[12] = 10; frame[15] = 1;		/* src 10.0.0.1 */
+		frame[16] = 10; frame[19] = 2;		/* dst 10.0.0.2 */
+		sum = 0;				/* IP header checksum over frame[0..19] */
+		for(i = 0; i < 20; i += 2)
+			sum += (frame[i] << 8) | frame[i+1];
+		while(sum >> 16)
+			sum = (sum & 0xffff) + (sum >> 16);
+		sum = ~sum & 0xffff;
+		frame[10] = sum >> 8; frame[11] = sum;
+		frame[20] = 8;				/* ICMP echo request */
+		frame[25] = 1;				/* id */
+		frame[27] = 1;				/* sequence */
+		sum = 0;				/* ICMP checksum over frame[20..27] */
+		for(i = 20; i < (int)sizeof frame; i += 2)
+			sum += (frame[i] << 8) | frame[i+1];
+		while(sum >> 16)
+			sum = (sum & 0xffff) + (sum >> 16);
+		sum = ~sum & 0xffff;
+		frame[22] = sum >> 8; frame[23] = sum;
+
 		fn = ring9p_frame(frame, sizeof frame);
 		if(fn == (long)sizeof frame)
-			print("p9: pair-client: sent a %d-byte frame to the server container over the ring - the device-carried medium\n", (int)sizeof frame);
+			print("p9: pair-client: sent an ICMP echo request (10.0.0.1->10.0.0.2) to the server container over the ring - the device-carried medium\n");
 		else
 			print("p9: pair-client: frame over the ring failed (%ld)\n", fn);
 	}

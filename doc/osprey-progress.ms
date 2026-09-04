@@ -1203,14 +1203,19 @@ request, the server loop answers that op by handing the frame to
 which hands it to its own osprey interface with
 .CW ipiput4
 exactly as the pump hands over a locally-queued frame - the same path a
-frame from a paired interface takes, so once a real frame crosses here it
-is a frame like any other and the kernel only routed it.  The p9pair boot
-sends a 64-byte frame from the client container to the server, which
-prints its arrival; the frame is a synthetic one, not an IP packet, so the
-stack drops it after
-.CW ipiput4 ,
-which is why what is checked is that the bytes crossed and were handed
-over, not that the stack parsed them.
+frame from a paired interface takes, so a frame from the peer container is
+a frame like any other and the kernel only routed it.  The frame is a real
+IP packet: the p9pair boot sends an ICMP echo request from the client
+container, addressed to the address the server injects into
+.CW ( 10.0.0.2 ),
+and the server's stack accepts it and answers with an echo reply, which
+.CW ospreybwrite
+sees the stack send - the proof the stack at the far end received a real
+packet across the ring and acted on it, not merely that the bytes arrived.
+The reply is addressed to
+.CW 10.0.0.1 ,
+which the server's other stack owns, so it terminates there and does not
+loop.
 The reverse direction rides the same request's reply: the server returns
 a frame on the reply and the client sees it come back whole, so a frame
 crosses the ring both ways between the two containers - the channel a
