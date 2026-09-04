@@ -427,6 +427,18 @@ TEXT	mmuenable(SB), 1, $-4
 	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */
 	DSB	$15
 	ISB	$15
+	/*
+	 * HARDWARE GAP (emulator is more forgiving; see AGENTS.md): on a real
+	 * Cortex-A53 the cache contents at reset are architecturally UNKNOWN,
+	 * so before turning the D-cache and I-cache on below they must be
+	 * invalidated -- an IC IALLU (+DSB/ISB) for the instruction cache and
+	 * a set/way invalidate of the L1 data cache -- or the CPU may hit
+	 * stale/garbage lines once C and I are set.  The page tables were
+	 * built with the caches off, so they are already in RAM and need no
+	 * clean.  QEMU models no cache, so none of this is needed there and
+	 * it is omitted until the board is real; do NOT enable the caches on
+	 * hardware without adding it first.
+	 */
 	MRS	SPR(D_SCTLR_EL1), R1
 	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
 	ORR	R2, R1, R1
