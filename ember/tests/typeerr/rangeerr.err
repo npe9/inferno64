@@ -1,5 +1,4 @@
 tests/typeerr/rangeerr.e:10: cannot range over P
-tests/typeerr/rangeerr.e:13: range over a list gives one name, the element
 tests/typeerr/rangeerr.e:16: range over an int gives one name, the count
 tests/typeerr/rangeerr.e:19: cannot range over real
 tests/typeerr/rangeerr.e:22: range is only the right side of a for header's :=

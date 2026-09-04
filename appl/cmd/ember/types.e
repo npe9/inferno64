@@ -130,7 +130,9 @@ const Odefer = 104
 const Omaplit = 105
 const Otypeval = 106
 const Ocond = 107
-const Oend = 108
+const Oassert = 108
+const Oqchain = 109
+const Oend = 110
 
 const Tnone = 0
 const Tadt = 1
@@ -226,6 +228,7 @@ type Node struct {
 	decl ref Decl
 	addable int
 	temps int
+	stop int	// a statement's last line (the parser records it for the formatter)
 }
 
 type Type struct {
@@ -377,7 +380,7 @@ type Case struct {
 	tagof ref Type
 }
 
-var opnames = [109]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "range", "copy", "exit", "defer", "maplit", "typeval", "cond", "end"}
+var opnames = [111]string{"none", "module", "import", "typedecl", "vardecl", "condecl", "fndecl", "method", "field", "tag", "tarray", "tchan", "tlist", "tref", "tfunc", "ttuple", "tinst", "tstruct", "tpick", "scope", "seq", "if", "for", "forctl", "match", "alt", "case", "pat", "break", "continue", "return", "spawn", "send", "das", "as", "addas", "subas", "mulas", "divas", "modas", "andas", "oras", "xoras", "lshas", "rshas", "inc", "dec", "expr", "label", "raise", "name", "const", "nil", "dot", "mdot", "call", "index", "inds", "indx", "slice", "composite", "elem", "funclit", "tuple", "chk", "rcv", "ref", "load", "len", "hd", "tl", "cons", "cast", "neg", "not", "inv", "add", "sub", "mul", "div", "mod", "and", "or", "xor", "lsh", "rsh", "andand", "oror", "eq", "neq", "lt", "gt", "leq", "geq", "ind", "adr", "used", "nothing", "chan", "array", "try", "range", "copy", "exit", "defer", "maplit", "typeval", "cond", "assert", "qchain", "end"}
 
 var kindnames = [34]string{"no type", "adt", "adt", "array", "big", "byte", "chan", "real", "fn", "int", "list", "module", "ref", "string", "tuple", "exception", "fixed point", "polymorphic", "array initializers", "alt channels", "polymorphic type", "->", "case int labels", "case big labels", "case string labels", ".", "type error", "goto labels", "id", "module interface", "exception handler table", "instantiated type", "bool", "end"}
 
@@ -560,6 +563,8 @@ func copytype(dst ref Type, src ref Type) {
 	dst.decl = src.decl
 	dst.tof = src.tof
 	dst.ids = src.ids
+	dst.isiface = src.isiface	// check.c copies the whole struct (*inst = *body)
+	dst.ismap = src.ismap
 	dst.tags = src.tags
 	dst.meths = src.meths
 	dst.cse = src.cse
@@ -1781,6 +1786,7 @@ func rotater(n ref Node) ref Node {
 		left.right = n
 		n = left
 	}
+	n.right = rotater(n.right)	// ast.c's rotater() also straightens a chain nested on the right
 	return n
 }
 
@@ -1789,5 +1795,5 @@ func dupn(old ref Node) ref Node {
 	if old == nil {
 		return nil
 	}
-	return ref Node{op: old.op, left: old.left, right: old.right, aux: old.aux, sym: old.sym, val: old.val, rval: old.rval, flags: old.flags & ~NCHECKED, line: old.line, pos: old.pos, ty: old.ty, decl: old.decl, addable: old.addable, temps: old.temps}
+	return ref Node{op: old.op, left: old.left, right: old.right, aux: old.aux, sym: old.sym, val: old.val, rval: old.rval, flags: old.flags & ~NCHECKED, line: old.line, pos: old.pos, stop: old.stop, ty: old.ty, decl: old.decl, addable: old.addable, temps: old.temps}
 }

@@ -1,0 +1,16 @@
+module Exported
+
+// derived by ember -i; generic and inline declarations are not
+// derived, an interface must carry their bodies
+
+import sys "sys"
+
+const Version = 3
+type Point struct {
+	x int
+	y int
+}
+
+func (p ref Point) sum() int
+
+func origin() ref Point

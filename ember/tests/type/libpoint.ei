@@ -38,3 +38,16 @@ func name() string
 // a module-typed parameter: the client must sign Rand complete (the
 // import-side modrefable(), types.c narrowmods()), not narrowed
 func roll(r Rand, n int) int
+
+// an interface and an implementation, asserted on both sides
+type Sized interface {
+	size() int
+}
+
+type Box struct {
+	n int
+}
+
+func (b ref Box) size() int
+func mkbox(n int) Sized
+func boxsize(s Sized) int

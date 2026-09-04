@@ -1,0 +1,5 @@
+buf:hi!
+copied hi! written 1
+hi!? 2
+asserted hi! n=1
+narrowed buf hi!

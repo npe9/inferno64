@@ -19,6 +19,8 @@ TARG=\
 	gen.dis\
 	disw.dis\
 	com.dis\
+	emberfmt.dis\
+	ifacegen.dis\
 	emberc.dis\
 
 all:V:	$TARG

@@ -7,3 +7,5 @@ areas=12 6 1
 rect 1,1-4,3
 roll<10=1
 poison=0
+box=1 size=7
+boxsize=9 7

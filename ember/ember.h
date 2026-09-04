@@ -745,6 +745,8 @@ enum
 	Omaplit,			/* map[K]V{k: v, ...}: left the type, right Oelem seq; the checker makes calls of it */
 	Otypeval,			/* a type expression already resolved: ty (the checker builds typed nodes with it) */
 	Ocond,				/* c ? a : b: left c, right a, aux b */
+	Oassert,			/* x.(T): left x, right T; val 1 for "v, ok := x.(T)" */
+	Oqchain,			/* a?.f...: left a, right the chain over the hidden name aux */
 	Oend
 };
 

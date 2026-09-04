@@ -1,0 +1,12 @@
+module Ifacegen
+
+// "emberc -i file.e": the module's interface file derived from its
+// checked declarations (a port of ember/ifacegen.c)
+
+import types "types"
+import check "check"
+
+const PATH = "/dis/ember/ifacegen.dis"
+
+func usecheck(c Check)
+func ifacegen(tree ref types.Node, fd int)

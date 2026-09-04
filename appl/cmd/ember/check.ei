@@ -20,5 +20,6 @@ func moduledecl() ref types.Decl
 func entry() ref types.Decl
 func importlist() list ref types.Decl
 func moduledecllist() ref types.Decl
+func lookup(name string) ref types.Decl
 func nildeclare() ref types.Decl
 func declownedby(d ref types.Decl, fn ref types.Decl) int

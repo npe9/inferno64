@@ -6,6 +6,7 @@ module Parse
 // print such trees identically (ember/tests/astcmp.sh).
 
 import types "types"
+import lex "lex"
 
 const PATH = "/dis/ember/parse.dis"
 
@@ -119,3 +120,6 @@ const Oend = 100
 func parse(file string) ref types.Node
 func errors() int
 func opname(op int) string
+func setfmt()
+func comments() []ref lex.Comment
+func ncomments() int

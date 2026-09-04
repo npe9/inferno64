@@ -1128,8 +1128,8 @@ func ecom(line int, pos int, nto ref types.Node, n ref types.Node) ref types.Nod
 			left = eacom(left, tl, nto)
 		}
 		ft := left.ty
-		if types.tequal(ft, n.ty) != 0 {
-			gen.genmove(line, pos, gen.Mas, n.ty, left, nto)
+		if types.tequal(ft, n.ty) != 0 || (ft.kind == types.Tref && n.ty.kind == types.Tref) {
+			gen.genmove(line, pos, gen.Mas, n.ty, left, nto)	// the same type, or a reference reinterpreted (x.(T))
 		} else {
 			tmid := newnode()
 			mid := left

@@ -208,6 +208,8 @@ typesrc(Decl *d)
 		/* .W$s: print the interface it stands for */
 		Bprint(ib, "type %.*s interface {\n", (int)(strlen(s) - 3), s + 1);
 		for(m = t->ids; m != nil; m = m->next){
+			if(m->sym->name[0] == '.')
+				continue;	/* .self and .tag, the converter's own */
 			Bprint(ib, "\t%s", m->sym->name);
 			fnsrc(m->ty->tof, 1);
 			Bprint(ib, "\n");
@@ -266,9 +268,17 @@ ifacegen(Node *tree, Biobuf *b)
 	Node *p, *decl;
 	Decl *d, *m;
 	Dlist *dl;
-	int n;
+	int n, anyexport;
 
 	ib = b;
+	anyexport = 0;
+	for(p = tree->right; p != nil; p = p->right){
+		decl = p->op == Oseq ? p->left : p;
+		if(decl->val & 2)
+			anyexport = 1;
+		if(p->op != Oseq)
+			break;
+	}
 	Bprint(ib, "module %s\n\n", tree->left->sym->name);
 	Bprint(ib, "// derived by ember -i; generic and inline declarations are not\n// derived, an interface must carry their bodies\n\n");
 	n = 0;
@@ -292,6 +302,11 @@ ifacegen(Node *tree, Biobuf *b)
 		decl = p;
 		if(p->op == Oseq)
 			decl = p->left;
+		if(anyexport && !(decl->val & 2) && decl->op != Oimport){
+			if(p->op != Oseq)
+				break;
+			continue;	/* not exported */
+		}
 		switch(decl->op){
 		case Ocondecl:
 			if(decl->left->sym->name[0] == '.' || decl->right->op != Oconst)

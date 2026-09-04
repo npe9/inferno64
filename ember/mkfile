@@ -47,4 +47,6 @@ test:V:	$O.out
 	./tests/ifacegen.sh
 	./tests/unittest.sh
 	./tests/fmt.sh
+	./tests/selffmt.sh
+	./tests/selftools.sh
 	./tests/limbocmp.sh

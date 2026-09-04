@@ -36,7 +36,9 @@ static	Node	*pstmt(void);
 static	Node	*palt(void);
 static	Node	*ptype(void);
 static	Node	*pmaptype(void);
-static	Node	*pinterface(Node*, Node*, Src*);
+static	Node	*pinterface(Node*, Node*, Node*, Src*);
+static	Node	*parrelems(Src*);
+static	Node	*ptypeswitch(Node*, Node*, Node*, Src*);
 Node	*deepdup(Node*);
 static	int	startsexpr(int);
 static	Node	*prange(Node*);
@@ -714,6 +716,25 @@ poperand(void)
 			 */
 			lexskip();
 			te = ptype();
+			if(cur() == '{'){
+				/* "[]T{v, v, ...}": the size is the count (val 1: the formatter prints it without) */
+				Src bsrc;
+				int nelem;
+
+				elems = parrelems(&bsrc);
+				nelem = 0;
+				for(e = elems; e != nil; e = e->right){
+					nelem++;
+					if(e->op != Oseq)
+						break;
+				}
+				n = mkn(Oarray, mkconst(&src, nelem), te);
+				n->aux = elems;
+				n->val = 1;
+				n->src.start = src.start;
+				n->src.stop = bsrc.stop;
+				return n;
+			}
 			pexpect('(', "conversion");
 			e = pexpr();
 			pexpect(')', "conversion");
@@ -731,22 +752,8 @@ poperand(void)
 		n->src.stop = te->src.stop;
 		if(cur() == '{'){
 			Src bsrc;
-			int oblit;
 
-			oblit = noblit;
-			noblit = 0;
-			bsrc = pexpect('{', "array composite literal");
-			elems = nil;
-			while(cur() != '}' && cur() != Beof){
-				e = mkn(Oelem, nil, pexpr());
-				elems = mkseq(elems, e);
-				if(!paccept(',') && cur() != ';')
-					break;
-				paccept(';');	/* trailing comma newline */
-			}
-			bsrc.stop = pexpect('}', "array composite literal").stop;
-			noblit = oblit;
-			n->aux = rotater(elems);
+			n->aux = parrelems(&bsrc);
 			n->src.stop = bsrc.stop;
 		}
 		return n;
@@ -758,6 +765,29 @@ poperand(void)
 	}
 }
 
+/* "{v, v, ...}" of an array literal: the Oelem list, and where the braces were */
+static Node*
+parrelems(Src *bsrc)
+{
+	Node *elems, *e;
+	int oblit;
+
+	oblit = noblit;
+	noblit = 0;
+	*bsrc = pexpect('{', "array composite literal");
+	elems = nil;
+	while(cur() != '}' && cur() != Beof){
+		e = mkn(Oelem, nil, pexpr());
+		elems = mkseq(elems, e);
+		if(!paccept(',') && cur() != ';')
+			break;
+		paccept(';');	/* trailing comma newline */
+	}
+	bsrc->stop = pexpect('}', "array composite literal").stop;
+	noblit = oblit;
+	return rotater(elems);
+}
+
 /*
  * postfix: selector, index, slice, call, composite literal, ?
  */
@@ -765,9 +795,11 @@ static Node*
 pprimary(void)
 {
 	Node *n, *e, *lo, *hi, *args;
-	Node *guard = nil;
+	Node *guard = nil, *qname = nil;
 	Src src;
 	int oblit;
+	char qbuf[32];
+	static int nqchain;
 
 	n = poperand();
 	for(;;){
@@ -775,6 +807,24 @@ pprimary(void)
 		switch(cur()){
 		case '.':
 			lexskip();
+			if(cur() == '('){
+				/* x.(T): a type assertion, T's value or nil by the interface value's tag */
+				lexskip();
+				if(cur() == Ktype){
+					/* x.(type): a type switch's subject (pmatch) */
+					lexskip();
+					pexpect(')', "type switch");
+					e = mkn(Oassert, n, nil);
+					e->val = 2;
+					e->src = n->src;
+					n = e;
+					continue;
+				}
+				e = ptype();
+				pexpect(')', "type assertion");
+				n = mkbin(Oassert, n, e);
+				continue;
+			}
 			e = pname("selector");
 			n = mkbin(Odot, n, e);
 			n->sym = e->sym;
@@ -843,8 +893,13 @@ pprimary(void)
 			 * the end; a is evaluated twice
 			 */
 			lexskip();
-			if(guard == nil && !rawparse)
-				guard = deepdup(n);
+			if(guard == nil && !rawparse){
+				/* the chain continues over a hidden name for a, which the checker binds once (Oqchain) */
+				guard = n;
+				seprint(qbuf, qbuf+sizeof(qbuf), ".q%d", nqchain++);
+				qname = mkname(&n->src, enter(qbuf, 0));
+				n = qname;
+			}
 			e = pname("field");
 			n = mkbin(Odot, n, e);
 			n->sym = e->sym;
@@ -860,11 +915,10 @@ pprimary(void)
 		break;
 	}
 	if(guard != nil){
-		e = mkbin(Oneq, guard, mkname(&guard->src, enter("nil", 0)));
-		e->src = guard->src;
-		e = mkn(Ocond, e, n);
-		e->aux = mkname(&n->src, enter("nil", 0));
-		e->src = n->src;
+		e = mkn(Oqchain, guard, n);
+		e->aux = qname;
+		e->src.start = guard->src.start;
+		e->src.stop = n->src.stop;
 		n = e;
 	}
 	return n;
@@ -1136,7 +1190,7 @@ ptypedecl(Node *decls)
 		pexpect(']', "type parameters");
 	}
 	if(cur() == Kinterface)
-		return pinterface(decls, name, &src);
+		return pinterface(decls, name, polys, &src);
 	n = mkn(Otypedecl, name, ptype());
 	n->aux = polys;
 	n->src.start = src.start;
@@ -1158,10 +1212,80 @@ ptypedecl(Node *decls)
  * which is the structural check.  the closures hold the receiver, so
  * a call through the interface is a call of a field.
  */
-static Node*
-pinterface(Node *decls, Node *name, Src *src)
+/* the interfaces parsed so far, for embedding: "type RW interface { Reader; Writer }" */
+typedef struct Ifacedef Ifacedef;
+struct Ifacedef
 {
-	Node *fields, *elems, *mname, *sig, *fl, *call, *args, *p, *f, *q, *id, *stmt, *st, *td, *fd, *sig2, *comp, *tn;
+	Sym	*name;
+	Node	*fields;
+	int	generic;
+	Ifacedef	*next;
+};
+static Ifacedef *ifacedefs;
+
+/* one method of an interface: its field, and the closure element of the converter */
+static Node*
+ifacemethod(Node *fields, Node **elems, Sym *mname, Node *sig, Src *src)
+{
+	Node *fl, *call, *args, *p, *f, *q, *id, *stmt;
+
+	sig->src = *src;
+	f = mkbin(Ofield, mkname(src, mname), sig);
+	f->src = *src;
+	fields = mkseq(fields, f);
+	/* m: func(params) results { return .x.m(params) } */
+	args = nil;
+	for(p = sig->left; p != nil; p = p->right){
+		q = p;
+		if(p->op == Oseq)
+			q = p->left;
+		for(id = q->left; id != nil; id = id->right){
+			args = mkseq(args, mkname(src, (id->op == Oseq ? id->left : id)->sym));
+			if(id->op != Oseq)
+				break;
+		}
+		if(p->op != Oseq)
+			break;
+	}
+	call = mkbin(Odot, mkname(src, enter(".x", 0)), mkname(src, mname));
+	call->sym = mname;
+	call->src = *src;
+	call = mkn(Ocall, call, rotater(args));
+	call->src = *src;
+	if(sig->right != nil)
+		stmt = mkn(Oret, call, nil);
+	else
+		stmt = mkunary(Oexpr, call);
+	stmt->src = *src;
+	fl = mkn(Ofunclit, nil, deepdup(sig));
+	fl->aux = mkn(Oscope, stmt, nil);
+	fl->aux->src = *src;
+	fl->src = *src;
+	p = mkn(Oelem, mkname(src, mname), fl);
+	p->src = *src;
+	*elems = mkseq(*elems, p);
+	return fields;
+}
+
+/* the name, or "name[T, ...]" for a generic interface's type parameters */
+static Node*
+ifacename(Src *src, char *s, Node *polys)
+{
+	Node *n;
+
+	n = mkname(src, enter(s, 0));
+	if(polys == nil)
+		return n;
+	n = mkbin(Otinst, n, deepdup(polys));
+	n->src = *src;
+	return n;
+}
+
+static Node*
+pinterface(Node *decls, Node *name, Node *polys, Src *src)
+{
+	Node *fields, *elems, *mname, *sig, *p, *f, *q, *st, *td, *fd, *sig2, *comp, *tn, *stmt;
+	Ifacedef *def;
 	char buf[StrSize];
 
 	pexpect(Kinterface, "interface type");
@@ -1172,76 +1296,105 @@ pinterface(Node *decls, Node *name, Src *src)
 		if(paccept(';'))
 			continue;
 		mname = pname("interface method");
-		sig = psignature(1);
-		sig->src = *src;
-		f = mkbin(Ofield, mkname(src, mname->sym), sig);
-		f->src = *src;
-		fields = mkseq(fields, f);
-		/* m: func(params) results { return .x.m(params) } */
-		args = nil;
-		for(p = sig->left; p != nil; p = p->right){
-			q = p;
-			if(p->op == Oseq)
-				q = p->left;
-			for(id = q->left; id != nil; id = id->right){
-				args = mkseq(args, mkname(src, (id->op == Oseq ? id->left : id)->sym));
-				if(id->op != Oseq)
+		if(cur() != '('){
+			/* an embedded interface: its methods, from its declaration earlier in this file */
+			for(def = ifacedefs; def != nil; def = def->next)
+				if(def->name == mname->sym)
 					break;
+			if(def == nil){
+				seprint(buf, buf+sizeof(buf), "embedded interface %s is not declared earlier in this file", mname->sym->name);
+				synerr(buf);
+			}else if(def->generic){
+				seprint(buf, buf+sizeof(buf), "embedded interface %s is generic", mname->sym->name);
+				synerr(buf);
+			}else if(rawparse){
+				f = mkn(Ofield, mkname(src, mname->sym), nil);	/* mkbin() spans left to right; there is no right */
+				f->src = mname->src;
+				fields = mkseq(fields, f);
+			}else{
+				for(p = def->fields; p != nil; p = p->right){
+					f = p->op == Oseq ? p->left : p;
+					if(f->right != nil)
+						fields = ifacemethod(fields, &elems, f->left->sym, deepdup(f->right), src);
+					if(p->op != Oseq)
+						break;
+				}
 			}
-			if(p->op != Oseq)
-				break;
+			if(cur() != '}')
+				pexpect(';', "interface method");
+			continue;
 		}
-		call = mkbin(Odot, mkname(src, enter(".x", 0)), mkname(src, mname->sym));
-		call->sym = mname->sym;
-		call->src = *src;
-		call = mkn(Ocall, call, rotater(args));
-		call->src = *src;
-		if(sig->right != nil)
-			stmt = mkn(Oret, call, nil);
-		else
-			stmt = mkunary(Oexpr, call);
-		stmt->src = *src;
-		fl = mkn(Ofunclit, nil, deepdup(sig));
-		fl->aux = mkn(Oscope, stmt, nil);
-		fl->aux->src = *src;
-		fl->src = *src;
-		p = mkn(Oelem, mkname(src, mname->sym), fl);
-		p->src = *src;
-		elems = mkseq(elems, p);
+		sig = psignature(1);
+		fields = ifacemethod(fields, &elems, mname->sym, sig, src);
 		if(cur() != '}')
 			pexpect(';', "interface method");
 	}
 	pexpect('}', "interface type");
+	def = malloc(sizeof(Ifacedef));
+	def->name = name->sym;
+	def->fields = rotater(deepdup(fields));	/* a copy: rotater() below rearranges the list in place */
+	def->generic = polys != nil;
+	def->next = ifacedefs;
+	ifacedefs = def;
 	if(rawparse){
 		st = mkn(Otstruct, rotater(fields), nil);
 		st->flags |= NIFACE;
 		st->src = *src;
 		td = mkn(Otypedecl, name, st);
+		td->aux = polys;
 		td->src = *src;
 		return mkseq(decls, td);
 	}
 	/* type .W$s struct { ... }; type W ref .W$s: the interface name is the reference */
 	seprint(buf, buf+sizeof(buf), ".%s$s", name->sym->name);
+	/*
+	 * two hidden fields for x.(T): .self is the receiver itself (an
+	 * unchecked reference cast, nil when .T is not a reference) and
+	 * .tag its type's name, .typeid(.x) folded by the checker
+	 */
+	tn = mkn(Otref, nil, ifacename(src, buf, polys));
+	tn->src = *src;
+	f = mkbin(Ofield, mkname(src, enter(".self", 0)), tn);
+	f->src = *src;
+	fields = mkseq(fields, f);
+	f = mkbin(Ofield, mkname(src, enter(".tag", 0)), mkname(src, enter("string", 0)));
+	f->src = *src;
+	fields = mkseq(fields, f);
+	tn = mkn(Otref, nil, ifacename(src, buf, polys));
+	tn->src = *src;
+	q = mkn(Ocast, mkname(src, enter(".x", 0)), tn);
+	q->src = *src;
+	q->val = 1;
+	p = mkn(Oelem, mkname(src, enter(".self", 0)), q);
+	p->src = *src;
+	elems = mkseq(elems, p);
+	q = mkn(Ocall, mkname(src, enter(".typeid", 0)), mkname(src, enter(".x", 0)));
+	q->src = *src;
+	p = mkn(Oelem, mkname(src, enter(".tag", 0)), q);
+	p->src = *src;
+	elems = mkseq(elems, p);
 	st = mkn(Otstruct, rotater(fields), nil);
 	st->flags |= NIFACE;
 	st->src = *src;
 	td = mkn(Otypedecl, mkname(src, enter(buf, 0)), st);
+	td->aux = polys;	/* a generic interface: the struct, its reference and the converter take its parameters */
 	td->src = *src;
 	decls = mkseq(decls, td);
-	td = mkn(Otypedecl, name, mkn(Otref, nil, mkname(src, enter(buf, 0))));
+	td = mkn(Otypedecl, name, mkn(Otref, nil, ifacename(src, buf, polys)));
+	td->aux = deepdup(polys);
 	td->right->src = *src;
 	td->src = *src;
 	decls = mkseq(decls, td);
 
 	seprint(buf, buf+sizeof(buf), ".%s$from", name->sym->name);
 	tn = mkname(src, enter(".T", 0));
-	sig2 = mkn(Otfunc, mkbin(Ofield, mkname(src, enter(".x", 0)), tn), mkname(src, name->sym));
+	sig2 = mkn(Otfunc, mkbin(Ofield, mkname(src, enter(".x", 0)), tn), ifacename(src, name->sym->name, polys));
 	sig2->left->src = *src;
 	sig2->right->src = *src;
-	sig2->aux = mkname(src, enter(".T", 0));
+	sig2->aux = mkseq(mkname(src, enter(".T", 0)), deepdup(polys));
 	sig2->src = *src;
 	seprint(buf, buf+sizeof(buf), ".%s$s", name->sym->name);
-	comp = mkn(Ocomposite, mkname(src, enter(buf, 0)), rotater(elems));
+	comp = mkn(Ocomposite, ifacename(src, buf, polys), rotater(elems));
 	seprint(buf, buf+sizeof(buf), ".%s$from", name->sym->name);
 	comp->src = *src;
 	stmt = mkn(Oret, mkunary(Oref, comp), nil);
@@ -1268,10 +1421,14 @@ psimple(void)
 	case Edeclas:
 		lexskip();
 		rhs = pexprlist();
+		if(rhs->op == Oassert && lhs->op == Oseq)
+			rhs->val = 1;	/* v, ok := x.(T) */
 		return mkbin(Odas, lhs, rhs);
 	case '=':
 		lexskip();
 		rhs = pexprlist();
+		if(rhs->op == Oassert && lhs->op == Oseq)
+			rhs->val = 1;
 		return mkbin(Oas, lhs, rhs);
 	case Eaddeq:	op = Oaddas; goto opas;
 	case Esubeq:	op = Osubas; goto opas;
@@ -1398,9 +1555,16 @@ pfor(void)
 				else
 					error(e->src.start, "for condition must be an expression");
 			}
-			pexpect(';', "for clause");
-			if(cur() != '{')
-				post = psimple();
+			if(cur() == '{' && init != nil && init->op == Odas && init->left->op == Oname && init->right->op != Oseq){
+				/* for s := f(); s != nil {: the post statement repeats the initializer */
+				post = mkbin(Oas, mkname(&init->left->src, init->left->sym), deepdup(init->right));
+				post->src = init->src;
+				post->val = 1;	/* implied, for the formatter */
+			}else{
+				pexpect(';', "for clause");
+				if(cur() != '{')
+					post = psimple();
+			}
 		}else{
 			if(e->op == Oexpr)
 				cond = e->left;
@@ -1433,10 +1597,13 @@ ppattern(void)
 	switch(t->t){
 	case Econst: {
 		Long v;
+		int form;
 
 		v = t->ival;
+		form = t->form;
 		lexskip();
 		n = mkconst(&src, v);
+		n->temps = form;	/* the written form, for -F */
 		if(paccept(Edots))
 			return prange(n);
 		return n;
@@ -1530,13 +1697,14 @@ palt(void)
 	n = mkn(Oalt, nil, rotater(cases));
 	n->src.start = src.start;
 	n->src.stop = pexpect('}', "alt statement").stop;
+	n->val = n->src.stop.line;
 	return n;
 }
 
 static Node*
 pmatch(void)
 {
-	Node *subj, *cases, *pats, *stmts, *c, *n, *init, *guard;
+	Node *subj, *cases, *pats, *stmts, *c, *n, *init, *guard, *binder;
 	Src src, csrc;
 	int oblit;
 
@@ -1550,7 +1718,11 @@ pmatch(void)
 		init = n;
 		n = psimple();
 	}
-	if(n->op == Oexpr)
+	binder = nil;
+	if(n->op == Odas && n->right->op == Oassert && n->right->val == 2 && n->left->op == Oname){
+		binder = n->left;	/* match v := x.(type) */
+		subj = n->right;
+	}else if(n->op == Oexpr)
 		subj = n->left;
 	else{
 		error(n->src.start, "match subject must be an expression");
@@ -1558,6 +1730,8 @@ pmatch(void)
 	}
 	noblit = oblit;
 	pexpect('{', "match statement");
+	if(subj->op == Oassert && subj->val == 2)
+		return ptypeswitch(subj, binder, init, &src);
 	cases = nil;
 	while(cur() != '}' && cur() != Beof){
 		if(paccept(';'))
@@ -1591,6 +1765,7 @@ pmatch(void)
 	n = mkn(Omatch, subj, rotater(cases));
 	n->src.start = src.start;
 	n->src.stop = pexpect('}', "match statement").stop;
+	n->val = n->src.stop.line;
 	if(init != nil){
 		if(rawparse){
 			n->aux = init;
@@ -1599,6 +1774,132 @@ pmatch(void)
 		n = mkn(Oscope, mkseq(init, n), nil);
 		n->src.start = src.start;
 	}
+	return n;
+}
+
+/*
+ * "match v := x.(type) { case ref Rect: ... case ref A, ref B: ... default: ... }":
+ * a type switch, its cases types.  raw (-F): an Omatch whose subject
+ * is the Oassert (val 2, right the binder).  otherwise a chain of
+ * ifs on type assertions of a hidden temp:
+ *
+ *	.tsN := x
+ *	if v := .tsN.(ref Rect); v != nil { ... }
+ *	else if .tsN.(ref A) != nil || .tsN.(ref B) != nil { v := .tsN; ... }
+ *	else { ... }
+ *
+ * so in an arm of one type v has that type, in an arm of several
+ * the interface's, as in go.  "break" inside is the enclosing loop's.
+ */
+static Node*
+ptypeswitch(Node *subj, Node *binder, Node *init, Src *src)
+{
+	Node *cases, *pats, *stmts, *c, *n, *p, *q, *t, *x, *body, *cond, *ini, *e, *ifn, *node, *chain, *last, *dflt;
+	Src csrc, stop;
+	Sym *ts;
+	int npats;
+	char buf[32];
+	static int ntsw;
+
+	cases = nil;
+	while(cur() != '}' && cur() != Beof){
+		if(paccept(';'))
+			continue;
+		csrc = tk()->src;
+		pats = nil;
+		if(paccept(Kdefault))
+			;
+		else{
+			pexpect(Kcase, "type switch case");
+			pats = ptype();
+			while(paccept(','))
+				pats = mkseq(pats, ptype());
+			pats = rotater(pats);
+		}
+		pexpect(':', "type switch case");
+		stmts = nil;
+		while(cur() != Kcase && cur() != Kdefault && cur() != '}' && cur() != Beof){
+			if(paccept(';'))
+				continue;
+			stmts = mkseq(stmts, pstmt());
+		}
+		c = mkn(Ocase, pats, rotater(stmts));
+		c->src.start = csrc.start;
+		cases = mkseq(cases, c);
+	}
+	cases = rotater(cases);
+	stop = pexpect('}', "type switch");
+	if(rawparse){
+		subj->right = binder;
+		n = mkn(Omatch, subj, cases);
+		n->aux = init;
+		n->src.start = src->start;
+		n->src.stop = stop.stop;
+		n->val = stop.stop.line;
+		return n;
+	}
+	seprint(buf, buf+sizeof(buf), ".ts%d", ntsw++);
+	ts = enter(buf, 0);
+	x = subj->left;
+	chain = nil;
+	last = nil;
+	dflt = nil;
+	for(p = cases; p != nil; p = p->right){
+		c = p->op == Oseq ? p->left : p;
+		body = mkn(Oscope, c->right, nil);
+		body->src = c->src;
+		if(c->left == nil)
+			dflt = body;
+		else{
+			npats = 0;
+			for(q = c->left; q != nil; q = q->right){
+				npats++;
+				if(q->op != Oseq)
+					break;
+			}
+			ini = nil;
+			cond = nil;
+			if(binder != nil && npats == 1){
+				ini = mkbin(Odas, mkname(src, binder->sym), mkbin(Oassert, mkname(src, ts), c->left));
+				cond = mkbin(Oneq, mkname(src, binder->sym), mkname(src, enter("nil", 0)));
+			}else{
+				if(binder != nil)
+					ini = mkbin(Odas, mkname(src, binder->sym), mkname(src, ts));
+				for(q = c->left; q != nil; q = q->right){
+					t = q->op == Oseq ? q->left : q;
+					e = mkbin(Oneq, mkbin(Oassert, mkname(src, ts), t), mkname(src, enter("nil", 0)));
+					cond = cond == nil ? e : mkbin(Ooror, cond, e);
+					if(q->op != Oseq)
+						break;
+				}
+			}
+			ifn = mkn(Oif, cond, body);
+			ifn->src = c->src;
+			node = ifn;
+			if(ini != nil){
+				node = mkn(Oscope, mkseq(ini, ifn), nil);
+				node->src = c->src;
+			}
+			if(last == nil)
+				chain = node;
+			else
+				last->aux = node;
+			last = ifn;
+		}
+		if(p->op != Oseq)
+			break;
+	}
+	if(chain == nil)
+		chain = dflt;
+	else if(dflt != nil)
+		last->aux = dflt;
+	stmts = mkbin(Odas, mkname(src, ts), x);
+	stmts = mkseq(stmts, chain);
+	if(init != nil)
+		stmts = mkseq(init, stmts);
+	n = mkn(Oscope, rotater(stmts), nil);
+	n->src.start = src->start;
+	n->src.stop = stop.stop;
 	return n;
 }
 
@@ -1621,6 +1922,7 @@ prange(Node *lo)
 		return lo;
 	}
 	hi = mkconst(&t->src, neg ? -t->ival : t->ival);
+	hi->temps = t->form;
 	lexskip();
 	n = mkbin(Orange, lo, hi);
 	n->src.start = lo->src.start;
@@ -1806,6 +2108,7 @@ pblock(void)
 	b = mkn(Oscope, rotater(n), nil);
 	b->src.start = src.start;
 	b->src.stop = pexpect('}', "block").stop;
+	b->val = b->src.stop.line;	/* the closing brace's line, for the formatter (the self-hosted tree has no stop) */
 	return b;
 }
 
@@ -1881,8 +2184,9 @@ pimport(void)
 Node*
 parse(char *in)
 {
-	Node *prog, *name, *n;
+	Node *prog, *name, *n, *before, *p;
 	Src src;
+	int exported;
 
 	if(lexstart(in) < 0){
 		fprint(2, "ember: can't open %s: %r\n", in);
@@ -1890,6 +2194,7 @@ parse(char *in)
 		return nil;
 	}
 
+	ifacedefs = nil;
 	src = pexpect(Kmodule, "module clause");
 	name = pname("module clause");
 	pexpect(';', "module clause");
@@ -1897,10 +2202,23 @@ parse(char *in)
 	prog->src = src;
 
 	n = nil;
+	exported = 0;
 	while(cur() != Beof){
+		before = n;
 		switch(cur()){
 		case ';':
 			lexskip();
+			continue;
+		case Eid:
+			/* "export" before a declaration marks it: -i derives only marked names.
+			 * a contextual word, not a keyword: sys.export is a function */
+			if(strcmp(tk()->sym->name, "export") == 0 && (nxt() == Kfunc || nxt() == Ktype || nxt() == Kvar || nxt() == Kconst)){
+				lexskip();
+				exported = 1;
+				continue;
+			}
+			synerr("expected a declaration");
+			psync();
 			continue;
 		case Kimport:
 			n = mkseq(n, pimport());
@@ -1921,6 +2239,18 @@ parse(char *in)
 			synerr("expected a declaration");
 			psync();
 			continue;
+		}
+		if(exported){
+			for(p = n; p != before; ){
+				if(p->op == Oseq){
+					p->right->val |= 2;
+					p = p->left;
+				}else{
+					p->val |= 2;
+					break;
+				}
+			}
+			exported = 0;
 		}
 		if(cur() != Beof && cur() != '}')
 			pexpect(';', "declaration");

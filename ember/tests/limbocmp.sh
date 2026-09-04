@@ -16,7 +16,7 @@ fi
 mkdir -p "$ROOT/tmp/limbocmp/e" "$ROOT/tmp/limbocmp/l"
 # the Limbo libraries the programs load; dis/ is not in git, so
 # build any that are missing (appl/lib's mkfile wants limbo on PATH)
-for lib in lib/arg lib/bufio lib/keyring lib/regex lib/string echo; do
+for lib in lib/arg lib/bufio lib/regex lib/string echo; do	# keyring is built into emu
 	if [ ! -f "$ROOT/dis/$lib.dis" ]; then
 		case "$lib" in lib/*) d=appl/lib;; *) d=appl/cmd;; esac
 		(cd "$ROOT/$d" && PATH="$(dirname "$LIMBO"):$PATH" mk "$ROOT/dis/$lib.dis" >/dev/null 2>&1) ||
@@ -28,6 +28,11 @@ fail=0
 for src in limbo/*.e; do
 	name=$(basename "$src" .e)
 	orig="$ROOT/appl/cmd/$name.b"
+	# a second translation of the same program (an idiomatic rewrite)
+	# names its original in NAME.orig
+	if [ -f "limbo/$name.orig" ]; then
+		orig="$ROOT/appl/cmd/$(cat "limbo/$name.orig").b"
+	fi
 	cases="limbo/$name.cases"
 	if [ ! -f "$orig" ] || [ ! -f "$cases" ]; then
 		echo "limbocmp.sh: $name: no original or no cases" >&2

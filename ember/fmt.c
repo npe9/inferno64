@@ -13,6 +13,7 @@
 
 static Biobuf *fb;
 static int indent;
+static	int	exporting;	/* stmt() prefixes "export " to the declaration decl() handed it */
 static int nextcom;		/* comments[nextcom] is the first not yet printed */
 static int lastline;		/* source line of the last statement printed */
 
@@ -223,7 +224,8 @@ type(Node *n)
 				comsbefore(t->src.start.line);
 				tabs();
 				Bprint(fb, "%s", t->left->sym->name);
-				signature(t->right);
+				if(t->right != nil)	/* an embedded interface is its name alone */
+					signature(t->right);
 				comsafter(t->src.start.line);
 				Bprint(fb, "\n");
 				lastline = t->src.start.line;
@@ -451,6 +453,16 @@ expr(Node *n, int prec)
 		expr(n->left, 8);
 		Bprint(fb, n->val == 1 ? "?.%s" : ".%s", n->right->sym->name);
 		break;
+	case Oassert:
+		expr(n->left, 8);
+		if(n->val == 2){
+			Bprint(fb, ".(type)");	/* a type switch's subject */
+			break;
+		}
+		Bprint(fb, ".(");
+		type(n->right);
+		Bprint(fb, ")");
+		break;
 	case Ocall:
 		expr(n->left, 8);
 		Bprint(fb, "(");
@@ -491,10 +503,11 @@ expr(Node *n, int prec)
 		break;
 	case Oarray:
 		Bprint(fb, "[");
-		expr(n->left, 0);
+		if(n->val != 1)	/* "[]T{...}" counted its own elements */
+			expr(n->left, 0);
 		Bprint(fb, "]");
 		type(n->right);
-		if(n->aux != nil){
+		if(n->aux != nil || n->val == 1){
 			Bprint(fb, "{");
 			elems(n->aux);
 			Bprint(fb, "}");
@@ -671,7 +684,7 @@ block(Node *n)
 }
 
 static void
-cases(Node *n, int isalt)
+cases(Node *n, int isalt, int istype)
 {
 	Node *c, *p, *q;
 
@@ -688,7 +701,9 @@ cases(Node *n, int isalt)
 			else{
 				for(p = c->left; p != nil; p = p->right){
 					q = p->op == Oseq ? p->left : p;
-					if(q->op == Opat){
+					if(istype)
+						type(q);	/* a type switch's case */
+					else if(q->op == Opat){
 						type(q->left);
 						if(q->right != nil){
 							Bprint(fb, "(");
@@ -747,6 +762,8 @@ ifstmt(Node *n)
 static void
 stmt(Node *n)
 {
+	int end, istype;
+
 	if(n == nil)
 		return;
 	if(n->op == Oseq){
@@ -756,6 +773,8 @@ stmt(Node *n)
 	comsbefore(n->src.start.line);
 	gap(n);
 	tabs();
+	if(exporting)
+		Bprint(fb, "export ");
 	switch(n->op){
 	case Oscope:
 		block(n->left);
@@ -776,10 +795,14 @@ stmt(Node *n)
 			Bprint(fb, "; ");
 			if(n->left != nil)
 				expr(n->left, 0);
-			Bprint(fb, ";");
-			if(n->aux->right != nil){
-				Bprint(fb, " ");
-				simple(n->aux->right);
+			if(n->aux->right != nil && n->aux->right->val == 1)
+				;	/* implied post: for init; cond { */
+			else{
+				Bprint(fb, ";");
+				if(n->aux->right != nil){
+					Bprint(fb, " ");
+					simple(n->aux->right);
+				}
 			}
 		}else if(n->left != nil){
 			Bprint(fb, " ");
@@ -794,17 +817,20 @@ stmt(Node *n)
 			simple(n->aux);
 			Bprint(fb, "; ");
 		}
+		istype = n->left->op == Oassert && n->left->val == 2;
+		if(istype && n->left->right != nil)
+			Bprint(fb, "%s := ", n->left->right->sym->name);	/* the type switch's binder */
 		expr(n->left, 0);
 		Bprint(fb, " {\n");
 		lastline = n->src.start.line;
-		cases(n->right, 0);
+		cases(n->right, 0, istype);
 		tabs();
 		Bprint(fb, "}");
 		break;
 	case Oalt:
 		Bprint(fb, "alt {\n");
 		lastline = n->src.start.line;
-		cases(n->right, 1);
+		cases(n->right, 1, 0);
 		tabs();
 		Bprint(fb, "}");
 		break;
@@ -880,9 +906,13 @@ stmt(Node *n)
 		simple(n);
 		break;
 	}
-	comsafter(lastlineof(n));
+	/* a statement with blocks ends where its last block did */
+	end = lastlineof(n);
+	if(lastline > end)
+		end = lastline;
+	comsafter(end);
 	Bprint(fb, "\n");
-	lastline = lastlineof(n);
+	lastline = end;
 }
 
 /* a run of const-block items (parse.c's pcondecl marks them with aux) */
@@ -891,9 +921,11 @@ constblock(Node *p)
 {
 	Node *d;
 
+	d = p->op == Oseq ? p->left : p;
+	if(d->val & 2)
+		Bprint(fb, "export ");
 	Bprint(fb, "const (\n");
 	indent++;
-	d = p->op == Oseq ? p->left : p;
 	lastline = d->aux->src.start.line;	/* the "const (" line */
 	for(; p != nil; p = p->right){
 		d = p->op == Oseq ? p->left : p;
@@ -903,7 +935,7 @@ constblock(Node *p)
 		gap(d);
 		tabs();
 		Bprint(fb, "%s", d->left->sym->name);
-		if(d->val != 1){
+		if(!(d->val & 1)){
 			Bprint(fb, " = ");
 			expr(d->right, 0);
 		}
@@ -934,8 +966,20 @@ constblock(Node *p)
 static void
 decl(Node *n)
 {
+	int end;
+
+	if(n->op != Oimport && n->op != Ofndecl){
+		/* type, var and const declarations print as statements, which space themselves */
+		exporting = n->val & 2;
+		indent = 0;
+		stmt(n);
+		exporting = 0;
+		return;
+	}
 	comsbefore(n->src.start.line);
 	gap(n);
+	if(n->val & 2)
+		Bprint(fb, "export ");
 	switch(n->op){
 	case Oimport:
 		if(n->left != nil)
@@ -965,13 +1009,12 @@ decl(Node *n)
 		}
 		Bprint(fb, "\n");
 		break;
-	default:
-		indent = 0;
-		stmt(n);
-		return;
 	}
-	comsafter(lastlineof(n));
-	lastline = lastlineof(n);
+	end = lastlineof(n);
+	if(lastline > end)
+		end = lastline;
+	comsafter(end);
+	lastline = end;
 }
 
 void

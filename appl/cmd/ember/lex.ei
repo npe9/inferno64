@@ -80,6 +80,23 @@ type Tok struct {
 	ival big
 	rval real
 	text string
+	form int	// Econst: how it was written (Fchar, Fhex, ...), for the formatter
+}
+
+// Tok.form
+const Fdec = 0
+const Fchar = 1
+const Fhex = 2
+const Foct = 3
+const Fbin = 4
+const Foct0 = 5
+
+// comments the lexer saw, for the formatter (setkeep)
+type Comment struct {
+	text string
+	line int
+	pos int
+	block int
 }
 
 type Lexer struct {
@@ -96,3 +113,6 @@ type Lexer struct {
 func open(file string) ref Lexer
 func (lx ref Lexer) next() ref Tok
 func tokname(t int) string
+func setkeep(k int)
+func commentlist() []ref Comment
+func ncomment() int

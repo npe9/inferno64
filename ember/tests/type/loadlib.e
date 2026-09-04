@@ -55,4 +55,13 @@ func init() {
 	poison := 66666
 	poison = 0
 	sys.print("poison=%d\n", poison)
+
+	// an interface from the library: a value made there asserted
+	// here, one made here asserted there
+	s := lib.mkbox(7)
+	bx := s.(ref libpoint.Box)
+	sys.print("box=%d size=%d\n", bx != nil, s.size())
+	var t libpoint.Sized
+	t = ref libpoint.Box{n: 9}
+	sys.print("boxsize=%d %d\n", lib.boxsize(t), lib.boxsize(s))
 }

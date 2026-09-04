@@ -1847,8 +1847,8 @@ ecom(Src *src, Node *nto, Node *n)
 		if(left->addable >= Rcant)
 			left = eacom(left, &tl, nto);
 		ft = left->ty;
-		if(tequal(ft, n->ty))
-			genmove(src, Mas, n->ty, left, nto);
+		if(tequal(ft, n->ty) || (ft->kind == Tref && n->ty->kind == Tref))
+			genmove(src, Mas, n->ty, left, nto);	/* the same type, or a reference reinterpreted (x.(T)) */
 		else{
 			tmid.decl = nil;
 			mid = left;

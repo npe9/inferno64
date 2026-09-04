@@ -132,7 +132,9 @@ const Odefer = 104
 const Omaplit = 105
 const Otypeval = 106
 const Ocond = 107
-const Oend = 108
+const Oassert = 108
+const Oqchain = 109
+const Oend = 110
 
 const Tnone = 0
 const Tadt = 1
@@ -209,6 +211,7 @@ type Node struct {
 	decl ref Decl
 	addable int
 	temps int
+	stop int	// a statement's last line (the parser records it for the formatter)
 }
 
 type Type struct {

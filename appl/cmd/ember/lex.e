@@ -92,6 +92,23 @@ type Tok struct {
 	ival big
 	rval real
 	text string
+	form int	// Econst: how it was written (Fchar, Fhex, ...), for the formatter
+}
+
+// Tok.form
+const Fdec = 0
+const Fchar = 1
+const Fhex = 2
+const Foct = 3
+const Fbin = 4
+const Foct0 = 5
+
+// comments the lexer saw, for the formatter (setkeep)
+type Comment struct {
+	text string
+	line int
+	pos int
+	block int
 }
 
 type Lexer struct {
@@ -321,22 +338,27 @@ func (lx ref Lexer) lexnum(tok ref Tok, c int) int {
 	buf := ""
 	base := 10
 	isreal := 0
+	tok.form = Fdec
 	if c == '0' {
 		c = lx.getc()
 		if c == 'x' || c == 'X' {
 			base = 16
+			tok.form = Fhex
 			c = lx.getc()
 		} else if c == 'o' || c == 'O' {
 			base = 8
+			tok.form = Foct
 			c = lx.getc()
 		} else if c == 'b' || c == 'B' {
 			base = 2
+			tok.form = Fbin
 			c = lx.getc()
 		} else {
 			lx.ungetc()
 			// 0666: octal, as in go and limbo's own 8r666
 			if lx.at < len(lx.src) && lx.src[lx.at] >= '0' && lx.src[lx.at] <= '9' {
 				base = 8
+				tok.form = Foct0
 			}
 			c = '0'
 		}
@@ -500,20 +522,59 @@ func endsstmt(t int) int {
 
 // 0: a block comment consumed; '\n': a line comment to end of line;
 // Beof; or -2 for a plain /
+var keepcomments = 0
+var comments []ref Comment
+var ncomments = 0
+
+func setkeep(k int) {
+	keepcomments = k
+}
+
+func commentlist() []ref Comment {
+	return comments
+}
+
+func ncomment() int {
+	return ncomments
+}
+
+func addcomment(text string, line int, pos int, block int) {
+	if comments == nil || ncomments >= len(comments) {
+		nc := [ncomments + 64]ref Comment
+		for i := 0; i < ncomments; i++ {
+			nc[i] = comments[i]
+		}
+		comments = nc
+	}
+	comments[ncomments] = ref Comment{text: text, line: line, pos: pos, block: block}
+	ncomments++
+}
+
 func (lx ref Lexer) lexcom() int {
+	line := lx.line
+	pos := lx.pos - 1
 	c := lx.getc()
 	if c == '/' {
+		text := ""
 		for {
 			c = lx.getc()
-			if c == '\n' {
-				return '\n'
+			if c == '\n' || c == Beof {
+				break
 			}
-			if c == Beof {
-				return Beof
+			if keepcomments != 0 {
+				text[len(text)] = c
 			}
 		}
+		if keepcomments != 0 {
+			addcomment(text, line, pos, 0)
+		}
+		if c == Beof {
+			return Beof
+		}
+		return '\n'
 	}
 	if c == '*' {
+		text := ""
 		for {
 			c = lx.getc()
 			if c == Beof {
@@ -527,11 +588,19 @@ func (lx ref Lexer) lexcom() int {
 			if c == '*' {
 				c = lx.getc()
 				if c == '/' {
-					return 0
+					break
 				}
 				lx.ungetc()
+				c = '*'
+			}
+			if keepcomments != 0 {
+				text[len(text)] = c
 			}
 		}
+		if keepcomments != 0 {
+			addcomment(text, line, pos, 1)
+		}
+		return 0
 	}
 	lx.ungetc()
 	return -2
@@ -582,6 +651,7 @@ func (lx ref Lexer) lex(tok ref Tok) int {
 				lx.error("missing closing '")
 				lx.ungetc()
 			}
+			tok.form = Fchar
 			return Econst
 		case '(', ')', '[', ']', '{', '}', ',', ';', '~':
 			return c
@@ -767,7 +837,7 @@ func (lx ref Lexer) lex(tok ref Tok) int {
 }
 
 func (lx ref Lexer) next() ref Tok {
-	tok := ref Tok{t: 0, line: 0, pos: 0, sym: nil, ival: big(0), rval: 0.0, text: nil}
+	tok := ref Tok{t: 0, line: 0, pos: 0, sym: nil, ival: big(0), rval: 0.0, text: nil, form: 0}
 	tok.t = lx.lex(tok)
 	lx.lasttok = tok.t
 	return tok

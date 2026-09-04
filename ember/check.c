@@ -49,6 +49,9 @@ static	void	boxvar(Decl*, Decl*);
 static	int	lowerguards(Node*);
 static	int	isifacetype(Type*);
 static	int	implements(Type*, Type*, Node*);
+static	Node	*typeval(Src*, Type*);
+static	void	subst(Node*, Sym*, Node*);
+static	Node	*zeroval(Src*, Type*);
 static	void	ifaceconv(Node*, Type*);
 static	void	condchk(Node*);
 static	void	packvarargs(Node*, Decl*);
@@ -1373,6 +1376,21 @@ boxwalk(Node **np)
 			n->right = mkseq(inits, n->right);
 		}
 		return;
+	case Ofor:
+		/*
+		 * a captured loop variable of a three-part for gets a fresh
+		 * box each iteration, holding its value at the end of the
+		 * body, before the post statement: closures made in one
+		 * iteration keep that iteration's value (go 1.22)
+		 */
+		if(n->aux != nil && n->aux->op == Oforctl && n->aux->left != nil && n->aux->left->op == Odas){
+			inits = boxinits(n->aux->left->left);
+			if(inits != nil){
+				n->aux->right = mkseq(inits, n->aux->right);
+				stchk(inits);
+			}
+		}
+		break;
 	}
 	boxwalk(&n->left);
 	boxwalk(&n->right);
@@ -2279,7 +2297,7 @@ assignable(Type *t, Type *s, Node *v)
 	 * the interface's .Name$from converter (ifaceconv())
 	 */
 	if(v != nil && isifacetype(t) && !tequal(t, s)
-	&& s->kind == Tref && s->tof != nil && (s->tof->kind == Tadt || s->tof->kind == Tadtpick) && !s->tof->isiface){
+	&& s->kind == Tref && s->tof != nil && (s->tof->kind == Tadt || s->tof->kind == Tadtpick)){
 		if(!implements(s, t, v))
 			return 0;
 		ifaceconv(v, t);
@@ -3642,6 +3660,26 @@ echk1(Node *n)
 		}
 		if(n->left->op == Oname && strcmp(n->left->sym->name, "expect") == 0 && lookup(n->left->sym) == nil)
 			n->left = builtinref(&n->src, "expect");	/* a test's assertion, builtin.ei's */
+		if(n->left->op == Oname && strcmp(n->left->sym->name, ".typeid") == 0){
+			/* the interface converter's .tag: the argument's type as a string, what x.(T) compares */
+			Type *at;
+
+			at = echk(n->right);
+			if(at == terror){
+				n->ty = terror;
+				return n->ty;
+			}
+			if(isifacetype(at)){
+				/* an interface narrowed to another keeps the tag of what it holds */
+				n->op = Odot;
+				n->left = n->right;
+				n->right = mkname(&n->src, enter(".tag", 0));
+				n->sym = n->right->sym;
+				return echk(n);
+			}
+			*n = *mksconst(&n->src, enter(smprint("%T", at), 0));
+			return echk(n);
+		}
 		if(n->left->op == Oname && strcmp(n->left->sym->name, "exit") == 0){
 			/* "exit()": limbo's exit statement, Dis IEXIT; terminates */
 			if(n->right != nil){
@@ -4335,6 +4373,175 @@ echk1(Node *n)
 		}
 		return n->ty;
 	}
+	case Oassert: {
+		/*
+		 * x.(T): T's value when the interface holds one, else nil;
+		 * "v, ok := x.(T)" (val 1) gives the pair (value, bool).
+		 * the converter stored the receiver in .self and its type's
+		 * name in .tag (parse.c's pinterface), so this is
+		 *	x != nil && x..tag == "T" ? T(x..self) : nil
+		 * with an unchecked reference cast.  x is evaluated at
+		 * each mention, like ?.'s operand.
+		 */
+		Type *tx;
+		Node *x, *cond, *yes, *no, *d;
+
+		tx = echk(n->left);
+		t = stype(n->right);
+		n->right = nil;
+		if(tx == terror || t == terror){
+			n->ty = terror;
+			return n->ty;
+		}
+		if(!isifacetype(tx)){
+			nerror(n, "type assertion needs an interface value, not %T", tx);
+			n->ty = terror;
+			return n->ty;
+		}
+		if(isifacetype(t)){
+			nerror(n, "type assertion needs a concrete type, not an interface");
+			n->ty = terror;
+			return n->ty;
+		}
+		if(t->kind != Tref){
+			nerror(n, "type assertion needs a reference type, not %T", t);
+			n->ty = terror;
+			return n->ty;
+		}
+		sizetype(t);
+		if(n->left->op != Oname){
+			/*
+			 * not a plain name: evaluated once, as the parameter of
+			 * a closure asserting on it:  (func(.as S) T { return .as.(T) })(x)
+			 */
+			Node *param, *ret, *sig, *inner, *stmt, *fl, *call;
+			Sym *an;
+			char buf[32];
+			static int nasrt;
+
+			seprint(buf, buf+sizeof(buf), ".as%d", nasrt++);
+			an = enter(buf, 0);
+			param = mkbin(Ofield, mkname(&n->src, an), typeval(&n->src, tx));
+			ret = typeval(&n->src, t);
+			if(n->val == 1)
+				ret = mkn(Ottuple, mkseq(ret, mkname(&n->src, enter("bool", 0))), nil);
+			sig = mkn(Otfunc, param, ret);
+			sig->src = n->src;
+			inner = mkbin(Oassert, mkname(&n->src, an), typeval(&n->src, t));
+			inner->val = n->val;
+			stmt = mkn(Oret, inner, nil);
+			stmt->src = n->src;
+			fl = mkn(Ofunclit, nil, sig);
+			fl->aux = mkn(Oscope, stmt, nil);
+			fl->aux->src = n->src;
+			fl->src = n->src;
+			call = mkn(Ocall, fl, n->left);
+			call->src = n->src;
+			*n = *call;
+			return echk(n);
+		}
+		x = n->left;
+		x->flags |= NCHECKED;
+		d = mkbin(Odot, deepdup(x), mkname(&n->src, enter(".tag", 0)));
+		d->sym = d->right->sym;
+		cond = mkbin(Oandand, mkbin(Oneq, deepdup(x), mkname(&n->src, enter("nil", 0))),
+			mkbin(Oeq, d, mksconst(&n->src, enter(smprint("%T", t), 0))));
+		d = mkbin(Odot, x, mkname(&n->src, enter(".self", 0)));
+		d->sym = d->right->sym;
+		echk(d);
+		yes = mkn(Ocast, d, nil);
+		yes->src = n->src;
+		yes->val = 1;
+		yes->ty = t;
+		yes->flags |= NCHECKED;
+		no = mkname(&n->src, enter("nil", 0));
+		if(n->val == 1){
+			yes = mkn(Otuple, mkseq(yes, mkname(&n->src, enter("true", 0))), nil);
+			yes->src = n->src;
+			no = mkn(Otuple, mkseq(no, mkname(&n->src, enter("false", 0))), nil);
+			no->src = n->src;
+		}
+		n->op = Ocond;
+		n->left = cond;
+		n->right = yes;
+		n->aux = no;
+		n->val = 0;
+		return echk(n);
+	}
+	case Oqchain: {
+		/*
+		 * a?.f...: nil when a is, else the chain (right) over the
+		 * hidden name (aux) that stands for a.  a plain name is
+		 * simply mentioned twice; anything else is evaluated once,
+		 * as the parameter of a closure:
+		 *	(func(.q S) T { return .q != nil ? chain : nil })(a)
+		 * or, for a chain with no value, if .q != nil { chain }.
+		 */
+		Type *ts, *tc;
+		Node *chain, *cond, *fl, *sig, *param, *ret, *stmt, *call, *e;
+		Decl *qd;
+		Sym *qs;
+
+		ts = echk(n->left);
+		if(ts == terror){
+			n->ty = terror;
+			return n->ty;
+		}
+		qs = n->aux->sym;
+		chain = deepdup(n->right);	/* pristine, for the closure's body */
+		pushscope();
+		qd = mkdecl(&n->src, Dlocal, ts);
+		qd->sym = qs;
+		install(qd);
+		tc = echk(n->right);	/* the chain's type, the name bound to a's */
+		popscope();
+		if(tc == terror){
+			n->ty = terror;
+			return n->ty;
+		}
+		if(tc->kind == Ttuple){
+			nerror(n, "?. cannot yield a tuple");
+			n->ty = terror;
+			return n->ty;
+		}
+		if(n->left->op == Oname && tc != tnone){
+			/* a plain name: mentioned again in the guard, no closure */
+			subst(n->right, qs, n->left);
+			cond = mkbin(Oneq, dupn(n->left), mkname(&n->src, enter("nil", 0)));
+			cond->src = n->src;
+			chain = n->right;
+			n->op = Ocond;
+			n->left = cond;
+			n->right = chain;
+			n->aux = zeroval(&n->src, tc);
+			n->val = 0;
+			return echk(n);
+		}
+		param = mkbin(Ofield, mkname(&n->src, qs), typeval(&n->src, ts));
+		ret = tc == tnone ? nil : typeval(&n->src, tc);
+		sig = mkn(Otfunc, param, ret);
+		sig->src = n->src;
+		cond = mkbin(Oneq, mkname(&n->src, qs), mkname(&n->src, enter("nil", 0)));
+		cond->src = n->src;
+		if(tc == tnone){
+			stmt = mkn(Oif, cond, mkn(Oscope, mkunary(Oexpr, chain), nil));
+			stmt->right->src = n->src;
+		}else{
+			e = mkn(Ocond, cond, chain);
+			e->aux = zeroval(&n->src, tc);
+			e->src = n->src;
+			stmt = mkn(Oret, e, nil);
+		}
+		stmt->src = n->src;
+		fl = mkn(Ofunclit, nil, sig);
+		fl->aux = mkn(Oscope, stmt, nil);
+		fl->aux->src = n->src;
+		fl->src = n->src;
+		call = mkn(Ocall, fl, n->left);
+		call->src = n->src;
+		*n = *call;
+		return echk(n);
+	}
 	case Omaplit: {
 		/*
 		 * map[K]V{k: v, ...}: .builtin.mput(... .builtin.mput(
@@ -4759,6 +4966,35 @@ echk1(Node *n)
 			return n->ty;
 		}
 		sizetype(t);	/* "[]byte(s)": stype() leaves an array type unsized */
+		if(n->val == 1){
+			/*
+			 * the interface converter's .self (parse.c's pinterface)
+			 * and x.(T): a reference reinterpreted as another, one
+			 * move; nil when the value is not a reference at all
+			 */
+			if(tt->kind != Tref){
+				*n = *mkname(&n->src, enter("nil", 0));
+				return echk(n);
+			}
+			if(isifacetype(tt)){
+				/* an interface narrowed to another: the receiver it holds, not the interface itself */
+				n->left = mkbin(Odot, n->left, mkname(&n->src, enter(".self", 0)));
+				n->left->sym = n->left->right->sym;
+				echk(n->left);
+			}
+			n->ty = t;
+			return n->ty;
+		}
+		if(isifacetype(t) && !tequal(tt, t)){
+			/* "Shape(x)": the conversion an assignment would make (assignable() rewrites the operand) */
+			if(!assignable(t, tt, n->left)){
+				nerror(n, "cannot convert %T to %T", tt, t);
+				n->ty = terror;
+				return n->ty;
+			}
+			*n = *n->left;
+			return n->ty;
+		}
 		if(!castable(tt, t)){
 			nerror(n, "cannot convert %T to %T", tt, t);
 			n->ty = terror;
@@ -5007,10 +5243,41 @@ implements(Type *s, Type *t, Node *v)
 	adt = s->tof;
 	if(adt->kind == Tadtpick)
 		adt = adt->tof;
+	if(adt->isiface){
+		/* another interface: its fields must include t's, with the same types */
+		for(f = t->tof->ids; f != nil; f = f->next){
+			if(f->sym->name[0] == '.')
+				continue;
+			for(m = adt->ids; m != nil; m = m->next)
+				if(m->sym == f->sym)
+					break;
+			if(m == nil){
+				nerror(v, "%T does not implement %T: no method %s", s, t, f->sym->name);
+				return 0;
+			}
+			if(!tequal(f->ty, m->ty)){
+				nerror(v, "%T does not implement %T: method %s has the wrong signature", s, t, f->sym->name);
+				return 0;
+			}
+		}
+		return 1;
+	}
 	for(f = t->tof->ids; f != nil; f = f->next){
+		if(f->sym->name[0] == '.')
+			continue;	/* .self and .tag, the converter's own */
 		for(m = adt->meths; m != nil; m = m->link)
 			if(m->sym == f->sym)
 				break;
+		if(m == nil && adt->gtemplate != nil){
+			Decl *mtd;
+
+			/* a generic struct's method, instantiated on demand as a call would */
+			for(mtd = adt->gtemplate->methtmpl; mtd != nil; mtd = mtd->link)
+				if(mtd->sym == f->sym){
+					m = tinstantiatemeth(mtd, adt);
+					break;
+				}
+		}
 		if(m == nil){
 			nerror(v, "%T does not implement %T: no method %s", s, t, f->sym->name);
 			return 0;
@@ -5038,11 +5305,16 @@ ifaceconv(Node *v, Type *t)
 	Dlist *dl;
 	char buf[StrSize];
 
-	/* the struct is .W$s (parse.c's pinterface): the converter is .W$from */
-	seprint(buf, buf+sizeof(buf), "%s", t->tof->decl->sym->name);
+	Type *tmpl;
+
+	/* the struct is .W$s (parse.c's pinterface): the converter is .W$from; an instance of a generic one names its template */
+	tmpl = t->tof;
+	if(tmpl->gtemplate != nil)
+		tmpl = tmpl->gtemplate;
+	seprint(buf, buf+sizeof(buf), "%s", tmpl->decl->sym->name);
 	buf[strlen(buf) - 2] = 0;
 	strcat(buf, "$from");
-	m = t->tof->decl->dot;
+	m = tmpl->decl->dot;
 	if(m != nil && m != impdecl && m->ty != nil && m->ty->kind == Tmodule){
 		for(dl = imports; dl != nil; dl = dl->next)
 			if(dl->d->importid == m)
@@ -5060,6 +5332,24 @@ ifaceconv(Node *v, Type *t)
 		/* a tag value stands for its pick: the methods are the pick's */
 		a->ty = mktype(&v->src, Tref, a->ty->tof->tof, nil);
 		sizetype(a->ty);
+	}
+	if(t->tof->ginst != nil){
+		/* a generic interface: the converter's parameters are .T then the interface's own, given outright */
+		Node *targs, *tv;
+		int i;
+
+		tv = mkn(Otypeval, nil, nil);
+		tv->ty = a->ty;
+		tv->src = v->src;
+		targs = tv;
+		for(i = 0; i < t->tof->ginst->nargs; i++){
+			tv = mkn(Otypeval, nil, nil);
+			tv->ty = t->tof->ginst->args[i];
+			tv->src = v->src;
+			targs = mkseq(targs, tv);
+		}
+		callee = mkbin(Otinst, callee, rotater(targs));
+		callee->src = v->src;
 	}
 	c = mkn(Ocall, callee, a);
 	c->src = v->src;
@@ -5213,6 +5503,57 @@ declblank(Node *id, Type *t)
  * last first, at every return
  */
 static Decl *deferlist;
+
+/* a type as a node: stype() gives it back (Otypeval) */
+static Node*
+typeval(Src *src, Type *t)
+{
+	Node *n;
+
+	n = mkn(Otypeval, nil, nil);
+	n->ty = t;
+	n->src = *src;
+	return n;
+}
+
+/*
+ * every unchecked mention of s in n becomes a copy of val: the
+ * hidden name of a ?. chain, which "??" may have deepdup'ed, so the
+ * occurrences cannot be found by pointer
+ */
+static void
+subst(Node *n, Sym *s, Node *val)
+{
+	if(n == nil)
+		return;
+	if(n->op == Oname && n->sym == s){
+		*n = *dupn(val);
+		return;
+	}
+	subst(n->left, s, val);
+	subst(n->right, s, val);
+	subst(n->aux, s, val);
+}
+
+/* what a?.f yields when a is nil: nil, or the zero of a type that has none */
+static Node*
+zeroval(Src *src, Type *t)
+{
+	Node *n;
+
+	switch(t->kind){
+	case Tint:
+	case Tbyte:
+	case Tbig:
+		return mkconst(src, 0);
+	case Treal:
+		return mkrconst(src, 0.0);
+	case Tbool:
+		return mkname(src, enter("false", 0));
+	}
+	n = mkname(src, enter("nil", 0));
+	return n;
+}
 
 static Node*
 mkdeclname(Src *src, Decl *d)
@@ -6158,13 +6499,28 @@ rangefor(Node *n)
 	case Tlist:
 		/* .r := e; .r != nil; .r = tl(.r) { v := hd(.r) } */
 		if(second != nil){
-			nerror(n, "range over a list gives one name, the element");
-			return 0;
+			/* for i, x := range l: i counts from 0, as over an array */
+			init = mkseq(mkn(Odas, tmp, e), mkn(Odas, first, mkconst(src, 0)));
+			cond = mkbin(Oneq, dupn(tmp), mkname(src, enter("nil", 0)));
+			post = mkseq(mkn(Oas, dupn(tmp), mkn(Ocall, mkname(src, enter("tl", 0)), dupn(tmp))), mkunary(Oinc, dupn(first)));
+			prefix = mkn(Odas, second, mkn(Ocall, mkname(src, enter("hd", 0)), dupn(tmp)));
+			break;
 		}
 		init = mkn(Odas, tmp, e);
 		cond = mkbin(Oneq, dupn(tmp), mkname(src, enter("nil", 0)));
 		post = mkn(Oas, dupn(tmp), mkn(Ocall, mkname(src, enter("tl", 0)), dupn(tmp)));
 		prefix = mkn(Odas, first, mkn(Ocall, mkname(src, enter("hd", 0)), dupn(tmp)));
+		break;
+	case Tchan:
+		/* .r := e; 1; { v := <-.r } -- until the body breaks; Dis channels do not close */
+		if(second != nil){
+			nerror(n, "range over a channel gives one name, the value received");
+			return 0;
+		}
+		init = mkn(Odas, tmp, e);
+		cond = mkconst(src, 1);
+		post = nil;
+		prefix = mkn(Odas, first, mkunary(Orcv, dupn(tmp)));
 		break;
 	case Tint:
 		/* .r := e; i := 0; i < .r; i++ */
@@ -6206,7 +6562,8 @@ rangefor(Node *n)
 	}
 	init->src = *src;
 	cond->src = *src;
-	post->src = *src;
+	if(post != nil)
+		post->src = *src;
 	n->left = cond;
 	n->aux = mkn(Oforctl, init, post);
 	n->aux->src = *src;
@@ -6953,11 +7310,7 @@ typedec(Node *n)
 		 * distinct argument list.  see the Type.tparams/tbody
 		 * comment in ember.h.
 		 */
-		if(n->right->op != Otstruct && n->right->op != Otpick){
-			nerror(n, "generic type %s: only struct and pick bodies are supported", d->sym->name);
-			d->ty = terror;
-			return;
-		}
+		/* struct and pick bodies become adts; any other body (a generic interface's "ref .W$s[T]") is typed as written at each instantiation */
 		t = mktype(&n->src, Tadt, nil, nil);
 		t->tparams = n->aux;
 		t->tbody = n->right;
@@ -7284,6 +7637,13 @@ check(Node *tree)
 		dl->d = v;
 		dl->next = imports;
 		imports = dl;
+		/* Result[T] by its bare name: bound directly, not install()ed,
+		 * which would cut the module's member list at it */
+		v = modmember(d->ty, enter("Result", 0));
+		if(v != nil){
+			v->old = v->sym->decl;
+			v->sym->decl = v;
+		}
 	}
 
 	pushscope();	/* module scope */

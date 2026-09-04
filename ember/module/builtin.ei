@@ -194,3 +194,10 @@ func expect(ok bool, msg string) {
 		raise "expect: " + msg
 	}
 }
+
+// Result[T]: a value or an error, for functions that can fail; the ?
+// operator propagates the Err of one out of the enclosing function
+type Result[T] pick {
+	Ok(v T)
+	Err(e string)
+}

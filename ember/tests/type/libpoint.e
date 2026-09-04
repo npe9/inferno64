@@ -70,3 +70,29 @@ func roll(r Rand, n int) int {
 	r.init(3)
 	return r.rand(n)
 }
+
+// an interface declared in the interface file: a value made here is
+// asserted on the client side, one made there is asserted here, so
+// the two compilations must agree on the type tag
+type Sized interface {
+	size() int
+}
+
+type Box struct {
+	n int
+}
+
+func (b ref Box) size() int {
+	return b.n
+}
+
+func mkbox(n int) Sized {
+	return ref Box{n: n}
+}
+
+func boxsize(s Sized) int {
+	if b := s.(ref Box); b != nil {
+		return b.n
+	}
+	return -1
+}

@@ -1,0 +1,18 @@
+module Emberfmt
+
+// the source formatter, in Ember: a port of ember/fmt.c.  print()
+// writes the raw parse tree (parse.setfmt() first) formatted, with
+// the lexer's comments interleaved by line.
+
+const PATH = "/dis/ember/emberfmt.dis"
+
+import types "types"
+import bufio "bufio"
+
+import lex "lex"
+
+// the comments come from the caller's parse instance: a module's
+// state lives with the instance that made it.  the output buffer is
+// this module's own (an Iobuf's methods run in the caller's bufio
+// instance, which must have opened something to have loaded Sys)
+func print(fd int, tree ref types.Node, cms []ref lex.Comment, ncms int)

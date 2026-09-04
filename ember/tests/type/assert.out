@@ -1,0 +1,6 @@
+rect 3x4 area 12
+circle r=2 area 12
+ok 1 r 2
+ok 0 nil 1
+none: 1 1
+rect area 11

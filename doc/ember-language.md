@@ -80,7 +80,8 @@ literals such as `'a'` and `'\n'` are ints.
 
 `[]T` is an array. `[n]T` allocates a zero-filled array of `n`
 elements, where `n` may be a runtime value; `[3]int{1, 2, 3}` is a
-literal, `[3]int{}` is zero-filled. Arrays are shared by reference,
+literal, `[3]int{}` is zero-filled, and `[]int{1, 2, 3}` is the same
+literal sized by its elements (`[]int{}` is empty). Arrays are shared by reference,
 indexed with `a[i]`, sliced with `a[lo:hi]`, `a[lo:]` and `a[:hi]`,
 and measured with `len(a)`. `copy(dst, src)` copies the elements of
 one array into another (either may be a slice, and they may overlap);
@@ -109,11 +110,20 @@ so a map costs what that struct costs.
 `len(l)`. `chan T` is a channel; `chan[n] T` allocates a buffered
 channel value, `c <- v` sends, `<-c` receives.
 
-`a?.f` is `a.f` when `a` is not nil and nil otherwise, and guards the
-whole postfix chain after it (`a?.next?.name`, `a?.last()?.name`);
-`a ?? b` is `a` unless it is nil. Both are sugar for a conditional
-expression, so the result must be a type that can be nil (a ref,
-string, array or list), and `a` is evaluated twice.
+`a?.f` is `a.f` when `a` is not nil, and guards the whole postfix
+chain after it (`a?.next?.name`, `a?.last()?.name`); when `a` is nil
+the chain yields nil, or the zero of a type that has no nil (0,
+0.0, false), and a chain that yields nothing (`a?.bump()`) simply
+does not run. `a` is evaluated once: a plain name is mentioned
+twice, anything else becomes the parameter of a hidden closure the
+chain runs inside. `a ?? b` is `a` unless it is nil; it is a
+conditional expression, so `a` there is evaluated twice and its type
+must be one that can be nil.
+
+`Result[T]` is a pick in the builtin library, `Ok(v T)` or `Err(e
+string)`, for a function that can fail: return `ref
+Result[int].Ok{v: n}` or `.Err{e: "why"}`, match on it, or let `?`
+propagate an `Err` out of the enclosing function (`x := parse(s)?`).
 
 `c ? a : b` is the conditional expression, at the lowest precedence
 and right-associative; the arms must have one type (a `nil` arm
@@ -207,13 +217,18 @@ builtins. `s[i]` indexes a string by rune.
 ## Statements
 
 `if cond { } else if cond { } else { }` takes an optional init
-statement: `if x := f(); x > 2 { ... }`. `for` has three forms: `for
+statement: `if x := f(); x > 2 { ... }`. `for s := f(); s != nil {`
+with no post statement repeats the initializer's call each time
+round, Limbo's `while((s := f()) != nil)`. `for` has three forms: `for
 { }`, `for cond { }`, and `for init; cond; post { }`, where init and
 post may be expression-list assignments (`for i, j := 0, 10; i < j;
 i, j = i+1, j-1`). `for i, v := range xs { ... }` walks an array or
 string with the index and the element (one name gives the index
-alone), `for v := range l` a list's elements, and `for i := range n`
-counts from 0 to n-1; the operand is evaluated once. `break` and
+alone), `for v := range l` a list's elements (`for i, v := range l`
+counts them too), `for i := range n`
+counts from 0 to n-1, and `for v := range c` receives from a channel
+until the body breaks (Dis channels do not close); the operand is
+evaluated once. `break` and
 `continue` take an optional label
 naming an enclosing loop or match.
 
@@ -322,8 +337,9 @@ an assignment outside is seen by the closure after it was created.
 declaration; a variable no closure captures stays in the frame.) A
 variable declared inside a loop body is fresh each iteration, so
 closures made in the loop each keep their own; the variable of a
-three-part `for` header is one variable for the whole loop, as in Go
-before 1.22. Calling an element of an array of functions, `fs[i](x)`,
+three-part `for` header is fresh each iteration too (its value is
+copied into a new variable before the post statement runs, as in Go
+1.22), so closures made in different iterations see different values. Calling an element of an array of functions, `fs[i](x)`,
 works as expected.
 
 Generic functions and types take type parameters in brackets: `func
@@ -412,8 +428,64 @@ is its zero value, and a pick's tags convert as the pick. Under the
 covers the interface is a struct of method closures and a hidden
 generic converter the parser writes (`.Shape$from[T]`), so a
 conversion allocates once and a call through the interface is a
-call of a field. There is no type assertion back to the concrete
-type. An interface declared in a `.ei` file works across modules.
+call of a field. An interface declared in a `.ei` file works across
+modules.
+
+`Shape(r)` converts explicitly, through the same converter an
+assignment uses. A type assertion goes back to the concrete type:
+
+    if r := s.(ref Rect); r != nil { ... }
+    c, ok := s.(ref Circle)
+
+`s.(T)` is `T`'s value when the interface holds one and `nil`
+otherwise (also when `s` is `nil`); the two-value form adds a `bool`.
+`T` must be a `ref` to a struct or pick, not another interface. The
+converter keeps the receiver and its type's name in two hidden
+fields, so an assertion is a string comparison and a move. The
+operand is evaluated once, as with `?.`.
+
+A type switch tries several types in order:
+
+    match v := s.(type) {
+    case ref Rect:
+        ... v is a ref Rect ...
+    case ref Circle, ref Tri:
+        ... v is s, the interface ...
+    default:
+        ...
+    }
+
+It is a chain of type assertions on a hidden copy of `s`, so `s` is
+evaluated once; the binder is optional (`match s.(type) {`), and an
+initializer may precede the subject as in any `match`. Unlike a
+value `match`, a `break` inside an arm leaves the enclosing loop.
+
+An interface can embed others declared earlier in the same file,
+taking their methods:
+
+    type ReadWriter interface {
+        Reader
+        Writer
+        name() string
+    }
+
+A value of a wider interface converts to a narrower one wherever a
+concrete value would (`copyall(rw, c)` with `rw` a `ReadWriter` and
+the parameter a `Reader`), and the narrowed value keeps its identity:
+an assertion through it still finds the original receiver.
+
+An interface can be generic; its parameters are those of its methods:
+
+    type Container[T] interface {
+        get() T
+        put(x T)
+    }
+
+    func bump(c Container[int], n int) { ... }
+
+`Container[int]` takes any `ref` whose `get` and `put` have those
+types, a generic struct's instance (`ref Cell[int]`) or a plain one.
+A generic interface cannot be embedded in another.
 
 ## Unit tests
 
@@ -423,7 +495,8 @@ A file of `func test_xxx()` functions, each checking with
 failure as `FAIL test_xxx: expect: what` and carries on, then prints
 `PASS n tests` or ends with `raise "fail:tests"`. `expect` is a
 builtin unless the program declares its own. `tests/unit/*_test.e`
-with their `.out` files are run by `tests/unittest.sh`.
+with their `.out` files are run by `tests/unittest.sh`. The
+self-hosted compiler has the same flag, `emberc -t`.
 
 ## Formatting
 
@@ -434,7 +507,8 @@ works from the parse tree alone, so it needs no interfaces to be
 present, and every construct prints back as written, including
 `defer`, `?.`, `??`, `match` initializers and const blocks.
 `tests/fmt.sh` formats every test and translation and checks that
-the result compiles to the same code and formats to itself.
+the result compiles to the same code and formats to itself. The
+self-hosted compiler has the same formatter, `emberc -F`.
 
 ## Deriving an interface file
 
@@ -443,8 +517,11 @@ constants, types (an interface type as declared, a pick with its
 tags, a struct with its methods' signatures), variables and function
 signatures, in source order. Generic and inline declarations are
 left out with a comment, since an interface must carry their bodies;
-write those by hand. `tests/gen/` holds sources with their expected
+write those by hand. A declaration may be prefixed with `export`;
+when any is, only the exported ones are derived, so a module can
+keep its helpers private. `tests/gen/` holds sources with their expected
 output, checked by `tests/ifacegen.sh`.
+The self-hosted compiler has the same flag, `emberc -i`.
 
 ## Interfaces and separate compilation
 

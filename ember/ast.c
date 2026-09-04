@@ -119,6 +119,8 @@ char *opname[] =
 	/* Omaplit */	"maplit",
 	/* Otypeval */	"typeval",
 	/* Ocond */	"cond",
+	/* Oassert */	"assert",
+	/* Oqchain */	"qchain",
 	/* Oend */	"end",
 };
 

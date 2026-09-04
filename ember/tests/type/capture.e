@@ -5,7 +5,8 @@ module Capture
 // loop body's variable fresh per iteration, a closure created in a
 // loop reading the loop variable after the loop, a transitive
 // capture two closures deep, a match binder, a captured variable
-// read by a defer after the return value is fixed
+// read by a defer after the return value is fixed, and a three-part
+// for whose variable is fresh each iteration (go 1.22)
 
 import sys "sys"
 import draw "draw"
