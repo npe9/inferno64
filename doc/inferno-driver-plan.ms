@@ -942,12 +942,17 @@ sifive_u prints
 and recovers, raspi3b never reaches that line.
 .CW setlabel / gotolabel
 are byte-for-byte the same minimal SP+PC form riscv64 uses and are not
-the difference, so the next lead is the arm64 error()/nexterror longjmp
-or a lock held across it, not SD and not the tick timing.  Separately,
-the SDHOST
-.CW bio()
-has no flow control (it relies on the emulated synchronous FIFO), so a
-physical Pi will want an SDEDM-level wait before kfs runs on hardware.
+the difference.  Tracing nexterror pins it further: it is a livelock, not
+a one-shot hang.  When the create's mount RPC blocks, release() spawns a
+second
+.CW vmachine
+kproc (the "dis" proc), and that kproc spins forever in namec/devwalk
+raising Enonexist ("file does not exist") on a walk that never resolves,
+where the same recipe on riscv64 recovers and the create succeeds.  So
+the lead is the freshly-spawned dis kproc's namespace/environment
+(kproc(..., KPDUP) group inheritance) or the multi-kproc handoff on arm64
+- not SD, not the tick.  (The SDHOST flow control the earlier draft asked
+for here has since been added; see fifospace()/fifodata().)
 (2) persistence across reboot on sifive_u - the kfs is reamed every boot;
 a mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
