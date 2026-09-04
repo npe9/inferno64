@@ -28,14 +28,19 @@ classic Vanadium "fortune" client/server demo), with nine man pages
 principal creation, self-blessing, delegated blessing, encode/decode,
 pattern matching, expiry caveats, ACL checks all pass.
 
-**But the source is gone.** `appl/cmd/v23/` and `appl/lib/v23/` do not
-exist; no `.b` in the tree contains `V23security`/`blessself`/
-`createprincipal`. Only `module/v23.m`, the man pages, and the demo
-shell scripts are tracked; the `.dis` are orphaned build artifacts (the
-tree does not track `.dis`). The selftest man page even cites
-`/appl/cmd/v23/selftest.b`, which is absent. **Recovering the v23 source
-is the single most important action item** — the port works but cannot
-be rebuilt, fixed, or extended without it.
+**The source was missing, now recovered.** Originally `appl/cmd/v23/`
+and `appl/lib/v23/` did not exist here; only `module/v23.m`, the man
+pages, and the demo scripts were tracked, and the `.dis` were orphaned
+build artifacts (the tree does not track `.dis`). The `.b` source turned
+out to be *untracked* working-tree files in the sibling
+`inferno-vanadium` worktree — never committed anywhere. It has now been
+pulled in and wired into the build (`appl/lib/v23`, `appl/cmd/v23`,
+`appl/wm/v23fortune.b`, `doc/v23.md`; `v23` added to the `appl/lib` and
+`appl/cmd` DIRS and to `appl/wm`'s mkfile). Verified by negative control:
+the orphaned `.dis` were deleted and rebuilt from the recovered source at
+identical sizes, and the freshly-built selftest still prints `v23
+selftest: ok`. The port is now rebuildable and extensible. No Upspin
+source exists in either worktree.
 
 ## The substrate already in the tree
 
@@ -124,10 +129,10 @@ EE packing loop — no new cryptography, and the store already exists.
 
 ## Effort and order
 
-1. **Recover the v23 source** (blocking for anything Vanadium). The port
-   runs but is unmaintainable without it. If it cannot be found, the
-   `.dis` + `module/v23.m` + man pages are enough to re-derive it, but
-   that is a re-implementation.
+1. **Recover the v23 source** — **done.** Pulled from the
+   `inferno-vanadium` worktree and wired into the build; rebuilds from
+   source and passes selftest (negative-control verified). The port is
+   now maintainable.
 2. **Vanadium naming** — wire `registry(4)` + secured Styx as the mount
    table so a global `/pkg`-style namespace resolves and can be walked.
    Medium; this is the piece package discovery needs.
