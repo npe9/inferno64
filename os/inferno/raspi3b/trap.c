@@ -24,15 +24,19 @@ extern void	vectorinit(void*);
  * Sync at +0x200, IRQ at +0x280, FIQ at +0x300, SError at +0x380.
  *
  * Like armv7/l.s's own vectorbuild(), this table is built as runtime
- * DATA into an oversized static buffer, not linked branch code --
- * not because 7l is known to fold a block of nothing-but-branches
- * the way 5l provably does (unverified either way for 7l), but
- * because a real TEXT block cannot be given 2048-byte alignment
- * through this assembler regardless, so a runtime-computed base
- * address is required either way.  Each of the four active slots is
- * four real AArch64 instructions (not pure branches, hand-encoded
- * since they must live at a runtime-only-known address no assembler
- * invocation ever sees):
+ * DATA into an oversized static buffer, not linked branch code.  The
+ * table must be 2048-byte aligned (VBAR_EL1's low bits are RES0), and
+ * this linker has no per-symbol alignment -- 7l rounds only whole text
+ * and data segments, to 4096 (see utils/7l/asm.c) -- so no TEXT symbol
+ * can be placed on a 2KB boundary.  The base is therefore computed at
+ * runtime by rounding this buffer, and once the base is runtime-only
+ * the slot-to-vectrap branches (PC-relative) cannot be pre-assembled.
+ * That is the one case here that stays hand-encoded: the nameable
+ * system instructions in l.s (ISB, CLREX, WFE, HVC, TLBI via SYS, and
+ * every MSR/MRS through SPR()) are assembler mnemonics.  Each of the
+ * four active slots is four real AArch64 instructions (not pure
+ * branches, encoded here because they must live at a runtime-only-known
+ * address no assembler invocation ever sees):
  *
  *	SUB  SP, SP, #UR_SIZE       -- reserve the Ureg frame; touches
  *	                               no GPR, so nothing needs saving
