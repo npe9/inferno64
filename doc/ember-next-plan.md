@@ -330,6 +330,13 @@ signs differently on the two sides, because the recursion ids in the
 signature depend on how the type graph is shared. The JSON value
 keeps its members in parallel arrays for that reason.
 
+The signature algorithm is Limbo's and cannot change without
+breaking every `.dis` in the tree, so the fix would have to make the
+two sides share one instantiation rather than build two structurally
+equal graphs. Until then the diagnostic says what is happening: the
+two types print the same, so the error explains that it is the link
+signature that differs and what to do about it.
+
 Two compiler fixes came with it: a pick is no longer sized or
 equivalence-classed while its cases are still being built (sizing it
 then fixed every case's field offsets against fields that were not

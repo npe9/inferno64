@@ -104,6 +104,25 @@ nerror(Node *n, char *fmt, ...)
 }
 
 /*
+ * the two types print the same but sign differently: a generic
+ * instantiated by a type the interface declares (a pick holding a
+ * map of itself) builds a second copy of the type graph, and the
+ * recursion ids in a link signature depend on how the graph is
+ * shared.  say so, rather than printing one type twice
+ */
+static char sigsame[] = ": the same shape, but a generic instantiated by a type this interface declares signs differently on the two sides -- keep such a type out of the interface (parallel arrays rather than a map of itself)";
+
+static int
+samesig(Type *a, Type *b)
+{
+	char bufa[1024], bufb[1024];
+
+	seprint(bufa, bufa+sizeof(bufa), "%T", a);
+	seprint(bufb, bufb+sizeof(bufb), "%T", b);
+	return strcmp(bufa, bufb) == 0;
+}
+
+/*
  * scopes
  */
 static void
@@ -8308,8 +8327,9 @@ check(Node *tree)
 				continue;
 			}
 			if(d->tparams == nil && sign(d) != sign(id))
-				error(id->src.start, "method %s.%s is %T in the interface but %T in module %s",
-					id->dot->sym->name, id->sym->name, id->ty, d->ty, impdecl->sym->name);
+				error(id->src.start, "method %s.%s is %T in the interface but %T in module %s%s",
+					id->dot->sym->name, id->sym->name, id->ty, d->ty, impdecl->sym->name,
+					samesig(id->ty, d->ty) ? sigsame : "");
 			continue;
 		}
 		d = lookup(id->sym);
@@ -8319,8 +8339,9 @@ check(Node *tree)
 			continue;
 		}
 		if(d->tparams == nil && sign(d) != sign(id))
-			error(id->src.start, "function %s is %T in the interface but %T in module %s",
-				id->sym->name, id->ty, d->ty, impdecl->sym->name);
+			error(id->src.start, "function %s is %T in the interface but %T in module %s%s",
+				id->sym->name, id->ty, d->ty, impdecl->sym->name,
+				samesig(id->ty, d->ty) ? sigsame : "");
 	}
 	}
 }

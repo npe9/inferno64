@@ -216,6 +216,18 @@ func ifacetinst(n ref types.Node, mod ref types.Decl) ref types.Type {
 	return t
 }
 
+// the two types print the same but sign differently: a generic
+// instantiated by a type the interface declares (a pick holding a
+// map of itself) builds a second copy of the type graph, and the
+// recursion ids in a link signature depend on how the graph is
+// shared.  say so, rather than printing one type twice (check.c)
+func sigsame(a ref types.Type, b ref types.Type) string {
+	if tp(a) != tp(b) {
+		return ""
+	}
+	return ": the same shape, but a generic instantiated by a type this interface declares signs differently on the two sides -- keep such a type out of the interface (parallel arrays rather than a map of itself)"
+}
+
 func install(d ref types.Decl) {
 	d.next = nil
 	installids(d)
@@ -5779,7 +5791,7 @@ func check(tree ref types.Node, file string) int {
 					continue
 				}
 				if d.tparams == nil && types.sign(d) != types.sign(id) {
-					errorat(iface.ownfacepath(), id.line, sys.sprint("method %s.%s is %s in the interface but %s in module %s", id.dot.sym, id.sym, tp(id.ty), tp(d.ty), impdecl.sym))
+					errorat(iface.ownfacepath(), id.line, sys.sprint("method %s.%s is %s in the interface but %s in module %s%s", id.dot.sym, id.sym, tp(id.ty), tp(d.ty), impdecl.sym, sigsame(id.ty, d.ty)))
 				}
 				continue
 			}
@@ -5789,7 +5801,7 @@ func check(tree ref types.Node, file string) int {
 				continue
 			}
 			if d.tparams == nil && types.sign(d) != types.sign(id) {
-				errorat(iface.ownfacepath(), id.line, sys.sprint("function %s is %s in the interface but %s in module %s", id.sym, tp(id.ty), tp(d.ty), impdecl.sym))
+				errorat(iface.ownfacepath(), id.line, sys.sprint("function %s is %s in the interface but %s in module %s%s", id.sym, tp(id.ty), tp(d.ty), impdecl.sym, sigsame(id.ty, d.ty)))
 			}
 		}
 	}
