@@ -35,6 +35,7 @@ OBJ=\
 	mul64fract.$O\
 	fdt.$O\
 	stubs.$O\
+	i2cbcm.$O\
 	$CONF.root.$O\
 	$IP\
 	$DEVS\

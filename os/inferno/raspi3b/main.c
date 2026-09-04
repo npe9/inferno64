@@ -109,7 +109,7 @@ main(void)
 	confinit();
 	fpinit();
 
-	serialputs("Inferno/arm64 virt\n", -1);
+	serialputs("Inferno/arm64 raspi3b\n", -1);
 
 	uartconsole();
 	archconsole();
@@ -128,6 +128,11 @@ main(void)
 	}
 	quotefmtinstall();
 	printinit();
+
+	{	/* I2C probe: needs the console up to report the round trip */
+		extern void i2cinit(void);
+		i2cinit();
+	}
 
 	procinit();
 	links();
