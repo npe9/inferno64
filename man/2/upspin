@@ -1,0 +1,83 @@
+.TH UPSPIN 2
+.SH NAME
+upspin \- content-addressed store, signed directory and key server
+.SH SYNOPSIS
+.EX
+include "keyring.m";
+include "upspin.m";
+up := load Upspin Upspin->PATH;
+Store, Dir, KeyServer, DirEntry, Block: import up;
+.EE
+.SH DESCRIPTION
+.I Upspin
+provides the pieces of an Upspin-style content name space; see
+.IR upspin (1)
+for the command and the overall model.
+.PP
+.B init
+must be called before anything else.
+.B store,
+.B dir
+and
+.B keyserver
+return handles rooted at a directory.
+.PP
+A
+.B Store
+holds content-addressed blocks.
+.B Store.put
+writes a block and returns its SHA-256 hex reference;
+.B Store.get
+reads a block and
+.I rehashes
+it, returning an error unless the bytes still match the reference.
+.B putblocks
+splits data into fixed
+.B BLOCKSIZE
+blocks and stores them;
+.B getblocks
+reassembles a block list, verifying each block on the way.
+.PP
+A
+.B DirEntry
+names content
+.RB ( name ,
+of the form
+.IB user @ domain / path\fR)
+and lists the
+.B blocks
+that make it up, with the owner's signature.
+.B DirEntry.signedbytes
+is the single canonical serialization that
+.B signentry
+and
+.B verifyentry
+both use; it covers the name and the ordered block references, so neither
+can change under a valid signature.
+.B Dir.put
+and
+.B Dir.lookup
+store and retrieve entries under an owner-rooted name, rejecting any path
+that would escape the owner's subtree;
+.B Dir.glob
+lists an owner's names.
+.PP
+A
+.B KeyServer
+maps
+.IB user @ domain
+to a public key.
+.B verifyentry
+takes the owner from the entry's
+.I name,
+looks its key up in the KeyServer, and checks the signature against it \(em
+a key carried inside the entry is never trusted.
+.SH SOURCE
+.B /appl/lib/upspin.b
+.SH SEE ALSO
+.IR upspin (1),
+.IR keyring (2)
+.SH BUGS
+The backing stores are local directories, not
+.IR styx (2)
+services, and there is no encryption packing yet.

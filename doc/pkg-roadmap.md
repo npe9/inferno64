@@ -222,3 +222,44 @@ Styx; mirrors, verified by hash.
 **M7 — Publish.** `pkg publish` writes a signed entry + blob into the
 publisher's own DirServer subtree (the write side, `doc/package-
 management.md` §7).
+
+## The Upspin content namespace (chosen foundation)
+
+The `pkg(1)` milestones above proved install-by-mount, but the more
+principled direction — and the one being taken — is Upspin's: content is
+not a monolithic tar but content-addressed blocks; a name is an
+owner-rooted global `user@domain/path`; and a name maps to a *signed*
+directory entry verified through a KeyServer, not through any key the
+entry carries. Built as its own module (`module/upspin.m`,
+`appl/lib/upspin.b`, `appl/cmd/upspin.b`, `man/1/upspin`, `man/2/upspin`),
+independent of `pkg`:
+
+- **Store** — content-addressed blocks. `get` rehashes every block and
+  rejects a mismatch, so content-addressing is enforced by the check, not
+  the file name. Fixed 1 MiB blocks; identical content dedups.
+- **DirEntry + Dir** — a name maps to a signed entry listing its block
+  refs. One canonical serializer (`signedbytes`) is used by both sign and
+  verify and covers the name and the ordered block list, so neither can
+  change under a valid signature. Names are sanitized so a path cannot
+  escape the owner's subtree.
+- **KeyServer** — `user@domain → public key`. Verification derives the
+  owner from the name, looks up that owner's key, and checks the
+  signature — the architectural upgrade over a single pinned key.
+
+Verified end to end by `tests/upspinlocal.sh` with three negative
+controls, each a distinct guarantee: a forged entry stored under another
+owner's name is rejected (KeyServer binding), a tampered signed field
+fails the signature (canonical serializer covers it), and a corrupted
+store block fails its content hash (Store.get rehashes). `upspin put`/
+`get`/`ls` round-trip.
+
+Two hashes, two jobs: block refs are SHA-256 (content addressing); the
+entry signature digest is SHA-1 (the keyring certificate algorithm).
+
+Next on this foundation: end-to-end encryption (per-reader wrapped content
+keys + Access files, reusing the AES-GCM/ECDH primitives already in
+`keyring`), serving Store/Dir/KeyServer over `styx(2)` so names resolve
+across the network and mount at `/pkg`, verification through `v23`
+blessing chains instead of a flat KeyServer, and finally re-expressing a
+package as an Upspin subtree so `install` becomes get-by-name over this
+namespace — retiring `pkg`'s bespoke tar+repo format.

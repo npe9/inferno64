@@ -1,0 +1,149 @@
+.TH UPSPIN 1
+.SH NAME
+upspin \- content-addressed, signed name space
+.SH SYNOPSIS
+.B upspin
+.RB [ -b
+.IR base ]
+.B keygen
+.I user
+.I skfile
+.br
+.B upspin
+.RB [ -b
+.IR base ]
+.B keyadd
+.I user
+.I pkfile
+.br
+.B upspin
+.RB [ -b
+.IR base ]
+.B put
+.I name
+.I file
+.I skfile
+.br
+.B upspin
+.RB [ -b
+.IR base ]
+.B get
+.I name
+.RI [ outfile ]
+.br
+.B upspin
+.RB [ -b
+.IR base ]
+.B ls
+.I owner
+.SH DESCRIPTION
+.I Upspin
+stores content in a global, verifiable name space modelled on
+.I upspin.io.
+It is built from three parts:
+.IP \(bu
+a
+.B Store
+of content-addressed blocks \(em each block is named by the SHA-256 of
+its bytes, and is verified against that name every time it is read;
+.IP \(bu
+a
+.B Dir
+mapping an owner-rooted global
+.I name
+of the form
+.IB user @ domain / path
+to a signed directory entry that lists the blocks making up the content;
+.IP \(bu
+a
+.B KeyServer
+mapping
+.IB user @ domain
+to a public key.
+.PP
+To write, content is split into fixed-size blocks stored in the Store,
+and a directory entry naming those blocks is signed with the owner's
+secret key and written to the Dir.
+To read, the entry is looked up, its owner is taken from the
+.IR name ,
+that owner's key is fetched from the KeyServer, and the signature is
+verified against it \(em so trust rests on the KeyServer binding of name
+to key, never on a key carried inside the entry.
+Each block is then fetched and checked against its content hash.
+A tampered block, a tampered entry, or an entry signed by anyone other
+than the name's owner is therefore rejected.
+.PP
+.I Base
+holds the
+.BR store/ ,
+.B dir/
+and
+.B keys/
+subtrees; it defaults to
+.B $UPSPINROOT
+or
+.BR /mnt/upspin .
+.SS Commands
+.TP
+.B keygen
+Generate a key pair for
+.IR user ,
+writing the secret key to
+.I skfile
+and registering the public key in the KeyServer.
+.TP
+.B keyadd
+Register the public key in
+.I pkfile
+for
+.I user
+in the KeyServer.
+.TP
+.B put
+Store
+.I file
+under
+.I name
+(which must be
+.IB user @ domain / path\fR),
+signed with the secret key in
+.IR skfile .
+.TP
+.B get
+Fetch, verify and write the content of
+.I name
+to
+.I outfile
+or standard output.
+.TP
+.B ls
+List the names owned by
+.IR owner .
+.SH EXAMPLE
+.EX
+
+	upspin keygen ann@example.com ann.key
+	upspin put ann@example.com/notes/todo todo.txt ann.key
+	upspin get ann@example.com/notes/todo
+	upspin ls ann@example.com
+
+.EE
+.SH SOURCE
+.B /appl/cmd/upspin.b
+.br
+.B /appl/lib/upspin.b
+.SH SEE ALSO
+.IR upspin (2),
+.IR keyring (2),
+.IR pkg (1)
+.PP
+.B /doc/pkg-roadmap.md
+.SH BUGS
+The Store, Dir and KeyServer are local directories; serving them over
+.IR styx (2)
+so names resolve across the network, and end-to-end encryption (per-reader
+wrapped keys and Access files) are not yet done.
+The signature digest is SHA-1 (the
+.IR keyring (2)
+certificate algorithm); block content addresses are SHA-256.
+Names must not contain newlines.

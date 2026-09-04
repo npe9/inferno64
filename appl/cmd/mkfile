@@ -245,6 +245,7 @@ TARG=\
 	units.dis\
 	uniq.dis\
 	unmount.dis\
+	upspin.dis\
 	uudecode.dis\
 	uuencode.dis\
 	vacfs.dis\
