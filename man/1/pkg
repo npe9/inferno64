@@ -6,10 +6,26 @@ pkg \- namespace-native package manager
 .I stagedir
 .I out.tar
 .br
+.B pkg genkey
+.I owner
+.I skfile
+.RI [ bits ]
+.br
+.B pkg sign
+.I pkg.tar
+.I skfile
+.br
+.B pkg verify
+.RB [ -k
+.IR pkfile ]
+.I pkg.tar
+.br
 .B pkg info
 .I pkg.tar
 .br
 .B pkg install
+.RB [ -k
+.IR pkfile ]
 .I pkg.tar
 .br
 .B pkg list
@@ -70,6 +86,42 @@ privilege, affects only the invoking name space, and is undone exactly by
 unbinding and unmounting.
 Each install is named by the content hash of its archive, so installing
 the same bytes twice is idempotent.
+.SS Signing
+A package may carry a detached signature in
+.IB pkg.tar .sig
+that authenticates the archive's exact bytes.
+.B pkg genkey
+writes an RSA secret key to
+.I skfile
+and the matching public key to
+.IB skfile .pk
+.RI ( bits
+defaults to 1024).
+.B pkg sign
+hashes
+.I pkg.tar
+and writes
+.IB pkg.tar .sig,
+a
+.IR keyring (2)
+certificate over that hash together with the signer's public key.
+.B pkg verify
+checks that signature against the archive; with
+.B -k
+it also requires the signer to be the key in
+.IR pkfile .
+.B pkg install
+verifies the signature when a
+.B .sig
+is present, rejects a package whose signer does not match a
+.BR -k pkfile,
+and warns when installing an unsigned package.
+Signing uses the same
+.IR keyring (2)
+key and certificate types as
+.IR v23-security (2)
+principals, so a later milestone can check a publisher's blessing chain
+rather than a single pinned key.
 .SS Commands
 .TP
 .B pack
@@ -85,15 +137,35 @@ and whichever of
 .B lib/
 apply.
 .TP
+.B genkey
+Generate a signing keypair for
+.IR owner .
+.TP
+.B sign
+Sign
+.I pkg.tar
+with the secret key in
+.IR skfile .
+.TP
+.B verify
+Check the signature on
+.IR pkg.tar ,
+optionally requiring signer
+.IR pkfile .
+.TP
 .B info
 Print the content SHA-256 and the manifest of
 .I pkg.tar
 without installing it.
 .TP
 .B install
-Mount and bind
+Verify the signature (if any), then mount and bind
 .I pkg.tar
 into the name space as described above.
+With
+.B -k
+the package must be signed by
+.IR pkfile .
 .TP
 .B list
 List the installed packages \(em name, version and content id \(em read
@@ -126,12 +198,13 @@ Package, install, use and remove a tool:
 .PP
 .B /doc/pkg-roadmap.md
 .SH BUGS
-This is milestone 1: local packages only.
-There is no signature or content verification yet, no
+Local packages only (milestones 1\(en2): packages are named on the
+command line, not fetched.
+Trust is a single pinned key; a publisher blessing chain, a
 .B /pkg
-naming service, and no
-.BR search ;
-those are later milestones.
+naming service, and
+.B search
+are later milestones.
 An installed package keeps a
 .IR tarfs (4)
 server process alive for as long as it is mounted.

@@ -23,6 +23,10 @@ Command: module {
 
 PKGROOT: con "/mnt/pkg";
 IDLEN: con 16;			# short content id (hex chars) used as mountpoint
+# separates the signer public key from the certificate in a .sig file.
+# Both keyring strings are multi-line base64, so a marker that never
+# occurs in that alphabet is needed to split them.
+SIGMARK: con "==PKGCERT==\n";
 
 stderr: ref Sys->FD;
 
@@ -47,6 +51,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	case cmd {
 	"pack" =>	cmdpack(args);
 	"info" =>	cmdinfo(args);
+	"genkey" =>	cmdgenkey(args);
+	"sign" =>	cmdsign(args);
+	"verify" =>	cmdverify(args);
 	"install" =>	cmdinstall(args);
 	"list" =>	cmdlist(args);
 	"remove" or "uninstall" =>	cmdremove(args);
@@ -125,9 +132,36 @@ cmdinfo(args: list of string)
 
 cmdinstall(args: list of string)
 {
+	pin := "";			# -k pkfile: required signer public key
+	if(args != nil && hd args == "-k"){
+		args = tl args;
+		if(args == nil)
+			usage();
+		pin = hd args;
+		args = tl args;
+	}
 	if(args == nil)
 		usage();
 	tarpath := hd args;
+
+	# signature check (M2). A detached tarpath.sig authenticates the
+	# archive's content. With -k the signature is required and its signer
+	# must match the pinned key; without -k an unsigned package installs
+	# with a warning, a signed one is still verified.
+	sigpath := tarpath + ".sig";
+	if(exists(sigpath)){
+		(owner, pkstr, verr) := verifytar(tarpath, sigpath);
+		if(verr != nil)
+			fail("signature: " + verr);
+		if(pin != "" && pkstr != readstr(pin))
+			fail("signer key does not match -k " + pin);
+		sys->print("signature ok, signed by %s\n", owner);
+	}else{
+		if(pin != "")
+			fail("no signature (" + sigpath + ") but -k requires one");
+		sys->fprint(stderr, "pkg: warning: installing unsigned package %s\n", tarpath);
+	}
+
 	(id, err) := sha256file(tarpath);
 	if(err != nil)
 		fail(err);
@@ -200,6 +234,120 @@ cmdremove(args: list of string)
 	}
 	if(!found)
 		fail("no installed package named " + name);
+}
+
+cmdgenkey(args: list of string)
+{
+	if(args == nil || tl args == nil)
+		usage();
+	owner := hd args;
+	skfile := hd tl args;
+	bits := 1024;
+	if(tl tl args != nil)
+		bits = int hd tl tl args;
+	sk := kr->genSK("rsa", owner, bits);
+	if(sk == nil)
+		fail("genSK failed");
+	e := writefile(skfile, array of byte kr->sktostr(sk));
+	if(e != nil)
+		fail(e);
+	e = writefile(skfile + ".pk", array of byte kr->pktostr(kr->sktopk(sk)));
+	if(e != nil)
+		fail(e);
+	sys->print("wrote secret key %s and public key %s.pk for %s\n", skfile, skfile, owner);
+}
+
+cmdsign(args: list of string)
+{
+	if(args == nil || tl args == nil)
+		usage();
+	tarpath := hd args;
+	skfile := hd tl args;
+	sk := kr->strtosk(readstr(skfile));
+	if(sk == nil)
+		fail("cannot read secret key " + skfile);
+	(state, derr) := digeststate(tarpath);
+	if(derr != nil)
+		fail(derr);
+	cert := kr->sign(sk, 0, state, "sha1");
+	if(cert == nil)
+		fail("sign failed");
+	pk := kr->sktopk(sk);
+	sig := kr->pktostr(pk) + SIGMARK + kr->certtostr(cert);
+	e := writefile(tarpath + ".sig", array of byte sig);
+	if(e != nil)
+		fail(e);
+	sys->print("signed %s -> %s.sig by %s\n", tarpath, tarpath, pk.owner);
+}
+
+cmdverify(args: list of string)
+{
+	pin := "";
+	if(args != nil && hd args == "-k"){
+		args = tl args;
+		if(args == nil)
+			usage();
+		pin = hd args;
+		args = tl args;
+	}
+	if(args == nil)
+		usage();
+	tarpath := hd args;
+	(owner, pkstr, verr) := verifytar(tarpath, tarpath + ".sig");
+	if(verr != nil)
+		fail("signature: " + verr);
+	if(pin != "" && pkstr != readstr(pin))
+		fail("signer key does not match -k " + pin);
+	sys->print("%s: signature ok, signed by %s\n", tarpath, owner);
+}
+
+# a sha1 DigestState with the whole tar streamed in but NOT finalized -
+# the exact state kr->sign and kr->verify both expect (the keyring
+# Certificate path signs sha1 digests, as auth/signer.b etc. do; the
+# sha256 content address in install/info is a separate concern). sign and
+# verify must build this identically or verification cannot succeed.
+digeststate(path: string): (ref Keyring->DigestState, string)
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return (nil, sys->sprint("open %s: %r", path));
+	state: ref Keyring->DigestState;
+	buf := array[8192] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n < 0)
+			return (nil, sys->sprint("read %s: %r", path));
+		if(n == 0)
+			break;
+		state = kr->sha1(buf, n, nil, state);
+	}
+	return (state, nil);
+}
+
+# verify tarpath against its .sig. Returns (signer owner, signer pk
+# string, error). error non-nil means the signature is absent, malformed,
+# or does not match the archive's current bytes.
+verifytar(tarpath, sigpath: string): (string, string, string)
+{
+	sigb := readfile(sigpath);
+	if(sigb == nil)
+		return ("", "", "no signature file " + sigpath);
+	sig := string sigb;
+	idx := indexof(sig, SIGMARK);
+	if(idx < 0)
+		return ("", "", "malformed signature file");
+	pkstr := sig[0:idx];
+	certstr := sig[idx + len SIGMARK:];
+	pk := kr->strtopk(pkstr);
+	cert := kr->strtocert(certstr);
+	if(pk == nil || cert == nil)
+		return ("", "", "malformed key or certificate");
+	(state, derr) := digeststate(tarpath);
+	if(derr != nil)
+		return ("", "", derr);
+	if(kr->verify(pk, cert, state) == 0)
+		return ("", "", "signature does not verify (archive tampered or wrong key)");
+	return (pk.owner, trim(pkstr), nil);
 }
 
 # spawn tarfs to serve tarpath at mnt and wait until the mount is live.
@@ -322,6 +470,41 @@ readfile(path: string): array of byte
 	return out;
 }
 
+readstr(path: string): string
+{
+	data := readfile(path);
+	if(data == nil)
+		return "";
+	return trim(string data);
+}
+
+trim(s: string): string
+{
+	while(len s > 0 && (s[len s - 1] == '\n' || s[len s - 1] == '\r'))
+		s = s[0:len s - 1];
+	return s;
+}
+
+indexof(s, sub: string): int
+{
+	n := len s;
+	m := len sub;
+	for(i := 0; i <= n - m; i++)
+		if(s[i:i + m] == sub)
+			return i;
+	return -1;
+}
+
+writefile(path: string, data: array of byte): string
+{
+	fd := sys->create(path, Sys->OWRITE, 8r644);
+	if(fd == nil)
+		return sys->sprint("create %s: %r", path);
+	if(sys->write(fd, data, len data) != len data)
+		return sys->sprint("write %s: %r", path);
+	return nil;
+}
+
 exists(path: string): int
 {
 	(ok, nil) := sys->stat(path);
@@ -340,7 +523,10 @@ ensuredir(path: string)
 usage()
 {
 	sys->fprint(stderr, "usage: pkg pack stagedir out.tar\n");
-	sys->fprint(stderr, "       pkg install pkg.tar\n");
+	sys->fprint(stderr, "       pkg genkey owner skfile\n");
+	sys->fprint(stderr, "       pkg sign pkg.tar skfile\n");
+	sys->fprint(stderr, "       pkg verify [-k pkfile] pkg.tar\n");
+	sys->fprint(stderr, "       pkg install [-k pkfile] pkg.tar\n");
 	sys->fprint(stderr, "       pkg info pkg.tar\n");
 	sys->fprint(stderr, "       pkg list\n");
 	sys->fprint(stderr, "       pkg remove name\n");

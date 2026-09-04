@@ -181,9 +181,14 @@ and remove actually compose/decompose the namespace. The load-bearing
 assumption (a `bind` done by a command persists in the invoking shell's
 namespace) was confirmed empirically first.
 
-**M2 — Signing + verification.** Sign `manifest`+content-hash
-(ed25519/RSA via `keyring`/`factotum`); verify on install; a tampered
-archive or wrong key is rejected (negative control).
+**M2 — Signing + verification. DONE.** `pkg genkey`/`sign`/`verify` and
+a `-k` option on `install`. A package carries a detached `pkg.tar.sig`: a
+`keyring(2)` certificate over the archive's hash plus the signer's public
+key — the same key/cert types `v23-security(2)` principals use, so M5's
+blessing chains compose. `install` verifies a present signature, rejects
+a package whose signer does not match `-k`, and warns on unsigned.
+Verified by `tests/pkgsign.sh` with both negative controls: a wrong
+pinned key is rejected and a tampered archive fails verification.
 
 **M3 — Naming service (Phase 1 keystone).** A Styx file server exposing
 `/pkg/<category>/<name>/<version>`, browsable by `ls`/`walk`, mountable
