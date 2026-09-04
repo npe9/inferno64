@@ -16,6 +16,10 @@
 #define	D_CNTPCT_EL0	SYSARG5(3,3,14,0,1)
 #define	D_CNTP_CTL_EL0	SYSARG5(3,3,14,2,1)
 #define	D_CNTP_CVAL_EL0	SYSARG5(3,3,14,2,2)
+#define	D_MAIR_EL1	SYSARG5(3,0,10,2,0)
+#define	D_TCR_EL1	SYSARG5(3,0,2,0,2)
+#define	D_TTBR0_EL1	SYSARG5(3,0,2,0,0)
+#define	D_SCTLR_EL1	SYSARG5(3,0,1,0,0)
 
 /*
  * QEMU -M virt, AArch64 (cortex-a72), single privilege level (EL1),
@@ -395,6 +399,29 @@ TEXT	cntfrq(SB), 1, $-4
 TEXT	timerie(SB), 1, $-4
 	MOV	$1, R0
 	MSR	R0, SPR(D_CNTP_CTL_EL0)
+	RET	R30
+
+/*
+ * mmuenable(void *ttbr0): install the identity map mmu.c built and turn
+ * the MMU + caches on.  MAIR index 0 = Device-nGnRnE, index 1 = Normal
+ * write-back cacheable; TCR = 4KB granule, 39-bit VA (T0SZ 25), inner
+ * shareable WB walks, TTBR1 disabled.
+ */
+TEXT	mmuenable(SB), 1, $-4
+	MOV	$0xff00, R1		/* MAIR: attr1=Normal(ff), attr0=Device(00) */
+	MSR	R1, SPR(D_MAIR_EL1)
+	MOV	$0x803519, R1		/* TCR: T0SZ25 IRGN/ORGN WB SH inner EPD1 */
+	MSR	R1, SPR(D_TCR_EL1)
+	MSR	R0, SPR(D_TTBR0_EL1)	/* R0 = &l1 table (REGARG) */
+	WORD	$0xd5033fdf		/* ISB */
+	WORD	$0xd508871f		/* TLBI VMALLE1 */
+	DSB	$15
+	WORD	$0xd5033fdf		/* ISB */
+	MRS	SPR(D_SCTLR_EL1), R1
+	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
+	ORR	R2, R1, R1
+	MSR	R1, SPR(D_SCTLR_EL1)
+	WORD	$0xd5033fdf		/* ISB */
 	RET	R30
 
 /*
