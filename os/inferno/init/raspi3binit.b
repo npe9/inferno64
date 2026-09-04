@@ -2,6 +2,8 @@ implement Init;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+	draw: Draw;
+	Display, Image, Rect, Point: import draw;
 Init: module { init: fn(); };
 Shell: module { init: fn(nil: ref Draw->Context, argv: list of string); };
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
@@ -95,6 +97,26 @@ sdfs()
 	sys->print("SD-FS-CREATE-OK\n");
 }
 
+drawtest()
+{
+	draw = load Draw Draw->PATH;
+	if(draw == nil){ sys->print("DRAW-FAIL load: %r\n"); return; }
+	if(sys->bind("#i", "/dev", sys->MAFTER) < 0){ sys->print("DRAW-FAIL bind: %r\n"); return; }
+	disp: ref Display;
+	{ disp = Display.allocate("/dev"); }
+	exception e { "*" => sys->print("DRAW-FAIL Display: %s\n", e); return; }
+	if(disp == nil){ sys->print("DRAW-FAIL nil: %r\n"); return; }
+	img := disp.image;
+	r := img.r;
+	w := (r.max.x - r.min.x) / 3;
+	x0 := r.min.x;
+	img.draw(Rect((x0, r.min.y), (x0+w, r.max.y)), disp.rgb(255,0,0), nil, (0,0));
+	img.draw(Rect((x0+w, r.min.y), (x0+2*w, r.max.y)), disp.rgb(0,255,0), nil, (0,0));
+	img.draw(Rect((x0+2*w, r.min.y), (r.max.x, r.max.y)), disp.rgb(0,0,255), nil, (0,0));
+	img.flush(Draw->Flushnow);
+	sys->print("DRAW-OK %dx%d\n", r.max.x-r.min.x, r.max.y-r.min.y);
+}
+
 init()
 {
 	shell: Shell;
@@ -108,6 +130,7 @@ init()
 
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();
+	drawtest();
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
 	# creates a file.  The ream and every SD write succeed, but the
 	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
