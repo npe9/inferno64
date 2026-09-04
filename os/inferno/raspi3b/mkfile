@@ -38,6 +38,7 @@ OBJ=\
 	i2cbcm.$O\
 	spibcm.$O\
 	gpiobcm.$O\
+	mailbox.$O\
 	$CONF.root.$O\
 	$IP\
 	$DEVS\

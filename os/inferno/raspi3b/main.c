@@ -144,6 +144,11 @@ main(void)
 		gpioinit();
 	}
 
+	{	/* VideoCore mailbox probe: verify the property channel */
+		extern void mailboxinit(void);
+		mailboxinit();
+	}
+
 	procinit();
 	links();
 	screeninit();
