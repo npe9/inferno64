@@ -98,5 +98,19 @@ startboot(char *argv0, char **argv)
 	}
 
 	print("legacy: the buddy answered every trap\n");
+
+	/*
+	 * Last, on purpose: read an address the buddy has no page for.  The
+	 * fault is declined and reaches this program as a note; with no
+	 * handler registered the note kills it - its container exits cleanly -
+	 * and must not panic the microkernel.
+	 */
+	print("legacy: reading a bad address on purpose; expect a clean note-kill, the container exiting\n");
+	{
+		volatile int *bad = (volatile int*)0;
+		int x = *bad;
+		USED(x);
+	}
+	print("legacy: BUG: still running after the bad read - the fault was not delivered\n");
 	exits(nil);
 }

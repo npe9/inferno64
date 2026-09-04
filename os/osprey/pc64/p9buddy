@@ -132,7 +132,24 @@ port
 	int openmode(ulong a)			{ USED(a); panic("microkernel: openmode"); return 0; }
 	Mount *newmount(Chan *a, int b, char *c){ USED(a,b,c); panic("microkernel: newmount"); return nil; }
 	void mountfree(Mount *a)		{ USED(a); panic("microkernel: mountfree"); }
-	int donotify(Ureg *a)			{ USED(a); panic("microkernel: donotify"); return 0; }
+	int donotify(Ureg *a)
+	{
+		USED(a);
+		if(ospreybuddyhas()){
+			/*
+			 * A declined fault reaches a legacy Plan 9 program as a note.
+			 * It registered no handler (notify(2) is not wired), so the
+			 * note kills it - its container exits, cleanly - instead of
+			 * the microkernel panicking.  A personality process's fault
+			 * still panics, so a real corruption stays visible.
+			 */
+			char *msg = up->nnote > 0 ? up->note[up->nnote-1]->msg : "note";
+			print("osprey: legacy process %s killed by note: %s\n", up->text, msg);
+			ospreyexits(1);
+		}
+		panic("microkernel: donotify");
+		return 0;
+	}
 
 	/*
 	 * The microkernel's system-call interface: two calls, no more.

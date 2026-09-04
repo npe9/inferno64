@@ -268,7 +268,17 @@ read back over the buddy like any other result.  And
 is answered: the buddy makes a pipe on its own
 .CW #|
 and hands back two descriptors, and the program writes one end and reads
-its message from the other, both ends held by the buddy.  What remains is
+its message from the other, both ends held by the buddy.  And a declined
+fault now reaches the program as a note instead of stopping the machine:
+the per-config
+.CW donotify ,
+which was a stub that panicked, kills a legacy container cleanly when it
+faults \- it registered no handler, so the note is its death, its
+container exiting with the fault's own message
+.CW ( "sys: trap: fault read addr=0x0" )
+\- while a personality process's fault still panics, so a real corruption
+stays visible.  The legacy binary reads a bad address on purpose and the
+microkernel carries on.  What remains is
 .CW rfork ,
 .CW mount
 and
@@ -277,9 +287,11 @@ and
 .CW rfork
 with
 .CW RFNAMEG ,
-item 6) before one program's bind stops changing what the next one sees
-\- and a declined fault reaching a Plan 9 program as a note rather than
-the microkernel's donotify panic.
+item 6) before one program's bind stops changing what the next one sees.
+The fuller form of the note \- delivered to a
+.CW notify (2)
+handler the program registered, so it can catch the fault rather than die
+\- waits on that syscall pair, which is not wired.
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an
@@ -3564,8 +3576,14 @@ The program's handler maps the page the fault named
 is honoured for it) and returns, and the store that faulted goes
 through.  A process with no handler, or one that faults in its handler,
 is killed with status 139, the 128 plus the signal Linux gives, and its
-parent's wait sees that.  A Plan 9 program's declined fault still ends
-in the microkernel's donotify panic: a note would need the notify
+parent's wait sees that.  A Plan 9 program's declined fault is now the
+same shape: its
+.CW donotify ,
+once a stub that panicked, kills the container cleanly and its parent's
+wait sees a non-zero status, since the program registered no handler.
+The fuller form \- the note delivered to a
+.CW notify (2)
+handler so the program can catch the fault \- would need the notify
 machinery the microkernel cut.  Only the file calls the demonstration
 makes are mapped.
 .PP

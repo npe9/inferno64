@@ -132,11 +132,10 @@ def main():
          'buddy: exec /boot/linux for container' in t and 'linux: read(fd, buf, 512) returned 470 bytes' in t
          and 'linux: brk grew the heap by 65536 bytes, zero-filled' in t
          and re.search(r'osprey exec: container \d+ \(/boot/linux\) exited with status 0', t) is not None),
-        ("exec starts a Plan 9 binary the same way, the buddy laying its a.out out, and it runs to exit",
+        ("exec starts a Plan 9 binary the same way, the buddy laying its a.out out, and it runs its file work",
          'buddy: exec /boot/legacy for container' in t and 'a Plan 9 a.out, text' in t
          and 'legacy: read(fd, buf, 512) returned 470 bytes' in t
-         and 'legacy: the buddy answered every trap' in t
-         and re.search(r'osprey exec: container \d+ \(/boot/legacy\) exited with status 0', t) is not None),
+         and 'legacy: the buddy answered every trap' in t),
         ("the Plan 9 binary creates a file, writes it, reads it back and stats it - all through the buddy's ABI",
          re.search(r'legacy: create\("/n/p9test"\) returned fd \d+', t) is not None
          and re.search(r'legacy: wrote (\d+) bytes to the new file', t) is not None
@@ -148,6 +147,11 @@ def main():
         ("the buddy makes a pipe: the program writes one end and reads the message from the other",
          re.search(r'legacy: pipe\(\) returned fds \d+ and \d+ from the buddy', t) is not None
          and 'legacy: wrote one pipe end and read 29 bytes from the other: "through a pipe the buddy made"' in t),
+        ("a declined fault reaches the Plan 9 program as a note - a clean kill, its container exiting, not a microkernel panic",
+         re.search(r'osprey: legacy process \S+ killed by note:', t) is not None
+         and re.search(r'osprey exec: container \d+ \(/boot/legacy\) exited with status 1', t) is not None
+         and 'legacy: BUG: still running' not in t
+         and 'microkernel: donotify' not in t),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose
