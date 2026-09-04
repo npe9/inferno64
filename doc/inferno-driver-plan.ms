@@ -822,18 +822,52 @@ directory entry and the kfs label all persist to the backing image.
 The SD-over-SPI stack is complete end to end: controller, block device,
 filesystem, file.
 .NH 1
+Round 9: raspi3b native-SD block device
+.PP
+Round 9 gave the Pi a storage device.
+.CW sdhostbcm.c
+drives the BCM2835 SDHOST controller (0x3f202000) in native SD mode and
+plugs into devsd as
+.CW /dev/sdM0/data .
+QEMU routes the -sd card to the generic SDHCI by default; it reaches
+SDHOST only with GPIO pins 48-53 in alt0, so
+.CW online()
+routes them (through the round-5 GPIO driver) and then runs the real
+native-SD init - CMD0/8, ACMD41, CMD2 (CID), CMD3 (RCA), CMD9 (CSD,
+decoded for the sector count), CMD7, CMD16 - not the SPI-mode protocol
+sifive_u uses.
+.CW bio()
+moves blocks through the SDDATA FIFO a word at a time, CMD17 for reads
+and CMD24 for writes.  Verified read, write and multi-block through
+.CW /dev/sdM0/data ,
+negative-controlled, persisting to the backing image.
+.PP
+kfs on top was attempted and backed out.  It hangs during reaming, but
+not in the SD driver: direct multi-block
+.CW bio
+from the init process works, while the failure appears only through the
+spawned kfs process and its pipe mount, the reaming crawling at a few
+.CW bio
+calls a second - a scheduling stall between calls, not MMIO.  raspi3b
+has no real interrupt controller and drives the scheduler by polling the
+generic timer's
+.CW CNTP_CTL.ISTATUS ,
+so the multi-process pipe-mount ping-pong is the suspect: a board-level
+scheduler question, separate from storage, and the clearest next lead.
+.NH 1
 Immediate next steps (cold-start)
 .PP
 The board work stands at: all four riscv virt boards, arm64 on both GIC
 versions with a display, sifive_u with SPI, GEM ethernet and an SD-over-
-SPI stack complete to a kfs filesystem (/dev/sdM0/data, read/write, kfs
-on top), shakti (riscv64), and the Raspberry Pi 3B (arm64) with its I2C,
-SPI and GPIO controllers all driven and slave-verified - every board
-booting to a shell.  The
-prioritized next work: (1) raspi3b storage - QEMU models bcm2835-sdhost
-and a generic SDHCI, so an SD image could back a filesystem on the Pi
-the way sifive_u now does over SPI.  (2) more boards if wanted - the loop
-is proven, and the one rule that matters for any multi-core board is to
-park the secondary cores first.  (3) persistence across reboot on
-sifive_u - the kfs is reamed every boot; a mount that reams only a blank
-device would show a file surviving a restart.
+SPI stack complete to a kfs filesystem, shakti (riscv64), and the
+Raspberry Pi 3B (arm64) with I2C/SPI/GPIO and now a native-SD block
+device (/dev/sdM0/data, read/write/multi-block) - every board booting to
+a shell.  The prioritized next work: (1) the raspi3b kfs hang - a
+multi-process pipe mount stalls where a single-process bio does not;
+chase the scheduler/timer path (the generic-timer polling), since it
+gates a filesystem on the Pi and likely any multi-server namespace
+there.  (2) persistence across reboot on sifive_u - the kfs is reamed
+every boot; a mount that reams only a blank device would show a file
+surviving a restart.  (3) more boards if wanted - the loop is proven,
+and the one rule that matters for any multi-core board is to park the
+secondary cores first.
