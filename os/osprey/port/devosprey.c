@@ -3223,6 +3223,14 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	 * segment is dupped as anonymous memory (SG_BSS): its pages are all
 	 * resident from the prefault above, so the copy-on-write is exact, and
 	 * with no buddy behind it the child's own faults on it are demand-zero.
+	 *
+	 * The retype flips the parent's own segment type across the dup, which
+	 * is safe only while the parent alone holds the segment: if some other
+	 * process shares it (ref > 1, e.g. after a prior RFMEM fork), that
+	 * process could fault on it mid-flip and ospreybuddyfault would see the
+	 * wrong type.  So the retype is gated on ref == 1 - the parent is
+	 * blocked here, so with no sharer there is no concurrent fault - and an
+	 * already-shared image-less data segment is kept shared instead.
 	 */
 	share = flag & RFMEM;
 	qlock(&p->seglock);
@@ -3230,10 +3238,13 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 		if((s = up->seg[i]) == nil)
 			continue;
 		if(!share && (s->type&SG_TYPE) == SG_DATA && s->image == nil){
-			int savedtype = s->type;
-			s->type = (s->type & ~SG_TYPE) | SG_BSS;
-			p->seg[i] = dupseg(up->seg, i, 0);
-			s->type = savedtype;		/* the parent stays SG_DATA */
+			if(s->ref == 1){
+				int savedtype = s->type;
+				s->type = (s->type & ~SG_TYPE) | SG_BSS;
+				p->seg[i] = dupseg(up->seg, i, 0);
+				s->type = savedtype;	/* the parent stays SG_DATA */
+			} else
+				p->seg[i] = dupseg(up->seg, i, RFMEM);	/* shared: keep sharing */
 		} else
 			p->seg[i] = dupseg(up->seg, i, share);
 	}

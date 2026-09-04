@@ -376,6 +376,11 @@ prints twice from the server personality during the IP bring-up \- an
 trap from that process the systab does not answer and no buddy stands
 behind, source not yet pinned; it predates this work, does no harm, and
 does not fail p9pair.)
+(A separate, pre-existing intermittent flake: the group-reservation and
+.CW dumptask
+status-line criteria fail on some boots \- their signature is a status
+line printed a beat late, the fork and note criteria pass on the same
+boots \- so they are timing, not a regression, and a re-run passes 34/34.)
 .PP
 .B "3.  Storage: a block device served by a task, then a file system."
 The plan's user-level services section says file-system policy means two
