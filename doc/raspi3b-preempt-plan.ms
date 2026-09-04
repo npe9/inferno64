@@ -259,6 +259,28 @@ stress, so the retry must be written to act on the FSM state it reads,
 not to rely on the read having "fixed" anything; verify it against a card
 image, not just against the stress passing.
 .PP
+This was built and measured, and it half-works, which is the useful part.
+A
+.CW bio()
+that after each write reads
+.CW SDEDM ,
+drains any stuck data-count, and re-issues the block up to eight times
+passes a byte-for-byte verifying stress with correct data - so the
+recovery is real, not a timing accident.  But two things stop it being
+the answer.  It is slow: the corruption is frequent enough that many
+blocks need draining and re-issuing, so a run that used to take seconds
+takes a minute or more, and a kfs ream crawls.  And it exposes that the
+write corruption was not the only bug.  With the retry in, a kfs
+.I reams
+to completion and reaches
+.CW "initializing minimal user table" -
+the block it always died on before - and then hangs in the mount and
+file-create phase, which never finishes even given four minutes.  So
+there are two faults, now cleanly separated: the transfer corruption
+(recoverable, but the recovery is too dear to ship), and a second hang in
+the multi-process pipe-mount path that only the first bug had been hiding.
+Both want the mechanism, not a workaround.
+.PP
 If E4 wins, the fix is the V-register save in
 .CW vectrap
 (and the same gap should be closed on every arm64 board, virtarm64
