@@ -321,17 +321,6 @@ copypath(Path *p)
 	trackpoint = "copypath:entry";
 	checktracked();
 	pp = smalloc(sizeof(Path));
-	/*
-	 * Decisive check for the "recycled mainmem, not a stray writer"
-	 * reading of the landmark hit: print the block copypath just
-	 * got back, so a hit's track[i].addr (printed by checktracked())
-	 * can be compared against [pp, pp+sizeof(Path)) by hand.  If the
-	 * tracked address falls inside this block, smalloc() just handed
-	 * back memory a live Frame registration still points into --
-	 * recycled-and-zeroed, not corrupted.  pc64-only, temporary.
-	 * See doc/inferno-ports.ms.
-	 */
-	print("copypath: pp %#p end %#p\n", pp, (uchar*)pp+sizeof(Path));
 	pp->ref = 1;
 	trackpoint = "copypath:after-alloc";
 	checktracked();
