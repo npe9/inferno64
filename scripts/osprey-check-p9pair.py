@@ -142,6 +142,8 @@ def main():
          and re.search(r'legacy: wrote (\d+) bytes to the new file', t) is not None
          and 'legacy: read 46 bytes back from the file: "a file written and read back through the buddy"' in t
          and re.search(r'legacy: fstat\("/n/p9test"\) returned a (\d+)-byte stat message', t) is not None),
+        ("errstr crosses too: a refused remove leaves the real reason, which the program reads back over the buddy",
+         re.search(r'legacy: remove refused, errstr from the buddy: "(\S+)"', t) is not None),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

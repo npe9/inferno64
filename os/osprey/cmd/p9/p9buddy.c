@@ -39,6 +39,7 @@ enum {
 	CREATE	= 22,
 	REMOVE	= 25,
 	FSTAT	= 43,
+	ERRSTR	= 41,
 
 	/*
 	 * Not system calls: the kernel's requests for the legacy process's
@@ -75,6 +76,7 @@ struct Img {
 	struct {
 		uvlong	off, va, filesz, memsz, flags;
 	} ph[Maxph];
+	char	err[ERRMAX];		/* the last error, for the process's errstr(2) */
 };
 enum { Nimg = 8 };
 static Img imgs[Nimg];
@@ -360,6 +362,29 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	int bfd;
 
 	img = imgof(container, 1);
+
+	if(scallnr == ERRSTR){
+		/* errstr(buf, nbuf): the last error this container's syscalls left,
+		 * to cdata[Dataoff] for the kernel to copy into the process's buf */
+		long m;
+		char *e = img != nil ? img->err : "";
+		for(m = 0; m < (long)a1 - 1 && e[m] != 0; m++)
+			(cdata + Dataoff)[m] = e[m];
+		(cdata + Dataoff)[m] = 0;
+		return m + 1;
+	}
+
+	/*
+	 * Any file trap that raises an error is answered -1, and the error
+	 * string is stashed per-container so the process's next errstr(2)
+	 * returns the real reason - not a lie, and not the buddy's own errstr.
+	 */
+	if(waserror()){
+		if(img != nil)
+			kstrcpy(img->err, up->errstr, sizeof img->err);
+		return -1;
+	}
+
 	switch(scallnr){
 	case MAPPAGE:
 		/* the page of the process's file a0 at offset a1, to cdata[Dataoff] */
@@ -429,12 +454,7 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 
 	case CREATE:
 		/* create(name, mode, perm): name at cdata[Nameoff], a1 mode, a2 perm */
-		if(waserror()){
-			r = -1;
-			break;
-		}
 		r = fdnew(img, p9create((char*)(cdata + Nameoff), (int)a1, (ulong)a2));
-		poperror();
 		break;
 
 	case REMOVE:
@@ -452,6 +472,7 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		r = -1;		/* a trap this buddy does not emulate */
 		break;
 	}
+	poperror();
 	return r;
 }
 

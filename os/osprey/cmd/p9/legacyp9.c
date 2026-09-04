@@ -68,8 +68,11 @@ startboot(char *argv0, char **argv)
 
 		if(remove("/n/p9test") == 0)
 			print("legacy: removed /n/p9test through the buddy\n");
-		else
-			print("legacy: remove forwarded to the buddy; the log store's versions are immutable, so it is refused\n");
+		else {
+			char ebuf[ERRMAX];
+			rerrstr(ebuf, sizeof ebuf);	/* the real reason, over the buddy's errstr */
+			print("legacy: remove refused, errstr from the buddy: \"%s\"\n", ebuf);
+		}
 	}
 
 	print("legacy: the buddy answered every trap\n");

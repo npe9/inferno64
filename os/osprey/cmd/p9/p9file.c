@@ -410,14 +410,11 @@ p9remove(char *name)
 {
 	Chan *c;
 
-	if(waserror())
-		return -1;
 	c = namec(name, Aremove, 0, 0);
-	poperror();
 	if(waserror()){
 		c->type = 0;		/* remove already clunked the fid; fake the Chan */
 		cclose(c);
-		return -1;
+		nexterror();		/* let the caller's waserror record the reason */
 	}
 	devtab[c->type]->remove(c);
 	c->type = 0;
@@ -437,17 +434,14 @@ p9fstatraw(int fd, uchar *buf, int nbuf)
 	Chan *c;
 	long n;
 
-	if(waserror())
-		return -1;
 	c = fdtochan(fd, -1, 0, 1);
 	if(waserror()){
 		cclose(c);
-		nexterror();
+		nexterror();		/* let the caller's waserror record the reason */
 	}
 	n = devtab[c->type]->stat(c, buf, nbuf);
 	poperror();
 	cclose(c);
-	poperror();
 	return n;
 }
 
