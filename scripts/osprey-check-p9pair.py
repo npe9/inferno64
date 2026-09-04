@@ -174,8 +174,18 @@ def main():
          and re.search(r'osprey medium: a 28-byte frame arrived over the ring from container \d+ and was handed to the stack at this end', t) is not None),
         ("and the stack accepts it: the server's IP stack answers the echo request with an echo reply, so a real packet that crossed the ring was received and acted on, not just handed over",
          'osprey medium: the stack answered with an ICMP echo reply - it accepted a real IP packet that crossed the ring from the peer container' in t),
-        ("and the reverse direction: the server puts the same 28 bytes on the reply and the client sees them return whole - the frame's bytes cross the ring both ways between the two containers (the reply channel a symmetric medium needs; a real one would carry the peer's own outbound frame, not the sender's)",
-         'p9 medium: the server returned the 28-byte frame over the ring, whole - the reverse direction of the device-carried medium' in t),
+        ("the client container brings up the real Plan 9 IP stack of its own - devip, ip.c, tcp.c - with an osprey interface whose wire is the ring to the server container",
+         'p9 ip: client container: the real Plan 9 IP stack is up in this container too; its osprey interface 10.0.1.1 is the ring wire to the server container' in t
+         and "p9 ip: stack B's osprey interface 10.0.1.2 is the ring wire to the client container" in t),
+        ("and its own tcp.c's frames leave over the ring - the stack's own output, not a frame built by hand - and the server's stack's frames come back on the replies: the one-way request ring carrying a two-way wire",
+         re.search(r"osprey medium: the stack's own \d+-byte frame left this container over the ring to the peer's stack - the client end of the device-carried wire", t) is not None
+         and re.search(r'p9 ip: client container: done after \d+ ticks; ([3-9]|\d\d+) frames of its stack\'s crossed the ring to the server container and ([3-9]|\d\d+) of the server\'s stack\'s came back', t) is not None),
+        ("the two containers' tcp.c complete a three-way handshake across the ring, and the server container's stack accepts the connection",
+         re.search(r"p9 ip: client container: the two containers' tcp.c completed a handshake across the ring - Established", t) is not None
+         and re.search(r"p9 ip: ring server: accepted a connection from the client container's tcp.c across the ring as conversation \d+", t) is not None),
+        ("and a byte stream crosses each way: the server container's tcp.c reads the line the client's sent, and the client's reads the answer - two whole stacks in two containers, one conversation, over a wire the kernel only routes",
+         'p9 ip: ring server: read 57 bytes the client container\'s stack sent across the ring: "sent by the client container\'s own tcp.c, across the ring"' in t
+         and 'p9 ip: client container: read 61 bytes back from the server container\'s tcp.c across the ring: "answered by the server container\'s own tcp.c, across the ring"' in t),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

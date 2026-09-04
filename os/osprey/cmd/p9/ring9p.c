@@ -22,9 +22,14 @@ enum {
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group to the server personality, the same way */
 	Reqframe	= 20,	/* a network frame to the peer container's stack, over the ring */
-	Maxframe	= 512,	/* a frame fits between T and R in the small data area */
+	Maxframe	= 1500,	/* the ring medium's MTU: a frame each way fits the data area */
+	Tfoff		= 256,	/* an outbound frame, staged here in the data area */
+	Rfoff		= 2048,	/* a frame the far stack sent us, returned here on the reply */
 	ReqWait		= 4,
 	ReqExec		= 13,
+	ReqTick		= 17,	/* a request of our own (ospreyxcall): the clock tick on a semaphore */
+	OSdown		= 4,	/* a select arm: down a semaphore */
+	Armoff		= 0,	/* the client's one select arm, at the start of the data area */
 	Execnameoff	= 3072,	/* where exec's name goes in the data area, clear of 9P */
 	ReplyDone	= 1,
 };
@@ -43,6 +48,9 @@ typedef struct Queue Queue;
 struct Queue { vlong message; uvlong size, put, get; };
 typedef struct Msg Msg;
 struct Msg { uvlong op, sequence, container, arg[5]; };
+
+typedef struct Arm Arm;
+struct Arm { uvlong op, obj, buf; };
 
 typedef struct Ring Ring;
 struct Ring {
@@ -164,41 +172,83 @@ ringpip_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 }
 
 /*
- * A network frame to the peer container over the ring: the frame goes in
- * our data area and the server drains it into the stack at its end, the
- * device-carrying form of the osprey medium.  Returns the count the peer
- * took, or -1.  This is the medium's two ends as two containers, in the
- * one direction the request ring runs (client to server); the reply
- * carries nothing back yet.
+ * A network frame to the peer container over the ring, and one back: the
+ * device-carried form of the osprey medium, its two ends two containers
+ * and the kernel only routing.  The frame goes in our data area at Tfoff
+ * and the server injects it into the stack at its end; the reply carries
+ * back, at Rfoff, one frame that stack sent toward us - its own outbound
+ * traffic, not an echo of ours - or nothing.  n may be 0: a poll, asking
+ * only for whatever the far stack has sent since.  Returns the length of
+ * the frame that came back (0 for none), or -1 if the ring failed.
+ *
+ * The request ring runs one way, so the far end can never push a frame
+ * at us; its outbound frames wait on a queue there until we ask.  The
+ * medium's client end asks on every send and on every clock tick.
  */
 long
-ring9p_frame(uchar *frame, long n)
+ring9p_frame(uchar *frame, long n, uchar *back, long backmax)
 {
-	uchar rbuf[Maxframe];
-	long rn, k, back;
+	Ring *r = &ring;
+	Msg rep;
+	uchar *data;
+	long rn, k;
 
-	/*
-	 * ringxfer caps its return at the reply buffer, so the buffer must be
-	 * as big as the frame for the reply to come back whole.  The reply
-	 * carries the peer's return frame - the reverse direction of the
-	 * device-carried medium - which we check came back whole; this client
-	 * runs no stack of its own to inject it into, so it is verified, not
-	 * delivered.
-	 */
-	if(n > Maxframe)
+	if(n < 0 || n > Maxframe || !mapped)
 		return -1;
-	rn = ringxfer(Reqframe, frame, n, rbuf, Maxframe);
-	if(rn == n){
-		back = 1;
-		for(k = 0; k < n; k++)
-			if(rbuf[k] != frame[k]){
-				back = 0;
-				break;
-			}
-		if(back)
-			print("p9 medium: the server returned the %ld-byte frame over the ring, whole - the reverse direction of the device-carried medium\n", n);
-	}
+	data = r->base + r->map->data;
+	for(k = 0; k < n; k++)
+		data[Tfoff + k] = frame[k];
+	rn = ringcall(Reqframe, (uvlong)Tfoff, (uvlong)n, (uvlong)Rfoff, &rep);
+	if(rn <= 0)
+		return rn;
+	if(rn > Maxframe)
+		return -1;
+	if(rn > backmax)
+		rn = backmax;
+	for(k = 0; k < rn; k++)
+		back[k] = data[Rfoff + k];
 	return rn;
+}
+
+/*
+ * The clock for the client end of the ring wire.  A client's ring runs
+ * requests to its server, so the clock is asked for the way a server
+ * asks for its own things: a request of its own by system call
+ * (ospreyxcall, xcall.s), answered at once by the kernel, which then
+ * gives the named semaphore on every tick.  0 for taken, -1 refused.
+ */
+extern long ospreyxcall(int op, uvlong *args, long n);
+
+int
+ring9p_taketick(int sem)
+{
+	uvlong args[5];
+
+	args[0] = sem;
+	args[1] = args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(ReqTick, args, 1) != 1)	/* 1: ReplyDone */
+		return -1;
+	return 0;
+}
+
+/*
+ * Wait for that tick: one arm, a down on the semaphore, in our data area
+ * ahead of the frame slots, taken by select the way a driver task waits.
+ * Returns 0 when the tick was taken, -1 otherwise.
+ */
+int
+ring9p_waittick(int sem)
+{
+	Ring *r = &ring;
+	Arm *arm;
+
+	if(!mapped)
+		return -1;
+	arm = (Arm*)(r->base + r->map->data + Armoff);
+	arm->op = OSdown;
+	arm->obj = sem;
+	arm->buf = 0;
+	return dup(1, Armoff) == 0 ? 0 : -1;	/* DUP's number is select over arms */
 }
 
 /*

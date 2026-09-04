@@ -75,6 +75,15 @@ the talk's driver task with all three of its arms and nothing above
 icmp: what it demonstrates is that the path is real, not that there is a
 usable stack outside the kernel.
 .PP
+.B "Two stacks in two containers, one wire the kernel only routes."
+The real Plan 9 IP stack \- devip, ip.c, tcp.c \- runs in each of two
+containers, and an osprey interface in each has the ring between them
+as its wire: the client end sends a frame as a request and takes the
+far end's frames off the replies, the server end queues its frames until
+asked.  The two stacks' tcp.c handshake across it and a line crosses
+each way.  The frames are the stacks' own; the kernel carries the
+messages and knows nothing of what is in them.
+.PP
 .B "A service outside the kernel."
 A container may name another as its server.  Requests the kernel does not
 implement are put on the server's ring with the container and sequence
@@ -1219,18 +1228,93 @@ loop.
 The reverse direction rides the same request's reply: the server returns
 a frame on the reply and the client sees it come back whole, so a frame
 crosses the ring both ways between the two containers - the channel a
-symmetric medium needs, where a real one would carry each stack's own
-outbound frames rather than return the sender's.  The client here runs no
-stack of its own, so the returned frame is verified, not injected.
-What is left to make this the talk's second machine is a stack's traffic
-rather than a synthetic frame: wiring the medium's
-.CW bwrite
-to
-.CW ring9p_frame
-for a cross-container peer, and giving the client container its own stack,
-so two whole stacks in two containers run a
+symmetric medium needs.  That was the record while the reply still
+returned the sender's own frame; it now carries the far stack's.
+.PP
+Two whole stacks in two containers now run one
 .CW tcp.c
-conversation over the wire the kernel routes.
+conversation over the ring, and the wire is the stacks' own traffic, not
+a frame built by hand.  The medium
+.CW ( os/osprey/ip/ospreymedium.c )
+has a third form beside the looped and the paired ones, chosen at bind:
+.CW "bind osprey ring"
+makes an interface whose wire is the ring to the peer container, and
+.CW "bind osprey ring client"
+the other end of it.  The request ring runs one way, so the two ends
+differ.  At the client end
+.CW bwrite
+sends the frame as a
+.CW Reqframe
+request
+.CW ( ring9p_frame
+in
+.CW os/osprey/cmd/p9/ring9p.c ,
+now symmetric: a frame out, and whatever frame the far stack has sent
+back on the reply) \- a synchronous send, the whole personality waiting
+in the
+.CW SLEEP
+call that services the ring, which is safe because nothing else in a
+cooperative personality can run meanwhile \- and a frame that rides back
+is queued for the pump rather than injected inside whatever protocol
+path was sending.  At the server end
+.CW bwrite
+cannot reach the client at all, so it queues the frame until the client
+asks: the server loop, answering
+.CW Reqframe ,
+injects the frame that came (if one did; a request carrying none is a
+poll) and returns one of its own stack's from that queue
+.CW ( ospreymediumtake ).
+The client polls on every clock tick, and so needed a clock of its own:
+it takes the tick by the same request a server uses
+.CW ( ring9p_taketick ,
+an
+.CW ospreyxcall )
+and waits for it by select on one arm in its data area
+.CW ( ring9p_waittick ),
+and on each tick polls the ring, advances the cooperative scheduler's
+clock and runs its ready kprocs \- the loop the server personality has,
+in the client, for as long as its stack is in use
+.CW ( p9clientnet
+in
+.CW os/osprey/cmd/p9/p9ip.c ).
+The ring interface's MTU is 1500, so
+.CW tcp.c 's
+own MSS keeps every segment inside one ring frame; a frame is staged at
+one offset of the data area and returned at another.
+An empty poll is not counted as a served request by the server loop, so
+a hundred polls a second do not spend the run's request count.
+.PP
+What the boot shows.  The server binds a third osprey interface on stack B,
+10.0.1.2, whose wire is the ring, and a kproc announces
+.CW tcp!*!9999
+on it and blocks in listen.  The client container, after all its other
+work, mounts
+.CW #I
+at
+.CW /net
+of its own name space \- the same devip, ip.c and tcp.c, now running in
+the second container \- binds
+.CW "osprey ring client"
+at 10.0.1.1, and a kproc connects to 10.0.1.2!9999.  The first frame the
+client's stack sends over the ring is the IGMP report it sends on
+getting an address (28 bytes), then the SYN (48 bytes, with options); the
+server's log shows each arrive and be handed to its stack, the server's
+tcp.c answers, its SYN-ACK rides back on the reply to the client's next
+request, and the client's connection reads
+.CW "Established ... swin 1048560>>4 rwin 1048560>>4 qscale 4" ,
+the server's listen returns the accepted conversation, a 57-byte line
+the client wrote is read by the server's tcp.c off the accepted
+conversation (a 97-byte segment across the ring), and the server's
+61-byte answer is read back by the client's.  The client's loop reports
+the count: 47 ticks, six frames of its stack's over the ring to the
+server, four of the server's stack's back.  Checked by
+.CW /scripts/osprey-check-p9pair.py ,
+forty-two criteria, four of them this.  What is honest to keep saying: the
+ring wire is between two containers on one machine, not two machines;
+the server end's frames wait for the client to ask, so its latency is a
+tick unless the client is sending; and the wire has no flow control
+beyond the queue the server end holds, which drops when full and counts
+the drop.
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

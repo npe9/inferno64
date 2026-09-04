@@ -20,6 +20,7 @@ enum {
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group, carried the same way */
 	Reqframe	= 20,	/* a network frame for the stack at this end, over the ring */
+	Maxframe	= 1500,	/* the ring wire's MTU (ring9p.c's Maxframe, ospreymedium.c's Ringmtu) */
 	Reqsyscall	= 15,
 	ReqGone		= 12,
 	ReqReserve	= 14+2,	/* above 9P's 14 and syscall's 15: 16 is the list's ReqReserve, 17 ReqTick */
@@ -139,6 +140,7 @@ extern void sched_tick(void);		/* p9sched.c: advance the cooperative clock */
 extern void runkprocs(void);		/* p9sched.c: run ready kprocs, then return */
 extern void ospreymediumpump(void);	/* ospreymedium.c: inject frames arrived over the ring */
 extern long ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer);	/* one frame off the ring into the stack */
+extern long ospreymediumtake(uchar *buf, long max);	/* one frame the stack sent toward the peer, for the reply */
 extern void p9kbdnotify(void);		/* p9kbd.c: hand an IRQ1 notification to the driver kproc */
 static int reclaims, ticks;
 
@@ -165,7 +167,7 @@ srvcall(uchar *base, Omap *map, uvlong op, uvlong a0, uvlong a1)
 	return 0;
 }
 
-/* returns 1 when a request was served, 0 when the tick was, -1 for neither */
+/* returns 1 when a request was served, 2 for an empty frame poll, 0 when the tick was, -1 for neither */
 static int
 serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 {
@@ -237,21 +239,28 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		rn = pipfs_serve(cdata + toff, (long)tlen, cdata + roff, 4096);
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == Reqframe){
+		/*
+		 * The device-carried wire.  A frame the peer container's stack
+		 * sent is handed to the stack at this end (tlen 0 is a poll,
+		 * carrying none); the reply carries back one frame this end's
+		 * stack has sent toward the peer, or 0 - its own outbound
+		 * traffic, the reverse direction of a wire whose request ring
+		 * runs one way.  A poll that carried nothing either way is
+		 * not counted as a served request (r 2): the client polls on
+		 * every tick, and those must not spend the run's request count.
+		 */
 		toff = req.arg[2];
 		tlen = req.arg[3];
 		roff = req.arg[4];
-		rn = ospreymediumreceive(cdata + toff, (long)tlen, req.container);
-		/*
-		 * The reverse direction: the reply carries a frame back to the
-		 * peer.  A real medium would put the stack's own outbound frames
-		 * here; this returns the frame just received, so the round trip
-		 * over the ring - out one container and back into the other - is
-		 * exercised end to end.  The peer injects it at its end.
-		 */
-		if(rn > 0)
-			for(i = 0; i < rn; i++)
-				cdata[roff + i] = cdata[toff + i];
+		if(tlen > 0)
+			ospreymediumreceive(cdata + toff, (long)tlen, req.container);
+		rn = ospreymediumtake(cdata + roff, Maxframe);
 		rep.arg[0] = (uvlong)rn;
+		if(tlen == 0 && rn == 0){
+			repm[pq->put % pq->size] = rep;
+			pq->put++;
+			return 2;
+		}
 	} else if(req.op == Reqsyscall){
 		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */
 		rep.arg[0] = (uvlong)rn;
@@ -315,8 +324,8 @@ p9serveloop(char *arg)
 			(Msg*)(base + map->data + Reqbuf),
 			(Arm*)(base + map->data + Armoff),
 			cbase + cmap->data, cmap->id);
-		if(r != 0)
-			iters++;	/* ticks do not count toward the end of a headless run */
+		if(r != 0 && r != 2)
+			iters++;	/* ticks and empty frame polls do not count toward the end of a headless run */
 	}
 	{
 		char line[96];

@@ -147,6 +147,147 @@ ostcp(void *)
 }
 
 /*
+ * The server end of the device-carried wire, as a service: announce a
+ * port on stack B - the stack whose osprey interface 10.0.1.2 is the
+ * ring to the client container - accept the connection the client
+ * container's own tcp.c makes across the ring, read what it sends, and
+ * answer.  Both the listen and the read block cooperatively; the frames
+ * that carry the conversation cross the ring on the client's requests
+ * and this loop's replies.
+ */
+static void
+ringsrv(void *)
+{
+	int afd, lfd, dfd, anum, lnum;
+	long n;
+	char cbuf[64], path[64], rx[256];
+	static char reply[] = "answered by the server container's own tcp.c, across the ring";
+
+	if(waserror()){
+		print("p9 ip: ring server failed: %s\n", up->errstr);
+		pexit("ringsrv", 0);
+	}
+	afd = p9open("#I1/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 9999", 13);
+	print("p9 ip: ring server: tcp!*!9999 announced on stack B for the client container\n");
+	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);		/* blocks until the client container connects */
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	print("p9 ip: ring server: accepted a connection from the client container's tcp.c across the ring as conversation %d\n", lnum);
+	snprint(path, sizeof path, "#I1/tcp/%d/data", lnum);
+	dfd = p9open(path, ORDWR);
+	n = p9read(dfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	print("p9 ip: ring server: read %ld bytes the client container's stack sent across the ring: \"%s\"\n", n, rx);
+	p9write(dfd, reply, sizeof reply - 1);
+	print("p9 ip: ring server: answered with %d bytes\n", (int)(sizeof reply - 1));
+	tsleep(&up->sleep, return0, nil, 1000);	/* let the answer and its ack cross before the close does */
+	p9close(dfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("ringsrv done", 0);
+}
+
+/*
+ * The client end.  The client container brings up the real Plan 9 IP
+ * stack of its own - devip, ip.c, tcp.c - and binds an osprey interface
+ * whose wire is the ring to the server container.  A kproc connects to
+ * the service above with the client's own tcp.c, so two whole stacks in
+ * two containers run one tcp.c conversation over a wire the kernel only
+ * routes.  The client has no server loop; this is its loop, driven by
+ * the clock tick it asks for: each tick it polls the ring for frames the
+ * far stack sent (ospreymediumpoll), advances the cooperative clock, and
+ * runs the kprocs that are ready.
+ */
+static int clientnetdone;
+
+static void
+ostcpclient(void *)
+{
+	int dfd, sfd, wfd, cnum, tries;
+	long n;
+	char cbuf[64], line[256], path[64], rx[256], *e;
+	static char msg[] = "sent by the client container's own tcp.c, across the ring";
+
+	tsleep(&up->sleep, return0, nil, 100);	/* let the loop start ticking */
+	if(waserror()){
+		print("p9 ip: client container: tcp across the ring failed: %s\n", up->errstr);
+		clientnetdone = 1;
+		pexit("ostcpclient", 0);
+	}
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	print("p9 ip: client container: its own tcp.c connecting to 10.0.1.2!9999, the server container, across the ring wire\n");
+	p9write(dfd, "connect 10.0.1.2!9999", 21);	/* returns once the handshake is done */
+	snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+	if(n<0)n=0; line[n]=0;
+	for(e=line; *e && *e!='\n'; e++) ; *e=0;
+	if(strncmp(line, "Established", 11) == 0)
+		print("p9 ip: client container: the two containers' tcp.c completed a handshake across the ring - %s\n", line);
+	else
+		print("p9 ip: client container: handshake did not reach Established - %s\n", line);
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	wfd = p9open(path, ORDWR);
+	p9write(wfd, msg, sizeof msg - 1);
+	for(tries = 0, n = 0; tries < 100 && n <= 0; tries++){
+		tsleep(&up->sleep, return0, nil, 50);	/* the answer crosses on ticks */
+		n = p9read(wfd, rx, sizeof rx - 1);
+	}
+	if(n<0)n=0; rx[n]=0;
+	print("p9 ip: client container: read %ld bytes back from the server container's tcp.c across the ring: \"%s\"\n", n, rx);
+	tsleep(&up->sleep, return0, nil, 300);	/* let the acks cross before the close does */
+	p9close(wfd); p9close(dfd);
+	poperror();
+	clientnetdone = 1;
+	pexit("ostcpclient done", 0);
+}
+
+void
+p9clientnet(void)
+{
+	extern int ring9p_taketick(int), ring9p_waittick(int);
+	extern void ospreymediumpoll(void), ospreymediumstats(long*, long*);
+	extern void sched_tick(void), runkprocs(void);
+	enum { Ticksem = 3 };		/* the kernel gave the client's keyboard 1 and mouse 2 */
+	Chan *ic, *nc;
+	char buf[128];
+	int fd, ticks;
+	long n, tx, rx;
+
+	if(waserror()){
+		print("p9 ip: client container: stack bring-up failed: %s\n", up->errstr);
+		return;
+	}
+	ospreymediumlink();
+	ic = namec("#I", Atodir, 0, 0);
+	nc = namec("/net", Atodir, 0, 0);
+	cmount(ic, nc, MAFTER, "");
+	cclose(ic);
+	cclose(nc);
+	fd = p9open("/net/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9write(fd, "bind osprey ring client", 23);
+	p9write(fd, "add 10.0.1.1 255.255.255.0", 26);
+	p9close(fd);
+	print("p9 ip: client container: the real Plan 9 IP stack is up in this container too; its osprey interface 10.0.1.1 is the ring wire to the server container\n");
+	if(ring9p_taketick(Ticksem) < 0)
+		error("the clock tick was refused");
+	kproc("ostcpclient", ostcpclient, nil);
+	for(ticks = 0; ticks < 1500 && !clientnetdone; ){
+		if(ring9p_waittick(Ticksem) < 0)
+			error("select on the tick failed");
+		ticks++;
+		ospreymediumpoll();	/* frames the far stack sent since, injected */
+		sched_tick();		/* the cooperative clock: timers, tsleep */
+		runkprocs();		/* the connecting kproc and the protocol kprocs */
+	}
+	ospreymediumstats(&tx, &rx);
+	print("p9 ip: client container: %s after %d ticks; %ld frames of its stack's crossed the ring to the server container and %ld of the server's stack's came back\n",
+		clientnetdone ? "done" : "gave up", ticks, tx, rx);
+	poperror();
+}
+
+/*
  * Bring the real Plan 9 IP stack up in this personality and prove it
  * runs.  ipdevtab is in the personality devtab and this is called from
  * the server once its name space is up.  The stack is the actual
@@ -265,7 +406,21 @@ p9ipup(void)
 	p9write(fd, "add 10.0.0.2 255.255.255.0", 26);
 	print("p9 ip: second stack #I1 with an osprey interface at 10.0.0.2\n");
 	p9close(fd);
+	/*
+	 * And on stack B a third osprey interface whose wire is the ring to
+	 * the client container: frames it sends wait for the client's next
+	 * request and ride the reply; frames the client's stack sends
+	 * arrive by Reqframe and are injected here.  10.0.1.2, on a subnet
+	 * of its own, so the route to the client's 10.0.1.1 goes out it.
+	 */
+	fd = p9open("#I1/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9write(fd, "bind osprey ring", 16);
+	p9write(fd, "add 10.0.1.2 255.255.255.0", 26);
+	print("p9 ip: stack B's osprey interface 10.0.1.2 is the ring wire to the client container\n");
+	p9close(fd);
 	kproc("ostcp", ostcp, nil);	/* two-stack tcp.c handshake + byte stream over the osprey wire */
+	kproc("ringsrv", ringsrv, nil);	/* a tcp.c service for the client container, across the ring wire */
 	p9kbdstart();			/* the i8042 keyboard driver, in user space above the kernel */
 	poperror();
 

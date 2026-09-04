@@ -8,6 +8,7 @@
 
 extern void p9init(void);
 extern void exits(char*);
+extern void p9clientnet(void);		/* p9ip.c: the client container's own stack, over the ring wire */
 void p9server(char *arg);
 void p9paircli(void);
 void p9server(char *arg);
@@ -690,8 +691,8 @@ p9paircli(void)
 	 * kernel only routes, the way the plan's second machine would send it.
 	 */
 	{
-		extern long ring9p_frame(uchar*, long);
-		uchar frame[28];
+		extern long ring9p_frame(uchar*, long, uchar*, long);
+		uchar frame[28], back[64];
 		long fn;
 		ulong sum;
 		int i;
@@ -730,12 +731,19 @@ p9paircli(void)
 		sum = ~sum & 0xffff;
 		frame[22] = sum >> 8; frame[23] = sum;
 
-		fn = ring9p_frame(frame, sizeof frame);
-		if(fn == (long)sizeof frame)
+		fn = ring9p_frame(frame, sizeof frame, back, sizeof back);
+		if(fn >= 0)
 			print("p9: pair-client: sent an ICMP echo request (10.0.0.1->10.0.0.2) to the server container over the ring - the device-carried medium\n");
 		else
 			print("p9: pair-client: frame over the ring failed (%ld)\n", fn);
 	}
+	/*
+	 * And the same wire carrying a whole stack's traffic, not a frame
+	 * built by hand: this container brings up the real Plan 9 IP stack
+	 * of its own, with an interface whose wire is the ring, and its
+	 * tcp.c talks to the server container's tcp.c across it.
+	 */
+	p9clientnet();
 	poperror();
 }
 

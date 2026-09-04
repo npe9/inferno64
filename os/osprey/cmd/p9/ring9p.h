@@ -7,4 +7,6 @@
  */
 int	ring9p_init(void);			/* map this container's ring; 0 ok, -1 no */
 long	ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax);	/* one 9P T/R exchange */
-long	ring9p_frame(uchar *frame, long n);	/* a network frame to the peer container's stack */
+long	ring9p_frame(uchar *frame, long n, uchar *back, long backmax);	/* a frame to the peer container's stack (n may be 0: a poll), and one of its back */
+int	ring9p_taketick(int sem);		/* ask the kernel for the clock on a semaphore of ours */
+int	ring9p_waittick(int sem);		/* wait for one tick on it by select; 0 taken, -1 not */
