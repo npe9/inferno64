@@ -1,0 +1,17 @@
+<../../../mkconfig
+
+TARG=\
+	fetch.dis\
+
+MODULES=\
+
+SYSMODULES=\
+	sys.m\
+	draw.m\
+	keyring.m\
+	tls12.m\
+	imap4.m\
+
+DISBIN=$ROOT/dis/upas
+
+<$ROOT/mkfiles/mkdis

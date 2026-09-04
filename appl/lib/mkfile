@@ -73,6 +73,7 @@ TARG=\
 	https.dis\
 	ipattr.dis\
 	ipval.dis\
+	imap4.dis\
 	ir.dis\
 	irsage.dis\
 	irsim.dis\

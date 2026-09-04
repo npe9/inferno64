@@ -1,0 +1,114 @@
+.TH UPAS-FETCH 1
+.SH NAME
+upas/fetch \- fetch mail from an IMAP server over TLS
+.SH SYNOPSIS
+.B upas/fetch
+[
+.B -s
+.I server
+] [
+.B -a
+.I dialip
+] [
+.B -p
+.I port
+] [
+.B -u
+.I user
+] [
+.B -P
+.I passfile
+] [
+.B -n
+.I n
+] [
+.B -b
+]
+.SH DESCRIPTION
+.I Upas/fetch
+connects to an IMAP4 server over
+.IR tls12 (2)
+and, given credentials, prints recent messages from the inbox.
+It defaults to Gmail
+.RB ( imap.gmail.com :993).
+.PP
+With no
+.B -u
+it only probes the transport: it completes the TLS handshake, reads the
+greeting, prints the server
+.B CAPABILITY
+and exits.
+This confirms reachability and certificate verification without any
+credentials.
+.PP
+With
+.B -u
+.I user
+and
+.B -P
+.I passfile
+it logs in with the password read from
+.I passfile
+(for Gmail, an
+.I "app password"
+\(em an ordinary Gmail password will be refused), selects
+.BR INBOX ,
+and prints the most recent
+.I n
+messages (default 5).
+By default only the
+.BR From ,
+.B Subject
+and
+.B Date
+headers are printed;
+.B -b
+prints whole messages.
+.PP
+A hosted
+.I emu
+usually has no
+.B /net/cs
+to resolve names, so
+.B -a
+gives the server's already-resolved address to dial while the
+certificate is still verified for
+.I server
+(the
+.B -s
+name).
+Bind
+.B "#I"
+onto
+.B /net
+first so the IP stack is present.
+.SH EXAMPLES
+Probe Gmail's IMAP endpoint (no account needed):
+.EX
+
+	bind -a '#I' /net
+	upas/fetch -s imap.gmail.com -a 142.251.163.108
+
+.EE
+Read the five most recent inbox headers with an app password:
+.EX
+
+	echo abcd\ efgh\ ijkl\ mnop >/tmp/gpass
+	upas/fetch -u me@gmail.com -P /tmp/gpass -a 142.251.163.108
+
+.EE
+.SH SOURCE
+.B /appl/cmd/upas/fetch.b
+.SH SEE ALSO
+.IR imap4 (2),
+.IR tls12 (2)
+.SH BUGS
+Names are not resolved inside
+.IR emu ;
+supply
+.B -a
+with an address looked up outside.
+Authentication is
+.B LOGIN
+only (an app password), not XOAUTH2, so a Gmail account with two-factor
+authentication needs an app password.

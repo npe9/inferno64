@@ -21,6 +21,7 @@ DIRS=\
 	sh\
 	spki\
 	ssh\
+	upas\
 	usb\
 	v23\
 	zip\

@@ -1,0 +1,104 @@
+.TH IMAP4 2
+.SH NAME
+imap4 \- IMAP4rev1 client over TLS
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "tls12.m";
+include "imap4.m";
+imap4 := load Imap4 Imap4->PATH;
+Client: import imap4;
+.EE
+.SH DESCRIPTION
+.I Imap4
+is an IMAP4rev1 (RFC 3501) client that runs over
+.IR tls12 (2),
+this tree's verifying TLS 1.2 client \(em never a host command.
+It is enough to reach modern servers such as Gmail
+.RB ( imap.gmail.com :993).
+.PP
+.B init
+loads and initialises
+.IR tls12 (2);
+call it once.
+.PP
+.B connect
+dials
+.I dialip
+(or
+.I host
+if
+.I dialip
+is empty) at
+.IR port ,
+runs the TLS handshake naming
+.I host
+for SNI and certificate verification, and reads the server greeting.
+Because a hosted
+.I emu
+has no
+.B /net/cs
+to resolve names, a caller may resolve
+.I host
+to an address outside
+.I emu
+and pass it as
+.I dialip
+while the certificate is still checked for
+.IR host .
+.PP
+The returned
+.B Client
+carries the TLS session and offers methods, each returning a trailing
+error string that is nil on success:
+.TP
+.B capa
+Return the server's
+.B CAPABILITY
+line.
+.TP
+.B login
+Authenticate with
+.I user
+and
+.I pass
+(an app password over TLS).
+.TP
+.B mailboxes
+Return the
+.B LIST
+lines matching a reference and pattern.
+.TP
+.B select
+Select a mailbox and return its message count.
+.TP
+.B fetch
+Fetch one
+.I item
+(for example
+.B "BODY.PEEK[]"
+or
+.BR "BODY.PEEK[HEADER]" )
+of a message, returning its literal bytes exactly.
+.TP
+.B docmd
+Send a raw command and collect its untagged and completion responses;
+the other methods are built on this.
+.TP
+.B logout
+Log out and close the TLS session.
+.SH SOURCE
+.B /appl/lib/imap4.b
+.SH SEE ALSO
+.IR upas-fetch (1),
+.IR tls12 (2),
+.IR smtp (2)
+.SH BUGS
+Only the subset needed to fetch mail is implemented: no STARTTLS (the
+connection is TLS from the start), no SASL beyond
+.B LOGIN
+(sufficient for a Gmail app password; not XOAUTH2), and literal handling
+covers the forms
+.B FETCH
+produces, not every server response.
