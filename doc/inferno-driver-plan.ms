@@ -869,26 +869,49 @@ lock; a per-controller
 .CW QLock
 now serialises it.
 .PP
-But the tick also exposes a preemption-safety bug that has no cheap fix,
-so the routing is reverted and the board ships cooperative.  A single
-process writing two thousand blocks and reading them back fails
-intermittently
-.CW "file does not exist"
-at a varying block (three of three), while a four-thousand-open
-namespace loop under the same tick is clean - the corruption is
-SD-specific.  Bisection is decisive on where it is not: a no-op
-.CW clockintr
-(re-arm and tick-count only) still corrupts, so it is the exception
-entry/return around the transfer, not a clock callee; yet
+Enabling the tick then exposed what looked like a preemption-safety bug
+in the transfer, and chasing it to ground took a long hunt through
+several wrong trees (the atomics, a QEMU-TCG residual, a multi-kproc
+race) - all ruled out by test.  The real cause was in
 .CW vectrap
-and its runtime-built stub are byte-identical to virtarm64's, which is
-stable under its own GIC timer, so the vector code alone is not the
-whole story.
-.CW splhi()
-around the transfer cures the single-proc stress but deadlocks the
-multi-proc file-server path in a lock loop.  sifive_u's slow SPI driver
-never lands in the window and is the working oracle; the mechanism is
-the open lead.
+and had nothing to do with SD: it builds the
+.CW Ureg
+on the stack at
+.CW SP
+and calls
+.CW trap(&ureg) ,
+but Plan 9's arm64 convention homes the callee's first argument at
+caller-
+.CW SP+8 ,
+which is exactly
+.CW UR_R1 ,
+so trap()'s prologue spilled its argument onto the saved
+.CW R1
+every interrupt.  Harmless wherever
+.CW R1
+was dead; catastrophic when a timer IRQ landed in
+.CW irestore 's
+fixed-size
+.CW "R = p->R"
+copy, whose loop counter is
+.CW R1
+- the copy then ran unbounded and walked memory upward from the global
+.CW R
+(silent with the MMU off, the
+.CW "file does not exist"
+symptom; a read-only-page-table fault with it on).  The full account is
+.CW doc/raspi3b-preempt-plan.ms .
+The fix reserves the argument-home area below the Ureg in
+.CW vectrap
+(l.s, both raspi3b and virtarm64); with it, the one-line timer routing is
+committed and the board runs a real 100Hz preemptive tick.  Proven not
+guessed: an instrumented qemu showed the saved
+.CW x1
+slot overwritten on 600 of 600 interrupts before the fix and 0 after,
+and the 2000-block stress that faulted about one run in eight passes 24
+of 24 with the real preemptive
+.CW clockintr .
+QEMU was correct throughout; no emulator change was needed.
 .NH 1
 Immediate next steps (cold-start)
 .PP
@@ -897,14 +920,22 @@ versions with a display, sifive_u with SPI, GEM ethernet and an SD-over-
 SPI stack complete to a kfs filesystem, shakti (riscv64), and the
 Raspberry Pi 3B (arm64) with I2C/SPI/GPIO and a native-SD block device
 (/dev/sdM0/data, read/write/multi-block) - every board booting to a
-clean shell.  The prioritized next work: (1) the raspi3b
-SD-under-preemption bug - re-enable the one-line timer routing
-(0x40000040 bit1) and make the SDHOST transfer survive a timer IRQ taken
-mid-stream; the single-proc 2000-block write/read stress is the
-reproducer, sifive_u is the working oracle, and a kfs (and any real
-multitasking) on the Pi is what it gates.  (2)
-persistence across reboot on sifive_u - the kfs is reamed every boot; a
-mount that reams only a blank device would show a file surviving a
+clean shell, and raspi3b now runs a real preemptive 100Hz tick (the
+SD-under-preemption bug is fixed - the vectrap argument-clobber above).
+The prioritized next work: (1) a kfs filesystem on the Pi, now that the
+tick and preemptive scheduling it gated are working - ream
+.CW /dev/sdM0/data ,
+mount it, and plant-and-read a file, the way sifive_u already does; the
+SDHOST
+.CW bio()
+has no flow control (it relies on QEMU's synchronous FIFO), so real
+hardware will want an SDEDM-level wait before kfs runs on a physical Pi.
+(2) persistence across reboot on sifive_u - the kfs is reamed every boot;
+a mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
-rule that matters for any multi-core board is to park the
-secondary cores first.
+rule that matters for any multi-core board is to park the secondary cores
+first.  A cross-cutting note from the tick hunt: the arm64
+.CW vectrap
+frames the Ureg on the interrupted stack, so any C handler it calls needs
+its argument-home area reserved below the Ureg; armv7 and riscv64 use a
+static Ureg buffer and are not exposed.

@@ -1,47 +1,86 @@
 .TL
-Diagnosing the raspi3b SD-under-preemption corruption
+The raspi3b SD-under-preemption corruption: a vectrap argument-clobber
 .PP
-A plan to find and fix the one bug that keeps a scheduler tick - and so a
-filesystem - off the Raspberry Pi 3B.  Everything else on the board (I2C,
-SPI, GPIO, and a native-SD block device at
+This was the one bug that kept a scheduler tick - and so a filesystem -
+off the Raspberry Pi 3B.  Everything else on the board (I2C, SPI, GPIO,
+and a native-SD block device at
 .CW /dev/sdM0/data )
-works; the board ships cooperative only because turning the tick on
-corrupts SD writes under load.  Read
+worked; the board shipped cooperative only because turning the tick on
+corrupted SD writes under load.  It is now
+.B fixed
+(commit
+.CW 2cdae759 )
+and the tick is enabled.  Read
 .CW doc/inferno-driver-plan.ms
 first for how the board got here.
 .NH 1
-Where it stands now
+Resolution
 .PP
-The root turned out to be atomics, not the SD driver.  The kernel's
-spinlock primitive
-.CW _tas
-is an
+The bug was not in the SD driver, not in the atomics, and not in QEMU.
+It was in
+.CW vectrap
+(l.s).  The AArch64 interrupt entry builds the
+.CW Ureg
+frame on the interrupted stack at
+.CW SP
+and then calls
+.CW trap(&ureg) .
+Plan 9's arm64 calling convention gives a callee a stack home for its
+first argument at caller-
+.CW SP+8 ,
+and with
+.CW SP
+sitting on the Ureg base that slot is exactly
+.CW UR_R1 .
+So trap()'s prologue, spilling its
+.CW Ureg*
+argument to its home, overwrote the saved
+.CW R1
+on every single interrupt.  It hid for the life of the port because
+.CW R1
+is almost always dead at an interrupt - except when a timer IRQ lands in
+.CW irestore 's
+fixed-size
+.CW "R = p->R"
+register-block copy, where
+.CW R1
+is the live loop counter.  Clobbering it turned a ten-iteration copy into
+an unbounded one that walked memory upward from the global
+.CW R :
+silent corruption with the MMU off (the
+.CW "file does not exist"
+heisenbug), a read-only-page-table fault with it on.
+.PP
+The fix is four instructions: reserve sixteen bytes of argument-home
+scratch below the Ureg before the call (
+.CW "SUB $16, SP" ;
+pass
+.CW "&Ureg = SP+16" ;
+.CW "ADD $16, SP"
+after), in both raspi3b and virtarm64
+.CW l.s .
+Verified against an instrumented qemu 10.1.3: the saved
+.CW x1
+slot was overwritten with the frame base on 600 of 600 interrupts before
+the fix and 0 after; the tick-on SD write+readback stress that used to
+fault about one run in eight now passes 24 of 24 with a no-op clock
+handler and 24 of 24 with the real preemptive
+.CW clockintr .
+QEMU is correct; no emulator patch was needed.
+.PP
+Two things from the hunt were real and are kept, though neither was the
+root cause.  The identity MMU (raspi3b/mmu.c) gives RAM Normal write-back
+inner-shareable, which is what makes the
 .CW LDXRW / STXRW
-exclusive pair, and the board ran with the MMU off, which on AArch64
-makes all of RAM Device-nGnRnE - memory the architecture leaves the
-exclusive monitor UNPREDICTABLE on.  So every lock ran on unsound memory,
-surviving only because QEMU's monitor emulation is lenient and no
-interrupt had ever landed inside an LL/SC (the timer never fired).  Two
-fixes are now committed: an identity MMU that gives RAM Normal write-back
-inner-shareable (raspi3b/mmu.c, on by default), and a
+spinlocks sound (exclusives are unpredictable on the Device memory an
+MMU-off board provides), and it maps the page tables read-only - the
+tripwire that turned the otherwise-silent wild store into a catchable
+fault and let the bug be localised at all.  The
 .CW CLREX
-on exception entry so an interrupted
-.CW _tas
-retries as the architecture requires (l.s vectrap).  Together they take
-the tick-time write stress from failing every run to passing roughly
-seven of eight, and the failure changed shape from a wild store
-corrupting data to a lock loop (a spinlock stuck) or an occasional
-register-corruption fault.  What remains is a QEMU-TCG residual: even on
-Normal memory and with CLREX, a timer IRQ taken inside an LL/SC still
-occasionally leaves a lock stuck or drops a register - visible with the
-tick on and a no-op
-.CW clockintr ,
-so it is the exclusive/interrupt path itself, not a driver or a scheduler
-callee.  The tick therefore stays off by default; closing that residual
-(or confirming it is a QEMU limitation and masking the LL/SC window with
-.CW splhi )
-is the last step before the tick, and a kfs, can land.  The rest of this
-document is the investigation that got here, kept as evidence.
+on exception entry is architecturally harmless and stays.  The rest of
+this document is the investigation, kept as evidence of the false trails
+(atomics, a QEMU residual, a multi-kproc race) the symptoms led through
+before the argument-home collision was found.
 .NH 1
 The bug
 .PP
