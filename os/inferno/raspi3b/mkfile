@@ -37,6 +37,7 @@ OBJ=\
 	stubs.$O\
 	i2cbcm.$O\
 	spibcm.$O\
+	gpiobcm.$O\
 	$CONF.root.$O\
 	$IP\
 	$DEVS\

@@ -139,6 +139,11 @@ main(void)
 		spiinit();
 	}
 
+	{	/* GPIO probe: drive a pin and read its level back */
+		extern void gpioinit(void);
+		gpioinit();
+	}
+
 	procinit();
 	links();
 	screeninit();
