@@ -145,6 +145,7 @@ port
 	 * boot process down (that would panic) but idles the machine.
 	 */
 	extern long ospreybuddyforward(ulong, uintptr*);
+	extern int ospreybuddyhas(void);
 	extern uintptr ospreyxcall(va_list);
 	typedef uintptr Xsyscall(va_list);
 
@@ -160,6 +161,8 @@ port
 		buf = va_arg(list, char*);
 		len = va_arg(list, long);
 		off = va_arg(list, vlong);
+		if(fd >= 3 && ospreybuddyhas())	/* a file descriptor: the buddy holds the file, not the console */
+			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
 		USED(fd, off);
 		if(len <= 0)
 			return 0;

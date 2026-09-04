@@ -2343,6 +2343,7 @@ ospreyp9server(void *a)
 enum {
 	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
+	Bcreate = 22, Bremove = 25, Bfstat = 43,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2578,6 +2579,33 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	case Bseek: case Boseek:
 		ab[1] = a[0]; ab[2] = a[1]; ab[3] = a[2];
 		break;
+	case Bcreate:				/* create(name, mode, perm) */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		ab[1] = 0; ab[2] = a[1]; ab[3] = a[2];	/* mode, perm */
+		break;
+	case Bremove:				/* remove(name) */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
+		break;
+	case Bfstat:				/* fstat(fd, edir, nedir): message back at Bdataoff */
+		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
+		break;
 	default:
 		return -1;			/* a trap the buddy does not emulate */
 	}
@@ -2586,7 +2614,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	if(status < 0)
 		return -1;
 
-	if((scallnr == Bread || scallnr == Bpread) && status > 0){
+	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat) && status > 0){
+		/* read to a[1] the buffer, fstat to a[1] the edir */
 		dd = ospreydata(p, Bdataoff, status);
 		if(dd != nil)
 			for(i = 0; i < status; i++)

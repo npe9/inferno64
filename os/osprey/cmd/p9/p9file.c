@@ -404,6 +404,53 @@ p9create(char *name, int mode, ulong perm)
 	return fd;
 }
 
+/* remove the file or directory named by `name`; 0, or -1 on error */
+int
+p9remove(char *name)
+{
+	Chan *c;
+
+	if(waserror())
+		return -1;
+	c = namec(name, Aremove, 0, 0);
+	poperror();
+	if(waserror()){
+		c->type = 0;		/* remove already clunked the fid; fake the Chan */
+		cclose(c);
+		return -1;
+	}
+	devtab[c->type]->remove(c);
+	c->type = 0;
+	poperror();
+	cclose(c);
+	return 0;
+}
+
+/*
+ * The raw machine-independent stat message for a descriptor, into buf: the
+ * bytes a Plan 9 fstat(2) puts in its edir, for the process's own libc to
+ * convM2D.  Returns the byte count, or -1.
+ */
+long
+p9fstatraw(int fd, uchar *buf, int nbuf)
+{
+	Chan *c;
+	long n;
+
+	if(waserror())
+		return -1;
+	c = fdtochan(fd, -1, 0, 1);
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+	n = devtab[c->type]->stat(c, buf, nbuf);
+	poperror();
+	cclose(c);
+	poperror();
+	return n;
+}
+
 /* bind the file or directory named by `name` onto `old` in the name space */
 int
 p9bind(char *name, char *old, int flag)

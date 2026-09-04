@@ -243,12 +243,34 @@ work.
 .B "2.  The rest of a legacy ABI."
 Built, above, for the Linux binary: file mappings, stdin and stdout
 through the buddy's own descriptor table, SIGSEGV to a handler or a
-kill.  What remains is on the Plan 9 side: the calls
-.CW p9srv
-makes that the buddy does not answer \- pipe, rfork, mount, bind and the
-rest of what a personality needs to host a real Plan 9 program \- and a
-declined fault reaching a Plan 9 program as a note rather than the
-microkernel's donotify panic.
+kill.  The Plan 9 side has grown from open/read/close to a real file
+lifecycle: the buddy now answers
+.CW create ,
+.CW fstat
+and
+.CW remove
+as well, and \- the fix that made writing to a file work at all \-
+.CW pwrite
+to a file descriptor is forwarded to the buddy instead of the kernel's
+console writer, which had been swallowing every legacy file write
+regardless of its descriptor.  The p9pair check has the legacy a.out
+create a file on the log store, write it, read the bytes back through the
+buddy, and stat it; remove is forwarded and the immutable log store
+refuses it, which is the store's semantics, not a gap.  What remains is
+the rest of what a personality needs to host a real Plan 9 program \-
+.CW pipe ,
+.CW rfork ,
+.CW mount ,
+.CW bind ,
+and a stat-by-name and errstr round trip \- and a declined fault reaching
+a Plan 9 program as a note rather than the microkernel's donotify panic.
+(A pre-existing boot-time
+.CW "unimplemented syscall 14"
+prints twice from the server personality during the IP bring-up \- an
+.CW open
+trap from that process the systab does not answer and no buddy stands
+behind, source not yet pinned; it predates this work, does no harm, and
+does not fail p9pair.)
 .PP
 .B "3.  Storage: a block device served by a task, then a file system."
 The plan's user-level services section says file-system policy means two

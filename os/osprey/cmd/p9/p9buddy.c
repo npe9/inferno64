@@ -36,6 +36,9 @@ enum {
 	SEEK	= 39,
 	PREAD	= 50,
 	PWRITE	= 51,
+	CREATE	= 22,
+	REMOVE	= 25,
+	FSTAT	= 43,
 
 	/*
 	 * Not system calls: the kernel's requests for the legacy process's
@@ -422,6 +425,27 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	case OSEEK:
 		bfd = fdof(img, a0);
 		r = bfd < 0 ? -1 : (long)p9seek(bfd, (vlong)a1, (int)a2);
+		break;
+
+	case CREATE:
+		/* create(name, mode, perm): name at cdata[Nameoff], a1 mode, a2 perm */
+		if(waserror()){
+			r = -1;
+			break;
+		}
+		r = fdnew(img, p9create((char*)(cdata + Nameoff), (int)a1, (ulong)a2));
+		poperror();
+		break;
+
+	case REMOVE:
+		/* remove(name): name at cdata[Nameoff] */
+		r = p9remove((char*)(cdata + Nameoff));
+		break;
+
+	case FSTAT:
+		/* fstat(fd, edir, nedir): the raw stat message to cdata[Dataoff], a1 = nedir */
+		bfd = fdof(img, a0);
+		r = bfd < 0 ? -1 : p9fstatraw(bfd, cdata + Dataoff, (int)a1);
 		break;
 
 	default:
