@@ -169,10 +169,10 @@ def main():
          and 'the name space did not cross' not in t),
         ("and the parent reaps it: wait() returns the forked child's pid - the fork's other end, the kernel answering await for the container it made",
          re.search(r'legacy: I awaited and reaped my forked child; its wait message: "\d+ ', t) is not None),
-        ("the device-carried medium: the client puts a frame on the osprey ring to the server container, and the server injects it into the stack at its end - the medium's two ends as two containers, the kernel only routing the frame",
+        ("the device-carried medium: the client puts a frame's bytes on the osprey ring to the server container, and the server receives them and hands the frame to the stack at its end - the medium's two ends as two containers, the kernel only routing the frame",
          'p9: pair-client: sent a 64-byte frame to the server container over the ring - the device-carried medium' in t
-         and re.search(r'osprey medium: a 64-byte frame arrived over the ring from container \d+, into the stack at this end', t) is not None),
-        ("and the reverse direction: the server returns the frame on the reply and the client sees it come back whole - a frame round-trips the ring between the two containers, both ways",
+         and re.search(r'osprey medium: a 64-byte frame arrived over the ring from container \d+ and was handed to the stack at this end', t) is not None),
+        ("and the reverse direction: the server puts the same 64 bytes on the reply and the client sees them return whole - the frame's bytes cross the ring both ways between the two containers (the reply channel a symmetric medium needs; a real one would carry the peer's own outbound frame, not the sender's)",
          'p9 medium: the server returned the 64-byte frame over the ring, whole - the reverse direction of the device-carried medium' in t),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t

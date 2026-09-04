@@ -145,7 +145,7 @@ ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer)
 	er = allos;			/* this container's osprey interface */
 	if(er == nil || n <= 0)
 		return -1;
-	print("osprey medium: a %ld-byte frame arrived over the ring from container %llud, into the stack at this end - the device-carried medium\n",
+	print("osprey medium: a %ld-byte frame arrived over the ring from container %llud and was handed to the stack at this end - the device-carried medium (a frame the stack does not parse it drops)\n",
 		n, fromcontainer);
 	bp = allocb(n);
 	if(bp == nil)

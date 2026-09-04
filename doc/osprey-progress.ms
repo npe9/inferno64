@@ -1190,8 +1190,8 @@ handshake and accept, and a byte stream crosses each way \- fifty-four
 bytes one way, forty the other, each read back verbatim, full duplex,
 checked in the p9pair boot.
 The device-carried two-container form is now begun, in the one direction
-the request ring runs.  A frame put on the ring to the peer container
-crosses it and is injected into the stack at the far end:
+the request ring runs.  A frame's bytes put on the ring to the peer
+container cross it and are handed to the stack at the far end:
 .CW ring9p_frame
 in
 .CW ring9p.c
@@ -1200,12 +1200,17 @@ stages the frame in the client's data area and sends it as a
 request, the server loop answers that op by handing the frame to
 .CW ospreymediumreceive
 .CW ( ospreymedium.c ),
-which injects it into its own osprey interface with
+which hands it to its own osprey interface with
 .CW ipiput4
-exactly as the pump injects a locally-queued frame - so from the stack's
-side a frame from the peer container is a frame like any other, and the
-kernel only routed it.  The p9pair boot sends a 64-byte frame from the
-client container to the server's stack and the server prints its arrival.
+exactly as the pump hands over a locally-queued frame - the same path a
+frame from a paired interface takes, so once a real frame crosses here it
+is a frame like any other and the kernel only routed it.  The p9pair boot
+sends a 64-byte frame from the client container to the server, which
+prints its arrival; the frame is a synthetic one, not an IP packet, so the
+stack drops it after
+.CW ipiput4 ,
+which is why what is checked is that the bytes crossed and were handed
+over, not that the stack parsed them.
 The reverse direction rides the same request's reply: the server returns
 a frame on the reply and the client sees it come back whole, so a frame
 crosses the ring both ways between the two containers - the channel a
