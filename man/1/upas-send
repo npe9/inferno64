@@ -25,6 +25,14 @@ upas/send \- submit mail through an SMTP server over TLS
 .B -t
 .I rcpt
 ] ... [
+.B -j
+.I subject
+] [
+.B -A
+.I attachment
+] ... [
+.B -N
+] [
 .I msgfile
 ]
 .SH DESCRIPTION
@@ -60,6 +68,27 @@ then sends the message read from
 (or standard input).
 The message should be a complete RFC 822 message \(em headers, a blank
 line, then the body.
+.PP
+Alternatively
+.I upas/send
+can compose the message itself: given
+.B -j
+.I subject
+and/or one or more
+.B -A
+.I attachment
+it builds a message from the
+.B -f
+sender, the
+.B -t
+recipients, the subject, the body read from
+.I msgfile
+or standard input, and the attachments (base64-encoded into a
+.B multipart/mixed
+message, one part each).
+.B -N
+composes the message and writes it to standard output without sending \(em
+useful to inspect it or to pipe it elsewhere.
 .PP
 As with
 .IR upas-fetch (1),
