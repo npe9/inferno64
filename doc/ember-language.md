@@ -625,6 +625,34 @@ and `sort(v.slice(), cmp)` sorts a `Vec`.
 `[]T(l)` converts a list to an array, as `[]byte(s)` converts a
 string, and `tolist(a)` converts back.
 
+## The read-eval-print loop
+
+    ; emberepl
+    ; 1 + 2 * 3
+    7
+    ; x := 21
+    ; x * 2
+    42
+    ; func twice(n int) int { return 2 * n }
+    ; twice(x)
+    42
+
+`emberepl` compiles each line into a module of its own -- the
+declarations of the session so far, then an `init` running its
+statements -- loads it and runs it. A line that is an expression
+prints its value (through `string(...)`, so a value that cannot be
+converted is simply run as a statement); a line starting with
+`import`, `type`, `func`, `const` or `var` joins the declarations.
+Since the whole session runs again for every line, the earlier lines'
+output goes to `/dev/null` and only the newest line's reaches the
+terminal, and a line with a side effect happens once per entry, not
+once per run. Given file arguments it reads the lines from them
+instead of the terminal, which is how `tests/repl.sh` drives it.
+
+Each line gets fresh instances of the compiler's modules, since they
+keep a compilation's state in their globals; a REPL was the first
+thing to compile more than once in one process.
+
 ## Unit tests
 
 A file of `func test_xxx()` functions, each checking with

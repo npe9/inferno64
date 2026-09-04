@@ -4,11 +4,12 @@
 # and installed under $ROOT/dis/ember.
 
 EMBER=$ROOT/$OBJDIR/bin/ember
-IFLAGS=-I$ROOT/ember/module -I.
+IFLAGS=-I$ROOT/ember/module -I$ROOT/appl/cmd/ember -I.
 
 TARG=\
 	json.dis\
 	jsonfmt.dis\
+	emberepl.dis\
 
 all:V:	$TARG
 
@@ -16,6 +17,7 @@ all:V:	$TARG
 	$EMBER $IFLAGS -o $target $stem.e || (rm -f $target; exit 1)
 
 jsonfmt.dis:	json.ei
+emberepl.dis:	replline.ei
 
 install:V:	all
 	mkdir -p $ROOT/dis/ember

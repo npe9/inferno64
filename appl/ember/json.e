@@ -301,7 +301,6 @@ func text(v ref Value) string {
 	return b.string()
 }
 
-
 // get(v, name): the member of an object, or nil
 func get(v ref Value, name string) ref Value {
 	match v {

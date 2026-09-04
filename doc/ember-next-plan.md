@@ -361,3 +361,24 @@ Changing the signature algorithm is not open: it is Limbo's, and
 every `.dis` in the tree carries signatures computed with it.
 
 So the limit stands, with a diagnostic that explains it.
+
+## 20. A read-eval-print loop
+
+`appl/ember/emberepl.e` is the last item of item 8: a REPL. Each line
+becomes a module -- the session's declarations, then an `init` with
+its statements -- compiled by the self-hosted compiler in the same
+process, loaded and run. An expression prints its value, a
+declaration joins the preamble, and a line that fails to compile is
+reported and dropped, leaving the session as it was.
+`ember/tests/repl/session.e` is a scripted session with its expected
+output, run by `tests/repl.sh` as part of `mk test`.
+
+It found one thing worth knowing: the compiler's modules keep a
+compilation's state in their globals, so compiling twice in one
+process needs a fresh instance of each (`load Parse parse.PATH` and
+so on, wired the way `emberc` wires its imports). Nothing before the
+REPL had ever compiled twice in one process.
+
+What is left of item 8 is a language server, which wants the checker
+to report positions and types for a file without generating code --
+the `-c` path already does the work, so it is mostly a protocol.

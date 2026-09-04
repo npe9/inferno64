@@ -49,4 +49,5 @@ test:V:	$O.out
 	./tests/fmt.sh
 	./tests/selffmt.sh
 	./tests/selftools.sh
+	./tests/repl.sh
 	./tests/limbocmp.sh
