@@ -1,21 +1,25 @@
 /*
  * BCM2835 SDHOST native-SD controller (0x3f202000) as an Inferno storage
- * device on QEMU -M raspi3b.  QEMU routes the -sd card to the generic
- * SDHCI by default; the card reaches SDHOST only once GPIO pins 48-53
- * are switched to alt0 (fsel 4), so online() does that routing first
- * (via gpiobcm.c's gpiofsel) and then talks native SD - real R1/R2/R3/R6
- * responses and RCA addressing, not the SPI-mode protocol.
+ * device on the Raspberry Pi 3.  On this SoC the card can be wired to the
+ * SDHOST controller or to the separate Arasan SDHCI; the SDHOST pins are
+ * GPIO 48-53 in alt0 (fsel 4), so online() switches them (via gpiobcm.c's
+ * gpiofsel) and then talks native SD - real R1/R2/R3/R6 responses and RCA
+ * addressing, not the SPI-mode protocol.  (Under -M raspi3b the emulator
+ * defaults the -sd card to the SDHCI, so the same pin switch is what
+ * routes it to SDHOST there.)
  *
- * The register model (QEMU hw/sd/bcm2835_sdhost.c): write SDARG then
- * SDCMD (index | flags | NEW_FLAG) to run a command; the response lands
- * in SDRSP0..3 synchronously.  For a data transfer set SDHBCT (block
- * size) and SDHBLC (block count, which arms datacnt), issue the command
- * with READ_CMD/WRITE_CMD, and move the block through the SDDATA FIFO a
- * 32-bit word at a time (a read pops and auto-refills from the card, a
- * write pushes and drains to it).
+ * The register interface: write SDARG then SDCMD (index | flags |
+ * NEW_FLAG) to run a command; the response lands in SDRSP0..3.  For a
+ * data transfer set SDHBCT (block size) and SDHBLC (block count, which
+ * arms datacnt), issue the command with READ_CMD/WRITE_CMD, and move the
+ * block through the SDDATA FIFO a 32-bit word at a time.  On real hardware
+ * that FIFO drains to / fills from the card at SD-clock speed, so each
+ * word is gated on the SDEDM fill level (see fifospace()/fifodata());
+ * the emulator drains it synchronously and never blocks there.
  *
  * This plugs into devsd with a bio callback, so devsd exposes the card
- * as /dev/sdM0/data.  Verified against a marker image, read and write.
+ * as /dev/sdM0/data.  Verified (under emulation) against a marker image,
+ * read and write.
  */
 #include "u.h"
 #include "../port/lib.h"
@@ -37,6 +41,7 @@ enum {
 	SDRSP3	= 0x1c/4,
 	SDHSTS	= 0x20/4,
 	SDVDD	= 0x30/4,
+	SDEDM	= 0x34/4,	/* extended data mode: FIFO fill level + FSM */
 	SDHCFG	= 0x38/4,
 	SDHBCT	= 0x3c/4,
 	SDDATA	= 0x40/4,
@@ -49,6 +54,10 @@ enum {
 	Longresp = 0x200,
 	Writecmd = 0x80,
 	Readcmd	= 0x40,
+
+	Fifofillsh = 4,		/* SDEDM bits 8:4: words currently in the FIFO */
+	Fifofillmask = 0x1f,
+	Fifodepth = 16,		/* BCM2835 SDHOST data FIFO is 16 words deep */
 
 	Secsize	= 512,
 	Alt0	= 4,		/* GPIO fsel selecting the SDHOST SD pins */
@@ -67,13 +76,49 @@ struct Ctlr {
 static Ctlr sdctlr;
 extern SDifc sdhostbcmifc;
 
-/* Issue a command; QEMU completes it synchronously.  Returns SDRSP0. */
+/* Issue a command; the model completes it synchronously.  Returns SDRSP0. */
 static u32
 sdcmd(u32 *r, int cmd, u32 arg, int flags)
 {
 	r[SDARG] = arg;
 	r[SDCMD] = cmd | flags | Newflag;
 	return r[SDRSP0];
+}
+
+/*
+ * FIFO flow control.  On the real BCM2835 SDHOST the data FIFO drains to
+ * (or fills from) the card at SD-clock speed, asynchronously to the CPU:
+ * a write must wait for space and a read must wait for a word, or the
+ * transfer under/overruns.  The emulator drains the FIFO synchronously on
+ * every SDDATA access, so the fill level is always 0 there and these
+ * polls fall straight through - but they are what a physical Pi needs, so
+ * they belong here (AGENTS.md: hardware correctness over emulator-pass).
+ * Bounded so a wedged controller cannot spin the kernel forever.
+ */
+static int
+fifofill(u32 *r)
+{
+	return (r[SDEDM] >> Fifofillsh) & Fifofillmask;
+}
+
+static void
+fifospace(u32 *r)			/* wait until the FIFO can take a word */
+{
+	int i;
+
+	for(i = 0; i < 1000000; i++)
+		if(fifofill(r) < Fifodepth)
+			return;
+}
+
+static void
+fifodata(u32 *r)			/* wait until the FIFO holds a word */
+{
+	int i;
+
+	for(i = 0; i < 1000000; i++)
+		if(fifofill(r) > 0)
+			return;
 }
 
 /*
@@ -224,12 +269,14 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			sdcmd(r, 24, arg, Writecmd);	/* WRITE_SINGLE_BLOCK */
 			for(j = 0; j < Secsize; j += 4){
 				w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
+				fifospace(r);		/* wait for FIFO room */
 				r[SDDATA] = w;
 				p += 4;
 			}
 		}else{
 			sdcmd(r, 17, arg, Readcmd);	/* READ_SINGLE_BLOCK */
 			for(j = 0; j < Secsize; j += 4){
+				fifodata(r);		/* wait for a FIFO word */
 				w = r[SDDATA];
 				p[0] = w;
 				p[1] = w>>8;
