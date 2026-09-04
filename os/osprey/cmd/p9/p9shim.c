@@ -166,11 +166,34 @@ kstrdup(char **p, char *b)
 	*p = s;
 }
 
+/*
+ * Blocks are the high-churn allocation - one per packet - and the bump
+ * arena never frees, so without reclaim they would exhaust it under any
+ * sustained traffic.  allocb re-zeroes, so a reused Block is as good as a
+ * fresh one; keep a free list of freed Blocks and reuse one whose buffer
+ * is big enough (first fit), falling back to the arena.  freeb pushes onto
+ * the list instead of leaking; freeblist has already nil'd b->next, so the
+ * link reuses that field.
+ */
+static Block *blockfreelist;
+
 Block*
 allocb(int size)
 {
-	Block *b;
+	Block *b, **l;
 
+	for(l = &blockfreelist; (b = *l) != nil; l = &b->next){
+		if((long)(b->lim - b->base) >= (long)(size + 64)){
+			*l = b->next;
+			memset(b->base, 0, b->lim - b->base);
+			b->next = b->list = nil;
+			b->rp = b->wp = b->base;
+			b->pool = nil;
+			b->flag = 0;
+			b->checksum = 0;
+			return b;
+		}
+	}
 	b = mallocz(sizeof(Block)+size+64, 1);
 	if(b == nil)
 		error(Enomem);
@@ -183,8 +206,10 @@ allocb(int size)
 void
 freeb(Block *b)
 {
-	if(b != nil)
-		free(b);
+	if(b != nil){
+		b->next = blockfreelist;
+		blockfreelist = b;
+	}
 }
 
 _Noreturn void
@@ -235,15 +260,17 @@ openmode(ulong o)
 /*
  * The personality's allocator: a bump arena that never reuses, so freshly
  * handed-out memory is still the zero the BSS arena started as (newpgrp and
- * the name space rely on that).  Because nothing is freed, the arena is a
- * high-water mark: it must hold every allocation the run ever makes at once.
- * Two independent IP stacks (two devip Fs) plus their per-packet Blocks
- * overran the old 1MB and corrupted memory when malloc then returned nil to
- * callers that did not check; 16MB gives comfortable headroom.  A reclaiming
- * allocator (or at least a Block free list, since allocb re-zeroes) is the
- * real fix for long-running or heavy workloads.
+ * the name space rely on that).  Because malloc never frees, the arena holds
+ * every non-Block allocation the run makes - the protocol and conversation
+ * structures, the name space - which is bounded and small.  The unbounded
+ * churn is Blocks, one per packet; those are reclaimed by a free list in
+ * allocb/freeb below (allocb re-zeroes, so a reused Block is as good as
+ * fresh), so sustained traffic no longer grows the arena.  The old 1MB with
+ * no reclaim overran once two IP stacks ran (their packet Blocks piling up),
+ * malloc returned nil, and the unchecked nil corrupted memory; 4MB now, with
+ * the churn reclaimed, is comfortable headroom for the persistent structures.
  */
-static char	arena[16*1024*1024];
+static char	arena[4*1024*1024];
 static ulong	arenap;
 enum { AHDR = 16 };
 void*
