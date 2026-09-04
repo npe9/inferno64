@@ -186,6 +186,12 @@ def main():
         ("and a byte stream crosses each way: the server container's tcp.c reads the line the client's sent, and the client's reads the answer - two whole stacks in two containers, one conversation, over a wire the kernel only routes",
          'p9 ip: ring server: read 57 bytes the client container\'s stack sent across the ring: "sent by the client container\'s own tcp.c, across the ring"' in t
          and 'p9 ip: client container: read 61 bytes back from the server container\'s tcp.c across the ring: "answered by the server container\'s own tcp.c, across the ring"' in t),
+        ("and a gateway: stack B in the server container, a wire on each side, forwards with the real ip.c - the client's tcp.c reaches stack A, which has no wire to it, through stack B, and a line crosses each way one hop further",
+         re.search(r'p9 ip: client container: handshake with stack A through the gateway - Established', t) is not None
+         and re.search(r'p9 ip: gateway server: stack A accepted a connection from 10\.0\.1\.1!\d+, forwarded by stack B', t) is not None
+         and 'p9 ip: gateway server: stack A read 44 bytes from the client container through the gateway: "sent through stack B as a gateway to stack A"' in t
+         and 'p9 ip: client container: read 39 bytes back from stack A through the gateway: "answered by stack A, behind the gateway"' in t
+         and re.search(r"p9 ip: gateway: stack B's ip.c forwarded the conversation - ForwDatagrams: ([4-9]|\d\d+)", t) is not None),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

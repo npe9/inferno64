@@ -181,6 +181,20 @@ sched_tick(void)
 }
 
 /*
+ * The fast clock, for il.c's round-trip timing: the tick count, at 100 Hz.
+ * The name is what -Dfastticks=kfastticks (build.sh) turns the stack's
+ * fastticks into; libc's own fastticks opens /dev/bintime through nsec(),
+ * an OPEN the microkernel does not answer.
+ */
+uvlong
+kfastticks(uvlong *hz)
+{
+	if(hz != nil)
+		*hz = 100;
+	return p9ticks;
+}
+
+/*
  * Run every kproc that is ready, then return to the caller (the server
  * loop).  The caller is Running, so sched() requeues it; it is handed back
  * the processor once the ready kprocs have each run until they sleep.

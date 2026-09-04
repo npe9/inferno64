@@ -416,13 +416,33 @@ the way the fork intercepts
 So item 6 is whole \- both fork forms, the child a full copy of the
 parent (its address space, its control flow, its open files and its name
 space), and the parent waiting on it to exit.
-(A pre-existing boot-time
+(The boot-time
 .CW "unimplemented syscall 14"
-prints twice from the server personality during the IP bring-up \- an
+that printed twice from the server personality during the IP bring-up
+is pinned and gone: the host libc's
+.CW fastticks
+calls
+.CW nsec ,
+which opens
+.CW /dev/bintime
+\- an
 .CW open
-trap from that process the systab does not answer and no buddy stands
-behind, source not yet pinned; it predates this work, does no harm, and
-does not fail p9pair.)
+trap the microkernel does not answer \- and
+.CW il.c 's
+.CW inittimescale
+called it once per stack attached.  The symbol cannot be overridden,
+the libc member being pulled in for
+.CW nsec ,
+so it is renamed the way
+.CW sleep
+was: the kernel-side sources are compiled
+.CW -Dfastticks=kfastticks
+and the personality's
+.CW kfastticks
+.CW ( os/osprey/cmd/p9/p9sched.c )
+is the cooperative clock's tick count at 100 Hz.  That print was what
+had been failing the last criterion of the p9buddy and p9linux checks;
+both pass whole now.)
 (A separate, pre-existing intermittent flake: the group-reservation and
 .CW dumptask
 status-line criteria fail on some boots \- their signature is a status
@@ -1309,12 +1329,43 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-forty-two criteria, four of them this.  What is honest to keep saying: the
+forty-three criteria, five of them this and the gateway below.  What is
+honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a
 tick unless the client is sending; and the wire has no flow control
 beyond the queue the server end holds, which drops when full and counts
-the drop.
+the drop.  Making it run to the end also removed the server loop's
+four-hundred-request cap, a headless-run guard from before the client
+had a stack: the rest of the run had spent the count by the time the
+client's stack came up, and nobody answered its ring.  The server now
+serves until the kernel ends the boot with the boot program's exit.
+.PP
+And the gateway, which is item 7's "routing and gateways" done by the
+real stack rather than by netsrv.  Stack B in the server container has a
+wire on each side \- 10.0.0.2 to stack A, 10.0.1.2 to the client
+container \- so it is told
+.CW "iprouting 1" ,
+stack A is given a route to 10.0.1.0/24 through 10.0.0.2, and the client
+a route to 10.0.0.0/24 through 10.0.1.2.  Stack A announces
+.CW tcp!*!8890 ,
+which the client container can reach only if stack B forwards: it has no
+wire to stack A at all.  The client's tcp.c connects to 10.0.0.1!8890,
+the SYN crosses the ring to stack B, is not for it, and
+.CW ip.c 's
+forwarding sends it out the paired wire to stack A with the ttl
+decremented; the SYN-ACK comes back the same way by stack A's route; the
+handshake reads
+.CW "Established ... swin 65535>>4 rwin 1048560>>4"
+(stack A's window, not B's), stack A's listen accepts a connection from
+10.0.1.1, a 44-byte line crosses to it and a 39-byte answer back, and
+stack B's own statistics say
+.CW "ForwDatagrams: 4"
+by the time the answer is written \- the count
+.CW ip.c
+keeps of what it forwarded.  A router that is a container, its
+forwarding the stack's own code in user space; what the firewall would
+add to it is the rule, which netsrv has and the real stack does not.
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

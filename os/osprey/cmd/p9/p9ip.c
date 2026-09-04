@@ -188,6 +188,57 @@ ringsrv(void *)
 }
 
 /*
+ * The service behind the gateway: the same shape as ringsrv, but on stack
+ * A (/net, 10.0.0.1), which has no wire to the client container at all -
+ * a connection from the client reaches it only if stack B forwards.
+ * Afterwards it reads stack B's ip statistics and reports how many
+ * datagrams B forwarded, the count the real ip.c keeps.
+ */
+static void
+gwsrv(void *)
+{
+	int afd, lfd, dfd, anum, lnum, sfd;
+	long n;
+	char cbuf[64], path[64], rx[256], stats[1024], *p, *e;
+	static char reply[] = "answered by stack A, behind the gateway";
+
+	if(waserror()){
+		print("p9 ip: gateway server failed: %s\n", up->errstr);
+		pexit("gwsrv", 0);
+	}
+	afd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 8890", 13);
+	print("p9 ip: gateway server: tcp!*!8890 announced on stack A, which the client container can reach only through stack B\n");
+	snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	snprint(path, sizeof path, "/net/tcp/%d/remote", lnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, rx, sizeof rx - 1); p9close(sfd);
+	if(n<0)n=0; rx[n]=0;
+	for(e=rx; *e && *e!='\n'; e++) ; *e=0;
+	print("p9 ip: gateway server: stack A accepted a connection from %s, forwarded by stack B, as conversation %d\n", rx, lnum);
+	snprint(path, sizeof path, "/net/tcp/%d/data", lnum);
+	dfd = p9open(path, ORDWR);
+	n = p9read(dfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	print("p9 ip: gateway server: stack A read %ld bytes from the client container through the gateway: \"%s\"\n", n, rx);
+	p9write(dfd, reply, sizeof reply - 1);
+	/* the count now, not after a sleep: the client exits soon after it reads the answer, and the machine idles with it */
+	sfd = p9open("#I1/ipifc/stats", OREAD);
+	n = p9read(sfd, stats, sizeof stats - 1); p9close(sfd);
+	if(n<0)n=0; stats[n]=0;
+	p = strstr(stats, "ForwDatagrams:");
+	if(p != nil){
+		for(e=p; *e && *e!='\n'; e++) ; *e=0;
+		print("p9 ip: gateway: stack B's ip.c forwarded the conversation - %s\n", p);
+	}
+	tsleep(&up->sleep, return0, nil, 1000);
+	p9close(dfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("gwsrv done", 0);
+}
+
+/*
  * The client end.  The client container brings up the real Plan 9 IP
  * stack of its own - devip, ip.c, tcp.c - and binds an osprey interface
  * whose wire is the ring to the server container.  A kproc connects to
@@ -237,6 +288,39 @@ ostcpclient(void *)
 	print("p9 ip: client container: read %ld bytes back from the server container's tcp.c across the ring: \"%s\"\n", n, rx);
 	tsleep(&up->sleep, return0, nil, 300);	/* let the acks cross before the close does */
 	p9close(wfd); p9close(dfd);
+	/*
+	 * Through the gateway: stack A (10.0.0.1) has no wire to this
+	 * container; the route added below sends 10.0.0.0/24 to 10.0.1.2,
+	 * stack B, which forwards.  The same tcp.c conversation, one hop
+	 * further, the forwarding done by the real ip.c in the server
+	 * container.
+	 */
+	{
+		static char msg2[] = "sent through stack B as a gateway to stack A";
+		dfd = p9open("/net/tcp/clone", ORDWR);
+		n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+		print("p9 ip: client container: connecting to 10.0.0.1!8890, stack A, through stack B as a gateway\n");
+		p9write(dfd, "connect 10.0.0.1!8890", 21);
+		snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+		sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+		if(n<0)n=0; line[n]=0;
+		for(e=line; *e && *e!='\n'; e++) ; *e=0;
+		if(strncmp(line, "Established", 11) == 0)
+			print("p9 ip: client container: handshake with stack A through the gateway - %s\n", line);
+		else
+			print("p9 ip: client container: gateway handshake did not reach Established - %s\n", line);
+		snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+		wfd = p9open(path, ORDWR);
+		p9write(wfd, msg2, sizeof msg2 - 1);
+		for(tries = 0, n = 0; tries < 100 && n <= 0; tries++){
+			tsleep(&up->sleep, return0, nil, 50);
+			n = p9read(wfd, rx, sizeof rx - 1);
+		}
+		if(n<0)n=0; rx[n]=0;
+		print("p9 ip: client container: read %ld bytes back from stack A through the gateway: \"%s\"\n", n, rx);
+		tsleep(&up->sleep, return0, nil, 300);
+		p9close(wfd); p9close(dfd);
+	}
 	poperror();
 	clientnetdone = 1;
 	pexit("ostcpclient done", 0);
@@ -269,6 +353,12 @@ p9clientnet(void)
 	p9write(fd, "bind osprey ring client", 23);
 	p9write(fd, "add 10.0.1.1 255.255.255.0", 26);
 	p9close(fd);
+	{
+		static char via[] = "add 10.0.0.0 255.255.255.0 10.0.1.2";	/* stack A's network, through stack B */
+		fd = p9open("/net/iproute", ORDWR);
+		p9write(fd, via, sizeof via - 1);
+		p9close(fd);
+	}
 	print("p9 ip: client container: the real Plan 9 IP stack is up in this container too; its osprey interface 10.0.1.1 is the ring wire to the server container\n");
 	if(ring9p_taketick(Ticksem) < 0)
 		error("the clock tick was refused");
@@ -418,9 +508,28 @@ p9ipup(void)
 	p9write(fd, "bind osprey ring", 16);
 	p9write(fd, "add 10.0.1.2 255.255.255.0", 26);
 	print("p9 ip: stack B's osprey interface 10.0.1.2 is the ring wire to the client container\n");
+	/*
+	 * Stack B now has a wire on each side - 10.0.0.2 to stack A, 10.0.1.2
+	 * to the client container - so make it a gateway: the real stack's
+	 * own forwarding (ip.c's iprouting), a packet from the client for
+	 * stack A comes in the ring wire, is not for stack B, and goes out
+	 * the paired one with its ttl decremented, and the reply comes back
+	 * the same way because stack A routes 10.0.1.0/24 through 10.0.0.2.
+	 * The talk's router and gateway, run by the Plan 9 stack in user
+	 * space; the kernel routes nothing here but the ring messages.
+	 */
+	p9write(fd, "iprouting 1", 11);
 	p9close(fd);
+	{
+		static char via[] = "add 10.0.1.0 255.255.255.0 10.0.0.2";
+		fd = p9open("/net/iproute", ORDWR);
+		p9write(fd, via, sizeof via - 1);
+		p9close(fd);
+	}
+	print("p9 ip: stack B forwards between its two wires - a gateway; stack A routes 10.0.1.0/24 through it at 10.0.0.2\n");
 	kproc("ostcp", ostcp, nil);	/* two-stack tcp.c handshake + byte stream over the osprey wire */
 	kproc("ringsrv", ringsrv, nil);	/* a tcp.c service for the client container, across the ring wire */
+	kproc("gwsrv", gwsrv, nil);	/* the same on stack A, reached through stack B as a gateway */
 	p9kbdstart();			/* the i8042 keyboard driver, in user space above the kernel */
 	poperror();
 

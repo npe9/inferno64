@@ -319,17 +319,23 @@ p9serveloop(char *arg)
 	if(srvcall(base, map, ReqTick, Ticksem, 0) < 0)
 		puts("p9 server: the tick was refused\n");
 	puts("p9 server: serving this name space over the ring\n");
-	for(iters = 0; iters < 400; ){
+	/*
+	 * Serve until the machine stops: the kernel ends the boot when the
+	 * boot program exits, and a server that stopped after a fixed number
+	 * of requests (as this once did, at four hundred, a headless-run
+	 * guard) left the client's own stack with nobody to answer its ring
+	 * once the rest of the run had spent them.  Every thousandth served
+	 * request says the server is still here.
+	 */
+	for(iters = 0;; ){
 		int r = serve1(pq, (Msg*)((uchar*)pq + pq->message),
 			(Msg*)(base + map->data + Reqbuf),
 			(Arm*)(base + map->data + Armoff),
 			cbase + cmap->data, cmap->id);
-		if(r != 0 && r != 2)
-			iters++;	/* ticks and empty frame polls do not count toward the end of a headless run */
-	}
-	{
-		char line[96];
-		seprint(line, line + sizeof line, "p9 server: done; %d ticks, reclamation ran %d times on them\n", ticks, reclaims);
-		puts(line);
+		if(r != 0 && r != 2 && ++iters % 1000 == 0){
+			char line[96];
+			seprint(line, line + sizeof line, "p9 server: %d requests served; %d ticks, reclamation ran %d times on them\n", iters, ticks, reclaims);
+			puts(line);
+		}
 	}
 }

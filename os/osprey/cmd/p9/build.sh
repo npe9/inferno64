@@ -2,13 +2,19 @@
 # Build the Plan 9 namespace library as a program on the host toolchain.
 # The name space (chan/dev/pgrp/devroot) is the kernel's own upper half
 # compiled against the shim (nsdat.h/dat.h/mem.h/fns.h + p9shim.c bodies).
+# Kernel-side sources are compiled -Dsleep=ksleep (the host libc owns
+# sleep(int)) and -Dfastticks=kfastticks: libc's fastticks calls nsec(),
+# which opens /dev/bintime - an OPEN trap the microkernel does not answer
+# ("unimplemented syscall 14", once per stack attached, from il.c's
+# inittimescale).  The personality's kfastticks (p9sched.c) is the
+# cooperative clock's tick count at 100 Hz.
 # Link note: the disk libc.a has members the host 6l cannot read (built
 # by a newer 6c), so link -l (no auto-libc) and supply those members
 # from lib9 source; libc.a still provides its readable members.
 set -e
 cd "$(dirname "$0")/../../../.."          # repo root
 P=os/osprey/cmd/p9
-INC="-Dsleep=ksleep -I $P -I os/osprey/port -I os/osprey/pc64 -I os/osprey/ip -I Osprey/amd64/include -I Osprey/include -I include"
+INC="-Dsleep=ksleep -Dfastticks=kfastticks -I $P -I os/osprey/port -I os/osprey/pc64 -I os/osprey/ip -I Osprey/amd64/include -I Osprey/include -I include"
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
