@@ -24,6 +24,11 @@ pkg \- namespace-native package manager
 .I repo
 .I pkg.tar
 .br
+.B pkg search
+.RB [ -r
+.IR repo ]
+.I term ...
+.br
 .B pkg info
 .I pkg.tar
 .br
@@ -163,6 +168,26 @@ and installed from by name.
 Version order is the lexical order of the
 .IB version .tar
 names, not a semantic-version comparison.
+.SS Search
+.B pkg search
+walks the repository, reads each package's newest manifest, and prints
+the packages whose manifest matches every
+.IR term .
+A term matches (case-insensitively) if it occurs in the package
+.BR name ,
+.BR category ,
+.BR keywords ,
+.B provides
+or
+.B description
+attribute; results are printed best-match first.
+With no
+.I term
+every package is listed.
+Search and the repository layout are two views of the same manifest
+attributes, so a package published with good
+.B keywords
+is both well-placed and findable.
 .SS Commands
 .TP
 .B pack
@@ -205,6 +230,10 @@ File
 into
 .I repo
 under its manifest name and version.
+.TP
+.B search
+Print packages in the repository whose manifest matches all
+.IR term s.
 .TP
 .B install
 Install an archive
@@ -255,11 +284,14 @@ Package, install, use and remove a tool:
 .PP
 .B /doc/pkg-roadmap.md
 .SH BUGS
-Milestones 1\(en3.
-A repository is resolved through the local name space; a
+Milestones 1\(en4.
+A repository is resolved and searched through the local name space;
+.B search
+reads manifests directly rather than a precomputed index.
+A
 .IR styx (2)-served
 .B /pkg
-with a synthetic search file, remote fetch, and a publisher blessing
+(with a synthetic search file), remote fetch, and a publisher blessing
 chain (rather than a single pinned key) are later milestones.
 Version selection is lexical, not semantic.
 An installed package keeps a

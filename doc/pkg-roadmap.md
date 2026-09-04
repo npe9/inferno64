@@ -202,8 +202,16 @@ fails). Still ahead for the full keystone: the Styx file server itself
 (a synthetic tree + a search file, M4) and factoring the manifest parse
 into `appl/lib/pkg.b` when the server needs it.
 
-**M4 — Search.** A query index over manifest attributes via `registry(4)`
-+ a synthetic search file; `pkg search`.
+**M4 — Search. DONE (direct form).** `pkg search [-r repo] term...` walks
+the repository, reads each package's newest manifest, and prints the
+packages matching all terms (case-insensitive over name, category,
+keywords, provides, description), best first; no term lists all. So
+search and the repository taxonomy are two views of one manifest metadata
+set. Verified by `tests/pkgsearch.sh`: a keyword matches the right
+packages and only those, multiple terms AND, an impossible term matches
+nothing, a bare search lists all. Still ahead: backing this with a
+precomputed `registry(4)` index and exposing it as a synthetic
+`/pkg/search` file once the Styx naming server (M3's server half) exists.
 
 **M5 — Trust (blessings).** Verify a publisher `v23` blessing chain
 against trusted roots in `factotum`.

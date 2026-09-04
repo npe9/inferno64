@@ -35,6 +35,13 @@ Manifest: adt {
 	get:	fn(m: self ref Manifest, attr: string): string;
 };
 
+Result: adt {
+	score:		int;
+	name:		string;
+	version:	string;
+	desc:		string;
+};
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -55,6 +62,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	"sign" =>	cmdsign(args);
 	"verify" =>	cmdverify(args);
 	"publish" =>	cmdpublish(args);
+	"search" =>	cmdsearch(args);
 	"install" =>	cmdinstall(args);
 	"list" =>	cmdlist(args);
 	"remove" or "uninstall" =>	cmdremove(args);
@@ -375,6 +383,144 @@ verifytar(tarpath, sigpath: string): (string, string, string)
 	return (pk.owner, trim(pkstr), nil);
 }
 
+# pkg search [-r repo] term... - walk a repository, read each package's
+# newest manifest, and print those matching all terms, best first. Search
+# is a name-space walk plus a match over the manifest attributes; a term
+# hits name, category, keywords, provides or description. With no term,
+# every package is listed. (A precomputed index is a later refinement;
+# this reads manifests directly, which is correct if not the fastest.)
+cmdsearch(args: list of string)
+{
+	repo := "";
+	if(args != nil && hd args == "-r"){
+		args = tl args;
+		if(args == nil)
+			usage();
+		repo = hd args;
+		args = tl args;
+	}
+	terms: list of string;
+	for(a := args; a != nil; a = tl a)
+		terms = lower(hd a) :: terms;
+	base := repo;
+	if(base == "")
+		base = pkgpath();
+	results := searchwalk(base, "", terms);
+	results = sortresults(results);
+	if(results == nil){
+		sys->print("no matching packages under %s\n", base);
+		return;
+	}
+	for(; results != nil; results = tl results){
+		r := hd results;
+		sys->print("%-24s %-8s %s\n", r.name, r.version, r.desc);
+	}
+}
+
+# recurse under base: a directory holding *.tar files is a package (at
+# repo-relative path rel); otherwise descend its subdirectories.
+searchwalk(dir, rel: string, terms: list of string): list of ref Result
+{
+	fd := sys->open(dir, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	subdirs: list of string;
+	istar := 0;
+	for(;;){
+		(n, d) := sys->dirread(fd);
+		if(n <= 0)
+			break;
+		for(i := 0; i < n; i++){
+			nm := d[i].name;
+			if(len nm > 0 && nm[0] == '.')
+				continue;
+			if(hassuffix(nm, ".tar"))
+				istar = 1;
+			else if(d[i].mode & Sys->DMDIR)
+				subdirs = nm :: subdirs;
+		}
+	}
+	res: list of ref Result;
+	if(istar){
+		r := scorepkg(dir, rel, terms);
+		if(r != nil)
+			res = r :: nil;
+	}else{
+		for(; subdirs != nil; subdirs = tl subdirs){
+			nm := hd subdirs;
+			childrel := nm;
+			if(rel != "")
+				childrel = rel + "/" + nm;
+			for(sub := searchwalk(dir + "/" + nm, childrel, terms); sub != nil; sub = tl sub)
+				res = hd sub :: res;
+		}
+	}
+	return res;
+}
+
+# score a package's newest manifest against the terms; nil if no match.
+scorepkg(dir, rel: string, terms: list of string): ref Result
+{
+	tn := newesttar(dir);
+	if(tn == "")
+		return nil;
+	m := manifestfromtar(dir + "/" + tn);
+	if(m == nil)
+		return nil;
+	hay := lower(rel + " " + m.get("name") + " " + m.get("category") + " " +
+		m.get("keywords") + " " + m.get("provides") + " " + m.get("description"));
+	sc := 0;
+	for(t := terms; t != nil; t = tl t)
+		if(indexof(hay, hd t) >= 0)
+			sc++;
+	if(terms != nil && sc < len terms)		# require ALL terms
+		return nil;
+	nm := m.get("name");
+	if(nm == "")
+		nm = rel;
+	return ref Result(sc, nm, m.get("version"), m.get("description"));
+}
+
+sortresults(rs: list of ref Result): list of ref Result
+{
+	# selection sort by score desc (small N).
+	out: list of ref Result;
+	for(;;){
+		best: ref Result;
+		for(l := rs; l != nil; l = tl l)
+			if(best == nil || (hd l).score > best.score)
+				best = hd l;
+		if(best == nil)
+			break;
+		out = best :: out;
+		nrs: list of ref Result;
+		removed := 0;
+		for(l = rs; l != nil; l = tl l)
+			if(!removed && hd l == best)
+				removed = 1;
+			else
+				nrs = hd l :: nrs;
+		rs = nrs;
+	}
+	# out is ascending (built by prepending descending picks); reverse.
+	rev: list of ref Result;
+	for(; out != nil; out = tl out)
+		rev = hd out :: rev;
+	return rev;
+}
+
+lower(s: string): string
+{
+	r := "";
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		if(c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		r[len r] = c;
+	}
+	return r;
+}
+
 # pkg publish repo pkg.tar - place an archive into a repository at
 # repo/<name>/<version>.tar (+ .sig), the layout resolvename walks. This
 # is the local form of the write side (doc/package-management.md #7); the
@@ -423,9 +569,18 @@ pkgpath(): string
 resolvename(base, name: string): (string, string)
 {
 	dir := base + "/" + name;
+	best := newesttar(dir);
+	if(best == "")
+		return ("", sys->sprint("no package %s under %s", name, base));
+	return (dir + "/" + best, nil);
+}
+
+# the lexically-greatest <version>.tar in dir, or "" if none.
+newesttar(dir: string): string
+{
 	fd := sys->open(dir, Sys->OREAD);
 	if(fd == nil)
-		return ("", sys->sprint("no package %s under %s", name, base));
+		return "";
 	best := "";
 	for(;;){
 		(n, d) := sys->dirread(fd);
@@ -435,9 +590,7 @@ resolvename(base, name: string): (string, string)
 			if(hassuffix(d[i].name, ".tar") && d[i].name > best)
 				best = d[i].name;
 	}
-	if(best == "")
-		return ("", "no versions of " + name + " under " + base);
-	return (dir + "/" + best, nil);
+	return best;
 }
 
 # read a package's manifest by peeking inside the tar (temporary mount).
@@ -659,6 +812,7 @@ usage()
 	sys->fprint(stderr, "       pkg sign pkg.tar skfile\n");
 	sys->fprint(stderr, "       pkg verify [-k pkfile] pkg.tar\n");
 	sys->fprint(stderr, "       pkg publish repo pkg.tar\n");
+	sys->fprint(stderr, "       pkg search [-r repo] term...\n");
 	sys->fprint(stderr, "       pkg install [-k pkfile] [-r repo] pkg.tar|name\n");
 	sys->fprint(stderr, "       pkg info pkg.tar\n");
 	sys->fprint(stderr, "       pkg list\n");
