@@ -694,18 +694,57 @@ controller - 0x40000000 is RAM) all fell into place.  The board is the
 one that reaches the Pi's I2C, SPI and GPIO, which QEMU raspi3b models
 and which are the next work.
 .NH 1
+Round 5: raspi3b serial peripherals - I2C, SPI, GPIO
+.PP
+Round 5 gave raspi3b its three BCM2835 serial controllers, each with a
+driver that runs at boot and proves itself against an attached slave, so
+the board now answers the original I2C/SPI/GPIO question concretely and
+not by assertion.
+.PP
+The I2C driver
+.CW ( i2cbcm.c )
+drives BSC0 at 0x3f205000 - the only BSC QEMU maps in the ARM address
+space (i2c-bus.0).  The transfers that stalled in round 4 were pinned by
+reading QEMU's
+.CW hw/i2c/bcm2835_i2c.c :
+the model sends each byte the instant the guest touches the FIFO
+register and only while S_TA is set, so the working order is to write C
+with I2CEN|ST first (which starts the transfer and sets S_TA) and push
+the bytes after - filling the FIFO before ST silently drops the data and
+the transfer never completes, which was the whole of the earlier hang.
+The at24 EEPROM model itself hangs on a data byte, so verification uses a
+ds1338 RTC instead
+.CW ( "-device ds1338,bus=i2c-bus.0,address=0x68" ):
+write a byte to its NVRAM, read it back, exact match.  With no slave the
+address write NAKs and the driver reports an empty bus; the kernel boots
+either way.
+.PP
+The SPI driver
+.CW ( spibcm.c )
+drives SPI0 at 0x3f204000.  QEMU's bcm2835-spi does one full-duplex byte
+per FIFO write while CS_TA is set, storing the MISO byte for the next
+FIFO read, and it asserts the slave chip-select implicitly, so an
+attached serial flash answers a JEDEC-id read directly
+.CW ( "-device m25p16,bus=spi,cs=0,drive=mtd0" gives jedec 20 20 15).
+.PP
+The GPIO driver
+.CW ( gpiobcm.c )
+drives the block at 0x3f200000: GPFSELn for direction, GPSETn/GPCLRn to
+drive an output, GPLEVn to read it back.  QEMU keeps the level register
+faithful to the set/clear writes, so pin 21 configured as an output
+drives high then low and reads back 1 then 0 with no external observable.
+A single boot with all three slaves attached exercises the I2C round
+trip, the SPI JEDEC read and the GPIO pin drive together, then the shell.
+.NH 1
 Immediate next steps (cold-start)
 .PP
 The board work stands at: all four riscv virt boards, arm64 on both GIC
-versions with a display, sifive_u with SPI and GEM ethernet, and two new
-boards this arc - shakti (riscv64) and the Raspberry Pi 3B (arm64) - all
-booting to a shell.  The prioritized next work: (1) I2C on raspi3b - the
-BCM2835 controller is accessible and QEMU models it with attachable
-slaves, but the transfers are timing-sensitive; read QEMU's
-.CW hw/i2c/bcm2835_i2c.c
-to see how a transfer completes, iterate with a standalone bare-metal
-test, verify against an attached at24 EEPROM on BSC0 (0x3f205000), then
-port to a kernel driver.  (2) SPI and GPIO on raspi3b, both modelled.
-(3) the sifive_u SD-over-SPI, which needs a GPIO chip-select driver.
-(4) more boards if wanted - the loop is proven, and the one rule that
-matters for any multi-core board is to park the secondary cores first.
+versions with a display, sifive_u with SPI and GEM ethernet, shakti
+(riscv64), and the Raspberry Pi 3B (arm64) with its I2C, SPI and GPIO
+controllers all driven and slave-verified - every board booting to a
+shell.  The prioritized next work: (1) the sifive_u SD-over-SPI, which
+needs a GPIO chip-select driver (the raspi3b GPIO work is a model for
+it).  (2) raspi3b storage - QEMU models bcm2835-sdhost and a generic
+SDHCI, so an SD image could back a real filesystem.  (3) more boards if
+wanted - the loop is proven, and the one rule that matters for any
+multi-core board is to park the secondary cores first.
