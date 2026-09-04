@@ -41,6 +41,7 @@ enum {
 	FSTAT	= 43,
 	STAT	= 42,
 	ERRSTR	= 41,
+	PIPE	= 21,
 
 	/*
 	 * Not system calls: the kernel's requests for the legacy process's
@@ -472,6 +473,19 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	case STAT:
 		/* stat(name, edir, nedir): name at cdata[Nameoff], message to cdata[Dataoff], a1 = nedir */
 		r = p9statraw((char*)(cdata + Nameoff), cdata + Dataoff, (int)a1);
+		break;
+
+	case PIPE:
+		/* pipe(fd[2]): two descriptors, written back as two ints at cdata[Dataoff] */
+		{
+			int bfd[2];
+
+			r = p9pipe(bfd);
+			if(r == 0){
+				((int*)(cdata + Dataoff))[0] = fdnew(img, bfd[0]);
+				((int*)(cdata + Dataoff))[1] = fdnew(img, bfd[1]);
+			}
+		}
 		break;
 
 	default:

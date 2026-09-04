@@ -263,13 +263,21 @@ per container, and answers the process's
 from it \- so the refused remove leaves the program not a lie but the
 store's own
 .CW Eperm ,
-read back over the buddy like any other result.  What remains is the rest
-of what a personality needs to host a real Plan 9 program \-
-.CW pipe ,
+read back over the buddy like any other result.  And
+.CW pipe
+is answered: the buddy makes a pipe on its own
+.CW #|
+and hands back two descriptors, and the program writes one end and reads
+its message from the other, both ends held by the buddy.  What remains is
 .CW rfork ,
 .CW mount
 and
 .CW bind
+\- the name-space calls, which want a per-process name space (a
+.CW rfork
+with
+.CW RFNAMEG ,
+item 6) before one program's bind stops changing what the next one sees
 \- and a declined fault reaching a Plan 9 program as a note rather than
 the microkernel's donotify panic.
 (A pre-existing boot-time

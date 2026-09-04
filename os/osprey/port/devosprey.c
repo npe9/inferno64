@@ -2343,7 +2343,7 @@ ospreyp9server(void *a)
 enum {
 	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
-	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41,
+	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2621,6 +2621,9 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	case Berrstr:				/* errstr(buf, nbuf): text back at Bdataoff */
 		ab[1] = 0; ab[2] = a[1]; ab[3] = 0;
 		break;
+	case Bpipe:				/* pipe(fd[2]): two ints back at Bdataoff */
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
+		break;
 	default:
 		return -1;			/* a trap the buddy does not emulate */
 	}
@@ -2636,6 +2639,13 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		if(dd != nil)
 			for(i = 0; i < status; i++)
 				dst[i] = dd[i];
+	}
+	if(scallnr == Bpipe && status == 0){
+		/* the two descriptors, two ints, back into the process's fd[2] */
+		dd = ospreydata(p, Bdataoff, 2*sizeof(int));
+		if(dd != nil)
+			for(i = 0; i < (long)(2*sizeof(int)); i++)
+				((uchar*)a[0])[i] = dd[i];
 	}
 	return status;
 }

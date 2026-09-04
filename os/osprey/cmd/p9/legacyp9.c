@@ -77,6 +77,26 @@ startboot(char *argv0, char **argv)
 		}
 	}
 
+	/* a pipe the buddy makes: write one end, read the other */
+	{
+		int p[2];
+		char pb[64];
+		static char msg[] = "through a pipe the buddy made";
+
+		if(pipe(p) == 0){
+			print("legacy: pipe() returned fds %d and %d from the buddy\n", p[0], p[1]);
+			write(p[1], msg, sizeof msg - 1);
+			n = read(p[0], pb, sizeof pb - 1);
+			if(n < 0)
+				n = 0;
+			pb[n] = 0;
+			print("legacy: wrote one pipe end and read %ld bytes from the other: \"%s\"\n", n, pb);
+			close(p[0]);
+			close(p[1]);
+		} else
+			print("legacy: pipe() failed\n");
+	}
+
 	print("legacy: the buddy answered every trap\n");
 	exits(nil);
 }

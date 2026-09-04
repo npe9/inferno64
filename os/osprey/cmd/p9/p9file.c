@@ -463,6 +463,41 @@ p9statraw(char *name, uchar *buf, int nbuf)
 	return n;
 }
 
+/*
+ * A pipe: two descriptors on the two ends of a #| channel, the same as
+ * the kernel's syspipe but returning fd-layer descriptors.  fd[0] is the
+ * read/write end, fd[1] the other; a write on one is read on the other.
+ */
+int
+p9pipe(int fd[2])
+{
+	static char *datastr[] = {"data", "data1"};
+	Chan *c0, *c1;
+
+	fd[0] = fd[1] = -1;
+	c0 = namec("#|", Atodir, 0, 0);
+	c1 = nil;
+	if(waserror()){
+		cclose(c0);
+		if(c1 != nil)
+			cclose(c1);
+		nexterror();
+	}
+	c1 = cclone(c0);
+	if(walk(&c0, datastr+0, 1, 1, nil) < 0)
+		error(Egreg);
+	if(walk(&c1, datastr+1, 1, 1, nil) < 0)
+		error(Egreg);
+	c0 = devtab[c0->type]->open(c0, ORDWR);
+	c1 = devtab[c1->type]->open(c1, ORDWR);
+	fd[0] = newfd(c0, ORDWR);
+	fd[1] = newfd(c1, ORDWR);
+	poperror();
+	if(fd[0] < 0 || fd[1] < 0)
+		return -1;
+	return 0;
+}
+
 /* bind the file or directory named by `name` onto `old` in the name space */
 int
 p9bind(char *name, char *old, int flag)
