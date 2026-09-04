@@ -190,19 +190,19 @@ sdhostonline(SDunit *u)
 }
 
 /*
- * KNOWN BUG (open, and why this board is left cooperative): if the
- * generic-timer routing is enabled (BCM2836 0x40000040 bit1, see the
- * commented-out line in clockinit), a heavy write stream through this
- * bio - a kfs ream, or a 2000-block stress loop - fails intermittently
- * with "file does not exist" at a varying block when a timer IRQ is
- * taken mid-transfer.  It is SD-specific (a 4000-open namespace loop
- * under the same tick is clean) and survives even a no-op clockintr, so
- * it is the exception entry/return interacting with this transfer, not a
- * clock callee - yet vectrap is byte-identical to virtarm64's, which is
- * stable under its GIC timer.  splhi() around the transfer cures the
- * single-proc case but deadlocks the multi-proc file-server path.  The
- * board therefore ships without the tick; sifive_u's slow SPI driver
- * never lands in the window and is the working oracle.
+ * FIXED (was: heavy write stream under the periodic tick failed
+ * intermittently with "file does not exist"): the root cause was not in
+ * this driver at all.  vectrap built the Ureg frame at SP and then
+ * called trap(&ureg); Plan 9's arm64 convention gives the callee a stack
+ * home for arg0 at caller-SP+8, which is exactly UR_R1, so trap()'s
+ * prologue spilling its Ureg* argument overwrote the saved R1 on every
+ * interrupt.  Usually R1 was dead so it went unnoticed; but a timer IRQ
+ * landing in irestore's fixed-size R = p->R copy clobbered the live loop
+ * counter, turning it into an unbounded copy that walked memory upward
+ * from the global R (with the MMU off, silent corruption -> the "file
+ * does not exist" symptom).  The one-line arg-home reservation in l.s's
+ * vectrap fixes it, and the periodic tick is now enabled in clockinit;
+ * see l.s and clock.c.
  */
 static long
 sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)

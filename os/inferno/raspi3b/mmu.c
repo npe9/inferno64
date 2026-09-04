@@ -17,17 +17,17 @@
 
 enum {
 	/*
-	 * Off by default: the board is stable MMU-off, and turning the MMU
-	 * on does not fix the tick-time SD corruption - it changes its
-	 * shape.  It is kept because it is the diagnostic that pinned the
-	 * mechanism: with the MMU on, the corruption's residual failures
-	 * fault as a level-1 translation abort at a RAM address, i.e. the
-	 * store's base register was corrupted and the store landed on the
-	 * page table (a wild store), where MMU-off had only shown a lost
-	 * SDDATA write.  Set Mmuon to 1 (and enable the timer routing) to
-	 * resume that hunt.  See doc/raspi3b-preempt-plan.ms.
+	 * On.  RAM is Normal write-back inner-shareable, which is what makes
+	 * the kernel's LDXR/STXR spinlocks sound (exclusives are unpredictable
+	 * on Device memory), and the page tables themselves are mapped
+	 * read-only so a wild store to them faults at the store with state
+	 * intact.  That read-only tripwire is what localised the tick-time
+	 * corruption to an unbounded copy walking upward into the page tables;
+	 * the root cause (vectrap's trap() arg-home overwriting the saved R1,
+	 * see l.s) is fixed, so the tripwire now stands as cheap defence in
+	 * depth rather than a live probe.
 	 */
-	Mmuon	= 1,			/* DIAG: MMU on to catch the wild store */
+	Mmuon	= 1,
 
 	L2SHIFT	= 21,			/* 2MB block */
 	Pvalid	= 1<<0,

@@ -542,8 +542,22 @@ TEXT	vectrap(SB), 1, $-4
 	MRS	SPR(D_FAR_EL1), R9
 	MOV	R9, UR_TVAL(RSP)
 
-	MOV	RSP, R0			/* &Ureg, arg to trap() */
+	/*
+	 * Reserve the C-call argument-home area BELOW the Ureg before
+	 * calling trap().  Plan 9's arm64 convention gives the callee a
+	 * stack home for arg0 at caller-SP+8; with SP sitting on the Ureg
+	 * base that slot IS UR_R1, so trap()'s prologue spilling its Ureg*
+	 * argument overwrote the saved R1 on every single interrupt --
+	 * harmless wherever R1 was dead, but it silently clobbered a live
+	 * loop counter (irestore's R = p->R copy count), turning a fixed
+	 * struct copy into an unbounded one that walked memory upward from
+	 * the global R.  Drop SP by 16 so the arg home lands in scratch,
+	 * pass &Ureg = SP+16, and pop it back before the register restore.
+	 */
+	SUB	$16, RSP
+	ADD	$16, RSP, R0		/* R0 = &Ureg (the frame base) */
 	BL	trap(SB)
+	ADD	$16, RSP
 
 	MOV	UR_PC(RSP), R9
 	MSR	R9, ELR_EL1
