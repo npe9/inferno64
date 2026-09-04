@@ -1091,32 +1091,29 @@ would put the frame on an osprey ring to the peer container and the pump
 would drain the ring the peer wrote, learned from a new
 .CW oselect
 arm - the osprey device carrying the frames it already carries requests
-on.  A data stream across the two stacks is the next bit, and it faults where
-the handshake did not.  The handshake and accept are proved; writing bytes
-on one stack and reading them on the other faults while the pump carries
-the payload-bearing segment into the far stack - a data segment drives
-deeper tcp processing (queueing the bytes, answering with an ack) than a
-bare control segment.  The first guess was the server proc's own stack,
-too shallow for that depth; but moving the pump into a kproc with a full
-stack does not fix it, so it is not simply depth.  The fault is a wild program counter -
-.CW "pc=0xffffffff" ,
-a corrupted return, sometimes landing in the print code - a memory or
-stack overwrite.  It was isolated to the two stacks: the same osprey
-medium with one stack (a self-loop, no
-.CW #I1 )
-does not corrupt - it fails only to deliver the bytes, cleanly, no
-fault - so it is state the two stacks
-share that a data segment overwrites, present only when two whole stacks
-(two
-.CW Fs )
-run in the one address space.  Per-stack
-.CW netlog
-and the obvious
-.CW tcp.c / ip.c
-file-scope statics are ruled out; the culprit is subtler and wants a
-reliable fault capture the async console fights.  That hunt, the
-single-stack delivery gap, and the device-carried two-container form are what remain of
-item 7a.
+on.  The data stream across the two stacks works now, and it was the same
+fault as the corruption above, not a separate one: writing bytes on one
+stack and reading them on the other drove the deeper tcp processing
+(queueing the bytes, answering with an ack) that allocated the Blocks
+that exhausted the arena, so the
+.CW "pc=0xffffffff"
+was an unchecked nil from the exhausted allocator, and the same arena fix
+that stopped two Fs corrupting stopped the data stream faulting.  Stack A
+announces on
+.CW #I1 ,
+stack B connects across the medium, the two
+.CW tcp.c
+handshake and accept, and a byte stream crosses each way \- fifty-four
+bytes one way, forty the other, each read back verbatim, full duplex,
+checked in the p9pair boot.  What remains of item 7a is the device-carried
+two-container form: the medium's two ends are two
+.CW Fs
+in one personality sharing a pair of queues today, and a real second
+machine would put the frame on an osprey ring to a peer container and
+drain the ring the peer wrote, from a new
+.CW oselect
+arm \- the osprey device carrying the frames it already carries requests
+on.
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a
