@@ -736,15 +736,48 @@ drives high then low and reads back 1 then 0 with no external observable.
 A single boot with all three slaves attached exercises the I2C round
 trip, the SPI JEDEC read and the GPIO pin drive together, then the shell.
 .NH 1
+Round 6: sifive_u SD-over-SPI - a falsified blocker
+.PP
+Round 6 read block 0 off an SD card over the sifive_u SPI2 controller
+.CW ( sdspisifive.c ),
+negative-controlled against two images whose first bytes each read back
+exactly.  It also retired a stored conclusion.  The earlier note held
+that the SD was blocked because QEMU wired its chip-select to a GPIO pin
+the SPI controller could not reach; reading
+.CW hw/riscv/sifive_u.c
+settled otherwise - the card's CS is
+.CW cs_lines[0]
+of SPI2 itself (its sysbus irq line 1), wired exactly as the NOR flash's
+CS is on SPI0, and driven by the same CSMODE=HOLD the flash already uses.
+The macro named in the wiring,
+.CW SSI_GPIO_CS ,
+is QEMU's name for a peripheral's own input pin, not the GPIO block.
+The real cause of the old all-0xff reads was mundane: the flash probe
+sent a JEDEC command (0x9f) to the SD, leaving QEMU's ssi-sd state
+machine stuck mid-command; the flash probe no longer touches SPI2.
+.PP
+Three facts from the QEMU models made the handshake work first boot.
+The SSI layer gates transfers on CS, so the classic 74-clock wake-up
+with CS deasserted is inert - CS is held asserted for the whole session
+instead.  A command's CRC byte is ignored but must be present, so a
+short frame silently does nothing (the same shape as the BCM I2C bug).
+And after CMD0/CMD8/ACMD41 the card sits in ready state while CMD17
+demands transfer state, which SPI mode has no CMD2/3/7 to reach - but
+.CW sd.c 's
+.CW spi_cmd_SEND_CxD
+advances the card to transfer state when the CSD is read, so CMD9 (a
+normal init step) bridges the gap before CMD17.
+.NH 1
 Immediate next steps (cold-start)
 .PP
 The board work stands at: all four riscv virt boards, arm64 on both GIC
-versions with a display, sifive_u with SPI and GEM ethernet, shakti
-(riscv64), and the Raspberry Pi 3B (arm64) with its I2C, SPI and GPIO
-controllers all driven and slave-verified - every board booting to a
-shell.  The prioritized next work: (1) the sifive_u SD-over-SPI, which
-needs a GPIO chip-select driver (the raspi3b GPIO work is a model for
-it).  (2) raspi3b storage - QEMU models bcm2835-sdhost and a generic
-SDHCI, so an SD image could back a real filesystem.  (3) more boards if
-wanted - the loop is proven, and the one rule that matters for any
-multi-core board is to park the secondary cores first.
+versions with a display, sifive_u with SPI, GEM ethernet and now a
+verified SD-over-SPI block read, shakti (riscv64), and the Raspberry Pi
+3B (arm64) with its I2C, SPI and GPIO controllers all driven and
+slave-verified - every board booting to a shell.  The prioritized next
+work: (1) promote the sifive_u SD read into a real block device (devsd
+or a styx-served file) so a filesystem can sit on it, then the same for
+writes (CMD24).  (2) raspi3b storage - QEMU models bcm2835-sdhost and a
+generic SDHCI, so an SD image could back a real filesystem there too.
+(3) more boards if wanted - the loop is proven, and the one rule that
+matters for any multi-core board is to park the secondary cores first.
