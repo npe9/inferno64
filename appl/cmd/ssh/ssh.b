@@ -21,6 +21,8 @@ include "doh.m";
 include "ssh.m";
 	ssh: Ssh;
 	Conn, Authkey: import ssh;
+include "factotum.m";
+	factotum: Factotum;
 
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
@@ -94,14 +96,12 @@ init(nil: ref Draw->Context, argv: list of string)
 		if(kerr != nil)
 			fatal(kerr);
 	} else {
-		# By default the key comes from factotum. If factotum holds no
-		# usable key, that is not fatal: fall back to password auth (many
-		# hosts, e.g. sdf.org, want a password anyway).
+		# By default the private key is held in factotum and signing goes
+		# through it. If factotum has no rsa key, that is not fatal: we
+		# will authenticate by password (also via factotum) below.
 		(key, kerr) = ssh->rsakey_factotum("service=ssh");
-		if(kerr != nil){
-			sys->fprint(stderr, "ssh: no key from factotum (%s); using password auth\n", kerr);
+		if(kerr != nil)
 			key = nil;
-		}
 	}
 
 	ip := resolve(dest);
@@ -124,12 +124,30 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(acceptnew && wantthumb == "")
 		sys->fprint(stderr, "ssh: warning: accepting unverified host key %s for %s\n", c1.thumb, dest);
 
-	# With no key, prompt for a password so login can authenticate; with a
-	# key, login tries publickey first and falls back to this password if
-	# the server does not accept the key.
+	# If there is no publickey, authenticate by password - but the
+	# password comes from factotum(4), not from ssh itself, following the
+	# Plan 9 model where every secret lives in the agent. We ask factotum
+	# for a proto=pass secret for this host; it returns a stored key or,
+	# with a key prompter such as auth/feedkey running, prompts once and
+	# remembers it. login then tries publickey first (if any) and falls
+	# back to this password.
 	password := "";
-	if(key == nil)
-		password = readpassword(sys->sprint("%s@%s's password: ", user, dest));
+	if(key == nil){
+		factotum = load Factotum Factotum->PATH;
+		if(factotum == nil)
+			fatal(sys->sprint("load factotum: %r"));
+		factotum->init();
+		keyspec := sys->sprint("proto=pass service=ssh server=%s user=%s", dest, user);
+		(fu, fp) := factotum->getuserpasswd(keyspec);
+		if(fp == nil)
+			fatal(sys->sprint("no key in factotum, and no password for %s: %r\n"+
+				"\tadd one:  echo 'key %s !password=yourpassword' >/mnt/factotum/ctl\n"+
+				"\tor run   auth/feedkey   so factotum can prompt for it",
+				dest, keyspec));
+		if(fu != nil && fu != "")
+			user = fu;
+		password = fp;
+	}
 	if((lerr := ssh->login(c1, user, key, password)) != nil)
 		fatal("login: " + lerr);
 
@@ -287,36 +305,6 @@ readfile(f: string): string
 		s += string buf[0:n];
 	}
 	return s;
-}
-
-# read a line from the console without echoing it, for a password.
-readpassword(prompt: string): string
-{
-	sys->fprint(sys->fildes(2), "%s", prompt);
-	ctl := sys->open("/dev/consctl", Sys->OWRITE);
-	if(ctl != nil)
-		sys->fprint(ctl, "rawon");
-	cons := sys->open("/dev/cons", Sys->OREAD);
-	if(cons == nil)
-		cons = sys->fildes(0);
-	pw := "";
-	buf := array[1] of byte;
-	while(sys->read(cons, buf, 1) == 1){
-		c := int buf[0];
-		if(c == '\n' || c == '\r')
-			break;
-		if(c == 8 || c == 16r7f){		# backspace / delete
-			if(len pw > 0)
-				pw = pw[0:len pw - 1];
-			continue;
-		}
-		pw[len pw] = c;
-	}
-	if(ctl != nil)
-		sys->fprint(ctl, "rawoff");
-	ctl = nil;
-	sys->fprint(sys->fildes(2), "\n");
-	return pw;
 }
 
 fatal(m: string)
