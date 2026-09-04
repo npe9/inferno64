@@ -922,14 +922,32 @@ Raspberry Pi 3B (arm64) with I2C/SPI/GPIO and a native-SD block device
 (/dev/sdM0/data, read/write/multi-block) - every board booting to a
 clean shell, and raspi3b now runs a real preemptive 100Hz tick (the
 SD-under-preemption bug is fixed - the vectrap argument-clobber above).
-The prioritized next work: (1) a kfs filesystem on the Pi, now that the
-tick and preemptive scheduling it gated are working - ream
+The prioritized next work: (1) finish a kfs filesystem on the Pi.  With
+the tick working, kfs now reams
 .CW /dev/sdM0/data ,
-mount it, and plant-and-read a file, the way sifive_u already does; the
-SDHOST
+mounts over a pipe, and serves Styx (proof the preemptive scheduler
+time-slices the kfs server against the init client), and the mount root
+is stat-able - but a
+.CW create
+deterministically hangs, where sifive_u with the identical recipe
+succeeds.  The hang is localised: a bio trace shows no SD I/O during it,
+so it is not the driver; it is in
+.CW devmnt 's
+.CW mountrpc
+error path, at the
+.CW error(ename)
+that a benign walk-Rerror (the create's existence check) raises -
+sifive_u prints
+.CW "mntwalk waserror()"
+and recovers, raspi3b never reaches that line.
+.CW setlabel / gotolabel
+are byte-for-byte the same minimal SP+PC form riscv64 uses and are not
+the difference, so the next lead is the arm64 error()/nexterror longjmp
+or a lock held across it, not SD and not the tick timing.  Separately,
+the SDHOST
 .CW bio()
-has no flow control (it relies on QEMU's synchronous FIFO), so real
-hardware will want an SDEDM-level wait before kfs runs on a physical Pi.
+has no flow control (it relies on the emulated synchronous FIFO), so a
+physical Pi will want an SDEDM-level wait before kfs runs on hardware.
 (2) persistence across reboot on sifive_u - the kfs is reamed every boot;
 a mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
