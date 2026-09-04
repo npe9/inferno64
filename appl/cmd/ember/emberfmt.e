@@ -323,6 +323,8 @@ func constant(n ref types.Node) {
 			out("'\\t'")
 		case '\r':
 			out("'\\r'")
+		case '\b':
+			out("'\\b'")
 		case 0:
 			out("'\\0'")
 		default:

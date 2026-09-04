@@ -481,6 +481,21 @@ sizetype(Type *t)
 			tg->ty->align = a;
 		}
 		break;
+	case Tadtpick:
+		/*
+		 * a pick's case is sized with the pick itself (just above),
+		 * and is reached directly only when something asks for its
+		 * size first -- "map[string]ref V" inside V's own pick,
+		 * whose instantiation sizes "ref V.Tag" while V is still
+		 * being built.  OKsized is already set on the way in, so
+		 * the pick's own loop fills the size in without looping
+		 * back here.
+		 */
+		t->ok &= ~OKsized;	/* the pick's loop skips a case already marked */
+		t->tof->ok &= ~OKsized;
+		sizetype(t->tof);
+		t->ok |= OKsized;
+		break;
 	case Tfn:
 		t->size = 0;
 		t->align = 1;

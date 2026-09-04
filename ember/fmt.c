@@ -314,6 +314,8 @@ constant(Node *n)
 			Bprint(fb, "'\\t'");
 		else if(n->val == '\r')
 			Bprint(fb, "'\\r'");
+		else if(n->val == '\b')
+			Bprint(fb, "'\\b'");
 		else if(n->val == 0)
 			Bprint(fb, "'\\0'");
 		else if(n->val >= ' ' && n->val < 0x7f)

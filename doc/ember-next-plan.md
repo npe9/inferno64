@@ -264,3 +264,43 @@ so any object built before a header changes stays stale until its own
 source is touched. When a program's output is wrong in a way its
 source cannot explain, rebuild the library it comes from before
 believing the code.
+
+## 16. A JSON reader and writer, and what writing it found
+
+`ember/tests/unit/json_test.e` is a JSON parser and printer in Ember
+with its unit tests: a pick for the value, `Result` for the errors, a
+map for an object's members with an array of keys beside it to keep
+their order, and a `Builder` for the text. 366 lines, against the
+619 of `appl/lib/json.b`, and it reads like the Go one.
+
+Writing it found a compiler bug that predates this round: a pick
+whose case holds a `map[K]ref V` or an array of the pick itself
+crashed the compiler ("sizetype: unknown type kind 2"). The map's
+instantiation asks for the size of `ref V.Tag` while `V` is still
+being built, and a pick's case is normally sized by the pick, so
+nothing handled being asked directly. Both compilers now size a case
+through its pick (`tests/type/pickmap.e`).
+
+Two smaller things: `?` propagates only its own `Result[T]`, so a
+`Result[string]` inside a function returning `Result[ref Value]` has
+to be matched by hand -- which is Go's rule for errors of different
+types too, and reads fine. And the formatter printed a backspace
+character literal as its numeric escape, which it no longer does.
+
+## 17. Gaps after item 16
+
+More probing, this time at generics and at what a loop that grows an
+array costs:
+
+- Generic code needs no constraints: `func maxof[T](a T, b T) T` with
+  `a > b` compiles, because a template is instantiated by
+  substitution and the comparison is checked against the concrete
+  type. `map`, `filter` and `reduce` over `[]T` with closures all
+  work. Not a gap; worth writing down, since a Go programmer expects
+  to have to say `constraints.Ordered`.
+- `append(a, x)` copies the whole array each time, because a Dis
+  array has no spare capacity, so building an array in a loop is
+  quadratic — the same trap `Builder` was added for. A `Vec[T]` in
+  the builtin library (push, len, at, slice) with doubling growth
+  would make it linear, and `sort(v.slice(), cmp)` would still work.
+  Planned.
