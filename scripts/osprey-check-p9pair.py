@@ -213,9 +213,14 @@ def main():
          and 'the kernel would not move me' not in t),
         ("and the moved process is still its parent's child: it exits from the new container and the client's wait is answered with that container, not a phantom of the old",
          re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 0', t) is not None
-         and (lambda a, b: a is not None and b is not None and a.group(2) == b.group(1))(
-             re.search(r"osprey move: container (\d+)'s process \(/boot/legacy\) resumed as container (\d+)", t),
+         and (lambda a, b: len(a) > 0 and b is not None and a[-1][1] == b.group(1))(
+             re.findall(r"osprey move: container (\d+)'s process \(/boot/legacy\) resumed as container (\d+)", t),
              re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 0', t))),
+        ("and as a group: a thread sharing the address space is stopped, carried along with its registers and stack into a container of its own sharing the moved memory, and goes on counting there after the move; the moved parent is still its parent and reaps it",
+         re.search(r'osprey move: group member container \d+ \(pid \d+, sharing the address space\) resumed as container \d+ with container \d+\'s; container \d+ destroyed', t) is not None
+         and re.search(r'legacy: moved with my thread: I am container \d+ now; the thread had counted to \d+ before the move and to \d+ after it - it came along, still running in the shared memory', t) is not None
+         and re.search(r'legacy: reaped my thread after the move; its wait message: "\d+ ', t) is not None
+         and 'did not stop' not in t and 'the group move did not carry' not in t),
         ("dynamic replicated data: the client container keeps a replica of the server's file and follows a stream of the file's committed version over the wire, answering reads from its copy while the stream says the version is unchanged",
          re.search(r'p9 ip: replica: holding /n/hello at version (\d+) \(\d+ bytes\) from the wire; watching its committed version on a stream', t) is not None
          and re.search(r'p9 ip: replica: the stream says version \d+ still, \d+ reads answered from the replica without asking the server', t) is not None),

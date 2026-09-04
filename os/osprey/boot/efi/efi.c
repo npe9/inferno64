@@ -53,6 +53,30 @@ unload(void)
 	eficall(ST->BootServices->ExitBootServices, IH, MK);
 }
 
+/*
+ * Claim the pages the kernel is about to be read into, from the
+ * firmware, at that address: a loader must own the memory it writes.
+ * Before this the kernel was read straight into its link address with
+ * nothing said to the firmware, whose boot services may have put
+ * something of their own there; a kernel that has grown past a
+ * megabyte makes that likelier, and the symptom - the loader printing
+ * its configuration and then nothing, one boot in several - is what a
+ * clobbered firmware looks like.  Returns 0 when the firmware would not
+ * give the region up, in which case the caller says so and goes on as
+ * before, since what the region holds is then not knowable here.
+ */
+int
+claimpages(uintptr addr, uintptr len)
+{
+	UINT64 mem;
+	UINTN pages;
+
+	mem = addr & ~(uintptr)4095;
+	pages = ((addr + len + 4095 & ~(uintptr)4095) - mem) / 4096;
+	return eficall(ST->BootServices->AllocatePages, (UINTN)2 /* AllocateAddress */,
+		(UINTN)EfiLoaderData, pages, &mem) == 0;
+}
+
 void
 memconf(char **cfg)
 {

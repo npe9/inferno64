@@ -2394,7 +2394,7 @@ ospreybuddycall(Ospreyproc *p, int tries)
  * status.  This is how a server, whose rings run the other way, sets
  * its reservation and takes the clock.
  */
-static long ospreymovekern(Ospreyproc*, uvlong*);
+static long ospreymovekern(Ospreyproc*, uvlong*, int);
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
@@ -2484,7 +2484,7 @@ ospreyxcall(va_list list)
 		return 0;
 	}
 	if(op == ReqMove)
-		return ospreymovekern(up->osprey, ubuf);	/* the caller does not return; its copy does */
+		return ospreymovekern(up->osprey, ubuf, (int)arg[0]);	/* the caller does not return; its copy does */
 	if(op == ReqSettime){
 		/*
 		 * The time of day is a task's to set: the kernel reads no clock
@@ -3338,6 +3338,7 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 		ospreyprocs[x] = p;
 		ospreysetpid(c, p->pid);
 	}
+	memset(e, 0, sizeof *e);		/* a reused slot carries no stale wait or status */
 	e->used = 1;
 	e->child = c;
 	e->parent = parent;
@@ -3376,15 +3377,130 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
  * of an address-space group that is running elsewhere would have to be
  * stopped first, which this does not do.
  */
-static long
-ospreymovekern(Ospreyproc *old, uvlong *ubuf)
+/*
+ * The members of the caller's address-space group: the processes of
+ * other containers that share a data or bss segment with it - what an
+ * rfork(RFPROC|RFMEM) made.  At most Nmember, for the demonstration.
+ */
+enum { Nmember = 4 };
+
+static int
+ospreymembers(Proc **mem, int max)
 {
-	Ospreychild *e, *ne;
-	Ospreyproc *sv, *c;
+	Proc *q;
+	int x, i, n;
+
+	n = 0;
+	for(x = 0; x < nelem(ospreyprocs) && n < max; x++){
+		if((q = ospreyprocs[x]) == nil || q == up || q->osprey == nil)
+			continue;
+		for(i = 0; i < NSEG; i++){
+			if(up->seg[i] == nil || q->seg[i] != up->seg[i])
+				continue;
+			if((up->seg[i]->type & SG_TYPE) == SG_DATA || (up->seg[i]->type & SG_TYPE) == SG_BSS){
+				mem[n++] = q;
+				break;
+			}
+		}
+	}
+	return n;
+}
+
+/* take a container apart the way an exit does, with nothing to tell a parent */
+static void
+ospreyunmake(Ospreyproc *c)
+{
+	qlock(&ospreylock);
+	ospreytellandwake(c, OpGone);
+	ospreyclosefds(c);
+	ospreyputproc(c);
+	ospreyputserver(c);
+	ospreyputether(c);
+	ospreyputuart(c);
+	ospreyexit(c);
+	qunlock(&ospreylock);
+}
+
+/*
+ * The new process of a moved one: a Proc whose return frame is the
+ * moved process's own (its registers as they were when it entered the
+ * kernel), given the container c and the segments seg[] - the mover's
+ * new ones where the old ones were shared, its own stack copied.
+ */
+static Proc*
+ospreymoveproc(Proc *q, Ospreyproc *c, Segment **shared, Proc *sharer)
+{
 	Proc *p;
+	int i;
+
+	if((p = newproc()) == nil)
+		return nil;
+	qlock(&q->debug);
+	qlock(&p->debug);
+	p->s = q->s;
+	p->slash = q->slash;
+	p->dot = q->dot;
+	if(p->dot != nil)
+		incref(p->dot);
+	p->nnote = 0;
+	p->notify = q->notify;
+	p->notified = 0;
+	p->notepending = 0;
+	p->lastnote = nil;
+	p->noteid = q->noteid;
+	p->procmode = q->procmode;
+	p->privatemem = q->privatemem;
+	p->noswap = q->noswap;
+	p->hang = q->hang;
+	p->kp = 0;
+	p->pgrp = q->pgrp;
+	if(p->pgrp != nil)
+		incref(p->pgrp);
+	forkchild(p, q->dbgreg);		/* its registers: it resumes where it entered the kernel */
+	kstrdup(&p->text, q->text);
+	kstrdup(&p->user, q->user);
+	kstrdup(&p->args, "");
+	p->nargs = 0;
+	p->setargs = 0;
+	p->insyscall = 0;
+	memset(p->time, 0, sizeof(p->time));
+	p->time[TReal] = MACHP(0)->ticks;
+	p->kentry = q->kentry;
+	p->pcycles = -p->kentry;
+	pidalloc(p);
+	qunlock(&p->debug);
+	qunlock(&q->debug);
+
+	qlock(&p->seglock);
+	for(i = 0; i < NSEG; i++){
+		if(q->seg[i] == nil)
+			continue;
+		if(shared != nil && sharer != nil && q->seg[i] == sharer->seg[i] && shared[i] != nil){
+			p->seg[i] = shared[i];	/* what it shared with the mover, it shares with the mover's new process */
+			incref(shared[i]);
+		} else
+			p->seg[i] = dupseg(q->seg, i, 0);	/* its own, the stack above all: copied */
+	}
+	qunlock(&p->seglock);
+
+	p->osprey = c;
+	p->buddyimage = q->buddyimage;
+	p->oslinux = q->oslinux;
+	p->linuxheap = q->linuxheap;
+	p->linuxbrk = q->linuxbrk;
+	p->linuxmmapnext = q->linuxmmapnext;
+	return p;
+}
+
+static long
+ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
+{
+	Ospreychild *e, *ne, *me;
+	Ospreyproc *sv, *c, *mc;
+	Proc *p, *mem[Nmember], *mp;
 	Segment *s;
 	uintptr va;
-	int i, x;
+	int i, x, nmem, k, tries;
 	extern void forkchildret(Proc*, uintptr);
 
 	if(old == nil || (sv = ospreyserverof(old)) == nil || up->dbgreg == nil)
@@ -3399,6 +3515,38 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf)
 			break;
 	if(ne == &ospreychildren[nelem(ospreychildren)])
 		return -1;
+	/*
+	 * The group, once every reason to refuse has been checked, since a
+	 * stopped member is only let go here: its members must be stopped
+	 * before their registers can be taken.  Each is asked to stop on
+	 * its next way back to user mode (the config's donotify runs
+	 * procctl); a member that never comes back - blocked for good -
+	 * cannot be moved, and the move is refused rather than left half
+	 * done, the members that had stopped readied again.
+	 */
+	nmem = 0;
+	if(group){
+		nmem = ospreymembers(mem, Nmember);
+		for(k = 0; k < nmem; k++)
+			mem[k]->procctl = Proc_stopme;
+		for(k = 0; k < nmem; k++){
+			for(tries = 0; tries < 200 && mem[k]->state != Stopped; tries++)
+				tsleep(&up->sleep, return0, nil, 10);
+			if(mem[k]->state != Stopped){
+				int j;
+
+				print("osprey move: a member of container %llud's group (pid %d) did not stop; the group is not moved\n",
+					ospreyid(old), mem[k]->pid);
+				for(j = 0; j < nmem; j++){
+					if(mem[j]->state == Stopped)
+						ready(mem[j]);		/* parked in procctl: goes on */
+					else
+						mem[j]->procctl = 0;
+				}
+				return -1;
+			}
+		}
+	}
 
 	/* the whole image resident, as for a fork: the new container is one the buddy has laid nothing out for */
 	for(i = 0; i < NSEG; i++){
@@ -3497,22 +3645,67 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf)
 	*ne = *e;				/* the child-table entry moves with it: parent, name, and a wait pending */
 	ne->child = c;
 	e->used = 0;
+	/* what was a child of the old container is a child of the new */
+	for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
+		if(me->used && me->parent == old)
+			me->parent = c;
 	qunlock(&ospreylock);
 
 	print("osprey move: container %llud's process (%s) resumed as container %llud, registers and stack as they were; container %llud destroyed\n",
 		ospreyid(old), ne->name, ospreyid(c), ospreyid(old));
+
+	/*
+	 * The group: each stopped member gets a container of its own and a
+	 * process with its registers and its own stack, sharing the mover's
+	 * new segments where it shared the old; its old container goes the
+	 * way the mover's does, and its old process is readied to exit.
+	 */
+	for(k = 0; k < nmem; k++){
+		Ospreyproc *oc = mem[k]->osprey;
+
+		mc = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+		if(mc == nil)
+			break;
+		ospreydelegate(mc, sv);
+		ospreyforkfds(oc, ospreyid(mc));
+		mp = ospreymoveproc(mem[k], mc, p->seg, up);
+		if(mp == nil){
+			ospreyexit(mc);
+			break;
+		}
+		qlock(&ospreylock);
+		x = ospreyindex(mc);
+		if(x >= 0 && x < nelem(ospreyprocs)){
+			ospreyprocs[x] = mp;
+			ospreysetpid(mc, mp->pid);
+		}
+		for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
+			if(me->used && me->child == oc)
+				break;
+		if(me < &ospreychildren[nelem(ospreychildren)]){
+			for(ne = ospreychildren; ne < &ospreychildren[nelem(ospreychildren)]; ne++)
+				if(!ne->used)
+					break;
+			if(ne < &ospreychildren[nelem(ospreychildren)]){
+				*ne = *me;
+				ne->child = mc;
+				if(ne->parent == old)
+					ne->parent = c;
+				me->used = 0;
+			}
+		}
+		qunlock(&ospreylock);
+		print("osprey move: group member container %llud (pid %d, sharing the address space) resumed as container %llud with container %llud's; container %llud destroyed\n",
+			ospreyid(oc), mem[k]->pid, ospreyid(mc), ospreyid(c), ospreyid(oc));
+		ready(mp);
+		ospreyunmake(oc);
+		mem[k]->procctl = Proc_exitme;	/* the old process, stopped in donotify, ends when it runs */
+		ready(mem[k]);
+	}
 	ready(p);
 
 	/* and the old container goes, as on exit, but with nothing to tell a parent */
-	qlock(&ospreylock);
-	ospreytellandwake(old, OpGone);
-	ospreyclosefds(old);
-	ospreyputproc(old);
-	ospreyputserver(old);
-	ospreyputether(old);
-	ospreyputuart(old);
-	ospreyexit(old);
-	qunlock(&ospreylock);
+	ospreyunmake(old);
 	ospreywakeup();
 	pexit("moved", 0);
 	return -1;				/* not reached */
@@ -3547,7 +3740,7 @@ ospreyexeckern(Ospreyproc *parent, uvlong nameoff)
 	if(c == nil)
 		return -1;
 	ospreydelegate(c, sv);
-	e->used = 1;
+	e->used = 1;				/* the slot was cleared above, before the name */
 	e->child = c;
 	e->parent = parent;
 	print("osprey exec: container %llud starts %s for container %llud, served by container %llud\n",

@@ -135,6 +135,19 @@ port
 	int donotify(Ureg *a)
 	{
 		USED(a);
+		if(up->procctl){
+			/*
+			 * Proc_stopme: a group move (ospreymovekern) has asked this
+			 * process to stop on its way back to user mode, so that its
+			 * registers can be taken; procctl parks it Stopped until it
+			 * is readied.  Readied with Proc_exitme set, it is the old
+			 * process of a moved one, and ends here.
+			 */
+			procctl();
+			if(up->procctl == Proc_exitme)
+				procctl();
+			return 0;
+		}
 		if(ospreybuddyhas()){
 			/*
 			 * A declined fault reaches a legacy Plan 9 program as a note.

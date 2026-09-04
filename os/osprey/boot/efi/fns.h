@@ -17,6 +17,7 @@ void (*close)(void *f);
 
 int readn(void *f, void *data, int len);
 void unload(void);
+int claimpages(uintptr addr, uintptr len);
 extern void (*stop)(void);
 
 int getc(void);

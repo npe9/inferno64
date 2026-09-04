@@ -131,10 +131,29 @@ def main():
 	seen = b''
 	deadline = time.time() + a.timeout
 	status = 1
+	lastout = time.time()
+	retries = 0		# boots restarted because the loader stalled reading the kernel
 	try:
 		while time.time() < deadline:
 			b = p.stdout.read(4096)
 			if b is None:
+				# The loader now and then prints its configuration and
+				# then nothing: it stalled reading the kernel off the
+				# CD (a test-bench flake of firmware and loader, not the
+				# kernel's).  Start the boot over, up to twice, rather
+				# than time the whole run out.
+				if retries < 2 and time.time() - lastout > 30 \
+						and b'bootfile=' in seen and not re.search(rb'^boot\r?$', seen, re.M):
+					retries += 1
+					log.write(b'\n[osprey-console: the loader stalled; restarting the boot]\n'); log.flush()
+					p.kill(); p.wait()
+					seen = b''
+					lastout = time.time()
+					deadline = time.time() + a.timeout
+					p = subprocess.Popen(qemu, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+						stderr=subprocess.DEVNULL, bufsize=0)
+					os.set_blocking(p.stdout.fileno(), False)
+					continue
 				time.sleep(0.05)
 				continue
 			if b == b'':
@@ -144,6 +163,8 @@ def main():
 				sys.stdout.write(b.decode('utf-8', 'replace'))
 				sys.stdout.flush()
 			seen = esc.sub(b'', seen + b)[-65536:]
+
+			lastout = time.time()
 
 			# expectations are consumed in order, so a pattern that
 			# also appears earlier in the boot cannot fire twice.

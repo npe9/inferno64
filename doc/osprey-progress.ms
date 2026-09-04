@@ -196,8 +196,9 @@ back.
 A running process is carried into a container of its own with its
 registers, stack, data, open files and name space, and the container it
 came from is destroyed: it goes on from the call, in the new container,
-rather than starting again.  On one machine; the pages do not yet cross
-a wire.
+rather than starting again, and the processes that share its address
+space are stopped and carried along with it as a group.  On one machine;
+the pages do not yet cross a wire.
 .PP
 .B "Dynamic replicated data."
 A replica of a file in another container follows a stream of the file's
@@ -738,12 +739,61 @@ through the descriptor it opened before \- the state crossed, the
 program did not start again \- and then exits from the new container,
 which is what the client's wait is answered with.  Two criteria in
 .CW /scripts/osprey-check-p9pair.py .
-What is still true: the copy is within one kernel, and only the calling
-process moves.  Carrying the pages to another machine is what a
-checkpoint cannot yet do (a frame is 1500 bytes; a process is many), and
-a member of an address-space group running elsewhere would have to be
-stopped before its registers could be taken, which this does not do.
-Those two are what remain of slide 15.
+What is still true: the copy is within one kernel.  Carrying the pages
+to another machine is what a checkpoint cannot yet do (a frame is 1500
+bytes; a process is many); that is what remains of slide 15.
+.PP
+The group moves too, which is slide 15's own sentence.  Asked to move
+with its group
+.CW ( ReqMove
+with a flag), the kernel finds the other containers' processes that
+share a data or bss segment with the caller \- what
+.CW "rfork(RFPROC|RFMEM)"
+made \- and stops each before its registers can be taken: the member
+is marked
+.CW Proc_stopme
+and parks
+.CW Stopped
+on its next way back to user mode (the configs'
+.CW donotify
+runs
+.CW procctl
+first, which is where the kernel's stop has always happened), the mover
+waiting up to two seconds for it and refusing the move rather than
+leaving it half done if a member never comes back.  Then each member
+gets a container of its own and a process built from its own register
+frame and its own stack, sharing the mover's new segments where it
+shared the old
+.CW ( ospreymoveproc ),
+its old container is taken apart, and its old process, still parked, is
+readied with
+.CW Proc_exitme
+and ends in the same place it stopped.  Children of the old container
+become children of the new, so the moved parent still reaps what it
+made.  The legacy binary forks a thread that counts in shared memory,
+moves with it, and reads the count still climbing afterwards \- 20
+before, 42 after, in the run recorded \- then stops it by a shared flag
+and reaps it from the new container.  One criterion in
+.CW /scripts/osprey-check-p9pair.py .
+Two things found on the way.  A child-table slot reused by a fork or an
+exec kept the wait state of its last occupant, so a stale
+.CW waiting
+answered the wrong request and freed the entry before the parent
+asked \- the thread's exit reaped by nobody \- now cleared at creation.
+And two test-bench matters, honestly test-bench: the EFI loader read the
+kernel straight into its link address with nothing said to the
+firmware, and with the kernel past a megabyte it stalled after printing
+its configuration one boot in several; it now claims the load region
+from the firmware first
+.CW ( claimpages
+in
+.CW os/osprey/boot/efi/efi.c ),
+which is what a loader owes the firmware on hardware too, and the
+console driver restarts a boot whose loader has gone quiet, since the
+stall is not the kernel's to answer for.  What stays true of the group
+move: a member blocked for good in the kernel would not stop and the
+move is refused; and the shared segments are shared, not copied, with
+the destroyed containers' processes until those end.
 .PP
 .B "7.  The stack in user space, beyond a demonstration."
 netsrv answers ARP for one address and echo, and now, when it is given a
@@ -1476,10 +1526,10 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-fifty-four criteria, five of them this and the gateway below, three
-the \[*p]p wire of item 4, one the time of day of item 5, two the
-resume of item 6a, four the replica and the caching file system of
-item 8, one the note continuation of item 2.  What is
+fifty-five criteria, five of them this and the gateway below, three
+the \[*p]p wire of item 4, one the time of day of item 5, three the
+resume and the group move of item 6a, four the replica and the caching
+file system of item 8, one the note continuation of item 2.  What is
 honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a

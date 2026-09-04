@@ -36,6 +36,9 @@ nhandler(void *ureg, char *msg)
 	exits("note handled");
 }
 
+/* shared with a thread made by rfork(RFPROC|RFMEM): in the data segment, so both see it */
+static volatile int gshared, gstop;
+
 void
 startboot(char *argv0, char **argv)
 {
@@ -261,6 +264,50 @@ startboot(char *argv0, char **argv)
 			print("legacy: the kernel would not move me (%d)\n", moved);
 		if(mfd >= 0)
 			close(mfd);
+		/*
+		 * And as a group: a thread sharing this address space, counting
+		 * in shared memory, is carried along with the move - stopped,
+		 * its registers and stack taken, resumed in a container of its
+		 * own sharing the new one's memory - and goes on counting after
+		 * it, which the parent sees.  Then it is stopped by a shared
+		 * flag and reaped: the moved parent is still its parent.
+		 */
+		{
+			int tid, n1, n2, i;
+			char abuf[128];
+			int an;
+
+			gshared = 0;
+			gstop = 0;
+			tid = rfork(RFPROC|RFMEM);
+			if(tid == 0){
+				while(!gstop){
+					gshared++;
+					sleep(1);
+				}
+				exits("thread done");
+			}
+			for(i = 0; i < 20; i++)
+				sleep(1);
+			n1 = gshared;
+			args[0] = 1;				/* with the group */
+			args[1] = args[2] = args[3] = args[4] = 0;
+			moved = (int)ospreyxcall(24, args, 1);
+			for(i = 0; i < 20; i++)
+				sleep(1);
+			n2 = gshared;
+			if(moved > 0 && n2 > n1)
+				print("legacy: moved with my thread: I am container %d now; the thread had counted to %d before the move and to %d after it - it came along, still running in the shared memory\n", moved, n1, n2);
+			else
+				print("legacy: the group move did not carry the thread (moved %d, counted %d then %d)\n", moved, n1, n2);
+			gstop = 1;
+			an = await(abuf, sizeof abuf - 1);
+			if(an >= 0){
+				abuf[an] = 0;
+				print("legacy: reaped my thread after the move; its wait message: \"%s\"\n", abuf);
+			} else
+				print("legacy: await() after the group move returned nothing\n");
+		}
 		/*
 		 * Let the console task carry that line out before the fault
 		 * below: the kernel prints a fault synchronously and would cut
