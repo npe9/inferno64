@@ -315,3 +315,47 @@ func tolist[T](a []T) list T {
 	}
 	return l
 }
+
+// Vec[T]: an array that grows.  "append(a, x)" copies the whole
+// array each time, since a Dis array has no spare capacity, so
+// building one in a loop is quadratic; a Vec doubles instead
+type Vec[T] struct {
+	a []T
+	n int
+}
+
+func (v ref Vec[T]) push(x T) {
+	if v.n >= len(v.a) {
+		size := 2 * len(v.a)
+		if size < 8 {
+			size = 8
+		}
+		b := [size]T
+		copy(b, v.a)
+		v.a = b
+	}
+	v.a[v.n] = x
+	v.n++
+}
+
+// the number of elements pushed
+func (v ref Vec[T]) len() int {
+	return v.n
+}
+
+func (v ref Vec[T]) at(i int) T {
+	return v.a[i]
+}
+
+func (v ref Vec[T]) set(i int, x T) {
+	v.a[i] = x
+}
+
+// the elements, as an array of exactly the right length
+func (v ref Vec[T]) slice() []T {
+	return v.a[0:v.n]
+}
+
+func (v ref Vec[T]) reset() {
+	v.n = 0
+}

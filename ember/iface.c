@@ -249,6 +249,9 @@ itype(Node *n, Decl *mod)
 			return ft;
 		/* a value type: the closure shape, as check.c's stype() */
 		return mktype(&n->src, Tref, envfn(&n->src, ft), nil);
+	case Otinst:
+		/* "map[K]V", "Result[T]", "Vec[int]": check.c instantiates it */
+		return ifacetinst(n, mod);
 	case Oname:
 		/* search module members, then builtins */
 		if(mod != nil && mod->ty != nil){

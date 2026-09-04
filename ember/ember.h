@@ -426,6 +426,7 @@ struct Type
 	Decl	*tags;			/* tagged fields in an adt */
 	uchar	ismap;			/* the adt is builtin's Map[K, V] instantiated by a map[K]V type */
 	uchar	isiface;		/* the adt is an interface: a struct of method closures, filled by its .Name$from template */
+	uchar	building;		/* a pick whose cases are still being built: sizing it now would fix their offsets too early (check.c's typedec) */
 	uchar	named;			/* "type Color int" with methods: a copy of the base type, distinct so it can carry them (check.c's typedec) */
 	Decl	*meths;			/* adt methods, chained via Decl.link */
 	Case	*cse;			/* case or goto labels */
@@ -822,6 +823,7 @@ extern	int	nfiles;
 extern	char	*opname[];
 extern	uchar	chantab[Tend];
 extern	uchar	disoptab[Oend+1][7];
+Type*	ifacetinst(Node*, Decl*);
 extern	void	ifacegen(Node*, Biobuf*);
 extern	Dlist	*imports;
 extern	Decl	*impdecl;

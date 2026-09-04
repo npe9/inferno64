@@ -20,7 +20,9 @@ func init(ctxt ref draw.Context, args list string) {
 	sys.print("%d %d\n", len(a), a[3])
 	v.set(0, 100)
 	sys.print("%d %d\n", v.at(0), a[0])
-	sort(v.slice(), func(x int, y int) int { return y - x })
+	sort(v.slice(), func(x int, y int) int {
+		return y - x
+	})
 	sys.print("%d %d\n", v.at(0), v.at(v.len() - 1))
 	v.reset()
 	v.push(7)

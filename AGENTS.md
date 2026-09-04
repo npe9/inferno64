@@ -48,6 +48,10 @@ then put those in the plan and continue.
   weeks. When output is wrong in a way the source cannot explain,
   remove the library archive and its objects and rebuild, then
   relink `emu` (`mk install CONF=emu-g` in `emu/MacOSX`).
+- Never run two `limbocmp.sh` at once: both build into
+  `tmp/limbocmp`, so they delete each other's `.dis` files and report
+  differences that are not there. One run at a time, and let it
+  finish.
 - Do not edit a running shell script in place; replace it atomically.
   Do not rebuild `o.out` while a long test run is using it, and do
   not edit `ember/module/*.ei` or `ember/limbo/*.e` either: work in

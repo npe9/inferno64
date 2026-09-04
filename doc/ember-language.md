@@ -598,8 +598,9 @@ in one interface file are an error rather than a silent mislink.
 
 Some names come from `builtin.ei`, the module every program imports
 without saying so: `append`, `map`'s operations, `expect`,
-`Result[T]`, `Builder` and `sort`. A program that declares its own
-name of the same spelling shadows the builtin one.
+`Result[T]`, `Builder`, `Vec[T]`, `sort`, `tolist` and the list-to-
+array conversion. A program that declares its own name of the same
+spelling shadows the builtin one.
 
 `Builder` builds a string a piece at a time, since `s += x` in a loop
 copies the whole string each time:
@@ -609,9 +610,17 @@ copies the whole string each time:
     b.putc(' ')
     s := b.string()      // also len() and reset()
 
+`Vec[T]` grows an array by doubling, since `append` copies the whole
+array each time:
+
+    v := ref Vec[int]{}
+    v.push(3)
+    a := v.slice()       // also len(), at(i), set(i, x), reset()
+
 `sort(a, cmp)` sorts an array in place, `cmp(x, y)` negative, zero or
 positive as `x` orders before, with or after `y`. It is a stable
-merge sort, so elements the comparison calls equal keep their order.
+merge sort, so elements the comparison calls equal keep their order,
+and `sort(v.slice(), cmp)` sorts a `Vec`.
 
 `[]T(l)` converts a list to an array, as `[]byte(s)` converts a
 string, and `tolist(a)` converts back.
@@ -653,6 +662,16 @@ output, checked by `tests/ifacegen.sh`.
 The self-hosted compiler has the same flag, `emberc -i`.
 
 ## Interfaces and separate compilation
+
+An interface file may use the generic types: `map[K]V`, `ref
+Result[T]`, `Vec[T]` and a program's own generic types all appear in
+signatures and in the fields of the types an interface declares, and
+the importing module instantiates them the same way the implementing
+one did. The exception is a generic instantiated by a type that is
+being declared in the same interface -- a pick holding a
+`map[string]ref V` of itself -- where the two sides number the
+recursion differently and the link signatures disagree; a pick like
+that keeps its members in parallel arrays instead.
 
 A module's interface is an `.ei` file: Ember syntax with signatures
 only.

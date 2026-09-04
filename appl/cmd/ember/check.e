@@ -196,6 +196,26 @@ func installids(ids ref types.Decl) {
 	}
 }
 
+// "map[string]ref V", "ref Result[T]", "Vec[int]" in an interface
+// file: iface.e hands the type expression over, since the generic
+// machinery lives here.  the interface's own types go into a scope
+// of their own first, since a type argument may name one
+func ifacetinst(n ref types.Node, mod ref types.Decl) ref types.Type {
+	pushscope()
+	if mod != nil && mod.ty != nil {
+		for id := mod.ty.ids; id != nil; id = id.next {
+			if id.store == types.Dtype {
+				d := types.mkdecl(id.line, id.pos, types.Dtype, id.ty)
+				d.sym = id.sym
+				install(d)
+			}
+		}
+	}
+	t := stype(n)
+	popscope()
+	return t
+}
+
 func install(d ref types.Decl) {
 	d.next = nil
 	installids(d)
@@ -5345,7 +5365,9 @@ func typedec(n ref types.Node) {
 		t = ph
 	}
 	if n.right.op == types.Otpick {
+		t.building = 1	// a case's field type may ask for the pick's size
 		picktags(n.right, t, d)
+		t.building = 0
 	}
 	d.ty = t
 	t.decl = d
@@ -5539,6 +5561,7 @@ func check(tree ref types.Node, file string) int {
 	if tree == nil || tree.op != types.Omodule {
 		return 0
 	}
+	iface.usetinst(ifacetinst)
 	types.typeinit()
 	tint = types.basic(types.Tint)
 	tbool = types.basic(types.Tbool)
@@ -5605,6 +5628,11 @@ func check(tree ref types.Node, file string) int {
 		if ld != nil {
 			ld.old = lookup("tolist")
 			setbind("tolist", ld)
+		}
+		vd := modmember(bm.ty, "Vec")
+		if vd != nil {
+			vd.old = lookup("Vec")
+			setbind("Vec", vd)
 		}
 	}
 	pushscope()

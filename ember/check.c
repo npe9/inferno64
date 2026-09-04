@@ -165,6 +165,33 @@ install(Decl *d)
 	installids(d);
 }
 
+/*
+ * "map[string]ref V", "ref Result[T]", "Vec[int]" in an interface
+ * file: the generic machinery lives here, so iface.c hands the type
+ * expression over.  the interface's own types are installed in a
+ * scope of their own first, since a type argument may name one
+ */
+Type*
+ifacetinst(Node *n, Decl *mod)
+{
+	Type *t;
+	Decl *id;
+
+	pushscope();
+	if(mod != nil && mod->ty != nil)
+		for(id = mod->ty->ids; id != nil; id = id->next)
+			if(id->store == Dtype){
+				Decl *d;
+
+				d = mkdecl(&id->src, Dtype, id->ty);
+				d->sym = id->sym;
+				install(d);
+			}
+	t = stype(n);
+	popscope();
+	return t;
+}
+
 static int inref;	/* stype() is resolving the operand of a ref */
 static int rawfn;	/* the next Otfunc stype() sees is a declaration's own signature, not a value type */
 
@@ -7714,7 +7741,11 @@ typedec(Node *n)
 		t = ph;
 	}
 	if(n->right->op == Otpick)
+	{
+		t->building = 1;	/* a case's field type may ask for the pick's size */
 		picktags(n->right, t, d);
+		t->building = 0;
+	}
 	d->ty = t;
 	t->decl = d;
 	sizetype(t);
@@ -8037,6 +8068,11 @@ check(Node *tree)
 			v->sym->decl = v;
 		}
 		v = modmember(d->ty, enter("tolist", 0));
+		if(v != nil){
+			v->old = v->sym->decl;
+			v->sym->decl = v;
+		}
+		v = modmember(d->ty, enter("Vec", 0));
 		if(v != nil){
 			v->old = v->sym->decl;
 			v->sym->decl = v;

@@ -12,7 +12,7 @@ type Value pick {
 	Num(v real)
 	Str(s string)
 	Arr(a []ref Value)
-	Obj(m map[string]ref Value, keys []string)
+	Obj(keys []string, vals []ref Value)
 }
 
 type Parser struct {
@@ -154,10 +154,10 @@ func (p ref Parser) value() ref Result[ref Value] {
 		return ref Result[ref Value].Err{e: "unexpected end of input"}
 	case '{':
 		p.i++
-		m := map[string]ref Value{}
 		var keys []string
+		var vals []ref Value
 		if p.want('}') {
-			return ref Result[ref Value].Ok{v: ref Value.Obj{m: m, keys: keys}}
+			return ref Result[ref Value].Ok{v: ref Value.Obj{keys: keys, vals: vals}}
 		}
 		for {
 			p.space()
@@ -172,13 +172,13 @@ func (p ref Parser) value() ref Result[ref Value] {
 				return ref Result[ref Value].Err{e: "expected : after a member name"}
 			}
 			v := p.value()?
-			m[k] = v
 			keys = append(keys, k)
+			vals = append(vals, v)
 			if p.want(',') {
 				continue
 			}
 			if p.want('}') {
-				return ref Result[ref Value].Ok{v: ref Value.Obj{m: m, keys: keys}}
+				return ref Result[ref Value].Ok{v: ref Value.Obj{keys: keys, vals: vals}}
 			}
 			return ref Result[ref Value].Err{e: "expected , or } in an object"}
 		}
@@ -280,7 +280,7 @@ func write(v ref Value, b ref Builder) {
 			write(e, b)
 		}
 		b.putc(']')
-	case Value.Obj(m, keys):
+	case Value.Obj(keys, vals):
 		b.putc('{')
 		for i, k := range keys {
 			if i > 0 {
@@ -288,7 +288,7 @@ func write(v ref Value, b ref Builder) {
 			}
 			quote(k, b)
 			b.putc(':')
-			write(m[k], b)
+			write(vals[i], b)
 		}
 		b.putc('}')
 	}
@@ -343,12 +343,11 @@ func test_lookup() {
 	match r := parse("{\"a\":1,\"b\":\"two\"}") {
 	case Result[ref Value].Ok(v):
 		match v {
-		case Value.Obj(m, keys):
+		case Value.Obj(keys, vals):
 			expect(len(keys) == 2, "two members")
-			expect(text(m["a"]) == "1", "member a")
-			expect(text(m["b"]) == "\"two\"", "member b")
-			nothing, ok := m["c"]
-			expect(!ok, "no member c")
+			expect(keys[0] == "a" && text(vals[0]) == "1", "member a")
+			expect(keys[1] == "b" && text(vals[1]) == "\"two\"", "member b")
+			expect(len(vals) == 2, "two values")
 		default:
 			expect(false, "expected an object")
 		}

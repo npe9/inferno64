@@ -458,6 +458,17 @@ sizetype(Type *t)
 	case Ttuple:
 	case Tadt:
 	case Texception:
+		if(t->building){
+			/*
+			 * a pick still being built: a case's own field type can
+			 * ask for the pick's size ("map[string]ref V" inside V),
+			 * and sizing it now would fix every case's field offsets
+			 * against fields that are not all there yet.  leave it
+			 * unsized; typedec sizes it once the cases are complete.
+			 */
+			t->ok &= ~OKsized;
+			return;
+		}
 		if(t->tags == nil){
 			szal = sizeids(t->ids, 0);
 			t->size = align(szal.size, szal.align);
@@ -483,18 +494,16 @@ sizetype(Type *t)
 		break;
 	case Tadtpick:
 		/*
-		 * a pick's case is sized with the pick itself (just above),
-		 * and is reached directly only when something asks for its
-		 * size first -- "map[string]ref V" inside V's own pick,
-		 * whose instantiation sizes "ref V.Tag" while V is still
-		 * being built.  OKsized is already set on the way in, so
-		 * the pick's own loop fills the size in without looping
-		 * back here.
+		 * a pick's case is sized by the pick itself (below),
+		 * from the size of the pick's own fields.  it is reached
+		 * directly only when something asks for its size first --
+		 * "map[string]ref V" inside V's own pick, whose
+		 * instantiation sizes "ref V.Tag" while V is still being
+		 * built, and only wants the word a ref takes.  leave the
+		 * mark off so the pick's loop still sizes this case when
+		 * it gets there, with the right base.
 		 */
-		t->ok &= ~OKsized;	/* the pick's loop skips a case already marked */
-		t->tof->ok &= ~OKsized;
-		sizetype(t->tof);
-		t->ok |= OKsized;
+		t->ok &= ~OKsized;
 		break;
 	case Tfn:
 		t->size = 0;
@@ -1017,6 +1026,8 @@ teqclass(Type *t)
 
 	if(t == nil || (t->ok & OKclass) == OKclass)
 		return;
+	if(t->building)
+		return;	/* a pick still being built: typedec classes it once its cases are complete */
 	t->ok |= OKclass;
 	switch(t->kind){
 	default:

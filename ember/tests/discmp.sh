@@ -23,11 +23,11 @@ for f in tests/type/*.e limbo/*.e ../appl/cmd/ember/*.e; do
 	rel=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
 	rel=${rel#$ROOT}
 	rm -f tests/.c.dis "$ROOT/tmp/discmp.dis"
-	./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -o tests/.c.dis "$f" >/dev/null 2>&1
+	./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -I ../appl/ember -o tests/.c.dis "$f" >/dev/null 2>&1
 	if [ ! -f tests/.c.dis ]; then
 		continue
 	fi
-	timeout 60 "$EMU" -r "$ROOT" -c0 /dis/ember/emberc.dis -I /ember/tests/type -I /appl/cmd/ember -o /tmp/discmp.dis "$rel" > tests/.eout 2>&1
+	timeout 60 "$EMU" -r "$ROOT" -c0 /dis/ember/emberc.dis -I /ember/tests/type -I /appl/cmd/ember -I /appl/ember -o /tmp/discmp.dis "$rel" > tests/.eout 2>&1
 	if [ ! -f "$ROOT/tmp/discmp.dis" ]; then
 		echo "FAIL $f (no output)"
 		head -3 tests/.eout | sed 's/^/	/'

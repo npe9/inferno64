@@ -230,6 +230,7 @@ type Type struct {
 	tags ref Decl
 	ismap int
 	isiface int
+	building int	// a pick whose cases are still being built: sizing it now would fix their offsets too early (check.e's typedec)
 	named int
 	meths ref Decl
 	cse ref Case

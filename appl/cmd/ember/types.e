@@ -247,6 +247,7 @@ type Type struct {
 	tags ref Decl
 	ismap int
 	isiface int
+	building int	// a pick whose cases are still being built: sizing it now would fix their offsets too early (check.e's typedec)
 	named int
 	meths ref Decl
 	cse ref Case
@@ -567,6 +568,7 @@ func copytype(dst ref Type, src ref Type) {
 	dst.ids = src.ids
 	dst.isiface = src.isiface	// check.c copies the whole struct (*inst = *body)
 	dst.named = src.named
+	dst.building = src.building
 	dst.ismap = src.ismap
 	dst.tags = src.tags
 	dst.meths = src.meths
@@ -752,6 +754,14 @@ func sizetype(t ref Type) {
 		t.size = IBY2WD
 		t.align = IBY2WD
 	case Ttuple, Tadt, Texception:
+		if t.building != 0 {
+			// a pick still being built: a case's own field type can
+			// ask for the pick's size ("map[string]ref V" inside V),
+			// and sizing it now would fix every case's field offsets
+			// against fields that are not all there yet (types.c)
+			t.ok &= ~OKsized
+			return
+		}
 		if t.tags == nil {
 			sz, al := sizeids(t.ids, 0)
 			t.size = align(sz, al)
@@ -808,15 +818,14 @@ func sizetype(t ref Type) {
 		t.size = 0
 		t.align = IBY2WD
 	case Tadtpick:
-		// a pick's case is sized with the pick itself, and is
-		// reached directly only when something asks for its size
-		// first -- "map[string]ref V" inside V's own pick, whose
-		// instantiation sizes "ref V.Tag" while V is still being
-		// built (types.c)
-		t.ok &= ~OKsized	// the pick's loop skips a case already marked
-		t.tof.ok &= ~OKsized
-		sizetype(t.tof)
-		t.ok |= OKsized
+		// a pick's case is sized by the pick itself, from the size
+		// of the pick's own fields.  it is reached directly only
+		// when something asks for its size first -- "map[string]ref
+		// V" inside V's own pick, whose instantiation sizes "ref
+		// V.Tag" while V is still being built, and only wants the
+		// word a ref takes.  leave the mark off so the pick's loop
+		// still sizes this case when it gets there (types.c)
+		t.ok &= ~OKsized
 	default:
 		sys.fprint(sys.fildes(2), "fatal: sizetype: unknown type kind %d\n", t.kind)
 	}
@@ -1214,6 +1223,9 @@ func narrowmods() {
 func teqclass(t ref Type) {
 	if t == nil || (t.ok & OKclass) == OKclass {
 		return
+	}
+	if t.building != 0 {
+		return	// a pick still being built: typedec classes it once its cases are complete
 	}
 	t.ok |= OKclass
 	match t.kind {

@@ -15,7 +15,7 @@ exec </dev/null
 cd "$(dirname "$0")/.."
 ROOT=$(cd .. && pwd)
 EMBER=./o.out
-IFLAGS="-I ./module -I ./tests/type -I ../appl/cmd/ember"
+IFLAGS="-I ./module -I ./tests/type -I ../appl/cmd/ember -I ../appl/ember"
 EMU=$(ls "$ROOT"/*/*/bin/emu-g 2>/dev/null | head -1)
 if [ -z "$EMU" ]; then
 	echo "runtime.sh: no emu-g built (mk install in emu/), skipping" >&2
@@ -36,6 +36,8 @@ done
 (cd "$ROOT/appl/cmd/ember" && mk install >/dev/null 2>&1) || echo "runtime.sh: cannot build appl/cmd/ember" >&2
 mkdir -p "$ROOT/tmp"
 $EMBER $IFLAGS -o "$ROOT/tmp/libpoint.dis" tests/type/libpoint.e || echo "runtime.sh: cannot build libpoint.dis" >&2
+mkdir -p "$ROOT/dis/ember"
+$EMBER $IFLAGS -I "$ROOT/appl/ember" -o "$ROOT/dis/ember/json.dis" "$ROOT/appl/ember/json.e" || echo "runtime.sh: cannot build json.dis" >&2
 $EMBER $IFLAGS -o "$ROOT/tmp/libvars.dis" tests/type/libvars.e || echo "runtime.sh: cannot build libvars.dis" >&2
 $EMBER $IFLAGS -o "$ROOT/tmp/libhook.dis" tests/type/libhook.e || echo "runtime.sh: cannot build libhook.dis" >&2
 $EMBER $IFLAGS -o "$ROOT/tmp/libgen.dis" tests/type/libgen.e || echo "runtime.sh: cannot build libgen.dis" >&2

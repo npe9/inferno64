@@ -10,6 +10,16 @@ func usetypes(t Types) {
 	fold.usetypes(t)
 }
 
+// "map[K]V", "Result[T]", "Vec[int]" in an interface file: the
+// generic machinery lives in the checker, which hands its own
+// resolver over (check.e's ifacetinst).  a function rather than the
+// module, since the checker already imports this one
+var tinst func(ref types.Node, ref types.Decl) ref types.Type
+
+func usetinst(f func(ref types.Node, ref types.Decl) ref types.Type) {
+	tinst = f
+}
+
 // a port of ember/iface.c.  the C version publishes the builtin type
 // names on the symbol table while binding an interface; here itype()
 // resolves them by name.  constants fold through fold.foldconstexpr()
@@ -133,6 +143,8 @@ func builtin(name string) ref types.Type {
 		return types.basic(types.Treal)
 	case "string":
 		return types.basic(types.Tstring)
+	case "bool":
+		return types.basic(types.Tbool)
 	}
 	return nil
 }
@@ -325,6 +337,9 @@ func itype(n ref types.Node, mod ref types.Decl) ref types.Type {
 		}
 		error(n.line, "bad qualified type")
 		return types.basic(types.Terror)
+	}
+	if n.op == types.Otinst && tinst != nil {
+		return tinst(n, mod)	// a generic instantiation: the checker resolves it
 	}
 	error(n.line, sys.sprint("unsupported interface type %s", types.opname(n.op)))
 	return types.basic(types.Terror)

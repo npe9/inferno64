@@ -11,21 +11,21 @@ mkdir -p tests/.fmt
 for f in tests/type/*.e limbo/*.e; do
 	name=$(basename "$f")
 	out=tests/.fmt/$name
-	if ! ./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -F "$f" > "$out" 2> tests/.fmt/err; then
+	if ! ./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -I ../appl/ember -F "$f" > "$out" 2> tests/.fmt/err; then
 		echo "FAIL $f: -F"
 		head -3 tests/.fmt/err | sed 's/^/	/'
 		fail=$((fail+1))
 		continue
 	fi
-	./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -F "$out" > tests/.fmt/again 2>/dev/null
+	./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -I ../appl/ember -F "$out" > tests/.fmt/again 2>/dev/null
 	if ! cmp -s "$out" tests/.fmt/again; then
 		echo "FAIL $f: formatting twice differs"
 		diff "$out" tests/.fmt/again | head -4 | sed 's/^/	/'
 		fail=$((fail+1))
 		continue
 	fi
-	./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -o tests/.fmt/a.dis "$f" > /dev/null 2>&1
-	if ! ./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -o tests/.fmt/b.dis "$out" > tests/.fmt/err 2>&1; then
+	./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -I ../appl/ember -o tests/.fmt/a.dis "$f" > /dev/null 2>&1
+	if ! ./o.out -I ./module -I ./tests/type -I ../appl/cmd/ember -I ../appl/ember -o tests/.fmt/b.dis "$out" > tests/.fmt/err 2>&1; then
 		echo "FAIL $f: formatted source does not compile"
 		head -3 tests/.fmt/err | sed 's/^/	/'
 		fail=$((fail+1))

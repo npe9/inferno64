@@ -300,7 +300,38 @@ array costs:
   to have to say `constraints.Ordered`.
 - `append(a, x)` copies the whole array each time, because a Dis
   array has no spare capacity, so building an array in a loop is
-  quadratic — the same trap `Builder` was added for. A `Vec[T]` in
-  the builtin library (push, len, at, slice) with doubling growth
-  would make it linear, and `sort(v.slice(), cmp)` would still work.
-  Planned.
+  quadratic — the same trap `Builder` was added for. `Vec[T]` is now
+  in the builtin library (`push`, `len`, `at`, `set`, `slice`,
+  `reset`) and doubles, so building an array in a loop is linear;
+  `sort(v.slice(), cmp)` sorts it in place
+  (`tests/type/vec.e`). Done.
+
+## 18. An Ember library with its own interface
+
+`appl/ember/` holds Ember libraries and commands, built by its own
+mkfile into `/dis/ember`: `json.e` (the JSON reader and writer, now a
+module with `json.ei` beside it) and `jsonfmt.e`, which loads it and
+prints JSON indented. `ember/tests/type/usejson.e` exercises the
+library across the module boundary, and the runtime harness builds it.
+
+Writing the interface found the next gap and closed it: an interface
+file could not name a generic instantiation at all ("unsupported
+interface type tinst"), so no library API could mention `map[K]V`,
+`Result[T]` or a generic type of its own. The interface reader now
+hands such a type expression to the checker, which instantiates it
+with the interface's own types in scope (`ifacetinst`); the
+self-hosted compiler passes its resolver over as a function value,
+since the checker already imports the interface reader.
+
+One case remains open, and is documented in the language reference:
+a generic instantiated by a type declared in the same interface -- a
+pick whose case holds a `map[string]ref V` of the pick itself --
+signs differently on the two sides, because the recursion ids in the
+signature depend on how the type graph is shared. The JSON value
+keeps its members in parallel arrays for that reason.
+
+Two compiler fixes came with it: a pick is no longer sized or
+equivalence-classed while its cases are still being built (sizing it
+then fixed every case's field offsets against fields that were not
+all there yet, which is what made a client read a member at the wrong
+offset), and the interface reader knows `bool`.
