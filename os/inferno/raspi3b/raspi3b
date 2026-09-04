@@ -25,11 +25,16 @@ dev
 	cap
 	kprof
 	sd
+	draw
+	pointer
 
 
 lib
 	interp
 	keyring
+	memlayer
+	memdraw
+	draw
 	sec
 	mp
 	math
@@ -60,12 +65,13 @@ port
 	sysfile
 	taslock
 	xalloc
+	swcursor
 
 	archvirtarm64
 
 misc
 	uartvirtarm64
-	screennone
+	screenbcm
 	randomvirtarm64
 	sdhostbcm
 
@@ -73,6 +79,7 @@ mod
 	sys
 	keyring
 	crypt
+	draw
 
 init
 	raspi3binit

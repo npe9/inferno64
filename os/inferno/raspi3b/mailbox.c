@@ -153,3 +153,50 @@ mailboxinit(void)
 		rev, base, size,
 		base == 0 && size != 0 ? "(MBOX-OK)" : "(MBOX-BAD)");
 }
+
+/*
+ * Ask the firmware to allocate a linear framebuffer of w x h at 32bpp.
+ * One property message carries the whole setup: physical and virtual
+ * size, depth, a zero virtual offset, then ALLOCATE_BUFFER (whose value
+ * buffer returns the framebuffer's bus base and byte size) and GET_PITCH
+ * (the scanline stride in bytes).  Returns 0 and fills *fbpa (the ARM
+ * physical address, the bus alias stripped), *pitch and *fbsize on
+ * success, -1 otherwise.
+ */
+int
+mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
+{
+	static u32 raw[36+4];
+	u32 *buf, *tag, *pitchslot;
+	int i;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	i = 2;					/* leave [0]=size, [1]=code */
+	buf[i++] = 0x00048003; buf[i++] = 8; buf[i++] = 0;	/* set phys w,h */
+		buf[i++] = w; buf[i++] = h;
+	buf[i++] = 0x00048004; buf[i++] = 8; buf[i++] = 0;	/* set virt w,h */
+		buf[i++] = w; buf[i++] = h;
+	buf[i++] = 0x00048005; buf[i++] = 4; buf[i++] = 0;	/* set depth */
+		buf[i++] = 32;
+	buf[i++] = 0x00048009; buf[i++] = 8; buf[i++] = 0;	/* set virt offset */
+		buf[i++] = 0; buf[i++] = 0;
+	buf[i++] = 0x00040001; buf[i++] = 8; buf[i++] = 0;	/* allocate buffer */
+		tag = &buf[i];			/* value: [0]=base(bus) [1]=size */
+		buf[i++] = 16;			/* in: alignment; out: base */
+		buf[i++] = 0;
+	buf[i++] = 0x00040008; buf[i++] = 4; buf[i++] = 0;	/* get pitch */
+		pitchslot = &buf[i];
+		buf[i++] = 0;			/* out: pitch */
+	buf[i++] = 0;				/* end tag */
+	buf[0] = i * 4;
+	buf[1] = 0;
+
+	if(mboxprop(buf) < 0)
+		return -1;
+	if(tag[0] == 0)				/* no buffer handed back */
+		return -1;
+	*fbpa = (uintptr)(tag[0] & ~Busalias);	/* bus alias -> ARM physical */
+	*fbsize = tag[1];
+	*pitch = *pitchslot;
+	return 0;
+}
