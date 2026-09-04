@@ -44,6 +44,7 @@ enum {
 	PIPE	= 21,
 	RFORK	= 19,
 	BIND	= 2,
+	MOUNT	= 46,
 	/* rfork flags (portdat.h), which the shim headers here do not carry */
 	RFNAMEG	 = (1<<0),
 	RFPROC	 = (1<<4),
@@ -533,6 +534,13 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	case BIND:
 		/* bind(name, old, flag): name at Nameoff, old at Nameoff+128, a0 the flag */
 		r = p9bind((char*)(cdata + Nameoff), (char*)(cdata + Nameoff + 128), (int)a0);
+		break;
+
+	case MOUNT:
+		/* mount(fd, afd, old, flag, spec): old at Nameoff, spec at Nameoff+128,
+		 * a0 the process fd of the 9P connection, a1 the flag */
+		bfd = fdof(img, a0);
+		r = bfd < 0 ? -1 : p9mount(bfd, (char*)(cdata + Nameoff), (int)a1, (char*)(cdata + Nameoff + 128));
 		break;
 
 	default:

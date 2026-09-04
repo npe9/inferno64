@@ -498,6 +498,37 @@ p9pipe(int fd[2])
 	return 0;
 }
 
+/* mount a served descriptor (a 9P connection) onto `old` in the name space */
+int
+p9mount(int fd, char *old, int flag, char *spec)
+{
+	Chan *bc, *c0, *c1;
+
+	bc = fdtochan(fd, ORDWR, 0, 1);
+	if(waserror()){
+		cclose(bc);
+		nexterror();
+	}
+	c0 = mntattach(bc, nil, spec, flag&MCACHE);	/* speak 9P over the descriptor */
+	poperror();
+	cclose(bc);
+	if(waserror()){
+		cclose(c0);
+		nexterror();
+	}
+	c1 = namec(old, Amount, 0, 0);
+	if(waserror()){
+		cclose(c1);
+		nexterror();
+	}
+	cmount(c0, c1, flag, spec);
+	poperror();
+	cclose(c1);
+	poperror();
+	cclose(c0);
+	return 0;
+}
+
 /* bind the file or directory named by `name` onto `old` in the name space */
 int
 p9bind(char *name, char *old, int flag)

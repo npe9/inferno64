@@ -133,6 +133,33 @@ startboot(char *argv0, char **argv)
 			close(fd);
 			print("legacy: rforked a private ns and bound /n into /; /hello (= /n/hello) reads: \"%s\"\n", buf);
 		}
+
+		/*
+		 * And mount: open the personality's own exportfs (#X), a 9P
+		 * connection, mount it onto /mnt, and read a file through it - the
+		 * mount is this container's own, in the name space it forked.
+		 */
+		fd = open("#X", ORDWR);
+		if(fd < 0)
+			print("legacy: could not open #X to mount\n");
+		else {
+			if(mount(fd, -1, "/mnt", MREPL, "") < 0)
+				print("legacy: mount #X onto /mnt failed\n");
+			else {
+				int hfd = open("/mnt/n/hello", OREAD);
+				if(hfd < 0)
+					print("legacy: /mnt/n/hello not readable after the mount\n");
+				else {
+					n = read(hfd, buf, sizeof buf - 1);
+					if(n < 0)
+						n = 0;
+					buf[n] = 0;
+					close(hfd);
+					print("legacy: mounted #X at /mnt and read /mnt/n/hello over 9P: \"%s\"\n", buf);
+				}
+			}
+			close(fd);
+		}
 	}
 
 	print("legacy: the buddy answered every trap\n");

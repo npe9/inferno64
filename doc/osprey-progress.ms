@@ -309,10 +309,24 @@ message, so the program catches its own fault instead of being killed.
 The legacy binary registers a handler, reads a bad address, and its
 handler prints the note
 .CW ( "sys: trap: fault read addr=0x0" )
-and exits.  What remains is
-.CW mount ,
-which needs a served file descriptor to mount rather than a name to bind;
-and the
+and exits.  And
+.CW mount
+is answered, the last of the name-space calls: the program opens the
+personality's own exportfs
+.CW ( #X ,
+a 9P connection), mounts it onto
+.CW /mnt
+in its private name space, and reads
+.CW /mnt/n/hello
+through the loopback \-
+.CW p9mount
+attaches the served descriptor with
+.CW mntattach
+and mounts it with
+.CW cmount ,
+the same primitives the personality's own boot uses.  The file traps, the
+name-space calls and the fault are all answered now; what is left of the
+legacy ABI is the
 .CW noted (2)
 continuation that would let a handler resume the interrupted instruction
 rather than exit (a fault cannot exercise it \- the address is still bad -
