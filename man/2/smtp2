@@ -1,0 +1,86 @@
+.TH SMTP2 2
+.SH NAME
+smtp2 \- SMTP message submission over TLS
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "tls12.m";
+include "smtp2.m";
+smtp2 := load Smtp2 Smtp2->PATH;
+Sender: import smtp2;
+.EE
+.SH DESCRIPTION
+.I Smtp2
+submits mail through an SMTP server over
+.IR tls12 (2),
+this tree's verifying TLS 1.2 client \(em never a host command.
+It is enough to send through Gmail
+.RB ( smtp.gmail.com :465,
+implicit TLS).
+It is distinct from the plaintext
+.IR smtp (2)
+module.
+.PP
+.B init
+loads and initialises
+.IR tls12 (2)
+and a base64 encoder; call it once.
+.B connect
+dials
+.I dialip
+(or
+.I host
+if empty) at
+.IR port ,
+runs the TLS handshake naming
+.I host
+for certificate verification, and reads the greeting \(em see
+.IR imap4 (2)
+for why
+.I dialip
+is separate.
+.PP
+The returned
+.B Sender
+offers, each returning a trailing error string that is nil on success:
+.TP
+.B ehlo
+Send
+.B EHLO
+and return the server's capability text (its
+.B AUTH
+line lists the mechanisms).
+.TP
+.B auth
+Authenticate with
+.B "AUTH PLAIN"
+using
+.I user
+and
+.I pass
+(an app password over TLS).
+.TP
+.B mail
+Run a full
+.B "MAIL FROM"
+/
+.B "RCPT TO"
+/
+.B DATA
+transaction; the message is CRLF-normalised and dot-stuffed.
+.TP
+.B quit
+Send
+.B QUIT
+and close the session.
+.SH SOURCE
+.B /appl/lib/smtp2.b
+.SH SEE ALSO
+.IR upas-send (1),
+.IR tls12 (2),
+.IR imap4 (2)
+.SH BUGS
+Only implicit TLS (no STARTTLS) and only
+.B "AUTH PLAIN"
+(sufficient for a Gmail app password; not XOAUTH2) are implemented.

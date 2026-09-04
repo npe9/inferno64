@@ -1,0 +1,101 @@
+.TH UPAS-SEND 1
+.SH NAME
+upas/send \- submit mail through an SMTP server over TLS
+.SH SYNOPSIS
+.B upas/send
+[
+.B -s
+.I server
+] [
+.B -a
+.I dialip
+] [
+.B -p
+.I port
+] [
+.B -u
+.I user
+] [
+.B -P
+.I passfile
+] [
+.B -f
+.I from
+] [
+.B -t
+.I rcpt
+] ... [
+.I msgfile
+]
+.SH DESCRIPTION
+.I Upas/send
+submits a message through an SMTP server over
+.IR tls12 (2).
+It defaults to Gmail
+.RB ( smtp.gmail.com :465).
+.PP
+With no
+.B -u
+it only probes the transport: it completes the TLS handshake, reads the
+greeting, prints the
+.B EHLO
+capabilities and exits, sending no mail.
+.PP
+With
+.B -u
+.IR user ,
+.B -P
+.IR passfile ,
+.B -f
+.I from
+and one or more
+.B -t
+.I rcpt
+it authenticates with the password from
+.I passfile
+(for Gmail, an
+.IR "app password" ),
+then sends the message read from
+.I msgfile
+(or standard input).
+The message should be a complete RFC 822 message \(em headers, a blank
+line, then the body.
+.PP
+As with
+.IR upas-fetch (1),
+a hosted
+.I emu
+does not resolve names, so give the already-resolved address with
+.B -a
+while the certificate is verified for the
+.B -s
+name, and bind
+.B "#I"
+onto
+.B /net
+first.
+.SH EXAMPLES
+Probe Gmail's submission endpoint (sends nothing):
+.EX
+
+	bind -a '#I' /net
+	upas/send -s smtp.gmail.com -a 142.251.16.108
+
+.EE
+Send a message with an app password:
+.EX
+
+	upas/send -u me@gmail.com -P /tmp/gpass -f me@gmail.com \e
+		-t you@example.com -a 142.251.16.108 message.txt
+
+.EE
+.SH SOURCE
+.B /appl/cmd/upas/send.b
+.SH SEE ALSO
+.IR smtp2 (2),
+.IR upas-fetch (1),
+.IR tls12 (2)
+.SH BUGS
+Authentication is
+.B "AUTH PLAIN"
+only (an app password), not XOAUTH2.

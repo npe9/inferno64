@@ -70,6 +70,7 @@ HT_CLIENT_HELLO: con 1;
 HT_SERVER_HELLO: con 2;
 HT_CERTIFICATE: con 11;
 HT_SERVER_KEY_EXCHANGE: con 12;
+HT_CERTIFICATE_REQUEST: con 13;
 HT_SERVER_HELLO_DONE: con 14;
 HT_CLIENT_KEY_EXCHANGE: con 16;
 HT_FINISHED: con 20;
@@ -280,11 +281,24 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 	if(err != nil)
 		return (nil, err);
 
-	(mtype, body, err) = hsmsg(s, hs);
-	if(err != nil)
-		return (nil, err);
-	if(mtype != HT_SERVER_HELLO_DONE || len body != 0)
+	# a server may send an (optional) CertificateRequest between
+	# ServerKeyExchange and ServerHelloDone - Gmail's SMTP submission
+	# endpoint does. We hold no client certificate, so we note the
+	# request, skip its body, and answer it with an empty Certificate
+	# below (RFC 5246 7.4.6).
+	certrequested := 0;
+	for(;;){
+		(mtype, body, err) = hsmsg(s, hs);
+		if(err != nil)
+			return (nil, err);
+		if(mtype == HT_CERTIFICATE_REQUEST){
+			certrequested = 1;
+			continue;
+		}
+		if(mtype == HT_SERVER_HELLO_DONE && len body == 0)
+			break;
 		return (nil, sys->sprint("tls: expected ServerHelloDone, got handshake type %d (%d bytes)", mtype, len body));
+	}
 
 	# authenticate the server before deriving any secret: the chain
 	# must verify to a trusted root and name the host, and the ECDHE
@@ -328,6 +342,16 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 		z = array[32] of byte;
 		if(kr->curve25519_dh_finish(x, serverpub, z) == 0)
 			return (nil, "tls: bad server X25519 public key (zero shared secret)");
+	}
+	# answer a CertificateRequest with an empty client Certificate (a
+	# 3-byte certificate_list length of zero); it precedes and is hashed
+	# before ClientKeyExchange. No CertificateVerify since we sent no cert.
+	if(certrequested){
+		emptycert := hsheader(HT_CERTIFICATE, array[3] of byte);
+		hashmsg(hs, emptycert);
+		err = sendrecord(s, CT_HANDSHAKE, VER_TLS12, emptycert);
+		if(err != nil)
+			return (nil, err);
 	}
 	ckxbody := array[1+len ckxpub] of byte;
 	ckxbody[0] = byte len ckxpub;

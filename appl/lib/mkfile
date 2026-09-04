@@ -142,6 +142,7 @@ TARG=\
 	sexprs.dis\
 	slip.dis\
 	smtp.dis\
+	smtp2.dis\
 	sort.dis\
 	sparse.dis\
 	ssh.dis\
