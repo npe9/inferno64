@@ -94,7 +94,7 @@ def main():
          and 'lfs: committed hello version 2, 56 bytes' in t),
         ("the same file over pi-p, about the personality's files: one group - session, open, read of *, read of data, write, close - answered in one round trip",
          'p9: pair-client: pi-p group of 6 answered with 6 replies in one round trip' in t
-         and 'p9: pair-client: pi-p read * (version 2): "* data version length name"' in t
+         and 'p9: pair-client: pi-p read * (version 2): "* data version length name latest"' in t
          and 'p9: pair-client: pi-p read data (version 2): "written by the client over 9P, a new version on the disk"' in t),
         ("the write makes a version nobody else sees until the close commits it, as one record on the log",
          "p9: pair-client: pi-p write makes version 3, nobody else's until the close" in t
@@ -120,9 +120,9 @@ def main():
          and 'the log is full' not in t),
         ("at the end the kernel reports the storage task's reservation and what it used of it, as the talk's dumptask does",
          re.search(r'osprey status: proc 3 core \d+ \w+ budget (19\d{5}|2000000) used \d+ period (99\d{5}|10000000) ', t) is not None),
-        ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 42: the store is persistent",
-         'from the checkpoint' in t2 and re.search(r'lfs: hello version 4\d, 82 bytes', t2) is not None
-         and 'lfs: found /n/hello on the disk: "version 42 of forty' in t2),
+        ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 44 - the forty versions and the one the replica test wrote after them: the store is persistent",
+         'from the checkpoint' in t2 and re.search(r'lfs: hello version 44, 37 bytes', t2) is not None
+         and 'lfs: found /n/hello on the disk: "a new version the replica must notice"' in t2),
         ("the microkernel runs a client personality that mounts a second personality over the ring",
          'pair-client: mounting the server personality over the ring' in t),
         ("and a second personality, a container of its own, answers 9P about its name space",
@@ -216,6 +216,13 @@ def main():
          and (lambda a, b: a is not None and b is not None and a.group(2) == b.group(1))(
              re.search(r"osprey move: container (\d+)'s process \(/boot/legacy\) resumed as container (\d+)", t),
              re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 0', t))),
+        ("dynamic replicated data: the client container keeps a replica of the server's file and follows a stream of the file's committed version over the wire, answering reads from its copy while the stream says the version is unchanged",
+         re.search(r'p9 ip: replica: holding /n/hello at version (\d+) \(\d+ bytes\) from the wire; watching its committed version on a stream', t) is not None
+         and re.search(r'p9 ip: replica: the stream says version \d+ still, \d+ reads answered from the replica without asking the server', t) is not None),
+        ("and when another path writes a new version, the stream says so within a period and the replica refetches over the wire: the copy is current again, and the reads after it are of the new text",
+         'p9 ip: replica: another path, 9P over the ring, wrote a new version while the replica watched' in t
+         and re.search(r'p9 ip: replica: the stream says version (\d+) now, not (\d+): refetched over the wire, "a new version the replica must notice" - the replica is current again', t) is not None
+         and re.search(r'p9 ip: replica: done - \d+ stream frames, \d+ reads answered from the replica, 1 refetch', t) is not None),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

@@ -253,10 +253,15 @@ a file's attributes are
 .BR * ,
 .BR data ,
 .BR version ,
-.B length
+.BR length ,
+.B name
 and
-.BR name ,
-of which
+.B latest
+\- the file's committed version now, where
+.B version
+is the fid's own, fixed at its open; a replica watches
+.B latest
+\- of which
 .B data
 may be written; the root's
 .B *

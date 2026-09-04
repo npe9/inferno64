@@ -282,7 +282,7 @@ readattr(Fid *f, char *attr, long cnt, int tag)
 			n = k;
 			v = 0;
 		} else if(strcmp(attr, "*") == 0){
-			n = snprint((char*)b, Datalen, "* data version length name");
+			n = snprint((char*)b, Datalen, "* data version length name latest");
 			v = f->draft != nil ? f->base + 1 : f->base;
 		} else if(strcmp(attr, "data") == 0){
 			if(f->draft != nil){
@@ -309,6 +309,11 @@ readattr(Fid *f, char *attr, long cnt, int tag)
 		} else if(strcmp(attr, "name") == 0){
 			n = snprint((char*)b, Datalen, "%s", f->name);
 			v = f->base;
+		} else if(strcmp(attr, "latest") == 0){
+			/* the file's committed version now, not this fid's: what a
+			 * replica watches, since a fid's version is fixed at its open */
+			v = fileversion(f->name);
+			n = snprint((char*)b, Datalen, "%llud", v);
 		} else
 			error("no such attribute");
 		if(cnt >= 0 && n > cnt)

@@ -199,6 +199,12 @@ came from is destroyed: it goes on from the call, in the new container,
 rather than starting again.  On one machine; the pages do not yet cross
 a wire.
 .PP
+.B "Dynamic replicated data."
+A replica of a file in another container follows a stream of the file's
+committed version over the \[*p]p wire, answers reads from its copy while
+the version stands, and refetches within a period when another path
+writes the file.
+.PP
 .B "What it costs."
 The presentation measures a send, a receive and a context switch
 together at 270 nanoseconds.  The same thing here \- a request put on a
@@ -1439,9 +1445,9 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-forty-nine criteria, five of them this and the gateway below, three
+fifty-one criteria, five of them this and the gateway below, three
 the \[*p]p wire of item 4, one the time of day of item 5, two the
-resume of item 6a.  What is
+resume of item 6a, two the replica of item 8.  What is
 honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a
@@ -1567,14 +1573,45 @@ and the byte stays in the buffer for the driver.  The reliable
 reproduction of the heisenbug is itself worth having; chasing it is not
 this item's work.
 .PP
-.B "8.  What the talk's goals name and nothing here does."
+.B "8.  What the talk's goals name."
 Authenticated, controlled access to
 .I "dynamic replicated data"
 (slide 11) and a
 .I "caching filesystem"
-(slide 23): nothing in the tree replicates or caches anything, and both
-sit on item 3.  These are the talk's ends, not its mechanisms, and they
-come after the file system exists.
+(slide 23).  These are the talk's ends, not its mechanisms, and they
+come after the file system exists, which it now does.  The replicated
+data is built, in the form the wire above makes natural: the client
+container keeps a replica of the server's
+.CW /n/hello
+and follows a stream of the file's committed version over the \[*p]p
+wire
+.CW ( replica
+in
+.CW os/osprey/cmd/p9/p9ip.c ).
+A fid's version is fixed at its open \- a fid's data is a snapshot \-
+so the server gained an attribute,
+.CW latest ,
+the file's committed version now
+.CW ( fileversion
+in
+.CW pipfsrv.c ),
+and that is what the stream carries, every 100 ms, unasked.  While each
+frame says the version the replica holds, a read is answered from the
+copy with nothing asked of the server; when a frame says another
+version, the replica opens a new fid on the file, reads it, closes the
+old, and moves the stream to the new fid, and is current again within a
+period.  The change is made by another path while it watches: 9P over
+the ring, the client's own mount of the server, writing the file.  The
+boot shows the replica holding version 43, three reads answered from it,
+the 9P write, the next frame saying 44, the refetch reading the new
+text, and the summary \- six frames, five reads from the copy, one
+refetch.  Two criteria in
+.CW /scripts/osprey-check-p9pair.py .
+What that is not: the access is not authenticated \- the personality's
+\[*p]p has no key, only the kernel's has \- and the replica is one file
+in one program's memory, not a file system.  The caching file system
+would be this replica generalised and put behind a name space, so that
+an open of a name is answered from the copy; it is not built.
 .PP
 .B "9.  A second machine."
 The talk boots the same code as

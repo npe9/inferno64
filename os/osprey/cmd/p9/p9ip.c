@@ -490,6 +490,150 @@ pipclient(void)
 	p9close(wfd); p9close(dfd);
 }
 
+/*
+ * Dynamic replicated data, the talk's end for the wire above: the
+ * client container keeps a replica of the server's /n/hello and follows
+ * a stream of the file's committed version ("latest") over the wire.
+ * While each frame says the version it holds, reads are answered from
+ * the replica with nothing asked of the server; when a frame says
+ * another version, the replica opens a new fid and refetches - a fid's
+ * data is a snapshot, so the new version needs a new fid - and is
+ * current again within a period.  The change is made by another path
+ * while the replica watches: 9P over the ring, this container's own
+ * mount of the server, writing the file.  Stream frames and the replies
+ * to the groups the replica sends arrive on one connection, told apart
+ * by tag.
+ */
+static void
+replica(void)
+{
+	extern long pip_tsession(uchar*, int, uvlong);
+	extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+	extern long pip_tread(uchar*, int, ulong, long, char*);
+	extern long pip_tstream(uchar*, int, ulong, ulong, ulong, char*);
+	extern long pip_tclose(uchar*, int, ulong);
+	extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
+	extern uvlong pip_num(uchar*, int);
+	uchar tg[512], rg[2048], *body;
+	char data[512], show[160];
+	long tn, rn, off, blen, dlen, served, frames;
+	int type, tag, dfd, wfd, fid, wrote, refetched, unchanged, want;
+	uvlong sid, vers, v;
+
+	wfd = pipconnect(&dfd);
+	fid = 1;
+	tn = 0;
+	tn += pip_tsession(tg+tn, 1, 0);
+	tn += pip_topen(tg+tn, 2, 0, fid, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 3, fid, sizeof data - 1, "data");
+	tn += pip_tread(tg+tn, 4, fid, 32, "latest");
+	putrec(wfd, tg, tn);
+	rn = getrec(wfd, rg, sizeof rg);
+	sid = 0; vers = 0; dlen = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 101)
+			sid = pip_num(body, 8);
+		else if(type == 105 && tag == 3){
+			dlen = pip_num(body+8, 2);
+			if(dlen > (long)sizeof data - 1)
+				dlen = sizeof data - 1;
+			memmove(data, body+10, dlen);
+			data[dlen] = 0;
+		} else if(type == 105 && tag == 4){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			vers = strtoull(show, nil, 10);
+		}
+	}
+	print("p9 ip: replica: holding /n/hello at version %llud (%ld bytes) from the wire; watching its committed version on a stream\n", vers, dlen);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 5, sid);
+	tn += pip_tstream(tg+tn, 7, fid, 100, 0, "latest");	/* every 100 ms, no end */
+	putrec(wfd, tg, tn);
+	getrec(wfd, rg, sizeof rg);				/* Rsession, Rstream */
+
+	served = frames = 0; wrote = refetched = unchanged = 0; want = 0;
+	while(frames < 40 && !(refetched && unchanged >= 2 && !want)){
+		rn = getrec(wfd, rg, sizeof rg);
+		if(rn <= 0)
+			break;
+		for(off = 0; pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+			if(type == 105 && tag == 7){		/* a stream frame: the committed version now */
+				frames++;
+				snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+				v = strtoull(show, nil, 10);
+				if(v == vers){
+					served++;		/* a read, answered from the copy */
+					unchanged++;
+					if(unchanged == 3 && !wrote)
+						print("p9 ip: replica: the stream says version %llud still, %ld reads answered from the replica without asking the server\n", vers, served);
+				} else if(!want){
+					/* changed: a new fid on the file, its data, the old fid closed */
+					tn = 0;
+					tn += pip_tsession(tg+tn, 8, sid);
+					tn += pip_topen(tg+tn, 9, 0, fid+1, 0, "/n/hello");
+					tn += pip_tread(tg+tn, 10, fid+1, sizeof data - 1, "data");
+					tn += pip_tclose(tg+tn, 11, fid);
+					putrec(wfd, tg, tn);
+					want = 10;
+					unchanged = 0;
+				}
+			} else if(type == 105 && tag == want){	/* the refetch */
+				dlen = pip_num(body+8, 2);
+				if(dlen > (long)sizeof data - 1)
+					dlen = sizeof data - 1;
+				memmove(data, body+10, dlen);
+				data[dlen] = 0;
+				print("p9 ip: replica: the stream says version %llud now, not %llud: refetched over the wire, \"%s\" - the replica is current again\n", v, vers, data);
+				vers = v;
+				fid++;
+				want = 0;
+				refetched = 1;
+				/* the stream was on the old fid, closed with it: watch the new one */
+				tn = 0;
+				tn += pip_tsession(tg+tn, 12, sid);
+				tn += pip_tstream(tg+tn, 7, fid, 100, 0, "latest");
+				putrec(wfd, tg, tn);
+			} else if(type == 112){
+				snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+				print("p9 ip: replica: error on tag %d: %s\n", tag, show);
+			}
+		}
+		if(unchanged >= 3 && !wrote){
+			/* another path changes the file: 9P over the ring, this container's mount of the server */
+			Chan *tc, *rc, *hc;
+			char *names[2];
+			static char text[] = "a new version the replica must notice";
+
+			wrote = 1;
+			if(!waserror()){
+				tc = namec("#L", Aopen, ORDWR, 0);
+				rc = mntattach(tc, nil, "", 0);
+				cclose(tc);
+				names[0] = "n"; names[1] = "hello";
+				hc = cclone(rc);
+				cclose(rc);
+				if(walk(&hc, names, 2, 1, nil) < 0)
+					error("no /n/hello over 9P");
+				hc = devtab[hc->type]->open(hc, OWRITE|OTRUNC);
+				devtab[hc->type]->write(hc, text, sizeof text - 1, 0);
+				cclose(hc);			/* the clunk commits the new version */
+				poperror();
+				print("p9 ip: replica: another path, 9P over the ring, wrote a new version while the replica watched\n");
+			} else
+				print("p9 ip: replica: the 9P write failed: %s\n", up->errstr);
+		}
+	}
+	print("p9 ip: replica: done - %ld stream frames, %ld reads answered from the replica, %d refetch\n", frames, served, refetched);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 13, sid);
+	tn += pip_tstream(tg+tn, 14, fid, 0, 0, "latest");	/* period 0: the stream stops */
+	tn += pip_tclose(tg+tn, 15, fid);
+	putrec(wfd, tg, tn);
+	getrec(wfd, rg, sizeof rg);
+	tsleep(&up->sleep, return0, nil, 200);
+	p9close(wfd); p9close(dfd);
+}
+
 static void
 ostcpclient(void *)
 {
@@ -561,6 +705,7 @@ ostcpclient(void *)
 		p9close(wfd); p9close(dfd);
 	}
 	pipclient();
+	replica();
 	poperror();
 	clientnetdone = 1;
 	pexit("ostcpclient done", 0);
