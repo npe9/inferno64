@@ -2398,6 +2398,7 @@ uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
 #define ReqMousenotify 22	/* xcall op: route IRQ12 (aux) to the caller as a notification */
+#define ReqSettime 23	/* xcall op: set the kernel's time of day, seconds since the epoch, from a task's own clock read */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2464,6 +2465,24 @@ ospreyxcall(va_list list)
 		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
 			inb(Kbddata);			/* drain the echo, if any */
 		intrenable(Kbdirq, ospreykbdnotify, nil, -1, "osprey-kbd-notify");
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqSettime){
+		/*
+		 * The time of day is a task's to set: the kernel reads no clock
+		 * at boot (its rtc driver is linked only for the warm-reset
+		 * vector the AP start writes through it) and starts at zero,
+		 * and the container that read the CMOS clock in user space
+		 * hands the kernel the time.  Ticket expiry (ospreycheckticket)
+		 * is measured against this, so until a task has set it a ticket
+		 * with a real expiry is early by the epoch.  Any container may
+		 * set it; who may is one of the checks the demonstration scale
+		 * leaves out (item 12 of osprey-progress).
+		 */
+		todset((vlong)arg[0] * 1000000000LL, 0, 0);
+		print("osprey: container %llud set the kernel's time of day by request: %llud seconds since the epoch; the kernel read no clock\n",
+			ospreyid(up->osprey), (uvlong)seconds());
 		ubuf[0] = 0;
 		return 0;
 	}

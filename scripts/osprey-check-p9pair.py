@@ -11,7 +11,7 @@ file operations to the other - one-directional, and NOT the paper's
 buddyOS, which is legacy-binary system-trap emulation, a different and
 unbuilt mechanism.
 """
-import os, re, subprocess, sys, tempfile
+import os, re, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -68,10 +68,14 @@ def main():
     try: os.unlink(img)
     except OSError: pass
 
+    now = int(time.time())
     m = re.search(r"pair-client: read (\d+) entries from the server personality's exported root", t)
     results = [
         ("the real-time clock is read in user space, by the personality's own outb/inb on the CMOS ports, no kernel rtc device in the data path",
          re.search(r'p9 rtc: read the CMOS clock in user space by its own outb/inb \(ports 0x70/0x71\): \d{4}-\d\d-\d\d \d\d:\d\d:\d\d', t) is not None),
+        ("and the task hands the kernel the time of day by request: the kernel read no clock at boot, and the seconds it was given are the host's own time within ten minutes",
+         (lambda mm: mm is not None and abs(int(mm.group(1)) - now) < 600)(re.search(r"osprey: container \d+ set the kernel's time of day by request: (\d+) seconds since the epoch; the kernel read no clock", t))
+         and re.search(r"p9 rtc: set the kernel's time of day to \d+ seconds since the epoch, by request", t) is not None),
         ("the kernel exposes the virtio block device's registers and interrupt to the server personality, and nothing more",
          'osprey blk: exposed virtio block device' in t and 'as "virtioblk"' in t),
         ("a driver above the kernel brings the device up and reads sector 0, the host's text",

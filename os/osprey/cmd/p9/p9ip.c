@@ -687,6 +687,29 @@ p9ipup(void)
 		print("p9 rtc: read the CMOS clock in user space by its own outb/inb (ports 0x70/0x71): "
 			"%d-%02d-%02d %02d:%02d:%02d - no kernel rtc device\n",
 			2000 + a[5], a[4], a[3], a[2], a[1], a[0]);
+		/*
+		 * And hand the kernel the time: it read no clock at boot and
+		 * its time of day starts at zero, which is what tickets expire
+		 * against.  Seconds since 1970, the CMOS clock taken as UTC
+		 * (which is how the test bench keeps it), by the usual
+		 * days-from-civil count.
+		 */
+		{
+			extern long ospreyxcall(int op, uvlong *args, long n);
+			uvlong secs, args[5];
+			long y, m, d, days;
+
+			y = 2000 + a[5]; m = a[4]; d = a[3];
+			if(m <= 2){ y--; m += 12; }
+			days = 365*y + y/4 - y/100 + y/400 + (153*(m - 3) + 2)/5 + d - 1 - 719468;	/* days since 1970-01-01 */
+			secs = (uvlong)days*86400 + a[2]*3600 + a[1]*60 + a[0];
+			args[0] = secs;
+			args[1] = args[2] = args[3] = args[4] = 0;
+			if(ospreyxcall(23, args, 1) == 0)		/* ReqSettime */
+				print("p9 rtc: set the kernel's time of day to %llud seconds since the epoch, by request, from the clock read in user space\n", secs);
+			else
+				print("p9 rtc: the kernel refused the time of day\n");
+		}
 	}
 	if(waserror()){
 		print("p9 ip: bring-up failed: %s\n", up->errstr);

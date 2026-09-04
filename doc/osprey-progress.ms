@@ -522,8 +522,21 @@ last by the client's own clock, with nothing sent to make them happen.
 Three criteria in
 .CW /scripts/osprey-check-p9pair.py ;
 .I pip (5)
-says which of its messages each transport answers.  What remains of the
-item is the attributes a uart here does not have.  For the record, the talk's uart (slide 20) is
+says which of its messages each transport answers.  As for the uart's
+attributes: read against the tree rather than the earlier record, the
+uart a container holds already answers all three the talk's slide
+names \-
+.CW *
+listing them,
+.CW b
+the line speed (readable, and writable as a request to the driver task),
+.CW d
+the bytes received \- and
+.CW name
+besides
+.CW ( devosprey.c ,
+the uart case of the \[*p]p read and write).  Nothing of the item
+remains.  For the record, the talk's uart (slide 20) is
 reached as a \[*p]p file with string attributes \-
 .CW *
 listing them,
@@ -554,10 +567,24 @@ on ports 0x70 and 0x71 under a port grant, reading the date and time with
 no kernel rtc device in the data path (it reads the six registers twice
 and takes them when the seconds match, the update-in-progress guard
 without the long spin that would be a CPL3 window for the standing pc64
-interrupt fault).  What is left is that the kernel still reads the clock
-once itself at boot, before any task exists, to set the time of day \- the
-bootstrap a task cannot do \- and retiring pc64 as the testbed, the
-measure the plan sets.
+interrupt fault).  And the time of day is the task's to set, not the
+kernel's to read: read against the tree, the microkernel never read the
+clock at boot at all \- its rtc driver is linked only because the AP
+start path writes the warm-reset vector through it \- so its time of
+day started at zero, and tickets, which expire against
+.CW seconds() ,
+were measured from 1970.  Now the personality, having read the CMOS
+clock in user space, hands the kernel the time by a request of its own
+.CW ( ReqSettime ,
+an
+.CW ospreyxcall ,
+answered by
+.CW todset ),
+and the kernel says what it was given: the p9pair check compares those
+seconds with the host's own clock and they agree within the boot's
+length.  Who may set it is unchecked, which is the demonstration scale
+of item 12.  What is left of the item is retiring pc64 as the testbed,
+the measure the plan sets.
 .PP
 .B "6.  Address-space groups, and a checkpoint that carries everything."
 Slide 15: processes that share an address space migrate as a group.
@@ -1368,8 +1395,8 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-forty-six criteria, five of them this and the gateway below, three
-the \[*p]p wire of item 4.  What is
+forty-seven criteria, five of them this and the gateway below, three
+the \[*p]p wire of item 4, one the time of day of item 5.  What is
 honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a
