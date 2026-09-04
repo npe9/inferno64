@@ -89,6 +89,7 @@ TARG=\
 	login.dis\
 	man.dis\
 	memfs.dis\
+	mime.dis\
 	mesh.dis\
 	meshview.dis\
 	mpeg.dis\

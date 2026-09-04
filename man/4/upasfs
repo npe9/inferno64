@@ -46,6 +46,27 @@ envelope line.
 .BR from ", " to ", " subject ", " date ", " cc ", " reply-to ", " message-id
 the value of the corresponding header field, with continuation lines
 folded; an absent field reads as empty.
+.TP
+.B type
+the message's MIME content type.
+.PP
+A message is decomposed by MIME (see
+.IR mime (2)).
+.B body
+is the decoded content \(em for a multipart message, its
+.B text/plain
+part.
+A multipart message additionally contains a numbered subdirectory per
+part
+.RB ( 1 ,
+.BR 2 ,
+\&..., nested for nested multiparts), each with
+.B type,
+.B encoding,
+a
+.B filename
+for an attachment, and the decoded
+.BR body .
 .PP
 The server keeps running after it prints its start line; the mount lives
 in the invoking name space.
@@ -65,9 +86,8 @@ in the invoking name space.
 .SH BUGS
 Only a local Unix mbox is read; feeding the same presentation from
 .IR imap4 (2)
-(so a Gmail inbox is browsable this way) is not yet wired in.
-Only the common header fields are broken out, and MIME parts are not
-decoded \(em
-.B body
-is the raw body.
+(so a Gmail inbox is browsable this way) is not yet wired in \(em fetch to
+an mbox with
+.IR upas-fetch (1)
+first.
 The mailbox is read once at start; it is not reread as it changes.

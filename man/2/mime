@@ -1,0 +1,84 @@
+.TH MIME 2
+.SH NAME
+mime \- MIME message parsing and transfer-encoding decoding
+.SH SYNOPSIS
+.EX
+include "mime.m";
+mime := load Mime Mime->PATH;
+Part: import mime;
+.EE
+.SH DESCRIPTION
+.I Mime
+parses an RFC 822 message with MIME (RFC 2045) extensions into a tree of
+.B Part
+values and decodes each part's transfer encoding.
+.PP
+.B init
+must be called once.
+.B parse
+takes a whole message (headers, a blank line, then the body) and returns
+its root
+.BR Part .
+.PP
+A
+.B Part
+has the content type
+.B ctype
+(\c
+.BR type/subtype ,
+lower-cased), the content-type
+.B params
+(\c
+.B charset,
+.BR boundary ,
+\&...), the
+.B disp
+(content-disposition), the attachment
+.B filename
+if any, the transfer
+.B encoding
+and the part
+.BR headers .
+For a leaf part
+.B body
+holds the
+.I decoded
+content; for a
+.B multipart/*
+part
+.B parts
+holds the sub-parts and
+.B body
+is nil.
+.PP
+The methods are
+.B ismultipart
+(true for a
+.B multipart/*
+part),
+.B param
+(look up a content-type parameter), and
+.B find
+(the first leaf part of a given
+.BR ctype ,
+searched depth-first \(em for example the
+.B text/plain
+alternative of a message).
+.PP
+.B decode
+decodes a body under a named transfer encoding:
+.BR base64 ,
+.B quoted-printable
+and
+.BR 7bit / 8bit / binary
+(returned unchanged).
+.SH SOURCE
+.B /appl/lib/mime.b
+.SH SEE ALSO
+.IR upasfs (4),
+.IR upas-fetch (1)
+.SH BUGS
+Header word encodings (RFC 2047
+.BR =?charset?enc?...?= )
+are not decoded, and no character-set conversion is done \(em bytes are
+returned as received.

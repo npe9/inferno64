@@ -16,6 +16,8 @@ SYSMODULES=\
 	smtp2.m\
 	styx.m\
 	styxservers.m\
+	mime.m\
+	encoding.m\
 
 DISBIN=$ROOT/dis/upas
 

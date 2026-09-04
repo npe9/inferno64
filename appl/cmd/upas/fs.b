@@ -17,6 +17,9 @@ include "styxservers.m";
 	styxservers: Styxservers;
 	Fid, Styxserver, Navigator, Navop: import styxservers;
 	Enotfound: import styxservers;
+include "mime.m";
+	mime: Mime;
+	Part: import mime;
 
 Upasfs: module
 {
@@ -55,6 +58,10 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(styxservers == nil)
 		error("load styxservers");
 	styxservers->init(styx);
+	mime = load Mime Mime->PATH;
+	if(mime == nil)
+		error("load mime");
+	mime->init();
 
 	mountpt := "/mail/fs/mbox";
 	argv = tl argv;
@@ -146,11 +153,46 @@ buildtree(data: array of byte)
 		(hdr, body, fields) := parsemsg(raw);
 		md.enter(mkleaf("raw", array of byte raw));
 		md.enter(mkleaf("header", array of byte hdr));
-		md.enter(mkleaf("body", array of byte body));
+		# MIME: decode the body and, for a multipart message, expose each
+		# part as a numbered subdirectory (upas/fs style). "body" is the
+		# decoded content: for multipart it is the first text/plain part.
+		part := mime->parse(array of byte raw);
+		md.enter(mkleaf("type", array of byte part.ctype));
+		if(part.ismultipart()){
+			tp := part.find("text/plain");
+			if(tp != nil)
+				md.enter(mkleaf("body", tp.body));
+			else
+				md.enter(mkleaf("body", array of byte body));
+			addparts(md, part.parts);
+		}else
+			md.enter(mkleaf("body", part.body));
 		if(env != "")
 			md.enter(mkleaf("unixheader", array of byte env));
 		for(fi := 0; fi < len FIELDS; fi++)
 			md.enter(mkleaf(FIELDS[fi], array of byte hdrfield(fields, FIELDS[fi])));
+	}
+}
+
+# expose a message's MIME parts as numbered subdirectories, each with
+# type/encoding/filename and the decoded body (recursing into nested
+# multiparts), as Plan 9 upas/fs does.
+addparts(parent: ref File, parts: list of ref Part)
+{
+	i := 0;
+	for(; parts != nil; parts = tl parts){
+		i++;
+		p := hd parts;
+		pd := mkdir(string i);
+		parent.enter(pd);
+		pd.enter(mkleaf("type", array of byte p.ctype));
+		pd.enter(mkleaf("encoding", array of byte p.encoding));
+		if(p.filename != "")
+			pd.enter(mkleaf("filename", array of byte p.filename));
+		if(p.ismultipart())
+			addparts(pd, p.parts);
+		else
+			pd.enter(mkleaf("body", p.body));
 	}
 }
 
