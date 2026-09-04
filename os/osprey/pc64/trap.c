@@ -732,6 +732,24 @@ uregok(void *nureg)
 	return okaddr((uintptr)nureg-BY2WD, BY2WD+sizeof(Ureg), 0);
 }
 
+/* a register frame's size, and one that came in from a wire made safe to resume from */
+int
+uregsize(void)
+{
+	return sizeof(Ureg);
+}
+
+void
+uregsanitize(void *a)
+{
+	Ureg *u = a;
+
+	u->cs = UESEL;
+	u->ss = UDSEL;
+	u->flags = (u->flags & 0x00ff) | 0x200;	/* the arithmetic flags are the process's; interrupts on */
+	u->pc &= UADDRMASK;
+}
+
 /*
  * What the process forkchild set up returns from its system call: a fork
  * gives its child 0, a container's process moved to another container

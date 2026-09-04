@@ -309,11 +309,26 @@ startboot(char *argv0, char **argv)
 				print("legacy: await() after the group move returned nothing\n");
 		}
 		/*
+		 * And over the wire: ask the kernel to carry this process to
+		 * the other machine.  If there is one, this line prints on its
+		 * console - the same program, going on from this call with its
+		 * stack as it was, on another kernel; if there is none, the
+		 * kernel says so and the program stays.
+		 */
+		args[0] = 2;
+		args[1] = args[2] = args[3] = args[4] = 0;
+		print("legacy: asking the kernel to carry me over the wire to the other machine\n");
+		moved = (int)ospreyxcall(24, args, 1);
+		if(moved > 0)
+			print("legacy: I was carried over the wire to the other machine: I am container %d here, and my stack still holds %d\n", moved, keep);
+		else
+			print("legacy: no other machine took me (%d); I stay\n", moved);
+		/*
 		 * Let the console task carry that line out before the fault
 		 * below: the kernel prints a fault synchronously and would cut
 		 * into it.  Each sleep is one service-and-yield of the ring.
 		 */
-		for(mn = 0; mn < 100; mn++)
+		for(mn = 0; mn < 800; mn++)
 			sleep(1);
 	}
 

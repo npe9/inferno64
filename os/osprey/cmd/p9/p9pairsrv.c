@@ -20,6 +20,7 @@ enum {
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group, carried the same way */
 	Reqframe	= 20,	/* a network frame for the stack at this end, over the ring */
+	ReqMigrate	= 22,	/* the kernel: carry this container's process over the wire (OpMigrate) */
 	Maxframe	= 1500,	/* the ring wire's MTU (ring9p.c's Maxframe, ospreymedium.c's Ringmtu) */
 	Reqsyscall	= 15,
 	ReqGone		= 12,
@@ -144,6 +145,8 @@ extern long ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer);	/* 
 extern long ospreymediumtake(uchar *buf, long max);	/* one frame the stack sent toward the peer, for the reply */
 extern void p9kbdnotify(void);		/* p9kbd.c: hand an IRQ1 notification to the driver kproc */
 extern void p9vnet(uchar *base);		/* netvirtio.c: the user-level network driver */
+extern void p9migrate(uvlong container);	/* p9ip.c: carry a container's process over the wire, in a kproc */
+static uchar *srvbase;			/* this server's own slice, for p9srvdata */
 extern void p9vnetup(void);		/* p9ip.c: the interface on it, and the machine's role on the wire */
 extern void ospreyvnetpump(void);	/* ospreyvnetmedium.c: what the device received, into the stack */
 static int reclaims, ticks;
@@ -229,6 +232,21 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		((uchar*)&rep)[i] = 0;
 	rep.container = req.container;
 	rep.sequence = req.sequence;
+	/*
+	 * What the kernel itself puts on this ring names a container and
+	 * nothing else - no slot to map - so it is answered before any
+	 * slice is looked for: a container gone, or one to carry over the
+	 * wire.  Neither is replied to on the ring.
+	 */
+	if(req.op == ReqGone){
+		p9buddy_gone(req.container);	/* let go of the image held for it */
+		return 1;
+	}
+	if(req.op == ReqMigrate){
+		p9migrate(req.container);	/* the kernel asks: a kproc carries it over the wire */
+		runkprocs();
+		return 1;			/* the kernel is answered by ReqMigdone */
+	}
 	if(req.container != cid){
 		/* another container this server answers for: a program exec started */
 		cdata = sliceof((int)req.arg[2], req.container);
@@ -277,14 +295,23 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	} else if(req.op == Reqsyscall){
 		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */
 		rep.arg[0] = (uvlong)rn;
-	} else if(req.op == ReqGone){
-		p9buddy_gone(req.container);	/* let go of the image held for it */
-		return 1;			/* nobody is left to reply to */
 	} else
 		rep.arg[0] = 2;
 	repm[pq->put % pq->size] = rep;
 	pq->put++;
 	return 1;
+}
+
+/* this server's own data area, for the kernel-header side (the migration kprocs stage pages in it) */
+uchar*
+p9srvdata(void)
+{
+	Omap *m;
+
+	if(srvbase == nil)
+		return nil;
+	m = (Omap*)srvbase;
+	return srvbase + m->data;
 }
 
 /* arg is "s <ownslot> <clientslot>"; called after the name space is up */
@@ -313,6 +340,7 @@ p9serveloop(char *arg)
 	if(client >= 0 && client < Nslot)
 		slices[client] = cbase;
 	pq = (Queue*)(base + map->replyqueue);
+	srvbase = base;
 
 	p9blk(base);		/* the disk, if the kernel exposed one: a driver above the kernel */
 	p9lfsmount();		/* and the file system on it, mounted at /n for the client */

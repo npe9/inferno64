@@ -192,13 +192,17 @@ one back is a restart, into this kernel or another one -- a container
 that was running when it was written out is running again when it is read
 back.
 .PP
-.B "Resume."
+.B "Resume, and migration."
 A running process is carried into a container of its own with its
 registers, stack, data, open files and name space, and the container it
 came from is destroyed: it goes on from the call, in the new container,
 rather than starting again, and the processes that share its address
-space are stopped and carried along with it as a group.  On one machine;
-the pages do not yet cross a wire.
+space are stopped and carried along with it as a group.  And over a
+wire: its segments, register frame and every resident page are pulled
+out of the kernel by its server, carried in a TCP connection between two
+personalities' stacks on two machines, and pushed into a process the far
+kernel makes, which resumes from the same instruction with the same
+stack; the container it left is destroyed.  Open files do not cross.
 .PP
 .B "The real wire, driven from user space."
 The kernel exposes a virtio network device to the server container the
@@ -251,7 +255,8 @@ boots two more and pings a container's own protocol stack from the
 second, and
 .CW scripts/osprey-check-p9wire.py
 boots two microkernels on one cable with the real stack in user space
-on each; between them they ask for everything above and say
+on each and carries a process from each to the other; between them they
+ask for everything above and say
 .B ok
 or
 .B FAIL
@@ -752,9 +757,87 @@ through the descriptor it opened before \- the state crossed, the
 program did not start again \- and then exits from the new container,
 which is what the client's wait is answered with.  Two criteria in
 .CW /scripts/osprey-check-p9pair.py .
-What is still true: the copy is within one kernel.  Carrying the pages
-to another machine is what a checkpoint cannot yet do (a frame is 1500
-bytes; a process is many); that is what remains of slide 15.
+And the pages cross a wire now, which is what a checkpoint could not
+do: a process is carried to another machine and resumed there.  The
+kernel keeps nothing of the wire \- the server personality has it, the
+real stack on the exposed network device (the section on the real wire,
+under 7a) \- so the kernel hands the process's state to its server by
+request and the server carries it in a TCP connection of its own.  A
+process asks
+.CW ( ReqMove
+to the wire), its whole image is made resident as for a fork, and it is
+parked in the kernel while the kernel tells its server
+.CW ( OpMigrate
+on the server's ring) and the server's
+.CW migsend
+pulls the state out: the segments and the register frame in one
+request
+.CW ( ReqMigsnap ),
+then every resident page by halves
+.CW ( ReqMigpage ,
+a half being what the server's data area has room for; the kernel
+answers a hole with the next resident address, so an empty megabyte of
+stack costs one request), each a record on the connection to the other
+machine's
+.CW migrecv ,
+which has its kernel make a container and a process with those
+segments
+.CW ( ReqMigmake ),
+fill each page
+.CW ( ReqMigput )
+and start it from the frame
+.CW ( ReqMigstart ,
+sanitised by
+.CW uregsanitize
+in
+.CW os/osprey/pc64/trap.c ,
+the return register set to the new container's identity); the answer
+comes back and the first server tells its kernel
+.CW ( ReqMigdone ),
+whereupon the parked process's container is taken apart and its
+parent's wait answered as an exit.  All of it is in
+.CW ospreymigcall
+in
+.CW devosprey.c
+and
+.CW migsend / migrecv
+in
+.CW os/osprey/cmd/p9/p9ip.c .
+Both machines run both halves, and in the check each machine's legacy
+process asks at about the same moment, so the two swap: four segments,
+nine pages, 36864 bytes each way, and on each machine's console the
+other's process prints that it is container 107 there and that its
+stack still holds 42 \- the same program, going on from its request's
+return, on another kernel.  Then it registers its note handler, takes
+a note by request, faults on purpose and exits there, all answered by
+the machine it arrived on.  Two criteria in
+.CW /scripts/osprey-check-p9wire.py .
+.PP
+What the first crossing found, each on a booted pair.  The staging area
+is one: the pages come through the same bytes the header was read
+into, so the sender copies the header out first and the receiving
+kernel keeps the register frame from the header when it makes the
+process, or the frame is the last page's bytes.  A process made from
+nothing keeps what
+.CW newproc
+does not reset \- the Linux ABI switch, the buddy's image, the note
+handler \- from the Proc's last occupant, which a fork copies from its
+parent and this has to set: the first arrival ran with the Linux
+program's signal handler and died 139.  And
+.CW fault()
+refuses an instruction fetch from a segment exec has not marked
+executable
+.CW ( flushme ),
+so the arrived text faulted on its first instruction until the
+segment was marked as exec marks it.  Also the user-space driver's
+transmit ring dropped a frame when all eight were in flight, which a
+burst from tcp.c is, and every drop cost a retransmission timeout; it
+waits briefly for a slot now.  What is honest to keep saying: open
+files do not cross \- the far buddy knows nothing of them \- and the
+process that arrives is a Plan 9 process of no buddy image, all its
+pages carried; a group does not yet cross as a group, though each
+member could be carried the same way.  What remains of slide 15 is
+that.
 .PP
 The group moves too, which is slide 15's own sentence.  Asked to move
 with its group
@@ -1650,8 +1733,8 @@ QEMU's virtio-net is a transitional device unless told
 which the check now says, as the block device's line already did.
 Checked by
 .CW /scripts/osprey-check-p9wire.py ,
-six criteria on two machines.  This is the wire item 6a's pages would
-cross; carrying them is the next piece.
+six criteria on two machines, and two more for the process that
+crosses it (item 6a).
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

@@ -49,9 +49,9 @@ def main():
         imgs.append(img)
     port = 17895
     t1 = threading.Thread(target=boot, args=('socket,id=n0,listen=:%d' % port, '52:54:00:00:d1:01',
-                                             'p9 wire: machine 1 answered the other machine', logs[0], imgs[0]))
+                                             r'arrived over the wire\) exited with status', logs[0], imgs[0]))
     t2 = threading.Thread(target=boot, args=('socket,id=n0,connect=:%d' % port, '52:54:00:00:d1:02',
-                                             'p9 wire: machine 2 read the answer across the cable', logs[1], imgs[1], 4))
+                                             r'arrived over the wire\) exited with status', logs[1], imgs[1], 4))
     t1.start(); t2.start(); t1.join(); t2.join()
     for img in imgs:
         try: os.unlink(img)
@@ -74,6 +74,14 @@ def main():
          and 'p9 wire: machine 2 read the answer across the cable: "answered across the cable by machine 1\'s tcp.c in user space"' in t[1]
          and re.search(r'machine 1 answered the other machine; its user-space driver took [1-9]\d* frames in and put [1-9]\d* out, 0 dropped', t[0]) is not None
          and re.search(r'its user-space driver took [1-9]\d* frames in and put [1-9]\d* out, 0 dropped', t[1]) is not None),
+        ("migration: each machine's legacy process asks to be carried over the wire, its kernel parks it and its server pulls the segments, register frame and every resident page out by request and sends them across the cable, and the other machine's server has its kernel make, fill and start a process from them",
+         all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12]: \d+ segments, ([1-9]\d*) pages, \d+ bytes; it is container \d+ there", x) is not None for x in t)
+         and all(re.search(r'p9 migrate: a process arrived over the wire from 10\.1\.0\.[12]!\d+, [1-9]\d* pages, and runs here as container \d+', x) is not None for x in t)
+         and all(re.search(r'osprey migrate: a process arrived over the wire and is container \d+ here, [1-9]\d* pages, its registers and stack as they were; resumed', x) is not None for x in t)),
+        ("and the process goes on from its request's return on the other machine, its stack as it was, and the container it left is destroyed there and its parent told",
+         all(re.search(r'legacy: I was carried over the wire to the other machine: I am container \d+ here, and my stack still holds 42', x) is not None for x in t)
+         and all(re.search(r"osprey migrate: container \d+'s process \(/boot/legacy\) has gone over the wire; container \d+ destroyed, its parent told", x) is not None for x in t)
+         and all('no other machine took me' not in x for x in t)),
         ("and neither machine panics",
          all('panic' not in x for x in t)),
     ]

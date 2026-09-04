@@ -229,13 +229,26 @@ vnet_send(uchar *frame, long n)
 	int slot;
 	uchar *b;
 
+	int spin;
+
 	if(bar == nil || n > Maxframe)
 		return -1;
-	while(txlastused != used[1])	/* reclaim what the device has sent */
-		txlastused++;
+	/*
+	 * Reclaim what the device has sent, and if every buffer is still in
+	 * flight wait for one, bounded: the device takes a frame off the
+	 * ring in well under a millisecond, and a burst from tcp.c is
+	 * longer than eight frames.  Dropping instead cost a retransmission
+	 * timeout per drop, which made a page transfer crawl.
+	 */
+	for(spin = 0; spin < 200000; spin++){
+		while(txlastused != used[1])
+			txlastused++;
+		if((u16int)(txavail - txlastused) < Qsize)
+			break;
+	}
 	if((u16int)(txavail - txlastused) >= Qsize){
 		txdrops++;
-		return -1;		/* every buffer in flight */
+		return -1;		/* every buffer in flight, still */
 	}
 	slot = txavail % Qsize;
 	b = txbuf(slot);

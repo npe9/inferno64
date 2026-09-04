@@ -438,6 +438,211 @@ wirecli(void *)
 	pexit("wirecli done", 0);
 }
 
+/*
+ * Migration over the wire, the personality's half: the kernel keeps
+ * nothing of the wire, so when a process asks to be carried to the
+ * other machine (ReqMove to the wire) the kernel parks it and tells
+ * this server (OpMigrate on its ring), and migsend pulls the process's
+ * state out by request - the segments and register frame, then every
+ * resident page by halves - and sends it in length-prefixed records on
+ * a TCP connection to the other machine's migrecv, which has the kernel
+ * there make a process (ReqMigmake), fills it (ReqMigput) and starts it
+ * (ReqMigstart), and answers; migsend then tells the kernel the process
+ * has gone (ReqMigdone).  Both machines run both halves, so each may
+ * send its process to the other.  Two personalities, two kernels, one
+ * cable; the process arrives with its registers, stack and data as
+ * they were, and the same program goes on from its request's return on
+ * the other machine.  What does not cross: open files, which the far
+ * buddy knows nothing of.
+ */
+enum {
+	Migoff		= 1024,
+	Migrxoff	= 5120,
+	Mighalf		= 2048,
+	Migport		= 9006,
+};
+extern uchar *p9srvdata(void);
+extern long ospreyxcall(int op, uvlong *args, long n);
+
+static int
+wireconnect(char *addr, int *dfdp)
+{
+	char cbuf[64], path[64];
+	long n;
+	int dfd, cnum;
+
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	p9write(dfd, addr, strlen(addr));
+	*dfdp = dfd;
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	return p9open(path, ORDWR);
+}
+
+static void
+migsend(void *a)
+{
+	uvlong cid = (uvlong)a;
+	uvlong args[5], *hdr, nseg, va, half, i, npages, nbytes;
+	uchar *d, rec[16 + Mighalf], rg[64], hdrbuf[1024];
+	uchar mac[6];
+	char addr[64];
+	long n, rn;
+	int dfd, wfd, ok;
+
+	ok = 0;
+	dfd = wfd = -1;
+	if(waserror()){
+		print("p9 migrate: carrying container %llud failed: %s\n", cid, up->errstr);
+		goto Done;
+	}
+	if(!vnet_ready() || (d = p9srvdata()) == nil)
+		error("no wire to carry it over");
+	vnet_mac(mac);
+	args[0] = cid; args[1] = args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(26, args, 1) != 0)		/* ReqMigsnap: the header at Migoff */
+		error("the kernel would not give up the process");
+	n = args[0];
+	if(n > (long)sizeof hdrbuf)
+		error("the header does not fit");
+	memmove(hdrbuf, d + Migoff, n);		/* out of the staging area: the pages come through it next */
+	hdr = (uvlong*)hdrbuf;
+	nseg = hdr[0];
+	print("p9 migrate: container %llud's process snapshotted: %llud segments, a %ld-byte header; connecting to 10.1.0.%d!%d\n",
+		cid, nseg, n, 3 - mac[5], Migport);
+	snprint(addr, sizeof addr, "connect 10.1.0.%d!%d", 3 - mac[5], Migport);
+	wfd = wireconnect(addr, &dfd);
+	print("p9 migrate: connected; sending the header\n");
+	pipwire_put(wfd, hdrbuf, n);		/* the header: segments and the register frame */
+	npages = nbytes = 0;
+	for(i = 0; i < nseg; i++){
+		uvlong *seg = hdr + 1 + 4*i;		/* idx, type, base, top */
+		uvlong next;
+
+		print("p9 migrate: segment %llud: type %llud, %#llux-%#llux (%llud pages)\n", seg[0], seg[1], seg[2], seg[3], (seg[3] - seg[2]) / 4096);
+		for(va = seg[2]; va < seg[3]; va = next){
+			next = va + 4096;
+			for(half = 0; half < 2; half++){
+				args[0] = cid; args[1] = va; args[2] = half;
+				if(ospreyxcall(27, args, 3) != 0)		/* ReqMigpage */
+					error("the kernel would not read a page");
+				if(args[0] == 0){			/* not resident: a hole, left to the far kernel; skip to the next that is */
+					if(half == 0 && args[1] > va)
+						next = args[1];
+					break;
+				}
+				memmove(rec, &va, 8);
+				memmove(rec + 8, &half, 8);
+				memmove(rec + 16, d + Migoff, Mighalf);
+				pipwire_put(wfd, rec, 16 + Mighalf);
+				nbytes += Mighalf;
+				if(half == 1)
+					npages++;
+			}
+		}
+	}
+	va = ~0ULL;
+	memmove(rec, &va, 8);
+	pipwire_put(wfd, rec, 8);			/* the end */
+	{
+		long rx, tx, drops;
+
+		vnet_stats(&rx, &tx, &drops);
+		print("p9 migrate: %llud pages sent in %ld frames so far, %ld dropped by the driver; waiting for the other machine's answer\n", npages, tx, drops);
+	}
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	if(rn >= 16 && *(uvlong*)rg == 1){
+		ok = 1;
+		print("p9 migrate: container %llud's process carried over the wire to 10.1.0.%d: %llud segments, %llud pages, %llud bytes; it is container %llud there\n",
+			cid, 3 - mac[5], nseg, npages, nbytes, *(uvlong*)(rg + 8));
+	} else
+		print("p9 migrate: the other machine did not take container %llud's process\n", cid);
+	poperror();
+Done:
+	if(wfd >= 0){ tsleep(&up->sleep, return0, nil, 200); p9close(wfd); }
+	if(dfd >= 0)
+		p9close(dfd);
+	args[0] = cid; args[1] = ok; args[2] = args[3] = args[4] = 0;
+	ospreyxcall(31, args, 2);			/* ReqMigdone: gone, or refused */
+	pexit("migsend", 0);
+}
+
+void
+p9migrate(uvlong container)
+{
+	kproc("migsend", migsend, (void*)container);
+}
+
+static void
+migrecv(void *)
+{
+	uvlong args[5], id, va, half, npages;
+	uchar *d, rec[16 + Mighalf], rg[64];
+	char cbuf[64], path[64], rx1[64], *e;
+	long n, rn;
+	int afd, lfd, dfd, anum, lnum, sfd;
+
+	afd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	snprint(cbuf, sizeof cbuf, "announce %d", Migport);
+	p9write(afd, cbuf, strlen(cbuf));
+	for(;;){
+		snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
+		lfd = p9open(path, ORDWR);
+		n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+		snprint(path, sizeof path, "/net/tcp/%d/remote", lnum);
+		sfd = p9open(path, OREAD); n = p9read(sfd, rx1, sizeof rx1 - 1); p9close(sfd);
+		if(n<0)n=0; rx1[n]=0;
+		for(e=rx1; *e && *e!='\n'; e++) ; *e=0;
+		snprint(path, sizeof path, "/net/tcp/%d/data", lnum);
+		dfd = p9open(path, ORDWR);
+		print("p9 migrate: a process is being offered over the wire from %s\n", rx1);
+		if(waserror()){
+			print("p9 migrate: taking a process from %s failed: %s\n", rx1, up->errstr);
+			p9close(dfd); p9close(lfd);
+			continue;
+		}
+		if((d = p9srvdata()) == nil)
+			error("no data area");
+		n = pipwire_get(dfd, rec, sizeof rec);
+		if(n <= 0)
+			error("no header");
+		memmove(d + Migrxoff, rec, n);
+		args[0] = args[1] = args[2] = args[3] = args[4] = 0;
+		if(ospreyxcall(28, args, 0) != 0)		/* ReqMigmake */
+			error("the kernel would not make a process for it");
+		id = args[0];
+		npages = 0;
+		for(;;){
+			rn = pipwire_get(dfd, rec, sizeof rec);
+			if(rn < 8)
+				error("the wire broke mid-process");
+			memmove(&va, rec, 8);
+			if(va == ~0ULL)
+				break;
+			if(rn < 16 + Mighalf)
+				error("a short page");
+			memmove(&half, rec + 8, 8);
+			memmove(d + Migrxoff, rec + 16, Mighalf);
+			args[0] = id; args[1] = va; args[2] = half;
+			if(ospreyxcall(29, args, 3) != 0)		/* ReqMigput */
+				error("the kernel would not take a page");
+			if(half == 1)
+				npages++;
+		}
+		args[0] = id; args[1] = args[2] = args[3] = args[4] = 0;
+		if(ospreyxcall(30, args, 1) != 0)		/* ReqMigstart: it runs */
+			error("the kernel would not start it");
+		print("p9 migrate: a process arrived over the wire from %s, %llud pages, and runs here as container %llud\n", rx1, npages, id);
+		*(uvlong*)rg = 1;
+		*(uvlong*)(rg + 8) = id;
+		pipwire_put(dfd, rg, 16);
+		poperror();
+		tsleep(&up->sleep, return0, nil, 300);
+		p9close(dfd); p9close(lfd);
+	}
+}
+
 /* called by the server loop once the driver is up: the interface, and the machine's role */
 void
 p9vnetup(void)
@@ -465,6 +670,7 @@ p9vnetup(void)
 		kproc("wiresrv", wiresrv, nil);
 	else
 		kproc("wirecli", wirecli, nil);
+	kproc("migrecv", migrecv, nil);		/* both machines take processes from the other */
 	poperror();
 }
 

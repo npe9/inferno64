@@ -77,6 +77,7 @@ enum {
 	OpYield,
 	OpPoll,
 	OpGone,			/* the kernel to a server, about a container that has gone */
+	OpMigrate = 22,		/* the kernel to a server: carry this container's process over the wire */
 };
 
 enum {
@@ -2420,6 +2421,7 @@ ospreybuddycall(Ospreyproc *p, int tries)
  * its reservation and takes the clock.
  */
 static long ospreymovekern(Ospreyproc*, uvlong*, int);
+static long ospreymigcall(int op, uvlong *arg, uvlong *ubuf);
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
@@ -2427,6 +2429,12 @@ uintptr
 #define ReqSettime 23	/* xcall op: set the kernel's time of day, seconds since the epoch, from a task's own clock read */
 #define ReqMove 24	/* xcall op: carry the calling process, running, into a container of its own - resume, not restart */
 #define ReqNote 25	/* xcall op: post the caller a note that is not a fault, so noted(NCONT) has something to resume from */
+#define ReqMigsnap 26	/* xcall ops 26-31: a server carrying a process over the wire, and one taking it in (ospreymig* below) */
+#define ReqMigpage 27
+#define ReqMigmake 28
+#define ReqMigput 29
+#define ReqMigstart 30
+#define ReqMigdone 31
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2496,6 +2504,8 @@ ospreyxcall(va_list list)
 		ubuf[0] = 0;
 		return 0;
 	}
+	if(op >= ReqMigsnap && op <= ReqMigdone)
+		return ospreymigcall((int)op, arg, ubuf);
 	if(op == ReqNote){
 		/*
 		 * A note by request: delivered on the way back to user mode
@@ -3403,6 +3413,304 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
  * stopped first, which this does not do.
  */
 /*
+ * Migration over a wire: a process carried to another machine and
+ * resumed there.  The kernel keeps nothing of the wire; the server
+ * personality has it (the real stack on the exposed network device),
+ * so the kernel hands the process's state to the server by request
+ * and the server carries it across in its own TCP connection.  The
+ * leaving process asks (ReqMove with the wire flag) and is parked in
+ * the kernel while its server pulls its state - the segments and the
+ * register frame (ReqMigsnap), then each resident page by halves
+ * (ReqMigpage; a half is what the server's data area has room for) -
+ * and sends it; the server at the other end pushes the same into a
+ * process it has the kernel make (ReqMigmake), fill (ReqMigput) and
+ * start (ReqMigstart), and the first server tells the kernel it is
+ * done (ReqMigdone), whereupon the parked process's container is
+ * taken apart and its parent's wait answered as an exit.  Text pages
+ * are carried like the rest - the far machine has no buddy image for
+ * them - so the whole image is made resident first, as the fork does.
+ */
+enum {
+	Migoff		= 1024,		/* the sender's staging area in its data area: a header, or half a page */
+	Migrxoff	= 5120,		/* the receiver's, clear of the sender's and the block device's ring */
+	Mighalf		= 2048,
+	Nmigin		= 4,
+};
+typedef struct Migseg Migseg;
+struct Migseg { uvlong idx, type, base, top; };
+
+static struct {
+	Ospreyproc *c;		/* the container leaving */
+	Proc	*p;		/* its process, parked */
+	int	pending;
+	int	result;		/* 0 not yet, 1 carried, -1 refused */
+} migout;
+static struct {
+	Ospreyproc *c;		/* a container arriving, being filled */
+	Proc	*p;
+	int	npages;
+	uchar	ureg[512];	/* its register frame, kept from the header: the pages come through the same staging area */
+} migin[Nmigin];
+
+static Page*
+ospreymigpageof(Proc *p, uintptr va, Segment **sp)
+{
+	Segment *s;
+	Pte *pte;
+	int i;
+
+	for(i = 0; i < NSEG; i++){
+		if((s = p->seg[i]) == nil || va < s->base || va >= s->top)
+			continue;
+		if(sp != nil)
+			*sp = s;
+		if(s->map == nil || (pte = s->map[(va - s->base)/PTEMAPMEM]) == nil)
+			return nil;
+		return pte->pages[((va - s->base) & (PTEMAPMEM-1))/BY2PG];
+	}
+	return nil;
+}
+
+static long
+ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
+{
+	extern int uregsize(void);
+	extern void uregsanitize(void*);
+	extern void forkchildret(Proc*, uintptr);
+	uchar *d;
+	Ospreyproc *c;
+	Proc *p;
+	Segment *s;
+	Page *pg;
+	KMap *k;
+	Migseg *ms;
+	uvlong *hdr, n, va, half;
+	int i, x, nseg;
+
+	switch(op){
+	case ReqMigsnap:
+		/* the leaving process's segments and register frame, into the server's data area */
+		if(!migout.pending || migout.c == nil || arg[0] != ospreyid(migout.c) || (p = migout.p) == nil)
+			return -1;
+		if((d = ospreydata(up->osprey, Migoff, Mighalf)) == nil)
+			return -1;
+		hdr = (uvlong*)d;
+		ms = (Migseg*)(hdr + 1);
+		nseg = 0;
+		for(i = 0; i < NSEG; i++){
+			if((s = p->seg[i]) == nil)
+				continue;
+			ms[nseg].idx = i;
+			ms[nseg].type = s->type & SG_TYPE;
+			ms[nseg].base = s->base;
+			ms[nseg].top = s->top;
+			nseg++;
+		}
+		hdr[0] = nseg;
+		n = sizeof(uvlong) + nseg*sizeof(Migseg);
+		*(uvlong*)(d + n) = uregsize();
+		n += sizeof(uvlong);
+		memmove(d + n, p->dbgreg, uregsize());
+		n += uregsize();
+		ubuf[0] = n;
+		return 0;
+	case ReqMigpage:
+		/*
+		 * Half of one resident page of the leaving process into the
+		 * server's data area, or 0 for one that is not resident; and
+		 * in ubuf[1] the next address worth asking about - the page
+		 * after this one, or past a whole unmapped chunk of the
+		 * segment - so a walk over a large, mostly empty segment costs
+		 * a request per resident page, not per page.
+		 */
+		if(!migout.pending || (p = migout.p) == nil || arg[0] != ospreyid(migout.c))
+			return -1;
+		va = arg[1] & ~(uvlong)(BY2PG-1);
+		half = arg[2] & 1;
+		if((d = ospreydata(up->osprey, Migoff, Mighalf)) == nil)
+			return -1;
+		s = nil;
+		pg = ospreymigpageof(p, va, &s);
+		if(s == nil){
+			ubuf[0] = 0;
+			ubuf[1] = ~0ULL;
+			return 0;
+		}
+		if(pg != nil && !pagedout(pg)){
+			k = kmap(pg);
+			memmove(d, (uchar*)VA(k) + half*Mighalf, Mighalf);
+			kunmap(k);
+			ubuf[0] = Mighalf;
+			ubuf[1] = va + BY2PG;
+			return 0;
+		}
+		ubuf[0] = 0;
+		for(va += BY2PG; va < s->top; ){
+			Pte *pte;
+
+			if(s->map == nil || (pte = s->map[(va - s->base)/PTEMAPMEM]) == nil){
+				va = s->base + ((va - s->base)/PTEMAPMEM + 1)*PTEMAPMEM;
+				continue;
+			}
+			pg = pte->pages[((va - s->base) & (PTEMAPMEM-1))/BY2PG];
+			if(pg != nil && !pagedout(pg))
+				break;
+			va += BY2PG;
+		}
+		ubuf[1] = va < s->top ? va : s->top;
+		return 0;
+	case ReqMigmake:
+		/* a container and a process for what is arriving, its segments as the header says */
+		if((d = ospreydata(up->osprey, Migrxoff, Mighalf)) == nil)
+			return -1;
+		for(x = 0; x < Nmigin && migin[x].c != nil; x++)
+			;
+		if(x == Nmigin)
+			return -1;
+		hdr = (uvlong*)d;
+		nseg = hdr[0];
+		if(nseg < 0 || nseg > NSEG)
+			return -1;
+		ms = (Migseg*)(hdr + 1);
+		n = sizeof(uvlong) + nseg*sizeof(Migseg);
+		if(*(uvlong*)(d + n) != uregsize() || n + sizeof(uvlong) + uregsize() > Mighalf || uregsize() > sizeof migin[x].ureg)
+			return -1;		/* a frame of another shape: another kernel, or another machine */
+		memmove(migin[x].ureg, d + n + sizeof(uvlong), uregsize());
+		c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+		if(c == nil)
+			return -1;
+		ospreydelegate(c, up->osprey);		/* the taker serves it, as an exec's child is served */
+		if((p = newproc()) == nil){
+			ospreyexit(c);
+			return -1;
+		}
+		qlock(&p->seglock);
+		for(i = 0; i < nseg; i++){
+			int type;
+
+			if(ms[i].idx >= NSEG || ms[i].top <= ms[i].base)
+				continue;
+			type = ms[i].type == SG_TEXT ? SG_TEXT : ms[i].type == SG_STACK ? SG_STACK : SG_BSS;
+			p->seg[ms[i].idx] = newseg(type, ms[i].base, (ms[i].top - ms[i].base)/BY2PG);
+			if(p->seg[ms[i].idx] != nil && type == SG_TEXT)
+				p->seg[ms[i].idx]->flushme = 1;	/* code is fetched from it: what exec marks a text segment with, and fault() insists on */
+		}
+		qunlock(&p->seglock);
+		kstrdup(&p->text, "arrived");
+		kstrdup(&p->user, eve);
+		kstrdup(&p->args, "");
+		/*
+		 * newproc leaves what its last occupant had in the fields the
+		 * kernel proper does not know - the Linux ABI switch, the
+		 * buddy's image, the note handler - and a fork copies its
+		 * parent's; this process has no parent here, so each is set.
+		 * A Plan 9 process, of no buddy's image, with no handler yet.
+		 */
+		p->kp = 0;
+		p->oslinux = 0;
+		p->buddyimage = 0;
+		p->linuxheap = -1;
+		p->linuxbrk = 0;
+		p->linuxmmapnext = 0;
+		p->linuxsighandler = 0;
+		p->linuxsigrestorer = 0;
+		p->notify = nil;
+		p->notified = 0;
+		p->nnote = 0;
+		p->notepending = 0;
+		p->lastnote = nil;
+		p->privatemem = 0;
+		p->noswap = 0;
+		p->hang = 0;
+		p->pgrp = nil;
+		p->slash = nil;
+		p->dot = nil;
+		p->osprey = c;
+		migin[x].c = c;
+		migin[x].p = p;
+		migin[x].npages = 0;
+		ubuf[0] = ospreyid(c);
+		return 0;
+	case ReqMigput:
+		/* half a page into the arriving process, the page made if it is its first half */
+		for(x = 0; x < Nmigin; x++)
+			if(migin[x].c != nil && arg[0] == ospreyid(migin[x].c))
+				break;
+		if(x == Nmigin || (d = ospreydata(up->osprey, Migrxoff, Mighalf)) == nil)
+			return -1;
+		p = migin[x].p;
+		va = arg[1] & ~(uvlong)(BY2PG-1);
+		half = arg[2] & 1;
+		s = nil;
+		pg = ospreymigpageof(p, va, &s);
+		if(s == nil)
+			return -1;
+		if(pg == nil){
+			pg = newpage(va, nil);
+			pg->va = va;
+			segpage(s, pg);
+			migin[x].npages++;
+		}
+		k = kmap(pg);
+		memmove((uchar*)VA(k) + half*Mighalf, d, Mighalf);
+		kunmap(k);
+		ubuf[0] = Mighalf;
+		return 0;
+	case ReqMigstart:
+		/* the register frame, and the process runs: it resumes at its request's return, told where it is */
+		for(x = 0; x < Nmigin; x++)
+			if(migin[x].c != nil && arg[0] == ospreyid(migin[x].c))
+				break;
+		if(x == Nmigin || (d = ospreydata(up->osprey, Migrxoff, Mighalf)) == nil)
+			return -1;
+		p = migin[x].p;
+		c = migin[x].c;
+		uregsanitize(migin[x].ureg);
+		forkchild(p, (Ureg*)migin[x].ureg);
+		forkchildret(p, (uintptr)ospreyid(c));
+		p->insyscall = 0;
+		memset(p->time, 0, sizeof(p->time));
+		p->time[TReal] = MACHP(0)->ticks;
+		pidalloc(p);
+		qlock(&ospreylock);
+		i = ospreyindex(c);
+		if(i >= 0 && i < nelem(ospreyprocs)){
+			ospreyprocs[i] = p;
+			ospreysetpid(c, p->pid);
+		}
+		{
+			Ospreychild *e;
+
+			for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+				if(!e->used)
+					break;
+			if(e < &ospreychildren[nelem(ospreychildren)]){
+				memset(e, 0, sizeof *e);
+				e->used = 1;
+				e->child = c;
+				e->parent = up->osprey;	/* the taker's: its exit is reported like an exec'd child's */
+				strncpy(e->name, "arrived over the wire", sizeof e->name - 1);
+			}
+		}
+		qunlock(&ospreylock);
+		print("osprey migrate: a process arrived over the wire and is container %llud here, %d pages, its registers and stack as they were; resumed\n",
+			ospreyid(c), migin[x].npages);
+		migin[x].c = nil;
+		migin[x].p = nil;
+		ready(p);
+		ubuf[0] = 0;
+		return 0;
+	case ReqMigdone:
+		if(!migout.pending || migout.c == nil || arg[0] != ospreyid(migout.c))
+			return -1;
+		migout.result = arg[1] != 0 ? 1 : -1;
+		ubuf[0] = 0;
+		return 0;
+	}
+	return -1;
+}
+
+/*
  * The members of the caller's address-space group: the processes of
  * other containers that share a data or bss segment with it - what an
  * rfork(RFPROC|RFMEM) made.  At most Nmember, for the demonstration.
@@ -3540,6 +3848,61 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 			break;
 	if(ne == &ospreychildren[nelem(ospreychildren)])
 		return -1;
+	if(group == 2){
+		/*
+		 * To the wire: ask the server to carry this process, and wait
+		 * here, parked, while it pulls the state out; then either go
+		 * (the container taken apart, the parent's wait answered as an
+		 * exit) or, if nobody took it, return refused to the caller.
+		 */
+		Ospreychild *me;
+
+		if(migout.pending)
+			return -1;
+		for(i = 0; i < NSEG; i++){
+			if((s = up->seg[i]) == nil)
+				continue;
+			if((s->type & SG_TYPE) != SG_TEXT && (s->type & SG_TYPE) != SG_DATA)
+				continue;
+			for(va = s->base; va < s->top; va += BY2PG){
+				if(waserror())
+					continue;
+				ospreybuddyfault(va, va, 1);
+				poperror();
+			}
+		}
+		migout.c = old;
+		migout.p = up;
+		migout.result = 0;
+		migout.pending = 1;
+		ospreytellandwake(old, OpMigrate);
+		for(tries = 0; tries < 3000 && migout.result == 0; tries++)
+			tsleep(&up->sleep, return0, nil, 20);
+		migout.pending = 0;
+		if(migout.result <= 0){
+			print("osprey migrate: container %llud's process was not taken by the other machine; it stays\n", ospreyid(old));
+			return -1;
+		}
+		print("osprey migrate: container %llud's process (%s) has gone over the wire; container %llud destroyed, its parent told\n",
+			ospreyid(old), e->name, ospreyid(old));
+		qlock(&ospreylock);
+		for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
+			if(me->used && me->child == old)
+				break;
+		if(me < &ospreychildren[nelem(ospreychildren)]){
+			if(me->waiting){
+				ospreyreplylater(me->parent, me->waitseq, Xreqwait, Xreplydone, 0);
+				me->used = 0;
+			} else {
+				me->done = 1;
+				me->status = 0;
+			}
+		}
+		qunlock(&ospreylock);
+		ospreyunmake(old);
+		ospreywakeup();
+		pexit("migrated", 0);
+	}
 	/*
 	 * The group, once every reason to refuse has been checked, since a
 	 * stopped member is only let go here: its members must be stopped
