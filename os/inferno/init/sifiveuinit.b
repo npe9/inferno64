@@ -24,6 +24,11 @@ Shell: module
 	init:	fn(nil: ref Draw->Context, argv: list of string);
 };
 
+Command: module
+{
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
 # DHCP over the GEM on QEMU user-net (SLIRP).  A full DHCP exchange
 # (DISCOVER/OFFER/REQUEST/ACK) needs the NIC to both transmit and
 # receive with working interrupts, so DHCP-OK proves the driver end to
@@ -118,7 +123,90 @@ sdcheck()
 			tag = "(SD-WRITE-MISMATCH)";
 	sys->print("SD block2 wrote %02x%02x readback %02x%02x %s\n",
 		int wbuf[0], int wbuf[1], int rbuf[0], int rbuf[1], tag);
+
+	# multi-block: write 16 blocks (8KB) in ONE pwrite, each tagged with
+	# its index, read back in ONE pread, verify no block is misaligned.
+	nblk := 16;
+	big8k := array[nblk*512] of byte;
+	for(k := 0; k < nblk; k++){
+		off := k*512;
+		big8k[off] = byte 16rE0;
+		big8k[off+1] = byte k;
+		for(j := 2; j < 512; j++)
+			big8k[off+j] = byte (k ^ j);
+	}
+	base := big (8*512);			# block 8
+	if(sys->pwrite(wfd, big8k, len big8k, base) != len big8k){
+		sys->print("SD-MB write: %r\n");
+		return;
+	}
+	rback := array[nblk*512] of byte;
+	if(sys->pread(wfd, rback, len rback, base) != len rback){
+		sys->print("SD-MB read: %r\n");
+		return;
+	}
+	mbtag := "(SD-MULTIBLOCK-OK)";
+	for(k = 0; k < nblk; k++){
+		off := k*512;
+		if(int rback[off] != 16rE0 || int rback[off+1] != k)
+			mbtag = sys->sprint("(SD-MB-MISALIGN blk %d got %02x%02x)",
+				k, int rback[off], int rback[off+1]);
+	}
+	sys->print("SD 16-block RW %s\n", mbtag);
 	sys->print("SD-OK\n");
+}
+
+# Put a real filesystem on the SD block device: ream a kfs onto
+# /dev/sdM0/data, mount it at /tmp, and round-trip a file through it.
+# kfs serves Styx on its fd 0, so it runs on one end of a pipe whose
+# other end we mount (the pcinit.b idiom).
+kfsproc(pfd: ref Sys->FD)
+{
+	sys->pctl(Sys->FORKFD, nil);
+	sys->dup(pfd.fd, 0);
+	pfd = nil;
+	kfs := load Command "/dis/disk/kfs.dis";
+	if(kfs == nil){
+		sys->print("SD-FS load kfs: %r\n");
+		return;
+	}
+	kfs->init(nil, "kfs" :: "-r" :: "/dev/sdM0/data" :: nil);
+}
+
+sdfs()
+{
+	p := array[2] of ref Sys->FD;
+	if(sys->pipe(p) < 0){
+		sys->print("SD-FS pipe: %r\n");
+		return;
+	}
+	spawn kfsproc(p[1]);
+	p[1] = nil;
+	if(sys->mount(p[0], nil, "/tmp", Sys->MREPL|Sys->MCREATE, "") < 0){
+		sys->print("SD-FS mount: %r\n");
+		return;
+	}
+	fd := sys->create("/tmp/hello", Sys->ORDWR, 8r644);
+	if(fd == nil){
+		sys->print("SD-FS create: %r\n");
+		return;
+	}
+	msg := array of byte "kfs-on-sd works";
+	if(sys->write(fd, msg, len msg) != len msg){
+		sys->print("SD-FS write: %r\n");
+		return;
+	}
+	fd = sys->open("/tmp/hello", Sys->OREAD);
+	if(fd == nil){
+		sys->print("SD-FS reopen: %r\n");
+		return;
+	}
+	rb := array[64] of byte;
+	n := sys->read(fd, rb, len rb);
+	if(n == len msg && string rb[0:n] == string msg)
+		sys->print("SD-FS-OK (%s)\n", string rb[0:n]);
+	else
+		sys->print("SD-FS-MISMATCH n=%d\n", n);
 }
 
 init()
@@ -138,6 +226,7 @@ init()
 
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();
+	sdfs();
 
 	ipcheck();
 
