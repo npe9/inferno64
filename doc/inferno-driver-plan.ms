@@ -876,27 +876,31 @@ drove the one controller through a non-atomic register sequence with no
 lock, so a file server's main and sync procs corrupted each other's
 transfers; a per-controller
 .CW QLock
-now serialises it.  With those, the SD block device is stable under the
-live tick, verified five of five.
+now serialises it.  Light block-device use is stable under the tick, but
+a heavier probe reveals the tick is not free.
 .PP
-A kfs on top still does not complete: during reaming it hits
+The failure that stops a kfs is a preemption-safety bug in the SD path
+itself, and a stress loop pins it far better than kfs did.  A single
+process writing two thousand distinct blocks and reading them back fails
+intermittently with
 .CW "file does not exist"
-at a varying block.  The earlier reading of this as a Styx desync was
-wrong - the
+at a varying block - three of three - while a four-thousand-open
+namespace loop under the same tick is clean, so it is SD-specific and not
+a generic vector or scheduler fault.  Earlier readings were all wrong and
+are now ruled out: the
 .CW "T110 R107"
-mount-walk message that looked like the culprit prints on sifive_u too,
-just before its
-.CW SD-FS-OK ,
-so it is the routine failed-walk of a create, not a fault.  A partition
-teardown was the next guess and it too is wrong: instrumenting
+mount-walk prints on sifive_u too just before its
+.CW SD-FS-OK
+(a routine create walk, not a fault); and
 .CW sdinitpart()
-shows it runs exactly once, so the partition is stable and its version
-never churns.  The failure is a timing-sensitive race that only the fast
-SDHOST driver lands in - sifive_u's slow SPI never does - and its
-location is now genuinely open: not the timer, not the Styx walk, not the
-partition version, most likely in the file server's own two-proc access
-or the unlocked namespace path under a 100Hz preemption the board never
-had before.
+runs exactly once (the partition never churns).  What remains is that a
+timer IRQ taken in the middle of the SDHOST transfer corrupts it -
+.CW splhi()
+around the transfer cures the single-proc stress but deadlocks the
+multi-proc file-server path in a lock loop, so it is not a usable fix.
+sifive_u's slow SPI driver never lands in the window and is the working
+oracle.  The mechanism - why a system-register-only clock interrupt
+disturbs an MMIO stream that touches no shared state - is the open lead.
 .NH 1
 Immediate next steps (cold-start)
 .PP
@@ -904,12 +908,13 @@ The board work stands at: all four riscv virt boards, arm64 on both GIC
 versions with a display, sifive_u with SPI, GEM ethernet and an SD-over-
 SPI stack complete to a kfs filesystem, shakti (riscv64), and the
 Raspberry Pi 3B (arm64) with I2C/SPI/GPIO, a native-SD block device
-(/dev/sdM0/data, read/write/multi-block) and now a real 100Hz scheduler
-tick - every board booting to a shell.  The prioritized next work: (1)
-the raspi3b kfs race - a "file does not exist" that only appears during a
-concurrent file-server workload under the new tick, with sdinitpart,
-Styx, and the timer all ruled out; instrument which of devsd's Enonexist
-sites (or which proc) fires, with sifive_u as the working oracle.  (2)
+(/dev/sdM0/data, read/write/multi-block, stable for light use) and now a
+real 100Hz scheduler tick - every board booting to a shell.  The
+prioritized next work: (1) the raspi3b SD-under-preemption bug - a heavy
+single-proc write loop fails "file does not exist" under the tick (the
+reproducer), splhi masks it but deadlocks the file server, and the
+mechanism is open; sifive_u is the working oracle and a kfs on the Pi is
+what it gates.  (2)
 persistence across reboot on sifive_u - the kfs is reamed every boot; a
 mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
