@@ -80,6 +80,19 @@ Sender.auth(s: self ref Sender, user, pass: string): string
 	return nil;
 }
 
+Sender.authxoauth2(s: self ref Sender, user, token: string): string
+{
+	sasl := "user=" + user + "\u0001auth=Bearer " + token + "\u0001\u0001";
+	if((e := send(s, "AUTH XOAUTH2 " + base64->enc(array of byte sasl) + "\r\n")) != nil)
+		return e;
+	(code, text, re) := readreply(s);
+	if(re != nil)
+		return re;
+	if(code != 235)
+		return "xoauth2 failed: " + text;
+	return nil;
+}
+
 Sender.mail(s: self ref Sender, from: string, rcpts: list of string, msg: array of byte): string
 {
 	if((e := cmd(s, "MAIL FROM:<" + from + ">", 250)) != nil)

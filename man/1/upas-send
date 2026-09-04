@@ -127,4 +127,7 @@ Send a message with an app password:
 .SH BUGS
 Authentication is
 .B "AUTH PLAIN"
-only (an app password), not XOAUTH2.
+(an app password) or, with
+.B -X
+.IR tokenfile ,
+SASL XOAUTH2 with the OAuth token in that file.

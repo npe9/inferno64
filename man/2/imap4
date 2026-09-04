@@ -65,6 +65,13 @@ and
 .I pass
 (an app password over TLS).
 .TP
+.B authxoauth2
+Authenticate with SASL XOAUTH2 using
+.I user
+and a caller-supplied OAuth 2.0 bearer
+.I token
+(Gmail's preferred mechanism).
+.TP
 .B mailboxes
 Return the
 .B LIST
@@ -126,9 +133,12 @@ Log out and close the TLS session.
 .IR tls12 (2),
 .IR smtp (2)
 .SH BUGS
-No STARTTLS (the connection is TLS from the start) and no SASL beyond
+No STARTTLS (the connection is TLS from the start).
+Authentication is
 .B LOGIN
-(sufficient for a Gmail app password; not XOAUTH2).
+or
+.B XOAUTH2
+(the caller obtains the OAuth token out of band).
 Literal handling covers the forms
 .B FETCH
 produces, not every server response.

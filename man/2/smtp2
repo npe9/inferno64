@@ -61,6 +61,14 @@ and
 .I pass
 (an app password over TLS).
 .TP
+.B authxoauth2
+Authenticate with
+.B "AUTH XOAUTH2"
+using
+.I user
+and a caller-supplied OAuth 2.0 bearer
+.IR token .
+.TP
 .B mail
 Run a full
 .B "MAIL FROM"
@@ -81,6 +89,9 @@ and close the session.
 .IR tls12 (2),
 .IR imap4 (2)
 .SH BUGS
-Only implicit TLS (no STARTTLS) and only
+Only implicit TLS (no STARTTLS).
+Authentication is
 .B "AUTH PLAIN"
-(sufficient for a Gmail app password; not XOAUTH2) are implemented.
+or
+.B "AUTH XOAUTH2"
+(the caller obtains the OAuth token out of band).

@@ -20,6 +20,8 @@ Smtp2: module
 		ehlo:	fn(s: self ref Sender, me: string): (string, string);
 		# AUTH PLAIN with user and an app password.
 		auth:	fn(s: self ref Sender, user, pass: string): string;
+		# AUTH XOAUTH2 with an OAuth 2.0 bearer token (caller-supplied).
+		authxoauth2:	fn(s: self ref Sender, user, token: string): string;
 		# a full MAIL FROM / RCPT TO / DATA transaction. msg is the
 		# RFC 822 message (headers + blank line + body).
 		mail:	fn(s: self ref Sender, from: string, rcpts: list of string, msg: array of byte): string;

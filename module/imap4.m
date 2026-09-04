@@ -21,6 +21,9 @@ Imap4: module
 		docmd:	fn(c: self ref Client, command: string): (list of string, string, string);
 		capa:	fn(c: self ref Client): (string, string);
 		login:	fn(c: self ref Client, user, pass: string): string;
+		# SASL XOAUTH2 with an OAuth 2.0 bearer token (Gmail's preferred
+		# mechanism); the caller supplies the token.
+		authxoauth2:	fn(c: self ref Client, user, token: string): string;
 		mailboxes:	fn(c: self ref Client, reff, pat: string): (list of string, string);
 		# SELECT a mailbox; returns the EXISTS message count.
 		select:	fn(c: self ref Client, mbox: string): (int, string);

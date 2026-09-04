@@ -43,6 +43,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	mboxout := "";
 	searchcrit := "";
 	markseen := 0;
+	xtokenfile := "";
 
 	argv = tl argv;
 	while(argv != nil && len hd argv > 0 && (hd argv)[0] == '-'){
@@ -59,6 +60,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		"-o" =>	mboxout = arg(argv); argv = tl argv; full = 1;	# save as mbox for upas/fs
 		"-S" =>	searchcrit = arg(argv); argv = tl argv;		# IMAP SEARCH criteria
 		"-R" =>	markseen = 1;					# mark fetched messages \Seen
+		"-X" =>	xtokenfile = arg(argv); argv = tl argv;		# XOAUTH2 token file
 		* =>	usage();
 		}
 	}
@@ -80,10 +82,16 @@ init(nil: ref Draw->Context, argv: list of string)
 	sys->print("%s\n", cap);
 
 	if(user != ""){
-		pass := readpass(passfile);
-		if(pass == "")
-			fail("no password (use -P passfile)");
-		if((le := c.login(user, pass)) != nil)
+		le: string;
+		if(xtokenfile != "")
+			le = c.authxoauth2(user, readpass(xtokenfile));
+		else{
+			pass := readpass(passfile);
+			if(pass == "")
+				fail("no password (use -P passfile or -X tokenfile)");
+			le = c.login(user, pass);
+		}
+		if(le != nil)
 			fail(le);
 		sys->print("logged in as %s\n", user);
 

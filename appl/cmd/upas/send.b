@@ -46,6 +46,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	subject := "";
 	attach: list of string;
 	dryrun := 0;
+	xtokenfile := "";
 	msgfile := "";
 
 	argv = tl argv;
@@ -63,6 +64,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		"-j" =>	subject = arg(argv); argv = tl argv;		# subject
 		"-A" =>	attach = arg(argv) :: attach; argv = tl argv;	# attach a file
 		"-N" =>	dryrun = 1;					# compose only, no send
+		"-X" =>	xtokenfile = arg(argv); argv = tl argv;		# XOAUTH2 token file
 		* =>	usage();
 		}
 	}
@@ -95,10 +97,16 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(user != ""){
 		if(from == "" || rcpts == nil)
 			fail("need -f from and at least one -t rcpt to send");
-		pass := readpass(passfile);
-		if(pass == "")
-			fail("no password (use -P passfile)");
-		if((ae := s.auth(user, pass)) != nil)
+		ae: string;
+		if(xtokenfile != "")
+			ae = s.authxoauth2(user, readpass(xtokenfile));
+		else{
+			pass := readpass(passfile);
+			if(pass == "")
+				fail("no password (use -P passfile or -X tokenfile)");
+			ae = s.auth(user, pass);
+		}
+		if(ae != nil)
 			fail(ae);
 		sys->print("authenticated as %s\n", user);
 		msg := buildmessage(composing, from, rcpts, subject, msgfile, attach);

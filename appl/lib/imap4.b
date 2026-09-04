@@ -9,6 +9,8 @@ include "keyring.m";
 include "tls12.m";
 	tls12: TLS12;
 	Session: import tls12;
+include "encoding.m";
+	base64: Encoding;
 include "imap4.m";
 
 init(): string
@@ -20,6 +22,9 @@ init(): string
 	tls12 = load TLS12 TLS12->PATH;
 	if(tls12 == nil)
 		return "load tls12";
+	base64 = load Encoding Encoding->BASE64PATH;
+	if(base64 == nil)
+		return "load base64";
 	return tls12->init();
 }
 
@@ -142,6 +147,19 @@ Client.login(c: self ref Client, user, pass: string): string
 		return e;
 	if(!isok(comp))
 		return "login rejected: " + comp;
+	return nil;
+}
+
+Client.authxoauth2(c: self ref Client, user, token: string): string
+{
+	# SASL XOAUTH2 initial-response string (Gmail advertises SASL-IR):
+	# base64("user=<user>^Aauth=Bearer <token>^A^A").
+	sasl := "user=" + user + "\u0001auth=Bearer " + token + "\u0001\u0001";
+	(nil, comp, e) := c.docmd("AUTHENTICATE XOAUTH2 " + base64->enc(array of byte sasl));
+	if(e != nil)
+		return e;
+	if(!isok(comp))
+		return "xoauth2 rejected: " + comp;
 	return nil;
 }
 

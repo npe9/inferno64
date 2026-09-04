@@ -31,6 +31,9 @@ upas/fetch \- fetch mail from an IMAP server over TLS
 .I criteria
 ] [
 .B -R
+] [
+.B -X
+.I tokenfile
 ]
 .SH DESCRIPTION
 .I Upas/fetch
@@ -104,6 +107,11 @@ instead of the most recent
 marks each fetched message
 .B \eSeen
 (read) after fetching.
+.B -X
+.I tokenfile
+authenticates with SASL XOAUTH2 using the OAuth token in
+.I tokenfile
+instead of an app password.
 .PP
 A hosted
 .I emu
