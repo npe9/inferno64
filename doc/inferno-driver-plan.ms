@@ -951,8 +951,17 @@ raising Enonexist ("file does not exist") on a walk that never resolves,
 where the same recipe on riscv64 recovers and the create succeeds.  So
 the lead is the freshly-spawned dis kproc's namespace/environment
 (kproc(..., KPDUP) group inheritance) or the multi-kproc handoff on arm64
-- not SD, not the tick.  (The SDHOST flow control the earlier draft asked
-for here has since been added; see fifospace()/fifodata().)
+- not SD, not the tick.  Sharper: the loop does NOT re-enter devwalk (a
+devwalk-entry trace stays silent through it), so it is not a retry - it is
+the error stack, nexterror repeatedly jumping to a STALE devwalk waserror
+label while up->nerrlab climbs, i.e. vmachine()'s
+.CW "while(waserror())"
+re-pushing on a walk that keeps raising Enonexist in the spawned kproc's
+kfs setup.  And the spawn is load-bearing: forcing single-kproc (removing
+release()'s kproc("dis",...)) deadlocks the mount instead - nothing serves
+kfs while the client blocks - so the bug is in the multi-kproc handoff,
+not in choosing to use it.  (The SDHOST flow control the earlier draft
+asked for here has since been added; see fifospace()/fifodata().)
 (2) persistence across reboot on sifive_u - the kfs is reamed every boot;
 a mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
