@@ -144,6 +144,24 @@ port
 			 * still panics, so a real corruption stays visible.
 			 */
 			char *msg = up->nnote > 0 ? up->note[up->nnote-1]->msg : "note";
+			/*
+			 * If it registered a handler with notify(2), deliver the note
+			 * to it: notify() builds the handler's frame and points the pc
+			 * at it, so the program catches its own fault.  With no handler
+			 * the note kills it cleanly.
+			 */
+			if(up->notify != nil){
+				Ureg *nureg = notify(a, msg);
+				if(nureg != nil){
+					if(up->nnote > 0)
+						up->nnote--;
+					up->notified = 1;
+					up->dbgreg = a;
+					*(Ureg**)((uintptr)nureg - BY2WD) = up->noteureg;
+					up->noteureg = nureg;
+					return 1;		/* the handler runs */
+				}
+			}
 			print("osprey: legacy process %s killed by note: %s\n", up->text, msg);
 			ospreyexits(1);
 		}
@@ -272,9 +290,18 @@ port
 		return (uintptr)ospreyselectcaller((uvlong)(ulong)armoff, narms);
 	}
 
+	uintptr xnotify(va_list list)
+	{
+		void *f = va_arg(list, void*);
+		if(f != nil)
+			validaddr((uintptr)f, sizeof(void*), 0);
+		up->notify = (int(*)(void*, char*))f;
+		return 0;
+	}
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
 		[8]	xexits,		/* EXITS */
+		[28]	xnotify,	/* NOTIFY: register a note handler */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */

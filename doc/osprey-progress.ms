@@ -299,14 +299,25 @@ and reads
 \- which the bind resolves to
 .CW /n/hello .
 This is the item-6 piece the plan said the name-space calls wait on, done
-for the legacy ABI.  What remains is
+for the legacy ABI.  And the fuller form of the note is answered too:
+.CW notify (2)
+registers a handler, and a declined fault is now delivered to it \- the
+microkernel's own
+.CW notify()
+frame builder points the faulting program at its handler with the note
+message, so the program catches its own fault instead of being killed.
+The legacy binary registers a handler, reads a bad address, and its
+handler prints the note
+.CW ( "sys: trap: fault read addr=0x0" )
+and exits.  What remains is
 .CW mount ,
 which needs a served file descriptor to mount rather than a name to bind;
-and the fuller form of the note \- delivered to a
-.CW notify (2)
-handler the program registered, so it can catch the fault rather than die
-\- which waits on that syscall pair, not wired.  The per-container name
-space is the buddy's; a real user-level
+and the
+.CW noted (2)
+continuation that would let a handler resume the interrupted instruction
+rather than exit (a fault cannot exercise it \- the address is still bad -
+so it is not built).  The per-container name space is the buddy's; a real
+user-level
 .CW rfork
 .CW RFPROC
 that forks the process itself (item 6's other half) is still the kernel's
@@ -3612,13 +3623,17 @@ is killed with status 139, the 128 plus the signal Linux gives, and its
 parent's wait sees that.  A Plan 9 program's declined fault is now the
 same shape: its
 .CW donotify ,
-once a stub that panicked, kills the container cleanly and its parent's
-wait sees a non-zero status, since the program registered no handler.
-The fuller form \- the note delivered to a
+once a stub that panicked, delivers the note to the program's
 .CW notify (2)
-handler so the program can catch the fault \- would need the notify
-machinery the microkernel cut.  Only the file calls the demonstration
-makes are mapped.
+handler if it registered one \- the microkernel's own
+.CW notify()
+frame builder points the frame at the handler with the note message, the
+same machinery a full Plan 9 kernel uses \- and otherwise kills the
+container cleanly, its parent's wait seeing a non-zero status.  The
+handler catches the fault and exits; the
+.CW noted (2)
+continuation that resumes the interrupted instruction is not built, since
+a bad-address fault cannot exercise it.
 .PP
 Memory is the kernel's to give, and the Linux calls that ask for it are
 answered there rather than forwarded: they are the microkernel's

@@ -17,6 +17,20 @@
  * legacy binary is the body: ordinary Plan 9 open/create/write/read/
  * fstat/remove/close/print.
  */
+/*
+ * A note handler: the ordinary Plan 9 kind, registered with notify(2).
+ * When the program faults, the microkernel delivers the note here (the
+ * buddy is not involved - a note is the process's own), and it catches
+ * its own fault and exits rather than being killed outright.
+ */
+static void
+nhandler(void *ureg, char *msg)
+{
+	USED(ureg);
+	print("legacy: my note handler caught the fault: \"%s\"\n", msg);
+	exits("note handled");
+}
+
 void
 startboot(char *argv0, char **argv)
 {
@@ -124,17 +138,18 @@ startboot(char *argv0, char **argv)
 	print("legacy: the buddy answered every trap\n");
 
 	/*
-	 * Last, on purpose: read an address the buddy has no page for.  The
-	 * fault is declined and reaches this program as a note; with no
-	 * handler registered the note kills it - its container exits cleanly -
-	 * and must not panic the microkernel.
+	 * Register a note handler, then read a bad address on purpose.  The
+	 * fault is declined and reaches this program as a note - and because
+	 * a handler is registered, the note is delivered to it rather than
+	 * killing the program outright; the handler catches its own fault.
 	 */
-	print("legacy: reading a bad address on purpose; expect a clean note-kill, the container exiting\n");
+	notify(nhandler);
+	print("legacy: registered a note handler; now reading a bad address on purpose\n");
 	{
 		volatile int *bad = (volatile int*)0;
 		int x = *bad;
 		USED(x);
 	}
-	print("legacy: BUG: still running after the bad read - the fault was not delivered\n");
+	print("legacy: BUG: still running after the bad read - the note was not delivered\n");
 	exits(nil);
 }

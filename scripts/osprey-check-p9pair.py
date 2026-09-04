@@ -153,9 +153,8 @@ def main():
          and 'legacy: wrote one pipe end and read 29 bytes from the other: "through a pipe the buddy made"' in t),
         ("a legacy program rforks its own name space and binds in it: /n bound into / makes /hello read /n/hello, the buddy running the call in the container's own ns",
          re.search(r'legacy: rforked a private ns and bound /n into /; /hello \(= /n/hello\) reads: "\S', t) is not None),
-        ("a declined fault reaches the Plan 9 program as a note - a clean kill, its container exiting, not a microkernel panic",
-         re.search(r'osprey: legacy process \S+ killed by note:', t) is not None
-         and re.search(r'osprey exec: container \d+ \(/boot/legacy\) exited with status 1', t) is not None
+        ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
+         'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t
          and 'microkernel: donotify' not in t),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
