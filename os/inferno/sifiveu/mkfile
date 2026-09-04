@@ -95,6 +95,9 @@ pwmsifive.$O:	../riscv/pwmsifive.c
 spisifive.$O:	../riscv/spisifive.c
 	$CC $CFLAGS ../riscv/spisifive.c
 
+sdspisifive.$O:	../riscv/sdspisifive.c
+	$CC $CFLAGS ../riscv/sdspisifive.c
+
 ethersifivegem.$O:	../riscv/ethersifivegem.c
 	$CC $CFLAGS ../riscv/ethersifivegem.c
 

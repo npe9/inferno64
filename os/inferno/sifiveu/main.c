@@ -134,6 +134,11 @@ main(void)
 		spiinit();
 	}
 
+	{	/* SD-over-SPI probe: read block 0 off the card on SPI2 */
+		extern void sdspiinit(void);
+		sdspiinit();
+	}
+
 	procinit();
 	links();
 	screeninit();

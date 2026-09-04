@@ -79,5 +79,9 @@ void
 spiinit(void)
 {
 	spiinit1((uintptr)SPI0, "spi0-nor");
-	spiinit1((uintptr)SPI1, "spi1-mmc");
+	/*
+	 * SPI1 (QSPI2) carries an SD card, not a JEDEC flash; probing it
+	 * with a 0x9f command would leave QEMU's ssi-sd state machine
+	 * mid-command.  sdspiinit() owns it - see sdspisifive.c.
+	 */
 }
