@@ -165,23 +165,23 @@ startboot(char *argv0, char **argv)
 	print("legacy: the buddy answered every trap\n");
 
 	/*
-	 * rfork(RFPROC|RFMEM): fork the process itself into a second thread of
-	 * control.  The buddy cannot do this - a container is the kernel's to
-	 * make - so the kernel forks the container, entered at this same point.
-	 * RFMEM shares the address space and gives the child its own stack, so
-	 * the two are separate flows of control over shared memory.  rfork
-	 * returns 0 in the child and the child's id in the parent.  The child
-	 * prints its own line and exits; the parent goes on to the note test.
+	 * rfork(RFPROC): fork the process itself.  The buddy cannot do this -
+	 * a container is the kernel's to make - so the kernel forks the
+	 * container: a private address space (text shared, data and bss copied
+	 * copy-on-write, its own stack), entered at this same point.  rfork
+	 * returns 0 in the child and the child's id in the parent, so the two
+	 * are separate flows of control.  The child prints its own line and
+	 * exits; the parent goes on to the note test.
 	 */
 	{
-		int pid = rfork(RFPROC|RFMEM);
+		int pid = rfork(RFPROC);
 		if(pid == 0){
-			print("legacy: I am the forked child; rfork(RFPROC|RFMEM) returned 0 to me alone\n");
+			print("legacy: I am the forked child; rfork(RFPROC) returned 0 to me alone\n");
 			exits("forked child");
 		} else if(pid < 0)
-			print("legacy: rfork(RFPROC|RFMEM) failed\n");
+			print("legacy: rfork(RFPROC) failed\n");
 		else
-			print("legacy: rfork(RFPROC|RFMEM) forked a child, id %d; I am the parent\n", pid);
+			print("legacy: rfork(RFPROC) forked a child, id %d; I am the parent\n", pid);
 	}
 
 	/*

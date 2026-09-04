@@ -334,19 +334,23 @@ so it is not built).  The per-container name space is the buddy's; the other hal
 real user-level
 .CW rfork
 that forks the process itself, is the kernel's to make, not a program's,
-and its thread form is now built.
+and is now built \- both forms.
 A legacy binary that calls
+.CW "rfork(RFPROC)"
+is forked into a process with a private address space, and
 .CW "rfork(RFPROC|RFMEM)"
-is forked into a second thread of control:
+into a second thread of control over a shared one.
 .CW ospreyforkkern
 in
 .CW devosprey.c
 intercepts the call before it reaches the buddy (a container is the
 kernel's to make), gives the child a container of its own for identity and
-billing, shares the parent's address space through
-.CW dupseg 's
-sameseg path while copying the stack so the child has its own call chain,
-and crafts a return frame with
+billing delegated to the same server, dups the parent's segments with
+.CW dupseg
+(text shared, data and bss copied copy-on-write for the plain fork or
+shared for
+.CW RFMEM ,
+the stack always the child's own), and crafts a return frame with
 .CW forkchild
 so the child pops out of the scheduler in user mode at the parent's fork
 point with the return register zero.
@@ -357,19 +361,14 @@ answers it the same way.
 The whole text and data image is faulted in on the parent first (through
 .CW ospreybuddyfault ,
 the buddy pager), because the child's new container is one the buddy laid
-no image for and could not page.
-Two things are named but not yet built: the plain copy fork
-.CW "(RFPROC"
-without
-.CW RFMEM ,
-a private address space) \-
-.CW dupseg 's
-copy-on-write path increfs a data segment's
+no image for and could not page; a data segment the buddy pages has no
 .CW Image ,
-and these segments are paged by the buddy with no
-.CW Image ,
-so that path cannot copy them \- and the child inheriting the buddy-side
-descriptor table (it starts with the buddy's default console fds).
+so for the copy it is dupped as anonymous memory
+.CW ( SG_BSS ),
+its pages all resident from the prefault.
+What the child does not inherit is the buddy-side descriptor table (it
+starts with the buddy's default console fds), which is the file server's
+to clone \- the next step.
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an

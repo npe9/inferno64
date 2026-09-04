@@ -3096,35 +3096,29 @@ ospreyexecproc(void *a)
 }
 
 /*
- * rfork(RFPROC|RFMEM): fork a legacy container into a second thread of
- * control.  This is item 6 of the plan - the process-making half of
- * rfork, which the buddy cannot do because a container is the kernel's
- * to make, not the file server's.  RFMEM shares the address space: the
- * text, data and bss segments are shared with the parent (dupseg's
- * sameseg path), and only the stack is copied, so the child gets its own
- * stack - a private call chain over shared memory, which is exactly a
- * thread.  forkchild crafts a return frame so the child pops out of the
- * scheduler in user mode at the parent's fork point with the return
- * register zero: the child sees 0, the parent sees the child's container
- * id.  The child runs in a container of its own for identity and billing,
- * and is recorded beside exec's children so wait answers it the same way.
+ * rfork(RFPROC): fork a legacy container.  This is item 6 of the plan -
+ * the process-making half of rfork, which the buddy cannot do because a
+ * container is the kernel's to make, not the file server's.  Both forms
+ * are built: the plain fork gives the child a private address space (text
+ * shared read-only, data and bss copied copy-on-write, its own stack),
+ * and RFMEM gives it a shared one (text, data and bss shared, only the
+ * stack its own) - a thread.  forkchild crafts a return frame so the child
+ * pops out of the scheduler in user mode at the parent's fork point with
+ * the return register zero: the child sees 0, the parent sees the child's
+ * container id.  The child runs in a container of its own for identity and
+ * billing, and is recorded beside exec's children so wait answers it the
+ * same way.
  *
  * The catch is the buddy's per-container image: a page of the child that
  * is not resident would fault to the buddy, which laid out no image for
- * the child's new container and would refuse it.  Because the address
- * space is shared, the child faults through the SAME segments as the
- * parent, but its container is what the buddy is asked about; so the
- * whole text and data image is faulted in on the parent first, and after
- * that neither side needs the buddy for it - only the stack grows, which
- * is the kernel's demand-zero service.
+ * the child's new container and would refuse it.  So the whole text and
+ * data image is faulted in on the parent first, through ospreybuddyfault
+ * (the buddy pager); after that the child needs no buddy for it - only its
+ * stack and bss grow, which are the kernel's demand-zero service.
  *
- * The plain copy fork (RFPROC without RFMEM, a private address space) is
- * not done here: dupseg's copy-on-write path for a data segment increfs
- * the segment's Image, and these segments are paged by the buddy out of
- * band with no Image, so that path cannot copy them.  What the child does
- * not inherit either is the buddy-side descriptor table (it starts with
- * the buddy's default console fds), which is the file server's to clone.
- * Both are named in the man page as the next steps.
+ * What the child does not inherit is the buddy-side descriptor table (it
+ * starts with the buddy's default console fds), which is the file server's
+ * to clone; that is named in the man page as the next step.
  */
 static long
 ospreyforkkern(Ospreyproc *parent, ulong flag)
@@ -3140,8 +3134,6 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 		return -1;			/* nobody to serve the child's image */
 	if((flag & RFPROC) == 0)
 		return -1;			/* the namespace-only forms go to the buddy */
-	if((flag & RFMEM) == 0)
-		return -1;			/* copy fork not yet done: see the comment above */
 	if(up->dbgreg == nil)
 		return -1;			/* no user register frame to copy */
 
@@ -3223,13 +3215,28 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	qunlock(&p->debug);
 	qunlock(&up->debug);
 
-	/* the child's address space: RFMEM shares text/data/bss, and dupseg
-	 * copies the stack regardless, so the child gets its own call chain */
+	/*
+	 * The child's address space.  RFMEM shares text/data/bss (dupseg's
+	 * sameseg) and copies only the stack; the plain fork copies data and
+	 * bss too.  A data segment the buddy pages has no Image, and dupseg's
+	 * copy path would incref that nil Image, so for the copy such a
+	 * segment is dupped as anonymous memory (SG_BSS): its pages are all
+	 * resident from the prefault above, so the copy-on-write is exact, and
+	 * with no buddy behind it the child's own faults on it are demand-zero.
+	 */
 	share = flag & RFMEM;
 	qlock(&p->seglock);
-	for(i = 0; i < NSEG; i++)
-		if(up->seg[i] != nil)
+	for(i = 0; i < NSEG; i++){
+		if((s = up->seg[i]) == nil)
+			continue;
+		if(!share && (s->type&SG_TYPE) == SG_DATA && s->image == nil){
+			int savedtype = s->type;
+			s->type = (s->type & ~SG_TYPE) | SG_BSS;
+			p->seg[i] = dupseg(up->seg, i, 0);
+			s->type = savedtype;		/* the parent stays SG_DATA */
+		} else
 			p->seg[i] = dupseg(up->seg, i, share);
+	}
 	qunlock(&p->seglock);
 	/* the parent's data and bss are now shared copy-on-write: drop its
 	 * stale mappings so the next write faults and copies. */
