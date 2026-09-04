@@ -153,7 +153,10 @@ that wire a
 .B Tstream
 asks for an attribute to keep arriving at a rate rather than to be asked
 for, and the frames come at that rate with nothing sent to make them
-happen.
+happen.  The personality's \[*p]p about its files is on a wire of its
+own as well: a TCP connection between two containers' stacks across the
+ring, on which a session outlives its connection and a stream's frames
+come at their rate.
 .PP
 .B "Proving who is asking."
 A machine holds a key and signs with it: a
@@ -482,9 +485,45 @@ Built, above, both halves: \[*p]p about the server personality's files
 \- immutable versions committed on close, leases, a grouped
 open-read-write-close in one round trip, over the ring \- and the uart a
 container holds as a \[*p]p thing with the talk's attributes, its data
-attribute answered by the driver task.  What remains is the
-personality's \[*p]p on a wire of its own, and the attributes a uart
-here does not have.  For the record, the talk's uart (slide 20) is
+attribute answered by the driver task.  The personality's \[*p]p is on a wire of
+its own now, too.  With a real stack in each of two containers over the
+ring (item 7a), the server personality's \[*p]p
+.CW ( pipfsrv.c )
+is spoken on a TCP connection between them \- port 9001 of stack B,
+answered by a kproc,
+.CW pipwire
+in
+.CW os/osprey/cmd/p9/p9ip.c ,
+each group and each reply a record on the stream (a 4-byte count, then
+the messages), served by
+.CW pipfs_servewire ,
+the same server that answers the ring.  The client container sends a
+group of four over its own tcp.c \- session, open
+.CW /n/hello ,
+read data, read version \- and reads the four replies back; then it
+closes the connection, opens another, and a group naming the session by
+number resumes it and reads through the fid the first connection
+opened, still open: the session outlived the connection, which is what
+the talk's sessions were for.  And on a wire a
+.B Tstream
+can be answered, which over the ring it cannot (a reply is the answer to
+a request, and nothing can arrive unasked): the server keeps a stream
+per fid and a second kproc,
+.CW pipstreamer ,
+puts what the streams owe on the connection every tick
+.CW ( pipfs_stream ),
+an
+.B Rread
+with the
+.B Tstream 's
+tag and no request to match.  The client asks for the version every
+100 ms three times, and three frames arrive, each 100 ms after the
+last by the client's own clock, with nothing sent to make them happen.
+Three criteria in
+.CW /scripts/osprey-check-p9pair.py ;
+.I pip (5)
+says which of its messages each transport answers.  What remains of the
+item is the attributes a uart here does not have.  For the record, the talk's uart (slide 20) is
 reached as a \[*p]p file with string attributes \-
 .CW *
 listing them,
@@ -1329,7 +1368,8 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-forty-three criteria, five of them this and the gateway below.  What is
+forty-six criteria, five of them this and the gateway below, three
+the \[*p]p wire of item 4.  What is
 honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a

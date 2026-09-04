@@ -63,6 +63,30 @@ static Sess sess[Nsess];
 static uvlong nextsid = 0x5ec0de;
 static uvlong nowms;			/* ticks * Tickms */
 
+/*
+ * A stream: an attribute of a fid sent at a rate, unasked, on the wire
+ * the group that set it up came over.  There is no wire under a group
+ * that came over the ring (a reply is the answer to a request), so a
+ * Tstream there is refused as it always was; a group served for the
+ * wire (pipfs_servewire) may set one up, and the wire's own task emits
+ * what is due (pipfs_stream).
+ */
+typedef struct Stream Stream;
+struct Stream {
+	int	used;
+	Sess	*s;
+	uvlong	sid;
+	ulong	fid;
+	int	tag;
+	ulong	period;			/* ms */
+	long	left;			/* frames still to send, or -1 for no end */
+	uvlong	due;			/* ms */
+	char	attr[Namelen];
+};
+enum { Nstream = 4 };
+static Stream streams[Nstream];
+static int onwire;			/* the group being served came over a wire */
+
 /* the replies of the group being served */
 static uchar *rbuf;
 static long rmax, rn;
@@ -213,6 +237,92 @@ commit(Fid *f)
 	return fileversion(f->name);
 }
 
+/*
+ * An attribute of a fid, answered as an Rread carrying the given tag:
+ * for a Tread, and for a stream, which is an Rread that arrives with the
+ * Tstream's tag and nobody asked for.
+ */
+static void
+readattr(Fid *f, char *attr, long cnt, int tag)
+{
+	uchar *r;
+	uvlong v;
+	long k;
+
+	{
+		uchar *b;
+		long n;
+
+		b = smalloc(Datalen);
+		if(waserror()){
+			free(b);
+			rerror(tag, up->errstr);
+			return;
+		}
+		if(f->c == nil){
+			/* the root: its names, from a directory read */
+			Chan *dc;
+			uchar dbuf[2048], *p, *e;
+			Dir d;
+			char names[256];
+			int mm;
+
+			if(strcmp(attr, "*") != 0)
+				error("no such attribute");
+			dc = namec("/", Aopen, OREAD, 0);
+			n = devtab[dc->type]->read(dc, dbuf, sizeof dbuf, 0);
+			cclose(dc);
+			k = 0;
+			for(p = dbuf, e = dbuf + n; p < e; p += mm){
+				mm = convM2D(p, (uint)(e - p), &d, names);
+				if(mm <= 0)
+					break;
+				k += snprint((char*)b+k, Datalen-k, k == 0 ? "%s" : " %s", d.name);
+			}
+			n = k;
+			v = 0;
+		} else if(strcmp(attr, "*") == 0){
+			n = snprint((char*)b, Datalen, "* data version length name");
+			v = f->draft != nil ? f->base + 1 : f->base;
+		} else if(strcmp(attr, "data") == 0){
+			if(f->draft != nil){
+				n = f->draftlen;
+				memmove(b, f->draft, n);
+				v = f->base + 1;
+			} else {
+				n = devtab[f->c->type]->read(f->c, b, Datalen, 0);
+				v = f->base;
+			}
+		} else if(strcmp(attr, "version") == 0){
+			v = f->draft != nil ? f->base + 1 : f->base;
+			n = snprint((char*)b, Datalen, "%llud", v);
+		} else if(strcmp(attr, "length") == 0){
+			if(f->draft != nil)
+				n = snprint((char*)b, Datalen, "%ld", f->draftlen);
+			else {
+				uchar *t = smalloc(Datalen);
+				long tn = devtab[f->c->type]->read(f->c, t, Datalen, 0);
+				free(t);
+				n = snprint((char*)b, Datalen, "%ld", tn);
+			}
+			v = f->draft != nil ? f->base + 1 : f->base;
+		} else if(strcmp(attr, "name") == 0){
+			n = snprint((char*)b, Datalen, "%s", f->name);
+			v = f->base;
+		} else
+			error("no such attribute");
+		if(cnt >= 0 && n > cnt)
+			n = cnt;
+		if((r = reply(PipRread, tag, 8+2+n)) != nil){
+			pput(r, 8, v);
+			pput(r+8, 2, n);
+			memmove(r+10, b, n);
+		}
+		poperror();
+		free(b);
+	}
+}
+
 static void
 serve1(Sess **sp, uchar *m, long sz)
 {
@@ -324,78 +434,7 @@ serve1(Sess **sp, uchar *m, long sz)
 			rerror(tag, "fid not open");
 			break;
 		}
-		{
-			uchar *b;
-			long n;
-
-			b = smalloc(Datalen);
-			if(waserror()){
-				free(b);
-				rerror(tag, up->errstr);
-				break;
-			}
-			if(f->c == nil){
-				/* the root: its names, from a directory read */
-				Chan *dc;
-				uchar dbuf[2048], *p, *e;
-				Dir d;
-				char names[256];
-				int mm;
-
-				if(strcmp(attr, "*") != 0)
-					error("no such attribute");
-				dc = namec("/", Aopen, OREAD, 0);
-				n = devtab[dc->type]->read(dc, dbuf, sizeof dbuf, 0);
-				cclose(dc);
-				k = 0;
-				for(p = dbuf, e = dbuf + n; p < e; p += mm){
-					mm = convM2D(p, (uint)(e - p), &d, names);
-					if(mm <= 0)
-						break;
-					k += snprint((char*)b+k, Datalen-k, k == 0 ? "%s" : " %s", d.name);
-				}
-				n = k;
-				v = 0;
-			} else if(strcmp(attr, "*") == 0){
-				n = snprint((char*)b, Datalen, "* data version length name");
-				v = f->draft != nil ? f->base + 1 : f->base;
-			} else if(strcmp(attr, "data") == 0){
-				if(f->draft != nil){
-					n = f->draftlen;
-					memmove(b, f->draft, n);
-					v = f->base + 1;
-				} else {
-					n = devtab[f->c->type]->read(f->c, b, Datalen, 0);
-					v = f->base;
-				}
-			} else if(strcmp(attr, "version") == 0){
-				v = f->draft != nil ? f->base + 1 : f->base;
-				n = snprint((char*)b, Datalen, "%llud", v);
-			} else if(strcmp(attr, "length") == 0){
-				if(f->draft != nil)
-					n = snprint((char*)b, Datalen, "%ld", f->draftlen);
-				else {
-					uchar *t = smalloc(Datalen);
-					long tn = devtab[f->c->type]->read(f->c, t, Datalen, 0);
-					free(t);
-					n = snprint((char*)b, Datalen, "%ld", tn);
-				}
-				v = f->draft != nil ? f->base + 1 : f->base;
-			} else if(strcmp(attr, "name") == 0){
-				n = snprint((char*)b, Datalen, "%s", f->name);
-				v = f->base;
-			} else
-				error("no such attribute");
-			if(cnt >= 0 && n > cnt)
-				n = cnt;
-			if((r = reply(PipRread, tag, 8+2+n)) != nil){
-				pput(r, 8, v);
-				pput(r+8, 2, n);
-				memmove(r+10, b, n);
-			}
-			poperror();
-			free(b);
-		}
+		readattr(f, attr, cnt, tag);
 		f->lease = nowms + Fidlease;
 		break;
 
@@ -472,7 +511,65 @@ serve1(Sess **sp, uchar *m, long sz)
 		break;
 
 	case PipTstream:
-		rerror(tag, "no wire to stream on");
+		if(sz < Pipheader + 4+4+4+2)
+			goto Bad;
+		fid = pget(m+Pipheader, 4);
+		{
+			ulong period, count;
+			Stream *st, *slot;
+
+			period = pget(m+Pipheader+4, 4);
+			count = pget(m+Pipheader+8, 4);
+			k = Pipheader + 12;
+			alen = pget(m+k, 2);
+			k += 2;
+			if(k + alen > sz || alen >= Namelen)
+				goto Bad;
+			memmove(attr, m+k, alen);
+			attr[alen] = 0;
+			if((f = fidfind(s, fid)) == nil){
+				rerror(tag, "fid not open");
+				break;
+			}
+			/* one stream to a fid: a second says what the first said */
+			slot = nil;
+			for(st = streams; st < &streams[Nstream]; st++)
+				if(st->used && st->s == s && st->sid == s->sid && st->fid == fid)
+					slot = st;
+			if(period == 0){
+				if(slot != nil)
+					slot->used = 0;
+				if((r = reply(PipRstream, tag, 8)) != nil)
+					pput(r, 8, 0);
+				break;
+			}
+			if(!onwire){
+				rerror(tag, "no wire to stream on");
+				break;
+			}
+			if(slot == nil)
+				for(st = streams; st < &streams[Nstream]; st++)
+					if(!st->used){
+						slot = st;
+						break;
+					}
+			if(slot == nil){
+				rerror(tag, "no room for another stream");
+				break;
+			}
+			memset(slot, 0, sizeof *slot);
+			slot->used = 1;
+			slot->s = s;
+			slot->sid = s->sid;
+			slot->fid = fid;
+			slot->tag = tag;
+			slot->period = period;
+			slot->left = count == 0 ? -1 : (long)count;
+			slot->due = nowms + period;
+			strncpy(slot->attr, attr, Namelen-1);
+			if((r = reply(PipRstream, tag, 8)) != nil)
+				pput(r, 8, period);
+		}
 		break;
 	case PipTauth:
 		rerror(tag, "no key here to check a ticket against");
@@ -511,6 +608,59 @@ pipfs_serve(uchar *msg, long n, uchar *out, long outmax)
 		rn = 0;
 		overflow = 0;
 		rerror(0, "the replies to that group do not fit");
+	}
+	return rn;
+}
+
+/*
+ * The same group, come over a wire: what differs is that a Tstream in it
+ * may be answered, since the wire's task will carry the frames.
+ */
+long
+pipfs_servewire(uchar *msg, long n, uchar *out, long outmax)
+{
+	long k;
+
+	onwire = 1;
+	k = pipfs_serve(msg, n, out, outmax);
+	onwire = 0;
+	return k;
+}
+
+/*
+ * What the streams owe now: for every stream whose period has come
+ * round, an Rread of its attribute with the Tstream's tag, into out;
+ * the count of bytes put there, 0 when nothing is due.  Called by the
+ * wire's task at its own rate; the frames leave at the stream's.  A
+ * stream ends when its count runs out, or when its session or its fid
+ * has gone - a fid's lease running out stops it, as pip(5) says, since
+ * the stream does not refresh the lease the way a Tread does.
+ */
+long
+pipfs_stream(uchar *out, long outmax)
+{
+	Stream *st;
+	Fid *f;
+
+	rbuf = out;
+	rmax = outmax;
+	rn = 0;
+	overflow = 0;
+	for(st = streams; st < &streams[Nstream]; st++){
+		if(!st->used || st->due > nowms)
+			continue;
+		if(!st->s->used || st->s->sid != st->sid || (f = fidfind(st->s, st->fid)) == nil){
+			st->used = 0;
+			continue;
+		}
+		readattr(f, st->attr, -1, st->tag);
+		st->due += st->period;
+		if(st->left > 0 && --st->left == 0)
+			st->used = 0;
+	}
+	if(overflow){
+		rn = 0;
+		overflow = 0;
 	}
 	return rn;
 }
@@ -576,6 +726,19 @@ pip_twrite(uchar *b, int tag, ulong fid, char *attr, char *data, long dlen)
 	pstr(b+Pipheader+4, attr, n);
 	pstr(b+Pipheader+4+2+n, data, dlen);
 	return tmsg(b, PipTwrite, tag, 4 + 2 + n + 2 + dlen);
+}
+
+long
+pip_tstream(uchar *b, int tag, ulong fid, ulong period, ulong count, char *attr)
+{
+	long n;
+
+	n = tmsg(b, PipTstream, tag, 4+4+4+2+strlen(attr));
+	pput(b+Pipheader, 4, fid);
+	pput(b+Pipheader+4, 4, period);
+	pput(b+Pipheader+8, 4, count);
+	pstr(b+Pipheader+12, attr, strlen(attr));
+	return n;
 }
 
 long

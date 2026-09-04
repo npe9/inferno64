@@ -239,6 +239,118 @@ gwsrv(void *)
 }
 
 /*
+ * Pi-p on a wire of its own.  The personality's pi-p (pipfsrv.c) has
+ * been spoken over the ring, a group on a request and its replies on
+ * the answer; here it is spoken on the wire between the two containers'
+ * stacks: a tcp.c connection across the ring, carrying groups as
+ * length-prefixed records each way (a 4-byte little-endian count, then
+ * the messages).  A session is settled by number, so it outlives the
+ * connection: a second connection resumes it and finds its fids still
+ * open.  And on a wire a Tstream can be answered - the attribute keeps
+ * arriving at its rate with nothing sent to make it happen - which over
+ * the ring it could not be.  pipwire takes connections one after
+ * another and serves the groups on each; pipstreamer, on every tick,
+ * puts whatever the streams owe on the connection that is up.
+ */
+static int pipwirefd = -1;		/* the connection up now, for the streamer */
+
+static long
+readn(int fd, uchar *buf, long n)
+{
+	long k, got;
+
+	for(got = 0; got < n; got += k){
+		k = p9read(fd, buf + got, n - got);
+		if(k <= 0)
+			return got;
+	}
+	return got;
+}
+
+static void
+putrec(int fd, uchar *rec, long n)
+{
+	uchar len[4];
+
+	len[0] = n; len[1] = n>>8; len[2] = n>>16; len[3] = n>>24;
+	p9write(fd, len, 4);
+	if(n > 0)
+		p9write(fd, rec, n);
+}
+
+static long
+getrec(int fd, uchar *rec, long max)
+{
+	uchar len[4];
+	long n;
+
+	if(readn(fd, len, 4) != 4)
+		return -1;
+	n = len[0] | (len[1]<<8) | (len[2]<<16) | (len[3]<<24);
+	if(n < 0 || n > max)
+		return -1;
+	if(readn(fd, rec, n) != n)
+		return -1;
+	return n;
+}
+
+static void
+pipstreamer(void *)
+{
+	extern long pipfs_stream(uchar*, long);
+	uchar out[2048];
+	long n;
+
+	for(;;){
+		tsleep(&up->sleep, return0, nil, 10);
+		if(pipwirefd < 0)
+			continue;
+		n = pipfs_stream(out, sizeof out);
+		if(n > 0)
+			putrec(pipwirefd, out, n);
+	}
+}
+
+static void
+pipwire(void *)
+{
+	extern long pipfs_servewire(uchar*, long, uchar*, long);
+	int afd, lfd, dfd, anum, lnum, conns;
+	long n, rn;
+	char cbuf[64], path[64];
+	uchar tg[2048], rg[4096];
+
+	if(waserror()){
+		print("p9 ip: pi-p wire failed: %s\n", up->errstr);
+		pipwirefd = -1;
+		pexit("pipwire", 0);
+	}
+	afd = p9open("#I1/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 9001", 13);
+	print("p9 ip: pi-p wire: tcp!*!9001 announced on stack B - the personality's pi-p on a wire of its own\n");
+	kproc("pipstreamer", pipstreamer, nil);
+	for(conns = 1;; conns++){
+		snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+		lfd = p9open(path, ORDWR);
+		n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+		snprint(path, sizeof path, "#I1/tcp/%d/data", lnum);
+		dfd = p9open(path, ORDWR);
+		print("p9 ip: pi-p wire: connection %d from the client container, conversation %d\n", conns, lnum);
+		pipwirefd = dfd;
+		while((n = getrec(dfd, tg, sizeof tg)) >= 0){
+			rn = pipfs_servewire(tg, n, rg, sizeof rg);
+			print("p9 ip: pi-p wire: a %ld-byte group came over the wire on connection %d, answered with %ld bytes of replies\n", n, conns, rn);
+			putrec(dfd, rg, rn);
+		}
+		pipwirefd = -1;
+		print("p9 ip: pi-p wire: connection %d closed; the sessions it carried live on\n", conns);
+		p9close(dfd);
+		p9close(lfd);
+	}
+}
+
+/*
  * The client end.  The client container brings up the real Plan 9 IP
  * stack of its own - devip, ip.c, tcp.c - and binds an osprey interface
  * whose wire is the ring to the server container.  A kproc connects to
@@ -250,6 +362,133 @@ gwsrv(void *)
  * runs the kprocs that are ready.
  */
 static int clientnetdone;
+
+/*
+ * Pi-p over the wire, from the client container: three groups on two
+ * connections to the server container's pi-p at 10.0.1.2!9001, over the
+ * two stacks' tcp.c across the ring.  The first connection opens a
+ * session and a fid on /n/hello and reads it; the connection is closed
+ * and a second one resumes the session by number and reads through the
+ * same fid, still open - the session outlived the connection.  Then a
+ * Tstream on that fid, and the attribute arrives three times at the
+ * asked rate with nothing sent to make it happen.
+ */
+static int
+pipconnect(int *dfdp)
+{
+	char cbuf[64], path[64];
+	long n;
+	int dfd, cnum;
+
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	p9write(dfd, "connect 10.0.1.2!9001", 21);
+	*dfdp = dfd;
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	return p9open(path, ORDWR);
+}
+
+static void
+pipclient(void)
+{
+	extern long pip_tsession(uchar*, int, uvlong);
+	extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+	extern long pip_tread(uchar*, int, ulong, long, char*);
+	extern long pip_tstream(uchar*, int, ulong, ulong, ulong, char*);
+	extern long pip_tclose(uchar*, int, ulong);
+	extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
+	extern uvlong pip_num(uchar*, int);
+	extern uvlong kfastticks(uvlong*);
+	uchar tg[512], rg[2048], *body;
+	long tn, rn, off, blen;
+	int type, tag, dfd, wfd, nrep, i;
+	uvlong sid, v, t0, t;
+	char show[160];
+
+	/* connection 1: a session, a fid on /n/hello, its data and version */
+	wfd = pipconnect(&dfd);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 1, 0);
+	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 3, 1, 256, "data");
+	tn += pip_tread(tg+tn, 4, 1, 32, "version");
+	putrec(wfd, tg, tn);
+	rn = getrec(wfd, rg, sizeof rg);
+	sid = 0; v = 0; nrep = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); nrep++){
+		if(type == 101)
+			sid = pip_num(body, 8);
+		else if(type == 105 && tag == 3){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			v = pip_num(body, 8);
+			print("p9 ip: pi-p over the wire: opened /n/hello in session %llux, read data (version %llud): \"%s\"\n", sid, v, show);
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p over the wire: error on tag %d: %s\n", tag, show);
+		}
+	}
+	print("p9 ip: pi-p over the wire: a group of 4 crossed the two stacks' tcp.c across the ring and came back with %d replies\n", nrep);
+	p9close(wfd); p9close(dfd);		/* the connection goes; the session and its fid do not */
+	tsleep(&up->sleep, return0, nil, 200);
+
+	/* connection 2: the same session by number, the same fid, still open */
+	wfd = pipconnect(&dfd);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 5, sid);
+	tn += pip_tread(tg+tn, 6, 1, 256, "data");
+	putrec(wfd, tg, tn);
+	rn = getrec(wfd, rg, sizeof rg);
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 105 && tag == 6){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			print("p9 ip: pi-p over the wire: a new connection resumed session %llux and read fid 1, still open, data (version %llud): \"%s\" - the session outlived the connection\n", sid, pip_num(body, 8), show);
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p over the wire: error on tag %d: %s\n", tag, show);
+		}
+	}
+
+	/* a stream: the version, every 100 ms, three times, unasked; a group
+	 * settles its session first, as every group does */
+	tn = 0;
+	tn += pip_tsession(tg+tn, 9, sid);
+	tn += pip_tstream(tg+tn, 7, 1, 100, 3, "version");
+	putrec(wfd, tg, tn);
+	rn = getrec(wfd, rg, sizeof rg);
+	nrep = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 114){		/* Rstream */
+			print("p9 ip: pi-p over the wire: Tstream answered, period %llud ms\n", pip_num(body, 8));
+			nrep = 1;
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p over the wire: tag %d refused: %s\n", tag, show);
+		}
+	}
+	t0 = kfastticks(nil);
+	for(i = 0; nrep && i < 3; i++){
+		rn = getrec(wfd, rg, sizeof rg);
+		if(rn <= 0)
+			break;
+		t = kfastticks(nil);
+		off = 0;
+		if(pip_next(rg, rn, &off, &type, &tag, &body, &blen) && type == 105 && tag == 7){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			print("p9 ip: pi-p over the wire: stream frame %d arrived unasked, tag 7, version \"%s\", %llud ms after the last\n", i+1, show, (t - t0) * 10);
+		} else
+			print("p9 ip: pi-p over the wire: unexpected frame type %d tag %d\n", type, tag);
+		t0 = t;
+	}
+	if(i == 3)
+		print("p9 ip: pi-p over the wire: three frames of the stream came at the asked rate with nothing sent to make them happen - isochronous data over the wire\n");
+	tn = 0;
+	tn += pip_tsession(tg+tn, 10, sid);
+	tn += pip_tclose(tg+tn, 8, 1);
+	putrec(wfd, tg, tn);
+	getrec(wfd, rg, sizeof rg);
+	tsleep(&up->sleep, return0, nil, 200);
+	p9close(wfd); p9close(dfd);
+}
 
 static void
 ostcpclient(void *)
@@ -321,6 +560,7 @@ ostcpclient(void *)
 		tsleep(&up->sleep, return0, nil, 300);
 		p9close(wfd); p9close(dfd);
 	}
+	pipclient();
 	poperror();
 	clientnetdone = 1;
 	pexit("ostcpclient done", 0);
@@ -530,6 +770,7 @@ p9ipup(void)
 	kproc("ostcp", ostcp, nil);	/* two-stack tcp.c handshake + byte stream over the osprey wire */
 	kproc("ringsrv", ringsrv, nil);	/* a tcp.c service for the client container, across the ring wire */
 	kproc("gwsrv", gwsrv, nil);	/* the same on stack A, reached through stack B as a gateway */
+	kproc("pipwire", pipwire, nil);	/* pi-p about this personality's files, on the wire */
 	p9kbdstart();			/* the i8042 keyboard driver, in user space above the kernel */
 	poperror();
 

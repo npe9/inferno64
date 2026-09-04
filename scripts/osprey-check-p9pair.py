@@ -192,6 +192,17 @@ def main():
          and 'p9 ip: gateway server: stack A read 44 bytes from the client container through the gateway: "sent through stack B as a gateway to stack A"' in t
          and 'p9 ip: client container: read 39 bytes back from stack A through the gateway: "answered by stack A, behind the gateway"' in t
          and re.search(r"p9 ip: gateway: stack B's ip.c forwarded the conversation - ForwDatagrams: ([4-9]|\d\d+)", t) is not None),
+        ("pi-p on a wire of its own: a group about the server personality's files crosses the two stacks' tcp.c across the ring and is answered there, not on the ring",
+         re.search(r'p9 ip: pi-p over the wire: opened /n/hello in session [0-9a-f]+, read data \(version \d+\): "version 42 of forty', t) is not None
+         and "p9 ip: pi-p over the wire: a group of 4 crossed the two stacks' tcp.c across the ring and came back with 4 replies" in t
+         and re.search(r'p9 ip: pi-p wire: a \d+-byte group came over the wire on connection 1, answered with \d+ bytes of replies', t) is not None),
+        ("and the session outlives the connection: the connection is closed, a second one resumes the session by number, and the fid opened on the first is still open and reads",
+         'p9 ip: pi-p wire: connection 1 closed; the sessions it carried live on' in t
+         and re.search(r'p9 ip: pi-p over the wire: a new connection resumed session [0-9a-f]+ and read fid 1, still open, data \(version \d+\): "version 42 of forty', t) is not None),
+        ("and isochronous data on it: a Tstream is answered on the wire (refused over the ring), and the attribute arrives three times at the asked rate with nothing sent to make it happen",
+         'p9 ip: pi-p over the wire: Tstream answered, period 100 ms' in t
+         and len(re.findall(r'p9 ip: pi-p over the wire: stream frame \d arrived unasked, tag 7, version "\d+", \d+ ms after the last', t)) == 3
+         and 'three frames of the stream came at the asked rate with nothing sent to make them happen' in t),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t
