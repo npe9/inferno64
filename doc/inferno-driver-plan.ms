@@ -861,31 +861,51 @@ core 0's IRQ, and ticks then run at HZ - confirmed at 100/s, and kfs
 reaming completes past its old stall to
 .CW "initializing minimal user table" .
 .PP
-But enabling the tick exposes what the cooperative schedule was hiding:
-with preemption live, the SD multi-block test fails intermittently
+The routing is now in
+.CW clockinit() ,
+and turning the tick on flushed out two real defects the cooperative
+schedule had masked - both in the SD driver, both fixed.  online()
+returned on its re-init path without restoring
+.CW unit->sectors ,
+which devsd zeroes before each call, so a concurrent walk dropped the
+data partition
+.CW ( "file does not exist" );
+it now always repopulates.  And
+.CW bio()
+drove the one controller through a non-atomic register sequence with no
+lock, so a file server's main and sync procs corrupted each other's
+transfers; a per-controller
+.CW QLock
+now serialises it.  With those, the SD block device is stable under the
+live tick, verified five of five.
+.PP
+A kfs on top still does not complete: during reaming it hits
 .CW "file does not exist"
-(a namespace error, ~1 in 3), and kfs then desyncs its Styx conversation
-over the pipe.  So the arm64 trap/context-switch path (and/or the mount
-and devsd locking) is not preemption-safe - a latent defect the missing
-tick had masked.  The one-line timer routing is therefore left out for
-now to keep the board stable; it is the front of a preemption-safety
-thread, not a finished fix.
+at a varying block.  The earlier reading of this as a Styx desync was
+wrong - the
+.CW "T110 R107"
+mount-walk message that looked like the culprit prints on sifive_u too,
+just before its
+.CW SD-FS-OK ,
+so it is the routine failed-walk of a create, not a fault.  What remains
+is a devsd race: sdinitpart() tears the partition down and rebuilds it on
+every walk, and under the fast SDHOST driver a concurrent file-server
+write catches the window - sifive_u's slow SPI simply never lands in it.
 .NH 1
 Immediate next steps (cold-start)
 .PP
 The board work stands at: all four riscv virt boards, arm64 on both GIC
 versions with a display, sifive_u with SPI, GEM ethernet and an SD-over-
 SPI stack complete to a kfs filesystem, shakti (riscv64), and the
-Raspberry Pi 3B (arm64) with I2C/SPI/GPIO and now a native-SD block
-device (/dev/sdM0/data, read/write/multi-block) - every board booting to
-a shell.  The prioritized next work: (1) raspi3b preemption safety - add
-the BCM2836 timer routing (0x40000040 bit1) back, then make the arm64
-trap/context-switch save-and-restore and the devsd/mount paths safe
-under the 100Hz tick the routing turns on; that is what a kfs (or any
-real multitasking) on the Pi is waiting on, and the intermittent
-"file does not exist" is the reproducer.  (2) persistence across reboot
-on sifive_u - the kfs is reamed every boot; a mount that reams only a
-blank device would show a file surviving a restart.  (3) more boards if
-wanted - the loop is proven, and the one rule that matters for any
-multi-core board is to park the
+Raspberry Pi 3B (arm64) with I2C/SPI/GPIO, a native-SD block device
+(/dev/sdM0/data, read/write/multi-block) and now a real 100Hz scheduler
+tick - every board booting to a shell.  The prioritized next work: (1)
+the raspi3b devsd partition race - make sdinitpart() (or the walk path
+that calls it) not drop a live partition under a concurrent transfer, so
+a kfs can ream and mount on the Pi; the "file does not exist" during
+reaming is the reproducer, and sifive_u is the working oracle.  (2)
+persistence across reboot on sifive_u - the kfs is reamed every boot; a
+mount that reams only a blank device would show a file surviving a
+restart.  (3) more boards if wanted - the loop is proven, and the one
+rule that matters for any multi-core board is to park the
 secondary cores first.
