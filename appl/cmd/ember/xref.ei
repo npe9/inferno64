@@ -1,0 +1,15 @@
+module Xref
+
+// "emberc -X": the names a file declares and every use of one, with
+// positions and types, for an editor or a language server.  a port of
+// ember/xref.c; the driver hands down its own types instance and the
+// checked function list.
+
+const PATH = "/dis/ember/xref.dis"
+
+import types "types"
+import check "check"
+
+func usetypes(t Types)
+func usecheck(c Check)
+func xref(tree ref types.Node, moduledecl ref types.Decl, fns []ref types.Decl, nfns int)

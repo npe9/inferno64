@@ -382,6 +382,7 @@ REPL had ever compiled twice in one process.
 What is left of item 8 is a language server, which wants the checker
 to report positions and types for a file without generating code --
 the `-c` path already does the work, so it is mostly a protocol.
+Item 22 is the half of that which is not protocol.
 
 ## 21. Another translation: bytes
 
@@ -398,3 +399,39 @@ change, which is the first translation in a while that found nothing:
 `len(x)`, `hd(l)`, `tl(l)` as calls, `0x` for `16r`, `copy` for a
 slice assignment, and `match` labels for `or` and `to` were the only
 edits.
+
+## 22. Cross-references: what an editor asks the compiler
+
+`ember -X file.e` (and `emberc -X`, `appl/cmd/ember/xref.e`) prints
+the file's declarations and every use of one, each with a position
+and a type, and each use naming the declaration the checker resolved
+it to. That is what a language server answers "go to definition",
+"hover" and "find references" with; what is left over is the
+protocol, which is JSON over a pipe and needs no compiler work
+(`appl/ember/json.e` already writes it).
+
+The dump runs after checking, on the checked tree, which decides what
+it can and cannot see. It sees every declaration in the file and the
+uses in every function body, with the imported declarations named by
+their module (`Sys:119:1`), since an interface file's lines are its
+own. It does not see what the checker rewrote away: a constant
+folded into its value, a field access lowered to address arithmetic,
+or the body of a closure, which is lifted into a function that never
+reaches the function list -- the local it captures still shows as a
+use, at the enclosing function's position. A generic function appears
+twice, once as the template (no type of its own) and once per
+instantiation, named `first[string]`.
+
+Two positions had to be got right for the two compilers to agree.
+The C compiler numbers every line of every file it reads on one
+absolute scale and maps it back with `fline()`; the self-hosted one
+parses a file at a time and keeps each file's own numbers. Printing
+`file:line:col` would have needed that map in both, so the format
+names the module instead of the file, which both have. And a
+top-level name is resolved through the checker's binding
+(`sym->decl`, `check.lookup`), not the symbol table: after checking,
+the two differ.
+
+`ember/tests/xref/*.e` are dumped and compared with the recorded
+`.x` files by `tests/xref.sh`, which then has the self-hosted
+compiler dump the same files and requires the same bytes.

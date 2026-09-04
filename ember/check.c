@@ -16,6 +16,19 @@
 Decl	*impdecl;			/* this module */
 Decl	**fns;				/* functions to compile */
 int	nfns;
+
+/* the checked functions, for xref.c */
+Decl**
+emberfns(void)
+{
+	return fns;
+}
+
+int
+emberfnc(void)
+{
+	return nfns;
+}
 Decl	*entrydecl;			/* the entry function (init) */
 Dlist	*imports;			/* imported module variables */
 Decl	*moduledecls;			/* module-scope var/const decls */

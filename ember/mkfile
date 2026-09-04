@@ -9,6 +9,7 @@ OFILES=	ast.$O\
 	gen.$O\
 	iface.$O\
 	ifacegen.$O\
+	xref.$O\
 	fmt.$O\
 	lex.$O\
 	main.$O\
@@ -49,5 +50,6 @@ test:V:	$O.out
 	./tests/fmt.sh
 	./tests/selffmt.sh
 	./tests/selftools.sh
+	./tests/xref.sh
 	./tests/repl.sh
 	./tests/limbocmp.sh

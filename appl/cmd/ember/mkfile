@@ -21,6 +21,7 @@ TARG=\
 	com.dis\
 	emberfmt.dis\
 	ifacegen.dis\
+	xref.dis\
 	emberc.dis\
 
 all:V:	$TARG
@@ -39,7 +40,8 @@ astdump.dis:	lex.ei parse.ei types.ei
 gen.dis:	types.ei
 disw.dis:	types.ei gen.ei
 com.dis:	types.ei check.ei gen.ei disw.ei
-emberc.dis:	types.ei parse.ei check.ei com.ei
+xref.dis:	types.ei check.ei
+emberc.dis:	types.ei parse.ei check.ei com.ei xref.ei
 
 install:V:	all
 	mkdir -p $ROOT/dis/ember

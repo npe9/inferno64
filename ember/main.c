@@ -15,6 +15,7 @@
  *	-f	abort on fatal errors (debugging)
  *	-I	add a directory to the .ei interface search path
  *	-o	output .dis path (default: replace .e with .dis)
+ *	-X	print the file's declarations and uses (xref.c)
  */
 
 static	int	toterrors;
@@ -24,13 +25,14 @@ static	int	testmain;	/* -t: add an init that runs every test_ function */
 static	int	fmtsrc;		/* -F: print the source formatted */
 static	int	tokdump;
 static	int	dumpchecked;
+static	int	dumpxref;
 static	int	checkonly;
 static	char	*outarg;
 
 static void
 usage(void)
 {
-	fprint(2, "usage: ember [-A] [-C] [-T] [-F] [-c] [-i] [-t] [-D name] [-f] [-I path] [-o outfile] file.e\n");
+	fprint(2, "usage: ember [-A] [-C] [-X] [-T] [-F] [-c] [-i] [-t] [-D name] [-f] [-I path] [-o outfile] file.e\n");
 	exits("usage");
 }
 
@@ -184,6 +186,13 @@ translate(char *in)
 		Bterm(&bo);
 		return;
 	}
+	if(dumpxref){
+		/* -X: the names this file declares and every use of one */
+		Binit(&bo, 1, OWRITE);
+		xref(tree, &bo, emberfns(), emberfnc());
+		Bterm(&bo);
+		return;
+	}
 	if(dumpchecked){
 		/* -C: the tree after checking, every node with its type --
 		 * the oracle for the self-hosted checker */
@@ -244,6 +253,9 @@ main(int argc, char *argv[])
 		break;
 	case 'C':
 		dumpchecked = 1;
+		break;
+	case 'X':
+		dumpxref = 1;
 		break;
 	case 'c':
 		checkonly = 1;

@@ -689,6 +689,45 @@ keep its helpers private. `tests/gen/` holds sources with their expected
 output, checked by `tests/ifacegen.sh`.
 The self-hosted compiler has the same flag, `emberc -i`.
 
+## Cross-references for an editor
+
+`ember -X file.e` prints, for the file it is given, every name the
+file declares and every use of one, with positions and types:
+
+	decl 10:1 Level type Level
+	decl 29:1 name method fn(Level): string
+	in Level.name
+	decl 29:7 l arg Level
+	use 30:5 l 29:7 Level
+
+A `decl` line is `decl LINE:COL NAME KIND TYPE`, where the kind is
+one of `type`, `func`, `method`, `global`, `local`, `arg`, `const`,
+`field`, `tag` or `import`. A `use` line is `use LINE:COL NAME
+DECLLINE:DECLCOL TYPE`, naming the declaration the checker resolved
+the use to, which is what an editor needs for "go to definition" and
+for hover text. Positions are the line and the character within it,
+both counting from 1. Declarations come first in source order, then
+the uses, function body by function body, each body introduced by an
+`in NAME` line; a method's body is introduced by `in Type.name`.
+
+A declaration that came from an imported module reads
+`Module:LINE:COL`, since the line is a line of that module's
+interface file, not of this one. A generic function is reported both
+as its template (which has no type of its own, so it prints `nil`)
+and as each instantiation the file asks for, named `first[string]`.
+An interface type prints in the type column under the internal name
+the checker gives its structure, `ref .Named$s`; the declaration's
+own name is the one before it.
+The dump is of the checked tree, so what the checker rewrote is not
+there to see: a folded constant, a field access that has become
+address arithmetic, and the body of a closure, which is lifted into a
+function of its own before the dump runs, though the local it
+captures still shows as a use.
+
+`tests/xref.sh` checks the dump of every `tests/xref/*.e` against a
+recorded one and checks that the self-hosted compiler, `emberc -X`,
+prints the same thing.
+
 ## Interfaces and separate compilation
 
 An interface file may use the generic types: `map[K]V`, `ref
@@ -831,7 +870,8 @@ data structures and types code (`types.e`), constant folding
 (`check.e`), the code generator (`com.e`, lowering; `gen.e`,
 instruction assembly and the opcode tables; `disw.e`, the `.dis`
 writer) and the driver `emberc.e`, each with an interface, plus dump
-drivers `lexdump.e`, `astdump.e` and `chkdump.e`.
+drivers `lexdump.e`, `astdump.e` and `chkdump.e` and the
+cross-reference dumper `xref.e`.
 
     emu-g -r $ROOT -c0 /dis/ember/emberc.dis [-I dir] [-o out.dis] file.e
 
@@ -863,7 +903,8 @@ four C-versus-Ember comparisons (`lexcmp.sh`, `astcmp.sh`,
 `chkcmp.sh`, `discmp.sh`) and `bootstrap.sh`, which has the
 self-hosted compiler compile itself and that compiler compile the
 sources again, requiring identical bytes; then `ifacegen.sh` (the
-`-i` goldens) and `unittest.sh` (the `-t` unit tests). Last, `limbocmp.sh` runs
+`-i` goldens), `unittest.sh` (the `-t` unit tests) and `xref.sh` (the
+`-X` cross-reference goldens, in both compilers). Last, `limbocmp.sh` runs
 the Limbo commands translated into Ember in `limbo/` (`cat`, `freq`,
 `cmp`, `uniq`, `comm`, `sort`, `echo`, `seq`, `wc`, `tr`, `fmt`,
 `grep`, `tsort`, `strings`, `xargs`, `md5sum`, `uuencode`,

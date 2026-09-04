@@ -8,14 +8,16 @@ import check "check"
 import com "com"
 import fmt "emberfmt"
 import ifacegen "ifacegen"
+import xref "xref"
 
 // the self-hosted ember compiler's driver: parse, check, lower, write.
 //
-//	emberc [-F] [-i] [-t] [-I dir] [-o out.dis] file.e
+//	emberc [-F] [-i] [-t] [-X] [-I dir] [-o out.dis] file.e
 //
 // the built-in module directory is searched after every -I one.
 // -F prints the source formatted, -i its derived interface file, -t
-// compiles a unit test with a synthesized init (ember/main.c's).
+// compiles a unit test with a synthesized init (ember/main.c's), -X
+// the file's declarations and uses for an editor.
 
 const Oimport = types.Oimport
 const Ofndecl = types.Ofndecl
@@ -146,6 +148,7 @@ func init(ctxt ref draw.Context, argv list string) {
 	fmtsrc := 0
 	geniface := 0
 	testmain := 0
+	dumpxref := 0
 	l := argv
 	if l != nil {
 		l = tl(l)
@@ -173,11 +176,15 @@ func init(ctxt ref draw.Context, argv list string) {
 			testmain = 1
 			continue
 		}
+		if hd(l) == "-X" {
+			dumpxref = 1
+			continue
+		}
 		files = hd(l) :: files
 	}
 	check.addincpath("/ember/module")
 	if files == nil {
-		sys.fprint(sys.fildes(2), "usage: emberc [-F] [-i] [-t] [-I dir] [-o out.dis] file.e\n")
+		sys.fprint(sys.fildes(2), "usage: emberc [-F] [-i] [-t] [-X] [-I dir] [-o out.dis] file.e\n")
 		raise "fail:usage"
 	}
 	var r list string
@@ -191,6 +198,8 @@ func init(ctxt ref draw.Context, argv list string) {
 		com.usetypes(types)
 		com.usecheck(check)
 		ifacegen.usecheck(check)
+		xref.usetypes(types)
+		xref.usecheck(check)
 		if fmtsrc != 0 {
 			parse.setfmt()
 		}
@@ -212,6 +221,11 @@ func init(ctxt ref draw.Context, argv list string) {
 		}
 		if geniface != 0 {
 			ifacegen.ifacegen(tree, 1)
+			continue
+		}
+		if dumpxref != 0 {
+			// -X: the names this file declares and every use of one
+			xref.xref(tree, check.moduledecl(), check.fnlist(), check.nfnlist())
 			continue
 		}
 		out := outarg
