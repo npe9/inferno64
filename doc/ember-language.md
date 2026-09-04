@@ -728,6 +728,43 @@ captures still shows as a use.
 recorded one and checks that the self-hosted compiler, `emberc -X`,
 prints the same thing.
 
+## A language server
+
+`appl/ember/emberls.e` is a language server: it answers, over the
+Language Server Protocol, the questions that need a compiler --
+where a name is declared, what its type is, where else it is used,
+what a file declares, and what the compiler says about it. It
+implements `initialize`, `textDocument/didOpen`, `didChange`,
+`didSave`, `didClose`, `definition`, `hover`, `references`,
+`documentSymbol`, `shutdown` and `exit`, publishes diagnostics after
+every change, and answers anything else with a method-not-found
+error.
+
+Every request analyses the file afresh -- parse, check, dump -- with
+new instances of the compiler's modules, since they keep a
+compilation's state in their globals. The answers come from the `-X`
+cross-reference dump, read back through `xref.setout`, so the server
+knows exactly what the dump knows: a name whose declaration is in
+another module has no position to jump to (hover says `(from Sys)`
+instead), and a use of an imported module's member shares the
+position of the module name it is reached through. A file that stops
+compiling keeps the declarations it last had, so an editor's outline
+does not empty out on a typo.
+
+	emberls [-I dir] [file ...]
+
+With no files it reads messages from standard input, as a client
+would speak to it. With files it reads them from those instead, one
+scripted session per file, which is how `tests/ls.sh` drives it:
+`tests/ls/session.jsonl` holds one JSON-RPC message per line, the
+harness frames them with `Content-Length` headers, and the replies
+must match `tests/ls/session.out`. Under the emulator the file is
+the only transport that works, since the emulator's console is a
+keyboard: it echoes what it reads back to standard output and turns
+a carriage return into a newline (`emu/port/devcons.c`'s `kbdslave`,
+`emu/MacOSX/os.c`'s `readkbd`). Connecting an editor to it wants a
+socket; that is item 23 of `doc/ember-next-plan.md`.
+
 ## Interfaces and separate compilation
 
 An interface file may use the generic types: `map[K]V`, `ref
@@ -903,8 +940,9 @@ four C-versus-Ember comparisons (`lexcmp.sh`, `astcmp.sh`,
 `chkcmp.sh`, `discmp.sh`) and `bootstrap.sh`, which has the
 self-hosted compiler compile itself and that compiler compile the
 sources again, requiring identical bytes; then `ifacegen.sh` (the
-`-i` goldens), `unittest.sh` (the `-t` unit tests) and `xref.sh` (the
-`-X` cross-reference goldens, in both compilers). Last, `limbocmp.sh` runs
+`-i` goldens), `unittest.sh` (the `-t` unit tests), `xref.sh` (the
+`-X` cross-reference goldens, in both compilers) and `ls.sh` (the
+language server's scripted session). Last, `limbocmp.sh` runs
 the Limbo commands translated into Ember in `limbo/` (`cat`, `freq`,
 `cmp`, `uniq`, `comm`, `sort`, `echo`, `seq`, `wc`, `tr`, `fmt`,
 `grep`, `tsort`, `strings`, `xargs`, `md5sum`, `uuencode`,

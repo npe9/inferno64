@@ -10,6 +10,7 @@ TARG=\
 	json.dis\
 	jsonfmt.dis\
 	emberepl.dis\
+	emberls.dis\
 
 all:V:	$TARG
 
@@ -18,6 +19,7 @@ all:V:	$TARG
 
 jsonfmt.dis:	json.ei
 emberepl.dis:	replline.ei
+emberls.dis:	json.ei
 
 install:V:	all
 	mkdir -p $ROOT/dis/ember

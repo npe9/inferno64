@@ -52,4 +52,5 @@ test:V:	$O.out
 	./tests/selftools.sh
 	./tests/xref.sh
 	./tests/repl.sh
+	./tests/ls.sh
 	./tests/limbocmp.sh

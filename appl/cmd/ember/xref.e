@@ -20,6 +20,7 @@ import check "check"
 
 var impdecl ref types.Decl
 var seen list ref types.Decl
+var out ref sys.FD	// where the dump goes: standard output unless setout() says otherwise
 
 func usetypes(t Types) {
 	types = t
@@ -27,6 +28,12 @@ func usetypes(t Types) {
 
 func usecheck(c Check) {
 	check = c
+}
+
+// setout(fd): write the dump to fd rather than to standard output,
+// for a caller that wants to read it back (appl/ember/emberls.e)
+func setout(fd ref sys.FD) {
+	out = fd
 }
 
 func kindof(d ref types.Decl) string {
@@ -101,7 +108,7 @@ func xdecl(d ref types.Decl) {
 		}
 	}
 	seen = d :: seen
-	sys.print("decl %s %s %s %s\n", declat(d), d.sym, kindof(d), types.tprint(d.ty))
+	sys.fprint(out, "decl %s %s %s %s\n", declat(d), d.sym, kindof(d), types.tprint(d.ty))
 }
 
 func xwalk(n ref types.Node) {
@@ -116,9 +123,9 @@ func xwalk(n ref types.Node) {
 		}
 		xdecl(n.decl)
 		if n.decl.line > 0 {
-			sys.print("use %s %s %s %s\n", useat(n), n.sym, declat(n.decl), types.tprint(t))
+			sys.fprint(out, "use %s %s %s %s\n", useat(n), n.sym, declat(n.decl), types.tprint(t))
 		} else {
-			sys.print("use %s %s - %s\n", useat(n), n.sym, types.tprint(t))
+			sys.fprint(out, "use %s %s - %s\n", useat(n), n.sym, types.tprint(t))
 		}
 	}
 	xwalk(n.left)
@@ -129,6 +136,9 @@ func xwalk(n ref types.Node) {
 func xref(tree ref types.Node, moduledecl ref types.Decl, fns []ref types.Decl, nfns int) {
 	impdecl = moduledecl
 	seen = nil
+	if out == nil {
+		out = sys.fildes(1)
+	}
 	// the module's own declarations, in the order they were written
 	for p := tree.right; p != nil; p = p.right {
 		d := p
@@ -153,7 +163,7 @@ func xref(tree ref types.Node, moduledecl ref types.Decl, fns []ref types.Decl, 
 	for i := 0; i < nfns; i++ {
 		if fns[i].init != nil && fns[i].init.aux != nil && hidden(fns[i].sym) == 0 {
 			xdecl(fns[i])
-			sys.print("in %s\n", fnname(fns[i]))
+			sys.fprint(out, "in %s\n", fnname(fns[i]))
 			xwalk(fns[i].init.aux)
 		}
 	}
