@@ -159,3 +159,46 @@ single signer; phases 6–7 add privacy, revocation, and Go interop. The
 keystone is **Phase 1** — it is Vanadium naming, Upspin naming, and the
 browse half of search, all at once, so it is the thing to build first and
 share.
+
+## Implementation milestones (what's actually built)
+
+The phases above are the architecture; these are the shippable
+increments, each verified before the next. Implementation order differs
+from phase-dependency order on purpose: you cannot serve a taxonomy of
+packages before a package exists, so the local format + install come
+first, before the Phase 1 naming service.
+
+**M1 — Local format + install-by-mount. DONE.** `pkg(1)`
+(`appl/cmd/pkg.b`, `man/1/pkg`): `pack`, `info`, `install`, `list`,
+`remove`. A package is a tar of `pkg/manifest` (ndb attribute lines, so
+`registry(4)` can index it later) + `dis/`/`man/`/`lib/`. Install mounts
+the tar with `tarfs(4)` at `/mnt/pkg/<sha256>` and binds its `dis/` after
+`/dis`; commands then resolve by bare name. `list`/`remove` read the real
+mount state, not a side file. Verified end to end by `tests/pkglocal.sh`:
+a command is unresolvable before install, runs after install, and is
+unresolvable again after remove — both negative controls proving install
+and remove actually compose/decompose the namespace. The load-bearing
+assumption (a `bind` done by a command persists in the invoking shell's
+namespace) was confirmed empirically first.
+
+**M2 — Signing + verification.** Sign `manifest`+content-hash
+(ed25519/RSA via `keyring`/`factotum`); verify on install; a tampered
+archive or wrong key is rejected (negative control).
+
+**M3 — Naming service (Phase 1 keystone).** A Styx file server exposing
+`/pkg/<category>/<name>/<version>`, browsable by `ls`/`walk`, mountable
+over secured Styx; `pkg` resolves names against it. Factor the manifest
+parse out of `pkg.b` into `appl/lib/pkg.b` for reuse here.
+
+**M4 — Search.** A query index over manifest attributes via `registry(4)`
++ a synthetic search file; `pkg search`.
+
+**M5 — Trust (blessings).** Verify a publisher `v23` blessing chain
+against trusted roots in `factotum`.
+
+**M6 — Remote fetch.** Content-addressed blobs over `https(2)`/secured
+Styx; mirrors, verified by hash.
+
+**M7 — Publish.** `pkg publish` writes a signed entry + blob into the
+publisher's own DirServer subtree (the write side, `doc/package-
+management.md` §7).

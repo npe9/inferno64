@@ -1,0 +1,140 @@
+.TH PKG 1
+.SH NAME
+pkg \- namespace-native package manager
+.SH SYNOPSIS
+.B pkg pack
+.I stagedir
+.I out.tar
+.br
+.B pkg info
+.I pkg.tar
+.br
+.B pkg install
+.I pkg.tar
+.br
+.B pkg list
+.br
+.B pkg remove
+.I name
+.SH DESCRIPTION
+.I Pkg
+installs software packages by composing them into the name space rather
+than copying files into a shared tree.
+A package is a
+.IR tar (1)
+archive containing a
+.B pkg/manifest
+file and any of the
+.BR dis/ ,
+.B man/
+and
+.B lib/
+directories.
+The manifest is a set of
+.IR attribute " " value
+lines, one per line, in the
+.IR ndb (6)
+style; blank lines and lines beginning with
+.B #
+are ignored:
+.EX
+
+	name util/pkgdemo
+	version 1.0
+	category util
+	keywords demo date example
+	provides pkgdemo
+	description a demo package
+
+.EE
+.PP
+Installing a package does not unpack it or touch any shared directory.
+The archive is mounted read-only with
+.IR tarfs (4)
+at
+.BI /mnt/pkg/ id\fR,
+where
+.I id
+is the first 16 hex digits of the SHA-256 of the archive, and the
+package's
+.B dis/
+directory (and
+.BR man/ ,
+if present) is bound after the current contents of
+.B /dis
+(and
+.BR /man ).
+The package's commands then resolve by bare name.
+Because installation is a name-space operation it needs no special
+privilege, affects only the invoking name space, and is undone exactly by
+unbinding and unmounting.
+Each install is named by the content hash of its archive, so installing
+the same bytes twice is idempotent.
+.SS Commands
+.TP
+.B pack
+Build
+.I out.tar
+from
+.IR stagedir ,
+which must contain a
+.B pkg/manifest
+and whichever of
+.BR dis/ ,
+.BR man/ ,
+.B lib/
+apply.
+.TP
+.B info
+Print the content SHA-256 and the manifest of
+.I pkg.tar
+without installing it.
+.TP
+.B install
+Mount and bind
+.I pkg.tar
+into the name space as described above.
+.TP
+.B list
+List the installed packages \(em name, version and content id \(em read
+from the packages actually mounted under
+.BR /mnt/pkg .
+.TP
+.B remove
+Unbind and unmount every installed package whose manifest
+.B name
+is
+.IR name .
+.SH EXAMPLES
+Package, install, use and remove a tool:
+.EX
+
+	pkg pack stage util-pkgdemo.tar
+	pkg install util-pkgdemo.tar
+	pkgdemo
+	pkg list
+	pkg remove util/pkgdemo
+
+.EE
+.SH SOURCE
+.B /appl/cmd/pkg.b
+.SH SEE ALSO
+.IR tarfs (4),
+.IR tar (1),
+.IR bind (1),
+.IR ndb (6)
+.PP
+.B /doc/pkg-roadmap.md
+.SH BUGS
+This is milestone 1: local packages only.
+There is no signature or content verification yet, no
+.B /pkg
+naming service, and no
+.BR search ;
+those are later milestones.
+An installed package keeps a
+.IR tarfs (4)
+server process alive for as long as it is mounted.
+.SH HISTORY
+.B Pkg
+first appeared in Inferno-rio (2026).

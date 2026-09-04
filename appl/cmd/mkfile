@@ -188,6 +188,7 @@ TARG=\
 	playski.dis\
 	plumb.dis\
 	plumber.dis\
+	pkg.dis\
 	prof.dis\
 	ps.dis\
 	puttar.dis\
