@@ -134,6 +134,11 @@ main(void)
 		i2cinit();
 	}
 
+	{	/* SPI0 probe: read the JEDEC id of any attached serial flash */
+		extern void spiinit(void);
+		spiinit();
+	}
+
 	procinit();
 	links();
 	screeninit();

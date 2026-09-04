@@ -40,6 +40,7 @@
 #define	BCMPERIPH	((uintptr)0x3f000000)
 #define	IRQBASE		(BCMPERIPH + 0x00b200)	/* BCM2835 ARM IRQ controller */
 #define	I2C0		(BCMPERIPH + 0x205000)	/* BCM2835 BSC0 (i2c-bus.0) */
+#define	SPI0		(BCMPERIPH + 0x204000)	/* BCM2835 SPI0 */
 
 
 /* Mach struct above typical kernel image */

@@ -36,6 +36,7 @@ OBJ=\
 	fdt.$O\
 	stubs.$O\
 	i2cbcm.$O\
+	spibcm.$O\
 	$CONF.root.$O\
 	$IP\
 	$DEVS\
