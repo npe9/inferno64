@@ -19,6 +19,7 @@ enum {
 	Ospreymagic	= 0x4f53505259ULL,
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group, carried the same way */
+	Reqframe	= 20,	/* a network frame for the stack at this end, over the ring */
 	Reqsyscall	= 15,
 	ReqGone		= 12,
 	ReqReserve	= 14+2,	/* above 9P's 14 and syscall's 15: 16 is the list's ReqReserve, 17 ReqTick */
@@ -137,6 +138,7 @@ extern void pipfs_tick(void);
 extern void sched_tick(void);		/* p9sched.c: advance the cooperative clock */
 extern void runkprocs(void);		/* p9sched.c: run ready kprocs, then return */
 extern void ospreymediumpump(void);	/* ospreymedium.c: inject frames arrived over the ring */
+extern long ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer);	/* one frame off the ring into the stack */
 extern void p9kbdnotify(void);		/* p9kbd.c: hand an IRQ1 notification to the driver kproc */
 static int reclaims, ticks;
 
@@ -233,6 +235,11 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		tlen = req.arg[3];
 		roff = req.arg[4];
 		rn = pipfs_serve(cdata + toff, (long)tlen, cdata + roff, 4096);
+		rep.arg[0] = (uvlong)rn;
+	} else if(req.op == Reqframe){
+		toff = req.arg[2];
+		tlen = req.arg[3];
+		rn = ospreymediumreceive(cdata + toff, (long)tlen, req.container);
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == Reqsyscall){
 		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */

@@ -682,6 +682,27 @@ p9paircli(void)
 				print("p9: pair-client: wait: no answer\n");
 		}
 	}
+	/*
+	 * The device-carried medium: put a network frame on the ring to the
+	 * server container, where it is injected into the stack at that end.
+	 * This is the osprey medium with its two ends in two containers, in
+	 * the direction the request ring runs; the frame crosses the ring the
+	 * kernel only routes, the way the plan's second machine would send it.
+	 */
+	{
+		extern long ring9p_frame(uchar*, long);
+		uchar frame[64];
+		int i;
+		long fn;
+
+		for(i = 0; i < (int)sizeof frame; i++)
+			frame[i] = 0xff;	/* a frame the peer will see arrive and count */
+		fn = ring9p_frame(frame, sizeof frame);
+		if(fn == (long)sizeof frame)
+			print("p9: pair-client: sent a %d-byte frame to the server container over the ring - the device-carried medium\n", (int)sizeof frame);
+		else
+			print("p9: pair-client: frame over the ring failed (%ld)\n", fn);
+	}
 	poperror();
 }
 

@@ -169,6 +169,9 @@ def main():
          and 'the name space did not cross' not in t),
         ("and the parent reaps it: wait() returns the forked child's pid - the fork's other end, the kernel answering await for the container it made",
          re.search(r'legacy: I awaited and reaped my forked child; its wait message: "\d+ ', t) is not None),
+        ("the device-carried medium: the client puts a frame on the osprey ring to the server container, and the server injects it into the stack at its end - the medium's two ends as two containers, the kernel only routing the frame",
+         'p9: pair-client: sent a 64-byte frame to the server container over the ring - the device-carried medium' in t
+         and re.search(r'osprey medium: a 64-byte frame arrived over the ring from container \d+, into the stack at this end', t) is not None),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

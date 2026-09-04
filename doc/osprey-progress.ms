@@ -1188,15 +1188,36 @@ stack B connects across the medium, the two
 .CW tcp.c
 handshake and accept, and a byte stream crosses each way \- fifty-four
 bytes one way, forty the other, each read back verbatim, full duplex,
-checked in the p9pair boot.  What remains of item 7a is the device-carried
-two-container form: the medium's two ends are two
-.CW Fs
-in one personality sharing a pair of queues today, and a real second
-machine would put the frame on an osprey ring to a peer container and
-drain the ring the peer wrote, from a new
-.CW oselect
-arm \- the osprey device carrying the frames it already carries requests
-on.
+checked in the p9pair boot.
+The device-carried two-container form is now begun, in the one direction
+the request ring runs.  A frame put on the ring to the peer container
+crosses it and is injected into the stack at the far end:
+.CW ring9p_frame
+in
+.CW ring9p.c
+stages the frame in the client's data area and sends it as a
+.CW Reqframe
+request, the server loop answers that op by handing the frame to
+.CW ospreymediumreceive
+.CW ( ospreymedium.c ),
+which injects it into its own osprey interface with
+.CW ipiput4
+exactly as the pump injects a locally-queued frame - so from the stack's
+side a frame from the peer container is a frame like any other, and the
+kernel only routed it.  The p9pair boot sends a 64-byte frame from the
+client container to the server's stack and the server prints its arrival.
+What is left is the other direction: the request ring runs client to
+server, so a frame from the server back to the client has no channel yet
+(the reply carries only the count taken); the symmetric form would
+piggyback the peer's outbound frames on the reply, or give the medium a
+ring of its own, and would let two whole stacks in two containers run a
+.CW tcp.c
+conversation over the wire the kernel routes.  The frame today is a
+synthetic one, not yet a stack's own output; wiring the medium's
+.CW bwrite
+to
+.CW ring9p_frame
+for a cross-container peer is the step that makes it a stack's traffic.
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

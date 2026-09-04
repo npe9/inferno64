@@ -7,3 +7,4 @@
  */
 int	ring9p_init(void);			/* map this container's ring; 0 ok, -1 no */
 long	ring9p_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax);	/* one 9P T/R exchange */
+long	ring9p_frame(uchar *frame, long n);	/* a network frame to the peer container's stack */

@@ -126,6 +126,47 @@ ospreymediumpump(void)
 	}
 }
 
+/*
+ * A frame that arrived over the osprey ring from a peer container, for
+ * the stack at this end: the device-carried form of the medium, where
+ * the two ends are two containers and the ring carries the frame between
+ * them.  It is injected into this container's osprey interface exactly as
+ * a locally-queued frame is by the pump, so from the stack's point of
+ * view a frame from the peer container is indistinguishable from one a
+ * paired interface wrote.  Returns the count taken.  Called from the
+ * server loop when a Reqframe request arrives on the ring.
+ */
+long
+ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer)
+{
+	Osrock *er;
+	Block *bp;
+
+	er = allos;			/* this container's osprey interface */
+	if(er == nil || n <= 0)
+		return -1;
+	print("osprey medium: a %ld-byte frame arrived over the ring from container %llud, into the stack at this end - the device-carried medium\n",
+		n, fromcontainer);
+	bp = allocb(n);
+	if(bp == nil)
+		return -1;
+	memmove(bp->wp, frame, n);
+	bp->wp += n;
+	rlock(er->ifc);
+	if(waserror()){
+		runlock(er->ifc);
+		return n;
+	}
+	er->ifc->in++;
+	if(er->ifc->lifc == nil)
+		freeb(bp);
+	else
+		ipiput4(er->f, er->ifc, bp);
+	runlock(er->ifc);
+	poperror();
+	return n;
+}
+
 Medium ospreymedium =
 {
 .hsize=		0,

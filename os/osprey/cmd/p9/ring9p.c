@@ -21,6 +21,8 @@ enum {
 	ReqOpen		= 2,
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group to the server personality, the same way */
+	Reqframe	= 20,	/* a network frame to the peer container's stack, over the ring */
+	Maxframe	= 512,	/* a frame fits between T and R in the small data area */
 	ReqWait		= 4,
 	ReqExec		= 13,
 	Execnameoff	= 3072,	/* where exec's name goes in the data area, clear of 9P */
@@ -159,6 +161,29 @@ ringpip_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 	if(rmax > 4096)
 		rmax = 4096;		/* R sits at 1024 in a data area of two pages */
 	return ringxfer(ReqPip, tmsg, tn, rbuf, rmax);
+}
+
+/*
+ * A network frame to the peer container over the ring: the frame goes in
+ * our data area and the server drains it into the stack at its end, the
+ * device-carrying form of the osprey medium.  Returns the count the peer
+ * took, or -1.  This is the medium's two ends as two containers, in the
+ * one direction the request ring runs (client to server); the reply
+ * carries nothing back yet.
+ */
+long
+ring9p_frame(uchar *frame, long n)
+{
+	uchar rbuf[Maxframe];
+
+	/*
+	 * ringxfer caps its return at the reply buffer, and the frame reply
+	 * carries only the count the peer took, so the buffer must be as big
+	 * as the frame for that count to come back whole.
+	 */
+	if(n > Maxframe)
+		return -1;
+	return ringxfer(Reqframe, frame, n, rbuf, n);
 }
 
 /*
