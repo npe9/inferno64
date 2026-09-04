@@ -48,6 +48,15 @@ then put those in the plan and continue.
   weeks. When output is wrong in a way the source cannot explain,
   remove the library archive and its objects and rebuild, then
   relink `emu` (`mk install CONF=emu-g` in `emu/MacOSX`).
+- A harness that runs `emu` must start with `exec </dev/null`: the
+  emulator reads its console from standard input, which under
+  `mk test` is the recipe itself, so it eats the remaining lines and
+  echoes them into whatever the harness captured. The symptom is a
+  failure that only happens under `mk test` and passes standalone.
+- A `limbocmp` case that ends before reading its input must not
+  redirect a file into standard input: the emulator echoes a console
+  nobody read, and where that echo lands among the program's own
+  output is a matter of timing, so the case fails at random.
 - Never run two `limbocmp.sh` at once: both build into
   `tmp/limbocmp`, so they delete each other's `.dis` files and report
   differences that are not there. One run at a time, and let it

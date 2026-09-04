@@ -10,6 +10,10 @@ if [ -z "$EMU" ] || [ ! -f "$ROOT/dis/ember/emberepl.dis" ]; then
 	echo "repl.sh: needs emu-g and dis/ember/emberepl.dis (mk install in appl/ember), skipping" >&2
 	exit 0
 fi
+# the emulator reads its console from stdin: under mk that is the
+# recipe itself, which it would eat (runtime.sh's own note)
+exec </dev/null
+
 pass=0
 fail=0
 for f in tests/repl/*.e; do

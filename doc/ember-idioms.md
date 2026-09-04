@@ -158,6 +158,13 @@ changing how the loop reads. Eight commands there mention sorting
 A callback is a method value where Limbo needs a free function and
 the receiver passed alongside it: `w.write` rather than `wwrite(w, s)`.
 
+`ember/limbo/bytes.e` is a plain translation rather than an idiomatic
+rewrite -- `appl/cmd/bytes.b` line for line, debug prints and all, so
+the differential can check it -- and the only changes the language
+forced were `len(x)` and `hd(l)`/`tl(l)` written as calls, `0x` for
+`16r`, `copy(dst, src)` for a slice assignment, and `match` with
+comma-separated and `...` case labels for Limbo's `or` and `to`.
+
 `ember/limbo/sort2.e` is the first of these written out: `sort.b`'s
 two hand-written merge sorts (25 lines each, one for text and one
 for numbers) become the builtin `sort` with a comparison closure, the

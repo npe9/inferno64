@@ -9,6 +9,10 @@ if [ -z "$EMU" ] || [ ! -f "$ROOT/dis/ember/emberc.dis" ]; then
 	echo "selftools.sh: needs emu-g and dis/ember/emberc.dis (mk install in appl/cmd/ember), skipping" >&2
 	exit 0
 fi
+# the emulator reads its console from stdin: under mk that is the
+# recipe itself, which it would eat (runtime.sh's own note)
+exec </dev/null
+
 pass=0
 fail=0
 for f in tests/gen/*.e; do

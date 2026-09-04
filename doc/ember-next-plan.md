@@ -382,3 +382,19 @@ REPL had ever compiled twice in one process.
 What is left of item 8 is a language server, which wants the checker
 to report positions and types for a file without generating code --
 the `-c` path already does the work, so it is mostly a protocol.
+
+## 21. Another translation: bytes
+
+`ember/limbo/bytes.e` translates `appl/cmd/bytes.b` (212 lines) line
+for line, with its own debug prints kept so the differential can hold
+the two to the same output; ten cases in `bytes.cases` cover the
+range, the replacement, the escapes and the error paths, and all ten
+matched by hand before they went in -- with one rule learned the hard
+way: a case whose program ends before reading its input must not
+redirect a file into standard input, since the emulator echoes a
+console nobody read and where that echo lands among the program's own
+output is a matter of timing. Nothing in it needed a language
+change, which is the first translation in a while that found nothing:
+`len(x)`, `hd(l)`, `tl(l)` as calls, `0x` for `16r`, `copy` for a
+slice assignment, and `match` labels for `or` and `to` were the only
+edits.
