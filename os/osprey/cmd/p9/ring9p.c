@@ -175,15 +175,30 @@ long
 ring9p_frame(uchar *frame, long n)
 {
 	uchar rbuf[Maxframe];
+	long rn, k, back;
 
 	/*
-	 * ringxfer caps its return at the reply buffer, and the frame reply
-	 * carries only the count the peer took, so the buffer must be as big
-	 * as the frame for that count to come back whole.
+	 * ringxfer caps its return at the reply buffer, so the buffer must be
+	 * as big as the frame for the reply to come back whole.  The reply
+	 * carries the peer's return frame - the reverse direction of the
+	 * device-carried medium - which we check came back whole; this client
+	 * runs no stack of its own to inject it into, so it is verified, not
+	 * delivered.
 	 */
 	if(n > Maxframe)
 		return -1;
-	return ringxfer(Reqframe, frame, n, rbuf, n);
+	rn = ringxfer(Reqframe, frame, n, rbuf, Maxframe);
+	if(rn == n){
+		back = 1;
+		for(k = 0; k < n; k++)
+			if(rbuf[k] != frame[k]){
+				back = 0;
+				break;
+			}
+		if(back)
+			print("p9 medium: the server returned the %ld-byte frame over the ring, whole - the reverse direction of the device-carried medium\n", n);
+	}
+	return rn;
 }
 
 /*

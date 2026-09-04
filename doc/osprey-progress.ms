@@ -1206,18 +1206,21 @@ exactly as the pump injects a locally-queued frame - so from the stack's
 side a frame from the peer container is a frame like any other, and the
 kernel only routed it.  The p9pair boot sends a 64-byte frame from the
 client container to the server's stack and the server prints its arrival.
-What is left is the other direction: the request ring runs client to
-server, so a frame from the server back to the client has no channel yet
-(the reply carries only the count taken); the symmetric form would
-piggyback the peer's outbound frames on the reply, or give the medium a
-ring of its own, and would let two whole stacks in two containers run a
-.CW tcp.c
-conversation over the wire the kernel routes.  The frame today is a
-synthetic one, not yet a stack's own output; wiring the medium's
+The reverse direction rides the same request's reply: the server returns
+a frame on the reply and the client sees it come back whole, so a frame
+crosses the ring both ways between the two containers - the channel a
+symmetric medium needs, where a real one would carry each stack's own
+outbound frames rather than return the sender's.  The client here runs no
+stack of its own, so the returned frame is verified, not injected.
+What is left to make this the talk's second machine is a stack's traffic
+rather than a synthetic frame: wiring the medium's
 .CW bwrite
 to
 .CW ring9p_frame
-for a cross-container peer is the step that makes it a stack's traffic.
+for a cross-container peer, and giving the client container its own stack,
+so two whole stacks in two containers run a
+.CW tcp.c
+conversation over the wire the kernel routes.
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

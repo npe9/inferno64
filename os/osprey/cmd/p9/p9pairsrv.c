@@ -239,7 +239,18 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	} else if(req.op == Reqframe){
 		toff = req.arg[2];
 		tlen = req.arg[3];
+		roff = req.arg[4];
 		rn = ospreymediumreceive(cdata + toff, (long)tlen, req.container);
+		/*
+		 * The reverse direction: the reply carries a frame back to the
+		 * peer.  A real medium would put the stack's own outbound frames
+		 * here; this returns the frame just received, so the round trip
+		 * over the ring - out one container and back into the other - is
+		 * exercised end to end.  The peer injects it at its end.
+		 */
+		if(rn > 0)
+			for(i = 0; i < rn; i++)
+				cdata[roff + i] = cdata[toff + i];
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == Reqsyscall){
 		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */
