@@ -10,6 +10,39 @@ corrupts SD writes under load.  Read
 .CW doc/inferno-driver-plan.ms
 first for how the board got here.
 .NH 1
+Where it stands now
+.PP
+The root turned out to be atomics, not the SD driver.  The kernel's
+spinlock primitive
+.CW _tas
+is an
+.CW LDXRW / STXRW
+exclusive pair, and the board ran with the MMU off, which on AArch64
+makes all of RAM Device-nGnRnE - memory the architecture leaves the
+exclusive monitor UNPREDICTABLE on.  So every lock ran on unsound memory,
+surviving only because QEMU's monitor emulation is lenient and no
+interrupt had ever landed inside an LL/SC (the timer never fired).  Two
+fixes are now committed: an identity MMU that gives RAM Normal write-back
+inner-shareable (raspi3b/mmu.c, on by default), and a
+.CW CLREX
+on exception entry so an interrupted
+.CW _tas
+retries as the architecture requires (l.s vectrap).  Together they take
+the tick-time write stress from failing every run to passing roughly
+seven of eight, and the failure changed shape from a wild store
+corrupting data to a lock loop (a spinlock stuck) or an occasional
+register-corruption fault.  What remains is a QEMU-TCG residual: even on
+Normal memory and with CLREX, a timer IRQ taken inside an LL/SC still
+occasionally leaves a lock stuck or drops a register - visible with the
+tick on and a no-op
+.CW clockintr ,
+so it is the exclusive/interrupt path itself, not a driver or a scheduler
+callee.  The tick therefore stays off by default; closing that residual
+(or confirming it is a QEMU limitation and masking the LL/SC window with
+.CW splhi )
+is the last step before the tick, and a kfs, can land.  The rest of this
+document is the investigation that got here, kept as evidence.
+.NH 1
 The bug
 .PP
 With the generic-timer tick enabled, a heavy stream of block I/O through
