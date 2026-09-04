@@ -19,6 +19,11 @@ Secstore: module
 	putfile:	fn(conn: ref Dial->Connection, filename: string, data: array of byte): int;
 	bye:		fn(conn: ref Dial->Connection);
 
+	# server side (secstored): the stored verifier for a user, and the
+	# server half of the PAK exchange.
+	mkverifier:	fn(user: string, pass: string): string;
+	pakserver:	fn(conn: ref Dial->Connection, C, hexm, hexH, servername: string): string;
+
 	mkfilekey:	fn(pass: string): array of byte;
 	decrypt:	fn(a: array of byte, key: array of byte): array of byte;
 	encrypt:	fn(a: array of byte, key: array of byte): array of byte;

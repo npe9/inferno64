@@ -1,0 +1,94 @@
+.TH SECSTORED 8
+.SH NAME
+secstored \- secure store server
+.SH SYNOPSIS
+.B auth/secstored
+.B -d
+.I storedir
+[
+.B -a
+.I announce
+] [
+.B -n
+.I name
+]
+.br
+.B auth/secstored
+.B -d
+.I storedir
+.B -c
+.I user
+.SH DESCRIPTION
+.I Secstored
+is the server for
+.IR secstore (1):
+it holds each user's files and serves them over a
+.IR secstore (2)
+connection \(em a PAK-authenticated, encrypted channel in which the
+server never learns the user's password, only a verifier.
+The tree previously shipped only the client; this is the matching server,
+so you can run your own secstore and so
+.IR factotum (4)
+.B -S
+has something to fetch from.
+.PP
+Storage lives under
+.IR storedir :
+each user has a directory
+.IB storedir / user
+holding their files, and a verifier
+.IB storedir / user /.pak.
+Files are stored exactly as the client uploads them \(em already
+encrypted client-side \(em so the server holds no plaintext.
+.SS Options
+.TP
+.B -d
+.I storedir
+The store directory (required).
+.TP
+.B -a
+.I announce
+The address to serve, default
+.BR tcp!*!secstore .
+.TP
+.B -n
+.I name
+The server name reported to clients, default
+.BR secstore .
+.TP
+.B -c
+.I user
+Create an account: prompt for a new password and write its verifier,
+then exit. Do this once per user before serving.
+.SH EXAMPLE
+.EX
+
+	auth/secstored -d /adm/secstore -c ann
+	auth/secstored -d /adm/secstore -a 'tcp!*!5356' &
+
+.EE
+Then, from a client, seed factotum from it:
+.EX
+
+	auth/factotum -S ann@tcp!server!5356
+
+.EE
+.SH SOURCE
+.B /appl/cmd/auth/secstored.b
+.SH SEE ALSO
+.IR secstore (1),
+.IR secstore (2),
+.IR factotum (4)
+.SH BUGS
+The encrypted channel uses the
+.IR ssl (3)
+device, which in the hosted
+.I emu
+does not currently operate over a network socket (it fails with
+.BR "fdtochan failed" ,
+affecting the
+.IR secstore (1)
+client too); so end-to-end use needs native Inferno or a fixed
+.IR ssl (3).
+The PAK exchange itself is complete and interoperates with the client's.
+No third-party-caveat, STA/SecurID, or account-removal support.

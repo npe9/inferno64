@@ -24,6 +24,7 @@ TARG=\
 	ssh2rsa.dis\
 	ssh2rsatest.dis\
 	secstore.dis\
+	secstored.dis\
 	signer.dis\
 	verify.dis\
 

@@ -518,3 +518,58 @@ ex(tag: string, s: string): string
 		return nil;
 	return s[len tag:];
 }
+
+# the verifier a server stores for a user: H = longhash(...), as hex. The
+# server never holds the password, only this (expensive-to-invert) value.
+mkverifier(user: string, pass: string): string
+{
+	pwhash := mkseckey(pass);
+	(nil, H, nil) := PAK_Hi(user, pwhash);
+	erasekey(pwhash);
+	return H.iptostr(64);
+}
+
+# server side of PAK: the client has sent C and m=g**x H; hexH is the
+# stored verifier for C, S is this server's name. Completes the exchange,
+# sets the session secret on conn, and turns on the cipher. Returns nil on
+# success, else an error (having told the client via writerr).
+pakserver(conn: ref Dial->Connection, C, hexm, hexH, S: string): string
+{
+	dfd := conn.dfd;
+	m := IPint.strtoip(hexm, 64);
+	H := IPint.strtoip(hexH, 64);
+	if(m == nil || H == nil){
+		writerr(dfd, "bad m or verifier");
+		return "bad m or verifier";
+	}
+	Hi := H.invert(pak.p);
+	hexHi := Hi.iptostr(64);
+	gx := mod(m.mul(Hi), pak.p);			# g**x = m H**-1
+	y := mod(IPint.random(240, 240), pak.q);
+	if(y.eq(IPint.inttoip(0)))
+		y = IPint.inttoip(1);
+	mu := pak.g.expmod(y, pak.p);			# g**y
+	hexmu := mu.iptostr(64);
+	sigma := gx.expmod(y, pak.p);			# g**xy
+	hexsigma := sigma.iptostr(64);
+	ks := base64->enc(shorthash("server", C, S, hexm, hexmu, hexsigma, hexHi));
+	if(sys->fprint(dfd, "mu=%s\nk=%s\nS=%s\n", hexmu, ks, S) < 0)
+		return "write mu";
+	s := readstr(dfd);
+	kc := ex("k'=", s);
+	expect := base64->enc(shorthash("client", C, S, hexm, hexmu, hexsigma, hexHi));
+	if(kc == nil || kc != expect){
+		writerr(dfd, "verifier didn't match");
+		return "client verifier mismatch";
+	}
+	digest := shorthash("session", C, S, hexm, hexmu, hexsigma, hexHi);
+	for(i := 0; i < len hexsigma; i++)
+		hexsigma[i] = 0;
+	err := setsecret(conn, digest, 1);		# 1 = server direction
+	erasekey(digest);
+	if(err != nil)
+		return err;
+	if(sys->fprint(conn.cfd, "alg sha1 rc4_128") < 0)
+		return "set alg";
+	return nil;
+}
