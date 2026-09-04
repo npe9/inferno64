@@ -160,9 +160,10 @@ def main():
         ("rfork(RFPROC) forks the legacy container: the kernel makes a copy-on-write child, the parent gets its id",
          re.search(r'legacy: rfork\(RFPROC\) forked a child, id \d+; I am the parent', t) is not None
          and re.search(r'osprey fork: container \d+ forked container \d+', t) is not None),
-        ("the forked child is a separate flow of control: rfork returned 0 to it and it runs its own line and exits",
-         'legacy: I am the forked child; rfork(RFPROC) returned 0 to me alone' in t
-         and 'legacy: rfork(RFPROC) failed' not in t),
+        ("the forked child is a separate flow of control and inherits the parent's open files: it reads the file the parent opened, through the descriptor the fork had the buddy clone",
+         re.search(r'legacy: I am the forked child; rfork\(RFPROC\) returned 0 to me, and I read the inherited fd: "\S', t) is not None
+         and 'legacy: rfork(RFPROC) failed' not in t
+         and 'could not read the inherited fd' not in t),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

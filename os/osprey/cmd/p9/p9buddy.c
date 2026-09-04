@@ -59,6 +59,7 @@ enum {
 	EXEC	= 100,
 	PAGE	= 101,
 	MAPPAGE	= 102,		/* a page of a file the process mapped */
+	FORKFDS	= 103,		/* clone this container's descriptor table into a0's, at fork */
 	Nfd	= 16,		/* descriptors a legacy process may hold */
 	Fdcons	= -2,		/* 0, 1 and 2: the console, which this personality has no file for */
 	Maxph	= 8,		/* loadable program headers kept */
@@ -427,6 +428,30 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		/* the image's page at a0, to cdata[Dataoff] */
 		r = p9buddy_page(container, a0, cdata + Dataoff);
 		break;
+
+	case FORKFDS:
+	{
+		/* fork: clone this container's descriptor table into a0's (the
+		 * child's).  Each real descriptor is dup'd, so parent and child
+		 * hold their own and each closes its own on exit; the console
+		 * sentinels (Fdcons) and empty slots are copied as they are. */
+		Img *cimg;
+		int k;
+
+		cimg = imgof(a0, 1);
+		if(cimg == nil){
+			r = -1;
+			break;
+		}
+		for(k = 0; k < Nfd; k++){
+			if(img->fds[k] >= 0)
+				cimg->fds[k] = p9dup(img->fds[k]);
+			else
+				cimg->fds[k] = img->fds[k];
+		}
+		r = 0;
+		break;
+	}
 
 	case OPEN:
 		/* open(name, mode): name at cdata[Nameoff], mode a1; the process's own number back */

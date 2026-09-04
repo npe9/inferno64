@@ -2353,7 +2353,7 @@ enum {
 	 * page of that image, which is how a page fault is answered by the
 	 * buddy and not the kernel.  Numbered above any Plan 9 system call.
 	 */
-	Bexec = 100, Bpage = 101, Bmappage = 102,
+	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103,
 	Bargoff = 64, Bnameoff = 256, Bdataoff = 1024,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
@@ -3096,6 +3096,25 @@ ospreyexecproc(void *a)
 }
 
 /*
+ * Ask the buddy to clone the descriptor table of the parent container
+ * into the child's, staged the same way ospreybuddypage stages a page
+ * request.  Best effort; returns the buddy's status.
+ */
+static int
+ospreyforkfds(Ospreyproc *parent, uvlong childid)
+{
+	uvlong *ab;
+
+	if(parent == nil || ospreyserverof(parent) == nil)
+		return -1;
+	ab = (uvlong*)ospreydata(parent, Bargoff, 4*sizeof(uvlong));
+	if(ab == nil)
+		return -1;
+	ab[0] = Bforkfds; ab[1] = childid; ab[2] = 0; ab[3] = 0;
+	return ospreybuddycall(parent, 400);
+}
+
+/*
  * rfork(RFPROC): fork a legacy container.  This is item 6 of the plan -
  * the process-making half of rfork, which the buddy cannot do because a
  * container is the kernel's to make, not the file server's.  Both forms
@@ -3174,6 +3193,13 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 		ospreyexit(c);
 		return -1;
 	}
+
+	/*
+	 * Ask the buddy to clone the parent's descriptor table into the child's
+	 * container, so the child inherits its open files (best effort: if the
+	 * buddy refuses, the child keeps the default console descriptors).
+	 */
+	ospreyforkfds(parent, ospreyid(c));
 
 	qlock(&up->debug);
 	qlock(&p->debug);

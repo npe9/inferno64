@@ -366,9 +366,23 @@ no image for and could not page; a data segment the buddy pages has no
 so for the copy it is dupped as anonymous memory
 .CW ( SG_BSS ),
 its pages all resident from the prefault.
-What the child does not inherit is the buddy-side descriptor table (it
-starts with the buddy's default console fds), which is the file server's
-to clone \- the next step.
+The child inherits the parent's open files: the kernel asks the buddy, at
+the fork, to clone the parent container's descriptor table into the
+child's
+.CW ( Bforkfds
+in
+.CW devosprey.c ,
+.CW FORKFDS
+in
+.CW p9buddy.c ),
+dup'ing each real descriptor with
+.CW p9dup
+so each side holds its own and closes its own on exit, and copying the
+console sentinels as they are.
+The test proves it: the parent opens a file, forks, and the child reads
+that file back through the inherited descriptor.
+So item 6 is whole \- both fork forms, and the child a full copy of the
+parent down to its open files.
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an

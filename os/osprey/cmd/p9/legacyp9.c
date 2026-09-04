@@ -170,18 +170,30 @@ startboot(char *argv0, char **argv)
 	 * container: a private address space (text shared, data and bss copied
 	 * copy-on-write, its own stack), entered at this same point.  rfork
 	 * returns 0 in the child and the child's id in the parent, so the two
-	 * are separate flows of control.  The child prints its own line and
-	 * exits; the parent goes on to the note test.
+	 * are separate flows of control.  The parent opens a file first; the
+	 * child inherits the descriptor (the kernel has the buddy clone the
+	 * container's descriptor table at the fork) and reads through it, which
+	 * proves the fork carried the open files.  The child then exits; the
+	 * parent goes on to the note test.
 	 */
 	{
+		int ffd = open("/n/hello", OREAD);
 		int pid = rfork(RFPROC);
 		if(pid == 0){
-			print("legacy: I am the forked child; rfork(RFPROC) returned 0 to me alone\n");
+			char cbuf[128];
+			long cn = ffd >= 0 ? read(ffd, cbuf, sizeof cbuf - 1) : -1;
+			if(cn > 0){
+				cbuf[cn] = 0;
+				print("legacy: I am the forked child; rfork(RFPROC) returned 0 to me, and I read the inherited fd: \"%s\"\n", cbuf);
+			} else
+				print("legacy: I am the forked child, but could not read the inherited fd\n");
 			exits("forked child");
 		} else if(pid < 0)
 			print("legacy: rfork(RFPROC) failed\n");
 		else
 			print("legacy: rfork(RFPROC) forked a child, id %d; I am the parent\n", pid);
+		if(ffd >= 0)
+			close(ffd);
 	}
 
 	/*
