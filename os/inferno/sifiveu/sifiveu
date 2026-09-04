@@ -26,6 +26,7 @@ dev
 	ssl
 	cap
 	kprof
+	sd
 	ether		netif
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 

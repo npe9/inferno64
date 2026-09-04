@@ -70,6 +70,32 @@ ipcheck()
 	sys->print("DHCP-OK\n");
 }
 
+# Read blocks off the SD card exposed by devsd (#S) as /dev/sdM0/data,
+# to prove the SD-over-SPI block device works through the file interface.
+# Boot with -sd <image> whose block 0 and block 1 carry known markers.
+sdcheck()
+{
+	fd := sys->open("/dev/sdM0/data", Sys->OREAD);
+	if(fd == nil){
+		sys->print("SD-NONE (no /dev/sdM0/data: %r)\n");
+		return;
+	}
+	buf := array[512] of byte;
+	if(sys->pread(fd, buf, len buf, big 0) != len buf){
+		sys->print("SD-FAIL block0: %r\n");
+		return;
+	}
+	sys->print("SD block0 %02x%02x%02x%02x\n",
+		int buf[0], int buf[1], int buf[2], int buf[3]);
+	if(sys->pread(fd, buf, len buf, big 512) != len buf){
+		sys->print("SD-FAIL block1: %r\n");
+		return;
+	}
+	sys->print("SD block1 %02x%02x%02x%02x\n",
+		int buf[0], int buf[1], int buf[2], int buf[3]);
+	sys->print("SD-OK\n");
+}
+
 init()
 {
 	shell: Shell;
@@ -84,6 +110,9 @@ init()
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 
 	sys->print("SIFIVEU-OK\n");
+
+	sys->bind("#S", "/dev", sys->MAFTER);
+	sdcheck();
 
 	ipcheck();
 

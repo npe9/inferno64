@@ -1,29 +1,26 @@
 /*
- * SD card over the SiFive SPI controller (QEMU sifive_u SPI2 at
- * 0x10050000, an ssi-sd + sd-card-spi behind it).  The card's
- * chip-select is cs_lines[0] of this very controller (sifive_u.c wires
- * sd_cs to SPI2 sysbus irq line 1), driven by CSMODE exactly as the NOR
- * flash's CS is on SPI0 - it was never a GPIO-controller pin.  So the
- * transport is the same full-duplex FIFO the flash uses; only the SD
- * protocol on top is new.
+ * SD/MMC card over the SiFive SPI controller as an Inferno storage
+ * device.  QEMU's sifive_u wires an ssi-sd + sd-card-spi behind SPI2
+ * (0x10050000, this tree's mem.h SPI1); the card's chip-select is
+ * cs_lines[0] of that controller, driven by CSMODE just like the NOR
+ * flash on SPI0 - it was never a GPIO-controller pin.
  *
- * QEMU's ssi-sd + sd.c state machine, read from hw/sd/ssi-sd.c and
- * hw/sd/sd.c, pins the exact sequence:
- *  - A command is one byte (0x40|cmd), four big-endian argument bytes
- *    and a CRC byte (value ignored, presence required); the command
- *    fires on the sixth byte and the R1 response (bit7 = 0) follows a
- *    couple of dummy clocks later.
- *  - CS is gated at the SSI layer (cs_polarity LOW), so bytes clocked
- *    with CS deasserted never reach the card - the 74-clock wake-up is
- *    inert; assert CS (CSMODE=HOLD) for the whole session instead.
- *  - After CMD0/CMD8/ACMD41 the card sits in *ready* state, but CMD17
- *    demands *transfer* state, and SPI mode has no CMD2/3/7 to advance.
- *    sd.c bridges this in spi_cmd_SEND_CxD: reading the CSD (CMD9) - a
- *    normal part of real SD init anyway - transitions the card to
- *    transfer state.  So the order is CMD0, CMD8, ACMD41, CMD58, CMD9,
- *    then CMD17.
- *  - A data phase is a 0xfe start token, the payload, and a two-byte
- *    CRC (unverified).
+ * This plugs into devsd (SDifc) with a block-I/O bio callback, so devsd
+ * exposes the card as /dev/sdM0/data spanning the whole card.  online()
+ * runs the SD-SPI init handshake once and reads the CSD to size the
+ * card; bio() reads blocks with CMD17.  The sequence and its subtleties
+ * are drawn from QEMU's hw/sd/ssi-sd.c and hw/sd/sd.c:
+ *  - CS is gated at the SSI layer, so wake-up clocks with CS deasserted
+ *    are inert; CS is asserted (CSMODE=HOLD) for the card's whole life.
+ *  - A command is 6 bytes (0x40|cmd, 4 big-endian arg, CRC byte whose
+ *    value is ignored but must be present); R1 (bit7=0) follows.
+ *  - After CMD0/CMD8/ACMD41 the card is in ready state, but CMD17 needs
+ *    transfer state and SPI mode has no CMD2/3/7 to advance; reading the
+ *    CSD with CMD9 bumps it to transfer state (sd.c spi_cmd_SEND_CxD).
+ *  - Byte- vs block-addressing comes from the CSD version: v1 (SDSC) is
+ *    byte-addressed, v2 (SDHC) block-addressed.
+ * Verified: /dev/sdM0/data reads block 0 and block 1 at the right
+ * offsets, matched against known markers with a negative control.
  */
 #include "u.h"
 #include "../port/lib.h"
@@ -31,6 +28,8 @@
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
+#include "../port/error.h"
+#include "../port/sd.h"
 #include "../riscv/sifive.h"
 
 #ifndef SPI1
@@ -39,7 +38,20 @@
 
 enum {
 	Token	= 0xfe,		/* single-block data start token */
+	Secsize	= 512,
 };
+
+typedef struct Ctlr Ctlr;
+struct Ctlr {
+	u32*	r;		/* SPI controller registers */
+	uvlong	sectors;
+	int	byteaddr;	/* CSD v1 SDSC: address in bytes, not blocks */
+	int	inited;
+};
+
+static Ctlr sdctlr;
+
+extern SDifc sdspisifiveifc;
 
 static int
 spibyte(u32 *r, int out)
@@ -54,10 +66,6 @@ spibyte(u32 *r, int out)
 	return v & 0xff;
 }
 
-/*
- * Send a 6-byte command frame and clock dummies until the R1 response
- * (bit7 clear) appears.  Returns R1, or -1 if none came.
- */
 static int
 sdcmd(u32 *r, int cmd, u32 arg, int crc)
 {
@@ -77,82 +85,168 @@ sdcmd(u32 *r, int cmd, u32 arg, int crc)
 	return -1;
 }
 
-/*
- * Wait for the 0xfe data-start token, read n payload bytes into buf, and
- * consume the two CRC bytes.  Returns 0, or -1 if the token never came.
- */
 static int
 sdreadblock(u32 *r, uchar *buf, int n)
 {
 	int i, tok;
 
-	for(i = 0; i < 2000; i++){
+	tok = 0xff;
+	for(i = 0; i < 100000; i++){
 		tok = spibyte(r, 0xff);
 		if(tok == Token)
 			break;
 		if(tok != 0xff)
-			return -1;	/* an error token */
+			return -1;		/* error token */
 	}
 	if(tok != Token)
 		return -1;
 	for(i = 0; i < n; i++)
 		buf[i] = spibyte(r, 0xff);
-	spibyte(r, 0xff);		/* CRC hi */
-	spibyte(r, 0xff);		/* CRC lo */
+	spibyte(r, 0xff);			/* CRC hi */
+	spibyte(r, 0xff);			/* CRC lo */
 	return 0;
 }
 
-void
-sdspiinit(void)
+/*
+ * Bring the card up and size it.  Returns 1 on success, 0 if no card.
+ * Leaves CS asserted for the life of the card.
+ */
+static int
+sdcardinit(Ctlr *c)
 {
 	u32 *r;
-	int i, r1, ccs;
-	uchar ocr[4], csd[16], blk[16];
+	int i, r1, rbl, cmult, ver;
+	uvlong cap;
+	uchar csd[16];
 
-	if((r = (u32*)SPI1) == 0)
-		return;
+	r1 = -1;
+	r = c->r;
 	r[SspiSckdiv/4] = 8;
-	r[SspiFmt/4] = (8<<16);		/* single, MSB-first, 8-bit, rx */
-	r[SspiCsdef/4] = 1;		/* CS idles high */
-	r[SspiCsid/4] = 0;		/* CS0 = the SD card */
-	r[SspiCsmode/4] = SspiCsHold;	/* assert CS for the whole session */
+	r[SspiFmt/4] = (8<<16);			/* single, MSB-first, 8-bit, rx */
+	r[SspiCsdef/4] = 1;			/* CS idles high */
+	r[SspiCsid/4] = 0;			/* CS0 = the SD card */
+	r[SspiCsmode/4] = SspiCsHold;		/* assert CS for the card's life */
 	for(i = 0; i < 10; i++)
-		spibyte(r, 0xff);	/* flush the model to its CMD state */
+		spibyte(r, 0xff);		/* flush model to CMD state */
 
-	if((r1 = sdcmd(r, 0, 0, 0x95)) < 0){		/* CMD0 GO_IDLE */
-		print("sd: no card on spi1 (CMD0 no response)\n");
-		r[SspiCsmode/4] = SspiCsAuto;
-		return;
-	}
-	sdcmd(r, 8, 0x1aa, 0x87);			/* CMD8 SEND_IF_COND */
-
-	for(i = 0; i < 1000; i++){			/* ACMD41 init loop */
+	if((r1 = sdcmd(r, 0, 0, 0x95)) < 0)		/* CMD0 GO_IDLE */
+		return 0;
+	sdcmd(r, 8, 0x1aa, 0x87);		/* CMD8 SEND_IF_COND */
+	for(i = 0; i < 1000; i++){		/* ACMD41 init loop */
 		sdcmd(r, 55, 0, 0x01);
 		if((r1 = sdcmd(r, 41, 0x40000000, 0x01)) == 0)
 			break;
 	}
-	if(r1 != 0){
-		print("sd: card did not leave idle (ACMD41 r1 %#ux)\n", r1);
-		r[SspiCsmode/4] = SspiCsAuto;
-		return;
-	}
+	if(r1 != 0)
+		return 0;
 
-	sdcmd(r, 58, 0, 0x01);				/* CMD58 READ_OCR */
+	/*
+	 * CMD58 (READ_OCR) before CMD9 is load-bearing in QEMU's model:
+	 * without it CMD9 returns R1 but queues no CSD data and the card
+	 * never leaves ready state.  Consume its short response tail.
+	 */
+	sdcmd(r, 58, 0, 0x01);
 	for(i = 0; i < 4; i++)
-		ocr[i] = spibyte(r, 0xff);
-	ccs = (ocr[0] >> 6) & 1;			/* OCR bit30 = block-addressed */
+		spibyte(r, 0xff);
 
-	sdcmd(r, 9, 0, 0x01);				/* CMD9 SEND_CSD -> transfer state */
-	sdreadblock(r, csd, sizeof csd);
+	if(sdcmd(r, 9, 0, 0x01) < 0)		/* CMD9 SEND_CSD -> transfer state */
+		return 0;
+	if(sdreadblock(r, csd, sizeof csd) < 0)
+		return 0;
 
-	r1 = sdcmd(r, 17, 0, 0x01);			/* CMD17 READ_SINGLE_BLOCK 0 */
-	if(sdreadblock(r, blk, sizeof blk) < 0){
-		print("sd: spi1 CMD17 r1 %#ux but no data block\n", r1);
-		r[SspiCsmode/4] = SspiCsAuto;
-		return;
+	ver = (csd[0] >> 6) & 3;		/* 0 = CSD v1 (SDSC), 1 = v2 (SDHC) */
+	if(ver == 0){
+		c->byteaddr = 1;
+		rbl = csd[5] & 0x0f;
+		cap = ((csd[6]&3)<<10) | (csd[7]<<2) | (csd[8]>>6);
+		cmult = ((csd[9]&3)<<1) | (csd[10]>>7);
+		c->sectors = (cap+1) << (cmult+2+rbl-9);
+	}else{
+		c->byteaddr = 0;
+		cap = ((uvlong)(csd[7]&0x3f)<<16) | (csd[8]<<8) | csd[9];
+		c->sectors = (cap+1) << 10;
 	}
-	r[SspiCsmode/4] = SspiCsAuto;			/* release CS */
-
-	print("sd: spi1 SD ok, ccs %d, block0 %.2ux%.2ux%.2ux%.2ux%.2ux%.2ux%.2ux%.2ux\n",
-		ccs, blk[0], blk[1], blk[2], blk[3], blk[4], blk[5], blk[6], blk[7]);
+	return 1;
 }
+
+static SDev*
+sdspipnp(void)
+{
+	SDev *s;
+
+	if((uintptr)SPI1 == 0)
+		return nil;
+	sdctlr.r = (u32*)SPI1;
+	if((s = malloc(sizeof(*s))) == nil)
+		return nil;
+	s->ctlr = &sdctlr;
+	s->idno = 'M';
+	s->ifc = &sdspisifiveifc;
+	s->nunit = 1;
+	return s;
+}
+
+static int
+sdspiverify(SDunit *u)
+{
+	USED(u);
+	return 1;
+}
+
+static int
+sdspionline(SDunit *u)
+{
+	Ctlr *c = u->dev->ctlr;
+
+	if(c->inited)
+		return u->sectors? 1: 0;
+	if(sdcardinit(c) == 0){
+		c->inited = 1;			/* do not re-probe a bad/absent card */
+		return 0;
+	}
+	c->inited = 1;
+	u->secsize = Secsize;
+	u->sectors = c->sectors;
+	return 2;				/* online, media changed */
+}
+
+static long
+sdspibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
+{
+	Ctlr *c = u->dev->ctlr;
+	uchar *p = a;
+	long i;
+	u32 arg;
+
+	USED(lun);
+	if(write)
+		return 0;			/* read-only for now */
+	for(i = 0; i < nb; i++){
+		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
+		if(sdcmd(c->r, 17, arg, 0x01) < 0)
+			break;
+		if(sdreadblock(c->r, p + i*Secsize, Secsize) < 0)
+			break;
+	}
+	return i * Secsize;
+}
+
+SDifc sdspisifiveifc = {
+	"spisifive",			/* name */
+
+	sdspipnp,			/* pnp */
+	nil,				/* enable */
+	nil,				/* disable */
+
+	sdspiverify,			/* verify */
+	sdspionline,			/* online */
+	nil,				/* rio */
+	nil,				/* rctl */
+	nil,				/* wctl */
+
+	sdspibio,			/* bio */
+	nil,				/* probe */
+	nil,				/* clear */
+	nil,				/* rtopctl */
+	nil,				/* wtopctl */
+};
