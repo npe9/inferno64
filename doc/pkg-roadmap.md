@@ -263,3 +263,54 @@ across the network and mount at `/pkg`, verification through `v23`
 blessing chains instead of a flat KeyServer, and finally re-expressing a
 package as an Upspin subtree so `install` becomes get-by-name over this
 namespace — retiring `pkg`'s bespoke tar+repo format.
+
+## Organizing the namespace at scale
+
+An owner-rooted namespace has no central "everything" directory to
+organize; you organize within each owner's tree and keep track of the
+*owners* through a registry. These are the techniques big multi-user
+systems (SDF and every large UNIX site, git, Venti, DNS/email) use, mapped
+onto our Store/Dir/KeyServer.
+
+- **The KeyServer is the roster of principals — our `/etc/passwd`.**
+  It is the authoritative "who exists," mapping `user@domain` to a key
+  (and, in full Upspin, to where that user's DirServer lives). Organizing
+  the system is mostly organizing this registry and each owner's tree, not
+  inventing a global hierarchy.
+- **Within an owner's tree: convention, not enforcement.** Like UNIX
+  `~/public_html`/`~/Maildir`, grow well-known subtrees —
+  `owner/pkg/...` (packages), `owner/pub/...` (public), an `Access` file
+  per level (per-directory ACL). Each owner curates their own tree; the
+  system imposes no schema.
+- **Shard so no directory explodes.** A flat `store/<64hex>` of millions
+  of blocks dies; shard by hash prefix `store/ab/cdef...` (git objects,
+  Venti arenas, S3 prefixes, and SDF's own `/udd/<letter>/<user>` home
+  splitting). Shard the registry as `keys/<domain>/<user>`.
+- **Indexes are derived and rebuildable, off the trust path.** Search /
+  member-map / `finger`-style lookups are built from the signed entries
+  and blocks and can be regenerated; verification always checks the
+  signature and the block hash, never the index — so a bad index can only
+  fail to find, never cause acceptance of bad content.
+- **Federate by domain.** `user@domain` delegates like email/DNS: each
+  domain runs its own Store/Dir/KeyServer; the registry (or DNS) says
+  which. The system scales by keeping track of domains, each of which
+  keeps track of its own users — not by one giant server.
+- **A system owner publishes curated views.** A well-known principal
+  (e.g. `registry@domain`) publishes the package taxonomy, a member
+  directory, featured lists — as ordinary *signed* subtrees anyone can
+  mount, several curators coexisting. Organization by publication, not by
+  central schema.
+- **Per-owner quotas + block GC.** A content-addressed Store needs
+  reference counting / garbage collection to reclaim unreferenced blocks
+  (Venti's problem) and per-owner quotas/accounting (SDF's disk quotas).
+- **Inferno twist: per-process namespaces.** The organization a user
+  *sees* is a view they compose by binding the owner subtrees and curated
+  indexes they care about into their own namespace (the `bind /p9/dis
+  /dis` pattern) — federated, sharded, derivably indexed, and composable,
+  never one monolithic administered tree.
+
+Concretely for the next increments: shard `Store` by hash prefix; make
+`KeyServer` a `keys/<domain>/<user>` registry that also records each
+user's DirServer endpoint (federation-ready); keep `Dir` owner-rooted with
+conventional `pkg`/`pub`/`Access` subtrees; designate a system owner for
+curated indexes; treat all search indexes as derived.
