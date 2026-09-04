@@ -1005,17 +1005,26 @@ bring-up jobs; what remains is user-visible hardware, and 9front's
 bcm64/pi3 tree is now a donor rather than just a reference.  The order,
 each item roughly gating the next:
 .IP 1.
-Firmware mailbox / property interface.  Small, kernel-private, and the
-key that unlocks the rest: the VideoCore firmware answers property
-requests for clocks, board info, and - the reason to build it first - a
-linear framebuffer.
+Firmware mailbox / property interface.
+.B DONE
+(mailbox.c): the ARM<->GPU mailbox 0 property channel, verified against
+the model's fixed answers (firmware revision, ARM memory split) and used
+to allocate the framebuffer below.  It is the key that unlocks clocks,
+board info and the framebuffer.
 .IP 2.
-Framebuffer plus an Inferno screen driver into devdraw.  Ask the firmware
-for a framebuffer over the mailbox, hand its linear memory to
-.CW /dev/draw ,
-and native Inferno stops being an embedded-firmware experiment and
-becomes a workstation.  The distance from Plan 9 devdraw to Inferno's
-draw device is small; do NOT start from the VideoCore GPU.
+Framebuffer plus an Inferno screen driver into devdraw.
+.B "PARTLY DONE" .
+The firmware allocates a 640x480x32 buffer over the mailbox
+(mboxfballoc), a screen driver (screenbcm.c) draws into kernel RAM and
+flushes dirty rectangles to it, and a monitor screendump confirms the
+GPU scans out our buffer end to end - so the framebuffer is live and
+displayed.  What is left is a memdraw fault, not the fb: drawing through
+the Limbo draw device faults in libmemdraw on arm64 (a Readfn is handed a
+corrupt Param* on the replicated-source fill path), and it reproduces
+with a plain kernel-RAM softscreen too, so it is a memdraw-side arm64 bug
+independent of the VideoCore buffer.  Fixing it is what makes wm/tk run;
+until then the board displays only what the kernel itself fills in.  (Do
+NOT start from the VideoCore GPU; the firmware framebuffer is the path.)
 .IP 3.
 Synopsys DesignWare USB host (9front usbdwc).  The highest-value port:
 on a Pi 3B the onboard 10/100 Ethernet hangs off USB, so the controller
