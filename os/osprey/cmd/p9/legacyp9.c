@@ -65,6 +65,8 @@ startboot(char *argv0, char **argv)
 			print("legacy: fstat(\"/n/p9test\") returned a %ld-byte stat message from the buddy\n", n);
 			close(fd);
 		}
+		n = stat("/n/p9test", statbuf, sizeof statbuf);
+		print("legacy: stat(\"/n/p9test\") by name returned a %ld-byte stat message from the buddy\n", n);
 
 		if(remove("/n/p9test") == 0)
 			print("legacy: removed /n/p9test through the buddy\n");

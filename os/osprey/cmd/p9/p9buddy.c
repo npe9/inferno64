@@ -39,6 +39,7 @@ enum {
 	CREATE	= 22,
 	REMOVE	= 25,
 	FSTAT	= 43,
+	STAT	= 42,
 	ERRSTR	= 41,
 
 	/*
@@ -466,6 +467,11 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		/* fstat(fd, edir, nedir): the raw stat message to cdata[Dataoff], a1 = nedir */
 		bfd = fdof(img, a0);
 		r = bfd < 0 ? -1 : p9fstatraw(bfd, cdata + Dataoff, (int)a1);
+		break;
+
+	case STAT:
+		/* stat(name, edir, nedir): name at cdata[Nameoff], message to cdata[Dataoff], a1 = nedir */
+		r = p9statraw((char*)(cdata + Nameoff), cdata + Dataoff, (int)a1);
 		break;
 
 	default:

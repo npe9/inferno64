@@ -255,7 +255,7 @@ to a file descriptor is forwarded to the buddy instead of the kernel's
 console writer, which had been swallowing every legacy file write
 regardless of its descriptor.  The p9pair check has the legacy a.out
 create a file on the log store, write it, read the bytes back through the
-buddy, and stat it; remove is forwarded and the immutable log store
+buddy, and stat it \- by descriptor and by name both; remove is forwarded and the immutable log store
 refuses it, which is the store's semantics, not a gap.  And errstr
 crosses now, genuinely: the buddy stashes the real reason a call failed,
 per container, and answers the process's
@@ -267,10 +267,11 @@ read back over the buddy like any other result.  What remains is the rest
 of what a personality needs to host a real Plan 9 program \-
 .CW pipe ,
 .CW rfork ,
-.CW mount ,
-.CW bind ,
-and a stat-by-name \- and a declined fault reaching a Plan 9 program as a
-note rather than the microkernel's donotify panic.
+.CW mount
+and
+.CW bind
+\- and a declined fault reaching a Plan 9 program as a note rather than
+the microkernel's donotify panic.
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an

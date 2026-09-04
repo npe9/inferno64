@@ -445,6 +445,24 @@ p9fstatraw(int fd, uchar *buf, int nbuf)
 	return n;
 }
 
+/* the raw stat message of a file named by `name` (the stat(2) edir), or -1 */
+long
+p9statraw(char *name, uchar *buf, int nbuf)
+{
+	Chan *c;
+	long n;
+
+	c = namec(name, Aaccess, 0, 0);
+	if(waserror()){
+		cclose(c);
+		nexterror();		/* let the caller's waserror record the reason */
+	}
+	n = devtab[c->type]->stat(c, buf, nbuf);
+	poperror();
+	cclose(c);
+	return n;
+}
+
 /* bind the file or directory named by `name` onto `old` in the name space */
 int
 p9bind(char *name, char *old, int flag)

@@ -2343,7 +2343,7 @@ ospreyp9server(void *a)
 enum {
 	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
-	Bcreate = 22, Bremove = 25, Bfstat = 43, Berrstr = 41,
+	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2606,6 +2606,18 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	case Bfstat:				/* fstat(fd, edir, nedir): message back at Bdataoff */
 		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
 		break;
+	case Bstat:				/* stat(name, edir, nedir): name at Bnameoff, message back at Bdataoff */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		ab[1] = 0; ab[2] = a[2]; ab[3] = 0;
+		break;
 	case Berrstr:				/* errstr(buf, nbuf): text back at Bdataoff */
 		ab[1] = 0; ab[2] = a[1]; ab[3] = 0;
 		break;
@@ -2617,8 +2629,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	if(status < 0)
 		return -1;
 
-	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Berrstr) && status > 0){
-		/* read/fstat return their bytes in a[1]; errstr in a[0] */
+	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Bstat || scallnr == Berrstr) && status > 0){
+		/* read/fstat/stat return their bytes in a[1]; errstr in a[0] */
 		uchar *dst = (uchar*)(scallnr == Berrstr ? a[0] : a[1]);
 		dd = ospreydata(p, Bdataoff, status);
 		if(dd != nil)
