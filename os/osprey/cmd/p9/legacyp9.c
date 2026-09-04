@@ -203,8 +203,23 @@ startboot(char *argv0, char **argv)
 			exits("forked child");
 		} else if(pid < 0)
 			print("legacy: rfork(RFPROC) failed\n");
-		else
+		else {
+			char abuf[128];
+			int an;
 			print("legacy: rfork(RFPROC) forked a child, id %d; I am the parent\n", pid);
+			/*
+			 * await(2) directly, not wait(): this minimal binary has no
+			 * malloc, and await fills a buffer the caller gives it.  The
+			 * message is the child's pid, its times, and its quoted exit
+			 * status - the fork's other end, the parent reaping the child.
+			 */
+			an = await(abuf, sizeof abuf - 1);
+			if(an >= 0){
+				abuf[an] = 0;
+				print("legacy: I awaited and reaped my forked child; its wait message: \"%s\"\n", abuf);
+			} else
+				print("legacy: await() returned nothing\n");
+		}
 		if(ffd >= 0)
 			close(ffd);
 	}

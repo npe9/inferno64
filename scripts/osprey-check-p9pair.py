@@ -167,6 +167,8 @@ def main():
         ("and it inherits the parent's name space: the child opens /hello, a name only in the private name space the parent rforked and bound - so the fork carried the name space, not just the descriptors",
          'legacy: the forked child opened /hello, a name only in the parent\'s rforked name space - the fork carried the name space' in t
          and 'the name space did not cross' not in t),
+        ("and the parent reaps it: wait() returns the forked child's pid - the fork's other end, the kernel answering await for the container it made",
+         re.search(r'legacy: I awaited and reaped my forked child; its wait message: "\d+ ', t) is not None),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t

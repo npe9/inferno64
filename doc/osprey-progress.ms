@@ -390,9 +390,23 @@ space it rforked and bound, forks; the child reads the file back through
 the inherited descriptor and opens
 .CW /hello ,
 a name that exists only through the parent's bind.
-So item 6 is whole \- both fork forms, and the child a full copy of the
-parent: its address space, its control flow, its open files and its name
-space.
+And the parent reaps it: the fork's other end is
+.CW await (2),
+which the kernel answers - it made the child and knows when it exits - so
+the parent's
+.CW wait
+blocks in a bounded kernel sleep until a child of its container is done,
+then reads back the child's pid and exit status
+.CW ( ospreylegacyawait
+in
+.CW devosprey.c ,
+intercepting
+.CW AWAIT
+the way the fork intercepts
+.CW rfork ).
+So item 6 is whole \- both fork forms, the child a full copy of the
+parent (its address space, its control flow, its open files and its name
+space), and the parent waiting on it to exit.
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an

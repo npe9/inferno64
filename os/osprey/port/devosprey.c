@@ -2344,7 +2344,7 @@ enum {
 	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
 	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
-	Brfork = 19, Bbind = 2, Bmount = 46,
+	Brfork = 19, Bbind = 2, Bmount = 46, Bawait = 47,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2518,6 +2518,7 @@ ospreybuddyhas(void)
 }
 
 static long ospreyforkkern(Ospreyproc*, ulong);
+static long ospreylegacyawait(Ospreyproc*, uintptr, int);
 
 long
 ospreybuddyforward(ulong scallnr, uintptr *a)
@@ -2539,6 +2540,14 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	 */
 	if(!up->oslinux && scallnr == Brfork && (a[0] & RFPROC))
 		return ospreyforkkern(p, a[0]);
+
+	/*
+	 * await(buf, n): the fork's other end - the parent reaps a forked or
+	 * exec'd child and reads its exit status.  The kernel answers it, since
+	 * it is the kernel that made the child and knows when it exits.
+	 */
+	if(!up->oslinux && scallnr == Bawait)
+		return ospreylegacyawait(p, a[0], (int)a[1]);
 
 	if(up->oslinux){
 		/* Linux system-call numbers to their Plan 9 equivalents; the
@@ -3436,6 +3445,52 @@ ospreywaitkern(Ospreyproc *parent, uvlong seq, long *status, uvlong *value)
 	live->waiting = 1;
 	live->waitseq = seq;
 	return 1;
+}
+
+/*
+ * await(buf, n) for a legacy program: block until a child of this
+ * container has exited, then write its wait message - pid, three times,
+ * and the quoted exit status - into the program's buffer, the way the
+ * Plan 9 await(2) does, so the ordinary library wait() parses it.  The
+ * exit status is always empty here because the personality's exits drops
+ * its string (it exits 0), so a reaped child reads as a clean exit.  The
+ * wait is a bounded kernel sleep between scans, never a CPL3 spin.
+ */
+static long
+ospreylegacyawait(Ospreyproc *parent, uintptr ubuf, int nbuf)
+{
+	Ospreychild *e;
+	char msg[128];
+	int n, haslive;
+
+	if(nbuf <= 0)
+		return -1;
+	for(;;){
+		haslive = 0;
+		qlock(&ospreylock);
+		for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
+			if(!e->used || e->parent != parent)
+				continue;
+			if(e->done){
+				n = snprint(msg, sizeof msg, "%llud 0 0 0 ''", ospreyid(e->child));
+				e->used = 0;
+				qunlock(&ospreylock);
+				if(n > nbuf)
+					n = nbuf;
+				if(waserror())
+					return -1;
+				validaddr(ubuf, n, 1);
+				memmove((void*)ubuf, msg, n);
+				poperror();
+				return n;
+			}
+			haslive = 1;
+		}
+		qunlock(&ospreylock);
+		if(!haslive)
+			return -1;		/* no children to wait for */
+		tsleep(&up->sleep, return0, nil, 50);
+	}
 }
 
 /*
