@@ -1022,9 +1022,20 @@ displayed.  What is left is a memdraw fault, not the fb: drawing through
 the Limbo draw device faults in libmemdraw on arm64 (a Readfn is handed a
 corrupt Param* on the replicated-source fill path), and it reproduces
 with a plain kernel-RAM softscreen too, so it is a memdraw-side arm64 bug
-independent of the VideoCore buffer.  Fixing it is what makes wm/tk run;
-until then the board displays only what the kernel itself fills in.  (Do
-NOT start from the VideoCore GPU; the firmware framebuffer is the path.)
+independent of the VideoCore buffer.  It is not raspi3b-specific: both
+arm64 boards carry it latently and neither had ever exercised memdraw's
+draw() combine before - virtarm64's draw check only reads the /dev/draw
+ctl, and its TK path never runs (Tk is not in its root), so this fill is
+the first real draw() on the arm64 port.  The lead: a
+.CW Readfn
+returns a
+.CW Buffer
+(~88 bytes) by value, so it is compiled with a hidden return-pointer
+argument; a struct-return ABI mismatch would shift its args and hand the
+callee a corrupt Param*.  Fixing it is what makes wm/tk run on either
+board; until then a board displays only what the kernel itself fills in.
+(Do NOT start from the VideoCore GPU; the firmware framebuffer is the
+path.)
 .IP 3.
 Synopsys DesignWare USB host (9front usbdwc).  The highest-value port:
 on a Pi 3B the onboard 10/100 Ethernet hangs off USB, so the controller
