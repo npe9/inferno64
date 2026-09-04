@@ -33,6 +33,7 @@ enum {
 	Armoff		= 0,
 	Reqbuf		= 256,
 	Kbdsem		= 3,		/* the block device has 1, the clock 2 */
+	Mousesem	= 4,
 };
 
 typedef struct Omap Omap;
@@ -185,7 +186,10 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	arm[2].op = OSdown;		/* the keyboard IRQ1 notification */
 	arm[2].obj = Kbdsem;
 	arm[2].buf = 0;
-	n = oselect(Armoff, 3);
+	arm[3].op = OSdown;		/* the mouse IRQ12 (aux) notification */
+	arm[3].obj = Mousesem;
+	arm[3].buf = 0;
+	n = oselect(Armoff, 4);
 	if(n == 0){
 		ticks++;
 		sched_tick();		/* advance the cooperative scheduler's clock */
@@ -196,7 +200,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		runkprocs();		/* let timer and medium kprocs run on this tick */
 		return 0;
 	}
-	if(n == 2){			/* the keyboard interrupt fired */
+	if(n == 2 || n == 3){		/* the keyboard or mouse interrupt fired */
 		p9kbdnotify();		/* ready the driver kproc; it does the inb */
 		runkprocs();
 		return 0;

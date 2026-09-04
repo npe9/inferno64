@@ -1035,8 +1035,31 @@ over QMP produces
 .CW 0x1e ,
 .CW 0x30 ,
 .CW 0x2e
-and their releases, each read in user space and printed by the driver;
-the p9pair check still passes twenty-four for twenty-four across boots.
+and their releases, each read in user space and printed by the driver.
+.PP
+The mouse is the same driver, not a second one.  The i8042 is one
+stateful controller with one output buffer, and its status port's aux
+bit says whether a byte came from the keyboard or the mouse, so one
+driver owns the whole device:
+.B ReqMousenotify
+routes IRQ12 the same way IRQ1 is routed, the kernel enables the aux
+device and its reporting, and the driver's drain loop routes each byte by
+the aux bit \- a scancode, or a byte of a three-byte PS/2 packet it
+assembles into motion and buttons.  Moving the QEMU mouse makes the
+driver read
+.CW "dx=15 dy=-7"
+off port 0x60, in user space, for each event injected.  The one thing
+this cost that the keyboard did not: the two interrupts must give
+.I different
+semaphores.  A first cut shared one semaphore between IRQ1 and IRQ12 and
+the mouse woke exactly once to an empty buffer \- a shared semaphore
+between two interrupt sources loses wakeups, because the count and the
+buffer state then come from two IRQs and desync.  A semaphore and an
+.CW oselect
+arm each fixed it; both wake the one driver.  The whole thing \- keyboard
+and mouse \- is checked by
+.CW scripts/osprey-check-kbd.py ,
+and the p9pair check still passes twenty-four for twenty-four across boots.
 .PP
 One seam is honest to name.  The one-time controller enable \- the i8042
 command-byte handshake that turns the keyboard interrupt on and drains
@@ -1051,10 +1074,14 @@ standing pc64 heisenbug
 a corrupted return), and a user driver taking a legacy IRQ from CPL3
 reproduces it reliably where before it was intermittent.  Run in kernel
 context an interrupt landing during the handshake is handled normally,
-so the setup is done there and the scancode reads \- the data path \- stay
-in user space.  The kernel also takes its own
+so the setup is done there (the aux enable in
+.CW ReqMousenotify
+the same way) and the reads \- the data path \- stay in user space.  The
+kernel also takes its own
 .CW ospreykbdintr
-off IRQ1 first, so the notification handler is the only one on the line
+and
+.CW ospreymouseintr
+off the lines first, so the notification handlers are the only ones there
 and the byte stays in the buffer for the driver.  The reliable
 reproduction of the heisenbug is itself worth having; chasing it is not
 this item's work.

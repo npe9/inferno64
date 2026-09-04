@@ -57,7 +57,7 @@ def main():
 
     # the keys to press and the Set-1 make codes the driver must read back
     keys = [('a', 0x1e), ('b', 0x30), ('c', 0x2e), ('spc', 0x39)]
-    up = pump(90, stop='user-space i8042 driver up')
+    up = pump(90, stop='i8042: user-space driver up')
     if up:
         pump(1)
         s = socket.socket(socket.AF_UNIX); s.connect(qmp)
@@ -66,6 +66,13 @@ def main():
         for k, _ in keys:
             f.write(json.dumps({"execute": "send-key",
                 "arguments": {"keys": [{"type": "qcode", "data": k}]}}) + "\n")
+            f.flush(); f.readline()
+            pump(0.4)
+        # move the PS/2 mouse: the driver must read aux packets and decode motion
+        for _ in range(6):
+            f.write(json.dumps({"execute": "input-send-event", "arguments": {"events": [
+                {"type": "rel", "data": {"axis": "x", "value": 15}},
+                {"type": "rel", "data": {"axis": "y", "value": 7}}]}}) + "\n")
             f.flush(); f.readline()
             pump(0.4)
         pump(4)
@@ -80,6 +87,10 @@ def main():
         rel = ('scancode %#x read from port 0x60 in user space (release)' % (mk | 0x80)) in t
         results.append(("key '%s' - the driver read make %#04x and release %#04x by inb"
                         % (k, mk, mk | 0x80), make and rel))
+    import re as _re
+    mv = _re.search(r'p9 mouse: dx=(-?\d+) dy=(-?\d+) .* read from port 0x60 in user space', t)
+    results.append(("the driver read a PS/2 mouse packet by inb and decoded motion",
+                    mv is not None and (int(mv.group(1)) != 0 or int(mv.group(2)) != 0)))
 
     ok = True
     for name, good in results:

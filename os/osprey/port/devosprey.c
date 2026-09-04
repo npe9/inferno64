@@ -1924,6 +1924,19 @@ ospreymouseintr(Ureg*, void*)
 	}
 }
 
+/* the aux twin of ospreykbdnotify: signal, do not read the byte */
+static void
+ospreymousenotify(Ureg*, void*)
+{
+	int sx;
+
+	if(ospreymouseproc != nil){
+		ospreysemgive(ospreymouseproc, ospreymousesem);
+		if((sx = ospreyindex(ospreymouseproc)) >= 0 && sx < nelem(ospreyselrend))
+			wakeup(&ospreyselrend[sx]);
+	}
+}
+
 /* wait for the input buffer to drain, then write a controller command */
 static void
 i8042cmd(int cmd)
@@ -2382,6 +2395,7 @@ ospreybuddycall(Ospreyproc *p, int tries)
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
+#define ReqMousenotify 22	/* xcall op: route IRQ12 (aux) to the caller as a notification */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2448,6 +2462,37 @@ ospreyxcall(va_list list)
 		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
 			inb(Kbddata);			/* drain the echo, if any */
 		intrenable(Kbdirq, ospreykbdnotify, nil, -1, "osprey-kbd-notify");
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqMousenotify){
+		int c, i;
+
+		ospreymouseproc = up->osprey;	/* whose semaphore the aux interrupt gives */
+		ospreymousesem = (int)arg[0];	/* its OWN semaphore, distinct from the keyboard's */
+		ospreymousering = nil;		/* notification-only: the driver reads 0x60 itself */
+		/*
+		 * Same shape as ReqKbdnotify (kernel-side setup, bounded spins,
+		 * intrdisable masks IRQ12 so no splhi), but the aux device is
+		 * more of a handshake: enable the port, set the aux interrupt and
+		 * clock bits in the command byte, and tell the mouse to report.
+		 */
+		intrdisable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
+		i8042cmd(0xA8);			/* enable the aux (mouse) port */
+		i8042cmd(0x20);			/* read the command byte */
+		c = i8042rdata();
+		if(c < 0)
+			c = 0;
+		c |= 0x02;			/* aux interrupt enable (IRQ12) */
+		c &= ~0x20;			/* aux clock enable (0 = enabled) */
+		i8042cmd(0x60);			/* write the command byte */
+		i8042wdata(c);
+		i8042cmd(0xD4);			/* route the next data byte to the aux port */
+		i8042wdata(0xF4);		/* tell the mouse to report movement */
+		i8042rdata();			/* eat its ACK (0xFA) */
+		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
+			inb(Kbddata);		/* drain */
+		intrenable(Mouseirq, ospreymousenotify, nil, -1, "osprey-mouse-notify");
 		ubuf[0] = 0;
 		return 0;
 	}
