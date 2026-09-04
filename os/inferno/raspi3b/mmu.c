@@ -27,7 +27,7 @@ enum {
 	 * SDDATA write.  Set Mmuon to 1 (and enable the timer routing) to
 	 * resume that hunt.  See doc/raspi3b-preempt-plan.ms.
 	 */
-	Mmuon	= 0,
+	Mmuon	= 1,			/* DIAG: MMU on to catch the wild store */
 
 	L2SHIFT	= 21,			/* 2MB block */
 	Pvalid	= 1<<0,
@@ -40,11 +40,12 @@ enum {
 	Pmem	= 1<<2,			/* MAIR index 1: Normal WB cacheable */
 
 	Pnormal	= Pvalid|Pblock|Paf|Pshin|Prw|Pmem,	/* 0x705 */
+	Pro	= 1<<7,			/* AP[2]: read-only at EL1 */
 	Pdevice	= Pvalid|Pblock|Paf|Prw|Pdev,		/* 0x401 */
 };
 
-/* two page-table pages plus slack to 4KB-align by hand (no __attribute__) */
-static uchar ptpages[3*4096];
+/* 2MB of page-table memory so the block holding it can be marked RO */
+static uchar ptpages[2*0x200000];
 
 extern void mmuenable(void*);
 
@@ -52,18 +53,23 @@ void
 mmuinit(void)
 {
 	uvlong *l1, *l2;
-	uintptr pa;
+	uintptr pa, ptblk;
 	int i;
 
 	if(!Mmuon)
 		return;			/* MMU off: identity/physical, board default */
-	l1 = (uvlong*)(((uintptr)ptpages + 4095) & ~(uintptr)4095);
-	l2 = l1 + 512;
+	l1 = (uvlong*)(((uintptr)ptpages + 0x1fffff) & ~(uintptr)0x1fffff);
+	l2 = l1 + 512;				/* next 4KB page, same 2MB block */
+	ptblk = ((uintptr)l1) >> L2SHIFT;	/* the 2MB block the tables live in */
 
 	for(i = 0; i < 512; i++){
 		pa = (uintptr)i << L2SHIFT;
 		if(pa >= BCMPERIPH && pa < 0x40000000)
 			l2[i] = pa | Pdevice;		/* peripherals */
+		else if(i == ptblk)
+			l2[i] = pa | Pnormal | Pro;	/* the page tables: RO, so a
+							 * wild store to them faults AT
+							 * the store, state intact */
 		else
 			l2[i] = pa | Pnormal;		/* RAM / unused */
 	}
