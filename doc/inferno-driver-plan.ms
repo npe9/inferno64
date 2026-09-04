@@ -887,10 +887,16 @@ wrong - the
 mount-walk message that looked like the culprit prints on sifive_u too,
 just before its
 .CW SD-FS-OK ,
-so it is the routine failed-walk of a create, not a fault.  What remains
-is a devsd race: sdinitpart() tears the partition down and rebuilds it on
-every walk, and under the fast SDHOST driver a concurrent file-server
-write catches the window - sifive_u's slow SPI simply never lands in it.
+so it is the routine failed-walk of a create, not a fault.  A partition
+teardown was the next guess and it too is wrong: instrumenting
+.CW sdinitpart()
+shows it runs exactly once, so the partition is stable and its version
+never churns.  The failure is a timing-sensitive race that only the fast
+SDHOST driver lands in - sifive_u's slow SPI never does - and its
+location is now genuinely open: not the timer, not the Styx walk, not the
+partition version, most likely in the file server's own two-proc access
+or the unlocked namespace path under a 100Hz preemption the board never
+had before.
 .NH 1
 Immediate next steps (cold-start)
 .PP
@@ -900,10 +906,10 @@ SPI stack complete to a kfs filesystem, shakti (riscv64), and the
 Raspberry Pi 3B (arm64) with I2C/SPI/GPIO, a native-SD block device
 (/dev/sdM0/data, read/write/multi-block) and now a real 100Hz scheduler
 tick - every board booting to a shell.  The prioritized next work: (1)
-the raspi3b devsd partition race - make sdinitpart() (or the walk path
-that calls it) not drop a live partition under a concurrent transfer, so
-a kfs can ream and mount on the Pi; the "file does not exist" during
-reaming is the reproducer, and sifive_u is the working oracle.  (2)
+the raspi3b kfs race - a "file does not exist" that only appears during a
+concurrent file-server workload under the new tick, with sdinitpart,
+Styx, and the timer all ruled out; instrument which of devsd's Enonexist
+sites (or which proc) fires, with sifive_u as the working oracle.  (2)
 persistence across reboot on sifive_u - the kfs is reamed every boot; a
 mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
