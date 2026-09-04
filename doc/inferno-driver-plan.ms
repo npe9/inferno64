@@ -842,79 +842,62 @@ and CMD24 for writes.  Verified read, write and multi-block through
 .CW /dev/sdM0/data ,
 negative-controlled, persisting to the backing image.
 .PP
-kfs on top was attempted and backed out, and chasing why turned up a
-real raspi3b defect and a deeper one behind it.  kfs hangs during
-reaming, but not in the SD driver: direct multi-block
-.CW bio
-from the init process works, while the stall appears only through the
-spawned kfs process and its pipe mount.  The root cause is that raspi3b
-had no periodic scheduler tick at all.  The generic-timer interrupt is a
-PPI, and with no GIC it reaches the core only through the BCM2836
-per-core interrupt controller - which QEMU does model at 0x40000000 (an
-earlier note that address was RAM was wrong; the control block shadows
-the RAM there).  Nothing routed it, so the timer never fired; the kernel
-only saw it opportunistically when
-.CW trap()
-ran for some other reason.  Writing the Core0 timer-control register
-(0x40000040) bit 1 (CNTPNSIRQ) routes the non-secure physical timer to
-core 0's IRQ, and ticks then run at HZ - confirmed at 100/s, and kfs
-reaming completes past its old stall to
-.CW "initializing minimal user table" .
+A kfs on top does not run on the Pi yet, and chasing why settled two
+things worth keeping and left one hard bug open.
 .PP
-The routing is now in
-.CW clockinit() ,
-and turning the tick on flushed out two real defects the cooperative
-schedule had masked - both in the SD driver, both fixed.  online()
+First, raspi3b has no periodic scheduler tick.  The generic-timer
+interrupt is a PPI, and with no GIC it reaches the core only through the
+BCM2836 per-core interrupt controller, which QEMU models at 0x40000000
+(an earlier note that the address was only RAM was wrong; the control
+block shadows the RAM).  Nothing routes it, so the kernel runs
+cooperatively.  A one-line write of the Core0 timer-control register
+(0x40000040 bit 1, CNTPNSIRQ) turns on a real 100Hz tick.  Second, doing
+that flushed out two genuine SD-driver bugs, both fixed and kept:
+.CW online()
 returned on its re-init path without restoring
-.CW unit->sectors ,
-which devsd zeroes before each call, so a concurrent walk dropped the
-data partition
-.CW ( "file does not exist" );
-it now always repopulates.  And
+.CW unit->sectors
+(devsd zeroes them before each call, so a walk could drop the data
+partition), and
 .CW bio()
-drove the one controller through a non-atomic register sequence with no
-lock, so a file server's main and sync procs corrupted each other's
-transfers; a per-controller
+drove the controller through a non-atomic register sequence with no
+lock; a per-controller
 .CW QLock
-now serialises it.  Light block-device use is stable under the tick, but
-a heavier probe reveals the tick is not free.
+now serialises it.
 .PP
-The failure that stops a kfs is a preemption-safety bug in the SD path
-itself, and a stress loop pins it far better than kfs did.  A single
-process writing two thousand distinct blocks and reading them back fails
-intermittently with
+But the tick also exposes a preemption-safety bug that has no cheap fix,
+so the routing is reverted and the board ships cooperative.  A single
+process writing two thousand blocks and reading them back fails
+intermittently
 .CW "file does not exist"
-at a varying block - three of three - while a four-thousand-open
-namespace loop under the same tick is clean, so it is SD-specific and not
-a generic vector or scheduler fault.  Earlier readings were all wrong and
-are now ruled out: the
-.CW "T110 R107"
-mount-walk prints on sifive_u too just before its
-.CW SD-FS-OK
-(a routine create walk, not a fault); and
-.CW sdinitpart()
-runs exactly once (the partition never churns).  What remains is that a
-timer IRQ taken in the middle of the SDHOST transfer corrupts it -
+at a varying block (three of three), while a four-thousand-open
+namespace loop under the same tick is clean - the corruption is
+SD-specific.  Bisection is decisive on where it is not: a no-op
+.CW clockintr
+(re-arm and tick-count only) still corrupts, so it is the exception
+entry/return around the transfer, not a clock callee; yet
+.CW vectrap
+and its runtime-built stub are byte-identical to virtarm64's, which is
+stable under its own GIC timer, so the vector code alone is not the
+whole story.
 .CW splhi()
 around the transfer cures the single-proc stress but deadlocks the
-multi-proc file-server path in a lock loop, so it is not a usable fix.
-sifive_u's slow SPI driver never lands in the window and is the working
-oracle.  The mechanism - why a system-register-only clock interrupt
-disturbs an MMIO stream that touches no shared state - is the open lead.
+multi-proc file-server path in a lock loop.  sifive_u's slow SPI driver
+never lands in the window and is the working oracle; the mechanism is
+the open lead.
 .NH 1
 Immediate next steps (cold-start)
 .PP
 The board work stands at: all four riscv virt boards, arm64 on both GIC
 versions with a display, sifive_u with SPI, GEM ethernet and an SD-over-
 SPI stack complete to a kfs filesystem, shakti (riscv64), and the
-Raspberry Pi 3B (arm64) with I2C/SPI/GPIO, a native-SD block device
-(/dev/sdM0/data, read/write/multi-block, stable for light use) and now a
-real 100Hz scheduler tick - every board booting to a shell.  The
-prioritized next work: (1) the raspi3b SD-under-preemption bug - a heavy
-single-proc write loop fails "file does not exist" under the tick (the
-reproducer), splhi masks it but deadlocks the file server, and the
-mechanism is open; sifive_u is the working oracle and a kfs on the Pi is
-what it gates.  (2)
+Raspberry Pi 3B (arm64) with I2C/SPI/GPIO and a native-SD block device
+(/dev/sdM0/data, read/write/multi-block) - every board booting to a
+clean shell.  The prioritized next work: (1) the raspi3b
+SD-under-preemption bug - re-enable the one-line timer routing
+(0x40000040 bit1) and make the SDHOST transfer survive a timer IRQ taken
+mid-stream; the single-proc 2000-block write/read stress is the
+reproducer, sifive_u is the working oracle, and a kfs (and any real
+multitasking) on the Pi is what it gates.  (2)
 persistence across reboot on sifive_u - the kfs is reamed every boot; a
 mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
