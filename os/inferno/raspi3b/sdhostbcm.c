@@ -189,6 +189,17 @@ sdhostonline(SDunit *u)
 	return first? 2: 1;
 }
 
+/*
+ * KNOWN BUG (open): under the 100Hz tick this board now runs, a heavy
+ * single-proc write stream (thousands of blocks, e.g. a kfs ream) fails
+ * intermittently with "file does not exist" at a varying block - a timer
+ * IRQ taken mid-transfer corrupts it, SD-specific (a 4000-open namespace
+ * loop under the same tick is clean).  splhi() around the transfer cures
+ * the single-proc case but deadlocks the multi-proc file-server path, so
+ * it is not applied.  Light block-device use is stable; the mechanism is
+ * the raspi3b open lead.  sifive_u's slow SPI driver never lands in the
+ * window and is the working oracle.
+ */
 static long
 sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 {
