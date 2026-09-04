@@ -25,6 +25,8 @@
 #define	D_SCR_EL3	SYSARG5(3,6,1,1,0)
 #define	D_SPSR_EL3	SYSARG5(3,6,4,0,0)
 #define	D_ELR_EL3	SYSARG5(3,6,4,0,1)
+#define	D_SPSR_EL2	SYSARG5(3,4,4,0,0)
+#define	D_ELR_EL2	SYSARG5(3,4,4,0,1)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
 #define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
 #define	D_ICC_BPR1_EL1	SYSARG5(3,0,12,12,3)
@@ -128,14 +130,20 @@ TEXT	_main(SB), 1, $-4
 	AND	$0xff, R0, R0
 	CBNZW	R0, parkcore
 	/*
-	 * Core 0.  QEMU enters at EL3; drop to EL1 in one ERET.  HCR_EL2.RW
-	 * first so EL1 is AArch64 with EL2 skipped.
+	 * Core 0.  Drop to EL1 in one ERET, from whatever EL the firmware
+	 * entered at.  QEMU's -M raspi3b enters at EL3; a real Pi 3's
+	 * armstub64 enters a 64-bit kernel at EL2.  Both need HCR_EL2.RW set
+	 * so EL1 comes up AArch64, but the drop uses that EL's own SPSR/ELR
+	 * (and SCR_EL3 only exists at EL3) -- writing SCR_EL3 at EL2 would
+	 * fault, which is why an EL3-only sequence hung on hardware.
 	 */
 	MRS	CurrentEL, R0
 	AND	$0xc, R0, R0
 	CMP	$0x4, R0
-	BEQ	atel1
-	MOV	$(1<<31), R0
+	BEQ	atel1			/* already at EL1 */
+	CMP	$0x8, R0
+	BEQ	atel2			/* EL2 (real Pi firmware) */
+	MOV	$(1<<31), R0		/* EL3 (QEMU): drop EL3 -> EL1 */
 	MSR	R0, SPR(D_HCR_EL2)
 	MOV	$0x431, R0
 	MSR	R0, SPR(D_SCR_EL3)
@@ -143,6 +151,14 @@ TEXT	_main(SB), 1, $-4
 	MSR	R0, SPR(D_SPSR_EL3)
 	MOV	$boot1(SB), R0
 	MSR	R0, SPR(D_ELR_EL3)
+	ERET
+atel2:
+	MOV	$(1<<31), R0		/* EL2 (real hardware): drop EL2 -> EL1 */
+	MSR	R0, SPR(D_HCR_EL2)
+	MOV	$0x3c5, R0		/* EL1h, DAIF masked */
+	MSR	R0, SPR(D_SPSR_EL2)
+	MOV	$boot1(SB), R0
+	MSR	R0, SPR(D_ELR_EL2)
 	ERET
 atel1:
 	BL	boot1(SB)

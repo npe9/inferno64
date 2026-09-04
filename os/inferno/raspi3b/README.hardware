@@ -1,0 +1,72 @@
+Booting this kernel on a real Raspberry Pi 3 Model B
+=====================================================
+
+On a Pi 3 the ARM cores do not fetch the kernel directly.  The VideoCore
+GPU boots first, reads the firmware and config from the first (FAT) SD
+partition, loads the ARM kernel image into RAM at 0x80000, and releases
+core 0 into it.  So there is no ELF loader on the board: the kernel must
+be a raw flat binary, and its startup must cope with the EL the firmware
+drops it at.
+
+Build
+-----
+    export PATH=$ROOT/MacOSX/arm64/bin:$PATH
+    cd os/inferno/raspi3b
+    mk INIT=raspi3binit install     # builds the ELF kernel (iraspi3b)
+    mk kernel8.img                  # -> raw flat image for the firmware
+
+kernel8.img is iraspi3b (ELF) reduced to its loadable segments laid out
+at their link addresses, produced by mkrawimg.py from the ELF program
+headers.  (7l -H6 emits a headerless image but packs the segments
+contiguously, which puts .data at the wrong address; mkrawimg.py honours
+the vaddr gap so a flat load at 0x80000 lands .text at 0x80000 and .data
+at 0x100000, matching the link.)
+
+FAT boot partition
+------------------
+Format the first SD partition FAT32 and copy onto it:
+
+    bootcode.bin        }
+    start.elf           }  Pi firmware (from raspberrypi/firmware, boot/)
+    fixup.dat           }
+    config.txt          (this directory)
+    kernel8.img         (mk kernel8.img)
+
+config.txt sets arm_64bit=1, kernel=kernel8.img, and routes the PL011
+UART (which this kernel's console drives, at 0x3f201000) to the GPIO
+header: on a Pi 3 the PL011 is wired to Bluetooth by default, so
+dtoverlay=disable-bt hands it back to GPIO 14/15 (header pins 8/10),
+115200 8N1.  Attach a 3.3 V USB-serial adapter there for the console.
+
+Exception level
+---------------
+The firmware enters a 64-bit kernel at EL2 (not EL3).  l.s's core-0 path
+reads CurrentEL and drops to EL1 from whichever of EL3 (what QEMU -M
+raspi3b gives) or EL2 (real hardware) it finds; an EL3-only drop faults on
+the SCR_EL3 write at EL2.
+
+Known hardware gaps (verified only under emulation so far)
+----------------------------------------------------------
+These are no-ops on QEMU (which models no caches and drains the SD FIFO
+synchronously) but matter on the board; grep the sources for the notes:
+  - MMU enable does not invalidate the caches first (l.s mmuenable): the
+    A53's cache reset state is UNKNOWN and must be invalidated before
+    SCTLR.C/I are set.
+  - The SDHOST bio now gates each FIFO word on the SDEDM fill level
+    (sdhostbcm.c fifospace()/fifodata()), which is real; keep it.
+  - Uniprocessor: cores 1-3 are parked at WFE (l.s), MAXMACH is 1.  SMP
+    (and the BCM2836 mailbox IPIs) is the next hardware milestone.
+
+Emulator boot that mirrors the firmware
+---------------------------------------
+QEMU's -kernel wants a Linux Image header for a raw binary, so to exercise
+the exact flat image the firmware would load, use an explicit loader that
+places it at 0x80000 and starts core 0 there:
+
+    qemu-system-aarch64 -M raspi3b -m 1G -nographic -sd disk.img \
+      -device loader,file=kernel8.img,addr=0x80000,force-raw=on \
+      -device loader,addr=0x80000,cpu-num=0
+
+(-M raspi3b still enters at EL3 there; the EL2 path above is only taken on
+real hardware.)  For day-to-day testing, -kernel iraspi3b (the ELF) is
+simpler and equivalent.

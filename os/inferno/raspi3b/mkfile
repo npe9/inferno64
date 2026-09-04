@@ -68,6 +68,18 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 	$LD -o $target -H7 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
 	cp $target $INSTALLDIR/$target
 
+# Raw flat image for a real Pi 3: the VideoCore firmware loads kernel8.img
+# byte-for-byte at 0x80000 and jumps there (no ELF loader), so strip the
+# ELF wrapper down to the loadable segments at their link addresses.  See
+# README.hardware.  (7l -H6 packs segments contiguously and would put .data
+# at the wrong address, so lay them out from the ELF program headers.)
+kernel8.img: i$CONF mkrawimg.py
+	python3 mkrawimg.py i$CONF kernel8.img $KTZERO
+
+boot:V: kernel8.img
+	@echo 'kernel8.img + config.txt are ready for the Pi FAT boot partition'
+	@echo '(also needs the Pi firmware: bootcode.bin start.elf fixup.dat)'
+
 <../port/portmkfile
 
 ../init/$INIT.dis:	../init/$INIT.b
