@@ -1,0 +1,73 @@
+.TH UPASFS 4
+.SH NAME
+upas/fs \- present a mailbox as a file system
+.SH SYNOPSIS
+.B upas/fs
+[
+.B -m
+.I mountpt
+]
+.I mbox
+.SH DESCRIPTION
+.I Upas/fs
+reads the Unix mbox file
+.I mbox
+and serves it as a file system, the Plan 9
+.I upas
+way, mounted at
+.I mountpt
+(default
+.BR /mail/fs/mbox ).
+Each message becomes a numbered directory
+.RB ( 1 ,
+.BR 2 ,
+\&...) so any program can read mail with
+.IR ls (1)
+and
+.IR cat (1)
+rather than parsing message syntax itself.
+.PP
+Within a message directory the read-only files are:
+.TP
+.B raw
+the whole message as stored.
+.TP
+.B header
+the header block (up to the first blank line).
+.TP
+.B body
+the message body.
+.TP
+.B unixheader
+the mbox
+.B From_
+envelope line.
+.TP
+.BR from ", " to ", " subject ", " date ", " cc ", " reply-to ", " message-id
+the value of the corresponding header field, with continuation lines
+folded; an absent field reads as empty.
+.PP
+The server keeps running after it prints its start line; the mount lives
+in the invoking name space.
+.SH EXAMPLE
+.EX
+
+	upas/fs -m /mail/fs/mbox $home/mbox
+	ls /mail/fs/mbox
+	cat /mail/fs/mbox/1/subject
+
+.EE
+.SH SOURCE
+.B /appl/cmd/upas/fs.b
+.SH SEE ALSO
+.IR upas-fetch (1),
+.IR imap4 (2)
+.SH BUGS
+Only a local Unix mbox is read; feeding the same presentation from
+.IR imap4 (2)
+(so a Gmail inbox is browsable this way) is not yet wired in.
+Only the common header fields are broken out, and MIME parts are not
+decoded \(em
+.B body
+is the raw body.
+The mailbox is read once at start; it is not reread as it changes.

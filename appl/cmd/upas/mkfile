@@ -2,6 +2,7 @@
 
 TARG=\
 	fetch.dis\
+	fs.dis\
 	send.dis\
 
 MODULES=\
@@ -13,6 +14,8 @@ SYSMODULES=\
 	tls12.m\
 	imap4.m\
 	smtp2.m\
+	styx.m\
+	styxservers.m\
 
 DISBIN=$ROOT/dis/upas
 
