@@ -693,3 +693,19 @@ timer recognised by its own CNTP_CTL.ISTATUS (QEMU maps no local IRQ
 controller - 0x40000000 is RAM) all fell into place.  The board is the
 one that reaches the Pi's I2C, SPI and GPIO, which QEMU raspi3b models
 and which are the next work.
+.NH 1
+Immediate next steps (cold-start)
+.PP
+The board work stands at: all four riscv virt boards, arm64 on both GIC
+versions with a display, sifive_u with SPI and GEM ethernet, and two new
+boards this arc - shakti (riscv64) and the Raspberry Pi 3B (arm64) - all
+booting to a shell.  The prioritized next work: (1) I2C on raspi3b - the
+BCM2835 controller is accessible and QEMU models it with attachable
+slaves, but the transfers are timing-sensitive; read QEMU's
+.CW hw/i2c/bcm2835_i2c.c
+to see how a transfer completes, iterate with a standalone bare-metal
+test, verify against an attached at24 EEPROM on BSC0 (0x3f205000), then
+port to a kernel driver.  (2) SPI and GPIO on raspi3b, both modelled.
+(3) the sifive_u SD-over-SPI, which needs a GPIO chip-select driver.
+(4) more boards if wanted - the loop is proven, and the one rule that
+matters for any multi-core board is to park the secondary cores first.
