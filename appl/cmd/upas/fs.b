@@ -170,7 +170,7 @@ buildtree(data: array of byte)
 		if(env != "")
 			md.enter(mkleaf("unixheader", array of byte env));
 		for(fi := 0; fi < len FIELDS; fi++)
-			md.enter(mkleaf(FIELDS[fi], array of byte hdrfield(fields, FIELDS[fi])));
+			md.enter(mkleaf(FIELDS[fi], array of byte mime->hdrdecode(hdrfield(fields, FIELDS[fi]))));
 	}
 }
 

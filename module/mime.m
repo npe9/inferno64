@@ -31,4 +31,7 @@ Mime: module
 	parse:	fn(msg: array of byte): ref Part;
 	# decode a body under a named transfer encoding.
 	decode:	fn(data: array of byte, encoding: string): array of byte;
+	# decode RFC 2047 encoded-words (=?charset?B|Q?text?=) in a header
+	# value; text outside encoded-words is left as is.
+	hdrdecode:	fn(s: string): string;
 };

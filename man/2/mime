@@ -72,13 +72,20 @@ decodes a body under a named transfer encoding:
 and
 .BR 7bit / 8bit / binary
 (returned unchanged).
+.PP
+.B hdrdecode
+decodes the RFC 2047 encoded-words
+.RB ( "=?charset?B?...?=" ,
+.BR "=?charset?Q?...?=" )
+that appear in
+.B Subject
+and address headers, leaving surrounding text as is; the decoded bytes
+are returned as received (no character-set conversion).
 .SH SOURCE
 .B /appl/lib/mime.b
 .SH SEE ALSO
 .IR upasfs (4),
 .IR upas-fetch (1)
 .SH BUGS
-Header word encodings (RFC 2047
-.BR =?charset?enc?...?= )
-are not decoded, and no character-set conversion is done \(em bytes are
-returned as received.
+No character-set conversion is done \(em decoded bytes are returned as
+received (UTF-8 displays correctly; other charsets are not transcoded).

@@ -23,7 +23,7 @@ rm -rf "$work"; mkdir -p "$work"
 cat > "$work/test.mbox" <<'MBOX'
 From sender@example.com Mon Sep  4 12:00:00 2026
 From: Sender <sender@example.com>
-Subject: With attachment
+Subject: =?UTF-8?B?V2l0aCBhdHRhY2htZW50?=
 MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="BOUND"
 
@@ -42,6 +42,9 @@ MBOX
 
 cat > "$work/exp.sh" <<'EMUSH'
 /dis/upas/fs.dis -m /mnt/upasmimetest /.upasmimetmp/test.mbox
+echo 'MARK subject'
+cat /mnt/upasmimetest/1/subject
+echo ''
 echo 'MARK msgtype'
 cat /mnt/upasmimetest/1/type
 echo ''
@@ -76,6 +79,8 @@ fail() { echo "UPASMIME: FAIL - $1" >&2; exit 1; }
 between() { awk "/MARK $1/{f=1;next} /MARK /{f=0} f" "$log"; }
 
 grep -q 'MARK done' "$log" || fail "did not complete"
+# RFC 2047: the base64-encoded Subject must be decoded
+between subject | grep -q '^With attachment$' || fail "RFC 2047 subject not decoded"
 between msgtype | grep -q 'multipart/mixed' || fail "message not recognised as multipart/mixed"
 between parts | grep -q '/1$' || fail "part 1 dir missing"
 between parts | grep -q '/2$' || fail "part 2 dir missing"

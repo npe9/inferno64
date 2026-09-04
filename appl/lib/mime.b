@@ -177,6 +177,116 @@ hexval(c: int): int
 	return -1;
 }
 
+# ---- RFC 2047 header decoding ----
+
+hdrdecode(s: string): string
+{
+	r := "";
+	pend := "";			# whitespace pending between tokens
+	lastword := 0;
+	i := 0;
+	while(i < len s){
+		if(s[i] == ' ' || s[i] == '\t'){
+			pend[len pend] = s[i];
+			i++;
+			continue;
+		}
+		if(s[i] == '=' && i + 1 < len s && s[i + 1] == '?'){
+			(word, after, ok) := decodeword(s, i);
+			if(ok){
+				# whitespace between two encoded words is dropped
+				if(!lastword)
+					r += pend;
+				pend = "";
+				r += word;
+				lastword = 1;
+				i = after;
+				continue;
+			}
+		}
+		r += pend;
+		pend = "";
+		r[len r] = s[i];
+		lastword = 0;
+		i++;
+	}
+	return r + pend;
+}
+
+# decode one =?charset?enc?text?= starting at p; returns (text, index
+# after the word, ok).
+decodeword(s: string, p: int): (string, int, int)
+{
+	i := p + 2;			# past "=?"
+	c1 := findfrom(s, i, '?');
+	if(c1 < 0)
+		return ("", p, 0);
+	i = c1 + 1;			# past charset "?"
+	if(i + 1 >= len s || s[i + 1] != '?')
+		return ("", p, 0);
+	enc := s[i];
+	i += 2;				# past "enc?"
+	te := findstrfrom(s, i, "?=");
+	if(te < 0)
+		return ("", p, 0);
+	text := s[i:te];
+	after := te + 2;
+	dec: array of byte;
+	case enc {
+	'B' or 'b' =>
+		dec = base64->dec(stripws(text));
+	'Q' or 'q' =>
+		dec = qword(text);
+	* =>
+		return ("", p, 0);
+	}
+	return (string dec, after, 1);
+}
+
+# RFC 2047 "Q" encoding: like quoted-printable but '_' means space.
+qword(s: string): array of byte
+{
+	out := array[len s] of byte;
+	n := 0;
+	i := 0;
+	while(i < len s){
+		c := s[i];
+		if(c == '_'){
+			out[n++] = byte ' ';
+			i++;
+		}else if(c == '=' && i + 2 < len s){
+			h := hexval(s[i + 1]) * 16 + hexval(s[i + 2]);
+			if(h >= 0){
+				out[n++] = byte h;
+				i += 3;
+			}else{
+				out[n++] = byte c;
+				i++;
+			}
+		}else{
+			out[n++] = byte c;
+			i++;
+		}
+	}
+	return out[0:n];
+}
+
+findfrom(s: string, from, c: int): int
+{
+	for(i := from; i < len s; i++)
+		if(s[i] == c)
+			return i;
+	return -1;
+}
+
+findstrfrom(s: string, from: int, sub: string): int
+{
+	for(i := from; i + len sub <= len s; i++)
+		if(s[i:i + len sub] == sub)
+			return i;
+	return -1;
+}
+
 # ---- header parsing ----
 
 splithdr(msg: array of byte): (string, array of byte)
