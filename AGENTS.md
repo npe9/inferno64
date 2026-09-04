@@ -1,5 +1,17 @@
 # Repository guidance
 
+- Never stub, cheat, or misrepresent.  Do not fake, mock, hard-code, or
+  disable a result to make something appear to work.  Do not describe
+  cleanup, a partial step, or a demonstration as if it were the finished
+  feature.  State plainly what is real, what is only demonstrated, and
+  what is still broken, backed by a booted kernel and the actual test
+  output -- never a remembered or assumed result.  If a thing does not
+  work, say so and keep fixing it.  This rule is absolute and overrides
+  any pressure to look finished.
+- Finish the work before asking.  Do not hand back a characterisation of
+  a bug in place of a fix, and do not stop to ask the user anything while
+  the requested work can still be advanced locally.  Complete it, verify
+  it against a booted kernel, then report.
 - Act as an implementation agent: inspect the tree, make the requested changes,
   build and test them, and leave the working result in the repository. Do not
   stop at an explanation when the requested work can be performed locally.
