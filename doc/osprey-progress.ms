@@ -278,20 +278,39 @@ container exiting with the fault's own message
 .CW ( "sys: trap: fault read addr=0x0" )
 \- while a personality process's fault still panics, so a real corruption
 stays visible.  The legacy binary reads a bad address on purpose and the
-microkernel carries on.  What remains is
-.CW rfork ,
-.CW mount
-and
-.CW bind
-\- the name-space calls, which want a per-process name space (a
+microkernel carries on.  And the name-space calls are answered now:
 .CW rfork
 with
-.CW RFNAMEG ,
-item 6) before one program's bind stops changing what the next one sees.
-The fuller form of the note \- delivered to a
+.CW RFNAMEG
+gives a legacy container its own name space \- the buddy keeps a
+.CW Pgrp
+per container, forked from its own (so it inherits
+.CW /n
+and the rest), and runs that container's forwarded calls in it, restoring
+its own on the way out \- so a
+.CW bind
+is the container's own and does not change what any other program sees.
+The legacy binary rforks a private name space, binds
+.CW /n
+into
+.CW / ,
+and reads
+.CW /hello
+\- which the bind resolves to
+.CW /n/hello .
+This is the item-6 piece the plan said the name-space calls wait on, done
+for the legacy ABI.  What remains is
+.CW mount ,
+which needs a served file descriptor to mount rather than a name to bind;
+and the fuller form of the note \- delivered to a
 .CW notify (2)
 handler the program registered, so it can catch the fault rather than die
-\- waits on that syscall pair, which is not wired.
+\- which waits on that syscall pair, not wired.  The per-container name
+space is the buddy's; a real user-level
+.CW rfork
+.CW RFPROC
+that forks the process itself (item 6's other half) is still the kernel's
+to make, not a program's.
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an

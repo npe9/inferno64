@@ -151,6 +151,8 @@ def main():
         ("the buddy makes a pipe: the program writes one end and reads the message from the other",
          re.search(r'legacy: pipe\(\) returned fds \d+ and \d+ from the buddy', t) is not None
          and 'legacy: wrote one pipe end and read 29 bytes from the other: "through a pipe the buddy made"' in t),
+        ("a legacy program rforks its own name space and binds in it: /n bound into / makes /hello read /n/hello, the buddy running the call in the container's own ns",
+         re.search(r'legacy: rforked a private ns and bound /n into /; /hello \(= /n/hello\) reads: "\S', t) is not None),
         ("a declined fault reaches the Plan 9 program as a note - a clean kill, its container exiting, not a microkernel panic",
          re.search(r'osprey: legacy process \S+ killed by note:', t) is not None
          and re.search(r'osprey exec: container \d+ \(/boot/legacy\) exited with status 1', t) is not None

@@ -340,6 +340,35 @@ newpgrp(void)
 	return p;
 }
 
+/*
+ * closepgrp lives in proc.c, which this personality does not link (its
+ * process model is the cooperative scheduler, not the kernel's Procs); a
+ * container that rforks its own name space needs it to free that name
+ * space, so it is here, the same walk of the mount hash proc.c's does.
+ */
+void
+closepgrp(Pgrp *p)
+{
+	Mhead **h, **e, *f;
+	Mount *m;
+
+	if(decref(p))
+		return;
+	e = &p->mnthash[MNTHASH];
+	for(h = p->mnthash; h < e; h++){
+		while((f = *h) != nil){
+			*h = f->hash;
+			wlock(&f->lock);
+			m = f->mount;
+			f->mount = nil;
+			wunlock(&f->lock);
+			mountfree(m);
+			putmhead(f);
+		}
+	}
+	free(p);
+}
+
 void
 chandevreset(void)
 {

@@ -2344,6 +2344,7 @@ enum {
 	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
 	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
+	Brfork = 19, Bbind = 2,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2623,6 +2624,24 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		break;
 	case Bpipe:				/* pipe(fd[2]): two ints back at Bdataoff */
 		ab[1] = 0; ab[2] = 0; ab[3] = 0;
+		break;
+	case Brfork:				/* rfork(flags) */
+		ab[1] = a[0]; ab[2] = 0; ab[3] = 0;
+		break;
+	case Bbind:				/* bind(name, old, flag): name at Bnameoff, old just past it */
+		nd = ospreydata(p, Bnameoff, 512);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0], *old = (char*)a[1];
+			for(i = 0; i < 127 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+			for(i = 0; i < 127 && old[i] != 0; i++)
+				nd[128+i] = old[i];
+			nd[128+i] = 0;
+		}
+		ab[1] = a[2]; ab[2] = 0; ab[3] = 0;	/* the flag */
 		break;
 	default:
 		return -1;			/* a trap the buddy does not emulate */

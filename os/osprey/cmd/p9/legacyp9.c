@@ -97,6 +97,30 @@ startboot(char *argv0, char **argv)
 			print("legacy: pipe() failed\n");
 	}
 
+	/*
+	 * A private name space: rfork it, then bind /n into / so /hello names
+	 * /n/hello here.  The bind is this program's own - the buddy runs the
+	 * call in the name space it forked for this container, not the shared
+	 * one - so it does not change what any other program sees.
+	 */
+	if(rfork(RFNAMEG) < 0)
+		print("legacy: rfork(RFNAMEG) failed\n");
+	else if(bind("/n", "/", MAFTER) < 0)
+		print("legacy: bind /n onto / in the private ns failed\n");
+	else {
+		fd = open("/hello", OREAD);
+		if(fd < 0)
+			print("legacy: /hello not visible after the bind\n");
+		else {
+			n = read(fd, buf, sizeof buf - 1);
+			if(n < 0)
+				n = 0;
+			buf[n] = 0;
+			close(fd);
+			print("legacy: rforked a private ns and bound /n into /; /hello (= /n/hello) reads: \"%s\"\n", buf);
+		}
+	}
+
 	print("legacy: the buddy answered every trap\n");
 
 	/*

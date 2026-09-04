@@ -42,6 +42,12 @@ enum {
 	STAT	= 42,
 	ERRSTR	= 41,
 	PIPE	= 21,
+	RFORK	= 19,
+	BIND	= 2,
+	/* rfork flags (portdat.h), which the shim headers here do not carry */
+	RFNAMEG	 = (1<<0),
+	RFPROC	 = (1<<4),
+	RFCNAMEG = (1<<10),
 
 	/*
 	 * Not system calls: the kernel's requests for the legacy process's
@@ -79,6 +85,7 @@ struct Img {
 		uvlong	off, va, filesz, memsz, flags;
 	} ph[Maxph];
 	char	err[ERRMAX];		/* the last error, for the process's errstr(2) */
+	Pgrp	*pgrp;			/* its own name space once it rforks RFNAMEG; nil = the buddy's shared one */
 };
 enum { Nimg = 8 };
 static Img imgs[Nimg];
@@ -299,6 +306,8 @@ p9buddy_gone(uvlong container)
 	for(i = 3; i < Nfd; i++)
 		if(img->fds[i] >= 0)
 			p9close(img->fds[i]);
+	if(img->pgrp != nil)
+		closepgrp(img->pgrp);		/* the container's own name space, if it rforked one */
 	memset(img, 0, sizeof *img);
 }
 
@@ -362,6 +371,7 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	Img *img;
 	long r;
 	int bfd;
+	Pgrp *savedpgrp = nil;
 
 	img = imgof(container, 1);
 
@@ -377,11 +387,25 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	}
 
 	/*
+	 * If this container has rforked its own name space, run its call in
+	 * that name space, not the buddy's shared one, so its binds and mounts
+	 * are its own; restore the buddy's on the way out.  Inert until a
+	 * container rforks (img->pgrp stays nil), so the common path is
+	 * unchanged.
+	 */
+	if(img != nil && img->pgrp != nil){
+		savedpgrp = up->pgrp;
+		up->pgrp = img->pgrp;
+	}
+
+	/*
 	 * Any file trap that raises an error is answered -1, and the error
 	 * string is stashed per-container so the process's next errstr(2)
 	 * returns the real reason - not a lie, and not the buddy's own errstr.
 	 */
 	if(waserror()){
+		if(savedpgrp != nil)
+			up->pgrp = savedpgrp;
 		if(img != nil)
 			kstrcpy(img->err, up->errstr, sizeof img->err);
 		return -1;
@@ -488,11 +512,36 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		}
 		break;
 
+	case RFORK:
+		/*
+		 * rfork(flags): only the name-space flags are answered - the
+		 * container gets its own name space, forked from the buddy's
+		 * (RFNAMEG) or empty (RFCNAMEG).  RFPROC (a new process) is not
+		 * answered; there is no user-level fork on the microkernel yet.
+		 */
+		r = 0;
+		if((a0 & (RFNAMEG|RFCNAMEG)) != 0 && img->pgrp == nil){
+			Pgrp *ng = newpgrp();
+			if(a0 & RFNAMEG)
+				pgrpcpy(ng, up->pgrp);		/* inherit the buddy's mounts, /n and all */
+			img->pgrp = ng;
+		}
+		if(a0 & RFPROC)
+			r = -1;				/* cannot fork a process here */
+		break;
+
+	case BIND:
+		/* bind(name, old, flag): name at Nameoff, old at Nameoff+128, a0 the flag */
+		r = p9bind((char*)(cdata + Nameoff), (char*)(cdata + Nameoff + 128), (int)a0);
+		break;
+
 	default:
 		r = -1;		/* a trap this buddy does not emulate */
 		break;
 	}
 	poperror();
+	if(savedpgrp != nil)
+		up->pgrp = savedpgrp;
 	return r;
 }
 
