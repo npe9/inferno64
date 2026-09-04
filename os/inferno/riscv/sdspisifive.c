@@ -45,6 +45,7 @@ enum {
 
 typedef struct Ctlr Ctlr;
 struct Ctlr {
+	QLock;			/* serialise bio across concurrent procs */
 	u32*	r;		/* SPI controller registers */
 	uvlong	sectors;
 	int	byteaddr;	/* CSD v1 SDSC: address in bytes, not blocks */
@@ -261,6 +262,7 @@ sdspibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	u32 arg;
 
 	USED(lun);
+	qlock(c);
 	for(i = 0; i < nb; i++){
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		if(write){
@@ -275,6 +277,7 @@ sdspibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				break;
 		}
 	}
+	qunlock(c);
 	return i * Secsize;
 }
 
