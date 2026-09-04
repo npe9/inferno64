@@ -27,6 +27,11 @@ static void
 nhandler(void *ureg, char *msg)
 {
 	USED(ureg);
+	if(strncmp(msg, "osprey:", 7) == 0){
+		/* not a fault: continue where the note interrupted */
+		print("legacy: my note handler got a note that is not a fault: \"%s\"; noted(NCONT)\n", msg);
+		noted(NCONT);
+	}
 	print("legacy: my note handler caught the fault: \"%s\"\n", msg);
 	exits("note handled");
 }
@@ -272,6 +277,23 @@ startboot(char *argv0, char **argv)
 	 * killing the program outright; the handler catches its own fault.
 	 */
 	notify(nhandler);
+	/*
+	 * A note that is not a fault first: ask the kernel to post one.  It
+	 * is delivered to the handler on the way back from the call, the
+	 * handler returns with noted(NCONT), and this program resumes at
+	 * the instruction after the call - the continuation a fault's note
+	 * cannot show, since its address stays bad.
+	 */
+	{
+		extern long ospreyxcall(int, uvlong*, long);
+		uvlong args[5];
+		volatile int after = 0;
+
+		args[0] = args[1] = args[2] = args[3] = args[4] = 0;
+		ospreyxcall(25, args, 0);		/* ReqNote */
+		after = 7;
+		print("legacy: resumed after the note - noted(NCONT) brought me back to the instruction after the call (%d)\n", after);
+	}
 	print("legacy: registered a note handler; now reading a bad address on purpose\n");
 	{
 		volatile int *bad = (volatile int*)0;

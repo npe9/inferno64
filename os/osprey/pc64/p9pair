@@ -182,6 +182,7 @@ port
 	extern long ospreybuddyforward(ulong, uintptr*);
 	extern int ospreybuddyhas(void);
 	extern uintptr ospreyxcall(va_list);
+	extern int uregok(void*);
 	typedef uintptr Xsyscall(va_list);
 
 	uintptr xpwrite(va_list list)
@@ -298,10 +299,69 @@ port
 		up->notify = (int(*)(void*, char*))f;
 		return 0;
 	}
+	/*
+	 * noted(2): the note handler's return.  NCONT resumes the
+	 * interrupted program from the register frame notify() saved on
+	 * its stack; the rest is as the cut sysproc.c had it.  A declined
+	 * fault cannot exercise NCONT (the address is still bad), so the
+	 * kernel posts a note by request (ReqNote, devosprey.c) for the
+	 * check of it.
+	 */
+	uintptr xnoted(va_list list)
+	{
+		Ureg *nureg;
+		int arg;
+
+		arg = va_arg(list, int);
+		qlock(&up->debug);
+		if(up->notified){
+			/*
+			 * fpunoted reads the saved FPU state, which a process
+			 * that never used the FPU has none of (fpsave nil,
+			 * fpstate FPinit): the cut sysproc.c's caller assumed
+			 * one and read address 0x340.
+			 */
+			if(up->fpsave != nil || (up->fpstate & FPnotify)){
+				splhi();
+				fpunoted(up);
+				spllo();
+			}
+		} else if(arg != NRSTR){
+			qunlock(&up->debug);
+			error(Ebadarg);
+		}
+		qunlock(&up->debug);
+		nureg = up->noteureg;
+		if(!uregok(nureg)){		/* trap.c: the frame wholly in user memory */
+			print("osprey: %s: bad ureg in noted\n", up->text);
+			ospreyexits(1);
+		}
+		switch(arg){
+		case NCONT:
+		case NRSTR:
+			up->noteureg = *(Ureg**)((uintptr)nureg-BY2WD);
+			/* wet floor */
+		case NSAVE:
+			if(noted(up->dbgreg, nureg, arg)){
+				print("osprey: %s: trap in noted\n", up->text);
+				ospreyexits(1);
+			}
+			break;
+		default:
+		case NDFLT:
+			noted(up->dbgreg, nureg, arg);
+			print("osprey: %s: noted(%d) ends it: %s\n", up->text, arg, up->lastnote != nil ? up->lastnote->msg : "");
+			ospreyexits(1);
+		}
+		up->notified = 0;
+		return 0;
+	}
+
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
 		[8]	xexits,		/* EXITS */
 		[28]	xnotify,	/* NOTIFY: register a note handler */
+		[29]	xnoted,		/* NOTED: the handler returns; NCONT resumes */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */

@@ -2401,6 +2401,7 @@ uintptr
 #define ReqMousenotify 22	/* xcall op: route IRQ12 (aux) to the caller as a notification */
 #define ReqSettime 23	/* xcall op: set the kernel's time of day, seconds since the epoch, from a task's own clock read */
 #define ReqMove 24	/* xcall op: carry the calling process, running, into a container of its own - resume, not restart */
+#define ReqNote 25	/* xcall op: post the caller a note that is not a fault, so noted(NCONT) has something to resume from */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2467,6 +2468,18 @@ ospreyxcall(va_list list)
 		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
 			inb(Kbddata);			/* drain the echo, if any */
 		intrenable(Kbdirq, ospreykbdnotify, nil, -1, "osprey-kbd-notify");
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqNote){
+		/*
+		 * A note by request: delivered on the way back to user mode
+		 * (trap.c's donotify), to the handler the caller registered
+		 * with notify(2).  A fault's note cannot be continued from -
+		 * the address stays bad - so this is what lets noted(NCONT)
+		 * be seen to resume the interrupted program.
+		 */
+		postnote(up, 1, "osprey: a note by request", NUser);
 		ubuf[0] = 0;
 		return 0;
 	}

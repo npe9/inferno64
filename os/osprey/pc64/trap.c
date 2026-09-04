@@ -721,6 +721,18 @@ forkchild(Proc *p, Ureg *ureg)
 }
 
 /*
+ * Is a note's saved register frame, at nureg on the user stack with the
+ * previous frame's pointer in the word below it, wholly in user memory?
+ * For the configs' noted(2), which live outside the kernel headers that
+ * define Ureg.
+ */
+int
+uregok(void *nureg)
+{
+	return okaddr((uintptr)nureg-BY2WD, BY2WD+sizeof(Ureg), 0);
+}
+
+/*
  * What the process forkchild set up returns from its system call: a fork
  * gives its child 0, a container's process moved to another container
  * (ospreymovekern, ../port/devosprey.c) is given the new container's

@@ -354,12 +354,39 @@ attaches the served descriptor with
 and mounts it with
 .CW cmount ,
 the same primitives the personality's own boot uses.  The file traps, the
-name-space calls and the fault are all answered now; what is left of the
-legacy ABI is the
+name-space calls and the fault are all answered now, and so is the
 .CW noted (2)
-continuation that would let a handler resume the interrupted instruction
-rather than exit (a fault cannot exercise it \- the address is still bad -
-so it is not built).  The per-container name space is the buddy's; the other half of item 6, a
+continuation, the last of the ABI: the configs carry
+.CW xnoted
+(the cut
+.CW sysproc.c 's
+.CW sysnoted ,
+which restores the register frame
+.CW notify()
+saved on the program's stack and, for
+.CW NCONT ,
+resumes the interrupted instruction), and since a fault cannot exercise
+it \- the address is still bad \- the kernel posts a note by request
+.CW ( ReqNote ,
+an
+.CW ospreyxcall ),
+delivered to the handler on the way back from the call.  The legacy
+binary's handler continues with
+.CW NCONT
+for a note that is not a fault and exits for one that is, and the
+program prints from the instruction after the call.  Two things were
+found on the way: the config generator drops preprocessor lines from a
+config's C, so the frame check that needs
+.CW sizeof(Ureg)
+is an arch helper
+.CW ( uregok
+in
+.CW os/osprey/pc64/trap.c );
+and the stock
+.CW fpunoted
+reads the saved FPU state of a process that never used the FPU and has
+none, which the cut caller assumed \- a kernel fault at 0x340 \- so it
+is guarded.  The per-container name space is the buddy's; the other half of item 6, a
 real user-level
 .CW rfork
 that forks the process itself, is the kernel's to make, not a program's,
@@ -1449,10 +1476,10 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-fifty-three criteria, five of them this and the gateway below, three
+fifty-four criteria, five of them this and the gateway below, three
 the \[*p]p wire of item 4, one the time of day of item 5, two the
 resume of item 6a, four the replica and the caching file system of
-item 8.  What is
+item 8, one the note continuation of item 2.  What is
 honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a
