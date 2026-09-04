@@ -88,6 +88,7 @@ void	lgdt(void*);
 void	lidt(void*);
 void	links(void);
 void	ltr(ulong);
+void	iogrant(Proc*, int, int);
 void	mach0init(void);
 void	mathinit(void);
 void	mb386(void);

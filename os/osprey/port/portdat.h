@@ -786,6 +786,7 @@ struct Proc
 	int	linuxheap;	/* the segment slot brk grows, or -1 */
 	uintptr	linuxbrk;	/* the break as the process last set it */
 	uintptr	linuxmmapnext;	/* where the next anonymous mmap goes */
+	void	*ioperm;	/* per-process I/O-permission bitmap, nil if no ports granted */
 	struct {		/* its file mappings: pages the buddy reads from the file */
 		uintptr	va;
 		uintptr	len;

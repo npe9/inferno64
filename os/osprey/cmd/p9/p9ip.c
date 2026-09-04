@@ -156,14 +156,19 @@ p9ipup(void)
 
 	{
 		extern int ospreyinb(int);
+		extern long ospreyxcall(int op, uvlong *args, long n);
+		uvlong grant[2];
 		int st;
-		/* A user-mode INB on the i8042 status port.  At CPL3 this traps
-		 * unless the kernel delegated 0x64 through the TSS I/O-permission
-		 * bitmap - so a printed status byte, not a fault, is the proof
-		 * that port I/O is delegated to user space, no syscall in the
-		 * data path. */
+		/* Ask the kernel to delegate the i8042 ports (0x60 data, 0x64
+		 * status/command) to this process.  The kernel clears their bits
+		 * in this process's own I/O-permission bitmap, which the scheduler
+		 * loads into the CPU's TSS - a per-process grant, not machine-wide.
+		 * Then a user-mode INB runs at CPL3 with no trap and no syscall in
+		 * the data path; a printed status byte, not a fault, is the proof. */
+		grant[0] = 0x60; grant[1] = 0x64;
+		ospreyxcall(20, grant, 2);		/* ReqIoport */
 		st = ospreyinb(0x64);
-		print("p9 io: user-mode inb(0x64) i8042 status = %#ux - port I/O delegated to user space, no trap\n", st & 0xff);
+		print("p9 io: user-mode inb(0x64) i8042 status = %#ux - port I/O delegated to this process, no trap\n", st & 0xff);
 	}
 	if(waserror()){
 		print("p9 ip: bring-up failed: %s\n", up->errstr);

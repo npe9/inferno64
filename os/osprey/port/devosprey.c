@@ -2357,6 +2357,7 @@ ospreybuddycall(Ospreyproc *p, int tries)
  * its reservation and takes the clock.
  */
 uintptr
+#define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2372,6 +2373,11 @@ ospreyxcall(va_list list)
 	memset(arg, 0, sizeof arg);
 	for(i = 0; i < n; i++)
 		arg[i] = ubuf[i];
+	if(op == ReqIoport){		/* delegate I/O ports arg[0]..arg[1] to the calling process */
+		iogrant(up, (int)arg[0], (int)arg[1]);
+		ubuf[0] = 0;
+		return 0;
+	}
 	if(up->osprey == nil || ospreycall(up->osprey, op, arg, &status) < 0){
 		print("osprey: xcall op %llud from container %llud refused\n", op, up->osprey == nil ? 0ULL : ospreyid(up->osprey));
 		return (uintptr)-1;

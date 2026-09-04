@@ -103,10 +103,11 @@ mmuinit(void)
 	 * schedule time is the finer, capability form.)
 	 */
 	m->tss->iomap = (u16int)((uchar*)m->tss->iobm - (uchar*)m->tss);
-	memset(m->tss->iobm, 0xff, sizeof m->tss->iobm);
+	memset(m->tss->iobm, 0xff, sizeof m->tss->iobm);	/* deny every port by default */
 	m->tss->iobmterm = 0xff;
-	m->tss->iobm[0x60/8] &= ~(1 << (0x60 & 7));	/* i8042 data */
-	m->tss->iobm[0x64/8] &= ~(1 << (0x64 & 7));	/* i8042 status/command */
+	/* a process is granted ports by ioperm (portdat.h); mmuswitch loads its
+	 * bitmap into this per-CPU TSS when it is scheduled, so the delegation is
+	 * per-process, not machine-wide. */
 	for(i=0; i<14; i+=2){
 		x = (uintptr)m + MACHSIZE;
 		m->tss->ist[i] = x;
@@ -509,7 +510,39 @@ mmuswitch(Proc *proc)
 		m->mmumap[p->index/MAPBITS] |= 1ull<<(p->index%MAPBITS);
 		m->pml4[p->index] = PADDR(p->page) | PTEUSER|PTEWRITE|PTEVALID;
 	}
+	/* load this process's I/O-port grant into the per-CPU TSS bitmap */
+	if(proc->ioperm != nil)
+		memmove(m->tss->iobm, proc->ioperm, sizeof m->tss->iobm);
+	else
+		memset(m->tss->iobm, 0xff, sizeof m->tss->iobm);
 	taskswitch((uintptr)proc);
+}
+
+/*
+ * Delegate I/O ports [lo, hi] to a process: give it (once) an all-deny
+ * bitmap and clear the granted bits.  If it is the running process, load
+ * the bitmap into this CPU's TSS now so the grant takes effect before the
+ * next context switch; otherwise mmuswitch loads it when it is scheduled.
+ * A cleared bit lets that process run in/out on the port directly at CPL3.
+ */
+void
+iogrant(Proc *proc, int lo, int hi)
+{
+	uchar *bm;
+	int port;
+
+	if(proc->ioperm == nil){
+		bm = mallocz(sizeof m->tss->iobm, 1);
+		if(bm == nil)
+			return;
+		memset(bm, 0xff, sizeof m->tss->iobm);	/* deny every port */
+		proc->ioperm = bm;
+	}
+	bm = proc->ioperm;
+	for(port = lo; port <= hi && port < 8*(int)sizeof m->tss->iobm; port++)
+		bm[port/8] &= ~(1 << (port & 7));
+	if(proc == up)
+		memmove(m->tss->iobm, bm, sizeof m->tss->iobm);
 }
 
 void
