@@ -941,7 +941,7 @@ sugen(Node *n, Node *nn, long w)
 		if(nn != Z && side(nn)) {
 			nod1 = *n;
 			nod1.type = typ(TIND, n->type);
-			regret(&nod2, &nod1);
+			regalloc(&nod2, &nod1, Z);	/* not regret: REGRET==REGARG here, so a struct arg would clobber arg0 in R0 */
 			lcgen(nn, &nod2);
 			regsalloc(&nod0, &nod1);
 			gopcode(OAS, &nod2, Z, &nod0);
