@@ -20,7 +20,8 @@
  *  - Byte- vs block-addressing comes from the CSD version: v1 (SDSC) is
  *    byte-addressed, v2 (SDHC) block-addressed.
  * Verified: /dev/sdM0/data reads block 0 and block 1 at the right
- * offsets, matched against known markers with a negative control.
+ * offsets (matched against known markers, negative-controlled) and a
+ * write to block 2 reads back and persists to the QEMU backing image.
  */
 #include "u.h"
 #include "../port/lib.h"
@@ -38,6 +39,7 @@
 
 enum {
 	Token	= 0xfe,		/* single-block data start token */
+	Rspaccept = 0x05,	/* data-response: write accepted */
 	Secsize	= 512,
 };
 
@@ -104,6 +106,37 @@ sdreadblock(u32 *r, uchar *buf, int n)
 		buf[i] = spibyte(r, 0xff);
 	spibyte(r, 0xff);			/* CRC hi */
 	spibyte(r, 0xff);			/* CRC lo */
+	return 0;
+}
+
+/*
+ * Write one block: the 0xfe start token, n payload bytes, a dummy CRC,
+ * then the card's data-response byte (accepted = 0x05) and a wait for it
+ * to finish programming (it holds the line at 0x00 while busy).  Returns
+ * 0, or -1 if the card did not accept the block.
+ */
+static int
+sdwriteblock(u32 *r, uchar *buf, int n)
+{
+	int i, resp;
+
+	spibyte(r, 0xff);			/* a gap byte before the token */
+	spibyte(r, Token);			/* data start token */
+	for(i = 0; i < n; i++)
+		spibyte(r, buf[i]);
+	spibyte(r, 0xff);			/* dummy CRC hi */
+	spibyte(r, 0xff);			/* dummy CRC lo */
+	resp = 0xff;
+	for(i = 0; i < 16; i++){		/* data-response token */
+		resp = spibyte(r, 0xff);
+		if((resp & 0x11) == 0x01)
+			break;
+	}
+	if((resp & 0x1f) != Rspaccept)
+		return -1;
+	for(i = 0; i < 100000; i++)		/* wait out busy (0x00) */
+		if(spibyte(r, 0xff) != 0x00)
+			break;
 	return 0;
 }
 
@@ -219,14 +252,19 @@ sdspibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	u32 arg;
 
 	USED(lun);
-	if(write)
-		return 0;			/* read-only for now */
 	for(i = 0; i < nb; i++){
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
-		if(sdcmd(c->r, 17, arg, 0x01) < 0)
-			break;
-		if(sdreadblock(c->r, p + i*Secsize, Secsize) < 0)
-			break;
+		if(write){
+			if(sdcmd(c->r, 24, arg, 0x01) < 0)	/* WRITE_SINGLE_BLOCK */
+				break;
+			if(sdwriteblock(c->r, p + i*Secsize, Secsize) < 0)
+				break;
+		}else{
+			if(sdcmd(c->r, 17, arg, 0x01) < 0)	/* READ_SINGLE_BLOCK */
+				break;
+			if(sdreadblock(c->r, p + i*Secsize, Secsize) < 0)
+				break;
+		}
 	}
 	return i * Secsize;
 }

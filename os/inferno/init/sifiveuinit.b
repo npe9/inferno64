@@ -93,6 +93,31 @@ sdcheck()
 	}
 	sys->print("SD block1 %02x%02x%02x%02x\n",
 		int buf[0], int buf[1], int buf[2], int buf[3]);
+
+	# write/read-back on block 2 (leaves the marker blocks 0/1 intact)
+	wfd := sys->open("/dev/sdM0/data", Sys->ORDWR);
+	if(wfd == nil){
+		sys->print("SD-RO (no write fd: %r)\n");
+		return;
+	}
+	wbuf := array[512] of byte;
+	for(i := 0; i < len wbuf; i++)
+		wbuf[i] = byte (16r90 + (i & 16rf));
+	if(sys->pwrite(wfd, wbuf, len wbuf, big (2*512)) != len wbuf){
+		sys->print("SD-WFAIL write: %r\n");
+		return;
+	}
+	rbuf := array[512] of byte;
+	if(sys->pread(wfd, rbuf, len rbuf, big (2*512)) != len rbuf){
+		sys->print("SD-WFAIL readback: %r\n");
+		return;
+	}
+	tag := "(SD-WRITE-OK)";
+	for(i = 0; i < len rbuf; i++)
+		if(rbuf[i] != wbuf[i])
+			tag = "(SD-WRITE-MISMATCH)";
+	sys->print("SD block2 wrote %02x%02x readback %02x%02x %s\n",
+		int wbuf[0], int wbuf[1], int rbuf[0], int rbuf[1], tag);
 	sys->print("SD-OK\n");
 }
 
