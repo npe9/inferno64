@@ -720,6 +720,21 @@ forkchild(Proc *p, Ureg *ureg)
 	cureg->ax = 0;
 }
 
+/*
+ * What the process forkchild set up returns from its system call: a fork
+ * gives its child 0, a container's process moved to another container
+ * (ospreymovekern, ../port/devosprey.c) is given the new container's
+ * identity, so it knows it moved.
+ */
+void
+forkchildret(Proc *p, uintptr v)
+{
+	Ureg *cureg;
+
+	cureg = (Ureg*)(p->sched.sp+2*BY2WD);
+	cureg->ax = v;
+}
+
 /* Give enough context in the ureg to produce a kernel stack for
  * a sleeping process
  */

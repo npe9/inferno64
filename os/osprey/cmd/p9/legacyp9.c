@@ -225,6 +225,47 @@ startboot(char *argv0, char **argv)
 	}
 
 	/*
+	 * Move: ask the kernel to carry this process, running, into a
+	 * container of its own - resume, not restart.  The call does not
+	 * return to this container; it returns, with the new container's
+	 * identity, to the same process in the new one, its stack and
+	 * registers as they were.  A local variable and a descriptor opened
+	 * before the move are read after it, which is what proves the state
+	 * crossed rather than the program starting again.
+	 */
+	{
+		extern long ospreyxcall(int, uvlong*, long);
+		uvlong args[5];
+		volatile int keep = 42;
+		char mbuf[128];
+		int mfd, moved;
+		long mn;
+
+		mfd = open("/n/hello", OREAD);
+		args[0] = args[1] = args[2] = args[3] = args[4] = 0;
+		print("legacy: asking the kernel to move me, running, to a container of my own\n");
+		moved = (int)ospreyxcall(24, args, 0);	/* ReqMove; only the moved process returns */
+		if(moved > 0){
+			mn = mfd >= 0 ? read(mfd, mbuf, sizeof mbuf - 1) : -1;
+			if(mn < 0)
+				mn = 0;
+			mbuf[mn] = 0;
+			print("legacy: I was moved: I am container %d now, my stack still holds %d, and the fd I opened before the move reads: \"%s\"\n",
+				moved, keep, mbuf);
+		} else
+			print("legacy: the kernel would not move me (%d)\n", moved);
+		if(mfd >= 0)
+			close(mfd);
+		/*
+		 * Let the console task carry that line out before the fault
+		 * below: the kernel prints a fault synchronously and would cut
+		 * into it.  Each sleep is one service-and-yield of the ring.
+		 */
+		for(mn = 0; mn < 100; mn++)
+			sleep(1);
+	}
+
+	/*
 	 * Register a note handler, then read a bad address on purpose.  The
 	 * fault is declined and reaches this program as a note - and because
 	 * a handler is registered, the note is delivered to it rather than

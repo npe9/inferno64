@@ -192,6 +192,13 @@ one back is a restart, into this kernel or another one -- a container
 that was running when it was written out is running again when it is read
 back.
 .PP
+.B "Resume."
+A running process is carried into a container of its own with its
+registers, stack, data, open files and name space, and the container it
+came from is destroyed: it goes on from the call, in the new container,
+rather than starting again.  On one machine; the pages do not yet cross
+a wire.
+.PP
 .B "What it costs."
 The presentation measures a send, a receive and a context switch
 together at 270 nanoseconds.  The same thing here \- a request put on a
@@ -663,6 +670,43 @@ and grants, not a process's registers or stack, nor its packets, its
 pages or its kernel channels, nor a checkpoint larger than one ethernet
 frame.  Resuming a process rather than restarting it is the piece, and
 it is the deepest one left.
+.PP
+Resume is built, on one machine.  A process asks to be moved
+.CW ( ReqMove ,
+an
+.CW ospreyxcall ;
+.CW ospreymovekern
+in
+.CW os/osprey/port/devosprey.c )
+and the kernel carries it, as it is, into a container of its own: the
+fork's own mechanism \- a new container delegated to the same server, a
+new
+.CW Proc
+whose return frame is the caller's
+.CW ( forkchild ),
+the caller's segments dupped copy-on-write, its descriptor table cloned
+by the buddy, its name space shared \- with the return register set to
+the new container's identity rather than 0
+.CW ( forkchildret ,
+in
+.CW os/osprey/pc64/trap.c ),
+and then, instead of two processes, one: the container it came from is
+taken apart the way an exit takes one apart, its entry in the child
+table, and any wait pending on it, carried to the new container so that
+the parent reaps the moved process and not a phantom of the old.  The
+legacy Plan 9 binary opens a file, sets a local variable, and asks to be
+moved; the call returns to it in the new container, and it prints the
+new identity, the variable (42) still on its stack, and the file read
+through the descriptor it opened before \- the state crossed, the
+program did not start again \- and then exits from the new container,
+which is what the client's wait is answered with.  Two criteria in
+.CW /scripts/osprey-check-p9pair.py .
+What is still true: the copy is within one kernel, and only the calling
+process moves.  Carrying the pages to another machine is what a
+checkpoint cannot yet do (a frame is 1500 bytes; a process is many), and
+a member of an address-space group running elsewhere would have to be
+stopped before its registers could be taken, which this does not do.
+Those two are what remain of slide 15.
 .PP
 .B "7.  The stack in user space, beyond a demonstration."
 netsrv answers ARP for one address and echo, and now, when it is given a
@@ -1395,8 +1439,9 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-forty-seven criteria, five of them this and the gateway below, three
-the \[*p]p wire of item 4, one the time of day of item 5.  What is
+forty-nine criteria, five of them this and the gateway below, three
+the \[*p]p wire of item 4, one the time of day of item 5, two the
+resume of item 6a.  What is
 honest to keep saying: the
 ring wire is between two containers on one machine, not two machines;
 the server end's frames wait for the client to ask, so its latency is a

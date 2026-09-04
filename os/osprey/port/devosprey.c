@@ -2394,11 +2394,13 @@ ospreybuddycall(Ospreyproc *p, int tries)
  * status.  This is how a server, whose rings run the other way, sets
  * its reservation and takes the clock.
  */
+static long ospreymovekern(Ospreyproc*, uvlong*);
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
 #define ReqMousenotify 22	/* xcall op: route IRQ12 (aux) to the caller as a notification */
 #define ReqSettime 23	/* xcall op: set the kernel's time of day, seconds since the epoch, from a task's own clock read */
+#define ReqMove 24	/* xcall op: carry the calling process, running, into a container of its own - resume, not restart */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2468,6 +2470,8 @@ ospreyxcall(va_list list)
 		ubuf[0] = 0;
 		return 0;
 	}
+	if(op == ReqMove)
+		return ospreymovekern(up->osprey, ubuf);	/* the caller does not return; its copy does */
 	if(op == ReqSettime){
 		/*
 		 * The time of day is a task's to set: the kernel reads no clock
@@ -3332,6 +3336,173 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 		ospreyid(parent), ospreyid(c), e->name, ospreyid(sv));
 	ready(p);
 	return (long)ospreyid(c);
+}
+
+/*
+ * Resume rather than restart: carry the calling process, as it is - its
+ * registers, its stack, its data, its open files and its name space -
+ * into a container of its own, and take the container it came from
+ * apart.  This is migration on one machine, the form slide 15's group
+ * migration would take here: the state that crosses is the process's
+ * own, not a checkpoint of its container that it restarts from.  The
+ * mechanism is the fork's - a new container delegated to the same
+ * server, a new Proc whose return frame is the caller's (forkchild), the
+ * caller's segments dupped copy-on-write - with the return register set
+ * to the new container's identity instead of 0, and then, instead of two
+ * processes, one: the caller's container is destroyed the way an exit
+ * destroys it, except that its entry in the child table, and any wait
+ * pending on it, are carried to the new container so that its parent
+ * reaps the moved process and not a phantom.  The buddy is asked to clone
+ * the descriptor table to the new container first, and is told the old
+ * one is gone after, so the files stay open across the move.
+ *
+ * What does not cross: a wire.  The segments are copied within one
+ * kernel; carrying them to another machine is what a checkpoint of a
+ * container's state already does for the small things and cannot yet do
+ * for a process's pages.  And only the calling process moves: a member
+ * of an address-space group that is running elsewhere would have to be
+ * stopped first, which this does not do.
+ */
+static long
+ospreymovekern(Ospreyproc *old, uvlong *ubuf)
+{
+	Ospreychild *e, *ne;
+	Ospreyproc *sv, *c;
+	Proc *p;
+	Segment *s;
+	uintptr va;
+	int i, x;
+	extern void forkchildret(Proc*, uintptr);
+
+	if(old == nil || (sv = ospreyserverof(old)) == nil || up->dbgreg == nil)
+		return -1;
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && e->child == old)
+			break;
+	if(e == &ospreychildren[nelem(ospreychildren)])
+		return -1;			/* the boot program stays where it is */
+	for(ne = ospreychildren; ne < &ospreychildren[nelem(ospreychildren)]; ne++)
+		if(!ne->used)
+			break;
+	if(ne == &ospreychildren[nelem(ospreychildren)])
+		return -1;
+
+	/* the whole image resident, as for a fork: the new container is one the buddy has laid nothing out for */
+	for(i = 0; i < NSEG; i++){
+		if((s = up->seg[i]) == nil)
+			continue;
+		if((s->type & SG_TYPE) != SG_TEXT && (s->type & SG_TYPE) != SG_DATA)
+			continue;
+		for(va = s->base; va < s->top; va += BY2PG){
+			if(waserror())
+				continue;
+			ospreybuddyfault(va, va, 1);
+			poperror();
+		}
+	}
+
+	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+	if(c == nil)
+		return -1;
+	ospreydelegate(c, sv);
+	if((p = newproc()) == nil){
+		ospreyexit(c);
+		return -1;
+	}
+	ospreyforkfds(old, ospreyid(c));	/* the open files, cloned to the new container by the buddy */
+	ubuf[0] = ospreyid(c);			/* before the copy, so the moved process's copy of its args carries it */
+
+	qlock(&up->debug);
+	qlock(&p->debug);
+	p->s = up->s;
+	p->slash = up->slash;
+	p->dot = up->dot;
+	if(p->dot != nil)
+		incref(p->dot);
+	p->nnote = 0;
+	p->notify = up->notify;
+	p->notified = 0;
+	p->notepending = 0;
+	p->lastnote = nil;
+	p->noteid = up->noteid;
+	p->procmode = up->procmode;
+	p->privatemem = up->privatemem;
+	p->noswap = up->noswap;
+	p->hang = up->hang;
+	p->kp = 0;
+	p->pgrp = up->pgrp;
+	if(p->pgrp != nil)
+		incref(p->pgrp);
+	forkchild(p, up->dbgreg);		/* the caller's registers: it resumes at this call's return */
+	forkchildret(p, (uintptr)ospreyid(c));	/* ... told where it now is */
+	kstrdup(&p->text, up->text);
+	kstrdup(&p->user, up->user);
+	kstrdup(&p->args, "");
+	p->nargs = 0;
+	p->setargs = 0;
+	p->insyscall = 0;
+	memset(p->time, 0, sizeof(p->time));
+	p->time[TReal] = MACHP(0)->ticks;
+	p->kentry = up->kentry;
+	p->pcycles = -p->kentry;
+	pidalloc(p);
+	qunlock(&p->debug);
+	qunlock(&up->debug);
+
+	/* the address space, copied: as the plain fork does it, image-less data as anonymous memory */
+	qlock(&p->seglock);
+	for(i = 0; i < NSEG; i++){
+		if((s = up->seg[i]) == nil)
+			continue;
+		if((s->type&SG_TYPE) == SG_DATA && s->image == nil){
+			if(s->ref == 1){
+				int savedtype = s->type;
+				s->type = (s->type & ~SG_TYPE) | SG_BSS;
+				p->seg[i] = dupseg(up->seg, i, 0);
+				s->type = savedtype;
+			} else
+				p->seg[i] = dupseg(up->seg, i, RFMEM);
+		} else
+			p->seg[i] = dupseg(up->seg, i, 0);
+	}
+	qunlock(&p->seglock);
+	flushmmu();
+
+	p->osprey = c;
+	p->buddyimage = up->buddyimage;
+	p->oslinux = up->oslinux;
+	p->linuxheap = up->linuxheap;
+	p->linuxbrk = up->linuxbrk;
+	p->linuxmmapnext = up->linuxmmapnext;
+
+	qlock(&ospreylock);
+	x = ospreyindex(c);
+	if(x >= 0 && x < nelem(ospreyprocs)){
+		ospreyprocs[x] = p;
+		ospreysetpid(c, p->pid);
+	}
+	*ne = *e;				/* the child-table entry moves with it: parent, name, and a wait pending */
+	ne->child = c;
+	e->used = 0;
+	qunlock(&ospreylock);
+
+	print("osprey move: container %llud's process (%s) resumed as container %llud, registers and stack as they were; container %llud destroyed\n",
+		ospreyid(old), ne->name, ospreyid(c), ospreyid(old));
+	ready(p);
+
+	/* and the old container goes, as on exit, but with nothing to tell a parent */
+	qlock(&ospreylock);
+	ospreytellandwake(old, OpGone);
+	ospreyclosefds(old);
+	ospreyputproc(old);
+	ospreyputserver(old);
+	ospreyputether(old);
+	ospreyputuart(old);
+	ospreyexit(old);
+	qunlock(&ospreylock);
+	ospreywakeup();
+	pexit("moved", 0);
+	return -1;				/* not reached */
 }
 
 static long

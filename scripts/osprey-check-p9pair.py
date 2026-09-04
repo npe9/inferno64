@@ -207,6 +207,15 @@ def main():
          'p9 ip: pi-p over the wire: Tstream answered, period 100 ms' in t
          and len(re.findall(r'p9 ip: pi-p over the wire: stream frame \d arrived unasked, tag 7, version "\d+", \d+ ms after the last', t)) == 3
          and 'three frames of the stream came at the asked rate with nothing sent to make them happen' in t),
+        ("resume, not restart: the kernel carries the running legacy process into a container of its own - registers, stack, data, open files, name space - and destroys the one it came from; the process goes on from the call with its stack intact and reads through a descriptor it opened before the move",
+         re.search(r"osprey move: container (\d+)'s process \(/boot/legacy\) resumed as container (\d+), registers and stack as they were; container \1 destroyed", t) is not None
+         and re.search(r'legacy: I was moved: I am container \d+ now, my stack still holds 42, and the fd I opened before the move reads: "version 42 of forty', t) is not None
+         and 'the kernel would not move me' not in t),
+        ("and the moved process is still its parent's child: it exits from the new container and the client's wait is answered with that container, not a phantom of the old",
+         re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 0', t) is not None
+         and (lambda a, b: a is not None and b is not None and a.group(2) == b.group(1))(
+             re.search(r"osprey move: container (\d+)'s process \(/boot/legacy\) resumed as container (\d+)", t),
+             re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 0', t))),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t
