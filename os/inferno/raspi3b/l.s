@@ -479,6 +479,11 @@ TEXT	vectorinit(SB), 1, $-4
  * touching any GPR, is enough to make the frame safe to write into.
  */
 TEXT	vectrap(SB), 1, $-4
+	WORD	$0xd5033f5f		/* CLREX: an exception clears the exclusive
+					 * monitor, so an interrupted _tas STXR fails
+					 * and retries.  QEMU TCG does not do this on
+					 * its own, and without it the timer IRQ landing
+					 * in an LL/SC leaves a lock stuck. */
 	MOV	R9, UR_TYPE(RSP)	/* the tag; R9 is now free to reuse */
 
 	/* the interrupted registers, before anything can touch them */
