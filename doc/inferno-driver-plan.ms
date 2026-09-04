@@ -793,19 +793,47 @@ back through
 the end-to-end proof through the file interface, negative-controlled
 against a second image with block 1 taken from byte offset 512.  One
 model quirk surfaced: CMD58 (READ_OCR) before CMD9 is load-bearing -
-drop it and CMD9 returns R1 but queues no CSD data.  Writes are declined
-for now; the read path lands first.
+drop it and CMD9 returns R1 but queues no CSD data.
+.NH 1
+Round 8: writes, multi-block, and a kfs filesystem on the SD
+.PP
+Round 8 finished the SD stack.
+.CW bio()
+gained the write path (CMD24 plus the 0xfe data token, the block, a
+dummy CRC and the card's accept byte), so
+.CW /dev/sdM0/data
+is read/write.  The multi-block path - a filesystem hands
+.CW bio
+many blocks at once - was verified by writing 16 blocks in one
+.CW pwrite
+and reading them back in one
+.CW pread ,
+each block index-tagged so a misalignment names the block; it passes,
+so every block leaves the ssi-sd state machine cleanly in CMD state.
+Then a real filesystem: the init reams a
+.CW kfs
+onto
+.CW /dev/sdM0/data ,
+mounts it at
+.CW /tmp
+(kfs serves Styx on its fd 0, so it runs on one end of a pipe whose
+other end is mounted), and round-trips a file - the content, the
+directory entry and the kfs label all persist to the backing image.
+The SD-over-SPI stack is complete end to end: controller, block device,
+filesystem, file.
 .NH 1
 Immediate next steps (cold-start)
 .PP
 The board work stands at: all four riscv virt boards, arm64 on both GIC
 versions with a display, sifive_u with SPI, GEM ethernet and an SD-over-
-SPI block device (/dev/sdM0/data, read), shakti (riscv64), and the
-Raspberry Pi 3B (arm64) with its I2C, SPI and GPIO controllers all
-driven and slave-verified - every board booting to a shell.  The
-prioritized next work: (1) SD writes (CMD24) in sdspisifive.c's bio, so
-a real filesystem (kfs or a dossrv image) can live on /dev/sdM0/data.
-(2) raspi3b storage - QEMU models bcm2835-sdhost and a generic SDHCI, so
-an SD image could back a filesystem there too.  (3) more boards if
-wanted - the loop is proven, and the one rule that matters for any
-multi-core board is to park the secondary cores first.
+SPI stack complete to a kfs filesystem (/dev/sdM0/data, read/write, kfs
+on top), shakti (riscv64), and the Raspberry Pi 3B (arm64) with its I2C,
+SPI and GPIO controllers all driven and slave-verified - every board
+booting to a shell.  The
+prioritized next work: (1) raspi3b storage - QEMU models bcm2835-sdhost
+and a generic SDHCI, so an SD image could back a filesystem on the Pi
+the way sifive_u now does over SPI.  (2) more boards if wanted - the loop
+is proven, and the one rule that matters for any multi-core board is to
+park the secondary cores first.  (3) persistence across reboot on
+sifive_u - the kfs is reamed every boot; a mount that reams only a blank
+device would show a file surviving a restart.
