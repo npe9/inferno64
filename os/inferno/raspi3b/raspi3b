@@ -24,6 +24,7 @@ dev
 	ssl
 	cap
 	kprof
+	sd
 
 
 lib
@@ -66,6 +67,7 @@ misc
 	uartvirtarm64
 	screennone
 	randomvirtarm64
+	sdhostbcm
 
 mod
 	sys
