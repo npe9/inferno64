@@ -20,13 +20,19 @@ pkg \- namespace-native package manager
 .IR pkfile ]
 .I pkg.tar
 .br
+.B pkg publish
+.I repo
+.I pkg.tar
+.br
 .B pkg info
 .I pkg.tar
 .br
 .B pkg install
 .RB [ -k
 .IR pkfile ]
-.I pkg.tar
+.RB [ -r
+.IR repo ]
+.I pkg.tar\fR|\fIname
 .br
 .B pkg list
 .br
@@ -122,6 +128,41 @@ key and certificate types as
 .IR v23-security (2)
 principals, so a later milestone can check a publisher's blessing chain
 rather than a single pinned key.
+.SS Repositories
+A repository is a directory tree
+.IB repo /name/version .tar
+(with a matching
+.B .tar.sig
+alongside).
+.B pkg publish
+reads a package's manifest and files it into
+.I repo
+under its own
+.B name
+and
+.BR version .
+.B pkg install
+then accepts a repository
+.I name
+in place of a file: the name is looked up under
+.I repo
+.RB ( -r ),
+or under
+.B $PKGPATH
+or
+.B /pkg
+otherwise, and the newest version found is installed.
+Resolving a name is a name-space walk of the repository, so a repository
+served over
+.IR styx (2)
+and bound at
+.B /pkg
+can be browsed with
+.IR ls (1)
+and installed from by name.
+Version order is the lexical order of the
+.IB version .tar
+names, not a semantic-version comparison.
 .SS Commands
 .TP
 .B pack
@@ -158,14 +199,30 @@ Print the content SHA-256 and the manifest of
 .I pkg.tar
 without installing it.
 .TP
-.B install
-Verify the signature (if any), then mount and bind
+.B publish
+File
 .I pkg.tar
-into the name space as described above.
+into
+.I repo
+under its manifest name and version.
+.TP
+.B install
+Install an archive
+.I pkg.tar
+or a repository
+.IR name .
+Verify the signature (if any), then mount and bind it into the name space
+as described above.
 With
 .B -k
 the package must be signed by
-.IR pkfile .
+.IR pkfile ;
+with
+.B -r
+a
+.I name
+is resolved under
+.IR repo .
 .TP
 .B list
 List the installed packages \(em name, version and content id \(em read
@@ -198,13 +255,13 @@ Package, install, use and remove a tool:
 .PP
 .B /doc/pkg-roadmap.md
 .SH BUGS
-Local packages only (milestones 1\(en2): packages are named on the
-command line, not fetched.
-Trust is a single pinned key; a publisher blessing chain, a
+Milestones 1\(en3.
+A repository is resolved through the local name space; a
+.IR styx (2)-served
 .B /pkg
-naming service, and
-.B search
-are later milestones.
+with a synthetic search file, remote fetch, and a publisher blessing
+chain (rather than a single pinned key) are later milestones.
+Version selection is lexical, not semantic.
 An installed package keeps a
 .IR tarfs (4)
 server process alive for as long as it is mounted.

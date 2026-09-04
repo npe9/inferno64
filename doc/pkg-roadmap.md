@@ -190,10 +190,17 @@ a package whose signer does not match `-k`, and warns on unsigned.
 Verified by `tests/pkgsign.sh` with both negative controls: a wrong
 pinned key is rejected and a tampered archive fails verification.
 
-**M3 — Naming service (Phase 1 keystone).** A Styx file server exposing
-`/pkg/<category>/<name>/<version>`, browsable by `ls`/`walk`, mountable
-over secured Styx; `pkg` resolves names against it. Factor the manifest
-parse out of `pkg.b` into `appl/lib/pkg.b` for reuse here.
+**M3 — Repository + install by name. DONE (local form).** `pkg publish
+repo pkg.tar` files a package into `repo/<name>/<version>.tar` (+ `.sig`),
+and `pkg install <name>` resolves a repository name (under `-r`,
+`$PKGPATH`, or `/pkg`) to its newest version, verifies it, and installs -
+name resolution IS a name-space walk of the repository. So a repository
+served over Styx and bound at `/pkg` is browsable by `ls` and installable
+by name with no new client code. Verified by `tests/pkgrepo.sh`
+(two versions published, newest resolved and verified; a missing name
+fails). Still ahead for the full keystone: the Styx file server itself
+(a synthetic tree + a search file, M4) and factoring the manifest parse
+into `appl/lib/pkg.b` when the server needs it.
 
 **M4 — Search.** A query index over manifest attributes via `registry(4)`
 + a synthetic search file; `pkg search`.

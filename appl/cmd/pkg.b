@@ -54,6 +54,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	"genkey" =>	cmdgenkey(args);
 	"sign" =>	cmdsign(args);
 	"verify" =>	cmdverify(args);
+	"publish" =>	cmdpublish(args);
 	"install" =>	cmdinstall(args);
 	"list" =>	cmdlist(args);
 	"remove" or "uninstall" =>	cmdremove(args);
@@ -133,16 +134,40 @@ cmdinfo(args: list of string)
 cmdinstall(args: list of string)
 {
 	pin := "";			# -k pkfile: required signer public key
-	if(args != nil && hd args == "-k"){
+	repo := "";			# -r repodir: resolve a name here
+	while(args != nil && len hd args > 0 && (hd args)[0] == '-'){
+		f := hd args;
 		args = tl args;
 		if(args == nil)
 			usage();
-		pin = hd args;
+		case f {
+		"-k" =>	pin = hd args;
+		"-r" =>	repo = hd args;
+		* =>	usage();
+		}
 		args = tl args;
 	}
 	if(args == nil)
 		usage();
-	tarpath := hd args;
+	arg := hd args;
+
+	# arg is either an archive file (install it directly) or a repository
+	# name like "util/pkgdemo" resolved to a version under the repository
+	# (-r, else /pkg or $PKGPATH). Name resolution IS the naming layer:
+	# the repository is a directory tree walked by name.
+	tarpath: string;
+	if(exists(arg)){
+		tarpath = arg;
+	}else{
+		base := repo;
+		if(base == "")
+			base = pkgpath();
+		(tp, rerr) := resolvename(base, arg);
+		if(rerr != nil)
+			fail(rerr);
+		tarpath = tp;
+		sys->print("resolved %s -> %s\n", arg, tarpath);
+	}
 
 	# signature check (M2). A detached tarpath.sig authenticates the
 	# archive's content. With -k the signature is required and its signer
@@ -350,6 +375,85 @@ verifytar(tarpath, sigpath: string): (string, string, string)
 	return (pk.owner, trim(pkstr), nil);
 }
 
+# pkg publish repo pkg.tar - place an archive into a repository at
+# repo/<name>/<version>.tar (+ .sig), the layout resolvename walks. This
+# is the local form of the write side (doc/package-management.md #7); the
+# remote DirServer publish is a later milestone.
+cmdpublish(args: list of string)
+{
+	if(args == nil || tl args == nil)
+		usage();
+	repo := hd args;
+	pkgtar := hd tl args;
+	m := manifestfromtar(pkgtar);
+	if(m == nil)
+		fail("no pkg/manifest in " + pkgtar);
+	name := m.get("name");
+	ver := m.get("version");
+	if(name == "" || ver == "")
+		fail("manifest is missing name or version");
+	dir := repo + "/" + name;
+	ensuredirp(dir);
+	dst := dir + "/" + ver + ".tar";
+	e := copyfile(pkgtar, dst);
+	if(e != nil)
+		fail(e);
+	if(exists(pkgtar + ".sig")){
+		e = copyfile(pkgtar + ".sig", dst + ".sig");
+		if(e != nil)
+			fail(e);
+	}
+	sys->print("published %s %s to %s\n", name, ver, dst);
+}
+
+# the default repository search root, overridable by $PKGPATH. A user
+# binds a served repository (or a local one) at /pkg and then installs by
+# name; -r overrides for a one-off.
+pkgpath(): string
+{
+	e := readstr("/env/PKGPATH");
+	if(e == "")
+		return "/pkg";
+	return e;
+}
+
+# resolve a repository name (e.g. "util/pkgdemo") to a version archive
+# under base. Picks the lexically-greatest <version>.tar; that is the
+# ordering, not semantic-version comparison (a later refinement).
+resolvename(base, name: string): (string, string)
+{
+	dir := base + "/" + name;
+	fd := sys->open(dir, Sys->OREAD);
+	if(fd == nil)
+		return ("", sys->sprint("no package %s under %s", name, base));
+	best := "";
+	for(;;){
+		(n, d) := sys->dirread(fd);
+		if(n <= 0)
+			break;
+		for(i := 0; i < n; i++)
+			if(hassuffix(d[i].name, ".tar") && d[i].name > best)
+				best = d[i].name;
+	}
+	if(best == "")
+		return ("", "no versions of " + name + " under " + base);
+	return (dir + "/" + best, nil);
+}
+
+# read a package's manifest by peeking inside the tar (temporary mount).
+manifestfromtar(tarpath: string): ref Manifest
+{
+	ensuredir(PKGROOT);
+	tmp := PKGROOT + "/.peek";
+	sys->unmount(nil, tmp);
+	ensuredir(tmp);
+	mounttar(tarpath, tmp);
+	m := readmanifest(tmp + "/pkg/manifest");
+	sys->unmount(nil, tmp);
+	sys->remove(tmp);
+	return m;
+}
+
 # spawn tarfs to serve tarpath at mnt and wait until the mount is live.
 mounttar(tarpath, mnt: string)
 {
@@ -520,13 +624,42 @@ ensuredir(path: string)
 		fail(sys->sprint("create %s: %r", path));
 }
 
+# mkdir -p: create every missing component of path (absolute or relative).
+ensuredirp(path: string)
+{
+	(nil, elems) := sys->tokenize(path, "/");
+	abs := len path > 0 && path[0] == '/';
+	cur := "";
+	for(; elems != nil; elems = tl elems){
+		if(cur == "")
+			cur = ("/" + hd elems)[abs == 0:];	# no leading / if relative
+		else
+			cur += "/" + hd elems;
+		ensuredir(cur);
+	}
+}
+
+copyfile(src, dst: string): string
+{
+	data := readfile(src);
+	if(data == nil)
+		return "cannot read " + src;
+	return writefile(dst, data);
+}
+
+hassuffix(s, suf: string): int
+{
+	return len s >= len suf && s[len s - len suf:] == suf;
+}
+
 usage()
 {
 	sys->fprint(stderr, "usage: pkg pack stagedir out.tar\n");
 	sys->fprint(stderr, "       pkg genkey owner skfile\n");
 	sys->fprint(stderr, "       pkg sign pkg.tar skfile\n");
 	sys->fprint(stderr, "       pkg verify [-k pkfile] pkg.tar\n");
-	sys->fprint(stderr, "       pkg install [-k pkfile] pkg.tar\n");
+	sys->fprint(stderr, "       pkg publish repo pkg.tar\n");
+	sys->fprint(stderr, "       pkg install [-k pkfile] [-r repo] pkg.tar|name\n");
 	sys->fprint(stderr, "       pkg info pkg.tar\n");
 	sys->fprint(stderr, "       pkg list\n");
 	sys->fprint(stderr, "       pkg remove name\n");
