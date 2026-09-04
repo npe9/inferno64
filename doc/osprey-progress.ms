@@ -330,12 +330,46 @@ legacy ABI is the
 .CW noted (2)
 continuation that would let a handler resume the interrupted instruction
 rather than exit (a fault cannot exercise it \- the address is still bad -
-so it is not built).  The per-container name space is the buddy's; a real
-user-level
+so it is not built).  The per-container name space is the buddy's; the other half of item 6, a
+real user-level
 .CW rfork
-.CW RFPROC
-that forks the process itself (item 6's other half) is still the kernel's
-to make, not a program's.
+that forks the process itself, is the kernel's to make, not a program's,
+and its thread form is now built.
+A legacy binary that calls
+.CW "rfork(RFPROC|RFMEM)"
+is forked into a second thread of control:
+.CW ospreyforkkern
+in
+.CW devosprey.c
+intercepts the call before it reaches the buddy (a container is the
+kernel's to make), gives the child a container of its own for identity and
+billing, shares the parent's address space through
+.CW dupseg 's
+sameseg path while copying the stack so the child has its own call chain,
+and crafts a return frame with
+.CW forkchild
+so the child pops out of the scheduler in user mode at the parent's fork
+point with the return register zero.
+The child sees 0 and runs its own line and exits; the parent sees the
+child's container id; the child is recorded beside exec's children so
+.CW wait
+answers it the same way.
+The whole text and data image is faulted in on the parent first (through
+.CW ospreybuddyfault ,
+the buddy pager), because the child's new container is one the buddy laid
+no image for and could not page.
+Two things are named but not yet built: the plain copy fork
+.CW "(RFPROC"
+without
+.CW RFMEM ,
+a private address space) \-
+.CW dupseg 's
+copy-on-write path increfs a data segment's
+.CW Image ,
+and these segments are paged by the buddy with no
+.CW Image ,
+so that path cannot copy them \- and the child inheriting the buddy-side
+descriptor table (it starts with the buddy's default console fds).
 (A pre-existing boot-time
 .CW "unimplemented syscall 14"
 prints twice from the server personality during the IP bring-up \- an

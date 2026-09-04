@@ -165,6 +165,26 @@ startboot(char *argv0, char **argv)
 	print("legacy: the buddy answered every trap\n");
 
 	/*
+	 * rfork(RFPROC|RFMEM): fork the process itself into a second thread of
+	 * control.  The buddy cannot do this - a container is the kernel's to
+	 * make - so the kernel forks the container, entered at this same point.
+	 * RFMEM shares the address space and gives the child its own stack, so
+	 * the two are separate flows of control over shared memory.  rfork
+	 * returns 0 in the child and the child's id in the parent.  The child
+	 * prints its own line and exits; the parent goes on to the note test.
+	 */
+	{
+		int pid = rfork(RFPROC|RFMEM);
+		if(pid == 0){
+			print("legacy: I am the forked child; rfork(RFPROC|RFMEM) returned 0 to me alone\n");
+			exits("forked child");
+		} else if(pid < 0)
+			print("legacy: rfork(RFPROC|RFMEM) failed\n");
+		else
+			print("legacy: rfork(RFPROC|RFMEM) forked a child, id %d; I am the parent\n", pid);
+	}
+
+	/*
 	 * Register a note handler, then read a bad address on purpose.  The
 	 * fault is declined and reaches this program as a note - and because
 	 * a handler is registered, the note is delivered to it rather than

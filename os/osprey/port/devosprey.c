@@ -2517,6 +2517,8 @@ ospreybuddyhas(void)
 	return up->osprey != nil && ospreyserverof(up->osprey) != nil;
 }
 
+static long ospreyforkkern(Ospreyproc*, ulong);
+
 long
 ospreybuddyforward(ulong scallnr, uintptr *a)
 {
@@ -2529,6 +2531,14 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	p = up->osprey;
 	if(p == nil || ospreyserverof(p) == nil)
 		return -1;			/* no buddy to forward to */
+
+	/*
+	 * rfork(RFPROC) makes a process, which is the kernel's to do, not the
+	 * buddy's; the namespace-only forms (RFNAMEG and friends) still go to
+	 * the buddy below.
+	 */
+	if(!up->oslinux && scallnr == Brfork && (a[0] & RFPROC))
+		return ospreyforkkern(p, a[0]);
 
 	if(up->oslinux){
 		/* Linux system-call numbers to their Plan 9 equivalents; the
@@ -3083,6 +3093,173 @@ ospreyexecproc(void *a)
 	}
 	print("osprey exec: %s: the server did not lay it out\n", e->name);
 	ospreyexits(-1);
+}
+
+/*
+ * rfork(RFPROC|RFMEM): fork a legacy container into a second thread of
+ * control.  This is item 6 of the plan - the process-making half of
+ * rfork, which the buddy cannot do because a container is the kernel's
+ * to make, not the file server's.  RFMEM shares the address space: the
+ * text, data and bss segments are shared with the parent (dupseg's
+ * sameseg path), and only the stack is copied, so the child gets its own
+ * stack - a private call chain over shared memory, which is exactly a
+ * thread.  forkchild crafts a return frame so the child pops out of the
+ * scheduler in user mode at the parent's fork point with the return
+ * register zero: the child sees 0, the parent sees the child's container
+ * id.  The child runs in a container of its own for identity and billing,
+ * and is recorded beside exec's children so wait answers it the same way.
+ *
+ * The catch is the buddy's per-container image: a page of the child that
+ * is not resident would fault to the buddy, which laid out no image for
+ * the child's new container and would refuse it.  Because the address
+ * space is shared, the child faults through the SAME segments as the
+ * parent, but its container is what the buddy is asked about; so the
+ * whole text and data image is faulted in on the parent first, and after
+ * that neither side needs the buddy for it - only the stack grows, which
+ * is the kernel's demand-zero service.
+ *
+ * The plain copy fork (RFPROC without RFMEM, a private address space) is
+ * not done here: dupseg's copy-on-write path for a data segment increfs
+ * the segment's Image, and these segments are paged by the buddy out of
+ * band with no Image, so that path cannot copy them.  What the child does
+ * not inherit either is the buddy-side descriptor table (it starts with
+ * the buddy's default console fds), which is the file server's to clone.
+ * Both are named in the man page as the next steps.
+ */
+static long
+ospreyforkkern(Ospreyproc *parent, ulong flag)
+{
+	Ospreychild *e;
+	Ospreyproc *sv, *c;
+	Proc *p;
+	Segment *s;
+	uintptr va;
+	int i, x, share;
+
+	if(parent == nil || (sv = ospreyserverof(parent)) == nil)
+		return -1;			/* nobody to serve the child's image */
+	if((flag & RFPROC) == 0)
+		return -1;			/* the namespace-only forms go to the buddy */
+	if((flag & RFMEM) == 0)
+		return -1;			/* copy fork not yet done: see the comment above */
+	if(up->dbgreg == nil)
+		return -1;			/* no user register frame to copy */
+
+	/*
+	 * Bring the whole image resident on the parent, so the child - whose
+	 * container the buddy does not know - never has to page from it.  This
+	 * is ospreybuddyfault, the buddy pager, not the bare kernel fault: the
+	 * kernel fault has no image behind these segments (the buddy supplies
+	 * the pages out of band), so it must be the buddy asked, page by page,
+	 * over the small image; the pages it cannot cover are holes the
+	 * program never touches, and are left alone.
+	 */
+	for(i = 0; i < NSEG; i++){
+		if((s = up->seg[i]) == nil)
+			continue;
+		if((s->type & SG_TYPE) != SG_TEXT && (s->type & SG_TYPE) != SG_DATA)
+			continue;
+		for(va = s->base; va < s->top; va += BY2PG){
+			if(waserror())
+				continue;	/* a hole, or the buddy could not cover it */
+			ospreybuddyfault(va, va, 1);
+			poperror();
+		}
+	}
+
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(!e->used)
+			break;
+	if(e == &ospreychildren[nelem(ospreychildren)])
+		return -1;			/* the child table is full */
+
+	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+	if(c == nil)
+		return -1;
+	ospreydelegate(c, sv);
+
+	if((p = newproc()) == nil){
+		ospreyexit(c);
+		return -1;
+	}
+
+	qlock(&up->debug);
+	qlock(&p->debug);
+	p->s = up->s;
+	p->slash = up->slash;
+	p->dot = up->dot;
+	if(p->dot != nil)
+		incref(p->dot);
+	p->nnote = 0;
+	p->notify = up->notify;
+	p->notified = 0;
+	p->notepending = 0;
+	p->lastnote = nil;
+	p->noteid = up->noteid;
+	p->procmode = up->procmode;
+	p->privatemem = up->privatemem;
+	p->noswap = up->noswap;
+	p->hang = up->hang;
+	p->kp = 0;
+	p->pgrp = up->pgrp;		/* share the namespace, like a thread fork */
+	if(p->pgrp != nil)
+		incref(p->pgrp);
+	/*
+	 * Craft the child's return frame: it pops out of the scheduler in
+	 * user mode at the parent's fork point, with the return register 0.
+	 */
+	forkchild(p, up->dbgreg);
+	kstrdup(&p->text, up->text);
+	kstrdup(&p->user, up->user);
+	kstrdup(&p->args, "");
+	p->nargs = 0;
+	p->setargs = 0;
+	p->insyscall = 0;
+	memset(p->time, 0, sizeof(p->time));
+	p->time[TReal] = MACHP(0)->ticks;
+	p->kentry = up->kentry;
+	p->pcycles = -p->kentry;
+	pidalloc(p);
+	qunlock(&p->debug);
+	qunlock(&up->debug);
+
+	/* the child's address space: RFMEM shares text/data/bss, and dupseg
+	 * copies the stack regardless, so the child gets its own call chain */
+	share = flag & RFMEM;
+	qlock(&p->seglock);
+	for(i = 0; i < NSEG; i++)
+		if(up->seg[i] != nil)
+			p->seg[i] = dupseg(up->seg, i, share);
+	qunlock(&p->seglock);
+	/* the parent's data and bss are now shared copy-on-write: drop its
+	 * stale mappings so the next write faults and copies. */
+	flushmmu();
+
+	/* the child runs the buddy's image the same way the parent does */
+	p->osprey = c;
+	p->buddyimage = up->buddyimage;
+	p->oslinux = up->oslinux;
+	p->linuxheap = up->linuxheap;
+	p->linuxbrk = up->linuxbrk;
+	p->linuxmmapnext = up->linuxmmapnext;
+
+	qlock(&ospreylock);
+	x = ospreyindex(c);
+	if(x >= 0 && x < nelem(ospreyprocs)){
+		ospreyprocs[x] = p;
+		ospreysetpid(c, p->pid);
+	}
+	e->used = 1;
+	e->child = c;
+	e->parent = parent;
+	strncpy(e->name, up->text, sizeof e->name - 1);
+	e->name[sizeof e->name - 1] = 0;
+	qunlock(&ospreylock);
+
+	print("osprey fork: container %llud forked container %llud (%s), sharing container %llud's server; readying child\n",
+		ospreyid(parent), ospreyid(c), e->name, ospreyid(sv));
+	ready(p);
+	return (long)ospreyid(c);
 }
 
 static long

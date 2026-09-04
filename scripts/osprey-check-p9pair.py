@@ -157,6 +157,12 @@ def main():
          re.search(r'legacy: rforked a private ns and bound /n into /; /hello \(= /n/hello\) reads: "\S', t) is not None),
         ("and mount: it mounts the exportfs #X onto /mnt in that private ns and reads /mnt/n/hello through the 9P loopback",
          re.search(r'legacy: mounted #X at /mnt and read /mnt/n/hello over 9P: "\S', t) is not None),
+        ("rfork(RFPROC) forks the legacy container: the kernel makes a copy-on-write child, the parent gets its id",
+         re.search(r'legacy: rfork\(RFPROC\|RFMEM\) forked a child, id \d+; I am the parent', t) is not None
+         and re.search(r'osprey fork: container \d+ forked container \d+', t) is not None),
+        ("the forked child is a separate flow of control: rfork returned 0 to it and it runs its own line and exits",
+         'legacy: I am the forked child; rfork(RFPROC|RFMEM) returned 0 to me alone' in t
+         and 'legacy: rfork(RFPROC|RFMEM) failed' not in t),
         ("a declined fault reaches the Plan 9 program as a note, delivered to its notify(2) handler, which catches its own fault - not a microkernel panic",
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t
