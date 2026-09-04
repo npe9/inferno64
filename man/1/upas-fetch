@@ -26,6 +26,11 @@ upas/fetch \- fetch mail from an IMAP server over TLS
 ] [
 .B -o
 .I mbox
+] [
+.B -S
+.I criteria
+] [
+.B -R
 ]
 .SH DESCRIPTION
 .I Upas/fetch
@@ -84,6 +89,21 @@ and
 	upas/fs inbox.mbox
 
 .EE
+.PP
+.B -S
+.I criteria
+selects the messages by an IMAP
+.B SEARCH
+(for example
+.B UNSEEN
+or
+.BR "FROM boss" )
+instead of the most recent
+.IR n .
+.B -R
+marks each fetched message
+.B \eSeen
+(read) after fetching.
 .PP
 A hosted
 .I emu

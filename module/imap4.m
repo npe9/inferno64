@@ -24,9 +24,27 @@ Imap4: module
 		mailboxes:	fn(c: self ref Client, reff, pat: string): (list of string, string);
 		# SELECT a mailbox; returns the EXISTS message count.
 		select:	fn(c: self ref Client, mbox: string): (int, string);
+		# EXAMINE (read-only SELECT); returns the EXISTS count.
+		examine:	fn(c: self ref Client, mbox: string): (int, string);
+		# STATUS: returns the "* STATUS" line for the requested items
+		# (e.g. "MESSAGES UNSEEN") without selecting the mailbox.
+		status:	fn(c: self ref Client, mbox, items: string): (string, string);
 		# FETCH one item (e.g. "BODY.PEEK[]" or "BODY.PEEK[HEADER]")
 		# of message msg; returns its literal bytes.
 		fetch:	fn(c: self ref Client, msg: int, item: string): (array of byte, string);
+		# SEARCH the selected mailbox; returns matching message numbers.
+		search:	fn(c: self ref Client, criteria: string): (list of int, string);
+		# STORE flags on a message, e.g. item "+FLAGS (\Seen)" to mark
+		# read or "+FLAGS (\Deleted)" to mark for expunge.
+		store:	fn(c: self ref Client, msg: int, item: string): string;
+		# COPY a message to another mailbox.
+		copy:	fn(c: self ref Client, msg: int, mbox: string): string;
+		# EXPUNGE deleted messages from the selected mailbox.
+		expunge:	fn(c: self ref Client): string;
+		# mailbox management.
+		create:	fn(c: self ref Client, mbox: string): string;
+		delete:	fn(c: self ref Client, mbox: string): string;
+		rename:	fn(c: self ref Client, old, newmb: string): string;
 		logout:	fn(c: self ref Client): string;
 	};
 

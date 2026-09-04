@@ -70,8 +70,17 @@ Return the
 .B LIST
 lines matching a reference and pattern.
 .TP
-.B select
-Select a mailbox and return its message count.
+.BR select ", " examine
+Select a mailbox (read-write, or read-only for
+.BR examine )
+and return its message count.
+.TP
+.B status
+Return the
+.B STATUS
+line for the given items (e.g.\&
+.BR "MESSAGES UNSEEN" )
+without selecting the mailbox.
 .TP
 .B fetch
 Fetch one
@@ -81,6 +90,28 @@ Fetch one
 or
 .BR "BODY.PEEK[HEADER]" )
 of a message, returning its literal bytes exactly.
+.TP
+.B search
+Return the message numbers matching a
+.B SEARCH
+.I criteria
+in the selected mailbox.
+.TP
+.B store
+Set flags on a message, e.g. item
+.B "+FLAGS (\eSeen)"
+to mark read or
+.B "+FLAGS (\eDeleted)"
+to mark for expunge.
+.TP
+.BR copy ", " expunge
+Copy a message to another mailbox;
+.B expunge
+removes messages flagged
+.BR \eDeleted .
+.TP
+.BR create ", " delete ", " rename
+Mailbox (folder) management.
 .TP
 .B docmd
 Send a raw command and collect its untagged and completion responses;
@@ -95,10 +126,14 @@ Log out and close the TLS session.
 .IR tls12 (2),
 .IR smtp (2)
 .SH BUGS
-Only the subset needed to fetch mail is implemented: no STARTTLS (the
-connection is TLS from the start), no SASL beyond
+No STARTTLS (the connection is TLS from the start) and no SASL beyond
 .B LOGIN
-(sufficient for a Gmail app password; not XOAUTH2), and literal handling
-covers the forms
+(sufficient for a Gmail app password; not XOAUTH2).
+Literal handling covers the forms
 .B FETCH
 produces, not every server response.
+UID-based variants of
+.B search
+and
+.B fetch
+are not exposed.

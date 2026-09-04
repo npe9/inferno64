@@ -41,6 +41,8 @@ init(nil: ref Draw->Context, argv: list of string)
 	nwant := 5;
 	full := 0;
 	mboxout := "";
+	searchcrit := "";
+	markseen := 0;
 
 	argv = tl argv;
 	while(argv != nil && len hd argv > 0 && (hd argv)[0] == '-'){
@@ -55,6 +57,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		"-n" =>	nwant = int arg(argv); argv = tl argv;
 		"-b" =>	full = 1;
 		"-o" =>	mboxout = arg(argv); argv = tl argv; full = 1;	# save as mbox for upas/fs
+		"-S" =>	searchcrit = arg(argv); argv = tl argv;		# IMAP SEARCH criteria
+		"-R" =>	markseen = 1;					# mark fetched messages \Seen
 		* =>	usage();
 		}
 	}
@@ -88,23 +92,44 @@ init(nil: ref Draw->Context, argv: list of string)
 			fail(se);
 		sys->print("INBOX: %d message(s)\n", cnt);
 
-		start := cnt - nwant + 1;
-		if(start < 1)
-			start = 1;
+		# messages to act on: either a SEARCH result, or the most recent n.
+		msgs: list of int;
+		if(searchcrit != ""){
+			(nums, sse) := c.search(searchcrit);
+			if(sse != nil)
+				fail("search: " + sse);
+			sys->print("search %s matched %d message(s)\n", searchcrit, len nums);
+			msgs = nums;
+		}else{
+			start := cnt - nwant + 1;
+			if(start < 1)
+				start = 1;
+			rev: list of int;
+			for(m := start; m <= cnt; m++)
+				rev = m :: rev;
+			for(; rev != nil; rev = tl rev)
+				msgs = hd rev :: msgs;
+		}
+
 		item := "BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)]";
 		if(full)
 			item = "BODY.PEEK[]";
-		for(m := start; m <= cnt; m++){
+		nmsg := 0;
+		for(l := msgs; l != nil; l = tl l){
+			m := hd l;
 			(data, fe) := c.fetch(m, item);
 			if(fe != nil)
 				fail(fe);
+			nmsg++;
 			if(mfd != nil)
 				writembox(mfd, m, data);
 			else
 				sys->print("===== message %d =====\n%s\n", m, string data);
+			if(markseen)
+				c.store(m, "+FLAGS (\\Seen)");
 		}
 		if(mfd != nil)
-			sys->print("wrote %d message(s) to %s\n", cnt - start + 1, mboxout);
+			sys->print("wrote %d message(s) to %s\n", nmsg, mboxout);
 	}
 	c.logout();
 }
@@ -146,7 +171,7 @@ readpass(passfile: string): string
 
 usage()
 {
-	sys->fprint(stderr, "usage: upas/fetch [-s server] [-a dialip] [-p port] [-u user] [-P passfile] [-n n] [-b] [-o mbox]\n");
+	sys->fprint(stderr, "usage: upas/fetch [-s server] [-a dialip] [-p port] [-u user] [-P passfile] [-n n] [-b] [-o mbox] [-S criteria] [-R]\n");
 	raise "fail:usage";
 }
 

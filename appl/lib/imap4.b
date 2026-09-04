@@ -161,7 +161,17 @@ Client.mailboxes(c: self ref Client, reff, pat: string): (list of string, string
 
 Client.select(c: self ref Client, mbox: string): (int, string)
 {
-	(untag, comp, e) := c.docmd("SELECT " + quote(mbox));
+	return selectcmd(c, "SELECT", mbox);
+}
+
+Client.examine(c: self ref Client, mbox: string): (int, string)
+{
+	return selectcmd(c, "EXAMINE", mbox);
+}
+
+selectcmd(c: ref Client, verb, mbox: string): (int, string)
+{
+	(untag, comp, e) := c.docmd(verb + " " + quote(mbox));
 	if(e != nil)
 		return (0, e);
 	if(!isok(comp))
@@ -173,6 +183,79 @@ Client.select(c: self ref Client, mbox: string): (int, string)
 			n = int hd tl f;
 	}
 	return (n, nil);
+}
+
+Client.status(c: self ref Client, mbox, items: string): (string, string)
+{
+	(untag, comp, e) := c.docmd("STATUS " + quote(mbox) + " (" + items + ")");
+	if(e != nil)
+		return ("", e);
+	if(!isok(comp))
+		return ("", comp);
+	for(l := untag; l != nil; l = tl l)
+		if(prefix("* STATUS", hd l))
+			return (hd l, nil);
+	return ("", nil);
+}
+
+Client.search(c: self ref Client, criteria: string): (list of int, string)
+{
+	(untag, comp, e) := c.docmd("SEARCH " + criteria);
+	if(e != nil)
+		return (nil, e);
+	if(!isok(comp))
+		return (nil, comp);
+	rnums: list of int;
+	for(l := untag; l != nil; l = tl l)
+		if(prefix("* SEARCH", hd l)){
+			(nil, f) := sys->tokenize((hd l)[len "* SEARCH":], " ");
+			for(; f != nil; f = tl f)
+				rnums = int hd f :: rnums;
+		}
+	nums: list of int;
+	for(; rnums != nil; rnums = tl rnums)
+		nums = hd rnums :: nums;
+	return (nums, nil);
+}
+
+Client.store(c: self ref Client, msg: int, item: string): string
+{
+	return simplecmd(c, sys->sprint("STORE %d %s", msg, item));
+}
+
+Client.copy(c: self ref Client, msg: int, mbox: string): string
+{
+	return simplecmd(c, sys->sprint("COPY %d %s", msg, quote(mbox)));
+}
+
+Client.expunge(c: self ref Client): string
+{
+	return simplecmd(c, "EXPUNGE");
+}
+
+Client.create(c: self ref Client, mbox: string): string
+{
+	return simplecmd(c, "CREATE " + quote(mbox));
+}
+
+Client.delete(c: self ref Client, mbox: string): string
+{
+	return simplecmd(c, "DELETE " + quote(mbox));
+}
+
+Client.rename(c: self ref Client, old, newmb: string): string
+{
+	return simplecmd(c, "RENAME " + quote(old) + " " + quote(newmb));
+}
+
+simplecmd(c: ref Client, command: string): string
+{
+	(nil, comp, e) := c.docmd(command);
+	if(e != nil)
+		return e;
+	if(!isok(comp))
+		return comp;
+	return nil;
 }
 
 # FETCH captures the item's literal bytes exactly (binary-safe).
