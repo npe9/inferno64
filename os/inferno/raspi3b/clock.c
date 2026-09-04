@@ -102,15 +102,6 @@ clockinit(void)
 	when = now() + m->cpuhz/HZ;
 	hwtimerset(&when);
 	timerie();
-
-	/*
-	 * The generic-timer interrupt is a PPI; with no GIC it reaches the
-	 * core only through the BCM2836 per-core interrupt controller.
-	 * Route the non-secure physical timer (CNTPNSIRQ, bit 1) to core 0's
-	 * IRQ so the timer actually fires at HZ - without this there is no
-	 * periodic scheduler tick, only cooperative switching.
-	 */
-	*(u32*)(LOCALCTL + 0x40) = 1<<1;	/* Core0 timers interrupt control */
 }
 
 void

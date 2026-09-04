@@ -190,15 +190,19 @@ sdhostonline(SDunit *u)
 }
 
 /*
- * KNOWN BUG (open): under the 100Hz tick this board now runs, a heavy
- * single-proc write stream (thousands of blocks, e.g. a kfs ream) fails
- * intermittently with "file does not exist" at a varying block - a timer
- * IRQ taken mid-transfer corrupts it, SD-specific (a 4000-open namespace
- * loop under the same tick is clean).  splhi() around the transfer cures
- * the single-proc case but deadlocks the multi-proc file-server path, so
- * it is not applied.  Light block-device use is stable; the mechanism is
- * the raspi3b open lead.  sifive_u's slow SPI driver never lands in the
- * window and is the working oracle.
+ * KNOWN BUG (open, and why this board is left cooperative): if the
+ * generic-timer routing is enabled (BCM2836 0x40000040 bit1, see the
+ * commented-out line in clockinit), a heavy write stream through this
+ * bio - a kfs ream, or a 2000-block stress loop - fails intermittently
+ * with "file does not exist" at a varying block when a timer IRQ is
+ * taken mid-transfer.  It is SD-specific (a 4000-open namespace loop
+ * under the same tick is clean) and survives even a no-op clockintr, so
+ * it is the exception entry/return interacting with this transfer, not a
+ * clock callee - yet vectrap is byte-identical to virtarm64's, which is
+ * stable under its GIC timer.  splhi() around the transfer cures the
+ * single-proc case but deadlocks the multi-proc file-server path.  The
+ * board therefore ships without the tick; sifive_u's slow SPI driver
+ * never lands in the window and is the working oracle.
  */
 static long
 sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)

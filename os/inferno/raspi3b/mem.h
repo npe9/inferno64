@@ -39,7 +39,6 @@
 
 #define	BCMPERIPH	((uintptr)0x3f000000)
 #define	IRQBASE		(BCMPERIPH + 0x00b200)	/* BCM2835 ARM IRQ controller */
-#define	LOCALCTL	((uintptr)0x40000000)	/* BCM2836 per-core interrupt control */
 #define	GPIO0		(BCMPERIPH + 0x200000)	/* BCM2835 GPIO */
 #define	SDHOST		(BCMPERIPH + 0x202000)	/* BCM2835 SDHOST (native SD) */
 #define	I2C0		(BCMPERIPH + 0x205000)	/* BCM2835 BSC0 (i2c-bus.0) */
