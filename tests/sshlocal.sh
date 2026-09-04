@@ -8,7 +8,10 @@ set -eu
 # to ssh-keygen's own fingerprint, authenticate by publickey, exec a
 # command, and check its output and exit status against known values.
 # A second run with an UNAUTHORISED key must be rejected - the negative
-# control that proves auth actually checks the key.
+# control that proves auth actually checks the key. Later stages exercise
+# ecdsa/ed25519 host keys, the ssh(1) command and interactive shell,
+# factotum(4) publickey auth (key never leaves the agent), and finally
+# factotum -S fetching that key from a secstored(8) over the network.
 #
 # Uses the host's sshd/ssh-keygen purely as a test oracle (the
 # #C-as-oracle exception in CLAUDE.md); nothing here is part of the
@@ -37,6 +40,7 @@ esshdpid=
 edpid=
 eport=$((port+1))
 edport=$((port+2))
+ssport=$((port+3))
 cleanup() {
 	test -n "$sshdpid" && kill "$sshdpid" 2>/dev/null || true
 	test -n "$esshdpid" && kill "$esshdpid" 2>/dev/null || true
@@ -214,6 +218,39 @@ if echo "$fout" | grep -q "fac-ok"; then
 	echo 'SSHLOCAL: factotum publickey auth: PASS'
 else
 	echo "SSHLOCAL: factotum publickey auth FAILED: [$fout]"; rc=1
+fi
+
+echo 'SSHLOCAL: === factotum -S from secstore: key fetched over the network ==='
+# The full chain: the same rsagen key, stored in a secstored(8) we stand
+# up on the loopback, is fetched by factotum -S over a PAK-authenticated
+# secstore(2) channel, loaded into factotum, and used to authenticate to
+# the real sshd - so this exercises the secstore network round-trip end to
+# end against a genuine OpenSSH server. auth/secstore -i takes the store
+# password from fd0 (< pwline); the account-create and factotum -S prompts
+# read /dev/cons, which is emu's own stdin, so three password lines are
+# piped there. secstored and factotum are daemons, so quitall(1) ends the
+# session once ssh has returned.
+sspw=secretpw
+cat > "$intree/secssh.sh" <<SEC
+bind -a '#I' /net
+rm -rf /tmp/ss; mkdir /tmp/ss
+auth/secstored -d /tmp/ss -c alice
+auth/secstored -d /tmp/ss -a 'tcp!*!$ssport' &
+sleep 2
+echo $sspw > /tmp/pwline
+rm -rf /tmp/w; mkdir /tmp/w; cd /tmp/w
+cp /.sshtesttmp/keyline factotum
+auth/secstore -i -s 'tcp!127.0.0.1!$ssport' -u alice r factotum < /tmp/pwline
+mkdir /mnt/factotum
+auth/factotum -S 'alice@tcp!127.0.0.1!$ssport'
+ssh -p $port -t '$wantthumb' $user@127.0.0.1 printf secstore-fac-ok
+quitall
+SEC
+secout=$(printf '%s\n%s\n%s\n' "$sspw" "$sspw" "$sspw" | timeout 90 ./MacOSX/arm64/bin/emu-g -r. sh /.sshtesttmp/secssh.sh 2>/dev/null) || true
+if echo "$secout" | grep -q "secstore-fac-ok"; then
+	echo 'SSHLOCAL: factotum -S secstore-seeded publickey auth: PASS'
+else
+	echo "SSHLOCAL: factotum -S secstore auth FAILED: [$secout]"; rc=1
 fi
 
 if [ "$rc" -eq 0 ]; then echo 'SSHLOCAL: ALL PASS'; else echo 'SSHLOCAL: FAILURE'; cat "$tmp/sshd.log"; fi
