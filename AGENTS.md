@@ -12,6 +12,19 @@
   a bug in place of a fix, and do not stop to ask the user anything while
   the requested work can still be advanced locally.  Complete it, verify
   it against a booted kernel, then report.
+- The target is real hardware, not the emulator.  QEMU (or any emulator)
+  is a temporary test bench; the point is a correct port to the physical
+  board, not something that merely runs under emulation.  Where the two
+  differ, hardware correctness takes precedence over getting it to pass on
+  the emulator: implement what the real device requires -- flow control,
+  memory-ordering barriers, errata workarounds, real timing and reset and
+  init sequences -- even when the emulator would pass without it, and
+  never rely on emulator leniency or on an emulator-only artifact.  When a
+  failure turns out to be the emulator's bug, not the port's, treat it as
+  a test-bench problem (fix or route around the emulator); do not contort
+  the real hardware path to match an emulator quirk.  Note in the code and
+  the commit any place the emulator is more forgiving than hardware, so
+  the gap is visible before the board is real.
 - Act as an implementation agent: inspect the tree, make the requested changes,
   build and test them, and leave the working result in the repository. Do not
   stop at an explanation when the requested work can be performed locally.
