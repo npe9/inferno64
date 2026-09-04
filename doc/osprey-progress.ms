@@ -200,6 +200,16 @@ rather than starting again, and the processes that share its address
 space are stopped and carried along with it as a group.  On one machine;
 the pages do not yet cross a wire.
 .PP
+.B "The real wire, driven from user space."
+The kernel exposes a virtio network device to the server container the
+way it exposes the block device \- the register BAR as a segment, the
+interrupt as a semaphore, nothing more \- and a driver in the
+personality brings it up and runs its queues in the container's own
+slice; the real Plan 9 stack binds an ethernet medium on that driver.
+Two such machines on one cable talk: ARP, a TCP handshake and a line
+each way, two tcp.c's in two user-space personalities on two machines,
+the kernels carrying interrupts and nothing else.
+.PP
 .B "Dynamic replicated data."
 A replica of a file in another container follows a stream of the file's
 committed version over the \[*p]p wire, answers reads from its copy while
@@ -238,7 +248,10 @@ boots one kernel,
 boots two on one wire, and
 .CW scripts/osprey-check-net.py
 boots two more and pings a container's own protocol stack from the
-second; between them they ask for everything above and say
+second, and
+.CW scripts/osprey-check-p9wire.py
+boots two microkernels on one cable with the real stack in user space
+on each; between them they ask for everything above and say
 .B ok
 or
 .B FAIL
@@ -1593,6 +1606,52 @@ in
 So item 7 is whole in the form the sources give it: the real stack in a
 container, routing between two wires, and a rule that drops before the
 stack \- with the demonstration's own limits, one rule and one machine.
+.PP
+.PP
+And the stack on a real wire, which is what the plan's stage (3) first
+asked for \- a medium over the exposed interface \- done the exokernel
+way rather than over the kernel's ether driver.  The kernel's virtio
+exposure is one routine now
+.CW ( ospreyvioexpose
+in
+.CW devosprey.c ,
+the block and the network device the same shape to it), and the
+network device goes to the server container as the segment
+.CW virtionet
+with its descriptor at
+.CW Ospreynetoff
+and its interrupt on the fifth semaphore.  Above it,
+.CW os/osprey/cmd/p9/netvirtio.c
+is the driver as a task: reset, VERSION_1 and MAC, a receive and a
+transmit queue of eight in the slice's packet buffers, the frames in
+the slice's packet and transmit buffers (contiguous with the slice, so
+a physical address is the slice's plus an offset), no offloads; and
+.CW os/osprey/ip/ospreyvnetmedium.c
+is
+.CW ethermedium.c
+with its three kernel-device channels replaced by calls into that
+driver \- IPv4 and ARP \- and its reading in a pump the server loop
+runs when the device's semaphore is given and on every tick.  Two
+machines booted from one image on one cable tell themselves apart by
+the MAC the bench gives them and take 10.1.0.1 and 10.1.0.2 from it;
+machine 1 announces a port, machine 2 connects across the cable, and
+a line crosses each way, ARP and all: seven frames in and six out on
+one side, five and six on the other, none dropped.  Two things were
+found by the first real wire.  The personality's stack clock,
+.CW NOW ,
+had never advanced \- nothing wrote the Mach tick count it reads \-
+so
+.CW arp.c ,
+which sends a request only when the entry is older than its
+retransmit time, never sent one; loopback and the ring medium need no
+ARP and never showed it; the cooperative tick now advances it.  And
+QEMU's virtio-net is a transitional device unless told
+.CW disable-legacy=on ,
+which the check now says, as the block device's line already did.
+Checked by
+.CW /scripts/osprey-check-p9wire.py ,
+six criteria on two machines.  This is the wire item 6a's pages would
+cross; carrying them is the next piece.
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

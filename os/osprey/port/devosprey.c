@@ -2153,10 +2153,15 @@ ospreyframebuffer(void)
  */
 #include "../port/pci.h"
 
-static Physseg ospreyblkseg;
-static Ospreyproc *ospreyblkproc;
-static int ospreyblksem;
-static uchar *ospreyblkisr;		/* the interrupt status byte, mapped for the handler */
+/* one exposed virtio device: its segment, the task it was given to, the interrupt's semaphore */
+typedef struct Vioexp Vioexp;
+struct Vioexp {
+	Physseg	seg;
+	Ospreyproc *proc;
+	int	sem;
+	uchar	*isr;		/* the interrupt status byte, mapped for the handler */
+};
+static Vioexp vioblk, vionet;
 
 static int
 ospreyviocapmatch(Pcidev *p, int cap, int off, int typ)
@@ -2172,31 +2177,39 @@ ospreyviocapmatch(Pcidev *p, int cap, int off, int typ)
 }
 
 static void
-ospreyblkintr(Ureg*, void*)
+ospreyviointr(Ureg*, void *a)
 {
+	Vioexp *v = a;
 	int sx;
 
 	/* reading the status deasserts the line; the completion itself is the task's to see */
-	if(ospreyblkisr == nil || (*ospreyblkisr & 1) == 0)
+	if(v->isr == nil || (*v->isr & 1) == 0)
 		return;
-	if(ospreyblkproc != nil){
-		ospreysemgive(ospreyblkproc, ospreyblksem);
-		if((sx = ospreyindex(ospreyblkproc)) >= 0 && sx < nelem(ospreyselrend))
+	if(v->proc != nil){
+		ospreysemgive(v->proc, v->sem);
+		if((sx = ospreyindex(v->proc)) >= 0 && sx < nelem(ospreyselrend))
 			wakeup(&ospreyselrend[sx]);
 	}
 }
 
+/*
+ * Expose one virtio 1.0 PCI device (device id did) to a container: its
+ * register BAR as a physical segment of the given name, the descriptor
+ * at descoff of the container's data area, and its interrupt as a
+ * semaphore.  The block device and the network device are the same
+ * shape to the kernel; what differs is the driver above it.
+ */
 static int
-ospreyblkexpose(Ospreyproc *p, int sem)
+ospreyvioexpose(Vioexp *v, Ospreyproc *p, int sem, int did, char *segname, uvlong descoff, uvlong magic, char *what, char *devname)
 {
 	Pcidev *pci;
 	Ospreyblk *b;
 	int cap, bar, i, typ;
 	uvlong pa, off[5], mult;
 
-	if(ospreyblkproc != nil)
+	if(v->proc != nil)
 		return -1;			/* one device, one task */
-	pci = pcimatch(nil, 0x1AF4, 0x1042);	/* virtio 1.0 block, legacy interface off */
+	pci = pcimatch(nil, 0x1AF4, did);	/* virtio 1.0, legacy interface off */
 	if(pci == nil)
 		return -1;
 	bar = -1;
@@ -2216,19 +2229,19 @@ ospreyblkexpose(Ospreyproc *p, int sem)
 	if(pci->mem[bar].bar & 1)
 		return -1;			/* ports: not memory a container can be given */
 	pa = pci->mem[bar].bar & ~0xFULL;
-	if((b = (Ospreyblk*)ospreydata(p, Ospreyblkoff, sizeof(Ospreyblk))) == nil)
+	if((b = (Ospreyblk*)ospreydata(p, descoff, sizeof(Ospreyblk))) == nil)
 		return -1;
-	memset(&ospreyblkseg, 0, sizeof ospreyblkseg);
-	ospreyblkseg.attr = SG_PHYSICAL | SG_DEVICE;
-	ospreyblkseg.name = "virtioblk";
-	ospreyblkseg.pa = pa;
-	ospreyblkseg.size = pci->mem[bar].size;
-	if(addphysseg(&ospreyblkseg) == nil)
+	memset(&v->seg, 0, sizeof v->seg);
+	v->seg.attr = SG_PHYSICAL | SG_DEVICE;
+	v->seg.name = segname;
+	v->seg.pa = pa;
+	v->seg.size = pci->mem[bar].size;
+	if(addphysseg(&v->seg) == nil)
 		return -1;
-	ospreyblkisr = vmap(pa + off[3], BY2PG);
-	if(ospreyblkisr == nil)
+	v->isr = vmap(pa + off[3], BY2PG);
+	if(v->isr == nil)
 		return -1;
-	b->magic = Ospreyblkmagic;
+	b->magic = magic;
 	b->slicepa = PADDR(ospreybase) + (uvlong)ospreyindex(p) * ospreyslicesize();
 	b->barsize = pci->mem[bar].size;
 	b->cfg = off[1];
@@ -2237,14 +2250,26 @@ ospreyblkexpose(Ospreyproc *p, int sem)
 	b->isr = off[3];
 	b->devcfg = off[4];
 	b->sem = sem;
-	ospreyblkproc = p;
-	ospreyblksem = sem;
+	v->proc = p;
+	v->sem = sem;
 	pcienable(pci);
-	intrenable(pci->intl, ospreyblkintr, nil, pci->tbdf, "osprey-blk");
-	print("osprey blk: exposed virtio block device %d.%d.%d, BAR %d at %#llux size %lud as \"virtioblk\", interrupt %d as semaphore %d of container %llud\n",
-		BUSBNO(pci->tbdf), BUSDNO(pci->tbdf), BUSFNO(pci->tbdf), bar, pa, (ulong)pci->mem[bar].size,
-		pci->intl, sem, ospreyid(p));
+	intrenable(pci->intl, ospreyviointr, v, pci->tbdf, what);
+	print("osprey %s: exposed virtio %s device %d.%d.%d, BAR %d at %#llux size %lud as \"%s\", interrupt %d as semaphore %d of container %llud\n",
+		what, devname, BUSBNO(pci->tbdf), BUSDNO(pci->tbdf), BUSFNO(pci->tbdf), bar, pa, (ulong)pci->mem[bar].size,
+		segname, pci->intl, sem, ospreyid(p));
 	return 0;
+}
+
+static int
+ospreyblkexpose(Ospreyproc *p, int sem)
+{
+	return ospreyvioexpose(&vioblk, p, sem, 0x1042, "virtioblk", Ospreyblkoff, Ospreyblkmagic, "blk", "block");
+}
+
+static int
+ospreynetexpose(Ospreyproc *p, int sem)
+{
+	return ospreyvioexpose(&vionet, p, sem, 0x1041, "virtionet", Ospreynetoff, Ospreynetmagic, "net", "network");
 }
 
 extern void ospreyloadprog(void);
@@ -3999,6 +4024,7 @@ ospreyuserprep(void)
 					Ospreyproc *ut;
 
 					ospreyblkexpose(sv, 1);
+					ospreynetexpose(sv, 5);	/* and the network device, the same way, on the fifth semaphore */
 					/*
 					 * And the second serial port, served by a task
 					 * in a container of its own - Cut B's uart,

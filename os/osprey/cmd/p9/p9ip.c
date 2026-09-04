@@ -35,6 +35,7 @@ void (*ipprotoinit[])(Fs*) = {
 
 extern void loopbackmediumlink(void);
 extern void ospreymediumlink(void);
+extern void ospreyvnetmediumlink(void);	/* ospreyvnetmedium.c: the real wire, the exposed virtio network device */
 extern void p9kbdstart(void);		/* p9kbd.c: the user-space i8042 keyboard driver */
 extern int p9open(char*, int);
 extern long p9read(int, void*, long);
@@ -348,6 +349,123 @@ pipwire(void *)
 		p9close(dfd);
 		p9close(lfd);
 	}
+}
+
+/*
+ * The real wire.  When the kernel has exposed a network device to this
+ * container and netvirtio.c has brought it up, stack A binds the vnet
+ * medium on it and takes an address from the device's MAC - 10.1.0.n
+ * for a MAC ending in n - so two machines booted from the same image on
+ * one wire know which they are: 1 answers, 2 asks.  Machine 1 announces
+ * a port on the wire and answers a line; machine 2 connects to it
+ * across the cable, its tcp.c to the other's, ARP and all, and reads
+ * the answer.  Nothing but the two personalities' own stacks and the
+ * drivers they run in user space is in the path; the kernels carry
+ * interrupts and nothing else.
+ */
+extern int vnet_ready(void);
+extern void vnet_mac(uchar*);
+extern void vnet_stats(long*, long*, long*);
+
+static void
+wiresrv(void *)
+{
+	int afd, lfd, dfd, anum, lnum, sfd;
+	long n, rx, tx, drops;
+	char cbuf[64], path[64], rx1[256], *e;
+	static char reply[] = "answered across the cable by machine 1's tcp.c in user space";
+
+	if(waserror()){
+		print("p9 wire: machine 1 failed: %s\n", up->errstr);
+		pexit("wiresrv", 0);
+	}
+	afd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 9005", 13);
+	print("p9 wire: machine 1 announced tcp!*!9005 on the wire, 10.1.0.1\n");
+	snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	snprint(path, sizeof path, "/net/tcp/%d/remote", lnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, rx1, sizeof rx1 - 1); p9close(sfd);
+	if(n<0)n=0; rx1[n]=0;
+	for(e=rx1; *e && *e!='\n'; e++) ; *e=0;
+	print("p9 wire: machine 1 accepted a connection over the cable from %s as conversation %d\n", rx1, lnum);
+	snprint(path, sizeof path, "/net/tcp/%d/data", lnum);
+	dfd = p9open(path, ORDWR);
+	n = p9read(dfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
+	print("p9 wire: machine 1 read %ld bytes from the other machine: \"%s\"\n", n, rx1);
+	p9write(dfd, reply, sizeof reply - 1);
+	tsleep(&up->sleep, return0, nil, 1000);
+	vnet_stats(&rx, &tx, &drops);
+	print("p9 wire: machine 1 answered the other machine; its user-space driver took %ld frames in and put %ld out, %ld dropped\n", rx, tx, drops);
+	p9close(dfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("wiresrv done", 0);
+}
+
+static void
+wirecli(void *)
+{
+	int dfd, sfd, wfd, cnum;
+	long n, rx, tx, drops;
+	char cbuf[64], path[64], line[256], rx1[256], *e;
+	static char msg[] = "sent across the cable by machine 2's tcp.c in user space";
+
+	tsleep(&up->sleep, return0, nil, 2000);		/* let the other machine come up */
+	if(waserror()){
+		print("p9 wire: machine 2 failed: %s\n", up->errstr);
+		pexit("wirecli", 0);
+	}
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	print("p9 wire: machine 2 connecting to 10.1.0.1!9005 across the cable\n");
+	p9write(dfd, "connect 10.1.0.1!9005", 21);
+	snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+	if(n<0)n=0; line[n]=0;
+	for(e=line; *e && *e!='\n'; e++) ; *e=0;
+	print("p9 wire: machine 2's handshake with machine 1 across the cable - %s\n", line);
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	wfd = p9open(path, ORDWR);
+	p9write(wfd, msg, sizeof msg - 1);
+	n = p9read(wfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
+	vnet_stats(&rx, &tx, &drops);
+	print("p9 wire: machine 2 read the answer across the cable: \"%s\"; its user-space driver took %ld frames in and put %ld out, %ld dropped\n", rx1, rx, tx, drops);
+	tsleep(&up->sleep, return0, nil, 500);
+	p9close(wfd); p9close(dfd);
+	poperror();
+	pexit("wirecli done", 0);
+}
+
+/* called by the server loop once the driver is up: the interface, and the machine's role */
+void
+p9vnetup(void)
+{
+	uchar mac[6];
+	char buf[128], addr[64];
+	int fd;
+	long n;
+
+	if(!vnet_ready())
+		return;
+	if(waserror()){
+		print("p9 wire: the vnet interface failed: %s\n", up->errstr);
+		return;
+	}
+	vnet_mac(mac);
+	fd = p9open("/net/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9write(fd, "bind vnet", 9);
+	n = snprint(addr, sizeof addr, "add 10.1.0.%d 255.255.255.0", mac[5]);
+	p9write(fd, addr, n);
+	p9close(fd);
+	print("p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.%d on the wire (from the MAC); machine %d\n", mac[5], mac[5]);
+	if(mac[5] == 1)
+		kproc("wiresrv", wiresrv, nil);
+	else
+		kproc("wirecli", wirecli, nil);
+	poperror();
 }
 
 /*
@@ -1026,6 +1144,7 @@ p9ipup(void)
 	}
 	loopbackmediumlink();
 	ospreymediumlink();
+	ospreyvnetmediumlink();
 	ic = namec("#I", Atodir, 0, 0);
 	nc = namec("/net", Atodir, 0, 0);
 	cmount(ic, nc, MAFTER, "");

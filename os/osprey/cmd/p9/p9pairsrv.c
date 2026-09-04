@@ -36,6 +36,7 @@ enum {
 	Reqbuf		= 256,
 	Kbdsem		= 3,		/* the block device has 1, the clock 2 */
 	Mousesem	= 4,
+	Netsem		= 5,		/* the network device's interrupt */
 };
 
 typedef struct Omap Omap;
@@ -142,6 +143,9 @@ extern void ospreymediumpump(void);	/* ospreymedium.c: inject frames arrived ove
 extern long ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer);	/* one frame off the ring into the stack */
 extern long ospreymediumtake(uchar *buf, long max);	/* one frame the stack sent toward the peer, for the reply */
 extern void p9kbdnotify(void);		/* p9kbd.c: hand an IRQ1 notification to the driver kproc */
+extern void p9vnet(uchar *base);		/* netvirtio.c: the user-level network driver */
+extern void p9vnetup(void);		/* p9ip.c: the interface on it, and the machine's role on the wire */
+extern void ospreyvnetpump(void);	/* ospreyvnetmedium.c: what the device received, into the stack */
 static int reclaims, ticks;
 
 /*
@@ -193,7 +197,10 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	arm[3].op = OSdown;		/* the mouse IRQ12 (aux) notification */
 	arm[3].obj = Mousesem;
 	arm[3].buf = 0;
-	n = oselect(Armoff, 4);
+	arm[4].op = OSdown;		/* the network device's interrupt */
+	arm[4].obj = Netsem;
+	arm[4].buf = 0;
+	n = oselect(Armoff, 5);
 	if(n == 0){
 		ticks++;
 		sched_tick();		/* advance the cooperative scheduler's clock */
@@ -201,11 +208,17 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		if(lfsreclaim())
 			reclaims++;
 		ospreymediumpump();	/* inject any frames that arrived over the osprey medium */
+		ospreyvnetpump();	/* and any the network device received */
 		runkprocs();		/* let timer and medium kprocs run on this tick */
 		return 0;
 	}
 	if(n == 2 || n == 3){		/* the keyboard or mouse interrupt fired */
 		p9kbdnotify();		/* ready the driver kproc; it does the inb */
+		runkprocs();
+		return 0;
+	}
+	if(n == 4){			/* the network device's interrupt */
+		ospreyvnetpump();
 		runkprocs();
 		return 0;
 	}
@@ -303,6 +316,8 @@ p9serveloop(char *arg)
 
 	p9blk(base);		/* the disk, if the kernel exposed one: a driver above the kernel */
 	p9lfsmount();		/* and the file system on it, mounted at /n for the client */
+	p9vnet(base);		/* the network device, if the kernel exposed one: the same */
+	p9vnetup();		/* and the real stack's interface on it */
 	/*
 	 * The kernel put a line on the uart task's own output queue at
 	 * boot; the server does not map the uart's slice, so it spends no

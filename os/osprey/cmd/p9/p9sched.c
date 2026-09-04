@@ -168,6 +168,14 @@ sched_tick(void)
 	Proc *p;
 
 	p9ticks++;
+	/*
+	 * The stack's own clock, NOW (TK2MS(MACHP(0)->ticks)), advances with
+	 * it: arp.c decides whether to send a request, and whether to send
+	 * it again, by the time since the entry was made, and with a clock
+	 * stuck at zero it never sent one at all - which loopback and the
+	 * ring medium, needing no ARP, never showed; the first real wire did.
+	 */
+	MACHP(0)->ticks = p9ticks;
 	for(i = 0; i < nallproc; i++){
 		p = allproc[i];
 		if(p->state == Wakeme && p->twhen != 0 && (long)(p9ticks - p->twhen) >= 0){
