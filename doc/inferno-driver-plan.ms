@@ -1013,27 +1013,38 @@ to allocate the framebuffer below.  It is the key that unlocks clocks,
 board info and the framebuffer.
 .IP 2.
 Framebuffer plus an Inferno screen driver into devdraw.
-.B "PARTLY DONE" .
+.B DONE .
 The firmware allocates a 640x480x32 buffer over the mailbox
 (mboxfballoc), a screen driver (screenbcm.c) draws into kernel RAM and
-flushes dirty rectangles to it, and a monitor screendump confirms the
-GPU scans out our buffer end to end - so the framebuffer is live and
-displayed.  What is left is a memdraw fault, not the fb: drawing through
-the Limbo draw device faults in libmemdraw on arm64 (a Readfn is handed a
-corrupt Param* on the replicated-source fill path), and it reproduces
-with a plain kernel-RAM softscreen too, so it is a memdraw-side arm64 bug
-independent of the VideoCore buffer.  It is not raspi3b-specific: both
-arm64 boards carry it latently and neither had ever exercised memdraw's
-draw() combine before - virtarm64's draw check only reads the /dev/draw
-ctl, and its TK path never runs (Tk is not in its root), so this fill is
-the first real draw() on the arm64 port.  The lead: a
-.CW Readfn
-returns a
-.CW Buffer
-(~88 bytes) by value, so it is compiled with a hidden return-pointer
-argument; a struct-return ABI mismatch would shift its args and hand the
-callee a corrupt Param*.  Fixing it is what makes wm/tk run on either
-board; until then a board displays only what the kernel itself fills in.
+flushes dirty rectangles to it, and the Limbo draw device now renders
+into it: a monitor screendump shows virtarm64 (ramfb) filled solid red
+(correct colour, all 307200 pixels) and raspi3b showing three drawn
+colour bands.
+.PP
+Getting there uncovered a real 7c code-generation bug, since neither
+arm64 board had ever exercised memdraw's draw() combine (virtarm64's
+draw check only reads the /dev/draw ctl, and its TK path never runs).
+The
+.I crash
+was that on arm64 REGRET==REGARG==R0, and sugen()'s OSTRUCT
+side()-branch built a struct-by-value argument's destination address
+into the return register, clobbering a pointer first argument still live
+in R0 - so replclipr(Image*, int, Rectangle) got its Image* overwritten
+by the Rectangle and faulted.  Fixed in utils/7c/cgen.c (take the
+address into a general temporary, not regret).  An earlier note here
+guessing a Readfn/Buffer struct-\fIreturn\fP ABI mismatch was wrong on
+both counts: it was an argument, in replclipr/bufimage, and the
+mechanism was regret aliasing REGARG.
+.PP
+A
+.I second ,
+distinct struct-by-value argument miscompilation survives that fix -
+imagedraw()'s drawop(d, IRECT(f->r), ...) arrived with a corrupt
+rectangle - and is
+.I not
+yet root-caused; libinterp/draw.c works around it by materialising
+IRECT/IPOINT into locals before the call.  So the compiler is not proven
+correct for struct-by-value arguments; that is the open thread here.
 (Do NOT start from the VideoCore GPU; the firmware framebuffer is the
 path.)
 .IP 3.
