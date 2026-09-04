@@ -257,6 +257,96 @@ func subst(n ref types.Node, s string, val ref types.Node) {
 	subst(n.aux, s, val)
 }
 
+// echk() is checking the callee of a call: a method there stays a method
+var incallee = 0
+
+var nmv = 0
+
+// "f := c.get": a method used as a value becomes the closure a
+// programmer would write, the receiver evaluated once and captured
+//
+//	func(.mp0 P0, ...) R { return .mv.get(.mp0, ...) }
+//
+// over the receiver itself when it is a name, or over the parameter
+// of an immediately-called wrapper when it is any other expression
+func methvalue(n ref types.Node, meth ref types.Decl) ref types.Type {
+	line := n.line
+	pos := n.pos
+	recv := n.left
+	isname := recv.op == types.Oname
+	rname := sys.sprint(".mv%d", nmv)
+	nmv++
+	var params ref types.Node
+	var args ref types.Node
+	i := 0
+	var id ref types.Decl
+	if meth.ty.ids != nil {
+		id = meth.ty.ids.next
+	}
+	for ; id != nil; id = id.next {
+		pn := sys.sprint(".mp%d", i)
+		i++
+		params = types.mkseq(params, types.mkbin(types.Ofield, mkname(line, pos, pn), typeval(line, pos, id.ty)))
+		args = types.mkseq(args, mkname(line, pos, pn))
+	}
+	var ret ref types.Node
+	if meth.ty.tof != nil && meth.ty.tof != tnone {
+		ret = typeval(line, pos, meth.ty.tof)
+	}
+	sig := types.mkn(types.Otfunc, types.rotater(params), ret)
+	sig.line = line
+	sig.pos = pos
+	var rcv ref types.Node
+	if isname {
+		rcv = types.dupn(recv)
+	} else {
+		rcv = mkname(line, pos, rname)
+	}
+	dot := types.mkbin(types.Odot, rcv, mkname(line, pos, meth.sym))
+	dot.sym = meth.sym
+	dot.line = line
+	dot.pos = pos
+	call := types.mkn(types.Ocall, dot, types.rotater(args))
+	call.line = line
+	call.pos = pos
+	var stmt ref types.Node
+	if meth.ty.tof != nil && meth.ty.tof != tnone {
+		stmt = types.mkn(types.Oret, call, nil)
+	} else {
+		stmt = types.mkunary(types.Oexpr, call)
+	}
+	stmt.line = line
+	stmt.pos = pos
+	fl := types.mkn(types.Ofunclit, nil, sig)
+	fl.aux = types.mkn(types.Oscope, stmt, nil)
+	fl.aux.line = line
+	fl.aux.pos = pos
+	fl.line = line
+	fl.pos = pos
+	if isname {
+		copynode(n, fl)
+		return echk(n)
+	}
+	// (func(.mv T) fnvalue { return <closure> })(recv)
+	osig := types.mkn(types.Otfunc, types.mkbin(types.Ofield, mkname(line, pos, rname), typeval(line, pos, recv.ty)), deepdup(sig))
+	osig.line = line
+	osig.pos = pos
+	outer := types.mkn(types.Ofunclit, nil, osig)
+	oret := types.mkn(types.Oret, fl, nil)
+	oret.line = line
+	oret.pos = pos
+	outer.aux = types.mkn(types.Oscope, oret, nil)
+	outer.aux.line = line
+	outer.aux.pos = pos
+	outer.line = line
+	outer.pos = pos
+	ocall := types.mkn(types.Ocall, outer, recv)
+	ocall.line = line
+	ocall.pos = pos
+	copynode(n, ocall)
+	return echk(n)
+}
+
 // what a?.f yields when a is nil: nil, or the zero of a type that has none
 func zeroval(line int, pos int, t ref types.Type) ref types.Node {
 	match t.kind {
@@ -602,6 +692,8 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 	td.finsts = fi
 	savedcurfn := curfn
 	savedcurret := curret
+	savedclosure := curclosure
+	curclosure = nil	// the template's body is its own, not this closure's: its locals are not captures
 	frommod := 0
 	if tmplmodule(td) != nil {
 		frommod = 1
@@ -611,6 +703,7 @@ func tinstantiatefncore(line int, pos int, td ref types.Decl, argv []ref types.T
 	if frommod != 0 {
 		popmodscope(tmplmodule(td))
 	}
+	curclosure = savedclosure
 	curfn = savedcurfn
 	curret = savedcurret
 	fnd.checked = 1
@@ -1064,6 +1157,100 @@ func inferfn1(n ref types.Node) ref types.Decl {
 	return tinstantiatefncore(n.line, n.pos, td, argv, nparams, nil)
 }
 
+// "a == b" on two struct values: the field-by-field comparison a
+// programmer would write, nested structs and all.  nil when a field
+// has no equality of its own (an array, say)
+func structeq(a ref types.Node, b ref types.Node, t ref types.Type, line int, pos int) ref types.Node {
+	var cmp ref types.Node
+	for id := t.ids; id != nil; id = id.next {
+		la := types.mkbin(types.Odot, types.dupn(a), mkname(line, pos, id.sym))
+		la.sym = id.sym
+		la.line = line
+		la.pos = pos
+		lb := types.mkbin(types.Odot, types.dupn(b), mkname(line, pos, id.sym))
+		lb.sym = id.sym
+		lb.line = line
+		lb.pos = pos
+		var e ref types.Node
+		match id.ty.kind {
+		case types.Tint, types.Tbig, types.Tbyte, types.Treal, types.Tstring, types.Tbool, types.Tref, types.Tany:
+			e = types.mkbin(types.Oeq, la, lb)
+			e.line = line
+			e.pos = pos
+		case types.Tadt:
+			if id.ty.tags != nil {
+				return nil	// a pick has no field-by-field equality
+			}
+			e = structeq(la, lb, id.ty, line, pos)
+			if e == nil {
+				return nil
+			}
+		default:
+			return nil
+		}
+		if cmp == nil {
+			cmp = e
+		} else {
+			cmp = types.mkbin(types.Oandand, cmp, e)
+			cmp.line = line
+			cmp.pos = pos
+		}
+	}
+	if cmp == nil {
+		cmp = mkconst(line, pos, big(1))	// a struct with no fields: every value is the same
+		cmp.ty = tint
+	}
+	return cmp
+}
+
+var neq = 0
+
+// does t, or a type embedded in it, have this field or method?
+// ("type Derived struct { Base; ... }": Base's own names are
+// reachable through the Derived value)
+func hasmember(t ref types.Type, s string) int {
+	if t == nil {
+		return 0
+	}
+	if t.kind == types.Tref {
+		t = t.tof
+	}
+	if t == nil || (t.kind != types.Tadt && t.kind != types.Tadtpick) {
+		return 0
+	}
+	for id := t.ids; id != nil; id = id.next {
+		if id.sym == s {
+			return 1
+		}
+	}
+	for id := t.meths; id != nil; id = id.link {
+		if id.sym == s {
+			return 1
+		}
+	}
+	for id := t.ids; id != nil; id = id.next {
+		if id.embedded != 0 && hasmember(id.ty, s) != 0 {
+			return 1
+		}
+	}
+	return 0
+}
+
+// a method declared with its body in an interface (builtin.ei's
+// Builder): this module's own copy, as an inline function is
+func inlmeth(mtd ref types.Decl, t ref types.Type) ref types.Decl {
+	recv := mtd.init.left.left	// Ofndecl.left(Omethod).left = the receiver Ofield
+	rt := t
+	if recv.right.op == types.Otref {
+		rt = types.mktype(mtd.line, mtd.pos, types.Tref, t, nil)
+	}
+	types.sizetype(rt)
+	rd := types.mkdecl(recv.left.line, recv.left.pos, types.Darg, rt)
+	rd.sym = recv.left.sym
+	rd.implicit = 1
+	return tinstantiatefncore(mtd.line, mtd.pos, mtd, nil, 0, rd)
+}
+
 func tinstantiatemeth(mtd ref types.Decl, t ref types.Type) ref types.Decl {
 	recv := mtd.init.left.left
 	rt := t
@@ -1119,6 +1306,9 @@ func stype(n ref types.Node) ref types.Type {
 				id := seqitem(names)
 				d := types.mkdecl(id.line, id.pos, types.Dfield, stype(f.right))
 				d.sym = id.sym
+				if f.val == big(1) {
+					d.embedded = 1	// a bare type name: promoted
+				}
 				if ids == nil {
 					ids = d
 				} else {
@@ -1338,7 +1528,7 @@ func assignable(t ref types.Type, s ref types.Type, v ref types.Node) int {
 	}
 	// an interface takes any ref to a struct or pick with its methods:
 	// the value becomes a call of the interface's .Name$from (check.c)
-	if v != nil && isifacetype(t) && types.tequal(t, s) == 0 && s.kind == types.Tref && s.tof != nil && (s.tof.kind == types.Tadt || s.tof.kind == types.Tadtpick) {
+	if v != nil && isifacetype(t) && types.tequal(t, s) == 0 && ((s.kind == types.Tref && s.tof != nil && (s.tof.kind == types.Tadt || s.tof.kind == types.Tadtpick)) || s.named != 0) {
 		if !implements(s, t, v) {
 			return 0
 		}
@@ -1416,7 +1606,7 @@ func modmember(mt ref types.Type, s string) ref types.Decl {
 
 func methodmodule(meth ref types.Decl) ref types.Decl {
 	td := meth.dot
-	if td == nil || td.store != types.Dtype || td.ty == nil || td.ty.kind != types.Tadt || td.dot == nil || td.dot == impdecl {
+	if td == nil || td.store != types.Dtype || td.ty == nil || (td.ty.kind != types.Tadt && td.ty.named == 0) || td.dot == nil || td.dot == impdecl {
 		return nil
 	}
 	for l := imports; l != nil; l = tl(l) {
@@ -1778,7 +1968,7 @@ func echk1(n ref types.Node) ref types.Type {
 			n.ty = terror
 			return n.ty
 		}
-		if (n.op == types.Olsh || n.op == types.Orsh) && tr == tint && (t.kind == types.Tbig || t.kind == types.Tbyte) {
+		if (n.op == types.Olsh || n.op == types.Orsh) && tr.kind == types.Tint && (t.kind == types.Tbig || t.kind == types.Tbyte) {
 			tr = t
 		}
 		if types.tequal(t, tr) == 0 {
@@ -1848,6 +2038,53 @@ func echk1(n ref types.Node) ref types.Type {
 		tr := echk(n.right)
 		if t != terror && tr != terror && assignable(t, tr, n.right) == 0 && assignable(tr, t, n.left) == 0 {
 			nerror(n, sys.sprint("type mismatch: %s %s %s", tp(t), types.opname(n.op), tp(tr)))
+		} else if t != terror && (n.op == types.Oeq || n.op == types.Oneq) && t.kind == types.Tadt && t.tags == nil && tr != terror && types.tequal(t, tr) != 0 {
+			// "a == b" on two struct values: field by field
+			var cmp ref types.Node
+			if n.left.op == types.Oname && n.right.op == types.Oname {
+				cmp = structeq(n.left, n.right, t, n.line, n.pos)
+			} else {
+				// an operand that is not a name is evaluated once,
+				// as the parameter of a closure comparing the two:
+				//	(func(.ea T, .eb T) int { return ... })(a, b)
+				sa := sys.sprint(".ea%d", neq)
+				sb := sys.sprint(".eb%d", neq)
+				neq++
+				body := structeq(mkname(n.line, n.pos, sa), mkname(n.line, n.pos, sb), t, n.line, n.pos)
+				if body != nil {
+					pa := types.mkbin(types.Ofield, mkname(n.line, n.pos, sa), typeval(n.line, n.pos, t))
+					pb := types.mkbin(types.Ofield, mkname(n.line, n.pos, sb), typeval(n.line, n.pos, t))
+					sig := types.mkn(types.Otfunc, types.mkseq(pa, pb), mkname(n.line, n.pos, "int"))
+					sig.line = n.line
+					sig.pos = n.pos
+					stmt := types.mkn(types.Oret, body, nil)
+					stmt.line = n.line
+					stmt.pos = n.pos
+					fl := types.mkn(types.Ofunclit, nil, sig)
+					fl.aux = types.mkn(types.Oscope, stmt, nil)
+					fl.aux.line = n.line
+					fl.aux.pos = n.pos
+					fl.line = n.line
+					fl.pos = n.pos
+					call := types.mkn(types.Ocall, fl, types.mkseq(n.left, n.right))
+					call.line = n.line
+					call.pos = n.pos
+					cmp = call
+				}
+			}
+			if cmp == nil {
+				nerror(n, sys.sprint("cannot compare %s values: a field has no equality of its own", tp(t)))
+				n.ty = tbool
+				return n.ty
+			}
+			if n.op == types.Oneq {
+				c2 := types.mkunary(types.Onot, cmp)
+				c2.line = n.line
+				c2.pos = n.pos
+				cmp = c2
+			}
+			copynode(n, cmp)
+			return echk(n)
 		} else if t != terror && (t.kind == types.Tadt || t.kind == types.Ttuple || t.kind == types.Tadtpick) {
 			nerror(n, sys.sprint("cannot compare %s values: compare the fields, or compare refs", tp(t)))
 		} else if t != terror && isnum(t) == 0 && t.kind != types.Tstring && n.op != types.Oeq && n.op != types.Oneq {
@@ -2236,7 +2473,7 @@ func echk1(n ref types.Node) ref types.Type {
 	case types.Ochan:
 		if n.left != nil {
 			t := echk(n.left)
-			if t != tint && t != terror {
+			if t.kind != types.Tint && t != terror {
 				nerror(n, sys.sprint("channel size must be int, not %s", tp(t)))
 			}
 		}
@@ -2247,7 +2484,7 @@ func echk1(n ref types.Node) ref types.Type {
 		return n.ty
 	case types.Oarray:
 		t := echk(n.left)
-		if t != tint && t != terror {
+		if t.kind != types.Tint && t != terror {
 			nerror(n, sys.sprint("array size must be int, not %s", tp(t)))
 		}
 		t = types.mktype(n.line, n.pos, types.Tarray, stype(n.right), nil)
@@ -2366,6 +2603,14 @@ func echk1(n ref types.Node) ref types.Type {
 			}
 			n.ty = t
 			return n.ty
+		}
+		if t.kind == types.Tarray && tt.kind == types.Tlist && t.tof != nil && tt.tof != nil && types.tequal(t.tof, tt.tof) != 0 {
+			// "[]T(l)": the list's elements in an array, builtin.ei's toarray
+			call := types.mkn(types.Ocall, builtinref(n.line, n.pos, "toarray"), n.left)
+			call.line = n.line
+			call.pos = n.pos
+			copynode(n, call)
+			return echk(n)
 		}
 		if isifacetype(t) && types.tequal(tt, t) == 0 {
 			// "Shape(x)": the conversion an assignment would make (assignable() rewrites the operand)
@@ -2552,12 +2797,32 @@ func chkdot(n ref types.Node) ref types.Type {
 			return n.ty
 		}
 	}
+	oincallee := incallee
+	incallee = 0	// the receiver is a value, whatever the whole dot is
 	bt := echk(n.left)
+	incallee = oincallee
 	t := bt
 	isref := 0
 	if bt != nil && bt.kind == types.Tref {
 		isref = 1
 		t = bt.tof
+	}
+	if t != nil && t.named != 0 && isref == 0 {
+		// "c.name()": a named type has no fields, only methods
+		for id := t.meths; id != nil; id = id.link {
+			if id.sym == n.sym {
+				if incallee == 0 {
+					return methvalue(n, id)	// "f := c.label": a method as a value
+				}
+				n.decl = id
+				n.ty = id.ty
+				n.right = nil
+				return n.ty
+			}
+		}
+		nerror(n, sys.sprint("%s has no method %s", tp(t), n.sym))
+		n.ty = terror
+		return n.ty
 	}
 	if t != nil && (t.kind == types.Tadt || t.kind == types.Tadtpick || t.kind == types.Ttuple) {
 		var chain1 ref types.Decl
@@ -2602,6 +2867,17 @@ func chkdot(n ref types.Node) ref types.Type {
 		}
 		for id := t.meths; id != nil; id = id.link {
 			if id.sym == n.sym {
+				if id.inl != 0 {
+					// declared with its body in an interface: this module's copy
+					id = inlmeth(id, t)
+					if id == nil {
+						n.ty = terror
+						return n.ty
+					}
+				}
+				if incallee == 0 {
+					return methvalue(n, id)	// "f := c.get": a method as a value
+				}
 				n.decl = id
 				n.ty = id.ty
 				n.right = nil
@@ -2616,11 +2892,25 @@ func chkdot(n ref types.Node) ref types.Type {
 						n.ty = terror
 						return n.ty
 					}
+					if incallee == 0 {
+						return methvalue(n, fnd)
+					}
 					n.decl = fnd
 					n.ty = fnd.ty
 					n.right = nil
 					return n.ty
 				}
+			}
+		}
+		// an embedded field's own names, through it: "d.id" is "d.Base.id"
+		for em := t.ids; em != nil; em = em.next {
+			if em.embedded != 0 && hasmember(em.ty, n.sym) != 0 {
+				base := types.mkbin(types.Odot, n.left, mkname(n.line, n.pos, em.sym))
+				base.sym = em.sym
+				base.line = n.line
+				base.pos = n.pos
+				n.left = base
+				return echk1(n)
 			}
 		}
 		nerror(n, sys.sprint("%s has no field or method %s", tp(t), n.sym))
@@ -2636,11 +2926,20 @@ func chkcall(n ref types.Node) ref types.Type {
 	isvalcall := 0
 	var recvdone ref types.Node
 	var ft ref types.Type
-	if n.left.op == types.Oname {
-		td := lookup(n.left.sym)
+	if n.left.op == types.Oname || (n.left.op == types.Odot && n.left.left != nil && n.left.left.op == types.Oname) {
+		var td ref types.Decl
+		if n.left.op == types.Oname {
+			td = lookup(n.left.sym)
+		} else {
+			// "alias.Color(x)": a type from an imported module
+			md := lookup(n.left.left.sym)
+			if md != nil && md.ty != nil && md.ty.kind == types.Tmodule {
+				td = modmember(md.ty, n.left.sym)
+			}
+		}
 		if td != nil && td.store == types.Dtype {
 			if n.right == nil || n.right.op == types.Oseq {
-				nerror(n, sys.sprint("conversion to %s needs exactly one argument", n.left.sym))
+				nerror(n, sys.sprint("conversion to %s needs exactly one argument", td.sym))
 				n.ty = terror
 				return n.ty
 			}
@@ -2914,7 +3213,9 @@ func chkcall(n ref types.Node) ref types.Type {
 			n.ty = terror
 			return n.ty
 		}
+		incallee++
 		ft = echk(n.left)
+		incallee--
 		if ft != nil && ft.kind == types.Tref && ft.tof != nil && ft.tof.kind == types.Tfn {
 			ind := types.mkunary(types.Oind, n.left)
 			ind.line = n.left.line
@@ -3207,6 +3508,9 @@ func isifacetype(t ref types.Type) bool {
 // parameters and results?  (check.c)
 func implements(s ref types.Type, t ref types.Type, v ref types.Node) bool {
 	adt := s.tof
+	if s.named != 0 {
+		adt = s	// "type Color int" carries its methods itself
+	}
 	if adt.kind == types.Tadtpick {
 		adt = adt.tof
 	}
@@ -3634,7 +3938,7 @@ func matchlabels(arms ref types.Node, ctype ref types.Type, nlab int) ref types.
 					nerror(labs[e].start, sys.sprint("case label %bd overlaps %bd", labs[e].start.val, stop.val))
 				}
 			}
-			if ctype != tint || labs[e].start.val != stop.val + big(1) || labs[e].node != labs[i].node {
+			if ctype.kind != types.Tint || labs[e].start.val != stop.val + big(1) || labs[e].node != labs[i].node {
 				break
 			}
 			stop = labs[e].stop
@@ -3792,7 +4096,7 @@ func matchcheck(n ref types.Node) {
 	if subj == nil || subj.kind != types.Tadt || subj.tags == nil {
 		subj = nil
 	}
-	if subj == nil && t != tint && t != tstring && t != terror {
+	if subj == nil && t.kind != types.Tint && t.kind != types.Tstring && t != terror {
 		nerror(n, sys.sprint("match subject must be int, string or a tagged adt, not %s", tp(t)))
 		ok = 0
 	}
@@ -3909,7 +4213,7 @@ func matchcheck(n ref types.Node) {
 					continue
 				}
 				pt := echk(q)
-				if pt != terror && pt != labty {
+				if pt != terror && pt.kind != labty.kind {
 					if t == tstring {
 						nerror(q, sys.sprint("case label must be string, not %s", tp(pt)))
 					} else {
@@ -3930,7 +4234,7 @@ func matchcheck(n ref types.Node) {
 			popscope()
 		}
 	}
-	if ok == 0 || (subj == nil && t != tint && t != tstring) {
+	if ok == 0 || (subj == nil && t.kind != types.Tint && t.kind != types.Tstring) {
 		return
 	}
 	c := matchlabels(n.right, labty, nlab)
@@ -4371,7 +4675,7 @@ func stchk(n ref types.Node) {
 			echk(n.right)
 			if chklval(n.left, "assign to") != 0 && n.right.ty != terror && types.tequal(n.left.ty, n.right.ty) == 0 {
 				shiftok := 0
-				if (n.op == types.Olshas || n.op == types.Orshas) && n.right.ty == tint && (n.left.ty.kind == types.Tbig || n.left.ty.kind == types.Tbyte) {
+				if (n.op == types.Olshas || n.op == types.Orshas) && n.right.ty.kind == types.Tint && (n.left.ty.kind == types.Tbig || n.left.ty.kind == types.Tbyte) {
 					shiftok = 1
 				}
 				if shiftok == 0 {
@@ -5014,6 +5318,22 @@ func typedec(n ref types.Node) {
 		return
 	}
 	t := stype(n.right)
+	if t != terror && t.kind != types.Tadt && t.kind != types.Tadtpick && hasmeths(d.sym) != 0 {
+		// "type Color int" with methods: a copy of the base type,
+		// so the name is a type of its own to hang them on.  the
+		// copy is structurally equal to the base (types.e's
+		// tequal), so a Color is still an int everywhere else.
+		nt := types.mktype(n.line, n.pos, t.kind, nil, nil)
+		types.copytype(nt, t)
+		nt.decl = d
+		nt.named = 1
+		nt.meths = nil
+		nt.methtmpl = nil
+		d.ty = nt
+		types.sizetype(nt)
+		types.teqclass(nt)
+		return
+	}
 	if ph != nil && t != ph && t.kind == types.Tadt {
 		ph.ids = t.ids
 		ph.isiface = t.isiface
@@ -5082,6 +5402,39 @@ func vardec(n ref types.Node) {
 	}
 }
 
+// the named types this module declares methods on ("func (c Color)
+// name() ..."): typedec gives those a type of their own, so a name
+// whose body is not a struct can still carry methods
+var methnames list string
+
+func findmethnames(tree ref types.Node) {
+	methnames = nil
+	for p := tree.right; p != nil; p = p.right {
+		d := p
+		if p.op == types.Oseq {
+			d = p.left
+		}
+		if d.op == types.Ofndecl && d.left.op == types.Omethod {
+			rty := d.left.left.right
+			if rty.op == types.Oname {
+				methnames = rty.sym :: methnames
+			}
+		}
+		if p.op != types.Oseq {
+			break
+		}
+	}
+}
+
+func hasmeths(s string) int {
+	for l := methnames; l != nil; l = tl(l) {
+		if hd(l) == s {
+			return 1
+		}
+	}
+	return 0
+}
+
 func fndecl(n ref types.Node) {
 	nm := n.left
 	var recv ref types.Node
@@ -5142,8 +5495,12 @@ func fndecl(n ref types.Node) {
 		if bt.kind == types.Tref {
 			bt = bt.tof
 		}
-		if bt.kind != types.Tadt {
-			nerror(n, sys.sprint("receiver type must be a struct or ref struct, not %s", tp(rt)))
+		if bt.kind != types.Tadt && bt.named == 0 {
+			nerror(n, sys.sprint("receiver type must be a struct, ref struct or named type, not %s", tp(rt)))
+			return
+		}
+		if bt.named != 0 && rt.kind == types.Tref {
+			nerror(n, sys.sprint("a named type takes a value receiver, not %s", tp(rt)))
 			return
 		}
 		rd := types.mkdecl(recv.left.line, recv.left.pos, types.Darg, rt)
@@ -5217,6 +5574,7 @@ func check(tree ref types.Node, file string) int {
 	nildecl = types.mkdecl(0, 0, types.Dglobal, tany)
 	nildecl.sym = "nil"
 	install(nildecl)
+	findmethnames(tree)
 	// the implicit import behind append and map[K]V: module/
 	// builtin.ei as the alias .builtin, which no source can name
 	bm := iface.readiface("builtin")
@@ -5232,6 +5590,21 @@ func check(tree ref types.Node, file string) int {
 		if rd != nil {
 			rd.old = lookup("Result")
 			setbind("Result", rd)
+		}
+		bd := modmember(bm.ty, "Builder")
+		if bd != nil {
+			bd.old = lookup("Builder")
+			setbind("Builder", bd)
+		}
+		sd := modmember(bm.ty, "sort")
+		if sd != nil {
+			sd.old = lookup("sort")
+			setbind("sort", sd)
+		}
+		ld := modmember(bm.ty, "tolist")
+		if ld != nil {
+			ld.old = lookup("tolist")
+			setbind("tolist", ld)
 		}
 	}
 	pushscope()
@@ -5365,7 +5738,7 @@ func check(tree ref types.Node, file string) int {
 			}
 			if id.dot != nil && id.dot != own {
 				td := lookup(id.dot.sym)
-				if td == nil || td.store != types.Dtype || td.ty == nil || td.ty.kind != types.Tadt {
+				if td == nil || td.store != types.Dtype || td.ty == nil || (td.ty.kind != types.Tadt && td.ty.named == 0) {
 					errorat(iface.ownfacepath(), id.line, sys.sprint("interface declares method %s.%s, but module %s has no struct %s", id.dot.sym, id.sym, impdecl.sym, id.dot.sym))
 					continue
 				}

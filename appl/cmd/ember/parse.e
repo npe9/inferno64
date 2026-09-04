@@ -381,7 +381,37 @@ func ptypename() ref types.Node {
 }
 
 func pfield() ref types.Node {
+	if cur() == lex.Kref {
+		// "ref Base;": an embedded reference, for a method with a ref receiver
+		t := ptype()
+		if (cur() == ';' || cur() == '}') && t.op == Otref && t.right != nil && t.right.op == Oname {
+			nm := mkname(tk(), t.right.sym)
+			nm.line = t.line
+			nm.pos = t.pos
+			n := types.mkbin(Ofield, nm, t)
+			n.val = big(1)
+			return n
+		}
+		synerr("a field needs a name")
+		nm := mkname(tk(), ".bad")
+		return types.mkbin(Ofield, nm, t)
+	}
 	ids := pnamelist("field declaration")
+	if cur() == ';' || cur() == '}' {
+		// "type Derived struct { Base; name string }": a bare type
+		// name is an embedded field, named after its type, whose
+		// own fields and methods the checker promotes
+		if ids.op != Oname {
+			synerr("an embedded field is one type name")
+			return types.mkbin(Ofield, ids, mkname(tk(), "int"))
+		}
+		nm := mkname(tk(), ids.sym)
+		nm.line = ids.line
+		nm.pos = ids.pos
+		n := types.mkbin(Ofield, ids, nm)
+		n.val = big(1)	// embedded
+		return n
+	}
 	t := ptype()
 	return types.mkbin(Ofield, types.rotater(ids), t)
 }
@@ -451,6 +481,104 @@ func ptag(tags ref types.Node, fields ref types.Node) (ref types.Node, ref types
 	return tags, fields
 }
 
+// the names of the last signature's named results, for pfndecl:
+// psignature leaves the plain tuple type behind, so nothing
+// downstream of the parser sees a field where a type belongs
+var resultnames ref types.Node
+
+func plainresults(results ref types.Node) ref types.Node {
+	var names ref types.Node
+	var typs ref types.Node
+	for p := results.left; p != nil; p = p.right {
+		f := p
+		if p.op == Oseq {
+			f = p.left
+		}
+		for id := f.left; id != nil; id = id.right {
+			e := id
+			if id.op == Oseq {
+				e = id.left
+			}
+			nm := mkname(tk(), e.sym)
+			nm.line = e.line
+			nm.pos = e.pos
+			names = types.mkseq(names, nm)
+			typs = types.mkseq(typs, deepdup(f.right))
+			if id.op != Oseq {
+				break
+			}
+		}
+		if p.op != Oseq {
+			break
+		}
+	}
+	resultnames = types.rotater(names)
+	if typs != nil && typs.op != Oseq {
+		return typs	// one result is a plain type, not a tuple of one
+	}
+	e := types.mkn(Ottuple, types.rotater(typs), nil)
+	e.line = results.line
+	e.pos = results.pos
+	return e
+}
+
+// a bare "return" in the body of a function with named results
+// returns them; a nested function literal has its own results and is
+// left alone
+func bareret(n ref types.Node, vals ref types.Node) {
+	if n == nil || n.op == Ofunclit {
+		return
+	}
+	if n.op == Oret && n.left == nil {
+		n.left = deepdup(vals)
+		return
+	}
+	bareret(n.left, vals)
+	bareret(n.right, vals)
+	bareret(n.aux, vals)
+}
+
+// "func f() (q int, r int)": the names are locals of the body, zero
+// at entry, and a bare "return" returns them
+func namedresults(body ref types.Node, names ref types.Node, typs ref types.Node) ref types.Node {
+	var decls ref types.Node
+	var vals ref types.Node
+	t := typs
+	if typs.op == Ottuple {
+		t = typs.left
+	}
+	for p := names; p != nil; p = p.right {
+		nm := p
+		if p.op == Oseq {
+			nm = p.left
+		}
+		tt := t
+		if t.op == Oseq {
+			tt = t.left
+		}
+		vn := mkname(tk(), nm.sym)
+		vn.line = nm.line
+		vn.pos = nm.pos
+		d := types.mkn(Ovardecl, vn, deepdup(tt))
+		d.line = nm.line
+		d.pos = nm.pos
+		decls = types.mkseq(decls, d)
+		v2 := mkname(tk(), nm.sym)
+		v2.line = nm.line
+		v2.pos = nm.pos
+		vals = types.mkseq(vals, v2)
+		if t.op == Oseq {
+			t = t.right
+		}
+		if p.op != Oseq {
+			break
+		}
+	}
+	bareret(body, types.rotater(vals))
+	body.left = types.rotater(types.mkseq(types.rotater(decls), body.left))
+	return body
+}
+
 func psignature(named int) ref types.Node {
 	var params ref types.Node
 	src := pexpect('(', "function signature")
@@ -491,14 +619,71 @@ func psignature(named int) ref types.Node {
 	case '(':
 		rt := tk()
 		lexskip()
-		results = ptype()
-		for paccept(',') != 0 {
-			results = types.mkseq(results, ptype())
+		// "(int, string)" or, when every result is named,
+		// "(q int, r int)" and "(a, b int)": each item parses as a
+		// type, and a type after it means the item was a name.
+		// pfndecl declares the names and gives a bare "return"
+		// their values; -F prints them
+		var pending ref types.Node
+		anynamed := 0
+		for cur() != ')' && cur() != lex.Beof {
+			t := ptype()
+			if cur() != ',' && cur() != ')' {
+				ty := ptype()
+				pending = types.mkseq(pending, t)
+				var nm ref types.Node
+				for q := types.rotater(pending); q != nil; q = q.right {
+					e := q
+					if q.op == Oseq {
+						e = q.left
+					}
+					if e.op != Oname {
+						synerr("a named result needs a name before its type")
+						break
+					}
+					nm = types.mkseq(nm, e)
+					if q.op != Oseq {
+						break
+					}
+				}
+				f := types.mkbin(Ofield, types.rotater(nm), ty)
+				f.line = ty.line
+				f.pos = ty.pos
+				results = types.mkseq(results, f)
+				pending = nil
+				anynamed = 1
+			} else {
+				pending = types.mkseq(pending, t)
+			}
+			if paccept(',') == 0 {
+				break
+			}
+		}
+		if pending != nil {
+			if anynamed != 0 {
+				synerr("either every result is named or none is")
+			}
+			for q := types.rotater(pending); q != nil; q = q.right {
+				e := q
+				if q.op == Oseq {
+					e = q.left
+				}
+				results = types.mkseq(results, e)
+				if q.op != Oseq {
+					break
+				}
+			}
 		}
 		pexpect(')', "function results")
 		results = types.mkn(Ottuple, types.rotater(results), nil)
 		results.line = rt.line
 		results.pos = rt.pos
+		if anynamed != 0 {
+			results.val = big(1)	// the results are named: Node.flags has no bit left
+			if rawparse == 0 {
+				results = plainresults(results)	// the names go to pfndecl
+			}
+		}
 	case '{', ';', ',', ')', lex.Beof:
 		results = nil
 	default:
@@ -1144,12 +1329,30 @@ func deepdup(n ref types.Node) ref types.Node {
 // "const X = e", or a block "const ( A = iota; B; C = 7 )": iota is
 // the item's index (aux), an item without "= e" repeats the previous
 // expression; the items are appended to decls one by one (parse.c)
+// "const Low Level = iota": the declared type of a constant, as the
+// conversion it stands for (val 2, so -F prints "name Type = expr"
+// and check.e's Ocast case treats it as an ordinary conversion)
+func contype(e ref types.Node, te ref types.Node) ref types.Node {
+	if te == nil {
+		return e
+	}
+	n := types.mkn(Ocast, e, te)
+	n.val = big(2)
+	n.line = e.line
+	n.pos = e.pos
+	return n
+}
+
 func pcondecl(decls ref types.Node) ref types.Node {
 	src := pexpect(lex.Kconst, "const declaration")
 	if paccept('(') == 0 {
 		name := pname("const declaration")
+		var te ref types.Node
+		if cur() != '=' {
+			te = ptype()
+		}
 		pexpect('=', "const declaration")
-		n := types.mkn(Ocondecl, name, pexpr())
+		n := types.mkn(Ocondecl, name, contype(pexpr(), te))
 		n.line = src.line
 		n.pos = src.pos
 		return types.mkseq(decls, n)
@@ -1161,9 +1364,13 @@ func pcondecl(decls ref types.Node) ref types.Node {
 			continue
 		}
 		name := pname("const declaration")
+		var te ref types.Node
+		if cur() != '=' && cur() != ';' && cur() != ')' {
+			te = ptype()
+		}
 		repeat := 0
 		if paccept('=') != 0 {
-			prev = pexpr()
+			prev = contype(pexpr(), te)
 		} else {
 			if prev == nil {
 				synerr("the first constant of a block needs an expression")
@@ -1732,8 +1939,124 @@ func pdefer() ref types.Node {
 	return n
 }
 
+// "match { case x < 3: ... default: ... }": no subject, the cases
+// are conditions tried in order -- an if/else chain, so a "break"
+// inside is the enclosing loop's, as in a type switch
+func pcondmatch(init ref types.Node, src ref lex.Tok) ref types.Node {
+	var cases ref types.Node
+	for cur() != '}' && cur() != lex.Beof {
+		if paccept(';') != 0 {
+			continue
+		}
+		csrc := tk()
+		var pats ref types.Node
+		if paccept(lex.Kdefault) != 0 {
+			pats = nil
+		} else {
+			pexpect(lex.Kcase, "match case")
+			pats = pexpr()
+			for paccept(',') != 0 {
+				pats = types.mkseq(pats, pexpr())
+			}
+			pats = types.rotater(pats)
+		}
+		pexpect(':', "match case")
+		var stmts ref types.Node
+		for cur() != lex.Kcase && cur() != lex.Kdefault && cur() != '}' && cur() != lex.Beof {
+			if paccept(';') != 0 {
+				continue
+			}
+			s := pstmt()
+			if s != nil && s.stop == 0 {
+				s.stop = lastconsumed
+			}
+			stmts = types.mkseq(stmts, s)
+		}
+		c := types.mkn(Ocase, pats, types.rotater(stmts))
+		c.line = csrc.line
+		c.pos = csrc.pos
+		cases = types.mkseq(cases, c)
+	}
+	cases = types.rotater(cases)
+	stop := pexpect('}', "match statement")
+	if rawparse != 0 {
+		n := types.mkn(Omatch, nil, cases)
+		n.aux = init
+		n.line = src.line
+		n.pos = src.pos
+		n.val = big(stop.line)
+		return n
+	}
+	var chain ref types.Node
+	var last ref types.Node
+	var dflt ref types.Node
+	for p := cases; p != nil; p = p.right {
+		c := p
+		if p.op == Oseq {
+			c = p.left
+		}
+		body := types.mkn(Oscope, c.right, nil)
+		body.line = c.line
+		body.pos = c.pos
+		if c.left == nil {
+			dflt = body
+		} else {
+			var cond ref types.Node
+			for q := c.left; q != nil; q = q.right {
+				e := q
+				if q.op == Oseq {
+					e = q.left
+				}
+				if cond == nil {
+					cond = e
+				} else {
+					cond = types.mkbin(Ooror, cond, e)
+				}
+				if q.op != Oseq {
+					break
+				}
+			}
+			ifn := types.mkn(Oif, cond, body)
+			ifn.line = c.line
+			ifn.pos = c.pos
+			if last == nil {
+				chain = ifn
+			} else {
+				last.aux = ifn
+			}
+			last = ifn
+		}
+		if p.op != Oseq {
+			break
+		}
+	}
+	if chain == nil {
+		chain = dflt
+	} else if dflt != nil {
+		last.aux = dflt
+	}
+	if chain == nil {
+		chain = types.mkn(Onothing, nil, nil)
+	}
+	if init == nil {
+		chain.line = src.line
+		chain.pos = src.pos
+		return chain
+	}
+	n := types.mkn(Oscope, types.rotater(types.mkseq(init, chain)), nil)
+	n.line = src.line
+	n.pos = src.pos
+	n.stop = stop.line
+	return n
+}
+
 func pmatch() ref types.Node {
 	src := pexpect(lex.Kmatch, "match statement")
+	if cur() == '{' {
+		// "match { case cond: ... }": the conditions in order, no subject
+		lexskip()
+		return pcondmatch(nil, src)
+	}
 	oblit := noblit
 	noblit = 1
 	// "match x := f(); x {": an initializer, as pif() takes
@@ -1742,12 +2065,23 @@ func pmatch() ref types.Node {
 	if paccept(';') != 0 {
 		init = n
 		n = psimple()
+	} else if cur() == '{' && n.op == Odas && n.left.op == Oname && !(n.right.op == Oassert && n.right.val == big(2)) && rawparse == 0 {
+		// "match r := f() {": the name it declares is the subject
+		init = n
+		nm := mkname(tk(), n.left.sym)
+		nm.line = n.left.line
+		nm.pos = n.left.pos
+		n = types.mkunary(Oexpr, nm)
+		n.line = nm.line
+		n.pos = nm.pos
 	}
 	var subj ref types.Node
 	var binder ref types.Node
 	if n.op == Odas && n.right.op == Oassert && n.right.val == big(2) && n.left.op == Oname {
 		binder = n.left	// match v := x.(type)
 		subj = n.right
+	} else if rawparse != 0 && n.op == Odas {
+		subj = n	// -F prints the short form as written
 	} else if n.op == Oexpr {
 		subj = n.left
 	} else {
@@ -2061,11 +2395,16 @@ func pfndecl() ref types.Node {
 		polys = types.rotater(pnamelist("type parameters"))
 		pexpect(']', "type parameters")
 	}
+	resultnames = nil
 	sig := psignature(1)
 	sig.aux = polys
+	rnames := resultnames
 	var body ref types.Node
 	if cur() == '{' {
 		body = pblock()
+	}
+	if body != nil && rnames != nil {
+		body = namedresults(body, rnames, sig.right)
 	}
 	n := types.mkn(Ofndecl, name, sig)
 	n.aux = body

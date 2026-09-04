@@ -247,6 +247,7 @@ type Type struct {
 	tags ref Decl
 	ismap int
 	isiface int
+	named int
 	meths ref Decl
 	cse ref Case
 	teq ref Type
@@ -281,6 +282,7 @@ type Decl struct {
 	cycle int
 	cyc int
 	implicit int
+	embedded int	// a struct field written as a bare type name: its fields and methods are promoted (parse.e's pfield)
 	inl int
 	iface ref Decl
 	locals ref Decl
@@ -564,6 +566,7 @@ func copytype(dst ref Type, src ref Type) {
 	dst.tof = src.tof
 	dst.ids = src.ids
 	dst.isiface = src.isiface	// check.c copies the whole struct (*inst = *body)
+	dst.named = src.named
 	dst.ismap = src.ismap
 	dst.tags = src.tags
 	dst.meths = src.meths
@@ -619,7 +622,7 @@ func mkdecl(line int, pos int, store int, t ref Type) ref Decl {
 }
 
 func dupdecl(old ref Decl) ref Decl {
-	d := ref Decl{sym: old.sym, store: old.store, nid: old.nid, das: old.das, dot: old.dot, ty: old.ty, refs: old.refs, offset: old.offset, tag: old.tag, scope: old.scope, next: nil, old: old.old, importid: old.importid, init: old.init, runinit: old.runinit, tref: old.tref, cycle: old.cycle, cyc: old.cyc, implicit: old.implicit, iface: old.iface, locals: old.locals, link: old.link, pc: old.pc, desc: old.desc, valty: old.valty, wrapdecl: old.wrapdecl, tparams: old.tparams, finsts: old.finsts, checked: old.checked, enclosing: old.enclosing, captures: old.captures, capuses: old.capuses, ncapuses: old.ncapuses, capty: old.capty, boxdecl: old.boxdecl, boxty: old.boxty, boxtdecl: old.boxtdecl, line: old.line, pos: old.pos}
+	d := ref Decl{sym: old.sym, store: old.store, nid: old.nid, das: old.das, dot: old.dot, ty: old.ty, refs: old.refs, offset: old.offset, tag: old.tag, scope: old.scope, next: nil, old: old.old, importid: old.importid, init: old.init, runinit: old.runinit, tref: old.tref, cycle: old.cycle, cyc: old.cyc, implicit: old.implicit, embedded: old.embedded, iface: old.iface, locals: old.locals, link: old.link, pc: old.pc, desc: old.desc, valty: old.valty, wrapdecl: old.wrapdecl, tparams: old.tparams, finsts: old.finsts, checked: old.checked, enclosing: old.enclosing, captures: old.captures, capuses: old.capuses, ncapuses: old.ncapuses, capty: old.capty, boxdecl: old.boxdecl, boxty: old.boxty, boxtdecl: old.boxtdecl, line: old.line, pos: old.pos}
 	return d
 }
 
@@ -1675,6 +1678,9 @@ func clearrec(t ref Type) int {
 func tprint(t ref Type) string {
 	if t == nil {
 		return "nil"
+	}
+	if t.named != 0 && t.decl != nil && t.decl.sym != "" {
+		return t.decl.sym	// "type Color int": its own name
 	}
 	match t.kind {
 	case Tref:

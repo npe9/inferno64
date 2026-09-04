@@ -110,3 +110,57 @@ not exercise, because Limbo could not, is the new territory: closures
 that hold state, interfaces, defer, and maps; the idiomatic rewrites
 above are the first Ember written that way, and the next programs
 should be new rather than translated.
+
+## What the corpus asks for that the survey missed
+
+The survey counted forms Limbo has. Writing new programs found the
+ones it does not, and each is now in the language:
+
+An enum is a named type and a typed const block, with its printing on
+the type rather than in a `case` somewhere:
+
+    type Level int
+
+    const (
+        Low Level = iota
+        Mid
+        High
+    )
+
+    func (l Level) label() string { ... }
+
+Limbo spells this as a `con` run plus a free function taking an int,
+and nothing keeps the two together; the Ember form cannot be passed a
+plain int by mistake.
+
+A struct that extends another embeds it, rather than repeating its
+fields and forwarding its methods by hand:
+
+    type Mid struct {
+        ref Base
+        kind int
+    }
+
+Two results with names read better than a tuple whose components a
+comment explains:
+
+    func divmod(a int, b int) (q int, r int)
+
+Building a string a piece at a time is `s += "..."` on 162 lines of
+`appl/cmd` and `appl/lib`, and 393 lines in `appl/cmd` append to a
+string or an array with `+=` of any kind; each one inside a loop is
+quadratic. `Builder` in the builtin library makes it linear without
+changing how the loop reads. Eight commands there mention sorting
+(`sort.b`, `tsort.b`, `diff.b`, `ls.b`, `cook.b`, `dossrv.b`,
+`ttffs.b`, `yacc.b`), each with its own comparison plumbing;
+`sort(a, cmp)` is now builtin.
+
+A callback is a method value where Limbo needs a free function and
+the receiver passed alongside it: `w.write` rather than `wwrite(w, s)`.
+
+`ember/limbo/sort2.e` is the first of these written out: `sort.b`'s
+two hand-written merge sorts (25 lines each, one for text and one
+for numbers) become the builtin `sort` with a comparison closure, the
+input loop moves into a function returning the array, and the output
+goes through a `Builder`. 105 lines against the line-for-line
+translation's 135, and `sort.b`'s own 129.

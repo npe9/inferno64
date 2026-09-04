@@ -50,6 +50,8 @@ static	int	lowerguards(Node*);
 static	int	isifacetype(Type*);
 static	int	implements(Type*, Type*, Node*);
 static	Node	*typeval(Src*, Type*);
+static	Type	*methvalue(Node*, Decl*);
+static	int	incallee;	/* echk() is checking the callee of a call: a method there stays a method */
 static	void	subst(Node*, Sym*, Node*);
 static	Node	*zeroval(Src*, Type*);
 static	void	ifaceconv(Node*, Type*);
@@ -83,6 +85,8 @@ static	void	pushmodscope(Decl*);
 static	void	popmodscope(Decl*);
 static	void	unifytparam(Node*, Type*, Decl*, Type**);
 static	Decl	*tinstantiatemeth(Decl*, Type*);
+static	Decl	*inlmeth(Decl*, Type*);
+static	Node	*structeq(Node*, Node*, Type*, Src*);
 static	Case	*matchlabels(Node*, Type*, int);
 static	int	casecmp(Type*, Node*, Node*);
 static	void	casesort(Type*, Label*, Label*, int, int);
@@ -489,7 +493,7 @@ tinstantiate(Node *n)
 static Decl*
 tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 {
-	Decl *pd, *savedcurfn;
+	Decl *pd, *savedcurfn, *savedclosure;
 	Type *ft, *savedcurret;
 	Ginst *fi;
 	Node *p, *pn;
@@ -614,11 +618,14 @@ tinstantiatefncore(Src *src, Decl *td, Type **argv, int nargs, Decl *recvarg)
 
 		savedcurfn = curfn;
 		savedcurret = curret;
+		savedclosure = curclosure;
+		curclosure = nil;	/* the template's body is its own, not this closure's: its locals are not captures */
 		if(tmplmodule(td) != nil)
 			pushmodscope(tmplmodule(td));
 		fnchk(fnd);
 		if(tmplmodule(td) != nil)
 			popmodscope(tmplmodule(td));
+		curclosure = savedclosure;
 		curfn = savedcurfn;
 		curret = savedcurret;
 		fnd->checked = 1;
@@ -1848,6 +1855,104 @@ tinstantiatemeth(Decl *mtd, Type *t)
 /*
  * map a surface type expression to a backend type
  */
+/*
+ * "a == b" on two struct values: the field-by-field comparison a
+ * programmer would write, nested structs and all.  nil when a field
+ * has no equality of its own (an array, say)
+ */
+static Node*
+structeq(Node *a, Node *b, Type *t, Src *src)
+{
+	Node *cmp, *e, *la, *lb;
+	Decl *id;
+
+	cmp = nil;
+	for(id = t->ids; id != nil; id = id->next){
+		la = mkbin(Odot, dupn(a), mkname(src, id->sym));
+		la->sym = id->sym;
+		la->src = *src;
+		lb = mkbin(Odot, dupn(b), mkname(src, id->sym));
+		lb->sym = id->sym;
+		lb->src = *src;
+		switch(id->ty->kind){
+		case Tint: case Tbig: case Tbyte: case Treal:
+		case Tstring: case Tbool: case Tref: case Tany:
+			e = mkbin(Oeq, la, lb);
+			e->src = *src;
+			break;
+		case Tadt:
+			if(id->ty->tags != nil)
+				return nil;	/* a pick has no field-by-field equality */
+			e = structeq(la, lb, id->ty, src);
+			if(e == nil)
+				return nil;
+			break;
+		default:
+			return nil;
+		}
+		cmp = cmp == nil ? e : mkbin(Oandand, cmp, e);
+		if(cmp != e)
+			cmp->src = *src;
+	}
+	if(cmp == nil){
+		cmp = mkconst(src, 1);	/* a struct with no fields: every value is the same */
+		cmp->ty = tint;
+	}
+	return cmp;
+}
+
+/*
+ * does t, or a type embedded in it, have this field or method?
+ * ("type Derived struct { Base; ... }": Base's own names are
+ * reachable through the Derived value)
+ */
+static int
+hasmember(Type *t, Sym *s)
+{
+	Decl *id;
+	Type *et;
+
+	if(t == nil)
+		return 0;
+	if(t->kind == Tref)
+		t = t->tof;
+	if(t == nil || (t->kind != Tadt && t->kind != Tadtpick))
+		return 0;
+	for(id = t->ids; id != nil; id = id->next)
+		if(id->sym == s)
+			return 1;
+	for(id = t->meths; id != nil; id = id->link)
+		if(id->sym == s)
+			return 1;
+	for(id = t->ids; id != nil; id = id->next)
+		if(id->embedded){
+			et = id->ty;
+			if(hasmember(et, s))
+				return 1;
+		}
+	return 0;
+}
+
+/*
+ * a method declared with its body in an interface (builtin.ei's
+ * Builder): this module's own copy, as an inline function is
+ */
+static Decl*
+inlmeth(Decl *mtd, Type *t)
+{
+	Decl *rd;
+	Node *recv;
+	Type *rt;
+
+	recv = mtd->init->left->left;	/* Ofndecl.left(Omethod).left = the receiver Ofield */
+	rt = recv->right->op == Otref ? mktype(&mtd->src, Tref, t, nil) : t;
+	sizetype(rt);
+	rd = mkdecl(&recv->left->src, Darg, rt);
+	rd->sym = recv->left->sym;
+	rd->implicit = 1;
+	return tinstantiatefncore(&mtd->src, mtd, nil, 0, rd);
+}
+
 static Type*
 stype(Node *n)
 {
@@ -1904,6 +2009,7 @@ stype(Node *n)
 						id = names->left;
 					d = mkdecl(&id->src, Dfield, stype(f->right));
 					d->sym = id->sym;
+					d->embedded = f->val == 1;	/* a bare type name: promoted */
 					if(ids == nil)
 						ids = d;
 					else
@@ -2297,7 +2403,7 @@ assignable(Type *t, Type *s, Node *v)
 	 * the interface's .Name$from converter (ifaceconv())
 	 */
 	if(v != nil && isifacetype(t) && !tequal(t, s)
-	&& s->kind == Tref && s->tof != nil && (s->tof->kind == Tadt || s->tof->kind == Tadtpick)){
+	&& ((s->kind == Tref && s->tof != nil && (s->tof->kind == Tadt || s->tof->kind == Tadtpick)) || s->named)){
 		if(!implements(s, t, v))
 			return 0;
 		ifaceconv(v, t);
@@ -2412,7 +2518,8 @@ methodmodule(Decl *meth)
 	Dlist *dl;
 
 	td = meth->dot;
-	if(td == nil || td->store != Dtype || td->ty == nil || td->ty->kind != Tadt
+	if(td == nil || td->store != Dtype || td->ty == nil
+	|| (td->ty->kind != Tadt && !td->ty->named)	/* "type Color int" carries methods too */
 	|| td->dot == nil || td->dot == impdecl)
 		return nil;
 	for(dl = imports; dl != nil; dl = dl->next)
@@ -2929,7 +3036,7 @@ foldconstexpr(Node *n)
 			return 0;
 		t = n->left->ty;
 		tr = n->right->ty;
-		if((n->op == Olsh || n->op == Orsh) && tr == tint && (t == tbig || t == tbyte))
+		if((n->op == Olsh || n->op == Orsh) && tr->kind == Tint && (t->kind == Tbig || t->kind == Tbyte))
 			tr = t;
 		if(t != tr)
 			return 0;
@@ -2976,6 +3083,24 @@ confoldcast(Node *n)
 	from = l->ty;
 	if(from == nil || from->kind == Tarray || to->kind == Tarray)
 		return;
+	if(from->kind == to->kind){
+		/* "const Hearts Suit = \"hearts\"": a named type of the same base, the same constant */
+		Long v;
+		Real r;
+		Sym *sy;
+		int fl;
+
+		v = l->val;
+		r = l->rval;
+		sy = l->sym;
+		fl = l->flags;
+		setconst(n, to);
+		n->val = v;
+		n->rval = r;
+		n->sym = sy;
+		n->flags = fl;
+		return;
+	}
 	if(from->kind == Tstring){
 		/* the VM's cvtcw/cvtcl/cvtcf: strtol/strtod semantics, so
 		 * int("12abc") is 12 and int("abc") is 0 */
@@ -3395,13 +3520,33 @@ echk1(Node *n)
 		}
 		{
 			Type *bt;
-			int isref;
+			int isref, oincallee;
 
+			oincallee = incallee;
+			incallee = 0;	/* the receiver is a value, whatever the whole dot is */
 			bt = echk(n->left);
+			incallee = oincallee;
 			t = bt;
 			isref = bt != nil && bt->kind == Tref;
 			if(isref)
 				t = bt->tof;
+			if(t != nil && t->named && !isref){
+				/* "c.name()": a named type has no fields, only methods */
+				Decl *id;
+
+				for(id = t->meths; id != nil; id = id->link)
+					if(id->sym == n->sym){
+						if(!incallee)
+							return methvalue(n, id);	/* "f := c.label": a method as a value */
+						n->decl = id;
+						n->ty = id->ty;
+						n->right = nil;
+						return n->ty;
+					}
+				nerror(n, "%T has no method %s", t, n->sym->name);
+				n->ty = terror;
+				return n->ty;
+			}
 			if(t != nil && (t->kind == Tadt || t->kind == Tadtpick || t->kind == Ttuple)){
 				Decl *id, *chains[2];
 				int ci;
@@ -3519,6 +3664,16 @@ echk1(Node *n)
 				 */
 				for(id = t->meths; id != nil; id = id->link)
 					if(id->sym == n->sym){
+						if(id->inl){
+							/* declared with its body in an interface: this module's copy */
+							id = inlmeth(id, t);
+							if(id == nil){
+								n->ty = terror;
+								return n->ty;
+							}
+						}
+						if(!incallee)
+							return methvalue(n, id);	/* "f := c.get": a method as a value */
 						n->decl = id;
 						n->ty = id->ty;
 						n->right = nil;
@@ -3543,10 +3698,27 @@ echk1(Node *n)
 								n->ty = terror;
 								return n->ty;
 							}
+							if(!incallee)
+								return methvalue(n, fnd);
 							n->decl = fnd;
 							n->ty = fnd->ty;
 							n->right = nil;
 							return n->ty;
+						}
+				}
+				{
+					/* an embedded field's own names, through it: "d.id" is "d.Base.id" */
+					Decl *em;
+
+					for(em = t->ids; em != nil; em = em->next)
+						if(em->embedded && hasmember(em->ty, n->sym)){
+							Node *base;
+
+							base = mkbin(Odot, n->left, mkname(&n->src, em->sym));
+							base->sym = em->sym;
+							base->src = n->src;
+							n->left = base;
+							return echk1(n);
 						}
 				}
 				nerror(n, "%T has no field or method %s", t, n->sym->name);
@@ -3574,13 +3746,21 @@ echk1(Node *n)
 		 * symbols (declbuiltin()), so the parser can't tell this
 		 * from a call and doesn't try to.
 		 */
-		if(n->left->op == Oname){
-			Decl *td;
+		if(n->left->op == Oname || (n->left->op == Odot && n->left->left != nil && n->left->left->op == Oname)){
+			Decl *td, *md;
 
-			td = lookup(n->left->sym);
+			if(n->left->op == Oname)
+				td = lookup(n->left->sym);
+			else{
+				/* "alias.Color(x)": a type from an imported module */
+				td = nil;
+				md = lookup(n->left->left->sym);
+				if(md != nil && md->ty != nil && md->ty->kind == Tmodule)
+					td = modmember(md->ty, n->left->sym);
+			}
 			if(td != nil && td->store == Dtype){
 				if(n->right == nil || n->right->op == Oseq){
-					nerror(n, "conversion to %s needs exactly one argument", n->left->sym->name);
+					nerror(n, "conversion to %s needs exactly one argument", td->sym->name);
 					n->ty = terror;
 					return n->ty;
 				}
@@ -3959,7 +4139,9 @@ echk1(Node *n)
 				n->ty = terror;
 				return n->ty;
 			}
+			incallee++;
 			ft = echk(n->left);
+			incallee--;
 			if(ft != nil && ft->kind == Tref && ft->tof != nil && ft->tof->kind == Tfn){
 				/*
 				 * calling *through* a function value instead
@@ -4196,7 +4378,7 @@ echk1(Node *n)
 		}
 		/* a shift count is always an int, whatever is shifted
 		 * (big(1) << 40, b << 2 for a byte), as in limbo */
-		if((n->op == Olsh || n->op == Orsh) && tr == tint
+		if((n->op == Olsh || n->op == Orsh) && tr->kind == Tint
 		&& (t->kind == Tbig || t->kind == Tbyte))
 			tr = t;
 		if(!tequal(t, tr)){
@@ -4292,6 +4474,59 @@ echk1(Node *n)
 		tr = echk(n->right);
 		if(t != terror && tr != terror && !assignable(t, tr, n->right) && !assignable(tr, t, n->left))
 			nerror(n, "type mismatch: %T %s %T", t, opname[n->op], tr);
+		else if(t != terror && (n->op == Oeq || n->op == Oneq) && t->kind == Tadt && t->tags == nil
+		&& tr != terror && tequal(t, tr)){
+			/* "a == b" on two struct values: field by field */
+			Node *cmp;
+
+			if(n->left->op == Oname && n->right->op == Oname)
+				cmp = structeq(n->left, n->right, t, &n->src);
+			else{
+				/*
+				 * an operand that is not a name is evaluated once,
+				 * as the parameter of a closure comparing the two:
+				 *	(func(.ea T, .eb T) int { return ... })(a, b)
+				 */
+				Node *pa, *pb, *sig, *stmt, *fl, *call, *body;
+				Sym *sa, *sb;
+				char buf[32];
+				static int neq;
+
+				seprint(buf, buf+sizeof(buf), ".ea%d", neq);
+				sa = enter(buf, 0);
+				seprint(buf, buf+sizeof(buf), ".eb%d", neq++);
+				sb = enter(buf, 0);
+				body = structeq(mkname(&n->src, sa), mkname(&n->src, sb), t, &n->src);
+				if(body == nil)
+					cmp = nil;
+				else{
+					pa = mkbin(Ofield, mkname(&n->src, sa), typeval(&n->src, t));
+					pb = mkbin(Ofield, mkname(&n->src, sb), typeval(&n->src, t));
+					sig = mkn(Otfunc, mkseq(pa, pb), mkname(&n->src, enter("int", 0)));
+					sig->src = n->src;
+					stmt = mkn(Oret, body, nil);
+					stmt->src = n->src;
+					fl = mkn(Ofunclit, nil, sig);
+					fl->aux = mkn(Oscope, stmt, nil);
+					fl->aux->src = n->src;
+					fl->src = n->src;
+					call = mkn(Ocall, fl, mkseq(n->left, n->right));
+					call->src = n->src;
+					cmp = call;
+				}
+			}
+			if(cmp == nil){
+				nerror(n, "cannot compare %T values: a field has no equality of its own", t);
+				n->ty = tbool;
+				return n->ty;
+			}
+			if(n->op == Oneq){
+				cmp = mkunary(Onot, cmp);
+				cmp->src = n->src;
+			}
+			*n = *cmp;
+			return echk(n);
+		}
 		else if(t != terror && (t->kind == Tadt || t->kind == Ttuple || t->kind == Tadtpick)){
 			/*
 			 * no Dis instruction compares a value struct or tuple:
@@ -4761,7 +4996,7 @@ echk1(Node *n)
 	case Ochan:
 		if(n->left != nil){
 			t = echk(n->left);
-			if(t != tint && t != terror)
+			if(t->kind != Tint && t != terror)
 				nerror(n, "channel size must be int, not %T", t);
 		}
 		t = mktype(&n->src, Tchan, stype(n->right), nil);
@@ -4771,7 +5006,7 @@ echk1(Node *n)
 		return n->ty;
 	case Oarray:
 		t = echk(n->left);
-		if(t != tint && t != terror)
+		if(t->kind != Tint && t != terror)
 			nerror(n, "array size must be int, not %T", t);
 		t = mktype(&n->src, Tarray, stype(n->right), nil);
 		sizetype(t);
@@ -4984,6 +5219,15 @@ echk1(Node *n)
 			}
 			n->ty = t;
 			return n->ty;
+		}
+		if(t->kind == Tarray && tt->kind == Tlist && t->tof != nil && tt->tof != nil && tequal(t->tof, tt->tof)){
+			/* "[]T(l)": the list's elements in an array, builtin.ei's toarray */
+			Node *call;
+
+			call = mkn(Ocall, builtinref(&n->src, "toarray"), n->left);
+			call->src = n->src;
+			*n = *call;
+			return echk(n);
 		}
 		if(isifacetype(t) && !tequal(tt, t)){
 			/* "Shape(x)": the conversion an assignment would make (assignable() rewrites the operand) */
@@ -5240,7 +5484,7 @@ implements(Type *s, Type *t, Node *v)
 	Type *adt, *ft;
 	Decl *f, *m, *fp, *mp;
 
-	adt = s->tof;
+	adt = s->named ? s : s->tof;	/* "type Color int" carries its methods itself */
 	if(adt->kind == Tadtpick)
 		adt = adt->tof;
 	if(adt->isiface){
@@ -5502,6 +5746,48 @@ declblank(Node *id, Type *t)
  * closures, each defer consing onto it; fnchk() runs the list, so
  * last first, at every return
  */
+/*
+ * the named types this module declares methods on ("func (c Color)
+ * name() ..."): typedec gives those a type of their own, so a name
+ * whose body is not a struct can still carry methods
+ */
+static Sym **methnames;
+static int nmethnames, lenmethnames;
+
+static void
+findmethnames(Node *tree)
+{
+	Node *p, *d, *rty;
+
+	nmethnames = 0;
+	for(p = tree->right; p != nil; p = p->right){
+		d = p->op == Oseq ? p->left : p;
+		if(d->op == Ofndecl && d->left->op == Omethod){
+			rty = d->left->left->right;
+			if(rty->op == Oname){
+				if(nmethnames >= lenmethnames){
+					lenmethnames = nmethnames + 32;
+					methnames = reallocmem(methnames, lenmethnames * sizeof *methnames);
+				}
+				methnames[nmethnames++] = rty->sym;
+			}
+		}
+		if(p->op != Oseq)
+			break;
+	}
+}
+
+static int
+hasmeths(Sym *s)
+{
+	int i;
+
+	for(i = 0; i < nmethnames; i++)
+		if(methnames[i] == s)
+			return 1;
+	return 0;
+}
+
 static Decl *deferlist;
 
 /* a type as a node: stype() gives it back (Otypeval) */
@@ -5533,6 +5819,75 @@ subst(Node *n, Sym *s, Node *val)
 	subst(n->left, s, val);
 	subst(n->right, s, val);
 	subst(n->aux, s, val);
+}
+
+/*
+ * "f := c.get": a method used as a value becomes the closure a
+ * programmer would write, the receiver evaluated once and captured
+ *
+ *	func(.mp0 P0, ...) R { return .mv.get(.mp0, ...) }
+ *
+ * over the receiver itself when it is a name, or over the parameter
+ * of an immediately-called wrapper when it is any other expression
+ */
+static Type*
+methvalue(Node *n, Decl *meth)
+{
+	Node *recv, *rn, *params, *args, *sig, *call, *stmt, *fl, *dot, *outer, *osig, *ocall;
+	Decl *id;
+	Src *src;
+	char buf[32];
+	static int nmv;
+	int i, isname;
+
+	src = &n->src;
+	recv = n->left;
+	isname = recv->op == Oname;
+	seprint(buf, buf+sizeof(buf), ".mv%d", nmv++);
+	rn = mkname(src, enter(buf, 0));
+	params = nil;
+	args = nil;
+	i = 0;
+	for(id = meth->ty->ids != nil ? meth->ty->ids->next : nil; id != nil; id = id->next){
+		Node *pn;
+
+		seprint(buf, buf+sizeof(buf), ".mp%d", i++);
+		pn = mkname(src, enter(buf, 0));
+		params = mkseq(params, mkbin(Ofield, pn, typeval(src, id->ty)));
+		args = mkseq(args, mkname(src, pn->sym));
+	}
+	sig = mkn(Otfunc, rotater(params), meth->ty->tof != nil && meth->ty->tof != tnone ? typeval(src, meth->ty->tof) : nil);
+	sig->src = *src;
+	dot = mkbin(Odot, isname ? dupn(recv) : mkname(src, rn->sym), mkname(src, meth->sym));
+	dot->sym = meth->sym;
+	dot->src = *src;
+	call = mkn(Ocall, dot, rotater(args));
+	call->src = *src;
+	if(meth->ty->tof != nil && meth->ty->tof != tnone)
+		stmt = mkn(Oret, call, nil);
+	else
+		stmt = mkunary(Oexpr, call);
+	stmt->src = *src;
+	fl = mkn(Ofunclit, nil, sig);
+	fl->aux = mkn(Oscope, stmt, nil);
+	fl->aux->src = *src;
+	fl->src = *src;
+	if(isname){
+		*n = *fl;
+		return echk(n);
+	}
+	/* (func(.mv T) fnvalue { return <closure> })(recv) */
+	osig = mkn(Otfunc, mkbin(Ofield, mkname(src, rn->sym), typeval(src, recv->ty)), deepdup(sig));
+	osig->src = *src;
+	outer = mkn(Ofunclit, nil, osig);
+	outer->aux = mkn(Oscope, mkn(Oret, fl, nil), nil);
+	outer->aux->src = *src;
+	outer->aux->left->src = *src;
+	outer->src = *src;
+	ocall = mkn(Ocall, outer, recv);
+	ocall->src = *src;
+	*n = *ocall;
+	return echk(n);
 }
 
 /* what a?.f yields when a is nil: nil, or the zero of a type that has none */
@@ -5891,7 +6246,7 @@ matchlabels(Node *arms, Type *ctype, int nlab)
 					nerror(labs[e].start, "case label %lld overlaps %lld",
 						(vlong)labs[e].start->val, (vlong)stop->val);
 			}
-			if(ctype != tint
+			if(ctype->kind != Tint
 			|| labs[e].start->val != stop->val+1
 			|| labs[e].node != labs[i].node)
 				break;
@@ -6090,7 +6445,7 @@ matchcheck(Node *n)
 		subj = subj->tof;
 	if(subj == nil || subj->kind != Tadt || subj->tags == nil)
 		subj = nil;
-	if(subj == nil && t != tint && t != tstring && t != terror){
+	if(subj == nil && t->kind != Tint && t->kind != Tstring && t != terror){
 		nerror(n, "match subject must be int, string or a tagged adt, not %T", t);
 		ok = 0;
 	}
@@ -6252,7 +6607,7 @@ matchcheck(Node *n)
 					continue;
 				}
 				pt = echk(q);
-				if(pt != terror && pt != (t == tstring ? tstring : tint)){
+				if(pt != terror && pt->kind != (t->kind == Tstring ? Tstring : Tint)){
 					nerror(q, "case label must be %s, not %T", t == tstring ? "string" : "int", pt);
 					ok = 0;
 				}else if(q->op != Oconst){
@@ -6268,7 +6623,7 @@ matchcheck(Node *n)
 			popscope();
 		}
 	}
-	if(!ok || subj == nil && t != tint && t != tstring)
+	if(!ok || subj == nil && t->kind != Tint && t->kind != Tstring)
 		return;
 	/*
 	 * string subject: the labels sort and search by text
@@ -6732,7 +7087,7 @@ stchk(Node *n)
 				echk(n->right);
 				if(chklval(n->left, "assign to") && n->right->ty != terror
 				&& !tequal(n->left->ty, n->right->ty)
-				&& !((n->op == Olshas || n->op == Orshas) && n->right->ty == tint
+				&& !((n->op == Olshas || n->op == Orshas) && n->right->ty->kind == Tint
 				&& (n->left->ty->kind == Tbig || n->left->ty->kind == Tbyte)))
 					nerror(n, "type mismatch in %s", opname[n->op]);
 				return;
@@ -7320,6 +7675,27 @@ typedec(Node *n)
 	}
 
 	t = stype(n->right);
+	if(t != terror && t->kind != Tadt && t->kind != Tadtpick && hasmeths(d->sym)){
+		/*
+		 * "type Color int" with methods: a copy of the base type,
+		 * so the name is a type of its own to hang them on.  the
+		 * copy is structurally equal to the base (types.c's
+		 * tequal), so a Color is still an int everywhere else.
+		 */
+		Type *nt;
+
+		nt = mktype(&n->src, t->kind, nil, nil);
+		*nt = *t;
+		nt->decl = d;
+		nt->named = 1;
+		nt->meths = nil;
+		nt->methtmpl = nil;
+		t = nt;
+		d->ty = t;
+		sizetype(t);
+		teqclass(t);
+		return;
+	}
 	if(ph != nil && t != ph && t->kind == Tadt){
 		ph->ids = t->ids;
 		ph->isiface = t->isiface;
@@ -7540,8 +7916,12 @@ fndecl(Node *n)
 		bt = rt;
 		if(bt->kind == Tref)
 			bt = bt->tof;
-		if(bt->kind != Tadt){
-			nerror(n, "receiver type must be a struct or ref struct, not %T", rt);
+		if(bt->kind != Tadt && !bt->named){
+			nerror(n, "receiver type must be a struct, ref struct or named type, not %T", rt);
+			return;
+		}
+		if(bt->named && rt->kind == Tref){
+			nerror(n, "a named type takes a value receiver, not %T", rt);
 			return;
 		}
 		rd = mkdecl(&recv->left->src, Darg, rt);
@@ -7619,6 +7999,8 @@ check(Node *tree)
 	nildecl->sym = enter("nil", 0);
 	install(nildecl);
 
+	findmethnames(tree);
+
 	/*
 	 * the implicit import behind append and map[K]V: module/
 	 * builtin.ei as the alias .builtin, which no source can name;
@@ -7640,6 +8022,21 @@ check(Node *tree)
 		/* Result[T] by its bare name: bound directly, not install()ed,
 		 * which would cut the module's member list at it */
 		v = modmember(d->ty, enter("Result", 0));
+		if(v != nil){
+			v->old = v->sym->decl;
+			v->sym->decl = v;
+		}
+		v = modmember(d->ty, enter("Builder", 0));
+		if(v != nil){
+			v->old = v->sym->decl;
+			v->sym->decl = v;
+		}
+		v = modmember(d->ty, enter("sort", 0));
+		if(v != nil){
+			v->old = v->sym->decl;
+			v->sym->decl = v;
+		}
+		v = modmember(d->ty, enter("tolist", 0));
 		if(v != nil){
 			v->old = v->sym->decl;
 			v->sym->decl = v;
@@ -7862,7 +8259,7 @@ check(Node *tree)
 			Decl *td;
 
 			td = lookup(id->dot->sym);
-			if(td == nil || td->store != Dtype || td->ty == nil || td->ty->kind != Tadt){
+			if(td == nil || td->store != Dtype || td->ty == nil || (td->ty->kind != Tadt && !td->ty->named)){
 				error(id->src.start, "interface declares method %s.%s, but module %s has no struct %s",
 					id->dot->sym->name, id->sym->name, impdecl->sym->name, id->dot->sym->name);
 				continue;

@@ -238,6 +238,7 @@ struct Decl
 	char	cycle;			/* can create a cycle */
 	char	cyc;			/* so labelled in source */
 	char	implicit;		/* implicit first argument in an adt? */
+	char	embedded;		/* a struct field written as a bare type name: its fields and methods are promoted (parse.c's pfield) */
 	char	inl;			/* a plain function with its body in an interface: instantiated by each importer like a template with no type arguments */
 
 	Decl	*iface;			/* used external declarations in a module */
@@ -425,6 +426,7 @@ struct Type
 	Decl	*tags;			/* tagged fields in an adt */
 	uchar	ismap;			/* the adt is builtin's Map[K, V] instantiated by a map[K]V type */
 	uchar	isiface;		/* the adt is an interface: a struct of method closures, filled by its .Name$from template */
+	uchar	named;			/* "type Color int" with methods: a copy of the base type, distinct so it can carry them (check.c's typedec) */
 	Decl	*meths;			/* adt methods, chained via Decl.link */
 	Case	*cse;			/* case or goto labels */
 	Type	*teq;			/* temporary equiv class for equiv checking */

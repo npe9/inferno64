@@ -89,6 +89,16 @@ func error(line int, msg string) {
 }
 
 func installmember(mod ref types.Decl, d ref types.Decl) {
+	// a module's members share one namespace, methods included (a
+	// method is called through the module alias), so two of the
+	// same name are ambiguous -- the loader would link one of them
+	// for both, silently
+	for e := mod.ty.ids; e != nil; e = e.next {
+		if e.sym == d.sym {
+			error(d.line, sys.sprint("%s is declared twice in this interface (a method shares the module's names)", d.sym))
+			break
+		}
+	}
 	d.dot = mod
 	d.next = nil
 	if mod.ty.ids == nil {
@@ -458,11 +468,10 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				}
 				t.tags = tags
 			} else {
+				// "type Path string": the base type entire, as iface.c's "*t = *nt"
 				nt := itype(decl.right, mod)
-				t.kind = nt.kind
-				t.tof = nt.tof
-				t.ids = nt.ids
-				t.ok |= types.OKverify
+				types.copytype(t, nt)
+				t.decl = td
 			}
 		case types.Ocondecl:
 			d := types.mkdecl(decl.line, decl.pos, types.Dconst, nil)
@@ -546,13 +555,11 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				installmember(mod, d)
 				break
 			}
-			if decl.aux != nil {
+			if decl.aux != nil && decl.left.op != types.Omethod {
 				// a plain function with its body: inline, instantiated
-				// by each importer (iface.c)
-				if decl.left.op == types.Omethod {
-					error(decl.line, sys.sprint("method %s: a body in an interface is only for a generic type's method", decl.left.right.sym))
-					break
-				}
+				// by each importer (iface.c).  a method with a body
+				// takes the ordinary path below, which resolves its
+				// receiver, and is marked inline there
 				d := types.mkdecl(decl.line, decl.pos, types.Dfn, nil)
 				d.sym = decl.left.sym
 				d.init = decl
@@ -570,8 +577,11 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 				if bt.kind == types.Tref {
 					bt = bt.tof
 				}
-				if bt.kind != types.Tadt || bt.decl == nil {
-					error(decl.line, "receiver type must be a struct or ref struct declared in this interface")
+				if bt.kind != types.Tadt && rt.kind != types.Tref && bt.decl != nil && bt.decl.store == types.Dtype && bt.decl.dot == mod {
+					bt.named = 1	// "type Color int" with methods (check.e's typedec)
+				}
+				if (bt.kind != types.Tadt && bt.named == 0) || bt.decl == nil {
+					error(decl.line, "receiver type must be a struct, ref struct or named type declared in this interface")
 					break
 				}
 				rd := types.mkdecl(recv.left.line, recv.left.pos, types.Darg, rt)
@@ -588,6 +598,11 @@ func bindiface(mod ref types.Decl, tree ref types.Node) {
 			types.sizetype(t.tof)
 			d := types.mkdecl(decl.line, decl.pos, types.Dfn, t)
 			d.offset = types.idoffsets(t.ids, types.MaxTemp, types.IBY2WD)
+			if decl.aux != nil {
+				// a method of a plain adt, with its body: inline, as a function with one is
+				d.init = decl
+				d.inl = 1
+			}
 			if decl.left.op == types.Omethod {
 				bt := t.ids.ty
 				if bt.kind == types.Tref {

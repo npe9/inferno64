@@ -39,6 +39,13 @@ func name() string
 // import-side modrefable(), types.c narrowmods()), not narrowed
 func roll(r Rand, n int) int
 
+// a named type with methods: the interface declares the base type
+// and the methods on the name
+type Color int
+
+func (c Color) label() string
+func mkcolor(n int) Color
+
 // an interface and an implementation, asserted on both sides
 type Sized interface {
 	size() int

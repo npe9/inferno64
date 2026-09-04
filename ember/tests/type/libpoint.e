@@ -96,3 +96,17 @@ func boxsize(s Sized) int {
 	}
 	return -1
 }
+
+// a named type with methods, used and called on both sides
+type Color int
+
+func (c Color) label() string {
+	if c == Color(0) {
+		return "red"
+	}
+	return "other"
+}
+
+func mkcolor(n int) Color {
+	return Color(n)
+}

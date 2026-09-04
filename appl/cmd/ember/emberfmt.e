@@ -102,6 +102,19 @@ func fields(n ref types.Node, stmts int) {
 			comsbefore(f.line)
 			tabs()
 		}
+		if f.val == big(1) {
+			typ(f.right)	// an embedded field is its type alone
+			if stmts != 0 {
+				out("\n")
+			}
+			if n.op != types.Oseq {
+				break
+			}
+			if stmts == 0 {
+				out(", ")
+			}
+			continue
+		}
 		if f.left != nil {
 			names(f.left)
 			if f.right != nil {
@@ -188,6 +201,11 @@ func typ(n ref types.Node) {
 		signature(n)
 	case types.Ottuple:
 		out("(")
+		if n.val == big(1) {
+			fields(n.left, 0)	// "(q int, r int)": named results
+			out(")")
+			break
+		}
 		for p := n.left; p != nil; p = p.right {
 			typ(item(p))
 			if p.op != types.Oseq {
@@ -810,14 +828,21 @@ func stmt(n ref types.Node) {
 			out("; ")
 		}
 		istype := 0
-		if n.left.op == types.Oassert && n.left.val == big(2) {
+		if n.left != nil && n.left.op == types.Oassert && n.left.val == big(2) {
 			istype = 1
 			if n.left.right != nil {
 				out(n.left.right.sym + " := ")	// the type switch's binder
 			}
 		}
-		expr(n.left, 0)
-		out(" {\n")
+		if n.left != nil {
+			if n.left.op == types.Odas {
+				simple(n.left)	// "match r := f() {": the short form
+			} else {
+				expr(n.left, 0)
+			}
+			out(" ")
+		}
+		out("{\n")
 		lastline = n.line
 		cases(n.right, 0, istype)
 		tabs()
@@ -878,7 +903,15 @@ func stmt(n ref types.Node) {
 			exprlist(n.aux)
 		}
 	case types.Ocondecl:
-		out("const " + n.left.sym + " = ")
+		out("const " + n.left.sym)
+		if n.right.op == types.Ocast && n.right.val == big(2) {
+			out(" ")
+			typ(n.right.right)
+			out(" = ")
+			expr(n.right.left, 0)
+			break
+		}
+		out(" = ")
 		expr(n.right, 0)
 	case types.Otypedecl:
 		out("type " + n.left.sym)
@@ -921,8 +954,15 @@ func constblock(p ref types.Node) ref types.Node {
 		tabs()
 		out(d.left.sym)
 		if (d.val & big(1)) == big(0) {
-			out(" = ")
-			expr(d.right, 0)
+			if d.right.op == types.Ocast && d.right.val == big(2) {
+				out(" ")
+				typ(d.right.right)
+				out(" = ")
+				expr(d.right.left, 0)
+			} else {
+				out(" = ")
+				expr(d.right, 0)
+			}
 		}
 		comsafter(d.line)
 		out("\n")

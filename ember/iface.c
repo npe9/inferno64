@@ -289,13 +289,24 @@ itype(Node *n, Decl *mod)
 static void
 installmember(Decl *mod, Decl *d)
 {
+	Decl *e;
+
+	/*
+	 * a module's members share one namespace, methods included (a
+	 * method is called through the module alias), so two of the
+	 * same name are ambiguous -- the loader would link one of them
+	 * for both, silently
+	 */
+	for(e = mod->ty->ids; e != nil; e = e->next)
+		if(e->sym == d->sym){
+			error(d->src.start, "%s is declared twice in this interface (a method shares the module's names)", d->sym->name);
+			break;
+		}
 	d->dot = mod;
 	d->next = nil;
 	if(mod->ty->ids == nil)
 		mod->ty->ids = d;
 	else{
-		Decl *e;
-
 		for(e = mod->ty->ids; e->next != nil; e = e->next)
 			;
 		e->next = d;
@@ -601,16 +612,15 @@ bindiface(Decl *mod, Node *tree)
 				installmember(mod, d);
 				break;
 			}
-			if(decl->aux != nil){
+			if(decl->aux != nil && decl->left->op != Omethod){
 				/*
 				 * a plain function with its body: inline, instantiated
 				 * by each importer like a template with no type
-				 * arguments (a header-only library's helpers)
+				 * arguments (a header-only library's helpers).  a
+				 * method with a body takes the ordinary path below,
+				 * which resolves its receiver, and is marked inline
+				 * there
 				 */
-				if(decl->left->op == Omethod){
-					error(decl->src.start, "method %s: a body in an interface is only for a generic type's method", decl->left->right->sym->name);
-					break;
-				}
 				d = mkdecl(&decl->src, Dfn, nil);
 				d->sym = decl->left->sym;
 				d->init = decl;
@@ -650,8 +660,11 @@ bindiface(Decl *mod, Node *tree)
 				bt = rt;
 				if(bt->kind == Tref)
 					bt = bt->tof;
-				if(bt->kind != Tadt || bt->decl == nil){
-					error(decl->src.start, "receiver type must be a struct or ref struct declared in this interface");
+				if(bt->kind != Tadt && rt->kind != Tref && bt->decl != nil
+				&& bt->decl->store == Dtype && bt->decl->dot == mod)
+					bt->named = 1;	/* "type Color int" with methods (check.c's typedec) */
+				if((bt->kind != Tadt && !bt->named) || bt->decl == nil){
+					error(decl->src.start, "receiver type must be a struct, ref struct or named type declared in this interface");
 					break;
 				}
 				rd = mkdecl(&recv->left->src, Darg, rt);
@@ -671,6 +684,11 @@ bindiface(Decl *mod, Node *tree)
 			}
 			d = mkdecl(&decl->src, Dfn, t);
 			d->offset = idoffsets(t->ids, MaxTemp, IBY2WD);
+			if(decl->aux != nil){
+				/* a method of a plain adt, with its body: inline, as a function with one is */
+				d->init = decl;
+				d->inl = 1;
+			}
 			if(decl->left->op == Omethod){
 				Type *bt;
 

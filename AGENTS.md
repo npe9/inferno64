@@ -33,7 +33,8 @@ then put those in the plan and continue.
   goes into both, and `mk test` in `ember/` must stay green:
   `discmp.sh` requires byte-identical `.dis` from the two,
   `bootstrap.sh` requires the self-hosted compiler to reproduce
-  itself. Tooling (`-i`, `-t`, `-F`) is C-only.
+  itself. Tooling (`-i`, `-t`, `-F`) is in both compilers now, and
+  `selffmt.sh` and `selftools.sh` compare them.
 - Build with `mk install` in `ember/`, then in `appl/cmd/ember/`.
   Never hand-invoke the compilers to install.
 - `tests/limbocmp.sh` (part of `mk test`, slow) compares every
@@ -42,8 +43,11 @@ then put those in the plan and continue.
   It builds the Limbo libraries it needs into `dis/`, which is not
   in git.
 - Do not edit a running shell script in place; replace it atomically.
-  Do not rebuild `o.out` while a long test run is using it; work in
-  a scratch copy of `ember/` for that.
+  Do not rebuild `o.out` while a long test run is using it, and do
+  not edit `ember/module/*.ei` or `ember/limbo/*.e` either: work in
+  a scratch copy of `ember/` and let the run finish. A run that
+  reports a dozen "ember compile" failures at once is usually an
+  edit that landed underneath it, not a regression.
 - Commit each finished item with its tests and its doc paragraph in
   `doc/ember-language.md`. Commit messages end with the
   `Co-Authored-By` and `Claude-Session` trailers used by the earlier

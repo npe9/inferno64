@@ -2,10 +2,12 @@ module Badcompare
 
 import sys "sys"
 
-// no equality on struct or tuple values (limbo's rule too): the
-// one-word compare it used to compile to called structs differing in
-// any later field equal.  refs compare by identity; scalars, strings
-// compare by value; ordering only on numbers and strings.
+// no equality on tuple values, and no ordering on a ref.  two struct
+// values do compare, field by field (the checker expands it: the
+// one-word compare limbo used to emit called structs differing in
+// any later field equal, which is why the naive form is still
+// refused).  refs compare by identity; scalars and strings by value;
+// ordering only on numbers and strings.
 
 type P struct {
 	x int

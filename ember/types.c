@@ -1096,8 +1096,7 @@ rtequal(Type *t1, Type *t2)
 	case Tint:
 	case Tbool:
 	case Tstring:
-		fatal("bogus value type %T vs %T in rtequal", t1, t2);
-		return 1;
+		return 1;	/* a named type ("type Color int") is a copy of its base, so these are no longer singletons */
 	case Tref:
 	case Tlist:
 	case Tarray:
@@ -1682,6 +1681,8 @@ tprint(char *p, char *e, Type *t)
 
 	if(t == nil)
 		return secpy(p, e, "nil");
+	if(t->named && t->decl != nil && t->decl->sym != nil)
+		return secpy(p, e, t->decl->sym->name);	/* "type Color int": its own name */
 	switch(t->kind){
 	case Tref:
 		if(t->tof != nil && t->tof->kind == Tfn && t->tof->hasenv){

@@ -77,6 +77,10 @@ func tsrc(t ref types.Type) {
 		out("nil")
 		return
 	}
+	if t.named != 0 && t.decl != nil {
+		out(t.decl.sym)	// "type Color int": its own name
+		return
+	}
 	match t.kind {
 	case types.Tint:
 		out("int")
@@ -219,6 +223,15 @@ func constsrc(n ref types.Node) {
 func typesrc(d ref types.Decl) {
 	t := d.ty
 	s := d.sym
+	if t.named != 0 {
+		// "type Color int": the base type, then its methods
+		out("type " + s + " ")
+		t.named = 0
+		tsrc(t)
+		t.named = 1
+		out("\n\n")
+		return
+	}
 	if t.kind == types.Tadt && t.isiface != 0 {
 		// .W$s: print the interface it stands for
 		out("type " + s[1:len(s) - 2] + " interface {\n")
@@ -348,7 +361,7 @@ func ifacegen(tree ref types.Node, fd int) {
 				break	// "type W ref .W$s": the interface was printed with its struct
 			}
 			typesrc(d)
-			if d.ty.kind == types.Tadt && d.ty.isiface == 0 && !hidden(d.sym) {
+			if (d.ty.kind == types.Tadt || d.ty.named != 0) && d.ty.isiface == 0 && !hidden(d.sym) {
 				// meths is prepended: print in declaration order
 				var ms list ref types.Decl
 				for m := d.ty.meths; m != nil; m = m.link {

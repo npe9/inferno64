@@ -201,3 +201,117 @@ type Result[T] pick {
 	Ok(v T)
 	Err(e string)
 }
+
+// Builder: a string built a piece at a time.  "s += x" in a loop
+// copies the whole string each time; a Builder appends into a byte
+// buffer that doubles, so building is linear
+type Builder struct {
+	b []byte
+	n int
+}
+
+func (bd ref Builder) grow(need int) {
+	if bd.n + need <= len(bd.b) {
+		return
+	}
+	size := 2 * len(bd.b)
+	if size < bd.n + need {
+		size = bd.n + need
+	}
+	if size < 32 {
+		size = 32
+	}
+	nb := [size]byte
+	copy(nb, bd.b[0:bd.n])
+	bd.b = nb
+}
+
+// append a string
+func (bd ref Builder) puts(s string) {
+	x := []byte(s)
+	bd.grow(len(x))
+	copy(bd.b[bd.n:], x)
+	bd.n += len(x)
+}
+
+// append one character
+func (bd ref Builder) putc(c int) {
+	s := ""
+	s[0] = c
+	bd.puts(s)
+}
+
+// the bytes written so far
+func (bd ref Builder) len() int {
+	return bd.n
+}
+
+func (bd ref Builder) reset() {
+	bd.n = 0
+}
+
+// everything written, as a string
+func (bd ref Builder) string() string {
+	return string(bd.b[0:bd.n])
+}
+
+// sort(a, cmp): the array in place, a stable bottom-up merge sort,
+// so equal elements keep their order; cmp is negative, zero or
+// positive as a orders before, with or after b
+func sort[T](a []T, cmp func(T, T) int) {
+	n := len(a)
+	if n < 2 {
+		return
+	}
+	b := [n]T
+	for w := 1; w < n; w = 2 * w {
+		for lo := 0; lo < n; lo += 2 * w {
+			mid := lo + w
+			hi := lo + 2 * w
+			if mid > n {
+				mid = n
+			}
+			if hi > n {
+				hi = n
+			}
+			i := lo
+			j := mid
+			for k := lo; k < hi; k++ {
+				// the left run first on a tie: that is what makes it stable
+				if i < mid && (j >= hi || cmp(a[j], a[i]) >= 0) {
+					b[k] = a[i]
+					i++
+				} else {
+					b[k] = a[j]
+					j++
+				}
+			}
+		}
+		copy(a, b)
+	}
+}
+
+// []T(l): the elements of a list in an array, which the checker
+// rewrites a list-to-array conversion into
+func toarray[T](l list T) []T {
+	n := 0
+	for p := l; p != nil; p = tl(p) {
+		n++
+	}
+	a := [n]T
+	i := 0
+	for ; l != nil; l = tl(l) {
+		a[i] = hd(l)
+		i++
+	}
+	return a
+}
+
+// tolist(a): the elements of an array in a list, in order
+func tolist[T](a []T) list T {
+	var l list T
+	for i := len(a) - 1; i >= 0; i-- {
+		l = a[i] :: l
+	}
+	return l
+}

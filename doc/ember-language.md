@@ -232,6 +232,31 @@ evaluated once. `break` and
 `continue` take an optional label
 naming an enclosing loop or match.
 
+A `match` may declare its subject, as a type switch does:
+
+    match s := shape(n) {
+    case Shape.Circle(r):
+        ...
+    }
+
+which is `match s := shape(n); s { ... }` written once. The older
+two-part form still takes any initializer.
+
+`match` with no subject takes conditions instead, tried in order —
+the `if`/`else` chain written as a table:
+
+    match {
+    case n < 0:
+        ...
+    case n == 0, n == 1:
+        ...
+    default:
+        ...
+    }
+
+A `break` inside one of those arms leaves the enclosing loop, since
+there is no dispatch to leave.
+
 `match` dispatches on an int, a string, or a pick value:
 
     match n {
@@ -378,6 +403,11 @@ with a field read directly off it (`Point{x: 8, y: 9}.x`). Fields may
 be read directly off a call result (`mkpoint().x`, `mkref().y`) and
 off array elements (`ps[i].name`).
 
+Two struct values of the same type compare with `==` and `!=`, field
+by field and through nested structs, each operand evaluated once. A
+struct holding an array, a list, a channel or a pick has no such
+comparison, and says so.
+
 A pick is a tagged union:
 
     type Expr pick {
@@ -420,7 +450,8 @@ variable, field, parameter or element of type `Expr` (rather than
         name() string
     }
 
-A value of an interface type holds any `ref` to a struct or pick
+A value of an interface type holds any `ref` to a struct or pick, or
+any named type,
 whose methods include the interface's, with the same signatures; the
 check is structural and happens where the value is assigned, passed,
 returned or put in a literal. Calls go through it (`s.area()`), `nil`
@@ -439,7 +470,9 @@ assignment uses. A type assertion goes back to the concrete type:
 
 `s.(T)` is `T`'s value when the interface holds one and `nil`
 otherwise (also when `s` is `nil`); the two-value form adds a `bool`.
-`T` must be a `ref` to a struct or pick, not another interface. The
+`T` must be a `ref` to a struct or pick: not another interface, and
+not a named type, which the interface holds by value and so has no
+reference to hand back. The
 converter keeps the receiver and its type's name in two hidden
 fields, so an assertion is a string comparison and a move. The
 operand is evaluated once, as with `?.`.
@@ -486,6 +519,102 @@ An interface can be generic; its parameters are those of its methods:
 `Container[int]` takes any `ref` whose `get` and `put` have those
 types, a generic struct's instance (`ref Cell[int]`) or a plain one.
 A generic interface cannot be embedded in another.
+
+## Struct embedding
+
+    type Mid struct {
+        ref Base
+        Tagged
+        kind int
+    }
+
+A field written as a bare type is embedded: it is a field named after
+its type, and the type's own fields and methods are reachable through
+the outer value (`d.id` for `d.Base.id`, `d.describe()` for
+`d.Base.describe()`), through as many levels as are embedded. A
+method with a `ref` receiver needs a `ref` embedded (`ref Base`),
+since Dis has no address of a field. Composite literals name the
+field by its type: `Mid{Base: ref Base{id: 7}, Tagged: ...}`.
+
+## Named results
+
+    func divmod(a int, b int) (q int, r int) {
+        q = a / b
+        r = a % b
+        return
+    }
+
+The names are ordinary locals of the body, zero at entry, and a bare
+`return` returns them; `return x, y` still works, and a nested
+function literal keeps its own results. Either every result is named
+or none is, and `(a, b int)` names two of one type.
+
+## Function and method values
+
+A function name is a value, and so is a method reached through a
+receiver:
+
+    f := twice          // func(int) int
+    g := c.add          // the method bound to c
+
+A method value is the closure a programmer would write by hand, so
+the receiver is evaluated once, where the value is made: `mk(5).get`
+calls `mk` once. Both may be passed, stored in an array or a struct
+field, spawned, and called like any other function value.
+
+## Named types
+
+    type Color int
+    type Path string
+
+    func (c Color) label() string { ... }
+
+A constant may declare its type, and the repeats of a block inherit
+it, which is how an enum over a named type is written:
+
+    const (
+        Low Level = iota
+        Mid
+        High
+    )
+
+A `type` declaration of a name whose body is not a struct or pick
+makes an alias, except when the file declares methods on it: then the
+name is a type of its own, so it can carry them. It stays
+structurally its base type, so a `Color` is an int in arithmetic, in
+`match`, as an array index and in assignment either way, and
+`Color(x)` and `int(c)` convert. The receiver must be a value
+(`func (c Color)`, never `ref Color`), and a named type has no
+fields, only methods. An interface file carries the base type and the
+methods (`type Color int`, then `func (c Color) label() string`), so
+another module can use them; `alias.Color(x)` converts to a type
+from an imported module.
+
+A module's names are one namespace, methods included, since a method
+is reachable through the module alias: two members of the same name
+in one interface file are an error rather than a silent mislink.
+
+## The builtin library
+
+Some names come from `builtin.ei`, the module every program imports
+without saying so: `append`, `map`'s operations, `expect`,
+`Result[T]`, `Builder` and `sort`. A program that declares its own
+name of the same spelling shadows the builtin one.
+
+`Builder` builds a string a piece at a time, since `s += x` in a loop
+copies the whole string each time:
+
+    b := ref Builder{}
+    b.puts("hello")
+    b.putc(' ')
+    s := b.string()      // also len() and reset()
+
+`sort(a, cmp)` sorts an array in place, `cmp(x, y)` negative, zero or
+positive as `x` orders before, with or after `y`. It is a stable
+merge sort, so elements the comparison calls equal keep their order.
+
+`[]T(l)` converts a list to an array, as `[]byte(s)` converts a
+string, and `tolist(a)` converts back.
 
 ## Unit tests
 

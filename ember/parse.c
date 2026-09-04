@@ -39,6 +39,9 @@ static	Node	*pmaptype(void);
 static	Node	*pinterface(Node*, Node*, Node*, Src*);
 static	Node	*parrelems(Src*);
 static	Node	*ptypeswitch(Node*, Node*, Node*, Src*);
+static	Node	*contype(Node*, Node*);
+static	Node	*plainresults(Node*);
+static	Node	*pcondmatch(Node*, Src*);
 Node	*deepdup(Node*);
 static	int	startsexpr(int);
 static	Node	*prange(Node*);
@@ -210,7 +213,32 @@ pfield(void)
 {
 	Node *ids, *t, *n;
 
+	if(cur() == Kref){
+		/* "ref Base;": an embedded reference, for a method with a ref receiver */
+		t = ptype();
+		if((cur() == ';' || cur() == '}') && t->op == Otref && t->right != nil && t->right->op == Oname){
+			n = mkbin(Ofield, mkname(&t->src, t->right->sym), t);
+			n->val = 1;
+			return n;
+		}
+		synerr("a field needs a name");
+		return mkbin(Ofield, mkname(&t->src, enter(".bad", 0)), t);
+	}
 	ids = pnamelist("field declaration");
+	if(cur() == ';' || cur() == '}'){
+		/*
+		 * "type Derived struct { Base; name string }": a bare type
+		 * name is an embedded field, named after its type, whose
+		 * own fields and methods the checker promotes
+		 */
+		if(ids->op != Oname){
+			synerr("an embedded field is one type name");
+			return mkbin(Ofield, ids, mkname(&ids->src, enter("int", 0)));
+		}
+		n = mkbin(Ofield, ids, mkname(&ids->src, ids->sym));
+		n->val = 1;	/* embedded */
+		return n;
+	}
 	t = ptype();
 	n = mkbin(Ofield, rotater(ids), t);
 	return n;
@@ -287,8 +315,10 @@ ptag(Node **tags, Node **fields)
 static Node*
 psignature(int named)
 {
-	Node *params, *p, *ids, *t, *results;
+	Node *params, *p, *ids, *t, *results, *pending;
 	Src src;
+	int anynamed;
+
 
 	params = nil;
 	src = pexpect('(', "function signature");
@@ -327,12 +357,65 @@ psignature(int named)
 	case '(':
 		src = tk()->src;
 		lexskip();
-		results = ptype();
-		while(paccept(','))
-			results = mkseq(results, ptype());
+		/*
+		 * "(int, string)" or, when every result is named,
+		 * "(q int, r int)" and "(a, b int)": each item parses as a
+		 * type, and a type after it means the item was a name.
+		 * pfndecl declares the names and gives a bare "return"
+		 * their values; -F prints them
+		 */
+		pending = nil;
+		anynamed = 0;
+		while(cur() != ')' && cur() != Beof){
+			t = ptype();
+			if(cur() != ',' && cur() != ')'){
+				Node *ty, *q, *nm;
+
+				ty = ptype();
+				pending = mkseq(pending, t);
+				nm = nil;
+				for(q = rotater(pending); q != nil; q = q->right){
+					Node *e;
+
+					e = q->op == Oseq ? q->left : q;
+					if(e->op != Oname){
+						synerr("a named result needs a name before its type");
+						break;
+					}
+					nm = mkseq(nm, e);
+					if(q->op != Oseq)
+						break;
+				}
+				p = mkbin(Ofield, rotater(nm), ty);
+				p->src = ty->src;
+				results = mkseq(results, p);
+				pending = nil;
+				anynamed = 1;
+			}else
+				pending = mkseq(pending, t);
+			if(!paccept(','))
+				break;
+		}
+		if(pending != nil){
+			if(anynamed)
+				synerr("either every result is named or none is");
+			for(p = rotater(pending); p != nil; p = p->right){
+				Node *e;
+
+				e = p->op == Oseq ? p->left : p;
+				results = mkseq(results, e);
+				if(p->op != Oseq)
+					break;
+			}
+		}
 		src.stop = pexpect(')', "function results").stop;
 		results = mkn(Ottuple, rotater(results), nil);
 		results->src = src;
+		if(anynamed){
+			results->val = 1;	/* the results are named: Node.flags has no bit left */
+			if(!rawparse)
+				results = plainresults(results);	/* the names go to pfndecl */
+		}
 		break;
 	case '{':
 	case ';':
@@ -1136,15 +1219,16 @@ deepdup(Node *n)
 static Node*
 pcondecl(Node *decls)
 {
-	Node *name, *n, *prev;
+	Node *name, *n, *prev, *te;
 	Src src;
 	int i;
 
 	src = pexpect(Kconst, "const declaration");
 	if(!paccept('(')){
 		name = pname("const declaration");
+		te = cur() == '=' ? nil : ptype();
 		pexpect('=', "const declaration");
-		n = mkn(Ocondecl, name, pexpr());
+		n = mkn(Ocondecl, name, contype(pexpr(), te));
 		n->src.start = src.start;
 		return mkseq(decls, n);
 	}
@@ -1154,8 +1238,9 @@ pcondecl(Node *decls)
 		if(paccept(';'))
 			continue;
 		name = pname("const declaration");
+		te = (cur() == '=' || cur() == ';' || cur() == ')') ? nil : ptype();
 		if(paccept('=')){
-			prev = pexpr();
+			prev = contype(pexpr(), te);
 			n = mkn(Ocondecl, name, deepdup(prev));
 		}else{
 			if(prev == nil)
@@ -1171,6 +1256,24 @@ pcondecl(Node *decls)
 	}
 	pexpect(')', "const block");
 	return decls;
+}
+
+/*
+ * "const Low Level = iota": the declared type of a constant, as the
+ * conversion it stands for (val 2, so -F prints "name Type = expr"
+ * and check.c's Ocast case treats it as an ordinary conversion)
+ */
+static Node*
+contype(Node *e, Node *te)
+{
+	Node *n;
+
+	if(te == nil)
+		return e;
+	n = mkn(Ocast, e, te);
+	n->val = 2;
+	n->src = e->src;
+	return n;
 }
 
 /*
@@ -1709,6 +1812,11 @@ pmatch(void)
 	int oblit;
 
 	src = pexpect(Kmatch, "match statement");
+	if(cur() == '{'){
+		/* "match { case cond: ... }": the conditions in order, no subject */
+		lexskip();
+		return pcondmatch(nil, &src);
+	}
 	oblit = noblit;
 	noblit = 1;
 	/* "match x := f(); x {": an initializer, as pif() takes */
@@ -1717,12 +1825,23 @@ pmatch(void)
 	if(paccept(';')){
 		init = n;
 		n = psimple();
+	}else if(cur() == '{' && n->op == Odas && n->left->op == Oname
+	&& !(n->right->op == Oassert && n->right->val == 2) && !rawparse){
+		/* "match r := f() {": the name it declares is the subject */
+		Node *nm;
+
+		init = n;
+		nm = mkname(&n->left->src, n->left->sym);
+		n = mkunary(Oexpr, nm);
+		n->src = nm->src;
 	}
 	binder = nil;
 	if(n->op == Odas && n->right->op == Oassert && n->right->val == 2 && n->left->op == Oname){
 		binder = n->left;	/* match v := x.(type) */
 		subj = n->right;
-	}else if(n->op == Oexpr)
+	}else if(rawparse && n->op == Odas)
+		subj = n;	/* -F prints the short form as written */
+	else if(n->op == Oexpr)
 		subj = n->left;
 	else{
 		error(n->src.start, "match subject must be an expression");
@@ -1774,6 +1893,97 @@ pmatch(void)
 		n = mkn(Oscope, mkseq(init, n), nil);
 		n->src.start = src.start;
 	}
+	return n;
+}
+
+/*
+ * "match { case x < 3: ... default: ... }": no subject, the cases
+ * are conditions tried in order -- an if/else chain, so a "break"
+ * inside is the enclosing loop's, as in a type switch
+ */
+static Node*
+pcondmatch(Node *init, Src *src)
+{
+	Node *cases, *pats, *stmts, *c, *n, *p, *q, *body, *cond, *ifn, *chain, *last, *dflt, *e;
+	Src csrc, stop;
+
+	cases = nil;
+	while(cur() != '}' && cur() != Beof){
+		if(paccept(';'))
+			continue;
+		csrc = tk()->src;
+		pats = nil;
+		if(paccept(Kdefault))
+			;
+		else{
+			pexpect(Kcase, "match case");
+			pats = pexpr();
+			while(paccept(','))
+				pats = mkseq(pats, pexpr());
+			pats = rotater(pats);
+		}
+		pexpect(':', "match case");
+		stmts = nil;
+		while(cur() != Kcase && cur() != Kdefault && cur() != '}' && cur() != Beof){
+			if(paccept(';'))
+				continue;
+			stmts = mkseq(stmts, pstmt());
+		}
+		c = mkn(Ocase, pats, rotater(stmts));
+		c->src.start = csrc.start;
+		cases = mkseq(cases, c);
+	}
+	cases = rotater(cases);
+	stop = pexpect('}', "match statement");
+	if(rawparse){
+		n = mkn(Omatch, nil, cases);
+		n->aux = init;
+		n->src.start = src->start;
+		n->src.stop = stop.stop;
+		n->val = stop.stop.line;
+		return n;
+	}
+	chain = nil;
+	last = nil;
+	dflt = nil;
+	for(p = cases; p != nil; p = p->right){
+		c = p->op == Oseq ? p->left : p;
+		body = mkn(Oscope, c->right, nil);
+		body->src = c->src;
+		if(c->left == nil)
+			dflt = body;
+		else{
+			cond = nil;
+			for(q = c->left; q != nil; q = q->right){
+				e = q->op == Oseq ? q->left : q;
+				cond = cond == nil ? e : mkbin(Ooror, cond, e);
+				if(q->op != Oseq)
+					break;
+			}
+			ifn = mkn(Oif, cond, body);
+			ifn->src = c->src;
+			if(last == nil)
+				chain = ifn;
+			else
+				last->aux = ifn;
+			last = ifn;
+		}
+		if(p->op != Oseq)
+			break;
+	}
+	if(chain == nil)
+		chain = dflt;
+	else if(dflt != nil)
+		last->aux = dflt;
+	if(chain == nil)
+		chain = mkn(Onothing, nil, nil);
+	if(init == nil){
+		chain->src.start = src->start;
+		return chain;
+	}
+	n = mkn(Oscope, rotater(mkseq(init, chain)), nil);
+	n->src.start = src->start;
+	n->src.stop = stop.stop;
 	return n;
 }
 
@@ -2118,10 +2328,91 @@ pblock(void)
  * a missing body (terminated by ';') is an interface declaration,
  * used in .ei module headers.
  */
+/*
+ * the names of the last signature's named results, for pfndecl:
+ * psignature leaves the plain tuple type behind, so nothing
+ * downstream of the parser sees a field where a type belongs
+ */
+static Node *resultnames;
+
+static Node*
+plainresults(Node *results)
+{
+	Node *p, *f, *id, *names, *types, *e;
+
+	names = nil;
+	types = nil;
+	for(p = results->left; p != nil; p = p->right){
+		f = p->op == Oseq ? p->left : p;
+		for(id = f->left; id != nil; id = id->right){
+			e = id->op == Oseq ? id->left : id;
+			names = mkseq(names, mkname(&e->src, e->sym));
+			types = mkseq(types, deepdup(f->right));
+			if(id->op != Oseq)
+				break;
+		}
+		if(p->op != Oseq)
+			break;
+	}
+	resultnames = rotater(names);
+	if(types != nil && types->op != Oseq)
+		return types;	/* one result is a plain type, not a tuple of one */
+	e = mkn(Ottuple, rotater(types), nil);
+	e->src = results->src;
+	return e;
+}
+
+/*
+ * a bare "return" in the body of a function with named results
+ * returns them; a nested function literal has its own results and is
+ * left alone
+ */
+static void
+bareret(Node *n, Node *vals)
+{
+	if(n == nil || n->op == Ofunclit)
+		return;
+	if(n->op == Oret && n->left == nil){
+		n->left = deepdup(vals);
+		return;
+	}
+	bareret(n->left, vals);
+	bareret(n->right, vals);
+	bareret(n->aux, vals);
+}
+
+/*
+ * "func f() (q int, r int)": the names are locals of the body, zero
+ * at entry, and a bare "return" returns them
+ */
+static Node*
+namedresults(Node *sig, Node *body, Node *names, Node *types)
+{
+	Node *p, *t, *nm, *decls, *vals, *stmts;
+
+	decls = nil;
+	vals = nil;
+	t = types->op == Ottuple ? types->left : types;
+	for(p = names; p != nil; p = p->right){
+		nm = p->op == Oseq ? p->left : p;
+		decls = mkseq(decls, mkn(Ovardecl, mkname(&nm->src, nm->sym),
+			deepdup(t->op == Oseq ? t->left : t)));
+		vals = mkseq(vals, mkname(&nm->src, nm->sym));
+		if(t->op == Oseq)
+			t = t->right;
+		if(p->op != Oseq)
+			break;
+	}
+	bareret(body, rotater(vals));
+	stmts = mkseq(rotater(decls), body->left);
+	body->left = rotater(stmts);
+	return body;
+}
+
 static Node*
 pfndecl(void)
 {
-	Node *recv, *name, *polys, *sig, *body, *n;
+	Node *recv, *name, *polys, *sig, *body, *n, *rnames;
 	Src src;
 
 	src = pexpect(Kfunc, "function declaration");
@@ -2138,11 +2429,15 @@ pfndecl(void)
 		polys = rotater(pnamelist("type parameters"));
 		pexpect(']', "type parameters");
 	}
+	resultnames = nil;
 	sig = psignature(1);
 	sig->aux = polys;
+	rnames = resultnames;
 	body = nil;
 	if(cur() == '{')
 		body = pblock();
+	if(body != nil && rnames != nil)
+		body = namedresults(sig, body, rnames, sig->right);
 	n = mkn(Ofndecl, name, sig);
 	n->aux = body;
 	n->src.start = src.start;

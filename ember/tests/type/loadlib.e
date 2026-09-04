@@ -64,4 +64,8 @@ func init() {
 	var t libpoint.Sized
 	t = ref libpoint.Box{n: 9}
 	sys.print("boxsize=%d %d\n", lib.boxsize(t), lib.boxsize(s))
+
+	// a named type from the library: its methods are called here
+	col := lib.mkcolor(0)
+	sys.print("colour=%s %s %d\n", col.label(), libpoint.Color(1).label(), int(col) + 5)
 }

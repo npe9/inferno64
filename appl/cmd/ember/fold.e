@@ -114,6 +114,19 @@ func confoldcast(n ref types.Node) {
 	if from == nil || from.kind == types.Tarray || to.kind == types.Tarray {
 		return
 	}
+	if from.kind == to.kind {
+		// "const Hearts Suit = \"hearts\"": a named type of the same base, the same constant
+		v := l.val
+		r := l.rval
+		sy := l.sym
+		fl := l.flags
+		setconst(n, to)
+		n.val = v
+		n.rval = r
+		n.sym = sy
+		n.flags = fl
+		return
+	}
 	if from.kind == types.Tstring {
 		if l.sym == nil {
 			return

@@ -70,6 +70,10 @@ tsrc(Type *t)
 		Bprint(ib, "nil");
 		return;
 	}
+	if(t->named && t->decl != nil){
+		Bprint(ib, "%s", t->decl->sym->name);	/* "type Color int": its own name */
+		return;
+	}
 	switch(t->kind){
 	case Tint:	Bprint(ib, "int"); return;
 	case Tbig:	Bprint(ib, "big"); return;
@@ -204,6 +208,15 @@ typesrc(Decl *d)
 
 	t = d->ty;
 	s = d->sym->name;
+	if(t->named){
+		/* "type Color int": the base type, then its methods */
+		Bprint(ib, "type %s ", s);
+		t->named = 0;
+		tsrc(t);
+		t->named = 1;
+		Bprint(ib, "\n\n");
+		return;
+	}
 	if(t->kind == Tadt && t->isiface){
 		/* .W$s: print the interface it stands for */
 		Bprint(ib, "type %.*s interface {\n", (int)(strlen(s) - 3), s + 1);
@@ -322,7 +335,7 @@ ifacegen(Node *tree, Biobuf *b)
 			if(d->ty->kind == Tref && d->ty->tof != nil && d->ty->tof->kind == Tadt && d->ty->tof->isiface)
 				break;	/* "type W ref .W$s": the interface was printed with its struct */
 			typesrc(d);
-			if(d->ty->kind == Tadt && !d->ty->isiface && d->sym->name[0] != '.'){
+			if((d->ty->kind == Tadt || d->ty->named) && !d->ty->isiface && d->sym->name[0] != '.'){
 				/* meths is prepended: print in declaration order */
 				Decl *ms[256];
 

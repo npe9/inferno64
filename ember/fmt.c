@@ -110,6 +110,16 @@ fields(Node *n, int stmts)
 			comsbefore(f->src.start.line);
 			tabs();
 		}
+		if(f->val == 1){
+			type(f->right);	/* an embedded field is its type alone */
+			if(stmts)
+				Bprint(fb, "\n");
+			if(n->op != Oseq)
+				break;
+			if(!stmts)
+				Bprint(fb, ", ");
+			continue;
+		}
 		if(f->left != nil){
 			names(f->left);
 			if(f->right != nil)
@@ -206,6 +216,11 @@ type(Node *n)
 		break;
 	case Ottuple:
 		Bprint(fb, "(");
+		if(n->val == 1){
+			fields(n->left, 0);	/* "(q int, r int)": named results */
+			Bprint(fb, ")");
+			break;
+		}
 		for(p = n->left; p != nil; p = p->right){
 			t = p->op == Oseq ? p->left : p;
 			type(t);
@@ -817,11 +832,17 @@ stmt(Node *n)
 			simple(n->aux);
 			Bprint(fb, "; ");
 		}
-		istype = n->left->op == Oassert && n->left->val == 2;
+		istype = n->left != nil && n->left->op == Oassert && n->left->val == 2;
 		if(istype && n->left->right != nil)
 			Bprint(fb, "%s := ", n->left->right->sym->name);	/* the type switch's binder */
-		expr(n->left, 0);
-		Bprint(fb, " {\n");
+		if(n->left != nil){
+			if(n->left->op == Odas)
+				simple(n->left);	/* "match r := f() {": the short form */
+			else
+				expr(n->left, 0);
+			Bprint(fb, " ");
+		}
+		Bprint(fb, "{\n");
 		lastline = n->src.start.line;
 		cases(n->right, 0, istype);
 		tabs();
@@ -889,7 +910,15 @@ stmt(Node *n)
 		}
 		break;
 	case Ocondecl:
-		Bprint(fb, "const %s = ", n->left->sym->name);
+		Bprint(fb, "const %s", n->left->sym->name);
+		if(n->right->op == Ocast && n->right->val == 2){
+			Bprint(fb, " ");
+			type(n->right->right);
+			Bprint(fb, " = ");
+			expr(n->right->left, 0);
+			break;
+		}
+		Bprint(fb, " = ");
 		expr(n->right, 0);
 		break;
 	case Otypedecl:
@@ -936,8 +965,15 @@ constblock(Node *p)
 		tabs();
 		Bprint(fb, "%s", d->left->sym->name);
 		if(!(d->val & 1)){
-			Bprint(fb, " = ");
-			expr(d->right, 0);
+			if(d->right->op == Ocast && d->right->val == 2){
+				Bprint(fb, " ");
+				type(d->right->right);
+				Bprint(fb, " = ");
+				expr(d->right->left, 0);
+			}else{
+				Bprint(fb, " = ");
+				expr(d->right, 0);
+			}
 		}
 		comsafter(d->src.start.line);
 		Bprint(fb, "\n");

@@ -230,6 +230,7 @@ type Type struct {
 	tags ref Decl
 	ismap int
 	isiface int
+	named int
 	meths ref Decl
 	cse ref Case
 	teq ref Type
@@ -264,6 +265,7 @@ type Decl struct {
 	cycle int
 	cyc int
 	implicit int
+	embedded int	// a struct field written as a bare type name: its fields and methods are promoted (parse.e's pfield)
 	inl int
 	iface ref Decl
 	locals ref Decl
