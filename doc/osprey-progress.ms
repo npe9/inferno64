@@ -1526,7 +1526,7 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-fifty-five criteria, five of them this and the gateway below, three
+fifty-six criteria, six of them this, the gateway and the firewall below, three
 the \[*p]p wire of item 4, one the time of day of item 5, three the
 resume and the group move of item 6a, four the replica and the caching
 file system of item 8, one the note continuation of item 2.  What is
@@ -1564,8 +1564,35 @@ stack B's own statistics say
 by the time the answer is written \- the count
 .CW ip.c
 keeps of what it forwarded.  A router that is a container, its
-forwarding the stack's own code in user space; what the firewall would
-add to it is the rule, which netsrv has and the real stack does not.
+forwarding the stack's own code in user space.
+.PP
+And the firewall's rule, with the real stack's own rule engine rather
+than netsrv's: once an
+.CW ipmux
+conversation exists, every packet for the stack passes its rules before
+its protocol sees it (devip's
+.CW Fsrcvpcolx ),
+and one that matches is diverted to that conversation.  Stack B
+announces a port, and when the client asks (a datagram to 9003) puts up
+.CW "src=10.0.1.1;proto=06;data[2:3]=232c"
+\- source, protocol and destination port, the fields a firewall's rule
+has \- so the client's SYNs to port 9004 arrive on the ipmux
+conversation, are read and counted there, 64 bytes each, and tcp.c never
+sees them; after two the conversation is closed, which lifts the rule,
+the next retransmitted SYN reaches tcp.c, and the connection is accepted
+and answered
+.CW ( fwsrv
+and
+.CW fwtest
+in
+.CW os/osprey/cmd/p9/p9ip.c ).
+What the client sees is a connect held 1.6 seconds while the rule stood
+and completed once it was lifted, and its line answered.  One criterion
+in
+.CW /scripts/osprey-check-p9pair.py .
+So item 7 is whole in the form the sources give it: the real stack in a
+container, routing between two wires, and a rule that drops before the
+stack \- with the demonstration's own limits, one rule and one machine.
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

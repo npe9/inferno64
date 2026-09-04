@@ -351,6 +351,71 @@ pipwire(void *)
 }
 
 /*
+ * The firewall, item 7's last word, with the real stack's own rule
+ * engine: ipmux.  Once an ipmux conversation exists, every packet for
+ * the stack passes its rules first (devip's Fsrcvpcolx), and one that
+ * matches is diverted to that conversation instead of reaching its
+ * protocol.  Here stack B announces a port, and when the client asks
+ * (a datagram to 9003) puts up a rule diverting TCP from 10.0.1.1 to
+ * that port - source, protocol and destination port, the fields a
+ * firewall's rule has; the client's SYNs then arrive on the ipmux
+ * conversation, read and counted here, and tcp.c never sees them.
+ * After two the rule is lifted (the conversation closed), the next
+ * retransmitted SYN reaches tcp.c, and the connection is accepted and
+ * answered.  What the client sees is a connect held for as long as the
+ * rule stood.
+ */
+static void
+fwsrv(void *)
+{
+	int ua, ul, afd, mfd, dfd, lfd, cfd, anum, mnum, lnum, i;
+	long n;
+	char cbuf[64], path[64], rx[256];
+	uchar pkt[2048];
+	static char rule[] = "connect src=10.0.1.1;proto=06;data[2:3]=232c";	/* tcp from the client to port 9004 */
+	static char reply[] = "answered once the firewall's rule was lifted";
+
+	if(waserror()){
+		print("p9 ip: firewall failed: %s\n", up->errstr);
+		pexit("fwsrv", 0);
+	}
+	afd = p9open("#I1/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 9004", 13);
+	ua = p9open("#I1/udp/clone", ORDWR);
+	n = p9read(ua, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0;
+	p9write(ua, "announce 9003", 13);
+	snprint(path, sizeof path, "#I1/udp/%s/listen", cbuf);
+	ul = p9open(path, ORDWR);			/* the client's ask, when it comes */
+	n = p9read(ul, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0;
+	p9close(ul); p9close(ua);
+	mfd = p9open("#I1/ipmux/clone", ORDWR);
+	n = p9read(mfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; mnum=atoi(cbuf);
+	p9write(mfd, rule, sizeof rule - 1);
+	print("p9 ip: firewall: the client asked for the rule; stack B's ipmux now diverts TCP from 10.0.1.1 to port 9004 before tcp.c sees it\n");
+	snprint(path, sizeof path, "#I1/ipmux/%d/data", mnum);
+	dfd = p9open(path, OREAD);
+	for(i = 0; i < 2; i++){
+		n = p9read(dfd, pkt, sizeof pkt);
+		print("p9 ip: firewall: diverted a %ld-byte TCP packet from 10.0.1.1 to port 9004 - the rule holds, tcp.c never saw it\n", n);
+	}
+	p9close(dfd); p9close(mfd);
+	print("p9 ip: firewall: the rule is lifted after 2 diverted packets\n");
+	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	print("p9 ip: firewall: the next SYN reached tcp.c and the connection was accepted as conversation %d\n", lnum);
+	snprint(path, sizeof path, "#I1/tcp/%d/data", lnum);
+	cfd = p9open(path, ORDWR);
+	n = p9read(cfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	p9write(cfd, reply, sizeof reply - 1);
+	tsleep(&up->sleep, return0, nil, 1000);
+	p9close(cfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("fwsrv done", 0);
+}
+
+/*
  * The client end.  The client container brings up the real Plan 9 IP
  * stack of its own - devip, ip.c, tcp.c - and binds an osprey interface
  * whose wire is the ring to the server container.  A kproc connects to
@@ -696,6 +761,41 @@ cachetest(void)
 	print("p9 ip: cache: done - %d miss, %d hit, %d refetch, %ld stream frames taken off the wire\n", misses, hits, refetches, nf);
 }
 
+/* the firewall from the client's side: ask for the rule, then a connect held until it is lifted */
+static void
+fwtest(void)
+{
+	extern uvlong kfastticks(uvlong*);
+	int ufd, dfd, wfd, cnum;
+	long n;
+	uvlong t0, t1;
+	char cbuf[64], path[64], rx[256];
+	static char msg[] = "sent once the firewall let the connection through";
+
+	ufd = p9open("/net/udp/clone", ORDWR);
+	n = p9read(ufd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0;
+	p9write(ufd, "connect 10.0.1.2!9003", 21);
+	snprint(path, sizeof path, "/net/udp/%s/data", cbuf);
+	wfd = p9open(path, ORDWR);
+	p9write(wfd, "put the rule up", 15);		/* the ask, a datagram across the ring */
+	p9close(wfd); p9close(ufd);
+	tsleep(&up->sleep, return0, nil, 200);		/* let the rule go up */
+	t0 = kfastticks(nil);
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	print("p9 ip: firewall: connecting to 10.0.1.2!9004 while the rule stands\n");
+	p9write(dfd, "connect 10.0.1.2!9004", 21);	/* held: the SYNs are diverted until the rule is lifted */
+	t1 = kfastticks(nil);
+	print("p9 ip: firewall: the connect took %llud ms - held while the rule diverted its SYNs, done once it was lifted\n", (t1 - t0) * 10);
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	wfd = p9open(path, ORDWR);
+	p9write(wfd, msg, sizeof msg - 1);
+	n = p9read(wfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	print("p9 ip: firewall: read %ld bytes back through the connection the rule had held: \"%s\"\n", n, rx);
+	tsleep(&up->sleep, return0, nil, 300);
+	p9close(wfd); p9close(dfd);
+}
+
 static void
 ostcpclient(void *)
 {
@@ -769,6 +869,7 @@ ostcpclient(void *)
 	pipclient();
 	replica();
 	cachetest();
+	fwtest();
 	poperror();
 	clientnetdone = 1;
 	pexit("ostcpclient done", 0);
@@ -811,7 +912,7 @@ p9clientnet(void)
 	if(ring9p_taketick(Ticksem) < 0)
 		error("the clock tick was refused");
 	kproc("ostcpclient", ostcpclient, nil);
-	for(ticks = 0; ticks < 1500 && !clientnetdone; ){
+	for(ticks = 0; ticks < 4000 && !clientnetdone; ){
 		if(ring9p_waittick(Ticksem) < 0)
 			error("select on the tick failed");
 		ticks++;
@@ -1002,6 +1103,7 @@ p9ipup(void)
 	kproc("ringsrv", ringsrv, nil);	/* a tcp.c service for the client container, across the ring wire */
 	kproc("gwsrv", gwsrv, nil);	/* the same on stack A, reached through stack B as a gateway */
 	kproc("pipwire", pipwire, nil);	/* pi-p about this personality's files, on the wire */
+	kproc("fwsrv", fwsrv, nil);	/* the firewall: the stack's own ipmux, a rule on the client's ask */
 	p9kbdstart();			/* the i8042 keyboard driver, in user space above the kernel */
 	poperror();
 

@@ -45,7 +45,7 @@ def main():
                               stdout=open(com2log, 'w'), stderr=subprocess.DEVNULL)
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '--blk', img, '-2', 'unix:%s,server,nowait' % com2,
-                    '-t', '150', '-u', 'the microkernel idles'],
+                    '-t', '240', '-u', 'the microkernel idles'],
                    env=env, capture_output=True, text=True)
     try: reader.terminate()
     except OSError: pass
@@ -196,6 +196,13 @@ def main():
          and 'p9 ip: gateway server: stack A read 44 bytes from the client container through the gateway: "sent through stack B as a gateway to stack A"' in t
          and 'p9 ip: client container: read 39 bytes back from stack A through the gateway: "answered by stack A, behind the gateway"' in t
          and re.search(r"p9 ip: gateway: stack B's ip.c forwarded the conversation - ForwDatagrams: ([4-9]|\d\d+)", t) is not None),
+        ("and a firewall: on the client's ask stack B puts up a rule in the real stack's own ipmux - source, protocol, destination port - and the client's SYNs are diverted and counted before tcp.c sees them; the connect is held until the rule is lifted, then accepted and answered",
+         'p9 ip: firewall: the client asked for the rule; stack B\'s ipmux now diverts TCP from 10.0.1.1 to port 9004 before tcp.c sees it' in t
+         and len(re.findall(r'p9 ip: firewall: diverted a \d+-byte TCP packet from 10\.0\.1\.1 to port 9004 - the rule holds, tcp\.c never saw it', t)) == 2
+         and 'p9 ip: firewall: the rule is lifted after 2 diverted packets' in t
+         and re.search(r'p9 ip: firewall: the next SYN reached tcp\.c and the connection was accepted as conversation \d+', t) is not None
+         and (lambda mm: mm is not None and int(mm.group(1)) >= 300)(re.search(r'p9 ip: firewall: the connect took (\d+) ms - held while the rule diverted its SYNs', t))
+         and 'p9 ip: firewall: read 44 bytes back through the connection the rule had held: "answered once the firewall\'s rule was lifted"' in t),
         ("pi-p on a wire of its own: a group about the server personality's files crosses the two stacks' tcp.c across the ring and is answered there, not on the ring",
          re.search(r'p9 ip: pi-p over the wire: opened /n/hello in session [0-9a-f]+, read data \(version \d+\): "version 42 of forty', t) is not None
          and "p9 ip: pi-p over the wire: a group of 4 crossed the two stacks' tcp.c across the ring and came back with 4 replies" in t

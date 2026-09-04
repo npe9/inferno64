@@ -3698,9 +3698,10 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 		print("osprey move: group member container %llud (pid %d, sharing the address space) resumed as container %llud with container %llud's; container %llud destroyed\n",
 			ospreyid(oc), mem[k]->pid, ospreyid(mc), ospreyid(c), ospreyid(oc));
 		ready(mp);
-		ospreyunmake(oc);
-		mem[k]->procctl = Proc_exitme;	/* the old process, stopped in donotify, ends when it runs */
-		ready(mem[k]);
+		mem[k]->procctl = Proc_exitme;	/* the old process, parked in donotify, ends when it runs */
+		ospreyunmake(oc);		/* ... which ospreyputproc's release may already have readied */
+		if(mem[k]->state == Stopped)
+			ready(mem[k]);
 	}
 	ready(p);
 
