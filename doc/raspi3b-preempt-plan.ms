@@ -236,6 +236,54 @@ no C work at all beyond the arm.  Still corrupting means the fault is in
 .CW vectrap 's
 save/restore or the mere act of taking the exception, and E3's
 watchpoint is then aimed squarely at the entry/exit.
+.IP "E7 (done - and it pinned the mechanism)."
+.I "Turn the MMU on."
+This board ran with the MMU off, so every access took Device-nGnRnE
+ordering.  The MMU is now built (gated off) in
+.CW mmu.c :
+a flat identity map, RAM Normal write-back cacheable, the peripheral and
+BCM2836 windows Device.  Turning it on with the tick enabled did not fix
+the corruption - it reshaped it decisively.  Three of five stress runs
+pass with every block correct; the other two fault with a level-1
+translation abort at a
+.I RAM
+address and then spin in prefetch aborts.  QEMU models no caches, so this
+is not coherency - it is a
+.I "wild store" :
+the corruption is corrupting the base register of a store so the store
+lands on the page table (which is why the whole map dies and every later
+fetch aborts), where the MMU-off board had only ever shown the milder
+symptom of a lost SDDATA write.  So the bug is not a lost write, it is a
+.I "register corruption"
+in the tight FIFO loop under the interrupt - a single register (a store
+base, or the loop's data pointer) coming back wrong across the exception,
+even though
+.CW vectrap
+saves and restores all of R0-R30 and is byte-identical to virtarm64's.
+Crucially, the MMU-on abort survives QEMU's own
+.CW "-d int"
+logging where every guest-side probe masked the fault, so it is the first
+handle on the failing moment.
+.IP "E8 (the next move)."
+.I "Catch the wild store."
+With
+.CW Mmuon
+set and the tick on, make the synchronous-exception path stop dead on the
+first Data Abort - before the page table is walked again, so it does not
+spin in prefetch aborts - and dump the Ureg it saved plus
+.CW ELR ,
+.CW FAR
+and
+.CW ESR .
+The faulting PC lands you on the exact store instruction, and comparing
+its base register in the Ureg against what the loop intended shows which
+register was corrupted and to what.  That is the whole answer: once the
+register is named, either
+.CW vectrap
+mishandles it in some path the tight loop alone reaches, or QEMU's TCG
+drops it taking the IRQ mid-block - and the second is worth a check
+against a newer QEMU or a bug report, since nothing in the guest can then
+fix it.
 .NH 1
 Likely fixes, by outcome
 .PP
