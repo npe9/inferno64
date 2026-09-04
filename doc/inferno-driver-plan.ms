@@ -942,26 +942,50 @@ sifive_u prints
 and recovers, raspi3b never reaches that line.
 .CW setlabel / gotolabel
 are byte-for-byte the same minimal SP+PC form riscv64 uses and are not
-the difference.  Tracing nexterror pins it further: it is a livelock, not
-a one-shot hang.  When the create's mount RPC blocks, release() spawns a
-second
-.CW vmachine
-kproc (the "dis" proc), and that kproc spins forever in namec/devwalk
-raising Enonexist ("file does not exist") on a walk that never resolves,
-where the same recipe on riscv64 recovers and the create succeeds.  So
-the lead is the freshly-spawned dis kproc's namespace/environment
-(kproc(..., KPDUP) group inheritance) or the multi-kproc handoff on arm64
-- not SD, not the tick.  Sharper: the loop does NOT re-enter devwalk (a
-devwalk-entry trace stays silent through it), so it is not a retry - it is
-the error stack, nexterror repeatedly jumping to a STALE devwalk waserror
-label while up->nerrlab climbs, i.e. vmachine()'s
-.CW "while(waserror())"
-re-pushing on a walk that keeps raising Enonexist in the spawned kproc's
-kfs setup.  And the spawn is load-bearing: forcing single-kproc (removing
-release()'s kproc("dis",...)) deadlocks the mount instead - nothing serves
-kfs while the client blocks - so the bug is in the multi-kproc handoff,
-not in choosing to use it.  (The SDHOST flow control the earlier draft
-asked for here has since been added; see fifospace()/fifodata().)
+the difference.  Instrumenting the error stack corrects an earlier read
+that called this a livelock: it is a
+.I deadlock ,
+and
+.CW up->nerrlab
+does not climb - it holds steady at 7.  Only about a dozen Enonexist
+unwinds happen in the spawned "dis" kproc (pid 3) - the ordinary
+per-union-member misses as kfs resolves
+.CW /dev/time
+through the three-member
+.CW /dev
+union - and then both procs block.  The create's existence-check Twalk
+gets its benign Rerror (correct Styx: the file does not exist yet), and
+.CW pid 1 's
+.CW error()
+is entered - the
+.CW mountrpc
+print fires immediately before it - but a print on
+.CW error() 's
+very first line never appears even ungated, so pid 1 stalls in
+.CW error() 's
+prologue right after its
+.CW spllo() ,
+and the kfs kproc, having sent that reply, also blocks.  No
+.CW "trap type"
+or panic ever prints, so it is not a fault or a stack overflow (KSTACK is
+32KB, the same as riscv64); the SD path is sound (kfs reams the whole
+filesystem, every
+.CW bio()
+completing in pid 3); and the nerrlab count and label machinery are
+sound.  The remaining lead is the multi-kproc handoff itself: pid 1 is
+not resumed after yielding at that
+.CW spllo()
+to the spawned kproc, which then sleeps - a sleep/wakeup or Dis
+.CW release()/acquire
+token-handoff bug, not a memory-ordering one (the board is MAXMACH 1 and
+.CW _tas / unlock
+already carry their DSB barriers).  And the spawn is load-bearing:
+forcing single-kproc (removing release()'s kproc("dis",...)) deadlocks
+the mount outright - nothing serves kfs while the client blocks.  The
+reproducer is committed: uncomment
+.CW sdfs()
+in raspi3binit.b.  (The SDHOST flow control an earlier draft asked for
+here has since been added; see fifospace()/fifodata().)
 (2) persistence across reboot on sifive_u - the kfs is reamed every boot;
 a mount that reams only a blank device would show a file surviving a
 restart.  (3) more boards if wanted - the loop is proven, and the one
@@ -971,3 +995,50 @@ first.  A cross-cutting note from the tick hunt: the arm64
 frames the Ureg on the interrupted stack, so any C handler it calls needs
 its argument-home area reserved below the Ureg; armv7 and riscv64 use a
 static Ureg buffer and are not exposed.
+.NH 1
+Raspberry Pi 3B: the port order beyond kfs
+.PP
+The board now drives PL011, GPIO, BCM2835 I2C and SPI, the generic timer
+with a real 100Hz tick, and native SD through SDHOST, and it boots the
+firmware's own flat kernel8.img at EL2.  That is past the unpleasant
+bring-up jobs; what remains is user-visible hardware, and 9front's
+bcm64/pi3 tree is now a donor rather than just a reference.  The order,
+each item roughly gating the next:
+.IP 1.
+Firmware mailbox / property interface.  Small, kernel-private, and the
+key that unlocks the rest: the VideoCore firmware answers property
+requests for clocks, board info, and - the reason to build it first - a
+linear framebuffer.
+.IP 2.
+Framebuffer plus an Inferno screen driver into devdraw.  Ask the firmware
+for a framebuffer over the mailbox, hand its linear memory to
+.CW /dev/draw ,
+and native Inferno stops being an embedded-firmware experiment and
+becomes a workstation.  The distance from Plan 9 devdraw to Inferno's
+draw device is small; do NOT start from the VideoCore GPU.
+.IP 3.
+Synopsys DesignWare USB host (9front usbdwc).  The highest-value port:
+on a Pi 3B the onboard 10/100 Ethernet hangs off USB, so the controller
+buys Ethernet, keyboard, mouse, and mass storage at once.
+.IP 4.
+USB keyboard and mouse - makes the framebuffer interactive.
+.IP 5.
+LAN9514 / SMSC USB Ethernet into
+.CW /net/ether* .
+9front detects the Pi's USB Ethernet specially and loads the SMSC driver.
+.IP 6.
+USB mass storage into devsd - thumb drives as block devices.
+.IP 7.
+Arasan SDHCI / SDIO, the Pi's second SD controller (SDHOST already drives
+the card, which deliberately leaves Arasan free for SDIO).
+.IP 8.
+BCM43430 Wi-Fi over that SDIO, borrowing 9front's ether4330.
+.IP 9.
+Watchdog, hardware RNG, PWM - individually small BCM283x drivers.
+.PP
+Left out on purpose until the machine is otherwise complete: Bluetooth
+(a whole HCI/L2CAP stack for little payoff), CSI camera and DSI display
+(VideoCore/firmware-bound), and GPU / OpenGL / hardware video (deep and
+largely out of scope).  The kfs deadlock above is worth fixing for a
+reliable native filesystem, but the port is not blocked on it: dossrv,
+ramfs, and 9660srv all run over the same working SD block device.
