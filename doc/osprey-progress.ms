@@ -946,11 +946,20 @@ stack's use of that nil smashed the return address to
 Every earlier clue fits: two Fs doubled the allocations, the icmp+udp+il/rudp
 combination was just enough more to cross 1MB, the steady-state timing was
 the arena filling as Blocks piled up, and the layout sensitivity was which
-allocation crossed the line.  The fix is a 16MB arena (two Fs use just over
-1MB) and a one-time "arena exhausted" print so the failure is legible; a
-reclaiming allocator, or a Block free list, is the proper fix for heavy or
-long-running use.  Two Fs no longer corrupts, so the two-stack byte stream
-is unblocked - what remains there is only the pump timing, not a crash.
+allocation crossed the line.  The fix has two parts.  A one-time "arena exhausted" print makes the
+failure legible instead of a wild fault.  And the churn itself is
+reclaimed: Blocks, one per packet, are the only unbounded allocation -
+everything else the personality allocates is persistent and small - so
+.CW freeb
+now returns a Block to a free list and
+.CW allocb
+reuses one (re-zeroed, since it always handed back zeroed memory), keeping
+the never-reuse-stays-zero property the other callers rely on because only
+Blocks are recycled and only through
+.CW allocb .
+With the churn reclaimed the arena holds only the persistent structures and
+stays flat under traffic, so it sits at a comfortable 4MB.  Two Fs no
+longer corrupts.
 .PP
 This is the wire test the talk's second machine stands for, run between
 two stacks in one address space over the osprey medium.  What a real
