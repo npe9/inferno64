@@ -20,6 +20,19 @@
 #define	D_TCR_EL1	SYSARG5(3,0,2,0,2)
 #define	D_TTBR0_EL1	SYSARG5(3,0,2,0,0)
 #define	D_SCTLR_EL1	SYSARG5(3,0,1,0,0)
+#define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
+#define	D_HCR_EL2	SYSARG5(3,4,1,1,0)
+#define	D_SCR_EL3	SYSARG5(3,6,1,1,0)
+#define	D_SPSR_EL3	SYSARG5(3,6,4,0,0)
+#define	D_ELR_EL3	SYSARG5(3,6,4,0,1)
+#define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
+#define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
+#define	D_ICC_BPR1_EL1	SYSARG5(3,0,12,12,3)
+#define	D_ICC_IGRPEN1_EL1	SYSARG5(3,0,12,12,7)
+#define	D_ICC_CTLR_EL1	SYSARG5(3,0,12,12,4)
+#define	D_ICC_IAR1_EL1	SYSARG5(3,0,12,12,0)
+#define	D_ICC_EOIR1_EL1	SYSARG5(3,0,12,12,1)
+#define	D_ID_AA64PFR0_EL1	SYSARG5(3,0,0,4,0)
 
 /*
  * QEMU -M virt, AArch64 (cortex-a72), single privilege level (EL1),
@@ -107,37 +120,36 @@ TEXT	_main(SB), 1, $-4
 	/*
 	 * QEMU raspi3b is a quad-core Pi 3 and starts ALL FOUR cores at
 	 * 0x80000.  This kernel is MAXMACH 1, so the three secondaries must
-	 * be parked or they trample the console and the boot.  Read MPIDR
-	 * (raw word - 7a does not name it), and if the low affinity byte is
-	 * non-zero, spin at WFE forever.  Only core 0 continues.
+	 * be parked or they trample the console and the boot.  Read MPIDR,
+	 * and if the low affinity byte is non-zero, spin at WFE forever.
+	 * Only core 0 continues.
 	 */
-	WORD	$0xd53800a0		/* MRS MPIDR_EL1, x0 */
+	MRS	SPR(D_MPIDR_EL1), R0
 	AND	$0xff, R0, R0
 	CBNZW	R0, parkcore
 	/*
 	 * Core 0.  QEMU enters at EL3; drop to EL1 in one ERET.  HCR_EL2.RW
-	 * first so EL1 is AArch64 with EL2 skipped.  EL3/EL2 regs are raw
-	 * MSR words (x0), verified against the host assembler.
+	 * first so EL1 is AArch64 with EL2 skipped.
 	 */
 	MRS	CurrentEL, R0
 	AND	$0xc, R0, R0
 	CMP	$0x4, R0
 	BEQ	atel1
 	MOV	$(1<<31), R0
-	WORD	$0xd51c1100		/* MSR x0, HCR_EL2 */
+	MSR	R0, SPR(D_HCR_EL2)
 	MOV	$0x431, R0
-	WORD	$0xd51e1100		/* MSR x0, SCR_EL3 */
+	MSR	R0, SPR(D_SCR_EL3)
 	MOV	$0x3c5, R0
-	WORD	$0xd51e4000		/* MSR x0, SPSR_EL3 */
+	MSR	R0, SPR(D_SPSR_EL3)
 	MOV	$boot1(SB), R0
-	WORD	$0xd51e4020		/* MSR x0, ELR_EL3 */
+	MSR	R0, SPR(D_ELR_EL3)
 	ERET
 atel1:
 	BL	boot1(SB)
 dead:
 	B	dead
 parkcore:
-	WORD	$0xd503205f		/* WFE */
+	WFE
 	B	parkcore
 
 TEXT	boot1(SB), 1, $-4
@@ -154,7 +166,7 @@ deadb:
  * timer has fired - used in trap() since raspi3b has no local IRQ
  * source register (0x40000000 is RAM here). */
 TEXT	getcntpctl(SB), 1, $-4
-	WORD	$0xd53be220		/* MRS CNTP_CTL_EL0, x0 */
+	MRS	SPR(D_CNTP_CTL_EL0), R0
 	RET	R30
 
 GLOBL	dtbptr(SB), $8
@@ -201,51 +213,49 @@ TEXT	getcallerpc(SB), 1, $-4
 /*
  * psci(fn, a1, a2, a3): a PSCI call through HVC, QEMU virt's conduit.
  * The four args are already in R0-R3 (x0-x3) where SMCCC wants them;
- * HVC #0 uses them and returns the result in x0.  HVC is not a 7a
- * mnemonic, so it is the raw encoding 0xd4000002.
+ * HVC #0 uses them and returns the result in x0.
  */
 TEXT	psci(SB), 1, $-4
-	WORD	$0xd4000002
+	HVC	$0
 	RET	R30
 
 /*
  * GICv3 CPU-interface accessors.  On a GICv3 the per-CPU interface is
  * a set of ICC_*_EL1 system registers, not the MMIO GICC page a GICv2
  * has, so acknowledge/EOI/priority-mask/group-enable are MSR/MRS here.
- * 7a does not know the ICC_* mnemonics, so each is the raw MSR/MRS
- * word (op0=3,op1=0,CRn=12/4,CRm,op2, Rt=0 == R0), verified against
- * the host assembler; the single arg / return value lives in R0/x0
- * where 7c's calling convention already puts it.  SRE and group-enable
- * writes need an ISB (0xd5033fdf) before the next fetch sees them.
+ * The ICC_* registers reach the assembler through SPR(); the single arg
+ * / return value lives in R0/x0 where 7c's calling convention already
+ * puts it.  SRE and group-enable writes need an ISB before the next
+ * fetch sees them.
  */
 TEXT	seticcsre(SB), 1, $-4
-	WORD	$0xd518cca0		/* MSR x0, ICC_SRE_EL1 */
-	WORD	$0xd5033fdf		/* ISB */
+	MSR	R0, SPR(D_ICC_SRE_EL1)
+	ISB	$15
 	RET	R30
 
 TEXT	geticcsre(SB), 1, $-4
-	WORD	$0xd538cca0		/* MRS ICC_SRE_EL1, x0 */
+	MRS	SPR(D_ICC_SRE_EL1), R0
 	RET	R30
 
 TEXT	seticcpmr(SB), 1, $-4
-	WORD	$0xd5184600		/* MSR x0, ICC_PMR_EL1 */
+	MSR	R0, SPR(D_ICC_PMR_EL1)
 	RET	R30
 
 TEXT	seticcbpr1(SB), 1, $-4
-	WORD	$0xd518cc60		/* MSR x0, ICC_BPR1_EL1 */
+	MSR	R0, SPR(D_ICC_BPR1_EL1)
 	RET	R30
 
 TEXT	seticcgrpen1(SB), 1, $-4
-	WORD	$0xd518cce0		/* MSR x0, ICC_IGRPEN1_EL1 */
-	WORD	$0xd5033fdf		/* ISB */
+	MSR	R0, SPR(D_ICC_IGRPEN1_EL1)
+	ISB	$15
 	RET	R30
 
 TEXT	seticcctlr(SB), 1, $-4
-	WORD	$0xd518cc80		/* MSR x0, ICC_CTLR_EL1 */
+	MSR	R0, SPR(D_ICC_CTLR_EL1)
 	RET	R30
 
 TEXT	geticciar(SB), 1, $-4
-	WORD	$0xd538cc00		/* MRS ICC_IAR1_EL1, x0 */
+	MRS	SPR(D_ICC_IAR1_EL1), R0
 	RET	R30
 
 /*
@@ -257,11 +267,11 @@ TEXT	geticciar(SB), 1, $-4
  * address that might not answer.
  */
 TEXT	getpfr0(SB), 1, $-4
-	WORD	$0xd5380400		/* MRS ID_AA64PFR0_EL1, x0 */
+	MRS	SPR(D_ID_AA64PFR0_EL1), R0
 	RET	R30
 
 TEXT	seticceoir(SB), 1, $-4
-	WORD	$0xd518cc20		/* MSR x0, ICC_EOIR1_EL1 */
+	MSR	R0, SPR(D_ICC_EOIR1_EL1)
 	RET	R30
 
 TEXT	_tas(SB), 1, $-4
@@ -413,15 +423,15 @@ TEXT	mmuenable(SB), 1, $-4
 	MOV	$0x803519, R1		/* TCR: T0SZ25 IRGN/ORGN WB SH inner EPD1 */
 	MSR	R1, SPR(D_TCR_EL1)
 	MSR	R0, SPR(D_TTBR0_EL1)	/* R0 = &l1 table (REGARG) */
-	WORD	$0xd5033fdf		/* ISB */
-	WORD	$0xd508871f		/* TLBI VMALLE1 */
+	ISB	$15
+	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */
 	DSB	$15
-	WORD	$0xd5033fdf		/* ISB */
+	ISB	$15
 	MRS	SPR(D_SCTLR_EL1), R1
 	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
 	ORR	R2, R1, R1
 	MSR	R1, SPR(D_SCTLR_EL1)
-	WORD	$0xd5033fdf		/* ISB */
+	ISB	$15
 	RET	R30
 
 /*
@@ -479,11 +489,11 @@ TEXT	vectorinit(SB), 1, $-4
  * touching any GPR, is enough to make the frame safe to write into.
  */
 TEXT	vectrap(SB), 1, $-4
-	WORD	$0xd5033f5f		/* CLREX: an exception clears the exclusive
-					 * monitor, so an interrupted _tas STXR fails
-					 * and retries.  QEMU TCG does not do this on
-					 * its own, and without it the timer IRQ landing
-					 * in an LL/SC leaves a lock stuck. */
+	CLREX				/* an exception clears the exclusive monitor,
+					 * so an interrupted _tas STXR fails and
+					 * retries.  QEMU TCG does not do this on its
+					 * own, and without it the timer IRQ landing in
+					 * an LL/SC leaves a lock stuck. */
 	MOV	R9, UR_TYPE(RSP)	/* the tag; R9 is now free to reuse */
 
 	/* the interrupted registers, before anything can touch them */

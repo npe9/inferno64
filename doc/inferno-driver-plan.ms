@@ -459,8 +459,7 @@ arm64 PSCI:
 .CW psci()
 in
 .CW l.s
-is HVC #0 (the raw word, since 7a has no HVC mnemonic) with the SMCCC
-arguments already in R0-R3;
+is HVC #0 with the SMCCC arguments already in R0-R3;
 .CW archreboot
 calls SYSTEM_RESET and
 .CW archshutdown
@@ -476,9 +475,11 @@ never aborts, where the GICv2 distributor's PIDR2 (the obvious probe)
 is unimplemented in QEMU and faults.  On a v3 the per-CPU interface is
 the
 .CW ICC_*_EL1
-system registers, hand-encoded as raw MSR/MRS words in
+system registers, reached in
 .CW l.s
-(verified against the host assembler); SGI/PPI enable state lives in
+through the assembler's
+.CW SPR()
+system-register operand with named defines; SGI/PPI enable state lives in
 the per-CPU redistributor's SGI frame, not the distributor; and SPIs
 are routed to a CPU through
 .CW GICD_IROUTER
@@ -640,11 +641,15 @@ KTZERO is 0x80000 - and x0 is 0 (no DTB, as the machine has no FDT).
 The EL3 to EL1 drop, verified working (the kernel ran to procinit at
 EL1).  In one ERET: set HCR_EL2.RW so EL1 comes up AArch64 even though
 EL2 is skipped, SCR_EL3 to 0x431 (RW, NS, the RES1 bits), SPSR_EL3 to
-0x3c5 (EL1h, DAIF masked), ELR_EL3 to the EL1 entry.  7a does not name
-the EL3/EL2 registers, so they are raw MSR words with source x0,
-verified against the host assembler: HCR_EL2 0xd51c1100, SCR_EL3
-0xd51e1100, SPSR_EL3 0xd51e4000, ELR_EL3 0xd51e4020, and MRS CurrentEL
-0xd5384240.
+0x3c5 (EL1h, DAIF masked), ELR_EL3 to the EL1 entry.  The EL3/EL2
+registers are written with
+.CW MSR
+through the assembler's
+.CW SPR()
+operand and named defines (D_HCR_EL2, D_SCR_EL3, D_SPSR_EL3,
+D_ELR_EL3); CurrentEL is a named
+.CW MRS
+operand.
 .IP \(bu
 The console is the PL011 at 0x3f201000 (the BCM2837 peripheral base is
 0x3f000000), and it is serial0 under
