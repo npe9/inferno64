@@ -21,6 +21,10 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 PATH="$root/MacOSX/arm64/bin:$PATH"
 export PATH
 
+# emu binary: defaults to the macOS build; the Docker/Linux run overrides
+# it via $EMU (e.g. Linux/amd64/bin/emu). All invocations go through $emu.
+emu=${EMU:-"$root/MacOSX/arm64/bin/emu-g"}
+
 port=${SSH_TEST_PORT:-2222}
 
 for tool in ssh-keygen; do
@@ -29,7 +33,7 @@ done
 SSHD=/usr/sbin/sshd
 test -x "$SSHD" || SSHD=$(command -v sshd || true)
 test -n "$SSHD" && test -x "$SSHD" || { echo 'SSHLOCAL: sshd not found' >&2; exit 2; }
-test -x "$root/MacOSX/arm64/bin/emu-g" || { echo 'SSHLOCAL: emu-g not built' >&2; exit 2; }
+test -x "$emu" || { echo "SSHLOCAL: emu not built at $emu" >&2; exit 2; }
 
 tmp=$(mktemp -d)
 # emu's / is the tree root, so the client key must live under $root to
@@ -68,7 +72,7 @@ cat > "$intree/gen.sh" <<'GEN'
 auth/rsagen -b 2048 > /.sshtesttmp/keyline
 auth/rsa2ssh /.sshtesttmp/keyline > /.sshtesttmp/facpub
 GEN
-"$root/MacOSX/arm64/bin/emu-g" -r. sh /.sshtesttmp/gen.sh >/dev/null 2>&1
+"$emu" -r. sh /.sshtesttmp/gen.sh >/dev/null 2>&1
 sed -i.bak 's/^key proto=rsa/key proto=rsa service=ssh/' "$intree/keyline" && rm -f "$intree/keyline.bak"
 cat "$intree/facpub" >> "$tmp/authorized_keys"
 
@@ -150,7 +154,7 @@ rc=0
 marker="all tests passed"
 
 echo 'SSHLOCAL: === positive: authorised key ==='
-pout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$port" "$user" "/.sshtesttmp/id_rsa" "$wantthumb" "printf hello" "hello" 2>&1) || true
+pout=$("$emu" -r. sshtest exec "tcp!127.0.0.1!$port" "$user" "/.sshtesttmp/id_rsa" "$wantthumb" "printf hello" "hello" 2>&1) || true
 echo "$pout"
 echo "$pout" | grep -q "$marker" || { echo 'SSHLOCAL: POSITIVE TEST FAILED'; rc=1; }
 
@@ -158,15 +162,15 @@ echo 'SSHLOCAL: === ECDSA host key: verify ecdsa-sha2-nistp256 ==='
 # the ecdsa-only server forces the client onto ecdsa host-key
 # verification; connect() succeeds only if that signature checks out,
 # with the thumbprint pinned to ssh-keygen's oracle for the ecdsa key
-eout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$eport" "$user" "/.sshtesttmp/id_rsa" "$ewantthumb" "printf hi" "hi" 2>&1) || true
+eout=$("$emu" -r. sshtest exec "tcp!127.0.0.1!$eport" "$user" "/.sshtesttmp/id_rsa" "$ewantthumb" "printf hi" "hi" 2>&1) || true
 echo "$eout" | grep -q "$marker" && echo 'SSHLOCAL: ecdsa host-key verification: PASS' || { echo "SSHLOCAL: ecdsa host-key verification FAILED: [$eout]"; rc=1; }
 
 echo 'SSHLOCAL: === ed25519 host key: verify ssh-ed25519 ==='
-edout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$edport" "$user" "/.sshtesttmp/id_rsa" "$edwantthumb" "printf hi" "hi" 2>&1) || true
+edout=$("$emu" -r. sshtest exec "tcp!127.0.0.1!$edport" "$user" "/.sshtesttmp/id_rsa" "$edwantthumb" "printf hi" "hi" 2>&1) || true
 echo "$edout" | grep -q "$marker" && echo 'SSHLOCAL: ed25519 host-key verification: PASS' || { echo "SSHLOCAL: ed25519 host-key verification FAILED: [$edout]"; rc=1; }
 
 echo 'SSHLOCAL: === negative control: unauthorised key must be REJECTED ==='
-nout=$(./MacOSX/arm64/bin/emu-g -r. sshtest exec "tcp!127.0.0.1!$port" "$user" "/.sshtesttmp/id_bad" "$wantthumb" "printf hello" "hello" 2>&1) || true
+nout=$("$emu" -r. sshtest exec "tcp!127.0.0.1!$port" "$user" "/.sshtesttmp/id_bad" "$wantthumb" "printf hello" "hello" 2>&1) || true
 echo "$nout"
 if echo "$nout" | grep -q "$marker"; then
 	echo 'SSHLOCAL: NEGATIVE CONTROL FAILED: unauthorised key accepted!'; rc=1
@@ -181,7 +185,7 @@ echo 'SSHLOCAL: === ssh(1) command: run a remote command ==='
 # the host process's stdout, so a host-side 2>/dev/null cannot drop the
 # remote login shell's rc-file chatter here - assert the command output
 # is PRESENT rather than exclusive.
-cout=$(./MacOSX/arm64/bin/emu-g -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" "printf" "cmd-ok" 2>&1) || true
+cout=$("$emu" -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" "printf" "cmd-ok" 2>&1) || true
 if echo "$cout" | grep -q "cmd-ok"; then
 	echo 'SSHLOCAL: ssh(1) command run: PASS'
 else
@@ -193,7 +197,7 @@ echo 'SSHLOCAL: === ssh(1) interactive shell: piped script ==='
 # Plan 9 telnet/vt model). $TERM is unset in emu, so no pty is asked
 # for and the remote runs a non-interactive shell reading our script.
 # It must run both commands and then exit on our EOF.
-sout=$(printf 'echo line-one\necho line-two\nexit\n' | ./MacOSX/arm64/bin/emu-g -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" 2>/dev/null) || true
+sout=$(printf 'echo line-one\necho line-two\nexit\n' | "$emu" -r. ssh -i /.sshtesttmp/id_rsa -p "$port" -t "$wantthumb" "$user@127.0.0.1" 2>/dev/null) || true
 if echo "$sout" | grep -q "line-one" && echo "$sout" | grep -q "line-two"; then
 	echo 'SSHLOCAL: ssh(1) interactive shell: PASS'
 else
@@ -213,7 +217,7 @@ quitall
 FAC
 # factotum is a daemon, so quitall(1) ends the emu session once ssh has
 # returned; a timeout backstops it in case that ever fails to fire.
-fout=$(timeout 60 ./MacOSX/arm64/bin/emu-g -r. sh /.sshtesttmp/facssh.sh 2>/dev/null) || true
+fout=$(timeout 60 "$emu" -r. sh /.sshtesttmp/facssh.sh 2>/dev/null) || true
 if echo "$fout" | grep -q "fac-ok"; then
 	echo 'SSHLOCAL: factotum publickey auth: PASS'
 else
@@ -246,7 +250,7 @@ auth/factotum -S 'alice@tcp!127.0.0.1!$ssport'
 ssh -p $port -t '$wantthumb' $user@127.0.0.1 printf secstore-fac-ok
 quitall
 SEC
-secout=$(printf '%s\n%s\n%s\n' "$sspw" "$sspw" "$sspw" | timeout 90 ./MacOSX/arm64/bin/emu-g -r. sh /.sshtesttmp/secssh.sh 2>/dev/null) || true
+secout=$(printf '%s\n%s\n%s\n' "$sspw" "$sspw" "$sspw" | timeout 90 "$emu" -r. sh /.sshtesttmp/secssh.sh 2>/dev/null) || true
 if echo "$secout" | grep -q "secstore-fac-ok"; then
 	echo 'SSHLOCAL: factotum -S secstore-seeded publickey auth: PASS'
 else

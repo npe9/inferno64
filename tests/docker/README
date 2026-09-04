@@ -1,0 +1,49 @@
+Docker "separate Linux host" for Inferno protocol interop testing
+================================================================
+
+This image is a small Linux host running real, mainstream server software:
+
+  - OpenSSH sshd
+  - Postfix, SMTP submission over implicit TLS (SMTPS, port 465), SASL auth
+  - Dovecot, IMAP over implicit TLS (IMAPS, port 993)
+
+all authenticating a single account ('tester'). It exists so the Inferno
+client - running on the host, unchanged - can be pointed at it to prove that
+Inferno actually speaks these protocols to independent implementations, not
+to a stub. The container is the server side only; no emu runs inside it, so
+it builds and runs on the host's native architecture (no emulation).
+
+The whole thing is driven by tests/mailsshinterop.sh, which:
+
+  - generates a throwaway CA + server cert (for mail.test.local), an sshd host
+    key, and an ssh client key, and drops them in a /shared volume the
+    container reads;
+  - runs this container with 22/465/993 published to the loopback;
+  - temporarily trusts the test CA in this tree's TLS bundle (lib/tls) so the
+    Inferno TLS client accepts the server cert, and restores it afterwards;
+  - drives the Inferno clients against the container:
+      * ssh(1): publickey login + a remote command (and an unauthorised-key
+        negative control);
+      * upas/send over smtp2(2): compose and send a message to Postfix;
+      * upas/fetch over imap4(2): fetch it back from Dovecot;
+    the headline check is the full round trip - a message SENT by Inferno's
+    SMTP client and FETCHED back by Inferno's IMAP client through the real
+    servers - plus a wrong-password negative control on IMAP.
+
+Run it (from the repo root):
+
+    docker build -t inferno-interop-host tests/docker
+    sh tests/mailsshinterop.sh
+
+A successful run ends with:
+
+    INTEROP: ALL PASS - Inferno ssh/SMTP/IMAP interoperate with OpenSSH/Postfix/Dovecot
+
+Files:
+  Dockerfile - the server image (Debian + OpenSSH + Postfix + Dovecot).
+  start.sh   - container entrypoint: configures the three daemons from the
+               cert/host-key/authorized_keys in /shared, then launches them.
+
+The client transport is the same one the Gmail work uses (tls12(2)/https(2)
+under imap4(2)/smtp2(2)); tests/upasmail.sh exercises the mail client against
+a Python TLS stub, and this test raises that to real Postfix/Dovecot plus ssh.
