@@ -120,6 +120,9 @@ root
 	/dis/sh.dis
 	/dis/sh/std.dis
 	/dis/unmount.dis
+	/dis/disk/kfs.dis
+	/dis/disk/kfs64.dis
+	/dis/lib/disks.dis
 	/dis/lib/arg.dis
 	/dis/lib/bufio.dis
 	/dis/lib/daytime.dis

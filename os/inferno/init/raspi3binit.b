@@ -4,6 +4,7 @@ include "sys.m";
 include "draw.m";
 Init: module { init: fn(); };
 Shell: module { init: fn(nil: ref Draw->Context, argv: list of string); };
+Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 # Read/write the SD card exposed by devsd (#S) as /dev/sdM0/data - the
 # BCM2835 SDHOST native-SD path.  Boot with -sd <image>.
 sdcheck()
@@ -60,6 +61,40 @@ sdcheck()
 	sys->print("SD-OK\n");
 }
 
+kfsproc(pfd: ref Sys->FD)
+{
+	sys->pctl(Sys->FORKFD, nil);
+	sys->dup(pfd.fd, 0);
+	pfd = nil;
+	kfs := load Command "/dis/disk/kfs.dis";
+	if(kfs == nil){
+		sys->print("SD-FS load kfs: %r\n");
+		return;
+	}
+	kfs->init(nil, "kfs" :: "-r" :: "/dev/sdM0/data" :: nil);
+}
+
+sdfs()
+{
+	p := array[2] of ref Sys->FD;
+	if(sys->pipe(p) < 0){
+		sys->print("SD-FS pipe: %r\n");
+		return;
+	}
+	spawn kfsproc(p[1]);
+	p[1] = nil;
+	if(sys->mount(p[0], nil, "/tmp", Sys->MREPL|Sys->MCREATE, "") < 0){
+		sys->print("SD-FS mount: %r\n");
+		return;
+	}
+	fd := sys->create("/tmp/hello", Sys->ORDWR, 8r644);
+	if(fd == nil){
+		sys->print("SD-FS create: %r\n");
+		return;
+	}
+	sys->print("SD-FS-CREATE-OK\n");
+}
+
 init()
 {
 	shell: Shell;
@@ -73,6 +108,14 @@ init()
 
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();
+	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
+	# creates a file.  The ream and every SD write succeed, but the
+	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
+	# error unwinds past mntwalk's own waserror handler instead of into
+	# it, so pid 1 never issues the Tcreate.  It is the open arm64
+	# multi-kproc error-stack bug (doc/inferno-driver-plan.ms); left
+	# uncalled so the board boots clean.  Uncomment to reproduce.
+	# sdfs();
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){ sys->print("init: load sh: %r\n"); exit; }
