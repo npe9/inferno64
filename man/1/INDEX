@@ -465,6 +465,7 @@ rwrite sh-file2chan
 say say
 schedcmp schedcmp
 secstore secstore
+secstoretest secstoretest
 send sh-tk
 sendmail sendmail
 sentences sentences

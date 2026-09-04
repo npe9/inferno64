@@ -1,0 +1,58 @@
+.TH SECSTORETEST 1
+.SH NAME
+secstoretest \- test the secstore network round-trip
+.SH SYNOPSIS
+.B secstoretest
+.SH DESCRIPTION
+.I Secstoretest
+is a self-contained regression test for the
+.IR secstore (2)
+client/server exchange.
+It stands up a minimal secstore server on a loopback socket \(em using the
+library's own
+.B pakserver
+plus a small in-memory
+.BR GET / PUT
+loop that speaks the same wire protocol as
+.B secstore->getfile
+and
+.B secstore->putfile
+\(em then, as a client, runs the whole library path: dial, push
+.IR ssl (3),
+authenticate with PAK,
+.B putfile
+an encrypted blob,
+.B getfile
+it back, and check it is byte-identical.
+.PP
+It then runs a negative control: a second client using the wrong password
+must fail to authenticate.
+A pass therefore means the PAK verifier is actually being checked rather than
+waved through, and that a correct exchange survives the switch to the encrypted
+channel.
+.PP
+It binds
+.B #I
+onto
+.B /net
+itself and needs no network, account, or password setup.
+It prints a line per check and a final
+.B PASS
+or
+.BR FAIL ,
+and exits with an exception on failure.
+.SH SOURCE
+.B /appl/cmd/secstoretest.b
+.SH SEE ALSO
+.IR secstore (1),
+.IR secstore (2),
+.IR secstored (8),
+.IR factotum (4)
+.SH BUGS
+The server side is a stripped-down stand-in, not
+.IR secstored (8)
+itself, so account creation, the file listing format, STA/SecurID, and the
+.B RM
+verb are not exercised here \(em only the PAK authentication and a single
+file's encrypted round trip, which is where the network-path bugs lived.
+It uses a fixed loopback port, so two copies cannot run at once.
