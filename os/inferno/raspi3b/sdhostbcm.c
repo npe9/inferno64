@@ -56,6 +56,7 @@ enum {
 
 typedef struct Ctlr Ctlr;
 struct Ctlr {
+	QLock;			/* serialise bio across concurrent procs */
 	u32*	r;
 	uvlong	sectors;
 	int	byteaddr;
@@ -166,17 +167,26 @@ static int
 sdhostonline(SDunit *u)
 {
 	Ctlr *c = u->dev->ctlr;
+	int first;
 
-	if(c->inited)
-		return u->sectors? 1: 0;
-	if(sdcardinit(c) == 0){
+	first = 0;
+	if(!c->inited){
 		c->inited = 1;
-		return 0;
+		sdcardinit(c);		/* leaves c->sectors 0 if no card */
+		first = 1;
 	}
-	c->inited = 1;
+	if(c->sectors == 0)
+		return 0;		/* no media */
+	/*
+	 * Always repopulate from the cached geometry: sdinitpart() zeroes
+	 * unit->sectors before each call, so a re-init must restore them or
+	 * the data partition vanishes ("file does not exist").  Report media
+	 * change only on the first init - returning 2 every call would churn
+	 * the partition version under an open channel.
+	 */
 	u->secsize = Secsize;
 	u->sectors = c->sectors;
-	return 2;
+	return first? 2: 1;
 }
 
 static long
@@ -190,6 +200,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	u32 arg, w;
 
 	USED(lun);
+	qlock(c);
 	for(i = 0; i < nb; i++){
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		r[SDHBCT] = Secsize;
@@ -215,6 +226,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		if(r[SDCMD] & Failflag)
 			break;
 	}
+	qunlock(c);
 	return i * Secsize;
 }
 
