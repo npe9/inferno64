@@ -4562,10 +4562,44 @@ binaries \-
 names them under
 .CW Osprey/amd64/bin
 \- and those exist for amd64 only.  A 386 kernel needs a 386 userland to
-put in its boot filesystem before it needs anything else, and that is a
-9front userland and a
-.CW libc
-for the object type, which this tree does not have.
+put in its boot filesystem before it needs anything else.
+.PP
+The sources for one are in the tree now, and so is a toolchain that
+builds them:
+.CW 9front-src
+holds the whole of 9front's
+.CW sys/src
+and
+.CW scripts/mk9front.sh
+takes
+.CW "-o 386" .
+What stops it is smaller than it was and measured rather than
+guessed:
+.CW utils/8a
+has no
+.CW XADD ,
+so
+.CW libc/386/atomic.s
+does not assemble \-
+.CW aincl
+and
+.CW coherence
+both want
+.CW "LOCK; XADDL" .
+.CW utils/6a
+has the whole family
+.CW ( XADDB ,
+.CW XADDL ,
+.CW XADDQ ,
+.CW XADDW )
+and 8a has none, though it does have
+.CW CMPXCHGB ,
+.CW CMPXCHGL
+and
+.CW CMPXCHGW
+beside them.  The amd64 userland is built and counted in
+.CW doc/9front-userland.ms ;
+the 386 one begins there.
 .PP
 The far one is a machine of another family.
 .CW os/inferno
