@@ -10,21 +10,27 @@ It runs under
 .IR wm (1).
 .PP
 Steer and accelerate along a perspective road. There is no finish line.
+The car starts stopped; hold the accelerator to get moving.
+Drive keys act continuously while held, and the engine's
+tone tracks the speed.
+Straying off the road ends the game; press
+.B Enter
+to restart.
 .PP
 The controls are:
 .TF space
 .TP
 .B Left / a
-Steer left
+Steer left (hold)
 .TP
 .B Right / d
-Steer right
+Steer right (hold)
 .TP
 .B Up / w
-Accelerate
+Accelerate (hold)
 .TP
 .B Down / s
-Slow
+Brake (hold)
 .TP
 .B r / Enter
 Restart
