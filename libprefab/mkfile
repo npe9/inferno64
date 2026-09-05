@@ -2,6 +2,14 @@
 
 LIB=libprefab.a
 
+#
+#	runt.h describes a Dis frame, so libinterp generates one per word
+#	width into w$DISWORD.  Look there rather than at a path that has
+#	not held it since a Dis word became the target's word.
+#
+DISH=../libinterp/w$DISWORD
+CFLAGS=$CFLAGS -I$DISH
+
 OFILES=\
 	box.$O\
 	compound.$O\
@@ -14,6 +22,7 @@ OFILES=\
 
 HFILES=\
 	$ROOT/include/draw.h\
+	$DISH/runt.h\
 	$ROOT/include/prefab.h\
 
 <$ROOT/mkfiles/mksyslib-$SHELLTYPE
