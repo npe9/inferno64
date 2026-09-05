@@ -23,6 +23,42 @@ _assert(char *s)
 }
 
 /*
+ * getenv, with Plan 9's contract rather than POSIX's: the value is a
+ * copy the caller owns and frees.  9front's code is written to that
+ * -- libdisk's proto reader does
+ *
+ *	s = getenv(*buf+1);
+ *	...
+ *	free(*buf);
+ *	*buf = s;
+ *
+ * and frees it later -- and against the C library's getenv, which
+ * returns a pointer into the environment itself, that free aborts the
+ * program.  Defining it here gives every host tool built from 9front
+ * sources the semantics those sources were written against; a tool
+ * that does not free what it gets leaks the copy, which is a few
+ * bytes once.
+ *
+ * The environment is walked here rather than asked through the C
+ * library's own getenv, because this definition is that name: calling
+ * it would be calling itself.
+ */
+extern char **environ;
+
+char*
+getenv(const char *name)
+{
+	char **p;
+	int n;
+
+	n = strlen(name);
+	for(p = environ; *p != nil; p++)
+		if(strncmp(*p, name, n) == 0 && (*p)[n] == '=')
+			return strdup(*p + n + 1);
+	return nil;
+}
+
+/*
  * libmp calls mallocz, which 9front's libc has and lib9 does not.
  * mpc, the generator libsec and libauthsrv run over their .mp
  * sources, is linked against this tree's host libmp and wants it.

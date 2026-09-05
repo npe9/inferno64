@@ -42,6 +42,14 @@
 # size goes through libmach; this one reads the a.out header directly.
 # See the note at the top of size.c.
 #
+# mkpaqfs and mkbootfs are the last two, and they are for a kernel
+# rather than for the userland: mkbootfs lays out the tree a boot
+# proto describes and mkpaqfs turns it into the bootfs.paq the kernel
+# links.  On 9front those are mkpaqfs and disk/mkfs, both ordinary
+# commands in /bin.  mkpaqfs is 9front's own source built here
+# against this tree's libflate and libsec; mkbootfs is ours, and the
+# note at the top of it says why disk/mkfs is not built instead.
+#
 # ROOT must be set.  Called by scripts/mk9front.sh; a tool is rebuilt
 # only when its source is newer.
 
@@ -96,4 +104,37 @@ if [ ! -x "$bin/size" ] || [ "$src" -nt "$bin/size" ] \
 	echo "mkhost: size"
 	"$ROOT/9front-glue/host/hostcc" -o "$obj/size.o" "$src"
 	"$ROOT/9front-glue/host/hostld" -o "$bin/size" "$obj/size.o"
+fi
+
+flate=$ROOT/libflate
+src=$ROOT/9front-src/sys/src/cmd/paqfs/mkpaqfs.c
+if [ ! -x "$bin/mkpaqfs" ] || [ "$src" -nt "$bin/mkpaqfs" ] \
+   || [ "$flate/deflate.c" -nt "$bin/mkpaqfs" ] \
+   || [ "$ROOT/9front-glue/host/hostsupp.c" -nt "$bin/mkpaqfs" ]; then
+	echo "mkhost: mkpaqfs"
+	objs=
+	"$ROOT/9front-glue/host/hostcc" -o "$obj/mkpaqfs.o" "$src"
+	objs="$obj/mkpaqfs.o"
+	for f in deflate deflateblock flateerr crc adler; do
+		"$ROOT/9front-glue/host/hostcc" -o "$obj/flate-$f.o" "$flate/$f.c"
+		objs="$objs $obj/flate-$f.o"
+	done
+	# shellcheck disable=SC2086
+	"$ROOT/9front-glue/host/hostld" -o "$bin/mkpaqfs" $objs \
+		"$host/lib/libsec.a" "$host/lib/libmp.a"
+fi
+
+src=$ROOT/9front-glue/host/mkbootfs.c
+proto=$ROOT/9front-src/sys/src/libdisk/proto.c
+if [ ! -x "$bin/mkbootfs" ] || [ "$src" -nt "$bin/mkbootfs" ] \
+   || [ "$proto" -nt "$bin/mkbootfs" ] \
+   || [ "$ROOT/9front-glue/host/hostsupp.c" -nt "$bin/mkbootfs" ]; then
+	echo "mkhost: mkbootfs"
+	nine="-I$ROOT/9front-glue/host/include/9front -I$ROOT/utils/include"
+	# shellcheck disable=SC2086
+	"$ROOT/9front-glue/host/hostcc" $nine -o "$obj/mkbootfs.o" "$src"
+	# shellcheck disable=SC2086
+	"$ROOT/9front-glue/host/hostcc" $nine -o "$obj/proto.o" "$proto"
+	"$ROOT/9front-glue/host/hostld" -o "$bin/mkbootfs" \
+		"$obj/mkbootfs.o" "$obj/proto.o" "$host/lib/libregexp.a"
 fi

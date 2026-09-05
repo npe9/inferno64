@@ -108,7 +108,12 @@ y.debug
 /9front/*/include/ureg.h
 /9front/*/init
 /9front/*/9pc64
-/9front/include/
+/9front/include/*
+# ... except the two headers the 9front flavour keeps there, which
+# are source and are tracked; without these the rule above swallows
+# them the moment anyone re-adds them
+!/9front/include/lib9.h
+!/9front/include/lib9x.h
 /9front/host/
 /9front/sweep/
 /9front/dirs.*
@@ -116,6 +121,20 @@ y.debug
 /9front/rc/
 /9front/lib/
 /9front/acme/
+# the rest of a deployed root, which scripts/mkroot9front.sh fills in
+# from an upstream checkout: the dist skeleton and the mount points
+/9front/adm/
+/9front/cfg/
+/9front/mail/
+/9front/usr/
+/9front/tmp/
+/9front/env/
+/9front/dev/
+/9front/proc/
+/9front/net/
+/9front/srv/
+/9front/mnt/
+/9front/n/
 /OpenBSD/*/bin/*
 /Inferno/*/bin/*
 /Inferno/*/pbs
