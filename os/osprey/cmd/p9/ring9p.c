@@ -14,6 +14,7 @@
  */
 #include <u.h>
 #include <libc.h>
+#include "ospreydata.h"
 
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
@@ -25,14 +26,14 @@ enum {
 	Maxframe	= 2048,	/* the ring medium's MTU: a frame fits one of the slice's packet buffers */
 	Inpktbuf	= 0xB0F,	/* arg[4] of a Reqframe: the frame is in the sender's packet buffer arg[2], not the data area */
 	Ntxslot		= 16,	/* our packet buffers 0-15 carry frames to the server; 16-31 carry the server's to us */
-	Takenoff	= 128,	/* where select puts a message it takes off our output queue */
+	Takenoff	= Odtaken,	/* where select puts a message it takes off our output queue */
 	OSget		= 2,	/* a select arm: take a message off a queue */
 	ReqWait		= 4,
 	ReqExec		= 13,
 	ReqTick		= 17,	/* a request of our own (ospreyxcall): the clock tick on a semaphore */
 	OSdown		= 4,	/* a select arm: down a semaphore */
-	Armoff		= 0,	/* the client's one select arm, at the start of the data area */
-	Execnameoff	= 3072,	/* where exec's name goes in the data area, clear of 9P */
+	Armoff		= Odarm,	/* the client's one select arm, at the start of the data area */
+	Execnameoff	= Odexecname,	/* where exec's name goes in the data area, clear of 9P */
 	ReplyDone	= 1,
 };
 
@@ -141,7 +142,7 @@ ringxfer(uvlong op, uchar *tmsg, long tn, uchar *rbuf, long rmax)
 	Msg rep;
 	uchar *data;
 	long rn, k;
-	enum { T9off = 256, R9off = 1024 };
+	enum { T9off = Odt9, R9off = Odr9 };
 
 	if(tn < 0 || tn > R9off - T9off)	/* keep T clear of R in the small data area */
 		return -1;

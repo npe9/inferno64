@@ -5753,12 +5753,21 @@ fault should.  The band-aid is removed because the thing it hid is
 fixed, and measured to be fixed.
 .PP
 .B "14.  One layout for the data area."
-Offsets for 9P, \[*p]p, frames, migration, the console, the block and
-network descriptors are constants in five files.  The real form: one
-enum in
+Done.  The offsets are one enum in
+.CW ospreydata.h
+\- the select arms and the message a select takes off the output
+queue, the 9P a client and its server exchange, the buddy's argument
+and data blocks, the migration header and staging, the pi-p tickets,
+and the block and network descriptors \- which
 .CW ospreyabi.h
-that every user reads, with a static check that nothing overlaps.
-Proof: the enum, and the build failing if it is wrong.
+includes and every user reads, in both the kernel's header world and
+the user program's.  The header carries its own check: one enum value
+is a sum of
+.CW 1/(region\ ends\ before\ the\ next\ begins)
+terms, so a layout where two regions that share a data area overlap
+divides by zero and will not compile.  Proof: the enum is read in six
+files that held the constants before, and moving one offset to overlap
+another fails the build with a divide check, as it should.
 .PP
 .B "15.  The pc64 interrupt-path bug."
 The standing corrupted return

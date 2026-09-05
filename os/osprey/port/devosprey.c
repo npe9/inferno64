@@ -1882,7 +1882,7 @@ extern int ospreyuser;		/* 0 = full personality (pc64), 1 = xup64 user path */
  * is above.
  */
 enum {
-	Kbdoff	= 1024,		/* the scancode ring, past the request message */
+	Kbdoff	= Odkbd,		/* the scancode ring, past the request message */
 	Kbdn	= 256,
 	Kbddata	= 0x60,
 	Kbdstat	= 0x64,
@@ -1988,7 +1988,7 @@ ospreykbdenable(Ospreyproc *p, int sem)
  * device; the hardware is exposed, the driver is above.
  */
 enum {
-	Mouseoff = 2048,	/* the aux-byte ring, past the keyboard ring */
+	Mouseoff = Odmouse,	/* the aux-byte ring, past the keyboard ring */
 	Mousen	= 256,
 	Mouseirq = 12,		/* IrqMOUSE - the i8042 aux device */
 };
@@ -2479,7 +2479,7 @@ enum {
 	 * buddy and not the kernel.  Numbered above any Plan 9 system call.
 	 */
 	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103,
-	Bargoff = 64, Bnameoff = 256, Bdataoff = 1024,
+	Bargoff = Odbuddyarg, Bnameoff = Odbuddyname, Bdataoff = Odbuddydata,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
 

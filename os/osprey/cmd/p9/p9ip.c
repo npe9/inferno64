@@ -4,6 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
+#include	"ospreydata.h"
 #include	"ip.h"
 
 /*
@@ -706,8 +707,8 @@ wirecli(void *)
  * buddy knows nothing of.
  */
 enum {
-	Migoff		= 1024,
-	Migrxoff	= 5120,
+	Migoff		= Odmig,
+	Migrxoff	= Odmigrx,
 	Mighalf		= 2048,
 	Migport		= 9006,
 };

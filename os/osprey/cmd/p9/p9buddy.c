@@ -5,6 +5,7 @@
 #include	"fns.h"
 #include	"../port/error.h"
 #include	"p9file.h"
+#include	"ospreydata.h"
 
 /*
  * The buddy operating system's syscall emulation, in the paper's sense:
@@ -65,9 +66,9 @@ enum {
 	Maxph	= 8,		/* loadable program headers kept */
 	Pagesz	= 4096,
 
-	Argoff	= 64,		/* where the kernel left the arg block, in cdata */
-	Nameoff	= 256,		/* where the kernel left a name, in cdata */
-	Dataoff	= 1024,		/* where read/write data goes, in cdata */
+	Argoff	= Odbuddyarg,	/* where the kernel left the arg block, in cdata */
+	Nameoff	= Odbuddyname,	/* where the kernel left a name, in cdata */
+	Dataoff	= Odbuddydata,	/* where read/write data goes, in cdata */
 };
 
 /*

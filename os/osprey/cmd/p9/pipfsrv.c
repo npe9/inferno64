@@ -4,6 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
+#include	"ospreydata.h"
 
 /*
  * Pi-p spoken about this personality's files: the session protocol of
@@ -62,7 +63,7 @@ struct Sess {
 	Fid	fids[Nfid];
 };
 static int servefd = -1;		/* the fd of the connection whose group is being served, so a stream's session remembers where to send frames */
-enum { Ticketoff = 3072, Ticketmax = 256 };	/* where a ticket goes in this server's data area for the kernel to read, and its answer comes back */
+enum { Ticketoff = Odticket, Ticketmax = Odticketlen };	/* where a ticket goes in this server's data area for the kernel to read, and its answer comes back */
 static long pstr(uchar*, char*, long);
 extern uchar *p9srvdata(void);
 extern long ospreyxcall(int op, uvlong *args, long n);
@@ -963,9 +964,9 @@ pip_ticket(void)
 		return nil;
 	asked = 1;
 	if((d = p9srvdata()) != nil)
-		off = 3328;		/* Ticketcliff */
+		off = Odticketcliff;
 	else if((d = ring9p_data()) != nil)
-		off = 3584;		/* clear of the client's 9P, arms, and exec names */
+		off = Odclientticket;	/* clear of the client's 9P, arms, and exec names */
 	else
 		return nil;
 	strncpy((char*)d + off, eve, Ticketmax - 1);

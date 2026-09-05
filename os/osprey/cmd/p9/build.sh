@@ -15,7 +15,7 @@ set -e
 cd "$(dirname "$0")/../../../.."          # repo root
 P=os/osprey/cmd/p9
 INC="-Dsleep=ksleep -Dfastticks=kfastticks -I $P -I os/osprey/port -I os/osprey/pc64 -I os/osprey/ip -I Osprey/amd64/include -I Osprey/include -I include"
-LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
+LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P -I os/osprey/port"
 OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \

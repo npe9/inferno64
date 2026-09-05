@@ -13,6 +13,8 @@
 
 typedef struct Ospreymap Ospreymap;
 
+#include "ospreydata.h"
+
 enum {
 	Ospreynarg	= 3,	/* request words available to the caller */
 	Ospreymagic	= 0x4f53505259ULL,
@@ -106,8 +108,6 @@ enum {
  */
 enum {
 	Ospreyblkmagic	= 0x4f53424c4bULL,	/* "OSBLK" */
-	Ospreyblkoff	= 3584,			/* the descriptor, in the data area */
-	Ospreyblkring	= 4096,			/* where a driver keeps its queue and buffers */
 };
 typedef struct Ospreyblk Ospreyblk;
 struct Ospreyblk {
@@ -130,6 +130,5 @@ struct Ospreyblk {
  */
 enum {
 	Ospreynetmagic	= 0x4f534e4554ULL,	/* "OSNET" */
-	Ospreynetoff	= 3712,			/* the descriptor, after the block device's */
 };
 typedef Ospreyblk Ospreynet;

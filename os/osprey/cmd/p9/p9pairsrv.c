@@ -14,6 +14,7 @@
  */
 #include <u.h>
 #include <libc.h>
+#include "ospreydata.h"
 
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
@@ -36,7 +37,7 @@ enum {
 	Reservebudget	= 2000,		/* 2 ms of every 10: the storage task's own reservation */
 	Reserveperiod	= 10000,
 	OSget		= 2,
-	Armoff		= 0,
+	Armoff		= Odarm,
 	Reqbuf		= 256,
 	Kbdsem		= 3,		/* the block device has 1, the clock 2 */
 	Mousesem	= 4,
