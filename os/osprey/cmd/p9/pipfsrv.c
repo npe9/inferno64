@@ -32,7 +32,7 @@ enum {
 
 	Pipheader = 7,
 	Nsess	= 4,
-	Nfid	= 8,
+	Nfid	= 16,		/* a caching client holds one per entry it streams, and one more for the group of the moment */
 	Namelen	= 128,
 	Datalen	= 4096,
 	Fidlease = 3000,		/* ms */
@@ -89,7 +89,7 @@ struct Stream {
 	uvlong	due;			/* ms */
 	char	attr[Namelen];
 };
-enum { Nstream = 4 };
+enum { Nstream = 16 };	/* a caching client streams one per entry it holds */
 static Stream streams[Nstream];
 static int onwire;			/* the group being served came over a wire */
 
@@ -97,6 +97,18 @@ static int onwire;			/* the group being served came over a wire */
 static uchar *rbuf;
 static long rmax, rn;
 static int overflow;
+/*
+ * The reply builder (rbuf, rn, rmax, overflow) is one set of globals,
+ * and two kprocs reach it: the wire task building a group's replies,
+ * and the stream task building a tick's frames.  A group's readattr
+ * reads a file, which may sleep, and the cooperative scheduler then
+ * runs the stream task, which reset these globals under the sleeping
+ * group and both buffers were written to ruin - a wild jump in the end.
+ * The flag holds the builder for whoever has it: the stream task defers
+ * a tick while a group is mid-build (across its sleeps), and a group
+ * never starts mid-frame because frame-building does not sleep.
+ */
+static int replybusy;
 
 void
 pipfs_tick(void)
@@ -253,7 +265,7 @@ readattr(Fid *f, char *attr, long cnt, int tag)
 {
 	uchar *r;
 	uvlong v;
-	long k;
+	long k, off;
 
 	{
 		uchar *b;
@@ -672,6 +684,7 @@ pipfs_serve(uchar *msg, long n, uchar *out, long outmax)
 	Sess *s;
 	long off, sz;
 
+	replybusy = 1;		/* held across serve1's sleeps, so a stream tick does not reset the builder under us */
 	rbuf = out;
 	rmax = outmax;
 	rn = 0;
@@ -688,6 +701,7 @@ pipfs_serve(uchar *msg, long n, uchar *out, long outmax)
 		overflow = 0;
 		rerror(0, "the replies to that group do not fit");
 	}
+	replybusy = 0;
 	return rn;
 }
 
@@ -721,6 +735,9 @@ pipfs_stream(uchar *out, long outmax)
 	Stream *st;
 	Fid *f;
 
+	if(replybusy)
+		return 0;		/* a group is mid-build, across a sleep: this tick's frames wait */
+	replybusy = 1;
 	rbuf = out;
 	rmax = outmax;
 	rn = 0;
@@ -733,6 +750,16 @@ pipfs_stream(uchar *out, long outmax)
 			continue;
 		}
 		readattr(f, st->attr, -1, st->tag);
+		/*
+		 * A stream is the fid's use, and the session's: each frame
+		 * renews their leases, so a client holding a file by its
+		 * stream keeps it, and loses it only when the stream stops -
+		 * the wire gone, or the count run out.  Before this a streamed
+		 * fid lapsed three seconds after its last read, the stream
+		 * stopped with it, and a cache served its copy stale for good.
+		 */
+		f->lease = nowms + Fidlease;
+		st->s->lease = nowms + Sesslease;
 		st->due += st->period;
 		if(st->left > 0 && --st->left == 0)
 			st->used = 0;
@@ -741,6 +768,7 @@ pipfs_stream(uchar *out, long outmax)
 		rn = 0;
 		overflow = 0;
 	}
+	replybusy = 0;
 	return rn;
 }
 

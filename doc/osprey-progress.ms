@@ -5597,14 +5597,56 @@ is pending and sleeps under an error label now.  And the personality's
 listens on stack A, where the cable is.
 .PP
 .B "9.  The cache is a file system."
+Done.  A write through
 .CW #K
-is read-only, holds eight names, and its streams never stop.  The real
-form: a write through the cache is a \[*p]p write and close on the wire
-and the stream then says the new version; the directory is the server's
-root listing; an entry is dropped, its stream stopped, when its fid's
-lease lapses or the table is full.  Proof: a write through
-.CW /n
-read back on the server, nine files cached and one evicted.
+is taken into a draft of the entry and the close commits it: a \[*p]p
+open, write and close on a fid of its own over the wire
+.CW ( cachecommit ),
+the server's close committing a version on the log, and the copy
+becomes the draft at the version the server said, which the entry's
+stream then says too.  The directory is the server's root listing,
+asked for at the start of each read
+\- an entry per file it has a copy of, its version and length as the
+cache knows them.  A cache is a window on the store, and its directory
+is that window, not the whole of the store.  A ninth name in a cache of
+eight evicts the entry least recently used that has no chan open on
+it and nothing being written through: its fid is closed on the wire,
+which stops its stream on the server, and its copy is freed
+.CW ( cachedrop ).
+A name the server has not got leaves no entry behind.  And the lease:
+a stream is the fid's use, and the session's, so each frame renews
+their leases on the server \- before this a streamed fid lapsed three
+seconds after its last read, its stream stopped with it, and the
+cache served its copy stale for good, within the check's window
+unseen \- and an entry whose stream has been silent past the lease is
+dropped and fetched afresh at its next open.  The server's session
+holds sixteen fids and sixteen streams now, one per entry and one for
+the group of the moment.  Proof, four criteria of the pair check: the
+write through
+.CW /n/hello
+read back on the server by 9P; the directory listing what the cache
+holds; nine files through the cache of eight with the ninth evicting
+the least recently used; and an entry still held and read from the
+copy three and a half seconds later.
+.PP
+This is where the cooperative scheduler's one shared reply buffer
+showed at last.  The server builds a group's replies and a stream
+tick's frames through the same globals
+.CW ( rbuf ,
+.CW rn );
+a group's
+.CW readattr
+reads a file, which sleeps, and the scheduler then ran the stream
+task, which reset those globals under the sleeping group, ruining both
+buffers and jumping wild in the end.  A flag holds the builder now, and
+the stream task defers a tick while a group is mid-build.  And the
+test leaves no streams firing behind it: it lets go of every entry
+when it is done
+.CW ( cachestopall ),
+each entry's fid closed on the wire, its stream stopped on the server,
+so eight streams did not run on through the firewall and migration
+work that follows and, before that, a run that went on long enough
+faulted the personality after the boot program had exited.
 .PP
 .B "10.  Authority on the kernel's requests."
 Any container may set the time of day, move itself to the wire, or post

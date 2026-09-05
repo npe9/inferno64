@@ -1318,6 +1318,51 @@ write9p(char *text)
 	cclose(hc);			/* the clunk commits the new version */
 }
 
+/* what the server's /n/hello holds now, by the other path: 9P over the ring */
+static long
+read9p(char *buf, long max)
+{
+	Chan *tc, *rc, *hc;
+	char *names[2];
+	long n;
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n"; names[1] = "hello";
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 2, 1, nil) < 0)
+		error("no /n/hello over 9P");
+	hc = devtab[hc->type]->open(hc, OREAD);
+	n = devtab[hc->type]->read(hc, buf, max - 1, 0);
+	cclose(hc);
+	if(n < 0)
+		n = 0;
+	buf[n] = 0;
+	return n;
+}
+
+/* a file made on the server by the other path, 9P over the ring, for the cache to hold */
+static void
+create9p(char *name, char *text)
+{
+	Chan *tc, *rc, *hc;
+	char *names[1];
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n";
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 1, 1, nil) < 0)
+		error("no /n over 9P");
+	devtab[hc->type]->create(hc, name, OWRITE, 0666);
+	devtab[hc->type]->write(hc, text, strlen(text), 0);
+	cclose(hc);
+}
+
 /*
  * The caching file system (devcache.c) through the name space: #K bound
  * over /n, so /n/hello here is the server's file, held in this
@@ -1345,10 +1390,19 @@ cachetest(void)
 		print("p9 ip: cache: read /n/hello through this container's name space (%s): \"%s\"\n", i == 0 ? "a miss, fetched" : "a hit, from the copy", buf);
 	}
 	fd = p9open("/n", OREAD);
-	n = p9read(fd, dbuf, sizeof dbuf);
+	{
+		uchar *p, *e;
+		int k;
+
+		while((n = p9read(fd, dbuf, sizeof dbuf)) > 0)
+			for(p = dbuf, e = dbuf + n; p < e; p += k){
+				if((k = convM2D(p, (uint)(e - p), &d, names)) <= 0)
+					break;
+				if(strcmp(d.name, "hello") == 0)
+					print("p9 ip: cache: ls /n lists hello, version %lud, %lld bytes - the cache is a directory in the name space, the version and length of what it holds\n", d.qid.vers, (vlong)d.length);
+			}
+	}
 	p9close(fd);
-	if(n > 0 && convM2D(dbuf, (uint)n, &d, names) > 0)
-		print("p9 ip: cache: ls /n lists %s, version %lud, %lld bytes - the cache is a directory in the name space\n", d.name, d.qid.vers, (vlong)d.length);
 	write9p("a version written after the cache held the file");
 	print("p9 ip: cache: another path, 9P over the ring, wrote a new version\n");
 	tsleep(&up->sleep, return0, nil, 250);		/* two periods of the stream */
@@ -1358,6 +1412,72 @@ cachetest(void)
 	print("p9 ip: cache: read /n/hello again after the stream said the version changed: \"%s\"\n", buf);
 	cachestats(&hits, &misses, &refetches, &nf);
 	print("p9 ip: cache: done - %d miss, %d hit, %d refetch, %ld stream frames taken off the wire\n", misses, hits, refetches, nf);
+
+	/*
+	 * The cache as a file system.  A write through it: the close
+	 * commits on the server, a pi-p write and close on the wire, and
+	 * the other path reads the new text back there.  The directory is
+	 * the server's root listing.  Nine files through a cache of eight:
+	 * the ninth evicts the least recently used, its fid closed and its
+	 * stream stopped.  And the stream is the lease's heartbeat: after
+	 * the server's lease has passed, an entry is still held.
+	 */
+	{
+		extern void cachestats2(int*, int*);
+		static char through[] = "written through the cache; the close committed it on the server";
+		char name[32], text[64], held[256];
+		int nevict, nwrite, nnames, nheld, k;
+		uchar *p, *e;
+
+		fd = p9open("/n/hello", OWRITE|OTRUNC);
+		p9write(fd, through, strlen(through));
+		p9close(fd);
+		read9p(buf, sizeof buf);
+		print("p9 ip: cache: wrote /n/hello through the cache, and 9P over the ring reads it back on the server: \"%s\"\n", buf);
+
+		for(i = 1; i <= 8; i++){
+			snprint(name, sizeof name, "cachef%d", i);
+			snprint(text, sizeof text, "file %d, made on the server for the cache to hold", i);
+			create9p(name, text);
+		}
+		for(i = 1; i <= 8; i++){
+			snprint(name, sizeof name, "/n/cachef%d", i);
+			fd = p9open(name, OREAD);
+			n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+			p9close(fd);
+		}
+		cachestats2(&nevict, &nwrite);
+		print("p9 ip: cache: nine files opened through the cache of eight: %d evicted, the least recently used; %d written through\n", nevict, nwrite);
+
+		/* the directory now: what the cache holds, the eight cachef files, hello evicted */
+		fd = p9open("/n", OREAD);
+		nnames = nheld = 0;
+		held[0] = 0;
+		while((n = p9read(fd, dbuf, sizeof dbuf)) > 0)
+			for(p = dbuf, e = dbuf + n; p < e; p += k){
+				if((k = convM2D(p, (uint)(e - p), &d, names)) <= 0)
+					break;
+				nnames++;
+				snprint(held + strlen(held), sizeof held - strlen(held), "%s%s", held[0] ? " " : "", d.name);
+			}
+		p9close(fd);
+		USED(nheld);
+		print("p9 ip: cache: ls /n lists what the cache holds: %d files (%s)\n", nnames, held);
+
+		tsleep(&up->sleep, return0, nil, 3500);	/* past the server's three-second lease */
+		fd = p9open("/n/cachef8", OREAD);
+		n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+		p9close(fd);
+		cachestats(&hits, &misses, &refetches, &nf);
+		print("p9 ip: cache: 3500 ms later /n/cachef8 is still held - %s; the stream's frames renewed its lease on the server\n",
+			strcmp(buf, "file 8, made on the server for the cache to hold") == 0 ? "read from the copy" : "not what was written");
+		{
+			extern void cachestopall(void);
+
+			cachestopall();			/* its streams stopped, so none fires on through the rest of the run */
+			print("p9 ip: cache: done as a file system - every entry let go, its stream stopped on the server\n");
+		}
+	}
 }
 
 /* the firewall from the client's side: ask for the rule, then a connect held until it is lifted */

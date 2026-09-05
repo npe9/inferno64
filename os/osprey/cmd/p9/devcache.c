@@ -36,7 +36,7 @@ enum {
 	Cdatalen = 4096,
 	Streamtag = 1000,
 	Qroot	= 0,
-	PipRsession = 101, PipRread = 105, PipRerror = 112,
+	PipRsession = 101, PipRread = 105, PipRclose = 109, PipRerror = 112,
 };
 
 typedef struct Centry Centry;
@@ -48,10 +48,24 @@ struct Centry {
 	uvlong	vers;			/* the version the copy is of */
 	uvlong	latest;			/* what the stream last said the committed version is */
 	ulong	fid;			/* the fid on the server the stream is on */
+	uchar	*draft;			/* what is being written through, until the close commits it */
+	long	draftlen;
+	int	dirty;
+	int	nopen;			/* chans open on it: not evicted while any */
+	uvlong	lastuse;		/* ms; the least recently used goes first */
+	uvlong	lastframe;		/* ms; when the stream last spoke - silent past the lease, the entry is dropped */
 	int	hits, misses, refetches;
 };
 
 static Centry cache[Ncache];
+enum { Leasems = 3000 };	/* the server's fid lease: a stream silent that long has stopped */
+static int evictions, writethroughs;
+
+static uvlong
+cnow(void)
+{
+	return TK2MS(MACHP(0)->ticks);
+}
 static int wfd = -1, dfd = -1;		/* the wire: data and ctl */
 static uvlong sid;
 static ulong nextfid = 1;
@@ -69,6 +83,7 @@ extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
 extern long pip_tread(uchar*, int, ulong, long, char*);
 extern long pip_tstream(uchar*, int, ulong, ulong, ulong, char*);
 extern long pip_tclose(uchar*, int, ulong);
+extern long pip_twrite(uchar*, int, ulong, char*, char*, long);
 extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
 extern uvlong pip_num(uchar*, int);
 
@@ -107,6 +122,7 @@ cachestream(void*)
 				frames++;
 				snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
 				cache[i].latest = strtoull(show, nil, 10);
+				cache[i].lastframe = cnow();
 			}
 			continue;
 		}
@@ -205,6 +221,87 @@ cachefetch(Centry *e)
 		}
 	}
 	e->fid = fid;
+	e->lastframe = cnow();
+}
+
+/* what an entry holds on the server, let go: its fid closed on the wire, which stops its stream there */
+static void
+cachedrop(Centry *e)
+{
+	uchar tg[256];
+	long tn;
+
+	if(e->fid != 0 && wfd >= 0){
+		tn = 0;
+		tn += pip_tsession(tg+tn, nexttag++, sid);
+		tn += pip_tclose(tg+tn, nexttag++, e->fid);
+		if(nexttag >= Streamtag - 8)
+			nexttag = 1;
+		if(!waserror()){
+			exchange(tg, tn);
+			poperror();
+		}
+	}
+	e->fid = 0;
+	free(e->data);
+	e->data = nil;
+	free(e->draft);
+	e->draft = nil;
+	e->len = e->draftlen = 0;
+	e->dirty = 0;
+}
+
+/*
+ * A write through the cache: the draft goes to the server as a pi-p
+ * write and close on a fid of its own, which commits it as a version
+ * on the log; the copy becomes the draft, at the version the server
+ * says, and the entry's stream will say the same.
+ */
+static void
+cachecommit(Centry *e)
+{
+	uchar *tg, *body;		/* off the stack: a page-and-a-half frame, deep under namec, overflowed a kproc's 32 KB */
+	long tn, off, blen;
+	int type, tag, t4;
+	ulong fid;
+	uvlong v;
+	char path[Cnamelen + 4], show[64];
+
+	cachewire();
+	tg = smalloc(Cdatalen + 512);
+	if(waserror()){
+		free(tg);
+		nexterror();
+	}
+	fid = nextfid++;
+	snprint(path, sizeof path, "/n/%s", e->name);
+	tn = 0;
+	tn += pip_tsession(tg+tn, nexttag++, sid);
+	tn += pip_topen(tg+tn, nexttag++, 0, fid, 0, path);
+	tn += pip_twrite(tg+tn, nexttag++, fid, "data", (char*)e->draft, e->draftlen);
+	tn += pip_tclose(tg+tn, t4 = nexttag++, fid);
+	if(nexttag >= Streamtag - 8)
+		nexttag = 1;
+	exchange(tg, tn);
+	v = 0;
+	for(off = 0; pip_next(replybuf, replyn, &off, &type, &tag, &body, &blen); ){
+		if(type == PipRerror){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			error(show);
+		}
+		if(type == PipRclose && tag == t4)
+			v = pip_num(body, 8);
+	}
+	if(e->data == nil)
+		e->data = smalloc(Cdatalen);
+	memmove(e->data, e->draft, e->draftlen);
+	e->len = e->draftlen;
+	e->vers = e->latest = v;
+	e->dirty = 0;
+	writethroughs++;
+	print("cache: /n/%s: written through - a pi-p write and close on the wire committed version %llud on the server\n", e->name, v);
+	poperror();
+	free(tg);
 }
 
 static Centry*
@@ -233,8 +330,27 @@ cachenew(char *name)
 			strcpy(e->name, name);
 			return e;
 		}
-	error("the cache is full");
-	return nil;
+	/*
+	 * Full: the entry least recently used, with no chan open on it and
+	 * nothing being written through, is let go - its fid closed on the
+	 * wire, its stream stopped - and the slot is this name's.
+	 */
+	{
+		Centry *lru = nil;
+
+		for(e = cache; e < &cache[Ncache]; e++)
+			if(e->nopen == 0 && !e->dirty && (lru == nil || e->lastuse < lru->lastuse))
+				lru = e;
+		if(lru == nil)
+			error("the cache is full, every entry open");
+		print("cache: /n/%s evicted for /n/%s, the least recently used: its fid closed on the wire, its stream stopped\n", lru->name, name);
+		cachedrop(lru);
+		evictions++;
+		memset(lru, 0, sizeof *lru);
+		lru->used = 1;
+		strcpy(lru->name, name);
+		return lru;
+	}
 }
 
 static int
@@ -258,14 +374,28 @@ cachegen(Chan *c, char *name, Dirtab*, int, int s, Dir *dp)
 		if((e = cachelookup(name)) == nil)
 			e = cachenew(name);
 	} else {
-		if(s >= Ncache)
+		/*
+		 * The directory lists what the cache holds: an entry per file
+		 * it has a copy of, its version and length as the cache knows
+		 * them.  A cache is a window on the store, and its directory
+		 * is that window, not the whole of the store.
+		 */
+		int j, seen;
+
+		seen = 0;
+		e = nil;
+		for(j = 0; j < Ncache; j++)
+			if(cache[j].used && cache[j].data != nil){
+				if(seen++ == s){
+					e = &cache[j];
+					break;
+				}
+			}
+		if(e == nil)
 			return -1;
-		e = &cache[s];
-		if(!e->used)
-			return 0;
 	}
 	mkqid(&q, (e - cache) + 1, e->vers, QTFILE);
-	devdir(c, q, e->name, e->len, eve, 0444, dp);
+	devdir(c, q, e->name, e->len, eve, 0666, dp);
 	return 1;
 }
 
@@ -295,16 +425,30 @@ static Chan*
 cacheopen(Chan *c, int omode)
 {
 	Centry *e;
+	int writing;
 
-	if(omode != OREAD)
+	if((c->qid.type & QTDIR) != 0 && omode != OREAD)
 		error(Eperm);
 	if((c->qid.type & QTDIR) == 0){
 		if(c->qid.path < 1 || c->qid.path > Ncache || !cache[c->qid.path-1].used)
 			error(Enonexist);
 		e = &cache[c->qid.path-1];
+		writing = (omode & 3) == OWRITE || (omode & 3) == ORDWR;
+		if(e->data != nil && e->fid != 0 && cnow() - e->lastframe > Leasems){
+			print("cache: /n/%s: its stream has been silent %llud ms, past the lease: the entry is dropped and fetched afresh\n", e->name, cnow() - e->lastframe);
+			cachedrop(e);
+		}
 		if(e->data == nil){
 			e->misses++;
+			if(waserror()){
+				if(e->nopen == 0){
+					cachedrop(e);
+					e->used = 0;	/* nothing on the server by that name: no entry either */
+				}
+				nexterror();
+			}
 			cachefetch(e);
+			poperror();
 			print("cache: /n/%s: not held; fetched version %llud over the wire, and its committed version now streams\n", e->name, e->vers);
 		} else if(e->latest != e->vers){
 			uvlong said = e->latest, had = e->vers;
@@ -317,6 +461,18 @@ cacheopen(Chan *c, int omode)
 			print("cache: /n/%s: answered from the copy, version %llud, nothing asked of the server\n", e->name, e->vers);
 		}
 		c->qid.vers = e->vers;
+		if(writing){
+			if(e->draft == nil)
+				e->draft = smalloc(Cdatalen);
+			if(omode & OTRUNC)
+				e->draftlen = 0;
+			else {
+				memmove(e->draft, e->data, e->len);
+				e->draftlen = e->len;
+			}
+		}
+		e->nopen++;
+		e->lastuse = cnow();
 	}
 	c->mode = openmode(omode);
 	c->offset = 0;
@@ -325,8 +481,19 @@ cacheopen(Chan *c, int omode)
 }
 
 static void
-cacheclose(Chan*)
+cacheclose(Chan *c)
 {
+	Centry *e;
+
+	if((c->qid.type & QTDIR) != 0 || (c->flag & COPEN) == 0)
+		return;
+	if(c->qid.path < 1 || c->qid.path > Ncache || !cache[c->qid.path-1].used)
+		return;
+	e = &cache[c->qid.path-1];
+	if(e->nopen > 0)
+		e->nopen--;
+	if((c->mode == OWRITE || c->mode == ORDWR) && e->dirty)
+		cachecommit(e);		/* the close commits, as a pi-p close does */
 }
 
 static long
@@ -346,10 +513,46 @@ cacheread(Chan *c, void *a, long n, vlong off)
 }
 
 static long
-cachewrite(Chan*, void*, long, vlong)
+cachewrite(Chan *c, void *a, long n, vlong off)
 {
-	error(Eperm);
-	return 0;
+	Centry *e;
+
+	if(c->qid.type & QTDIR)
+		error(Eperm);
+	if(c->qid.path < 1 || c->qid.path > Ncache || !cache[c->qid.path-1].used)
+		error(Enonexist);
+	e = &cache[c->qid.path-1];
+	if(e->draft == nil)
+		error(Eperm);
+	if(off < 0 || off + n > Cdatalen)
+		error("the cache holds a file of a page");
+	memmove(e->draft + off, a, n);
+	if(off + n > e->draftlen)
+		e->draftlen = off + n;
+	e->dirty = 1;
+	return n;
+}
+
+/* every held entry let go: its fid closed on the wire, its stream stopped on the server - so the test leaves no streams firing behind it */
+void
+cachestopall(void)
+{
+	Centry *e;
+
+	for(e = cache; e < &cache[Ncache]; e++)
+		if(e->used){
+			if(e->nopen == 0 && !e->dirty)
+				cachedrop(e);
+			memset(e, 0, sizeof *e);
+		}
+}
+
+/* what the cache has done beyond the reads, for the test's summary */
+void
+cachestats2(int *nevict, int *nwrite)
+{
+	*nevict = evictions;
+	*nwrite = writethroughs;
 }
 
 /* what the cache has done, for the test's summary */

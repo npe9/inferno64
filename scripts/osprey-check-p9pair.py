@@ -125,9 +125,9 @@ def main():
          and 'the log is full' not in t),
         ("at the end the kernel reports the storage task's reservation and what it used of it, as the talk's dumptask does",
          re.search(r'osprey status: proc 3 core \d+ \w+ budget (19\d{5}|200\d{4}) used \d+ period (99\d{5}|100\d{5}) ', t) is not None),	# the cycle rate is measured, so these vary by a little
-        ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 45 - the forty versions, the replica test's and the cache test's after them: the store is persistent",
-         'from the checkpoint' in t2 and re.search(r'lfs: hello version 45, 47 bytes', t2) is not None
-         and 'lfs: found /n/hello on the disk: "a version written after the cache held the file"' in t2),
+        ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 46 - the forty versions, the replica test's and the cache test's and the write through the cache after them: the store is persistent",
+         'from the checkpoint' in t2 and re.search(r'lfs: hello version 46, 63 bytes', t2) is not None
+         and 'lfs: found /n/hello on the disk: "written through the cache; the close committed it on the server"' in t2),
         ("the microkernel runs a client personality that mounts a second personality over the ring",
          'pair-client: mounting the server personality over the ring' in t),
         ("and a second personality, a container of its own, answers 9P about its name space",
@@ -251,6 +251,17 @@ def main():
          re.search(r'cache: /n/hello: the stream said version (\d+), the copy is (\d+): refetched over the wire - version \1 now', t) is not None
          and 'p9 ip: cache: read /n/hello again after the stream said the version changed: "a version written after the cache held the file"' in t
          and re.search(r'p9 ip: cache: done - 1 miss, 1 hit, 1 refetch, [1-9]\d* stream frames taken off the wire', t) is not None),
+        ("the cache is a file system: a write through it is a pi-p write and close on the wire, committed on the server as a version, which the other path - 9P over the ring - reads back there",
+         re.search(r'cache: /n/hello: written through - a pi-p write and close on the wire committed version \d+ on the server', t) is not None
+         and 'p9 ip: cache: wrote /n/hello through the cache, and 9P over the ring reads it back on the server: "written through the cache; the close committed it on the server"' in t),
+        ("its directory lists what the cache holds, each with the version and length the cache knows",
+         re.search(r"p9 ip: cache: ls /n lists what the cache holds: ([1-9]\d*) files \(.*cachef.*\)", t) is not None),
+        ("and nine files through a cache of eight: the ninth evicts the least recently used - its fid closed on the wire, its stream stopped on the server",
+         re.search(r'cache: /n/\w+ evicted for /n/cachef\d, the least recently used: its fid closed on the wire, its stream stopped', t) is not None
+         and re.search(r'p9 ip: cache: nine files opened through the cache of eight: [1-9] evicted, the least recently used; 1 written through', t) is not None),
+        ("and the stream is the lease's heartbeat: past the server's three-second lease an entry is still held and read from the copy - before, a streamed fid lapsed and the copy went stale for good",
+         "p9 ip: cache: 3500 ms later /n/cachef8 is still held - read from the copy; the stream's frames renewed its lease on the server" in t
+         and 'past the lease: the entry is dropped' not in t),
         ("a note that is not a fault: posted by request, delivered to the program's notify(2) handler, and noted(NCONT) resumes the interrupted program at the instruction after the call - the continuation the legacy ABI was missing",
          'legacy: my note handler got a note that is not a fault: "osprey: a note by request"; noted(NCONT)' in t
          and 'legacy: resumed after the note - noted(NCONT) brought me back to the instruction after the call (7)' in t),
