@@ -1,24 +1,47 @@
 .TH TITANIUM 1
 .SH NAME
-titanium \- vertical scrolling shooter
+titanium \- ground-war gun platform game
 .SH SYNOPSIS
 .B temple/titanium
 .SH DESCRIPTION
 .I Titanium
-is a vertical scrolling shooter.
+is a port of the TempleOS game of the same name.
 It runs under
 .IR wm (1).
 .PP
-A ship near the bottom fights downward-scrolling enemies. Move with wasd or the arrows; space fires.
+You fly a gun platform up a wrapping 4096-pixel desert battlefield,
+over a ground war between 512 enemy and 128 friendly infantry and
+tanks who seek each other out and fight hand-to-hand.
+The map scrolls at 100 pixels per second while the platform creeps
+toward the brown finish line; crossing it, or either side being
+wiped out, ends the game.
+Holding down the fire key sweeps a stream of bullets; the four
+wing-mounted missiles explode with a 100-pixel kill radius that
+also levels apartment buildings.
+Bullets and missiles do not distinguish friend from foe.
+.PP
+Scoring follows the original exactly:
++3 for each enemy killed, +5 for each enemy killed by a friendly,
+\-100 for each friendly killed by you, \-1 per bullet fired,
+\-10 per second of game time, and at game over the surviving
+friendlies are counted up at +250 apiece.
+The best score is remembered between sessions.
 .PP
 The controls are:
 .TF space
 .TP
-.B arrows / wasd
-Move
+.B left / right
+Sweep the gun \(+-15 degrees and strafe.
+The platform wraps around the screen edges.
 .TP
 .B space
-Fire
+Fire; hold it down for continuous fire.
+.TP
+.B z
+Fire a left-wing missile.
+.TP
+.B x
+Fire a right-wing missile.
 .TP
 .B Enter
 Restart
@@ -26,10 +49,27 @@ Restart
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TP
+.B /icons/temple/titanium_*.bit
+Gun, missile and landscape sprites from the original.
+.TP
+.B /icons/temple/titanium_*.mesh
+Infantry and tank meshes from the original.
 .SH SOURCE
 .B /appl/temple/titanium.b
 .SH SEE ALSO
 .IR temple (1),
-.IR draw3d (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original fires missiles with Ctrl+Left and Ctrl+Right from its
+pull-down menu; Inferno's keyboard interface does not distinguish
+Ctrl-modified arrows, so the missiles moved to
+.B z
+and
+.BR x ,
+and there is no menu.
+Unit walk cycles play the original's four mesh keyframes at the
+original rates but are not interpolated between frames, and facing
+angles are quantized to 16 directions.
