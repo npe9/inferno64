@@ -117,6 +117,45 @@ drawtest()
 	sys->print("DRAW-OK %dx%d\n", r.max.x-r.min.x, r.max.y-r.min.y);
 }
 
+readctl(path: string): string
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	s := "";
+	buf := array[256] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		s += string buf[0:n];
+	}
+	return s;
+}
+
+# Bind the DWC2 host controller (#U) into /dev, show the root hub the
+# kernel synthesised, then run usbd to reset the port and enumerate the
+# attached device over control transfers -- exercising the interrupt and
+# transfer paths.  Boot with -device usb-kbd (or usb-mouse) to have a
+# device to find; the second ctl dump should list it.
+usbcheck()
+{
+	if(sys->bind("#u", "/dev", sys->MAFTER) < 0){
+		sys->print("USB-NONE bind #U: %r\n");
+		return;
+	}
+	sys->print("USB root hub:\n%s", readctl("/dev/usb/ctl"));
+	usbd := load Command "/dis/usb/usbd.dis";
+	if(usbd == nil){
+		sys->print("USB-FAIL load usbd: %r\n");
+		return;
+	}
+	spawn usbd->init(nil, "usbd" :: "-d" :: nil);
+	sys->sleep(10000);
+	sys->print("USB after usbd:\n%s", readctl("/dev/usb/ctl"));
+	sys->print("USB-OK\n");
+}
+
 init()
 {
 	shell: Shell;
@@ -131,6 +170,7 @@ init()
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();
 	drawtest();
+	usbcheck();
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
 	# creates a file.  The ream and every SD write succeed, but the
 	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the

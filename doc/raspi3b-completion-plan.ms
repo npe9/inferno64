@@ -42,7 +42,35 @@ says so.  Verified: clean boot under QEMU with the same marker line-up
 (RASPI3B-OK, SD-OK/WRITE/MULTIBLOCK, DRAW-OK, RASPI3B-SH-OK) and the
 screendump still reading red/green/blue.
 .NH 1
-Phase 1: Synopsys DesignWare (DWC2) USB host -- the keystone
+Phase 1: Synopsys DesignWare (DWC2) USB host -- the keystone -- DONE
+.PP
+usbdwc.c ports 9front's sys/src/9/bcm/usbdwc.c to Inferno's Hci/Hciimpl
+interface.  The controller probes (DWC OTG rev 2.94a at 0x3f980000),
+core-inits (8 host channels, DMA mode), brings the root port up, and
+runs interrupt-driven control/bulk/interrupt transfers through its host
+channels.  usbd enumerates over it: on QEMU with -device usb-kbd the
+driver resets the port, issues SET_ADDRESS, and reads the device
+descriptor (vid/did/class) end to end, all via the interrupt path,
+booting clean to a shell.
+.PP
+Three donor-vs-Inferno adaptations were load-bearing.  The FIQ/ARM-timer
+wakeup hop is gone -- GPU IRQ 9 dispatches at normal level, so one
+handler read-and-clears each channel's hcint (which is also what lowers
+QEMU's sticky GINTSTS.Hcintr, the BCM interrupt controller having no EOI)
+and wakes the sleeper directly.  Both interrupt masks are armed before
+the channel is enabled, since QEMU raises the completion interrupt only
+at the event, gated by haintmsk as it then stands.  And a reported
+Xfercomp ends a zero-length stage even when Pktcnt is unchanged: real
+hardware decrements Pktcnt on a ZLP, QEMU does not, and keying the loop
+on Pktcnt alone re-enabled the channel against a device whose address
+had moved.  DMA is made coherent with cachebcm.c (Phase 0b) through
+cache-line-aligned bounce buffers.
+.PP
+Left for the device layer, not the HCD: the split-transaction path (for
+a full/low-speed device behind QEMU's high-speed root hub) is written
+but only exercised by the hub-walk that usbd does not yet complete.
+.NH 1
+Phase 1 (historical): the DWC2 controller
 .PP
 The BCM2837 has one USB: a DWC2 OTG host controller at 0x3f980000.  The
 onboard LAN9514 hub+ethernet, and any keyboard, mouse or storage, all

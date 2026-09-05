@@ -168,6 +168,38 @@ mailboxinit(void)
 }
 
 /*
+ * Switch a firmware-managed power domain (USB HCD, SD, etc.) on or off
+ * through SET_POWER_STATE (tag 0x00028001).  The value is the device id
+ * plus a state word: bit0 = on, bit1 = wait for the domain to settle.
+ * On real hardware the DWC2 USB core does not respond until its domain
+ * is powered here; QEMU powers everything unconditionally, so this is a
+ * verification-only round trip there.  Returns 0 if the firmware reports
+ * the requested power state, -1 otherwise.
+ */
+int
+mboxsetpower(int devid, int on)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8*4;			/* total bytes */
+	buf[1] = 0;			/* request */
+	buf[2] = 0x00028001;		/* tag: set power state */
+	buf[3] = 8;			/* value buffer size */
+	buf[4] = 0;			/* request code */
+	buf[5] = devid;			/* device id */
+	buf[6] = on ? 3 : 2;		/* bit0 on, bit1 wait */
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	/* buf[6] response: bit1 set with bit0 clear means "no such device" */
+	if((buf[6] & 2) != 0)
+		return -1;
+	return ((buf[6] & 1) != 0) == (on != 0) ? 0 : -1;
+}
+
+/*
  * Ask the firmware to allocate a linear framebuffer of w x h at 32bpp.
  * One property message carries the whole setup: physical and virtual
  * size, depth, a zero virtual offset, then ALLOCATE_BUFFER (whose value

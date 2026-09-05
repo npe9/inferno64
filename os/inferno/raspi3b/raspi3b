@@ -27,7 +27,11 @@ dev
 	sd
 	draw
 	pointer
+	usb
 
+
+link
+	usbdwc
 
 lib
 	interp
@@ -126,6 +130,7 @@ root
 	/dis/read.dis
 	/dis/sh.dis
 	/dis/sh/std.dis
+	/dis/usb/usbd.dis
 	/dis/unmount.dis
 	/dis/disk/kfs.dis
 	/dis/disk/kfs64.dis

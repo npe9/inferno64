@@ -57,6 +57,27 @@ cacheflush(void *va, usize len)
 }
 
 /*
+ * Clean AND invalidate [va, va+len) in a single pass (DC CIVAC): the
+ * line is written back if dirty and then dropped.  One CIVAC pass is
+ * not the same as a clean pass followed by a separate invalidate pass,
+ * so this is its own loop -- the DWC2 control path allocates a read
+ * buffer, poisons it, and CIVACs it before the transfer so the device
+ * DMAs into memory with no ARM-dirty line left to write back over it.
+ */
+void
+cacheflushinv(void *va, usize len)
+{
+	uintptr a, e, ls;
+
+	ls = dlinesz();
+	a = (uintptr)va & ~(ls - 1);
+	e = (uintptr)va + len;
+	for(; a < e; a += ls)
+		dccivac(a);
+	coherence();
+}
+
+/*
  * Invalidate [va, va+len): discard any stale D-lines so a following read
  * fetches what the device just wrote.  The range is rounded out to whole
  * lines; the caller must already have cleaned (or never written) the
