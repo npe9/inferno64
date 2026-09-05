@@ -1,24 +1,40 @@
 .TH RAINDROPS 1
 .SH NAME
-raindrops \- rain on glass demo
+raindrops \- falling-water simulation demo
 .SH SYNOPSIS
 .B temple/raindrops
 .SH DESCRIPTION
-.I RainDrops
-is a rain on glass demo.
+.I Raindrops
+is a port of the TempleOS falling-water demo
+.BR RainDrops .
 It runs under
 .IR wm (1).
 .PP
-Raindrops wet a glass grid. Holding 1 or 2 places hotspots.
+Drops of water rain from the top of the window and flow: a drop falls
+while the pixel below it is empty, otherwise it slides sideways and
+down when it can, so water pools in the two red funnels, piles up on
+the red block and the long ledge, and runs off the bottom of the
+window.
+.PP
+Each funnel has a small hole at its vertex.
+Holding
+.B 1
+or
+.B 2
+opens the corresponding hole, draining the pool above it; releasing
+the key closes it again.
 .PP
 The controls are:
 .TF space
 .TP
 .B 1 (hold)
-Hotspot 1
+Open the upper funnel's hole
 .TP
 .B 2 (hold)
-Hotspot 2
+Open the lower funnel's hole
+.TP
+.B Enter
+Restart: clear all water
 .TP
 .B Esc / q
 Quit
