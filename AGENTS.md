@@ -57,6 +57,13 @@ then put those in the plan and continue.
   redirect a file into standard input: the emulator echoes a console
   nobody read, and where that echo lands among the program's own
   output is a matter of timing, so the case fails at random.
+- A `limbocmp` case that reads a file on standard input can also fail
+  under load: those runs are the ones that can hang on the emulator's
+  stdin (`bufio`'s `gets` does not see the end of a redirected file),
+  and `limbocmp` gives each run 60 seconds before killing it, so a
+  loaded machine can cut one side's output short. A stdin case that
+  fails once and passes when `limbocmp.sh` is re-run alone was that,
+  not a real difference.
 - Never run two `limbocmp.sh` at once: both build into
   `tmp/limbocmp`, so they delete each other's `.dis` files and report
   differences that are not there. One run at a time, and let it

@@ -436,7 +436,7 @@ the two differ.
 `.x` files by `tests/xref.sh`, which then has the self-hosted
 compiler dump the same files and requires the same bytes.
 
-## 23. A language server, and the transport it still wants
+## 23. A language server, and the transport it took
 
 `appl/ember/emberls.e` is the rest of item 8: a language server
 speaking JSON-RPC, answering `definition`, `hover`, `references` and
@@ -448,8 +448,8 @@ picks with binders, maps of refs, multiple results, `try`/`catch`,
 string slicing and the builtin `Builder` were enough to write a
 protocol server.
 
-What it does not have is a transport an editor can use. The
-emulator's console is a keyboard, not a pipe: `kbdslave`
+What it could not have was a transport over the emulator's console.
+That console is a keyboard, not a pipe: `kbdslave`
 (`emu/port/devcons.c:100`) echoes every byte it reads back to file
 descriptor 1 unless the console has been put in raw mode, and it runs
 ahead of the program, so a `rawon` written at startup arrives too
@@ -460,15 +460,20 @@ turns a carriage return into a newline, which the protocol's
 that spawns the emulator and talks to it over pipes reads its own
 requests back, mangled.
 
-Two ways out, neither started. The narrow one is to stop the echo
-when the host's standard input is not a terminal -- a flag in
-`devcons.c` set from each platform's `os.c`, which is honest but
-touches every host and still leaves the carriage-return rewriting.
-The better one is a socket: LSP over TCP is a transport clients
-already know, Inferno has `/net/tcp`, and it sidesteps the console
-entirely. Until then the server reads its messages from a file, one
-JSON-RPC message per line, which is how `ember/tests/ls.sh` drives a
-scripted session against a recorded reply file.
+Two ways out were open. The narrow one is to stop the echo when the
+host's standard input is not a terminal -- a flag in `devcons.c` set
+from each platform's `os.c` -- which touches every host and still
+leaves the carriage-return rewriting. The one taken is a socket:
+`emberls -p 17777` binds `#I` on `/net`, announces on the port and
+serves each connection in turn, and a client on the host side of the
+emulator reaches it without the console in the way. `ember/tests/ls.sh` runs the same scripted session twice, once framed into a file
+and once over a connection made by `tests/lstcp.py`, and requires
+both to produce the recorded replies byte for byte -- which they do,
+so the two transports are not merely both working but identical.
+
+What is left of the echo is a note for whoever next wants a Dis
+program to speak a byte protocol over the emulator's standard input:
+it cannot, and the socket is the way.
 
 Two smaller things the dump's shape leaves for a later pass: a use of
 an imported module's member has the position of the module name it is

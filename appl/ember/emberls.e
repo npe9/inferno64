@@ -3,11 +3,13 @@ module Emberls
 // emberls: a language server for Ember, speaking the Language Server
 // Protocol over standard input and output.
 //
-//	emberls [-I dir] [file ...]
+//	emberls [-I dir] [-p port] [file ...]
 //
 // with files, the messages are read from them rather than from
-// standard input, which is how the tests drive it: the emulator's
-// console is a keyboard, not a pipe (see doc/ember-next-plan.md).
+// standard input, which is how the tests drive it; with -p, from
+// each connection to that TCP port, which is how an editor reaches
+// it.  the emulator's console cannot carry the protocol: it is a
+// keyboard, not a pipe (see doc/ember-next-plan.md).
 //
 // it answers the four questions that need a compiler -- where a name
 // is declared, what its type is, where else it is used, and what a
@@ -58,6 +60,7 @@ type Doc struct {
 }
 
 var docs = map[string]ref Doc{}
+var wr ref sys.FD	// where the replies go: standard output, or a connection
 var incdirs list string
 var lib Json
 var stop = 0
@@ -378,7 +381,7 @@ func getpos(v ref json.Value) (int, int) {
 func send(v ref json.Value) {
 	body := lib.text(v)
 	a := []byte(body)
-	sys.print("Content-Length: %d\r\n\r\n%s", len(a), body)
+	sys.fprint(wr, "Content-Length: %d\r\n\r\n%s", len(a), body)
 }
 
 func reply(id ref json.Value, result ref json.Value) {
@@ -615,8 +618,37 @@ func serve(bio ref bufio.Iobuf) {
 	}
 }
 
+// one client at a time, over TCP: the transport an editor can use,
+// since the emulator's console echoes what it reads
+func servetcp(port string) {
+	if sys.bind("#I", "/net", sys.MBEFORE) < 0 {
+		fail("cannot bind the IP device on /net: %r")
+	}
+	ok, c := sys.announce("tcp!*!" + port)
+	if ok < 0 {
+		fail("cannot announce on port " + port)
+		return
+	}
+	for stop == 0 {
+		lok, nc := sys.listen(c)
+		if lok < 0 {
+			fail("cannot listen on port " + port)
+			return
+		}
+		fd := sys.open(nc.dir + "/data", sys.ORDWR)
+		if fd == nil {
+			fail("cannot open the connection's data file")
+			continue
+		}
+		wr = fd
+		serve(bufio.fopen(fd, bufio.OREAD))
+		wr = sys.fildes(1)
+	}
+}
+
 func init(ctxt ref draw.Context, args list string) {
 	var files list string
+	port := ""
 	l := args
 	if l != nil {
 		l = tl(l)
@@ -627,12 +659,22 @@ func init(ctxt ref draw.Context, args list string) {
 			incdirs = hd(l) :: incdirs
 			continue
 		}
+		if hd(l) == "-p" && tl(l) != nil {
+			l = tl(l)
+			port = hd(l)
+			continue
+		}
 		files = hd(l) :: files
 	}
 	incdirs = "/ember/module" :: incdirs
 	lib = load Json json.PATH
 	if lib == nil {
 		fail("cannot load the JSON library")
+		return
+	}
+	wr = sys.fildes(1)
+	if port != "" {
+		servetcp(port)
 		return
 	}
 	if files == nil {

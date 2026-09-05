@@ -751,19 +751,21 @@ position of the module name it is reached through. A file that stops
 compiling keeps the declarations it last had, so an editor's outline
 does not empty out on a typo.
 
-	emberls [-I dir] [file ...]
+	emberls [-I dir] [-p port] [file ...]
 
-With no files it reads messages from standard input, as a client
-would speak to it. With files it reads them from those instead, one
-scripted session per file, which is how `tests/ls.sh` drives it:
-`tests/ls/session.jsonl` holds one JSON-RPC message per line, the
-harness frames them with `Content-Length` headers, and the replies
-must match `tests/ls/session.out`. Under the emulator the file is
-the only transport that works, since the emulator's console is a
-keyboard: it echoes what it reads back to standard output and turns
-a carriage return into a newline (`emu/port/devcons.c`'s `kbdslave`,
-`emu/MacOSX/os.c`'s `readkbd`). Connecting an editor to it wants a
-socket; that is item 23 of `doc/ember-next-plan.md`.
+`-p` announces on a TCP port and serves each connection in turn:
+that is the transport an editor uses, since the emulator's console
+cannot carry the protocol -- it is a keyboard, echoing what it reads
+back to standard output and turning a carriage return into a newline
+(`emu/port/devcons.c`'s `kbdslave`, `emu/MacOSX/os.c`'s `readkbd`).
+With file arguments it reads scripted sessions from them instead,
+one JSON-RPC message per line, and with neither it reads standard
+input, which works only where the console does not intrude.
+
+`tests/ls.sh` runs `tests/ls/session.jsonl` both ways -- framed into
+a file, and over a connection to a server on port 17777 made by
+`tests/lstcp.py` -- and both must print the bytes in
+`tests/ls/session.out`.
 
 ## Interfaces and separate compilation
 
