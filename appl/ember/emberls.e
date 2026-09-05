@@ -44,11 +44,24 @@ type Ent struct {
 	dline int
 	dcol int
 	ty string
+	fn string		// the function whose body it was seen in, "" at module level
 }
 
 type Diag struct {
 	line int
 	msg string
+}
+
+// a member of a module the file imports, for completion after "alias."
+type Member struct {
+	name string
+	what string
+	ty string
+}
+
+type Mod struct {
+	alias string
+	members []ref Member
 }
 
 // a file the client has open
@@ -58,6 +71,7 @@ type Doc struct {
 	text string
 	ents []ref Ent
 	diags []ref Diag
+	mods []ref Mod
 }
 
 var docs = map[string]ref Doc{}
@@ -205,6 +219,7 @@ func parsepos(s string, e ref Ent, isdecl int) {
 
 func parsedump(text string) []ref Ent {
 	ents := []ref Ent{}
+	fn := ""
 	bio := bufio.sopen(text)
 	for {
 		s := bio.gets('\n')
@@ -214,12 +229,16 @@ func parsedump(text string) []ref Ent {
 		if s[len(s) - 1] == '\n' {
 			s = s[0:len(s) - 1]
 		}
+		if len(s) > 3 && s[0:3] == "in " {
+			fn = s[3:len(s)]
+			continue
+		}
 		if len(s) > 5 && s[0:5] == "decl " {
 			f := fields(s[5:len(s)], 4)
 			if len(f) != 4 {
 				continue
 			}
-			e := ref Ent{isdecl: 1, name: f[1], what: f[2], ty: f[3]}
+			e := ref Ent{isdecl: 1, name: f[1], what: f[2], ty: f[3], fn: fn}
 			parsepos(f[0], e, 0)
 			parsepos(f[0], e, 1)
 			ents = append(ents, e)
@@ -228,7 +247,7 @@ func parsedump(text string) []ref Ent {
 			if len(f) != 4 {
 				continue
 			}
-			e := ref Ent{isdecl: 0, name: f[1], ty: f[3]}
+			e := ref Ent{isdecl: 0, name: f[1], ty: f[3], fn: fn}
 			parsepos(f[0], e, 0)
 			if f[2] != "-" {
 				parsepos(f[2], e, 1)
@@ -269,6 +288,31 @@ func parsediags(text string, path string) []ref Diag {
 
 // parse, check and dump the document, with the compiler's errors
 // caught in a file of their own
+// the compiler's own names begin with a dot or a dollar
+func hidden(s string) int {
+	if len(s) == 0 || s[0] == '.' || s[0] == '$' {
+		return 1
+	}
+	return 0
+}
+
+// the declaration kinds, named as the dump names them
+func storename(store int) string {
+	if store == types.Dtype {
+		return "type"
+	}
+	if store == types.Dfn {
+		return "func"
+	}
+	if store == types.Dconst {
+		return "const"
+	}
+	if store == types.Dglobal {
+		return "global"
+	}
+	return "name"
+}
+
 func analyse(d ref Doc) {
 	old := d.ents
 	d.ents = []ref Ent{}
@@ -314,6 +358,21 @@ func analyse(d ref Doc) {
 		fail("the compiler raised " + e + " on " + d.uri)
 	}
 	sys.dup(e2.fd, 2)
+	d.mods = []ref Mod{}
+	for l := ck.importlist(); l != nil; l = tl(l) {
+		imp := hd(l)
+		if imp.ty == nil || imp.ty.ids == nil {
+			continue
+		}
+		m := ref Mod{alias: imp.sym, members: []ref Member{}}
+		for id := imp.ty.ids; id != nil; id = id.next {
+			if id.sym == "" || hidden(id.sym) != 0 {
+				continue
+			}
+			m.members = append(m.members, ref Member{name: id.sym, what: storename(id.store), ty: ty.tprint(id.ty)})
+		}
+		d.mods = append(d.mods, m)
+	}
 	d.ents = parsedump(readfile(Tmpout))
 	d.diags = parsediags(readfile(Tmperr), src)
 	// a file that no longer compiles still has the names it had:
@@ -407,8 +466,9 @@ func publish(d ref Doc) {
 }
 
 func capabilities() ref json.Value {
-	caps := jobj([]string{"textDocumentSync", "definitionProvider", "hoverProvider", "referencesProvider", "documentSymbolProvider", "renameProvider"},
-		[]ref json.Value{jnum(1), jbool(1), jbool(1), jbool(1), jbool(1), jbool(1)})
+	comp := jobj([]string{"triggerCharacters"}, []ref json.Value{jarr([]ref json.Value{jstr(".")})})
+	caps := jobj([]string{"textDocumentSync", "definitionProvider", "hoverProvider", "referencesProvider", "documentSymbolProvider", "renameProvider", "completionProvider"},
+		[]ref json.Value{jnum(1), jbool(1), jbool(1), jbool(1), jbool(1), jbool(1), comp})
 	info := jobj([]string{"name", "version"}, []ref json.Value{jstr("emberls"), jstr("1")})
 	return jobj([]string{"capabilities", "serverInfo"}, []ref json.Value{caps, info})
 }
@@ -513,6 +573,132 @@ func references(d ref Doc, line int, col int) ref json.Value {
 	return jarr(a)
 }
 
+// the LSP completion kinds
+func compkind(what string) int {
+	if what == "type" {
+		return 7		// Class
+	}
+	if what == "method" {
+		return 2		// Method
+	}
+	if what == "func" {
+		return 3		// Function
+	}
+	if what == "const" {
+		return 21		// Constant
+	}
+	if what == "import" {
+		return 9		// Module
+	}
+	if what == "field" || what == "tag" {
+		return 5		// Field
+	}
+	return 6			// Variable
+}
+
+func item(name string, what string, ty string) ref json.Value {
+	return jobj([]string{"label", "kind", "detail"}, []ref json.Value{jstr(name), jnum(compkind(what)), jstr(what + " " + ty)})
+}
+
+// the text of a line of the document, from the client's copy if it
+// sent one, else from the file
+func linetext(d ref Doc, line int) string {
+	text := d.text
+	if text == "" {
+		text = readfile(d.path)
+	}
+	bio := bufio.sopen(text)
+	for i := 0; ; i++ {
+		s := bio.gets('\n')
+		if s == "" {
+			return ""
+		}
+		if i == line {
+			for len(s) > 0 && (s[len(s) - 1] == '\n' || s[len(s) - 1] == '\r') {
+				s = s[0:len(s) - 1]
+			}
+			return s
+		}
+	}
+}
+
+// "sys." before the cursor: the name being reached through, if any
+func qualifier(s string, col int) string {
+	if col > len(s) {
+		col = len(s)
+	}
+	i := col
+	for i > 0 && (s[i - 1] == '_' || (s[i - 1] >= 'a' && s[i - 1] <= 'z') || (s[i - 1] >= 'A' && s[i - 1] <= 'Z') || (s[i - 1] >= '0' && s[i - 1] <= '9')) {
+		i--
+	}
+	if i == 0 || s[i - 1] != '.' {
+		return ""
+	}
+	j := i - 1
+	i = j
+	for i > 0 && (s[i - 1] == '_' || (s[i - 1] >= 'a' && s[i - 1] <= 'z') || (s[i - 1] >= 'A' && s[i - 1] <= 'Z') || (s[i - 1] >= '0' && s[i - 1] <= '9')) {
+		i--
+	}
+	return s[i:j]
+}
+
+// the names a cursor could mean: everything the file declares, the
+// arguments and locals of the function the cursor is in, or -- after
+// "alias." -- what that module exports
+func completion(d ref Doc, line int, col int) ref json.Value {
+	a := []ref json.Value{}
+	q := qualifier(linetext(d, line), col)
+	if q != "" {
+		for _, m := range d.mods {
+			if m.alias != q {
+				continue
+			}
+			for _, mem := range m.members {
+				a = append(a, item(mem.name, mem.what, mem.ty))
+			}
+		}
+		return jarr(a)
+	}
+	// the function the cursor is in: the one whose first line is the
+	// last one at or above the cursor, since the dump lists a body's
+	// names in source order but its bodies in the checker's
+	fn := ""
+	at := 0
+	for _, e := range d.ents {
+		if e.fn == "" {
+			continue
+		}
+		first := 0
+		for _, x := range d.ents {
+			// a body's block also lists the module-level names it
+			// uses, whose declarations are elsewhere: only the
+			// function's own names and the uses inside it place it
+			if x.fn != e.fn || (x.isdecl != 0 && x.what != "arg" && x.what != "local") {
+				continue
+			}
+			if first == 0 || x.line < first {
+				first = x.line
+			}
+		}
+		if first > 0 && first <= line + 1 && first > at {
+			at = first
+			fn = e.fn
+		}
+	}
+	for _, e := range d.ents {
+		if e.isdecl == 0 || e.dmod != "" {
+			continue
+		}
+		if e.what == "local" || e.what == "arg" {
+			if e.fn != fn {
+				continue
+			}
+		}
+		a = append(a, item(e.name, e.what, e.ty))
+	}
+	return jarr(a)
+}
+
 func symbols(d ref Doc) ref json.Value {
 	a := []ref json.Value{}
 	for _, e := range d.ents {
@@ -596,6 +782,10 @@ func request(method string, id ref json.Value, params ref json.Value) {
 	}
 	if method == "textDocument/references" {
 		reply(id, references(d, line, col))
+		return
+	}
+	if method == "textDocument/completion" {
+		reply(id, completion(d, line, col))
 		return
 	}
 	if method == "textDocument/rename" {

@@ -738,9 +738,9 @@ where a name is declared, what its type is, where else it is used,
 what a file declares, and what the compiler says about it. It
 implements `initialize`, `textDocument/didOpen`, `didChange`,
 `didSave`, `didClose`, `definition`, `hover`, `references`,
-`documentSymbol`, `rename`, `shutdown` and `exit`, publishes
-diagnostics after every change, and answers anything else with a
-method-not-found error. A rename is an edit at the declaration and
+`documentSymbol`, `rename`, `completion`, `shutdown` and `exit`,
+publishes diagnostics after every change, and answers anything else
+with a method-not-found error. A rename is an edit at the declaration and
 at every use the checker resolved to it, which is a rename only
 because the checker did the resolving; it refuses a name declared in
 another module, since the edit would have to reach a file it was not
@@ -756,6 +756,14 @@ instead), and a use of an imported module's member shares the
 position of the module name it is reached through. A file that stops
 compiling keeps the declarations it last had, so an editor's outline
 does not empty out on a typo.
+
+Completion after `alias.` lists what that module exports, with each
+member's kind and type, which the server takes from the checked
+import rather than from the dump -- the dump only holds the members
+the file already uses. Elsewhere it lists what the file declares
+plus the arguments and locals of the function the cursor is in,
+which it finds by the first line of each body in the dump. The
+client does the filtering by prefix, as the protocol intends.
 
 	emberls [-I dir] [-p port] [file ...]
 
