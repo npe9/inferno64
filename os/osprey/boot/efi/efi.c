@@ -137,6 +137,61 @@ memconf(char **cfg)
 	}
 }
 
+/*
+ * Print the firmware's memory map, region by region, when the loader
+ * refuses a load region the firmware would not give up: the reader can
+ * then see what the firmware had put there.  Only text is printed, no
+ * MK is taken, so it is safe before ExitBootServices.
+ */
+void
+printmemmap(void)
+{
+	static uchar mapbuf[96*1024];
+	UINTN mapsize, entsize, junkmk;
+	UINT32 entvers;
+	EFI_MEMORY_DESCRIPTOR *t;
+	uchar *p;
+	char line[128], *s;
+	static char *typename[EfiMaxMemoryType] = {
+		[EfiReservedMemoryType]		"reserved",
+		[EfiLoaderCode]			"loader-code",
+		[EfiLoaderData]			"loader-data",
+		[EfiBootServicesCode]		"boot-svc-code",
+		[EfiBootServicesData]		"boot-svc-data",
+		[EfiRuntimeServicesCode]	"rt-svc-code",
+		[EfiRuntimeServicesData]	"rt-svc-data",
+		[EfiConventionalMemory]		"conventional",
+		[EfiUnusableMemory]		"unusable",
+		[EfiACPIReclaimMemory]		"acpi-reclaim",
+		[EfiACPIMemoryNVS]		"acpi-nvs",
+		[EfiMemoryMappedIO]		"mmio",
+		[EfiMemoryMappedIOPortSpace]	"mmio-port",
+		[EfiPalCode]			"pal-code",
+	};
+
+	mapsize = sizeof(mapbuf);
+	entsize = sizeof(EFI_MEMORY_DESCRIPTOR);
+	entvers = 1;
+	if(eficall(ST->BootServices->GetMemoryMap, &mapsize, mapbuf, &junkmk, &entsize, &entvers))
+		return;
+	print("loader: the firmware's memory map:\r\n");
+	for(p = mapbuf; mapsize >= entsize; p += entsize, mapsize -= entsize){
+		char *nm;
+
+		t = (EFI_MEMORY_DESCRIPTOR*)p;
+		nm = t->Type < EfiMaxMemoryType && typename[t->Type] != nil ? typename[t->Type] : "?";
+		s = line;
+		s = hexfmt(s, 16, t->PhysicalStart);
+		*s++ = '-';
+		s = hexfmt(s, 16, t->PhysicalStart + t->NumberOfPages * 4096ULL);
+		*s++ = ' ';
+		while(*nm)
+			*s++ = *nm++;
+		*s++ = '\r'; *s++ = '\n'; *s = 0;
+		print(line);
+	}
+}
+
 static void
 acpiconf(char **cfg)
 {

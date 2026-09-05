@@ -5732,11 +5732,25 @@ across a group's build by the flag of item 9, so two connections do
 not cross.
 .PP
 .B "13.  The loader refuses, and the stall is understood."
-A load region the firmware will not give up is read into anyway, and
-the console driver restarts a stalled boot.  The real form: refuse and
-print the memory map; and count stalls over twenty boots with
+Done, both halves.  When the firmware will not give up the kernel's
+load region
+.CW ( claimpages
+fails), the loader no longer reads into it anyway: it prints the
+firmware's memory map, region by region
+.CW ( printmemmap
+in
+.CW efi.c ),
+says the region it links at is not free, and halts \- reading into
+memory that is not the loader's is what the stall was, so it refuses
+rather than corrupt.  And the stall itself: with
 .CW claimpages
-in place \- if none, remove the restart.  Proof: the count.
+claiming the load region first, twenty boots in a row stalled none
+(the count run automatically, each boot to
+.CW "osprey: hello world" ),
+so the test harness's restart \- which used to start a stalled boot
+over up to twice \- is gone; a stall now times the run out, as a real
+fault should.  The band-aid is removed because the thing it hid is
+fixed, and measured to be fixed.
 .PP
 .B "14.  One layout for the data area."
 Offsets for 9P, \[*p]p, frames, migration, the console, the block and

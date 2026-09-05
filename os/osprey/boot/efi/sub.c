@@ -371,8 +371,13 @@ bootkern(void *f)
 
 		total = PGROUND(beswal(ex.text));
 		total += PGROUND(beswal(ex.data)) + PGROUND(beswal(ex.bss)) + BY2PG;
-		if(!claimpages((uintptr)e, total))
-			print("loader: the firmware would not give up the kernel's load region; reading into it anyway\n");
+		if(!claimpages((uintptr)e, total)){
+			print("loader: the firmware would not give up the kernel's load region; refusing rather than reading into memory that is not mine\r\n");
+			printmemmap();
+			print("loader: halted; the region the kernel links at is not free - see the map above\r\n");
+			for(;;)
+				;
+		}
 	}
 	t = e;
 	n = beswal(ex.text);
