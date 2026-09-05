@@ -166,7 +166,7 @@ mailboxinit(void)
 int
 mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 {
-	static u32 raw[36+4];
+	static u32 raw[40+4];
 	u32 *buf, *tag, *pitchslot;
 	int i;
 
@@ -178,6 +178,8 @@ mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 		buf[i++] = w; buf[i++] = h;
 	buf[i++] = 0x00048005; buf[i++] = 4; buf[i++] = 0;	/* set depth */
 		buf[i++] = 32;
+	buf[i++] = 0x00048006; buf[i++] = 4; buf[i++] = 0;	/* set pixel order */
+		buf[i++] = 0;			/* 0 = BGR: matches memdraw XRGB32 byte order so red reads red (real Pi default is BGR too) */
 	buf[i++] = 0x00048009; buf[i++] = 8; buf[i++] = 0;	/* set virt offset */
 		buf[i++] = 0; buf[i++] = 0;
 	buf[i++] = 0x00040001; buf[i++] = 8; buf[i++] = 0;	/* allocate buffer */
