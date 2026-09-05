@@ -279,6 +279,9 @@ def main():
          'cat: started with 2 arguments; argv[0] = /boot/cat' in t
          and 'cat: opening /n/hello (argument 1), served by the buddy' in t
          and re.search(r'p9: pair-client: wait: /boot/cat \(container \d+\) exited with status 0 - it read /n/hello through the buddy and wrote it out', t) is not None),
+        ("dup(2) is served by the buddy for a legacy program: /boot/cat dup's the descriptor it opened, and reads the file's contents through the duplicate - the buddy's descriptor table, not the personality's select-over-arms which shares dup's syscall number",
+         re.search(r"cat: dup'd descriptor \d+ to \d+ through the buddy; /n/hello through the duplicate ->", t) is not None
+         and 'cat: <- end of /n/hello through the duplicate' in t),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

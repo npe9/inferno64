@@ -323,7 +323,21 @@ port
 	uintptr xselect(va_list list)
 	{
 		int narms, armoff;
+		extern long ospreybuddydup(int, int);
 
+		/*
+		 * DUP's number is reused for select-over-arms, which the ring
+		 * clients call.  A legacy program - one whose text and data are
+		 * a buddy image - means dup(2) instead: route it to the buddy's
+		 * descriptor table.  The distinguisher is up->buddyimage, not
+		 * merely having a server, since a ring client has a server too
+		 * and calls the real select.
+		 */
+		if(up->buddyimage){
+			int oldfd = va_arg(list, int);
+			int newfd = va_arg(list, int);
+			return (uintptr)ospreybuddydup(oldfd, newfd);
+		}
 		narms = va_arg(list, int);
 		armoff = va_arg(list, int);
 		return (uintptr)ospreyselectcaller((uvlong)(ulong)armoff, narms);

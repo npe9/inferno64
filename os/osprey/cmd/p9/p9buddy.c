@@ -61,6 +61,7 @@ enum {
 	PAGE	= 101,
 	MAPPAGE	= 102,		/* a page of a file the process mapped */
 	FORKFDS	= 103,		/* clone this container's descriptor table into a0's, at fork */
+	DUPFD	= 104,		/* dup(oldfd, newfd): duplicate a process descriptor */
 	Nfd	= 16,		/* descriptors a legacy process may hold */
 	Fdcons	= -2,		/* 0, 1 and 2: the console, which this personality has no file for */
 	Maxph	= 8,		/* loadable program headers kept */
@@ -655,6 +656,38 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			memmove(cimg->bind, img->bind, sizeof cimg->bind);
 		}
 		r = 0;
+		break;
+	}
+
+	case DUPFD:
+	{
+		/* dup(oldfd, newfd): the process's oldfd duplicated to newfd, or to
+		 * the lowest free descriptor when newfd is -1; the console sentinel
+		 * copied as it is, a real descriptor dup'd on this personality. */
+		int old, nd, nf;
+
+		if(a0 >= Nfd || (old = img->fds[a0]) == -1){
+			r = -1;
+			break;
+		}
+		nd = old == Fdcons ? Fdcons : p9dup(old);
+		if((int)a1 == -1){
+			r = fdnew(img, nd, img->fdname[a0], img->fdmode[a0]);
+		} else {
+			nf = (int)a1;
+			if(nf < 0 || nf >= Nfd){
+				if(nd != Fdcons)
+					p9close(nd);
+				r = -1;
+				break;
+			}
+			if(img->fds[nf] >= 0)
+				p9close(img->fds[nf]);
+			img->fds[nf] = nd;
+			kstrcpy(img->fdname[nf], img->fdname[a0], sizeof img->fdname[nf]);
+			img->fdmode[nf] = img->fdmode[a0];
+			r = nf;
+		}
 		break;
 	}
 

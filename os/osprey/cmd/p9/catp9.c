@@ -40,9 +40,22 @@ startboot(char *argv0, char **argv)
 			print("cat: cannot open %s\n", argv[i]);
 			continue;
 		}
-		print("cat: %s contents follow ->\n", argv[i]);
-		catfd(fd);
-		print("\ncat: <- end of %s\n", argv[i]);
+		/*
+		 * dup the descriptor and read the file through the duplicate:
+		 * the buddy holds the descriptor table, so dup(2) is answered
+		 * there.  Proof the descriptor really duplicated: the copy
+		 * reads the same file.
+		 */
+		{
+			int df = dup(fd, -1);
+			if(df >= 0){
+				print("cat: dup'd descriptor %d to %d through the buddy; %s through the duplicate ->\n", fd, df, argv[i]);
+				catfd(df);
+				print("\ncat: <- end of %s through the duplicate\n", argv[i]);
+				close(df);
+			} else
+				print("cat: dup of %d failed\n", fd);
+		}
 		close(fd);
 	}
 	exits(nil);

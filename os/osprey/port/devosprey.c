@@ -2478,7 +2478,8 @@ enum {
 	 * page of that image, which is how a page fault is answered by the
 	 * buddy and not the kernel.  Numbered above any Plan 9 system call.
 	 */
-	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103,
+	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103, Bdupfd = 104,
+	Bdup = 5,
 	Bargoff = Odbuddyarg, Bnameoff = Odbuddyname, Bdataoff = Odbuddydata,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
@@ -2711,6 +2712,24 @@ ospreyxcall(va_list list)
  * what answers the system calls the kernel does not.  Configurations
  * forward through ospreybuddyforward when this says so.
  */
+/*
+ * dup for a legacy program: the config's DUP number is reused for
+ * select-over-arms, so its handler calls this when the caller has a
+ * buddy, and it dups through the buddy's descriptor table instead.
+ */
+long
+ospreybuddydup(int oldfd, int newfd)
+{
+	extern long ospreybuddyforward(ulong, uintptr*);
+	uintptr a[2];
+
+	if(!ospreybuddyhas())
+		return -1;
+	a[0] = (uintptr)oldfd;
+	a[1] = (uintptr)newfd;
+	return (long)ospreybuddyforward(Bdup, a);
+}
+
 int
 ospreybuddyhas(void)
 {
@@ -2732,6 +2751,23 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	p = up->osprey;
 	if(p == nil || ospreyserverof(p) == nil)
 		return -1;			/* no buddy to forward to */
+
+	/*
+	 * dup(oldfd, newfd): the buddy holds the descriptor table, so it
+	 * dups there.  A legacy program reaches this through the config's
+	 * DUP handler, which routes here when the caller has a buddy rather
+	 * than treating the number as select-over-arms.
+	 */
+	if(!up->oslinux && scallnr == Bdup){
+		ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+		if(ab == nil)
+			return -1;
+		ab[0] = Bdupfd; ab[1] = a[0]; ab[2] = a[1]; ab[3] = 0;
+		{
+			long st = ospreybuddycall(p, 400);
+			return st < 0 ? (uintptr)-1 : (uintptr)st;	/* the new descriptor */
+		}
+	}
 
 	/*
 	 * rfork(RFPROC) makes a process, which is the kernel's to do, not the
