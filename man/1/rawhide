@@ -9,16 +9,27 @@ is a cattle herding game.
 It runs under
 .IR wm (1).
 .PP
-The mouse or arrow keys move a horse used to drive cattle into the upper-left corral.
+The mouse moves a horse that scares cattle;
+the flock is herded through the swinging gate into the
+upper-left corral.
+The map is 1000x1000 pixels and larger than the window,
+so the view scrolls.
+Cattle may ford the river, but move at half speed off the grass,
+and are blocked by the fence and the waterfall.
+The clock stops when no animal is left outside the corral,
+and the best time is kept between runs.
+.PP
+A help dialog is shown at startup; any key or mouse button dismisses it
+and starts the clock.
 .PP
 The controls are:
-.TF space
+.TF mouse move
 .TP
 .B mouse move
 Move horse
 .TP
 .B arrows / wasd
-Move horse
+Scroll the view
 .TP
 .B Enter / r
 Restart
