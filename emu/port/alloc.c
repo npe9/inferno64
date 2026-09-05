@@ -1012,3 +1012,19 @@ poolaudit(char*(*audit)(int, Bhdr *))
 	}
 	return r;
 }
+
+/*
+ * The native pool allocator keeps a ring of recent frees so
+ * _poolfault() and libinterp/xec.c's badptrslot() can name who freed
+ * a block first (os/inferno/port/alloc.c).  This allocator keeps no
+ * such ring, so there is nothing here to look the address up in.
+ *
+ * It says so rather than returning silently.  The caller asks "was
+ * this freed before, and by whom?"; saying nothing is indistinguishable
+ * from answering "no", which would be a wrong answer, not a missing one.
+ */
+void
+printfreehist(void *v)
+{
+	print("printfreehist: %#p: emu keeps no free history; no record either way\n", v);
+}
