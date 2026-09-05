@@ -1,46 +1,98 @@
 .TH GRMODELS 1
 .SH NAME
-grmodels \- mesh viewer
+grmodels \- CSprite mesh generator (ball and man)
 .SH SYNOPSIS
 .B temple/grmodels
 .SH DESCRIPTION
-.I GrModels
-is a mesh viewer.
+.I Grmodels
+is a port of the TempleOS
+.B Apps/GrModels
+suite (Models, BallGen, ManGen), a generator of
+.B SPT_MESH
+CSprite models.
 It runs under
 .IR wm (1).
 .PP
-View a UV-sphere or stick figure. Drag or use the arrows to rotate; b and m switch models; minus and plus zoom.
-.PP
-The controls are:
-.TF space
-.TP
-.B b
-UV-sphere mode
-.TP
+The opening page offers two buttons,
+.B Man
+and
+.BR Ball .
+Choose one with the mouse, the arrow keys and Enter, or the
 .B m
-Stick-man mode
+and
+.B b
+shortcuts.
+.PP
+Each generator first presents its parameter form.
+BallGen asks for radius (default 20), longitude faces (16) and
+lattitude rings (8); as in the original, the two counts are halved
+before tessellation.
+ManGen has 28 fields: 12 body dimensions and 16 joint angles
+(shoulders, hips, elbows, knees, wrists and ankles, each side),
+defaulting to the original's walking pose.
+Move between fields with the arrow keys, Tab or Enter; type digits,
+.B .
+and
+.B \-
+to edit; backspace deletes and ctl-u clears.
+Esc accepts the form; Del or
+.B q
+aborts back to the menu.
+.PP
+Next comes the
+.I PopUpColorLighting
+chooser (once for the ball's face color; four times for the man's
+Shirt, Pants, Skin and Shoes), offering each of the sixteen colors in
+single- or double-sided and full- or half-range lighting variants,
+exactly as in TempleOS.
+Click a swatch or use the arrows and Enter; Esc cancels the whole
+generation.
+.PP
+The mesh is built with the original geometry: the stagger-quad UV
+sphere with shared-vertex dedup, or the articulated box man whose
+limbs chain shoulder to elbow to wrist and hip to knee to ankle
+through Z, Y then X rotations.
+It is then displayed shaded by a transliteration of the TempleOS
+.I DCLighting
+rule: the face normal is dotted with the default light source
+(1,1,1)/sqrt(3) and the result dithered between black, the chosen
+color and its intensity complement, honouring the two-sided and
+half-range flags.
+The ball's vertex count is printed, and
+.B Do another (Y/N)?
+loops back to the form
+.RB ( y ,
+retaining edits) or returns to the menu
+.RB ( n
+or Esc).
+.PP
+The generated model is also written to
+.B grmodels.csprite
+in the current directory as the byte-identical CSprite stream the
+original builds (SPT_MESH element: vertex and triangle counts,
+CD3I32 vertices, CMeshTri triangles, SPT_END), in place of the
+DolDoc cut-and-paste embedding, which has no counterpart here.
+.PP
+While a model is displayed, dragging with the left button rotates it
+and the arrow keys yaw and pitch;
+.B +
+and
+.B \-
+zoom.
+These viewing controls are a port addition; TempleOS shows the sprite
+statically in the document.
+.SH FILES
 .TP
-.B Enter
-Regenerate mesh
-.TP
-.B - / _
-Zoom out
-.TP
-.B arrows
-Yaw/pitch
-.TP
-.B LMB drag
-Rotate view
-.TP
-.B f
-Toggle face fill
-.TP
-.B Esc / q
-Quit
-.PD
+.B grmodels.csprite
+the last generated model, raw CSprite bytes
 .SH SOURCE
 .B /appl/temple/grmodels.b
 .SH SEE ALSO
 .IR temple (1),
-.IR draw3d (2),
 .IR wm (1)
+.SH BUGS
+The TempleOS fixed-point matrix arithmetic is emulated with rounded
+real arithmetic, so vertex coordinates can differ from the original
+by one unit.
+Faces are depth-sorted rather than depth-buffered, so mutually
+intersecting boxes can occasionally draw in the wrong order.
