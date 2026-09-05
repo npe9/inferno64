@@ -202,7 +202,9 @@ wire: its segments, register frame and every resident page are pulled
 out of the kernel by its server, carried in a TCP connection between two
 personalities' stacks on two machines, and pushed into a process the far
 kernel makes, which resumes from the same instruction with the same
-stack; the container it left is destroyed.  Open files do not cross.
+stack; the container it left is destroyed; and the processes sharing
+its address space are stopped and carried after it, sharing the arrived
+memory there.  Open files do not cross.
 .PP
 .B "The real wire, driven from user space."
 The kernel exposes a virtio network device to the server container the
@@ -276,10 +278,9 @@ either source describes, or the built parts imply, in the order it
 was done, each item ending with what of it, if anything, remains.
 Read on 4 September, what remains across all of them is: the raw-flash
 tier of item 3 and the second machine of item 9, both of which want a
-board this tree has no Osprey target for; a group carried over the
-wire as a group (item 6a's members could each be carried the way one
-is, but are not); the talk's number, item 10, which is structural; and
-the demonstration scale of item 12.
+board this tree has no Osprey target for; the talk's number, item 10, which is structural; and the demonstration
+scale of item 12.  Slide 15 \- processes sharing an address space
+migrating as a group \- is whole, on one machine and across a wire.
 .PP
 .B "1.  Starting a program in a container: exec."
 Built, above: the
@@ -840,12 +841,30 @@ so the arrived text faulted on its first instruction until the
 segment was marked as exec marks it.  Also the user-space driver's
 transmit ring dropped a frame when all eight were in flight, which a
 burst from tcp.c is, and every drop cost a retransmission timeout; it
-waits briefly for a slot now.  What is honest to keep saying: open
-files do not cross \- the far buddy knows nothing of them \- and the
-process that arrives is a Plan 9 process of no buddy image, all its
-pages carried; a group does not yet cross as a group, though each
-member could be carried the same way.  What remains of slide 15 is
-that.
+waits briefly for a slot now.  And the group crosses with it, which is slide 15 whole: asked to go
+with its group
+.CW ( ReqMove
+with both flags), the kernel stops the members as the one-machine
+group move does, and the server carries each after the first \- its
+header marking the segments it shares with the first
+.CW ( Migshared ),
+which are carried once and shared again at the far end
+.CW ( ReqMigmake
+with the first's identity), its own stack carried, its frame kept \-
+and the far kernel makes each a child of the arrived first, so the
+arrived parent reaps it; the members' containers go with the mover's
+when the answer comes.  The check has each machine's legacy process
+fork a thread counting in shared memory and cross with it: on the far
+console the parent prints that it is container 108 there with 42 on its
+stack and the thread's count at 20 before the crossing and 41 after,
+the thread arrives as container 109 sharing 108's memory, two pages of
+its own, and the parent stops and reaps it there.  Eleven pages,
+45056 bytes, each way.  One more criterion in
+.CW /scripts/osprey-check-p9wire.py .
+What is honest to keep saying: open files do not cross \- the far buddy
+knows nothing of them \- and the process that arrives is a Plan 9
+process of no buddy image, all its pages carried.  Nothing of slide 15
+remains.
 .PP
 The group moves too, which is slide 15's own sentence.  Asked to move
 with its group
@@ -1741,8 +1760,8 @@ QEMU's virtio-net is a transitional device unless told
 which the check now says, as the block device's line already did.
 Checked by
 .CW /scripts/osprey-check-p9wire.py ,
-six criteria on two machines, and two more for the process that
-crosses it (item 6a).
+six criteria on two machines, and three more for the process, and its
+group, that cross it (item 6a).
 .PP
 .B "7b.  A legacy port device driven from user space."
 The osprey device gained two primitives that let a personality own a

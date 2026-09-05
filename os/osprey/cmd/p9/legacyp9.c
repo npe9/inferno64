@@ -315,14 +315,44 @@ startboot(char *argv0, char **argv)
 		 * stack as it was, on another kernel; if there is none, the
 		 * kernel says so and the program stays.
 		 */
-		args[0] = 2;
-		args[1] = args[2] = args[3] = args[4] = 0;
-		print("legacy: asking the kernel to carry me over the wire to the other machine\n");
-		moved = (int)ospreyxcall(24, args, 1);
-		if(moved > 0)
-			print("legacy: I was carried over the wire to the other machine: I am container %d here, and my stack still holds %d\n", moved, keep);
-		else
-			print("legacy: no other machine took me (%d); I stay\n", moved);
+		{
+			int tid, n1, n2, i, an;
+			char abuf[128];
+
+			gshared = 0;
+			gstop = 0;
+			tid = rfork(RFPROC|RFMEM);		/* a thread to go with me */
+			if(tid == 0){
+				while(!gstop){
+					gshared++;
+					sleep(1);
+				}
+				exits("thread done");
+			}
+			for(i = 0; i < 20; i++)
+				sleep(1);
+			n1 = gshared;
+			args[0] = 3;				/* to the wire, with the group */
+			args[1] = args[2] = args[3] = args[4] = 0;
+			print("legacy: asking the kernel to carry me and my thread over the wire to the other machine\n");
+			moved = (int)ospreyxcall(24, args, 1);
+			for(i = 0; i < 20; i++)
+				sleep(1);
+			n2 = gshared;
+			if(moved > 0 && n2 > n1)
+				print("legacy: I was carried over the wire to the other machine with my thread: I am container %d here, my stack still holds %d, and the thread had counted to %d before the crossing and to %d after it - it came with me, still running in the shared memory\n", moved, keep, n1, n2);
+			else if(moved > 0)
+				print("legacy: I was carried over the wire but my thread did not come with me (counted %d then %d)\n", n1, n2);
+			else
+				print("legacy: no other machine took me (%d); I stay\n", moved);
+			gstop = 1;
+			an = await(abuf, sizeof abuf - 1);
+			if(an >= 0){
+				abuf[an] = 0;
+				print("legacy: reaped my thread after the crossing; its wait message: \"%s\"\n", abuf);
+			} else
+				print("legacy: await() after the crossing returned nothing\n");
+		}
 		/*
 		 * Let the console task carry that line out before the fault
 		 * below: the kernel prints a fault synchronously and would cut

@@ -483,7 +483,7 @@ static void
 migsend(void *a)
 {
 	uvlong cid = (uvlong)a;
-	uvlong args[5], *hdr, nseg, va, half, i, npages, nbytes;
+	uvlong args[5], *hdr, nseg, va, half, i, npages, nbytes, nmem, k;
 	uchar *d, rec[16 + Mighalf], rg[64], hdrbuf[1024];
 	uchar mac[6];
 	char addr[64];
@@ -499,32 +499,40 @@ migsend(void *a)
 	if(!vnet_ready() || (d = p9srvdata()) == nil)
 		error("no wire to carry it over");
 	vnet_mac(mac);
-	args[0] = cid; args[1] = args[2] = args[3] = args[4] = 0;
-	if(ospreyxcall(26, args, 1) != 0)		/* ReqMigsnap: the header at Migoff */
+	snprint(addr, sizeof addr, "connect 10.1.0.%d!%d", 3 - mac[5], Migport);
+	npages = nbytes = 0;
+	nmem = 1;
+	for(k = 0; k < nmem; k++){
+	args[0] = cid; args[1] = k; args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(26, args, 2) != 0)		/* ReqMigsnap: member k's header at Migoff */
 		error("the kernel would not give up the process");
 	n = args[0];
+	nmem = args[1];
 	if(n > (long)sizeof hdrbuf)
 		error("the header does not fit");
 	memmove(hdrbuf, d + Migoff, n);		/* out of the staging area: the pages come through it next */
 	hdr = (uvlong*)hdrbuf;
 	nseg = hdr[0];
-	print("p9 migrate: container %llud's process snapshotted: %llud segments, a %ld-byte header; connecting to 10.1.0.%d!%d\n",
-		cid, nseg, n, 3 - mac[5], Migport);
-	snprint(addr, sizeof addr, "connect 10.1.0.%d!%d", 3 - mac[5], Migport);
-	wfd = wireconnect(addr, &dfd);
-	print("p9 migrate: connected; sending the header\n");
+	if(k == 0){
+		print("p9 migrate: container %llud's process snapshotted: %llud segments, a %ld-byte header, %llud in its group; connecting to 10.1.0.%d!%d\n",
+			cid, nseg, n, nmem, 3 - mac[5], Migport);
+		wfd = wireconnect(addr, &dfd);
+		print("p9 migrate: connected; sending the header\n");
+	} else
+		print("p9 migrate: group member %llud snapshotted: %llud segments; sending it after\n", k, nseg);
 	pipwire_put(wfd, hdrbuf, n);		/* the header: segments and the register frame */
-	npages = nbytes = 0;
 	for(i = 0; i < nseg; i++){
 		uvlong *seg = hdr + 1 + 4*i;		/* idx, type, base, top */
 		uvlong next;
 
+		if(seg[1] & (1<<8))			/* shared with the first member: carried with it, shared again there */
+			continue;
 		print("p9 migrate: segment %llud: type %llud, %#llux-%#llux (%llud pages)\n", seg[0], seg[1], seg[2], seg[3], (seg[3] - seg[2]) / 4096);
 		for(va = seg[2]; va < seg[3]; va = next){
 			next = va + 4096;
 			for(half = 0; half < 2; half++){
-				args[0] = cid; args[1] = va; args[2] = half;
-				if(ospreyxcall(27, args, 3) != 0)		/* ReqMigpage */
+				args[0] = cid; args[1] = va; args[2] = half | (k << 8);
+				if(ospreyxcall(27, args, 3) != 0)		/* ReqMigpage: member k's page at va, this half */
 					error("the kernel would not read a page");
 				if(args[0] == 0){			/* not resident: a hole, left to the far kernel; skip to the next that is */
 					if(half == 0 && args[1] > va)
@@ -543,7 +551,11 @@ migsend(void *a)
 	}
 	va = ~0ULL;
 	memmove(rec, &va, 8);
-	pipwire_put(wfd, rec, 8);			/* the end */
+	pipwire_put(wfd, rec, 8);			/* the end of this member */
+	}
+	va = ~1ULL;
+	memmove(rec, &va, 8);
+	pipwire_put(wfd, rec, 8);			/* the end of the group */
 	{
 		long rx, tx, drops;
 
@@ -553,8 +565,8 @@ migsend(void *a)
 	rn = pipwire_get(wfd, rg, sizeof rg);
 	if(rn >= 16 && *(uvlong*)rg == 1){
 		ok = 1;
-		print("p9 migrate: container %llud's process carried over the wire to 10.1.0.%d: %llud segments, %llud pages, %llud bytes; it is container %llud there\n",
-			cid, 3 - mac[5], nseg, npages, nbytes, *(uvlong*)(rg + 8));
+		print("p9 migrate: container %llud's process carried over the wire to 10.1.0.%d, with %llud of its group: %llud pages, %llud bytes; it is container %llud there\n",
+			cid, 3 - mac[5], nmem - 1, npages, nbytes, *(uvlong*)(rg + 8));
 	} else
 		print("p9 migrate: the other machine did not take container %llud's process\n", cid);
 	poperror();
@@ -576,7 +588,7 @@ p9migrate(uvlong container)
 static void
 migrecv(void *)
 {
-	uvlong args[5], id, va, half, npages;
+	uvlong args[5], id, va, half, npages, first, nmem;
 	uchar *d, rec[16 + Mighalf], rg[64];
 	char cbuf[64], path[64], rx1[64], *e;
 	long n, rn;
@@ -604,38 +616,51 @@ migrecv(void *)
 		}
 		if((d = p9srvdata()) == nil)
 			error("no data area");
+		first = 0;
+		nmem = 0;
 		n = pipwire_get(dfd, rec, sizeof rec);
-		if(n <= 0)
-			error("no header");
-		memmove(d + Migrxoff, rec, n);
-		args[0] = args[1] = args[2] = args[3] = args[4] = 0;
-		if(ospreyxcall(28, args, 0) != 0)		/* ReqMigmake */
-			error("the kernel would not make a process for it");
-		id = args[0];
-		npages = 0;
 		for(;;){
-			rn = pipwire_get(dfd, rec, sizeof rec);
-			if(rn < 8)
-				error("the wire broke mid-process");
-			memmove(&va, rec, 8);
-			if(va == ~0ULL)
-				break;
-			if(rn < 16 + Mighalf)
-				error("a short page");
-			memmove(&half, rec + 8, 8);
-			memmove(d + Migrxoff, rec + 16, Mighalf);
-			args[0] = id; args[1] = va; args[2] = half;
-			if(ospreyxcall(29, args, 3) != 0)		/* ReqMigput */
-				error("the kernel would not take a page");
-			if(half == 1)
-				npages++;
+			/* a member: its header, its pages, its end; then the next, or the group's end */
+			if(n <= 0)
+				error("no header");
+			if(n == 8 && *(uvlong*)rec == ~1ULL)
+				break;				/* the group's end */
+			memmove(d + Migrxoff, rec, n);
+			args[0] = first; args[1] = args[2] = args[3] = args[4] = 0;
+			if(ospreyxcall(28, args, 1) != 0)		/* ReqMigmake, sharing the first's segments if a later member */
+				error("the kernel would not make a process for it");
+			id = args[0];
+			npages = 0;
+			for(;;){
+				rn = pipwire_get(dfd, rec, sizeof rec);
+				if(rn < 8)
+					error("the wire broke mid-process");
+				memmove(&va, rec, 8);
+				if(va == ~0ULL)
+					break;
+				if(rn < 16 + Mighalf)
+					error("a short page");
+				memmove(&half, rec + 8, 8);
+				memmove(d + Migrxoff, rec + 16, Mighalf);
+				args[0] = id; args[1] = va; args[2] = half;
+				if(ospreyxcall(29, args, 3) != 0)		/* ReqMigput */
+					error("the kernel would not take a page");
+				if(half == 1)
+					npages++;
+			}
+			args[0] = id; args[1] = args[2] = args[3] = args[4] = 0;
+			if(ospreyxcall(30, args, 1) != 0)		/* ReqMigstart: it runs */
+				error("the kernel would not start it");
+			if(first == 0){
+				first = id;
+				print("p9 migrate: a process arrived over the wire from %s, %llud pages, and runs here as container %llud\n", rx1, npages, id);
+			} else
+				print("p9 migrate: a member of its group arrived with it, %llud pages of its own, and runs here as container %llud sharing container %llud's memory\n", npages, id, first);
+			nmem++;
+			n = pipwire_get(dfd, rec, sizeof rec);
 		}
-		args[0] = id; args[1] = args[2] = args[3] = args[4] = 0;
-		if(ospreyxcall(30, args, 1) != 0)		/* ReqMigstart: it runs */
-			error("the kernel would not start it");
-		print("p9 migrate: a process arrived over the wire from %s, %llud pages, and runs here as container %llud\n", rx1, npages, id);
 		*(uvlong*)rg = 1;
-		*(uvlong*)(rg + 8) = id;
+		*(uvlong*)(rg + 8) = first;
 		pipwire_put(dfd, rg, 16);
 		poperror();
 		tsleep(&up->sleep, return0, nil, 300);

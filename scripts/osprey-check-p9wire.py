@@ -75,13 +75,18 @@ def main():
          and re.search(r'machine 1 answered the other machine; its user-space driver took [1-9]\d* frames in and put [1-9]\d* out, 0 dropped', t[0]) is not None
          and re.search(r'its user-space driver took [1-9]\d* frames in and put [1-9]\d* out, 0 dropped', t[1]) is not None),
         ("migration: each machine's legacy process asks to be carried over the wire, its kernel parks it and its server pulls the segments, register frame and every resident page out by request and sends them across the cable, and the other machine's server has its kernel make, fill and start a process from them",
-         all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12]: \d+ segments, ([1-9]\d*) pages, \d+ bytes; it is container \d+ there", x) is not None for x in t)
+         all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12], with 1 of its group: ([1-9]\d*) pages, \d+ bytes; it is container \d+ there", x) is not None for x in t)
          and all(re.search(r'p9 migrate: a process arrived over the wire from 10\.1\.0\.[12]!\d+, [1-9]\d* pages, and runs here as container \d+', x) is not None for x in t)
          and all(re.search(r'osprey migrate: a process arrived over the wire and is container \d+ here, [1-9]\d* pages, its registers and stack as they were; resumed', x) is not None for x in t)),
         ("and the process goes on from its request's return on the other machine, its stack as it was, and the container it left is destroyed there and its parent told",
-         all(re.search(r'legacy: I was carried over the wire to the other machine: I am container \d+ here, and my stack still holds 42', x) is not None for x in t)
+         all(re.search(r'legacy: I was carried over the wire to the other machine with my thread: I am container \d+ here, my stack still holds 42', x) is not None for x in t)
          and all(re.search(r"osprey migrate: container \d+'s process \(/boot/legacy\) has gone over the wire; container \d+ destroyed, its parent told", x) is not None for x in t)
          and all('no other machine took me' not in x for x in t)),
+        ("and its group crosses with it: the thread sharing its address space is stopped, carried after it with its own stack, and made to share the arrived memory on the other machine, where it goes on counting and is reaped by the arrived parent",
+         all(re.search(r'p9 migrate: a member of its group arrived with it, [1-9]\d* pages of its own, and runs here as container \d+ sharing container \d+\'s memory', x) is not None for x in t)
+         and all(re.search(r'the thread had counted to \d+ before the crossing and to \d+ after it - it came with me, still running in the shared memory', x) is not None for x in t)
+         and all(re.search(r'legacy: reaped my thread after the crossing; its wait message: "\d+ ', x) is not None for x in t)
+         and all(re.search(r'osprey migrate: group member container \d+ \(pid \d+\) has gone over the wire with it; container \d+ destroyed', x) is not None for x in t)),
         ("and neither machine panics",
          all('panic' not in x for x in t)),
     ]
