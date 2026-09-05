@@ -1,0 +1,77 @@
+.TH AMAIL 1
+.SH NAME
+amail \- acme mail client
+.SH SYNOPSIS
+.B amail
+[
+.B -f
+.I mbox
+] [
+.B -m
+.I mailbox
+]
+.br
+.B amail
+.B -t
+[
+.B -f
+.I mbox
+]
+.SH DESCRIPTION
+.I Amail
+is a mail client that runs inside
+.IR acme (1),
+after Plan 9's acme Mail.
+It reads the mailbox from
+.IR upas/fs (1)'s
+.B /mail/fs
+and shows the message list in an acme window whose tag carries
+.B Get
+and
+.BR Quit .
+Executing a message number in the list (chord or middle button) opens that
+message in its own window;
+.B Del
+.I n
+deletes message
+.I n
+through
+.BR /mail/fs/ctl ,
+and
+.B Get
+re-reads the mailbox.
+All transport is the modern
+.IR tls12 (2)-based
+upas backend, so no plaintext POP3 is involved.
+.PP
+With
+.B -f
+it serves a local mbox; if
+.B /mail/fs
+is already served it is used directly.
+.B -m
+selects the mailbox name (default
+.BR mbox ).
+.SS Self-test
+.B -t
+runs a headless self-test used by
+.IR tests :
+it starts the backend, reads the mailbox, prints the message list and the
+first message the way the acme windows would format them, and exits without
+touching acme.
+.SH SOURCE
+.B /appl/acme/acme/bin/src/amail.b
+.br
+.B /tests/amail.sh
+.SH SEE ALSO
+.IR acme (1),
+.IR upas/fs (1),
+.IR nedmail (1),
+.IR wmmail (1)
+.SH BUGS
+The acme window and event handling follows the standard acme-client pattern
+but, unlike the mailbox data layer, is not exercised by the headless test
+(acme needs a display).
+Opening a message is by executing its number; there is no
+.B B3
+look-to-open on the list line yet.
