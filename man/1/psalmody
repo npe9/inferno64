@@ -1,44 +1,168 @@
 .TH PSALMODY 1
 .SH NAME
-psalmody \- note-list music editor
+psalmody \- staff-notation music editor and jukebox
 .SH SYNOPSIS
 .B temple/psalmody
+[
+.I songdir
+]
 .SH DESCRIPTION
 .I Psalmody
-is a note-list music editor.
+is a port of the TempleOS sheet-music editor.
 It runs under
-.IR wm (1).
+.IR wm (1)
+in a 640\(mu480 window drawn with the authentic sprites, palette,
+and 8\(mu8 system font.
+Two five-line staves show the song; a piano-keyboard graphic,
+a note pick box, time signatures, a pointer/box tool chooser,
+and tempo/stacatto sliders fill the control strip below,
+and note names echo in green at the bottom as they sound.
 .PP
-Type A–G notes, octave digits, and w/h/q/e/s durations into a Tk list; space plays the score.
+The computer keyboard is a chromatic piano.
+Holding a key sounds its note through
+.IR tone (2)
+until release; the home row
+.B "a s d f g h j k l ; '"
+gives the naturals around the current octave's C and
+.B "e r t u i p [ ]"
+the sharps between them.
+Digits set the octave.
 .PP
 The controls are:
-.TF space
+.TF "<BACKSPACE>"
 .TP
 .B 0-9
-Set octave
+Set octave (the original's menu offers 1-7)
 .TP
-.B A-G
-Append note
+.B <SPACE>
+Rest (sounds silence; recorded as a rest)
 .TP
-.B w / h / q / e / s
-Set duration
+.B x
+Play from the cursor; any key or click stops
 .TP
-.B space / Play
-Play score
+.B z
+Toggle record mode: notes are appended with durations quantized
+from how long each key is held, scaled by the tempo slider
 .TP
-.B Save / Load / Clear buttons
-File and list ops
+.B ,
+Insert a random God song (see
+.IR god (1))
 .TP
-.B Esc / q
-Quit
+.B .
+Clear the song
+.TP
+.B m
+Mark the song incomplete
+.TP
+.B <BACKSPACE>
+Delete the note before the cursor
+.TP
+.B arrows, Home, End
+Move the note cursor (it blinks brown)
+.TP
+.B <DEL>
+Delete the note at the cursor
+.TP
+.B <ENTER>
+Pop up the note menu: set word, sharp, flat, tie, rest,
+insert, delete, or one of twelve durations
+.TP
+.B ^X ^C ^V
+Cut, copy, paste the selection
+.TP
+.B ^O
+JukeBox song browser
+.TP
+.B ^A
+Save
+.TP
+.B <ESC>
+Save the song, then exit
+.TP
+.B Q
+Abort without saving (the original's Shift-ESC)
+.TP
+.B F1
+Key summary
 .PD
+.PP
+The left mouse button drags: an existing note to a new pitch
+(or onto another note to shift its lyric word there),
+a duration glyph from the pick box onto the staff to insert a note,
+a time signature from the meter box, the tempo and stacatto sliders,
+and, with the box tool, a rubber-band selection.
+Clicking the drawn piano keys presses and releases them.
+The right mouse button opens the note menu,
+as do the sprite buttons for go-begin, play/stop, record, and go-end.
+.PP
+Songs are saved as runnable HolyC programs \(em a
+.B //0
+tag line and a
+.B Song()
+function of
+.B Play()
+strings (octave digits, durations
+.BR w / h / q / e / s
+with
+.B t
+triplet and
+.B .
+dot,
+.BR # / b
+accidentals,
+.B R
+rest,
+.B M4/4
+meters,
+.B (
+ties, and per-note lyric words) \(em the same format the original
+wrote to
+.BR ~/Psalmody ,
+so the bundled example songs load unchanged.
+.PP
+The JukeBox
+.RB ( ^O )
+browses
+.IB songdir /*.HC
+plus the examples in
+.BR /lib/temple/psalmody ,
+color-coded by tag (green graphics, blue words, red no nothing,
+black incomplete, cyan special).
+Arrows move, space previews a song in a loop,
+.B 0-9
+rates it,
+.B <DEL>
+deletes it,
+.B r
+appends a reward of God words, and
+.B <ESC>
+loads the chosen song into the editor.
 .SH FILES
 .TP
-.B /tmp/temple-song.txt
-Data file.
+.BI songdir /Tmp.HC
+Default save file;
+.I songdir
+defaults to
+.BR /usr/ user /Psalmody .
+.TP
+.B /lib/temple/psalmody
+Example songs from the original distribution.
+.TP
+.B /icons/temple/psalmodydraw_*.bit
+The seventeen staff, button, and keyboard sprites.
 .SH SOURCE
 .B /appl/temple/psalmody.b
 .SH SEE ALSO
 .IR temple (1),
+.IR god (1),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+Shift states are invisible in the keyboard stream, so Shift-ESC abort
+became
+.B Q
+and shift-arrow selection is missing (use the box tool).
+Compressed
+.B .HC.Z
+songs and the graphics code embedded in example songs are not
+supported; previews play audio and words only.
