@@ -64,8 +64,8 @@ def main():
          'vnet: virtio network device driven from user space, mac 52:54:00:00:d1:01, 16 receive buffers posted' in t[0]
          and 'vnet: virtio network device driven from user space, mac 52:54:00:00:d1:02, 16 receive buffers posted' in t[1]),
         ("the real Plan 9 stack binds an ethernet medium on that driver, and each machine takes its address on the wire from its MAC",
-         'p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.1 on the wire (from the MAC); machine 1' in t[0]
-         and 'p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.2 on the wire (from the MAC); machine 2' in t[1]),
+         'p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.1 on the wire (from /n/net); machine 1' in t[0]
+         and 'p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.2 on the wire (from /n/net); machine 2' in t[1]),
         ("machine 2's tcp.c connects to machine 1's across the cable - ARP, the handshake, real frames through two user-space drivers - and machine 1 accepts it",
          re.search(r"p9 wire: machine 2's handshake with machine 1 across the cable - Established", t[1]) is not None
          and re.search(r'p9 wire: machine 1 accepted a connection over the cable from 10\.1\.0\.2!\d+ as conversation \d+', t[0]) is not None),
@@ -115,6 +115,11 @@ def main():
          re.search(r'p9 ip: pi-p across the cable: my kernel signed a ticket for "osprey": "osprey \d+ \d+ [0-9a-f]+"', t[1]) is not None
          and re.search(r'p9 ip: pi-p wire: the kernel checked a ticket: session [0-9a-f]+ is "osprey" \(the ticket was for container \d+ where it was signed\)', t[0]) is not None
          and re.search(r'p9 ip: pi-p across the cable: with the ticket the other machine\'s kernel checked, the session is "osprey"; it opened /n/hello there and read \(version \d+\): "[^"]+"', t[1]) is not None),
+        ("the wire's configuration is read from a file in the store, not derived from the device: each machine writes /n/net from its MAC on the fresh disk and then reads it, one machine 10.1.0.1 role server, the other 10.1.0.2 role client, and brings its wire up from the file",
+         re.search(r'p9 net: no /n/net on the disk; wrote it from the MAC: this machine is 10\.1\.0\.1, its peer 10\.1\.0\.2, role server', t[0]) is not None
+         and re.search(r'p9 net: no /n/net on the disk; wrote it from the MAC: this machine is 10\.1\.0\.2, its peer 10\.1\.0\.1, role client', t[1]) is not None
+         and re.search(r'p9 wire: stack A bound the vnet medium on the user-space driver and is 10\.1\.0\.1 on the wire \(from /n/net\); machine 1', t[0]) is not None
+         and re.search(r'p9 wire: stack A bound the vnet medium on the user-space driver and is 10\.1\.0\.2 on the wire \(from /n/net\); machine 2', t[1]) is not None),
         ("the wire is a capability set at boot: each machine's server holds the network device, so the containers it serves may carry a process over the wire - the authority granted when the device was exposed",
          all(re.search(r'osprey: container \d+ holds the network device now; it and the containers it serves may carry a process over the wire \(Capwire\)', x) is not None for x in t)),
         ("and neither machine panics",

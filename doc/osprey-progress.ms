@@ -5678,12 +5678,25 @@ the wire when its device is exposed, and the crossings that follow are
 the authority in use.
 .PP
 .B "11.  Configuration read, not derived."
-Addresses come from the MAC, roles from its last byte, ports are
-constants.  The real form: a file in the store,
-.CW /n/net ,
-read at boot, giving address, peer and ports, so both machines boot the
-same image with different files.  Proof: the two-machine check writes
-the two files onto the two images first.
+Done.  Each machine reads
+.CW /n/net
+from its store at boot
+.CW ( netconf_read )
+\- its own address, its peer's, its role and the wire, pi-p and
+migration ports \- and the wire is brought up, the cable connected, the
+pi-p and migration reached, from those values.  A fresh disk has no
+such file, so it is written once from the MAC (the bootstrap: address
+.CW 10.1.0.n
+for a MAC ending in n, the peer its complement, role by the last bit),
+and read from then on, here and on the next boot; the same image on two
+disks holds two files and the machines differ only in them.  Proof, a
+criterion of the two-machine check: machine 1 writes
+.CW /n/net
+saying it is
+.CW 10.1.0.1 ,
+role server, machine 2 that it is
+.CW 10.1.0.2 ,
+role client, and each binds its wire to the address the file gives.
 .PP
 .B "12.  The firewall's rule set by policy."
 The rule goes up on a datagram from the client.  The real form: the

@@ -372,6 +372,74 @@ extern int vnet_ready(void);
 extern void vnet_mac(uchar*);
 extern void vnet_stats(long*, long*, long*);
 
+/*
+ * The wire's configuration, read from a file in the store, not derived
+ * from the device.  /n/net gives this machine its address, its peer's,
+ * its role and the ports; two machines boot the same image and differ
+ * only in that file.  On a fresh disk there is none, so it is written
+ * from the MAC once - the bootstrap - and read from then on, here and
+ * on the next boot.
+ */
+static char netmyaddr[32] = "10.1.0.1";
+static char netpeer[32] = "10.1.0.2";
+static int  netrole = 1;			/* 1 answers (server), 2 asks (client) */
+static int  netwireport = 9005, netpipport = 9001, netmigport = 9006;
+static int  netconfread;
+
+extern int p9create(char*, int, ulong);
+
+static void
+netconf_read(void)
+{
+	uchar mac[6];
+	char buf[512], *lines[16], *f[2], *e;
+	int fd, nl, i;
+	long n;
+
+	if(netconfread)
+		return;
+	netconfread = 1;
+	vnet_mac(mac);
+	fd = -1;
+	if(!waserror()){
+		fd = p9open("/n/net", OREAD);
+		poperror();
+	}
+	if(fd < 0){
+		/* no file: derive from the MAC and write it, so the next read - and the next boot - is of the file */
+		snprint(netmyaddr, sizeof netmyaddr, "10.1.0.%d", mac[5]);
+		snprint(netpeer, sizeof netpeer, "10.1.0.%d", 3 - mac[5]);
+		netrole = mac[5];
+		snprint(buf, sizeof buf, "addr %s\npeer %s\nrole %s\nwireport %d\npipport %d\nmigport %d\n",
+			netmyaddr, netpeer, netrole == 1 ? "server" : "client", netwireport, netpipport, netmigport);
+		if(!waserror()){
+			fd = p9create("/n/net", OWRITE, 0666);
+			p9write(fd, buf, strlen(buf));
+			p9close(fd);
+			poperror();
+			print("p9 net: no /n/net on the disk; wrote it from the MAC: this machine is %s, its peer %s, role %s\n",
+				netmyaddr, netpeer, netrole == 1 ? "server" : "client");
+		}
+		return;
+	}
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9close(fd);
+	nl = getfields(buf, lines, nelem(lines), 1, "\n");
+	for(i = 0; i < nl; i++){
+		if(getfields(lines[i], f, 2, 1, " \t") != 2)
+			continue;
+		if(strcmp(f[0], "addr") == 0){ strncpy(netmyaddr, f[1], sizeof netmyaddr - 1); netmyaddr[sizeof netmyaddr-1]=0; }
+		else if(strcmp(f[0], "peer") == 0){ strncpy(netpeer, f[1], sizeof netpeer - 1); netpeer[sizeof netpeer-1]=0; }
+		else if(strcmp(f[0], "role") == 0) netrole = strcmp(f[1], "server") == 0 ? 1 : 2;
+		else if(strcmp(f[0], "wireport") == 0) netwireport = atoi(f[1]);
+		else if(strcmp(f[0], "pipport") == 0) netpipport = atoi(f[1]);
+		else if(strcmp(f[0], "migport") == 0) netmigport = atoi(f[1]);
+	}
+	USED(e);
+	print("p9 net: read /n/net from the store: this machine is %s, its peer %s, role %s, ports wire %d pi-p %d migrate %d - the configuration is a file, not the device's\n",
+		netmyaddr, netpeer, netrole == 1 ? "server" : "client", netwireport, netpipport, netmigport);
+}
+
 static void
 wiresrv(void *)
 {
@@ -386,8 +454,8 @@ wiresrv(void *)
 	}
 	afd = p9open("/net/tcp/clone", ORDWR);
 	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
-	p9write(afd, "announce 9005", 13);
-	print("p9 wire: machine 1 announced tcp!*!9005 on the wire, 10.1.0.1\n");
+	{ char a[32]; snprint(a, sizeof a, "announce %d", netwireport); p9write(afd, a, strlen(a)); }
+	print("p9 wire: machine 1 announced tcp!*!%d on the wire, %s (from /n/net)\n", netwireport, netmyaddr);
 	snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
 	lfd = p9open(path, ORDWR);
 	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
@@ -464,7 +532,7 @@ pipacrosscable(void)
 		return;
 	}
 	/* as nobody */
-	wfd = pipwire_connectto("connect 10.1.0.1!9001", &dfd);
+	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
 	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
@@ -488,7 +556,7 @@ pipacrosscable(void)
 	if((ticket = pip_ticket()) == nil)
 		error("my kernel would not sign a ticket (no key set?)");
 	print("p9 ip: pi-p across the cable: my kernel signed a ticket for \"%s\": \"%s\"\n", eve, ticket);
-	wfd = pipwire_connectto("connect 10.1.0.1!9001", &dfd);
+	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
 	tn = 0;
 	tn += pip_tsession(tg+tn, 4, 0);
 	tn += pip_tauth(tg+tn, 5, ticket);
@@ -533,8 +601,8 @@ wirecli(void *)
 	}
 	dfd = p9open("/net/tcp/clone", ORDWR);
 	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
-	print("p9 wire: machine 2 connecting to 10.1.0.1!9005 across the cable\n");
-	p9write(dfd, "connect 10.1.0.1!9005", 21);
+	print("p9 wire: machine 2 connecting to %s!%d across the cable (from /n/net)\n", netpeer, netwireport);
+	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netwireport); p9write(dfd, a, strlen(a)); }
 	snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
 	sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
 	if(n<0)n=0; line[n]=0;
@@ -663,7 +731,7 @@ migsend(void *a)
 	if(!vnet_ready())
 		error("no wire to carry it over");
 	vnet_mac(mac);
-	snprint(addr, sizeof addr, "connect 10.1.0.%d!%d", 3 - mac[5], Migport);
+	snprint(addr, sizeof addr, "connect %s!%d", netpeer, netmigport);
 	npages = nbytes = 0;
 	nmem = 1;
 	for(k = 0; k < nmem; k++){
@@ -684,8 +752,8 @@ migsend(void *a)
 	if(k == 0){
 		int try;
 
-		print("p9 migrate: container %llud's process snapshotted: %llud segments, a %ld-byte header, %llud in its group, %s; connecting to 10.1.0.%d!%d\n",
-			cid, nseg, n, nmem, (hdr[1] & 1) ? "its text and data a buddy image's" : "every resident page to carry", 3 - mac[5], Migport);
+		print("p9 migrate: container %llud's process snapshotted: %llud segments, a %ld-byte header, %llud in its group, %s; connecting to %s!%d\n",
+			cid, nseg, n, nmem, (hdr[1] & 1) ? "its text and data a buddy image's" : "every resident page to carry", netpeer, netmigport);
 		/* the other machine may not be listening yet - booted later, or slower: try for a while */
 		for(try = 0;; try++){
 			if(!waserror()){
@@ -753,8 +821,8 @@ migsend(void *a)
 	rn = pipwire_get(wfd, rg, sizeof rg);
 	if(rn >= 16 && *(uvlong*)rg == 1){
 		ok = 1;
-		print("p9 migrate: container %llud's process carried over the wire to 10.1.0.%d, with %llud of its group: %llud pages, %llud bytes; it is container %llud there\n",
-			cid, 3 - mac[5], nmem - 1, npages, nbytes, *(uvlong*)(rg + 8));
+		print("p9 migrate: container %llud's process carried over the wire to %s, with %llud of its group: %llud pages, %llud bytes; it is container %llud there\n",
+			cid, netpeer, nmem - 1, npages, nbytes, *(uvlong*)(rg + 8));
 		migsent++;
 		migexchanged();
 	} else
@@ -876,7 +944,7 @@ migrecv(void *)
 
 	afd = p9open("/net/tcp/clone", ORDWR);
 	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
-	snprint(cbuf, sizeof cbuf, "announce %d", Migport);
+	snprint(cbuf, sizeof cbuf, "announce %d", netmigport);
 	p9write(afd, cbuf, strlen(cbuf));
 	for(;;){
 		snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
@@ -916,14 +984,15 @@ p9vnetup(void)
 		return;
 	}
 	vnet_mac(mac);
+	netconf_read();		/* the wire's address, peer, role and ports from /n/net, seeded from the MAC on a fresh disk */
 	fd = p9open("/net/ipifc/clone", ORDWR);
 	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
 	p9write(fd, "bind vnet", 9);
-	n = snprint(addr, sizeof addr, "add 10.1.0.%d 255.255.255.0", mac[5]);
+	n = snprint(addr, sizeof addr, "add %s 255.255.255.0", netmyaddr);
 	p9write(fd, addr, n);
 	p9close(fd);
-	print("p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.%d on the wire (from the MAC); machine %d\n", mac[5], mac[5]);
-	if(mac[5] == 1)
+	print("p9 wire: stack A bound the vnet medium on the user-space driver and is %s on the wire (from /n/net); machine %d\n", netmyaddr, netrole);
+	if(netrole == 1)
 		kproc("wiresrv", wiresrv, nil);
 	else
 		kproc("wirecli", wirecli, nil);
