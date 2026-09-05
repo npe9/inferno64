@@ -1,0 +1,18 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG =	atazz
+
+HFILES = atazz.h tabs.h
+OFILES = bit.$O main.$O probe.$O
+
+BIN=$ROOT/9front/$objtype/bin
+
+%.ps:DQ:	%.ms
+	eval `{doctype macros.ms $stem.ms} | \
+	lp -m.9 -dstdout >$target
+
+%.pdf:DQ: %.ps
+	cat /sys/doc/docfonts $stem.ps >_$stem.ps
+	ps2pdf _$stem.ps $stem.pdf && rm -f _$stem.ps
+
+<$ROOT/9front-src/sys/src/cmd/mkone

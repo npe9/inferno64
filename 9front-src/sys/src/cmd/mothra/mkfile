@@ -1,0 +1,27 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=mothra
+LIB=libpanel/libpanel.a$O
+CFILES= \
+	snoop.c \
+	forms.c \
+	getpix.c \
+	html.syntax.c \
+	mothra.c \
+	rdhtml.c \
+	url.c \
+
+OFILES=${CFILES:%.c=%.$O}
+HFILES=mothra.h html.h libpanel/panel.h libpanel/rtext.h
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+CFLAGS=-FTVw -Ilibpanel
+
+$LIB:V:
+	cd libpanel
+	mk
+
+clean nuke:V:
+	@{ cd libpanel; mk $target }
+	rm -f *.[$OS] [$OS].out $TARG

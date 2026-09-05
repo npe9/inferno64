@@ -1,0 +1,13 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libl.a
+OFILES=allprint.$O\
+	main.$O\
+	reject.$O\
+	yyless.$O\
+	yywrap.$O\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=-c -D_RESEARCH_SOURCE

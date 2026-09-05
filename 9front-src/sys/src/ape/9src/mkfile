@@ -1,0 +1,10 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+#	ptyfs\	# for X11, not going to bother
+TARG=\
+	stty\
+	tar\
+	cc\
+
+BIN=$ROOT/9front/$objtype/bin/ape
+<$ROOT/9front-src/sys/src/cmd/mkmany

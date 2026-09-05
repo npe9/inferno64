@@ -1,0 +1,16 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=spred
+BIN=$ROOT/9front/$objtype/bin
+OFILES=\
+	spred.$O\
+	win.$O\
+	cmd.$O\
+	pal.$O\
+	cmdw.$O\
+	spr.$O\
+	fil.$O\
+
+HFILES=dat.h fns.h
+
+<$ROOT/9front-src/sys/src/cmd/mkone

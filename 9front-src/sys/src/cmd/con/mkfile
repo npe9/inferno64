@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=con\
+	xms\
+	xmr\
+	hayes\
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+
+

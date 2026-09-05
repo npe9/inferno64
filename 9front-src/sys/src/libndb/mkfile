@@ -1,0 +1,35 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libndb.a
+OFILES=\
+	csgetval.$O\
+	csipinfo.$O\
+	dnsquery.$O\
+	ipattr.$O\
+	mkptrname.$O\
+	ndbaux.$O\
+	ndbcache.$O\
+	ndbcat.$O\
+	ndbconcatenate.$O\
+	ndbdiscard.$O\
+	ndbfree.$O\
+	ndbgetipaddr.$O\
+	ndbgetval.$O\
+	ndbhash.$O\
+	ndbipinfo.$O\
+	ndblookval.$O\
+	ndbopen.$O\
+	ndbparse.$O\
+	ndbreorder.$O\
+	ndbsubstitute.$O\
+	ndbdedup.$O\
+	ndbvalfmt.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ndb.h\
+	ndbhf.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+$O.out: testipinfo.$O
+	$LD $prereq

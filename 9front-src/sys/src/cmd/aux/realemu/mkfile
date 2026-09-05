@@ -1,0 +1,9 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/aux
+
+TARG=realemu
+OFILES=decode.$O arg.$O xec.$O fmt.$O pci.$O pit.$O main.$O
+HFILES=dat.h fns.h
+
+<$ROOT/9front-src/sys/src/cmd/mkone

@@ -1,0 +1,39 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=\
+	mkflashfs\
+	flashfs\
+
+ALLOBJ=\
+	devfs.$O\
+	journal.$O\
+	mkfs.$O\
+	testld.$O\
+	dummy.$O\
+	dreq.$O\
+	request.$O\
+	entry.$O\
+	conv.$O\
+	utils.$O\
+
+HFILES=\
+	flashfs.h
+
+LIB=$ROOT/9front/$objtype/lib/lib9p.a
+BIN=$ROOT/9front/$objtype/bin/aux
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+
+$O.mkflashfs: mkfs.$O devfs.$O utils.$O
+	$LD -o $target $prereq
+
+$O.testldfs: testld.$O journal.$O entry.$O errors.$O devfs.$O conv.$O utils.$O
+	$LD -o $target $prereq
+
+$O.dummyfs: dummy.$O dreq.$O entry.$O errors.$O devfs.$O utils.$O
+	$LD -o $target $prereq
+
+$O.flashfs: flash.$O journal.$O entry.$O errors.$O request.$O devfs.$O conv.$O utils.$O
+	$LD -o $target $prereq
+
+$ALLOBJ: $HFILES

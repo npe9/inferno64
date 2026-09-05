@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libpcm.a
+OFILES=\
+	conv.$O\
+	desc.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/pcm.h\
+	fir.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

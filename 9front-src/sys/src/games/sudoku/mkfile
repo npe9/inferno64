@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+BIN=$ROOT/9front/$objtype/bin/games
+
+TARG=sudoku
+OFILES=\
+	sudoku.$O\
+	levels.$O\
+	game.$O\
+
+HFILES=sudoku.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkone

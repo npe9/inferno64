@@ -1,0 +1,16 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libgeometry.a
+
+OFILES=\
+	point.$O\
+	matrix.$O\
+	quaternion.$O\
+	rframe.$O\
+	utils.$O\
+	fmt.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/geometry.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

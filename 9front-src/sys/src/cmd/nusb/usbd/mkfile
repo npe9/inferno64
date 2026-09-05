@@ -1,0 +1,16 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+OFILES=\
+	usbd.$O\
+	hub.$O\
+	hname.$O\
+
+HFILES=../lib/usb.h\
+	dat.h\
+	fns.h\
+
+TARG=usbd
+BIN=$ROOT/9front/$objtype/bin/nusb
+LIB=../lib/usb.a$O
+<$ROOT/9front-src/sys/src/cmd/mkone
+CFLAGS=-I../lib $CFLAGS

@@ -1,0 +1,10 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=basic
+
+<$ROOT/9front-src/sys/src/cmd/mktest
+
+$O.regexec: regexec.$O
+$O.rregexec: rregexec.$O
+
+%.test: $O.regexec $O.rregexec

@@ -1,0 +1,14 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+OFILES=\
+	disk.$O\
+	proto.$O\
+	scsi.$O\
+
+HFILES=$ROOT/9front-src/sys/include/disk.h
+LIB=$ROOT/9front/$objtype/lib/libdisk.a
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+$O.test: test.$O $LIB
+	$LD -o $target test.$O $LIB

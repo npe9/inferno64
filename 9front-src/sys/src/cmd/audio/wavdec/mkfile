@@ -1,0 +1,8 @@
+<$ROOT/9front-src/$objtype/mkfile
+<../config
+
+OFILES=wavdec.$O
+
+TARG=wavdec
+
+<$ROOT/9front-src/sys/src/cmd/mkone

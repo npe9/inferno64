@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=fdisk edisk prep
+
+YFILES=calc.y
+HFILES=edit.h
+OFILES=\
+	edit.$O\
+	y.tab.$O\
+
+BIN=$ROOT/9front/$objtype/bin/disk
+
+<$ROOT/9front-src/sys/src/cmd/mkmany

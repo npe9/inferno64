@@ -1,0 +1,9 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=patch
+
+CLEANFILES=\
+	multifile.1.in.tmp\
+	multifile.2.in.tmp\
+
+<$ROOT/9front-src/sys/src/cmd/mktest

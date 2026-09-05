@@ -1,0 +1,8 @@
+#!/bin/sh
+# Compile a *build host* tool -- a generator like libc/ucd's
+# mkrunetype or libsec's mpc, which has to run here rather than on
+# 9front.  It is Plan 9 C, so it is built against this tree's own host
+# lib9 and libbio, the same way everything under utils/ is.
+: "${ROOT:?ROOT must be set}"
+host=$ROOT/$(/usr/bin/sed -n 's/^SYSHOST=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")/$(/usr/bin/sed -n 's/^OBJTYPE=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")
+exec cc -c -w -Wno-main -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -I"$ROOT/9front-src/host/include" -I"$host/include" -I"$ROOT/include" "$@"

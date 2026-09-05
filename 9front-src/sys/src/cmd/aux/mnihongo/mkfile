@@ -1,0 +1,7 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=mnihongo
+OFILES=mnihongo.$O
+
+BIN=$ROOT/9front/$objtype/bin/aux
+<$ROOT/9front-src/sys/src/cmd/mkone

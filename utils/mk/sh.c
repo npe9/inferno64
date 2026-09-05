@@ -3,6 +3,7 @@
 char	*termchars = "\"'= \t";	/*used in parse.c to isolate assignment attribute*/
 char	*shflags = 0;
 int	IWS = ' ';		/* inter-word separator in env */
+int	emptyisnolist = 0;	/* sh cannot tell the two apart */
 
 /*
  *	This file contains functions that depend on the shell's syntax.  Most

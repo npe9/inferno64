@@ -1,0 +1,31 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=samterm
+OFILES=main.$O\
+	icons.$O\
+	menu.$O\
+	mesg.$O\
+	rasp.$O\
+	scroll.$O\
+	flayer.$O\
+	io.$O\
+	plan9.$O\
+
+HFILES=samterm.h\
+	flayer.h\
+	$ROOT/9front-src/sys/include/frame.h\
+
+LIB=	$ROOT/9front/$objtype/lib/libdraw.a\
+	$ROOT/9front/$objtype/lib/libframe.a\
+
+BIN=$ROOT/9front/$objtype/bin/aux
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+CFLAGS=-I../sam $CFLAGS
+
+mesg.$O:	../sam/mesg.h
+
+syms:V:
+	$CC -a $CFLAGS main.c		 > syms
+	for(i in *.c) $CC -aa $CFLAGS $i >> syms

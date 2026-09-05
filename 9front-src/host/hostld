@@ -1,0 +1,13 @@
+#!/bin/sh
+# Link a build host tool.  The libraries go last: the mkfiles say
+# "$LD $LDFLAGS -o out obj", so anything in LDFLAGS would come before
+# the object and a static archive there resolves nothing.
+: "${ROOT:?ROOT must be set}"
+host=$ROOT/$(/usr/bin/sed -n 's/^SYSHOST=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")/$(/usr/bin/sed -n 's/^OBJTYPE=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")
+supp=${TMPDIR:-/tmp}/9front-hostsupp.$$.o
+cc -c -w -I"$ROOT/9front-src/host/include" -I"$host/include" -I"$ROOT/include" \
+	-o "$supp" "$ROOT/9front-src/host/hostsupp.c" || exit 1
+cc -w "$@" "$supp" "$host/lib/libbio.a" "$host/lib/lib9.a"
+st=$?
+rm -f "$supp"
+exit $st

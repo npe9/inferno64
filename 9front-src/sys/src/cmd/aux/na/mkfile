@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=na
+HFILES=\
+	na.h\
+
+OFILES=\
+	y.tab.$O\
+
+YFILES=na.y\
+
+BIN=$ROOT/9front/$objtype/bin/aux
+<$ROOT/9front-src/sys/src/cmd/mkone

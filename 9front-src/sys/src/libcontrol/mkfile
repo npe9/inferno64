@@ -1,0 +1,31 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libcontrol.a
+
+OFILES=\
+	box.$O\
+	button.$O\
+	cache.$O\
+	control.$O\
+	entry.$O\
+	group.$O\
+	keyboard.$O\
+	label.$O\
+	menu.$O\
+	radiobutton.$O\
+	scribble.$O\
+	slider.$O\
+	tabs.$O\
+	text.$O\
+	textbutton.$O\
+	textbutton3.$O\
+
+HFILES=$ROOT/9front-src/sys/include/draw.h\
+	$ROOT/9front-src/sys/include/mouse.h\
+	$ROOT/9front-src/sys/include/keyboard.h\
+	$ROOT/9front-src/sys/include/control.h\
+	group.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+$OFILES: $HFILES

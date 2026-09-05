@@ -1,0 +1,10 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libsec.a
+
+HFILES=$ROOT/9front-src/sys/include/ape/libsec.h
+
+OFILES=\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

@@ -1,0 +1,13 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libmp.a
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ape/mp.h\
+	../../../../libmp/port/dat.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+%.$O:	../../../../libmp/power64/%.s
+	$AS ../../../../libmp/power64/$stem.s

@@ -174,6 +174,7 @@ enum
 	Zilo_m,
 	Ziqo_m,
 	Zjmp,
+	Zjmpf,
 	Zloop,
 	Zo_iw,
 	Zm_o,

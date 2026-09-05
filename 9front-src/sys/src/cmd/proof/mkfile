@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=proof
+OFILES=main.$O\
+	font.$O\
+	htroff.$O\
+	screen.$O\
+
+HFILES=proof.h
+
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+$O.pout: $OFILES
+	$LD -o $O.pout -p $OFILES

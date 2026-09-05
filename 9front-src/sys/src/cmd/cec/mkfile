@@ -1,0 +1,14 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=cec
+
+OFILES=\
+	cec.$O\
+	plan9.$O\
+	mux.$O\
+	utils.$O\
+
+HFILES=cec.h
+
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkone

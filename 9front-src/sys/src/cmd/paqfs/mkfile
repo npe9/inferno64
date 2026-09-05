@@ -1,0 +1,17 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+HFILES=paqfs.h
+
+TARG=mkpaqfs\
+	paqfs\
+
+OFILES=
+
+PROGS=${TARG:%=$O.%}
+
+BIN=$ROOT/9front/$objtype/bin
+
+all:V:
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+

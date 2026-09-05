@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/games
+TARG=blit
+HFILES=dat.h fns.h
+OFILES=\
+	blit.$O\
+	cpu.$O\
+	mem.$O\
+	telnet.$O\
+
+<$ROOT/9front-src/sys/src/cmd/mkone

@@ -1,0 +1,16 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libregexp.a
+OFILES=\
+	regcomp.$O\
+	regerror.$O\
+	regexec.$O\
+	regsub.$O\
+	rregexec.$O\
+	rregsub.$O\
+	regprint.$O\
+
+HFILES=$ROOT/9front-src/sys/include/regexp.h\
+	regimpl.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

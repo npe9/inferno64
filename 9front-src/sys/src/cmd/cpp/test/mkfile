@@ -1,0 +1,6 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=\
+	edges
+
+<$ROOT/9front-src/sys/src/cmd/mktest

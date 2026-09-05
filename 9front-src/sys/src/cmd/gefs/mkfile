@@ -1,0 +1,28 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=gefs
+BIN=$ROOT/9front/$objtype/bin
+OFILES=\
+	blk.$O\
+	cache.$O\
+	check.$O\
+	cons.$O\
+	ctl.$O\
+	dump.$O\
+	error.$O\
+	fs.$O\
+	fuzz.$O\
+	hash.$O\
+	load.$O\
+	main.$O\
+	pack.$O\
+	ream.$O\
+	snap.$O\
+	tree.$O\
+	user.$O\
+
+HFILES=\
+	dat.h\
+	fns.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkone

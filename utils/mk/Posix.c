@@ -8,6 +8,41 @@
 char 	*shell =	"/bin/sh";
 char 	*shellname =	"sh";
 
+/*
+ *	The shell a recipe runs under.  A mkfile that sets MKSH names
+ *	it; this port ran everything under /bin/sh and had no way to say
+ *	otherwise, and 9front's mkfiles are written in rc.  Nt.c has
+ *	read MKSH exactly this way for as long as it has existed, which
+ *	is why that is the name rather than Plan 9 mk's MKSHELL: mkfiles
+ *	already in this tree set MKSHELL and have always been built
+ *	under sh regardless, and honouring it now would change how they
+ *	build.  os/9front/pc64/mkfile is one of them.
+ *
+ *	The name passed as argv[0] follows the path, so a shell that
+ *	looks at its own name still sees the right one.
+ */
+/*
+ *	MKSHELL names the shell a recipe runs under.  It may be a bare
+ *	name, which is looked up on the path -- the exec below is
+ *	execlp -- or a full path.
+ */
+static char*
+mkshell(char **namep)
+{
+	Symtab *sym;
+	char *p, *q;
+
+	sym = symlook("MKSH", S_VAR, 0);
+	if(sym == 0 || sym->value == 0)
+		return shell;
+	p = ((Word*)(sym->value))->s;
+	if(p == 0 || *p == 0)
+		return shell;
+	q = strrchr(p, '/');
+	*namep = q? q+1: p;
+	return p;
+}
+
 extern char **environ;
 
 void
@@ -44,15 +79,32 @@ exportenv(Envy *e)
 	char *values;
 
 	p = 0;
-	for(i = 0; e->name; e++, i++) {
-		p = (char**) Realloc(p, (i+2)*sizeof(char*));
+	i = 0;
+	for(; e->name; e++) {
 		if (e->values)
 			values = wtos(e->values, IWS);
 		else
 			values = "";
+		/*
+		 *	"AFLAGS=" in a mkfile is an empty list.  On Plan 9
+		 *	rc reads it back as one -- /env/AFLAGS is a zero
+		 *	length file -- but through a Unix environment it
+		 *	comes back as a list of one empty string, and a
+		 *	recipe reading "$AS $AFLAGS $stem.s" then hands the
+		 *	assembler an empty file name before the real one.
+		 *	9front's mkfiles are full of such variables.  So
+		 *	export nothing instead: sh cannot tell an unset
+		 *	variable from an empty one, and rc can.
+		 */
+		if (emptyisnolist && *values == 0)
+			continue;
+		p = (char**) Realloc(p, (i+2)*sizeof(char*));
 		p[i] = malloc(strlen(e->name) + strlen(values) + 2);
 		sprint(p[i], "%s=%s", e->name,  values);
+		i++;
 	}
+	if (p == 0)
+		p = (char**) Realloc(p, sizeof(char*));
 	p[i] = 0;
 	environ = p;
 }
@@ -102,6 +154,8 @@ execsh(char *args, char *cmd, Bufblock *buf, Envy *e)
 		Exit();
 	}
 	if(pid == 0){
+		char *sh, *shname = shellname;
+
 		if(buf)
 			close(out[0]);
 		if(pipe(in) < 0){
@@ -123,11 +177,12 @@ execsh(char *args, char *cmd, Bufblock *buf, Envy *e)
 			close(in[1]);
 			if (e)
 				exportenv(e);
+			sh = mkshell(&shname);
 			if(shflags)
-				execl(shell, shellname, shflags, args, nil);
+				execlp(sh, shname, shflags, args, nil);
 			else
-				execl(shell, shellname, args, nil);
-			perror(shell);
+				execlp(sh, shname, args, nil);
+			perror(sh);
 			_exits("exec");
 		}
 		if(buf)
@@ -182,6 +237,8 @@ pipecmd(char *cmd, Envy *e, int *fd)
 		Exit();
 	}
 	if(pid == 0){
+		char *sh, *shname = shellname;
+
 		if(fd){
 			close(pfd[0]);
 			dup2(pfd[1], 1);
@@ -189,11 +246,12 @@ pipecmd(char *cmd, Envy *e, int *fd)
 		}
 		if(e)
 			exportenv(e);
+		sh = mkshell(&shname);
 		if(shflags)
-			execl(shell, shellname, shflags, "-c", cmd, nil);
+			execlp(sh, shname, shflags, "-c", cmd, nil);
 		else
-			execl(shell, shellname, "-c", cmd, nil);
-		perror(shell);
+			execlp(sh, shname, "-c", cmd, nil);
+		perror(sh);
 		_exits("exec");
 	}
 	if(fd){

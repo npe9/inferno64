@@ -1,0 +1,22 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+<../config
+
+LIB=com.a$O
+OFILES=bbox.$O\
+	glob.$O\
+	misc.$O\
+	request.$O\
+	tempnam.$O\
+	getopt.$O\
+
+HFILES=comments.h\
+	gen.h\
+	ext.h\
+	request.h\
+	path.h
+
+<$ROOT/9front-src/sys/src/cmd/mklib
+
+CFLAGS=-c -D$SYSTEM -D_POSIX_SOURCE -B
+CC=pcc

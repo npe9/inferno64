@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=vt
+
+OFILES=\
+	main.$O\
+	vt.$O\
+	fs.$O\
+
+HFILES=cons.h
+
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkone

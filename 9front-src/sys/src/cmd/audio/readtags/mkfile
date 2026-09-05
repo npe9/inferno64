@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+<../config
+
+TARG=readtags
+CFLAGS=$CFLAGS -I../libtags
+
+OFILES=\
+	readtags.$O\
+	
+HFILES=\
+	../libtags/tags.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkone

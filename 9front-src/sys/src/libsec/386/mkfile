@@ -1,0 +1,11 @@
+objtype=386
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libsec.a
+OFILES=\
+	md5block.$O\
+	sha1block.$O\
+
+HFILES=$ROOT/9front-src/sys/include/libsec.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

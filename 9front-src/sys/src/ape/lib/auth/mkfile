@@ -1,0 +1,37 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libauth.a
+OFILES=\
+	amount.$O\
+	amount_getkey.$O\
+	attr.$O\
+	auth_attr.$O\
+	auth_challenge.$O\
+	auth_chuid.$O\
+	auth_getkey.$O\
+	auth_getuserpasswd.$O\
+	auth_proxy.$O\
+	auth_respond.$O\
+	auth_rpc.$O\
+	auth_userpasswd.$O\
+	login.$O\
+	newns.$O\
+	noworld.$O\
+	procsetuser.$O\
+	passtokey.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ape/auth.h\
+	$ROOT/9front-src/sys/src/libauth/authlocal.h\
+	../9/libc.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=-TVwc -D_POSIX_SOURCE -D_PLAN9_SOURCE -D_NET_EXTENSION -I. -I../9 -I$ROOT/9front-src/sys/src/libauth
+
+%.$O:	$ROOT/9front-src/sys/src/libauth/%.c
+	$CC $CFLAGS $ROOT/9front-src/sys/src/libauth/$stem.c
+
+passtokey.$O:	$ROOT/9front-src/sys/src/libauthsrv/passtokey.c
+	$CC $CFLAGS $ROOT/9front-src/sys/src/libauthsrv/passtokey.c

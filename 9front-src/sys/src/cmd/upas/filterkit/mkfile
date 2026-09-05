@@ -1,0 +1,14 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=\
+	deliver\
+	list\
+	mbappend\
+	token\
+
+LIB=../common/libcommon.a$O
+OFILES=readaddrs.$O
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+<../mkupas
+CFLAGS=$CFLAGS -I../common

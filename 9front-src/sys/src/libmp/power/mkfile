@@ -1,0 +1,15 @@
+objtype=power
+</power/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libmp.a
+SFILES=\
+	mpvecadd.s\
+	mpvecsub.s\
+	mpvecdigmuladd.s\
+	mpvecdigmulsub.s\
+
+HFILES=$ROOT/9front-src/$objtype/include/u.h $ROOT/9front-src/sys/include/mp.h ../port/dat.h
+
+OFILES=${SFILES:%.s=%.$O}
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

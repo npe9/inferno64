@@ -1,0 +1,17 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+
+<../config
+
+COMMONDIR=../common
+
+TARG=p9bitpost
+OFILES=pslib.$O\
+	p9bitpost.$O\
+
+BIN=$POSTBIN
+
+LIB=$ROOT/9front/$objtype/lib/libmemdraw.a
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+CFLAGS=-w -I$COMMONDIR

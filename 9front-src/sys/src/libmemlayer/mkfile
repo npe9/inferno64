@@ -1,0 +1,25 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libmemlayer.a
+
+OFILES=\
+	draw.$O\
+	warp.$O\
+	lalloc.$O\
+	layerop.$O\
+	ldelete.$O\
+	lhide.$O\
+	line.$O\
+	load.$O\
+	lorigin.$O\
+	lsetrefresh.$O\
+	ltofront.$O\
+	ltorear.$O\
+	unload.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/memlayer.h\
+	$ROOT/9front-src/sys/include/memdraw.h\
+	$ROOT/9front-src/sys/include/draw.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

@@ -1,0 +1,28 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=wikifs
+
+HFILES=wiki.h
+COFILES=\
+	io.$O\
+	parse.$O\
+	parsehist.$O\
+	tohtml.$O\
+	util.$O\
+	wdir.$O\
+
+OFILES=fs.$O $COFILES
+
+BIN=$ROOT/9front/$objtype/bin
+LIB=$ROOT/9front/$objtype/lib/lib9p.a #$ROOT/9front/$objtype/lib/libdebugmalloc.a
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+$O.wiki2html: wiki2html.$O $COFILES
+	$LD -o $target $prereq
+
+$O.wiki2text: wiki2text.$O $COFILES
+	$LD -o $target $prereq
+
+$O.owikifs: ofs.$O $COFILES
+	$LD -o $target $prereq

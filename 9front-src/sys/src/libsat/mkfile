@@ -1,0 +1,18 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libsat.a
+
+OFILES=\
+	misc.$O \
+	satadd.$O \
+	satrange.$O \
+	satsolve.$O \
+	satmore.$O \
+	debug.$O \
+	satget.$O \
+
+HFILES=\
+	$ROOT/9front-src/sys/include/sat.h\
+	impl.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

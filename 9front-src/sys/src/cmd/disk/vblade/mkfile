@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=vblade
+
+OFILES=\
+	vblade.$O\
+
+HFILES=aoe.h
+
+BIN=$ROOT/9front/$objtype/bin/disk
+
+<$ROOT/9front-src/sys/src/cmd/mkone

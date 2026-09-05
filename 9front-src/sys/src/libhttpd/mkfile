@@ -1,0 +1,27 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libhttpd.a
+OFILES=\
+	alloc.$O\
+	checkcontent.$O\
+	date.$O\
+	fail.$O\
+	gethead.$O\
+	hio.$O\
+	httpfmt.$O\
+	httpunesc.$O\
+	lower.$O\
+	okheaders.$O\
+	parse.$O\
+	parsereq.$O\
+	query.$O\
+	redirected.$O\
+	unallowed.$O\
+	urlfmt.$O\
+	urlunesc.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/httpd.h\
+	escape.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

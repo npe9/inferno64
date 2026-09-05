@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=exportfs
+OFILES=\
+	exportsrv.$O\
+	pattern.$O\
+	io.$O\
+
+HFILES=exportfs.h\
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkmany

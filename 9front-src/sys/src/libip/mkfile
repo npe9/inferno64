@@ -1,0 +1,25 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libip.a
+OFILES=\
+	eipfmt.$O\
+	equivip.$O\
+	parseip.$O\
+	parseether.$O\
+	myetheraddr.$O\
+	myipaddr.$O\
+	classmask.$O\
+	bo.$O\
+	readipifc.$O\
+	ipaux.$O\
+	iplocalonifc.$O\
+	ipremoteonifc.$O\
+	ptclbsum.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ip.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+ptclbsum.8:	ptclbsum386.s
+	$AS -o $target ptclbsum386.s

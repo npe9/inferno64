@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libframe.a
+OFILES=\
+	frbox.$O\
+	frdraw.$O\
+	frdelete.$O\
+	frinit.$O\
+	frinsert.$O\
+	frptofchar.$O\
+	frselect.$O\
+	frstr.$O\
+	frutil.$O\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

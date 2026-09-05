@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=diff merge3
+OFILES=\
+	diffdir.$O\
+	diffio.$O\
+	diffreg.$O\
+	util.$O
+
+HFILES=diff.h
+
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkmany

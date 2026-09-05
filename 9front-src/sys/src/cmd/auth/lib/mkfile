@@ -1,0 +1,27 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+
+LIB=../lib.$O.a
+OFILES=\
+	answer.$O\
+	keyfmt.$O\
+	netcheck.$O\
+	okpasswd.$O\
+	private.$O\
+	readwrite.$O\
+	readarg.$O\
+	getpass.$O\
+	getauthkey.$O\
+	log.$O\
+	error.$O\
+	fs.$O\
+	rdbio.$O\
+	querybio.$O\
+	wrbio.$O\
+	getexpiration.$O\
+
+
+HFILES=$ROOT/9front-src/sys/include/auth.h $ROOT/9front-src/sys/include/authsrv.h ../authcmdlib.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+CFLAGS=$CFLAGS -I..

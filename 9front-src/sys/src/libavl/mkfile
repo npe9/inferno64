@@ -1,0 +1,11 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libavl.a
+
+OFILES=\
+	avl.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/avl.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

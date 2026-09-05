@@ -1,0 +1,8 @@
+<$ROOT/9front-src/$objtype/mkfile
+<../config
+
+OFILES=pcmconv.$O
+
+TARG=pcmconv
+
+<$ROOT/9front-src/sys/src/cmd/mkone

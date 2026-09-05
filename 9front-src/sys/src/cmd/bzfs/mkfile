@@ -1,0 +1,20 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=bzfs
+
+OFILES=\
+	mkext.$O\
+	oramfs.$O\
+	unbflz.$O\
+	unbzip.$O\
+
+HFILES=bzfs.h
+
+BIN=$ROOT/9front/$objtype/bin
+LIB=$ROOT/9front-src/sys/src/cmd/bzip2/lib/libbzip2.a$O
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+CFLAGS=$CFLAGS -p -I$ROOT/9front-src/sys/src/cmd/bzip2/lib
+
+/sys/src/cmd/bzip2/lib/libbzip2.a$O:
+	@{cd $ROOT/9front-src/sys/src/cmd/bzip2/lib && mk}

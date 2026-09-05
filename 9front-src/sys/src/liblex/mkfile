@@ -1,0 +1,11 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libl.a
+OFILES=\
+	allprint.$O\
+	main.$O\
+	reject.$O\
+	yyless.$O\
+	yywrap.$O\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

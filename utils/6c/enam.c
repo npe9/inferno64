@@ -665,5 +665,6 @@ char*	anames[] =
 	"RETFQ",
 	"SWAPGS",
 	"MODE",
+	"JMPF",
 	"LAST",
 };

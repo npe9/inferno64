@@ -1,0 +1,18 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libttf.a
+
+OFILES=\
+	head.$O \
+	cmap.$O \
+	hint.$O \
+	scan.$O \
+	glyf.$O \
+	render.$O \
+	bit.$O \
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ttf.h\
+	impl.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

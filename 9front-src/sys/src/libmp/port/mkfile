@@ -1,0 +1,58 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libmp.a
+FILES=\
+	mpaux\
+	mpfmt\
+	strtomp\
+	mptobe\
+	mptober\
+	mptole\
+	mptolel\
+	betomp\
+	letomp\
+	mpadd\
+	mpsub\
+	mpcmp\
+	mpsel\
+	mpfactorial\
+	mpmul\
+	mpleft\
+	mpright\
+	mpvecadd\
+	mpvecsub\
+	mpvecdigmuladd\
+	mpveccmp\
+	mpvectscmp\
+	mpdigdiv\
+	mpdiv\
+	mpexp\
+	mpmod\
+	mpmodop\
+	mpextendedgcd\
+	mpinvert\
+	mprand\
+	mpnrand\
+	crt\
+	mptoi\
+	mptoui\
+	mptov\
+	mptouv\
+	mpfield\
+	cnfield\
+	gmfield\
+	mplogic\
+	mptod\
+
+ALLOFILES=${FILES:%=%.$O}
+# cull things in the per-machine directories from this list
+OFILES=	`{rfork e; \
+	if(~ $objtype spim) objtype=mips; \
+	rc ./reduce $O $objtype $ALLOFILES}
+
+HFILES=\
+	$ROOT/9front-src/$objtype/include/u.h\
+	$ROOT/9front-src/sys/include/mp.h\
+	dat.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

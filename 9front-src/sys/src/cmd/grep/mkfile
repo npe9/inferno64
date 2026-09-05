@@ -1,0 +1,17 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=grep
+HFILES=\
+	grep.h\
+
+OFILES=\
+	y.tab.$O\
+	main.$O\
+	comp.$O\
+	sub.$O\
+
+YFILES=grep.y\
+
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkone
+

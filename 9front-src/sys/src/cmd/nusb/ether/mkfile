@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/nusb
+LIB=../lib/usb.a$O
+
+TARG=ether
+HFILES=../lib/usb.h dat.h
+OFILES=ether.$O cdc.$O smsc.$O lan78xx.$O asix.$O aue.$O url.$O rndis.$O
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+CFLAGS=-I../lib $CFLAGS

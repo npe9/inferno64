@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libhtml.a
+
+OFILES=\
+	build.$O\
+	lex.$O\
+	strinttab.$O\
+	utils.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/html.h\
+	impl.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

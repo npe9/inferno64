@@ -1,0 +1,5 @@
+upstream	https://github.com/9front/9front.git
+branch		front
+commit		5b902d52edaa25e5f430f024c1a1b9b56f94e3e0
+imported by	scripts/import-9front.sh
+left out	sys/src/9, sys/src/cmd/gs, lib, sys/lib

@@ -1,0 +1,60 @@
+#
+# mkrc: mk, built for rc rather than for sh.
+#
+# The shell a recipe runs under is now MKSHELL's to say (see
+# mkshell() in ../mk/Posix.c), but the *dialect* mk parses mkfiles in
+# is compiled in: it decides how a backquote is closed, which
+# characters end an assignment, and how a substituted word is quoted.
+# sh and rc disagree about all three, and 9front's mkfiles are rc's --
+# `{ls | sed ...} is a command substitution to rc and a syntax error
+# to sh.  So the 9front tree in 9front-src is built with this one,
+# and the Inferno tree keeps the sh-flavoured mk it has always used.
+#
+# Same sources as ../mk; only the shell-dialect file differs.
+#
+
+MKAR=	archive
+
+<../../mkconfig
+
+TARG=mkrc
+
+TARGSHTYPE=rc
+
+OFILES=	arc.$O\
+	$MKAR.$O\
+	bufblock.$O\
+	env.$O\
+	file.$O\
+	graph.$O\
+	job.$O\
+	lex.$O\
+	main.$O\
+	match.$O\
+	mk.$O\
+	parse.$O\
+	$TARGMODEL.$O\
+	recipe.$O\
+	rule.$O\
+	run.$O\
+	$TARGSHTYPE.$O\
+	shprint.$O\
+	symtab.$O\
+	var.$O\
+	varsub.$O\
+	word.$O\
+
+HFILES=	../mk/fns.h\
+	../include/ar.h\
+	../mk/mk.h\
+
+LIBS=	regexp bio 9
+
+BIN=$ROOT/$OBJDIR/bin
+
+<$ROOT/mkfiles/mkone-$SHELLTYPE
+
+CFLAGS=$CFLAGS -I../include -I../mk -DROOT'="'$ROOT'"'
+
+%.$O:	../mk/%.c
+	$CC $CFLAGS -o $target ../mk/$stem.c

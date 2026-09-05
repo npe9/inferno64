@@ -1,0 +1,33 @@
+objtype=sparc
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libc.a
+SFILES=\
+	argv0.s\
+	getcallerpc.$O\
+	getfcr.s\
+	main9.s\
+	main9p.s\
+	memccpy.s\
+	memchr.s\
+	memcmp.s\
+	memmove.s\
+	memset.s\
+	muldivrt.s\
+	setjmp.s\
+	strchr.s\
+	strcmp.s\
+	strcpy.s\
+	tas.s\
+	vlop.s
+
+CFILES=\
+	notejmp.c\
+	sqrt.c\
+	vlrt.c\
+
+HFILES=$ROOT/9front-src/sys/include/libc.h
+
+OFILES=${CFILES:%.c=%.$O} ${SFILES:%.s=%.$O}
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

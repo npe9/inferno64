@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=joy
+OFILES=joy.$O
+HFILES=\
+	../lib/usb.h\
+	hid.h\
+
+LIB=../lib/usb.a$O
+
+BIN=$ROOT/9front/$objtype/bin/nusb
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+CFLAGS=-I../lib $CFLAGS
+

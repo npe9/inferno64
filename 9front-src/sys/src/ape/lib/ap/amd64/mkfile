@@ -1,0 +1,18 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+LIB=$ROOT/9front/$objtype/lib/ape/libap.a
+OFILES=\
+	_seek.$O\
+	cycles.$O\
+	lock.$O\
+	main9.$O\
+	main9p.$O\
+	notetramp.$O\
+	setjmp.$O\
+	strchr.$O\
+	strlen.$O\
+	tas.$O\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=$CFLAGS -c -D_POSIX_SOURCE -D_PLAN9_SOURCE

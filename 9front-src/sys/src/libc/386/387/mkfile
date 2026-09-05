@@ -1,0 +1,14 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/lib387.a
+
+OFILES=\
+	atan.$O\
+	tan.$O\
+	atan2.$O\
+	exp.$O\
+	asin.$O\
+	log.$O\
+	sin.$O\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

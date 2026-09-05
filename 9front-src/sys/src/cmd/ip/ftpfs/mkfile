@@ -1,0 +1,11 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=ftpfs
+HFILES=ftpfs.h
+OFILES=ftpfs.$O\
+	proto.$O\
+	file.$O\
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone

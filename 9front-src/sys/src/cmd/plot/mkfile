@@ -1,0 +1,24 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=plot
+OFILES=plot.$O\
+
+HFILES=plot.h\
+
+LIB=libplot.a$O
+
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+$LIB:
+	cd libplot
+	mk install
+
+clean:V:
+	rm -f *.[$OS] [$OS].out y.tab.? y.debug y.output $TARG
+	cd libplot
+	mk clean
+
+nuke:V:
+	mk clean
+	rm -f libplot.a[$OS]

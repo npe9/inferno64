@@ -1,0 +1,19 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=9660srv
+
+OFILES=\
+	main.$O\
+	9660srv.$O\
+	xfile.$O\
+	iobuf.$O\
+	data.$O\
+
+HFILES=dat.h fns.h
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+$O.out:
+
+9660srv.$O: iso9660.h

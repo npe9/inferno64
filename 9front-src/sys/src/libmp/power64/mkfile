@@ -1,0 +1,9 @@
+objtype=power64
+</power/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libmp.a
+OFILES=\
+
+HFILES=$ROOT/9front-src/$objtype/include/u.h $ROOT/9front-src/sys/include/mp.h ../port/dat.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

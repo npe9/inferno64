@@ -1,0 +1,15 @@
+BUILTINS=
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/fs
+TARG=tarfs tpfs v6fs 32vfs cpiofs tapfs v10fs zipfs
+OFILES=\
+	fs.$O\
+	util.$O
+
+HFILES=\
+	tapefs.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+
+zipfs.$O:	zip.h

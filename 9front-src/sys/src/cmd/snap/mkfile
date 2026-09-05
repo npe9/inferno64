@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+BIN=$ROOT/9front/$objtype/bin
+
+TARG=snap snapfs
+OFILES=\
+	read.$O\
+	take.$O\
+	util.$O\
+	write.$O\
+
+HFILES=snap.h
+
+LIB=$ROOT/9front/$objtype/lib/lib9p.a
+
+<$ROOT/9front-src/sys/src/cmd/mkmany

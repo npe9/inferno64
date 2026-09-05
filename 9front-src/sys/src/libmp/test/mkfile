@@ -1,0 +1,18 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=\
+	main
+
+OFILES=\
+	ld.$O\
+	gen.tab.$O\
+	convtest.$O\
+
+HFILES=dat.h fns.h
+
+CLEANFILES=gen.tab.c
+
+<$ROOT/9front-src/sys/src/cmd/mktest
+
+gen.tab.c:D: testgen.rc
+	rc ./testgen.rc >gen.tab.c

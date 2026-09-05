@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=vf
+LIB=../common/libcommon.a$O
+OFILES=vf.$O
+HFILES=\
+	../common/common.h\
+	../common/sys.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+<../mkupas
+CFLAGS=$CFLAGS -I../common

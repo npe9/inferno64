@@ -1,0 +1,14 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin
+TARG=forp
+OFILES=\
+	forp.$O\
+	parse.$O\
+	misc.$O\
+	cvt.$O\
+	logic.$O\
+
+HFILES=dat.h fns.h
+
+<$ROOT/9front-src/sys/src/cmd/mkone

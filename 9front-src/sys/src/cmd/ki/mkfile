@@ -1,0 +1,22 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=ki
+OFILES= ki.$O\
+	run.$O\
+	mem.$O\
+	syscall.$O\
+	stats.$O\
+	icache.$O\
+	symbols.$O\
+	cmd.$O\
+	bpt.$O\
+	float.$O\
+
+HFILES=sparc.h\
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+acid:	
+	$CC -a run.c > acid.def

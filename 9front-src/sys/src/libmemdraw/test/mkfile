@@ -1,0 +1,8 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=\
+	drawtest\
+
+CFLAGS=$CFLAGS -I../../libmp/port
+
+<$ROOT/9front-src/sys/src/cmd/mktest

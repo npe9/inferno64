@@ -1,0 +1,16 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/games
+TARG=c64
+OFILES=\
+	c64.$O\
+	cpu.$O\
+	mem.$O\
+	vic.$O\
+	eui.$O\
+
+HFILES=dat.h fns.h
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+eui.$O: ../eui.c
+	$CC $CFLAGS ../eui.c

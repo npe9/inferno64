@@ -1,0 +1,19 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=hoc
+HFILES=\
+	y.tab.h\
+	hoc.h\
+
+OFILES=\
+	y.tab.$O\
+	code.$O\
+	init.$O\
+	math.$O\
+	symbol.$O\
+
+YFILES=hoc.y\
+
+BIN=$ROOT/9front/$objtype/bin
+<$ROOT/9front-src/sys/src/cmd/mkone
+

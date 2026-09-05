@@ -1,0 +1,8 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=awk
+
+<$ROOT/9front-src/sys/src/cmd/mktest
+
+clean:V:
+	rm -rf $CLEANFILES arnold-fixes foo*

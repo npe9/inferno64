@@ -1,0 +1,32 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libbio.a
+OFILES=\
+	bbuffered.$O\
+	bfildes.$O\
+	bflush.$O\
+	bgetrune.$O\
+	bgetc.$O\
+#	bgetd.$O\
+	binit.$O\
+	blethal.$O\
+	boffset.$O\
+	bprint.$O\
+	bputrune.$O\
+	bputc.$O\
+	brdline.$O\
+	brdstr.$O\
+	bread.$O\
+	bseek.$O\
+	bwrite.$O\
+	bvprint.$O\
+
+HFILES=$ROOT/9front-src/sys/include/ape/bio.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=-TVwc -D_PLAN9_SOURCE -D_POSIX_SOURCE -I. -I../9
+
+%.$O:	$ROOT/9front-src/sys/src/libbio/%.c
+	$CC $CFLAGS $ROOT/9front-src/sys/src/libbio/$stem.c

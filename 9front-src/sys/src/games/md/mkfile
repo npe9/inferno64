@@ -1,0 +1,21 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/games
+TARG=md
+OFILES=\
+	cpu.$O\
+	mem.$O\
+	md.$O\
+	vdp.$O\
+	z80.$O\
+	ym.$O\
+	eui.$O\
+
+HFILES=dat.h fns.h
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+eui.$O: ../eui.c
+	$CC $CFLAGS ../eui.c
+
+cpu.$O: ../blit/cpu.c
+	$CC $CFLAGS ../blit/cpu.c

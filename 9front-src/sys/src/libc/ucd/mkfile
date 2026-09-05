@@ -1,0 +1,45 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libc.a
+
+OFILES=\
+	runenorm.$O\
+	runetotype.$O\
+	runeistype.$O\
+	runebreak.$O\
+
+CLEANFILES=$OFILES
+
+HFILES=$ROOT/9front-src/sys/include/libc.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+DATA=\
+	runenormdata\
+	runetotypedata\
+	runeistypedata\
+	runebreakdata\
+
+runenorm.$O: runenormdata
+runetotype.$O: runetotypedata
+runeistype.$O: runeistypedata
+runebreak.$O: runebreakdata
+
+UCD=\
+	$ROOT/9front-src/lib/ucd/CompositionExclusions.txt\
+	$ROOT/9front-src/lib/ucd/DerivedNormalizationProps.txt\
+	$ROOT/9front-src/lib/ucd/GraphemeBreakProperty.txt\
+	$ROOT/9front-src/lib/ucd/UnicodeData.txt\
+	$ROOT/9front-src/lib/ucd/WordBreakProperty.txt\
+	$ROOT/9front-src/lib/ucd/emoji-data.txt\
+
+$DATA:	$UCD
+	@{
+		eval `{grep '^[A-Z]' $ROOT/9front-src/host/mkfile}
+		$CC $CFLAGS -o mkrunetype.$O mkrunetype.c
+		$LD $LDFLAGS -o $O.mkrunetype mkrunetype.$O
+		./$O.mkrunetype
+	}
+
+nuke:V:
+	rm -f $CLEANFILES $DATA [$OS].mkrunetype mkrunetype.[$OS]

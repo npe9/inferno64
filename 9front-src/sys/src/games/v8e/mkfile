@@ -1,0 +1,14 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin
+TARG=v8e
+HFILES=dat.h fns.h
+OFILES=\
+	v8e.$O \
+	cpu.$O \
+	cpubcd.$O \
+	cpufp.$O \
+	mem.$O \
+	sys.$O \
+
+<$ROOT/9front-src/sys/src/cmd/mkone

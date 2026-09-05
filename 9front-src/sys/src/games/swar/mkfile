@@ -1,0 +1,10 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/games
+TARG=swar
+OFILES=\
+	swar.$O\
+
+HFILES=player0.icon player1.icon accel.h missile.icon deathstar.icon boom.icon
+
+<$ROOT/9front-src/sys/src/cmd/mkone

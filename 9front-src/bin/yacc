@@ -1,0 +1,5 @@
+#!/bin/sh
+# 9front's mkfiles call yacc by the name it has on a 9front machine.
+# This tree's is iyacc.  scripts/mk9front.sh puts this directory first
+# on the path so those mkfiles need no editing.
+exec iyacc "$@"

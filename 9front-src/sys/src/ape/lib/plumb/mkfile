@@ -1,0 +1,19 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libplumb.a
+
+OFILES=\
+	event.$O\
+	mesg.$O\
+	plumbsendtext.$O
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ape/plumb.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=-c $CFLAGS -D_POSIX_SOURCE -D_PLAN9_SOURCE -I../9
+
+%.$O: $ROOT/9front-src/sys/src/libplumb/%.c
+	$CC $CFLAGS $ROOT/9front-src/sys/src/libplumb/$stem.c

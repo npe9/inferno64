@@ -1,0 +1,5 @@
+#!/bin/sh
+# 9front's mkfiles call recursive builds as "mk".  The one that parses
+# rc's syntax is mkrc; scripts/mk9front.sh puts this directory first
+# on the path so those recursive calls reach it.
+exec mkrc "$@"

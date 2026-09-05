@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=hgfs
+BIN=$ROOT/9front/$objtype/bin
+CFLAGS=-FTVw
+
+HFILES=dat.h fns.h
+
+OFILES=fs.$O zip.$O patch.$O hash.$O revlog.$O tree.$O info.$O util.$O
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+# debug stuff
+$O.hgdb: hgdb.$O hash.$O util.$O ancestor.$O
+	$LD $LDFLAGS -o $target $prereq

@@ -1,0 +1,24 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=qi
+OFILES= qi.$O\
+	run.$O\
+	mem.$O\
+	syscall.$O\
+	stats.$O\
+	icache.$O\
+	symbols.$O\
+	cmd.$O\
+	bpt.$O\
+	float.$O\
+	branch.$O\
+	iu.$O\
+
+HFILES=power.h\
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+acid:	
+	$CC -a run.c > acid.def

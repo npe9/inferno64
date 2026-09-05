@@ -1,0 +1,16 @@
+objtype=386
+</386/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libmp.a
+SFILES=\
+	mpvecadd.s\
+	mpvecdigmuladd.s\
+	mpvecdigmulsub.s\
+	mpvecsub.s\
+	mpdigdiv.s\
+
+HFILES=$ROOT/9front-src/$objtype/include/u.h $ROOT/9front-src/sys/include/mp.h ../port/dat.h
+
+OFILES=${SFILES:%.s=%.$O}
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

@@ -1,0 +1,22 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=htmlfmt
+OFILES=\
+	main.$O\
+	html.$O\
+	util.$O\
+
+HFILES=\
+	dat.h\
+	$ROOT/9front-src/sys/include/html.h\
+
+LIB=
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+CFLAGS=$CFLAGS
+
+$O.out: $OFILES
+	$LD -o $target  $LDFLAGS $OFILES

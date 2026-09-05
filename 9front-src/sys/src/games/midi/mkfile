@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+TARG=\
+	midi\
+	mid2s\
+	dmid\
+
+HFILES=
+OFILES=\
+	midifile.$O\
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+BIN=$ROOT/9front/$objtype/bin/games

@@ -1,0 +1,31 @@
+APE=$ROOT/9front-src/sys/src/ape
+</$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libbz2.a
+
+OFILES=\
+	blocksort.$O\
+	bzassert.$O\
+	bzcompress.$O\
+	bzdecompress.$O\
+	bzfeof.$O\
+	bzlib.$O\
+	bzread.$O\
+	bzversion.$O\
+	bzwrite.$O\
+	bzzlib.$O\
+	compress.$O\
+	crctable.$O\
+	decompress.$O\
+	huffman.$O\
+	randtable.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ape/bzlib.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=-c -D_POSIX_SOURCE
+
+%.$O: $ROOT/9front-src/sys/src/cmd/bzip2/lib/%.c
+	$CC $CFLAGS $ROOT/9front-src/sys/src/cmd/bzip2/lib/$stem.c

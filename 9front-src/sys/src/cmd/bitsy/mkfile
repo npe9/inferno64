@@ -1,0 +1,21 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=\
+	bitsyload\
+	pencal\
+	prompter\
+	keyboard\
+	light\
+	params\
+
+BIN=$ROOT/9front/$objtype/bin/bitsy
+<$ROOT/9front-src/sys/src/cmd/mkmany
+
+light.$O:V:
+	# nothing
+
+$O.light: light.rc
+	cp light.rc $target
+
+light.install:
+	cp light.rc $BIN/light

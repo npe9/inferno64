@@ -1,0 +1,8 @@
+<$ROOT/9front-src/$objtype/mkfile
+BIN=$ROOT/9front/$objtype/bin
+TARG=webfs
+
+HFILES=fns.h dat.h
+OFILES=sub.$O url.$O buq.$O http.$O fs.$O
+
+<$ROOT/9front-src/sys/src/cmd/mkone

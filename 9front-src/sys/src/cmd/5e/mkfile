@@ -1,0 +1,8 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=5e
+OFILES=5e.$O seg.$O proc.$O util.$O arm.$O sys.$O fs.$O fpa.$O vfp.$O
+HFILES=dat.h fns.h
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone

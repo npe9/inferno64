@@ -1,0 +1,7 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=\
+	diff\
+	merge
+
+<$ROOT/9front-src/sys/src/cmd/mktest

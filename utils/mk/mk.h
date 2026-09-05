@@ -150,6 +150,7 @@ extern	int	IWS;
 extern	char 	*shell;
 extern	char 	*shellname;
 extern	char 	*shflags;
+extern	int	emptyisnolist;
 
 #define	SYNERR(l)	(fprint(2, "mk: %s:%d: syntax error; ", infile, ((l)>=0)?(l):mkinline))
 #define	RERR(r)		(fprint(2, "mk: %s:%d: rule error; ", (r)->file, (r)->line))

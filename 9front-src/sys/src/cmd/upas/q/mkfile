@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=\
+	qer\
+	runq\
+
+LIB=../common/libcommon.a$O
+OFILES=
+HFILES=\
+	../common/common.h\
+	../common/sys.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+<../mkupas
+CFLAGS=$CFLAGS -I../common

@@ -1,0 +1,16 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/image
+TARG=\
+	correlate\
+	affinewarp\
+	histogram\
+	crop\
+
+OFILES=\
+	util.$O\
+
+HFILES=\
+	fns.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkmany

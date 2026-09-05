@@ -1,0 +1,10 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG =	disk/smart
+
+HFILES = smart.h
+OFILES = ata.$O scsi.$O smart.$O
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone

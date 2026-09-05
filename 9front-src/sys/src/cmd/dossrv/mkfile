@@ -1,0 +1,23 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=dossrv
+OFILES=\
+	xfssrv.$O\
+	xfile.$O\
+	dosfs.$O\
+	dossubs.$O\
+	iotrack.$O\
+	lock.$O\
+	chat.$O\
+	devio.$O\
+
+HFILES=dat.h\
+	dosfs.h\
+	fns.h\
+	iotrack.h\
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+xfssrv.$O:	errstr.h

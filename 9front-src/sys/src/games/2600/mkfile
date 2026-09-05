@@ -1,0 +1,17 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+BIN=$ROOT/9front/$objtype/bin/games
+TARG=2600
+OFILES=\
+	2600.$O\
+	aud.$O\
+	cpu.$O\
+	mem.$O\
+	tia.$O\
+	eui.$O\
+
+HFILES=dat.h fns.h
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+eui.$O: ../eui.c
+	$CC $CFLAGS ../eui.c

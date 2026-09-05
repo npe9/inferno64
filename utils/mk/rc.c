@@ -3,6 +3,11 @@
 char	*termchars = "'= \t";	/*used in parse.c to isolate assignment attribute*/
 char	*shflags = "-I";	/* rc flag to force non-interactive mode */
 int	IWS = '\1';		/* inter-word separator in env - not used in plan 9 */
+/*
+ *	rc tells an empty list from a list holding one empty string, so
+ *	a variable set to nothing must reach it as nothing at all.
+ */
+int	emptyisnolist = 1;
 
 /*
  *	This file contains functions that depend on rc's syntax.  Most

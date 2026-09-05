@@ -1,0 +1,7 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=unesc
+OFILES=unesc.$O
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+<../mkupas

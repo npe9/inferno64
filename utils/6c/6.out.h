@@ -699,6 +699,16 @@ enum	as
 
 	AMODE,
 
+	/*
+	 * JMPF is 9front's: a near jump that always takes the five byte
+	 * rel32 form, and that the loader follows when it works out what
+	 * calls what.  libc's _main uses it to enter _callmain.  It goes
+	 * here, after everything else, because an object file stores the
+	 * opcode as a number and inserting one anywhere earlier would
+	 * change the meaning of every object already built.
+	 */
+	AJMPF,
+
 	ALAST
 };
 

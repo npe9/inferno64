@@ -1,0 +1,18 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=syscall
+OFILES=syscall.$O\
+
+HFILES=tab.h\
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+SYSCALL=$ROOT/9front-src/sys/src/libc/9syscall/sys.h
+
+tab.h:	$SYSCALL mktab.awk
+	./mktab.awk $SYSCALL >$target
+
+clean:V:
+	rm -f *.[$OS] [$OS].out $TARG $HFILES

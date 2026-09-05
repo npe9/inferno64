@@ -1,0 +1,15 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=execnet
+
+OFILES=\
+	client.$O\
+	fs.$O\
+	main.$O\
+	note.$O\
+
+HFILES=dat.h
+
+BIN=$ROOT/9front/$objtype/bin
+
+<$ROOT/9front-src/sys/src/cmd/mkone

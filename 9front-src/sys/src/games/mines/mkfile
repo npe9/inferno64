@@ -1,0 +1,14 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=mines
+
+OFILES=\
+	mines.$O \
+	ghost.$O \
+	gfx.$O \
+
+HFILES=dat.h fns.h
+
+BIN=$ROOT/9front/$objtype/bin/games
+
+<$ROOT/9front-src/sys/src/cmd/mkone

@@ -1,0 +1,16 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libdtracy.a
+
+OFILES=\
+	prov.$O\
+	prog.$O\
+	dtefmt.$O\
+	pack.$O\
+	chan.$O\
+	agg.$O\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/dtracy.h\
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

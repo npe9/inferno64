@@ -1,0 +1,12 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libsec.a
+OFILES=\
+
+HFILES=$ROOT/9front-src/sys/include/ape/libsec.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+%.$O:	$ROOT/9front-src/sys/src/libsec/$objtype/%.s
+	$AS $AFLAGS $ROOT/9front-src/sys/src/libsec/$objtype/$stem.s

@@ -1,0 +1,41 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libz.a
+OFILES=\
+	adler32.$O\
+	compress.$O\
+	crc32.$O\
+	deflate.$O\
+	gzio.$O\
+	infback.$O\
+	inffast.$O\
+	inflate.$O\
+	inftrees.$O\
+	trees.$O\
+	uncompr.$O\
+	zutil.$O\
+
+TARG=\
+	example\
+	minigzip\
+
+TOOLS=${TARG:%=$O.%}
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ape/zlib.h\
+
+CLEANFILES=$TOOLS
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=-c -D_POSIX_SOURCE -D_C99_SNPRINTF_EXTENSION
+
+%.$O: $ROOT/9front-src/sys/src/cmd/gs/zlib/%.c
+	$CC $CFLAGS $ROOT/9front-src/sys/src/cmd/gs/zlib/$stem.c
+
+$O.%: %.$O $LIB
+	$LD -o $target $prereq
+
+tools: $LIB
+	mk $TOOLS

@@ -1,0 +1,11 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+LIB=$ROOT/9front/$objtype/lib/libjson.a
+OFILES=\
+	json.$O\
+	printjson.$O
+
+HFILES=\
+	$ROOT/9front-src/sys/include/json.h
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib

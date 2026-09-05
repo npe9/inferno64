@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=mix
+YFILES=mixal.y
+OFILES=y.tab.$O\
+	mix.$O\
+	char.$O\
+	util.$O\
+	repl.$O
+HFILES=mix.h y.tab.h
+BIN=$ROOT/9front/$objtype/bin/games
+
+<$ROOT/9front-src/sys/src/cmd/mkone

@@ -1,0 +1,12 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=dump
+OFILES=dump.$O
+HFILES=../lib/usb.h
+
+LIB=../lib/usb.a$O
+
+BIN=$ROOT/9front/$objtype/bin/nusb
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+CFLAGS=-I../lib $CFLAGS

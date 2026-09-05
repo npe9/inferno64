@@ -1,0 +1,13 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TARG=expect\
+	pass\
+	drain\
+	at\
+
+OFILES=
+
+BIN=$ROOT/9front/$objtype/bin/dial
+
+<$ROOT/9front-src/sys/src/cmd/mkmany
+

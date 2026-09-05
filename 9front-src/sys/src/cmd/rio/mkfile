@@ -1,0 +1,25 @@
+<$ROOT/9front-src/$objtype/mkfile
+BIN=$ROOT/9front/$objtype/bin
+
+TARG=rio
+OFILES=\
+	rio.$O\
+	data.$O\
+	fsys.$O\
+	scrl.$O\
+	time.$O\
+	util.$O\
+	wctl.$O\
+	wind.$O\
+	xfid.$O\
+
+HFILES=dat.h\
+	fns.h\
+
+<$ROOT/9front-src/sys/src/cmd/mkone
+
+$O.out:	$ROOT/9front/$objtype/lib/libdraw.a $ROOT/9front/$objtype/lib/libframe.a \
+	$ROOT/9front/$objtype/lib/libthread.a $ROOT/9front/$objtype/lib/libplumb.a $ROOT/9front/$objtype/lib/libc.a
+syms:V:
+	$CC -a $CFLAGS rio.c	> syms
+	$CC -aa $CFLAGS *.c 	>>syms

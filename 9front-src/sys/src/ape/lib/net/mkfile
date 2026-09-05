@@ -1,0 +1,13 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libnet.a
+OFILES=dial.$O\
+	announce.$O\
+	netmkaddr.$O\
+	hangup.$O\
+	
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+CFLAGS=-c -D_POSIX_SOURCE -D_RESEARCH_SOURCE -D_NET_EXTENSION

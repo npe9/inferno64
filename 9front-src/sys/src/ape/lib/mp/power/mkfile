@@ -1,0 +1,21 @@
+APE=$ROOT/9front-src/sys/src/ape
+<$APE/config
+
+LIB=$ROOT/9front/$objtype/lib/ape/libmp.a
+
+SFILES=\
+	mpvecadd.s\
+	mpvecsub.s\
+	mpvecdigmuladd.s\
+	mpvecdigmulsub.s\
+
+HFILES=\
+	$ROOT/9front-src/sys/include/ape/mp.h\
+	../../../../libmp/port/dat.h
+
+OFILES=${SFILES:%.s=%.$O}
+
+<$ROOT/9front-src/sys/src/cmd/mksyslib
+
+%.$O:	../../../../libmp/power/%.s
+	$AS ../../../../libmp/power/$stem.s

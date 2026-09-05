@@ -1,0 +1,10 @@
+<$ROOT/9front-src/$objtype/mkfile
+
+TEST=\
+	date\
+	patch\
+	ramfs\
+	test\
+	zones\
+
+<$ROOT/9front-src/sys/src/cmd/mktest
