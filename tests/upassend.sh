@@ -28,19 +28,19 @@ cat > "$work/exp.sh" <<'EMUSH'
 {echo 'From compose@local'; cat /.upassendtmp/composed.eml} > /.upassendtmp/msg.mbox
 /dis/upas/fs.dis -m /mnt/upassendtest /.upassendtmp/msg.mbox
 echo 'MARK subject'
-cat /mnt/upassendtest/1/subject
+cat /mnt/upassendtest/mbox/1/subject
 echo ''
 echo 'MARK type'
-cat /mnt/upassendtest/1/type
+cat /mnt/upassendtest/mbox/1/type
 echo ''
 echo 'MARK p1body'
-cat /mnt/upassendtest/1/1/body
+cat /mnt/upassendtest/mbox/1/1/body
 echo ''
 echo 'MARK p2file'
-cat /mnt/upassendtest/1/2/filename
+cat /mnt/upassendtest/mbox/1/2/filename
 echo ''
 echo 'MARK p2body'
-cat /mnt/upassendtest/1/2/body
+cat /mnt/upassendtest/mbox/1/2/body
 echo ''
 echo 'MARK done'
 EMUSH

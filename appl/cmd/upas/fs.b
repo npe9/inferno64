@@ -1,11 +1,16 @@
 implement Upasfs;
 
 #
-# upas/fs - present a mailbox as a file system, the Plan 9 upas way. Each
-# message becomes a numbered directory holding raw/header/body and the
-# parsed From/To/Subject/Date/... header fields, so any tool can read mail
-# with ls and cat. This first version reads a local Unix mbox file; the
-# IMAP backend (imap4(2), for Gmail) feeds the same presentation.
+# upas/fs - present a mailbox as a file system, the Plan 9 upas way. It
+# mounts at /mail/fs and serves a `ctl' file plus a `mbox' directory; each
+# message in the mailbox is a numbered directory holding the Plan 9 upas
+# file set (info, raw, header, body, and the parsed From/To/Subject/...
+# fields), with MIME parts as numbered sub-directories. `ctl' accepts
+# `delete mbox n ...', which rewrites the backing mbox. This is the live
+# interface nedmail(1) and other Plan 9 mail tools drive, not a snapshot.
+#
+# The backend is a local Unix mbox file, or (with -i) an IMAP mailbox
+# fetched over TLS (imap4(2)); both feed the same presentation.
 #
 include "sys.m";
 	sys: Sys;
@@ -21,6 +26,7 @@ include "mime.m";
 	mime: Mime;
 	Part: import mime;
 include "keyring.m";
+	kr: Keyring;
 include "tls12.m";
 include "imap4.m";
 	imap4: Imap4;
@@ -42,15 +48,27 @@ File: adt {
 
 	find:	fn(f: self ref File, name: string): ref File;
 	enter:	fn(d: self ref File, f: ref File);
+	remove:	fn(d: self ref File, f: ref File);
 	stat:	fn(d: self ref File): ref Sys->Dir;
 };
 
+# a message in the mailbox, kept so the mbox can be rewritten on delete.
+Msg: adt {
+	num:	int;
+	env:	string;		# unix "From " envelope line
+	raw:	string;		# the rfc822 message
+	dir:	ref File;
+	alive:	int;
+};
+
 root: ref File;
+ctlfile: ref File;
+mboxdir: ref File;
 files: array of ref File;
 pathgen: int;
 
-# the header fields exposed as their own files, in display order.
-FIELDS := array[] of {"from", "to", "subject", "date", "cc", "reply-to", "message-id"};
+msgs: list of ref Msg;		# in mailbox order
+mboxpath := "";			# backing mbox file, "" for imap (no rewrite)
 
 init(nil: ref Draw->Context, argv: list of string)
 {
@@ -67,8 +85,11 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(mime == nil)
 		error("load mime");
 	mime->init();
+	kr = load Keyring Keyring->PATH;
+	if(kr == nil)
+		error("load keyring");
 
-	mountpt := "/mail/fs/mbox";
+	rootmnt := "/mail/fs";
 	imapmode := 0;
 	imapserver := "imap.gmail.com";
 	dialip := "";
@@ -81,7 +102,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		opt := hd argv;
 		argv = tl argv;
 		case opt {
-		"-m" =>	mountpt = optarg(argv); argv = tl argv;
+		"-m" =>	rootmnt = optarg(argv); argv = tl argv;
 		"-i" =>	imapmode = 1;
 		"-s" =>	imapserver = optarg(argv); argv = tl argv;
 		"-a" =>	dialip = optarg(argv); argv = tl argv;
@@ -93,9 +114,16 @@ init(nil: ref Draw->Context, argv: list of string)
 		}
 	}
 
-	files = array[16] of ref File;
+	files = array[64] of ref File;
 	root = files[0] = mkdir("/");
 	pathgen = 1;
+	# the two entries at the mailbox-server root: a control file and the
+	# default mailbox directory.
+	ctlfile = mkleaf("ctl", nil);
+	ctlfile.mode = 8r666;
+	root.enter(ctlfile);
+	mboxdir = mkdir("mbox");
+	root.enter(mboxdir);
 
 	if(imapmode){
 		if(user == "")
@@ -104,10 +132,11 @@ init(nil: ref Draw->Context, argv: list of string)
 	}else{
 		if(argv == nil)
 			usage();
-		data := readfile(hd argv);
+		mboxpath = hd argv;
+		data := readfile(mboxpath);
 		if(data == nil)
-			error(sys->sprint("cannot read %s", hd argv));
-		buildtree(data);
+			error(sys->sprint("cannot read %s", mboxpath));
+		buildmessages(splitmbox(data));
 	}
 
 	fds := array[2] of ref Sys->FD;
@@ -120,10 +149,10 @@ init(nil: ref Draw->Context, argv: list of string)
 	pidc := chan of int;
 	spawn server(tchan, srv, pidc, navops);
 	<-pidc;
-	ensuredir(mountpt);
-	if(sys->mount(fds[1], nil, mountpt, Sys->MREPL, nil) < 0)
-		error(sys->sprint("mount %s: %r", mountpt));
-	sys->print("upas/fs: serving at %s\n", mountpt);
+	ensuredir(rootmnt);
+	if(sys->mount(fds[1], nil, rootmnt, Sys->MREPL, nil) < 0)
+		error(sys->sprint("mount %s: %r", rootmnt));
+	sys->print("upas/fs: serving at %s\n", rootmnt);
 }
 
 server(tchan: chan of ref Tmsg, srv: ref Styxserver, pidc: chan of int, navops: chan of ref Navop)
@@ -148,7 +177,7 @@ Serve:
 			f := files[int c.path];
 			off := m.offset;
 			n := m.count;
-			if(off >= big len f.data){
+			if(f.data == nil || off >= big len f.data){
 				srv.reply(ref Rmsg.Read(m.tag, nil));
 				break;
 			}
@@ -156,6 +185,22 @@ Serve:
 			if(end > big len f.data)
 				end = big len f.data;
 			srv.reply(ref Rmsg.Read(m.tag, f.data[int off:int end]));
+		Write =>
+			(c, err) := srv.canwrite(m);
+			if(c == nil){
+				srv.reply(ref Rmsg.Error(m.tag, err));
+				break;
+			}
+			if(int c.path == ctlfile.x){
+				e := doctl(string m.data);
+				if(e != nil){
+					srv.reply(ref Rmsg.Error(m.tag, e));
+					break;
+				}
+				srv.reply(ref Rmsg.Write(m.tag, len m.data));
+				break;
+			}
+			srv.reply(ref Rmsg.Error(m.tag, "read-only"));
 		* =>
 			srv.default(gm);
 		}
@@ -163,12 +208,72 @@ Serve:
 	navops <-= nil;
 }
 
-# ---- building the tree from an mbox ----
+# ---- ctl ----
 
-buildtree(data: array of byte)
+# the mailbox control file. nedmail and friends write:
+#   open <path> <name>      (we serve a single mailbox, so this is a no-op)
+#   close <name>            (no-op)
+#   delete <name> <n> ...   (remove those messages and rewrite the mbox)
+doctl(cmd: string): string
 {
-	buildmessages(splitmbox(data));
+	(nil, tok) := sys->tokenize(cmd, " \t\r\n");
+	if(tok == nil)
+		return nil;
+	case hd tok {
+	"open" or "close" =>
+		return nil;
+	"delete" =>
+		tok = tl tok;			# skip verb
+		if(tok != nil)
+			tok = tl tok;		# skip mailbox name
+		for(; tok != nil; tok = tl tok)
+			deletemsg(int hd tok);
+		if(mboxpath != "")
+			rewritembox();
+		return nil;
+	* =>
+		return "unknown control message";
+	}
 }
+
+deletemsg(num: int)
+{
+	for(l := msgs; l != nil; l = tl l){
+		m := hd l;
+		if(m.num == num && m.alive){
+			m.alive = 0;
+			if(m.dir != nil)
+				mboxdir.remove(m.dir);
+			return;
+		}
+	}
+}
+
+rewritembox()
+{
+	s := "";
+	for(l := msgs; l != nil; l = tl l){
+		m := hd l;
+		if(!m.alive)
+			continue;
+		env := m.env;
+		if(env == "")
+			env = "From upas";
+		s += env + "\n" + m.raw;
+		if(len m.raw > 0 && m.raw[len m.raw - 1] != '\n')
+			s += "\n";
+		s += "\n";
+	}
+	fd := sys->create(mboxpath, Sys->OWRITE|Sys->OTRUNC, 8r600);
+	if(fd == nil){
+		sys->fprint(sys->fildes(2), "upas/fs: rewrite %s: %r\n", mboxpath);
+		return;
+	}
+	d := array of byte s;
+	sys->write(fd, d, len d);
+}
+
+# ---- building the tree ----
 
 # fetch the most recent n messages from an IMAP server (imap4(2), over
 # TLS) and return them as (envelope, raw) pairs for buildmessages.
@@ -198,42 +303,116 @@ fetchimap(server, dialip: string, port: int, user, pass: string, n: int): list o
 		rmsgs = (sys->sprint("From imap message %d", m), string data) :: rmsgs;
 	}
 	c.logout();
-	msgs: list of (string, string);
+	res: list of (string, string);
 	for(; rmsgs != nil; rmsgs = tl rmsgs)
-		msgs = hd rmsgs :: msgs;
-	return msgs;
+		res = hd rmsgs :: res;
+	return res;
 }
 
-buildmessages(msgs: list of (string, string))
+buildmessages(raw: list of (string, string))
 {
+	ml: list of ref Msg;
 	i := 0;
-	for(; msgs != nil; msgs = tl msgs){
+	for(; raw != nil; raw = tl raw){
 		i++;
-		(env, raw) := hd msgs;
-		md := mkdir(string i);
-		root.enter(md);
-		(hdr, body, fields) := parsemsg(raw);
-		md.enter(mkleaf("raw", array of byte raw));
-		md.enter(mkleaf("header", array of byte hdr));
-		# MIME: decode the body and, for a multipart message, expose each
-		# part as a numbered subdirectory (upas/fs style). "body" is the
-		# decoded content: for multipart it is the first text/plain part.
-		part := mime->parse(array of byte raw);
-		md.enter(mkleaf("type", array of byte part.ctype));
-		if(part.ismultipart()){
-			tp := part.find("text/plain");
-			if(tp != nil)
-				md.enter(mkleaf("body", tp.body));
-			else
-				md.enter(mkleaf("body", array of byte body));
-			addparts(md, part.parts);
-		}else
-			md.enter(mkleaf("body", part.body));
-		if(env != "")
-			md.enter(mkleaf("unixheader", array of byte env));
-		for(fi := 0; fi < len FIELDS; fi++)
-			md.enter(mkleaf(FIELDS[fi], array of byte mime->hdrdecode(hdrfield(fields, FIELDS[fi]))));
+		(env, r) := hd raw;
+		m := ref Msg(i, env, r, nil, 1);
+		m.dir = buildmsgdir(m);
+		ml = m :: ml;
 	}
+	# msgs in mailbox order
+	msgs = nil;
+	for(; ml != nil; ml = tl ml)
+		msgs = hd ml :: msgs;
+}
+
+buildmsgdir(m: ref Msg): ref File
+{
+	md := mkdir(string m.num);
+	mboxdir.enter(md);
+	(hdr, body, fields) := parsemsg(m.raw);
+	part := mime->parse(array of byte m.raw);
+
+	# decoded body: for multipart, the first text/plain part.
+	decbody := part.body;
+	if(part.ismultipart()){
+		tp := part.find("text/plain");
+		if(tp != nil)
+			decbody = tp.body;
+		else
+			decbody = array of byte body;
+	}
+
+	from := fld(fields, "from");
+	if(from == "" && m.env != "")
+		from = envfrom(m.env);
+	date := fld(fields, "date");
+	if(date == "")
+		date = envdate(m.env);
+	replyto := fld(fields, "reply-to");
+	if(replyto == "")
+		replyto = from;
+	disposition := "inline";
+	filename := "";
+	if(part.filename != ""){
+		disposition = "file";
+		filename = part.filename;
+	}
+	digest := hexsha1(array of byte m.raw);
+	nlines := countlines(decbody);
+
+	# the info file: 16 fields, one per line, in Plan 9 upas order. nedmail
+	# reads the first nine (from,to,cc,replyto,date,subject,type,
+	# disposition,filename); the rest complete the Plan 9 contract.
+	info :=	from + "\n" +
+		fld(fields, "to") + "\n" +
+		fld(fields, "cc") + "\n" +
+		replyto + "\n" +
+		date + "\n" +
+		mime->hdrdecode(fld(fields, "subject")) + "\n" +
+		part.ctype + "\n" +
+		disposition + "\n" +
+		filename + "\n" +
+		digest + "\n" +
+		fld(fields, "bcc") + "\n" +
+		fld(fields, "in-reply-to") + "\n" +
+		date + "\n" +
+		fld(fields, "sender") + "\n" +
+		fld(fields, "message-id") + "\n" +
+		string nlines + "\n";
+	md.enter(mkleaf("info", array of byte info));
+
+	md.enter(mkleaf("raw", array of byte m.raw));
+	md.enter(mkleaf("rawunix", array of byte (m.env + "\n" + m.raw)));
+	md.enter(mkleaf("header", array of byte hdr));
+	md.enter(mkleaf("rawheader", array of byte hdr));
+	md.enter(mkleaf("mimeheader", array of byte hdr));
+	md.enter(mkleaf("body", decbody));
+	md.enter(mkleaf("rawbody", array of byte body));
+	if(m.env != "")
+		md.enter(mkleaf("unixheader", array of byte m.env));
+	md.enter(mkleaf("type", array of byte part.ctype));
+	md.enter(mkleaf("disposition", array of byte disposition));
+	if(filename != "")
+		md.enter(mkleaf("filename", array of byte filename));
+	md.enter(mkleaf("digest", array of byte digest));
+	md.enter(mkleaf("lines", array of byte string nlines));
+
+	# individual header-field files (Plan 9 names, no hyphens).
+	md.enter(mkleaf("from", array of byte mime->hdrdecode(from)));
+	md.enter(mkleaf("to", array of byte mime->hdrdecode(fld(fields, "to"))));
+	md.enter(mkleaf("cc", array of byte mime->hdrdecode(fld(fields, "cc"))));
+	md.enter(mkleaf("bcc", array of byte fld(fields, "bcc")));
+	md.enter(mkleaf("replyto", array of byte replyto));
+	md.enter(mkleaf("subject", array of byte mime->hdrdecode(fld(fields, "subject"))));
+	md.enter(mkleaf("date", array of byte date));
+	md.enter(mkleaf("sender", array of byte fld(fields, "sender")));
+	md.enter(mkleaf("messageid", array of byte fld(fields, "message-id")));
+	md.enter(mkleaf("inreplyto", array of byte fld(fields, "in-reply-to")));
+
+	if(part.ismultipart())
+		addparts(md, part.parts);
+	return md;
 }
 
 # expose a message's MIME parts as numbered subdirectories, each with
@@ -249,8 +428,12 @@ addparts(parent: ref File, parts: list of ref Part)
 		parent.enter(pd);
 		pd.enter(mkleaf("type", array of byte p.ctype));
 		pd.enter(mkleaf("encoding", array of byte p.encoding));
-		if(p.filename != "")
+		disp := "inline";
+		if(p.filename != ""){
+			disp = "file";
 			pd.enter(mkleaf("filename", array of byte p.filename));
+		}
+		pd.enter(mkleaf("disposition", array of byte disp));
 		if(p.ismultipart())
 			addparts(pd, p.parts);
 		else
@@ -258,15 +441,15 @@ addparts(parent: ref File, parts: list of ref Part)
 	}
 }
 
+# ---- mbox and message parsing ----
+
 # split a Unix mbox into (envelope-From line, rfc822 message) pairs. A
 # message begins at a line "From " that starts the file or follows a blank
 # line.
 splitmbox(data: array of byte): list of (string, string)
 {
-	(nil, lines) := sys->tokenize(string data, "\n");
-	# tokenize drops blank lines, so re-split manually keeping them.
 	s := string data;
-	lines = nil;
+	lines: list of string;
 	start := 0;
 	for(i := 0; i <= len s; i++){
 		if(i == len s || s[i] == '\n'){
@@ -274,7 +457,6 @@ splitmbox(data: array of byte): list of (string, string)
 			start = i + 1;
 		}
 	}
-	# reverse
 	ord: list of string;
 	for(; lines != nil; lines = tl lines)
 		ord = hd lines :: ord;
@@ -301,7 +483,6 @@ splitmbox(data: array of byte): list of (string, string)
 	}
 	if(have)
 		msgs = (env, cur) :: msgs;
-	# reverse to message order
 	res: list of (string, string);
 	for(; msgs != nil; msgs = tl msgs)
 		res = hd msgs :: res;
@@ -317,7 +498,6 @@ isfromline(line: string): int
 # name -> value, continuation lines folded).
 parsemsg(raw: string): (string, string, list of (string, string))
 {
-	# header ends at the first blank line
 	hdrend := len raw;
 	body := "";
 	for(i := 0; i + 1 < len raw; i++){
@@ -365,7 +545,7 @@ parsefields(hdr: string): list of (string, string)
 	return fields;
 }
 
-hdrfield(fields: list of (string, string), name: string): string
+fld(fields: list of (string, string), name: string): string
 {
 	for(; fields != nil; fields = tl fields){
 		(n, v) := hd fields;
@@ -375,12 +555,56 @@ hdrfield(fields: list of (string, string), name: string): string
 	return "";
 }
 
+# pull the address and date out of a unix "From addr weekday mon day time year"
+# envelope line.
+envfrom(env: string): string
+{
+	(n, t) := sys->tokenize(env, " \t");
+	if(n >= 2)
+		return hd tl t;
+	return "";
+}
+
+envdate(env: string): string
+{
+	(n, t) := sys->tokenize(env, " \t");
+	if(n < 3)
+		return "";
+	t = tl tl t;			# skip "From" and the address
+	d := "";
+	for(; t != nil; t = tl t){
+		if(d != "")
+			d += " ";
+		d += hd t;
+	}
+	return d;
+}
+
+countlines(body: array of byte): int
+{
+	n := 0;
+	for(i := 0; i < len body; i++)
+		if(body[i] == byte '\n')
+			n++;
+	return n;
+}
+
+hexsha1(data: array of byte): string
+{
+	dig := array[Keyring->SHA1dlen] of byte;
+	kr->sha1(data, len data, dig, nil);
+	s := "";
+	for(i := 0; i < len dig; i++)
+		s += sys->sprint("%.2x", int dig[i]);
+	return s;
+}
+
 # ---- File tree (adapted from tarfs) ----
 
 mkdir(name: string): ref File
 {
 	f := ref File;
-	f.x = 0;			# root keeps this; enter() sets it for others
+	f.x = 0;
 	f.name = name;
 	f.mode = Sys->DMDIR | 8r555;
 	f.mtime = 0;
@@ -402,7 +626,7 @@ mkleaf(name: string, data: array of byte): ref File
 File.enter(dir: self ref File, f: ref File)
 {
 	if(pathgen >= len files){
-		t := array[pathgen + 50] of ref File;
+		t := array[pathgen + 64] of ref File;
 		t[0:] = files;
 		files = t;
 	}
@@ -410,6 +634,17 @@ File.enter(dir: self ref File, f: ref File)
 	f.parent = dir;
 	dir.children = f :: dir.children;
 	files[pathgen++] = f;
+}
+
+File.remove(dir: self ref File, f: ref File)
+{
+	nl: list of ref File;
+	for(g := dir.children; g != nil; g = tl g)
+		if(hd g != f)
+			nl = hd g :: nl;
+	dir.children = nl;
+	if(f.x >= 0 && f.x < len files)
+		files[f.x] = nil;		# unreachable by walk
 }
 
 File.find(f: self ref File, name: string): ref File
@@ -442,10 +677,14 @@ navigator(navops: chan of ref Navop)
 	while((m := <-navops) != nil){
 		pick n := m {
 		Stat =>
-			n.reply <-= (files[int n.path].stat(), nil);
+			f := files[int n.path];
+			if(f == nil)
+				n.reply <-= (nil, Enotfound);
+			else
+				n.reply <-= (f.stat(), nil);
 		Walk =>
 			f := files[int n.path];
-			if((f.mode & Sys->DMDIR) == 0){
+			if(f == nil || (f.mode & Sys->DMDIR) == 0){
 				n.reply <-= (nil, "not a directory");
 				break;
 			}
@@ -463,7 +702,7 @@ navigator(navops: chan of ref Navop)
 			}
 		Readdir =>
 			f := files[int n.path];
-			if((f.mode & Sys->DMDIR) == 0){
+			if(f == nil || (f.mode & Sys->DMDIR) == 0){
 				n.reply <-= (nil, "not a directory");
 				break;
 			}
@@ -570,8 +809,8 @@ readpass(passfile: string): string
 
 usage()
 {
-	sys->fprint(sys->fildes(2), "usage: upas/fs [-m mountpt] mboxfile\n");
-	sys->fprint(sys->fildes(2), "       upas/fs -i -u user -P passfile [-s server] [-a dialip] [-n n] [-m mountpt]\n");
+	sys->fprint(sys->fildes(2), "usage: upas/fs [-m rootmnt] mboxfile\n");
+	sys->fprint(sys->fildes(2), "       upas/fs -i -u user -P passfile [-s server] [-a dialip] [-n n] [-m rootmnt]\n");
 	raise "fail:usage";
 }
 

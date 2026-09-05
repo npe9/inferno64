@@ -97,10 +97,10 @@ cat > "$work/fs.sh" <<EOF
 bind -a '#I' /net
 /dis/upas/fs.dis -i -s $HOSTN -a 127.0.0.1 -p $IMAPPORT -u $USER -P /.upasmailtmp/pass -m /mnt/oraclembox
 echo MARK subject
-cat /mnt/oraclembox/1/subject
+cat /mnt/oraclembox/mbox/1/subject
 echo ''
 echo MARK body
-cat /mnt/oraclembox/1/body
+cat /mnt/oraclembox/mbox/1/body
 echo ''
 echo MARK done
 EOF

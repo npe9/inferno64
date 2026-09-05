@@ -37,19 +37,20 @@ cat > "$work/exp.sh" <<'EMUSH'
 /dis/upas/fs.dis -m /mnt/upasfstest /.upasfstmp/test.mbox
 echo 'MARK ls'
 ls /mnt/upasfstest
+ls /mnt/upasfstest/mbox
 echo 'MARK dir'
-ls /mnt/upasfstest/1
+ls /mnt/upasfstest/mbox/1
 echo 'MARK subj1'
-cat /mnt/upasfstest/1/subject
+cat /mnt/upasfstest/mbox/1/subject
 echo ''
 echo 'MARK from1'
-cat /mnt/upasfstest/1/from
+cat /mnt/upasfstest/mbox/1/from
 echo ''
 echo 'MARK subj2'
-cat /mnt/upasfstest/2/subject
+cat /mnt/upasfstest/mbox/2/subject
 echo ''
 echo 'MARK body1'
-cat /mnt/upasfstest/1/body
+cat /mnt/upasfstest/mbox/1/body
 echo 'MARK done'
 EMUSH
 
