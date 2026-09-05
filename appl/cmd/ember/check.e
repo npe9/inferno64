@@ -2812,12 +2812,19 @@ func chkdot(n ref types.Node) ref types.Type {
 			case types.Dtype:
 				d.refs++
 				id.refs++
+				// the member keeps its own place, not the whole dot's: -X reports it
+				mline := n.line
+				mpos := n.pos
+				if n.right != nil {
+					mline = n.right.line
+					mpos = n.right.pos
+				}
 				n.op = types.Omdot
 				n.left.decl = d
 				n.left.ty = d.ty
 				n.right = types.mkn(types.Oname, nil, nil)
-				n.right.line = n.line
-				n.right.pos = n.pos
+				n.right.line = mline
+				n.right.pos = mpos
 				n.right.sym = n.sym
 				n.right.decl = id
 				n.right.ty = id.ty
@@ -3225,12 +3232,19 @@ func chkcall(n ref types.Node) ref types.Type {
 		fnd := modmember(alias.ty, n.left.sym)
 		alias.refs++
 		fnd.refs++
+		// the member keeps its own place, not the whole dot's: -X reports it
+		mline := n.left.line
+		mpos := n.left.pos
+		if n.left.right != nil {
+			mline = n.left.right.line
+			mpos = n.left.right.pos
+		}
 		n.left.op = types.Omdot
 		n.left.left.decl = alias
 		n.left.left.ty = alias.ty
 		n.left.right = types.mkn(types.Oname, nil, nil)
-		n.left.right.line = n.left.line
-		n.left.right.pos = n.left.pos
+		n.left.right.line = mline
+		n.left.right.pos = mpos
 		n.left.right.sym = n.left.sym
 		n.left.right.decl = fnd
 		n.left.right.ty = fnd.ty

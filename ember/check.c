@@ -3557,19 +3557,24 @@ echk1(Node *n)
 					n->ty = id->ty;
 					return n->ty;
 				}
-				case Dtype:
+				case Dtype: {
+					Src msrc;
+
 					d->refs++;
 					id->refs++;
+					/* the member keeps its own place, not the whole dot's: -X reports it */
+					msrc = n->right != nil ? n->right->src : n->src;
 					n->op = Omdot;
 					n->left->decl = d;
 					n->left->ty = d->ty;
 					n->right = mkn(Oname, nil, nil);
-					n->right->src = n->src;
+					n->right->src = msrc;
 					n->right->sym = n->sym;
 					n->right->decl = id;
 					n->right->ty = id->ty;
 					n->ty = id->ty;
 					return n->ty;
+				}
 				default:
 					nerror(n, "cannot use %s.%s here", n->left->sym->name, n->sym->name);
 					n->ty = terror;
@@ -4169,16 +4174,19 @@ echk1(Node *n)
 			 * receiver is never itself a Tmodule-typed Dglobal.
 			 */
 			Decl *alias, *fnd;
+			Src msrc;
 
 			alias = lookup(n->left->left->sym);
 			fnd = modmember(alias->ty, n->left->sym);
 			alias->refs++;
 			fnd->refs++;
+			/* the member keeps its own place, not the whole dot's: -X reports it */
+			msrc = n->left->right != nil ? n->left->right->src : n->left->src;
 			n->left->op = Omdot;
 			n->left->left->decl = alias;
 			n->left->left->ty = alias->ty;
 			n->left->right = mkn(Oname, nil, nil);
-			n->left->right->src = n->left->src;
+			n->left->right->src = msrc;
 			n->left->right->sym = n->left->sym;
 			n->left->right->decl = fnd;
 			n->left->right->ty = fnd->ty;

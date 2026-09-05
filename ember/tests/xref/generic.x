@@ -26,7 +26,7 @@ use 37:2 g 37:2 func(): string
 decl 7:1 sys global Sys
 use 38:2 sys 7:1 Sys
 decl Sys:119:1 print func fn(string): int
-use 38:2 print Sys:119:1 fn(string): int
+use 38:6 print Sys:119:1 fn(string): int
 decl 38:29 first[string] func fn(list of string): string
 use 38:29 first[string] 38:29 fn(list of string): string
 use 38:49 nil - polymorphic type

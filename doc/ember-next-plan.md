@@ -475,9 +475,13 @@ What is left of the echo is a note for whoever next wants a Dis
 program to speak a byte protocol over the emulator's standard input:
 it cannot, and the socket is the way.
 
-Two smaller things the dump's shape leaves for a later pass: a use of
-an imported module's member has the position of the module name it is
-reached through (`sys.print` reports `print` at the `s`), so a hover
-between them picks the module; and a constant folded by the checker
-is not in the dump at all, so `High.name()` reports the call but not
-`High`.
+One of the two things the dump's shape left over is now fixed: a use
+of an imported module's member had the position of the module name it
+was reached through (`sys.print` reported `print` at the `s`), which
+made a hover over the member name answer about the module. Both
+checkers were building the member's name node fresh and giving it the
+whole dot expression's source range; they now keep the member name's
+own, so `print` is reported at the `p`, and a hover lands where the
+editor's cursor is. The other stands: a constant folded by the
+checker is not in the dump at all, so `High.name()` reports the call
+but not `High`.

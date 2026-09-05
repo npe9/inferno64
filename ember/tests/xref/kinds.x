@@ -37,7 +37,7 @@ use 56:7 Point 17:1 Point
 decl 7:1 sys global Sys
 use 57:2 sys 7:1 Sys
 decl Sys:119:1 print func fn(string): int
-use 57:2 print Sys:119:1 fn(string): int
+use 57:6 print Sys:119:1 fn(string): int
 use 57:26 name 29:1 fn(Level): string
 use 57:39 dist 36:1 fn(Point): int
 use 57:44 p 56:2 Point
