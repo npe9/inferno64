@@ -1,3 +1,4 @@
+a
 abandon
 abandoned
 abandonedly
@@ -2311,6 +2312,11 @@ eternal
 eternally
 eternity
 etext
+etext00
+etext01
+etext02
+etext90
+etext99
 etexts
 eunuchs
 euodius
@@ -3368,6 +3374,7 @@ husks
 hymn
 hymns
 hypertext
+i
 ibiblio
 ice
 idaho
@@ -5691,6 +5698,7 @@ running
 runs
 rush
 rushing
+s
 sabbath
 sacrament
 sacraments
@@ -6576,6 +6584,9 @@ taunt
 taunted
 tax
 taxes
+tcosa10
+tcosa10a
+tcosa11
 teach
 teacher
 teachers

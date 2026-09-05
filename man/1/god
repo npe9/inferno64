@@ -1,49 +1,95 @@
 .TH GOD 1
 .SH NAME
-god \- entropy word and song toy
+god \- TempleOS God: words, songs and Bible passages from user-gated entropy
 .SH SYNOPSIS
 .B temple/god
 .SH DESCRIPTION
 .I God
-is a entropy word and song toy.
+is a port of the TempleOS
+.B /Adam/God
+suite (HolySpirit, GodWord, GodSong, GodBiblePassage).
 It runs under
 .IR wm (1).
 .PP
-Entropy from the clock and keyboard feeds buttons that pick a vocabulary word, play a generated song, or show a passage from Dante's
-.I Inferno
-(Longfellow translation).
+All randomness is drawn from a bit fifo that is fed only by the
+.I entropy ceremony.
+Whenever a pick needs more bits than the fifo holds, a modal panel
+replaces the window contents, showing two live hexadecimal readouts \-
+.B Timer
+(a free-running microsecond clock) and
+.B Latch
+(the timestamp of the most recent keyboard or mouse event) \-
+the message
+.RB \(lqPress " OKAY " "to generate a random num from a timer\(rq,"
+and an
+.B OKAY
+button.
+Dismissing the panel latches the timestamp of the user's own click;
+its low 4 bits are discarded and the next 24 bits are fed to the fifo.
+The user's act of choosing when to click is the randomness,
+as in the original.
 .PP
-The controls are:
-.TF space
+The buttons are:
 .TP
-.B Add entropy button
-Insert timer entropy into bit fifo
+.B God Word
+Draw 17 bits and print the selected word from the vocabulary list.
 .TP
-.B God Word button
-Pick word from vocab via GodBits
+.B God Song
+Show the song settings form (complexity
+.BR Simple / Normal / Complex ,
+.B Rests
+and
+.B Six Eight
+checkboxes, and an octave field, clamped to 1\-7).
+Two independent two-measure strings are generated,
+each from a freshly flushed fifo \- so the form and the ceremony
+run twice \- and the result is printed and played as
+AABB through
+.IR tone (2).
+Notes span two octaves (G, A, B in the base octave and C\-G above it),
+with rests only when
+.B Rests
+is checked.
+In the form, Escape accepts, as TempleOS
+.B ESC
+does.
 .TP
-.B God Song button
-Generate and play song (fixed Normal/octave 4)
+.B Bible passage
+Draw 21 bits, print the
+.RI \(lq "Book chapter:verse" \(rq
+citation resolved from the 66-book line table of the original,
+a blank line, then 20 lines of the King James text.
 .TP
-.B Inferno passage button
-Pick passage from Inferno.TXT
-.TP
-.B keyboard (any)
-Also feeds entropy
-.TP
-.B Esc / q
-Quit
-.PD
+.B keyboard
+.B Esc
+or
+.B q
+quits; in the entropy panel,
+.B Esc
+or
+.B Enter
+acts as OKAY.
 .SH FILES
 .TP
 .B /lib/temple/vocab.txt
-Data file.
+Word list, the original's
+.B /Adam/God/Vocab.DD
+verbatim.
 .TP
-.B /lib/temple/Inferno.TXT
-Dante's Inferno (Project Gutenberg / Longfellow).
+.B /lib/temple/Bible.TXT
+King James Bible text addressed by the book line table.
 .SH SOURCE
 .B /appl/temple/god.b
 .SH SEE ALSO
 .IR temple (1),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original emits each song as a clickable DolDoc song object;
+here the song string is printed and played immediately.
+.IR tone (2)
+has no tuplet duration, so eighth-note triplets are approximated
+by dotted sixteenths (the printed string keeps the TempleOS
+.B et
+notation).
+GodDoodle is not ported.
