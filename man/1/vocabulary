@@ -5,31 +5,47 @@ vocabulary \- vocabulary quiz
 .B temple/vocabulary
 .SH DESCRIPTION
 .I Vocabulary
-is a vocabulary quiz.
+is the TempleOS vocabulary quiz.
 It runs under
 .IR wm (1).
 .PP
-Choose which of four words matches the prompt. Keys 1–4 select; n asks another question.
+A word is shown in blinking red, followed by four numbered
+definitions from the dictionary; choose the definition that matches
+the word.
+After each answer the full dictionary entry of the quizzed word pops
+up so you learn it; dismiss the popup and the next round is already
+waiting.
+A high tone marks a correct answer, a low tone a wrong one.
 .PP
 The controls are:
 .TF space
 .TP
-.B 1-4 / buttons
-Select choice
-.TP
-.B n
-Next question
+.B 1-4
+Select a definition (the numbered buttons may also be clicked)
 .TP
 .B Esc / q
-Quit
+Quit; in the definition popup, dismiss it
+(space and Enter also dismiss it)
 .PD
 .SH FILES
 .TP
-.B /lib/temple/vocab.txt
-Data file.
+.B /lib/temple/vocab.dict
+The dictionary, converted from the TempleOS AutoComplete
+dictionary data: records of a marker byte
+(1 word, 2 definition, 3 pronunciation, 4 part of speech, 5 extra)
+each followed by a UTF-8 string and a NUL.
+.TP
+.B /lib/temple/vocab.ndx
+Byte offset into
+.B vocab.dict
+of each entry that has at least one definition, one decimal number
+per line.
 .SH SOURCE
 .B /appl/temple/vocabulary.b
 .SH SEE ALSO
 .IR temple (1),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original quizzed the live AutoComplete word list; this uses the
+same dictionary converted to a static file.
