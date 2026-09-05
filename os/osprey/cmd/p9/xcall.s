@@ -54,3 +54,13 @@ TEXT	ospreyoutb(SB), 1, $-4
 	MOVL	byte+8(FP), AX
 	OUTB
 	RET
+
+/*
+ * The cycle counter, for a program measuring the ring: the same RDTSC
+ * the kernel's _cycles reads, low word then high at the address given.
+ */
+TEXT	ospreycycles(SB), 1, $-4
+	RDTSC
+	MOVL	AX, 0(RARG)
+	MOVL	DX, 4(RARG)
+	RET

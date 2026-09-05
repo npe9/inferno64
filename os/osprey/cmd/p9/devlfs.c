@@ -379,13 +379,25 @@ lfsreclaimstep(int force)
 	return 1;
 }
 
-/* the serve loop's call, on the clock tick: one step when the log is more than half full */
+/*
+ * The serve loop's call, on the clock tick: steps while the log is more
+ * than half full, up to eight a tick, so that the task's reservation is
+ * what pays for reclamation and a writer only pays when the log has
+ * filled between two ticks.  One step a tick was enough while a client's
+ * every request waited two milliseconds in its yield; a client answered
+ * in a hundred microseconds writes faster than that, and made writers
+ * pay.
+ */
 int
 lfsreclaim(void)
 {
+	int n;
+
 	if(!scanned)
 		return 0;
-	return lfsreclaimstep(0);
+	for(n = 0; n < 8 && lfsreclaimstep(0); n++)
+		;
+	return n > 0;
 }
 
 static int

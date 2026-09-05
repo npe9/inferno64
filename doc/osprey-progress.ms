@@ -279,7 +279,9 @@ was done, each item ending with what of it, if anything, remains.
 Read on 4 September, what remains across all of them is: the raw-flash
 tier of item 3 and the second machine of item 9, both of which want a
 board this tree has no Osprey target for; the talk's number, item 10, which is structural; and the demonstration
-scale of item 12.  Slide 15 \- processes sharing an address space
+scale of item 12; item 10's microkernel number is measured (108 \(mcs
+a request between two personalities under QEMU) but its task and its
+hardware figure are not.  Slide 15 \- processes sharing an address space
 migrating as a group \- is whole, on one machine and across a wire.
 .PP
 .B "1.  Starting a program in a container: exec."
@@ -632,7 +634,17 @@ offers the line to
 .CW consoletask
 first and writes the port itself only when the task cannot, a panic or a
 full queue \- so a container holds the console and the kernel's own output
-is that container's to carry.  And the clock: the CMOS real-time clock is
+is that container's to carry.  One thing about it found on 4 September:
+when the queue to the task was momentarily full, the rest of a print
+went straight to the port, ahead of what was queued, and cut a line in
+two \- the console interleave that had flaked a criterion on every busy
+boot, and that the faster ring yield of item 10 made constant.  The
+kernel now waits up to twenty milliseconds for the task to drain, the
+lock dropped, when it is in process context with interrupts on (the
+task runs on the other processor meanwhile), and falls through to the
+port only then; a boot's direct bytes fell from about a thousand to a
+hundred, the rest being the fault prints that are meant to be
+synchronous.  And the clock: the CMOS real-time clock is
 read in user space now, the exokernel way, the personality's own
 .CW outb / inb
 on ports 0x70 and 0x71 under a port grant, reading the date and time with
@@ -1649,7 +1661,7 @@ conversation (a 97-byte segment across the ring), and the server's
 the count: 47 ticks, six frames of its stack's over the ring to the
 server, four of the server's stack's back.  Checked by
 .CW /scripts/osprey-check-p9pair.py ,
-fifty-six criteria, six of them this, the gateway and the firewall below, three
+fifty-seven criteria, six of them this, the gateway and the firewall below, three
 the \[*p]p wire of item 4, one the time of day of item 5, three the
 resume and the group move of item 6a, four the replica and the caching
 file system of item 8, one the note continuation of item 2.  What is
@@ -1942,6 +1954,31 @@ says why: a message wakes a Plan 9 kernel process.  The microkernel's
 tasks are still Procs.  A task of the talk's shape on the microkernel,
 and the number measured on hardware, is the piece; it is structural, and
 it is last because everything above it is correct without it.
+.PP
+The microkernel's own number, between two personalities, is measured
+now, and one thing was found by measuring it.  The p9pair client times
+a thousand requests by the cycle counter \- each put on its ring, carried
+by the kernel to the server container, taken by the server's select,
+answered, and routed home \- and the check turns the cycles into time
+by the rate the kernel prints: 108 \(mcs a request, under QEMU.  Before
+that could be measured the number was two milliseconds, and not
+because of the path: a program's yield after a request
+.CW ( xsleep ,
+the SLEEP call that services the ring) slept a fixed two milliseconds
+however fast the reply came, so every request from a personality \-
+every 9P message, every \[*p]p group, every frame poll \- cost at least
+that.  The yield now sleeps on the container's reply rendezvous, which
+the server's select wakes when it routes a reply home
+.CW ( ospreyawaitreply
+in
+.CW devosprey.c ),
+with the two milliseconds as the bound.  The whole p9pair run is
+quicker for it, and the store's reclamation had to change to keep up:
+one step a tick was enough while every write waited two milliseconds,
+and a client answered in a hundred microseconds outran it and made
+writers pay, so the tick now takes up to eight steps until the log is
+half free, still under the storage task's reservation.  What remains
+of the item is what it was: a task that is not a Proc, and hardware.
 .PP
 .B "11.  Knowing who agreed the key."
 The exchange is with whoever answers.  A person comparing two

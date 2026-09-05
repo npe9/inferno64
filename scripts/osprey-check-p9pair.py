@@ -69,6 +69,9 @@ def main():
     except OSError: pass
 
     now = int(time.time())
+    hz = re.search(r'by request \(\d+ of \d+ at (\d+) hz\)', t)
+    rt = re.search(r'p9: pair-client: 1000 requests put on the ring and answered by the server personality in \d+ cycles: (\d+) cycles each', t)
+    rtus = (int(rt.group(1)) * 1000000.0 / int(hz.group(1))) if hz and rt else None
     m = re.search(r"pair-client: read (\d+) entries from the server personality's exported root", t)
     results = [
         ("the real-time clock is read in user space, by the personality's own outb/inb on the CMOS ports, no kernel rtc device in the data path",
@@ -178,6 +181,8 @@ def main():
          and re.search(r'osprey medium: a 28-byte frame arrived over the ring from container \d+ and was handed to the stack at this end', t) is not None),
         ("and the stack accepts it: the server's IP stack answers the echo request with an echo reply, so a real packet that crossed the ring was received and acted on, not just handed over",
          'osprey medium: the stack answered with an ICMP echo reply - it accepted a real IP packet that crossed the ring from the peer container' in t),
+        ("what a request costs between two personalities - put on the ring, carried by the kernel, taken by the server's select, answered, routed home - a thousand of them timed by the cycle counter: %s each" % ('%.1f us' % rtus if rtus else 'not measured'),
+         rtus is not None and rtus < 2000),
         ("the client container brings up the real Plan 9 IP stack of its own - devip, ip.c, tcp.c - with an osprey interface whose wire is the ring to the server container",
          'p9 ip: client container: the real Plan 9 IP stack is up in this container too; its osprey interface 10.0.1.1 is the ring wire to the server container' in t
          and "p9 ip: stack B's osprey interface 10.0.1.2 is the ring wire to the client container" in t),

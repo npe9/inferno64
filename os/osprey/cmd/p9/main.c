@@ -738,6 +738,30 @@ p9paircli(void)
 			print("p9: pair-client: frame over the ring failed (%ld)\n", fn);
 	}
 	/*
+	 * What a request costs, between two personalities: a thousand empty
+	 * frame polls, each a request this container puts on the ring, the
+	 * kernel carries to the server container, the server's loop takes
+	 * by select and answers, and the kernel routes home - measured by
+	 * the cycle counter, which the kernel's status line gives the rate
+	 * of.  The talk's number is 270 ns for a send, a receive and a
+	 * context switch; this is the microkernel's equivalent, two whole
+	 * processes switched, under QEMU.
+	 */
+	{
+		extern void ospreycycles(uvlong*);
+		extern long ring9p_frame(uchar*, long, uchar*, long);
+		uvlong t0, t1;
+		uchar back[64];
+		int i;
+
+		ospreycycles(&t0);
+		for(i = 0; i < 1000; i++)
+			ring9p_frame(nil, 0, back, sizeof back);
+		ospreycycles(&t1);
+		print("p9: pair-client: 1000 requests put on the ring and answered by the server personality in %llud cycles: %llud cycles each\n",
+			t1 - t0, (t1 - t0) / 1000);
+	}
+	/*
 	 * And the same wire carrying a whole stack's traffic, not a frame
 	 * built by hand: this container brings up the real Plan 9 IP stack
 	 * of its own, with an interface whose wire is the ring, and its

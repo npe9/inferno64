@@ -1460,6 +1460,27 @@ ospreywakeup(void)
 }
 
 /*
+ * A caller's yield after a request: sleep until a reply is on its ring,
+ * or ms have passed, whichever first.  The yield used to be a fixed
+ * two milliseconds, so every request from a personality cost at least
+ * that however fast it was answered; the reply routed home by the
+ * server's select wakes this at once (ospreywakeup, above).
+ */
+void
+ospreyawaitreply(int ms)
+{
+	Ospreyproc *p;
+	int x;
+
+	p = up->osprey;
+	if(p == nil || (x = ospreyindex(p)) < 0 || x >= nelem(ospreyreplyrend)){
+		tsleep(&up->sleep, return0, nil, ms);
+		return;
+	}
+	tsleep(&ospreyreplyrend[x], ospreyreply, p, ms);
+}
+
+/*
  * Name every part of the span: a segment for each container's slice and
  * one for each page.  They are published once, when the span is made.
  */
@@ -1732,7 +1753,8 @@ ospreyselectcaller(uvlong armoff, int narms)
 		sw.armoff = armoff;
 		sw.narms = narms;
 		qlock(&ospreylock);
-		ospreyroute(p);			/* send home anything answered */
+		if(ospreyroute(p) > 0)		/* send home anything answered, and wake whoever waits for it */
+			ospreywakeup();
 		i = ospreyselectready(p, armoff, narms);
 		if(i == -1){
 			/*
@@ -1751,7 +1773,8 @@ ospreyselectcaller(uvlong armoff, int narms)
 			qlock(&ospreylock);
 			if((p = ospreyat(slot)) != nil){
 				sw.p = p;
-				ospreyroute(p);
+				if(ospreyroute(p) > 0)
+					ospreywakeup();
 				i = ospreyselectready(p, armoff, narms);
 			}
 		}
@@ -2972,9 +2995,29 @@ ospreyconsput(char *s, int n)
 	while(n > 0){
 		m = n < Consslot ? n : Consslot;
 		if(!ospreyoutputroom(p)){
+			int i;
+
+			/*
+			 * The queue to the task is full.  Writing the rest to the
+			 * port at once would put it out ahead of what is queued,
+			 * cutting lines in two - the console interleave every
+			 * busy boot showed.  The task drains a slot in well under
+			 * a millisecond, so wait for room, the lock dropped, when
+			 * waiting is allowed at all (process context, interrupts
+			 * on); the task runs on the other processor meanwhile,
+			 * which is the test bench's shape.  With one processor,
+			 * or from an interrupt, this falls through to the port
+			 * as before.
+			 */
 			iunlock(&ospreyconslock);
-			ospreyconsdirect += n;
-			return -1;	/* the caller writes the port itself */
+			for(i = 0; i < 20 && up != nil && islo() && !ospreyoutputroom(p); i++)
+				delay(1);
+			ilock(&ospreyconslock);
+			if(!ospreyoutputroom(p)){
+				iunlock(&ospreyconslock);
+				ospreyconsdirect += n;
+				return -1;	/* the caller writes the port itself */
+			}
 		}
 		slot = ospreyconsnext++ % Nconsslot;
 		if((d = ospreydata(p, Consoff + slot*Consslot, Consslot)) == nil){
