@@ -65,7 +65,7 @@ static uvlong slicepa;
 static uchar mac[6];
 static u16int rxavail, rxlastused, txavail, txlastused;
 static u16int notifyoff[2];
-static long rxframes, txframes, txdrops;
+static long rxframes, txframes, txdrops, txrefused;
 
 static void
 say(char *s)
@@ -238,21 +238,17 @@ vnet_send(uchar *frame, long n)
 	if(bar == nil || n > Maxframe)
 		return -1;
 	/*
-	 * Reclaim what the device has sent, and if every buffer is still in
-	 * flight wait for one, bounded: the device takes a frame off the
-	 * ring in well under a millisecond, and a burst from tcp.c is
-	 * longer than eight frames.  Dropping instead cost a retransmission
-	 * timeout per drop, which made a page transfer crawl.
+	 * Reclaim what the device has sent; if every buffer is still in
+	 * flight say so and the medium keeps the frame in its own queue
+	 * until the device's interrupt says a slot is free (ospreyvnetpump
+	 * drains it).  This spun for a slot once, and dropped before that.
 	 */
-	for(spin = 0; spin < 200000; spin++){
-		while(txlastused != used[1])
-			txlastused++;
-		if((u16int)(txavail - txlastused) < Qsize)
-			break;
-	}
+	USED(spin);
+	while(txlastused != used[1])
+		txlastused++;
 	if((u16int)(txavail - txlastused) >= Qsize){
-		txdrops++;
-		return -1;		/* every buffer in flight, still */
+		txrefused++;
+		return -1;		/* every buffer in flight: not sent, not dropped */
 	}
 	slot = txavail % Qsize;
 	b = txbuf(slot);
@@ -306,4 +302,25 @@ vnet_stats(long *rx, long *tx, long *drops)
 	*rx = rxframes;
 	*tx = txframes;
 	*drops = txdrops;
+}
+
+/* times a send found every buffer in flight and left the frame with the medium */
+long
+vnet_refused(void)
+{
+	return txrefused;
+}
+
+/* is there a transmit slot free now?  the medium asks before it tries a queued frame */
+int
+vnet_cansend(void)
+{
+	u16int *used;
+
+	if(bar == nil)
+		return 0;
+	used = qused(Txq);
+	while(txlastused != used[1])
+		txlastused++;
+	return (u16int)(txavail - txlastused) < Qsize;
 }

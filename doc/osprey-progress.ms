@@ -5311,19 +5311,30 @@ at its
 not above it.
 .PP
 .B "4.  The network driver waits, it does not spin."
-Half done.  The rings are sixteen now, from the slice's own buffers
-(the boot sets the
+Done.  The rings are sixteen, from the slice's own buffers (the boot
+sets the
 .CW pktbuf
 tunable to thirty-two and
 .CW txbuf
 to sixteen), which was what the first attempt at item 1 found wanting:
 under a host load of thirty the eight-entry receive ring overflowed
 between two ticks, SYNs were lost and backed off for seconds, and two
-machines that boot four seconds apart missed each other.  What remains:
+machines that boot four seconds apart missed each other.  And the
+driver neither drops nor waits:
 .CW vnet_send
-still spins for a transmit slot; the real form is the medium keeping a
-transmit queue the pump drains as the device's interrupt frees slots.
-Proof still owed: a megabyte over the cable with no drops.
+says when every slot is in flight, the medium keeps the frame on a
+transmit queue of its own, and the pump \- run by the device's
+interrupt and on every tick \- sends what waited, in order, as slots
+free
+.CW ( vnetdrain
+in
+.CW ospreyvnetmedium.c ).
+Proof: machine 2 sends a megabyte across the cable in 8 KB writes and
+machine 1 reads it back whole \- 20 milliseconds, 52 megabytes a
+second, under QEMU \- with nothing dropped and, as it happens, nothing
+refused either, tcp.c's own pacing keeping a burst inside sixteen
+frames; the queue is there for when it does not.  Ten criteria in the
+two-machine check.
 .PP
 Two bandaids found and removed on the way, both in the two-machine
 check.  A wait is a wait:

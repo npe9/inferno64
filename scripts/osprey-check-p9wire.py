@@ -74,6 +74,9 @@ def main():
          and 'p9 wire: machine 2 read the answer across the cable: "answered across the cable by machine 1\'s tcp.c in user space"' in t[1]
          and re.search(r'machine 1 answered the other machine; its user-space driver took [1-9]\d* frames in and put [1-9]\d* out, 0 dropped', t[0]) is not None
          and re.search(r'its user-space driver took [1-9]\d* frames in and put [1-9]\d* out, 0 dropped', t[1]) is not None),
+        ("and a megabyte across the cable: tcp.c's bursts run far past the driver's sixteen slots, the medium queues what the device has no slot for and sends it when the interrupt frees one, and nothing is dropped - the throughput printed",
+         re.search(r'p9 wire: machine 1 took 1048576 bytes across the cable in \d+ ms \(\d+ KB/s\); its driver dropped 0 frames', t[0]) is not None
+         and re.search(r'p9 wire: machine 2 sent 1048576 bytes across the cable and the other machine said "got it"; its driver put \d+ frames out, dropped 0, refused \d+ for want of a slot, of which the medium queued (\d+) and sent \1 later', t[1]) is not None),
         ("migration: each machine's legacy process asks to be carried over the wire, its kernel parks it and its server pulls the segments, register frame and every resident page out by request and sends them across the cable, and the other machine's server has its kernel make, fill and start a process from them",
          all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12], with 1 of its group: ([1-9]\d*) pages, \d+ bytes; it is container \d+ there", x) is not None for x in t)
          and all(re.search(r'p9 migrate: a process arrived over the wire from 10\.1\.0\.[12]!\d+, [1-9]\d* pages, and runs here as container \d+', x) is not None for x in t)

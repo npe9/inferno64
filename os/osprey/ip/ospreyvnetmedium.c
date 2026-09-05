@@ -44,14 +44,23 @@ typedef struct Vnetrock Vnetrock;
 struct Vnetrock { Fs *f; Ipifc *ifc; };
 
 static Ipifc *vnetifc;		/* the one interface on the one device */
+static Queue *vnettxq;		/* frames the device had no slot for, in order, until it has */
+static long vnetqueued, vnetdrained;
 
 extern int vnet_ready(void);
 extern void vnet_mac(uchar*);
 extern int vnet_send(uchar*, long);
 extern long vnet_recv(uchar*, long);
+extern int vnet_cansend(void);
 
 static int shown;		/* the first few frames each way, said, as evidence of the wire */
 
+/*
+ * A frame out: to the device if it has a slot and nothing is waiting
+ * ahead of it, else onto the medium's transmit queue, which the pump
+ * drains in order when the device's interrupt says a slot is free.
+ * The driver neither drops nor waits.
+ */
 static void
 vnetout(Block *bp)
 {
@@ -65,8 +74,34 @@ vnetout(Block *bp)
 		print("vnet: out %ld bytes, type %#.4ux, to %02x:%02x:%02x:%02x:%02x:%02x\n",
 			BLEN(bp), (f[12]<<8)|f[13], f[0], f[1], f[2], f[3], f[4], f[5]);
 	}
-	vnet_send(bp->rp, BLEN(bp));
-	freeb(bp);
+	if(vnettxq != nil && qlen(vnettxq) == 0 && vnet_send(bp->rp, BLEN(bp)) == 0){
+		freeb(bp);
+		return;
+	}
+	if(vnettxq == nil || qpass(vnettxq, bp) < 0){
+		if(vnetifc != nil)
+			vnetifc->outerr++;
+		return;			/* qpass frees it */
+	}
+	vnetqueued++;
+}
+
+/* what waited for a slot, to the device now that it has one */
+static void
+vnetdrain(void)
+{
+	Block *bp;
+
+	if(vnettxq == nil)
+		return;
+	while(vnet_cansend() && (bp = qget(vnettxq)) != nil){
+		if(vnet_send(bp->rp, BLEN(bp)) < 0){
+			qputback(vnettxq, bp);	/* the slot went meanwhile: next time */
+			break;
+		}
+		freeb(bp);
+		vnetdrained++;
+	}
 }
 
 static void
@@ -83,6 +118,8 @@ vnetbind(Ipifc *ifc, int, char**)
 	er->ifc = ifc;
 	vnet_mac(ifc->mac);
 	ifc->arg = er;
+	if(vnettxq == nil)
+		vnettxq = qopen(256*1024, Qmsg, nil, nil);
 	vnetifc = ifc;
 }
 
@@ -297,6 +334,7 @@ ospreyvnetpump(void)
 
 	if((ifc = vnetifc) == nil || (er = ifc->arg) == nil)
 		return;
+	vnetdrain();			/* the device's interrupt: slots may have freed */
 	while((n = vnet_recv(frame, sizeof frame)) > 0){
 		if(n < ETHERHDRSIZE)
 			continue;
@@ -351,6 +389,14 @@ vnetareg(Fs*, Ipifc *ifc, Iplifc*, uchar *ip)
 		return;
 	if(isv4(ip))
 		sendgarp(ifc, ip);
+}
+
+/* how many frames waited for a slot and were sent later, for the record */
+void
+ospreyvnetqstats(long *queued, long *drained)
+{
+	*queued = vnetqueued;
+	*drained = vnetdrained;
 }
 
 Medium ospreyvnetmedium =

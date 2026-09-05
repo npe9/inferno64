@@ -398,6 +398,32 @@ wiresrv(void *)
 	p9write(dfd, reply, sizeof reply - 1);
 	vnet_stats(&rx, &tx, &drops);
 	print("p9 wire: machine 1 answered the other machine; its user-space driver took %ld frames in and put %ld out, %ld dropped\n", rx, tx, drops);
+	/*
+	 * Then a megabyte from the other machine, to show the driver and
+	 * the medium under a load a line does not give them: read until it
+	 * is all here, and say how long it took and whether anything was
+	 * dropped or had to wait for a slot.
+	 */
+	{
+		extern uvlong kfastticks(uvlong*);
+		extern void ospreyvnetqstats(long*, long*);
+		static uchar big[8192];
+		long got, queued, drained;
+		uvlong t0, t1;
+
+		t0 = kfastticks(nil);
+		for(got = 0; got < 1024*1024; got += n){
+			n = p9read(dfd, big, sizeof big);
+			if(n <= 0)
+				break;
+		}
+		t1 = kfastticks(nil);
+		vnet_stats(&rx, &tx, &drops);
+		ospreyvnetqstats(&queued, &drained);
+		print("p9 wire: machine 1 took %ld bytes across the cable in %llud ms (%llud KB/s); its driver dropped %ld frames, %ld waited for a slot and were sent later\n",
+			got, (t1 - t0) * 10, (t1 - t0) > 0 ? (uvlong)got / ((t1 - t0) * 10) : 0, drops, queued);
+		p9write(dfd, "got it", 6);
+	}
 	tsleep(&up->sleep, return0, nil, 1000);	/* let the answer and its ack cross before the close does */
 	p9close(dfd); p9close(lfd); p9close(afd);
 	poperror();
@@ -432,6 +458,27 @@ wirecli(void *)
 	n = p9read(wfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
 	vnet_stats(&rx, &tx, &drops);
 	print("p9 wire: machine 2 read the answer across the cable: \"%s\"; its user-space driver took %ld frames in and put %ld out, %ld dropped\n", rx1, rx, tx, drops);
+	/* and a megabyte the other way, in 8 KB writes: a burst tcp.c segments far past the ring's sixteen slots */
+	{
+		extern void ospreyvnetqstats(long*, long*);
+		extern long vnet_refused(void);
+		static uchar big[8192];
+		long sent, queued, drained;
+		int i;
+
+		for(i = 0; i < (int)sizeof big; i++)
+			big[i] = 'a' + i % 26;
+		for(sent = 0; sent < 1024*1024; sent += n){
+			n = p9write(wfd, big, sizeof big);
+			if(n <= 0)
+				break;
+		}
+		n = p9read(wfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
+		vnet_stats(&rx, &tx, &drops);
+		ospreyvnetqstats(&queued, &drained);
+		print("p9 wire: machine 2 sent %ld bytes across the cable and the other machine said \"%s\"; its driver put %ld frames out, dropped %ld, refused %ld for want of a slot, of which the medium queued %ld and sent %ld later\n",
+			sent, rx1, tx, drops, vnet_refused(), queued, drained);
+	}
 	tsleep(&up->sleep, return0, nil, 500);
 	p9close(wfd); p9close(dfd);
 	poperror();
