@@ -5770,16 +5770,47 @@ files that held the constants before, and moving one offset to overlap
 another fails the build with a divide check, as it should.
 .PP
 .B "15.  The pc64 interrupt-path bug."
-The standing corrupted return
-.CW ( "pc=0xffffffff" ),
-reproduced reliably by a user driver taking a legacy interrupt at CPL3
-and now seen as an idle server faulting after a two-machine run.  The
-plan: the arm64 port's bug of the same shape was a trap argument
-aliasing a saved register; instrument the pc64 trap entry to checksum
-the saved frame on entry and exit for interrupts from user mode, run
-the i8042 reproduction, and find the field that changes.  Proof: the
-reproduction runs a hundred boots clean and the idle fault is gone from
-the two-machine runs.
+Two things were once one.  The idle server faulting after a two-machine
+run
+.CW ( "pc=0xffffffff" )
+was run down under item 9: it was the personality's one shared reply
+buffer, reset by a stream tick under a group that had slept mid-build,
+not a kernel interrupt-path bug at all \- and it is fixed there.  What
+remained was the kernel half, said to be reproduced by a user driver
+taking a legacy interrupt at CPL3.  The tooling the plan named is
+built: the trap handler snapshots the return frame on the way in for an
+interrupt from user mode and, on the way out, when no note was
+delivered and no fixup moved the pc, checks it is unchanged
+.CW ( ospreytraptrace ,
+armed by the config).  And the reproduction: the i8042 driver spins two
+hundred million times at CPL3 while the clock and device interrupts
+land, the window the bug was said to corrupt.
+.PP
+The tooling found the bug in the hunt, not in the kernel.  A first cut
+kept the snapshot per processor, and it reported the return corrupted
+four boots in fifteen \- but every one was a valid pc changing to
+another valid pc, because a trap that sleeps and reschedules lets
+another process's trap overwrite the shared snapshot; the frame was
+never touched, the instrument was.  This is the shape of the thing that
+made forty-six earlier traces inconclusive: an interrupt from user
+mode that reschedules is normal, and an instrument that does not hold
+its snapshot on its own stack cannot tell that from a fault.  With the
+snapshot a local, so a reschedule cannot reach it, fifty-two boots of
+the reproduction \- two hundred million CPL3 iterations each, thousands
+of interrupts taken from user mode \- corrupted no return and panicked
+none.  The
+.CW pc64
+trap entry passes its argument in a slot of its own
+.CW ( "PUSHQ SP" ),
+not aliased to a saved register the way the arm64 entry's was before
+that port's fix, so the shape the plan guessed at is not present here;
+whatever the standing corruption was, the reproduction no longer
+reproduces it, and the two-machine runs, whose idle fault was item 9's,
+are clean nineteen criteria in a row.  The honest reading is that the
+kernel half is gone \- fixed by earlier work on this branch, or a
+figure of an instrument that could not hold still \- and the tooling to
+tell, and to catch it should it return, is in the tree.
+.PP
 .NH 1
 Not attempted
 .PP

@@ -19,6 +19,8 @@ static void doublefault(Ureg*, void*);
 static void unexpected(Ureg*, void*);
 static void _dumpstack(Ureg*);
 
+int ospreytraptrace;		/* item 15's trap-return checksum, armed by *ospreytraptrace */
+
 void
 trapinit0(void)
 {
@@ -63,6 +65,12 @@ trapinit0(void)
 void
 trapinit(void)
 {
+	{
+		extern char *getconf(char*);
+		char *cf = getconf("*ospreytraptrace");
+		if(cf != nil && *cf != '0')
+			ospreytraptrace = 1;
+	}
 	irqinit();
 
 	nmienable();
@@ -129,15 +137,48 @@ usertrap(int vno)
 }
 
 
+/*
+ * Item 15's tooling: for an interrupt from user mode, snapshot the
+ * return frame (the fields the CPU pushed - pc, cs, flags, sp, ss - and
+ * the whole Ureg's checksum) on the way in, and on the way out, when no
+ * note was delivered and no fixup moved the pc, check it is unchanged.
+ * A field that changed under an interrupt that did nothing to it is the
+ * standing corruption (the return going to 0xffffffff); the check names
+ * it, direct to the port.  Armed by *ospreytraptrace in the config.
+ */
+typedef struct Trapsnap Trapsnap;
+struct Trapsnap { int used; uvlong pc, cs, flags, sp, ss, sum; };
+static uvlong
+uregsum(Ureg *u)
+{
+	uvlong *w, s;
+	int i;
+
+	s = 0;
+	for(w = (uvlong*)u, i = 0; i < (int)(sizeof(Ureg)/sizeof(uvlong)); i++)
+		s = s*1000003 + w[i];
+	return s;
+}
+
 void
 trap(Ureg *ureg)
 {
 	int vno, user;
+	Trapsnap snap;
 
 	vno = ureg->type;
 	user = kenter(ureg);
 	if(vno != VectorCNA)
 		fpukenter(ureg);
+
+	/* the snapshot is a local, so a reschedule inside the trap cannot clobber it */
+	snap.used = 0;
+	if(ospreytraptrace && user){
+		snap.used = 1;
+		snap.pc = ureg->pc; snap.cs = ureg->cs; snap.flags = ureg->flags;
+		snap.sp = ureg->sp; snap.ss = ureg->ss;
+		snap.sum = uregsum(ureg);
+	}
 
 	if(!irqhandled(ureg, vno) && (!user || !usertrap(vno))){
 		if(!user){
@@ -178,6 +219,12 @@ trap(Ureg *ureg)
 out:
 	splhi();
 	if(user){
+		int noted = up->procctl || up->nnote;
+		/* with the local snapshot a reschedule cannot change the frame, so any pc change that is not a note or a fixup is the corruption */
+		if(snap.used && !noted && ureg->pc != snap.pc && ureg->pc != snap.pc + 2){
+			iprint("trap trace: cpu%d user-interrupt %llud corrupted the return: pc %#llux -> %#llux, sp %#llux -> %#llux, cs %#llux flags %#llux sum %#llux -> %#llux\n",
+				m->machno, (uvlong)vno, snap.pc, ureg->pc, snap.sp, ureg->sp, ureg->cs, ureg->flags, snap.sum, uregsum(ureg));
+		}
 		if(up->procctl || up->nnote)
 			donotify(ureg);
 		kexit(ureg);
