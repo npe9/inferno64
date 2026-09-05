@@ -352,6 +352,14 @@ flushmemscreen(Rectangle r)
 		dp = vfb + r.min.y*stride + r.min.x*ScrPix;
 		for(y = r.min.y; y < r.max.y; y++){
 			memmove(dp, sp, nb);
+			/*
+			 * Clean this scanline to the point of coherency: the
+			 * GPU scans vfb out uncached, so without the clean it
+			 * would show stale pixels on real hardware.  Only the
+			 * dirty span (nb bytes at dp), not the whole line, and
+			 * a no-op under QEMU which models no data cache.
+			 */
+			cacheflush(dp, nb);
 			sp += stride;
 			dp += stride;
 		}

@@ -16,15 +16,12 @@
  * ARM physical address is correct on both.  RAM here is identity-mapped,
  * so a kernel pointer is its own physical address.
  *
- * HARDWARE GAP (see mmuenable() in l.s for the board's standing policy):
- * RAM is mapped cacheable (mmu.c, Pnormal), and the GPU reads the buffer
+ * RAM is mapped cacheable (mmu.c, Pnormal) and the GPU reads the buffer
  * uncached through the alias above, so on real silicon the buffer must
- * be cleaned to the point of coherency (DC CVAC) before the WRITE and
- * invalidated (DC IVAC) after the READ, or the GPU sees a stale request
- * and the ARM sees a stale response.  QEMU models no data cache, so the
- * plain DSB below suffices there; this is deferred with the rest of the
- * board's cache maintenance until the hardware is real.  Do NOT trust a
- * mailbox response on hardware without adding the clean/invalidate.
+ * be cleaned to the point of coherency before the WRITE and invalidated
+ * after the READ, or the GPU would see a stale request and the ARM a
+ * stale response.  mboxprop() does exactly that (cacheflush/cacheinval,
+ * cache.c); QEMU models no data cache so those loops are no-ops there.
  */
 #include "u.h"
 #include "../port/lib.h"
@@ -94,13 +91,29 @@ int
 mboxprop(u32 *buf)
 {
 	uintptr pa = (uintptr)buf;	/* RAM is identity-mapped */
+	usize reqlen;
 
 	if(pa & 0xf)
 		panic("mboxprop: buf %#p not 16-byte aligned", buf);
-	coherence();
+	reqlen = buf[0];		/* total length, read before the exchange overwrites it */
+
+	/*
+	 * Clean the request to the point of coherency so the GPU, which
+	 * reads the buffer uncached through the bus alias, sees the bytes
+	 * we wrote.  cacheflush ends in a DSB, so the write-register poke
+	 * below is ordered after the clean.
+	 */
+	cacheflush(buf, reqlen);
 	mboxwrite(Chanprop, (u32)(pa | Busalias));
 	mboxread(Chanprop);
-	coherence();
+	/*
+	 * The GPU filled the response in place.  Invalidate our now-stale
+	 * D-lines so the reads below fetch what the GPU wrote.  IVAC
+	 * discards rather than cleans -- safe here only because the whole
+	 * buffer was cleaned before the write, so no ARM-dirty line remains
+	 * in it to lose.
+	 */
+	cacheinval(buf, reqlen);
 	return buf[1] == Respok ? 0 : -1;
 }
 

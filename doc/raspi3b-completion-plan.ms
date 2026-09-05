@@ -11,26 +11,36 @@ test it against a booted kernel where QEMU models the device, and per
 AGENTS.md implement what the real board needs (power domains, cache,
 flow control) even where the emulator is lenient -- noting each such gap.
 .NH 1
-Phase 0: hardware-correctness debt (do first, cheap)
+Phase 0: hardware-correctness debt (do first, cheap) -- DONE
 .PP
 Two known gaps flagged in the source, both no-ops under QEMU but needed
 on real silicon, and cheap to close before more drivers pile on.
 .IP 0a.
-Framebuffer pixel order.  The screendump shows red and blue swapped: the
-Pi framebuffer is BGR by default.  Ask the firmware for RGB order with a
-SET_PIXEL_ORDER (0x00048006) tag in mboxfballoc, and fall back to
-ScrChan XBGR32 in screenbcm.c if QEMU ignores the tag.  Verify: a drawn
-red band reads (255,0,0) in the screendump.
+Framebuffer pixel order -- DONE.  The screendump had red and blue
+swapped: QEMU's bcm2835 framebuffer defaults to pixel order RGB while
+memdraw's XRGB32 byte order (and the real Pi firmware) want BGR.  A
+SET_PIXEL_ORDER (0x00048006) tag in mboxfballoc now requests BGR
+explicitly, so the emulator and hardware agree.  Verified: three drawn
+bands read red, green, blue left to right in the screendump.
 .IP 0b.
-Cache maintenance.  RAM is mapped cacheable but the GPU and any DMA read
-it uncached, and the caches are UNKNOWN at reset.  Add DC CVAC (clean to
-PoC), DC IVAC (invalidate) and IC IALLU as l.s TEXT functions (SYS
-encoding with the address register).  Wire: mmuenable() invalidates D+I
-before setting SCTLR.C/I; mboxprop() cleans the message buffer before the
-write and invalidates after the read; screenbcm's flushmemscreen cleans
-each dirty rectangle after the copy to the visible framebuffer.  Verify:
-byte-identical clean boot under QEMU (no regression); the ops are only
-exercised on real hardware, note that in the source.
+Cache maintenance -- DONE (by-VA ops; set/way walker deliberately
+deferred).  RAM is mapped cacheable but the GPU and any DMA read it
+uncached, and the caches are UNKNOWN at reset.  DC CVAC (clean to PoC),
+DC IVAC (invalidate), DC CIVAC and IC IALLU are l.s TEXT functions,
+reached as the "SYS reg, sysarg" form since 7a has no optab row for the
+DC/IC mnemonics; the encodings were checked byte-for-byte with 7l -a
+(DC CVAC,X0 == 0xd50b7a20, IC IALLU == 0xd508751f).  cachebcm.c strides
+the by-VA ops over a range at the CTR_EL0 minimum line size.  Wired:
+mmuenable() invalidates the I-cache (IC IALLU) before setting SCTLR.I;
+mboxprop() cleans the request before the write and invalidates the
+response after the read; flushmemscreen cleans each pushed scanline.
+The L1 D-cache set/way invalidate that mmuenable still wants at reset is
+left out on purpose -- its CLIDR/CCSIDR level-walk loop is logic QEMU
+cannot exercise (it models no cache), so shipping it unvalidated would
+only risk discrediting the ops that ARE validated; the source comment
+says so.  Verified: clean boot under QEMU with the same marker line-up
+(RASPI3B-OK, SD-OK/WRITE/MULTIBLOCK, DRAW-OK, RASPI3B-SH-OK) and the
+screendump still reading red/green/blue.
 .NH 1
 Phase 1: Synopsys DesignWare (DWC2) USB host -- the keystone
 .PP
