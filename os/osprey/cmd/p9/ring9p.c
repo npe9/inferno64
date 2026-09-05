@@ -278,6 +278,17 @@ ring9p_wait(int sem)
 	return n == -2 ? -2 : -1;	/* -1: nothing within the kernel's wait (200 ms of quiet), ask again; -2: the arms were refused */
 }
 
+/* this container's data area, for a caller that is a client rather than a server (a server has p9srvdata) */
+uchar*
+ring9p_data(void)
+{
+	Ring *r = &ring;
+
+	if(!mapped)
+		return nil;
+	return r->base + r->map->data;
+}
+
 /*
  * Start a program in a container of its own: the name goes in our data
  * area and the kernel is asked to exec it, which it does through our

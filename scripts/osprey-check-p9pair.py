@@ -27,7 +27,7 @@ def main():
     if r.returncode != 0:
         print('FAIL 9p9pair did not build'); print(r.stdout[-800:]); print(r.stderr[-800:]); return 1
     subprocess.run(['sh', 'scripts/mkosprey-efi-iso.sh'],
-                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9pair')),
+                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9pair'), OSPREY_INI='ospreykey=this machine\'s secret'),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9pair-', suffix='.log')
     # a raw disk image for the user-level block driver: sector 0 says who wrote it,
@@ -96,7 +96,7 @@ def main():
          'p9: pair-client: read /n/hello from the disk over 9P: "hello from the log-structured store, version 1"' in t
          and 'lfs: committed hello version 2, 56 bytes' in t),
         ("the same file over pi-p, about the personality's files: one group - session, open, read of *, read of data, write, close - answered in one round trip",
-         'p9: pair-client: pi-p group of 6 answered with 6 replies in one round trip' in t
+         'p9: pair-client: pi-p group of 7, the first saying who I am, answered with 7 replies in one round trip' in t
          and 'p9: pair-client: pi-p read * (version 2): "* data version length name latest"' in t
          and 'p9: pair-client: pi-p read data (version 2): "written by the client over 9P, a new version on the disk"' in t),
         ("the write makes a version nobody else sees until the close commits it, as one record on the log",
@@ -144,12 +144,12 @@ def main():
          re.search(r'osprey exec: container (\d+) starts /boot/linux for container 1, served by container 3', t) is not None
          and re.search(r'p9: pair-client: exec /boot/linux started container \d+', t) is not None),
         ("the server lays it out and pages it in, and it runs to exit: its file calls, brk and mmap answered",
-         'buddy: exec /boot/linux for container' in t and 'linux: read(fd, buf, 512) returned 470 bytes' in t
+         'buddy: exec /boot/linux for container' in t and 'linux: read(fd, buf, 512) returned 488 bytes' in t
          and 'linux: brk grew the heap by 65536 bytes, zero-filled' in t
          and re.search(r'osprey exec: container \d+ \(/boot/linux\) exited with status 0', t) is not None),
         ("exec starts a Plan 9 binary the same way, the buddy laying its a.out out, and it runs its file work",
          'buddy: exec /boot/legacy for container' in t and 'a Plan 9 a.out, text' in t
-         and 'legacy: read(fd, buf, 512) returned 470 bytes' in t
+         and 'legacy: read(fd, buf, 512) returned 488 bytes' in t
          and 'legacy: the buddy answered every trap' in t),
         ("the Plan 9 binary creates a file, writes it, reads it back and stats it - all through the buddy's ABI",
          re.search(r'legacy: create\("/n/p9test"\) returned fd \d+', t) is not None
@@ -212,7 +212,7 @@ def main():
          and 'p9 ip: firewall: read 44 bytes back through the connection the rule had held: "answered once the firewall\'s rule was lifted"' in t),
         ("pi-p on a wire of its own: a group about the server personality's files crosses the two stacks' tcp.c across the ring and is answered there, not on the ring",
          re.search(r'p9 ip: pi-p over the wire: opened /n/hello in session [0-9a-f]+, read data \(version \d+\): "version 42 of forty', t) is not None
-         and "p9 ip: pi-p over the wire: a group of 4 crossed the two stacks' tcp.c across the ring and came back with 4 replies" in t
+         and "p9 ip: pi-p over the wire: a group of 5, the first saying who I am, crossed the two stacks' tcp.c across the ring and came back with 5 replies" in t
          and re.search(r'p9 ip: pi-p wire: a \d+-byte group came over the wire on connection 1, answered with \d+ bytes of replies', t) is not None),
         ("and the session outlives the connection: the connection is closed, a second one resumes the session by number, and the fid opened on the first is still open and reads",
          'p9 ip: pi-p wire: connection 1 closed; the sessions it carried live on' in t

@@ -56,8 +56,14 @@ struct Sess {
 	int	used;
 	uvlong	sid;
 	uvlong	lease;
+	char	user[Namelen];		/* who the session is, proven by a ticket the kernel checked; empty is nobody */
+	uvlong	authid;			/* the container the ticket was for, on the machine that signed it */
 	Fid	fids[Nfid];
 };
+enum { Ticketoff = 3072, Ticketmax = 256 };	/* where a ticket goes in this server's data area for the kernel to read, and its answer comes back */
+static long pstr(uchar*, char*, long);
+extern uchar *p9srvdata(void);
+extern long ospreyxcall(int op, uvlong *args, long n);
 
 static Sess sess[Nsess];
 static uvlong nextsid = 0x5ec0de;
@@ -409,6 +415,38 @@ serve1(Sess **sp, uchar *m, long sz)
 			}
 			f->c = namec(name, Aopen, OREAD, 0);
 			poperror();
+			/*
+			 * Whose file, and who asks.  The personality opened it as
+			 * itself; the session gets it only as whom it has proven
+			 * to be: a file that is somebody's is refused to a session
+			 * that is nobody's, and a named session reads by the mode,
+			 * as owner or as other.
+			 */
+			{
+				uchar sb[512];
+				char strs[256];
+				Dir dir;
+				int sn, ok;
+
+				sn = devtab[f->c->type]->stat(f->c, sb, sizeof sb);
+				ok = 1;
+				if(sn > 0 && convM2D(sb, sn, &dir, strs) > 0 && dir.uid[0] != 0 && strcmp(dir.uid, "none") != 0){
+					if(s->user[0] == 0)
+						ok = 0;
+					else if(strcmp(s->user, dir.uid) == 0)
+						ok = (dir.mode & 0400) != 0;
+					else
+						ok = (dir.mode & 0004) != 0;
+				}
+				if(!ok){
+					print("p9 ip: pi-p wire: refused %s, which is %s's, to session %llux, which is %s\n",
+						name, dir.uid, s->sid, s->user[0] ? s->user : "nobody's");
+					cclose(f->c);
+					f->c = nil;
+					rerror(tag, s->user[0] ? "permission denied" : "not yours: a session that is nobody's may open only nobody's files");
+					break;
+				}
+			}
 			strcpy(f->name, name);
 			f->base = f->c->qid.vers;
 		}
@@ -577,7 +615,43 @@ serve1(Sess **sp, uchar *m, long sz)
 		}
 		break;
 	case PipTauth:
-		rerror(tag, "no key here to check a ticket against");
+		/*
+		 * Who is asking.  The personality has no key; the kernel has,
+		 * and checks tickets already, so the ticket goes to it
+		 * (ReqCheckticket) and the name it vouches for is the
+		 * session's from here on.  Without one a session is nobody,
+		 * which on a wire is all a frame can prove.
+		 */
+		if(sz < Pipheader + 2)
+			goto Bad;
+		alen = pget(m+Pipheader, 2);
+		{
+			uchar *d;
+			uvlong args[5];
+
+			if(Pipheader + 2 + alen > sz || alen >= Ticketmax || (d = p9srvdata()) == nil){
+				rerror(tag, "bad ticket");
+				break;
+			}
+			memmove(d + Ticketoff, m+Pipheader+2, alen);
+			d[Ticketoff + alen] = 0;
+			args[0] = Ticketoff; args[1] = args[2] = args[3] = args[4] = 0;
+			if(ospreyxcall(34, args, 1) != 0){
+				s->user[0] = 0;
+				s->authid = 0;
+				print("p9 ip: pi-p wire: the kernel would not vouch for a ticket; the session stays nobody's\n");
+				rerror(tag, "ticket does not check out");
+				break;
+			}
+			strncpy(s->user, (char*)d + Ticketoff, sizeof s->user - 1);
+			s->user[sizeof s->user - 1] = 0;
+			s->authid = args[1];
+			print("p9 ip: pi-p wire: the kernel checked a ticket: session %llux is \"%s\" (the ticket was for container %llud where it was signed)\n",
+				s->sid, s->user, s->authid);
+			k = strlen(s->user);
+			if((r = reply(PipRauth, tag, 2+k)) != nil)
+				pstr(r, s->user, k);
+		}
 		break;
 	default:
 	Bad:
@@ -744,6 +818,54 @@ pip_tstream(uchar *b, int tag, ulong fid, ulong period, ulong count, char *attr)
 	pput(b+Pipheader+8, 4, count);
 	pstr(b+Pipheader+12, attr, strlen(attr));
 	return n;
+}
+
+/*
+ * A ticket for this personality, from its own kernel (ReqTicket): its
+ * name, for its own container, without expiry; asked for once and kept.
+ * A server keeps the window at Ticketcliff of its data area clear of
+ * the one its wire end checks tickets in; a client has only its ring's
+ * data area, and a window there.  Nil when the kernel has no key.
+ */
+char*
+pip_ticket(void)
+{
+	extern uchar *ring9p_data(void);
+	static char cached[Ticketmax];
+	static int asked;
+	uchar *d;
+	uvlong args[5], off;
+
+	if(cached[0] != 0)
+		return cached;
+	if(asked)
+		return nil;
+	asked = 1;
+	if((d = p9srvdata()) != nil)
+		off = 3328;		/* Ticketcliff */
+	else if((d = ring9p_data()) != nil)
+		off = 3584;		/* clear of the client's 9P, arms, and exec names */
+	else
+		return nil;
+	strncpy((char*)d + off, eve, Ticketmax - 1);
+	d[off + Ticketmax - 1] = 0;
+	args[0] = off; args[1] = 0; args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(35, args, 2) != 0){
+		print("p9 ip: pi-p: my kernel would not sign a ticket for \"%s\"; sessions I open are nobody's\n", eve);
+		return nil;
+	}
+	snprint(cached, sizeof cached, "%.*s", (int)args[0], (char*)d + off);
+	print("p9 ip: pi-p: my kernel signed a ticket for \"%s\", for my container; every session I open says who I am\n", eve);
+	return cached;
+}
+
+long
+pip_tauth(uchar *b, int tag, char *ticket)
+{
+	long n = strlen(ticket);
+
+	pstr(b+Pipheader, ticket, n);
+	return tmsg(b, PipTauth, tag, 2 + n);
 }
 
 long

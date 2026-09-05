@@ -2525,6 +2525,8 @@ uintptr
 #define ReqMigdone 31
 #define ReqAccount 32	/* xcall op: the caller's reservation, what it has used of it this period, and the period, in cycles */
 #define ReqKick 33	/* xcall op: a server has put work on a container's output queue in memory; wake that container's select */
+#define ReqCheckticket 34	/* xcall op: a ticket in the caller's data area at arg[0]; the kernel says whom it names, or no */
+#define ReqTicket 35	/* xcall op: a ticket for the name at arg[0] in the caller's data area, for the caller's container, good arg[1] seconds */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2596,6 +2598,42 @@ ospreyxcall(va_list list)
 	}
 	if(op >= ReqMigsnap && op <= ReqMigdone)
 		return ospreymigcall((int)op, arg, ubuf);
+	if(op == ReqCheckticket || op == ReqTicket){
+		/*
+		 * The kernel holds the key, so it is the kernel that says what
+		 * a ticket proves (ReqCheckticket: the name in it, if it is
+		 * signed with this key and has not expired) and the kernel
+		 * that signs one (ReqTicket: for the caller's own container,
+		 * for a name the container is for - a container nobody has
+		 * claimed is anyone's, and the ticket then says just that).
+		 * The ticket's text goes through the caller's data area both
+		 * ways, so a personality serving a wire can check who asks,
+		 * and one asking over a wire can say who it is.
+		 */
+		char *d, who[Pipmaxname+1];
+		uvlong id;
+		int n;
+
+		if((d = ospreydata(up->osprey, arg[0], Ticketlen)) == nil)
+			return -1;
+		d[Ticketlen-1] = '\0';
+		if(op == ReqCheckticket){
+			if(ospreyticketok(d, who, sizeof who, &id) < 0)
+				return -1;
+			strcpy(d, who);
+			ubuf[0] = 0;
+			ubuf[1] = id;
+			return 0;
+		}
+		if(ospreykeyset == 0 || strlen(d) > Pipmaxname || !ospreymay(up->osprey, d))
+			return -1;
+		strcpy(who, d);
+		n = ospreyticket(who, ospreyid(up->osprey), arg[1] == 0 ? 0 : (uvlong)seconds() + arg[1], d, Ticketlen);
+		if(n < 0)
+			return -1;
+		ubuf[0] = n;
+		return 0;
+	}
 	if(op == ReqKick){
 		/*
 		 * The work itself went into the container's own memory - its
@@ -4890,8 +4928,19 @@ ospreyexits(long status)
 	if(p == nil || e == &ospreychildren[nelem(ospreychildren)]){
 		ospreydumptasks();
 		print("osprey user: the program exited; the microkernel idles\n");
-		for(;;)
+		/*
+		 * Idle with nothing pending and an error label up: a boot
+		 * program that came here killed by a note still had the note
+		 * pending, and the sleep raised Eintr into no handler at all,
+		 * which panicked the idle machine.
+		 */
+		up->notepending = 0;
+		for(;;){
+			if(waserror())
+				continue;
 			tsleep(&up->sleep, return0, nil, 1000);
+			poperror();
+		}
 	}
 	print("osprey exec: container %llud (%s) exited with status %ld\n",
 		ospreyid(p), e->name, status);
@@ -5220,6 +5269,21 @@ ospreyinit(void)
 
 	if(ospreybase != nil)
 		return;
+	/*
+	 * A key typed in - the same line in both machines' plan9.ini - is
+	 * the alternative to one agreed over a wire the kernel drives; in a
+	 * configuration whose wire is a personality's, it is the one there
+	 * is.  The control file's "key" command does the same later.
+	 */
+	if((cf = getconf("ospreykey")) != nil && *cf != '\0'){
+		uchar h[SHA1dlen];
+
+		sha1((uchar*)cf, strlen(cf), ospreykey, nil);
+		sha1(ospreykey, Keylen, h, nil);
+		ospreyhex(h, 8, ospreyfinger);
+		ospreykeyset = 1;
+		print("osprey: the key is set from the configuration, fingerprint %s\n", ospreyfinger);
+	}
 	/*
 	 * How big a slice is, before there is one.  Each of these is a
 	 * count the container reads out of its own map and nothing here

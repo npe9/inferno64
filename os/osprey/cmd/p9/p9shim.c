@@ -33,7 +33,7 @@ int return0(void *a){ USED(a); return 0; }
 static Proc	theproc;
 static char	errbuf0[ERRMAX], errbuf1[ERRMAX];
 Proc	*up = &theproc;
-char	*eve = "";
+char	*eve = "osprey";	/* the personality has a name: its files are somebody's, and a session on its wire must say who it is to open them */
 extern void exits(char*);
 
 char Enoerror[] = "Enoerror";

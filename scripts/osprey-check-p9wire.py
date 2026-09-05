@@ -36,7 +36,7 @@ def main():
     if r.returncode != 0:
         print('FAIL 9p9pair did not build'); print(r.stdout[-800:]); print(r.stderr[-800:]); return 1
     subprocess.run(['sh', 'scripts/mkosprey-efi-iso.sh'],
-                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9pair')),
+                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9pair'), OSPREY_INI='ospreykey=the same secret, typed into both machines'),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     logs, imgs = [], []
     for i in (1, 2):
@@ -107,6 +107,14 @@ def main():
          and all(re.search(r'the thread had counted to 1 before the crossing and to ([2-9]|[1-9]\d+) after it', x) is not None for x in t)),
         ("and the parked process waited on its transfer's own progress, not a minute's count: no crossing stalled and none was refused",
          all('crossing stalled' not in x and 'was not taken by the other machine' not in x for x in t)),
+        ("pi-p across the cable checks who is asking: both kernels hold the key (typed into both, since the wire is the personality's), and machine 2's session that is nobody's asks machine 1's personality to open /n/hello and is refused - the file is the personality's",
+         all('osprey: the key is set from the configuration, fingerprint' in x for x in t)
+         and re.search(r'p9 ip: pi-p across the cable: a session that is nobody\'s asked the other machine\'s personality to open /n/hello and was refused: "not yours', t[1]) is not None
+         and re.search(r"p9 ip: pi-p wire: refused /n/hello, which is osprey's, to session [0-9a-f]+, which is nobody's", t[0]) is not None),
+        ("and with a ticket its own kernel signed (ReqTicket), which machine 1's personality has its kernel check (ReqCheckticket), the session has the name in the ticket and reads the file",
+         re.search(r'p9 ip: pi-p across the cable: my kernel signed a ticket for "osprey": "osprey \d+ \d+ [0-9a-f]+"', t[1]) is not None
+         and re.search(r'p9 ip: pi-p wire: the kernel checked a ticket: session [0-9a-f]+ is "osprey" \(the ticket was for container \d+ where it was signed\)', t[0]) is not None
+         and re.search(r'p9 ip: pi-p across the cable: with the ticket the other machine\'s kernel checked, the session is "osprey"; it opened /n/hello there and read \(version \d+\): "[^"]+"', t[1]) is not None),
         ("and neither machine panics",
          all('panic' not in x for x in t)),
     ]

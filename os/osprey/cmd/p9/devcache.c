@@ -133,7 +133,7 @@ exchange(uchar *tg, long tn)
 static void
 cachewire(void)
 {
-	uchar tg[64], rg[256], *body;
+	uchar tg[512], rg[512], *body;	/* a session and a ticket: sixty-four bytes held a session alone */
 	long tn, rn, off, blen;
 	int type, tag;
 
@@ -141,6 +141,14 @@ cachewire(void)
 		return;
 	wfd = pipwire_connect(&dfd);
 	tn = pip_tsession(tg, nexttag++, 0);
+	{
+		extern char *pip_ticket(void);
+		extern long pip_tauth(uchar*, int, char*);
+		char *tk = pip_ticket();
+
+		if(tk != nil)
+			tn += pip_tauth(tg+tn, nexttag++, tk);	/* who I am: the files the cache holds are the personality's */
+	}
 	pipwire_put(wfd, tg, tn);
 	rn = pipwire_get(wfd, rg, sizeof rg);	/* before the reader exists: read it here */
 	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); )

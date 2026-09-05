@@ -313,31 +313,36 @@ pipstreamer(void *)
 }
 
 static void
-pipwire(void *)
+pipwire(void *a)
 {
 	extern long pipfs_servewire(uchar*, long, uchar*, long);
 	int afd, lfd, dfd, anum, lnum, conns;
 	long n, rn;
-	char cbuf[64], path[64];
+	char cbuf[64], path[64], *net, *stack;
 	uchar tg[2048], rg[4096];
 
+	/* stack B (#I1) faces the client container over the ring; stack A (/net) faces the cable, and the other machine asks there */
+	net = a != nil ? a : "#I1";
+	stack = a != nil ? "stack A, the cable" : "stack B";
 	if(waserror()){
-		print("p9 ip: pi-p wire failed: %s\n", up->errstr);
+		print("p9 ip: pi-p wire failed on %s: %s\n", stack, up->errstr);
 		pipwirefd = -1;
 		pexit("pipwire", 0);
 	}
-	afd = p9open("#I1/tcp/clone", ORDWR);
+	snprint(path, sizeof path, "%s/tcp/clone", net);
+	afd = p9open(path, ORDWR);
 	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
 	p9write(afd, "announce 9001", 13);
-	print("p9 ip: pi-p wire: tcp!*!9001 announced on stack B - the personality's pi-p on a wire of its own\n");
-	kproc("pipstreamer", pipstreamer, nil);
+	print("p9 ip: pi-p wire: tcp!*!9001 announced on %s - the personality's pi-p on a wire of its own\n", stack);
+	if(a == nil)
+		kproc("pipstreamer", pipstreamer, nil);
 	for(conns = 1;; conns++){
-		snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+		snprint(path, sizeof path, "%s/tcp/%d/listen", net, anum);
 		lfd = p9open(path, ORDWR);
 		n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
-		snprint(path, sizeof path, "#I1/tcp/%d/data", lnum);
+		snprint(path, sizeof path, "%s/tcp/%d/data", net, lnum);
 		dfd = p9open(path, ORDWR);
-		print("p9 ip: pi-p wire: connection %d from the client container, conversation %d\n", conns, lnum);
+		print("p9 ip: pi-p wire: connection %d from %s, conversation %d\n", conns, a != nil ? "the cable" : "the client container", lnum);
 		pipwirefd = dfd;
 		while((n = pipwire_get(dfd, tg, sizeof tg)) >= 0){
 			rn = pipfs_servewire(tg, n, rg, sizeof rg);
@@ -430,6 +435,89 @@ wiresrv(void *)
 	pexit("wiresrv done", 0);
 }
 
+/*
+ * Pi-p across the cable, and who is asking.  Machine 2 opens a session
+ * on machine 1's personality's wire and asks for /n/hello: as nobody it
+ * is refused, since the file is the personality's; then with a ticket
+ * its own kernel signed (ReqTicket), which the far personality has its
+ * kernel check (ReqCheckticket) - the two kernels holding the same key -
+ * the session has a name and reads the file.
+ */
+int pipwire_connectto(char *addr, int *dfdp);
+static void
+pipacrosscable(void)
+{
+	extern long pip_tsession(uchar*, int, uvlong);
+	extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+	extern long pip_tread(uchar*, int, ulong, long, char*);
+	extern long pip_tauth(uchar*, int, char*);
+	extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
+	extern uvlong pip_num(uchar*, int);
+	extern char *pip_ticket(void);
+	uchar tg[512], rg[2048], *body;
+	char show[160], who[64], *ticket;
+	long tn, rn, off, blen;
+	int type, tag, dfd, wfd, refused, opened;
+
+	if(waserror()){
+		print("p9 ip: pi-p across the cable failed: %s\n", up->errstr);
+		return;
+	}
+	/* as nobody */
+	wfd = pipwire_connectto("connect 10.1.0.1!9001", &dfd);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 1, 0);
+	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 3, 1, 256, "data");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	refused = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 112 && tag == 2){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p across the cable: a session that is nobody's asked the other machine's personality to open /n/hello and was refused: \"%s\"\n", show);
+			refused = 1;
+		} else if(type == 103 && tag == 2)
+			print("p9 ip: pi-p across the cable: a session that is nobody's was given /n/hello - wrong\n");
+	}
+	if(!refused)
+		print("p9 ip: pi-p across the cable: no refusal came back for the session that is nobody's\n");
+	p9close(wfd); p9close(dfd);
+
+	/* with a ticket my kernel signed: my name, for my container */
+	if((ticket = pip_ticket()) == nil)
+		error("my kernel would not sign a ticket (no key set?)");
+	print("p9 ip: pi-p across the cable: my kernel signed a ticket for \"%s\": \"%s\"\n", eve, ticket);
+	wfd = pipwire_connectto("connect 10.1.0.1!9001", &dfd);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 4, 0);
+	tn += pip_tauth(tg+tn, 5, ticket);
+	tn += pip_topen(tg+tn, 6, 0, 1, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 7, 1, 256, "data");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	who[0] = 0;
+	opened = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 116)
+			snprint(who, sizeof who, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+		else if(type == 103 && tag == 6)
+			opened = 1;
+		else if(type == 105 && tag == 7){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			print("p9 ip: pi-p across the cable: with the ticket the other machine's kernel checked, the session is \"%s\"; it opened /n/hello there and read (version %llud): \"%s\"\n",
+				who, pip_num(body, 8), show);
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p across the cable: error on tag %d with the ticket: %s\n", tag, show);
+		}
+	}
+	if(!opened)
+		print("p9 ip: pi-p across the cable: the ticketed session did not get /n/hello\n");
+	p9close(wfd); p9close(dfd);
+	poperror();
+}
+
 static void
 wirecli(void *)
 {
@@ -482,6 +570,7 @@ wirecli(void *)
 	tsleep(&up->sleep, return0, nil, 500);
 	p9close(wfd); p9close(dfd);
 	poperror();
+	pipacrosscable();
 	pexit("wirecli done", 0);
 }
 
@@ -931,7 +1020,7 @@ static int clientnetdone;
  * asked rate with nothing sent to make it happen.
  */
 int
-pipwire_connect(int *dfdp)
+pipwire_connectto(char *addr, int *dfdp)
 {
 	char cbuf[64], path[64];
 	long n;
@@ -939,10 +1028,16 @@ pipwire_connect(int *dfdp)
 
 	dfd = p9open("/net/tcp/clone", ORDWR);
 	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
-	p9write(dfd, "connect 10.0.1.2!9001", 21);
+	p9write(dfd, addr, strlen(addr));
 	*dfdp = dfd;
 	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
 	return p9open(path, ORDWR);
+}
+
+int
+pipwire_connect(int *dfdp)
+{
+	return pipwire_connectto("connect 10.0.1.2!9001", dfdp);
 }
 
 static void
@@ -956,16 +1051,20 @@ pipclient(void)
 	extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
 	extern uvlong pip_num(uchar*, int);
 	extern uvlong kfastticks(uvlong*);
+	extern char *pip_ticket(void);
+	extern long pip_tauth(uchar*, int, char*);
 	uchar tg[512], rg[2048], *body;
 	long tn, rn, off, blen;
 	int type, tag, dfd, wfd, nrep, i;
 	uvlong sid, v, t0, t;
-	char show[160];
+	char show[160], *tk;
 
 	/* connection 1: a session, a fid on /n/hello, its data and version */
 	wfd = pipwire_connect(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
+	if((tk = pip_ticket()) != nil)
+		tn += pip_tauth(tg+tn, 99, tk);		/* who I am, first: the file is the personality's */
 	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
 	tn += pip_tread(tg+tn, 3, 1, 256, "data");
 	tn += pip_tread(tg+tn, 4, 1, 32, "version");
@@ -984,7 +1083,7 @@ pipclient(void)
 			print("p9 ip: pi-p over the wire: error on tag %d: %s\n", tag, show);
 		}
 	}
-	print("p9 ip: pi-p over the wire: a group of 4 crossed the two stacks' tcp.c across the ring and came back with %d replies\n", nrep);
+	print("p9 ip: pi-p over the wire: a group of 5, the first saying who I am, crossed the two stacks' tcp.c across the ring and came back with %d replies\n", nrep);
 	p9close(wfd); p9close(dfd);		/* the connection goes; the session and its fid do not */
 	tsleep(&up->sleep, return0, nil, 200);
 
@@ -1081,6 +1180,14 @@ replica(void)
 	fid = 1;
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
+	{
+		extern char *pip_ticket(void);
+		extern long pip_tauth(uchar*, int, char*);
+		char *tk = pip_ticket();
+
+		if(tk != nil)
+			tn += pip_tauth(tg+tn, 99, tk);
+	}
 	tn += pip_topen(tg+tn, 2, 0, fid, 0, "/n/hello");
 	tn += pip_tread(tg+tn, 3, fid, sizeof data - 1, "data");
 	tn += pip_tread(tg+tn, 4, fid, 32, "latest");
@@ -1608,6 +1715,7 @@ p9ipup(void)
 	kproc("ringsrv", ringsrv, nil);	/* a tcp.c service for the client container, across the ring wire */
 	kproc("gwsrv", gwsrv, nil);	/* the same on stack A, reached through stack B as a gateway */
 	kproc("pipwire", pipwire, nil);	/* pi-p about this personality's files, on the wire */
+	kproc("pipwireA", pipwire, "/net");	/* and on stack A, where the other machine asks across the cable */
 	kproc("fwsrv", fwsrv, nil);	/* the firewall: the stack's own ipmux, a rule on the client's ask */
 	p9kbdstart();			/* the i8042 keyboard driver, in user space above the kernel */
 	poperror();

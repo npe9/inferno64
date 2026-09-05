@@ -527,6 +527,14 @@ p9paircli(void)
 
 			tn = 0;
 			tn += pip_tsession(tg+tn, 1, 0);
+			{
+				extern char *pip_ticket(void);
+				extern long pip_tauth(uchar*, int, char*);
+				char *tk = pip_ticket();
+
+				if(tk != nil)
+					tn += pip_tauth(tg+tn, 99, tk);	/* who I am, first: the file is the personality's */
+			}
 			tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
 			tn += pip_tread(tg+tn, 3, 1, 64, "*");
 			tn += pip_tread(tg+tn, 4, 1, 256, "data");
@@ -561,7 +569,7 @@ p9paircli(void)
 					break;
 				}
 			}
-			print("p9: pair-client: pi-p group of 6 answered with %d replies in one round trip, session %llux\n", nrep, sid);
+			print("p9: pair-client: pi-p group of 7, the first saying who I am, answered with %d replies in one round trip, session %llux\n", nrep, sid);
 			/* come back to the session and read what was committed */
 			tn = 0;
 			tn += pip_tsession(tg+tn, 7, sid);

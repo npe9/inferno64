@@ -5538,15 +5538,63 @@ the registers now, direct to the port, so the next one will say where
 it came from.
 .PP
 .B "8.  The personality's \[*p]p wire checks who is asking."
+Done.  The kernel has the key and checks tickets already, so the
+personality asks it: a
 .CW Tauth
-is refused there because the personality has no key.  The real form:
-the kernel has the key and checks tickets already; the personality asks
-it
+on the wire puts the ticket in the server's data area and the kernel
+says whom it names
 .CW ( ReqCheckticket ,
-an xcall) and gives the session the name in the ticket, and an open of
-a file that is somebody's is refused to a session that is nobody's.
-Proof: in the two-machine check a session without a ticket is refused
-a file and one with a ticket is given it.
+xcall 34: signed with this key and not expired, or no), and that name
+is the session's from then on; a session without one is nobody, which
+on a wire is all a frame can prove.  The personality has a name now
+.CW ( eve
+is
+.CW osprey ,
+in
+.CW p9shim.c ),
+so its files are somebody's, and an open on the wire is judged by the
+file's owner and mode against the session's name: a file that is
+somebody's is refused to a session that is nobody's, and a named
+session reads as owner or as other.  The asking end gets its ticket
+from its own kernel
+.CW ( ReqTicket ,
+xcall 35: for the caller's container and a name the container is for
+\- a container nobody has claimed is anyone's, and the ticket says just
+that).  What the ticket does not do is name a container on the far
+machine: the number in it is the signer's, kept for the record.
+.PP
+The two kernels must hold the same key, and in this configuration the
+kernel has no wire of its own to agree one over (item 11's exchange is
+the kernel's, on a kernel ether); the check types the same key into
+both machines' plan9.ini
+.CW ( ospreykey= ,
+read at
+.CW ospreyinit ,
+the fingerprint printed), which is the alternative the design names.
+Proof, two criteria of the two-machine check: machine 2's session that
+is nobody's asks machine 1's personality for
+.CW /n/hello
+and is refused \- \*(lqnot yours: a session that is nobody's may open
+only nobody's files\*(rq \- and with a ticket its kernel signed, which
+machine 1's personality had its kernel check, the session is
+.CW osprey
+and reads the file.  The rule fell on the ring too: the client
+container's \[*p]p over the device-carried wire \- the pair check's
+own groups, the replica, the caching file system \- opened sessions
+that were nobody's and was refused the personality's files, as it
+should be; every client asks its kernel for a ticket once
+.CW ( pip_ticket )
+and says who it is in the first group of each session it opens.  Two
+more things came of that: the caching file system's group buffer was
+sixty-four bytes, a session alone, and a ticket in it smashed the
+client personality's stack, which died by a note; and the boot
+program's idle loop, entered killed by that note with the note still
+pending, had its sleep raise
+.CW Eintr
+into no handler at all and panicked the idle machine \- it clears what
+is pending and sleeps under an error label now.  And the personality's
+\[*p]p listener answered on stack B alone, the ring's; a second
+listens on stack A, where the cable is.
 .PP
 .B "9.  The cache is a file system."
 .CW #K
