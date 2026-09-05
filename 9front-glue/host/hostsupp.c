@@ -80,6 +80,8 @@ mallocz(ulong size, int clr)
  * the note in host/include/time.h.
  */
 #undef ctime
+#undef localtime
+#undef gmtime
 char*
 _p9ctime(long sec)
 {
@@ -89,6 +91,54 @@ _p9ctime(long sec)
 	t = sec;
 	strftime(buf, sizeof buf, "%a %b %e %H:%M:%S %Z %Y\n", localtime(&t));
 	return buf;
+}
+
+/*
+ * Plan 9's localtime and gmtime, over the host's: the seconds by
+ * value and a Tm back, rather than a pointer to the seconds and a
+ * struct tm.  The two structures agree field for field as far as
+ * yday; what Plan 9 has after that is the zone name and its offset,
+ * which the host keeps under different names, and disk/9660 -- the
+ * caller that found this -- reads neither.  They are filled anyway so
+ * that the next caller is not surprised.
+ */
+static Tm*
+fillTm(Tm *tm, struct tm *t)
+{
+	if(t == nil)
+		return nil;
+	tm->sec = t->tm_sec;
+	tm->min = t->tm_min;
+	tm->hour = t->tm_hour;
+	tm->mday = t->tm_mday;
+	tm->mon = t->tm_mon;
+	tm->year = t->tm_year;
+	tm->wday = t->tm_wday;
+	tm->yday = t->tm_yday;
+	strncpy(tm->zone, t->tm_zone ? t->tm_zone : "", sizeof tm->zone - 1);
+	tm->zone[sizeof tm->zone - 1] = 0;
+	tm->tzoff = t->tm_gmtoff;
+	return tm;
+}
+
+Tm*
+_p9localtime(long sec)
+{
+	static Tm tm;
+	time_t tt;
+
+	tt = sec;
+	return fillTm(&tm, localtime(&tt));
+}
+
+Tm*
+_p9gmtime(long sec)
+{
+	static Tm tm;
+	time_t tt;
+
+	tt = sec;
+	return fillTm(&tm, gmtime(&tt));
 }
 
 /*

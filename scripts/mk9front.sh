@@ -36,6 +36,18 @@ fi
 RCSHELL=$PLAN9/bin/rc
 export RCSHELL PLAN9
 
+# The shell mk runs recipes under.  9front-src/$objtype/mkfile sets
+# MKSH, and every library and command mkfile includes it, so almost
+# everything gets rc that way.  The boot loaders do not: they are
+# freestanding and their mkfiles include nothing.  A recipe of theirs
+# run under sh gets $prereq as one word with mk's list separator --
+# 01, invisible -- still in it, and the loader is asked to open a file
+# called "x64.6efi.6fs.6...".  So the default is set here as well,
+# where it covers a mkfile that includes nothing; an mkfile that sets
+# MKSH itself still wins.
+MKSH=$RCSHELL
+export MKSH
+
 hostbin=$ROOT/$(/usr/bin/sed -n 's/^SYSHOST=\([^ 	]*\).*/\1/p' mkconfig)/$(/usr/bin/sed -n 's/^OBJTYPE=\([^ 	]*\).*/\1/p' mkconfig)/bin
 PATH=$ROOT/9front-glue/bin:$ROOT/9front/host/bin:$hostbin:$PLAN9/bin:$PATH
 export PATH
@@ -60,6 +72,24 @@ export cputype
 # a 9front machine is /bin/cpp.  Here it is the one built above.
 CPP=$ROOT/9front/host/bin/cpp
 export CPP
+
+# 9front's headers, for the same mkfiles that include nothing: on a
+# 9front machine 6c finds /$objtype/include and /sys/include without
+# being told, and here it has to be told.  The arch mkfile assigns
+# INCLUDES rather than appending to it, so everything that includes it
+# is unaffected by this.
+#
+# The separator is 01, not a space.  A list in a Plan 9 environment
+# variable is separated by 01 -- that is the convention mk and rc
+# share, and mk's readenv splits on it -- so a variable joined by
+# spaces arrives as one word, and one word is one argument to the
+# compiler: it would see a single -I whose directory has the other
+# two -I flags inside it.  The compiler's setinclude() splits on
+# spaces itself, which hides half of the mistake: the first directory
+# works and the rest do not.
+IWS=$'\001'
+INCLUDES="-I$ROOT/9front-src/$objtype/include${IWS}-I$ROOT/9front-src/sys/include${IWS}-I$ROOT/9front-src"
+export INCLUDES
 
 mkdir -p "$ROOT/9front/$objtype/lib" "$ROOT/9front/$objtype/bin"
 

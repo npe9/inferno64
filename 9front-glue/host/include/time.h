@@ -25,4 +25,24 @@ extern char *_p9ctime(long);
 #undef ctime
 #define ctime(sec) _p9ctime(sec)
 
+/*
+ * localtime is the same difference and the same trap: Plan 9's takes
+ * the seconds and returns a Tm, the host's takes a pointer and
+ * returns a struct tm, and the two structures do not have the same
+ * shape.  disk/9660's dump.c reads tm.year and tm.mon straight out of
+ * what it gets back.  Tm is declared in lib9.h, which this header
+ * cannot assume has been read yet, so the return type is spelled out
+ * long-hand.
+ */
+struct Tm;
+extern struct Tm *_p9localtime(long);
+
+#undef localtime
+#define localtime(sec) _p9localtime(sec)
+
+extern struct Tm *_p9gmtime(long);
+
+#undef gmtime
+#define gmtime(sec) _p9gmtime(sec)
+
 #endif

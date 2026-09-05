@@ -350,7 +350,17 @@ mkfile leaves it out of its own DIRS for that reason.
 .CW mk install
 at the top of
 .CW sys/src/cmd
-also runs to the end.
+also runs to the end, with one ordering dependency:
+.CW bzfs
+links a library that
+.CW bzip2
+builds where it sits and does not install, and
+.CW bzfs
+comes first in DIRS, so on a tree whose objects have been cleaned
+.CW bzip2
+has to be built before the whole of
+.CW cmd .
+The sweep does not need that told to it \(em see below.
 .PP
 The count comes from
 .CW scripts/sweep9front.sh ,
@@ -358,13 +368,14 @@ which builds each directory on its own rather than stopping at the
 first failure the way
 .CW mk install
 does \(em the only way to see what is actually missing while a port is
-unfinished.  Both
+unfinished.
 .CW 9front/amd64/bin
-and
+was emptied before this run, so 646 is what this toolchain built on
+this run and not what some earlier one left behind, and every library
+in
 .CW 9front/amd64/lib
-were emptied before this run and the libraries rebuilt first, so 646
-is what this toolchain built and every one of them is linked against
-libraries this toolchain also built.
+is newer than the last change to the compiler, so every one of the 646
+is linked against libraries this toolchain built after that change.
 .PP
 The sweep builds in name order, so a directory that links a library
 another one builds where it sits can fail on order alone:
@@ -577,6 +588,45 @@ did not exist and every APE library failed to archive the moment
 .CW 9front/amd64/lib
 was emptied and rebuilt.  Not noticed for as long as the directory
 happened to be left over from an earlier run.
+.IP \(bu
+The driver again, and the same shape of mistake twice over.  A list in
+a Plan 9 environment variable is separated by 01, not by a space:
+that is the convention
+.I mk
+and
+.I rc
+share, and mk's
+.CW readenv
+splits on it.  The driver set
+.CW INCLUDES
+with spaces, so it arrived as one word and became a single
+.CW -I
+flag whose directory had the other two flags inside it.  What made
+that hard to see is that the compiler's
+.CW setinclude
+splits on spaces itself, so the first directory worked and the rest
+did not: a header in
+.CW $objtype/include
+was found and a header in
+.CW sys/include
+was not, from the same command line.
+.IP \(bu
+And the shell.  The architecture mkfile sets
+.CW MKSH ,
+and every library and command mkfile includes it, so nearly everything
+gets rc.  The boot loaders' mkfiles include nothing \(em a loader is
+freestanding \(em and their recipes ran under sh, which cannot read a
+01-separated list either.  The loader was asked to open a file called
+.CW x64.6efi.6fs.6pxe.6iso.6sub.6 :
+six names with the separator still between them, invisible.  Both are
+fixed where they belong, in
+.CW scripts/mk9front.sh ,
+which now sets
+.CW MKSH
+and
+.CW INCLUDES
+for the mkfiles that include nothing.  A mkfile that sets either
+itself still wins.
 .NH 1
 Two bugs in 9front, found the same way
 .PP
@@ -692,8 +742,8 @@ and
 .CW lp .
 .CW libz
 does not build, and cannot: upstream ships its mkfile and a proto
-file and no zlib sources, so it does not build on a 9front machine
-either.
+file and no zlib sources at all.  Nothing here is missing; there is
+nothing to compile.
 .PP
 Four things had to be true before any of that worked, and each was
 its own small discovery.
@@ -766,7 +816,7 @@ worth naming.
 .IP \(bu
 .CW libz
 for APE.  Upstream ships its mkfile and a proto file and no zlib
-sources at all, so it does not build on a 9front machine either.
+sources at all, so there is nothing here to compile.
 .IP \(bu
 .CW ape/cmd ,
 which is pdksh, because
@@ -809,15 +859,26 @@ Building it
 .EX
 	scripts/mk9front.sh 9front-src/sys/src libs
 	scripts/mk9front.sh 9front-src/sys/src/ape install
+	scripts/mk9front.sh 9front-src/sys/src/cmd/bzip2 install
 	scripts/mk9front.sh 9front-src/sys/src/cmd install
 	scripts/sweep9front.sh
+	scripts/mkroot9front.sh
+	scripts/mkbootfs9front.sh
+	scripts/mkiso9front.sh
 .EE
 The order matters: the libraries first, because everything links
-against them, then APE (which stops at libz and is meant to), then the
-commands.  The sweep is not part of building \(em it builds everything
-again, one directory at a time, and reports.  It is there to answer
-"what is missing", and after a run of the three lines above the answer
-should be nothing.
+against them, then APE (which stops at libz and is meant to), then
+bzip2, which leaves
+.CW libbzip2
+where it sits for bzfs to link and is the one thing in
+.CW cmd
+that name order does not get right, then the commands.  The sweep is
+not part of building \(em it builds everything again, one directory at
+a time, and reports.  It is there to answer "what is missing", and
+after a run of the four lines above the answer should be nothing.
+The last three lines are the system rather than the userland: the
+root, then the kernel's own boot file system out of that root, then
+the image.  Each wants the one before it.
 The driver sets what 9front's mkfiles expect:
 .CW ROOT ,
 an rc to run recipes under,
@@ -1065,13 +1126,127 @@ recompiles.  A whole "rebuild" after the switch fix produced a
 userland still carrying the old code, and the boot failed exactly as
 before \(em byte for byte, which is what made it look like the fix
 had done nothing.  The objects have to be deleted by hand.
+.NH 1
+An image of our own
 .PP
-What is left: an image of our own.  The pieces for it are here \(em
-.CW .qemu/9front-root.qcow2
-is a full 9front installation the tests boot, and
+The disk above is somebody else's installation.  The last step is an
+image this tree makes: kernel, boot file system, boot loaders and root
+all compiled here, and nothing borrowed.
+.CW scripts/mkiso9front.sh
+builds it, and what comes out is a live CD, which is also the shape
+9front itself ships in \(em the ISO9660 file system on the disc is
+both the thing the machine boots and the root it then runs on.
+.PP
+Three things had to be built that the userland had not needed.
+.IP \(bu
+The boot loaders, from 9front's own
+.CW sys/src/boot .
+.CW 386/9bootiso
+is the El Torito image a BIOS loads, built by this tree's
+.CW 8c ,
+.CW 8a
+and
+.CW 8l ;
+.CW bootx64.efi
+and
+.CW bootia32.efi
+are what firmware loads, built by
+.CW 6c
+and
+.CW 8c .
+Either one reads
+.CW /cfg/plan9.ini
+and the kernel out of the ISO itself.
+.IP \(bu
+.CW aux/aout2efi ,
+which turns the a.out
+.CW 6l
+writes into the PE32+ image firmware wants.  It is 9front's source
+unmodified.  The one library call in it is
+.CW crackhdr ,
+and
+.CW 9front-glue/host/machhdr.c
+reads a Plan 9 a.out header into the five fields it uses rather than
+bringing libmach across \(em the same judgement, and the same five
+numbers, as the host
+.I size .
+.IP \(bu
+.CW disk/mk9660 ,
+which lays out the ISO.  It is 9front's own, one line of rc over
+.CW disk/dump9660 ,
+and both are built for this machine over this tree's libsec and libmp
+and 9front's proto reader.  The EFI System Partition inside the ISO
+is the one part 9front makes with
+.I disk/format
+and
+.I dossrv ,
+which are Plan 9 file servers; here it is mtools, the same way
 .CW scripts/mkosprey-efi-iso.sh
-knows how to make a bootable image \(em with the
-.CW 9pc64
-that
-.CW os/9front
-already builds.
+already did it.
+.PP
+Building dump9660 turned up one more thing missing from the host
+side, and it is the
+.I ctime
+trap again:
+.CW gmtime
+on Plan 9 takes the seconds and returns a
+.CW Tm ,
+the host's takes a pointer and returns a
+.CW "struct tm" ,
+and disk/9660 calls it without ever naming
+.CW time.h .
+It got the host's, was handed a number where a pointer belongs, and
+died inside the C library.  Both spellings now come through
+.CW <libc.h> ,
+which is what a Plan 9 source includes and means to have them from.
+.PP
+The image is 220 MB and boots both ways.  Under the machine's own
+firmware it takes the El Torito image; under EFI it takes the ESP.
+Either way the kernel comes up, bootrc finds the disc,
+.CW local.rc
+recognises it as 9660 and starts
+.CW 9660srv
+on it, and the root is the CD:
+.EX
+	boot: bootrc
+	/dev/sdE2: QEMU QEMU DVD-ROM 2.5+
+	/dev/sdE2/data	 9660
+	bootargs is (tcp, tls, il, local!device)[local!/dev/sdE2/data]
+	user[glenda]:
+
+	init: starting /bin/rc
+	%  ls /amd64/bin | wc -l
+	    318
+	%  echo hi | tr a-z A-Z
+	HI
+	%  cat /dev/user
+	glenda
+.EE
+\(em a shell on a 9front system where every compiled program, the ones
+that ran to get there and the ones it can run now, came out of this
+tree.  What did not is what no compiler makes: the rc scripts, which
+are upstream's text brought across by the import, and the runtime data
+\(em fonts, ndb, the troff tables, the keyboard maps \(em which
+.CW scripts/mkroot9front.sh
+takes from an upstream checkout.
+.CW scripts/qemu9front.sh
+is what ran that; it answers the two prompts and then types whatever
+it is given.  It feeds a line at a time with a pause between, because
+the console takes a whole line at once and drops the first character
+of anything that arrives while it is still handling the last, which
+reads exactly like a program that is not there.
+.PP
+Two things the boot says that are worth knowing rather than fixing.
+.CW #i
+and
+.CW #m
+are missing because a serial console has no draw device and no mouse,
+so
+.CW termrc
+cannot bind them; and
+.CW /usr/glenda/bin/amd64
+does not exist because the dist skeleton does not make it.  Neither
+stops the shell.  What is left after this is a hard disk of our own:
+the ISO is what an installation is made from, and
+.CW /rc/bin/inst
+is on it.

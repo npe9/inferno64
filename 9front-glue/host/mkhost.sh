@@ -42,6 +42,16 @@
 # size goes through libmach; this one reads the a.out header directly.
 # See the note at the top of size.c.
 #
+# aout2efi, dump9660 and mk9660 are for an image rather than for the
+# userland: the EFI loader 6l writes is a Plan 9 a.out and firmware
+# wants PE32+, and the ISO is laid out by 9front's own disk/mk9660,
+# which is an rc line over disk/dump9660.  aout2efi is 9front's source
+# unmodified; the one library call in it is crackhdr, and machhdr.c
+# beside this reads a Plan 9 a.out header into the five fields it
+# wants rather than bringing libmach across.  dump9660 is 9front's
+# source too, over this tree's libsec and libmp and 9front's own
+# proto reader and encodefmt.
+#
 # mkpaqfs and mkbootfs are the last two, and they are for a kernel
 # rather than for the userland: mkbootfs lays out the tree a boot
 # proto describes and mkpaqfs turns it into the bootfs.paq the kernel
@@ -60,7 +70,11 @@ set -eu
 host=$ROOT/$(/usr/bin/sed -n 's/^SYSHOST=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")/$(/usr/bin/sed -n 's/^OBJTYPE=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")
 bin=$ROOT/9front/host/bin
 obj=$ROOT/9front/host/obj
-mkdir -p "$bin" "$obj"
+# aout2efi and mk9660 are aux/aout2efi and disk/mk9660 on 9front, and
+# the mkfiles that run them say so.  rc searches $path for a name with
+# a slash in it as long as it does not begin with one, so a tool put
+# where 9front keeps it is found by the name 9front uses.
+mkdir -p "$bin" "$bin/aux" "$bin/disk" "$obj"
 
 src=$ROOT/9front-src/sys/src/cmd/mpc.y
 if [ ! -x "$bin/mpc" ] || [ "$src" -nt "$bin/mpc" ] \
@@ -137,4 +151,50 @@ if [ ! -x "$bin/mkbootfs" ] || [ "$src" -nt "$bin/mkbootfs" ] \
 	"$ROOT/9front-glue/host/hostcc" $nine -o "$obj/proto.o" "$proto"
 	"$ROOT/9front-glue/host/hostld" -o "$bin/mkbootfs" \
 		"$obj/mkbootfs.o" "$obj/proto.o" "$host/lib/libregexp.a"
+fi
+
+src=$ROOT/9front-src/sys/src/cmd/aux/aout2efi.c
+if [ ! -x "$bin/aux/aout2efi" ] || [ "$src" -nt "$bin/aux/aout2efi" ] \
+   || [ "$ROOT/9front-glue/host/machhdr.c" -nt "$bin/aux/aout2efi" ] \
+   || [ "$ROOT/9front-glue/host/hostsupp.c" -nt "$bin/aux/aout2efi" ]; then
+	echo "mkhost: aout2efi"
+	"$ROOT/9front-glue/host/hostcc" -I"$ROOT/utils/include" \
+		-o "$obj/aout2efi.o" "$src"
+	"$ROOT/9front-glue/host/hostcc" -I"$ROOT/utils/include" \
+		-o "$obj/machhdr.o" "$ROOT/9front-glue/host/machhdr.c"
+	"$ROOT/9front-glue/host/hostld" -o "$bin/aux/aout2efi" \
+		"$obj/aout2efi.o" "$obj/machhdr.o"
+fi
+
+iso=$ROOT/9front-src/sys/src/cmd/disk/9660
+newest=$(/usr/bin/find "$iso" -name '*.[ch]' -newer "$bin/disk/dump9660" -print 2>/dev/null | head -1)
+if [ ! -x "$bin/disk/dump9660" ] || [ -n "$newest" ] \
+   || [ "$ROOT/9front-glue/host/hostsupp.c" -nt "$bin/disk/dump9660" ]; then
+	echo "mkhost: dump9660"
+	nine="-I$ROOT/9front-glue/host/include/9front -I$ROOT/utils/include"
+	objs=
+	for f in boot cdrdwr conform direc dump dump9660 ichar jchar path \
+		 plan9 rune sysuse util write; do
+		# shellcheck disable=SC2086
+		"$ROOT/9front-glue/host/hostcc" $nine -o "$obj/9660-$f.o" "$iso/$f.c"
+		objs="$objs $obj/9660-$f.o"
+	done
+	# 9front's proto reader, and the %H encoder dump9660 installs for
+	# the md5 sums it writes into a dump name.
+	# shellcheck disable=SC2086
+	"$ROOT/9front-glue/host/hostcc" $nine -o "$obj/9660-proto.o" \
+		"$ROOT/9front-src/sys/src/libdisk/proto.c"
+	"$ROOT/9front-glue/host/hostcc" -o "$obj/9660-encodefmt.o" \
+		"$ROOT/9front-src/sys/src/libc/port/encodefmt.c"
+	objs="$objs $obj/9660-proto.o $obj/9660-encodefmt.o"
+	# shellcheck disable=SC2086
+	"$ROOT/9front-glue/host/hostld" -o "$bin/disk/dump9660" $objs \
+		"$host/lib/libsec.a" "$host/lib/libmp.a" "$host/lib/libregexp.a"
+	# 9front's mk9660 is one line of rc over dump9660; this is that
+	# line, in the shell this machine has.
+	cat > "$bin/disk/mk9660" <<\EOF
+#!/bin/sh
+exec "$(dirname "$0")/dump9660" -M "$@"
+EOF
+	chmod +x "$bin/disk/mk9660"
 fi

@@ -79,6 +79,15 @@ host.*
 sys/src/cmd/aux/kbdfs/latin1.h
 sys/src/cmd/nusb/disk/scsierrs.c
 
+# the boot loaders, which are built where they sit rather than
+# installed: scripts/mkiso9front.sh puts them into the root itself
+sys/src/boot/pc/9boot*
+sys/src/boot/pc/mbr
+sys/src/boot/pc/pbs
+sys/src/boot/efi/*.efi
+sys/src/boot/efi/*.out
+sys/src/boot/efi/efiboot.fat
+
 # The tree-wide .gitignore treats a one-letter suffix as compiler
 # output and *.patch as a patch someone left lying about.  Under two
 # of 9front's test directories they are neither -- they are the input

@@ -108,6 +108,11 @@ y.debug
 /9front/*/include/ureg.h
 /9front/*/init
 /9front/*/9pc64
+# the boot loaders and the EFI System Partition image
+# scripts/mkiso9front.sh builds, which live where 9front keeps them
+/9front/386/9boot*
+/9front/386/*.efi
+/9front/386/efiboot.fat
 /9front/include/*
 # ... except the two headers the 9front flavour keeps there, which
 # are source and are tracked; without these the rule above swallows

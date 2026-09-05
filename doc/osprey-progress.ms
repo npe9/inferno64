@@ -199,6 +199,26 @@ waits for.  Asking it the first time found that nothing woke a
 container's service process when a request was submitted from inside the
 kernel, so a round trip waited for the clock: 5.5 milliseconds, ninety
 times what it costs now.
+.PP
+.B "A whole 9front, built here."
+9front's
+.CW sys/src
+is in the tree under
+.CW 9front-src
+and this tree's own compilers build all of it: 39 libraries, 646
+programs, every command directory,
+.CW os/9front 's
+.CW 9pc64
+kernel, the boot file system it carries, and the BIOS and EFI boot
+loaders.
+.CW scripts/mkiso9front.sh
+puts them together as a live ISO and
+.CW scripts/qemu9front.sh
+boots it to a glenda shell prompt with the CD as the root, so nothing
+in the running system came from anywhere but this tree.  The build,
+the seven bugs it found in this tree's tools and the three more in the
+driver that drives them, and what is still missing, are in
+.CW doc/9front-userland.ms .
 .NH 1
 What proves it
 .PP
