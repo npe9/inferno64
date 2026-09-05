@@ -5,24 +5,42 @@ asciiorgan \- keyboard organ
 .B temple/asciiorgan
 .SH DESCRIPTION
 .I ASCIIOrgan
-is a keyboard organ.
+is a keyboard organ and ASCII chart.
 It runs under
 .IR wm (1).
 .PP
-Typing keys plays short tones through a Tk keyboard chart.
+A 32-row chart lists the codes 00\-7F in hex with each printable
+character shown in red.
+Every keypress re-pitches a continuous drone, one semitone per
+ASCII code
+.RB ( freq
+=
+440\(mu2\u\s-2(ch\-1B\-49)/12\s+2\d
+Hz, as TempleOS
+.BR Snd(ch-CH_ESC) ),
+so adjacent codes are adjacent notes and the tone sustains until the
+next key.
 .PP
 The controls are:
 .TF space
 .TP
-.B printable/other keys
-Beep at frequency derived from key code
+.B any key
+Sound that key's semitone, held until the next key
 .TP
-.B Esc / q
-Quit
+.B Esc
+Silence the drone and quit
 .PD
+.PP
+Clicking the organ sprite at the bottom launches
+.IR psalmody (1),
+the ``better organ'' the original links to.
 .SH SOURCE
 .B /appl/temple/asciiorgan.b
 .SH SEE ALSO
 .IR temple (1),
+.IR psalmody (1),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+Shift-Esc is indistinguishable from Esc here; both silence and exit,
+as in the original.
