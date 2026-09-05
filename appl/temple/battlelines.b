@@ -1,17 +1,27 @@
 implement Battlelines;
 
 # TempleOS Demo/Games/BattleLines.HC — troop swarm combat
-# GAP: no soldier sprites / SpriteInterpolate — circles + aim lines
-# GAP: no GrPrint troop counts — corner bars; no menu TimeLapse/TapMode checkmarks
-# GAP: mouse wheel force — , . adjust radius; buttons 4/8 if wm sends them
-# GAP: RegWrite / PopUpOk help omitted
+# GAP: MenuPush pull-down menu (File/Play entries with live checkmarks) has no
+#      wmclient equivalent; the same keys ('1' TimeLapse, '2' TapMode, Enter
+#      Restart, Esc Exit) work directly.
+# GAP: mouse wheel force — ',' '.' (and '-','+','=') adjust wheel_z, plus
+#      wheel buttons 4/8 if wm sends them; wheel_z is signed and unclamped
+#      like ms.pos.z in the original.
+#
+# Timing: the original loop is Sleep(40) per tick (25 ticks/sec) with
+# velocities in 32.32 fixed point px/tick; this port ticks at the same 40 ms,
+# so per-tick constants carry over 1:1 (fixed-point ones divided by 2^32).
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Image, Point, Rect, Font: import draw;
+
+include "bufio.m";
+	bufio: Bufio;
+	Iobuf: import bufio;
 
 include "math.m";
 	math: Math;
@@ -38,31 +48,46 @@ Battlelines: module
 TROOPERS_NUM: con 100;
 TAP_MODE_RADIUS: con 50;
 AI_NOTHING, AI_TARGET, AI_RANDOM, AI_AI_NUM: con iota;
+FRAMES: con 6;
+FIX: con 4294967296.0;			# 2^32, one pixel in 32.32 fixed point
+FORCE_SCALE: con 400000000.0 / FIX;	# original j=400000000*z on fixed velocities
+SND_FREQ: con 3729;			# Snd(86): 440*2^((86-49)/12) Hz
 
 Trooper: adt {
-	x, y, dx, dy: real;
+	x, y, dx, dy: real;		# px, px/tick (original 32.32 fixed /2^32)
 	att, def, rng, player: int;
 	animate_time_base, fire_end_time: real;
 	target_side, target_idx: int;
 };
 
+El: adt {
+	x1, y1, x2, y2: int;
+};
+
 win: ref Window;
 ink: array of ref Image;
+tfont: ref Font;
+frames: array of array of El;		# soldier sprite bins 1..5
+imgs := array[FRAMES] of {0, 1, 2, 3, 2, 1};	# ping-pong walk cycle
+have_spr := 0;
 tr0, tr1: array of Trooper;
 time_lapse := 0;
 tap_mode := 0;
 ai_mode := 0;
 ai_targets: array of int;
 fire_end_time := 0.0;
-wheel_z := 25;
+wheel_z := 25;				# signed, unclamped (ms.pos.z)
 mx, my: int;
 ptr_lb, ptr_rb: int;
 have_tone := 0;
+snd_on := 0;
+help_up := 1;				# PopUpOk startup dialog showing
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	bufio = load Bufio Bufio->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -79,14 +104,17 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win = wmclient->window(ctxt, "TempleOS BattleLines", Wmclient->Appl);
 	d := win.display;
 	ink = array[16] of ref Image;
+	# the exact TempleOS 16-color palette, index = TempleOS color
 	cols := array[] of {
-		Draw->Black, Draw->Blue, Draw->Green, Draw->Cyan,
-		Draw->Red, Draw->Magenta, Draw->Darkyellow, Draw->Grey,
-		int 16r444444FF, Draw->Paleblue, Draw->Palegreen, Draw->Palebluegreen,
-		int 16rFF8888FF, int 16rFF88FFFF, Draw->Yellow, Draw->White
+		int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
+		int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
+		int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
+		int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
 	};
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
+	tfont = Font.open(d, "/fonts/temple/temple.font");
+	loadsprites();
 
 	tr0 = array[TROOPERS_NUM] of Trooper;
 	tr1 = array[TROOPERS_NUM] of Trooper;
@@ -106,7 +134,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		win.pointer(*p);
 		handleptr(p);
 	k := <-win.ctxt.kbd =>
-		case k {
+		if(help_up){
+			help_up = 0;
+			redraw();
+		}else case k {
 		16r1b or 'q' or 'Q' =>
 			if(have_tone)
 				tone->stop();
@@ -118,20 +149,60 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		'2' =>
 			tap_mode = tap_mode ^ 1;
 		',' or '-' =>
-			if(wheel_z > 5)
-				wheel_z--;
+			wheel_z--;
 		'.' or '+' or '=' =>
-			if(wheel_z < 120)
-				wheel_z++;
+			wheel_z++;
 		}
 	<-ticks =>
-		if(ai_mode == AI_TARGET)
-			do_ai_target();
-		update_human_velocities();
-		update_pos();
-		resolve_firing();
+		if(!help_up){
+			if(ai_mode == AI_TARGET)
+				do_ai_target();
+			update_human_velocities();
+			update_pos();
+			resolve_firing();
+		}
 		redraw();
 	}
+}
+
+loadsprites()
+{
+	frames = array[5] of array of El;
+	have_spr = 1;
+	for(i := 0; i < 5; i++){
+		frames[i] = loadspr(sys->sprint("/lib/temple/sprites/battlelines_%d.spr", i+1));
+		if(len frames[i] == 0)
+			have_spr = 0;
+	}
+}
+
+loadspr(path: string): array of El
+{
+	if(bufio == nil)
+		return array[0] of El;
+	b := bufio->open(path, Bufio->OREAD);
+	if(b == nil)
+		return array[0] of El;
+	l: list of El;
+	n := 0;
+	for(;;){
+		ln := b.gets('\n');
+		if(ln == nil)
+			break;
+		(nt, toks) := sys->tokenize(ln, " \t\n");
+		if(nt >= 5 && hd toks == "line"){
+			t := tl toks;
+			e := El(int hd t, int hd tl t, int hd tl tl t, int hd tl tl tl t);
+			l = e :: l;
+			n++;
+		}
+	}
+	a := array[n] of El;
+	for(i := n - 1; i >= 0; i--){
+		a[i] = hd l;
+		l = tl l;
+	}
+	return a;
 }
 
 game_init()
@@ -145,28 +216,31 @@ game_init()
 	tap_mode = 0;
 	time_lapse = 0;
 	fire_end_time = 0.0;
-	wheel_z = 25;
+	wheel_z = 25;			# MsSet(,,25)
 	for(i := 0; i < 10; i++){
 		ai_targets[i] = rn(TROOPERS_NUM);
-		dx := rn(65536) - 32768;
-		dy := rn(65536) - 32768;
+		# RandI32 as a 32.32 fixed velocity: uniform in (-0.5, 0.5) px/tick
+		dxv := frnd() - 0.5;
+		dyv := frnd() - 0.5;
 		for(j := 0; j < 10; j++){
 			idx := i*10 + j;
 			tr0[idx] = Trooper(
 				real(w - 100 - i*10), real(h/2 - 50 + j*10),
 				0.0, 0.0, 3, 10, 50*50, 0,
-				10.0 * rnreal(), 0.0, -1, -1);
+				10.0 * frnd(), 0.0, -1, -1);
 			t1 := Trooper(
 				real(100 + i*10), real(h/2 - 50 + j*10),
 				0.0, 0.0, 3, 10, 50*50, 1,
-				10.0 * rnreal(), 0.0, -1, -1);
+				10.0 * frnd(), 0.0, -1, -1);
 			if(ai_mode == AI_RANDOM){
-				t1.dx = real dx / 2048.0;
-				t1.dy = real dy / 2048.0;
+				t1.dx = dxv;
+				t1.dy = dyv;
 			}
 			tr1[idx] = t1;
 		}
 	}
+	# faithful quirk: ai_mode is re-randomized AFTER the loop, so the
+	# AI_RANDOM branch above tested the previous round's mode
 	ai_mode = rn(AI_AI_NUM);
 }
 
@@ -177,16 +251,16 @@ handleptr(p: ref Draw->Pointer)
 		return;
 	mx = p.xy.x - img.r.min.x;
 	my = p.xy.y - img.r.min.y;
+	if(help_up && (p.buttons & 7)){
+		help_up = 0;
+		return;
+	}
 	ptr_lb = (p.buttons & 1) != 0;
 	ptr_rb = (p.buttons & 2) != 0;
-	if(p.buttons & 4){
-		if(wheel_z > 5)
-			wheel_z--;
-	}
-	if(p.buttons & 8){
-		if(wheel_z < 120)
-			wheel_z++;
-	}
+	if(p.buttons & 4)
+		wheel_z--;
+	if(p.buttons & 8)
+		wheel_z++;
 }
 
 do_ai_target()
@@ -196,7 +270,7 @@ do_ai_target()
 		for(j := 0; j < 10; j++){
 			idx := i*10 + j;
 			t1 := tr1[idx];
-			t1.dx = (t0.x - t1.x) / 2048.0;
+			t1.dx = (t0.x - t1.x) / 2048.0;	# original >>11 on 32.32 fixed
 			t1.dy = (t0.y - t1.y) / 2048.0;
 			tr1[idx] = t1;
 		}
@@ -212,15 +286,12 @@ update_pos()
 		w = real img.r.dx();
 		h = real img.r.dy();
 	}
+	# time-lapse is a display projection only (see draw_trooper);
+	# the simulation always advances one dx per tick
 	for(i = 0; i < TROOPERS_NUM; i++){
 		t := tr0[i];
-		if(time_lapse){
-			t.x += 500.0 * t.dx;
-			t.y += 500.0 * t.dy;
-		}else{
-			t.x += t.dx;
-			t.y += t.dy;
-		}
+		t.x += t.dx;
+		t.y += t.dy;
 		if(t.x >= w)
 			t.x -= w;
 		if(t.x < 0.0)
@@ -233,13 +304,8 @@ update_pos()
 	}
 	for(i = 0; i < TROOPERS_NUM; i++){
 		t := tr1[i];
-		if(time_lapse){
-			t.x += 500.0 * t.dx;
-			t.y += 500.0 * t.dy;
-		}else{
-			t.x += t.dx;
-			t.y += t.dy;
-		}
+		t.x += t.dx;
+		t.y += t.dy;
 		if(t.x >= w)
 			t.x -= w;
 		if(t.x < 0.0)
@@ -281,8 +347,7 @@ resolve_firing()
 				t0.target_side = 1;
 				t0.target_idx = j;
 				tr0[i] = t0;
-				if(have_tone)
-					tone->beep(86, 40);
+				sndfire();
 			}
 			if(dd < t1.rng && t1.target_side < 0){
 				fire_end_time = ts + 0.125;
@@ -290,13 +355,24 @@ resolve_firing()
 				t1.target_side = 0;
 				t1.target_idx = i;
 				tr1[j] = t1;
-				if(have_tone)
-					tone->beep(86, 40);
+				sndfire();
 			}
 		}
 	}
-	if(ts >= fire_end_time && have_tone)
-		tone->stop();
+	if(ts >= fire_end_time && snd_on){
+		if(have_tone)
+			tone->stop();
+		snd_on = 0;
+	}
+}
+
+# Snd(86): a held note for as long as anyone is firing, not a per-shot beep
+sndfire()
+{
+	if(have_tone && !snd_on){
+		tone->snd(SND_FREQ);
+		snd_on = 1;
+	}
 }
 
 resolve_shot(side, i: int, t: Trooper)
@@ -315,15 +391,17 @@ update_human_velocities()
 	active := ptr_lb || ptr_rb;
 	i: int;
 	if(tap_mode){
+		r2 := real(TAP_MODE_RADIUS * TAP_MODE_RADIUS);
 		for(i = 0; i < TROOPERS_NUM; i++){
 			t := tr0[i];
-			dx := real(mx) - t.x;
-			dy := real(my) - t.y;
+			dx := real mx - t.x;
+			dy := real my - t.y;
 			d := dx*dx + dy*dy;
-			r2 := real(TAP_MODE_RADIUS * TAP_MODE_RADIUS);
 			if(d > 0.0 && d < r2){
+				# SqrI64(SqrI64(SqrI64(R)-d)) = (R^2-d)^4,
+				# applied to 32.32 fixed velocities, hence /2^32
 				gap := r2 - d;
-				intensity := gap * gap * gap;
+				intensity := gap * gap * gap * gap / FIX;
 				t.dx -= intensity * dx / d;
 				t.dy -= intensity * dy / d;
 			}else{
@@ -333,14 +411,15 @@ update_human_velocities()
 			tr0[i] = t;
 		}
 	}else if(active){
-		repulsive := (wheel_z > 0) != (ptr_rb != 0);
-		j := 0.25 * real(wheel_z);
-		if(repulsive)
+		# original: j = 400000000*z; if (ms.rb) j = -j — the RIGHT
+		# button negates; positive z + left button REPELS
+		j := FORCE_SCALE * real wheel_z;
+		if(ptr_rb)
 			j = -j;
 		for(i = 0; i < TROOPERS_NUM; i++){
 			t := tr0[i];
-			dx := real(mx) - t.x;
-			dy := real(my) - t.y;
+			dx := real mx - t.x;
+			dy := real my - t.y;
 			d := dx*dx + dy*dy;
 			if(d > 0.0){
 				t.dx -= j * dx / d;
@@ -357,9 +436,8 @@ redraw()
 	if(img == nil)
 		return;
 	w := img.r.dx();
-	h := img.r.dy();
 	o := img.r.min;
-	img.draw(img.r, ink[0], nil, Point(0, 0));
+	img.draw(img.r, ink[2], nil, Point(0, 0));	# GREEN field (DocClear on GREEN<<4)
 	cnt0, cnt1, i: int;
 	for(i = 0; i < TROOPERS_NUM; i++){
 		t := tr0[i];
@@ -376,61 +454,135 @@ redraw()
 		draw_trooper(img, o, t, 1);
 	}
 	if(tap_mode)
-		img.ellipse(Point(o.x+mx, o.y+my), TAP_MODE_RADIUS, TAP_MODE_RADIUS, 1, ink[14], Point(0, 0));
+		img.ellipse(Point(o.x+mx, o.y+my), TAP_MODE_RADIUS, TAP_MODE_RADIUS, 0, ink[14], Point(0, 0));
 	else{
 		active := ptr_lb || ptr_rb;
 		repulsive := (wheel_z > 0) != (ptr_rb != 0);
-		col := ink[1];
+		col: ref Image;
 		if(repulsive){
 			if(active)
-				col = ink[12];
-		}else if(active)
-			col = ink[10];
+				col = ink[12];	# LTRED
+			else
+				col = ink[4];	# RED
+		}else{
+			if(active)
+				col = ink[9];	# LTBLUE
+			else
+				col = ink[1];	# BLUE
+		}
 		rad := wheel_z;
-		if(rad < 1)
-			rad = 1;
-		img.ellipse(Point(o.x+mx, o.y+my), rad, rad, 1, col, Point(0, 0));
+		if(rad < 0)
+			rad = -rad;
+		img.ellipse(Point(o.x+mx, o.y+my), rad, rad, 0, col, Point(0, 0));
 	}
-	# troop strength bars (top corners)
-	bar0 := (w - 20) * cnt0 / TROOPERS_NUM;
-	bar1 := (w - 20) * cnt1 / TROOPERS_NUM;
-	img.draw(Rect((o.x+10, o.y+4), (o.x+10+bar0, o.y+8)), ink[11], nil, Point(0, 0));
-	img.draw(Rect((o.x+w-10-bar1, o.y+4), (o.x+w-10, o.y+8)), ink[13], nil, Point(0, 0));
+	# GrPrint "%03d" troop counts at the top right, in character cells
+	if(tfont != nil){
+		ncols := w / 8;
+		img.text(Point(o.x + (ncols-8)*8, o.y), ink[11], Point(0, 0), tfont,
+			sys->sprint("%03d", cnt0));
+		img.text(Point(o.x + (ncols-4)*8, o.y), ink[13], Point(0, 0), tfont,
+			sys->sprint("%03d", cnt1));
+	}
+	if(help_up)
+		draw_help(img, o, w, img.r.dy());
 	img.flush(Draw->Flushnow);
+}
+
+# PopUpOk startup dialog
+draw_help(img: ref Image, o: Point, w, h: int)
+{
+	lines := array[] of {
+		"The mouse wheel controls",
+		"the command force.",
+		"Attract or repel with",
+		"left or right bttn.",
+		"",
+		"        ( OK )"
+	};
+	bw := 24*8 + 16;
+	bh := len lines * 8 + 16;
+	x0 := o.x + (w - bw)/2;
+	y0 := o.y + (h - bh)/2;
+	img.draw(Rect((x0-1, y0-1), (x0+bw+1, y0+bh+1)), ink[0], nil, Point(0, 0));
+	img.draw(Rect((x0, y0), (x0+bw, y0+bh)), ink[15], nil, Point(0, 0));
+	if(tfont != nil)
+		for(i := 0; i < len lines; i++)
+			img.text(Point(x0+8, y0+8+i*8), ink[0], Point(0, 0), tfont, lines[i]);
 }
 
 draw_trooper(img: ref Image, o: Point, t: Trooper, side: int)
 {
-	x := int t.x;
-	y := int t.y;
-	spd := 0.5 * math->sqrt(t.dx*t.dx + t.dy*t.dy);
-	pulse := int(3.0 + 2.0 * math->sin(t.animate_time_base + now()*spd));
-	if(pulse < 2)
-		pulse = 2;
-	body := ink[11];
-	edge := ink[15];
-	if(side != 0){
-		body = ink[13];
-		edge = ink[10];
+	x, y: int;
+	if(time_lapse){
+		# display projection 500 ticks ahead; positions still step 1 dx/tick
+		x = int(t.x + 500.0*t.dx);
+		y = int(t.y + 500.0*t.dy);
+	}else{
+		x = int t.x;
+		y = int t.y;
 	}
+	mir := 1;
+	if(t.dx < 0.0)
+		mir = -1;
+	body := ink[11];	# LTCYAN
+	if(side != 0)
+		body = ink[13];	# LTPURPLE
 	if(t.target_side >= 0){
 		victim := get_troop(t.target_side, t.target_idx);
-		gx := x; gy := y - 7;
-		if(t.dx < 0.0)
-			gx -= 13;
-		else
-			gx += 13;
-		img.ellipse(Point(o.x+x+1, o.y+y+1), pulse, pulse, 0, ink[0], Point(0, 0));
-		img.ellipse(Point(o.x+x, o.y+y), pulse, pulse, 0, body, Point(0, 0));
-		aim := edge;
+		gx := x + mir*13;
+		gy := y - 7;
+		if(have_spr){
+			# static firing pose, bin 5, black drop shadow at (x+1,y)
+			draw_spr(img, o.x+x+1, o.y+y, mir, frames[4], frames[4], 0.0, ink[0]);
+			draw_spr(img, o.x+x, o.y+y, mir, frames[4], frames[4], 0.0, body);
+		}else{
+			img.ellipse(Point(o.x+x+1, o.y+y), 3, 3, 0, ink[0], Point(0, 0));
+			img.ellipse(Point(o.x+x, o.y+y), 3, 3, 0, body, Point(0, 0));
+		}
+		aim := ink[15];		# WHITE
 		if(side != 0)
-			aim = ink[10];
+			aim = ink[9];	# LTBLUE
 		img.line(Point(o.x+gx, o.y+gy), Point(o.x+int victim.x, o.y+int victim.y),
-			Draw->Enddisc, Draw->Enddisc, 1, aim, Point(0, 0));
+			Draw->Endsquare, Draw->Endsquare, 0, aim, Point(0, 0));
 	}else{
-		img.ellipse(Point(o.x+x+1, o.y+y+1), pulse, pulse, 0, ink[0], Point(0, 0));
-		img.ellipse(Point(o.x+x, o.y+y), pulse, pulse, 0, body, Point(0, 0));
+		# walk cycle: SpriteInterpolate(tt%1, imgs[tt%6], imgs[(tt+1)%6]),
+		# tt = base + tS*speed, speed = 0.5*|16*v| = 8*|v| (v in px/tick)
+		spd := 8.0 * math->sqrt(t.dx*t.dx + t.dy*t.dy);
+		tt := t.animate_time_base + now()*spd;
+		fi := int math->floor(tt);
+		f := tt - real fi;
+		if(have_spr){
+			a := frames[imgs[fi % FRAMES]];
+			b := frames[imgs[(fi+1) % FRAMES]];
+			draw_spr(img, o.x+x+1, o.y+y, mir, a, b, f, ink[0]);
+			draw_spr(img, o.x+x, o.y+y, mir, a, b, f, body);
+		}else{
+			img.ellipse(Point(o.x+x+1, o.y+y), 3, 3, 0, ink[0], Point(0, 0));
+			img.ellipse(Point(o.x+x, o.y+y), 3, 3, 0, body, Point(0, 0));
+		}
 	}
+}
+
+# draw the sprite morphed fraction f of the way from a to b, mirrored
+# about the vertical through (x,y) when mir = -1, all elements in col
+draw_spr(img: ref Image, x, y, mir: int, a, b: array of El, f: real, col: ref Image)
+{
+	n := len a;
+	if(len b < n)
+		n = len b;
+	for(i := 0; i < n; i++){
+		x1 := lerp(a[i].x1, b[i].x1, f);
+		y1 := lerp(a[i].y1, b[i].y1, f);
+		x2 := lerp(a[i].x2, b[i].x2, f);
+		y2 := lerp(a[i].y2, b[i].y2, f);
+		img.line(Point(x + mir*x1, y + y1), Point(x + mir*x2, y + y2),
+			Draw->Endsquare, Draw->Endsquare, 0, col, Point(0, 0));
+	}
+}
+
+lerp(a, b: int, f: real): int
+{
+	return int (real a + f * real (b - a));
 }
 
 get_troop(side, i: int): Trooper
@@ -460,11 +612,11 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-rnreal(): real
+frnd(): real
 {
 	if(rand == nil)
-		return real(sys->millisec() & 1023) / 1023.0;
-	return real(rand->rand(1000)) / 1000.0;
+		return real(sys->millisec() & 1023) / 1024.0;
+	return real rand->rand(1073741824) / 1073741824.0;
 }
 
 timer(c: chan of int, ms: int)

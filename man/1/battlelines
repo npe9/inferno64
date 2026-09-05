@@ -9,31 +9,39 @@ is a swarm combat game.
 It runs under
 .IR wm (1).
 .PP
-Two swarms of troopers fight across the window. Hold button 1 or 2 near the pointer to attract or repel your side. Corner bars show remaining strength.
+Two swarms of animated soldiers fight across a green field.
+A force circle follows the pointer; hold a button to push your
+(light cyan) troops around with it.
+With a positive force value, the left button repels troops from
+the pointer (red circle) and the right button attracts them
+(blue circle); a negative force value inverts both.
+Live troop counts for each side are printed at the top right.
 .PP
 The controls are:
 .TF space
 .TP
 .B LMB hold
-Apply force field at pointer (attract/repel per wheel and RMB)
+Apply the force field at the pointer
 .TP
 .B RMB hold
-Invert attractive/repulsive sense of force
+Apply the force field with the opposite sense
 .TP
 .B mouse wheel buttons 4/8 (if wm sends)
-Decrease/increase force radius wheel_z
+Decrease/increase the signed force value (circle radius)
 .TP
 .B , / -
-Decrease force radius
+Decrease the force value
 .TP
 .B . / + / =
-Increase force radius
+Increase the force value
 .TP
 .B 1
-Toggle time-lapse (fast motion)
+Toggle time-lapse: troops are drawn 500 ticks ahead of their true
+positions (a display projection; the battle itself runs at normal speed)
 .TP
 .B 2
-Toggle tap-mode (local push within radius)
+Toggle tap-mode: a yellow 50-pixel circle that violently scatters
+troops inside it and damps those outside
 .TP
 .B Enter / r
 Restart
