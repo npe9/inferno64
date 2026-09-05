@@ -109,6 +109,7 @@ echo "copying sources"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 ARCHS="amd64 386 arm arm64 mips power power64 sparc sparc64 spim 68000 68020"
+COPIED="sys/include $ARCHS rc adm lib/ucd lib/keyboard sys/lib/yaccpar sys/lib/yaccpars sys/lib/scsicodes sys/src"
 for d in sys/include $ARCHS rc adm lib/ucd lib/keyboard sys/lib/yaccpar sys/lib/yaccpars sys/lib/scsicodes; do
 	[ -e "$SRC/$d" ] || continue
 	mkdir -p "$DEST/$(dirname "$d")"
@@ -586,6 +587,71 @@ if git -C "$PWD" rev-parse --git-dir >/dev/null 2>&1; then
 	fi
 fi
 
+#
+# The other direction.  Most of that .gitignore is a list of exact
+# paths a build writes into the source tree, and a path that names
+# nothing is either a typo or something upstream stopped generating.
+# Neither is caught by the check above -- an entry that matches no
+# file cannot swallow one -- and either would sit there unnoticed
+# until a build put a real file at that name.  So: every entry that
+# names a directory under sys/src must name a directory that exists.
+#
+missing=
+while IFS= read -r pat; do
+	case "$pat" in
+	'#'*|''|'!'*|*'*'*)	continue;;
+	*/*)			;;
+	*)			continue;;
+	esac
+	d=$(dirname "$DEST/$pat")
+	[ -d "$d" ] || missing="$missing $pat"
+done < "$DEST/.gitignore"
+if [ -n "$missing" ]; then
+	echo "error: .gitignore names paths that do not exist:" >&2
+	for p in $missing; do echo "	$p" >&2; done
+	exit 1
+fi
+
+#
+# What did not arrive.  This is a copy, and a copy can lose files
+# without saying so: on a case-insensitive filesystem -- which is what
+# a Mac has by default -- rc/bin/Kill and rc/bin/kill are the same
+# name, and the second one written is the only one there.  git says so
+# when it clones and nothing says so afterwards, which is how three of
+# devpost's troff font files went missing without anyone noticing.
+#
+# So the import compares what it copied against what it copied from,
+# and records the difference.  It is not an error: nothing can be done
+# about it on this filesystem, and a build does not need those files.
+# A deployed root does, and this is where someone finds out.
+#
+#
+# The comparison is against upstream's index rather than against its
+# working tree, and the names are compared rather than looked up.
+# Both matter: git could not check the second of a colliding pair out
+# either, so the tree copied from is missing it too; and on this
+# filesystem asking whether rc/bin/Kill exists in a directory holding
+# rc/bin/kill answers yes.
+#
+echo "checking what arrived"
+lost=$(mktemp)
+if git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1; then
+	want=$(mktemp)
+	got=$(mktemp)
+	# shellcheck disable=SC2086
+	git -C "$SRC" ls-files -z -- $COPIED | tr '\0' '\n' \
+		| grep -vE '^sys/src/(9|cmd/gs)/' | sort > "$want"
+	# shellcheck disable=SC2086
+	( cd "$DEST" && find $COPIED -type f -print 2>/dev/null ) | sort > "$got"
+	comm -23 "$want" "$got" > "$lost"
+	rm -f "$want" "$got"
+else
+	echo "	$SRC is not a git checkout; skipped"
+fi
+if [ -s "$lost" ]; then
+	echo "warning: $(wc -l < "$lost" | tr -d " ") files did not arrive; see $DEST/MANIFEST"
+fi
+
 cat > "$DEST/MANIFEST" <<EOF
 upstream	$UPSTREAM_URL
 branch		$UPSTREAM_BRANCH
@@ -593,4 +659,14 @@ commit		$UPSTREAM_COMMIT
 imported by	scripts/import-9front.sh
 left out	sys/src/9, sys/src/cmd/gs, lib, sys/lib
 EOF
+if [ -s "$lost" ]; then
+	{
+	echo ""
+	echo "did not arrive	$(wc -l < "$lost" | tr -d " ") files, one of each pair whose"
+	echo "		names differ only in case; this filesystem"
+	echo "		cannot hold both"
+	sed 's/^/	/' "$lost"
+	} >> "$DEST/MANIFEST"
+fi
+rm -f "$lost"
 echo "imported $UPSTREAM_COMMIT into $DEST"

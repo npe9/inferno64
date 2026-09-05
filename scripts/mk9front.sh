@@ -79,8 +79,12 @@ dirlist=$ROOT/9front/dirs.$objtype
 if [ ! -f "$dirlist" ] || [ "$ROOT/9front-src/MANIFEST" -nt "$dirlist" ]; then
 	/usr/bin/grep -rhE '^[A-Z0-9_]*(BIN|LIB|DIR)=\$ROOT/9front/' "$ROOT/9front-src/sys/src" \
 		--include=mkfile --include=config 2>/dev/null \
-		| /usr/bin/sed -e 's/^[A-Z0-9_]*=//' -e "s|[\$]objtype|$objtype|g" -e "s|[\$]ROOT|$ROOT|" \
-		| /usr/bin/grep -v '\.a$' \
+		| /usr/bin/sed -e 's/^[A-Z0-9_]*=//' -e 's/[ 	]*#.*$//' \
+		| /usr/bin/tr ' \t' '\n\n' \
+		| /usr/bin/grep -v '^$' \
+		| /usr/bin/sed -e "s|[\$]objtype|$objtype|g" -e "s|[\$]ROOT|$ROOT|" \
+			-e 's|/[^/]*\.a$||' \
+		| /usr/bin/grep "^$ROOT/9front/" \
 		| sort -u > "$dirlist"
 fi
 while read -r d; do mkdir -p "$d"; done < "$dirlist"
