@@ -9,17 +9,14 @@ is a dot net pattern.
 It runs under
 .IR wm (1).
 .PP
-Draws a radiating net of lines. Space repaints.
-.PP
-The controls are:
-.TF space
-.TP
-.B space
-Repaint
-.TP
-.B Esc / q
-Quit
-.PD
+Draws a radiating net of dotted lines: each line is plotted as
+single red pixels every third step along its length, as the
+TempleOS original does with
+.B GrLine
+step 3.
+As in the original's
+.BR PressAKey ,
+pressing any key exits.
 .SH SOURCE
 .B /appl/temple/netofdots.b
 .SH SEE ALSO
