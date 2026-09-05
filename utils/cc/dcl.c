@@ -724,6 +724,48 @@ loop:
 	}
 }
 
+/*
+ * __func__: C99's name for the function being compiled.  9front's cc
+ * has this and this one did not, which is what stopped ext4srv --
+ * every one of its assertions names the function it is in.
+ *
+ * It is declared as a local array of const char at the head of the
+ * body, before any statement can use it, and given its value only if
+ * the body actually referred to it; a string constant emitted for
+ * every function in the tree would be a needless cost on a system
+ * where nothing else uses one.  The two passes are the two points in
+ * the grammar where that can be done: pass 0 after the parameter
+ * declarations, pass 1 at the end of the block.
+ *
+ * From 9front's sys/src/cmd/cc/dcl.c, with garbt taking a long here
+ * rather than a Spec.
+ */
+void
+fndecls(int pass)
+{
+	static Sym *funcsym;
+	Node *n;
+
+	if(thisfnnode == Z || thisfnnode->etype != TFUNC)
+		return;
+	if(pass == 0){
+		n = new(ONAME, Z, Z);
+		n->type = typ(TARRAY, garbt(types[TCHAR], BCONSTNT));
+		n->type->width = 0;
+		n->sym = slookup("__func__");
+		n->sym->type = n->type;
+		funcsym = dodecl(adecl, CLOCAL, n->type, n)->sym;
+	}else if(funcsym != S && funcsym->aused){
+		n = new(OSTRING, Z, Z);
+		n->cstring = thisfnnode->sym->name;
+		n->type = copytyp(funcsym->type);
+		n->type->width = strlen(n->cstring)+1;
+		n->etype = TARRAY;
+		n->class = CSTATIC;
+		doinit(funcsym, funcsym->type, 0L, n);
+	}
+}
+
 void
 markdcl(void)
 {
