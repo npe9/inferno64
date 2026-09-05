@@ -10,6 +10,8 @@ It runs under
 .IR wm (1).
 .PP
 Drag button 1 in the bow box to aim; release to shoot. Enter resets.
+While a drag is in progress the cursor is held inside the bow box,
+as in the original.
 .PP
 The controls are:
 .TF space

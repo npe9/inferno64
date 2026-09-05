@@ -1,9 +1,12 @@
 implement Zing;
 
 # TempleOS Demo/Games/Zing.HC — bow and arrow toy
-# LMB drag in bow box to aim; release to shoot; Enter restart; q quit
-# GAP: no Sprite3ZB arrow art / Gr2BSpline3 — lines + triangle head;
-#      no mouse clamp-to-box during animate task
+# LMB drag in bow box to aim; release to shoot; Enter restart; Esc/q quit
+# GAP: the original's AnimateTask clamps the real cursor into the bow box
+#      at all times; here the cursor is only warped into the box during a
+#      drag (a windowed host must keep the titlebar and other windows
+#      reachable). The original's MenuPush bar (File Abort/Exit, Play
+#      Restart) has no counterpart; its actions are on Esc and Enter.
 
 include "sys.m";
 	sys: Sys;
@@ -11,6 +14,10 @@ include "sys.m";
 include "draw.m";
 	draw: Draw;
 	Display, Image, Point, Rect: import draw;
+
+include "bufio.m";
+	bufio: Bufio;
+	Iobuf: import bufio;
 
 include "math.m";
 	math: Math;
@@ -32,8 +39,19 @@ Zing: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+# vector sprite element (lib/temple/sprites/zing_1.spr): the original's
+# $SP "<1>" arrow, drawn rotated like Sprite3ZB
+Sprel: adt {
+	kind:	int;	# 0 line, 1 pt
+	col:	int;
+	x1, y1, x2, y2:	int;
+};
+
 win: ref Window;
+pal: array of ref Image;	# the 16 TempleOS colors
 black, brown, red, white: ref Image;
+arrowspr: array of Sprel;
+ptrfd: ref Sys->FD;
 box_x0, box_y0, box_x1, box_y1: int;
 bow_x, bow_y: real;
 bow_drawn := 0;
@@ -46,10 +64,19 @@ last_tick: int;
 ax, ay, adx, ady: array of real;
 narrows := 0;
 
+# TempleOS 16-color palette, index = TempleOS color number
+palette := array[] of {
+	int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
+	int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
+	int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
+	int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF,
+};
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	bufio = load Bufio Bufio->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -65,10 +92,15 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Zing", Wmclient->Appl);
 	d := win.display;
-	black = d.color(Draw->Black);
-	brown = d.color(int 16r8B4513FF);
-	red = d.color(Draw->Red);
-	white = d.color(Draw->White);
+	pal = array[16] of ref Image;
+	for(i := 0; i < 16; i++)
+		pal[i] = d.color(palette[i]);
+	black = pal[0];
+	red = pal[4];
+	brown = pal[6];
+	white = pal[15];
+	arrowspr = loadspr("/lib/temple/sprites/zing_1.spr");
+	ptrfd = sys->open("/dev/pointer", Sys->OWRITE);
 	last_tick = sys->millisec();
 	reset();
 	win.reshape(Rect((0, 0), (640, 480)));
@@ -94,6 +126,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		}
 	<-ticks =>
 		animate();
+		clampcursor();
 		redraw();
 	}
 }
@@ -121,6 +154,9 @@ reset()
 	ady = array[0] of real;
 	mx = int bow_x;
 	my = int bow_y;
+	# original Init() ends with MsSet(bow centre): warp the cursor there
+	if(img != nil && ptrfd != nil)
+		sys->fprint(ptrfd, "m%d %d", img.r.min.x + mx, img.r.min.y + my);
 }
 
 handleptr(p: ref Draw->Pointer)
@@ -146,6 +182,24 @@ handleptr(p: ref Draw->Pointer)
 	prev_btn = btn;
 }
 
+# original AnimateTask MsSet()s the real cursor into the bow box every
+# 10ms; do the same while aiming (see GAP header for the always-on case)
+clampcursor()
+{
+	if(!bow_drawn || ptrfd == nil)
+		return;
+	img := win.image;
+	if(img == nil)
+		return;
+	cx := clampi(mx, box_x0, box_x1);
+	cy := clampi(my, box_y0, box_y1);
+	if(cx != mx || cy != my){
+		sys->fprint(ptrfd, "m%d %d", img.r.min.x + cx, img.r.min.y + cy);
+		mx = cx;
+		my = cy;
+	}
+}
+
 shoot(sx, sy: real)
 {
 	n := narrows;
@@ -159,7 +213,28 @@ shoot(sx, sy: real)
 	adx[n] = 10.0 * (bow_x - sx);
 	ady[n] = 10.0 * (bow_y - sy);
 	if(have_tone)
-		tone->beep(110, 50);
+		spawn noiseproc(50, 110, 114);	# original Noise(50,110,114)
+}
+
+# TempleOS Noise(ms,min_ona,max_ona): white noise in the ona band for ms;
+# approximated as rapid random tones in the band (one voice)
+noiseproc(ms, lo, hi: int)
+{
+	t0 := sys->millisec();
+	while(sys->millisec() - t0 < ms){
+		ona := lo;
+		if(rand != nil)
+			ona += rand->rand(hi - lo + 1);
+		tone->snd(onafreq(ona));
+		sys->sleep(10);
+	}
+	tone->stop();
+}
+
+# ona -> Hz, TempleOS Snd() semitone scale: 440*2^((ona-60)/12), Ona2Freq: ona 60 = 440Hz
+onafreq(ona: int): int
+{
+	return int (440.0 * math->pow(2.0, real(ona - 60) / 12.0));
 }
 
 extend(a: array of real, n: int): array of real
@@ -177,11 +252,18 @@ animate()
 	if(dt <= 0.0)
 		dt = 0.01;
 	last_tick = now;
+	# cull against the live window, like the original's pix_width/height
+	w := 640.0; h := 480.0;
+	img := win.image;
+	if(img != nil){
+		w = real img.r.dx();
+		h = real img.r.dy();
+	}
 	keep := 0;
 	for(i := 0; i < narrows; i++){
 		ax[i] += adx[i] * dt;
 		ay[i] += ady[i] * dt;
-		if(ax[i] >= -20.0 && ax[i] < 660.0 && ay[i] >= -20.0 && ay[i] < 500.0){
+		if(ax[i] >= 0.0 && ax[i] < w && ay[i] >= 0.0 && ay[i] < h){
 			if(keep != i){
 				ax[keep] = ax[i];
 				ay[keep] = ay[i];
@@ -200,11 +282,17 @@ redraw()
 	if(img == nil)
 		return;
 	o := img.r.min;
-	w := img.r.dx();
-	h := img.r.dy();
 	img.draw(img.r, white, nil, Point(0, 0));
-	img.draw(Rect((o.x + box_x0, o.y + box_y0), (o.x + box_x1, o.y + box_y1)),
-		red, nil, Point(0, 0));
+
+	# GrBorder: red outline rectangle
+	p00 := Point(o.x + box_x0, o.y + box_y0);
+	p10 := Point(o.x + box_x1, o.y + box_y0);
+	p01 := Point(o.x + box_x0, o.y + box_y1);
+	p11 := Point(o.x + box_x1, o.y + box_y1);
+	img.line(p00, p10, Draw->Endsquare, Draw->Endsquare, 0, red, Point(0, 0));
+	img.line(p10, p11, Draw->Endsquare, Draw->Endsquare, 0, red, Point(0, 0));
+	img.line(p11, p01, Draw->Endsquare, Draw->Endsquare, 0, red, Point(0, 0));
+	img.line(p01, p00, Draw->Endsquare, Draw->Endsquare, 0, red, Point(0, 0));
 
 	x := real(clampi(mx, box_x0, box_x1));
 	y := real(clampi(my, box_y0, box_y1));
@@ -220,55 +308,150 @@ redraw()
 	draw_len := math->sqrt(dx * dx + dy * dy);
 	str_w := draw_len / 3.0;
 	str_h := math->sqrt(3600.0 - str_w * str_w);
-	if(str_h != str_h)	# NaN guard
+	if(str_h != str_h)	# NaN guard (draw_len > 180); original lacks it
 		str_h = 0.0;
 
-	# bow string
-	img.line(pt(o, x - str_h / 2.0 * math->cos(bow_ang + math->Pi / 2.0) + str_w * math->cos(bow_ang),
-			y - str_h / 2.0 * math->sin(bow_ang + math->Pi / 2.0) + str_w * math->sin(bow_ang)),
-		pt(o, x, y), Draw->Endsquare, Draw->Endsquare, 1, black, Point(0, 0));
-	img.line(pt(o, x + str_h / 2.0 * math->cos(bow_ang + math->Pi / 2.0) + str_w * math->cos(bow_ang),
-			y + str_h / 2.0 * math->sin(bow_ang + math->Pi / 2.0) + str_w * math->sin(bow_ang)),
-		pt(o, x, y), Draw->Endsquare, Draw->Endsquare, 1, black, Point(0, 0));
+	cp := math->cos(bow_ang + math->Pi / 2.0);
+	sp := math->sin(bow_ang + math->Pi / 2.0);
+	ca := math->cos(bow_ang);
+	sa := math->sin(bow_ang);
 
-	# bow limbs (polyline stand-in for BSpline)
-	prev: Point;
-	prev2: Point;
-	for(t := 0; t <= 4; t++){
-		tt := real(t) / 4.0;
-		bx := x - (1.0 - 0.25 * tt) * str_h / 2.0 * math->cos(bow_ang + math->Pi / 2.0)
-			+ (draw_len / 2.0 * tt + str_w) * math->cos(bow_ang);
-		by := y - (1.0 - 0.25 * tt) * str_h / 2.0 * math->sin(bow_ang + math->Pi / 2.0)
-			+ (draw_len / 2.0 * tt + str_w) * math->sin(bow_ang);
-		if(t > 0){
-			img.line(prev, pt(o, bx, by), Draw->Endsquare, Draw->Endsquare, 2, brown, Point(0, 0));
-			img.line(prev2, pt(o, x + (bx - x), y + (by - y)), Draw->Endsquare, Draw->Endsquare, 2, brown, Point(0, 0));
-		}
-		prev = pt(o, bx, by);
-		prev2 = pt(o, x + (bx - x), y + (by - y));
-	}
+	# bow string: two black lines from the string ends to the draw point
+	img.line(pt(o, x - str_h / 2.0 * cp + str_w * ca,
+			y - str_h / 2.0 * sp + str_w * sa),
+		pt(o, x, y), Draw->Endsquare, Draw->Endsquare, 0, black, Point(0, 0));
+	img.line(pt(o, x + str_h / 2.0 * cp + str_w * ca,
+			y + str_h / 2.0 * sp + str_w * sa),
+		pt(o, x, y), Draw->Endsquare, Draw->Endsquare, 0, black, Point(0, 0));
+
+	# the bow: one Gr2BSpline3 through 5 control points, brown, thick 2
+	cx := array[5] of real;
+	cy := array[5] of real;
+	cx[0] = x - str_h / 2.0 * cp + str_w * ca;
+	cy[0] = y - str_h / 2.0 * sp + str_w * sa;
+	cx[1] = x - 0.75 * str_h / 2.0 * cp + (draw_len / 2.0 + str_w) * ca;
+	cy[1] = y - 0.75 * str_h / 2.0 * sp + (draw_len / 2.0 + str_w) * sa;
+	cx[2] = x + (draw_len / 2.0 + str_w) * ca;
+	cy[2] = y + (draw_len / 2.0 + str_w) * sa;
+	cx[3] = x + 0.75 * str_h / 2.0 * cp + (draw_len / 2.0 + str_w) * ca;
+	cy[3] = y + 0.75 * str_h / 2.0 * sp + (draw_len / 2.0 + str_w) * sa;
+	cx[4] = x + str_h / 2.0 * cp + str_w * ca;
+	cy[4] = y + str_h / 2.0 * sp + str_w * sa;
+	bspline(img, o, cx, cy);
 
 	if(bow_drawn)
-		drawarrow(img, o, int bow_x, int bow_y, bow_ang);
+		drawarrow(img, o, x, y, bow_ang);	# at the draw point, like Sprite3ZB(dc,x,y,...)
 
 	for(i := 0; i < narrows; i++){
 		ang := math->atan2(ady[i], adx[i]);
-		drawarrow(img, o, int ax[i], int ay[i], ang);
+		drawarrow(img, o, ax[i], ay[i], ang);
 	}
 	img.flush(Draw->Flushnow);
 }
 
-drawarrow(img: ref Image, o: Point, x, y: int, ang: real)
+# clamped quadratic B-spline through the control points (Gr2BSpline3):
+# passes through the endpoints, interior points pull the curve
+bspline(img: ref Image, o: Point, cx, cy: array of real)
 {
-	tip := pt(o, real(x), real(y));
-	tail := pt(o, real(x) - 18.0 * math->cos(ang), real(y) - 18.0 * math->sin(ang));
-	img.line(tail, tip, Draw->Endsquare, Draw->Endsquare, 2, black, Point(0, 0));
-	lx := tip.x - int(6.0 * math->cos(ang - math->Pi / 2.0));
-	ly := tip.y - int(6.0 * math->sin(ang - math->Pi / 2.0));
-	rx := tip.x - int(6.0 * math->cos(ang + math->Pi / 2.0));
-	ry := tip.y - int(6.0 * math->sin(ang + math->Pi / 2.0));
-	img.line(tip, Point(lx, ly), Draw->Endsquare, Draw->Endsquare, 1, black, Point(0, 0));
-	img.line(tip, Point(rx, ry), Draw->Endsquare, Draw->Endsquare, 1, black, Point(0, 0));
+	SEGSTEPS: con 8;
+	n := len cx;
+	prev := pt(o, cx[0], cy[0]);
+	for(i := 1; i < n - 1; i++){
+		sx := cx[0]; sy := cy[0];
+		if(i > 1){
+			sx = (cx[i-1] + cx[i]) / 2.0;
+			sy = (cy[i-1] + cy[i]) / 2.0;
+		}
+		ex := cx[n-1]; ey := cy[n-1];
+		if(i < n - 2){
+			ex = (cx[i] + cx[i+1]) / 2.0;
+			ey = (cy[i] + cy[i+1]) / 2.0;
+		}
+		for(s := 1; s <= SEGSTEPS; s++){
+			t := real s / real SEGSTEPS;
+			u := 1.0 - t;
+			bx := u*u*sx + 2.0*t*u*cx[i] + t*t*ex;
+			by := u*u*sy + 2.0*t*u*cy[i] + t*t*ey;
+			p := pt(o, bx, by);
+			img.line(prev, p, Draw->Endsquare, Draw->Endsquare, 1, brown, Point(0, 0));
+			prev = p;
+		}
+	}
+}
+
+# the original's $SP "<1>" arrow, rotated about its origin like
+# Sprite3ZB(dc,x,y,0,...,ang)
+drawarrow(img: ref Image, o: Point, x, y, ang: real)
+{
+	cs := math->cos(ang);
+	sn := math->sin(ang);
+	if(len arrowspr > 0){
+		for(i := 0; i < len arrowspr; i++){
+			e := arrowspr[i];
+			c := pal[e.col & 15];
+			p1 := pt(o, x + real e.x1 * cs - real e.y1 * sn,
+				y + real e.x1 * sn + real e.y1 * cs);
+			case e.kind {
+			0 =>
+				p2 := pt(o, x + real e.x2 * cs - real e.y2 * sn,
+					y + real e.x2 * sn + real e.y2 * cs);
+				img.line(p1, p2, Draw->Endsquare, Draw->Endsquare, 0, c, Point(0, 0));
+			1 =>
+				img.draw(Rect(p1, Point(p1.x + 1, p1.y + 1)), c, nil, Point(0, 0));
+			}
+		}
+		return;
+	}
+	# fallback if the sprite file is missing: plain shaft and head
+	tip := pt(o, x + 53.0 * cs, y + 53.0 * sn);
+	tail := pt(o, x, y);
+	img.line(tail, tip, Draw->Endsquare, Draw->Endsquare, 0, brown, Point(0, 0));
+}
+
+loadspr(path: string): array of Sprel
+{
+	if(bufio == nil)
+		return array[0] of Sprel;
+	b := bufio->open(path, Bufio->OREAD);
+	if(b == nil)
+		return array[0] of Sprel;
+	l: list of Sprel;
+	n := 0;
+	col := 0;
+	for(;;){
+		ln := b.gets('\n');
+		if(ln == nil)
+			break;
+		(nt, toks) := sys->tokenize(ln, " \t\n");
+		if(nt < 1)
+			continue;
+		case hd toks {
+		"color" =>
+			if(nt >= 2)
+				col = int hd tl toks;
+		"line" =>
+			if(nt >= 5){
+				t := tl toks;
+				e := Sprel(0, col, int hd t, int hd tl t,
+					int hd tl tl t, int hd tl tl tl t);
+				l = e :: l;
+				n++;
+			}
+		"pt" =>
+			if(nt >= 3){
+				t := tl toks;
+				e := Sprel(1, col, int hd t, int hd tl t, 0, 0);
+				l = e :: l;
+				n++;
+			}
+		}
+	}
+	a := array[n] of Sprel;
+	for(i := n - 1; i >= 0; i--){
+		a[i] = hd l;
+		l = tl l;
+	}
+	return a;
 }
 
 pt(o: Point, x, y: real): Point
