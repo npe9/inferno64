@@ -10,4 +10,4 @@ OFILES=allprint.$O\
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-c -D_RESEARCH_SOURCE
+CFLAGS=-c -D_RESEARCH_SOURCE $INCLUDES

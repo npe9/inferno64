@@ -1,5 +1,9 @@
 #!/bin/sh
 # 9front's mkfiles call yacc by the name it has on a 9front machine.
-# This tree's is iyacc.  scripts/mk9front.sh puts this directory first
-# on the path so those mkfiles need no editing.
-exec iyacc "$@"
+# The one that runs here is 9front's own, built for this machine by
+# 9front-glue/host/mkhost.sh: the parser it writes calls what 9front's
+# libc has, which this tree's iyacc does not -- iyacc's calls sprint,
+# and an APE program linked against libap has no sprint.
+# scripts/mk9front.sh puts 9front/host/bin on the path for it.
+: "${ROOT:?ROOT must be set}"
+exec "$ROOT/9front/host/bin/yacc" "$@"

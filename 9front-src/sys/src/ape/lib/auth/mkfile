@@ -28,7 +28,7 @@ HFILES=\
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-TVwc -D_POSIX_SOURCE -D_PLAN9_SOURCE -D_NET_EXTENSION -I. -I../9 -I$ROOT/9front-src/sys/src/libauth
+CFLAGS=-TVwc -D_POSIX_SOURCE -D_PLAN9_SOURCE -D_NET_EXTENSION -I. -I../9 -I$ROOT/9front-src/sys/src/libauth $INCLUDES
 
 %.$O:	$ROOT/9front-src/sys/src/libauth/%.c
 	$CC $CFLAGS $ROOT/9front-src/sys/src/libauth/$stem.c

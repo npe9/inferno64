@@ -1,0 +1,8 @@
+#!/bin/sh
+# A mkfile that builds something for the machine doing the building
+# names the compiler by the object suffix: $O^c, which is 6c for
+# amd64 and, for the host architecture this tree adds, oc.  jpg does
+# that for its table generator.  See 9front-glue/host/mkfile, where O
+# is o.
+: "${ROOT:?ROOT must be set}"
+exec "$ROOT/9front-glue/host/hostcc" "$@"

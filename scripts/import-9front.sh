@@ -21,6 +21,7 @@
 #
 # What is rewritten, and nothing else:
 #	$ROOT/			-> /		(see below)
+#	a line that is just "ROOT="	deleted	(see below)
 #	</$objtype/mkfile	-> <$ROOT/9front-src/$objtype/mkfile
 #	</sys/src/...		-> <$ROOT/9front-src/sys/src/...
 #	/$objtype/lib/		-> $ROOT/9front/$objtype/lib/
@@ -53,13 +54,24 @@
 # same thing this tree means by it, but pointing at a place that is
 # not where these libraries and binaries go.  So upstream's $ROOT is
 # taken off first, leaving the plain absolute path every other mkfile
-# writes, and the rules below then put it where it belongs.
+# writes, and the rules below then put it where it belongs.  Those
+# mkfiles also set ROOT to nothing, which here would undo the whole
+# arrangement, so that line goes as well.
 #
 # Usage: scripts/import-9front.sh [upstream-checkout]
 # With no argument it clones the pinned commit into a temporary
 # directory.  See doc/9front-userland.ms.
 
 set -eu
+
+#
+# Byte semantics, not character semantics: some of 9front's sources
+# are not UTF-8 (an ISO 8859 header among them) and sed under a UTF-8
+# locale stops at the first byte it cannot decode -- "RE error:
+# illegal byte sequence" -- taking the rest of the import with it.
+#
+LC_ALL=C
+export LC_ALL
 
 UPSTREAM_URL=https://github.com/9front/9front.git
 UPSTREAM_BRANCH=front
@@ -83,13 +95,18 @@ fi
 #   sys/src/cmd/gs	a bundled ghostscript, 31 MB, and nothing needs
 #			it to build a system
 #   lib, sys/lib	runtime data (fonts, ndb, troff tables), not
-#			source; a deployed root takes them from upstream
+#			source; a deployed root takes them from upstream.
+#			lib/ucd and sys/lib/yaccpar are the exceptions
+#			and do come across: libc generates its Unicode
+#			tables from one and every yacc grammar in the
+#			tree is built from the other, which makes them
+#			build inputs rather than data
 #
 echo "copying sources"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 ARCHS="amd64 386 arm arm64 mips power power64 sparc sparc64 spim 68000 68020"
-for d in sys/include $ARCHS rc adm lib/ucd; do
+for d in sys/include $ARCHS rc adm lib/ucd lib/keyboard sys/lib/yaccpar sys/lib/yaccpars; do
 	[ -e "$SRC/$d" ] || continue
 	mkdir -p "$DEST/$(dirname "$d")"
 	cp -R "$SRC/$d" "$DEST/$d"
@@ -104,11 +121,13 @@ for d in "$SRC"/sys/src/*; do
 done
 rm -rf "$DEST/sys/src/cmd/gs"
 
-echo "rewriting mkfile paths"
-find "$DEST" \( -name mkfile -o -name 'mkfile.*' -o -name mkone -o -name mkmany \
-	-o -name mklib -o -name mksyslib -o -name mktest -o -name mkproto \
-	-o -name config -o -name portmkfile -o -name mkupas \) \
-	-type f -print0 | xargs -0 /usr/bin/sed -i '' \
+#
+# The rewrite itself, as a function: the mkfiles get it, and so do the
+# handful of scripts a mkfile runs, which name the same paths.
+#
+rewrite1()
+{
+	/usr/bin/sed -i '' \
 	-e 's|\$ROOT/|/|g' \
 	-e 's|^< */\$objtype/mkfile|<$ROOT/9front-src/$objtype/mkfile|' \
 	-e 's|^< */sys/src/|<$ROOT/9front-src/sys/src/|' \
@@ -119,14 +138,20 @@ find "$DEST" \( -name mkfile -o -name 'mkfile.*' -o -name mkone -o -name mkmany 
 	-e 's|^/sys/include/|$ROOT/9front-src/sys/include/|g' \
 	-e 's|\([^-A-Za-z0-9_/]\)/sys/src/|\1$ROOT/9front-src/sys/src/|g' \
 	-e 's|/lib/ucd/|$ROOT/9front-src/lib/ucd/|g' \
+	-e 's|/lib/keyboard|$ROOT/9front-src/lib/keyboard|g' \
 	-e 's|/\$cputype/mkfile|$ROOT/9front-src/$cputype/mkfile|g' \
 	-e 's|-I/sys/src/|-I$ROOT/9front-src/sys/src/|g' \
+	-e 's|-I/sys/include/|-I$ROOT/9front-src/sys/include/|g' \
 	-e 's|-I/\$objtype/|-I$ROOT/9front-src/$objtype/|g' \
 	-e 's|\([^-A-Za-z0-9_/]\)/\$objtype/|\1$ROOT/9front/$objtype/|g' \
 	-e 's|^/\$objtype/|$ROOT/9front/$objtype/|g' \
 	-e 's|^CFLAGS=$|CFLAGS=$INCLUDES|' \
 	-e 's|^\(	*\)ar vu |\1$AR $ARFLAGS |' \
-	-e 's|^\(	*\)yacc |\1$YACC |'
+	-e 's|^\(	*\)yacc |\1$YACC |' \
+	-e 's|#!/bin/rc|#!/usr/bin/env rc|g' \
+	-e '/^ROOT=$/d' \
+		"$@"
+}
 
 #
 # The same files again, for the paths that do not go through a
@@ -139,15 +164,55 @@ find "$DEST" \( -name mkfile -o -name 'mkfile.*' -o -name mkone -o -name mkmany 
 # wants alternation, and a separate pass so the rules above keep
 # theirs.
 #
+# The rule before last is where a mkfile sets CFLAGS outright instead
+# of adding to it.  The per-architecture mkfile puts the headers on
+# the command line through CFLAGS, and a mkfile that overwrites it
+# takes them away again: postscript's p9bitpost says
+# "CFLAGS=-w -I../common" and then cannot find u.h.  On a 9front
+# machine the compiler knows where its own headers are and no -I is
+# needed, which is why upstream can write that.  Here the include
+# path is added back.  LDFLAGS is the same story: mkone clears it, and
+# the loader then has nowhere to look for the three audio libraries
+# and map's libmap.  Neither rule touches an assignment that runs on
+# to the next line: appending after the backslash ends the
+# continuation, and the syntax error that makes shows up two lines
+# later, where nothing looks wrong.
+#
+# The last rule is a namespace, not a path.  APE's libmp and libsec
+# are built from the sources of the ones beside them, and their
+# mkfiles work out which files the architecture has in assembly by
+# binding that architecture's directory into view and listing it.
+# There is no bind here.  The list is what is wanted, not the
+# namespace, so reduce -- the script that does the listing -- is
+# pointed straight at the directory instead.  Without this the C
+# versions of the routines the assembly also defines go into the
+# archive beside them and the archiver refuses the duplicate.
+#
 ARCHRE='386|amd64|arm|arm64|mips|power|power64|sparc|sparc64|spim|68000|68020'
+rewrite2()
+{
+	/usr/bin/sed -i '' -E \
+	-e "s%^< */($ARCHRE)/mkfile%<\$ROOT/9front-src/\1/mkfile%" \
+	-e "s%([^-A-Za-z0-9_/])/($ARCHRE)(/|\$)%\1\$ROOT/9front/\2\3%g" \
+	-e 's%([^-A-Za-z0-9_/])/(sys/lib|rc/bin|acme|lib/font|sys/doc)(/|$)%\1$ROOT/9front/\2\3%g' \
+	-e 's%^/(sys/lib|rc/bin|acme)/%$ROOT/9front/\1/%' \
+	-e 's%bind -a \.\./\.\./\.\./\.\./(libmp|libsec)/[$]objtype \.\./[$]objtype;%objtype=../../../\1/$objtype;%' \
+	-e '/^CFLAGS=[^\\]*$/{/[$](CFLAGS|INCLUDES)/!s/$/ $INCLUDES/;}' \
+	-e '/^LDFLAGS=[^\\]*$/{/[$]ROOT/!s%$% -L$ROOT/9front-src%;}' \
+		"$@"
+}
+
+echo "rewriting mkfile paths"
+mkfiles=$(mktemp)
 find "$DEST" \( -name mkfile -o -name 'mkfile.*' -o -name mkone -o -name mkmany \
 	-o -name mklib -o -name mksyslib -o -name mktest -o -name mkproto \
 	-o -name config -o -name portmkfile -o -name mkupas \) \
-	-type f -print0 | xargs -0 /usr/bin/sed -i '' -E \
-	-e "s%^< */($ARCHRE)/mkfile%<\$ROOT/9front-src/\1/mkfile%" \
-	-e "s%([^-A-Za-z0-9_/])/($ARCHRE)(/|\$)%\1\$ROOT/9front/\2\3%g" \
-	-e 's%([^-A-Za-z0-9_/])/(sys/lib|rc/bin|acme|lib/font|lib/keyboard|sys/doc)(/|$)%\1$ROOT/9front/\2\3%g' \
-	-e 's%^/(sys/lib|rc/bin|acme)/%$ROOT/9front/\1/%'
+	-type f -print > "$mkfiles"
+while IFS= read -r f; do
+	rewrite1 "$f"
+	rewrite2 "$f"
+done < "$mkfiles"
+rm -f "$mkfiles"
 
 #
 # The per-architecture mkfile is what every library and command mkfile
@@ -186,10 +251,11 @@ EOF
 		cat "$DEST/$a/mkfile"
 		cat <<'EOF'
 
-# this tree's archiver and yacc, not the host's
+# this tree's archiver, and 9front's own yacc built for this machine
+# (9front-glue/bin/yacc, first on the path, is what finds it)
 AR=iar
 ARFLAGS=vu
-YACC=iyacc
+YACC=yacc
 
 # 9front's own headers, and nothing from the Inferno side: a 9front
 # program sees the system it is being built for and no other.  The
@@ -197,6 +263,11 @@ YACC=iyacc
 # a header by what was an absolute path on a 9front machine.
 INCLUDES=-I$ROOT/9front-src/$objtype/include -I$ROOT/9front-src/sys/include -I$ROOT/9front-src
 CFLAGS=$CFLAGS $INCLUDES
+
+# where the loader looks for a library a #pragma names without a
+# path: the target tree for the system's own, and the source tree for
+# the three audio libraries that are built where they sit
+LDFLAGS=$LDFLAGS -L$ROOT/9front-src
 
 BIN=$ROOT/9front/$objtype/bin
 LIBDIR=$ROOT/9front/$objtype/lib
@@ -214,7 +285,8 @@ done
 # the tree unusable anywhere else.
 #
 echo "rewriting absolute includes in C sources"
-find "$DEST/sys/src" \( -name '*.c' -o -name '*.h' \) -type f -print0 \
+find "$DEST/sys/src" "$DEST/sys/include" "$DEST"/*/include \
+	\( -name '*.c' -o -name '*.h' \) -type f -print0 \
 	| xargs -0 grep -l '#include[ 	]*[<"]/' \
 	| while read -r f; do
 	/usr/bin/sed -i '' \
@@ -258,6 +330,63 @@ done
 # This is upstream's bug, not the import's; it is fixed here because
 # the tree under 9front-src is generated and no edit to it survives.
 #
+#
+# cpp is a host tool too, and the only one that is also built for
+# 9front: pcc pipes every APE source through it because neither
+# 9front's compiler nor this tree's understands "#if".  Its nlist.c
+# declares getopt, optarg and optind and then uses none of them --
+# 9front's libc has no getopt at all -- and on this build machine the
+# declaration collides with the one in the host's unistd.h, which
+# lib9.h has already pulled in.  Removing three declarations of things
+# nothing calls is safe for both targets.
+#
+#
+# APE's headers name the library that goes with them with
+#
+#	#pragma lib "/$M/lib/ape/libap.a"
+#
+# and the loader takes a name beginning with a slash as the path to
+# open, which on this machine is nothing.  The rest of 9front's
+# headers write the same pragma without a path -- "libdraw.a" -- and
+# the loader then looks through its library directories, which is
+# where these libraries are.  So the APE headers are made to say what
+# the others say.  This is what puts libap in the list the loader
+# rescans until nothing is undefined; a library named only as a file
+# on the command line is read once, before the loader has pulled in
+# the libc member that needs it.
+#
+echo "making the library pragmas searchable"
+find "$DEST/sys/include/ape" "$DEST"/*/include/ape -name '*.h' -type f -print0 2>/dev/null \
+	| xargs -0 /usr/bin/sed -i '' -E -e 's|^#pragma([[:space:]]+)lib([[:space:]]+)"/[$]M/lib/|#pragma\1lib\2"|'
+
+#
+# Three headers under sys/src do the same with a path of their own:
+# audio's ogg, vorbis and tags libraries are built where they sit and
+# say so.  The leading slash comes off those too, and the loader finds
+# them because the per-architecture mkfile and pcc both give it
+# -L$ROOT/9front-src to look under.
+#
+find "$DEST/sys/src" -name '*.h' -type f -print0 \
+	| xargs -0 /usr/bin/sed -i '' -E -e 's|^#pragma([[:space:]]+)lib([[:space:]]+)"/sys/src/|#pragma\1lib\2"sys/src/|'
+
+#
+# yacc names its parser skeleton by the path it has on a 9front
+# machine.  The host build needs to say where the imported copy is,
+# and cannot, because the define is unconditional.  Guarding it
+# changes nothing for 9front and lets -DPARSER through here.
+#
+echo "letting yacc's skeleton path be overridden"
+/usr/bin/sed -i '' -E \
+	-e 's|^#define[[:space:]]+(PARSERS?)[[:space:]]+("/sys/lib/yaccpars?")$|#ifndef \1\'$'\n''#define \1 \2\'$'\n''#endif|' \
+	"$DEST/sys/src/cmd/yacc.c"
+
+echo "removing cpp's unused getopt declaration"
+/usr/bin/sed -i '' \
+	-e '/^extern	int getopt(int, char \*\*, char \*);$/d' \
+	-e '/^extern	char	\*optarg;$/d' \
+	-e '/^extern	int	optind;$/d' \
+	"$DEST/sys/src/cmd/cpp/nlist.c"
+
 echo "fixing host-tool main() signatures"
 for f in "$DEST/sys/src/libc/ucd/mkrunetype.c"; do
 	[ -f "$f" ] || continue
@@ -266,13 +395,6 @@ for f in "$DEST/sys/src/libc/ucd/mkrunetype.c"; do
 		-e 's|r1 = mydecomp\[x\]>>16|r1 = (uint)mydecomp[x]>>16|' "$f"
 done
 
-#
-# The tree-wide .gitignore treats a one-letter suffix as compiler
-# output and *.patch as a patch someone left lying about.  Under two
-# of 9front's test directories they are neither -- they are the input
-# and the expected output of the tests -- and an import that quietly
-# dropped them would leave a tree that does not match upstream.
-#
 #
 # $cputype names the architecture the build machine runs, and a
 # mkfile reaches for it when it needs a tool that runs here rather
@@ -285,20 +407,78 @@ mkdir -p "$DEST/host"
 cp "$PWD/9front-glue/host/mkfile" "$DEST/host/mkfile"
 
 #
-# An awk script that the build runs starts "#!/bin/awk -f", which is
-# where awk is on a 9front machine and not where it is here.  These
-# are generators -- they make a table from a header and are never
-# installed -- so the line is pointed at the awk this machine has.
-# Nothing else's first line is touched.
+# A script the build runs starts "#!/bin/rc" or "#!/bin/awk -f",
+# which is where those are on a 9front machine and not where they are
+# here.  Only the ones a mkfile actually executes are changed, and
+# they are found by looking: a recipe line that runs "./something" in
+# the directory it is in.  That leaves alone the hundred-odd rc
+# scripts under sys/src that are installed rather than run -- awk's
+# tests, the auth commands -- whose first line has to stay what a
+# 9front machine will read.
 #
-find "$DEST/sys/src" -name '*.awk' -type f -print0 | xargs -0 /usr/bin/sed -i '' \
-	-e '1s|^#!/bin/awk|#!/usr/bin/awk|'
+# rc goes to /usr/bin/env, so it finds the shim in 9front-glue/bin
+# rather than a plan9port rc straight; awk goes to where the host
+# keeps its own.
+#
+echo "pointing the scripts the build runs at this machine's shells"
+find "$DEST" -name mkfile -type f | while read -r mf; do
+	d=$(dirname "$mf")
+	/usr/bin/sed -n 's|.*\./\([A-Za-z0-9_][A-Za-z0-9_.-]*\).*|\1|p' "$mf" | sort -u |
+	while read -r prog; do
+		f=$d/$prog
+		[ -f "$f" ] || continue
+		case $(head -1 "$f") in
+		'#!/bin/rc'*)	/usr/bin/sed -i '' -e '1s|^#!/bin/rc|#!/usr/bin/env rc|' "$f"
+				# and the paths in it, which are the same
+				# paths the mkfiles name
+				rewrite1 "$f"
+				rewrite2 "$f";;
+		'#!/bin/awk'*)	/usr/bin/sed -i '' -e '1s|^#!/bin/awk|#!/usr/bin/awk|' "$f";;
+		esac
+	done
+done
 
 cat > "$DEST/.gitignore" <<'EOF'
 # written by scripts/import-9front.sh; see the note there
+
+# mkone and mkmany link the program as $O.name in the directory it is
+# built in and leave it there after installing it, so a build dirties
+# the imported tree.  $O is a single character -- 6 for amd64, 8 for
+# 386, and so on down the list in the arch mkfiles -- which means the
+# pattern also matches upstream source: libmach/6.c, cmd/6c/6.out.h.
+# The negations put those back.  A host tool built by 9front-glue's
+# hostcc is named for $cputype, which the build sets to "host".
+[01256789kquv].*
+![01256789kquv].c
+![01256789kquv].h
+![01256789kquv].out.h
+*.host
+
+# The tree-wide .gitignore treats a one-letter suffix as compiler
+# output and *.patch as a patch someone left lying about.  Under two
+# of 9front's test directories they are neither -- they are the input
+# and the expected output of the tests -- and an import that quietly
+# dropped them would leave a tree that does not match upstream.
 !sys/src/cmd/awk/test/*
 !sys/src/cmd/test/patch/*.patch
 EOF
+
+#
+# Nothing under $DEST is written by hand and nothing there is built,
+# so immediately after an import every file in it came from upstream
+# and none of them may be ignored.  An ignore rule that reaches too
+# far -- mine above, or one added to the tree-wide .gitignore later --
+# silently drops upstream files, which is how twenty of awk's test
+# files went missing once.  Check rather than trust.
+#
+if git -C "$PWD" rev-parse --git-dir >/dev/null 2>&1; then
+	swallowed=$(git -C "$PWD" ls-files --others --ignored --exclude-standard -- 9front-src)
+	if [ -n "$swallowed" ]; then
+		echo "error: .gitignore swallows imported files:" >&2
+		echo "$swallowed" >&2
+		exit 1
+	fi
+fi
 
 cat > "$DEST/MANIFEST" <<EOF
 upstream	$UPSTREAM_URL

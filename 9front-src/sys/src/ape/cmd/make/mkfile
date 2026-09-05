@@ -16,7 +16,7 @@ YFILES=gram.y
 BIN=$APEBIN
 <$ROOT/9front-src/sys/src/cmd/mkone
 
-CFLAGS=-c -DSHELLCOM'="/bin/sh"'
+CFLAGS=-c -DSHELLCOM'="/bin/sh"' $INCLUDES
 YFLAGS=-S
 
 gram.c:	y.tab.c

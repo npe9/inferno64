@@ -2,7 +2,7 @@
 
 TARG=antiword
 
-CFLAGS=-Bp -I/sys/include/ape -I$ROOT/9front-src/$objtype/include/ape -DNDEBUG -D_POSIX_SOURCE -D__Plan9__
+CFLAGS=-Bp -I$ROOT/9front-src/sys/include/ape -I$ROOT/9front-src/$objtype/include/ape -DNDEBUG -D_POSIX_SOURCE -D__Plan9__ $INCLUDES
 
 TARG=antiword
 OFILES= main_u.$O asc85enc.$O blocklist.$O chartrans.$O datalist.$O depot.$O\

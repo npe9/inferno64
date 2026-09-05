@@ -5,7 +5,6 @@ MAKE=mk
 SYSTEM=plan9
 VERSION=3.3.1
 
-ROOT=
 MAN1DIR=/tmp
 POSTBIN=$ROOT/9front/sys/lib/postscript/bin
 
@@ -14,8 +13,8 @@ COMMONDIR=../common
 CC=pcc
 LD=pcc
 
-CFLAGS=-c -D$SYSTEM -D_POSIX_SOURCE -I$COMMONDIR -B
-LDFLAGS=
+CFLAGS=-c -D$SYSTEM -D_POSIX_SOURCE -I$COMMONDIR -B $INCLUDES
+LDFLAGS= -L$ROOT/9front-src
 
 all :V: $O.out
 

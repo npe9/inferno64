@@ -1,7 +1,6 @@
 SYSTEM=plan9
 VERSION=3.3.1
 
-ROOT=
 POSTBIN=$ROOT/9front/$objtype/bin/aux
 DKHOST=FALSE
 DKSTREAMS=FALSE

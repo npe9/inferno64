@@ -11,8 +11,12 @@
 #define SETBIT(a,i)	((a)[(i)>>5] |= (1<<((i)&037)))
 #define NWORDS(n)	(((n)+32)/32)
 
-#define PARSER		"/sys/lib/yaccpar"
-#define PARSERS		"/sys/lib/yaccpars"
+#ifndef PARSER
+#define PARSER "/sys/lib/yaccpar"
+#endif
+#ifndef PARSERS
+#define PARSERS "/sys/lib/yaccpars"
+#endif
 #define TEMPNAME	"y.tmp.XXXXXX"
 #define ACTNAME		"y.acts.XXXXXX"
 #define OFILE		"tab.c"

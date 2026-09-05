@@ -14,4 +14,4 @@ BIN=$POSTBIN
 LIB=$ROOT/9front/$objtype/lib/libmemdraw.a
 <$ROOT/9front-src/sys/src/cmd/mkone
 
-CFLAGS=-w -I$COMMONDIR
+CFLAGS=-w -I$COMMONDIR $INCLUDES

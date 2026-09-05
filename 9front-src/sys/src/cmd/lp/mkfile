@@ -11,7 +11,7 @@ HFILES=
 
 BIN=$ROOT/9front/$objtype/bin/aux
 <$ROOT/9front-src/sys/src/cmd/mkmany
-CFLAGS=-Dplan9
+CFLAGS=-Dplan9 $INCLUDES
 
 installall:V:	$ROOT/9front/sys/lib/lp/bin/lpsend.rc
 

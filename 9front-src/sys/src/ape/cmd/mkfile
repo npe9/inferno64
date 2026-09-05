@@ -15,7 +15,7 @@ DIRS=\
 BIN=$APEBIN
 <$ROOT/9front-src/sys/src/cmd/mkmany
 
-CFLAGS=-c -D_POSIX_SOURCE
+CFLAGS=-c -D_POSIX_SOURCE $INCLUDES
 
 all:V:	$DIRS
 

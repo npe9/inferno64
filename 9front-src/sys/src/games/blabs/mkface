@@ -1,4 +1,4 @@
-#!/bin/rc
+#!/usr/bin/env rc
 
 fn unhex {
 	tr '	' ' ' | sed 's/0x//g;s/[, ]//g;s/../0x&, /g;s/^/	/'

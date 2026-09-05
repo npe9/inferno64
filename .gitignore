@@ -111,6 +111,7 @@ y.debug
 /9front/include/
 /9front/host/
 /9front/sweep/
+/9front/dirs.*
 /9front/sys/
 /9front/rc/
 /9front/lib/

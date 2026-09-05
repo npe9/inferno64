@@ -47,14 +47,14 @@ ALLOFILES=${CFILES:%.c=%.$O}
 
 # cull things in the per-machine directories from this list
 OFILES=	`{rfork n; \
-	bind -a ../../../../libsec/$objtype ../$objtype; \
+	objtype=../../../libsec/$objtype; \
 	rc ../../../../libsec/port/reduce $O $objtype $ALLOFILES}
 
 HFILES=$ROOT/9front-src/sys/include/ape/libsec.h
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-TVwc -+ -D_POSIX_SOURCE -D_PLAN9_SOURCE -I. -I../../9 -I../../../../libmp/port
+CFLAGS=-TVwc -+ -D_POSIX_SOURCE -D_PLAN9_SOURCE -I. -I../../9 -I../../../../libmp/port $INCLUDES
 
 ../../../../libsec/port/%.c:D:	../../../../libsec/port/%.mp
 	@{cd ../../../../libsec/port && mk $stem.c}

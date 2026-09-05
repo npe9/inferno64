@@ -10,7 +10,7 @@ BIN=$POSTBIN
 
 <$ROOT/9front-src/sys/src/cmd/mkone
 CC=pcc
-CFLAGS=-Bw -c -D_BSD_EXTENSION -D_NET_EXTENSION -Dplan9
+CFLAGS=-Bw -c -D_BSD_EXTENSION -D_NET_EXTENSION -Dplan9 $INCLUDES
 
 syms:V:
 	vc $CFLAGS -a tcpostio.c > syms

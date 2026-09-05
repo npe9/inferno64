@@ -10,4 +10,4 @@ BIN=$APEBIN
 <$ROOT/9front-src/sys/src/cmd/mkone
 
 YFLAGS=-S
-CFLAGS=-B -c
+CFLAGS=-B -c $INCLUDES

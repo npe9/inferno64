@@ -42,7 +42,7 @@ rc.jis:VQD:
 	awk 'BEGIN {
 		fontsize = 512		# set this to chars/subfont
 		dest = "$ROOT/9front/lib/font/bit/jis"
-		print "#!/bin/rc"
+		print "#!/usr/bin/env rc"
 		printf "v.out -s 0x3000 0x303f > %s/jis3000.16\n", dest
 		printf "v.out -s 0x30a1 0x30fe > %s/katakana.16\n", dest
 		printf "v.out -s 0x3041 0x309e > %s/hiragana.16\n", dest
@@ -61,7 +61,7 @@ rc.big5:VQD:
 	awk 'BEGIN {
 		fontsize = 512		# set this to chars/subfont
 		dest = "$ROOT/9front/lib/font/bit/big5"
-		print "#!/bin/rc"
+		print "#!/usr/bin/env rc"
 		for(i = 19968; i < 40869; i += fontsize)
 			printf "v.out -5 -s 0x%x 0x%x > %s/%x.16\n", i, i+fontsize-1, dest, i
 		exit
@@ -78,7 +78,7 @@ rc.gb:VQD:
 		dest = "$ROOT/9front/lib/font/bit/gb/'$"x'."
 		opt = "'$"y'"
 		sz = "'$"z'"
-		print "#!/bin/rc"
+		print "#!/usr/bin/env rc"
 		printf "v.out %s 0x3000 0x303f > %s3000.%s\n", opt, dest, sz
 		printf "v.out %s 0x30a1 0x30fe > %skatakana.%s\n", opt, dest, sz
 		printf "v.out %s 0x3041 0x309e > %shiragana.%s\n", opt, dest, sz

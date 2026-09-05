@@ -17,6 +17,25 @@
 # rather than the 9front libmp being built for amd64, which is not
 # code this machine can run.
 #
+# yacc is a third.  The parser this tree's iyacc writes calls sprint,
+# which Plan 9's libc has and APE's libap does not, so an APE program
+# with a grammar in it -- eqn, pic, grap, spin -- does not link.
+# 9front's own yacc writes a parser against 9front's libc, which is
+# the one being built here, so that is the yacc to run.  It needs its
+# skeleton, which is why the import brings sys/lib/yaccpar across, and
+# one function this tree's Bio has not got; see Blethal in hostsupp.c.
+#
+# cpp is the other.  APE's headers begin
+#
+#	#if !defined(_RESEARCH_SOURCE) && !defined(_PLAN9_SOURCE)
+#
+# and neither 9front's compiler nor this tree's understands "#if" --
+# which is why 9front's pcc pipes every APE source through the
+# standalone cpp rather than handing it to the compiler.  So the same
+# is needed here, running on this machine.  Its one Plan 9 system call
+# is dup(old, new); 9front-glue/host/include/unistd.h is where that is
+# made to mean what it means on Plan 9.
+#
 # ROOT must be set.  Called by scripts/mk9front.sh; a tool is rebuilt
 # only when its source is newer.
 
@@ -38,4 +57,29 @@ if [ ! -x "$bin/mpc" ] || [ "$src" -nt "$bin/mpc" ] \
 		-I"$ROOT/9front-glue/host/include" -I"$host/include" -I"$ROOT/include" \
 		-o "$bin/mpc" "$obj/mpc.c" "$ROOT/9front-glue/host/hostsupp.c" \
 		"$host/lib/libmp.a" "$host/lib/libbio.a" "$host/lib/lib9.a"
+fi
+
+src=$ROOT/9front-src/sys/src/cmd/yacc.c
+if [ ! -x "$bin/yacc" ] || [ "$src" -nt "$bin/yacc" ] \
+   || [ "$ROOT/9front-glue/host/hostsupp.c" -nt "$bin/yacc" ]; then
+	echo "mkhost: yacc"
+	"$ROOT/9front-glue/host/hostcc" \
+		-DPARSER="\"$ROOT/9front-src/sys/lib/yaccpar\"" \
+		-DPARSERS="\"$ROOT/9front-src/sys/lib/yaccpars\"" \
+		-o "$obj/yacc.o" "$src"
+	"$ROOT/9front-glue/host/hostld" -o "$bin/yacc" "$obj/yacc.o"
+fi
+
+cppdir=$ROOT/9front-src/sys/src/cmd/cpp
+newest=$(/usr/bin/find "$cppdir" -name '*.[ch]' -newer "$bin/cpp" -print 2>/dev/null | head -1)
+if [ ! -x "$bin/cpp" ] || [ -n "$newest" ]; then
+	echo "mkhost: cpp"
+	objs=
+	for f in cpp lex nlist tokens macro eval include hideset; do
+		"$ROOT/9front-glue/host/hostcc" \
+			-o "$obj/cpp-$f.o" "$cppdir/$f.c"
+		objs="$objs $obj/cpp-$f.o"
+	done
+	# shellcheck disable=SC2086
+	"$ROOT/9front-glue/host/hostld" -o "$bin/cpp" $objs
 fi

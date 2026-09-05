@@ -10,7 +10,7 @@ install:V: genall gencall
 # we're in $ROOT/9front-src/sys/src/ape/lib/ap/syscall.
 gencall:D: ../../../../libc/9syscall/mkfile	# $ROOT/9front-src/sys/src/libc/9syscall/mkfile
 	{
-		echo '#!/bin/rc'
+		echo '#!/usr/bin/env rc'
 		sed -n -e 's/seek/_SEEK/g' -e '/switch/,/\$AS /p' $prereq
 	} >$target
 	chmod +x $target

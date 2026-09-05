@@ -6,7 +6,6 @@ MAKEFILE=postscript.mk
 SYSTEM=plan9
 VERSION=3.3.1
 
-ROOT=
 FONTDIR=$ROOT/9front/sys/lib/troff/font
 MAN1DIR=/tmp
 POSTBIN=$ROOT/9front/sys/lib/postscript/bin

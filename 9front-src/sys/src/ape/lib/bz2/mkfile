@@ -25,7 +25,7 @@ HFILES=\
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-c -D_POSIX_SOURCE
+CFLAGS=-c -D_POSIX_SOURCE $INCLUDES
 
 %.$O: $ROOT/9front-src/sys/src/cmd/bzip2/lib/%.c
 	$CC $CFLAGS $ROOT/9front-src/sys/src/cmd/bzip2/lib/$stem.c

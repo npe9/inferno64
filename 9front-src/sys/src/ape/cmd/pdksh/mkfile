@@ -35,7 +35,7 @@ LIB=$ROOT/9front/$objtype/lib/ape/libap.a $ROOT/9front/$objtype/lib/ape/libbsd.a
 <$ROOT/9front-src/sys/src/cmd/mkone
 
 CC=pcc
-CFLAGS=-I. -DHAVE_CONFIG_H -c
+CFLAGS=-I. -DHAVE_CONFIG_H -c $INCLUDES
 
 $O.out: $OFILES $LIB
 	$LD -o $target $prereq

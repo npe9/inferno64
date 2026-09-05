@@ -55,15 +55,35 @@ export ccroot
 cputype=host
 export cputype
 
+# the preprocessor 6c runs for -p.  A few mkfiles ask for it -- audio
+# and bzip2 among them -- and what they want is an ANSI cpp, which on
+# a 9front machine is /bin/cpp.  Here it is the one built above.
+CPP=$ROOT/9front/host/bin/cpp
+export CPP
+
 mkdir -p "$ROOT/9front/$objtype/lib" "$ROOT/9front/$objtype/bin"
 
 # A 9front machine already has /$objtype/bin/aux and its dozen
-# siblings; here the target tree starts empty and cp into a directory
-# that is not there fails.  The list is the tree's own: every BIN a
-# mkfile sets under the target root.
-/usr/bin/grep -rh '^BIN=\$ROOT/9front/' "$ROOT/9front-src/sys/src" --include=mkfile 2>/dev/null \
-	| /usr/bin/sed -e 's/^BIN=//' -e "s|[\$]objtype|$objtype|g" -e "s|[\$]ROOT|$ROOT|" \
-	| sort -u | while read -r d; do mkdir -p "$d"; done
+# siblings, and /sys/lib/postscript, and the rest of what an
+# installation has; here the target tree starts empty and a cp into a
+# directory that is not there fails.  The list is the tree's own:
+# every BIN, LIB or DIR that a mkfile -- or one of the three config
+# files beside a mkfile -- points at the target root.  A library
+# archive is named the same way and is a file, so anything ending in
+# .a is left out.
+# The list is cached: working it out means reading every mkfile in the
+# tree, and this script runs once per directory built.  The import
+# writes 9front-src/MANIFEST last, so a cache newer than that is
+# current.
+dirlist=$ROOT/9front/dirs.$objtype
+if [ ! -f "$dirlist" ] || [ "$ROOT/9front-src/MANIFEST" -nt "$dirlist" ]; then
+	/usr/bin/grep -rhE '^[A-Z0-9_]*(BIN|LIB|DIR)=\$ROOT/9front/' "$ROOT/9front-src/sys/src" \
+		--include=mkfile --include=config 2>/dev/null \
+		| /usr/bin/sed -e 's/^[A-Z0-9_]*=//' -e "s|[\$]objtype|$objtype|g" -e "s|[\$]ROOT|$ROOT|" \
+		| /usr/bin/grep -v '\.a$' \
+		| sort -u > "$dirlist"
+fi
+while read -r d; do mkdir -p "$d"; done < "$dirlist"
 
 dir=${1:-9front-src/sys/src}
 shift || true

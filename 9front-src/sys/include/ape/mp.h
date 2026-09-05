@@ -6,7 +6,7 @@
 #define __LIBMP_H_
 
 #pragma	src	"/sys/src/ape/lib/mp"
-#pragma	lib	"/$M/lib/ape/libmp.a"
+#pragma	lib	"ape/libmp.a"
 
 #include <u.h>
 #include <fmt.h>

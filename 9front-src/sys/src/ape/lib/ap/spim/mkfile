@@ -43,5 +43,5 @@ MIPSC=`{echo $MIPSCFILES | sed 's/\.c//g; s/ /|/g'}
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-c -D_POSIX_SOURCE -D_PLAN9_SOURCE
+CFLAGS=-c -D_POSIX_SOURCE -D_PLAN9_SOURCE $INCLUDES
 

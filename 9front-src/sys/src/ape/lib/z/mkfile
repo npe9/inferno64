@@ -29,7 +29,7 @@ CLEANFILES=$TOOLS
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-c -D_POSIX_SOURCE -D_C99_SNPRINTF_EXTENSION
+CFLAGS=-c -D_POSIX_SOURCE -D_C99_SNPRINTF_EXTENSION $INCLUDES
 
 %.$O: $ROOT/9front-src/sys/src/cmd/gs/zlib/%.c
 	$CC $CFLAGS $ROOT/9front-src/sys/src/cmd/gs/zlib/$stem.c

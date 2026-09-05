@@ -27,7 +27,7 @@ BIN=$ROOT/9front/$objtype/bin
 <$ROOT/9front-src/sys/src/cmd/mkone
 CC=pcc
 LD=pcc
-CFLAGS=-c
+CFLAGS=-c $INCLUDES
 YFLAGS=-S -d
 
 picy.c:	y.tab.c

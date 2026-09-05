@@ -317,7 +317,13 @@ brk:
 		break;
 
 	case OCAST:
-		if(l->type->etype == TUVLONG && typefd[n->type->etype])
+		/*
+		 * a cast with no operand -- (void)f() among others --
+		 * reaches here with l nil, and dereferencing it is a
+		 * crash with no diagnostic at all.  9front's own 6c
+		 * has this guard; this one did not.
+		 */
+		if(l != Z && l->type->etype == TUVLONG && typefd[n->type->etype])
 			n->complex += 2;
 		break;
 

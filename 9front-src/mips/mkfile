@@ -25,10 +25,11 @@ LD=vl
 O=v
 AS=va
 
-# this tree's archiver and yacc, not the host's
+# this tree's archiver, and 9front's own yacc built for this machine
+# (9front-glue/bin/yacc, first on the path, is what finds it)
 AR=iar
 ARFLAGS=vu
-YACC=iyacc
+YACC=yacc
 
 # 9front's own headers, and nothing from the Inferno side: a 9front
 # program sees the system it is being built for and no other.  The
@@ -36,6 +37,11 @@ YACC=iyacc
 # a header by what was an absolute path on a 9front machine.
 INCLUDES=-I$ROOT/9front-src/$objtype/include -I$ROOT/9front-src/sys/include -I$ROOT/9front-src
 CFLAGS=$CFLAGS $INCLUDES
+
+# where the loader looks for a library a #pragma names without a
+# path: the target tree for the system's own, and the source tree for
+# the three audio libraries that are built where they sit
+LDFLAGS=$LDFLAGS -L$ROOT/9front-src
 
 BIN=$ROOT/9front/$objtype/bin
 LIBDIR=$ROOT/9front/$objtype/lib

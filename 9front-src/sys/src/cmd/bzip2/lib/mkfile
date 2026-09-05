@@ -28,7 +28,7 @@ HFILES=\
 LIB=libbzip2.a$O
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-FV -p -DPLAN9
+CFLAGS=-FV -p -DPLAN9 $INCLUDES
 
 clean:V:
 	rm -f *.[$OS] [$OS].out libbzip2.a[$OS]

@@ -4,7 +4,7 @@
 TARGET=oggenc
 
 CC=pcc
-CFLAGS=-I../libvorbis -I../libogg
+CFLAGS=-I../libvorbis -I../libogg $INCLUDES
 
 %.$O: %.c
 	$CC $CFLAGS -c $stem.c

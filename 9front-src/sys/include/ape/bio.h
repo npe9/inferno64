@@ -5,7 +5,7 @@
 #ifndef __BIO_H_
 #define __BIO_H_
 #pragma	src	"/sys/src/libbio"
-#pragma	lib	"/$M/lib/ape/libbio.a"
+#pragma	lib	"ape/libbio.a"
 
 #include <u.h>
 

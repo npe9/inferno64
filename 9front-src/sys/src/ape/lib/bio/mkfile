@@ -26,7 +26,7 @@ HFILES=$ROOT/9front-src/sys/include/ape/bio.h
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-TVwc -D_PLAN9_SOURCE -D_POSIX_SOURCE -I. -I../9
+CFLAGS=-TVwc -D_PLAN9_SOURCE -D_POSIX_SOURCE -I. -I../9 $INCLUDES
 
 %.$O:	$ROOT/9front-src/sys/src/libbio/%.c
 	$CC $CFLAGS $ROOT/9front-src/sys/src/libbio/$stem.c

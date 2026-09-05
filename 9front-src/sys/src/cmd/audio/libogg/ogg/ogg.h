@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#pragma lib "/sys/src/cmd/audio/libogg/libogg.a$O"
+#pragma lib "sys/src/cmd/audio/libogg/libogg.a$O"
 
 #include <stddef.h>
 #include <ogg/os_types.h>

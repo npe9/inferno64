@@ -12,5 +12,5 @@ CLEANFILES=latin1.h mklatin.$cputype
 mklatin.$cputype:	mkfile.mklatin
 	@{objtype=$cputype mk -f $prereq $target}
 
-latin1.h:D:	mklatin.$cputype $ROOT/9front/lib/keyboard
-	./mklatin.$cputype /lib/keyboard >$target
+latin1.h:D:	mklatin.$cputype $ROOT/9front-src/lib/keyboard
+	./mklatin.$cputype $ROOT/9front-src/lib/keyboard >$target

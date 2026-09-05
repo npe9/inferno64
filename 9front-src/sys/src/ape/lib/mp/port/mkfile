@@ -50,7 +50,7 @@ ALLOFILES=${FILES:%=%.$O}
 # cull things in the per-machine directories from this list
 OFILES=	`{rfork en; \
 	if(~ $objtype spim) objtype=mips; \
-	bind -a ../../../../libmp/$objtype ../$objtype; \
+	objtype=../../../libmp/$objtype; \
 	rc ../../../../libmp/port/reduce $O $objtype $ALLOFILES}
 
 HFILES=\
@@ -61,7 +61,7 @@ CFILES=${FILES:%=%.c}
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-TVwc -+ -D_POSIX_SOURCE -D_PLAN9_SOURCE -I. -I../../9
+CFLAGS=-TVwc -+ -D_POSIX_SOURCE -D_PLAN9_SOURCE -I. -I../../9 $INCLUDES
 
 %.$O:	../../../../libmp/port/%.c
 	$CC $CFLAGS ../../../../libmp/port/$stem.c

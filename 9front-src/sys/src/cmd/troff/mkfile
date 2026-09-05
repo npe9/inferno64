@@ -30,7 +30,7 @@ HFILES=tdef.h\
 
 BIN=$ROOT/9front/$objtype/bin
 <$ROOT/9front-src/sys/src/cmd/mkone
-CFLAGS=-FTVw -DUNICODE
+CFLAGS=-FTVw -DUNICODE $INCLUDES
 
 TMACDIR='"sys/lib/tmac/tmac."'
 FONTDIR="sys/lib/troff/font"

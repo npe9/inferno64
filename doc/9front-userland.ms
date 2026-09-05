@@ -45,7 +45,8 @@ and its relatives, libraries and binaries install to
 .CW /$objtype/lib
 and
 .CW /$objtype/bin ,
-and twenty-two C files name a header by absolute path \(em libmach
+and thirty-five C sources and headers name an include by absolute
+path \(em libmach
 reads every architecture's
 .CW ureg.h
 and every loader's object format that way.  None of that resolves
@@ -238,23 +239,42 @@ sources, and
 .CW libmach ,
 which needed binary literals in the compiler.
 .PP
+Sixteen of the seventeen APE libraries, which is all of them that
+have sources here; see below.
+.PP
 Of the command directories under
 .CW sys/src/cmd ,
-112 of 134 build and install; 513 programs are in
-.CW 9front/amd64/bin
-after a sweep.  That is what is present in the target tree, not a
-count of what one run compiled: the tree accumulates, and a program
-that built yesterday and fails today is still sitting in it.
+126 of 134 build and install, and 559 programs end up in
+.CW 9front/amd64/bin .
+That directory was emptied before the run, so the number is what this
+toolchain built, not what has accumulated in it.  The count is from
+the run before the last two rewrite rules landed \(em the
+.CW -I/sys/include/ape
+and
+.CW lib/keyboard
+ones below \(em and it has not been taken again since.  The only
+directory those rules touch is
+.CW aux ,
+which still fails for the reason named below, so 126 and 8 are
+unchanged by them.
 .CW scripts/sweep9front.sh
-is what produces the number, and it builds each directory on its own
-rather than stopping at the first failure the way
+produces it, and it builds each directory on its own rather than
+stopping at the first failure the way
 .CW mk install
-does, which is the only way to see what is actually missing.
+does, which is the only way to see what is actually missing.  It
+builds them in name order and independently, so a directory that
+needs a library another one builds can fail on order alone:
+.CW bzfs
+wants
+.CW bzip2 's,
+and comes first.
 .NH 1
-Five bugs in this tree's tools, found by building 9front with them
+Bugs in this tree's tools, found by building 9front with them
 .PP
 None of these are 9front's.  They are in
-.CW utils ,
+.CW utils
+and in the host
+.CW lib9 ,
 they are all old, and each one had been sitting under some program
 this tree has never compiled.
 .IP \(bu
@@ -342,6 +362,43 @@ is run as
 .CW "rc mkcname" .
 .CW 9front-glue/bin/rc
 gives the name a directory and passes it on.
+.IP \(bu
+.CW utils/6c 's
+.CW xcom
+dereferences the left operand of an
+.CW OCAST
+without checking whether there is one.  A cast with no operand \(em
+.CW (void)f()
+among others \(em reaches it with that pointer nil and the compiler
+dies of a bad address, silently, with no diagnostic and no line
+number.  9front's own
+.CW 6c
+has the guard and this one did not; the source that found it was
+.CW libdraw/subfont.c ,
+compiled for APE.
+.IP \(bu
+.CW lib9 's
+.CW runetype.c
+declares
+.CW _runebsearch
+at the top and defines it nowhere.  Every Unicode predicate in the
+library \(em
+.CW isalpharune ,
+.CW isspacerune ,
+.CW tolowerrune
+and the rest \(em calls it, so every one of them has been an
+undefined symbol for as long as the file has existed.  Nothing in the
+tree had ever called one from a host tool.  The search is written out
+now, and
+.CW lib9/runetest.c
+checks it against answers that do not depend on the tables: ASCII,
+Greek, Cyrillic, a Latin-1 accented letter, an em space and an
+Arabic-Indic digit, through both the pairs the predicates index and
+the triples the case conversions do.
+.CW "mk runetest"
+in
+.CW lib9
+runs it.
 .NH 1
 A bug in 9front, found the same way
 .PP
@@ -388,53 +445,151 @@ which this machine cannot run.  What is verified is that the generator
 runs, terminates and writes four tables, and that what links against
 them works.
 .NH 1
-What does not build yet
+APE
 .PP
-Twenty-two of the 134 command directories.  They fall into four
-groups.
-.IP \(bu
-APE, the ANSI/POSIX environment:
+APE is 9front's ANSI/POSIX environment: a second set of headers and a
+second libc, which a dozen commands are written against \(em
+.CW compress ,
+the troff preprocessors,
+.CW spin .
+Their mkfiles set
+.CW CC=pcc
+and
+.CW LD=pcc ,
+and 9front's
+.CW pcc
+is a program that runs on 9front.
+.CW 9front-glue/bin/pcc
+is that driver written for this machine: it does what
+.CW sys/src/cmd/pcc.c
+does, running the source through
+.CW cpp
+and then the compiler, and linking against
+.CW ape/libap.a .
+Sixteen of the seventeen APE libraries build, and with them
 .CW compress ,
 .CW eqn ,
 .CW grap ,
 .CW pic ,
 .CW spin
-and parts of
-.CW aux
 and
-.CW lp
-are written against it, their mkfiles set
-.CW CC=pcc ,
-and 9front's
+.CW lp .
+.CW libz
+does not build, and cannot: upstream ships its mkfile and a proto
+file and no zlib sources, so it does not build on a 9front machine
+either.
+.PP
+Four things had to be true before any of that worked, and each was
+its own small discovery.
+.IP \(bu
+The
+.CW cpp
+is real, not the compiler's own.  APE's headers open with
+.CW "#if !defined(_RESEARCH_SOURCE) && !defined(_PLAN9_SOURCE)"
+and neither 9front's compiler nor this tree's understands
+.CW #if
+at all.  That is why 9front's pcc pipes through cpp rather than
+handing the source to the compiler, and it is not a nicety.
+.CW 9front-glue/host/mkhost.sh
+builds
+.CW sys/src/cmd/cpp
+for this machine.
+.IP \(bu
+That cpp crashed on every source it was given.  It calls
+.CW ctime(time(0))
+for
+.CW __DATE__ ,
+and Plan 9's
+.CW ctime
+takes the seconds themselves where the host's takes a pointer to
+them, so it died inside
+.CW localtime .
+.CW 9front-glue/host/include/time.h
+and
+.CW unistd.h
+put the Plan 9 spellings of
+.CW ctime
+and
+.CW dup
+back over the host's declarations, after those have been read; the
+supporting functions are in
+.CW hostsupp.c .
+.IP \(bu
 .CW pcc
-is a program that runs on 9front.
-.CW 9front-glue/bin/pcc
-is a driver for it in the shell; the APE libraries it links against
-have not been built yet.
+piped cpp into the compiler, and a shell pipeline reports the last
+stage's status.  A cpp that died left the compiler reading nothing,
+which it accepted: an empty object, no message, and a link failing
+much later about a symbol whose source had compiled fine.  cpp writes
+to a file now and its status is checked.
 .IP \(bu
-Directories with their own libraries built into the directory \(em
-.CW mothra ,
-.CW nusb ,
-.CW upas ,
-.CW map ,
-.CW scat ,
-.CW bzip2 ,
+The parser
+.CW iyacc
+writes calls
+.CW sprint ,
+which Plan 9's libc has and APE's
+.CW libap
+has not, so any APE program with a grammar in it did not link.
+9front's own yacc writes a parser against 9front's libc \(em the one
+being built here \(em so that is the yacc the build runs, built for
+this machine like cpp and mpc.  It needs its skeleton, which is why
+the import now brings
+.CW sys/lib/yaccpar
+across, and two functions this tree's libraries have not got:
+.CW fd2path ,
+which is
+.CW F_GETPATH
+here, and
+.CW Blethal ,
+which is nothing here and is documented as nothing in
+.CW hostsupp.c .
+.NH 1
+What does not build yet
+.PP
+Eight of the 134 command directories, and they are eight separate
+problems rather than one.
+.IP \(bu
+.CW aux ,
+because of
+.CW kbdfs :
+its
+.CW mklatin
+turns
+.CW lib/keyboard
+into a header, and built for this machine it traps rather than
+running.  Everything else under
+.CW aux
+builds, including
+.CW antiword ,
+which needed one more rewrite rule (its mkfile writes
+.CW -I/sys/include/ape
+outright) found after the sweep.
+.IP \(bu
 .CW jpg ,
-.CW audio .
-Each is its own small problem rather than one shared cause.
+whose table generator is a host tool that wants
+.CW cmap2rgb
+from libdraw.  There is no libdraw for the host and no reason to
+build one except this.
 .IP \(bu
+.CW bzfs ,
+which wants
+.CW bzip2 's
+library and is built before it.  That is the sweep's ordering, not a
+failure to compile: it builds when
+.CW bzip2
+has been.
+.IP \(bu
+.CW cwfs ,
 .CW ext4srv ,
-.CW hgfs ,
-.CW troff ,
-.CW cwfs :
-compile errors that have not been read yet.
+.CW nusb :
+compile errors not yet read.
 .IP \(bu
 .CW test ,
 which has no
 .CW install
 target at all, and the top of
 .CW cmd
-itself, which fails because it loops into the directories above.
+itself, which fails because it loops into
+.CW aux .
 .PP
 None of this is doubt about the chain.  Every one of these has a
 program beside it that built.
@@ -455,7 +610,11 @@ finds
 .CW -lc
 in the target tree,
 .CW cputype
-for the tools that must run here, the target
+for the tools that must run here,
+.CW CPP
+for the preprocessor
+.CW 6c
+runs when a mkfile asks for one, the target
 .CW bin
 subdirectories a 9front machine already has, the host tools the build
 runs rather than installs, and a path with
@@ -530,6 +689,27 @@ so the tree names no machine but through
 which comes from the environment.  Re-running the import over the
 committed tree changes nothing, which is the property that makes
 moving to a newer upstream one command.
+.PP
+A build does write there \(em
+.CW mkone
+links the program as
+.CW $O.name
+in the directory it was built in and leaves it \(em and five of those
+were committed once before anyone noticed.  The
+.CW .gitignore
+the import writes now covers them, and because
+.CW $O
+is one character the patterns also catch upstream source
+.CW ( libmach/6.c ,
+.CW cmd/6c/6.out.h ),
+which negations put back.  An ignore rule that reaches too far drops
+upstream files silently, which is how twenty of awk's test files went
+missing once, so the import ends by asking git which of the files it
+just wrote are ignored and failing if the answer is not none.  Right
+after an import every file under
+.CW 9front-src
+came from upstream and none of them may be ignored; that is the whole
+invariant.
 .NH 1
 What is left out of the import
 .IP \(bu
@@ -566,11 +746,10 @@ and also
 and the font and keyboard directories, which is where the mkfiles put
 runtime data.  So the tree fills itself in as more of it builds.
 .PP
-What is left, in order: the APE libraries, so the dozen commands
-written against them build; the twenty-two directories above; then the
-runtime data the import deliberately leaves behind, which a deployed
-root needs and no compiler produces; then an image.  The pieces for
-the last part are here \(em
+What is left, in order: the eight directories above; then the runtime
+data the import deliberately leaves behind \(em fonts, ndb, the troff
+tables \(em which a deployed root needs and no compiler produces;
+then an image.  The pieces for the last part are here \(em
 .CW .qemu/9front-root.qcow2
 is a full 9front installation the tests boot, and
 .CW scripts/mkosprey-efi-iso.sh

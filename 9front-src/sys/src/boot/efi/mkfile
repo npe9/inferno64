@@ -1,7 +1,7 @@
 TARG=bootia32.efi bootx64.efi bootaa64.efi efiboot.fat
 HFILES=fns.h mem.h
 IMAGEBASE=0x8000
-CFLAGS=-FTVw
+CFLAGS=-FTVw $INCLUDES
 PEFLAGS=$CFLAGS '-DIMAGEBASE='$IMAGEBASE
 
 all:V: $TARG

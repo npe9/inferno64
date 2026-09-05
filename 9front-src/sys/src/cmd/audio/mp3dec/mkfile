@@ -18,4 +18,4 @@ TARG=mp3dec
 
 <$ROOT/9front-src/sys/src/cmd/mkone
 
-CFLAGS=-FVp -DFPM_DEFAULT
+CFLAGS=-FVp -DFPM_DEFAULT $INCLUDES

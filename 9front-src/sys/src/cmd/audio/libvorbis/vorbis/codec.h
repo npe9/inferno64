@@ -22,7 +22,7 @@ extern "C"
 {
 #endif /* __cplusplus */
 
-#pragma lib "/sys/src/cmd/audio/libvorbis/libvorbis.a$O"
+#pragma lib "sys/src/cmd/audio/libvorbis/libvorbis.a$O"
 
 #include <ogg/ogg.h>
 

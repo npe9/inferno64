@@ -1,0 +1,4 @@
+#!/bin/sh
+# The loader half of the pair; see oc beside this.
+: "${ROOT:?ROOT must be set}"
+exec "$ROOT/9front-glue/host/hostld" "$@"

@@ -1,6 +1,6 @@
 #ifndef	__DIRENT_H
 #define	__DIRENT_H
-#pragma lib "/$M/lib/ape/libap.a"
+#pragma lib "ape/libap.a"
 
 #ifndef __STAT_H
 #include <sys/stat.h>

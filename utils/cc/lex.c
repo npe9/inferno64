@@ -245,7 +245,18 @@ compile(char *file, char **defs, int ndef)
 			close(fd[0]);
 			mydup(fd[1], 1);
 			close(fd[1]);
-			av[0] = CPP;
+			/*
+			 * The preprocessor -p asks for.  CPP is where
+			 * it is on the machine this compiler was built
+			 * for; $CPP says where it is on the machine the
+			 * compiler is running on, which is not the same
+			 * question when the target is not the host.
+			 * The 9front build sets it to 9front's own cpp,
+			 * built for this machine.
+			 */
+			av[0] = getenv("CPP");
+			if(av[0] == nil || av[0][0] == '\0')
+				av[0] = CPP;
 			i = 1;
 			if(debug['.'])
 				av[i++] = strdup("-.");
@@ -274,7 +285,7 @@ compile(char *file, char **defs, int ndef)
 				fprint(2, "\n");
 			}
 			myexec(av[0], av);
-			fprint(2, "can't exec C preprocessor %s: %r\n", CPP);
+			fprint(2, "can't exec C preprocessor %s: %r\n", av[0]);
 			errorexit();
 		default:
 			close(fd[1]);

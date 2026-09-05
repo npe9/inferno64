@@ -1,7 +1,7 @@
 <$ROOT/9front-src/$objtype/mkfile
 
 CC=pcc
-CFLAGS=-I. -I../libogg -c
+CFLAGS=-I. -I../libogg -c $INCLUDES
 LIB=libvorbis.a$O
 
 OFILES=\

@@ -4,7 +4,7 @@
 TARGET=flacenc
 
 CC=pcc
-CFLAGS=-I. -I../libFLAC -I../libFLAC/FLAC -D_POSIX_SOURCE -D_BSD_EXTENSION -DPlan9 -c
+CFLAGS=-I. -I../libFLAC -I../libFLAC/FLAC -D_POSIX_SOURCE -D_BSD_EXTENSION -DPlan9 -c $INCLUDES
 
 %.$O: %.c
 	$CC $CFLAGS -c $stem.c

@@ -1,4 +1,4 @@
-#pragma lib "/sys/src/cmd/audio/libtags/libtags.a$O"
+#pragma lib "sys/src/cmd/audio/libtags/libtags.a$O"
 
 typedef struct Tagctx Tagctx;
 typedef int (*Tagread)(void *buf, int *cnt);

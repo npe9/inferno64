@@ -5,7 +5,7 @@ TARG=$YTARG `{ls | sed -n '/^cp\.c$/d; /^yacc\.c$/d; /\.c$/s/\.c$//p'}
 HFILES=$ROOT/9front-src/$objtype/include/u.h $ROOT/9front-src/sys/include/libc.h $ROOT/9front-src/sys/include/bio.h
 
 BIN=$ROOT/9front/$objtype/bin
-LDFLAGS=
+LDFLAGS= -L$ROOT/9front-src
 YFLAGS=-d
 
 PCONLY=vmx

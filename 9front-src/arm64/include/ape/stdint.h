@@ -4,6 +4,6 @@
 typedef long long _intptr_t;
 typedef unsigned long long _uintptr_t;
 
-#include "/sys/include/ape/stdint.h"
+#include "sys/include/ape/stdint.h"
 
 #endif

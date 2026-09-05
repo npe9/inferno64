@@ -15,7 +15,7 @@ OFILES=getpass.$O\
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib
 
-CFLAGS=-c
+CFLAGS=-c $INCLUDES
 
 %.$O:	$FAMILY/%.c
 	$CC $CFLAGS $prereq

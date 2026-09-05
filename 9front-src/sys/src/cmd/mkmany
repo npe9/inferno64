@@ -1,6 +1,6 @@
 PROGS=${TARG:%=$O.%}
 MANFILES=${TARG:%=%.man}
-LDFLAGS=
+LDFLAGS= -L$ROOT/9front-src
 YFLAGS=-d
 
 none:VQ:

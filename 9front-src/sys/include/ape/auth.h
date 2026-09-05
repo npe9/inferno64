@@ -6,7 +6,7 @@
 #define __AUTH_H_
 
 #pragma	src	"/sys/src/ape/lib/auth"
-#pragma	lib	"/$M/lib/ape/libauth.a"
+#pragma	lib	"ape/libauth.a"
 
 #include <u.h>
 #include <fmt.h>

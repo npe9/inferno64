@@ -10,4 +10,4 @@ HFILES=sed.h
 BIN=$APEBIN
 <$ROOT/9front-src/sys/src/cmd/mkone
 
-CFLAGS=-c -D_POSIX_SOURCE
+CFLAGS=-c -D_POSIX_SOURCE $INCLUDES

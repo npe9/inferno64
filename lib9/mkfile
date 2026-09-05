@@ -90,3 +90,12 @@ convM2D.$O: $ROOT/include/fcall.h
 convM2S.$O: $ROOT/include/fcall.h
 convS2M.$O: $ROOT/include/fcall.h
 fcallfmt.$O: $ROOT/include/fcall.h
+
+# runetest is not part of the library: it is a program that links
+# against it and says whether the Unicode tables answer correctly.
+# See the note at the top of runetest.c.
+runetest:V:	$ROOT/$SYSTARG/$OBJTYPE/lib/lib9.a runetest.c
+	$CC $CFLAGS -o runetest.$O runetest.c
+	$LD -o o.runetest runetest.$O $ROOT/$SYSTARG/$OBJTYPE/lib/lib9.a
+	./o.runetest
+	rm -f o.runetest runetest.$O

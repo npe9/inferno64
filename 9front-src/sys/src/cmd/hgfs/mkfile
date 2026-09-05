@@ -2,7 +2,7 @@
 
 TARG=hgfs
 BIN=$ROOT/9front/$objtype/bin
-CFLAGS=-FTVw
+CFLAGS=-FTVw $INCLUDES
 
 HFILES=dat.h fns.h
 

@@ -45,7 +45,7 @@ BIN=$ROOT/9front/$objtype/bin
 <$ROOT/9front-src/sys/src/cmd/mkone
 
 CC=pcc -c
-CFLAGS=-B -D_POSIX_SOURCE -D_PLAN9
+CFLAGS=-B -D_POSIX_SOURCE -D_PLAN9 $INCLUDES
 YFLAGS=-S -d
 
 $SPIN_OS:	spin.h

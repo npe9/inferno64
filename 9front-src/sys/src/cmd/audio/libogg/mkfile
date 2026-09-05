@@ -1,7 +1,7 @@
 <$ROOT/9front-src/$objtype/mkfile
 
 CC=pcc
-CFLAGS=-I. -c
+CFLAGS=-I. -c $INCLUDES
 LIB=libogg.a$O
 
 OFILES=\

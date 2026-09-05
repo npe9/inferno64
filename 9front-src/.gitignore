@@ -1,3 +1,22 @@
 # written by scripts/import-9front.sh; see the note there
+
+# mkone and mkmany link the program as $O.name in the directory it is
+# built in and leave it there after installing it, so a build dirties
+# the imported tree.  $O is a single character -- 6 for amd64, 8 for
+# 386, and so on down the list in the arch mkfiles -- which means the
+# pattern also matches upstream source: libmach/6.c, cmd/6c/6.out.h.
+# The negations put those back.  A host tool built by 9front-glue's
+# hostcc is named for $cputype, which the build sets to "host".
+[01256789kquv].*
+![01256789kquv].c
+![01256789kquv].h
+![01256789kquv].out.h
+*.host
+
+# The tree-wide .gitignore treats a one-letter suffix as compiler
+# output and *.patch as a patch someone left lying about.  Under two
+# of 9front's test directories they are neither -- they are the input
+# and the expected output of the tests -- and an import that quietly
+# dropped them would leave a tree that does not match upstream.
 !sys/src/cmd/awk/test/*
 !sys/src/cmd/test/patch/*.patch

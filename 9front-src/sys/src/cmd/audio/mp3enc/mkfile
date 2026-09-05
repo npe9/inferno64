@@ -55,7 +55,7 @@ CFLAGS=\
 	-D'SIZEOF_UNSIGNED_LONG_LONG=8'\
 	-D'SIZEOF_UNSIGNED_SHORT=2'\
 	-+ -c
-LDFLAGS= # -p
+LDFLAGS= # -p -L$ROOT/9front-src
 
 testcase.new.mp3: testcase.wav $O.out
 	$O.out --nores -h testcase.wav testcase.new.mp3

@@ -7,4 +7,4 @@ BIN=$ROOT/9front/$objtype/bin
 <$ROOT/9front-src/sys/src/cmd/mkone
 CC=pcc
 LD=pcc
-CFLAGS=-w -B -c
+CFLAGS=-w -B -c $INCLUDES

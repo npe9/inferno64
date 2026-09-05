@@ -6,7 +6,7 @@
 #define __LIBSEC_H_
 
 #pragma	src	"/sys/src/ape/lib/sec"
-#pragma	lib	"/$M/lib/ape/libsec.a"
+#pragma	lib	"ape/libsec.a"
 
 #include <u.h>
 

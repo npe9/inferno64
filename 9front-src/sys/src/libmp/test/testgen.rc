@@ -1,4 +1,4 @@
-#!/bin/rc
+#!/usr/bin/env rc
 echo '
 cmp	in	in	retsign
 magcmp	in	in	retsign

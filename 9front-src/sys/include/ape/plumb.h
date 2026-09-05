@@ -5,7 +5,7 @@
 #ifndef	__PLUMB_H_
 #define	__PLUMB_H_
 #pragma src "/sys/src/ape/lib/plumb"
-#pragma lib "/$M/lib/ape/libplumb.a"
+#pragma lib "ape/libplumb.a"
 
 /*
  * Message format:
