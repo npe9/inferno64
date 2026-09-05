@@ -1,15 +1,31 @@
 .TH VAROOM 1
 .SH NAME
-varoom \- oval-track racing game
+varoom \- pseudo-3D road racing game
 .SH SYNOPSIS
 .B temple/varoom
 .SH DESCRIPTION
 .I Varoom
-is a oval-track racing game.
+is a port of the TempleOS racing game.
 It runs under
 .IR wm (1).
 .PP
-Steer and accelerate on an oval track against AI cars under a chase camera.
+The view is from behind your car, looking down the road.
+The course is a closed circuit of straights and curves that
+rises and falls in dips, with red and white shoulder stripes,
+bushes on the surrounding land, and seven purple opponent cars
+circulating at speed.
+A minimap in the bottom-right corner shows the track in yellow
+with your car as a light-cyan dot and the opponents as
+light-purple dots.
+The heads-up line at the top left shows the percentage of the
+lap completed, the elapsed time, and the best time, which is
+kept across runs.
+.PP
+Steer and accelerate with the arrow keys.
+Going off the road slows the car; touching another car ends the
+game.
+Complete the lap to win \(em finishing faster than the best time
+is saluted with a beep.
 .PP
 The controls are:
 .TF space
@@ -24,7 +40,7 @@ Steer right
 Accelerate
 .TP
 .B Down / s
-Brake/slow
+Brake
 .TP
 .B Enter / r
 Restart
@@ -32,10 +48,22 @@ Restart
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TF /lib/temple/sprites
+.TP
+.B /lib/temple/sprites
+vector bush sprites
+.TP
+.B /fonts/temple/temple.font
+the 8x8 system font used for the heads-up text
 .SH SOURCE
 .B /appl/temple/varoom.b
 .SH SEE ALSO
 .IR temple (1),
-.IR draw3d (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original's pull-down menu has no equivalent here; its
+per-pixel depth-buffered renderer is approximated with a
+painter's-algorithm sort, and its crash noise by rapid random
+tones.
