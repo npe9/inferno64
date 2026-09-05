@@ -81,10 +81,23 @@ priority; 4-6 are the MTA/server side.
 
 - Milestone 1 **done** (`c3bd7d5f`): upas/fs serves the real /mail/fs interface
   (info file, full per-message file set, ctl delete rewriting the mbox).
-- Milestone 2 **reader core done** (`5a21f08c`): nedmail lists/searches/prints,
-  marks and flushes deletes through ctl, saves, resyncs. Tested with a negative
-  control (`x` must not flush). Still to do in M2: reply/forward (r/R/a/m/M),
-  the pipe/shell escapes (|, ||, !), and filing (f).
+- Milestone 2 **done** (`5a21f08c`, `b2ff1088`): nedmail lists/searches/prints,
+  marks and flushes deletes through ctl, saves, resyncs, and does reply/forward
+  (r/R/a/A/m/M) via upas/send with an SMTP config file. Tested with controls.
+  Only the pipe escapes (|, ||) and filing (f) remain, deferred as the
+  hosted-emu exit-in-child limitation above.
+- **Tk client done** (`42a29ca3`): `wm/mail` - list/header/body panes over
+  /mail/fs, delete via ctl; headless `-t` self-test covers the data layer.
+- **acme client done** (`ae0a0548`): `amail` - acme Mail-style client over
+  /mail/fs; headless `-t` self-test covers the data layer (acme GUI path needs
+  a display, not covered by the test).
+
+The mail **user agent** (read/compose/reply/forward/delete across CLI, Tk and
+acme) is complete and tested. Remaining for full equivalence is the MTA/server
+half: M4 outbound (smtp MX/smarthost, send/queue/runq), M5 servers (smtpd,
+pop3, ratfs), M6 filters+ml. The interop container (`tests/docker`) is the
+oracle for the server side - and it can be inverted (host client against an
+Inferno server) to test smtpd/pop3.
 
   **Hosted-emu sub-command finding (corrected, verified with a discriminating
   test):** the earlier "reading stdin corrupts the parent" theory was WRONG. A
