@@ -5,20 +5,31 @@ rocketscience \- guided rocket game
 .B temple/rocketscience
 .SH DESCRIPTION
 .I RocketScience
-is a guided rocket game.
+is Terry Davis's guided-rocket demo:
+a rocket steered by proportional navigation with a servo-driven nozzle
+chases a plane flying overhead.
 It runs under
 .IR wm (1).
 .PP
-Space launches a guided rocket at a flying target. Enter resets.
+On start (and on every restart) a popup asks for the anti-spin
+coefficient, chosen from an exponentially spaced menu between 0.1 and 10;
+experimenting with it is the point of the demo.
+Use the arrow keys and Enter, or click an entry, to choose.
+Once chosen, any key blasts off.
+The number printed at the top left is the estimated time to intercept.
 .PP
 The controls are:
-.TF space
+.TF "any key"
 .TP
-.B space
-Launch
+.B Up / Down
+Move the popup cursor
 .TP
 .B Enter
-Restart
+In the popup, choose the highlighted coefficient;
+in flight, restart (the coefficient is asked again)
+.TP
+.B "any key"
+Blast off, once the coefficient is chosen
 .TP
 .B Esc / q
 Quit
@@ -31,3 +42,7 @@ Quit
 .IR ode (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original's menu bar
+(File Abort/Exit; Play Restart/Launch)
+is not reproduced; its entries are all available on keys.
