@@ -77,6 +77,24 @@ Ordered by value and dependency. Each ships with a test and a man page.
 Milestones 1-3 are the mail *user agent* (read/compose/manage) and are the
 priority; 4-6 are the MTA/server side.
 
+## Progress
+
+- Milestone 1 **done** (`c3bd7d5f`): upas/fs serves the real /mail/fs interface
+  (info file, full per-message file set, ctl delete rewriting the mbox).
+- Milestone 2 **reader core done** (`5a21f08c`): nedmail lists/searches/prints,
+  marks and flushes deletes through ctl, saves, resyncs. Tested with a negative
+  control (`x` must not flush). Still to do in M2: reply/forward (r/R/a/m/M),
+  the pipe/shell escapes (|, ||, !), and filing (f).
+
+  **Gotcha for M2's remainder and M3:** running an Inferno sub-command in the
+  reader by `spawn`+`load`+`init` (to pipe a message to a command, or to hand a
+  reply to `upas/send`) ends the parent's command-reader loop after the first
+  sub-command - the child `sh`/command disturbs the shared fd0 even with
+  FORKFD and fd0 rebound, so the parent's next read of its own command stream
+  returns EOF. This needs a proper sub-process story (a clean namespace/fd
+  handoff, or reading commands from a Chan the child can't reach) before
+  reply/forward/pipe land. It is the open blocker on finishing M2/M3.
+
 ## Testing
 
 `tests/mailsshinterop.sh` already drives send/fetch against real
