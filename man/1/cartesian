@@ -1,27 +1,89 @@
 .TH CARTESIAN 1
 .SH NAME
-cartesian \- function plotter
+cartesian \- graph a user-entered algebraic equation
 .SH SYNOPSIS
 .B temple/cartesian
 .SH DESCRIPTION
 .I Cartesian
-is a function plotter.
+is the TempleOS Cartesian-plot demo: it prompts
+.B y=
+for an algebraic equation in
+.IR x ,
+graphs it, and repeats.
 It runs under
 .IR wm (1).
 .PP
-Plots a sample function on labelled axes. Space redraws the graph.
+Type the right-hand side of the equation (for example
+.B 2*x
+or
+.BR sin(x/20)*100 )
+and press Enter.
+The expression is compiled with
+.IR hoc (2),
+so its grammar is hoc's: the operators
+.BR + ,
+.BR \- ,
+.BR * ,
+.BR / ,
+.BR % ,
+.BR ^ ,
+the functions
+.BR sin ,
+.BR cos ,
+.BR tan ,
+.BR atan ,
+.BR asin ,
+.BR acos ,
+.BR log ,
+.BR log10 ,
+.BR exp ,
+.BR sqrt ,
+.BR int ,
+.BR abs ,
+and the constants
+.B PI
+and
+.BR E .
+The variables
+.BR x ,
+.BR y ,
+and
+.B y_last
+are readable from the expression, as in the original.
 .PP
+As in TempleOS, the plot is in 1:1 pixel space: as
+.I x
+runs across the window in pixels, the expression's value is the height in
+pixels above the centre, with no automatic scaling \(em
+.B 2*x
+is a line of slope 2.
+Red axes cross the full window through the centre; the curve is drawn
+black on the white page, joining successive samples with line segments.
+.PP
+After the graph is drawn, any key clears the page and prompts for a new
+equation.
 The controls are:
-.TF space
+.TF Enter
 .TP
-.B space
-Replot
+.B Enter
+Graph the typed equation; with an empty line, exit
 .TP
-.B Esc / q
+.B Backspace
+Edit the equation
+.TP
+.B Esc
 Quit
 .PD
 .SH SOURCE
 .B /appl/temple/cartesian.b
 .SH SEE ALSO
 .IR temple (1),
+.IR hoc (2),
 .IR wm (1)
+.SH BUGS
+The original JIT-compiles the entered text as HolyC via
+.BR ExePrint ;
+here the grammar is
+.IR hoc (2)'s
+expression language, which covers algebraic equations but not arbitrary
+HolyC.
