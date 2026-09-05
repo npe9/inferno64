@@ -5699,10 +5699,37 @@ role server, machine 2 that it is
 role client, and each binds its wire to the address the file gives.
 .PP
 .B "12.  The firewall's rule set by policy."
-The rule goes up on a datagram from the client.  The real form: the
-rule is an attribute of the container over \[*p]p, written by whoever
-holds the container.  Proof: installed and lifted by \[*p]p writes and
-counted.
+Done.  The rule is a container attribute, not a datagram anyone could
+send: the client, holding the container by a ticket its kernel signed,
+opens a \[*p]p session over the ring and writes the
+.CW firewall
+attribute
+.CW ( pip_twrite ),
+and the server takes it only from an authenticated session
+.CW ( pipfs_firewall
+holds the value; a session that is nobody's is refused).  The firewall
+task waits for it, puts the rule up in the real stack's own
+.CW ipmux
+\- source, protocol, destination port \- and takes it down when the
+holder writes
+.CW down .
+Proof, a criterion of the pair check: the client writes the attribute
+up, stack B diverts the client's SYNs and counts them before
+.CW tcp.c
+sees them, the client writes it down, and the connect held until then
+is accepted and answered.
+.PP
+Making the firewall a \[*p]p write, where the cache already held a
+\[*p]p wire, found that the server served one connection at a time: a
+cache holding its connection open for streams starved every other.  So
+the server serves each connection on a kproc of its own
+.CW ( pipconn ),
+each delivering its own sessions' stream frames to its own fd; a
+stream stops when its connection closes, though the session lives on;
+and a session with no open fid is reaped when its connection closes,
+so a table of them does not fill.  The one shared reply buffer is held
+across a group's build by the flag of item 9, so two connections do
+not cross.
 .PP
 .B "13.  The loader refuses, and the stall is understood."
 A load region the firmware will not give up is read into anyway, and

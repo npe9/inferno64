@@ -250,10 +250,9 @@ gwsrv(void *)
  * open.  And on a wire a Tstream can be answered - the attribute keeps
  * arriving at its rate with nothing sent to make it happen - which over
  * the ring it could not be.  pipwire takes connections one after
- * another and serves the groups on each; pipstreamer, on every tick,
+ * another and serves the groups on each on a kproc of its own, which also,
  * puts whatever the streams owe on the connection that is up.
  */
-static int pipwirefd = -1;		/* the connection up now, for the streamer */
 
 static long
 readn(int fd, uchar *buf, long n)
@@ -295,64 +294,111 @@ pipwire_get(int fd, uchar *rec, long max)
 	return n;
 }
 
+/*
+ * One connection, its own kproc: it serves the groups that come on it
+ * and, between them, emits the stream frames due for the sessions on
+ * it - to its own fd, so two connections do not compete for one.  A
+ * reader kproc feeds it groups; this kproc owns the fd.  When the
+ * reader sees the connection close it hands back nil and this ends,
+ * its streams stopped, the sessions living on.
+ */
+typedef struct Pipconn Pipconn;
+struct Pipconn {
+	int	dfd, lfd, conn;
+	int	closed;
+	uchar	group[2048];		/* the reader leaves one group here */
+	long	grouplen;
+	int	groupready;
+};
+
 static void
-pipstreamer(void *)
+pipconnreader(void *a)
 {
-	extern long pipfs_stream(uchar*, long);
-	uchar out[2048];
+	Pipconn *c = a;
 	long n;
 
 	for(;;){
-		tsleep(&up->sleep, return0, nil, 10);
-		if(pipwirefd < 0)
-			continue;
-		n = pipfs_stream(out, sizeof out);
-		if(n > 0)
-			pipwire_put(pipwirefd, out, n);
+		while(c->groupready && !c->closed)
+			tsleep(&up->sleep, return0, nil, 5);
+		if(c->closed)
+			break;
+		n = pipwire_get(c->dfd, c->group, sizeof c->group);
+		if(n < 0){
+			c->closed = 1;
+			break;
+		}
+		c->grouplen = n;
+		c->groupready = 1;
 	}
+	pexit("pipconnreader", 0);
+}
+
+static void
+pipconn(void *a)
+{
+	extern long pipfs_servewire(uchar*, long, uchar*, long, int);
+	extern long pipfs_stream(int, uchar*, long);
+	extern void pipfs_connclosed(int);
+	Pipconn *c = a;
+	uchar rg[4096], sg[2048];
+	long rn, sn;
+
+	kproc("pipconnreader", pipconnreader, c);
+	for(;;){
+		if(c->groupready){
+			rn = pipfs_servewire(c->group, c->grouplen, rg, sizeof rg, c->dfd);
+			c->groupready = 0;
+			print("p9 ip: pi-p wire: a %ld-byte group came over the wire on connection %d, answered with %ld bytes of replies\n", c->grouplen, c->conn, rn);
+			pipwire_put(c->dfd, rg, rn);
+		}
+		if(c->closed && !c->groupready)
+			break;
+		sn = pipfs_stream(c->dfd, sg, sizeof sg);
+		if(sn > 0)
+			pipwire_put(c->dfd, sg, sn);
+		tsleep(&up->sleep, return0, nil, 10);
+	}
+	pipfs_connclosed(c->dfd);		/* its streams stop; the sessions live on */
+	print("p9 ip: pi-p wire: connection %d closed; the sessions it carried live on\n", c->conn);
+	p9close(c->dfd);
+	p9close(c->lfd);
+	free(c);
+	pexit("pipconn", 0);
 }
 
 static void
 pipwire(void *a)
 {
-	extern long pipfs_servewire(uchar*, long, uchar*, long);
-	int afd, lfd, dfd, anum, lnum, conns;
-	long n, rn;
+	int lfd, dfd, anum, lnum, conns;
+	long n;
 	char cbuf[64], path[64], *net, *stack;
-	uchar tg[2048], rg[4096];
 
 	/* stack B (#I1) faces the client container over the ring; stack A (/net) faces the cable, and the other machine asks there */
 	net = a != nil ? a : "#I1";
 	stack = a != nil ? "stack A, the cable" : "stack B";
 	if(waserror()){
 		print("p9 ip: pi-p wire failed on %s: %s\n", stack, up->errstr);
-		pipwirefd = -1;
 		pexit("pipwire", 0);
 	}
 	snprint(path, sizeof path, "%s/tcp/clone", net);
-	afd = p9open(path, ORDWR);
+	{ int afd = p9open(path, ORDWR);
 	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
-	p9write(afd, "announce 9001", 13);
+	p9write(afd, "announce 9001", 13); }
 	print("p9 ip: pi-p wire: tcp!*!9001 announced on %s - the personality's pi-p on a wire of its own\n", stack);
-	if(a == nil)
-		kproc("pipstreamer", pipstreamer, nil);
 	for(conns = 1;; conns++){
+		Pipconn *c;
+
 		snprint(path, sizeof path, "%s/tcp/%d/listen", net, anum);
 		lfd = p9open(path, ORDWR);
 		n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
 		snprint(path, sizeof path, "%s/tcp/%d/data", net, lnum);
 		dfd = p9open(path, ORDWR);
 		print("p9 ip: pi-p wire: connection %d from %s, conversation %d\n", conns, a != nil ? "the cable" : "the client container", lnum);
-		pipwirefd = dfd;
-		while((n = pipwire_get(dfd, tg, sizeof tg)) >= 0){
-			rn = pipfs_servewire(tg, n, rg, sizeof rg);
-			print("p9 ip: pi-p wire: a %ld-byte group came over the wire on connection %d, answered with %ld bytes of replies\n", n, conns, rn);
-			pipwire_put(dfd, rg, rn);
-		}
-		pipwirefd = -1;
-		print("p9 ip: pi-p wire: connection %d closed; the sessions it carried live on\n", conns);
-		p9close(dfd);
-		p9close(lfd);
+		c = malloc(sizeof *c);
+		if(c == nil){ p9close(dfd); p9close(lfd); continue; }
+		memset(c, 0, sizeof *c);
+		c->dfd = dfd; c->lfd = lfd; c->conn = conns;
+		kproc("pipconn", pipconn, c);	/* each connection served on its own kproc, so one does not block another */
 	}
 }
 
@@ -1018,7 +1064,7 @@ p9vnetup(void)
 static void
 fwsrv(void *)
 {
-	int ua, ul, afd, mfd, dfd, lfd, cfd, anum, mnum, lnum, i;
+	int afd, mfd, dfd, lfd, cfd, anum, mnum, lnum, i;
 	long n;
 	char cbuf[64], path[64], rx[256];
 	uchar pkt[2048];
@@ -1029,20 +1075,30 @@ fwsrv(void *)
 		print("p9 ip: firewall failed: %s\n", up->errstr);
 		pexit("fwsrv", 0);
 	}
+	extern long pipfs_firewall(char*, int, char*, int, int*);
+	char fwrule[128], fwwho[64];
+	int fwgen, mygen;
+
 	afd = p9open("#I1/tcp/clone", ORDWR);
 	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
 	p9write(afd, "announce 9004", 13);
-	ua = p9open("#I1/udp/clone", ORDWR);
-	n = p9read(ua, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0;
-	p9write(ua, "announce 9003", 13);
-	snprint(path, sizeof path, "#I1/udp/%s/listen", cbuf);
-	ul = p9open(path, ORDWR);			/* the client's ask, when it comes */
-	n = p9read(ul, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0;
-	p9close(ul); p9close(ua);
+	/*
+	 * The rule is a container attribute, not a datagram: wait until a
+	 * session that holds this container has written the "firewall"
+	 * attribute over pi-p (pipfs_firewall reports it), then put the rule
+	 * up.  Whoever holds the container sets policy; nobody else can.
+	 */
+	for(;;){
+		pipfs_firewall(fwrule, sizeof fwrule, fwwho, sizeof fwwho, &fwgen);
+		if(strncmp(fwrule, "up", 2) == 0)
+			break;			/* a holder has set the attribute to "up" */
+		tsleep(&up->sleep, return0, nil, 50);
+	}
+	USED(mygen);
 	mfd = p9open("#I1/ipmux/clone", ORDWR);
 	n = p9read(mfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; mnum=atoi(cbuf);
 	p9write(mfd, rule, sizeof rule - 1);
-	print("p9 ip: firewall: the client asked for the rule; stack B's ipmux now diverts TCP from 10.0.1.1 to port 9004 before tcp.c sees it\n");
+	print("p9 ip: firewall: %s set the firewall attribute on the container over pi-p; stack B's ipmux now diverts TCP from 10.0.1.1 to port 9004 before tcp.c sees it\n", fwwho);
 	snprint(path, sizeof path, "#I1/ipmux/%d/data", mnum);
 	dfd = p9open(path, OREAD);
 	for(i = 0; i < 2; i++){
@@ -1050,7 +1106,14 @@ fwsrv(void *)
 		print("p9 ip: firewall: diverted a %ld-byte TCP packet from 10.0.1.1 to port 9004 - the rule holds, tcp.c never saw it\n", n);
 	}
 	p9close(dfd); p9close(mfd);
-	print("p9 ip: firewall: the rule is lifted after 2 diverted packets\n");
+	/* wait for the holder to take the rule down over pi-p, or lift after the two packets if it already has */
+	for(i = 0; i < 100; i++){
+		pipfs_firewall(fwrule, sizeof fwrule, fwwho, sizeof fwwho, &fwgen);
+		if(strncmp(fwrule, "down", 4) == 0)
+			break;
+		tsleep(&up->sleep, return0, nil, 50);
+	}
+	print("p9 ip: firewall: %s took the firewall attribute down over pi-p; the rule is lifted after 2 diverted packets\n", fwwho);
 	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
 	lfd = p9open(path, ORDWR);
 	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
@@ -1560,13 +1623,37 @@ fwtest(void)
 	char cbuf[64], path[64], rx[256];
 	static char msg[] = "sent once the firewall let the connection through";
 
-	ufd = p9open("/net/udp/clone", ORDWR);
-	n = p9read(ufd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0;
-	p9write(ufd, "connect 10.0.1.2!9003", 21);
-	snprint(path, sizeof path, "/net/udp/%s/data", cbuf);
-	wfd = p9open(path, ORDWR);
-	p9write(wfd, "put the rule up", 15);		/* the ask, a datagram across the ring */
-	p9close(wfd); p9close(ufd);
+	/*
+	 * The rule is set by writing the container's firewall attribute
+	 * over pi-p, not by a datagram: the client holds the container (a
+	 * ticket its kernel signed), opens a pi-p session over the ring,
+	 * and writes "firewall" = "up".  Only a holder may; a datagram
+	 * from anyone could not.
+	 */
+	{
+		extern long pip_tsession(uchar*, int, uvlong);
+		extern long pip_tauth(uchar*, int, char*);
+		extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+		extern long pip_twrite(uchar*, int, ulong, char*, char*, long);
+		extern char *pip_ticket(void);
+		uchar tg[512], rg[256];
+		long tn;
+		int pdfd, pwfd;
+		char *tk;
+
+		pwfd = pipwire_connect(&pdfd);		/* the pi-p wire to the server, over the ring */
+		tn = 0;
+		tn += pip_tsession(tg+tn, 1, 0);
+		if((tk = pip_ticket()) != nil)
+			tn += pip_tauth(tg+tn, 2, tk);
+		tn += pip_topen(tg+tn, 3, 0, 1, 0, "/n/hello");	/* a fid to carry the write on */
+		tn += pip_twrite(tg+tn, 4, 1, "firewall", "up", 2);
+		pipwire_put(pwfd, tg, tn);
+		pipwire_get(pwfd, rg, sizeof rg);
+		print("p9 ip: firewall: the client set the container's firewall attribute to \"up\" over pi-p - it holds the container\n");
+		p9close(pwfd); p9close(pdfd);
+		USED(ufd);
+	}
 	tsleep(&up->sleep, return0, nil, 200);		/* let the rule go up */
 	t0 = kfastticks(nil);
 	dfd = p9open("/net/tcp/clone", ORDWR);
@@ -1580,6 +1667,29 @@ fwtest(void)
 	p9write(wfd, msg, sizeof msg - 1);
 	n = p9read(wfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
 	print("p9 ip: firewall: read %ld bytes back through the connection the rule had held: \"%s\"\n", n, rx);
+	{
+		extern long pip_tsession(uchar*, int, uvlong);
+		extern long pip_tauth(uchar*, int, char*);
+		extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+		extern long pip_twrite(uchar*, int, ulong, char*, char*, long);
+		extern char *pip_ticket(void);
+		uchar tg[512], rg[256];
+		long tn;
+		int pdfd, pwfd;
+		char *tk;
+
+		pwfd = pipwire_connect(&pdfd);
+		tn = 0;
+		tn += pip_tsession(tg+tn, 1, 0);
+		if((tk = pip_ticket()) != nil)
+			tn += pip_tauth(tg+tn, 2, tk);
+		tn += pip_topen(tg+tn, 3, 0, 1, 0, "/n/hello");
+		tn += pip_twrite(tg+tn, 4, 1, "firewall", "down", 4);
+		pipwire_put(pwfd, tg, tn);
+		pipwire_get(pwfd, rg, sizeof rg);
+		print("p9 ip: firewall: the client set the firewall attribute to \"down\" over pi-p; the rule is lifted\n");
+		p9close(pwfd); p9close(pdfd);
+	}
 	tsleep(&up->sleep, return0, nil, 300);
 	p9close(wfd); p9close(dfd);
 }
@@ -1656,8 +1766,8 @@ ostcpclient(void *)
 	}
 	pipclient();
 	replica();
-	cachetest();
 	fwtest();
+	cachetest();
 	poperror();
 	clientnetdone = 1;
 	pexit("ostcpclient done", 0);

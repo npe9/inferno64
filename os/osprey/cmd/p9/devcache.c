@@ -76,6 +76,7 @@ static long replyn;			/* a group's replies, when the reader has them */
 static long frames;			/* stream frames taken off the wire */
 
 extern int pipwire_connect(int*);			/* p9ip.c: a connection to the server's pi-p */
+extern int p9close(int);
 extern void pipwire_put(int, uchar*, long);
 extern long pipwire_get(int, uchar*, long);
 extern long pip_tsession(uchar*, int, uvlong);
@@ -545,6 +546,21 @@ cachestopall(void)
 				cachedrop(e);
 			memset(e, 0, sizeof *e);
 		}
+	/*
+	 * And let go of the pi-p wire: the server serves one connection at
+	 * a time, so a cache that held its connection open would block the
+	 * next thing that wants the wire (the firewall's write).  Closing
+	 * it ends the reader and frees the server to accept the next.
+	 */
+	if(wfd >= 0){
+		int f = wfd;
+		wfd = -1;		/* the reader sees this and stops */
+		p9close(f);
+	}
+	if(dfd >= 0){
+		p9close(dfd);
+		dfd = -1;
+	}
 }
 
 /* what the cache has done beyond the reads, for the test's summary */

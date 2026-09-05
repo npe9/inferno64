@@ -31,7 +31,7 @@ enum {
 	PipRerror, PipTstream, PipRstream, PipTauth, PipRauth,
 
 	Pipheader = 7,
-	Nsess	= 4,
+	Nsess	= 16,	/* sessions outlive their connections, so several tests' sessions coexist */
 	Nfid	= 16,		/* a caching client holds one per entry it streams, and one more for the group of the moment */
 	Namelen	= 128,
 	Datalen	= 4096,
@@ -58,12 +58,39 @@ struct Sess {
 	uvlong	lease;
 	char	user[Namelen];		/* who the session is, proven by a ticket the kernel checked; empty is nobody */
 	uvlong	authid;			/* the container the ticket was for, on the machine that signed it */
+	int	connfd;			/* the connection it is on now, for its streams' frames; -1 when its connection has gone */
 	Fid	fids[Nfid];
 };
+static int servefd = -1;		/* the fd of the connection whose group is being served, so a stream's session remembers where to send frames */
 enum { Ticketoff = 3072, Ticketmax = 256 };	/* where a ticket goes in this server's data area for the kernel to read, and its answer comes back */
 static long pstr(uchar*, char*, long);
 extern uchar *p9srvdata(void);
 extern long ospreyxcall(int op, uvlong *args, long n);
+
+/*
+ * The firewall as a container attribute (item 12): a session that holds
+ * the container - proven by a ticket - writes the "firewall" attribute
+ * with a rule, or "down"; the firewall task reads it here and puts the
+ * rule up or takes it down.  Not a datagram anyone could send: the
+ * write is authenticated and the attribute is the container's own.
+ */
+static char pipfwrule[128];
+static int  pipfwgen;
+static char pipfwwho[Namelen];
+
+long
+pipfs_firewall(char *rule, int max, char *who, int wmax, int *gen)
+{
+	if(gen != nil)
+		*gen = pipfwgen;
+	if(who != nil){
+		strncpy(who, pipfwwho, wmax-1);
+		who[wmax-1] = 0;
+	}
+	strncpy(rule, pipfwrule, max-1);
+	rule[max-1] = 0;
+	return strlen(pipfwrule);
+}
 
 static Sess sess[Nsess];
 static uvlong nextsid = 0x5ec0de;
@@ -378,9 +405,11 @@ serve1(Sess **sp, uchar *m, long sz)
 			}
 			memset(s, 0, sizeof *s);
 			s->used = 1;
+			s->connfd = -1;
 			s->sid = ++nextsid;
 		}
 		s->lease = nowms + Sesslease;
+		s->connfd = servefd;		/* its streams' frames go out on this connection */
 		*sp = s;
 		if((r = reply(PipRsession, tag, 8)) != nil)
 			pput(r, 8, s->sid);
@@ -511,6 +540,24 @@ serve1(Sess **sp, uchar *m, long sz)
 		k += 2;
 		if(k + dlen > sz || dlen > Datalen)
 			goto Bad;
+		if(strcmp(attr, "firewall") == 0){
+			/* the container's own firewall rule: only a session that holds the container may set it */
+			if(s->user[0] == 0){
+				rerror(tag, "not yours: only a session that holds the container may set its firewall");
+				break;
+			}
+			if(dlen >= sizeof pipfwrule)
+				dlen = sizeof pipfwrule - 1;
+			memmove(pipfwrule, m+k, dlen);
+			pipfwrule[dlen] = 0;
+			strncpy(pipfwwho, s->user, sizeof pipfwwho - 1);
+			pipfwwho[sizeof pipfwwho - 1] = 0;
+			pipfwgen++;
+			print("p9 ip: pi-p wire: session %llux (%s) set the container's firewall attribute: \"%s\"\n", s->sid, s->user, pipfwrule);
+			if((r = reply(PipRwrite, tag, 8)) != nil)
+				pput(r, 8, (uvlong)pipfwgen);
+			break;
+		}
 		if((f = fidfind(s, fid)) == nil || f->c == nil){
 			rerror(tag, "fid not open");
 			break;
@@ -710,12 +757,14 @@ pipfs_serve(uchar *msg, long n, uchar *out, long outmax)
  * may be answered, since the wire's task will carry the frames.
  */
 long
-pipfs_servewire(uchar *msg, long n, uchar *out, long outmax)
+pipfs_servewire(uchar *msg, long n, uchar *out, long outmax, int connfd)
 {
 	long k;
 
 	onwire = 1;
+	servefd = connfd;
 	k = pipfs_serve(msg, n, out, outmax);
+	servefd = -1;
 	onwire = 0;
 	return k;
 }
@@ -729,8 +778,51 @@ pipfs_servewire(uchar *msg, long n, uchar *out, long outmax)
  * has gone - a fid's lease running out stops it, as pip(5) says, since
  * the stream does not refresh the lease the way a Tread does.
  */
+/*
+ * A pi-p connection has closed.  Sessions outlive their connection, but
+ * a stream cannot: it delivers frames on the connection it was made on,
+ * and with that gone its frames would pour into a closed fd forever -
+ * which, with streams that renew their own leases, is exactly what
+ * happened, one connection's streams starving every other.  So the
+ * streams stop when their connection does; a client that wants them
+ * back opens them again on its next connection.
+ */
+void
+pipfs_connclosed(int fd)
+{
+	Stream *st;
+	Sess *s;
+	Fid *f;
+	int open;
+
+	for(s = sess; s < &sess[Nsess]; s++){
+		if(!s->used || s->connfd != fd)
+			continue;
+		s->connfd = -1;		/* the session's streams have no connection now */
+		/*
+		 * A session with an open fid lives on, to be resumed by number
+		 * on another connection (a fid opened before, read after - the
+		 * session outliving its connection).  One with none has served
+		 * its purpose and is reaped, so a table of them does not fill.
+		 */
+		open = 0;
+		for(f = s->fids; f < &s->fids[Nfid]; f++)
+			if(f->used)
+				open = 1;
+		if(!open){
+			for(f = s->fids; f < &s->fids[Nfid]; f++)
+				if(f->used)
+					fidfree(f);
+			s->used = 0;
+		}
+	}
+	for(st = streams; st < &streams[Nstream]; st++)
+		if(st->used && (st->s == nil || !st->s->used || st->s->connfd < 0))
+			st->used = 0;
+}
+
 long
-pipfs_stream(uchar *out, long outmax)
+pipfs_stream(int connfd, uchar *out, long outmax)
 {
 	Stream *st;
 	Fid *f;
@@ -745,8 +837,9 @@ pipfs_stream(uchar *out, long outmax)
 	for(st = streams; st < &streams[Nstream]; st++){
 		if(!st->used || st->due > nowms)
 			continue;
-		if(!st->s->used || st->s->sid != st->sid || (f = fidfind(st->s, st->fid)) == nil){
-			st->used = 0;
+		if(!st->s->used || st->s->sid != st->sid || st->s->connfd != connfd || (f = fidfind(st->s, st->fid)) == nil){
+			if(st->s == nil || !st->s->used || st->s->connfd < 0)
+				st->used = 0;	/* the session or its connection is gone: the stream stops */
 			continue;
 		}
 		readattr(f, st->attr, -1, st->tag);
