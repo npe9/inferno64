@@ -369,6 +369,20 @@ p9srvdata(void)
 	return srvbase + m->data;
 }
 
+/* a packet buffer slot of this server's own slice, len bytes from its start: a page is staged whole across two adjacent slots */
+uchar*
+p9srvpktbuf(int slot, long len)
+{
+	Omap *m;
+
+	if(srvbase == nil || slot < 0)
+		return nil;
+	m = (Omap*)srvbase;
+	if(m->pktbufsize == 0 || (uvlong)slot*m->pktbufsize + len > m->npktbuf*m->pktbufsize)
+		return nil;
+	return srvbase + m->pktbuf + (uvlong)slot*m->pktbufsize;
+}
+
 /* arg is "s <ownslot> <clientslot>"; called after the name space is up */
 void
 p9serveloop(char *arg)

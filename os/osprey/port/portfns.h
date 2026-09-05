@@ -367,6 +367,7 @@ uintptr		segattach(int, char *, uintptr, uintptr);
 void		segclock(uintptr);
 long		segio(Segio*, Segment*, void*, long, vlong, int);
 void		segpage(Segment*, Page*);
+int		segpageif(Segment*, Page*);
 int		setcolor(ulong, ulong, ulong, ulong);
 void		setkernur(Ureg*, Proc*);
 int		setlabel(Label*);

@@ -917,6 +917,25 @@ ospreydata(Ospreyproc *p, uvlong off, ulong len)
 	return (uchar*)p->map + p->map->data + off;
 }
 
+/*
+ * A packet buffer slot of the container's slice, len bytes from its
+ * start: a page is staged whole across two adjacent slots, which lie
+ * end to end at the slot stride.
+ */
+void*
+ospreypktbuf(Ospreyproc *p, int slot, ulong len)
+{
+	uvlong stride;
+
+	mapfix(p);
+	if(p == nil || p->used == 0 || p->map == nil || slot < 0)
+		return nil;
+	stride = p->map->pktbufsize;
+	if(stride == 0 || (uvlong)slot*stride + len > p->map->npktbuf*stride)
+		return nil;
+	return (uchar*)p->map + p->map->pktbuf + (uvlong)slot*stride;
+}
+
 void
 ospreyreset(void)
 {

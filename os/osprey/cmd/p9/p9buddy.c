@@ -79,6 +79,9 @@ typedef struct Img Img;
 struct Img {
 	uvlong	container;	/* whose image this is; 0 when free */
 	int	fds[Nfd];	/* the process's descriptors: this personality's fd each stands for */
+	char	fdname[Nfd][96];	/* what each was opened as, and how: what crosses a wire with the process, to be reopened there */
+	int	fdmode[Nfd];
+	char	name[128];	/* the image's file, named the same in the far personality's file system */
 	int	fd;
 	int	kind;		/* 0 an ELF, 1 a Plan 9 a.out */
 	uvlong	entry;
@@ -182,6 +185,7 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 	}
 	img->fd = p9open(name, 0);
 	poperror();
+	kstrcpy(img->name, name, sizeof img->name);
 	if(readat(img->fd, 0, hdr, sizeof hdr) < 0)
 		return -1;
 	if(hdr[0] != 0x7f || hdr[1] != 'E'){
@@ -275,8 +279,10 @@ p9buddy_page(uvlong container, uvlong va, uchar *out)
 	int i, found;
 
 	memset(out, 0, Pagesz);
-	if((img = imgof(container, 0)) == nil || img->fd < 0)
+	if((img = imgof(container, 0)) == nil || img->fd < 0){
+		print("buddy: page %#llux for container %llud: %s\n", va, container, img == nil ? "no image held for it" : "its image has no file open");
 		return -1;
+	}
 	found = 0;
 	for(i = 0; i < img->nph; i++){
 		if(va + Pagesz <= img->ph[i].va || va >= img->ph[i].va + img->ph[i].memsz)
@@ -285,11 +291,15 @@ p9buddy_page(uvlong container, uvlong va, uchar *out)
 		lo = va > img->ph[i].va ? va : img->ph[i].va;
 		fend = img->ph[i].va + img->ph[i].filesz;
 		hi = va + Pagesz < fend ? va + Pagesz : fend;
-		if(lo < hi && readat(img->fd, img->ph[i].off + (lo - img->ph[i].va), out + (lo - va), hi - lo) < 0)
+		if(lo < hi && readat(img->fd, img->ph[i].off + (lo - img->ph[i].va), out + (lo - va), hi - lo) < 0){
+			print("buddy: page %#llux for container %llud: the image file (%s, fd %d) could not be read\n", va, container, img->name, img->fd);
 			return -1;
+		}
 	}
 	if(found)
 		print("buddy: page %#llux of the legacy image supplied from its file\n", va);
+	else
+		print("buddy: page %#llux for container %llud: no loadable segment of %s covers it\n", va, container, img->name);
 	return found ? 0 : -1;
 }
 
@@ -329,17 +339,129 @@ fdof(Img *img, uvlong fd)
 }
 
 static long
-fdnew(Img *img, int bfd)
+fdnew(Img *img, int bfd, char *name, int mode)
 {
 	int i;
 
 	for(i = 3; i < Nfd; i++)
 		if(img->fds[i] == -1){
 			img->fds[i] = bfd;
+			if(name != nil)
+				kstrcpy(img->fdname[i], name, sizeof img->fdname[i]);
+			else
+				img->fdname[i][0] = 0;	/* a pipe's end: no name to reopen it by elsewhere */
+			img->fdmode[i] = mode;
 			return i;
 		}
 	p9close(bfd);
 	return -1;
+}
+
+/*
+ * What a process takes with it over a wire, as text: its image's name
+ * and kind, and each open descriptor's number, mode, offset and name.
+ * The far personality reopens each by name in its own file system and
+ * seeks to the offset; the descriptor table is the buddy's, so it is
+ * the buddy's to carry, not the kernel's.  A pipe's end has no name
+ * and is left behind, said so.
+ */
+long
+p9buddy_migout(uvlong container, char *buf, long max)
+{
+	Img *img;
+	long n;
+	int i, nopen, nleft;
+
+	if((img = imgof(container, 0)) == nil || img->name[0] == 0){
+		print("buddy: container %llud departs with no record: %s\n", container, img == nil ? "no table held for it" : "its image has no name");
+		return -1;
+	}
+	n = snprint(buf, max, "image %s %d\n", img->name, img->kind);
+	nopen = nleft = 0;
+	for(i = 3; i < Nfd; i++){
+		if(img->fds[i] < 0)
+			continue;
+		if(img->fdname[i][0] == 0){
+			nleft++;
+			continue;
+		}
+		n += snprint(buf + n, max - n, "fd %d %d %lld %s\n", i, img->fdmode[i], (vlong)p9seek(img->fds[i], 0, 1), img->fdname[i]);
+		nopen++;
+	}
+	print("buddy: container %llud departs: image %s, %d descriptors in its record%s\n", container, img->name, nopen,
+		nleft > 0 ? ", a pipe's end left behind" : "");
+	return n;
+}
+
+static vlong
+migrecnum(char **pp)
+{
+	char *p = *pp;
+	vlong v = 0;
+	int neg = 0;
+
+	while(*p == ' ')
+		p++;
+	if(*p == '-'){ neg = 1; p++; }
+	while(*p >= '0' && *p <= '9')
+		v = v*10 + (*p++ - '0');
+	*pp = p;
+	return neg ? -v : v;
+}
+
+/* the record above, arriving: the image laid out for the new container, its descriptors reopened */
+int
+p9buddy_migin(uvlong container, char *rec)
+{
+	Img *img;
+	uvlong scratch[4 + 3*Maxph];
+	char *line, *next, *name, *e;
+	vlong off;
+	int fd, mode, bfd, nfd;
+
+	nfd = 0;
+	img = nil;
+	for(line = rec; line != nil && *line != 0; line = next){
+		next = strchr(line, '\n');
+		if(next != nil)
+			*next++ = 0;
+		if(strncmp(line, "image ", 6) == 0){
+			name = line + 6;
+			if((e = strchr(name, ' ')) != nil)
+				*e = 0;
+			if(p9buddy_exec(container, name, (uchar*)scratch) < 0)
+				return -1;
+			img = imgof(container, 0);
+			continue;
+		}
+		if(strncmp(line, "fd ", 3) != 0 || img == nil)
+			continue;
+		e = line + 3;
+		fd = migrecnum(&e);
+		mode = migrecnum(&e);
+		off = migrecnum(&e);
+		while(*e == ' ')
+			e++;
+		if(fd < 3 || fd >= Nfd)
+			continue;
+		if(waserror()){
+			print("buddy: container %llud arrived: descriptor %d, %s, could not be reopened: %s\n", container, fd, e, up->errstr);
+			continue;
+		}
+		bfd = p9open(e, mode);
+		poperror();
+		p9seek(bfd, off, 0);
+		if(img->fds[fd] >= 0)
+			p9close(img->fds[fd]);
+		img->fds[fd] = bfd;
+		img->fdmode[fd] = mode;
+		kstrcpy(img->fdname[fd], e, sizeof img->fdname[fd]);
+		nfd++;
+	}
+	if(img == nil)
+		return -1;
+	print("buddy: container %llud arrived: image %s laid out for it, %d descriptors reopened at their offsets\n", container, img->name, nfd);
+	return 0;
 }
 
 /* the file's bytes at off, up to n, zero past its end; -1 for a bad descriptor */
@@ -448,7 +570,22 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 				cimg->fds[k] = p9dup(img->fds[k]);
 			else
 				cimg->fds[k] = img->fds[k];
+			memmove(cimg->fdname[k], img->fdname[k], sizeof cimg->fdname[k]);
+			cimg->fdmode[k] = img->fdmode[k];
 		}
+		/* the image too: the child's text and data are the same binary's, and it may cross a wire, where the far buddy needs its name */
+		if(img->fd >= 0){
+			if(cimg->fd >= 0)
+				p9close(cimg->fd);
+			cimg->fd = p9dup(img->fd);
+			cimg->kind = img->kind;
+			cimg->entry = img->entry;
+			cimg->nph = img->nph;
+			memmove(cimg->ph, img->ph, sizeof cimg->ph);
+			memmove(cimg->name, img->name, sizeof cimg->name);
+		}
+		print("buddy: container %llud's descriptors cloned to container %llud%s\n", container, a0,
+			img->fd >= 0 ? ", and its image with them" : "; it has no image of its own");
 		/*
 		 * The name space too: a fork without RFNAMEG shares the parent's,
 		 * so if the parent rforked a private one, the child holds the same
@@ -465,15 +602,17 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 
 	case OPEN:
 		/* open(name, mode): name at cdata[Nameoff], mode a1; the process's own number back */
-		r = fdnew(img, p9open((char*)(cdata + Nameoff), (int)a1));
+		r = fdnew(img, p9open((char*)(cdata + Nameoff), (int)a1), (char*)(cdata + Nameoff), (int)a1);
 		break;
 
 	case CLOSE:
 		bfd = fdof(img, a0);
 		if(bfd >= 0)
 			p9close(bfd);
-		if(bfd != -1)
+		if(bfd != -1){
 			img->fds[a0] = a0 < 3 ? Fdcons : -1;
+			img->fdname[a0][0] = 0;
+		}
 		r = bfd == -1 ? -1 : 0;
 		break;
 
@@ -516,7 +655,7 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 
 	case CREATE:
 		/* create(name, mode, perm): name at cdata[Nameoff], a1 mode, a2 perm */
-		r = fdnew(img, p9create((char*)(cdata + Nameoff), (int)a1, (ulong)a2));
+		r = fdnew(img, p9create((char*)(cdata + Nameoff), (int)a1, (ulong)a2), (char*)(cdata + Nameoff), (int)a1);
 		break;
 
 	case REMOVE:
@@ -542,8 +681,8 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 
 			r = p9pipe(bfd);
 			if(r == 0){
-				((int*)(cdata + Dataoff))[0] = fdnew(img, bfd[0]);
-				((int*)(cdata + Dataoff))[1] = fdnew(img, bfd[1]);
+				((int*)(cdata + Dataoff))[0] = fdnew(img, bfd[0], nil, ORDWR);
+				((int*)(cdata + Dataoff))[1] = fdnew(img, bfd[1], nil, ORDWR);
 			}
 		}
 		break;

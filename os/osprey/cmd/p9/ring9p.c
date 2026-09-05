@@ -273,7 +273,9 @@ ring9p_wait(int sem)
 	arm[1].obj = 2;			/* our output queue */
 	arm[1].buf = Takenoff;
 	n = dup(2, Armoff);		/* DUP's number is select over arms */
-	return n == 0 || n == 1 ? n : -1;
+	if(n == 0 || n == 1)
+		return n;
+	return n == -2 ? -2 : -1;	/* -1: nothing within the kernel's wait (200 ms of quiet), ask again; -2: the arms were refused */
 }
 
 /*

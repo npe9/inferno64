@@ -49,9 +49,9 @@ def main():
         imgs.append(img)
     port = 17895
     t1 = threading.Thread(target=boot, args=('socket,id=n0,listen=:%d' % port, '52:54:00:00:d1:01',
-                                             'osprey migrate: the exchange is complete on this machine', logs[0], imgs[0]))
+                                             'osprey migrate: the exchange is complete on this machine - 2 carried away, 2 taken in and done', logs[0], imgs[0]))
     t2 = threading.Thread(target=boot, args=('socket,id=n0,connect=:%d' % port, '52:54:00:00:d1:02',
-                                             'osprey migrate: the exchange is complete on this machine', logs[1], imgs[1], 4))
+                                             'osprey migrate: the exchange is complete on this machine - 2 carried away, 2 taken in and done', logs[1], imgs[1], 4))
     t1.start(); t2.start(); t1.join(); t2.join()
     for img in imgs:
         try: os.unlink(img)
@@ -90,6 +90,20 @@ def main():
          and all(re.search(r'the thread had counted to \d+ before the crossing and to \d+ after it - it came with me, still running in the shared memory', x) is not None for x in t)
          and all(re.search(r'legacy: reaped my thread after the crossing; its wait message: "\d+ ', x) is not None for x in t)
          and all(re.search(r'osprey migrate: group member container \d+ \(pid \d+\) has gone over the wire with it; container \d+ destroyed', x) is not None for x in t)),
+        ("what the process has crosses with it: its text and data are a buddy image's, so the sender lets go of every page equal to the image and carries only the forty dirty pages and the rest that differ - under sixty pages, not the whole image - and the far buddy lays the same image out for the arrival, which pages in from it",
+         all(re.search(r"osprey migrate: container \d+'s process's text and data are its buddy's image: [1-9]\d* pages let go \(text, data equal to the image, zeros\), (4\d|5\d) pages that differ kept to carry, \d+ in segments shared with a process that stays", x) is not None for x in t)
+         and all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12], with 1 of its group: (4\d|5\d) pages,", x) is not None for x in t)
+         and all(re.search(r'buddy: container \d+ arrived: image /boot/legacy laid out for it, [1-9]\d* descriptors reopened at their offsets', x) is not None for x in t)
+         and all(re.search(r'legacy: and what I had came with me: my 40 dirty pages \(40 intact\)', x) is not None for x in t)),
+        ("and its descriptor table crosses: the buddy's record of each open descriptor - name, mode, offset - goes with the header and is reopened at the far end, where the arrived process reads /n/hello through the descriptor it opened before crossing",
+         all(re.search(r'buddy: container \d+ departs: image /boot/legacy, [1-9]\d* descriptors in its record', x) is not None for x in t)
+         and all(re.search(r'legacy: and what I had came with me: .* the descriptor I opened before the crossing reads here: "[^"]+"', x) is not None for x in t)),
+        ("and two cross at once: a second process forked before the crossing asks at the same moment, alone; the kernel's departures table holds both, each server end carries its own over a connection of its own, the taker takes them in on kprocs of its own, and both arrive",
+         all(re.search(r"osprey migrate: container \d+'s crossing begins while container \d+'s is in flight - 2 at once", x) is not None for x in t)
+         and all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12], with 0 of its group: [1-9]\d* pages,", x) is not None for x in t)
+         and all(re.search(r'legacy: the second process crossed at the same time: I am container \d+ here, my 40 dirty pages came with me \(40 intact\), and my descriptor opened before the crossing reads: "[^"]+"', x) is not None for x in t)),
+        ("and the parked process waited on its transfer's own progress, not a minute's count: no crossing stalled and none was refused",
+         all('crossing stalled' not in x and 'was not taken by the other machine' not in x for x in t)),
         ("and neither machine panics",
          all('panic' not in x for x in t)),
     ]

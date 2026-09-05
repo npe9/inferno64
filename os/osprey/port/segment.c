@@ -309,6 +309,50 @@ sameseg:
 }
 
 /*
+ * segpage's form for a page fetched outside the segment's lock (the
+ * buddy pager's): inserted if the slot is still empty, returning 1;
+ * if a sharer faulting the same page put its copy in meanwhile, p is
+ * let go and 0 returned, and the page present is the one to use.
+ */
+int
+segpageif(Segment *s, Page *p)
+{
+	Pte **pte, *etp;
+	uintptr soff;
+	Page **pg;
+
+	qlock(s);
+	if(p->va < s->base || p->va >= s->top || s->mapsize == 0)
+		panic("segpageif");
+	soff = p->va - s->base;
+	pte = &s->map[soff/PTEMAPMEM];
+	if((etp = *pte) == nil){
+		etp = ptealloc();
+		if(etp == nil){
+			qunlock(s);
+			putpage(p);
+			error(Enomem);
+		}
+		*pte = etp;
+	}
+	pg = &etp->pages[(soff&(PTEMAPMEM-1))/BY2PG];
+	if(*pg != nil){
+		qunlock(s);
+		putpage(p);
+		return 0;
+	}
+	settxtflush(p, s->flushme);
+	*pg = p;
+	s->used++;
+	if(pg < etp->first)
+		etp->first = pg;
+	if(pg > etp->last)
+		etp->last = pg;
+	qunlock(s);
+	return 1;
+}
+
+/*
  *  segpage inserts Page p into Segmnet s.
  *  on error, calls putpage() on p.
  */

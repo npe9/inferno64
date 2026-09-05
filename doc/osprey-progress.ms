@@ -5397,20 +5397,103 @@ and
 and the sleeps now arm the wait before every switch.
 .PP
 .B "6.  Migration that carries what a process has."
-Open files do not cross; the arrived process has no buddy image and so
-every page is carried; one process may cross at a time; the sender
-parks for up to a minute; pages cross in halves through the data area.
-The real form: the header names the program and the buddy at the far
-end lays its image out, so only pages that differ from the image cross
-and the rest page in there; the buddy's descriptor table \- name, mode,
-offset \- crosses in the header and is reopened at the far end; pages
-are staged whole in the packet buffers;
-.CW migout
-is a table; the parked process waits on the transfer's own progress.
-Proof: the arrived process reads
-.CW /n/hello
-through a descriptor it opened before crossing, a process with forty
-dirty pages crosses with only those carried, and two cross at once.
+Done.  The descriptor table is the buddy's, so it is the buddy's to
+carry: the sender's personality asks its buddy for the departing
+container's record
+.CW ( p9buddy_migout
+in
+.CW p9buddy.c :
+the image's file name and kind, and each open descriptor's number,
+mode, offset and name, which the buddy records at open and create; a
+pipe's end has no name and is left behind, said so), sends it after
+the kernel's header, and the taker's buddy lays the same image out for
+the arrived container and reopens each descriptor at its offset in its
+own file system
+.CW ( p9buddy_migin ).
+The kernel's header says whether the process's text and data are a
+buddy image's
+.CW ( Migimage ),
+and before such a process is parked its text pages and every data page
+equal to the buddy's copy are let go
+.CW ( mfreeseg ,
+a page at a time), as is every page of zeros in bss or stack; the far
+kernel makes the data segment data, not bss, marks the process the
+buddy's, and what was let go pages in from the image there, or from
+this machine's again if the crossing is refused.  A segment shared
+with a process that stays \- a forked sibling shares the text \- is
+carried whole: only a segment whose every sharer is leaving (the
+process, its group, a process parked in another departure) may lose
+pages.  Pages cross whole, staged across two adjacent packet buffer
+slots of the server's slice (a slot is 2112 bytes; slots 18 to 23 for
+arrivals, 24 to 31 for departures), the header alone through the data
+area.  Departures are a table of four
+.CW ( migouts ),
+each with slots of its own, and the taker's listener hands each
+connection to a kproc of its own, so two cross at once; the parked
+process sleeps on its entry's rendezvous, woken by every page the
+server pulls and by the answer, and is refused only when nothing has
+moved for ten seconds, not after a minute's count.  The legacy
+program's proof: it opens
+.CW /n/hello ,
+writes forty pages of its bss, forks a sibling that asks to cross at
+the same moment alone, and crosses with its thread; on the far machine
+it reads the file through the descriptor, counts its forty pages
+intact, and the sibling does the same.  The figures, the same on both
+machines: the parent lets go of six pages \- its five of text and one
+of zeros \- and carries forty-three, the forty it dirtied, its stack
+and two data pages that differ, where the whole image had crossed
+before; the sibling, asking a moment earlier while the parent still
+runs and shares its text, carries that text whole, five pages, and
+lets go of one, which is the rule and not a failure of it.
+.PP
+Two bugs older than the item came out of it.  Letting go of shared
+text under a live sharer made the sharer fault, and the process that
+reached the note code with no container was a ghost: the old process
+of a group member that a local move had copied was told to exit
+.CW ( Proc_exitme )
+and then, as its old container was taken apart, the container's
+release \- meant to undo a stop this device had imposed \- cleared
+that order and readied it, and it went back to user mode with no
+container, sharing the old address space, after every group move and
+every wire departure, until some page it needed was gone.  The release
+now undoes a stop and not an exit.  And a forked or moved child's
+buddy image was an empty table: the buddy cloned the descriptors at a
+fork but not the image's file and layout, which the whole-image
+residency of a fork hid until a page was let go; the clone carries
+them now.
+.PP
+Three more came out of running it.  A process may hold ten segments
+.CW ( NSEG ,
+an enum in
+.CW portdat.h ),
+and the personality's text, data, bss and stack, its two device BARs
+and the slices of the containers it serves fill them by the seventh
+container, whose every request was then \*(lqunmapped\*(rq and whose
+buddy was lost to it \- which is why a moved process's descriptor read
+empty and a departing container had no record: the count is thirty
+now.  Every exit of a legacy process, and the move's and the
+migration's, called
+.CW pexit
+with its second argument 0, which to Plan 9 means keep the memory and
+become a Broken process, held for a debugger until four more break; so
+every exited, moved or carried process lingered with all its pages and
+its segment references until the fourth exit after it, and a departing
+process's text always looked shared with a process that stays.  They
+free their memory now, and a departure lets go of what it may \- which
+found the last one: the buddy's page fault
+.CW ( ospreybuddyfault )
+put the page it had fetched into the segment without looking again,
+and two sharers of a segment on two cores, faulting the same page once
+pages were let go that had always been resident, hit the assertion in
+.CW segpage ;
+a form of it that inserts only into an empty slot
+.CW ( segpageif )
+does it under the segment's own lock, and the page present is used.
+And an arrival exited against a departed container's child-table entry, whose
+container record had been reused: a lookup skips entries already done.
+The client's select loop of item 5 took the kernel's \*(lqnothing in
+200 ms\*(rq for a failure, which a tick paused by a loaded host can
+produce; it asks again.
 .PP
 .B "7.  A group member that is blocked still crosses."
 A member that never comes back to user mode refuses the move.  The

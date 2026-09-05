@@ -28,6 +28,7 @@ ulong		ospreycoreof(Ospreyproc*);
 int		ospreynproc(void);
 int		ospreyncore(void);
 void*		ospreydata(Ospreyproc*, uvlong off, ulong len);
+void*		ospreypktbuf(Ospreyproc*, int slot, ulong len);
 uvlong		ospreydataoffset(Ospreyproc*);
 uvlong		ospreydatalen(Ospreyproc*);
 void*		ospreyarenaaddr(uvlong off, ulong len);

@@ -39,6 +39,10 @@ nhandler(void *ureg, char *msg)
 /* shared with a thread made by rfork(RFPROC|RFMEM): in the data segment, so both see it */
 static volatile int gshared, gstop;
 
+/* forty pages of the bss, each written before the crossing: pages that differ from the image, which is what a crossing carries */
+enum { Ndirty = 40 };
+static char dirty[Ndirty*4096];
+
 void
 startboot(char *argv0, char **argv)
 {
@@ -316,9 +320,43 @@ startboot(char *argv0, char **argv)
 		 * kernel says so and the program stays.
 		 */
 		{
-			int tid, n1, n2, i, an;
-			char abuf[128];
+			int tid, n1, n2, i, an, hfd, sib, intact;
+			char abuf[128], hbuf[128];
+			long hn;
 
+			/*
+			 * What crosses with me: a descriptor opened before the
+			 * crossing, read after it there; forty pages written
+			 * here, which are the pages that differ from my image -
+			 * the image itself the far buddy has; and a second
+			 * process, forked now, that asks to cross at the same
+			 * moment I do, alone.
+			 */
+			hfd = open("/n/hello", OREAD);
+			for(i = 0; i < Ndirty; i++)
+				dirty[i*4096 + 100] = 'a' + (i % 26);
+			sib = rfork(RFPROC|RFFDG);
+			if(sib == 0){
+				for(i = 0; i < 20; i++)
+					sleep(1);
+				args[0] = 2;			/* to the wire, alone */
+				args[1] = args[2] = args[3] = args[4] = 0;
+				moved = (int)ospreyxcall(24, args, 1);
+				if(moved > 0){
+					hn = hfd >= 0 ? read(hfd, hbuf, sizeof hbuf - 1) : -1;
+					if(hn < 0)
+						hn = 0;
+					hbuf[hn] = 0;
+					intact = 0;
+					for(i = 0; i < Ndirty; i++)
+						if(dirty[i*4096 + 100] == 'a' + (i % 26))
+							intact++;
+					print("legacy: the second process crossed at the same time: I am container %d here, my %d dirty pages came with me (%d intact), and my descriptor opened before the crossing reads: \"%s\"\n",
+						moved, Ndirty, intact, hbuf);
+				} else
+					print("legacy: the second process was not taken (%d)\n", moved);
+				exits("second done");
+			}
 			gshared = 0;
 			gstop = 0;
 			tid = rfork(RFPROC|RFMEM);		/* a thread to go with me */
@@ -339,9 +377,19 @@ startboot(char *argv0, char **argv)
 			for(i = 0; i < 20; i++)
 				sleep(1);
 			n2 = gshared;
-			if(moved > 0 && n2 > n1)
+			if(moved > 0 && n2 > n1){
 				print("legacy: I was carried over the wire to the other machine with my thread: I am container %d here, my stack still holds %d, and the thread had counted to %d before the crossing and to %d after it - it came with me, still running in the shared memory\n", moved, keep, n1, n2);
-			else if(moved > 0)
+				hn = hfd >= 0 ? read(hfd, hbuf, sizeof hbuf - 1) : -1;
+				if(hn < 0)
+					hn = 0;
+				hbuf[hn] = 0;
+				intact = 0;
+				for(i = 0; i < Ndirty; i++)
+					if(dirty[i*4096 + 100] == 'a' + (i % 26))
+						intact++;
+				print("legacy: and what I had came with me: my %d dirty pages (%d intact), and the descriptor I opened before the crossing reads here: \"%s\"\n",
+					Ndirty, intact, hbuf);
+			} else if(moved > 0)
 				print("legacy: I was carried over the wire but my thread did not come with me (counted %d then %d)\n", n1, n2);
 			else
 				print("legacy: no other machine took me (%d); I stay\n", moved);

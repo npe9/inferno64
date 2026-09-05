@@ -178,6 +178,12 @@ port
 			print("osprey: legacy process %s killed by note: %s\n", up->text, msg);
 			ospreyexits(1);
 		}
+		{
+			extern uintptr uregpc(void*);
+			iprint("osprey: donotify for pid %d (%s), %s, user pc %#p: %s\n", up->pid, up->text,
+				up->osprey == nil ? "no container" : "a container without a server", uregpc(a),
+				up->nnote > 0 ? up->note[up->nnote-1]->msg : "no note");
+		}
 		panic("microkernel: donotify");
 		return 0;
 	}
