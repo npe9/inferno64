@@ -9,7 +9,16 @@ is a circle tracing game.
 It runs under
 .IR wm (1).
 .PP
-Drag button 1 around a guide circle. On release, radial error is scored; lower is better.
+Drag button 1 around the guide circle.
+A status line at the top left shows the running average radial error,
+elapsed time, and score.
+The score is elapsed time multiplied by average error per pixel of path,
+so a trace must be both fast and accurate; lower is better.
+An attempt only counts if the traced path is at least 95% of the
+guide circle's circumference; shorter traces sound a low failure tone
+and are discarded.
+A new best score plays a three-beep jingle and is saved across runs;
+background music plays while tracing.
 .PP
 The controls are:
 .TF space
