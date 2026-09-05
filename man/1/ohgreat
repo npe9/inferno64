@@ -5,21 +5,21 @@ ohgreat \- song and lyrics player
 .B temple/ohgreat
 .SH DESCRIPTION
 .I OhGreat
-is a song and lyrics player.
+plays a song by Terry A. Davis, ported from the TempleOS
+sound demo of the same name.
 It runs under
 .IR wm (1).
 .PP
-Space starts and stops a fixed song while lyrics are shown.
+The song starts as soon as the window opens and repeats
+forever.
+As each note sounds, its lyric syllable is appended to the
+window, karaoke style, exactly as the original's
+.B Play()
+prints them.
 .PP
-The controls are:
-.TF space
-.TP
-.B space
-Play/stop
-.TP
-.B Esc / q
-Quit
-.PD
+Pressing any key stops the song and exits, as the original's
+.B ScanChar
+loop does.
 .SH SOURCE
 .B /appl/temple/ohgreat.b
 .SH SEE ALSO
