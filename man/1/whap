@@ -17,10 +17,7 @@ The controls are:
 .B mouse move
 Stretch ball0 toward pointer
 .TP
-.B Enter
-Restart
-.TP
-.B Esc / q
+.B any key
 Quit
 .PD
 .SH SOURCE
