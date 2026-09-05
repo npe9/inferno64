@@ -5881,8 +5881,17 @@ and
 .CW p9linux
 are the per-process buddy the paper means: an unmodified legacy binary,
 Plan 9 or Linux, whose own system traps a peer personality answers.
-For the Linux binary the buddy is loader and pager as well: the binary
-is a file in the buddy's file system and every page of it arrives by a
-fault the buddy answers.  What that buddy does not yet do is take the
-Plan 9 binary's page faults the same way, and what it maps is the
-handful of file calls the demonstration makes.
+For either binary the buddy is loader and pager as well: the binary is
+a file in the buddy's file system and every page of it arrives by a
+fault the buddy answers.  The Plan 9 a.out is paged the same way as the
+Linux ELF now \- the buddy lays it out as three pieces and supplies
+each page from its file
+.CW ( p9buddy_page ,
+by
+.CW img->kind ),
+which the p9buddy check shows: the legacy a.out laid out by the buddy
+and its pages supplied by fault, exactly as the Linux binary's are.
+What is left is breadth, not kind: the buddy maps the file calls the
+demonstration makes \- open, read, write, close, create, remove, stat,
+seek, pipe, bind, mount, errstr \- and rc or rio would need far more of
+the Plan 9 ABI than that.
