@@ -1,27 +1,95 @@
 .TH LOGIC 1
 .SH NAME
-logic \- truth-table synthesizer
+logic \- truth-table gate synthesizer
 .SH SYNOPSIS
 .B temple/logic
 .SH DESCRIPTION
 .I Logic
-is a truth-table synthesizer.
+is a port of the TempleOS
+.B Apps/Logic
+truth-table gate synthesizer.
 It runs under
 .IR wm (1).
 .PP
-Edit hex truth-table columns in Tk and synthesize a gate expression.
+Give it the columns of a truth table and it builds a circuit that
+produces them, by repeated passes over a table of every value the
+circuit can hold, adding whichever gate it can make from values it
+already has.
+All values are hexadecimal.
+.PP
+The fields are:
+.TP
+.B Table size
+The number of table entries, and so the width of a column:
+.B 100
+for three inputs,
+.B 10000
+for four.
+The original's maximum is
+.BR 10000 .
+.TP
+.B Input columns
+Any number of input columns, separated by spaces.
+The default
+.B "F0 CC AA"
+is the three-input enumeration.
+.TP
+.B Output columns
+Any number of columns to be produced.
+.TP
+.B Gates
+The gate types the synthesizer may use, in the order it should try
+them.
+The order matters: each pass tries the gates in the order given, so
+listing
+.B NAND
+before
+.B AND
+yields a different circuit.
+The names are
+.BR NOT ,
+.BR AND ,
+.BR OR ,
+.BR NAND ,
+.BR NOR ,
+.BR XOR ,
+.BR AND3 ,
+.BR OR3 ,
+.BR NAND3 ,
+.BR NOR3 .
+.PP
+.B "Run synthesis"
+fills the table, reporting each pass, and then draws the circuit
+right to left in the panel below \- gate sprites, red connection
+wires, green input letters and
+.B Dup
+labels, and each node's value in black.
 .PP
 The controls are:
-.TF space
+.TF "Run synthesis"
 .TP
-.B Tk fields / buttons
-Edit truth table and synthesize
+.B "Run synthesis"
+Synthesize and draw the circuit
 .TP
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TP
+.B /icons/temple/logic_1.bit
+Gate sprites, one pair of
+.IB name .bit
+and
+.IB name .mask
+per gate type, rasterized from the
+.B $SP
+bins of the original
+.BR Logic.HC .
 .SH SOURCE
 .B /appl/temple/logic.b
 .SH SEE ALSO
 .IR temple (1),
 .IR wm (1)
+.SH BUGS
+The original re-dumps the schematic into a scrolling document on every
+synthesis; here it persists in the panel.

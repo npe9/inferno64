@@ -5,42 +5,83 @@ strut \- ship and thruster editor
 .B temple/strut
 .SH DESCRIPTION
 .I Strut
-is a ship and thruster editor.
+is a port of the TempleOS
+.B Apps/Strut
+ship editor.
 It runs under
 .IR wm (1).
 .PP
-Edit masses, struts, and thrusters, then space to play. Digits fire thrusters once assigned; z and Z zoom.
+Build a ship out of masses joined by springs, connectors and
+thrusters, then press space to fly it against an 8192-star field.
+An instruction screen is shown at startup and dismissed by any key.
+.PP
+The mode is held in two on-screen buttons, which may be clicked as
+well as typed: the main
+.BR Edit / Play
+button centred at the top, and, while editing, the
+.BR Mass / Spring / Connector / Thruster / Move
+column down the left.
+Each thruster and connector is assigned an
+.I action key
+when it is placed; in play, that digit fires the thruster or breaks
+the connector.
+.PP
+.B z
+and
+.B Z
+zoom in and out about the cursor, over the original's twenty
+animation steps, so the point under the pointer stays under it.
+.B d
+damps the ship while it is held down, and while editing it also
+unpauses the simulation so the ship settles.
 .PP
 The controls are:
-.TF space
+.TF "m / s / n / t / v"
 .TP
-.B m / s / n / t / v
+.B "any key"
+Dismiss the instruction screen
+.TP
+.B "m / s / n / t / v"
 Edit modes: mass / spring / connector / thruster / move
 .TP
 .B 0-9
-Set next action key; in play fire/break
+While editing, set the action key for the next thruster or connector;
+in play, fire that thruster or break that connector
 .TP
 .B LMB
-Place/edit per mode
+Place or edit per mode; press a mode button
 .TP
 .B RMB
 Cycle edit mode
 .TP
 .B space
-Toggle play/edit
+Toggle play and edit
+.TP
+.B Enter
+Restart, while editing
 .TP
 .B c
-Center masses
+Centre masses
 .TP
 .B d
-Increase drag (play)
+Damp while held
 .TP
 .B z / Z
-Zoom in/out
+Zoom in / out about the cursor
 .TP
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TP
+.B /icons/temple/strut_1.bit
+Mass and thruster-nozzle sprites, one
+.IB name .bit
+and
+.IB name .mask
+each, from the
+.B $SP
+bins of the original.
 .SH SOURCE
 .B /appl/temple/strut.b
 .SH SEE ALSO
@@ -49,3 +90,13 @@ Quit
 .IR ode (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original's File, Edit, Play and View pulldown menus are not drawn;
+every entry is on a key or a mode button, and Shift-Esc (Abort) is not
+distinguishable from Esc here.
+The simulation integrates at h=5e-4 rather than the original's 1e-4,
+because RK4 at 1e-4 does not fit the frame budget on this
+implementation; app forces are computed once per tick rather than per
+derivative evaluation.
+.BR Noise (250,18,46)
+is one random tone in that range, not white noise.

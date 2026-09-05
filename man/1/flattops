@@ -5,14 +5,33 @@ flattops \- carrier task-force game
 .B temple/flattops
 .SH DESCRIPTION
 .I FlatTops
-is a carrier task-force game.
+is a port of the TempleOS
+.B Demo/Games/FlatTops.HC
+carrier task force game.
 It runs under
 .IR wm (1).
 .PP
-Button 1 sets squadron heading; button 2 launches fighters (double-tap recalls). Destroy the enemy force. Plus and minus change game speed.
+A help panel listing the three mouse actions is shown at startup; the
+simulation is held until any key dismisses it.
+.PP
+Button 1 sets the course of the squadron nearest the point clicked;
+button 2 launches a squadron from the nearest carrier toward the
+point; a right double-tap on a squadron sends it home.
+Ships carry fuel and a damage bitmap: hits burn holes in it and
+repairs fill them back in, so a ship is lost when the burning
+outruns the repair.
+Destroy the enemy force.
+.PP
+Plus and minus scale
+.IR "game speed" ,
+which multiplies the rate at which everything \- movement, fuel burn,
+repair and the odds of a torpedo hit \- advances per real second.
 .PP
 The controls are:
-.TF space
+.TF "RMB double-tap"
+.TP
+.B "any key"
+Dismiss the startup help and begin
 .TP
 .B LMB
 Set friendly squadron heading toward point
@@ -20,7 +39,7 @@ Set friendly squadron heading toward point
 .B RMB
 Launch squadron toward point
 .TP
-.B RMB double-tap
+.B "RMB double-tap"
 Return squadron
 .TP
 .B + / =
@@ -35,6 +54,16 @@ Restart
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TP
+.B /icons/temple/flattops_1.bit
+Ship sprites, one
+.IB name .bit
+and
+.IB name .mask
+per ship type and player, from the
+.B $SP
+bins of the original.
 .SH SOURCE
 .B /appl/temple/flattops.b
 .SH SEE ALSO
@@ -42,3 +71,11 @@ Quit
 .IR draw3d (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original's File and Play pulldown menus are not drawn; their
+entries are all on keys.
+The window is a fixed 800x600 rather than a scrollable maximized task,
+so there is no Ctrl-Left grab scrolling.
+Squadron return is a right double-tap within 400ms and 20 pixels,
+standing in for the original's
+.BR MSG_MS_R_D_UP .

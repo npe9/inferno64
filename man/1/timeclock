@@ -1,37 +1,78 @@
 .TH TIMECLOCK 1
 .SH NAME
-timeclock \- punch clock
+timeclock \- punch clock with weekly totals
 .SH SYNOPSIS
 .B temple/timeclock
+[
+.I in
+|
+.I out
+|
+.I rep
+[
+.I description ...
+] ]
 .SH DESCRIPTION
 .I TimeClock
-is a punch clock.
-It runs under
-.IR wm (1).
+is a port of the TempleOS
+.B Apps/TimeClock
+punch clock.
+With no arguments it opens a window under
+.IR wm (1);
+with an argument it does the one thing and exits, as the original's
+console commands do.
 .PP
-Punch in and out from Tk buttons and view a text report of the log.
+Each punch records the time and a description.
+The report lists every entry and, following
+.IR TimeRep ,
+groups them by week \- the day number divided by seven \- printing a
+.B "Week Total"
+whenever the week changes and again at the end.
+A shift still open counts up to the present.
+.PP
+Punching in when already in, or out when already out, is refused with
+a blinking warning, as the original's
+.B $$BK,1$$
+text does.
+.PP
+In the window, type the description first and then press
+.B "Punch In"
+or
+.BR "Punch Out" .
+On the command line the description may be given as arguments; if it
+is not, it is read from standard input after the punch, as
+.I GetStr
+does in the original, ending at end of file or at a line containing
+only a dot.
 .PP
 The controls are:
-.TF space
+.TF "Punch In / Punch Out"
 .TP
-.B Punch In / Punch Out / Report buttons
-Timekeeping
+.B "Punch In / Punch Out"
+Record a punch with the typed description
 .TP
-.B entry + Enter
-Punch in with note
+.B Report
+Redraw the report
 .TP
 .B Esc / q
 Quit
 .PD
 .SH FILES
 .TP
-.B /tmp/temple-timeclock.txt
-Data file.
-.TP
-.B ~/temple-timeclock.txt
-Documented; code uses /tmp.
+.B /usr/$user/timeclock/timefile
+The log: one record a line, holding the punch type, the time and the
+escaped description.
 .SH SOURCE
 .B /appl/temple/timeclock.b
 .SH SEE ALSO
 .IR temple (1),
+.IR daytime (2),
 .IR wm (1)
+.SH BUGS
+The original stores binary
+.B CDate
+records, compressed, in
+.BR ~/TimeClock/TimeFile.DATA.Z ;
+this stores uncompressed text, so the two files are not interchangeable.
+In the window the description is typed before the punch rather than
+prompted for after it.
