@@ -463,6 +463,15 @@ enum {
 };
 extern uchar *p9srvdata(void);
 extern long ospreyxcall(int op, uvlong *args, long n);
+static int migsent, migtaken;		/* processes carried away and taken in on this machine */
+
+/* when this machine has both sent one and taken one, say so: what the two-machine check waits for */
+static void
+migexchanged(void)
+{
+	if(migsent > 0 && migtaken > 0)
+		print("p9 migrate: this machine has carried %d away and taken %d in - the exchange is complete\n", migsent, migtaken);
+}
 
 static int
 wireconnect(char *addr, int *dfdp)
@@ -514,10 +523,24 @@ migsend(void *a)
 	hdr = (uvlong*)hdrbuf;
 	nseg = hdr[0];
 	if(k == 0){
+		int try;
+
 		print("p9 migrate: container %llud's process snapshotted: %llud segments, a %ld-byte header, %llud in its group; connecting to 10.1.0.%d!%d\n",
 			cid, nseg, n, nmem, 3 - mac[5], Migport);
-		wfd = wireconnect(addr, &dfd);
-		print("p9 migrate: connected; sending the header\n");
+		/* the other machine may not be listening yet - booted later, or slower: try for a while */
+		for(try = 0;; try++){
+			if(!waserror()){
+				wfd = wireconnect(addr, &dfd);
+				poperror();
+				break;
+			}
+			if(try >= 20)
+				error("the other machine did not answer in twenty tries");
+			print("p9 migrate: connect to the other machine failed (%s); trying again\n", up->errstr);
+			if(dfd >= 0){ p9close(dfd); dfd = -1; }
+			tsleep(&up->sleep, return0, nil, 1000);
+		}
+		print("p9 migrate: connected on try %d; sending the header\n", try + 1);
 	} else
 		print("p9 migrate: group member %llud snapshotted: %llud segments; sending it after\n", k, nseg);
 	pipwire_put(wfd, hdrbuf, n);		/* the header: segments and the register frame */
@@ -567,6 +590,8 @@ migsend(void *a)
 		ok = 1;
 		print("p9 migrate: container %llud's process carried over the wire to 10.1.0.%d, with %llud of its group: %llud pages, %llud bytes; it is container %llud there\n",
 			cid, 3 - mac[5], nmem - 1, npages, nbytes, *(uvlong*)(rg + 8));
+		migsent++;
+		migexchanged();
 	} else
 		print("p9 migrate: the other machine did not take container %llud's process\n", cid);
 	poperror();
@@ -662,6 +687,8 @@ migrecv(void *)
 		*(uvlong*)rg = 1;
 		*(uvlong*)(rg + 8) = first;
 		pipwire_put(dfd, rg, 16);
+		migtaken++;
+		migexchanged();
 		poperror();
 		tsleep(&up->sleep, return0, nil, 300);
 		p9close(dfd); p9close(lfd);

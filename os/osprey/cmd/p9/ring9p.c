@@ -276,15 +276,18 @@ ring_exec(char *name)
 
 /*
  * Wait for a program this container started to exit; its status comes
- * back in *status.  The kernel answers when the child exits, which may
- * be a while, so this waits longer than a file request does.
+ * back in *status.  The kernel answers when the child exits - or when it
+ * has gone to another machine - which may be a while: a wait is a wait,
+ * and it does not give up on its own.  (It once gave up after ten
+ * seconds, which a child migrating over a slow wire outlasted, and the
+ * program went on with the child still here.)
  */
 long
 ring_wait(long *status)
 {
 	Msg rep;
 
-	if(ringcalln(ReqWait, 0, 0, 0, &rep, 5000) < 0 || rep.arg[0] != 1)
+	if(ringcalln(ReqWait, 0, 0, 0, &rep, 1<<30) < 0 || rep.arg[0] != 1)
 		return -1;
 	*status = (long)rep.arg[2];
 	return 0;

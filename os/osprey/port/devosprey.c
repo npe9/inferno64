@@ -577,6 +577,7 @@ static QLock ospreylock;
  * share one.  A ring still has one producer and one consumer.
  */
 static Rendez ospreyroomrend[16];
+static void ospreyconsdrained(Ospreyproc*);	/* the console FIFO, fed when its task frees a slot */
 static Rendez ospreyreplyrend[16];
 
 /*
@@ -1090,6 +1091,7 @@ ospreyuarttask(void *a)
 				ospreyuartlen[x] = (long)arg[1];
 			}
 			qunlock(&ospreylock);
+			ospreyconsdrained(p);	/* a slot freed: the console FIFO, if this is the console, feeds it */
 			continue;
 		}
 		if(n == 0){
@@ -2982,62 +2984,92 @@ static Lock ospreyconslock;
 static int ospreyconsnext;
 static uvlong ospreyconsbytes, ospreyconsdirect;
 
+/*
+ * Every print goes to the console task, in order, and none blocks or
+ * bypasses it: a print appends to a FIFO the kernel keeps, and the FIFO
+ * is fed to the task's output queue, a slot at a time, whenever there is
+ * room - by the printer itself, and by the task when its take of a
+ * message frees a slot (ospreyconsdrained).  A print cannot wait for
+ * room, since it may hold the lock the task needs to make it, and it
+ * must not write the port itself, since that put its text out ahead of
+ * what was queued and cut lines in two; so the FIFO holds what the
+ * queue cannot yet.  Only the FIFO itself overflowing - the task sixteen
+ * kilobytes behind - or a panic goes to the port.
+ */
+enum { Consfifo = 16*1024 };
+static char consfifo[Consfifo];
+static ulong consin, consout;		/* under ospreyconslock; consin - consout is what waits */
+
+static void
+ospreyconsflush(Ospreyproc *p)
+{
+	uchar *d;
+	ulong m, off;
+	int slot;
+
+	while(consout != consin && ospreyoutputroom(p)){
+		off = consout % Consfifo;
+		m = consin - consout;
+		if(m > Consslot)
+			m = Consslot;
+		if(m > Consfifo - off)
+			m = Consfifo - off;	/* to the end of the FIFO; the rest next slot */
+		slot = ospreyconsnext++ % Nconsslot;
+		if((d = ospreydata(p, Consoff + slot*Consslot, Consslot)) == nil)
+			return;
+		memmove(d, consfifo + off, m);
+		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0)
+			return;
+		ospreyconsbytes += m;
+		consout += m;
+	}
+}
+
 static int
 ospreyconsput(char *s, int n)
 {
 	Ospreyproc *p;
-	uchar *d;
-	int m, slot, x;
+	ulong off, m;
+	int x;
 
 	if((p = ospreyconsproc) == nil || n <= 0)
 		return -1;
 	ilock(&ospreyconslock);
+	if(Consfifo - (consin - consout) < (ulong)n){
+		iunlock(&ospreyconslock);
+		ospreyconsdirect += n;
+		return -1;		/* the task is a whole FIFO behind: the caller writes the port itself */
+	}
 	while(n > 0){
-		m = n < Consslot ? n : Consslot;
-		if(!ospreyoutputroom(p)){
-			int i;
-
-			/*
-			 * The queue to the task is full.  Writing the rest to the
-			 * port at once would put it out ahead of what is queued,
-			 * cutting lines in two - the console interleave every
-			 * busy boot showed.  The task drains a slot in well under
-			 * a millisecond, so wait for room, the lock dropped, when
-			 * waiting is allowed at all (process context, interrupts
-			 * on); the task runs on the other processor meanwhile,
-			 * which is the test bench's shape.  With one processor,
-			 * or from an interrupt, this falls through to the port
-			 * as before.
-			 */
-			iunlock(&ospreyconslock);
-			for(i = 0; i < 20 && up != nil && islo() && !ospreyoutputroom(p); i++)
-				delay(1);
-			ilock(&ospreyconslock);
-			if(!ospreyoutputroom(p)){
-				iunlock(&ospreyconslock);
-				ospreyconsdirect += n;
-				return -1;	/* the caller writes the port itself */
-			}
-		}
-		slot = ospreyconsnext++ % Nconsslot;
-		if((d = ospreydata(p, Consoff + slot*Consslot, Consslot)) == nil){
-			iunlock(&ospreyconslock);
-			return -1;
-		}
-		memmove(d, s, m);
-		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0){
-			iunlock(&ospreyconslock);
-			ospreyconsdirect += n;
-			return -1;
-		}
-		ospreyconsbytes += m;
+		off = consin % Consfifo;
+		m = n;
+		if(m > Consfifo - off)
+			m = Consfifo - off;
+		memmove(consfifo + off, s, m);
+		consin += m;
 		s += m;
 		n -= m;
 	}
+	ospreyconsflush(p);
 	iunlock(&ospreyconslock);
 	if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
 		wakeup(&ospreyselrend[x]);
 	return 0;
+}
+
+/* the console task took a message off its output queue: feed it what waits in the FIFO */
+static void
+ospreyconsdrained(Ospreyproc *p)
+{
+	int x;
+
+	if(p != ospreyconsproc)
+		return;
+	ilock(&ospreyconslock);
+	ospreyconsflush(p);
+	iunlock(&ospreyconslock);
+	if(consout != consin && (x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
+		wakeup(&ospreyselrend[x]);
 }
 
 /* a task's write to the console: through the console task, or the port when there is none */
@@ -3483,6 +3515,16 @@ typedef struct Migseg Migseg;
 struct Migseg { uvlong idx, type, base, top; };
 
 enum { Nmigmember = 4, Migshared = 1<<8 };	/* a segment type in a header carrying Migshared: shared with the group's first member */
+static int migdepartures, migarrivedexited;	/* for the line the two-machine check waits on: both have happened here */
+
+static void
+ospreymigexchanged(void)
+{
+	if(migdepartures > 0 && migarrivedexited > 0)
+		print("osprey migrate: the exchange is complete on this machine - %d carried away, %d taken in and done\n",
+			migdepartures, migarrivedexited);
+}
+
 static struct {
 	Ospreyproc *c;		/* the container leaving */
 	Proc	*p;		/* its process, parked */
@@ -4051,6 +4093,8 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 		migout.nmem = 0;
 		print("osprey migrate: container %llud's process (%s) has gone over the wire; container %llud destroyed, its parent told\n",
 			ospreyid(old), e->name, ospreyid(old));
+		migdepartures++;
+		ospreymigexchanged();
 		qlock(&ospreylock);
 		for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
 			if(me->used && me->child == old)
@@ -4423,6 +4467,10 @@ ospreyexits(long status)
 	}
 	print("osprey exec: container %llud (%s) exited with status %ld\n",
 		ospreyid(p), e->name, status);
+	if(strcmp(e->name, "arrived over the wire") == 0){
+		migarrivedexited++;
+		ospreymigexchanged();
+	}
 	qlock(&ospreylock);
 	if(e->waiting){
 		ospreyreplylater(e->parent, e->waitseq, Xreqwait, Xreplydone, (uvlong)status);
@@ -4749,6 +4797,8 @@ ospreyinit(void)
 	 */
 	if(ospreyp9)
 		ospreysetsize("data", 2*BY2PG, 0);
+		ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
+		ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
 	for(i = 0; i < nelem(ospreysizeconf); i++){
 		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
 			continue;

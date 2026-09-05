@@ -49,9 +49,9 @@ def main():
         imgs.append(img)
     port = 17895
     t1 = threading.Thread(target=boot, args=('socket,id=n0,listen=:%d' % port, '52:54:00:00:d1:01',
-                                             r'arrived over the wire\) exited with status', logs[0], imgs[0]))
+                                             'osprey migrate: the exchange is complete on this machine', logs[0], imgs[0]))
     t2 = threading.Thread(target=boot, args=('socket,id=n0,connect=:%d' % port, '52:54:00:00:d1:02',
-                                             r'arrived over the wire\) exited with status', logs[1], imgs[1], 4))
+                                             'osprey migrate: the exchange is complete on this machine', logs[1], imgs[1], 4))
     t1.start(); t2.start(); t1.join(); t2.join()
     for img in imgs:
         try: os.unlink(img)
@@ -61,8 +61,8 @@ def main():
         ("each kernel exposes its virtio network device to the server personality - the BAR as a segment, the interrupt as a semaphore - and nothing more",
          all(re.search(r'osprey net: exposed virtio network device \d+\.\d+\.\d+, BAR \d+ at 0x[0-9a-f]+ size \d+ as "virtionet", interrupt \d+ as semaphore 5', x) is not None for x in t)),
         ("a driver above each kernel brings the device up - reset, features, two queues and the receive buffers in the container's own slice - and reads its MAC",
-         'vnet: virtio network device driven from user space, mac 52:54:00:00:d1:01, 8 receive buffers posted' in t[0]
-         and 'vnet: virtio network device driven from user space, mac 52:54:00:00:d1:02, 8 receive buffers posted' in t[1]),
+         'vnet: virtio network device driven from user space, mac 52:54:00:00:d1:01, 16 receive buffers posted' in t[0]
+         and 'vnet: virtio network device driven from user space, mac 52:54:00:00:d1:02, 16 receive buffers posted' in t[1]),
         ("the real Plan 9 stack binds an ethernet medium on that driver, and each machine takes its address on the wire from its MAC",
          'p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.1 on the wire (from the MAC); machine 1' in t[0]
          and 'p9 wire: stack A bound the vnet medium on the user-space driver and is 10.1.0.2 on the wire (from the MAC); machine 2' in t[1]),

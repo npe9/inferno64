@@ -5233,20 +5233,28 @@ finished; the two kernel bugs are last only because they are the least
 predictable.
 .PP
 .B "1.  The console never bypasses its task."
-When the queue to the console task is full a print waits twenty
-milliseconds and then writes the port, ahead of what is queued.  The
-real form: a print in process context sleeps on the console container's
-room rendezvous
-.CW ( ospreyroomrend ,
-which the task's take of its output queue wakes) until there is room,
-without bound; only a panic, and a print from interrupt context, go to
-the port, and the user-fault line of
+Done.  When the queue to the console task was full a print waited
+twenty milliseconds and then wrote the port, ahead of what was queued.
+The form first planned \- a print sleeping until the task makes room \-
+would deadlock: a printer may hold the lock the task needs to take a
+message.  The real form is a FIFO the kernel keeps between printers and
+the task
+.CW ( ospreyconsput ,
+.CW ospreyconsflush ,
+.CW ospreyconsdrained
+in
+.CW devosprey.c ):
+every print appends to it in order and never blocks, and the FIFO is
+fed to the task's output queue a slot at a time whenever there is room,
+by the printer and by the task itself when its take frees a slot.  Only
+the FIFO overflowing \- the task sixteen kilobytes behind \- or a panic
+goes to the port.  The user-fault line of
 .CW trap.c
-becomes an ordinary print since it no longer needs to.  Proof: the
-direct-byte count the kernel prints at exit is zero on every check, the
-eight-hundred-sleep drain in
+is an ordinary print again, and the eight-hundred-sleep drain in
 .CW legacyp9.c
-is removed, and the group and exec criteria hold across ten boots.
+is gone.  Proof: the kernel's line at exit reads
+.CW "0 straight to the port"
+and the p9pair check is 57 of 57.
 .PP
 .B "2.  A reply wakes whom it is for."
 .CW ospreyawaitreply
@@ -5271,14 +5279,30 @@ never above
 .CW budget .
 .PP
 .B "4.  The network driver waits, it does not spin."
-.CW vnet_send
-spins for a transmit slot.  The real form: the medium keeps a transmit
-queue, the pump moves frames to the ring as the device's interrupt
-frees slots (the semaphore the loop already selects on), and the slice's
-transmit buffers are made sixteen with the
+Half done.  The rings are sixteen now, from the slice's own buffers
+(the boot sets the
+.CW pktbuf
+tunable to thirty-two and
 .CW txbuf
-tunable.  Proof: a megabyte over the cable with no drops, its throughput
-printed, and the driver's spin count gone from the code.
+to sixteen), which was what the first attempt at item 1 found wanting:
+under a host load of thirty the eight-entry receive ring overflowed
+between two ticks, SYNs were lost and backed off for seconds, and two
+machines that boot four seconds apart missed each other.  What remains:
+.CW vnet_send
+still spins for a transmit slot; the real form is the medium keeping a
+transmit queue the pump drains as the device's interrupt frees slots.
+Proof still owed: a megabyte over the cable with no drops.
+.PP
+Two bandaids found and removed on the way, both in the two-machine
+check.  A wait is a wait:
+.CW ring_wait
+gave up after ten seconds, which a child migrating over a slow wire
+outlasted, and the client went on with the child still here; it waits
+until answered now.  And the sender connects to the other machine up to
+twenty times a second apart, since the other may not be listening yet.
+The check itself waits, on each machine, for a line the kernel prints
+at the later of the machine's own departure and the exit of the process
+that arrived, since the two come in either order.
 .PP
 .B "5.  The ring medium carries frames both ways without polling."
 Frames from the server end wait for the client's next request, which

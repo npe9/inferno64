@@ -23,7 +23,7 @@
 enum {
 	Ospreynetmagic	= 0x4f534e4554ULL,
 	Ospreynetoff	= 3712,
-	Qsize		= 8,
+	Qsize		= 16,		/* a power of two, as a split virtqueue must be */
 	Sacknowledge	= 1,
 	Sdriver		= 2,
 	Sdriverok	= 4,
@@ -36,10 +36,10 @@ enum {
 	Maxframe	= 1514,
 	Rxq		= 0,
 	Txq		= 1,
-	Odesc		= 0,		/* a queue's rings, inside one packet buffer */
-	Oavail		= 128,
-	Oused		= 256,
-	Nrxbuf		= Qsize,
+	Odesc		= 0,		/* a queue's rings, inside one packet buffer: 16 descriptors, avail, used */
+	Oavail		= 256,
+	Oused		= 512,
+	Nrxbuf		= Qsize,	/* receive buffers posted: the kernel lays out 32 packet buffers, 2 hold the rings */
 	Rxfirst		= 2,		/* packet buffers 0 and 1 hold the two queues' rings */
 };
 
@@ -106,7 +106,7 @@ qsetup(int q)
 		return -1;
 	if(n > Qsize)
 		w16(net->cfg + Vconf_queuesize, Qsize);
-	memset(pktbuf(q), 0, 384);
+	memset(pktbuf(q), 0, 1024);
 	w64(net->cfg + Vconf_queuedesc, pktbufpa(q) + Odesc);
 	w64(net->cfg + Vconf_queueavail, pktbufpa(q) + Oavail);
 	w64(net->cfg + Vconf_queueused, pktbufpa(q) + Oused);
@@ -185,6 +185,10 @@ p9vnet(uchar *b)
 	net = (Ospreynet*)(base + map->data + Ospreynetoff);
 	if(net->magic != Ospreynetmagic)
 		return;			/* no device was exposed */
+	if(map->npktbuf < Rxfirst + Nrxbuf || map->ntxbuf < Qsize){
+		say("vnet: the slice has too few packet or transmit buffers for the queues\n");
+		return;
+	}
 	bar = (uchar*)segattach(0, "virtionet", 0, net->barsize);
 	if(bar == (uchar*)-1){
 		say("vnet: could not map the device's registers\n");

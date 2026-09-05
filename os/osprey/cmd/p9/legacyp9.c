@@ -353,13 +353,6 @@ startboot(char *argv0, char **argv)
 			} else
 				print("legacy: await() after the crossing returned nothing\n");
 		}
-		/*
-		 * Let the console task carry that line out before the fault
-		 * below: the kernel prints a fault synchronously and would cut
-		 * into it.  Each sleep is one service-and-yield of the ring.
-		 */
-		for(mn = 0; mn < 800; mn++)
-			sleep(1);
 	}
 
 	/*

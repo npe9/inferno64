@@ -150,6 +150,9 @@ static uchar *srvbase;			/* this server's own slice, for p9srvdata */
 extern void p9vnetup(void);		/* p9ip.c: the interface on it, and the machine's role on the wire */
 extern void ospreyvnetpump(void);	/* ospreyvnetmedium.c: what the device received, into the stack */
 static int reclaims, ticks;
+static int opcount[32];			/* requests served, by op: what the periodic line names */
+static int unmapped;			/* requests from a container whose slice could not be mapped */
+static uvlong unmappedop, unmappedfrom, unmappedslot;
 
 /*
  * A request of this container's own: the reservation it needs, and the
@@ -228,6 +231,8 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	if(n != 1)
 		return -1;
 	req = *reqp;
+	if(req.op < 32)
+		opcount[req.op]++;
 	for(i = 0; i < (long)sizeof rep; i++)
 		((uchar*)&rep)[i] = 0;
 	rep.container = req.container;
@@ -251,6 +256,10 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		/* another container this server answers for: a program exec started */
 		cdata = sliceof((int)req.arg[2], req.container);
 		if(cdata == nil){
+			unmapped++;
+			unmappedop = req.op;
+			unmappedfrom = req.container;
+			unmappedslot = req.arg[2];
 			rep.arg[0] = (uvlong)-1;	/* not a count a layout could have */
 			repm[pq->put % pq->size] = rep;
 			pq->put++;
@@ -376,8 +385,16 @@ p9serveloop(char *arg)
 			(Arm*)(base + map->data + Armoff),
 			cbase + cmap->data, cmap->id);
 		if(r != 0 && r != 2 && ++iters % 1000 == 0){
-			char line[96];
-			seprint(line, line + sizeof line, "p9 server: %d requests served; %d ticks, reclamation ran %d times on them\n", iters, ticks, reclaims);
+			char line[200], *s, *e;
+			int k;
+
+			s = line;
+			e = line + sizeof line;
+			s = seprint(s, e, "p9 server: %d requests served; %d ticks, reclamation ran %d times on them; by op:", iters, ticks, reclaims);
+			for(k = 0; k < 32; k++)
+				if(opcount[k] > 0)
+					s = seprint(s, e, " %d=%d", k, opcount[k]);
+			seprint(s, e, "; unmapped %d, last op %llud from container %llud slot %llud\n", unmapped, unmappedop, unmappedfrom, unmappedslot);
 			puts(line);
 		}
 	}
