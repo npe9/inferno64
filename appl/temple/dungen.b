@@ -1,8 +1,17 @@
 implement Dungen;
 
-# TempleOS Demo/Games/DunGen.HC — dungeon crawl; kill all monsters
-# space then arrow attacks; arrows move; Enter restart; q quit
-# GAP: sprite map + 3D view → procedural top-down; tile sprites → colors
+# TempleOS Demo/Games/DunGen.HC — dungeon crawl; kill all 10 monsters.
+# The level is Terry's FIXED hand-drawn map: sprite <1> sampled every
+# MAP_SCALE=4 pixels (Init()'s GrPeek loop); cell value = palette color
+# index.  Color 1 (BLUE) draws blinking tile <7>/<8>, 2 (GREEN) tile <5>,
+# 8 (DKGRAY) floor tile <6>; any other nonzero color a solid fill.  Only
+# DKGRAY is walkable.  The view is drawn through Mat4x4RotX(60°) then
+# RotZ(15°) (DCTransform: v' = Rz·Rx·v + centre) — tiles/sprites blit
+# flat at transformed points, solid cells as transformed quads, wall-face
+# sprites <9>/<10> on void cells whose lower/right neighbour is visible.
+# Hold space: every arrow while held attacks (KEY_DOWN sets man_attack,
+# KEY_UP clears it).
+# GAP: MenuPush File/Play menu bar has no wm(1) equivalent.
 
 include "sys.m";
 	sys: Sys;
@@ -36,32 +45,32 @@ Dungen: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-MW: con 48;
-MH: con 36;
-CELL: con 14;
-VIEWW: con 24;
-VIEWH: con 24;
-MONS: con 10;
-
-T_EMPTY: con 0;
-T_FLOOR: con 1;
-T_WALL: con 2;
+SCALE: con 24;		# SCRN_SCALE
+SW: con 24;		# SCRN_WIDTH
+SH: con 24;		# SCRN_HEIGHT
+MONS: con 10;		# MONSTERS_NUM
+LOSS: con 4;		# LOS_SCALE
 
 win: ref Window;
 font: ref Font;
-black, floorc, wallc, playerc, monsc, fog, red, green: ref Image;
+ink: array of ref Image;		# the 16 TempleOS palette colors
+spr, msk: array of ref Image;		# DunGen.HC bins 1..10
+manf, manfm, atkf, atkfm, monf, monfm: ref Image;	# DCF_SYMMETRY mirrors
 have_tone := 0;
-blink_on := 0;
+noisegen := 0;
 
-map: array of array of int;
-visible: array of array of int;
+map: array of array of int;		# temple color index per cell
+mapw, maph: int;
+scrn_x, scrn_y: int;
 man_x, man_y, man_dx, man_dy: int;
-attack_hold := 0;
-attack_t0 := 0;
+man_attack := 0;			# space held
+attack_t0 := -1000000;			# ms of last Attack()
 mon_x, mon_y, mon_dx, mon_dy, mon_dead: array of int;
 monsters_left := 0;
-t0, tf: int;
+t0, tf: int;				# ms; tf=0 while playing
 best_score: real;
+c15, s15: real;				# cos/sin 15°
+vis: array of array of int;		# per-frame LOS cache, view+1 border
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
@@ -81,29 +90,55 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(ctxt == nil)
 		ctxt = wmclient->makedrawcontext();
 
+	rad := Math->Pi * 15.0 / 180.0;
+	c15 = math->cos(rad);
+	s15 = math->sin(rad);
+
 	win = wmclient->window(ctxt, "TempleOS DunGen", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	black = d.color(Draw->Black);
-	floorc = d.color(int 16r555555FF);
-	wallc = d.color(int 16r886644FF);
-	playerc = d.color(Draw->Cyan);
-	monsc = d.color(Draw->Red);
-	fog = d.color(int 16r111111FF);
-	red = d.color(Draw->Red);
-	green = d.color(Draw->Green);
+	font = Font.open(d, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+	pal := array[] of {
+		int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
+		int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
+		int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
+		int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
+	};
+	ink = array[16] of ref Image;
+	for(i := 0; i < 16; i++)
+		ink[i] = d.color(pal[i]);
+	spr = array[11] of ref Image;
+	msk = array[11] of ref Image;
+	for(i = 1; i <= 10; i++){
+		spr[i] = d.open(sys->sprint("/icons/temple/dungen_%d.bit", i));
+		msk[i] = d.open(sys->sprint("/icons/temple/dungen_%d.mask", i));
+	}
+	if(spr[1] == nil || msk[1] == nil){
+		sys->fprint(sys->fildes(2), "dungen: cannot open /icons/temple/dungen_1.bit/.mask\n");
+		exit;
+	}
+	manf = flipimage(d, spr[2]);
+	manfm = flipimage(d, msk[2]);
+	atkf = flipimage(d, spr[3]);
+	atkfm = flipimage(d, msk[3]);
+	monf = flipimage(d, spr[4]);
+	monfm = flipimage(d, msk[4]);
+
+	loadmap();
+
 	best_score = 9999.0;
 	if(scorestore != nil)
 		best_score = scorestore->loadreal("dungen", best_score);
 	game_init();
-	win.reshape(Rect((0, 0), (VIEWW*CELL, VIEWH*CELL+20)));
+	win.reshape(Rect((0, 0), (640, 480)));	# WinMax on the 640x480 screen
 	win.onscreen("place");
-	win.startinput("kbd" :: "ptr" :: nil);
+	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);
 
 	ticks := chan of int;
 	spawn timer(ticks, 16);
 	mtick := chan of int;
-	spawn mon_timer(mtick, 1000);
+	spawn timer(mtick, 1000);	# AnimateTask Sleep(1000)
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -118,184 +153,145 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		'\n' or 'r' or 'R' =>
 			game_init();
 		' ' =>
-			attack_hold = 1;
-		Keyboard->Right =>
+			man_attack = 1;
+		Keyboard->Keyup | ' ' =>
+			man_attack = 0;
+		Keyboard->Right or 'd' or 'D' =>
 			dir_key(1, 0);
-		Keyboard->Left =>
+		Keyboard->Left or 'a' or 'A' =>
 			dir_key(-1, 0);
-		Keyboard->Up =>
+		Keyboard->Up or 'w' or 'W' =>
 			dir_key(0, -1);
-		Keyboard->Down =>
-			dir_key(0, 1);
-		'a' or 'A' =>
-			dir_key(-1, 0);
-		'd' or 'D' =>
-			dir_key(1, 0);
-		'w' or 'W' =>
-			dir_key(0, -1);
-		's' or 'S' =>
+		Keyboard->Down or 's' or 'S' =>
 			dir_key(0, 1);
 		}
 	<-mtick =>
-		if(!tf)
-			move_monsters();
+		move_monsters();
 	<-ticks =>
-		blink_on = (sys->millisec() / 250) % 2;
 		redraw();
 	}
 }
 
+# Sample the map out of sprite <1> exactly as Init() does: GrPeek every
+# 4 px from the sprite's tight bounding box.  Our rasterized bbox is 2px
+# looser than TempleOS SpriteExtents on this sprite, hence the (2,2)
+# sample offset — verified: it puts the original start cell (0,4) on
+# DKGRAY floor and yields a fully connected 34x26 floor, while offset
+# (0,0)/(1,*) leave the start on void or disconnect corridors.
+loadmap()
+{
+	r := spr[1].r;
+	w := r.dx();
+	h := r.dy();
+	buf := array[w*h] of byte;
+	spr[1].readpixels(r, buf);
+	mrow := (w+7)/8;
+	mbuf := array[mrow*h] of byte;
+	msk[1].readpixels(r, mbuf);
+	# inferno m8 cmap byte for each of the 16 TempleOS palette colors
+	cmapb := array[] of {0, 36, 42, 44, 160, 162, 164, 170,
+			85, 121, 127, 113, 245, 247, 253, 255};
+	inv := array[256] of {* => 0};
+	for(i := 0; i < 16; i++)
+		inv[cmapb[i]] = i;
+	mapw = (w-2)/4;
+	maph = (h-2)/4;
+	map = array[maph] of array of int;
+	for(y := 0; y < maph; y++){
+		map[y] = array[mapw] of int;
+		for(x := 0; x < mapw; x++){
+			px := 2 + 4*x;
+			py := 2 + 4*y;
+			if(((int mbuf[py*mrow + px/8] >> (7 - px%8)) & 1) == 0)
+				map[y][x] = 0;
+			else
+				map[y][x] = inv[int buf[py*w + px]];
+		}
+	}
+	vis = array[SH+1] of { * => array[SW+1] of { * => 0 } };
+}
+
 game_init()
 {
-	map = array[MH] of { * => array[MW] of { * => T_WALL } };
-	visible = array[MH] of { * => array[MW] of { * => 0 } };
-	gen_dungeon();
-	(man_x, man_y) = find_floor();
+	# the original's fixed start (see the map-edit comment in DunGen.HC)
+	man_x = 0;
+	man_y = 4;
 	man_dx = 0;
-	man_dy = 1;
-	scrn_x = man_x - VIEWW/2;
-	scrn_y = man_y - VIEWH/2;
-	clamp_view();
+	man_dy = 0;
+	man_attack = 0;
+	attack_t0 = -1000000;
+	scrn_x = 0;
+	scrn_y = 0;
 	mon_x = array[MONS] of int;
 	mon_y = array[MONS] of int;
-	mon_dx = array[MONS] of int;
-	mon_dy = array[MONS] of int;
-	mon_dead = array[MONS] of int;
+	mon_dx = array[MONS] of {* => 0};
+	mon_dy = array[MONS] of {* => 0};
+	mon_dead = array[MONS] of {* => 0};
 	for(i := 0; i < MONS; i++){
-		mon_dead[i] = 0;
-		mon_dx[i] = 0;
-		mon_dy[i] = 0;
-		(x, y) := rand_floor();
-		mon_x[i] = x;
-		mon_y[i] = y;
+		do {
+			mon_x[i] = 1 + rn(mapw-2);
+			mon_y[i] = 1 + rn(maph-2);
+		} while(map[mon_y[i]][mon_x[i]] == 0);
 	}
 	monsters_left = MONS;
 	tf = 0;
 	t0 = sys->millisec();
-	attack_hold = 0;
-	attack_t0 = 0;
-}
-
-scrn_x, scrn_y: int;
-
-gen_dungeon()
-{
-	for(my := 1; my < MH-1; my++)
-		for(mx := 1; mx < MW-1; mx++)
-			map[my][mx] = T_WALL;
-	rooms := 10;
-	for(r := 0; r < rooms; r++){
-		rw := 4 + rn(8);
-		rh := 4 + rn(6);
-		rx := 1 + rn(MW - rw - 2);
-		ry := 1 + rn(MH - rh - 2);
-		for(cy := ry; cy < ry+rh; cy++)
-			for(cx := rx; cx < rx+rw; cx++)
-				map[cy][cx] = T_FLOOR;
-	}
-	# connect rooms with horizontal/vertical tunnels
-	for(c := 0; c < rooms-1; c++){
-		(x1, y1) := find_floor();
-		(x2, y2) := find_floor();
-		for(tx := min(x1,x2); tx <= max(x1,x2); tx++)
-			map[y1][tx] = T_FLOOR;
-		for(ty := min(y1,y2); ty <= max(y1,y2); ty++)
-			map[ty][x2] = T_FLOOR;
-	}
-}
-
-find_floor(): (int, int)
-{
-	for(t := 0; t < 1000; t++){
-		x := 1 + rn(MW-2);
-		y := 1 + rn(MH-2);
-		if(map[y][x] == T_FLOOR)
-			return (x, y);
-	}
-	return (MW/2, MH/2);
-}
-
-rand_floor(): (int, int)
-{
-	for(t := 0; t < 1000; t++){
-		(x, y) := find_floor();
-		if(x == man_x && y == man_y)
-			continue;
-		ok := 1;
-		for(i := 0; i < MONS; i++)
-			if(!mon_dead[i] && mon_x[i] == x && mon_y[i] == y)
-				ok = 0;
-		if(ok)
-			return (x, y);
-	}
-	return find_floor();
 }
 
 dir_key(dx, dy: int)
 {
-	if(attack_hold){
+	if(man_attack){
 		man_dx = dx;
 		man_dy = dy;
-		do_attack();
-		attack_hold = 0;
-	}else
-		try_move(dx, dy);
-}
-
-try_move(dx, dy: int)
-{
+		attack();
+		return;
+	}
 	nx := man_x + dx;
 	ny := man_y + dy;
-	if(nx < 0 || nx >= MW || ny < 0 || ny >= MH)
+	if(nx < 0 || nx >= mapw || ny < 0 || ny >= maph)
 		return;
-	if(map[ny][nx] != T_FLOOR)
+	if(map[ny][nx] != 8)	# only DKGRAY is walkable
 		return;
 	man_x = nx;
 	man_y = ny;
-	man_dx = dx;
-	man_dy = dy;
-	if(man_x - scrn_x > VIEWW/2 - 3){
-		scrn_x += VIEWW/2;
-		clamp_view();
+	# half-screen scroll jumps, clamped as the original does per direction
+	if(dx == 1 && man_x - scrn_x > SW/2 - 3){
+		scrn_x += SW/2;
+		if(scrn_x + SW/2 > mapw)
+			scrn_x = mapw - SW/2;
 	}
-	if(man_x - scrn_x < -VIEWW/2 + 3){
-		scrn_x -= VIEWW/2;
-		clamp_view();
+	if(dx == -1 && man_x - scrn_x < -SW/2 + 3){
+		scrn_x -= SW/2;
+		if(scrn_x - SW/2 < 0)
+			scrn_x = SW/2;
 	}
-	if(man_y - scrn_y > VIEWH/2 - 3){
-		scrn_y += VIEWH/2;
-		clamp_view();
+	if(dy == 1 && man_y - scrn_y > SH/2 - 3){
+		scrn_y += SH/2;
+		if(scrn_y + SH/2 > maph)
+			scrn_y = maph - SH/2;
 	}
-	if(man_y - scrn_y < -VIEWH/2 + 3){
-		scrn_y -= VIEWH/2;
-		clamp_view();
+	if(dy == -1 && man_y - scrn_y < -SH/2 + 3){
+		scrn_y -= SH/2;
+		if(scrn_y - SH/2 < 0)
+			scrn_y = SH/2;
 	}
 }
 
-clamp_view()
-{
-	if(scrn_x < VIEWW/2) scrn_x = VIEWW/2;
-	if(scrn_y < VIEWH/2) scrn_y = VIEWH/2;
-	if(scrn_x > MW - VIEWW/2) scrn_x = MW - VIEWW/2;
-	if(scrn_y > MH - VIEWH/2) scrn_y = MH - VIEWH/2;
-}
-
-do_attack()
+attack()
 {
 	attack_t0 = sys->millisec();
-	if(have_tone)
-		tone->beep(53, 100);
-	ax := man_x + man_dx;
-	ay := man_y + man_dy;
+	if(have_tone){
+		noisegen++;
+		spawn noise(noisegen);
+	}
 	for(i := 0; i < MONS; i++){
 		if(mon_dead[i])
 			continue;
-		if(mon_x[i] == ax && mon_y[i] == ay){
+		if(mon_x[i] == man_x + man_dx && mon_y[i] == man_y + man_dy){
 			mon_dead[i] = 1;
-			monsters_left--;
-			if(!monsters_left){
+			if(--monsters_left == 0){
 				tf = sys->millisec();
-				elapsed := real(tf - t0) / 1000.0;
+				elapsed := real (tf - t0) / 1000.0;
 				if(elapsed < best_score){
 					best_score = elapsed;
 					if(scorestore != nil)
@@ -306,6 +302,21 @@ do_attack()
 	}
 }
 
+# Noise(100,53,74): 100ms of random tones between semitones (ona) 53..74,
+# queued asynchronously; freq = 440*2^((ona-60)/12)
+noise(gen: int)
+{
+	for(t := 0; t < 100; t += 20){
+		if(gen != noisegen)
+			return;
+		ona := 53 + rn(22);
+		tone->snd(int (440.0 * math->pow(2.0, real (ona-60) / 12.0)));
+		sys->sleep(20);
+	}
+	if(gen == noisegen)
+		tone->stop();
+}
+
 move_monsters()
 {
 	for(i := 0; i < MONS; i++){
@@ -313,37 +324,40 @@ move_monsters()
 			continue;
 		dx := rn(3) - 1;
 		dy := rn(3) - 1;
-		nx := mon_x[i] + dx;
-		ny := mon_y[i] + dy;
-		if(nx < 0 || nx >= MW || ny < 0 || ny >= MH)
-			continue;
-		if(map[ny][nx] != T_FLOOR)
-			continue;
-		if(nx == man_x && ny == man_y)
-			continue;
-		mon_x[i] = nx;
-		mon_y[i] = ny;
-		mon_dx[i] = dx;
-		mon_dy[i] = dy;
+		x := mon_x[i] + dx;
+		y := mon_y[i] + dy;
+		# any nonzero cell will do, the player's included
+		if(x >= 0 && x < mapw && y >= 0 && y < maph && map[y][x] != 0){
+			mon_x[i] = x;
+			mon_y[i] = y;
+			mon_dx[i] = dx;
+			mon_dy[i] = dy;
+		}
 	}
 }
 
+# LOS at LOS_SCALE=4 subsample with centre offsets, blocking on ZERO
+# (void) cells only — colored feature cells pass, as in LOSPlot()
 los(x1, y1, x2, y2: int): int
 {
-	dx := absi(x2 - x1);
-	dy := absi(y2 - y1);
+	px1 := x1*LOSS + LOSS/2;
+	py1 := y1*LOSS + LOSS/2;
+	px2 := x2*LOSS + LOSS/2;
+	py2 := y2*LOSS + LOSS/2;
+	dx := absi(px2 - px1);
+	dy := absi(py2 - py1);
 	sx := 1;
-	if(x1 > x2) sx = -1;
+	if(px1 > px2) sx = -1;
 	sy := 1;
-	if(y1 > y2) sy = -1;
+	if(py1 > py2) sy = -1;
 	err := dx - dy;
-	x := x1;
-	y := y1;
+	x := px1;
+	y := py1;
 	for(;;){
-		if(x == x2 && y == y2)
-			return 1;
-		if(map[y][x] == T_WALL && !(x == x1 && y == y1))
+		if(map[y/LOSS][x/LOSS] == 0)
 			return 0;
+		if(x == px2 && y == py2)
+			return 1;
 		e2 := 2 * err;
 		if(e2 > -dy){
 			err -= dy;
@@ -356,82 +370,184 @@ los(x1, y1, x2, y2: int): int
 	}
 }
 
+# v' = Rz(15°)·Rx(60°)·v + centre; z is unused by Sprite3's blit.
+# Rx(60°) with z=0 just scales y by cos 60° = 1/2.
+trans(x, y: real, cx, cy: int): Point
+{
+	yr := y * 0.5;
+	return Point(cx + int (x*c15 - yr*s15), cy + int (x*s15 + yr*c15));
+}
+
+blit(img: ref Image, p: Point, s, m: ref Image)
+{
+	if(s == nil)
+		return;
+	img.draw(s.r.addpt(p), s, m, s.r.min);
+}
+
+# tiles1/tiles2 by color index; Blink(5) picks between them
+tileno(color, blnk: int): int
+{
+	case color {
+	1 =>	if(blnk) return 7; return 8;
+	2 =>	return 5;
+	8 =>	return 6;
+	}
+	return 0;
+}
+
 redraw()
 {
 	img := win.image;
 	if(img == nil)
 		return;
-	img.draw(img.r, black, nil, Point(0, 0));
 	o := img.r.min;
-	for(y := 0; y < VIEWH; y++)
-		for(x := 0; x < VIEWW; x++){
-			mx := x + scrn_x - VIEWW/2;
-			my := y + scrn_y - VIEWH/2;
-			if(mx < 0 || mx >= MW || my < 0 || my >= MH)
-				continue;
-			vis := los(man_x, man_y, mx, my);
-			visible[my][mx] = vis;
-			if(!vis)
-				continue;
-			col := floorc;
-			if(map[my][mx] == T_WALL)
-				col = wallc;
-			img.draw(Rect((o.x+x*CELL, o.y+y*CELL), (o.x+x*CELL+CELL-1, o.y+y*CELL+CELL-1)),
-				col, nil, Point(0, 0));
-		}
-	for(i := 0; i < MONS; i++){
-		if(mon_dead[i])
-			continue;
-		mx := mon_x[i];
-		my := mon_y[i];
-		if(!visible[my][mx] || !los(man_x, man_y, mx, my))
-			continue;
-		sx := mx - scrn_x + VIEWW/2;
-		sy := my - scrn_y + VIEWH/2;
-		if(sx < 0 || sx >= VIEWW || sy < 0 || sy >= VIEWH)
-			continue;
-		img.draw(Rect((o.x+sx*CELL+3, o.y+sy*CELL+3), (o.x+sx*CELL+CELL-4, o.y+sy*CELL+CELL-4)),
-			monsc, nil, Point(0, 0));
-	}
-	psx := man_x - scrn_x + VIEWW/2;
-	psy := man_y - scrn_y + VIEWH/2;
-	ox := 0;
-	oy := 0;
-	if(sys->millisec() - attack_t0 < 200){
-		ox = man_dx * (200 - (sys->millisec() - attack_t0)) / 40;
-		oy = man_dy * (200 - (sys->millisec() - attack_t0)) / 40;
-	}
-	img.draw(Rect((o.x+(psx+ox)*CELL+2, o.y+(psy+oy)*CELL+2),
-		(o.x+(psx+ox)*CELL+CELL-3, o.y+(psy+oy)*CELL+CELL-3)), playerc, nil, Point(0, 0));
+	cx := o.x + img.r.dx()/2;
+	cy := o.y + img.r.dy()/2;
+	ms := sys->millisec();
+	blnk5 := (ms/100) % 2;	# Blink(5): toggles at 10/s
+	blnkb := (ms/200) % 2;	# Blink() default 2.5Hz: toggles at 5/s
+	img.draw(img.r, ink[0], nil, Point(0, 0));
 
+	# LOS cache over the view plus a one-cell border for the wall faces
+	for(y := -SH/2; y <= SH/2; y++){
+		yy := y + scrn_y;
+		for(x := -SW/2; x <= SW/2; x++){
+			xx := x + scrn_x;
+			v := 0;
+			if(xx >= 0 && xx < mapw && yy >= 0 && yy < maph &&
+			   map[yy][xx] != 0 && los(xx, yy, man_x, man_y))
+				v = 1;
+			vis[y+SH/2][x+SW/2] = v;
+		}
+	}
+
+	# pass 1: tiles and solid-color cells
+	poly := array[4] of Point;
+	for(y = -SH/2; y < SH/2; y++){
+		yy := y + scrn_y;
+		if(yy < 0 || yy >= maph)
+			continue;
+		for(x := -SW/2; x < SW/2; x++){
+			xx := x + scrn_x;
+			if(xx < 0 || xx >= mapw)
+				continue;
+			color := map[yy][xx];
+			if(color == 0 || !vis[y+SH/2][x+SW/2])
+				continue;
+			t := tileno(color, blnk5);
+			if(t != 0)
+				blit(img, trans(real (x*SCALE), real (y*SCALE), cx, cy), spr[t], msk[t]);
+			else {
+				poly[0] = trans(real (x*SCALE), real (y*SCALE), cx, cy);
+				poly[1] = trans(real ((x+1)*SCALE-1), real (y*SCALE), cx, cy);
+				poly[2] = trans(real ((x+1)*SCALE), real ((y+1)*SCALE-1), cx, cy);
+				poly[3] = trans(real (x*SCALE-1), real ((y+1)*SCALE-1), cx, cy);
+				img.fillpoly(poly, ~0, ink[color & 15], Point(0, 0));
+			}
+		}
+	}
+
+	# pass 2: wall-face sprites <9>/<10> on void cells whose lower/right
+	# neighbour is visible floor
+	for(y = -SH/2; y < SH/2; y++){
+		yy := y + scrn_y;
+		if(yy < 0 || yy >= maph)
+			continue;
+		for(x := -SW/2; x < SW/2; x++){
+			xx := x + scrn_x;
+			if(xx < 0 || xx >= mapw)
+				continue;
+			if(map[yy][xx] != 0)
+				continue;
+			if(yy+1 < maph && vis[y+1+SH/2][x+SW/2])
+				blit(img, trans(real (x*SCALE), real (y*SCALE), cx, cy), spr[9], msk[9]);
+			if(xx+1 < mapw && vis[y+SH/2][x+1+SW/2])
+				blit(img, trans(real (x*SCALE), real (y*SCALE), cx, cy), spr[10], msk[10]);
+		}
+	}
+
+	# monsters, mirrored via DCF_SYMMETRY when walking left
+	for(i := 0; i < MONS; i++){
+		if(mon_dead[i] || !los(mon_x[i], mon_y[i], man_x, man_y))
+			continue;
+		p := trans(real ((mon_x[i]-scrn_x)*SCALE + SCALE/2),
+			real ((mon_y[i]-scrn_y)*SCALE + SCALE/2), cx, cy);
+		if(mon_dx[i] < 0)
+			blit(img, p, monf, monfm);
+		else
+			blit(img, p, spr[4], msk[4]);
+	}
+
+	# player; attack lunge: Tri(t,0.2)*SCALE towards the blow with a
+	# Saw(t,0.2)*SCALE rise unless striking downward
+	x1 := real ((man_x-scrn_x)*SCALE + SCALE/2);
+	y1 := real ((man_y-scrn_y)*SCALE + SCALE/2);
+	dt := ms - attack_t0;
+	attacking := dt >= 0 && dt < 200;
+	if(attacking){
+		tri: real;
+		if(dt <= 100)
+			tri = real dt / 100.0;
+		else
+			tri = real (200 - dt) / 100.0;
+		x1 += tri * real SCALE * real man_dx;
+		y1 += tri * real SCALE * real man_dy;
+		if(man_dy != 1)
+			y1 -= (real dt / 200.0) * real SCALE;
+	}
+	p := trans(x1, y1, cx, cy);
+	if(attacking){
+		if(man_dx < 0)
+			blit(img, p, atkf, atkfm);
+		else
+			blit(img, p, spr[3], msk[3]);
+	} else {
+		if(man_dx < 0)
+			blit(img, p, manf, manfm);
+		else
+			blit(img, p, spr[2], msk[2]);
+	}
+
+	# HUD: LTGREEN while playing, LTRED once completed, GrPrint at (0,0)
 	if(font != nil){
-		elapsed := real(sys->millisec() - t0) / 1000.0;
-		if(tf)
-			elapsed = real(tf - t0) / 1000.0;
-		msg := sys->sprint("Enemy:%d Time:%3.2fs Best:%3.2fs", monsters_left, elapsed, best_score);
-		img.text(Point(o.x+4, o.y+VIEWH*CELL+4), green, Point(0, 0), font, msg);
-		if(tf && blink_on)
-			img.text(Point(o.x+VIEWW*CELL/2-56, o.y+VIEWH*CELL/2), red, Point(0, 0), font, "Game Completed");
+		col := ink[10];
+		tt := ms;
+		if(tf){
+			col = ink[12];
+			tt = tf;
+			if(blnkb)
+				img.text(Point(cx - 8*14/2, cy - 8/2), col,
+					Point(0, 0), font, "Game Completed");
+		}
+		msg := sys->sprint("Enemy:%d Time:%3.2f Best:%3.2f",
+			monsters_left, real (tt - t0) / 1000.0, best_score);
+		img.text(o, col, Point(0, 0), font, msg);
 	}
 	img.flush(Draw->Flushnow);
+}
+
+# horizontal mirror about the sprite origin (DCF_SYMMETRY|DCF_JUST_MIRROR
+# with a vertical symmetry line through the anchor)
+flipimage(d: ref Display, src: ref Image): ref Image
+{
+	if(src == nil)
+		return nil;
+	sw := src.r.dx();
+	n := d.newimage(Rect((1-src.r.max.x, src.r.min.y), (1-src.r.min.x, src.r.max.y)),
+		src.chans, 0, 0);
+	if(n == nil)
+		return nil;
+	for(i := 0; i < sw; i++)
+		n.draw(Rect((-(src.r.min.x+i), n.r.min.y), (-(src.r.min.x+i)+1, n.r.max.y)),
+			src, nil, Point(src.r.min.x+i, src.r.min.y));
+	return n;
 }
 
 absi(v: int): int
 {
 	if(v < 0) return -v;
 	return v;
-}
-
-min(a, b: int): int
-{
-	if(a < b) return a;
-	return b;
-}
-
-max(a, b: int): int
-{
-	if(a > b) return b;
-	return b;
 }
 
 rn(n: int): int
@@ -442,14 +558,6 @@ rn(n: int): int
 }
 
 timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}
-
-mon_timer(c: chan of int, ms: int)
 {
 	for(;;){
 		sys->sleep(ms);

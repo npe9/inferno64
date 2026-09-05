@@ -9,16 +9,22 @@ is a dungeon crawl.
 It runs under
 .IR wm (1).
 .PP
-Move with wasd or the arrows in a first-person dungeon. Press space then a direction to attack. Kill every monster.
+Move with wasd or the arrows through Terry Davis's fixed, hand-drawn
+dungeon, shown in a tilted three-quarter view.
+Hold space and press a direction to strike; while space is held every
+direction key attacks instead of moving.
+Kill all ten monsters; the elapsed time is scored and the best time kept.
+Monsters (and the map itself) are only drawn where there is a line of
+sight to the player.
 .PP
 The controls are:
 .TF space
 .TP
 .B arrows / wasd
-Move (or attack direction after space)
+Move (or attack direction while space is held)
 .TP
 .B space
-Enter attack mode (then arrow)
+Hold for attack mode (then arrows strike)
 .TP
 .B Enter / r
 Restart
