@@ -99,3 +99,13 @@ runetest:V:	$ROOT/$SYSTARG/$OBJTYPE/lib/lib9.a runetest.c
 	$LD -o o.runetest runetest.$O $ROOT/$SYSTARG/$OBJTYPE/lib/lib9.a
 	./o.runetest
 	rm -f o.runetest runetest.$O
+
+# dirreadtest is the same shape: it builds a directory of its own and
+# checks that dirread and dirreadall give it back.  See the note at
+# the top of dirread-posix.c for why there is one function behind the
+# two names here.
+dirreadtest:V:	$ROOT/$SYSTARG/$OBJTYPE/lib/lib9.a dirreadtest.c
+	$CC $CFLAGS -o dirreadtest.$O dirreadtest.c
+	$LD -o o.dirreadtest dirreadtest.$O $ROOT/$SYSTARG/$OBJTYPE/lib/lib9.a
+	./o.dirreadtest
+	rm -f o.dirreadtest dirreadtest.$O

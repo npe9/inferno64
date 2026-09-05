@@ -80,9 +80,18 @@ enum
  * and might be faster on some machines
  */
 /*
-#define hashit(c)	(((ulong)(c) * 0x6b43a9) >> (24 - HashLog))
+#define hashit(c)	(((uint)(c) * 0x6b43a9) >> (24 - HashLog))
 */
-#define hashit(c)	((((ulong)(c) & 0xffffff) * 0x6b43a9b5) >> (32 - HashLog))
+/*
+ * uint, not ulong.  The multiply is meant to wrap at 32 bits and the
+ * shift is written for a 32 bit product: with a 64 bit ulong nothing
+ * wraps, the shift leaves as much as 36 bits, and the result indexes
+ * a 8192 entry table with it.  Every compiler this tree's own builds
+ * use has a 32 bit long, which is why it went unnoticed; a host
+ * build -- mkpaqfs, for a 9front kernel's boot file system -- does
+ * not, and read wild memory on the first block it compressed.
+ */
+#define hashit(c)	((((uint)(c) & 0xffffff) * 0x6b43a9b5) >> (32 - HashLog))
 
 /*
  * lempel-ziv style compression state
