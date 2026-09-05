@@ -4665,7 +4665,8 @@ lost its read until the number moved),
 put to the dispatcher directly and answered at once.  On a 64-sector
 image the client writes forty-one versions, more than the 61-sector log
 holds, and every reclaim step \- 28 in the first boot, 41 in the second
-\- ran on the tick, none on a writer; the second boot reads the
+\- ran on the tick, none on a writer (a figure of that day's speed;
+what holds is the rule of the plan's item 3 below); the second boot reads the
 checkpoint, finds the wrapped log with the file at version 42, and goes
 on.  When the boot program exits the kernel prints every container's
 line of status, which is the talk's dumptask: the storage task's
@@ -5298,17 +5299,28 @@ an xcall answered from the container's own accounting by
 .CW ospreyaccount
 in
 .CW ospreyrt.c ),
-and steps while three quarters of the budget are not yet spent, asking
-again after each step, until the log is half free; a ceiling of
-thirty-two steps a tick bounds the little the accounting lags behind
-a stretch of work, since it moves at switches.  So a writer pays only
-when the log has filled between two ticks.  Proof: twenty-two steps on
-the tick and none for a writer under a client writing at ring speed,
-and the status line's
-.CW used
-at its
-.CW budget ,
-not above it.
+and which period this is, measures what each reclaim step costs by the
+cycle counter, and steps while what reclamation itself has spent this
+period is under three quarters of the budget, until the log is half
+free.  It is reclamation's own spending that is measured, not the
+container's: the server personality serves its client out of the same
+reservation and is at its budget most periods, and measured that way
+(the first form of this item) reclamation never got a step once the
+client stopped polling, and writers paid again.  So a writer pays only
+when the log has filled between two ticks, and then one step, for its
+own record.  What the check asks is that rule and not more: an early
+run of it, with the client slowed by a two-millisecond wait, saw
+eighteen steps on the tick and none for a writer, and the check was
+written to demand that; with the ring medium of item 5 the client
+writes a version a millisecond, a reclaim step's disk round trip through
+the user-space driver costs more than the share of one period under a
+host load of thirty, and a burst of twelve versions lands between two
+ticks.  The tick's line says what it spent of the reservation: under
+that load a step cost from a quarter of a million cycles to three and a
+half million, against a share of two million in each period of ten
+million, so a tick gets one step or three, and the writers' steps \-
+eleven in the first boot, twenty-five in the second, which starts with
+the log full \- are the rule, not a failure of it.
 .PP
 .B "4.  The network driver waits, it does not spin."
 Done.  The rings are sixteen, from the slice's own buffers (the boot
@@ -5348,13 +5360,41 @@ at the later of the machine's own departure and the exit of the process
 that arrived, since the two come in either order.
 .PP
 .B "5.  The ring medium carries frames both ways without polling."
-Frames from the server end wait for the client's next request, which
-the client makes on every tick.  The real form: the server puts frames
-on the client container's output queue, which the client's select takes
-by an arm of its own, and frames are staged in the slice's packet
-buffers rather than the data area, so the MTU is the buffer's and
-nothing polls.  Proof: the client's loop makes no empty polls, printed
-as zero, and a frame's latency is a wakeup, not a tick.
+Done.  A container's output queue is its own memory, and its server
+maps the slice: so the server end's frames go into the client's own
+packet buffers (sixteen through thirty-one) and a message naming each
+onto the client's output queue, written there in memory
+.CW ( ringsrv_output
+in
+.CW p9pairsrv.c ),
+and one request
+.CW ( ReqKick )
+has the kernel wake the client's select, which takes the message on an
+arm of its own beside the tick
+.CW ( ring9p_wait ,
+.CW ring9p_taken )
+and injects the frame from the buffer
+.CW ( ospreymediumtaken ).
+The client's frames go the other way the same way, staged in its packet
+buffers naught through fifteen and named by the request, so neither
+direction copies through the small data area and the MTU is a packet
+buffer's, 2048.  A full queue holds the server's frame on the medium
+until the tick.  Proof: the client's line at the end says every one of
+the server's frames came on its output queue, taken by select as many
+times, and no polls; the kernel carries a wakeup per frame and nothing
+else.  Making this run on two machines found a bug older than any of
+it, in the personality's cooperative scheduler: its sleep loops armed
+the wait once, before the loop, so after a wakeup with the condition
+still false the sleeper yielded marked Running, was queued as
+runnable, and ran round with the serve loop for good \- the loop never
+regaining its select, the machine's stack going quiet while its
+kernel and client went on.  A bulk transfer's queue wakeups made it
+happen one run in two; the kernel's new once-a-second watch for a
+process sitting at one user pc placed it in
+.CW sched
+and
+.CW setlabel ,
+and the sleeps now arm the wait before every switch.
 .PP
 .B "6.  Migration that carries what a process has."
 Open files do not cross; the arrived process has no buddy image and so

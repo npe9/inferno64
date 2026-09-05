@@ -22,9 +22,11 @@ enum {
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group to the server personality, the same way */
 	Reqframe	= 20,	/* a network frame to the peer container's stack, over the ring */
-	Maxframe	= 1500,	/* the ring medium's MTU: a frame each way fits the data area */
-	Tfoff		= 256,	/* an outbound frame, staged here in the data area */
-	Rfoff		= 2048,	/* a frame the far stack sent us, returned here on the reply */
+	Maxframe	= 2048,	/* the ring medium's MTU: a frame fits one of the slice's packet buffers */
+	Inpktbuf	= 0xB0F,	/* arg[4] of a Reqframe: the frame is in the sender's packet buffer arg[2], not the data area */
+	Ntxslot		= 16,	/* our packet buffers 0-15 carry frames to the server; 16-31 carry the server's to us */
+	Takenoff	= 128,	/* where select puts a message it takes off our output queue */
+	OSget		= 2,	/* a select arm: take a message off a queue */
 	ReqWait		= 4,
 	ReqExec		= 13,
 	ReqTick		= 17,	/* a request of our own (ospreyxcall): the clock tick on a semaphore */
@@ -172,42 +174,58 @@ ringpip_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 }
 
 /*
- * A network frame to the peer container over the ring, and one back: the
- * device-carried form of the osprey medium, its two ends two containers
- * and the kernel only routing.  The frame goes in our data area at Tfoff
- * and the server injects it into the stack at its end; the reply carries
- * back, at Rfoff, one frame that stack sent toward us - its own outbound
- * traffic, not an echo of ours - or nothing.  n may be 0: a poll, asking
- * only for whatever the far stack has sent since.  Returns the length of
- * the frame that came back (0 for none), or -1 if the ring failed.
- *
- * The request ring runs one way, so the far end can never push a frame
- * at us; its outbound frames wait on a queue there until we ask.  The
- * medium's client end asks on every send and on every clock tick.
+ * A network frame to the peer container over the ring: staged in one of
+ * this container's own packet buffers - the server maps the slice and
+ * reads it there - and sent as a Reqframe naming the buffer; the reply
+ * is the count taken.  Nothing comes back on the reply any more: the
+ * far stack's frames arrive on this container's output queue, which
+ * select takes them from (ring9p_wait, ring9p_taken).  The one-way
+ * request ring is used one way.  Returns 0 when the server took it, -1
+ * if the ring failed.
  */
 long
-ring9p_frame(uchar *frame, long n, uchar *back, long backmax)
+ring9p_frame(uchar *frame, long n, uchar*, long)
 {
 	Ring *r = &ring;
 	Msg rep;
-	uchar *data;
-	long rn, k;
+	uchar *b;
+	long k, rn;
+	static int txnext;
+	int slot;
 
-	if(n < 0 || n > Maxframe || !mapped)
+	if(n <= 0 || n > Maxframe || !mapped || r->map->npktbuf < 2*Ntxslot || r->map->pktbufsize < Maxframe)
 		return -1;
-	data = r->base + r->map->data;
+	slot = txnext++ % Ntxslot;
+	b = r->base + r->map->pktbuf + slot*r->map->pktbufsize;
 	for(k = 0; k < n; k++)
-		data[Tfoff + k] = frame[k];
-	rn = ringcall(Reqframe, (uvlong)Tfoff, (uvlong)n, (uvlong)Rfoff, &rep);
-	if(rn <= 0)
-		return rn;
-	if(rn > Maxframe)
-		return -1;
-	if(rn > backmax)
-		rn = backmax;
-	for(k = 0; k < rn; k++)
-		back[k] = data[Rfoff + k];
-	return rn;
+		b[k] = frame[k];
+	rn = ringcall(Reqframe, (uvlong)slot, (uvlong)n, (uvlong)Inpktbuf, &rep);
+	return rn < 0 ? -1 : 0;
+}
+
+/*
+ * A frame the server put in one of our packet buffers, announced by
+ * the message select just took off our output queue: where it is and
+ * how long, or 0 for none.
+ */
+uchar*
+ring9p_taken(long *len)
+{
+	Ring *r = &ring;
+	Msg *m;
+
+	if(!mapped)
+		return nil;
+	m = (Msg*)(r->base + r->map->data + Takenoff);
+	if(m->op != Reqframe || m->arg[1] == 0 || m->arg[0] >= r->map->npktbuf){
+		*len = 0;
+		return nil;
+	}
+	*len = (long)m->arg[1];
+	if(*len > (long)r->map->pktbufsize)
+		*len = r->map->pktbufsize;
+	m->op = 0;				/* taken: not twice */
+	return r->base + r->map->pktbuf + m->arg[0]*r->map->pktbufsize;
 }
 
 /*
@@ -232,23 +250,30 @@ ring9p_taketick(int sem)
 }
 
 /*
- * Wait for that tick: one arm, a down on the semaphore, in our data area
- * ahead of the frame slots, taken by select the way a driver task waits.
- * Returns 0 when the tick was taken, -1 otherwise.
+ * Wait for the tick, or for a frame from the server: two arms in our
+ * data area, a down on the tick's semaphore and a get on our output
+ * queue (the server fills it in memory and the kernel wakes us), taken
+ * by select the way a driver task waits.  Returns 0 for the tick, 1 for
+ * a frame (ring9p_taken says where), -1 otherwise.
  */
 int
-ring9p_waittick(int sem)
+ring9p_wait(int sem)
 {
 	Ring *r = &ring;
 	Arm *arm;
+	int n;
 
 	if(!mapped)
 		return -1;
 	arm = (Arm*)(r->base + r->map->data + Armoff);
-	arm->op = OSdown;
-	arm->obj = sem;
-	arm->buf = 0;
-	return dup(1, Armoff) == 0 ? 0 : -1;	/* DUP's number is select over arms */
+	arm[0].op = OSdown;
+	arm[0].obj = sem;
+	arm[0].buf = 0;
+	arm[1].op = OSget;
+	arm[1].obj = 2;			/* our output queue */
+	arm[1].buf = Takenoff;
+	n = dup(2, Armoff);		/* DUP's number is select over arms */
+	return n == 0 || n == 1 ? n : -1;
 }
 
 /*

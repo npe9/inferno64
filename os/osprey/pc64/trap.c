@@ -732,6 +732,13 @@ uregok(void *nureg)
 	return okaddr((uintptr)nureg-BY2WD, BY2WD+sizeof(Ureg), 0);
 }
 
+/* the user pc a saved frame holds: for a status line about another process */
+uintptr
+uregpc(void *a)
+{
+	return a == nil ? 0 : ((Ureg*)a)->pc;
+}
+
 /* a register frame's size, and one that came in from a wire made safe to resume from */
 int
 uregsize(void)

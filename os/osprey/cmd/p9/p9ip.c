@@ -1301,13 +1301,13 @@ ostcpclient(void *)
 void
 p9clientnet(void)
 {
-	extern int ring9p_taketick(int), ring9p_waittick(int);
-	extern void ospreymediumpoll(void), ospreymediumstats(long*, long*);
+	extern int ring9p_taketick(int), ring9p_wait(int);
+	extern void ospreymediumpoll(void), ospreymediumtaken(void), ospreymediumstats(long*, long*);
 	extern void sched_tick(void), runkprocs(void);
 	enum { Ticksem = 3 };		/* the kernel gave the client's keyboard 1 and mouse 2 */
 	Chan *ic, *nc;
 	char buf[128];
-	int fd, ticks;
+	int fd, ticks, taken;
 	long n, tx, rx;
 
 	if(waserror()){
@@ -1335,17 +1335,27 @@ p9clientnet(void)
 	if(ring9p_taketick(Ticksem) < 0)
 		error("the clock tick was refused");
 	kproc("ostcpclient", ostcpclient, nil);
+	taken = 0;
 	for(ticks = 0; ticks < 4000 && !clientnetdone; ){
-		if(ring9p_waittick(Ticksem) < 0)
-			error("select on the tick failed");
+		switch(ring9p_wait(Ticksem)){
+		case 1:				/* a frame from the server, on our output queue: no poll asked for it */
+			taken++;
+			ospreymediumtaken();
+			runkprocs();
+			continue;
+		case 0:
+			break;
+		default:
+			error("select on the tick and the output queue failed");
+		}
 		ticks++;
-		ospreymediumpoll();	/* frames the far stack sent since, injected */
+		ospreymediumpoll();	/* whatever is queued, injected */
 		sched_tick();		/* the cooperative clock: timers, tsleep */
 		runkprocs();		/* the connecting kproc and the protocol kprocs */
 	}
 	ospreymediumstats(&tx, &rx);
-	print("p9 ip: client container: %s after %d ticks; %ld frames of its stack's crossed the ring to the server container and %ld of the server's stack's came back\n",
-		clientnetdone ? "done" : "gave up", ticks, tx, rx);
+	print("p9 ip: client container: %s after %d ticks; %ld frames of its stack's crossed the ring to the server container and %ld of the server's stack's came back on this container's output queue, taken by select %d times, no polls\n",
+		clientnetdone ? "done" : "gave up", ticks, tx, rx, taken);
 	poperror();
 }
 

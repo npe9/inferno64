@@ -116,10 +116,12 @@ def main():
         ("the storage task sets its own reservation and takes the clock, both by request",
          'osprey: container 3 reserves 2000 us of every 10000 us, by request' in t
          and 'osprey: container 3 takes the clock tick on semaphore 2, by request' in t),
-        ("forty more versions overrun the 61-sector log, and every reclaim step ran on the tick under that reservation, none on a writer",
+        ("forty more versions overrun the 61-sector log; the tick reclaims under the storage task's reservation, saying what each tick spent of it, and a writer reclaims only when the log filled between two ticks, one step for its own record",
          'p9: pair-client: wrote forty more versions of /n/hello over 9P' in t
          and 'read it back: "version 42 of forty' in t
-         and len(re.findall(r'lfs: reclaim on the tick', t)) >= 10 and 'reclaim for a writer' not in t
+         and len(re.findall(r'lfs: reclaim on the tick: dropped', t)) >= 4
+         and len(re.findall(r'lfs: reclaim on the tick: \d+ steps?, spent \d+ cycles of the [1-9]\d+ this period', t)) >= 2
+         and all(int(x) <= 3 for x in re.findall(r'lfs: reclaim for a writer: .* (\d+) sectors free', t))
          and 'the log is full' not in t),
         ("at the end the kernel reports the storage task's reservation and what it used of it, as the talk's dumptask does",
          re.search(r'osprey status: proc 3 core \d+ \w+ budget (19\d{5}|200\d{4}) used \d+ period (99\d{5}|100\d{5}) ', t) is not None),	# the cycle rate is measured, so these vary by a little
@@ -186,9 +188,9 @@ def main():
         ("the client container brings up the real Plan 9 IP stack of its own - devip, ip.c, tcp.c - with an osprey interface whose wire is the ring to the server container",
          'p9 ip: client container: the real Plan 9 IP stack is up in this container too; its osprey interface 10.0.1.1 is the ring wire to the server container' in t
          and "p9 ip: stack B's osprey interface 10.0.1.2 is the ring wire to the client container" in t),
-        ("and its own tcp.c's frames leave over the ring - the stack's own output, not a frame built by hand - and the server's stack's frames come back on the replies: the one-way request ring carrying a two-way wire",
+        ("and its own tcp.c's frames leave over the ring - the stack's own output, not a frame built by hand - and the server's stack's frames arrive in the client's own packet buffers and on its output queue, filled in memory by the server and taken by the client's select on one kernel wakeup each: nothing polls",
          re.search(r"osprey medium: the stack's own \d+-byte frame left this container over the ring to the peer's stack - the client end of the device-carried wire", t) is not None
-         and re.search(r'p9 ip: client container: done after \d+ ticks; ([3-9]|\d\d+) frames of its stack\'s crossed the ring to the server container and ([3-9]|\d\d+) of the server\'s stack\'s came back', t) is not None),
+         and re.search(r'p9 ip: client container: done after \d+ ticks; ([3-9]|\d\d+) frames of its stack\'s crossed the ring to the server container and ([3-9]|\d\d+) of the server\'s stack\'s came back on this container\'s output queue, taken by select ([1-9]\d*) times, no polls', t) is not None),
         ("the two containers' tcp.c complete a three-way handshake across the ring, and the server container's stack accepts the connection",
          re.search(r"p9 ip: client container: the two containers' tcp.c completed a handshake across the ring - Established", t) is not None
          and re.search(r"p9 ip: ring server: accepted a connection from the client container's tcp.c across the ring as conversation \d+", t) is not None),

@@ -46,13 +46,15 @@
  * whole Plan 9 stack in its own container.
  */
 
-/* ring9p.c, compiled against the user headers; the plain-typed seam */
-extern long ring9p_frame(uchar *frame, long n, uchar *back, long backmax);
+/* ring9p.c and p9pairsrv.c, compiled against the user headers; the plain-typed seam */
+extern long ring9p_frame(uchar *frame, long n, uchar *unused, long unused2);
+extern uchar *ring9p_taken(long *len);
+extern long ringsrv_output(uchar *frame, long n);
 
 
 enum {
 	Maxtu = 64*1024,	/* the in-personality wire */
-	Ringmtu = 1500,		/* the ring wire: a frame each way fits the data area (ring9p.c's Maxframe) */
+	Ringmtu = 2048,		/* the ring wire: a frame each way fits one of the client's packet buffers (ring9p.c's Maxframe) */
 };
 
 typedef struct Osrock Osrock;
@@ -197,26 +199,35 @@ ospreybwrite(Ipifc *ifc, Block *bp, int, uchar*, Routehint*)
 	er = ifc->arg;
 	if(er->ring && !er->client){
 		/*
-		 * The server end: the peer can only be reached on the reply to
-		 * a request of its own, so the frame waits until it asks
-		 * (ospreymediumtake, from the server loop).
+		 * The server end: the frame goes into the peer's own packet
+		 * buffer and a message onto its output queue, in the peer's
+		 * memory, and the kernel is asked to wake it (ringsrv_output).
+		 * If the peer's queue is full the frame waits here, and the
+		 * loop's tick gives it another try (ospreymediumflush).
 		 */
-		if(qpass(er->toring, bp) < 0)
+		n = BLEN(bp);
+		if(n > Ringmtu){
+			ifc->outerr++;
+			freeb(bp);
+			return;
+		}
+		if(qlen(er->toring) == 0 && ringsrv_output(bp->rp, n) == 0){
+			freeb(bp);
+			ringtx++;
+		} else if(qpass(er->toring, bp) < 0)
 			ifc->outerr++;
 		ifc->out++;
 		return;
 	}
 	if(er->ring){
 		/*
-		 * The client end: the frame is a request on the ring, answered
-		 * by the server container when its loop injects it - a
-		 * synchronous send, the whole personality waiting in the SLEEP
-		 * call that services the ring, which is safe because nothing
-		 * else in a cooperative personality can run meanwhile.  The
-		 * reply may carry a frame the far stack sent toward us; it is
-		 * queued, not injected here, so injection stays in the loop's
-		 * context (the pump) and not inside whatever protocol path is
-		 * sending.
+		 * The client end: the frame goes into one of this container's
+		 * packet buffers and a request names it - a synchronous send,
+		 * the whole personality waiting in the SLEEP call that
+		 * services the ring, which is safe because nothing else in a
+		 * cooperative personality can run meanwhile.  Nothing comes
+		 * back on the reply: the far stack's frames arrive on the
+		 * output queue, taken by the loop's select (ospreymediumtaken).
 		 */
 		n = BLEN(bp);
 		if(n > Ringmtu){
@@ -226,7 +237,7 @@ ospreybwrite(Ipifc *ifc, Block *bp, int, uchar*, Routehint*)
 		}
 		memmove(frame, bp->rp, n);
 		freeb(bp);
-		rn = ring9p_frame(frame, n, back, sizeof back);
+		rn = ring9p_frame(frame, n, nil, 0);
 		if(rn < 0){
 			ifc->outerr++;
 			return;
@@ -237,8 +248,7 @@ ospreybwrite(Ipifc *ifc, Block *bp, int, uchar*, Routehint*)
 			print("osprey medium: the stack's own %ld-byte frame left this container over the ring to the peer's stack - the client end of the device-carried wire\n", n);
 		}
 		ifc->out++;
-		if(rn > 0)
-			ringarrived(er, back, rn);
+		USED(back);
 		return;
 	}
 	if(qpass(er->peer->q, bp) < 0)	/* out this end -> in at the other */
@@ -276,28 +286,58 @@ ospreymediumpump(void)
 }
 
 /*
- * The client end's clock tick: ask the server for whatever frames its
- * stack has sent toward us since we last asked, queue each for the pump,
- * then pump.  Called from the client's loop on every tick.
+ * The client end's clock tick: nothing to ask the server for any more -
+ * its frames come on the output queue - so only what is queued is
+ * pumped.  Called from the client's loop on every tick.
  */
 void
 ospreymediumpoll(void)
 {
+	ospreymediumpump();
+}
+
+/*
+ * The client end's select took a message off this container's output
+ * queue: a frame the server's stack sent, in one of our packet buffers.
+ * Queue it for the pump and pump, in the loop's own context.
+ */
+void
+ospreymediumtaken(void)
+{
 	Osrock *er;
-	uchar back[Ringmtu];
-	long rn;
-	int i;
+	uchar *f;
+	long n;
 
 	er = ringrock();
 	if(er == nil || !er->client)
 		return;
-	for(i = 0; i < 64; i++){		/* bounded: a flood cannot keep the loop here */
-		rn = ring9p_frame(nil, 0, back, sizeof back);
-		if(rn <= 0)
-			break;
-		ringarrived(er, back, rn);
-	}
+	f = ring9p_taken(&n);
+	if(f != nil && n > 0)
+		ringarrived(er, f, n);
 	ospreymediumpump();
+}
+
+/*
+ * The server end's tick: frames toward the peer that found its queue
+ * full go now, in order, as far as there is room.
+ */
+void
+ospreymediumflush(void)
+{
+	Osrock *er;
+	Block *bp;
+
+	er = ringrock();
+	if(er == nil || er->client || er->toring == nil)
+		return;
+	while((bp = qget(er->toring)) != nil){
+		if(ringsrv_output(bp->rp, BLEN(bp)) < 0){
+			qputback(er->toring, bp);
+			break;
+		}
+		freeb(bp);
+		ringtx++;
+	}
 }
 
 /*
@@ -343,36 +383,6 @@ ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer)
 	runlock(er->ifc);
 	poperror();
 	return n;
-}
-
-/*
- * The server end's outbound: one frame the stack sent toward the peer
- * container, copied out for the reply to the peer's request, or 0 when
- * there is none.  Called from the server loop answering Reqframe.
- */
-long
-ospreymediumtake(uchar *buf, long max)
-{
-	Osrock *er;
-	Block *bp;
-	long n;
-
-	er = ringrock();
-	if(er == nil || er->client || er->toring == nil)
-		return 0;
-	while((bp = qget(er->toring)) != nil){
-		n = BLEN(bp);
-		if(n > max){			/* cannot fit the reply: dropped, counted */
-			er->ifc->outerr++;
-			freeb(bp);
-			continue;
-		}
-		memmove(buf, bp->rp, n);
-		freeb(bp);
-		ringtx++;
-		return n;
-	}
-	return 0;
 }
 
 /* how many frames this end has put on and taken off the ring wire */

@@ -1949,7 +1949,7 @@ int	(*ospreytickreq)(Ospreyproc*, int sem);
  */
 /* a container's reservation and what it has used of it this period, in cycles */
 int
-ospreyaccount(Ospreyproc *p, uvlong *budget, uvlong *used, uvlong *period)
+ospreyaccount(Ospreyproc *p, uvlong *budget, uvlong *used, uvlong *period, uvlong *periods)
 {
 	Container *c;
 
@@ -1959,6 +1959,7 @@ ospreyaccount(Ospreyproc *p, uvlong *budget, uvlong *used, uvlong *period)
 	*budget = c->budget;
 	*used = c->used;
 	*period = c->period;
+	*periods = c->periods;
 	return 0;
 }
 

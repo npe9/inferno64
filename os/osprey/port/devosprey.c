@@ -1346,6 +1346,40 @@ ospreyclock(int core)
 	ospreytick(core, q != nil ? q->osprey : nil, d, now);
 
 	/*
+	 * A watch for a container's process spinning in user mode: once a
+	 * second, one that is not in a system call and sits at the user pc
+	 * it sat at a second ago is named, with that pc, so a loop nobody
+	 * can otherwise see is at least placed.
+	 */
+	if(core == 0){
+		static int watchticks;
+		static uintptr lastpc[16];
+		static int same[16];
+		extern uintptr uregpc(void*);
+		int x;
+
+		if(++watchticks % 100 == 0){
+			for(x = 0; x < nelem(ospreyprocs); x++){
+				Proc *w = ospreyprocs[x];
+				uintptr pc;
+
+				if(w == nil || w->osprey == nil || w->insyscall || (w->state != Running && w->state != Ready)){
+					same[x] = 0;
+					continue;
+				}
+				pc = uregpc(w->dbgreg);
+				if(pc != 0 && pc == lastpc[x]){
+					if(++same[x] >= 2 && same[x] <= 6)
+						print("osprey watch: container %llud pid %lud %s has sat in user mode at pc %#p for %d s\n",
+							ospreyid(w->osprey), w->pid, w->text, pc, same[x]);
+				} else
+					same[x] = 0;
+				lastpc[x] = pc;
+			}
+		}
+	}
+
+	/*
 	 * Hand this tick to any container that asked for it, the way a
 	 * device interrupt hands work to the task that serves it: give a
 	 * semaphore and wake whoever is waiting on it.  The interrupt does
@@ -2490,6 +2524,7 @@ uintptr
 #define ReqMigstart 30
 #define ReqMigdone 31
 #define ReqAccount 32	/* xcall op: the caller's reservation, what it has used of it this period, and the period, in cycles */
+#define ReqKick 33	/* xcall op: a server has put work on a container's output queue in memory; wake that container's select */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2561,6 +2596,23 @@ ospreyxcall(va_list list)
 	}
 	if(op >= ReqMigsnap && op <= ReqMigdone)
 		return ospreymigcall((int)op, arg, ubuf);
+	if(op == ReqKick){
+		/*
+		 * The work itself went into the container's own memory - its
+		 * output queue and packet buffers, which its server maps - so
+		 * the kernel carries nothing here but the wakeup, and only for
+		 * a container the caller serves.
+		 */
+		Ospreyproc *c;
+		int x;
+
+		if((c = ospreylookup(arg[0])) == nil || ospreyserverof(c) != up->osprey)
+			return -1;
+		if((x = ospreyindex(c)) >= 0 && x < nelem(ospreyselrend))
+			wakeup(&ospreyselrend[x]);
+		ubuf[0] = 0;
+		return 0;
+	}
 	if(op == ReqAccount){
 		/*
 		 * A task asks what its reservation is and what it has used of
@@ -2568,7 +2620,7 @@ ospreyxcall(va_list list)
 		 * storage task's reclamation - can be paid for by the
 		 * reservation rather than by a number compiled in.
 		 */
-		if(ospreyaccount(up->osprey, &ubuf[0], &ubuf[1], &ubuf[2]) < 0)
+		if(ospreyaccount(up->osprey, &ubuf[0], &ubuf[1], &ubuf[2], &ubuf[4]) < 0)
 			return -1;
 		ubuf[3] = ospreyhz;
 		return 0;
@@ -4459,6 +4511,22 @@ ospreydumptasks(void)
 			print("osprey status: %.*s", (int)(e - s), s);
 	}
 	free(buf);
+	{
+		/* each container's process: where the scheduler has it, what it waits in, its last user pc */
+		extern char *statename[];
+		extern uintptr uregpc(void*);
+		Proc *q;
+		int x;
+
+		for(x = 0; x < nelem(ospreyprocs); x++){
+			if((q = ospreyprocs[x]) == nil || q->osprey == nil)
+				continue;
+			print("osprey proc: container %llud pid %lud %s: %s%s%s, in a syscall %d, user pc %#p\n",
+				ospreyid(q->osprey), q->pid, q->text, statename[q->state],
+				q->psstate != nil ? " in " : "", q->psstate != nil ? q->psstate : "",
+				q->insyscall, uregpc(q->dbgreg));
+		}
+	}
 	if(ospreyconsproc != nil)
 		print("osprey console: %llud bytes of this went out through the console task, %llud straight to the port\n",
 			ospreyconsbytes, ospreyconsdirect);

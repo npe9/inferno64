@@ -20,8 +20,11 @@ enum {
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group, carried the same way */
 	Reqframe	= 20,	/* a network frame for the stack at this end, over the ring */
+	Inpktbuf	= 0xB0F,	/* arg[4] of a Reqframe: the frame is in the client's packet buffer arg[2] */
+	Rxslot0		= 16,	/* the client's packet buffers 16-31 carry this end's frames to it */
+	Nrxslot		= 16,
 	ReqMigrate	= 22,	/* the kernel: carry this container's process over the wire (OpMigrate) */
-	Maxframe	= 1500,	/* the ring wire's MTU (ring9p.c's Maxframe, ospreymedium.c's Ringmtu) */
+	Maxframe	= 2048,	/* the ring wire's MTU (ring9p.c's Maxframe, ospreymedium.c's Ringmtu): a packet buffer */
 	Reqsyscall	= 15,
 	ReqGone		= 12,
 	ReqReserve	= 14+2,	/* above 9P's 14 and syscall's 15: 16 is the list's ReqReserve, 17 ReqTick */
@@ -142,11 +145,15 @@ extern void sched_tick(void);		/* p9sched.c: advance the cooperative clock */
 extern void runkprocs(void);		/* p9sched.c: run ready kprocs, then return */
 extern void ospreymediumpump(void);	/* ospreymedium.c: inject frames arrived over the ring */
 extern long ospreymediumreceive(uchar *frame, long n, uvlong fromcontainer);	/* one frame off the ring into the stack */
-extern long ospreymediumtake(uchar *buf, long max);	/* one frame the stack sent toward the peer, for the reply */
+extern void ospreymediumflush(void);	/* frames the stack sent toward the peer that had to wait for room on its queue */
 extern void p9kbdnotify(void);		/* p9kbd.c: hand an IRQ1 notification to the driver kproc */
 extern void p9vnet(uchar *base);		/* netvirtio.c: the user-level network driver */
 extern void p9migrate(uvlong container);	/* p9ip.c: carry a container's process over the wire, in a kproc */
 static uchar *srvbase;			/* this server's own slice, for p9srvdata */
+static uchar *clientbase;		/* the client's slice: its output queue and packet buffers, filled in memory */
+static Omap *clientmap;
+static int rxnext;			/* the next of the client's packet buffers to put a frame in */
+static long framesout, kicks;
 extern void p9vnetup(void);		/* p9ip.c: the interface on it, and the machine's role on the wire */
 extern void ospreyvnetpump(void);	/* ospreyvnetmedium.c: what the device received, into the stack */
 static int reclaims, ticks;
@@ -214,6 +221,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		if(lfsreclaim())
 			reclaims++;
 		ospreymediumpump();	/* inject any frames that arrived over the osprey medium */
+		ospreymediumflush();	/* and give the peer what waited for room on its queue */
 		ospreyvnetpump();	/* and any the network device received */
 		runkprocs();		/* let timer and medium kprocs run on this tick */
 		return 0;
@@ -280,27 +288,20 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == Reqframe){
 		/*
-		 * The device-carried wire.  A frame the peer container's stack
-		 * sent is handed to the stack at this end (tlen 0 is a poll,
-		 * carrying none); the reply carries back one frame this end's
-		 * stack has sent toward the peer, or 0 - its own outbound
-		 * traffic, the reverse direction of a wire whose request ring
-		 * runs one way.  A poll that carried nothing either way is
-		 * not counted as a served request (r 2): the client polls on
-		 * every tick, and those must not spend the run's request count.
+		 * The device-carried wire, the direction the request ring
+		 * runs: a frame the peer container's stack sent, in one of the
+		 * peer's own packet buffers, handed to the stack at this end.
+		 * This end's frames to the peer do not ride the reply: they go
+		 * into the peer's packet buffers and onto its output queue, in
+		 * memory (ringsrv_output), and the kernel is asked to wake it.
 		 */
 		toff = req.arg[2];
 		tlen = req.arg[3];
 		roff = req.arg[4];
-		if(tlen > 0)
-			ospreymediumreceive(cdata + toff, (long)tlen, req.container);
-		rn = ospreymediumtake(cdata + roff, Maxframe);
+		rn = 0;
+		if(roff == Inpktbuf && clientbase != nil && toff < clientmap->npktbuf && tlen > 0 && tlen <= clientmap->pktbufsize)
+			rn = ospreymediumreceive(clientbase + clientmap->pktbuf + toff*clientmap->pktbufsize, (long)tlen, req.container);
 		rep.arg[0] = (uvlong)rn;
-		if(tlen == 0 && rn == 0){
-			repm[pq->put % pq->size] = rep;
-			pq->put++;
-			return 2;
-		}
 	} else if(req.op == Reqsyscall){
 		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */
 		rep.arg[0] = (uvlong)rn;
@@ -309,6 +310,51 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	repm[pq->put % pq->size] = rep;
 	pq->put++;
 	return 1;
+}
+
+/*
+ * A frame from this end's stack to the client container: into one of the
+ * client's own packet buffers, and a message naming it onto the client's
+ * output queue, both in the client's slice which this server maps - no
+ * kernel in the data path - then one request (ReqKick) so the kernel
+ * wakes the client's select, which takes the message on an arm of its
+ * own.  Returns -1 when the queue is full (sixteen frames not yet taken,
+ * one per buffer), and the medium keeps the frame until the next tick.
+ */
+long
+ringsrv_output(uchar *frame, long n)
+{
+	Queue *oq;
+	Msg *om, m;
+	uchar *b;
+	long k;
+	int slot;
+	uvlong args[5];
+
+	if(clientbase == nil || n <= 0 || n > (long)clientmap->pktbufsize || clientmap->npktbuf < Rxslot0 + Nrxslot)
+		return -1;
+	oq = (Queue*)(clientbase + clientmap->outputqueue);
+	if(oq->put - oq->get >= oq->size)
+		return -1;			/* the client has not taken what is there */
+	slot = Rxslot0 + rxnext++ % Nrxslot;
+	b = clientbase + clientmap->pktbuf + slot*clientmap->pktbufsize;
+	for(k = 0; k < n; k++)
+		b[k] = frame[k];
+	om = (Msg*)((uchar*)oq + oq->message);
+	for(k = 0; k < (long)sizeof m; k++)
+		((uchar*)&m)[k] = 0;
+	m.op = Reqframe;
+	m.container = clientmap->id;
+	m.arg[0] = slot;
+	m.arg[1] = n;
+	om[oq->put % oq->size] = m;
+	oq->put++;
+	framesout++;
+	args[0] = clientmap->id;
+	args[1] = args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(33, args, 1) == 0)	/* ReqKick */
+		kicks++;
+	return 0;
 }
 
 /* this server's own data area, for the kernel-header side (the migration kprocs stage pages in it) */
@@ -350,6 +396,8 @@ p9serveloop(char *arg)
 		slices[client] = cbase;
 	pq = (Queue*)(base + map->replyqueue);
 	srvbase = base;
+	clientbase = cbase;
+	clientmap = cmap;
 
 	p9blk(base);		/* the disk, if the kernel exposed one: a driver above the kernel */
 	p9lfsmount();		/* and the file system on it, mounted at /n for the client */
