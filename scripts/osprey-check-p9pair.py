@@ -77,7 +77,7 @@ def main():
         ("the real-time clock is read in user space, by the personality's own outb/inb on the CMOS ports, no kernel rtc device in the data path",
          re.search(r'p9 rtc: read the CMOS clock in user space by its own outb/inb \(ports 0x70/0x71\): \d{4}-\d\d-\d\d \d\d:\d\d:\d\d', t) is not None),
         ("and the task hands the kernel the time of day by request: the kernel read no clock at boot, and the seconds it was given are the host's own time within ten minutes",
-         (lambda mm: mm is not None and abs(int(mm.group(1)) - now) < 600)(re.search(r"osprey: container \d+ set the kernel's time of day by request: (\d+) seconds since the epoch; the kernel read no clock", t))
+         (lambda mm: mm is not None and abs(int(mm.group(1)) - now) < 600)(re.search(r"osprey: container \d+ set the kernel's time of day by request: (\d+) seconds since the epoch; it holds the console, the capability granted at boot", t))
          and re.search(r"p9 rtc: set the kernel's time of day to \d+ seconds since the epoch, by request", t) is not None),
         ("the kernel exposes the virtio block device's registers and interrupt to the server personality, and nothing more",
          'osprey blk: exposed virtio block device' in t and 'as "virtioblk"' in t),
@@ -269,6 +269,11 @@ def main():
          'legacy: my note handler caught the fault: "sys: trap: fault read addr=0x0"' in t
          and 'legacy: BUG: still running' not in t
          and 'microkernel: donotify' not in t),
+        ("authority on the kernel's requests is a capability set at boot: the boot personality holds the console and its rtc task sets the time of day, while a legacy container that does not hold the console is refused",
+         'p9 rtc: set the kernel\'s time of day to' in t
+         and re.search(r"osprey: container \d+ set the kernel's time of day by request: \d+ seconds since the epoch; it holds the console, the capability granted at boot", t) is not None
+         and re.search(r"osprey: container \d+ asked to set the time of day and was refused: it does not hold the console \(no Capsettime\)", t) is not None
+         and 'legacy: the kernel refused to let me set the time of day - I do not hold the console' in t),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

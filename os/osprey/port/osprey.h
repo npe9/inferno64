@@ -202,6 +202,8 @@ long		ospreyattr(Ospreyproc*, char *name, char *buf, long nbuf);
 int		ospreysetattr(Ospreyproc*, char *name, char *val);
 int		ospreyattrwritable(char *name);
 uvlong		ospreyversion(Ospreyproc*);
+uvlong		ospreycaps(Ospreyproc*);
+void		ospreyaddcaps(Ospreyproc*, uvlong);
 
 /*
  * Who a container is for.  The owner is whoever made it; the owner may

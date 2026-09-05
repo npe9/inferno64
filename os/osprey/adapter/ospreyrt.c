@@ -82,6 +82,7 @@ struct Ospreyproc {
 	char	segname[Segnamelen];	/* the segment that is this slice */
 	char	owner[Userlen];		/* whoever made it */
 	char	grant[Ngrant][Userlen];	/* and whoever they handed it to */
+	uvlong	caps;			/* what requests of its own the kernel will answer for it: a bit per authority, set at boot */
 	Ospreyproc *server;	/* answers what the kernel will not */
 	int	serving;	/* is that server for someone */
 	Pktq	pktq;		/* packets given to this container */
@@ -332,6 +333,20 @@ uvlong
 ospreyversion(Ospreyproc *p)
 {
 	return p == nil ? 0 : p->version;
+}
+
+/* the authorities this container holds, and setting them: a capability word, set at boot */
+uvlong
+ospreycaps(Ospreyproc *p)
+{
+	return p == nil || p->used == 0 ? 0 : p->caps;
+}
+
+void
+ospreyaddcaps(Ospreyproc *p, uvlong bits)
+{
+	if(p != nil && p->used != 0)
+		p->caps |= bits;
 }
 
 /*

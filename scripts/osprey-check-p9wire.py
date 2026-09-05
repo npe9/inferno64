@@ -115,6 +115,8 @@ def main():
          re.search(r'p9 ip: pi-p across the cable: my kernel signed a ticket for "osprey": "osprey \d+ \d+ [0-9a-f]+"', t[1]) is not None
          and re.search(r'p9 ip: pi-p wire: the kernel checked a ticket: session [0-9a-f]+ is "osprey" \(the ticket was for container \d+ where it was signed\)', t[0]) is not None
          and re.search(r'p9 ip: pi-p across the cable: with the ticket the other machine\'s kernel checked, the session is "osprey"; it opened /n/hello there and read \(version \d+\): "[^"]+"', t[1]) is not None),
+        ("the wire is a capability set at boot: each machine's server holds the network device, so the containers it serves may carry a process over the wire - the authority granted when the device was exposed",
+         all(re.search(r'osprey: container \d+ holds the network device now; it and the containers it serves may carry a process over the wire \(Capwire\)', x) is not None for x in t)),
         ("and neither machine panics",
          all('panic' not in x for x in t)),
     ]

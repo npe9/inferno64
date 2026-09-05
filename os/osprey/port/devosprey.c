@@ -26,6 +26,12 @@
 #include	<mp.h>
 #include	"../port/pip.h"
 
+enum {	/* the authorities a container's capability word may carry (ospreycaps), each gating a request of the task's own */
+	Capsettime = 1,		/* set the kernel's time of day (ReqSettime): the container that holds the console */
+	Capwire    = 2,		/* carry a process over the wire (ReqMove to the wire): a container whose server holds the network device */
+	Capnote    = 4,		/* post itself a note (ReqNote) */
+	Capioport  = 8,		/* be granted I/O ports (ReqIoport) */
+};
 enum {
 	Qdir,
 	Qctl,
@@ -2358,7 +2364,12 @@ ospreyblkexpose(Ospreyproc *p, int sem)
 static int
 ospreynetexpose(Ospreyproc *p, int sem)
 {
-	return ospreyvioexpose(&vionet, p, sem, 0x1041, "virtionet", Ospreynetoff, Ospreynetmagic, "net", "network");
+	int r = ospreyvioexpose(&vionet, p, sem, 0x1041, "virtionet", Ospreynetoff, Ospreynetmagic, "net", "network");
+	if(r == 0){
+		ospreyaddcaps(p, Capwire);	/* the network device is this container's now: it and the containers it serves may carry a process over the wire */
+		print("osprey: container %llud holds the network device now; it and the containers it serves may carry a process over the wire (Capwire)\n", ospreyid(p));
+	}
+	return r;
 }
 
 extern void ospreyloadprog(void);
@@ -2685,12 +2696,18 @@ ospreyxcall(va_list list)
 		 * and the container that read the CMOS clock in user space
 		 * hands the kernel the time.  Ticket expiry (ospreycheckticket)
 		 * is measured against this, so until a task has set it a ticket
-		 * with a real expiry is early by the epoch.  Any container may
-		 * set it; who may is one of the checks the demonstration scale
-		 * leaves out (item 12 of osprey-progress).
+		 * with a real expiry is early by the epoch.  Only the container
+		 * that holds the console may set it - the capability it was
+		 * granted at boot - since the clock read in user space is the
+		 * console personality's; a container without it is refused.
 		 */
+		if((ospreycaps(up->osprey) & Capsettime) == 0){
+			print("osprey: container %llud asked to set the time of day and was refused: it does not hold the console (no Capsettime)\n",
+				ospreyid(up->osprey));
+			return -1;
+		}
 		todset((vlong)arg[0] * 1000000000LL, 0, 0);
-		print("osprey: container %llud set the kernel's time of day by request: %llud seconds since the epoch; the kernel read no clock\n",
+		print("osprey: container %llud set the kernel's time of day by request: %llud seconds since the epoch; it holds the console, the capability granted at boot\n",
 			ospreyid(up->osprey), (uvlong)seconds());
 		ubuf[0] = 0;
 		return 0;
@@ -4344,6 +4361,19 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 		Migout *mo, *oe;
 		int inflight, letgo, kept, shared;
 
+		/*
+		 * The wire is a capability: only a container whose server
+		 * holds the network device may carry a process across it,
+		 * since it is that server's real stack the process crosses on.
+		 * A container whose server has no wire is refused, and stays.
+		 */
+		if((ospreycaps(sv) & Capwire) == 0){
+			print("osprey migrate: container %llud asked to cross the wire and was refused: its server holds no network device (no Capwire)\n", ospreyid(old));
+			for(k = 0; k < nmem; k++)
+				if(mem[k]->state == Stopped)
+					ready(mem[k]);
+			return -1;
+		}
 		qlock(&ospreylock);
 		inflight = 0;
 		for(mo = migouts; mo < &migouts[Nmigout]; mo++)
@@ -5027,6 +5057,7 @@ ospreyuserprep(void)
 			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
 			if(sv != nil){
 				ospreydelegate(p, sv);
+				ospreyaddcaps(sv, Capsettime);	/* the server holds the console: its tasks read the clock and set the time of day */
 				/*
 				 * The block device, if the machine has one, goes to
 				 * the server: the personality that will be the file
@@ -7170,6 +7201,8 @@ ospreyctlether(Cmdbuf *cb)
 	ospreyether[x] = et;
 	ospreyethersem[x] = i;
 	((Ether*)et)->rbpool = &ospreyrbpool[x];
+	ospreyaddcaps(p, Capwire);	/* this container's server holds the network device: it, and those it serves, may carry a process over the wire */
+	print("osprey: container %llud holds the network device now; it and the containers it serves may carry a process over the wire (Capwire)\n", ospreyid(p));
 }
 
 static void

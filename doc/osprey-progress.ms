@@ -5651,14 +5651,31 @@ work that follows and, before that, a run that went on long enough
 faulted the personality after the boot program had exited.
 .PP
 .B "10.  Authority on the kernel's requests."
-Any container may set the time of day, move itself to the wire, or post
-itself a note.  The real form: the grants the kernel already keeps carry
-a capability word, set at boot, and each request of a task's own
-checks it \- the clock to the container holding the console, the wire
-to a container whose server holds the network device.  Proof: a legacy
-container's
+Done.  A container carries a capability word
+.CW ( caps ,
+set at boot by
+.CW ospreyaddcaps ),
+a bit per authority, and the requests of a task's own check it.  The
+server holds the console \- its tasks read the CMOS clock in user
+space and its rtc task sets the kernel's time of day \- so it is
+granted
+.CW Capsettime
+when it is created, and
 .CW ReqSettime
-refused and the server's accepted, printed by the kernel.
+refuses a container without it.  The network device, when it is
+exposed to a server
+.CW ( ospreynetexpose ),
+grants that server
+.CW Capwire ,
+and
+.CW ReqMove
+to the wire refuses a container whose server holds no device, since it
+is that server's real stack the process would cross on.  Proof, three
+criteria across the two checks: the server sets the time and says it
+holds the console; a legacy container asks and is refused, in the
+kernel's words and its own; and on two machines each server is granted
+the wire when its device is exposed, and the crossings that follow are
+the authority in use.
 .PP
 .B "11.  Configuration read, not derived."
 Addresses come from the MAC, roles from its last byte, ports are

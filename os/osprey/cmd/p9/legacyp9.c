@@ -253,6 +253,17 @@ startboot(char *argv0, char **argv)
 		int mfd, moved;
 		long mn;
 
+		/*
+		 * Before the move: ask the kernel to set the time of day.  A
+		 * legacy container does not hold the console, so the kernel
+		 * refuses - the authority is a capability, not everyone's.
+		 */
+		args[0] = 1000000000; args[1] = args[2] = args[3] = args[4] = 0;
+		if((int)ospreyxcall(23, args, 1) < 0)		/* ReqSettime */
+			print("legacy: the kernel refused to let me set the time of day - I do not hold the console\n");
+		else
+			print("legacy: BUG: the kernel let a legacy container set the time of day\n");
+
 		mfd = open("/n/hello", OREAD);
 		args[0] = args[1] = args[2] = args[3] = args[4] = 0;
 		print("legacy: asking the kernel to move me, running, to a container of my own\n");
