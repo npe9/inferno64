@@ -11,10 +11,11 @@ module Emberls
 // it.  the emulator's console cannot carry the protocol: it is a
 // keyboard, not a pipe (see doc/ember-next-plan.md).
 //
-// it answers the four questions that need a compiler -- where a name
-// is declared, what its type is, where else it is used, and what a
-// file declares -- from "emberc -X", the cross-reference dump, and
-// reports the compiler's own diagnostics as it goes.  every request
+// it answers the questions that need a compiler -- where a name is
+// declared, what its type is, where else it is used, what a file
+// declares, and what renaming it would touch -- from "emberc -X", the
+// cross-reference dump, and reports the compiler's own diagnostics as
+// it goes.  every request
 // analyses the file afresh: parse, check and dump, with new instances
 // of the compiler's modules, since they keep a compilation's state in
 // their globals (appl/ember/emberepl.e found that out).
@@ -406,8 +407,8 @@ func publish(d ref Doc) {
 }
 
 func capabilities() ref json.Value {
-	caps := jobj([]string{"textDocumentSync", "definitionProvider", "hoverProvider", "referencesProvider", "documentSymbolProvider"},
-		[]ref json.Value{jnum(1), jbool(1), jbool(1), jbool(1), jbool(1)})
+	caps := jobj([]string{"textDocumentSync", "definitionProvider", "hoverProvider", "referencesProvider", "documentSymbolProvider", "renameProvider"},
+		[]ref json.Value{jnum(1), jbool(1), jbool(1), jbool(1), jbool(1), jbool(1)})
 	info := jobj([]string{"name", "version"}, []ref json.Value{jstr("emberls"), jstr("1")})
 	return jobj([]string{"capabilities", "serverInfo"}, []ref json.Value{caps, info})
 }
@@ -456,6 +457,43 @@ func hover(d ref Doc, line int, col int) ref json.Value {
 	}
 	c := jobj([]string{"kind", "value"}, []ref json.Value{jstr("plaintext"), jstr(s)})
 	return jobj([]string{"contents", "range"}, []ref json.Value{c, namerange(e.line, e.col, e.name)})
+}
+
+// every place a name is written in this file: its declaration, if it
+// is here, and each use that resolved to it
+func places(d ref Doc, e ref Ent) []ref Ent {
+	a := []ref Ent{}
+	if e.dmod == "" && e.dline > 0 {
+		for _, x := range d.ents {
+			if x.isdecl != 0 && x.line == e.dline && x.col == e.dcol && x.name == e.name {
+				a = append(a, x)
+			}
+		}
+	}
+	for _, u := range d.ents {
+		if u.isdecl == 0 && u.dline == e.dline && u.dcol == e.dcol && u.dmod == e.dmod && u.name == e.name {
+			a = append(a, u)
+		}
+	}
+	return a
+}
+
+// rename: an edit for every place, which is a rename only because
+// the checker resolved them all to one declaration
+func rename(d ref Doc, line int, col int, to string) ref json.Value {
+	e := entat(d, line, col)
+	if e == nil || e.dmod != "" || e.dline <= 0 || to == "" {
+		return jnull()
+	}
+	a := []ref json.Value{}
+	for _, x := range places(d, e) {
+		a = append(a, jobj([]string{"range", "newText"}, []ref json.Value{namerange(x.line, x.col, x.name), jstr(to)}))
+	}
+	if len(a) == 0 {
+		return jnull()
+	}
+	ch := jobj([]string{d.uri}, []ref json.Value{jarr(a)})
+	return jobj([]string{"changes"}, []ref json.Value{ch})
 }
 
 func references(d ref Doc, line int, col int) ref json.Value {
@@ -558,6 +596,10 @@ func request(method string, id ref json.Value, params ref json.Value) {
 	}
 	if method == "textDocument/references" {
 		reply(id, references(d, line, col))
+		return
+	}
+	if method == "textDocument/rename" {
+		reply(id, rename(d, line, col, jtext(lib.get(params, "newName"))))
 		return
 	}
 	if id != nil {

@@ -738,9 +738,13 @@ where a name is declared, what its type is, where else it is used,
 what a file declares, and what the compiler says about it. It
 implements `initialize`, `textDocument/didOpen`, `didChange`,
 `didSave`, `didClose`, `definition`, `hover`, `references`,
-`documentSymbol`, `shutdown` and `exit`, publishes diagnostics after
-every change, and answers anything else with a method-not-found
-error.
+`documentSymbol`, `rename`, `shutdown` and `exit`, publishes
+diagnostics after every change, and answers anything else with a
+method-not-found error. A rename is an edit at the declaration and
+at every use the checker resolved to it, which is a rename only
+because the checker did the resolving; it refuses a name declared in
+another module, since the edit would have to reach a file it was not
+given.
 
 Every request analyses the file afresh -- parse, check, dump -- with
 new instances of the compiler's modules, since they keep a
