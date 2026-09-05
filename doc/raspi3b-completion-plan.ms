@@ -66,9 +66,25 @@ on Pktcnt alone re-enabled the channel against a device whose address
 had moved.  DMA is made coherent with cachebcm.c (Phase 0b) through
 cache-line-aligned bounce buffers.
 .PP
-Left for the device layer, not the HCD: the split-transaction path (for
-a full/low-speed device behind QEMU's high-speed root hub) is written
-but only exercised by the hub-walk that usbd does not yet complete.
+The split-transaction path is exercised and works: QEMU's raspi3b puts
+an 8-port hub on the DWC2 root, so -device usb-kbd is a full-speed
+device behind a high-speed hub.  usbd walks the hub, enumerates the
+keyboard (vid 0627 class 0), and its boot-protocol interrupt endpoint
+delivers HID reports through split transactions -- injecting keys at the
+QEMU monitor produces the matching usage codes in usbd's reader.  One
+usbd fix was needed for the hub topology (which xhci boards never hit,
+their keyboards being direct): confighub reads the hub descriptor over
+ep0's data file, which an enumerated device leaves open, but the kernel
+refuses the "hub" ctl command for a busy endpoint -- so newhub now
+closes the data file after confighub and before "hub", reopening it
+after.
+.NH 1
+Phase 2: USB keyboard and mouse -- boot keyboard reports arriving
+.PP
+With Phase 1 and the hub fix, usbd already detects the boot keyboard and
+reads its HID reports over the split interrupt endpoint (verified by
+monitor key injection).  What remains is wiring those reports through to
+cons (#c) and the mouse reports to the pointer (#m) on this board.
 .NH 1
 Phase 1 (historical): the DWC2 controller
 .PP
