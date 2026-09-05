@@ -1,14 +1,30 @@
 implement Logic;
 
-# TempleOS Apps/Logic/Logic.HC — truth-table gate synthesizer (Tk)
-# GAP: no gate sprites; max table 0x100 (not 0x10000); no 3-input gates
+# TempleOS Apps/Logic/Logic.HC — truth-table gate synthesizer.
+#
+# The original prompts in the console (gate preference order, table size,
+# input columns A,B,C,... until blank, output columns until blank), fills
+# the gate table by relaxation passes, then flips to a graphics screen and
+# draws the circuit right-to-left: gate sprites, red connection wires,
+# green input letters and "Dup" labels, black %04X value beside each node.
+# This port keeps that flow inside a Tk form: the prompts become entries
+# (space-separated values give the any-arity input/output lists; the gate
+# entry keeps the user's preference ORDER, which matters because each pass
+# tries gates in that order), the doc's "Pass : n" prints and progress bars
+# become the message pane, and the schematic is drawn with the sprites
+# rasterized from the original's DolDoc bins (icons/temple/logic_1..10 =
+# $SP bins BI=1..10 = NOT..NOR3; Sprite3 blits bitmap bins in their stored
+# colors, so they draw as extracted, not tinted).
+#
+# GAP: the schematic persists in the panel rather than being re-dumped into
+# a scrolling document (Refresh(2,TRUE)/DocBottom has no Tk counterpart).
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Context: import draw;
+	Context, Display, Image, Font, Point, Rect: import draw;
 
 include "tk.m";
 	tk: Tk;
@@ -31,50 +47,82 @@ GT_OR: con 5;
 GT_NAND: con 6;
 GT_NOR: con 7;
 GT_XOR: con 8;
+GT_AND3: con 9;
+GT_OR3: con 10;
+GT_NAND3: con 11;
+GT_NOR3: con 12;
+GT_ENTRIES_NUM: con 13;
 
-TABLESIZE: con 16r100;
-MAXPASS: con 64;
+TABLE_SIZE_MAX: con 16r10000;
+SEL_GATES_NUM: con 128;
+MAXPASS: con 64;		# safety cap over the original's run-to-quiescence
 
+CONNECT_WIDTH: con 16;
+GATE_WIDTH: con 37;
+FONT_WIDTH: con 8;
+
+SCRW: con 640;
+SCRH: con 480;
+
+# exact TempleOS palette entries used by DrawDesign
+RED: con int 16rAA0000FF;
+GREEN: con int 16r00AA00FF;
+BLACK: con int 16r000000FF;
+WHITE: con int 16rFFFFFFFF;
+
+gatenames := array[] of {
+	"", "", "",
+	"NOT", "AND", "OR", "NAND", "NOR", "XOR",
+	"AND3", "OR3", "NAND3", "NOR3",
+};
+
+display: ref Display;
 top: ref Toplevel;
+buf: ref Image;
+font: ref Font;
+inkred, inkgreen, inkblack, inkwhite: ref Image;
+sprimg := array[GT_ENTRIES_NUM] of ref Image;
+sprmask := array[GT_ENTRIES_NUM] of ref Image;
+
+tsize := 16r100;
 gate: array of int;
-in1, in2: array of int;
-selgates: array of int;
+in1, in2, in3: array of int;
+displayed: array of int;
+selgates := array[SEL_GATES_NUM] of int;
 nsel := 0;
 ninp := 0;
 nout := 0;
 outidx := -1;
 passes := 0;
+msgs := "";
 
 cfg := array[] of {
 	"frame .f",
-	"label .f.gap -fg #884400 -text {GAP: text tree only — table 0x100 · no gate sprites}",
-	"label .f.tl -text {3-input truth table (size 0x100). Inputs A/B/C hex, outputs hex.}",
+	"label .f.tl -text {Truth-table gate synthesizer. All values are hex.}",
+	"frame .f.sz",
+	"label .f.sz.l -text {Table size (3 input=100, 4=10000):}",
+	"entry .f.sz.e -width 8",
+	"pack .f.sz.l .f.sz.e -side left -padx 4",
 	"frame .f.in",
-	"label .f.in.la -text {A=}",
-	"entry .f.in.a -width 8",
-	"label .f.in.lb -text {B=}",
-	"entry .f.in.b -width 8",
-	"label .f.in.lc -text {C=}",
-	"entry .f.in.c -width 8",
-	"pack .f.in.la .f.in.a .f.in.lb .f.in.b .f.in.lc .f.in.c -side left -padx 4",
+	"label .f.in.l -text {Input columns A B C ...:}",
+	"entry .f.in.e -width 40",
+	"pack .f.in.l .f.in.e -side left -padx 4",
 	"frame .f.out",
-	"label .f.out.l1 -text {Out1=}",
-	"entry .f.out.o1 -width 8",
-	"label .f.out.l2 -text {Out2=}",
-	"entry .f.out.o2 -width 8",
-	"pack .f.out.l1 .f.out.o1 .f.out.l2 .f.out.o2 -side left -padx 4",
+	"label .f.out.l -text {Output columns:}",
+	"entry .f.out.e -width 40",
+	"pack .f.out.l .f.out.e -side left -padx 4",
 	"frame .f.g",
-	"checkbutton .f.g.n -text NOT -variable gNOT",
-	"checkbutton .f.g.a -text AND -variable gAND",
-	"checkbutton .f.g.o -text OR -variable gOR",
-	"checkbutton .f.g.d -text NAND -variable gNAND",
-	"checkbutton .f.g.r -text NOR -variable gNOR",
-	"checkbutton .f.g.x -text XOR -variable gXOR",
-	"pack .f.g.n .f.g.a .f.g.o .f.g.d .f.g.r .f.g.x -side left -padx 2",
-	"button .f.run -text Run synthesis -command {send cmd run}",
-	"text .f.t -width 88 -height 18 -state disabled",
-	"label .f.h -text {example A=F0 B=CC C=AA · Run · q quit}",
-	"pack .f.gap .f.tl .f.in .f.out .f.g .f.run .f.t .f.h -side top -anchor w -pady 2",
+	"label .f.g.l -text {Gates, in the order you prefer them used:}",
+	"entry .f.g.e -width 44",
+	"pack .f.g.l .f.g.e -side left -padx 4",
+	"frame .f.b",
+	"button .f.b.run -text {Run synthesis} -command {send cmd run}",
+	"label .f.b.h -text {example A=F0 B=CC C=AA out=96 · q quit}",
+	"pack .f.b.run .f.b.h -side left -padx 8",
+	"text .f.t -width 78 -height 4 -state disabled",
+	"panel .f.p -bd 1 -relief sunken",
+	"pack .f.tl .f.sz .f.in .f.out .f.g .f.b .f.t -side top -anchor w -pady 2",
+	"pack .f.p -side top -anchor w",
 	"pack .f -fill both -expand 1",
 };
 
@@ -88,6 +136,7 @@ init(ctxt: ref Context, nil: list of string)
 	tkclient->init();
 	if(ctxt == nil)
 		ctxt = tkclient->makedrawcontext();
+	display = ctxt.display;
 
 	menubut: chan of string;
 	(top, menubut) = tkclient->toplevel(ctxt, "", "TempleOS Logic", 0);
@@ -95,15 +144,25 @@ init(ctxt: ref Context, nil: list of string)
 	tk->namechan(top, cmdch, "cmd");
 	for(i := 0; i < len cfg; i++)
 		cmd(top, cfg[i]);
-	cmd(top, ".f.in.a insert 0 F0");
-	cmd(top, ".f.in.b insert 0 CC");
-	cmd(top, ".f.in.c insert 0 AA");
-	cmd(top, "variable gNOT 1");
-	cmd(top, "variable gAND 1");
-	cmd(top, "variable gOR 1");
-	cmd(top, "variable gNAND 1");
-	cmd(top, "variable gNOR 1");
-	cmd(top, "variable gXOR 1");
+	cmd(top, ".f.sz.e insert 0 100");
+	cmd(top, ".f.in.e insert 0 {F0 CC AA}");
+	cmd(top, ".f.g.e insert 0 {NOT AND OR NAND NOR XOR AND3 OR3 NAND3 NOR3}");
+
+	font = Font.open(display, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(display, "*default*");
+	inkred = display.color(RED);
+	inkgreen = display.color(GREEN);
+	inkblack = display.color(BLACK);
+	inkwhite = display.color(WHITE);
+	for(t := GT_NOT; t <= GT_NOR3; t++){
+		# $SP bins BI=1..10 in Logic.HC, imgs[GT_NOT..GT_NOR3]
+		sprimg[t] = display.open(sys->sprint("/icons/temple/logic_%d.bit", t-2));
+		sprmask[t] = display.open(sys->sprint("/icons/temple/logic_%d.mask", t-2));
+	}
+	buf = display.newimage(Rect((0, 0), (SCRW, SCRH)), display.image.chans, 0, Draw->White);
+	if(buf != nil)
+		tk->putimage(top, ".f.p", buf, nil);
 	cmd(top, "update");
 	tkclient->startinput(top, "kbd" :: "ptr" :: nil);
 	tkclient->onscreen(top, nil);
@@ -127,90 +186,124 @@ init(ctxt: ref Context, nil: list of string)
 
 run()
 {
-	gate = array[TABLESIZE] of { * => GT_NULL };
-	in1 = array[TABLESIZE] of int;
-	in2 = array[TABLESIZE] of int;
+	msgs = "";
+
+	# table size: GetI64("Table size in hex (3 input=0x100,4=0x10000)")
+	tsize = parsehex(cmd(top, ".f.sz.e get"));
+	if(tsize < 1){
+		show("No table specified, aborting.\n");
+		return;
+	}
+	if(tsize > TABLE_SIZE_MAX){
+		show("Too large\n");
+		return;
+	}
+	gate = array[tsize] of { * => GT_NULL };
+	in1 = array[tsize] of int;
+	in2 = array[tsize] of int;
+	in3 = array[tsize] of int;
 	ninp = 0;
 	nout = 0;
 	outidx = -1;
+
+	# GetGates: gate types in the order the user prefers them used
 	nsel = 0;
-
-	if(cmd(top, "variable gNOT") == "1") selgates[nsel++] = GT_NOT;
-	if(cmd(top, "variable gAND") == "1") selgates[nsel++] = GT_AND;
-	if(cmd(top, "variable gOR") == "1") selgates[nsel++] = GT_OR;
-	if(cmd(top, "variable gNAND") == "1") selgates[nsel++] = GT_NAND;
-	if(cmd(top, "variable gNOR") == "1") selgates[nsel++] = GT_NOR;
-	if(cmd(top, "variable gXOR") == "1") selgates[nsel++] = GT_XOR;
+	(nil, gtoks) := sys->tokenize(cmd(top, ".f.g.e get"), " \t,");
+	for(gl := gtoks; gl != nil; gl = tl gl){
+		g := gatebyname(hd gl);
+		if(g < 0){
+			show(sys->sprint("Invalid gate: %s\n", hd gl));
+			return;
+		}
+		if(nsel < SEL_GATES_NUM)
+			selgates[nsel++] = g;
+	}
 	if(nsel == 0){
-		show("Select at least one gate.\n");
+		show("No gates specified, aborting.\n");
 		return;
 	}
 
-	if(!markin(cmd(top, ".f.in.a get")) ||
-	   !markin(cmd(top, ".f.in.b get")) ||
-	   !markin(cmd(top, ".f.in.c get"))){
-		show("Need three input hex indices (e.g. F0 CC AA).\n");
+	# inputs: any number of columns, A, B, C, ...
+	(nil, itoks) := sys->tokenize(cmd(top, ".f.in.e get"), " \t,");
+	for(il := itoks; il != nil; il = tl il){
+		v := parsehex(hd il);
+		if(v < 0){
+			show(sys->sprint("Bad input value: %s\n", hd il));
+			return;
+		}
+		if(v >= tsize)
+			app("Too large\n");
+		else if(gate[v] != GT_NULL)
+			app("Duplicate\n");
+		else{
+			gate[v] = GT_INPUT;
+			in1[v] = ninp++;
+		}
+	}
+	if(ninp == 0){
+		show("No inputs specified, aborting.\n");
 		return;
 	}
-	o1 := cmd(top, ".f.out.o1 get");
-	o2 := cmd(top, ".f.out.o2 get");
-	if(!markout(o1) && !markout(o2)){
-		show("Enter at least one output hex index.\n");
+
+	# outputs: any number of columns
+	(nil, otoks) := sys->tokenize(cmd(top, ".f.out.e get"), " \t,");
+	for(ol := otoks; ol != nil; ol = tl ol){
+		v := parsehex(hd ol);
+		if(v < 0){
+			show(sys->sprint("Bad output value: %s\n", hd ol));
+			return;
+		}
+		if(v >= tsize)
+			app("Too large\n");
+		else if(gate[v] == GT_INPUT)
+			app(sys->sprint("To produce output %04X, connect to input %c\n",
+				v, 'A'+in1[v]));
+		else if(gate[v] == GT_OUTPUT)
+			app("Duplicate\n");
+		else{
+			gate[v] = GT_OUTPUT;
+			in1[v] = nout++;
+		}
+	}
+	if(nout == 0){
+		show("No output specified, aborting.\n");
 		return;
 	}
-	markout(o2);
 
 	found := synth();
-	if(found <= 0){
-		show(sys->sprint("Synthesis failed after %d passes (%d/%d outputs).\n",
-			passes, found, nout));
-		return;
-	}
-	tree := drawtree(outidx, 0, array[TABLESIZE] of int);
-	show(sys->sprint("Found %d/%d outputs in %d passes.\n\n%s",
-		found, nout, passes, tree));
+	if(found > 0){
+		drawit();
+		app(sys->sprint("Found %d/%d outputs in %d passes.\n",
+			found, nout, passes-1));
+	}else
+		app(sys->sprint("No design found (0/%d outputs).\n", nout));
 }
 
-markin(s: string): int
+gatebyname(s: string): int
 {
-	if(s == "")
-		return 0;
-	v := parsehex(s);
-	if(v < 0 || v >= TABLESIZE)
-		return 0;
-	if(gate[v] != GT_NULL)
-		return 0;
-	gate[v] = GT_INPUT;
-	in1[v] = ninp++;
-	return 1;
-}
-
-markout(s: string): int
-{
-	if(s == "")
-		return 0;
-	v := parsehex(s);
-	if(v < 0 || v >= TABLESIZE)
-		return 0;
-	if(gate[v] == GT_INPUT){
-		show(sys->sprint("Output %04X is input %c — connect directly.\n",
-			v, 'A'+in1[v]));
-		return 0;
+	u := "";
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		if(c >= 'a' && c <= 'z')
+			c += 'A' - 'a';
+		u[len u] = c;
 	}
-	if(gate[v] == GT_OUTPUT)
-		return 1;
-	gate[v] = GT_OUTPUT;
-	in1[v] = nout++;
-	nout++;
-	return 1;
+	for(t := GT_NOT; t <= GT_NOR3; t++)
+		if(u == gatenames[t])
+			return t;
+	return -1;
 }
 
 parsehex(s: string): int
 {
-	(_n, tok) := sys->tokenize(s, " \t");
+	(nil, tok) := sys->tokenize(s, " \t");
 	if(tok == nil)
 		return -1;
 	t := hd tok;
+	if(len t > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X'))
+		t = t[2:];
+	if(len t == 0 || len t > 5)
+		return -1;
 	n := 0;
 	for(i := 0; i < len t; i++){
 		c := t[i];
@@ -228,43 +321,37 @@ parsehex(s: string): int
 	return n;
 }
 
+# FillGateTable: relaxation passes; each pass tries the selected gates
+# in preference order until every requested output has been produced or
+# a pass changes nothing.
 synth(): int
 {
-	added: array of int;
 	found := 0;
-	passes = 0;
+	passes = 1;
 	outidx = -1;
-	mask := TABLESIZE - 1;
+	chged := 1;
+	added: array of int;
 
-	for(pass := 0; pass < MAXPASS && found < nout; pass++){
-		passes = pass + 1;
-		added = array[TABLESIZE] of { * => 0 };
-		chged := 0;
+	while(found < nout && chged && passes <= MAXPASS){
+		app(sys->sprint("Pass : %d\n", passes));
+		passes++;
+		chged = 0;
+		added = array[tsize] of { * => 0 };
 		ch: int;
 		for(gi := 0; gi < nsel && found < nout; gi++){
 			case selgates[gi] {
 			GT_NOT =>
-				(ch, found) = fillnot(added, mask, found);
-				if(ch) chged = 1;
-			GT_AND =>
-				(ch, found) = filland(added, mask, found);
-				if(ch) chged = 1;
-			GT_OR =>
-				(ch, found) = fillor(added, mask, found);
-				if(ch) chged = 1;
-			GT_NAND =>
-				(ch, found) = fillnand(added, mask, found);
-				if(ch) chged = 1;
-			GT_NOR =>
-				(ch, found) = fillnor(added, mask, found);
-				if(ch) chged = 1;
-			GT_XOR =>
-				(ch, found) = fillxor(added, mask, found);
-				if(ch) chged = 1;
+				(ch, found) = fillnot(added, found);
+			GT_AND or GT_OR or GT_NAND or GT_NOR or GT_XOR =>
+				(ch, found) = fill2(selgates[gi], added, found);
+			GT_AND3 or GT_OR3 or GT_NAND3 or GT_NOR3 =>
+				(ch, found) = fill3(selgates[gi], added, found);
+			* =>
+				ch = 0;
 			}
+			if(ch)
+				chged = 1;
 		}
-		if(!chged)
-			break;
 	}
 	return found;
 }
@@ -274,232 +361,216 @@ usable(i: int, added: array of int): int
 	return gate[i] > GT_OUTPUT && !added[i];
 }
 
-fillnot(added: array of int, mask, found: int): (int, int)
+# record a newly reachable table slot; returns updated found count
+place(t, j, i1, i2, i3, old: int, added: array of int, found: int): int
+{
+	gate[j] = t;
+	in1[j] = i1;
+	in2[j] = i2;
+	in3[j] = i3;
+	added[j] = 1;
+	if(old == GT_OUTPUT){
+		if(outidx < 0)
+			outidx = j;
+		found++;
+	}
+	return found;
+}
+
+fillnot(added: array of int, found: int): (int, int)
 {
 	ch := 0;
-	for(i := 0; i < TABLESIZE; i++){
+	mask := tsize - 1;
+	for(i := 0; i < tsize; i++){
 		if(!usable(i, added))
 			continue;
+		progress(i);
 		j := (~i) & mask;
 		old := gate[j];
 		if(old >= GT_INPUT)
 			continue;
-		gate[j] = GT_NOT;
-		in1[j] = i;
-		added[j] = 1;
+		found = place(GT_NOT, j, i, 0, 0, old, added, found);
 		ch = 1;
-		if(old == GT_OUTPUT){
-			if(outidx < 0)
-				outidx = j;
-			found++;
+	}
+	return (ch, found);
+}
+
+# FillAnd/FillOr/FillNAnd/FillNOr/FillXor: identical scan, different op
+fill2(t: int, added: array of int, found: int): (int, int)
+{
+	ch := 0;
+	mask := tsize - 1;
+	for(i := 0; i < tsize; i++){
+		if(!usable(i, added))
+			continue;
+		progress(i);
+		for(k := 0; k < tsize; k++){
+			if(!usable(k, added))
+				continue;
+			j: int;
+			case t {
+			GT_AND =>	j = i & k;
+			GT_OR =>	j = i | k;
+			GT_NAND =>	j = ~(i & k);
+			GT_NOR =>	j = ~(i | k);
+			* =>		j = i ^ k;
+			}
+			j &= mask;
+			old := gate[j];
+			if(old >= GT_INPUT)
+				continue;
+			found = place(t, j, i, k, 0, old, added, found);
+			ch = 1;
 		}
 	}
 	return (ch, found);
 }
 
-filland(added: array of int, mask, found: int): (int, int)
+# FillAnd3/FillOr3/FillNAnd3/FillNOr3: triple-nested scan
+fill3(t: int, added: array of int, found: int): (int, int)
 {
 	ch := 0;
-	for(i := 0; i < TABLESIZE; i++){
+	mask := tsize - 1;
+	for(i := 0; i < tsize; i++){
 		if(!usable(i, added))
 			continue;
-		for(k := 0; k < TABLESIZE; k++){
+		progress(i);
+		for(k := 0; k < tsize; k++){
 			if(!usable(k, added))
 				continue;
-			j := (i & k) & mask;
-			old := gate[j];
-			if(old >= GT_INPUT)
-				continue;
-			gate[j] = GT_AND;
-			in1[j] = i;
-			in2[j] = k;
-			added[j] = 1;
-			ch = 1;
-			if(old == GT_OUTPUT){
-				if(outidx < 0)
-					outidx = j;
-				found++;
+			for(l := 0; l < tsize; l++){
+				if(!usable(l, added))
+					continue;
+				j: int;
+				case t {
+				GT_AND3 =>	j = i & k & l;
+				GT_OR3 =>	j = i | k | l;
+				GT_NAND3 =>	j = ~(i & k & l);
+				* =>		j = ~(i | k | l);
+				}
+				j &= mask;
+				old := gate[j];
+				if(old >= GT_INPUT)
+					continue;
+				found = place(t, j, i, k, l, old, added, found);
+				ch = 1;
 			}
 		}
 	}
 	return (ch, found);
 }
 
-fillor(added: array of int, mask, found: int): (int, int)
+# progress1/progress1_max counterpart: coarse position report during a pass
+progress(i: int)
 {
-	ch := 0;
-	for(i := 0; i < TABLESIZE; i++){
-		if(!usable(i, added))
-			continue;
-		for(k := 0; k < TABLESIZE; k++){
-			if(!usable(k, added))
-				continue;
-			j := (i | k) & mask;
-			old := gate[j];
-			if(old >= GT_INPUT)
-				continue;
-			gate[j] = GT_OR;
-			in1[j] = i;
-			in2[j] = k;
-			added[j] = 1;
-			ch = 1;
-			if(old == GT_OUTPUT){
-				if(outidx < 0)
-					outidx = j;
-				found++;
-			}
-		}
+	if(i != 0 && (i & 16rFFF) == 0){
+		cmd(top, sys->sprint(".f.b.h configure -text {pass %d: %04X/%04X}",
+			passes-1, i, tsize));
+		cmd(top, "update");
 	}
-	return (ch, found);
 }
 
-fillnand(added: array of int, mask, found: int): (int, int)
+# DrawIt/DrawDesign: the schematic.  Laid out right-to-left by pass count,
+# gate sprites at each node, red wires from input stubs to children,
+# green input letters and Dup labels, black %04X value beside every node.
+drawit()
 {
-	ch := 0;
-	for(i := 0; i < TABLESIZE; i++){
-		if(!usable(i, added))
-			continue;
-		for(k := 0; k < TABLESIZE; k++){
-			if(!usable(k, added))
-				continue;
-			j := (~(i & k)) & mask;
-			old := gate[j];
-			if(old >= GT_INPUT)
-				continue;
-			gate[j] = GT_NAND;
-			in1[j] = i;
-			in2[j] = k;
-			added[j] = 1;
-			ch = 1;
-			if(old == GT_OUTPUT){
-				if(outidx < 0)
-					outidx = j;
-				found++;
-			}
-		}
-	}
-	return (ch, found);
+	if(buf == nil)
+		return;
+	buf.draw(buf.r, inkwhite, nil, Point(0, 0));
+	displayed = array[tsize] of { * => 0 };
+	drawdesign(0, outidx, 0);
+	tk->putimage(top, ".f.p", buf, nil);
+	cmd(top, sys->sprint(".f.b.h configure -text {found in %d passes · q quit}", passes-1));
+	cmd(top, ".f.p dirty; update");
 }
 
-fillnor(added: array of int, mask, found: int): (int, int)
+drawdesign(y, out, depth: int): (int, int, int)
 {
-	ch := 0;
-	for(i := 0; i < TABLESIZE; i++){
-		if(!usable(i, added))
-			continue;
-		for(k := 0; k < TABLESIZE; k++){
-			if(!usable(k, added))
-				continue;
-			j := (~(i | k)) & mask;
-			old := gate[j];
-			if(old >= GT_INPUT)
-				continue;
-			gate[j] = GT_NOR;
-			in1[j] = i;
-			in2[j] = k;
-			added[j] = 1;
-			ch = 1;
-			if(old == GT_OUTPUT){
-				if(outidx < 0)
-					outidx = j;
-				found++;
-			}
-		}
-	}
-	return (ch, found);
-}
-
-fillxor(added: array of int, mask, found: int): (int, int)
-{
-	ch := 0;
-	for(i := 0; i < TABLESIZE; i++){
-		if(!usable(i, added))
-			continue;
-		for(k := 0; k < TABLESIZE; k++){
-			if(!usable(k, added))
-				continue;
-			j := (i ^ k) & mask;
-			old := gate[j];
-			if(old >= GT_INPUT)
-				continue;
-			gate[j] = GT_XOR;
-			in1[j] = i;
-			in2[j] = k;
-			added[j] = 1;
-			ch = 1;
-			if(old == GT_OUTPUT){
-				if(outidx < 0)
-					outidx = j;
-				found++;
-			}
-		}
-	}
-	return (ch, found);
-}
-
-gname(t: int): string
-{
-	case t {
-	GT_NOT => return "NOT";
-	GT_AND => return "AND";
-	GT_OR => return "OR";
-	GT_NAND => return "NAND";
-	GT_NOR => return "NOR";
-	GT_XOR => return "XOR";
-	GT_INPUT => return "IN";
-	}
-	return "?";
-}
-
-drawtree(idx, depth: int, seen: array of int): string
-{
-	if(idx < 0 || idx >= TABLESIZE)
-		return "";
-	if(seen[idx])
-		return indent(depth)+"Dup %04X\n";
-	seen[idx] = 1;
-	ind := indent(depth);
-	t := gate[idx];
-	case t {
+	t := gate[out];
+	xx := (passes-depth) * (GATE_WIDTH+CONNECT_WIDTH);
+	yy := y;
+	x1 := 0; y1 := 0;
+	x2 := 0; y2 := 0;
+	x3 := 0; y3 := 0;
+	if(displayed[out] && t != GT_INPUT){
+		grprint(inkgreen, xx-FONT_WIDTH*3, y-4, "Dup");
+		y += 10;
+	}else case t {
 	GT_INPUT =>
-		return ind+sys->sprint("IN %c [%04X]\n", 'A'+in1[idx], idx);
+		grprint(inkgreen, xx-FONT_WIDTH-4, y-4,
+			sys->sprint("%c", 'A'+in1[out]));
+		y += 10;
 	GT_NOT =>
-		return ind+sys->sprint("NOT [%04X]\n", idx)+drawtree(in1[idx], depth+1, seen);
-	GT_AND =>
-		return gate2(ind, idx, "AND", depth, seen);
-	GT_OR =>
-		return gate2(ind, idx, "OR", depth, seen);
-	GT_NAND =>
-		return gate2(ind, idx, "NAND", depth, seen);
-	GT_NOR =>
-		return gate2(ind, idx, "NOR", depth, seen);
-	GT_XOR =>
-		return gate2(ind, idx, "XOR", depth, seen);
+		y += 16;
+		(y, x1, y1) = drawdesign(y, in1[out], depth+1);
+		yy = y1;
+		sprite(t, xx, yy);
+		wire(xx-GATE_WIDTH, yy, x1, y1);
+	GT_AND or GT_OR or GT_NAND or GT_NOR or GT_XOR =>
+		y += 24;
+		(y, x1, y1) = drawdesign(y, in1[out], depth+1);
+		(y, x2, y2) = drawdesign(y, in2[out], depth+1);
+		yy = (y1+y2)/2;
+		sprite(t, xx, yy);
+		wire(xx-GATE_WIDTH, yy-4, x1, y1);
+		wire(xx-GATE_WIDTH, yy+4, x2, y2);
+	GT_AND3 or GT_OR3 or GT_NAND3 or GT_NOR3 =>
+		y += 32;
+		(y, x1, y1) = drawdesign(y, in1[out], depth+1);
+		(y, x2, y2) = drawdesign(y, in2[out], depth+1);
+		(y, x3, y3) = drawdesign(y, in3[out], depth+1);
+		yy = (y1+y2+y3)/3;
+		sprite(t, xx, yy);
+		wire(xx-GATE_WIDTH, yy-8, x1, y1);
+		wire(xx-GATE_WIDTH, yy, x2, y2);
+		wire(xx-GATE_WIDTH, yy+8, x3, y3);
 	}
-	return ind+sys->sprint("? [%04X]\n", idx);
+	grprint(inkblack, xx, yy+3, sys->sprint("%04X", out));
+	displayed[out] = 1;
+	return (y, xx, yy);
 }
 
-gate2(ind: string, idx: int, name: string, depth: int, seen: array of int): string
+sprite(t, x, y: int)
 {
-	s := ind+sys->sprint("%s [%04X]\n", name, idx);
-	s += drawtree(in1[idx], depth+1, seen);
-	s += drawtree(in2[idx], depth+1, seen);
-	return s;
+	s := sprimg[t];
+	if(s == nil){
+		grprint(inkblack, x-GATE_WIDTH, y-4, gatenames[t]);
+		return;
+	}
+	buf.draw(s.r.addpt(Point(x, y)), s, sprmask[t], s.r.min);
 }
 
-indent(n: int): string
+wire(x1, y1, x2, y2: int)
 {
-	s := "";
-	for(i := 0; i < n; i++)
-		s += "  ";
-	return s;
+	buf.line(Point(x1, y1), Point(x2, y2),
+		Draw->Endsquare, Draw->Endsquare, 0, inkred, Point(0, 0));
+}
+
+grprint(ink: ref Image, x, y: int, s: string)
+{
+	if(font != nil)
+		buf.text(Point(x, y), ink, Point(0, 0), font, s);
 }
 
 show(msg: string)
 {
+	msgs = msg;
+	setmsgs();
+}
+
+app(msg: string)
+{
+	msgs += msg;
+	setmsgs();
+}
+
+setmsgs()
+{
 	cmd(top, ".f.t configure -state normal");
 	cmd(top, ".f.t delete 1.0 end");
-	cmd(top, ".f.t insert end {"+msg+"}");
+	cmd(top, ".f.t insert end {"+msgs+"}");
+	cmd(top, ".f.t see end");
 	cmd(top, ".f.t configure -state disabled");
 	cmd(top, "update");
 }
