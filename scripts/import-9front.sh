@@ -415,6 +415,22 @@ echo "removing cpp's unused getopt declaration"
 # is the part that matters: it is what a lib/keyboard with a
 # four-character sequence would hit, instead of the corruption.
 #
+#
+# jpg's two table generators run here and both call cmap2rgb, which
+# lives in libdraw.  There is no libdraw for this machine and no
+# reason to build one: cmap2rgb and the rgb2cmap beside it are
+# arithmetic over the Plan 9 colour map and depend on nothing else in
+# the library.  So the one file that holds them is compiled beside
+# each generator.  Upstream does not need this because on a 9front
+# machine the host compiler is the target compiler and -ldraw is
+# there to be linked.
+#
+echo "giving jpg's table generators cmap2rgb"
+/usr/bin/sed -i '' -E \
+	-e 's%^(\t*)[$]c\^c (rgbycc|rgbrgbv)\.c$%\1$c^c \2.c\'$'\n''\1$c^c $ROOT/9front-src/sys/src/libdraw/rgb.c%' \
+	-e 's%^(\t*)[$]c\^l -o [$]c\.(rgbycc|rgbrgbv) (rgbycc|rgbrgbv)\.[$]c$%\1$c^l -o $c.\2 \3.$c rgb.$c%' \
+	"$DEST/sys/src/cmd/jpg/mkfile"
+
 echo "bounding mklatin's key-sequence copy"
 /usr/bin/sed -i '' \
 	-e 's|^\(\t*\)strcpy((\*tp)->seq, seq);$|\1assert(q+1-(uchar*)seq <= MAXLD);\'$'\n''\1memmove((*tp)->seq, seq, q+1-(uchar*)seq);|' \
@@ -481,11 +497,59 @@ cat > "$DEST/.gitignore" <<'EOF'
 # pattern also matches upstream source: libmach/6.c, cmd/6c/6.out.h.
 # The negations put those back.  A host tool built by 9front-glue's
 # hostcc is named for $cputype, which the build sets to "host".
-[01256789kquv].*
-![01256789kquv].c
-![01256789kquv].h
-![01256789kquv].out.h
+[01256789kquvo].*
+![01256789kquvo].c
+![01256789kquvo].h
+![01256789kquvo].out.h
 *.host
+
+# generated into the source tree by a build of sys/src/cmd: yacc and
+# lex output, the tables a program builds from its own data, and the
+# scripts a mkfile writes.  The list is what "git status" showed
+# after a full build; the check at the end of the import is what
+# keeps it from swallowing an upstream file that later takes one of
+# these names.
+sys/src/cmd/bc.c
+sys/src/cmd/bc.tab.h
+sys/src/cmd/mpc.c
+sys/src/cmd/mpc.tab.h
+sys/src/cmd/pc.c
+sys/src/cmd/pc.tab.h
+sys/src/cmd/units.c
+sys/src/cmd/units.tab.h
+sys/src/cmd/awk/awkgram.c
+sys/src/cmd/awk/proctab.c
+sys/src/cmd/grap/grap.c
+sys/src/cmd/grap/grapl.c
+sys/src/cmd/pic/picy.c
+sys/src/cmd/pic/picl.c
+sys/src/cmd/upas/smtp/rfc822.tab.c
+sys/src/cmd/upas/smtp/rfc822.tab.h
+sys/src/cmd/upas/smtp/smtpd.tab.c
+sys/src/cmd/ip/snoopy/protos.c
+sys/src/cmd/ip/snoopy/protos.h
+sys/src/cmd/jpg/ycbcr.h
+sys/src/cmd/jpg/rgbv.h
+sys/src/cmd/syscall/tab.h
+sys/src/cmd/tcs/alias.h
+sys/src/cmd/postscript/cropmarks/cropmarks
+sys/src/cmd/postscript/grabit/grabit
+sys/src/cmd/postscript/hardcopy/hardcopy
+sys/src/cmd/postscript/printfont/printfont
+sys/src/cmd/postscript/psencoding/psencoding
+sys/src/cmd/postscript/mpictures/tmac.pictures
+
+# the instruction-name table each compiler and loader builds from its
+# own header with mkenam
+enam.c
+cnam.c
+# except where upstream ships one; these two loaders do
+!sys/src/cmd/9l/cnam.c
+!sys/src/cmd/ql/cnam.c
+
+# a tool built to run on the build machine, named for $cputype, which
+# this build sets to "host"
+host.*
 
 # a library that a mkfile builds beside its sources rather than
 # installing, named for the object character the same way

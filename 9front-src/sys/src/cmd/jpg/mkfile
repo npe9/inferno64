@@ -52,12 +52,14 @@ torgbv.$O:	ycbcr.h rgbv.h
 
 ycbcr.h:	rgbycc.c
 	$c^c rgbycc.c
-	$c^l -o $c.rgbycc rgbycc.$c
+	$c^c $ROOT/9front-src/sys/src/libdraw/rgb.c
+	$c^l -o $c.rgbycc rgbycc.$c rgb.$c
 	./$c.rgbycc > ycbcr.h
 
 rgbv.h:	rgbrgbv.c
 	$c^c rgbrgbv.c
-	$c^l -o $c.rgbrgbv rgbrgbv.$c
+	$c^c $ROOT/9front-src/sys/src/libdraw/rgb.c
+	$c^l -o $c.rgbrgbv rgbrgbv.$c rgb.$c
 	./$c.rgbrgbv > rgbv.h
 
 nuke:V:	nuke-headers

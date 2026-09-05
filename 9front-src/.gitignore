@@ -7,11 +7,59 @@
 # pattern also matches upstream source: libmach/6.c, cmd/6c/6.out.h.
 # The negations put those back.  A host tool built by 9front-glue's
 # hostcc is named for $cputype, which the build sets to "host".
-[01256789kquv].*
-![01256789kquv].c
-![01256789kquv].h
-![01256789kquv].out.h
+[01256789kquvo].*
+![01256789kquvo].c
+![01256789kquvo].h
+![01256789kquvo].out.h
 *.host
+
+# generated into the source tree by a build of sys/src/cmd: yacc and
+# lex output, the tables a program builds from its own data, and the
+# scripts a mkfile writes.  The list is what "git status" showed
+# after a full build; the check at the end of the import is what
+# keeps it from swallowing an upstream file that later takes one of
+# these names.
+sys/src/cmd/bc.c
+sys/src/cmd/bc.tab.h
+sys/src/cmd/mpc.c
+sys/src/cmd/mpc.tab.h
+sys/src/cmd/pc.c
+sys/src/cmd/pc.tab.h
+sys/src/cmd/units.c
+sys/src/cmd/units.tab.h
+sys/src/cmd/awk/awkgram.c
+sys/src/cmd/awk/proctab.c
+sys/src/cmd/grap/grap.c
+sys/src/cmd/grap/grapl.c
+sys/src/cmd/pic/picy.c
+sys/src/cmd/pic/picl.c
+sys/src/cmd/upas/smtp/rfc822.tab.c
+sys/src/cmd/upas/smtp/rfc822.tab.h
+sys/src/cmd/upas/smtp/smtpd.tab.c
+sys/src/cmd/ip/snoopy/protos.c
+sys/src/cmd/ip/snoopy/protos.h
+sys/src/cmd/jpg/ycbcr.h
+sys/src/cmd/jpg/rgbv.h
+sys/src/cmd/syscall/tab.h
+sys/src/cmd/tcs/alias.h
+sys/src/cmd/postscript/cropmarks/cropmarks
+sys/src/cmd/postscript/grabit/grabit
+sys/src/cmd/postscript/hardcopy/hardcopy
+sys/src/cmd/postscript/printfont/printfont
+sys/src/cmd/postscript/psencoding/psencoding
+sys/src/cmd/postscript/mpictures/tmac.pictures
+
+# the instruction-name table each compiler and loader builds from its
+# own header with mkenam
+enam.c
+cnam.c
+# except where upstream ships one; these two loaders do
+!sys/src/cmd/9l/cnam.c
+!sys/src/cmd/ql/cnam.c
+
+# a tool built to run on the build machine, named for $cputype, which
+# this build sets to "host"
+host.*
 
 # a library that a mkfile builds beside its sources rather than
 # installing, named for the object character the same way
