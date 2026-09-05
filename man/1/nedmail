@@ -1,0 +1,156 @@
+.TH NEDMAIL 1
+.SH NAME
+nedmail \- reading mail
+.SH SYNOPSIS
+.B upas/nedmail
+[
+.B -f
+.I mailbox
+] [
+.B -m
+.I name
+]
+.SH DESCRIPTION
+.I Nedmail
+is an interactive command-line mail reader, after Plan 9's
+.IR nedmail .
+It is a client of
+.IR upas/fs (1):
+it lists the numbered message directories a mailbox presents under
+.BR /mail/fs ,
+reads each message's parsed
+.B info
+and its content files, and deletes through
+.BR /mail/fs/ctl .
+.PP
+If
+.B /mail/fs
+is not already being served and
+.B -f
+names a Unix mbox file,
+.I nedmail
+starts
+.IR upas/fs (1)
+on it first.
+.B -m
+selects the mailbox name to read (default
+.BR mbox ).
+.PP
+At the prompt, which shows the current message number, a line is
+.IB address command " " args
+where either part may be omitted: a bare
+.I address
+prints that message and a bare newline advances to the next one.
+.SS Addresses
+.TP
+.I n
+message number
+.TP
+.B .
+the current message
+.TP
+.B $
+the last message
+.TP
+.B ^
+the first message
+.TP
+.BI + n
+.I n
+messages forward (default 1)
+.TP
+.BI - n
+.I n
+messages back
+.TP
+.BI / regexp /
+the next message whose from, subject or to matches
+.SS Commands
+.TP
+.B p
+print the message (a short header block, then the decoded body)
+.TP
+.B P
+print the raw message
+.TP
+.B "\(dq"
+print the body quoted with a leading attribution
+.TP
+.B h
+print a one-line summary of the message
+.TP
+.B b
+print summaries of the next ten messages
+.TP
+.B H
+print the message's MIME structure
+.TP
+.B d
+mark the message for deletion
+.TP
+.B u
+remove the deletion mark
+.TP
+.B =
+print the message number
+.TP
+.BI w " file"
+save the decoded body to
+.I file
+.TP
+.BI s " file"
+append the raw message to
+.I file
+(as an mbox)
+.TP
+.B y
+.PD 0
+.TP
+.B i
+resynchronise with the mailbox, picking up new mail
+.PD
+.TP
+.B q
+quit, deleting the marked messages from the mailbox
+.TP
+.B x
+quit without deleting anything
+.TP
+.B help
+print a command summary
+.SH EXAMPLE
+Read an mbox, delete the second message, and quit:
+.EX
+
+	% upas/nedmail -f /tmp/mbox
+	3 messages
+	1: 2
+	...
+	2: d
+	2: q
+	deleted 1 message
+
+.EE
+.SH SOURCE
+.B /appl/cmd/upas/nedmail.b
+.SH SEE ALSO
+.IR upas/fs (1),
+.IR upas-fetch (1),
+.IR upas-send (1)
+.SH BUGS
+This is the reader core. Reply and forward
+.RB ( r ,
+.BR R ,
+.BR a ,
+.BR m ,
+.BR M ),
+the pipe and shell escapes
+.RB ( \(ba ,
+.BR \(ba\(ba ,
+.BR ! )
+and message filing
+.RB ( f )
+are not yet implemented; they await the
+.I marshal
+milestone (see
+.BR doc/upas-plan.md ).

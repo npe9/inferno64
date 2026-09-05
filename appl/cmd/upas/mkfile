@@ -3,6 +3,7 @@
 TARG=\
 	fetch.dis\
 	fs.dis\
+	nedmail.dis\
 	send.dis\
 
 MODULES=\
@@ -18,6 +19,8 @@ SYSMODULES=\
 	styxservers.m\
 	mime.m\
 	encoding.m\
+	bufio.m\
+	regex.m\
 	imap4.m\
 
 DISBIN=$ROOT/dis/upas

@@ -393,6 +393,7 @@ mprof mprof
 munload sh-mload
 mux mux
 mv mv
+nedmail nedmail
 netkey netkey
 netofdots netofdots
 netstat netstat
