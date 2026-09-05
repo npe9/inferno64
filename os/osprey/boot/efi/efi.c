@@ -53,6 +53,30 @@ unload(void)
 	eficall(ST->BootServices->ExitBootServices, IH, MK);
 }
 
+/*
+ * Claim the pages the kernel is about to be read into, from the
+ * firmware, at that address: a loader must own the memory it writes.
+ * Before this the kernel was read straight into its link address with
+ * nothing said to the firmware, whose boot services may have put
+ * something of their own there; a kernel that has grown past a
+ * megabyte makes that likelier, and the symptom - the loader printing
+ * its configuration and then nothing, one boot in several - is what a
+ * clobbered firmware looks like.  Returns 0 when the firmware would not
+ * give the region up, in which case the caller says so and goes on as
+ * before, since what the region holds is then not knowable here.
+ */
+int
+claimpages(uintptr addr, uintptr len)
+{
+	UINT64 mem;
+	UINTN pages;
+
+	mem = addr & ~(uintptr)4095;
+	pages = ((addr + len + 4095 & ~(uintptr)4095) - mem) / 4096;
+	return eficall(ST->BootServices->AllocatePages, (UINTN)2 /* AllocateAddress */,
+		(UINTN)EfiLoaderData, pages, &mem) == 0;
+}
+
 void
 memconf(char **cfg)
 {
@@ -110,6 +134,61 @@ memconf(char **cfg)
 		s[-1] = '\n';
 		/* print(*cfg); -- no printing allowed, can change MK */
 		*cfg = s;
+	}
+}
+
+/*
+ * Print the firmware's memory map, region by region, when the loader
+ * refuses a load region the firmware would not give up: the reader can
+ * then see what the firmware had put there.  Only text is printed, no
+ * MK is taken, so it is safe before ExitBootServices.
+ */
+void
+printmemmap(void)
+{
+	static uchar mapbuf[96*1024];
+	UINTN mapsize, entsize, junkmk;
+	UINT32 entvers;
+	EFI_MEMORY_DESCRIPTOR *t;
+	uchar *p;
+	char line[128], *s;
+	static char *typename[EfiMaxMemoryType] = {
+		[EfiReservedMemoryType]		"reserved",
+		[EfiLoaderCode]			"loader-code",
+		[EfiLoaderData]			"loader-data",
+		[EfiBootServicesCode]		"boot-svc-code",
+		[EfiBootServicesData]		"boot-svc-data",
+		[EfiRuntimeServicesCode]	"rt-svc-code",
+		[EfiRuntimeServicesData]	"rt-svc-data",
+		[EfiConventionalMemory]		"conventional",
+		[EfiUnusableMemory]		"unusable",
+		[EfiACPIReclaimMemory]		"acpi-reclaim",
+		[EfiACPIMemoryNVS]		"acpi-nvs",
+		[EfiMemoryMappedIO]		"mmio",
+		[EfiMemoryMappedIOPortSpace]	"mmio-port",
+		[EfiPalCode]			"pal-code",
+	};
+
+	mapsize = sizeof(mapbuf);
+	entsize = sizeof(EFI_MEMORY_DESCRIPTOR);
+	entvers = 1;
+	if(eficall(ST->BootServices->GetMemoryMap, &mapsize, mapbuf, &junkmk, &entsize, &entvers))
+		return;
+	print("loader: the firmware's memory map:\r\n");
+	for(p = mapbuf; mapsize >= entsize; p += entsize, mapsize -= entsize){
+		char *nm;
+
+		t = (EFI_MEMORY_DESCRIPTOR*)p;
+		nm = t->Type < EfiMaxMemoryType && typename[t->Type] != nil ? typename[t->Type] : "?";
+		s = line;
+		s = hexfmt(s, 16, t->PhysicalStart);
+		*s++ = '-';
+		s = hexfmt(s, 16, t->PhysicalStart + t->NumberOfPages * 4096ULL);
+		*s++ = ' ';
+		while(*nm)
+			*s++ = *nm++;
+		*s++ = '\r'; *s++ = '\n'; *s = 0;
+		print(line);
 	}
 }
 

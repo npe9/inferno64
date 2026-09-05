@@ -82,6 +82,7 @@ struct Ospreyproc {
 	char	segname[Segnamelen];	/* the segment that is this slice */
 	char	owner[Userlen];		/* whoever made it */
 	char	grant[Ngrant][Userlen];	/* and whoever they handed it to */
+	uvlong	caps;			/* what requests of its own the kernel will answer for it: a bit per authority, set at boot */
 	Ospreyproc *server;	/* answers what the kernel will not */
 	int	serving;	/* is that server for someone */
 	Pktq	pktq;		/* packets given to this container */
@@ -332,6 +333,20 @@ uvlong
 ospreyversion(Ospreyproc *p)
 {
 	return p == nil ? 0 : p->version;
+}
+
+/* the authorities this container holds, and setting them: a capability word, set at boot */
+uvlong
+ospreycaps(Ospreyproc *p)
+{
+	return p == nil || p->used == 0 ? 0 : p->caps;
+}
+
+void
+ospreyaddcaps(Ospreyproc *p, uvlong bits)
+{
+	if(p != nil && p->used != 0)
+		p->caps |= bits;
 }
 
 /*
@@ -915,6 +930,25 @@ ospreydata(Ospreyproc *p, uvlong off, ulong len)
 	if(off >= p->map->datalen || len > p->map->datalen - off)
 		return nil;
 	return (uchar*)p->map + p->map->data + off;
+}
+
+/*
+ * A packet buffer slot of the container's slice, len bytes from its
+ * start: a page is staged whole across two adjacent slots, which lie
+ * end to end at the slot stride.
+ */
+void*
+ospreypktbuf(Ospreyproc *p, int slot, ulong len)
+{
+	uvlong stride;
+
+	mapfix(p);
+	if(p == nil || p->used == 0 || p->map == nil || slot < 0)
+		return nil;
+	stride = p->map->pktbufsize;
+	if(stride == 0 || (uvlong)slot*stride + len > p->map->npktbuf*stride)
+		return nil;
+	return (uchar*)p->map + p->map->pktbuf + (uvlong)slot*stride;
 }
 
 void
@@ -1790,6 +1824,36 @@ ospreytellserver(Ospreyproc *p, int op)
 	return 0;
 }
 
+/*
+ * As ospreyroute, and say who received a reply: up to max of them in
+ * got, each once, so that the caller can wake those and no others.
+ */
+int
+ospreyroutewoke(Ospreyproc *s, Ospreyproc **got, int max)
+{
+	Ospreyproc *p;
+	Message m;
+	int n, i, ngot;
+
+	mapfix(s);
+	if(s == nil || s->used == 0 || s->serving == 0)
+		return 0;
+	ngot = 0;
+	for(n = 0; queueget(s->process.replies, &m) == 0; n++){
+		if((p = ospreylookup(m.container)) == nil || p == s)
+			continue;
+		if(queuefull(p->process.replies))
+			continue;
+		queueput(p->process.replies, &m);
+		for(i = 0; i < ngot; i++)
+			if(got[i] == p)
+				break;
+		if(i == ngot && ngot < max)
+			got[ngot++] = p;
+	}
+	return ngot;
+}
+
 int
 ospreyroute(Ospreyproc *s)
 {
@@ -1917,6 +1981,22 @@ int	(*ospreytickreq)(Ospreyproc*, int sem);
  * Set a container's reservation: what it is owed every period, and by
  * when.  The current period's use is forgotten; the totals stand.
  */
+/* a container's reservation and what it has used of it this period, in cycles */
+int
+ospreyaccount(Ospreyproc *p, uvlong *budget, uvlong *used, uvlong *period, uvlong *periods)
+{
+	Container *c;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	c = &p->process.container;
+	*budget = c->budget;
+	*used = c->used;
+	*period = c->period;
+	*periods = c->periods;
+	return 0;
+}
+
 int
 ospreysetreservation(Ospreyproc *p, uvlong budget, uvlong period, uvlong deadline)
 {

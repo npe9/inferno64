@@ -26,6 +26,12 @@
 #include	<mp.h>
 #include	"../port/pip.h"
 
+enum {	/* the authorities a container's capability word may carry (ospreycaps), each gating a request of the task's own */
+	Capsettime = 1,		/* set the kernel's time of day (ReqSettime): the container that holds the console */
+	Capwire    = 2,		/* carry a process over the wire (ReqMove to the wire): a container whose server holds the network device */
+	Capnote    = 4,		/* post itself a note (ReqNote) */
+	Capioport  = 8,		/* be granted I/O ports (ReqIoport) */
+};
 enum {
 	Qdir,
 	Qctl,
@@ -77,6 +83,7 @@ enum {
 	OpYield,
 	OpPoll,
 	OpGone,			/* the kernel to a server, about a container that has gone */
+	OpMigrate = 22,		/* the kernel to a server: carry this container's process over the wire */
 };
 
 enum {
@@ -576,6 +583,9 @@ static QLock ospreylock;
  * share one.  A ring still has one producer and one consumer.
  */
 static Rendez ospreyroomrend[16];
+static void ospreyconsdrained(Ospreyproc*);	/* the console FIFO, fed when its task frees a slot */
+static void ospreyconscheck(Ospreyproc*, uvlong, uvlong);
+static void ospreyconspushed(Ospreyproc*, uvlong, uvlong);
 static Rendez ospreyreplyrend[16];
 
 /*
@@ -636,6 +646,7 @@ static int ospreyuartsem[16];		/* the semaphore its interrupt gives */
 static int ospreyuarting[16];		/* its driver task is running */
 static uvlong ospreyuartoff[16];	/* what is left of the last work taken */
 static long ospreyuartlen[16];
+static long ospreyuartlen0[nelem(ospreyuartlen)];	/* the message's whole length, for the check at the end of its push */
 static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
 static int ospreytxsem[16];		/* and the one a freed transmit buffer gives */
@@ -1019,6 +1030,8 @@ ospreyuartpush(Ospreyproc *p, Uart *uart, int x)
 	if(k > 0){
 		ospreyuartoff[x] += k;
 		ospreyuartlen[x] -= k;
+		if(ospreyuartlen[x] == 0)
+			ospreyconspushed(p, ospreyuartoff[x] - ospreyuartlen0[x], ospreyuartlen0[x]);	/* pushed whole: still what was put there? */
 	}
 	return ospreyuartlen[x];
 }
@@ -1087,8 +1100,11 @@ ospreyuarttask(void *a)
 			if(ospreymessage(p, out, &op, arg) == 0){
 				ospreyuartoff[x] = arg[0];
 				ospreyuartlen[x] = (long)arg[1];
+				ospreyuartlen0[x] = (long)arg[1];
+				ospreyconscheck(p, arg[0], arg[1]);	/* the console's slot as filled, still? */
 			}
 			qunlock(&ospreylock);
+			ospreyconsdrained(p);	/* a slot freed: the console FIFO, if this is the console, feeds it */
 			continue;
 		}
 		if(n == 0){
@@ -1336,6 +1352,40 @@ ospreyclock(int core)
 	ospreytick(core, q != nil ? q->osprey : nil, d, now);
 
 	/*
+	 * A watch for a container's process spinning in user mode: once a
+	 * second, one that is not in a system call and sits at the user pc
+	 * it sat at a second ago is named, with that pc, so a loop nobody
+	 * can otherwise see is at least placed.
+	 */
+	if(core == 0){
+		static int watchticks;
+		static uintptr lastpc[16];
+		static int same[16];
+		extern uintptr uregpc(void*);
+		int x;
+
+		if(++watchticks % 100 == 0){
+			for(x = 0; x < nelem(ospreyprocs); x++){
+				Proc *w = ospreyprocs[x];
+				uintptr pc;
+
+				if(w == nil || w->osprey == nil || w->insyscall || (w->state != Running && w->state != Ready)){
+					same[x] = 0;
+					continue;
+				}
+				pc = uregpc(w->dbgreg);
+				if(pc != 0 && pc == lastpc[x]){
+					if(++same[x] >= 2 && same[x] <= 6)
+						print("osprey watch: container %llud pid %lud %s has sat in user mode at pc %#p for %d s\n",
+							ospreyid(w->osprey), w->pid, w->text, pc, same[x]);
+				} else
+					same[x] = 0;
+				lastpc[x] = pc;
+			}
+		}
+	}
+
+	/*
 	 * Hand this tick to any container that asked for it, the way a
 	 * device interrupt hands work to the task that serves it: give a
 	 * semaphore and wake whoever is waiting on it.  The interrupt does
@@ -1456,6 +1506,51 @@ ospreywakeup(void)
 		wakeup(&ospreyreplyrend[i]);
 		wakeup(&ospreyselrend[i]);
 	}
+}
+
+/*
+ * Route a server's replies home and wake, of all the containers, only
+ * those that received one: their reply rendezvous, where a caller's
+ * yield after a request waits.  Waking every rendezvous of every
+ * container (ospreywakeup) was the first form, and woke the server's
+ * own select loop some hundred times a second for nothing.
+ */
+static uvlong ospreyroutewakes;		/* containers woken for a reply, in all */
+
+static void
+ospreyroutewake(Ospreyproc *s)
+{
+	Ospreyproc *got[16];
+	int n, i, x;
+
+	n = ospreyroutewoke(s, got, nelem(got));
+	for(i = 0; i < n; i++){
+		if((x = ospreyindex(got[i])) < 0 || x >= nelem(ospreyreplyrend))
+			continue;
+		wakeup(&ospreyreplyrend[x]);
+		ospreyroutewakes++;
+	}
+}
+
+/*
+ * A caller's yield after a request: sleep until a reply is on its ring,
+ * or ms have passed, whichever first.  The yield used to be a fixed
+ * two milliseconds, so every request from a personality cost at least
+ * that however fast it was answered; the reply routed home by the
+ * server's select wakes this at once (ospreywakeup, above).
+ */
+void
+ospreyawaitreply(int ms)
+{
+	Ospreyproc *p;
+	int x;
+
+	p = up->osprey;
+	if(p == nil || (x = ospreyindex(p)) < 0 || x >= nelem(ospreyreplyrend)){
+		tsleep(&up->sleep, return0, nil, ms);
+		return;
+	}
+	tsleep(&ospreyreplyrend[x], ospreyreply, p, ms);
 }
 
 /*
@@ -1731,7 +1826,7 @@ ospreyselectcaller(uvlong armoff, int narms)
 		sw.armoff = armoff;
 		sw.narms = narms;
 		qlock(&ospreylock);
-		ospreyroute(p);			/* send home anything answered */
+		ospreyroutewake(p);		/* send home anything answered, and wake those it is for */
 		i = ospreyselectready(p, armoff, narms);
 		if(i == -1){
 			/*
@@ -1750,7 +1845,7 @@ ospreyselectcaller(uvlong armoff, int narms)
 			qlock(&ospreylock);
 			if((p = ospreyat(slot)) != nil){
 				sw.p = p;
-				ospreyroute(p);
+				ospreyroutewake(p);
 				i = ospreyselectready(p, armoff, narms);
 			}
 		}
@@ -1787,7 +1882,7 @@ extern int ospreyuser;		/* 0 = full personality (pc64), 1 = xup64 user path */
  * is above.
  */
 enum {
-	Kbdoff	= 1024,		/* the scancode ring, past the request message */
+	Kbdoff	= Odkbd,		/* the scancode ring, past the request message */
 	Kbdn	= 256,
 	Kbddata	= 0x60,
 	Kbdstat	= 0x64,
@@ -1893,7 +1988,7 @@ ospreykbdenable(Ospreyproc *p, int sem)
  * device; the hardware is exposed, the driver is above.
  */
 enum {
-	Mouseoff = 2048,	/* the aux-byte ring, past the keyboard ring */
+	Mouseoff = Odmouse,	/* the aux-byte ring, past the keyboard ring */
 	Mousen	= 256,
 	Mouseirq = 12,		/* IrqMOUSE - the i8042 aux device */
 };
@@ -2153,10 +2248,15 @@ ospreyframebuffer(void)
  */
 #include "../port/pci.h"
 
-static Physseg ospreyblkseg;
-static Ospreyproc *ospreyblkproc;
-static int ospreyblksem;
-static uchar *ospreyblkisr;		/* the interrupt status byte, mapped for the handler */
+/* one exposed virtio device: its segment, the task it was given to, the interrupt's semaphore */
+typedef struct Vioexp Vioexp;
+struct Vioexp {
+	Physseg	seg;
+	Ospreyproc *proc;
+	int	sem;
+	uchar	*isr;		/* the interrupt status byte, mapped for the handler */
+};
+static Vioexp vioblk, vionet;
 
 static int
 ospreyviocapmatch(Pcidev *p, int cap, int off, int typ)
@@ -2172,31 +2272,39 @@ ospreyviocapmatch(Pcidev *p, int cap, int off, int typ)
 }
 
 static void
-ospreyblkintr(Ureg*, void*)
+ospreyviointr(Ureg*, void *a)
 {
+	Vioexp *v = a;
 	int sx;
 
 	/* reading the status deasserts the line; the completion itself is the task's to see */
-	if(ospreyblkisr == nil || (*ospreyblkisr & 1) == 0)
+	if(v->isr == nil || (*v->isr & 1) == 0)
 		return;
-	if(ospreyblkproc != nil){
-		ospreysemgive(ospreyblkproc, ospreyblksem);
-		if((sx = ospreyindex(ospreyblkproc)) >= 0 && sx < nelem(ospreyselrend))
+	if(v->proc != nil){
+		ospreysemgive(v->proc, v->sem);
+		if((sx = ospreyindex(v->proc)) >= 0 && sx < nelem(ospreyselrend))
 			wakeup(&ospreyselrend[sx]);
 	}
 }
 
+/*
+ * Expose one virtio 1.0 PCI device (device id did) to a container: its
+ * register BAR as a physical segment of the given name, the descriptor
+ * at descoff of the container's data area, and its interrupt as a
+ * semaphore.  The block device and the network device are the same
+ * shape to the kernel; what differs is the driver above it.
+ */
 static int
-ospreyblkexpose(Ospreyproc *p, int sem)
+ospreyvioexpose(Vioexp *v, Ospreyproc *p, int sem, int did, char *segname, uvlong descoff, uvlong magic, char *what, char *devname)
 {
 	Pcidev *pci;
 	Ospreyblk *b;
 	int cap, bar, i, typ;
 	uvlong pa, off[5], mult;
 
-	if(ospreyblkproc != nil)
+	if(v->proc != nil)
 		return -1;			/* one device, one task */
-	pci = pcimatch(nil, 0x1AF4, 0x1042);	/* virtio 1.0 block, legacy interface off */
+	pci = pcimatch(nil, 0x1AF4, did);	/* virtio 1.0, legacy interface off */
 	if(pci == nil)
 		return -1;
 	bar = -1;
@@ -2216,19 +2324,19 @@ ospreyblkexpose(Ospreyproc *p, int sem)
 	if(pci->mem[bar].bar & 1)
 		return -1;			/* ports: not memory a container can be given */
 	pa = pci->mem[bar].bar & ~0xFULL;
-	if((b = (Ospreyblk*)ospreydata(p, Ospreyblkoff, sizeof(Ospreyblk))) == nil)
+	if((b = (Ospreyblk*)ospreydata(p, descoff, sizeof(Ospreyblk))) == nil)
 		return -1;
-	memset(&ospreyblkseg, 0, sizeof ospreyblkseg);
-	ospreyblkseg.attr = SG_PHYSICAL | SG_DEVICE;
-	ospreyblkseg.name = "virtioblk";
-	ospreyblkseg.pa = pa;
-	ospreyblkseg.size = pci->mem[bar].size;
-	if(addphysseg(&ospreyblkseg) == nil)
+	memset(&v->seg, 0, sizeof v->seg);
+	v->seg.attr = SG_PHYSICAL | SG_DEVICE;
+	v->seg.name = segname;
+	v->seg.pa = pa;
+	v->seg.size = pci->mem[bar].size;
+	if(addphysseg(&v->seg) == nil)
 		return -1;
-	ospreyblkisr = vmap(pa + off[3], BY2PG);
-	if(ospreyblkisr == nil)
+	v->isr = vmap(pa + off[3], BY2PG);
+	if(v->isr == nil)
 		return -1;
-	b->magic = Ospreyblkmagic;
+	b->magic = magic;
 	b->slicepa = PADDR(ospreybase) + (uvlong)ospreyindex(p) * ospreyslicesize();
 	b->barsize = pci->mem[bar].size;
 	b->cfg = off[1];
@@ -2237,14 +2345,31 @@ ospreyblkexpose(Ospreyproc *p, int sem)
 	b->isr = off[3];
 	b->devcfg = off[4];
 	b->sem = sem;
-	ospreyblkproc = p;
-	ospreyblksem = sem;
+	v->proc = p;
+	v->sem = sem;
 	pcienable(pci);
-	intrenable(pci->intl, ospreyblkintr, nil, pci->tbdf, "osprey-blk");
-	print("osprey blk: exposed virtio block device %d.%d.%d, BAR %d at %#llux size %lud as \"virtioblk\", interrupt %d as semaphore %d of container %llud\n",
-		BUSBNO(pci->tbdf), BUSDNO(pci->tbdf), BUSFNO(pci->tbdf), bar, pa, (ulong)pci->mem[bar].size,
-		pci->intl, sem, ospreyid(p));
+	intrenable(pci->intl, ospreyviointr, v, pci->tbdf, what);
+	print("osprey %s: exposed virtio %s device %d.%d.%d, BAR %d at %#llux size %lud as \"%s\", interrupt %d as semaphore %d of container %llud\n",
+		what, devname, BUSBNO(pci->tbdf), BUSDNO(pci->tbdf), BUSFNO(pci->tbdf), bar, pa, (ulong)pci->mem[bar].size,
+		segname, pci->intl, sem, ospreyid(p));
 	return 0;
+}
+
+static int
+ospreyblkexpose(Ospreyproc *p, int sem)
+{
+	return ospreyvioexpose(&vioblk, p, sem, 0x1042, "virtioblk", Ospreyblkoff, Ospreyblkmagic, "blk", "block");
+}
+
+static int
+ospreynetexpose(Ospreyproc *p, int sem)
+{
+	int r = ospreyvioexpose(&vionet, p, sem, 0x1041, "virtionet", Ospreynetoff, Ospreynetmagic, "net", "network");
+	if(r == 0){
+		ospreyaddcaps(p, Capwire);	/* the network device is this container's now: it and the containers it serves may carry a process over the wire */
+		print("osprey: container %llud holds the network device now; it and the containers it serves may carry a process over the wire (Capwire)\n", ospreyid(p));
+	}
+	return r;
 }
 
 extern void ospreyloadprog(void);
@@ -2353,8 +2478,9 @@ enum {
 	 * page of that image, which is how a page fault is answered by the
 	 * buddy and not the kernel.  Numbered above any Plan 9 system call.
 	 */
-	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103,
-	Bargoff = 64, Bnameoff = 256, Bdataoff = 1024,
+	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103, Bdupfd = 104,
+	Bdup = 5,
+	Bargoff = Odbuddyarg, Bnameoff = Odbuddyname, Bdataoff = Odbuddydata,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
 
@@ -2394,10 +2520,25 @@ ospreybuddycall(Ospreyproc *p, int tries)
  * status.  This is how a server, whose rings run the other way, sets
  * its reservation and takes the clock.
  */
+static long ospreymovekern(Ospreyproc*, uvlong*, int);
+static long ospreymigcall(int op, uvlong *arg, uvlong *ubuf);
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
 #define ReqMousenotify 22	/* xcall op: route IRQ12 (aux) to the caller as a notification */
+#define ReqSettime 23	/* xcall op: set the kernel's time of day, seconds since the epoch, from a task's own clock read */
+#define ReqMove 24	/* xcall op: carry the calling process, running, into a container of its own - resume, not restart */
+#define ReqNote 25	/* xcall op: post the caller a note that is not a fault, so noted(NCONT) has something to resume from */
+#define ReqMigsnap 26	/* xcall ops 26-31: a server carrying a process over the wire, and one taking it in (ospreymig* below) */
+#define ReqMigpage 27
+#define ReqMigmake 28
+#define ReqMigput 29
+#define ReqMigstart 30
+#define ReqMigdone 31
+#define ReqAccount 32	/* xcall op: the caller's reservation, what it has used of it this period, and the period, in cycles */
+#define ReqKick 33	/* xcall op: a server has put work on a container's output queue in memory; wake that container's select */
+#define ReqCheckticket 34	/* xcall op: a ticket in the caller's data area at arg[0]; the kernel says whom it names, or no */
+#define ReqTicket 35	/* xcall op: a ticket for the name at arg[0] in the caller's data area, for the caller's container, good arg[1] seconds */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2419,81 +2560,141 @@ ospreyxcall(va_list list)
 		return 0;
 	}
 	if(op == ReqKbdnotify){		/* route IRQ1 to this container as a bare notification */
-		int c, i;
-
 		ospreykbdproc = up->osprey;	/* whose semaphore the interrupt gives */
 		ospreykbdsem = (int)arg[0];
 		ospreykbdring = nil;		/* notification-only: the driver reads 0x60 itself */
 		/*
-		 * The one-time controller setup is done here, in the kernel, not
-		 * in the driver's CPL3 kproc: the i8042 command-byte handshake
-		 * spins on the status port, and a spin that long at CPL3 in a
-		 * personality kproc is a window for a clock or device interrupt
-		 * to land while that kproc is the running context, which this
-		 * microkernel's interrupt path corrupts (the standing pc64
-		 * heisenbug - a user driver taking a legacy IRQ from CPL3
-		 * reproduces it reliably).  It runs in kernel context instead,
-		 * so an interrupt landing during it is handled normally.
-		 *
-		 * A config that exposes the framebuffer also armed the kernel's
-		 * own ospreykbdintr on IRQ1 (it drains 0x60 into a ring).  Take
-		 * it off the line first: intrdisable masks IRQ1 (irqdisable),
-		 * so the command-byte read below cannot raise an unhandled
-		 * interrupt, and no splhi is needed - the handshake does not
-		 * block the block device or the clock while it spins.  The
-		 * spins are bounded so a wedged controller cannot hang the
-		 * kernel.  intrenable last re-arms IRQ1, buffer already drained,
-		 * onto the notification handler alone.  The scancodes themselves
-		 * - the data path - the driver still reads with its own inb.
+		 * Arming only.  The command-byte handshake that enables the
+		 * keyboard interrupt in the controller used to be here, in the
+		 * kernel, because a long CPL3 spin was thought to reproduce the
+		 * standing pc64 interrupt-path bug (item 7b's seam).  Item 15's
+		 * tooling ran that reproduction fifty-two boots - two hundred
+		 * million CPL3 status reads each, interrupts landing throughout
+		 * - and corrupted no return, so the driver does its own
+		 * handshake at CPL3 now (p9kbd.c), owning the whole i8042
+		 * including its enable.  The kernel takes its own drain-handler
+		 * off the line (intrdisable masks IRQ1) and arms the
+		 * notification handler; the interrupt is not enabled in the
+		 * controller until the driver's handshake sets the command bit,
+		 * so between here and that a keypress cannot fire, and a
+		 * spurious one only wakes the driver, which drains.
 		 */
 		intrdisable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
-		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
-			inb(Kbddata);			/* drain stale bytes */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
-			;				/* input buffer clear */
-		outb(Kbdstat, 0x20);			/* read command byte */
-		for(i = 0; i < 100000 && !(inb(Kbdstat) & Kbdready); i++)
-			;
-		c = inb(Kbddata);
-		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
-			;
-		outb(Kbdstat, 0x60);			/* write command byte */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
-			;
-		outb(Kbddata, c | 0x01);		/* enable the keyboard interrupt */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
-			inb(Kbddata);			/* drain the echo, if any */
 		intrenable(Kbdirq, ospreykbdnotify, nil, -1, "osprey-kbd-notify");
 		ubuf[0] = 0;
 		return 0;
 	}
-	if(op == ReqMousenotify){
-		int c, i;
+	if(op >= ReqMigsnap && op <= ReqMigdone)
+		return ospreymigcall((int)op, arg, ubuf);
+	if(op == ReqCheckticket || op == ReqTicket){
+		/*
+		 * The kernel holds the key, so it is the kernel that says what
+		 * a ticket proves (ReqCheckticket: the name in it, if it is
+		 * signed with this key and has not expired) and the kernel
+		 * that signs one (ReqTicket: for the caller's own container,
+		 * for a name the container is for - a container nobody has
+		 * claimed is anyone's, and the ticket then says just that).
+		 * The ticket's text goes through the caller's data area both
+		 * ways, so a personality serving a wire can check who asks,
+		 * and one asking over a wire can say who it is.
+		 */
+		char *d, who[Pipmaxname+1];
+		uvlong id;
+		int n;
 
+		if((d = ospreydata(up->osprey, arg[0], Ticketlen)) == nil)
+			return -1;
+		d[Ticketlen-1] = '\0';
+		if(op == ReqCheckticket){
+			if(ospreyticketok(d, who, sizeof who, &id) < 0)
+				return -1;
+			strcpy(d, who);
+			ubuf[0] = 0;
+			ubuf[1] = id;
+			return 0;
+		}
+		if(ospreykeyset == 0 || strlen(d) > Pipmaxname || !ospreymay(up->osprey, d))
+			return -1;
+		strcpy(who, d);
+		n = ospreyticket(who, ospreyid(up->osprey), arg[1] == 0 ? 0 : (uvlong)seconds() + arg[1], d, Ticketlen);
+		if(n < 0)
+			return -1;
+		ubuf[0] = n;
+		return 0;
+	}
+	if(op == ReqKick){
+		/*
+		 * The work itself went into the container's own memory - its
+		 * output queue and packet buffers, which its server maps - so
+		 * the kernel carries nothing here but the wakeup, and only for
+		 * a container the caller serves.
+		 */
+		Ospreyproc *c;
+		int x;
+
+		if((c = ospreylookup(arg[0])) == nil || ospreyserverof(c) != up->osprey)
+			return -1;
+		if((x = ospreyindex(c)) >= 0 && x < nelem(ospreyselrend))
+			wakeup(&ospreyselrend[x]);
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqAccount){
+		/*
+		 * A task asks what its reservation is and what it has used of
+		 * it this period, so that work it does on its tick - the
+		 * storage task's reclamation - can be paid for by the
+		 * reservation rather than by a number compiled in.
+		 */
+		if(ospreyaccount(up->osprey, &ubuf[0], &ubuf[1], &ubuf[2], &ubuf[4]) < 0)
+			return -1;
+		ubuf[3] = ospreyhz;
+		return 0;
+	}
+	if(op == ReqNote){
+		/*
+		 * A note by request: delivered on the way back to user mode
+		 * (trap.c's donotify), to the handler the caller registered
+		 * with notify(2).  A fault's note cannot be continued from -
+		 * the address stays bad - so this is what lets noted(NCONT)
+		 * be seen to resume the interrupted program.
+		 */
+		postnote(up, 1, "osprey: a note by request", NUser);
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqMove)
+		return ospreymovekern(up->osprey, ubuf, (int)arg[0]);	/* the caller does not return; its copy does */
+	if(op == ReqSettime){
+		/*
+		 * The time of day is a task's to set: the kernel reads no clock
+		 * at boot (its rtc driver is linked only for the warm-reset
+		 * vector the AP start writes through it) and starts at zero,
+		 * and the container that read the CMOS clock in user space
+		 * hands the kernel the time.  Ticket expiry (ospreycheckticket)
+		 * is measured against this, so until a task has set it a ticket
+		 * with a real expiry is early by the epoch.  Only the container
+		 * that holds the console may set it - the capability it was
+		 * granted at boot - since the clock read in user space is the
+		 * console personality's; a container without it is refused.
+		 */
+		if((ospreycaps(up->osprey) & Capsettime) == 0){
+			print("osprey: container %llud asked to set the time of day and was refused: it does not hold the console (no Capsettime)\n",
+				ospreyid(up->osprey));
+			return -1;
+		}
+		todset((vlong)arg[0] * 1000000000LL, 0, 0);
+		print("osprey: container %llud set the kernel's time of day by request: %llud seconds since the epoch; it holds the console, the capability granted at boot\n",
+			ospreyid(up->osprey), (uvlong)seconds());
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqMousenotify){
 		ospreymouseproc = up->osprey;	/* whose semaphore the aux interrupt gives */
 		ospreymousesem = (int)arg[0];	/* its OWN semaphore, distinct from the keyboard's */
 		ospreymousering = nil;		/* notification-only: the driver reads 0x60 itself */
-		/*
-		 * Same shape as ReqKbdnotify (kernel-side setup, bounded spins,
-		 * intrdisable masks IRQ12 so no splhi), but the aux device is
-		 * more of a handshake: enable the port, set the aux interrupt and
-		 * clock bits in the command byte, and tell the mouse to report.
-		 */
+		/* arming only, as ReqKbdnotify: the aux handshake is the driver's now, at CPL3 */
 		intrdisable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
-		i8042cmd(0xA8);			/* enable the aux (mouse) port */
-		i8042cmd(0x20);			/* read the command byte */
-		c = i8042rdata();
-		if(c < 0)
-			c = 0;
-		c |= 0x02;			/* aux interrupt enable (IRQ12) */
-		c &= ~0x20;			/* aux clock enable (0 = enabled) */
-		i8042cmd(0x60);			/* write the command byte */
-		i8042wdata(c);
-		i8042cmd(0xD4);			/* route the next data byte to the aux port */
-		i8042wdata(0xF4);		/* tell the mouse to report movement */
-		i8042rdata();			/* eat its ACK (0xFA) */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
-			inb(Kbddata);		/* drain */
 		intrenable(Mouseirq, ospreymousenotify, nil, -1, "osprey-mouse-notify");
 		ubuf[0] = 0;
 		return 0;
@@ -2511,6 +2712,24 @@ ospreyxcall(va_list list)
  * what answers the system calls the kernel does not.  Configurations
  * forward through ospreybuddyforward when this says so.
  */
+/*
+ * dup for a legacy program: the config's DUP number is reused for
+ * select-over-arms, so its handler calls this when the caller has a
+ * buddy, and it dups through the buddy's descriptor table instead.
+ */
+long
+ospreybuddydup(int oldfd, int newfd)
+{
+	extern long ospreybuddyforward(ulong, uintptr*);
+	uintptr a[2];
+
+	if(!ospreybuddyhas())
+		return -1;
+	a[0] = (uintptr)oldfd;
+	a[1] = (uintptr)newfd;
+	return (long)ospreybuddyforward(Bdup, a);
+}
+
 int
 ospreybuddyhas(void)
 {
@@ -2532,6 +2751,23 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	p = up->osprey;
 	if(p == nil || ospreyserverof(p) == nil)
 		return -1;			/* no buddy to forward to */
+
+	/*
+	 * dup(oldfd, newfd): the buddy holds the descriptor table, so it
+	 * dups there.  A legacy program reaches this through the config's
+	 * DUP handler, which routes here when the caller has a buddy rather
+	 * than treating the number as select-over-arms.
+	 */
+	if(!up->oslinux && scallnr == Bdup){
+		ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+		if(ab == nil)
+			return -1;
+		ab[0] = Bdupfd; ab[1] = a[0]; ab[2] = a[1]; ab[3] = 0;
+		{
+			long st = ospreybuddycall(p, 400);
+			return st < 0 ? (uintptr)-1 : (uintptr)st;	/* the new descriptor */
+		}
+	}
 
 	/*
 	 * rfork(RFPROC) makes a process, which is the kernel's to do, not the
@@ -2770,8 +3006,10 @@ ospreybuddypage(uintptr va, uchar *dst)
 	if(ab == nil)
 		return -1;
 	ab[0] = Bpage; ab[1] = va; ab[2] = BY2PG; ab[3] = 0;
-	if(ospreybuddycall(p, 400) < 0)
+	if(ospreybuddycall(p, 400) < 0){
+		iprint("osprey buddy: container %llud's page %#llux: the buddy's answer was no, or none came\n", ospreyid(p), (uvlong)va);
 		return -1;
+	}
 	dd = ospreydata(p, Bdataoff, BY2PG);
 	if(dd == nil)
 		return -1;
@@ -2860,9 +3098,18 @@ ospreybuddyfault(uintptr addr, uintptr pc, int read)
 		return -1;
 	}
 	kunmap(k);
-	print("osprey buddy: page %#llux %s supplied by the buddy\n", (uvlong)va,
-		m < nelem(up->linuxmap) ? "of a mapped file" : "of the legacy image");
-	segpage(s, pg);
+	/*
+	 * The buddy's answer took time, and a process sharing the segment
+	 * - a thread on the other core - may have faulted on the same page
+	 * meanwhile and put its copy in: segpageif inserts under the
+	 * segment's lock only if the slot is still empty, and otherwise
+	 * lets this page go, the one present being used.  Two sharers
+	 * faulting the same text page, once a departure let go of pages
+	 * that had always been resident, hit segpage's assertion.
+	 */
+	if(segpageif(s, pg))
+		print("osprey buddy: page %#llux %s supplied by the buddy\n", (uvlong)va,
+			m < nelem(up->linuxmap) ? "of a mapped file" : "of the legacy image");
 	return fault(addr, pc, read) < 0 ? -1 : 0;
 }
 
@@ -2887,43 +3134,144 @@ static Ospreyproc *ospreyconsproc;
 static Lock ospreyconslock;
 static int ospreyconsnext;
 static uvlong ospreyconsbytes, ospreyconsdirect;
+uvlong kdebugputsbytes;		/* main.c counts what went out through the bare console */
+
+/*
+ * Every print goes to the console task, in order, and none blocks or
+ * bypasses it: a print appends to a FIFO the kernel keeps, and the FIFO
+ * is fed to the task's output queue, a slot at a time, whenever there is
+ * room - by the printer itself, and by the task when its take of a
+ * message frees a slot (ospreyconsdrained).  A print cannot wait for
+ * room, since it may hold the lock the task needs to make it, and it
+ * must not write the port itself, since that put its text out ahead of
+ * what was queued and cut lines in two; so the FIFO holds what the
+ * queue cannot yet.  Only the FIFO itself overflowing - the task sixteen
+ * kilobytes behind - or a panic goes to the port.
+ */
+enum { Consfifo = 16*1024 };
+static char consfifo[Consfifo];
+static ulong consin, consout;		/* under ospreyconslock; consin - consout is what waits */
+static ulong consslotsum[Nconsslot];	/* a checksum of each slot as filled, checked when the task starts to push it */
+static ulong consslotlen[Nconsslot];
+static int consslotbad;
+static int consinflight = -1;		/* the slot the console task is pushing now, or -1 */
+static int consreuse;			/* fills that landed on it */
+
+static ulong
+conssum(uchar *d, ulong n)
+{
+	ulong s = 0;
+
+	while(n-- > 0)
+		s = s*31 + *d++;
+	return s;
+}
+
+static void
+ospreyconsflush(Ospreyproc *p)
+{
+	uchar *d;
+	ulong m, off;
+	int slot;
+
+	while(consout != consin && ospreyoutputroom(p)){
+		off = consout % Consfifo;
+		m = consin - consout;
+		if(m > Consslot)
+			m = Consslot;
+		if(m > Consfifo - off)
+			m = Consfifo - off;	/* to the end of the FIFO; the rest next slot */
+		slot = ospreyconsnext++ % Nconsslot;
+		if(slot == consinflight){
+			char dbg[80];
+			int k = snprint(dbg, sizeof dbg, "[console: slot %d refilled while in flight, next %d]\n", slot, ospreyconsnext);
+			consreuse++;
+			kdebugputs(dbg, k);
+		}
+		if((d = ospreydata(p, Consoff + slot*Consslot, Consslot)) == nil)
+			return;
+		memmove(d, consfifo + off, m);
+		consslotsum[slot] = conssum(d, m);
+		consslotlen[slot] = m;
+		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0)
+			return;
+		ospreyconsbytes += m;
+		consout += m;
+	}
+}
 
 static int
 ospreyconsput(char *s, int n)
 {
 	Ospreyproc *p;
-	uchar *d;
-	int m, slot, x;
+	ulong off, m;
+	int x;
 
 	if((p = ospreyconsproc) == nil || n <= 0)
 		return -1;
 	ilock(&ospreyconslock);
+	if(Consfifo - (consin - consout) < (ulong)n){
+		iunlock(&ospreyconslock);
+		ospreyconsdirect += n;
+		return -1;		/* the task is a whole FIFO behind: the caller writes the port itself */
+	}
 	while(n > 0){
-		m = n < Consslot ? n : Consslot;
-		if(!ospreyoutputroom(p)){
-			iunlock(&ospreyconslock);
-			ospreyconsdirect += n;
-			return -1;	/* the caller writes the port itself */
-		}
-		slot = ospreyconsnext++ % Nconsslot;
-		if((d = ospreydata(p, Consoff + slot*Consslot, Consslot)) == nil){
-			iunlock(&ospreyconslock);
-			return -1;
-		}
-		memmove(d, s, m);
-		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0){
-			iunlock(&ospreyconslock);
-			ospreyconsdirect += n;
-			return -1;
-		}
-		ospreyconsbytes += m;
+		off = consin % Consfifo;
+		m = n;
+		if(m > Consfifo - off)
+			m = Consfifo - off;
+		memmove(consfifo + off, s, m);
+		consin += m;
 		s += m;
 		n -= m;
 	}
+	ospreyconsflush(p);
 	iunlock(&ospreyconslock);
 	if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
 		wakeup(&ospreyselrend[x]);
 	return 0;
+}
+
+/* a slot the console task is about to push: is it still what was put there? */
+static void
+ospreyconscheck(Ospreyproc *p, uvlong off, uvlong len)
+{
+	int slot;
+	uchar *b;
+
+	if(p != ospreyconsproc || off < Consoff || off >= Consoff + Nconsslot*Consslot)
+		return;
+	slot = (off - Consoff) / Consslot;
+	consinflight = slot;
+	b = ospreydata(p, off, len);
+	if(b != nil && (consslotlen[slot] != len || consslotsum[slot] != conssum(b, len))){
+		consslotbad++;
+		print("osprey console: slot %d changed between being filled and being pushed (len %lud vs %llud)\n", slot, consslotlen[slot], len);
+	}
+}
+
+/* a slot the console task has pushed whole: checked, and no longer in flight */
+static void
+ospreyconspushed(Ospreyproc *p, uvlong off, uvlong len)
+{
+	ospreyconscheck(p, off, len);
+	if(p == ospreyconsproc)
+		consinflight = -1;
+}
+
+/* the console task took a message off its output queue: feed it what waits in the FIFO */
+static void
+ospreyconsdrained(Ospreyproc *p)
+{
+	int x;
+
+	if(p != ospreyconsproc)
+		return;
+	ilock(&ospreyconslock);
+	ospreyconsflush(p);
+	iunlock(&ospreyconslock);
+	if(consout != consin && (x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
+		wakeup(&ospreyselrend[x]);
 }
 
 /* a task's write to the console: through the console task, or the port when there is none */
@@ -3067,6 +3415,7 @@ struct Ospreychild {
 	Ospreyproc *child;
 	Ospreyproc *parent;
 	char	name[128];
+	char	args[256];	/* the packed argument vector: argv[0]\0 argv[1]\0 ... \0 */
 	int	done;		/* exited; status is valid */
 	long	status;
 	int	waiting;	/* the parent has asked and is owed a reply */
@@ -3098,7 +3447,10 @@ ospreyexecproc(void *a)
 	case 0:
 		ospreyenteruserat();	/* an ELF: at its entry, the Linux way */
 	case 1:
-		ospreyenteruser(e->name);	/* an a.out: the Plan 9 way, argv0 the name */
+		{
+			extern void ospreyenteruserargs(char*);
+			ospreyenteruserargs(e->args);	/* an a.out: the Plan 9 way, with its argument vector */
+		}
 	}
 	print("osprey exec: %s: the server did not lay it out\n", e->name);
 	ospreyexits(-1);
@@ -3302,6 +3654,7 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 		ospreyprocs[x] = p;
 		ospreysetpid(c, p->pid);
 	}
+	memset(e, 0, sizeof *e);		/* a reused slot carries no stale wait or status */
 	e->used = 1;
 	e->child = c;
 	e->parent = parent;
@@ -3313,6 +3666,1061 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 		ospreyid(parent), ospreyid(c), e->name, ospreyid(sv));
 	ready(p);
 	return (long)ospreyid(c);
+}
+
+/*
+ * Resume rather than restart: carry the calling process, as it is - its
+ * registers, its stack, its data, its open files and its name space -
+ * into a container of its own, and take the container it came from
+ * apart.  This is migration on one machine, the form slide 15's group
+ * migration would take here: the state that crosses is the process's
+ * own, not a checkpoint of its container that it restarts from.  The
+ * mechanism is the fork's - a new container delegated to the same
+ * server, a new Proc whose return frame is the caller's (forkchild), the
+ * caller's segments dupped copy-on-write - with the return register set
+ * to the new container's identity instead of 0, and then, instead of two
+ * processes, one: the caller's container is destroyed the way an exit
+ * destroys it, except that its entry in the child table, and any wait
+ * pending on it, are carried to the new container so that its parent
+ * reaps the moved process and not a phantom.  The buddy is asked to clone
+ * the descriptor table to the new container first, and is told the old
+ * one is gone after, so the files stay open across the move.
+ *
+ * What does not cross: a wire.  The segments are copied within one
+ * kernel; carrying them to another machine is what a checkpoint of a
+ * container's state already does for the small things and cannot yet do
+ * for a process's pages.  And only the calling process moves: a member
+ * of an address-space group that is running elsewhere would have to be
+ * stopped first, which this does not do.
+ */
+/*
+ * Migration over a wire: a process carried to another machine and
+ * resumed there.  The kernel keeps nothing of the wire; the server
+ * personality has it (the real stack on the exposed network device),
+ * so the kernel hands the process's state to the server by request
+ * and the server carries it across in its own TCP connection.  The
+ * leaving process asks (ReqMove with the wire flag) and is parked in
+ * the kernel while its server pulls its state - the segments and the
+ * register frame (ReqMigsnap), then each resident page by halves
+ * (ReqMigpage; a half is what the server's data area has room for) -
+ * and sends it; the server at the other end pushes the same into a
+ * process it has the kernel make (ReqMigmake), fill (ReqMigput) and
+ * start (ReqMigstart), and the first server tells the kernel it is
+ * done (ReqMigdone), whereupon the parked process's container is
+ * taken apart and its parent's wait answered as an exit.
+ *
+ * A process whose text and data are a buddy image's (a legacy binary
+ * the buddy laid out) says so in its header, and only the pages that
+ * differ from the image cross: before it is parked its text pages, and
+ * every data page equal to the image's, are let go, and the far
+ * kernel's process is marked the buddy's, so what was let go pages in
+ * from the image there - the same binary in the far personality's
+ * file system, named in the descriptor record the personalities
+ * exchange.  A process made another way carries every resident page.
+ * Pages are staged whole, across two adjacent packet buffer slots of
+ * the server's slice (a slot is 2112 bytes); the header goes through
+ * the data area.  Several crossings may be in flight, each an entry of
+ * migouts with slots of its own, and the parked process waits on its
+ * entry's progress - every page pulled wakes it - refusing only when
+ * nothing has moved for ten seconds.
+ */
+enum {
+	Migoff		= 1024,		/* the sender's staging area in its data area: a header */
+	Migrxoff	= 5120,		/* the receiver's, clear of the sender's and the block device's ring */
+	Mighalf		= 2048,		/* the room a header has there */
+	Nmigin		= 3,		/* arrivals being filled at once */
+	Nmigout		= 4,		/* departures in flight at once */
+	Migrxslot0	= 18,		/* packet buffer slots of an arrival's pages: two each; the driver's rings and receive buffers are 0-17 */
+	Migtxslot0	= 24,		/* and of a departure's: two each, 24-31 */
+	Migimage	= 1,		/* a header flag: the text and data are a buddy image's, and only pages differing from it were carried */
+	Migstall	= 30000,	/* ms without a page pulled, or a connect tried, before a departure is refused */
+};
+typedef struct Migseg Migseg;
+struct Migseg { uvlong idx, type, base, top; };
+
+enum { Nmigmember = 4, Migshared = 1<<8 };	/* a segment type in a header carrying Migshared: shared with the group's first member */
+static int migdepartures, migarrivedexited;	/* for the line the two-machine check waits on: both have happened here */
+
+static void
+ospreymigexchanged(void)
+{
+	if(migdepartures > 0 && migarrivedexited > 0)
+		print("osprey migrate: the exchange is complete on this machine - %d carried away, %d taken in and done\n",
+			migdepartures, migarrivedexited);
+}
+
+typedef struct Migout Migout;
+struct Migout {
+	Ospreyproc *c;		/* the container leaving */
+	Proc	*p;		/* its process, parked */
+	Proc	*mem[Nmigmember];	/* the members of its group going with it, stopped */
+	int	nmem;
+	int	pending;
+	int	result;		/* 0 not yet, 1 carried, -1 refused */
+	uvlong	progress;	/* requests served for it: the parked process waits on this moving */
+	uvlong	mark;		/* where progress stood when it last went to sleep */
+	Rendez	r;
+};
+static Migout migouts[Nmigout];
+
+/* the departure in flight of the container named, or nil */
+static Migout*
+ospreymigout(uvlong id)
+{
+	Migout *e;
+
+	for(e = migouts; e < &migouts[Nmigout]; e++)
+		if(e->pending && e->c != nil && ospreyid(e->c) == id)
+			return e;
+	return nil;
+}
+
+static int
+ospreymigmoved(void *a)
+{
+	Migout *e = a;
+
+	return e->result != 0 || e->progress != e->mark;
+}
+
+static void
+ospreymigtouch(Migout *e)
+{
+	e->progress++;
+	wakeup(&e->r);
+}
+static struct {
+	Ospreyproc *c;		/* a container arriving, being filled */
+	Proc	*p;
+	Ospreyproc *first;	/* the group's first member here, whose segments a later member shares; nil for the first */
+	int	npages;
+	uchar	ureg[512];	/* its register frame, kept from the header: the pages come through the same staging area */
+} migin[Nmigin];
+
+/* the process the sender is asking about: the leaving process, or member k of its group */
+static Proc*
+ospreymigmember(Migout *e, int k)
+{
+	if(e == nil)
+		return nil;
+	if(k == 0)
+		return e->p;
+	if(k < 1 || k > e->nmem)
+		return nil;
+	return e->mem[k-1];
+}
+
+static Page*
+ospreymigpageof(Proc *p, uintptr va, Segment **sp)
+{
+	Segment *s;
+	Pte *pte;
+	int i;
+
+	for(i = 0; i < NSEG; i++){
+		if((s = p->seg[i]) == nil || va < s->base || va >= s->top)
+			continue;
+		if(sp != nil)
+			*sp = s;
+		if(s->map == nil || (pte = s->map[(va - s->base)/PTEMAPMEM]) == nil)
+			return nil;
+		return pte->pages[((va - s->base) & (PTEMAPMEM-1))/BY2PG];
+	}
+	return nil;
+}
+
+static long
+ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
+{
+	extern int uregsize(void);
+	extern void uregsanitize(void*);
+	extern void forkchildret(Proc*, uintptr);
+	uchar *d;
+	Ospreyproc *c;
+	Proc *p;
+	Segment *s;
+	Page *pg;
+	KMap *k;
+	Migseg *ms;
+	Migout *e;
+	uvlong *hdr, n, va, flags;
+	int i, x, nseg;
+
+	switch(op){
+	case ReqMigsnap:
+		/*
+		 * The leaving process's segments and register frame, into the
+		 * server's data area - or those of member arg[1] of its group,
+		 * whose segments shared with the leaving process are marked so,
+		 * to be shared again at the far end and carried once.  ubuf[1]
+		 * says how many there are to ask about in all.
+		 */
+		if((e = ospreymigout(arg[0])) == nil || (p = ospreymigmember(e, (int)arg[1])) == nil)
+			return -1;
+		if((d = ospreydata(up->osprey, Migoff, Mighalf)) == nil)
+			return -1;
+		hdr = (uvlong*)d;
+		ms = (Migseg*)(hdr + 2);
+		nseg = 0;
+		for(i = 0; i < NSEG; i++){
+			if((s = p->seg[i]) == nil)
+				continue;
+			ms[nseg].idx = i;
+			ms[nseg].type = s->type & SG_TYPE;
+			if(arg[1] != 0 && e->p->seg[i] == s)
+				ms[nseg].type |= Migshared;
+			ms[nseg].base = s->base;
+			ms[nseg].top = s->top;
+			nseg++;
+		}
+		hdr[0] = nseg;
+		hdr[1] = p->buddyimage ? Migimage : 0;
+		n = 2*sizeof(uvlong) + nseg*sizeof(Migseg);
+		*(uvlong*)(d + n) = uregsize();
+		n += sizeof(uvlong);
+		memmove(d + n, p->dbgreg, uregsize());
+		n += uregsize();
+		ubuf[0] = n;
+		ubuf[1] = 1 + e->nmem;
+		ubuf[2] = e - migouts;		/* its entry: the packet buffer slots its pages come through */
+		ubuf[3] = p->osprey != nil ? ospreyid(p->osprey) : 0;	/* the member's own container, whose descriptor table the buddy holds */
+		ospreymigtouch(e);
+		return 0;
+	case ReqMigpage:
+		/*
+		 * One resident page of the leaving process, whole, into the
+		 * entry's packet buffer slots of the server's slice, or 0 for
+		 * one that is not resident; and in ubuf[1] the next address
+		 * worth asking about - the page after this one, or past a
+		 * whole unmapped chunk of the segment - so a walk over a
+		 * large, mostly empty segment costs a request per resident
+		 * page, not per page.
+		 */
+		if((e = ospreymigout(arg[0])) == nil || (p = ospreymigmember(e, (int)(arg[2] >> 8))) == nil)
+			return -1;			/* arg[2]: the member, above the low byte - a request carries three words */
+		va = arg[1] & ~(uvlong)(BY2PG-1);
+		if((d = ospreypktbuf(up->osprey, Migtxslot0 + 2*(e - migouts), BY2PG)) == nil)
+			return -1;
+		ospreymigtouch(e);
+		s = nil;
+		pg = ospreymigpageof(p, va, &s);
+		if(s == nil){
+			ubuf[0] = 0;
+			ubuf[1] = ~0ULL;
+			return 0;
+		}
+		if(pg != nil && !pagedout(pg)){
+			k = kmap(pg);
+			memmove(d, (uchar*)VA(k), BY2PG);
+			kunmap(k);
+			ubuf[0] = BY2PG;
+			ubuf[1] = va + BY2PG;
+			return 0;
+		}
+		ubuf[0] = 0;
+		for(va += BY2PG; va < s->top; ){
+			Pte *pte;
+
+			if(s->map == nil || (pte = s->map[(va - s->base)/PTEMAPMEM]) == nil){
+				va = s->base + ((va - s->base)/PTEMAPMEM + 1)*PTEMAPMEM;
+				continue;
+			}
+			pg = pte->pages[((va - s->base) & (PTEMAPMEM-1))/BY2PG];
+			if(pg != nil && !pagedout(pg))
+				break;
+			va += BY2PG;
+		}
+		ubuf[1] = va < s->top ? va : s->top;
+		return 0;
+	case ReqMigmake:
+		/* a container and a process for what is arriving, its segments as the header says */
+		if((d = ospreydata(up->osprey, Migrxoff, Mighalf)) == nil)
+			return -1;
+		for(x = 0; x < Nmigin && migin[x].c != nil; x++)
+			;
+		if(x == Nmigin)
+			return -1;
+		hdr = (uvlong*)d;
+		nseg = hdr[0];
+		flags = hdr[1];
+		if(nseg < 0 || nseg > NSEG)
+			return -1;
+		ms = (Migseg*)(hdr + 2);
+		n = 2*sizeof(uvlong) + nseg*sizeof(Migseg);
+		if(*(uvlong*)(d + n) != uregsize() || n + sizeof(uvlong) + uregsize() > Mighalf || uregsize() > sizeof migin[x].ureg)
+			return -1;		/* a frame of another shape: another kernel, or another machine */
+		memmove(migin[x].ureg, d + n + sizeof(uvlong), uregsize());
+		c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+		if(c == nil)
+			return -1;
+		ospreydelegate(c, up->osprey);		/* the taker serves it, as an exec's child is served */
+		if((p = newproc()) == nil){
+			ospreyexit(c);
+			return -1;
+		}
+		{
+			Proc *fp = nil;
+			int y;
+
+			/* a later member of a group: the group's first member here, whose segments it shares */
+			if(arg[0] != 0){
+				for(y = 0; y < nelem(ospreyprocs); y++)
+					if(ospreyprocs[y] != nil && ospreyprocs[y]->osprey != nil && ospreyid(ospreyprocs[y]->osprey) == arg[0]){
+						fp = ospreyprocs[y];
+						break;
+					}
+				if(fp == nil){
+					ospreyexit(c);
+					return -1;
+				}
+				migin[x].first = fp->osprey;
+			}
+			qlock(&p->seglock);
+			for(i = 0; i < nseg; i++){
+				int type;
+
+				if(ms[i].idx >= NSEG || ms[i].top <= ms[i].base)
+					continue;
+				if((ms[i].type & Migshared) && fp != nil && fp->seg[ms[i].idx] != nil){
+					p->seg[ms[i].idx] = fp->seg[ms[i].idx];	/* shared with the first member, here as there */
+					incref(p->seg[ms[i].idx]);
+					continue;
+				}
+				type = (ms[i].type & ~Migshared);
+				/* a buddy image's data stays data, so that a page not carried is the buddy's to supply; other memory is bss, zero where nothing was carried */
+				type = type == SG_TEXT ? SG_TEXT : type == SG_STACK ? SG_STACK : (flags & Migimage) && type == SG_DATA ? SG_DATA : SG_BSS;
+				p->seg[ms[i].idx] = newseg(type, ms[i].base, (ms[i].top - ms[i].base)/BY2PG);
+				if(p->seg[ms[i].idx] != nil && type == SG_TEXT)
+					p->seg[ms[i].idx]->flushme = 1;	/* code is fetched from it: what exec marks a text segment with, and fault() insists on */
+			}
+			qunlock(&p->seglock);
+		}
+		kstrdup(&p->text, "arrived");
+		kstrdup(&p->user, eve);
+		kstrdup(&p->args, "");
+		/*
+		 * newproc leaves what its last occupant had in the fields the
+		 * kernel proper does not know - the Linux ABI switch, the
+		 * buddy's image, the note handler - and a fork copies its
+		 * parent's; this process has no parent here, so each is set.
+		 * A Plan 9 process, with no handler yet; its text and data are
+		 * the taker's buddy's image if the header says so - the taker
+		 * lays that image out for this container before starting it.
+		 */
+		p->kp = 0;
+		p->oslinux = 0;
+		p->buddyimage = (flags & Migimage) != 0;
+		p->linuxheap = -1;
+		p->linuxbrk = 0;
+		p->linuxmmapnext = 0;
+		p->linuxsighandler = 0;
+		p->linuxsigrestorer = 0;
+		p->notify = nil;
+		p->notified = 0;
+		p->nnote = 0;
+		p->notepending = 0;
+		p->lastnote = nil;
+		p->privatemem = 0;
+		p->noswap = 0;
+		p->hang = 0;
+		p->pgrp = nil;
+		p->slash = nil;
+		p->dot = nil;
+		p->osprey = c;
+		migin[x].c = c;
+		migin[x].p = p;
+		migin[x].npages = 0;
+		if(arg[0] == 0)
+			migin[x].first = nil;
+		ubuf[0] = ospreyid(c);
+		ubuf[1] = x;			/* its entry: the packet buffer slots its pages come through */
+		return 0;
+	case ReqMigput:
+		/* a page into the arriving process, whole, from the entry's packet buffer slots */
+		for(x = 0; x < Nmigin; x++)
+			if(migin[x].c != nil && arg[0] == ospreyid(migin[x].c))
+				break;
+		if(x == Nmigin || (d = ospreypktbuf(up->osprey, Migrxslot0 + 2*x, BY2PG)) == nil)
+			return -1;
+		p = migin[x].p;
+		va = arg[1] & ~(uvlong)(BY2PG-1);
+		s = nil;
+		pg = ospreymigpageof(p, va, &s);
+		if(s == nil)
+			return -1;
+		if(pg == nil){
+			pg = newpage(va, nil);
+			pg->va = va;
+			segpage(s, pg);
+			migin[x].npages++;
+		}
+		k = kmap(pg);
+		memmove((uchar*)VA(k), d, BY2PG);
+		kunmap(k);
+		ubuf[0] = BY2PG;
+		return 0;
+	case ReqMigstart:
+		/* the register frame, and the process runs: it resumes at its request's return, told where it is */
+		for(x = 0; x < Nmigin; x++)
+			if(migin[x].c != nil && arg[0] == ospreyid(migin[x].c))
+				break;
+		if(x == Nmigin || (d = ospreydata(up->osprey, Migrxoff, Mighalf)) == nil)
+			return -1;
+		p = migin[x].p;
+		c = migin[x].c;
+		uregsanitize(migin[x].ureg);
+		forkchild(p, (Ureg*)migin[x].ureg);
+		/*
+		 * The leader's request returns its new container's identity;
+		 * a member keeps the return its own call had - Eintr, for the
+		 * sleep the stop interrupted, which it is to see and act on.
+		 */
+		{
+			extern uintptr uregax(void*);
+
+			forkchildret(p, migin[x].first == nil ? (uintptr)ospreyid(c) : uregax(migin[x].ureg));	/* forkchild zeroes the return, as fork's child's */
+		}
+		p->insyscall = 0;
+		memset(p->time, 0, sizeof(p->time));
+		p->time[TReal] = MACHP(0)->ticks;
+		pidalloc(p);
+		qlock(&ospreylock);
+		i = ospreyindex(c);
+		if(i >= 0 && i < nelem(ospreyprocs)){
+			ospreyprocs[i] = p;
+			ospreysetpid(c, p->pid);
+		}
+		{
+			Ospreychild *e;
+
+			for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+				if(!e->used)
+					break;
+			if(e < &ospreychildren[nelem(ospreychildren)]){
+				memset(e, 0, sizeof *e);
+				e->used = 1;
+				e->child = c;
+				/* the taker's, so its exit is reported like an exec'd child's; a group's later member is the first's, so that reaps it */
+				e->parent = migin[x].first != nil ? migin[x].first : up->osprey;
+				strncpy(e->name, migin[x].first != nil ? "arrived over the wire, a group member" : "arrived over the wire", sizeof e->name - 1);
+			}
+		}
+		qunlock(&ospreylock);
+		print("osprey migrate: a process arrived over the wire and is container %llud here, %d pages, its registers and stack as they were; resumed\n",
+			ospreyid(c), migin[x].npages);
+		migin[x].c = nil;
+		migin[x].p = nil;
+		ready(p);
+		ubuf[0] = 0;
+		return 0;
+	case ReqMigdone:
+		if((e = ospreymigout(arg[0])) == nil)
+			return -1;
+		if(arg[1] == 2){		/* not done: still trying to connect, which is progress the kernel cannot otherwise see */
+			ospreymigtouch(e);
+			ubuf[0] = 0;
+			return 0;
+		}
+		e->result = arg[1] != 0 ? 1 : -1;
+		wakeup(&e->r);
+		ubuf[0] = 0;
+		return 0;
+	}
+	return -1;
+}
+
+/*
+ * The members of the caller's address-space group: the processes of
+ * other containers that share a data or bss segment with it - what an
+ * rfork(RFPROC|RFMEM) made.  At most Nmember, for the demonstration.
+ */
+enum { Nmember = 4 };
+
+static int
+ospreymembers(Proc **mem, int max)
+{
+	Proc *q;
+	int x, i, n;
+
+	n = 0;
+	for(x = 0; x < nelem(ospreyprocs) && n < max; x++){
+		if((q = ospreyprocs[x]) == nil || q == up || q->osprey == nil)
+			continue;
+		for(i = 0; i < NSEG; i++){
+			if(up->seg[i] == nil || q->seg[i] != up->seg[i])
+				continue;
+			if((up->seg[i]->type & SG_TYPE) == SG_DATA || (up->seg[i]->type & SG_TYPE) == SG_BSS){
+				mem[n++] = q;
+				break;
+			}
+		}
+	}
+	return n;
+}
+
+/* take a container apart the way an exit does, with nothing to tell a parent */
+static void
+ospreyunmake(Ospreyproc *c)
+{
+	qlock(&ospreylock);
+	ospreytellandwake(c, OpGone);
+	ospreyclosefds(c);
+	ospreyputproc(c);
+	ospreyputserver(c);
+	ospreyputether(c);
+	ospreyputuart(c);
+	ospreyexit(c);
+	qunlock(&ospreylock);
+}
+
+/* the notes a process holds, dropped: the stop's own, which a move that did not happen must not deliver */
+static void
+ospreydropnotes(Proc *p)
+{
+	int i;
+
+	qlock(&p->debug);
+	for(i = 0; i < p->nnote; i++)
+		freenote(p->note[i]);
+	p->nnote = 0;
+	p->notepending = 0;
+	qunlock(&p->debug);
+}
+
+/*
+ * The new process of a moved one: a Proc whose return frame is the
+ * moved process's own (its registers as they were when it entered the
+ * kernel), given the container c and the segments seg[] - the mover's
+ * new ones where the old ones were shared, its own stack copied.
+ */
+static Proc*
+ospreymoveproc(Proc *q, Ospreyproc *c, Segment **shared, Proc *sharer)
+{
+	Proc *p;
+	int i;
+
+	if((p = newproc()) == nil)
+		return nil;
+	qlock(&q->debug);
+	qlock(&p->debug);
+	p->s = q->s;
+	p->slash = q->slash;
+	p->dot = q->dot;
+	if(p->dot != nil)
+		incref(p->dot);
+	p->nnote = 0;
+	p->notify = q->notify;
+	p->notified = 0;
+	p->notepending = 0;
+	p->lastnote = nil;
+	p->noteid = q->noteid;
+	p->procmode = q->procmode;
+	p->privatemem = q->privatemem;
+	p->noswap = q->noswap;
+	p->hang = q->hang;
+	p->kp = 0;
+	p->pgrp = q->pgrp;
+	if(p->pgrp != nil)
+		incref(p->pgrp);
+	forkchild(p, q->dbgreg);		/* its registers: it resumes where it entered the kernel */
+	kstrdup(&p->text, q->text);
+	kstrdup(&p->user, q->user);
+	kstrdup(&p->args, "");
+	p->nargs = 0;
+	p->setargs = 0;
+	p->insyscall = 0;
+	memset(p->time, 0, sizeof(p->time));
+	p->time[TReal] = MACHP(0)->ticks;
+	p->kentry = q->kentry;
+	p->pcycles = -p->kentry;
+	pidalloc(p);
+	qunlock(&p->debug);
+	qunlock(&q->debug);
+
+	qlock(&p->seglock);
+	for(i = 0; i < NSEG; i++){
+		if(q->seg[i] == nil)
+			continue;
+		if(shared != nil && sharer != nil && q->seg[i] == sharer->seg[i] && shared[i] != nil){
+			p->seg[i] = shared[i];	/* what it shared with the mover, it shares with the mover's new process */
+			incref(shared[i]);
+		} else
+			p->seg[i] = dupseg(q->seg, i, 0);	/* its own, the stack above all: copied */
+	}
+	qunlock(&p->seglock);
+
+	p->osprey = c;
+	p->buddyimage = q->buddyimage;
+	p->oslinux = q->oslinux;
+	p->linuxheap = q->linuxheap;
+	p->linuxbrk = q->linuxbrk;
+	p->linuxmmapnext = q->linuxmmapnext;
+	return p;
+}
+
+static long
+ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
+{
+	Ospreychild *e, *ne, *me;
+	Ospreyproc *sv, *c, *mc;
+	Proc *p, *mem[Nmember], *mp;
+	Segment *s;
+	uintptr va;
+	int i, x, nmem, k, tries;
+	extern void forkchildret(Proc*, uintptr);
+
+	if(old == nil || (sv = ospreyserverof(old)) == nil || up->dbgreg == nil)
+		return -1;
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && !e->done && e->child == old)
+			break;
+	if(e == &ospreychildren[nelem(ospreychildren)])
+		return -1;			/* the boot program stays where it is */
+	for(ne = ospreychildren; ne < &ospreychildren[nelem(ospreychildren)]; ne++)
+		if(!ne->used)
+			break;
+	if(ne == &ospreychildren[nelem(ospreychildren)])
+		return -1;
+	/*
+	 * The group, once every reason to refuse has been checked, since a
+	 * stopped member is only let go here: its members must be stopped
+	 * before their registers can be taken.  Each is asked to stop on
+	 * its next way back to user mode (the config's donotify runs
+	 * procctl); a member that never comes back - blocked for good -
+	 * cannot be moved, and the move is refused rather than left half
+	 * done, the members that had stopped readied again.
+	 */
+	nmem = 0;
+	if(group & 1){
+		nmem = ospreymembers(mem, Nmember);
+		for(k = 0; k < nmem; k++){
+			mem[k]->procctl = Proc_stopme;
+			/*
+			 * A member blocked in the kernel - a long sleep, a read
+			 * with nothing to read - never comes back to user mode of
+			 * its own accord, and used to refuse the move.  Plan 9's
+			 * own way: a note interrupts its sleep, its call returns
+			 * Eintr on the way out, and procctl stops it there, the
+			 * interrupted call's return in its registers; after
+			 * arriving the program sees the call interrupted and
+			 * retries, as a Plan 9 program does.  The note itself is
+			 * never delivered: a moved process starts with no notes,
+			 * and a refused move takes it back below.
+			 */
+			postnote(mem[k], 1, "osprey: stop for a move", NUser);
+		}
+		for(k = 0; k < nmem; k++){
+			for(tries = 0; tries < 200 && mem[k]->state != Stopped; tries++)
+				tsleep(&up->sleep, return0, nil, 10);
+			if(mem[k]->state != Stopped){
+				int j;
+
+				print("osprey move: a member of container %llud's group (pid %d) did not stop; the group is not moved\n",
+					ospreyid(old), mem[k]->pid);
+				for(j = 0; j < nmem; j++){
+					ospreydropnotes(mem[j]);
+					if(mem[j]->state == Stopped)
+						ready(mem[j]);		/* parked in procctl: goes on */
+					else
+						mem[j]->procctl = 0;
+				}
+				return -1;
+			}
+		}
+	}
+
+	if(!(group & 2)){
+		/* the whole image resident, as for a fork: the new container is one the buddy has laid nothing out for */
+		for(i = 0; i < NSEG; i++){
+			if((s = up->seg[i]) == nil)
+				continue;
+			if((s->type & SG_TYPE) != SG_TEXT && (s->type & SG_TYPE) != SG_DATA)
+				continue;
+			for(va = s->base; va < s->top; va += BY2PG){
+				if(waserror())
+					continue;
+				ospreybuddyfault(va, va, 1);
+				poperror();
+			}
+		}
+	}
+
+	if(group & 2){
+		/*
+		 * To the wire: ask the server to carry this process, and wait
+		 * here, parked, while it pulls the state out; then either go
+		 * (the container taken apart, the parent's wait answered as an
+		 * exit) or, if nobody took it, return refused to the caller.
+		 */
+		Ospreychild *me;
+		Migout *mo, *oe;
+		int inflight, letgo, kept, shared;
+
+		/*
+		 * The wire is a capability: only a container whose server
+		 * holds the network device may carry a process across it,
+		 * since it is that server's real stack the process crosses on.
+		 * A container whose server has no wire is refused, and stays.
+		 */
+		if((ospreycaps(sv) & Capwire) == 0){
+			print("osprey migrate: container %llud asked to cross the wire and was refused: its server holds no network device (no Capwire)\n", ospreyid(old));
+			for(k = 0; k < nmem; k++)
+				if(mem[k]->state == Stopped)
+					ready(mem[k]);
+			return -1;
+		}
+		qlock(&ospreylock);
+		inflight = 0;
+		for(mo = migouts; mo < &migouts[Nmigout]; mo++)
+			if(mo->pending)
+				inflight++;
+		for(mo = migouts; mo < &migouts[Nmigout] && mo->pending; mo++)
+			;
+		if(mo == &migouts[Nmigout]){
+			qunlock(&ospreylock);
+			return -1;		/* the table is full: refused, the caller may ask again */
+		}
+		mo->c = old;
+		mo->p = up;
+		mo->nmem = nmem;
+		for(k = 0; k < nmem; k++)
+			mo->mem[k] = mem[k];
+		mo->result = 0;
+		mo->progress = 0;
+		mo->mark = 0;
+		mo->pending = 1;
+		qunlock(&ospreylock);
+		if(inflight > 0){
+			for(oe = migouts; oe < &migouts[Nmigout]; oe++)
+				if(oe != mo && oe->pending)
+					break;
+			print("osprey migrate: container %llud's crossing begins while container %llud's is in flight - %d at once\n",
+				ospreyid(old), oe < &migouts[Nmigout] ? ospreyid(oe->c) : 0ULL, inflight + 1);
+		}
+		letgo = kept = shared = 0;
+		{
+			/*
+			 * Pages that need not cross are let go before the process
+			 * is parked: every text page and every data page equal to
+			 * the buddy's image, when the text and data are a buddy
+			 * image's, since the far machine's buddy has the same image
+			 * and lays it out for the arrival; and every page of zeros
+			 * in anonymous memory - bss, a stack - which the far kernel
+			 * makes at the first touch, as this one would again if the
+			 * crossing is refused.  Only a segment whose every sharer is
+			 * leaving too - this process, its group, a process parked in
+			 * another departure - may lose pages: a sharer that stays
+			 * would fault on them, so such a segment is carried whole.
+			 */
+			uchar *tmp;
+			Migout *oe;
+			int j, m, sharers, type;
+
+			tmp = malloc(BY2PG);
+			for(i = 0; i < NSEG; i++){
+				if((s = up->seg[i]) == nil)
+					continue;
+				type = s->type & SG_TYPE;
+				if(type != SG_TEXT && type != SG_DATA && type != SG_BSS && type != SG_STACK)
+					continue;
+				if((type == SG_TEXT || type == SG_DATA) && !up->buddyimage && type == SG_TEXT)
+					continue;	/* text of no image: carried whole */
+				sharers = 0;
+				for(k = 0; k < nmem; k++)
+					for(j = 0; j < NSEG; j++)
+						if(mem[k]->seg[j] == s)
+							sharers++;
+				for(oe = migouts; oe < &migouts[Nmigout]; oe++){
+					if(!oe->pending || oe == mo || oe->p == nil)
+						continue;
+					for(j = 0; j < NSEG; j++)
+						if(oe->p->seg[j] == s)
+							sharers++;
+					for(m = 0; m < oe->nmem; m++)
+						for(j = 0; j < NSEG; j++)
+							if(oe->mem[m]->seg[j] == s)
+								sharers++;
+				}
+				if(s->ref > 1 + sharers){
+					print("osprey migrate: container %llud's segment %d (type %d) has %ld references and %d sharers leaving: carried whole\n",
+						ospreyid(old), i, type, s->ref, sharers);
+					for(va = s->base; va < s->top; va += BY2PG){
+						Page *pg;
+						Segment *ps;
+
+						ps = nil;
+						pg = ospreymigpageof(up, va, &ps);
+						if(pg != nil && ps == s && !pagedout(pg))
+							shared++;
+					}
+					continue;
+				}
+				for(va = s->base; va < s->top; va += BY2PG){
+					Page *pg;
+					Segment *ps;
+					KMap *km;
+					int same;
+
+					ps = nil;
+					pg = ospreymigpageof(up, va, &ps);
+					if(pg == nil || ps != s || pagedout(pg))
+						continue;
+					same = 0;
+					if(type == SG_TEXT && up->buddyimage)
+						same = 1;
+					else if(type == SG_DATA && up->buddyimage){
+						if(tmp != nil && ospreybuddypage(va, tmp) == 0){
+							km = kmap(pg);
+							same = memcmp((uchar*)VA(km), tmp, BY2PG) == 0;
+							kunmap(km);
+						}
+					} else {
+						uvlong *w, *ew;
+
+						km = kmap(pg);
+						w = (uvlong*)VA(km);
+						for(ew = w + BY2PG/sizeof(uvlong); w < ew && *w == 0; w++)
+							;
+						same = w == ew;	/* a page of zeros */
+						kunmap(km);
+					}
+					if(!same){
+						kept++;
+						continue;
+					}
+					qlock(s);
+					mfreeseg(s, va, 1);
+					qunlock(s);
+					letgo++;
+				}
+			}
+			free(tmp);
+			flushmmu();
+			print("osprey migrate: container %llud's process%s: %d pages let go%s, %d pages that differ kept to carry, %d in segments shared with a process that stays, carried whole\n",
+				ospreyid(old), up->buddyimage ? "'s text and data are its buddy's image" : "", letgo,
+				up->buddyimage ? " (text, data equal to the image, zeros)" : " (zeros)", kept, shared);
+		}
+		ospreytellandwake(old, OpMigrate);
+		/* parked on the transfer's own progress: woken by every page the server pulls and by its answer; refused when nothing moves for Migstall ms */
+		for(;;){
+			mo->mark = mo->progress;
+			tsleep(&mo->r, ospreymigmoved, mo, Migstall);
+			if(mo->result != 0)
+				break;
+			if(mo->progress == mo->mark){
+				print("osprey migrate: container %llud's crossing stalled - nothing pulled for %d ms after %llud requests; refused\n",
+					ospreyid(old), Migstall, mo->progress);
+				break;
+			}
+		}
+		mo->pending = 0;
+		if(mo->result <= 0){
+			print("osprey migrate: container %llud's process was not taken by the other machine; it stays\n", ospreyid(old));
+			for(k = 0; k < nmem; k++){
+				ospreydropnotes(mem[k]);	/* the stop's note, never to be delivered */
+				if(mem[k]->state == Stopped)
+					ready(mem[k]);		/* the group goes on here */
+			}
+			mo->nmem = 0;
+			mo->c = nil;
+			mo->p = nil;
+			return -1;
+		}
+		/* the members went with it: their containers go, their parked processes end */
+		for(k = 0; k < nmem; k++){
+			Ospreyproc *oc = mem[k]->osprey;
+
+			print("osprey migrate: group member container %llud (pid %d) has gone over the wire with it; container %llud destroyed\n",
+				ospreyid(oc), mem[k]->pid, ospreyid(oc));
+			/* its entry in the child table goes too, or a container made later in the same slot would exit against it */
+			qlock(&ospreylock);
+			for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
+				if(me->used && !me->done && me->child == oc)
+					me->used = 0;
+			qunlock(&ospreylock);
+			mem[k]->procctl = Proc_exitme;
+			ospreyunmake(oc);
+			if(mem[k]->state == Stopped)
+				ready(mem[k]);
+		}
+		mo->nmem = 0;
+		mo->c = nil;
+		mo->p = nil;
+		print("osprey migrate: container %llud's process (%s) has gone over the wire; container %llud destroyed, its parent told\n",
+			ospreyid(old), e->name, ospreyid(old));
+		migdepartures++;
+		ospreymigexchanged();
+		qlock(&ospreylock);
+		for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
+			if(me->used && !me->done && me->child == old)
+				break;
+		if(me < &ospreychildren[nelem(ospreychildren)]){
+			if(me->waiting){
+				ospreyreplylater(me->parent, me->waitseq, Xreqwait, Xreplydone, 0);
+				me->used = 0;
+			} else {
+				me->done = 1;
+				me->status = 0;
+			}
+		}
+		qunlock(&ospreylock);
+		ospreyunmake(old);
+		ospreywakeup();
+		pexit("migrated", 1);
+	}
+	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+	if(c == nil)
+		return -1;
+	ospreydelegate(c, sv);
+	if((p = newproc()) == nil){
+		ospreyexit(c);
+		return -1;
+	}
+	ospreyforkfds(old, ospreyid(c));	/* the open files, cloned to the new container by the buddy */
+	ubuf[0] = ospreyid(c);			/* before the copy, so the moved process's copy of its args carries it */
+
+	qlock(&up->debug);
+	qlock(&p->debug);
+	p->s = up->s;
+	p->slash = up->slash;
+	p->dot = up->dot;
+	if(p->dot != nil)
+		incref(p->dot);
+	p->nnote = 0;
+	p->notify = up->notify;
+	p->notified = 0;
+	p->notepending = 0;
+	p->lastnote = nil;
+	p->noteid = up->noteid;
+	p->procmode = up->procmode;
+	p->privatemem = up->privatemem;
+	p->noswap = up->noswap;
+	p->hang = up->hang;
+	p->kp = 0;
+	p->pgrp = up->pgrp;
+	if(p->pgrp != nil)
+		incref(p->pgrp);
+	forkchild(p, up->dbgreg);		/* the caller's registers: it resumes at this call's return */
+	forkchildret(p, (uintptr)ospreyid(c));	/* ... told where it now is */
+	kstrdup(&p->text, up->text);
+	kstrdup(&p->user, up->user);
+	kstrdup(&p->args, "");
+	p->nargs = 0;
+	p->setargs = 0;
+	p->insyscall = 0;
+	memset(p->time, 0, sizeof(p->time));
+	p->time[TReal] = MACHP(0)->ticks;
+	p->kentry = up->kentry;
+	p->pcycles = -p->kentry;
+	pidalloc(p);
+	qunlock(&p->debug);
+	qunlock(&up->debug);
+
+	/* the address space, copied: as the plain fork does it, image-less data as anonymous memory */
+	qlock(&p->seglock);
+	for(i = 0; i < NSEG; i++){
+		if((s = up->seg[i]) == nil)
+			continue;
+		if((s->type&SG_TYPE) == SG_DATA && s->image == nil){
+			if(s->ref == 1){
+				int savedtype = s->type;
+				s->type = (s->type & ~SG_TYPE) | SG_BSS;
+				p->seg[i] = dupseg(up->seg, i, 0);
+				s->type = savedtype;
+			} else
+				p->seg[i] = dupseg(up->seg, i, RFMEM);
+		} else
+			p->seg[i] = dupseg(up->seg, i, 0);
+	}
+	qunlock(&p->seglock);
+	flushmmu();
+
+	p->osprey = c;
+	p->buddyimage = up->buddyimage;
+	p->oslinux = up->oslinux;
+	p->linuxheap = up->linuxheap;
+	p->linuxbrk = up->linuxbrk;
+	p->linuxmmapnext = up->linuxmmapnext;
+
+	qlock(&ospreylock);
+	x = ospreyindex(c);
+	if(x >= 0 && x < nelem(ospreyprocs)){
+		ospreyprocs[x] = p;
+		ospreysetpid(c, p->pid);
+	}
+	*ne = *e;				/* the child-table entry moves with it: parent, name, and a wait pending */
+	ne->child = c;
+	e->used = 0;
+	/* what was a child of the old container is a child of the new */
+	for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
+		if(me->used && me->parent == old)
+			me->parent = c;
+	qunlock(&ospreylock);
+
+	print("osprey move: container %llud's process (%s) resumed as container %llud, registers and stack as they were; container %llud destroyed\n",
+		ospreyid(old), ne->name, ospreyid(c), ospreyid(old));
+
+	/*
+	 * The group: each stopped member gets a container of its own and a
+	 * process with its registers and its own stack, sharing the mover's
+	 * new segments where it shared the old; its old container goes the
+	 * way the mover's does, and its old process is readied to exit.
+	 */
+	for(k = 0; k < nmem; k++){
+		Ospreyproc *oc = mem[k]->osprey;
+
+		mc = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
+		if(mc == nil)
+			break;
+		ospreydelegate(mc, sv);
+		ospreyforkfds(oc, ospreyid(mc));
+		mp = ospreymoveproc(mem[k], mc, p->seg, up);
+		if(mp == nil){
+			ospreyexit(mc);
+			break;
+		}
+		{
+			extern uintptr uregax(void*);
+
+			forkchildret(mp, uregax(mem[k]->dbgreg));	/* the member's own return: forkchild zeroed it, as fork's child's */
+		}
+		qlock(&ospreylock);
+		x = ospreyindex(mc);
+		if(x >= 0 && x < nelem(ospreyprocs)){
+			ospreyprocs[x] = mp;
+			ospreysetpid(mc, mp->pid);
+		}
+		for(me = ospreychildren; me < &ospreychildren[nelem(ospreychildren)]; me++)
+			if(me->used && !me->done && me->child == oc)
+				break;
+		if(me < &ospreychildren[nelem(ospreychildren)]){
+			for(ne = ospreychildren; ne < &ospreychildren[nelem(ospreychildren)]; ne++)
+				if(!ne->used)
+					break;
+			if(ne < &ospreychildren[nelem(ospreychildren)]){
+				*ne = *me;
+				ne->child = mc;
+				if(ne->parent == old)
+					ne->parent = c;
+				me->used = 0;
+			}
+		}
+		qunlock(&ospreylock);
+		print("osprey move: group member container %llud (pid %d, sharing the address space) resumed as container %llud with container %llud's; container %llud destroyed\n",
+			ospreyid(oc), mem[k]->pid, ospreyid(mc), ospreyid(c), ospreyid(oc));
+		ready(mp);
+		mem[k]->procctl = Proc_exitme;	/* the old process, parked in donotify, ends when it runs */
+		ospreyunmake(oc);		/* ... which ospreyputproc's release may already have readied */
+		if(mem[k]->state == Stopped)
+			ready(mem[k]);
+	}
+	ready(p);
+
+	/* and the old container goes, as on exit, but with nothing to tell a parent */
+	ospreyunmake(old);
+	ospreywakeup();
+	pexit("moved", 1);
+	return -1;				/* not reached */
 }
 
 static long
@@ -3339,12 +4747,41 @@ ospreyexeckern(Ospreyproc *parent, uvlong nameoff)
 		e->name[i] = nd[i];
 	}
 	e->name[i] = 0;
+	/*
+	 * The exec request packed the whole argument vector at nameoff:
+	 * argv[0]\0 argv[1]\0 ... \0.  The name above is argv[0]; copy the
+	 * whole packed vector into the child, ending at the double nul, so
+	 * the program is entered with its arguments.
+	 */
+	{
+		int j, prevnul;
+		prevnul = 0;
+		for(j = 0; j < (int)sizeof e->args - 1; j++){
+			if(ospreydata(parent, nameoff + j, 1) == nil)
+				break;
+			e->args[j] = nd[j];
+			if(nd[j] == 0){
+				if(prevnul)		/* a double nul ends the vector */
+					break;
+				prevnul = 1;
+			} else
+				prevnul = 0;
+		}
+		e->args[j] = 0;
+		if(j == 0 || e->args[0] == 0){
+			/* no vector packed (an old single-name exec): argv is the name alone */
+			for(j = 0; e->name[j] != 0 && j < (int)sizeof e->args - 2; j++)
+				e->args[j] = e->name[j];
+			e->args[j] = 0;
+			e->args[j+1] = 0;
+		}
+	}
 	/* ospreylock is held: dispatch runs under it, as ospreyuserprep did */
 	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
 	if(c == nil)
 		return -1;
 	ospreydelegate(c, sv);
-	e->used = 1;
+	e->used = 1;				/* the slot was cleared above, before the name */
 	e->child = c;
 	e->parent = parent;
 	print("osprey exec: container %llud starts %s for container %llud, served by container %llud\n",
@@ -3418,9 +4855,34 @@ ospreydumptasks(void)
 			print("osprey status: %.*s", (int)(e - s), s);
 	}
 	free(buf);
+	{
+		/* each container's process: where the scheduler has it, what it waits in, its last user pc */
+		extern char *statename[];
+		extern uintptr uregpc(void*);
+		Proc *q;
+		int x;
+
+		for(x = 0; x < nelem(ospreyprocs); x++){
+			if((q = ospreyprocs[x]) == nil || q->osprey == nil)
+				continue;
+			print("osprey proc: container %llud pid %lud %s: %s%s%s, in a syscall %d, user pc %#p\n",
+				ospreyid(q->osprey), q->pid, q->text, statename[q->state],
+				q->psstate != nil ? " in " : "", q->psstate != nil ? q->psstate : "",
+				q->insyscall, uregpc(q->dbgreg));
+		}
+	}
 	if(ospreyconsproc != nil)
 		print("osprey console: %llud bytes of this went out through the console task, %llud straight to the port\n",
 			ospreyconsbytes, ospreyconsdirect);
+	print("osprey replies: %llud containers woken for a reply of their own, nobody else\n", ospreyroutewakes);
+	{
+		extern uvlong uartputsbytes, uartputslate, kdebugputsbytes;
+		extern char uartputssample[];
+
+		print("osprey console: %d slots found changed between fill and push, %d refilled while in flight\n", consslotbad, consreuse);
+		print("osprey console: %llud bytes went to the port through uartputs, %llud of them after the task took over (the first: \"%s\"), and %llud through kdebugputs\n",
+			uartputsbytes, uartputslate, uartputssample, kdebugputsbytes);
+	}
 }
 
 static int
@@ -3508,17 +4970,38 @@ ospreyexits(long status)
 	Ospreyproc *p;
 
 	p = up->osprey;
+	/*
+	 * Its entry, and not a done one: an entry stays until the parent
+	 * reaps it, its container gone, and the container's record may
+	 * by then be another's - an arrival's, once, which exited against
+	 * a departed container's entry and was written up under its name.
+	 */
 	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
-		if(e->used && e->child == p)
+		if(e->used && !e->done && e->child == p)
 			break;
 	if(p == nil || e == &ospreychildren[nelem(ospreychildren)]){
 		ospreydumptasks();
 		print("osprey user: the program exited; the microkernel idles\n");
-		for(;;)
+		/*
+		 * Idle with nothing pending and an error label up: a boot
+		 * program that came here killed by a note still had the note
+		 * pending, and the sleep raised Eintr into no handler at all,
+		 * which panicked the idle machine.
+		 */
+		up->notepending = 0;
+		for(;;){
+			if(waserror())
+				continue;
 			tsleep(&up->sleep, return0, nil, 1000);
+			poperror();
+		}
 	}
 	print("osprey exec: container %llud (%s) exited with status %ld\n",
 		ospreyid(p), e->name, status);
+	if(strcmp(e->name, "arrived over the wire") == 0){
+		migarrivedexited++;
+		ospreymigexchanged();
+	}
 	qlock(&ospreylock);
 	if(e->waiting){
 		ospreyreplylater(e->parent, e->waitseq, Xreqwait, Xreplydone, (uvlong)status);
@@ -3536,7 +5019,17 @@ ospreyexits(long status)
 	ospreyexit(p);
 	qunlock(&ospreylock);
 	ospreywakeup();
-	pexit("exited", 0);
+	/*
+	 * With its memory freed.  The second argument was 0 here, and in
+	 * the move's and the migration's pexit, for a long time: to pexit
+	 * that means keep the memory and become a Broken process, held
+	 * for a debugger until four more break, so every exited, moved or
+	 * carried legacy process lingered with all its pages and its
+	 * segment references until the fourth exit after it - the
+	 * references that had a departing process's text look shared
+	 * with a process that stays.
+	 */
+	pexit("exited", 1);
 }
 
 int
@@ -3588,6 +5081,7 @@ ospreyuserprep(void)
 			sv = ospreycreate(3, 40000000ULL, 800000000ULL, 200000000ULL);
 			if(sv != nil){
 				ospreydelegate(p, sv);
+				ospreyaddcaps(sv, Capsettime);	/* the server holds the console: its tasks read the clock and set the time of day */
 				/*
 				 * The block device, if the machine has one, goes to
 				 * the server: the personality that will be the file
@@ -3602,6 +5096,7 @@ ospreyuserprep(void)
 					Ospreyproc *ut;
 
 					ospreyblkexpose(sv, 1);
+					ospreynetexpose(sv, 5);	/* and the network device, the same way, on the fifth semaphore */
 					/*
 					 * And the second serial port, served by a task
 					 * in a container of its own - Cut B's uart,
@@ -3830,6 +5325,21 @@ ospreyinit(void)
 	if(ospreybase != nil)
 		return;
 	/*
+	 * A key typed in - the same line in both machines' plan9.ini - is
+	 * the alternative to one agreed over a wire the kernel drives; in a
+	 * configuration whose wire is a personality's, it is the one there
+	 * is.  The control file's "key" command does the same later.
+	 */
+	if((cf = getconf("ospreykey")) != nil && *cf != '\0'){
+		uchar h[SHA1dlen];
+
+		sha1((uchar*)cf, strlen(cf), ospreykey, nil);
+		sha1(ospreykey, Keylen, h, nil);
+		ospreyhex(h, 8, ospreyfinger);
+		ospreykeyset = 1;
+		print("osprey: the key is set from the configuration, fingerprint %s\n", ospreyfinger);
+	}
+	/*
 	 * How big a slice is, before there is one.  Each of these is a
 	 * count the container reads out of its own map and nothing here
 	 * indexes an array with, except txbuf, which has a ceiling for the
@@ -3844,6 +5354,8 @@ ospreyinit(void)
 	 */
 	if(ospreyp9)
 		ospreysetsize("data", 2*BY2PG, 0);
+		ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
+		ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
 	for(i = 0; i < nelem(ospreysizeconf); i++){
 		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
 			continue;
@@ -4121,7 +5633,17 @@ ospreyrelease(Proc *q, int x)
 	if(q->procctl == Proc_stopme)
 		q->procctl = 0;
 	if(q->state == Stopped){
-		q->procctl = 0;
+		/*
+		 * A stop is undone, an exit is not: a move sets Proc_exitme
+		 * on the old process of a group member it has copied, and
+		 * this release, called as the old container is taken apart,
+		 * used to clear that too - the old process woke with nothing
+		 * to do and went back to user mode without a container, a
+		 * ghost sharing the address space, which ran on after every
+		 * group move until some page it needed was gone.
+		 */
+		if(q->procctl != Proc_exitme)
+			q->procctl = 0;
 		ready(q);
 	}
 	splx(s);
@@ -5703,6 +7225,8 @@ ospreyctlether(Cmdbuf *cb)
 	ospreyether[x] = et;
 	ospreyethersem[x] = i;
 	((Ether*)et)->rbpool = &ospreyrbpool[x];
+	ospreyaddcaps(p, Capwire);	/* this container's server holds the network device: it, and those it serves, may carry a process over the wire */
+	print("osprey: container %llud holds the network device now; it and the containers it serves may carry a process over the wire (Capwire)\n", ospreyid(p));
 }
 
 static void

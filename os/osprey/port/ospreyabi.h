@@ -13,6 +13,8 @@
 
 typedef struct Ospreymap Ospreymap;
 
+#include "ospreydata.h"
+
 enum {
 	Ospreynarg	= 3,	/* request words available to the caller */
 	Ospreymagic	= 0x4f53505259ULL,
@@ -106,8 +108,6 @@ enum {
  */
 enum {
 	Ospreyblkmagic	= 0x4f53424c4bULL,	/* "OSBLK" */
-	Ospreyblkoff	= 3584,			/* the descriptor, in the data area */
-	Ospreyblkring	= 4096,			/* where a driver keeps its queue and buffers */
 };
 typedef struct Ospreyblk Ospreyblk;
 struct Ospreyblk {
@@ -121,3 +121,14 @@ struct Ospreyblk {
 	uvlong	devcfg;		/* device configuration: capacity first */
 	uvlong	sem;		/* the semaphore the interrupt gives */
 };
+/*
+ * A virtio 1.0 network device, the same way: the BAR as the segment
+ * "virtionet", this descriptor (the same shape) at Ospreynetoff.  Its
+ * device configuration begins with the MAC address.  A driver above the
+ * kernel keeps its two queues and its frames in the slice's packet and
+ * transmit buffers, which are physically contiguous with the slice.
+ */
+enum {
+	Ospreynetmagic	= 0x4f534e4554ULL,	/* "OSNET" */
+};
+typedef Ospreyblk Ospreynet;

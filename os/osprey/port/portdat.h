@@ -644,7 +644,16 @@ enum
  */
 enum
 {
-	SSEG, TSEG, DSEG, BSEG, ESEG, LSEG, SEG1, SEG2, SEG3, SEG4, NSEG
+	SSEG, TSEG, DSEG, BSEG, ESEG, LSEG, SEG1, SEG2, SEG3, SEG4,
+	/*
+	 * Twenty more, for Osprey: a personality maps each container it
+	 * serves as a segment of its own, and two device BARs besides,
+	 * and with ten slots the seventh container could never be mapped
+	 * - every request from it was "unmapped", its buddy lost to it.
+	 */
+	SEG5, SEG6, SEG7, SEG8, SEG9, SEG10, SEG11, SEG12, SEG13, SEG14,
+	SEG15, SEG16, SEG17, SEG18, SEG19, SEG20, SEG21, SEG22, SEG23, SEG24,
+	NSEG
 };
 
 enum

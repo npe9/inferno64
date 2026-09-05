@@ -771,7 +771,11 @@ newhub(name: string, d: ref Dev): ref Hub
 			return nil;
 		}
 	}
-	# the kernel wants the port count before the hub's data file is open
+	# the kernel wants the port count before the hub's data file is open.
+	# confighub above read the hub descriptor over ep0's data file, which
+	# an enumerated device leaves open; close it so "hub" is not refused
+	# for a busy endpoint (it is reopened just below).
+	h.dev.dfd = nil;
 	if(devctl(h.dev, sys->sprint("hub %d", h.nport)) < 0)
 		sys->fprint(sys->fildes(2), "usbd: %s: hub: %r\n", h.dev.name);
 	if(h.dev.dfd == nil && opendevdata(h.dev) < 0){

@@ -21,6 +21,7 @@
 #define	D_TTBR0_EL1	SYSARG5(3,0,2,0,0)
 #define	D_SCTLR_EL1	SYSARG5(3,0,1,0,0)
 #define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
+#define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
 #define	D_HCR_EL2	SYSARG5(3,4,1,1,0)
 #define	D_SCR_EL3	SYSARG5(3,6,1,1,0)
 #define	D_SPSR_EL3	SYSARG5(3,6,4,0,0)
@@ -397,6 +398,47 @@ TEXT	coherence(SB), 1, $-4
 	RET	R30
 
 /*
+ * Data- and instruction-cache maintenance by virtual address, to the
+ * point of coherency.  These reach the assembler as SYS with the
+ * address in R0 (the "SYS reg, sysarg" form, a.y line 364); DC/IC are
+ * SYS aliases and 7a has no optab row for the mnemonics themselves.
+ * Verified byte-for-byte with 7l -a: DC CVAC,X0 == 0xd50b7a20,
+ * DC IVAC,X0 == 0xd5087620, DC CIVAC,X0 == 0xd50b7e20,
+ * IC IALLU == 0xd508751f.  The C loops in cache.c stride these over a
+ * range; each op here touches the single cache line containing R0.
+ *
+ * getctr() returns CTR_EL0 so cache.c can read the minimum D- and
+ * I-cache line sizes (DminLine 19:16, IminLine 3:0; bytes = 4<<field)
+ * and stride by the smallest line present.
+ */
+TEXT	getctr(SB), 1, $-4
+	MRS	SPR(D_CTR_EL0), R0
+	RET	R30
+
+TEXT	dccvac(SB), 1, $-4		/* clean D-line at R0 to PoC */
+	SYS	R0, $SYSARG5(0,3,7,10,1)
+	RET	R30
+
+TEXT	dcivac(SB), 1, $-4		/* invalidate D-line at R0 */
+	SYS	R0, $SYSARG5(0,0,7,6,1)
+	RET	R30
+
+TEXT	dccivac(SB), 1, $-4		/* clean+invalidate D-line at R0 */
+	SYS	R0, $SYSARG5(0,3,7,14,1)
+	RET	R30
+
+/*
+ * cacheiinv(): invalidate the whole instruction cache to the point of
+ * unification, then the barriers that make it visible to the next
+ * fetch.  IC IALLU has no address operand (Rt == XZR).
+ */
+TEXT	cacheiinv(SB), 1, $-4
+	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU */
+	DSB	$15
+	ISB	$15
+	RET	R30
+
+/*
  * cycles(uvlong*): genuinely 64-bit here (real X registers), unlike
  * armv7's mrrc-into-two-32-bit-halves.  Still an out-param, matching
  * fns.h/io.h's shared declaration across every board -- nothing in
@@ -443,17 +485,21 @@ TEXT	mmuenable(SB), 1, $-4
 	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */
 	DSB	$15
 	ISB	$15
+	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU: invalidate I-cache */
+	DSB	$15
+	ISB	$15
 	/*
 	 * HARDWARE GAP (emulator is more forgiving; see AGENTS.md): on a real
-	 * Cortex-A53 the cache contents at reset are architecturally UNKNOWN,
-	 * so before turning the D-cache and I-cache on below they must be
-	 * invalidated -- an IC IALLU (+DSB/ISB) for the instruction cache and
-	 * a set/way invalidate of the L1 data cache -- or the CPU may hit
-	 * stale/garbage lines once C and I are set.  The page tables were
-	 * built with the caches off, so they are already in RAM and need no
-	 * clean.  QEMU models no cache, so none of this is needed there and
-	 * it is omitted until the board is real; do NOT enable the caches on
-	 * hardware without adding it first.
+	 * Cortex-A53 the cache contents at reset are architecturally UNKNOWN.
+	 * The instruction cache is invalidated just above (IC IALLU); what
+	 * remains before turning the D-cache on below is a set/way invalidate
+	 * of the L1 data cache -- a CLIDR/CCSIDR level walk -- or the CPU may
+	 * hit stale/garbage D-lines once C is set.  That walk is loop logic
+	 * QEMU cannot validate (it models no cache), so it is deliberately
+	 * left out here rather than shipped unexercised; do NOT enable the
+	 * D-cache on real hardware without adding it first.  The page tables
+	 * were built with the caches off, so they are already in RAM and
+	 * need no clean.
 	 */
 	MRS	SPR(D_SCTLR_EL1), R1
 	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */

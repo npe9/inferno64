@@ -172,6 +172,7 @@ port
 	 */
 	extern long ospreybuddyforward(ulong, uintptr*);
 	extern uintptr ospreyxcall(va_list);
+	extern void ospreyawaitreply(int);
 	typedef uintptr Xsyscall(va_list);
 
 	uintptr xpwrite(va_list list)
@@ -211,9 +212,10 @@ port
 		 * Yield after servicing, so a server task the request was
 		 * forwarded to gets the processor to answer it.  Without this
 		 * the program's retry loop is a tight spin that starves the
-		 * server and no reply ever lands.
+		 * server and no reply ever lands.  The yield ends when the
+		 * reply lands, or after two milliseconds.
 		 */
-		tsleep(&up->sleep, return0, nil, 2);
+		ospreyawaitreply(2);
 		return 0;
 	}
 	uintptr xexits(va_list list)

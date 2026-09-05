@@ -353,3 +353,79 @@ exec, under which rio would run on the microkernel rather than on the
 Plan 9 kernel; that is item 1 of "Next, in order" in
 doc/osprey-progress.ms.  rio itself is still an import from the disk,
 not a build of this tree.
+.NH 1
+Reconciled against the tree, 5 September 2026
+.PP
+The component-by-component sections above were written on 26 August and
+several gaps they name have been closed since, in the run recorded under
+"Making the demonstrations real" in
+.I doc/osprey-progress.ms .
+What that body still lists as missing but the tree now has, each checked
+on a booted kernel:
+.IP \(bu
+Create and remove over 9P: the log store answers
+.CW create ,
+and refuses
+.CW remove
+because it is immutable, both over 9P
+.CW ( osprey-check-p9pair ).
+.IP \(bu
+A wire of its own for \[*p]p: the personality's \[*p]p is served on a
+TCP wire (stack B over the ring, stack A over the cable), one connection
+per kproc
+.CW ( pipconn ),
+and it authenticates \- a session proves who it is with a ticket the
+kernel signs and checks, and an open of a file that is somebody's is
+refused to a session that is nobody's
+.CW ( osprey-check-p9wire ,
+.CW osprey-check-p9pair ).
+.IP \(bu
+A second machine: two kernels on a socket cable, each driving a
+user-space virtio-net device, run tcp.c to tcp.c, carry a megabyte, and
+migrate a process \- its pages, its descriptor table and its private
+name space \- from one to the other
+.CW ( osprey-check-p9wire ,
+twenty criteria).  It is two amd64 machines under QEMU; a non-amd64 one
+is the part that still wants a board.
+.IP \(bu
+Group migration: a process that shares its address space with a thread
+crosses the wire with it, the thread made to share the arrived memory
+and reaped by the arrived parent \- slide 15, whole, on one machine and
+across a wire.
+.IP \(bu
+The authentication the replicated data and the caching file system
+lacked: both now speak over the authenticated \[*p]p wire.
+.IP \(bu
+The caching file system is a file system: write-through commits a
+version on the server, its directory lists what the cache holds, a
+ninth file evicts the least recently used, and a stream is the lease's
+heartbeat
+.CW ( osprey-check-p9pair ).
+.IP \(bu
+Configuration read, not derived: each machine reads
+.CW /n/net
+for its address, peer, role and ports, seeded from the MAC on a fresh
+disk and read from then on.
+.IP \(bu
+The i8042 driver owns the whole controller: the one-time command-byte
+enable is the driver's now, at CPL3, not the kernel's
+.CW ( osprey-check-kbd ) ;
+the interrupt-path bug that had kept it in the kernel was run down with a
+trap-return checksum and fifty-two reproduction boots and did not
+reproduce.
+.PP
+What is genuinely left is what this analysis's own last section and the
+progress doc's latency section name, and it is of two kinds.  Structural:
+rio runs unmodified on
+.CW pc64 ,
+the full personality, with a user-level draw service and user-level
+mouse and keyboard drivers above the microkernel-exposed frame buffer
+and interrupt rings; what it does not yet do is run on the microkernel
+itself \- the 9front personality as a library
+.CW ( p964
+has the name space, not exec and the full syscall set over the ring) \-
+and the talk's 270-nanosecond round trip needs a task that is not a Plan
+9 process, which this kernel's is.  Board-bound: the raw-flash storage
+tier, a non-amd64 second machine, and the hardware latency figure each
+want a board this tree has no Osprey target for.  Everything else the
+paper and the talk describe is built and checked.

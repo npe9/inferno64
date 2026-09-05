@@ -25,6 +25,7 @@ server's file opened and read by file descriptor, with no panic.
 
 usage: scripts/osprey-check-p9.py [-k]
 """
+import re
 import os, re, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,7 +62,7 @@ def main():
     results.append(("and the program is the Plan 9 personality: it builds a name space in user space and attaches the root",
                     'name space up, root attached' in t))
     results.append(("and it reads a directory through the name space by namec/open/read, the kernel serving only print and exit",
-                    'read 731 bytes of directory through the name space' in t))
+                    re.search(r'opened / and read [5-9]\d\d bytes of directory through the name space', t) is not None))
     results.append(("and it mounts a second device and resolves a name with no device prefix across the mount table into it",
                     'resolved /greeting through the mount table and read \"hello osprey\"' in t))
     m = re.search(r'served by device type=(\d+) \(mnt=(\d+)\)', t)

@@ -253,22 +253,34 @@ a file's attributes are
 .BR * ,
 .BR data ,
 .BR version ,
-.B length
+.BR length ,
+.B name
 and
-.BR name ,
-of which
+.B latest
+\- the file's committed version now, where
+.B version
+is the fid's own, fixed at its open; a replica watches
+.B latest
+\- of which
 .B data
 may be written; the root's
 .B *
 is the root directory's names.  Versions and leases are as above: a write
 makes the version the fid is making and the close commits it, as one
 record on the log-structured store, and a fid whose file has been
-committed over since it was opened is refused.  There is no wire and no
-key there, so
+committed over since it was opened is refused.  Over the ring there is
+no wire under a group - a reply is the answer to a request - so
 .B Tstream
-and
+is refused there; the same server speaks on a wire of its own as well,
+a TCP connection to port 9001 of the server container's stack, each
+group and each reply a record on the stream (a 4-byte little-endian
+count, then the messages), and there a
+.B Tstream
+is answered and the frames come at its rate.  A session is by number,
+so it outlives the connection: a second connection that names it finds
+its fids still open.  There is no key there, so
 .B Tauth
-are refused.
+is refused.
 .SH EXAMPLE
 .PP
 Open a container, read every attribute it has and close it, in one round

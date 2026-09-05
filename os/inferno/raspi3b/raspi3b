@@ -25,11 +25,32 @@ dev
 	cap
 	kprof
 	sd
+	draw
+	pointer
+	usb
+	ether		netif
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
+
+ip
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
+
+
+link
+	usbdwc
+	ethermedium
+	loopbackmedium
 
 lib
 	interp
 	keyring
+	memlayer
+	memdraw
+	draw
 	sec
 	mp
 	math
@@ -60,12 +81,13 @@ port
 	sysfile
 	taslock
 	xalloc
+	swcursor
 
 	archvirtarm64
 
 misc
 	uartvirtarm64
-	screennone
+	screenbcm
 	randomvirtarm64
 	sdhostbcm
 
@@ -73,6 +95,7 @@ mod
 	sys
 	keyring
 	crypt
+	draw
 
 init
 	raspi3binit
@@ -119,6 +142,8 @@ root
 	/dis/read.dis
 	/dis/sh.dis
 	/dis/sh/std.dis
+	/dis/usb/usbd.dis
+	/dis/usb/etherusb.dis
 	/dis/unmount.dis
 	/dis/disk/kfs.dis
 	/dis/disk/kfs64.dis

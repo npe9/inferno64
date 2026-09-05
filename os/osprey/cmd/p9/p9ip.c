@@ -4,6 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
+#include	"ospreydata.h"
 #include	"ip.h"
 
 /*
@@ -35,6 +36,7 @@ void (*ipprotoinit[])(Fs*) = {
 
 extern void loopbackmediumlink(void);
 extern void ospreymediumlink(void);
+extern void ospreyvnetmediumlink(void);	/* ospreyvnetmedium.c: the real wire, the exposed virtio network device */
 extern void p9kbdstart(void);		/* p9kbd.c: the user-space i8042 keyboard driver */
 extern int p9open(char*, int);
 extern long p9read(int, void*, long);
@@ -147,6 +149,1695 @@ ostcp(void *)
 }
 
 /*
+ * The server end of the device-carried wire, as a service: announce a
+ * port on stack B - the stack whose osprey interface 10.0.1.2 is the
+ * ring to the client container - accept the connection the client
+ * container's own tcp.c makes across the ring, read what it sends, and
+ * answer.  Both the listen and the read block cooperatively; the frames
+ * that carry the conversation cross the ring on the client's requests
+ * and this loop's replies.
+ */
+static void
+ringsrv(void *)
+{
+	int afd, lfd, dfd, anum, lnum;
+	long n;
+	char cbuf[64], path[64], rx[256];
+	static char reply[] = "answered by the server container's own tcp.c, across the ring";
+
+	if(waserror()){
+		print("p9 ip: ring server failed: %s\n", up->errstr);
+		pexit("ringsrv", 0);
+	}
+	afd = p9open("#I1/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 9999", 13);
+	print("p9 ip: ring server: tcp!*!9999 announced on stack B for the client container\n");
+	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);		/* blocks until the client container connects */
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	print("p9 ip: ring server: accepted a connection from the client container's tcp.c across the ring as conversation %d\n", lnum);
+	snprint(path, sizeof path, "#I1/tcp/%d/data", lnum);
+	dfd = p9open(path, ORDWR);
+	n = p9read(dfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	print("p9 ip: ring server: read %ld bytes the client container's stack sent across the ring: \"%s\"\n", n, rx);
+	p9write(dfd, reply, sizeof reply - 1);
+	print("p9 ip: ring server: answered with %d bytes\n", (int)(sizeof reply - 1));
+	tsleep(&up->sleep, return0, nil, 1000);	/* let the answer and its ack cross before the close does */
+	p9close(dfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("ringsrv done", 0);
+}
+
+/*
+ * The service behind the gateway: the same shape as ringsrv, but on stack
+ * A (/net, 10.0.0.1), which has no wire to the client container at all -
+ * a connection from the client reaches it only if stack B forwards.
+ * Afterwards it reads stack B's ip statistics and reports how many
+ * datagrams B forwarded, the count the real ip.c keeps.
+ */
+static void
+gwsrv(void *)
+{
+	int afd, lfd, dfd, anum, lnum, sfd;
+	long n;
+	char cbuf[64], path[64], rx[256], stats[1024], *p, *e;
+	static char reply[] = "answered by stack A, behind the gateway";
+
+	if(waserror()){
+		print("p9 ip: gateway server failed: %s\n", up->errstr);
+		pexit("gwsrv", 0);
+	}
+	afd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 8890", 13);
+	print("p9 ip: gateway server: tcp!*!8890 announced on stack A, which the client container can reach only through stack B\n");
+	snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	snprint(path, sizeof path, "/net/tcp/%d/remote", lnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, rx, sizeof rx - 1); p9close(sfd);
+	if(n<0)n=0; rx[n]=0;
+	for(e=rx; *e && *e!='\n'; e++) ; *e=0;
+	print("p9 ip: gateway server: stack A accepted a connection from %s, forwarded by stack B, as conversation %d\n", rx, lnum);
+	snprint(path, sizeof path, "/net/tcp/%d/data", lnum);
+	dfd = p9open(path, ORDWR);
+	n = p9read(dfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	print("p9 ip: gateway server: stack A read %ld bytes from the client container through the gateway: \"%s\"\n", n, rx);
+	p9write(dfd, reply, sizeof reply - 1);
+	/* the count now, not after a sleep: the client exits soon after it reads the answer, and the machine idles with it */
+	sfd = p9open("#I1/ipifc/stats", OREAD);
+	n = p9read(sfd, stats, sizeof stats - 1); p9close(sfd);
+	if(n<0)n=0; stats[n]=0;
+	p = strstr(stats, "ForwDatagrams:");
+	if(p != nil){
+		for(e=p; *e && *e!='\n'; e++) ; *e=0;
+		print("p9 ip: gateway: stack B's ip.c forwarded the conversation - %s\n", p);
+	}
+	tsleep(&up->sleep, return0, nil, 1000);
+	p9close(dfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("gwsrv done", 0);
+}
+
+/*
+ * Pi-p on a wire of its own.  The personality's pi-p (pipfsrv.c) has
+ * been spoken over the ring, a group on a request and its replies on
+ * the answer; here it is spoken on the wire between the two containers'
+ * stacks: a tcp.c connection across the ring, carrying groups as
+ * length-prefixed records each way (a 4-byte little-endian count, then
+ * the messages).  A session is settled by number, so it outlives the
+ * connection: a second connection resumes it and finds its fids still
+ * open.  And on a wire a Tstream can be answered - the attribute keeps
+ * arriving at its rate with nothing sent to make it happen - which over
+ * the ring it could not be.  pipwire takes connections one after
+ * another and serves the groups on each on a kproc of its own, which also,
+ * puts whatever the streams owe on the connection that is up.
+ */
+
+static long
+readn(int fd, uchar *buf, long n)
+{
+	long k, got;
+
+	for(got = 0; got < n; got += k){
+		k = p9read(fd, buf + got, n - got);
+		if(k <= 0)
+			return got;
+	}
+	return got;
+}
+
+void
+pipwire_put(int fd, uchar *rec, long n)
+{
+	uchar len[4];
+
+	len[0] = n; len[1] = n>>8; len[2] = n>>16; len[3] = n>>24;
+	p9write(fd, len, 4);
+	if(n > 0)
+		p9write(fd, rec, n);
+}
+
+long
+pipwire_get(int fd, uchar *rec, long max)
+{
+	uchar len[4];
+	long n;
+
+	if(readn(fd, len, 4) != 4)
+		return -1;
+	n = len[0] | (len[1]<<8) | (len[2]<<16) | (len[3]<<24);
+	if(n < 0 || n > max)
+		return -1;
+	if(readn(fd, rec, n) != n)
+		return -1;
+	return n;
+}
+
+/*
+ * One connection, its own kproc: it serves the groups that come on it
+ * and, between them, emits the stream frames due for the sessions on
+ * it - to its own fd, so two connections do not compete for one.  A
+ * reader kproc feeds it groups; this kproc owns the fd.  When the
+ * reader sees the connection close it hands back nil and this ends,
+ * its streams stopped, the sessions living on.
+ */
+typedef struct Pipconn Pipconn;
+struct Pipconn {
+	int	dfd, lfd, conn;
+	int	closed;
+	uchar	group[2048];		/* the reader leaves one group here */
+	long	grouplen;
+	int	groupready;
+};
+
+static void
+pipconnreader(void *a)
+{
+	Pipconn *c = a;
+	long n;
+
+	for(;;){
+		while(c->groupready && !c->closed)
+			tsleep(&up->sleep, return0, nil, 5);
+		if(c->closed)
+			break;
+		n = pipwire_get(c->dfd, c->group, sizeof c->group);
+		if(n < 0){
+			c->closed = 1;
+			break;
+		}
+		c->grouplen = n;
+		c->groupready = 1;
+	}
+	pexit("pipconnreader", 0);
+}
+
+static void
+pipconn(void *a)
+{
+	extern long pipfs_servewire(uchar*, long, uchar*, long, int);
+	extern long pipfs_stream(int, uchar*, long);
+	extern void pipfs_connclosed(int);
+	Pipconn *c = a;
+	uchar rg[4096], sg[2048];
+	long rn, sn;
+
+	kproc("pipconnreader", pipconnreader, c);
+	for(;;){
+		if(c->groupready){
+			rn = pipfs_servewire(c->group, c->grouplen, rg, sizeof rg, c->dfd);
+			c->groupready = 0;
+			print("p9 ip: pi-p wire: a %ld-byte group came over the wire on connection %d, answered with %ld bytes of replies\n", c->grouplen, c->conn, rn);
+			pipwire_put(c->dfd, rg, rn);
+		}
+		if(c->closed && !c->groupready)
+			break;
+		sn = pipfs_stream(c->dfd, sg, sizeof sg);
+		if(sn > 0)
+			pipwire_put(c->dfd, sg, sn);
+		tsleep(&up->sleep, return0, nil, 10);
+	}
+	pipfs_connclosed(c->dfd);		/* its streams stop; the sessions live on */
+	print("p9 ip: pi-p wire: connection %d closed; the sessions it carried live on\n", c->conn);
+	p9close(c->dfd);
+	p9close(c->lfd);
+	free(c);
+	pexit("pipconn", 0);
+}
+
+static void
+pipwire(void *a)
+{
+	int lfd, dfd, anum, lnum, conns;
+	long n;
+	char cbuf[64], path[64], *net, *stack;
+
+	/* stack B (#I1) faces the client container over the ring; stack A (/net) faces the cable, and the other machine asks there */
+	net = a != nil ? a : "#I1";
+	stack = a != nil ? "stack A, the cable" : "stack B";
+	if(waserror()){
+		print("p9 ip: pi-p wire failed on %s: %s\n", stack, up->errstr);
+		pexit("pipwire", 0);
+	}
+	snprint(path, sizeof path, "%s/tcp/clone", net);
+	{ int afd = p9open(path, ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 9001", 13); }
+	print("p9 ip: pi-p wire: tcp!*!9001 announced on %s - the personality's pi-p on a wire of its own\n", stack);
+	for(conns = 1;; conns++){
+		Pipconn *c;
+
+		snprint(path, sizeof path, "%s/tcp/%d/listen", net, anum);
+		lfd = p9open(path, ORDWR);
+		n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+		snprint(path, sizeof path, "%s/tcp/%d/data", net, lnum);
+		dfd = p9open(path, ORDWR);
+		print("p9 ip: pi-p wire: connection %d from %s, conversation %d\n", conns, a != nil ? "the cable" : "the client container", lnum);
+		c = malloc(sizeof *c);
+		if(c == nil){ p9close(dfd); p9close(lfd); continue; }
+		memset(c, 0, sizeof *c);
+		c->dfd = dfd; c->lfd = lfd; c->conn = conns;
+		kproc("pipconn", pipconn, c);	/* each connection served on its own kproc, so one does not block another */
+	}
+}
+
+/*
+ * The real wire.  When the kernel has exposed a network device to this
+ * container and netvirtio.c has brought it up, stack A binds the vnet
+ * medium on it and takes an address from the device's MAC - 10.1.0.n
+ * for a MAC ending in n - so two machines booted from the same image on
+ * one wire know which they are: 1 answers, 2 asks.  Machine 1 announces
+ * a port on the wire and answers a line; machine 2 connects to it
+ * across the cable, its tcp.c to the other's, ARP and all, and reads
+ * the answer.  Nothing but the two personalities' own stacks and the
+ * drivers they run in user space is in the path; the kernels carry
+ * interrupts and nothing else.
+ */
+extern int vnet_ready(void);
+extern void vnet_mac(uchar*);
+extern void vnet_stats(long*, long*, long*);
+
+/*
+ * The wire's configuration, read from a file in the store, not derived
+ * from the device.  /n/net gives this machine its address, its peer's,
+ * its role and the ports; two machines boot the same image and differ
+ * only in that file.  On a fresh disk there is none, so it is written
+ * from the MAC once - the bootstrap - and read from then on, here and
+ * on the next boot.
+ */
+static char netmyaddr[32] = "10.1.0.1";
+static char netpeer[32] = "10.1.0.2";
+static int  netrole = 1;			/* 1 answers (server), 2 asks (client) */
+static int  netwireport = 9005, netpipport = 9001, netmigport = 9006;
+static int  netconfread;
+
+extern int p9create(char*, int, ulong);
+
+static void
+netconf_read(void)
+{
+	uchar mac[6];
+	char buf[512], *lines[16], *f[2], *e;
+	int fd, nl, i;
+	long n;
+
+	if(netconfread)
+		return;
+	netconfread = 1;
+	vnet_mac(mac);
+	fd = -1;
+	if(!waserror()){
+		fd = p9open("/n/net", OREAD);
+		poperror();
+	}
+	if(fd < 0){
+		/* no file: derive from the MAC and write it, so the next read - and the next boot - is of the file */
+		snprint(netmyaddr, sizeof netmyaddr, "10.1.0.%d", mac[5]);
+		snprint(netpeer, sizeof netpeer, "10.1.0.%d", 3 - mac[5]);
+		netrole = mac[5];
+		snprint(buf, sizeof buf, "addr %s\npeer %s\nrole %s\nwireport %d\npipport %d\nmigport %d\n",
+			netmyaddr, netpeer, netrole == 1 ? "server" : "client", netwireport, netpipport, netmigport);
+		if(!waserror()){
+			fd = p9create("/n/net", OWRITE, 0666);
+			p9write(fd, buf, strlen(buf));
+			p9close(fd);
+			poperror();
+			print("p9 net: no /n/net on the disk; wrote it from the MAC: this machine is %s, its peer %s, role %s\n",
+				netmyaddr, netpeer, netrole == 1 ? "server" : "client");
+		}
+		return;
+	}
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9close(fd);
+	nl = getfields(buf, lines, nelem(lines), 1, "\n");
+	for(i = 0; i < nl; i++){
+		if(getfields(lines[i], f, 2, 1, " \t") != 2)
+			continue;
+		if(strcmp(f[0], "addr") == 0){ strncpy(netmyaddr, f[1], sizeof netmyaddr - 1); netmyaddr[sizeof netmyaddr-1]=0; }
+		else if(strcmp(f[0], "peer") == 0){ strncpy(netpeer, f[1], sizeof netpeer - 1); netpeer[sizeof netpeer-1]=0; }
+		else if(strcmp(f[0], "role") == 0) netrole = strcmp(f[1], "server") == 0 ? 1 : 2;
+		else if(strcmp(f[0], "wireport") == 0) netwireport = atoi(f[1]);
+		else if(strcmp(f[0], "pipport") == 0) netpipport = atoi(f[1]);
+		else if(strcmp(f[0], "migport") == 0) netmigport = atoi(f[1]);
+	}
+	USED(e);
+	print("p9 net: read /n/net from the store: this machine is %s, its peer %s, role %s, ports wire %d pi-p %d migrate %d - the configuration is a file, not the device's\n",
+		netmyaddr, netpeer, netrole == 1 ? "server" : "client", netwireport, netpipport, netmigport);
+}
+
+static void
+wiresrv(void *)
+{
+	int afd, lfd, dfd, anum, lnum, sfd;
+	long n, rx, tx, drops;
+	char cbuf[64], path[64], rx1[256], *e;
+	static char reply[] = "answered across the cable by machine 1's tcp.c in user space";
+
+	if(waserror()){
+		print("p9 wire: machine 1 failed: %s\n", up->errstr);
+		pexit("wiresrv", 0);
+	}
+	afd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	{ char a[32]; snprint(a, sizeof a, "announce %d", netwireport); p9write(afd, a, strlen(a)); }
+	print("p9 wire: machine 1 announced tcp!*!%d on the wire, %s (from /n/net)\n", netwireport, netmyaddr);
+	snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	snprint(path, sizeof path, "/net/tcp/%d/remote", lnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, rx1, sizeof rx1 - 1); p9close(sfd);
+	if(n<0)n=0; rx1[n]=0;
+	for(e=rx1; *e && *e!='\n'; e++) ; *e=0;
+	print("p9 wire: machine 1 accepted a connection over the cable from %s as conversation %d\n", rx1, lnum);
+	snprint(path, sizeof path, "/net/tcp/%d/data", lnum);
+	dfd = p9open(path, ORDWR);
+	n = p9read(dfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
+	print("p9 wire: machine 1 read %ld bytes from the other machine: \"%s\"\n", n, rx1);
+	p9write(dfd, reply, sizeof reply - 1);
+	vnet_stats(&rx, &tx, &drops);
+	print("p9 wire: machine 1 answered the other machine; its user-space driver took %ld frames in and put %ld out, %ld dropped\n", rx, tx, drops);
+	/*
+	 * Then a megabyte from the other machine, to show the driver and
+	 * the medium under a load a line does not give them: read until it
+	 * is all here, and say how long it took and whether anything was
+	 * dropped or had to wait for a slot.
+	 */
+	{
+		extern uvlong kfastticks(uvlong*);
+		extern void ospreyvnetqstats(long*, long*);
+		static uchar big[8192];
+		long got, queued, drained;
+		uvlong t0, t1;
+
+		t0 = kfastticks(nil);
+		for(got = 0; got < 1024*1024; got += n){
+			n = p9read(dfd, big, sizeof big);
+			if(n <= 0)
+				break;
+		}
+		t1 = kfastticks(nil);
+		vnet_stats(&rx, &tx, &drops);
+		ospreyvnetqstats(&queued, &drained);
+		print("p9 wire: machine 1 took %ld bytes across the cable in %llud ms (%llud KB/s); its driver dropped %ld frames, %ld waited for a slot and were sent later\n",
+			got, (t1 - t0) * 10, (t1 - t0) > 0 ? (uvlong)got / ((t1 - t0) * 10) : 0, drops, queued);
+		p9write(dfd, "got it", 6);
+	}
+	tsleep(&up->sleep, return0, nil, 1000);	/* let the answer and its ack cross before the close does */
+	p9close(dfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("wiresrv done", 0);
+}
+
+/*
+ * Pi-p across the cable, and who is asking.  Machine 2 opens a session
+ * on machine 1's personality's wire and asks for /n/hello: as nobody it
+ * is refused, since the file is the personality's; then with a ticket
+ * its own kernel signed (ReqTicket), which the far personality has its
+ * kernel check (ReqCheckticket) - the two kernels holding the same key -
+ * the session has a name and reads the file.
+ */
+int pipwire_connectto(char *addr, int *dfdp);
+static void
+pipacrosscable(void)
+{
+	extern long pip_tsession(uchar*, int, uvlong);
+	extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+	extern long pip_tread(uchar*, int, ulong, long, char*);
+	extern long pip_tauth(uchar*, int, char*);
+	extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
+	extern uvlong pip_num(uchar*, int);
+	extern char *pip_ticket(void);
+	uchar tg[512], rg[2048], *body;
+	char show[160], who[64], *ticket;
+	long tn, rn, off, blen;
+	int type, tag, dfd, wfd, refused, opened;
+
+	if(waserror()){
+		print("p9 ip: pi-p across the cable failed: %s\n", up->errstr);
+		return;
+	}
+	/* as nobody */
+	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
+	tn = 0;
+	tn += pip_tsession(tg+tn, 1, 0);
+	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 3, 1, 256, "data");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	refused = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 112 && tag == 2){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p across the cable: a session that is nobody's asked the other machine's personality to open /n/hello and was refused: \"%s\"\n", show);
+			refused = 1;
+		} else if(type == 103 && tag == 2)
+			print("p9 ip: pi-p across the cable: a session that is nobody's was given /n/hello - wrong\n");
+	}
+	if(!refused)
+		print("p9 ip: pi-p across the cable: no refusal came back for the session that is nobody's\n");
+	p9close(wfd); p9close(dfd);
+
+	/* with a ticket my kernel signed: my name, for my container */
+	if((ticket = pip_ticket()) == nil)
+		error("my kernel would not sign a ticket (no key set?)");
+	print("p9 ip: pi-p across the cable: my kernel signed a ticket for \"%s\": \"%s\"\n", eve, ticket);
+	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
+	tn = 0;
+	tn += pip_tsession(tg+tn, 4, 0);
+	tn += pip_tauth(tg+tn, 5, ticket);
+	tn += pip_topen(tg+tn, 6, 0, 1, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 7, 1, 256, "data");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	who[0] = 0;
+	opened = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 116)
+			snprint(who, sizeof who, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+		else if(type == 103 && tag == 6)
+			opened = 1;
+		else if(type == 105 && tag == 7){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			print("p9 ip: pi-p across the cable: with the ticket the other machine's kernel checked, the session is \"%s\"; it opened /n/hello there and read (version %llud): \"%s\"\n",
+				who, pip_num(body, 8), show);
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p across the cable: error on tag %d with the ticket: %s\n", tag, show);
+		}
+	}
+	if(!opened)
+		print("p9 ip: pi-p across the cable: the ticketed session did not get /n/hello\n");
+	p9close(wfd); p9close(dfd);
+	poperror();
+}
+
+static void
+wirecli(void *)
+{
+	int dfd, sfd, wfd, cnum;
+	long n, rx, tx, drops;
+	char cbuf[64], path[64], line[256], rx1[256], *e;
+	static char msg[] = "sent across the cable by machine 2's tcp.c in user space";
+
+	tsleep(&up->sleep, return0, nil, 2000);		/* let the other machine come up */
+	if(waserror()){
+		print("p9 wire: machine 2 failed: %s\n", up->errstr);
+		pexit("wirecli", 0);
+	}
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	print("p9 wire: machine 2 connecting to %s!%d across the cable (from /n/net)\n", netpeer, netwireport);
+	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netwireport); p9write(dfd, a, strlen(a)); }
+	snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+	if(n<0)n=0; line[n]=0;
+	for(e=line; *e && *e!='\n'; e++) ; *e=0;
+	print("p9 wire: machine 2's handshake with machine 1 across the cable - %s\n", line);
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	wfd = p9open(path, ORDWR);
+	p9write(wfd, msg, sizeof msg - 1);
+	n = p9read(wfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
+	vnet_stats(&rx, &tx, &drops);
+	print("p9 wire: machine 2 read the answer across the cable: \"%s\"; its user-space driver took %ld frames in and put %ld out, %ld dropped\n", rx1, rx, tx, drops);
+	/* and a megabyte the other way, in 8 KB writes: a burst tcp.c segments far past the ring's sixteen slots */
+	{
+		extern void ospreyvnetqstats(long*, long*);
+		extern long vnet_refused(void);
+		static uchar big[8192];
+		long sent, queued, drained;
+		int i;
+
+		for(i = 0; i < (int)sizeof big; i++)
+			big[i] = 'a' + i % 26;
+		for(sent = 0; sent < 1024*1024; sent += n){
+			n = p9write(wfd, big, sizeof big);
+			if(n <= 0)
+				break;
+		}
+		n = p9read(wfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
+		vnet_stats(&rx, &tx, &drops);
+		ospreyvnetqstats(&queued, &drained);
+		print("p9 wire: machine 2 sent %ld bytes across the cable and the other machine said \"%s\"; its driver put %ld frames out, dropped %ld, refused %ld for want of a slot, of which the medium queued %ld and sent %ld later\n",
+			sent, rx1, tx, drops, vnet_refused(), queued, drained);
+	}
+	tsleep(&up->sleep, return0, nil, 500);
+	p9close(wfd); p9close(dfd);
+	poperror();
+	pipacrosscable();
+	pexit("wirecli done", 0);
+}
+
+/*
+ * Migration over the wire, the personality's half: the kernel keeps
+ * nothing of the wire, so when a process asks to be carried to the
+ * other machine (ReqMove to the wire) the kernel parks it and tells
+ * this server (OpMigrate on its ring), and migsend pulls the process's
+ * state out by request - the segments and register frame, then every
+ * resident page by halves - and sends it in length-prefixed records on
+ * a TCP connection to the other machine's migrecv, which has the kernel
+ * there make a process (ReqMigmake), fills it (ReqMigput) and starts it
+ * (ReqMigstart), and answers; migsend then tells the kernel the process
+ * has gone (ReqMigdone).  Both machines run both halves, so each may
+ * send its process to the other.  Two personalities, two kernels, one
+ * cable; the process arrives with its registers, stack and data as
+ * they were, and the same program goes on from its request's return on
+ * the other machine.  What does not cross: open files, which the far
+ * buddy knows nothing of.
+ */
+enum {
+	Migoff		= Odmig,
+	Migrxoff	= Odmigrx,
+	Mighalf		= 2048,
+	Migport		= 9006,
+};
+extern uchar *p9srvdata(void);
+extern long ospreyxcall(int op, uvlong *args, long n);
+static int migsent, migtaken;		/* processes carried away and taken in on this machine */
+
+/* when this machine has both sent one and taken one, say so: what the two-machine check waits for */
+static void
+migexchanged(void)
+{
+	if(migsent > 0 && migtaken > 0)
+		print("p9 migrate: this machine has carried %d away and taken %d in - the exchange is complete\n", migsent, migtaken);
+}
+
+static int
+wireconnect(char *addr, int *dfdp)
+{
+	char cbuf[64], path[64];
+	long n;
+	int dfd, cnum;
+
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	p9write(dfd, addr, strlen(addr));
+	*dfdp = dfd;
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	return p9open(path, ORDWR);
+}
+
+enum {
+	Migrxslot0	= 18,		/* packet buffer slots of this server's slice: an arrival's pages come through two of these, from 18; a departure's from 24 (devosprey.c's numbers) */
+	Migtxslot0	= 24,
+	Migpage		= 4096,
+	Mighdrmax	= 2048,		/* a header: two words, up to NSEG segments of four, the register frame */
+	Migendmember	= ~0ULL,	/* the record that ends a member's pages */
+	Migendgroup	= ~1ULL,	/* the record that ends the group */
+	Migbuddyrec	= ~2ULL,	/* a record carrying the buddy's descriptor record */
+};
+
+extern uchar *p9srvpktbuf(int slot, long len);
+extern long p9buddy_migout(uvlong container, char *buf, long max);
+extern int p9buddy_migin(uvlong container, char *rec);
+
+static void
+migsend(void *a)
+{
+	uvlong cid = (uvlong)a;
+	uvlong args[5], *hdr, nseg, va, i, npages, nbytes, nmem, k, entry, member;
+	uchar *d, *rec, rg[64], *hdrbuf;
+	uchar mac[6];
+	char addr[64];
+	long n, rn;
+	int dfd, wfd, ok;
+
+	/* a page and a header: off the kproc's stack, which is a few pages and shared its neighbourhood with the next kproc's when they overflowed */
+	rec = malloc(8 + Migpage);
+	hdrbuf = malloc(Mighdrmax);
+	if(rec == nil || hdrbuf == nil)
+		panic("migsend: no memory");
+	ok = 0;
+	dfd = wfd = -1;
+	if(waserror()){
+		print("p9 migrate: carrying container %llud failed: %s\n", cid, up->errstr);
+		goto Done;
+	}
+	if(!vnet_ready())
+		error("no wire to carry it over");
+	vnet_mac(mac);
+	snprint(addr, sizeof addr, "connect %s!%d", netpeer, netmigport);
+	npages = nbytes = 0;
+	nmem = 1;
+	for(k = 0; k < nmem; k++){
+	args[0] = cid; args[1] = k; args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(26, args, 2) != 0)		/* ReqMigsnap: member k's header at Migoff */
+		error("the kernel would not give up the process");
+	n = args[0];
+	nmem = args[1];
+	entry = args[2];
+	member = args[3];
+	if(n > Mighdrmax)
+		error("the header does not fit");
+	if(p9srvdata() == nil || (d = p9srvpktbuf(Migtxslot0 + 2*entry, Migpage)) == nil)
+		error("no staging area");
+	memmove(hdrbuf, p9srvdata() + Migoff, n);	/* out of the data area; the pages come through the entry's packet buffer slots */
+	hdr = (uvlong*)hdrbuf;
+	nseg = hdr[0];
+	if(k == 0){
+		int try;
+
+		print("p9 migrate: container %llud's process snapshotted: %llud segments, a %ld-byte header, %llud in its group, %s; connecting to %s!%d\n",
+			cid, nseg, n, nmem, (hdr[1] & 1) ? "its text and data a buddy image's" : "every resident page to carry", netpeer, netmigport);
+		/* the other machine may not be listening yet - booted later, or slower: try for a while */
+		for(try = 0;; try++){
+			if(!waserror()){
+				wfd = wireconnect(addr, &dfd);
+				poperror();
+				break;
+			}
+			if(try >= 20)
+				error("the other machine did not answer in twenty tries");
+			print("p9 migrate: connect to the other machine failed (%s); trying again\n", up->errstr);
+			args[0] = cid; args[1] = 2; args[2] = args[3] = args[4] = 0;
+			ospreyxcall(31, args, 2);		/* ReqMigdone, not done: the try counts as progress for the parked process */
+			if(dfd >= 0){ p9close(dfd); dfd = -1; }
+			tsleep(&up->sleep, return0, nil, 1000);
+		}
+		print("p9 migrate: connected on try %d; sending the header\n", try + 1);
+	} else
+		print("p9 migrate: group member %llud snapshotted: %llud segments; sending it after\n", k, nseg);
+	pipwire_put(wfd, hdrbuf, n);		/* the header: segments and the register frame */
+	/* the buddy's record for this member: its image's name, its descriptors */
+	va = Migbuddyrec;
+	memmove(rec, &va, 8);
+	rn = member != 0 ? p9buddy_migout(member, (char*)rec + 8, Migpage - 1) : -1;
+	if(rn > 0){
+		rec[8 + rn] = 0;
+		pipwire_put(wfd, rec, 8 + rn + 1);
+	}
+	for(i = 0; i < nseg; i++){
+		uvlong *seg = hdr + 2 + 4*i;		/* idx, type, base, top */
+		uvlong next;
+
+		if(seg[1] & (1<<8))			/* shared with the first member: carried with it, shared again there */
+			continue;
+		print("p9 migrate: segment %llud: type %llud, %#llux-%#llux (%llud pages)\n", seg[0], seg[1], seg[2], seg[3], (seg[3] - seg[2]) / 4096);
+		for(va = seg[2]; va < seg[3]; va = next){
+			next = va + 4096;
+			args[0] = cid; args[1] = va; args[2] = k << 8;
+			if(ospreyxcall(27, args, 3) != 0)		/* ReqMigpage: member k's page at va, whole, into the entry's slots */
+				error("the kernel would not read a page");
+			if(args[0] == 0){			/* not resident: a hole, left to the far kernel; skip to the next that is */
+				if(args[1] > va)
+					next = args[1];
+				continue;
+			}
+			memmove(rec, &va, 8);
+			memmove(rec + 8, d, Migpage);
+			pipwire_put(wfd, rec, 8 + Migpage);
+			nbytes += Migpage;
+			npages++;
+		}
+	}
+	va = Migendmember;
+	memmove(rec, &va, 8);
+	pipwire_put(wfd, rec, 8);			/* the end of this member */
+	}
+	va = Migendgroup;
+	memmove(rec, &va, 8);
+	pipwire_put(wfd, rec, 8);			/* the end of the group */
+	{
+		long rx, tx, drops;
+
+		vnet_stats(&rx, &tx, &drops);
+		print("p9 migrate: %llud pages sent in %ld frames so far, %ld dropped by the driver; waiting for the other machine's answer\n", npages, tx, drops);
+	}
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	if(rn >= 16 && *(uvlong*)rg == 1){
+		ok = 1;
+		print("p9 migrate: container %llud's process carried over the wire to %s, with %llud of its group: %llud pages, %llud bytes; it is container %llud there\n",
+			cid, netpeer, nmem - 1, npages, nbytes, *(uvlong*)(rg + 8));
+		migsent++;
+		migexchanged();
+	} else
+		print("p9 migrate: the other machine did not take container %llud's process\n", cid);
+	poperror();
+Done:
+	if(wfd >= 0){ tsleep(&up->sleep, return0, nil, 200); p9close(wfd); }
+	if(dfd >= 0)
+		p9close(dfd);
+	args[0] = cid; args[1] = ok; args[2] = args[3] = args[4] = 0;
+	ospreyxcall(31, args, 2);			/* ReqMigdone: gone, or refused */
+	free(rec);
+	free(hdrbuf);
+	pexit("migsend", 0);
+}
+
+void
+p9migrate(uvlong container)
+{
+	kproc("migsend", migsend, (void*)container);
+}
+
+/* one connection offering a process, or a group: taken in by a kproc of its own, so that two may arrive at once */
+typedef struct Migtake Migtake;
+struct Migtake { int dfd, lfd; char rx1[64]; };
+
+static void
+migtake(void *a)
+{
+	Migtake *t = a;
+	uvlong args[5], id, va, npages, first, nmem, x;
+	uchar *d, *dr, *rec, rg[64];
+	long n, rn;
+	int dfd;
+
+	dfd = t->dfd;
+	rec = malloc(8 + Migpage);		/* off the kproc's stack, as in migsend */
+	if(rec == nil)
+		panic("migtake: no memory");
+	if(waserror()){
+		print("p9 migrate: taking a process from %s failed: %s\n", t->rx1, up->errstr);
+		p9close(t->dfd); p9close(t->lfd);
+		free(t);
+		free(rec);
+		pexit("migtake", 0);
+	}
+	if((d = p9srvdata()) == nil)
+		error("no data area");
+	first = 0;
+	nmem = 0;
+	n = pipwire_get(dfd, rec, 8 + Migpage);
+	for(;;){
+		/* a member: its header, the buddy's record, its pages, its end; then the next, or the group's end */
+		if(n <= 0)
+			error("no header");
+		if(n == 8 && *(uvlong*)rec == Migendgroup)
+			break;				/* the group's end */
+		memmove(d + Migrxoff, rec, n);		/* and the request follows at once: the staging area is shared by arrivals, never held across a wait */
+		args[0] = first; args[1] = args[2] = args[3] = args[4] = 0;
+		if(ospreyxcall(28, args, 1) != 0)		/* ReqMigmake, sharing the first's segments if a later member */
+			error("the kernel would not make a process for it");
+		id = args[0];
+		x = args[1];
+		if((dr = p9srvpktbuf(Migrxslot0 + 2*x, Migpage)) == nil)
+			error("no packet buffer slots for its pages");
+		npages = 0;
+		for(;;){
+			rn = pipwire_get(dfd, rec, 8 + Migpage);
+			if(rn < 8)
+				error("the wire broke mid-process");
+			memmove(&va, rec, 8);
+			if(va == Migendmember)
+				break;
+			if(va == Migbuddyrec){
+				rec[rn < 8 + Migpage ? rn : 8 + Migpage - 1] = 0;
+				if(p9buddy_migin(id, (char*)rec + 8) < 0)
+					error("the buddy could not lay out the arriving process's image");
+				continue;
+			}
+			if(rn < 8 + Migpage)
+				error("a short page");
+			memmove(dr, rec + 8, Migpage);
+			args[0] = id; args[1] = va; args[2] = 0;
+			if(ospreyxcall(29, args, 3) != 0)		/* ReqMigput: the page, whole, from the entry's slots */
+				error("the kernel would not take a page");
+			npages++;
+		}
+		args[0] = id; args[1] = args[2] = args[3] = args[4] = 0;
+		if(ospreyxcall(30, args, 1) != 0)		/* ReqMigstart: it runs */
+			error("the kernel would not start it");
+		if(first == 0){
+			first = id;
+			print("p9 migrate: a process arrived over the wire from %s, %llud pages, and runs here as container %llud\n", t->rx1, npages, id);
+		} else
+			print("p9 migrate: a member of its group arrived with it, %llud pages of its own, and runs here as container %llud sharing container %llud's memory\n", npages, id, first);
+		nmem++;
+		n = pipwire_get(dfd, rec, 8 + Migpage);
+	}
+	*(uvlong*)rg = 1;
+	*(uvlong*)(rg + 8) = first;
+	pipwire_put(dfd, rg, 16);
+	migtaken++;
+	migexchanged();
+	poperror();
+	tsleep(&up->sleep, return0, nil, 300);
+	p9close(t->dfd); p9close(t->lfd);
+	free(t);
+	free(rec);
+	pexit("migtake", 0);
+}
+
+static void
+migrecv(void *)
+{
+	Migtake *t;
+	char cbuf[64], path[64], *e;
+	long n;
+	int afd, lfd, dfd, anum, lnum, sfd;
+
+	afd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	snprint(cbuf, sizeof cbuf, "announce %d", netmigport);
+	p9write(afd, cbuf, strlen(cbuf));
+	for(;;){
+		snprint(path, sizeof path, "/net/tcp/%d/listen", anum);
+		lfd = p9open(path, ORDWR);
+		n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+		t = malloc(sizeof *t);
+		if(t == nil){
+			p9close(lfd);
+			continue;
+		}
+		snprint(path, sizeof path, "/net/tcp/%d/remote", lnum);
+		sfd = p9open(path, OREAD); n = p9read(sfd, t->rx1, sizeof t->rx1 - 1); p9close(sfd);
+		if(n<0)n=0; t->rx1[n]=0;
+		for(e=t->rx1; *e && *e!='\n'; e++) ; *e=0;
+		snprint(path, sizeof path, "/net/tcp/%d/data", lnum);
+		dfd = p9open(path, ORDWR);
+		print("p9 migrate: a process is being offered over the wire from %s\n", t->rx1);
+		t->dfd = dfd;
+		t->lfd = lfd;
+		kproc("migtake", migtake, t);		/* and back to listen: another may be offered while this one is taken in */
+	}
+}
+
+/* called by the server loop once the driver is up: the interface, and the machine's role */
+void
+p9vnetup(void)
+{
+	uchar mac[6];
+	char buf[128], addr[64];
+	int fd;
+	long n;
+
+	if(!vnet_ready())
+		return;
+	if(waserror()){
+		print("p9 wire: the vnet interface failed: %s\n", up->errstr);
+		return;
+	}
+	vnet_mac(mac);
+	netconf_read();		/* the wire's address, peer, role and ports from /n/net, seeded from the MAC on a fresh disk */
+	fd = p9open("/net/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9write(fd, "bind vnet", 9);
+	n = snprint(addr, sizeof addr, "add %s 255.255.255.0", netmyaddr);
+	p9write(fd, addr, n);
+	p9close(fd);
+	print("p9 wire: stack A bound the vnet medium on the user-space driver and is %s on the wire (from /n/net); machine %d\n", netmyaddr, netrole);
+	if(netrole == 1)
+		kproc("wiresrv", wiresrv, nil);
+	else
+		kproc("wirecli", wirecli, nil);
+	kproc("migrecv", migrecv, nil);		/* both machines take processes from the other */
+	poperror();
+}
+
+/*
+ * The firewall, item 7's last word, with the real stack's own rule
+ * engine: ipmux.  Once an ipmux conversation exists, every packet for
+ * the stack passes its rules first (devip's Fsrcvpcolx), and one that
+ * matches is diverted to that conversation instead of reaching its
+ * protocol.  Here stack B announces a port, and when the client asks
+ * (a datagram to 9003) puts up a rule diverting TCP from 10.0.1.1 to
+ * that port - source, protocol and destination port, the fields a
+ * firewall's rule has; the client's SYNs then arrive on the ipmux
+ * conversation, read and counted here, and tcp.c never sees them.
+ * After two the rule is lifted (the conversation closed), the next
+ * retransmitted SYN reaches tcp.c, and the connection is accepted and
+ * answered.  What the client sees is a connect held for as long as the
+ * rule stood.
+ */
+static void
+fwsrv(void *)
+{
+	int afd, mfd, dfd, lfd, cfd, anum, mnum, lnum, i;
+	long n;
+	char cbuf[64], path[64], rx[256];
+	uchar pkt[2048];
+	static char rule[] = "connect src=10.0.1.1;proto=06;data[2:3]=232c";	/* tcp from the client to port 9004 */
+	static char reply[] = "answered once the firewall's rule was lifted";
+
+	if(waserror()){
+		print("p9 ip: firewall failed: %s\n", up->errstr);
+		pexit("fwsrv", 0);
+	}
+	extern long pipfs_firewall(char*, int, char*, int, int*);
+	char fwrule[128], fwwho[64];
+	int fwgen, mygen;
+
+	afd = p9open("#I1/tcp/clone", ORDWR);
+	n = p9read(afd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; anum=atoi(cbuf);
+	p9write(afd, "announce 9004", 13);
+	/*
+	 * The rule is a container attribute, not a datagram: wait until a
+	 * session that holds this container has written the "firewall"
+	 * attribute over pi-p (pipfs_firewall reports it), then put the rule
+	 * up.  Whoever holds the container sets policy; nobody else can.
+	 */
+	for(;;){
+		pipfs_firewall(fwrule, sizeof fwrule, fwwho, sizeof fwwho, &fwgen);
+		if(strncmp(fwrule, "up", 2) == 0)
+			break;			/* a holder has set the attribute to "up" */
+		tsleep(&up->sleep, return0, nil, 50);
+	}
+	USED(mygen);
+	mfd = p9open("#I1/ipmux/clone", ORDWR);
+	n = p9read(mfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; mnum=atoi(cbuf);
+	p9write(mfd, rule, sizeof rule - 1);
+	print("p9 ip: firewall: %s set the firewall attribute on the container over pi-p; stack B's ipmux now diverts TCP from 10.0.1.1 to port 9004 before tcp.c sees it\n", fwwho);
+	snprint(path, sizeof path, "#I1/ipmux/%d/data", mnum);
+	dfd = p9open(path, OREAD);
+	for(i = 0; i < 2; i++){
+		n = p9read(dfd, pkt, sizeof pkt);
+		print("p9 ip: firewall: diverted a %ld-byte TCP packet from 10.0.1.1 to port 9004 - the rule holds, tcp.c never saw it\n", n);
+	}
+	p9close(dfd); p9close(mfd);
+	/* wait for the holder to take the rule down over pi-p, or lift after the two packets if it already has */
+	for(i = 0; i < 100; i++){
+		pipfs_firewall(fwrule, sizeof fwrule, fwwho, sizeof fwwho, &fwgen);
+		if(strncmp(fwrule, "down", 4) == 0)
+			break;
+		tsleep(&up->sleep, return0, nil, 50);
+	}
+	print("p9 ip: firewall: %s took the firewall attribute down over pi-p; the rule is lifted after 2 diverted packets\n", fwwho);
+	snprint(path, sizeof path, "#I1/tcp/%d/listen", anum);
+	lfd = p9open(path, ORDWR);
+	n = p9read(lfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; lnum=atoi(cbuf);
+	print("p9 ip: firewall: the next SYN reached tcp.c and the connection was accepted as conversation %d\n", lnum);
+	snprint(path, sizeof path, "#I1/tcp/%d/data", lnum);
+	cfd = p9open(path, ORDWR);
+	n = p9read(cfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	p9write(cfd, reply, sizeof reply - 1);
+	tsleep(&up->sleep, return0, nil, 1000);
+	p9close(cfd); p9close(lfd); p9close(afd);
+	poperror();
+	pexit("fwsrv done", 0);
+}
+
+/*
+ * The client end.  The client container brings up the real Plan 9 IP
+ * stack of its own - devip, ip.c, tcp.c - and binds an osprey interface
+ * whose wire is the ring to the server container.  A kproc connects to
+ * the service above with the client's own tcp.c, so two whole stacks in
+ * two containers run one tcp.c conversation over a wire the kernel only
+ * routes.  The client has no server loop; this is its loop, driven by
+ * the clock tick it asks for: each tick it polls the ring for frames the
+ * far stack sent (ospreymediumpoll), advances the cooperative clock, and
+ * runs the kprocs that are ready.
+ */
+static int clientnetdone;
+
+/*
+ * Pi-p over the wire, from the client container: three groups on two
+ * connections to the server container's pi-p at 10.0.1.2!9001, over the
+ * two stacks' tcp.c across the ring.  The first connection opens a
+ * session and a fid on /n/hello and reads it; the connection is closed
+ * and a second one resumes the session by number and reads through the
+ * same fid, still open - the session outlived the connection.  Then a
+ * Tstream on that fid, and the attribute arrives three times at the
+ * asked rate with nothing sent to make it happen.
+ */
+int
+pipwire_connectto(char *addr, int *dfdp)
+{
+	char cbuf[64], path[64];
+	long n;
+	int dfd, cnum;
+
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	p9write(dfd, addr, strlen(addr));
+	*dfdp = dfd;
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	return p9open(path, ORDWR);
+}
+
+int
+pipwire_connect(int *dfdp)
+{
+	return pipwire_connectto("connect 10.0.1.2!9001", dfdp);
+}
+
+static void
+pipclient(void)
+{
+	extern long pip_tsession(uchar*, int, uvlong);
+	extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+	extern long pip_tread(uchar*, int, ulong, long, char*);
+	extern long pip_tstream(uchar*, int, ulong, ulong, ulong, char*);
+	extern long pip_tclose(uchar*, int, ulong);
+	extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
+	extern uvlong pip_num(uchar*, int);
+	extern uvlong kfastticks(uvlong*);
+	extern char *pip_ticket(void);
+	extern long pip_tauth(uchar*, int, char*);
+	uchar tg[512], rg[2048], *body;
+	long tn, rn, off, blen;
+	int type, tag, dfd, wfd, nrep, i;
+	uvlong sid, v, t0, t;
+	char show[160], *tk;
+
+	/* connection 1: a session, a fid on /n/hello, its data and version */
+	wfd = pipwire_connect(&dfd);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 1, 0);
+	if((tk = pip_ticket()) != nil)
+		tn += pip_tauth(tg+tn, 99, tk);		/* who I am, first: the file is the personality's */
+	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 3, 1, 256, "data");
+	tn += pip_tread(tg+tn, 4, 1, 32, "version");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	sid = 0; v = 0; nrep = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); nrep++){
+		if(type == 101)
+			sid = pip_num(body, 8);
+		else if(type == 105 && tag == 3){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			v = pip_num(body, 8);
+			print("p9 ip: pi-p over the wire: opened /n/hello in session %llux, read data (version %llud): \"%s\"\n", sid, v, show);
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p over the wire: error on tag %d: %s\n", tag, show);
+		}
+	}
+	print("p9 ip: pi-p over the wire: a group of 5, the first saying who I am, crossed the two stacks' tcp.c across the ring and came back with %d replies\n", nrep);
+	p9close(wfd); p9close(dfd);		/* the connection goes; the session and its fid do not */
+	tsleep(&up->sleep, return0, nil, 200);
+
+	/* connection 2: the same session by number, the same fid, still open */
+	wfd = pipwire_connect(&dfd);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 5, sid);
+	tn += pip_tread(tg+tn, 6, 1, 256, "data");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 105 && tag == 6){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			print("p9 ip: pi-p over the wire: a new connection resumed session %llux and read fid 1, still open, data (version %llud): \"%s\" - the session outlived the connection\n", sid, pip_num(body, 8), show);
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p over the wire: error on tag %d: %s\n", tag, show);
+		}
+	}
+
+	/* a stream: the version, every 100 ms, three times, unasked; a group
+	 * settles its session first, as every group does */
+	tn = 0;
+	tn += pip_tsession(tg+tn, 9, sid);
+	tn += pip_tstream(tg+tn, 7, 1, 100, 3, "version");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	nrep = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 114){		/* Rstream */
+			print("p9 ip: pi-p over the wire: Tstream answered, period %llud ms\n", pip_num(body, 8));
+			nrep = 1;
+		} else if(type == 112){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+			print("p9 ip: pi-p over the wire: tag %d refused: %s\n", tag, show);
+		}
+	}
+	t0 = kfastticks(nil);
+	for(i = 0; nrep && i < 3; i++){
+		rn = pipwire_get(wfd, rg, sizeof rg);
+		if(rn <= 0)
+			break;
+		t = kfastticks(nil);
+		off = 0;
+		if(pip_next(rg, rn, &off, &type, &tag, &body, &blen) && type == 105 && tag == 7){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			print("p9 ip: pi-p over the wire: stream frame %d arrived unasked, tag 7, version \"%s\", %llud ms after the last\n", i+1, show, (t - t0) * 10);
+		} else
+			print("p9 ip: pi-p over the wire: unexpected frame type %d tag %d\n", type, tag);
+		t0 = t;
+	}
+	if(i == 3)
+		print("p9 ip: pi-p over the wire: three frames of the stream came at the asked rate with nothing sent to make them happen - isochronous data over the wire\n");
+	tn = 0;
+	tn += pip_tsession(tg+tn, 10, sid);
+	tn += pip_tclose(tg+tn, 8, 1);
+	pipwire_put(wfd, tg, tn);
+	pipwire_get(wfd, rg, sizeof rg);
+	tsleep(&up->sleep, return0, nil, 200);
+	p9close(wfd); p9close(dfd);
+}
+
+/*
+ * Dynamic replicated data, the talk's end for the wire above: the
+ * client container keeps a replica of the server's /n/hello and follows
+ * a stream of the file's committed version ("latest") over the wire.
+ * While each frame says the version it holds, reads are answered from
+ * the replica with nothing asked of the server; when a frame says
+ * another version, the replica opens a new fid and refetches - a fid's
+ * data is a snapshot, so the new version needs a new fid - and is
+ * current again within a period.  The change is made by another path
+ * while the replica watches: 9P over the ring, this container's own
+ * mount of the server, writing the file.  Stream frames and the replies
+ * to the groups the replica sends arrive on one connection, told apart
+ * by tag.
+ */
+static void
+replica(void)
+{
+	extern long pip_tsession(uchar*, int, uvlong);
+	extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+	extern long pip_tread(uchar*, int, ulong, long, char*);
+	extern long pip_tstream(uchar*, int, ulong, ulong, ulong, char*);
+	extern long pip_tclose(uchar*, int, ulong);
+	extern int pip_next(uchar*, long, long*, int*, int*, uchar**, long*);
+	extern uvlong pip_num(uchar*, int);
+	uchar tg[512], rg[2048], *body;
+	char data[512], show[160];
+	long tn, rn, off, blen, dlen, served, frames;
+	int type, tag, dfd, wfd, fid, wrote, refetched, unchanged, want;
+	uvlong sid, vers, v;
+
+	wfd = pipwire_connect(&dfd);
+	fid = 1;
+	tn = 0;
+	tn += pip_tsession(tg+tn, 1, 0);
+	{
+		extern char *pip_ticket(void);
+		extern long pip_tauth(uchar*, int, char*);
+		char *tk = pip_ticket();
+
+		if(tk != nil)
+			tn += pip_tauth(tg+tn, 99, tk);
+	}
+	tn += pip_topen(tg+tn, 2, 0, fid, 0, "/n/hello");
+	tn += pip_tread(tg+tn, 3, fid, sizeof data - 1, "data");
+	tn += pip_tread(tg+tn, 4, fid, 32, "latest");
+	pipwire_put(wfd, tg, tn);
+	rn = pipwire_get(wfd, rg, sizeof rg);
+	sid = 0; vers = 0; dlen = 0;
+	for(off = 0; rn > 0 && pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+		if(type == 101)
+			sid = pip_num(body, 8);
+		else if(type == 105 && tag == 3){
+			dlen = pip_num(body+8, 2);
+			if(dlen > (long)sizeof data - 1)
+				dlen = sizeof data - 1;
+			memmove(data, body+10, dlen);
+			data[dlen] = 0;
+		} else if(type == 105 && tag == 4){
+			snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+			vers = strtoull(show, nil, 10);
+		}
+	}
+	print("p9 ip: replica: holding /n/hello at version %llud (%ld bytes) from the wire; watching its committed version on a stream\n", vers, dlen);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 5, sid);
+	tn += pip_tstream(tg+tn, 7, fid, 100, 0, "latest");	/* every 100 ms, no end */
+	pipwire_put(wfd, tg, tn);
+	pipwire_get(wfd, rg, sizeof rg);				/* Rsession, Rstream */
+
+	served = frames = 0; wrote = refetched = unchanged = 0; want = 0;
+	while(frames < 40 && !(refetched && unchanged >= 2 && !want)){
+		rn = pipwire_get(wfd, rg, sizeof rg);
+		if(rn <= 0)
+			break;
+		for(off = 0; pip_next(rg, rn, &off, &type, &tag, &body, &blen); ){
+			if(type == 105 && tag == 7){		/* a stream frame: the committed version now */
+				frames++;
+				snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);
+				v = strtoull(show, nil, 10);
+				if(v == vers){
+					served++;		/* a read, answered from the copy */
+					unchanged++;
+					if(unchanged == 3 && !wrote)
+						print("p9 ip: replica: the stream says version %llud still, %ld reads answered from the replica without asking the server\n", vers, served);
+				} else if(!want){
+					/* changed: a new fid on the file, its data, the old fid closed */
+					tn = 0;
+					tn += pip_tsession(tg+tn, 8, sid);
+					tn += pip_topen(tg+tn, 9, 0, fid+1, 0, "/n/hello");
+					tn += pip_tread(tg+tn, 10, fid+1, sizeof data - 1, "data");
+					tn += pip_tclose(tg+tn, 11, fid);
+					pipwire_put(wfd, tg, tn);
+					want = 10;
+					unchanged = 0;
+				}
+			} else if(type == 105 && tag == want){	/* the refetch */
+				dlen = pip_num(body+8, 2);
+				if(dlen > (long)sizeof data - 1)
+					dlen = sizeof data - 1;
+				memmove(data, body+10, dlen);
+				data[dlen] = 0;
+				print("p9 ip: replica: the stream says version %llud now, not %llud: refetched over the wire, \"%s\" - the replica is current again\n", v, vers, data);
+				vers = v;
+				fid++;
+				want = 0;
+				refetched = 1;
+				/* the stream was on the old fid, closed with it: watch the new one */
+				tn = 0;
+				tn += pip_tsession(tg+tn, 12, sid);
+				tn += pip_tstream(tg+tn, 7, fid, 100, 0, "latest");
+				pipwire_put(wfd, tg, tn);
+			} else if(type == 112){
+				snprint(show, sizeof show, "%.*s", (int)pip_num(body, 2), (char*)body+2);
+				print("p9 ip: replica: error on tag %d: %s\n", tag, show);
+			}
+		}
+		if(unchanged >= 3 && !wrote){
+			/* another path changes the file: 9P over the ring, this container's mount of the server */
+			Chan *tc, *rc, *hc;
+			char *names[2];
+			static char text[] = "a new version the replica must notice";
+
+			wrote = 1;
+			if(!waserror()){
+				tc = namec("#L", Aopen, ORDWR, 0);
+				rc = mntattach(tc, nil, "", 0);
+				cclose(tc);
+				names[0] = "n"; names[1] = "hello";
+				hc = cclone(rc);
+				cclose(rc);
+				if(walk(&hc, names, 2, 1, nil) < 0)
+					error("no /n/hello over 9P");
+				hc = devtab[hc->type]->open(hc, OWRITE|OTRUNC);
+				devtab[hc->type]->write(hc, text, sizeof text - 1, 0);
+				cclose(hc);			/* the clunk commits the new version */
+				poperror();
+				print("p9 ip: replica: another path, 9P over the ring, wrote a new version while the replica watched\n");
+			} else
+				print("p9 ip: replica: the 9P write failed: %s\n", up->errstr);
+		}
+	}
+	print("p9 ip: replica: done - %ld stream frames, %ld reads answered from the replica, %d refetch\n", frames, served, refetched);
+	tn = 0;
+	tn += pip_tsession(tg+tn, 13, sid);
+	tn += pip_tstream(tg+tn, 14, fid, 0, 0, "latest");	/* period 0: the stream stops */
+	tn += pip_tclose(tg+tn, 15, fid);
+	pipwire_put(wfd, tg, tn);
+	pipwire_get(wfd, rg, sizeof rg);
+	tsleep(&up->sleep, return0, nil, 200);
+	p9close(wfd); p9close(dfd);
+}
+
+/* a new version of the server's /n/hello by another path: 9P over the ring, this container's mount */
+static void
+write9p(char *text)
+{
+	Chan *tc, *rc, *hc;
+	char *names[2];
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n"; names[1] = "hello";
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 2, 1, nil) < 0)
+		error("no /n/hello over 9P");
+	hc = devtab[hc->type]->open(hc, OWRITE|OTRUNC);
+	devtab[hc->type]->write(hc, text, strlen(text), 0);
+	cclose(hc);			/* the clunk commits the new version */
+}
+
+/* what the server's /n/hello holds now, by the other path: 9P over the ring */
+static long
+read9p(char *buf, long max)
+{
+	Chan *tc, *rc, *hc;
+	char *names[2];
+	long n;
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n"; names[1] = "hello";
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 2, 1, nil) < 0)
+		error("no /n/hello over 9P");
+	hc = devtab[hc->type]->open(hc, OREAD);
+	n = devtab[hc->type]->read(hc, buf, max - 1, 0);
+	cclose(hc);
+	if(n < 0)
+		n = 0;
+	buf[n] = 0;
+	return n;
+}
+
+/* a file made on the server by the other path, 9P over the ring, for the cache to hold */
+static void
+create9p(char *name, char *text)
+{
+	Chan *tc, *rc, *hc;
+	char *names[1];
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n";
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 1, 1, nil) < 0)
+		error("no /n over 9P");
+	devtab[hc->type]->create(hc, name, OWRITE, 0666);
+	devtab[hc->type]->write(hc, text, strlen(text), 0);
+	cclose(hc);
+}
+
+/*
+ * The caching file system (devcache.c) through the name space: #K bound
+ * over /n, so /n/hello here is the server's file, held in this
+ * container and kept current by the wire.  Two opens - a miss and a
+ * hit; a listing; a new version written by another path; and an open
+ * after the stream has said so, which refetches.
+ */
+static void
+cachetest(void)
+{
+	extern void cachestats(int*, int*, int*, long*);
+	extern int p9bind(char*, char*, int);
+	char buf[256];
+	uchar dbuf[1024];
+	int fd, hits, misses, refetches, i;
+	long n, nf;
+	Dir d;
+	char names[128];
+
+	p9bind("#K", "/n", MREPL);
+	for(i = 0; i < 2; i++){
+		fd = p9open("/n/hello", OREAD);
+		n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+		p9close(fd);
+		print("p9 ip: cache: read /n/hello through this container's name space (%s): \"%s\"\n", i == 0 ? "a miss, fetched" : "a hit, from the copy", buf);
+	}
+	fd = p9open("/n", OREAD);
+	{
+		uchar *p, *e;
+		int k;
+
+		while((n = p9read(fd, dbuf, sizeof dbuf)) > 0)
+			for(p = dbuf, e = dbuf + n; p < e; p += k){
+				if((k = convM2D(p, (uint)(e - p), &d, names)) <= 0)
+					break;
+				if(strcmp(d.name, "hello") == 0)
+					print("p9 ip: cache: ls /n lists hello, version %lud, %lld bytes - the cache is a directory in the name space, the version and length of what it holds\n", d.qid.vers, (vlong)d.length);
+			}
+	}
+	p9close(fd);
+	write9p("a version written after the cache held the file");
+	print("p9 ip: cache: another path, 9P over the ring, wrote a new version\n");
+	tsleep(&up->sleep, return0, nil, 250);		/* two periods of the stream */
+	fd = p9open("/n/hello", OREAD);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9close(fd);
+	print("p9 ip: cache: read /n/hello again after the stream said the version changed: \"%s\"\n", buf);
+	cachestats(&hits, &misses, &refetches, &nf);
+	print("p9 ip: cache: done - %d miss, %d hit, %d refetch, %ld stream frames taken off the wire\n", misses, hits, refetches, nf);
+
+	/*
+	 * The cache as a file system.  A write through it: the close
+	 * commits on the server, a pi-p write and close on the wire, and
+	 * the other path reads the new text back there.  The directory is
+	 * the server's root listing.  Nine files through a cache of eight:
+	 * the ninth evicts the least recently used, its fid closed and its
+	 * stream stopped.  And the stream is the lease's heartbeat: after
+	 * the server's lease has passed, an entry is still held.
+	 */
+	{
+		extern void cachestats2(int*, int*);
+		static char through[] = "written through the cache; the close committed it on the server";
+		char name[32], text[64], held[256];
+		int nevict, nwrite, nnames, nheld, k;
+		uchar *p, *e;
+
+		fd = p9open("/n/hello", OWRITE|OTRUNC);
+		p9write(fd, through, strlen(through));
+		p9close(fd);
+		read9p(buf, sizeof buf);
+		print("p9 ip: cache: wrote /n/hello through the cache, and 9P over the ring reads it back on the server: \"%s\"\n", buf);
+
+		for(i = 1; i <= 8; i++){
+			snprint(name, sizeof name, "cachef%d", i);
+			snprint(text, sizeof text, "file %d, made on the server for the cache to hold", i);
+			create9p(name, text);
+		}
+		for(i = 1; i <= 8; i++){
+			snprint(name, sizeof name, "/n/cachef%d", i);
+			fd = p9open(name, OREAD);
+			n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+			p9close(fd);
+		}
+		cachestats2(&nevict, &nwrite);
+		print("p9 ip: cache: nine files opened through the cache of eight: %d evicted, the least recently used; %d written through\n", nevict, nwrite);
+
+		/* the directory now: what the cache holds, the eight cachef files, hello evicted */
+		fd = p9open("/n", OREAD);
+		nnames = nheld = 0;
+		held[0] = 0;
+		while((n = p9read(fd, dbuf, sizeof dbuf)) > 0)
+			for(p = dbuf, e = dbuf + n; p < e; p += k){
+				if((k = convM2D(p, (uint)(e - p), &d, names)) <= 0)
+					break;
+				nnames++;
+				snprint(held + strlen(held), sizeof held - strlen(held), "%s%s", held[0] ? " " : "", d.name);
+			}
+		p9close(fd);
+		USED(nheld);
+		print("p9 ip: cache: ls /n lists what the cache holds: %d files (%s)\n", nnames, held);
+
+		tsleep(&up->sleep, return0, nil, 3500);	/* past the server's three-second lease */
+		fd = p9open("/n/cachef8", OREAD);
+		n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+		p9close(fd);
+		cachestats(&hits, &misses, &refetches, &nf);
+		print("p9 ip: cache: 3500 ms later /n/cachef8 is still held - %s; the stream's frames renewed its lease on the server\n",
+			strcmp(buf, "file 8, made on the server for the cache to hold") == 0 ? "read from the copy" : "not what was written");
+		{
+			extern void cachestopall(void);
+
+			cachestopall();			/* its streams stopped, so none fires on through the rest of the run */
+			print("p9 ip: cache: done as a file system - every entry let go, its stream stopped on the server\n");
+		}
+	}
+}
+
+/* the firewall from the client's side: ask for the rule, then a connect held until it is lifted */
+static void
+fwtest(void)
+{
+	extern uvlong kfastticks(uvlong*);
+	int ufd, dfd, wfd, cnum;
+	long n;
+	uvlong t0, t1;
+	char cbuf[64], path[64], rx[256];
+	static char msg[] = "sent once the firewall let the connection through";
+
+	/*
+	 * The rule is set by writing the container's firewall attribute
+	 * over pi-p, not by a datagram: the client holds the container (a
+	 * ticket its kernel signed), opens a pi-p session over the ring,
+	 * and writes "firewall" = "up".  Only a holder may; a datagram
+	 * from anyone could not.
+	 */
+	{
+		extern long pip_tsession(uchar*, int, uvlong);
+		extern long pip_tauth(uchar*, int, char*);
+		extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+		extern long pip_twrite(uchar*, int, ulong, char*, char*, long);
+		extern char *pip_ticket(void);
+		uchar tg[512], rg[256];
+		long tn;
+		int pdfd, pwfd;
+		char *tk;
+
+		pwfd = pipwire_connect(&pdfd);		/* the pi-p wire to the server, over the ring */
+		tn = 0;
+		tn += pip_tsession(tg+tn, 1, 0);
+		if((tk = pip_ticket()) != nil)
+			tn += pip_tauth(tg+tn, 2, tk);
+		tn += pip_topen(tg+tn, 3, 0, 1, 0, "/n/hello");	/* a fid to carry the write on */
+		tn += pip_twrite(tg+tn, 4, 1, "firewall", "up", 2);
+		pipwire_put(pwfd, tg, tn);
+		pipwire_get(pwfd, rg, sizeof rg);
+		print("p9 ip: firewall: the client set the container's firewall attribute to \"up\" over pi-p - it holds the container\n");
+		p9close(pwfd); p9close(pdfd);
+		USED(ufd);
+	}
+	tsleep(&up->sleep, return0, nil, 200);		/* let the rule go up */
+	t0 = kfastticks(nil);
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	print("p9 ip: firewall: connecting to 10.0.1.2!9004 while the rule stands\n");
+	p9write(dfd, "connect 10.0.1.2!9004", 21);	/* held: the SYNs are diverted until the rule is lifted */
+	t1 = kfastticks(nil);
+	print("p9 ip: firewall: the connect took %llud ms - held while the rule diverted its SYNs, done once it was lifted\n", (t1 - t0) * 10);
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	wfd = p9open(path, ORDWR);
+	p9write(wfd, msg, sizeof msg - 1);
+	n = p9read(wfd, rx, sizeof rx - 1); if(n<0)n=0; rx[n]=0;
+	print("p9 ip: firewall: read %ld bytes back through the connection the rule had held: \"%s\"\n", n, rx);
+	{
+		extern long pip_tsession(uchar*, int, uvlong);
+		extern long pip_tauth(uchar*, int, char*);
+		extern long pip_topen(uchar*, int, ulong, ulong, int, char*);
+		extern long pip_twrite(uchar*, int, ulong, char*, char*, long);
+		extern char *pip_ticket(void);
+		uchar tg[512], rg[256];
+		long tn;
+		int pdfd, pwfd;
+		char *tk;
+
+		pwfd = pipwire_connect(&pdfd);
+		tn = 0;
+		tn += pip_tsession(tg+tn, 1, 0);
+		if((tk = pip_ticket()) != nil)
+			tn += pip_tauth(tg+tn, 2, tk);
+		tn += pip_topen(tg+tn, 3, 0, 1, 0, "/n/hello");
+		tn += pip_twrite(tg+tn, 4, 1, "firewall", "down", 4);
+		pipwire_put(pwfd, tg, tn);
+		pipwire_get(pwfd, rg, sizeof rg);
+		print("p9 ip: firewall: the client set the firewall attribute to \"down\" over pi-p; the rule is lifted\n");
+		p9close(pwfd); p9close(pdfd);
+	}
+	tsleep(&up->sleep, return0, nil, 300);
+	p9close(wfd); p9close(dfd);
+}
+
+static void
+ostcpclient(void *)
+{
+	int dfd, sfd, wfd, cnum, tries;
+	long n;
+	char cbuf[64], line[256], path[64], rx[256], *e;
+	static char msg[] = "sent by the client container's own tcp.c, across the ring";
+
+	tsleep(&up->sleep, return0, nil, 100);	/* let the loop start ticking */
+	if(waserror()){
+		print("p9 ip: client container: tcp across the ring failed: %s\n", up->errstr);
+		clientnetdone = 1;
+		pexit("ostcpclient", 0);
+	}
+	dfd = p9open("/net/tcp/clone", ORDWR);
+	n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+	print("p9 ip: client container: its own tcp.c connecting to 10.0.1.2!9999, the server container, across the ring wire\n");
+	p9write(dfd, "connect 10.0.1.2!9999", 21);	/* returns once the handshake is done */
+	snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+	sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+	if(n<0)n=0; line[n]=0;
+	for(e=line; *e && *e!='\n'; e++) ; *e=0;
+	if(strncmp(line, "Established", 11) == 0)
+		print("p9 ip: client container: the two containers' tcp.c completed a handshake across the ring - %s\n", line);
+	else
+		print("p9 ip: client container: handshake did not reach Established - %s\n", line);
+	snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+	wfd = p9open(path, ORDWR);
+	p9write(wfd, msg, sizeof msg - 1);
+	for(tries = 0, n = 0; tries < 100 && n <= 0; tries++){
+		tsleep(&up->sleep, return0, nil, 50);	/* the answer crosses on ticks */
+		n = p9read(wfd, rx, sizeof rx - 1);
+	}
+	if(n<0)n=0; rx[n]=0;
+	print("p9 ip: client container: read %ld bytes back from the server container's tcp.c across the ring: \"%s\"\n", n, rx);
+	tsleep(&up->sleep, return0, nil, 300);	/* let the acks cross before the close does */
+	p9close(wfd); p9close(dfd);
+	/*
+	 * Through the gateway: stack A (10.0.0.1) has no wire to this
+	 * container; the route added below sends 10.0.0.0/24 to 10.0.1.2,
+	 * stack B, which forwards.  The same tcp.c conversation, one hop
+	 * further, the forwarding done by the real ip.c in the server
+	 * container.
+	 */
+	{
+		static char msg2[] = "sent through stack B as a gateway to stack A";
+		dfd = p9open("/net/tcp/clone", ORDWR);
+		n = p9read(dfd, cbuf, sizeof cbuf - 1); if(n<0)n=0; cbuf[n]=0; cnum=atoi(cbuf);
+		print("p9 ip: client container: connecting to 10.0.0.1!8890, stack A, through stack B as a gateway\n");
+		p9write(dfd, "connect 10.0.0.1!8890", 21);
+		snprint(path, sizeof path, "/net/tcp/%d/status", cnum);
+		sfd = p9open(path, OREAD); n = p9read(sfd, line, sizeof line - 1); p9close(sfd);
+		if(n<0)n=0; line[n]=0;
+		for(e=line; *e && *e!='\n'; e++) ; *e=0;
+		if(strncmp(line, "Established", 11) == 0)
+			print("p9 ip: client container: handshake with stack A through the gateway - %s\n", line);
+		else
+			print("p9 ip: client container: gateway handshake did not reach Established - %s\n", line);
+		snprint(path, sizeof path, "/net/tcp/%d/data", cnum);
+		wfd = p9open(path, ORDWR);
+		p9write(wfd, msg2, sizeof msg2 - 1);
+		for(tries = 0, n = 0; tries < 100 && n <= 0; tries++){
+			tsleep(&up->sleep, return0, nil, 50);
+			n = p9read(wfd, rx, sizeof rx - 1);
+		}
+		if(n<0)n=0; rx[n]=0;
+		print("p9 ip: client container: read %ld bytes back from stack A through the gateway: \"%s\"\n", n, rx);
+		tsleep(&up->sleep, return0, nil, 300);
+		p9close(wfd); p9close(dfd);
+	}
+	pipclient();
+	replica();
+	fwtest();
+	cachetest();
+	poperror();
+	clientnetdone = 1;
+	pexit("ostcpclient done", 0);
+}
+
+void
+p9clientnet(void)
+{
+	extern int ring9p_taketick(int), ring9p_wait(int);
+	extern void ospreymediumpoll(void), ospreymediumtaken(void), ospreymediumstats(long*, long*);
+	extern void sched_tick(void), runkprocs(void);
+	enum { Ticksem = 3 };		/* the kernel gave the client's keyboard 1 and mouse 2 */
+	Chan *ic, *nc;
+	char buf[128];
+	int fd, ticks, taken;
+	long n, tx, rx;
+
+	if(waserror()){
+		print("p9 ip: client container: stack bring-up failed: %s\n", up->errstr);
+		return;
+	}
+	ospreymediumlink();
+	ic = namec("#I", Atodir, 0, 0);
+	nc = namec("/net", Atodir, 0, 0);
+	cmount(ic, nc, MAFTER, "");
+	cclose(ic);
+	cclose(nc);
+	fd = p9open("/net/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9write(fd, "bind osprey ring client", 23);
+	p9write(fd, "add 10.0.1.1 255.255.255.0", 26);
+	p9close(fd);
+	{
+		static char via[] = "add 10.0.0.0 255.255.255.0 10.0.1.2";	/* stack A's network, through stack B */
+		fd = p9open("/net/iproute", ORDWR);
+		p9write(fd, via, sizeof via - 1);
+		p9close(fd);
+	}
+	print("p9 ip: client container: the real Plan 9 IP stack is up in this container too; its osprey interface 10.0.1.1 is the ring wire to the server container\n");
+	if(ring9p_taketick(Ticksem) < 0)
+		error("the clock tick was refused");
+	kproc("ostcpclient", ostcpclient, nil);
+	taken = 0;
+	for(ticks = 0; ticks < 4000 && !clientnetdone; ){
+		switch(ring9p_wait(Ticksem)){
+		case 1:				/* a frame from the server, on our output queue: no poll asked for it */
+			taken++;
+			ospreymediumtaken();
+			runkprocs();
+			continue;
+		case 0:
+			break;
+		case -1:			/* nothing in the kernel's wait: a tick can pause that long under a loaded host; ask again */
+			continue;
+		default:
+			error("select on the tick and the output queue failed");
+		}
+		ticks++;
+		ospreymediumpoll();	/* whatever is queued, injected */
+		sched_tick();		/* the cooperative clock: timers, tsleep */
+		runkprocs();		/* the connecting kproc and the protocol kprocs */
+	}
+	ospreymediumstats(&tx, &rx);
+	print("p9 ip: client container: %s after %d ticks; %ld frames of its stack's crossed the ring to the server container and %ld of the server's stack's came back on this container's output queue, taken by select %d times, no polls\n",
+		clientnetdone ? "done" : "gave up", ticks, tx, rx, taken);
+	poperror();
+}
+
+/*
  * Bring the real Plan 9 IP stack up in this personality and prove it
  * runs.  ipdevtab is in the personality devtab and this is called from
  * the server once its name space is up.  The stack is the actual
@@ -216,6 +1907,29 @@ p9ipup(void)
 		print("p9 rtc: read the CMOS clock in user space by its own outb/inb (ports 0x70/0x71): "
 			"%d-%02d-%02d %02d:%02d:%02d - no kernel rtc device\n",
 			2000 + a[5], a[4], a[3], a[2], a[1], a[0]);
+		/*
+		 * And hand the kernel the time: it read no clock at boot and
+		 * its time of day starts at zero, which is what tickets expire
+		 * against.  Seconds since 1970, the CMOS clock taken as UTC
+		 * (which is how the test bench keeps it), by the usual
+		 * days-from-civil count.
+		 */
+		{
+			extern long ospreyxcall(int op, uvlong *args, long n);
+			uvlong secs, args[5];
+			long y, m, d, days;
+
+			y = 2000 + a[5]; m = a[4]; d = a[3];
+			if(m <= 2){ y--; m += 12; }
+			days = 365*y + y/4 - y/100 + y/400 + (153*(m - 3) + 2)/5 + d - 1 - 719468;	/* days since 1970-01-01 */
+			secs = (uvlong)days*86400 + a[2]*3600 + a[1]*60 + a[0];
+			args[0] = secs;
+			args[1] = args[2] = args[3] = args[4] = 0;
+			if(ospreyxcall(23, args, 1) == 0)		/* ReqSettime */
+				print("p9 rtc: set the kernel's time of day to %llud seconds since the epoch, by request, from the clock read in user space\n", secs);
+			else
+				print("p9 rtc: the kernel refused the time of day\n");
+		}
 	}
 	if(waserror()){
 		print("p9 ip: bring-up failed: %s\n", up->errstr);
@@ -223,6 +1937,7 @@ p9ipup(void)
 	}
 	loopbackmediumlink();
 	ospreymediumlink();
+	ospreyvnetmediumlink();
 	ic = namec("#I", Atodir, 0, 0);
 	nc = namec("/net", Atodir, 0, 0);
 	cmount(ic, nc, MAFTER, "");
@@ -265,7 +1980,43 @@ p9ipup(void)
 	p9write(fd, "add 10.0.0.2 255.255.255.0", 26);
 	print("p9 ip: second stack #I1 with an osprey interface at 10.0.0.2\n");
 	p9close(fd);
+	/*
+	 * And on stack B a third osprey interface whose wire is the ring to
+	 * the client container: frames it sends wait for the client's next
+	 * request and ride the reply; frames the client's stack sends
+	 * arrive by Reqframe and are injected here.  10.0.1.2, on a subnet
+	 * of its own, so the route to the client's 10.0.1.1 goes out it.
+	 */
+	fd = p9open("#I1/ipifc/clone", ORDWR);
+	n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+	p9write(fd, "bind osprey ring", 16);
+	p9write(fd, "add 10.0.1.2 255.255.255.0", 26);
+	print("p9 ip: stack B's osprey interface 10.0.1.2 is the ring wire to the client container\n");
+	/*
+	 * Stack B now has a wire on each side - 10.0.0.2 to stack A, 10.0.1.2
+	 * to the client container - so make it a gateway: the real stack's
+	 * own forwarding (ip.c's iprouting), a packet from the client for
+	 * stack A comes in the ring wire, is not for stack B, and goes out
+	 * the paired one with its ttl decremented, and the reply comes back
+	 * the same way because stack A routes 10.0.1.0/24 through 10.0.0.2.
+	 * The talk's router and gateway, run by the Plan 9 stack in user
+	 * space; the kernel routes nothing here but the ring messages.
+	 */
+	p9write(fd, "iprouting 1", 11);
+	p9close(fd);
+	{
+		static char via[] = "add 10.0.1.0 255.255.255.0 10.0.0.2";
+		fd = p9open("/net/iproute", ORDWR);
+		p9write(fd, via, sizeof via - 1);
+		p9close(fd);
+	}
+	print("p9 ip: stack B forwards between its two wires - a gateway; stack A routes 10.0.1.0/24 through it at 10.0.0.2\n");
 	kproc("ostcp", ostcp, nil);	/* two-stack tcp.c handshake + byte stream over the osprey wire */
+	kproc("ringsrv", ringsrv, nil);	/* a tcp.c service for the client container, across the ring wire */
+	kproc("gwsrv", gwsrv, nil);	/* the same on stack A, reached through stack B as a gateway */
+	kproc("pipwire", pipwire, nil);	/* pi-p about this personality's files, on the wire */
+	kproc("pipwireA", pipwire, "/net");	/* and on stack A, where the other machine asks across the cable */
+	kproc("fwsrv", fwsrv, nil);	/* the firewall: the stack's own ipmux, a rule on the client's ask */
 	p9kbdstart();			/* the i8042 keyboard driver, in user space above the kernel */
 	poperror();
 

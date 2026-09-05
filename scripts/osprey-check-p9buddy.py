@@ -28,7 +28,7 @@ def main():
     if r.returncode != 0:
         print('FAIL 9p9buddy did not build'); print(r.stdout[-800:]); print(r.stderr[-800:]); return 1
     subprocess.run(['sh', 'scripts/mkosprey-efi-iso.sh'],
-                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9buddy')),
+                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9buddy'), OSPREY_INI='ospreykey=this machine\'s secret'),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9buddy-', suffix='.log')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',

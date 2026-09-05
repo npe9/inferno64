@@ -25,13 +25,12 @@
  * The one-time controller setup (the command-byte handshakes that turn
  * the keyboard and aux interrupts on, enable the aux device and its
  * reporting, and drain the buffer) is done inside those two xcalls, in
- * the kernel, not in this CPL3 kproc: the handshakes spin on the status
- * port, and a spin that long at CPL3 in a cooperative kproc is a window
- * for a clock or device interrupt to land while this kproc is the running
- * context, which this microkernel's interrupt path corrupts (the standing
- * pc64 heisenbug).  The reads below are a couple of inb instructions each
- * - short CPL3 bursts - so the data path stays in user space without
- * reopening that window.
+ * this CPL3 kproc now (i8042enable below): the handshakes spin on the
+ * status port, once thought to reopen the standing pc64 interrupt-path
+ * bug, which item 15 ran fifty-two boots of the reproduction against and
+ * found gone.  The whole i8042 - its one-time enable and its scancode
+ * reads both - is the driver's, in user space; the kernel only routes
+ * the interrupt as a notification.
  *
  * It runs as a cooperative kproc, sharing the one microkernel process the
  * personality is, and that process's port grant.  A kproc cannot block in
@@ -61,6 +60,80 @@ enum {
 };
 
 extern int  ospreyinb(int);
+extern void ospreyoutb(int, int);
+
+/*
+ * The i8042 command-byte handshake, at CPL3, with this driver's own
+ * port I/O - the enable the kernel used to do (item 7b's seam), moved
+ * here now that item 15 showed a long CPL3 spin taking interrupts
+ * corrupts nothing.  The spins on the status port are bounded so a
+ * wedged controller cannot hang the driver.  The kernel has already
+ * armed the notification handler and masked its own; the interrupt is
+ * not enabled in the controller until the writes below set the command
+ * bits, so no keypress or mouse packet fires before the driver is ready.
+ */
+static void
+i8042wait_ibe(void)		/* wait for the input buffer to empty before a write */
+{
+	int i;
+	for(i = 0; i < 100000 && (ospreyinb(Kbdstat) & 0x02); i++)
+		;
+}
+static void
+i8042wait_obf(void)		/* wait for the output buffer to fill before a read */
+{
+	int i;
+	for(i = 0; i < 100000 && !(ospreyinb(Kbdstat) & Kbdready); i++)
+		;
+}
+static void
+i8042cmd_u(int cmd)
+{
+	i8042wait_ibe();
+	ospreyoutb(Kbdstat, cmd);
+}
+static void
+i8042wdata_u(int data)
+{
+	i8042wait_ibe();
+	ospreyoutb(Kbddata, data);
+}
+static int
+i8042rdata_u(void)
+{
+	i8042wait_obf();
+	return ospreyinb(Kbddata) & 0xff;
+}
+
+static void
+i8042enable(void)
+{
+	int c, i;
+
+	/* drain any stale bytes the buffer holds */
+	for(i = 0; i < 100000 && (ospreyinb(Kbdstat) & Kbdready); i++)
+		ospreyinb(Kbddata);
+	/* the keyboard: read the command byte, set the keyboard-interrupt bit, write it back */
+	i8042cmd_u(0x20);
+	c = i8042rdata_u();
+	c |= 0x01;			/* keyboard interrupt enable (IRQ1) */
+	i8042cmd_u(0x60);
+	i8042wdata_u(c);
+	/* the aux (mouse): enable the port, set the aux-interrupt and clock bits, tell it to report */
+	i8042cmd_u(0xA8);		/* enable the aux port */
+	i8042cmd_u(0x20);
+	c = i8042rdata_u();
+	c |= 0x02;			/* aux interrupt enable (IRQ12) */
+	c &= ~0x20;			/* aux clock enable (0 = enabled) */
+	i8042cmd_u(0x60);
+	i8042wdata_u(c);
+	i8042cmd_u(0xD4);		/* route the next byte to the aux port */
+	i8042wdata_u(0xF4);		/* tell the mouse to report movement */
+	i8042rdata_u();			/* eat its ACK (0xFA) */
+	/* drain the echoes */
+	for(i = 0; i < 100000 && (ospreyinb(Kbdstat) & Kbdready); i++)
+		ospreyinb(Kbddata);
+}
 extern long ospreyxcall(int op, uvlong *args, long n);
 
 static Rendez kbdr;
@@ -106,7 +179,15 @@ kbdproc(void *)
 	ospreyxcall(ReqKbdnotify, a, 1);
 	a[0] = Mousesem;
 	ospreyxcall(ReqMousenotify, a, 1);
-	print("p9 i8042: user-space driver up; IRQ1/IRQ12 are notifications, "
+	/*
+	 * The handshake at CPL3, this driver's own: the kernel has armed
+	 * the notification handlers and masked its own; now the driver
+	 * enables the keyboard and aux interrupts in the controller.  The
+	 * whole i8042 - its enable and its data both - is the driver's now.
+	 */
+	i8042enable();
+	print("p9 i8042: user-space driver up; the driver did the controller handshake at CPL3 "
+		"(the whole i8042 is its own now); IRQ1/IRQ12 are notifications, "
 		"scancodes and mouse packets read by inb\n");
 
 	mn = 0;

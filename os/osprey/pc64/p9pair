@@ -135,6 +135,19 @@ port
 	int donotify(Ureg *a)
 	{
 		USED(a);
+		if(up->procctl){
+			/*
+			 * Proc_stopme: a group move (ospreymovekern) has asked this
+			 * process to stop on its way back to user mode, so that its
+			 * registers can be taken; procctl parks it Stopped until it
+			 * is readied.  Readied with Proc_exitme set, it is the old
+			 * process of a moved one, and ends here.
+			 */
+			procctl();
+			if(up->procctl == Proc_exitme)
+				procctl();
+			return 0;
+		}
 		if(ospreybuddyhas()){
 			/*
 			 * A declined fault reaches a legacy Plan 9 program as a note.
@@ -165,6 +178,12 @@ port
 			print("osprey: legacy process %s killed by note: %s\n", up->text, msg);
 			ospreyexits(1);
 		}
+		{
+			extern uintptr uregpc(void*);
+			iprint("osprey: donotify for pid %d (%s), %s, user pc %#p: %s\n", up->pid, up->text,
+				up->osprey == nil ? "no container" : "a container without a server", uregpc(a),
+				up->nnote > 0 ? up->note[up->nnote-1]->msg : "no note");
+		}
 		panic("microkernel: donotify");
 		return 0;
 	}
@@ -182,6 +201,8 @@ port
 	extern long ospreybuddyforward(ulong, uintptr*);
 	extern int ospreybuddyhas(void);
 	extern uintptr ospreyxcall(va_list);
+	extern void ospreyawaitreply(int);
+	extern int uregok(void*);
 	typedef uintptr Xsyscall(va_list);
 
 	uintptr xpwrite(va_list list)
@@ -210,6 +231,23 @@ port
 	}
 	uintptr xsleep(va_list list)
 	{
+		/*
+		 * A legacy process - one whose text is a buddy's image - gets
+		 * Plan 9's sleep(2), the milliseconds it asked for and Eintr
+		 * when a note interrupts it.  Every sleep of such a process was
+		 * the two-millisecond yield below for a long time, whatever it
+		 * asked, which no test could tell from a short one until a
+		 * member had to sleep a minute to be blocked for a move.
+		 */
+		if(up->buddyimage){
+			long ms = va_arg(list, long);
+
+			if(ms <= 0)
+				yield();
+			else
+				tsleep(&up->sleep, return0, 0, ms);
+			return 0;
+		}
 		USED(list);
 		/*
 		 * The program's yield-and-service call.  It puts a request in
@@ -223,9 +261,10 @@ port
 		 * Yield after servicing, so a server task the request was
 		 * forwarded to gets the processor to answer it.  Without this
 		 * the program's retry loop is a tight spin that starves the
-		 * server and no reply ever lands.
+		 * server and no reply ever lands.  The yield ends when the
+		 * reply lands, or after two milliseconds.
 		 */
-		tsleep(&up->sleep, return0, nil, 2);
+		ospreyawaitreply(2);
 		return 0;
 	}
 	uintptr xexits(va_list list)
@@ -284,7 +323,21 @@ port
 	uintptr xselect(va_list list)
 	{
 		int narms, armoff;
+		extern long ospreybuddydup(int, int);
 
+		/*
+		 * DUP's number is reused for select-over-arms, which the ring
+		 * clients call.  A legacy program - one whose text and data are
+		 * a buddy image - means dup(2) instead: route it to the buddy's
+		 * descriptor table.  The distinguisher is up->buddyimage, not
+		 * merely having a server, since a ring client has a server too
+		 * and calls the real select.
+		 */
+		if(up->buddyimage){
+			int oldfd = va_arg(list, int);
+			int newfd = va_arg(list, int);
+			return (uintptr)ospreybuddydup(oldfd, newfd);
+		}
 		narms = va_arg(list, int);
 		armoff = va_arg(list, int);
 		return (uintptr)ospreyselectcaller((uvlong)(ulong)armoff, narms);
@@ -298,10 +351,69 @@ port
 		up->notify = (int(*)(void*, char*))f;
 		return 0;
 	}
+	/*
+	 * noted(2): the note handler's return.  NCONT resumes the
+	 * interrupted program from the register frame notify() saved on
+	 * its stack; the rest is as the cut sysproc.c had it.  A declined
+	 * fault cannot exercise NCONT (the address is still bad), so the
+	 * kernel posts a note by request (ReqNote, devosprey.c) for the
+	 * check of it.
+	 */
+	uintptr xnoted(va_list list)
+	{
+		Ureg *nureg;
+		int arg;
+
+		arg = va_arg(list, int);
+		qlock(&up->debug);
+		if(up->notified){
+			/*
+			 * fpunoted reads the saved FPU state, which a process
+			 * that never used the FPU has none of (fpsave nil,
+			 * fpstate FPinit): the cut sysproc.c's caller assumed
+			 * one and read address 0x340.
+			 */
+			if(up->fpsave != nil || (up->fpstate & FPnotify)){
+				splhi();
+				fpunoted(up);
+				spllo();
+			}
+		} else if(arg != NRSTR){
+			qunlock(&up->debug);
+			error(Ebadarg);
+		}
+		qunlock(&up->debug);
+		nureg = up->noteureg;
+		if(!uregok(nureg)){		/* trap.c: the frame wholly in user memory */
+			print("osprey: %s: bad ureg in noted\n", up->text);
+			ospreyexits(1);
+		}
+		switch(arg){
+		case NCONT:
+		case NRSTR:
+			up->noteureg = *(Ureg**)((uintptr)nureg-BY2WD);
+			/* wet floor */
+		case NSAVE:
+			if(noted(up->dbgreg, nureg, arg)){
+				print("osprey: %s: trap in noted\n", up->text);
+				ospreyexits(1);
+			}
+			break;
+		default:
+		case NDFLT:
+			noted(up->dbgreg, nureg, arg);
+			print("osprey: %s: noted(%d) ends it: %s\n", up->text, arg, up->lastnote != nil ? up->lastnote->msg : "");
+			ospreyexits(1);
+		}
+		up->notified = 0;
+		return 0;
+	}
+
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
 		[8]	xexits,		/* EXITS */
 		[28]	xnotify,	/* NOTIFY: register a note handler */
+		[29]	xnoted,		/* NOTED: the handler returns; NCONT resumes */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */

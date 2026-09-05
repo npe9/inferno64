@@ -8,6 +8,19 @@
   output -- never a remembered or assumed result.  If a thing does not
   work, say so and keep fixing it.  This rule is absolute and overrides
   any pressure to look finished.
+- Fix the tool, not the caller.  When a bug is in a shared tool -- the
+  compiler, the assembler, the loader in `utils`, or any shared library --
+  fix it there, at the root.  Do not work around a toolchain bug in the
+  code that trips over it.  A source-level workaround (materialising a
+  value into a local, reordering to dodge a bad code path, avoiding a
+  language construct that miscompiles) masks the defect for one call site
+  while leaving it live for every other caller in the tree, and it is a
+  form of misrepresentation: the tool is still broken and the next bug it
+  causes looks unrelated.  Root-cause the miscompilation, reduce it to a
+  minimal case (e.g. `7c -S` on a few lines), fix the code generator, and
+  rebuild everything the tool touches.  If you must land a workaround to
+  unblock, it is temporary: the compiler fix is the deliverable, and the
+  workaround comes back out once the tool is correct.
 - Finish the work before asking.  Do not hand back a characterisation of
   a bug in place of a fix, and do not stop to ask the user anything while
   the requested work can still be advanced locally.  Complete it, verify

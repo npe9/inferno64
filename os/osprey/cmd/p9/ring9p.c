@@ -14,6 +14,7 @@
  */
 #include <u.h>
 #include <libc.h>
+#include "ospreydata.h"
 
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
@@ -22,10 +23,17 @@ enum {
 	Req9P		= 14,	/* above every request in policy/syscall.h */
 	ReqPip		= 18,	/* a pi-p group to the server personality, the same way */
 	Reqframe	= 20,	/* a network frame to the peer container's stack, over the ring */
-	Maxframe	= 512,	/* a frame fits between T and R in the small data area */
+	Maxframe	= 2048,	/* the ring medium's MTU: a frame fits one of the slice's packet buffers */
+	Inpktbuf	= 0xB0F,	/* arg[4] of a Reqframe: the frame is in the sender's packet buffer arg[2], not the data area */
+	Ntxslot		= 16,	/* our packet buffers 0-15 carry frames to the server; 16-31 carry the server's to us */
+	Takenoff	= Odtaken,	/* where select puts a message it takes off our output queue */
+	OSget		= 2,	/* a select arm: take a message off a queue */
 	ReqWait		= 4,
 	ReqExec		= 13,
-	Execnameoff	= 3072,	/* where exec's name goes in the data area, clear of 9P */
+	ReqTick		= 17,	/* a request of our own (ospreyxcall): the clock tick on a semaphore */
+	OSdown		= 4,	/* a select arm: down a semaphore */
+	Armoff		= Odarm,	/* the client's one select arm, at the start of the data area */
+	Execnameoff	= Odexecname,	/* where exec's name goes in the data area, clear of 9P */
 	ReplyDone	= 1,
 };
 
@@ -43,6 +51,9 @@ typedef struct Queue Queue;
 struct Queue { vlong message; uvlong size, put, get; };
 typedef struct Msg Msg;
 struct Msg { uvlong op, sequence, container, arg[5]; };
+
+typedef struct Arm Arm;
+struct Arm { uvlong op, obj, buf; };
 
 typedef struct Ring Ring;
 struct Ring {
@@ -131,7 +142,7 @@ ringxfer(uvlong op, uchar *tmsg, long tn, uchar *rbuf, long rmax)
 	Msg rep;
 	uchar *data;
 	long rn, k;
-	enum { T9off = 256, R9off = 1024 };
+	enum { T9off = Odt9, R9off = Odr9 };
 
 	if(tn < 0 || tn > R9off - T9off)	/* keep T clear of R in the small data area */
 		return -1;
@@ -164,41 +175,119 @@ ringpip_xfer(uchar *tmsg, long tn, uchar *rbuf, long rmax)
 }
 
 /*
- * A network frame to the peer container over the ring: the frame goes in
- * our data area and the server drains it into the stack at its end, the
- * device-carrying form of the osprey medium.  Returns the count the peer
- * took, or -1.  This is the medium's two ends as two containers, in the
- * one direction the request ring runs (client to server); the reply
- * carries nothing back yet.
+ * A network frame to the peer container over the ring: staged in one of
+ * this container's own packet buffers - the server maps the slice and
+ * reads it there - and sent as a Reqframe naming the buffer; the reply
+ * is the count taken.  Nothing comes back on the reply any more: the
+ * far stack's frames arrive on this container's output queue, which
+ * select takes them from (ring9p_wait, ring9p_taken).  The one-way
+ * request ring is used one way.  Returns 0 when the server took it, -1
+ * if the ring failed.
  */
 long
-ring9p_frame(uchar *frame, long n)
+ring9p_frame(uchar *frame, long n, uchar*, long)
 {
-	uchar rbuf[Maxframe];
-	long rn, k, back;
+	Ring *r = &ring;
+	Msg rep;
+	uchar *b;
+	long k, rn;
+	static int txnext;
+	int slot;
 
-	/*
-	 * ringxfer caps its return at the reply buffer, so the buffer must be
-	 * as big as the frame for the reply to come back whole.  The reply
-	 * carries the peer's return frame - the reverse direction of the
-	 * device-carried medium - which we check came back whole; this client
-	 * runs no stack of its own to inject it into, so it is verified, not
-	 * delivered.
-	 */
-	if(n > Maxframe)
+	if(n <= 0 || n > Maxframe || !mapped || r->map->npktbuf < 2*Ntxslot || r->map->pktbufsize < Maxframe)
 		return -1;
-	rn = ringxfer(Reqframe, frame, n, rbuf, Maxframe);
-	if(rn == n){
-		back = 1;
-		for(k = 0; k < n; k++)
-			if(rbuf[k] != frame[k]){
-				back = 0;
-				break;
-			}
-		if(back)
-			print("p9 medium: the server returned the %ld-byte frame over the ring, whole - the reverse direction of the device-carried medium\n", n);
+	slot = txnext++ % Ntxslot;
+	b = r->base + r->map->pktbuf + slot*r->map->pktbufsize;
+	for(k = 0; k < n; k++)
+		b[k] = frame[k];
+	rn = ringcall(Reqframe, (uvlong)slot, (uvlong)n, (uvlong)Inpktbuf, &rep);
+	return rn < 0 ? -1 : 0;
+}
+
+/*
+ * A frame the server put in one of our packet buffers, announced by
+ * the message select just took off our output queue: where it is and
+ * how long, or 0 for none.
+ */
+uchar*
+ring9p_taken(long *len)
+{
+	Ring *r = &ring;
+	Msg *m;
+
+	if(!mapped)
+		return nil;
+	m = (Msg*)(r->base + r->map->data + Takenoff);
+	if(m->op != Reqframe || m->arg[1] == 0 || m->arg[0] >= r->map->npktbuf){
+		*len = 0;
+		return nil;
 	}
-	return rn;
+	*len = (long)m->arg[1];
+	if(*len > (long)r->map->pktbufsize)
+		*len = r->map->pktbufsize;
+	m->op = 0;				/* taken: not twice */
+	return r->base + r->map->pktbuf + m->arg[0]*r->map->pktbufsize;
+}
+
+/*
+ * The clock for the client end of the ring wire.  A client's ring runs
+ * requests to its server, so the clock is asked for the way a server
+ * asks for its own things: a request of its own by system call
+ * (ospreyxcall, xcall.s), answered at once by the kernel, which then
+ * gives the named semaphore on every tick.  0 for taken, -1 refused.
+ */
+extern long ospreyxcall(int op, uvlong *args, long n);
+
+int
+ring9p_taketick(int sem)
+{
+	uvlong args[5];
+
+	args[0] = sem;
+	args[1] = args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(ReqTick, args, 1) != 1)	/* 1: ReplyDone */
+		return -1;
+	return 0;
+}
+
+/*
+ * Wait for the tick, or for a frame from the server: two arms in our
+ * data area, a down on the tick's semaphore and a get on our output
+ * queue (the server fills it in memory and the kernel wakes us), taken
+ * by select the way a driver task waits.  Returns 0 for the tick, 1 for
+ * a frame (ring9p_taken says where), -1 otherwise.
+ */
+int
+ring9p_wait(int sem)
+{
+	Ring *r = &ring;
+	Arm *arm;
+	int n;
+
+	if(!mapped)
+		return -1;
+	arm = (Arm*)(r->base + r->map->data + Armoff);
+	arm[0].op = OSdown;
+	arm[0].obj = sem;
+	arm[0].buf = 0;
+	arm[1].op = OSget;
+	arm[1].obj = 2;			/* our output queue */
+	arm[1].buf = Takenoff;
+	n = dup(2, Armoff);		/* DUP's number is select over arms */
+	if(n == 0 || n == 1)
+		return n;
+	return n == -2 ? -2 : -1;	/* -1: nothing within the kernel's wait (200 ms of quiet), ask again; -2: the arms were refused */
+}
+
+/* this container's data area, for a caller that is a client rather than a server (a server has p9srvdata) */
+uchar*
+ring9p_data(void)
+{
+	Ring *r = &ring;
+
+	if(!mapped)
+		return nil;
+	return r->base + r->map->data;
 }
 
 /*
@@ -218,7 +307,38 @@ ring_exec(char *name)
 	d = r->base + r->map->data + Execnameoff;
 	for(i = 0; i < 120 && name[i] != 0; i++)
 		d[i] = name[i];
-	d[i] = 0;
+	d[i++] = 0;
+	d[i] = 0;			/* a second nul: the argument vector is the name alone */
+	if(ringcall(ReqExec, Execnameoff, 0, 0, &rep) < 0 || rep.arg[0] != 1)
+		return -1;
+	return (long)rep.arg[2];
+}
+
+/*
+ * Start a program with an argument vector: argv is nil-terminated, argv[0]
+ * the program name.  The vector is packed at Execnameoff - each string and
+ * its nul, a final nul ending it - and the kernel lays it on the new
+ * program's stack.
+ */
+long
+ring_execv(char **argv)
+{
+	Ring *r = &ring;
+	Msg rep;
+	uchar *d;
+	long i, k;
+
+	if(!mapped || argv == nil || argv[0] == nil)
+		return -1;
+	d = r->base + r->map->data + Execnameoff;
+	i = 0;
+	for(k = 0; argv[k] != nil; k++){
+		char *a = argv[k];
+		while(*a != 0 && i < 480)
+			d[i++] = *a++;
+		d[i++] = 0;
+	}
+	d[i] = 0;			/* the final nul ends the vector */
 	if(ringcall(ReqExec, Execnameoff, 0, 0, &rep) < 0 || rep.arg[0] != 1)
 		return -1;
 	return (long)rep.arg[2];
@@ -226,15 +346,18 @@ ring_exec(char *name)
 
 /*
  * Wait for a program this container started to exit; its status comes
- * back in *status.  The kernel answers when the child exits, which may
- * be a while, so this waits longer than a file request does.
+ * back in *status.  The kernel answers when the child exits - or when it
+ * has gone to another machine - which may be a while: a wait is a wait,
+ * and it does not give up on its own.  (It once gave up after ten
+ * seconds, which a child migrating over a slow wire outlasted, and the
+ * program went on with the child still here.)
  */
 long
 ring_wait(long *status)
 {
 	Msg rep;
 
-	if(ringcalln(ReqWait, 0, 0, 0, &rep, 5000) < 0 || rep.arg[0] != 1)
+	if(ringcalln(ReqWait, 0, 0, 0, &rep, 1<<30) < 0 || rep.arg[0] != 1)
 		return -1;
 	*status = (long)rep.arg[2];
 	return 0;

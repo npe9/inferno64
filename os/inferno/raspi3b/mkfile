@@ -30,6 +30,7 @@ OBJ=\
 	clock.$O\
 	main.$O\
 	mmu.$O\
+	cachebcm.$O\
 	trap.$O\
 	tod.$O\
 	mul64fract.$O\
@@ -38,6 +39,7 @@ OBJ=\
 	i2cbcm.$O\
 	spibcm.$O\
 	gpiobcm.$O\
+	mailbox.$O\
 	$CONF.root.$O\
 	$IP\
 	$DEVS\

@@ -8,6 +8,7 @@
 
 extern void p9init(void);
 extern void exits(char*);
+extern void p9clientnet(void);		/* p9ip.c: the client container's own stack, over the ring wire */
 void p9server(char *arg);
 void p9paircli(void);
 void p9server(char *arg);
@@ -526,6 +527,14 @@ p9paircli(void)
 
 			tn = 0;
 			tn += pip_tsession(tg+tn, 1, 0);
+			{
+				extern char *pip_ticket(void);
+				extern long pip_tauth(uchar*, int, char*);
+				char *tk = pip_ticket();
+
+				if(tk != nil)
+					tn += pip_tauth(tg+tn, 99, tk);	/* who I am, first: the file is the personality's */
+			}
 			tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
 			tn += pip_tread(tg+tn, 3, 1, 64, "*");
 			tn += pip_tread(tg+tn, 4, 1, 256, "data");
@@ -560,7 +569,7 @@ p9paircli(void)
 					break;
 				}
 			}
-			print("p9: pair-client: pi-p group of 6 answered with %d replies in one round trip, session %llux\n", nrep, sid);
+			print("p9: pair-client: pi-p group of 7, the first saying who I am, answered with %d replies in one round trip, session %llux\n", nrep, sid);
 			/* come back to the session and read what was committed */
 			tn = 0;
 			tn += pip_tsession(tg+tn, 7, sid);
@@ -681,6 +690,27 @@ p9paircli(void)
 			else
 				print("p9: pair-client: wait: no answer\n");
 		}
+		/*
+		 * An arbitrary program with an argument vector: /boot/cat is an
+		 * ordinary Plan 9 binary that opens the file it is given and
+		 * writes its bytes, its file calls served by the buddy.  Exec it
+		 * with a real argument - the file to read - and its output, the
+		 * file's contents, comes back to the console.  This is exec
+		 * carrying arguments, and a program that is not the hand-written
+		 * demonstration, on the server personality.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *catargv[3];
+
+			catargv[0] = "/boot/cat";
+			catargv[1] = "/n/hello";
+			catargv[2] = nil;
+			id = ring_execv(catargv);
+			print("p9: pair-client: exec /boot/cat /n/hello with an argument vector started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/cat (container %ld) exited with status %ld - it read /n/hello through the buddy and wrote it out\n", id, st);
+		}
 	}
 	/*
 	 * The device-carried medium: put a network frame on the ring to the
@@ -690,19 +720,83 @@ p9paircli(void)
 	 * kernel only routes, the way the plan's second machine would send it.
 	 */
 	{
-		extern long ring9p_frame(uchar*, long);
-		uchar frame[64];
-		int i;
+		extern long ring9p_frame(uchar*, long, uchar*, long);
+		uchar frame[28], back[64];
 		long fn;
+		ulong sum;
+		int i;
 
+		/*
+		 * A real IPv4 packet, not filler: an ICMP echo request from
+		 * 10.0.0.1 to 10.0.0.2, the address the server injects a ring
+		 * frame into.  The osprey medium is a raw-IP medium (no MAC), so
+		 * this is a whole frame.  The server's stack, if it accepts it,
+		 * answers with an echo reply to 10.0.0.1 - which its other stack
+		 * owns, so the reply terminates there and does not loop.
+		 */
 		for(i = 0; i < (int)sizeof frame; i++)
-			frame[i] = 0xff;	/* a frame the peer will see arrive and count */
-		fn = ring9p_frame(frame, sizeof frame);
-		if(fn == (long)sizeof frame)
-			print("p9: pair-client: sent a %d-byte frame to the server container over the ring - the device-carried medium\n", (int)sizeof frame);
+			frame[i] = 0;
+		frame[0] = 0x45;			/* IPv4, header 20 bytes */
+		frame[3] = sizeof frame;		/* total length */
+		frame[8] = 64;				/* ttl */
+		frame[9] = 1;				/* protocol ICMP */
+		frame[12] = 10; frame[15] = 1;		/* src 10.0.0.1 */
+		frame[16] = 10; frame[19] = 2;		/* dst 10.0.0.2 */
+		sum = 0;				/* IP header checksum over frame[0..19] */
+		for(i = 0; i < 20; i += 2)
+			sum += (frame[i] << 8) | frame[i+1];
+		while(sum >> 16)
+			sum = (sum & 0xffff) + (sum >> 16);
+		sum = ~sum & 0xffff;
+		frame[10] = sum >> 8; frame[11] = sum;
+		frame[20] = 8;				/* ICMP echo request */
+		frame[25] = 1;				/* id */
+		frame[27] = 1;				/* sequence */
+		sum = 0;				/* ICMP checksum over frame[20..27] */
+		for(i = 20; i < (int)sizeof frame; i += 2)
+			sum += (frame[i] << 8) | frame[i+1];
+		while(sum >> 16)
+			sum = (sum & 0xffff) + (sum >> 16);
+		sum = ~sum & 0xffff;
+		frame[22] = sum >> 8; frame[23] = sum;
+
+		fn = ring9p_frame(frame, sizeof frame, back, sizeof back);
+		if(fn >= 0)
+			print("p9: pair-client: sent an ICMP echo request (10.0.0.1->10.0.0.2) to the server container over the ring - the device-carried medium\n");
 		else
 			print("p9: pair-client: frame over the ring failed (%ld)\n", fn);
 	}
+	/*
+	 * What a request costs, between two personalities: a thousand empty
+	 * frame polls, each a request this container puts on the ring, the
+	 * kernel carries to the server container, the server's loop takes
+	 * by select and answers, and the kernel routes home - measured by
+	 * the cycle counter, which the kernel's status line gives the rate
+	 * of.  The talk's number is 270 ns for a send, a receive and a
+	 * context switch; this is the microkernel's equivalent, two whole
+	 * processes switched, under QEMU.
+	 */
+	{
+		extern void ospreycycles(uvlong*);
+		extern long ring9p_frame(uchar*, long, uchar*, long);
+		uvlong t0, t1;
+		uchar back[64];
+		int i;
+
+		ospreycycles(&t0);
+		for(i = 0; i < 1000; i++)
+			ring9p_frame(nil, 0, back, sizeof back);
+		ospreycycles(&t1);
+		print("p9: pair-client: 1000 requests put on the ring and answered by the server personality in %llud cycles: %llud cycles each\n",
+			t1 - t0, (t1 - t0) / 1000);
+	}
+	/*
+	 * And the same wire carrying a whole stack's traffic, not a frame
+	 * built by hand: this container brings up the real Plan 9 IP stack
+	 * of its own, with an interface whose wire is the ring, and its
+	 * tcp.c talks to the server container's tcp.c across it.
+	 */
+	p9clientnet();
 	poperror();
 }
 

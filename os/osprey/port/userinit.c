@@ -340,10 +340,23 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 			char *b = (char*)la[1];
 			long ln = (long)la[2], i;
 
+			/*
+			 * Through the console task like every other write, in
+			 * pieces a kernel buffer holds.  This once went to the bare
+			 * port a byte at a time, past the task, and was the last
+			 * writer that could cut the task's lines in two.
+			 */
 			if(!waserror()){
+				extern void ospreyconsolewrite(char*, int);
+				char kb[256];
+				long m;
+
 				validaddr((uintptr)b, ln, 0);
-				for(i = 0; i < ln; i++)
-					kdebugputc(b[i]);
+				for(i = 0; i < ln; i += m){
+					m = ln - i < (long)sizeof kb ? ln - i : (long)sizeof kb;
+					memmove(kb, b + i, m);
+					ospreyconsolewrite(kb, m);
+				}
 				poperror();
 			}
 			*retp = (uintptr)ln;
@@ -463,11 +476,20 @@ ospreyenteruserat(void)
  * second is argv[0] (a copy of arg0), the third the argv terminator, and
  * arg0's bytes sit above them.
  */
-void
-ospreyenteruser(char *arg0)
+/*
+ * Lay a nil-terminated argument vector on the user stack the way the
+ * entry (init9's _main) expects: the strings just below the Tos, then a
+ * pointer array below them - argv[0]..argv[argc-1] and a nil - and enter
+ * with the stack pointer at that array, which the 6c amd64 convention
+ * leaves in the first argument register.  The kernel argv[] are kernel
+ * pointers; their bytes are copied up and the array holds user addresses.
+ */
+static void
+ospreyenteruservec(char **argv, int argc)
 {
-	char *sp;
-	int n;
+	uintptr strtop, sp;
+	uintptr *uargv;
+	int i, n;
 
 	up->kp = 0;
 	up->noswap = 0;
@@ -476,21 +498,64 @@ ospreyenteruser(char *arg0)
 	procsetup(up);
 	flushmmu();
 
-	/*
-	 * The 6c amd64 convention passes the first argument in a register
-	 * (RARG == BP), and touser leaves the sp pointer there, so the user
-	 * entry reads argv0 == sp.  Put the argument string at sp itself, so
-	 * the program's first parameter points straight at it.  The stack
-	 * grows down from sp, so these bytes are above it and stay intact
-	 * until the program reads them.
-	 */
-	sp = (char*)(USTKTOP - sizeof(Tos) - 64);
-	n = strlen(arg0) + 1;
-	memmove(sp, arg0, n);
+	/* the strings, packed just below the Tos, growing down */
+	strtop = USTKTOP - sizeof(Tos) - 16;
+	sp = strtop;
+	{
+		uintptr straddr[1 + 32];		/* the user address of each string */
+
+		if(argc > 32)
+			argc = 32;
+		for(i = argc - 1; i >= 0; i--){
+			n = strlen(argv[i]) + 1;
+			sp -= n;
+			memmove((void*)sp, argv[i], n);
+			straddr[i] = sp;
+		}
+		/* the pointer array, 16-aligned, below the strings */
+		sp &= ~(uintptr)15;
+		sp -= (uintptr)(argc + 1) * sizeof(uintptr);
+		sp &= ~(uintptr)15;
+		uargv = (uintptr*)sp;
+		for(i = 0; i < argc; i++)
+			uargv[i] = straddr[i];
+		uargv[argc] = 0;
+	}
 
 	splhi();
 	fpukexit(nil);
-	touser(sp);
+	touser((char*)sp);		/* the first argument register holds argv */
+}
+
+void
+ospreyenteruser(char *arg0)
+{
+	char *argv[2];
+
+	argv[0] = arg0;
+	argv[1] = nil;
+	ospreyenteruservec(argv, 1);
+}
+
+/*
+ * The same, from a packed argument buffer the exec request carried:
+ * argv[0]\0 argv[1]\0 ... \0, a double nul ending it.
+ */
+void
+ospreyenteruserargs(char *packed)
+{
+	char *argv[32];
+	int argc;
+
+	argc = 0;
+	while(*packed != 0 && argc < 32){
+		argv[argc++] = packed;
+		packed += strlen(packed) + 1;
+	}
+	if(argc == 0){
+		argv[argc++] = "";
+	}
+	ospreyenteruservec(argv, argc);
 }
 
 /*

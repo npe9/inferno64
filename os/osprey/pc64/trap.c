@@ -19,6 +19,8 @@ static void doublefault(Ureg*, void*);
 static void unexpected(Ureg*, void*);
 static void _dumpstack(Ureg*);
 
+int ospreytraptrace;		/* item 15's trap-return checksum, armed by *ospreytraptrace */
+
 void
 trapinit0(void)
 {
@@ -63,6 +65,12 @@ trapinit0(void)
 void
 trapinit(void)
 {
+	{
+		extern char *getconf(char*);
+		char *cf = getconf("*ospreytraptrace");
+		if(cf != nil && *cf != '0')
+			ospreytraptrace = 1;
+	}
 	irqinit();
 
 	nmienable();
@@ -129,15 +137,48 @@ usertrap(int vno)
 }
 
 
+/*
+ * Item 15's tooling: for an interrupt from user mode, snapshot the
+ * return frame (the fields the CPU pushed - pc, cs, flags, sp, ss - and
+ * the whole Ureg's checksum) on the way in, and on the way out, when no
+ * note was delivered and no fixup moved the pc, check it is unchanged.
+ * A field that changed under an interrupt that did nothing to it is the
+ * standing corruption (the return going to 0xffffffff); the check names
+ * it, direct to the port.  Armed by *ospreytraptrace in the config.
+ */
+typedef struct Trapsnap Trapsnap;
+struct Trapsnap { int used; uvlong pc, cs, flags, sp, ss, sum; };
+static uvlong
+uregsum(Ureg *u)
+{
+	uvlong *w, s;
+	int i;
+
+	s = 0;
+	for(w = (uvlong*)u, i = 0; i < (int)(sizeof(Ureg)/sizeof(uvlong)); i++)
+		s = s*1000003 + w[i];
+	return s;
+}
+
 void
 trap(Ureg *ureg)
 {
 	int vno, user;
+	Trapsnap snap;
 
 	vno = ureg->type;
 	user = kenter(ureg);
 	if(vno != VectorCNA)
 		fpukenter(ureg);
+
+	/* the snapshot is a local, so a reschedule inside the trap cannot clobber it */
+	snap.used = 0;
+	if(ospreytraptrace && user){
+		snap.used = 1;
+		snap.pc = ureg->pc; snap.cs = ureg->cs; snap.flags = ureg->flags;
+		snap.sp = ureg->sp; snap.ss = ureg->ss;
+		snap.sum = uregsum(ureg);
+	}
 
 	if(!irqhandled(ureg, vno) && (!user || !usertrap(vno))){
 		if(!user){
@@ -178,6 +219,12 @@ trap(Ureg *ureg)
 out:
 	splhi();
 	if(user){
+		int noted = up->procctl || up->nnote;
+		/* with the local snapshot a reschedule cannot change the frame, so any pc change that is not a note or a fixup is the corruption */
+		if(snap.used && !noted && ureg->pc != snap.pc && ureg->pc != snap.pc + 2){
+			iprint("trap trace: cpu%d user-interrupt %llud corrupted the return: pc %#llux -> %#llux, sp %#llux -> %#llux, cs %#llux flags %#llux sum %#llux -> %#llux\n",
+				m->machno, (uvlong)vno, snap.pc, ureg->pc, snap.sp, ureg->sp, ureg->cs, ureg->flags, snap.sum, uregsum(ureg));
+		}
 		if(up->procctl || up->nnote)
 			donotify(ureg);
 		kexit(ureg);
@@ -420,7 +467,7 @@ faultamd64(Ureg* ureg, void*)
 		if(r < 0){
 			if(!user)
 				error("legacy image: no page at that address");
-			print("user fault: %s addr=%#llux pc=%#llux, no page for it in the buddy's image\n",
+			iprint("user fault: %s addr=%#llux pc=%#llux, no page for it in the buddy's image\n",
 				read? "read": "write", (uvlong)addr, (uvlong)ureg->pc);
 			if(up->oslinux){
 				/*
@@ -446,7 +493,16 @@ faultamd64(Ureg* ureg, void*)
 		if(!waserror()){
 			uvlong *w = (uvlong*)ureg->sp;
 			validaddr(ureg->sp, 8*sizeof(uvlong), 0);
-			print("user fault: stack %#llux %#llux %#llux %#llux %#llux %#llux %#llux %#llux\n",
+			{	/* the frames below the stack pointer too, and the registers: a return into nowhere leaves its trail there */
+				uvlong *w = (uvlong*)(ureg->sp - 128);
+				int i;
+				for(i = 0; i < 16; i += 4)
+					if(okaddr((uintptr)(w + i), 32, 0))
+						iprint("user fault: below sp %#p: %#llux %#llux %#llux %#llux\n", w + i, w[i], w[i+1], w[i+2], w[i+3]);
+				iprint("user fault: ax %#llux bx %#llux cx %#llux dx %#llux si %#llux di %#llux bp %#llux r12 %#llux r13 %#llux\n",
+					ureg->ax, ureg->bx, ureg->cx, ureg->dx, ureg->si, ureg->di, ureg->bp, ureg->r12, ureg->r13);
+			}
+			iprint("user fault: stack %#llux %#llux %#llux %#llux %#llux %#llux %#llux %#llux\n",
 				w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
 			poperror();
 		}
@@ -718,6 +774,64 @@ forkchild(Proc *p, Ureg *ureg)
 	memmove(cureg, ureg, sizeof(Ureg));
 
 	cureg->ax = 0;
+}
+
+/*
+ * Is a note's saved register frame, at nureg on the user stack with the
+ * previous frame's pointer in the word below it, wholly in user memory?
+ * For the configs' noted(2), which live outside the kernel headers that
+ * define Ureg.
+ */
+int
+uregok(void *nureg)
+{
+	return okaddr((uintptr)nureg-BY2WD, BY2WD+sizeof(Ureg), 0);
+}
+
+/* the user pc a saved frame holds: for a status line about another process */
+uintptr
+uregax(void *a)
+{
+	return ((Ureg*)a)->ax;
+}
+
+uintptr
+uregpc(void *a)
+{
+	return a == nil ? 0 : ((Ureg*)a)->pc;
+}
+
+/* a register frame's size, and one that came in from a wire made safe to resume from */
+int
+uregsize(void)
+{
+	return sizeof(Ureg);
+}
+
+void
+uregsanitize(void *a)
+{
+	Ureg *u = a;
+
+	u->cs = UESEL;
+	u->ss = UDSEL;
+	u->flags = (u->flags & 0x00ff) | 0x200;	/* the arithmetic flags are the process's; interrupts on */
+	u->pc &= UADDRMASK;
+}
+
+/*
+ * What the process forkchild set up returns from its system call: a fork
+ * gives its child 0, a container's process moved to another container
+ * (ospreymovekern, ../port/devosprey.c) is given the new container's
+ * identity, so it knows it moved.
+ */
+void
+forkchildret(Proc *p, uintptr v)
+{
+	Ureg *cureg;
+
+	cureg = (Ureg*)(p->sched.sp+2*BY2WD);
+	cureg->ax = v;
 }
 
 /* Give enough context in the ureg to produce a kernel stack for

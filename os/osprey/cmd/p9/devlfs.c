@@ -379,13 +379,64 @@ lfsreclaimstep(int force)
 	return 1;
 }
 
-/* the serve loop's call, on the clock tick: one step when the log is more than half full */
+/*
+ * The serve loop's call, on the clock tick: steps while the log is more
+ * than half full and the reservation has room for it this period, so
+ * that the task's reservation is what pays for reclamation and a writer
+ * only pays when the log has filled between two ticks.  The tick asks
+ * the kernel what the reservation is and which period this is
+ * (ReqAccount), measures what each step costs by the cycle counter, and
+ * steps while what reclamation has spent this period is under three
+ * quarters of the budget.  It is reclamation's own spending that is
+ * measured, not the container's: the server personality serves the
+ * client out of the same reservation and is at its budget most periods,
+ * and measured that way the reclaim never got a step and writers paid.
+ * One step a tick, then eight, were numbers compiled in; this is the
+ * reservation.
+ */
+extern long ospreyxcall(int op, uvlong *args, long n);
+extern void ospreycycles(uvlong*);
+static uvlong lfssteps, lfsticksbusy, lfsspent, lfsperiod;
+
 int
 lfsreclaim(void)
 {
+	uvlong a[5], t0, t1;
+	int n;
+
 	if(!scanned)
 		return 0;
-	return lfsreclaimstep(0);
+	a[0] = a[1] = a[2] = a[3] = a[4] = 0;
+	if(ospreyxcall(32, a, 0) < 0)
+		a[0] = 0;
+	if(a[4] != lfsperiod){		/* a new period: the reservation is whole again */
+		lfsperiod = a[4];
+		lfsspent = 0;
+	}
+	for(n = 0; n < 64; n++){
+		if(a[0] != 0 && lfsspent >= a[0] - a[0]/4)
+			break;			/* reclamation has spent its share of this period */
+		ospreycycles(&t0);
+		if(!lfsreclaimstep(0))
+			break;
+		ospreycycles(&t1);
+		lfsspent += t1 - t0;
+		lfssteps++;
+	}
+	if(n > 0){
+		lfsticksbusy++;
+		print("lfs: reclaim on the tick: %d step%s, spent %llud cycles of the %llud this period\n",
+			n, n == 1 ? "" : "s", lfsspent, a[0]);
+	}
+	return n > 0;
+}
+
+/* what the tick has done, for the record: steps, and ticks that took any */
+void
+lfsreclaimstats(uvlong *steps, uvlong *ticks)
+{
+	*steps = lfssteps;
+	*ticks = lfsticksbusy;
 }
 
 static int

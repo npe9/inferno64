@@ -4,6 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
+#include	"ospreydata.h"
 
 /*
  * Pi-p spoken about this personality's files: the session protocol of
@@ -31,8 +32,8 @@ enum {
 	PipRerror, PipTstream, PipRstream, PipTauth, PipRauth,
 
 	Pipheader = 7,
-	Nsess	= 4,
-	Nfid	= 8,
+	Nsess	= 16,	/* sessions outlive their connections, so several tests' sessions coexist */
+	Nfid	= 16,		/* a caching client holds one per entry it streams, and one more for the group of the moment */
 	Namelen	= 128,
 	Datalen	= 4096,
 	Fidlease = 3000,		/* ms */
@@ -56,17 +57,86 @@ struct Sess {
 	int	used;
 	uvlong	sid;
 	uvlong	lease;
+	char	user[Namelen];		/* who the session is, proven by a ticket the kernel checked; empty is nobody */
+	uvlong	authid;			/* the container the ticket was for, on the machine that signed it */
+	int	connfd;			/* the connection it is on now, for its streams' frames; -1 when its connection has gone */
 	Fid	fids[Nfid];
 };
+static int servefd = -1;		/* the fd of the connection whose group is being served, so a stream's session remembers where to send frames */
+enum { Ticketoff = Odticket, Ticketmax = Odticketlen };	/* where a ticket goes in this server's data area for the kernel to read, and its answer comes back */
+static long pstr(uchar*, char*, long);
+extern uchar *p9srvdata(void);
+extern long ospreyxcall(int op, uvlong *args, long n);
+
+/*
+ * The firewall as a container attribute (item 12): a session that holds
+ * the container - proven by a ticket - writes the "firewall" attribute
+ * with a rule, or "down"; the firewall task reads it here and puts the
+ * rule up or takes it down.  Not a datagram anyone could send: the
+ * write is authenticated and the attribute is the container's own.
+ */
+static char pipfwrule[128];
+static int  pipfwgen;
+static char pipfwwho[Namelen];
+
+long
+pipfs_firewall(char *rule, int max, char *who, int wmax, int *gen)
+{
+	if(gen != nil)
+		*gen = pipfwgen;
+	if(who != nil){
+		strncpy(who, pipfwwho, wmax-1);
+		who[wmax-1] = 0;
+	}
+	strncpy(rule, pipfwrule, max-1);
+	rule[max-1] = 0;
+	return strlen(pipfwrule);
+}
 
 static Sess sess[Nsess];
 static uvlong nextsid = 0x5ec0de;
 static uvlong nowms;			/* ticks * Tickms */
 
+/*
+ * A stream: an attribute of a fid sent at a rate, unasked, on the wire
+ * the group that set it up came over.  There is no wire under a group
+ * that came over the ring (a reply is the answer to a request), so a
+ * Tstream there is refused as it always was; a group served for the
+ * wire (pipfs_servewire) may set one up, and the wire's own task emits
+ * what is due (pipfs_stream).
+ */
+typedef struct Stream Stream;
+struct Stream {
+	int	used;
+	Sess	*s;
+	uvlong	sid;
+	ulong	fid;
+	int	tag;
+	ulong	period;			/* ms */
+	long	left;			/* frames still to send, or -1 for no end */
+	uvlong	due;			/* ms */
+	char	attr[Namelen];
+};
+enum { Nstream = 16 };	/* a caching client streams one per entry it holds */
+static Stream streams[Nstream];
+static int onwire;			/* the group being served came over a wire */
+
 /* the replies of the group being served */
 static uchar *rbuf;
 static long rmax, rn;
 static int overflow;
+/*
+ * The reply builder (rbuf, rn, rmax, overflow) is one set of globals,
+ * and two kprocs reach it: the wire task building a group's replies,
+ * and the stream task building a tick's frames.  A group's readattr
+ * reads a file, which may sleep, and the cooperative scheduler then
+ * runs the stream task, which reset these globals under the sleeping
+ * group and both buffers were written to ruin - a wild jump in the end.
+ * The flag holds the builder for whoever has it: the stream task defers
+ * a tick while a group is mid-build (across its sleeps), and a group
+ * never starts mid-frame because frame-building does not sleep.
+ */
+static int replybusy;
 
 void
 pipfs_tick(void)
@@ -213,6 +283,97 @@ commit(Fid *f)
 	return fileversion(f->name);
 }
 
+/*
+ * An attribute of a fid, answered as an Rread carrying the given tag:
+ * for a Tread, and for a stream, which is an Rread that arrives with the
+ * Tstream's tag and nobody asked for.
+ */
+static void
+readattr(Fid *f, char *attr, long cnt, int tag)
+{
+	uchar *r;
+	uvlong v;
+	long k, off;
+
+	{
+		uchar *b;
+		long n;
+
+		b = smalloc(Datalen);
+		if(waserror()){
+			free(b);
+			rerror(tag, up->errstr);
+			return;
+		}
+		if(f->c == nil){
+			/* the root: its names, from a directory read */
+			Chan *dc;
+			uchar dbuf[2048], *p, *e;
+			Dir d;
+			char names[256];
+			int mm;
+
+			if(strcmp(attr, "*") != 0)
+				error("no such attribute");
+			dc = namec("/", Aopen, OREAD, 0);
+			n = devtab[dc->type]->read(dc, dbuf, sizeof dbuf, 0);
+			cclose(dc);
+			k = 0;
+			for(p = dbuf, e = dbuf + n; p < e; p += mm){
+				mm = convM2D(p, (uint)(e - p), &d, names);
+				if(mm <= 0)
+					break;
+				k += snprint((char*)b+k, Datalen-k, k == 0 ? "%s" : " %s", d.name);
+			}
+			n = k;
+			v = 0;
+		} else if(strcmp(attr, "*") == 0){
+			n = snprint((char*)b, Datalen, "* data version length name latest");
+			v = f->draft != nil ? f->base + 1 : f->base;
+		} else if(strcmp(attr, "data") == 0){
+			if(f->draft != nil){
+				n = f->draftlen;
+				memmove(b, f->draft, n);
+				v = f->base + 1;
+			} else {
+				n = devtab[f->c->type]->read(f->c, b, Datalen, 0);
+				v = f->base;
+			}
+		} else if(strcmp(attr, "version") == 0){
+			v = f->draft != nil ? f->base + 1 : f->base;
+			n = snprint((char*)b, Datalen, "%llud", v);
+		} else if(strcmp(attr, "length") == 0){
+			if(f->draft != nil)
+				n = snprint((char*)b, Datalen, "%ld", f->draftlen);
+			else {
+				uchar *t = smalloc(Datalen);
+				long tn = devtab[f->c->type]->read(f->c, t, Datalen, 0);
+				free(t);
+				n = snprint((char*)b, Datalen, "%ld", tn);
+			}
+			v = f->draft != nil ? f->base + 1 : f->base;
+		} else if(strcmp(attr, "name") == 0){
+			n = snprint((char*)b, Datalen, "%s", f->name);
+			v = f->base;
+		} else if(strcmp(attr, "latest") == 0){
+			/* the file's committed version now, not this fid's: what a
+			 * replica watches, since a fid's version is fixed at its open */
+			v = fileversion(f->name);
+			n = snprint((char*)b, Datalen, "%llud", v);
+		} else
+			error("no such attribute");
+		if(cnt >= 0 && n > cnt)
+			n = cnt;
+		if((r = reply(PipRread, tag, 8+2+n)) != nil){
+			pput(r, 8, v);
+			pput(r+8, 2, n);
+			memmove(r+10, b, n);
+		}
+		poperror();
+		free(b);
+	}
+}
+
 static void
 serve1(Sess **sp, uchar *m, long sz)
 {
@@ -245,9 +406,11 @@ serve1(Sess **sp, uchar *m, long sz)
 			}
 			memset(s, 0, sizeof *s);
 			s->used = 1;
+			s->connfd = -1;
 			s->sid = ++nextsid;
 		}
 		s->lease = nowms + Sesslease;
+		s->connfd = servefd;		/* its streams' frames go out on this connection */
 		*sp = s;
 		if((r = reply(PipRsession, tag, 8)) != nil)
 			pput(r, 8, s->sid);
@@ -294,6 +457,38 @@ serve1(Sess **sp, uchar *m, long sz)
 			}
 			f->c = namec(name, Aopen, OREAD, 0);
 			poperror();
+			/*
+			 * Whose file, and who asks.  The personality opened it as
+			 * itself; the session gets it only as whom it has proven
+			 * to be: a file that is somebody's is refused to a session
+			 * that is nobody's, and a named session reads by the mode,
+			 * as owner or as other.
+			 */
+			{
+				uchar sb[512];
+				char strs[256];
+				Dir dir;
+				int sn, ok;
+
+				sn = devtab[f->c->type]->stat(f->c, sb, sizeof sb);
+				ok = 1;
+				if(sn > 0 && convM2D(sb, sn, &dir, strs) > 0 && dir.uid[0] != 0 && strcmp(dir.uid, "none") != 0){
+					if(s->user[0] == 0)
+						ok = 0;
+					else if(strcmp(s->user, dir.uid) == 0)
+						ok = (dir.mode & 0400) != 0;
+					else
+						ok = (dir.mode & 0004) != 0;
+				}
+				if(!ok){
+					print("p9 ip: pi-p wire: refused %s, which is %s's, to session %llux, which is %s\n",
+						name, dir.uid, s->sid, s->user[0] ? s->user : "nobody's");
+					cclose(f->c);
+					f->c = nil;
+					rerror(tag, s->user[0] ? "permission denied" : "not yours: a session that is nobody's may open only nobody's files");
+					break;
+				}
+			}
 			strcpy(f->name, name);
 			f->base = f->c->qid.vers;
 		}
@@ -324,78 +519,7 @@ serve1(Sess **sp, uchar *m, long sz)
 			rerror(tag, "fid not open");
 			break;
 		}
-		{
-			uchar *b;
-			long n;
-
-			b = smalloc(Datalen);
-			if(waserror()){
-				free(b);
-				rerror(tag, up->errstr);
-				break;
-			}
-			if(f->c == nil){
-				/* the root: its names, from a directory read */
-				Chan *dc;
-				uchar dbuf[2048], *p, *e;
-				Dir d;
-				char names[256];
-				int mm;
-
-				if(strcmp(attr, "*") != 0)
-					error("no such attribute");
-				dc = namec("/", Aopen, OREAD, 0);
-				n = devtab[dc->type]->read(dc, dbuf, sizeof dbuf, 0);
-				cclose(dc);
-				k = 0;
-				for(p = dbuf, e = dbuf + n; p < e; p += mm){
-					mm = convM2D(p, (uint)(e - p), &d, names);
-					if(mm <= 0)
-						break;
-					k += snprint((char*)b+k, Datalen-k, k == 0 ? "%s" : " %s", d.name);
-				}
-				n = k;
-				v = 0;
-			} else if(strcmp(attr, "*") == 0){
-				n = snprint((char*)b, Datalen, "* data version length name");
-				v = f->draft != nil ? f->base + 1 : f->base;
-			} else if(strcmp(attr, "data") == 0){
-				if(f->draft != nil){
-					n = f->draftlen;
-					memmove(b, f->draft, n);
-					v = f->base + 1;
-				} else {
-					n = devtab[f->c->type]->read(f->c, b, Datalen, 0);
-					v = f->base;
-				}
-			} else if(strcmp(attr, "version") == 0){
-				v = f->draft != nil ? f->base + 1 : f->base;
-				n = snprint((char*)b, Datalen, "%llud", v);
-			} else if(strcmp(attr, "length") == 0){
-				if(f->draft != nil)
-					n = snprint((char*)b, Datalen, "%ld", f->draftlen);
-				else {
-					uchar *t = smalloc(Datalen);
-					long tn = devtab[f->c->type]->read(f->c, t, Datalen, 0);
-					free(t);
-					n = snprint((char*)b, Datalen, "%ld", tn);
-				}
-				v = f->draft != nil ? f->base + 1 : f->base;
-			} else if(strcmp(attr, "name") == 0){
-				n = snprint((char*)b, Datalen, "%s", f->name);
-				v = f->base;
-			} else
-				error("no such attribute");
-			if(cnt >= 0 && n > cnt)
-				n = cnt;
-			if((r = reply(PipRread, tag, 8+2+n)) != nil){
-				pput(r, 8, v);
-				pput(r+8, 2, n);
-				memmove(r+10, b, n);
-			}
-			poperror();
-			free(b);
-		}
+		readattr(f, attr, cnt, tag);
 		f->lease = nowms + Fidlease;
 		break;
 
@@ -417,6 +541,24 @@ serve1(Sess **sp, uchar *m, long sz)
 		k += 2;
 		if(k + dlen > sz || dlen > Datalen)
 			goto Bad;
+		if(strcmp(attr, "firewall") == 0){
+			/* the container's own firewall rule: only a session that holds the container may set it */
+			if(s->user[0] == 0){
+				rerror(tag, "not yours: only a session that holds the container may set its firewall");
+				break;
+			}
+			if(dlen >= sizeof pipfwrule)
+				dlen = sizeof pipfwrule - 1;
+			memmove(pipfwrule, m+k, dlen);
+			pipfwrule[dlen] = 0;
+			strncpy(pipfwwho, s->user, sizeof pipfwwho - 1);
+			pipfwwho[sizeof pipfwwho - 1] = 0;
+			pipfwgen++;
+			print("p9 ip: pi-p wire: session %llux (%s) set the container's firewall attribute: \"%s\"\n", s->sid, s->user, pipfwrule);
+			if((r = reply(PipRwrite, tag, 8)) != nil)
+				pput(r, 8, (uvlong)pipfwgen);
+			break;
+		}
 		if((f = fidfind(s, fid)) == nil || f->c == nil){
 			rerror(tag, "fid not open");
 			break;
@@ -472,10 +614,104 @@ serve1(Sess **sp, uchar *m, long sz)
 		break;
 
 	case PipTstream:
-		rerror(tag, "no wire to stream on");
+		if(sz < Pipheader + 4+4+4+2)
+			goto Bad;
+		fid = pget(m+Pipheader, 4);
+		{
+			ulong period, count;
+			Stream *st, *slot;
+
+			period = pget(m+Pipheader+4, 4);
+			count = pget(m+Pipheader+8, 4);
+			k = Pipheader + 12;
+			alen = pget(m+k, 2);
+			k += 2;
+			if(k + alen > sz || alen >= Namelen)
+				goto Bad;
+			memmove(attr, m+k, alen);
+			attr[alen] = 0;
+			if((f = fidfind(s, fid)) == nil){
+				rerror(tag, "fid not open");
+				break;
+			}
+			/* one stream to a fid: a second says what the first said */
+			slot = nil;
+			for(st = streams; st < &streams[Nstream]; st++)
+				if(st->used && st->s == s && st->sid == s->sid && st->fid == fid)
+					slot = st;
+			if(period == 0){
+				if(slot != nil)
+					slot->used = 0;
+				if((r = reply(PipRstream, tag, 8)) != nil)
+					pput(r, 8, 0);
+				break;
+			}
+			if(!onwire){
+				rerror(tag, "no wire to stream on");
+				break;
+			}
+			if(slot == nil)
+				for(st = streams; st < &streams[Nstream]; st++)
+					if(!st->used){
+						slot = st;
+						break;
+					}
+			if(slot == nil){
+				rerror(tag, "no room for another stream");
+				break;
+			}
+			memset(slot, 0, sizeof *slot);
+			slot->used = 1;
+			slot->s = s;
+			slot->sid = s->sid;
+			slot->fid = fid;
+			slot->tag = tag;
+			slot->period = period;
+			slot->left = count == 0 ? -1 : (long)count;
+			slot->due = nowms + period;
+			strncpy(slot->attr, attr, Namelen-1);
+			if((r = reply(PipRstream, tag, 8)) != nil)
+				pput(r, 8, period);
+		}
 		break;
 	case PipTauth:
-		rerror(tag, "no key here to check a ticket against");
+		/*
+		 * Who is asking.  The personality has no key; the kernel has,
+		 * and checks tickets already, so the ticket goes to it
+		 * (ReqCheckticket) and the name it vouches for is the
+		 * session's from here on.  Without one a session is nobody,
+		 * which on a wire is all a frame can prove.
+		 */
+		if(sz < Pipheader + 2)
+			goto Bad;
+		alen = pget(m+Pipheader, 2);
+		{
+			uchar *d;
+			uvlong args[5];
+
+			if(Pipheader + 2 + alen > sz || alen >= Ticketmax || (d = p9srvdata()) == nil){
+				rerror(tag, "bad ticket");
+				break;
+			}
+			memmove(d + Ticketoff, m+Pipheader+2, alen);
+			d[Ticketoff + alen] = 0;
+			args[0] = Ticketoff; args[1] = args[2] = args[3] = args[4] = 0;
+			if(ospreyxcall(34, args, 1) != 0){
+				s->user[0] = 0;
+				s->authid = 0;
+				print("p9 ip: pi-p wire: the kernel would not vouch for a ticket; the session stays nobody's\n");
+				rerror(tag, "ticket does not check out");
+				break;
+			}
+			strncpy(s->user, (char*)d + Ticketoff, sizeof s->user - 1);
+			s->user[sizeof s->user - 1] = 0;
+			s->authid = args[1];
+			print("p9 ip: pi-p wire: the kernel checked a ticket: session %llux is \"%s\" (the ticket was for container %llud where it was signed)\n",
+				s->sid, s->user, s->authid);
+			k = strlen(s->user);
+			if((r = reply(PipRauth, tag, 2+k)) != nil)
+				pstr(r, s->user, k);
+		}
 		break;
 	default:
 	Bad:
@@ -496,6 +732,7 @@ pipfs_serve(uchar *msg, long n, uchar *out, long outmax)
 	Sess *s;
 	long off, sz;
 
+	replybusy = 1;		/* held across serve1's sleeps, so a stream tick does not reset the builder under us */
 	rbuf = out;
 	rmax = outmax;
 	rn = 0;
@@ -512,6 +749,120 @@ pipfs_serve(uchar *msg, long n, uchar *out, long outmax)
 		overflow = 0;
 		rerror(0, "the replies to that group do not fit");
 	}
+	replybusy = 0;
+	return rn;
+}
+
+/*
+ * The same group, come over a wire: what differs is that a Tstream in it
+ * may be answered, since the wire's task will carry the frames.
+ */
+long
+pipfs_servewire(uchar *msg, long n, uchar *out, long outmax, int connfd)
+{
+	long k;
+
+	onwire = 1;
+	servefd = connfd;
+	k = pipfs_serve(msg, n, out, outmax);
+	servefd = -1;
+	onwire = 0;
+	return k;
+}
+
+/*
+ * What the streams owe now: for every stream whose period has come
+ * round, an Rread of its attribute with the Tstream's tag, into out;
+ * the count of bytes put there, 0 when nothing is due.  Called by the
+ * wire's task at its own rate; the frames leave at the stream's.  A
+ * stream ends when its count runs out, or when its session or its fid
+ * has gone - a fid's lease running out stops it, as pip(5) says, since
+ * the stream does not refresh the lease the way a Tread does.
+ */
+/*
+ * A pi-p connection has closed.  Sessions outlive their connection, but
+ * a stream cannot: it delivers frames on the connection it was made on,
+ * and with that gone its frames would pour into a closed fd forever -
+ * which, with streams that renew their own leases, is exactly what
+ * happened, one connection's streams starving every other.  So the
+ * streams stop when their connection does; a client that wants them
+ * back opens them again on its next connection.
+ */
+void
+pipfs_connclosed(int fd)
+{
+	Stream *st;
+	Sess *s;
+	Fid *f;
+	int open;
+
+	for(s = sess; s < &sess[Nsess]; s++){
+		if(!s->used || s->connfd != fd)
+			continue;
+		s->connfd = -1;		/* the session's streams have no connection now */
+		/*
+		 * A session with an open fid lives on, to be resumed by number
+		 * on another connection (a fid opened before, read after - the
+		 * session outliving its connection).  One with none has served
+		 * its purpose and is reaped, so a table of them does not fill.
+		 */
+		open = 0;
+		for(f = s->fids; f < &s->fids[Nfid]; f++)
+			if(f->used)
+				open = 1;
+		if(!open){
+			for(f = s->fids; f < &s->fids[Nfid]; f++)
+				if(f->used)
+					fidfree(f);
+			s->used = 0;
+		}
+	}
+	for(st = streams; st < &streams[Nstream]; st++)
+		if(st->used && (st->s == nil || !st->s->used || st->s->connfd < 0))
+			st->used = 0;
+}
+
+long
+pipfs_stream(int connfd, uchar *out, long outmax)
+{
+	Stream *st;
+	Fid *f;
+
+	if(replybusy)
+		return 0;		/* a group is mid-build, across a sleep: this tick's frames wait */
+	replybusy = 1;
+	rbuf = out;
+	rmax = outmax;
+	rn = 0;
+	overflow = 0;
+	for(st = streams; st < &streams[Nstream]; st++){
+		if(!st->used || st->due > nowms)
+			continue;
+		if(!st->s->used || st->s->sid != st->sid || st->s->connfd != connfd || (f = fidfind(st->s, st->fid)) == nil){
+			if(st->s == nil || !st->s->used || st->s->connfd < 0)
+				st->used = 0;	/* the session or its connection is gone: the stream stops */
+			continue;
+		}
+		readattr(f, st->attr, -1, st->tag);
+		/*
+		 * A stream is the fid's use, and the session's: each frame
+		 * renews their leases, so a client holding a file by its
+		 * stream keeps it, and loses it only when the stream stops -
+		 * the wire gone, or the count run out.  Before this a streamed
+		 * fid lapsed three seconds after its last read, the stream
+		 * stopped with it, and a cache served its copy stale for good.
+		 */
+		f->lease = nowms + Fidlease;
+		st->s->lease = nowms + Sesslease;
+		st->due += st->period;
+		if(st->left > 0 && --st->left == 0)
+			st->used = 0;
+	}
+	if(overflow){
+		rn = 0;
+		overflow = 0;
+	}
+	replybusy = 0;
 	return rn;
 }
 
@@ -576,6 +927,67 @@ pip_twrite(uchar *b, int tag, ulong fid, char *attr, char *data, long dlen)
 	pstr(b+Pipheader+4, attr, n);
 	pstr(b+Pipheader+4+2+n, data, dlen);
 	return tmsg(b, PipTwrite, tag, 4 + 2 + n + 2 + dlen);
+}
+
+long
+pip_tstream(uchar *b, int tag, ulong fid, ulong period, ulong count, char *attr)
+{
+	long n;
+
+	n = tmsg(b, PipTstream, tag, 4+4+4+2+strlen(attr));
+	pput(b+Pipheader, 4, fid);
+	pput(b+Pipheader+4, 4, period);
+	pput(b+Pipheader+8, 4, count);
+	pstr(b+Pipheader+12, attr, strlen(attr));
+	return n;
+}
+
+/*
+ * A ticket for this personality, from its own kernel (ReqTicket): its
+ * name, for its own container, without expiry; asked for once and kept.
+ * A server keeps the window at Ticketcliff of its data area clear of
+ * the one its wire end checks tickets in; a client has only its ring's
+ * data area, and a window there.  Nil when the kernel has no key.
+ */
+char*
+pip_ticket(void)
+{
+	extern uchar *ring9p_data(void);
+	static char cached[Ticketmax];
+	static int asked;
+	uchar *d;
+	uvlong args[5], off;
+
+	if(cached[0] != 0)
+		return cached;
+	if(asked)
+		return nil;
+	asked = 1;
+	if((d = p9srvdata()) != nil)
+		off = Odticketcliff;
+	else if((d = ring9p_data()) != nil)
+		off = Odclientticket;	/* clear of the client's 9P, arms, and exec names */
+	else
+		return nil;
+	strncpy((char*)d + off, eve, Ticketmax - 1);
+	d[off + Ticketmax - 1] = 0;
+	args[0] = off; args[1] = 0; args[2] = args[3] = args[4] = 0;
+	if(ospreyxcall(35, args, 2) != 0){
+		print("p9 ip: pi-p: my kernel would not sign a ticket for \"%s\"; sessions I open are nobody's\n", eve);
+		return nil;
+	}
+	snprint(cached, sizeof cached, "%.*s", (int)args[0], (char*)d + off);
+	print("p9 ip: pi-p: my kernel signed a ticket for \"%s\", for my container; every session I open says who I am\n", eve);
+	return cached;
+}
+
+long
+pip_tauth(uchar *b, int tag, char *ticket)
+{
+	long n = strlen(ticket);
+
+	pstr(b+Pipheader, ticket, n);
+	return tmsg(b, PipTauth, tag, 2 + n);
 }
 
 long

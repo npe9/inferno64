@@ -131,6 +131,14 @@ def main():
 	seen = b''
 	deadline = time.time() + a.timeout
 	status = 1
+	lastout = time.time()
+	# The loader used to stall now and then - print its configuration and
+	# then nothing, one boot in several - and this harness restarted the
+	# boot up to twice to get past it.  That was the loader reading the
+	# kernel into memory the firmware had not given up (efi/sub.c); with
+	# claimpages claiming the load region first, twenty boots in a row
+	# stalled none, so the restart is gone - a stall now times the run
+	# out, as a real fault should.
 	try:
 		while time.time() < deadline:
 			b = p.stdout.read(4096)
@@ -144,6 +152,8 @@ def main():
 				sys.stdout.write(b.decode('utf-8', 'replace'))
 				sys.stdout.flush()
 			seen = esc.sub(b'', seen + b)[-65536:]
+
+			lastout = time.time()
 
 			# expectations are consumed in order, so a pattern that
 			# also appears earlier in the boot cannot fire twice.

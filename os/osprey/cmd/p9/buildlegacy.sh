@@ -9,7 +9,8 @@ P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 OBJ="os/osprey/pc64/init9.6"
 6c $LIBINC -o /tmp/legacyp9.6 $P/legacyp9.c
-OBJ="$OBJ /tmp/legacyp9.6"
+6a -o /tmp/legacyxcall.6 $P/legacyxcall.s
+OBJ="$OBJ /tmp/legacyp9.6 /tmp/legacyxcall.6"
 SUP=""
 for m in utfnlen vsnprint dofmt vfprint; do
 	6c $LIBINC -o /tmp/legacy_$m.6 lib9/$m.c

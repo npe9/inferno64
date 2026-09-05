@@ -2,25 +2,31 @@
 # Build the Plan 9 namespace library as a program on the host toolchain.
 # The name space (chan/dev/pgrp/devroot) is the kernel's own upper half
 # compiled against the shim (nsdat.h/dat.h/mem.h/fns.h + p9shim.c bodies).
+# Kernel-side sources are compiled -Dsleep=ksleep (the host libc owns
+# sleep(int)) and -Dfastticks=kfastticks: libc's fastticks calls nsec(),
+# which opens /dev/bintime - an OPEN trap the microkernel does not answer
+# ("unimplemented syscall 14", once per stack attached, from il.c's
+# inittimescale).  The personality's kfastticks (p9sched.c) is the
+# cooperative clock's tick count at 100 Hz.
 # Link note: the disk libc.a has members the host 6l cannot read (built
 # by a newer 6c), so link -l (no auto-libc) and supply those members
 # from lib9 source; libc.a still provides its readable members.
 set -e
 cd "$(dirname "$0")/../../../.."          # repo root
 P=os/osprey/cmd/p9
-INC="-Dsleep=ksleep -I $P -I os/osprey/port -I os/osprey/pc64 -I os/osprey/ip -I Osprey/amd64/include -I Osprey/include -I include"
-LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
+INC="-Dsleep=ksleep -Dfastticks=kfastticks -I $P -I os/osprey/port -I os/osprey/pc64 -I os/osprey/ip -I Osprey/amd64/include -I Osprey/include -I include"
+LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P -I os/osprey/port"
 OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \
          os/osprey/port/devenv.c os/osprey/port/qio.c os/osprey/port/devmnt.c os/osprey/port/devpipe.c os/osprey/port/devsrv.c \
-         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c \
+         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c $P/devcache.c \
          os/osprey/port/netif.c os/osprey/port/parse.c \
          os/osprey/ip/ip.c os/osprey/ip/ipaux.c os/osprey/ip/iproute.c os/osprey/ip/ipifc.c \
          os/osprey/ip/netlog.c os/osprey/ip/ipmux.c os/osprey/ip/arp.c os/osprey/ip/icmp.c \
          os/osprey/ip/icmp6.c os/osprey/ip/igmp.c os/osprey/ip/ipv6.c os/osprey/ip/tcp.c \
          os/osprey/ip/udp.c os/osprey/ip/rudp.c os/osprey/ip/il.c os/osprey/ip/gre.c \
-         os/osprey/ip/devip.c os/osprey/ip/inferno.c os/osprey/ip/loopbackmedium.c os/osprey/ip/ospreymedium.c os/osprey/ip/netdevmedium.c \
+         os/osprey/ip/devip.c os/osprey/ip/inferno.c os/osprey/ip/loopbackmedium.c os/osprey/ip/ospreymedium.c os/osprey/ip/ospreyvnetmedium.c os/osprey/ip/netdevmedium.c \
          os/osprey/ip/nullmedium.c os/osprey/ip/pktmedium.c os/osprey/ip/chandial.c; do
 	o=/tmp/p9_$(basename $f .c).6
 	6c $INC -o $o $f
@@ -46,6 +52,8 @@ OBJ="$OBJ /tmp/p9_ring9p.6"
 OBJ="$OBJ /tmp/p9_p9pairsrv.6"
 6c $LIBINC -o /tmp/p9_blkvirtio.6 $P/blkvirtio.c
 OBJ="$OBJ /tmp/p9_blkvirtio.6"
+6c $LIBINC -o /tmp/p9_netvirtio.6 $P/netvirtio.c
+OBJ="$OBJ /tmp/p9_netvirtio.6"
 6a -o /tmp/p9_xcall.6 $P/xcall.s
 OBJ="$OBJ /tmp/p9_xcall.6"
 

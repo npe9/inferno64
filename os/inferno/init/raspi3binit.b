@@ -2,6 +2,8 @@ implement Init;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+	draw: Draw;
+	Display, Image, Rect, Point: import draw;
 Init: module { init: fn(); };
 Shell: module { init: fn(nil: ref Draw->Context, argv: list of string); };
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
@@ -95,6 +97,102 @@ sdfs()
 	sys->print("SD-FS-CREATE-OK\n");
 }
 
+drawtest()
+{
+	draw = load Draw Draw->PATH;
+	if(draw == nil){ sys->print("DRAW-FAIL load: %r\n"); return; }
+	if(sys->bind("#i", "/dev", sys->MAFTER) < 0){ sys->print("DRAW-FAIL bind: %r\n"); return; }
+	disp: ref Display;
+	{ disp = Display.allocate("/dev"); }
+	exception e { "*" => sys->print("DRAW-FAIL Display: %s\n", e); return; }
+	if(disp == nil){ sys->print("DRAW-FAIL nil: %r\n"); return; }
+	img := disp.image;
+	r := img.r;
+	w := (r.max.x - r.min.x) / 3;
+	x0 := r.min.x;
+	img.draw(Rect((x0, r.min.y), (x0+w, r.max.y)), disp.rgb(255,0,0), nil, (0,0));
+	img.draw(Rect((x0+w, r.min.y), (x0+2*w, r.max.y)), disp.rgb(0,255,0), nil, (0,0));
+	img.draw(Rect((x0+2*w, r.min.y), (r.max.x, r.max.y)), disp.rgb(0,0,255), nil, (0,0));
+	img.flush(Draw->Flushnow);
+	sys->print("DRAW-OK %dx%d\n", r.max.x-r.min.x, r.max.y-r.min.y);
+}
+
+readctl(path: string): string
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	s := "";
+	buf := array[256] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		s += string buf[0:n];
+	}
+	return s;
+}
+
+# Bind the DWC2 host controller (#U) into /dev, show the root hub the
+# kernel synthesised, then run usbd to reset the port and enumerate the
+# attached device over control transfers -- exercising the interrupt and
+# transfer paths.  Boot with -device usb-kbd (or usb-mouse) to have a
+# device to find; the second ctl dump should list it.
+usbcheck()
+{
+	if(sys->bind("#u", "/dev", sys->MAFTER) < 0){
+		sys->print("USB-NONE bind #U: %r\n");
+		return;
+	}
+	sys->print("USB root hub:\n%s", readctl("/dev/usb/ctl"));
+	usbd := load Command "/dis/usb/usbd.dis";
+	if(usbd == nil){
+		sys->print("USB-FAIL load usbd: %r\n");
+		return;
+	}
+	spawn usbd->init(nil, "usbd" :: nil);
+	sys->sleep(2000);
+	sys->print("USB after usbd:\n%s", readctl("/dev/usb/ctl"));
+	# A USB boot keyboard, once usbd finds it, delivers UTF-8 keystrokes
+	# to /dev/keyboard (the graphics console queue).  Report what arrives
+	# so an injected "hello" from the QEMU monitor shows the whole path --
+	# split interrupt transfers, HID translation, cons -- end to end.
+	spawn kbdreport();
+	sys->print("USB-OK\n");
+	ethercheck();
+}
+
+# Phase 3 de-risk: the Limbo USB-ethernet server serves the netif file
+# interface, self-mounts, and binds it as devip's ethernet.  Running it
+# proves chandial's clone/connect/data dance is satisfiable from Limbo
+# (ETHERBIND-OK) and that outgoing frames reach the driver (ETHERTX from
+# the ARP an added address provokes).  The USB half comes next.
+ethercheck()
+{
+	eth := load Command "/dis/usb/etherusb.dis";
+	if(eth == nil){
+		sys->print("ETHER-FAIL load: %r\n");
+		return;
+	}
+	spawn eth->init(nil, "etherusb" :: "/net.alt" :: nil);
+}
+
+kbdreport()
+{
+	fd := sys->open("/dev/keyboard", Sys->OREAD);
+	if(fd == nil){
+		sys->print("USB-KBD-NONE: %r\n");
+		return;
+	}
+	buf := array[16] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			return;
+		sys->print("USB-KBD got %d: %q\n", n, string buf[0:n]);
+	}
+}
+
 init()
 {
 	shell: Shell;
@@ -108,6 +206,8 @@ init()
 
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();
+	drawtest();
+	usbcheck();
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
 	# creates a file.  The ream and every SD write succeed, but the
 	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the

@@ -28,6 +28,7 @@ ulong		ospreycoreof(Ospreyproc*);
 int		ospreynproc(void);
 int		ospreyncore(void);
 void*		ospreydata(Ospreyproc*, uvlong off, ulong len);
+void*		ospreypktbuf(Ospreyproc*, int slot, ulong len);
 uvlong		ospreydataoffset(Ospreyproc*);
 uvlong		ospreydatalen(Ospreyproc*);
 void*		ospreyarenaaddr(uvlong off, ulong len);
@@ -83,6 +84,7 @@ int		ospreyservicep(Ospreyproc*, uvlong now);
 int		ospreydelegate(Ospreyproc*, Ospreyproc *server);
 Ospreyproc*	ospreyserverof(Ospreyproc*);
 int		ospreyroute(Ospreyproc *server);
+int		ospreyroutewoke(Ospreyproc *server, Ospreyproc **got, int max);	/* and who received one */
 int		ospreyrequestready(Ospreyproc*);
 
 void		ospreysemgive(Ospreyproc*, ulong sem);
@@ -128,6 +130,7 @@ extern int	(*ospreywait)(Ospreyproc*, uvlong, long*, uvlong*);
 extern int	(*ospreyreserve)(Ospreyproc*, uvlong, uvlong);
 extern int	(*ospreytickreq)(Ospreyproc*, int);
 int		ospreysetreservation(Ospreyproc*, uvlong, uvlong, uvlong);
+int		ospreyaccount(Ospreyproc*, uvlong *budget, uvlong *used, uvlong *period, uvlong *periods);	/* this period's accounting, cycles, and which period */
 int		ospreyisserver(Ospreyproc*);
 int		ospreyoutputroom(Ospreyproc*);
 int		ospreycall(Ospreyproc*, uvlong, uvlong*, long*);
@@ -199,6 +202,8 @@ long		ospreyattr(Ospreyproc*, char *name, char *buf, long nbuf);
 int		ospreysetattr(Ospreyproc*, char *name, char *val);
 int		ospreyattrwritable(char *name);
 uvlong		ospreyversion(Ospreyproc*);
+uvlong		ospreycaps(Ospreyproc*);
+void		ospreyaddcaps(Ospreyproc*, uvlong);
 
 /*
  * Who a container is for.  The owner is whoever made it; the owner may

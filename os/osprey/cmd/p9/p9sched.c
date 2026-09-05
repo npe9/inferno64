@@ -97,16 +97,25 @@ sched(void)
 	gotolabel(&p->sched);
 }
 
+/*
+ * Sleep until the condition is true.  A wakeup readies the sleeper but
+ * proves nothing about the condition, so it is checked again, and - the
+ * point that was missed for a long time - the sleep is armed again
+ * before each switch: a wakeup clears the rendezvous and sched() marks
+ * the sleeper Running, so a sleeper that just looped back to sched()
+ * was put on the run queue as if runnable and ran round with the loop
+ * proc for good, the serve loop never regaining its select.  A bulk
+ * transfer's queue wakeups made that happen once in two runs.
+ */
 void
 ksleep(Rendez *r, int (*f)(void*), void *arg)
 {
-	if(f(arg))
-		return;			/* condition already true */
-	r->p = up;
-	up->rendez = r;
-	up->state = Wakeme;
-	while(!f(arg))
+	while(!f(arg)){
+		r->p = up;
+		up->rendez = r;
+		up->state = Wakeme;
 		sched();		/* switch away; a wakeup readies us */
+	}
 	up->rendez = nil;
 	up->state = Running;
 }
@@ -146,11 +155,12 @@ tsleep(Rendez *r, int (*f)(void*), void *arg, ulong ms)
 	if(wait == 0)
 		wait = 1;
 	up->twhen = p9ticks + wait;
-	r->p = up;
-	up->rendez = r;
-	up->state = Wakeme;
-	while(!f(arg) && (long)(p9ticks - up->twhen) < 0)
+	while(!f(arg) && (long)(p9ticks - up->twhen) < 0){
+		r->p = up;		/* armed again before each switch, as in ksleep */
+		up->rendez = r;
+		up->state = Wakeme;
 		sched();
+	}
 	up->rendez = nil;
 	up->twhen = 0;
 	up->state = Running;
@@ -168,6 +178,14 @@ sched_tick(void)
 	Proc *p;
 
 	p9ticks++;
+	/*
+	 * The stack's own clock, NOW (TK2MS(MACHP(0)->ticks)), advances with
+	 * it: arp.c decides whether to send a request, and whether to send
+	 * it again, by the time since the entry was made, and with a clock
+	 * stuck at zero it never sent one at all - which loopback and the
+	 * ring medium, needing no ARP, never showed; the first real wire did.
+	 */
+	MACHP(0)->ticks = p9ticks;
 	for(i = 0; i < nallproc; i++){
 		p = allproc[i];
 		if(p->state == Wakeme && p->twhen != 0 && (long)(p9ticks - p->twhen) >= 0){
@@ -178,6 +196,20 @@ sched_tick(void)
 			enqueue(p);	/* deadline passed: it re-checks and returns */
 		}
 	}
+}
+
+/*
+ * The fast clock, for il.c's round-trip timing: the tick count, at 100 Hz.
+ * The name is what -Dfastticks=kfastticks (build.sh) turns the stack's
+ * fastticks into; libc's own fastticks opens /dev/bintime through nsec(),
+ * an OPEN the microkernel does not answer.
+ */
+uvlong
+kfastticks(uvlong *hz)
+{
+	if(hz != nil)
+		*hz = 100;
+	return p9ticks;
 }
 
 /*

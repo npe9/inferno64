@@ -867,6 +867,9 @@ uartputc(int c)
 	consuart->phys->putc(consuart, c);
 }
 
+uvlong uartputsbytes, uartputslate;	/* what bypassed the console task through here, and how much after the task took over; devosprey.c reports it */
+char uartputssample[64];	/* the first of it, for the report */
+
 void
 uartputs(char *s, int n)
 {
@@ -874,6 +877,17 @@ uartputs(char *s, int n)
 
 	if(consuart == nil || consuart->phys->putc == nil)
 		return;
+	{
+		extern int (*consoletask)(char*, int);
+		extern uvlong uartputslate;
+
+		if(consoletask != nil){		/* after the console became a task's: every byte here cuts its output */
+			if(uartputslate == 0 && n > 0)
+				snprint(uartputssample, sizeof uartputssample, "%.*s", n < 60 ? n : 60, s);
+			uartputslate += n;
+		}
+	}
+	uartputsbytes += n;
 
 	e = s+n;
 	for(; s<e; s++){
