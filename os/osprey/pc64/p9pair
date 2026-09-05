@@ -231,6 +231,23 @@ port
 	}
 	uintptr xsleep(va_list list)
 	{
+		/*
+		 * A legacy process - one whose text is a buddy's image - gets
+		 * Plan 9's sleep(2), the milliseconds it asked for and Eintr
+		 * when a note interrupts it.  Every sleep of such a process was
+		 * the two-millisecond yield below for a long time, whatever it
+		 * asked, which no test could tell from a short one until a
+		 * member had to sleep a minute to be blocked for a move.
+		 */
+		if(up->buddyimage){
+			long ms = va_arg(list, long);
+
+			if(ms <= 0)
+				yield();
+			else
+				tsleep(&up->sleep, return0, 0, ms);
+			return 0;
+		}
 		USED(list);
 		/*
 		 * The program's yield-and-service call.  It puts a request in

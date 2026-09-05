@@ -361,9 +361,23 @@ startboot(char *argv0, char **argv)
 			gstop = 0;
 			tid = rfork(RFPROC|RFMEM);		/* a thread to go with me */
 			if(tid == 0){
+				/*
+				 * Blocked for good, as far as a move that waits for
+				 * user mode is concerned: a minute's sleep.  The
+				 * move interrupts it - the sleep returns -1 - and
+				 * the thread goes on counting where it lands.
+				 */
+				int longsleep = 1;
+
 				while(!gstop){
 					gshared++;
-					sleep(1);
+					if(longsleep){
+						if(sleep(60*1000) < 0){
+							longsleep = 0;
+							print("legacy thread: my minute's sleep was interrupted for the move; I go on counting where I am\n");
+						}
+					} else
+						sleep(1);
 				}
 				exits("thread done");
 			}

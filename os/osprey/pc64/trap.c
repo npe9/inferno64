@@ -420,7 +420,7 @@ faultamd64(Ureg* ureg, void*)
 		if(r < 0){
 			if(!user)
 				error("legacy image: no page at that address");
-			print("user fault: %s addr=%#llux pc=%#llux, no page for it in the buddy's image\n",
+			iprint("user fault: %s addr=%#llux pc=%#llux, no page for it in the buddy's image\n",
 				read? "read": "write", (uvlong)addr, (uvlong)ureg->pc);
 			if(up->oslinux){
 				/*
@@ -442,11 +442,20 @@ faultamd64(Ureg* ureg, void*)
 			dumpregs(ureg);
 			panic("kernel fault: %s addr=%#p", read? "read": "write", addr);
 		}
-		print("user fault: %s addr=%#llux pc=%#llux sp=%#llux, pid %lud %s\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc, (uvlong)ureg->sp, up->pid, up->text);
+		iprint("user fault: %s addr=%#llux pc=%#llux sp=%#llux, pid %lud %s\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc, (uvlong)ureg->sp, up->pid, up->text);
 		if(!waserror()){
 			uvlong *w = (uvlong*)ureg->sp;
 			validaddr(ureg->sp, 8*sizeof(uvlong), 0);
-			print("user fault: stack %#llux %#llux %#llux %#llux %#llux %#llux %#llux %#llux\n",
+			{	/* the frames below the stack pointer too, and the registers: a return into nowhere leaves its trail there */
+				uvlong *w = (uvlong*)(ureg->sp - 128);
+				int i;
+				for(i = 0; i < 16; i += 4)
+					if(okaddr((uintptr)(w + i), 32, 0))
+						iprint("user fault: below sp %#p: %#llux %#llux %#llux %#llux\n", w + i, w[i], w[i+1], w[i+2], w[i+3]);
+				iprint("user fault: ax %#llux bx %#llux cx %#llux dx %#llux si %#llux di %#llux bp %#llux r12 %#llux r13 %#llux\n",
+					ureg->ax, ureg->bx, ureg->cx, ureg->dx, ureg->si, ureg->di, ureg->bp, ureg->r12, ureg->r13);
+			}
+			iprint("user fault: stack %#llux %#llux %#llux %#llux %#llux %#llux %#llux %#llux\n",
 				w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
 			poperror();
 		}
@@ -733,6 +742,12 @@ uregok(void *nureg)
 }
 
 /* the user pc a saved frame holds: for a status line about another process */
+uintptr
+uregax(void *a)
+{
+	return ((Ureg*)a)->ax;
+}
+
 uintptr
 uregpc(void *a)
 {

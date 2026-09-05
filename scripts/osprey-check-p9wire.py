@@ -102,6 +102,9 @@ def main():
          all(re.search(r"osprey migrate: container \d+'s crossing begins while container \d+'s is in flight - 2 at once", x) is not None for x in t)
          and all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12], with 0 of its group: [1-9]\d* pages,", x) is not None for x in t)
          and all(re.search(r'legacy: the second process crossed at the same time: I am container \d+ here, my 40 dirty pages came with me \(40 intact\), and my descriptor opened before the crossing reads: "[^"]+"', x) is not None for x in t)),
+        ("and a member blocked in the kernel crosses: the thread is a minute into a sleep when the parent asks, the kernel's note interrupts the sleep, the call returns interrupted on the way out and the thread stops there; it lands with its parent, sees the interrupted call and goes on counting",
+         all(re.search(r"legacy thread: my minute's sleep was interrupted for the move; I go on counting where I am", x) is not None for x in t)
+         and all(re.search(r'the thread had counted to 1 before the crossing and to ([2-9]|[1-9]\d+) after it', x) is not None for x in t)),
         ("and the parked process waited on its transfer's own progress, not a minute's count: no crossing stalled and none was refused",
          all('crossing stalled' not in x and 'was not taken by the other machine' not in x for x in t)),
         ("and neither machine panics",

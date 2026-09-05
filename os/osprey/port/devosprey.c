@@ -4020,7 +4020,16 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		c = migin[x].c;
 		uregsanitize(migin[x].ureg);
 		forkchild(p, (Ureg*)migin[x].ureg);
-		forkchildret(p, (uintptr)ospreyid(c));
+		/*
+		 * The leader's request returns its new container's identity;
+		 * a member keeps the return its own call had - Eintr, for the
+		 * sleep the stop interrupted, which it is to see and act on.
+		 */
+		{
+			extern uintptr uregax(void*);
+
+			forkchildret(p, migin[x].first == nil ? (uintptr)ospreyid(c) : uregax(migin[x].ureg));	/* forkchild zeroes the return, as fork's child's */
+		}
 		p->insyscall = 0;
 		memset(p->time, 0, sizeof(p->time));
 		p->time[TReal] = MACHP(0)->ticks;
@@ -4112,6 +4121,20 @@ ospreyunmake(Ospreyproc *c)
 	ospreyputuart(c);
 	ospreyexit(c);
 	qunlock(&ospreylock);
+}
+
+/* the notes a process holds, dropped: the stop's own, which a move that did not happen must not deliver */
+static void
+ospreydropnotes(Proc *p)
+{
+	int i;
+
+	qlock(&p->debug);
+	for(i = 0; i < p->nnote; i++)
+		freenote(p->note[i]);
+	p->nnote = 0;
+	p->notepending = 0;
+	qunlock(&p->debug);
 }
 
 /*
@@ -4220,8 +4243,22 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 	nmem = 0;
 	if(group & 1){
 		nmem = ospreymembers(mem, Nmember);
-		for(k = 0; k < nmem; k++)
+		for(k = 0; k < nmem; k++){
 			mem[k]->procctl = Proc_stopme;
+			/*
+			 * A member blocked in the kernel - a long sleep, a read
+			 * with nothing to read - never comes back to user mode of
+			 * its own accord, and used to refuse the move.  Plan 9's
+			 * own way: a note interrupts its sleep, its call returns
+			 * Eintr on the way out, and procctl stops it there, the
+			 * interrupted call's return in its registers; after
+			 * arriving the program sees the call interrupted and
+			 * retries, as a Plan 9 program does.  The note itself is
+			 * never delivered: a moved process starts with no notes,
+			 * and a refused move takes it back below.
+			 */
+			postnote(mem[k], 1, "osprey: stop for a move", NUser);
+		}
 		for(k = 0; k < nmem; k++){
 			for(tries = 0; tries < 200 && mem[k]->state != Stopped; tries++)
 				tsleep(&up->sleep, return0, nil, 10);
@@ -4231,6 +4268,7 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 				print("osprey move: a member of container %llud's group (pid %d) did not stop; the group is not moved\n",
 					ospreyid(old), mem[k]->pid);
 				for(j = 0; j < nmem; j++){
+					ospreydropnotes(mem[j]);
 					if(mem[j]->state == Stopped)
 						ready(mem[j]);		/* parked in procctl: goes on */
 					else
@@ -4415,9 +4453,11 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 		mo->pending = 0;
 		if(mo->result <= 0){
 			print("osprey migrate: container %llud's process was not taken by the other machine; it stays\n", ospreyid(old));
-			for(k = 0; k < nmem; k++)
+			for(k = 0; k < nmem; k++){
+				ospreydropnotes(mem[k]);	/* the stop's note, never to be delivered */
 				if(mem[k]->state == Stopped)
 					ready(mem[k]);		/* the group goes on here */
+			}
 			mo->nmem = 0;
 			mo->c = nil;
 			mo->p = nil;
@@ -4575,6 +4615,11 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 		if(mp == nil){
 			ospreyexit(mc);
 			break;
+		}
+		{
+			extern uintptr uregax(void*);
+
+			forkchildret(mp, uregax(mem[k]->dbgreg));	/* the member's own return: forkchild zeroed it, as fork's child's */
 		}
 		qlock(&ospreylock);
 		x = ospreyindex(mc);

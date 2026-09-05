@@ -5496,12 +5496,46 @@ The client's select loop of item 5 took the kernel's \*(lqnothing in
 produce; it asks again.
 .PP
 .B "7.  A group member that is blocked still crosses."
-A member that never comes back to user mode refuses the move.  The
-real form is Plan 9's own: the member's sleep is interrupted with a
-note, its call returns
+Done, Plan 9's own way.  With the stop
+.CW ( Proc_stopme )
+the move posts each member a note
+.CW ( postnote ),
+which cancels the sleep it is in; the interrupted call returns
 .CW Eintr
-on the way out and it stops there, and it retries after arriving.
-Proof: a thread blocked in a long sleep crosses with its parent.
+on its way out, and there, at the return to user mode, the stop takes
+hold and the member is carried with the call's return in its
+registers.  The note itself is never delivered: a moved process starts
+with no notes, and a move refused takes it back
+.CW ( ospreydropnotes )
+before the member goes on, since a note delivered to a process without
+a handler would kill it.  What the program does with an interrupted
+call is the program's, as on Plan 9: the legacy program's thread
+sleeps a minute, sees the sleep return \-1 on the other machine, and
+goes on counting there \- the two-machine check reads the count at 1
+before the crossing and above it after.  Which found that no legacy
+process had ever slept: the configuration gives SLEEP's number to the
+boot program's yield-and-service call, a two-millisecond wait, and a
+legacy process trapping the same number got that too, whatever it
+asked \- a minute's sleep was two milliseconds, and the thread counted
+on as if nothing had blocked it.  A process whose text is a buddy's
+image gets Plan 9's sleep(2) now.  And the arrived member saw its
+sleep return 0, not \-1: an arrival's frame is built by
+.CW forkchild ,
+which zeroes the return register as fork's child's, and the leader's
+identity was then written over it for every arrival; a member gets its
+own saved return back
+.CW ( uregax ),
+on a local move as on the wire.  Proof, the two-machine check's
+fifteenth criterion: the thread had counted to 1 before the crossing
+and to 17 after it, and said its minute's sleep was interrupted.
+.PP
+Open, seen twice and not since: after the boot program's exit, when a
+run goes on long enough, the server personality faulted returning into
+address \-1 on a kproc stack of zeros
+.CW ( "user fault: read addr=0xffffffff pc=0xffffffff" ,
+pid 6).  The fault dump prints the frames below the stack pointer and
+the registers now, direct to the port, so the next one will say where
+it came from.
 .PP
 .B "8.  The personality's \[*p]p wire checks who is asking."
 .CW Tauth
