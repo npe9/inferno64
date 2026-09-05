@@ -2559,50 +2559,26 @@ ospreyxcall(va_list list)
 		return 0;
 	}
 	if(op == ReqKbdnotify){		/* route IRQ1 to this container as a bare notification */
-		int c, i;
-
 		ospreykbdproc = up->osprey;	/* whose semaphore the interrupt gives */
 		ospreykbdsem = (int)arg[0];
 		ospreykbdring = nil;		/* notification-only: the driver reads 0x60 itself */
 		/*
-		 * The one-time controller setup is done here, in the kernel, not
-		 * in the driver's CPL3 kproc: the i8042 command-byte handshake
-		 * spins on the status port, and a spin that long at CPL3 in a
-		 * personality kproc is a window for a clock or device interrupt
-		 * to land while that kproc is the running context, which this
-		 * microkernel's interrupt path corrupts (the standing pc64
-		 * heisenbug - a user driver taking a legacy IRQ from CPL3
-		 * reproduces it reliably).  It runs in kernel context instead,
-		 * so an interrupt landing during it is handled normally.
-		 *
-		 * A config that exposes the framebuffer also armed the kernel's
-		 * own ospreykbdintr on IRQ1 (it drains 0x60 into a ring).  Take
-		 * it off the line first: intrdisable masks IRQ1 (irqdisable),
-		 * so the command-byte read below cannot raise an unhandled
-		 * interrupt, and no splhi is needed - the handshake does not
-		 * block the block device or the clock while it spins.  The
-		 * spins are bounded so a wedged controller cannot hang the
-		 * kernel.  intrenable last re-arms IRQ1, buffer already drained,
-		 * onto the notification handler alone.  The scancodes themselves
-		 * - the data path - the driver still reads with its own inb.
+		 * Arming only.  The command-byte handshake that enables the
+		 * keyboard interrupt in the controller used to be here, in the
+		 * kernel, because a long CPL3 spin was thought to reproduce the
+		 * standing pc64 interrupt-path bug (item 7b's seam).  Item 15's
+		 * tooling ran that reproduction fifty-two boots - two hundred
+		 * million CPL3 status reads each, interrupts landing throughout
+		 * - and corrupted no return, so the driver does its own
+		 * handshake at CPL3 now (p9kbd.c), owning the whole i8042
+		 * including its enable.  The kernel takes its own drain-handler
+		 * off the line (intrdisable masks IRQ1) and arms the
+		 * notification handler; the interrupt is not enabled in the
+		 * controller until the driver's handshake sets the command bit,
+		 * so between here and that a keypress cannot fire, and a
+		 * spurious one only wakes the driver, which drains.
 		 */
 		intrdisable(Kbdirq, ospreykbdintr, nil, -1, "osprey-kbd");
-		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
-			inb(Kbddata);			/* drain stale bytes */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
-			;				/* input buffer clear */
-		outb(Kbdstat, 0x20);			/* read command byte */
-		for(i = 0; i < 100000 && !(inb(Kbdstat) & Kbdready); i++)
-			;
-		c = inb(Kbddata);
-		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
-			;
-		outb(Kbdstat, 0x60);			/* write command byte */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & 0x02); i++)
-			;
-		outb(Kbddata, c | 0x01);		/* enable the keyboard interrupt */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
-			inb(Kbddata);			/* drain the echo, if any */
 		intrenable(Kbdirq, ospreykbdnotify, nil, -1, "osprey-kbd-notify");
 		ubuf[0] = 0;
 		return 0;
@@ -2713,32 +2689,11 @@ ospreyxcall(va_list list)
 		return 0;
 	}
 	if(op == ReqMousenotify){
-		int c, i;
-
 		ospreymouseproc = up->osprey;	/* whose semaphore the aux interrupt gives */
 		ospreymousesem = (int)arg[0];	/* its OWN semaphore, distinct from the keyboard's */
 		ospreymousering = nil;		/* notification-only: the driver reads 0x60 itself */
-		/*
-		 * Same shape as ReqKbdnotify (kernel-side setup, bounded spins,
-		 * intrdisable masks IRQ12 so no splhi), but the aux device is
-		 * more of a handshake: enable the port, set the aux interrupt and
-		 * clock bits in the command byte, and tell the mouse to report.
-		 */
+		/* arming only, as ReqKbdnotify: the aux handshake is the driver's now, at CPL3 */
 		intrdisable(Mouseirq, ospreymouseintr, nil, -1, "osprey-mouse");
-		i8042cmd(0xA8);			/* enable the aux (mouse) port */
-		i8042cmd(0x20);			/* read the command byte */
-		c = i8042rdata();
-		if(c < 0)
-			c = 0;
-		c |= 0x02;			/* aux interrupt enable (IRQ12) */
-		c &= ~0x20;			/* aux clock enable (0 = enabled) */
-		i8042cmd(0x60);			/* write the command byte */
-		i8042wdata(c);
-		i8042cmd(0xD4);			/* route the next data byte to the aux port */
-		i8042wdata(0xF4);		/* tell the mouse to report movement */
-		i8042rdata();			/* eat its ACK (0xFA) */
-		for(i = 0; i < 100000 && (inb(Kbdstat) & Kbdready); i++)
-			inb(Kbddata);		/* drain */
 		intrenable(Mouseirq, ospreymousenotify, nil, -1, "osprey-mouse-notify");
 		ubuf[0] = 0;
 		return 0;

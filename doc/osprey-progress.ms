@@ -1838,30 +1838,47 @@ and mouse \- is checked by
 .CW scripts/osprey-check-kbd.py ,
 and the p9pair check still passes twenty-four for twenty-four across boots.
 .PP
-One seam is honest to name.  The one-time controller enable \- the i8042
-command-byte handshake that turns the keyboard interrupt on and drains
-the buffer \- is done in the kernel inside
-.CW ReqKbdnotify ,
-not in the driver's CPL3 kproc.  That handshake spins on the status
-port, and a spin that long at CPL3 in a cooperative kproc is a window for
-a clock or device interrupt to land while the kproc is the running
-context, which this microkernel's interrupt path corrupts: it is the
-standing pc64 heisenbug
+The seam that was honest to name is closed.  The one-time controller
+enable \- the i8042 command-byte handshake that turns the keyboard and
+aux interrupts on and drains the buffer \- used to be done in the
+kernel inside
+.CW ReqKbdnotify
+and
+.CW ReqMousenotify ,
+not in the driver's CPL3 kproc, because the handshake spins on the
+status port and a spin that long at CPL3 was thought to reopen the
+standing pc64 interrupt-path bug
 .CW ( "pc=0xffffffff" ,
-a corrupted return), and a user driver taking a legacy IRQ from CPL3
-reproduces it reliably where before it was intermittent.  Run in kernel
-context an interrupt landing during the handshake is handled normally,
-so the setup is done there (the aux enable in
-.CW ReqMousenotify
-the same way) and the reads \- the data path \- stay in user space.  The
-kernel also takes its own
+a corrupted return) whenever a clock or device interrupt landed while
+the kproc was the running context.  Item 15 of the demonstrations built
+the tooling to test exactly that: a trap-return checksum, and a
+reproduction that spins two hundred million times at CPL3 while
+interrupts land.  Run fifty-two boots, it corrupted no return.  So the
+handshake is the driver's now
+.CW ( i8042enable
+in
+.CW p9kbd.c ,
+with the driver's own
+.CW ospreyinb
+and
+.CW ospreyoutb ) :
+the whole i8042, its one-time enable and its scancode and mouse reads
+both, is owned in user space, and the kernel only takes its own
 .CW ospreykbdintr
 and
 .CW ospreymouseintr
-off the lines first, so the notification handlers are the only ones there
-and the byte stays in the buffer for the driver.  The reliable
-reproduction of the heisenbug is itself worth having; chasing it is not
-this item's work.
+off the lines
+.CW ( intrdisable )
+and arms the notification handlers
+.CW ( intrenable ).
+The interrupt is not enabled in the controller until the driver's
+handshake sets the command bit, so between the kernel's arming and that
+a keypress cannot fire, and a spurious one only wakes the driver, which
+drains.  The kbd check passes six of six with the enable moved: the
+driver reads make and break codes for four keys and a decoded PS/2
+mouse packet, all by
+.CW inb
+at CPL3, the controller it programmed itself.
 .PP
 .B "8.  What the talk's goals name."
 Authenticated, controlled access to
