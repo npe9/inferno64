@@ -1,0 +1,25 @@
+color 4
+thick 2
+line 11 2 9 6
+line 8 6 11 15
+line 11 15 18 15
+line 18 15 24 11
+line 24 11 25 5
+line 25 5 22 1
+line 22 0 17 3
+line 17 3 13 1
+line 14 12 11 5
+line 15 11 22 2
+line 17 12 23 7
+line 14 5 13 2
+line 11 11 9 5
+line 12 13 21 10
+line 15 7 15 3
+color 12
+line 17 9 23 5
+line 18 5 21 1
+line 18 12 23 9
+color 2
+line 15 0 17 -5
+line 17 -5 22 -6
+line 16 -1 16 -4

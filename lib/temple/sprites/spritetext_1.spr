@@ -1,0 +1,18 @@
+dither 6 8
+rect -77 -6 79 240
+color 0
+thick 2
+circle 1 33 32
+planarsym 1 25 1 45
+circle 13 21 6
+circle 13 21 2
+line 2 25 5 41
+line 3 53 9 53
+line 9 53 17 47
+line 5 -1 33 5
+line 21 7 37 13
+line 31 17 39 31
+line 33 39 29 57
+line -35 35 -37 49
+line -29 13 -35 19
+polypt 491 10 63 f66ddbbe7dfbfc799ee749fa24499224499224fff334fffbe67dfaf67ddbbeeddbb66ddfb66ddbb66ddbb66dfbb66ddbb66ddbb64ddbb66ddbb66ddbb66dd3b66dfbb66d9bb66fdfb77d7badd7d9edd6b5db902008120449122449822449922c489220099224489224419224491224499224499220499224098200419020b65ddbb66ddbb66ddbb66ddbb76ddbb66ddbb66fdbb6eddbb66ddfb66ddbf66ddbb67ddbb66ddbf66d6f5bb76ddb366fdbb66edbb66ddbb66ddb00

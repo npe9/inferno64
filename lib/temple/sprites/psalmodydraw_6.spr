@@ -1,0 +1,9 @@
+color 10
+rect 0 0 21 18
+color 0
+rect 2 2 19 16
+thick 1
+color 14
+line 4 8 16 8
+line 4 8 8 4
+line 4 8 8 12

@@ -1,0 +1,19 @@
+color 2
+thick 2
+line 10 24 16 -2
+line 12 -4 6 22
+line 12 -4 6 -16
+line 6 -22 12 -8
+line 12 -8 16 -24
+line 18 -24 14 -2
+line 14 -2 30 -18
+line 22 -20 14 -2
+line 14 -2 28 -18
+color 10
+line 28 -10 32 -20
+line 28 -22 22 -16
+line 16 -16 18 -28
+line 14 -30 8 -16
+line 8 -16 4 -22
+line 4 -22 8 -6
+line 16 0 32 -10

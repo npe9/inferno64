@@ -1,0 +1,109 @@
+color 8
+thick 4
+line 4 16 32 16
+line 32 4 32 28
+line 32 28 60 28
+line 60 28 60 4
+line 60 4 32 4
+line 44 28 44 44
+line 36 24 56 24
+line 56 24 56 8
+line 56 8 36 8
+line 36 8 36 20
+line 36 20 52 20
+line 52 20 52 12
+line 52 12 40 12
+line 40 12 40 16
+line 40 16 48 16
+line 44 48 84 48
+line 84 48 84 76
+line 84 76 44 76
+line 44 76 44 52
+line 48 52 80 52
+line 80 52 80 72
+line 80 72 48 72
+line 48 72 48 56
+line 48 56 76 56
+line 76 56 76 68
+line 76 68 52 68
+line 52 68 52 60
+line 52 60 72 60
+line 72 60 72 64
+line 72 64 56 64
+line 84 64 108 64
+line 108 52 108 76
+line 108 76 136 76
+line 136 76 136 36
+line 136 36 128 36
+line 128 36 128 48
+line 128 48 108 48
+line 112 52 132 52
+line 132 40 132 72
+line 128 72 112 72
+line 112 68 112 56
+line 112 56 128 56
+line 128 56 128 68
+line 128 68 116 72
+line 116 68 116 60
+line 116 60 124 60
+line 120 64 124 64
+line 124 68 120 68
+line 132 32 132 16
+line 132 16 116 16
+line 112 4 112 28
+line 112 28 92 28
+line 92 28 92 4
+line 92 4 108 4
+line 108 4 104 24
+line 108 24 108 8
+line 108 8 96 8
+line 96 8 96 24
+line 96 24 100 24
+line 100 24 100 12
+line 104 12 104 20
+line 88 16 84 16
+line 80 8 80 24
+line 80 24 76 24
+line 76 24 76 8
+line 40 64 24 64
+line 20 56 20 72
+line 20 72 8 72
+line 8 72 8 56
+line 8 56 16 56
+line 16 56 16 68
+line 16 68 12 68
+line 12 68 12 60
+rect 18 90 44 117
+line 32 64 31 90
+color 1
+line 68 0 68 60
+line 68 68 68 92
+line 68 92 68 100
+color 2
+pt 84 48
+pt 84 56
+pt 84 72
+pt 76 48
+pt 76 76
+pt 28 100
+pt 32 100
+pt 32 104
+pt 28 104
+pt 56 8
+pt 56 24
+pt 120 56
+pt 124 56
+pt 124 52
+pt 120 52
+color 14
+pt 20 116
+pt 28 116
+pt 36 116
+pt 8 64
+pt 8 56
+pt 8 72
+pt 76 24
+pt 76 8
+pt 44 76
+pt 52 76
+pt 60 76

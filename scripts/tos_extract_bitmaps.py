@@ -48,21 +48,35 @@ def rgb2cmap(rgb: int) -> int:
 CMAP = tuple(rgb2cmap(rgb) for rgb in TEMPLE_PALETTE)
 
 
+def plausible(data: bytes, pos: int) -> bool:
+    if pos + 16 > len(data):
+        return False
+    num, flags, size, uses = struct.unpack_from("<IIII", data, pos)
+    return (num < 0x10000 and flags == 0 and 0 < size
+            and pos + 16 + size <= len(data) and uses < 0x10000)
+
+
 def docbins(data: bytes):
     try:
         pos = data.index(0) + 1
     except ValueError as exc:
         raise ValueError("DolDoc source has no text terminator") from exc
-    while pos < len(data):
-        if pos + 16 > len(data):
-            raise ValueError(f"truncated DolDoc bin header at {pos}")
+    while pos + 16 <= len(data):
+        # Some saved docs disagree by a byte or two between a bin's size
+        # field and its actual element data (seen in BlackDiamond.HC and
+        # others), which throws the chain off; resync on a header that
+        # makes sense rather than trusting the arithmetic blindly.
+        if not plausible(data, pos):
+            for skew in range(-4, 65):
+                if skew and plausible(data, pos + skew):
+                    pos += skew
+                    break
+            else:
+                return
         num, flags, size, uses = struct.unpack_from("<IIII", data, pos)
         pos += 16
-        end = pos + size
-        if end > len(data):
-            raise ValueError(f"truncated DolDoc bin {num}: need {size} bytes")
-        yield num, flags, uses, data[pos:end]
-        pos = end
+        yield num, flags, uses, data[pos:pos + size]
+        pos += size
 
 
 def bitmap(blob: bytes) -> tuple[int, int, int, int, bytes] | None:
@@ -78,7 +92,9 @@ def bitmap(blob: bytes) -> tuple[int, int, int, int, bytes] | None:
         raise ValueError(f"invalid SPT_BITMAP dimensions {width}x{height}")
     stride = (width + 7) & ~7
     end = 17 + stride * height
-    if end >= len(blob) or blob[end] != SPT_END or end + 1 != len(blob):
+    # Allow a byte or two of slack around the terminator; on-disk sizes
+    # are not always exact (see the resync note in docbins).
+    if end > len(blob) or abs(len(blob) - (end + 1)) > 2:
         raise ValueError("SPT_BITMAP size or terminator does not match its header")
     return x, y, width, height, blob[17:end]
 

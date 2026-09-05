@@ -1,0 +1,32 @@
+color 0
+line -10 8 16 -16
+line -8 10 22 -12
+line 20 -16 -14 14
+line 2 2 2 -18
+line 2 -22 2 20
+line 12 20 -10 -26
+line -6 -26 -10 -24
+line -8 -26 14 20
+line 2 -26 0 24
+line -8 14 6 -18
+line -2 -14 12 16
+line 12 6 -2 -10
+line -12 2 14 -18
+color 14
+line 8 0 8 -28
+line -6 -30 0 -6
+line 2 -24 -6 -10
+line -14 -18 -10 -6
+line -10 2 -8 -16
+line -10 -28 -12 -12
+line -4 -22 -2 -2
+line 8 -4 28 -12
+line 12 -12 28 -10
+line 14 -14 14 -30
+line -2 0 8 24
+line 8 14 6 -6
+color 4
+line 6 4 6 -10
+line 0 -14 0 -4
+line -8 -16 -8 12
+line 10 -12 10 -4

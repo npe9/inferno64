@@ -1,0 +1,7 @@
+color 10
+rect 0 0 21 18
+color 0
+rect 2 2 19 16
+color 4
+circle 10 8 4
+floodfillnot 10 9

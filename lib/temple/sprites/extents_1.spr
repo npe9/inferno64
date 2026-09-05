@@ -1,0 +1,11 @@
+color 2
+line 22 5 35 -8
+line 35 -8 49 9
+line 49 9 34 23
+line 34 22 20 6
+color 4
+line 42 0 42 15
+line 42 15 27 14
+line 27 14 27 -2
+line 27 -2 42 0
+text -11 -12 'Hello'

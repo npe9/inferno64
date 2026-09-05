@@ -1,0 +1,9 @@
+thick 2
+color 6
+line 0 0 0 -7
+color 7
+thick 1
+line 0 -6 -16 -6
+line 0 -1 -16 -1
+line -16 -1 -1 -6
+line -1 -1 -16 -6

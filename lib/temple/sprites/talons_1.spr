@@ -1,0 +1,10 @@
+color 0
+thick 2
+line 2 -32 -3 2
+line -3 2 2 34
+line 2 34 -1 43
+line -1 43 11 38
+line 11 38 4 28
+line 4 28 9 -4
+line 9 -4 2 -31
+line 2 -31 4 41

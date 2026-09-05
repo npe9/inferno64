@@ -1,0 +1,7 @@
+color 9
+bspline3 4 -6 -5 0 -1 -1 0 -1 3 0 -6 5 0
+bspline3 3 -6 -4 0 -2 1 0 -6 5 0
+color 7
+line -3 1 -7 1
+line -7 1 -7 -1
+line -7 -1 -3 -1

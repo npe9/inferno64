@@ -1,0 +1,29 @@
+color 3
+thick 2
+line -14 1 5 1
+line -10 1 -6 -2
+line -6 -2 4 -3
+thick 1
+line -14 1 -7 -1
+line 3 -2 1 -1
+line -7 -1 -6 2
+line -6 2 -8 8
+line -8 8 -3 12
+line -3 12 1 -1
+line 3 -2 4 5
+line 4 5 1 13
+line 1 13 -1 6
+color 11
+floodfill -6 4
+floodfill 1 4
+color 3
+thick 2
+line -5 -2 0 0
+line -6 0 3 0
+line 4 -4 6 -4
+color 12
+thick 1
+line 3 -3 4 -4
+color 14
+line 2 -1 6 -3
+line 2 -1 5 1

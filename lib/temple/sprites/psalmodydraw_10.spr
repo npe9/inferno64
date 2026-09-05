@@ -1,0 +1,22 @@
+color 10
+rect 0 0 21 18
+color 0
+rect 2 2 19 16
+color 12
+circle 10 8 4
+color 4
+circle 10 7 2
+circle 10 9 2
+circle 10 7 2
+circle 10 8 3
+color 12
+line 10 9 11 8
+line 11 5 9 6
+line 8 10 10 11
+line 8 10 9 9
+line 8 10 8 10
+line 11 6 11 6
+line 8 10 8 10
+line 10 6 10 6
+line 8 10 8 10
+line 7 10 7 10

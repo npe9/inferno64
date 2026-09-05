@@ -1,0 +1,14 @@
+text -75 53 'Welcome to TempleOS'
+thick 5
+dither 7 14
+circle 0 -40 20
+color 1
+line 0 -15 0 20
+line 0 20 -25 40
+line 0 20 25 40
+line 0 0 25 0
+line 0 0 -25 0
+pt -7 -40
+pt 7 -40
+color 14
+floodfill -3 -33

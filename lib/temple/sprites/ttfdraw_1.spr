@@ -1,0 +1,6 @@
+color 4
+thick 2
+circle 1 1 6
+thick 1
+line 0 -2 0 2
+line -2 0 2 0

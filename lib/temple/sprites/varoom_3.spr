@@ -1,0 +1,16 @@
+color 6
+thick 2
+line -26 -10 14 -28
+line -20 0 18 -20
+circle -26 -4 6
+line 12 -28 22 -42
+line 22 -42 14 -26
+line 14 -26 34 -32
+line 16 -22 36 -28
+line 18 -20 36 -26
+line -28 -6 -28 -6
+line -26 -4 -26 -4
+line -18 -6 12 -22
+color 2
+line 34 -36 38 -26
+line 6 -28 12 -32

@@ -1,0 +1,73 @@
+color 0
+line 16 20 16 36
+line 32 36 32 0
+line 48 36 48 20
+line 44 20 52 20
+line 52 20 52 0
+line 44 20 44 0
+line 64 36 64 20
+line 60 20 68 20
+line 68 20 68 0
+line 60 20 60 0
+line 124 20 132 20
+line 132 20 132 0
+line 124 20 124 0
+line 108 20 116 20
+line 116 20 116 0
+line 108 20 108 0
+line 16 36 192 36
+line 16 20 20 20
+line 20 20 20 0
+line 196 0 20 0
+text 20 24 'A'
+text 36 24 'S'
+text 52 24 'D'
+text 68 24 'F'
+text 84 24 'G'
+text 100 24 'H'
+text 116 24 'J'
+text 132 24 'K'
+text 148 24 'L'
+text 164 24 ';'
+text 180 24 "'"
+text 44 8 'E'
+text 60 8 'R'
+text 76 8 'T'
+text 108 8 'U'
+text 124 8 'I'
+text 156 8 'P'
+text 172 8 '['
+text 188 8 ']'
+line 80 20 80 20
+line 76 20 84 20
+line 84 20 84 0
+line 76 20 76 0
+line 96 36 96 0
+line 112 36 112 20
+line 128 36 128 20
+line 144 36 144 0
+line 160 36 160 20
+line 176 36 176 20
+line 192 36 192 20
+line 156 20 164 20
+line 164 20 164 0
+line 156 20 156 0
+line 172 20 180 20
+line 180 20 180 0
+line 172 20 172 0
+line 188 20 196 20
+line 196 20 196 0
+line 188 20 188 0
+line 80 36 80 20
+color 7
+floodfill 48 4
+floodfill 64 4
+floodfill 80 4
+floodfill 112 4
+floodfill 128 4
+floodfill 160 4
+floodfill 176 4
+floodfill 192 4
+floodfill 64 10
+floodfill 126 11
+floodfill 160 10

@@ -1,57 +1,114 @@
 .TH TOS_EXTRACT_SPRITES 1
 .SH NAME
-tos_extract_sprites \- convert DolDoc binary images to Inferno image files
+tos_extract_sprites, tos_extract_bitmaps, tos_expand \- recover TempleOS sprites and sources for Inferno
 .SH SYNOPSIS
-.B python3 scripts/tos_extract_sprites.py
-.I file
-[
+.B python3 scripts/tos_expand.py
+.I iso
 .B -o
 .I outdir
-]
 [
-.B --bin
-.I n
+.B -v
 ]
+.PP
+.B python3 scripts/tos_extract_sprites.py
+.I file
+.B -o
+.I outdir
 [
 .B --prefix
 .I name
 ]
 [
-.B --compressed
+.B --spr
+.I dir
 ]
+.PP
+.B python3 scripts/tos_extract_bitmaps.py
+.I file
+.B -o
+.I outdir
 [
-.B --rgba
+.B --prefix
+.I name
 ]
 .SH DESCRIPTION
+These are host Python programs (not Dis modules) used to carry
+TempleOS art into this tree.
+.PP
+.I Tos_expand
+reads a TempleOS distribution ISO, walks its RedSea filesystem, and
+writes every file into
+.IR outdir ,
+expanding TempleOS's own LZW-style
+.B .Z
+compression as it goes.
+It exists because the TempleOS source mirrors circulating on the web
+passed through an export that stripped every 0x05 byte, silently
+corrupting the binary DolDoc sprite records embedded in
+.B .HC
+files; the ISO is the only faithful source.
+(Stripping the 0x05 bytes from a file it writes reproduces the
+mirrored copy byte for byte, which is how the corruption was
+diagnosed.)
+.PP
 .I Tos_extract_sprites
-is a host Python program (not a Dis module).
-It reads DolDoc files that contain binary image or vector records, or
-.B .GR
-bitmaps, and writes Inferno
-.IR image (6)
-files:
-an
+reads a DolDoc file, walks its binary sprite bins, and
+.I rasterizes
+each one at 1:1 scale the way
+.B GrSpritePlot
+would draw it: colors, dithers, thickness, lines, arrows, rectangles,
+circles, ellipses, regular polygons, polylines, B-splines, flood
+fills, embedded bitmaps, planar symmetry, shifts, and text in the
+authentic 8x8 system font.
+For each bin it writes an
 .B m8
 .B .bit
 and a
 .B k1
 .B .mask
-by default.
+named
+.IB prefix _ binnum ,
+with the image rectangle placed so that the sprite's origin is (0,0)
+\(em drawing the image through its mask at point
+.I p
+puts the sprite where TempleOS's
+.B Sprite(dc,x,y)
+would.
+Mesh bins are 3D and are skipped (see
+.B scripts/tos_extract_meshes.py ).
+With
+.B --spr
+it also dumps each bin's element list as one-line-per-element text,
+for tools that want the vectors rather than a raster.
 .PP
-.B --compressed
-selects Inferno's compressed image encoding.
-.B --rgba
-writes an
-.B r8g8b8a8
-image and an
-.B a8
-mask instead.
-.SH EXAMPLE
-.EX
-	python3 scripts/tos_extract_sprites.py demo.HC -o /tmp/out --prefix demo
-.EE
+.I Tos_extract_bitmaps
+is the older, simpler tool: it converts only
+.B SPT_BITMAP
+records and ignores vector elements.
+.SH FILES
+.TP
+.B /icons/temple/*.bit
+rasterized sprites, named
+.IB app _ binnum
+.TP
+.B /lib/temple/sprites/*.spr
+element-list dumps
+.TP
+.B /fonts/temple/temple.font
+the TempleOS 8x8 system font, generated from
+.B Kernel/FontStd.HC
 .SH SOURCE
+.B /scripts/tos_expand.py
+.br
 .B /scripts/tos_extract_sprites.py
+.br
+.B /scripts/tos_extract_bitmaps.py
 .SH SEE ALSO
 .IR image (6),
 .IR draw-image (2)
+.SH BUGS
+Flood fills are rasterized on the sprite's own transparent canvas, so
+a fill that in TempleOS would spill onto surrounding screen pixels is
+clipped to the sprite's bounding box instead.
+B-splines are sampled uniformly rather than with TempleOS's exact
+stepping, so a curve can differ by a pixel.
