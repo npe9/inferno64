@@ -1,24 +1,47 @@
 .TH KEEPAWAY 1
 .SH NAME
-keepaway \- keep-away ball game
+keepaway \- two-team basketball keep-away
 .SH SYNOPSIS
 .B temple/keepaway
 .SH DESCRIPTION
-.I KeepAway
-is a keep-away ball game.
+.I Keepaway
+is a port of the TempleOS game
+.IR KeepAway :
+a pseudo-3D basketball keep-away between two teams of three men
+on a red-bordered court, viewed at 45 degrees.
 It runs under
 .IR wm (1).
 .PP
-The player is on the left of a pitched field, the AI on the right. Move with wasd or the arrows; space kicks toward the ball. Drive the ball into the far goal zone to score.
+Your man is the one with the light red floor shadow, on the
+light cyan team; he runs toward the mouse pointer.
+Get the ball to your team: a team scores 2 points when one of its
+men takes possession (a hand-off or a steal) and 6 points when he
+catches a pass just as it lands.
+Charging into an opposing man fast enough is a foul and gives the
+other team a point.
+The man holding the ball dribbles; shooting throws the ball
+forward and up along his heading.
+The game lasts three minutes, against the clock at the top of
+the screen, and the best score difference is remembered between
+games.
 .PP
 The controls are:
-.TF space
+.TF Right-click
 .TP
-.B arrows / wasd
-Move player
+.B mouse
+Run toward the pointer
+.TP
+.B Left-click
+Shoot (pass)
 .TP
 .B space
-Kick impulse toward ball
+Shoot (pass)
+.TP
+.B Right-click
+Jump
+.TP
+.B j
+Jump
 .TP
 .B Enter
 Restart
@@ -26,11 +49,21 @@ Restart
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TP
+.B /icons/temple/keepaway_*.mesh
+The original's GrModels-generated 3D ball and man sprites.
+.TP
+.B /fonts/temple/temple.font
+The 8x8 system font used for the scoreboard.
 .SH SOURCE
 .B /appl/temple/keepaway.b
 .SH SEE ALSO
 .IR temple (1),
-.IR draw3d (2),
-.IR ode (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The TempleOS pulldown menu bar and pop-up rules dialog are
+replaced by keys and an in-window overlay, and the
+.B Noise()
+sound effects are approximated by single beeps.
