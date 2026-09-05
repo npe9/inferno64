@@ -5,18 +5,16 @@ box \- rotating wireframe cube
 .B temple/box
 .SH DESCRIPTION
 .I Box
-is a rotating wireframe cube.
+is a port of the TempleOS demo
+.BR Demo/Graphics/Box.HC .
 It runs under
 .IR wm (1).
 .PP
-A yellow wireframe cube rotates under perspective projection.
+A red wireframe cube tumbles under an orthographic transform,
+composing three independently advancing ZXZ Euler rotations while
+its scale pulses between 0.2\(mu and 1.4\(mu, as in the original.
 .PP
-The controls are:
-.TF space
-.TP
-.B Esc / q
-Quit
-.PD
+Pressing any key quits.
 .SH SOURCE
 .B /appl/temple/box.b
 .SH SEE ALSO

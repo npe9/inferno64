@@ -1,7 +1,12 @@
 implement Box;
 
 # TempleOS Demo/Graphics/Box.HC — software 3D wireframe (Limbo math)
-# Plan step 1: project cube edges with Mat4-less rotate+perspective
+#
+# Faithful to the original: an orthographic ±100 cube (no perspective —
+# GrLine3 under DCF_TRANSFORMATION is a pure matrix transform) anchored at
+# dc->x,y = (200,200), drawn RED with thick=2 over the white DocClear page,
+# tumbling with three independent ZXZ Euler angles and a breathing scale
+# pulse, exiting on any key (while (!ScanChar)).
 
 include "sys.m";
 	sys: Sys;
@@ -24,9 +29,19 @@ Box: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+# exact TempleOS palette entries used by the original
+RED:	con int 16rAA0000FF;
+WHITE:	con int 16rFFFFFFFF;
+
 win: ref Window;
-yellow, black, grey: ref Image;
-ang := 0.0;
+red, white: ref Image;
+
+# original: F64 θ1=0,θ2=0,θ3=0, s=1, s1=1.05, advanced once per Sleep(20) frame
+th1 := 0.0;
+th2 := 0.0;
+th3 := 0.0;
+s := 1.0;
+s1 := 1.05;
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
@@ -41,15 +56,16 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Box", Wmclient->Appl);
 	d := win.display;
-	yellow = d.color(Draw->Yellow);
-	black = d.color(Draw->Black);
-	grey = d.color(Draw->Grey);
+	red = d.color(RED);
+	white = d.color(WHITE);
 	win.reshape(Rect((0, 0), (400, 400)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
 
+	# original loops Sleep(20) ≈ 50 fps with per-frame angle/scale steps;
+	# we tick at the same 20 ms so the per-frame constants carry over 1:1
 	ticks := chan of int;
-	spawn timer(ticks, 30);
+	spawn timer(ticks, 20);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -58,11 +74,16 @@ init(ctxt: ref Draw->Context, nil: list of string)
 			drawbox();
 	p := <-win.ctxt.ptr =>
 		win.pointer(*p);
-	k := <-win.ctxt.kbd =>
-		if(k == 16r1b || k == 'q' || k == 'Q')
-			exit;
+	<-win.ctxt.kbd =>
+		exit;		# original exits on ANY key
 	<-ticks =>
-		ang += 0.04;
+		Pi: con Math->Pi;
+		th1 += 2.0*Pi/70.0;
+		th2 += 2.0*Pi/90.0;
+		th3 += 2.0*Pi/110.0;
+		s *= s1;
+		if(!(s > 0.2 && s < 1.4))
+			s1 = 1.0/s1;
 		drawbox();
 	}
 }
@@ -72,28 +93,35 @@ drawbox()
 	img := win.image;
 	if(img == nil)
 		return;
-	img.draw(img.r, black, nil, Point(0, 0));
-	cx := img.r.min.x + img.r.dx()/2;
-	cy := img.r.min.y + img.r.dy()/2;
-	s := 70.0;
+	# DocClear: white page background
+	img.draw(img.r, white, nil, Point(0, 0));
+	# dc->x,y = (200,200): fixed anchor, not window-centred
+	cx := img.r.min.x + 200;
+	cy := img.r.min.y + 200;
+
+	c1 := math->cos(th1);	sn1 := math->sin(th1);
+	c2 := math->cos(th2);	sn2 := math->sin(th2);
+	c3 := math->cos(th3);	sn3 := math->sin(th3);
+
+	# Mat4x4RotZ(θ1); Mat4x4RotX(θ2); Mat4x4RotZ(θ3); Mat4x4Scale(s):
+	# orthographic — transform each ±100 vertex, keep x,y, no divide
 	pts := array[8] of Point;
 	i := 0;
 	for(zz := -1; zz <= 1; zz += 2)
 		for(yy := -1; yy <= 1; yy += 2)
 			for(xx := -1; xx <= 1; xx += 2){
-				fx := real xx;
-				fy := real yy;
-				fz := real zz;
-				ca := math->cos(ang);
-				sa := math->sin(ang);
-				x1 := fx*ca + fz*sa;
-				z1 := -fx*sa + fz*ca;
-				cb := math->cos(ang*0.7);
-				sb := math->sin(ang*0.7);
-				y2 := fy*cb - z1*sb;
-				z2 := fy*sb + z1*cb;
-				f := 3.0/(4.0+z2);
-				pts[i] = Point(cx+int(x1*s*f), cy+int(y2*s*f));
+				x := 100.0 * real xx;
+				y := 100.0 * real yy;
+				z := 100.0 * real zz;
+				# Rz(θ1)
+				x1 := x*c1 - y*sn1;
+				y1 := x*sn1 + y*c1;
+				# Rx(θ2) — z' unused: orthographic drops z
+				y2 := y1*c2 - z*sn2;
+				# Rz(θ3)
+				x3 := x1*c3 - y2*sn3;
+				y3 := x1*sn3 + y2*c3;
+				pts[i] = Point(cx+int(x3*s), cy+int(y3*s));
 				i++;
 			}
 	edges := array[] of {
@@ -101,9 +129,11 @@ drawbox()
 		(4,5),(5,7),(7,6),(6,4),
 		(0,4),(1,5),(2,6),(3,7)
 	};
+	# dc->thick=2: Plan 9 line widths are odd (2r+1); radius 1 (3 px)
+	# is the nearest that keeps the original's fat pen
 	for(j := 0; j < len edges; j++){
 		(a, b) := edges[j];
-		img.line(pts[a], pts[b], Draw->Endsquare, Draw->Endsquare, 0, yellow, Point(0, 0));
+		img.line(pts[a], pts[b], Draw->Enddisc, Draw->Enddisc, 1, red, Point(0, 0));
 	}
 	img.flush(Draw->Flushnow);
 }
