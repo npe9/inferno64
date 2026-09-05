@@ -5455,7 +5455,23 @@ program's proof: it opens
 writes forty pages of its bss, forks a sibling that asks to cross at
 the same moment alone, and crosses with its thread; on the far machine
 it reads the file through the descriptor, counts its forty pages
-intact, and the sibling does the same.  The figures, the same on both
+intact, reads
+.CW /hello
+\- the bind of
+.CW /n
+onto
+.CW /
+it made in a private name space before crossing, which names
+.CW /n/hello
+there because the buddy rebuilt the name space and replayed the bind
+.CW ( p9buddy_migout
+records each bind,
+.CW p9buddy_migin
+rforks the ns and replays them) \- and the sibling does the same.  So
+the process's name space crosses now, not only its descriptors: what
+the survey once kept saying, that a migrated process's kernel channels
+do not cross, is no longer whole \- its private name space, the binds
+that made it, crosses with it.  The figures, the same on both
 machines: the parent lets go of six pages \- its five of text and one
 of zeros \- and carries forty-three, the forty it dirtied, its stack
 and two data pages that differ, where the whole image had crossed

@@ -92,6 +92,9 @@ struct Img {
 	} ph[Maxph];
 	char	err[ERRMAX];		/* the last error, for the process's errstr(2) */
 	Pgrp	*pgrp;			/* its own name space once it rforks RFNAMEG; nil = the buddy's shared one */
+	int	nsforked;		/* it rforked a private name space (RFNAMEG) */
+	int	nbind;			/* path binds it made in that name space, recorded so migration can replay them */
+	struct { char new[80], old[80]; int flag; } bind[8];
 };
 enum { Nimg = 8 };
 static Img imgs[Nimg];
@@ -389,8 +392,16 @@ p9buddy_migout(uvlong container, char *buf, long max)
 		n += snprint(buf + n, max - n, "fd %d %d %lld %s\n", i, img->fdmode[i], (vlong)p9seek(img->fds[i], 0, 1), img->fdname[i]);
 		nopen++;
 	}
-	print("buddy: container %llud departs: image %s, %d descriptors in its record%s\n", container, img->name, nopen,
-		nleft > 0 ? ", a pipe's end left behind" : "");
+	if(img->nsforked){
+		int b;
+		n += snprint(buf + n, max - n, "ns\n");	/* it had a private name space */
+		for(b = 0; b < img->nbind; b++)
+			n += snprint(buf + n, max - n, "bind %d %s %s\n", img->bind[b].flag, img->bind[b].new, img->bind[b].old);
+		print("buddy: container %llud departs: image %s, %d descriptors, a private name space with %d binds in its record%s\n",
+			container, img->name, nopen, img->nbind, nleft > 0 ? ", a pipe's end left behind" : "");
+	} else
+		print("buddy: container %llud departs: image %s, %d descriptors in its record%s\n", container, img->name, nopen,
+			nleft > 0 ? ", a pipe's end left behind" : "");
 	return n;
 }
 
@@ -418,9 +429,12 @@ p9buddy_migin(uvlong container, char *rec)
 	uvlong scratch[4 + 3*Maxph];
 	char *line, *next, *name, *e;
 	vlong off;
-	int fd, mode, bfd, nfd;
+	int fd, mode, bfd, nfd, nsforked, nbind;
+	struct { char *newp, *oldp; int flag; } binds[8];
 
 	nfd = 0;
+	nsforked = 0;
+	nbind = 0;
 	img = nil;
 	for(line = rec; line != nil && *line != 0; line = next){
 		next = strchr(line, '\n');
@@ -433,6 +447,26 @@ p9buddy_migin(uvlong container, char *rec)
 			if(p9buddy_exec(container, name, (uchar*)scratch) < 0)
 				return -1;
 			img = imgof(container, 0);
+			continue;
+		}
+		if(strncmp(line, "ns", 2) == 0 && (line[2] == 0 || line[2] == ' ')){
+			nsforked = 1;
+			continue;
+		}
+		if(strncmp(line, "bind ", 5) == 0 && nbind < (int)nelem(binds)){
+			/* bind <flag> <new> <old>: replayed after the whole record is read, in the rebuilt name space */
+			char *p = line + 5;
+			binds[nbind].flag = (int)migrecnum(&p);
+			while(*p == ' ')
+				p++;
+			binds[nbind].newp = p;
+			while(*p != 0 && *p != ' ')
+				p++;
+			if(*p == ' ')
+				*p++ = 0;
+			binds[nbind].oldp = p;
+			if(binds[nbind].newp[0] != 0 && binds[nbind].oldp[0] != 0)
+				nbind++;
 			continue;
 		}
 		if(strncmp(line, "fd ", 3) != 0 || img == nil)
@@ -462,6 +496,26 @@ p9buddy_migin(uvlong container, char *rec)
 	if(img == nil)
 		return -1;
 	print("buddy: container %llud arrived: image %s laid out for it, %d descriptors reopened at their offsets\n", container, img->name, nfd);
+	/* the private name space, rebuilt the way it was made: a fresh pgrp forked from the buddy's, then each bind replayed */
+	if(nsforked && img->pgrp == nil){
+		Pgrp *ng = newpgrp();
+		Pgrp *saved;
+		int b;
+
+		pgrpcpy(ng, up->pgrp);		/* the buddy's shared mounts, /n and all, as on the machine it left */
+		img->pgrp = ng;
+		img->nsforked = 1;
+		saved = up->pgrp;
+		up->pgrp = ng;
+		for(b = 0; b < nbind; b++){
+			if(waserror())
+				continue;
+			p9bind(binds[b].newp, binds[b].oldp, binds[b].flag);
+			poperror();
+		}
+		up->pgrp = saved;
+		print("buddy: container %llud arrived: its private name space rebuilt, %d binds replayed\n", container, nbind);
+	}
 	return 0;
 }
 
@@ -596,6 +650,9 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		if(img->pgrp != nil){
 			cimg->pgrp = img->pgrp;
 			incref(img->pgrp);
+			cimg->nsforked = img->nsforked;	/* the child holds the same private ns, and its record of the binds that made it, for its own migration */
+			cimg->nbind = img->nbind;
+			memmove(cimg->bind, img->bind, sizeof cimg->bind);
 		}
 		r = 0;
 		break;
@@ -703,6 +760,7 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			if(a0 & RFNAMEG)
 				pgrpcpy(ng, up->pgrp);		/* inherit the buddy's mounts, /n and all */
 			img->pgrp = ng;
+			img->nsforked = 1;		/* the far side rebuilds it the same way on a migration */
 		}
 		if(a0 & RFPROC)
 			r = -1;				/* cannot fork a process here */
@@ -711,6 +769,13 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	case BIND:
 		/* bind(name, old, flag): name at Nameoff, old at Nameoff+128, a0 the flag */
 		r = p9bind((char*)(cdata + Nameoff), (char*)(cdata + Nameoff + 128), (int)a0);
+		if(r >= 0 && img != nil && img->nbind < nelem(img->bind)){
+			/* recorded, so a migration can replay it: the name space is the container's, and it crosses with the process */
+			int b = img->nbind++;
+			kstrcpy(img->bind[b].new, (char*)(cdata + Nameoff), sizeof img->bind[b].new);
+			kstrcpy(img->bind[b].old, (char*)(cdata + Nameoff + 128), sizeof img->bind[b].old);
+			img->bind[b].flag = (int)a0;
+		}
 		break;
 
 	case MOUNT:

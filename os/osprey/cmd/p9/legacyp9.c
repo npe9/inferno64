@@ -414,6 +414,27 @@ startboot(char *argv0, char **argv)
 						intact++;
 				print("legacy: and what I had came with me: my %d dirty pages (%d intact), and the descriptor I opened before the crossing reads here: \"%s\"\n",
 					Ndirty, intact, hbuf);
+				/*
+				 * And my name space crossed: /hello is the bind of /n
+				 * onto / I made in my private name space before the
+				 * crossing, so if the bind came with me it names
+				 * /n/hello here.  The far buddy rebuilt the name space
+				 * and replayed the bind.
+				 */
+				{
+					int bf = open("/hello", OREAD);
+					char bbuf[128];
+					long bn = bf >= 0 ? read(bf, bbuf, sizeof bbuf - 1) : -1;
+					if(bn < 0)
+						bn = 0;
+					bbuf[bn] = 0;
+					if(bf >= 0)
+						close(bf);
+					if(bf >= 0)
+						print("legacy: and my name space came with me: /hello, the bind of /n onto / I made before the crossing, reads here: \"%s\"\n", bbuf);
+					else
+						print("legacy: BUG: /hello is not visible after the crossing - the name space did not come\n");
+				}
 			} else if(moved > 0)
 				print("legacy: I was carried over the wire but my thread did not come with me (counted %d then %d)\n", n1, n2);
 			else

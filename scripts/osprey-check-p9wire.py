@@ -96,12 +96,16 @@ def main():
          and all(re.search(r'buddy: container \d+ arrived: image /boot/legacy laid out for it, [1-9]\d* descriptors reopened at their offsets', x) is not None for x in t)
          and all(re.search(r'legacy: and what I had came with me: my 40 dirty pages \(40 intact\)', x) is not None for x in t)),
         ("and its descriptor table crosses: the buddy's record of each open descriptor - name, mode, offset - goes with the header and is reopened at the far end, where the arrived process reads /n/hello through the descriptor it opened before crossing",
-         all(re.search(r'buddy: container \d+ departs: image /boot/legacy, [1-9]\d* descriptors in its record', x) is not None for x in t)
+         all(re.search(r'buddy: container \d+ departs: image /boot/legacy, [1-9]\d* descriptors(, a private name space with \d+ binds)? in its record', x) is not None for x in t)
          and all(re.search(r'legacy: and what I had came with me: .* the descriptor I opened before the crossing reads here: "[^"]+"', x) is not None for x in t)),
         ("and two cross at once: a second process forked before the crossing asks at the same moment, alone; the kernel's departures table holds both, each server end carries its own over a connection of its own, the taker takes them in on kprocs of its own, and both arrive",
          all(re.search(r"osprey migrate: container \d+'s crossing begins while container \d+'s is in flight - 2 at once", x) is not None for x in t)
          and all(re.search(r"p9 migrate: container \d+'s process carried over the wire to 10\.1\.0\.[12], with 0 of its group: [1-9]\d* pages,", x) is not None for x in t)
          and all(re.search(r'legacy: the second process crossed at the same time: I am container \d+ here, my 40 dirty pages came with me \(40 intact\), and my descriptor opened before the crossing reads: "[^"]+"', x) is not None for x in t)),
+        ("and the process's private name space crosses: it rforked its own name space and bound /n onto / before the crossing, and the far buddy rebuilds the name space and replays the bind, so /hello - the bound path - names /n/hello there",
+         all(re.search(r'buddy: container \d+ departs: image /boot/legacy, \d+ descriptors, a private name space with [1-9]\d* binds in its record', x) is not None for x in t)
+         and all(re.search(r'buddy: container \d+ arrived: its private name space rebuilt, [1-9]\d* binds replayed', x) is not None for x in t)
+         and all(re.search(r'legacy: and my name space came with me: /hello, the bind of /n onto / I made before the crossing, reads here: "[^"]+"', x) is not None for x in t)),
         ("and a member blocked in the kernel crosses: the thread is a minute into a sleep when the parent asks, the kernel's note interrupts the sleep, the call returns interrupted on the way out and the thread stops there; it lands with its parent, sees the interrupted call and goes on counting",
          all(re.search(r"legacy thread: my minute's sleep was interrupted for the move; I go on counting where I am", x) is not None for x in t)
          and all(re.search(r'the thread had counted to 1 before the crossing and to ([2-9]|[1-9]\d+) after it', x) is not None for x in t)),
