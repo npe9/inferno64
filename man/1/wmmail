@@ -1,0 +1,89 @@
+.TH WMMAIL 1
+.SH NAME
+wm/mail \- Tk mail client over the upas file system
+.SH SYNOPSIS
+.B wm/mail
+[
+.B -f
+.I mbox
+] [
+.B -m
+.I mailbox
+]
+.br
+.B wm/mail
+.B -i
+.B -u
+.I user
+.B -P
+.I passfile
+[
+.B -s
+.I server
+] [
+.B -a
+.I dialip
+] [
+.B -p
+.I port
+]
+.SH DESCRIPTION
+.I Wm/mail
+is a graphical mail reader.
+It drives
+.IR upas/fs (1)'s
+.B /mail/fs
+namespace and presents the mailbox as a scrolling list of messages with a
+header pane and a body pane; it deletes through
+.B /mail/fs/ctl
+and (in the interactive window) replies through
+.IR upas-send (1).
+Unlike the older
+.IR readmail (1)
+it speaks no plaintext POP3 \(em all transport is the
+.IR tls12 (2)-based
+upas backend, so it works with modern servers.
+.PP
+With
+.B -f
+it serves a local Unix mbox; with
+.B -i
+it fetches an IMAP mailbox over TLS (see
+.IR upas-fetch (1)
+for the
+.BR -s / -a / -p / -u / -P
+options).
+If
+.B /mail/fs
+is already served,
+.I wm/mail
+uses it and neither option is needed.
+.B -m
+selects the mailbox name (default
+.BR mbox ).
+.PP
+Selecting a message in the list shows it; the
+.BR Prev ,
+.BR Next ,
+.B Delete
+and
+.B Sync
+buttons navigate, remove and re-read.
+.SS Self-test
+.B -t
+runs a headless self-test used by
+.IR tests (see SOURCE): it starts the backend, reads the mailbox, prints the
+message list and the first message, and exits without opening a window.
+.SH SOURCE
+.B /appl/wm/mail.b
+.br
+.B /tests/wmmail.sh
+.SH SEE ALSO
+.IR upas/fs (1),
+.IR upas-fetch (1),
+.IR upas-send (1),
+.IR nedmail (1),
+.IR readmail (1)
+.SH BUGS
+Composing a new message and interactive reply are minimal; the reader half is
+the focus.

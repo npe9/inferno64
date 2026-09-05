@@ -33,6 +33,7 @@ TARG=\
 	keyboard.dis\
 	logon.dis\
 	logwindow.dis\
+	mail.dis\
 	man.dis\
 	mand.dis\
 	mash.dis\

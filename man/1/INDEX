@@ -584,6 +584,7 @@ wish wish
 wm wm
 wm-misc wm-misc
 wm-sh wm-sh
+wm/mail wmmail
 wm/man man
 wm/mprof mprof
 wm/prof prof
