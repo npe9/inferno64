@@ -1,7 +1,25 @@
 implement Symmetry;
 
-# TempleOS Demo/Graphics/Symmetry.HC
-# RMB set mirror line; LMB draw (mirrored); q quit
+# TempleOS Demo/Graphics/Symmetry.HC — stock Inferno Wmclient+Draw port
+#
+# The original is a rubber-band straight-line tool with a mirror:
+# MSG_MS_L_DOWN anchors, an inner GetMsg loop XOR-previews the line
+# anchor->cursor on every MS_MOVE (mirrored live, since DCF_SYMMETRY
+# stays on), and MS_L_UP commits one straight segment.  MSG_MS_R_DOWN
+# clears DCF_SYMMETRY and rubber-bands the prospective mirror line in
+# XOR red; MS_R_UP commits it via DCSymmetry3Set — a degenerate (point)
+# line leaves symmetry off.  The default mirror at pix_width/2 is
+# configured but never drawn.  Only Esc/Shift-Esc exits.
+#
+# Here the XOR draw/undraw preview is done by redrawing from a white
+# backing canvas (which also preserves the drawing across window
+# redraws/resizes, as TempleOS screen memory did).
+#
+# GAP: draw(2) has no XOR raster op: previews and committed strokes
+# paint opaquely (black strokes, red mirror line) instead of
+# XOR-inverting the pixels beneath, so overlapping ink does not invert.
+# GAP: original runs fullscreen borderless (WinBorder/WinMax,
+# SELF_BORDER/SELF_FOCUS inhibited); this is a normal 640x480 window.
 
 include "sys.m";
 	sys: Sys;
@@ -22,12 +40,13 @@ Symmetry: module
 };
 
 win: ref Window;
-black, red, white: ref Image;
+canvas: ref Image;	# backing store: committed drawing, white ground
+black, red: ref Image;
 sym_on := 1;
-sx1, sy1, sx2, sy2: int;
-down := 0;
-mode := 0;	# 1 LMB draw, 2 RMB set
-x0, y0: int;
+sx1, sy1, sx2, sy2: int;	# mirror line (canvas coords)
+rubber := 0;		# 0 idle, 1 LMB stroke, 2 RMB mirror line
+ax, ay: int;		# rubber-band anchor (canvas coords)
+cx, cy: int;		# current cursor (canvas coords)
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
@@ -40,45 +59,61 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS Symmetry", Wmclient->Appl);
 	d := win.display;
-	black = d.color(Draw->Black);
-	red = d.color(Draw->Red);
-	white = d.color(Draw->White);
+	# exact TempleOS palette entries: BLACK, RED
+	black = d.color(int 16r000000FF);
+	red = d.color(int 16rAA0000FF);
 	win.reshape(Rect((0, 0), (640, 480)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
+	ensurecanvas();
 	if(win.image != nil){
-		win.image.draw(win.image.r, white, nil, Point(0, 0));
+		# default mirror: vertical at width/2, active but NOT drawn
+		# (DCSymmetrySet only configures the transform)
 		sx1 = win.image.r.dx()/2; sy1 = 0;
 		sx2 = sx1; sy2 = 1;
-		drawmirror();
 	}
+	refresh();
+
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
 		win.wmctl(ctl);
+		if(ctl != nil && ctl[0] == '!'){
+			ensurecanvas();
+			refresh();
+		}
 	p := <-win.ctxt.ptr =>
 		win.pointer(*p);
 		ptr(p);
 	k := <-win.ctxt.kbd =>
-		if(k == 16r1b || k == 'q' || k == 'Q')
+		# original exits ONLY on Esc/Shift-Esc; other keys ignored
+		if(k == 16r1b)
 			exit;
-		if(k == 'c' || k == 'C'){
-			if(win.image != nil){
-				win.image.draw(win.image.r, white, nil, Point(0, 0));
-				drawmirror();
-			}
-		}
 	}
 }
 
-drawmirror()
+# keep the backing canvas at least as big as the window, preserving content
+ensurecanvas()
 {
 	img := win.image;
-	if(img == nil || !sym_on)
+	if(img == nil)
 		return;
-	o := img.r.min;
-	img.line(Point(sx1, sy1).add(o), Point(sx2, sy2).add(o), 0, 0, 0, red, Point(0, 0));
-	img.flush(Draw->Flushnow);
+	w := img.r.dx();
+	h := img.r.dy();
+	if(canvas != nil && canvas.r.dx() >= w && canvas.r.dy() >= h)
+		return;
+	if(canvas != nil){
+		if(canvas.r.dx() > w)
+			w = canvas.r.dx();
+		if(canvas.r.dy() > h)
+			h = canvas.r.dy();
+	}
+	nc := win.display.newimage(Rect((0, 0), (w, h)), img.chans, 0, Draw->White);
+	if(nc == nil)
+		return;
+	if(canvas != nil)
+		nc.draw(canvas.r, canvas, nil, canvas.r.min);
+	canvas = nc;
 }
 
 # reflect point across line (sx1,sy1)-(sx2,sy2)
@@ -96,14 +131,31 @@ reflect(x, y: int): (int, int)
 	return (int(2.0*qx - real x), int(2.0*qy - real y));
 }
 
-line2(img: ref Image, x1, y1, x2, y2: int, col: ref Image)
+# draw a 1px line (and its mirror image if symmetry is on), as
+# DCF_SYMMETRY mirrored every plotted pixel in the original
+line2(img: ref Image, x1, y1, x2, y2: int, col: ref Image, off: Point)
 {
-	o := img.r.min;
-	img.line(Point(x1, y1).add(o), Point(x2, y2).add(o), 0, 0, 1, col, Point(0, 0));
+	img.line(Point(x1, y1).add(off), Point(x2, y2).add(off), 0, 0, 0, col, Point(0, 0));
 	if(sym_on){
 		(a, b) := reflect(x1, y1);
 		(c, d) := reflect(x2, y2);
-		img.line(Point(a, b).add(o), Point(c, d).add(o), 0, 0, 1, col, Point(0, 0));
+		img.line(Point(a, b).add(off), Point(c, d).add(off), 0, 0, 0, col, Point(0, 0));
+	}
+}
+
+# blit the committed canvas, then the live rubber-band preview on top
+refresh()
+{
+	img := win.image;
+	if(img == nil || canvas == nil)
+		return;
+	img.draw(img.r, canvas, nil, Point(0, 0));
+	case rubber {
+	1 =>	# stroke preview: mirrored live, like the original's XOR pass
+		line2(img, ax, ay, cx, cy, black, img.r.min);
+	2 =>	# mirror-line preview: red, unmirrored (DCF_SYMMETRY cleared)
+		img.line(Point(ax, ay).add(img.r.min), Point(cx, cy).add(img.r.min),
+			0, 0, 0, red, Point(0, 0));
 	}
 	img.flush(Draw->Flushnow);
 }
@@ -111,38 +163,54 @@ line2(img: ref Image, x1, y1, x2, y2: int, col: ref Image)
 ptr(p: ref Draw->Pointer)
 {
 	img := win.image;
-	if(img == nil)
+	if(img == nil || canvas == nil)
 		return;
 	x := p.xy.x - img.r.min.x;
 	y := p.xy.y - img.r.min.y;
-	if(p.buttons & 2){
-		if(mode != 2){
-			mode = 2;
-			x0 = x; y0 = y;
-			sx1 = x; sy1 = y; sx2 = x; sy2 = y;
-			sym_on = 0;
-		}else{
-			# rubber — just update endpoint; full redraw expensive, draw red tip
-			sx2 = x; sy2 = y;
-		}
-	}else if(mode == 2){
-		sx2 = x; sy2 = y;
-		if(sx1 != sx2 || sy1 != sy2)
-			sym_on = 1;
-		else
-			sym_on = 0;
-		mode = 0;
-		drawmirror();
-	}
+	b := p.buttons;
 
-	if(p.buttons & 1){
-		if(mode != 1){
-			mode = 1;
-			x0 = x; y0 = y;
-		}else{
-			line2(img, x0, y0, x, y, black);
-			x0 = x; y0 = y;
+	case rubber {
+	0 =>
+		if(b & 2){
+			# MSG_MS_R_DOWN: symmetry off, anchor the mirror line
+			rubber = 2;
+			sym_on = 0;
+			ax = x; ay = y;
+			cx = x; cy = y;
+			refresh();
+		}else if(b & 1){
+			# MSG_MS_L_DOWN: anchor the stroke
+			rubber = 1;
+			ax = x; ay = y;
+			cx = x; cy = y;
+			refresh();
 		}
-	}else if(mode == 1)
-		mode = 0;
+	1 =>
+		if(b & 1){
+			# MS_MOVE: re-preview the straight line anchor->cursor
+			cx = x; cy = y;
+			refresh();
+		}else{
+			# MSG_MS_L_UP: commit one straight segment (+ mirror)
+			rubber = 0;
+			line2(canvas, ax, ay, x, y, black, Point(0, 0));
+			refresh();
+		}
+	2 =>
+		if(b & 2){
+			cx = x; cy = y;
+			refresh();
+		}else{
+			# MSG_MS_R_UP: the red line stays as ink (the original's
+			# final XOR pass leaves it on screen); a point turns
+			# symmetry off, anything else sets the new mirror
+			rubber = 0;
+			canvas.line(Point(ax, ay), Point(x, y), 0, 0, 0, red, Point(0, 0));
+			sx1 = ax; sy1 = ay;
+			sx2 = x; sy2 = y;
+			if(sx1 != sx2 || sy1 != sy2)
+				sym_on = 1;
+			refresh();
+		}
+	}
 }

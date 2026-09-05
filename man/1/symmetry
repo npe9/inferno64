@@ -5,25 +5,28 @@ symmetry \- mirror drawing
 .B temple/symmetry
 .SH DESCRIPTION
 .I Symmetry
-is a mirror drawing.
+is a mirror drawing, a port of the TempleOS symmetry demo.
 It runs under
 .IR wm (1).
 .PP
-Button 2 sets a mirror line; button 1 draws strokes mirrored across it.
+Dragging button 2 rubber-bands a red mirror line and commits it on
+release; releasing at the press point (a degenerate line) turns
+symmetry off.
+Dragging button 1 rubber-bands a straight black line, previewed
+live together with its mirror image, and commits both on release.
+A vertical mirror at the window's horizontal centre is active (but
+not drawn) at startup.
 .PP
 The controls are:
 .TF space
 .TP
-.B RMB
+.B RMB drag
 Set mirror line
 .TP
 .B LMB drag
-Draw (mirrored)
+Draw a straight line (mirrored)
 .TP
-.B c
-Clear
-.TP
-.B Esc / q
+.B Esc
 Quit
 .PD
 .SH SOURCE
