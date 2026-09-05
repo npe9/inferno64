@@ -381,23 +381,46 @@ lfsreclaimstep(int force)
 
 /*
  * The serve loop's call, on the clock tick: steps while the log is more
- * than half full, up to eight a tick, so that the task's reservation is
- * what pays for reclamation and a writer only pays when the log has
- * filled between two ticks.  One step a tick was enough while a client's
- * every request waited two milliseconds in its yield; a client answered
- * in a hundred microseconds writes faster than that, and made writers
- * pay.
+ * than half full and this period's reservation has room, so that the
+ * task's reservation is what pays for reclamation and a writer only pays
+ * when the log has filled between two ticks.  The tick asks the kernel
+ * what the task's budget is and what it has used of it (ReqAccount), and
+ * steps while three quarters of the budget are not yet spent, asking
+ * again after each step; the kernel's accounting moves at switches, so
+ * a stretch of steps can overrun a little, and a ceiling of thirty-two
+ * a tick bounds that.  One step a tick, then eight, were numbers
+ * compiled in; this is the reservation.
  */
+extern long ospreyxcall(int op, uvlong *args, long n);
+static uvlong lfssteps, lfsticksbusy;
+
 int
 lfsreclaim(void)
 {
+	uvlong a[5];
 	int n;
 
 	if(!scanned)
 		return 0;
-	for(n = 0; n < 8 && lfsreclaimstep(0); n++)
-		;
+	for(n = 0; n < 32; n++){
+		a[0] = a[1] = a[2] = a[3] = a[4] = 0;
+		if(ospreyxcall(32, a, 0) == 0 && a[0] != 0 && a[1] >= a[0] - a[0]/4)
+			break;			/* the period's budget is spent: the rest waits for the next */
+		if(!lfsreclaimstep(0))
+			break;
+		lfssteps++;
+	}
+	if(n > 0)
+		lfsticksbusy++;
 	return n > 0;
+}
+
+/* what the tick has done, for the record: steps, and ticks that took any */
+void
+lfsreclaimstats(uvlong *steps, uvlong *ticks)
+{
+	*steps = lfssteps;
+	*ticks = lfsticksbusy;
 }
 
 static int

@@ -5291,16 +5291,24 @@ select loop some hundred times a second \- and the kernel's line at
 exit counts the containers woken, each for a reply of its own.
 .PP
 .B "3.  Reclamation paid for by the reservation, not by a number."
-The tick takes up to eight reclaim steps.  The real form: the tick
-steps while the storage task's reservation has budget left in this
-period \- the kernel tells the task, on its tick, what of its budget
-remains, and the task steps until that or the log is half free \- so a
-writer pays only when the log is full of live data.  Proof: no
-.CW "reclaim for a writer"
-under a client writing at ring speed, and the status line's
+Done.  The tick asks the kernel what the task's reservation is and what
+it has used of it this period
+.CW ( ReqAccount ,
+an xcall answered from the container's own accounting by
+.CW ospreyaccount
+in
+.CW ospreyrt.c ),
+and steps while three quarters of the budget are not yet spent, asking
+again after each step, until the log is half free; a ceiling of
+thirty-two steps a tick bounds the little the accounting lags behind
+a stretch of work, since it moves at switches.  So a writer pays only
+when the log has filled between two ticks.  Proof: twenty-two steps on
+the tick and none for a writer under a client writing at ring speed,
+and the status line's
 .CW used
-never above
-.CW budget .
+at its
+.CW budget ,
+not above it.
 .PP
 .B "4.  The network driver waits, it does not spin."
 Half done.  The rings are sixteen now, from the slice's own buffers

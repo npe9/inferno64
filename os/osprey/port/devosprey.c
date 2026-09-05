@@ -2489,6 +2489,7 @@ uintptr
 #define ReqMigput 29
 #define ReqMigstart 30
 #define ReqMigdone 31
+#define ReqAccount 32	/* xcall op: the caller's reservation, what it has used of it this period, and the period, in cycles */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2560,6 +2561,18 @@ ospreyxcall(va_list list)
 	}
 	if(op >= ReqMigsnap && op <= ReqMigdone)
 		return ospreymigcall((int)op, arg, ubuf);
+	if(op == ReqAccount){
+		/*
+		 * A task asks what its reservation is and what it has used of
+		 * it this period, so that work it does on its tick - the
+		 * storage task's reclamation - can be paid for by the
+		 * reservation rather than by a number compiled in.
+		 */
+		if(ospreyaccount(up->osprey, &ubuf[0], &ubuf[1], &ubuf[2]) < 0)
+			return -1;
+		ubuf[3] = ospreyhz;
+		return 0;
+	}
 	if(op == ReqNote){
 		/*
 		 * A note by request: delivered on the way back to user mode

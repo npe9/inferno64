@@ -129,6 +129,7 @@ extern int	(*ospreywait)(Ospreyproc*, uvlong, long*, uvlong*);
 extern int	(*ospreyreserve)(Ospreyproc*, uvlong, uvlong);
 extern int	(*ospreytickreq)(Ospreyproc*, int);
 int		ospreysetreservation(Ospreyproc*, uvlong, uvlong, uvlong);
+int		ospreyaccount(Ospreyproc*, uvlong *budget, uvlong *used, uvlong *period);	/* this period's accounting, cycles */
 int		ospreyisserver(Ospreyproc*);
 int		ospreyoutputroom(Ospreyproc*);
 int		ospreycall(Ospreyproc*, uvlong, uvlong*, long*);

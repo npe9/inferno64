@@ -1947,6 +1947,21 @@ int	(*ospreytickreq)(Ospreyproc*, int sem);
  * Set a container's reservation: what it is owed every period, and by
  * when.  The current period's use is forgotten; the totals stand.
  */
+/* a container's reservation and what it has used of it this period, in cycles */
+int
+ospreyaccount(Ospreyproc *p, uvlong *budget, uvlong *used, uvlong *period)
+{
+	Container *c;
+
+	if(p == nil || p->used == 0)
+		return -1;
+	c = &p->process.container;
+	*budget = c->budget;
+	*used = c->used;
+	*period = c->period;
+	return 0;
+}
+
 int
 ospreysetreservation(Ospreyproc *p, uvlong budget, uvlong period, uvlong deadline)
 {
