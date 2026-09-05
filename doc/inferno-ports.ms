@@ -19230,6 +19230,17 @@ being a kernel only, so shipping C that cannot be built or booted
 would be exactly the kind of thing this repository forbids.  The
 mapping is a plan, and it is recorded as one.
 .PP
+What the stack still needs before it is useful against a real device,
+and a plan for the 9front implementation, are set out separately in
+.CW doc/bluetooth-plan.ms
+so this record stays a record.  The short of it: no real controller
+has been talked to yet; a resolvable private address is never
+resolved, so a bond cannot survive a modern peripheral rotating its
+address; LE Secure Connections needs P-256 and AES-CMAC and
+.CW libsec
+has no elliptic curve code at all; and the peripheral role, Classic
+and audio do not exist.
+.PP
 Osprey gets nothing here, and the reason is not neglect.  Osprey is a
 microkernel with library operating systems above it: its unit of
 execution is a task, its central call is

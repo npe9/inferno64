@@ -220,3 +220,7 @@ A device that rotates its address \- which most modern peripherals do
 \- is a new device to this stack every time.  The identity key a bond
 distributes is stored and never used to resolve one, so a bond cannot
 be matched to the device it was made with.
+.PP
+.B doc/bluetooth-plan.ms
+lists what is missing in the order the pieces block each other, and
+plans the 9front implementation.
