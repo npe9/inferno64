@@ -307,7 +307,38 @@ ring_exec(char *name)
 	d = r->base + r->map->data + Execnameoff;
 	for(i = 0; i < 120 && name[i] != 0; i++)
 		d[i] = name[i];
-	d[i] = 0;
+	d[i++] = 0;
+	d[i] = 0;			/* a second nul: the argument vector is the name alone */
+	if(ringcall(ReqExec, Execnameoff, 0, 0, &rep) < 0 || rep.arg[0] != 1)
+		return -1;
+	return (long)rep.arg[2];
+}
+
+/*
+ * Start a program with an argument vector: argv is nil-terminated, argv[0]
+ * the program name.  The vector is packed at Execnameoff - each string and
+ * its nul, a final nul ending it - and the kernel lays it on the new
+ * program's stack.
+ */
+long
+ring_execv(char **argv)
+{
+	Ring *r = &ring;
+	Msg rep;
+	uchar *d;
+	long i, k;
+
+	if(!mapped || argv == nil || argv[0] == nil)
+		return -1;
+	d = r->base + r->map->data + Execnameoff;
+	i = 0;
+	for(k = 0; argv[k] != nil; k++){
+		char *a = argv[k];
+		while(*a != 0 && i < 480)
+			d[i++] = *a++;
+		d[i++] = 0;
+	}
+	d[i] = 0;			/* the final nul ends the vector */
 	if(ringcall(ReqExec, Execnameoff, 0, 0, &rep) < 0 || rep.arg[0] != 1)
 		return -1;
 	return (long)rep.arg[2];

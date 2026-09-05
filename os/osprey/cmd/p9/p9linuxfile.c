@@ -18,10 +18,12 @@
  */
 #include	"linuxprog.i"
 #include	"legacyprog.i"
+#include	"catprog.i"
 
 void
 p9linuxfile(void)
 {
 	addbootfile("linux", linuxprog, sizeof linuxprog);
 	addbootfile("legacy", legacyprog, sizeof legacyprog);
+	addbootfile("cat", catprog, sizeof catprog);
 }

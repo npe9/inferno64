@@ -3379,6 +3379,7 @@ struct Ospreychild {
 	Ospreyproc *child;
 	Ospreyproc *parent;
 	char	name[128];
+	char	args[256];	/* the packed argument vector: argv[0]\0 argv[1]\0 ... \0 */
 	int	done;		/* exited; status is valid */
 	long	status;
 	int	waiting;	/* the parent has asked and is owed a reply */
@@ -3410,7 +3411,10 @@ ospreyexecproc(void *a)
 	case 0:
 		ospreyenteruserat();	/* an ELF: at its entry, the Linux way */
 	case 1:
-		ospreyenteruser(e->name);	/* an a.out: the Plan 9 way, argv0 the name */
+		{
+			extern void ospreyenteruserargs(char*);
+			ospreyenteruserargs(e->args);	/* an a.out: the Plan 9 way, with its argument vector */
+		}
 	}
 	print("osprey exec: %s: the server did not lay it out\n", e->name);
 	ospreyexits(-1);
@@ -4707,6 +4711,35 @@ ospreyexeckern(Ospreyproc *parent, uvlong nameoff)
 		e->name[i] = nd[i];
 	}
 	e->name[i] = 0;
+	/*
+	 * The exec request packed the whole argument vector at nameoff:
+	 * argv[0]\0 argv[1]\0 ... \0.  The name above is argv[0]; copy the
+	 * whole packed vector into the child, ending at the double nul, so
+	 * the program is entered with its arguments.
+	 */
+	{
+		int j, prevnul;
+		prevnul = 0;
+		for(j = 0; j < (int)sizeof e->args - 1; j++){
+			if(ospreydata(parent, nameoff + j, 1) == nil)
+				break;
+			e->args[j] = nd[j];
+			if(nd[j] == 0){
+				if(prevnul)		/* a double nul ends the vector */
+					break;
+				prevnul = 1;
+			} else
+				prevnul = 0;
+		}
+		e->args[j] = 0;
+		if(j == 0 || e->args[0] == 0){
+			/* no vector packed (an old single-name exec): argv is the name alone */
+			for(j = 0; e->name[j] != 0 && j < (int)sizeof e->args - 2; j++)
+				e->args[j] = e->name[j];
+			e->args[j] = 0;
+			e->args[j+1] = 0;
+		}
+	}
 	/* ospreylock is held: dispatch runs under it, as ospreyuserprep did */
 	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
 	if(c == nil)

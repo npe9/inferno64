@@ -275,6 +275,10 @@ def main():
          and re.search(r"osprey: container \d+ set the kernel's time of day by request: \d+ seconds since the epoch; it holds the console, the capability granted at boot", t) is not None
          and re.search(r"osprey: container \d+ asked to set the time of day and was refused: it does not hold the console \(no Capsettime\)", t) is not None
          and 'legacy: the kernel refused to let me set the time of day - I do not hold the console' in t),
+        ("exec carries an argument vector, and an arbitrary program runs on the server personality: /boot/cat, an ordinary Plan 9 binary that is not the hand-written demonstration, is exec'd with a file argument, receives its argv, opens the file through the buddy and writes its contents, and exits 0",
+         'cat: started with 2 arguments; argv[0] = /boot/cat' in t
+         and 'cat: opening /n/hello (argument 1), served by the buddy' in t
+         and re.search(r'p9: pair-client: wait: /boot/cat \(container \d+\) exited with status 0 - it read /n/hello through the buddy and wrote it out', t) is not None),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

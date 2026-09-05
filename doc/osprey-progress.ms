@@ -5933,8 +5933,8 @@ kernel.  The plan brings a real program, and then rio, to both.
 .NH 2
 Track two: the server personality runs an arbitrary program, then rio
 .PP
-.B "Phase 2.1: exec carries arguments, and an arbitrary in-tree binary runs."
-The exec request passes only the program's name today
+.B "Phase 2.1: exec carries arguments, and an arbitrary in-tree binary runs. Done."
+The exec request passed only the program's name
 .CW ( ring_exec ,
 .CW ReqExec ),
 and the a.out is entered with
@@ -5954,12 +5954,27 @@ under the buddy: the tree already builds several
 .CW o9cat ,
 .CW netsrv ,
 .CW fb ) .
-Proof:
-.CW o9cat
-is embedded as
+Done: the request carries the vector packed in the data area
+.CW ( ring_execv ),
+the kernel copies it into the child and lays it on the new program's
+stack, strings and pointer array and a nil, entered with the stack
+pointer at the array
+.CW ( ospreyenteruservec ),
+and the entry trampoline
+.CW ( init9.c 's
+.CW _main )
+takes the array and calls
+.CW startboot .
+A real
+.CW cat
+.CW ( os/osprey/cmd/p9/catp9.c ,
+an ordinary Plan 9 binary that knows nothing of Osprey) is embedded as
 .CW /boot/cat ,
-exec'd with a file argument, and prints that file's bytes, read through
-the buddy's file calls.
+exec'd as
+.CW "/boot/cat /n/hello" ,
+receives its two-element argv, opens the file through the buddy and
+writes its bytes \- "version 42 of forty..." \- back to the console, and
+exits.  One criterion of the pair check.
 .PP
 .B "Phase 2.2: a shell."
 A shell forks, execs, waits and pipes \- the buddy answers all four

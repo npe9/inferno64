@@ -690,6 +690,27 @@ p9paircli(void)
 			else
 				print("p9: pair-client: wait: no answer\n");
 		}
+		/*
+		 * An arbitrary program with an argument vector: /boot/cat is an
+		 * ordinary Plan 9 binary that opens the file it is given and
+		 * writes its bytes, its file calls served by the buddy.  Exec it
+		 * with a real argument - the file to read - and its output, the
+		 * file's contents, comes back to the console.  This is exec
+		 * carrying arguments, and a program that is not the hand-written
+		 * demonstration, on the server personality.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *catargv[3];
+
+			catargv[0] = "/boot/cat";
+			catargv[1] = "/n/hello";
+			catargv[2] = nil;
+			id = ring_execv(catargv);
+			print("p9: pair-client: exec /boot/cat /n/hello with an argument vector started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/cat (container %ld) exited with status %ld - it read /n/hello through the buddy and wrote it out\n", id, st);
+		}
 	}
 	/*
 	 * The device-carried medium: put a network frame on the ring to the
