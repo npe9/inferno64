@@ -14,8 +14,17 @@ import types "types"
 func addincpath(dir string)
 func usetypes(t Types)
 func check(tree ref types.Node, file string) int
+type Cuse struct {
+	line int
+	pos int
+	sym string
+	decl ref types.Decl
+}
+
 func fnlist() []ref types.Decl
 func nfnlist() int
+func constuses() []ref Cuse
+func nconstuses() int
 func moduledecl() ref types.Decl
 func entry() ref types.Decl
 func importlist() list ref types.Decl

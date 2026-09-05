@@ -824,9 +824,20 @@ extern	char	*opname[];
 extern	uchar	chantab[Tend];
 extern	uchar	disoptab[Oend+1][7];
 Type*	ifacetinst(Node*, Decl*);
-void	xref(Node*, Biobuf*, Decl**, int);
+/* a use of a constant name, which confold() takes out of the tree */
+typedef struct Cuse Cuse;
+struct Cuse
+{
+	Src	src;
+	Sym	*sym;
+	Decl	*decl;
+};
+
+void	xref(Node*, Biobuf*, Decl**, int, Cuse*, int);
 Decl**	emberfns(void);
 int	emberfnc(void);
+Cuse*	emberconsts(void);
+int	emberconstc(void);
 extern	void	ifacegen(Node*, Biobuf*);
 extern	Dlist	*imports;
 extern	Decl	*impdecl;

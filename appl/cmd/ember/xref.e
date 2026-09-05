@@ -20,6 +20,8 @@ import check "check"
 
 var impdecl ref types.Decl
 var seen list ref types.Decl
+var cus []ref check.Cuse	// uses of constant names, which the tree no longer holds
+var ncus int
 var out ref sys.FD	// where the dump goes: standard output unless setout() says otherwise
 
 func usetypes(t Types) {
@@ -111,9 +113,26 @@ func xdecl(d ref types.Decl) {
 	sys.fprint(out, "decl %s %s %s %s\n", declat(d), d.sym, kindof(d), types.tprint(d.ty))
 }
 
+// the constant name folded away at this node's position, if any
+func constuse(n ref types.Node) ref check.Cuse {
+	for i := 0; i < ncus; i++ {
+		if cus[i].line == n.line && cus[i].pos == n.pos {
+			return cus[i]
+		}
+	}
+	return nil
+}
+
 func xwalk(n ref types.Node) {
 	if n == nil {
 		return
+	}
+	if n.op == types.Oconst && n.line > 0 {
+		cu := constuse(n)
+		if cu != nil && hidden(cu.sym) == 0 {
+			xdecl(cu.decl)
+			sys.fprint(out, "use %s %s %s %s\n", useat(n), cu.sym, declat(cu.decl), types.tprint(cu.decl.ty))
+		}
 	}
 	if n.op == types.Oname && n.decl != nil && hidden(n.sym) == 0 && n.line > 0 {
 		// a type name used in a literal has no type of its own: name the type
@@ -133,8 +152,10 @@ func xwalk(n ref types.Node) {
 	xwalk(n.aux)
 }
 
-func xref(tree ref types.Node, moduledecl ref types.Decl, fns []ref types.Decl, nfns int) {
+func xref(tree ref types.Node, moduledecl ref types.Decl, fns []ref types.Decl, nfns int, consts []ref check.Cuse, nconsts int) {
 	impdecl = moduledecl
+	cus = consts
+	ncus = nconsts
 	seen = nil
 	if out == nil {
 		out = sys.fildes(1)

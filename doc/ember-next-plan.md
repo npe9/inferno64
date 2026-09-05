@@ -482,6 +482,10 @@ made a hover over the member name answer about the module. Both
 checkers were building the member's name node fresh and giving it the
 whole dot expression's source range; they now keep the member name's
 own, so `print` is reported at the `p`, and a hover lands where the
-editor's cursor is. The other stands: a constant folded by the
-checker is not in the dump at all, so `High.name()` reports the call
-but not `High`.
+editor's cursor is. The other is fixed too, differently: a constant
+folded by the checker is gone from the tree, name and all, so there
+is nothing left to walk. Both checkers now record the use as they
+fold it -- position, name and declaration -- and the dump looks that
+table up at each `Oconst` it walks, so `High.name()` reports `High`
+where it is written. That is what makes an enum navigable, which is
+most of what a constant is for.

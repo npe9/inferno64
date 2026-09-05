@@ -10,6 +10,7 @@ decl 29:1 name method fn(Level): string
 in Level.name
 decl 29:7 l arg Level
 use 30:5 l 29:7 Level
+use 30:10 Low 13:2 Level
 in dist
 decl 37:2 d local int
 use 37:2 d 37:2 int
@@ -39,6 +40,7 @@ use 57:2 sys 7:1 Sys
 decl Sys:119:1 print func fn(string): int
 use 57:6 print Sys:119:1 fn(string): int
 use 57:26 name 29:1 fn(Level): string
+use 57:26 High 14:2 Level
 use 57:39 dist 36:1 fn(Point): int
 use 57:44 p 56:2 Point
 use 57:48 size 44:1 fn(ref Shape): int

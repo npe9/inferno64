@@ -17,6 +17,8 @@
  */
 
 static Biobuf *xb;
+static Cuse *cus;		/* uses of constant names, which the tree no longer holds */
+static int ncus;
 static Decl **seen;		/* grown, so that it holds as many as the port's list does */
 static int nseen, aseen;
 
@@ -113,13 +115,33 @@ xdecl(Decl *d)
 	Bprint(xb, "decl %s %s %s %T\n", declat(d), d->sym->name, kindof(d), d->ty);
 }
 
+/* the constant name folded away at this node's position, if any */
+static Cuse*
+constuse(Node *n)
+{
+	int i;
+
+	for(i = 0; i < ncus; i++)
+		if(cus[i].src.start.line == n->src.start.line && cus[i].src.start.pos == n->src.start.pos)
+			return &cus[i];
+	return nil;
+}
+
 static void
 xwalk(Node *n)
 {
 	Type *t;
+	Cuse *cu;
 
 	if(n == nil)
 		return;
+	if(n->op == Oconst && n->src.start.line > 0){
+		cu = constuse(n);
+		if(cu != nil && !hidden(cu->sym)){
+			xdecl(cu->decl);
+			Bprint(xb, "use %s %s %s %T\n", useat(n), cu->sym->name, declat(cu->decl), cu->decl->ty);
+		}
+	}
 	if(n->op == Oname && n->decl != nil && !hidden(n->sym) && n->src.start.line > 0){
 		/* a type name used in a literal has no type of its own: name the type */
 		t = n->ty != nil ? n->ty : n->decl->ty;
@@ -135,12 +157,14 @@ xwalk(Node *n)
 }
 
 void
-xref(Node *tree, Biobuf *b, Decl *fns[], int nfns)
+xref(Node *tree, Biobuf *b, Decl *fns[], int nfns, Cuse *consts, int nconsts)
 {
 	Node *p, *d;
 	int i;
 
 	xb = b;
+	cus = consts;
+	ncus = nconsts;
 	nseen = 0;
 	/* the module's own declarations, in the order they were written */
 	for(p = tree->right; p != nil; p = p->right){

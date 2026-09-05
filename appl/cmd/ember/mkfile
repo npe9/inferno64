@@ -41,7 +41,8 @@ gen.dis:	types.ei
 disw.dis:	types.ei gen.ei
 com.dis:	types.ei check.ei gen.ei disw.ei
 xref.dis:	types.ei check.ei
-emberc.dis:	types.ei parse.ei check.ei com.ei xref.ei
+ifacegen.dis:	types.ei check.ei
+emberc.dis:	types.ei parse.ei check.ei com.ei xref.ei ifacegen.ei
 
 install:V:	all
 	mkdir -p $ROOT/dis/ember

@@ -29,6 +29,43 @@ emberfnc(void)
 {
 	return nfns;
 }
+
+/*
+ * every use of a constant name, kept as confold() replaces the name
+ * with its value: the checked tree no longer has the name in it, and
+ * xref.c wants to report the use like any other
+ */
+static Cuse *cuses;
+static int ncuses, acuses;
+
+static void
+addcuse(Node *n, Decl *d)
+{
+	if(n->sym == nil || d->src.start.line <= 0)
+		return;
+	if(ncuses == acuses){
+		acuses = acuses != 0 ? acuses * 2 : 256;
+		cuses = reallocmem(cuses, acuses * sizeof(Cuse));
+		if(cuses == nil)
+			fatal("out of memory");
+	}
+	cuses[ncuses].src = n->src;
+	cuses[ncuses].sym = n->sym;
+	cuses[ncuses].decl = d;
+	ncuses++;
+}
+
+Cuse*
+emberconsts(void)
+{
+	return cuses;
+}
+
+int
+emberconstc(void)
+{
+	return ncuses;
+}
 Decl	*entrydecl;			/* the entry function (init) */
 Dlist	*imports;			/* imported module variables */
 Decl	*moduledecls;			/* module-scope var/const decls */
@@ -3326,6 +3363,7 @@ echk1(Node *n)
 			return n->ty;
 		}
 		if(d->store == Dconst){
+			addcuse(n, d);
 			if(confold(n, d))
 				return n->ty;
 			nerror(n, "constant %s is not usable here", n->sym->name);

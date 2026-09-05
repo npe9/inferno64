@@ -225,7 +225,7 @@ func init(ctxt ref draw.Context, argv list string) {
 		}
 		if dumpxref != 0 {
 			// -X: the names this file declares and every use of one
-			xref.xref(tree, check.moduledecl(), check.fnlist(), check.nfnlist())
+			xref.xref(tree, check.moduledecl(), check.fnlist(), check.nfnlist(), check.constuses(), check.nconstuses())
 			continue
 		}
 		out := outarg

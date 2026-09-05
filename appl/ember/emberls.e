@@ -306,7 +306,7 @@ func analyse(d ref Doc) {
 	try {
 		tree := ps.parse(src)
 		if tree != nil && ps.errors() == 0 && ck.check(tree, src) == 0 {
-			xr.xref(tree, ck.moduledecl(), ck.fnlist(), ck.nfnlist())
+			xr.xref(tree, ck.moduledecl(), ck.fnlist(), ck.nfnlist(), ck.constuses(), ck.nconstuses())
 		}
 	} catch e {
 		sys.dup(e2.fd, 2)

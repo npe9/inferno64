@@ -14,4 +14,4 @@ import check "check"
 func usetypes(t Types)
 func usecheck(c Check)
 func setout(fd ref sys.FD)
-func xref(tree ref types.Node, moduledecl ref types.Decl, fns []ref types.Decl, nfns int)
+func xref(tree ref types.Node, moduledecl ref types.Decl, fns []ref types.Decl, nfns int, consts []ref check.Cuse, nconsts int)

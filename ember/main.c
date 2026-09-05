@@ -189,7 +189,7 @@ translate(char *in)
 	if(dumpxref){
 		/* -X: the names this file declares and every use of one */
 		Binit(&bo, 1, OWRITE);
-		xref(tree, &bo, emberfns(), emberfnc());
+		xref(tree, &bo, emberfns(), emberfnc(), emberconsts(), emberconstc());
 		Bterm(&bo);
 		return;
 	}

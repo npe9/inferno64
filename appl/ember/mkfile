@@ -17,9 +17,11 @@ all:V:	$TARG
 %.dis:	%.e
 	$EMBER $IFLAGS -o $target $stem.e || (rm -f $target; exit 1)
 
+COMPILER=$ROOT/appl/cmd/ember
+
 jsonfmt.dis:	json.ei
-emberepl.dis:	replline.ei
-emberls.dis:	json.ei
+emberepl.dis:	replline.ei $COMPILER/types.ei $COMPILER/parse.ei $COMPILER/check.ei $COMPILER/com.ei
+emberls.dis:	json.ei $COMPILER/types.ei $COMPILER/parse.ei $COMPILER/check.ei $COMPILER/xref.ei
 
 install:V:	all
 	mkdir -p $ROOT/dis/ember

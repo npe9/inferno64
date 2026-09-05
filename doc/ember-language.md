@@ -719,10 +719,12 @@ An interface type prints in the type column under the internal name
 the checker gives its structure, `ref .Named$s`; the declaration's
 own name is the one before it.
 The dump is of the checked tree, so what the checker rewrote is not
-there to see: a folded constant, a field access that has become
-address arithmetic, and the body of a closure, which is lifted into a
-function of its own before the dump runs, though the local it
-captures still shows as a use.
+there to see: a field access that has become address arithmetic, and
+the body of a closure, which is lifted into a function of its own
+before the dump runs, though the local it captures still shows as a
+use. A constant is the exception: the checker replaces its name with
+its value, and records the use as it does so, so the dump has it
+anyway.
 
 `tests/xref.sh` checks the dump of every `tests/xref/*.e` against a
 recorded one and checks that the self-hosted compiler, `emberc -X`,

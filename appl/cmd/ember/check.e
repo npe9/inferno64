@@ -27,6 +27,16 @@ var nfns = 0
 var entrydecl ref types.Decl
 var imports list ref types.Decl
 var moduledecls ref types.Decl
+
+// a use of a constant name, which confold() takes out of the tree
+type Cuse struct {
+	line int
+	pos int
+	sym string
+	decl ref types.Decl
+}
+
+var cuses []ref Cuse
 var modname = ""
 var nildecl ref types.Decl
 
@@ -64,6 +74,24 @@ func fnlist() []ref types.Decl {
 
 func nfnlist() int {
 	return nfns
+}
+
+// every use of a constant name, kept as confold() replaces the name
+// with its value: the checked tree no longer has the name in it, and
+// xref.e wants to report the use like any other
+func addcuse(n ref types.Node, d ref types.Decl) {
+	if n.sym == "" || d.line <= 0 {
+		return
+	}
+	cuses = append(cuses, ref Cuse{line: n.line, pos: n.pos, sym: n.sym, decl: d})
+}
+
+func constuses() []ref Cuse {
+	return cuses
+}
+
+func nconstuses() int {
+	return len(cuses)
 }
 
 func moduledecl() ref types.Decl {
@@ -1955,6 +1983,7 @@ func echk1(n ref types.Node) ref types.Type {
 			return n.ty
 		}
 		if d.store == types.Dconst {
+			addcuse(n, d)
 			if confold(n, d) != 0 {
 				return n.ty
 			}
@@ -5606,6 +5635,7 @@ func check(tree ref types.Node, file string) int {
 	entrydecl = nil
 	imports = nil
 	moduledecls = nil
+	cuses = []ref Cuse{}
 	scope = 0
 	curclosure = nil
 	nclosures = 0
