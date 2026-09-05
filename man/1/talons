@@ -1,33 +1,47 @@
 .TH TALONS 1
 .SH NAME
-talons \- fishing flight game
+talons \- first-person eagle fishing flight simulator
 .SH SYNOPSIS
 .B temple/talons
 .SH DESCRIPTION
 .I Talons
-is a fishing flight game.
+is a port of the TempleOS flight simulator of the same name.
 It runs under
 .IR wm (1).
 .PP
-Steer a low flight with wasd or the arrows and catch fish while avoiding birds.
+You fly first-person over a randomly generated island landscape of
+water, grass, rock and snow, rendered in perspective with a sky and
+ground horizon.
+Dive down to the water: near the surface your speed steadies and your
+claws reach down whenever a fish is ahead of you.
+Fly over a fish to snatch it.
+Catch ten fish as fast as you can; the best (lowest) time is saved
+between runs.
 .PP
-The controls are:
+Attitude controls the aircraft: diving builds speed and climbing bleeds
+it, skimming the water pulls the nose up, and turning is done by
+rolling and then pitching through the turn.
+Flying into terrain \(em or off the edge of the map \(em ends the game.
+Boats and trees decorate the landscape and flocking birds circle above
+it; they are scenery.
+.PP
+The controls follow the original's airplane-style stick:
 .TF space
 .TP
-.B Left / a
-Turn left
-.TP
-.B Right / d
-Turn right
-.TP
 .B Up / w
-Increase speed
+Nose down
 .TP
 .B Down / s
-Decrease speed
+Nose up
+.TP
+.B Right / d
+Roll right
+.TP
+.B Left / a
+Roll left
 .TP
 .B Enter / r
-Restart
+Restart with a fresh map
 .TP
 .B Esc / q
 Quit
@@ -36,6 +50,10 @@ Quit
 .B /appl/temple/talons.b
 .SH SEE ALSO
 .IR temple (1),
-.IR draw3d (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The terrain is painted far-to-near rather than through a depth buffer,
+so a tall tree or bird occasionally shows through a nearer hill.
+The map is 512x512 cells to the original's 1024x1024; scenery densities
+match the original per unit area.
