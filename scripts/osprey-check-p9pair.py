@@ -122,7 +122,7 @@ def main():
          and len(re.findall(r'lfs: reclaim on the tick', t)) >= 10 and 'reclaim for a writer' not in t
          and 'the log is full' not in t),
         ("at the end the kernel reports the storage task's reservation and what it used of it, as the talk's dumptask does",
-         re.search(r'osprey status: proc 3 core \d+ \w+ budget (19\d{5}|2000000) used \d+ period (99\d{5}|10000000) ', t) is not None),
+         re.search(r'osprey status: proc 3 core \d+ \w+ budget (19\d{5}|200\d{4}) used \d+ period (99\d{5}|100\d{5}) ', t) is not None),	# the cycle rate is measured, so these vary by a little
         ("a second boot on the same image reads the checkpoint, finds the wrapped log and the file at version 45 - the forty versions, the replica test's and the cache test's after them: the store is persistent",
          'from the checkpoint' in t2 and re.search(r'lfs: hello version 45, 47 bytes', t2) is not None
          and 'lfs: found /n/hello on the disk: "a version written after the cache held the file"' in t2),

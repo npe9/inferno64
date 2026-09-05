@@ -396,9 +396,9 @@ wiresrv(void *)
 	n = p9read(dfd, rx1, sizeof rx1 - 1); if(n<0)n=0; rx1[n]=0;
 	print("p9 wire: machine 1 read %ld bytes from the other machine: \"%s\"\n", n, rx1);
 	p9write(dfd, reply, sizeof reply - 1);
-	tsleep(&up->sleep, return0, nil, 1000);
 	vnet_stats(&rx, &tx, &drops);
 	print("p9 wire: machine 1 answered the other machine; its user-space driver took %ld frames in and put %ld out, %ld dropped\n", rx, tx, drops);
+	tsleep(&up->sleep, return0, nil, 1000);	/* let the answer and its ack cross before the close does */
 	p9close(dfd); p9close(lfd); p9close(afd);
 	poperror();
 	pexit("wiresrv done", 0);

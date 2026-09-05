@@ -477,6 +477,9 @@ kdebugmark(char *s, int n)
 void
 kdebugputs(char *s, int n)
 {
+	extern uvlong kdebugputsbytes;
+	kdebugputsbytes += n;
+
 	/*
 	 * Serialise whole strings so the two user tasks' console writes do
 	 * not interleave: each waits for the UART per byte, and with both

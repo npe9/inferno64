@@ -340,10 +340,23 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 			char *b = (char*)la[1];
 			long ln = (long)la[2], i;
 
+			/*
+			 * Through the console task like every other write, in
+			 * pieces a kernel buffer holds.  This once went to the bare
+			 * port a byte at a time, past the task, and was the last
+			 * writer that could cut the task's lines in two.
+			 */
 			if(!waserror()){
+				extern void ospreyconsolewrite(char*, int);
+				char kb[256];
+				long m;
+
 				validaddr((uintptr)b, ln, 0);
-				for(i = 0; i < ln; i++)
-					kdebugputc(b[i]);
+				for(i = 0; i < ln; i += m){
+					m = ln - i < (long)sizeof kb ? ln - i : (long)sizeof kb;
+					memmove(kb, b + i, m);
+					ospreyconsolewrite(kb, m);
+				}
 				poperror();
 			}
 			*retp = (uintptr)ln;

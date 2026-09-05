@@ -1790,6 +1790,36 @@ ospreytellserver(Ospreyproc *p, int op)
 	return 0;
 }
 
+/*
+ * As ospreyroute, and say who received a reply: up to max of them in
+ * got, each once, so that the caller can wake those and no others.
+ */
+int
+ospreyroutewoke(Ospreyproc *s, Ospreyproc **got, int max)
+{
+	Ospreyproc *p;
+	Message m;
+	int n, i, ngot;
+
+	mapfix(s);
+	if(s == nil || s->used == 0 || s->serving == 0)
+		return 0;
+	ngot = 0;
+	for(n = 0; queueget(s->process.replies, &m) == 0; n++){
+		if((p = ospreylookup(m.container)) == nil || p == s)
+			continue;
+		if(queuefull(p->process.replies))
+			continue;
+		queueput(p->process.replies, &m);
+		for(i = 0; i < ngot; i++)
+			if(got[i] == p)
+				break;
+		if(i == ngot && ngot < max)
+			got[ngot++] = p;
+	}
+	return ngot;
+}
+
 int
 ospreyroute(Ospreyproc *s)
 {

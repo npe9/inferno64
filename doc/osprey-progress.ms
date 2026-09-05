@@ -1956,7 +1956,9 @@ and the number measured on hardware, is the piece; it is structural, and
 it is last because everything above it is correct without it.
 .PP
 The microkernel's own number, between two personalities, is measured
-now, and one thing was found by measuring it.  The p9pair client times
+now \- 56 \(mcs a request after item 2 of the section on making the
+demonstrations real, 108 before it \- and one thing was found by
+measuring it.  The p9pair client times
 a thousand requests by the cycle counter \- each put on its ring, carried
 by the kernel to the server container, taken by the server's select,
 answered, and routed home \- and the check turns the cycles into time
@@ -5254,17 +5256,39 @@ is an ordinary print again, and the eight-hundred-sleep drain in
 .CW legacyp9.c
 is gone.  Proof: the kernel's line at exit reads
 .CW "0 straight to the port"
-and the p9pair check is 57 of 57.
+and the p9pair check is 57 of 57.  A second, later finding under the
+same item: a kernel line was still cut in two, now and then, by a Linux
+program's output, and three probes in turn cleared the FIFO (its slots
+are checksummed at fill and at the end of their push, and a fill landing
+on the slot in flight is counted: all zero), cleared the counted
+fallbacks, and then noticed the intruding lines ended in carriage
+return and newline where the task's do not \- the mark of the bare
+port's own conversion.  The writer was the kernel's answer to a Linux
+program's write to its standard output
+.CW ( ospreylinuxsyscall
+in
+.CW userinit.c ),
+which pushed each byte to the port itself; it goes through the console
+like every other write now, and the kernel's exit lines count every
+path to the port: through
+.CW uartputs
+only before the task exists, through
+.CW kdebugputs
+never.
 .PP
 .B "2.  A reply wakes whom it is for."
-.CW ospreyawaitreply
-is woken by
-.CW ospreywakeup ,
-which wakes every container's three rendezvous on every routed reply.
-The real form: the route reports which containers received replies and
-only their reply rendezvous are woken.  Proof: the round-trip number
-does not regress and a count of spurious wakeups, printed at exit, is
-zero.
+Done.  The route reports which containers received replies
+.CW ( ospreyroutewoke
+in
+.CW ospreyrt.c )
+and only their reply rendezvous are woken
+.CW ( ospreyroutewake
+in
+.CW devosprey.c );
+the broadcast is gone.  The round trip between two personalities went
+from 108 to 56 \(mcs \- the broadcast had been waking the server's own
+select loop some hundred times a second \- and the kernel's line at
+exit counts the containers woken, each for a reply of its own.
 .PP
 .B "3.  Reclamation paid for by the reservation, not by a number."
 The tick takes up to eight reclaim steps.  The real form: the tick

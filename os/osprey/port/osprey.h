@@ -83,6 +83,7 @@ int		ospreyservicep(Ospreyproc*, uvlong now);
 int		ospreydelegate(Ospreyproc*, Ospreyproc *server);
 Ospreyproc*	ospreyserverof(Ospreyproc*);
 int		ospreyroute(Ospreyproc *server);
+int		ospreyroutewoke(Ospreyproc *server, Ospreyproc **got, int max);	/* and who received one */
 int		ospreyrequestready(Ospreyproc*);
 
 void		ospreysemgive(Ospreyproc*, ulong sem);

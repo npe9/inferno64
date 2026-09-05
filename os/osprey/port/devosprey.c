@@ -578,6 +578,8 @@ static QLock ospreylock;
  */
 static Rendez ospreyroomrend[16];
 static void ospreyconsdrained(Ospreyproc*);	/* the console FIFO, fed when its task frees a slot */
+static void ospreyconscheck(Ospreyproc*, uvlong, uvlong);
+static void ospreyconspushed(Ospreyproc*, uvlong, uvlong);
 static Rendez ospreyreplyrend[16];
 
 /*
@@ -638,6 +640,7 @@ static int ospreyuartsem[16];		/* the semaphore its interrupt gives */
 static int ospreyuarting[16];		/* its driver task is running */
 static uvlong ospreyuartoff[16];	/* what is left of the last work taken */
 static long ospreyuartlen[16];
+static long ospreyuartlen0[nelem(ospreyuartlen)];	/* the message's whole length, for the check at the end of its push */
 static void *ospreyether[16];		/* an interface this container has */
 static int ospreyethersem[16];		/* the semaphore its packets give */
 static int ospreytxsem[16];		/* and the one a freed transmit buffer gives */
@@ -1021,6 +1024,8 @@ ospreyuartpush(Ospreyproc *p, Uart *uart, int x)
 	if(k > 0){
 		ospreyuartoff[x] += k;
 		ospreyuartlen[x] -= k;
+		if(ospreyuartlen[x] == 0)
+			ospreyconspushed(p, ospreyuartoff[x] - ospreyuartlen0[x], ospreyuartlen0[x]);	/* pushed whole: still what was put there? */
 	}
 	return ospreyuartlen[x];
 }
@@ -1089,6 +1094,8 @@ ospreyuarttask(void *a)
 			if(ospreymessage(p, out, &op, arg) == 0){
 				ospreyuartoff[x] = arg[0];
 				ospreyuartlen[x] = (long)arg[1];
+				ospreyuartlen0[x] = (long)arg[1];
+				ospreyconscheck(p, arg[0], arg[1]);	/* the console's slot as filled, still? */
 			}
 			qunlock(&ospreylock);
 			ospreyconsdrained(p);	/* a slot freed: the console FIFO, if this is the console, feeds it */
@@ -1462,6 +1469,30 @@ ospreywakeup(void)
 }
 
 /*
+ * Route a server's replies home and wake, of all the containers, only
+ * those that received one: their reply rendezvous, where a caller's
+ * yield after a request waits.  Waking every rendezvous of every
+ * container (ospreywakeup) was the first form, and woke the server's
+ * own select loop some hundred times a second for nothing.
+ */
+static uvlong ospreyroutewakes;		/* containers woken for a reply, in all */
+
+static void
+ospreyroutewake(Ospreyproc *s)
+{
+	Ospreyproc *got[16];
+	int n, i, x;
+
+	n = ospreyroutewoke(s, got, nelem(got));
+	for(i = 0; i < n; i++){
+		if((x = ospreyindex(got[i])) < 0 || x >= nelem(ospreyreplyrend))
+			continue;
+		wakeup(&ospreyreplyrend[x]);
+		ospreyroutewakes++;
+	}
+}
+
+/*
  * A caller's yield after a request: sleep until a reply is on its ring,
  * or ms have passed, whichever first.  The yield used to be a fixed
  * two milliseconds, so every request from a personality cost at least
@@ -1755,8 +1786,7 @@ ospreyselectcaller(uvlong armoff, int narms)
 		sw.armoff = armoff;
 		sw.narms = narms;
 		qlock(&ospreylock);
-		if(ospreyroute(p) > 0)		/* send home anything answered, and wake whoever waits for it */
-			ospreywakeup();
+		ospreyroutewake(p);		/* send home anything answered, and wake those it is for */
 		i = ospreyselectready(p, armoff, narms);
 		if(i == -1){
 			/*
@@ -1775,8 +1805,7 @@ ospreyselectcaller(uvlong armoff, int narms)
 			qlock(&ospreylock);
 			if((p = ospreyat(slot)) != nil){
 				sw.p = p;
-				if(ospreyroute(p) > 0)
-					ospreywakeup();
+				ospreyroutewake(p);
 				i = ospreyselectready(p, armoff, narms);
 			}
 		}
@@ -2983,6 +3012,7 @@ static Ospreyproc *ospreyconsproc;
 static Lock ospreyconslock;
 static int ospreyconsnext;
 static uvlong ospreyconsbytes, ospreyconsdirect;
+uvlong kdebugputsbytes;		/* main.c counts what went out through the bare console */
 
 /*
  * Every print goes to the console task, in order, and none blocks or
@@ -2999,6 +3029,21 @@ static uvlong ospreyconsbytes, ospreyconsdirect;
 enum { Consfifo = 16*1024 };
 static char consfifo[Consfifo];
 static ulong consin, consout;		/* under ospreyconslock; consin - consout is what waits */
+static ulong consslotsum[Nconsslot];	/* a checksum of each slot as filled, checked when the task starts to push it */
+static ulong consslotlen[Nconsslot];
+static int consslotbad;
+static int consinflight = -1;		/* the slot the console task is pushing now, or -1 */
+static int consreuse;			/* fills that landed on it */
+
+static ulong
+conssum(uchar *d, ulong n)
+{
+	ulong s = 0;
+
+	while(n-- > 0)
+		s = s*31 + *d++;
+	return s;
+}
 
 static void
 ospreyconsflush(Ospreyproc *p)
@@ -3015,9 +3060,17 @@ ospreyconsflush(Ospreyproc *p)
 		if(m > Consfifo - off)
 			m = Consfifo - off;	/* to the end of the FIFO; the rest next slot */
 		slot = ospreyconsnext++ % Nconsslot;
+		if(slot == consinflight){
+			char dbg[80];
+			int k = snprint(dbg, sizeof dbg, "[console: slot %d refilled while in flight, next %d]\n", slot, ospreyconsnext);
+			consreuse++;
+			kdebugputs(dbg, k);
+		}
 		if((d = ospreydata(p, Consoff + slot*Consslot, Consslot)) == nil)
 			return;
 		memmove(d, consfifo + off, m);
+		consslotsum[slot] = conssum(d, m);
+		consslotlen[slot] = m;
 		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0)
 			return;
 		ospreyconsbytes += m;
@@ -3055,6 +3108,33 @@ ospreyconsput(char *s, int n)
 	if((x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
 		wakeup(&ospreyselrend[x]);
 	return 0;
+}
+
+/* a slot the console task is about to push: is it still what was put there? */
+static void
+ospreyconscheck(Ospreyproc *p, uvlong off, uvlong len)
+{
+	int slot;
+	uchar *b;
+
+	if(p != ospreyconsproc || off < Consoff || off >= Consoff + Nconsslot*Consslot)
+		return;
+	slot = (off - Consoff) / Consslot;
+	consinflight = slot;
+	b = ospreydata(p, off, len);
+	if(b != nil && (consslotlen[slot] != len || consslotsum[slot] != conssum(b, len))){
+		consslotbad++;
+		print("osprey console: slot %d changed between being filled and being pushed (len %lud vs %llud)\n", slot, consslotlen[slot], len);
+	}
+}
+
+/* a slot the console task has pushed whole: checked, and no longer in flight */
+static void
+ospreyconspushed(Ospreyproc *p, uvlong off, uvlong len)
+{
+	ospreyconscheck(p, off, len);
+	if(p == ospreyconsproc)
+		consinflight = -1;
 }
 
 /* the console task took a message off its output queue: feed it what waits in the FIFO */
@@ -4369,6 +4449,15 @@ ospreydumptasks(void)
 	if(ospreyconsproc != nil)
 		print("osprey console: %llud bytes of this went out through the console task, %llud straight to the port\n",
 			ospreyconsbytes, ospreyconsdirect);
+	print("osprey replies: %llud containers woken for a reply of their own, nobody else\n", ospreyroutewakes);
+	{
+		extern uvlong uartputsbytes, uartputslate, kdebugputsbytes;
+		extern char uartputssample[];
+
+		print("osprey console: %d slots found changed between fill and push, %d refilled while in flight\n", consslotbad, consreuse);
+		print("osprey console: %llud bytes went to the port through uartputs, %llud of them after the task took over (the first: \"%s\"), and %llud through kdebugputs\n",
+			uartputsbytes, uartputslate, uartputssample, kdebugputsbytes);
+	}
 }
 
 static int
