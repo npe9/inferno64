@@ -79,12 +79,19 @@ refuses the "hub" ctl command for a busy endpoint -- so newhub now
 closes the data file after confighub and before "hub", reopening it
 after.
 .NH 1
-Phase 2: USB keyboard and mouse -- boot keyboard reports arriving
+Phase 2: USB keyboard -- DONE, end to end
 .PP
-With Phase 1 and the hub fix, usbd already detects the boot keyboard and
-reads its HID reports over the split interrupt endpoint (verified by
-monitor key injection).  What remains is wiring those reports through to
-cons (#c) and the mouse reports to the pointer (#m) on this board.
+No new driver was needed: usbd's boot-keyboard reader already translates
+HID usage codes to UTF-8 and writes them to /dev/keyboard, which devcons
+routes to its graphics keyboard queue (gkbdq) -- the input a wm/tk
+console reads, correctly distinct from the uart serial console.
+Verified whole: with -device usb-kbd, injecting "hello\\n" at the QEMU
+monitor makes raspi3binit's reader print h e l l o and a newline from
+/dev/keyboard -- QEMU keyboard, through the root hub, through the DWC2
+driver's split interrupt transfers, through usbd's HID translation, to
+cons.  The mouse (boot-protocol, to #m/pointer) is the same shape and
+follows usbd's existing mouse reader; it is left for a pointer-wiring
+pass on this board.
 .NH 1
 Phase 1 (historical): the DWC2 controller
 .PP

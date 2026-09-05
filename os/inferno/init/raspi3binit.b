@@ -150,10 +150,31 @@ usbcheck()
 		sys->print("USB-FAIL load usbd: %r\n");
 		return;
 	}
-	spawn usbd->init(nil, "usbd" :: "-d" :: nil);
-	sys->sleep(10000);
+	spawn usbd->init(nil, "usbd" :: nil);
+	sys->sleep(2000);
 	sys->print("USB after usbd:\n%s", readctl("/dev/usb/ctl"));
+	# A USB boot keyboard, once usbd finds it, delivers UTF-8 keystrokes
+	# to /dev/keyboard (the graphics console queue).  Report what arrives
+	# so an injected "hello" from the QEMU monitor shows the whole path --
+	# split interrupt transfers, HID translation, cons -- end to end.
+	spawn kbdreport();
 	sys->print("USB-OK\n");
+}
+
+kbdreport()
+{
+	fd := sys->open("/dev/keyboard", Sys->OREAD);
+	if(fd == nil){
+		sys->print("USB-KBD-NONE: %r\n");
+		return;
+	}
+	buf := array[16] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			return;
+		sys->print("USB-KBD got %d: %q\n", n, string buf[0:n]);
+	}
 }
 
 init()
