@@ -18,6 +18,19 @@
 # it said.
 MKSH=$RCSHELL
 
+# 9front's own headers, and nothing from the Inferno side: a 9front
+# program sees the system it is being built for and no other.  The
+# tree root is on the path too, for the thirty-five sources that name
+# a header by what was an absolute path on a 9front machine.
+#
+# This is set before the upstream part below rather than after,
+# because that part reads sys/src/mkfile.proto, which is where
+# CFLAGS is built out of it: "CFLAGS=-FTVw $INCLUDES".  Setting
+# CFLAGS again afterwards would append the includes a second time in
+# every recursive mk, which inherits the parent's CFLAGS through the
+# environment.
+INCLUDES=-I$ROOT/9front-src/$objtype/include -I$ROOT/9front-src/sys/include -I$ROOT/9front-src
+
 <$ROOT/9front-src/sys/src/mkfile.proto
 
 CC=0c
@@ -31,17 +44,12 @@ AR=iar
 ARFLAGS=vu
 YACC=yacc
 
-# 9front's own headers, and nothing from the Inferno side: a 9front
-# program sees the system it is being built for and no other.  The
-# tree root is on the path too, for the thirty-five sources that name
-# a header by what was an absolute path on a 9front machine.
-INCLUDES=-I$ROOT/9front-src/$objtype/include -I$ROOT/9front-src/sys/include -I$ROOT/9front-src
-CFLAGS=$CFLAGS $INCLUDES
-
 # where the loader looks for a library a #pragma names without a
 # path: the target tree for the system's own, and the source tree for
-# the three audio libraries that are built where they sit
-LDFLAGS=$LDFLAGS -L$ROOT/9front-src
+# the three audio libraries that are built where they sit.  Assigned
+# rather than appended, for the reason given against INCLUDES above:
+# nothing sets LDFLAGS before this except a parent mk.
+LDFLAGS=-L$ROOT/9front-src
 
 BIN=$ROOT/9front/$objtype/bin
 LIBDIR=$ROOT/9front/$objtype/lib

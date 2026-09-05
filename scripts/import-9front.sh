@@ -100,13 +100,16 @@ fi
 #			and do come across: libc generates its Unicode
 #			tables from one and every yacc grammar in the
 #			tree is built from the other, which makes them
-#			build inputs rather than data
+#			build inputs rather than data.  lib/keyboard and
+#			sys/lib/scsicodes are two more of the same kind:
+#			kbdfs's latin1.h comes from the first and
+#			nusb/disk's scsierrs.c from the second
 #
 echo "copying sources"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 ARCHS="amd64 386 arm arm64 mips power power64 sparc sparc64 spim 68000 68020"
-for d in sys/include $ARCHS rc adm lib/ucd lib/keyboard sys/lib/yaccpar sys/lib/yaccpars; do
+for d in sys/include $ARCHS rc adm lib/ucd lib/keyboard sys/lib/yaccpar sys/lib/yaccpars sys/lib/scsicodes; do
 	[ -e "$SRC/$d" ] || continue
 	mkdir -p "$DEST/$(dirname "$d")"
 	cp -R "$SRC/$d" "$DEST/$d"
@@ -139,6 +142,7 @@ rewrite1()
 	-e 's|\([^-A-Za-z0-9_/]\)/sys/src/|\1$ROOT/9front-src/sys/src/|g' \
 	-e 's|/lib/ucd/|$ROOT/9front-src/lib/ucd/|g' \
 	-e 's|/lib/keyboard|$ROOT/9front-src/lib/keyboard|g' \
+	-e 's|/sys/lib/scsicodes|$ROOT/9front-src/sys/lib/scsicodes|g' \
 	-e 's|/\$cputype/mkfile|$ROOT/9front-src/$cputype/mkfile|g' \
 	-e 's|-I/sys/src/|-I$ROOT/9front-src/sys/src/|g' \
 	-e 's|-I/sys/include/|-I$ROOT/9front-src/sys/include/|g' \
@@ -247,6 +251,19 @@ for a in $ARCHS; do
 # it said.
 MKSH=$RCSHELL
 
+# 9front's own headers, and nothing from the Inferno side: a 9front
+# program sees the system it is being built for and no other.  The
+# tree root is on the path too, for the thirty-five sources that name
+# a header by what was an absolute path on a 9front machine.
+#
+# This is set before the upstream part below rather than after,
+# because that part reads sys/src/mkfile.proto, which is where
+# CFLAGS is built out of it: "CFLAGS=-FTVw $INCLUDES".  Setting
+# CFLAGS again afterwards would append the includes a second time in
+# every recursive mk, which inherits the parent's CFLAGS through the
+# environment.
+INCLUDES=-I$ROOT/9front-src/$objtype/include -I$ROOT/9front-src/sys/include -I$ROOT/9front-src
+
 EOF
 		cat "$DEST/$a/mkfile"
 		cat <<'EOF'
@@ -257,17 +274,12 @@ AR=iar
 ARFLAGS=vu
 YACC=yacc
 
-# 9front's own headers, and nothing from the Inferno side: a 9front
-# program sees the system it is being built for and no other.  The
-# tree root is on the path too, for the thirty-five sources that name
-# a header by what was an absolute path on a 9front machine.
-INCLUDES=-I$ROOT/9front-src/$objtype/include -I$ROOT/9front-src/sys/include -I$ROOT/9front-src
-CFLAGS=$CFLAGS $INCLUDES
-
 # where the loader looks for a library a #pragma names without a
 # path: the target tree for the system's own, and the source tree for
-# the three audio libraries that are built where they sit
-LDFLAGS=$LDFLAGS -L$ROOT/9front-src
+# the three audio libraries that are built where they sit.  Assigned
+# rather than appended, for the reason given against INCLUDES above:
+# nothing sets LDFLAGS before this except a parent mk.
+LDFLAGS=-L$ROOT/9front-src
 
 BIN=$ROOT/9front/$objtype/bin
 LIBDIR=$ROOT/9front/$objtype/lib
@@ -387,6 +399,27 @@ echo "removing cpp's unused getopt declaration"
 	-e '/^extern	int	optind;$/d' \
 	"$DEST/sys/src/cmd/cpp/nlist.c"
 
+#
+# mklatin builds kbdfs's latin1.h out of lib/keyboard.  Its trie nodes
+# hold the key sequence in a three-byte field -- MAXLD+1, and kbdfs
+# assumes MAXLD is 2 -- and it fills that field with strcpy of the
+# whole sequence before truncating it, so a three-character sequence
+# writes four bytes into three.  lib/keyboard has eighty of those
+# ("-*l", "DvZ", "_\"U" and the rest), and on 9front the fourth byte
+# lands in the padding before the next field and nothing shows.  Built
+# here it is __strcpy_chk that sees it, and the tool dies on SIGTRAP
+# with nothing printed at all.
+#
+# Copy only the prefix the node is for -- which is what the line after
+# it truncates to anyway -- and say out loud that it fits.  The assert
+# is the part that matters: it is what a lib/keyboard with a
+# four-character sequence would hit, instead of the corruption.
+#
+echo "bounding mklatin's key-sequence copy"
+/usr/bin/sed -i '' \
+	-e 's|^\(\t*\)strcpy((\*tp)->seq, seq);$|\1assert(q+1-(uchar*)seq <= MAXLD);\'$'\n''\1memmove((*tp)->seq, seq, q+1-(uchar*)seq);|' \
+	"$DEST/sys/src/cmd/aux/kbdfs/mklatin.c"
+
 echo "fixing host-tool main() signatures"
 for f in "$DEST/sys/src/libc/ucd/mkrunetype.c"; do
 	[ -f "$f" ] || continue
@@ -453,6 +486,15 @@ cat > "$DEST/.gitignore" <<'EOF'
 ![01256789kquv].h
 ![01256789kquv].out.h
 *.host
+
+# a library that a mkfile builds beside its sources rather than
+# installing, named for the object character the same way
+*.a[01256789kquv]
+
+# source a mkfile generates into the directory it is built in, from
+# data the import brings across for exactly this
+sys/src/cmd/aux/kbdfs/latin1.h
+sys/src/cmd/nusb/disk/scsierrs.c
 
 # The tree-wide .gitignore treats a one-letter suffix as compiler
 # output and *.patch as a patch someone left lying about.  Under two

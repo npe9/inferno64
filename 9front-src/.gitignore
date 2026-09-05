@@ -13,6 +13,15 @@
 ![01256789kquv].out.h
 *.host
 
+# a library that a mkfile builds beside its sources rather than
+# installing, named for the object character the same way
+*.a[01256789kquv]
+
+# source a mkfile generates into the directory it is built in, from
+# data the import brings across for exactly this
+sys/src/cmd/aux/kbdfs/latin1.h
+sys/src/cmd/nusb/disk/scsierrs.c
+
 # The tree-wide .gitignore treats a one-letter suffix as compiler
 # output and *.patch as a patch someone left lying about.  Under two
 # of 9front's test directories they are neither -- they are the input

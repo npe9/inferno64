@@ -36,6 +36,12 @@
 # is dup(old, new); 9front-glue/host/include/unistd.h is where that is
 # made to mean what it means on Plan 9.
 #
+# size is the last, and the only one here that is not 9front's own
+# source: cwfs's mkfile runs "size $target" after linking and the name
+# would otherwise reach the Xcode size, which reads Mach-O.  9front's
+# size goes through libmach; this one reads the a.out header directly.
+# See the note at the top of size.c.
+#
 # ROOT must be set.  Called by scripts/mk9front.sh; a tool is rebuilt
 # only when its source is newer.
 
@@ -82,4 +88,12 @@ if [ ! -x "$bin/cpp" ] || [ -n "$newest" ]; then
 	done
 	# shellcheck disable=SC2086
 	"$ROOT/9front-glue/host/hostld" -o "$bin/cpp" $objs
+fi
+
+src=$ROOT/9front-glue/host/size.c
+if [ ! -x "$bin/size" ] || [ "$src" -nt "$bin/size" ] \
+   || [ "$ROOT/9front-glue/host/hostsupp.c" -nt "$bin/size" ]; then
+	echo "mkhost: size"
+	"$ROOT/9front-glue/host/hostcc" -o "$obj/size.o" "$src"
+	"$ROOT/9front-glue/host/hostld" -o "$bin/size" "$obj/size.o"
 fi

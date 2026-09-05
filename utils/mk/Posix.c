@@ -45,6 +45,47 @@ mkshell(char **namep)
 
 extern char **environ;
 
+/*
+ *	The inverse of what exportenv() wrote: a variable that was a
+ *	list went out joined by IWS, and comes back one word again
+ *	only if it is broken there.  Plan9.c does this -- its
+ *	encodenulls() splits at 01 and at nulls -- and this file did
+ *	not, so every variable a recursive mk inherited arrived as a
+ *	single word with the separators still inside it.  Under rc,
+ *	where IWS is 01, that was invisible: rc splits the environment
+ *	itself, so the recipe ran with the right arguments, and only
+ *	mk's echo of it showed the words run together.  It is not
+ *	invisible to a mkfile that appends to an inherited variable,
+ *	or matches against one.
+ */
+static Word*
+splitenv(char *s)
+{
+	Word *head, *w;
+	char *cp;
+	int last;
+
+	head = w = 0;
+	for(;;){
+		for(cp = s; *cp && *cp != IWS; cp++)
+			;
+		last = *cp;
+		*cp = 0;
+		if(w){
+			w->next = newword(s);
+			w = w->next;
+		} else
+			head = w = newword(s);
+		*cp = last;	/* newword copied it; put the string back */
+		if(last == 0)
+			break;
+		s = cp+1;
+	}
+	if(!head)
+		head = newword("");
+	return head;
+}
+
 void
 readenv(void)
 {
@@ -55,7 +96,7 @@ readenv(void)
 		s = shname(*p);
 		if(*s == '=') {
 			*s = 0;
-			w = newword(s+1);
+			w = splitenv(s+1);
 		} else
 			w = newword("");
 		if (symlook(*p, S_INTERNAL, 0))

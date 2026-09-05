@@ -57,7 +57,8 @@ mktrie(char *seq)
 			*tp = malloc(sizeof(**tp));
 			assert(*tp != nil);
 			memset(*tp, 0, sizeof(**tp));
-			strcpy((*tp)->seq, seq);
+			assert(q+1-(uchar*)seq <= MAXLD);
+			memmove((*tp)->seq, seq, q+1-(uchar*)seq);
 			(*tp)->seq[q+1-(uchar*)seq] = '\0';
 		}
 	}
